@@ -161,9 +161,12 @@ static long *hs_arguments_evaluate(long thread_index, short formal_parameter_cou
 static long hs_value_still_exists(short type, long value);
 static long object_list_skip_deleted(long object_index, long *reference_index);
 void *datum_try_and_get(struct data_array *data, long index);
-void *datum_get(struct data_array *data, long index);
+void *datum_get_slow(struct data_array *data, long index);
+/* (data.h's fast path, its slow one data.c's datum_get_slow) */
+static void *datum_get(struct data_array *data, long index);
 void *object_try_and_get_and_verify_type(long object_index, unsigned long valid_type_flags);
-void *object_get_and_verify_type(long object_index, unsigned long valid_type_flags);
+void *object_get_and_verify_type_slow(long object_index, unsigned long valid_type_flags);
+static void *object_get_and_verify_type(long object_index, unsigned long valid_type_flags);
 long object_list_new(void);
 void object_list_add(long object_list_index, long object_index);
 long object_list_get_first(long object_list_index, long *reference_index);

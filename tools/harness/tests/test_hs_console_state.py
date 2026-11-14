@@ -41,8 +41,10 @@ def console_state_tool(tmp_path_factory, request):
     types += "\n" + structure(compiler, "hs_compile_globals") + "\n" + structure(compiler, "hs_tokenizer")
     definitions = "\n".join(line for text in (checkpoint, read("port/linux/game/mcc_campaign.h"),
         read("port/linux/game/mcc_object_names.h")) for line in text.splitlines() if line.startswith("#define MCC_"))
-    data_code = "\n".join(function(data, name) for name in ("data_initialize", "data_verify", "data_usable",
-        "datum_initialize", "datum_get", "datum_try_and_get", "data_delete_all", "data_make_valid",
+    # (datum_get's fast path is data.h's, inline; its slow path data.c's datum_get_slow)
+    data_code = function(data, "datum_get_slow") + "\n" + function(data_h, "datum_get") + "\n"
+    data_code += "\n".join(function(data, name) for name in ("data_initialize", "data_verify", "data_usable",
+        "datum_initialize", "datum_try_and_get", "data_delete_all", "data_make_valid",
         "data_make_invalid", "datum_new", "datum_delete", "data_next_index"))
     storage = function(checkpoint, "mcc_checkpoint_script_storage") + "\n" + re.sub(r'^#include .*$', '',
         read("port/linux/game/mcc_script_threads.inl"), flags=re.M)
