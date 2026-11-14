@@ -82,6 +82,32 @@ files of those no screen names any more removed, and `menus.json`. The
 rest of `ce/bitmaps.xml` stays as it is. It needs `rsvg-convert`, Pillow and
 NumPy.
 
+## Merging
+
+The files `tools/ce_menus.py` writes (`ce/`, `port_svg/`, `model/`,
+`menus.json`, `NON_HANDDRAWN.md`, `UNWIRED.md`) stay committed, so that no
+build (Android, iOS, Windows, the releases) needs the PC version's tags, and
+are never merged by hand. Once per clone:
+
+```sh
+tools/git_setup.sh
+```
+
+sets up the `menus-generated` merge driver (`.gitattributes`): a merge takes
+our side of a generated file without a conflict, and its post-merge hook
+writes the menus again from the merged sources when both sides changed
+them, folded into the merge commit. A merge stopped by a conflict in a
+source (`tools/port_settings.py`, say): resolve that, then the one command
+
+```sh
+tools/menus_regen.sh --resolve
+```
+
+writes the menus again, fetching the inputs if needed, and stages them,
+whatever their conflicts; `git commit` finishes. CI's merge checks run
+`tools/menus_regen.sh --check`, which fails when the committed files are not
+what the generator writes (a merge or a change made without it).
+
 ## Elements
 
 A file holds one `<menus>` element (`root` names the main menu's widget, in
