@@ -194,14 +194,16 @@ jobs:
       # (tools/ci-runner/status.py, at the repository variable
       # CI_RUNNER_STATUS's addresses): the Linux jobs (linux-x86_64 and the
       # tests' shards) all go to ours or all to GitHub's; the windows job to
-      # the Windows VM's runner when it is running and idle, else to
-      # windows-2025. (A trusted run's alone, the Pick the runner step's.)
+      # the Windows VM's runner when it is running and idle and the
+      # repository variable CI_WINDOWS_RUNNER is on, else to windows-2025.
+      # (A trusted run's alone, the Pick the runner step's.)
       - name: Free runners
         id: free
         env:
           OWN: ${{ steps.runner.outputs.self_hosted }}
           RUNNER: ${{ steps.runner.outputs.runner }}
           STATUS: ${{ vars.CI_RUNNER_STATUS }}
+          WINDOWS_ON: ${{ vars.CI_WINDOWS_RUNNER }}
           BUILD: ${{ steps.plan.outputs.build }}
           SHARDS: ${{ steps.plan.outputs.shards }}
         shell: python3 {0}
@@ -224,7 +226,7 @@ jobs:
           outputs = {
               "runner": os.environ["RUNNER"] if ours else '"ubuntu-24.04"',
               "self_hosted": "true" if ours else "false",
-              "windows_runner": '["self-hosted","goath1-windows"]' if own and windows == "idle" else '"windows-2025"',
+              "windows_runner": '["self-hosted","goath1-windows"]' if own and windows == "idle" and os.environ["WINDOWS_ON"] == "on" else '"windows-2025"',
           }
           print(f"{linux} idle Linux runners for {needed} jobs, the Windows VM's {windows}: {outputs}")
           with open(os.environ["GITHUB_OUTPUT"], "a") as out:

@@ -62,9 +62,11 @@ switch ($Mode) {
         'PowerShell-7.7.0-win-x64.zip' '7C74E03B20A75B59715847439D046A6214B1863EE79B187872980F139BB4A05F'
       Expand-Archive $zip -DestinationPath 'C:\Program Files\PowerShell\7'
     }
-    # (the system PATH: pwsh, python and python3, clang, Git's tools; the PATH a service starts with)
-    $path = [Environment]::GetEnvironmentVariable('Path', 'Machine')
-    foreach ($dir in 'C:\Program Files\PowerShell\7', 'C:\Program Files\LLVM\bin', 'C:\Program Files\Git\cmd', 'C:\Program Files\Git\usr\bin') {
+    # (the system PATH: pwsh, python and python3, clang, and Git's bin\bash.exe, which puts Git's tools first on
+    # its PATH as GitHub's runners' bash does: its usr\bin itself would lose to System32's, timeout.exe's say)
+    $path = (([Environment]::GetEnvironmentVariable('Path', 'Machine') -split ';') |
+      Where-Object { $_ -and $_ -ne 'C:\Program Files\Git\usr\bin' }) -join ';'
+    foreach ($dir in 'C:\Program Files\PowerShell\7', 'C:\Program Files\LLVM\bin', 'C:\Program Files\Git\cmd', 'C:\Program Files\Git\bin') {
       if ($path -notlike "*$dir*") { $path = "$path;$dir" }
     }
     [Environment]::SetEnvironmentVariable('Path', $path, 'Machine')
