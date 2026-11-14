@@ -70,6 +70,14 @@ def generated(control=None):
     for name in ("PREDICTION_ANCHOR_TICKS", "PREDICTION_JITTER_TICKS", "PREDICTION_CEILING_LEAD_TICKS",
                  "PREDICTION_SPEED_TICKS"):
         types += f"#define {name} {constant(network + read('source/cseries/cseries.h'), name)}\n"
+    # (what a tick that begins takes of a client's predictions: OpenH1's sub-steps; none at 30 here)
+    types += enum_with(header, "_distributed_take_none,") + "\n"
+    for name in ("predictions_heard", "predictions_earlier"):
+        types += re.search(r"static struct\n\{[^}]*\} distributed_" + name + r"\[MAXIMUM_TRACKED_PLAYERS\];",
+                           network).group(0) + "\n"
+    types += re.search(r"static long distributed_host_run_times\[MAXIMUM_TRACKED_PLAYERS\];", network).group(0) + "\n"
+    end = network.index("} distributed_host_takes;")
+    types += network[network.rindex("static struct", 0, end):end] + "} distributed_host_takes;\n"
     for name in ("predictions", "accepted", "host_speeds"):
         types += re.search(r"static struct(?: distributed_host_speed| distributed_accepted_state)?\n\{[^}]*\} distributed_" + name +
                            r"\[MAXIMUM_TRACKED_PLAYERS\];", network).group(0) + "\n"

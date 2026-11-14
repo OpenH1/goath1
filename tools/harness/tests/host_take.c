@@ -80,6 +80,12 @@ static struct player_datum *distributed_player(short p) { return &players[p]; }
 static long distributed_living_unit(struct player_datum const *p) { return p->unit_index; }
 static long distributed_player_machine(short p) { return p; }
 static real rtt_ticks = 3.0f;
+/* (the host takes its clients' predictions as its ticks end, as at 30: OpenH1's
+tick-start take, for several sub-steps a tick, is network_substeps' own tests') */
+static boolean distributed_prediction_at_tick_start(short p) { (void)p; return FALSE; }
+static short distributed_host_take_choice(short p, long key, long time, boolean earlier_valid, long earlier_time)
+{ (void)p; (void)key; (void)time; (void)earlier_valid; (void)earlier_time; return 0; }
+static long update_queues_distributed_input_key(long p) { (void)p; return NONE; }
 static real distributed_machine_round_trip_ticks(long machine) { return rtt_ticks; }
 static boolean network_coop_player_has_structure_bsp(long p) { return TRUE; }
 static boolean distributed_point_valid(real_point3d const *p, real bound)
