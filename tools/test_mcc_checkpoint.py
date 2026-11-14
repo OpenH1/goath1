@@ -126,7 +126,8 @@ def checkpoint_tool(tmp_path_factory):
         "extern struct data_array *object_header_data;\n")
     native = (ROOT / "source/saved games/game_state.c").read_text()
     funcs = "\n".join(function(native, name) for name in
-                      ("game_state_save", "game_state_save_core", "game_state_image_accept"))
+                      ("game_state_image_valid", "game_state_image_size", "game_state_save",
+                       "game_state_save_core", "game_state_image_accept"))
     data_source = (ROOT / "source/memory/data.c").read_text()
     objects = (ROOT / "source/objects/objects.c").read_text()
     grenades = (ROOT / "port/linux/game/mcc_grenades.c").read_text()
@@ -165,7 +166,7 @@ static int real_grenades_restore(void const *in,uint32_t bytes);
 static int loaded=1, malformed=0, reject_handles=0, captures=0, restores=0, writes=0;
 static uint32_t payload_size=16;
 static unsigned char live[GAME_STATE_SIZE], saved[GAME_STATE_SIZE];
-static struct {void *base_address;long cpu_allocation_size;int saved_game_valid;} game_state_globals;
+static struct {void *base_address;long cpu_allocation_size,gpu_allocation_size;int saved_game_valid;} game_state_globals;
 enum {_game_state_allocation_data,_game_state_allocation_memory_pool,_game_state_allocation_lruv_cache};
 struct game_state_allocation {int kind;void *address;long maximum_count,element_size,size;};
 static struct game_state_allocation game_state_allocations[1];
