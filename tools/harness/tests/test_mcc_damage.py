@@ -6,7 +6,12 @@ def damage_code():
     code = function(read("source/objects/damage.c"), "object_damage_aftermath")
     # Compile the actual dispatch block, retaining its immunity and type gates.
     start = code.index("\tif (object_definition->object.acceleration_scale")
-    end = code.index("\n\tif (game_engine_can_score()", start)
+    # (the block's end, found by its braces: what follows it differs by port)
+    end = code.index("{", start) + 1
+    depth = 1
+    while depth:
+        depth += (code[end] == "{") - (code[end] == "}")
+        end += 1
     return (function(read("port/linux/game/mcc_damage.c"), "mcc_damage_acceleration") +
             "\nstatic void dispatch(void) {\n" + code[start:end] + "\n}\n")
 
