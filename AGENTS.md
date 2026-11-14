@@ -41,7 +41,7 @@ end.
 | `pgo/` | Profile-guided optimisation profiles |
 | `deploy/` | Running a dedicated server: systemd, Docker, Pterodactyl, Helm, PufferPanel, MCSManager, example gametypes |
 | `assets/` | Game data for local runs (gitignored: `maps/`, `custom_maps/`) |
-| `.github/workflows/` | CI: builds every platform on each push, publishes releases from `main` |
+| `.github/workflows/` | CI: builds every platform on each push; a tag `build-<N>` publishes a release (docs/releasing.md) |
 
 ## Building
 
@@ -480,10 +480,9 @@ The decompilation's upstream, punpckhdq/halo, is AGPL 3.0 from 17 October
 
 ### Commits and pull requests
 
-- Pull requests target `dev`, the default branch. `master` is what ships:
-  every push to it publishes a release that the self-updaters install, so
-  it changes only when `dev` is merged into it, a release, when the
-  maintainers choose.
+- Pull requests target the default branch (`master`; `dev` until the
+  switch). A push to master runs the full suite and publishes nothing;
+  a release is a tag `build-<N>` (`tools/ship.sh`, docs/releasing.md).
 
 - Commit subjects are plain sentences saying what changed; the body says
   why and what was checked.
@@ -516,6 +515,7 @@ The decompilation's upstream, punpckhdq/halo, is AGPL 3.0 from 17 October
 | [docs/master_protocol.md](docs/master_protocol.md) | The master servers' protocol: publishing, the probe, the signed list |
 | [docs/mcc_maps.md](docs/mcc_maps.md) | MCC maps: their format, installation, sharing, the implementation's layout and limits ([docs/reading](docs/reading/README.md) follows the sources) |
 | [docs/controller_remapping.md](docs/controller_remapping.md) | Controller button remapping (each player's layout, the overlays' buttons, VR), stick dead zones, the look's inversion |
+| [docs/releasing.md](docs/releasing.md) | How to ship a release, and what each kind of CI run does |
 | [docs/mods.md](docs/mods.md) | Mods: folders of Halo PC tag files whose sounds, bitmaps, text and models play over a map's on one machine |
 | [port/assets/text_filter/README.md](port/assets/text_filter/README.md) | Streamer mode's words: Surge AI's list, the review, the allowed words |
 | [port/assets/menus/README.md](port/assets/menus/README.md) | The menu files' format and how to write them again |

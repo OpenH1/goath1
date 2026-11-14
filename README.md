@@ -68,15 +68,15 @@ two can play together. OpenCE starts from the decompilation of
 | **Display** | Any resolution from 640 × 480, a field of view up to 150°, a HUD redrawn at 8× |
 | **Network** | Plays online with OpenCE players; internet play needs no servers to set up |
 | **Mods** | Texture, sound, text and model packs from the game's Mods menu; Custom Edition and MCC maps that share themselves |
-| **Releases** | Every commit is built for every platform, and each build of `master` that passes is a release |
+| **Releases** | Every commit is built for every platform; a release is a tagged build of `master` that passes ([docs/releasing.md](docs/releasing.md)) |
 
 Contributions are welcome: refer to "Contributing" below. Players and
 contributors meet on the [OpenH1 Discord](https://discord.gg/MJa327PSWt).
 
 ## Download
 
-GitHub Actions builds the game for each commit, and each build of `master`
-that passes on all the platforms is a new release. These links download the
+GitHub Actions builds the game for each commit, and a tagged build of
+`master` that passes on all the platforms is a new release. These links download the
 builds of the latest release:
 
 | Platform | Release | Debug |
