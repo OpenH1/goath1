@@ -718,6 +718,7 @@ SHIPPED_DEFAULTS = {
     "display.draw_distance": "1024",
     "display.overshield_layer_color": "true",
     "controls.walk": "Left Shift",
+    "game.sim_rate": "60",
 }
 
 
@@ -729,7 +730,8 @@ def shipped_defaults(run):
 def test_shipped_defaults(tmp_path, monkeypatch):
     """The defaults a new config.toml has for the settings above, as the built port_config.c reads them"""
     for key in ("HALO_LATENCY_METER", "HALO_LOWERED_RETICLE", "HALO_LOWERED_RETICLE_AMOUNT", "HALO_PANINI",
-                "HALO_PANINI_VERTICAL", "HALO_DRAW_DISTANCE", "HALO_OVERSHIELD_LAYER_COLOR", "HALO_KEY_WALK"):
+                "HALO_PANINI_VERTICAL", "HALO_DRAW_DISTANCE", "HALO_OVERSHIELD_LAYER_COLOR", "HALO_KEY_WALK",
+                "HALO_SIM_RATE"):
         monkeypatch.delenv(key, raising=False)
     shipped_defaults(config_check_build(tmp_path, ["-DHALO_VULKAN=1", "-DHALO_GUEST=1"]))
 
