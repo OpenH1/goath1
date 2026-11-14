@@ -312,14 +312,25 @@ static real distributed_vitality_unpack(word v) {return v/16384.0f;}
 static real distributed_own_round_trip_ticks(void) {return 0;}
 static void damage_set_network_state(long index,struct damage_network_state const *state) {(void)index;CHECK(state->body_vitality==1.0f,"host vitality");}
 static void distributed_correct_own_unit(struct player_datum *p,long index,struct distributed_unit_state const *s) {(void)p;(void)index;(void)s;CHECK(0,"movement outside fixture");}
-static void distributed_apply_remote_unit(long index,struct distributed_unit_state const *s)
-    {(void)index;(void)s;CHECK(0,"movement outside fixture");}
+static void distributed_place_remote_unit(struct player_datum *p,long index,struct distributed_unit_state const *s,long time)
+    {(void)p;(void)index;(void)s;(void)time;CHECK(0,"movement outside fixture");}
+/* (a remote player's place a host's sub-step already gave: none here) */
+static struct {long time;} distributed_substep_states_taken[MAXIMUM_TRACKED_PLAYERS];
 static real distance_squared3d(real_point3d const *a,real_point3d const *b) {return (a->x-b->x)*(a->x-b->x)+(a->y-b->y)*(a->y-b->y)+(a->z-b->z)*(a->z-b->z);}
 static long find_netgame_flag(real_point3d const *p,real a,real b,int kind,long previous) {(void)p;(void)a;(void)b;(void)kind;(void)previous;return NONE;}
 
 /* Damage effects are the fake-world boundary. The real handler and validators
    decide whether to reach this callback. No packet-age decision is mocked here. */
 static void damage_data_new(struct damage_data *data,long definition) {memset(data,0,sizeof(*data));data->definition_index=definition;}
+/* (this client's predicted hits and their sounds, and the network tests' notes:
+   none in this fixture, so every host event applies as it comes) */
+static void network_test_note_hit(char const *what,long object_index) {(void)what;(void)object_index;}
+static void distributed_predicted_hits_reset(void) {}
+static void distributed_predicted_hits_update(void) {}
+static boolean distributed_predicted_hit_answered(long object_index,struct damage_data const *damage) {(void)object_index;(void)damage;return FALSE;}
+static boolean distributed_predicted_kill_answered(struct distributed_damage_event const *event) {(void)event;return FALSE;}
+static void distributed_hit_sound(struct distributed_damage_event const *event,struct damage_data const *damage) {(void)event;(void)damage;}
+static void distributed_client_note_item_paths(void) {}
 static void scenario_location_from_point(int *location,real_point3d const *point) {(void)point;*location=0;}
 static struct collision_model *collision_model_definition_get(long index) {(void)index;CHECK(0,"fixture has no collision model");return NULL;}
 static boolean object_has_node(long index,short node) {(void)index;return node==0;}
@@ -476,7 +487,7 @@ static int snapshot_inventory_case(long unit,boolean many) {
     distributed_client_apply_inventory(&future);
     {
         struct distributed_unit_state state=live_state(unit);
-        distributed_handle_unit_state(now,&state);
+        distributed_handle_unit_state(&state,now);
         CHECK(player_get(DATUM_INDEX_NEW(0,7))->unit_index==unit,"retained healthy unit remains locally bound");
     }
     CHECK(object_get(unit)->unit.grenade_counts[0]==2&&object_get(unit)->unit.weapon_object_indices[0]==weapon,"future equipment established");
@@ -542,7 +553,7 @@ static int exercise(char const *name) {
         long projectile,child;
         int prediction_resets;
         weapon=add_replica(4,_object_type_weapon);inventory=inventory_for(index,weapon);
-        distributed_handle_unit_state(now,&state);
+        distributed_handle_unit_state(&state,now);
         begin_checkpoint();
         distributed_client_apply_inventory(&inventory);
         CHECK(!distributed_checkpoint_synchronized&&corpse->unit.weapon_object_indices[0]==weapon,
@@ -592,7 +603,7 @@ static int exercise(char const *name) {
         network_objects_discard_client_effects();CHECK(deleted==2&&effect_cleanups==initial_effect_cleanups+2,"repeated cleanup is harmless; effect lifetime also retires");return 0;
     }
     if(!strcmp(name,"live")){
-        distributed_handle_unit_state(now,&state);network_objects_handle_changes(&change,1);
+        distributed_handle_unit_state(&state,now);network_objects_handle_changes(&change,1);
         CHECK(constructed==1&&!deleted,"unchanged live replica is reused");
         CHECK(player_get(player_index)->unit_index==index&&control_unit==index,"live binding retained");return 0;
     }
@@ -605,14 +616,14 @@ static int exercise(char const *name) {
         return 0;
     }
     if(!strcmp(name,"bound-corpse")){
-        distributed_handle_unit_state(now,&state);
+        distributed_handle_unit_state(&state,now);
         CHECK(player_get(player_index)->unit_index==index&&corpse->unit.player_index==player_index&&control_unit==index,
             "old life begins with a reciprocal player binding");
         require_detached=TRUE;
     }
     if(!strcmp(name,"unknown")||!strcmp(name,"unknown-player")){
         if(!strcmp(name,"unknown"))state.unit_index=DATUM_INDEX_NEW(4,0x1234);else state.player_index=255;
-        distributed_handle_unit_state(now,&state);
+        distributed_handle_unit_state(&state,now);
         CHECK(!objects_client_ask_again&&!deleted&&constructed==1,"unknown references do not reconstruct");
         CHECK(player_get(player_index)->unit_index==NONE&&control_unit==NONE,"unknown references do not bind");return 0;
     }
@@ -631,7 +642,7 @@ static int exercise(char const *name) {
         }
     }
     if(!strcmp(name,"late-kill")){
-        distributed_handle_unit_state(now,&state);saved_kill=kill_for(index);
+        distributed_handle_unit_state(&state,now);saved_kill=kill_for(index);
         kill_header.type=_distributed_message_damage_events;kill_header.count=1;
         kill_header.checkpoint_epoch=distributed_checkpoint_epoch;
         CHECK(distributed_message_epoch_valid(NONE,&kill_header,sizeof(kill_header)+sizeof(saved_kill)),"old life was current at first delivery");
@@ -653,7 +664,7 @@ static int exercise(char const *name) {
         network_objects_handle_changes(&change,1);
         CHECK(constructed==1&&!deleted&&network_objects_client_has(index),"invalid description must not destroy replica");
         CHECK(!memcmp(&before,corpse,sizeof(before))&&objects_client_checkpoint_pending[3],"invalid description preserves object and recovery eligibility");
-        change=description(index);network_objects_handle_changes(&change,1);distributed_handle_unit_state(now,&state);
+        change=description(index);network_objects_handle_changes(&change,1);distributed_handle_unit_state(&state,now);
         CHECK(constructed==2&&deleted==1&&control_unit==index&&!objects_client_checkpoint_pending[3],"next valid descriptor still reconstructs");return 0;
     }
     if(!strcmp(name,"host-dead")){
@@ -662,20 +673,20 @@ static int exercise(char const *name) {
     }
     if(!strcmp(name,"different-handle")){
         change.object_index=DATUM_INDEX_NEW(3,0x1235);state.unit_index=change.object_index;
-        network_objects_handle_changes(&change,1);distributed_handle_unit_state(now,&state);
+        network_objects_handle_changes(&change,1);distributed_handle_unit_state(&state,now);
         CHECK(!object_try_and_get(index)&&network_objects_client_has(change.object_index),"identifier replacement");
         CHECK(constructed==2&&deleted==1&&player_get(player_index)->unit_index==change.object_index,"new generation binds");return 0;
     }
-    distributed_handle_unit_state(now,&state);
+    distributed_handle_unit_state(&state,now);
     CHECK(player_get(player_index)->unit_index==(require_detached?index:NONE),"alive state alone cannot replace a corpse");
     CHECK(objects_client_ask_again&&!objects_client_synchronized,"authoritative recovery request");
     CHECK(objects_client_ready_interval==CLIENT_RETRY_TICKS,"ordinary retry delay");
     if(!strcmp(name,"retry")){
         int i;long interval=objects_client_ready_interval;
-        for(i=0;i<20;i++){now++;distributed_handle_unit_state(now,&state);}
+        for(i=0;i<20;i++){now++;distributed_handle_unit_state(&state,now);}
         CHECK(objects_client_ready_interval==interval&&objects_client_retry_ticks==2*CLIENT_RETRY_TICKS,"one pending request coalesces");
         network_objects_handle_synchronized();CHECK(!objects_client_synchronized,"premature completion cannot clear pending failure");
-        for(i=0;i<20;i++){objects_client_ready_time=++now;now++;distributed_handle_unit_state(now,&state);}
+        for(i=0;i<20;i++){objects_client_ready_time=++now;now++;distributed_handle_unit_state(&state,now);}
         CHECK(objects_client_retry_ticks==CLIENT_RETRY_MAXIMUM_TICKS,"bounded retry growth");
         objects_client_ready_time=++now;network_objects_handle_synchronized();
         CHECK(objects_client_synchronized&&objects_client_failed_time==NONE&&objects_client_retry_ticks==CLIENT_RETRY_TICKS,"completed request resets retry");return 0;
@@ -688,7 +699,7 @@ static int exercise(char const *name) {
     }
     constructed_before=constructed;deleted_before=deleted;controls_before=controls_changed;
     bound_before=player_get(player_index)->unit_index==index;
-    network_objects_handle_changes(&change,1);distributed_handle_unit_state(now,&state);
+    network_objects_handle_changes(&change,1);distributed_handle_unit_state(&state,now);
     if(fail_allocation){
         CHECK(deleted==1&&constructed==1&&!object_try_and_get(index),"failed replacement leaves no partial object");
         CHECK(!network_objects_client_has(index)&&objects_client_has[3]==NONE,"failed replacement is not known");
@@ -723,7 +734,7 @@ static int exercise(char const *name) {
         SET_FLAG(object_get(index)->object.damage_flags,_object_dead_bit,TRUE);
         player_get(player_index)->action_object_index=index;
         begin_checkpoint();
-        network_objects_handle_changes(&change,1);distributed_handle_unit_state(now,&state);
+        network_objects_handle_changes(&change,1);distributed_handle_unit_state(&state,now);
         CHECK(constructed==3&&deleted==2,"second restore reconstructs again");
         CHECK(control_unit==index&&controls_changed==3,"bound corpse detaches then rebinds");
         CHECK(player_get(player_index)->action_object_index==NONE,"discarded action target cleared");
@@ -757,10 +768,10 @@ static int exercise(char const *name) {
             network_damage_handle_events(&event,1);CHECK(kill_calls==kills_before+1,"already-dead duplicate not replayed");
             if(!strcmp(name,"same-epoch-create")){
                 int count=constructed;
-                network_objects_handle_changes(&change,1);distributed_handle_unit_state(now,&state);
+                network_objects_handle_changes(&change,1);distributed_handle_unit_state(&state,now);
                 CHECK(constructed==count&&TEST_FLAG(object_get(index)->object.damage_flags,_object_dead_bit)&&
                     player_get(player_index)->unit_index==NONE,"later live description cannot revive a same-epoch death");
-                begin_checkpoint();network_objects_handle_changes(&change,1);distributed_handle_unit_state(now,&state);
+                begin_checkpoint();network_objects_handle_changes(&change,1);distributed_handle_unit_state(&state,now);
                 CHECK(constructed==count+1&&!TEST_FLAG(object_get(index)->object.damage_flags,_object_dead_bit)&&
                     control_unit==index,"next checkpoint explicitly permits same-handle recovery");
             }

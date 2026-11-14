@@ -219,6 +219,8 @@ static void game_initial_pulse(void) {}
 static void game_state_try_and_load_from_persistent_storage(void) {}
 static void ui_widgets_disable_pause_game(short ticks) {}
 #define game_precache_new_map(map_name, blocking) ((void)0)
+/* (no MCC map: a failed load is not one to take back to the menus, mcc_main.c) */
+#define mcc_main_load_failed(map_name) FALSE
 /* (game.c's: the loading screen begins, the old map's clock goes) */
 static void game_dispose_from_old_map(void)
 {

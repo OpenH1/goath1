@@ -81,6 +81,10 @@ int main(int argc, char **argv)
 		CHECK(!wanted(current - 1, _listing_open, 0, 0) && newer_count == 0, "an older version's: not counted");
 		CHECK(!wanted(current + 1, _listing_open, 0, 0) && newer_count == 1, "a newer version's: counted");
 		CHECK(!wanted(current + 1, _listing_closed, 0, 0) && newer_count == 1, "a newer version's tombstone");
+		/* (a GOAT H1 Standard game's listing carries its protocol version, flagged) */
+		CHECK(wanted(HALO_PORT_STANDARD_ADVERTISED_VERSION, _listing_open, 0, 0), "a Standard game of this protocol");
+		CHECK(!wanted(HALO_PORT_STANDARD_ADVERTISED_VERSION + 1, _listing_open, 0, 0) && newer_count == 2,
+			"a newer Standard protocol's: counted");
 		CHECK(!listing_wanted((const unsigned char *)"HL", 2, 0, key_hash), "a short message");
 	}
 	else CASE("burst")

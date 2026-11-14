@@ -32,6 +32,9 @@ static char const *SDL_GetGamepadName(SDL_Gamepad *p){return "Test controller";}
 static unsigned SDL_GetGamepadID(SDL_Gamepad *p){return p->id;}
 static unsigned short SDL_GetGamepadVendor(SDL_Gamepad *p){return 123;}
 static unsigned short SDL_GetGamepadProduct(SDL_Gamepad *p){return 456;}
+typedef enum {SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1=16,SDL_GAMEPAD_BUTTON_LEFT_PADDLE1,
+ SDL_GAMEPAD_BUTTON_RIGHT_PADDLE2,SDL_GAMEPAD_BUTTON_LEFT_PADDLE2} SDL_GamepadButton;
+static int SDL_GamepadHasButton(SDL_Gamepad *p,SDL_GamepadButton b){(void)p;return b==SDL_GAMEPAD_BUTTON_LEFT_PADDLE1;}
 static int automatic;
 static char const *manual="ps_modern",*xbox="menu_gems",*ps="ps_gems",*sw="switch_modern";
 static int config_boolean(char const *s){assert(!strcmp(s,"input.auto_button_detection"));return automatic;}
@@ -43,15 +46,16 @@ static char const *config_string(char const *s){
 }
 '''
     if android:
-        code += '#define HALO_ARM64_GUEST 1\n'
+        code += '#define HALO_GUEST 1\n'
     code += HEADER + without_includes((ROOT / 'port/linux/src/controller_buttons.c').read_text()) + r'''
 int main(void){
  SDL_Gamepad a={SDL_GAMEPAD_TYPE_PS5,7},b={SDL_GAMEPAD_TYPE_XBOXONE,9},c={SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO,11};
  struct controller_device info;int type;
  controller_device_update(0,&a);controller_device_update(1,&b);controller_device_update(2,&c);
  controller_device_get(0,&info);assert(info.family==CONTROLLER_PLAYSTATION && info.type==SDL_GAMEPAD_TYPE_PS5);
-#ifndef HALO_ARM64_GUEST
+#ifndef HALO_GUEST
  assert(info.instance==7 && info.vendor==123 && info.product==456 && !strcmp(info.name,"Test controller"));
+ assert(info.paddles==1);
 #endif
  assert(controller_button_style_for_port(0)==7 && controller_button_style_for_port(1)==7);
  automatic=1;
@@ -76,8 +80,8 @@ int main(void){
 
 
 def test_artwork_mapping_transparency_labels_and_regeneration():
-    import numpy as np
-    from PIL import Image
+    np = pytest.importorskip("numpy")
+    Image = pytest.importorskip("PIL.Image")
     import controller_button_assets as assets
     entries = assets.sources()
     assert len(entries) == 62
@@ -202,8 +206,8 @@ int main(void){
 
 
 def test_classic_letters_are_transparent_cutouts():
-    import numpy as np
-    from PIL import Image
+    np = pytest.importorskip("numpy")
+    Image = pytest.importorskip("PIL.Image")
     from scipy.ndimage import binary_fill_holes
     for letter in 'abxy':
         rgba = np.asarray(Image.open(ROOT / f'port/assets/buttons/classic_{letter}__0.png'))

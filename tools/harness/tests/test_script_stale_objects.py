@@ -103,10 +103,13 @@ def generated(fault=None):
     if fault == 'scenery':
         animation_time = mutated(animation_time, 'scenery_try_and_get(object_index)', 'scenery_get(object_index)')
 
-    code = function(data, 'datum_try_and_get') + '\n' + function(data, 'datum_get') + '\n'
+    # (datum_get's fast path is data.h's, inline; its slow path data.c's datum_get_slow)
+    code = function(data, 'datum_get_slow') + '\n' + function(read('source/memory/data.h'), 'datum_get') + '\n'
+    code += function(data, 'datum_try_and_get') + '\n'
     code += function(data, 'datum_delete') + '\n'
     code += function(objects, 'object_try_and_get_and_verify_type') + '\n'
-    code += function(objects, 'object_get_and_verify_type') + '\n'
+    code += function(objects, 'object_get_and_verify_type_slow') + '\n'
+    code += function(read('source/objects/objects.h'), 'object_get_and_verify_type') + '\n'
     for name in ('reference_list_get_next_datum_index', 'reference_list_add', 'reference_list_delete'):
         code += inline(references, name) + '\n'
     code += define(lists, 'object_list_get_first_internal')

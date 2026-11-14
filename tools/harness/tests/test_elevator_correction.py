@@ -41,8 +41,10 @@ def generated(fault=None):
     config += re.search(r"^#define MAX\(.*$", read("source/cseries/cseries.h"), re.M)[0] + "\n"
     config += structure(header, "distributed_vector") + "\n"
     config += enum_with(read("source/game/players.h"), "_player_powerup_active_camouflage") + "\n"
-    config += enum_with(source, "_distributed_pose_facing,") + "\n"
-    config += structure(source, "distributed_unit_state") + "\n"
+    # (a unit's state and its pose's vectors: network_legacy.h's)
+    legacy = read("port/linux/game/network_legacy.h")
+    config += enum_with(legacy, "_distributed_pose_facing,") + "\n"
+    config += structure(legacy, "distributed_unit_state") + "\n"
     for name in ("DISTRIBUTED_UNIT_SCALE", "DISTRIBUTED_VELOCITY_SCALE", "REMOTE_BLEND_DISTANCE", "REMOTE_CORRECTION_TOLERANCE"):
         config += re.search(r"^#define " + name + r" .*$", header, re.M).group(0) + "\n"
     for name in ("SEAT_DISAGREEMENT_TICKS", "SEAT_DISAGREEMENT_SLACK_TICKS"):

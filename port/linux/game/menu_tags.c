@@ -673,6 +673,9 @@ static char const *const port_game_data_input_names[] =
 	/* (the Mods screen's list; the main menu's Quit notes the main menu
 	shown, for the update question) */
 	"port mods update", "port update question",
+	/* (the MCC packages' download and downloads screens: their rows shown, their text) */
+	"port mcc share update", "port mcc share text",
+	"port mcc downloads update", "port mcc downloads text",
 	/* (network co-op's pause menu's FRIENDLY FIRE: its text, ON or OFF) */
 	"port coop friendly fire text",
 	/* (Multiplayer's panel, what is live for the item chosen) */

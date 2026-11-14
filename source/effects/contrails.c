@@ -505,9 +505,11 @@ void contrails_update(
 		frames a second they lived about half that, the trail half as long.
 		The points' physics and their states' fades step with them, so at a
 		high frame rate a point moves and fades once a tick, as on the Xbox,
-		not on every frame */
-		if (point_dt > 0.0f)
-			contrail_update_points(contrail_index, point_dt);
+		not on every frame. Called on every frame all the same, with no time
+		between the ticks: a point made in a frame between them (a provisional
+		head, contrail_add_provisional_points) takes its first state there,
+		before it is drawn, and nothing ages */
+		contrail_update_points(contrail_index, point_dt);
 
 		for (instance_index = 0;
 			instance_index < MAXIMUM_CONTRAIL_INSTANCES;

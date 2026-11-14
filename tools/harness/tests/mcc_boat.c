@@ -152,6 +152,19 @@ static int physics_instance_new(struct physics_instance *instance, long index)
     instance->physics = &test_physics;
     return TRUE;
 }
+/* a tick's update at game.sim_rate 30: no sub-step (physics.c's
+physics_update_substep and vehicles.c's vehicle_substep run at 60 and 120) */
+struct physics_substep;
+static struct physics_substep *physics_substep;
+static void physics_update_substep(long object_index, struct powered_mass_point_datum *powered_mass_points,
+    struct mass_point_datum *mass_points, real_vector3d const *magic_force, real_vector3d const *magic_torque,
+    struct physics_substep *substep)
+{
+    (void)object_index; (void)powered_mass_points; (void)mass_points; (void)magic_force; (void)magic_torque;
+    (void)substep; abort();
+}
+static void *vehicle_substep;
+static real vehicle_closing_gain(void) { return 1.0f; }
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wmissing-braces"
 #include "consumer.inc"

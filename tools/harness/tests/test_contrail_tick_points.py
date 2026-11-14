@@ -11,7 +11,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from harness import CHECK_FAILED, build, constant, enum_with, function, mutated, read, run, structure  # noqa: E402
 
-CASES = ["steady-at-144", "uneven-frames", "time-jumps"]
+CASES = ["steady-at-144", "uneven-frames", "time-jumps", "provisional-state"]
 FUNCTIONS = ("contrail_scale_value", "contrail_scale_random_value", "contrail_next_frame",
              "contrail_compute_new_point_count", "contrail_add_points", "contrail_update_points",
              "contrail_remove_provisional_points", "contrail_add_provisional_points", "contrails_update")
@@ -22,8 +22,13 @@ NEGATIVE_CONTROLS = {
     "frames-time": (("point_dt = (real)ticks / TICKS_PER_SECOND;", "point_dt = dt * 4.8f * (real)ticks;"),
                     "uneven-frames"),
     # the points aged every frame by its own time (before fix-contrail-point-ticks)
-    "aged-each-frame": (("if (point_dt > 0.0f)\n\t\t\tcontrail_update_points(contrail_index, point_dt);",
-                         "if (dt > 0.0f)\n\t\t\tcontrail_update_points(contrail_index, dt);"), "steady-at-144"),
+    "aged-each-frame": (("\t\tcontrail_update_points(contrail_index, point_dt);",
+                         "\t\tcontrail_update_points(contrail_index, dt);"), "steady-at-144"),
+    # the points updated on the ticks' frames alone: a provisional head made
+    # between them is drawn with no state (state NONE)
+    "tick-frames-only": (("\t\tcontrail_update_points(contrail_index, point_dt);",
+                          "\t\tif (point_dt > 0.0f)\n\t\t\tcontrail_update_points(contrail_index, point_dt);"),
+                         "provisional-state"),
     # a game time gone back ages the points backwards
     "time-back": (("ticks < 1 || ", ""), "time-jumps"),
     # a game time jumping ahead ages them all at once

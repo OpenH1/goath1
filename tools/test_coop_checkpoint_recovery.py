@@ -28,6 +28,8 @@ def generated(fault=None):
     units = read("source/units/units.c")
     damage = read("port/linux/game/network_damage.c")
     distributed_h = read("port/linux/game/network_distributed.h")
+    # (the unit state's message format, the Classic protocol's: network_legacy.h)
+    legacy_h = read("port/linux/game/network_legacy.h")
     units_h = read("source/units/units.h")
     objects_h = read("source/objects/objects.h")
     damage_h = read("source/objects/damage.h")
@@ -76,9 +78,9 @@ def generated(fault=None):
         enum_with(objects, "_object_change_create,"),
         enum_with(objects, "_send_rank_player_unit,"),
         enum_with(objects, "_distributed_object_carried_bit ="),
-        enum_with(distributed, "_distributed_unit_alive_bit ="),
-        enum_with(distributed, "_distributed_unit_camouflaged_bit ="),
-        enum_with(distributed, "_distributed_pose_facing,"),
+        enum_with(legacy_h, "_distributed_unit_alive_bit ="),
+        enum_with(legacy_h, "_distributed_unit_camouflaged_bit ="),
+        enum_with(legacy_h, "_distributed_pose_facing,"),
         structure(distributed_h, "distributed_vector"),
         structure(objects, "distributed_object_change"),
         structure(objects, "distributed_inventory"),
@@ -87,7 +89,7 @@ def generated(fault=None):
         structure(objects.replace("static struct", "struct"), "distributed_own_inventory"),
         structure(objects.replace("static struct", "struct"), "distributed_retried_inventory"),
         structure(read("port/linux/game/vehicle_riding.h"), "vehicle_riding_deck"),
-        structure(distributed, "distributed_unit_state"),
+        structure(legacy_h, "distributed_unit_state"),
         enum_with(damage, "_damage_event_player_effect,"),
         enum_with(damage, "_damage_event_friendly_fire_bit ="),
         structure(damage, "distributed_damage"),
@@ -95,9 +97,11 @@ def generated(fault=None):
         structure(damage, "distributed_hit_report"),
         structure(damage, "distributed_hit_report_message"),
     ])
-    data_code = "\n".join(function(data, name) for name in (
+    # (datum_get's fast path is data.h's, inline; its slow path data.c's datum_get_slow)
+    data_code = function(data, "datum_get_slow") + "\n" + function(read("source/memory/data.h"), "datum_get") + "\n"
+    data_code += "\n".join(function(data, name) for name in (
         "data_initialize", "data_verify", "data_usable", "datum_initialize",
-        "datum_try_and_get", "datum_get", "datum_new_at_index", "datum_delete",
+        "datum_try_and_get", "datum_new_at_index", "datum_delete",
         "data_iterator_new", "data_iterator_next"))
     code = "\n".join(function(distributed, name) for name in (
         "distributed_object_index_valid", "distributed_real_valid", "distributed_point_valid",

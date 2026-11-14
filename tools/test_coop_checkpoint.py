@@ -239,6 +239,8 @@ static int objects_client_local_free_index=8,objects_client_object_count=3;
 static struct {long unit_index;} objects_client_own_inventories[2];
 static struct {long definition_index;} objects_client_picked_up_weapons[2];
 static struct {long time,vehicle_index;} objects_client_own_vehicles[2][4];
+#define MAXIMUM_ITEM_PATHS 3
+static struct {long object_index;} objects_client_item_paths[3];
 static int mcc_resets;
 static void mcc_network_new_game(void){mcc_resets++;}
 ''' + definitions + "\n" + function(source, "network_objects_reverted") + function(source, "network_objects_new_game") + r'''
@@ -248,6 +250,7 @@ int main(void){
  memset(objects_host_inventories,1,sizeof(objects_host_inventories));
  memset(objects_client_dead,1,sizeof(objects_client_dead));
  memset(objects_client_unsteered_path,1,sizeof(objects_client_unsteered_path));
+ memset(objects_client_item_paths,1,sizeof(objects_client_item_paths));
  network_objects_reverted();
  assert(mcc_resets==1 && objects_host_told_count==3 && objects_client_local_allocation);
  assert(objects_host_machines[0].time==99 && objects_host_machines[1].time==88);
@@ -262,6 +265,7 @@ int main(void){
   assert(objects_client_dead[i].object_index==NONE && objects_client_unsteered_path[i].object_index==NONE);
   assert(objects_client_unsteered_path[i].time==NONE && !objects_client_unsteered_path[i].interval);
   assert(!client_damage_animations[i]);
+  assert(objects_client_item_paths[i].object_index==NONE);
  }
  assert(!host_damage_animation_count && !objects_host_viewers.count && !objects_host_resting_cursor);
  assert(!objects_client_synchronized && objects_client_ready_time==NONE && objects_client_failed_time==NONE);

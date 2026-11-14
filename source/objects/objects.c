@@ -208,6 +208,12 @@ static const struct object_memory_release_function object_memory_release_procs[3
 static long *object_name_list = NULL;
 static struct memory_pool *object_memory_pool = NULL;
 static struct object_globals *object_globals = NULL;
+/* port: the activating cluster is the co-op host's
+(objects_port_set_activating_cluster), an index into the bsp loaded when it
+came, not a script's: let go of when the bsp changes
+(objects_port_structure_bsp_switched). Not in the game state: a client's own. */
+static boolean objects_port_activation_from_host = FALSE;
+
 
 boolean debug_objects_names;
 boolean debug_objects_pathfinding_spheres;
@@ -571,6 +577,7 @@ void object_pvs_set_camera_point(
 		{
 			object_globals->pvs_activation_type = _pvs_activation_cluster;
 			object_globals->pvs_activation.cluster_index = location.cluster_index;
+			objects_port_activation_from_host = FALSE; /* port */
 		}
 	}
 
@@ -588,6 +595,22 @@ void objects_port_set_activating_cluster(
 	}
 	object_globals->pvs_activation_type = _pvs_activation_cluster;
 	object_globals->pvs_activation.cluster_index = cluster_index;
+	objects_port_activation_from_host = TRUE;
+}
+
+/* port: a new structure bsp is in (scenario_switch_structure_bsp): the co-op
+host's activating cluster, which named one of the old bsp's clusters, is let
+go of until the host sends one of the new bsp's. A script's (object_pvs_set_
+camera_point) is kept, as the original keeps it. */
+void objects_port_structure_bsp_switched(
+	void)
+{
+	if (objects_port_activation_from_host &&
+		object_globals->pvs_activation_type == _pvs_activation_cluster)
+	{
+		object_globals->pvs_activation_type = _pvs_activation_normal;
+	}
+	objects_port_activation_from_host = FALSE;
 }
 
 void object_pvs_clear(void)
@@ -606,6 +629,16 @@ short objects_get_activating_cluster_index(
 	switch (object_globals->pvs_activation_type)
 	{
 	case _pvs_activation_cluster:
+		/* port: and none for an index outside the bsp loaded now (a
+		cluster named in another bsp: players_compute_combined_pvs would
+		read past its pvs) */
+		if (!global_structure_bsp_get() ||
+			object_globals->pvs_activation.cluster_index < 0 ||
+			object_globals->pvs_activation.cluster_index >= global_structure_bsp_get()->clusters.count)
+		{
+			object_globals->pvs_activation_type = _pvs_activation_normal;
+			break;
+		}
 		result = object_globals->pvs_activation.cluster_index;
 		break;
 	case _pvs_activation_object:

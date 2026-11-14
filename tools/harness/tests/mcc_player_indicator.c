@@ -35,6 +35,13 @@ static short name_bottom;
 #define _texture_cache_bitmap_get_hardware_format(bitmap, a, b) TRUE
 #define fast_ftol(value) ((long)(value))
 #define PIN(value, low, high) ((value)<(low) ? (low) : (value)>(high) ? (high) : (value))
+#define MIN(a, b) ((a)<(b) ? (a) : (b))
+/* (the game's own far distance, past the test's frustum: far_clip.c) */
+static struct { real far_clip_distance; } rasterizer_globals = {1.0e9f};
+/* (a mark at a whole unit of the screen, as the original placed them: the
+part of a unit past it is the port's, hud_draw.c's) */
+static void hud_draw_mark_begin(real x, real y, point2d *whole) { whole->x=(short)x; whole->y=(short)y; }
+static void hud_draw_mark_end(void) {}
 #define NUMBEROF(array) (sizeof(array)/sizeof((array)[0]))
 #define hud_get_font_index() 0
 #define distance3d(a, b) 1.0f
@@ -65,11 +72,11 @@ static void check_family(int is_mcc, unsigned short flags, real expected)
     mcc=is_mcc;
     test_group.flags=flags;
     hud_draw_friendly_indicator(0);
-    hud_draw_player_name(0, TRUE, TRUE, 100);
+    hud_draw_player_name(0, TRUE, TRUE, 100, 1.0f);
     CHECK(drawn_width==128*expected && drawn_height==64*expected, "arrow dimensions");
     CHECK(drawn_origin_y==100-31*expected, "arrow registration point");
     CHECK(name_bottom==98-(short)(31*expected), "name follows arrow registration point");
-    hud_draw_player_name(0, TRUE, FALSE, 100);
+    hud_draw_player_name(0, TRUE, FALSE, 100, 1.0f);
     CHECK(name_bottom==98, "name without indicator");
 }
 

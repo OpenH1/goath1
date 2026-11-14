@@ -37,6 +37,7 @@ typedef float real;
 #define DISTRIBUTED_TIME_WINDOW_TICKS 450
 #define DISTRIBUTED_UNIT_STATE_MINIMUM_SIZE 1
 #define DISTRIBUTED_RELAYED_ACTION_MINIMUM_SIZE 1
+#define DISTRIBUTED_FORWARDED_INPUT_MINIMUM_SIZE 1
 #define _game_connection_network_client 1
 #define _game_connection_network_server 2
 #define _error_silent 0
@@ -68,28 +69,21 @@ static void network_damage_new_game(void){}
 static void distributed_note_client_clock(long m,long t){(void)m;(void)t;clock_notes++;}
 static int distributed_machine_clock_fast(long m){(void)m;return 0;}
 static void error(int level,char const *fmt,...){(void)level;(void)fmt;}
-#define network_riding_map_handles_message(m,s) 0
-#define network_aim_assist_handles_message(m,s) 0
-#define network_shield_effects_handles_message(m,s) 0
-#define network_voice_handles_message(m,s) 0
-#define map_share_handles_message(m,s) 0
-#define mcc_share_game_handles_message(m,s) 0
-#define mcc_admission_handles_message(m,s) 0
-#define mcc_load_network_handles_message(m,s) 0
-#define network_map_vote_handles_message(m,s) 0
-#define network_riding_map_handle_message(m,p,s) ((void)0)
-#define network_aim_assist_handle_message(m,p,s) ((void)0)
-#define network_shield_effects_handle_message(m,p,s) ((void)0)
-#define network_voice_handle_message(m,p,s) ((void)0)
-#define map_share_handle_message(m,p,s,r) ((void)0)
-#define mcc_share_game_handle_message(m,p,s,r) ((void)0)
-#define mcc_admission_handle_message(m,p,s,r) ((void)0)
-#define mcc_load_network_handle_message(m,p,s,r) ((void)0)
-#define network_map_vote_handle_message(m,p,s,r) ((void)0)
+/* (a GOAT H1 Standard game's messages that only some machines are sent:
+   network_standard.c's; every one goes to everyone in a Classic game) */
+static boolean network_standard_message_goes_to(long machine,byte type){(void)machine;(void)type;return TRUE;}
+static void network_standard_message_heard(byte type){(void)type;}
 '''
     import re
-    sizes = sorted(set(re.findall(r"\b(\w+_entry_size)\(", dispatch)))
+    sizes = sorted(set(re.findall(r"\b(\w+_entry_size|\w+_minimum_size)\(", dispatch)))
     prefix += "\n".join(f"#define {name}(...) 1" for name in sizes) + "\n"
+    # the other modules' messages (chat, voice, map sharing, the host's
+    # controls...), each claimed by its own module: none of them here
+    hooks = sorted(set(re.findall(r"\b(\w+_handles_(?:lobby_)?message)\(", dispatch)))
+    prefix += "\n".join(f"#define {name}(...) 0" for name in hooks) + "\n"
+    handlers = sorted(set(re.findall(r"\b(\w+_handle_(?:lobby_)?message)\(", dispatch)) -
+                      {"network_distributed_handle_message"})
+    prefix += "\n".join(f"#define {name}(...) ((void)0)" for name in handlers) + "\n"
     code = prefix + kinds + structure(header, "distributed_message_header")
     code += r'''
 static long distributed_sender_times[MAXIMUM_SENDERS];
@@ -310,7 +304,29 @@ static long distributed_sent_structure_bsp_index,distributed_pickup_count;
 static struct {boolean valid;} distributed_machines;
 static struct {long flags,unit_index,vehicle_index,seat_index;} distributed_sent_units[2];
 static long distributed_player_machines[2];
-static struct {long taken_time[2],taken_host_time[2],input_time[2];} distributed_divergence;
+static struct {long taken_time[2],taken_host_time[2],input_heard_time[2],input_time[2],ran_time[2],
+ last_input_time[2];} distributed_divergence;
+/* (our netcode's: the forwarded inputs, prediction history, host takes, and
+   the GOAT H1 Standard protocol's difference and sub-step bases) */
+#define REMOTE_POSITION_TICKS 2
+#define MAXIMUM_SIM_SUBSTEPS 4
+#define SUBSTEP_BASE_TICKS 2
+#define UNIT_BASE_TICKS 2
+#define UNIT_SENT_TICKS 2
+static int distributed_predictions_heard[2],distributed_predictions_earlier[2];
+static int distributed_forwards[2],distributed_forward_periods[2],distributed_far_live[2];
+static long distributed_forwarded_ticks[2],distributed_forwarded_times[2],distributed_host_run_times[2];
+static struct {long last_run[2];int count;} distributed_host_takes;
+static struct {long key,unit_index;} distributed_remote_positions[2][REMOTE_POSITION_TICKS],
+ distributed_remote_substep_positions[2][REMOTE_POSITION_TICKS][MAXIMUM_SIM_SUBSTEPS-1];
+static struct {long time,substep_index;} distributed_substep_states_taken[2];
+static struct {long time;} distributed_taken_substep_bases[2][SUBSTEP_BASE_TICKS];
+static long distributed_tick_state_times[2][UNIT_BASE_TICKS],distributed_unit_base_times[2][UNIT_BASE_TICKS];
+static long distributed_unit_taken_time,distributed_unit_missing_time;
+static boolean distributed_unit_bases_missing;
+static struct {long time;} distributed_sent_substep_bases[HALO_PORT_MAXIMUM_NETWORK_MACHINES][2];
+static long distributed_unit_sent_times[HALO_PORT_MAXIMUM_NETWORK_MACHINES][2][UNIT_SENT_TICKS];
+static long distributed_unit_acked_times[HALO_PORT_MAXIMUM_NETWORK_MACHINES];
 static struct {long size;} distributed_batches[MAXIMUM_SENDERS];
 static struct {long time,unit_index;} distributed_own_positions[2][4];
 static int provisional_inputs;
@@ -327,6 +343,7 @@ static void provisional(void){
   distributed_host_states[i]=9;distributed_accepted[i].valid=TRUE;distributed_sends[i]=9;
   distributed_accepted[i].taken_air_unit_index=77;distributed_accepted[i].taken_air_vehicle=88;
   distributed_divergence.input_time[i]=111;distributed_sent_units[i].unit_index=77;
+  distributed_substep_states_taken[i].time=111;distributed_unit_base_times[i][0]=111;
   for(j=0;j<4;j++){distributed_own_positions[i][j].time=111;distributed_own_positions[i][j].unit_index=77;}
  }
  for(i=0;i<MAXIMUM_SENDERS;i++)distributed_batches[i].size=17;
@@ -349,6 +366,7 @@ int main(void){
   assert(!distributed_host_states[i] && !distributed_accepted[i].valid && !distributed_sends[i]);
   assert(distributed_accepted[i].taken_air_unit_index==NONE && distributed_accepted[i].taken_air_vehicle==NONE);
   assert(distributed_divergence.input_time[i]==NONE && distributed_sent_units[i].unit_index==NONE);
+  assert(distributed_substep_states_taken[i].time==NONE && distributed_unit_base_times[i][0]==NONE);
   for(j=0;j<4;j++)assert(distributed_own_positions[i][j].time==NONE && distributed_own_positions[i][j].unit_index==NONE);
  }
  for(i=0;i<MAXIMUM_SENDERS;i++)assert(!distributed_batches[i].size);

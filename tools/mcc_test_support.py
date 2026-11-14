@@ -24,6 +24,26 @@ def compile_tool(work, sources):
     return exe
 
 
+def sanitizer_clang(work, sanitizers):
+    """a clang that builds and links with -fsanitize=<sanitizers>: the PATH's,
+    else the system's (CI puts the guests' pinned LLVM first on the PATH, and
+    it carries no sanitizer runtimes); the test is skipped if none can"""
+    probe = work / "sanitizer_probe.c"
+    # (libFuzzer's runtime has the main, and calls the target)
+    probe.write_text("int LLVMFuzzerTestOneInput(const unsigned char *d, unsigned long n) { (void)d; (void)n; "
+                     "return 0; }\n" if "fuzzer" in sanitizers else "int main(void) { return 0; }\n")
+    tried = []
+    for clang in (shutil.which("clang"), "/usr/bin/clang", shutil.which("clang", path="/usr/local/bin")):
+        if not clang or clang in tried or not Path(clang).exists():
+            continue
+        tried.append(clang)
+        result = subprocess.run([clang, "-fsanitize=" + sanitizers, str(probe), "-o", str(work / "sanitizer_probe")],
+                                capture_output=True, text=True)
+        if result.returncode == 0:
+            return clang
+    pytest.skip(f"no clang here links -fsanitize={sanitizers}: {', '.join(tried) or 'none'}")
+
+
 def chunk(kind, data):
     return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
 

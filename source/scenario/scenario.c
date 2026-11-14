@@ -1178,6 +1178,8 @@ boolean scenario_switch_structure_bsp(
 			global_structure_bsp = structure_bsp_definition_get(reference->structure_bsp.index);
 			/* port: (and any found while it was read) */
 			structure_port_clusters_forget();
+			/* port: the co-op host's activating cluster was the old bsp's */
+			objects_port_structure_bsp_switched();
 			global_collision_bsp = TAG_BLOCK_GET_ELEMENT(
 				&global_structure_bsp->collision_bsp,
 				0,

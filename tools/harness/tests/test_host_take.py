@@ -56,8 +56,11 @@ def generated(control=None):
         types += f"#define {name} {constant(sources['riding'], name)}\n"
     types += structure(header, "distributed_vector") + "\n"
     types += enum_with(read("source/game/players.h"), "_player_powerup_active_camouflage") + "\n"
-    types += enum_with(network, "_distributed_pose_facing,") + "\n"
-    types += structure(network, "distributed_unit_state") + "\n"
+    # (a unit's state and its pose's vectors: network_legacy.h's, the Legacy
+    # and Standard encodings' shared record)
+    legacy = read("port/linux/game/network_legacy.h")
+    types += enum_with(legacy, "_distributed_pose_facing,") + "\n"
+    types += structure(legacy, "distributed_unit_state") + "\n"
     types += structure(network, "distributed_on_foot_bound") + "\n"
     for name in ("HOST_ACCEPT_TOLERANCE", "MAXIMUM_PREDICTED_SPEED", "PREDICTED_ON_FOOT_SPEED_SCALE",
                  "PREDICTED_ON_FOOT_SPEED_MARGIN", "PREDICTED_RISE_TOLERANCE"):
@@ -67,6 +70,14 @@ def generated(control=None):
     for name in ("PREDICTION_ANCHOR_TICKS", "PREDICTION_JITTER_TICKS", "PREDICTION_CEILING_LEAD_TICKS",
                  "PREDICTION_SPEED_TICKS"):
         types += f"#define {name} {constant(network + read('source/cseries/cseries.h'), name)}\n"
+    # (what a tick that begins takes of a client's predictions: OpenH1's sub-steps; none at 30 here)
+    types += enum_with(header, "_distributed_take_none,") + "\n"
+    for name in ("predictions_heard", "predictions_earlier"):
+        types += re.search(r"static struct\n\{[^}]*\} distributed_" + name + r"\[MAXIMUM_TRACKED_PLAYERS\];",
+                           network).group(0) + "\n"
+    types += re.search(r"static long distributed_host_run_times\[MAXIMUM_TRACKED_PLAYERS\];", network).group(0) + "\n"
+    end = network.index("} distributed_host_takes;")
+    types += network[network.rindex("static struct", 0, end):end] + "} distributed_host_takes;\n"
     for name in ("predictions", "accepted", "host_speeds"):
         types += re.search(r"static struct(?: distributed_host_speed| distributed_accepted_state)?\n\{[^}]*\} distributed_" + name +
                            r"\[MAXIMUM_TRACKED_PLAYERS\];", network).group(0) + "\n"
