@@ -2118,6 +2118,8 @@ def option_row_heights() -> list:
     """the rows' heights the screens have (their pictures': parts_pictures)"""
     pitches = {OPTION_ROW_PITCH, SERVER_SETTINGS_SPACING, SETUP_OPTION_PITCH}
     pitches |= {spec.get("spacing", OPTION_ROW_PITCH) for spec in [*SCREENS.values(), *VR_SCREENS.values()]}
+    # (co-op's options' screens and map sharing's, fitted: _server_settings)
+    pitches |= {setup_option_pitch(rows, True) for _, _, _, rows in [*COOP_SETUP_SCREENS, MAP_SHARE_SETUP]}
     return sorted({option_row_height(pitch) for pitch in pitches})
 
 
@@ -4320,6 +4322,14 @@ TITLES.update({f"{MT}/server_settings/{key}/header_{key}": title
 SETUP_OPTION_SAME_PLACE = set()
 
 
+def setup_option_pitch(rows: list, fit: bool) -> int:
+    """a setup options screen's step between its rows: with fit, closer than
+    SETUP_OPTION_PITCH for more rows than fit at it, the last clear of the
+    help at 341 (_setup_option_screen)"""
+    places = len([row_key for row_key, *_ in rows if row_key not in SETUP_OPTION_SAME_PLACE])
+    return min(SETUP_OPTION_PITCH, (341 - 1 - 73 - 28) // max(1, places - 1)) if fit else SETUP_OPTION_PITCH
+
+
 def _setup_option_screen(base: str, key: str, rows: list, fit: bool = False) -> list:
     """a screen of options laid out as the gametype's are (Teamplay
     Options'), its spinners setting config.toml's settings (menu_functions.c's
@@ -4338,8 +4348,7 @@ def _setup_option_screen(base: str, key: str, rows: list, fit: bool = False) -> 
                 '<on event="created" run="port setup options init"/>']
     # (with fit, closer than SETUP_OPTION_PITCH for more rows than fit at it, the last clear of the help at
     # 341: CO-OP OPTIONS', all shown at once, which menu_functions.c packs at the same step)
-    places = len([row_key for row_key, *_ in rows if row_key not in SETUP_OPTION_SAME_PLACE])
-    pitch = min(SETUP_OPTION_PITCH, (341 - 1 - 73 - 28) // max(1, places - 1)) if fit else SETUP_OPTION_PITCH
+    pitch = setup_option_pitch(rows, fit)
     place = -1
     for row_key, *_ in rows:
         if row_key not in SETUP_OPTION_SAME_PLACE:

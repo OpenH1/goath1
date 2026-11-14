@@ -1073,6 +1073,10 @@
 		<frame png="ce/port/main_menu/parts/option_row_512x22__0.png" width="512" height="22"/>
 		<frame png="ce/port/main_menu/parts/option_row_512x22__1.png" width="512" height="22"/>
 	</bitmap>
+	<bitmap name="main_menu/parts/option_row_512x24">
+		<frame png="ce/port/main_menu/parts/option_row_512x24__0.png" width="512" height="24"/>
+		<frame png="ce/port/main_menu/parts/option_row_512x24__1.png" width="512" height="24"/>
+	</bitmap>
 	<bitmap name="main_menu/parts/option_row_512x26">
 		<frame png="ce/port/main_menu/parts/option_row_512x26__0.png" width="512" height="26"/>
 		<frame png="ce/port/main_menu/parts/option_row_512x26__1.png" width="512" height="26"/>
