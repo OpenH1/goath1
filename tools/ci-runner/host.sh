@@ -119,3 +119,5 @@ case ${1:-} in
     ;;
   *) sed -n '2,20p' "$0" >&2; exit 2 ;;
 esac
+
+# (probe)
