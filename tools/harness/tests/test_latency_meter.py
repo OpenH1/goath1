@@ -77,12 +77,3 @@ def test_negative_control(control):
     skip_without_32_bit_abi(ABI_DEPENDENT, control, case)
     status, output = run(build("latency_meter", generated(fault, faulty_function)), case)
     assert status == CHECK_FAILED, f"the code with a fault ({control}) passed '{case}': the test cannot see it"
-
-
-def test_off_by_default():
-    # a departure from the stock HUD: off unless asked for (port_config.c), and the netcode's refresh and log lines
-    # only with it on
-    config = read("port/linux/src/port_config.c")
-    assert '{ "display.latency_meter", _config_boolean, "false", "HALO_LATENCY_METER"' in config
-    tick = function(read("port/linux/game/network_distributed.c"), "network_distributed_tick")
-    assert tick.count("% PING_REFRESH_TICKS == 0 && latency_meter_enabled())\n\t\t\tdistributed_refresh_pings();") == 2

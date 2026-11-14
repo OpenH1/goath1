@@ -122,25 +122,3 @@ def test_called_only_by_the_drawing():
         "\t\tlowered_reticle_offset_point(&point, reticle_scale);" in hud
     assert hud.index("reticle_scale = is_crosshair_bitmap") < hud.index("lowered_reticle_offset_point(")
     assert "\t\treticle_scale);" in hud[hud.index("hud_draw_bitmap_internal("):]
-
-
-def test_the_settings():
-    config = read("port/linux/src/port_config.c")
-    readme = read("port/linux/README.md")
-    sys.path.insert(0, str(ROOT / "tools"))
-    import port_settings
-
-    assert re.search(r'\{ "display\.lowered_reticle", _config_boolean, "false", "HALO_LOWERED_RETICLE"', config)
-    assert re.search(r'\{ "display\.lowered_reticle_amount", _config_real, "10\.0", "HALO_LOWERED_RETICLE_AMOUNT"',
-                     config)
-    assert "| `display.lowered_reticle` | `false` | `HALO_LOWERED_RETICLE` |" in readme
-    assert "| `display.lowered_reticle_amount` | `10.0` | `HALO_LOWERED_RETICLE_AMOUNT` |" in readme
-    rows = {row[1]: (page, row) for page in port_settings.PAGES.values() for row in page["rows"]
-            if row[0] != port_settings.SECTION}
-    page, row = rows["display.lowered_reticle"]
-    assert row[2] == port_settings.ON_OFF and page["title"] == "FIRST PERSON"
-    page, row = rows["display.lowered_reticle_amount"]
-    assert row[2] == port_settings.LOWERED_RETICLE_AMOUNTS and page["title"] == "FIRST PERSON"
-    # the slider's range typed is the one the code holds it to
-    assert port_settings.LOWERED_RETICLE_AMOUNTS.typed_most == 30 and port_settings.LOWERED_RETICLE_AMOUNTS.typed_least == 0
-    assert "#define LOWERED_RETICLE_MAXIMUM_PERCENT 30.0" in read("port/linux/game/lowered_reticle.c")

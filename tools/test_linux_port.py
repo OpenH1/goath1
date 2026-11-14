@@ -708,6 +708,41 @@ def test_vehicle_riding_settings_negative_control(tmp_path, monkeypatch, fault):
         riding_settings(run, monkeypatch)
 
 
+# (settings whose shipped default is a choice made on purpose: a departure from the stock game off, or a fix on)
+SHIPPED_DEFAULTS = {
+    "display.latency_meter": "false",
+    "display.lowered_reticle": "false",
+    "display.lowered_reticle_amount": "10",
+    "display.panini": "0",
+    "display.panini_vertical": "0",
+    "display.draw_distance": "1024",
+    "display.overshield_layer_color": "true",
+    "controls.walk": "Left Shift",
+}
+
+
+def shipped_defaults(run):
+    found = {name: run("get", name) for name in SHIPPED_DEFAULTS}
+    assert found == SHIPPED_DEFAULTS
+
+
+def test_shipped_defaults(tmp_path, monkeypatch):
+    """The defaults a new config.toml has for the settings above, as the built port_config.c reads them"""
+    for key in ("HALO_LATENCY_METER", "HALO_LOWERED_RETICLE", "HALO_LOWERED_RETICLE_AMOUNT", "HALO_PANINI",
+                "HALO_PANINI_VERTICAL", "HALO_DRAW_DISTANCE", "HALO_OVERSHIELD_LAYER_COLOR", "HALO_KEY_WALK"):
+        monkeypatch.delenv(key, raising=False)
+    shipped_defaults(config_check_build(tmp_path, ["-DHALO_VULKAN=1", "-DHALO_GUEST=1"]))
+
+
+@pytest.mark.parametrize("fault", [
+    ('{ "display.draw_distance", _config_real, "1024.0",', '{ "display.draw_distance", _config_real, "2048.0",'),
+    ('{ "display.latency_meter", _config_boolean, "false",', '{ "display.latency_meter", _config_boolean, "true",'),
+], ids=["draw-distance", "latency-meter"])
+def test_shipped_defaults_negative_control(tmp_path, fault):
+    with pytest.raises(AssertionError):
+        shipped_defaults(config_check_build(tmp_path, ["-DHALO_VULKAN=1", "-DHALO_GUEST=1"], fault))
+
+
 def test_default_brokers_are_brokers_txt():
     """The brokers a game uses with no brokers.txt beside its config.toml
     (p2p_signal.c's DEFAULT_BROKERS) are port/assets/network/brokers.txt's."""

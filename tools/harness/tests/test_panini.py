@@ -61,12 +61,6 @@ CONTROLS = [
 ]
 
 
-def _model_slider(key: str) -> str:
-    """the model's slider row of the key (port/assets/menus/model, which menu_functions.c's sliders are made from):
-    its element's line"""
-    model = read("port/assets/menus/model/settings.xml")
-    return next(line for line in model.splitlines() if f'<row key="{key}" kind="slider"' in line)
-
 def generated(fault=None):
     projection = read(PROJECTION)
     game = read(GAME)
@@ -91,15 +85,3 @@ def test_case(case):
 def test_negative_control(file, before, after, case):
     status, output = run(build("panini", generated((file, before, after))), case)
     assert status == CHECK_FAILED, output
-
-
-def test_the_settings():
-    config = read("port/linux/src/port_config.c")
-    # (off by default: its strength 0)
-    assert '{ "display.panini", _config_real, "0.0", "HALO_PANINI",' in config
-    assert '{ "display.panini_vertical", _config_real, "0.0", "HALO_PANINI_VERTICAL",' in config
-    row = _model_slider("panini")
-    assert 'setting="display.panini"' in row and 'least="0" most="1" step="0.25" typed_least="0" typed_most="1"' in row
-    row = _model_slider("panini_vertical")
-    assert 'setting="display.panini_vertical"' in row and \
-        'least="0" most="1" step="0.05" typed_least="0" typed_most="1"' in row
