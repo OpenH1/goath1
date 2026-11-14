@@ -32,15 +32,16 @@ runner_sha256=baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c40
 ssh "$target" 'mkdir -p goat-rig/ci/bin goat-rig/ci/runners .config/systemd/user'
 COPYFILE_DISABLE=1 tar --no-xattrs -C "$root/tools/ci-runner" -cf - host.sh | ssh "$target" 'tar -C goat-rig/ci/bin -xf -'
 
-# the jobs' file system: .github/ci-image's image, built on the builder
+# the jobs' file system: .github/ci-image's image, built on the builder when its files change (the key)
 start=start
-image=$(COPYFILE_DISABLE=1 tar --no-xattrs -C "$root/.github/ci-image" -cf - . |
-  ssh "$builder" 'docker build -q --pull --build-arg ARCH=x86_64 -t goath1-ci-rootfs -')
-if [ "$(ssh "$target" 'cat goat-rig/ci/rootfs/.image-id 2>/dev/null' || true)" != "$image" ]; then
-  echo "unpacking $image on $host"
+key=$(cd "$root/.github/ci-image" && cat Dockerfile packages*.txt | shasum -a 256 | cut -c1-16)
+if [ "$(ssh "$target" 'cat goat-rig/ci/rootfs/.image-id 2>/dev/null' || true)" != "$key" ]; then
+  echo "building and unpacking the image ($key) on $host"
   start=restart
+  image=$(COPYFILE_DISABLE=1 tar --no-xattrs -C "$root/.github/ci-image" -cf - . |
+    ssh "$builder" 'docker build -q --pull --build-arg ARCH=x86_64 -t goath1-ci-rootfs -')
   ssh "$builder" "cid=\$(docker create $image) && docker export \$cid; docker rm \$cid > /dev/null" |
-    ssh "$target" "goat-rig/ci/bin/host.sh rootfs $image"
+    ssh "$target" "goat-rig/ci/bin/host.sh rootfs $key"
 fi
 ssh "$target" "goat-rig/ci/bin/host.sh runner $runner_version $runner_sha256"
 
