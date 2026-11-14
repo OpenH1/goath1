@@ -55,9 +55,16 @@ switch ($Mode) {
     Install 'the Build Tools' 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC' `
       (Fetch 'https://aka.ms/vs/17/release/vs_BuildTools.exe' 'vs_BuildTools.exe' $null) `
       '--quiet --wait --norestart --nocache --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --add Microsoft.VisualStudio.Component.Windows11SDK.26100'
-    # (the system PATH: python and python3, clang, Git's tools; the PATH a service starts with)
+    # PowerShell 7, pwsh (the workflow's shell: pwsh steps)
+    if (-not (Test-Path 'C:\Program Files\PowerShell\7\pwsh.exe')) {
+      'installing PowerShell 7'
+      $zip = Fetch 'https://github.com/PowerShell/PowerShell/releases/download/v7.7.0/PowerShell-7.7.0-win-x64.zip' `
+        'PowerShell-7.7.0-win-x64.zip' '7C74E03B20A75B59715847439D046A6214B1863EE79B187872980F139BB4A05F'
+      Expand-Archive $zip -DestinationPath 'C:\Program Files\PowerShell\7'
+    }
+    # (the system PATH: pwsh, python and python3, clang, Git's tools; the PATH a service starts with)
     $path = [Environment]::GetEnvironmentVariable('Path', 'Machine')
-    foreach ($dir in 'C:\Program Files\LLVM\bin', 'C:\Program Files\Git\cmd', 'C:\Program Files\Git\usr\bin') {
+    foreach ($dir in 'C:\Program Files\PowerShell\7', 'C:\Program Files\LLVM\bin', 'C:\Program Files\Git\cmd', 'C:\Program Files\Git\usr\bin') {
       if ($path -notlike "*$dir*") { $path = "$path;$dir" }
     }
     [Environment]::SetEnvironmentVariable('Path', $path, 'Machine')
