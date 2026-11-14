@@ -731,10 +731,5 @@ void network_damage_handle_events(void const *entries, short count);
 void network_damage_handle_reports(long machine_index, void const *entries, short count);
 void network_damage_handle_fire_origins(long machine_index, void const *entries, short count);
 word network_damage_entry_size(byte type);
-/* what says where a local player's shots leave from when that is not their
-unit's camera: the offset from it (world units), FALSE when they leave from
-the camera; NULL (the default) for a build whose shots always do */
-typedef boolean (*network_damage_fire_origin_source)(short local_player_index, real_vector3d *offset);
-void network_damage_set_fire_origin_source(network_damage_fire_origin_source source);
 
 #endif // __NETWORK_DISTRIBUTED_H
