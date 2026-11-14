@@ -5,9 +5,9 @@
 <h3 align="center">Halo: Combat Evolved, recompiled for Mac, Windows, Linux, Android and VR.</h3>
 
 <p align="center">
-  The original game, built natively from its own code. It plays exactly as
-  it shipped, looks the way you remember, and brings the campaign online
-  with your friends.
+  The original game, built natively from its own code. It feels sharper at
+  60 or 120 ticks, looks the way you remember, and brings the campaign
+  online with your friends.
 </p>
 
 <p align="center">
@@ -26,11 +26,16 @@
 </p>
 
 GOAT H1 is the 2001 Xbox game's own code, compiled natively for each
-platform. Not a remake and not emulation: the same game, at the same 30
-ticks a second, with new renderers, a new menu and lobby, online co-op,
-VR, and the maps the community has made since.
+platform. Not a remake, not emulation: the same game, now at 60 or 120
+ticks, with new renderers, a new menu and lobby, online co-op, VR, and the
+maps the community has made since.
 
 ## Features
+
+**60 and 120 tick.** What you feel in your hands (your movement, aim,
+shots, projectiles and thrown items) runs at 60 ticks a second by default,
+or 120. ORIGINAL keeps the 2001 game's 30, and games with OpenCE players
+play at 30.
 
 **Play it anywhere**
 
@@ -61,8 +66,6 @@ VR, and the maps the community has made since.
 
 **Play it your way**
 
-- **60 and 120 tick:** your movement, aim and shots in 2 or 4 steps per
-  tick, while the world keeps the original's 30.
 - **Modern Aim** for controllers, beside Classic, plus gyro and flick stick.
 - **Hit sounds**, if you want them (a host can switch them off).
 - **Ride on vehicles:** stand on a moving Warthog and stay on it (a host
