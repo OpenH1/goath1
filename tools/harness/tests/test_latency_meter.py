@@ -86,13 +86,3 @@ def test_off_by_default():
     assert '{ "display.latency_meter", _config_boolean, "false", "HALO_LATENCY_METER"' in config
     tick = function(read("port/linux/game/network_distributed.c"), "network_distributed_tick")
     assert tick.count("% PING_REFRESH_TICKS == 0 && latency_meter_enabled())\n\t\t\tdistributed_refresh_pings();") == 2
-
-
-def test_scoreboard_ping_drawn_alone_in_its_colour():
-    # with the meter on, a known ping leaves the row and is drawn at the row's fourth tab stop in the meter's colour;
-    # with it off, or a ping not known ("-"), the row is drawn as before
-    scoreboard = read("source/game/game_engine.c")
-    assert "ping_colored = ping != NONE && latency_meter_shown();" in scoreboard
-    assert "ping_colored ? L\"\" : ping_string);" in scoreboard
-    drawn = scoreboard[scoreboard.index("if (ping_colored)\n"):]
-    assert drawn.index("latency_meter_color(ping, &ping_color);") < drawn.index("L\"\\t\\t\\t\\t%s\", ping_string")

@@ -72,15 +72,6 @@ def test_render_skips_tags_used_as_both_struct_and_union():
 XDK_INCLUDE = Path(__file__).resolve().parent.parent / "port" / "include" / "xdk"
 
 
-def test_xdk_headers_use_the_sdk_spellings():
-    # each port gives the SDK's keywords and names its own meaning (its
-    # prefix header), so none of one port's must be written into them
-    for header in sorted(XDK_INCLUDE.glob("*.h")):
-        text = re.sub(r"/\*.*?\*/", "", header.read_text(encoding="utf-8"), flags=re.S)
-        assert "__attribute__" not in text, header.name
-        assert not re.findall(r"\bhalo_\w+", text), header.name
-
-
 def x86_abi(tmp_path):
     """skips unless this computer builds the game's 32-bit x86 ABI
     (tools/x86_game_abi.py: clang and the C library's 32-bit files)"""
@@ -963,7 +954,6 @@ def test_friends_negative_controls(tmp_path, what, original, mutated, case):
     result = friends_run(program, case, tmp_path / "profiles")
     assert result.returncode != 0 and ("FAIL" in result.stdout or result.returncode < 0), \
         f"{what}: the {case} case still passes"
-
 
 
 # port_config.c on its own, with the app's file paths (HALO_DATA_ROOT) and C

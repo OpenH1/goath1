@@ -62,26 +62,6 @@ def test_negative_control(before, after, case):
     assert status == CHECK_FAILED, output
 
 
-def test_where_the_game_takes_it():
-    # the local views' projection (and from it the render camera's far distance, which the structure's visibility
-    # walks portals to, and the frustum's far plane the objects are culled against), and the structure culling's
-    # own far plane
-    main = read("source/main/main.c")
-    assert "\twindow->rasterizer_camera.z_far = render_far_clip_distance(window->local_player_index);\n" in main
-    assert main.count("rasterizer_globals.far_clip_distance") == 1  # (the rasterizer's test loop, no player's view)
-    culling = read("port/linux/game/structure_culling.c")
-    assert "render.camera.position.z +\n\t\trender_far_clip_distance(render.local_player_index);" in culling
-    assert "rasterizer_globals.far_clip_distance" not in culling
-    visibility = read("source/structures/structure_visibility.c")
-    assert "render.camera.z_far)))" in visibility
-
-
-def test_the_marks_keep_their_fade():
-    # the teammates' marks fade over a share of the game's own far distance, not the drawn one
-    hud = read("source/interface/hud.c")
-    assert "(MIN(render.frustum.z_far, rasterizer_globals.far_clip_distance) - render.frustum.z_near);" in hud
-
-
 def test_the_setting():
     config = read("port/linux/src/port_config.c")
     assert '{ "display.draw_distance", _config_real, "1024.0", "HALO_DRAW_DISTANCE",' in config

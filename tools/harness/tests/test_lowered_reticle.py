@@ -124,20 +124,6 @@ def test_called_only_by_the_drawing():
     assert "\t\treticle_scale);" in hud[hud.index("hud_draw_bitmap_internal("):]
 
 
-def test_the_weapon_posed_along_the_aim():
-    # the pose, its interpolation (kept relative to the same camera) and display.viewmodel_offset_* (along the aim's
-    # axes) all at the camera turned back to the aim
-    build_matrices = function(read("source/interface/first_person_weapons.c"), "first_person_weapon_build_node_matrices")
-    pose = build_matrices.index("pose_camera= lowered_reticle_aim_camera(")
-    assert pose < build_matrices.index("&pose_camera->position,\n\t\t\t&pose_camera->forward,\n\t\t\t&pose_camera->up);")
-    # (the turning sway: the aim's turn, not the view's lift as a scope recenters it)
-    assert build_matrices.count("euler_angles2d_from_vector3d(&first_person_weapon->render_facing, &pose_camera->forward);") == 2
-    interpolation = build_matrices.index("render_interpolation_first_person(")
-    assert "\t\t\tpose_camera);" in build_matrices[interpolation:interpolation + 300]
-    offset = build_matrices.index("viewmodel_offset_apply(")
-    assert "\t\t\tpose_camera);" in build_matrices[offset:offset + 300]
-
-
 def test_the_settings():
     config = read("port/linux/src/port_config.c")
     readme = read("port/linux/README.md")

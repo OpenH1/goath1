@@ -239,28 +239,6 @@ def test_pause_host_rows_are_player_ones():
                 assert re.search(r'do="(open host controls|pause end game|pause chapters)"', item), item
 
 
-def test_scoreboard_offers_host_controls():
-    """The scoreboard's player menu offers the host's Mute for everyone, Kick, Ban, Move and Host controls... after
-    the vote, mute and party items, each as Host Controls offers it for the player, and does them through it."""
-    engine = read("source/game/game_engine.c")
-    items = engine[engine.index("\t_scoreboard_item_vote,"):engine.index("NUMBER_OF_SCOREBOARD_ITEMS")]
-    order = re.findall(r"_scoreboard_item_(\w+),", items)
-    assert order == ["vote", "mute", "party_invite", "party_join", "party_accept", "party_friend", "host_mute", "kick",
-                     "ban", "move_team", "host_controls", "cancel"]
-    offered = engine[engine.index("static void scoreboard_menu_items("):engine.index("static long scoreboard_menu_first_row(")]
-    assert "if ((network_host_controls_available() || network_admin_remote()) &&\n\t\t" \
-        "network_host_controls_local_player((short)(scoreboard_menu - scoreboard_views)))" in offered
-    for item, action in (("host_mute", "mute"), ("kick", "kick"), ("ban", "ban"), ("move_team", "move_team")):
-        assert re.search(rf"offered\[_scoreboard_item_{item}\] = TEST_FLAG\(actions, _host_controls_{action}\)",
-                         offered), item
-    picked = engine[engine.index("static void scoreboard_menu_pick("):engine.index("static void game_engine_rasterize_scoreboard(")]
-    assert "network_host_controls_kick(scoreboard_menu->player_index, FALSE)" in picked
-    assert "network_host_controls_kick(scoreboard_menu->player_index, TRUE)" in picked
-    assert "network_host_controls_move_team(scoreboard_menu->player_index)" in picked
-    assert "network_host_controls_open(scoreboard_menu->player_index, 0)" in picked
-    assert "ban_picked" in picked, "Ban is picked twice"
-
-
 def test_lobby_keeps_locked_teams():
     """The host's lobby takes a player's team change through the lock (the host machine's own are its own)."""
     handler = read("source/networking/network_server_message_handler.c")

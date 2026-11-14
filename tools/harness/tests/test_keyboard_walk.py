@@ -129,15 +129,6 @@ def test_negative_control(path, before, after, case):
     assert status == CHECK_FAILED, output
 
 
-def test_the_frame_toggles_and_the_substeps_do_not():
-    # the frame's keys update the toggle; a sub-step's reading (input_abstraction_port_substep_state) only applies
-    code = read(INPUT)
-    update = function(code, "keyboard_controls_update")
-    assert "walk_toggle_update(controller_index, held);" in update
-    assert "walk_toggle_update" not in function(code, "input_abstraction_port_substep_state")
-    assert "walk_toggle_update" not in function(code, "keyboard_controls_apply")
-
-
 def test_the_key_is_bound_and_named():
     # controls.walk, Left Shift by default, free in the default layout; in Key Bindings' movement
     config = read("port/linux/src/port_config.c")

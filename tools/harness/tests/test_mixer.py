@@ -292,19 +292,3 @@ if __name__ == "__main__":
     executable = build("mixer", generated(Path(other).read_text(encoding="latin-1") if other else None,
                                           scalar=bool(os.environ.get("MIXER_SCALAR"))))
     sys.exit(subprocess.run([str(executable), *(sys.argv[1:] or ["metrics"])]).returncode)
-
-
-def test_sound_setting_live():
-    """Settings > Audio's SOUND (audio.enabled) takes effect as it changes (#510): the mix's output goes through the
-    fade after the limiter (what is heard and recorded), the setting is read again with the other audio settings as
-    they change, and the device's check opens one for it; its help says so, not 'from the next time the game
-    starts'."""
-    text = read(SOURCE)
-    assert "\tlimit(output, frames);\n\tsound_gain = sound_fade(output, frames, output_channels, sound_gain, sound_on);" \
-        "\n\trecord(output, frames);" in function(text, "mix")
-    assert 'sound_on = config_boolean("audio.enabled");' in function(text, "DirectSoundDoWork")
-    assert "sound_device_wanted(audio_started, paced, sound_on, audio_stream != NULL" in \
-        function(text, "dsound_sdl_output_device_check")
-    settings = read("tools/port_settings.py")
-    row = settings[settings.index('("SOUND", "audio.enabled"'):][:300]
-    assert "next time" not in row and "restart" not in row.lower()

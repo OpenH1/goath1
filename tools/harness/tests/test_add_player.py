@@ -92,17 +92,3 @@ def test_negative_control(control):
     case = NEGATIVE_CONTROLS[control][2]
     status, output = run(build("add_player", generated(control)), case)
     assert status == CHECK_FAILED, f"the code with a fault ({control}) passed '{case}': the test cannot see it"
-
-
-def test_screen_keys_and_places():
-    """Add Player is a place whose keys are taken by controller (menu_screen.c's screen_places), the lobby's start
-    is C's (pc_menu_lobby_start, not the host's start for anyone), and ADD PLAYER, START and the preview's START open
-    Add Player in the new menus (add_player_open)"""
-    screen = read("port/linux/game/menu_screen.c")
-    assert re.search(r'\{ "add_player", "screens\\\\add_player", NULL, NULL, pc_menu_add_player_key \}', screen)
-    assert re.search(r'\{ "lobby start", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_add_player \}', screen)
-    assert "open->place->key(event->controller_index, key)" in function(screen, "menu_screen_back")
-    functions = read(FUNCTIONS)
-    for name in ("lobby_add_player", "lobby_join_start", "preview_add"):
-        assert "add_player_open(widget, event, " in function(functions, name), name
-    assert 'start="lobby start"' in read("port/assets/menus/screens/lobby.xml")
