@@ -78,7 +78,6 @@ static boolean ui_widget_load_by_name_or_tag(char const *name, long tag, void *p
 #define input_get_gamepad_state(index) (&pads[index])
 #define network_coop_active() coop
 #define menu_screen_pause_name(name) (name)
-#define menu_pictures_preparing() pictures_preparing
 #define main_get_seconds_elapsed() (1.f / 60.f)
 #define network_game_client_get_game(client) (&(client)->game)
 #define network_game_client_get_machine_index(client) 0
@@ -93,6 +92,13 @@ static boolean ui_widget_load_by_name_or_tag(char const *name, long tag, void *p
 #define ui_widgets_close_all_for_local_player(controller) ((void)0)
 
 static void error(int level, char const *text, ...) { errors++; }
+
+/* (a function, not a macro over the flag: the "pictures" negative control
+takes main.c's only call away, and the flag must still be read) */
+static boolean menu_pictures_preparing(void)
+{
+	return pictures_preparing;
+}
 
 static short local_player_get_next(short index)
 {
