@@ -533,15 +533,23 @@ static void lobby_checks(void)
 	}
 }
 
-/* the server browser: the games shown in the order's (reverse: the other
-way), and of those the first count only */
-static void show(int order, int reverse, int count)
+/* the server browser: the games found shown in the order of their names
+given (the browser's sort, menu_functions.c), those not found left out */
+static void show(const char *const *order, int count)
 {
-	struct p2p_listing all[8];
+	struct p2p_listing all[8], shown[8];
 	int found = p2p_lobby_games(all, 8);
+	int index, game, shown_count = 0;
 
-	p2p_lobby_sort(all, found, order, reverse);
-	p2p_lobby_shown(all, count < found ? count : found);
+	for (index = 0; index < count; index++)
+	{
+		for (game = 0; game < found; game++)
+		{
+			if (!strcmp(all[game].name, order[index]))
+				shown[shown_count++] = all[game];
+		}
+	}
+	p2p_lobby_shown(shown, shown_count);
 }
 
 /* four games, heard as Alpha, Bravo, Charlie, Delta (Charlie's join failed),
@@ -554,6 +562,11 @@ static void probe_order_checks(void)
 	static const unsigned char token[P2P_TOKEN_SIZE] = { 9, 9, 9 };
 	static const char *names[] = { "Alpha", "Bravo", "Charlie", "Delta" };
 	static const int player_counts[] = { 2, 9, 5, 5 }, first_wave[] = { 1, 2, 0, 3 };
+	/* (by servers: the most players, then those joining has not failed; by
+	name; by name the other way) */
+	static const char *const by_servers[] = { "Bravo", "Delta", "Charlie", "Alpha" };
+	static const char *const by_name[] = { "Alpha", "Bravo", "Charlie", "Delta" };
+	static const char *const by_name_reversed[] = { "Delta", "Charlie", "Bravo", "Alpha" };
 	unsigned char hash[P2P_KEY_HASH_SIZE], payloads[4][512], identifiers[4][P2P_IDENTIFIER_SIZE];
 	char slots[4][2 * P2P_KEY_HASH_SIZE + 1];
 	int sizes[4], index;
@@ -605,7 +618,7 @@ static void probe_order_checks(void)
 	{
 		lobby_update(token, 0, 16);
 		check(probe_count == 0, "no probe starts while listings wait to be checked");
-		show(P2P_LOBBY_SORT_SERVERS, 0, 4);
+		show(by_servers, 4);
 	}
 	lobby_update(token, 0, 16);
 	check_cost = 0;
@@ -615,7 +628,7 @@ static void probe_order_checks(void)
 		check(!memcmp(probed_hosts[index], identifiers[first_wave[index]], P2P_IDENTIFIER_SIZE),
 			"the games are probed in the order shown, one not shown yet last");
 	/* sorted by name, then Refresh: Alpha, Bravo, Charlie, Delta */
-	show(P2P_LOBBY_SORT_NAME, 0, 4);
+	show(by_name, 4);
 	probe_count = 0;
 	p2p_lobby_refresh();
 	lobby_update(token, 0, 16);
@@ -625,7 +638,7 @@ static void probe_order_checks(void)
 			"the games are probed in the order the list is sorted by now");
 	/* by name the other way, Alpha filtered out: Delta, Charlie, Bravo, then
 	Alpha */
-	show(P2P_LOBBY_SORT_NAME, 1, 3);
+	show(by_name_reversed, 3);
 	probe_count = 0;
 	p2p_lobby_refresh();
 	lobby_update(token, 0, 16);
