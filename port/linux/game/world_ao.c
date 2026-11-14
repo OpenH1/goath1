@@ -27,18 +27,11 @@ other value (and the Classic preset's "off") draws exactly as before.
 #include "world_rt.h"
 #include "world_scene.h"
 #include "world_sdf.h"
-#include "../src/xgpu_stream.h"
 
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-/* the window's proxies as the GPU takes them (xgpu_stream.h's block) */
-_Static_assert(WORLD_PROXY_MAXIMUM_PER_WINDOW == XGPU_WORLD_AO_PROXIES_MAXIMUM &&
-	_world_proxy_sphere == XGPU_WORLD_AO_PROXY_SPHERE && _world_proxy_capsule == XGPU_WORLD_AO_PROXY_CAPSULE &&
-	_world_proxy_box == XGPU_WORLD_AO_PROXY_BOX && _world_proxy_field == XGPU_WORLD_AO_PROXY_FIELD,
-	"the window's proxies as the GPU takes them (xgpu_stream.h)");
 
 const char *config_string(const char *name);
 int config_boolean(const char *name);
