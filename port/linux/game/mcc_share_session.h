@@ -18,6 +18,12 @@
 #define MCC_SHARE_LEVEL_SIZE 64
 #define MCC_SHARE_CHUNK_BYTES 3072
 #define MCC_SHARE_WINDOW 16
+/* The joiner's CHUNK requests in flight. A host queues at most
+ * MCC_SHARE_WINDOW * 2 a transfer (the queue below, the same in OpenCE 359)
+ * and drops the rest, which would stall the download: the joiner never asks
+ * twice. So the window may grow to that queue and no further. */
+#define MCC_SHARE_CLIENT_WINDOW 32
+typedef char mcc_share_client_window_queued[MCC_SHARE_CLIENT_WINDOW <= MCC_SHARE_WINDOW * 2 ? 1 : -1];
 #define MCC_SHARE_HOST_TRANSFERS 4
 #define MCC_SHARE_HOST_MACHINES 128
 #define MCC_SHARE_MANIFEST_PAGE 16
