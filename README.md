@@ -34,8 +34,7 @@ maps the community has made since.
 
 **60 and 120 tick.** What you feel in your hands (your movement, aim,
 shots, projectiles and thrown items) runs at 60 ticks a second by default,
-or 120. ORIGINAL keeps the 2001 game's 30, and games with OpenCE players
-play at 30.
+or 120. ORIGINAL keeps the 2001 game's 30.
 
 **Play it anywhere**
 
