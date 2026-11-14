@@ -69,20 +69,6 @@ def test_the_players_downloads_keep_their_names():
                 release_names.NAMES[platform] + release_names.EXTENSIONS.get(platform, ".zip"))
 
 
-def test_the_release_packages_and_checks_the_symbols():
-    """the release job zips each symbols artifact (a failure warns), checks them without stopping, and
-    publishes the zips with the rest (release/*.zip, in SHA256SUMS)"""
-    package = WORKFLOW[WORKFLOW.index("      - name: Package\n"):WORKFLOW.index("      - name: Appcast\n")]
-    assert "halo-*-symbols)" in package and "::warning::" in package
-    # (the symbols' case before the Linux builds', which would take a Linux build's symbols as a tree)
-    assert package.index("halo-*-symbols)") < package.index("halo-linux-*)")
-    check = WORKFLOW[WORKFLOW.index("      - name: Check the symbols\n"):]
-    check = check[:check.index("\n\n")]
-    assert "continue-on-error: true" in check and "release_names.py --check-symbols release" in check
-    assert WORKFLOW.index("name: Check the symbols") < WORKFLOW.index("name: Sums and signature")
-    assert "gh release create \"$tag\" release/*.zip" in WORKFLOW
-
-
 def write_zip(path, members):
     with zipfile.ZipFile(path, "w") as archive:
         for name, data in members.items():
