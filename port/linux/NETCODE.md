@@ -3199,3 +3199,58 @@ a game, and the positions apart are 0.017 to 0.057 world units on average,
 (`distributed_predictions_earlier`) or held in 0% to 4% of the ticks of the
 latency games, against up to 83% before. The host's states at the sub-step rate (version 14) are measured in "States
 at the sub-steps".
+
+## Numbers on parallel branches
+
+GOAT H1's own numbers (`HALO_PORT_STANDARD_NETWORK_VERSION`, its
+distributed messages from `FIRST_OPENH1_DISTRIBUTED_MESSAGE`, 120, up, and
+the bits of the game record's `standard_flags`) are given out when a branch
+merges, not when it starts, by `tools/netver.py`. Branches side by side
+used to take the same next number, and the later one renumbered. The
+classic (OpenCE) numbers, `HALO_PORT_NETWORK_VERSION` among them, come only
+from upstream (`docs/upstream_sync.md`); the tool never gives them out and
+refuses a pending mark on one.
+
+On a branch:
+
+1. Add the message or bit with any free number, marked pending, and use it
+   by name only:
+
+   ```c
+   _distributed_message_my_thing = 144, /* netver: pending */
+   ```
+
+2. Say what changes on the wire in a file of its own, which never conflicts
+   with another branch's (do not touch the version's `#define`):
+
+   ```sh
+   tools/netver.py change my-thing "the host's word on my thing to each OpenH1 client (network_my_thing.c)"
+   ```
+
+   This is the history entry, as the comment after
+   `HALO_PORT_STANDARD_NETWORK_VERSION` words its others.
+
+3. Last, once the pull request is ready to merge:
+
+   ```sh
+   git fetch origin && git merge origin/dev
+   tools/netver.py bump   # and push; the PR says the numbers it took
+   ```
+
+   `bump` gives each pending entry the next number free on dev, in order,
+   removes its mark, raises the Standard version by one for all the
+   branch's `port/linux/net_changes/` files, adds them to its history,
+   deletes them, sets `HALO_PORT_STANDARD_BASE_VERSION` to
+   `HALO_PORT_NETWORK_VERSION` (an upstream sync's raise), and commits
+   ("Assign the network numbers"). If another branch merged first, run
+   `tools/netver.py rebump`: it reverts that commit, merges `origin/dev`
+   and bumps again.
+
+`tools/netver.py check` (CI's merge checks, every push) fails on two
+entries with one number (unless one is pending), a number past its field (a
+message is a byte; a game record bit one of eight), a pending mark on a
+classic number, pending numbers with no `net_changes` file, a Standard
+version without its history entry, and an upstream raise of the Legacy
+version not yet followed. On `dev` and `master` (`--final`) nothing may be
+pending. A branch's builds keep dev's Standard version until the bump, so
+test a pending change between the branch's own builds, not against dev's.

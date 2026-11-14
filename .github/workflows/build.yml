@@ -162,6 +162,52 @@ jobs:
           echo "ios=$ios" >> "$GITHUB_OUTPUT"
           echo "macos=$macos" >> "$GITHUB_OUTPUT"
 
+  # What parallel branches used to fight over, checked so that merges can
+  # be left to tools: GOAT H1's network numbers (tools/netver.py: on dev and
+  # master nothing may be left pending), and the generated menus, which must
+  # be what tools/ce_menus.py writes from the committed sources
+  # (tools/menus_regen.sh --check, with the PC version's tags/ui, Invader's
+  # definitions and the pinned Python packages cached).
+  merge-checks:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.build != 'false' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    name: merge checks
+    env:
+      MENU_INPUTS: /home/runner/menu-inputs
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Network numbers
+        run: |
+          if [ "$GITHUB_REF" = refs/heads/dev ] || [ "$GITHUB_REF" = refs/heads/master ]; then
+            python3 tools/netver.py check --final
+          else
+            python3 tools/netver.py check
+          fi
+
+      - name: Install librsvg
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get -o Acquire::Retries=5 update -qq
+          sudo apt-get -o Acquire::Retries=5 install -y -qq --no-install-recommends librsvg2-bin
+
+      - uses: actions/cache@v4
+        with:
+          path: /home/runner/menu-inputs
+          key: menu-inputs-${{ hashFiles('tools/menus_regen.sh', 'tools/menus_requirements.txt') }}
+
+      - name: Tests
+        run: |
+          tools/menus_regen.sh --fetch
+          "$MENU_INPUTS/venv/bin/python" -m pip install -q pytest
+          "$MENU_INPUTS/venv/bin/python" -m pytest -q -rs tools/test_netver.py tools/test_merge_friction.py tools/test_upstream_trial_merge.py
+
+      - name: Generated menus
+        run: tools/menus_regen.sh --check
+
   linux-arm64:
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.build != 'false' }}
