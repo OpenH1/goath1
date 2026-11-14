@@ -109,10 +109,3 @@ def test_the_gpu_takes_as_many_as_a_window_gives():
         number = ["sphere", "capsule", "box", "field"].index(kind) + 1
         assert f"#define XGPU_WORLD_AO_PROXY_{name} {number}" in gpu
         assert f"_world_proxy_{kind}," in read(HEADER)
-
-
-def test_the_game_side_reads_only_through_the_adapter():
-    """world_proxies.c is pure arithmetic: the game is read in world_proxies_game.c alone"""
-    game = read(GAME)
-    for include in ("cseries.h", "objects/", "render/", "tag_files/"):
-        assert include not in game

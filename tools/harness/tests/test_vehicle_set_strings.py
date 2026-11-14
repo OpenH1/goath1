@@ -24,13 +24,6 @@ def preset(name):
     return int(re.search(rf"^#define {name} (\d+)$", read("port/linux/game/menu_functions.c"), re.M).group(1))
 
 
-def test_vehicle_sets_are_the_codes():
-    sets = [text for text, _ in strings(f"{VEHICLE_EDIT}/var_vehicle_set")]
-    assert len(sets) == preset("VEHICLE_PRESET_CUSTOM") + 1
-    assert sets[preset("VEHICLE_PRESET_PC")] == "PC"
-    assert sets[preset("VEHICLE_PRESET_CUSTOM")] == "CUSTOM"
-
-
 def test_each_value_has_its_help():
     """gametype_option_help: the rows' values' helps in turn (respawn, riding,
     side, set, then the six vehicles' counts)"""

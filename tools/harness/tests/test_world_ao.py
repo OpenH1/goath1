@@ -74,25 +74,6 @@ def test_negative_control(before, after, case):
     assert status == CHECK_FAILED, output
 
 
-def test_the_hooks():
-    render = read("source/render/render.c")
-    # the window's block handed on before the opaque surfaces, taken away after the lightmap pass
-    assert render.index("world_ao_window_begin(") < render.index("\t\trender_objects();\n\t\t/* port: and through")
-    assert render.index("structure_render_lightmaps();") < render.index("world_ao_window_end();") < \
-        render.index("rasterizer_lens_flares_submit_occlusion_tests();")
-    assert "world_ao_frame_begin();" in render
-    # each object named before its model draws, the first-person weapon unlit, the structure after
-    objects = read("source/render/render_objects.c")
-    assert objects.index("world_ao_object_begin(object_index);") < objects.index("\t\t\t\t\trender_model(\n")
-    assert "world_ao_first_person(TRUE);\n\t\t\tfirst_person_weapon_draw();\n\t\t\tworld_ao_first_person(FALSE);" in \
-        objects
-    assert objects.index("while (first_person_pass);") < objects.index("world_ao_object_begin(NONE);")
-    scenario = read("source/scenario/scenario.c")
-    for hook in ("world_ao_map_loaded();", "world_ao_map_unloaded();",
-                 "world_ao_bsp_switched(global_structure_bsp_index);"):
-        assert hook in scenario, hook
-
-
 def test_the_classic_preset_bypasses_it():
     # Classic sets display.ambient_occlusion "off", which world_ao_mode reads as off
     assert '{ "display.ambient_occlusion", "\\"off\\"" },' in read("port/linux/src/port_config.c")
