@@ -8,14 +8,14 @@ bit) and the later one renumbered. Now a branch marks what it adds as
 pending, takes whatever free number builds for its own tests, and says
 what its change does in a file of port/linux/net_changes/; then, the last
 thing before it merges, `tools/netver.py bump` gives out the numbers free
-on dev at that moment:
+on master at that moment:
 
     _distributed_message_my_thing = 144, /* netver: pending */
 
     tools/netver.py change my-thing "what the machines now send, file.c's function"
-    tools/netver.py check       # the numbers agree (CI runs it; --final on dev)
-    tools/netver.py bump        # after merging dev in: the numbers given out
-    tools/netver.py rebump      # dev moved on after a bump: undo it, merge dev, bump
+    tools/netver.py check       # the numbers agree (CI runs it; --final on master)
+    tools/netver.py bump        # after merging master in: the numbers given out
+    tools/netver.py rebump      # master moved on after a bump: undo it, merge master, bump
 
 Only GOAT H1's own numbers are given out: the messages from
 FIRST_OPENH1_DISTRIBUTED_MESSAGE (120) up, the bits of the game record's
@@ -124,7 +124,7 @@ def history(text: str) -> str:
 
 
 def check(root: Path, final: bool = False) -> list[str]:
-    """what is wrong with the numbers (nothing: an empty list). final: dev's
+    """what is wrong with the numbers (nothing: an empty list). final: master's
     check, where nothing may be pending"""
     problems = []
     pending_count = 0
@@ -253,11 +253,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
     check_parser = commands.add_parser("check", help="whether the numbers agree")
-    check_parser.add_argument("--final", action="store_true", help="dev's check: nothing may be pending")
+    check_parser.add_argument("--final", action="store_true", help="master's check: nothing may be pending")
     bump_parser = commands.add_parser("bump", help="give out the pending numbers and the next version")
     bump_parser.add_argument("--no-commit", action="store_true", help="leave the changes uncommitted")
-    rebump_parser = commands.add_parser("rebump", help="undo the branch's bump, merge dev, bump again")
-    rebump_parser.add_argument("--base", default="origin/dev", help="the branch merged into (origin/dev)")
+    rebump_parser = commands.add_parser("rebump", help="undo the branch's bump, merge master, bump again")
+    rebump_parser.add_argument("--base", default="origin/master", help="the branch merged into (origin/master)")
     change_parser = commands.add_parser("change", help=f"add a network change's file to {CHANGES}/")
     change_parser.add_argument("topic", help="a short name: the file's")
     change_parser.add_argument("text", help="what the machines now send, as the history says it")

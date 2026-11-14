@@ -1,13 +1,13 @@
 # Syncing with upstream (OpenCE)
 
 GOAT H1 is a fork of [OpenCE](https://github.com/OpenCommunityEdition/OpenCE).
-Its `main` is merged into `dev` by hand from time to time, by these rules.
+Its `main` is merged into `master` by hand from time to time, by these rules.
 To see what is new upstream since the last sync:
 
 ```sh
 git remote add opence https://github.com/OpenCommunityEdition/OpenCE.git  # once
 git fetch opence main
-git log --oneline "$(git merge-base origin/dev opence/main)"..opence/main
+git log --oneline "$(git merge-base origin/master opence/main)"..opence/main
 ```
 
 ## What wins
@@ -46,18 +46,18 @@ git log --oneline "$(git merge-base origin/dev opence/main)"..opence/main
 
 ## How to work
 
-- Merge `opence/main` into a branch made from `dev`
+- Merge `opence/main` into a branch made from `master`
   (`merge-opence-<year>-<month>`). A big sync can be committed once with
   its conflict markers, then split into lanes (engine, network, menus,
   platform, sound and graphics), each owning a list of files and editing
   only those; a change needed outside the list goes in the lane's report.
 - Understand each conflict before choosing:
   `git log -p <merge base>..opence/main -- <file>` and
-  `git log -p <merge base>..origin/dev -- <file>`. Our side may already
+  `git log -p <merge base>..origin/master -- <file>`. Our side may already
   hold a port of their change under another commit (many OpenCE pull
   requests were ported by hand): keep one copy, not both.
 - Binary files: take one side whole
-  (`git show opence/main:<path> > <path>` or `git show origin/dev:<path> > <path>`).
+  (`git show opence/main:<path> > <path>` or `git show origin/master:<path> > <path>`).
 - Resolve every marker:
   `grep -n '^<<<<<<<\|^=======$\|^>>>>>>>' <files>`.
 - Then build, run the tests, and check that classic play still matches

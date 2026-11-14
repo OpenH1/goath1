@@ -3233,17 +3233,17 @@ On a branch:
 3. Last, once the pull request is ready to merge:
 
    ```sh
-   git fetch origin && git merge origin/dev
+   git fetch origin && git merge origin/master
    tools/netver.py bump   # and push; the PR says the numbers it took
    ```
 
-   `bump` gives each pending entry the next number free on dev, in order,
+   `bump` gives each pending entry the next number free on master, in order,
    removes its mark, raises the Standard version by one for all the
    branch's `port/linux/net_changes/` files, adds them to its history,
    deletes them, sets `HALO_PORT_STANDARD_BASE_VERSION` to
    `HALO_PORT_NETWORK_VERSION` (an upstream sync's raise), and commits
    ("Assign the network numbers"). If another branch merged first, run
-   `tools/netver.py rebump`: it reverts that commit, merges `origin/dev`
+   `tools/netver.py rebump`: it reverts that commit, merges `origin/master`
    and bumps again.
 
 `tools/netver.py check` (CI's merge checks, every push) fails on two
@@ -3251,6 +3251,6 @@ entries with one number (unless one is pending), a number past its field (a
 message is a byte; a game record bit one of eight), a pending mark on a
 classic number, pending numbers with no `net_changes` file, a Standard
 version without its history entry, and an upstream raise of the Legacy
-version not yet followed. On `dev` and `master` (`--final`) nothing may be
-pending. A branch's builds keep dev's Standard version until the bump, so
-test a pending change between the branch's own builds, not against dev's.
+version not yet followed. On `master` (`--final`) nothing may be
+pending. A branch's builds keep master's Standard version until the bump, so
+test a pending change between the branch's own builds, not against master's.

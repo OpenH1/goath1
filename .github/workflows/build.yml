@@ -235,8 +235,8 @@ jobs:
           echo "macos=$macos" >> "$GITHUB_OUTPUT"
 
   # What parallel branches used to fight over, checked so that merges can
-  # be left to tools: GOAT H1's network numbers (tools/netver.py: on dev and
-  # master nothing may be left pending), and the generated menus, which must
+  # be left to tools: GOAT H1's network numbers (tools/netver.py: on master
+  # nothing may be left pending), and the generated menus, which must
   # be what tools/ce_menus.py writes from the committed sources
   # (tools/menus_regen.sh --check, with the PC version's tags/ui, Invader's
   # definitions and the pinned Python packages cached).
@@ -253,7 +253,7 @@ jobs:
 
       - name: Network numbers
         run: |
-          if [ "$GITHUB_REF" = refs/heads/dev ] || [ "$GITHUB_REF" = refs/heads/master ]; then
+          if [ "$GITHUB_REF" = refs/heads/master ]; then
             python3 tools/netver.py check --final
           else
             python3 tools/netver.py check
