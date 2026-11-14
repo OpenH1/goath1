@@ -122,7 +122,9 @@ static boolean random_math_port_begin_cosmetic(void) { return FALSE; }
 static void random_math_port_end_cosmetic(boolean ticking) { (void)ticking; }
 /* the frames drawn at the ticks (no provisional heads between them), so the
 points counted are the ticks' own */
-static boolean halo_interpolation_enabled(void) { return FALSE; }
+/* (Smooth Motion: the provisional head points' case turns it on) */
+static boolean interpolation_on;
+static boolean halo_interpolation_enabled(void) { return interpolation_on; }
 static void contrail_remove_provisional_points(long contrail_index);
 static void contrail_add_provisional_points(long contrail_index);
 #include "under_test.inc"
@@ -286,6 +288,38 @@ int main(int argc, char **argv)
 			frame(1.0f / 144.0f);
 		CHECK(tick_count > 170, "the trail was not looked at after the jumps (%ld ticks)", tick_count);
 		same_each_tick(expected, "with the game's time gone back and jumping ahead");
+		return 0;
+	}
+	/* frames between the ticks with the projectile drawn on from its last
+	point: the provisional head points made there are drawn with a state, as
+	render_contrails.c reads one (a point of state NONE: the tag block's
+	element -1) */
+	CASE("provisional-state")
+	{
+		long frames_with_points = 0;
+
+		interpolation_on = TRUE;
+		for (index = 0; index < 144 * 2; index++)
+		{
+			struct contrail_datum *contrail;
+			long point_index;
+			long ticked = game_time;
+
+			frame(1.0f / 144.0f);
+			if (game_time == ticked)
+				projectile_position.x += 0.2f;
+			contrail = datum_get(contrail_data, contrail_index);
+			for (point_index = contrail->first_contrail_point_indices[0]; point_index != NONE;)
+			{
+				struct contrail_point_datum *point = datum_get(contrail_point_data, point_index);
+
+				CHECK(point->state_index >= 0 && point->state_index < 3,
+					"frame %ld draws a point of state %d", index, (int)point->state_index);
+				frames_with_points++;
+				point_index = point->next_contrail_point_index;
+			}
+		}
+		CHECK(frames_with_points > 0, "no points were made");
 		return 0;
 	}
 	fprintf(stderr, "unknown case '%s'\n", case_name);
