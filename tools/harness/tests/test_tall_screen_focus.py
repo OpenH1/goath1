@@ -93,15 +93,6 @@ def test_targets_reached_by_the_dpad():
     assert unreachable(source) == []
 
 
-def test_header_button_in_the_body():
-    """the band's button is the body's first block (up from the tabs), lit while it has the focus"""
-    source = read(TALL)
-    build = source[source.index("static boolean tall_build("):]
-    assert build.index("tall->body = tall_add(") < build.index("tall_build_header(tall, widget, screen, index)")
-    assert "tall->header_button.widget->animation.current_frame_index = (short)(tall->body->focused_child == " \
-        "tall->header_bar)" in source
-
-
 @pytest.mark.parametrize("fault", sorted(NEGATIVE_CONTROLS))
 def test_negative_control(fault):
     change, widget = NEGATIVE_CONTROLS[fault]

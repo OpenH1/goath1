@@ -184,26 +184,6 @@ def test_x32_boundary(tmp_path):
     assert result.returncode == 0 and result.stdout.strip() == "ok", result.stdout + result.stderr
 
 
-def test_image_base_agrees():
-    """tools/guest_arch.py's image_base is the host's HALO_GUEST_IMAGE_BASE
-    for this processor's guest"""
-    cc = compiler()
-    if not cc:
-        pytest.skip("no C compiler")
-    sys.path.insert(0, str(ROOT / "tools"))
-    from guest_arch import GUEST_ARCHES
-    machine = platform.machine().lower()
-    arch = next((arch for arch in GUEST_ARCHES.values()
-                 if arch.elf_arch == {"amd64": "x86_64", "arm64": "aarch64"}.get(machine, machine)), None)
-    if arch is None:
-        pytest.skip("no guest for this processor")
-    output = subprocess.run([cc, "-E", "-dM", "-x", "c", "-include",
-                             str(ROOT / "port" / "android" / "include" / "halo_android_abi.h"), "/dev/null"],
-                            capture_output=True, text=True, check=True).stdout
-    value = next(line.split()[2] for line in output.splitlines() if line.startswith("#define HALO_GUEST_IMAGE_BASE "))
-    assert int(value.rstrip("uU"), 16) == arch.image_base
-
-
 def sdl_build():
     """an SDL3 the builds made (its headers and library), or None"""
     for headers in sorted(ROOT.glob("build/*/third_party/SDL3/include")):

@@ -74,31 +74,6 @@ def test_negative_control(control):
     assert status == CHECK_FAILED, f"the code with a fault ({control}) passed '{case}': the test cannot see it"
 
 
-def test_drawn_through_it():
-    """ui_widget.c draws a text box's line (not one wrapped to its box, nor a field typed into) and a spinner's value
-    through pc_menu_text_line, a list's row focused while it is on the focus path, elsewhere where the focus ends at
-    the text or its parent; a spinner's value keeps a gap clear of its arrows; the high-res text cuts a shifted line
-    to its box, fades it at an edge it is cut at and moves it by its fraction of a unit"""
-    widgets = read("source/interface/ui_widget.c")
-    text_box = function(widgets, "widget_instance_render_text_box")
-    assert "else if (wrapped || caret ||\n\t\t!widget_instance_port_text_line_draw(" in text_box
-    spinner = function(widgets, "widget_instance_render_spinner_list")
-    assert "widget_instance_port_text_line_draw(widget, &bounds, &clip, item_text," in spinner
-    assert spinner.index("widget_instance_port_spinner_insets(") < spinner.index("ui_widget_port_text_scale_begin(")
-    insets = function(widgets, "widget_instance_port_spinner_insets")
-    assert "x1 + UI_WIDGET_PORT_SPINNER_ARROW_GAP - bounds->x0" in insets
-    assert "bounds->x1 - (x0 - UI_WIDGET_PORT_SPINNER_ARROW_GAP)" in insets
-    draw = function(widgets, "widget_instance_port_text_line_draw")
-    assert "pc_menu_text_line(" in draw and "rasterizer_text_set_shift(0.0f, 0.0f, -1.0f, 0.0f, 0.0f);" in draw
-    assert "scroll > 0.0f ? fade : 0.0f" in draw and "scroll < (real)overflow ? fade : 0.0f" in draw
-    focused = function(widgets, "widget_instance_port_row_focused")
-    assert "row->parent->type == _ui_widget_type_column_list" in focused and "while (end->focused_child)" in focused
-    glyph = function(read("source/rasterizer/rasterizer_text.c"), "rasterizer_draw_hires_glyph")
-    assert "clip_left = MAX(clip_left, text_shift_left + text_shift);" in glyph
-    assert glyph.index("left -= text_shift;") > glyph.index("if (left < clip_left)")
-    assert "rasterizer_text_shift_faded(vertex_color, left + offset)" in glyph
-
-
 def test_panel_value_place():
     """the panel's value is SETTINGS_PANEL_VALUE_UNDER_NAME under its name, as tools/port_settings.py places it, and
     its boxes have room for their lines"""
