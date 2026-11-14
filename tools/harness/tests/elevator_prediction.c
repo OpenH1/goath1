@@ -19,8 +19,11 @@ unit there.
 
 #include "harness.h"
 
-/* Legacy movement: the MCC authority hook is inactive. */
-static boolean mcc_script_effects_host_movement(void) { return FALSE; }
+/* Legacy movement: the MCC authority hook is inactive, but for the case that sets it
+(an MCC map's movement effects, which stay the host's: no client word taken, riding's neither) */
+static boolean mcc_host_movement;
+static long riding_reads;
+static boolean mcc_script_effects_host_movement(void) { return mcc_host_movement; }
 
 #include <limits.h>
 #include <math.h>
@@ -142,7 +145,7 @@ static boolean apply(long unit_index, real_point3d const *position)
 struct vehicle_riding_state { long unused; long ticks; long object_index; };
 struct vehicle_riding_vehicle { long unused; };
 enum { _vehicle_riding_host_world, _vehicle_riding_host_deck };
-#define biped_riding_get_state(index, state) FALSE
+#define biped_riding_get_state(index, state) (riding_reads++, FALSE)
 #define vehicle_riding_host_path(host, present, deck, transition) _vehicle_riding_host_world
 #define vehicle_riding_is_riding(host) FALSE
 #define vehicle_riding_deck_valid(deck, nodes) FALSE
@@ -258,6 +261,17 @@ int main(int argc, char **argv)
 		real height = taken_height(NONE, 0.0f, 10.4f);
 
 		CHECK(height == 10.4f, "on foot, the client's height 10.4 not taken: %f", height);
+		return 0;
+	}
+	/* an MCC map's movement effects: the host keeps its own copy where it is, and riding is never asked */
+	CASE("mcc-host-movement")
+	{
+		real height;
+
+		mcc_host_movement = TRUE;
+		height = taken_height(NONE, 0.0f, 10.4f);
+		CHECK(height == 10.0f, "the client's height %f taken while the host moves the player", height);
+		CHECK(riding_reads == 0, "riding read %ld times while the host moves the player", riding_reads);
 		return 0;
 	}
 	CASE("jump-at-rest")
