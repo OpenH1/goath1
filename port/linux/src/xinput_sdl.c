@@ -146,6 +146,9 @@ drawn view may then take what has come since (halo_linux_mouse_look_late) */
 static BOOL mouse_look_taken;
 static unsigned long mouse_polls_unconsumed = 0;
 static float mouse_wheel_accumulated = 0.0f;
+/* the wheel's notches turned while a chat line is typed, not yet taken
+(halo_chat_wheel_steps) */
+static int chat_wheel_steps = 0;
 /* the wheel's switch (wheel_update): when the wheel last moved, until when
 Y is held, and whether a scroll is under way */
 static Uint64 wheel_moved_ms = 0;
@@ -392,6 +395,17 @@ unsigned long halo_chat_pad_buttons(void)
 int halo_chat_taps(float *x, float *y)
 {
 	return touch_input_chat_taps(x, y);
+}
+
+int halo_chat_wheel_steps(void)
+{
+	int steps;
+
+	pthread_mutex_lock(&mouse_lock);
+	steps = chat_wheel_steps;
+	chat_wheel_steps = 0;
+	pthread_mutex_unlock(&mouse_lock);
+	return steps;
 }
 
 int halo_chat_touch_layout(void)
@@ -895,6 +909,10 @@ void platform_text_typing(int typing)
 {
 	text_typing_keyboard = typing != 0;
 	text_typing_update();
+#ifdef HALO_ANDROID
+	/* (on a touchscreen: Android's on-screen keyboard as well, sdl_platform.c) */
+	platform_screen_keyboard(text_typing_keyboard, FALSE);
+#endif
 }
 
 void platform_text_field(int typing, int password)
@@ -1234,6 +1252,22 @@ static void bindings_read(void)
 			text += length;
 		}
 	}
+}
+
+/* Prompt readers use the same parsed bindings and refresh generation as play.
+ * No parallel setting table: a rebind is visible on the next lookup. */
+int halo_keyboard_binding_label(int action, int slot, char *shown, unsigned int size)
+{
+	char name[64];
+	if (!shown || !size) return 0;
+	shown[0] = 0;
+	if (action < 0 || action >= NUMBER_OF_HALO_KEYBOARD_ACTIONS || slot < 0 || slot >= MAXIMUM_BINDINGS)
+		return 0;
+	bindings_read();
+	if (bindings[action][slot] < 0) return 0;
+	halo_input_name(bindings[action][slot], name, sizeof(name));
+	halo_input_shown_name(name, shown, size);
+	return shown[0] != 0;
 }
 
 static BOOL input_held(const struct platform_input_state *input, int code)
@@ -2689,6 +2723,23 @@ static void wheel_update(void)
 	Uint64 now = SDL_GetTicks();
 
 	pthread_mutex_lock(&mouse_lock);
+	/* (a chat line typed: the wheel scrolls its lines, network_chat.c) */
+	if (network_chat_typing())
+	{
+		while (mouse_wheel_accumulated >= WHEEL_NOTCH)
+		{
+			chat_wheel_steps++;
+			mouse_wheel_accumulated -= WHEEL_NOTCH;
+		}
+		while (mouse_wheel_accumulated <= -WHEEL_NOTCH)
+		{
+			chat_wheel_steps--;
+			mouse_wheel_accumulated += WHEEL_NOTCH;
+		}
+		wheel_scrolling = FALSE;
+		pthread_mutex_unlock(&mouse_lock);
+		return;
+	}
 	if (!wheel_scrolling)
 	{
 		if (fabsf(mouse_wheel_accumulated) >= WHEEL_NOTCH)
@@ -2767,6 +2818,10 @@ int sdl_gamepads(SDL_Gamepad **gamepads)
 
 /* whether one gamepad is port 1's (port_gamepad) */
 static BOOL lone_gamepad_split;
+/* pc_menu_split_players, as the game's thread last read it (XInputGetState):
+port_gamepad also runs on the input thread's rumble (XInputSetState), which
+must not read the game's state while the game's thread has it */
+static BOOL split_players;
 
 /* no button of the gamepad held, its sticks and triggers at rest */
 static BOOL gamepad_idle(SDL_Gamepad *gamepad)
@@ -2795,7 +2850,7 @@ static SDL_Gamepad *port_gamepad(SDL_Gamepad *gamepads[PORT_COUNT], int count, i
 {
 	if (count == 1)
 	{
-		BOOL split = pc_menu_split_players() != 0;
+		BOOL split = split_players;
 
 		if (split != lone_gamepad_split && gamepad_idle(gamepads[0]))
 			lone_gamepad_split = split;
@@ -2803,6 +2858,26 @@ static SDL_Gamepad *port_gamepad(SDL_Gamepad *gamepads[PORT_COUNT], int count, i
 			return port == 1 ? gamepads[0] : NULL;
 	}
 	return port < count ? gamepads[port] : NULL;
+}
+
+
+
+
+
+/* whether port 0 (player 1) is the keyboard's and a gamepad's */
+unsigned char halo_keyboard_shares_gamepad(void)
+{
+	SDL_Gamepad *gamepads[PORT_COUNT];
+	int count = sdl_gamepads(gamepads);
+
+	return port_gamepad(gamepads, count, 0) != NULL;
+}
+
+int halo_gamepad_count(void)
+{
+	SDL_Gamepad *gamepads[PORT_COUNT];
+
+	return sdl_gamepads(gamepads);
 }
 
 static SHORT stick(Sint16 value, BOOL flip)
@@ -3657,6 +3732,41 @@ static unsigned int remap_reserved(int port)
 	return reserved;
 }
 
+/* debug camera (director.c): the middle button, R and F, and the wheel's
+notches since the director last asked */
+static BOOL debug_cam_middle = FALSE;
+static BOOL debug_cam_up = FALSE;
+static BOOL debug_cam_down = FALSE;
+static float debug_cam_wheel = 0.0f;
+
+static void debug_camera_update(const struct platform_input_state *input, BOOL blocked)
+{
+	pthread_mutex_lock(&mouse_lock);
+	debug_cam_middle = !blocked && !input->mouse_released &&
+		input->mouse_buttons[SDL_BUTTON_MIDDLE] != 0;
+	debug_cam_up = !blocked && input->keys[SDL_SCANCODE_R] != 0;
+	debug_cam_down = !blocked && input->keys[SDL_SCANCODE_F] != 0;
+	if (debug_cam_middle)
+		debug_cam_wheel += input->mouse_wheel;
+	else
+		debug_cam_wheel = 0.0f;
+	pthread_mutex_unlock(&mouse_lock);
+}
+
+/* read by director.c (halo_linux_source_fixups.h); the wheel's notches are
+returned once, then cleared */
+int halo_linux_debug_camera_input(int *middle, int *up, int *down, float *wheel)
+{
+	pthread_mutex_lock(&mouse_lock);
+	*middle = debug_cam_middle;
+	*up = debug_cam_up;
+	*down = debug_cam_down;
+	*wheel = debug_cam_wheel;
+	debug_cam_wheel = 0.0f;
+	pthread_mutex_unlock(&mouse_lock);
+	return TRUE;
+}
+
 /* a split screen player's controller (a port past the first): physical, a
 connected one's reading, or with none the test script's (p<n>), read the
 same way, its presses the controller's own; and what reads it on the way,
@@ -3706,6 +3816,7 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 	if (port < 0)
 		return ERROR_DEVICE_NOT_CONNECTED;
 	platform_pump_events();
+	split_players = pc_menu_split_players() != 0;
 	count = sdl_gamepads(gamepads);
 	controller_device_update((short)port, port_gamepad(gamepads, count, port));
 	/* Keep physical remapping separate from the keyboard and touch controls. */
@@ -3753,6 +3864,7 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 		discord_ask_keys(&input, discord_ask);
 		/* (a chat line typed takes the keyboard as the console does) */
 		console_active = console_is_active() || network_chat_typing();
+		debug_camera_update(&input, console_active);
 		held = console_active ? 0 : keyboard_bound_actions(&input);
 		keyboard_screenshot(held);
 		if (!console_active)
