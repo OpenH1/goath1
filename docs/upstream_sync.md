@@ -1,18 +1,13 @@
 # Syncing with upstream (OpenCE)
 
 GOAT H1 is a fork of [OpenCE](https://github.com/OpenCommunityEdition/OpenCE).
-Its `main` is merged into `dev` from time to time. Every Monday the
-[Upstream trial merge](../.github/workflows/upstream-trial-merge.yml) workflow
-tries that merge in a runner (`tools/upstream_trial_merge.py`) and updates one
-tracking issue, *Weekly OpenCE trial merge*: upstream's new commits since the
-last sync, the files that would conflict, grouped by area, and any change of
-the network version. It pushes nothing. Run it by hand from the Actions tab,
-or locally:
+Its `main` is merged into `dev` by hand from time to time, by these rules.
+To see what is new upstream since the last sync:
 
 ```sh
 git remote add opence https://github.com/OpenCommunityEdition/OpenCE.git  # once
 git fetch opence main
-tools/upstream_trial_merge.py --base origin/dev --upstream opence/main
+git log --oneline "$(git merge-base origin/dev opence/main)"..opence/main
 ```
 
 ## What wins
@@ -27,9 +22,9 @@ tools/upstream_trial_merge.py --base origin/dev --upstream opence/main
   flow, parties and friends, Spartan Link, host controls: **ours**, kept
   alongside theirs. When upstream raises `HALO_PORT_NETWORK_VERSION`, raise
   the Standard version and its `HALO_PORT_STANDARD_BASE_VERSION` with it
-  (`tools/netver.py change`, then `tools/netver.py bump`, and set the base:
+  (`tools/netver.py change`, then `tools/netver.py bump`, which sets the base:
   port/linux/NETCODE.md, "Numbers on parallel branches"). If upstream takes a
-  number of ours, ours moves (the trial merge's report lists such clashes).
+  number of ours, ours moves.
 - **Gameplay and engine behavior** (`source/`, game rules, map support,
   dedicated server changes): **theirs**, unless it undoes one of our
   documented fixes (keep our fix and say so in the pull request). Anything

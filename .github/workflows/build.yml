@@ -203,7 +203,7 @@ jobs:
         run: |
           tools/menus_regen.sh --fetch
           "$MENU_INPUTS/venv/bin/python" -m pip install -q pytest
-          "$MENU_INPUTS/venv/bin/python" -m pytest -q -rs tools/test_netver.py tools/test_merge_friction.py tools/test_upstream_trial_merge.py
+          "$MENU_INPUTS/venv/bin/python" -m pytest -q -rs tools/test_netver.py tools/test_merge_friction.py
 
       - name: Generated menus
         run: tools/menus_regen.sh --check
