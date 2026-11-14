@@ -8968,12 +8968,23 @@ def _solo_new_profile() -> list:
                    [f'<on event="deleted" run="new campaign decision" open="{CAMPAIGN}/mission_screen"/>'])
 
 
+def _coop_join_new_profile() -> list:
+    """co-op's JOIN with no profile (port/linux/game/menu_screen.c's "coop join"): the profile's name asked, then the
+    profile made ("new campaign decision") and the co-op list opened at once, as JOIN with a profile, and as HOST goes
+    on to Choose Mission (_solo_new_profile). Select Profile's own (pm_empty_creating_profile) came back to co-op's
+    screen, JOIN to be chosen again"""
+    return _widget(f"{CAMPAIGN}/coop_join_creating_profile",
+                   [("width", 640), ("height", 480), ("flags", "pass_unhandled_to_focused_child no_history"),
+                    ("auto_close", 1)],
+                   ['<on event="deleted" run="new campaign decision" open="screens/coop_join"/>'])
+
+
 def campaign_files() -> dict:
     head = ['<?xml version="1.0" encoding="UTF-8"?>',
             "<!-- The campaign's screens: the Campaign menu, Choose Mission and Choose Difficulty "
             "(tools/port_settings.py) -->", "<menus>"]
     return {CAMPAIGN.replace("/", ".") + ".xml": head + _campaign_menu() + _missions() + _difficulties() +
-            _solo_new_profile() + ["</menus>", ""]}
+            _solo_new_profile() + _coop_join_new_profile() + ["</menus>", ""]}
 
 
 def multiplayer_files() -> dict:

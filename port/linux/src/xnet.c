@@ -164,6 +164,14 @@ static void net_settings_read(void)
 			"receive no broadcasts, so this machine sees other machines' games and searches only if "
 			"they list its address in their network.broadcast");
 	}
+	/* (sockets bound to 127.0.0.1 are this computer's alone, as the telnet
+	console's: note_socket_port tells internet play none of them) */
+	if (net_settings.has_local_address && net_settings.local_address == halo_ws_htonl(0x7F000001))
+	{
+		platform_log("network.address 127.0.0.1: a game hosted here is this computer's alone, never offered to "
+			"internet play (no invite link, friends and parties cannot join it); give each copy of the game its "
+			"own address, 127.0.0.2 up");
+	}
 	net_settings.read = 1;
 }
 

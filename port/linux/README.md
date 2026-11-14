@@ -2872,12 +2872,15 @@ HALO_NET_ADDRESS=127.0.0.202 HALO_NET_BROADCAST=127.0.0.200 build/linux_x86_64/h
 
 Do not give 127.0.0.1 to a copy. Each copy gets to its own address through
 127.0.0.1. Linux and Windows send all of 127.0.0.0/8 to the loopback
-interface.
+interface. A copy at 127.0.0.1 hosts for this computer alone: internet play
+never offers its game (no invite link, its lobby says Local network), so
+friends and parties cannot join it.
 
 Two games side by side (two tests at once, say) need ports of their own:
 `network.port` (`HALO_NET_PORT`) moves a game's port from 5150 (the
 clients' from 5151) to another and the next. Give the host and its clients
-the same port. A Mac's loopback interface has 127.0.0.1 alone, so there the
+the same port, for internet play too: a friend's or party's join finds the
+host's game by searching on its own port, through the tunnel. A Mac's loopback interface has 127.0.0.1 alone, so there the
 port keeps two hosts apart. The map sharing port (5153) does not move:
 turn `network.map_share` off in such tests.
 
