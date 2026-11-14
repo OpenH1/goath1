@@ -150,3 +150,18 @@ def test_two_given_numbers_alike_are_an_error(tree):
                for problem in problems)
     with pytest.raises(netver.NetverError):
         netver.bump(tree)
+
+
+def test_an_upstream_raise_of_the_legacy_version_is_followed(tree):
+    """a sync took OpenCE's new HALO_PORT_NETWORK_VERSION: check asks for a
+    change, and bump raises the Standard version with its base"""
+    path = tree / netver.LIMITS
+    text = path.read_text()
+    legacy = int(re.search(r"^#define HALO_PORT_NETWORK_VERSION (\d+)", text, re.M).group(1))
+    path.write_text(re.sub(r"^(#define HALO_PORT_NETWORK_VERSION )\d+", rf"\g<1>{legacy + 1}", text, flags=re.M))
+    assert any("upstream raised it" in problem for problem in netver.check(tree))
+    change(tree, "sync", f"network version {legacy + 1}, OpenCE's")
+    netver.bump(tree)
+    text = path.read_text()
+    assert re.search(rf"^#define HALO_PORT_STANDARD_BASE_VERSION {legacy + 1}$", text, re.M)
+    assert netver.check(tree, final=True) == []

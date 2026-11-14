@@ -165,6 +165,12 @@ def check(root: Path, final: bool = False) -> list[str]:
     if not re.search(rf"(^|[(;\s]){version}: ", history(text)):
         problems.append(f"{LIMITS}: {VERSION} is {version}, but its history (the comment after it) has no "
                         f"\"{version}: \"")
+    legacy = re.search(r"^#define HALO_PORT_NETWORK_VERSION (\d+)", text, re.M)
+    base = re.search(r"^#define HALO_PORT_STANDARD_BASE_VERSION (\d+)", text, re.M)
+    if legacy and base and legacy.group(1) != base.group(1) and not found:
+        problems.append(f"{LIMITS}: HALO_PORT_NETWORK_VERSION is {legacy.group(1)} (upstream raised it), the Standard "
+                        f"version's base {base.group(1)}: tools/netver.py change <topic> \"network version "
+                        f"{legacy.group(1)}, OpenCE's (...)\", then tools/netver.py bump")
     return problems
 
 
@@ -221,6 +227,11 @@ def bump(root: Path) -> list[str]:
         entry = "; ".join(" ".join(path.read_text().split()).rstrip(".") for path in found)
         text = re.sub(rf"^(#define {VERSION} )\d+", rf"\g<1>{version}", text, count=1, flags=re.M)
         text = add_history(text, version, entry)
+        # (the Legacy version upstream raised, which the Standard version follows)
+        legacy = re.search(r"^#define HALO_PORT_NETWORK_VERSION (\d+)", text, re.M)
+        if legacy:
+            text = re.sub(r"^(#define HALO_PORT_STANDARD_BASE_VERSION )\d+", rf"\g<1>{legacy.group(1)}", text,
+                          count=1, flags=re.M)
         limits.write_text(text)
         for path in found:
             path.unlink()

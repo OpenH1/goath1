@@ -16,6 +16,7 @@ own, removed after.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -29,28 +30,32 @@ import netver  # noqa: E402
 ROOT = Path(__file__).resolve().parent.parent
 MARKER = "<!-- upstream-trial-merge -->"
 UPSTREAM_URL = "https://github.com/OpenCommunityEdition/OpenCE"
+RULES = "docs/upstream_sync.md"
 LEGACY_VERSION = re.compile(r"^#define HALO_PORT_NETWORK_VERSION (\d+)", re.M)
 # areas, first match wins: (path prefix or regex, area)
 AREAS = (
     (r"^port/assets/menus/", "Menus (generated: tools/menus_regen.sh --resolve)"),
     (r"^tools/(port_settings|ce_menus|menu_)", "Menus (generator)"),
     (r"^(source/networking/|port/linux/game/network|port/linux/include/halo_port_limits\.h|port/linux/NETCODE\.md"
-     r"|port/linux/game/(p2p|matchmaking|master|lobby))", "Network"),
+     r"|port/linux/network_format\.txt|port/linux/(game|src)/(p2p|matchmaking|master|server_master|lobby))",
+     "Network"),
+    (r"^(docs/|website/)|\.md$", "Docs"),
     (r"^source/(sound|.*audio)|^port/linux/(game|src)/.*(sound|audio|dsound)", "Sound"),
-    (r"^(port/linux/(src|host)/.*(vulkan|render|gpu|shader|xgpu)|.*\.(metal|glsl|hlsl|spv)$|source/rasterizer/)",
-     "Graphics"),
+    (r"^(port/linux/(src|host)/.*(vulkan|render|gpu|shader|xgpu|nv2a|d3d|gl\b|textures)|.*\.(metal|glsl|hlsl)$"
+     r"|source/rasterizer/)", "Graphics"),
     (r"^source/", "Engine (source/)"),
-    (r"^port/linux/game/", "Port game code"),
-    (r"^port/(android|ios|macos|windows)/", "Platforms"),
+    (r"^port/linux/game/", "Port game code (port/linux/game)"),
+    (r"^port/linux/(src|include|host)/", "Port host code (port/linux/src, include)"),
+    (r"^port/assets/", "Assets (port/assets)"),
+    (r"^port/(android|ios|macos|windows|web)/", "Platforms"),
     (r"^port/", "Port (other)"),
     (r"^(\.github/|configure\.py$|tools/(ci_|.*_build))", "Build and CI"),
     (r"^tools/", "Tools and tests"),
-    (r"^(docs/|website/)|\.md$", "Docs"),
 )
 
 
-def git(*args: str, cwd: Path = ROOT, check: bool = True) -> str:
-    result = subprocess.run(["git", "-C", str(cwd), *args], text=True, capture_output=True)
+def git(*args: str, cwd: Path = None, check: bool = True) -> str:
+    result = subprocess.run(["git", "-C", str(cwd or ROOT), *args], text=True, capture_output=True)
     if check and result.returncode:
         raise SystemExit(f"git {' '.join(args)} failed:\n{result.stderr}")
     return result.stdout
@@ -106,7 +111,7 @@ STATUS_WORDS = {"UU": "both changed", "AA": "both added", "DU": "we deleted", "U
                 "AU": "we added", "UA": "they added", "DD": "both deleted"}
 
 
-def report(base: str, upstream: str) -> str:
+def report(base: str, upstream: str, repository: str = "OpenH1/goath1") -> str:
     base_sha = git("rev-parse", base).strip()
     upstream_sha = git("rev-parse", upstream).strip()
     since = git("merge-base", base_sha, upstream_sha).strip()
@@ -114,7 +119,7 @@ def report(base: str, upstream: str) -> str:
     commits = [line.split("\t", 2) for line in commits.splitlines()]
     lines = [MARKER, f"Trial merge of OpenCE `main` ({upstream_sha[:12]}) into `dev` ({base_sha[:12]}). "
              "Report only: nothing was pushed. Merge by the rules in "
-             "[docs/upstream_sync.md](../blob/dev/docs/upstream_sync.md).", ""]
+             f"[{RULES}](https://github.com/{repository}/blob/dev/{RULES}).", ""]
     lines.append(f"Last sync (merge base): {since[:12]} ({git('log', '-1', '--format=%ad', '--date=short', since).strip()})")
     lines.append("")
 
@@ -172,9 +177,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--base", default="origin/dev", help="the branch merged into (origin/dev)")
     parser.add_argument("--upstream", default="opence/main", help="upstream's branch (opence/main)")
+    parser.add_argument("--repository", default=os.environ.get("GITHUB_REPOSITORY", "OpenH1/goath1"),
+                        help="the repository the rules' link points into")
     parser.add_argument("--output", type=Path, help="write the report here (else print it)")
     args = parser.parse_args()
-    text = report(args.base, args.upstream)
+    text = report(args.base, args.upstream, args.repository)
     if args.output:
         args.output.write_text(text)
     else:

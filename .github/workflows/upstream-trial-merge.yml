@@ -1,0 +1,62 @@
+name: Upstream trial merge
+
+# Once a week (and by hand), a trial merge of OpenCE's main into dev in the
+# runner (tools/upstream_trial_merge.py), reported in ONE tracking issue,
+# opened the first time and updated after: upstream's commits since the last
+# sync, the files that would conflict, by area, and any change of the
+# network version. Report only: nothing is pushed and no pull request is
+# opened. docs/upstream_sync.md has the rules a sync follows.
+on:
+  schedule:
+    # (Mondays, 06:00 UTC)
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: upstream-trial-merge
+  cancel-in-progress: true
+
+jobs:
+  trial-merge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0
+
+      - name: Fetch OpenCE's main
+        run: |
+          git remote add opence https://github.com/OpenCommunityEdition/OpenCE.git
+          git fetch --quiet --no-tags opence main
+
+      - name: Try the merge
+        run: python3 tools/upstream_trial_merge.py --base origin/dev --upstream opence/main --output "$RUNNER_TEMP/report.md"
+
+      - name: Open or update the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: "Weekly OpenCE trial merge"
+        run: |
+          body="$RUNNER_TEMP/report.md"
+          # (GitHub's limit for an issue's body is 65536 characters)
+          if [ "$(wc -c < "$body")" -gt 65000 ]; then
+            head -c 64000 "$body" > "$body.cut"
+            printf '\n\n... cut: the whole report is in the run %s\n' \
+              "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> "$body.cut"
+            body="$body.cut"
+          fi
+          number="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$TITLE\" in:title" \
+            --json number,title --jq "map(select(.title == \"$TITLE\")) | .[0].number // empty")"
+          if [ -n "$number" ]; then
+            gh issue edit "$number" --repo "$GITHUB_REPOSITORY" --body-file "$body"
+            echo "Updated #$number"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file "$body"
+          fi
+          cat "$body" >> "$GITHUB_STEP_SUMMARY"
