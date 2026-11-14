@@ -102,7 +102,7 @@ whose public key is [port/assets/release-key.pub](port/assets/release-key.pub)
 checks the downloads, and `python3 tools/release_sign.py verify SHA256SUMS`
 (OpenSSL 3) the signature.
 
-- **macOS:** open the `.dmg` and drag OpenH1 to Applications. The app
+- **macOS:** open the `.dmg` and drag GOAT H1 to Applications. The app
   is signed with a Developer ID and notarized by Apple, so it opens like any
   other downloaded app.
 - **Windows:** unzip into a folder and start `halo.exe`. Windows may say
