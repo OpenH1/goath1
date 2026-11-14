@@ -36,13 +36,18 @@ goat-rig run split-pause --seconds 30 --shots at:10 -- HALO_NETWORK_TEST=local:b
   HALO_NETWORK_TEST_PLAYERS=2 HALO_NETWORK_TEST_START=2 "HALO_TEST_INPUT=script:5-7 p2 move=0,1; 8 p2 start"
 ```
 
-**4. Co-op campaign, intro skipped by a cue** (a10's cutscene leaves the players' input off: the cue turns it on):
+**4. Co-op campaign, intro skipped** (a10). Both players vote to skip the intro with A, at 35 s and 39 s
+on the menus' clock. The host's debug.txt then logs `co-op: skipping the cutscene (2 of 2 voted)`. The cue runs
+a console line at a game second, counted from when the host's player has a unit.
 ```sh
-goat-rig run coop --pair host:my-branch client:my-branch --seconds 165 --shots every:1800 -- \
-  'HALO_NETWORK_TEST=host:levels\a10\a10:coop' HALO_NETWORK_TEST_START=12 HALO_NETWORK_TEST_CUE_PLAYERS=2 \
-  'HALO_NETWORK_TEST_CUES=128 player_enable_input 1' 'HALO_TEST_INPUT=script:135-150 move=0,1' -- \
-  HALO_NETWORK_TEST=join 'HALO_TEST_INPUT=script:135-150 move=0,1'
+V="menu:$(printf 'wait %.0s' $(seq 35))a wait wait wait a $(printf 'wait %.0s' $(seq 70))"
+goat-rig run coop --pair host:my-branch client:my-branch --seconds 110 --shots every:900 -- \
+  'HALO_NETWORK_TEST=host:levels\a10\a10:coop' HALO_NETWORK_TEST_START=12 \
+  'HALO_NETWORK_TEST_CUES=40 player_enable_input 1' "HALO_TEST_INPUT=$V" -- HALO_NETWORK_TEST=join "HALO_TEST_INPUT=$V"
 ```
+After the skip, the host stays in the cryo pod and the client spectates it ("You join them when they're on
+foot"), even with the cue. The cross-play check let the intro play out and gave input back with
+`'HALO_NETWORK_TEST_CUES=128 player_enable_input 1'` and `HALO_NETWORK_TEST_CUE_PLAYERS=1`.
 Friends, invites and party follow need `--online` (a local MQTT broker and STUN inside the run's network). Use
 `{run:<instance>}` for another instance's folder: `"HALO_FRIENDS=3 add @{run:client}/friends.txt"`.
 
