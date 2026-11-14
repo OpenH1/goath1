@@ -12,6 +12,7 @@
 #   host.sh runner <version> <sha> the runner's release downloaded and checked
 #   host.sh add <name> <version>   a runner unpacked and registered (its registration token on stdin)
 #   host.sh remove <name>          a runner unregistered and deleted (its removal token on stdin)
+#   host.sh list                   the runners' names
 #   host.sh tidy                   the previous rootfs deleted, once the runners restarted
 #   host.sh run <name>             the runner, in its sandbox (the service's command)
 #   host.sh guard                  on the 5900X: runners stopped while a game plays, started again after
@@ -94,6 +95,9 @@ case ${1:-} in
     ( sandbox "$name" /bin/bash -c 'IFS= read -r token; ACTIONS_RUNNER_INPUT_TOKEN=$token exec ./config.sh remove' )
     chmod -R u+w "$ci/runners/$name" && rm -rf "${ci:?}/runners/$name"
     ;;
+  list)
+    for dir in "$ci"/runners/*/; do [ -d "$dir" ] && basename "$dir"; done
+    ;;
   tidy)
     [ ! -d "$ci/rootfs.old" ] || { chmod -R u+w "$ci/rootfs.old" && rm -rf "$ci/rootfs.old"; }
     ;;
@@ -117,5 +121,5 @@ case ${1:-} in
       fi
     done
     ;;
-  *) sed -n '2,20p' "$0" >&2; exit 2 ;;
+  *) sed -n '2,21p' "$0" >&2; exit 2 ;;
 esac

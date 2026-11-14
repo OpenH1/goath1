@@ -95,7 +95,7 @@ for i in $(seq 1 "$count"); do
   fi
   ssh "$target" "systemctl --user enable goath1-runner@$name.service && systemctl --user $start goath1-runner@$name.service"
 done
-for name in $(ssh "$target" 'ls goat-rig/ci/runners'); do
+for name in $(ssh "$target" 'goat-rig/ci/bin/host.sh list'); do
   [ "${name#"$host"-}" -le "$count" ] 2>/dev/null && continue
   echo "removing $name"
   gh api -X POST "repos/$repo/actions/runners/remove-token" --jq .token |

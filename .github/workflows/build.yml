@@ -378,7 +378,7 @@ jobs:
       # (on our machines: their compile cache and the guests' LLVM, kept)
       - name: Use the machine's caches
         if: needs.changes.outputs.self_hosted == 'true'
-        run: printf '%s\n' CCACHE_DIR=/goat-rig/ccache CCACHE_MAXSIZE=30G CI_GUEST_LLVM_CACHE=/runner/cache/llvm >> "$GITHUB_ENV"
+        run: printf '%s\n' CCACHE_DIR=/goat-rig/ccache CCACHE_MAXSIZE=30G CCACHE_NOHASHDIR=true CCACHE_SLOPPINESS=include_file_mtime,include_file_ctime,time_macros CI_GUEST_LLVM_CACHE=/runner/cache/llvm >> "$GITHUB_ENV"
 
       # (the image has the packages of .github/ci-image's lists: apt installs
       # only what it lacks, a package a branch adds before master publishes
@@ -607,7 +607,7 @@ jobs:
       # (on our machines: their compile cache and the guests' LLVM, kept)
       - name: Use the machine's caches
         if: needs.changes.outputs.self_hosted == 'true'
-        run: printf '%s\n' CCACHE_DIR=/goat-rig/ccache CCACHE_MAXSIZE=30G CI_GUEST_LLVM_CACHE=/runner/cache/llvm >> "$GITHUB_ENV"
+        run: printf '%s\n' CCACHE_DIR=/goat-rig/ccache CCACHE_MAXSIZE=30G CCACHE_NOHASHDIR=true CCACHE_SLOPPINESS=include_file_mtime,include_file_ctime,time_macros CI_GUEST_LLVM_CACHE=/runner/cache/llvm >> "$GITHUB_ENV"
 
       # (as linux-x86_64's)
       - name: Install the toolchain
