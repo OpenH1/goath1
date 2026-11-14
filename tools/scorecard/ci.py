@@ -9,8 +9,9 @@
 4. the known bugs, each of which must be caught;
 5. two runs of this build alike, tick for tick (identity.py --repeat), and an unseeded draw caught (its negative
    control);
-6. the 30 Hz gate: on master, this build's determinism logs recorded as the baseline (BASELINE, which the workflow
-   keeps in its cache); elsewhere, this build against the latest master's (none yet: a note).
+6. the 30 Hz gate: on a main branch's full run (CI_SCORECARD_RECORD=1), this build's determinism logs recorded as
+   the baseline (BASELINE, which the workflow keeps in its cache); elsewhere, this build against the latest one
+   (none yet: a note).
 
     python tools/scorecard/ci.py
 
@@ -62,7 +63,7 @@ def main():
     results.append(step("determinism: two runs alike", identity + ["--repeat"]))
     results.append(step("determinism: an unseeded draw caught", identity + ["--repeat", "--mutation", "unseeded"],
                         expect=1))
-    if os.environ.get("GITHUB_REF") == "refs/heads/master":
+    if os.environ.get("CI_SCORECARD_RECORD") == "1":
         results.append(step("30 Hz gate: master's baseline recorded", identity + ["--record", str(BASELINE)]))
     else:
         results.append(step("30 Hz gate: bit-identical to master", identity + ["--baseline", str(BASELINE),

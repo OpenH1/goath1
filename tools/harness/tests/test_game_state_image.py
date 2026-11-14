@@ -45,6 +45,7 @@ def generated(fault=None, faulty_function=None):
     size = constant(CAPACITY, "HALO_PORT_GAME_STATE_CPU_SIZE") + constant(CAPACITY, "HALO_PORT_GAME_STATE_GPU_SIZE")
     types = "\n\n".join([
         f"#define GAME_STATE_SIZE ({size}L)",
+        f"#define GAME_STATE_CPU_SIZE ({constant(CAPACITY, 'HALO_PORT_GAME_STATE_CPU_SIZE')}L)",
         enum_with(source, "_game_state_allocation_data,"),
     ]) + "\n"
     text = ""

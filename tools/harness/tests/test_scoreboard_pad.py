@@ -122,5 +122,8 @@ def test_the_scoreboard_uses_it():
     fade = function(engine, "game_engine_post_rasterize_in_game")
     assert "!scoreboard_view_get(local_player_index)->pinned" in fade, "a pinned scoreboard stays shown"
     state = function(inputs, "XInputGetState")
-    assert state.count("scoreboard_pad_read(") == 2, "port 0's and the other ports'"
+    assert state.count("scoreboard_pad_read(") == 1, "port 0's"
+    assert "split_screen_pad_read(port, &state->Gamepad" in state, "the other ports'"
+    assert "scoreboard_pad_read(port, pad, 0, scoreboard_pad_port_hold(port, input.menus))" in \
+        function(inputs, "split_screen_pad_read")
     assert "keys_held_over_switch(&input, scoreboard_hold == HALO_SCOREBOARD_PAD_HOLDS)" in state
