@@ -56,8 +56,11 @@ def generated(control=None):
         types += f"#define {name} {constant(sources['riding'], name)}\n"
     types += structure(header, "distributed_vector") + "\n"
     types += enum_with(read("source/game/players.h"), "_player_powerup_active_camouflage") + "\n"
-    types += enum_with(network, "_distributed_pose_facing,") + "\n"
-    types += structure(network, "distributed_unit_state") + "\n"
+    # (a unit's state and its pose's vectors: network_legacy.h's, the Legacy
+    # and Standard encodings' shared record)
+    legacy = read("port/linux/game/network_legacy.h")
+    types += enum_with(legacy, "_distributed_pose_facing,") + "\n"
+    types += structure(legacy, "distributed_unit_state") + "\n"
     types += structure(network, "distributed_on_foot_bound") + "\n"
     for name in ("HOST_ACCEPT_TOLERANCE", "MAXIMUM_PREDICTED_SPEED", "PREDICTED_ON_FOOT_SPEED_SCALE",
                  "PREDICTED_ON_FOOT_SPEED_MARGIN", "PREDICTED_RISE_TOLERANCE"):

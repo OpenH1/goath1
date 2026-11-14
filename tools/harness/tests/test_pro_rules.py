@@ -50,6 +50,7 @@ def generated(fault=None):
     config = '\n'.join([
         enum_with(read('source/game/game.h'), '_game_connection_local = 0'),
         enum_with(read('source/networking/network_game_manager.h'), '_network_game_pro_rules_bit'),
+        enum_with(read('source/networking/network_game_manager.h'), '_network_game_cooperative_no_player_collisions_bit'),
         enum_with(read('port/linux/game/network_shield_effects.h'), '_shield_effects_stock'),
         '#define DISTRIBUTED_CLIENT_BUILD_MODS_SIZE 512',
         '#define PRO_FIELD_OF_VIEW 110.0',
