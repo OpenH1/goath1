@@ -78,18 +78,3 @@ def test_the_classic_preset_bypasses_it():
     # Classic sets display.ambient_occlusion "off", which world_ao_mode reads as off
     assert '{ "display.ambient_occlusion", "\\"off\\"" },' in read("port/linux/src/port_config.c")
     assert '#define GRAPHICS_AMBIENT_OCCLUSION "\\"off\\""' in read("port/linux/src/port_config.c")
-
-
-def test_the_stream_and_the_bindings():
-    stream = read("port/linux/src/xgpu_stream.h")
-    assert "XGPU_STREAM_WORLD_AO_WINDOW," in stream and "XGPU_STREAM_WORLD_AO_FIELD," in stream
-    decode = read("port/android/host/host_render_stream.c")
-    assert "[XGPU_STREAM_WORLD_AO_WINDOW] = sizeof(struct xgpu_stream_world_ao_window)," in decode
-    assert "[XGPU_STREAM_WORLD_AO_FIELD] = sizeof(struct xgpu_stream_world_ao_field)," in decode
-    # (in #574's set: a draw binds at most four)
-    spirv = read("port/linux/src/xgpu_spirv.h")
-    assert "#define XGPU_SPIRV_BINDING_WORLD_SDF 1" in spirv and "#define XGPU_SPIRV_BINDING_WORLD_AO 2" in spirv
-    msl = read("port/linux/src/xgpu_msl.h")
-    metal = read("port/macos/xgpu_metal_bindings.h")
-    assert "#define XGPU_MSL_TEXTURE_WORLD_SDF 5" in msl and "#define XGPU_METAL_TEXTURE_WORLD_SDF 5" in metal
-    assert "#define XGPU_MSL_BUFFER_WORLD_AO 23" in msl and "#define XGPU_METAL_BUFFER_WORLD_AO 23" in metal

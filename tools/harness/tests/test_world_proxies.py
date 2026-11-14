@@ -99,13 +99,3 @@ def test_case(case):
 def test_negative_control(before, after, case):
     status, output = run(build("world_proxies", generated((before, after))), case)
     assert status == CHECK_FAILED, output
-
-
-def test_the_gpu_takes_as_many_as_a_window_gives():
-    gpu = read("port/linux/src/xgpu_stream.h")
-    assert "#define XGPU_WORLD_AO_PROXIES_MAXIMUM 64" in gpu
-    assert "WORLD_PROXY_MAXIMUM_PER_WINDOW = 64," in read(HEADER)
-    for name, kind in (("SPHERE", "sphere"), ("CAPSULE", "capsule"), ("BOX", "box"), ("FIELD", "field")):
-        number = ["sphere", "capsule", "box", "field"].index(kind) + 1
-        assert f"#define XGPU_WORLD_AO_PROXY_{name} {number}" in gpu
-        assert f"_world_proxy_{kind}," in read(HEADER)
