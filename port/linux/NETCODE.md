@@ -625,10 +625,10 @@ to 4 and the chat settings' lobby bit from 2 to 3, after OpenCE's
 numbers, below OpenH1's own (120 and after), and the host's filter of
 MCC-only messages outside an MCC game drops 97 to 106 alone.
 
-Version 32 carries a rider standing on a vehicle in a Standard game.
+Version 31 also carries a rider standing on a vehicle in a Standard game.
 A tick state's difference (`_distributed_message_unit_state_differences`)
 had no deck part, so a client kept the deck of whatever state its
-difference came from: from version 32 a difference whose first byte is 2
+difference came from: from version 31 a difference whose first byte is 2
 ends in the deck part where it is not that state's (a byte, 1 with the 28
 bytes of `distributed_deck_put` after it, or 0 for none). A rider in a
 vehicle's window, and every vehicle such a rider names, move once a tick at
