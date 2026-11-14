@@ -106,13 +106,15 @@ jobs:
   # platforms' jobs build everything: a failed check rather than a skipped
   # one.
   changes:
-    # (on our machines, tools/ci-runner, when the Pick the runner step's rule
-    # allows it: the same rule, which runs-on cannot take from a step)
-    runs-on: ${{ (vars.SELF_HOSTED != 'off' && contains(fromJSON('["startupfoundry","g0atbutt","erincena"]'), github.actor) && contains(fromJSON('["startupfoundry","g0atbutt","erincena"]'), github.triggering_actor) && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'push' && github.ref == 'refs/heads/master'))) && fromJSON('["self-hosted","goath1"]') || 'ubuntu-24.04' }}
+    # (on our machines' plan runners, tools/ci-runner, which builds never
+    # hold, when the Pick the runner step's rule allows it: the same rule,
+    # which runs-on cannot take from a step)
+    runs-on: ${{ (vars.SELF_HOSTED != 'off' && contains(fromJSON('["startupfoundry","g0atbutt","erincena"]'), github.actor) && contains(fromJSON('["startupfoundry","g0atbutt","erincena"]'), github.triggering_actor) && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'push' && github.ref == 'refs/heads/master'))) && fromJSON('["self-hosted","goath1-plan"]') || 'ubuntu-24.04' }}
     timeout-minutes: 5
     outputs:
-      runner: ${{ steps.runner.outputs.runner }}
-      self_hosted: ${{ steps.runner.outputs.self_hosted }}
+      runner: ${{ steps.free.outputs.runner }}
+      self_hosted: ${{ steps.free.outputs.self_hosted }}
+      windows_runner: ${{ steps.free.outputs.windows_runner }}
       build: ${{ steps.plan.outputs.build }}
       full: ${{ steps.plan.outputs.full }}
       release: ${{ steps.plan.outputs.release }}
@@ -186,6 +188,49 @@ jobs:
           set -- --sha "$HEAD" --base "$BASE" --message "$message" --latest "${latest:-0}" --version "$VERSION"
           [ "$DRY_RUN" = true ] && set -- "$@" --dry-run
           python3 tools/ci_plan.py "$@" | tee -a "$GITHUB_OUTPUT"
+
+      # Our runners only when enough of them are free, else GitHub's: no job
+      # waits for ours. Each machine says how many are idle
+      # (tools/ci-runner/status.py, at the repository variable
+      # CI_RUNNER_STATUS's addresses): the Linux jobs (linux-x86_64 and the
+      # tests' shards) all go to ours or all to GitHub's; the windows job to
+      # the Windows VM's runner when it is running and idle and the
+      # repository variable CI_WINDOWS_RUNNER is on, else to windows-2025.
+      # (A trusted run's alone, the Pick the runner step's.)
+      - name: Free runners
+        id: free
+        env:
+          OWN: ${{ steps.runner.outputs.self_hosted }}
+          RUNNER: ${{ steps.runner.outputs.runner }}
+          STATUS: ${{ vars.CI_RUNNER_STATUS }}
+          WINDOWS_ON: ${{ vars.CI_WINDOWS_RUNNER }}
+          BUILD: ${{ steps.plan.outputs.build }}
+          SHARDS: ${{ steps.plan.outputs.shards }}
+        shell: python3 {0}
+        run: |
+          import json, os, urllib.request
+          own = os.environ["OWN"] == "true"
+          linux, windows = 0, "off"
+          for url in os.environ["STATUS"].split() if own else []:
+              try:
+                  with urllib.request.urlopen(url, timeout=3) as answer:
+                      status = json.load(answer)
+              except Exception as error:
+                  print(f"{url}: {error}")
+                  continue
+              print(f"{url}: {status}")
+              linux += int(status.get("linux", 0))
+              windows = "idle" if status.get("windows") == "idle" else windows
+          needed = 0 if os.environ["BUILD"] == "false" else 1 + len(json.loads(os.environ["SHARDS"] or "[1, 2, 3, 4]"))
+          ours = own and (not os.environ["STATUS"] or linux >= needed)
+          outputs = {
+              "runner": os.environ["RUNNER"] if ours else '"ubuntu-24.04"',
+              "self_hosted": "true" if ours else "false",
+              "windows_runner": '["self-hosted","goath1-windows"]' if own and windows == "idle" and os.environ["WINDOWS_ON"] == "on" else '"windows-2025"',
+          }
+          print(f"{linux} idle Linux runners for {needed} jobs, the Windows VM's {windows}: {outputs}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.writelines(f"{key}={value}\n" for key, value in outputs.items())
 
   # What parallel branches used to fight over, checked so that merges can
   # be left to tools: GOAT H1's network numbers (tools/netver.py: on master
@@ -863,7 +908,9 @@ jobs:
     # The runner image has LLVM, Python, Git and Visual Studio's x64 libraries
     # and Windows SDK; the guest's compiler is the pinned LLVM configure.py
     # downloads (its Windows archive), the host's the image's clang.
-    runs-on: windows-2025
+    # (the Windows VM's runner, tools/ci-runner/windows.ps1, when the
+    # changes job found it free; else GitHub's)
+    runs-on: ${{ fromJSON(needs.changes.outputs.windows_runner || '"windows-2025"') }}
     timeout-minutes: 40
     # (the image's Android SDK hidden from configure.py, which would otherwise
     # fetch the Android build's SDL and musl, uncached here, for a build this
@@ -896,8 +943,14 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      # (on the VM: its compile cache and the guests' LLVM, kept)
+      - name: Use the machine's caches
+        if: runner.environment == 'self-hosted'
+        run: printf '%s\n' CCACHE_DIR='C:\goath1-ci\cache\ccache' CCACHE_MAXSIZE=20G CCACHE_NOHASHDIR=true CI_GUEST_LLVM_CACHE='C:\goath1-ci\cache\llvm' >> "$GITHUB_ENV"
+
       # (master's, as the 64-bit ARM job's)
       - uses: actions/cache/restore@v4
+        if: runner.environment != 'self-hosted'
         with:
           path: .ccache
           key: ccache-windows-${{ github.sha }}
@@ -917,6 +970,7 @@ jobs:
 
       # the guests' LLVM, which configure.py fetches (tools/guest_toolchain.py)
       - uses: actions/cache@v4
+        if: runner.environment != 'self-hosted'
         with:
           path: .cache/llvm
           key: guest-llvm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/guest_toolchain.py') }}
@@ -965,13 +1019,13 @@ jobs:
         run: ccache --show-stats
 
       - name: Trim the compile cache
-        if: needs.changes.outputs.save == 'true'
+        if: needs.changes.outputs.save == 'true' && runner.environment != 'self-hosted'
         run: |
           ccache --evict-older-than "$(( $(date +%s) - CCACHE_START + 60 ))s"
           ccache --show-stats
 
       - uses: actions/cache/save@v4
-        if: needs.changes.outputs.save == 'true'
+        if: needs.changes.outputs.save == 'true' && runner.environment != 'self-hosted'
         with:
           path: .ccache
           key: ccache-windows-${{ github.sha }}
