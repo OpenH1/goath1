@@ -106,9 +106,13 @@ jobs:
   # platforms' jobs build everything: a failed check rather than a skipped
   # one.
   changes:
-    runs-on: ubuntu-24.04
+    # (on our machines, tools/ci-runner, when the Pick the runner step's rule
+    # allows it: the same rule, which runs-on cannot take from a step)
+    runs-on: ${{ (vars.SELF_HOSTED != 'off' && contains(fromJSON('["startupfoundry","g0atbutt","erincena"]'), github.actor) && contains(fromJSON('["startupfoundry","g0atbutt","erincena"]'), github.triggering_actor) && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'push' && github.ref == 'refs/heads/master'))) && fromJSON('["self-hosted","goath1"]') || 'ubuntu-24.04' }}
     timeout-minutes: 5
     outputs:
+      runner: ${{ steps.runner.outputs.runner }}
+      self_hosted: ${{ steps.runner.outputs.self_hosted }}
       build: ${{ steps.plan.outputs.build }}
       full: ${{ steps.plan.outputs.full }}
       release: ${{ steps.plan.outputs.release }}
@@ -126,6 +130,39 @@ jobs:
       macos: ${{ steps.plan.outputs.macos }}
       ios: ${{ steps.plan.outputs.ios }}
     steps:
+      # The Linux x86-64 jobs' runner (changes, linux-x86_64, tests): our own
+      # machines (tools/ci-runner, warm caches, no queue) only for a pull
+      # request from this repository or a push to master, by a trusted
+      # account; anything else, a fork's pull request above all, GitHub's.
+      # Our machines never run an untrusted account's code. (The repository
+      # variable SELF_HOSTED=off sends everything to GitHub's.)
+      - name: Pick the runner
+        id: runner
+        env:
+          TRUSTED: startupfoundry g0atbutt erincena
+          SWITCH: ${{ vars.SELF_HOSTED }}
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          EVENT: ${{ github.event_name }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref }}
+          HERE: ${{ runner.environment }}
+        run: |
+          own=false
+          case " $TRUSTED " in *" $ACTOR "*) case " $TRUSTED " in *" $TRIGGERING_ACTOR "*)
+            case "$EVENT:$REF" in
+              pull_request:*) [ -n "$HEAD_REPO" ] && [ "$HEAD_REPO" = "$REPO" ] && own=true ;;
+              push:refs/heads/master) own=true ;;
+            esac ;; esac ;; esac
+          [ "$SWITCH" != off ] || own=false
+          if [ "$HERE" = self-hosted ] && [ "$own" != true ]; then
+            echo "::error::an untrusted run on our own runner"; exit 1
+          fi
+          if [ "$own" = true ]; then runner='["self-hosted","goath1"]'; else runner='"ubuntu-24.04"'; fi
+          echo "actor $ACTOR ($TRIGGERING_ACTOR), $EVENT from ${HEAD_REPO:-$REPO}: $runner"
+          { echo "runner=$runner"; echo "self_hosted=$own"; } >> "$GITHUB_OUTPUT"
+
       # (the history's commits and trees; the files' contents of this
       # commit alone)
       - uses: actions/checkout@v4
@@ -321,10 +358,11 @@ jobs:
     # its clang for the host and the development files SDL3 builds with, the
     # guest's compiler (x32) the pinned LLVM; and the tests that read the
     # build (those that need none are the tests job's).
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(needs.changes.outputs.runner || '"ubuntu-24.04"') }}
     # (.github/ci-image/Dockerfile, as the 64-bit ARM job's)
+    # (none on our machines: their runners run in this image's files)
     container:
-      image: ghcr.io/openh1/ci-linux:ubuntu-22.04-x86_64
+      image: ${{ needs.changes.outputs.self_hosted != 'true' && 'ghcr.io/openh1/ci-linux:ubuntu-22.04-x86_64' || '' }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ github.token }}
@@ -336,6 +374,11 @@ jobs:
       CI_BUILD_NUMBER: ${{ needs.changes.outputs.number }}
     steps:
       - uses: actions/checkout@v4
+
+      # (on our machines: their compile cache and the guests' LLVM, kept)
+      - name: Use the machine's caches
+        if: needs.changes.outputs.self_hosted == 'true'
+        run: printf '%s\n' CCACHE_DIR=/goat-rig/ccache CCACHE_MAXSIZE=30G CI_GUEST_LLVM_CACHE=/runner/cache/llvm >> "$GITHUB_ENV"
 
       # (the image has the packages of .github/ci-image's lists: apt installs
       # only what it lacks, a package a branch adds before master publishes
@@ -352,6 +395,7 @@ jobs:
 
       # (master's, as the 64-bit ARM job's)
       - uses: actions/cache/restore@v4
+        if: needs.changes.outputs.self_hosted != 'true'
         with:
           path: .ccache
           key: ccache-linux-x86_64-${{ github.sha }}
@@ -371,6 +415,7 @@ jobs:
 
       # the guests' LLVM, which configure.py fetches (tools/guest_toolchain.py)
       - uses: actions/cache@v4
+        if: needs.changes.outputs.self_hosted != 'true'
         with:
           path: .cache/llvm
           key: guest-llvm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/guest_toolchain.py') }}
@@ -472,13 +517,13 @@ jobs:
         run: ccache --show-stats
 
       - name: Trim the compile cache
-        if: needs.changes.outputs.save == 'true'
+        if: needs.changes.outputs.save == 'true' && needs.changes.outputs.self_hosted != 'true'
         run: |
           ccache --evict-older-than "$(( $(date +%s) - CCACHE_START + 60 ))s"
           ccache --show-stats
 
       - uses: actions/cache/save@v4
-        if: needs.changes.outputs.save == 'true'
+        if: needs.changes.outputs.save == 'true' && needs.changes.outputs.self_hosted != 'true'
         with:
           path: .ccache
           key: ccache-linux-x86_64-${{ github.sha }}
@@ -542,10 +587,11 @@ jobs:
     # together on every processor (pytest-xdist's loadfile). Every shard
     # reports its own check, tests (1) to tests (4), and runs to the end
     # whatever the others do.
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(needs.changes.outputs.runner || '"ubuntu-24.04"') }}
     # (.github/ci-image/Dockerfile: linux-x86_64's packages and system clang)
+    # (none on our machines: their runners run in this image's files)
     container:
-      image: ghcr.io/openh1/ci-linux:ubuntu-22.04-x86_64
+      image: ${{ needs.changes.outputs.self_hosted != 'true' && 'ghcr.io/openh1/ci-linux:ubuntu-22.04-x86_64' || '' }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ github.token }}
@@ -557,6 +603,11 @@ jobs:
     name: tests (${{ matrix.shard }})
     steps:
       - uses: actions/checkout@v4
+
+      # (on our machines: their compile cache and the guests' LLVM, kept)
+      - name: Use the machine's caches
+        if: needs.changes.outputs.self_hosted == 'true'
+        run: printf '%s\n' CCACHE_DIR=/goat-rig/ccache CCACHE_MAXSIZE=30G CI_GUEST_LLVM_CACHE=/runner/cache/llvm >> "$GITHUB_ENV"
 
       # (as linux-x86_64's)
       - name: Install the toolchain
@@ -571,6 +622,7 @@ jobs:
 
       # the guests' LLVM, linux-x86_64's cache (which that job saves)
       - uses: actions/cache/restore@v4
+        if: needs.changes.outputs.self_hosted != 'true'
         with:
           path: .cache/llvm
           key: guest-llvm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/guest_toolchain.py') }}
