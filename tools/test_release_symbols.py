@@ -41,13 +41,13 @@ GUEST_BUILDS = [
 
 @pytest.mark.parametrize("platform, config, vr, artifact, name", GUEST_BUILDS)
 def test_each_build_s_symbols_are_uploaded_and_named(platform, config, vr, artifact, name):
-    """ci_build.py's folder is the artifact the workflow uploads (on master only, as the build itself, for a
+    """ci_build.py's folder is the artifact the workflow uploads (on a full run only, as the build itself, for a
     release build), and the release's name for it says the machine"""
     folder = ci_build.dist_name(platform, config, vr) if platform != "ios" else f"halo-ios-{config}"
     assert f"{folder}-symbols" == artifact
     assert f"name: {artifact}\n          path: dist/{artifact}\n" in WORKFLOW
     upload = WORKFLOW[:WORKFLOW.index(f"name: {artifact}\n")].rsplit("- uses: actions/upload-artifact@v4", 1)[1]
-    assert ("if: github.ref == 'refs/heads/master'" in upload) == (config == "release")
+    assert ("if: needs.changes.outputs.full == 'true'" in upload) == (config == "release")
     assert release_names.published(artifact) == name
 
 
