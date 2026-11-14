@@ -6,7 +6,7 @@ import subprocess
 import sys
 
 import pytest
-from mcc_test_support import compile_tool
+from mcc_test_support import compile_tool, sanitizer_clang
 
 ROOT = Path(__file__).resolve().parents[1]
 GAME = ROOT / "port/linux/game"
@@ -106,8 +106,7 @@ def test_sanitized(tmp_path):
     """Linux CI runs every case with address and undefined-behaviour checks."""
     if not sys.platform.startswith("linux"):
         pytest.skip("sanitizer runtime exercised by Linux CI")
-    clang = shutil.which("clang")
-    assert clang, "clang is required for the Linux security checks"
+    clang = sanitizer_clang(tmp_path, "address,undefined")
     exe = tmp_path / "sanitized"
     result = subprocess.run([clang, "-D_GNU_SOURCE", "-std=gnu89", "-g", "-O1", "-Wall", "-Wextra", "-Werror",
                              "-fsanitize=address,undefined", "-fno-sanitize-recover=all",

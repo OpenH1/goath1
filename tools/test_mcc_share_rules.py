@@ -5,7 +5,7 @@ import subprocess
 import sys
 
 import pytest
-from mcc_test_support import compile_tool
+from mcc_test_support import compile_tool, sanitizer_clang
 
 ROOT = Path(__file__).resolve().parents[1]
 RULES = ROOT / "port/linux/game/mcc_share_rules.c"
@@ -49,8 +49,7 @@ def test_sanitized_rules(tmp_path):
     """Linux CI executes every case with address/undefined-behaviour checks."""
     if not sys.platform.startswith("linux"):
         pytest.skip("sanitizer runtime exercised by Linux CI")
-    clang = shutil.which("clang")
-    assert clang, "clang is required for the Linux security checks"
+    clang = sanitizer_clang(tmp_path, "address,undefined")
     exe = tmp_path / "sanitized"
     result = subprocess.run([clang, "-std=gnu89", "-g", "-O1", "-Wall", "-Wextra", "-Werror",
                              "-fsanitize=address,undefined", "-fno-sanitize-recover=all",
@@ -66,8 +65,7 @@ def test_fuzzed_rules(tmp_path):
     """Bounded libFuzzer run over exact-length buffers, states and resource leaves."""
     if not sys.platform.startswith("linux"):
         pytest.skip("libFuzzer runtime exercised by Linux CI")
-    clang = shutil.which("clang")
-    assert clang, "clang is required for the Linux security checks"
+    clang = sanitizer_clang(tmp_path, "fuzzer,address,undefined")
     source = tmp_path / "fuzz.c"
     source.write_text(r'''
 #include "mcc_share_rules.h"
