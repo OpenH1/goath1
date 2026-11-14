@@ -891,6 +891,36 @@ int main(int argc,char **argv)
         return 0;
     }
 
+    CASE("window") {
+        /* The joiner keeps MCC_SHARE_CLIENT_WINDOW chunks in flight: as many as
+         * a host (this one, or OpenCE 359's, the same code) queues a transfer,
+         * MCC_SHARE_WINDOW*2. A slow host lets the window fill; it holds every
+         * request (one more would be dropped, and the download would stall). */
+        char path[400];
+        unsigned char *data;
+        unsigned const bytes=MCC_SHARE_CHUNK_BYTES*80+123;
+        int identity_ok,most=0,most_queued=0,k;
+        data=make_bytes(bytes,77);
+        snprintf(path,sizeof(path),"%smcc_maps/solar_flare/m0.map",H);
+        CHECK(write_file(path,data,bytes));free(data);
+        snprintf(path,sizeof(path),"%smcc_maps/solar_flare",H);
+        identity_digest(path,W.digest,&identity_ok);CHECK(identity_ok);
+        W.limit=MCC_SHARE_CHUNK_BYTES*8;
+        CHECK(mcc_share_client_begin(&W.join,LEVEL,W.digest));
+        for (i=0;i<4000 && !W.finished;i++) {
+            step();
+            if (W.join.outstanding>most) most=W.join.outstanding;
+            for (k=0;k<MCC_SHARE_HOST_TRANSFERS;k++)
+                if (W.host.transfers[k].used && W.host.transfers[k].queued>most_queued)
+                    most_queued=W.host.transfers[k].queued;
+        }
+        CHECK(W.finished && W.finished_ok);
+        CHECK(most==MCC_SHARE_CLIENT_WINDOW);                           /* twice the old 16 */
+        CHECK(most_queued==MCC_SHARE_CLIENT_WINDOW);                    /* all held, none dropped */
+        CHECK(MCC_SHARE_CLIENT_WINDOW<=MCC_SHARE_WINDOW*2);
+        return 0;
+    }
+
     CASE("rate") {
         uint32_t start=W.clock;
         W.limit=8192;

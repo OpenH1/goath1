@@ -911,7 +911,7 @@ in an OpenH1 game"):
 The host welcomes OpenCE players (`port/linux/game/network_welcome.c`,
 `network.opence_welcome`): a few seconds after a client machine has loaded
 the game (its client ready), the host sends it two notices of the text
-chat, "This server runs GOAT H1." and "Get it free at openh1.com for
+chat, "This server runs GOAT H1." and "Get it free at goath1.com for
 smoother 60 and 120 tick games.", once a player (their machine's real
 address and hardware id) while it hosts. A notice is OpenCE's own
 `_distributed_message_chat_down` with `_chat_line_notice_bit`, which
@@ -2278,7 +2278,16 @@ header is 12 bytes, including its checkpoint epoch.
 - **Messages and bounds.** `MANIFEST` responses carry up to 16 file entries per
   page. The full offer has at most 168 entries, each with kind, a 128-byte path
   buffer, size and SHA-256. Exactly one map is required. `CHUNK` requests up to
-  3072 bytes; the client window is 16 and the host supports four transfers.
+  3072 bytes; the host supports four transfers and queues at most 32 CHUNK
+  requests a transfer (`MCC_SHARE_WINDOW * 2`), silently dropping the rest.
+  The joiner never asks for a range twice, so a dropped request stalls the
+  download: the joiner's window (`MCC_SHARE_CLIENT_WINDOW`) is 32, exactly that
+  queue, which OpenCE 359's host shares (its window is 16, its queue the same
+  32). The window was 16 before; 32 chunks in flight double what one
+  round trip carries (about 1.4 MB/s on loopback before), within the host's
+  `network.map_share_upload` (1024 KB/s unless raised). The `window` case of
+  `tools/test_mcc_share.py` holds a slow host's queue full at 32 and checks
+  none is dropped; its negative controls take 16 and 33.
   Reserved fields, counts, lengths, session IDs, offsets and sender roles are
   checked. Only the sender's established reliable stream is accepted; datagrams
   and responses from other peers cannot supply content. Backpressure retries

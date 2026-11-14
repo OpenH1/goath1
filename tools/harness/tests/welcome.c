@@ -206,7 +206,7 @@ static void check_welcomed(
 	CHECK(!strcmp(machines[machine_index].shown[0], "This server runs GOAT H1."), "'%s'",
 		machines[machine_index].shown[0]);
 	CHECK(!strcmp(machines[machine_index].shown[1],
-		"Get it free at openh1.com for smoother 60 and 120 tick games."), "'%s'", machines[machine_index].shown[1]);
+		"Get it free at goath1.com for smoother 60 and 120 tick games."), "'%s'", machines[machine_index].shown[1]);
 }
 
 int main(int argc, char **argv)

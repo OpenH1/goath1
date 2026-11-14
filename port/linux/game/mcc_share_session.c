@@ -651,7 +651,7 @@ static void client_pump(struct mcc_share *share)
     }
     /* Decide reuse before requesting a file. The chunk window stays within that
      * file so no speculative resource requests precede its local verification. */
-    while (share->outstanding<MCC_SHARE_WINDOW && share->request_file==current &&
+    while (share->outstanding<MCC_SHARE_CLIENT_WINDOW && share->request_file==current &&
         share->request_file<share->stage.count) {
         uint32_t size=share->stage.files[share->request_file].size;
         uint32_t length=size-share->request_offset;

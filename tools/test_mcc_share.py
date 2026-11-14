@@ -14,7 +14,7 @@ SOURCES = [ROOT / "tools/tests/mcc_share_session.c", GAME / "mcc_share_stage.c",
            GAME / "mcc_share_list.c", GAME / "mcc_share_rules.c", GAME / "mcc_package.c", GAME / "mcc_sha256.c",
            ROOT / "port/linux/src/posix_mcc_share.c"]
 CASES = ["list", "admit", "manifest", "redirect", "stage_cancel", "stage_hash_and_size", "stage_exists",
-         "stage_install", "stage_race", "stage_move_failure", "stage_names", "transfer", "rate", "cancel",
+         "stage_install", "stage_race", "stage_move_failure", "stage_names", "transfer", "window", "rate", "cancel",
          "bad_hash", "changed_size", "identity", "disk_space", "taken", "exists", "refusals", "busy", "host_requests",
          "hostile_manifest", "hostile_chunk", "hashed_once", "names", "timeouts", "aggregate_rate", "offer_accept",
          "offer_expiry", "offer_cancel", "backpressure", "request_fields", "response_fields", "manifest_pages", "clock_zero", "clock_wrap",
@@ -80,6 +80,9 @@ def test_share(share_tool, tmp_path, case):
     ("cancel(stage->check_user);", "(void)cancel;", "verify_refused"),
     ("if (share->env.installed_ready && !share->env.installed_ready(share->env.user)) {",
      "if (0) {", "verify_success"),
+    # the joiner keeps 32 chunks in flight, and no more than a host queues
+    ("share->outstanding<MCC_SHARE_CLIENT_WINDOW &&", "share->outstanding<MCC_SHARE_WINDOW &&", "window"),
+    ("share->outstanding<MCC_SHARE_CLIENT_WINDOW &&", "share->outstanding<MCC_SHARE_CLIENT_WINDOW+1 &&", "window"),
 ])
 def test_negative_controls(tmp_path, before, after, case):
     """Each selected check must detect its intended fault in the real code."""

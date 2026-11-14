@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://openh1.com"><img src="website/public/media/og.jpg" alt="OpenH1: welcome back, soldier" width="100%"></a>
+  <a href="https://goath1.com"><img src="website/public/media/og.jpg" alt="OpenH1: welcome back, soldier" width="100%"></a>
 </p>
 
 <h3 align="center">Halo: Combat Evolved, recompiled for Mac, Windows, Linux, Android and VR.</h3>
@@ -19,7 +19,7 @@
 
 <p align="center">
   <a href="#download"><b>Download</b></a> ·
-  <a href="https://openh1.com">openh1.com</a> ·
+  <a href="https://goath1.com">goath1.com</a> ·
   <a href="https://discord.gg/MJa327PSWt">Discord</a> ·
   <a href="#game-data">Bring your own game</a> ·
   <a href="#contributing">Contributing</a>
@@ -53,7 +53,7 @@ two can play together. OpenCE starts from the decompilation of
 | **Anti-aliasing**<br><sub>Blood Gulch, enlarged 4×</sub> | <img src="website/public/media/edges-original-poster.webp" alt="Blood Gulch's cliffs with no anti-aliasing" width="360"> | <img src="website/public/media/edges-openh1-poster.webp" alt="The same cliffs with SMAA" width="360"> |
 | **Plasma glow**<br><sub>Blood Gulch, a charged plasma pistol</sub> | <img src="website/public/media/glow-original-poster.webp" alt="A plasma bolt as the original drew it" width="360"> | <img src="website/public/media/glow-openh1-poster.webp" alt="The same bolt with OpenH1's glow" width="360"> |
 
-<sub>Real captures, the same moment twice. [openh1.com](https://openh1.com) has them side by side, with clips.</sub>
+<sub>Real captures, the same moment twice. [goath1.com](https://goath1.com) has them side by side, with clips.</sub>
 
 ## Under the hood
 
@@ -140,7 +140,7 @@ The port does not include the game data. You need your own, legally
 obtained copy of Halo: Combat Evolved for the original Xbox: an Xbox disc
 image (`.xiso` or `.iso`) made from a disc you own. OpenH1 does not supply
 the game or say where to get it. How to make a disc image of your disc,
-and how each build takes it: [openh1.com/maps](https://openh1.com/maps). All versions of the game operate. The maps of the European (PAL) version were made for a slower
+and how each build takes it: [goath1.com/maps](https://goath1.com/maps). All versions of the game operate. The maps of the European (PAL) version were made for a slower
 console. The port changes them to play as the North American (NTSC) maps do,
 so players of the two versions can play together.
 
