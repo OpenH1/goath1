@@ -52,6 +52,9 @@ static boolean biped_riding_air_correct(long u, real_vector3d const *d, real pea
 static void biped_get_physics_pill(long u, real_point3d *base, real *h, real *w) {}
 boolean vehicle_riding_deck_valid(struct vehicle_riding_deck const *d, short nodes) { return FALSE; }
 boolean vehicle_riding_claim_grace(struct vehicle_riding_claim *c, long ov, short on, long hv, short hn, short g) { return FALSE; }
+/* (unreached: no claim; an unoptimised build still links it) */
+void vehicle_riding_point_to_local(real_point3d const *o, real_vector3d const *f, real_vector3d const *u,
+	real_point3d const *p, real_point3d *l) { *l = *p; }
 static long distributed_own_windows[1], distributed_own_air_episodes[1];
 static long game_connection(void) { return 0; }
 #define _game_connection_network_client 1

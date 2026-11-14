@@ -101,7 +101,7 @@ ninja) and these items:
 - Nothing for the guest: it is compiled with LLVM 22.1.8, which
   `configure.py` downloads the first time (approximately 1.5 GB) to
   `~/.cache/openh1`. Refer to "The guests' compiler" in
-  [README.md](../../README.md#the-guests-compiler). The option
+  [docs/building.md](../../docs/building.md#the-guests-compiler). The option
   `--android-guest-cc` of `configure.py` selects a different compiler (a
   clang with the `arm64_32` target), with the NDK's linker and tools.
 - The Android NDK. `configure.py` looks for it in `ANDROID_NDK_HOME`, then

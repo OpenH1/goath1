@@ -508,7 +508,9 @@ clear (a hand through a wall does not hit) and the hand where one firing at
 the target can be: no more than 0.05 world units behind the eye along the
 line to the target, 0.2 to its side and 0.1 above it (a client cannot claim
 a hand far past a corner). Such hits are counted in the host's log, and the
-host's `network.fire_origins` (true by default) turns the hand off.
+host's `network.fire_origins` (true by default) turns the hand off. This
+build only takes the message: it sends none, as its VR mode fires from the
+camera too (`vr_aim.c`).
 Then version 40 adds to the join request (`message_client_join_game_request`,
 0x70 bytes before) a Discord account's pass, 170 bytes, and its proof, 64
 (`port/linux/src/player_link.c`; `docs/master_protocol.md`, "Player keys,

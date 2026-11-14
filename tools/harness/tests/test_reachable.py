@@ -21,14 +21,7 @@ DEFINED = re.compile(r"^(?:[A-Za-z_][^;{=(]*?[\s*])?([A-Za-z_]\w*)\s*\(")  # a d
 
 # (functions a test takes that the game did not call when this test was written: each to be wired or deleted with
 # its test; an entry is dropped once the game calls it, which the test below asks for)
-NOT_YET_CALLED = {
-    "network_damage_set_fire_origin_source": "never set, so network_damage.c's damage_fire_origin_source stays NULL",
-    "p2p_lobby_filter": "the server browser's filters, only tools/p2p_lobby_check.c calls them",
-    "p2p_lobby_sort": "the server browser's sort, only tools/p2p_lobby_check.c calls it",
-    "p2p_lobby_sort_parse": "the server browser's sort, only tools/p2p_lobby_check.c calls it",
-    "p2p_lobby_sort_text": "the server browser's sort, only tools/p2p_lobby_check.c calls it",
-    "render_prepared_key": "the prepared journal's key, computed elsewhere",
-}
+NOT_YET_CALLED = {}
 
 
 def taken_names():

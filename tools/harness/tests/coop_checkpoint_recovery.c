@@ -152,13 +152,12 @@ static struct {
 static struct {long time;} damage_history[TARGET_HISTORY_TICKS];
 static struct {long time;short count;} damage_explosions[MAXIMUM_TRACKED_PLAYERS];
 static struct {long time;} damage_trails[MAXIMUM_TRACKED_PLAYERS][PLAYER_TRAIL_POINTS];
-static struct {long time;} damage_fire_origins[MAXIMUM_TRACKED_PLAYERS],damage_fire_origins_sent[MAXIMUM_LOCAL_PLAYERS];
+static struct {long time;} damage_fire_origins[MAXIMUM_TRACKED_PLAYERS];
 static struct {long source_index;} damage_rate_cache[DAMAGE_RATE_CACHE_SIZE];
 static int checkpoint_prediction_resets;
 static void distributed_reset_checkpoint_state(boolean reset_received_times) {
     CHECK(!reset_received_times,"completion preserves ordered snapshot receive history");checkpoint_prediction_resets++;
 }
-static void distributed_send_fire_origins(void) { }
 static struct object_datum *object_get(long index);
 static struct object_datum *object_try_and_get(long index);
 static void object_delete_recursive(long index,boolean siblings);

@@ -25,7 +25,7 @@ To build:
 - clang for the host. The guest is compiled, linked and checked
   (`tools/guest_image_check.py`) with LLVM 22.1.8, which `configure.py`
   downloads the first time (approximately 1.5 GB) to `~/.cache/openh1`.
-  Refer to "The guests' compiler" in [README.md](../../README.md#the-guests-compiler).
+  Refer to "The guests' compiler" in [docs/building.md](../../docs/building.md#the-guests-compiler).
   The option `--linux-x86-64-cc` (or `--linux-arm64-cc`) of `configure.py`
   selects a different clang for the host and the guest, which then needs
   the `x32` (or `arm64_32`) target, `ld.lld`, `llvm-ar` and `llvm-objdump`.
@@ -1743,7 +1743,7 @@ the setting for one start of the game. It has priority over the file.
 | `debug.memory_watch` | `true` | `HALO_MEMORY_WATCH` | The builds with a host only (Linux, Android, macOS). `true`: the host notices the game's writes to cached textures and vertices by page protection. `false`: it compares page contents once a frame instead, which is slower. |
 | `debug.pass_times` | `0` | `HALO_PASS_TIMES` | Every this many frames, the Vulkan backend times each of the frame's passes on the GPU (a timestamp after each, in the frame's submissions) and logs every 30 timed frames each kind of pass (its size, colour, depth, MSAA, put aside or not) with its milliseconds a frame and its share of the GPU's time. The shares hold whatever clock the GPU runs at, which a phone's governor changes. 0: never. |
 | `debug.telnet_console`, `debug.telnet_console_port` | `false`, `2323` | `HALO_TELNET_CONSOLE`, `HALO_TELNET_CONSOLE_PORT` | The game listens on 127.0.0.1, on this port, for a script console (connect with telnet). The console has no password, so only this computer can reach it. |
-| `debug.profile_record`, `debug.profile_record_when`, `debug.profile_memory` | `false`, `"start"`, `256` | `HALO_PROFILE_RECORD`, `HALO_PROFILE_RECORD_WHEN`, `HALO_PROFILE_MEMORY` | Profiling builds only (`configure.py --profile`). Record without a command; `"start"` records from the first frame until the first map change, `"game"` records each game outside the main menu. Memory is 4–1024 MB. Numbered `profile_<stamp>_<role>.part<n>.json` files remain in `profiles/` after recording. Refer to "Profiling builds" in the main README. |
+| `debug.profile_record`, `debug.profile_record_when`, `debug.profile_memory` | `false`, `"start"`, `256` | `HALO_PROFILE_RECORD`, `HALO_PROFILE_RECORD_WHEN`, `HALO_PROFILE_MEMORY` | Profiling builds only (`configure.py --profile`). Record without a command; `"start"` records from the first frame until the first map change, `"game"` records each game outside the main menu. Memory is 4–1024 MB. Numbered `profile_<stamp>_<role>.part<n>.json` files remain in `profiles/` after recording. Refer to "Profiling builds" in [docs/building.md](../../docs/building.md#profiling-builds). |
 
 
 ### Classic and Enhanced

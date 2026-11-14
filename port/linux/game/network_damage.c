@@ -193,10 +193,6 @@ around it unseen */
 #define FIRE_ORIGIN_BEHIND 0.05f
 #define FIRE_ORIGIN_SIDEWAYS 0.2f
 #define FIRE_ORIGIN_ABOVE 0.1f
-/* how often a client sends an unchanged fire origin (ticks): well within
-FIRE_ORIGIN_FRESH_TICKS, over a lost one or two */
-#define FIRE_ORIGIN_RESEND_TICKS 8
-
 int config_boolean(char const *name);
 unsigned long config_changes(void);
 
@@ -394,6 +390,8 @@ struct distributed_fire_origin
 
 typedef char distributed_fire_origin_size_assert[sizeof(struct distributed_fire_origin) == 8 ? 1 : -1];
 
+/* (the message as a client that sends it does: this build takes it, and
+sends none) */
 struct distributed_fire_origin_message
 {
 	struct distributed_message_header header;
@@ -516,14 +514,6 @@ static struct damage_fire_origin
 	long time;
 	real_vector3d offset;
 } damage_fire_origins[MAXIMUM_TRACKED_PLAYERS];
-/* a client: where its players' shots leave from (NULL: their cameras), and
-what it last sent of each local player's, when */
-static network_damage_fire_origin_source damage_fire_origin_source;
-static struct
-{
-	long time;
-	struct distributed_vector offset;
-} damage_fire_origins_sent[MAXIMUM_LOCAL_PLAYERS];
 /* the host: the clients' hits only a hand's line of sight let through */
 static long damage_hand_reports;
 /* ... what each weapon or grenade deals, as the tags have it (their walk
@@ -3518,58 +3508,6 @@ void network_damage_handle_fire_origins(
 	}
 }
 
-void network_damage_set_fire_origin_source(
-	network_damage_fire_origin_source source)
-{
-	damage_fire_origin_source = source;
-}
-
-/* a client: where its players' shots leave from, when not from their
-cameras, to the host every tick (unreliably: a lost one is followed by the
-next) */
-static void distributed_send_fire_origins(
-	void)
-{
-	struct distributed_fire_origin_message message;
-	short local_player_index;
-	short count = 0;
-
-	if (!damage_fire_origin_source)
-		return;
-	for (local_player_index = 0; local_player_index < MAXIMUM_LOCAL_PLAYERS; local_player_index++)
-	{
-		long player_index = local_player_get_player_index(local_player_index);
-		real_vector3d offset;
-
-		if (player_index == NONE || !damage_fire_origin_source(local_player_index, &offset) ||
-			!distributed_fire_origin_within_reach(&offset))
-		{
-			damage_fire_origins_sent[local_player_index].time = NONE;
-			continue;
-		}
-		csmemset(&message.origins[count], 0, sizeof(message.origins[count]));
-		message.origins[count].player_index = distributed_player_to_byte(player_index);
-		distributed_vector_pack(&offset, FIRE_ORIGIN_SCALE, &message.origins[count].offset);
-		/* (when it changes, else every few ticks) */
-		if (damage_fire_origins_sent[local_player_index].time != NONE &&
-			game_time_get() >= damage_fire_origins_sent[local_player_index].time &&
-			game_time_get() - damage_fire_origins_sent[local_player_index].time < FIRE_ORIGIN_RESEND_TICKS &&
-			!csmemcmp(&damage_fire_origins_sent[local_player_index].offset, &message.origins[count].offset,
-				sizeof(struct distributed_vector)))
-		{
-			continue;
-		}
-		damage_fire_origins_sent[local_player_index].time = game_time_get();
-		damage_fire_origins_sent[local_player_index].offset = message.origins[count].offset;
-		count++;
-	}
-	if (count)
-	{
-		distributed_send(&message, _distributed_message_fire_origins, count,
-			(word)(sizeof(message.header) + count * sizeof(struct distributed_fire_origin)), _distributed_to_host);
-	}
-}
-
 void network_damage_client_tick(
 	void)
 {
@@ -3578,7 +3516,6 @@ void network_damage_client_tick(
 	short index;
 	short count = 0;
 
-	distributed_send_fire_origins();
 	distributed_predicted_hits_update();
 
 	damage_sent_reports += damage_report_count;
@@ -3686,8 +3623,6 @@ void network_damage_new_game(
 			damage_trails[player_index][index].time = NONE;
 		damage_fire_origins[player_index].time = NONE;
 	}
-	for (player_index = 0; player_index < MAXIMUM_LOCAL_PLAYERS; player_index++)
-		damage_fire_origins_sent[player_index].time = NONE;
 	for (player_index = 0; player_index < DAMAGE_RATE_CACHE_SIZE; player_index++)
 		damage_rate_cache[player_index].source_index = NONE;
 }

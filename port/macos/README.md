@@ -21,7 +21,7 @@ maps and the campaign. It was tested on an Apple A18 Pro with macOS 27.
   of `configure.py` selects a different clang.
 - The guest is compiled with LLVM 22.1.8, which `configure.py` downloads
   the first time (approximately 1.5 GB) to `~/Library/Caches/openh1`. Refer
-  to "The guests' compiler" in [README.md](../../README.md#the-guests-compiler).
+  to "The guests' compiler" in [docs/building.md](../../docs/building.md#the-guests-compiler).
   With `--macos-guest-cc` (or `--macos-cc`, or `--guest-llvm=system`), the
   guest is compiled with that clang instead, and `configure.py` needs
   `ld.lld`, `llvm-ar` and `llvm-objdump` on the `PATH` or in Homebrew's
