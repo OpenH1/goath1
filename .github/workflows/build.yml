@@ -3,7 +3,10 @@ name: Build
 # Builds of the native ports (Linux x86-64 and arm64, Windows, Android,
 # macOS, iOS), uploaded as artifacts, in three kinds of run
 # (docs/releasing.md):
-# - a branch's push: the debug builds, a quick check;
+# - a pull request: the quick check (tools/ci_plan.py), Linux x86-64's
+#   debug build and the tests the changed files touch, and another
+#   platform only when the pull request touches its files: the check
+#   job's result is the one branch protection requires;
 # - a push to a main branch (master; dev too until it goes) or a run
 #   started by hand: the full suite, the debug and release builds (and the
 #   VR ones: x86-64's, and the Steam Frame's package on arm64) and every
@@ -46,7 +49,10 @@ name: Build
 # (every push starts the run, documentation's too, so that the platforms'
 # checks are always reported: the changes job decides whether they build)
 on:
+  pull_request:
   push:
+    branches: [master, dev]
+    tags: ["build-*"]
   workflow_dispatch:
     inputs:
       version:
@@ -62,12 +68,12 @@ on:
         type: boolean
         default: false
 
-# (a branch's newer push cancels its run still going; a main branch's, a
-# tag's and a run started by hand are never cancelled nor queued behind
-# another: a group of their own)
+# (a pull request's newer push cancels its run still going; a main
+# branch's, a tag's and a run started by hand are never cancelled nor
+# queued behind another: a group of their own)
 concurrency:
-  group: build-${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/') && github.ref != 'refs/heads/master' && github.ref != 'refs/heads/dev') && github.ref || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/') && github.ref != 'refs/heads/master' && github.ref != 'refs/heads/dev' }}
+  group: build-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -90,153 +96,63 @@ env:
   CI_GUEST_ASM_CACHE: .cache/guest-asm
 
 jobs:
-  # The run's kind (above): full (a main branch, a tag, a run by hand),
-  # release (a tag build-<N>, or a version given by hand) and its number,
-  # publish (a tag, or a version given by hand on a main branch without
-  # dry_run), save (a full run that is not a release: the compile caches
-  # every branch's build starts from). And whether the push changes
-  # anything but documentation: Markdown files
-  # anywhere, and website/ (openh1.com, published from website/ by hand:
-  # website/README.md). On master, the files the push changed (from its
-  # before sha); on a branch, every file the branch changed from master
-  # (from their merge base), so that the branch's latest commit is skipped
-  # only when the whole branch is documentation: a documentation commit
-  # pushed after code still builds the code. Builds when it cannot tell (a
-  # run started by hand, a first push of master, a history it cannot find),
-  # and the platforms' jobs build too should this job fail: a failed check
-  # rather than a skipped one, which branch protection would let through.
+  # What the run does, tools/ci_plan.py's plan (docs/releasing.md): the
+  # kind of run (quick for a pull request; full for a main branch's push or
+  # a run by hand; release for a tag build-<N> or a version given by hand),
+  # a release's number and whether it is published, whether the compile
+  # caches are saved (a full run's), the tests and their shards, the
+  # platforms built, the scorecard. A push or pull request of documentation
+  # alone (Markdown, website/) builds nothing. Should this job fail, the
+  # platforms' jobs build everything: a failed check rather than a skipped
+  # one.
   changes:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
-      build: ${{ steps.diff.outputs.build }}
-      ios: ${{ steps.diff.outputs.ios }}
-      macos: ${{ steps.diff.outputs.macos }}
-      full: ${{ steps.kind.outputs.full }}
-      release: ${{ steps.kind.outputs.release }}
-      number: ${{ steps.kind.outputs.number }}
-      publish: ${{ steps.kind.outputs.publish }}
-      save: ${{ steps.kind.outputs.save }}
+      build: ${{ steps.plan.outputs.build }}
+      full: ${{ steps.plan.outputs.full }}
+      release: ${{ steps.plan.outputs.release }}
+      number: ${{ steps.plan.outputs.number }}
+      publish: ${{ steps.plan.outputs.publish }}
+      save: ${{ steps.plan.outputs.save }}
+      tests: ${{ steps.plan.outputs.tests }}
+      shards: ${{ steps.plan.outputs.shards }}
+      shard_count: ${{ steps.plan.outputs.shard_count }}
+      build_tests: ${{ steps.plan.outputs.build_tests }}
+      scorecard: ${{ steps.plan.outputs.scorecard }}
+      linux_arm64: ${{ steps.plan.outputs.linux_arm64 }}
+      android: ${{ steps.plan.outputs.android }}
+      windows: ${{ steps.plan.outputs.windows }}
+      macos: ${{ steps.plan.outputs.macos }}
+      ios: ${{ steps.plan.outputs.ios }}
     steps:
-      # (the history's commits and trees, without their files' contents,
-      # and one file checked out: seconds)
+      # (the history's commits and trees; the files' contents of this
+      # commit alone)
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           filter: blob:none
-          sparse-checkout: README.md
-          sparse-checkout-cone-mode: false
 
-      - name: Kind of run
-        id: kind
+      - name: Plan
+        id: plan
         env:
-          EVENT: ${{ github.event_name }}
           VERSION: ${{ inputs.version }}
           DRY_RUN: ${{ inputs.dry_run }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          full=false release=false number='' publish=false save=false
-          case "$GITHUB_REF" in
-            refs/heads/master|refs/heads/dev) [ "$EVENT" = push ] && full=true save=true ;;
-          esac
-          [ "$EVENT" = workflow_dispatch ] && full=true save=true
-          case "$GITHUB_REF" in
-            refs/tags/build-*)
-              number="${GITHUB_REF#refs/tags/build-}"
-              full=true release=true publish=true save=false ;;
-          esac
-          if [ "$EVENT" = workflow_dispatch ] && [ -n "$VERSION" ]; then
-            number="$VERSION"
-            release=true save=false
-            case "$GITHUB_REF" in
-              refs/heads/master|refs/heads/dev) [ "$DRY_RUN" != true ] && publish=true ;;
-            esac
-          fi
-          if [ "$release" = true ]; then
-            if ! printf '%s' "$number" | grep -qE '^[1-9][0-9]*$'; then
-              echo "::error::'$number' is not a build number"; exit 1
-            fi
-            # (the self-updaters take a release only when its number is above theirs)
-            latest="$(gh release view --json tagName --jq .tagName 2>/dev/null | sed -n 's/^build-\([0-9]*\)$/\1/p')"
-            if [ -n "$latest" ] && [ "$number" -le "$latest" ]; then
-              if [ "$publish" = true ]; then
-                echo "::error::build-$number is not above the latest release, build-$latest"; exit 1
-              fi
-              echo "::warning::build-$number is not above the latest release, build-$latest"
-            fi
-            [ "$publish" = true ] || echo "::notice::dry run: build-$number is built, signed and packaged, and nothing is published"
-          fi
-          echo "full: $full, release: $release, number: $number, publish: $publish, save: $save"
-          { echo "full=$full"; echo "release=$release"; echo "number=$number"; echo "publish=$publish"; echo "save=$save"; } >> "$GITHUB_OUTPUT"
-
-      - name: Changed files
-        id: diff
-        env:
-          EVENT: ${{ github.event_name }}
-          BEFORE: ${{ github.event.before }}
-          HEAD_MESSAGE: ${{ github.event.head_commit.message }}
-          FULL: ${{ steps.kind.outputs.full }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: |
-          build=true
-          ios=true
-          macos=true
-          base=
-          # (a branch's push; a tag's, or a run by hand, builds everything)
-          if [ "$EVENT" = push ] && [ "${GITHUB_REF#refs/heads/}" != "$GITHUB_REF" ]; then
-            if [ "$FULL" = true ]; then
-              # (all zeros: the branch's first push)
-              if [ -n "${BEFORE//0/}" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-                base="$BEFORE"
-              fi
-            else
-              # (a branch is compared with the default branch, where pull
-              # requests merge)
-              base="$(git merge-base "origin/$DEFAULT_BRANCH" "$GITHUB_SHA" 2>/dev/null)" || base=
-            fi
-          fi
-          if [ -n "$base" ] && files="$(git -c core.quotePath=false diff --name-only --no-renames "$base" "$GITHUB_SHA")"; then
-            echo "Changed from ${base:0:12}:"
-            printf '%s\n' "$files" | sed 's/^/  /'
-            if ! printf '%s\n' "$files" | grep -v -E -e '\.md$' -e '^website/' -e '^$' > /dev/null; then
-              build=false
-            fi
-            # (a branch builds iOS only when it changes what is iOS's or
-            # Apple's alone: the macOS job builds the shared Metal and Apple
-            # code, and the arm64_32 guest is linux-arm64's and Android's.
-            # macOS runners are few, so iOS's job queued behind every
-            # branch's; master always builds it)
-            if [ "$FULL" != true ] && ! printf '%s\n' "$files" | grep -E \
-                -e '^port/(ios|macos|third_party)/' -e '^tools/(ios_|macos_|build_common|ci_build)' -e '^configure\.py$' \
-                -e '^\.github/' -e '[Tt]ouch' > /dev/null; then
-              ios=false
-            fi
-            # (a branch builds macOS only when it changes what the macOS
-            # app builds beyond the arm64_32 guest, which linux-arm64 and
-            # Android build: the hosts' and the presenters' code, the Apple
-            # and Metal files, the build's tools; or when its newest commit
-            # asks with [mac]. dev and master always build it, so a merge
-            # that breaks the app shows on dev's run)
-            if [ "$FULL" != true ] &&
-                ! printf '%s\n' "$HEAD_MESSAGE" | grep -F '[mac]' > /dev/null &&
-                ! printf '%s\n' "$files" | grep -E \
-                -e '^port/(ios|macos|third_party|linux/src|linux/host|linux/include|android/host)/' \
-                -e '^tools/(ios_|macos_|build_common|ci_build|embed_assets|render_manifest)' -e '^configure\.py$' \
-                -e '^\.github/' -e '\.(m|mm|metal)$' -e '[Mm]etal' -e 'xgpu' > /dev/null; then
-              macos=false
-            fi
-          else
-            echo "No base to compare with (event $EVENT): building"
-          fi
-          echo "build: $build, ios: $ios, macos: $macos"
-          echo "build=$build" >> "$GITHUB_OUTPUT"
-          echo "ios=$ios" >> "$GITHUB_OUTPUT"
-          echo "macos=$macos" >> "$GITHUB_OUTPUT"
+          latest="$(gh release view --json tagName --jq .tagName 2>/dev/null | sed -n 's/^build-\([0-9]*\)$/\1/p')"
+          # (a pull request's newest commit can ask for a platform: [mac], [windows]...)
+          message="$(git log -1 --format=%B "$HEAD" 2>/dev/null || true)"
+          set -- --sha "$HEAD" --base "$BASE" --message "$message" --latest "${latest:-0}" --version "$VERSION"
+          [ "$DRY_RUN" = true ] && set -- "$@" --dry-run
+          python3 tools/ci_plan.py "$@" | tee -a "$GITHUB_OUTPUT"
 
   linux-arm64:
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.build != 'false' }}
+    if: ${{ !cancelled() && needs.changes.outputs.build != 'false' && needs.changes.outputs.linux_arm64 != 'false' }}
     # Ubuntu 22.04 (glibc 2.35, so the build starts on older distributions
     # too) on GitHub's 64-bit ARM runner, with its clang for the host and the
     # development files SDL3 builds with; the guest's compiler (arm64_32) is
@@ -481,27 +397,41 @@ jobs:
       # reference, the two backends' one GLSL source); and
       # display.ambient_occlusion's, the ambient light alone by it in both
       # emitters' shaders. (The tests that need no build are the tests job's.)
+      # (the plan's: a pull request's those its files touch, else every one)
       - name: Start the build's tests
         id: build-tests
+        env:
+          BUILD_TESTS: ${{ needs.changes.outputs.build_tests }}
         run: |
+          [ -n "$BUILD_TESTS" ] || BUILD_TESTS="$(python3 tools/ci_plan.py --all-build-tests)"
+          echo "the build's tests: $BUILD_TESTS"
+          serial='' light='' parallel=''
+          for test in $BUILD_TESTS; do
+            case "$test" in
+              tools/test_profile.py|tools/test_host_units.py::*) serial="$serial $test" ;;
+              tools/test_light_storage.py) light=yes ;;
+              *) parallel="$parallel $test" ;;
+            esac
+          done
           python3 -c "import sys; sys.path.insert(0, '.'); from pathlib import Path; from tools.linux_guest_build import fetch_openxr_headers; fetch_openxr_headers(Path('build/linux_x86_64/third_party/openxr'))"
           (status=0
-           python3 -m pytest -q -rs tools/test_profile.py tools/test_host_units.py::test_host_screenshot || status=1
-           (PATH="$(python3 tools/guest_toolchain.py --cache "$CI_GUEST_LLVM_CACHE"):$PATH" python3 tools/test_light_storage.py) || status=1
-           python3 -m pytest -q -rs -n auto --dist loadfile tools/test_vulkan_passes.py tools/test_host_vr_vulkan.py tools/test_vr_vehicles.py \
-             tools/test_vr_effects.py tools/test_host_texture_idle.py tools/test_hdr.py tools/test_hdr_backends.py tools/test_screen_passes_samples.py \
-             tools/test_ambient_occlusion_light.py || status=1
+           [ -z "$serial" ] || python3 -m pytest -q -rs $serial || status=1
+           [ -z "$light" ] || (PATH="$(python3 tools/guest_toolchain.py --cache "$CI_GUEST_LLVM_CACHE"):$PATH" python3 tools/test_light_storage.py) || status=1
+           [ -z "$parallel" ] || python3 -m pytest -q -rs -n auto --dist loadfile $parallel || status=1
            echo "$status" > "$RUNNER_TEMP/tests.status") < /dev/null > "$RUNNER_TEMP/tests.log" 2>&1 &
 
       # the 60/120 Hz scorecard on the debug build (tools/scorecard/ci.py):
       # StageKit, the rates compared, the known bugs caught, and the 30 Hz
       # gate against master's logs, which master's runs keep in the cache
+      # (a pull request's only when it changes C, or the scorecard itself)
       - uses: actions/cache/restore@v4
+        if: needs.changes.outputs.scorecard != 'false'
         with:
           path: .scorecard-baseline
           key: scorecard-baseline-${{ github.sha }}
           restore-keys: scorecard-baseline-
       - name: Scorecard
+        if: needs.changes.outputs.scorecard != 'false'
         env:
           SCORECARD_HOLDOUTS_JSON: ${{ secrets.SCORECARD_HOLDOUTS_JSON }}
           CI_SCORECARD_RECORD: ${{ needs.changes.outputs.save == 'true' && '1' || '' }}
@@ -623,7 +553,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: ${{ fromJSON(needs.changes.outputs.shards || '[1, 2, 3, 4]') }}
     name: tests (${{ matrix.shard }})
     steps:
       - uses: actions/checkout@v4
@@ -646,10 +576,16 @@ jobs:
           key: guest-llvm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/guest_toolchain.py') }}
 
       # with the guests' LLVM on the PATH (clang, ld.lld and LLVM's tools)
+      # (the plan's tests: a pull request's those its files touch, else
+      # every one; all of them should the changes job have failed)
       - name: Test
+        env:
+          TESTS: ${{ needs.changes.outputs.tests }}
+          SHARD_COUNT: ${{ needs.changes.outputs.shard_count || 4 }}
         run: |
+          [ -n "$TESTS" ] || TESTS="$(python3 tools/ci_plan.py --all-tests)"
           PATH="$(python3 tools/guest_toolchain.py --cache "$CI_GUEST_LLVM_CACHE"):$PATH"
-          files="$(python3 tools/ci_test_shards.py ${{ matrix.shard }} 4 tools/test_host_units.py tools/test_host_pages.py tools/test_android_elf_alignment.py tools/test_guest_image_check.py tools/test_check_host_imports.py tools/test_host_syscall.py tools/test_guest_layout.py tools/test_linux_guest_build.py tools/test_build_errors.py tools/test_guest_toolchain.py tools/test_linux_port.py tools/test_join_page.py tools/test_linux_package.py tools/test_install_layout.py tools/test_android_asm_convert.py tools/test_guest_asm_cache.py tools/test_guest_branch_relax.py tools/test_host_watch_hash.py tools/test_touch_menu.py tools/harness tools/test_controller_remap.py tools/test_controller_remap_context.py tools/test_net_compare.py tools/test_loading_ring.py tools/test_preparation.py tools/test_progress_ownership.py tools/test_ci_test_shards.py tools/test_supersampling.py tools/test_android_resolution.py tools/test_screen_passes_samples.py tools/test_notes.py tools/test_menu_look.py tools/test_mcc_local_package.py tools/test_mcc_server.py tools/test_mcc_share_menu.py tools/test_mcc_resource_selection.py tools/test_mcc_identity_candidates.py tools/test_mcc_cache_format.py tools/test_mcc_projectiles.py tools/test_mcc_tag_validation.py tools/test_mcc_share.py tools/test_mcc_share_rules.py tools/test_mcc_share_stage.py tools/test_mcc_share_storage.py tools/test_mcc_share_metadata.py tools/test_mcc_load_network.py tools/test_checkpoint_epoch.py tools/test_coop_checkpoint.py tools/test_coop_checkpoint_recovery.py tools/test_mcc_checkpoint.py tools/test_mcc_keyboard_glyphs.py tools/test_controller_buttons.py tools/test_hud_button_style.py tools/test_hud_corrections.py)"
+          files="$(python3 tools/ci_test_shards.py ${{ matrix.shard }} "$SHARD_COUNT" $TESTS)"
           python3 -m pytest -q -rs -n auto --dist loadfile --durations=10 -o junit_family=xunit1 --junitxml "$RUNNER_TEMP/junit.xml" $files
 
       - uses: actions/upload-artifact@v4
@@ -661,7 +597,7 @@ jobs:
 
   android:
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.build != 'false' }}
+    if: ${{ !cancelled() && needs.changes.outputs.build != 'false' && needs.changes.outputs.android != 'false' }}
     # The runner image has the Android SDK and NDK, a JDK and CMake; the
     # guest's compiler is the pinned LLVM configure.py downloads.
     runs-on: ubuntu-24.04
@@ -825,7 +761,7 @@ jobs:
 
   windows:
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.build != 'false' }}
+    if: ${{ !cancelled() && needs.changes.outputs.build != 'false' && needs.changes.outputs.windows != 'false' }}
     # The runner image has LLVM, Python, Git and Visual Studio's x64 libraries
     # and Windows SDK; the guest's compiler is the pinned LLVM configure.py
     # downloads (its Windows archive), the host's the image's clang.
@@ -1535,6 +1471,22 @@ jobs:
           while read -r tag; do
             gh release delete "$tag" --cleanup-tag --yes
           done
+
+  check:
+    # The check branch protection requires: every job the plan ran passed
+    # (a job the plan skipped counts as passed; one that failed, or was
+    # cancelled, does not).
+    needs: [changes, linux-x86_64, tests, linux-arm64, android, windows, macos, ios]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every job passed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          printf '%s' "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          ! printf '%s' "$RESULTS" | jq -e 'to_entries | any(.value.result != "success" and .value.result != "skipped")' > /dev/null
 
   ci-broken:
     # A main branch's full run (a push to master, or dev until it goes): a
