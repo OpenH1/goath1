@@ -349,7 +349,8 @@ static void touch_used(void)
 /* Each controller's buttons, before the on-screen keyboard consumes them. */
 static unsigned long chat_pad[PORT_COUNT], chat_physical_pad[PORT_COUNT];
 
-static void chat_pad_record(short port, const XINPUT_GAMEPAD *pad)
+/* a controller's buttons as the chat's (HALO_CHAT_PAD_*) */
+static unsigned long chat_pad_bits(const XINPUT_GAMEPAD *pad)
 {
 	/* (an analog button pressed half way; the stick most of the way) */
 	enum { PRESSED = 0x80, PUSHED = 22000 };
@@ -368,7 +369,12 @@ static void chat_pad_record(short port, const XINPUT_GAMEPAD *pad)
 	if (pad->sThumbLY < -PUSHED) buttons |= 1UL << HALO_CHAT_PAD_STICK_DOWN;
 	if (pad->sThumbLX < -PUSHED) buttons |= 1UL << HALO_CHAT_PAD_STICK_LEFT;
 	if (pad->sThumbLX > PUSHED) buttons |= 1UL << HALO_CHAT_PAD_STICK_RIGHT;
-	chat_pad[port] = buttons;
+	return buttons;
+}
+
+static void chat_pad_record(short port, const XINPUT_GAMEPAD *pad)
+{
+	chat_pad[port] = chat_pad_bits(pad);
 }
 
 extern short network_chat_controller(void);
@@ -2117,6 +2123,9 @@ second (tools/scorecard). An event is "<start>[-<end>] <action>":
 An action after "p<n> " is played on controller n (2 to 4: a split screen
 player's, connected for the script while it has any) rather than the
 first: its buttons, D-pad and sticks ("4 p2 start; 5 p2 down; 6 p2 jump").
+A script's controller is read as a connected one is (the first's too): its
+presses its own (test_script_pressed), which the D-pad's pings and Spartan
+link take as a real controller's.
 
 A time on the 30 Hz grid (a multiple of 1/30) falls on a step at every
 rate. */
@@ -2148,6 +2157,10 @@ static int test_script_count;
 static int test_script_on;
 /* the ports past the first that the script plays (p<n>), a bit each */
 static unsigned int test_script_ports;
+/* the buttons and D-pad the script presses on each controller at this
+reading: a controller's own presses (chat_physical_pad), as a connected
+one's are, for the D-pad's pings and Spartan link */
+static XINPUT_GAMEPAD test_script_pressed[PORT_COUNT];
 /* the script plays a controller's gyroscope (gyro_test_feed) */
 static int test_script_gyro;
 
@@ -2272,8 +2285,10 @@ static void test_script_port_gamepad(int port, XINPUT_GAMEPAD *pad)
 	/* (a hair before a step's time is that step's: 1/30 in a double is not
 	exact) */
 	double t = sim_trace_scenario_seconds() + 1e-6;
+	XINPUT_GAMEPAD *pressed = &test_script_pressed[port];
 	int index;
 
+	memset(pressed, 0, sizeof(*pressed));
 	if (t < 0.0)
 		return;
 	for (index = 0; index < test_script_count; index++)
@@ -2308,8 +2323,9 @@ static void test_script_port_gamepad(int port, XINPUT_GAMEPAD *pad)
 			continue;
 		}
 		if (event->analog >= 0)
-			pad->bAnalogButtons[event->analog] = 255;
+			pad->bAnalogButtons[event->analog] = pressed->bAnalogButtons[event->analog] = 255;
 		pad->wButtons |= (WORD)event->digital;
+		pressed->wButtons |= (WORD)event->digital;
 		if (event->stick == 1)
 		{
 			pad->sThumbLX = test_script_axis(event->x);
@@ -3641,6 +3657,33 @@ static unsigned int remap_reserved(int port)
 	return reserved;
 }
 
+/* a split screen player's controller (a port past the first): physical, a
+connected one's reading, or with none the test script's (p<n>), read the
+same way, its presses the controller's own; and what reads it on the way,
+as the first's: the scoreboard, the chat's on-screen keyboard, the D-pad's
+pings and Spartan link */
+static void split_screen_pad_read(int port, XINPUT_GAMEPAD *pad, const XINPUT_GAMEPAD *physical,
+	unsigned int reserved)
+{
+	struct platform_input_state input;
+
+	if (physical)
+		*pad = *physical;
+	else
+	{
+		test_script_port_gamepad(port, pad);
+		chat_physical_pad[port] = chat_pad_bits(&test_script_pressed[port]);
+	}
+	/* (a split screen player's scoreboard, as port 0's) */
+	platform_input_read(&input, FALSE);
+	scoreboard_pad_read(port, pad, 0, scoreboard_pad_port_hold(port, input.menus));
+	/* (the chat's on-screen keyboard, when this player opened it) */
+	chat_pad_record((short)port, pad);
+	chat_pad_hold_over((short)port, pad);
+	ping_pad_read(port, pad, reserved);
+	spartan_link_pad_read(port, pad, reserved);
+}
+
 /* reads a controller's state; for port 0 the keyboard, mouse, debug input
 and touchscreen are merged into the first gamepad's; runs on the game's main
 thread (touch_input_gamepad relies on it); returns ERROR_SUCCESS or
@@ -3656,6 +3699,7 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 	XINPUT_GAMEPAD physical;
 	struct gamepad_taps taps;
 	int captured;
+	int connected;
 	unsigned int reserved;
 
 	memset(state, 0, sizeof(*state));
@@ -3678,6 +3722,13 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 	controller_remap_reserve((short)port, reserved);
 	controller_remap_paddles((short)port, sdl_gamepad_paddles(port_gamepad(gamepads, count, port), &taps));
 	captured = controller_remap_input((short)port, &physical, port_gamepad(gamepads, count, port) != NULL);
+	/* (a split screen player's controller: in the headset every gamepad is
+	the first player's) */
+#ifdef HALO_VR
+	connected = !halo_vr_running() && port_gamepad(gamepads, count, port) != NULL;
+#else
+	connected = port_gamepad(gamepads, count, port) != NULL;
+#endif
 	if (port == 0)
 	{
 		struct platform_input_state input;
@@ -3753,7 +3804,11 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 		halo_vr_gamepad(&state->Gamepad);
 #endif
 		substep_frame_devices = state->Gamepad;
+		memset(&test_script_pressed[0], 0, sizeof(test_script_pressed[0]));
 		test_input_gamepad(&state->Gamepad);
+		/* (the script's presses on the first controller are a controller's
+		own, as a connected one's: its D-pad's pings and Spartan link) */
+		chat_physical_pad[0] |= chat_pad_bits(&test_script_pressed[0]);
 		substep_frame_reading = state->Gamepad;
 		touch_input_gamepad(&state->Gamepad);
 		/* (debug.latency_log: when the input was read) */
@@ -3809,27 +3864,8 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 			pthread_mutex_unlock(&mouse_lock);
 		}
 	}
-#ifdef HALO_VR
-	else if (!halo_vr_running() && port_gamepad(gamepads, count, port))
-#else
-	else if (port_gamepad(gamepads, count, port))
-#endif
-	{
-		struct platform_input_state input;
-
-		state->Gamepad = physical;
-		/* (a split screen player's scoreboard, as port 0's) */
-		platform_input_read(&input, FALSE);
-		scoreboard_pad_read(port, &state->Gamepad, 0, scoreboard_pad_port_hold(port, input.menus));
-		/* (the chat's on-screen keyboard, when this player opened it) */
-		chat_pad_record((short)port, &state->Gamepad);
-		chat_pad_hold_over((short)port, &state->Gamepad);
-		ping_pad_read(port, &state->Gamepad, reserved);
-		spartan_link_pad_read(port, &state->Gamepad, reserved);
-	}
-	/* (a controller the test script plays: p<n>) */
-	else if (test_script_ports & (1U << port))
-		test_script_port_gamepad(port, &state->Gamepad);
+	else if (connected || (test_script_ports & (1U << port)))
+		split_screen_pad_read(port, &state->Gamepad, connected ? &physical : NULL, reserved);
 	/* (or the menu script: p<n>:) */
 	else if (test_input_menu_ports & (1U << port))
 		test_input_menu_gamepad(&state->Gamepad, port);
