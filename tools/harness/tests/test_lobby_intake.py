@@ -21,14 +21,18 @@ def size(source, name):
 def generated(fault=None):
     source = read('port/linux/src/p2p_lobby.c')
     headers = read('port/linux/src/p2p_internal.h') + read('port/linux/src/p2p.h')
-    version = re.search(r"#define HALO_PORT_NETWORK_VERSION (\d+)", read('port/linux/include/halo_port_limits.h'))
+    limits = read('port/linux/include/halo_port_limits.h')
     config = ''.join(f'#define {name} {size(headers, name)}\n' for name in SIZES)
-    config += f'#define HALO_PORT_NETWORK_VERSION {version.group(1)}\n'
+    # (a Legacy game's network version, a Standard game's protocol version as listings advertise it)
+    for name in ('HALO_PORT_NETWORK_VERSION', 'HALO_PORT_STANDARD_NETWORK_VERSION', 'HALO_PORT_STANDARD_VERSION_BIT',
+                 'HALO_PORT_STANDARD_ADVERTISED_VERSION'):
+        config += re.search(r"^#define " + name + r" .*$", limits, re.M).group(0) + '\n'
     # (the file's constants: the listing's format and sizes, the windows and the queue's places)
     config += re.search(r"^enum\n\{\n\tLISTING_FORMAT.*?^\};\n", source, re.M | re.S).group(0)
     code = '\n'.join([structure(source, 'listing')] +
                      [function(source, name) for name in ('sanitize', 'get_long', 'get_text', 'listing_read',
-                                                          'listing_current', 'listing_wanted')])
+                                                          'listing_current', 'version_ours', 'version_newer',
+                                                          'listing_wanted')])
     if fault:
         code = mutated(code, *fault)
     return (('config.inc', config), ('under_test.inc', code))
@@ -44,7 +48,7 @@ def test_case(case):
     # every listing of this version let in, however old
     ('return listing_current(&listing, retained);', 'return 1;'),
     # every version let in
-    ('if (listing.version != HALO_PORT_NETWORK_VERSION)', 'if (0)'),
+    ('if (!version_ours(listing.version))', 'if (0)'),
 ])
 def test_negative_control(fault):
     status, output = run(build('lobby_intake', generated(fault)), 'burst')
