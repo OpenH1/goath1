@@ -10,12 +10,16 @@
 # in a systemd user service, goath1-runner@<name>, in the slice goath1-ci (the machine's limits: install.sh).
 #   host.sh rootfs <id>            the image (docker export, on stdin) unpacked as the next rootfs
 #   host.sh runner <version> <sha> the runner's release downloaded and checked
-#   host.sh add <name> <version>   a runner unpacked and registered (its registration token on stdin)
+#   host.sh add <name> <version> <label>  a runner unpacked and registered (its registration token on stdin):
+#                                  goath1 (the build and test jobs) or goath1-plan (the changes job alone)
 #   host.sh remove <name>          a runner unregistered and deleted (its removal token on stdin)
 #   host.sh list                   the runners' names
 #   host.sh tidy                   the previous rootfs deleted, once the runners restarted
 #   host.sh run <name>             the runner, in its sandbox (the service's command)
 #   host.sh guard                  on the 5900X: runners stopped while a game plays, started again after
+#   host.sh status                 the number of idle goath1 runners (what the changes job asks, through serve)
+#   host.sh serve <address> [linux:<host>|windows:<host>...]  on omarchy: every machine's free runners, as JSON
+#                                  over HTTP on <address>:8790 (status.py)
 set -euo pipefail
 ci=$HOME/goat-rig/ci
 rootfs=$ci/rootfs
@@ -81,13 +85,14 @@ case ${1:-} in
     fi
     ;;
   add)
-    name=${2:?name} version=${3:?version}
+    name=${2:?name} version=${3:?version} label=${4:-goath1}
     dir=$ci/runners/$name
     mkdir -p "$dir"
     [ -x "$dir/config.sh" ] || tar -C "$dir" -xzf "$ci/actions-runner-linux-x64-$version.tar.gz"
+    echo "$label" > "$dir/.label"
     # (the token read from stdin inside the sandbox: never on a command line or in a file)
     sandbox "$name" /bin/bash -c 'IFS= read -r token; ACTIONS_RUNNER_INPUT_TOKEN=$token exec ./config.sh \
-      --unattended --replace --url "https://github.com/$1" --name "$2" --labels goath1 --work _work' _ "$repo" "$name"
+      --unattended --replace --url "https://github.com/$1" --name "$2" --labels "$3" --work _work' _ "$repo" "$name" "$label"
     ;;
   remove)
     name=${2:?name}
@@ -121,5 +126,17 @@ case ${1:-} in
       fi
     done
     ;;
-  *) sed -n '2,21p' "$0" >&2; exit 2 ;;
+  status)
+    idle=0
+    for dir in "$ci"/runners/*/; do
+      name=$(basename "$dir")
+      [ -f "$dir/.runner" ] && [ "$(cat "$dir/.label" 2>/dev/null || echo goath1)" = goath1 ] || continue
+      if systemctl --user is-active -q "goath1-runner@$name.service" && ! busy "$name"; then idle=$((idle + 1)); fi
+    done
+    echo "$idle"
+    ;;
+  serve)
+    exec python3 "$(dirname "$0")/status.py" "${2:?address}" "$0" "${@:3}"
+    ;;
+  *) sed -n '2,25p' "$0" >&2; exit 2 ;;
 esac

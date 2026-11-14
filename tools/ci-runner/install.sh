@@ -1,18 +1,20 @@
 #!/bin/bash
-# tools/ci-runner/install.sh <omarchy|5900x> [count]: GitHub Actions runners of OpenH1/goath1 on a test machine
+# tools/ci-runner/install.sh <omarchy|5900x> [count] [plan]: GitHub Actions runners of OpenH1/goath1 on a test machine:
+# count runners for the build and test jobs (label goath1), plan for the changes job alone (goath1-plan, so that it
+# never waits behind a build), and the status server the changes job asks which are free (status.py)
 # (<name>.fabric as $GOAT_RIG_USER, the machines' user), from a checkout with gh signed in as a repository admin. No root needed: each runner
 # runs sandboxed in a systemd user service (tools/ci-runner/host.sh). Needs goat-rig (tools/rig/install.sh) for
 # its compile cache, and omarchy's docker to build the jobs' file system. Run it again to update the kit or the
-# image (when the machine is idle: its runners restart); count 0 removes the machine's runners.
+# image (when the machine is idle: its runners restart); count and plan 0 remove the machine's runners.
 # The workflow sends only trusted accounts' jobs here (build.yml, changes job's Pick the runner).
 set -euo pipefail
-host=${1:?usage: tools/ci-runner/install.sh <omarchy|5900x> [count]}
+host=${1:?usage: tools/ci-runner/install.sh <omarchy|5900x> [count] [plan]}
 case $host in
   # (the 5900X is for games first: 20 of its 24 cores, idle priority, and its runners stop while a game plays)
-  omarchy) count=${2:-1} nice=10 slice='CPUWeight=50
+  omarchy) count=${2:-5} plan=${3:-2} nice=10 slice='CPUWeight=50
 MemoryHigh=36G
 MemoryMax=40G' ;;
-  5900x) count=${2:-1} nice=19 slice='CPUWeight=idle
+  5900x) count=${2:-1} plan=${3:-0} nice=19 slice='CPUWeight=idle
 AllowedCPUs=4-23
 IOWeight=10
 MemoryHigh=12G
@@ -30,7 +32,7 @@ runner_sha256=baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c40
 
 # the kit (the 5900X's login shell is fish: plain commands only)
 ssh "$target" 'mkdir -p goat-rig/ci/bin goat-rig/ci/runners .config/systemd/user'
-COPYFILE_DISABLE=1 tar --no-xattrs -C "$root/tools/ci-runner" -cf - host.sh | ssh "$target" 'tar -C goat-rig/ci/bin -xf -'
+COPYFILE_DISABLE=1 tar --no-xattrs -C "$root/tools/ci-runner" -cf - host.sh status.py | ssh "$target" 'tar -C goat-rig/ci/bin -xf -'
 
 # the jobs' file system: .github/ci-image's image, built on the builder when its files change (the key)
 start=start
@@ -85,23 +87,48 @@ AccuracySec=2s
 WantedBy=timers.target
 EOF
 fi
+# (omarchy's alone, on its fabric address, for every machine: the others' firewalls keep the port closed; the
+# repository variable CI_RUNNER_STATUS is its address)
+if [ "$host" = omarchy ]; then
+  address=$(ssh "$target" 'ip -4 -o addr show' | awk '$4 ~ /^10\.70\./ { sub(/\/.*/, "", $4); print $4; exit }')
+  ssh "$target" 'cat > .config/systemd/user/goath1-ci-status.service' <<EOF
+[Unit]
+Description=Which of OpenH1/goath1's runners are free (tools/ci-runner/status.py)
+[Service]
+ExecStart=%h/goat-rig/ci/bin/host.sh serve $address linux:5900x.fabric windows:bosgame.fabric
+Restart=always
+RestartSec=10
+[Install]
+WantedBy=default.target
+EOF
+else
+  ssh "$target" 'systemctl --user disable --now goath1-ci-status.service 2>/dev/null; rm -f .config/systemd/user/goath1-ci-status.service'
+fi
 ssh "$target" 'systemctl --user daemon-reload'
 
-# the runners: <host>-1 to <host>-<count> (registration tokens last an hour, and go on stdin only)
-for i in $(seq 1 "$count"); do
-  name=$host-$i
+# the runners: <host>-1 to <host>-<count>, <host>-plan-1 to <host>-plan-<plan> (registration tokens last an hour,
+# and go on stdin only)
+wanted=" "
+names=()  # (not seq: macOS's counts down from 1 to 0)
+for ((i = 1; i <= count; i++)); do names+=("$i"); done
+for ((i = 1; i <= plan; i++)); do names+=("plan-$i"); done
+for i in ${names[@]+"${names[@]}"}; do
+  name=$host-$i label=goath1
+  case $i in plan-*) label=goath1-plan ;; esac
+  wanted="$wanted$name "
   if ! ssh "$target" "test -f goat-rig/ci/runners/$name/.runner"; then
     gh api -X POST "repos/$repo/actions/runners/registration-token" --jq .token |
-      ssh "$target" "goat-rig/ci/bin/host.sh add $name $runner_version"
+      ssh "$target" "goat-rig/ci/bin/host.sh add $name $runner_version $label"
   fi
   ssh "$target" "systemctl --user enable goath1-runner@$name.service && systemctl --user $start goath1-runner@$name.service"
 done
+[ "$host" != omarchy ] || ssh "$target" 'systemctl --user enable goath1-ci-status.service && systemctl --user restart goath1-ci-status.service'
 for name in $(ssh "$target" 'goat-rig/ci/bin/host.sh list'); do
-  [ "${name#"$host"-}" -le "$count" ] 2>/dev/null && continue
+  case $wanted in *" $name "*) continue ;; esac
   echo "removing $name"
   gh api -X POST "repos/$repo/actions/runners/remove-token" --jq .token |
     ssh "$target" "goat-rig/ci/bin/host.sh remove $name"
 done
 [ "$host" != 5900x ] || ssh "$target" 'systemctl --user enable --now goath1-runner-guard.timer'
 ssh "$target" 'goat-rig/ci/bin/host.sh tidy'
-echo "$host: $count runner(s); gh api repos/$repo/actions/runners lists them"
+echo "$host: $count runner(s) and $plan for the plan; gh api repos/$repo/actions/runners lists them"
