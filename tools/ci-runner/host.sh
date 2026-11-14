@@ -57,7 +57,7 @@ case ${1:-} in
   rootfs)
     id=${2:?image id}
     rm -rf "$ci/rootfs.new" && mkdir -p "$ci/rootfs.new"
-    tar -C "$ci/rootfs.new" --no-same-owner --exclude='dev/*' --exclude='proc/*' --exclude='sys/*' -xf -
+    tar -C "$ci/rootfs.new" --no-same-owner --anchored --exclude='dev/*' --exclude='proc/*' --exclude='sys/*' -xf -
     mkdir -p "$ci/rootfs.new"/{runner,goat-rig/ccache,tmp,run}
     : > "$ci/rootfs.new/etc/resolv.conf"
     printf '127.0.0.1 localhost goath1-ci\n::1 localhost ip6-localhost ip6-loopback\n' > "$ci/rootfs.new/etc/hosts"

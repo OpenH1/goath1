@@ -33,10 +33,12 @@ ssh "$target" 'mkdir -p goat-rig/ci/bin goat-rig/ci/runners .config/systemd/user
 COPYFILE_DISABLE=1 tar --no-xattrs -C "$root/tools/ci-runner" -cf - host.sh | ssh "$target" 'tar -C goat-rig/ci/bin -xf -'
 
 # the jobs' file system: .github/ci-image's image, built on the builder
+start=start
 image=$(COPYFILE_DISABLE=1 tar --no-xattrs -C "$root/.github/ci-image" -cf - . |
   ssh "$builder" 'docker build -q --pull --build-arg ARCH=x86_64 -t goath1-ci-rootfs -')
 if [ "$(ssh "$target" 'cat goat-rig/ci/rootfs/.image-id 2>/dev/null' || true)" != "$image" ]; then
   echo "unpacking $image on $host"
+  start=restart
   ssh "$builder" "cid=\$(docker create $image) && docker export \$cid; docker rm \$cid > /dev/null" |
     ssh "$target" "goat-rig/ci/bin/host.sh rootfs $image"
 fi
@@ -91,7 +93,7 @@ for i in $(seq 1 "$count"); do
     gh api -X POST "repos/$repo/actions/runners/registration-token" --jq .token |
       ssh "$target" "goat-rig/ci/bin/host.sh add $name $runner_version"
   fi
-  ssh "$target" "systemctl --user enable goath1-runner@$name.service && systemctl --user restart goath1-runner@$name.service"
+  ssh "$target" "systemctl --user enable goath1-runner@$name.service && systemctl --user $start goath1-runner@$name.service"
 done
 for name in $(ssh "$target" 'ls goat-rig/ci/runners'); do
   [ "${name#"$host"-}" -le "$count" ] 2>/dev/null && continue
