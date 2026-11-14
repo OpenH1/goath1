@@ -86,6 +86,10 @@ static boolean ui_widget_load_by_name_or_tag(char const *name, long tag, void *p
 #define ui_widget_delete(widget) ((void)0)
 #define ui_widgets_close_all() ((void)0)
 #define ui_widgets_active() FALSE
+/* not an MCC map, whose own pause menus the port opens (mcc_pause_runtime.c) */
+#define mcc_pause_runtime_active() FALSE
+#define mcc_pause_runtime_screen(count, first) NONE
+#define ui_widgets_close_all_for_local_player(controller) ((void)0)
 
 static void error(int level, char const *text, ...) { errors++; }
 
