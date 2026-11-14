@@ -142,12 +142,17 @@ case "${1:-}" in
         exit 0
     fi
     git -C "$ROOT" add -A -- "${GENERATED_PATHS[@]}"
-    if git -C "$ROOT" diff --cached --quiet -- "${GENERATED_PATHS[@]}"; then
+    if git -C "$ROOT" diff --cached --quiet HEAD -- "${GENERATED_PATHS[@]}"; then
         echo "The merged menus were already what the generator writes."
-    else
-        git -C "$ROOT" commit -q -m "Write the menus again after the merge" -- "${GENERATED_PATHS[@]}"
-        echo "Committed the menus written again: $(git -C "$ROOT" log -1 --format='%h %s')"
+        exit 0
     fi
+    # (the merge commit made again with them, by plumbing: git still counts
+    # the merge as under way while its hook runs, and refuses an amend)
+    merge=$(git -C "$ROOT" rev-parse HEAD)
+    commit=$(git -C "$ROOT" log -1 --format=%B HEAD |
+        git -C "$ROOT" commit-tree "$(git -C "$ROOT" write-tree)" -p HEAD^1 -p HEAD^2)
+    git -C "$ROOT" update-ref -m "menus_regen.sh --after-merge: the menus written again" HEAD "$commit" "$merge"
+    echo "The merge commit now has the menus written again: $(git -C "$ROOT" log -1 --format='%h %s')"
     exit 0
     ;;
 --check)
