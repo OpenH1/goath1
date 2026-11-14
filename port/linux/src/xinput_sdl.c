@@ -133,12 +133,6 @@ static struct controller controllers[PORT_COUNT];
 static struct controller keyboard_device;
 static DWORD reported_gamepads = 0;
 static BOOL reported_keyboard = FALSE;
-/* the 4-way join screen's SPACE (menu_functions.c's join4): the keyboard
-plays player 1 alone, and the gamepad that shared port 0 with it takes the
-first port no gamepad has (port_gamepad), asked for and in effect */
-static BOOL keyboard_alone_wanted, keyboard_alone;
-/* the keyboard's SPACE held, as the menus read it (keyboard_gamepad) */
-static BOOL keyboard_join_down;
 
 static BOOL gamepad_idle(SDL_Gamepad *gamepad);
 
@@ -1018,8 +1012,7 @@ static void keyboard_gamepad(const struct platform_input_state *input, XINPUT_GA
 	would choose, as A does. The Back button comes as menu_back, the menus'
 	pointer taking the mouse's buttons (sdl_platform.c); with none, Android's,
 	as X1) */
-	keyboard_join_down = k[SDL_SCANCODE_SPACE];
-	pad->bAnalogButtons[XINPUT_GAMEPAD_A] |= analog(keyboard_join_down || k[SDL_SCANCODE_RETURN] ||
+	pad->bAnalogButtons[XINPUT_GAMEPAD_A] |= analog(k[SDL_SCANCODE_SPACE] || k[SDL_SCANCODE_RETURN] ||
 		k[SDL_SCANCODE_KP_ENTER]);
 	pad->bAnalogButtons[XINPUT_GAMEPAD_B] |= analog(k[SDL_SCANCODE_ESCAPE] ||
 		(!(settings && settings_keys_search) && k[SDL_SCANCODE_BACKSPACE]) || input->menu_back ||
@@ -2848,27 +2841,12 @@ static SDL_Gamepad *port_gamepad(SDL_Gamepad *gamepads[PORT_COUNT], int count, i
 		if (lone_gamepad_split)
 			return port == 1 ? gamepads[0] : NULL;
 	}
-	/* (back to one player: the keyboard shares port 0 again) */
-	if (!split_players)
-		keyboard_alone_wanted = FALSE;
-	if (keyboard_alone != keyboard_alone_wanted && count > 1 && gamepad_idle(gamepads[0]))
-		keyboard_alone = keyboard_alone_wanted;
-	if (keyboard_alone && count > 1 && count < PORT_COUNT)
-		return port == 0 ? NULL : port == count ? gamepads[0] : port < count ? gamepads[port] : NULL;
 	return port < count ? gamepads[port] : NULL;
 }
 
-unsigned char halo_keyboard_join_held(void)
-{
-	return keyboard_join_down;
-}
 
 
 
-void halo_keyboard_alone_set(unsigned char alone)
-{
-	keyboard_alone_wanted = alone != 0;
-}
 
 /* whether port 0 (player 1) is the keyboard's and a gamepad's */
 unsigned char halo_keyboard_shares_gamepad(void)
