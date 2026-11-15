@@ -80,6 +80,7 @@ symbols in this file:
 #include "interface/hud_draw.h"
 #include "interface/hud.h"
 #include "interface/motion_sensor.h"
+#include "royale_hud.h" /* port: port/linux/game/royale_hud.c */
 #include "interface/hud_unit.h"
 #include "interface/unit_hud_interface_definition.h"
 #include "render/render.h"
@@ -1158,7 +1159,9 @@ void hud_render_unit_interface(
 					!TEST_FLAG(
 						unit_hud_globals->script_flags,
 						_hud_panel_motion_sensor_dont_show_bit) &&
-					game_engine_hud_draw_motion_sensor(player_index))
+					(game_engine_hud_draw_motion_sensor(player_index) ||
+						/* port: Royale's, its squadmate alone on it (royale_hud.c) */
+						royale_hud_motion_sensor_shown(player_index)))
 				{
 					struct hud_absolute_placement_definition absolute_placement;
 					short draw_flags = 0;

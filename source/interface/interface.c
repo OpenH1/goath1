@@ -112,6 +112,7 @@ symbols in this file:
 #include "stats_log.h" /* port: port/linux/game/stats_log.c */
 #include "frame_rate_display.h" /* port: port/linux/game/frame_rate_display.c */
 #include "touch_cinematic.h" /* port: port/linux/game/touch_cinematic.c */
+#include "royale_cinema.h" /* port: port/linux/game/royale_cinema.c */
 
 /* ---------- constants */
 
@@ -470,7 +471,8 @@ static long interface_get_weapon_hud_index(
 	if (player_index != NONE)
 	{
 		struct player_datum *player = player_get(player_index);
-		director_perspective perspective = director_get_perspective(render.local_player_index);
+		director_perspective perspective = (director_perspective)royale_cinema_hud_perspective(render.local_player_index,
+		(short)director_get_perspective(render.local_player_index)); /* port: royale_cinema.c */
 
 		if (hud_scripted_globals &&
 			hud_scripted_globals->show_hud &&

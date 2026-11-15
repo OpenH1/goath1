@@ -95,6 +95,8 @@ machine (their datum identifiers need not be).
 #include "network_markers.h"
 #include "network_shield_effects.h"
 #include "network_substeps.h"
+#include "bots.h"
+#include "royale.h"
 #include "sim_rate.h"
 #include "network_standard.h"
 #include "network_riding_map.h"
@@ -130,6 +132,7 @@ void network_player_show_pickup(long player_index, short kind, long definition_i
 /* game_engine.c's */
 long game_engine_write_network_state(byte *buffer, long size);
 void game_engine_read_network_state(byte const *buffer, long size);
+long game_engine_network_state_clock_size(void);
 /* physics.c's (world units a tick, each tick) */
 extern real global_gravity;
 /* network_server_manager.c's, cseries_windows.c's, console.c's, p2p.c's */
@@ -215,6 +218,10 @@ enum
 	(the king's and the ball's scores change every tick), but the game's end
 	at once */
 	GAME_STATE_MINIMUM_TICKS = 2 * GAME_STATE_INTERVAL_TICKS,
+	/* ... and a state ending in a clock every machine advances itself
+	(game_engine_network_state_clock_size: Royale's) at least this often,
+	its clock the only change: a correction */
+	GAME_STATE_CLOCK_REFRESH_TICKS = 3 * TICKS_PER_SECOND,
 	MAXIMUM_GAME_STATE_SIZE = 0xF00,
 	MAXIMUM_STATISTICS_PER_MESSAGE = 64,
 	/* the players' pings sent, for the scoreboard */
@@ -1052,6 +1059,18 @@ HOST_SENDER) since the tests last asked (network_distributed_batch_bytes) */
 static long distributed_batch_bytes[MAXIMUM_SENDERS];
 /* ... and how many datagrams (network_distributed_batch_datagrams) */
 static long distributed_batch_datagrams[MAXIMUM_SENDERS];
+/* ... and the bytes of each type of message to the clients
+(network_distributed_type_bytes) */
+static long distributed_type_bytes[256];
+
+/* the bytes each type of message took in the datagrams to the clients
+since the tests last asked, by type */
+void network_distributed_type_bytes(
+	long bytes[256])
+{
+	csmemcpy(bytes, distributed_type_bytes, sizeof(distributed_type_bytes));
+	csmemset(distributed_type_bytes, 0, sizeof(distributed_type_bytes));
+}
 
 void network_distributed_batch_datagrams(
 	long *to_host,
@@ -1520,6 +1539,8 @@ static void distributed_batch_append(
 		sizeof(*header) - sizeof(message_header));
 	csmemcpy(batch->data + batch->size + BATCH_MESSAGE_OVERHEAD, entries, entries_size);
 	batch->size += (word)(BATCH_MESSAGE_OVERHEAD + entries_size);
+	if (sender != HOST_SENDER)
+		distributed_type_bytes[header->type] += BATCH_MESSAGE_OVERHEAD + entries_size;
 }
 
 /* where a message's bytes past its message header go: a machine's batch,
@@ -5756,6 +5777,22 @@ static word distributed_substep_state_read(
 	return (word)(cursor - buffer);
 }
 
+/* (the host) whether a player is a bot the host plays (bots.c): its
+controls hold through its tick's sub-steps, which every OpenH1 machine
+steps alike from the tick's input, so its state of a sub-step tells a
+client nothing its tick's state does not (NETCODE.md's "Bots in network
+games"); a game of many bots near a client spent most of its bytes on them.
+Royale's games alone for now, the big ones (royale.c), every other game's
+bots sent as they were */
+static boolean distributed_player_is_bot(
+	short player_index)
+{
+	struct player_datum const *player = distributed_player(player_index);
+
+	return royale_active() && player && player->local_player_index == NONE &&
+		bots_machine_is_bot(player->network_player_data.machine_index);
+}
+
 /* (the host) whether a player's state of a sub-step goes to a client: one
 its last tick's plan sends the client every tick or every second tick (not
 its own), alive and on foot, whose sub-steps the host runs from their
@@ -5814,8 +5851,11 @@ void network_distributed_host_substep_ended(
 				byte entry[1 + DISTRIBUTED_UNIT_STATE_MAXIMUM_SIZE];
 				byte period = distributed_forward_periods[machine_index][player_index];
 
-				if (!period || period > 2 || !distributed_player(player_index))
+				if (!period || period > 2 || !distributed_player(player_index) ||
+					distributed_player_is_bot(player_index))
+				{
 					continue;
+				}
 				/* (as of the end of the tick it is in: the client's tick it
 				runs of a client's player, as the tick's own state names) */
 				if (!made[player_index])
@@ -6699,7 +6739,9 @@ static void distributed_send_game_state(
 		byte data[MAXIMUM_GAME_STATE_SIZE];
 	} message;
 	long size = game_engine_write_network_state(message.data, sizeof(message.data));
+	long clock_size = game_engine_network_state_clock_size();
 	unsigned long checksum;
+	boolean clock_due;
 
 	if (size <= 0)
 		return;
@@ -6709,8 +6751,13 @@ static void distributed_send_game_state(
 			(word)(sizeof(message.header) + size));
 		return;
 	}
-	checksum = distributed_checksum(message.data, size);
-	if (distributed_game_state_time != NONE &&
+	/* (a clock at the end is no change: it goes with the next change, or
+	every GAME_STATE_CLOCK_REFRESH_TICKS) */
+	clock_size = PIN(clock_size, 0, size);
+	checksum = distributed_checksum(message.data, size - clock_size);
+	clock_due = clock_size > 0 && distributed_game_state_time != NONE &&
+		game_time_get() - distributed_game_state_time >= GAME_STATE_CLOCK_REFRESH_TICKS;
+	if (distributed_game_state_time != NONE && !clock_due &&
 		(checksum == distributed_game_state_checksum ||
 			(game_time_get() - distributed_game_state_time < GAME_STATE_MINIMUM_TICKS &&
 				(size < (long)sizeof(long) ||

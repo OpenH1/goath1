@@ -108,6 +108,8 @@ symbols in this file:
 #include "units/unit_definitions.h"
 #include "units/units.h"
 #include "units/vehicles.h"
+#include "royale_hud.h" /* port: port/linux/game/royale_hud.c */
+#include "royale_cinema.h" /* port: port/linux/game/royale_cinema.c */
 
 #ifdef HALO_VR
 /* port/linux/game/vr_death.c: as the player is back from the VR mode's
@@ -126,6 +128,10 @@ enum
 	_blip_type_vehicle_enemy,
 	_blip_type_custom,
 	_blip_type_none,
+	/* port: Royale's squadmate, and downed (royale_hud.c): after none,
+	never stored in a blip */
+	_blip_type_squadmate,
+	_blip_type_squadmate_downed,
 	NUMBER_OF_BLIP_TYPES
 };
 
@@ -253,7 +259,9 @@ const real_rgb_color blip_colors[] =
 	{ 1.f, 1.f, 0.f },
 	{ 1.f, 0.f, 0.f },
 	{ .5f, .5f, 1.f },
-	{ 0.f, 0.f, 0.f }
+	{ 0.f, 0.f, 0.f },
+	{ .3f, .85f, 1.f },
+	{ 1.f, .15f, .1f }
 };
 
 real scale[] =
@@ -694,7 +702,8 @@ static void render_motion_sensor(
 	short history_index;
 
 	csmemset(stack_buffer, 0x62, sizeof(stack_buffer));
-	perspective = director_get_perspective(local_player_index);
+	perspective = (director_perspective)royale_cinema_hud_perspective(local_player_index,
+		(short)director_get_perspective(local_player_index)); /* port: royale_cinema.c */
 	if (perspective == _director_perspective_neutral ||
 		perspective == _director_perspective_scripted)
 	{
@@ -782,6 +791,21 @@ static void render_motion_sensor(
 					fade,
 					radius);
 			}
+		}
+	}
+
+	/* port: Royale's squadmate, always (moving or not), pulsing as a goal's
+	blip does, in its own colour (royale_hud.c) */
+	{
+		real_point2d mate_position;
+		boolean mate_downed;
+
+		if (royale_hud_tracker_mate(local_player_index, &mate_position, &mate_downed))
+		{
+			struct motion_sensor_datum *sensor = &player->sensor_data[motion_sensor_globals->active_sensor_index];
+
+			render_blip(sensor, mate_downed ? _blip_type_squadmate_downed : _blip_type_squadmate,
+				_hud_blip_type_medium, &mate_position, relative_scale, 1.0f, 1.0f);
 		}
 	}
 
@@ -1165,7 +1189,8 @@ static void render_blip(
 		blip_color = &blip_colors[blip_type];
 		pulse_scale = 1.0f;
 		blip_draw_size = blip_size_get(blip_size_type);
-		if (blip_type == _blip_type_custom)
+		if (blip_type == _blip_type_custom || blip_type == _blip_type_squadmate ||
+			blip_type == _blip_type_squadmate_downed)
 		{
 			/* port: (pulsing in each frame drawn, as the sweep moves) */
 			pulse_scale = (real)(
@@ -1180,7 +1205,8 @@ static void render_blip(
 			fade,
 			blip_draw_size,
 			blip_color,
-			(boolean)(blip_type == _blip_type_custom));
+			(boolean)(blip_type == _blip_type_custom || blip_type == _blip_type_squadmate ||
+				blip_type == _blip_type_squadmate_downed));
 	}
 
 	return;

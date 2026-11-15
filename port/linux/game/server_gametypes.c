@@ -331,6 +331,9 @@ static void server_gametype_rule(
 	else if (!strcmp(key, "no_map_weapons")) options->no_map_weapons = (boolean)(value != 0);
 	else if (!strcmp(key, "hardcore")) options->hardcore = (boolean)(value != 0);
 	else if (!strcmp(key, "force_team_spawns")) options->force_team_spawns = (boolean)(value != 0);
+	else if (!strcmp(key, "royale_bleed_out")) options->royale_bleed_out = (byte)value;
+	else if (!strcmp(key, "royale_revive")) options->royale_revive = (byte)value;
+	else if (!strcmp(key, "royale_gulag")) options->royale_gulag = (boolean)(value != 0);
 	else if (!strcmp(key, "team_vehicles"))
 	{
 		byte set = value == 1 ? VARIANT_VEHICLE_SET_PC : value == 2 ? VARIANT_VEHICLE_SET_CUSTOM :

@@ -23,6 +23,7 @@ NEGATIVE_CONTROLS = {
                        "return FALSE && forward ? widget->parameters.list.selected_index >= count - 1 :"),
                       "spinner-ends"),
     "toggles-stop": (("|| count <= 2)", ")"), "spinner-ends"),
+    "hidden-offered": (("\tcount -= pc_menu_spinner_hidden_items(widget);", ""), "spinner-ends"),
     "xbox-spinners-stop": (("|| !pc_menu_tag(widget->definition_tag_index)", ""), "spinner-ends"),
     "bots-load-writes": (("\tlobby_board.bots_shown = NONE;\n\tlobby_board_bots_choice(spinner, TRUE);",
                           "\tlobby_board_bots_choice(spinner, FALSE);"), "lobby-bots"),

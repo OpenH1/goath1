@@ -105,7 +105,7 @@ takes it for a newer version and does not join. Raise it with any change to
 what a Standard game's machines send each other, and with every raise of
 HALO_PORT_NETWORK_VERSION: HALO_PORT_STANDARD_BASE_VERSION is the network
 version it was last raised for, and the build fails until they agree. */
-#define HALO_PORT_STANDARD_NETWORK_VERSION 32
+#define HALO_PORT_STANDARD_NETWORK_VERSION 33
 /* (1: the rate agreed; 2: the players' sub-steps sent, network_substeps.c;
 3: OpenCE players in the game, network_standard.c's mixed games; 4: a
 player moved to the other team by the host, network_host_controls.c; 5:
@@ -190,7 +190,17 @@ every machine of the game simulates: the host's rule in the game record
 (_network_game_vehicle_hijack_bit, network_standard.c's
 network_standard_vehicle_hijack), and the host's word on each hijack and on
 the rule changed during a game (network_hijack.c's
-_distributed_message_vehicle_hijack).
+_distributed_message_vehicle_hijack); 33: a host sends no sub-step states of
+its own bots in a Royale game (network_distributed.c's
+network_distributed_host_substep_ended, distributed_player_is_bot): every GOAT
+H1 machine steps a bot alike from its tick's input; Royale (a game mode:
+options' mode 4 and its bleed-out, revive and gulag options from reserved),
+and its rules' state after Slayer's in the game engine state (royale.c);
+Royale's game engine state compacted and split: the rules' discrete part (only
+slots in the game) and the gulag's line and fight, then the clock (match time,
+downed counts) left out of the host's change check and sent with each change
+and every 3 s; clients advance the clock themselves (royale.c,
+royale_rules.c).
 Legacy games, and what an OpenCE machine sees, are unchanged) */
 #define HALO_PORT_STANDARD_BASE_VERSION 44
 #define HALO_PORT_STANDARD_VERSION_BIT 0x8000

@@ -142,6 +142,7 @@ symbols in this file:
 #include "mcc_damage.h" /* port: port/linux/game/mcc_damage.c */
 #include "mcc_ui_teams.h" /* port: port/linux/game/mcc_ui_teams.c */
 #include "server_team_switch.h" /* port: port/linux/game/server_team_switch.c */
+#include "royale.h" /* port: port/linux/game/royale.c */
 
 /* network_game_globals.c's */
 boolean network_game_distributed_client(void);
@@ -1377,7 +1378,13 @@ static void object_damage_body(
 	{
 		real body_vitality = object_get_actual_body_vitality(object_index, FALSE);
 
-		if (damage_resistance->body_destroyed_threshold < 0.f &&
+		/* port: Royale: a player's lethal hit (one that would blow the body
+		apart too) downs them instead (port/linux/game/royale.c) */
+		if (body_vitality < 0.f && !TEST_FLAG(object->object.damage_flags, _object_dead_bit) &&
+			royale_absorb_lethal_damage(object_index, damage->owner_player_index))
+		{
+		}
+		else if (damage_resistance->body_destroyed_threshold < 0.f &&
 			body_vitality < damage_resistance->body_destroyed_threshold)
 		{
 			object_destroy(object_index);

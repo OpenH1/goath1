@@ -46,6 +46,12 @@ static boolean hardcore=TRUE;
 static boolean game_modes_hardcore(void){return hardcore;}
 static struct player_datum *player_try_and_get(long index){return index==1?&killer_player:NULL;}
 static struct unit_datum *unit_try_and_get(long index){return index==7?&killer_unit:NULL;}
+/* Royale's world (royale.h): its defaults, and whether it may be played here
+(game.royale on, or the host's game) */
+#define ROYALE_DEFAULT_BLEED_OUT 30
+#define ROYALE_DEFAULT_REVIVE 3
+static boolean royale_allowed;
+static boolean royale_game_allowed(void){return royale_allowed;}
 #include "under_test.inc"
 
 static void wounded_killer(real body,real shield)
@@ -154,6 +160,12 @@ int main(int argc,char **argv)
   CHECK(game_modes_variant_mode(&variant,&options)==_game_mode_gun_game,"Gun Game, free for all");
   variant.universal_variant.teams=TRUE;
   CHECK(game_modes_variant_mode(&variant,&options)==_game_mode_none,"no Gun Game on teams");
+  options.mode=_game_mode_royale;variant.universal_variant.teams=FALSE;royale_allowed=FALSE;
+  CHECK(game_modes_variant_mode(&variant,&options)==_game_mode_none,"no Royale where it is not allowed");
+  royale_allowed=TRUE;
+  CHECK(game_modes_variant_mode(&variant,&options)==_game_mode_royale,"Royale, free for all, allowed");
+  variant.universal_variant.teams=TRUE;
+  CHECK(game_modes_variant_mode(&variant,&options)==_game_mode_none,"no Royale on teams");
   variant.universal_variant.teams=FALSE;variant.game_engine_index=game_engine_ctf;
   CHECK(game_modes_variant_mode(&variant,&options)==_game_mode_none,"Slayer's modes only");
   CHECK(game_modes_variant_mode(NULL,&options)==_game_mode_none&&game_modes_variant_mode(&variant,NULL)==_game_mode_none,

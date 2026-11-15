@@ -716,6 +716,9 @@ draw in place of a widget's text: whole and scrolled while its row has the
 focus, cut short with "..." while not (widget_instance_port_text_line_draw) */
 wchar_t const *pc_menu_text_line(struct widget_instance *widget, long font, wchar_t const *text, short width,
 	boolean row, boolean focused, unsigned long now, real *scroll, short *room, short *overflow);
+/* port: port/linux/game/menu_functions.c: a spinner's last items not offered
+(a hidden setting's choice), past which it stops */
+short pc_menu_spinner_hidden_items(struct widget_instance *spinner);
 
 /* ---------- constants */
 
@@ -3008,6 +3011,8 @@ static boolean ui_widget_port_spinner_stops(
 
 	if (widget->type != _ui_widget_type_spinner_list || !pc_menu_tag(widget->definition_tag_index) || count <= 2)
 		return FALSE;
+	/* (and one with items not offered stops before them) */
+	count -= pc_menu_spinner_hidden_items(widget);
 	return forward ? widget->parameters.list.selected_index >= count - 1 : widget->parameters.list.selected_index <= 0;
 }
 

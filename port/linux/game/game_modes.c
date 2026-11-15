@@ -49,6 +49,7 @@ limit.
 #include "game_modes.h"
 #include "gun_game.h"
 #include "infection.h"
+#include "royale.h"
 
 #include <string.h>
 
@@ -89,6 +90,7 @@ enum
 	_gametype_hardcore_ctf,
 	_gametype_hardcore_oddball,
 	_gametype_hardcore_king,
+	_gametype_royale,
 	NUMBER_OF_GAMETYPES
 };
 
@@ -110,6 +112,7 @@ static struct
 	{ "hardcore_ctf", L"Hardcore CTF", L"HC CTF" },
 	{ "hardcore_oddball", L"Hardcore Oddball", L"HC Oddball" },
 	{ "hardcore_king", L"Hardcore King", L"HC King" },
+	{ "royale", L"Royale", L"Royale" },
 };
 
 /* the kill being recorded is a melee's (game_modes_kill_by_melee) */
@@ -120,7 +123,8 @@ static boolean game_modes_melee_kill;
 short game_modes_gametype_count(
 	void)
 {
-	return NUMBER_OF_GAMETYPES;
+	/* (Royale's, the last, only with game.royale on: royale_enabled) */
+	return royale_enabled() ? NUMBER_OF_GAMETYPES : NUMBER_OF_GAMETYPES - 1;
 }
 
 wchar_t const *game_modes_gametype_name(
@@ -159,6 +163,7 @@ void game_modes_gametype(
 		*variant = *build_game_variant_team_king(&temporary);
 		break;
 	case _gametype_gun_game:
+	case _gametype_royale:
 		*variant = *build_game_variant_slayer(&temporary);
 		break;
 	default:
@@ -196,6 +201,18 @@ void game_modes_gametype(
 		variant->universal_variant.respawn_time = 90;
 		variant->universal_variant.suicide_penalty = 0;
 		options->no_map_weapons = TRUE;
+		break;
+	case _gametype_royale:
+		/* (free for all: the squads are Royale's own; no respawns, no time
+		limit, no vehicles, the map's weapons the loot lane's) */
+		options->mode = _game_mode_royale;
+		variant->universal_variant.vehicle_set = VEHICLE_SET_NONE;
+		variant->universal_variant.respawn_time = 0;
+		variant->universal_variant.suicide_penalty = 0;
+		options->time_limit = 0;
+		options->friendly_fire = _friendly_fire_off;
+		options->radar_players = _radar_players_none;
+		SET_FLAG(variant->universal_variant.flags, _game_variant_draw_object_in_motion_sensor_bit, FALSE);
 		break;
 	default:
 		options->hardcore = TRUE;
@@ -290,6 +307,9 @@ void game_modes_options_default(
 	options->infection_zombie_shields = TRUE;
 	options->gun_game_order = _gun_game_order_strongest_first;
 	options->gun_game_melee_demotes = TRUE;
+	options->royale_bleed_out = ROYALE_DEFAULT_BLEED_OUT;
+	options->royale_revive = ROYALE_DEFAULT_REVIVE;
+	options->royale_gulag = TRUE;
 	csmemset(options->reserved, 0, sizeof(options->reserved));
 }
 
@@ -324,6 +344,13 @@ void game_modes_options_sanitize(
 		options->gun_game_order = _gun_game_order_strongest_first;
 	options->gun_game_melee_demotes = options->gun_game_melee_demotes != FALSE;
 	options->force_team_spawns = options->force_team_spawns != FALSE;
+	/* (a gametype saved before Royale has these 0: its defaults, the gulag
+	on) */
+	if (!options->royale_bleed_out)
+		options->royale_gulag = TRUE;
+	options->royale_bleed_out = game_modes_option(options->royale_bleed_out, 5, 120, ROYALE_DEFAULT_BLEED_OUT);
+	options->royale_revive = game_modes_option(options->royale_revive, 1, 15, ROYALE_DEFAULT_REVIVE);
+	options->royale_gulag = options->royale_gulag != FALSE;
 	csmemset(options->reserved, 0, sizeof(options->reserved));
 }
 
@@ -341,6 +368,10 @@ short game_modes_variant_mode(
 		return variant->universal_variant.teams ? _game_mode_infection : _game_mode_none;
 	case _game_mode_gun_game:
 		return !variant->universal_variant.teams ? _game_mode_gun_game : _game_mode_none;
+	/* (free for all, and a GOAT H1 Standard game's only: OpenCE's machines
+	know nothing of it) */
+	case _game_mode_royale:
+		return !variant->universal_variant.teams && royale_game_allowed() ? _game_mode_royale : _game_mode_none;
 	}
 	return _game_mode_none;
 }
@@ -365,6 +396,7 @@ wchar_t const *game_modes_kind_name(
 		{ { L"SWAT", L"SWAT" }, { L"HARDCORE SWAT", L"HC SWAT" } },
 		{ { L"INFECTION", L"INFECTION" }, { L"HARDCORE INFECTION", L"HC INFECTION" } },
 		{ { L"GUN GAME", L"GUN GAME" }, { L"HARDCORE GUN GAME", L"HC GUN GAME" } },
+		{ { L"ROYALE", L"ROYALE" }, { L"HARDCORE ROYALE", L"HC ROYALE" } },
 	};
 	static wchar_t const *const hardcore_names[][2] =
 	{
@@ -430,6 +462,8 @@ struct game_engine *game_modes_engine(
 		return infection_engine_get(engine);
 	case _game_mode_gun_game:
 		return gun_game_engine_get(engine);
+	case _game_mode_royale:
+		return royale_engine_get(engine);
 	}
 	return engine;
 }
@@ -444,6 +478,9 @@ void game_modes_postspawn(
 		break;
 	case _game_mode_gun_game:
 		gun_game_postspawn(player_index);
+		break;
+	case _game_mode_royale:
+		royale_postspawn(player_index);
 		break;
 	}
 }

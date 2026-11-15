@@ -231,6 +231,9 @@ enum
 	_game_mode_swat,
 	_game_mode_infection,
 	_game_mode_gun_game,
+	/* GOAT H1's Royale (port/linux/game/royale.c): free for all Slayer's
+	engine, squads of two, no respawns, the last squad alive wins */
+	_game_mode_royale,
 	NUMBER_OF_GAME_MODES
 };
 
@@ -291,7 +294,13 @@ struct game_variant_options
 	of their own team (game_engine_get_starting_location_rating). Taken from
 	reserved, which older builds zero and ignore: the host alone picks spawns */
 	boolean force_team_spawns;
-	byte reserved[5];
+	/* port: Royale (royale.c): a downed player's bleed-out and a revive's
+	time (seconds), and whether the dead go to the gulag. Taken from
+	reserved, which older builds zero and ignore */
+	byte royale_bleed_out;
+	byte royale_revive;
+	boolean royale_gulag;
+	byte reserved[2];
 };
 
 typedef char verify_game_variant_options_size[sizeof(struct game_variant_options) == 0x2C ? 1 : -1];

@@ -114,6 +114,7 @@ symbols in this file:
 #include "rasterizer/rasterizer_model_types.h"
 #include "panini.h" /* port: port/linux/game/panini.c */
 #include "world_ao.h" /* port: port/linux/game/world_ao.c */
+#include "royale_cinema.h" /* port: port/linux/game/royale_cinema.c */
 
 /* ---------- constants */
 
@@ -358,6 +359,8 @@ struct render_lighting *object_get_cached_render_lighting(
 	}
 
 	lights_prepare_for_object_static(object_index, &lighting_storage);
+	/* port: Royale's Pelicans' bay lit (port/linux/game/royale_cinema.c) */
+	royale_cinema_object_lighting(object_index, &lighting_storage);
 	lights_prepare_for_object_dynamic(object_index, &lighting_storage);
 
 	return &lighting_storage;
@@ -1198,6 +1201,8 @@ static void object_render_state_refresh(
 	{
 		state->object_index = object_index;
 		lights_prepare_for_object_static(object_index, &state->desired_lighting);
+		/* port: Royale's Pelicans' bay lit (port/linux/game/royale_cinema.c) */
+		royale_cinema_object_lighting(object_index, &state->desired_lighting);
 		state->level_of_detail_pixels = level_of_detail_pixels;
 		state->refresh_frame_index = game_time_get();
 	}

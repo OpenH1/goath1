@@ -1331,6 +1331,9 @@ static const struct config_setting config_settings[] =
 		"computer's reads it as its map begins; in a network game the host's\n"
 		"decides, read in the lobby (Host Controls' VEHICLE HIJACKING changes\n"
 		"it during a game); a Legacy game never hijacks (OpenCE's way)." },
+	{ "game.royale", _config_boolean, "false", "HALO_ROYALE", _environment_value, _platform_all,
+		"Experimental and unfinished, for testing: an extra game type in the\n"
+		"menus. Leave it false." },
 	{ "game.spectate_on_death", _config_string, "\"off\"", "HALO_SPECTATE_ON_DEATH", _environment_value,
 		_platform_all,
 		"While you are dead in co-op or a team game, waiting to respawn:\n"

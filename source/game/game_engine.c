@@ -610,6 +610,8 @@ struct network_game *network_game_server_get_game(struct network_game_server *se
 #include "server_team_switch.h" /* port: port/linux/game/server_team_switch.c */
 #include "latency_meter.h" /* port: port/linux/game/latency_meter.c */
 #include "touch_postgame.h" /* port: port/linux/game/touch_postgame.c */
+#include "royale.h" /* port: port/linux/game/royale.c */
+#include "royale_cinema.h" /* port: port/linux/game/royale_cinema.c */
 
 /* network_game_globals.c's */
 boolean network_game_distributed_client(void);
@@ -1604,6 +1606,28 @@ long populate_statistic_buffer(
 		else
 		{
 			statistic_buffer[statistic_index].place = statistic_index;
+		}
+	}
+	/* port: Royale's places are its squads' (royale.c): squadmates tie, and
+	the next squad is the next place, as its own results say */
+	if (statistic == _postgame_statistic_ranking && royale_active())
+	{
+		for (statistic_index = 0; statistic_index < player_count; statistic_index++)
+		{
+			long place = royale_player_place(statistic_buffer[statistic_index].player_index);
+
+			if (place != NONE)
+				statistic_buffer[statistic_index].place = place;
+		}
+		for (statistic_index = 1; statistic_index < player_count; statistic_index++)
+		{
+			if ((statistic_buffer[statistic_index].place & 0x7FFFFFFF) ==
+				(statistic_buffer[statistic_index - 1].place & 0x7FFFFFFF) &&
+				royale_player_place(statistic_buffer[statistic_index].player_index) != NONE)
+			{
+				statistic_buffer[statistic_index - 1].place |= 0x80000000;
+				statistic_buffer[statistic_index].place |= 0x80000000;
+			}
 		}
 	}
 
@@ -4022,7 +4046,10 @@ static void carnage_report_banner(
 		box.x0 = left;
 		box.x1 = right;
 		carnage_report_box(&box, 0xF00A2456, 0xFF5AA9FF);
-		if (tie)
+		/* port: Royale's winners are a squad (royale.c) */
+		if (royale_winners_label(label, NUMBEROF(label)))
+			;
+		else if (tie)
 			usnprintf(label, NUMBEROF(label), L"TIED FOR FIRST");
 		else
 			usnprintf(label, NUMBEROF(label), L"%s WINS", name);
@@ -5392,7 +5419,9 @@ static void game_engine_post_rasterize_in_game(
 	if ((!gamepad ||
 		!gamepad->buttons[_gamepad_binary_button_back]) &&
 		!scoreboard_view_get(local_player_index)->pinned &&
-		(!game_engine || game_engine_globals.postgame_state != game_engine_mode_postgame_delay))
+		(!game_engine || game_engine_globals.postgame_state != game_engine_mode_postgame_delay ||
+			/* port: Royale shows its own carnage report then (royale_cinema.c) */
+			royale_active()))
 	{
 		/* a frame is no longer a tick (render_interpolation.c): fade in half
 		a second, not in 15 frames */
@@ -5652,8 +5681,14 @@ static void game_engine_build_lighting(
 void game_engine_dispose_from_old_map(
 	void)
 {
+	extern void royale_map_restore(void);
+
 	if (game_engine && game_engine->dispose_from_old_map)
 		game_engine->dispose_from_old_map();
+	/* port: the campaign level's tags as it had them (royale_map.c), and
+	nothing of a Royale match left for the next game (royale.c) */
+	royale_map_restore();
+	royale_reset();
 	/* port: every local player's scoreboard closed (none left pinned open
 	for the next game) */
 	{
@@ -7248,6 +7283,9 @@ boolean game_engine_should_end_game(
 	/* port: Infection's round ends by its own rules (infection.c) */
 	if (infection_enabled())
 		return FALSE;
+	/* port: and Royale's once its results have been shown (royale.c) */
+	if (royale_active())
+		return royale_game_over();
 	/* port: not once bots have left it (the host took them out, or asked
 	for fewer), which may leave one team, or one player, alone: the game
 	goes on to its limits, for bots the host adds back or players who join
@@ -9181,6 +9219,14 @@ void game_engine_initialize(
 void game_engine_initialize_for_new_map(
 	void)
 {
+	/* port: a campaign level under a game engine made a multiplayer map in
+	memory, before anything reads its globals' multiplayer part or places
+	its objects (port/linux/game/royale_map.c) */
+	extern void royale_map_prepare(void);
+
+	/* (and nothing of a last Royale match: royale.c) */
+	royale_reset();
+	royale_map_prepare();
 	if (game_engine)
 	{
 		game_engine_verify_current_map();
@@ -9341,6 +9387,11 @@ real game_engine_get_starting_location_rating(
 	{
 		return 0.0f;
 	}
+	/* port: Royale's lobby takes any start, near others or not: each player
+	is stepped off it at once (royale_postspawn), so a campaign level's few
+	starts take every player of a big game */
+	if (royale_active())
+		return 1.0f;
 
 	if (nearby_vehicle(player_index, starting_location))
 		return 0.0f;
@@ -9774,6 +9825,10 @@ long game_engine_remap_object_definition(
 	{
 		return definition_index;
 	}
+	/* port: Royale's own objects: the insertion's Pelicans
+	(port/linux/game/royale_insertion.c) */
+	if (royale_insertion_creating())
+		return definition_index;
 
 	object_type = object_definition_get(definition_index)->object.type;
 	if (object_type==_object_type_vehicle)
@@ -10666,6 +10721,11 @@ static void game_engine_update_item_spawn(
 	/* port: a long counter, for a map's long count */
 	long equipment_index;
 
+	/* port: Royale has no stock netgame items: the loot lane's are its own
+	(port/linux/game/royale.c) */
+	if (royale_active())
+		return;
+
 	/* a client of the distributed netcode has the host's items
 	(port/linux/game/network_distributed.c) */
 	if (network_game_distributed_client())
@@ -10955,7 +11015,9 @@ void game_engine_postspawn_player_update(
 		{
 			game_engine_give_loadout(unit_index);
 		}
-		else if (!TEST_FLAG(global_variant.universal_variant.flags, _game_variant_generic_starting_equipment_bit))
+		/* port: (Royale's starting kit is the loot lane's: royale.c) */
+		else if (!TEST_FLAG(global_variant.universal_variant.flags, _game_variant_generic_starting_equipment_bit) &&
+			!royale_active())
 		{
 			handle_custom_starting_equipment(
 				unit_index,
@@ -11055,6 +11117,10 @@ boolean game_engine_get_state_message(
 			player->state_message = NONE;
 		}
 
+		/* port: Royale's players with no unit have its own lines (down,
+		the gulag, spectating, eliminated: royale.c), never a respawn's */
+		if (player->unit_index == NONE && royale_active())
+			return FALSE;
 		if (player->unit_index == NONE)
 		{
 			state_message_parameter = 0;
@@ -11084,7 +11150,9 @@ boolean game_engine_get_state_message(
 				message,
 				message_character_count);
 		}
-		else if (game_time_get() < 15 * TICKS_PER_SECOND)
+		/* port: (not over Royale's flyover, royale_cinema.c) */
+		else if (game_time_get() < 15 * TICKS_PER_SECOND &&
+			!royale_cinema_owns_screen(player->local_player_index))
 		{
 			result = multiplayer_message_internal(
 				player_index,
@@ -11167,6 +11235,11 @@ boolean game_engine_should_spawn_player(
 		else if (basic_training_player_held(player_index))
 		{
 			should_spawn = FALSE;
+		}
+		/* port: Royale's players spawn when its rules say (royale.c) */
+		else if (royale_active())
+		{
+			return royale_should_spawn(player_index);
 		}
 		else if (player->statistics.deaths == 0)
 		{
@@ -11417,6 +11490,7 @@ long game_engine_write_network_state(
 	case game_engine_ctf: written = game_engine_ctf_write_network_state(buffer, size); break;
 	/* port: (Infection's own state: infection.c) */
 	case game_engine_slayer: written = infection_enabled() ? infection_write_network_state(buffer, size) :
+		royale_active() ? royale_write_network_state(buffer, size) :
 		game_engine_slayer_write_network_state(buffer, size); break;
 	case game_engine_oddball: written = game_engine_oddball_write_network_state(buffer, size); break;
 	case game_engine_king: written = game_engine_king_write_network_state(buffer, size); break;
@@ -11424,6 +11498,16 @@ long game_engine_write_network_state(
 	default: written = 0; break;
 	}
 	return sizeof(postgame_state) + written;
+}
+
+/* the distributed netcode: the bytes at the end of the state last written
+that are a clock every machine advances itself (Royale's): left out of the
+host's check for a change, and sent anyway now and then; 0 for none */
+long game_engine_network_state_clock_size(
+	void)
+{
+	return game_engine && game_engine_get_type() == game_engine_slayer && !infection_enabled() && royale_active() ?
+		royale_network_state_clock_size() : 0;
 }
 
 /* a client: the host's */
@@ -11445,6 +11529,7 @@ void game_engine_read_network_state(
 	{
 	case game_engine_ctf: read = game_engine_ctf_read_network_state(buffer, size, first); break;
 	case game_engine_slayer: read = infection_enabled() ? infection_read_network_state(buffer, size, first) :
+		royale_active() ? royale_read_network_state(buffer, size, first) :
 		game_engine_slayer_read_network_state(buffer, size, first); break;
 	case game_engine_oddball: read = game_engine_oddball_read_network_state(buffer, size, first); break;
 	case game_engine_king: read = game_engine_king_read_network_state(buffer, size, first); break;

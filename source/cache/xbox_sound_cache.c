@@ -610,8 +610,10 @@ static void sound_cache_start_loading_sound(
 		at once (port/linux/game/mod_sounds.c) */
 		{
 			extern boolean mod_sounds_read(struct sound_permutation const *permutation, void *buffer);
+			/* (and Royale's announcer, borrowed: port/linux/game/royale_audio.c) */
+			extern boolean royale_audio_read(struct sound_permutation const *permutation, void *buffer);
 
-			if (mod_sounds_read(sound, cache_address))
+			if (mod_sounds_read(sound, cache_address) || royale_audio_read(sound, cache_address))
 			{
 				cache_sound->loaded = TRUE;
 			}
