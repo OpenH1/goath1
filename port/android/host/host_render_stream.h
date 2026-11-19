@@ -311,6 +311,18 @@ void host_render_stream_display_blocking(int blocking);
 total; at a frame's end, on the render thread): written into the ring for
 the guest (gpu_microseconds: a report's) */
 void host_render_stream_gpu_time(uint64_t nanoseconds);
+/* (render thread) the number of the frame being played, as the guest's
+frames_submitted counts it: a backend tags the frame's GPU timestamps with
+it as it ends the frame (its frame_end), and once they are read gives the
+frame's own GPU time under it (host_render_stream_gpu_frame, from one
+thread: the render thread's, or a backend's completions'), into the ring's
+xgpu_stream_gpu_frames for the guest (port/linux/src/frame_gpu.h: each
+frame's row, its GPU time its own, not a running count's change).
+host_render_stream_gpu_frames(0): none given (a replay: its ring is a
+recording's, whose memory after the pipelines' states may be no table) */
+uint32_t host_render_stream_frame_playing(void);
+void host_render_stream_gpu_frame(uint32_t frame, uint64_t nanoseconds);
+void host_render_stream_gpu_frames(int on);
 
 /* ---------- pacing by the display (frame_pacing.h)
 

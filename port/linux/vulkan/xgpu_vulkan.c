@@ -1454,9 +1454,15 @@ static struct
 	{
 		uint64_t serial;
 		int used;
+		/* the tag of the frame it ended in (xgpu_vulkan_gpu_time_tag) */
+		uint32_t tag;
 	} gpu_times[GPU_TIME_FRAMES];
 	uint32_t gpu_time_current;
 	int gpu_time_active, gpu_time_armed, gpu_time_failed;
+	/* the tag the interval ending next takes, and who is told each frame's
+	own time (xgpu_vulkan_gpu_time_tag) */
+	uint32_t gpu_time_tag;
+	void (*gpu_frame_listener)(uint32_t tag, uint64_t nanoseconds);
 
 	/* the window: its surface, and what makes it again (NULL: no window) */
 	VkSurfaceKHR surface;
@@ -3010,10 +3016,24 @@ void xgpu_vulkan_gpu_time_end(void)
 	/* Outside the multiview rendering scope: one query, not one per view. */
 	vkCmdWriteTimestamp(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, vk.gpu_time_pool, index * 2 + 1);
 	vk.gpu_times[index].serial = vk.serial;
+	vk.gpu_times[index].tag = vk.gpu_time_tag;
 	vk.gpu_time_active = 0;
 }
 
+void xgpu_vulkan_gpu_time_tag(uint32_t tag, void (*listener)(uint32_t tag, uint64_t nanoseconds))
+{
+	vk.gpu_time_tag = tag;
+	vk.gpu_frame_listener = listener;
+}
+
 int xgpu_vulkan_gpu_time_read(double *milliseconds)
+{
+	uint32_t tag;
+
+	return xgpu_vulkan_gpu_time_read_tagged(milliseconds, &tag);
+}
+
+int xgpu_vulkan_gpu_time_read_tagged(double *milliseconds, uint32_t *tag)
 {
 	uint64_t done, oldest = UINT64_MAX, results[2][2], mask, elapsed;
 	uint32_t index, found = GPU_TIME_FRAMES;
@@ -3048,6 +3068,7 @@ int xgpu_vulkan_gpu_time_read(double *milliseconds)
 	mask = vk.timestamp_bits >= 64 ? UINT64_MAX : (UINT64_C(1) << vk.timestamp_bits) - 1;
 	elapsed = (results[1][0] - results[0][0]) & mask;
 	*milliseconds = (double)elapsed * (double)vk.properties.limits.timestampPeriod * 1e-6;
+	*tag = vk.gpu_times[found].tag;
 	vk.gpu_times[found].used = 0;
 	return 1;
 }
@@ -10437,12 +10458,17 @@ void xgpu_vulkan_frame_end(struct xgpu_vulkan_image *image, int present_window)
 	if (vk.frame_timing)
 	{
 		double milliseconds, now = seconds_now();
+		uint32_t tag;
 
-		while (xgpu_vulkan_gpu_time_read(&milliseconds))
+		/* (each frame's own, under its tag: two at once where one was read
+		late, none where none was done) */
+		while (xgpu_vulkan_gpu_time_read_tagged(&milliseconds, &tag))
 		{
 			vk.statistics.gpu_milliseconds += milliseconds;
 			vk.statistics.gpu_frames++;
 			vk.gpu_nanoseconds += (uint64_t)(milliseconds * 1e6);
+			if (tag && vk.gpu_frame_listener)
+				vk.gpu_frame_listener(tag, (uint64_t)(milliseconds * 1e6));
 		}
 		if (vk.frame_ended > 0.0)
 		{

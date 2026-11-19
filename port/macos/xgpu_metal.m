@@ -1807,6 +1807,34 @@ void xgpu_metal_gpu_interval(double start, double end)
 	pthread_mutex_unlock(&metal.statistics_lock);
 }
 
+/* the frames' own GPU times (xgpu_metal_gpu_time_tag): the tag the frame
+ending next takes and who is told, and the busy time as the last frame's
+work was done */
+static uint32_t gpu_frame_tag;
+static void (*gpu_frame_listener)(uint32_t tag, uint64_t nanoseconds);
+static double gpu_busy_at_frame;
+
+void xgpu_metal_gpu_time_tag(uint32_t tag, void (*listener)(uint32_t tag, uint64_t nanoseconds))
+{
+	gpu_frame_tag = tag;
+	gpu_frame_listener = listener;
+}
+
+/* (a completion's) a frame's last command buffer done: its own time, the
+busy time since the frame before's was (its aside and earlier buffers, and
+the presentation of the frame before, all done before it on the queue) */
+static void gpu_frame_done(uint32_t tag, void (*listener)(uint32_t tag, uint64_t nanoseconds))
+{
+	double busy;
+
+	pthread_mutex_lock(&metal.statistics_lock);
+	busy = gpu_busy_total - gpu_busy_at_frame;
+	gpu_busy_at_frame = gpu_busy_total;
+	pthread_mutex_unlock(&metal.statistics_lock);
+	if (tag && listener)
+		listener(tag, (uint64_t)(busy * 1e9));
+}
+
 uint64_t xgpu_metal_gpu_busy_nanoseconds(void)
 {
 	double total;
@@ -3005,12 +3033,19 @@ uint64_t xgpu_metal_frame_end(uint32_t present)
 	completion that frees that slot. Waiting first would form a cycle. */
 	if (image)
 		host_metal_present_signal(command_buffer(), number);
-	slot->fence = command_buffer_commit(entries || timed ? ^{
-		if (entries)
-			visibility_publish(slot, entries, number);
-		if (timed)
-			profile_log();
-	} : nil);
+	{
+		/* (the frame's own GPU time, under its tag, once its work is done) */
+		uint32_t tag = gpu_frame_tag;
+		void (*listener)(uint32_t tag, uint64_t nanoseconds) = gpu_frame_listener;
+
+		slot->fence = command_buffer_commit(entries || timed || (tag && listener) ? ^{
+			if (entries)
+				visibility_publish(slot, entries, number);
+			if (timed)
+				profile_log();
+			gpu_frame_done(tag, listener);
+		} : nil);
+	}
 	if (image)
 	{
 		id<MTLTexture> next = host_metal_present_exchange(image);

@@ -40,8 +40,10 @@ port/linux/README.md.
 #define XGPU_STREAM_MAGIC 0x53504758u /* "XGPS" */
 /* 24: INITIALIZE's answer (xgpu_stream_capabilities) 128 bytes, its
 temporal_metalfx before device: a guest and a host of 23 and 24 would read
-each other's device and temporal_metalfx out of place */
-#define XGPU_STREAM_VERSION 24
+each other's device and temporal_metalfx out of place. 25: each frame's
+own GPU time (xgpu_stream_gpu_frames) after the pipelines' states, which a
+host of 24 would not write and a guest of 24 has no room for */
+#define XGPU_STREAM_VERSION 25
 #define XGPU_STREAM_LOADING_ART_BYTES (640u * 480u * 4u)
 /* and the picture at its own size after it, where there is one (loading_art.h's LOADING_ART_SOURCE_BYTES) */
 #define XGPU_STREAM_LOADING_ART_SOURCE_BYTES (1600u * 1200u * 4u)
@@ -82,7 +84,8 @@ struct xgpu_stream_ring
 	test; 0: none yet), written after its count with a release store, so
 	that a guest reading the number first (an acquire load) reads a count
 	of that test or a later one; pipelines: XGPU_STREAM_PIPELINES states (uint8_t,
-	XGPU_STREAM_PIPELINE_*) of the pipeline ids */
+	XGPU_STREAM_PIPELINE_*) of the pipeline ids, then the frames' GPU times
+	(struct xgpu_stream_gpu_frames: XGPU_STREAM_PIPELINES_AREA bytes in all) */
 	uint32_t visibility, pipelines;
 
 	/* the guest's (written before each host_render_stream_submit, read by
@@ -131,7 +134,9 @@ struct xgpu_stream_ring
 	host_render_stream_display_blocking); the guest's waits for the
 	display's pacing, a part of wait_nanoseconds (display_wait's, and its
 	waits for the render thread or the GPU while the display held the render
-	thread) */
+	thread). The GPU's running count's change from one frame presented to
+	the next is not that frame's (its timestamps are read late): each
+	frame's own is in xgpu_stream_gpu_frames */
 	uint32_t gpu_microseconds;
 	uint32_t gpu_measured;
 	uint32_t render_microseconds;
@@ -161,6 +166,23 @@ enum
 #define XGPU_STREAM_VISIBILITY_SLOTS 4096
 #define XGPU_STREAM_PIPELINES 16384
 #define XGPU_STREAM_LAYOUTS 4096
+
+/* the host's, after the pipelines' states: the GPU's time on each of the
+last XGPU_STREAM_GPU_FRAMES frames, each its own (not a running count's
+change, which puts two frames' in one frame and none in another when a
+frame's timestamps are read late), in the slot of its number (frames_submitted's
+count of it) modulo XGPU_STREAM_GPU_FRAMES. The host writes a slot's frame 0,
+then its microseconds, then its frame (release stores); a guest reads the
+frame, the microseconds and the frame again (acquire loads), and takes the
+time only for the frame it asked of, read alike both times
+(port/linux/src/frame_gpu.h) */
+#define XGPU_STREAM_GPU_FRAMES 16
+struct xgpu_stream_gpu_frames
+{
+	uint32_t frame[XGPU_STREAM_GPU_FRAMES];
+	uint32_t microseconds[XGPU_STREAM_GPU_FRAMES];
+};
+#define XGPU_STREAM_PIPELINES_AREA (XGPU_STREAM_PIPELINES + sizeof(struct xgpu_stream_gpu_frames))
 
 /* a pipeline id's state, written by the host when the backend first makes
 it (the front end's lighting fallback reads it from the next frame) */
@@ -1689,6 +1711,7 @@ struct xgpu_stream_world_ao_instances
 #define XGPU_STREAM_ASSERT_SIZE(type, size) _Static_assert(sizeof(type) == (size), #type "'s size")
 
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_ring, 120);
+XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_gpu_frames, 128);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_frame_end, 12);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_capabilities, 128);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_hdr, 24);

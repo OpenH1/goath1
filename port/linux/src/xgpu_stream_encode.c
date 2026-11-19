@@ -616,7 +616,8 @@ void xgpu_backend_initialize(void)
 	stream.buffer = stream_allocate(XGPU_STREAM_RING_ALIGNMENT, stream.ring_size);
 	/* (the counts, then the numbers of the tests they are of) */
 	stream.visibility = stream_allocate(64, XGPU_STREAM_VISIBILITY_SLOTS * 2 * sizeof(uint32_t));
-	stream.pipelines = stream_allocate(64, XGPU_STREAM_PIPELINES);
+	/* (the pipelines' states, then the frames' GPU times) */
+	stream.pipelines = stream_allocate(64, XGPU_STREAM_PIPELINES_AREA);
 	stream.replies = stream_allocate(64, sizeof(*stream.replies));
 	if (!ring || !stream.buffer || !stream.visibility || !stream.pipelines || !stream.replies ||
 		!numbering_initialize(&stream.pipeline_keys, sizeof(struct xgpu_pipeline_key), XGPU_STREAM_PIPELINES) ||
@@ -627,7 +628,7 @@ void xgpu_backend_initialize(void)
 	}
 	memset(ring, 0, sizeof(*ring));
 	memset((void *)stream.visibility, 0, XGPU_STREAM_VISIBILITY_SLOTS * 2 * sizeof(uint32_t));
-	memset((void *)stream.pipelines, 0, XGPU_STREAM_PIPELINES);
+	memset((void *)stream.pipelines, 0, XGPU_STREAM_PIPELINES_AREA);
 	ring->magic = XGPU_STREAM_MAGIC;
 	ring->version = XGPU_STREAM_VERSION;
 	ring->header_size = sizeof(*ring);
@@ -707,6 +708,17 @@ int xgpu_backend_frame_times(struct xgpu_backend_frame_times *times)
 		return 0;
 	times->gpu = load_acquire(&stream.ring->gpu_microseconds);
 	return 1;
+}
+
+unsigned long xgpu_backend_frame_number(void)
+{
+	return stream.open ? stream.ring->frames_submitted : 0;
+}
+
+const volatile struct xgpu_stream_gpu_frames *xgpu_backend_gpu_frames(void)
+{
+	return stream.open ? (const volatile struct xgpu_stream_gpu_frames *)(stream.pipelines + XGPU_STREAM_PIPELINES) :
+		NULL;
 }
 
 #ifndef XGPU_STREAM_TEST

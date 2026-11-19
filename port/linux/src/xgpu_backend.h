@@ -133,6 +133,14 @@ struct xgpu_backend_frame_times
 };
 
 int xgpu_backend_frame_times(struct xgpu_backend_frame_times *times);
+/* the number of the last frame handed to the backend (xgpu_backend_frame_end:
+the stream's frames_submitted; 0 none), and each recent frame's own GPU
+time by its number (NULL while the backend has no stream): the running
+count's change from one frame presented to the next is not the frame's,
+its timestamps read late (frame_gpu.h, report.c's rows) */
+struct xgpu_stream_gpu_frames;
+unsigned long xgpu_backend_frame_number(void);
+const volatile struct xgpu_stream_gpu_frames *xgpu_backend_gpu_frames(void);
 
 /* ---------- the backend's life
 

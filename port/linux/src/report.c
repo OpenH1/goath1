@@ -88,6 +88,7 @@ on the render thread, as report_write is); a log line a copy into the ring.
 #include "report.h"
 #include "input_trace.h"
 #include "xgpu_backend.h"
+#include "frame_gpu.h"
 #include "demo_files.h"
 
 #include <pthread.h>
@@ -153,14 +154,16 @@ static struct
 {
 	uint32_t micros[REPORT_FRAMES];
 	uint32_t at_ms[REPORT_FRAMES];
-	/* the work in each (xgpu_backend_frame_times; the GPU's
-	REPORT_GPU_UNKNOWN where not measured) */
+	/* the work in each (xgpu_backend_frame_times; the GPU's each frame's
+	own, REPORT_GPU_UNKNOWN where not measured, and until it comes: the
+	frames held, frame_gpu.h) */
 	struct report_frame_work work[REPORT_FRAMES];
 	unsigned long count;
 	long long start_ns, last_ns;
 	/* the backend's counts at the last frame, and whether the GPU's was */
 	struct xgpu_backend_frame_times last;
 	int gpu_last_known;
+	struct frame_gpu_hold held;
 } report_frames;
 
 static struct
@@ -230,15 +233,27 @@ static long long report_now_ns(void)
 A line for each frame presented once the scenario's simulation has started
 (sim_trace_scenario_seconds: the clock of debug.test_input's scripts), for a
 benchmark (tools/bench.py): the scenario's seconds, then microseconds of the
-frame's time, the GPU's (-1 not measured), the render thread's playing its
-records, the game's waits for the renderer and the display, and the game
-thread's CPU (CLOCK_THREAD_CPUTIME_ID, -1 not known). With
-debug.frame_log_seconds the game quits once the scenario's clock reaches it,
-so that every build runs the same ticks and then stops. */
+frame's time, the GPU's on that frame (-1 not measured), the render thread's
+playing its records, the game's waits for the renderer and the display, and
+the game thread's CPU (CLOCK_THREAD_CPUTIME_ID, -1 not known). A frame's
+line is written once its GPU time has come, a few frames on (frame_gpu.h:
+report_frames_settle), so the lines are in order but a few frames behind.
+With debug.frame_log_seconds the game quits once the line of the scenario's
+clock reaching it is written, so that every build logs the same ticks and
+then stops. */
 static FILE *frame_log;
 static int frame_log_opened;
 static double frame_log_seconds;
 static long long frame_log_cpu_ns = -1;
+/* (the game exiting otherwise: the lines held written, as they are) */
+static int frame_log_exiting;
+/* the frames held for their GPU times: their scenario's seconds (-1: no
+line) and game thread's CPU, by their index's slot */
+static struct
+{
+	double seconds;
+	long long cpu;
+} frame_log_held[FRAME_GPU_ROWS];
 
 /* port/linux/game/sim_trace.c's */
 extern double sim_trace_scenario_seconds(void);
@@ -254,10 +269,21 @@ static long long report_thread_cpu_ns(void)
 	return -1;
 }
 
-static void report_frame_log(long long micros, const struct report_frame_work *work)
+static void report_frames_settle(int flushing);
+
+/* the game's end before debug.frame_log_seconds: the lines still held
+written, their GPU times unknown if they have not come */
+static void report_frame_log_at_exit(void)
 {
-	long long cpu_ns, cpu;
-	double seconds;
+	frame_log_exiting = 1;
+	report_frames_settle(1);
+}
+
+/* a frame presented, its line held (index: report_frames'; micros < 0: no
+line) */
+static void report_frame_log_hold(unsigned long index, long long micros)
+{
+	long long cpu_ns;
 
 	if (!frame_log_opened)
 	{
@@ -269,7 +295,9 @@ static void report_frame_log(long long micros, const struct report_frame_work *w
 		{
 			frame_log = fopen(path, "w");
 			if (frame_log)
-				fprintf(frame_log, "# frame log 1: seconds frame gpu render waited cpu (microseconds)\n");
+				atexit(report_frame_log_at_exit);
+			if (frame_log)
+				fprintf(frame_log, "# frame log 2: seconds frame gpu render waited cpu (microseconds; gpu the frame's own)\n");
 			else
 				platform_log("debug.frame_log: cannot write %s", path);
 		}
@@ -277,20 +305,29 @@ static void report_frame_log(long long micros, const struct report_frame_work *w
 	if (!frame_log)
 		return;
 	cpu_ns = report_thread_cpu_ns();
-	cpu = cpu_ns >= 0 && frame_log_cpu_ns >= 0 ? (cpu_ns - frame_log_cpu_ns) / 1000 : -1;
+	frame_log_held[index % FRAME_GPU_ROWS].cpu = cpu_ns >= 0 && frame_log_cpu_ns >= 0 ?
+		(cpu_ns - frame_log_cpu_ns) / 1000 : -1;
 	frame_log_cpu_ns = cpu_ns;
-	seconds = sim_trace_scenario_seconds();
-	if (seconds < 0.0 || micros < 0)
+	frame_log_held[index % FRAME_GPU_ROWS].seconds = micros < 0 ? -1.0 : sim_trace_scenario_seconds();
+}
+
+/* a held frame's line, its GPU time come (or given up) */
+static void report_frame_log(unsigned long index, long long micros, const struct report_frame_work *work)
+{
+	double seconds = frame_log_held[index % FRAME_GPU_ROWS].seconds;
+
+	if (!frame_log || seconds < 0.0)
 		return;
 	fprintf(frame_log, "%.6f %lld %ld %lu %lu %lld\n", seconds, micros,
 		work->gpu == REPORT_GPU_UNKNOWN ? -1L : (long)work->gpu, (unsigned long)work->render,
-		(unsigned long)work->waited, cpu);
+		(unsigned long)work->waited, frame_log_held[index % FRAME_GPU_ROWS].cpu);
 	if (frame_log_seconds > 0.0 && seconds >= frame_log_seconds - 1e-9)
 	{
 		fclose(frame_log);
 		frame_log = NULL;
 		platform_log("debug.frame_log: %.3f seconds of the scenario logged", seconds);
-		exit(EXIT_SUCCESS);
+		if (!frame_log_exiting)
+			exit(EXIT_SUCCESS);
 	}
 }
 
@@ -518,6 +555,24 @@ static void demo_perf_frame(long long micros, const struct report_frame_work *wo
 
 /* ---------- what is kept */
 
+/* the frames held whose GPU times have come (frame_gpu.h), or all of them
+(flushing: the game's end): their GPU times kept (unknown if not come) and
+their frame log lines written, oldest first */
+static void report_frames_settle(int flushing)
+{
+	unsigned long held;
+	uint32_t gpu;
+
+	frame_gpu_hold_settle(&report_frames.held, xgpu_backend_gpu_frames());
+	while (frame_gpu_hold_next(&report_frames.held, flushing, &held, &gpu))
+	{
+		struct report_frame_work *work = &report_frames.work[held & (REPORT_FRAMES - 1)];
+
+		work->gpu = gpu;
+		report_frame_log(held, report_frames.micros[held & (REPORT_FRAMES - 1)], work);
+	}
+}
+
 void report_frame_presented(void)
 {
 	long long now = report_now_ns();
@@ -537,26 +592,36 @@ void report_frame_presented(void)
 	{
 		unsigned long index = report_frames.count & (REPORT_FRAMES - 1);
 		long long micros = (now - report_frames.last_ns) / 1000;
-		struct report_frame_work *work = &report_frames.work[index];
+		struct report_frame_work *work = &report_frames.work[index], demo;
 
 		report_frames.micros[index] = (uint32_t)(micros > 0xFFFFFFFFLL ? 0xFFFFFFFFLL : micros);
 		report_frames.at_ms[index] = (uint32_t)((now - report_frames.start_ns) / 1000000);
-		/* (the counts' changes since the last frame, modulo 2^32) */
-		work->gpu = (uint32_t)times.gpu - (uint32_t)report_frames.last.gpu;
-		if (!gpu_known || !report_frames.gpu_last_known)
-			work->gpu = REPORT_GPU_UNKNOWN;
+		/* (the counts' changes since the last frame, modulo 2^32; the GPU's
+		the frame's own, once it comes: report_frames_settle) */
+		work->gpu = REPORT_GPU_UNKNOWN;
 		work->render = (uint32_t)times.render - (uint32_t)report_frames.last.render;
 		work->waited = (uint32_t)times.waited - (uint32_t)report_frames.last.waited;
 		work->paced = (uint32_t)times.paced - (uint32_t)report_frames.last.paced;
+		/* (debug.demo_perf_log's rows are written at once: the GPU's the
+		running count's change, as they always had) */
+		demo = *work;
+		demo.gpu = (uint32_t)times.gpu - (uint32_t)report_frames.last.gpu;
+		if (!gpu_known || !report_frames.gpu_last_known)
+			demo.gpu = REPORT_GPU_UNKNOWN;
+		frame_gpu_hold_add(&report_frames.held, (uint32_t)xgpu_backend_frame_number(), gpu_known,
+			report_frames.count);
+		report_frame_log_hold(report_frames.count, micros);
 		report_frames.count++;
-		report_frame_log(micros, work);
-		demo_perf_frame(micros, work, now);
+		demo_perf_frame(micros, &demo, now);
 	}
 	else
 		report_frames.start_ns = now;
 	report_frames.last_ns = now;
 	report_frames.last = times;
 	report_frames.gpu_last_known = gpu_known;
+	/* (the frames held whose GPU times have come: theirs kept, their lines
+	written, in order) */
+	report_frames_settle(0);
 }
 
 void report_log_line(const char *line)
