@@ -14,7 +14,7 @@ from harness import CHECK_FAILED, build, constant, enum_with, function, mutated,
 SOURCE = "port/linux/game/network_distributed.c"
 HEADER = "port/linux/game/network_distributed.h"
 SUBSTEPS_HEADER = "port/linux/game/network_substeps.h"
-CASES = ["substep", "substep-after-read", "step-due", "display-wait", "tick-end", "split", "held", "react", "defer", "into-view", "compact", "opence"]
+CASES = ["substep", "substep-after-read", "step-due", "display-wait", "as-they-come", "tick-end", "split", "held", "react", "defer", "into-view", "compact", "opence"]
 
 NEGATIVE_CONTROLS = {
     # what came read just before the host's step in a datagram of its own, beside the step's
@@ -22,6 +22,9 @@ NEGATIVE_CONTROLS = {
                         "return FALSE;"), "step-due"),
     # in a drawing host's wait for the display, held for a step that runs only once the wait ends
     "display-wait-as-step": (("\tif (display_wait)\n", "\tif (FALSE)\n"), "display-wait"),
+    # read as they come, the frame's interval kept: a press held up to 8 ms for the step or the last datagram
+    "as-they-come-frame-interval": (("interval = halo_server_mode() || (distributed_reading_as_they_come &&",
+                                     "interval = halo_server_mode() || (FALSE &&"), "as-they-come"),
     # ... or held for it though the wait's end is not known
     "display-wait-unknown-held": (("\t\tif (wait_left_milliseconds < 0.0f)\n\t\t\treturn FALSE;\n", ""),
                                   "display-wait"),
