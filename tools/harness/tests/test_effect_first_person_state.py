@@ -1,5 +1,7 @@
 """An effect on a first-person weapon: the effects and their locations (the game state the ticks keep) are the same
-whether the renderer drew the weapon or not; a drawn weapon's particles still go at its first-person markers."""
+whether the renderer drew the weapon or not; a drawn weapon's particles still go at its first-person markers; the
+first-person locations, outside the game state, put right when it is written over (a load: none of the state's before
+walked, a shown weapon's back)."""
 import sys
 from pathlib import Path
 
@@ -8,9 +10,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from harness import CHECK_FAILED, build, constant, enum_with, function, mutated, read, run, structure
 
-CASES = ['drawn-or-not', 'first-person']
+CASES = ['drawn-or-not', 'first-person', 'rewritten']
 
 EFFECTS = 'source/effects/effects.c'
+FIRST_PERSON_WEAPONS = 'source/interface/first_person_weapons.c'
 
 
 def generated(fault=None):
@@ -41,7 +44,8 @@ def generated(fault=None):
         'effect_build_locations', 'effect_delete', 'effect_new_from_object', 'effect_new_looping',
         'effects_start_on_first_person_weapon', 'effects_stop_on_first_person_weapon',
         'effect_camera_mode_first_person', 'effect_location_first_instance', 'effect_location_get_next_instance',
-        'effects_initialize_for_new_map'))
+        'effects_initialize_for_new_map', 'effects_port_game_state_rewritten'))
+    code += '\n' + function(read(FIRST_PERSON_WEAPONS), 'first_person_weapons_port_effects_restart')
     if fault:
         code = mutated(code, *fault)
     return (('config.inc', config), ('under_test.inc', code))
@@ -69,4 +73,18 @@ FAULTS = [
 @pytest.mark.parametrize('fault', FAULTS, ids=['own-array', 'own-player'])
 def test_negative_control(fault):
     status, output = run(build('effect_first_person_state', generated(fault)), 'drawn-or-not')
+    assert status == CHECK_FAILED, output
+
+
+REWRITTEN_FAULTS = [
+    # (nothing put right after a load: the slots' identifiers alone, which the loaded effects have too)
+    ('if (!effect_first_persons || !effect_first_person_location_data)\n\t\treturn;', 'return;'),
+    # (the slots freed, but a weapon the loaded state has shown already not given its locations again)
+    ('\tfirst_person_weapons_port_effects_restart();\n', ''),
+]
+
+
+@pytest.mark.parametrize('fault', REWRITTEN_FAULTS, ids=['identifier-only', 'no-restart'])
+def test_negative_control_rewritten(fault):
+    status, output = run(build('effect_first_person_state', generated(fault)), 'rewritten')
     assert status == CHECK_FAILED, output

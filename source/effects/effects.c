@@ -610,9 +610,11 @@ and only the particles drawn from that player's eyes are placed at them
 took identifiers of its array, which the ticks keep, so the game state
 parted with whether a frame was drawn (a demo recorded with the renderer
 on, played back without it). The effects, their locations and their
-parts are the same whether the weapon is drawn or not; these two
-allocations are the frames' (port/linux/game/demo.c), as the first-person
-weapons are, and the ticks never read them but to place those particles. */
+parts are the same whether the weapon is drawn or not; these two are
+outside the game state (the process's memory: a saved game's layout, size
+and allocations' checksum as before them), the ticks never read them but
+to place those particles, and a game state written over as a whole puts
+them right (effects_port_game_state_rewritten). */
 #define MAXIMUM_EFFECT_FIRST_PERSON_LOCATIONS 512
 
 struct effect_first_person
@@ -623,6 +625,7 @@ struct effect_first_person
 	long location_datum_indices[MAXIMUM_EFFECT_LOCATIONS];
 };
 
+static struct effect_first_person effect_first_person_slots[HALO_PORT_MAXIMUM_EFFECTS];
 static struct effect_first_person *effect_first_persons;
 static struct data_array *effect_first_person_location_data;
 
@@ -645,12 +648,10 @@ void effects_initialize(
 	pool drops deterministic effects, damage included */
 	effect_data = game_state_data_new("effect", HALO_PORT_MAXIMUM_EFFECTS, 0xFC);
 	effect_location_data = game_state_data_new("effect location", HALO_PORT_MAXIMUM_EFFECT_LOCATIONS, 0x3C);
-	/* port: (the first-person weapons' locations, the frames') */
-	effect_first_persons = (struct effect_first_person *)game_state_malloc(
-		"effect first person",
-		NULL,
-		sizeof(*effect_first_persons) * HALO_PORT_MAXIMUM_EFFECTS);
-	effect_first_person_location_data = game_state_data_new(
+	/* port: (the first-person weapons' locations, the frames': not the
+	game state's, data_new's and an array of the process's) */
+	effect_first_persons = effect_first_person_slots;
+	effect_first_person_location_data = data_new(
 		"effect first person location", MAXIMUM_EFFECT_FIRST_PERSON_LOCATIONS, 0x3C);
 	if (!effect_data || !effect_location_data || !effect_first_persons || !effect_first_person_location_data)
 		error(_error_immediate, "couldn't allocate effect globals");
@@ -693,7 +694,35 @@ void effects_dispose(
 	if (effect_location_data)
 		effect_location_data = NULL;
 	effect_first_persons = NULL;
+	if (effect_first_person_location_data)
+		data_dispose(effect_first_person_location_data);
 	effect_first_person_location_data = NULL;
+
+	return;
+}
+
+/* port: the game state written over as a whole (a saved game, a
+checkpoint's revert, a core, a demo's snapshot or tick: game_state.c's
+game_state_port_rewritten): the first-person slots, outside it, were the
+state's before it, whatever its effects' identifiers are now. All of them
+freed, never walked again, and each first-person weapon the state now has
+shown given its effects' locations again, as showing it does
+(first_person_weapons_port_effects_restart): the weapon's own state says
+it is shown already, so its next frame would not */
+void effects_port_game_state_rewritten(
+	void)
+{
+	long index;
+
+	if (!effect_first_persons || !effect_first_person_location_data)
+		return;
+	for (index = 0; index < HALO_PORT_MAXIMUM_EFFECTS; index++)
+	{
+		effect_first_persons[index].identifier = 0;
+		effect_first_persons[index].local_player_index = NONE;
+	}
+	data_delete_all(effect_first_person_location_data);
+	first_person_weapons_port_effects_restart();
 
 	return;
 }

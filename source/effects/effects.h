@@ -37,6 +37,10 @@ void effects_dispose_from_old_map(
 	void);
 void effects_dispose(
 	void);
+/* port: the game state written over as a whole: the first-person slots,
+outside it, put right (game_state.c) */
+void effects_port_game_state_rewritten(
+	void);
 void effect_delete(
 	long effect_index);
 /* port: discard delayed gameplay producers at a client checkpoint boundary. */

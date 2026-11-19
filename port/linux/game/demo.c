@@ -562,7 +562,6 @@ void demo_game_state_allocation(
 		"decal vertex cache", "particle systems", "particle system particles", "particle", "contrail",
 		"contrail point", "game sound globals", "cached object render states", "motion sensor (radar)",
 		"object looping sounds", "scenario globals", "player control globals", "first person weapons",
-		"effect first person", "effect first person location",
 		/* (the lights' cluster references, and their globals, go with the
 		lights: a difference written into them would not be the lights'
 		here) */
@@ -3077,7 +3076,10 @@ static boolean demo_playback_snapshot(
 	{
 		if (!game_state_port_demo_load(demo_ranges_write, &ranges, TRUE))
 			return FALSE;
-		demo_ranges_write(&ranges);
+		/* (written over again through game_state.c, which puts right what
+		is kept outside the game state for its sake) */
+		if (!game_state_port_demo_load(demo_ranges_write, &ranges, FALSE))
+			return FALSE;
 	}
 	random_math_port_set_seeds(demo_read_u32(bytes + 8), demo_read_u32(bytes + 12));
 	return TRUE;

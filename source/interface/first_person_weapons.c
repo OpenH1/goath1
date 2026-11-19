@@ -648,6 +648,31 @@ long first_person_weapon_get_local_index(
 	return (local_player_index==MAXIMUM_NUMBER_OF_LOCAL_PLAYERS) ? NONE : local_player_index;
 }
 
+/* port: the game state written over as a whole (effects_port_game_state_rewritten):
+the effects' first-person locations are outside it, and freed; a weapon
+the state has shown already is not shown again by its next frame
+(first_person_weapon_set_visibility), so its effects are started on it
+here, as showing it starts them (the players first_person_weapon_get_local_index
+gives: not a feed's slot, nor a dead player's showing a teammate's) */
+void first_person_weapons_port_effects_restart(
+	void)
+{
+	short local_player_index;
+
+	if (!first_person_weapons)
+		return;
+	for (local_player_index=0; local_player_index<MAXIMUM_NUMBER_OF_LOCAL_PLAYERS; local_player_index++)
+	{
+		struct first_person_weapon *first_person_weapon= first_person_weapon_get(local_player_index);
+
+		if (first_person_weapon->visible && first_person_weapon->weapon_index!=NONE &&
+			dead_spectate_eyes_unit(local_player_index)==NONE)
+		{
+			effects_start_on_first_person_weapon(local_player_index, first_person_weapon->weapon_index);
+		}
+	}
+}
+
 void first_person_weapon_draw(
 	void)
 {

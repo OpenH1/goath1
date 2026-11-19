@@ -1,7 +1,9 @@
 /* An effect on a first-person weapon (effects/effects.c): the game state the
 ticks keep (the effects and their locations) is the same whether the
 renderer drew the weapon or not; the first-person locations, the frames',
-are where a drawn weapon's particles go, and only while it is drawn. */
+are where a drawn weapon's particles go, and only while it is drawn; they
+are outside the game state, and a game state written over leaves none of
+the state's before them walked and a shown weapon's back. */
 #include "harness.h"
 
 typedef unsigned short word;
@@ -63,6 +65,15 @@ static void data_make_valid(struct data_array *array)
 	array->next_identifier = 0x1000;
 }
 
+static void data_delete_all(struct data_array *array)
+{
+	long index;
+
+	for (index = 0; index < array->maximum_count; index++)
+		((struct datum_header *)(array->data + index * array->size))->identifier = 0;
+	array->count = 0;
+}
+
 static struct data_array *effect_data, *effect_location_data;
 static struct effect_first_person *effect_first_persons;
 static struct data_array *effect_first_person_location_data;
@@ -81,9 +92,19 @@ static real_rgb_color const white = { 1.0f, 1.0f, 1.0f };
 static real_rgb_color const *const global_real_rgb_white = &white;
 static short local_player_count(void) { return 1; }
 
-/* the renderer's: whether it drew the weapon (first_person_weapon_draw) */
+/* the renderer's: whether it drew the weapon (first_person_weapon_draw),
+the first-person weapons' (the game state's, as a frame left them) */
 #define WEAPON 0x12340005
-static boolean weapon_drawn;
+#define MAXIMUM_NUMBER_OF_LOCAL_PLAYERS 4
+static struct first_person_weapon { boolean visible; long weapon_index; }
+	first_person_weapon_slots[MAXIMUM_NUMBER_OF_LOCAL_PLAYERS] = { { FALSE, WEAPON }, { FALSE, NONE }, { FALSE, NONE },
+	{ FALSE, NONE } };
+static struct first_person_weapon *first_person_weapons = first_person_weapon_slots;
+#define first_person_weapon_get(index) (&first_person_weapons[index])
+#define weapon_drawn (first_person_weapon_slots[0].visible)
+static long dead_spectate_eyes_unit(short local_player_index) { return NONE; }
+static void effects_start_on_first_person_weapon(short local_player_index, long object_index);
+void first_person_weapons_port_effects_restart(void);
 static long first_person_weapon_get_local_index(long weapon_index)
 {
 	return weapon_drawn && weapon_index == WEAPON ? 0 : NONE;
@@ -190,6 +211,45 @@ static int instances(long effect_index, short camera_mode, int *first_person)
 	return count;
 }
 
+/* the game state (the effects, their locations, the first-person weapons) as
+a saved game holds it, and written back over as game_state.c does, which
+then has the effects put right what is outside it */
+struct saved_state
+{
+	struct data_array effects, locations;
+	unsigned char *effect_bytes, *location_bytes;
+	struct first_person_weapon weapons[MAXIMUM_NUMBER_OF_LOCAL_PLAYERS];
+};
+
+static void state_save(struct saved_state *state)
+{
+	size_t effect_size = (size_t)(effect_data->maximum_count * effect_data->size);
+	size_t location_size = (size_t)(effect_location_data->maximum_count * effect_location_data->size);
+
+	state->effects = *effect_data;
+	state->locations = *effect_location_data;
+	state->effect_bytes = malloc(effect_size);
+	state->location_bytes = malloc(location_size);
+	memcpy(state->effect_bytes, effect_data->data, effect_size);
+	memcpy(state->location_bytes, effect_location_data->data, location_size);
+	memcpy(state->weapons, first_person_weapon_slots, sizeof(state->weapons));
+}
+
+static void state_load(struct saved_state const *state)
+{
+	unsigned char *effect_bytes = effect_data->data, *location_bytes = effect_location_data->data;
+
+	*effect_data = state->effects;
+	*effect_location_data = state->locations;
+	effect_data->data = effect_bytes;
+	effect_location_data->data = location_bytes;
+	memcpy(effect_bytes, state->effect_bytes, (size_t)(effect_data->maximum_count * effect_data->size));
+	memcpy(location_bytes, state->location_bytes,
+		(size_t)(effect_location_data->maximum_count * effect_location_data->size));
+	memcpy(first_person_weapon_slots, state->weapons, sizeof(state->weapons));
+	effects_port_game_state_rewritten();
+}
+
 int main(int argc, char **argv)
 {
 	const char *case_name = argv[1];
@@ -245,6 +305,56 @@ int main(int argc, char **argv)
 		effects_start_on_first_person_weapon(0, WEAPON);
 		CHECK(instances(looping, _effect_camera_mode_first_person_only, &first_person) == 2 && first_person == 2,
 			"shown again: %d of the weapon's markers", first_person);
+		effect_delete(looping);
+		CHECK(effect_first_person_location_data->count == 0, "deleted: %ld first-person locations left",
+			(long)effect_first_person_location_data->count);
+	}
+	CASE("rewritten")
+	{
+		/* the game state saved with the weapon shown, and again hidden; the
+		renderer then showing it, which takes the effect's slot again under
+		the same identifier the saved states' effect has; each state loaded
+		over that */
+		struct saved_state shown, hidden;
+		long looping;
+		int first_person;
+
+		map_begin();
+		weapon_drawn = TRUE;
+		looping = effect_new_looping(7, WEAPON, NONE, NONE, NONE);
+		state_save(&shown);
+		weapon_drawn = FALSE;
+		effects_stop_on_first_person_weapon(0);
+		state_save(&hidden);
+		weapon_drawn = TRUE;
+		effects_start_on_first_person_weapon(0, WEAPON);
+		CHECK(effect_first_person_location_data->count == 2, "shown: %ld first-person locations",
+			(long)effect_first_person_location_data->count);
+
+		/* hidden in the state loaded: the slot of the state before (its
+		identifier the loaded effect's) is not the effect's */
+		state_load(&hidden);
+		CHECK(effect_local_player_index(effect_get(looping)) == NONE,
+			"loaded hidden: the effect has the player of the state before");
+		CHECK(instances(looping, _effect_camera_mode_first_person_only, &first_person) == 0,
+			"loaded hidden: %d first-person locations of the state before walked", first_person);
+		CHECK(effect_first_person_location_data->count == 0, "loaded hidden: %ld first-person locations left",
+			(long)effect_first_person_location_data->count);
+		/* (its next frame shows it, as the renderer does) */
+		weapon_drawn = TRUE;
+		effects_start_on_first_person_weapon(0, WEAPON);
+		CHECK(instances(looping, _effect_camera_mode_first_person_only, &first_person) == 2 && first_person == 2,
+			"loaded hidden, shown: %d of the weapon's markers", first_person);
+
+		/* shown in the state loaded: the weapon's own state says it is
+		shown, so no frame starts it; its locations are back all the same,
+		and only they */
+		state_load(&shown);
+		CHECK(effect_local_player_index(effect_get(looping)) == 0, "loaded shown: the effect has no player");
+		CHECK(instances(looping, _effect_camera_mode_first_person_only, &first_person) == 2 && first_person == 2,
+			"loaded shown: %d of the weapon's markers", first_person);
+		CHECK(effect_first_person_location_data->count == 2, "loaded shown: %ld first-person locations",
+			(long)effect_first_person_location_data->count);
 		effect_delete(looping);
 		CHECK(effect_first_person_location_data->count == 0, "deleted: %ld first-person locations left",
 			(long)effect_first_person_location_data->count);

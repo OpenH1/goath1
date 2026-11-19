@@ -52,6 +52,10 @@ void first_person_weapons_update(
 	void);
 long first_person_weapon_get_local_index(
 	long weapon_index);
+/* port: each shown weapon's effects started again (effects.c, after the
+game state is written over) */
+void first_person_weapons_port_effects_restart(
+	void);
 void first_person_weapon_draw(
 	void);
 short first_person_weapon_get_marker_by_name(
