@@ -297,7 +297,9 @@ card, a handheld or a 4K display. The HUD and menus are drawn into the same
 targets, so at it too. 1 (or 0, unset or not a number) draws the display's
 pixels. It multiplies display.supersampling's factor (Settings' RENDER
 RESOLUTION sets one or the other: menu_functions.c). Android and iOS draw
-it in their hosts instead (a smaller swapchain or drawable). Read between
+it in their hosts instead (a smaller swapchain or drawable), except where
+display.temporal_aa upscales it: then the host draws the display's pixels
+and the game the render scale (HALO_UPSCALE_RENDER_SCALE). Read between
 frames (halo_screen_commit). display.dynamic_resolution lowers it while the
 GPU cannot keep to the frame rate (render_scale_dynamic: dynamic_resolution.h). */
 
@@ -331,6 +333,24 @@ static float render_scale_configured(void)
 			else
 				platform_log("render scale: %g", factor);
 		}
+	}
+	return factor;
+#elif defined(HALO_ANDROID) || defined(HALO_IOS)
+	/* (a phone's host draws the display's pixels where display.temporal_aa
+	upscales, and gives the render scale here, HALO_UPSCALE_RENDER_SCALE:
+	the 3D view drawn at it and upscaled, else the screen's targets at it
+	and the display blit scales them up; otherwise the host draws it, 1) */
+	static float factor = -1.0f;
+
+	if (factor < 0.0f)
+	{
+		const char *value = getenv("HALO_UPSCALE_RENDER_SCALE");
+
+		factor = value ? (float)atof(value) : 1.0f;
+		if (!(factor >= RENDER_SCALE_LEAST && factor <= 1.0f))
+			factor = 1.0f;
+		if (factor < 1.0f)
+			platform_log("render scale: %g, upscaled by the game", factor);
 	}
 	return factor;
 #else
@@ -7892,6 +7912,10 @@ int halo_motion_window(int on, float jitter_x, float jitter_y)
 	}
 	motion.on = TRUE;
 	motion.lod_bias = temporal_lod_bias();
+	/* (MetalFX's spatial scaler, where the GPU has no temporal one: an
+	iOS's temporal_metalfx 2; one frame alone, not jittered) */
+	if (motion_vectors_technique() == 3 && xgpu_backend_capabilities.temporal_metalfx == 2)
+		jitter_x = jitter_y = 0.0f;
 	motion.jitter[0] = jitter_x / target->target.scale[0];
 	motion.jitter[1] = jitter_y / target->target.scale[1];
 	return TRUE;

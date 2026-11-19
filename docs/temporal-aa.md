@@ -73,8 +73,12 @@ renderer has it: Settings > Video > Frame Rate & Sync > Upscaler (`xgpu_backend_
   light too: the accumulation's sharpening build leaves the output to RCAS, which reads this frame's upscaled colour.
   0 dispatches neither (the frame as without it). MetalFX's output goes through the same RCAS, ported to MSL
   (`xgpu_metal_temporal.m`), in place of its copy into the back buffer; 0 is the plain copy. DLSS ignores it.
-- **Not done.** Android's render scale is its swapchain's (FSR there antialiases at the
-  swapchain's size).
+- **Phones (#1228).** `display.temporal_aa` `"fsr"` on Android or `"metalfx"` on iOS (off by default; the
+  Upscaler row on both). With it the host draws the screen's pixels (the swapchain or drawable at full size) and gives the game the
+  render scale (`HALO_UPSCALE_RENDER_SCALE`): the 3D view is drawn at it and upscaled, with the LOD bias, as on a
+  computer. Otherwise the host draws the render scale and the system stretches it, as before. The host chooses at
+  the start; a change in the game takes full effect at the next one. An iPhone whose GPU has MetalFX's spatial
+  scaler but not its temporal one upscales with the spatial one, unjittered (`temporal_metalfx` 2).
 
 ## Milestone 3: `"dlss"` (Vulkan, NVIDIA)
 

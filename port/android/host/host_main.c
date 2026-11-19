@@ -264,6 +264,29 @@ static float render_scale_choose(const char *config, int shorter)
 	return (float)scale;
 }
 
+/* whether display.temporal_aa is "fsr" (HALO_TEMPORAL_AA, else config.toml's;
+off by default): AMD FSR upscales the game's render scale to the screen's
+pixels (#1228), so the swapchain is the screen's size */
+static int render_scale_upscaled(const char *config)
+{
+	const char *value = getenv("HALO_TEMPORAL_AA");
+	int upscaled = 0;
+
+	if (value && *value)
+		return !strcmp(value, "fsr");
+	{
+		toml_result_t result = toml_parse_file_ex(config);
+		toml_datum_t setting;
+
+		if (!result.ok)
+			return 0;
+		setting = toml_seek(result.toptab, "display.temporal_aa");
+		upscaled = setting.type == TOML_STRING && !strcmp(setting.u.s, "fsr");
+		toml_free(result);
+	}
+	return upscaled;
+}
+
 /* the host's (host_sdl.c's window size, xgpu_vulkan.c's swapchain) */
 float host_app_render_scale(void)
 {
@@ -327,6 +350,19 @@ static void *game_main(void *unused)
 
 			snprintf(path, sizeof(path), "%s/config.toml", data_root);
 			render_scale = render_scale_choose(path, shorter);
+			/* (display.temporal_aa "fsr": the game draws its 3D view at the
+			render scale and FSR builds the screen's pixels from it,
+			d3d8_device.c's render_scale_configured; the swapchain, the
+			window and the touch controls' sizes the screen's) */
+			if (render_scale < 1.0f && render_scale_upscaled(path))
+			{
+				char scale[16];
+
+				snprintf(scale, sizeof(scale), "%g", render_scale);
+				host_environment_set(&environment, "HALO_UPSCALE_RENDER_SCALE", scale);
+				host_logf(HOST_LOG_INFO, "render scale %.2f upscaled by AMD FSR", render_scale);
+				render_scale = 1.0f;
+			}
 			snprintf(width, sizeof(width), "%d", render_scaled(longer));
 			snprintf(height, sizeof(height), "%d", render_scaled(shorter));
 			host_environment_set(&environment, "HALO_DISPLAY_WIDTH", width);

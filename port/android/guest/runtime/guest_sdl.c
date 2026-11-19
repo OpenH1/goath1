@@ -216,6 +216,18 @@ SDL_PowerState SDL_GetPowerInfo(int *seconds, int *percent)
 	return state;
 }
 
+/* (SDL_AtomicInt's reads and writes, with the compiler's atomics: the
+shared code's flags between its threads, dlss_addon.c's state) */
+int SDL_GetAtomicInt(SDL_AtomicInt *a)
+{
+	return __atomic_load_n(&a->value, __ATOMIC_SEQ_CST);
+}
+
+int SDL_SetAtomicInt(SDL_AtomicInt *a, int v)
+{
+	return __atomic_exchange_n(&a->value, v, __ATOMIC_SEQ_CST);
+}
+
 void SDL_Delay(Uint32 milliseconds)
 {
 	struct timespec duration;
@@ -242,6 +254,14 @@ bool SDL_GetWindowSizeInPixels(SDL_Window *window, int *width, int *height)
 	if (height)
 		*height = h;
 	return true;
+}
+
+/* (the phone's one window: shown and full screen while the game runs; in
+the background the app is paused in the event poll, so focus alone tells
+it apart: sdl_platform.c's platform_window_background) */
+SDL_WindowFlags SDL_GetWindowFlags(SDL_Window *window)
+{
+	return window ? SDL_WINDOW_FULLSCREEN : 0;
 }
 
 bool SDL_SetWindowRelativeMouseMode(SDL_Window *window, bool enabled)
