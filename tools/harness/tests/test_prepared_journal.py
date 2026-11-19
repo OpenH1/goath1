@@ -182,6 +182,12 @@ KEPT_ELSEWHERE = {
                           "objects draw their motion: the backend's own record, sent again as a record plays",
     'halo_motion_objects': "the backend's motion target bound (its own record); the objects' span, which their "
                            "variants are derived from, is struct draw_inputs' motion_objects",
+    'halo_target_detail': "the size in pixels of the targets the game makes from then on (the water's ripples, the "
+                          "motion sensor's): a target is made as the game asks for it, played back or not, and a "
+                          "pipeline is built from its format and samples, never its size",
+    'halo_target_averaged': "the sun glow's screen copy sampled with levels made from it: the texture's levels and "
+                            "its sampler's filter, bound as it draws, which no pipeline is built from (a stage's "
+                            "pipeline inputs are its source, sampler type, addressing and border: xgpu_manifest_stage)",
     'd3d8_draw_state_kept': "debug.retained_shadows' hint that a draw's state is the one before's: no draw is "
                             "kept so while a preparation runs or a journal records",
 }

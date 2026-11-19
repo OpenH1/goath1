@@ -521,6 +521,170 @@ boolean render_enumerate_structure_wanted(short structure_bsp_index)
 	return structure_bsp_cache_reference_materials(reference, structure_keys_visit, NULL) && structure_keys.found;
 }
 
+#ifdef HALO_VR
+/* The VR mode records no preparation (render_prepared.c's
+prepared_enabled: its eyes' and HUD's views are not journaled), so no record
+can carry a later structure's own walk: there, until it does, the map's
+first frame draws its other structures' materials as it did before #1181,
+each by a material of the first structure of the same class
+(MATERIAL_KEY_CLASS) standing in for it, drawn with its shader (and its
+permutation 0) and given its own back after the round, in rounds of its
+world's passes after the frame's; a key no material of the first can stand
+in for is left to its structure's own walk, at the switch to it. */
+
+/* the rounds of the map's other structures' materials drawn as its first
+frame's (stand_ins_next), at most */
+#define MAXIMUM_STAND_IN_ROUNDS 4
+
+static struct
+{
+	/* the keys still to draw, and their shaders */
+	struct enumerated_materials pending;
+	long pending_shader_indices[MAXIMUM_ENUMERATED_MATERIALS];
+	/* the round being drawn (0 the frame's own passes), its materials
+	standing in, their own shaders and permutations, the keys they stand
+	for */
+	short round;
+	short count;
+	struct structure_material *materials[MAXIMUM_ENUMERATED_MATERIALS];
+	long shader_indices[MAXIMUM_ENUMERATED_MATERIALS];
+	short permutation_indices[MAXIMUM_ENUMERATED_MATERIALS];
+	struct enumerated_materials keys;
+	/* a lightmap of the first structure drawn without its picture, its
+	materials standing in for those of lightmaps without one, and its
+	picture */
+	struct structure_lightmap *unlit;
+	short unlit_bitmap_index;
+} stand_ins;
+
+static void stand_ins_visit(void *context, struct structure_lightmap const *lightmap,
+	struct structure_material const *material)
+{
+	struct enumerated_materials const *enumerated = context;
+	unsigned long key = material_key(lightmap, material);
+
+	if (material->shader.index != NONE && tag_index_is_group(material->shader.index, SHADER_DEFINITION_TAG) &&
+		!materials_have(enumerated, key) && !materials_have(&stand_ins.pending, key) &&
+		stand_ins.pending.count < MAXIMUM_ENUMERATED_MATERIALS)
+	{
+		stand_ins.pending_shader_indices[stand_ins.pending.count] = material->shader.index;
+		stand_ins.pending.keys[stand_ins.pending.count++] = key;
+	}
+}
+
+/* the other structures' keys the map's enumerations have not drawn, and
+the first structure's will not */
+static void stand_ins_collect(struct structure_bsp *structure_bsp, struct enumerated_materials *enumerated)
+{
+	static struct enumerated_materials known;
+
+	stand_ins.pending.count = 0;
+	stand_ins.round = 0;
+	stand_ins.count = 0;
+	stand_ins.keys.count = 0;
+	if (!enumerated)
+		return;
+	known = *enumerated;
+	structure_materials(structure_bsp, &known, TRUE, FALSE);
+	structure_bsp_cache_materials(stand_ins_visit, &known);
+}
+
+/* the last round's materials given their own shaders back, and its keys
+counted as drawn */
+static void stand_ins_restore(struct enumerated_materials *enumerated)
+{
+	short index;
+
+	for (index = 0; index < stand_ins.count; index++)
+	{
+		stand_ins.materials[index]->shader.index = stand_ins.shader_indices[index];
+		stand_ins.materials[index]->permutation_index = stand_ins.permutation_indices[index];
+	}
+	if (stand_ins.unlit)
+		stand_ins.unlit->bitmap_index = stand_ins.unlit_bitmap_index;
+	stand_ins.unlit = NULL;
+	for (index = 0; index < stand_ins.keys.count; index++)
+	{
+		materials_add(enumerated, stand_ins.keys.keys[index]);
+		/* (drawn through the mirrors' window too) */
+		if (enumerate.mirrors)
+			materials_add(enumerated, stand_ins.keys.keys[index] | MATERIAL_KEY_MIRROR);
+	}
+	stand_ins.count = 0;
+	stand_ins.keys.count = 0;
+}
+
+/* the next round's materials standing in for the keys still to draw: TRUE,
+or FALSE with none left (or none that can stand in for them) */
+static boolean stand_ins_next(struct structure_bsp *structure_bsp, struct enumerated_materials *enumerated)
+{
+	short lightmap_index, material_index, index;
+
+	stand_ins_restore(enumerated);
+	if (!structure_bsp || !enumerated || stand_ins.round >= MAXIMUM_STAND_IN_ROUNDS || !stand_ins.pending.count)
+		return FALSE;
+	stand_ins.round++;
+	/* (a lightmap drawn without its picture, if a key still to draw has
+	none) */
+	for (index = 0; index < stand_ins.pending.count && (stand_ins.pending.keys[index] & 0x10000UL); index++)
+		;
+	if (index < stand_ins.pending.count)
+	{
+		for (lightmap_index = 0; lightmap_index < structure_bsp->lightmaps.count && !stand_ins.unlit; lightmap_index++)
+		{
+			struct structure_lightmap *lightmap = TAG_BLOCK_GET_ELEMENT(&structure_bsp->lightmaps, lightmap_index,
+				struct structure_lightmap);
+
+			if (lightmap->bitmap_index != NONE && lightmap->materials.count)
+				stand_ins.unlit = lightmap;
+		}
+		if (stand_ins.unlit)
+		{
+			stand_ins.unlit_bitmap_index = stand_ins.unlit->bitmap_index;
+			stand_ins.unlit->bitmap_index = NONE;
+		}
+	}
+	for (lightmap_index = 0; lightmap_index < structure_bsp->lightmaps.count; lightmap_index++)
+	{
+		struct structure_lightmap *lightmap = TAG_BLOCK_GET_ELEMENT(&structure_bsp->lightmaps, lightmap_index,
+			struct structure_lightmap);
+
+		for (material_index = 0; material_index < lightmap->materials.count; material_index++)
+		{
+			struct structure_material *material = TAG_BLOCK_GET_ELEMENT(&lightmap->materials, material_index,
+				struct structure_material);
+			unsigned long key = material_key(lightmap, material);
+
+			if (material->surface_count <= 0 || material->first_surface_index < 0 ||
+				material->first_surface_index >= structure_bsp->surfaces.count)
+			{
+				continue;
+			}
+			for (index = 0; index < stand_ins.pending.count; index++)
+			{
+				unsigned long pending = stand_ins.pending.keys[index];
+
+				if (MATERIAL_KEY_CLASS(pending) != MATERIAL_KEY_CLASS(key))
+					continue;
+				stand_ins.materials[stand_ins.count] = material;
+				stand_ins.shader_indices[stand_ins.count] = material->shader.index;
+				stand_ins.permutation_indices[stand_ins.count] = material->permutation_index;
+				stand_ins.count++;
+				material->shader.index = stand_ins.pending_shader_indices[index];
+				material->permutation_index = 0;
+				materials_add(&stand_ins.keys, pending);
+				stand_ins.pending.count--;
+				stand_ins.pending.keys[index] = stand_ins.pending.keys[stand_ins.pending.count];
+				stand_ins.pending_shader_indices[index] = stand_ins.pending_shader_indices[stand_ins.pending.count];
+				break;
+			}
+		}
+	}
+	return stand_ins.count != 0;
+}
+
+#endif
+
 static short pass_fog(void)
 {
 	return (short)(enumerate.pass / NUMBER_OF_PARTS % NUMBER_OF_FOGS);
@@ -764,6 +928,13 @@ boolean render_enumerate_begin(boolean mirrors, boolean scope)
 	/* A map's models and effects once, each structure once, in each view. */
 	enumerate.everything = *enumerate.structure_bsps_enumerated[view] == 0;
 	enumerate.map_drawn = enumerate.everything;
+#ifdef HALO_VR
+	/* (and with them, its other structures' materials, standing in) */
+	if (enumerate.everything)
+		stand_ins_collect(global_structure_bsp_get(), enumerate.materials_enumerated[view]);
+	else
+		stand_ins.pending.count = stand_ins.round = 0;
+#endif
 	enumerate.scope = scope;
 	enumerate.interface_drawn = FALSE;
 	if (enumerate.everything)
@@ -851,13 +1022,31 @@ boolean render_enumerate_next(void)
 		return TRUE;
 	}
 	enumerate.fog_screen = NONE;
-	if (!enumerate.scope)
-		enumerate.interface_pending = enumerate.everything && !enumerate.interface_drawn;
-	/* (its materials' pipelines made: a later structure with these alone
-	draws nothing) */
-	if (global_structure_bsp_get())
-		structure_materials(global_structure_bsp_get(), enumerate.materials_enumerated[enumerate.scope ? 1 : 0], TRUE,
-			enumerate.mirrors);
+#ifdef HALO_VR
+	if (!stand_ins.round)
+#endif
+	{
+		if (!enumerate.scope)
+			enumerate.interface_pending = enumerate.everything && !enumerate.interface_drawn;
+		/* (its materials' pipelines made: a later structure with these alone
+		draws nothing) */
+		if (global_structure_bsp_get())
+			structure_materials(global_structure_bsp_get(), enumerate.materials_enumerated[enumerate.scope ? 1 : 0], TRUE,
+				enumerate.mirrors);
+	}
+#ifdef HALO_VR
+	/* (VR: the map's other structures' materials, standing in, in the
+	world's passes alone) */
+	if (stand_ins_next(global_structure_bsp_get(), enumerate.materials_enumerated[enumerate.scope ? 1 : 0]))
+	{
+		enumerate.everything = FALSE;
+		enumerate.pass = 0;
+		while (!pass_drawn())
+			enumerate.pass++;
+		fog_set(pass_fog());
+		return TRUE;
+	}
+#endif
 	render.fog = enumerate.own_fog;
 	rasterizer_lens_flares_port_truncate(enumerate.lens_flare_count);
 	render_enumerating = FALSE;
