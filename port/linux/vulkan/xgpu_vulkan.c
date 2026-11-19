@@ -947,6 +947,9 @@ noted */
 #define ACQUIRE_STALL_NS 2000000000ull
 /* the upload ring */
 #define RING_SIZE (128u * 1024 * 1024)
+/* (bytes past the ring's end, read by none, so that every range of the
+ring is inside the buffer through the constants' descriptor: draw_set_make) */
+#define RING_TAIL (384u * 16)
 /* images' memory, in blocks of this (larger images have their own) */
 #define BLOCK_SIZE (64u * 1024 * 1024)
 #define SAMPLER_CACHE 1024
@@ -1160,6 +1163,9 @@ struct segment
 	/* the targets' first layer and views */
 	uint32_t layer, views;
 	struct pass_attachment color, depth;
+	/* display.temporal_aa's motion (xgpu_vulkan_set_motion_target): the
+	second colour attachment, while the objects of a window draw */
+	struct pass_attachment motion;
 };
 
 /* a frame's visibility tests: its queries, and the slot and area of each */
@@ -1342,7 +1348,12 @@ static struct
 	/* the targets bound, and the pass drawing into them */
 	struct xgpu_vulkan_image *color, *depth;
 	uint32_t layer, views;
+	/* display.temporal_aa: the motion's image, the second colour attachment
+	of a pass into motion_of (xgpu_vulkan_set_motion_target; NULL none) */
+	struct xgpu_vulkan_image *motion, *motion_of;
 	int pass_active;
+	/* (the pass has the motion attachment: draws' pipelines with it) */
+	int pass_motion;
 	uint32_t pass_width, pass_height;
 	/* the pass began by a clear of XGPU_VULKAN_CLEAR_ALONE, its colour all
 	cleared to this: the rectangles drawn or cleared again in it since (left,
@@ -2488,7 +2499,7 @@ static void image_first_use(struct xgpu_vulkan_image *image, int cleared, const 
 
 static struct pass_attachment *segment_attachment(uint32_t segment, int slot)
 {
-	return slot ? &vk.segments[segment].depth : &vk.segments[segment].color;
+	return slot == 2 ? &vk.segments[segment].motion : slot ? &vk.segments[segment].depth : &vk.segments[segment].color;
 }
 
 static void aside_image_read(struct xgpu_vulkan_image *image);
@@ -2653,7 +2664,8 @@ static int aside_continues(const struct segment *segment)
 {
 	const struct segment *last = &vk.segments[vk.chain_last - 1];
 
-	if (segment->color.image != vk.chain_color || segment->depth.image != vk.chain_depth ||
+	if (segment->motion.image || last->motion.image ||
+		segment->color.image != vk.chain_color || segment->depth.image != vk.chain_depth ||
 		segment->color.info.imageView != last->color.info.imageView ||
 		segment->depth.info.imageView != last->depth.info.imageView ||
 		memcmp(&segment->area, &last->area, sizeof(segment->area)) || segment->view_mask != last->view_mask ||
@@ -2712,7 +2724,7 @@ and resolves, the pieces between executed in it */
 static void pass_play(VkCommandBuffer main, uint32_t first, uint32_t last)
 {
 	struct segment *segment = &vk.segments[first], *end = &vk.segments[last];
-	VkRenderingAttachmentInfo color, depth, stencil;
+	VkRenderingAttachmentInfo colors[2], depth, stencil;
 	VkRenderingInfo rendering;
 	uint32_t index;
 
@@ -2725,16 +2737,22 @@ static void pass_play(VkCommandBuffer main, uint32_t first, uint32_t last)
 	rendering.viewMask = segment->view_mask;
 	if (segment->color.info.imageView)
 	{
-		color = segment->color.info;
-		color.storeOp = store_choose(last, &end->color, 0);
+		colors[0] = segment->color.info;
+		colors[0].storeOp = store_choose(last, &end->color, 0);
 		if (end->color.resolve_view)
 		{
-			color.resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
-			color.resolveImageView = end->color.resolve_view;
-			color.resolveImageLayout = VK_IMAGE_LAYOUT_GENERAL;
+			colors[0].resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
+			colors[0].resolveImageView = end->color.resolve_view;
+			colors[0].resolveImageLayout = VK_IMAGE_LAYOUT_GENERAL;
 		}
 		rendering.colorAttachmentCount = 1;
-		rendering.pColorAttachments = &color;
+		rendering.pColorAttachments = colors;
+		/* (display.temporal_aa's motion, stored: the resolve reads it) */
+		if (segment->motion.info.imageView)
+		{
+			colors[1] = segment->motion.info;
+			rendering.colorAttachmentCount = 2;
+		}
 	}
 	if (segment->depth.info.imageView)
 	{
@@ -4411,13 +4429,15 @@ void xgpu_vulkan_image_destroy(struct xgpu_vulkan_image *image)
 
 	if (!image)
 		return;
-	if (vk.color == image || vk.depth == image)
+	if (vk.color == image || vk.depth == image || vk.motion == image || vk.motion_of == image)
 	{
 		pass_end();
 		if (vk.color == image)
 			vk.color = NULL;
 		if (vk.depth == image)
 			vk.depth = NULL;
+		if (vk.motion == image || vk.motion_of == image)
+			vk.motion = vk.motion_of = NULL;
 	}
 	if (image == vk.chain_color || image == vk.chain_depth)
 		aside_break();
@@ -5778,12 +5798,12 @@ static VkPipeline pipeline_build(const struct xgpu_vulkan_pipeline_description *
 	VkPipelineRasterizationStateCreateInfo raster;
 	VkPipelineMultisampleStateCreateInfo multisample;
 	VkPipelineDepthStencilStateCreateInfo depth_stencil;
-	VkPipelineColorBlendAttachmentState blend_attachment;
+	VkPipelineColorBlendAttachmentState blend_attachments[2];
 	VkPipelineColorBlendStateCreateInfo blend;
 	VkPipelineDynamicStateCreateInfo dynamic;
 	VkPipelineRenderingCreateInfo rendering;
 	VkGraphicsPipelineCreateInfo info;
-	VkFormat color_format = vulkan_format(description->color_format);
+	VkFormat color_formats[2] = { vulkan_format(description->color_format), vulkan_format(description->motion_format) };
 	VkFormat depth_format = description->depth_format ? vk.depth_format : VK_FORMAT_UNDEFINED;
 	static const VkDynamicState dynamic_states[] =
 	{
@@ -5882,18 +5902,28 @@ static VkPipeline pipeline_build(const struct xgpu_vulkan_pipeline_description *
 	depth_stencil.minDepthBounds = 0.0f;
 	depth_stencil.maxDepthBounds = 1.0f;
 
-	memset(&blend_attachment, 0, sizeof(blend_attachment));
+	memset(&blend_attachments[0], 0, sizeof(blend_attachments[0]));
 	/* (display.hdr: a pixel shader that reads the pixel it draws over
 	blends with it itself) */
-	blend_attachment.blendEnable = description->blend && !description->color_read ? VK_TRUE : VK_FALSE;
-	blend_attachment.srcColorBlendFactor = blend_attachment.srcAlphaBlendFactor = blend_factor(description->blend_source);
-	blend_attachment.dstColorBlendFactor = blend_attachment.dstAlphaBlendFactor = blend_factor(description->blend_destination);
-	blend_attachment.colorBlendOp = blend_attachment.alphaBlendOp = blend_op(description->blend_operation);
-	blend_attachment.colorWriteMask = description->color_store ? 0 : description->color_mask & 15;
+	blend_attachments[0].blendEnable = description->blend && !description->color_read ? VK_TRUE : VK_FALSE;
+	blend_attachments[0].srcColorBlendFactor = blend_attachments[0].srcAlphaBlendFactor =
+		blend_factor(description->blend_source);
+	blend_attachments[0].dstColorBlendFactor = blend_attachments[0].dstAlphaBlendFactor =
+		blend_factor(description->blend_destination);
+	blend_attachments[0].colorBlendOp = blend_attachments[0].alphaBlendOp = blend_op(description->blend_operation);
+	blend_attachments[0].colorWriteMask = description->color_store ? 0 : description->color_mask & 15;
 	memset(&blend, 0, sizeof(blend));
 	blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-	blend.attachmentCount = color_format != VK_FORMAT_UNDEFINED ? 1 : 0;
-	blend.pAttachments = &blend_attachment;
+	blend.attachmentCount = color_formats[0] != VK_FORMAT_UNDEFINED ? 1 : 0;
+	blend.pAttachments = blend_attachments;
+	/* (display.temporal_aa: the motion, written through its own mask, never
+	blended) */
+	if (color_formats[0] != VK_FORMAT_UNDEFINED && description->motion_format)
+	{
+		memset(&blend_attachments[1], 0, sizeof(blend_attachments[1]));
+		blend_attachments[1].colorWriteMask = description->motion_mask & 15;
+		blend.attachmentCount = 2;
+	}
 	if (description->color_read && vk.capabilities.raster_order)
 		blend.flags = VK_PIPELINE_COLOR_BLEND_STATE_CREATE_RASTERIZATION_ORDER_ATTACHMENT_ACCESS_BIT_EXT;
 
@@ -5905,8 +5935,8 @@ static VkPipeline pipeline_build(const struct xgpu_vulkan_pipeline_description *
 	memset(&rendering, 0, sizeof(rendering));
 	rendering.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
 	rendering.viewMask = description->view_mask;
-	rendering.colorAttachmentCount = color_format != VK_FORMAT_UNDEFINED ? 1 : 0;
-	rendering.pColorAttachmentFormats = &color_format;
+	rendering.colorAttachmentCount = blend.attachmentCount;
+	rendering.pColorAttachmentFormats = color_formats;
 	rendering.depthAttachmentFormat = depth_format;
 	rendering.stencilAttachmentFormat = depth_format;
 
@@ -6066,7 +6096,7 @@ static void pass_segment_begin(const VkRenderingInfo *rendering)
 	struct segment *segment = segment_add();
 	uint32_t index = vk.segment_count - 1;
 	VkCommandBufferInheritanceRenderingInfo inheritance;
-	VkFormat color_format = VK_FORMAT_UNDEFINED;
+	VkFormat color_formats[2] = { VK_FORMAT_UNDEFINED, VK_FORMAT_UNDEFINED };
 	struct xgpu_vulkan_image *sized = vk.color ? vk.color : vk.depth;
 
 	segment->pass = 1;
@@ -6086,11 +6116,20 @@ static void pass_segment_begin(const VkRenderingInfo *rendering)
 
 		segment->color.image = vk.color;
 		segment->color.info = *color;
-		color_format = vk.color->format;
+		color_formats[0] = vk.color->format;
 		inheritance.colorAttachmentCount = 1;
-		inheritance.pColorAttachmentFormats = &color_format;
+		inheritance.pColorAttachmentFormats = color_formats;
 		attachment_use(index, 0, vk.color, 1,
 			color->loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR && attachment_whole(vk.color, &rendering->renderArea));
+		/* (display.temporal_aa's motion, loaded and stored) */
+		if (rendering->colorAttachmentCount > 1)
+		{
+			segment->motion.image = vk.motion;
+			segment->motion.info = rendering->pColorAttachments[1];
+			color_formats[1] = vk.motion->format;
+			inheritance.colorAttachmentCount = 2;
+			attachment_use(index, 2, vk.motion, 1, 0);
+		}
 	}
 	if (rendering->pDepthAttachment)
 	{
@@ -6241,7 +6280,7 @@ static void pass_clear_end(void)
 /* the pass drawing into the bound targets, begun */
 static int pass_begin(uint32_t clear_parts, const float clear_color[4], float clear_depth, uint32_t clear_stencil)
 {
-	VkRenderingAttachmentInfo color, depth, stencil;
+	VkRenderingAttachmentInfo colors[2], depth, stencil;
 	VkRenderingInfo rendering;
 	struct xgpu_vulkan_image *size_of = vk.color ? vk.color : vk.depth;
 
@@ -6258,19 +6297,35 @@ static int pass_begin(uint32_t clear_parts, const float clear_color[4], float cl
 	rendering.viewMask = vk.views > 1 ? (1u << vk.views) - 1 : 0;
 	if (vk.color)
 	{
-		memset(&color, 0, sizeof(color));
-		color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-		color.imageView = attachment_view(vk.color, vk.layer, vk.views);
-		color.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-		if (!color.imageView)
+		memset(&colors[0], 0, sizeof(colors[0]));
+		colors[0].sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+		colors[0].imageView = attachment_view(vk.color, vk.layer, vk.views);
+		colors[0].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+		if (!colors[0].imageView)
 			return 0;
-		color.loadOp = (clear_parts & XGPU_VULKAN_CLEAR_COLOR) ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+		colors[0].loadOp = (clear_parts & XGPU_VULKAN_CLEAR_COLOR) ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
 		if (clear_parts & XGPU_VULKAN_CLEAR_COLOR)
-			memcpy(color.clearValue.color.float32, clear_color, sizeof(color.clearValue.color.float32));
-		color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+			memcpy(colors[0].clearValue.color.float32, clear_color, sizeof(colors[0].clearValue.color.float32));
+		colors[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 		rendering.colorAttachmentCount = 1;
-		rendering.pColorAttachments = &color;
+		rendering.pColorAttachments = colors;
 		vk.color->used = vk.serial;
+		/* (display.temporal_aa: the motion, the second attachment, where the
+		colour is the image it was set with: xgpu_vulkan_set_motion_target) */
+		if (xgpu_vulkan_motion_bound())
+		{
+			memset(&colors[1], 0, sizeof(colors[1]));
+			colors[1].sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+			colors[1].imageView = attachment_view(vk.motion, 0, 1);
+			colors[1].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+			colors[1].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+			colors[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+			if (colors[1].imageView)
+			{
+				rendering.colorAttachmentCount = 2;
+				vk.motion->used = vk.serial;
+			}
+		}
 		if (vk.depth && (vk.depth->description.width < rendering.renderArea.extent.width ||
 			vk.depth->description.height < rendering.renderArea.extent.height))
 		{
@@ -6304,8 +6359,8 @@ static int pass_begin(uint32_t clear_parts, const float clear_color[4], float cl
 	}
 	if (vk.color)
 	{
-		vk.statistics.attachment_clears += color.loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR;
-		vk.statistics.attachment_loads += color.loadOp == VK_ATTACHMENT_LOAD_OP_LOAD;
+		vk.statistics.attachment_clears += colors[0].loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR;
+		vk.statistics.attachment_loads += colors[0].loadOp == VK_ATTACHMENT_LOAD_OP_LOAD;
 	}
 	if (vk.depth)
 	{
@@ -6338,6 +6393,7 @@ static int pass_begin(uint32_t clear_parts, const float clear_color[4], float cl
 	vk.vertex_barrier_unused = 0;
 	if (vk.test_active)
 		test_query_begin();
+	vk.pass_motion = rendering.colorAttachmentCount > 1;
 	return 1;
 }
 
@@ -6384,6 +6440,7 @@ static void pass_end_body(void)
 		timing_mark(vk.slot->main, &vk.direct_pass, 0, 0);
 	}
 	vk.pass_active = 0;
+	vk.pass_motion = 0;
 	vk.pass_reads_depth = 0;
 }
 
@@ -6408,6 +6465,24 @@ void xgpu_vulkan_set_target_views(struct xgpu_vulkan_image *color, struct xgpu_v
 	vk.depth = depth;
 	vk.layer = layer;
 	vk.views = views;
+}
+
+void xgpu_vulkan_set_motion_target(struct xgpu_vulkan_image *motion, struct xgpu_vulkan_image *color)
+{
+	if (motion == vk.motion && color == vk.motion_of)
+		return;
+	if (vk.pass_active && (vk.pass_motion || (motion && vk.color == color)))
+		pass_end();
+	vk.motion = motion;
+	vk.motion_of = motion ? color : NULL;
+}
+
+/* the targets bound now draw the motion too (pass_begin's test) */
+int xgpu_vulkan_motion_bound(void)
+{
+	return vk.motion && vk.color && vk.color == vk.motion_of && vk.views == 1 && !vk.layer &&
+		vk.motion->description.width == vk.color->description.width &&
+		vk.motion->description.height == vk.color->description.height;
 }
 
 void xgpu_vulkan_set_targets(struct xgpu_vulkan_image *color, struct xgpu_vulkan_image *depth, uint32_t layer)
@@ -6445,6 +6520,9 @@ static int clear_description(uint32_t channels, struct xgpu_vulkan_pipeline_desc
 	description->depth_format = vk.depth ? XGPU_VULKAN_FORMAT_D24S8 : XGPU_VULKAN_FORMAT_NONE;
 	description->samples = vk.color->description.samples > 1 ? vk.color->description.samples : 1;
 	description->view_mask = vk.views > 1 ? (uint8_t)((1u << vk.views) - 1) : 0;
+	/* (display.temporal_aa: in a pass with the motion, which it leaves) */
+	if (xgpu_vulkan_motion_bound())
+		description->motion_format = vk.motion->description.format;
 	return 1;
 }
 
@@ -10691,7 +10769,9 @@ static int draw_set_make(void)
 	vk.lights_block->named_by_set = vk.samples->named_by_set = 1;
 	memset(buffers, 0, sizeof(buffers));
 	buffers[0].buffer = vk.ring;
-	buffers[0].range = 192 * 16;
+	/* (the 192 registers, and with display.temporal_aa's motion the previous
+	frame's after them, which only its draws' shaders read: 384) */
+	buffers[0].range = 384 * 16;
 	buffers[1].buffer = vk.ring;
 	/* (the uniforms' size: xgpu_spirv.h's struct xgpu_spirv_uniforms, at
 	most) */
@@ -11100,7 +11180,9 @@ int xgpu_vulkan_initialize(const struct xgpu_vulkan_options *options)
 		if (vk.surface_create)
 			vkCreateSemaphore(vk.device, &semaphore, NULL, &vk.acquired[index]);
 	}
-	if (!buffer_make(RING_SIZE, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
+	/* (past its end, the constants' range's tail: a range of 192 registers
+	at the ring's end is read through the descriptor's 384: draw_set_make) */
+	if (!buffer_make(RING_SIZE + RING_TAIL, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
 		VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 1, &vk.ring, &vk.ring_memory,
 		(void **)&vk.ring_mapped))
 		return 0;

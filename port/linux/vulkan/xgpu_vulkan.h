@@ -472,6 +472,9 @@ struct xgpu_vulkan_pipeline_description
 	/* and, interlocked (capabilities pixel_interlock), reads and writes it
 	as a storage image: the pipeline writes no colour */
 	uint8_t color_store;
+	/* display.temporal_aa: the motion's attachment, the second (its format,
+	XGPU_VULKAN_FORMAT_*, 0 none), and the channels written into it */
+	uint8_t motion_format, motion_mask;
 };
 
 /* the pipeline of a description, made the first time; VK_NULL_HANDLE if it
@@ -526,6 +529,11 @@ void xgpu_vulkan_set_targets(struct xgpu_vulkan_image *color, struct xgpu_vulkan
 /* views is 1, 2 or 4, relative to the image view's first layer. */
 void xgpu_vulkan_set_target_views(struct xgpu_vulkan_image *color, struct xgpu_vulkan_image *depth,
 	uint32_t layer, uint32_t views);
+/* display.temporal_aa: the motion drawn into motion (NULL none) as the second
+colour attachment of the passes into color (the 3D view's target, while a
+window's objects draw); whether the targets bound now draw it */
+void xgpu_vulkan_set_motion_target(struct xgpu_vulkan_image *motion, struct xgpu_vulkan_image *color);
+int xgpu_vulkan_motion_bound(void);
 /* Copy to a runtime image of the matching channel order or exact depth
 format. It enters and leaves in COLOR_ATTACHMENT_OPTIMAL (colour) or
 DEPTH_STENCIL_ATTACHMENT_OPTIMAL (depth); OpenXR owns its lifetime. */

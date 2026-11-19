@@ -39,6 +39,10 @@ enum xgpu_vulkan_post_program_id
 	XGPU_VULKAN_POST_HDR_ENCODE,
 	/* display.panini's projection (xgpu_vulkan_post_panini) */
 	XGPU_VULKAN_POST_PANINI,
+	/* display.temporal_aa's motion: the window's resolved from its objects'
+	and the camera's, and debug.motion_vectors' view of it */
+	XGPU_VULKAN_POST_MOTION_RESOLVE,
+	XGPU_VULKAN_POST_MOTION_VIEW,
 	XGPU_VULKAN_POST_PROGRAM_COUNT
 };
 
@@ -67,6 +71,12 @@ struct xgpu_vulkan_post_uniforms
 	/* display.hdr_gamut's (#1124): the encoding's expansion (1, 0 none)
 	and its target (xgpu_hdr_frame.gamut_target) */
 	float gamut[4];
+	/* display.temporal_aa's motion (tools/vulkan_post_shaders.py's
+	MOTION_RESOLVE_SOURCE): the rows of the reprojection from this frame's
+	clip positions to the frame before's, and the drawn pixels' offset (x,
+	y), the depth reversed, the window's frame before (z, w) */
+	float reproject[4][4];
+	float motion[4];
 };
 
 struct xgpu_vulkan_post_module

@@ -499,6 +499,17 @@ static struct
 	BOOL cards;
 } world_ao = { FALSE, FALSE, WORLD_AO_OWNER_NONE, 1.0f, FALSE, FALSE, FALSE, 2.0f, FALSE, FALSE, 0, FALSE };
 
+/* display.temporal_aa's motion (port/linux/game/motion_vectors.c,
+halo_motion_*): a window's draws jittered (on) by so many of the game's
+units of the screen (x right, y down: the draws' uniforms' viewport offset,
+not the vertex constants' c[-37], so the motion's previous position has it
+too and the difference none), and its objects drawing their motion */
+static struct
+{
+	BOOL on, objects;
+	float jitter[2];
+} motion;
+
 /* the draw takes the world's light where its window is given: one of the
 window's opaque surfaces, not the first-person weapon, not lighting itself
 (the window's span alone, so that the renderer's manifest notes it with
@@ -4368,14 +4379,21 @@ static BOOL words_equal(const void *a, const void *b, unsigned long size)
 share it with the draw before them, and so share its uniforms */
 static void draw_uniforms_update(const float texture_scale[4][4])
 {
+	float viewport_offset[4];
 	DWORD inputs[DRAW_UNIFORM_INPUT_COUNT];
 	unsigned long count = 0;
 	float world_object[4];
 	int stage;
 
+	/* (display.temporal_aa: the window's jitter, its draws' pixels moved by
+	it; none without) */
+	viewport_offset[0] = device.viewport_offset[0] - motion.jitter[0];
+	viewport_offset[1] = device.viewport_offset[1] - motion.jitter[1];
+	viewport_offset[2] = device.viewport_offset[2];
+	viewport_offset[3] = device.viewport_offset[3];
 	memcpy(&inputs[count], device.viewport_scale, sizeof(device.viewport_scale));
 	count += 4;
-	memcpy(&inputs[count], device.viewport_offset, sizeof(device.viewport_offset));
+	memcpy(&inputs[count], viewport_offset, sizeof(viewport_offset));
 	count += 4;
 	memcpy(&inputs[count], texture_scale, 16 * sizeof(float));
 	count += 16;
@@ -4421,7 +4439,7 @@ static void draw_uniforms_update(const float texture_scale[4][4])
 		memcpy(draw_uniform_inputs, inputs, sizeof(inputs));
 		draw_uniforms_serial++;
 		memcpy(converted->viewport_scale, device.viewport_scale, sizeof(converted->viewport_scale));
-		memcpy(converted->viewport_offset, device.viewport_offset, sizeof(converted->viewport_offset));
+		memcpy(converted->viewport_offset, viewport_offset, sizeof(converted->viewport_offset));
 		memcpy(converted->texture_scale, texture_scale, sizeof(converted->texture_scale));
 		converted->point_size = D3D__RenderState[D3DRS_POINTSIZE] ?
 			dword_to_float(D3D__RenderState[D3DRS_POINTSIZE]) : 1.0f;
@@ -6705,6 +6723,83 @@ void halo_world_ao_prepass_end(short x0, short y0, short x1, short y1, float con
 	previous = pass;
 	previous_made = 1;
 	xgpu_backend_world_ao_prepass(XGPU_WORLD_AO_PREPASS_END, target->target.number, &pass);
+}
+
+/* ---------- display.temporal_aa's motion (port/linux/game/motion_vectors.c;
+xgpu_stream.h's MOTION) */
+
+int halo_motion_window(int on, float jitter_x, float jitter_y)
+{
+	struct render_target_entry *target;
+
+	motion.on = FALSE;
+	motion.jitter[0] = motion.jitter[1] = 0.0f;
+	/* (the screen's back buffer, one sample: not with multisampling) */
+	if (!on || !device.gl_ready || screen_view || anti_aliasing() == _anti_aliasing_msaa ||
+		!(target = render_target_get(&device.back_buffer)) || !(target->target.scale[0] > 0.0f) ||
+		!(target->target.scale[1] > 0.0f))
+		return FALSE;
+	motion.on = TRUE;
+	motion.jitter[0] = jitter_x / target->target.scale[0];
+	motion.jitter[1] = jitter_y / target->target.scale[1];
+	return TRUE;
+}
+
+void halo_motion_previous_constants(int reg, float const (*values)[4], unsigned long count)
+{
+	long first = reg + XGPU_VERTEX_CONSTANT_BIAS;
+
+	if (!motion.on || first < 0 || first >= XGPU_VERTEX_CONSTANT_COUNT || !count)
+		return;
+	if (first + (long)count > XGPU_VERTEX_CONSTANT_COUNT)
+		count = XGPU_VERTEX_CONSTANT_COUNT - first;
+	/* (the previous frame's registers: past the 192) */
+	xgpu_backend_set_constants(XGPU_STREAM_PREVIOUS_CONSTANTS + (unsigned long)first, values, count);
+}
+
+void halo_motion_objects(int begin)
+{
+	struct render_target_entry *target;
+
+	if (!motion.on || (begin ? motion.objects : !motion.objects))
+		return;
+	motion.objects = FALSE;
+	if (begin && (device.render_target != &device.back_buffer || device.depth_stencil != &device.depth_buffer ||
+		!(target = render_target_get(&device.back_buffer))))
+		return;
+	target = render_target_get(&device.back_buffer);
+	motion.objects = begin != 0;
+	xgpu_backend_motion(begin ? XGPU_MOTION_OBJECTS_BEGIN : XGPU_MOTION_OBJECTS_END, target ? target->target.number : 0,
+		NULL);
+}
+
+void halo_motion_resolve(short x0, short y0, short x1, short y1, float const reproject[4][4], int history)
+{
+	struct render_target_entry *target;
+	struct xgpu_motion_pass pass;
+	long corners[4];
+	float width = (float)(x1 - x0), height = (float)(y1 - y0);
+	int index;
+
+	halo_motion_objects(FALSE);
+	if (!motion.on || !(target = render_target_get(&device.back_buffer)) || !(width > 0.0f) || !(height > 0.0f))
+		return;
+	memset(&pass, 0, sizeof(pass));
+	view_corners(target, x0, y0, x1, y1, corners);
+	for (index = 0; index < 4; index++)
+		pass.corners[index] = (int32_t)corners[index];
+	memcpy(pass.reproject, reproject, sizeof(pass.reproject));
+	/* (the drawn pixels' offset from their clip positions, as normalized
+	coordinates: the screen conversion's half pixel and the jitter, x right,
+	y up) */
+	pass.motion[0] = (0.5f + (float)UI_OFFSET + motion.jitter[0]) * 2.0f / width;
+	pass.motion[1] = -(0.5f + motion.jitter[1]) * 2.0f / height;
+	pass.motion[2] = 1.0f;
+	pass.motion[3] = history ? 1.0f : 0.0f;
+	pass.jitter[0] = motion.jitter[0] * target->target.scale[0];
+	pass.jitter[1] = motion.jitter[1] * target->target.scale[1];
+	pass.jitter[2] = config_boolean("debug.motion_vectors") ? 1.0f : 0.0f;
+	xgpu_backend_motion(XGPU_MOTION_RESOLVE, target->target.number, &pass);
 }
 
 /* display.panini's pass over a window's 3D view (port/linux/game/panini.c),

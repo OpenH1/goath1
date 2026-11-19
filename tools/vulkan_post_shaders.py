@@ -65,10 +65,12 @@ SAMPLER = re.compile(r"^uniform sampler2D (\w+);\n", re.M)
 # the last its program uses (hdr in display.hdr's passes, window, panini
 # and tangents in display.panini's; gamut, display.hdr_gamut's, in the
 # encoding's)
-UNIFORMS = ("metrics", "bounds", "hdr", "window", "panini", "tangents", "gamut")
+# (and display.temporal_aa's motion passes' reproject0 to reproject3 and motion)
+UNIFORMS = ("metrics", "bounds", "hdr", "window", "panini", "tangents", "gamut", "reproject0", "reproject1",
+            "reproject2", "reproject3", "motion")
 # the fragment programs, in xgpu_vulkan_post_shaders.h's order
 PROGRAMS = ("fxaa", "smaa_edges", "smaa_weights", "smaa_blend", "rotate", "hdr_tone_map", "hdr_tone_map_ms",
-            "hdr_encode", "panini")
+            "hdr_encode", "panini", "motion_resolve", "motion_view")
 # one triangle over the whole viewport
 VERTEX_SOURCE = (
     "void main()\n"
@@ -220,7 +222,8 @@ SMAA_PREFIX = (
     "#define SMAA_PRESET_HIGH 1\n"
 )
 # each sampler's texture unit, which becomes its binding
-UNITS = {"color_texture": 0, "edges_texture": 0, "area_texture": 1, "search_texture": 2, "weights_texture": 1}
+UNITS = {"color_texture": 0, "edges_texture": 0, "area_texture": 1, "search_texture": 2, "weights_texture": 1,
+         "objects_texture": 0, "depth_texture": 1}
 # Vulkan's own program: the frame turned for a swapchain the display turns
 # (a phone held sideways: xgpu_vulkan_post_rotate). Each pixel takes the
 # texel the bounds' matrix (its rows xy and zw) turns it to, about the
@@ -292,6 +295,68 @@ PANINI_SOURCE = (
     "\t\t}\n"
     "\t}\n"
     "\tresult = sum / float(taps.x * taps.y);\n"
+    "}\n"
+)
+# display.temporal_aa's motion (xgpu_vulkan_stream.c's MOTION records, docs/temporal-aa.md): each pixel's movement
+# from where it was the frame before, as a fraction of the view (previous less current, x right, y down; the
+# camera's jitter not in it). Its uniforms: window, the view's corners in the target's pixels (x0, y0, width,
+# height); reproject0 to 3, the rows of the matrix from a point's clip position this frame (unjittered: the
+# game's own projection, depth 0 near to 1 far) to its clip position the frame before, the camera's alone;
+# motion, the offset of the drawn pixels from the clip positions (the jitter and the screen's half pixel, as
+# normalized coordinates), whether the depth is reversed, and whether the window has a frame before (0: a cut,
+# none). The objects' own (objects_texture, written by their draws as the second attachment: xgpu_spirv.c's
+# motion) are kept where they are the surface the depth has (their depth the same); elsewhere the camera's.
+MOTION_RESOLVE_SOURCE = (
+    "uniform sampler2D objects_texture;\n"
+    "uniform sampler2D depth_texture;\n"
+    "\n"
+    "uniform vec4 metrics;\n"
+    "uniform vec4 window;\n"
+    "uniform vec4 reproject0;\n"
+    "uniform vec4 reproject1;\n"
+    "uniform vec4 reproject2;\n"
+    "uniform vec4 reproject3;\n"
+    "uniform vec4 motion;\n"
+    "out vec4 result;\n"
+    "\n"
+    "void main()\n"
+    "{\n"
+    "\tivec2 texel = ivec2(gl_FragCoord.xy);\n"
+    "\tvec4 object = texelFetch(objects_texture, texel, 0);\n"
+    "\tfloat depth = texelFetch(depth_texture, texel, 0).r;\n"
+    "\tif (object.w > 0.5 && abs(object.z - depth) <= max(1.5e-7, depth * 1.0e-6))\n"
+    "\t{\n"
+    "\t\tresult = vec4(object.xy, 0.0, 1.0);\n"
+    "\t\treturn;\n"
+    "\t}\n"
+    "\tif (motion.w == 0.0)\n"
+    "\t{\n"
+    "\t\tresult = vec4(0.0);\n"
+    "\t\treturn;\n"
+    "\t}\n"
+    "\tvec2 place = (gl_FragCoord.xy - window.xy) / window.zw;\n"
+    "\tvec2 ndc = vec2(place.x * 2.0 - 1.0, 1.0 - place.y * 2.0) - motion.xy;\n"
+    "\tvec4 current = vec4(ndc, motion.z != 0.0 ? 1.0 - depth : depth, 1.0);\n"
+    "\tvec4 previous = vec4(dot(reproject0, current), dot(reproject1, current), dot(reproject2, current),\n"
+    "\t\tdot(reproject3, current));\n"
+    "\tvec2 before = previous.w > 0.0 ? previous.xy / previous.w : ndc;\n"
+    "\tresult = vec4((before - ndc) * vec2(0.5, -0.5), 0.0, 0.0);\n"
+    "}\n"
+)
+# debug.motion_vectors: the motion drawn over the view as colour, in the view's pixels: grey still, more red
+# to the right and green downward (cyan and magenta the other ways), full at 8 pixels a frame
+MOTION_VIEW_SOURCE = (
+    "uniform sampler2D color_texture;\n"
+    "\n"
+    "uniform vec4 metrics;\n"
+    "uniform vec4 window;\n"
+    "out vec4 result;\n"
+    "\n"
+    "void main()\n"
+    "{\n"
+    "\tvec2 moved = texelFetch(color_texture, ivec2(gl_FragCoord.xy), 0).xy * window.zw;\n"
+    "\tvec2 shown = clamp(moved / 8.0, -1.0, 1.0);\n"
+    "\tresult = vec4(0.5 + 0.5 * shown.x, 0.5 + 0.5 * shown.y, 0.5 - 0.25 * (shown.x + shown.y), 1.0);\n"
     "}\n"
 )
 # the clears' pixel shader (its uniforms at the passes' binding)
@@ -393,6 +458,8 @@ def generate(args):
     programs["hdr_tone_map_ms"] = ("frag", multisampled(hdr["tone_map"]))
     programs["hdr_encode"] = ("frag", hdr["encode"])
     programs["panini"] = ("frag", PANINI_SOURCE)
+    programs["motion_resolve"] = ("frag", MOTION_RESOLVE_SOURCE)
+    programs["motion_view"] = ("frag", MOTION_VIEW_SOURCE)
     programs["clear"] = ("frag", CLEAR)
     text = [
         "/* Generated by tools/vulkan_post_shaders.py from its GLSL, xgpu_hdr.c and port/third_party/smaa. "

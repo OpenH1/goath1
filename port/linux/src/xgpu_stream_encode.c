@@ -1042,6 +1042,27 @@ void xgpu_backend_world_ao_field(int part, unsigned long width, unsigned long he
 	record_body->data = size ? carry_one(&place, data, size) : 0;
 }
 
+void xgpu_backend_motion(int phase, xgpu_target target, const struct xgpu_motion_pass *pass)
+{
+	struct xgpu_stream_motion *record_body;
+
+	if (!stream.open)
+		return;
+	record_body = record(XGPU_STREAM_MOTION, sizeof(*record_body));
+	record_body->phase = (uint32_t)phase;
+	record_body->target = (uint32_t)target;
+	record_body->pad = 0;
+	if (pass)
+	{
+		record_body->pass = *pass;
+		stream_finite(&record_body->pass.reproject[0][0], 24, "motion's reprojection", 0);
+	}
+	else
+	{
+		memset(&record_body->pass, 0, sizeof(record_body->pass));
+	}
+}
+
 void xgpu_backend_world_ao_prepass(int phase, xgpu_target target, const struct xgpu_world_ao_pass *pass)
 {
 	struct xgpu_stream_world_ao_prepass *record_body;

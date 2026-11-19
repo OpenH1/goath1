@@ -420,6 +420,7 @@ symbols in this file:
 #include "rasterizer_xbox_internal.h"
 #include "rasterizer_xbox_vertex_shaders.h"
 #include "mcc_cache.h" /* port: port/linux/game/mcc_cache.c */
+#include "motion_vectors.h" /* port: port/linux/game/motion_vectors.c */
 
 /* ---------- constants */
 
@@ -1327,6 +1328,9 @@ void rasterizer_set_model_skinning(
 		}
 	}
 #endif
+	/* port: display.temporal_aa: the object's nodes kept for its motion
+	(port/linux/game/motion_vectors.c) */
+	motion_vectors_model_nodes(skinning->node_matrices, skinning->node_matrix_count);
 	/* port: a model of more nodes than the constants hold is skinned a
 	part's own nodes at a time (rasterizer_model_part_skinning) */
 	if (skinning->node_matrix_count >= RASTERIZER_MAXIMUM_NODES_PER_MODEL)
@@ -1343,6 +1347,9 @@ void rasterizer_set_model_skinning(
 		-36,
 		vsh_constants__nodematrices,
 		skinning->node_matrix_count * 3);
+	/* port: and the frame before's (motion_vectors.c) */
+	motion_vectors_skinning(skinning->node_matrices, NULL, skinning->node_matrix_count,
+		(short)(skinning->node_matrix_count - 1));
 	if (rasterizer_debug_options.statistics_mode)
 		rasterizer_frame_statistics.vertex_shader_skinning_constant_bytes +=
 			skinning->node_matrix_count * sizeof(vsh_constants__nodematrices[0]);
@@ -1375,7 +1382,11 @@ void rasterizer_model_part_skinning(
 			&many_node_matrices[MIN(nodes[node_index], many_node_matrix_count - 1)]);
 	}
 	if (node_index)
+	{
 		D3DDevice_SetVertexShaderConstant(-36, vsh_constants__nodematrices, node_index * 3);
+		/* port: and the frame before's (motion_vectors.c) */
+		motion_vectors_skinning(many_node_matrices, nodes, node_index, (short)(many_node_matrix_count - 1));
+	}
 	return;
 }
 
@@ -2944,6 +2955,9 @@ void rasterizer_set_frustum_z(
 		-96,
 		vertex_constants,
 		8);
+	/* port: display.temporal_aa: and the frame before's projection
+	(port/linux/game/motion_vectors.c) */
+	motion_vectors_projection((real const (*)[4])vertex_constants);
 	return;
 }
 
