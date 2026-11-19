@@ -17,7 +17,7 @@ states: port/linux/src/game_data_page.c. -->
 		<heading text="{data.heading}" lines="1"/>
 		<text text="{data.status}" lines="6"/>
 		<text text="{data.from}" lines="2" if="data.from"/>
-		<text text="{data.folder}" lines="3"/>
+		<text text="{data.folder}" lines="4"/>
 		<text text="{data.opened}" lines="2" if="data.opened"/>
 		<button key="accept" label="OPEN FOLDER" do="data open folder"/>
 		<button key="accept" label="{data.add}" do="data add" if="data.add"/>
