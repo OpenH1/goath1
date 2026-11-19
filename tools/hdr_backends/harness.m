@@ -425,13 +425,18 @@ static void depth_test(id<MTLFunction> vertex, id<MTLFunction> encode)
 /* The last pass's downscale (#1117), drawn by the shipped Vulkan encoding
 into a float target from a checkerboard of single texels (0 and 1), its
 sampler linear as the backends' is. At 1.5 (AREA_SIZE * 3 / 2 texels to
-AREA_SIZE pixels each way) it scales down by area: the mean stays 0.5 and
-no pixel is further from it than the box's own beat over a 1.5 grid (1/18,
-AREA_BEAT); the negative control, the single linear tap the pass had (the
-same arithmetic, in MSL here), leaves a pattern twice as strong. At 1 and
-exactly 2 the pass gives the single tap's values, bit for bit. */
+AREA_SIZE pixels each way) it scales down by area, in light (#1224): the
+mean light stays 0.5 and no pixel's light is further from it than the
+box's own beat over a 1.5 grid (1/18, AREA_BEAT); the negative control,
+the single linear tap the pass had (the same arithmetic, in MSL here),
+leaves a pattern twice as strong. At exactly 2 each pixel is half white and
+half black: the pass gives half the light, about 74% of the code
+(AREA_HALF), where the single tap (the negative control) gives half the
+code. At 1 the pass gives the single tap's values, bit for bit. */
 #define AREA_SIZE 256
 #define AREA_BEAT 0.0600f
+/* (sRGB's code of half the light) */
+#define AREA_HALF 0.7354f
 
 static const char tap_source[] =
 	"#include <metal_stdlib>\n"
@@ -473,7 +478,7 @@ static void area_test(id<MTLFunction> vertex, id<MTLFunction> encode)
 			MTLPixelFormatRGBA16Float width:size height:size mipmapped:NO];
 		id<MTLTexture> source, target;
 		__fp16 *halves = malloc((size_t)size * size * 8);
-		double mean[2] = { 0.0, 0.0 }, beat[2] = { 0.0, 0.0 };
+		double mean[2] = { 0.0, 0.0 }, beat[2] = { 0.0, 0.0 }, code[2] = { 0.0, 0.0 };
 
 		description.usage = MTLTextureUsageShaderRead;
 		description.storageMode = MTLStorageModeShared;
@@ -511,22 +516,37 @@ static void area_test(id<MTLFunction> vertex, id<MTLFunction> encode)
 				mipmapLevel:0];
 			for (x = 0; x < AREA_SIZE * AREA_SIZE; x++)
 			{
-				mean[kind] += got[kind][x * 4 + 1];
-				if (fabs(got[kind][x * 4 + 1] - 0.5) > beat[kind])
-					beat[kind] = fabs(got[kind][x * 4 + 1] - 0.5);
+				float light = xgpu_hdr_linear(got[kind][x * 4 + 1]);
+
+				mean[kind] += light;
+				code[kind] += got[kind][x * 4 + 1];
+				if (fabs(light - 0.5) > beat[kind])
+					beat[kind] = fabs(light - 0.5);
 			}
 			mean[kind] /= AREA_SIZE * AREA_SIZE;
+			code[kind] /= AREA_SIZE * AREA_SIZE;
 		}
 		if (which == 0)
 		{
 			if (fabs(mean[0] - 0.5) > 0.002 || beat[0] > AREA_BEAT)
-				FAIL("area (1.5): the mean %.4f, a pixel %.4f off it: the downscale skips texels", mean[0], beat[0]);
+				FAIL("area (1.5): the mean light %.4f, a pixel %.4f off it: the downscale skips texels, or averages "
+					"codes", mean[0], beat[0]);
 			if (beat[1] < 2.0 * AREA_BEAT)
 				FAIL("area (1.5, the single tap): a pixel only %.4f off the mean: the control shows no pattern", beat[1]);
-			printf("area: at 1.5 the mean %.4f, the pattern %.4f (the single tap's %.4f)\n", mean[0], beat[0], beat[1]);
+			printf("area: at 1.5 the mean light %.4f, the pattern %.4f (the single tap's %.4f)\n", mean[0], beat[0],
+				beat[1]);
+		}
+		else if (which == 2)
+		{
+			if (fabs(code[0] - AREA_HALF) > 0.002 || beat[0] > 0.002)
+				FAIL("area (2): half white and half black at %.4f of the code (the light %.4f off half), not %.4f",
+					code[0], beat[0], AREA_HALF);
+			if (fabs(code[1] - 0.5) > 0.002)
+				FAIL("area (2, the single tap): %.4f of the code, not the codes' mean, 0.5", code[1]);
+			printf("area: at 2 half white and half black %.4f of the code (the single tap's %.4f)\n", code[0], code[1]);
 		}
 		else if (memcmp(got[0], got[1], AREA_SIZE * AREA_SIZE * 16))
-			FAIL("area (%s): not the single tap's values", which == 1 ? "1" : "2");
+			FAIL("area (1): not the single tap's values");
 	}
 	post_linear = NO;
 	free(got[0]);
