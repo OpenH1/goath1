@@ -8984,6 +8984,84 @@ static BOOL journal_streams_usable(unsigned long first, unsigned long count)
 	return TRUE;
 }
 
+/* A record's later structure's walk (render_prepared.c's segments) drew
+from its own structure's vertices, which are not loaded as the record plays
+(the stock maps' place holds the structure loaded now; a Custom Edition
+structure's named geometry, or an MCC one's, is not there at all). Its draws
+make the same pipelines from any vertices (a pipeline is made of the
+declaration and the strides, never the vertices' values: a played draw
+draws nothing), so with halo_gpu_journal_elsewhere on, a draw whose
+vertices are not there reads its few from memory a draw played before read
+(journal_elsewhere_note): always memory that is there and readable now. */
+
+static struct
+{
+	BOOL on;
+	/* (a virtual address and its readable bytes) */
+	unsigned long address, bytes;
+} journal_elsewhere;
+
+void halo_gpu_journal_elsewhere(int on)
+{
+	journal_elsewhere.on = on != 0;
+	if (!on)
+		journal_elsewhere.address = journal_elsewhere.bytes = 0;
+}
+
+#define JOURNAL_ELSEWHERE_BYTES 4096UL
+
+/* a played draw's vertices, there and read (first of them): where a draw
+of a structure not loaded can read its own */
+static void journal_elsewhere_note(unsigned long first)
+{
+	const struct vertex_shader_object *declaration = device.vertex_shader;
+	unsigned long index;
+
+	if (journal_elsewhere.bytes >= JOURNAL_ELSEWHERE_BYTES || !declaration)
+		return;
+	for (index = 0; index < declaration->element_count; index++)
+	{
+		unsigned long stream = declaration->elements[index].stream, address;
+
+		if (stream >= 16 || declaration->elements[index].format == XGPU_VERTEX_NONE_FORMAT ||
+			!device.streams[stream].data)
+			continue;
+		address = (unsigned long)PLATFORM_PHYSICAL_TO_VIRTUAL(device.streams[stream].data) +
+			first * device.streams[stream].stride;
+		if (platform_contiguous_readable((const char *)address, JOURNAL_ELSEWHERE_BYTES))
+		{
+			journal_elsewhere.address = address;
+			journal_elsewhere.bytes = JOURNAL_ELSEWHERE_BYTES;
+			return;
+		}
+	}
+}
+
+/* ...and a draw's streams put there (first and count of its vertices
+read), where it is on: TRUE if it can be played so */
+static BOOL journal_elsewhere_place(unsigned long first, unsigned long count)
+{
+	const struct vertex_shader_object *declaration = device.vertex_shader;
+	unsigned long index;
+
+	if (!journal_elsewhere.on || !journal_elsewhere.bytes || !declaration)
+		return FALSE;
+	for (index = 0; index < declaration->element_count; index++)
+	{
+		unsigned long stream = declaration->elements[index].stream, stride;
+
+		if (stream >= 16 || declaration->elements[index].format == XGPU_VERTEX_NONE_FORMAT)
+			continue;
+		stride = device.streams[stream].stride;
+		if ((stride ? stride * count : 64) > journal_elsewhere.bytes)
+			return FALSE;
+		device.streams[stream].data = (DWORD)(PLATFORM_VIRTUAL_TO_PHYSICAL(journal_elsewhere.address) -
+			first * stride);
+		journal_lost_streams &= ~(1u << stream);
+	}
+	return journal_streams_usable(first, count);
+}
+
 /* the textures, surfaces and palettes made, in order, and the vertex shaders
 by id */
 static void **resources;
@@ -9702,7 +9780,9 @@ static void journal_play(unsigned long op, const struct journal_state *state)
 	{
 	/* (a draw whose vertices are not there now: skipped, unknown, #1169) */
 	case JOURNAL_DRAW:
-		if (!journal_streams_usable(state->start, journal_vertices(state->primitive, state->count)))
+		if (journal_streams_usable(state->start, journal_vertices(state->primitive, state->count)))
+			journal_elsewhere_note(state->start);
+		else if (!journal_elsewhere_place(state->start, journal_vertices(state->primitive, state->count)))
 		{
 			journal.unknown++;
 			break;
@@ -9713,7 +9793,9 @@ static void journal_play(unsigned long op, const struct journal_state *state)
 	case JOURNAL_DRAW_INDEXED:
 		device.base_vertex_index = state->base_vertex + state->minimum;
 		/* (its indices all 0: the one vertex at its base) */
-		if (!journal_streams_usable(device.base_vertex_index, 1))
+		if (journal_streams_usable(device.base_vertex_index, 1))
+			journal_elsewhere_note(device.base_vertex_index);
+		else if (!journal_elsewhere_place(device.base_vertex_index, 1))
 		{
 			journal.unknown++;
 			break;

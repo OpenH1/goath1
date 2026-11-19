@@ -88,6 +88,7 @@ shown, not the loading screen.
 #include "rasterizer/rasterizer.h"
 #include "render/render.h"
 #include "scenario/scenario.h"
+#include "scenario/scenario_definitions.h"
 #include "sound/sound_manager.h"
 #include "tag_files/tag_groups.h"
 #include "text/draw_string.h"
@@ -146,6 +147,11 @@ enum prepare_state
 	/* (a map whose picture is current: its preparation alone recorded, in
 	the frames after its load: render_prepared.c) */
 	_prepare_record,
+	/* (the map done: each of its other structures whose materials no
+	enumeration of it has made switched to, a frame each, so that its own
+	walk is drawn, and recorded into the map's record: render_enumerate.c,
+	#1181) */
+	_prepare_structures,
 	/* the main menu asked for, and shown */
 	_prepare_menu,
 };
@@ -206,6 +212,8 @@ static struct
 	/* (where in the pose's lines the next is; a frame drawn for one) */
 	long line;
 	int line_drawn;
+	/* (the structure switched to for its walk, NONE none; the next to look at) */
+	short structure_to, structure_next;
 	/* the frame drawn this frame (the one kept), and when the loading
 	screen began its fade (its progress at 1) */
 	int drawn;
@@ -668,6 +676,16 @@ static void prepare_input(
 	ui_widgets_disable_pause_game(2);
 }
 
+/* the map's other structures to walk next (_prepare_structures) */
+static void prepare_structures_begin(
+	void)
+{
+	prepare.structure_to = NONE;
+	prepare.structure_next = 0;
+	prepare.frames = 0;
+	prepare.state = _prepare_structures;
+}
+
 static void prepare_update(
 	int main_menu_loaded)
 {
@@ -890,10 +908,8 @@ static void prepare_update(
 				break;
 			}
 			prepare_picture_log(pose, "made");
-			prepare.index++;
-			prepare.done++;
 			prepare.made++;
-			prepare_next();
+			prepare_structures_begin();
 		}
 		break;
 	case _prepare_record:
@@ -910,10 +926,43 @@ static void prepare_update(
 		}
 		prepare_phase(_phase_frame);
 		prepare_picture_log(prepare.poses[prepare.index], "recorded");
+		prepare_structures_begin();
+		break;
+	case _prepare_structures:
+	{
+		struct scenario *scenario = global_scenario_try_and_get();
+		short count = scenario && game_in_progress() && !main_menu_loaded ?
+			scenario->structure_bsp_references.count : 0;
+
+		/* (switched at a frame's start, its walk drawn in that frame) */
+		if (prepare.structure_to != NONE)
+		{
+			if ((global_structure_bsp_index_get() != prepare.structure_to || render_enumerate_pending(FALSE)) &&
+				++prepare.frames <= PREPARE_LOAD_FRAMES)
+			{
+				prepare.line_drawn = TRUE;
+				break;
+			}
+			prepare.structure_to = NONE;
+		}
+		while (prepare.structure_next < count && !render_enumerate_structure_wanted(prepare.structure_next))
+			prepare.structure_next++;
+		if (prepare.structure_next < count)
+		{
+			platform_log("menu pictures: %s's structure %d switched to for its own walk", picture->map,
+				prepare.structure_next);
+			snprintf(line, sizeof(line), "switch_bsp %d", prepare.structure_next);
+			prepare_command(line);
+			prepare.structure_to = prepare.structure_next++;
+			prepare.frames = 0;
+			prepare.line_drawn = TRUE;
+			break;
+		}
 		prepare.index++;
 		prepare.done++;
 		prepare_next();
 		break;
+	}
 	case _prepare_menu:
 		if (main_menu_loaded && prepare_now() - prepare.faded >= PREPARE_SCREEN_FADE)
 		{
@@ -946,6 +995,7 @@ static void prepare_screen(
 		0.9f, /* _prepare_pose */
 		0.95f, /* _prepare_capture */
 		0.3f, /* _prepare_record */
+		0.98f, /* _prepare_structures */
 		1.0f, /* _prepare_menu */
 	};
 	/* (a map recorded alone: its load, then its walk from here to its end) */

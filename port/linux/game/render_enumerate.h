@@ -22,6 +22,11 @@ mode's eyes and one of several windows do not) */
 boolean render_enumerate_pending(boolean scope);
 boolean render_enumerate_begin(boolean mirrors, boolean scope);
 boolean render_enumerate_next(void);
+/* a structure of the map loaded (its index) has materials no enumeration of
+the map has made (read from its kept copy): its own walk is still to come,
+at the switch to it (the first start's pass switches to it for its record:
+menu_pictures_render.c) */
+boolean render_enumerate_structure_wanted(short structure_bsp_index);
 /* the window's target (_render_target_*) and whether it has a mirror, for
 the pass being drawn */
 short render_enumerate_target(void);
