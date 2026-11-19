@@ -86,6 +86,8 @@ void network_distributed_tick(void);
 /* port: port/linux/game/network_clock.c */
 real network_clock_frame_seconds(real time_delta_sec);
 void network_clock_steps_ran(real late_seconds);
+/* port: port/linux/game/network_test.c (debug.network_test_step_cost) */
+void network_test_step_cost(void);
 /* port: port/linux/game/determinism_log.c */
 void determinism_log_tick_begin(void);
 void determinism_log_tick_end(long tick);
@@ -797,6 +799,8 @@ void game_time_update(
 					if (game_time_run_substep())
 						ticks_ended_run++;
 					game_time_substeps.boundary_waits = 0;
+					/* port: (debug.network_test_step_cost) */
+					network_test_step_cost();
 				}
 				/* port: the open tick copied as its last sub-step left it, once
 				(port/linux/game/demo.c) */
