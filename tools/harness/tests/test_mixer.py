@@ -30,7 +30,7 @@ CASES = ["reference", "impulse", "sines", "aliases", "silent-voice", "mono", "li
          "limiter", "night", "obstruction", "room-send", "room-send-images", "quiet-levels", "quiet-levels-3d", "resampler-xbox", "resampler-xbox-images", "channels", "surround", "lfe", "spatial-choice", "hrtf-cues", "hrtf-paths", "hrtf-switch", "stereo-in-world",
          "stereo-spread",
          "dry-2d",
-         "master-volume", "buffers", "sound-off",
+         "master-volume", "buffers", "sound-off", "background",
          "hand-off-never-waits", "hand-off-settings"]
 
 # a fault in the mixer, and the case that must catch it
@@ -222,13 +222,20 @@ NEGATIVE_CONTROLS = {
                        "else if (pthread_mutex_lock(&voices_lock))\n\t\treturn;"), "hand-off-never-waits"),
     # Settings > Audio's SOUND: off cut at once (a click), off not held, on never back; a device opened again at
     # every frame, or not for a game started with the sound off (#510)
-    "sound-cut": (("\tif (gain == target)\n\t{", "\tgain = target;\n\tif (gain == target)\n\t{"), "sound-off"),
-    "sound-off-not-held": (("\t\tif (!on)\n\t\t\tmemset(output, 0, frames * channels * sizeof(float));\n", ""),
+    "sound-cut": (("\tif (gain == target && (target == 0.0f || target == 1.0f))\n\t{",
+                   "\tgain = target;\n\tif (gain == target && (target == 0.0f || target == 1.0f))\n\t{"), "sound-off"),
+    "sound-off-not-held": (("\t\tif (target == 0.0f)\n\t\t\tmemset(output, 0, frames * channels * sizeof(float));\n", ""),
                            "sound-off"),
     "sound-never-back": (("\t\tif (gain < target)", "\t\tif (FALSE)"), "sound-off"),
     "device-every-frame": (("&& !open && read_at != changes;", "&& !open;"), "sound-off"),
     "device-never": (("return started && !paced_mix && on && !open && read_at != changes;", "return FALSE;"),
                      "sound-off"),
+    # audio.background_volume: the focus not heard (the gain 1 in the background, as before #1212), or the gain
+    # jumped to it, not faded
+    "background-ignored": (("\tif (!background)\n\t\treturn 1.0f;", "\treturn 1.0f;"), "background"),
+    "background-not-faded": (("\t\tif (gain < target)\n\t\t\tgain = gain + 1.0f / SOUND_FADE_FRAMES",
+                              "\t\tgain = target;\n\t\tif (gain < target)\n\t\t\tgain = gain + 1.0f / SOUND_FADE_FRAMES"),
+                             "background"),
     "setting-not-taken": (("\tstream->room_hf = settings->room_hf;\n", ""), "hand-off-settings"),
 }
 

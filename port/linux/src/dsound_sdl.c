@@ -391,6 +391,11 @@ voices play out in time, as the game expects; the mixer's gain fades to it
 (sound_fade) */
 static volatile BOOL sound_on = TRUE;
 static float sound_gain = 1.0f;
+/* audio.background_volume (0 to 1), and whether the window is in the
+background now (platform_window_background), both read on the game's thread
+(DirectSoundDoWork); the mixer's gain fades to it there (sound_target) */
+static volatile float background_volume = 1.0f;
+static volatile BOOL in_background;
 /* audio.doppler */
 static BOOL doppler_enabled = TRUE;
 /* whether mono 3D voices go through the HRTF: on stereo, audio.spatial;
@@ -3455,18 +3460,32 @@ static struct
 	BOOL initialized;
 } limiter;
 
-/* the sound turned off or on (audio.enabled, Settings > Audio's SOUND) as
-it plays: the output's gain faded to 0 or 1 over SOUND_FADE_FRAMES, with
-no click, and held there; the gain it reached */
-#define SOUND_FADE_FRAMES 480
-static float sound_fade(float *output, unsigned long frames, unsigned long channels, float gain, BOOL on)
+/* the output's gain, the master stage after the limiter: 0 with the sound
+off (audio.enabled, Settings > Audio's SOUND), audio.background_volume's
+while the window is in the background (shown without the focus: another
+window in front of it, or minimized; never in the VR mode, whose headset is
+what is looked at), 1 otherwise. A network game plays on as before: only
+what is heard is scaled */
+static float sound_target(BOOL on, BOOL background, float volume)
 {
-	float target = on ? 1.0f : 0.0f;
+	if (!on)
+		return 0.0f;
+	if (!background)
+		return 1.0f;
+	return volume < 0.0f ? 0.0f : volume > 1.0f ? 1.0f : volume;
+}
+
+/* the output's gain faded to target (sound_target) at a full step's
+SOUND_FADE_FRAMES (10 ms from 1 to 0), with no click, and held there; the
+gain it reached */
+#define SOUND_FADE_FRAMES 480
+static float sound_fade(float *output, unsigned long frames, unsigned long channels, float gain, float target)
+{
 	unsigned long frame, channel;
 
-	if (gain == target)
+	if (gain == target && (target == 0.0f || target == 1.0f))
 	{
-		if (!on)
+		if (target == 0.0f)
 			memset(output, 0, frames * channels * sizeof(float));
 		return gain;
 	}
@@ -4399,7 +4418,8 @@ static void mix(float *output, unsigned long frames, BOOL wait)
 	/* (audio.listening_mode "night") */
 	night_compress(output, frames);
 	limit(output, frames);
-	sound_gain = sound_fade(output, frames, output_channels, sound_gain, sound_on);
+	sound_gain = sound_fade(output, frames, output_channels, sound_gain,
+		sound_target(sound_on, in_background, background_volume));
 	record(output, frames);
 	if (mix_profile_on)
 		mix_part_end(_mix_part_rest, &part_at);
@@ -5072,6 +5092,7 @@ static void audio_start(void)
 	night_enabled = !strcmp(config_string("audio.listening_mode"), "night");
 	stereo_spread = stereo_spread_read();
 	sound_on = config_boolean("audio.enabled");
+	background_volume = (float)config_real("audio.background_volume");
 	sound_gain = sound_on ? 1.0f : 0.0f;
 	mix_profile_initialize();
 	resampler_mode = resampler_mode_read();
@@ -5536,8 +5557,8 @@ VOID WINAPI DirectSoundDoWork(void)
 		log_flushed_ns = SDL_GetTicksNS();
 		dsound_log_flush();
 	}
-	/* (audio.volume, audio.reverb, audio.doppler, audio.listening_mode, audio.stereo_spread, audio.enabled
-	and audio.resampler read again when the settings change: on the game's thread, not the mixer's,
+	/* (audio.volume, audio.reverb, audio.doppler, audio.listening_mode, audio.stereo_spread, audio.enabled,
+	audio.background_volume and audio.resampler read again when the settings change: on the game's thread, not the mixer's,
 	whose lock the config's file I/O would hold) */
 	if (volume_read_at != config_changes())
 	{
@@ -5548,6 +5569,7 @@ VOID WINAPI DirectSoundDoWork(void)
 		night_enabled = !strcmp(config_string("audio.listening_mode"), "night");
 		stereo_spread = stereo_spread_read();
 		sound_on = config_boolean("audio.enabled");
+		background_volume = (float)config_real("audio.background_volume");
 		log_voices = config_boolean("debug.audio_log");
 		snprintf(spatial_setting, sizeof(spatial_setting), "%s", config_string("audio.spatial"));
 #ifdef HALO_VR
@@ -5560,6 +5582,10 @@ VOID WINAPI DirectSoundDoWork(void)
 	vr_running = halo_vr_running() != 0;
 	vr_hrtf = hrtf_setting;
 #endif
+	/* (the window in the background: audio.background_volume's gain, which
+	the mixer fades to; in the VR mode the headset is looked at, not the
+	window) */
+	in_background = !vr_running && platform_window_background();
 	/* the HRTF, or the pan (audio.spatial), each frame: the mixer
 	crossfades each voice from one to the other as it changes; what the
 	host says the sound plays on is logged */

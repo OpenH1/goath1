@@ -695,6 +695,11 @@ static const struct config_setting config_settings[] =
 		"dialogue), 0.0 to 1.0 (of audio.volume)." },
 	{ "audio.effects_volume", _config_real, "1.0", "HALO_EFFECTS_VOLUME", _environment_value, _platform_all,
 		"The volume of every other sound, 0.0 to 1.0 (of audio.volume)." },
+	{ "audio.background_volume", _config_real, "1.0", "HALO_BACKGROUND_VOLUME", _environment_value,
+		_platform_desktop,
+		"The volume while the game's window is in the background (another window\n"
+		"in front of it, or minimized), 0.0 to 1.0 of what it plays; 0.0 mutes\n"
+		"it. It fades there and back in 10 ms. 1.0 keeps it as it is." },
 	{ "audio.buffer_frames", _config_integer, "0", "HALO_AUDIO_BUFFER_FRAMES", _environment_value,
 		_platform_desktop,
 		"The frames the sound device asks for at a time, at 48 kHz (64 to 8192):\n"

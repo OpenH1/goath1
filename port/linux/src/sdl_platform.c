@@ -2009,6 +2009,18 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	return TRUE;
 }
 
+BOOL platform_window_background(void)
+{
+	SDL_WindowFlags flags;
+
+	if (!platform_window)
+		return FALSE;
+	flags = SDL_GetWindowFlags(platform_window);
+	if (flags & SDL_WINDOW_HIDDEN)
+		return FALSE;
+	return !input_state.focused || (flags & SDL_WINDOW_MINIMIZED) != 0;
+}
+
 #ifdef HALO_VR
 /* the VR build's window, made hidden for the headset (platform_video_
 initialize), shown as a build without VR shows it when there is no VR
