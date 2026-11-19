@@ -487,6 +487,12 @@ void render_object_shadows(
 		/* port: the casters into the shadow atlas, all of them blurred at
 		once, then each one's receivers (rasterizer_xbox_shadows.c) */
 		deferred_shadow_count = 0;
+		/* port: debug.retained_shadows: the casters kept from the frame
+		before are this view's (rasterizer_xbox_shadows.c) */
+		rasterizer_shadow_retained_view(
+			(render.window_index & 0xff) |
+			((render.local_player_index & 0xff) << 8) |
+			((render.camera.mirrored != FALSE) << 16));
 		rasterizer_shadow_atlas_begin();
 
 		data.shadow = TRUE;
@@ -1414,7 +1420,21 @@ static void render_object(
 					after every caster's (render_object_shadows) */
 					short region;
 
-					render_object_list(data, NULL, data->object_index);
+					/* port: debug.retained_shadows: walked for its draws'
+					hash first, drawn only if its region of the frame before
+					does not hold them (rasterizer_xbox_shadows.c) */
+					if (!rasterizer_shadow_retained_fingerprinting())
+					{
+						render_object_list(data, NULL, data->object_index);
+					}
+					else
+					{
+						render_object_list(data, NULL, data->object_index);
+						if (!rasterizer_shadow_retained_caster())
+						{
+							render_object_list(data, NULL, data->object_index);
+						}
+					}
 					region = rasterizer_shadow_atlas_caster_end();
 					if (region != NONE)
 					{
