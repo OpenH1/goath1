@@ -198,6 +198,8 @@ static long shadow_atlas_y(
 	short region);
 static void shadow_atlas_caster_target(
 	short region);
+static short shadow_atlas_spill(
+	void);
 /* port: the caster's target (its region's, NONE: its map's), the shadow
 model's texture transform, and the retained casters' hash (below) */
 static void shadow_caster_target(
@@ -234,9 +236,15 @@ same. A pass stores the whole of its target, and a GPU's time for a pass
 grows with its target's area as well as with what it draws, so an atlas
 holds about the regions a frame needs: the atlases are a class's pair, of
 one row of regions, three or seven (shadow_atlas_heights), the class chosen
-for the casters the frame before had. Casters past the class's regions, the
-larger maps of 1024 (whose atlases would be 128 MB each) and the debugging
-options take the per-object path. */
+for the casters the frame before had. Casters past the class's regions go
+to a second page, and a third: the atlases of another class, the smallest
+holding the casters past the first page the frame before had (and a few),
+the chain run over each page in turn, its receivers sampling it as the
+first's do (no class's atlases are another class's page and the frame's own
+at once: what a page draws is not kept, the retained casters below are the
+first page's). The larger maps of 1024 (whose atlases would be 128 MB each)
+and the debugging options take the per-object path, as do casters past
+every class's regions (more than RASTERIZER_SHADOW_ATLAS_REGIONS). */
 
 enum
 {
@@ -254,7 +262,11 @@ enum
 	SHADOW_ATLAS_SPACING = SHADOW_ATLAS_MAP_SIZE + SHADOW_ATLAS_GUARD,
 	SHADOW_ATLAS_MARGIN = SHADOW_ATLAS_GUARD / 2,
 	SHADOW_ATLAS_COLUMNS = SHADOW_ATLAS_WIDTH / SHADOW_ATLAS_SPACING,
-	SHADOW_ATLAS_REGIONS = RASTERIZER_SHADOW_ATLAS_REGIONS,
+	/* the regions of the largest class's atlases (the first page's most,
+	shadow_atlas_heights' last), and of every page (each class's once) */
+	SHADOW_ATLAS_REGIONS = (1024 / SHADOW_ATLAS_SPACING) * SHADOW_ATLAS_COLUMNS,
+	SHADOW_ATLAS_PAGES = SHADOW_ATLAS_CLASSES,
+	SHADOW_ATLAS_ALL_REGIONS = RASTERIZER_SHADOW_ATLAS_REGIONS,
 	/* the casters more than the frame before's that a class is chosen for */
 	SHADOW_ATLAS_SLACK = 2,
 	SHADOW_ATLAS_MOST_SCALE = 4,
@@ -263,6 +275,12 @@ enum
 /* each class's height (a power of two, as a texture's), the rows of
 regions it holds those it has room for */
 static short const shadow_atlas_heights[SHADOW_ATLAS_CLASSES] = { 256, 512, 1024 };
+/* (the retained casters' masks are 64 bits; every class's regions are the
+pages') */
+typedef char verify_shadow_atlas_regions[SHADOW_ATLAS_REGIONS <= 64 ? 1 : -1];
+typedef char verify_shadow_atlas_all_regions[
+	SHADOW_ATLAS_ALL_REGIONS == ((256 / SHADOW_ATLAS_SPACING) + (512 / SHADOW_ATLAS_SPACING) +
+		(1024 / SHADOW_ATLAS_SPACING)) * SHADOW_ATLAS_COLUMNS ? 1 : -1];
 
 /* each class's atlases: the casters' (0), and the chain's other */
 static D3DTexture *shadow_atlas_textures[SHADOW_ATLAS_CLASSES][2];
@@ -276,8 +294,10 @@ static boolean shadow_atlas_failed = FALSE;
 /* the casters go to the atlas, and how many it has */
 static boolean shadow_atlas_active = FALSE;
 static short shadow_atlas_count = 0;
-/* the region of the shadow begun last (NONE: its map's), and of the shadow
-whose receivers are drawn (NONE: not the atlas's) */
+/* the region of the shadow begun last (NONE: its map's), of every page's
+(the first page's from 0, each next page's after them: shadow_atlas_locate),
+and the region of its page of the shadow whose receivers are drawn (NONE:
+not the atlas's) */
 static short shadow_atlas_region = NONE;
 static short shadow_atlas_receiving = NONE;
 static struct
@@ -286,7 +306,21 @@ static struct
 	real_rgb_color color;
 	real radius;
 	boolean used;
-} shadow_atlas_shadows[SHADOW_ATLAS_REGIONS];
+} shadow_atlas_shadows[SHADOW_ATLAS_ALL_REGIONS];
+/* the frame's pages (the first, the frame's class's, and those the casters
+past it took), each one's class, its first region and its casters; the
+class of the page drawn into or sampled (shadow_atlas_set_target); and the
+casters past the first page, the frame before's when the atlas begins */
+static struct
+{
+	short atlas_class;
+	short first;
+	short count;
+} shadow_atlas_pages[SHADOW_ATLAS_PAGES];
+static short shadow_atlas_page_count = 1;
+static short shadow_atlas_page_class = 0;
+static short shadow_atlas_spilled = 0;
+static short shadow_atlas_pages_spilled = 0;
 
 /* ---------- port: the retained casters
 
@@ -344,8 +378,9 @@ static long shadow_retained_view = NONE;
 /* the casters and those kept, logged now and then */
 static unsigned long shadow_retained_casters = 0;
 static unsigned long shadow_retained_kept_count = 0;
-/* (diagnostic: the casters past the atlas's regions, drawn into their own
-maps, and the frames of each class) */
+/* (diagnostic: the casters past the first page's regions, those of them
+past every page's, drawn into their own maps, and the frames of each class) */
+static unsigned long shadow_retained_spill_count = 0;
 static unsigned long shadow_retained_overflow_count = 0;
 static unsigned long shadow_retained_class_frames[SHADOW_ATLAS_CLASSES] = { 0, 0, 0 };
 static unsigned long shadow_retained_frames = 0;
@@ -492,7 +527,8 @@ boolean _rasterizer_environment_shadow_begin(
 		}
 		/* port: (the retained casters, above) its region chosen once its
 		draws are known (rasterizer_shadow_retained_caster) */
-		shadow_fingerprinting = shadow_retained_on && shadow_atlas_active;
+		shadow_fingerprinting = shadow_retained_on && shadow_atlas_active &&
+			shadow_atlas_count < shadow_atlas_capacity(shadow_atlas_class);
 		shadow_atlas_region = NONE;
 		if (shadow_fingerprinting)
 		{
@@ -507,6 +543,10 @@ boolean _rasterizer_environment_shadow_begin(
 			if (shadow_atlas_active && shadow_atlas_count < shadow_atlas_capacity(shadow_atlas_class))
 			{
 				shadow_atlas_region = shadow_atlas_count++;
+			}
+			else if (shadow_atlas_active)
+			{
+				shadow_atlas_region = shadow_atlas_spill();
 			}
 			shadow_caster_target(shadow_atlas_region);
 		}
@@ -826,7 +866,7 @@ void _rasterizer_environment_shadow_draw(
 			if (shadow_atlas_receiving != NONE)
 			{
 				real const width = (real)SHADOW_ATLAS_WIDTH;
-				real const height = (real)shadow_atlas_heights[shadow_atlas_class];
+				real const height = (real)shadow_atlas_heights[shadow_atlas_page_class];
 				float region[4];
 
 				region[0] = (real)SHADOW_ATLAS_MAP_SIZE / width;
@@ -836,7 +876,7 @@ void _rasterizer_environment_shadow_draw(
 				IDirect3DDevice8_SetTexture(
 					global_d3d_device,
 					0,
-					(IDirect3DBaseTexture8 *)shadow_atlas_textures[shadow_atlas_class][1]);
+					(IDirect3DBaseTexture8 *)shadow_atlas_textures[shadow_atlas_page_class][1]);
 				d3d8_texture_region(0, region);
 			}
 			else
@@ -1503,11 +1543,11 @@ static void shadow_atlas_set_target(
 {
 	D3DVIEWPORT8 viewport;
 
-	IDirect3DDevice8_SetRenderTarget(global_d3d_device, shadow_atlas_surfaces[shadow_atlas_class][atlas], NULL);
+	IDirect3DDevice8_SetRenderTarget(global_d3d_device, shadow_atlas_surfaces[shadow_atlas_page_class][atlas], NULL);
 	viewport.X = 0;
 	viewport.Y = 0;
 	viewport.Width = SHADOW_ATLAS_WIDTH;
-	viewport.Height = shadow_atlas_heights[shadow_atlas_class];
+	viewport.Height = shadow_atlas_heights[shadow_atlas_page_class];
 	viewport.MinZ = 0.0f;
 	viewport.MaxZ = 1.0f;
 	/* port: (the retained casters) each cell emptied alone, and what the
@@ -1544,14 +1584,86 @@ static void shadow_atlas_set_target(
 	return;
 }
 
-/* a caster drawn into its region of the casters' atlas, which the frame's
-first empties */
+/* a region of every page's (shadow_atlas_region): its page, and its region
+of the page's atlases */
+static short shadow_atlas_locate(
+	short region,
+	short *page_region)
+{
+	short page = shadow_atlas_page_count - 1;
+
+	while (page > 0 && region < shadow_atlas_pages[page].first)
+	{
+		page--;
+	}
+	*page_region = region - shadow_atlas_pages[page].first;
+
+	return page;
+}
+
+/* a caster drawn into its region of its page's casters' atlas, which the
+page's first empties */
 static void shadow_atlas_caster_target(
 	short region)
 {
-	shadow_atlas_set_target(0, region, region == 0, TRUE);
+	short page_region;
+	short page = shadow_atlas_locate(region, &page_region);
+
+	shadow_atlas_page_class = shadow_atlas_pages[page].atlas_class;
+	shadow_atlas_set_target(0, page_region, page_region == 0, TRUE);
 
 	return;
+}
+
+/* a region of the next page for a caster past the first page's (NONE: its
+map's, past every page's): the page begun last while it has room, else the
+atlases of a class no page has, the smallest holding the casters past the
+first page the frame before had, and a few, beyond the pages' (else the
+largest) */
+static short shadow_atlas_spill(
+	void)
+{
+	short page = shadow_atlas_page_count - 1;
+
+	shadow_retained_spill_count++;
+	if (page == 0 ||
+		shadow_atlas_pages[page].count >= shadow_atlas_capacity(shadow_atlas_pages[page].atlas_class))
+	{
+		short needed = shadow_atlas_pages_spilled + SHADOW_ATLAS_SLACK;
+		short chosen = NONE;
+		short atlas_class;
+
+		for (page = 1; page < shadow_atlas_page_count; page++)
+		{
+			needed -= shadow_atlas_capacity(shadow_atlas_pages[page].atlas_class);
+		}
+		for (atlas_class = 0; atlas_class < SHADOW_ATLAS_CLASSES; atlas_class++)
+		{
+			boolean taken = FALSE;
+
+			for (page = 0; page < shadow_atlas_page_count; page++)
+			{
+				taken = taken || shadow_atlas_pages[page].atlas_class == atlas_class;
+			}
+			if (!taken && (chosen == NONE || shadow_atlas_capacity(chosen) < needed))
+			{
+				chosen = atlas_class;
+			}
+		}
+		if (chosen == NONE || !shadow_atlas_make(chosen))
+		{
+			shadow_retained_overflow_count++;
+			return NONE;
+		}
+		page = shadow_atlas_page_count++;
+		shadow_atlas_pages[page].atlas_class = chosen;
+		shadow_atlas_pages[page].first = (short)(shadow_atlas_pages[page - 1].first +
+			shadow_atlas_capacity(shadow_atlas_pages[page - 1].atlas_class));
+		shadow_atlas_pages[page].count = 0;
+	}
+	shadow_atlas_spilled++;
+
+	return (short)(shadow_atlas_pages[page].first + shadow_atlas_pages[page].count++);
 }
 
 /* the chain's passes for the scale: the Xbox's, and each widening
@@ -1593,7 +1705,7 @@ static void shadow_atlas_states(
 		IDirect3DDevice8_SetTexture(
 			global_d3d_device,
 			stage,
-			(IDirect3DBaseTexture8 *)shadow_atlas_textures[shadow_atlas_class][atlas]);
+			(IDirect3DBaseTexture8 *)shadow_atlas_textures[shadow_atlas_page_class][atlas]);
 		IDirect3DDevice8_SetTextureStageState(global_d3d_device, stage, D3DTSS_ADDRESSU, D3DTADDRESS_BORDER);
 		IDirect3DDevice8_SetTextureStageState(global_d3d_device, stage, D3DTSS_ADDRESSV, D3DTADDRESS_BORDER);
 		IDirect3DDevice8_SetTextureStageState(global_d3d_device, stage, D3DTSS_MAGFILTER, D3DTEXF_LINEAR);
@@ -1634,7 +1746,7 @@ static void shadow_atlas_quad(
 	/* the Xbox pass's corners, in its order */
 	static real const signs[8] = { -1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f, 1.0f, -1.0f };
 	real const width = (real)SHADOW_ATLAS_WIDTH;
-	real const height = (real)shadow_atlas_heights[shadow_atlas_class];
+	real const height = (real)shadow_atlas_heights[shadow_atlas_page_class];
 	real vertex_constants[8][4];
 	short stage;
 
@@ -1684,6 +1796,13 @@ boolean rasterizer_shadow_atlas_begin(
 	shadow_atlas_count = 0;
 	shadow_atlas_region = NONE;
 	shadow_atlas_receiving = NONE;
+	/* the first page, the frame's class's; the casters past it the frame
+	before had, kept for the next page's class (shadow_atlas_spill) */
+	shadow_atlas_pages[0].atlas_class = shadow_atlas_class;
+	shadow_atlas_pages[0].first = 0;
+	shadow_atlas_pages[0].count = 0;
+	shadow_atlas_page_count = 1;
+	shadow_atlas_page_class = shadow_atlas_class;
 	if (global_window_parameters.rasterizer_target == _rasterizer_target_render_primary &&
 		rasterizer_debug_options.draw_environment_shadows &&
 		rasterizer_debug_options.shadow_convolution_enabled &&
@@ -1694,6 +1813,11 @@ boolean rasterizer_shadow_atlas_begin(
 		shadow_atlas_active = TRUE;
 	}
 	shadow_retained_frame_begin();
+	if (shadow_atlas_active)
+	{
+		shadow_atlas_pages_spilled = shadow_atlas_spilled;
+		shadow_atlas_spilled = 0;
+	}
 
 	return shadow_atlas_active;
 }
@@ -1708,7 +1832,7 @@ short rasterizer_shadow_atlas_caster_end(
 	{
 		shadow_atlas_shadows[region].used = shadow_used;
 		shadow_atlas_region = NONE;
-		if (shadow_retained_on)
+		if (shadow_retained_on && region < shadow_atlas_capacity(shadow_atlas_class))
 		{
 			shadow_atlas_owners[region].used = shadow_used;
 		}
@@ -1722,7 +1846,7 @@ void rasterizer_shadow_atlas_convolve(
 {
 	long scale = halo_shadow_map_scale();
 	short pass_count = shadow_atlas_pass_count(scale);
-	short pass, region;
+	short pass, region, page;
 
 	if (!shadow_atlas_active)
 	{
@@ -1735,34 +1859,41 @@ void rasterizer_shadow_atlas_convolve(
 	}
 	/* port: (debug.pass_times) the chain's passes timed as its own */
 	halo_timing_category(HALO_TIMING_SHADOW_BLUR);
-	/* every pass, back and forth from the casters' atlas, ending in the
-	other (the count is odd), whose regions the receivers sample; each
-	atlas's guard bands black, as each pass empties the atlas it draws into
-	(its quads cover their regions) */
-	for (pass = 0; pass < pass_count; pass++)
+	/* each page's chain: every pass, back and forth from the casters'
+	atlas, ending in the other (the count is odd), whose regions the
+	receivers sample; each atlas's guard bands black, as each pass empties
+	the atlas it draws into (its quads cover their regions) */
+	shadow_atlas_pages[0].count = shadow_atlas_count;
+	for (page = 0; page < shadow_atlas_page_count; page++)
 	{
-		/* port: (the retained casters) the regions drawn this frame alone,
-		each cell emptied alone (shadow_atlas_set_target) */
-		if (shadow_retained_on && !(shadow_atlas_claimed & ~shadow_atlas_kept))
+		/* port: (the retained casters) the first page's regions drawn this
+		frame alone, each cell emptied alone (shadow_atlas_set_target) */
+		boolean retained = shadow_retained_on && page == 0;
+
+		shadow_atlas_page_class = shadow_atlas_pages[page].atlas_class;
+		for (pass = 0; pass < pass_count; pass++)
 		{
-			break;
-		}
-		shadow_atlas_states(pass & 1);
-		for (region = 0; region < (shadow_retained_on ? SHADOW_ATLAS_REGIONS : shadow_atlas_count); region++)
-		{
-			if (shadow_retained_on &&
-				!((shadow_atlas_claimed & ~shadow_atlas_kept) & (1ULL << region)))
+			if (retained && !(shadow_atlas_claimed & ~shadow_atlas_kept))
 			{
-				continue;
+				break;
 			}
-			/* port: (emptied by the chain's first pass alone, but where a
-			tile-based GPU empties each pass's cells alone: above) */
-			shadow_atlas_set_target(
-				!(pass & 1),
-				region,
-				region == 0,
-				pass == 0 || (d3d8_clears_alone() && !shadow_retained_on));
-			shadow_atlas_quad(region, shadow_atlas_pass_offset(pass, scale));
+			shadow_atlas_states(pass & 1);
+			for (region = 0; region < (retained ? SHADOW_ATLAS_REGIONS : shadow_atlas_pages[page].count); region++)
+			{
+				if (retained &&
+					!((shadow_atlas_claimed & ~shadow_atlas_kept) & (1ULL << region)))
+				{
+					continue;
+				}
+				/* port: (emptied by the chain's first pass alone, but where a
+				tile-based GPU empties each pass's cells alone: above) */
+				shadow_atlas_set_target(
+					!(pass & 1),
+					region,
+					region == 0,
+					pass == 0 || (d3d8_clears_alone() && !shadow_retained_on));
+				shadow_atlas_quad(region, shadow_atlas_pass_offset(pass, scale));
+			}
 		}
 	}
 	halo_timing_category(NONE);
@@ -1783,8 +1914,19 @@ void rasterizer_shadow_atlas_receive(
 	match_assert(
 		"c:\\halo\\SOURCE\\rasterizer\\xbox\\rasterizer_xbox_shadows.c",
 		0,
-		region >= 0 && (shadow_retained_on ? region < SHADOW_ATLAS_REGIONS && (shadow_atlas_claimed & (1ULL << region)) :
-			region < shadow_atlas_count));
+		region >= 0 && region < SHADOW_ATLAS_ALL_REGIONS);
+	{
+		short page_region;
+		short page = shadow_atlas_locate(region, &page_region);
+
+		match_assert(
+			"c:\\halo\\SOURCE\\rasterizer\\xbox\\rasterizer_xbox_shadows.c",
+			0,
+			page > 0 ? page_region < shadow_atlas_pages[page].count :
+				shadow_retained_on ? (shadow_atlas_claimed & (1ULL << region)) != 0 : region < shadow_atlas_count);
+		shadow_atlas_page_class = shadow_atlas_pages[page].atlas_class;
+		shadow_atlas_receiving = page_region;
+	}
 
 	local_shadow_matrix = shadow_atlas_shadows[region].matrix;
 	local_shadow_color = shadow_atlas_shadows[region].color;
@@ -1793,7 +1935,6 @@ void rasterizer_shadow_atlas_receive(
 	shadow_setup = FALSE;
 	shadow_used = shadow_atlas_shadows[region].used;
 	shadow_restored = FALSE;
-	shadow_atlas_receiving = region;
 
 	return;
 }
@@ -1804,6 +1945,7 @@ void rasterizer_shadow_atlas_end(
 	d3d8_texture_region(0, NULL);
 	shadow_atlas_active = FALSE;
 	shadow_atlas_count = 0;
+	shadow_atlas_page_count = 1;
 	shadow_atlas_region = NONE;
 	shadow_atlas_receiving = NONE;
 
@@ -1970,11 +2112,12 @@ static void shadow_retained_frame_begin(
 	if (on && ++shadow_retained_frames >= 1200 && config_boolean("debug.gpu_stats"))
 	{
 		platform_log("retained shadows: %lu casters in %lu frames, %lu kept (%.1f%%), %lu more but for their nodes' matrices, "
-			"%lu past the atlas's regions; frames of each class %lu, %lu, %lu",
+			"%lu past the first page (a page more), %lu past every page's regions; frames of each class %lu, %lu, %lu",
 			shadow_retained_casters, shadow_retained_frames, shadow_retained_kept_count,
 			shadow_retained_casters ? 100.0 * (double)shadow_retained_kept_count / (double)shadow_retained_casters : 0.0,
-			shadow_retained_posed_count, shadow_retained_overflow_count, shadow_retained_class_frames[0],
-			shadow_retained_class_frames[1], shadow_retained_class_frames[2]);
+			shadow_retained_posed_count, shadow_retained_spill_count, shadow_retained_overflow_count,
+			shadow_retained_class_frames[0], shadow_retained_class_frames[1], shadow_retained_class_frames[2]);
+		shadow_retained_spill_count = 0;
 		shadow_retained_overflow_count = 0;
 		shadow_retained_class_frames[0] = shadow_retained_class_frames[1] = shadow_retained_class_frames[2] = 0;
 		shadow_retained_posed_count = 0;
@@ -2021,16 +2164,23 @@ boolean rasterizer_shadow_retained_caster(
 		}
 	}
 
-	/* (no region left: its map's, as before) */
+	/* (no region left: the next page's, as rasterizer_environment_shadow_begin
+	chooses, never kept) */
 	if (shadow_atlas_count >= shadow_atlas_capacity(shadow_atlas_class))
 	{
-		shadow_retained_overflow_count++;
 		if (owned != NONE)
 		{
 			shadow_atlas_owners[owned].object_index = NONE;
 		}
-		shadow_atlas_region = NONE;
-		shadow_caster_target(NONE);
+		shadow_atlas_region = shadow_atlas_spill();
+		if (shadow_atlas_region != NONE)
+		{
+			shadow_atlas_shadows[shadow_atlas_region].matrix = local_shadow_matrix;
+			shadow_atlas_shadows[shadow_atlas_region].color = local_shadow_color;
+			shadow_atlas_shadows[shadow_atlas_region].radius = local_object_bounding_radius;
+		}
+		shadow_caster_target(shadow_atlas_region);
+		shadow_used = FALSE;
 		return FALSE;
 	}
 
