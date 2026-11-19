@@ -844,13 +844,18 @@
 			<stop shown="0.9" value="0.9"/>
 			<stop shown="1" value="1"/>
 		</row>
-		<section key="section_12" title="RAY TRACING" when="desktop android"/>
+		<row key="dynamic_resolution" kind="choice" setting="display.dynamic_resolution" label="DYNAMIC RESOLUTION" crumb="VIDEO › FRAME RATE &amp; SYNC" when="desktop">
+			<help>Lowers the Render Resolution for a moment when the graphics card cannot keep up with the display, down to 50%, instead of dropping frames, and raises it again as it can. Best with an Upscaler.</help>
+			<choice shown="ON" value="true"/>
+			<choice shown="OFF" value="false"/>
+		</row>
+		<section key="section_13" title="RAY TRACING" when="desktop android"/>
 		<row key="shadows" kind="choice" setting="display.shadows" label="RAY TRACED SHADOWS" crumb="VIDEO › FRAME RATE &amp; SYNC" search="shadows" when="desktop+ray_queries android+ray_queries">
 			<help>The shadows of characters and vehicles traced by the graphics card from their own shapes, soft at the edges, in the same place and darkness as the game's, which frees the processor's shadow work. Off draws them as the Xbox did.</help>
 			<choice shown="OFF" value="classic"/>
 			<choice shown="ON" value="ray_traced"/>
 		</row>
-		<section key="section_14" title="BENCHMARK"/>
+		<section key="section_15" title="BENCHMARK"/>
 		<row key="benchmark_pacing" kind="choice" setting="display.benchmark_pacing" label="BENCHMARK PACING" crumb="VIDEO › FRAME RATE &amp; SYNC" search_choices="uncapped your settings" when="!in_game">
 			<help>What the benchmark measures. Uncapped turns VSync, Variable Refresh and the frame cap off for the run: what your computer can draw. Your Settings keeps them: what you see as you play.</help>
 			<choice shown="UNCAPPED" value="uncapped"/>

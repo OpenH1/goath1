@@ -1517,6 +1517,12 @@ PAGES = {
              "How much AMD FSR or Apple MetalFX sharpens its picture, which offsets the softness of a Render "
              "Resolution below 100%. Higher is crisper; too high outlines edges. Off adds no sharpening.",
              "desktop android"),
+            # (display.dynamic_resolution: d3d8_device.c's
+            # dynamic_resolution_update, port/linux/src/dynamic_resolution.h)
+            ("DYNAMIC RESOLUTION", "display.dynamic_resolution", ON_OFF,
+             "Lowers the Render Resolution for a moment when the graphics card cannot keep up with the display, "
+             "down to 50%, instead of dropping frames, and raises it again as it can. Best with an Upscaler.",
+             "desktop"),
             (SECTION, "RAY TRACING"),
             # (display.shadows: where the graphics card has ray queries alone,
             # SETTINGS_ROW_WHEN; Advanced Graphics and Brightness

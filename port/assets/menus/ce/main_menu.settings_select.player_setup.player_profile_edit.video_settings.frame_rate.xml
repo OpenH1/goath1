@@ -25,11 +25,12 @@
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/op_temporal_aa_metalfx" x="28" y="232" platform="desktop"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/op_temporal_aa_dlss_get" x="28" y="232" platform="desktop"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/op_temporal_aa_sharpness" x="28" y="253" platform="desktop android"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/section_12" x="28" y="280" platform="desktop android"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/op_shadows" x="28" y="300" platform="desktop android"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/section_14" x="28" y="327"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/op_benchmark_pacing" x="28" y="347"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/op_benchmark" x="28" y="368"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/op_dynamic_resolution" x="28" y="274" platform="desktop"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/section_13" x="28" y="301" platform="desktop android"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/op_shadows" x="28" y="321" platform="desktop android"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/section_15" x="28" y="348"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/op_benchmark_pacing" x="28" y="368"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/op_benchmark" x="28" y="389"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/button_bar" y="414"/>
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items" source="tools/port_settings.py settings_files/_settings_page">
@@ -230,10 +231,26 @@
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/temporal_aa_sharpness_value" type="text" controller="1" width="76" height="20" bitmap="main_menu/settings/slider_field" color="#FF2896FF" align="center" text_y="1" text_flags="no_focus_test" wide="244 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/section_12" width="344" height="18" bitmap="main_menu/settings/section" platform="desktop android" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/section_12_title"/>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/op_dynamic_resolution" width="344" height="20" flags="pass_unhandled_to_focused_child" bitmap="main_menu/settings/row" color="#FF2896FF" platform="desktop" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/dynamic_resolution_label"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/dynamic_resolution_spinner" x="188"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/dynamic_resolution_seg0" x="188" y="1"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/dynamic_resolution_seg1" x="240" y="1"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/section_12_title" type="text" controller="1" width="344" height="18" wide="0 244" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/labels" string_index="12" color="#FF6F9CD0" text_x="2" text_y="1" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/dynamic_resolution_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/labels" string_index="12" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/dynamic_resolution_seg0" type="text" controller="1" width="48" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="ON" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/dynamic_resolution_seg1" type="text" controller="1" width="48" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="OFF" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/dynamic_resolution_spinner" type="spinner" top="1" width="140" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="ON|OFF" setting="display.dynamic_resolution" values="true|false" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="4 -6 16 0" footer_bounds="4 140 16 146" wide="20 120" source="tools/port_settings.py settings_files/_settings_page">
+		<on event="created" run="port setting load"/>
+		<on event="a" run="port setting segment"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/section_13" width="344" height="18" bitmap="main_menu/settings/section" platform="desktop android" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/section_13_title"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/section_13_title" type="text" controller="1" width="344" height="18" wide="0 244" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/labels" string_index="13" color="#FF6F9CD0" text_x="2" text_y="1" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/op_shadows" width="344" height="20" flags="pass_unhandled_to_focused_child" bitmap="main_menu/settings/row" color="#FF2896FF" platform="desktop android" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/shadows_label"/>
@@ -241,7 +258,7 @@
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/shadows_seg0" x="188" y="1"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/shadows_seg1" x="240" y="1"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/shadows_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/labels" string_index="13" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/shadows_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/labels" string_index="14" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/shadows_seg0" type="text" controller="1" width="48" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="OFF" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
@@ -251,10 +268,10 @@
 		<on event="created" run="port setting load"/>
 		<on event="a" run="port setting segment"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/section_14" width="344" height="18" bitmap="main_menu/settings/section" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/section_14_title"/>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/section_15" width="344" height="18" bitmap="main_menu/settings/section" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/section_15_title"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/section_14_title" type="text" controller="1" width="344" height="18" wide="0 244" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/labels" string_index="14" color="#FF6F9CD0" text_x="2" text_y="1" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/section_15_title" type="text" controller="1" width="344" height="18" wide="0 244" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/labels" string_index="15" color="#FF6F9CD0" text_x="2" text_y="1" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/op_benchmark_pacing" width="344" height="20" flags="pass_unhandled_to_focused_child" bitmap="main_menu/settings/row" color="#FF2896FF" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/benchmark_pacing_label"/>
@@ -262,7 +279,7 @@
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/benchmark_pacing_seg0" x="188" y="1"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/benchmark_pacing_seg1" x="321" y="1"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/benchmark_pacing_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/labels" string_index="15" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/benchmark_pacing_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/labels" string_index="16" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/benchmark_pacing_seg0" type="text" controller="1" width="129" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="UNCAPPED" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
@@ -278,7 +295,7 @@
 		<on event="left_mouse" run="mouse emit accept event"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/benchmark_label"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/benchmark_label" type="text" controller="1" width="332" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/labels" string_index="16" color="#FF2896FF" text_x="10" text_y="1" wide="0 244" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/benchmark_label" type="text" controller="1" width="332" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/labels" string_index="17" color="#FF2896FF" text_x="10" text_y="1" wide="0 244" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
 	<strings name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/labels">
 		<string text="VSYNC"/>
@@ -293,6 +310,7 @@
 		<string text="UPSCALER"/>
 		<string text="UPSCALER"/>
 		<string text="SHARPNESS"/>
+		<string text="DYNAMIC RESOLUTION"/>
 		<string text="RAY TRACING"/>
 		<string text="RAY TRACED SHADOWS"/>
 		<string text="BENCHMARK"/>
@@ -313,6 +331,7 @@
 		<string text="Apple MetalFX builds each frame from the frames before it: smooth edges, and a sharp picture at a Render Resolution below 100% for more frames. While it is on, it replaces Anti-Aliasing."/>
 		<string text="AMD FSR builds each frame from the frames before it: smooth edges, and a sharp picture at a Render Resolution below 100%. Get DLSS is NVIDIA DLSS, NVIDIA's own download (about 30 MB): select it to read its license and install it, for the next start."/>
 		<string text="How much AMD FSR or Apple MetalFX sharpens its picture, which offsets the softness of a Render Resolution below 100%. Higher is crisper; too high outlines edges. Off adds no sharpening."/>
+		<string text="Lowers the Render Resolution for a moment when the graphics card cannot keep up with the display, down to 50%, instead of dropping frames, and raises it again as it can. Best with an Upscaler."/>
 		<string text=""/>
 		<string text="The shadows of characters and vehicles traced by the graphics card from their own shapes, soft at the edges, in the same place and darkness as the game's, which frees the processor's shadow work. Off draws them as the Xbox did."/>
 		<string text=""/>

@@ -241,6 +241,13 @@ static const struct config_setting config_settings[] =
 		"display's pixels, and the HUD is drawn at the scale too; Vulkan scales\n"
 		"up sharply (whole multiples of the pixels, then smoothed), and it\n"
 		"multiplies display.supersampling." },
+	{ "display.dynamic_resolution", _config_boolean, "false", "HALO_DYNAMIC_RESOLUTION", _environment_value,
+		_platform_desktop,
+		"On a computer: lower the render scale, in steps of 0.05 down to 0.5,\n"
+		"while the graphics card cannot keep to the display's refresh rate (or\n"
+		"display.max_fps where that is lower), and raise it again up to\n"
+		"display.render_scale as it can, checked each second. Best with\n"
+		"display.temporal_aa. The game plays the same." },
 	{ "display.window_size", _config_string, "\"\"", "HALO_WINDOW_SIZE", _environment_value, _platform_desktop,
 		"The window's size, \"<width>x<height>\" (\"1920x1080\"), 640x480 or more (it\n"
 		"can be resized). Empty: display.window_scale's." },

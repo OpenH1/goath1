@@ -2106,6 +2106,14 @@ static float platform_refresh_rate(void)
 #endif
 }
 
+float platform_frame_rate_target(void)
+{
+	float refresh = platform_refresh_rate() > 0.0f ? platform_refresh_rate() : 60.0f;
+	long maximum = config_integer("display.max_fps");
+
+	return maximum > 0 && (float)maximum < refresh ? (float)maximum : refresh;
+}
+
 /* ---------- display.vrr
 
 A display of variable refresh (G-SYNC, FreeSync, VRR) shows each frame as

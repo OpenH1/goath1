@@ -38,6 +38,7 @@ Conventions carried over from the Xbox:
 #include "halo_dynamic_lights.h"
 #include "port_config.h"
 #include "battery_saver.h"
+#include "dynamic_resolution.h"
 #include "menu_pictures.h"
 #include "halo_menus.h"
 #include "report.h"
@@ -297,11 +298,19 @@ targets, so at it too. 1 (or 0, unset or not a number) draws the display's
 pixels. It multiplies display.supersampling's factor (Settings' RENDER
 RESOLUTION sets one or the other: menu_functions.c). Android and iOS draw
 it in their hosts instead (a smaller swapchain or drawable). Read between
-frames (halo_screen_commit). */
+frames (halo_screen_commit). display.dynamic_resolution lowers it while the
+GPU cannot keep to the frame rate (render_scale_dynamic: dynamic_resolution.h). */
 
 #define RENDER_SCALE_LEAST 0.25f
 
-static float render_scale_wanted(void)
+#ifdef SUPERSAMPLING
+/* display.dynamic_resolution's scale (dynamic_resolution_update), at most
+the setting's: 1 while it is off */
+static float render_scale_dynamic = 1.0f;
+#endif
+
+/* display.render_scale's fraction, the setting's alone */
+static float render_scale_configured(void)
 {
 #ifdef SUPERSAMPLING
 	static unsigned long read_at = (unsigned long)-1;
@@ -327,6 +336,19 @@ static float render_scale_wanted(void)
 #else
 	return 1.0f;
 #endif
+}
+
+/* the render scale drawn: the setting's, or display.dynamic_resolution's
+where that is lower */
+static float render_scale_wanted(void)
+{
+	float factor = render_scale_configured();
+
+#ifdef SUPERSAMPLING
+	if (render_scale_dynamic < factor)
+		factor = render_scale_dynamic;
+#endif
+	return factor;
 }
 
 /* ---------- the draws' inputs
@@ -3095,6 +3117,52 @@ long halo_screen_commit(void)
 	}
 	sharp_upscale_send();
 	return screen_width;
+}
+
+/* display.dynamic_resolution (dynamic_resolution.h, off by default): at each
+frame presented, the GPU's time on it against the frame rate's target
+(platform_frame_rate_target), and the render scale it calls for, taken up
+between frames (halo_screen_commit: render_scale_wanted); a computer's
+alone, where display.render_scale is the targets' (SUPERSAMPLING) */
+static void dynamic_resolution_update(void)
+{
+#ifdef SUPERSAMPLING
+	static struct dynamic_resolution state;
+	static unsigned long read_at = (unsigned long)-1;
+	static BOOL on;
+	struct xgpu_backend_frame_times times = {0};
+	int known;
+	float budget, scale;
+
+	if (read_at != config_changes())
+	{
+		BOOL value = config_boolean("display.dynamic_resolution") != 0;
+
+		read_at = config_changes();
+		if (value != on)
+		{
+			on = value;
+			dynamic_resolution_reset(&state);
+			platform_log("dynamic resolution: %s", on ? "on" : "off");
+		}
+	}
+	if (!on)
+	{
+		render_scale_dynamic = 1.0f;
+		return;
+	}
+	known = xgpu_backend_frame_times(&times);
+	budget = 1e6f / platform_frame_rate_target();
+	scale = dynamic_resolution_frame(&state, SDL_GetTicksNS() / 1000u, (uint32_t)times.gpu, known, budget,
+		render_scale_configured());
+	if (scale != render_scale_dynamic)
+	{
+		if (state.smoothed_us > 0.0f)
+			platform_log("dynamic resolution: render scale %.2f (GPU %.1f ms a frame, %.1f ms the target's)", scale,
+				state.smoothed_us / 1000.0f, budget / 1000.0f);
+		render_scale_dynamic = scale;
+	}
+#endif
 }
 
 ULONG WINAPI D3DDevice_Release(void)
@@ -8770,6 +8838,9 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 	platform_frame_wait) */
 	if (!platform_frame_report_held())
 		report_frame_presented();
+	/* (display.dynamic_resolution: the GPU's time weighed, the scale for
+	the next halo_screen_commit) */
+	dynamic_resolution_update();
 	/* (display.hdr: a frame begins with no 3D view drawn) */
 	inputs.hdr_view = FALSE;
 	inputs.hdr_category = -1;
