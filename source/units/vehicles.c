@@ -330,7 +330,8 @@ outlives the tick: an entry of another tick is ignored. Every other vehicle
 does. */
 enum
 {
-	MAXIMUM_SUBSTEP_VEHICLES = 16
+	/* a vehicle a player drives each, at most (a game's most players) */
+	MAXIMUM_SUBSTEP_VEHICLES = HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 };
 
 /* what a vehicle's controls ramp toward a step a tick (vehicle_substep_lead) */
