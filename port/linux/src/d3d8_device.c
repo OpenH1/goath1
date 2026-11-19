@@ -5648,6 +5648,9 @@ static struct
 	and xgpu_backend_sent_serial */
 	struct retained_draw *told;
 	unsigned long told_count, told_sent;
+	/* xgpu_texture_choices_unkept as the draw began to be prepared: a draw
+	whose texture's choice is made again each time is not kept */
+	unsigned long unkept_at;
 	/* counted (logged every 600 frames with either setting) */
 	unsigned long found, found_told, prepared, not_kept, not_kept_moved, not_kept_target, differed, targets_differed,
 		hash_differed;
@@ -5809,6 +5812,7 @@ static int retained_draw_find(struct vertex_shader_object *program, BOOL immedia
 	draw = &retained.draws[retained_context_hash(&retained.context) % RETAINED_DRAWS];
 	retained.slot = draw;
 	retained.keep = TRUE;
+	retained.unkept_at = xgpu_texture_choices_unkept();
 	if (draw->generation != retained.generation || memcmp(&draw->context, &retained.context, sizeof(retained.context)))
 	{
 		retained.told = NULL;
@@ -5899,7 +5903,8 @@ static void retained_draw_keep(const struct xgpu_texture_source *sources, const 
 	retained_tokens_now(&tokens);
 	if (memcmp(&tokens, &retained.tokens, sizeof(tokens)))
 		retained_tokens_moved(&tokens);
-	if (memcmp(&tokens, &retained.tokens, sizeof(tokens)) || (program->lighting_failed != 0) !=
+	if (memcmp(&tokens, &retained.tokens, sizeof(tokens)) || xgpu_texture_choices_unkept() != retained.unkept_at ||
+		(program->lighting_failed != 0) !=
 		retained.context.lighting_failed || (program->split_failed != 0) != retained.context.split_failed)
 	{
 		retained.not_kept_moved++;

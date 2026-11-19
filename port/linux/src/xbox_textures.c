@@ -381,7 +381,12 @@ void xgpu_texture_replacements_changed(void)
 
 unsigned long xgpu_texture_choices_serial(void)
 {
-	return __atomic_load_n(&replacement_epoch, __ATOMIC_ACQUIRE) + choices_unkept;
+	return __atomic_load_n(&replacement_epoch, __ATOMIC_ACQUIRE);
+}
+
+unsigned long xgpu_texture_choices_unkept(void)
+{
+	return choices_unkept;
 }
 
 void xgpu_texture_cache_begin_frame(void)
