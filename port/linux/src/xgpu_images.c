@@ -64,10 +64,17 @@ void xgpu_image_changed(unsigned int image)
 		images[image - 1].image.serial = ++image_serial;
 }
 
+unsigned long xgpu_images_serial(void)
+{
+	return image_serial;
+}
+
 void xgpu_image_delete(unsigned int image)
 {
 	if (!image || image > IMAGE_MAXIMUM || !images[image - 1].used || images[image - 1].deleted)
 		return;
+	/* (xgpu_images_serial) */
+	image_serial++;
 	images[image - 1].deleted = TRUE;
 	images[image - 1].freed_at = image_frame + IMAGE_KEPT_FRAMES;
 }

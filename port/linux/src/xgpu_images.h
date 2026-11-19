@@ -45,6 +45,8 @@ are done) */
 void xgpu_image_delete(unsigned int image);
 /* the image of a number (NULL: none) */
 const struct xgpu_image *xgpu_image_get(unsigned int image);
+/* moves as any image is made, changed or deleted */
+unsigned long xgpu_images_serial(void);
 /* a frame is submitted (xgpu_stream_encode.c) */
 void xgpu_images_frame_end(void);
 
@@ -62,6 +64,11 @@ unsigned int xgpu_texture_replacement(DWORD resource, struct xgpu_texture_descri
 (a placeholder or a menu's art registered or let go), on any thread: each
 texture's choice is made again at its next bind */
 void xgpu_texture_replacements_changed(void);
+/* moves as a texture's replacement or channels may be other than they
+were: the replacements changed, a choice not kept (or an MCC texture's
+image); and whether a Custom Edition HUD meter's channels are sampled now */
+unsigned long xgpu_texture_choices_serial(void);
+int xgpu_texture_hud_meter(void);
 unsigned long xgpu_texture_channels(unsigned long address, int stage);
 
 #endif

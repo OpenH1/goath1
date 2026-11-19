@@ -497,8 +497,11 @@ static void synchronous(void)
 
 /* what the host had is unknown to it now (or the stream began): sent
 again as it is next used */
+static uint32_t sent_forgotten;
+
 static void forget_sent(void)
 {
+	sent_forgotten++;
 	stream.category = 0;
 	stream.pipeline = 0;
 	stream.dynamic_sent = FALSE;
@@ -1627,6 +1630,17 @@ void xgpu_backend_pipeline_stand_in(unsigned long number)
 	record_body->id = stream.pipeline;
 	/* (the same round of numbers alone: XGPU_STREAM_PIPELINES' 14 bits) */
 	record_body->stand_in = number >> 16 == stream.pipeline_keys.rounds ? (uint32_t)(number & 0xffff) : 0;
+}
+
+unsigned long xgpu_backend_sent_serial(void)
+{
+	return sent_forgotten;
+}
+
+BOOL xgpu_backend_pipeline_usable(void)
+{
+	return stream.open && stream.pipeline &&
+		__atomic_load_n(&stream.pipelines[stream.pipeline], __ATOMIC_RELAXED) != XGPU_STREAM_PIPELINE_FAILED;
 }
 
 unsigned long xgpu_backend_pipeline_number(void)

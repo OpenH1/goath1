@@ -1268,6 +1268,9 @@ static struct render_target_entry **render_target_bucket(unsigned long data)
 }
 
 static struct render_target_entry *render_targets;
+/* moves as an entry is made or freed (the draws' kept preparations: a
+texture that was not a target may be one now) */
+static unsigned long render_target_serial;
 /* the number the next target gets */
 static xgpu_target next_target_number = 1;
 
@@ -1358,6 +1361,8 @@ struct d3d8_device
 };
 
 static struct d3d8_device device;
+/* (the states' hash: debug.retained_draws) */
+static void state_hash_forget(void);
 
 /* a map's preparation's journal (below): recording, and what it notes */
 enum
@@ -1969,6 +1974,7 @@ static struct render_target_entry *render_target_get(const D3DSurface *surface)
 		}
 	}
 	entry = calloc(1, sizeof(*entry));
+	render_target_serial++;
 	entry->target.number = next_target_number++;
 	entry->target.data = surface->Data;
 	entry->target.width = width;
@@ -2380,6 +2386,7 @@ HRESULT WINAPI Direct3D_CreateDevice(UINT adapter, D3DDEVTYPE device_type, void 
 			D3D__TextureState[index][D3DTSS_MINFILTER] = D3DTEXF_POINT;
 			D3D__TextureState[index][D3DTSS_MAXANISOTROPY] = 1;
 		}
+		state_hash_forget();
 		viewport_update_constants();
 
 		if (!config_boolean("debug.null_renderer") && platform_video_initialize(width, height))
@@ -3194,19 +3201,155 @@ unsigned long d3d8_visibility_test_number(void)
 	return device.visibility_test_number;
 }
 
+/* ---------- the states' hash (debug.retained_draws)
+
+A sum over the render and texture stage states that a draw's pipeline and
+its textures' description are made from (not the ones read into its
+uniforms and dynamic state alone: the combiners' and the fog's constants,
+the point size, the blend colour, the stencil reference, the depth bias's
+values, the bump environment's), each word's mix of its place and value,
+kept as the setters below change them: a draw's preparation is found again
+by it (retained_draw_find) without reading the tables. A word written past
+the setters (the tables copied back whole) marks it to be summed again.
+debug.retained_draws_verify sums it again for each draw and says where the
+two differ. */
+
+#define RETAINED_STATE_WORDS (D3DRS_MAX + D3DTSS_MAXSTAGES * D3DTSS_MAX)
+
+static struct
+{
+	uint64_t sum;
+	BOOL summed, places_made;
+	/* 1: a uniform's or the dynamic state's alone, not summed */
+	unsigned char unsummed[RETAINED_STATE_WORDS];
+	/* a simple state's place by its push buffer method's (+ 1, 0 none) */
+	unsigned char simple_by_method[1024];
+} state_hash;
+
+static uint64_t state_word_mix(unsigned long place, DWORD value)
+{
+	uint64_t mixed = ((uint64_t)place << 32 | value) + 0x9e3779b97f4a7c15ull;
+
+	mixed = (mixed ^ (mixed >> 30)) * 0xbf58476d1ce4e5b9ull;
+	mixed = (mixed ^ (mixed >> 27)) * 0x94d049bb133111ebull;
+	return mixed ^ (mixed >> 31);
+}
+
+static void state_hash_places(void)
+{
+	unsigned long index;
+	int stage;
+
+	state_hash.places_made = TRUE;
+	for (index = 0; index < 8; index++)
+	{
+		state_hash.unsummed[D3DRS_PSCONSTANT0_0 + index] = 1;
+		state_hash.unsummed[D3DRS_PSCONSTANT1_0 + index] = 1;
+	}
+	state_hash.unsummed[D3DRS_PSFINALCOMBINERCONSTANT0] = 1;
+	state_hash.unsummed[D3DRS_PSFINALCOMBINERCONSTANT1] = 1;
+	state_hash.unsummed[D3DRS_FOGCOLOR] = 1;
+	state_hash.unsummed[D3DRS_FOGSTART] = 1;
+	state_hash.unsummed[D3DRS_FOGEND] = 1;
+	state_hash.unsummed[D3DRS_FOGDENSITY] = 1;
+	state_hash.unsummed[D3DRS_POINTSIZE] = 1;
+	state_hash.unsummed[D3DRS_BLENDCOLOR] = 1;
+	state_hash.unsummed[D3DRS_STENCILREF] = 1;
+	state_hash.unsummed[D3DRS_POLYGONOFFSETZSLOPESCALE] = 1;
+	state_hash.unsummed[D3DRS_POLYGONOFFSETZOFFSET] = 1;
+	for (stage = 0; stage < D3DTSS_MAXSTAGES; stage++)
+	{
+		unsigned long base = D3DRS_MAX + (unsigned long)stage * D3DTSS_MAX;
+
+		state_hash.unsummed[base + D3DTSS_BUMPENVMAT00] = 1;
+		state_hash.unsummed[base + D3DTSS_BUMPENVMAT01] = 1;
+		state_hash.unsummed[base + D3DTSS_BUMPENVMAT10] = 1;
+		state_hash.unsummed[base + D3DTSS_BUMPENVMAT11] = 1;
+		state_hash.unsummed[base + D3DTSS_BUMPENVLSCALE] = 1;
+		state_hash.unsummed[base + D3DTSS_BUMPENVLOFFSET] = 1;
+	}
+	for (index = 0; index < D3DRS_SIMPLE_MAX; index++)
+		state_hash.simple_by_method[(D3DSIMPLERENDERSTATEENCODE[index] >> 2) & 1023] = (unsigned char)(index + 1);
+}
+
+/* the sum as the tables are now */
+static uint64_t state_hash_summed(void)
+{
+	const DWORD *words[2] = { D3D__RenderState, &D3D__TextureState[0][0] };
+	uint64_t sum = 0;
+	unsigned long place;
+
+	if (!state_hash.places_made)
+		state_hash_places();
+	for (place = 0; place < RETAINED_STATE_WORDS; place++)
+	{
+		DWORD value = place < D3DRS_MAX ? words[0][place] : words[1][place - D3DRS_MAX];
+
+		if (!state_hash.unsummed[place])
+			sum += state_word_mix(place, value);
+	}
+	return sum;
+}
+
+/* (the tables written whole) */
+static void state_hash_forget(void)
+{
+	state_hash.summed = FALSE;
+}
+
+static uint64_t state_hash_now(void)
+{
+	if (!state_hash.summed)
+	{
+		state_hash.sum = state_hash_summed();
+		state_hash.summed = TRUE;
+	}
+	return state_hash.sum;
+}
+
+static void state_word_set(DWORD *word, unsigned long place, DWORD value)
+{
+	DWORD old = *word;
+
+	*word = value;
+	if (old == value || !state_hash.summed || state_hash.unsummed[place])
+		return;
+	state_hash.sum += state_word_mix(place, value) - state_word_mix(place, old);
+}
+
+static void render_state_set(unsigned long state, DWORD value)
+{
+	if (state < D3DRS_MAX)
+		state_word_set(&D3D__RenderState[state], state, value);
+}
+
+static void texture_state_set(DWORD stage, unsigned long type, DWORD value)
+{
+	if (stage < D3DTSS_MAXSTAGES && type < D3DTSS_MAX)
+		state_word_set(&D3D__TextureState[stage][type], D3DRS_MAX + stage * D3DTSS_MAX + type, value);
+}
+
 /* ---------- render and texture stage state */
 
 void D3DFASTCALL D3DDevice_SetRenderState_Simple(DWORD method, DWORD value)
 {
-	/* callers also store the value in D3D__RenderState themselves */
-	(void)method;
-	(void)value;
+	/* callers also store the value in D3D__RenderState themselves, after
+	(port: stored here first, so that the states' hash follows it) */
+	unsigned long state;
+
+	if (!state_hash.places_made)
+		state_hash_places();
+	state = state_hash.simple_by_method[(method >> 2) & 1023];
+	if (state && D3DSIMPLERENDERSTATEENCODE[state - 1] == method)
+		render_state_set(state - 1, value);
+	else
+		state_hash_forget();
 }
 
 void D3DFASTCALL D3DDevice_SetRenderState_Deferred(D3DRENDERSTATETYPE state, DWORD value)
 {
 	if ((unsigned long)state < D3DRS_MAX)
-		D3D__RenderState[state] = value;
+		render_state_set(state, value);
 }
 
 void WINAPI D3DDevice_SetRenderState_ZBias(DWORD value);
@@ -3216,7 +3359,7 @@ void WINAPI D3DDevice_SetRenderStateNotInline(D3DRENDERSTATETYPE state, DWORD va
 	if (state == D3DRS_ZBIAS)
 		D3DDevice_SetRenderState_ZBias(value);
 	else if ((unsigned long)state < D3DRS_MAX)
-		D3D__RenderState[state] = value;
+		render_state_set(state, value);
 }
 
 /* As the Xbox's D3D8 does it: a z bias is a polygon offset of -bias depth
@@ -3229,16 +3372,20 @@ void WINAPI D3DDevice_SetRenderState_ZBias(DWORD value)
 	float slope = offset * 0.25f;
 	DWORD enable = value != 0;
 
-	memcpy(&D3D__RenderState[D3DRS_POLYGONOFFSETZSLOPESCALE], &slope, sizeof(slope));
-	memcpy(&D3D__RenderState[D3DRS_POLYGONOFFSETZOFFSET], &offset, sizeof(offset));
-	D3D__RenderState[D3DRS_POINTOFFSETENABLE] = enable;
-	D3D__RenderState[D3DRS_WIREFRAMEOFFSETENABLE] = enable;
-	D3D__RenderState[D3DRS_SOLIDOFFSETENABLE] = enable;
-	D3D__RenderState[D3DRS_ZBIAS] = value;
+	DWORD slope_word, offset_word;
+
+	memcpy(&slope_word, &slope, sizeof(slope));
+	memcpy(&offset_word, &offset, sizeof(offset));
+	render_state_set(D3DRS_POLYGONOFFSETZSLOPESCALE, slope_word);
+	render_state_set(D3DRS_POLYGONOFFSETZOFFSET, offset_word);
+	render_state_set(D3DRS_POINTOFFSETENABLE, enable);
+	render_state_set(D3DRS_WIREFRAMEOFFSETENABLE, enable);
+	render_state_set(D3DRS_SOLIDOFFSETENABLE, enable);
+	render_state_set(D3DRS_ZBIAS, value);
 }
 
 #define COMPLEX_RENDER_STATE(name, state) \
-	void WINAPI D3DDevice_SetRenderState_##name(DWORD value) { D3D__RenderState[state] = value; }
+	void WINAPI D3DDevice_SetRenderState_##name(DWORD value) { render_state_set(state, value); }
 
 COMPLEX_RENDER_STATE(PSTextureModes, D3DRS_PSTEXTUREMODES)
 COMPLEX_RENDER_STATE(VertexBlend, D3DRS_VERTEXBLEND)
@@ -3270,32 +3417,27 @@ COMPLEX_RENDER_STATE(DoNotCullUncompressed, D3DRS_DONOTCULLUNCOMPRESSED)
 
 void D3DFASTCALL D3DDevice_SetTextureState_Deferred(DWORD stage, D3DTEXTURESTAGESTATETYPE type, DWORD value)
 {
-	if (stage < D3DTSS_MAXSTAGES && (unsigned long)type < D3DTSS_MAX)
-		D3D__TextureState[stage][type] = value;
+	texture_state_set(stage, type, value);
 }
 
 void WINAPI D3DDevice_SetTextureState_TexCoordIndex(DWORD stage, DWORD value)
 {
-	if (stage < D3DTSS_MAXSTAGES)
-		D3D__TextureState[stage][D3DTSS_TEXCOORDINDEX] = value;
+	texture_state_set(stage, D3DTSS_TEXCOORDINDEX, value);
 }
 
 void WINAPI D3DDevice_SetTextureState_BorderColor(DWORD stage, DWORD value)
 {
-	if (stage < D3DTSS_MAXSTAGES)
-		D3D__TextureState[stage][D3DTSS_BORDERCOLOR] = value;
+	texture_state_set(stage, D3DTSS_BORDERCOLOR, value);
 }
 
 void WINAPI D3DDevice_SetTextureState_ColorKeyColor(DWORD stage, DWORD value)
 {
-	if (stage < D3DTSS_MAXSTAGES)
-		D3D__TextureState[stage][D3DTSS_COLORKEYCOLOR] = value;
+	texture_state_set(stage, D3DTSS_COLORKEYCOLOR, value);
 }
 
 void WINAPI D3DDevice_SetTextureState_BumpEnv(DWORD stage, D3DTEXTURESTAGESTATETYPE type, DWORD value)
 {
-	if (stage < D3DTSS_MAXSTAGES && (unsigned long)type < D3DTSS_MAX)
-		D3D__TextureState[stage][type] = value;
+	texture_state_set(stage, type, value);
 }
 
 void WINAPI D3DDevice_SetTexture(DWORD stage, D3DBaseTexture *texture)
@@ -3322,24 +3464,30 @@ void WINAPI D3DDevice_SetPalette(DWORD stage, D3DPalette *palette)
 
 void WINAPI D3DDevice_SetPixelShaderProgram(D3DPIXELSHADERDEF *definition)
 {
-	/* the definition's members are the pixel shader render states */
+	/* the definition's members are the pixel shader render states (each
+	through render_state_set, for the states' hash) */
+	unsigned long index;
+
 	if (!definition)
 		return;
-	memcpy(&D3D__RenderState[D3DRS_PSALPHAINPUTS0], definition->PSAlphaInputs, sizeof(definition->PSAlphaInputs));
-	D3D__RenderState[D3DRS_PSFINALCOMBINERINPUTSABCD] = definition->PSFinalCombinerInputsABCD;
-	D3D__RenderState[D3DRS_PSFINALCOMBINERINPUTSEFG] = definition->PSFinalCombinerInputsEFG;
-	memcpy(&D3D__RenderState[D3DRS_PSCONSTANT0_0], definition->PSConstant0, sizeof(definition->PSConstant0));
-	memcpy(&D3D__RenderState[D3DRS_PSCONSTANT1_0], definition->PSConstant1, sizeof(definition->PSConstant1));
-	memcpy(&D3D__RenderState[D3DRS_PSALPHAOUTPUTS0], definition->PSAlphaOutputs, sizeof(definition->PSAlphaOutputs));
-	memcpy(&D3D__RenderState[D3DRS_PSRGBINPUTS0], definition->PSRGBInputs, sizeof(definition->PSRGBInputs));
-	D3D__RenderState[D3DRS_PSCOMPAREMODE] = definition->PSCompareMode;
-	D3D__RenderState[D3DRS_PSFINALCOMBINERCONSTANT0] = definition->PSFinalCombinerConstant0;
-	D3D__RenderState[D3DRS_PSFINALCOMBINERCONSTANT1] = definition->PSFinalCombinerConstant1;
-	memcpy(&D3D__RenderState[D3DRS_PSRGBOUTPUTS0], definition->PSRGBOutputs, sizeof(definition->PSRGBOutputs));
-	D3D__RenderState[D3DRS_PSCOMBINERCOUNT] = definition->PSCombinerCount;
-	D3D__RenderState[D3DRS_PSTEXTUREMODES] = definition->PSTextureModes;
-	D3D__RenderState[D3DRS_PSDOTMAPPING] = definition->PSDotMapping;
-	D3D__RenderState[D3DRS_PSINPUTTEXTURE] = definition->PSInputTexture;
+	for (index = 0; index < 8; index++)
+	{
+		render_state_set(D3DRS_PSALPHAINPUTS0 + index, definition->PSAlphaInputs[index]);
+		render_state_set(D3DRS_PSCONSTANT0_0 + index, definition->PSConstant0[index]);
+		render_state_set(D3DRS_PSCONSTANT1_0 + index, definition->PSConstant1[index]);
+		render_state_set(D3DRS_PSALPHAOUTPUTS0 + index, definition->PSAlphaOutputs[index]);
+		render_state_set(D3DRS_PSRGBINPUTS0 + index, definition->PSRGBInputs[index]);
+		render_state_set(D3DRS_PSRGBOUTPUTS0 + index, definition->PSRGBOutputs[index]);
+	}
+	render_state_set(D3DRS_PSFINALCOMBINERINPUTSABCD, definition->PSFinalCombinerInputsABCD);
+	render_state_set(D3DRS_PSFINALCOMBINERINPUTSEFG, definition->PSFinalCombinerInputsEFG);
+	render_state_set(D3DRS_PSCOMPAREMODE, definition->PSCompareMode);
+	render_state_set(D3DRS_PSFINALCOMBINERCONSTANT0, definition->PSFinalCombinerConstant0);
+	render_state_set(D3DRS_PSFINALCOMBINERCONSTANT1, definition->PSFinalCombinerConstant1);
+	render_state_set(D3DRS_PSCOMBINERCOUNT, definition->PSCombinerCount);
+	render_state_set(D3DRS_PSTEXTUREMODES, definition->PSTextureModes);
+	render_state_set(D3DRS_PSDOTMAPPING, definition->PSDotMapping);
+	render_state_set(D3DRS_PSINPUTTEXTURE, definition->PSInputTexture);
 }
 
 /* ---------- vertex shaders */
@@ -3722,6 +3870,7 @@ static void render_target_delete(struct render_target_entry *entry)
 	for (link = render_target_bucket(entry->target.data); *link != entry; link = &(*link)->next_in_bucket)
 		;
 	*link = entry->next_in_bucket;
+	render_target_serial++;
 	xgpu_backend_target_delete(entry->target.number);
 	free(entry);
 }
@@ -4081,12 +4230,13 @@ static int cutout_stage(void)
 	return stage;
 }
 
-static void bind_textures(struct nv2a_pixel_shader_key *key, float texture_scale[4][4])
+/* (sources: the stages' as the backend is told them) */
+static void bind_textures(struct nv2a_pixel_shader_key *key, float texture_scale[4][4],
+	struct xgpu_texture_source sources[D3DTSS_MAXSTAGES])
 {
-	struct xgpu_texture_source sources[D3DTSS_MAXSTAGES];
 	int stage;
 
-	memset(sources, 0, sizeof(sources));
+	memset(sources, 0, D3DTSS_MAXSTAGES * sizeof(*sources));
 	for (stage = 0; stage < D3DTSS_MAXSTAGES; stage++)
 		stage_alpha_minimum[stage] = -1;
 	if (preparation.active)
@@ -4227,7 +4377,7 @@ static void bind_textures(struct nv2a_pixel_shader_key *key, float texture_scale
 	xgpu_manifest_note_textures(sources);
 	if (preparation.active)
 	{
-		memcpy(preparation.key.textures, sources, sizeof(sources));
+		memcpy(preparation.key.textures, sources, D3DTSS_MAXSTAGES * sizeof(*sources));
 		for (stage = 0; stage < D3DTSS_MAXSTAGES; stage++)
 		{
 			D3DBaseTexture *texture = device.textures[stage];
@@ -5415,6 +5565,375 @@ void d3d8_draw_state_kept(int kept)
 	draw_state_kept_asked = kept != 0;
 }
 
+/* ---------- the draws' kept preparations (debug.retained_draws)
+
+Most of a frame's draws are prepared as an earlier draw was: the same
+model's parts for each player, a run of decals, the same shaders object
+after object. A draw's preparation (its textures' description, its pixel
+key and pipeline, made by bind_textures and pipeline_bind) is kept, found
+by what it is made from (retained_context: the states' hash, the program,
+the textures and their headers, the targets, the game's draw inputs and
+the settings' parts it reads), and used again by a later draw with the
+same: its uniforms and dynamic state are made again, from the states that
+change from object to object (draw_uniforms_update), as every draw's are.
+Where it is the preparation of the draw before, with nothing prepared
+between and nothing the backend had forgotten, the backend is not told
+again either (what it would have found the same).
+Kept while what else it was made from is the same (retained_tokens): the
+memory the textures are in, their replacements and images, the settings,
+the render targets made. Not kept: a map's preparation (its records and
+journal), the render manifest's recording, a draw that samples a render
+target (its pixels written since), the world ambient occlusion's stand-ins,
+the VR mode. debug.retained_draws_verify (HALO_RETAINED_DRAWS_VERIFY)
+prepares each found draw anyway and says where the kept one differs. */
+
+#define RETAINED_DRAWS 1024
+
+unsigned long memory_watch_serial(void);
+
+struct retained_context
+{
+	uint64_t state_hash;
+	const struct vertex_shader_object *program, *vertex_shader;
+	const struct xgpu_vertex_program *program_code;
+	unsigned long program_id, packed_mask;
+	uint32_t immediate, lighting_failed, split_failed;
+	const D3DBaseTexture *textures[D3DTSS_MAXSTAGES];
+	DWORD texture_words[D3DTSS_MAXSTAGES][3];
+	const D3DPalette *palettes[D3DTSS_MAXSTAGES];
+	DWORD palette_data[D3DTSS_MAXSTAGES];
+	const D3DSurface *targets[2];
+	DWORD target_words[2][3];
+	int32_t sampled_view, screen_view;
+	struct draw_inputs inputs;
+	uint32_t cutout_depth, lights_unreached, model_unreached, per_pixel, lights_active, world_ao, hud_meter;
+	int32_t hdr_mode, hdr_boost;
+};
+
+struct retained_draw
+{
+	unsigned long generation;
+	struct retained_context context;
+	struct xgpu_texture_source sources[D3DTSS_MAXSTAGES];
+	float texture_scale[4][4];
+	int alpha_minimum[D3DTSS_MAXSTAGES];
+	struct xgpu_pipeline_key key;
+	/* bind_targets' */
+	BOOL has_depth, has_color, hdr_target, deep;
+	int samples;
+};
+
+/* what else the kept preparations were made from */
+struct retained_tokens
+{
+	unsigned long memory, choices, images, settings, gpu_settings, targets;
+};
+
+static struct
+{
+	BOOL read, enabled, verify;
+	unsigned long read_at;
+	struct retained_draw *draws;
+	/* the preparations kept before it moved are not found */
+	unsigned long generation;
+	struct retained_tokens tokens;
+	/* the draw being prepared: its context and the slot it goes in, kept
+	as it is prepared (keep), and the one found it is checked against
+	(verifying) */
+	struct retained_context context;
+	struct retained_draw *slot, *verifying;
+	BOOL keep;
+	/* the preparation the backend was last told, at that prepare_draw_count
+	and xgpu_backend_sent_serial */
+	struct retained_draw *told;
+	unsigned long told_count, told_sent;
+	/* counted (logged every 600 frames with either setting) */
+	unsigned long found, found_told, prepared, not_kept, differed, targets_differed, hash_differed;
+	unsigned long logged_frame;
+} retained;
+
+static void retained_read_settings(void)
+{
+	if (retained.read && retained.read_at == config_changes())
+		return;
+	retained.read = TRUE;
+	retained.read_at = config_changes();
+	retained.enabled = config_boolean("debug.retained_draws") != 0;
+	retained.verify = config_boolean("debug.retained_draws_verify") != 0;
+	if ((retained.enabled || retained.verify) && !retained.draws)
+		retained.draws = calloc(RETAINED_DRAWS, sizeof(*retained.draws));
+	if (!retained.draws)
+		retained.enabled = retained.verify = FALSE;
+	retained.generation++;
+	retained.told = NULL;
+}
+
+static void retained_tokens_now(struct retained_tokens *tokens)
+{
+	tokens->memory = memory_watch_serial();
+	tokens->choices = xgpu_texture_choices_serial();
+	tokens->images = xgpu_images_serial();
+	tokens->settings = config_changes();
+	tokens->gpu_settings = halo_gpu_settings_taken();
+	tokens->targets = render_target_serial;
+}
+
+static uint32_t retained_context_hash(const struct retained_context *context)
+{
+	const uint32_t *words = (const uint32_t *)context;
+	uint64_t hash = context->state_hash;
+	unsigned long index;
+
+	for (index = 2; index < sizeof(*context) / 4; index++)
+		hash = (hash ^ words[index]) * 0x100000001b3ull;
+	return (uint32_t)(hash ^ (hash >> 29) ^ (hash >> 41));
+}
+
+/* the draw's context (retained_context); FALSE if its preparation is not
+kept */
+static BOOL retained_context_make(struct retained_context *context, struct vertex_shader_object *program,
+	BOOL immediate)
+{
+	int stage, index;
+
+#ifdef HALO_VR
+	return FALSE;
+#endif
+	if (preparation.active || journal_recording || xgpu_manifest_recording())
+		return FALSE;
+	memset(context, 0, sizeof(*context));
+	context->state_hash = state_hash_now();
+	if (retained.verify)
+	{
+		uint64_t summed = state_hash_summed();
+
+		if (summed != context->state_hash)
+		{
+			if (retained.hash_differed++ < 8)
+				platform_log("GPU: retained draws: a state was written past its setters (the states' hash differs)");
+			state_hash.sum = context->state_hash = summed;
+		}
+	}
+	context->program = program;
+	context->vertex_shader = device.vertex_shader;
+	context->program_code = program->program;
+	context->program_id = program->id;
+	context->packed_mask = immediate ? 0 : device.vertex_shader->packed_mask;
+	context->immediate = immediate != 0;
+	context->lighting_failed = program->lighting_failed != 0;
+	context->split_failed = program->split_failed != 0;
+	for (stage = 0; stage < D3DTSS_MAXSTAGES; stage++)
+	{
+		const D3DBaseTexture *texture = device.textures[stage];
+		const D3DPalette *palette = device.palettes[stage];
+
+		context->textures[stage] = texture;
+		if (texture)
+		{
+			context->texture_words[stage][0] = texture->Data;
+			context->texture_words[stage][1] = texture->Format;
+			context->texture_words[stage][2] = texture->Size;
+		}
+		context->palettes[stage] = palette;
+		context->palette_data[stage] = palette ? palette->Data : 0;
+	}
+	context->targets[0] = device.render_target;
+	context->targets[1] = device.depth_stencil;
+	for (index = 0; index < 2; index++)
+	{
+		if (context->targets[index])
+		{
+			context->target_words[index][0] = context->targets[index]->Data;
+			context->target_words[index][1] = context->targets[index]->Format;
+			context->target_words[index][2] = context->targets[index]->Size;
+		}
+	}
+	context->sampled_view = sampled_view;
+	context->screen_view = screen_view;
+	context->inputs = inputs;
+	context->cutout_depth = cutout_depth_drawing != 0;
+	context->lights_unreached = lights_unreached_drawing != 0;
+	context->model_unreached = dynamic_lights.model_unreached != 0;
+	context->per_pixel = per_pixel_lighting() != 0;
+	context->lights_active = dynamic_lights_active() != 0;
+	context->world_ao = world_ao_key(XGPU_AMBIENT_OCCLUSION_LIGHT_NONE);
+	context->hud_meter = xgpu_texture_hud_meter() != 0;
+	context->hdr_mode = hdr.mode;
+	context->hdr_boost = hdr.boost;
+	return TRUE;
+}
+
+/* the draw prepared from a kept preparation: 1 drawn, 0 not drawn, -1 not
+found (prepare_draw prepares it, and keeps it: retained_draw_keep) */
+static int retained_draw_find(struct vertex_shader_object *program, BOOL immediate)
+{
+	struct retained_tokens tokens;
+	struct retained_draw *draw;
+	struct xgpu_pipeline_key scratch;
+	struct xgpu_dynamic_state dynamic;
+	BOOL has_depth = FALSE, told;
+
+	retained.keep = FALSE;
+	retained.verifying = NULL;
+	retained_read_settings();
+	if (!retained.enabled && !retained.verify)
+		return -1;
+	if (!retained_context_make(&retained.context, program, immediate))
+	{
+		retained.told = NULL;
+		retained.not_kept++;
+		return -1;
+	}
+	retained_tokens_now(&tokens);
+	if (memcmp(&tokens, &retained.tokens, sizeof(tokens)))
+	{
+		retained.tokens = tokens;
+		retained.generation++;
+		retained.told = NULL;
+	}
+	draw = &retained.draws[retained_context_hash(&retained.context) % RETAINED_DRAWS];
+	retained.slot = draw;
+	retained.keep = TRUE;
+	if (draw->generation != retained.generation || memcmp(&draw->context, &retained.context, sizeof(retained.context)))
+	{
+		retained.told = NULL;
+		retained.prepared++;
+		return -1;
+	}
+	if (retained.verify || !retained.enabled)
+	{
+		retained.verifying = draw;
+		retained.told = NULL;
+		return -1;
+	}
+	/* the textures before the targets, as bind_textures */
+	told = retained.told == draw && retained.told_count + 1 == prepare_draw_count &&
+		retained.told_sent == xgpu_backend_sent_serial();
+	if (!told)
+		xgpu_backend_set_textures(draw->sources);
+	if (!bind_targets(&has_depth))
+	{
+		retained.told = NULL;
+		retained.keep = FALSE;
+		stats.skipped_no_target++;
+		return 0;
+	}
+	if (has_depth != draw->has_depth || target_has_color != draw->has_color || target_samples != draw->samples ||
+		hdr.target != draw->hdr_target || target_deep != draw->deep)
+	{
+		/* (prepared again: the backend told again what differs) */
+		retained.told = NULL;
+		retained.targets_differed++;
+		return -1;
+	}
+	if (device.gl_ready)
+		world_ao_twins();
+	if (told ? !xgpu_backend_pipeline_usable() : !xgpu_backend_pipeline(&draw->key))
+	{
+		retained.told = NULL;
+		return -1;
+	}
+	if (immediate)
+		stats.immediate_draws++;
+	else
+		stats.draws++;
+	memcpy(stage_alpha_minimum, draw->alpha_minimum, sizeof(stage_alpha_minimum));
+	/* (the dynamic state: from the states the pipeline is not made from) */
+	memset(&scratch, 0, sizeof(scratch));
+	memset(&dynamic, 0, sizeof(dynamic));
+	scratch.pixel.source_blend = draw->key.pixel.source_blend;
+	pipeline_state_describe(has_depth, &scratch, &dynamic);
+	draw_uniforms_update((const float (*)[4])draw->texture_scale);
+	xgpu_backend_draw_state(&dynamic, &draw_uniforms, draw_uniforms_serial);
+	retained.keep = FALSE;
+	retained.told = draw;
+	retained.told_count = prepare_draw_count;
+	retained.told_sent = xgpu_backend_sent_serial();
+	retained.found++;
+	if (told)
+		retained.found_told++;
+	return 1;
+}
+
+/* the draw just prepared (prepare_draw: ready), kept for the draws after */
+static void retained_draw_keep(const struct xgpu_texture_source *sources, const float texture_scale[4][4],
+	const struct xgpu_pipeline_key *key, BOOL has_depth, struct vertex_shader_object *program)
+{
+	struct retained_tokens tokens;
+	struct retained_draw *draw = retained.slot;
+	int stage;
+
+	if (!retained.keep)
+		return;
+	retained.keep = FALSE;
+	retained.told = NULL;
+	/* (not: what it was made from changed as it was prepared, a choice of a
+	texture's not kept, a program's lighting failed) */
+	retained_tokens_now(&tokens);
+	if (memcmp(&tokens, &retained.tokens, sizeof(tokens)) || (program->lighting_failed != 0) !=
+		retained.context.lighting_failed || (program->split_failed != 0) != retained.context.split_failed ||
+		(key->pixel.ambient_occlusion & XGPU_AMBIENT_OCCLUSION_WORLD))
+	{
+		retained.not_kept++;
+		return;
+	}
+	for (stage = 0; stage < D3DTSS_MAXSTAGES; stage++)
+	{
+		if (sources[stage].source == XGPU_SOURCE_TARGET)
+		{
+			retained.not_kept++;
+			return;
+		}
+	}
+	if (retained.verifying == draw)
+	{
+		const char *differs = memcmp(draw->sources, sources, sizeof(draw->sources)) ? "textures" :
+			memcmp(draw->texture_scale, texture_scale, sizeof(draw->texture_scale)) ? "texture scale" :
+			memcmp(draw->alpha_minimum, stage_alpha_minimum, sizeof(draw->alpha_minimum)) ? "alpha" :
+			memcmp(&draw->key, key, sizeof(*key)) ? "pipeline key" :
+			draw->has_depth != has_depth || draw->has_color != target_has_color || draw->samples != target_samples ||
+			draw->hdr_target != hdr.target || draw->deep != target_deep ? "targets" : NULL;
+
+		if (differs)
+		{
+			if (retained.differed++ < 16)
+				platform_log("GPU: retained draws: a kept draw's %s differ (vertex shader %lu)", differs, program->id);
+		}
+		else
+			retained.found++;
+	}
+	draw->generation = retained.generation;
+	draw->context = retained.context;
+	memcpy(draw->sources, sources, sizeof(draw->sources));
+	memcpy(draw->texture_scale, texture_scale, sizeof(draw->texture_scale));
+	memcpy(draw->alpha_minimum, stage_alpha_minimum, sizeof(draw->alpha_minimum));
+	draw->key = *key;
+	draw->has_depth = has_depth;
+	draw->has_color = target_has_color;
+	draw->samples = target_samples;
+	draw->hdr_target = hdr.target;
+	draw->deep = target_deep;
+	retained.told = draw;
+	retained.told_count = prepare_draw_count;
+	retained.told_sent = xgpu_backend_sent_serial();
+}
+
+/* (each frame) the counts, every 600 frames */
+static void retained_draws_frame(void)
+{
+	if (!retained.enabled && !retained.verify)
+		return;
+	retained.told = NULL;
+	if (device.frame - retained.logged_frame < 600)
+		return;
+	retained.logged_frame = device.frame;
+	platform_log("GPU: retained draws: %lu found (%lu as the draw before's), %lu prepared, %lu not kept; %lu differed, "
+		"%lu targets differed, %lu hash differed", retained.found, retained.found_told, retained.prepared,
+		retained.not_kept, retained.differed, retained.targets_differed, retained.hash_differed);
+	retained.found = retained.found_told = retained.prepared = retained.not_kept = 0;
+	retained.targets_differed = 0;
+}
+
 static BOOL prepare_draw(BOOL immediate, unsigned long primitive)
 {
 	struct vertex_shader_object *program = current_program();
@@ -5422,6 +5941,7 @@ static BOOL prepare_draw(BOOL immediate, unsigned long primitive)
 	struct xgpu_pipeline_key pipeline_key, basis;
 	struct xgpu_dynamic_state dynamic;
 	struct xgpu_draw_facts facts;
+	struct xgpu_texture_source sources[D3DTSS_MAXSTAGES];
 	float texture_scale[4][4];
 	BOOL has_depth = FALSE, ready;
 	/* (the draw as no setting changes it: manifest_note_basis) */
@@ -5456,6 +5976,13 @@ static BOOL prepare_draw(BOOL immediate, unsigned long primitive)
 				skip++;
 		}
 	}
+	/* (debug.retained_draws: prepared as an earlier draw was) */
+	{
+		int found = retained_draw_find(program, immediate);
+
+		if (found >= 0)
+			return found != 0;
+	}
 	memset(&key, 0, sizeof(key));
 	key.texture_modes = D3D__RenderState[D3DRS_PSTEXTUREMODES];
 	combiner_state_describe(key.combiner_state, key.texture_modes);
@@ -5464,7 +5991,7 @@ static BOOL prepare_draw(BOOL immediate, unsigned long primitive)
 	can be both sampled and drawn into */
 	preparation_time_add(2, traced);
 	traced = preparation_time();
-	bind_textures(&key, texture_scale);
+	bind_textures(&key, texture_scale, sources);
 	preparation_time_add(0, traced);
 	traced = preparation_time();
 	if (!bind_targets(&has_depth))
@@ -5593,6 +6120,7 @@ static BOOL prepare_draw(BOOL immediate, unsigned long primitive)
 		stats.immediate_draws++;
 	else
 		stats.draws++;
+	retained_draw_keep(sources, (const float (*)[4])texture_scale, &pipeline_key, has_depth, program);
 	xgpu_manifest_note_pipeline(&pipeline_key);
 	preparation_time_add(2, traced);
 	traced = preparation_time();
@@ -5634,6 +6162,7 @@ void halo_gpu_draw_preserved(void (*draw)(void *), void *data)
 	draw(data);
 	memcpy(D3D__RenderState, render_states, sizeof(render_states));
 	memcpy(D3D__TextureState, texture_states, sizeof(texture_states));
+	state_hash_forget();
 	memcpy(device.textures, textures, sizeof(textures));
 	memcpy(device.attributes, attributes, sizeof(attributes));
 	device.vertex_shader = vertex_shader;
@@ -7858,6 +8387,7 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 	}
 	device.frame++;
 	stats.presents++;
+	retained_draws_frame();
 	/* (a light's or a shadow's pass that never said its draws are done
 	clips nothing of the next frame: draw_bounds_state.h) */
 	draw_bounds_state_frame_end(&draw_bounds);
@@ -8824,6 +9354,7 @@ static void journal_restore(const struct journal_state *state)
 
 	memcpy(D3D__RenderState, state->render_state, sizeof(state->render_state));
 	memcpy(D3D__TextureState, state->texture_state, sizeof(state->texture_state));
+	state_hash_forget();
 	for (stage = 0; stage < D3DTSS_MAXSTAGES; stage++)
 	{
 		device.textures[stage] = journal_resolve(&state->textures[stage]);
@@ -9086,6 +9617,7 @@ int halo_gpu_journal_replay(const unsigned int *words, unsigned int count, const
 
 	memcpy(D3D__RenderState, saved.render_states, sizeof(saved.render_states));
 	memcpy(D3D__TextureState, saved.texture_states, sizeof(saved.texture_states));
+	state_hash_forget();
 	memcpy(device.textures, saved.textures, sizeof(saved.textures));
 	memcpy(device.palettes, saved.palettes, sizeof(saved.palettes));
 	device.render_target = saved.render_target;

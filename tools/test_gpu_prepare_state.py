@@ -53,6 +53,7 @@ static struct state {
 static unsigned int invalidations, calls, checkpoints;
 static struct { unsigned long preserved; } preparation;
 static void xgpu_backend_invalidate(void) { invalidations++; }
+static void state_hash_forget(void) {}
 static void preparation_draw_complete(void) {
     assert(!preparation.preserved);
     assert(device.textures[0] == (D3DBaseTexture *)(uintptr_t)1);
