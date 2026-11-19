@@ -108,6 +108,9 @@ struct xgpu_backend_capabilities
 	/* display.temporal_aa "dlss": a window's view upscaled with NVIDIA DLSS
 	(xgpu_backend_temporal, technique 2) */
 	BOOL temporal_dlss;
+	/* display.temporal_aa "metalfx": ... with Apple's MetalFX temporal
+	scaler (xgpu_backend_temporal, technique 3: Metal's) */
+	BOOL temporal_metalfx;
 };
 
 extern struct xgpu_backend_capabilities xgpu_backend_capabilities;

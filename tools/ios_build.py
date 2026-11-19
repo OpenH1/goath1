@@ -97,7 +97,9 @@ def ios_platform(name: str, sdk: str, guest=None) -> ApplePlatform:
         name=name, label="IOS SIM" if simulator else "IOS", build=SIMULATOR_BUILD if simulator else BUILD,
         third_party=THIRD_PARTY, guest_defines=["-DHALO_IOS=1"],
         target_flags=f"-target arm64-apple-ios{IOS_MINIMUM}{'-simulator' if simulator else ''} -isysroot {sdk}",
-        frameworks=IOS_FRAMEWORKS,
+        # (display.temporal_aa's MetalFX: the device's SDK has it, the
+        # simulator's not: xgpu_metal_temporal.m draws none there)
+        frameworks=IOS_FRAMEWORKS if simulator else f"{IOS_FRAMEWORKS} -framework MetalFX",
         # (port/macos/host_app.m is the Mac's: port/ios/host_app.m stands in)
         host_excluded={"host_app.m"},
         host_sources=[*sorted(source for source in [*PORT_DIR.glob("*.m"), *PORT_DIR.glob("*.c")]

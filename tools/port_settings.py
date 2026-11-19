@@ -1438,9 +1438,9 @@ PAGES = {
             # the new menus' screens/benchmark.xml)
             # (display.temporal_aa: shown where the renderer has a technique,
             # Vulkan's AMD FSR, and NVIDIA DLSS where its module and an NVIDIA
-            # GPU are (a row of its own in the same place: SETTINGS_ROW_WHEN);
-            # MetalFX is not offered until it is drawn. Advanced Graphics,
-            # beside Render Resolution, has no room)
+            # GPU are, and Metal's MetalFX (a row of its own each in the same
+            # place: SETTINGS_ROW_WHEN). Advanced Graphics, beside Render
+            # Resolution, has no room)
             (SECTION, "UPSCALING"),
             ("UPSCALER", "display.temporal_aa", [("OFF", "off"), ("AMD FSR", "fsr")],
              "AMD FSR builds each frame from the frames before it: smooth edges, and a sharp picture at a Render "
@@ -1449,6 +1449,10 @@ PAGES = {
              "AMD FSR and NVIDIA DLSS build each frame from the frames before it: smooth edges, and a sharp picture "
              "at a Render Resolution below 100% for more frames (DLSS at 100% is DLAA). While one is on, it replaces "
              "Anti-Aliasing.", "desktop", "temporal_aa_dlss"),
+            ("UPSCALER", "display.temporal_aa", [("OFF", "off"), ("APPLE METALFX", "metalfx")],
+             "Apple MetalFX builds each frame from the frames before it: smooth edges, and a sharp picture at a "
+             "Render Resolution below 100% for more frames. While it is on, it replaces Anti-Aliasing.", "desktop",
+             "temporal_aa_metalfx"),
             (SECTION, "RAY TRACING"),
             # (display.shadows: where the graphics card has ray queries alone,
             # SETTINGS_ROW_WHEN; Advanced Graphics and Brightness
@@ -2619,7 +2623,7 @@ def _settings_platform(rows: list, start: int):
 # the rows in the place of the row before them, each platform having one of
 # them at most, or the model's conditions showing one (SETTINGS_ROW_WHEN):
 # Window Size in Resolution's, Android's anti-aliasing in the desktop's
-SETTINGS_SAME_PLACE = {"window_size", "anti_aliasing_android", "temporal_aa_dlss", "touch_gyro_sensitivity",
+SETTINGS_SAME_PLACE = {"window_size", "anti_aliasing_android", "temporal_aa_dlss", "temporal_aa_metalfx", "touch_gyro_sensitivity",
                        "touch_gyro_vertical_sensitivity", "touch_gyro_smoothing"}
 # the rows hidden while VR Setup's row is shown (the game in the headset),
 # which takes their room: Mouse's Menu Cursor; and Brightness's Gamma, which
@@ -2653,9 +2657,10 @@ SETTINGS_ROW_WHEN = {
     "soft_particles": "soft_effects+!vr",
     # (display.temporal_aa: where the renderer upscales, Vulkan's AMD FSR;
     # with NVIDIA DLSS too where the renderer has it, its own row:
-    # settings_condition_term's temporal_upscale and temporal_dlss; not in
-    # the headset)
+    # settings_condition_term's temporal_upscale and temporal_dlss; Metal's
+    # MetalFX, temporal_metalfx; not in the headset)
     "temporal_aa": "temporal_upscale+!temporal_dlss+!vr", "temporal_aa_dlss": "temporal_dlss+!vr",
+    "temporal_aa_metalfx": "temporal_metalfx+!vr",
     # (the renderer has ray queries: settings_condition_term's ray_queries)
     "shadows": "ray_queries",
     # (the Mac's display paces its frames already)
@@ -2692,7 +2697,7 @@ SETTINGS_ROW_ENABLED = {
     # in HDR, whose half floats are its own: settings_condition_term's
     # hdr_drawn)
     "output_depth": "!hdr_drawn",
-    # (display.temporal_aa's AMD FSR or NVIDIA DLSS antialiases in its place,
+    # (display.temporal_aa's AMD FSR, NVIDIA DLSS or MetalFX antialiases in its place,
     # its row on Frame Rate & Sync: d3d8_device.c's anti_aliasing_read,
     # settings_condition_term's temporal_on)
     "anti_aliasing": "!temporal_on", "anti_aliasing_android": "!temporal_on",

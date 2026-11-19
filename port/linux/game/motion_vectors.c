@@ -122,8 +122,10 @@ int motion_vectors_technique(void)
 		motion_vectors.technique = !setting ? 0 : !strcmp(setting, "fsr") ? 1 : !strcmp(setting, "dlss") ? 2 :
 			!strcmp(setting, "metalfx") ? 3 : 0;
 	}
-	/* ("dlss" where the renderer has no DLSS: off, no motion or jitter) */
-	if (motion_vectors.technique == 2 && !halo_temporal_dlss_drawn())
+	/* ("dlss" where the renderer has no DLSS, "metalfx" where it has no
+	MetalFX: off, no motion or jitter) */
+	if ((motion_vectors.technique == 2 && !halo_temporal_dlss_drawn()) ||
+		(motion_vectors.technique == 3 && !halo_temporal_metalfx_drawn()))
 		return 0;
 	return motion_vectors.technique;
 }

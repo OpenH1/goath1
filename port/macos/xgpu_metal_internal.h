@@ -45,6 +45,13 @@ committed (the open pass ended first) and waited for, the frame going on
 in another */
 id<MTLCommandBuffer> xgpu_metal_command_buffer(void);
 void xgpu_metal_command_buffer_finish(void);
+/* work of a caller's own outside the passes (display.temporal_aa's
+MetalFX): the open pass ended, the command buffer being recorded (begun
+if there is none), in the frame's order; and a texture of the backend's
+that work reads (written 0) or writes, marked so (the frame's and the
+command buffers' account of it) */
+id<MTLCommandBuffer> xgpu_metal_outside_passes(void);
+void xgpu_metal_texture_encoded(uint32_t texture, int written);
 
 /* ---------- host_metal.m */
 

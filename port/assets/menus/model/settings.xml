@@ -781,13 +781,18 @@
 			<choice shown="AMD FSR" value="fsr"/>
 			<choice shown="NVIDIA DLSS" value="dlss"/>
 		</row>
-		<section key="section_9" title="RAY TRACING" when="desktop android"/>
+		<row key="temporal_aa_metalfx" kind="choice" setting="display.temporal_aa" label="UPSCALER" crumb="VIDEO › FRAME RATE &amp; SYNC" search_choices="apple metalfx" when="desktop+temporal_metalfx+!vr" same_place="true">
+			<help>Apple MetalFX builds each frame from the frames before it: smooth edges, and a sharp picture at a Render Resolution below 100% for more frames. While it is on, it replaces Anti-Aliasing.</help>
+			<choice shown="OFF" value="off"/>
+			<choice shown="APPLE METALFX" value="metalfx"/>
+		</row>
+		<section key="section_10" title="RAY TRACING" when="desktop android"/>
 		<row key="shadows" kind="choice" setting="display.shadows" label="RAY TRACED SHADOWS" crumb="VIDEO › FRAME RATE &amp; SYNC" search="shadows" when="desktop+ray_queries android+ray_queries">
 			<help>The shadows of characters and vehicles traced by the graphics card from their own shapes, soft at the edges, in the same place and darkness as the game's, which frees the processor's shadow work. Off draws them as the Xbox did.</help>
 			<choice shown="OFF" value="classic"/>
 			<choice shown="ON" value="ray_traced"/>
 		</row>
-		<section key="section_11" title="BENCHMARK"/>
+		<section key="section_12" title="BENCHMARK"/>
 		<row key="benchmark_pacing" kind="choice" setting="display.benchmark_pacing" label="BENCHMARK PACING" crumb="VIDEO › FRAME RATE &amp; SYNC" search_choices="uncapped your settings" when="!in_game">
 			<help>What the benchmark measures. Uncapped turns VSync, Variable Refresh and the frame cap off for the run: what your computer can draw. Your Settings keeps them: what you see as you play.</help>
 			<choice shown="UNCAPPED" value="uncapped"/>

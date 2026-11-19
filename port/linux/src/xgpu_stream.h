@@ -463,6 +463,9 @@ struct xgpu_stream_capabilities
 	NVIDIA DLSS (MOTION's _UPSCALE, technique 2: xgpu_backend_capabilities'
 	temporal_dlss) */
 	uint8_t temporal_dlss;
+	/* display.temporal_aa "metalfx": ... with MetalFX's temporal scaler
+	(technique 3: xgpu_backend_capabilities' temporal_metalfx) */
+	uint8_t temporal_metalfx, pad[3];
 	/* the GPU, its API and driver, in a few words (a report's:
 	port/linux/src/report.c), NUL terminated */
 	char device[96];
@@ -1619,7 +1622,7 @@ struct xgpu_stream_world_ao_instances
 
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_ring, 120);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_frame_end, 12);
-XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_capabilities, 124);
+XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_capabilities, 128);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_hdr, 24);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_tone_map, 24);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_panini, 56);

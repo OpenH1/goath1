@@ -270,6 +270,16 @@ static void operand(struct xgpu_text *text, const struct xgpu_vertex_operand *op
 		swizzle_names[operand->swizzle[2]], swizzle_names[operand->swizzle[3]]);
 }
 
+/* (the screen conversion's registers, c[-38] and c[-37], as text) */
+#define XGPU_MSL_TEXT(value) #value
+#define XGPU_MSL_NUMBER(value) XGPU_MSL_TEXT(value)
+#define XGPU_MSL_SCREEN_SCALE XGPU_MSL_NUMBER(XGPU_MSL_SCREEN_SCALE_REGISTER)
+#define XGPU_MSL_SCREEN_OFFSET XGPU_MSL_NUMBER(XGPU_MSL_SCREEN_OFFSET_REGISTER)
+#define XGPU_MSL_SCREEN_SCALE_REGISTER 58
+#define XGPU_MSL_SCREEN_OFFSET_REGISTER 59
+_Static_assert(XGPU_MSL_SCREEN_SCALE_REGISTER == XGPU_VERTEX_CONSTANT_BIAS - 38 &&
+	XGPU_MSL_SCREEN_OFFSET_REGISTER == XGPU_VERTEX_CONSTANT_BIAS - 37, "the screen conversion's registers");
+
 static const char vertex_functions[] =
 	"static inline float4 nv2a_finite(float4 v)\n"
 	"{\n"
@@ -304,12 +314,141 @@ static const char vertex_functions[] =
 	"{\n"
 	"\tfloat specular = s.x > 0.0 ? pow(max(s.y, 0.0), clamp(s.w, -127.9961, 127.9961)) : 0.0;\n"
 	"\treturn float4(1.0, max(s.x, 0.0), specular, 1.0);\n"
+	"}\n"
+	/* (display.temporal_aa's motion: a position as the screen's conversion
+	has it, before the depth: x, y and w, the half pixel and the jitter in
+	it, as xgpu_spirv.c's motion_screen; c the frame's registers) */
+	"static inline float3 xgpu_motion_screen(bool clip_captured, float4 clip_position, float4 position,\n"
+	"\tconstant float4 *c, constant xgpu_uniforms &u)\n"
+	"{\n"
+	"\tfloat2 scale = float2(u.viewport_scale.x != 0.0 ? u.viewport_scale.x : 1.0,\n"
+	"\t\tu.viewport_scale.y != 0.0 ? u.viewport_scale.y : 1.0);\n"
+	"\tfloat2 shift = float2(0.5 + u.screen_offset, 0.5);\n"
+	"\tif (clip_captured)\n"
+	"\t\treturn float3((clip_position.xy * c[" XGPU_MSL_SCREEN_SCALE "].xy + (c[" XGPU_MSL_SCREEN_OFFSET "].xy + shift -\n"
+	"\t\t\tu.viewport_offset.xy) * clip_position.w) / scale, clip_position.w);\n"
+	"\treturn float3((position.xy + shift - u.viewport_offset.xy) / scale * position.w, position.w);\n"
 	"}\n";
 
 /* the lighting's outputs (the pixel shader's model_lighting) */
 static BOOL lighting_position(const struct nv2a_vertex_lighting *lighting)
 {
 	return lighting && (lighting->lights == 2 || lighting->world_found || lighting->lights == XGPU_ENVIRONMENT_LIGHTING);
+}
+
+/* the program's instructions (previous: run again on the previous frame's
+registers for display.temporal_aa's motion, xgpu_msl_options' motion: its
+position alone, no lighting's nor depth rows' captures) */
+static void vertex_instructions(struct xgpu_text *text, const struct xgpu_vertex_program *program,
+	const struct vertex_usage *usage, const struct nv2a_vertex_lighting *lighting, BOOL environment, BOOL depth_rows,
+	unsigned long depth_z, unsigned long depth_w, BOOL previous)
+{
+	unsigned long index;
+
+	for (index = 0; index < program->instruction_count; index++)
+	{
+		const struct xgpu_vertex_instruction *instruction = &program->instructions[index];
+		unsigned int operands = (usage->mac[index] ? mac_operands(instruction->mac) : 0) |
+			(usage->ilu[index] ? ilu_operands(instruction->ilu) : 0);
+		const char *output = output_name(instruction->output);
+		char mask[5];
+
+		if (!previous)
+			xgpu_text_append(text, "\t/* %lu */\n", index);
+		/* the lighting's normal and position, before the program reuses them */
+		if (!previous && lighting && !environment && index == lighting->normal_instruction)
+		{
+			xgpu_text_append(text, "\txWorldNormal = float4(r%lu.xyz, length(r%lu.xyz));\n",
+				lighting->normal_register, lighting->normal_register);
+		}
+		if (!previous && lighting && lighting->lights == 2 && index == lighting->position_instruction)
+			xgpu_text_append(text, "\txWorldPosition = r%lu.xyz;\n", lighting->position_register);
+		else if (!previous && lighting && lighting->lights == 1 && lighting->world_found && index == lighting->world_instruction)
+			xgpu_text_append(text, "\txWorldPosition = r%lu.xyz;\n", lighting->world_register);
+		if (operands & 1)
+		{
+			xgpu_text_append(text, "\tA = "); operand(text, &instruction->a, instruction->relative); xgpu_text_append(text, ";\n");
+		}
+		if (operands & 2)
+		{
+			xgpu_text_append(text, "\tB = "); operand(text, &instruction->b, instruction->relative); xgpu_text_append(text, ";\n");
+		}
+		if (operands & 4)
+		{
+			xgpu_text_append(text, "\tC = "); operand(text, &instruction->c, instruction->relative); xgpu_text_append(text, ";\n");
+		}
+		if (!previous && depth_rows && index == depth_z)
+			xgpu_text_append(text, "\tdepth_point = A;\n\tdepth_z_row = B;\n");
+		if (!previous && depth_rows && index == depth_w)
+			xgpu_text_append(text, "\tdepth_w_row = B;\n");
+
+		if (usage->mac[index])
+		{
+			switch (instruction->mac)
+			{
+			case XGPU_MAC_MOV: xgpu_text_append(text, "\tmac = A;\n"); break;
+			case XGPU_MAC_MUL: xgpu_text_append(text, "\tmac = A * B;\n"); break;
+			case XGPU_MAC_ADD: xgpu_text_append(text, "\tmac = A + C;\n"); break;
+			case XGPU_MAC_MAD: xgpu_text_append(text, "\tmac = A * B + C;\n"); break;
+			case XGPU_MAC_DP3: xgpu_text_append(text, "\tmac = float4(dot(A.xyz, B.xyz));\n"); break;
+			case XGPU_MAC_DPH: xgpu_text_append(text, "\tmac = float4(dot(A.xyz, B.xyz) + B.w);\n"); break;
+			case XGPU_MAC_DP4: xgpu_text_append(text, "\tmac = float4(dot(A, B));\n"); break;
+			case XGPU_MAC_DST: xgpu_text_append(text, "\tmac = float4(1.0, A.y * B.y, A.z, B.w);\n"); break;
+			case XGPU_MAC_MIN: xgpu_text_append(text, "\tmac = min(A, B);\n"); break;
+			case XGPU_MAC_MAX: xgpu_text_append(text, "\tmac = max(A, B);\n"); break;
+			case XGPU_MAC_SLT: xgpu_text_append(text, "\tmac = float4(A < B);\n"); break;
+			case XGPU_MAC_SGE: xgpu_text_append(text, "\tmac = float4(A >= B);\n"); break;
+			case XGPU_MAC_ARL: xgpu_text_append(text, "\tmac = A;\n"); break;
+			default: xgpu_text_append(text, "\tmac = float4(0.0);\n"); break;
+			}
+		}
+		if (usage->ilu[index])
+		{
+			switch (instruction->ilu)
+			{
+			case XGPU_ILU_MOV: xgpu_text_append(text, "\tilu = C;\n"); break;
+			case XGPU_ILU_RCP: xgpu_text_append(text, "\tilu = float4(1.0 / C.x);\n"); break;
+			case XGPU_ILU_RCC: xgpu_text_append(text, "\tilu = nv2a_rcc(C.x);\n"); break;
+			case XGPU_ILU_RSQ: xgpu_text_append(text, "\tilu = float4(rsqrt(abs(C.x)));\n"); break;
+			case XGPU_ILU_EXP: xgpu_text_append(text, "\tilu = nv2a_exp(C.x);\n"); break;
+			case XGPU_ILU_LOG: xgpu_text_append(text, "\tilu = nv2a_log(C.x);\n"); break;
+			case XGPU_ILU_LIT: xgpu_text_append(text, "\tilu = nv2a_lit(C);\n"); break;
+			default: xgpu_text_append(text, "\tilu = float4(0.0);\n"); break;
+			}
+		}
+		/* the screen-space conversion takes the reciprocal of the clip-space
+		position's w (rcc of r12.w); keep the position it converts */
+		if (instruction->captures_clip)
+			xgpu_text_append(text, "\tclip_position = oPos;\n\tclip_captured = true;\n");
+
+		/* results are written only after both units have read their inputs */
+		if (usage->mac[index] && instruction->mac == XGPU_MAC_ARL && usage->a0)
+		{
+			xgpu_text_append(text, "\ta0 = int(floor(mac.x + 0.001));\n");
+		}
+		else if (usage->mac[index] && instruction->mac != XGPU_MAC_ARL && instruction->mac_mask && temporary_read(usage, instruction->mac_temporary))
+		{
+			write_mask(instruction->mac_mask, mask);
+			if (instruction->mac_temporary == XGPU_VERTEX_POSITION)
+				xgpu_text_append(text, "\toPos.%s = mac.%s;\n", mask, mask);
+			else
+				xgpu_text_append(text, "\tr%lu.%s = mac.%s;\n", (unsigned long)instruction->mac_temporary, mask, mask);
+		}
+		if (usage->ilu[index] && instruction->ilu_mask && temporary_read(usage, instruction->ilu_temporary))
+		{
+			write_mask(instruction->ilu_mask, mask);
+			if (instruction->ilu_temporary == XGPU_VERTEX_POSITION)
+				xgpu_text_append(text, "\toPos.%s = ilu.%s;\n", mask, mask);
+			else
+				xgpu_text_append(text, "\tr%lu.%s = ilu.%s;\n", (unsigned long)instruction->ilu_temporary, mask, mask);
+		}
+		if (instruction->writes_output && output && (!previous || instruction->output == XGPU_OUTPUT_POSITION))
+		{
+			write_mask(instruction->output_mask, mask);
+			xgpu_text_append(text, "\t%s.%s = %s.%s;\n", output, mask, instruction->output_from_ilu ? "ilu" : "mac", mask);
+		}
+	}
+
 }
 
 char *xgpu_msl_vertex_shader(const struct xgpu_vertex_program *program, unsigned long packed_attribute_mask,
@@ -321,8 +460,10 @@ char *xgpu_msl_vertex_shader(const struct xgpu_vertex_program *program, unsigned
 	unsigned long index, functions_at, depth_z, depth_w;
 	BOOL environment = lighting && lighting->lights == XGPU_ENVIRONMENT_LIGHTING;
 	BOOL depth_rows = xgpu_vertex_program_depth_rows(program, &depth_z, &depth_w);
+	/* (display.temporal_aa: the positions this frame and the frame before,
+	as the screen's conversion has them, xgpu_msl_options' motion) */
+	BOOL motion = options && options->motion;
 
-	(void)options;
 	vertex_usage(program, lighting, &usage);
 	xgpu_text_append(&text, uniforms_declaration, XGPU_MODEL_LIGHT_COUNT, "");
 
@@ -364,6 +505,9 @@ char *xgpu_msl_vertex_shader(const struct xgpu_vertex_program *program, unsigned
 	apart: xgpu_spirv.c's vertex_light_split) */
 	if (lighting && lighting->split && !environment)
 		xgpu_text_append(&text, "\tfloat3 xLightAmbient [[user(xLightAmbient)]];\n\tfloat3 xLightPoint [[user(xLightPoint)]];\n");
+	if (motion)
+		xgpu_text_append(&text, "\tfloat3 xMotionCurrent [[user(xMotionCurrent)]];\n"
+			"\tfloat3 xMotionPrevious [[user(xMotionPrevious)]];\n");
 	xgpu_text_append(&text, "};\n");
 
 	functions_at = text.length;
@@ -420,107 +564,42 @@ char *xgpu_msl_vertex_shader(const struct xgpu_vertex_program *program, unsigned
 			"\tfloat3 xWorldBinormal = v2.xyz;\n\tfloat3 xWorldTangent = v3.xyz;\n");
 	}
 
-	for (index = 0; index < program->instruction_count; index++)
+	vertex_instructions(&text, program, &usage, lighting, environment, depth_rows, depth_z, depth_w, FALSE);
+	/* (display.temporal_aa: the program run again on the previous frame's
+	registers, the 192 past the 192, from its state before its first
+	instruction, as xgpu_spirv.c's motion_previous; the screen's conversion
+	this frame's) */
+	if (motion)
 	{
-		const struct xgpu_vertex_instruction *instruction = &program->instructions[index];
-		unsigned int operands = (usage.mac[index] ? mac_operands(instruction->mac) : 0) |
-			(usage.ilu[index] ? ilu_operands(instruction->ilu) : 0);
-		const char *output = output_name(instruction->output);
-		char mask[5];
-
-		xgpu_text_append(&text, "\t/* %lu */\n", index);
-		/* the lighting's normal and position, before the program reuses them */
-		if (lighting && !environment && index == lighting->normal_instruction)
+		xgpu_text_append(&text,
+			"\tconstant float4 *motion_registers = c;\n"
+			"\tfloat3 motion_current = xgpu_motion_screen(clip_captured, clip_position, oPos, c, u);\n"
+			"\tfloat3 motion_previous;\n"
+			"\t{\n"
+			"\tconstant float4 *c = motion_registers + %d;\n", XGPU_VERTEX_CONSTANT_COUNT);
+		for (index = 0; index < XGPU_VERTEX_POSITION; index++)
 		{
-			xgpu_text_append(&text, "\txWorldNormal = float4(r%lu.xyz, length(r%lu.xyz));\n",
-				lighting->normal_register, lighting->normal_register);
+			if (usage.temporaries & (1UL << index))
+				xgpu_text_append(&text, "\tfloat4 r%lu = float4(0.0);\n", index);
 		}
-		if (lighting && lighting->lights == 2 && index == lighting->position_instruction)
-			xgpu_text_append(&text, "\txWorldPosition = r%lu.xyz;\n", lighting->position_register);
-		else if (lighting && lighting->lights == 1 && lighting->world_found && index == lighting->world_instruction)
-			xgpu_text_append(&text, "\txWorldPosition = r%lu.xyz;\n", lighting->world_register);
-		if (operands & 1)
-		{
-			xgpu_text_append(&text, "\tA = "); operand(&text, &instruction->a, instruction->relative); xgpu_text_append(&text, ";\n");
-		}
-		if (operands & 2)
-		{
-			xgpu_text_append(&text, "\tB = "); operand(&text, &instruction->b, instruction->relative); xgpu_text_append(&text, ";\n");
-		}
-		if (operands & 4)
-		{
-			xgpu_text_append(&text, "\tC = "); operand(&text, &instruction->c, instruction->relative); xgpu_text_append(&text, ";\n");
-		}
-		if (depth_rows && index == depth_z)
-			xgpu_text_append(&text, "\tdepth_point = A;\n\tdepth_z_row = B;\n");
-		if (depth_rows && index == depth_w)
-			xgpu_text_append(&text, "\tdepth_w_row = B;\n");
-
-		if (usage.mac[index])
-		{
-			switch (instruction->mac)
-			{
-			case XGPU_MAC_MOV: xgpu_text_append(&text, "\tmac = A;\n"); break;
-			case XGPU_MAC_MUL: xgpu_text_append(&text, "\tmac = A * B;\n"); break;
-			case XGPU_MAC_ADD: xgpu_text_append(&text, "\tmac = A + C;\n"); break;
-			case XGPU_MAC_MAD: xgpu_text_append(&text, "\tmac = A * B + C;\n"); break;
-			case XGPU_MAC_DP3: xgpu_text_append(&text, "\tmac = float4(dot(A.xyz, B.xyz));\n"); break;
-			case XGPU_MAC_DPH: xgpu_text_append(&text, "\tmac = float4(dot(A.xyz, B.xyz) + B.w);\n"); break;
-			case XGPU_MAC_DP4: xgpu_text_append(&text, "\tmac = float4(dot(A, B));\n"); break;
-			case XGPU_MAC_DST: xgpu_text_append(&text, "\tmac = float4(1.0, A.y * B.y, A.z, B.w);\n"); break;
-			case XGPU_MAC_MIN: xgpu_text_append(&text, "\tmac = min(A, B);\n"); break;
-			case XGPU_MAC_MAX: xgpu_text_append(&text, "\tmac = max(A, B);\n"); break;
-			case XGPU_MAC_SLT: xgpu_text_append(&text, "\tmac = float4(A < B);\n"); break;
-			case XGPU_MAC_SGE: xgpu_text_append(&text, "\tmac = float4(A >= B);\n"); break;
-			case XGPU_MAC_ARL: xgpu_text_append(&text, "\tmac = A;\n"); break;
-			default: xgpu_text_append(&text, "\tmac = float4(0.0);\n"); break;
-			}
-		}
-		if (usage.ilu[index])
-		{
-			switch (instruction->ilu)
-			{
-			case XGPU_ILU_MOV: xgpu_text_append(&text, "\tilu = C;\n"); break;
-			case XGPU_ILU_RCP: xgpu_text_append(&text, "\tilu = float4(1.0 / C.x);\n"); break;
-			case XGPU_ILU_RCC: xgpu_text_append(&text, "\tilu = nv2a_rcc(C.x);\n"); break;
-			case XGPU_ILU_RSQ: xgpu_text_append(&text, "\tilu = float4(rsqrt(abs(C.x)));\n"); break;
-			case XGPU_ILU_EXP: xgpu_text_append(&text, "\tilu = nv2a_exp(C.x);\n"); break;
-			case XGPU_ILU_LOG: xgpu_text_append(&text, "\tilu = nv2a_log(C.x);\n"); break;
-			case XGPU_ILU_LIT: xgpu_text_append(&text, "\tilu = nv2a_lit(C);\n"); break;
-			default: xgpu_text_append(&text, "\tilu = float4(0.0);\n"); break;
-			}
-		}
-		/* the screen-space conversion takes the reciprocal of the clip-space
-		position's w (rcc of r12.w); keep the position it converts */
-		if (instruction->captures_clip)
-			xgpu_text_append(&text, "\tclip_position = oPos;\n\tclip_captured = true;\n");
-
-		/* results are written only after both units have read their inputs */
-		if (usage.mac[index] && instruction->mac == XGPU_MAC_ARL && usage.a0)
-		{
-			xgpu_text_append(&text, "\ta0 = int(floor(mac.x + 0.001));\n");
-		}
-		else if (usage.mac[index] && instruction->mac != XGPU_MAC_ARL && instruction->mac_mask && temporary_read(&usage, instruction->mac_temporary))
-		{
-			write_mask(instruction->mac_mask, mask);
-			if (instruction->mac_temporary == XGPU_VERTEX_POSITION)
-				xgpu_text_append(&text, "\toPos.%s = mac.%s;\n", mask, mask);
-			else
-				xgpu_text_append(&text, "\tr%lu.%s = mac.%s;\n", (unsigned long)instruction->mac_temporary, mask, mask);
-		}
-		if (usage.ilu[index] && instruction->ilu_mask && temporary_read(&usage, instruction->ilu_temporary))
-		{
-			write_mask(instruction->ilu_mask, mask);
-			if (instruction->ilu_temporary == XGPU_VERTEX_POSITION)
-				xgpu_text_append(&text, "\toPos.%s = ilu.%s;\n", mask, mask);
-			else
-				xgpu_text_append(&text, "\tr%lu.%s = ilu.%s;\n", (unsigned long)instruction->ilu_temporary, mask, mask);
-		}
-		if (instruction->writes_output && output)
-		{
-			write_mask(instruction->output_mask, mask);
-			xgpu_text_append(&text, "\t%s.%s = %s.%s;\n", output, mask, instruction->output_from_ilu ? "ilu" : "mac", mask);
-		}
+		xgpu_text_append(&text, "\tfloat4 oPos = float4(0.0, 0.0, 0.0, 1.0);\n");
+		if (usage.a0)
+			xgpu_text_append(&text, "\tint a0 = 0;\n");
+		if (usage.operands[0])
+			xgpu_text_append(&text, "\tfloat4 A;\n");
+		if (usage.operands[1])
+			xgpu_text_append(&text, "\tfloat4 B;\n");
+		if (usage.operands[2])
+			xgpu_text_append(&text, "\tfloat4 C;\n");
+		if (usage.mac_used)
+			xgpu_text_append(&text, "\tfloat4 mac;\n");
+		if (usage.ilu_used)
+			xgpu_text_append(&text, "\tfloat4 ilu;\n");
+		xgpu_text_append(&text, "\tfloat4 clip_position = float4(0.0);\n\tbool clip_captured = false;\n");
+		vertex_instructions(&text, program, &usage, lighting, environment, depth_rows, depth_z, depth_w, TRUE);
+		xgpu_text_append(&text,
+			"\tmotion_previous = xgpu_motion_screen(clip_captured, clip_position, oPos, motion_registers, u);\n"
+			"\t}\n");
 	}
 
 	/* the clip position, as the SPIR-V's (xgpu_spirv.c: the conversion done
@@ -579,6 +658,8 @@ char *xgpu_msl_vertex_shader(const struct xgpu_vertex_program *program, unsigned
 		xgpu_text_append(&text, "\toutput.xWorldPosition = xWorldPosition;\n");
 	if (environment)
 		xgpu_text_append(&text, "\toutput.xWorldBinormal = xWorldBinormal;\n\toutput.xWorldTangent = xWorldTangent;\n");
+	if (motion)
+		xgpu_text_append(&text, "\toutput.xMotionCurrent = motion_current;\n\toutput.xMotionPrevious = motion_previous;\n");
 	if (lighting && lighting->split && !environment)
 	{
 		int light;
@@ -2456,6 +2537,11 @@ char *xgpu_msl_pixel_shader(const struct xgpu_pixel_program *program, const stru
 	BOOL occluder = !world && (program->ambient_occlusion & XGPU_AMBIENT_OCCLUSION_WORLD_INPUTS);
 	BOOL world_sampled = world && !world_inputs && (program->ambient_occlusion & XGPU_AMBIENT_OCCLUSION_WORLD_SAMPLED);
 	BOOL world_inline = world && !world_inputs && !world_sampled;
+	/* (display.temporal_aa: the motion, the second attachment's, as
+	xgpu_spirv.c's: the previous position less the current, as a fraction
+	of the view, x right and y down, and the pixel's depth, which the
+	resolve finds it still is; xgpu_msl_options' motion) */
+	BOOL motion = options->motion && !world_inputs && !occluder;
 	int stage;
 
 	pixel_usage(program, &usage);
@@ -2482,8 +2568,11 @@ char *xgpu_msl_pixel_shader(const struct xgpu_pixel_program *program, const stru
 		"\tfloat4 xT2 [[user(xT2)]];\n"
 		"\tfloat4 xT3 [[user(xT3)]];\n"
 		"\tfloat xFog [[user(xFog)]];\n");
-	if (replaces_depth || world_sampled)
+	if (replaces_depth || world_sampled || motion)
 		xgpu_text_append(&text, "\tfloat4 frag_position [[position]];\n");
+	if (motion)
+		xgpu_text_append(&text, "\tfloat3 xMotionCurrent [[user(xMotionCurrent)]];\n"
+			"\tfloat3 xMotionPrevious [[user(xMotionPrevious)]];\n");
 	if (occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_VERTEX)
 		xgpu_text_append(&text, "\tfloat3 xLightAmbient [[user(xLightAmbient)]];\n\tfloat3 xLightPoint [[user(xLightPoint)]];\n");
 	if (program->per_pixel_lighting || environment || world)
@@ -2494,6 +2583,8 @@ char *xgpu_msl_pixel_shader(const struct xgpu_pixel_program *program, const stru
 		xgpu_text_append(&text, "\tfloat3 xWorldBinormal [[user(xWorldBinormal)]];\n\tfloat3 xWorldTangent [[user(xWorldTangent)]];\n");
 	xgpu_text_append(&text, "};\nstruct xgpu_fragment_out\n{\n\t%s color [[color(0)]];\n",
 		world_inputs || occluder ? "uint4" : "float4");
+	if (motion)
+		xgpu_text_append(&text, "\tfloat4 motion [[color(1)]];\n");
 	if (sample_mask)
 		xgpu_text_append(&text, "\tuint sample_mask [[sample_mask]];\n");
 	if (replaces_depth)
@@ -2797,6 +2888,15 @@ char *xgpu_msl_pixel_shader(const struct xgpu_pixel_program *program, const stru
 	/* (finite: the NV2A wrote no colour that is not a number, nor an
 	infinite one; by its bits, which Metal's fast arithmetic keeps) */
 	xgpu_text_append(&text, "\toutput.color = nv2a_finite(output.color);\n");
+	/* (none where either position is behind the eye) */
+	if (motion)
+		xgpu_text_append(&text,
+			"\t{\n"
+			"\t\tfloat2 now = in.xMotionCurrent.xy / in.xMotionCurrent.z;\n"
+			"\t\tfloat2 before = in.xMotionPrevious.xy / in.xMotionPrevious.z;\n"
+			"\t\tbool both = in.xMotionCurrent.z > 0.0 && in.xMotionPrevious.z > 0.0;\n"
+			"\t\toutput.motion = float4(both ? (before - now) * float2(0.5, -0.5) : float2(0.0), in.frag_position.z, 1.0);\n"
+			"\t}\n");
 	xgpu_text_append(&text, "\treturn output;\n}\n");
 	functions_insert(&text, functions_at, functions.buffer);
 	free(functions.buffer);

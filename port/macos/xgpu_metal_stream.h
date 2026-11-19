@@ -42,12 +42,15 @@ const struct host_render_backend *xgpu_metal_stream_backend(void);
 at a draw: the inputs its vertex layout feeds as integers (unnormalized
 shorts: bit n, input n; none in immediate mode), and for each texture
 stage the axes (bit 0 u, 1 v, 2 w) whose border colour the pixel shader
-draws (any axis addressed by the border: xgpu_metal_border_axes) */
+draws (any axis addressed by the border: xgpu_metal_border_axes); and
+whether it writes display.temporal_aa's motion (xgpu_msl_options' motion:
+an object's opaque draw in a window's objects' pass) */
 struct xgpu_metal_stream_variant
 {
 	uint16_t integer_attributes;
 	uint8_t border[4];
-	uint8_t pad[2];
+	uint8_t motion;
+	uint8_t pad[1];
 };
 
 /* the draw's values the uniforms are made of: the front end's uniforms,

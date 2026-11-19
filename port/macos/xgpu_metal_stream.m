@@ -48,6 +48,7 @@ by the functions under "the interface's values".
 #include "xgpu_metal_pipeline.h"
 #include "xgpu_metal_post.h"
 #include "xgpu_metal_stream.h"
+#include "xgpu_metal_temporal.h"
 #include "xgpu_metal_textures.h"
 #define XGPU_HDR_REFERENCE
 #include "xgpu_dynamic_lights_world.h"
@@ -174,6 +175,23 @@ static struct
 	struct stream_pipeline *entries;
 	uint32_t vertex, pixel;
 } prepass;
+
+/* display.temporal_aa's motion (xgpu_stream.h's MOTION): on once a record
+has come (the previous frame's registers kept from then on); a window's
+objects drawing their motion (objects) into the objects' texture (drawn,
+RGBA32F: the motion, the depth, 1 where drawn) beside its target's; each
+pipeline's variant that writes it (its shaders xgpu_msl_options' motion),
+made as first drawn or as a map is prepared (preparing: its objects' draws;
+prepare_variant: the variant made now); the window's motion resolved
+(RGBA16F, the target's size: for the technique); its history begun again
+(reset) */
+static struct
+{
+	BOOL on, objects, preparing, prepare_variant, reset;
+	uint32_t drawn, motion;
+	struct xgpu_stream_pipeline_define *definitions;
+	struct stream_pipeline *entries;
+} motion;
 
 static void prepass_targets_bind(void)
 {
@@ -710,10 +728,17 @@ static void stream_set_constants(void *context, const struct xgpu_stream_constan
 	uint32_t count = record->count;
 
 	(void)context;
+	/* (display.temporal_aa: the previous frame's alone, past the 192) */
 	if (record->first >= XGPU_METAL_VERTEX_CONSTANT_COUNT)
+	{
+		xgpu_metal_set_vertex_constants(record->first, count, &record->values[0][0]);
 		return;
+	}
 	if (count > XGPU_METAL_VERTEX_CONSTANT_COUNT - record->first)
 		count = XGPU_METAL_VERTEX_CONSTANT_COUNT - record->first;
+	/* (and the previous frame's the same, until a record sets them apart) */
+	if (motion.on)
+		xgpu_metal_set_vertex_constants(XGPU_STREAM_PREVIOUS_CONSTANTS + record->first, count, &record->values[0][0]);
 	memcpy(stream.constants[record->first], record->values, (size_t)count * sizeof(stream.constants[0]));
 	if ((record->first <= MODEL_LIGHT_LAST && record->first + count > MODEL_LIGHT_FIRST) ||
 		(record->first <= MODEL_LIGHT_OWN_LIGHTS && record->first + count > MODEL_LIGHT_OWN_LIGHTS))
@@ -957,12 +982,17 @@ static void pipeline_missed(const struct xgpu_stream_pipeline_key *key)
 static BOOL prepass_draw_prepare(const struct xgpu_metal_vertex_attribute *attributes, const uint16_t *strides,
 	const struct xgpu_metal_source *streams, const float (*constants)[4], uint16_t integers);
 
+/* (display.temporal_aa's: below) */
+static BOOL motion_tables(void);
+static BOOL motion_writer(const struct xgpu_stream_pipeline_define *definition);
+
 static BOOL draw_prepare(const struct xgpu_metal_vertex_attribute *attributes, const uint16_t *strides,
 	const struct xgpu_metal_source *streams, const float (*constants)[4], uint16_t integers)
 {
 	struct xgpu_metal_pipeline pipeline = stream.pipeline;
 	struct xgpu_metal_stream_variant variant;
 	struct stream_pipeline *entry;
+	BOOL motion_drawn, motion_writes;
 	uint32_t index;
 
 	if (!stream.pipeline_id || !stream.definition)
@@ -971,16 +1001,39 @@ static BOOL draw_prepare(const struct xgpu_metal_vertex_attribute *attributes, c
 	from their pixels, alone) */
 	if (prepass.active)
 		return prepass_draw_prepare(attributes, strides, streams, constants, integers);
-	entry = &stream.pipelines[stream.pipeline_id];
+	/* (a map prepared with display.temporal_aa on: an object's draw's
+	pipeline into the motion too, as the window's objects draw in play) */
+	if (stream.preparing && motion.preparing && !motion.prepare_variant)
+	{
+		motion.prepare_variant = YES;
+		(void)draw_prepare(attributes, strides, streams, constants, integers);
+		motion.prepare_variant = NO;
+	}
+	/* (display.temporal_aa: a window's objects, into the motion too; those
+	that write it with their variant's shaders, the rest through it) */
+	motion_drawn = (motion.objects && !stream.preparing && xgpu_metal_motion_bound()) || motion.prepare_variant;
+	motion_writes = motion_drawn && motion_writer(stream.definition) && motion_tables();
+	entry = motion_writes ? &motion.entries[stream.pipeline_id] : &stream.pipelines[stream.pipeline_id];
+	if (motion_writes && memcmp(&motion.definitions[stream.pipeline_id], stream.definition, sizeof(*stream.definition)))
+	{
+		motion.definitions[stream.pipeline_id] = *stream.definition;
+		memset(entry, 0, sizeof(*entry));
+	}
 	memset(&variant, 0, sizeof(variant));
 	variant.integer_attributes = stream.definition->key.immediate ? 0 : integers;
 	memcpy(variant.border, stream.border, sizeof(variant.border));
-	if (!pipeline_shaders(entry, stream.definition, &variant))
+	variant.motion = motion_writes;
+	if (!pipeline_shaders(entry, motion_writes ? &motion.definitions[stream.pipeline_id] : stream.definition, &variant))
 		return NO;
 	pipeline.vertex_shader = entry->vertex_shader;
 	pipeline.pixel_shader = entry->pixel_shader;
 	memcpy(pipeline.attributes, attributes, sizeof(pipeline.attributes));
 	memcpy(pipeline.strides, strides, sizeof(pipeline.strides));
+	if (motion_drawn)
+	{
+		pipeline.motion_format = XGPU_METAL_FORMAT_RGBA32F;
+		pipeline.motion_mask = motion_writes ? XGPU_WRITE_RED | XGPU_WRITE_GREEN | XGPU_WRITE_BLUE | XGPU_WRITE_ALPHA : 0;
+	}
 	if (stream.preparing)
 	{
 		/* Keep resource residency and the complete vertex layout, without
@@ -988,7 +1041,7 @@ static BOOL draw_prepare(const struct xgpu_metal_vertex_attribute *attributes, c
 		textures_bind();
 		xgpu_metal_prepare(&pipeline);
 		/* (where its draws are the pre-pass's in play: its twin's too) */
-		if (prepass.twins)
+		if (prepass.twins && !motion.prepare_variant)
 			(void)prepass_draw_prepare(attributes, strides, streams, constants, integers);
 		return NO;
 	}
@@ -1621,6 +1674,209 @@ static void stream_world_ao_window(void *context, const struct xgpu_stream_world
 	xgpu_metal_world_ao_window(record->active ? &record->block : NULL);
 }
 
+/* ---------- display.temporal_aa's motion (xgpu_stream.h's MOTION)
+
+As xgpu_vulkan_stream.c's: a window's objects draw their motion beside
+their colour (the passes into the window's target have the objects'
+texture as their second attachment: xgpu_metal_set_motion_target), each
+draw that writes depth and blends nothing with its pipeline's variant whose
+shaders write it (xgpu_msl_options' motion: its vertex program run again on
+the previous frame's registers, which the backend keeps past the 192), the
+others through it, writing none. The window whole, its motion is resolved
+over its corners (xgpu_metal_temporal.m): an object's where its depth is
+still the pixel's, the camera's from the depth elsewhere. debug.motion_vectors
+then draws it over the view. "metalfx" upscales the window with it
+(xgpu_metal_temporal.m's MetalFX). With multisampling no motion is drawn. */
+
+/* the variants' tables, made once (NO: none can be) */
+static BOOL motion_tables(void)
+{
+	if (motion.entries)
+		return YES;
+	motion.entries = calloc(XGPU_STREAM_PIPELINES, sizeof(*motion.entries));
+	motion.definitions = calloc(XGPU_STREAM_PIPELINES, sizeof(*motion.definitions));
+	if (motion.entries && motion.definitions)
+		return YES;
+	free(motion.entries);
+	free(motion.definitions);
+	motion.entries = NULL;
+	motion.definitions = NULL;
+	return NO;
+}
+
+/* whether a pipeline's draws write the motion: opaque (depth tested and
+written, nothing blended, in the fixed function or the shader) and of no
+views */
+static BOOL motion_writer(const struct xgpu_stream_pipeline_define *definition)
+{
+	const struct xgpu_stream_pipeline_key *key = &definition->key;
+
+	return key->depth_test && key->depth_write && !key->blend && key->color_mask && !key->pixel.source_blend &&
+		key->views <= 1 && !key->pixel.vr_effect && !XGPU_HDR_SHADER_BLENDS(key->pixel.hdr);
+}
+
+static uint32_t prepass_texture(uint32_t texture, uint8_t format, uint32_t width, uint32_t height, uint32_t *made_width,
+	uint32_t *made_height);
+
+/* a texture of the backend's of a format and size (made again as the size
+changes) */
+static uint32_t motion_texture(uint32_t texture, uint8_t format, uint32_t width, uint32_t height)
+{
+	id<MTLTexture> made = texture ? xgpu_metal_texture(texture) : nil;
+	uint32_t made_width = made ? (uint32_t)made.width : 0, made_height = made ? (uint32_t)made.height : 0;
+
+	return prepass_texture(texture, format, width, height, &made_width, &made_height);
+}
+
+/* corners (left, top, right, bottom) inside a target's pixels; NO if
+nothing is left */
+static BOOL motion_rectangle(const struct stream_target *target, const int32_t corners[4], int32_t rectangle[4])
+{
+	int axis;
+
+	for (axis = 0; axis < 2; axis++)
+	{
+		int32_t size = (int32_t)(axis ? target->description.height : target->description.width);
+
+		rectangle[axis] = corners[axis] < 0 ? 0 : corners[axis] > size ? size : corners[axis];
+		rectangle[axis + 2] = corners[axis + 2] < rectangle[axis] ? rectangle[axis] :
+			corners[axis + 2] > size ? size : corners[axis + 2];
+	}
+	return rectangle[2] > rectangle[0] && rectangle[3] > rectangle[1];
+}
+
+/* whether a texture of the backend's is of a target's size */
+static BOOL motion_sized(uint32_t texture, const struct stream_target *target)
+{
+	id<MTLTexture> made = texture ? xgpu_metal_texture(texture) : nil;
+
+	return made && made.width == target->description.width && made.height == target->description.height;
+}
+
+static void stream_motion(void *context, const struct xgpu_stream_motion *record)
+{
+	struct stream_target *target = target_get(record->target);
+
+	(void)context;
+	/* (the previous frame's registers this frame's, from the first: the
+	game sets some of them once) */
+	if (!motion.on)
+		xgpu_metal_set_vertex_constants(XGPU_STREAM_PREVIOUS_CONSTANTS, XGPU_METAL_VERTEX_CONSTANT_COUNT,
+			&stream.constants[0][0]);
+	motion.on = YES;
+	if (stream.preparing)
+	{
+		/* (the objects' draws' variants that write their motion, or draw
+		through it, made with the map's other pipelines: draw_prepare; and
+		the passes') */
+		motion.preparing = record->phase == XGPU_MOTION_OBJECTS_BEGIN;
+		if (record->phase == XGPU_MOTION_OBJECTS_BEGIN || record->phase == XGPU_MOTION_RESOLVE)
+			(void)xgpu_metal_motion_prepare(target && target->description.samples <= 1 ? target->description.format :
+				XGPU_METAL_FORMAT_NONE);
+		return;
+	}
+	if (record->phase == XGPU_MOTION_OBJECTS_BEGIN)
+	{
+		if (!target || target->description.format == XGPU_METAL_FORMAT_D24S8 || target->description.samples > 1 ||
+			target->description.depth_or_layers > 1 || !motion_tables())
+			return;
+		motion.drawn = motion_texture(motion.drawn, XGPU_METAL_FORMAT_RGBA32F, target->description.width,
+			target->description.height);
+		if (!motion.drawn || !motion_sized(motion.drawn, target))
+			return;
+		/* (cleared as its first pass begins: nothing drawn, alpha 0) */
+		xgpu_metal_set_motion_target(motion.drawn, target->texture);
+		motion.objects = YES;
+		return;
+	}
+	if (record->phase == XGPU_MOTION_OBJECTS_END || record->phase == XGPU_MOTION_NONE)
+	{
+		motion.objects = NO;
+		xgpu_metal_set_motion_target(0, 0);
+		return;
+	}
+	if (record->phase == XGPU_MOTION_RESOLVE)
+	{
+		struct stream_target *depth = target_get(stream.depth);
+		struct xgpu_metal_motion_uniforms uniforms;
+		int32_t rectangle[4];
+
+		motion.objects = NO;
+		xgpu_metal_set_motion_target(0, 0);
+		/* (the technique's history begun again) */
+		motion.reset = record->pass.motion[3] == 0.0f;
+		if (!target || target->description.format == XGPU_METAL_FORMAT_D24S8 || target->description.samples > 1 ||
+			!depth || depth->description.format != XGPU_METAL_FORMAT_D24S8 || depth->description.samples > 1 ||
+			!motion_sized(motion.drawn, target) || !motion_rectangle(target, record->pass.corners, rectangle))
+			return;
+		motion.motion = motion_texture(motion.motion, XGPU_METAL_FORMAT_RGBA16F, target->description.width,
+			target->description.height);
+		if (!motion.motion || !motion_sized(motion.motion, target))
+			return;
+		memset(&uniforms, 0, sizeof(uniforms));
+		uniforms.metrics[0] = 1.0f / (float)target->description.width;
+		uniforms.metrics[1] = 1.0f / (float)target->description.height;
+		uniforms.metrics[2] = (float)target->description.width;
+		uniforms.metrics[3] = (float)target->description.height;
+		uniforms.window[0] = (float)record->pass.corners[0];
+		uniforms.window[1] = (float)record->pass.corners[1];
+		uniforms.window[2] = (float)(record->pass.corners[2] - record->pass.corners[0]);
+		uniforms.window[3] = (float)(record->pass.corners[3] - record->pass.corners[1]);
+		memcpy(uniforms.reproject, record->pass.reproject, sizeof(uniforms.reproject));
+		memcpy(uniforms.motion, record->pass.motion, sizeof(uniforms.motion));
+		/* (the depth reversed: xgpu_backend.h) */
+		uniforms.motion[2] = 1.0f;
+		xgpu_metal_motion_resolve(motion.motion, motion.drawn, depth->texture, rectangle, &uniforms);
+		/* (debug.motion_vectors: drawn over the view) */
+		if (record->pass.jitter[2] != 0.0f)
+		{
+			target->written++;
+			xgpu_metal_motion_view(target->texture, target->description.format, motion.motion, rectangle, &uniforms);
+		}
+		stream_state_restore();
+		return;
+	}
+	/* ("metalfx": the window's colour before its transparent draws, for the
+	reactive mask) */
+	if (record->phase == XGPU_MOTION_OPAQUE)
+	{
+		if (!target || target->description.format == XGPU_METAL_FORMAT_D24S8 || target->description.samples > 1 ||
+			target->description.depth_or_layers > 1)
+			return;
+		xgpu_metal_metalfx_opaque((int)record->pass.motion[0], target->texture);
+		return;
+	}
+	if (record->phase == XGPU_MOTION_UPSCALE)
+	{
+		struct xgpu_temporal_pass pass;
+		struct xgpu_metal_metalfx_frame frame;
+		struct stream_target *depth, *destination = target_get(record->pad);
+
+		memcpy(&pass, &record->pass, sizeof(pass));
+		depth = target_get(pass.depth);
+		if (pass.technique != 3 || !target || target->description.samples > 1 || !destination ||
+			destination->description.samples > 1 || destination->description.format == XGPU_METAL_FORMAT_D24S8 ||
+			!depth || depth->description.format != XGPU_METAL_FORMAT_D24S8 || depth->description.samples > 1 ||
+			!motion_sized(motion.motion, target))
+			return;
+		memset(&frame, 0, sizeof(frame));
+		frame.color = target->texture;
+		frame.depth = depth->texture;
+		frame.motion = motion.motion;
+		frame.destination = destination->texture;
+		if (!motion_rectangle(target, pass.corners, frame.source) ||
+			!motion_rectangle(destination, pass.destination, frame.destination_rectangle))
+			return;
+		frame.jitter[0] = pass.jitter[0];
+		frame.jitter[1] = pass.jitter[1];
+		frame.reset = pass.reset != 0 || motion.reset;
+		frame.window = (int)pass.window;
+		destination->written++;
+		(void)xgpu_metal_metalfx_upscale(&frame);
+		stream_state_restore();
+	}
+}
+
 /* ---------- display.ambient_occlusion "world" found once a pixel
 
 xgpu_stream.h's WORLD_AO_PREPASS, as xgpu_vulkan_stream.c's: the window's
@@ -1960,6 +2216,7 @@ static uint32_t stream_prepared(void *context)
 	stream.preparing = NO;
 	stream.prepared = YES;
 	prepass.twins = NO;
+	motion.preparing = NO;
 	return (uint32_t)(xgpu_metal_prepared() * 1000.0 + 0.5);
 }
 
@@ -2034,6 +2291,9 @@ static void stream_initialize(void *context, struct xgpu_stream_capabilities *ca
 	/* (display.output_depth: RGBA16Unorm, which every Apple GPU draws into,
 	blends and filters; dithered to the 8-bit layer by the presentation) */
 	capabilities->deep_sdr = 1;
+	/* (display.temporal_aa "metalfx": MetalFX's temporal scaler,
+	xgpu_metal_temporal.m) */
+	capabilities->temporal_metalfx = xgpu_metal_metalfx_supported() != 0;
 	snprintf(capabilities->device, sizeof(capabilities->device), "%s", metal.device);
 }
 
@@ -2107,6 +2367,8 @@ const struct host_render_backend *xgpu_metal_stream_backend(void)
 		backend.world_ao_cascades = stream_world_ao_cascades;
 		backend.world_ao_window = stream_world_ao_window;
 		backend.world_ao_prepass = stream_world_ao_prepass;
+		/* display.temporal_aa's motion, and "metalfx" (docs/temporal-aa.md) */
+		backend.motion = stream_motion;
 	}
 	return &backend;
 }
