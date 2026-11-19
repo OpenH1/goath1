@@ -448,6 +448,14 @@ static void render_window(
 	/* port: display.temporal_aa: the screen's 3D view's motion and jitter,
 	the frame before's camera kept (port/linux/game/motion_vectors.c; not a
 	mirror's view, a feed's, nor the VR mode's eyes) */
+	/* port: display.render_scale: the screen's 3D view drawn at it (the
+	HUD and menus at the display's: port/linux/src/d3d8_device.c) */
+	halo_screen_view_begin(rasterizer_target == _render_target_primary &&
+		!rasterizer_camera->mirrored && !render_link_pass && !bink_playback_in_progress()
+#ifdef HALO_VR
+		&& !render_vr_eye_pass && !render_vr_scope_pass
+#endif
+		);
 	motion_vectors_window_begin(local_player_index, rasterizer_target == _render_target_primary &&
 		!rasterizer_camera->mirrored && !render_link_pass && !bink_playback_in_progress() &&
 #ifdef HALO_VR
@@ -737,6 +745,14 @@ static void render_window(
 			/* port: and drawn through display.panini's projection, the HUD
 			not (port/linux/game/panini.c) */
 			panini_window_draw();
+			/* port: display.render_scale: the view stretched to the
+			display's pixels, where the HUD and menus are drawn, where no
+			upscaler took it there (port/linux/src/d3d8_device.c) */
+			halo_screen_view_end(TRUE,
+				rasterizer_camera->viewport_bounds.x0,
+				rasterizer_camera->viewport_bounds.y0,
+				rasterizer_camera->viewport_bounds.x1,
+				rasterizer_camera->viewport_bounds.y1);
 		}
 		interface_draw_screen();
 		/* port: the HUD's Spartan link: the teammates' feeds in its top line
@@ -772,6 +788,7 @@ static void render_window(
 		panini_window_end(); /* port */
 	/* port: (and none of its jitter past the window: motion_vectors.c) */
 	motion_vectors_window_end(NULL);
+	halo_screen_view_end(FALSE, 0, 0, 0, 0); /* port */
 	rasterizer_window_end();
 	profile_render_window_end();
 

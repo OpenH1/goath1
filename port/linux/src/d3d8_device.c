@@ -97,12 +97,15 @@ static float screen_scale[2] = { 1.0f, 1.0f };
 the scale screen_mode_choose last chose), and how many it was asked for
 (more where the GPU's largest target has too few pixels) */
 static float screen_supersampling = 1.0f, screen_supersampling_asked = 1.0f;
-/* display.temporal_aa "fsr" (docs/temporal-aa.md): a window's 3D view drawn
-at display.render_scale's fraction (factor) of the screen's scale, and
-upscaled by the backend (AMD FSR) into the screen's targets at the
-display's, where its tone map, panini and HUD are drawn: the screen's scale
-is the 3D view's while it draws (rendering: halo_motion_window to
-halo_motion_resolve), the display's (display) otherwise */
+/* display.render_scale (docs/temporal-aa.md): a window's 3D view drawn at
+its fraction (factor) of the screen's scale, then either upscaled by
+display.temporal_aa's technique (AMD FSR, NVIDIA DLSS, MetalFX) into the
+screen's targets at the display's, where its tone map, panini and HUD are
+drawn (halo_motion_resolve), or, without one, stretched into them after its
+tone map, anti-aliasing and panini, before the HUD (halo_screen_view_end):
+the screen's scale is the 3D view's while it draws (rendering:
+halo_screen_view_begin to the upscale or the stretch), the display's
+(display) otherwise. The HUD and menus are always drawn at the display's. */
 static struct
 {
 	float factor;
@@ -290,12 +293,14 @@ static float supersampling_wanted(void)
 
 /* ---------- display.render_scale on a computer
 
-The screen's targets drawn at this fraction of the display's pixels each
-way, 0.25 to 1, which the display blit scales up (on Vulkan sharply:
-xgpu_vulkan.c's present_sharp): a steadier frame rate on a weak graphics
-card, a handheld or a 4K display. The HUD and menus are drawn into the same
-targets, so at it too. 1 (or 0, unset or not a number) draws the display's
-pixels. It multiplies display.supersampling's factor (Settings' RENDER
+Each window's 3D view drawn at this fraction of the display's pixels each
+way, 0.25 to 1 (temporal.factor), then upscaled by display.temporal_aa's
+technique or, off, stretched into the display's targets (on Vulkan sharply,
+as xgpu_vulkan.c's present_sharp scales: halo_screen_view_end): a steadier
+frame rate on a weak graphics card, a handheld or a 4K display. The HUD and
+menus are drawn at the display's pixels whatever it is. 1 (or 0, unset or
+not a number) draws the display's pixels. It multiplies
+display.supersampling's factor (Settings' RENDER
 RESOLUTION sets one or the other: menu_functions.c). Android and iOS draw
 it in their hosts instead (a smaller swapchain or drawable), except where
 display.temporal_aa upscales it: then the host draws the display's pixels
@@ -338,8 +343,9 @@ static float render_scale_configured(void)
 #elif defined(HALO_ANDROID) || defined(HALO_IOS)
 	/* (a phone's host draws the display's pixels where display.temporal_aa
 	upscales, and gives the render scale here, HALO_UPSCALE_RENDER_SCALE:
-	the 3D view drawn at it and upscaled, else the screen's targets at it
-	and the display blit scales them up; otherwise the host draws it, 1) */
+	the 3D view drawn at it and upscaled, or, where no upscaler is drawn
+	after all, stretched before the HUD as a computer's is
+	(halo_screen_view_end); otherwise the host draws it, 1) */
 	static float factor = -1.0f;
 
 	if (factor < 0.0f)
@@ -983,8 +989,9 @@ static void screen_mode_choose(long *width, float scale[2])
 		display blit scales down (or, below 1, up); not with "original"
 		resolution scaling, which draws the Xbox's 640x480 (and gives no
 		display_width). Each target's pixels are its units times the scale,
-		rounded (render_target_get): 1.5 at 2560x1440 draws 3840x2160, a
-		render scale of 0.5 at 1920x1080 draws 960x540 */
+		rounded (render_target_get): 1.5 at 2560x1440 draws 3840x2160. The
+		render scale is the 3D view's alone (temporal): 0.5 at 1920x1080
+		draws the view at 960x540, the HUD and menus at 1920x1080 */
 		if (xgpu_backend_capabilities.largest_target > 0)
 		{
 			float factor = supersampling_wanted();
@@ -992,13 +999,7 @@ static void screen_mode_choose(long *width, float scale[2])
 
 			if (factor < panini)
 				factor = panini;
-			/* (display.temporal_aa "fsr": the 3D view's alone, upscaled:
-			temporal) */
-			temporal.factor = 1.0f;
-			if (temporal_upscaling())
-				temporal.factor = render_scale_wanted();
-			else
-				factor *= render_scale_wanted();
+			temporal.factor = render_scale_wanted();
 			screen_supersampling_asked = factor;
 			if (*width * scale[0] * factor > (float)xgpu_backend_capabilities.largest_target)
 				factor = (float)xgpu_backend_capabilities.largest_target / (*width * scale[0]);
@@ -1031,6 +1032,9 @@ static void screen_mode_log(long width, const float scale[2])
 	else
 		platform_log("screen: %ldx%d drawn at %.0fx%.0f", width, SCREEN_HEIGHT, width * scale[0],
 			SCREEN_HEIGHT * scale[1]);
+	if (temporal.factor < 1.0f)
+		platform_log("screen: the 3D view drawn at %.0fx%.0f, render scale %.3g (the HUD and menus at the display's)",
+			width * scale[0] * temporal.factor, SCREEN_HEIGHT * scale[1] * temporal.factor, temporal.factor);
 }
 
 long halo_screen_width(void)
@@ -2320,6 +2324,14 @@ static BOOL bind_targets(BOOL *has_depth)
 	samples = anti_aliasing() == _anti_aliasing_msaa ? anti_aliasing_samples : 0;
 	if (samples && !target_multisampled)
 		samples = 0;
+	/* (display.render_scale: the 3D view's targets alone, at its scale; the
+	display's, which its view is stretched into and the HUD drawn into, one
+	sample: halo_screen_view_end) */
+	if (samples && temporal.factor < 1.0f && !temporal.rendering)
+	{
+		samples = 0;
+		target_multisampled = FALSE;
+	}
 	/* (not an extra view's: a few hundred pixels, drawn now and then) */
 	if (screen_view)
 	{
@@ -7867,9 +7879,9 @@ void halo_world_ao_prepass_end(short x0, short y0, short x1, short y1, float con
 /* ---------- display.temporal_aa's motion (port/linux/game/motion_vectors.c;
 xgpu_stream.h's MOTION) */
 
-/* display.temporal_aa "fsr": the screen's scale the 3D view's (the
-display's times display.render_scale's fraction), its targets of that scale
-from now on; and the display's again */
+/* display.render_scale: the screen's scale the 3D view's (the display's
+times display.render_scale's fraction), its targets of that scale from now
+on; and the display's again */
 static void temporal_scale_render(void)
 {
 	if (temporal.rendering || temporal.factor >= 1.0f)
@@ -7890,6 +7902,58 @@ static void temporal_scale_display(void)
 	temporal.rendering = FALSE;
 }
 
+/* display.render_scale: a window's 3D view begins (source/render/render.c's
+render_window), drawn at the render scale's targets where it is the screen's
+own (eligible: not a mirror's, a feed's, an extra view's nor the VR mode's
+eyes), before anything of it is drawn, until display.temporal_aa's
+technique upscales it (halo_motion_resolve) or halo_screen_view_end
+stretches it */
+void halo_screen_view_begin(int eligible)
+{
+	temporal_scale_display();
+	if (eligible && device.gl_ready && !screen_view)
+		temporal_scale_render();
+}
+
+/* ... and its window's corners in the game's units, once the view is whole,
+tone mapped, antialiased and through the Panini pass (drawn 0: none drawn,
+its window ended): a view still at the render scale (no technique upscaled
+it) stretched over the window into the screen's back buffer at the
+display's scale (xgpu_stream.h's MOTION _UPSCALE, technique 0: the backend
+scales it as its presentation scales a smaller frame, on Vulkan sharply),
+where the HUD and menus are drawn after it */
+void halo_screen_view_end(int drawn, short x0, short y0, short x1, short y1)
+{
+	struct render_target_entry *source, *destination;
+	struct xgpu_temporal_pass pass;
+	long corners[4];
+	int index;
+
+	if (!temporal.rendering)
+		return;
+	source = drawn && device.gl_ready ? render_target_get(&device.back_buffer) : NULL;
+	temporal_scale_display();
+	if (!source || x1 <= x0 || y1 <= y0 || !(destination = render_target_get(&device.back_buffer)) ||
+		destination == source)
+		return;
+	memset(&pass, 0, sizeof(pass));
+	view_corners(source, x0, y0, x1, y1, corners);
+	for (index = 0; index < 4; index++)
+		pass.corners[index] = (int32_t)corners[index];
+	view_corners(destination, x0, y0, x1, y1, corners);
+	for (index = 0; index < 4; index++)
+		pass.destination[index] = (int32_t)corners[index];
+	pass.technique = 0;
+	pass.hdr = source->target.format == XGPU_FORMAT_RGBA16F;
+	pass.reset = 1;
+	/* (its samples resolved for the stretch to read, where it has them) */
+	if (source->target.samples)
+		render_target_resolve(&source->target);
+	xgpu_backend_temporal(source->target.number, destination->target.number, &pass);
+	destination->target.written = ++render_target_write_serial;
+	destination->last_rendered = device.frame + 1;
+}
+
 int halo_motion_window(int on, float jitter_x, float jitter_y)
 {
 	struct render_target_entry *target;
@@ -7897,17 +7961,13 @@ int halo_motion_window(int on, float jitter_x, float jitter_y)
 	motion.on = FALSE;
 	motion.jitter[0] = motion.jitter[1] = 0.0f;
 	motion.lod_bias = 0.0f;
-	/* (display.temporal_aa "fsr": the window's 3D view at its own scale,
-	before anything of it is drawn, until halo_motion_resolve upscales it) */
-	temporal_scale_display();
-	if (on && device.gl_ready && !screen_view && temporal_upscaling())
-		temporal_scale_render();
-	/* (the screen's back buffer, one sample: not with multisampling) */
+	/* (the window's 3D view at its own scale from halo_screen_view_begin,
+	until halo_motion_resolve upscales it or halo_screen_view_end stretches
+	it; the screen's back buffer, one sample: not with multisampling) */
 	if (!on || !device.gl_ready || screen_view || anti_aliasing() == _anti_aliasing_msaa ||
 		!(target = render_target_get(&device.back_buffer)) || !(target->target.scale[0] > 0.0f) ||
 		!(target->target.scale[1] > 0.0f))
 	{
-		temporal_scale_display();
 		return FALSE;
 	}
 	motion.on = TRUE;

@@ -1802,11 +1802,40 @@ static BOOL motion_sized(uint32_t texture, const struct stream_target *target)
 	return made && made.width == target->description.width && made.height == target->description.height;
 }
 
+/* display.render_scale's view stretched (MOTION's _UPSCALE, technique 0: no
+upscaler, nor any motion) over the destination's rectangle, one sample
+(a multisampled target's texture is its samples resolved: each pass's end) */
+static void view_stretch(const struct xgpu_stream_motion *record)
+{
+	struct stream_target *target = target_get(record->target), *destination = target_get(record->pad);
+	struct xgpu_temporal_pass pass;
+	int32_t from[4], to[4];
+
+	memcpy(&pass, &record->pass, sizeof(pass));
+	if (stream.preparing || !target || target->description.format == XGPU_METAL_FORMAT_D24S8 ||
+		target->description.depth_or_layers > 1 || !destination ||
+		destination->description.format != target->description.format || destination->description.samples > 1 ||
+		destination->description.depth_or_layers > 1 || !motion_rectangle(target, pass.corners, from) ||
+		!motion_rectangle(destination, pass.destination, to))
+		return;
+	destination->written++;
+	xgpu_metal_view_stretch(target->texture, from, destination->texture, destination->description.format, to);
+	stream_state_restore();
+}
+
 static void stream_motion(void *context, const struct xgpu_stream_motion *record)
 {
 	struct stream_target *target = target_get(record->target);
+	struct xgpu_temporal_pass upscale;
 
 	(void)context;
+	/* (display.render_scale's stretch: no motion's) */
+	memcpy(&upscale, &record->pass, sizeof(upscale));
+	if (record->phase == XGPU_MOTION_UPSCALE && upscale.technique == 0)
+	{
+		view_stretch(record);
+		return;
+	}
 	/* (the previous frame's registers this frame's, from the first: the
 	game sets some of them once) */
 	if (!motion.on)

@@ -42,6 +42,13 @@ void xgpu_metal_motion_resolve(uint32_t into, uint32_t objects, uint32_t depth, 
 	const struct xgpu_metal_motion_uniforms *uniforms);
 void xgpu_metal_motion_view(uint32_t into, uint8_t format, uint32_t motion, const int32_t rectangle[4],
 	const struct xgpu_metal_motion_uniforms *uniforms);
+/* display.render_scale's 3D view, no upscaler: a rectangle (x0, y0, x1, y1)
+of a colour texture stretched (linear, as the presentation scales a smaller
+frame) over a rectangle of another, one sample, of the format
+(XGPU_METAL_FORMAT_*: the display's back buffer, where the HUD and menus are
+drawn after it). The backend's state is the pass's afterwards */
+void xgpu_metal_view_stretch(uint32_t color, const int32_t source[4], uint32_t into, uint8_t format,
+	const int32_t place[4]);
 
 /* whether the GPU and the system have MetalFX's temporal scaler (macOS 13,
 iOS 16 on): 1; 2 on iOS where they have only its spatial one (#1228); 0
