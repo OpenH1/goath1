@@ -43,6 +43,14 @@ enum xgpu_vulkan_post_program_id
 	and the camera's, and debug.motion_vectors' view of it */
 	XGPU_VULKAN_POST_MOTION_RESOLVE,
 	XGPU_VULKAN_POST_MOTION_VIEW,
+	/* the loading screen's sharp frame (loading_art.h's "drawn by the
+	GPU"): the frame (the trail 0, the still layers 1, the table 2, the
+	words 3), its caption at the window's pixels (the trail 0, the frame 1,
+	the table 2, the caption's texels 3), and the picture resampled from its
+	own size (0) */
+	XGPU_VULKAN_POST_LOADING,
+	XGPU_VULKAN_POST_LOADING_CAPTION,
+	XGPU_VULKAN_POST_LOADING_PICTURE,
 	XGPU_VULKAN_POST_PROGRAM_COUNT
 };
 

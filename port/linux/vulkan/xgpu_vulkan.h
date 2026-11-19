@@ -149,6 +149,10 @@ swapchain takes where the surface has it (0: the swap interval's choice) */
 	build's). */
 	void (*display_hdr)(int hdr, float headroom, float white_nits, int white_reported);
 	int (*encode_prepare)(void);
+	/* the loading screen's sharp frame drawn by the GPU (port/linux/src/
+	loading_art.h): its pipelines made at the start (1 if they are;
+	xgpu_vulkan_post_loading_prepare). NULL: the processor draws it. */
+	int (*loading_prepare)(void);
 	struct xgpu_vulkan_image *(*encode)(struct xgpu_vulkan_image *image, const struct xgpu_hdr_frame *frame,
 		uint8_t format, const struct xgpu_vulkan_output *output);
 	/* a frame smaller than the window (display.render_scale on a computer,

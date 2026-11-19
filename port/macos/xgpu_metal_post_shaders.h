@@ -37,6 +37,14 @@ enum
 	/* display.panini's projection (the Vulkan backend's), over a window's
 	3D view in the target, sampling its copy (texture 0) */
 	XGPU_METAL_POST_PANINI,
+	/* the loading screen's sharp frame (port/linux/src/loading_art.h's
+	loading_art_hd_uniforms): the trail (texture 0), the still layers (1),
+	the table (2) and the words (3); its caption at the drawable's pixels,
+	the frame at 1 and the caption's texels at 3; and the picture resampled
+	from its own size (0) */
+	XGPU_METAL_POST_LOADING,
+	XGPU_METAL_POST_LOADING_CAPTION,
+	XGPU_METAL_POST_LOADING_PICTURE,
 	XGPU_METAL_POST_FUNCTION_COUNT
 };
 

@@ -28,6 +28,15 @@ static void loading_capture(const struct loading_presentation_frame *frame, stru
 		host_loading_capture_write(frame, pixels, description->width, description->height, 0,
 			description->format == XGPU_VULKAN_FORMAT_BGRA8);
 	free(pixels);
+	/* (HALO_LOADING_GPU_CHECK: the processor's sharp frame of the same
+	frame beside it, -cpu, for the GPU's to be compared with) */
+	{
+		const uint8_t *cpu;
+		uint32_t width, height;
+
+		if (xgpu_vulkan_loading_check(&cpu, &width, &height))
+			host_loading_capture_write_named(frame, "-cpu", cpu, width, height, 0, 0);
+	}
 }
 
 int xgpu_vulkan_loading_owned(void *context)

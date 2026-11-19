@@ -97,6 +97,8 @@ static struct
 	struct xgpu_vulkan_image *encoded;
 	/* display.panini's pipelines could not be made (logged once) */
 	int panini_failed;
+	/* the loading screen's sharp frame's pipelines (made at the start) */
+	VkPipeline loading[3];
 } post;
 
 /* ---------- images */
@@ -834,4 +836,94 @@ struct xgpu_vulkan_image *xgpu_vulkan_post_encode(struct xgpu_vulkan_image *imag
 	xgpu_vulkan_set_target_views(post.encoded, NULL, 0, 1);
 	xgpu_vulkan_draw(&draw);
 	return post.encoded;
+}
+
+/* ---------- the loading screen's sharp frame (loading_art.h's "drawn by the GPU")
+
+Its programs draw into BGRA8 images (the loading image, and the frame under
+a caption), the picture's into the still layers' RGBA8 one. Made at the
+start, as the loading screen presents while a map is prepared and may not
+ask for a pipeline. */
+
+static const uint8_t LOADING_FORMATS[3] = { XGPU_VULKAN_FORMAT_BGRA8, XGPU_VULKAN_FORMAT_BGRA8, XGPU_VULKAN_FORMAT_RGBA8 };
+
+static void loading_description(int index, struct xgpu_vulkan_pipeline_description *description)
+{
+	memset(description, 0, sizeof(*description));
+	description->vertex_shader = post.vertex;
+	description->pixel_shader = post.pixel[XGPU_VULKAN_POST_LOADING + index];
+	description->primitive_class = XGPU_VULKAN_CLASS_TRIANGLES;
+	description->color_mask = 15;
+	description->color_format = LOADING_FORMATS[index];
+	description->samples = 1;
+}
+
+int xgpu_vulkan_post_loading_prepare(void)
+{
+	struct xgpu_vulkan_pipeline_description description;
+	int index;
+
+	if (post.loading[0] && post.loading[1] && post.loading[2])
+		return 1;
+	for (index = 0; index < 3; index++)
+	{
+		if (!shaders_make(XGPU_VULKAN_POST_LOADING + index) || !sampler_make())
+			break;
+		loading_description(index, &description);
+		post.loading[index] = xgpu_vulkan_pipeline(&description);
+		if (!post.loading[index])
+			break;
+	}
+	if (index < 3)
+	{
+		host_logf(HOST_LOG_WARN, "vulkan: the loading screen's sharp frame's pipelines cannot be made: "
+			"the processor draws it");
+		return 0;
+	}
+	return 1;
+}
+
+void xgpu_vulkan_post_loading(int program, struct xgpu_vulkan_image *into, const int32_t rectangle[4],
+	struct xgpu_vulkan_image *const images[4], const float uniforms[5][4])
+{
+	struct xgpu_vulkan_pipeline_description description;
+	struct xgpu_vulkan_post_uniforms *block;
+	struct xgpu_vulkan_dynamic_state dynamic;
+	struct xgpu_vulkan_draw draw;
+	int stage, index = program - XGPU_VULKAN_POST_LOADING;
+
+	if (index < 0 || index > 2 || !post.loading[index])
+		return;
+	memset(&draw, 0, sizeof(draw));
+	loading_description(index, &description);
+	draw.pipeline = xgpu_vulkan_pipeline(&description);
+	if (!draw.pipeline)
+		return;
+	for (stage = 0; stage < 4; stage++)
+	{
+		draw.textures[stage].image = images[stage];
+		draw.textures[stage].kind = XGPU_VULKAN_IMAGE_2D;
+		draw.textures[stage].sampler = post.sampler;
+	}
+	block = xgpu_vulkan_upload(UNIFORMS_RANGE, 256, &draw.uniforms);
+	if (!block)
+		return;
+	memset(block, 0, sizeof(*block));
+	memcpy(block->metrics, uniforms[0], sizeof(block->metrics));
+	memcpy(block->bounds, uniforms[1], sizeof(block->bounds));
+	memcpy(block->hdr, uniforms[2], sizeof(block->hdr));
+	memcpy(block->window, uniforms[3], sizeof(block->window));
+	memcpy(block->panini, uniforms[4], sizeof(block->panini));
+	draw.constants = draw.uniforms;
+	memset(&dynamic, 0, sizeof(dynamic));
+	dynamic.viewport[0] = dynamic.scissor[0] = rectangle[0];
+	dynamic.viewport[1] = dynamic.scissor[1] = rectangle[1];
+	dynamic.viewport[2] = dynamic.scissor[2] = rectangle[2] - rectangle[0];
+	dynamic.viewport[3] = dynamic.scissor[3] = rectangle[3] - rectangle[1];
+	dynamic.depth_range[1] = 1.0f;
+	draw.dynamic = &dynamic;
+	draw.topology = XGPU_VULKAN_TOPOLOGY_TRIANGLES;
+	draw.count = 3;
+	xgpu_vulkan_set_target_views(into, NULL, 0, 1);
+	xgpu_vulkan_draw(&draw);
 }
