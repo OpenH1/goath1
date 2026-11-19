@@ -3455,7 +3455,7 @@ int main(int argc, char **argv)
 
 		for (frame = 0; frame < CHUNK * 2; frame++)
 			output[frame] = 0.5f;
-		gain = sound_fade(output, CHUNK, 2, gain, FALSE);
+		gain = sound_fade(output, CHUNK, 2, gain, 0.0f);
 		CHECK(output[0] < 0.5f && output[0] > 0.49f, "the fade's first frame: %f", output[0]);
 		CHECK(output[2 * (SOUND_FADE_FRAMES / 2)] > 0.2f && output[2 * (SOUND_FADE_FRAMES / 2)] < 0.3f,
 			"half way: %f", output[2 * (SOUND_FADE_FRAMES / 2)]);
@@ -3464,17 +3464,17 @@ int main(int argc, char **argv)
 		CHECK(gain == 0.0f, "the gain off: %f", gain);
 		for (frame = 0; frame < CHUNK * 2; frame++)
 			output[frame] = 0.5f;
-		gain = sound_fade(output, CHUNK, 2, gain, FALSE);
+		gain = sound_fade(output, CHUNK, 2, gain, 0.0f);
 		for (frame = 0; frame < CHUNK * 2; frame++)
 			CHECK(output[frame] == 0.0f, "off, sample %lu: %f", frame, output[frame]);
 		for (frame = 0; frame < CHUNK * 2; frame++)
 			output[frame] = 0.5f;
-		gain = sound_fade(output, CHUNK, 2, gain, TRUE);
+		gain = sound_fade(output, CHUNK, 2, gain, 1.0f);
 		CHECK(output[0] > 0.0f && output[0] < 0.01f, "fading in: %f", output[0]);
 		CHECK(output[2 * (CHUNK - 1)] == 0.5f && gain == 1.0f, "faded in: %f, gain %f", output[2 * (CHUNK - 1)], gain);
 		for (frame = 0; frame < CHUNK * 2; frame++)
 			output[frame] = 0.5f;
-		gain = sound_fade(output, CHUNK, 2, gain, TRUE);
+		gain = sound_fade(output, CHUNK, 2, gain, 1.0f);
 		for (frame = 0; frame < CHUNK * 2; frame++)
 			CHECK(output[frame] == 0.5f, "on, sample %lu: %f", frame, output[frame]);
 		/* (the device: turned on with none open, once a change; not when
@@ -3485,6 +3485,56 @@ int main(int argc, char **argv)
 		CHECK(!sound_device_wanted(FALSE, FALSE, TRUE, FALSE, 4, 5), "before the start");
 		CHECK(!sound_device_wanted(TRUE, FALSE, TRUE, TRUE, 4, 5), "one open already");
 		CHECK(!sound_device_wanted(TRUE, FALSE, FALSE, FALSE, 4, 5), "a device for no sound");
+		return 0;
+	}
+	/* audio.background_volume (#1212): the window in the background (its
+	focus lost) fades the output to the setting's gain, without a step, and
+	holds it there; back in front (the focus regained) it fades back to 1 and
+	is then left as mixed. Not in the background, the setting changes
+	nothing; with the sound off it is silent wherever the window is */
+	CASE("background")
+	{
+		static float output[CHUNK * 2];
+		unsigned long frame;
+		float gain = 1.0f, target, previous;
+
+		CHECK(sound_target(TRUE, FALSE, 0.25f) == 1.0f, "in front: %f", sound_target(TRUE, FALSE, 0.25f));
+		CHECK(sound_target(FALSE, TRUE, 0.25f) == 0.0f, "off in the background: %f", sound_target(FALSE, TRUE, 0.25f));
+		CHECK(sound_target(TRUE, TRUE, 1.5f) == 1.0f && sound_target(TRUE, TRUE, -1.0f) == 0.0f, "out of 0 to 1");
+		/* (the focus lost) */
+		target = sound_target(TRUE, TRUE, 0.25f);
+		CHECK(target == 0.25f, "in the background: %f", target);
+		for (frame = 0; frame < CHUNK * 2; frame++)
+			output[frame] = 0.5f;
+		gain = sound_fade(output, CHUNK, 2, gain, target);
+		CHECK(output[0] < 0.5f && output[0] > 0.49f, "the fade's first frame: %f", output[0]);
+		previous = 0.5f;
+		for (frame = 0; frame < CHUNK; frame++)
+		{
+			CHECK(output[frame * 2] <= previous && previous - output[frame * 2] < 0.002f,
+				"frame %lu: %f after %f, a step", frame, output[frame * 2], previous);
+			previous = output[frame * 2];
+		}
+		CHECK(gain == 0.25f && output[2 * (CHUNK - 1)] == 0.125f, "faded down: %f, gain %f",
+			output[2 * (CHUNK - 1)], gain);
+		for (frame = 0; frame < CHUNK * 2; frame++)
+			output[frame] = 0.5f;
+		gain = sound_fade(output, CHUNK, 2, gain, target);
+		for (frame = 0; frame < CHUNK * 2; frame++)
+			CHECK(output[frame] == 0.125f, "held, sample %lu: %f", frame, output[frame]);
+		/* (the focus regained) */
+		target = sound_target(TRUE, FALSE, 0.25f);
+		for (frame = 0; frame < CHUNK * 2; frame++)
+			output[frame] = 0.5f;
+		gain = sound_fade(output, CHUNK, 2, gain, target);
+		CHECK(output[0] > 0.125f && output[0] < 0.13f, "fading back: %f", output[0]);
+		CHECK(output[2 * (CHUNK - 1)] == 0.5f && gain == 1.0f, "faded back: %f, gain %f",
+			output[2 * (CHUNK - 1)], gain);
+		for (frame = 0; frame < CHUNK * 2; frame++)
+			output[frame] = 0.5f;
+		gain = sound_fade(output, CHUNK, 2, gain, target);
+		for (frame = 0; frame < CHUNK * 2; frame++)
+			CHECK(output[frame] == 0.5f, "in front, sample %lu: %f", frame, output[frame]);
 		return 0;
 	}
 	CASE("master-volume")

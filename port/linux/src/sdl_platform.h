@@ -152,6 +152,10 @@ void platform_frame_rate_apply(void);
 void platform_video_vr_unavailable(void);
 #endif
 void platform_video_swap(void);
+/* whether the window is in the background: shown, without the focus
+(another window in front of it, or minimized); none, or a hidden one, never
+(audio.background_volume: dsound_sdl.c's sound_target) */
+BOOL platform_window_background(void);
 /* the frames' limit's wait woken for a step of the game's clock that falls
 due before the frame's time (main.c's main_frame_step_due: when, 0 for
 none); whether the last wait was, once; and, for a frame woken so (which

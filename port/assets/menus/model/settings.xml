@@ -109,19 +109,13 @@
 			<choice shown="HEADPHONES" value="headphones"/>
 			<choice shown="SPEAKERS" value="speakers"/>
 		</row>
-		<row key="stereo_spread" kind="slider" setting="audio.stereo_spread" label="STEREO SPREAD" crumb="AUDIO › SOUND" least="0" most="1" step="0.05" typed_least="0" typed_most="1">
-			<help>How wide stereo sounds from mods and custom maps are heard: left and right from either side, narrowing with distance. 0 makes each one point. The game's own sounds play as on the Xbox.</help>
-		</row>
 		<row key="reverb" kind="choice" setting="audio.reverb" label="REVERB" crumb="AUDIO › SOUND">
 			<help>Echoes sounds as the place you are in would, and muffles those behind walls, as the Xbox did. It costs a little of the processor.</help>
 			<choice shown="ON" value="true"/>
 			<choice shown="OFF" value="false"/>
 		</row>
-		<row key="resampler" kind="choice" setting="audio.resampler" label="RESAMPLER" crumb="AUDIO › SOUND" search_choices="xbox clean">
-			<help>How sounds are converted to your speakers' rate. Xbox sounds as the Xbox did; Clean is clearer; Classic is brighter but harsher. Xbox and Classic cost a little less.</help>
-			<choice shown="XBOX" value="xbox"/>
-			<choice shown="CLEAN" value="sinc"/>
-			<choice shown="CLASSIC" value="linear"/>
+		<row key="advanced_audio" kind="link" label="ADVANCED AUDIO ›" crumb="AUDIO › SOUND" open="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/advanced_audio_screen">
+			<help>The resampler, and how wide stereo sounds from mods and custom maps are heard.</help>
 		</row>
 		<row key="enabled" kind="choice" setting="audio.enabled" label="SOUND" crumb="AUDIO › SOUND">
 			<help>Turns all sound off or on, at once.</help>
@@ -131,7 +125,7 @@
 		<row key="voice_chat_settings" kind="link" label="MULTIPLAYER ›" crumb="AUDIO › SOUND" open="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/voice_chat/voice_chat_screen">
 			<help>Voice chat in network games (your microphone and the other players' voices' volume) and hit sounds.</help>
 		</row>
-		<section key="section_8" title="VOLUME"/>
+		<section key="section_7" title="VOLUME"/>
 		<row key="volume" kind="slider" setting="audio.volume" label="MASTER VOLUME" crumb="AUDIO › VOLUME" least="0" most="110" step="1" typed_least="0" typed_most="110" whole="true" curve="volume">
 			<help>The volume of everything the game plays. 100% is the Xbox's level; up to 200% is louder.</help>
 		</row>
@@ -144,6 +138,9 @@
 		<row key="effects_volume" kind="slider" setting="audio.effects_volume" label="EFFECTS VOLUME" crumb="AUDIO › VOLUME" least="0" most="100" step="1" typed_least="0" typed_most="100" whole="true" curve="volume">
 			<help>Every other sound: weapons, vehicles and the world.</help>
 		</row>
+		<row key="background_volume" kind="slider" setting="audio.background_volume" label="BACKGROUND VOLUME" crumb="AUDIO › VOLUME" when="desktop" least="0" most="100" step="1" typed_least="0" typed_most="100" whole="true" curve="volume">
+			<help>The volume while the game's window is in the background or minimized. 0% mutes it; 100% keeps it as it is.</help>
+		</row>
 		<row key="listening_mode" kind="choice" setting="audio.listening_mode" label="LISTENING MODE" crumb="AUDIO › VOLUME" search_choices="night">
 			<help>Default plays the sound as it is. Night evens it out for playing quietly: speech and quiet sounds come up, explosions and gunfire come down.</help>
 			<choice shown="DEFAULT" value="default"/>
@@ -152,6 +149,21 @@
 		<button key="button_defaults" kind="defaults" run="port settings defaults" help="Puts this tab's settings back to their defaults. Nothing changes until OK."/>
 		<button key="button_ok" kind="ok" run="port settings ok" help="Keeps your changes, on every tab, and applies them."/>
 		<button key="button_cancel" kind="cancel" run="port settings cancel" help="Leaves Settings without keeping any change."/>
+	</screen>
+	<screen name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/advanced_audio_screen" kind="settings" layout="page" geometry="tall" title="ADVANCED AUDIO">
+		<section key="section_0" title="ADVANCED AUDIO"/>
+		<row key="stereo_spread" kind="slider" setting="audio.stereo_spread" label="STEREO SPREAD" crumb="AUDIO › ADVANCED AUDIO" least="0" most="1" step="0.05" typed_least="0" typed_most="1">
+			<help>How wide stereo sounds from mods and custom maps are heard: left and right from either side, narrowing with distance. 0 makes each one point. The game's own sounds play as on the Xbox.</help>
+		</row>
+		<row key="resampler" kind="choice" setting="audio.resampler" label="RESAMPLER" crumb="AUDIO › ADVANCED AUDIO" search_choices="xbox clean">
+			<help>How sounds are converted to your speakers' rate. Xbox sounds as the Xbox did; Clean is clearer; Classic is brighter but harsher. Xbox and Classic cost a little less.</help>
+			<choice shown="XBOX" value="xbox"/>
+			<choice shown="CLEAN" value="sinc"/>
+			<choice shown="CLASSIC" value="linear"/>
+		</row>
+		<button key="button_defaults" kind="defaults" run="port settings defaults" help="Puts this page's settings back to their defaults."/>
+		<button key="button_ok" kind="ok" run="port settings keep" help="Saves your changes, on this page and every tab, and applies them."/>
+		<button key="button_cancel" kind="cancel" run="port settings page cancel" help="Goes back without these changes."/>
 	</screen>
 	<screen name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/voice_chat/voice_chat_screen" kind="settings" layout="page" geometry="tall" title="MULTIPLAYER AUDIO">
 		<section key="section_0" title="VOICE CHAT"/>

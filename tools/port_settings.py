@@ -815,6 +815,9 @@ STREAMING = ("interface_settings/streaming", "streaming_screen")
 GAMEPLAY = ("network_setup/gameplay", "gameplay_screen")
 # (Audio's voice chat, a page of its own)
 VOICE_CHAT = ("audio_settings/voice_chat", "voice_chat_screen")
+# (Audio's stereo spread and resampler, a page of their own once Audio had no
+# room for BACKGROUND VOLUME)
+ADVANCED_AUDIO = ("audio_settings/advanced_audio", "advanced_audio_screen")
 # (Online's Discord account: port/linux/src/player_link.c)
 DISCORD_ACCOUNT = ("network_setup/discord_account", "discord_account_screen")
 # (the server browsers' Filters, which their FILTERS opens too: menu_functions.c's
@@ -978,16 +981,11 @@ PAGES = {
              "Where the sounds around you come from. Auto and Headphones place each ahead, behind, above or below "
              "you, as the Xbox's 3D audio did on speakers and headphones alike; Speakers pans them left and right.",
              None),
-            # (port/linux/src/dsound_sdl.c's stereo spread)
-            ("STEREO SPREAD", "audio.stereo_spread", STEREO_SPREADS,
-             "How wide stereo sounds from mods and custom maps are heard: left and right from either side, "
-             "narrowing with distance. 0 makes each one point. The game's own sounds play as on the Xbox.", None),
             ("REVERB", "audio.reverb", ON_OFF,
              "Echoes sounds as the place you are in would, and muffles those behind walls, as the Xbox did. It "
              "costs a little of the processor.", None),
-            ("RESAMPLER", "audio.resampler", [("XBOX", "xbox"), ("CLEAN", "sinc"), ("CLASSIC", "linear")],
-             "How sounds are converted to your speakers' rate. Xbox sounds as the Xbox did; Clean is clearer; "
-             "Classic is brighter but harsher. Xbox and Classic cost a little less.", None),
+            ("ADVANCED AUDIO ›", None, _page_screen(*ADVANCED_AUDIO),
+             "The resampler, and how wide stereo sounds from mods and custom maps are heard.", None),
             ("SOUND", "audio.enabled", ON_OFF,
              "Turns all sound off or on, at once.", None),
             # (voice chat: this machine's own, port/linux/game/network_voice.c;
@@ -1003,10 +1001,27 @@ PAGES = {
              "The characters' speech: Cortana, the Marines and the cutscenes' lines.", None),
             ("EFFECTS VOLUME", "audio.effects_volume", VOLUMES,
              "Every other sound: weapons, vehicles and the world.", None),
+            # (port/linux/src/dsound_sdl.c's sound_target)
+            ("BACKGROUND VOLUME", "audio.background_volume", VOLUMES,
+             "The volume while the game's window is in the background or minimized. 0% mutes it; 100% keeps it "
+             "as it is.", "desktop"),
             # (port/linux/src/dsound_sdl.c's night_compress)
             ("LISTENING MODE", "audio.listening_mode", [("DEFAULT", "default"), ("NIGHT", "night")],
              "Default plays the sound as it is. Night evens it out for playing quietly: speech and quiet sounds "
              "come up, explosions and gunfire come down.", None),
+        ],
+    },
+    ADVANCED_AUDIO[0]: {
+        "screen": ADVANCED_AUDIO[1], "title": "ADVANCED AUDIO",
+        "rows": [
+            (SECTION, "ADVANCED AUDIO"),
+            # (port/linux/src/dsound_sdl.c's stereo spread)
+            ("STEREO SPREAD", "audio.stereo_spread", STEREO_SPREADS,
+             "How wide stereo sounds from mods and custom maps are heard: left and right from either side, "
+             "narrowing with distance. 0 makes each one point. The game's own sounds play as on the Xbox.", None),
+            ("RESAMPLER", "audio.resampler", [("XBOX", "xbox"), ("CLEAN", "sinc"), ("CLASSIC", "linear")],
+             "How sounds are converted to your speakers' rate. Xbox sounds as the Xbox did; Clean is clearer; "
+             "Classic is brighter but harsher. Xbox and Classic cost a little less.", None),
         ],
     },
     VOICE_CHAT[0]: {
