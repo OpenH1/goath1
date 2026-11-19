@@ -31,7 +31,7 @@ checked as the file is read against the names the game gave
 #define MENU_SCREEN_MAXIMUM_HINTS 4
 #define MENU_SCREEN_MAXIMUM_STRINGS 640
 #define MENU_SCREEN_MAXIMUM_TEXT 256
-#define MENU_SCREEN_MAXIMUM_SCREENS 16
+#define MENU_SCREEN_MAXIMUM_SCREENS 32
 /* a screen's <panel>s (each its if: the first whose if has a value shown),
 and its <spartan>s (one of its own, one in each panel) */
 #define MENU_SCREEN_MAXIMUM_PANELS 4
