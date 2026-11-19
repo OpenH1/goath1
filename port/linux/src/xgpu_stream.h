@@ -38,7 +38,10 @@ port/linux/README.md.
 #include <stdint.h>
 
 #define XGPU_STREAM_MAGIC 0x53504758u /* "XGPS" */
-#define XGPU_STREAM_VERSION 23
+/* 24: INITIALIZE's answer (xgpu_stream_capabilities) 128 bytes, its
+temporal_metalfx before device: a guest and a host of 23 and 24 would read
+each other's device and temporal_metalfx out of place */
+#define XGPU_STREAM_VERSION 24
 #define XGPU_STREAM_LOADING_ART_BYTES (640u * 480u * 4u)
 
 /* ---------- the ring

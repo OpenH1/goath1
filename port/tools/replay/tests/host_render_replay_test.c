@@ -379,9 +379,10 @@ static void mark_owner_add(uint32_t kind, uint32_t id, uint32_t label, uint32_t 
 
 /* a recording of frames of rectangles: with marks (the first draw a
 world object's, the second a menu widget's, the third of no owner's: the
-owner before it ends at the view), or as a recording of version 1 (the
-stream's 21, before the marks) */
-static int make(const char *path, uint32_t frames, int with_marks, int old)
+owner before it ends at the view), or as a recording of an older version
+(old: 1, the stream's 21, before the marks); stream, when not 0, the
+stream's version it claims (one that is not its version's) */
+static int make(const char *path, uint32_t frames, int with_marks, uint32_t old, uint32_t stream)
 {
 	struct host_render_record_file file;
 	struct host_render_record_block block;
@@ -390,13 +391,13 @@ static int make(const char *path, uint32_t frames, int with_marks, int old)
 
 	memset(&file, 0, sizeof(file));
 	file.magic = HOST_RENDER_RECORD_MAGIC;
-	file.version = old ? 1 : HOST_RENDER_RECORD_VERSION;
+	file.version = old ? old : HOST_RENDER_RECORD_VERSION;
 	file.header_size = sizeof(file);
 	file.page_size = (uint32_t)sysconf(_SC_PAGESIZE);
 	file.block_size = HOST_RENDER_RECORD_BLOCK;
 	file.ring_address = RING_ADDRESS;
 	file.ring.magic = XGPU_STREAM_MAGIC;
-	file.ring.version = old ? XGPU_STREAM_VERSION - (HOST_RENDER_RECORD_VERSION - 1) : XGPU_STREAM_VERSION;
+	file.ring.version = stream ? stream : XGPU_STREAM_VERSION - (HOST_RENDER_RECORD_VERSION - file.version);
 	file.ring.header_size = sizeof(file.ring);
 	file.ring.buffer = RING_BUFFER;
 	file.ring.size = RING_SIZE;
@@ -671,8 +672,16 @@ int main(int argc, char *argv[])
 	if (argc == 5 && !strcmp(argv[1], "bench"))
 		return bench(argv[2], (uint32_t)atoi(argv[3]), (uint32_t)atoi(argv[4]));
 	if (argc >= 4 && !strcmp(argv[1], "make"))
-		return make(argv[2], (uint32_t)atoi(argv[3]), argc > 4 && !strcmp(argv[4], "marks"),
-			argc > 4 && !strcmp(argv[4], "old"));
+	{
+		/* (the fourth: marks; old, version 1; version=N, or version=N,stream=M) */
+		unsigned old = 0, stream = 0;
+
+		if (argc > 4 && !strcmp(argv[4], "old"))
+			old = 1;
+		else if (argc > 4 && sscanf(argv[4], "version=%u,stream=%u", &old, &stream) < 1)
+			old = stream = 0;
+		return make(argv[2], (uint32_t)atoi(argv[3]), argc > 4 && !strcmp(argv[4], "marks"), old, stream);
+	}
 	if (argc == 3 && !strcmp(argv[1], "unit"))
 	{
 		lz4_test();

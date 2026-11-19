@@ -352,6 +352,24 @@ def test_play(binary, tmp_path):
     assert result.stdout.count("loop ") == 2
 
 
+def test_previous_version(binary, tmp_path):
+    """a recording of the version before (3, the stream's 23: the same records) played as it was; one whose
+    stream's version is not its own (3 with the stream's 24) refused"""
+    header = (ROOT / "port/android/host/host_render_record.h").read_text()
+    version = int(header.split("#define HOST_RENDER_RECORD_VERSION ")[1].split()[0])
+    stream = int((ROOT / "port/linux/src/xgpu_stream.h").read_text().split("#define XGPU_STREAM_VERSION ")[1].split()[0])
+    previous = tmp_path / "previous.hrpl"
+    subprocess.run([str(binary), "make", str(previous), str(FRAMES), f"version={version - 1}"], check=True)
+    result = subprocess.run([str(binary), str(previous), "--quiet"], capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stderr
+    assert "0 records out of place" in result.stdout, result.stdout
+    mismatched = tmp_path / "mismatched.hrpl"
+    subprocess.run([str(binary), "make", str(mismatched), str(FRAMES), f"version={version - 1},stream={stream}"],
+                   check=True)
+    result = subprocess.run([str(binary), str(mismatched), "--quiet"], capture_output=True, text=True, timeout=120)
+    assert result.returncode != 0 and "is not a recording of this version" in result.stderr, result
+
+
 def test_inspect_shader(tmp_path):
     """the Vulkan backend's ID buffer pass (tools/vulkan_inspect_shader.py): its SPIR-V valid for Vulkan 1.1
     where spirv-val is installed, and what its GLSL makes where glslangValidator is the one it was made with"""
