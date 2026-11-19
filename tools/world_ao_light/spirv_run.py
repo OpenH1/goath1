@@ -328,6 +328,10 @@ def run(module, inputs, sample):
             values[result] = values[rest[0]]
         elif opcode == 95:  # OpImageFetch: a texel by its integer place
             values[result] = sample(values[rest[0]][1], v[1])
+        elif opcode == 103:  # OpImageQuerySizeLod: sample(name, None) is the image's size
+            values[result] = sample(values[rest[0]][1], None)
+        elif opcode in (207, 208):  # OpDPdx, OpDPdy: one invocation, no neighbors
+            values[result] = _map(lambda x: 0.0, v[0])
         else:
             raise NotImplementedError(f"opcode {opcode}")
 
