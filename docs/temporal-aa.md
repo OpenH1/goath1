@@ -67,11 +67,12 @@ renderer has it: Settings > Video > Frame Rate & Sync > Upscaler (`xgpu_backend_
   mapped, largest channel, 0.9 past 0.2). The first-person weapon and the objects write their own motion.
 - **Preparation.** A map prepared with a technique on also makes the objects' pipelines' motion variants. The
   enumeration's models are drawn as the window's objects are, and FSR's compute pipelines are made then too.
-- **Sharpening.** `display.temporal_aa_sharpness` (0 to 1, default 0.8; Settings > Video > Frame Rate & Sync > FSR
+- **Sharpening.** `display.temporal_aa_sharpness` (0 to 1, default 0.8; Settings > Video > Frame Rate & Sync >
   Sharpness) is the SDK's sharpness: FSR's own RCAS pass at 2 - 2 × sharpness stops below its strongest
   (`FsrRcasCon`). As in the SDK it is part of the upscale, so it runs before the tone map, on `display.hdr`'s linear
   light too: the accumulation's sharpening build leaves the output to RCAS, which reads this frame's upscaled colour.
-  0 dispatches neither (the frame as without it). DLSS and MetalFX ignore it.
+  0 dispatches neither (the frame as without it). MetalFX's output goes through the same RCAS, ported to MSL
+  (`xgpu_metal_temporal.m`), in place of its copy into the back buffer; 0 is the plain copy. DLSS ignores it.
 - **Not done.** Android's render scale is its swapchain's (FSR there antialiases at the
   swapchain's size).
 

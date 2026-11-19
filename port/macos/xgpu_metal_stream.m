@@ -1871,6 +1871,7 @@ static void stream_motion(void *context, const struct xgpu_stream_motion *record
 		frame.jitter[1] = pass.jitter[1];
 		frame.reset = pass.reset != 0 || motion.reset;
 		frame.window = (int)pass.window;
+		frame.sharpness = pass.sharpness;
 		destination->written++;
 		(void)xgpu_metal_metalfx_upscale(&frame);
 		stream_state_restore();

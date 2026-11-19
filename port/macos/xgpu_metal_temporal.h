@@ -54,15 +54,21 @@ void xgpu_metal_metalfx_opaque(int window, uint32_t color);
 the depth target, its motion (RGBA16F, xgpu_metal_motion_resolve's) over
 source (the rectangle in their pixels) into destination's rectangle; the
 jitter in the source's pixels (x right, y down); its history begun again
-(reset) */
+(reset); display.temporal_aa_sharpness (0 to 1, 0 none) */
 struct xgpu_metal_metalfx_frame
 {
 	uint32_t color, depth, motion, destination;
 	int32_t source[4], destination_rectangle[4];
 	float jitter[2];
 	int reset, window;
+	float sharpness;
 };
 /* nonzero if it was drawn; the backend's state is the passes' afterwards */
 int xgpu_metal_metalfx_upscale(const struct xgpu_metal_metalfx_frame *frame);
+/* MetalFX's output (a target of the rectangle's size) into the
+destination's rectangle: copied as it is at sharpness 0, else sharpened
+by AMD FSR's RCAS at that sharpness (0 to 1, as FSR's); the backend's state
+is the passes' afterwards */
+void xgpu_metal_metalfx_place(uint32_t output, uint32_t destination, const int32_t rectangle[4], float sharpness);
 
 #endif

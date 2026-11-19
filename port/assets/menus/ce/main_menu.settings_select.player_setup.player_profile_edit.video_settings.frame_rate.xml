@@ -271,7 +271,7 @@
 		<string text="UPSCALER"/>
 		<string text="UPSCALER"/>
 		<string text="UPSCALER"/>
-		<string text="FSR SHARPNESS"/>
+		<string text="SHARPNESS"/>
 		<string text="RAY TRACING"/>
 		<string text="RAY TRACED SHADOWS"/>
 		<string text="BENCHMARK"/>
@@ -290,7 +290,7 @@
 		<string text="AMD FSR builds each frame from the frames before it: smooth edges, and a sharp picture at a Render Resolution below 100% for more frames. While it is on, it replaces Anti-Aliasing."/>
 		<string text="AMD FSR and NVIDIA DLSS build each frame from the frames before it: smooth edges, and a sharp picture at a Render Resolution below 100% for more frames (DLSS at 100% is DLAA). While one is on, it replaces Anti-Aliasing."/>
 		<string text="Apple MetalFX builds each frame from the frames before it: smooth edges, and a sharp picture at a Render Resolution below 100% for more frames. While it is on, it replaces Anti-Aliasing."/>
-		<string text="How much AMD FSR sharpens its picture, which offsets the softness of a Render Resolution below 100%. Higher is crisper; too high outlines edges. Off adds no sharpening."/>
+		<string text="How much AMD FSR or Apple MetalFX sharpens its picture, which offsets the softness of a Render Resolution below 100%. Higher is crisper; too high outlines edges. Off adds no sharpening."/>
 		<string text=""/>
 		<string text="The shadows of characters and vehicles traced by the graphics card from their own shapes, soft at the edges, in the same place and darkness as the game's, which frees the processor's shadow work. Off draws them as the Xbox did."/>
 		<string text=""/>

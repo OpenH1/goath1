@@ -16,7 +16,11 @@ motion, xgpu_vulkan_fsr.c):
   is MetalFX's own sense), jitter and reset into an output texture of the
   destination window's size, copied into the destination (the back buffer
   at the display's scale, where the tone map, the Panini pass and the HUD
-  follow). The exposure is fixed at 1 (a 1x1 R16Float of 1), as FSR's. Each
+  follow), or sharpened into it by AMD FSR's RCAS where
+  display.temporal_aa_sharpness is above 0 (xgpu_metal_pipeline.m's
+  xgpu_temporal_rcas, ported to MSL from the SDK's FsrRcasF as the Vulkan
+  FSR runs it: the same constant, before the tone map; 0 the plain copy).
+  The exposure is fixed at 1 (a 1x1 R16Float of 1), as FSR's. Each
   window (split screen's four) has a scaler and history of its own, made
   again as its sizes or formats change: off the render thread (a scaler
   takes 100 to 300 ms to make on an M1 Max, over a second the first time
@@ -56,6 +60,7 @@ each window's first upscale's time on the render thread.
 #include "xgpu_metal_pipeline.h"
 #include "xgpu_metal_temporal.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -69,13 +74,14 @@ enum
 	FUNCTION_VIEW,
 	FUNCTION_REACTIVE,
 	FUNCTION_STRETCH,
+	FUNCTION_RCAS,
 	FUNCTIONS
 };
 
 static const char *const function_names[FUNCTIONS] =
 {
 	"xgpu_temporal_vertex", "xgpu_temporal_resolve", "xgpu_temporal_view", "xgpu_temporal_reactive",
-	"xgpu_temporal_stretch",
+	"xgpu_temporal_stretch", "xgpu_temporal_rcas",
 };
 
 #ifdef XGPU_METAL_METALFX
@@ -99,7 +105,9 @@ struct metalfx_window
 	struct metalfx_fit fit, asked;
 	BOOL making, made_done, fresh;
 	id<MTLFXTemporalScaler> made;
-	id<MTLTexture> output, inputs[4];
+	/* (the output: the backend's texture, which the RCAS pass reads) */
+	uint32_t output;
+	id<MTLTexture> inputs[4];
 	/* the colour before the transparent draws (the backend's texture: 0
 	none) and whether this frame's is in it; the reactive mask, of the
 	target's size */
@@ -178,7 +186,8 @@ int xgpu_metal_motion_prepare(uint8_t view_format)
 	}
 	if (xgpu_metal_metalfx_supported())
 	{
-		/* (and the stretch, into each of the back buffer's formats) */
+		/* (and the stretch and the RCAS pass, into each of the back
+		buffer's formats) */
 		static const uint8_t formats[] = { XGPU_METAL_FORMAT_BGRA8, XGPU_METAL_FORMAT_RGBA16F, XGPU_METAL_FORMAT_RGBA16 };
 		size_t index;
 
@@ -187,6 +196,8 @@ int xgpu_metal_motion_prepare(uint8_t view_format)
 		for (index = 0; index < sizeof(formats); index++)
 		{
 			pipeline_describe(FUNCTION_STRETCH, formats[index], WRITE_ALL, &pipeline);
+			xgpu_metal_prepare(&pipeline);
+			pipeline_describe(FUNCTION_RCAS, formats[index], WRITE_ALL, &pipeline);
 			xgpu_metal_prepare(&pipeline);
 		}
 	}
@@ -271,8 +282,8 @@ static id<MTLTexture> texture_make(MTLPixelFormat format, NSUInteger width, NSUI
 }
 
 /* the backend's texture of a format and size for a window (made again as
-they change) */
-static uint32_t handle_fit(uint32_t texture, uint8_t format, uint32_t width, uint32_t height)
+they change); written: MetalFX's output (written by its shaders) */
+static uint32_t handle_fit(uint32_t texture, uint8_t format, uint32_t width, uint32_t height, int written)
 {
 	struct xgpu_metal_texture_description description;
 	id<MTLTexture> made = texture ? xgpu_metal_texture(texture) : nil;
@@ -286,7 +297,7 @@ static uint32_t handle_fit(uint32_t texture, uint8_t format, uint32_t width, uin
 	memset(&description, 0, sizeof(description));
 	description.type = XGPU_METAL_TEXTURE_2D;
 	description.format = format;
-	description.usage = XGPU_METAL_USAGE_SAMPLED | XGPU_METAL_USAGE_TARGET;
+	description.usage = XGPU_METAL_USAGE_SAMPLED | XGPU_METAL_USAGE_TARGET | (written ? XGPU_METAL_USAGE_WRITTEN : 0);
 	description.width = (uint16_t)width;
 	description.height = (uint16_t)height;
 	description.depth_or_layers = 1;
@@ -314,7 +325,7 @@ void xgpu_metal_metalfx_opaque(int window, uint32_t color)
 	if (!texture || !xgpu_metal_metalfx_supported())
 		return;
 	entry->opaque = handle_fit(entry->opaque, backend_format(texture.pixelFormat), (uint32_t)texture.width,
-		(uint32_t)texture.height);
+		(uint32_t)texture.height, 0);
 	if (!entry->opaque || xgpu_metal_texture(entry->opaque).pixelFormat != texture.pixelFormat)
 		return;
 	xgpu_metal_texture_copy(color, entry->opaque);
@@ -379,6 +390,7 @@ while it is made (or cannot be) */
 static BOOL scaler_fit(struct metalfx_window *entry, const struct metalfx_fit *fit)
 {
 	id<MTLFXTemporalScaler> made = nil;
+	id<MTLTexture> output;
 	BOOL done;
 	int which;
 
@@ -421,7 +433,16 @@ static BOOL scaler_fit(struct metalfx_window *entry, const struct metalfx_fit *f
 	entry->scaler = made;
 	entry->fit = *fit;
 	entry->fresh = YES;
-	entry->output = texture_make(fit->output, fit->output_width, fit->output_height, made.outputTextureUsage);
+	entry->output = handle_fit(entry->output, backend_format(fit->output), (uint32_t)fit->output_width,
+		(uint32_t)fit->output_height, 1);
+	output = entry->output ? xgpu_metal_texture(entry->output) : nil;
+	if (output && (output.pixelFormat != fit->output || (made.outputTextureUsage & ~output.usage)))
+	{
+		host_logf(HOST_LOG_WARN, "metal: MetalFX's output cannot be a texture of the backend's: the view is stretched");
+		temporal.metalfx_failed = YES;
+		entry->scaler = nil;
+		return NO;
+	}
 	for (which = 0; which < 4; which++)
 		entry->inputs[which] = nil;
 	if (!temporal.exposure)
@@ -436,7 +457,7 @@ static BOOL scaler_fit(struct metalfx_window *entry, const struct metalfx_fit *f
 		temporal.exposure = [xgpu_metal_device() newTextureWithDescriptor:descriptor];
 		[temporal.exposure replaceRegion:MTLRegionMake2D(0, 0, 1, 1) mipmapLevel:0 withBytes:&one bytesPerRow:2];
 	}
-	return entry->output != nil;
+	return output != nil;
 }
 
 /* an input as MetalFX reads it: the texture itself where the window is at
@@ -487,7 +508,8 @@ static int upscale(const struct xgpu_metal_metalfx_frame *frame)
 	if (use_reactive && entry->opaque && xgpu_metal_texture(entry->opaque).width == color.width &&
 		xgpu_metal_texture(entry->opaque).height == color.height && functions_make())
 	{
-		entry->reactive = handle_fit(entry->reactive, XGPU_METAL_FORMAT_R8, (uint32_t)color.width, (uint32_t)color.height);
+		entry->reactive = handle_fit(entry->reactive, XGPU_METAL_FORMAT_R8, (uint32_t)color.width, (uint32_t)color.height,
+			0);
 		if (entry->reactive)
 		{
 			pass_draw(FUNCTION_REACTIVE, entry->reactive, XGPU_METAL_FORMAT_R8, WRITE_ALL, source, entry->opaque,
@@ -533,7 +555,7 @@ static int upscale(const struct xgpu_metal_metalfx_frame *frame)
 	xgpu_metal_texture_encoded(frame->motion, 0);
 	if (reactive)
 		xgpu_metal_texture_encoded(entry->reactive, 0);
-	xgpu_metal_texture_encoded(frame->destination, 1);
+	xgpu_metal_texture_encoded(entry->output, 1);
 	inputs[0] = input_place(entry, 0, color, source, &blit, buffer);
 	inputs[1] = input_place(entry, 1, depth, source, &blit, buffer);
 	inputs[2] = input_place(entry, 2, motion, source, &blit, buffer);
@@ -550,7 +572,7 @@ static int upscale(const struct xgpu_metal_metalfx_frame *frame)
 	entry->scaler.depthTexture = inputs[1];
 	entry->scaler.motionTexture = inputs[2];
 	entry->scaler.reactiveMaskTexture = inputs[3];
-	entry->scaler.outputTexture = entry->output;
+	entry->scaler.outputTexture = xgpu_metal_texture(entry->output);
 	entry->scaler.exposureTexture = temporal.exposure;
 	entry->scaler.preExposure = 1.0f;
 	entry->scaler.inputContentWidth = input_width;
@@ -591,16 +613,53 @@ static int upscale(const struct xgpu_metal_metalfx_frame *frame)
 		xgpu_metal_fence();
 		buffer = xgpu_metal_outside_passes();
 	}
-	/* (the output into the destination's window) */
-	blit = [buffer blitCommandEncoder];
-	[blit copyFromTexture:entry->output sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0)
-		sourceSize:MTLSizeMake(output_width, output_height, 1) toTexture:destination destinationSlice:0
-		destinationLevel:0 destinationOrigin:MTLOriginMake((NSUInteger)place[0], (NSUInteger)place[1], 0)];
-	[blit endEncoding];
 	xgpu_metal_pass_kind(kind);
+	/* (the output into the destination's window) */
+	xgpu_metal_metalfx_place(entry->output, frame->destination, place, frame->sharpness);
 	return 1;
 }
 #endif
+
+void xgpu_metal_metalfx_place(uint32_t output, uint32_t destination, const int32_t rectangle[4], float sharpness)
+{
+#ifdef XGPU_METAL_METALFX
+	id<MTLTexture> from = xgpu_metal_texture(output), into = xgpu_metal_texture(destination);
+	id<MTLBlitCommandEncoder> blit;
+	uint32_t kind;
+
+	if (!from || !into || rectangle[2] <= rectangle[0] || rectangle[3] <= rectangle[1])
+		return;
+	/* (RCAS: FsrRcasCon's constant, fsr3upscalerDispatch's sharpness's
+	2 - 2 * sharpness stops below its strongest, as xgpu_vulkan_fsr.c's) */
+	if (sharpness > 0.0f)
+	{
+		struct xgpu_metal_motion_uniforms uniforms;
+
+		memset(&uniforms, 0, sizeof(uniforms));
+		uniforms.metrics[0] = exp2f(-(2.0f - 2.0f * (sharpness < 1.0f ? sharpness : 1.0f)));
+		uniforms.window[0] = (float)rectangle[0];
+		uniforms.window[1] = (float)rectangle[1];
+		pass_draw(FUNCTION_RCAS, destination, backend_format(into.pixelFormat), WRITE_ALL, rectangle, output, 0,
+			&uniforms);
+		return;
+	}
+	kind = xgpu_metal_pass_kind(XGPU_METAL_PASS_TEMPORAL);
+	xgpu_metal_texture_encoded(output, 0);
+	xgpu_metal_texture_encoded(destination, 1);
+	blit = [xgpu_metal_outside_passes() blitCommandEncoder];
+	[blit copyFromTexture:from sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0)
+		sourceSize:MTLSizeMake((NSUInteger)(rectangle[2] - rectangle[0]), (NSUInteger)(rectangle[3] - rectangle[1]), 1)
+		toTexture:into destinationSlice:0 destinationLevel:0
+		destinationOrigin:MTLOriginMake((NSUInteger)rectangle[0], (NSUInteger)rectangle[1], 0)];
+	[blit endEncoding];
+	xgpu_metal_pass_kind(kind);
+#else
+	(void)output;
+	(void)destination;
+	(void)rectangle;
+	(void)sharpness;
+#endif
+}
 
 int xgpu_metal_metalfx_upscale(const struct xgpu_metal_metalfx_frame *frame)
 {

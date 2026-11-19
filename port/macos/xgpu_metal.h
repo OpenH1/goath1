@@ -162,6 +162,8 @@ enum
 	XGPU_METAL_USAGE_SAMPLED = 1,
 	/* drawn into */
 	XGPU_METAL_USAGE_TARGET = 2,
+	/* written by a shader (a target's: MetalFX's output) */
+	XGPU_METAL_USAGE_WRITTEN = 4,
 };
 
 struct xgpu_metal_texture_description
