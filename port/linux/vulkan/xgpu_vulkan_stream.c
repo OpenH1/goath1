@@ -60,6 +60,7 @@ its swapchain.
 #include "xgpu_vulkan_loading.h"
 #include "xgpu_vulkan_post.h"
 #include "xgpu_vulkan_post_shaders.h"
+#include "xgpu_vulkan_fsr.h"
 #include "xgpu_vulkan_stream.h"
 #include "xgpu_vulkan_textures.h"
 #ifdef HALO_VR
@@ -401,9 +402,11 @@ motion, the depth, 1 where drawn) beside its target's; each pipeline's
 variant that writes it (its shaders xgpu_spirv_options' motion), made as
 first drawn; the window's motion resolved (RGBA16F, the target's size:
 for the technique), and the passes' shaders and sampler */
+/* (a map prepared with it on: its objects' draws, whose variants are made
+with the rest, preparing; the variant made now, prepare_variant) */
 static struct
 {
-	int on, objects, making, failed, reset;
+	int on, objects, making, failed, reset, preparing, prepare_variant;
 	struct xgpu_vulkan_image *drawn, *motion;
 	struct stream_pipeline *entries;
 	struct xgpu_stream_pipeline_define *definitions;
@@ -2240,9 +2243,18 @@ static int draw_pipeline(const struct draw_input *input, int apart)
 
 	if (!stream.pipeline_id || !stream.definition || !input->count)
 		return 1;
+	/* (a map prepared with display.temporal_aa on: an object's draw's
+	variant into the motion too, as the window's objects draw in play) */
+	if (stream.preparing && motion.preparing && !prepass.drawing && !motion.prepare_variant)
+	{
+		motion.prepare_variant = 1;
+		(void)draw_pipeline(input, apart);
+		motion.prepare_variant = 0;
+	}
 	/* (display.temporal_aa: a window's objects, into the motion too; those
 	that write it with their variant's shaders, the rest through it) */
-	motion_drawn = motion.objects && !prepass.drawing && !stream.preparing && xgpu_vulkan_motion_bound();
+	motion_drawn = (motion.objects && !prepass.drawing && !stream.preparing && xgpu_vulkan_motion_bound()) ||
+		motion.prepare_variant;
 	motion_writes = motion_drawn && motion_writer(stream.definition) && motion_tables();
 	entry = prepass.drawing ? prepass.drawing : motion_writes ? &motion.entries[stream.pipeline_id] :
 		&stream.pipelines[stream.pipeline_id];
@@ -3379,6 +3391,23 @@ static void motion_pass_draw(VkShaderModule pixel_shader, struct xgpu_vulkan_ima
 	xgpu_vulkan_draw(&draw);
 }
 
+/* corners (left, top, right, bottom) inside a target's pixels; 0 if
+nothing is left */
+static int motion_rectangle(const struct stream_target *target, const int32_t corners[4], int32_t rectangle[4])
+{
+	int axis;
+
+	for (axis = 0; axis < 2; axis++)
+	{
+		int32_t size = (int32_t)(axis ? target->height : target->width);
+
+		rectangle[axis] = corners[axis] < 0 ? 0 : corners[axis] > size ? size : corners[axis];
+		rectangle[axis + 2] = corners[axis + 2] < rectangle[axis] ? rectangle[axis] :
+			corners[axis + 2] > size ? size : corners[axis + 2];
+	}
+	return rectangle[2] > rectangle[0] && rectangle[3] > rectangle[1];
+}
+
 static void stream_motion(void *context, const struct xgpu_stream_motion *record)
 {
 	struct stream_target *target = target_get(record->target);
@@ -3391,7 +3420,15 @@ static void stream_motion(void *context, const struct xgpu_stream_motion *record
 			XGPU_STREAM_PREVIOUS_CONSTANTS * sizeof(stream.constants[0]));
 	motion.on = 1;
 	if (stream.preparing)
+	{
+		/* (the objects' draws' variants that write their motion, or draw
+		through it, made with the map's other pipelines: draw_pipeline; and
+		display.temporal_aa "fsr"'s passes) */
+		motion.preparing = record->phase == XGPU_MOTION_OBJECTS_BEGIN;
+		if (record->phase == XGPU_MOTION_RESOLVE && stream.capabilities.temporal_fsr)
+			xgpu_vulkan_fsr_prepare();
 		return;
+	}
 	if (record->phase == XGPU_MOTION_OBJECTS_BEGIN)
 	{
 		static const float none[4];
@@ -3477,6 +3514,52 @@ static void stream_motion(void *context, const struct xgpu_stream_motion *record
 			}
 		}
 		xgpu_vulkan_pass_owner(NULL);
+		targets_bind();
+		return;
+	}
+	/* (display.temporal_aa "fsr": the window's opaque colour, for the
+	reactive mask: xgpu_vulkan_fsr.c) */
+	if (record->phase == XGPU_MOTION_OPAQUE)
+	{
+		int32_t rectangle[4];
+
+		if (!target || target->depth || target->samples > 1 || !motion_rectangle(target, record->pass.corners, rectangle))
+			return;
+		xgpu_vulkan_fsr_opaque((int)record->pass.motion[0], target->image, rectangle);
+		targets_bind();
+		return;
+	}
+	if (record->phase == XGPU_MOTION_UPSCALE)
+	{
+		struct xgpu_temporal_pass pass;
+		struct xgpu_vulkan_fsr_frame frame;
+		struct stream_target *depth, *destination = target_get(record->pad);
+
+		memcpy(&pass, &record->pass, sizeof(pass));
+		depth = target_get(pass.depth);
+		if (!target || target->depth || target->samples > 1 || !destination || destination->depth ||
+			destination->samples > 1 || !depth || !depth->depth || depth->samples > 1 || !motion.motion ||
+			xgpu_vulkan_image_description(motion.motion)->width != target->width ||
+			xgpu_vulkan_image_description(motion.motion)->height != target->height)
+			return;
+		memset(&frame, 0, sizeof(frame));
+		frame.color = target->image;
+		frame.depth = depth->image;
+		frame.motion = motion.motion;
+		frame.destination = destination->image;
+		if (!motion_rectangle(target, pass.corners, frame.source) ||
+			!motion_rectangle(destination, pass.destination, frame.destination_rectangle))
+			return;
+		frame.jitter[0] = pass.jitter[0];
+		frame.jitter[1] = pass.jitter[1];
+		frame.near_plane = pass.camera[0];
+		frame.far_plane = pass.camera[1];
+		frame.field_of_view = pass.camera[2];
+		frame.meters = pass.camera[3];
+		frame.reset = pass.reset != 0 || motion.reset;
+		frame.hdr = pass.hdr != 0;
+		destination->written++;
+		(void)xgpu_vulkan_fsr_upscale((int)pass.window, &frame);
 		targets_bind();
 	}
 }
@@ -4124,6 +4207,8 @@ static void stream_initialize(void *context, struct xgpu_stream_capabilities *ca
 #ifndef __ANDROID__
 	capabilities->soft_effects = 1;
 #endif
+	/* (display.temporal_aa "fsr": xgpu_vulkan_fsr.c) */
+	capabilities->temporal_upscale = stream.capabilities.temporal_fsr != 0;
 	snprintf(capabilities->device, sizeof(capabilities->device), "%s", stream.capabilities.device);
 }
 
@@ -4185,6 +4270,7 @@ static uint32_t stream_prepared(void *context)
 	stream.preparing = 0;
 	stream.prepared = 1;
 	prepass.twins = 0;
+	motion.preparing = 0;
 	/* (the pipelines just made kept, where they are new: Android seldom
 	lets the app exit cleanly, which also saves them) */
 	if (xgpu_vulkan_pipeline_count() != stream.prepare_pipelines)

@@ -95,8 +95,31 @@ static float screen_scale[2] = { 1.0f, 1.0f };
 the scale screen_mode_choose last chose), and how many it was asked for
 (more where the GPU's largest target has too few pixels) */
 static float screen_supersampling = 1.0f, screen_supersampling_asked = 1.0f;
+/* display.temporal_aa "fsr" (docs/temporal-aa.md): a window's 3D view drawn
+at display.render_scale's fraction (factor) of the screen's scale, and
+upscaled by the backend (AMD FSR) into the screen's targets at the
+display's, where its tone map, panini and HUD are drawn: the screen's scale
+is the 3D view's while it draws (rendering: halo_motion_window to
+halo_motion_resolve), the display's (display) otherwise */
+static struct
+{
+	float factor;
+	float display[2];
+	BOOL rendering;
+} temporal = { 1.0f, { 1.0f, 1.0f }, FALSE };
 static long ui_offset;
 #define UI_OFFSET ((long)ui_offset)
+/* display.temporal_aa's technique (port/linux/game/motion_vectors.c: 0
+off, 1 "fsr") */
+int motion_vectors_technique(void);
+
+/* whether a window's 3D view is upscaled by the backend's AMD FSR
+(display.temporal_aa "fsr" where the backend has it: Vulkan's) */
+static BOOL temporal_upscaling(void)
+{
+	return xgpu_backend_capabilities.temporal_upscale && motion_vectors_technique() == 1;
+}
+
 /* ---------- anti-aliasing
 
 display.anti_aliasing, off unless it is set: the Xbox drew without any.
@@ -168,23 +191,33 @@ static void anti_aliasing_read(void)
 {
 	/* (read again as the settings change: config_changes) */
 	static unsigned long read_at = (unsigned long)-1;
+	/* (and as display.temporal_aa's FSR comes and goes) */
+	static int read_temporal = -1;
 	unsigned long changes = config_changes();
+	int temporal = temporal_upscaling() != 0;
 	const char *setting;
 	int value;
 
-	if (anti_aliasing_value >= 0 && read_at == changes)
+	if (anti_aliasing_value >= 0 && read_at == changes && read_temporal == temporal)
 		return;
 	read_at = changes;
+	read_temporal = temporal;
 	setting = config_string("display.anti_aliasing");
 	for (value = NUMBER_OF_ANTI_ALIASING_VALUES - 1;
 		value > 0 && strcmp(setting, anti_aliasing_values[value].name);
 		value--)
 	{
 	}
+	/* (display.temporal_aa "fsr" antialiases: no pass, samples or
+	supersampling of this setting's) */
+	if (temporal)
+		value = 0;
 	if (value == anti_aliasing_value)
 		return;
 	anti_aliasing_value = value;
-	if (strcmp(setting, anti_aliasing_values[value].name))
+	if (temporal)
+		platform_log("anti-aliasing: off (display.temporal_aa \"fsr\" antialiases)");
+	else if (strcmp(setting, anti_aliasing_values[value].name))
 		platform_log("anti-aliasing: \"%s\" is unknown, so off", setting);
 	else
 		platform_log("anti-aliasing: %s", setting);
@@ -855,6 +888,7 @@ static void screen_mode_choose(long *width, float scale[2])
 	*width = 640;
 	scale[0] = scale[1] = 1.0f;
 	screen_supersampling = screen_supersampling_asked = 1.0f;
+	temporal.factor = 1.0f;
 	if (platform_screen_mode(&display_width, &display_height) && display_width > 0 && display_height > 0)
 	{
 		long wanted = (SCREEN_HEIGHT * display_width + display_height / 2) / display_height;
@@ -883,7 +917,13 @@ static void screen_mode_choose(long *width, float scale[2])
 
 			if (factor < panini)
 				factor = panini;
-			factor *= render_scale_wanted();
+			/* (display.temporal_aa "fsr": the 3D view's alone, upscaled:
+			temporal) */
+			temporal.factor = 1.0f;
+			if (temporal_upscaling())
+				temporal.factor = render_scale_wanted();
+			else
+				factor *= render_scale_wanted();
 			screen_supersampling_asked = factor;
 			if (*width * scale[0] * factor > (float)xgpu_backend_capabilities.largest_target)
 				factor = (float)xgpu_backend_capabilities.largest_target / (*width * scale[0]);
@@ -1031,6 +1071,9 @@ float halo_model_detail_scale(int level)
 	halo_screen_width();
 	/* (the eyes' scale is their images' own, which nothing supersamples) */
 	display_scale = eyes ? screen_scale[1] : screen_scale[1] / screen_supersampling;
+	/* (display.temporal_aa "fsr": the display's, not the 3D view's) */
+	if (!eyes && temporal.rendering)
+		display_scale /= temporal.factor;
 	return display_scale > 1.0f ? display_scale : 1.0f;
 }
 
@@ -2842,10 +2885,14 @@ unsigned long halo_gpu_settings_taken(void)
 /* takes up the display's shape and resolution, or the window's, if they
 have changed; between frames, since the game's layout and the targets must
 agree for a whole frame. Returns the width the game draws. */
+static void temporal_scale_display(void);
+
 long halo_screen_commit(void)
 {
 	long width;
 	float scale[2];
+	/* (display.temporal_aa "fsr": the 3D view's scale as last chosen) */
+	float temporal_factor = temporal.factor;
 
 	/* (display.battery_saver first: on, it reads the settings below at
 	cheaper values) */
@@ -2901,7 +2948,13 @@ long halo_screen_commit(void)
 		sharp_upscale_send();
 		return screen_width;
 	}
+	/* (the display's scale between frames: a window's 3D view's ends with
+	it) */
+	temporal_scale_display();
 	screen_mode_choose(&width, scale);
+	if (temporal.factor != temporal_factor && width == screen_width && scale[0] == screen_scale[0] &&
+		scale[1] == screen_scale[1])
+		render_targets_evict();
 	if (width != screen_width || scale[0] != screen_scale[0] || scale[1] != screen_scale[1])
 	{
 		screen_mode_log(width, scale);
@@ -3645,7 +3698,10 @@ static BOOL render_target_stale(const struct render_target_entry *entry)
 			return TRUE;
 		if (entry->view && !views[entry->view].width)
 			return TRUE;
-		return entry->target.scale[0] != screen_scale[0] || entry->target.scale[1] != screen_scale[1] ||
+		/* (display.temporal_aa "fsr": the 3D view's scale is found too) */
+		return ((entry->target.scale[0] != screen_scale[0] || entry->target.scale[1] != screen_scale[1]) &&
+				(temporal.factor >= 1.0f || entry->target.scale[0] != screen_scale[0] * temporal.factor ||
+				entry->target.scale[1] != screen_scale[1] * temporal.factor)) ||
 			(!entry->view && entry->target.height == SCREEN_HEIGHT &&
 				entry->target.width != (unsigned long)halo_screen_width()) ||
 			(render_target_screen_colour(entry) && entry->target.format != hdr_back_buffer_format());
@@ -4928,6 +4984,11 @@ void halo_effect_soft(int soft)
 int halo_soft_effects_drawn(void)
 {
 	return xgpu_backend_capabilities.soft_effects != 0;
+}
+
+int halo_temporal_upscale_drawn(void)
+{
+	return xgpu_backend_capabilities.temporal_upscale != 0;
 }
 
 /* the pixel key's vr_effect for a draw of these views (XGPU_MULTIVIEW_*)
@@ -6763,17 +6824,48 @@ void halo_world_ao_prepass_end(short x0, short y0, short x1, short y1, float con
 /* ---------- display.temporal_aa's motion (port/linux/game/motion_vectors.c;
 xgpu_stream.h's MOTION) */
 
+/* display.temporal_aa "fsr": the screen's scale the 3D view's (the
+display's times display.render_scale's fraction), its targets of that scale
+from now on; and the display's again */
+static void temporal_scale_render(void)
+{
+	if (temporal.rendering || temporal.factor >= 1.0f)
+		return;
+	temporal.display[0] = screen_scale[0];
+	temporal.display[1] = screen_scale[1];
+	screen_scale[0] *= temporal.factor;
+	screen_scale[1] *= temporal.factor;
+	temporal.rendering = TRUE;
+}
+
+static void temporal_scale_display(void)
+{
+	if (!temporal.rendering)
+		return;
+	screen_scale[0] = temporal.display[0];
+	screen_scale[1] = temporal.display[1];
+	temporal.rendering = FALSE;
+}
+
 int halo_motion_window(int on, float jitter_x, float jitter_y)
 {
 	struct render_target_entry *target;
 
 	motion.on = FALSE;
 	motion.jitter[0] = motion.jitter[1] = 0.0f;
+	/* (display.temporal_aa "fsr": the window's 3D view at its own scale,
+	before anything of it is drawn, until halo_motion_resolve upscales it) */
+	temporal_scale_display();
+	if (on && device.gl_ready && !screen_view && temporal_upscaling())
+		temporal_scale_render();
 	/* (the screen's back buffer, one sample: not with multisampling) */
 	if (!on || !device.gl_ready || screen_view || anti_aliasing() == _anti_aliasing_msaa ||
 		!(target = render_target_get(&device.back_buffer)) || !(target->target.scale[0] > 0.0f) ||
 		!(target->target.scale[1] > 0.0f))
+	{
+		temporal_scale_display();
 		return FALSE;
+	}
 	motion.on = TRUE;
 	motion.jitter[0] = jitter_x / target->target.scale[0];
 	motion.jitter[1] = jitter_y / target->target.scale[1];
@@ -6808,7 +6900,69 @@ void halo_motion_objects(int begin)
 		NULL);
 }
 
-void halo_motion_resolve(short x0, short y0, short x1, short y1, float const reproject[4][4], int history)
+/* display.temporal_aa "fsr": the window's colour before its transparent
+draws, for the reactive mask (xgpu_stream.h's MOTION _OPAQUE) */
+void halo_motion_opaque(short x0, short y0, short x1, short y1, int window)
+{
+	struct render_target_entry *target;
+	struct xgpu_motion_pass pass;
+	long corners[4];
+	int index;
+
+	if (!motion.on || !temporal_upscaling() || !(target = render_target_get(&device.back_buffer)))
+		return;
+	memset(&pass, 0, sizeof(pass));
+	view_corners(target, x0, y0, x1, y1, corners);
+	for (index = 0; index < 4; index++)
+		pass.corners[index] = (int32_t)corners[index];
+	pass.motion[0] = (float)window;
+	xgpu_backend_motion(XGPU_MOTION_OPAQUE, target->target.number, &pass);
+}
+
+/* ... and the window's view, resolved, upscaled into the screen's back
+buffer at the display's scale, where its tone map, panini and HUD are drawn
+(xgpu_stream.h's MOTION _UPSCALE): the window (0 to 3), its camera (near
+and far planes, vertical field of view) */
+static void temporal_upscale(struct render_target_entry *source, short x0, short y0, short x1, short y1,
+	int history, int window, float const camera[3])
+{
+	struct render_target_entry *depth = render_target_get(&device.depth_buffer), *destination;
+	struct xgpu_temporal_pass pass;
+	long corners[4];
+	int index;
+
+	memset(&pass, 0, sizeof(pass));
+	view_corners(source, x0, y0, x1, y1, corners);
+	for (index = 0; index < 4; index++)
+		pass.corners[index] = (int32_t)corners[index];
+	pass.jitter[0] = motion.jitter[0] * source->target.scale[0];
+	pass.jitter[1] = motion.jitter[1] * source->target.scale[1];
+	/* (the display's scale from here on: the destination is the back
+	buffer of it) */
+	temporal_scale_display();
+	destination = render_target_get(&device.back_buffer);
+	if (!depth || !destination)
+		return;
+	view_corners(destination, x0, y0, x1, y1, corners);
+	for (index = 0; index < 4; index++)
+		pass.destination[index] = (int32_t)corners[index];
+	pass.window = (uint32_t)(window < 0 ? 0 : window > 3 ? 3 : window);
+	pass.technique = 1;
+	pass.hdr = source->target.format == XGPU_FORMAT_RGBA16F;
+	pass.reset = !history;
+	pass.depth = depth->target.number;
+	pass.camera[0] = camera[0];
+	pass.camera[1] = camera[1];
+	pass.camera[2] = camera[2];
+	/* (a world unit is 10 feet) */
+	pass.camera[3] = 3.048f;
+	xgpu_backend_temporal(source->target.number, destination->target.number, &pass);
+	destination->target.written = ++render_target_write_serial;
+	destination->last_rendered = device.frame + 1;
+}
+
+void halo_motion_resolve(short x0, short y0, short x1, short y1, float const reproject[4][4], int history,
+	int window, float const camera[3])
 {
 	struct render_target_entry *target;
 	struct xgpu_motion_pass pass;
@@ -6835,6 +6989,10 @@ void halo_motion_resolve(short x0, short y0, short x1, short y1, float const rep
 	pass.jitter[1] = motion.jitter[1] * target->target.scale[1];
 	pass.jitter[2] = config_boolean("debug.motion_vectors") ? 1.0f : 0.0f;
 	xgpu_backend_motion(XGPU_MOTION_RESOLVE, target->target.number, &pass);
+	/* (display.temporal_aa "fsr": then upscaled, debug.motion_vectors' view
+	of it too) */
+	if (temporal_upscaling())
+		temporal_upscale(target, x0, y0, x1, y1, history, window, camera);
 }
 
 /* display.panini's pass over a window's 3D view (port/linux/game/panini.c),

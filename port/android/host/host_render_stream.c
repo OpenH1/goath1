@@ -571,7 +571,7 @@ static int decode_record(struct host_render_decoder *decoder, const unsigned cha
 		break;
 	}
 	case XGPU_STREAM_MOTION:
-		if (((const struct xgpu_stream_motion *)(const void *)start)->phase > XGPU_MOTION_RESOLVE)
+		if (((const struct xgpu_stream_motion *)(const void *)start)->phase > XGPU_MOTION_UPSCALE)
 			return XGPU_STREAM_ERROR_BOUNDS;
 		CALL(motion, (const void *)start);
 		break;

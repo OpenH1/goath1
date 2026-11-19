@@ -494,7 +494,7 @@
 			<choice shown="175%" value="1.75"/>
 			<choice shown="200%" value="2"/>
 		</row>
-		<row key="anti_aliasing" kind="choice" setting="display.anti_aliasing" label="ANTI-ALIASING" crumb="VIDEO › ADVANCED GRAPHICS" search="aa" search_choices="fxaa smaa msaa" when="desktop">
+		<row key="anti_aliasing" kind="choice" setting="display.anti_aliasing" label="ANTI-ALIASING" crumb="VIDEO › ADVANCED GRAPHICS" search="aa" search_choices="fxaa smaa msaa" when="desktop" enabled="!temporal_fsr">
 			<help>Smooths jagged edges. FXAA and SMAA cost little; MSAA is sharper and costs more of the graphics card.</help>
 			<choice shown="OFF" value="off"/>
 			<choice shown="FXAA" value="fxaa"/>
@@ -503,7 +503,7 @@
 			<choice shown="MSAA 4X" value="msaa4x"/>
 			<choice shown="MSAA 8X" value="msaa8x"/>
 		</row>
-		<row key="anti_aliasing_android" kind="choice" setting="display.anti_aliasing" label="ANTI-ALIASING" crumb="VIDEO › ADVANCED GRAPHICS" search="aa" search_choices="fxaa smaa msaa" when="android" same_place="true">
+		<row key="anti_aliasing_android" kind="choice" setting="display.anti_aliasing" label="ANTI-ALIASING" crumb="VIDEO › ADVANCED GRAPHICS" search="aa" search_choices="fxaa smaa msaa" when="android" enabled="!temporal_fsr" same_place="true">
 			<help>Smooths jagged edges. FXAA and SMAA cost little; MSAA is sharper and costs more of the graphics card.</help>
 			<choice shown="OFF" value="off"/>
 			<choice shown="FXAA" value="fxaa"/>
@@ -769,7 +769,13 @@
 		<row key="performance_tools" kind="link" label="PERFORMANCE TOOLS ›" crumb="VIDEO › FRAME RATE &amp; SYNC" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/performance_tools/performance_tools_screen">
 			<help>The performance overlay, and timings and logs of where each frame's time goes, for finding what slows the game down.</help>
 		</row>
-		<section key="section_6" title="BENCHMARK"/>
+		<section key="section_6" title="UPSCALING" when="desktop android"/>
+		<row key="temporal_aa" kind="choice" setting="display.temporal_aa" label="UPSCALER" crumb="VIDEO › FRAME RATE &amp; SYNC" search_choices="amd fsr" when="desktop+temporal_upscale+!vr android+temporal_upscale+!vr">
+			<help>AMD FSR builds each frame from the frames before it: smooth edges, and a sharp picture at a Render Resolution below 100% for more frames. While it is on, it replaces Anti-Aliasing.</help>
+			<choice shown="OFF" value="off"/>
+			<choice shown="AMD FSR" value="fsr"/>
+		</row>
+		<section key="section_8" title="BENCHMARK"/>
 		<row key="benchmark_pacing" kind="choice" setting="display.benchmark_pacing" label="BENCHMARK PACING" crumb="VIDEO › FRAME RATE &amp; SYNC" search_choices="uncapped your settings" when="!in_game">
 			<help>What the benchmark measures. Uncapped turns VSync, Variable Refresh and the frame cap off for the run: what your computer can draw. Your Settings keeps them: what you see as you play.</help>
 			<choice shown="UNCAPPED" value="uncapped"/>

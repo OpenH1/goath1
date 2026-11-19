@@ -49,6 +49,18 @@ void host_render_stream_display_paced(int paced)
 	(void)paced;
 }
 
+/* display.temporal_aa "fsr" (xgpu_vulkan_fsr.c): not made over the fake
+device */
+int xgpu_vulkan_fsr_create(const struct xgpu_vulkan_fsr_device *device)
+{
+	(void)device;
+	return 0;
+}
+
+void xgpu_vulkan_fsr_destroy(void)
+{
+}
+
 void host_render_stream_frames_ahead(int frames)
 {
 	(void)frames;

@@ -1436,6 +1436,14 @@ PAGES = {
             # (port/linux/game/benchmark.c: from the main menu only, its match
             # taking the place of the game: SETTINGS_ROW_WHEN; its results
             # the new menus' screens/benchmark.xml)
+            # (display.temporal_aa: shown where the renderer has a technique,
+            # Vulkan's AMD FSR, and only its: SETTINGS_ROW_WHEN; DLSS and
+            # MetalFX are not offered until they are drawn. Advanced
+            # Graphics, beside Render Resolution, has no room)
+            (SECTION, "UPSCALING"),
+            ("UPSCALER", "display.temporal_aa", [("OFF", "off"), ("AMD FSR", "fsr")],
+             "AMD FSR builds each frame from the frames before it: smooth edges, and a sharp picture at a Render "
+             "Resolution below 100% for more frames. While it is on, it replaces Anti-Aliasing.", "desktop android"),
             (SECTION, "BENCHMARK"),
             ("BENCHMARK PACING", "display.benchmark_pacing", [("UNCAPPED", "uncapped"), ("YOUR SETTINGS", "settings")],
              "What the benchmark measures. Uncapped turns VSync, Variable Refresh and the frame cap off for the run: "
@@ -2629,6 +2637,9 @@ SETTINGS_ROW_WHEN = {
     # (display.soft_particles: where the renderer draws it, Vulkan's;
     # settings_condition_term's soft_effects)
     "soft_particles": "soft_effects+!vr",
+    # (display.temporal_aa: where the renderer upscales, Vulkan's AMD FSR;
+    # settings_condition_term's temporal_upscale; not in the headset)
+    "temporal_aa": "temporal_upscale+!vr",
     # (the Mac's display paces its frames already)
     "low_latency": "!vrr_system",
     # (in a game: not those that would drop it or are the main menu's, nor
@@ -2663,6 +2674,10 @@ SETTINGS_ROW_ENABLED = {
     # in HDR, whose half floats are its own: settings_condition_term's
     # hdr_drawn)
     "output_depth": "!hdr_drawn",
+    # (display.temporal_aa's AMD FSR antialiases in its place, its row on
+    # Frame Rate & Sync: d3d8_device.c's anti_aliasing_read,
+    # settings_condition_term's temporal_fsr)
+    "anti_aliasing": "!temporal_fsr", "anti_aliasing_android": "!temporal_fsr",
 }
 
 

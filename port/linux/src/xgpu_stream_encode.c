@@ -671,6 +671,7 @@ void xgpu_backend_initialize(void)
 	xgpu_backend_capabilities.deep_sdr = stream.capabilities.deep_sdr;
 	xgpu_backend_capabilities.ray_queries = stream.capabilities.ray_queries;
 	xgpu_backend_capabilities.soft_effects = stream.capabilities.soft_effects;
+	xgpu_backend_capabilities.temporal_upscale = stream.capabilities.temporal_upscale;
 	stream.capabilities.device[sizeof(stream.capabilities.device) - 1] = 0;
 }
 
@@ -1061,6 +1062,20 @@ void xgpu_backend_motion(int phase, xgpu_target target, const struct xgpu_motion
 	{
 		memset(&record_body->pass, 0, sizeof(record_body->pass));
 	}
+}
+
+void xgpu_backend_temporal(xgpu_target source, xgpu_target destination, const struct xgpu_temporal_pass *pass)
+{
+	struct xgpu_stream_motion *record_body;
+
+	if (!stream.open || !pass)
+		return;
+	record_body = record(XGPU_STREAM_MOTION, sizeof(*record_body));
+	record_body->phase = XGPU_MOTION_UPSCALE;
+	record_body->target = (uint32_t)source;
+	record_body->pad = (uint32_t)destination;
+	/* (its bytes the pass's: xgpu_stream.h) */
+	memcpy(&record_body->pass, pass, sizeof(record_body->pass));
 }
 
 void xgpu_backend_world_ao_prepass(int phase, xgpu_target target, const struct xgpu_world_ao_pass *pass)

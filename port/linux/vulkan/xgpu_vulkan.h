@@ -236,6 +236,10 @@ struct xgpu_vulkan_capabilities
 	/* display.output_depth: RGBA16 (unsigned normalized) targets drawn
 	into, blended, multisampled, sampled linearly and copied */
 	int deep_sdr;
+	/* display.temporal_aa "fsr": AMD FSR 3.1's upscaler's compute passes
+	(xgpu_vulkan_fsr.c): its storage images' formats, and storage images
+	written and read without a format */
+	int temporal_fsr;
 	/* the device, its Vulkan version and driver, in a few words (a
 	report's: port/linux/src/report.c) */
 	char device[96];
@@ -723,6 +727,30 @@ struct xgpu_vulkan_rt_device
 };
 int xgpu_vulkan_rt_create(const struct xgpu_vulkan_rt_device *device);
 void xgpu_vulkan_rt_destroy(void);
+/* display.temporal_aa "fsr" (xgpu_vulkan_fsr.c): the device it makes its
+images, pipelines and sets on, and the pipeline cache */
+struct xgpu_vulkan_fsr_device
+{
+	VkDevice device;
+	PFN_vkGetDeviceProcAddr get_device_proc_addr;
+	VkPhysicalDeviceMemoryProperties memory;
+	VkPipelineCache cache;
+};
+int xgpu_vulkan_fsr_create(const struct xgpu_vulkan_fsr_device *device);
+void xgpu_vulkan_fsr_destroy(void);
+/* (the core's, for xgpu_vulkan_fsr.c) work outside the passes in the main
+command buffer, in the stream's order: the pass ended, the images it reads
+and writes noted as used (and written), everything recorded before it done
+first; _end: everything recorded after it waits for it */
+VkCommandBuffer xgpu_vulkan_outside_begin(struct xgpu_vulkan_image *const *read, uint32_t read_count,
+	struct xgpu_vulkan_image *const *written, uint32_t written_count);
+void xgpu_vulkan_outside_end(VkCommandBuffer commands);
+/* an image's handle, its view sampled (a depth image's depth alone) and its
+format, for xgpu_vulkan_fsr.c's work (in the GENERAL layout, as all are) */
+VkImage xgpu_vulkan_image_handle(const struct xgpu_vulkan_image *image);
+VkImageView xgpu_vulkan_image_view(const struct xgpu_vulkan_image *image);
+VkFormat xgpu_vulkan_image_format(const struct xgpu_vulkan_image *image);
+
 /* (the core's, for xgpu_vulkan_rt.c) the early commands, begun: before the
 draws of the submission being recorded, which are ordered after them; and
 the latest submission the GPU is done with */

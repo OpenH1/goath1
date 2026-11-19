@@ -87,6 +87,9 @@ static struct
 	boolean active, history;
 	short slot;
 	struct motion_window now, before;
+	/* (display.temporal_aa "fsr": the window's camera's near and far planes
+	and vertical field of view, for the upscaler's depth) */
+	float camera[3];
 	/* the camera's change, a point of the world (x, y, z, 1) to where this
 	frame's camera sees what the frame before's saw there: this frame's
 	projection's registers' inverse after the frame before's (rows; the
@@ -293,8 +296,18 @@ boolean motion_vectors_window_begin(short local_player_index, boolean eligible, 
 		}
 	}
 	motion_vectors.slot = local_player_index;
+	motion_vectors.camera[0] = camera->z_near;
+	motion_vectors.camera[1] = camera->z_far;
+	motion_vectors.camera[2] = camera->vertical_field_of_view;
 	motion_vectors.active = TRUE;
 	return TRUE;
+}
+
+void motion_vectors_opaque(rectangle2d const *viewport_bounds)
+{
+	if (motion_vectors.active && viewport_bounds)
+		halo_motion_opaque(viewport_bounds->x0, viewport_bounds->y0, viewport_bounds->x1, viewport_bounds->y1,
+			motion_vectors.slot);
 }
 
 /* (the registers as they are now, whichever projection they are: the
@@ -427,7 +440,7 @@ void motion_vectors_window_end(rectangle2d const *viewport_bounds)
 	if (!history)
 		memset(rows, 0, sizeof(rows));
 	halo_motion_resolve(viewport_bounds->x0, viewport_bounds->y0, viewport_bounds->x1, viewport_bounds->y1,
-		(float const (*)[4])rows, history);
+		(float const (*)[4])rows, history, motion_vectors.slot, motion_vectors.camera);
 	halo_motion_window(FALSE, 0.0f, 0.0f);
 }
 

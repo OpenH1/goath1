@@ -3101,6 +3101,17 @@ static boolean settings_condition_term(struct widget_instance *list, char const 
 	/* (the renderer draws display.soft_particles: Vulkan's) */
 	if (!strcmp(name, "soft_effects"))
 		return halo_soft_effects_drawn() != 0;
+	/* (the renderer upscales with display.temporal_aa "fsr": Vulkan's; and
+	it is on, its row on another page than the anti-aliasing it replaces) */
+	if (!strcmp(name, "temporal_upscale"))
+		return halo_temporal_upscale_drawn() != 0;
+	if (!strcmp(name, "temporal_fsr"))
+	{
+		char technique[16];
+
+		return halo_temporal_upscale_drawn() && settings_value("display.temporal_aa", technique, sizeof(technique)) &&
+			!strcmp(technique, "fsr");
+	}
 	if (!strcmp(name, "gyro"))
 		return halo_gyro_found() == 2;
 	/* (the player's Aim Style Modern, on another page than the rows it
