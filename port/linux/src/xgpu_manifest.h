@@ -197,6 +197,10 @@ struct xgpu_draw_facts
 	int per_pixel, lights_active, environment;
 	/* the backend has a sample mask (xgpu_backend_capabilities) */
 	int sample_mask;
+	/* display.smooth_lightmaps on, and the draw's texture 2 a 2D lookup
+	(PSTextureModes' PROJECT2D of a 2D texture: the lightmap pass's
+	lightmap), filtered linearly where the front end knows its filter */
+	int smooth_lightmaps, lightmap_stage;
 };
 
 /* what the facts make of the pipeline (xgpu_backend.h's XGPU_LIGHTING_*,
@@ -206,6 +210,9 @@ struct xgpu_draw_derived
 	uint8_t lighting, color_format, samples;
 	uint8_t alpha_test_samples, per_pixel_lighting, dynamic_lights, ambient_occlusion;
 	uint16_t hdr;
+	/* the lightmap sampled by the cubic B-spline (xgpu.h's
+	XGPU_TEXTURE_MODES_LIGHTMAP_CUBIC in the pixel key's texture_modes) */
+	uint8_t lightmap_cubic;
 };
 
 /* the pipeline the facts give a draw, lit as the settings light it, or
@@ -219,12 +226,14 @@ or display.anti_aliasing's multisampling's), display.hdr on, each pixel lit
 occlusion (XGPU_MANIFEST_OCCLUSION_*), the SDR back buffer in RGBA16
 (display.output_depth's 16-bit frame: deep, where display.hdr is off), the
 effects soft (display.soft_particles), display.hdr_highlight_boost's level
-(0 to XGPU_HDR_BOOST_MOST) and an alpha test that cannot fail dropped (the
-backend's alpha_test_drop); with the stream's backends' sample mask and
+(0 to XGPU_HDR_BOOST_MOST), an alpha test that cannot fail dropped (the
+backend's alpha_test_drop) and the lightmaps filtered by the cubic
+(display.smooth_lightmaps); with the stream's backends' sample mask and
 dynamic lights (Metal's and Vulkan's) */
 struct xgpu_manifest_settings
 {
 	int samples, hdr, per_pixel_lighting, enhanced_lights, ambient_occlusion, deep, soft, boost, alpha_drop;
+	int smooth_lightmaps;
 };
 
 /* display.ambient_occlusion: off, or found in the world ("world"; without

@@ -109,7 +109,7 @@ enum
 	EXECUTION_MODE_DEPTH_GREATER = 14, EXECUTION_MODE_DEPTH_LESS = 15,
 	EXECUTION_MODE_PIXEL_INTERLOCK_ORDERED = 5366, EXECUTION_MODE_SAMPLE_INTERLOCK_ORDERED = 5368,
 	DIM_2D = 1, DIM_3D = 2, DIM_CUBE = 3, DIM_SUBPASS_DATA = 6, IMAGE_FORMAT_RGBA16F = 2,
-	IMAGE_OPERANDS_LOD = 2, IMAGE_OPERANDS_SAMPLE = 0x40,
+	IMAGE_OPERANDS_LOD = 2, IMAGE_OPERANDS_GRAD = 4, IMAGE_OPERANDS_SAMPLE = 0x40,
 	SCOPE_DEVICE = 1, SCOPE_SUBGROUP = 3, GROUP_OPERATION_REDUCE = 0,
 };
 
@@ -2187,6 +2187,55 @@ static unsigned int image_size(struct module *m, unsigned int image, unsigned in
 	return op(m, OP_IMAGE_QUERY_SIZE_LOD, type, 2, operands);
 }
 
+/* display.smooth_lightmaps (xgpu.h's XGPU_TEXTURE_MODES_LIGHTMAP_CUBIC): the
+lightmap at uv (a vec2, the texture's own coordinates) by the uniform cubic
+B-spline over the 4x4 texels about it, in four bilinear lookups: along each
+axis, of t = uv size - 0.5, its texel i = floor(t) and f = t - i, the weights
+w0 = (1-f)^3/6, w1 = (3f^3 - 6f^2 + 4)/6, w2 = (-3f^3 + 3f^2 + 3f + 1)/6,
+w3 = f^3/6, paired: g0 = w0 + w1 at (i - 0.5 + w1/g0)/size, g1 = 1 - g0 at
+(i + 1.5 + w3/g1)/size (each pair's two texels mixed by the bilinear
+filter; g0 and g1 at least 1/6). The weights sum to 1 (a flat area as
+bilinear draws it). Each lookup by the gradients of uv itself, so that its
+level and anisotropy are bilinear's (the lookups' own coordinates jump at a
+texel's edge), the sampler's LOD bias (display.temporal_aa's) applied */
+static unsigned int lightmap_cubic(struct module *m, unsigned int image, unsigned int uv)
+{
+	unsigned int raw = op(m, OP_IMAGE, type_sampled_image(m, DIM_2D, FALSE, FALSE, FALSE), 1, &image);
+	unsigned int size = op1(m, OP_CONVERT_S_TO_F, m->t_v2, image_size(m, raw, m->t_iv2));
+	unsigned int one = splat(m, 2, constant_float(m, 1.0f)), sixth = constant_float(m, 1.0f / 6.0f);
+	unsigned int t = fsub(m, 2, fmul(m, 2, uv, size), splat(m, 2, constant_float(m, 0.5f)));
+	unsigned int i = ext1(m, GLSL_FLOOR, m->t_v2, t), f = fsub(m, 2, t, i);
+	unsigned int f2 = fmul(m, 2, f, f), f3 = fmul(m, 2, f2, f), r = fsub(m, 2, one, f);
+	unsigned int w0 = fscale(m, 2, fmul(m, 2, fmul(m, 2, r, r), r), sixth);
+	unsigned int w1 = fscale(m, 2, fadd(m, 2, fsub(m, 2, fscale(m, 2, f3, constant_float(m, 3.0f)),
+		fscale(m, 2, f2, constant_float(m, 6.0f))), splat(m, 2, constant_float(m, 4.0f))), sixth);
+	unsigned int w3 = fscale(m, 2, f3, sixth);
+	unsigned int g0 = fadd(m, 2, w0, w1), g1 = fsub(m, 2, one, g0);
+	unsigned int p0 = fdiv(m, 2, fadd(m, 2, fsub(m, 2, i, splat(m, 2, constant_float(m, 0.5f))), fdiv(m, 2, w1, g0)), size);
+	unsigned int p1 = fdiv(m, 2, fadd(m, 2, fadd(m, 2, i, splat(m, 2, constant_float(m, 1.5f))), fdiv(m, 2, w3, g1)), size);
+	unsigned int dx = op1(m, OP_DPDX, m->t_v2, uv), dy = op1(m, OP_DPDY, m->t_v2, uv);
+	unsigned int texels[4], operands[5], row[2];
+	int corner;
+
+	for (corner = 0; corner < 4; corner++)
+	{
+		unsigned int parts[2];
+
+		parts[0] = extract(m, corner & 1 ? p1 : p0, 0);
+		parts[1] = extract(m, corner & 2 ? p1 : p0, 1);
+		operands[0] = image;
+		operands[1] = construct(m, 2, parts);
+		operands[2] = IMAGE_OPERANDS_GRAD;
+		operands[3] = dx;
+		operands[4] = dy;
+		texels[corner] = op(m, OP_IMAGE_SAMPLE_EXPLICIT_LOD, m->t_v4, 5, operands);
+	}
+	for (corner = 0; corner < 2; corner++)
+		row[corner] = fadd(m, 4, fscale(m, 4, texels[2 * corner], extract(m, g0, 0)),
+			fscale(m, 4, texels[2 * corner + 1], extract(m, g1, 0)));
+	return fadd(m, 4, fscale(m, 4, row[0], extract(m, g0, 1)), fscale(m, 4, row[1], extract(m, g1, 1)));
+}
+
 /* the stage's lookup at coordinates (a vec4); where the shader draws the
 border, the texel mixed with the border color by how much of the lookup's
 footprint is inside the texture along each axis the border is on (xgpu_msl.c
@@ -2252,6 +2301,12 @@ static unsigned int sample(struct module *m, struct pixel_state *state, int stag
 		parts[0] = uv;
 		parts[1] = op1(m, OP_CONVERT_S_TO_F, m->t_float, layer);
 		texel = op2(m, OP_IMAGE_SAMPLE_IMPLICIT_LOD, m->t_v4, image, op(m, OP_COMPOSITE_CONSTRUCT, m->t_v3, 2, parts));
+	}
+	else if (stage == 2 && state->program->lightmap_filter && sampler == _xgpu_sampler_2d && !border &&
+		!(state->options->border[stage] & XGPU_BORDER_MSDF))
+	{
+		/* (display.smooth_lightmaps: the lightmap pass's lightmap) */
+		return lightmap_cubic(m, image, uv);
 	}
 	else
 	{

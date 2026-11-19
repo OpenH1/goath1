@@ -5442,6 +5442,29 @@ static unsigned char soft_effect_key(int multiview)
 	return soft_effects.enabled ? 1 : 0;
 }
 
+/* display.smooth_lightmaps (#1225, xgpu.h's XGPU_TEXTURE_MODES_LIGHTMAP_CUBIC):
+the structure's lightmap pass's lightmap sampled by the cubic B-spline,
+where its stage filters linearly (the game's debug lightmap_filtering off:
+the nearest texel, as it was). Read again as the front end takes a change
+up between frames */
+static struct
+{
+	BOOL read;
+	unsigned long read_at;
+	BOOL enabled;
+} smooth_lightmaps;
+
+static BOOL smooth_lightmaps_on(void)
+{
+	if (!smooth_lightmaps.read || smooth_lightmaps.read_at != halo_gpu_settings_taken())
+	{
+		smooth_lightmaps.read = TRUE;
+		smooth_lightmaps.read_at = halo_gpu_settings_taken();
+		smooth_lightmaps.enabled = config_boolean("display.smooth_lightmaps") != 0;
+	}
+	return smooth_lightmaps.enabled;
+}
+
 /* the combiner portions whose results nothing after reads cleared (what
 an earlier draw left in a portion the draw's code did not set, which no
 later stage nor the final combiner reads): one program, one key. A
@@ -5658,6 +5681,8 @@ static void pipeline_derived(const struct xgpu_draw_derived *derived, struct xgp
 	key->pixel.per_pixel_lighting = derived->per_pixel_lighting;
 	key->pixel.dynamic_lights = derived->dynamic_lights;
 	key->pixel.ambient_occlusion = derived->ambient_occlusion;
+	key->pixel.texture_modes = (key->pixel.texture_modes & ~XGPU_TEXTURE_MODES_LIGHTMAP_CUBIC) |
+		(derived->lightmap_cubic ? XGPU_TEXTURE_MODES_LIGHTMAP_CUBIC : 0);
 }
 
 /* a draw as no setting changes it (key: before xgpu_draw_derive) to the
@@ -6405,6 +6430,10 @@ static BOOL prepare_draw(BOOL immediate, unsigned long primitive)
 		dynamic_lights_active();
 	facts.environment = inputs.lights_environment;
 	facts.sample_mask = xgpu_backend_capabilities.sample_mask;
+	facts.smooth_lightmaps = inputs.lights_environment && smooth_lightmaps_on();
+	facts.lightmap_stage = ((pipeline_key.pixel.texture_modes >> 10) & 0x1f) == XGPU_TEXTURE_PROJECT2D &&
+		pipeline_key.pixel.sampler_type[2] == _xgpu_sampler_2d &&
+		D3D__TextureState[2][D3DTSS_MAGFILTER] == D3DTEXF_LINEAR;
 	/* (display.ambient_occlusion "world": its light, where its window is
 	given and the draw takes it: world_ao_key) */
 	facts.world = world_ao_key(XGPU_AMBIENT_OCCLUSION_LIGHT_NONE);

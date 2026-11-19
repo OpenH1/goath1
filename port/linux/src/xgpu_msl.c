@@ -1126,6 +1126,13 @@ static void sample(struct xgpu_text *text, const struct xgpu_pixel_program *prog
 	else
 		snprintf(uv, sizeof(uv), "(%s).xy * u.texture_scale[%d].xy", coordinates, stage);
 	/* (the high-res text's distance fields: msdf_coverage) */
+	/* (display.smooth_lightmaps: the lightmap pass's lightmap, lightmap_cubic) */
+	if (stage == 2 && program->lightmap_filter && sampler == _xgpu_sampler_2d && !border &&
+		!(options->border[stage] & XGPU_BORDER_MSDF))
+	{
+		xgpu_text_append(text, "lightmap_cubic(tex%d, tex%d_sampler, %s, u.texture_lod_bias[%d])", stage, stage, uv, stage);
+		return;
+	}
 	if ((options->border[stage] & XGPU_BORDER_MSDF) && sampler == _xgpu_sampler_2d)
 	{
 		xgpu_text_append(text, "msdf_coverage(tex%d.sample(tex%d_sampler, %s, bias(u.texture_lod_bias[%d])), %s, "
@@ -1571,6 +1578,24 @@ static const char border_function[] =
 	"\tfloat2 texels = fwidth(uv * size);\n"
 	"\tfloat pixels = max(" XGPU_MSDF_RANGE_TEXT " * 0.5 * (1.0 / max(texels.x, 1e-6) + 1.0 / max(texels.y, 1e-6)), 1.0);\n"
 	"\treturn float4(1.0, 1.0, 1.0, saturate((distance - 0.5) * pixels + 0.5));\n"
+	"}\n";
+
+/* display.smooth_lightmaps: the lightmap by the cubic B-spline in four
+bilinear lookups (xgpu_spirv.c's lightmap_cubic), each by the gradients of
+uv itself scaled by the LOD bias (Metal samplers have none; a gradient
+twice as long is a level coarser) */
+static const char lightmap_cubic_function[] =
+	"static inline float4 lightmap_cubic(texture2d<float> t, sampler s, float2 uv, float lod_bias)\n"
+	"{\n"
+	"\tfloat2 size = float2(float(t.get_width()), float(t.get_height()));\n"
+	"\tfloat2 c = uv * size - 0.5, i = floor(c), f = c - i, r = 1.0 - f;\n"
+	"\tfloat2 w0 = r * r * r * (1.0 / 6.0), w1 = (3.0 * f * f * f - 6.0 * f * f + 4.0) * (1.0 / 6.0);\n"
+	"\tfloat2 w3 = f * f * f * (1.0 / 6.0), g0 = w0 + w1, g1 = 1.0 - g0;\n"
+	"\tfloat2 p0 = (i - 0.5 + w1 / g0) / size, p1 = (i + 1.5 + w3 / g1) / size;\n"
+	"\tfloat scale = exp2(lod_bias);\n"
+	"\tgradient2d g = gradient2d(dfdx(uv) * scale, dfdy(uv) * scale);\n"
+	"\treturn g0.y * (g0.x * t.sample(s, float2(p0.x, p0.y), g) + g1.x * t.sample(s, float2(p1.x, p0.y), g)) +\n"
+	"\t\tg1.y * (g0.x * t.sample(s, float2(p0.x, p1.y), g) + g1.x * t.sample(s, float2(p1.x, p1.y), g));\n"
 	"}\n";
 
 /* ---------- display.hdr's tags (xgpu_hdr.h) */
@@ -2606,6 +2631,8 @@ char *xgpu_msl_pixel_shader(const struct xgpu_pixel_program *program, const stru
 		model_lighting(&functions, program->per_pixel_lighting == 2, program->dynamic_lights == XGPU_DYNAMIC_LIGHTS_MODEL,
 			occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_MODEL);
 	xgpu_text_append(&functions, "%s%s", pixel_functions, border_function);
+	if (program->lightmap_filter)
+		xgpu_text_append(&functions, "%s", lightmap_cubic_function);
 	functions_at = text.length;
 
 	/* samples that pass the depth and stencil tests, as the NV2A's

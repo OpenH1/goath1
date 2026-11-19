@@ -757,6 +757,10 @@ int xgpu_draw_derive(const struct xgpu_draw_facts *facts, int unlit, struct xgpu
 	if (facts->sample_mask && facts->samples > 1 && facts->alpha_test && !facts->blend)
 		derived->alpha_test_samples = (uint8_t)facts->samples;
 	derived->hdr = facts->hdr_target ? facts->hdr : 0;
+	/* (display.smooth_lightmaps: the structure's lightmap pass's lightmap,
+	lit or not) */
+	derived->lightmap_cubic = (uint8_t)(facts->smooth_lightmaps && facts->lightmap_stage && facts->environment &&
+		!facts->immediate);
 	derived->lighting = XGPU_LIGHTING_NONE;
 	if (!unlit && facts->lights && !facts->lighting_failed && facts->per_pixel)
 	{
@@ -820,7 +824,7 @@ static const int settings_samples[] = { 1, 2, 4, 8 };
 
 int xgpu_manifest_settings(int index, struct xgpu_manifest_settings *settings)
 {
-	if (index < 0 || index >= SETTINGS_SAMPLES * 64 * (XGPU_HDR_BOOST_MOST + 1) * XGPU_MANIFEST_OCCLUSIONS)
+	if (index < 0 || index >= SETTINGS_SAMPLES * 128 * (XGPU_HDR_BOOST_MOST + 1) * XGPU_MANIFEST_OCCLUSIONS)
 		return 0;
 	memset(settings, 0, sizeof(*settings));
 	settings->samples = settings_samples[index % SETTINGS_SAMPLES];
@@ -831,7 +835,8 @@ int xgpu_manifest_settings(int index, struct xgpu_manifest_settings *settings)
 	settings->deep = (index >> 3) & 1;
 	settings->soft = (index >> 4) & 1;
 	settings->alpha_drop = (index >> 5) & 1;
-	index >>= 6;
+	settings->smooth_lightmaps = (index >> 6) & 1;
+	index >>= 7;
 	settings->boost = index % (XGPU_HDR_BOOST_MOST + 1);
 	settings->ambient_occlusion = index / (XGPU_HDR_BOOST_MOST + 1);
 	return 1;
@@ -894,6 +899,11 @@ int xgpu_manifest_derive(const struct xgpu_manifest_draw *draw, const struct xgp
 	facts.lights_active = settings->enhanced_lights && context->lights_present;
 	facts.environment = context->environment;
 	facts.sample_mask = 1;
+	/* (d3d8_device.c's smooth_lightmaps_key: the stage's filter is not
+	recorded, the game's linear) */
+	facts.smooth_lightmaps = settings->smooth_lightmaps;
+	facts.lightmap_stage = ((key->pixel.texture_modes >> 10) & 0x1f) == 1 /* PROJECT2D */ &&
+		key->pixel.sampler_type[2] == _xgpu_sampler_2d;
 	lit = xgpu_draw_derive(&facts, unlit, &parts);
 	/* (its bytes, padding too: a draw's hash is of them) */
 	memcpy(derived, draw, sizeof(*derived));
@@ -906,6 +916,8 @@ int xgpu_manifest_derive(const struct xgpu_manifest_draw *draw, const struct xgp
 	derived->key.pixel.dynamic_lights = parts.dynamic_lights;
 	derived->key.pixel.ambient_occlusion = parts.ambient_occlusion;
 	derived->key.pixel.alpha_test_function = alpha_test;
+	derived->key.pixel.texture_modes = (key->pixel.texture_modes & ~XGPU_TEXTURE_MODES_LIGHTMAP_CUBIC) |
+		(parts.lightmap_cubic ? XGPU_TEXTURE_MODES_LIGHTMAP_CUBIC : 0);
 	/* (display.soft_particles: the effect soft, on a flat screen: d3d8_device.c's
 	soft_effect_key) */
 	if (settings->soft && context->soft && !derived->key.pixel.vr_effect)

@@ -115,7 +115,8 @@ is keyed by these bytes */
 struct nv2a_pixel_shader_key
 {
 	DWORD combiner_state[D3DRS_PS_MAX];
-	/* D3DRS_PSTEXTUREMODES lies past D3DRS_PS_MAX */
+	/* D3DRS_PSTEXTUREMODES lies past D3DRS_PS_MAX: its four stages' 20
+	bits, and past them the port's (XGPU_TEXTURE_MODES_*, below) */
 	DWORD texture_modes;
 	unsigned char sampler_type[4];
 	unsigned char alpha_kill[4];
@@ -174,6 +175,26 @@ struct nv2a_pixel_shader_key
 	XGPU_HDR_*); 0 into any other target, and without HDR */
 	unsigned short hdr;
 };
+
+/* display.smooth_lightmaps (#1225): a structure's lightmap pass samples its
+lightmap (texture 2, in 2D: rasterizer_xbox_environment.c) with a uniform
+cubic B-spline over the 4x4 texels about the point, in four bilinear
+lookups, instead of the hardware's bilinear filter over 2x2, so that the
+level's coarse baked light shows no stair steps or diamonds at high
+resolutions. The weights are positive and sum to 1 (a flat area is as it
+was; the lightmap never brighter or darker). Each page is a texture of
+its own (clamped at its edge: no lookup reaches another page), and its
+charts are dilated into the gutters between them by the light's bake:
+measured on bloodgulch's and a10's first structures, the cubic's weight on
+another chart's texels is 0.006% of it at most (bilinear's 0.001%), and
+its light off what the chart's own texels alone give 0.003 on average, 0.11
+at the 99.9th percentile (bilinear's 0.001 and 0.09), so no chart's bounds
+are needed (xgpu_spirv.c's, xgpu_msl.c's lightmap_cubic). The bit in the pixel key's texture_modes,
+set by xgpu_draw_derive; nv2a_pixel_program_decode gives the program's
+lightmap_filter */
+#define XGPU_TEXTURE_MODES_LIGHTMAP_CUBIC 0x80000000u
+/* (the stages' own bits) */
+#define XGPU_TEXTURE_MODES_STAGES 0x000fffffu
 
 /* the vertex constants the per-pixel model lighting reads, in a uniform of
 their own (the vertex shader's 192 would pass the least fragment uniform

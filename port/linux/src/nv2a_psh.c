@@ -179,5 +179,7 @@ void nv2a_pixel_program_decode(const struct nv2a_pixel_shader_key *key, struct x
 	program->multiview = key->multiview;
 	program->source_blend = key->source_blend;
 	program->ambient_occlusion = key->ambient_occlusion;
+	program->lightmap_filter = (key->texture_modes & XGPU_TEXTURE_MODES_LIGHTMAP_CUBIC) &&
+		program->stages[2].mode == XGPU_TEXTURE_PROJECT2D && program->stages[2].sampler == _xgpu_sampler_2d;
 	program->hdr = key->hdr;
 }

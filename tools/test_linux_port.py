@@ -552,9 +552,9 @@ def test_config_mouse_sensitivity_in_cs2_units(config_check_mac):
 # the settings display.graphics chooses, and their values in Classic and in
 # Enhanced (the same on every build)
 GRAPHICS_SETTINGS = ["anti_aliasing", "anisotropic_filtering", "shadow_resolution", "per_pixel_lighting",
-                     "model_detail", "dynamic_lights", "soft_particles", "alpha_coverage"]
-GRAPHICS_CLASSIC = ["off", "0", "128", "false", "auto", "classic", "false", "false"]
-GRAPHICS_ENHANCED = ["smaa", "16", "512", "true", "native", "enhanced", "true", "true"]
+                     "model_detail", "dynamic_lights", "soft_particles", "alpha_coverage", "smooth_lightmaps"]
+GRAPHICS_CLASSIC = ["off", "0", "128", "false", "auto", "classic", "false", "false", "false"]
+GRAPHICS_ENHANCED = ["smaa", "16", "512", "true", "native", "enhanced", "true", "true", "true"]
 
 
 def graphics_values(run):

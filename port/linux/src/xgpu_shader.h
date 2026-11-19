@@ -347,6 +347,9 @@ struct xgpu_pixel_program
 	(1 to 4), the ambient occlusion's light (XGPU_AMBIENT_OCCLUSION_LIGHT_*) */
 	unsigned char count_samples, coverage_alpha, point_threshold, per_pixel_lighting, dynamic_lights, multiview;
 	unsigned char source_blend, ambient_occlusion;
+	/* display.smooth_lightmaps: the lightmap (texture 2, a 2D lookup)
+	sampled by the cubic B-spline (xgpu.h's XGPU_TEXTURE_MODES_LIGHTMAP_CUBIC) */
+	unsigned char lightmap_filter;
 	/* display.hdr's tag (nv2a_pixel_shader_key.hdr: xgpu_hdr.h) */
 	unsigned short hdr;
 };

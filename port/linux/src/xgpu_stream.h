@@ -1031,6 +1031,8 @@ struct xgpu_stream_pixel_program
 	uint8_t count_samples, coverage_alpha, point_threshold, per_pixel_lighting, dynamic_lights, multiview;
 	uint8_t source_blend;
 	uint8_t ambient_occlusion;
+	/* display.smooth_lightmaps (xgpu_shader.h's lightmap_filter) */
+	uint8_t lightmap_filter;
 	/* display.hdr's tag (xgpu_hdr.h) */
 	uint16_t hdr;
 };
