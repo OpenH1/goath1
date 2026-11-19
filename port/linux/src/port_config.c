@@ -3049,11 +3049,12 @@ static const struct config_setting config_settings[] =
 		"structure's shader, an effect, the HUD, a menu widget, text), for the\n"
 		"inspector's replay of a recording (HALO_RENDER_RECORD; port/macos/README.md).\n"
 		"The backends draw nothing for them; off, nothing is sent." },
-	{ "debug.retained_draws", _config_boolean, "false", "HALO_RETAINED_DRAWS", _environment_set_is_true, _platform_all,
+	{ "debug.retained_draws", _config_boolean, "true", "HALO_RETAINED_DRAWS", _environment_value, _platform_all,
 		"Keep each draw's preparation (its textures' description and its\n"
 		"pipeline) and use it again for a later draw made from the same states,\n"
 		"program, textures and targets: a model's parts drawn for each player,\n"
-		"a run of decals. The pictures the same. For measuring." },
+		"a run of decals. The pictures the same. HALO_RETAINED_DRAWS=0 prepares\n"
+		"every draw as before." },
 	{ "debug.retained_draws_verify", _config_boolean, "false", "HALO_RETAINED_DRAWS_VERIFY", _environment_set_is_true,
 		_platform_all,
 		"Prepare each draw debug.retained_draws would find kept anyway, and log\n"

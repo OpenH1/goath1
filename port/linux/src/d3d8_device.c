@@ -5565,7 +5565,8 @@ void d3d8_draw_state_kept(int kept)
 	draw_state_kept_asked = kept != 0;
 }
 
-/* ---------- the draws' kept preparations (debug.retained_draws)
+/* ---------- the draws' kept preparations (debug.retained_draws, on;
+HALO_RETAINED_DRAWS=0 prepares every draw as before)
 
 Most of a frame's draws are prepared as an earlier draw was: the same
 model's parts for each player, a run of decals, the same shaders object
