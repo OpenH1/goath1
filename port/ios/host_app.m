@@ -163,10 +163,34 @@ static float render_scale_for_device(void)
 	return scale;
 }
 
+/* port/macos/xgpu_metal_temporal.m: 1 MetalFX's temporal scaler, 2 its
+spatial one alone, 0 neither */
+int xgpu_metal_metalfx_supported(void);
+
+/* whether display.temporal_aa is "metalfx" (HALO_TEMPORAL_AA, else
+config.toml's; off by default) and the GPU has MetalFX: it upscales the
+game's render scale to the screen's pixels (#1228) */
+static BOOL render_scale_upscaled(void)
+{
+	const char *value = getenv("HALO_TEMPORAL_AA");
+	BOOL upscaled;
+
+	if (value && *value)
+		upscaled = !strcmp(value, "metalfx");
+	else
+		upscaled = [config_path_setting("display.temporal_aa") isEqualToString:@"metalfx"];
+	return upscaled && xgpu_metal_metalfx_supported();
+}
+
 /* display.render_scale (HALO_RENDER_SCALE): the game draws at this fraction
 of the screen's pixels each way, and the display scales the picture up
 (port/android/host/host_sdl.c gives the game the window's pixels times it;
-host_metal.m makes the layer's drawables that size); 0, the device's */
+host_metal.m makes the layer's drawables that size); 0, the device's. Where
+MetalFX upscales it (render_scale_upscaled) the drawables are the screen's
+size (1 here) and the game draws its 3D view at the render scale
+(HALO_UPSCALE_RENDER_SCALE: d3d8_device.c's render_scale_configured), which
+MetalFX builds the screen's pixels from. Read at the start (host_app_start),
+before the game reads its environment. */
 float host_app_render_scale(void)
 {
 	static float scale;
@@ -180,7 +204,20 @@ float host_app_render_scale(void)
 			scale = render_scale_for_device();
 		if (!(scale >= 0.25f && scale <= 1.0f))
 			scale = 1.0f;
-		host_logf(HOST_LOG_INFO, "render scale: %.2f", scale);
+		if (scale < 1.0f && render_scale_upscaled())
+		{
+			char text[16];
+
+			snprintf(text, sizeof(text), "%g", scale);
+			setenv("HALO_UPSCALE_RENDER_SCALE", text, 1);
+			host_logf(HOST_LOG_INFO, "render scale: %.2f, upscaled by MetalFX's %s scaler", scale,
+				xgpu_metal_metalfx_supported() == 1 ? "temporal" : "spatial");
+			scale = 1.0f;
+		}
+		else
+		{
+			host_logf(HOST_LOG_INFO, "render scale: %.2f", scale);
+		}
 	}
 	return scale;
 }
@@ -339,6 +376,9 @@ void host_app_start(void)
 			/* (the first start: the disc image or the maps, asked for) */
 			host_app_game_data(documents_folder.fileSystemRepresentation);
 		}
+		/* (the render scale chosen before the game starts: its environment's
+		HALO_UPSCALE_RENDER_SCALE) */
+		(void)host_app_render_scale();
 		/* (HOME is the app's container: the Metal archive's folder,
 		Library/Caches/OpenH1) */
 	}

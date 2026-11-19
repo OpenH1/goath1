@@ -108,6 +108,10 @@ struct metalfx_window
 	/* (the output: the backend's texture, which the RCAS pass reads) */
 	uint32_t output;
 	id<MTLTexture> inputs[4];
+	/* (iOS without the temporal scaler: the spatial one, and what it was
+	made for) */
+	id<MTLFXSpatialScaler> spatial;
+	struct metalfx_fit spatial_fit;
 	/* the colour before the transparent draws (the backend's texture: 0
 	none) and whether this frame's is in it; the reactive mask, of the
 	target's size */
@@ -259,9 +263,18 @@ int xgpu_metal_metalfx_supported(void)
 
 	if (supported < 0)
 	{
-		id<MTLDevice> device = xgpu_metal_device();
+		/* (the system's GPU, the backend's, where it is not made yet: the
+		iOS app asks before the game starts, host_app_render_scale) */
+		id<MTLDevice> device = xgpu_metal_device() ? xgpu_metal_device() : MTLCreateSystemDefaultDevice();
 
 		supported = device && [MTLFXTemporalScalerDescriptor supportsDevice:device];
+#if TARGET_OS_IPHONE
+		/* (an iPhone's GPU without the temporal scaler: the spatial one,
+		which upscales the render scale from each frame alone, not
+		jittered: d3d8_device.c's halo_motion_window; #1228) */
+		if (!supported && device && [MTLFXSpatialScalerDescriptor supportsDevice:device])
+			supported = 2;
+#endif
 	}
 	return supported;
 #else
@@ -322,7 +335,8 @@ void xgpu_metal_metalfx_opaque(int window, uint32_t color)
 	id<MTLTexture> texture = xgpu_metal_texture(color);
 
 	entry->opaque_now = NO;
-	if (!texture || !xgpu_metal_metalfx_supported())
+	/* (the spatial scaler has no reactive mask) */
+	if (!texture || xgpu_metal_metalfx_supported() != 1)
 		return;
 	entry->opaque = handle_fit(entry->opaque, backend_format(texture.pixelFormat), (uint32_t)texture.width,
 		(uint32_t)texture.height, 0);
@@ -484,6 +498,86 @@ static id<MTLTexture> input_place(struct metalfx_window *entry, int which, id<MT
 #endif
 
 #ifdef XGPU_METAL_METALFX
+/* the spatial scaler (xgpu_metal_metalfx_supported's 2): the window's
+colour alone upscaled into the output, made on the render thread as the
+sizes or formats change (it is quick to make), then placed as the temporal
+scaler's output is (RCAS or the copy); 0 where it cannot be */
+static int upscale_spatial(struct metalfx_window *entry, const struct xgpu_metal_metalfx_frame *frame, id<MTLTexture> color,
+	id<MTLTexture> destination)
+{
+	const int32_t *source = frame->source, *place = frame->destination_rectangle;
+	id<MTLBlitCommandEncoder> blit = nil;
+	id<MTLCommandBuffer> buffer;
+	id<MTLTexture> input, output;
+	struct metalfx_fit fit;
+	uint32_t kind;
+
+	memset(&fit, 0, sizeof(fit));
+	fit.color = color.pixelFormat;
+	fit.output = destination.pixelFormat;
+	fit.input_width = (NSUInteger)(source[2] - source[0]);
+	fit.input_height = (NSUInteger)(source[3] - source[1]);
+	fit.output_width = (NSUInteger)(place[2] - place[0]);
+	fit.output_height = (NSUInteger)(place[3] - place[1]);
+	if (!entry->spatial || !fit_same(&entry->spatial_fit, &fit))
+	{
+		MTLFXSpatialScalerDescriptor *descriptor;
+
+		if (temporal.metalfx_failed && fit_same(&entry->spatial_fit, &fit))
+			return 0;
+		descriptor = [MTLFXSpatialScalerDescriptor new];
+		descriptor.colorTextureFormat = fit.color;
+		descriptor.outputTextureFormat = fit.output;
+		descriptor.inputWidth = fit.input_width;
+		descriptor.inputHeight = fit.input_height;
+		descriptor.outputWidth = fit.output_width;
+		descriptor.outputHeight = fit.output_height;
+		/* (display.hdr's linear light, else the game's colour, as the eye
+		sees it) */
+		descriptor.colorProcessingMode = fit.color == MTLPixelFormatRGBA16Float ? MTLFXSpatialScalerColorProcessingModeHDR :
+			MTLFXSpatialScalerColorProcessingModePerceptual;
+		entry->spatial_fit = fit;
+		entry->spatial = [descriptor newSpatialScalerWithDevice:xgpu_metal_device()];
+		entry->output = handle_fit(entry->output, backend_format(fit.output), (uint32_t)fit.output_width,
+			(uint32_t)fit.output_height, 1);
+		output = entry->output ? xgpu_metal_texture(entry->output) : nil;
+		if (!entry->spatial || !output || output.pixelFormat != fit.output ||
+			(entry->spatial.outputTextureUsage & ~output.usage))
+		{
+			host_logf(HOST_LOG_WARN, "metal: MetalFX's spatial scaler cannot be made (%lux%lu to %lux%lu): the view is "
+				"stretched, not upscaled", (unsigned long)fit.input_width, (unsigned long)fit.input_height,
+				(unsigned long)fit.output_width, (unsigned long)fit.output_height);
+			temporal.metalfx_failed = YES;
+			entry->spatial = nil;
+			return 0;
+		}
+		host_logf(HOST_LOG_INFO, "metal: MetalFX's spatial scaler (%lux%lu to %lux%lu) made",
+			(unsigned long)fit.input_width, (unsigned long)fit.input_height, (unsigned long)fit.output_width,
+			(unsigned long)fit.output_height);
+		entry->inputs[0] = nil;
+	}
+	kind = xgpu_metal_pass_kind(XGPU_METAL_PASS_TEMPORAL);
+	buffer = xgpu_metal_outside_passes();
+	xgpu_metal_texture_encoded(frame->color, 0);
+	xgpu_metal_texture_encoded(entry->output, 1);
+	input = input_place(entry, 0, color, source, &blit, buffer);
+	if (blit)
+		[blit endEncoding];
+	if (!input)
+	{
+		xgpu_metal_pass_kind(kind);
+		return 0;
+	}
+	entry->spatial.colorTexture = input;
+	entry->spatial.outputTexture = xgpu_metal_texture(entry->output);
+	entry->spatial.inputContentWidth = fit.input_width;
+	entry->spatial.inputContentHeight = fit.input_height;
+	[entry->spatial encodeToCommandBuffer:buffer];
+	xgpu_metal_pass_kind(kind);
+	xgpu_metal_metalfx_place(entry->output, frame->destination, place, frame->sharpness);
+	return 1;
+}
+
 static int upscale(const struct xgpu_metal_metalfx_frame *frame)
 {
 	struct metalfx_window *entry = &temporal.windows[frame->window & 3];
@@ -496,6 +590,8 @@ static int upscale(const struct xgpu_metal_metalfx_frame *frame)
 	NSUInteger input_width = (NSUInteger)(source[2] - source[0]), input_height = (NSUInteger)(source[3] - source[1]);
 	NSUInteger output_width = (NSUInteger)(place[2] - place[0]), output_height = (NSUInteger)(place[3] - place[1]);
 	BOOL use_reactive = entry->opaque_now;
+	/* (MetalFX's spatial scaler in place of the temporal one) */
+	BOOL spatial = xgpu_metal_metalfx_supported() == 2;
 	struct metalfx_fit fit;
 	uint32_t kind;
 
@@ -525,10 +621,10 @@ static int upscale(const struct xgpu_metal_metalfx_frame *frame)
 	fit.output_width = output_width;
 	fit.output_height = output_height;
 	fit.reactive = reactive != nil;
-	if (!scaler_fit(entry, &fit))
+	if (spatial ? !upscale_spatial(entry, frame, color, destination) : !scaler_fit(entry, &fit))
 	{
-		/* (while it is made: the view stretched over the destination's
-		window) */
+		/* (while it is made, or where the spatial scaler cannot be: the
+		view stretched over the destination's window) */
 		struct xgpu_metal_motion_uniforms uniforms;
 
 		memset(&uniforms, 0, sizeof(uniforms));
@@ -544,6 +640,8 @@ static int upscale(const struct xgpu_metal_metalfx_frame *frame)
 			frame->color, 0, &uniforms);
 		return 1;
 	}
+	if (spatial)
+		return 1;
 	kind = xgpu_metal_pass_kind(XGPU_METAL_PASS_TEMPORAL);
 	/* (HALO_METALFX_TIMES: the work so far committed, MetalFX's alone in
 	the next command buffer) */

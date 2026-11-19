@@ -165,7 +165,29 @@ static void xgpu_backend_tone_map(xgpu_target target, const long corners[4])
 	sent_add(SENT_TONE_MAP, target);
 }
 
+/* (MetalFX's spatial scaler alone: 2) */
+static struct { BOOL temporal_metalfx; } xgpu_backend_capabilities = { 1 };
+
+/* render_scale_configured as a phone's build has it (#1228): the host's
+HALO_UPSCALE_RENDER_SCALE */
+#define HALO_ANDROID 1
+#define RENDER_SCALE_LEAST 0.25f
+
+static void platform_log(const char *format, ...)
+{
+	(void)format;
+}
+
 #include "under_test.inc"
+
+/* a phone's render scale, upscaled: the host draws the screen's pixels and
+gives the game the render scale, its 3D view's */
+static void phone_scale(void)
+{
+	setenv("HALO_UPSCALE_RENDER_SCALE", "0.67", 1);
+	CHECK(fabsf(render_scale_configured() - 0.67f) < 1e-6f, "the phone's render scale %f, not the host's 0.67",
+		render_scale_configured());
+}
 
 /* a draw into the back buffer, as the game's are (the view's, the HUD's) */
 static void draw(int kind)
@@ -348,6 +370,8 @@ int main(int argc, char **argv)
 		off();
 	else if (!strcmp(which, "lod_bias"))
 		lod_bias();
+	else if (!strcmp(which, "phone_scale"))
+		phone_scale();
 	else
 		return 2;
 	return 0;

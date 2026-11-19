@@ -2343,7 +2343,7 @@ static void stream_initialize(void *context, struct xgpu_stream_capabilities *ca
 	capabilities->deep_sdr = 1;
 	/* (display.temporal_aa "metalfx": MetalFX's temporal scaler,
 	xgpu_metal_temporal.m) */
-	capabilities->temporal_metalfx = xgpu_metal_metalfx_supported() != 0;
+	capabilities->temporal_metalfx = (uint8_t)xgpu_metal_metalfx_supported();
 	snprintf(capabilities->device, sizeof(capabilities->device), "%s", metal.device);
 }
 

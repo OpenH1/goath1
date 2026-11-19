@@ -109,7 +109,8 @@ struct xgpu_backend_capabilities
 	(xgpu_backend_temporal, technique 2) */
 	BOOL temporal_dlss;
 	/* display.temporal_aa "metalfx": ... with Apple's MetalFX temporal
-	scaler (xgpu_backend_temporal, technique 3: Metal's) */
+	scaler (xgpu_backend_temporal, technique 3: Metal's); 2 its spatial
+	scaler alone, unjittered (iOS's GPUs without the temporal one) */
 	BOOL temporal_metalfx;
 	/* the GPU an NVIDIA one on Vulkan where NVIDIA DLSS's add-on could run:
 	the game offers to download it (port/linux/src/dlss_addon.c) */

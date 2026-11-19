@@ -39,6 +39,9 @@ CONTROLS = [
      "motion.on ? motion.lod_bias : 0.0f", "lod_bias"),
     # FSR's bias without AMD's extra stop
     ("log2f(fraction) - (motion_vectors_technique() == 1 ? 1.0f : 0.0f)", "log2f(fraction)", "lod_bias"),
+    # a phone's render scale the host's alone, 1 to the game: the system stretches it, nothing upscales it (#1228)
+    ("#elif defined(HALO_ANDROID) || defined(HALO_IOS)\n\t/* (a phone's host", "#elif 0\n\t/* (a phone's host",
+     "phone_scale"),
 ]
 
 
@@ -52,7 +55,7 @@ def generated(fault=None):
     code = "\n\n".join([states] + [function(device, name) for name in (
         "scaled_pixel", "view_corners", "temporal_scale_render", "temporal_scale_display", "temporal_lod_bias",
         "draw_lod_bias", "halo_motion_window", "temporal_upscale", "halo_motion_resolve", "halo_screen_tone_map",
-        "halo_motion_jitter_phases")])
+        "halo_motion_jitter_phases", "render_scale_configured")])
     types = "\n\n".join([enum_with(stream, "XGPU_MOTION_RESOLVE"), structure(stream, "xgpu_motion_pass"),
                          structure(stream, "xgpu_temporal_pass")])
     return (("stream.inc", types), ("under_test.inc", code))
@@ -74,7 +77,7 @@ def window_order(render):
     return None
 
 
-@pytest.mark.parametrize("case", ["upscaled", "native", "off", "sharpness", "lod_bias"])
+@pytest.mark.parametrize("case", ["upscaled", "native", "off", "sharpness", "lod_bias", "phone_scale"])
 def test_case(case):
     status, output = run(build("temporal_order", generated()), case)
     assert status == 0, output

@@ -470,7 +470,8 @@ struct xgpu_stream_capabilities
 	temporal_dlss) */
 	uint8_t temporal_dlss;
 	/* display.temporal_aa "metalfx": ... with MetalFX's temporal scaler
-	(technique 3: xgpu_backend_capabilities' temporal_metalfx) */
+	(technique 3: xgpu_backend_capabilities' temporal_metalfx); 2 with its
+	spatial one alone (iOS, #1228) */
 	uint8_t temporal_metalfx;
 	/* the GPU an NVIDIA one where the DLSS add-on could run
 	(xgpu_backend_capabilities' dlss_gpu; a pad byte before, 0 from an

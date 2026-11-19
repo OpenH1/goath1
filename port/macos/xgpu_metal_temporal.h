@@ -44,7 +44,8 @@ void xgpu_metal_motion_view(uint32_t into, uint8_t format, uint32_t motion, cons
 	const struct xgpu_metal_motion_uniforms *uniforms);
 
 /* whether the GPU and the system have MetalFX's temporal scaler (macOS 13,
-iOS 16 on) */
+iOS 16 on): 1; 2 on iOS where they have only its spatial one (#1228); 0
+neither */
 int xgpu_metal_metalfx_supported(void);
 /* the window's (0 to 3) colour before its transparent draws (a copy of the
 target's texture, of its format and size), for this frame's reactive mask */
