@@ -331,6 +331,10 @@ static long shadow_retained_view = NONE;
 static unsigned long shadow_retained_casters = 0;
 static unsigned long shadow_retained_kept_count = 0;
 static unsigned long shadow_retained_frames = 0;
+/* the shadow's receivers drawn yet, and their vertices' type
+(_rasterizer_environment_shadow_draw: d3d8_draw_state_kept) */
+static boolean shadow_receiver_drawn = FALSE;
+static long shadow_receiver_type = NONE;
 
 int config_boolean(char const *name);
 unsigned long config_changes(void);
@@ -793,6 +797,7 @@ void _rasterizer_environment_shadow_draw(
 	{
 		if (!shadow_setup)
 		{
+			shadow_receiver_drawn = FALSE; /* port: (below) */
 			/* port: a shadow of the atlas is blurred already, into its region
 			of the chain's last atlas, sampled as its own map
 			(rasterizer_shadow_atlas_convolve) */
@@ -1078,11 +1083,18 @@ void _rasterizer_environment_shadow_draw(
 		}
 
 		rasterizer_set_stencil_mode(RASTERIZER_STENCIL_MODE_REJECT);
+		/* port: debug.retained_shadows: the shadow's draws after its first
+		(its setup's), of other materials' vertices of the same type, keep
+		its state as it was prepared (d3d8_draw_state_kept) */
+		d3d8_draw_state_kept(shadow_retained_on && shadow_receiver_drawn && vertex_buffer->type == shadow_receiver_type);
 		rasterizer_draw_dynamic_triangles_static_vertices(
 			dynamic_triangle_buffer_index,
 			first_triangle_index,
 			triangle_count,
 			vertex_buffer);
+		d3d8_draw_state_kept(FALSE);
+		shadow_receiver_drawn = TRUE;
+		shadow_receiver_type = vertex_buffer->type;
 
 		if (rasterizer_debug_options.statistics_mode ==
 			_rasterizer_statistics_mode_enabled)
