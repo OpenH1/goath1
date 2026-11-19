@@ -90,6 +90,7 @@ static BOOL platform_screen_mode(long *width, long *height)
 /* (display.temporal_aa "fsr" where the backend has it: upscaling) */
 static BOOL upscaling;
 static BOOL temporal_upscaling(void) { return upscaling; }
+static int motion_vectors_technique(void) { return upscaling ? 1 : 0; }
 %FUNCTIONS%
 static long drawn[2];
 static float factor;
