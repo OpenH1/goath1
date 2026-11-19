@@ -36,7 +36,10 @@ next sub-step's index):
                                                        message handled
     A <kind> <player> <key> <sub> <time> <tick> <step> applied to the machine's
                                                        copy of the player, first
-    P <time>                                           a frame presented, after
+    P <time>                                           a frame presented (handed to
+                                                       the host's renderer, which
+                                                       presents it: before the frame
+                                                       cap's sleep), after
                                                        one applied or sampled since
                                                        the last (the owner's own
                                                        view of its change)
@@ -90,6 +93,8 @@ static struct
 	unsigned long long step_begun;
 	unsigned long long last_flush;
 	int applied_since_present;
+	/* the frame's commands handed to the host's renderer (0: not this frame) */
+	unsigned long long committed;
 	short destination;
 	struct trace_change queued[TRACE_QUEUED];
 	int queued_count;
@@ -428,13 +433,26 @@ void network_latency_trace_applied(
 	trace.applied_since_present = 1;
 }
 
+/* (xgpu_stream_encode.c) the frame's commands handed to the host's renderer,
+which presents it then: before the frame cap's sleep, which
+network_latency_trace_presented comes after */
+void network_latency_trace_frame_committed(
+	void)
+{
+	if (network_latency_trace_on)
+		trace.committed = trace_now();
+}
+
 void network_latency_trace_presented(
 	void)
 {
+	unsigned long long committed = trace.committed;
+
+	trace.committed = 0;
 	if (!network_latency_trace_on || !trace.applied_since_present)
 		return;
 	trace.applied_since_present = 0;
-	fprintf(trace.file, "P %llu\n", trace_now());
+	fprintf(trace.file, "P %llu\n", committed ? committed : trace_now());
 }
 
 /* (the socket layer) a datagram, or a stream's write, to the peer's address

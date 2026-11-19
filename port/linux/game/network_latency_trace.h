@@ -31,6 +31,7 @@ void network_latency_trace_datagram_dequeued(void const *connection, int datagra
 void network_latency_trace_queue_reset(void const *connection);
 void network_latency_trace_received(char kind, short player, long key, short substep, long tick);
 void network_latency_trace_applied(char kind, short player, long key, short substep, long tick, short step);
+void network_latency_trace_frame_committed(void);
 void network_latency_trace_presented(void);
 void network_latency_trace_send(unsigned long address, int datagram);
 
