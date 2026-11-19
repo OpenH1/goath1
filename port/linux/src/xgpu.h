@@ -522,6 +522,50 @@ BOOL xgpu_texture_decode_level(const struct xgpu_texture_description *descriptio
 void xgpu_texture_decode_dxt(const struct xgpu_texture_description *description, unsigned long level,
 	const unsigned char *source, DWORD *destination);
 
+/* ---------- levels that keep an alpha test's coverage
+
+display.alpha_coverage (Enhanced; the Xbox drew the levels as stored, #1223):
+a 2D texture whose alpha a draw's alpha test reads alone (d3d8_device.c's
+alpha_test_stage) is drawn from a copy of its own (the stage's
+xgpu_stream_texture_stage target, XGPU_TEXTURE_COVERAGE_*: the texture of
+any other draw is the one stored), whose levels past the first have the
+share of texels the test passes that the first has. Averaged, a level's
+alphas fall under the test's reference where the first's are thin (a
+fence's wires, a tree's leaves), and far away those vanish and shimmer.
+Each level's alpha is made from the one before's as it was made (not as
+scaled), box-filtered, then scaled so that as many of its texels pass as
+the first's share would have (I. Castaño's, "Computing Alpha Mipmaps",
+2010); a texel the test passes now that it failed as stored takes the
+colour the first level's passing texels average to there (a stored level's
+cut-out texels are of any colour, DXT1's black). The colours of the rest
+are the level's as stored. The backends decode such a copy to BGRA
+(xgpu_vulkan_textures.c, xgpu_metal_textures.c), once as it is read. */
+#define XGPU_TEXTURE_COVERAGE_SHIFT 16
+#define XGPU_TEXTURE_COVERAGE_MASK 0x00ff0000u
+/* the least alpha the test passes (2 to 255) in a stage's target */
+#define XGPU_TEXTURE_COVERAGE_PASS(target) (((target) & XGPU_TEXTURE_COVERAGE_MASK) >> XGPU_TEXTURE_COVERAGE_SHIFT)
+
+struct xgpu_texture_coverage
+{
+	/* the least alpha passing; the first level's share passing */
+	unsigned int pass;
+	double share;
+	/* the level before as made, unscaled: its colour averaged over its
+	alpha, and that (ARGB words) */
+	DWORD *made;
+	unsigned long width, height;
+	BOOL failed;
+};
+
+void xgpu_texture_coverage_begin(struct xgpu_texture_coverage *coverage, unsigned int pass);
+/* the texture's next level (0 first, then each in order), its texels
+decoded (ARGB words, as xgpu_texture_decode_level), width by height: the
+first's share taken from it; a later one's alpha (and colour where it is
+passed now and was not) made as above, in place */
+void xgpu_texture_coverage_level(struct xgpu_texture_coverage *coverage, unsigned long level, unsigned long width,
+	unsigned long height, DWORD *texels);
+void xgpu_texture_coverage_end(struct xgpu_texture_coverage *coverage);
+
 /* ---------- MCC textures
 
 An MCC map's textures (port/linux/game/mcc_texture_cache.c) are converted to

@@ -4166,6 +4166,66 @@ static BOOL alpha_test_always_passes(void)
 	return stage >= 0 && alpha_minimum_passes(stage_alpha_minimum[stage]);
 }
 
+/* ---------- levels that keep an alpha test's coverage
+
+display.alpha_coverage (Enhanced, #1223; xgpu.h): a draw whose alpha test
+reads a texture's alpha alone (alpha_test_stage), as an opaque draw (a
+blend that takes the source's alpha would show its alphas changed), with a
+test some of the texture's texels fail, draws the texture from the copy
+whose levels past the first keep the test's share of texels passing: the
+stage's target (XGPU_TEXTURE_COVERAGE_*), which the backends key their
+copies by. Every other draw of the texture (a blended one, one that tests
+another alpha, the passes after an alpha-tested environment's first, which
+test none) draws it as stored. Read again as the front end takes a change
+up between frames; off (Classic), the stages are as they were. */
+
+static struct
+{
+	BOOL read;
+	unsigned long read_at;
+	BOOL enabled;
+} alpha_coverage;
+
+/* the blend factor takes the source's alpha */
+static BOOL blend_source_alpha(DWORD factor)
+{
+	return factor == D3DBLEND_SRCALPHA || factor == D3DBLEND_INVSRCALPHA || factor == D3DBLEND_SRCALPHASAT;
+}
+
+/* the stage's target: the copy of its texture (a 2D one, of more levels
+than one, sampled as it is) the draw is to draw, 0 the texture as stored */
+static DWORD alpha_coverage_target(int stage)
+{
+	const DWORD *state = D3D__RenderState;
+	int reference = (int)(state[D3DRS_ALPHAREF] & 0xff), pass;
+
+	if (!state[D3DRS_ALPHATESTENABLE])
+		return 0;
+	if (!alpha_coverage.read || alpha_coverage.read_at != halo_gpu_settings_taken())
+	{
+		alpha_coverage.read = TRUE;
+		alpha_coverage.read_at = halo_gpu_settings_taken();
+		alpha_coverage.enabled = config_boolean("display.alpha_coverage") != 0;
+	}
+	if (!alpha_coverage.enabled)
+		return 0;
+	switch (state[D3DRS_ALPHAFUNC])
+	{
+	case D3DCMP_GREATER: pass = reference + 1; break;
+	case D3DCMP_GREATEREQUAL: pass = reference; break;
+	default: return 0;
+	}
+	/* (a test of no alpha at all, a scale leaves as it is; of 255 alone) */
+	if (pass < 2 || pass > 255)
+		return 0;
+	if (state[D3DRS_ALPHABLENDENABLE] && (blend_source_alpha(state[D3DRS_SRCBLEND]) ||
+		blend_source_alpha(state[D3DRS_DESTBLEND])))
+		return 0;
+	if (alpha_test_stage() != stage || alpha_minimum_passes(stage_alpha_minimum[stage]))
+		return 0;
+	return (DWORD)pass << XGPU_TEXTURE_COVERAGE_SHIFT;
+}
+
 /* ---------- the model being drawn
 
 The game says what model its draws are of while it draws one
@@ -4505,6 +4565,11 @@ static void bind_textures(struct nv2a_pixel_shader_key *key, float texture_scale
 			!description.hires && source->sampler.address[0] < XGPU_ADDRESS_BORDER &&
 			source->sampler.address[1] < XGPU_ADDRESS_BORDER)
 			stage_alpha_minimum[stage] = texture_alpha_minimum(texture, stage);
+		/* (display.alpha_coverage: the copy whose levels keep the test's
+		coverage, above; the texture's own, not an MCC map's image) */
+		if (!target && mode == 0x01 && kind == XGPU_TEXTURE_KIND_2D && !description.hires && !description.cube_map &&
+			description.depth <= 1 && description.levels > 1 && texture->Data != XGPU_MCC_TEXTURE_DATA)
+			source->target = alpha_coverage_target(stage);
 		if (inputs.texture_regions[stage][0] > 0.0f)
 			memcpy(texture_scale[stage], inputs.texture_regions[stage], sizeof(texture_scale[stage]));
 		/* (the high-res text's distance fields: text_hires.c) */

@@ -899,7 +899,9 @@ made (the header is at resource). For an Xbox texture (XGPU_SOURCE_TEXTURE)
 target is the channels its texels are sampled from: 0 as they are, else
 0x100 and two bits for each of red, green, blue and alpha (red's lowest),
 the channel of the texels it is taken from (a Custom Edition map's model
-masks and meters: xbox_textures.c).
+masks and meters: xbox_textures.c); of one sampled as it is, the copy
+drawn whose levels keep an alpha test's coverage in XGPU_TEXTURE_COVERAGE_MASK
+(xgpu.h: the least alpha the test passes, 0 the texture as stored).
 
 A stage may instead draw an image (XGPU_STREAM_SOURCE_IMAGE: a high-res
 replacement for the Xbox texture, xgpu_images.h): resource is its number,
