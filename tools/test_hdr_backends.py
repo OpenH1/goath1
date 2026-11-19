@@ -128,7 +128,8 @@ def test_post_shaders_on_the_gpu(harness):
     assert "post: 9 values not a number or infinite tone mapped finite" in output, output
     assert "dither: means within" in output, output
     assert "depth: 16-bit frame" in output, output
-    assert "area: at 1.5 the mean" in output, output
+    assert "area: at 1.5 the mean light" in output, output
+    assert "area: at 2 half white and half black" in output, output
 
 
 def test_draws_agree_on_the_gpu(harness):

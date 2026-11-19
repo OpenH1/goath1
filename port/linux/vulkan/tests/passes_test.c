@@ -2682,11 +2682,12 @@ static void deep_window_test(void)
 	reset();
 }
 
-/* #1117: an 8-bit frame at gamma 1 shown smaller than it is by 1.5
-(supersampling: 1920x1080 in a 1280x720 window) is drawn by the last pass,
-which scales it down by its area at the window's pixels, then copied 1:1;
-at 1 and exactly 2 (the negative controls) it is blitted as before, the
-2x blit linear, untouched by any pass */
+/* #1117, #1224: an 8-bit frame at gamma 1 shown smaller than it is by 1.5
+or exactly 2 (supersampling: 1920x1080 or 2560x1440 in a 1280x720 window)
+is drawn by the last pass, which scales it down by its area, in light, at
+the window's pixels, then copied 1:1 (a 2x linear blit would average the
+codes); at 1 (the negative control) it is blitted as before, untouched by
+any pass */
 static void area_window_test(void)
 {
 	static const uint32_t sizes[3][2] = { { 1920, 1080 }, { 2560, 1440 }, { 1280, 720 } };
@@ -2698,7 +2699,7 @@ static void area_window_test(void)
 		window_frame.description.width = sizes[which][0];
 		window_frame.description.height = sizes[which][1];
 		assert(window_present_frame() && window_made.imageFormat == VK_FORMAT_B8G8R8A8_UNORM);
-		if (!which)
+		if (which < 2)
 		{
 			assert(hdr_encodes == 1 && hdr_encoded_format == XGPU_VULKAN_FORMAT_BGRA8);
 			assert(hdr_encoded_output.width == 1280 && hdr_encoded_output.height == 720);

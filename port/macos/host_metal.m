@@ -1078,15 +1078,12 @@ uint64_t host_metal_loading(void *context, const struct loading_presentation_fra
 	return presentation.refresh_rate > 0.0f ? (uint64_t)(1e9 / presentation.refresh_rate) : 16666667ull;
 }
 
-/* the picture is shown smaller than it is (supersampling) by other than 1
-or 2 each way: the last pass scales it down by its area (#1117) */
+/* the picture is shown smaller than it is (supersampling) either way: the
+last pass scales it down by its area (#1117) and in light (#1224), where
+the sampler, 2's too, would average the codes */
 static BOOL area_scaled(id<MTLTexture> picture, MTLViewport viewport)
 {
-	double width = (double)picture.width, height = (double)picture.height;
-	BOOL across = width <= viewport.width + 0.5 || fabs(width - 2.0 * viewport.width) <= 0.5;
-	BOOL down = height <= viewport.height + 0.5 || fabs(height - 2.0 * viewport.height) <= 0.5;
-
-	return (width > viewport.width + 0.5 || height > viewport.height + 0.5) && !(across && down);
+	return (double)picture.width > viewport.width + 0.5 || (double)picture.height > viewport.height + 0.5;
 }
 
 /* A picture drawn into the viewport, as the drawable's layer wants it. */

@@ -419,11 +419,14 @@ height); bounds: the frame's width and height and the sharp upscale's
 whole factors across and down (xgpu_vulkan.c's present_sharp, in one tap:
 the frame scaled up by them by nearest, then linearly to the viewport; 1, 1
 linearly alone). A frame larger than the viewport (supersampling) by other
-than 1 or 2 either way is scaled down by its area (#1117): each pixel the
-mean of the frame's texels under it, each by how much of it they cover, so
-that none is skipped (a linear tap reads 2 of 1.5's or 3's); at 1 and 2
-the one linear tap (2's is the mean of the 4 texels under the pixel
-already) as before. window: the SDR curve (XGPU_HDR_SDR_CURVE_*), the levels
+than 1 either way is scaled down by its area (#1117): each pixel the mean
+of the frame's texels under it, each by how much of it they cover, so that
+none is skipped (a linear tap reads 2 of 1.5's or 3's), and the mean of
+their light (#1224): each texel's value made linear, the mean encoded
+again, as a pixel showing half white and half black shows half the light
+(about 74% of its code), not half the code (about 22% of the light), so
+that a thin bright detail keeps its brightness (2's too, whose linear tap
+would be the mean of the codes); at 1 the one linear tap as before. window: the SDR curve (XGPU_HDR_SDR_CURVE_*), the levels
 a channel is dithered to (255, 1023; 0 none), the power (1 none), the
 display's black (xgpu_hdr_frame.black: 0 none); gamut: display.hdr_gamut
 "expanded" (x: 1) and its target (y: xgpu_hdr_frame.gamut_target) */
@@ -456,9 +459,9 @@ static const char encode_source[] =
 	"}\n"
 	"\n"
 	"/* the frame scaled down by its area at a point of the viewport, the\n"
-	"frame's pixels to the viewport's each way (ratio): the texels under the\n"
-	"pixel's square, each by the part of it they cover (at most 8 each way:\n"
-	"a ratio up to 7) */\n"
+	"frame's pixels to the viewport's each way (ratio): the light of the\n"
+	"texels under the pixel's square, each by the part of it they cover (at\n"
+	"most 8 each way: a ratio up to 7), encoded again */\n"
 	"vec3 present_area(vec2 at, vec2 ratio)\n"
 	"{\n"
 	"\tvec2 start = (at - 0.5) * ratio, end = (at + 0.5) * ratio;\n"
@@ -478,19 +481,18 @@ static const char encode_source[] =
 	"\t\t\tif (width <= 0.0)\n"
 	"\t\t\t\tbreak;\n"
 	"\t\t\tivec2 texel = clamp(ivec2(first.x + column, first.y + row), ivec2(0), most);\n"
-	"\t\t\tsum += texelFetch(color_texture, texel, 0).rgb * (width * height);\n"
+	"\t\t\tsum += hdr_linear(texelFetch(color_texture, texel, 0).rgb) * (width * height);\n"
 	"\t\t\ttotal += width * height;\n"
 	"\t\t}\n"
 	"\t}\n"
-	"\treturn sum / max(total, 1e-6);\n"
+	"\treturn hdr_encoded(sum / max(total, 1e-6));\n"
 	"}\n"
 	"\n"
 	"void main()\n"
 	"{\n"
 	"\tvec2 at = gl_FragCoord.xy - metrics.xy;\n"
 	"\tvec2 ratio = bounds.xy * metrics.zw;\n"
-	"\tbvec2 tap = lessThan(abs(ratio - 2.0), vec2(1e-4));\n"
-	"\ttap = bvec2(tap.x || ratio.x < 1.0001, tap.y || ratio.y < 1.0001);\n"
+	"\tbvec2 tap = lessThan(ratio, vec2(1.0001));\n"
 	"\tvec3 frame = all(tap) ? textureLod(color_texture, present_position(at), 0.0).rgb : present_area(at, max(ratio, 1.0));\n"
 	"\tvec3 code = hdr_encode(frame, hdr, window.x, window.w, gamut);\n"
 	"\tif (hdr.z < 0.5 && window.z > 0.0 && window.z != 1.0)\n"
