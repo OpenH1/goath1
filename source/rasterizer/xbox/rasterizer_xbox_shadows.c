@@ -302,7 +302,12 @@ tile-based GPU (shadow_atlas_set_target), never the whole atlas, so a kept
 region stays as it was; the chain draws the regions drawn this frame alone.
 The receivers are drawn as before, each sampling its own region. Kept only
 while the atlas's class, the maps' scale, the settings and the view drawing
-the shadows (a window's: split screen and mirrors alternate) stay the same. */
+the shadows (a window's: split screen and mirrors alternate) stay the same.
+
+Not yet the same pictures: a kept region's shadow is drawn fainter than one
+drawn again (measured: the regions, cells and order alone, every caster
+drawn, are the same pictures), so the casters are kept only with
+HALO_RETAINED_CASTERS set as well, for measuring. */
 
 static boolean shadow_retained_on = FALSE;
 static boolean shadow_fingerprinting = FALSE;
@@ -335,10 +340,13 @@ static unsigned long shadow_retained_frames = 0;
 (_rasterizer_environment_shadow_draw: d3d8_draw_state_kept) */
 static boolean shadow_receiver_drawn = FALSE;
 static long shadow_receiver_type = NONE;
+/* debug.retained_shadows, read as the frame's casters begin */
+static boolean shadow_receivers_kept = FALSE;
 
 int config_boolean(char const *name);
 unsigned long config_changes(void);
 void platform_log(char const *format, ...);
+char *getenv(char const *name);
 
 /* ---------- globals */
 
@@ -1086,7 +1094,7 @@ void _rasterizer_environment_shadow_draw(
 		/* port: debug.retained_shadows: the shadow's draws after its first
 		(its setup's), of other materials' vertices of the same type, keep
 		its state as it was prepared (d3d8_draw_state_kept) */
-		d3d8_draw_state_kept(shadow_retained_on && shadow_receiver_drawn && vertex_buffer->type == shadow_receiver_type);
+		d3d8_draw_state_kept(shadow_receivers_kept && shadow_receiver_drawn && vertex_buffer->type == shadow_receiver_type);
 		rasterizer_draw_dynamic_triangles_static_vertices(
 			dynamic_triangle_buffer_index,
 			first_triangle_index,
@@ -1879,9 +1887,12 @@ settings changed, or the setting is off */
 static void shadow_retained_frame_begin(
 	void)
 {
-	boolean on = shadow_atlas_active && config_boolean("debug.retained_shadows");
 	long scale = halo_shadow_map_scale();
 	unsigned long changes = config_changes();
+	boolean on;
+
+	shadow_receivers_kept = config_boolean("debug.retained_shadows") != 0;
+	on = shadow_receivers_kept && shadow_atlas_active && getenv("HALO_RETAINED_CASTERS") != NULL;
 
 	if (!on || shadow_retained_class != shadow_atlas_class || shadow_retained_scale != scale ||
 		shadow_retained_changes != changes)

@@ -3031,10 +3031,12 @@ static const struct config_setting config_settings[] =
 		"inspector's replay of a recording (HALO_RENDER_RECORD; port/macos/README.md).\n"
 		"The backends draw nothing for them; off, nothing is sent." },
 	{ "debug.retained_shadows", _config_boolean, "false", "HALO_RETAINED_SHADOWS", _environment_set_is_true, _platform_all,
-		"Keep each object's shadow drawn the frame before while what it would draw\n"
-		"is the same (an object at rest), not drawn and blurred again, and each\n"
-		"shadow's surfaces of the level while its place is the same; the pictures\n"
-		"the same. For measuring; off draws every shadow each frame." },
+		"Keep each shadow's surfaces of the level while its place is the same (an\n"
+		"object at rest), and draw a shadow's surfaces after its first with the\n"
+		"state the first was prepared with; the pictures the same. With\n"
+		"HALO_RETAINED_CASTERS set too, an object's shadow drawn the frame before\n"
+		"is kept, not drawn and blurred again (not yet the same pictures). For\n"
+		"measuring." },
 	{ "debug.gpu_validation", _config_boolean, "false", "HALO_GPU_VALIDATION", _environment_set_is_true, _platform_all,
 		"Report the graphics API's errors in the log: Vulkan's validation layers\n"
 		"(which must be installed)." },
