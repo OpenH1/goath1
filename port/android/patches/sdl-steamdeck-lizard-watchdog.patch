@@ -1,0 +1,117 @@
+diff --git a/src/joystick/hidapi/SDL_hidapi_steamdeck.c b/src/joystick/hidapi/SDL_hidapi_steamdeck.c
+index 8bfb64d..4be9e99 100644
+--- a/src/joystick/hidapi/SDL_hidapi_steamdeck.c
++++ b/src/joystick/hidapi/SDL_hidapi_steamdeck.c
+@@ -84,7 +84,16 @@ typedef struct
+     Uint32 update_rate_us;
+     Uint64 sensor_timestamp_ns;
+     Uint64 last_button_state;
+-    Uint8 watchdog_counter;
++
++    /* The lizard-mode watchdog's keep-alive, fed on a thread of its own, on
++       a handle of its own, every STEAMDECK_LIZARD_WATCHDOG_MS: its three
++       feature reports are USB control transfers (about 8 ms in all on the
++       Deck), which must not stall the thread that pumps the joysticks, and
++       the controller's timeout is a time, not a count of updates. The
++       thread takes neither the joystick lock nor the device's dev_lock. */
++    SDL_hid_device *watchdog_dev;
++    SDL_Thread *watchdog_thread;
++    SDL_Semaphore *watchdog_stop;
+ 
+     bool left_touch_down;
+     float left_touch_x;
+@@ -130,6 +139,11 @@ static bool DisableDeckLizardMode(SDL_hid_device *dev)
+     return true;
+ }
+ 
++/* The keep-alive's period: the Steam Controller (2026) driver's
++   (SDL_hidapi_steam_triton.c, 3 seconds); Linux's hid-steam driver feeds
++   the Deck's every 5 seconds, so the firmware's timeout is longer. */
++#define STEAMDECK_LIZARD_WATCHDOG_MS 3000
++
+ static bool FeedDeckLizardWatchdog(SDL_hid_device *dev)
+ {
+     int rc;
+@@ -158,6 +172,47 @@ static bool FeedDeckLizardWatchdog(SDL_hid_device *dev)
+     return true;
+ }
+ 
++static int SDLCALL SteamDeckLizardWatchdogThread(void *data)
++{
++    SDL_DriverSteamDeck_Context *ctx = (SDL_DriverSteamDeck_Context *)data;
++
++    while (!SDL_WaitSemaphoreTimeout(ctx->watchdog_stop, STEAMDECK_LIZARD_WATCHDOG_MS)) {
++        FeedDeckLizardWatchdog(ctx->watchdog_dev);
++    }
++    return 0;
++}
++
++static void StopDeckLizardWatchdog(SDL_DriverSteamDeck_Context *ctx)
++{
++    if (ctx->watchdog_thread) {
++        SDL_SignalSemaphore(ctx->watchdog_stop);
++        SDL_WaitThread(ctx->watchdog_thread, NULL);
++        ctx->watchdog_thread = NULL;
++    }
++    if (ctx->watchdog_stop) {
++        SDL_DestroySemaphore(ctx->watchdog_stop);
++        ctx->watchdog_stop = NULL;
++    }
++    if (ctx->watchdog_dev) {
++        SDL_hid_close(ctx->watchdog_dev);
++        ctx->watchdog_dev = NULL;
++    }
++}
++
++static bool StartDeckLizardWatchdog(SDL_HIDAPI_Device *device, SDL_DriverSteamDeck_Context *ctx)
++{
++    ctx->watchdog_dev = SDL_hid_open_path(device->path);
++    ctx->watchdog_stop = SDL_CreateSemaphore(0);
++    if (ctx->watchdog_dev && ctx->watchdog_stop) {
++        ctx->watchdog_thread = SDL_CreateThread(SteamDeckLizardWatchdogThread, "SDLSteamDeckWatchdog", ctx);
++    }
++    if (!ctx->watchdog_thread) {
++        StopDeckLizardWatchdog(ctx);
++        return false;
++    }
++    return true;
++}
++
+ static void HIDAPI_DriverSteamDeck_HandleState(SDL_HIDAPI_Device *device,
+                                                SDL_Joystick *joystick,
+                                                ValveInReport_t *pInReport)
+@@ -349,6 +404,9 @@ static bool HIDAPI_DriverSteamDeck_InitDevice(SDL_HIDAPI_Device *device)
+ 
+     HIDAPI_SetDeviceName(device, "Steam Deck");
+ 
++    if (!StartDeckLizardWatchdog(device, ctx))
++        return false;
++
+     return HIDAPI_JoystickConnected(device, NULL);
+ }
+ 
+@@ -378,12 +436,6 @@ static bool HIDAPI_DriverSteamDeck_UpdateDevice(SDL_HIDAPI_Device *device)
+         return false;
+     }
+ 
+-    if (ctx->watchdog_counter++ > 200) {
+-        ctx->watchdog_counter = 0;
+-        if (!FeedDeckLizardWatchdog(device->dev))
+-            return false;
+-    }
+-
+     SDL_zeroa(data);
+ 
+     do {
+@@ -478,6 +530,11 @@ static void HIDAPI_DriverSteamDeck_CloseJoystick(SDL_HIDAPI_Device *device, SDL_
+ 
+ static void HIDAPI_DriverSteamDeck_FreeDevice(SDL_HIDAPI_Device *device)
+ {
++    SDL_DriverSteamDeck_Context *ctx = (SDL_DriverSteamDeck_Context *)device->context;
++
++    if (ctx) {
++        StopDeckLizardWatchdog(ctx);
++    }
+ }
+ 
+ SDL_HIDAPI_DeviceDriver SDL_HIDAPI_DriverSteamDeck = {
