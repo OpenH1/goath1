@@ -427,24 +427,21 @@ static int adpcm_decode_nibble(
 	return state->predictor;
 }
 
-static boolean adpcm_decode(
+/* `block_count` blocks of Xbox ADPCM `data` of `channels` channels, decoded
+into `output` (ADPCM_BLOCK_SAMPLES frames a block): no memory is taken, so
+any thread may (mod_sounds.c's decoder) */
+static void adpcm_blocks_decode(
 	byte const *data,
-	long data_bytes,
+	long block_count,
 	long channels,
-	long rate,
-	struct frames *frames)
+	short *output)
 {
-	long block_count = data_bytes / (ADPCM_BLOCK_BYTES * channels);
 	long block_index;
 
-	frames->count = block_count * ADPCM_BLOCK_SAMPLES;
-	frames->channels = channels;
-	frames->rate = rate;
-	frames->samples = frames_allocate(frames->count, channels);
-	for (block_index = 0; frames->samples && block_index < block_count; block_index++)
+	for (block_index = 0; block_index < block_count; block_index++)
 	{
 		byte const *block = data + block_index * ADPCM_BLOCK_BYTES * channels;
-		short *output = frames->samples + block_index * ADPCM_BLOCK_SAMPLES * channels;
+		short *block_output = output + block_index * ADPCM_BLOCK_SAMPLES * channels;
 		long channel;
 
 		for (channel = 0; channel < channels; channel++)
@@ -464,11 +461,30 @@ static boolean adpcm_decode(
 				{
 					long frame = group * 8 + byte_index * 2;
 
-					output[frame * channels + channel] = (short)adpcm_decode_nibble(&state, group_bytes[byte_index] & 0xF);
-					output[(frame + 1) * channels + channel] = (short)adpcm_decode_nibble(&state, group_bytes[byte_index] >> 4);
+					block_output[frame * channels + channel] = (short)adpcm_decode_nibble(&state, group_bytes[byte_index] & 0xF);
+					block_output[(frame + 1) * channels + channel] = (short)adpcm_decode_nibble(&state, group_bytes[byte_index] >> 4);
 				}
 			}
 		}
+	}
+}
+
+static boolean adpcm_decode(
+	byte const *data,
+	long data_bytes,
+	long channels,
+	long rate,
+	struct frames *frames)
+{
+	long block_count = data_bytes / (ADPCM_BLOCK_BYTES * channels);
+
+	frames->count = block_count * ADPCM_BLOCK_SAMPLES;
+	frames->channels = channels;
+	frames->rate = rate;
+	frames->samples = frames_allocate(frames->count, channels);
+	if (frames->samples)
+	{
+		adpcm_blocks_decode(data, block_count, channels, frames->samples);
 	}
 
 	return frames->samples != NULL;
@@ -555,6 +571,83 @@ static double resample_weight(
 	return resample_table[index] + (resample_table[index + 1] - resample_table[index]) * (at - index);
 }
 
+/* the source frames each side of an output frame the low pass from
+`source_rate` to `rate` reaches (frames_resample_range) */
+static double resample_reach(
+	long source_rate,
+	long rate)
+{
+	return RESAMPLE_ZERO_CROSSINGS / (RESAMPLE_CUTOFF * MIN(1.0, (double)rate / source_rate));
+}
+
+/* The frames [first, first + count) of `source_total` frames at
+`source_rate` resampled to `rate` (frames_resample's), into `output`, from
+`source`, which holds the source's frames [source_first, source_first +
+source_count) of `channels`: every frame each output frame's low pass
+reaches (resample_reach) must be among them. The same frames frames_resample
+makes of the whole, sample for sample, and no memory taken, so any thread
+may (mod_sounds.c's decoder; resample_table_make first, on the game's). */
+static void frames_resample_range(
+	short const *source,
+	long source_first,
+	long source_count,
+	long source_total,
+	long source_rate,
+	long channels,
+	long rate,
+	long first,
+	long count,
+	short *output)
+{
+	/* (the pass band, as a fraction of the source's, and the source frames
+	each side the low pass reaches) */
+	double cutoff = RESAMPLE_CUTOFF * MIN(1.0, (double)rate / source_rate);
+	double reach = resample_reach(source_rate, rate);
+	long frame;
+
+	for (frame = first; frame < first + count; frame++)
+	{
+		double at = (double)frame * source_rate / rate;
+		long lowest = MAX((long)ceil(at - reach), 0);
+		long highest = MIN((long)floor(at + reach), source_total - 1);
+		double sums[2] = { 0.0, 0.0 };
+		long index;
+		long channel;
+
+		/* (none past what is held: silence, never another's memory) */
+		lowest = MAX(lowest, source_first);
+		highest = MIN(highest, source_first + source_count - 1);
+		for (index = lowest; index <= highest; index++)
+		{
+			double weight = resample_weight((at - index) * cutoff);
+
+			for (channel = 0; channel < channels; channel++)
+			{
+				sums[channel] += source[(index - source_first) * channels + channel] * weight;
+			}
+		}
+		for (channel = 0; channel < channels; channel++)
+		{
+			long value = lround(sums[channel] * cutoff);
+
+			output[(frame - first) * channels + channel] = (short)PIN(value, -32768, 32767);
+		}
+	}
+}
+
+/* the frames `source_total` frames at `source_rate` are at `rate`, or -1
+when that is more than any sound has (a stream's own rate can be anything) */
+static long resampled_count(
+	long source_total,
+	long source_rate,
+	long rate)
+{
+	double scaled_count = source_rate > 0 ? (double)source_total * rate / source_rate : -1.0;
+
+	return source_rate <= 0 || rate <= 0 || !(scaled_count >= 0.0) || scaled_count > (double)MAXIMUM_FRAMES ?
+		-1 : (long)scaled_count;
+}
+
 /* `frames` resampled to `rate` with the windowed sinc low pass at the lower
 of the two rates' bands (band limited: nothing above the new rate's band is
 folded into it); FALSE when it comes to nothing */
@@ -562,52 +655,20 @@ static boolean frames_resample(
 	struct frames *frames,
 	long rate)
 {
-	/* (the count at the new rate, refused before it is a long when it is
-	more than any sound has: a stream's own rate can be anything) */
-	double scaled_count = frames->rate > 0 ? (double)frames->count * rate / frames->rate : -1.0;
-	double cutoff;
-	double reach;
-	long channels = frames->channels;
-	long count;
+	long count = resampled_count(frames->count, frames->rate, rate);
 	short *samples;
-	long frame;
 
-	if (frames->rate <= 0 || rate <= 0 || !(scaled_count >= 0.0) || scaled_count > (double)MAXIMUM_FRAMES)
+	if (count < 0)
 	{
 		frames_free(frames);
 		return FALSE;
 	}
 	resample_table_make();
-	/* (the pass band, as a fraction of the source's, and the source frames
-	each side the low pass reaches) */
-	cutoff = RESAMPLE_CUTOFF * MIN(1.0, (double)rate / frames->rate);
-	reach = RESAMPLE_ZERO_CROSSINGS / cutoff;
-	count = (long)scaled_count;
-	samples = frames_allocate(count, channels);
-	for (frame = 0; samples && frame < count; frame++)
+	samples = frames_allocate(count, frames->channels);
+	if (samples)
 	{
-		double at = (double)frame * frames->rate / rate;
-		long first = MAX((long)ceil(at - reach), 0);
-		long last = MIN((long)floor(at + reach), frames->count - 1);
-		double sums[2] = { 0.0, 0.0 };
-		long source;
-		long channel;
-
-		for (source = first; source <= last; source++)
-		{
-			double weight = resample_weight((at - source) * cutoff);
-
-			for (channel = 0; channel < channels; channel++)
-			{
-				sums[channel] += frames->samples[source * channels + channel] * weight;
-			}
-		}
-		for (channel = 0; channel < channels; channel++)
-		{
-			long value = lround(sums[channel] * cutoff);
-
-			samples[frame * channels + channel] = (short)PIN(value, -32768, 32767);
-		}
+		frames_resample_range(frames->samples, 0, frames->count, frames->count, frames->rate, frames->channels,
+			rate, 0, count, samples);
 	}
 	frames_free(frames);
 	frames->samples = samples;
@@ -1152,6 +1213,54 @@ short *custom_edition_sounds_resource_sound(
 	fclose(stream);
 
 	return samples;
+}
+
+void custom_edition_sounds_adpcm_blocks(
+	byte const *data,
+	long block_count,
+	long channels,
+	short *output)
+{
+	adpcm_blocks_decode(data, block_count, channels, output);
+
+	return;
+}
+
+long custom_edition_sounds_resampled_count(
+	long source_total,
+	long source_rate,
+	long rate)
+{
+	/* (and the low pass's table, made here, on the game's thread, before
+	any decoder's thread reads it) */
+	resample_table_make();
+
+	return resampled_count(source_total, source_rate, rate);
+}
+
+long custom_edition_sounds_resample_reach(
+	long source_rate,
+	long rate)
+{
+	return (long)ceil(resample_reach(source_rate, rate)) + 1;
+}
+
+void custom_edition_sounds_resample_range(
+	short const *source,
+	long source_first,
+	long source_count,
+	long source_total,
+	long source_rate,
+	long channels,
+	long rate,
+	long first,
+	long count,
+	short *output)
+{
+	frames_resample_range(source, source_first, source_count, source_total, source_rate, channels, rate,
+		first, count, output);
+
+	return;
 }
 
 unsigned long custom_edition_sounds_piece_bytes(

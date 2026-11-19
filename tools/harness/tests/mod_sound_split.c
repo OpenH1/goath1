@@ -7,15 +7,22 @@ with the real custom_edition_sounds.c keeping its samples (OpenH1 issue
 (a quarter of the ARM64 guests' 4 MB sound cache) is split into a chain of
 linked pieces, each under that cap, PCM at its own rate, whose frames
 joined in the chain's order are the source's, sample for sample. The chain
-ends where the permutation's did, the pieces are never picked to start a
-sound (sound_definitions.c's next permutation), and past the memory the
-mods may keep a permutation is Xbox ADPCM, as before.
+ends where the permutation's did, and the pieces are never picked to start
+a sound (sound_definitions.c's next permutation). The samples stay in the
+file kept and each piece is made PCM as the sound cache loads it (OpenH1
+issue 1202): past what the mods may keep a permutation still plays as PCM
+at its own rate, only its file held; an Ogg Vorbis one past the mixer's
+rate comes out as a whole resample would, joins and all; and an Ogg Vorbis
+piece is decoded on the decoder's thread, never the one that asks for it,
+which goes on and finds it loaded later.
 test_mod_sound_split.py takes the modules (under_test.inc) and the game's
 structures (types.inc).
 */
 
 #include "harness.h"
 #include <math.h>
+#include <pthread.h>
+#include <time.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <strings.h>
@@ -58,6 +65,22 @@ static char const *custom_edition_cache_tag_name(byte *tag_cache, unsigned long 
 	return "sound";
 }
 
+/* the shared clock (xbox_kernel.c's) */
+static unsigned long long platform_shared_clock_microseconds(void)
+{
+	struct timespec now;
+
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	return (unsigned long long)now.tv_sec * 1000000ULL + (unsigned long long)now.tv_nsec / 1000ULL;
+}
+
+/* the thread that asks the decoder for pieces; while `hold_decoder`, a fake stream decoded on any other waits
+for `release_decoder`, and one decoded on it is a fault (decoded-off-thread) */
+static pthread_t asking_thread;
+static int hold_decoder;
+static volatile int release_decoder;
+static volatile int decoded_on_asker;
+
 /* stb_vorbis, faked: the "stream" is a fake_vorbis record of 16-bit frames at its own rate */
 struct fake_vorbis
 {
@@ -71,13 +94,13 @@ typedef struct fake_vorbis stb_vorbis;
 typedef struct { unsigned int sample_rate; int channels; } stb_vorbis_info;
 static stb_vorbis *stb_vorbis_open_memory(byte const *data, int length, int *error, void *alloc)
 {
-	static struct fake_vorbis opened;
+	struct fake_vorbis *opened = (malloc)(sizeof(*opened));
 
 	(void)length; (void)alloc;
 	*error = 0;
-	memcpy(&opened, data, sizeof(opened));
-	opened.read = 0;
-	return &opened;
+	memcpy(opened, data, sizeof(*opened));
+	opened->read = 0;
+	return opened;
 }
 static stb_vorbis_info stb_vorbis_get_info(stb_vorbis *vorbis)
 {
@@ -91,11 +114,20 @@ static int stb_vorbis_get_frame_short_interleaved(stb_vorbis *vorbis, int channe
 {
 	int frames = MIN(MIN(vorbis->frames - vorbis->read, shorts / channels), 1024);
 
+	if (hold_decoder)
+	{
+		if (pthread_equal(pthread_self(), asking_thread))
+			decoded_on_asker = 1;
+		else
+			while (!release_decoder)
+				sched_yield();
+	}
+
 	memcpy(buffer, vorbis->samples + (long)vorbis->read * channels, (size_t)frames * channels * sizeof(short));
 	vorbis->read += frames;
 	return frames;
 }
-static void stb_vorbis_close(stb_vorbis *vorbis) { (void)vorbis; }
+static void stb_vorbis_close(stb_vorbis *vorbis) { (free)(vorbis); }
 
 typedef int (*cache_file_read_proc)(void *context, uint32_t offset, uint32_t size, void *buffer);
 struct cache_file_source { void *context; cache_file_read_proc read; uint32_t size; };
@@ -255,6 +287,16 @@ static short *sweep_make(long frames, long channels)
 	return samples;
 }
 
+/* room for a permutation's samples (one at a time) */
+static void *joined_scratch(struct sound_permutation const *permutation)
+{
+	static void *scratch;
+
+	scratch = realloc(scratch, (size_t)permutation->samples.size);
+	CHECK(scratch, "no memory");
+	return scratch;
+}
+
 static struct sound_pitch_range *the_range(struct mod_sound *sound)
 {
 	CHECK(sound->definition.pitch_ranges.count == 1, "%ld pitch ranges", (long)sound->definition.pitch_ranges.count);
@@ -292,7 +334,8 @@ static long chain_join(struct mod_sound *sound, short first, short stop, long ra
 			permutation->samples.size <= (long)custom_edition_sounds_piece_bytes() * 2,
 			"permutation %d of %ld bytes is over the cap", index, (long)permutation->samples.size);
 		CHECK(count + samples <= most, "the chain is longer than its source");
-		memcpy(joined + count, permutation->samples.address, (size_t)permutation->samples.size);
+		/* (made PCM as the sound cache loads it) */
+		CHECK(piece_decode(permutation->samples.address, joined + count), "permutation %d cannot be decoded", index);
 		count += samples;
 		(*pieces)++;
 		index = permutation->next_permutation_index;
@@ -484,25 +527,96 @@ int main(int argc, char **argv)
 		CHECK(permutation_get(sound, 4)->compression == 1 && !sound_permutation_pcm_rate(permutation_get(sound, 4)),
 			"the fifth is not Xbox ADPCM");
 		CHECK(sound->adpcm_count == 1, "%ld permutations said kept as Xbox ADPCM", sound->adpcm_count);
+		CHECK(piece_decode(permutation_get(sound, 4)->samples.address, joined_scratch(permutation_get(sound, 4))),
+			"the fifth's Xbox ADPCM cannot be loaded");
 	}
 	else if (!strcmp(name, "over-budget"))
 	{
-		/* the mods may keep 1 MB more: the 30 s permutation is Xbox ADPCM at 22.05 kHz, one permutation, said */
+		/* the mods may keep 1 MB more (OpenH1 issue 1202; it was Xbox ADPCM at 22.05 kHz): the 30 s permutation
+		(2.6 MB of PCM, and Ogg Vorbis of it) is still PCM at 44.1 kHz, its six pieces the source's, sample for
+		sample, and the sound holds no more than its file and a few hundred bytes a piece, no PCM of its own */
 		struct source source = { NULL, 30L * 44100, 1, 44100, NONE };
 		struct mod_sound *sound;
-		struct sound_permutation *permutation;
+		short compression;
 
 		memory_left = 1UL << 20;
 		source.samples = sweep_make(source.frames, 1);
-		file_make(MONO, RATE_44, PCM, FALSE, 1, &source, 1);
+		for (compression = PCM; compression <= OGG; compression += OGG - PCM)
+		{
+			file_make(MONO, RATE_44, compression, FALSE, 1, &source, 1);
+			sound = sound_load();
+			CHECK(chain_check(sound, 0, NONE, &source, 44100) == 6, "not six pieces of PCM");
+			CHECK(sound->adpcm_count == 0, "a permutation was made Xbox ADPCM");
+			CHECK(sound->kept_bytes <= file_size + 6 * 512 + sizeof(struct mod_sound_stream),
+				"the sound holds %lu bytes, its file %lu", sound->kept_bytes, file_size);
+		}
+	}
+	else if (!strcmp(name, "stereo-96k-resampled"))
+	{
+		/* 10 s of stereo Ogg Vorbis at 96 kHz: PCM at the mixer's 48 kHz, in four pieces, each resampled from the
+		stream's frames its low pass reaches, joined sample for sample the whole stream resampled at once (the
+		Halo PC maps' frames_resample), across the joins */
+		struct source source = { NULL, 10L * 96000, 2, 96000, NONE };
+		struct frames whole = { 0 };
+		struct mod_sound *sound;
+		struct source expected;
+
+		source.samples = sweep_make(source.frames, 2);
+		file_make(STEREO, RATE_44, OGG, FALSE, 1, &source, 1);
+		sound = sound_load();
+		whole.count = source.frames;
+		whole.channels = 2;
+		whole.rate = 96000;
+		whole.samples = malloc((size_t)source.frames * 2 * sizeof(short));
+		CHECK(whole.samples, "no memory");
+		memcpy(whole.samples, source.samples, (size_t)source.frames * 2 * sizeof(short));
+		CHECK(frames_resample(&whole, 48000), "the whole would not resample");
+		expected.samples = whole.samples;
+		expected.frames = whole.count;
+		expected.channels = 2;
+		CHECK(chain_check(sound, 0, NONE, &expected, 48000) == 4, "not four pieces");
+		/* (and again from its first piece, the decoder started over) */
+		CHECK(chain_check(sound, 0, NONE, &expected, 48000) == 4, "not four pieces the second time");
+	}
+	else if (!strcmp(name, "decoded-off-thread"))
+	{
+		/* an Ogg Vorbis piece asked for (sound_cache_start_loading_sound's mod_sounds_read): the asker goes on
+		at once, the piece not yet loaded, and it is decoded on the decoder's thread, never the asker's; once
+		the decoder is let go it is loaded, the source's samples; a PCM piece is loaded at once */
+		struct source source = { NULL, 30L * 44100, 1, 44100, NONE };
+		struct mod_sound *sound;
+		struct sound_permutation *permutation;
+		short *buffer;
+		volatile boolean loaded = FALSE;
+		long waited = 0;
+		long sample;
+
+		source.samples = sweep_make(source.frames, 1);
+		file_make(MONO, RATE_44, OGG, FALSE, 1, &source, 1);
 		sound = sound_load();
 		permutation = permutation_get(sound, 0);
-		CHECK(the_range(sound)->permutations.count == 1, "%ld permutations", (long)the_range(sound)->permutations.count);
-		CHECK(permutation->compression == 1 && !sound_permutation_pcm_rate(permutation), "it is not Xbox ADPCM");
-		CHECK(permutation->samples.size >= (long)adpcm_encoded_bytes(30L * 22050 - 64, 1) &&
-			permutation->samples.size <= (long)adpcm_encoded_bytes(30L * 22050 + 64, 1), "%ld bytes of Xbox ADPCM",
-			(long)permutation->samples.size);
-		CHECK(sound->definition.sample_rate == 0 && sound->adpcm_count == 1, "not the old fallback, or not said");
+		buffer = malloc((size_t)permutation->samples.size);
+		CHECK(buffer, "no memory");
+		asking_thread = pthread_self();
+		hold_decoder = 1;
+		piece_request(permutation->samples.address, buffer, (boolean *)&loaded);
+		CHECK(!decoded_on_asker, "the piece was decoded on the thread that asked for it");
+		CHECK(!loaded, "the piece was loaded before the decoder was let go: the asker waited for it");
+		release_decoder = 1;
+		while (!__atomic_load_n(&loaded, __ATOMIC_ACQUIRE) && waited++ < 20000000)
+			sched_yield();
+		CHECK(loaded, "the piece was never loaded");
+		decoder_wait();
+		for (sample = 0; sample < permutation->samples.size / 2 && buffer[sample] == source.samples[sample]; sample++)
+			;
+		CHECK(sample == permutation->samples.size / 2, "sample %ld is %d, the source's %d", sample, buffer[sample],
+			source.samples[sample]);
+		hold_decoder = 0;
+		file_make(MONO, RATE_44, PCM, FALSE, 1, &source, 1);
+		sound = sound_load();
+		loaded = FALSE;
+		piece_request(permutation_get(sound, 0)->samples.address, buffer, (boolean *)&loaded);
+		CHECK(loaded, "a PCM piece was not loaded at once");
 	}
 	else if (!strcmp(name, "forty-variations"))
 	{

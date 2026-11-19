@@ -20,8 +20,8 @@ NEGATIVE_CONTROLS = {
     # Halo PC's hit sound (#673) at its own rate, not its tag's pitch
     "no-pitch": (("\tpitch = base * one;", "\tpitch = base;"), "resource-entry"),
     # the old resampler (#1110): the nearest source frame, no low pass
-    "nearest-frame": (("double weight = resample_weight((at - source) * cutoff);",
-                       "double weight = source == (long)at ? 1.0 / cutoff : 0.0;"), "too-long"),
+    "nearest-frame": (("double weight = resample_weight((at - index) * cutoff);",
+                       "double weight = index == (long)at ? 1.0 / cutoff : 0.0;"), "too-long"),
 }
 
 
