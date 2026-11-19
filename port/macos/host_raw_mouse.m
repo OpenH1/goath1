@@ -90,6 +90,32 @@ void host_raw_mouse_start(void)
 how far inside the window's corner it is parked, in points (not in it: a
 hot corner there would act) */
 #define RAW_CURSOR_CHECK_NS 100000000ull
+#define RAW_CURSOR_SLACK 2.0f
+
+/* the cursor put at a point without muting the keyboard and the pointer: a
+warp (CGWarpMouseCursorPosition) has the window server suppress the local
+hardware events for a while after it (0.25 s by default), so that warping
+the cursor every RAW_CURSOR_CHECK_NS held the keys and a trackpad's motion
+back in bursts and let them through together (key events 60 to 95 ms late,
+a press and its release a millisecond apart, motion silent then caught up).
+The session's suppression interval is made 0 first, and the mouse is tied
+off from the cursor again after it, as SDL's own warps and its relative
+mode's do (SDL_cocoamouse.m) */
+static void raw_cursor_warp(CGPoint point)
+{
+	static CGEventSourceRef source;
+
+	if (!source)
+	{
+		source = CGEventSourceCreate(kCGEventSourceStateCombinedSessionState);
+		if (source)
+			CGEventSourceSetLocalEventsSuppressionInterval(source, 0.0);
+	}
+	CGWarpMouseCursorPosition(point);
+	/* (the relative mode's: the motion stays the mouse's own, the cursor
+	where it was put) */
+	CGAssociateMouseAndMouseCursorPosition(false);
+}
 #define RAW_CURSOR_INSET 4.0f
 
 /* whether the cursor is parked (host_raw_mouse_cursor), and the one shown
@@ -163,9 +189,15 @@ void host_raw_mouse_cursor(void)
 	SDL_GetWindowPosition(focus, &x, &y);
 	SDL_GetWindowSize(focus, &width, &height);
 	SDL_GetGlobalMouseState(&at_x, &at_y);
+	/* (within RAW_CURSOR_SLACK: the system's pointer, read back through
+	NSEvent's flipped coordinates, can be a point off where it was put, and
+	each warp costs the suppression below) */
 	if (width > 2 * RAW_CURSOR_INSET && height > 2 * RAW_CURSOR_INSET &&
-		(fabsf(at_x - (x + width - RAW_CURSOR_INSET)) > 1.0f || fabsf(at_y - (y + height - RAW_CURSOR_INSET)) > 1.0f))
-		CGWarpMouseCursorPosition(CGPointMake(x + width - RAW_CURSOR_INSET, y + height - RAW_CURSOR_INSET));
+		(fabsf(at_x - (x + width - RAW_CURSOR_INSET)) > RAW_CURSOR_SLACK ||
+			fabsf(at_y - (y + height - RAW_CURSOR_INSET)) > RAW_CURSOR_SLACK))
+	{
+		raw_cursor_warp(CGPointMake(x + width - RAW_CURSOR_INSET, y + height - RAW_CURSOR_INSET));
+	}
 }
 
 /* the counts since the last call, if the mouse has moved lately (else 0:
