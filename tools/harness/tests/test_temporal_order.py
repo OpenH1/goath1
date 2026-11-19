@@ -3,7 +3,8 @@ motion resolved, the view upscaled into the display's back buffer, and the tone 
 the display's scale (port/linux/src/d3d8_device.c's own functions against fake targets and a fake backend); at the
 native scale the same order in one target; off, nothing upscaled. And render.c's window: the opaque view kept after
 the fog and before the particles, the upscale (the motion's end) before the tone map, the anti-aliasing, the Panini
-pass and the HUD."""
+pass and the HUD. The upscaler's texture LOD bias (each vendor's) on the view's draws alone, and the jitter's phases
+at the render scale."""
 import re
 import sys
 from pathlib import Path
@@ -33,6 +34,11 @@ CONTROLS = [
     # display.temporal_aa_sharpness sent as set, past 1 or below 0 too
     ("\tpass.sharpness = pass.sharpness > 0.0f ? (pass.sharpness < 1.0f ? pass.sharpness : 1.0f) : 0.0f;\n", "",
      "sharpness"),
+    # the upscaler's LOD bias on every draw of the window, a shadow map's too
+    ("motion.on && device.render_target == &device.back_buffer ? motion.lod_bias : 0.0f",
+     "motion.on ? motion.lod_bias : 0.0f", "lod_bias"),
+    # FSR's bias without AMD's extra stop
+    ("log2f(fraction) - (motion_vectors_technique() == 1 ? 1.0f : 0.0f)", "log2f(fraction)", "lod_bias"),
 ]
 
 
@@ -44,8 +50,9 @@ def generated(fault=None):
     states = "\n".join(re.search(pattern, device, re.M | re.S).group(0) for pattern in (
         r"^static struct\n\{\n\tfloat factor;.*?^\} temporal = .*?;\n", r"^static struct\n\{\n\tBOOL on, objects;.*?^\} motion;\n"))
     code = "\n\n".join([states] + [function(device, name) for name in (
-        "scaled_pixel", "view_corners", "temporal_scale_render", "temporal_scale_display", "halo_motion_window",
-        "temporal_upscale", "halo_motion_resolve", "halo_screen_tone_map")])
+        "scaled_pixel", "view_corners", "temporal_scale_render", "temporal_scale_display", "temporal_lod_bias",
+        "draw_lod_bias", "halo_motion_window", "temporal_upscale", "halo_motion_resolve", "halo_screen_tone_map",
+        "halo_motion_jitter_phases")])
     types = "\n\n".join([enum_with(stream, "XGPU_MOTION_RESOLVE"), structure(stream, "xgpu_motion_pass"),
                          structure(stream, "xgpu_temporal_pass")])
     return (("stream.inc", types), ("under_test.inc", code))
@@ -67,7 +74,7 @@ def window_order(render):
     return None
 
 
-@pytest.mark.parametrize("case", ["upscaled", "native", "off", "sharpness"])
+@pytest.mark.parametrize("case", ["upscaled", "native", "off", "sharpness", "lod_bias"])
 def test_case(case):
     status, output = run(build("temporal_order", generated()), case)
     assert status == 0, output

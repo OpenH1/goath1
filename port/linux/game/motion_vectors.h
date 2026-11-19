@@ -17,8 +17,9 @@ struct render_frustum;
 
 enum
 {
-	/* the frames of the jitter's Halton (2, 3) sequence before it repeats */
-	MOTION_JITTER_PHASES = 8,
+	/* the frames of the jitter's Halton (2, 3) sequence before it repeats
+	at the native scale; more below it (halo_motion_jitter_phases) */
+	MOTION_JITTER_BASE_PHASES = 8,
 	/* the objects whose nodes are kept (a power of two) */
 	MOTION_OBJECTS = 1024,
 	/* the most nodes an object's motion is kept for (MAXIMUM_NODES_PER_MODEL) */
@@ -90,6 +91,10 @@ void motion_vectors_jitter(unsigned long frame, real *x, real *y);
 none), and whether its motion can be drawn (the back buffer, one sample) */
 int halo_motion_window(int on, float jitter_x, float jitter_y);
 /* the previous frame's registers beside c[reg] .. c[reg + count) */
+/* the frames of the jitter's sequence before it repeats: the upscaler's
+at the render scale, 8 times the display's pixels per the render's,
+squared (17 at 0.67), MOTION_JITTER_BASE_PHASES at the native scale */
+int halo_motion_jitter_phases(void);
 void halo_motion_previous_constants(int reg, float const (*values)[4], unsigned long count);
 /* the window's objects' span begun or ended, whatever the setting (the
 draws' input, journaled); their motion drawn while the window's is */

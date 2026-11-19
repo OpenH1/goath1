@@ -5,9 +5,16 @@ any render scale, the native one included. Milestone 1 (this) makes what every t
 per-pixel motion and a sub-pixel jitter. No SDK is drawn yet. With `"off"` nothing here runs: the frames, passes and
 uploads are as before.
 
-- **Jitter.** A Halton (2, 3) offset, 8 phases, in the target's pixels. The front end moves the draws' pixels by it
+- **Jitter.** A Halton (2, 3) offset, in the target's pixels. Its sequence is AMD's length
+  (`ffxFsr3GetJitterPhaseCount`): 8 times the display's pixels per the render's, squared (8 at the native scale, 17
+  at 0.67), for each technique (`halo_motion_jitter_phases`). The front end moves the draws' pixels by it
   through their uniforms' viewport offset (`d3d8_device.c`), not the game's projection. It covers the 3D view only and
   is taken away before the tone map, so the HUD and menus are never jittered.
+- **Texture LOD bias.** While the window's 3D view is upscaled, its draws into the screen's targets sample their
+  textures' mip levels with the upscaler's bias added to the game's, so the render fetches the display's detail:
+  FSR's log2(render / display) - 1 (AMD's: -1 at the native scale, -1.58 at 0.67), DLSS's and MetalFX's
+  log2(render / display) (0 at DLAA). Vulkan's samplers have it (`mipLodBias`), Metal's lookups (`texture_lod_bias`).
+  Not the HUD, menus, shadow maps or mirrors; off, nothing changes (`d3d8_device.c`'s `draw_lod_bias`).
 - **Motion.** The value is the previous position less the current one, as a fraction of the view (x right, y down),
   with the jitter left out. It is written to RGBA16F, the target's size; the backend's `motion.motion` is the
   technique's input.

@@ -23,7 +23,8 @@ resize, a change of player) has none at all, and an object none of its
 own (it appeared, respawned, was teleported, changed its nodes): the frame
 before's registers are this frame's, so it moves with the camera.
 
-The jitter: a Halton (2, 3) offset of the window's pixels each frame, while
+The jitter: a Halton (2, 3) offset of the window's pixels each frame (its
+sequence the upscaler's length: halo_motion_jitter_phases), while
 a technique is on, given to the front end, which moves the draws' pixels
 by it (the viewport's offset in the draws' uniforms, not the game's
 projection): the motion leaves it out, the HUD and menus never have it.
@@ -145,7 +146,8 @@ static real halton(unsigned long index, unsigned long base)
 
 void motion_vectors_jitter(unsigned long frame, real *x, real *y)
 {
-	unsigned long index = frame % MOTION_JITTER_PHASES + 1;
+	int phases = halo_motion_jitter_phases();
+	unsigned long index = frame % (unsigned long)(phases > 0 ? phases : MOTION_JITTER_BASE_PHASES) + 1;
 
 	*x = halton(index, 2) - 0.5f;
 	*y = halton(index, 3) - 0.5f;
