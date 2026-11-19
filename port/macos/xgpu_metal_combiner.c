@@ -46,7 +46,10 @@ void xgpu_metal_combiner_configure(const struct xgpu_pixel_program *program, con
 			((uint32_t)(texture->input & 3) << 8) | ((uint32_t)((texture->previous + 1) & 3) << 10) |
 			((uint32_t)(texture->dot_mapping & 7) << 12) | ((uint32_t)(texture->compare & 15) << 15) |
 			((uint32_t)(texture->color_sign & 15) << 19) | ((uint32_t)(texture->alpha_kill != 0) << 23) |
-			((uint32_t)(border[stage] & 31) << 24);
+			((uint32_t)(border[stage] & 31) << 24) |
+			/* (display.smooth_lightmaps: the lightmap pass's lightmap by the
+			cubic B-spline, as the emitter's sample) */
+			((uint32_t)(stage == 2 && program->lightmap_filter && texture->sampler == _xgpu_sampler_2d) << 29);
 	}
 	combiner->flags = (uint32_t)(program->combiner_count & 15) | ((uint32_t)(program->mux_msb != 0) << 4) |
 		((uint32_t)(program->fog != 0) << 5) | ((uint32_t)(program->fog_mode & 7) << 6) |
@@ -262,6 +265,20 @@ const char xgpu_metal_combiner_source[] =
 	"\tfloat pixels = max(" XGPU_MSDF_RANGE_TEXT " * 0.5 * (1.0 / max(texels.x, 1e-6) + 1.0 / max(texels.y, 1e-6)), 1.0);\n"
 	"\treturn float4(1.0, 1.0, 1.0, saturate((distance - 0.5) * pixels + 0.5));\n"
 	"}\n"
+	"/* display.smooth_lightmaps: the lightmap by the cubic B-spline in four bilinear lookups (the\n"
+	"emitter's lightmap_cubic) */\n"
+	"static inline float4 lightmap_cubic(texture2d<float> t, sampler s, float2 uv, float lod_bias)\n"
+	"{\n"
+	"\tfloat2 size = float2(float(t.get_width()), float(t.get_height()));\n"
+	"\tfloat2 c = uv * size - 0.5, i = floor(c), f = c - i, r = 1.0 - f;\n"
+	"\tfloat2 w0 = r * r * r * (1.0 / 6.0), w1 = (3.0 * f * f * f - 6.0 * f * f + 4.0) * (1.0 / 6.0);\n"
+	"\tfloat2 w3 = f * f * f * (1.0 / 6.0), g0 = w0 + w1, g1 = 1.0 - g0;\n"
+	"\tfloat2 p0 = (i - 0.5 + w1 / g0) / size, p1 = (i + 1.5 + w3 / g1) / size;\n"
+	"\tfloat scale = exp2(lod_bias);\n"
+	"\tgradient2d g = gradient2d(dfdx(uv) * scale, dfdy(uv) * scale);\n"
+	"\treturn g0.y * (g0.x * t.sample(s, float2(p0.x, p0.y), g) + g1.x * t.sample(s, float2(p1.x, p0.y), g)) +\n"
+	"\t\tg1.y * (g0.x * t.sample(s, float2(p0.x, p1.y), g) + g1.x * t.sample(s, float2(p1.x, p1.y), g));\n"
+	"}\n"
 	"/* the texture stages' texels and dot products (t0-t3, dot0-dot3) */\n"
 	"struct xgpu_stages\n"
 	"{\n"
@@ -302,6 +319,8 @@ const char xgpu_metal_combiner_source[] =
 	"\t\treturn region_sample(t2d[S], samplers[S], coordinates.xy, u.texture_scale[S], bias_value, u.texture_border[S],\n"
 	"\t\t\tu.texture_border_linear[S]);\n"
 	"\tfloat2 uv = coordinates.xy * u.texture_scale[S].xy;\n"
+	"\tif (S == 2u && (fc_stage2 & (1u << 29)) != 0u && type == 1u && (border & 19u) == 0u)\n"
+	"\t\treturn lightmap_cubic(t2d[S], samplers[S], uv, bias_value);\n"
 	"\tif (type == 4u)\n"
 	"\t\treturn tarray[S].sample(samplers[S], uv, 0, bias(bias_value));\n"
 	"\tfloat4 texel = t2d[S].sample(samplers[S], uv, bias(bias_value));\n"
