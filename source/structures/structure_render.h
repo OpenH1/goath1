@@ -20,6 +20,9 @@ STRUCTURE_RENDER.H
 
 void structure_render_set_fog_offset(
 	real_vector3d *vector_offset);
+/* port: the shadows' kept receivers forgotten (a new map's) */
+void structure_render_shadow_receivers_new_map(
+	void);
 void structure_render_preprocess(
 	void);
 void structure_render_lightmaps(

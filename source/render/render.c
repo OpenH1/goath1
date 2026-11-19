@@ -255,6 +255,10 @@ void render_initialize_for_new_map(
 	/* port: the new map's shaders and pipelines made at its first frame
 	(port/linux/game/render_enumerate.c) */
 	render_enumerate_new_map();
+	/* port: the kept shadows (rasterizer_xbox_shadows.c) and their receivers
+	(structure_render.c) are the map before's */
+	rasterizer_shadow_retained_new_map();
+	structure_render_shadow_receivers_new_map();
 #ifdef HALO_VR
 	/* port: the VR mode's trigger on the assault rifle's first-person model
 	(port/linux/game/vr_trigger.c) */

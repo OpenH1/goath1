@@ -76,6 +76,7 @@ symbols in this file:
 #include "rasterizer/common/rasterizer_common.h"
 #include "rasterizer/rasterizer_geometry.h"
 #include "render/render.h"
+#include "render_enumerate.h" /* port: port/linux/game/render_enumerate.c */
 #include "shaders/shader_definitions.h"
 #include "shaders/shaders.h"
 
@@ -287,7 +288,10 @@ static struct
 	boolean used;
 } shadow_atlas_shadows[SHADOW_ATLAS_REGIONS];
 
-/* ---------- port: the retained casters (debug.retained_shadows)
+/* ---------- port: the retained casters
+
+port: on unless HALO_SHADOWS_REDRAWN is set (each shadow drawn and blurred
+every frame, its receivers walked, as before: for comparisons).
 
 A caster drawn into the atlas the frame before, whose draws this frame would
 be the same, is not drawn nor blurred again: its region of the chain's last
@@ -301,13 +305,16 @@ it had, or one no caster had. Each region's cell is emptied alone, as on a
 tile-based GPU (shadow_atlas_set_target), never the whole atlas, so a kept
 region stays as it was; the chain draws the regions drawn this frame alone.
 The receivers are drawn as before, each sampling its own region. Kept only
-while the atlas's class, the maps' scale, the settings and the view drawing
-the shadows (a window's: split screen and mirrors alternate) stay the same.
+while the atlas's class, the maps' scale, the settings, the map, the
+atlases' targets (d3d8_target_identity: made anew, their pixels are gone)
+and the view drawing the shadows (a window's: split screen and mirrors
+alternate) stay the same.
 
-Not yet the same pictures: a kept region's shadow is drawn fainter than one
-drawn again (measured: the regions, cells and order alone, every caster
-drawn, are the same pictures), so the casters are kept only with
-HALO_RETAINED_CASTERS set as well, for measuring. */
+Nothing is kept from a frame of the map's preparation (render_enumerating,
+port/linux/game/render_enumerate.c): its passes walk the casters as a frame
+would, but what they draw never reaches the atlas the frames after sample,
+so a caster drawn there and kept after had a black region, its shadow gone
+(the frames after the preparation's, measured with the atlas read back). */
 
 static boolean shadow_retained_on = FALSE;
 static boolean shadow_fingerprinting = FALSE;
@@ -329,6 +336,8 @@ static unsigned long long shadow_unposed_fingerprint = 0;
 static boolean shadow_hashing_pose = FALSE;
 static unsigned long shadow_retained_posed_count = 0;
 static short shadow_retained_class = NONE;
+/* the atlases' targets' identities (d3d8_target_identity) */
+static unsigned long shadow_retained_targets[2] = { 0, 0 };
 static long shadow_retained_scale = 0;
 static unsigned long shadow_retained_changes = 0;
 static long shadow_retained_view = NONE;
@@ -340,7 +349,8 @@ static unsigned long shadow_retained_frames = 0;
 (_rasterizer_environment_shadow_draw: d3d8_draw_state_kept) */
 static boolean shadow_receiver_drawn = FALSE;
 static long shadow_receiver_type = NONE;
-/* debug.retained_shadows, read as the frame's casters begin */
+/* the receivers kept (HALO_SHADOWS_REDRAWN unset), read as the frame's
+casters begin */
 static boolean shadow_receivers_kept = FALSE;
 
 int config_boolean(char const *name);
@@ -1091,7 +1101,7 @@ void _rasterizer_environment_shadow_draw(
 		}
 
 		rasterizer_set_stencil_mode(RASTERIZER_STENCIL_MODE_REJECT);
-		/* port: debug.retained_shadows: the shadow's draws after its first
+		/* port: (the retained casters, above) the shadow's draws after its first
 		(its setup's), of other materials' vertices of the same type, keep
 		its state as it was prepared (d3d8_draw_state_kept) */
 		d3d8_draw_state_kept(shadow_receivers_kept && shadow_receiver_drawn && vertex_buffer->type == shadow_receiver_type);
@@ -1867,6 +1877,14 @@ static void shadow_retained_forget(
 	return;
 }
 
+void rasterizer_shadow_retained_new_map(
+	void)
+{
+	shadow_retained_class = NONE;
+
+	return;
+}
+
 /* the view drawing the frame's shadows (render_object_shadows): a window's,
 its player's, a mirror's */
 void rasterizer_shadow_retained_view(
@@ -1882,23 +1900,33 @@ void rasterizer_shadow_retained_view(
 }
 
 /* the casters' frame begins (rasterizer_shadow_atlas_begin): what the
-regions hold is forgotten if the atlas's class, the maps' scale or the
-settings changed, or the setting is off */
+regions hold is forgotten if the atlas's class, the maps' scale, the
+settings or the atlases' targets changed, in the map's preparation, or with
+HALO_SHADOWS_REDRAWN */
 static void shadow_retained_frame_begin(
 	void)
 {
 	long scale = halo_shadow_map_scale();
 	unsigned long changes = config_changes();
+	unsigned long targets[2] = { 0, 0 };
 	boolean on;
 
-	shadow_receivers_kept = config_boolean("debug.retained_shadows") != 0;
-	on = shadow_receivers_kept && shadow_atlas_active && getenv("HALO_RETAINED_CASTERS") != NULL;
+	shadow_receivers_kept = getenv("HALO_SHADOWS_REDRAWN") == NULL;
+	on = shadow_receivers_kept && shadow_atlas_active && !render_enumerating;
 
+	if (on)
+	{
+		targets[0] = d3d8_target_identity(shadow_atlas_surfaces[shadow_atlas_class][0]);
+		targets[1] = d3d8_target_identity(shadow_atlas_surfaces[shadow_atlas_class][1]);
+	}
 	if (!on || shadow_retained_class != shadow_atlas_class || shadow_retained_scale != scale ||
-		shadow_retained_changes != changes)
+		shadow_retained_changes != changes || targets[0] != shadow_retained_targets[0] ||
+		targets[1] != shadow_retained_targets[1])
 	{
 		shadow_retained_forget();
 	}
+	shadow_retained_targets[0] = targets[0];
+	shadow_retained_targets[1] = targets[1];
 	shadow_retained_on = on;
 	shadow_retained_class = on ? shadow_atlas_class : NONE;
 	shadow_retained_scale = scale;
@@ -1906,7 +1934,7 @@ static void shadow_retained_frame_begin(
 	shadow_atlas_claimed = 0;
 	shadow_atlas_kept = 0;
 	shadow_fingerprinting = FALSE;
-	if (on && ++shadow_retained_frames >= 1200)
+	if (on && ++shadow_retained_frames >= 1200 && config_boolean("debug.gpu_stats"))
 	{
 		platform_log("retained shadows: %lu casters in %lu frames, %lu kept (%.1f%%), %lu more but for their nodes' matrices",
 			shadow_retained_casters, shadow_retained_frames, shadow_retained_kept_count,

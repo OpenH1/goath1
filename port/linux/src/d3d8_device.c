@@ -6645,6 +6645,13 @@ void d3d8_clear_viewport_alone(D3DCOLOR color)
 	clear_alone = FALSE;
 }
 
+unsigned long d3d8_target_identity(void *surface)
+{
+	struct render_target_entry *entry = device.gl_ready ? render_target_get((const D3DSurface *)surface) : NULL;
+
+	return entry ? (unsigned long)entry->target.number : 0;
+}
+
 /* ---------- the anti-aliasing passes */
 
 /* display.anti_aliasing's pass over a window's 3D view, before the HUD and
