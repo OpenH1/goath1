@@ -747,6 +747,12 @@ RENDER_RESOLUTIONS = [("XBOX 640X480", "original")] + \
 ANTI_ALIASING_HELP = "Smooths jagged edges. FXAA and SMAA cost little; {} sharper and {} more of the graphics card."
 # (STRONG & WORSE: its row's spinner's 140 units, STRONG AND WORSE did not fit)
 STREAMER_LEVELS = [("OFF", "off"), ("SEVERE", "severe"), ("STRONG & WORSE", "strong"), ("MILD & WORSE", "mild")]
+# (display.subtitles_language: MCC's eleven, and the game's; short for the
+# spinner's 140 units)
+SUBTITLE_LANGUAGES = [("GAME'S", "game"), ("ENGLISH", "english"), ("FRENCH", "french"), ("GERMAN", "german"),
+                      ("ITALIAN", "italian"), ("SPANISH", "spanish"), ("LATAM SPANISH", "latam_spanish"),
+                      ("PORTUGUESE", "portuguese"), ("JAPANESE", "japanese"), ("KOREAN", "korean"),
+                      ("TRAD. CHINESE", "chinese"), ("SIMP. CHINESE", "chinese_simplified")]
 SEED_UPLOADS = (64, 128, 256, 512, 1024, 2048, 4096, 8192, 10240)
 VR_CONTROLS = f"{PE}/vr_controls/vr_controls_screen"
 
@@ -987,8 +993,10 @@ PAGES = {
             ("REVERB", "audio.reverb", ON_OFF,
              "Echoes sounds as the place you are in would, and muffles those behind walls, as the Xbox did. It "
              "costs a little of the processor.", None),
-            ("ADVANCED AUDIO ›", None, _page_screen(*ADVANCED_AUDIO),
-             "The resampler, and how wide stereo sounds from mods and custom maps are heard.", None),
+            # (the subtitles' rows on its page: this one had no room)
+            ("SUBTITLES & MORE ›", None, _page_screen(*ADVANCED_AUDIO),
+             "Subtitles for the campaign's dialogue, the resampler, and how wide stereo sounds from mods and "
+             "custom maps are heard.", None),
             ("SOUND", "audio.enabled", ON_OFF,
              "Turns all sound off or on, at once.", None),
             # (voice chat: this machine's own, port/linux/game/network_voice.c;
@@ -1015,8 +1023,17 @@ PAGES = {
         ],
     },
     ADVANCED_AUDIO[0]: {
-        "screen": ADVANCED_AUDIO[1], "title": "ADVANCED AUDIO",
+        "screen": ADVANCED_AUDIO[1], "title": "SUBTITLES & ADVANCED AUDIO",
         "rows": [
+            # (port/linux/game/subtitles.c: MCC's lines, read from the player's
+            # own install; dimmed without it: SETTINGS_ROW_ENABLED)
+            (SECTION, "SUBTITLES"),
+            ("SUBTITLES", "display.subtitles", ON_OFF,
+             "Shows the campaign's dialogue at the bottom of the screen as it plays, with its speaker.|Read from "
+             "your own Halo: The Master Chief Collection installed with Steam: without it, this is off.", None),
+            ("SUBTITLE LANGUAGE", "display.subtitles_language", SUBTITLE_LANGUAGES,
+             "The subtitles' language. Game's follows the game's language. A line the game's font cannot draw "
+             "is shown in English.", None),
             (SECTION, "ADVANCED AUDIO"),
             # (port/linux/src/dsound_sdl.c's stereo spread)
             ("STEREO SPREAD", "audio.stereo_spread", STEREO_SPREADS,
@@ -2755,6 +2772,9 @@ SETTINGS_ROW_ENABLED = {
     # its row on Frame Rate & Sync: d3d8_device.c's anti_aliasing_read,
     # settings_condition_term's temporal_on)
     "anti_aliasing": "!temporal_on", "anti_aliasing_android": "!temporal_on",
+    # (the subtitles: MCC's install found, its pack's; the language while
+    # they are on: subtitles.c's subtitles_available)
+    "subtitles": "mcc_subtitles", "subtitles_language": "mcc_subtitles+subtitles=true",
 }
 
 

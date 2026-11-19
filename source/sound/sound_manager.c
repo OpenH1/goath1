@@ -235,6 +235,7 @@ symbols in this file:
 #include "sound_preferences.h"
 #include "camera/director.h" /* port: the listener's velocity (refresh_listener) */
 #include "coop_sound_sync.h" /* port: port/linux/game/coop_sound_sync.c */
+#include "subtitles.h" /* port: port/linux/game/subtitles.c */
 #include "camera/observer.h"
 #include "effects/player_effects.h"
 #include "game/game.h"
@@ -2877,6 +2878,18 @@ long sound_new_impulse(
 				definition->sample_rate);
 		}
 	}
+
+	/* port: its subtitle (display.subtitles: port/linux/game/subtitles.c), a
+	scripted line's always, another's as it plays or with the sound off */
+	subtitles_sound_started(
+		definition_index,
+		definition->longest_permutation_length,
+		definition->sound_class == _sound_class_scripted_dialog_to_player ||
+			definition->sound_class == _sound_class_scripted_dialog_to_other ||
+			definition->sound_class == _sound_class_scripted_dialog_force_unspatialized ||
+			sound_index != NONE ||
+			!sound_manager_globals.initialized ||
+			!sound_manager_globals.enabled);
 
 	return sound_index;
 }

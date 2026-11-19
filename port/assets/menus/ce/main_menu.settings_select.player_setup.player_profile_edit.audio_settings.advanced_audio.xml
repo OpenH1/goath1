@@ -14,8 +14,11 @@
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/options_menu" type="column_list" width="640" height="480" flags="pass_unhandled_to_focused_child up_down_tabs_children" description="main_menu/settings/page_panel" source="tools/port_settings.py settings_files/_settings_page">
 		<data input="port settings page"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/section_0" x="28" y="80"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/op_stereo_spread" x="28" y="100"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/op_resampler" x="28" y="121"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/op_subtitles" x="28" y="100"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/op_subtitles_language" x="28" y="121"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/section_3" x="28" y="148"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/op_stereo_spread" x="28" y="168"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/op_resampler" x="28" y="189"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/button_bar" y="414"/>
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items" source="tools/port_settings.py settings_files/_settings_page">
@@ -43,6 +46,36 @@
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/section_0_title" type="text" controller="1" width="344" height="18" wide="0 244" string_list="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/labels" color="#FF6F9CD0" text_x="2" text_y="1" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/op_subtitles" width="344" height="20" flags="pass_unhandled_to_focused_child" bitmap="main_menu/settings/row" color="#FF2896FF" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/subtitles_label"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/subtitles_spinner" x="188"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/subtitles_seg0" x="188" y="1"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/subtitles_seg1" x="240" y="1"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/subtitles_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/labels" string_index="1" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/subtitles_seg0" type="text" controller="1" width="48" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="ON" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/subtitles_seg1" type="text" controller="1" width="48" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="OFF" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/subtitles_spinner" type="spinner" top="1" width="140" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="ON|OFF" setting="display.subtitles" values="true|false" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="4 -6 16 0" footer_bounds="4 140 16 146" wide="20 120" source="tools/port_settings.py settings_files/_settings_page">
+		<on event="created" run="port setting load"/>
+		<on event="a" run="port setting segment"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/op_subtitles_language" width="344" height="20" flags="pass_unhandled_to_focused_child" bitmap="main_menu/settings/row" color="#FF2896FF" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/subtitles_language_label"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/subtitles_language_spinner" x="188"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/subtitles_language_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/labels" string_index="2" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/subtitles_language_spinner" type="spinner" top="1" width="140" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="GAME'S|ENGLISH|FRENCH|GERMAN|ITALIAN|SPANISH|LATAM SPANISH|PORTUGUESE|JAPANESE|KOREAN|TRAD. CHINESE|SIMP. CHINESE" setting="display.subtitles_language" values="game|english|french|german|italian|spanish|latam_spanish|portuguese|japanese|korean|chinese|chinese_simplified" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="4 -6 16 0" footer_bounds="4 140 16 146" wide="20 120" source="tools/port_settings.py settings_files/_settings_page">
+		<on event="created" run="port setting load"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/section_3" width="344" height="18" bitmap="main_menu/settings/section" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/section_3_title"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/section_3_title" type="text" controller="1" width="344" height="18" wide="0 244" string_list="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/labels" string_index="3" color="#FF6F9CD0" text_x="2" text_y="1" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/op_stereo_spread" width="344" height="20" flags="pass_unhandled_to_focused_child" bitmap="main_menu/settings/row" color="#FF2896FF" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
 		<on event="left" run="port slider left"/>
 		<on event="right" run="port slider right"/>
@@ -55,7 +88,7 @@
 		<on event="stick_left" run="port slider left"/>
 		<on event="stick_right" run="port slider right"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/stereo_spread_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/labels" string_index="1" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/stereo_spread_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/labels" string_index="4" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/stereo_spread_track" controller="1" width="62" height="14" bitmap="main_menu/settings/slider_track" wide="20 224" source="tools/port_settings.py settings_files/_settings_page">
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/stereo_spread_thumb"/>
@@ -71,7 +104,7 @@
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/resampler_seg1" x="266" y="1"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/resampler_seg2" x="344" y="1"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/resampler_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/labels" string_index="2" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/resampler_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/labels" string_index="5" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/resampler_seg0" type="text" controller="1" width="74" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="XBOX" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
@@ -84,12 +117,18 @@
 		<on event="a" run="port setting segment"/>
 	</widget>
 	<strings name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/labels">
+		<string text="SUBTITLES"/>
+		<string text="SUBTITLES"/>
+		<string text="SUBTITLE LANGUAGE"/>
 		<string text="ADVANCED AUDIO"/>
 		<string text="STEREO SPREAD"/>
 		<string text="RESAMPLER"/>
 	</strings>
 	<strings name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/help_strings">
 		<string text=""/>
+		<string text=""/>
+		<string text="Shows the campaign's dialogue at the bottom of the screen as it plays, with its speaker.|Read from your own Halo: The Master Chief Collection installed with Steam: without it, this is off."/>
+		<string text="The subtitles' language. Game's follows the game's language. A line the game's font cannot draw is shown in English."/>
 		<string text=""/>
 		<string text="How wide stereo sounds from mods and custom maps are heard: left and right from either side, narrowing with distance. 0 makes each one point. The game's own sounds play as on the Xbox."/>
 		<string text="How sounds are converted to your speakers' rate. Xbox sounds as the Xbox did; Clean is clearer; Classic is brighter but harsher. Xbox and Classic cost a little less."/>

@@ -651,6 +651,30 @@ int steam_workshop_resource_path(const char *request, const char *data_root, cha
 	return result;
 }
 
+int steam_workshop_mcc_file(const char *relative, char *path, unsigned long size)
+{
+#if defined(HALO_ANDROID) || defined(HALO_WEB)
+	(void)relative; (void)path; (void)size;
+	return 0;
+#else
+	char (*paths)[STEAM_WORKSHOP_PATH_SIZE];
+	char local[STEAM_WORKSHOP_PATH_SIZE];
+	int count, library, result = 0;
+
+	if (snprintf(local, sizeof(local), "steamapps/common/Halo The Master Chief Collection/%s", relative) >=
+		(int)sizeof(local))
+		return 0;
+	paths = malloc(sizeof(*paths) * 2 * STEAM_WORKSHOP_MAXIMUM_LIBRARIES);
+	if (!paths)
+		return 0;
+	count = libraries(paths, 2 * STEAM_WORKSHOP_MAXIMUM_LIBRARIES);
+	for (library = 0; library < count && !result; library++)
+		result = resolve(paths[library], local, path, size) && is_file(path);
+	free(paths);
+	return result;
+#endif
+}
+
 int steam_workshop_item_title(const char *item_id, char *title, unsigned long size)
 {
 	const struct steam_workshop_map *map = item_map(item_id);

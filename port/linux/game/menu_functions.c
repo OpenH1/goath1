@@ -139,6 +139,7 @@ their handlers open opens.
 #include "../src/p2p.h"
 #include "../src/browser_favorites.h"
 #include "../src/dlss_addon.h"
+#include "subtitles.h" /* port: port/linux/game/subtitles.c */
 /* (the server browser's master servers, and Server Setup's publisher key) */
 #include "../src/master_list.h"
 #include "../src/player_link.h" /* port: port/linux/src/player_link.c */
@@ -3131,6 +3132,9 @@ static boolean settings_condition_term(struct widget_instance *list, char const 
 	/* (the renderer has ray queries: display.shadows "ray_traced") */
 	if (!strcmp(name, "ray_queries"))
 		return halo_world_ao_ray_queries() != 0;
+	/* (MCC's install found, whose subtitles display.subtitles shows) */
+	if (!strcmp(name, "mcc_subtitles"))
+		return subtitles_available();
 	if (!strcmp(name, "gyro"))
 		return halo_gyro_found() == 2;
 	/* (the player's Aim Style Modern, on another page than the rows it

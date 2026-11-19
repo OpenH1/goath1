@@ -111,7 +111,7 @@
 		<on event="created" run="port setting load"/>
 		<on event="a" run="port setting segment"/>
 	</behaviour>
-	<behaviour name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_advanced_audio" flags="pass_unhandled_to_focused_child">
+	<behaviour name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_subtitles_more" flags="pass_unhandled_to_focused_child">
 		<on event="a" open="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/advanced_audio_screen"/>
 		<on event="start" open="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/advanced_audio_screen"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
