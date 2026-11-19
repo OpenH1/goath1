@@ -39,6 +39,11 @@ int port_mods_file_stamp(long file, unsigned long *size, unsigned long stamp[2])
 /* reads size bytes of a file at offset into buffer (the Xbox's memory too);
 0 unless all of them were read */
 int port_mods_file_read(long file, unsigned long offset, void *buffer, unsigned long size);
+/* the same of the file at `path` (a file's path, which stays the file's
+when the mods are found again): any thread may call them (a mod's sound's
+samples are read on the mods' decoder's thread, mod_sounds.c) */
+int port_mods_path_stamp(const char *path, unsigned long *size, unsigned long stamp[2]);
+int port_mods_path_read(const char *path, unsigned long offset, void *buffer, unsigned long size);
 /* the place in the order the mods' files were listed in of a file's mod
 (later plays over earlier), or -1 */
 long port_mods_file_order(long file);

@@ -1011,10 +1011,20 @@ long port_mods_file_find(const char *tag_file, const char *map_name)
 
 int port_mods_file_stamp(long file, unsigned long *size, unsigned long stamp[2])
 {
+	return file >= 0 && file < port_mods.file_count && port_mods_path_stamp(port_mods.files[file].path, size, stamp);
+}
+
+int port_mods_file_read(long file, unsigned long offset, void *buffer, unsigned long size)
+{
+	return file >= 0 && file < port_mods.file_count && port_mods_path_read(port_mods.files[file].path, offset, buffer, size);
+}
+
+int port_mods_path_stamp(const char *path, unsigned long *size, unsigned long stamp[2])
+{
 	struct posix_file_information information;
 
-	if (file < 0 || file >= port_mods.file_count || posix_stat(port_mods.files[file].path, &information) != 0 ||
-		information.size_high)
+	if (!path || posix_stat(path, &information) != 0 || information.size_high ||
+		(information.flags & _posix_file_is_directory))
 	{
 		return 0;
 	}
@@ -1024,9 +1034,8 @@ int port_mods_file_stamp(long file, unsigned long *size, unsigned long stamp[2])
 	return 1;
 }
 
-int port_mods_file_read(long file, unsigned long offset, void *buffer, unsigned long size)
+int port_mods_path_read(const char *path, unsigned long offset, void *buffer, unsigned long size)
 {
-	const char *path;
 	int bounce = platform_is_contiguous(buffer);
 	unsigned char *staging = NULL;
 	unsigned long done = 0;
@@ -1037,9 +1046,8 @@ int port_mods_file_read(long file, unsigned long offset, void *buffer, unsigned 
 	SDL_IOStream *stream;
 #endif
 
-	if (file < 0 || file >= port_mods.file_count)
+	if (!path)
 		return 0;
-	path = port_mods.files[file].path;
 	if (bounce && !(staging = malloc(READ_BOUNCE_SIZE)))
 		return 0;
 #ifdef HALO_GUEST

@@ -49,9 +49,10 @@ int menu_pictures_stock_maps(void);
 
 /* ---------- constants */
 
-/* the most the mods' tags keep in memory (their files, their sounds'
-samples, their bitmaps' tags and their models' geometry; bitmaps' pixels
-are read as they are drawn) */
+/* the most the mods' tags keep in memory (their sounds' values and mouth
+and subtitle data, their bitmaps' tags and their models' geometry; sounds'
+samples are read from their files as they load into the sound cache, and
+bitmaps' pixels as they are drawn, so neither counts: OpenH1 issue 1202) */
 #ifdef HALO_ANDROID
 #define MAXIMUM_KEPT_BYTES (192UL * 1024 * 1024)
 #else

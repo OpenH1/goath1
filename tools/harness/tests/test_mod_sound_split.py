@@ -2,9 +2,10 @@
 mod_sounds.c (mod_sound_new) splits it at load into a chain of linked pieces, each under the cap of the ARM64 guests'
 sound cache, whose frames joined are the source's, sample for sample; the chain ends where the permutation's did, a
 looping sound's next pick is never a piece. Its samples stay in the file and each piece is made PCM as the sound cache
-loads it (OpenH1 issue 1202): past the memory the mods may keep it is still PCM at its own rate, only its file held; a
-resampled Ogg Vorbis stream's pieces join as the whole resampled; an Ogg Vorbis piece is decoded on the decoder's
-thread, not the asker's."""
+loads it (OpenH1 issue 1202): past the memory the mods may keep it is still PCM at its own rate, neither its file nor
+its samples held; a resampled Ogg Vorbis stream's pieces join as the whole resampled; an Ogg Vorbis or PCM piece is
+read from the file on disk and decoded on the decoder's thread, not the asker's; a piece of a file changed or removed
+since is silence, the file said."""
 import re
 import sys
 from pathlib import Path
@@ -20,7 +21,8 @@ from harness.audio import pcm_permutation_rate, permutation_picker  # noqa: E402
 pytestmark = needs_32_bit_abi("a sound tag file is read at the offsets of the game's 32-bit structures")
 
 CASES = ["mono-30s", "stereo-15s-48k", "linked-chain", "under-cap", "loop-wrap", "fake-impulse-repeats",
-         "too-many-pieces", "over-budget", "forty-variations", "stereo-96k-resampled", "decoded-off-thread"]
+         "too-many-pieces", "over-budget", "forty-variations", "stereo-96k-resampled", "decoded-off-thread",
+         "file-changed"]
 NEGATIVE_CONTROLS = {
     # the old refusal (#1170): a mod's sound picking from more than 32 permutations left out
     "refuse-past-32": (("\t\t\t\trange->actual_permutation_count < 1 ||\n",
@@ -39,9 +41,14 @@ NEGATIVE_CONTROLS = {
     # a resampled piece's low pass not reaching past its own frames: a click at each join
     "resample-edge": (("long reach = custom_edition_sounds_resample_reach(piece->source_rate, piece->rate);",
                        "long reach = 0;"), "stereo-96k-resampled"),
-    # the piece decoded on the thread that asks for it (the game's, at the cache's request)
-    "decode-on-asker": (("piece->kind == _piece_pcm || !decoder_start())",
-                         "piece->kind == _piece_pcm || TRUE)"), "decoded-off-thread"),
+    # the piece read and decoded on the thread that asks for it (the game's, at the cache's request)
+    "decode-on-asker": (("if (piece->data || !decoder_start())", "if (piece->data || TRUE)"), "decoded-off-thread"),
+    # a PCM piece read from its file on the asker's thread (as the first version swapped it there, at once)
+    "read-on-asker": (("if (piece->data || !decoder_start())",
+                       "if (piece->data || piece->kind == _piece_pcm || !decoder_start())"), "decoded-off-thread"),
+    # the file read whatever it is now: a changed file's new samples played
+    "stamp-unchecked": (("file_size == source->size && stamp[0] == source->stamp[0] && stamp[1] == source->stamp[1] &&",
+                         ""), "file-changed"),
     # the split sound made a linked one (the first version): a looping sound that repeated forever plays once
     "play-once": (("\tdefinition->longest_permutation_length = (long)longest;",
                    "\tif (sound->permutation_count > permutation_total)\n"

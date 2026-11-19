@@ -196,6 +196,9 @@ plays), and `debug.txt` and the console say why.
   Halo PC translations have them) is left out.
 - A permutation must fit in a block of the sound cache (one sound's samples:
   `MAXIMUM_SOUND_DATA_SIZE`).
+- The samples are read from the file when the sound cache loads them, on a
+  thread of their own, not kept in memory. A file changed or removed while
+  the map plays is silent (said once in `debug.txt`) until `mods_reload`.
 
 ### Bitmaps
 
@@ -368,6 +371,6 @@ mods: 4 models from their files (4 new), 0 given back, 1 left out
   under the game: before a reload changes anything, the sounds stop and the
   caches let go of what they hold.
 - The mods' tags keep at most 512 MB in memory (192 MB on Android and the
-  web): their files, their sounds' samples, their bitmaps' tags and their
-  models' geometry.
+  web): their sounds' values, their bitmaps' tags and their models'
+  geometry. Sounds' samples and bitmaps' pixels are read from the files.
 - A Custom Edition map takes mods as an Xbox map does.
