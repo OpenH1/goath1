@@ -88,6 +88,7 @@ shown, not the loading screen.
 #include "rasterizer/rasterizer.h"
 #include "render/render.h"
 #include "scenario/scenario.h"
+#include "scenario/scenario_definitions.h"
 #include "sound/sound_manager.h"
 #include "tag_files/tag_groups.h"
 #include "text/draw_string.h"
