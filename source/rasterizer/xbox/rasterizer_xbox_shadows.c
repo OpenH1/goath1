@@ -344,6 +344,10 @@ static long shadow_retained_view = NONE;
 /* the casters and those kept, logged now and then */
 static unsigned long shadow_retained_casters = 0;
 static unsigned long shadow_retained_kept_count = 0;
+/* (diagnostic: the casters past the atlas's regions, drawn into their own
+maps, and the frames of each class) */
+static unsigned long shadow_retained_overflow_count = 0;
+static unsigned long shadow_retained_class_frames[SHADOW_ATLAS_CLASSES] = { 0, 0, 0 };
 static unsigned long shadow_retained_frames = 0;
 /* the shadow's receivers drawn yet, and their vertices' type
 (_rasterizer_environment_shadow_draw: d3d8_draw_state_kept) */
@@ -1713,6 +1717,8 @@ void rasterizer_shadow_atlas_convolve(
 	{
 		return;
 	}
+	/* port: (debug.pass_times) the chain's passes timed as its own */
+	halo_timing_category(HALO_TIMING_SHADOW_BLUR);
 	/* every pass, back and forth from the casters' atlas, ending in the
 	other (the count is odd), whose regions the receivers sample; each
 	atlas's guard bands black, as each pass empties the atlas it draws into
@@ -1737,6 +1743,7 @@ void rasterizer_shadow_atlas_convolve(
 			shadow_atlas_quad(region, shadow_atlas_pass_offset(pass, scale));
 		}
 	}
+	halo_timing_category(NONE);
 	rasterizer_set_target(
 		global_window_parameters.rasterizer_target,
 		0,
@@ -1934,12 +1941,20 @@ static void shadow_retained_frame_begin(
 	shadow_atlas_claimed = 0;
 	shadow_atlas_kept = 0;
 	shadow_fingerprinting = FALSE;
+	if (on)
+	{
+		shadow_retained_class_frames[shadow_atlas_class]++;
+	}
 	if (on && ++shadow_retained_frames >= 1200 && config_boolean("debug.gpu_stats"))
 	{
-		platform_log("retained shadows: %lu casters in %lu frames, %lu kept (%.1f%%), %lu more but for their nodes' matrices",
+		platform_log("retained shadows: %lu casters in %lu frames, %lu kept (%.1f%%), %lu more but for their nodes' matrices, "
+			"%lu past the atlas's regions; frames of each class %lu, %lu, %lu",
 			shadow_retained_casters, shadow_retained_frames, shadow_retained_kept_count,
 			shadow_retained_casters ? 100.0 * (double)shadow_retained_kept_count / (double)shadow_retained_casters : 0.0,
-			shadow_retained_posed_count);
+			shadow_retained_posed_count, shadow_retained_overflow_count, shadow_retained_class_frames[0],
+			shadow_retained_class_frames[1], shadow_retained_class_frames[2]);
+		shadow_retained_overflow_count = 0;
+		shadow_retained_class_frames[0] = shadow_retained_class_frames[1] = shadow_retained_class_frames[2] = 0;
 		shadow_retained_posed_count = 0;
 		shadow_retained_frames = 0;
 		shadow_retained_casters = 0;
@@ -1987,6 +2002,7 @@ boolean rasterizer_shadow_retained_caster(
 	/* (no region left: its map's, as before) */
 	if (shadow_atlas_count >= shadow_atlas_capacity(shadow_atlas_class))
 	{
+		shadow_retained_overflow_count++;
 		if (owned != NONE)
 		{
 			shadow_atlas_owners[owned].object_index = NONE;

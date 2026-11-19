@@ -506,6 +506,13 @@ void halo_hdr_category(int category)
 		inputs.hdr_view = TRUE;
 }
 
+/* (halo_linux_source_fixups.h) the backend's category alone, then the
+game's renderer's again */
+void halo_timing_category(int category)
+{
+	category_send(category >= 0 ? category : inputs.hdr_category);
+}
+
 void halo_hdr_draw_kind(int kind)
 {
 	inputs.hdr_kind = kind;

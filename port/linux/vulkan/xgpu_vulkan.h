@@ -838,6 +838,12 @@ string that lives as long as the backend: "SMAA", "PANINI"...; NULL none),
 as debug.pass_times sums and logs them; nothing kept while the passes are
 not timed */
 void xgpu_vulkan_pass_owner(const char *owner);
+/* (debug.pass_times) the game's renderer's category of the draws from now
+on (XGPU_STREAM_CATEGORY's value: rasterizer.h's _rasterizer_profile_*,
+the port's own past them, XGPU_STREAM_CATEGORY_NONE none): an unowned
+pass is timed by the categories of its draws, a timestamp where the
+category changes within it (without discards) */
+void xgpu_vulkan_pass_category(uint32_t category);
 
 uint64_t xgpu_vulkan_fence(void);
 /* returns once the GPU has done the submission of that number and those

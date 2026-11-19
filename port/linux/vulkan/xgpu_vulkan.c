@@ -1151,6 +1151,10 @@ struct segment
 	that owns it (xgpu_vulkan_pass_owner, as it began; NULL none) */
 	const char *ended_by;
 	const char *owner;
+	/* (debug.pass_times) the game's renderer's category of its draws
+	(xgpu_vulkan_pass_category's, plus one: 0 none): an unowned pass's
+	label; without discards, of its draws since its last timestamp */
+	uint32_t category;
 	/* with aside passes: a pass that continues the chain's pass before it
 	(piece), and a chain's first pass, the last of its pieces (its index
 	plus one; segments_play) */
@@ -1603,6 +1607,9 @@ static struct
 	(xgpu_vulkan_pass_owner), and the one the direct work outside passes
 	since the last timestamp began under */
 	const char *pass_owner, *direct_outside_owner;
+	/* (debug.pass_times) the category of the draws from now on
+	(xgpu_vulkan_pass_category's, plus one: 0 none) */
+	uint32_t pass_category;
 	/* HALO_VULKAN_ASIDE (on with discards): passes put aside, before the
 	pass they interrupt, which goes on in one rendering ("aside passes",
 	below): the chain's first and last pieces (segment indices plus one;
@@ -3217,8 +3224,8 @@ on a line of its own ("vulkan: pass groups: ..."), which the performance
 overlay reads from the host's recent lines (port/linux/game/perf_overlay.c,
 debug.timings). Labels only: what is drawn is the same. */
 
-#define PASS_TIMES_MAXIMUM 512
-#define PASS_TIMES_LABELS 48
+#define PASS_TIMES_MAXIMUM 1024
+#define PASS_TIMES_LABELS 64
 #define PASS_TIMES_LABEL 96
 
 static struct
@@ -3253,6 +3260,22 @@ void xgpu_vulkan_pass_owner(const char *owner)
 	/* (kept only while the passes are timed) */
 	if (host_pass_times)
 		vk.pass_owner = owner;
+}
+
+void xgpu_vulkan_pass_category(uint32_t category)
+{
+	uint32_t value = category < 255u ? category + 1 : 0;
+
+	if (value == vk.pass_category)
+		return;
+	/* (without discards: the pass's draws so far timed as theirs, the
+	pass going on under the new one) */
+	if (host_pass_times && !vk.deferred && vk.pass_active && !vk.direct_pass.owner)
+	{
+		pass_times_mark(vk.slot->main, pass_times_label(&vk.direct_pass, 0));
+		vk.direct_pass.category = value;
+	}
+	vk.pass_category = value;
 }
 
 /* the summary's sums by owner, the rest as OTHER, the most first, and the
@@ -3399,7 +3422,22 @@ static void pass_times_mark(VkCommandBuffer main, const char *label)
 	pass_times.used++;
 }
 
-/* a pass's label: the setting that owns it, else what it draws into */
+/* the game's renderer's categories (rasterizer.h's _rasterizer_profile_*,
+then the port's own: halo_linux_source_fixups.h's HALO_TIMING_*), as
+debug.pass_times labels the passes' draws by them */
+static const char *const pass_times_categories[] =
+{
+	"CLEAR", "SKY", "MODELS", "LIGHTMAPS", "SHADOWS", "DIFFUSE LIGHTS", "LIGHT DECALS", "ALPHA-TESTED DECALS",
+	"TEXTURES", "PRIMARY DECALS", "SECONDARY DECALS", "SPECULAR LIGHTS", "SPECULAR LIGHTMAPS", "REFLECTION MASKS",
+	"MIRRORS", "REFLECTIONS", "TRANSPARENTS", "FOG", "SCREEN FOG", "WATER", "WATER DECALS", "DETAIL OBJECTS",
+	"QUEUED TRANSPARENTS", "FLARE OCCLUSION", "FLARE QUERIES", "LENS FLARES", "SCREEN EFFECT", "HUD",
+	"SCREEN FLASH",
+	/* (the port's) */
+	"SHADOW BLUR",
+};
+
+/* a pass's label: the setting that owns it, else the category of its draws
+and what it draws into ("MODELS 1280x800"), else what it draws into */
 static const char *pass_times_label(const struct segment *segment, int aside)
 {
 	static char label[PASS_TIMES_LABEL];
@@ -3407,6 +3445,18 @@ static const char *pass_times_label(const struct segment *segment, int aside)
 
 	if (segment->owner)
 		return segment->owner;
+	if (segment->category)
+	{
+		uint32_t category = segment->category - 1;
+
+		if (category < sizeof(pass_times_categories) / sizeof(pass_times_categories[0]))
+			snprintf(label, sizeof(label), "%s %ux%u", pass_times_categories[category],
+				segment->area.extent.width, segment->area.extent.height);
+		else
+			snprintf(label, sizeof(label), "CATEGORY %u %ux%u", category, segment->area.extent.width,
+				segment->area.extent.height);
+		return label;
+	}
 	snprintf(label, sizeof(label), "%s%ux%u%s%s%s, ended by %s", aside ? "aside " : "", segment->area.extent.width,
 		segment->area.extent.height, segment->color.image ? " colour" : "", segment->depth.image ? " depth" : "",
 		image && image->description.samples > 1 ? " msaa" : "", segment->ended_by ? segment->ended_by : "?");
@@ -3462,15 +3512,29 @@ static void pass_times_collect(void)
 	pass_times.serial = 0;
 	if (pass_times.frames >= 30)
 	{
-		char line[2048];
-		int length = 0;
+		/* (a log line holds 1023 bytes: the sums go on in lines of their
+		own, "vulkan: pass times, more") */
+		char line[1024] = "";
+		int length = 0, first = 1;
 		double total = 0.0;
 
 		for (sum = 0; sum < pass_times.sum_count; sum++)
 			total += pass_times.sums[sum].milliseconds;
 		/* (the largest first) */
-		for (index = 0; index < pass_times.sum_count && length < (int)sizeof(line) - 96; index++)
+		for (index = 0; index < pass_times.sum_count; index++)
 		{
+			if (length > (int)sizeof(line) - 2 * PASS_TIMES_LABEL - 96)
+			{
+				if (first)
+					host_logf(HOST_LOG_INFO, "vulkan: pass times, %.3f ms a frame of %.0f frames%s",
+						total / pass_times.frames, pass_times.frames, line);
+				else
+					host_logf(HOST_LOG_INFO, "vulkan: pass times, more%s", line);
+				first = 0;
+				length = 0;
+				line[0] = 0;
+			}
+
 			uint32_t largest = index;
 
 			for (sum = index + 1; sum < pass_times.sum_count; sum++)
@@ -3491,8 +3555,11 @@ static void pass_times_collect(void)
 				total > 0.0 ? 100.0 * pass_times.sums[index].milliseconds / total : 0.0,
 				pass_times.sums[index].count / pass_times.frames);
 		}
-		host_logf(HOST_LOG_INFO, "vulkan: pass times, %.3f ms a frame of %.0f frames%s", total / pass_times.frames,
-			pass_times.frames, line);
+		if (first)
+			host_logf(HOST_LOG_INFO, "vulkan: pass times, %.3f ms a frame of %.0f frames%s", total / pass_times.frames,
+				pass_times.frames, line);
+		else if (length)
+			host_logf(HOST_LOG_INFO, "vulkan: pass times, more%s", line);
 		pass_times_groups_log();
 		pass_times.sum_count = 0;
 		pass_times.frames = 0.0;
@@ -6184,6 +6251,7 @@ static void pass_segment_begin(const VkRenderingInfo *rendering)
 
 	segment->pass = 1;
 	segment->owner = vk.pass_owner;
+	segment->category = vk.pass_category;
 	segment->area = rendering->renderArea;
 	segment->view_mask = rendering->viewMask;
 	segment->layer = vk.layer;
@@ -6462,6 +6530,7 @@ static int pass_begin(uint32_t clear_parts, const float clear_color[4], float cl
 		memset(&vk.direct_pass, 0, sizeof(vk.direct_pass));
 		vk.direct_pass.pass = 1;
 		vk.direct_pass.owner = vk.pass_owner;
+		vk.direct_pass.category = vk.pass_category;
 		vk.direct_pass.area = rendering.renderArea;
 		vk.direct_pass.color.image = rendering.colorAttachmentCount ? vk.color : NULL;
 		vk.direct_pass.depth.image = rendering.pDepthAttachment ? vk.depth : NULL;
