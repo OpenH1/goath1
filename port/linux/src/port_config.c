@@ -2534,6 +2534,9 @@ static const struct config_setting config_settings[] =
 	{ "debug.network_test_hitch", _config_real, "0.0", "HALO_NETWORK_TEST_HITCH", _environment_value, _platform_all,
 		"As debug.network_test_vehicle seats the player, the frame stops for this\n"
 		"many seconds, as a stall of the renderer or the VR runtime would; 0 never." },
+	{ "debug.network_test_step_cost", _config_real, "0.0", "HALO_NETWORK_TEST_STEP_COST", _environment_value, _platform_all,
+		"A network game's client spends this many milliseconds more on each step\n"
+		"(sub-step at 60 and 120) it runs, as a slower computer would; 0 none." },
 	{ "debug.bsp_switch_test", _config_real, "0.0", "HALO_BSP_SWITCH_TEST", _environment_value, _platform_all,
 		"Every this many seconds of a campaign level the game switches to its next\n"
 		"structure bsp, as a load zone does, puts the player in it and logs the\n"

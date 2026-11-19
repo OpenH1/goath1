@@ -1296,6 +1296,13 @@ game at any rate (`port/linux/game/network_clock.c`):
   half a tick, at once if it is behind, or slowly if ahead. Further ahead
   (the round trip shortened) it slows down; it never goes back, which the
   host would take for old messages (`distributed_add_new_ticks`).
+- A client's frame runs its due steps for at most a tick's time of the
+  computer's (`game_time.c`: `game_time_client_steps_over`); the rest are
+  not run, and the clock skips them as above. A client whose steps cost more
+  than their time (a slow computer at 120 ticks) ran every step owed, so each
+  frame owed more than the last, until the frames came about one a second;
+  now its frames come at least about a tick apart plus their drawing
+  (`debug.network_test_step_cost` makes the steps slower for a test).
 - A dedicated server of an OpenH1 game waits for its frame's time
   (`server_mode_pace_frame`) before it reads its datagrams, not after
   (`main.c`, `network_clock_server_pace_first`): what came while it waited is

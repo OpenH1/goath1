@@ -143,6 +143,7 @@ int player_settings_profile_folder(long profile_index, char *folder, unsigned lo
 void player_settings_update(void);
 int config_boolean(char const *name);
 double config_real(char const *name);
+unsigned long config_changes(void);
 long config_integer(char const *name);
 int config_write(char const *name, char const *value);
 void platform_log(char const *format, ...);
@@ -1049,6 +1050,29 @@ static void network_test_hitch(
 		return;
 	platform_log("network test: the frame stops for %.1f seconds", network_test.hitch_seconds);
 	while (system_milliseconds() - start < length)
+		;
+}
+
+/* debug.network_test_step_cost: a network game's client spends that many
+milliseconds more on each step (each sub-step at 60 and 120) it runs, busy,
+as a slower computer's heavier ticks would: a test of how its frames and
+clock bear ticks that cost more than their time (game_time.c) */
+void network_test_step_cost(
+	void)
+{
+	static unsigned long read_at = (unsigned long)-1;
+	static unsigned long long microseconds;
+	unsigned long long start;
+
+	if (read_at != config_changes())
+	{
+		read_at = config_changes();
+		microseconds = (unsigned long long)(MAX(0.0, config_real("debug.network_test_step_cost")) * 1000.0);
+	}
+	if (!microseconds || !network_game_distributed_client())
+		return;
+	start = platform_shared_clock_microseconds();
+	while (platform_shared_clock_microseconds() - start < microseconds)
 		;
 }
 
