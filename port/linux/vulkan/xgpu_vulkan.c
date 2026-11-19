@@ -46,6 +46,7 @@ options' gamma) first, where the setting is not 1.
 */
 
 #include "xgpu_vulkan.h"
+#include "xgpu_vulkan_dlss.h"
 #include "xgpu_vulkan_loading.h"
 #include "xgpu_vulkan_pacing.h"
 #include "xgpu_vulkan_post_shaders.h"
@@ -9974,6 +9975,10 @@ static int instance_make(const struct xgpu_vulkan_options *options)
 		extensions[extension_count++] = VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME;
 		vk.colorspaces = 1;
 	}
+	/* (display.temporal_aa "dlss": the instance's extensions NVIDIA's NGX
+	asks for, where its module is beside the game: xgpu_vulkan_dlss.c) */
+	if (!options->create_instance && xgpu_vulkan_dlss_load())
+		extension_count = xgpu_vulkan_dlss_instance_extensions(extensions, extension_count, 32, has_instance_extension);
 	memset(&application, 0, sizeof(application));
 	application.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
 	application.pApplicationName = "OpenH1";
@@ -10196,9 +10201,12 @@ static int device_make(const struct xgpu_vulkan_options *options)
 	VkDriverId driver = driver_id();
 	VkDeviceQueueCreateInfo queue;
 	VkDeviceCreateInfo info;
-	const char *extensions[20];
+	const char *extensions[40];
 	uint32_t extension_count = 0;
 	float priority = 1.0f;
+	/* (display.temporal_aa "dlss": NVIDIA's NGX on an NVIDIA GPU, its
+	module loaded: xgpu_vulkan_dlss.c) */
+	int dlss = vk.properties.vendorID == 0x10de && xgpu_vulkan_dlss_load();
 	/* (HALO_VULKAN_NO_CUSTOM_BORDER_COLORS: as a device without them, whose
 	shaders draw the border colours, Metal's way: to test that path) */
 	int custom_border = device_has_extension(VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME) &&
@@ -10483,6 +10491,21 @@ static int device_make(const struct xgpu_vulkan_options *options)
 		extensions[extension_count++] = VK_KHR_RAY_QUERY_EXTENSION_NAME;
 		extensions[extension_count++] = VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME;
 		vk.capabilities.ray_queries = 1;
+	}
+	/* (display.temporal_aa "dlss": the device's extensions NGX asks for, and
+	buffer addresses, which it uses; nothing of it without its module) */
+	if (dlss)
+	{
+		extension_count = xgpu_vulkan_dlss_device_extensions(vk.instance, vk.physical, vkGetInstanceProcAddr, extensions,
+			extension_count, 40, device_has_extension);
+		if (!vk.capabilities.ray_queries && available12.bufferDeviceAddress)
+		{
+			memset(&addresses, 0, sizeof(addresses));
+			addresses.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
+			addresses.bufferDeviceAddress = VK_TRUE;
+			*chain = &addresses;
+			chain = &addresses.pNext;
+		}
 	}
 
 	memset(&queue, 0, sizeof(queue));
@@ -11289,6 +11312,31 @@ int xgpu_vulkan_initialize(const struct xgpu_vulkan_options *options)
 		device.cache = vk.pipeline_cache;
 		vk.capabilities.temporal_fsr = xgpu_vulkan_fsr_create(&device);
 	}
+	/* (display.temporal_aa "dlss": NVIDIA DLSS through NGX, where its module
+	is and the GPU is NVIDIA's: xgpu_vulkan_dlss.c) */
+	vk.capabilities.temporal_dlss = 0;
+	if (vk.properties.vendorID == 0x10de && xgpu_vulkan_dlss_load())
+	{
+		struct xgpu_vulkan_dlss_device device;
+		char folder[1024];
+		char *slash;
+
+		snprintf(folder, sizeof(folder), "%s", options->cache_path ? options->cache_path : ".");
+		slash = strrchr(folder, '/');
+		if (slash)
+			*slash = 0;
+		memset(&device, 0, sizeof(device));
+		device.instance = vk.instance;
+		device.physical = vk.physical;
+		device.device = vk.device;
+		device.get_instance_proc_addr = vkGetInstanceProcAddr;
+		device.get_device_proc_addr = vkGetDeviceProcAddr;
+		device.memory = vk.memory_properties;
+		device.data_folder = folder;
+		vk.capabilities.temporal_dlss = xgpu_vulkan_dlss_create(&device);
+		host_logf(HOST_LOG_INFO, "vulkan: display.temporal_aa \"dlss\": NVIDIA DLSS %s",
+			vk.capabilities.temporal_dlss ? "available" : "not available");
+	}
 	/* (the frame's last pass's pipelines made now, as the loading screen's
 	presentation may draw it while a map is prepared) */
 	if (vk.encode && (!options->encode_prepare || !options->encode_prepare()))
@@ -11349,6 +11397,7 @@ void xgpu_vulkan_initialize_undo(void)
 		xgpu_vulkan_pacing_stop();
 		xgpu_vulkan_rt_destroy();
 		xgpu_vulkan_fsr_destroy();
+		xgpu_vulkan_dlss_destroy();
 		if (vkDestroyDevice)
 			vkDestroyDevice(vk.device, NULL);
 	}

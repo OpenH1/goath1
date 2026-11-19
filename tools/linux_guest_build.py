@@ -50,7 +50,7 @@ from .build_common import (MBEDTLS_DIR, MINIUPNPC_DEFINES, MINIUPNPC_DIR, OWN_CO
 from .guest_arch import ARM64_32, X32, GuestArch
 from .guest_toolchain import LLVM_VERSION, guest_toolchain
 from .ninja_syntax import Writer, escape
-from .vulkan_build import VULKAN_DIR, fetch_vulkan_headers, host_vulkan_renderer
+from .vulkan_build import VULKAN_DIR, dlss_module, fetch_dlss_sdk, fetch_vulkan_headers, host_vulkan_renderer
 
 # the desktop host's own files (its entry point, SDL's desktop functions, VR)
 PORT_DIR = Path("port/linux/host")
@@ -202,6 +202,14 @@ def _generate(n: Writer, sln: Any, target: LinuxGuest, config_path: Path, third_
         fetch_vulkan_headers(vulkan_headers)
     except (RuntimeError, OSError) as error:
         raise RuntimeError(f"cannot fetch the Vulkan headers ({error})") from error
+    # (configure.py --dlss: NVIDIA's DLSS SDK, for the module beside the game,
+    # Linux x86-64's)
+    dlss = bool(getattr(sln, "port_dlss", False)) and target.name == "linux_x86_64"
+    if dlss:
+        try:
+            fetch_dlss_sdk(third_party / "dlss")
+        except (RuntimeError, OSError) as error:
+            raise RuntimeError(f"cannot fetch NVIDIA's DLSS SDK ({error})") from error
     if vr:
         try:
             fetch_openxr_headers(openxr_dir)
@@ -376,8 +384,11 @@ def _generate(n: Writer, sln: Any, target: LinuxGuest, config_path: Path, third_
     # ... and the textures', fonts' and menus' bytes (port/linux/src/embedded_assets.h)
     assets = build / "openh1.assets"
     n.build(outputs=assets, rule=f"{prefix}_copy", inputs=guest["assets"])
+    # (configure.py --dlss: the DLSS module, its runtime and license beside the game)
+    dlss_outputs = (dlss_module(n, prefix, label, build, host_cc, host_cflags, vulkan_headers, third_party / "dlss")
+                    if dlss else [])
     n.build(outputs=target.name, rule="phony", inputs=[output, staged_sdl, sdl_license, brokers, masters, relays,
-                                                         records, assets])
+                                                         records, assets, *dlss_outputs])
 
     # ---------- the command stream's replay (port/linux/vulkan/tools/halo_replay.c), with the replays' shared
     # part (port/tools/replay): the render stream and its recording, and the Vulkan renderer, without the

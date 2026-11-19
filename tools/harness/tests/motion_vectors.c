@@ -57,6 +57,14 @@ unsigned long halo_gpu_settings_taken(void)
 	return 0;
 }
 
+/* the renderer has NVIDIA DLSS (its module, an NVIDIA GPU) */
+static int dlss_drawn;
+
+int halo_temporal_dlss_drawn(void)
+{
+	return dlss_drawn;
+}
+
 /* the front end, as the backend would have it: this frame's registers and
 the frame before's (each this frame's but where set apart) */
 static float registers[192][4], previous[192][4];
@@ -476,6 +484,24 @@ static void off(void)
 	CHECK(!window_on, "off jittered");
 }
 
+/* display.temporal_aa "dlss": on where the renderer has DLSS (the window's
+motion and jitter made); where it has none, off (none of either) */
+static void dlss(int drawn)
+{
+	struct render_camera camera_now;
+	struct render_frustum frustum;
+	boolean begun;
+
+	technique = "dlss";
+	dlss_drawn = drawn;
+	camera_make(0.0f, 0.0f, 0.0f, 0.0f, 1.0f, &camera_now, &frustum);
+	motion_vectors_frame_begin();
+	begun = motion_vectors_window_begin(0, TRUE, &camera_now, &frustum);
+	CHECK(motion_vectors_technique() == (drawn ? 2 : 0), "the technique %d", motion_vectors_technique());
+	CHECK(begun == (drawn != 0) && window_on == (drawn != 0), "DLSS %s: the motion %s", drawn ? "drawn" : "not drawn",
+		begun ? "made" : "not made");
+}
+
 int main(int argc, char **argv)
 {
 	const char *name = argc > 1 ? argv[1] : "";
@@ -490,6 +516,10 @@ int main(int argc, char **argv)
 		cut();
 	else if (!strcmp(name, "off"))
 		off();
+	else if (!strcmp(name, "dlss"))
+		dlss(1);
+	else if (!strcmp(name, "dlss_unavailable"))
+		dlss(0);
 	else
 	{
 		fprintf(stderr, "unknown case %s\n", name);

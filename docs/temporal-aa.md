@@ -60,5 +60,33 @@ renderer has it: Settings > Video > Frame Rate & Sync > Upscaler (`xgpu_backend_
   mapped, largest channel, 0.9 past 0.2). The first-person weapon and the objects write their own motion.
 - **Preparation.** A map prepared with a technique on also makes the objects' pipelines' motion variants. The
   enumeration's models are drawn as the window's objects are, and FSR's compute pipelines are made then too.
-- **Not done.** Sharpening, DLSS and MetalFX. Android's render scale is its swapchain's (FSR there antialiases at the
+- **Not done.** Sharpening and MetalFX. Android's render scale is its swapchain's (FSR there antialiases at the
   swapchain's size).
+
+## Milestone 3: `"dlss"` (Vulkan, NVIDIA)
+
+NVIDIA DLSS Super Resolution (DLAA at render scale 1) through NVIDIA's NGX, the DLSS SDK's own path on Vulkan for Linux
+and Windows. It is offered where the renderer has it: Settings > Video > Frame Rate & Sync > Upscaler gains NVIDIA DLSS
+(`xgpu_backend_capabilities.temporal_dlss`, its own row in the FSR row's place). Elsewhere `"dlss"` is off: no motion,
+no jitter (`motion_vectors_technique`).
+
+- **The module.** The game holds none of NVIDIA's code. `configure.py --dlss` downloads the SDK's NGX headers, its
+  static library and the DLSS runtime (pinned by SHA-256, `tools/vulkan_build.py`), and builds
+  `libopenh1_dlss.so` beside the game from `port/linux/vulkan/dlss/openh1_dlss.c`; it alone links NVIDIA's library.
+  `libnvidia-ngx-dlss.so.310.9.16` (the DLSS runtime, NVIDIA's redistributable) and `NVIDIA-DLSS-LICENSE.txt` are
+  staged beside it. The game loads the module at run time (`xgpu_vulkan_dlss.c`); without it, an NVIDIA GPU or the
+  driver's NGX (`libnvidia-ngx.so`, which NVIDIA's Linux driver installs), nothing changes. `HALO_VULKAN_NO_DLSS=1`
+  leaves it unloaded. Linux x86-64 for now; Windows's loader is written (`openh1_dlss.dll`) but not built.
+- **Device.** Only with the module and an NVIDIA GPU: the instance's and the device's extensions NGX asks for
+  (`GetFeature*ExtensionRequirements`) are added, and buffer device addresses. NGX is identified by a project ID
+  and the custom engine type.
+- **Inputs.** FSR's: the colour, the depth (reversed), the motion (scaled by the render's size into its pixels,
+  at the render's resolution, not jittered), the jitter, the reset; read in place at the window's corner. Exposure
+  1, no auto exposure; display.hdr's linear light is marked HDR. The output is an RGBA16F image blitted into the
+  window of the back buffer, where the tone map, Panini and the HUD follow. No reactive mask (DLSS has none).
+- **Quality.** Any render scale: the quality mode is the one whose range of render sizes (NGX's optimal settings)
+  holds the render scale's, the nearest optimal; 1.0 is DLAA. The render preset is NGX's default.
+- **License.** The NVIDIA RTX SDKs license: the runtime may be shipped inside an application, the SDK must not be
+  made subject to an open-source license, NVIDIA's attribution is required (splash, credits) and NVIDIA is to be
+  told before a commercial release. The repository holds none of the SDK.
+

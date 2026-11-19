@@ -458,7 +458,11 @@ struct xgpu_stream_capabilities
 	uint8_t soft_effects;
 	/* display.temporal_aa "fsr": the backend upscales a window's view with
 	AMD FSR (MOTION's _UPSCALE: xgpu_backend_capabilities' temporal_upscale) */
-	uint8_t temporal_upscale, pad[1];
+	uint8_t temporal_upscale;
+	/* display.temporal_aa "dlss": the backend upscales a window's view with
+	NVIDIA DLSS (MOTION's _UPSCALE, technique 2: xgpu_backend_capabilities'
+	temporal_dlss) */
+	uint8_t temporal_dlss;
 	/* the GPU, its API and driver, in a few words (a report's:
 	port/linux/src/report.c), NUL terminated */
 	char device[96];
@@ -698,7 +702,7 @@ struct xgpu_motion_pass
 /* the window's corners in the source's pixels (the target its view was
 drawn into) and in the destination's (the target it is upscaled into: the
 HUD's, at the display's scale); the window (0 to 3), the technique (1
-"fsr"), whether the colour is display.hdr's linear light (else an SDR
+"fsr", 2 "dlss"), whether the colour is display.hdr's linear light (else an SDR
 picture), whether its history begins again (a cut, a new map, a resize);
 the depth target's number (the view's); the camera's near and far planes
 (world units), vertical field of view (radians) and meters in a world unit;

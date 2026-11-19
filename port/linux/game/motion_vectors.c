@@ -47,6 +47,7 @@ feed's, or a multisampled view (the front end's).
 
 const char *config_string(const char *name);
 unsigned long halo_gpu_settings_taken(void);
+int halo_temporal_dlss_drawn(void);
 
 /* an object's nodes as the vertex shader has them (three registers each) */
 typedef real motion_node[3][4];
@@ -121,6 +122,9 @@ int motion_vectors_technique(void)
 		motion_vectors.technique = !setting ? 0 : !strcmp(setting, "fsr") ? 1 : !strcmp(setting, "dlss") ? 2 :
 			!strcmp(setting, "metalfx") ? 3 : 0;
 	}
+	/* ("dlss" where the renderer has no DLSS: off, no motion or jitter) */
+	if (motion_vectors.technique == 2 && !halo_temporal_dlss_drawn())
+		return 0;
 	return motion_vectors.technique;
 }
 

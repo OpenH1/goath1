@@ -111,14 +111,18 @@ static struct
 static long ui_offset;
 #define UI_OFFSET ((long)ui_offset)
 /* display.temporal_aa's technique (port/linux/game/motion_vectors.c: 0
-off, 1 "fsr") */
+off, 1 "fsr", 2 "dlss") */
 int motion_vectors_technique(void);
 
-/* whether a window's 3D view is upscaled by the backend's AMD FSR
-(display.temporal_aa "fsr" where the backend has it: Vulkan's) */
+/* whether a window's 3D view is upscaled by the backend: AMD FSR
+(display.temporal_aa "fsr") or NVIDIA DLSS ("dlss"), where the backend has
+it (Vulkan's; DLSS's where its module and an NVIDIA GPU are) */
 static BOOL temporal_upscaling(void)
 {
-	return xgpu_backend_capabilities.temporal_upscale && motion_vectors_technique() == 1;
+	int technique = motion_vectors_technique();
+
+	return technique == 1 ? xgpu_backend_capabilities.temporal_upscale :
+		technique == 2 ? xgpu_backend_capabilities.temporal_dlss : FALSE;
 }
 
 /* ---------- anti-aliasing
@@ -217,7 +221,8 @@ static void anti_aliasing_read(void)
 		return;
 	anti_aliasing_value = value;
 	if (temporal)
-		platform_log("anti-aliasing: off (display.temporal_aa \"fsr\" antialiases)");
+		platform_log("anti-aliasing: off (display.temporal_aa \"%s\" antialiases)",
+			motion_vectors_technique() == 2 ? "dlss" : "fsr");
 	else if (strcmp(setting, anti_aliasing_values[value].name))
 		platform_log("anti-aliasing: \"%s\" is unknown, so off", setting);
 	else
@@ -5192,6 +5197,11 @@ int halo_temporal_upscale_drawn(void)
 	return xgpu_backend_capabilities.temporal_upscale != 0;
 }
 
+int halo_temporal_dlss_drawn(void)
+{
+	return xgpu_backend_capabilities.temporal_dlss != 0;
+}
+
 /* the pixel key's vr_effect for a draw of these views (XGPU_MULTIVIEW_*)
 on a flat screen: 1 soft, 0 none */
 static unsigned char soft_effect_key(int multiview)
@@ -7550,7 +7560,9 @@ void halo_motion_opaque(short x0, short y0, short x1, short y1, int window)
 	long corners[4];
 	int index;
 
-	if (!motion.on || !temporal_upscaling() || !(target = render_target_get(&device.back_buffer)))
+	/* (AMD FSR's alone: DLSS has no reactive mask) */
+	if (!motion.on || !temporal_upscaling() || motion_vectors_technique() != 1 ||
+		!(target = render_target_get(&device.back_buffer)))
 		return;
 	memset(&pass, 0, sizeof(pass));
 	view_corners(target, x0, y0, x1, y1, corners);
@@ -7588,7 +7600,7 @@ static void temporal_upscale(struct render_target_entry *source, short x0, short
 	for (index = 0; index < 4; index++)
 		pass.destination[index] = (int32_t)corners[index];
 	pass.window = (uint32_t)(window < 0 ? 0 : window > 3 ? 3 : window);
-	pass.technique = 1;
+	pass.technique = (uint32_t)motion_vectors_technique();
 	pass.hdr = source->target.format == XGPU_FORMAT_RGBA16F;
 	pass.reset = !history;
 	pass.depth = depth->target.number;
