@@ -15,9 +15,11 @@ The options are the port's, the same for every pass: no half floats (any
 Vulkan 1.1 device), no subgroup operations in the downsampler
 (FFX_SPD_NO_WAVE_OPERATIONS: no quad operations needed), the depth reversed
 (XGPU_VULKAN_REVERSED_DEPTH), the motion at the render resolution and
-without the jitter, no sharpening (no RCAS pass). Each pass is built twice,
-for an SDR and an HDR (linear, display.hdr's) colour input; where both are
-the same words, once. glslang 16.6.0 and SPIRV-Tools 2026.4 (Homebrew's)
+without the jitter. The accumulation is built a second time with the SDK's
+sharpening option (FFX_FSR3UPSCALER_OPTION_APPLY_SHARPENING: it leaves the
+output to the RCAS pass, display.temporal_aa_sharpness's). Each pass is built
+twice, for an SDR and an HDR (linear, display.hdr's) colour input; where both
+are the same words, once. glslang 16.6.0 and SPIRV-Tools 2026.4 (Homebrew's)
 produce the checked-in words.
 """
 
@@ -32,9 +34,14 @@ ROOT = Path(__file__).resolve().parents[1]
 FSR = ROOT / "port/third_party/fidelityfx-fsr3"
 OUTPUT = ROOT / "port/linux/vulkan/xgpu_vulkan_fsr_shaders.c"
 
-# the passes, in xgpu_vulkan_fsr_shaders.h's order (the SDK's entry points)
-PASSES = ("prepare_inputs", "luma_pyramid", "shading_change_pyramid", "shading_change", "prepare_reactivity",
-          "luma_instability", "accumulate", "autogen_reactive")
+# the passes, in xgpu_vulkan_fsr_shaders.h's order: each one's name, the SDK's
+# entry point it is built from and the options it adds to OPTIONS
+PASSES = (("prepare_inputs", "prepare_inputs", {}), ("luma_pyramid", "luma_pyramid", {}),
+          ("shading_change_pyramid", "shading_change_pyramid", {}), ("shading_change", "shading_change", {}),
+          ("prepare_reactivity", "prepare_reactivity", {}), ("luma_instability", "luma_instability", {}),
+          ("accumulate", "accumulate", {}), ("autogen_reactive", "autogen_reactive", {}),
+          ("accumulate_sharpen", "accumulate", {"FFX_FSR3UPSCALER_OPTION_APPLY_SHARPENING": 1}),
+          ("rcas", "rcas", {}))
 OPTIONS = {
     "FFX_GPU": 1,
     "FFX_GLSL": 1,
@@ -97,9 +104,11 @@ RESOURCES = {
     "rw_upscaled_output": "UPSCALED_OUTPUT",
     "rw_output_autoreactive": "AUTOREACTIVE",
     "rw_output_autocomposition": "AUTOCOMPOSITION",
+    "r_rcas_input": "RCAS_INPUT",
     "cbFSR3Upscaler": "CONSTANTS",
     "cbSPD": "SPD_CONSTANTS",
     "cbGenerateReactive": "REACTIVE_CONSTANTS",
+    "cbRCAS": "RCAS_CONSTANTS",
     "s_PointClamp": "POINT_SAMPLER",
     "s_LinearClamp": "LINEAR_SAMPLER",
 }
@@ -161,15 +170,15 @@ def words_array(name: str, data: bytes) -> str:
     return "\n".join(lines)
 
 
-def compile_pass(args, name: str, hdr: int) -> bytes:
+def compile_pass(args, name: str, source: str, options: dict[str, int], hdr: int) -> bytes:
     build = args.build_dir
     build.mkdir(parents=True, exist_ok=True)
     spv = build / f"{name}_{'hdr' if hdr else 'sdr'}.spv"
     spv.unlink(missing_ok=True)
-    defines = dict(OPTIONS, FFX_FSR3UPSCALER_OPTION_HDR_COLOR_INPUT=hdr)
+    defines = dict(OPTIONS, **options, FFX_FSR3UPSCALER_OPTION_HDR_COLOR_INPUT=hdr)
     command = [args.compiler, "-V", "--target-env", "vulkan1.1", "-S", "comp", "-Os",
                *[f"-D{key}={value}" for key, value in defines.items()], f"-I{FSR / 'gpu'}",
-               "-o", str(spv), str(FSR / "vk" / f"ffx_fsr3upscaler_{name}_pass.glsl")]
+               "-o", str(spv), str(FSR / "vk" / f"ffx_fsr3upscaler_{source}_pass.glsl")]
     subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     subprocess.run([args.validator, "--target-env", "vulkan1.1", str(spv)], check=True)
     return spv.read_bytes()
@@ -183,8 +192,8 @@ def generate(args):
     ]
     programs: dict[int, list[str]] = {0: [], 1: []}
     total = 0
-    for name in PASSES:
-        modules = {hdr: compile_pass(args, name, hdr) for hdr in (0, 1)}
+    for name, source, options in PASSES:
+        modules = {hdr: compile_pass(args, name, source, options, hdr) for hdr in (0, 1)}
         found = bindings(modules[0])
         if bindings(modules[1]) != found:
             raise ValueError(f"{name}'s bindings differ between its SDR and HDR builds")

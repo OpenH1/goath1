@@ -30,6 +30,9 @@ CONTROLS = [
      "\tif (temporal_upscaling())\n\t\ttemporal_upscale(target, x0, y0, x1, y1, history, window, camera);",
      "\tif (temporal_upscaling())\n\t\ttemporal_upscale(target, x0, y0, x1, y1, history, window, camera);\n"
      "\txgpu_backend_motion(XGPU_MOTION_RESOLVE, target->target.number, &pass);", "native"),
+    # display.temporal_aa_sharpness sent as set, past 1 or below 0 too
+    ("\tpass.sharpness = pass.sharpness > 0.0f ? (pass.sharpness < 1.0f ? pass.sharpness : 1.0f) : 0.0f;\n", "",
+     "sharpness"),
 ]
 
 
@@ -64,7 +67,7 @@ def window_order(render):
     return None
 
 
-@pytest.mark.parametrize("case", ["upscaled", "native", "off"])
+@pytest.mark.parametrize("case", ["upscaled", "native", "off", "sharpness"])
 def test_case(case):
     status, output = run(build("temporal_order", generated()), case)
     assert status == 0, output

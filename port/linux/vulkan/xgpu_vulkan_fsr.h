@@ -34,6 +34,9 @@ struct xgpu_vulkan_fsr_frame
 	/* the history begun again (a cut, a new map, a resize); the colour is
 	display.hdr's linear light (else an SDR picture) */
 	int reset, hdr;
+	/* display.temporal_aa_sharpness, 0 to 1 (0 none): FSR's RCAS; DLSS
+	ignores it */
+	float sharpness;
 };
 
 /* the passes' pipelines made (as a map is prepared with it on), for an SDR

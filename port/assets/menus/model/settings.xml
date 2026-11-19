@@ -786,13 +786,27 @@
 			<choice shown="OFF" value="off"/>
 			<choice shown="APPLE METALFX" value="metalfx"/>
 		</row>
-		<section key="section_10" title="RAY TRACING" when="desktop android"/>
+		<row key="temporal_aa_sharpness" kind="slider" setting="display.temporal_aa_sharpness" label="FSR SHARPNESS" crumb="VIDEO › FRAME RATE &amp; SYNC" when="desktop+temporal_upscale+!vr android+temporal_upscale+!vr" least="0" most="1" step="0.05" typed_least="0" typed_most="1">
+			<help>How much AMD FSR sharpens its picture, which offsets the softness of a Render Resolution below 100%. Higher is crisper; too high outlines edges. Off adds no sharpening.</help>
+			<stop shown="OFF" value="0"/>
+			<stop shown="0.1" value="0.1"/>
+			<stop shown="0.2" value="0.2"/>
+			<stop shown="0.3" value="0.3"/>
+			<stop shown="0.4" value="0.4"/>
+			<stop shown="0.5" value="0.5"/>
+			<stop shown="0.6" value="0.6"/>
+			<stop shown="0.7" value="0.7"/>
+			<stop shown="0.8" value="0.8"/>
+			<stop shown="0.9" value="0.9"/>
+			<stop shown="1" value="1"/>
+		</row>
+		<section key="section_11" title="RAY TRACING" when="desktop android"/>
 		<row key="shadows" kind="choice" setting="display.shadows" label="RAY TRACED SHADOWS" crumb="VIDEO › FRAME RATE &amp; SYNC" search="shadows" when="desktop+ray_queries android+ray_queries">
 			<help>The shadows of characters and vehicles traced by the graphics card from their own shapes, soft at the edges, in the same place and darkness as the game's, which frees the processor's shadow work. Off draws them as the Xbox did.</help>
 			<choice shown="OFF" value="classic"/>
 			<choice shown="ON" value="ray_traced"/>
 		</row>
-		<section key="section_12" title="BENCHMARK"/>
+		<section key="section_13" title="BENCHMARK"/>
 		<row key="benchmark_pacing" kind="choice" setting="display.benchmark_pacing" label="BENCHMARK PACING" crumb="VIDEO › FRAME RATE &amp; SYNC" search_choices="uncapped your settings" when="!in_game">
 			<help>What the benchmark measures. Uncapped turns VSync, Variable Refresh and the frame cap off for the run: what your computer can draw. Your Settings keeps them: what you see as you play.</help>
 			<choice shown="UNCAPPED" value="uncapped"/>
