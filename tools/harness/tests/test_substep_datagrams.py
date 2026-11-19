@@ -18,7 +18,7 @@ CASES = ["substep", "substep-after-read", "step-due", "display-wait", "as-they-c
 
 NEGATIVE_CONTROLS = {
     # what came read just before the host's step in a datagram of its own, beside the step's
-    "step-due-alone": (("return step_milliseconds >= 0.0f && step_milliseconds < (real)FORWARDED_INPUT_INTERVAL_MILLISECONDS;",
+    "step-due-alone": (("return step_milliseconds >= 0.0f && step_milliseconds < interval_milliseconds;",
                         "return FALSE;"), "step-due"),
     # in a drawing host's wait for the display, held for a step that runs only once the wait ends
     "display-wait-as-step": (("\tif (display_wait)\n", "\tif (FALSE)\n"), "display-wait"),

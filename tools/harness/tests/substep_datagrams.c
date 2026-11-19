@@ -443,7 +443,7 @@ static void display_wait_case(void)
 		{ -0.004f, 3.0f, TRUE, "the step overdue, the wait to end past the server's interval: at once" },
 		{ 0.001f, 1.0f, FALSE, "the step and the wait's end within the server's interval: with the step" },
 		{ 0.020f, 3.0f, TRUE, "the step not due for longer than the interval: at once" },
-		{ 0.002f, -1.0f, TRUE, "the wait's end not known: at once" },
+		{ 0.001f, -1.0f, TRUE, "the wait's end not known, the step within the server's interval: at once" },
 		{ -0.004f, 0.0f, FALSE, "the wait past the last one's length, to end any moment: with the step" },
 	};
 	short index;
