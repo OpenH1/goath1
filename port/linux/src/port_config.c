@@ -168,6 +168,9 @@ the VR mode's eyes draw them (#1116) */
 /* display.alpha_coverage: an alpha-tested texture's levels keep its first's
 coverage (#1223) */
 #define GRAPHICS_ALPHA_COVERAGE "true"
+/* display.smooth_lightmaps: the level's baked light filtered by a cubic
+B-spline in the lightmap pass (#1225) */
+#define GRAPHICS_SMOOTH_LIGHTMAPS "true"
 /* display.astc_textures: "auto" everywhere (iPhones, through Metal; Android
 phones without BC, through Vulkan: seen right on a Pixel 11 Pro's PowerVR) */
 #define ASTC_TEXTURES_DEFAULT "\"auto\""
@@ -1699,6 +1702,12 @@ static const struct config_setting config_settings[] =
 		"out and shimmering: the smaller versions of a cut-out texture keep as\n"
 		"many of their texels drawn as the full-size one has, made once as it is\n"
 		"read. false draws them as the Xbox did."
+		GRAPHICS_CHOOSES },
+	{ "display.smooth_lightmaps", _config_boolean, GRAPHICS_SMOOTH_LIGHTMAPS, "HALO_SMOOTH_LIGHTMAPS",
+		_environment_value, _platform_all,
+		"The level's baked lighting filtered smoothly, so that its coarse texels\n"
+		"don't show as stair steps and diamonds on walls and floors at high\n"
+		"resolutions; false filters it as the Xbox did."
 		GRAPHICS_CHOOSES },
 	{ "display.shield_color", _config_string, "\"default\"", "HALO_SHIELD_COLOR", _environment_value, _platform_all,
 		"Your energy shield's color, as this machine draws it: \"default\" (the\n"
@@ -4641,6 +4650,7 @@ static const struct
 	{ "display.ambient_occlusion", "\"off\"" },
 	{ "display.soft_particles", "false" },
 	{ "display.alpha_coverage", "false" },
+	{ "display.smooth_lightmaps", "false" },
 	{ "game.enhanced_animations", "false", 1 },
 	{ "display.menu_fade", "true", 1 },
 };

@@ -39,12 +39,13 @@ CHECKER = r"""
 16-bit frame, the enhanced lights, soft effects, Vulkan's alpha tests that
 cannot fail dropped), and each one changed */
 static const struct { const char *name; struct xgpu_manifest_settings settings; } matrix[] = {
-	{ "defaults", { 1, 0, 1, 1, XGPU_MANIFEST_OCCLUSION_OFF, 1, 1, 0, 1 } },
-	{ "soft_particles_off", { 1, 0, 1, 1, XGPU_MANIFEST_OCCLUSION_OFF, 1, 0, 0, 1 } },
-	{ "output_depth_8", { 1, 0, 1, 1, XGPU_MANIFEST_OCCLUSION_OFF, 0, 1, 0, 1 } },
-	{ "hdr", { 1, 1, 1, 1, XGPU_MANIFEST_OCCLUSION_OFF, 1, 1, 0, 1 } },
-	{ "hdr_boost", { 1, 1, 1, 1, XGPU_MANIFEST_OCCLUSION_OFF, 1, 1, XGPU_HDR_BOOST_MOST, 1 } },
-	{ "alpha_drop_off", { 1, 0, 1, 1, XGPU_MANIFEST_OCCLUSION_OFF, 1, 1, 0, 0 } },
+	{ "defaults", { 1, 0, 1, 1, XGPU_MANIFEST_OCCLUSION_OFF, 1, 1, 0, 1, 1 } },
+	{ "soft_particles_off", { 1, 0, 1, 1, XGPU_MANIFEST_OCCLUSION_OFF, 1, 0, 0, 1, 1 } },
+	{ "output_depth_8", { 1, 0, 1, 1, XGPU_MANIFEST_OCCLUSION_OFF, 0, 1, 0, 1, 1 } },
+	{ "hdr", { 1, 1, 1, 1, XGPU_MANIFEST_OCCLUSION_OFF, 1, 1, 0, 1, 1 } },
+	{ "hdr_boost", { 1, 1, 1, 1, XGPU_MANIFEST_OCCLUSION_OFF, 1, 1, XGPU_HDR_BOOST_MOST, 1, 1 } },
+	{ "alpha_drop_off", { 1, 0, 1, 1, XGPU_MANIFEST_OCCLUSION_OFF, 1, 1, 0, 0, 1 } },
+	{ "smooth_lightmaps_off", { 1, 0, 1, 1, XGPU_MANIFEST_OCCLUSION_OFF, 1, 1, 0, 1, 0 } },
 };
 
 #define FIELD(name, member) { name, offsetof(struct xgpu_manifest_draw, member), \

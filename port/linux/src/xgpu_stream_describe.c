@@ -100,6 +100,7 @@ void xgpu_stream_pixel_program_describe(const struct xgpu_pixel_program *program
 	wire->multiview = program->multiview;
 	wire->source_blend = program->source_blend;
 	wire->ambient_occlusion = program->ambient_occlusion;
+	wire->lightmap_filter = program->lightmap_filter;
 	wire->hdr = program->hdr;
 }
 
