@@ -4,7 +4,8 @@ face (OpenCE, the menus' titles'), and drawn under them at the screen's own
 pixels (loading_art_caption_shown): its letters are all there (a font whose
 ascent is smaller than its capitals once lost every letter but the dots),
 drawn where they belong, as tall as 15 of the 480 lines are on that screen
-(not the loading frame's pixels scaled up: a 4K screen shows a frame of 1080
+(not the loading frame's pixels scaled up: a 4K screen under a sharp
+frame's budget of 1080p's pixels, LOADING_ART_HD_BUDGET, shows a frame of 1080
 rows), in the words' colour from the picture, lit by the sweep as the words
 are (bright as its band crosses them, its trail's glow about them in the
 frame); in VR's window, in its frame."""
@@ -237,6 +238,6 @@ int main(int argc, char **argv) {
     path.write_text(program)
     binary = tmp_path / "caption"
     subprocess.run([os.environ.get("CC", "cc"), "-std=gnu99", "-O1", "-Wall", "-Werror", "-Wno-unused-function",
-                    "-pthread", "-I", str(ROOT / "port/linux/src"), str(path), "-o", str(binary), "-lm", "-lz"],
+                    "-DLOADING_ART_HD_BUDGET=(1920u*1080u)", "-pthread", "-I", str(ROOT / "port/linux/src"), str(path), "-o", str(binary), "-lm", "-lz"],
                    check=True, timeout=120)
     subprocess.run([str(binary), str(FONT), str(PICTURE)], check=True, timeout=60)

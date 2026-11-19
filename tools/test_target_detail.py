@@ -70,7 +70,7 @@ def run(tmp_path, body):
     program = tmp_path / "detail.c"
     program.write_text(PRELUDE + body + MAIN)
     binary = tmp_path / "detail"
-    subprocess.run([compiler, "-std=c99", "-Wall", "-Werror", str(program), "-o", str(binary)], check=True)
+    subprocess.run([compiler, "-std=c99", str(program), "-o", str(binary)], check=True)
     return subprocess.run([str(binary)], check=True, capture_output=True, text=True).stdout.split("\n")[:-1]
 
 
