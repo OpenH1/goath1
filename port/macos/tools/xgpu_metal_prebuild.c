@@ -20,7 +20,8 @@ which here keeps each function's source), and the render pipeline state
 (xgpu_metal_pipeline.m). It writes each function's source as <name>.metal
 in the sources folder (named after its source's hash, as the backend looks
 it up), with the clears' and the presentation's functions
-(xgpu_metal_fixed.metal), the enhanced dynamic lights' glows' and
+(xgpu_metal_fixed.metal), display.temporal_aa's passes'
+(xgpu_metal_temporal.metal), the enhanced dynamic lights' glows' and
 anti-aliasing's passes' (xgpu_metal_post_shaders.c), and the pipelines as a Metal pipelines script
 (xgpu_metal_prebuild_script.m) whose functions are the library's at the
 library path. Plain C: the shared headers' BOOL is not Objective-C's.
@@ -412,6 +413,12 @@ int main(int argc, char **argv)
 	snprintf(path, sizeof(path), "%s/xgpu_metal_combiner.metal", sources_folder);
 	if (!prebuild_write_text(path, xgpu_metal_combiner_source, strlen(xgpu_metal_combiner_source)))
 		fail("cannot write the combiner's function's source");
+	/* (display.temporal_aa's passes': xgpu_metal_temporal.m. Not the
+	draws' motion variants: a map prepared with it on compiles those of its
+	objects on the backend's queues as it loads, about 40 on a stock map,
+	where every draw's variant here would add about 7 MB to the library) */
+	snprintf(path, sizeof(path), "%s/xgpu_metal_temporal.metal", sources_folder);
+	prebuild_write_temporal(path);
 	/* each draw as every setting derives it (xgpu_manifest_derive: lit, and
 	unlit where the backend could not light it), each derived draw once */
 	for (index = 0; index < manifest.draw_count; index++)

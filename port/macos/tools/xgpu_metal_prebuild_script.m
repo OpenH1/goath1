@@ -257,3 +257,12 @@ void prebuild_write_fixed(const char *path)
 			fail("cannot write the fixed functions' source");
 	}
 }
+
+void prebuild_write_temporal(const char *path)
+{
+	@autoreleasepool
+	{
+		if (![[xgpu_metal_temporal_source dataUsingEncoding:NSUTF8StringEncoding] writeToFile:@(path) atomically:NO])
+			fail("cannot write display.temporal_aa's functions' source");
+	}
+}
