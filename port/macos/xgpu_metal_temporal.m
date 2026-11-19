@@ -18,7 +18,11 @@ motion, xgpu_vulkan_fsr.c):
   at the display's scale, where the tone map, the Panini pass and the HUD
   follow). The exposure is fixed at 1 (a 1x1 R16Float of 1), as FSR's. Each
   window (split screen's four) has a scaler and history of its own, made
-  again as its sizes or formats change. A window not at its target's top
+  again as its sizes or formats change: off the render thread (a scaler
+  takes 100 to 300 ms to make on an M1 Max, over a second the first time
+  after a system update), the window's view stretched into the destination
+  (linear filtering) until it is made, its history begun with it. A
+  window not at its target's top
   left corner, or smaller than it, is copied there first (MetalFX reads its
   inputs from their origin).
 - The reactive mask: FSR's generated one (xgpu_vulkan_fsr.c's), from the
@@ -29,13 +33,15 @@ motion, xgpu_vulkan_fsr.c):
 The passes are the backend's (xgpu_metal.h), their functions MSL compiled on
 the backend's queues; MetalFX's work goes in the command buffer between the
 passes (xgpu_metal_outside_passes). HALO_METALFX_TIMES=<n>: MetalFX's GPU
-time (its own command buffer), its mean over each n upscales, logged.
+time (its own command buffer), its mean over each n upscales, logged, and
+each window's first upscale's time on the render thread.
 */
 
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 #if __has_include(<MetalFX/MetalFX.h>) && !TARGET_OS_SIMULATOR
 #import <MetalFX/MetalFX.h>
+#include <os/lock.h>
 #define XGPU_METAL_METALFX 1
 #endif
 
@@ -103,6 +109,14 @@ static NSString *const temporal_source =
 	"\tfloat3 change = abs(reactive_tone_map(max(color.read(texel).rgb, 0.0)) -\n"
 	"\t\treactive_tone_map(max(opaque.read(texel).rgb, 0.0)));\n"
 	"\treturn float4(max(change.r, max(change.g, change.b)) < 0.2 ? 0.0 : 0.9);\n"
+	"}\n"
+	/* (the view stretched while its scaler is made: the source's rectangle
+	(metrics: x0, y0, width, height) over the destination's (window)) */
+	"fragment float4 xgpu_temporal_stretch(temporal_out in [[stage_in]], constant motion_uniforms &u [[buffer(17)]],\n"
+	"\ttexture2d<float> color [[texture(0)]])\n"
+	"{\n"
+	"\tconstexpr sampler linear(coord::pixel, filter::linear, address::clamp_to_edge);\n"
+	"\treturn color.sample(linear, u.metrics.xy + (in.position.xy - u.window.xy) / u.window.zw * u.metrics.zw);\n"
 	"}\n";
 
 enum
@@ -111,23 +125,37 @@ enum
 	FUNCTION_RESOLVE,
 	FUNCTION_VIEW,
 	FUNCTION_REACTIVE,
+	FUNCTION_STRETCH,
 	FUNCTIONS
 };
 
 static const char *const function_names[FUNCTIONS] =
 {
 	"xgpu_temporal_vertex", "xgpu_temporal_resolve", "xgpu_temporal_view", "xgpu_temporal_reactive",
+	"xgpu_temporal_stretch",
 };
 
 #ifdef XGPU_METAL_METALFX
+/* what a scaler is made for: its inputs' and output's formats and sizes,
+and whether it reads a reactive mask */
+struct metalfx_fit
+{
+	MTLPixelFormat color, depth, output;
+	NSUInteger input_width, input_height, output_width, output_height;
+	BOOL reactive;
+};
+
 /* a window's scaler, what it was made for, its output, and its inputs'
-copies (made where the window is not at its targets' origin) */
+copies (made where the window is not at its targets' origin); the scaler
+being made off the render thread (making: for asked; made, under
+temporal.lock: its result, handed over), and whether the next upscale
+begins the history (the scaler new) */
 struct metalfx_window
 {
 	id<MTLFXTemporalScaler> scaler;
-	MTLPixelFormat color_format, depth_format, output_format;
-	NSUInteger input_width, input_height, output_width, output_height;
-	BOOL reactive_enabled;
+	struct metalfx_fit fit, asked;
+	BOOL making, made_done, fresh;
+	id<MTLFXTemporalScaler> made;
 	id<MTLTexture> output, inputs[4];
 	/* the colour before the transparent draws (the backend's texture: 0
 	none) and whether this frame's is in it; the reactive mask, of the
@@ -144,8 +172,13 @@ static struct
 #ifdef XGPU_METAL_METALFX
 	struct metalfx_window windows[4];
 	id<MTLTexture> exposure;
+	/* the scalers made in turn, at the user's priority (below the render
+	thread's); the lock over the windows' made and made_done */
+	dispatch_queue_t maker;
+	os_unfair_lock lock;
 	/* HALO_METALFX_TIMES: each so many upscales, their GPU time's mean */
 	int times_every, timed;
+	BOOL first_timed[4];
 	double timed_seconds;
 #endif
 } temporal;
@@ -202,8 +235,17 @@ int xgpu_metal_motion_prepare(uint8_t view_format)
 	}
 	if (xgpu_metal_metalfx_supported())
 	{
+		/* (and the stretch, into each of the back buffer's formats) */
+		static const uint8_t formats[] = { XGPU_METAL_FORMAT_BGRA8, XGPU_METAL_FORMAT_RGBA16F, XGPU_METAL_FORMAT_RGBA16 };
+		size_t index;
+
 		pipeline_describe(FUNCTION_REACTIVE, XGPU_METAL_FORMAT_R8, WRITE_ALL, &pipeline);
 		xgpu_metal_prepare(&pipeline);
+		for (index = 0; index < sizeof(formats); index++)
+		{
+			pipeline_describe(FUNCTION_STRETCH, formats[index], WRITE_ALL, &pipeline);
+			xgpu_metal_prepare(&pipeline);
+		}
 	}
 	return 1;
 }
@@ -342,56 +384,103 @@ void xgpu_metal_metalfx_opaque(int window, uint32_t color)
 
 #ifdef XGPU_METAL_METALFX
 
-/* the window's scaler for its inputs' and output's formats and sizes */
-static BOOL scaler_fit(struct metalfx_window *entry, MTLPixelFormat color, MTLPixelFormat depth, MTLPixelFormat output,
-	NSUInteger input_width, NSUInteger input_height, NSUInteger output_width, NSUInteger output_height, BOOL reactive)
+static BOOL fit_same(const struct metalfx_fit *a, const struct metalfx_fit *b)
 {
-	MTLFXTemporalScalerDescriptor *descriptor;
+	return a->color == b->color && a->depth == b->depth && a->output == b->output &&
+		a->input_width == b->input_width && a->input_height == b->input_height &&
+		a->output_width == b->output_width && a->output_height == b->output_height && a->reactive == b->reactive;
+}
 
-	if (entry->scaler && entry->color_format == color && entry->depth_format == depth && entry->output_format == output &&
-		entry->input_width == input_width && entry->input_height == input_height &&
-		entry->output_width == output_width && entry->output_height == output_height &&
-		entry->reactive_enabled == reactive)
-	{
+/* a scaler made for a fit, off the render thread, handed to the window's
+made */
+static void scaler_make(struct metalfx_window *entry, struct metalfx_fit fit)
+{
+	if (!temporal.maker)
+		temporal.maker = dispatch_queue_create("metalfx scalers", dispatch_queue_attr_make_with_qos_class(
+			DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0));
+	entry->asked = fit;
+	entry->making = YES;
+	dispatch_async(temporal.maker, ^{
+		MTLFXTemporalScalerDescriptor *descriptor = [MTLFXTemporalScalerDescriptor new];
+		id<MTLFXTemporalScaler> scaler;
+		double started = CFAbsoluteTimeGetCurrent();
+
+		descriptor.colorTextureFormat = fit.color;
+		descriptor.depthTextureFormat = fit.depth;
+		descriptor.motionTextureFormat = MTLPixelFormatRGBA16Float;
+		descriptor.outputTextureFormat = fit.output;
+		descriptor.inputWidth = fit.input_width;
+		descriptor.inputHeight = fit.input_height;
+		descriptor.outputWidth = fit.output_width;
+		descriptor.outputHeight = fit.output_height;
+		descriptor.autoExposureEnabled = NO;
+		if (fit.reactive)
+		{
+			descriptor.reactiveMaskTextureEnabled = YES;
+			descriptor.reactiveMaskTextureFormat = MTLPixelFormatR8Unorm;
+		}
+		scaler = [descriptor newTemporalScalerWithDevice:xgpu_metal_device()];
+		if (scaler)
+			host_logf(HOST_LOG_INFO, "metal: MetalFX's temporal scaler (%lux%lu to %lux%lu) made in %.0f ms",
+				(unsigned long)fit.input_width, (unsigned long)fit.input_height, (unsigned long)fit.output_width,
+				(unsigned long)fit.output_height, (CFAbsoluteTimeGetCurrent() - started) * 1000.0);
+		os_unfair_lock_lock(&temporal.lock);
+		entry->made = scaler;
+		entry->made_done = YES;
+		os_unfair_lock_unlock(&temporal.lock);
+	});
+}
+
+/* the window's scaler for its inputs' and output's formats and sizes: NO
+while it is made (or cannot be) */
+static BOOL scaler_fit(struct metalfx_window *entry, const struct metalfx_fit *fit)
+{
+	id<MTLFXTemporalScaler> made = nil;
+	BOOL done;
+	int which;
+
+	if (entry->scaler && fit_same(&entry->fit, fit))
 		return YES;
-	}
-	entry->scaler = nil;
-	entry->output = nil;
-	descriptor = [MTLFXTemporalScalerDescriptor new];
-	descriptor.colorTextureFormat = color;
-	descriptor.depthTextureFormat = depth;
-	descriptor.motionTextureFormat = MTLPixelFormatRGBA16Float;
-	descriptor.outputTextureFormat = output;
-	descriptor.inputWidth = input_width;
-	descriptor.inputHeight = input_height;
-	descriptor.outputWidth = output_width;
-	descriptor.outputHeight = output_height;
-	descriptor.autoExposureEnabled = NO;
-	if (reactive)
+	if (!entry->making)
 	{
-		descriptor.reactiveMaskTextureEnabled = YES;
-		descriptor.reactiveMaskTextureFormat = MTLPixelFormatR8Unorm;
+		/* (one that cannot be made is not asked for again) */
+		if (!temporal.metalfx_failed || !fit_same(&entry->asked, fit))
+			scaler_make(entry, *fit);
+		return NO;
 	}
-	entry->scaler = [descriptor newTemporalScalerWithDevice:xgpu_metal_device()];
-	if (!entry->scaler)
+	os_unfair_lock_lock(&temporal.lock);
+	done = entry->made_done;
+	if (done)
+	{
+		made = entry->made;
+		entry->made = nil;
+		entry->made_done = NO;
+	}
+	os_unfair_lock_unlock(&temporal.lock);
+	if (!done)
+		return NO;
+	entry->making = NO;
+	if (!made)
 	{
 		if (!temporal.metalfx_failed)
 			host_logf(HOST_LOG_WARN, "metal: MetalFX's temporal scaler cannot be made (%lux%lu to %lux%lu): the view is "
-				"not upscaled", (unsigned long)input_width, (unsigned long)input_height, (unsigned long)output_width,
-				(unsigned long)output_height);
+				"stretched, not upscaled", (unsigned long)entry->asked.input_width, (unsigned long)entry->asked.input_height,
+				(unsigned long)entry->asked.output_width, (unsigned long)entry->asked.output_height);
 		temporal.metalfx_failed = YES;
 		return NO;
 	}
-	entry->output = texture_make(output, output_width, output_height, entry->scaler.outputTextureUsage);
-	memset(entry->inputs, 0, sizeof(entry->inputs));
-	entry->color_format = color;
-	entry->depth_format = depth;
-	entry->output_format = output;
-	entry->input_width = input_width;
-	entry->input_height = input_height;
-	entry->output_width = output_width;
-	entry->output_height = output_height;
-	entry->reactive_enabled = reactive;
+	/* (made for another fit, the sizes changed meanwhile: made again) */
+	if (!fit_same(&entry->asked, fit))
+	{
+		scaler_make(entry, *fit);
+		return NO;
+	}
+	entry->scaler = made;
+	entry->fit = *fit;
+	entry->fresh = YES;
+	entry->output = texture_make(fit->output, fit->output_width, fit->output_height, made.outputTextureUsage);
+	for (which = 0; which < 4; which++)
+		entry->inputs[which] = nil;
 	if (!temporal.exposure)
 	{
 		MTLTextureDescriptor *descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatR16Float
@@ -430,9 +519,9 @@ static id<MTLTexture> input_place(struct metalfx_window *entry, int which, id<MT
 
 #endif
 
-int xgpu_metal_metalfx_upscale(const struct xgpu_metal_metalfx_frame *frame)
-{
 #ifdef XGPU_METAL_METALFX
+static int upscale(const struct xgpu_metal_metalfx_frame *frame)
+{
 	struct metalfx_window *entry = &temporal.windows[frame->window & 3];
 	id<MTLTexture> color = xgpu_metal_texture(frame->color), depth = xgpu_metal_texture(frame->depth);
 	id<MTLTexture> motion = xgpu_metal_texture(frame->motion), destination = xgpu_metal_texture(frame->destination);
@@ -443,6 +532,7 @@ int xgpu_metal_metalfx_upscale(const struct xgpu_metal_metalfx_frame *frame)
 	NSUInteger input_width = (NSUInteger)(source[2] - source[0]), input_height = (NSUInteger)(source[3] - source[1]);
 	NSUInteger output_width = (NSUInteger)(place[2] - place[0]), output_height = (NSUInteger)(place[3] - place[1]);
 	BOOL use_reactive = entry->opaque_now;
+	struct metalfx_fit fit;
 	uint32_t kind;
 
 	entry->opaque_now = NO;
@@ -462,14 +552,36 @@ int xgpu_metal_metalfx_upscale(const struct xgpu_metal_metalfx_frame *frame)
 			reactive = xgpu_metal_texture(entry->reactive);
 		}
 	}
-	if (!scaler_fit(entry, color.pixelFormat, depth.pixelFormat, destination.pixelFormat, input_width, input_height,
-		output_width, output_height, reactive != nil))
-		return 0;
+	fit.color = color.pixelFormat;
+	fit.depth = depth.pixelFormat;
+	fit.output = destination.pixelFormat;
+	fit.input_width = input_width;
+	fit.input_height = input_height;
+	fit.output_width = output_width;
+	fit.output_height = output_height;
+	fit.reactive = reactive != nil;
+	if (!scaler_fit(entry, &fit))
+	{
+		/* (while it is made: the view stretched over the destination's
+		window) */
+		struct xgpu_metal_motion_uniforms uniforms;
+
+		memset(&uniforms, 0, sizeof(uniforms));
+		uniforms.metrics[0] = (float)source[0];
+		uniforms.metrics[1] = (float)source[1];
+		uniforms.metrics[2] = (float)input_width;
+		uniforms.metrics[3] = (float)input_height;
+		uniforms.window[0] = (float)place[0];
+		uniforms.window[1] = (float)place[1];
+		uniforms.window[2] = (float)output_width;
+		uniforms.window[3] = (float)output_height;
+		pass_draw(FUNCTION_STRETCH, frame->destination, backend_format(destination.pixelFormat), WRITE_ALL, place,
+			frame->color, 0, &uniforms);
+		return 1;
+	}
 	kind = xgpu_metal_pass_kind(XGPU_METAL_PASS_TEMPORAL);
 	/* (HALO_METALFX_TIMES: the work so far committed, MetalFX's alone in
 	the next command buffer) */
-	if (!temporal.times_every)
-		temporal.times_every = getenv("HALO_METALFX_TIMES") ? atoi(getenv("HALO_METALFX_TIMES")) : -1;
 	if (temporal.times_every > 0)
 		xgpu_metal_fence();
 	buffer = xgpu_metal_outside_passes();
@@ -509,7 +621,9 @@ int xgpu_metal_metalfx_upscale(const struct xgpu_metal_metalfx_frame *frame)
 	the source's pixels, where the pixel was the frame before, MetalFX's) */
 	entry->scaler.motionVectorScaleX = (float)input_width;
 	entry->scaler.motionVectorScaleY = (float)input_height;
-	entry->scaler.reset = frame->reset != 0;
+	/* (a new scaler's history begun) */
+	entry->scaler.reset = frame->reset != 0 || entry->fresh;
+	entry->fresh = NO;
 	entry->scaler.depthReversed = YES;
 	if (temporal.times_every > 0)
 	{
@@ -542,6 +656,27 @@ int xgpu_metal_metalfx_upscale(const struct xgpu_metal_metalfx_frame *frame)
 	[blit endEncoding];
 	xgpu_metal_pass_kind(kind);
 	return 1;
+}
+#endif
+
+int xgpu_metal_metalfx_upscale(const struct xgpu_metal_metalfx_frame *frame)
+{
+#ifdef XGPU_METAL_METALFX
+	double started = CFAbsoluteTimeGetCurrent();
+	int drawn;
+
+	if (!temporal.times_every)
+		temporal.times_every = getenv("HALO_METALFX_TIMES") ? atoi(getenv("HALO_METALFX_TIMES")) : -1;
+	drawn = upscale(frame);
+	/* (HALO_METALFX_TIMES: each window's first upscale's time on the render
+	thread) */
+	if (temporal.times_every > 0 && !temporal.first_timed[frame->window & 3])
+	{
+		temporal.first_timed[frame->window & 3] = YES;
+		host_logf(HOST_LOG_INFO, "metal: MetalFX's first upscale of window %d: %.1f ms of the render thread",
+			frame->window & 3, (CFAbsoluteTimeGetCurrent() - started) * 1000.0);
+	}
+	return drawn;
 #else
 	(void)frame;
 	return 0;
