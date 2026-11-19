@@ -12,6 +12,10 @@ and its DLSS runtime, libnvidia-ngx-dlss.so / nvngx_dlss.dll, staged beside
 it) is loaded at run time (xgpu_vulkan_dlss.c). Without the module, an
 NVIDIA GPU or its driver's NGX, nothing changes: no extension, no feature,
 and the setting is not offered. Render thread alone, as the core.
+
+The module's interface below (OPENH1_DLSS_MODULE's part: the openh1_dlss
+structures and calls) may also be used under the MIT license, as
+openh1_dlss.c is, which includes it (the DLSS add-on: tools/dlss_addon.py).
 */
 
 #ifndef XGPU_VULKAN_DLSS_H

@@ -281,9 +281,14 @@ def test_actions_registered():
             assert f'"{binding}"' in re.search(r"\nint pc_menu_layout_value\(.*?\n\}\n",
                                                 read("port/linux/game/controller_layout_menu.inc"), re.S).group(0), \
                 binding
+        elif binding.startswith("dlss."):
+            # (the NVIDIA DLSS add-on's, port/linux/src/dlss_addon.c's dlss_addon_value)
+            assert '"dlss."' in value, binding
+            assert f'"{binding}"' in re.search(r"\nint dlss_addon_value\(.*?\n\}\n",
+                                                read("port/linux/src/dlss_addon.c"), re.S).group(0), binding
         else:
             assert f'"{binding}"' in value, binding
-    sources = re.findall(r'"([^"]+)"', re.search(r"screen_source_names\[\] =\n\{\n(.*?)\n\};", source,
+    sources =re.findall(r'"([^"]+)"', re.search(r"screen_source_names\[\] =\n\{\n(.*?)\n\};", source,
                                                  re.S).group(1))
     table = re.search(r"screen_sources\[\] =\n\{\n(.*?)\n\};", source, re.S).group(1)
     assert len(sources) == len(re.findall(r"&\w+", table)), (sources, table)

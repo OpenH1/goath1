@@ -22,6 +22,8 @@
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/mods_settings/op_add_maps" x="28" y="192" platform="computer"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/mods_settings/section_5" x="28" y="219"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/mods_settings/op_mcc_packages" x="28" y="239"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/mods_settings/section_7" x="28" y="266" platform="desktop"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/mods_settings/op_dlss_addon" x="28" y="286" platform="desktop"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/mods_settings/button_bar" y="414"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/mods_settings/tabs" y="76"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/mods_settings/tabs_search" y="76"/>
@@ -182,6 +184,19 @@
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/mods_settings/mcc_packages_label" type="text" controller="1" width="332" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/mods_settings/labels" string_index="6" color="#FF2896FF" text_x="10" text_y="1" wide="0 244" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/mods_settings/section_7" width="344" height="18" bitmap="main_menu/settings/section" platform="desktop" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/mods_settings/section_7_title"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/mods_settings/section_7_title" type="text" controller="1" width="344" height="18" wide="0 244" string_list="main_menu/settings_select/player_setup/player_profile_edit/mods_settings/labels" string_index="7" color="#FF6F9CD0" text_x="2" text_y="1" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/mods_settings/op_dlss_addon" width="344" height="20" flags="pass_unhandled_to_focused_child" bitmap="main_menu/settings/row" color="#FF2896FF" platform="desktop" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
+		<on event="a" open="screens/dlss_addon"/>
+		<on event="start" open="screens/dlss_addon"/>
+		<on event="left_mouse" run="mouse emit accept event"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/mods_settings/dlss_addon_label"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/mods_settings/dlss_addon_label" type="text" controller="1" width="332" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/mods_settings/labels" string_index="8" color="#FF2896FF" text_x="10" text_y="1" wide="0 244" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
 	<strings name="main_menu/settings_select/player_setup/player_profile_edit/mods_settings/labels">
 		<string text="MODS"/>
 		<string text="MANAGE MODS ›"/>
@@ -190,6 +205,8 @@
 		<string text="ADD MAPS"/>
 		<string text="MASTER CHIEF COLLECTION"/>
 		<string text="MCC PACKAGES ›"/>
+		<string text="ADD-ONS"/>
+		<string text="NVIDIA DLSS ADD-ON ›"/>
 	</strings>
 	<strings name="main_menu/settings_select/player_setup/player_profile_edit/mods_settings/help_strings">
 		<string text="Texture, sound, text and model packs from the mods folder."/>
@@ -200,5 +217,7 @@
 		<string text="Your maps come from your Xbox disc image, which the game needs, and from Custom Edition's installer (halocesetup_en_1.00.exe), whose multiplayer maps are optional.|Select it twice: the maps screen opens the next time the game starts, to add either."/>
 		<string text=""/>
 		<string text="The Master Chief Collection's maps: finding them, their campaign missions and collections, and the copies downloaded from hosts."/>
+		<string text=""/>
+		<string text="NVIDIA DLSS, installed from its own download under NVIDIA's license, in your own folder. Open it to see whether it runs, or to remove it."/>
 	</strings>
 </menus>

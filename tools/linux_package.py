@@ -48,6 +48,9 @@ import zipfile
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import dlss_addon  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 NAME = "openh1"  # install_layout.h's INSTALL_NAME
 
@@ -169,6 +172,10 @@ def stage_tree(dist: Path, executable: Path, library: Optional[Path], notices: I
     _copy(PROJECT_LICENSE, dist / "share/licenses" / NAME / PROJECT_LICENSE.name)
     for source, name in notices:
         _copy(source, dist / "share/licenses" / NAME / name)
+    # (none of NVIDIA's files, nor the DLSS module: the add-on's, downloaded apart, tools/dlss_addon.py)
+    found = dlss_addon.check_package(dist)
+    if found:
+        raise RuntimeError(f"the package would hold NVIDIA's or the DLSS add-on's files: {found}")
 
 
 def mode(name: str) -> int:

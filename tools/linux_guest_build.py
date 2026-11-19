@@ -50,7 +50,8 @@ from .build_common import (MBEDTLS_DIR, MINIUPNPC_DEFINES, MINIUPNPC_DIR, OWN_CO
 from .guest_arch import ARM64_32, X32, GuestArch
 from .guest_toolchain import LLVM_VERSION, guest_toolchain
 from .ninja_syntax import Writer, escape
-from .vulkan_build import VULKAN_DIR, dlss_module, fetch_dlss_sdk, fetch_vulkan_headers, host_vulkan_renderer
+from .vulkan_build import (VULKAN_DIR, dlss_addon, dlss_module, fetch_dlss_sdk, fetch_vulkan_headers,
+                           host_vulkan_renderer)
 
 # the desktop host's own files (its entry point, SDL's desktop functions, VR)
 PORT_DIR = Path("port/linux/host")
@@ -387,6 +388,10 @@ def _generate(n: Writer, sln: Any, target: LinuxGuest, config_path: Path, third_
     # (configure.py --dlss: the DLSS module, its runtime and license beside the game)
     dlss_outputs = (dlss_module(n, prefix, label, build, host_cc, host_cflags, vulkan_headers, third_party / "dlss")
                     if dlss else [])
+    # (... and the DLSS add-on that the game downloads, built from them: ninja dlss_addon, tools/dlss_addon.py;
+    # never in the game's package)
+    if dlss:
+        dlss_addon(n, prefix, "linux-x86_64", dlss_outputs, Path("build") / "dlss-addon")
     n.build(outputs=target.name, rule="phony", inputs=[output, staged_sdl, sdl_license, brokers, masters, relays,
                                                          records, assets, *dlss_outputs])
 

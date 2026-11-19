@@ -468,7 +468,11 @@ struct xgpu_stream_capabilities
 	uint8_t temporal_dlss;
 	/* display.temporal_aa "metalfx": ... with MetalFX's temporal scaler
 	(technique 3: xgpu_backend_capabilities' temporal_metalfx) */
-	uint8_t temporal_metalfx, pad[3];
+	uint8_t temporal_metalfx;
+	/* the GPU an NVIDIA one where the DLSS add-on could run
+	(xgpu_backend_capabilities' dlss_gpu; a pad byte before, 0 from an
+	older host: the size and the version are as they were) */
+	uint8_t dlss_gpu, pad[2];
 	/* the GPU, its API and driver, in a few words (a report's:
 	port/linux/src/report.c), NUL terminated */
 	char device[96];

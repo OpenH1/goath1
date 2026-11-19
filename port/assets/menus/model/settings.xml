@@ -489,6 +489,10 @@
 		<row key="mcc_packages" kind="link" label="MCC PACKAGES ›" crumb="MODS › MASTER CHIEF COLLECTION" open="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/mcc_packages_screen">
 			<help>The Master Chief Collection's maps: finding them, their campaign missions and collections, and the copies downloaded from hosts.</help>
 		</row>
+		<section key="section_7" title="ADD-ONS" when="desktop"/>
+		<row key="dlss_addon" kind="link" label="NVIDIA DLSS ADD-ON ›" crumb="MODS › ADD-ONS" when="desktop+dlss_addon_installed+!vr" open="screens/dlss_addon">
+			<help>NVIDIA DLSS, installed from its own download under NVIDIA's license, in your own folder. Open it to see whether it runs, or to remove it.</help>
+		</row>
 		<button key="button_defaults" kind="defaults" run="port settings defaults" help="Puts this tab's settings back to their defaults. Nothing changes until OK."/>
 		<button key="button_ok" kind="ok" run="port settings ok" help="Keeps your changes, on every tab, and applies them."/>
 		<button key="button_cancel" kind="cancel" run="port settings cancel" help="Leaves Settings without keeping any change."/>
@@ -782,7 +786,7 @@
 			<help>The performance overlay, and timings and logs of where each frame's time goes, for finding what slows the game down.</help>
 		</row>
 		<section key="section_6" title="UPSCALING" when="desktop android"/>
-		<row key="temporal_aa" kind="choice" setting="display.temporal_aa" label="UPSCALER" crumb="VIDEO › FRAME RATE &amp; SYNC" search_choices="amd fsr" when="desktop+temporal_upscale+!temporal_dlss+!vr android+temporal_upscale+!temporal_dlss+!vr">
+		<row key="temporal_aa" kind="choice" setting="display.temporal_aa" label="UPSCALER" crumb="VIDEO › FRAME RATE &amp; SYNC" search_choices="amd fsr" when="desktop+temporal_upscale+!temporal_dlss+!dlss_addon_offer+!vr android+temporal_upscale+!temporal_dlss+!dlss_addon_offer+!vr">
 			<help>AMD FSR builds each frame from the frames before it: smooth edges, and a sharp picture at a Render Resolution below 100% for more frames. While it is on, it replaces Anti-Aliasing.</help>
 			<choice shown="OFF" value="off"/>
 			<choice shown="AMD FSR" value="fsr"/>
@@ -798,6 +802,12 @@
 			<choice shown="OFF" value="off"/>
 			<choice shown="APPLE METALFX" value="metalfx"/>
 		</row>
+		<row key="temporal_aa_dlss_get" kind="choice" setting="display.temporal_aa" label="UPSCALER" crumb="VIDEO › FRAME RATE &amp; SYNC" search_choices="amd fsr get dlss" when="desktop+temporal_upscale+dlss_addon_offer+!temporal_dlss+!vr" same_place="true">
+			<help>AMD FSR builds each frame from the frames before it: smooth edges, and a sharp picture at a Render Resolution below 100%. Get DLSS is NVIDIA DLSS, NVIDIA's own download (about 30 MB): select it to read its license and install it, for the next start.</help>
+			<choice shown="OFF" value="off"/>
+			<choice shown="AMD FSR" value="fsr"/>
+			<choice shown="GET DLSS" value="dlss"/>
+		</row>
 		<row key="temporal_aa_sharpness" kind="slider" setting="display.temporal_aa_sharpness" label="SHARPNESS" crumb="VIDEO › FRAME RATE &amp; SYNC" when="desktop+temporal_upscale+!vr desktop+temporal_metalfx+!vr android+temporal_upscale+!vr android+temporal_metalfx+!vr" least="0" most="1" step="0.05" typed_least="0" typed_most="1">
 			<help>How much AMD FSR or Apple MetalFX sharpens its picture, which offsets the softness of a Render Resolution below 100%. Higher is crisper; too high outlines edges. Off adds no sharpening.</help>
 			<stop shown="OFF" value="0"/>
@@ -812,13 +822,13 @@
 			<stop shown="0.9" value="0.9"/>
 			<stop shown="1" value="1"/>
 		</row>
-		<section key="section_11" title="RAY TRACING" when="desktop android"/>
+		<section key="section_12" title="RAY TRACING" when="desktop android"/>
 		<row key="shadows" kind="choice" setting="display.shadows" label="RAY TRACED SHADOWS" crumb="VIDEO › FRAME RATE &amp; SYNC" search="shadows" when="desktop+ray_queries android+ray_queries">
 			<help>The shadows of characters and vehicles traced by the graphics card from their own shapes, soft at the edges, in the same place and darkness as the game's, which frees the processor's shadow work. Off draws them as the Xbox did.</help>
 			<choice shown="OFF" value="classic"/>
 			<choice shown="ON" value="ray_traced"/>
 		</row>
-		<section key="section_13" title="BENCHMARK"/>
+		<section key="section_14" title="BENCHMARK"/>
 		<row key="benchmark_pacing" kind="choice" setting="display.benchmark_pacing" label="BENCHMARK PACING" crumb="VIDEO › FRAME RATE &amp; SYNC" search_choices="uncapped your settings" when="!in_game">
 			<help>What the benchmark measures. Uncapped turns VSync, Variable Refresh and the frame cap off for the run: what your computer can draw. Your Settings keeps them: what you see as you play.</help>
 			<choice shown="UNCAPPED" value="uncapped"/>

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The NVIDIA DLSS add-on (docs/menu_screens.md, "The DLSS add-on"; docs/temporal-aa.md), as Frame Rate & Sync's
+NVIDIA DLSS rows open it (its stand-in screens/dlss_addon). The tall layout: NVIDIA's license in the table at the left
+(the row source dlss.license, fetched as the screen opens, its lines scrolled with the d-pad, a page at a time with
+left and right), and in the panel what the add-on is doing: ACCEPT (A on the panel, X anywhere) downloads it, checks it
+against this build's pin and installs it in the player's own folder, for the next start; REMOVE (Y) deletes it. B goes
+back; a download goes on meanwhile. Its words and states: port/linux/src/dlss_addon.c. -->
+<screen name="dlss_addon">
+	<header title="NVIDIA DLSS" detail="{dlss.detail}"/>
+	<table source="dlss.license" empty="{dlss.license.empty}" left="dlss page up" right="dlss page down">
+		<column id="line" label="NVIDIA'S LICENSE" width="388" grow="144" touch="12 7 340 0 144"/>
+	</table>
+	<panel>
+		<heading text="{dlss.heading}" lines="2"/>
+		<text text="{dlss.status}" lines="5"/>
+		<text text="{dlss.credit}" lines="5" if="dlss.credit"/>
+		<button key="accept" label="ACCEPT" do="dlss accept" if="dlss.can_accept"/>
+		<button key="accept" label="REMOVE ADD-ON" do="dlss remove" if="dlss.can_remove"/>
+	</panel>
+	<buttons>
+		<button key="back" label="BACK"/>
+		<button key="x" label="ACCEPT" do="dlss accept" if="dlss.can_accept" side="right"/>
+		<button key="y" label="REMOVE" do="dlss remove" if="dlss.can_remove" side="right"/>
+	</buttons>
+</screen>

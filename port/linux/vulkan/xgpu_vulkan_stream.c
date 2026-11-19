@@ -4526,6 +4526,8 @@ static void stream_initialize(void *context, struct xgpu_stream_capabilities *ca
 	capabilities->temporal_upscale = stream.capabilities.temporal_fsr != 0;
 	/* (display.temporal_aa "dlss": xgpu_vulkan_dlss.c) */
 	capabilities->temporal_dlss = stream.capabilities.temporal_dlss != 0;
+	/* (the DLSS add-on's download offered: an NVIDIA GPU, dlss_addon.c) */
+	capabilities->dlss_gpu = stream.capabilities.dlss_gpu != 0;
 	snprintf(capabilities->device, sizeof(capabilities->device), "%s", stream.capabilities.device);
 }
 

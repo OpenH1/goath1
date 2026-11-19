@@ -788,6 +788,9 @@ GYRO = ("gamepad_setup/gyro", "gyro_screen")
 # (opened from Advanced Stick Settings: each stick's reading and its circle,
 # a hand-written screen's, port/assets/menus/screens/stick_test.xml)
 STICK_TEST = "screens/stick_test"
+# the NVIDIA DLSS add-on's screen (a hand-written screen's,
+# port/assets/menus/screens/dlss_addon.xml), which Frame Rate & Sync opens
+DLSS_ADDON = "screens/dlss_addon"
 # input.gyro_sensitivity's: the view's degrees for each degree the controller turns
 GYRO_SENSITIVITY = Slider(0.25, 8.0, 0.05, 0.05, 20.0)
 # input.gyro_smoothing's strengths (gyro_aim.c's gyro_aim_smoothing)
@@ -1281,6 +1284,14 @@ PAGES = {
             ("MCC PACKAGES ›", None, _page_screen(*MCC_PACKAGES),
              "The Master Chief Collection's maps: finding them, their campaign missions and collections, and "
              "the copies downloaded from hosts.", None),
+            # (NVIDIA DLSS's add-on, once it is installed (port/linux/src/
+            # dlss_addon.c, downloaded from Frame Rate & Sync's Upscaler): its
+            # screen, screens/dlss_addon.xml, which removes it:
+            # SETTINGS_ROW_WHEN)
+            (SECTION, "ADD-ONS"),
+            ("NVIDIA DLSS ADD-ON ›", None, DLSS_ADDON,
+             "NVIDIA DLSS, installed from its own download under NVIDIA's license, in your own folder. Open it to "
+             "see whether it runs, or to remove it.", "desktop", "dlss_addon"),
         ],
     },
     # ---- the pages the rows open
@@ -1472,6 +1483,16 @@ PAGES = {
              "Apple MetalFX builds each frame from the frames before it: smooth edges, and a sharp picture at a "
              "Render Resolution below 100% for more frames. While it is on, it replaces Anti-Aliasing.", "desktop",
              "temporal_aa_metalfx"),
+            # (on an NVIDIA GPU with Vulkan while NVIDIA DLSS's add-on is not
+            # installed (port/linux/src/dlss_addon.c): its choice opens
+            # screens/dlss_addon.xml, NVIDIA's license and the download, as
+            # it is selected (menu_functions.c's dlss_addon_segment); its own
+            # row in the same place: SETTINGS_ROW_WHEN)
+            ("UPSCALER", "display.temporal_aa",
+             [("OFF", "off"), ("AMD FSR", "fsr"), ("GET DLSS", "dlss")],
+             "AMD FSR builds each frame from the frames before it: smooth edges, and a sharp picture at a Render "
+             "Resolution below 100%. Get DLSS is NVIDIA DLSS, NVIDIA's own download (about 30 MB): select it to "
+             "read its license and install it, for the next start.", "desktop", "temporal_aa_dlss_get"),
             # (display.temporal_aa_sharpness: FSR's RCAS, after FSR's and
             # MetalFX's upscale; where either is, as the Upscaler rows:
             # SETTINGS_ROW_WHEN; DLSS sharpens its own)
@@ -2649,7 +2670,8 @@ def _settings_platform(rows: list, start: int):
 # the rows in the place of the row before them, each platform having one of
 # them at most, or the model's conditions showing one (SETTINGS_ROW_WHEN):
 # Window Size in Resolution's, Android's anti-aliasing in the desktop's
-SETTINGS_SAME_PLACE = {"window_size", "anti_aliasing_android", "temporal_aa_dlss", "temporal_aa_metalfx", "touch_gyro_sensitivity",
+SETTINGS_SAME_PLACE = {"window_size", "anti_aliasing_android", "temporal_aa_dlss", "temporal_aa_metalfx", "temporal_aa_dlss_get",
+"touch_gyro_sensitivity",
                        "touch_gyro_vertical_sensitivity", "touch_gyro_smoothing"}
 # the rows hidden while VR Setup's row is shown (the game in the headset),
 # which takes their room: Mouse's Menu Cursor; and Brightness's Gamma, which
@@ -2685,8 +2707,13 @@ SETTINGS_ROW_WHEN = {
     # with NVIDIA DLSS too where the renderer has it, its own row:
     # settings_condition_term's temporal_upscale and temporal_dlss; Metal's
     # MetalFX, temporal_metalfx; not in the headset)
-    "temporal_aa": "temporal_upscale+!temporal_dlss+!vr", "temporal_aa_dlss": "temporal_dlss+!vr",
+    "temporal_aa": "temporal_upscale+!temporal_dlss+!dlss_addon_offer+!vr", "temporal_aa_dlss": "temporal_dlss+!vr",
     "temporal_aa_metalfx": "temporal_metalfx+!vr",
+    # (the DLSS add-on's download offered in the Upscaler row, and the add-on
+    # on Mods' page once it is installed: settings_condition_term's
+    # dlss_addon_offer and dlss_addon_installed)
+    "temporal_aa_dlss_get": "temporal_upscale+dlss_addon_offer+!temporal_dlss+!vr",
+    "dlss_addon": "dlss_addon_installed+!vr",
     "temporal_aa_sharpness": "temporal_upscale+!vr temporal_metalfx+!vr",
     # (the renderer has ray queries: settings_condition_term's ray_queries)
     "shadows": "ray_queries",

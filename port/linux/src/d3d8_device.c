@@ -5243,6 +5243,11 @@ int halo_temporal_dlss_drawn(void)
 	return xgpu_backend_capabilities.temporal_dlss != 0;
 }
 
+int halo_dlss_gpu(void)
+{
+	return xgpu_backend_capabilities.dlss_gpu != 0;
+}
+
 int halo_temporal_metalfx_drawn(void)
 {
 	return xgpu_backend_capabilities.temporal_metalfx != 0;

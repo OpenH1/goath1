@@ -153,6 +153,28 @@ def dlss_module_windows(n: Writer, build: Path, host_cflags: str, cross_prefix: 
     return [module, runtime, license_copy]
 
 
+# the DLSS add-on's targets the builds made (configure.py's ninja dlss_addon)
+DLSS_ADDON_TARGETS: List[str] = []
+
+
+def dlss_addon(n: Writer, prefix: str, platform: str, outputs: List[Path], out: Path) -> str:
+    """ninja dlss_addon_<prefix>: the add-on's archive, manifest and license
+    (tools/dlss_addon.py pack) in out from the module, the DLSS runtime and
+    NVIDIA's license (dlss_module's outputs); its target's name"""
+    module, runtime, license_copy = outputs
+    stamp = out / f"{platform}.stamp"
+    n.rule(name=f"{prefix}_dlss_addon",
+           command=(f"$python tools/dlss_addon.py pack --platform {platform} --module {module} "
+                    f"--runtime {runtime} --license {license_copy} --out {out} --stamp $out"),
+           description=f"DLSS ADD-ON {platform}")
+    n.build(outputs=stamp, rule=f"{prefix}_dlss_addon", inputs=[module, runtime, license_copy],
+            implicit=[Path("tools/dlss_addon.py")])
+    target = f"dlss_addon_{prefix}"
+    n.build(outputs=target, rule="phony", inputs=[stamp])
+    DLSS_ADDON_TARGETS.append(target)
+    return target
+
+
 def fetch_vulkan_headers(vulkan_dir: Path) -> None:
     """Download the Vulkan headers into vulkan_dir (configure time, once; a
     header whose SHA-256 is wrong is downloaded again)."""
