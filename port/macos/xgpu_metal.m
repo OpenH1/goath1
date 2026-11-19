@@ -1232,7 +1232,8 @@ static void encoder_stores(void)
 			profile.passes[profile.current].stores[0] = (int8_t)(discard ? MTLStoreActionMultisampleResolve :
 				MTLStoreActionStoreAndMultisampleResolve);
 	}
-	if (metal.encoder_depth_deferred)
+	/* (a stencil alone has no depth's: XGPU_METAL_FORMAT_S8) */
+	if (metal.encoder_depth_deferred || metal.encoder_stencil_deferred)
 	{
 		BOOL discard = frame_end_discards(depth);
 		MTLStoreAction action;
@@ -1243,14 +1244,16 @@ static void encoder_stores(void)
 		}
 		action = discard ? MTLStoreActionDontCare : MTLStoreActionStore;
 
-		[metal.encoder setDepthStoreAction:action];
+		if (metal.encoder_depth_deferred)
+			[metal.encoder setDepthStoreAction:action];
 		if (metal.encoder_stencil_deferred)
 			[metal.encoder setStencilStoreAction:action];
 		if (discard)
 			depth->end_discarded_frame = metal.frame_number;
 		if (profile.current >= 0)
 		{
-			profile.passes[profile.current].stores[1] = (int8_t)action;
+			if (metal.encoder_depth_deferred)
+				profile.passes[profile.current].stores[1] = (int8_t)action;
 			if (metal.encoder_stencil_deferred)
 				profile.passes[profile.current].stores[2] = (int8_t)action;
 		}
@@ -3316,13 +3319,17 @@ static id<MTLRenderCommandEncoder> encoder(void)
 		}
 		texture = depth->multisampled && metal.multisampled ? depth->multisampled : depth->texture;
 
-		pass.depthAttachment.texture = texture;
-		pass.depthAttachment.loadAction = metal.depth_load;
-		pass.depthAttachment.clearDepth = metal.clear_depth;
-		/* (decided as the pass ends: encoder_stores; the main command
-		buffer's passes alone have depth) */
-		pass.depthAttachment.storeAction = metal.aside ? MTLStoreActionStore : MTLStoreActionUnknown;
-		metal.encoder_depth_deferred = !metal.aside;
+		/* (a stencil alone has no depth: XGPU_METAL_FORMAT_S8) */
+		if (format->depth)
+		{
+			pass.depthAttachment.texture = texture;
+			pass.depthAttachment.loadAction = metal.depth_load;
+			pass.depthAttachment.clearDepth = metal.clear_depth;
+			/* (decided as the pass ends: encoder_stores; the main command
+			buffer's passes alone have depth) */
+			pass.depthAttachment.storeAction = metal.aside ? MTLStoreActionStore : MTLStoreActionUnknown;
+			metal.encoder_depth_deferred = !metal.aside;
+		}
 		if (format->stencil)
 		{
 			pass.stencilAttachment.texture = texture;
@@ -3331,7 +3338,7 @@ static id<MTLRenderCommandEncoder> encoder(void)
 			pass.stencilAttachment.storeAction = metal.aside ? MTLStoreActionStore : MTLStoreActionUnknown;
 			metal.encoder_stencil_deferred = !metal.aside;
 		}
-		texture_first_use(depth, metal.depth_load == MTLLoadActionClear &&
+		texture_first_use(depth, (!format->depth || metal.depth_load == MTLLoadActionClear) &&
 			(!format->stencil || metal.stencil_load == MTLLoadActionClear));
 		depth->used = serial;
 		depth->main_written = serial;
@@ -3463,7 +3470,7 @@ void xgpu_metal_clear(const int32_t (*rectangles)[4], uint32_t count, uint32_t p
 	depth = 1.0f - depth;
 	if (!color_entry || !(parts & XGPU_METAL_CLEAR_CHANNELS))
 		parts &= ~(uint32_t)XGPU_METAL_CLEAR_COLOR;
-	if (!depth_entry)
+	if (!depth_entry || !format_get(depth_entry->description.format)->depth)
 		parts &= ~(uint32_t)XGPU_METAL_CLEAR_DEPTH;
 	if (!has_stencil)
 		parts &= ~(uint32_t)XGPU_METAL_CLEAR_STENCIL;

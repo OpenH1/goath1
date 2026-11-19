@@ -305,6 +305,9 @@ enum
 	/* four 16-bit unsigned normalized channels (display.output_depth's SDR
 	back buffer: clamped and blended as BGRA8, 65535 levels) */
 	XGPU_VULKAN_FORMAT_RGBA16,
+	/* a stencil alone (S8_UINT; D24S8's format where the device draws into
+	none): SMAA's marks (xgpu_vulkan_post.c), an attachment only */
+	XGPU_VULKAN_FORMAT_S8,
 	XGPU_VULKAN_FORMAT_COUNT
 };
 

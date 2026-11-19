@@ -51,6 +51,8 @@ static const struct xgpu_metal_format_information formats[XGPU_METAL_FORMAT_COUN
 	[XGPU_METAL_FORMAT_RGBA32F] = { MTLPixelFormatRGBA32Float, 16, 0, 0, 0, SWIZZLE(Red, Green, Blue, Alpha), 0 },
 	[XGPU_METAL_FORMAT_RG8_SNORM] = { MTLPixelFormatRG8Snorm, 2, 0, 0, 0, SWIZZLE(Red, Green, Blue, Alpha), 0 },
 	[XGPU_METAL_FORMAT_RGBA16] = { MTLPixelFormatRGBA16Unorm, 8, 0, 0, 0, SWIZZLE(Red, Green, Blue, Alpha), 0 },
+	/* (a stencil alone: no depth) */
+	[XGPU_METAL_FORMAT_S8] = { MTLPixelFormatStencil8, 1, 0, 0, 1, SWIZZLE(Red, Green, Blue, Alpha), 0 },
 };
 
 const struct xgpu_metal_format_information *xgpu_metal_format_information(uint32_t format)
@@ -227,9 +229,13 @@ MTLRenderPipelineDescriptor *xgpu_metal_pipeline_descriptor(const struct xgpu_me
 	}
 	if (key->depth_format)
 	{
-		descriptor.depthAttachmentPixelFormat = xgpu_metal_format_information(key->depth_format)->pixel_format;
-		if (xgpu_metal_format_information(key->depth_format)->stencil)
-			descriptor.stencilAttachmentPixelFormat = descriptor.depthAttachmentPixelFormat;
+		const struct xgpu_metal_format_information *format = xgpu_metal_format_information(key->depth_format);
+
+		/* (a stencil alone: XGPU_METAL_FORMAT_S8) */
+		if (format->depth)
+			descriptor.depthAttachmentPixelFormat = format->pixel_format;
+		if (format->stencil)
+			descriptor.stencilAttachmentPixelFormat = format->pixel_format;
 	}
 	return descriptor;
 }
@@ -259,9 +265,13 @@ MTLRenderPipelineDescriptor *xgpu_metal_clear_descriptor(const struct xgpu_metal
 	}
 	if (key->depth_format)
 	{
-		descriptor.depthAttachmentPixelFormat = xgpu_metal_format_information(key->depth_format)->pixel_format;
-		if (xgpu_metal_format_information(key->depth_format)->stencil)
-			descriptor.stencilAttachmentPixelFormat = descriptor.depthAttachmentPixelFormat;
+		const struct xgpu_metal_format_information *format = xgpu_metal_format_information(key->depth_format);
+
+		/* (a stencil alone: XGPU_METAL_FORMAT_S8) */
+		if (format->depth)
+			descriptor.depthAttachmentPixelFormat = format->pixel_format;
+		if (format->stencil)
+			descriptor.stencilAttachmentPixelFormat = format->pixel_format;
 	}
 	return descriptor;
 }

@@ -154,7 +154,7 @@ static VkClearAttachment cleared[2];
 static VkClearRect cleared_rect;
 static VkImageViewCreateInfo last_view;
 static VkDescriptorImageInfo written_images[4];
-static VkFormatFeatureFlags depth24_features, depth32_features;
+static VkFormatFeatureFlags depth24_features, depth32_features, stencil8_features;
 static unsigned int capability_errors;
 static unsigned int ended_queries;
 static unsigned int barriers, copies, bound_vertices;
@@ -285,6 +285,8 @@ static void VKAPI_CALL fake_format_properties(VkPhysicalDevice physical, VkForma
 		properties->optimalTilingFeatures = depth24_features;
 	else if (format == VK_FORMAT_D32_SFLOAT_S8_UINT)
 		properties->optimalTilingFeatures = depth32_features;
+	else if (format == VK_FORMAT_S8_UINT)
+		properties->optimalTilingFeatures = stencil8_features;
 	else
 		assert(0);
 }
@@ -310,6 +312,12 @@ static void capabilities_test(void)
 	depth24_features = attachment | sampled;
 	depth32_features = 0;
 	assert(depth_format_choose() && vk.depth_format == VK_FORMAT_D24_UNORM_S8_UINT);
+	/* (SMAA's marks: a stencil alone where the device draws into one, else
+	the depth's format) */
+	assert(vk.stencil_format == VK_FORMAT_D24_UNORM_S8_UINT);
+	stencil8_features = attachment;
+	assert(depth_format_choose() && vk.stencil_format == VK_FORMAT_S8_UINT);
+	stencil8_features = 0;
 	capability_errors = 0;
 	depth24_features = attachment;
 	depth32_features = sampled;
@@ -922,6 +930,10 @@ static char post_events[64];
 static VkImageCopy post_copied;
 static VkImageView post_attachments[4];
 static VkRenderingAttachmentInfo post_began[4];
+/* each pass's depth and stencil attachments (SMAA's marks: none, a null
+view) and each pipeline's stencil test */
+static VkRenderingAttachmentInfo post_began_depth[4], post_began_stencil[4];
+static VkPipelineDepthStencilStateCreateInfo post_stencils[4];
 static uint32_t post_begins, post_draws, post_updates, post_masks[4], post_pipelines;
 static VkSampleCountFlagBits post_pipeline_samples[4];
 static VkDescriptorImageInfo post_sampled[4][4];
@@ -973,12 +985,27 @@ static void VKAPI_CALL post_barrier(VkCommandBuffer command, VkPipelineStageFlag
 static void VKAPI_CALL post_begin(VkCommandBuffer command, const VkRenderingInfo *info)
 {
 	(void)command;
-	assert(post_begins < 4 && info->colorAttachmentCount == 1 && !info->pDepthAttachment && !info->viewMask);
+	assert(post_begins < 4 && info->colorAttachmentCount == 1 && !info->viewMask);
 	post_began[post_begins] = info->pColorAttachments[0];
+	memset(&post_began_depth[post_begins], 0, sizeof(post_began_depth[post_begins]));
+	memset(&post_began_stencil[post_begins], 0, sizeof(post_began_stencil[post_begins]));
+	if (info->pDepthAttachment)
+		post_began_depth[post_begins] = *info->pDepthAttachment;
+	if (info->pStencilAttachment)
+		post_began_stencil[post_begins] = *info->pStencilAttachment;
 	post_attachments[post_begins] = info->pColorAttachments[0].imageView;
 	post_begins++;
 	post_event('B');
 	post_event(info->pColorAttachments[0].loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR ? 'c' : 'l');
+}
+
+static uint32_t post_stencil_reference;
+
+static void VKAPI_CALL post_stencil(VkCommandBuffer command, VkStencilFaceFlags faces, uint32_t reference)
+{
+	(void)command;
+	assert(faces == VK_STENCIL_FACE_FRONT_AND_BACK);
+	post_stencil_reference = reference;
 }
 
 static void VKAPI_CALL post_end(VkCommandBuffer command)
@@ -993,17 +1020,22 @@ static VkResult VKAPI_CALL post_pipeline(VkDevice device, VkPipelineCache cache,
 	const VkPipelineRenderingCreateInfo *rendering = info->pNext;
 
 	(void)device; (void)cache; (void)allocator;
-	/* one triangle from the vertex's index, into BGRA8 alone, nothing
-	culled, tested or blended */
+	/* one triangle from the vertex's index, into BGRA8, nothing culled,
+	depth tested or blended; SMAA's edges and weights with the stencil of
+	their marks */
 	assert(count == 1 && post_pipelines < 4);
 	assert(!info->pVertexInputState->vertexBindingDescriptionCount &&
 		!info->pVertexInputState->vertexAttributeDescriptionCount);
 	assert(info->pInputAssemblyState->topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
 	assert(info->pRasterizationState->cullMode == VK_CULL_MODE_NONE);
-	assert(!info->pDepthStencilState->depthTestEnable && !info->pDepthStencilState->stencilTestEnable);
+	assert(!info->pDepthStencilState->depthTestEnable && !info->pDepthStencilState->depthWriteEnable);
 	assert(!info->pColorBlendState->pAttachments[0].blendEnable);
 	assert(rendering->colorAttachmentCount == 1 && rendering->pColorAttachmentFormats[0] == VK_FORMAT_B8G8R8A8_UNORM);
-	assert(rendering->depthAttachmentFormat == VK_FORMAT_UNDEFINED && !rendering->viewMask);
+	assert(!rendering->viewMask);
+	assert(rendering->depthAttachmentFormat == VK_FORMAT_UNDEFINED);
+	assert(rendering->stencilAttachmentFormat ==
+		(info->pDepthStencilState->stencilTestEnable ? VK_FORMAT_S8_UINT : VK_FORMAT_UNDEFINED));
+	post_stencils[post_pipelines] = *info->pDepthStencilState;
 	post_pipeline_samples[post_pipelines] = info->pMultisampleState->rasterizationSamples;
 	post_masks[post_pipelines] = info->pColorBlendState->pAttachments[0].colorWriteMask;
 	*pipeline = (VkPipeline)(uintptr_t)(200 + post_pipelines++);
@@ -1093,6 +1125,8 @@ static void post_reset(void)
 	vkCmdPipelineBarrier = post_barrier;
 	vkCmdBeginRendering = post_begin;
 	vkCmdEndRendering = post_end;
+	vkCmdSetStencilReference = post_stencil;
+	post_stencil_reference = 0;
 	vkUpdateDescriptorSets = post_update;
 	vkCmdSetViewport = post_viewport;
 	vkCmdSetScissor = post_scissor;
@@ -1111,20 +1145,24 @@ rectangle, its uniforms the target's size and FXAA's bounds the
 rectangle's outermost texel centres */
 static void post_test(void)
 {
-	static struct xgpu_vulkan_image target, color, edges, weights, area, search;
+	static struct xgpu_vulkan_image target, color, edges, weights, area, search, marks;
 	static const int32_t corners[4] = { 8, 4, 40, 44 };
 	static const int32_t beyond[4] = { -4, 4, 70, 44 }, empty[4] = { 70, 4, 80, 44 };
-	struct xgpu_vulkan_image *images[6];
+	struct xgpu_vulkan_image *images[7];
 	const struct xgpu_vulkan_post_uniforms *uniforms;
 	uint32_t index;
 
 	post_reset();
+	vk.depth_format = VK_FORMAT_D24_UNORM_S8_UINT;
+	vk.stencil_format = VK_FORMAT_S8_UINT;
 	post_image(&target, 1, XGPU_VULKAN_FORMAT_BGRA8, 64, 48);
 	post_image(&color, 2, XGPU_VULKAN_FORMAT_BGRA8, 64, 48);
 	post_image(&edges, 3, XGPU_VULKAN_FORMAT_BGRA8, 64, 48);
 	post_image(&weights, 4, XGPU_VULKAN_FORMAT_BGRA8, 64, 48);
 	post_image(&area, 5, XGPU_VULKAN_FORMAT_RGBA8, 160, 560);
 	post_image(&search, 6, XGPU_VULKAN_FORMAT_RGBA8, 64, 16);
+	post_image(&marks, 7, XGPU_VULKAN_FORMAT_S8, 64, 48);
+	marks.aspect = VK_IMAGE_ASPECT_STENCIL_BIT;
 	memset(&post, 0, sizeof(post));
 	post.vertex = (VkShaderModule)(uintptr_t)1;
 	for (index = 0; index < XGPU_VULKAN_POST_PROGRAM_COUNT; index++)
@@ -1135,6 +1173,7 @@ static void post_test(void)
 	post.color = &color;
 	post.edges = &edges;
 	post.weights = &weights;
+	post.marks = &marks;
 	post.width = 64;
 	post.height = 48;
 	post.format = XGPU_VULKAN_FORMAT_BGRA8;
@@ -1165,6 +1204,24 @@ static void post_test(void)
 	}
 	assert(post_attachments[0] == edges.attachments[0] && post_attachments[1] == weights.attachments[0]);
 	assert(post_attachments[2] == target.attachments[0]);
+	/* the edges mark their pixels in the stencil, emptied as their pass
+	begins (always passing, replacing it with the reference, 1); the
+	weights run where it is marked (equal to it), and keep it; a stencil
+	alone (no depth attachment); the blend, over every pixel, with none */
+	assert(post_began_stencil[0].imageView && !post_began_depth[0].imageView);
+	assert(post_began_stencil[1].imageView == post_began_stencil[0].imageView);
+	assert(post_began_stencil[0].loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR &&
+		post_began_stencil[0].clearValue.depthStencil.stencil == 0);
+	assert(post_began_stencil[0].storeOp == VK_ATTACHMENT_STORE_OP_STORE);
+	assert(post_began_stencil[1].loadOp == VK_ATTACHMENT_LOAD_OP_LOAD);
+	assert(!post_began_depth[2].imageView && !post_began_stencil[2].imageView);
+	assert(post_stencils[0].stencilTestEnable && post_stencils[0].front.compareOp == VK_COMPARE_OP_ALWAYS);
+	assert(post_stencils[0].front.passOp == VK_STENCIL_OP_REPLACE && post_stencils[0].front.writeMask == 0xff);
+	assert(post_stencils[1].stencilTestEnable && post_stencils[1].front.compareOp == VK_COMPARE_OP_EQUAL);
+	assert(post_stencils[1].front.compareMask == 0xff && !post_stencils[1].front.writeMask);
+	assert(post_stencils[1].front.passOp == VK_STENCIL_OP_KEEP && post_stencils[1].front.failOp == VK_STENCIL_OP_KEEP);
+	assert(!post_stencils[2].stencilTestEnable);
+	assert(post_stencil_reference == 1);
 	/* edges from the copy; weights from the edges, the area and search
 	textures; the blend from the copy and the weights */
 	assert(post_updates == 3);
@@ -1185,8 +1242,10 @@ static void post_test(void)
 	}
 	assert(vk.color == &target);
 
-	/* FXAA in a layered target's second layer, beyond its corners */
+	/* FXAA in a layered target's second layer, beyond its corners (SMAA's
+	images let go first: none here to destroy) */
 	post_reset();
+	post.edges = post.weights = post.marks = NULL;
 	free(target.attachments);
 	target.attachments = NULL;
 	target.attachment_count = 0;
@@ -1216,7 +1275,8 @@ static void post_test(void)
 	images[3] = &weights;
 	images[4] = &area;
 	images[5] = &search;
-	for (index = 0; index < 6; index++)
+	images[6] = &marks;
+	for (index = 0; index < 7; index++)
 	{
 		free(images[index]->attachments);
 		images[index]->attachments = NULL;

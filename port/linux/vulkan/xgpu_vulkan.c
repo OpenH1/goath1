@@ -1128,6 +1128,10 @@ order, recorded into a secondary command buffer and put into the main one
 at the submission: work outside a pass, or a pass's draws, whose
 vkCmdBeginRendering is made only then, when what the later pieces do
 with its attachments is known (segments_play) */
+/* an image's aspects that make it a depth/stencil image (D24S8's both, a
+stencil alone's one) */
+#define DEPTH_STENCIL_ASPECTS (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)
+
 struct pass_attachment
 {
 	/* NULL: none (or the image destroyed since) */
@@ -1243,6 +1247,9 @@ static struct
 
 	struct xgpu_vulkan_capabilities capabilities;
 	VkFormat depth_format;
+	/* XGPU_VULKAN_FORMAT_S8's: S8_UINT where the device draws into it,
+	else the depth's (depth_format_choose) */
+	VkFormat stencil_format;
 	/* NVIDIA's own driver (its anisotropic filtering: anisotropic_bias) */
 	int nvidia;
 	/* cube maps sampled face by face (VK_EXT_non_seamless_cube_map) */
@@ -2486,7 +2493,7 @@ static struct segment *segment_add(void)
 last pass may discard */
 static int image_discardable(const struct xgpu_vulkan_image *image)
 {
-	return (image->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) || image->description.samples > 1;
+	return (image->aspect & DEPTH_STENCIL_ASPECTS) || image->description.samples > 1;
 }
 
 /* the first use in a frame of an image whose end-of-frame contents may be
@@ -2792,7 +2799,9 @@ static void pass_play(VkCommandBuffer main, uint32_t first, uint32_t last)
 			depth.resolveImageView = stencil.resolveImageView = end->depth.resolve_view;
 			depth.resolveImageLayout = stencil.resolveImageLayout = VK_IMAGE_LAYOUT_GENERAL;
 		}
-		rendering.pDepthAttachment = &depth;
+		/* (a stencil alone: XGPU_VULKAN_FORMAT_S8) */
+		rendering.pDepthAttachment = !end->depth.image || (end->depth.image->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) ?
+			&depth : NULL;
 		rendering.pStencilAttachment = &stencil;
 	}
 	/* (after the transfers its pieces use, where no barrier has put them
@@ -4192,6 +4201,7 @@ static VkFormat vulkan_format(uint8_t format)
 	{
 	case XGPU_VULKAN_FORMAT_BGRA8: return VK_FORMAT_B8G8R8A8_UNORM;
 	case XGPU_VULKAN_FORMAT_D24S8: return vk.depth_format;
+	case XGPU_VULKAN_FORMAT_S8: return vk.stencil_format;
 	case XGPU_VULKAN_FORMAT_DXT1: return VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
 	case XGPU_VULKAN_FORMAT_DXT3: return VK_FORMAT_BC2_UNORM_BLOCK;
 	case XGPU_VULKAN_FORMAT_DXT5: return VK_FORMAT_BC3_UNORM_BLOCK;
@@ -4312,7 +4322,7 @@ static void transient_clear(struct xgpu_vulkan_image *image, uint32_t layers)
 	VkPipelineStageFlags stages = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
 		VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
 	VkAccessFlags writes = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-	int depth = (image->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) != 0;
+	int depth = (image->aspect & DEPTH_STENCIL_ASPECTS) != 0;
 	VkImageMemoryBarrier transition;
 	VkRenderingAttachmentInfo attachment;
 	VkRenderingInfo rendering;
@@ -4347,7 +4357,7 @@ static void transient_clear(struct xgpu_vulkan_image *image, uint32_t layers)
 	rendering.layerCount = layers;
 	if (depth)
 	{
-		rendering.pDepthAttachment = &attachment;
+		rendering.pDepthAttachment = image->aspect & VK_IMAGE_ASPECT_DEPTH_BIT ? &attachment : NULL;
 		rendering.pStencilAttachment = &attachment;
 	}
 	else
@@ -4389,6 +4399,10 @@ struct xgpu_vulkan_image *xgpu_vulkan_image_create(const struct xgpu_vulkan_imag
 	image->format = vulkan_format(description->format);
 	image->aspect = description->format == XGPU_VULKAN_FORMAT_D24S8 ?
 		VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+	/* (a stencil alone, or the depth's format's where the device has none) */
+	if (description->format == XGPU_VULKAN_FORMAT_S8)
+		image->aspect = image->format == VK_FORMAT_S8_UINT ? VK_IMAGE_ASPECT_STENCIL_BIT :
+			VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
 	memset(&info, 0, sizeof(info));
 	info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
 	info.imageType = description->type == XGPU_VULKAN_IMAGE_3D ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
@@ -4413,7 +4427,7 @@ struct xgpu_vulkan_image *xgpu_vulkan_image_create(const struct xgpu_vulkan_imag
 	if (description->samples <= 1)
 		info.usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
 	if (description->usage & XGPU_VULKAN_USAGE_TARGET)
-		info.usage |= image->aspect & VK_IMAGE_ASPECT_DEPTH_BIT ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT :
+		info.usage |= image->aspect & DEPTH_STENCIL_ASPECTS ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT :
 			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 	if ((description->usage & XGPU_VULKAN_USAGE_INPUT) && vk.capabilities.color_read)
 		info.usage |= VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
@@ -4494,7 +4508,7 @@ struct xgpu_vulkan_image *xgpu_vulkan_image_create(const struct xgpu_vulkan_imag
 		transition.subresourceRange.layerCount = VK_REMAINING_ARRAY_LAYERS;
 		vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL,
 			1, &transition);
-		if (image->aspect & VK_IMAGE_ASPECT_DEPTH_BIT)
+		if (image->aspect & DEPTH_STENCIL_ASPECTS)
 		{
 			VkClearDepthStencilValue clear = { 1.0f, 0 };
 
@@ -5954,7 +5968,7 @@ static VkPipeline pipeline_build(const struct xgpu_vulkan_pipeline_description *
 	VkPipelineRenderingCreateInfo rendering;
 	VkGraphicsPipelineCreateInfo info;
 	VkFormat color_formats[2] = { vulkan_format(description->color_format), vulkan_format(description->motion_format) };
-	VkFormat depth_format = description->depth_format ? vk.depth_format : VK_FORMAT_UNDEFINED;
+	VkFormat depth_format = description->depth_format ? vulkan_format(description->depth_format) : VK_FORMAT_UNDEFINED;
 	static const VkDynamicState dynamic_states[] =
 	{
 		VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS, VK_DYNAMIC_STATE_BLEND_CONSTANTS,
@@ -6087,7 +6101,8 @@ static VkPipeline pipeline_build(const struct xgpu_vulkan_pipeline_description *
 	rendering.viewMask = description->view_mask;
 	rendering.colorAttachmentCount = blend.attachmentCount;
 	rendering.pColorAttachmentFormats = color_formats;
-	rendering.depthAttachmentFormat = depth_format;
+	/* (a stencil alone: XGPU_VULKAN_FORMAT_S8) */
+	rendering.depthAttachmentFormat = depth_format == VK_FORMAT_S8_UINT ? VK_FORMAT_UNDEFINED : depth_format;
 	rendering.stencilAttachmentFormat = depth_format;
 
 	memset(&info, 0, sizeof(info));
@@ -6504,7 +6519,8 @@ static int pass_begin(uint32_t clear_parts, const float clear_color[4], float cl
 			depth.storeOp = VK_ATTACHMENT_STORE_OP_NONE;
 		stencil = depth;
 		stencil.loadOp = (clear_parts & XGPU_VULKAN_CLEAR_STENCIL) ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
-		rendering.pDepthAttachment = &depth;
+		/* (a stencil alone: XGPU_VULKAN_FORMAT_S8) */
+		rendering.pDepthAttachment = vk.depth->aspect & VK_IMAGE_ASPECT_DEPTH_BIT ? &depth : NULL;
 		rendering.pStencilAttachment = &stencil;
 		vk.depth->used = vk.serial;
 	}
@@ -6669,7 +6685,7 @@ static int clear_description(uint32_t channels, struct xgpu_vulkan_pipeline_desc
 	description->primitive_class = XGPU_VULKAN_CLASS_TRIANGLES;
 	description->color_mask = (uint8_t)(channels & XGPU_VULKAN_CLEAR_CHANNELS);
 	description->color_format = vk.color->description.format;
-	description->depth_format = vk.depth ? XGPU_VULKAN_FORMAT_D24S8 : XGPU_VULKAN_FORMAT_NONE;
+	description->depth_format = vk.depth ? vk.depth->description.format : XGPU_VULKAN_FORMAT_NONE;
 	description->samples = vk.color->description.samples > 1 ? vk.color->description.samples : 1;
 	description->view_mask = vk.views > 1 ? (uint8_t)((1u << vk.views) - 1) : 0;
 	/* (display.temporal_aa: in a pass with the motion, which it leaves) */
@@ -6796,8 +6812,8 @@ void xgpu_vulkan_clear(const int32_t (*rectangles)[4], uint32_t count, uint32_t 
 	}
 	if ((parts & (XGPU_VULKAN_CLEAR_DEPTH | XGPU_VULKAN_CLEAR_STENCIL)) && vk.depth)
 	{
-		attachments[attachment_count].aspectMask = ((parts & XGPU_VULKAN_CLEAR_DEPTH) ? VK_IMAGE_ASPECT_DEPTH_BIT : 0) |
-			((parts & XGPU_VULKAN_CLEAR_STENCIL) ? VK_IMAGE_ASPECT_STENCIL_BIT : 0);
+		attachments[attachment_count].aspectMask = (((parts & XGPU_VULKAN_CLEAR_DEPTH) ? VK_IMAGE_ASPECT_DEPTH_BIT : 0) |
+			((parts & XGPU_VULKAN_CLEAR_STENCIL) ? VK_IMAGE_ASPECT_STENCIL_BIT : 0)) & vk.depth->aspect;
 		attachments[attachment_count].colorAttachment = 0;
 		attachments[attachment_count].clearValue.depthStencil.depth = depth;
 		attachments[attachment_count].clearValue.depthStencil.stencil = stencil & 0xff;
@@ -10662,6 +10678,9 @@ static int depth_format_choose(void)
 			vk.properties.deviceName);
 		return 0;
 	}
+	/* (SMAA's marks: a stencil alone, a quarter of D24S8's memory or less) */
+	vk.stencil_format = format_has(VK_FORMAT_S8_UINT, 0, VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) ?
+		VK_FORMAT_S8_UINT : vk.depth_format;
 	return 1;
 }
 
