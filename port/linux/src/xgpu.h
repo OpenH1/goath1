@@ -182,11 +182,14 @@ cubic B-spline over the 4x4 texels about the point, in four bilinear
 lookups, instead of the hardware's bilinear filter over 2x2, so that the
 level's coarse baked light shows no stair steps or diamonds at high
 resolutions. The weights are positive and sum to 1 (a flat area is as it
-was; the lightmap never brighter or darker). A page's charts are dilated
-into its gutters by the light's bake: measured on bloodgulch, a10 and a30,
-the cubic's weight on another chart's texels is under 0.01% of it, and its
-light off the chart's own texels about what bilinear's is (xgpu_spirv.c's,
-xgpu_msl.c's lightmap_cubic). The bit in the pixel key's texture_modes,
+was; the lightmap never brighter or darker). Each page is a texture of
+its own (clamped at its edge: no lookup reaches another page), and its
+charts are dilated into the gutters between them by the light's bake:
+measured on bloodgulch's and a10's first structures, the cubic's weight on
+another chart's texels is 0.006% of it at most (bilinear's 0.001%), and
+its light off what the chart's own texels alone give 0.003 on average, 0.11
+at the 99.9th percentile (bilinear's 0.001 and 0.09), so no chart's bounds
+are needed (xgpu_spirv.c's, xgpu_msl.c's lightmap_cubic). The bit in the pixel key's texture_modes,
 set by xgpu_draw_derive; nv2a_pixel_program_decode gives the program's
 lightmap_filter */
 #define XGPU_TEXTURE_MODES_LIGHTMAP_CUBIC 0x80000000u
