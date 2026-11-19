@@ -1471,7 +1471,8 @@ static void shadow_atlas_cell(
 }
 
 /* an atlas of the frame's class drawn into, all of it emptied first if
-clear, the viewport a region's (NONE: all of it).
+clear, the viewport a region's (NONE: all of it); nothing emptied unless
+empty (port: the chain's passes after its first, below).
 
 Where a pass costs by the area it covers (d3d8_clears_alone: a tile-based
 GPU, for which a class's 1024 by 256 atlas is most of the screen's tiles,
@@ -1479,11 +1480,26 @@ twice a frame, for one caster), each region's cell is emptied instead as
 its turn comes, and the rest of the atlas left as it was: nothing samples
 it. A pass's taps reach no further than the guard band (SHADOW_ATLAS_GUARD),
 which is the cells', and a receiver samples its region alone
-(d3d8_texture_region). The pixels drawn are the same. */
+(d3d8_texture_region). The pixels drawn are the same.
+
+port: a region's cell is emptied once a frame in each atlas, not before
+every pass of the chain: the casters' atlas as its caster is drawn, the
+chain's other by the chain's first pass. A pass's quad covers its region
+whole, opaque, as it covers a map (whose passes empty nothing between them,
+rasterizer_shadow_convolve), and draws nothing beyond it (the viewport's),
+nor does anything else but the emptying: each guard band stays black from
+its frame's first emptying through the chain. The chain's taps read only
+the colour (not the alpha, which the passes do not write). On an immediate
+GPU the four emptyings a frame left out were a sixth of the chain's time
+(a Steam Deck with 60 players: the chain's 3.3 ms a frame to 2.8; the rest
+is its quads' four taps a pixel, bound by the texture units). Where the tile-based GPU's emptying of a cell
+alone (d3d8_clear_viewport_alone) spares the pass loading the atlas, every
+pass empties it still. */
 static void shadow_atlas_set_target(
 	short atlas,
 	short region,
-	boolean clear)
+	boolean clear,
+	boolean empty)
 {
 	D3DVIEWPORT8 viewport;
 
@@ -1506,12 +1522,12 @@ static void shadow_atlas_set_target(
 		{
 			d3d8_clear_viewport_alone(0);
 		}
-		else
+		else if (empty)
 		{
 			IDirect3DDevice8_Clear(global_d3d_device, 0, NULL, D3DCLEAR_TARGET, 0, 1.0f, 0);
 		}
 	}
-	else if (clear)
+	else if (clear && empty)
 	{
 		IDirect3DDevice8_SetViewport(global_d3d_device, &viewport);
 		IDirect3DDevice8_Clear(global_d3d_device, 0, NULL, D3DCLEAR_TARGET, 0, 1.0f, 0);
@@ -1533,7 +1549,7 @@ first empties */
 static void shadow_atlas_caster_target(
 	short region)
 {
-	shadow_atlas_set_target(0, region, region == 0);
+	shadow_atlas_set_target(0, region, region == 0, TRUE);
 
 	return;
 }
@@ -1739,7 +1755,13 @@ void rasterizer_shadow_atlas_convolve(
 			{
 				continue;
 			}
-			shadow_atlas_set_target(!(pass & 1), region, region == 0);
+			/* port: (emptied by the chain's first pass alone, but where a
+			tile-based GPU empties each pass's cells alone: above) */
+			shadow_atlas_set_target(
+				!(pass & 1),
+				region,
+				region == 0,
+				pass == 0 || (d3d8_clears_alone() && !shadow_retained_on));
 			shadow_atlas_quad(region, shadow_atlas_pass_offset(pass, scale));
 		}
 	}
