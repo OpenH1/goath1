@@ -115,6 +115,7 @@ symbols in this file:
 #include "rasterizer/rasterizer_model_types.h"
 #include "panini.h" /* port: port/linux/game/panini.c */
 #include "world_ao.h" /* port: port/linux/game/world_ao.c */
+#include "rt_shadows.h" /* port: port/linux/game/rt_shadows.c */
 
 /* ---------- constants */
 
@@ -261,6 +262,9 @@ static void render_object(
 	struct object_render_data *data);
 static void process_rendered_objects(
 	struct object_render_data *data);
+/* port: display.shadows "ray_traced" (port/linux/game/rt_shadows.c) */
+static void render_object_rt_shadows(
+	void);
 
 short structure_visibility_find_objects(
 	long *object_indices,
@@ -485,6 +489,18 @@ void render_object_shadows(
 	void)
 {
 	profile_enter(render_object_shadows_section);
+	rt_shadows_measure(TRUE); /* port: (HALO_SHADOW_TIMES: rt_shadows.c) */
+
+	/* port: display.shadows "ray_traced": the casters' shadows found by the
+	GPU's ray queries, none of the below (no atlas, blur, receivers' walk
+	or draws: port/linux/game/rt_shadows.c) */
+	if (render_shadows && rt_shadows_on())
+	{
+		render_object_rt_shadows();
+		rt_shadows_measure(FALSE);
+		profile_exit(render_object_shadows_section);
+		return;
+	}
 
 	if (render_shadows)
 	{
@@ -524,6 +540,7 @@ void render_object_shadows(
 		rasterizer_environment_shadows_end();
 	}
 
+	rt_shadows_measure(FALSE);
 	profile_exit(render_object_shadows_section);
 
 	return;
@@ -1528,6 +1545,78 @@ static void process_rendered_objects(
 			render_object_globals.rendered_object_indices[rendered_object_index];
 		render_object(data);
 	}
+
+	return;
+}
+
+/* port: display.shadows "ray_traced": the window's casters, as render_object
+and render_object_shadow_begin choose them and their strength, handed to
+the backend's pass with their shadow's direction and colour, which traces
+them through the ray-traced scene (port/linux/game/rt_shadows.c); the
+classic shadows' primary target alone */
+static void render_object_rt_shadows(
+	void)
+{
+	short rendered_object_index;
+
+	if (global_window_parameters.rasterizer_target != 0 /* _rasterizer_target_render_primary */ ||
+		!rasterizer_debug_options.draw_environment_shadows)
+	{
+		return;
+	}
+	rt_shadows_begin();
+	for (rendered_object_index = 0;
+		rendered_object_index < render_object_globals.rendered_object_count;
+		rendered_object_index++)
+	{
+		long object_index = render_object_globals.rendered_object_indices[rendered_object_index];
+		struct object_datum *object = object_get(object_index);
+
+		if ((!object_is_first_person_camera(object_index) ||
+				(first_person_legs_wanted(object_index) && first_person_legs_shadow_node_matrices(
+					object_index, object_get_node_matrices(object_index)))) &&
+			!TEST_FLAG(object->object.flags, _object_shadowless_bit) &&
+			(!TEST_FLAG(object->object.flags, _object_invisible_bit) ||
+				object->object.first_child_object_index != NONE))
+		{
+			real level_of_detail_pixels = object_get_level_of_detail_pixels(object_index);
+			struct render_lighting *lighting = object_get_cached_render_lighting(object_index, level_of_detail_pixels);
+			real shadow_darkness = 1.f - real_rgb_color_brightness(&lighting->shadow_color);
+
+			if (level_of_detail_pixels > OBJECT_SHADOW_MINIMUM_PIXELS &&
+				shadow_darkness > OBJECT_SHADOW_MINIMUM_DARKNESS)
+			{
+				real size_fraction = (level_of_detail_pixels - OBJECT_SHADOW_MINIMUM_PIXELS) * 0.06666667f;
+				real darkness_fraction = (shadow_darkness - OBJECT_SHADOW_MINIMUM_DARKNESS) * 9.0909081f;
+				real strength;
+				real_point3d center;
+				real radius;
+
+				size_fraction = PIN(size_fraction, 0.f, 1.f);
+				darkness_fraction = PIN(darkness_fraction, 0.f, 1.f);
+				strength = darkness_fraction * size_fraction;
+				if (TEST_FLAG(_object_mask_unit, object->object.type))
+				{
+					real super_amount;
+					real active_camouflage = render_interpolation_unit_camouflage(object_index, &super_amount);
+
+					if (active_camouflage > 0.f)
+						strength *= 1.f - active_camouflage;
+				}
+				object_get_bounding_sphere(object_index, &center, &radius);
+				rt_shadows_caster(
+					object_index,
+					object->object.first_child_object_index,
+					&center.x,
+					radius,
+					&lighting->shadow_vector.i,
+					&lighting->shadow_color.red,
+					strength,
+					level_of_detail_pixels);
+			}
+		}
+	}
+	rt_shadows_window(&render.camera.position.x);
 
 	return;
 }

@@ -322,6 +322,9 @@ enum
 	XGPU_STREAM_PASS_TIMES,
 	/* display.temporal_aa: a window's motion (xgpu_backend_motion) */
 	XGPU_STREAM_MOTION,
+	/* display.shadows "ray_traced": a window's casters' shadows
+	(xgpu_backend_rt_shadows) */
+	XGPU_STREAM_RT_SHADOWS,
 	XGPU_STREAM_RECORD_TYPES,
 };
 
@@ -1340,6 +1343,29 @@ struct xgpu_stream_dynamic_lights_halos
 	float halos[][4];
 };
 
+/* xgpu_backend.h's struct xgpu_rt_shadows but its casters, which follow
+(count of them, 32 bytes each: the sphere, the direction's x and y, the
+darkness's and owners' words); color and depth 0 (and count 0) while a map
+is prepared: the pass's pipeline made for its targets */
+#define XGPU_STREAM_RT_SHADOWS_CASTERS 96
+struct xgpu_stream_rt_shadow_caster
+{
+	float sphere[4];
+	float direction[2];
+	uint32_t darkness, owners;
+};
+struct xgpu_stream_rt_shadows
+{
+	uint32_t header;
+	uint32_t color, depth;
+	int32_t count;
+	float projection[6][4];
+	float viewport_scale[4], viewport_offset[4];
+	float camera[3];
+	float screen_offset;
+	struct xgpu_stream_rt_shadow_caster casters[];
+};
+
 /* ---------- the VR mode
 
 The backend composes each frame (the eyes' images, the HUD's and its
@@ -1626,6 +1652,8 @@ XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_vertices, 12);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_draw_immediate, 28);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_dynamic_lights_block, 6192);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_dynamic_lights_halos, 192);
+XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_rt_shadow_caster, 32);
+XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_rt_shadows, 160);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_dynamic_lights_world, 12);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_vr_info, 108);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_vr_eyes, 36 + 4 * 52);

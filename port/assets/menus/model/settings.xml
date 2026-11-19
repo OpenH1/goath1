@@ -775,7 +775,13 @@
 			<choice shown="OFF" value="off"/>
 			<choice shown="AMD FSR" value="fsr"/>
 		</row>
-		<section key="section_8" title="BENCHMARK"/>
+		<section key="section_8" title="RAY TRACING" when="desktop android"/>
+		<row key="shadows" kind="choice" setting="display.shadows" label="RAY TRACED SHADOWS" crumb="VIDEO › FRAME RATE &amp; SYNC" search="shadows" when="desktop+ray_queries android+ray_queries">
+			<help>The shadows of characters and vehicles traced by the graphics card from their own shapes, soft at the edges, in the same place and darkness as the game's, which frees the processor's shadow work. Off draws them as the Xbox did.</help>
+			<choice shown="OFF" value="classic"/>
+			<choice shown="ON" value="ray_traced"/>
+		</row>
+		<section key="section_10" title="BENCHMARK"/>
 		<row key="benchmark_pacing" kind="choice" setting="display.benchmark_pacing" label="BENCHMARK PACING" crumb="VIDEO › FRAME RATE &amp; SYNC" search_choices="uncapped your settings" when="!in_game">
 			<help>What the benchmark measures. Uncapped turns VSync, Variable Refresh and the frame cap off for the run: what your computer can draw. Your Settings keeps them: what you see as you play.</help>
 			<choice shown="UNCAPPED" value="uncapped"/>

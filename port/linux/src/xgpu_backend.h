@@ -760,6 +760,49 @@ struct xgpu_dynamic_lights_halos
 void xgpu_backend_dynamic_lights_halos(xgpu_target color, xgpu_target depth, int layers,
 	const struct xgpu_dynamic_lights_halos *halos);
 
+/* ---------- display.shadows "ray_traced" (port/linux/game/rt_shadows.c)
+
+A window's objects' shadows on the level, after its lightmap pass: each
+pixel the stencil leaves (not a model's: the classic receivers', the
+level's) and the depth has (not the sky's) multiplied by the shadows of
+the casters whose volumes hold it, each traced by the GPU's ray queries
+from the pixel toward its light through the ray-traced scene
+(xgpu_backend_world_ao_mesh, _instances), its own collision meshes alone
+counting. Each caster (rt_shadows.h's struct rt_shadow_caster): its
+bounding sphere; its shadow's direction's x and y (z down, from them); its
+darkness, a byte each of red, green and blue; its owners among the
+instances, 16 bits each. With the world's projection (c[-96] to c[-93]),
+the screen conversion (c[-38], c[-37]) and the viewport's, as the lightmap
+pass began (the glows' too). Where the backend has ray queries alone; a
+record of no casters while a map is prepared makes the pass's pipeline. */
+#define XGPU_RT_SHADOWS_CASTERS 96
+/* each pixel's rays toward each caster's light, in a cone of this
+half-angle's tangent (the penumbra, widening away from the caster as the
+classic shadow's blur is soft), turned by the pixel's noise; and their
+start off the surface toward the camera, this far plus this share of the
+camera's distance (the depth's precision) */
+#define XGPU_RT_SHADOWS_RAYS 4
+#define XGPU_RT_SHADOWS_SPREAD 0.06f
+#define XGPU_RT_SHADOWS_BIAS 0.02f
+#define XGPU_RT_SHADOWS_BIAS_FAR 0.002f
+struct xgpu_rt_shadow_caster
+{
+	float sphere[4];
+	float direction[2];
+	unsigned int darkness, owners;
+};
+struct xgpu_rt_shadows
+{
+	int count;
+	struct xgpu_rt_shadow_caster casters[XGPU_RT_SHADOWS_CASTERS];
+	float projection[6][4];
+	float viewport_scale[4], viewport_offset[4];
+	float camera[3];
+	float screen_offset;
+};
+
+void xgpu_backend_rt_shadows(xgpu_target color, xgpu_target depth, const struct xgpu_rt_shadows *shadows);
+
 /* ---------- the VR mode (HALO_VR; vr.h): the backend's part
 
 The front end keeps the passes (vr.h's HALO_VR_PASS_*) and which views a

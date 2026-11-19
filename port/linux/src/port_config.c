@@ -453,6 +453,14 @@ static const struct config_setting config_settings[] =
 		_environment_value, _platform_all,
 		"The size the objects' shadows are drawn at, in pixels each way: 128 as\n"
 		"on the Xbox, or 256, 512 or 1024 for smoother edges, as soft." GRAPHICS_CHOOSES },
+	{ "display.shadows", _config_string, "\"classic\"", "HALO_SHADOWS", _environment_value, _platform_all,
+		"The objects' shadows on the level: \"classic\" as the game draws them\n"
+		"(each drawn into a map, blurred and laid over the ground under it), or\n"
+		"\"ray_traced\": each traced by the GPU's ray queries through the\n"
+		"objects' own shapes, in the same direction and darkness, soft at their\n"
+		"edges, with none of the classic shadows' work on the processor; where\n"
+		"the GPU and its Vulkan driver have ray queries (\"classic\" elsewhere,\n"
+		"Metal included). docs/world-ao.md, \"Ray-traced shadows\"." },
 	{ "display.menus", _config_string, "\"pc\"", "HALO_MENUS", _environment_value, _platform_all,
 		"The menus: \"pc\" for the PC version's main menu (port/assets/menus,\n"
 		"and a menus folder here for your own), \"xbox\" for the Xbox's." },
@@ -4905,6 +4913,7 @@ static const struct
 	{ "display.anti_aliasing", { "off", "fxaa", "smaa", "ssaa2x", "msaa2x", "msaa4x", "msaa8x", NULL }, NULL },
 	{ "display.ambient_occlusion", { "off", "world", "ray_traced", NULL }, "off" },
 	{ "display.temporal_aa", { "off", "fsr", "dlss", "metalfx", NULL }, "off" },
+	{ "display.shadows", { "classic", "ray_traced", NULL }, "classic" },
 	{ "display.astc_textures", { "auto", "always", "off", NULL }, NULL },
 	{ "display.picture_position", { "center", "top", "bottom", NULL }, NULL },
 	{ "display.orientation", { "landscape", "portrait", "auto", NULL }, NULL },

@@ -44,6 +44,7 @@ Conventions carried over from the Xbox:
 #include "bink_import.h"
 #include "halo_linux_source_fixups.h"
 #include "panini_projection.h"
+#include "rt_shadows.h"
 #include "world_ao.h"
 #include "world_cascades.h"
 #include "world_proxies.h"
@@ -4940,6 +4941,56 @@ void halo_dynamic_lights_halos_draw(void)
 	xgpu_backend_dynamic_lights_halos(color->target.number, depth->target.number, color->target.layers, halos);
 }
 
+/* display.shadows "ray_traced" (port/linux/game/rt_shadows.c): a window's
+casters, into its 3D view after its lightmap pass, with the world's
+projection as that pass began (halo_dynamic_lights_environment's) */
+_Static_assert(sizeof(struct rt_shadow_caster) == sizeof(struct xgpu_rt_shadow_caster) &&
+	sizeof(struct xgpu_rt_shadow_caster) == 32 && RT_SHADOWS_CASTERS == XGPU_RT_SHADOWS_CASTERS,
+	"a ray-traced shadow's caster as the stream carries it (rt_shadows.h, xgpu_backend.h)");
+
+void halo_rt_shadows(struct rt_shadow_caster const *casters, int count, float const camera[3])
+{
+	static struct xgpu_rt_shadows shadows;
+	struct xgpu_dynamic_lights_halos const *halos = &dynamic_lights.halos;
+	struct render_target_entry *color, *depth;
+
+	if (!device.gl_ready || !xgpu_backend_capabilities.ray_queries)
+		return;
+#ifdef HALO_VR
+	vr_frame_resume();
+	/* (the eyes' pass, or the flat screen's) */
+	if (vr_gl.pass != HALO_VR_PASS_NONE)
+		return;
+#endif
+	color = render_target_get(device.render_target);
+	depth = render_target_get(device.depth_stencil);
+	if (!color || !depth || !depth->target.depth || color->target.layers > 1)
+		return;
+	if (count < 0)
+		count = 0;
+	if (count > XGPU_RT_SHADOWS_CASTERS)
+		count = XGPU_RT_SHADOWS_CASTERS;
+	shadows.count = count;
+	memcpy(shadows.casters, casters, (size_t)count * sizeof(shadows.casters[0]));
+	memcpy(shadows.projection, halos->projection, sizeof(shadows.projection));
+	memcpy(shadows.viewport_scale, halos->viewport_scale, sizeof(shadows.viewport_scale));
+	memcpy(shadows.viewport_offset, halos->viewport_offset, sizeof(shadows.viewport_offset));
+	shadows.screen_offset = (float)UI_OFFSET;
+	memcpy(shadows.camera, camera, sizeof(shadows.camera));
+	xgpu_backend_rt_shadows(color->target.number, depth->target.number, &shadows);
+}
+
+/* ... its pass's pipeline made as a map is prepared, where the setting is
+on (each of the targets the map's draws go to: the backend's) */
+static void rt_shadows_prepare(void)
+{
+	static struct xgpu_rt_shadows none;
+	const char *setting = config_string("display.shadows");
+
+	if (setting && !strcmp(setting, "ray_traced") && xgpu_backend_capabilities.ray_queries)
+		xgpu_backend_rt_shadows(0, 0, &none);
+}
+
 /* display.per_pixel_lighting: the model lighting programs' draws are lit for
 each pixel (xgpu_spirv.c's model lighting), from shaders of their own; read
 again as the front end takes a change up between frames (as the dynamic
@@ -5620,7 +5671,10 @@ void halo_gpu_prepare(int new_map)
 	world_ao.preparing = TRUE;
 	world_ao.twins = FALSE;
 	if (device.gl_ready)
+	{
 		xgpu_backend_prepare();
+		rt_shadows_prepare();
+	}
 }
 
 double halo_thread_cpu_seconds(void)

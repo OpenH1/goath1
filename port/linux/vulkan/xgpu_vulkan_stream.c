@@ -788,6 +788,7 @@ static void targets_bind(void)
 }
 
 static void prepass_prepare(void);
+static void rt_shadows_prepare(void);
 
 static void stream_set_targets(void *context, const struct xgpu_stream_set_targets *record)
 {
@@ -814,7 +815,10 @@ static void stream_set_targets(void *context, const struct xgpu_stream_set_targe
 	/* (display.ambient_occlusion "world"'s passes' pipelines, as the map's
 	are made) */
 	if (stream.preparing)
+	{
 		prepass_prepare();
+		rt_shadows_prepare();
+	}
 	/* The game's clears of some of the colour's channels are of alpha alone
 	(a fog screen's, and a split screen's window's end, which the map's
 	enumeration may not reach): their pipeline is made for each of the
@@ -3136,6 +3140,311 @@ static void stream_dynamic_lights_halos(void *context, const struct xgpu_stream_
 	targets_bind();
 }
 
+/* ---------- display.shadows "ray_traced" (xgpu_backend.h's
+xgpu_backend_rt_shadows)
+
+A window's casters' shadows on the level: one triangle over the 3D view's
+viewport, after its lightmap pass, its pixel shader (xgpu_spirv_rt_shadows_pass)
+tracing each pixel's rays through the ray-traced scene (xgpu_vulkan_rt.c,
+built first) and its colour multiplied into the pixel (the classic
+receivers' blend). The stencil's first bit, the models' (rasterizer_xbox_models.c's
+STENCIL_MODE_WRITE), leaves their pixels, as the classic receivers' stencil
+test does; the depth, sampled where it is drawn into (xgpu_vulkan_draw's
+reads_depth) or resolved from its samples, finds each pixel's point. The
+pipeline is made as a map is prepared, for each of its targets, once the
+front end says the setting is on (a record of no casters). */
+
+static struct
+{
+	VkShaderModule vertex, pixel;
+	VkSampler sampler;
+	int failed;
+	/* the map being prepared makes the pipeline for its targets */
+	int preparing;
+	/* (said as the pass begins) */
+	int drawn;
+} rt_shadows;
+
+static int rt_shadows_shaders(void)
+{
+	struct xgpu_spirv_options options;
+	struct xgpu_spirv_module module;
+
+	if (rt_shadows.failed || !stream.capabilities.ray_queries)
+		return 0;
+	if (rt_shadows.vertex && rt_shadows.pixel && rt_shadows.sampler)
+		return 1;
+	memset(&options, 0, sizeof(options));
+	options.reversed_depth = XGPU_VULKAN_REVERSED_DEPTH;
+	options.ray_queries = TRUE;
+	if (!rt_shadows.vertex && xgpu_spirv_world_ao_pass(XGPU_SPIRV_WORLD_AO_VERTEX, &options, &module))
+	{
+		rt_shadows.vertex = xgpu_vulkan_shader(module.words, module.count);
+		free(module.words);
+	}
+	if (!rt_shadows.pixel && xgpu_spirv_rt_shadows_pass(&options, &module))
+	{
+		shader_dump("rt_shadows", &module);
+		rt_shadows.pixel = xgpu_vulkan_shader(module.words, module.count);
+		free(module.words);
+	}
+	if (!rt_shadows.sampler)
+	{
+		struct xgpu_vulkan_sampler_description sampler;
+
+		memset(&sampler, 0, sizeof(sampler));
+		sampler.minify = sampler.magnify = XGPU_VULKAN_FILTER_POINT;
+		sampler.mip = XGPU_VULKAN_MIP_NONE;
+		sampler.address[0] = sampler.address[1] = sampler.address[2] = XGPU_VULKAN_ADDRESS_CLAMP;
+		sampler.anisotropy = 1;
+		rt_shadows.sampler = xgpu_vulkan_sampler(&sampler);
+	}
+	if (!rt_shadows.vertex || !rt_shadows.pixel || !rt_shadows.sampler)
+	{
+		host_logf(HOST_LOG_WARN, "vulkan: display.shadows \"ray_traced\"'s pass cannot be made: no shadows drawn");
+		rt_shadows.failed = 1;
+		return 0;
+	}
+	return 1;
+}
+
+/* the pass's pipeline into these targets (0: none can be) */
+static int rt_shadows_pipeline(const struct stream_target *color, const struct stream_target *depth, int samples,
+	struct xgpu_vulkan_pipeline_description *pipeline)
+{
+	if (!color || !depth || color->depth || !depth->depth || color->layers > 1 || !color->image || !depth->image ||
+		!rt_shadows_shaders())
+	{
+		return 0;
+	}
+	memset(pipeline, 0, sizeof(*pipeline));
+	pipeline->vertex_shader = rt_shadows.vertex;
+	pipeline->pixel_shader = rt_shadows.pixel;
+	pipeline->primitive_class = XGPU_VULKAN_CLASS_TRIANGLES;
+	pipeline->blend = 1;
+	pipeline->blend_source = XGPU_BLEND_ZERO;
+	pipeline->blend_destination = XGPU_BLEND_SOURCE_COLOR;
+	pipeline->blend_operation = XGPU_BLEND_ADD;
+	pipeline->color_mask = 7;
+	/* (the level's pixels alone: the models' have the stencil's first bit) */
+	pipeline->stencil_test = 1;
+	pipeline->stencil_function = XGPU_COMPARE_EQUAL;
+	pipeline->stencil_fail = pipeline->stencil_depth_fail = pipeline->stencil_pass = XGPU_STENCIL_KEEP;
+	pipeline->stencil_read_mask = 1;
+	pipeline->stencil_write_mask = 0;
+	pipeline->color_format = xgpu_vulkan_image_description(color->image)->format;
+	pipeline->depth_format = xgpu_vulkan_image_description(depth->image)->format;
+	pipeline->samples = (uint8_t)(samples && color->multisampled && depth->multisampled ? color->samples : 1);
+	return 1;
+}
+
+/* (a map prepared: the pipeline for the targets its draws go to) */
+static void rt_shadows_prepare(void)
+{
+	struct xgpu_vulkan_pipeline_description pipeline;
+
+	if (rt_shadows.preparing &&
+		rt_shadows_pipeline(target_get(stream.color), target_get(stream.depth), stream.samples, &pipeline))
+	{
+		(void)xgpu_vulkan_pipeline_prepare(&pipeline);
+	}
+}
+
+/* the 4x4 inverse of a (rows), into inverse (rows); 0 if it has none */
+static int rt_shadows_invert(const double a[4][4], double inverse[4][4])
+{
+	double m[4][8];
+	int row, column, pivot, other;
+
+	for (row = 0; row < 4; row++)
+	{
+		for (column = 0; column < 4; column++)
+		{
+			m[row][column] = a[row][column];
+			m[row][column + 4] = row == column ? 1.0 : 0.0;
+		}
+	}
+	for (column = 0; column < 4; column++)
+	{
+		pivot = column;
+		for (row = column + 1; row < 4; row++)
+		{
+			if (fabs(m[row][column]) > fabs(m[pivot][column]))
+				pivot = row;
+		}
+		if (fabs(m[pivot][column]) < 1.0e-300)
+			return 0;
+		if (pivot != column)
+		{
+			for (other = 0; other < 8; other++)
+			{
+				double swap = m[column][other];
+
+				m[column][other] = m[pivot][other];
+				m[pivot][other] = swap;
+			}
+		}
+		{
+			double scale = 1.0 / m[column][column];
+
+			for (other = 0; other < 8; other++)
+				m[column][other] *= scale;
+		}
+		for (row = 0; row < 4; row++)
+		{
+			double factor = m[row][column];
+
+			if (row == column || factor == 0.0)
+				continue;
+			for (other = 0; other < 8; other++)
+				m[row][other] -= factor * m[column][other];
+		}
+	}
+	for (row = 0; row < 4; row++)
+	{
+		for (column = 0; column < 4; column++)
+			inverse[row][column] = m[row][column + 4];
+	}
+	return 1;
+}
+
+/* the framebuffer's (x, y, depth, 1), times w, of a world point (rows),
+as the game's programs place it (the glows' vertex shader: the world's
+projection, the screen conversion and the viewport's scale and offset,
+then Vulkan's viewport and depth range, rows from the top); its inverse
+into unproject. 0 if it has none */
+static int rt_shadows_unproject(const struct xgpu_stream_rt_shadows *record, const struct xgpu_vulkan_dynamic_state *dynamic,
+	float unproject[4][4])
+{
+	const float (*c)[4] = (const float (*)[4])record->projection;
+	const float offsets[3] = { 0.5f + record->screen_offset, 0.5f, 0.0f };
+	double ndc[3][4], window[4][4], inverse[4][4];
+	double near_z = dynamic->depth_range[0], far_z = dynamic->depth_range[1];
+	int axis, column;
+
+	for (axis = 0; axis < 3; axis++)
+	{
+		double scale = record->viewport_scale[axis] != 0.0f ? record->viewport_scale[axis] : 1.0f;
+		double shift = (double)c[5][axis] + offsets[axis] - record->viewport_offset[axis];
+
+		for (column = 0; column < 4; column++)
+			ndc[axis][column] = ((double)c[4][axis] * c[axis][column] + shift * c[3][column]) / scale;
+	}
+	for (column = 0; column < 4; column++)
+	{
+		double w = c[3][column];
+
+		window[0][column] = dynamic->viewport[0] * w + (ndc[0][column] + w) * 0.5 * dynamic->viewport[2];
+		/* (y down: the programs' y negated) */
+		window[1][column] = dynamic->viewport[1] * w + (w - ndc[1][column]) * 0.5 * dynamic->viewport[3];
+		window[2][column] = near_z * w + ndc[2][column] * (far_z - near_z);
+		window[3][column] = w;
+	}
+	if (!rt_shadows_invert((const double (*)[4])window, inverse))
+		return 0;
+	for (axis = 0; axis < 4; axis++)
+	{
+		for (column = 0; column < 4; column++)
+			unproject[axis][column] = (float)inverse[axis][column];
+	}
+	return 1;
+}
+
+static void stream_rt_shadows(void *context, const struct xgpu_stream_rt_shadows *record)
+{
+	struct stream_target *color, *depth;
+	struct xgpu_vulkan_pipeline_description pipeline;
+	struct xgpu_vulkan_dynamic_state dynamic;
+	struct xgpu_vulkan_draw draw;
+	float (*header)[4], (*casters)[4];
+	uint64_t before, serial;
+	int multisampled, attempt;
+
+	(void)context;
+	if (!stream.capabilities.ray_queries)
+		return;
+	if (stream.preparing)
+	{
+		rt_shadows.preparing = 1;
+		rt_shadows_prepare();
+		return;
+	}
+	if (record->count <= 0)
+		return;
+	color = target_get(record->color);
+	depth = target_get(record->depth);
+	if (!rt_shadows_pipeline(color, depth, stream.samples, &pipeline))
+		return;
+	before = xgpu_vulkan_pipeline_count();
+	memset(&draw, 0, sizeof(draw));
+	draw.pipeline = xgpu_vulkan_pipeline(&pipeline);
+	if (stream.prepared && xgpu_vulkan_pipeline_count() != before)
+	{
+		stream.pipeline_misses++;
+		host_logf(HOST_LOG_WARN, "vulkan: pipeline missed map preparation: display.shadows \"ray_traced\"'s pass, "
+			"samples %u, total %u", (unsigned)pipeline.samples, stream.pipeline_misses);
+	}
+	/* (the scene built first, in the early commands; none yet: no shadows) */
+	if (!draw.pipeline || !xgpu_vulkan_rt_build())
+		return;
+	if (!rt_shadows.drawn)
+	{
+		rt_shadows.drawn = 1;
+		host_logf(HOST_LOG_INFO, "vulkan: display.shadows \"ray_traced\": the shadows traced by ray queries");
+	}
+	dynamic = stream.dynamic;
+	memset(dynamic.scissor, 0, sizeof(dynamic.scissor));
+	dynamic.stencil_reference = 0;
+	multisampled = stream.samples && color->multisampled && depth->multisampled;
+	/* (the depth the level was drawn with, in its texture: resolved where it
+	is drawn with samples, its first's) */
+	if (multisampled)
+		target_resolve(depth);
+	draw.textures[0].image = depth->image;
+	draw.textures[0].kind = XGPU_VULKAN_IMAGE_2D;
+	draw.textures[0].sampler = rt_shadows.sampler;
+	draw.dynamic = &dynamic;
+	draw.topology = XGPU_VULKAN_TOPOLOGY_TRIANGLES;
+	draw.count = 3;
+	draw.ambient_occlusion = 1;
+	/* (HALO_VULKAN_DRAW_TIMES: the pass's own kind) */
+	draw.kind[0] = 0xfd;
+	for (attempt = 0; attempt < 3; attempt++)
+	{
+		serial = xgpu_vulkan_serial();
+		header = xgpu_vulkan_upload(UNIFORMS_RANGE, 256, &draw.uniforms);
+		casters = xgpu_vulkan_upload(CONSTANTS_RANGE, 256, &draw.constants);
+		if (!header || !casters)
+			return;
+		if (serial == xgpu_vulkan_serial())
+			break;
+	}
+	if (attempt == 3)
+		return;
+	memset(header, 0, UNIFORMS_RANGE);
+	if (!rt_shadows_unproject(record, &dynamic, (float (*)[4])header))
+		return;
+	memcpy(header[4], record->camera, sizeof(record->camera));
+	header[4][3] = (float)record->count;
+	/* (checking: each volume's pixels red, its rays' hits less blue) */
+	{
+		const char *view = getenv("HALO_VULKAN_RT_SHADOWS_VIEW");
+
+		header[5][0] = view && *view && strcmp(view, "0") ? 1.0f : 0.0f;
+	}
+	memset(casters, 0, CONSTANTS_RANGE);
+	memcpy(casters, record->casters, (size_t)record->count * sizeof(record->casters[0]));
+	if (multisampled)
+		color->unresolved = 1;
+	color->written++;
+	xgpu_vulkan_set_target_views(multisampled ? color->multisampled : color->image,
+		multisampled ? depth->multisampled : depth->image, 0, 1);
+	draw.reads_depth = (uint8_t)!multisampled;
+	xgpu_vulkan_draw(&draw);
+	/* (the stream's targets again, for what follows) */
+	targets_bind();
+}
+
 /* ---------- anti-aliasing (display.anti_aliasing; xgpu_vulkan_post.c) */
 
 static void stream_anti_aliasing_prepare(void *context, uint32_t smaa)
@@ -4220,6 +4529,7 @@ static void stream_prepare(void *context)
 	stream.trace_pipeline_descriptions = host_load_trace_enabled() && detail && *detail && strcmp(detail, "0");
 	xgpu_vulkan_preparation_service(host_render_stream_loading_service);
 	stream.preparing = 1;
+	rt_shadows.preparing = 0;
 	stream.prepare_pipelines = xgpu_vulkan_pipeline_count();
 	stream.trace_preparing = host_load_trace_enabled();
 	memset(stream.trace_seconds, 0, sizeof(stream.trace_seconds));
@@ -4361,6 +4671,7 @@ const struct host_render_backend *xgpu_vulkan_stream_backend(void)
 		backend.world_ao_prepass = stream_world_ao_prepass;
 		/* display.temporal_aa's motion */
 		backend.motion = stream_motion;
+		backend.rt_shadows = stream_rt_shadows;
 		/* ... "ray_traced"'s scene (xgpu_vulkan_rt.c), where the device has
 		ray queries */
 		backend.world_ao_mesh = stream_world_ao_mesh;

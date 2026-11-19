@@ -572,6 +572,37 @@ says why once in the log. Off by default.
   (Mesa 25 on the Spark) crashed in its own code as the scene was built again each frame, not root-caused; it is left
   without ray queries.
 
+### Ray-traced shadows
+
+`display.shadows = "ray_traced"` (`"classic"` by default; Video > Frame Rate & Sync > Ray Traced Shadows, shown
+where the renderer has ray queries): the objects' shadows on the level traced through the scene above, built for
+them whatever `display.ambient_occlusion` says (`world_ao_rt_frame`). None of the classic path runs: no atlas, blur,
+BSP walk or receiver draws (`render_objects.c`'s `render_object_shadows` returns first; `rt_shadows.h`).
+
+- **The same shadows.** The casters are the classic ones (a drawn object, not the first-person camera's unless its
+  legs are drawn, not shadowless, over 30 pixels and dark enough), each with the classic shadow's direction (its
+  lighting's `shadow_vector`: the lightmap's dominant light, at least 45 degrees down), darkness (`1 - shadow_color`
+  times the size, darkness and camouflage strength `render_object_shadow_begin` uses) and volume (its bounding
+  radius to each side, half of it toward the light, four times it away, fading linearly toward both ends). The
+  receivers are the classic ones, the level's surfaces: the pass's stencil test leaves the models' pixels (the
+  stencil's first bit, as the classic receivers' test does), and multiplies the lightmap pass's result, before
+  the diffuse texture, as the classic blend did.
+- **The pass** (`xgpu_spirv_rt_shadows_pass`, `xgpu_vulkan_stream.c`'s `stream_rt_shadows`): one triangle over the
+  view after the lightmap pass; each pixel's point from the depth (the world's projection inverted), and for each
+  caster whose volume holds it, 4 rays toward its light in a cone (tangent 0.06), stratified and turned by the
+  pixel's interleaved gradient noise, each counting where the nearest it meets is that caster's own collision mesh
+  (or its first child's: a vehicle's rider); the structure, opaque, stops a ray, so a wall between them leaves no
+  shadow. The cone gives the penumbra, sharp at the contact and softer away from it, with no history (a
+  per-pixel dither at the edge); 4 rays a caster are paid only where a volume holds the pixel.
+- **Measured** (Radeon 8060S, 1920x1080, Blood Gulch with 59 bots, a debug build, `HALO_SHADOW_TIMES`): the game
+  thread's time in `render_object_shadows` 0.05 to 0.07 ms a window classic, 0.006 to 0.008 ms ray-traced (the casters
+  listed and the scene's instances made; the scene of the frame's objects it reads, `world_scene_frame_begin`, is
+  outside it). The pass, by `debug.pass_times`: about 0.05 ms a frame; the frame's GPU time 1.67 ms classic (its atlas,
+  blur and receivers among it), 1.00 ms ray-traced, not the same views.
+- **Left:** Metal (`intersector` in a fragment function over the same casters, and the scene's
+  `MTLAccelerationStructure`s built from the same records); the objects as receivers (the classic shadows have
+  none); `HALO_VULKAN_RT_SHADOWS_VIEW=1` shows the volumes (magenta) and their rays' hits (green).
+
 ## Proxies (`world_proxies.h`)
 
 Each object definition gets up to 16 shapes, made the first time it's drawn and kept until the map unloads:

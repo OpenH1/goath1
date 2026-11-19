@@ -346,6 +346,16 @@ enum
 };
 BOOL xgpu_spirv_world_ao_pass(int pass, const struct xgpu_spirv_options *options, struct xgpu_spirv_module *module);
 
+/* display.shadows "ray_traced" (xgpu_backend.h's xgpu_backend_rt_shadows):
+its pass's pixel shader, drawn with world_ao_pass's vertex shader (the
+triangle over the viewport): the scene's depth at texture 0, a header of
+8 vec4 at the uniforms' binding (the unprojection's rows from the
+framebuffer's x, y and depth to the world's homogeneous point; the camera
+and the casters' count), the casters (2 vec4 each) at the constants', the
+ray-traced scene at the occlusion set's; its colour the light the pixel
+keeps, which the blend multiplies it by */
+BOOL xgpu_spirv_rt_shadows_pass(const struct xgpu_spirv_options *options, struct xgpu_spirv_module *module);
+
 /* the enhanced dynamic lights' glows (xgpu_backend.h's
 xgpu_backend_dynamic_lights_halos):
 a camera-facing quad about each light, six vertices of a triangle list,

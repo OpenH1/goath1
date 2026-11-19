@@ -136,6 +136,10 @@ their occlusion is taken about their most open direction, the sky's or
 either face's, not each card's one normal (world_ao_cards_occlusion;
 rasterizer_xbox_models.c's _rasterizer_model_draw) */
 void world_ao_cards(int cards);
+/* the ray-traced scene's instances for this frame (world_rt_frame, once a
+frame), for display.shadows "ray_traced" (rt_shadows.c) whatever this
+setting */
+void world_ao_rt_frame(void);
 /* the structure's lightmap pass draws with this page of its lightmaps
 next (rasterizer_environment_lightmap_begin; NULL none): its static
 scenery's layer, or the static scenery's shapes walked where it has none */
