@@ -366,6 +366,68 @@ NSString *const xgpu_metal_temporal_source =
 	"{\n"
 	"\tconstexpr sampler linear(coord::pixel, filter::linear, address::clamp_to_edge);\n"
 	"\treturn color.sample(linear, u.metrics.xy + (in.position.xy - u.window.xy) / u.window.zw * u.metrics.zw);\n"
+	"}\n"
+	/* FSR's RCAS (port/third_party/fidelityfx-fsr3/gpu/fsr1/ffx_fsr1.h's
+	FsrRcasF, as ffx_fsr3upscaler_rcas.h builds it: 32-bit, FSR_RCAS_DENOISE,
+	the exposure 1), ported to MSL as a pass over the destination's rectangle
+	(window.xy its corner) reading MetalFX's output (its pixels clamped at its
+	edges); metrics.x FsrRcasCon's con[0], exp2(-(2 - 2 * sharpness)); the
+	alpha passed through. Where a ring's channel is 0 or 1 throughout, its
+	limits' reciprocals are kept finite (the SDK's are infinite there and its
+	GPUs' max takes the other side of the NaN), the result the same.
+
+	This part is ported from the AMD FidelityFX SDK:
+
+	Copyright (C) 2024 Advanced Micro Devices, Inc.
+
+	Permission is hereby granted, free of charge, to any person obtaining a copy
+	of this software and associated documentation files(the "Software"), to deal
+	in the Software without restriction, including without limitation the rights
+	to use, copy, modify, merge, publish, distribute, sublicense, and /or sell
+	copies of the Software, and to permit persons to whom the Software is
+	furnished to do so, subject to the following conditions :
+
+	The above copyright notice and this permission notice shall be included in
+	all copies or substantial portions of the Software.
+
+	THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+	IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+	FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+	AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+	LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+	OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+	THE SOFTWARE. */
+	"static float rcas_reciprocal_medium(float a)\n"
+	"{\n"
+	"\tfloat b = as_type<float>(0x7ef19fffu - as_type<uint>(a));\n"
+	"\treturn b * (-b * a + 2.0);\n"
+	"}\n"
+	"static float rcas_luma(float3 c) { return c.b * 0.5 + (c.r * 0.5 + c.g); }\n"
+	"fragment float4 xgpu_temporal_rcas(temporal_out in [[stage_in]], constant motion_uniforms &u [[buffer(17)]],\n"
+	"\ttexture2d<float> color [[texture(0)]])\n"
+	"{\n"
+	"\tint2 last = int2(color.get_width(), color.get_height()) - 1;\n"
+	"\tint2 sp = int2(in.position.xy - u.window.xy);\n"
+	"\tfloat3 b = color.read(uint2(clamp(sp + int2(0, -1), int2(0), last))).rgb;\n"
+	"\tfloat3 d = color.read(uint2(clamp(sp + int2(-1, 0), int2(0), last))).rgb;\n"
+	"\tfloat4 ee = color.read(uint2(clamp(sp, int2(0), last)));\n"
+	"\tfloat3 e = ee.rgb;\n"
+	"\tfloat3 f = color.read(uint2(clamp(sp + int2(1, 0), int2(0), last))).rgb;\n"
+	"\tfloat3 h = color.read(uint2(clamp(sp + int2(0, 1), int2(0), last))).rgb;\n"
+	"\tfloat bL = rcas_luma(b), dL = rcas_luma(d), eL = rcas_luma(e), fL = rcas_luma(f), hL = rcas_luma(h);\n"
+	"\tfloat nz = 0.25 * bL + 0.25 * dL + 0.25 * fL + 0.25 * hL - eL;\n"
+	"\tnz = saturate(abs(nz) * rcas_reciprocal_medium(max(max(max(bL, dL), eL), max(fL, hL)) -\n"
+	"\t\tmin(min(min(bL, dL), eL), min(fL, hL))));\n"
+	"\tnz = -0.5 * nz + 1.0;\n"
+	"\tfloat3 mn4 = min(min(min(b, d), f), h);\n"
+	"\tfloat3 mx4 = max(max(max(b, d), f), h);\n"
+	"\tfloat3 hit_min = mn4 * (1.0 / max(4.0 * mx4, 1.0e-30));\n"
+	"\tfloat3 hit_max = (1.0 - mx4) * (1.0 / min(4.0 * mn4 - 4.0, -1.0e-30));\n"
+	"\tfloat3 lobe3 = max(-hit_min, hit_max);\n"
+	"\tfloat lobe = max(-(0.25 - 1.0 / 16.0), min(max(max(lobe3.r, lobe3.g), lobe3.b), 0.0)) * u.metrics.x;\n"
+	"\tlobe *= nz;\n"
+	"\tfloat rcpL = rcas_reciprocal_medium(4.0 * lobe + 1.0);\n"
+	"\treturn float4((lobe * b + lobe * d + lobe * h + lobe * f + e) * rcpL, ee.a);\n"
 	"}\n";
 
 /* ---------- the command stream's pipelines */

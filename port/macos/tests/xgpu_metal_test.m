@@ -27,6 +27,7 @@ and checks them.
 #include "xgpu_metal.h"
 #include "xgpu_metal_internal.h"
 #include "xgpu_metal_post_shaders.h"
+#include "xgpu_metal_temporal.h"
 #define XGPU_HDR_REFERENCE
 #include "xgpu_hdr.h"
 #if __has_include("host_render_stream.h")
@@ -1125,6 +1126,65 @@ static void test_frames(void)
 	CHECK(!ahead, "%d frames began with more than two in flight", ahead);
 	CHECK(ordered, "the fences grow");
 	CHECK(pixel(4, 4) == 0xff000027, "the last frame's: %08x", pixel(4, 4));
+	xgpu_metal_texture_destroy(target);
+}
+
+/* MetalFX's output into the destination's rectangle (here a step from dark
+to light, 32 by 64, into the target's right half): copied as it is at
+sharpness 0 (the RCAS pass not run: the negative control), sharpened by
+FSR's RCAS at 0.8 (the step's sides pushed apart, its flat parts as they
+were); the left half untouched */
+static void test_metalfx_place(void)
+{
+	static const int32_t place[4] = { 32, 0, 64, SIZE };
+	uint32_t target = target_make(XGPU_METAL_FORMAT_BGRA8, SIZE, SIZE, 0);
+	uint32_t output = texture_make(XGPU_METAL_TEXTURE_2D, XGPU_METAL_FORMAT_BGRA8, 32, SIZE, 1);
+	uint32_t texels[32 * SIZE];
+	int x, y, copied = 1, flat = 1, edged = 1;
+
+	begin("MetalFX's output placed (FSR's RCAS)");
+	for (y = 0; y < SIZE; y++)
+	{
+		for (x = 0; x < 32; x++)
+			texels[y * 32 + x] = x < 16 ? 0xff404040u : 0xffc0c0c0u;
+	}
+	xgpu_metal_texture_upload(output, 0, 0, 0, 0, 0, 32, SIZE, 1, texels, 32 * 4, 0);
+
+	frame_begin(target, 0);
+	xgpu_metal_clear(NULL, 0, CLEAR_COLOR, (float[4]){ 0, 0, 0, 1 }, 0, 0);
+	xgpu_metal_metalfx_place(output, target, place, 0.0f);
+	xgpu_metal_frame_wait(xgpu_metal_frame_end(0));
+	read_target(target);
+	for (y = 0; y < SIZE; y++)
+	{
+		for (x = 32; x < SIZE; x++)
+		{
+			if (pixel(x, y) != texels[y * 32 + x - 32])
+				copied = 0;
+		}
+	}
+	CHECK(copied && pixel(8, 8) == 0xff000000, "copied as it is at 0: %08x %08x %08x", pixel(8, 8), pixel(47, 8),
+		pixel(48, 8));
+
+	frame_begin(target, 0);
+	xgpu_metal_clear(NULL, 0, CLEAR_COLOR, (float[4]){ 0, 0, 0, 1 }, 0, 0);
+	xgpu_metal_metalfx_place(output, target, place, 0.8f);
+	xgpu_metal_frame_wait(xgpu_metal_frame_end(0));
+	read_target(target);
+	for (y = 0; y < SIZE; y++)
+	{
+		if (!near(pixel(34, y), 0xff404040u, 1) || !near(pixel(40, y), 0xff404040u, 1) ||
+			!near(pixel(56, y), 0xffc0c0c0u, 1) || !near(pixel(63, y), 0xffc0c0c0u, 1))
+			flat = 0;
+		/* (the step's sides: about 0x37 and 0xc9) */
+		if ((pixel(47, y) & 0xff) > 0x3a || (pixel(47, y) & 0xff) < 0x30 || (pixel(48, y) & 0xff) < 0xc6 ||
+			(pixel(48, y) & 0xff) > 0xd0 || (pixel(47, y) >> 24) != 0xff)
+			edged = 0;
+	}
+	CHECK(edged, "the step sharpened at 0.8: %08x %08x", pixel(47, 8), pixel(48, 8));
+	CHECK(flat && pixel(8, 8) == 0xff000000, "the flat parts as they were: %08x %08x %08x", pixel(8, 8), pixel(40, 8),
+		pixel(56, 8));
+	xgpu_metal_texture_destroy(output);
 	xgpu_metal_texture_destroy(target);
 }
 
@@ -2740,6 +2800,7 @@ int main(int argc, char *argv[])
 		test_texture_kinds();
 		test_guest_memory();
 		test_frames();
+		test_metalfx_place();
 #ifdef TEST_STREAM
 		test_stream_table();
 		test_stream_emitter();

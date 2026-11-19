@@ -313,9 +313,10 @@ static const struct config_setting config_settings[] =
 		"VR (docs/temporal-aa.md)." },
 	{ "display.temporal_aa_sharpness", _config_real, "0.8", "HALO_TEMPORAL_AA_SHARPNESS", _environment_value,
 		_platform_all,
-		"How much display.temporal_aa \"fsr\" sharpens its picture, 0.0 to 1.0:\n"
-		"AMD FSR's own sharpening (RCAS), which offsets the softness of a\n"
-		"render scale below 1. 0.0 none. DLSS and MetalFX ignore it." },
+		"How much display.temporal_aa \"fsr\" or \"metalfx\" sharpens its\n"
+		"picture, 0.0 to 1.0: AMD FSR's own sharpening (RCAS; MetalFX's output\n"
+		"through the same), which offsets the softness of a render scale below\n"
+		"1. 0.0 none. DLSS ignores it." },
 	{ "display.supersampling", _config_real, "1.0", "HALO_SUPERSAMPLING", _environment_value, _platform_desktop,
 		"Draw the game at this many times the display's resolution each way, 1.0\n"
 		"to 2.0, and scale it down to the display: smoother edges and finer\n"

@@ -2116,6 +2116,8 @@ uint32_t xgpu_metal_texture_create(const struct xgpu_metal_texture_description *
 		/* (drawn into, and copied out of by blits: private) */
 		descriptor.usage |= MTLTextureUsageRenderTarget;
 		descriptor.storageMode = MTLStorageModePrivate;
+		if (description->usage & XGPU_METAL_USAGE_WRITTEN)
+			descriptor.usage |= MTLTextureUsageShaderWrite;
 	}
 	else
 	{

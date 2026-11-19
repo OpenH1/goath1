@@ -786,8 +786,8 @@
 			<choice shown="OFF" value="off"/>
 			<choice shown="APPLE METALFX" value="metalfx"/>
 		</row>
-		<row key="temporal_aa_sharpness" kind="slider" setting="display.temporal_aa_sharpness" label="FSR SHARPNESS" crumb="VIDEO › FRAME RATE &amp; SYNC" when="desktop+temporal_upscale+!vr android+temporal_upscale+!vr" least="0" most="1" step="0.05" typed_least="0" typed_most="1">
-			<help>How much AMD FSR sharpens its picture, which offsets the softness of a Render Resolution below 100%. Higher is crisper; too high outlines edges. Off adds no sharpening.</help>
+		<row key="temporal_aa_sharpness" kind="slider" setting="display.temporal_aa_sharpness" label="SHARPNESS" crumb="VIDEO › FRAME RATE &amp; SYNC" when="desktop+temporal_upscale+!vr desktop+temporal_metalfx+!vr android+temporal_upscale+!vr android+temporal_metalfx+!vr" least="0" most="1" step="0.05" typed_least="0" typed_most="1">
+			<help>How much AMD FSR or Apple MetalFX sharpens its picture, which offsets the softness of a Render Resolution below 100%. Higher is crisper; too high outlines edges. Off adds no sharpening.</help>
 			<stop shown="OFF" value="0"/>
 			<stop shown="0.1" value="0.1"/>
 			<stop shown="0.2" value="0.2"/>

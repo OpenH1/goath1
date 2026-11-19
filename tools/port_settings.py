@@ -727,9 +727,9 @@ GAMMA = Slider(0.5, 2.0, 0.05, 0.5, 2.0)
 PANINI_STRENGTHS = Slider(0.0, 1.0, 0.25, 0.0, 1.0,
                           stops=(("OFF", "0"), ("0.25", "0.25"), ("0.5", "0.5"), ("0.75", "0.75"), ("1", "1")))
 PANINI_VERTICAL = Slider(0.0, 1.0, 0.05, 0.0, 1.0)
-# display.temporal_aa_sharpness's: FSR's RCAS, off (0) to 1; any of 0 to 1
-# typed
-FSR_SHARPNESS = Slider(0.0, 1.0, 0.05, 0.0, 1.0, stops=(("OFF", "0"),) + tuple(
+# display.temporal_aa_sharpness's: FSR's RCAS (FSR's, and MetalFX's with
+# it), off (0) to 1; any of 0 to 1 typed
+UPSCALER_SHARPNESS = Slider(0.0, 1.0, 0.05, 0.0, 1.0, stops=(("OFF", "0"),) + tuple(
     (f"{n / 10:g}", f"{n / 10:g}") for n in range(1, 11)))
 # display.draw_distance's: the far clip plane in world units, the game's own
 # 1024 to ChupathingyCE's farthest (port/linux/game/far_clip.c); any of 1024
@@ -1457,11 +1457,13 @@ PAGES = {
              "Apple MetalFX builds each frame from the frames before it: smooth edges, and a sharp picture at a "
              "Render Resolution below 100% for more frames. While it is on, it replaces Anti-Aliasing.", "desktop",
              "temporal_aa_metalfx"),
-            # (display.temporal_aa_sharpness: FSR's RCAS; where FSR is, as
-            # the Upscaler row; DLSS sharpens its own)
-            ("FSR SHARPNESS", "display.temporal_aa_sharpness", FSR_SHARPNESS,
-             "How much AMD FSR sharpens its picture, which offsets the softness of a Render Resolution below 100%. "
-             "Higher is crisper; too high outlines edges. Off adds no sharpening.", "desktop android"),
+            # (display.temporal_aa_sharpness: FSR's RCAS, after FSR's and
+            # MetalFX's upscale; where either is, as the Upscaler rows:
+            # SETTINGS_ROW_WHEN; DLSS sharpens its own)
+            ("SHARPNESS", "display.temporal_aa_sharpness", UPSCALER_SHARPNESS,
+             "How much AMD FSR or Apple MetalFX sharpens its picture, which offsets the softness of a Render "
+             "Resolution below 100%. Higher is crisper; too high outlines edges. Off adds no sharpening.",
+             "desktop android"),
             (SECTION, "RAY TRACING"),
             # (display.shadows: where the graphics card has ray queries alone,
             # SETTINGS_ROW_WHEN; Advanced Graphics and Brightness
@@ -2670,7 +2672,7 @@ SETTINGS_ROW_WHEN = {
     # MetalFX, temporal_metalfx; not in the headset)
     "temporal_aa": "temporal_upscale+!temporal_dlss+!vr", "temporal_aa_dlss": "temporal_dlss+!vr",
     "temporal_aa_metalfx": "temporal_metalfx+!vr",
-    "temporal_aa_sharpness": "temporal_upscale+!vr",
+    "temporal_aa_sharpness": "temporal_upscale+!vr temporal_metalfx+!vr",
     # (the renderer has ray queries: settings_condition_term's ray_queries)
     "shadows": "ray_queries",
     # (the Mac's display paces its frames already)
