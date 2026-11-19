@@ -94,6 +94,7 @@ symbols in this file:
 #include "panini.h" /* port: port/linux/game/panini.c */
 #include "near_clip.h" /* port: port/linux/game/near_clip.c */
 #include "world_ao.h" /* port: port/linux/game/world_ao.c */
+#include "motion_vectors.h" /* port: port/linux/game/motion_vectors.c */
 
 #ifdef HALO_VR
 #include "../../port/linux/src/vr.h"
@@ -440,6 +441,15 @@ static void render_window(
 	(port/linux/game/panini.c) */
 	if (!render_link_pass) /* port: (spartan_link.c) */
 		panini_window_begin(local_player_index, rasterizer_target, rasterizer_camera, &parameters.frustum);
+	/* port: display.temporal_aa: the screen's 3D view's motion and jitter,
+	the frame before's camera kept (port/linux/game/motion_vectors.c; not a
+	mirror's view, a feed's, nor the VR mode's eyes) */
+	motion_vectors_window_begin(local_player_index, rasterizer_target == _render_target_primary &&
+		!rasterizer_camera->mirrored && !render_link_pass && !bink_playback_in_progress() &&
+#ifdef HALO_VR
+		!render_vr_eye_pass && !render_vr_scope_pass &&
+#endif
+		TRUE, rasterizer_camera, &parameters.frustum);
 	rasterizer_window_begin(&parameters);
 	/* port: debug.render_marks: the window's camera, its viewport the
 	rasterizer's (port/linux/game/render_marks.c) */
@@ -701,6 +711,9 @@ static void render_window(
 		(not the VR mode's eye pass: its targets have a layer for each eye) */
 		if (rasterizer_target == _render_target_primary)
 		{
+			/* port: display.temporal_aa: the window's motion, whole, and the
+			jitter taken away (port/linux/game/motion_vectors.c) */
+			motion_vectors_window_end(&rasterizer_camera->viewport_bounds);
 			halo_screen_tone_map(
 				rasterizer_camera->viewport_bounds.x0,
 				rasterizer_camera->viewport_bounds.y0,
@@ -747,6 +760,8 @@ static void render_window(
 	render_enumerate_loading_screen();
 	if (!render_link_pass) /* port: (spartan_link.c) */
 		panini_window_end(); /* port */
+	/* port: (and none of its jitter past the window: motion_vectors.c) */
+	motion_vectors_window_end(NULL);
 	rasterizer_window_end();
 	profile_render_window_end();
 
@@ -1108,6 +1123,9 @@ void render_frame(
 	this frame, the field's upload continued (port/linux/game/world_ao.c;
 	nothing unless it is on) */
 	world_ao_frame_begin();
+	/* port: display.temporal_aa: the frame's number, the jitter's phase
+	(port/linux/game/motion_vectors.c) */
+	motion_vectors_frame_begin();
 
 	for (window_index = 0; window_index < window_count; window_index++)
 	{

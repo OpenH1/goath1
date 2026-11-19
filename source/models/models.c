@@ -87,6 +87,7 @@ symbols in this file:
 #include "cache/cache_files.h"
 #include "rasterizer/rasterizer_transparent_geometry.h"
 #include "model_detail.h" /* port: port/linux/game/model_detail.c */
+#include "motion_vectors.h" /* port: port/linux/game/motion_vectors.c */
 
 /* ---------- constants */
 
@@ -1194,6 +1195,10 @@ void render_model(
 				relative_node_matrices[node_index] = render.frustum.world_to_view;
 			}
 		}
+		/* port: display.temporal_aa: the nodes the vertex shader is given are
+		these, the object's named with node_matrices (port/linux/game/
+		motion_vectors.c) */
+		motion_vectors_model_relative(node_matrices, relative_node_matrices);
 
 		geometry_detail_level_index = NUMBER_OF_DETAIL_LEVELS_PER_MODEL-1;
 		while (geometry_detail_level_index>0 &&

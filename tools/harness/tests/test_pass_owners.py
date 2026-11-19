@@ -64,6 +64,7 @@ OWNED_WORK = [
     ("stream_frame_end", "PASS_OWNER_FINAL", "xgpu_vulkan_frame_end("),
     ("stream_world_ao_prepass", "PASS_OWNER_AO", "xgpu_vulkan_set_target_views(prepass.inputs"),
     ("stream_world_ao_prepass", "PASS_OWNER_AO", "prepass_pass_draw("),
+    ("stream_motion", "PASS_OWNER_MOTION", "motion_pass_draw(motion.resolve"),
 ]
 
 
@@ -84,7 +85,8 @@ def test_owners_named_by_their_settings():
     stream = read(STREAM)
     owners = dict(re.findall(r'#define (PASS_OWNER_\w+) "([^"]+)"', stream))
     assert owners == {"PASS_OWNER_FXAA": "FXAA", "PASS_OWNER_SMAA": "SMAA", "PASS_OWNER_MSAA_RESOLVE": "MSAA RESOLVE",
-                      "PASS_OWNER_PANINI": "PANINI", "PASS_OWNER_AO": "AO", "PASS_OWNER_FINAL": "FINAL PASS"}
+                      "PASS_OWNER_PANINI": "PANINI", "PASS_OWNER_AO": "AO", "PASS_OWNER_FINAL": "FINAL PASS",
+                      "PASS_OWNER_MOTION": "MOTION"}
     # (capitals: pass_times_owned tells them from the passes' own labels)
     assert all(re.fullmatch(r"[A-Z][A-Z ]*", name) for name in owners.values())
 

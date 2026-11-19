@@ -111,6 +111,10 @@ enum
 	/* (a model lit for each vertex, its ambient light apart: xgpu.h's
 	XGPU_AMBIENT_OCCLUSION_LIGHT_VERTEX) */
 	XGPU_SPIRV_LOCATION_LIGHT_AMBIENT, XGPU_SPIRV_LOCATION_LIGHT_POINT,
+	/* (display.temporal_aa: the position this frame and the frame before,
+	x, y and w as the screen's conversion has them: xgpu_spirv_options'
+	motion) */
+	XGPU_SPIRV_LOCATION_MOTION_CURRENT, XGPU_SPIRV_LOCATION_MOTION_PREVIOUS,
 };
 
 /* the draw's values both stages read, laid out alike in C and in the
@@ -230,6 +234,12 @@ struct xgpu_spirv_options
 	xgpu_spirv_world_ao_pass) through the scene at
 	XGPU_SPIRV_BINDING_WORLD_AO_SCENE */
 	BOOL ray_queries;
+	/* display.temporal_aa: the draw writes its motion as the second colour
+	attachment (location 1: the previous position less the current, as a
+	fraction of the view, x right, y down; its depth; 1), its vertex
+	program run again on the previous frame's registers, which the
+	constants' block holds after the 192 (384 vec4s then); not with views */
+	BOOL motion;
 };
 
 /* ---------- the VR mode's effects

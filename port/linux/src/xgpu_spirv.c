@@ -168,6 +168,10 @@ bitwise or (GroupNonUniformArithmetic) */
 	unsigned int world_ao_pixels, t_uv2;
 	/* the vertex constants read (xgpu_spirv_module's) */
 	unsigned long long constants_read[3];
+	/* display.temporal_aa's motion (xgpu_spirv_options' motion): the constants'
+	block holds the previous frame's registers after the 192, and the
+	program reads them while previous is set */
+	BOOL motion, previous;
 };
 
 static void words_push(struct module *m, struct words *words, unsigned int word)
@@ -804,7 +808,7 @@ static unsigned int local(struct module *m, struct words *locals, unsigned int t
 /* the vertex constants: a block of 192 vec4 */
 static void declare_constants(struct module *m)
 {
-	unsigned int length = constant_uint(m, XGPU_VERTEX_CONSTANT_COUNT);
+	unsigned int length = constant_uint(m, m->motion ? 2 * XGPU_VERTEX_CONSTANT_COUNT : XGPU_VERTEX_CONSTANT_COUNT);
 	unsigned int array, block;
 
 	array = id_new(m);
@@ -1004,6 +1008,8 @@ static unsigned int vertex_constant(struct module *m, unsigned int index_id)
 	unsigned int operands[3], pointer;
 
 	memset(m->constants_read, 0xff, sizeof(m->constants_read));
+	if (m->previous)
+		index_id = op2(m, OP_I_ADD, m->t_int, index_id, constant_int(m, XGPU_VERTEX_CONSTANT_COUNT));
 	operands[0] = m->constants;
 	operands[1] = constant_int(m, 0);
 	operands[2] = index_id;
@@ -1020,7 +1026,7 @@ static unsigned int vertex_constant_at(struct module *m, int index)
 		m->constants_read[index >> 6] |= 1ull << (index & 63);
 	operands[0] = m->constants;
 	operands[1] = constant_int(m, 0);
-	operands[2] = constant_int(m, index);
+	operands[2] = constant_int(m, m->previous ? index + XGPU_VERTEX_CONSTANT_COUNT : index);
 	pointer = op(m, OP_ACCESS_CHAIN, type_pointer(m, STORAGE_UNIFORM, m->t_v4), 3, operands);
 	return load(m, m->t_v4, pointer);
 }
@@ -1584,6 +1590,124 @@ unsigned long xgpu_spirv_vertex_inputs(const struct xgpu_vertex_program *program
 	return vertex_inputs(program, lighting);
 }
 
+/* ---------- display.temporal_aa's motion
+
+The objects' draws while a window's objects draw with the motion
+(xgpu_spirv_options' motion): the program run a second time on the previous
+frame's registers (the 192 after the 192: the game's previous projection
+and nodes where it has them, d3d8_device.c's halo_motion_previous_constants,
+else the registers as they are), each position taken through the screen's
+conversion as the draw's is (the same jitter and half pixel, which the
+difference leaves out), and handed to the pixel shader as x, y and w: the
+pixel's motion, the previous less the current, as a fraction of the view. */
+
+/* a position as the screen's conversion has it, before the depth: x, y, w
+(the window's clip position, the conversion's half pixel and the jitter in
+it; no multiview) */
+static unsigned int motion_screen(struct module *m, BOOL clip_captured, unsigned int clip_position,
+	unsigned int position)
+{
+	unsigned int viewport_scale = uniform(m, U_VIEWPORT_SCALE, -1), viewport_offset = uniform(m, U_VIEWPORT_OFFSET, -1);
+	unsigned int screen_offset = uniform(m, U_SCREEN_OFFSET, -1);
+	unsigned int scale_parts[2], scale, shift_parts[2], shift, xy_value, w, parts[3];
+	BOOL previous = m->previous;
+	int component;
+
+	m->previous = FALSE;
+	for (component = 0; component < 2; component++)
+	{
+		unsigned int value = extract(m, viewport_scale, component);
+
+		scale_parts[component] = op3(m, OP_SELECT, m->t_float,
+			compare(m, OP_F_UNORD_NOT_EQUAL, value, constant_float(m, 0.0f)), value, constant_float(m, 1.0f));
+	}
+	scale = construct(m, 2, scale_parts);
+	shift_parts[0] = fadd(m, 1, constant_float(m, 0.5f), screen_offset);
+	shift_parts[1] = constant_float(m, 0.5f);
+	shift = construct(m, 2, shift_parts);
+	if (clip_captured)
+	{
+		w = extract(m, clip_position, 3);
+		xy_value = fdiv(m, 2, fadd(m, 2, fmul(m, 2, xy(m, clip_position),
+			xy(m, vertex_constant_at(m, XGPU_VERTEX_CONSTANT_BIAS - 38))),
+			fscale(m, 2, fsub(m, 2, fadd(m, 2, xy(m, vertex_constant_at(m, XGPU_VERTEX_CONSTANT_BIAS - 37)), shift),
+			xy(m, viewport_offset)), w)), scale);
+	}
+	else
+	{
+		w = extract(m, position, 3);
+		xy_value = fscale(m, 2, fdiv(m, 2, fsub(m, 2, fadd(m, 2, xy(m, position), shift), xy(m, viewport_offset)),
+			scale), w);
+	}
+	m->previous = previous;
+	parts[0] = extract(m, xy_value, 0);
+	parts[1] = extract(m, xy_value, 1);
+	parts[2] = w;
+	return construct(m, 3, parts);
+}
+
+/* the program run on the previous frame's registers, from its state before
+its first instruction: its position as motion_screen has it */
+static unsigned int motion_previous(struct module *m, const struct xgpu_vertex_program *program,
+	const struct vertex_state *initial)
+{
+	struct vertex_state state = *initial;
+	unsigned int clip_position = 0;
+	BOOL clip_captured = FALSE;
+	unsigned long index;
+
+	m->previous = TRUE;
+	for (index = 0; index < program->instruction_count; index++)
+	{
+		const struct xgpu_vertex_instruction *instruction = &program->instructions[index];
+		unsigned int operands = mac_operands(instruction->mac) |
+			(instruction->ilu != XGPU_ILU_NOP && instruction->ilu <= XGPU_ILU_LIT ? 4 : 0);
+		unsigned int a = 0, b = 0, c = 0;
+
+		if (operands & 1)
+			a = vertex_operand(m, &state, &instruction->a, instruction->relative);
+		if (operands & 2)
+			b = vertex_operand(m, &state, &instruction->b, instruction->relative);
+		if (operands & 4)
+			c = vertex_operand(m, &state, &instruction->c, instruction->relative);
+		if (instruction->mac != XGPU_MAC_NOP)
+			state.mac = mac_operation(m, &state, instruction->mac, a, b, c);
+		if (instruction->ilu != XGPU_ILU_NOP)
+			state.ilu = ilu_operation(m, &state, instruction->ilu, c);
+		if (instruction->captures_clip)
+		{
+			clip_position = state.position;
+			clip_captured = TRUE;
+		}
+		if (instruction->mac == XGPU_MAC_ARL)
+		{
+			state.a0 = op1(m, OP_CONVERT_F_TO_S, m->t_int, ext1(m, GLSL_FLOOR, m->t_float,
+				fadd(m, 1, extract(m, state.mac, 0), constant_float(m, (float)0.001))));
+		}
+		else if (instruction->mac != XGPU_MAC_NOP && instruction->mac_mask)
+		{
+			if (instruction->mac_temporary == XGPU_VERTEX_POSITION)
+				state.position = write_masked(m, state.position, state.mac, instruction->mac_mask);
+			else if (instruction->mac_temporary < XGPU_VERTEX_POSITION)
+				state.r[instruction->mac_temporary] = write_masked(m, state.r[instruction->mac_temporary], state.mac,
+					instruction->mac_mask);
+		}
+		if (instruction->ilu != XGPU_ILU_NOP && instruction->ilu_mask)
+		{
+			if (instruction->ilu_temporary == XGPU_VERTEX_POSITION)
+				state.position = write_masked(m, state.position, state.ilu, instruction->ilu_mask);
+			else if (instruction->ilu_temporary < XGPU_VERTEX_POSITION)
+				state.r[instruction->ilu_temporary] = write_masked(m, state.r[instruction->ilu_temporary], state.ilu,
+					instruction->ilu_mask);
+		}
+		if (instruction->writes_output && output_slot(instruction->output) == OUT_POSITION)
+			state.position = write_masked(m, state.position, instruction->output_from_ilu ? state.ilu : state.mac,
+				instruction->output_mask);
+	}
+	m->previous = FALSE;
+	return motion_screen(m, clip_captured, clip_position, state.position);
+}
+
 BOOL xgpu_spirv_vertex_shader(const struct xgpu_vertex_program *program, unsigned long packed_attribute_mask,
 	unsigned long integer_attribute_mask, const struct nv2a_vertex_lighting *lighting,
 	const struct xgpu_spirv_options *options, struct xgpu_spirv_module *module)
@@ -1608,8 +1732,14 @@ BOOL xgpu_spirv_vertex_shader(const struct xgpu_vertex_program *program, unsigne
 	unsigned long depth_z = 0, depth_w = 0;
 	BOOL depth_rows = options->reversed_depth && xgpu_vertex_program_depth_rows(program, &depth_z, &depth_w);
 	unsigned int depth_point = 0, depth_z_row = 0, depth_w_row = 0;
+	/* (display.temporal_aa: the positions this frame and the frame before,
+	as the screen's conversion has them; none with views) */
+	BOOL motion = options->motion && !options->multiview;
+	unsigned int motion_current_out = 0, motion_previous_out = 0;
+	struct vertex_state initial;
 
 	module_begin(&m, EXECUTION_MODEL_VERTEX);
+	m.motion = motion;
 	inputs = vertex_inputs(program, lighting);
 	declare_constants(&m);
 	declare_uniforms(&m);
@@ -1652,6 +1782,13 @@ BOOL xgpu_spirv_vertex_shader(const struct xgpu_vertex_program *program, unsigne
 		light_ambient_out = interface_variable(&m, m.t_v3, STORAGE_OUTPUT, XGPU_SPIRV_LOCATION_LIGHT_AMBIENT, "xLightAmbient");
 		light_point_out = interface_variable(&m, m.t_v3, STORAGE_OUTPUT, XGPU_SPIRV_LOCATION_LIGHT_POINT, "xLightPoint");
 	}
+	if (motion)
+	{
+		motion_current_out = interface_variable(&m, m.t_v3, STORAGE_OUTPUT, XGPU_SPIRV_LOCATION_MOTION_CURRENT,
+			"xMotionCurrent");
+		motion_previous_out = interface_variable(&m, m.t_v3, STORAGE_OUTPUT, XGPU_SPIRV_LOCATION_MOTION_PREVIOUS,
+			"xMotionPrevious");
+	}
 
 	main_id = function_begin(&m);
 	memset(&state, 0, sizeof(state));
@@ -1678,6 +1815,7 @@ BOOL xgpu_spirv_vertex_shader(const struct xgpu_vertex_program *program, unsigne
 	state.outputs[OUT_PTS] = splat(&m, 4, uniform(&m, U_POINT_SIZE, -1));
 	state.a0 = constant_int(&m, 0);
 	state.mac = state.ilu = state.zero;
+	initial = state;
 	/* a structure's vertices are in the world: as they are */
 	if (environment)
 	{
@@ -1772,6 +1910,11 @@ BOOL xgpu_spirv_vertex_shader(const struct xgpu_vertex_program *program, unsigne
 		}
 	}
 
+	if (motion)
+	{
+		store(&m, motion_current_out, motion_screen(&m, clip_captured, clip_position, state.position));
+		store(&m, motion_previous_out, motion_previous(&m, program, &initial));
+	}
 	if (options->multiview)
 	{
 		unsigned int correction, corrected;
@@ -4989,6 +5132,7 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 	self-illumination, and the light that adds past white) */
 	BOOL self_illuminated = XGPU_HDR_IS_SELF_ILLUMINATED(program->hdr) && !program->source_blend;
 	unsigned int self_illumination_base = 0, self_illumination = 0;
+	unsigned int in_motion_current = 0, in_motion_previous = 0, motion_out = 0;
 	int stage;
 
 	memset(&state, 0, sizeof(state));
@@ -5075,6 +5219,22 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 		state.in_world_tangent = interface_variable(&m, m.t_v3, STORAGE_INPUT, XGPU_SPIRV_LOCATION_WORLD_TANGENT, "xWorldTangent");
 	}
 	color_out = interface_variable(&m, world_inputs || occluder ? m.t_uv4 : m.t_v4, STORAGE_OUTPUT, 0, "fragment_color");
+	/* (display.temporal_aa: the motion, the second attachment's: the
+	previous position less the current, as a fraction of the view, x right
+	and y down, and the pixel's depth, which the resolve finds it still is) */
+	if (options->motion && !program->multiview && !world_inputs && !occluder)
+	{
+		in_motion_current = interface_variable(&m, m.t_v3, STORAGE_INPUT, XGPU_SPIRV_LOCATION_MOTION_CURRENT,
+			"xMotionCurrent");
+		in_motion_previous = interface_variable(&m, m.t_v3, STORAGE_INPUT, XGPU_SPIRV_LOCATION_MOTION_PREVIOUS,
+			"xMotionPrevious");
+		motion_out = interface_variable(&m, m.t_v4, STORAGE_OUTPUT, 1, "fragment_motion");
+		if (!state.frag_coord)
+		{
+			state.frag_coord = variable(&m, m.t_v4, STORAGE_INPUT, "gl_FragCoord");
+			decorate1(&m, state.frag_coord, DECORATION_BUILT_IN, BUILT_IN_FRAG_COORD);
+		}
+	}
 	if (sample_mask)
 	{
 		unsigned int operands[3], array = id_new(&m);
@@ -5362,6 +5522,25 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 			constant_uint(&m, 0), constant_uint(&m, 0), constant_uint(&m, 0) }));
 	else
 		store(&m, color_out, finite4(&m, result));
+	if (motion_out)
+	{
+		static const float half_down[2] = { 0.5f, -0.5f };
+		unsigned int current = load(&m, m.t_v3, in_motion_current), previous = load(&m, m.t_v3, in_motion_previous);
+		unsigned int current_w = extract(&m, current, 2), previous_w = extract(&m, previous, 2);
+		unsigned int now = fdiv(&m, 2, xy(&m, current), splat(&m, 2, current_w));
+		unsigned int before = fdiv(&m, 2, xy(&m, previous), splat(&m, 2, previous_w));
+		unsigned int moved, depth, both;
+
+		moved = fmul(&m, 2, fsub(&m, 2, before, now), constant_vector(&m, 2, half_down));
+		/* (none where either is behind the eye) */
+		both = op2(&m, OP_LOGICAL_AND, m.t_bool,
+			compare(&m, OP_F_ORD_GREATER_THAN, current_w, constant_float(&m, 0.0f)),
+			compare(&m, OP_F_ORD_GREATER_THAN, previous_w, constant_float(&m, 0.0f)));
+		moved = select_n(&m, 2, both, moved, constant_splat(&m, 2, 0.0f));
+		depth = extract(&m, load(&m, m.t_v4, state.frag_coord), 2);
+		store(&m, motion_out, construct4(&m, extract(&m, moved, 0), extract(&m, moved, 1), depth,
+			constant_float(&m, 1.0f)));
+	}
 	if (interlocked)
 	{
 		unsigned int operands[2];

@@ -90,6 +90,7 @@ symbols in this file:
 #include "math/real_math.h"
 #include "bitmaps/bitmaps.h"
 #include "render/render.h"
+#include "motion_vectors.h" /* port: port/linux/game/motion_vectors.c */
 #include "camera/camera_scripting.h"
 #include "editor/editor_stubs.h"
 #include "rasterizer/rasterizer.h"
@@ -392,6 +393,11 @@ void render_objects(
 	profile_enter(render_objects_section);
 
 	rasterizer_models_begin(FALSE);
+	/* port: display.temporal_aa: the window's objects draw their motion
+	too (not in display.ambient_occlusion "world"'s pre-pass:
+	port/linux/game/motion_vectors.c) */
+	if (!render_world_ao_prepass)
+		motion_vectors_objects(TRUE);
 	if (!rendered_objects_found_early)
 	{
 		find_rendered_objects();
@@ -424,6 +430,8 @@ void render_objects(
 	/* port: the projectiles deleted in the last tick, drawn through it
 	(port/linux/game/render_interpolation.c) */
 	render_interpolation_ghosts_draw();
+	if (!render_world_ao_prepass)
+		motion_vectors_objects(FALSE);
 
 	rasterizer_models_end();
 
@@ -821,6 +829,9 @@ static void render_object_list(
 					(its own proxies do not shade it; its reference:
 					port/linux/game/world_ao.c) */
 					world_ao_object_begin(object_index);
+					/* port: display.temporal_aa: its nodes, kept for its motion
+					(port/linux/game/motion_vectors.c) */
+					motion_vectors_object(object_index, 0, node_matrices);
 #ifdef HALO_VR
 					/* port: a weapon the VR mode's right hand reaches for, lit
 					up as the holsters' weapons are (port/linux/game/

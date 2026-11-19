@@ -242,6 +242,7 @@ static const uint32_t record_minimum[XGPU_STREAM_RECORD_TYPES] =
 	[XGPU_STREAM_HDR_PEAK_NITS] = sizeof(struct xgpu_stream_value),
 	[XGPU_STREAM_HDR_GAMUT] = sizeof(struct xgpu_stream_value),
 	[XGPU_STREAM_PASS_TIMES] = sizeof(struct xgpu_stream_value),
+	[XGPU_STREAM_MOTION] = sizeof(struct xgpu_stream_motion),
 	[XGPU_STREAM_PANINI] = sizeof(struct xgpu_stream_panini),
 	[XGPU_STREAM_WORLD_AO_WINDOW] = sizeof(struct xgpu_stream_world_ao_window),
 	[XGPU_STREAM_WORLD_AO_FIELD] = sizeof(struct xgpu_stream_world_ao_field),
@@ -569,6 +570,11 @@ static int decode_record(struct host_render_decoder *decoder, const unsigned cha
 		CALL(world_ao_field, field);
 		break;
 	}
+	case XGPU_STREAM_MOTION:
+		if (((const struct xgpu_stream_motion *)(const void *)start)->phase > XGPU_MOTION_RESOLVE)
+			return XGPU_STREAM_ERROR_BOUNDS;
+		CALL(motion, (const void *)start);
+		break;
 	case XGPU_STREAM_WORLD_AO_PREPASS:
 		if (((const struct xgpu_stream_world_ao_prepass *)(const void *)start)->phase > XGPU_WORLD_AO_PREPASS_TWINS)
 			return XGPU_STREAM_ERROR_BOUNDS;
@@ -692,7 +698,8 @@ static int decode_record(struct host_render_decoder *decoder, const unsigned cha
 		const struct xgpu_stream_constants *constants = (const void *)start;
 
 		if (constants->count > (size - sizeof(*constants)) / sizeof(constants->values[0]) ||
-			constants->first > 192 || constants->count > 192 - constants->first)
+			constants->first > 2 * XGPU_STREAM_PREVIOUS_CONSTANTS ||
+			constants->count > 2 * XGPU_STREAM_PREVIOUS_CONSTANTS - constants->first)
 			return XGPU_STREAM_ERROR_RECORD;
 		CALL(set_constants, constants);
 		break;

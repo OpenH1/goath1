@@ -209,6 +209,11 @@ void xgpu_backend_world_ao_field(int part, unsigned long width, unsigned long he
 begun (XGPU_WORLD_AO_PREPASS_BEGIN, its targets target's size), ended and
 the occlusion found from it over the window (_END, pass), or none (_NONE) */
 void xgpu_backend_world_ao_prepass(int phase, xgpu_target target, const struct xgpu_world_ao_pass *pass);
+/* display.temporal_aa's motion (xgpu_stream.h's MOTION): a window's objects
+begun or ended (XGPU_MOTION_OBJECTS_BEGIN, _END), and the window's motion
+resolved (_RESOLVE, pass) */
+struct xgpu_motion_pass;
+void xgpu_backend_motion(int phase, xgpu_target target, const struct xgpu_motion_pass *pass);
 /* a box of the distance-field scene's cascades' texture (xgpu.h's
 XGPU_WORLD_CASCADE*): its first texel, its size, two signed bytes a texel,
 x fastest (width 0: released) */

@@ -59,6 +59,7 @@ its swapchain.
 #include "xgpu_vulkan_effects.h"
 #include "xgpu_vulkan_loading.h"
 #include "xgpu_vulkan_post.h"
+#include "xgpu_vulkan_post_shaders.h"
 #include "xgpu_vulkan_stream.h"
 #include "xgpu_vulkan_textures.h"
 #ifdef HALO_VR
@@ -148,6 +149,7 @@ pre-pass, and the frame's last pass (its composition, encoding, present) */
 #define PASS_OWNER_PANINI "PANINI"
 #define PASS_OWNER_AO "AO"
 #define PASS_OWNER_FINAL "FINAL PASS"
+#define PASS_OWNER_MOTION "MOTION"
 
 struct stream_target
 {
@@ -266,7 +268,10 @@ static struct
 	float effect_scale[4], effect_offset[4], effect_screen_offset;
 	/* (and made for a flat screen's one view: effect_views) */
 	int effect_flat;
-	float constants[192][4];
+	/* (and past them the previous frame's, display.temporal_aa's: the
+	192 as they are, but where a record of them sets them apart,
+	xgpu_stream.h's MOTION) */
+	float constants[2 * XGPU_STREAM_PREVIOUS_CONSTANTS][4];
 	/* the registers set since the constants were last uploaded, and those
 	that upload has (bit n of word n / 64: c[n], from c[-96]) */
 	uint64_t constants_changed[3], constants_valid[3];
@@ -388,6 +393,23 @@ static struct
 	struct xgpu_vulkan_pipeline_description rays;
 	int rays_drawn;
 } prepass;
+
+/* display.temporal_aa's motion (xgpu_stream.h's MOTION): on once a record
+has come (the previous registers kept from then on); a window's objects
+drawing their motion (objects) into the objects' image (RGBA32F: the
+motion, the depth, 1 where drawn) beside its target's; each pipeline's
+variant that writes it (its shaders xgpu_spirv_options' motion), made as
+first drawn; the window's motion resolved (RGBA16F, the target's size:
+for the technique), and the passes' shaders and sampler */
+static struct
+{
+	int on, objects, making, failed, reset;
+	struct xgpu_vulkan_image *drawn, *motion;
+	struct stream_pipeline *entries;
+	struct xgpu_stream_pipeline_define *definitions;
+	VkShaderModule vertex, resolve, view;
+	VkSampler sampler;
+} motion;
 
 static double preparation_start(void)
 {
@@ -1201,10 +1223,23 @@ static void stream_set_constants(void *context, const struct xgpu_stream_constan
 	uint64_t changed[3];
 
 	(void)context;
-	if (record->first >= 192)
+	/* (display.temporal_aa: the previous frame's alone) */
+	if (record->first >= XGPU_STREAM_PREVIOUS_CONSTANTS)
+	{
+		if (record->first < 2 * XGPU_STREAM_PREVIOUS_CONSTANTS)
+		{
+			if (count > 2 * XGPU_STREAM_PREVIOUS_CONSTANTS - record->first)
+				count = 2 * XGPU_STREAM_PREVIOUS_CONSTANTS - record->first;
+			memcpy(stream.constants[record->first], record->values, (size_t)count * sizeof(stream.constants[0]));
+		}
 		return;
+	}
 	if (count > 192 - record->first)
 		count = 192 - record->first;
+	/* (and the previous frame's the same, until a record sets them apart) */
+	if (motion.on)
+		memcpy(stream.constants[XGPU_STREAM_PREVIOUS_CONSTANTS + record->first], record->values,
+			(size_t)count * sizeof(stream.constants[0]));
 	if (!memcmp(stream.constants[record->first], record->values, (size_t)count * sizeof(stream.constants[0])))
 		return;
 	memcpy(stream.constants[record->first], record->values, (size_t)count * sizeof(stream.constants[0]));
@@ -1490,6 +1525,8 @@ static int pipeline_shaders(struct stream_pipeline *entry, const struct xgpu_str
 	options.debug_flat = debug_switch("HALO_GPU_DEBUG_FLAT", &debug_flat);
 	options.reversed_depth = XGPU_VULKAN_REVERSED_DEPTH;
 	options.subgroups = stream.capabilities.subgroups;
+	/* (display.temporal_aa: a window's objects' variant, its motion too) */
+	options.motion = motion.making != 0;
 	program = malloc(sizeof(*program));
 	if (!program)
 		return 0;
@@ -1497,8 +1534,8 @@ static int pipeline_shaders(struct stream_pipeline *entry, const struct xgpu_str
 	entry->inputs = (uint16_t)xgpu_spirv_vertex_inputs(program, lighting);
 	if (xgpu_spirv_vertex_shader(program, packed, integers, lighting, &options, &module))
 	{
-		snprintf(name, sizeof(name), "vs%08x%08x_%lx_%lx_%u_view%u_fovea%u", (unsigned)(hash >> 32), (unsigned)hash,
-			packed, integers, key->lighting, key->views, variant->foveated);
+		snprintf(name, sizeof(name), "vs%08x%08x_%lx_%lx_%u_view%u_fovea%u%s", (unsigned)(hash >> 32), (unsigned)hash,
+			packed, integers, key->lighting, key->views, variant->foveated, motion.making ? "_motion" : "");
 		shader_dump(name, &module);
 		entry->vertex_shader = xgpu_vulkan_shader(module.words, module.count);
 		free(module.words);
@@ -1518,9 +1555,9 @@ static int pipeline_shaders(struct stream_pipeline *entry, const struct xgpu_str
 
 	if (xgpu_spirv_pixel_shader(&pixel, &options, &module))
 	{
-		snprintf(name, sizeof(name), "ps_%08x_%02x%02x%02x%02x_fovea%u_effect%u%u", bytes_hash(&definition->pixel_program,
+		snprintf(name, sizeof(name), "ps_%08x_%02x%02x%02x%02x_fovea%u_effect%u%u%s", bytes_hash(&definition->pixel_program,
 			sizeof(definition->pixel_program)), options.border[0], options.border[1], options.border[2], options.border[3],
-			variant->foveated, (unsigned)options.effect, (unsigned)options.effect_fade);
+			variant->foveated, (unsigned)options.effect, (unsigned)options.effect_fade, motion.making ? "_motion" : "");
 		shader_dump(name, &module);
 		entry->pixel_shader = xgpu_vulkan_shader(module.words, module.count);
 		free(module.words);
@@ -2185,24 +2222,43 @@ uniforms, its vertices and indices; nothing if it cannot be drawn. Apart
 (a world pipeline that has a stand-in): its shaders not made here, its
 pipeline made apart from the draws (xgpu_vulkan_pipeline_ready), and FALSE
 before anything is done where either is not made yet; else TRUE */
+/* (display.temporal_aa's: below) */
+static int motion_tables(void);
+static int motion_writer(const struct xgpu_stream_pipeline_define *definition);
+
 static int draw_pipeline(const struct draw_input *input, int apart)
 {
 	struct xgpu_vulkan_pipeline_description pipeline = stream.pipeline;
 	struct xgpu_vulkan_draw draw;
 	struct xgpu_vulkan_texture effect_draw_textures[4];
+	struct xgpu_vulkan_range previous_range;
 	struct stream_pipeline *entry;
 	struct variant variant;
 	uint32_t index, attempt;
+	int motion_drawn, motion_writes, made;
 	double traced;
 
 	if (!stream.pipeline_id || !stream.definition || !input->count)
 		return 1;
-	entry = prepass.drawing ? prepass.drawing : &stream.pipelines[stream.pipeline_id];
+	/* (display.temporal_aa: a window's objects, into the motion too; those
+	that write it with their variant's shaders, the rest through it) */
+	motion_drawn = motion.objects && !prepass.drawing && !stream.preparing && xgpu_vulkan_motion_bound();
+	motion_writes = motion_drawn && motion_writer(stream.definition) && motion_tables();
+	entry = prepass.drawing ? prepass.drawing : motion_writes ? &motion.entries[stream.pipeline_id] :
+		&stream.pipelines[stream.pipeline_id];
 	variant_current(&stream.definition->key, &variant);
 	variant.integer_attributes = stream.definition->key.immediate ? 0 : input->integers;
 	if (apart && (entry->state != XGPU_STREAM_PIPELINE_MADE || memcmp(&entry->variant, &variant, sizeof(variant))))
 		return 0;
-	if (!pipeline_shaders(entry, stream.definition, &variant))
+	if (motion_writes && memcmp(&motion.definitions[stream.pipeline_id], stream.definition, sizeof(*stream.definition)))
+	{
+		motion.definitions[stream.pipeline_id] = *stream.definition;
+		memset(entry, 0, sizeof(*entry));
+	}
+	motion.making = motion_writes;
+	made = pipeline_shaders(entry, stream.definition, &variant);
+	motion.making = 0;
+	if (!made)
 		return 1;
 	pipeline.vertex_shader = entry->vertex_shader;
 	pipeline.pixel_shader = entry->pixel_shader;
@@ -2255,6 +2311,12 @@ static int draw_pipeline(const struct draw_input *input, int apart)
 		pipeline.samples = 1;
 		pipeline.view_mask = 0;
 		pipeline.depth_format = XGPU_VULKAN_FORMAT_D24S8;
+	}
+	/* (display.temporal_aa: the motion's attachment, written or not) */
+	if (motion_drawn)
+	{
+		pipeline.motion_format = XGPU_VULKAN_FORMAT_RGBA32F;
+		pipeline.motion_mask = motion_writes ? 15 : 0;
 	}
 #ifdef HALO_VR
 	pipeline.depth_clamp = host_vulkan_vr_sky() != 0;
@@ -2344,6 +2406,19 @@ static int draw_pipeline(const struct draw_input *input, int apart)
 			preparation_end(2, traced);
 			return 1;
 		}
+		/* (display.temporal_aa: a writer's registers, this frame's and the
+		frame before's, 384: its own upload, never the others') */
+		if (motion_writes)
+		{
+			void *to = xgpu_vulkan_upload((uint32_t)sizeof(stream.constants), 256, &previous_range);
+
+			if (!to)
+			{
+				preparation_end(2, traced);
+				return 1;
+			}
+			memcpy(to, stream.constants, sizeof(stream.constants));
+		}
 		preparation_end(2, traced);
 		if (serial == xgpu_vulkan_serial())
 			break;
@@ -2351,7 +2426,7 @@ static int draw_pipeline(const struct draw_input *input, int apart)
 	if (attempt == 3)
 		return 1;
 	memcpy(draw.textures, stream.textures, sizeof(draw.textures));
-	draw.constants = stream.constants_range;
+	draw.constants = motion_writes ? previous_range : stream.constants_range;
 	draw.uniforms = stream.uniforms_range;
 	draw.dynamic = &stream.dynamic;
 	draw.dynamic_lights = stream.definition->pixel_program.dynamic_lights != 0;
@@ -3162,6 +3237,250 @@ static void stream_world_ao_instances(void *context, const struct xgpu_stream_wo
 	xgpu_vulkan_rt_instances(record->size ? host_pointer(record->data) : NULL, record->count);
 }
 
+/* ---------- display.temporal_aa's motion (xgpu_stream.h's MOTION)
+
+A window's objects draw their motion beside their colour: the targets' pass
+has the objects' image as its second attachment (xgpu_vulkan_set_motion_
+target), each draw that writes depth and blends nothing with its
+pipeline's variant whose shaders write it (xgpu_spirv_options' motion: its
+vertex program run again on the previous frame's registers, uploaded with
+this frame's), the others through it, writing none. The window whole, its
+motion is resolved over its corners (tools/vulkan_post_shaders.py's
+MOTION_RESOLVE_SOURCE): an object's where its depth is still the pixel's
+(nothing drew over it since), the camera's from the depth elsewhere (the
+level, the sky, whatever drew over an object). debug.motion_vectors then
+draws it over the view (MOTION_VIEW_SOURCE). With multisampling, or views
+(VR's eyes), no motion is drawn: the objects' attachment is the target's
+own image's, one sample, one layer. */
+
+/* the variants' tables, made once (0: none can be) */
+static int motion_tables(void)
+{
+	if (motion.entries)
+		return 1;
+	motion.entries = calloc(XGPU_STREAM_PIPELINES, sizeof(*motion.entries));
+	motion.definitions = calloc(XGPU_STREAM_PIPELINES, sizeof(*motion.definitions));
+	if (motion.entries && motion.definitions)
+		return 1;
+	free(motion.entries);
+	free(motion.definitions);
+	motion.entries = NULL;
+	motion.definitions = NULL;
+	return 0;
+}
+
+/* whether a pipeline's draws write the motion: opaque (depth tested and
+written, nothing blended, in the fixed function or the shader) and of no
+views */
+static int motion_writer(const struct xgpu_stream_pipeline_define *definition)
+{
+	const struct xgpu_stream_pipeline_key *key = &definition->key;
+
+	return key->depth_test && key->depth_write && !key->blend && key->color_mask && !key->pixel.source_blend &&
+		key->views <= 1 && !key->pixel.vr_effect && !XGPU_HDR_SHADER_BLENDS(key->pixel.hdr);
+}
+
+static struct xgpu_vulkan_image *motion_image(struct xgpu_vulkan_image *image, uint8_t format, uint32_t width,
+	uint32_t height)
+{
+	struct xgpu_vulkan_image_description description;
+
+	if (image && xgpu_vulkan_image_description(image)->width == width &&
+		xgpu_vulkan_image_description(image)->height == height)
+		return image;
+	xgpu_vulkan_image_destroy(image);
+	memset(&description, 0, sizeof(description));
+	description.type = XGPU_VULKAN_IMAGE_2D;
+	description.format = format;
+	description.usage = XGPU_VULKAN_USAGE_SAMPLED | XGPU_VULKAN_USAGE_TARGET;
+	description.width = width;
+	description.height = height;
+	description.depth_or_layers = 1;
+	description.levels = 1;
+	return xgpu_vulkan_image_create(&description);
+}
+
+/* the passes' shaders and sampler (0 if they cannot be made) */
+static int motion_passes(void)
+{
+	struct xgpu_vulkan_sampler_description sampler;
+
+	if (motion.failed)
+		return 0;
+	if (!motion.vertex)
+		motion.vertex = xgpu_vulkan_shader(xgpu_vulkan_post_vertex.words, xgpu_vulkan_post_vertex.count);
+	if (!motion.resolve)
+		motion.resolve = xgpu_vulkan_shader(xgpu_vulkan_post_programs[XGPU_VULKAN_POST_MOTION_RESOLVE].words,
+			xgpu_vulkan_post_programs[XGPU_VULKAN_POST_MOTION_RESOLVE].count);
+	if (!motion.view)
+		motion.view = xgpu_vulkan_shader(xgpu_vulkan_post_programs[XGPU_VULKAN_POST_MOTION_VIEW].words,
+			xgpu_vulkan_post_programs[XGPU_VULKAN_POST_MOTION_VIEW].count);
+	if (!motion.sampler)
+	{
+		memset(&sampler, 0, sizeof(sampler));
+		sampler.minify = sampler.magnify = XGPU_VULKAN_FILTER_POINT;
+		sampler.mip = XGPU_VULKAN_MIP_NONE;
+		sampler.address[0] = sampler.address[1] = sampler.address[2] = XGPU_VULKAN_ADDRESS_CLAMP;
+		sampler.anisotropy = 1;
+		motion.sampler = xgpu_vulkan_sampler(&sampler);
+	}
+	if (motion.vertex && motion.resolve && motion.view && motion.sampler)
+		return 1;
+	host_logf(HOST_LOG_WARN, "vulkan: display.temporal_aa's motion passes cannot be made: no motion is found");
+	motion.failed = 1;
+	return 0;
+}
+
+/* a pass's triangle over the rectangle into an image, sampling two */
+static void motion_pass_draw(VkShaderModule pixel_shader, struct xgpu_vulkan_image *into, uint8_t color_mask,
+	const int32_t rectangle[4], struct xgpu_vulkan_image *image0, struct xgpu_vulkan_image *image1,
+	const struct xgpu_vulkan_post_uniforms *uniforms)
+{
+	struct xgpu_vulkan_pipeline_description pipeline;
+	struct xgpu_vulkan_dynamic_state dynamic;
+	struct xgpu_vulkan_draw draw;
+	void *bytes;
+	int stage;
+
+	memset(&pipeline, 0, sizeof(pipeline));
+	pipeline.vertex_shader = motion.vertex;
+	pipeline.pixel_shader = pixel_shader;
+	pipeline.primitive_class = XGPU_VULKAN_CLASS_TRIANGLES;
+	pipeline.color_mask = color_mask;
+	pipeline.color_format = xgpu_vulkan_image_description(into)->format;
+	pipeline.samples = 1;
+	memset(&draw, 0, sizeof(draw));
+	draw.pipeline = xgpu_vulkan_pipeline(&pipeline);
+	if (!draw.pipeline)
+		return;
+	for (stage = 0; stage < 4; stage++)
+	{
+		draw.textures[stage].image = stage == 0 ? image0 : stage == 1 ? image1 : NULL;
+		draw.textures[stage].kind = XGPU_VULKAN_IMAGE_2D;
+		draw.textures[stage].sampler = motion.sampler;
+	}
+	/* (the draw set's constants' range, which the uniforms' share) */
+	bytes = xgpu_vulkan_upload(192 * 16, 256, &draw.uniforms);
+	if (!bytes)
+		return;
+	memset(bytes, 0, 192 * 16);
+	memcpy(bytes, uniforms, sizeof(*uniforms));
+	draw.constants = draw.uniforms;
+	memset(&dynamic, 0, sizeof(dynamic));
+	dynamic.viewport[0] = dynamic.scissor[0] = rectangle[0];
+	dynamic.viewport[1] = dynamic.scissor[1] = rectangle[1];
+	dynamic.viewport[2] = dynamic.scissor[2] = rectangle[2] - rectangle[0];
+	dynamic.viewport[3] = dynamic.scissor[3] = rectangle[3] - rectangle[1];
+	dynamic.depth_range[1] = 1.0f;
+	draw.dynamic = &dynamic;
+	draw.topology = XGPU_VULKAN_TOPOLOGY_TRIANGLES;
+	draw.count = 3;
+	xgpu_vulkan_set_target_views(into, NULL, 0, 1);
+	xgpu_vulkan_draw(&draw);
+}
+
+static void stream_motion(void *context, const struct xgpu_stream_motion *record)
+{
+	struct stream_target *target = target_get(record->target);
+
+	(void)context;
+	/* (the previous frame's registers this frame's, from the first: the
+	game sets some of them once) */
+	if (!motion.on)
+		memcpy(stream.constants[XGPU_STREAM_PREVIOUS_CONSTANTS], stream.constants[0],
+			XGPU_STREAM_PREVIOUS_CONSTANTS * sizeof(stream.constants[0]));
+	motion.on = 1;
+	if (stream.preparing)
+		return;
+	if (record->phase == XGPU_MOTION_OBJECTS_BEGIN)
+	{
+		static const float none[4];
+		int32_t whole[1][4];
+
+		if (!target || target->depth || target->samples > 1 || !motion_tables())
+			return;
+		xgpu_vulkan_pass_owner(PASS_OWNER_MOTION);
+		motion.drawn = motion_image(motion.drawn, XGPU_VULKAN_FORMAT_RGBA32F, target->width, target->height);
+		if (!motion.drawn)
+		{
+			xgpu_vulkan_pass_owner(NULL);
+			return;
+		}
+		/* (nothing drawn: alpha 0) */
+		xgpu_vulkan_set_target_views(motion.drawn, NULL, 0, 1);
+		whole[0][0] = whole[0][1] = 0;
+		whole[0][2] = (int32_t)target->width;
+		whole[0][3] = (int32_t)target->height;
+		xgpu_vulkan_clear((const int32_t (*)[4])whole, 1, XGPU_VULKAN_CLEAR_COLOR | XGPU_VULKAN_CLEAR_CHANNELS, none,
+			1.0f, 0);
+		xgpu_vulkan_pass_owner(NULL);
+		xgpu_vulkan_set_motion_target(motion.drawn, target->image);
+		motion.objects = 1;
+		targets_bind();
+		return;
+	}
+	if (record->phase == XGPU_MOTION_OBJECTS_END || record->phase == XGPU_MOTION_NONE)
+	{
+		motion.objects = 0;
+		xgpu_vulkan_set_motion_target(NULL, NULL);
+		return;
+	}
+	if (record->phase == XGPU_MOTION_RESOLVE)
+	{
+		struct stream_target *depth = target_get(stream.depth);
+		struct xgpu_vulkan_post_uniforms uniforms;
+		int32_t rectangle[4];
+		int axis;
+
+		motion.objects = 0;
+		xgpu_vulkan_set_motion_target(NULL, NULL);
+		/* (the technique's history begun again: milestone 2's) */
+		motion.reset = record->pass.motion[3] == 0.0f;
+		if (!target || target->depth || target->samples > 1 || !depth || !depth->depth || depth->samples > 1 ||
+			!motion.drawn || xgpu_vulkan_image_description(motion.drawn)->width != target->width ||
+			xgpu_vulkan_image_description(motion.drawn)->height != target->height || !motion_passes())
+			return;
+		for (axis = 0; axis < 2; axis++)
+		{
+			int32_t size = (int32_t)(axis ? target->height : target->width);
+			const int32_t *corners = record->pass.corners;
+
+			rectangle[axis] = corners[axis] < 0 ? 0 : corners[axis] > size ? size : corners[axis];
+			rectangle[axis + 2] = corners[axis + 2] < rectangle[axis] ? rectangle[axis] :
+				corners[axis + 2] > size ? size : corners[axis + 2];
+		}
+		if (rectangle[2] <= rectangle[0] || rectangle[3] <= rectangle[1])
+			return;
+		xgpu_vulkan_pass_owner(PASS_OWNER_MOTION);
+		motion.motion = motion_image(motion.motion, XGPU_VULKAN_FORMAT_RGBA16F, target->width, target->height);
+		if (motion.motion)
+		{
+			memset(&uniforms, 0, sizeof(uniforms));
+			uniforms.metrics[0] = 1.0f / (float)target->width;
+			uniforms.metrics[1] = 1.0f / (float)target->height;
+			uniforms.metrics[2] = (float)target->width;
+			uniforms.metrics[3] = (float)target->height;
+			uniforms.window[0] = (float)record->pass.corners[0];
+			uniforms.window[1] = (float)record->pass.corners[1];
+			uniforms.window[2] = (float)(record->pass.corners[2] - record->pass.corners[0]);
+			uniforms.window[3] = (float)(record->pass.corners[3] - record->pass.corners[1]);
+			memcpy(uniforms.reproject, record->pass.reproject, sizeof(uniforms.reproject));
+			memcpy(uniforms.motion, record->pass.motion, sizeof(uniforms.motion));
+			uniforms.motion[2] = XGPU_VULKAN_REVERSED_DEPTH ? 1.0f : 0.0f;
+			target_resolve(depth);
+			motion_pass_draw(motion.resolve, motion.motion, 15, rectangle, motion.drawn, depth->image, &uniforms);
+			/* (debug.motion_vectors: drawn over the view) */
+			if (record->pass.jitter[2] != 0.0f)
+			{
+				target->written++;
+				motion_pass_draw(motion.view, target->image, 7, rectangle, motion.motion, NULL, &uniforms);
+			}
+		}
+		xgpu_vulkan_pass_owner(NULL);
+		targets_bind();
+	}
+}
+
 /* ---------- display.ambient_occlusion "world" found once a pixel
 
 xgpu_stream.h's WORLD_AO_PREPASS: the window's opaque surfaces drawn first
@@ -3954,6 +4273,8 @@ const struct host_render_backend *xgpu_vulkan_stream_backend(void)
 		backend.world_ao_cascades = stream_world_ao_cascades;
 		backend.world_ao_window = stream_world_ao_window;
 		backend.world_ao_prepass = stream_world_ao_prepass;
+		/* display.temporal_aa's motion */
+		backend.motion = stream_motion;
 		/* ... "ray_traced"'s scene (xgpu_vulkan_rt.c), where the device has
 		ray queries */
 		backend.world_ao_mesh = stream_world_ao_mesh;

@@ -119,6 +119,9 @@ struct host_render_backend
 	/* ... found once a pixel (xgpu_stream.h's WORLD_AO_PREPASS); none: the
 	pre-pass's draws are drawn as the surfaces' (xgpu_stream.h) */
 	void (*world_ao_prepass)(void *context, const struct xgpu_stream_world_ao_prepass *record);
+	/* display.temporal_aa's motion (xgpu_stream.h's MOTION); none: the
+	window's objects draw as ever, and no motion is found */
+	void (*motion)(void *context, const struct xgpu_stream_motion *record);
 	void (*world_ao_cascades)(void *context, const struct xgpu_stream_world_ao_cascades *record);
 	/* display.ambient_occlusion "ray_traced" (xgpu_stream.h's WORLD_AO_MESH,
 	_INSTANCES: the decoder has checked their sizes, not the instances'

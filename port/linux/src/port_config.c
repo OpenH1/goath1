@@ -302,6 +302,12 @@ static const struct config_setting config_settings[] =
 		"or \"smaa\" smooth the 3D view once it is drawn (the HUD and menus stay\n"
 		"sharp); \"msaa2x\", \"msaa4x\" or \"msaa8x\" draw with that many samples\n"
 		"a pixel. Each combines with display.supersampling." GRAPHICS_CHOOSES },
+	{ "display.temporal_aa", _config_string, "\"off\"", "HALO_TEMPORAL_AA", _environment_value, _platform_all,
+		"A temporal technique over the 3D view, at any render scale (the native\n"
+		"one too): \"off\", or \"fsr\", \"dlss\" or \"metalfx\" (none of them is\n"
+		"drawn yet: each window's motion and jitter are made for them, which\n"
+		"debug.motion_vectors shows). Not with multisampling, nor in VR\n"
+		"(docs/temporal-aa.md)." },
 	{ "display.supersampling", _config_real, "1.0", "HALO_SUPERSAMPLING", _environment_value, _platform_desktop,
 		"Draw the game at this many times the display's resolution each way, 1.0\n"
 		"to 2.0, and scale it down to the display: smoother edges and finer\n"
@@ -2993,6 +2999,10 @@ static const struct config_setting config_settings[] =
 	{ "debug.world_ao_view", _config_boolean, "false", "HALO_WORLD_AO_VIEW", _environment_value, _platform_all,
 		"With display.ambient_occlusion \"world\", the surfaces it shades drawn as\n"
 		"its occlusion alone, in grey." },
+	{ "debug.motion_vectors", _config_boolean, "false", "HALO_MOTION_VECTORS", _environment_value, _platform_all,
+		"With display.temporal_aa on, each pixel's motion since the frame before\n"
+		"drawn over the 3D view as colour: grey still, red to the right, green\n"
+		"downward, full at 8 pixels a frame." },
 	{ "debug.world_ao_inline", _config_boolean, "false", "HALO_WORLD_AO_INLINE", _environment_value, _platform_all,
 		"With display.ambient_occlusion \"world\", each surface finds its own\n"
 		"occlusion as it draws (as before it was found once a pixel), to compare." },
@@ -4893,6 +4903,7 @@ static const struct
 	{ "display.resolution_scaling", { "native", "original", NULL }, NULL },
 	{ "display.anti_aliasing", { "off", "fxaa", "smaa", "ssaa2x", "msaa2x", "msaa4x", "msaa8x", NULL }, NULL },
 	{ "display.ambient_occlusion", { "off", "world", "ray_traced", NULL }, "off" },
+	{ "display.temporal_aa", { "off", "fsr", "dlss", "metalfx", NULL }, "off" },
 	{ "display.astc_textures", { "auto", "always", "off", NULL }, NULL },
 	{ "display.picture_position", { "center", "top", "bottom", NULL }, NULL },
 	{ "display.orientation", { "landscape", "portrait", "auto", NULL }, NULL },

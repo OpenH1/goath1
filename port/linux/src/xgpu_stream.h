@@ -320,6 +320,8 @@ enum
 	/* debug.timings: each pass timed on the GPU (value: every so many
 	frames, 0 none), as the setting changes (xgpu_backend_pass_times) */
 	XGPU_STREAM_PASS_TIMES,
+	/* display.temporal_aa: a window's motion (xgpu_backend_motion) */
+	XGPU_STREAM_MOTION,
 	XGPU_STREAM_RECORD_TYPES,
 };
 
@@ -637,6 +639,56 @@ struct xgpu_stream_world_ao_prepass
 	uint32_t target;
 	uint32_t pad;
 	struct xgpu_world_ao_pass pass;
+};
+
+/* display.temporal_aa's motion (docs/temporal-aa.md): a window's pixels'
+movement since the frame before, for a temporal technique (FSR, DLSS,
+MetalFX; at any render scale, the native one too).
+
+MOTION: phase XGPU_MOTION_OBJECTS_BEGIN (the draws from here on into
+target, the window's objects, draw their motion too: the second colour
+attachment, xgpu_spirv_options' motion, those that write depth and blend
+nothing writing it, the others drawn through it; the constants' registers
+192 to 383 are the previous frame's, CONSTANTS's past the 192: the backend
+keeps a copy of the 192 there, which a record of the first 192 writes too),
+_OBJECTS_END (no more), _RESOLVE (the window whole: its motion found at
+each pixel of its corners, from its objects' where their depth is still
+the pixel's, else from the camera's, struct xgpu_motion_pass). The
+transparent draws (particles, decals, glass, water) draw none: their pixels
+have what is behind them (the place for a mask of them, later). */
+enum
+{
+	XGPU_MOTION_NONE,
+	XGPU_MOTION_OBJECTS_BEGIN,
+	XGPU_MOTION_OBJECTS_END,
+	XGPU_MOTION_RESOLVE,
+};
+/* the previous frame's registers' first, in CONSTANTS */
+#define XGPU_STREAM_PREVIOUS_CONSTANTS 192u
+/* the window's corners in its target's pixels (left, top, right, bottom);
+the rows of the matrix from a pixel's clip position (unjittered, the game's
+projection: x, y -1 to 1 up, depth 0 near to 1 far, w 1) to where it was
+the frame before, the camera's movement alone; motion: [0] and [1] the
+drawn pixels' offset from their clip positions (the jitter and the screen's
+half pixel, in the same units), [2] 1, [3] 1 where the window has its frame
+before (0: a cut, a new map, a resize: no motion, and the technique's
+history reset); jitter: the frame's jitter in the target's pixels (x right,
+y down), and [2] 1 where debug.motion_vectors draws the motion over the
+view */
+struct xgpu_motion_pass
+{
+	int32_t corners[4];
+	float reproject[4][4];
+	float motion[4];
+	float jitter[4];
+};
+struct xgpu_stream_motion
+{
+	uint32_t header;
+	uint32_t phase;
+	uint32_t target;
+	uint32_t pad;
+	struct xgpu_motion_pass pass;
 };
 
 /* PIPELINE_STAND_IN: pipeline id (one with the world's light) has a stand-in
@@ -1518,6 +1570,7 @@ XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_world_ao_window, 16 + 32 + 32 + XGPU_
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_world_ao_field, 40);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_world_ao_prepass, 96 + 64 + 64 + 16 + 16);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_world_ao_cascades, 40);
+XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_motion, 16 + 16 + 64 + 16 + 16);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_world_ao_mesh, 32);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_world_ao_instance, 64);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_world_ao_instances, 16);
