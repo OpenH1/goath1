@@ -5695,15 +5695,23 @@ static void retained_tokens_moved(const struct retained_tokens *tokens)
 		retained.moved[index] += now[index] != had[index];
 }
 
+/* its slot's: of what tells most draws apart (the states, the program, the
+textures, the target, the game's kind of draw), each word its own multiply
+so that they run side by side; the rest is compared in the slot */
 static uint32_t retained_context_hash(const struct retained_context *context)
 {
-	const uint32_t *words = (const uint32_t *)context;
-	uint64_t hash = context->state_hash;
-	unsigned long index;
+	uint64_t hash = context->state_hash ^
+		(uint64_t)(uintptr_t)context->program * 0x9e3779b97f4a7c15ull ^
+		(uint64_t)(uintptr_t)context->textures[0] * 0xc2b2ae3d27d4eb4full ^
+		(uint64_t)(uintptr_t)context->textures[1] * 0x165667b19e3779f9ull ^
+		(uint64_t)(uintptr_t)context->textures[2] * 0x85ebca77c2b2ae63ull ^
+		(uint64_t)(uintptr_t)context->textures[3] * 0x27d4eb2f165667c5ull ^
+		(uint64_t)(uintptr_t)context->targets[0] * 0xff51afd7ed558ccdull ^
+		(uint64_t)(uint32_t)context->inputs.hdr_kind * 0xc4ceb9fe1a85ec53ull;
 
-	for (index = 2; index < sizeof(*context) / 4; index++)
-		hash = (hash ^ words[index]) * 0x100000001b3ull;
-	return (uint32_t)(hash ^ (hash >> 29) ^ (hash >> 41));
+	hash ^= hash >> 33;
+	hash *= 0xff51afd7ed558ccdull;
+	return (uint32_t)(hash ^ (hash >> 29));
 }
 
 /* the draw's context (retained_context); FALSE if its preparation is not
