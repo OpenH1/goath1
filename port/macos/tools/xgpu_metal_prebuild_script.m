@@ -107,15 +107,36 @@ static const char *blend_operation_name(MTLBlendOperation operation)
 	return (NSUInteger)operation < sizeof(names) / sizeof(names[0]) ? names[operation] : NULL;
 }
 
+/* a colour attachment's entry */
+static NSDictionary *color_attachment_entry(MTLRenderPipelineColorAttachmentDescriptor *color)
+{
+	const char *format = pixel_format_name(color.pixelFormat), *source = blend_factor_name(color.sourceRGBBlendFactor),
+		*destination = blend_factor_name(color.destinationRGBBlendFactor),
+		*source_alpha = blend_factor_name(color.sourceAlphaBlendFactor),
+		*destination_alpha = blend_factor_name(color.destinationAlphaBlendFactor),
+		*operation = blend_operation_name(color.rgbBlendOperation),
+		*alpha_operation = blend_operation_name(color.alphaBlendOperation);
+
+	if (!format || !source || !destination || !source_alpha || !destination_alpha || !operation || !alpha_operation)
+		fail("a colour attachment's value the script writer does not know");
+	return @{ @"pixel_format": @(format), @"write_mask": @(color.writeMask),
+		@"blending_enabled": @(color.blendingEnabled), @"rgb_blend_operation": @(operation),
+		@"alpha_blend_operation": @(alpha_operation), @"source_rgb_blend_factor": @(source),
+		@"destination_rgb_blend_factor": @(destination), @"source_alpha_blend_factor": @(source_alpha),
+		@"destination_alpha_blend_factor": @(destination_alpha) };
+}
+
 /* a pipeline's entry in the script: as the harvested scripts of the
 backend's own archives write it (metal-source -flatbuffers=json), the
-attributes and the layouts up to the last used in order */
+attributes and the layouts up to the last used in order, and the colour
+attachments up to the last with a format (display.temporal_aa's motion
+variants: the motion, RGBA32F, the second) */
 static NSDictionary *pipeline_entry(MTLRenderPipelineDescriptor *descriptor, NSString *vertex, NSString *fragment)
 {
 	NSMutableDictionary *entry = [NSMutableDictionary dictionary];
 	NSMutableArray *attributes = [NSMutableArray array], *layouts = [NSMutableArray array];
-	MTLRenderPipelineColorAttachmentDescriptor *color = descriptor.colorAttachments[0];
-	NSUInteger index, last_attribute = 0, last_layout = 0, used = 0;
+	NSMutableArray *colors = [NSMutableArray array];
+	NSUInteger index, last_attribute = 0, last_layout = 0, last_color = 0, used = 0;
 
 	entry[@"vertex_function"] = [@"alias:library#" stringByAppendingString:vertex];
 	if (fragment)
@@ -153,23 +174,13 @@ static NSDictionary *pipeline_entry(MTLRenderPipelineDescriptor *descriptor, NSS
 	if (last_attribute)
 		entry[@"vertex_descriptor"] = @{ @"attributes": attributes, @"layouts": layouts };
 	entry[@"raster_sample_count"] = @(descriptor.rasterSampleCount);
-	if (color.pixelFormat != MTLPixelFormatInvalid)
-	{
-		const char *format = pixel_format_name(color.pixelFormat), *source = blend_factor_name(color.sourceRGBBlendFactor),
-			*destination = blend_factor_name(color.destinationRGBBlendFactor),
-			*source_alpha = blend_factor_name(color.sourceAlphaBlendFactor),
-			*destination_alpha = blend_factor_name(color.destinationAlphaBlendFactor),
-			*operation = blend_operation_name(color.rgbBlendOperation),
-			*alpha_operation = blend_operation_name(color.alphaBlendOperation);
-
-		if (!format || !source || !destination || !source_alpha || !destination_alpha || !operation || !alpha_operation)
-			fail("a colour attachment's value the script writer does not know");
-		entry[@"color_attachments"] = @[ @{ @"pixel_format": @(format), @"write_mask": @(color.writeMask),
-			@"blending_enabled": @(color.blendingEnabled), @"rgb_blend_operation": @(operation),
-			@"alpha_blend_operation": @(alpha_operation), @"source_rgb_blend_factor": @(source),
-			@"destination_rgb_blend_factor": @(destination), @"source_alpha_blend_factor": @(source_alpha),
-			@"destination_alpha_blend_factor": @(destination_alpha) } ];
-	}
+	for (index = 0; index < 8; index++)
+		if (descriptor.colorAttachments[index].pixelFormat != MTLPixelFormatInvalid)
+			last_color = index + 1;
+	for (index = 0; index < last_color; index++)
+		[colors addObject:color_attachment_entry(descriptor.colorAttachments[index])];
+	if (last_color)
+		entry[@"color_attachments"] = colors;
 	if (descriptor.depthAttachmentPixelFormat != MTLPixelFormatInvalid)
 	{
 		if (!pixel_format_name(descriptor.depthAttachmentPixelFormat))
