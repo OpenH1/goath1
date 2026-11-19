@@ -33,6 +33,12 @@ from pathlib import Path
 # platform: its SDK and its deployment target (the macOS app's; the iOS
 # app's, tools/ios_build.py)
 METAL_FLAGS = ["-std=metal3.1", "-fmetal-math-mode=safe"]
+# the functions the backend looks up by a name of its own rather than its
+# source's hash, which the library must have or the app compiles them as a map
+# is prepared: display.temporal_aa's passes (xgpu_metal_temporal.m's
+# function_names, written by the tool as xgpu_metal_temporal.metal)
+NAMED_FUNCTIONS = ["xgpu_temporal_vertex", "xgpu_temporal_resolve", "xgpu_temporal_view", "xgpu_temporal_reactive",
+                   "xgpu_temporal_stretch"]
 PLATFORMS = {
     "macos": ("macosx", "-mmacosx-version-min=14.4"),
     "ios": ("iphoneos", "-mios-version-min=17.4"),
@@ -53,15 +59,28 @@ def compile_chunk(folder, names, platform):
     run(["xcrun", "-sdk", sdk, "metal", *METAL_FLAGS, minimum, "-c", *names], cwd=folder)
 
 
+def library_lacks(library, platform):
+    """the NAMED_FUNCTIONS a library lacks (its symbols: metal-nm)"""
+    symbols = run(["xcrun", "-sdk", PLATFORMS[platform][0], "metal-nm", str(library)])
+    defined = {line.split()[-1] for line in symbols.splitlines() if " T " in line}
+    return [name for name in NAMED_FUNCTIONS if name not in defined]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--platform", choices=sorted(PLATFORMS), default="macos")
-    parser.add_argument("--tool", required=True)
-    parser.add_argument("--manifest", required=True)
-    parser.add_argument("--work", required=True)
-    parser.add_argument("--library", required=True)
+    parser.add_argument("--tool")
+    parser.add_argument("--manifest")
+    parser.add_argument("--work")
+    parser.add_argument("--library")
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
+    parser.add_argument("--check", help="only check that this library has the NAMED_FUNCTIONS")
     arguments = parser.parse_args()
+    if arguments.check:
+        lacks = library_lacks(arguments.check, arguments.platform)
+        raise SystemExit(f"{arguments.check} lacks {', '.join(lacks)}" if lacks else 0)
+    if not all((arguments.tool, arguments.manifest, arguments.work, arguments.library)):
+        parser.error("--tool, --manifest, --work and --library (or --check)")
 
     work = Path(arguments.work)
     sources = work / "sources"
@@ -82,6 +101,9 @@ def main():
     airs = sorted(str(path) for path in sources.glob("*.air"))
     library.parent.mkdir(parents=True, exist_ok=True)
     run(["xcrun", "-sdk", PLATFORMS[arguments.platform][0], "metallib", *airs, "-o", str(library)])
+    lacks = library_lacks(library, arguments.platform)
+    if lacks:
+        raise SystemExit(f"{library} lacks {', '.join(lacks)}: the app would compile them as a map is prepared")
     print(f"{library}: {len(airs)} sources, {library.stat().st_size // 1024} KB")
 
 
