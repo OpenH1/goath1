@@ -1137,6 +1137,58 @@ static __inline float xgpu_reversed_depth_bias(int biased, float offset)
 	return biased ? -offset / 16777215.0f : 0.0f;
 }
 
+/* ---------- the depth buffer's two projections
+
+The depth buffer holds two projections' depths: the first-person weapon's
+(its own near plane and field of view: rasterizer_xbox_models.c's
+STENCIL_MODE_WRITE, which marks its pixels with the stencil's first bit)
+and the world's (everything else). Both are perspective along the same
+camera's forward, so each writes the game's depth (as the game has it, not
+reversed) d = a + b / w of a point w ahead of the camera, with its own a
+and b; a pixel's depth read back is the world's only where the stencil's
+first bit is clear. Where it is set, a' + b' / w of the world's is
+a + (b / b') (d' - a') of the weapon's: what a reader that unprojects with
+the world's projection must read there instead (xgpu_depth_remap). */
+
+/* a projection's (c[-96] to c[-93], then the screen conversion c[-38] and
+c[-37], rows), drawn in a viewport of the draw's scale and offset
+(xgpu_draw_uniforms') and depth range, line: the game's depth a + b / w
+of a point w ahead (line[0] a, line[1] b). 0 where the projection has no
+forward (its w row none) or no depth (b 0). */
+static __inline int xgpu_depth_line(const float projection[6][4], const float scale[4], const float offset[4],
+	const float depth_range[2], float line[2])
+{
+	/* (z = A w + B over the world: its z row the w row's A times, plus B) */
+	float w_w = projection[3][0] * projection[3][0] + projection[3][1] * projection[3][1] +
+		projection[3][2] * projection[3][2];
+	float a, b, scale_z, near_z, far_z;
+
+	if (!(w_w > 0.0f))
+		return 0;
+	a = (projection[2][0] * projection[3][0] + projection[2][1] * projection[3][1] +
+		projection[2][2] * projection[3][2]) / w_w;
+	b = projection[2][3] - a * projection[3][3];
+	scale_z = scale[2] != 0.0f ? scale[2] : 1.0f;
+	near_z = depth_range[0] >= 0.0f && depth_range[0] <= 1.0f ? depth_range[0] : 0.0f;
+	far_z = depth_range[1] >= 0.0f && depth_range[1] <= 1.0f ? depth_range[1] : 1.0f;
+	line[0] = near_z + (far_z - near_z) * (a * projection[4][2] + projection[5][2] - offset[2]) / scale_z;
+	line[1] = (far_z - near_z) * b * projection[4][2] / scale_z;
+	return line[1] != 0.0f;
+}
+
+/* a weapon's pixel's depth (the game's) as the world's projection would
+have written it at the same distance: world[0] + world[1] / w, its w from
+the weapon's line, remap[0] * depth + remap[1]. 0 where either has no
+depth (nothing to remap: the world's own) */
+static __inline int xgpu_depth_remap(const float world[2], const float first_person[2], float remap[2])
+{
+	if (world[1] == 0.0f || first_person[1] == 0.0f)
+		return 0;
+	remap[0] = world[1] / first_person[1];
+	remap[1] = world[0] - remap[0] * first_person[0];
+	return 1;
+}
+
 /* xgpu_backend.h's struct xgpu_draw_uniforms (floats alone: alike on both
 sides) */
 struct xgpu_stream_draw_uniforms

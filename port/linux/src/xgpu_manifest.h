@@ -124,7 +124,8 @@ struct xgpu_manifest_context
 	uint16_t hdr_kind;
 	uint8_t world, found;
 	/* the effect's group can be soft (display.soft_particles: d3d8_device.c's
-	soft_effect_key, on a flat screen), and its alpha test passes every pixel
+	soft_effect_key, on a flat screen; 2 a first-person weapon's over its
+	own pixels, its fade its depth test: xgpu.h's xgpu_effect_untested), and its alpha test passes every pixel
 	(its texture's least alpha: d3d8_device.c's alpha_test_always_passes),
 	the draw kept with the test (where a backend drops it:
 	xgpu_backend_capabilities.alpha_test_drop) */

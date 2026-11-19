@@ -195,6 +195,19 @@ lightmap_filter */
 #define XGPU_TEXTURE_MODES_LIGHTMAP_CUBIC 0x80000000u
 /* (the stages' own bits) */
 #define XGPU_TEXTURE_MODES_STAGES 0x000fffffu
+/* display.soft_particles: a first-person weapon's effect drawn over the
+weapon's own pixels (d3d8_device.c's halo_effect_soft 2) tests no depth
+where it is soft, its fade against the weapon's depth its test, so that a
+flat sprite meets the gun without a straight cut. Only where the backend's
+fade is sure to be drawn for the draw's pixel program: texture 0 sampled in
+2D and textures 2 and 3 not at all (xgpu_spirv.c's
+xgpu_spirv_effect_possible, which samples none in 2 and 3 more strictly);
+else the draw keeps its test, as the Xbox drew it (its pixel key's
+texture modes and texture 0's sampler) */
+static __inline int xgpu_effect_untested(unsigned long texture_modes, unsigned int sampler_0)
+{
+	return (texture_modes & 0x1f) == 1 && sampler_0 == _xgpu_sampler_2d && !((texture_modes >> 10) & 0x3ff);
+}
 
 /* the vertex constants the per-pixel model lighting reads, in a uniform of
 their own (the vertex shader's 192 would pass the least fragment uniform

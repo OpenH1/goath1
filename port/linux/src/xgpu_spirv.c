@@ -4977,6 +4977,7 @@ gone). As GLSL:
 vec4 base = unproject[view][0] * gl_FragCoord.x + unproject[view][1] * gl_FragCoord.y + unproject[view][3];
 vec3 p = point(base + unproject[view][2] * gl_FragCoord.z);
 float depth = texelFetch(effect_depth, ivec3(gl_FragCoord.xy, view), 0).r;
+(a flat screen's: depth = eye[1].z > 0.5 ? depth * eye[1].x + eye[1].y : depth)
 vec4 behind = base + unproject[view][2] * depth;
 float to_scene = depth >= 1.0 || behind.w <= 0.0 ? 1.0e9 : length(point(behind) - eye[view]);
 float to_pixel = length(p - eye[view]); vec3 ray = (p - eye[view]) / to_pixel;
@@ -5028,6 +5029,18 @@ static unsigned int effect_prelude(struct module *m, struct pixel_state *state)
 		operands[2] = IMAGE_OPERANDS_LOD;
 		operands[3] = constant_int(m, 0);
 		depth = effect_game_depth(m, options, extract(m, op(m, OP_IMAGE_FETCH, m->t_v4, 4, operands), 0));
+	}
+	/* (a flat screen's draw over the first-person weapon's pixels: their
+	depth of its own projection, as the world's would have it, the
+	uniforms' effect_eye[1] its scale and offset where its z is 1, else
+	unused: xgpu_stream.h's xgpu_depth_remap, xgpu_vulkan_stream.c's
+	effect_first_person_uniforms) */
+	if (!arrayed)
+	{
+		unsigned int remap = uniform_index(m, U_EFFECT_EYE, constant_int(m, 1));
+
+		depth = op3(m, OP_SELECT, m->t_float, compare(m, OP_F_ORD_GREATER_THAN, extract(m, remap, 2),
+			constant_float(m, 0.5f)), fadd(m, 1, fmul(m, 1, depth, extract(m, remap, 0)), extract(m, remap, 1)), depth);
 	}
 	behind = fadd(m, 4, base, fscale(m, 4, columns[2], depth));
 	eye = xyz(m, uniform_index(m, U_EFFECT_EYE, view));

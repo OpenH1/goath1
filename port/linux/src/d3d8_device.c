@@ -383,7 +383,9 @@ struct draw_inputs
 	it (WORLD_AO_SPAN_*: halo_world_ao_span), whatever the setting */
 	int32_t world_span;
 	/* display.soft_particles: the effect's group drawn can be soft
-	(halo_effect_soft), whatever the setting */
+	(halo_effect_soft), whatever the setting: 1, or 2 a first-person
+	weapon's over its own pixels, whose fade is its depth test
+	(xgpu.h's xgpu_effect_untested) */
 	uint32_t soft_group;
 	/* display.temporal_aa: the window's objects drawn into the screen's
 	targets (halo_motion_objects), whatever the setting: in play, their
@@ -5457,7 +5459,12 @@ XGPU_SPIRV_EFFECT_SOFT (1) in a draw of no views (the backend samples the
 depth target the draw tests against, in a pass that writes none of it: no
 copy). Only where the backend draws it (xgpu_backend_capabilities.soft_effects);
 off, the key is as it was. Read again as the front end takes a change up
-between frames. */
+between frames. A first-person weapon's effect over the weapon's own
+pixels (2: rasterizer_xbox_transparent_geometry.c's first pass, whose
+stencil accepts only them) is soft against the weapon's depth, both of
+the weapon's projection, and where it is soft its fade is its depth test
+(xgpu.h's xgpu_effect_untested): a flat sprite meets the gun as smoke
+meets a wall, not along a straight line where its plane cuts the gun. */
 static struct
 {
 	BOOL read;
@@ -5467,7 +5474,7 @@ static struct
 
 void halo_effect_soft(int soft)
 {
-	inputs.soft_group = soft != 0;
+	inputs.soft_group = soft == 2 ? 2 : soft != 0;
 }
 
 int halo_soft_effects_drawn(void)
@@ -5757,7 +5764,7 @@ static void pipeline_derived(const struct xgpu_draw_derived *derived, struct xgp
 manifest's recording, with what the settings derive it from, whatever they
 are now (xgpu_manifest_context) */
 static void manifest_note_basis(const struct vertex_shader_object *program, const struct xgpu_pipeline_key *drawn,
-	unsigned long alpha_test, BOOL alpha_passes, BOOL soft)
+	unsigned long alpha_test, BOOL alpha_passes, unsigned int soft)
 {
 	struct xgpu_manifest_context context;
 	struct xgpu_pipeline_key basis = *drawn;
@@ -5770,7 +5777,9 @@ static void manifest_note_basis(const struct vertex_shader_object *program, cons
 	context.alpha_passes = alpha_passes ? 1 : 0;
 	if (soft)
 		basis.pixel.vr_effect = 0;
-	context.soft = soft ? 1 : 0;
+	/* (2 a first-person weapon's, its depth test as the game set it:
+	xgpu_manifest_derive) */
+	context.soft = (uint8_t)soft;
 	context.lights = (uint8_t)program->lighting.lights;
 	context.world_found = program->lighting.world_found ? 1 : 0;
 	context.multisampled = target_multisampled ? 1 : 0;
@@ -6361,7 +6370,8 @@ static BOOL prepare_draw(BOOL immediate, unsigned long primitive)
 	BOOL has_depth = FALSE, ready;
 	/* (the draw as no setting changes it: manifest_note_basis) */
 	unsigned long alpha_test_kept;
-	BOOL alpha_passes, soft_basis;
+	BOOL alpha_passes;
+	unsigned int soft_basis;
 	int stage;
 	double traced;
 
@@ -6445,7 +6455,7 @@ static BOOL prepare_draw(BOOL immediate, unsigned long primitive)
 	key.vr_effect = key.multiview == XGPU_MULTIVIEW_EYES ? (unsigned char)vr_gl.effect_depth : 0;
 #endif
 	/* (display.soft_particles: an effect on a flat screen, soft) */
-	soft_basis = !key.vr_effect && inputs.soft_group && key.multiview == XGPU_MULTIVIEW_NONE;
+	soft_basis = !key.vr_effect && key.multiview == XGPU_MULTIVIEW_NONE ? inputs.soft_group : 0;
 	if (!key.vr_effect)
 		key.vr_effect = soft_effect_key(key.multiview);
 	/* the pipeline: the shaders, the fixed-function state, the targets */
@@ -6464,6 +6474,10 @@ static BOOL prepare_draw(BOOL immediate, unsigned long primitive)
 	make of it from (debug.render_manifest) */
 	if (xgpu_manifest_recording())
 		manifest_note_basis(program, &pipeline_key, alpha_test_kept, alpha_passes, soft_basis);
+	/* (display.soft_particles: a first-person weapon's effect over its own
+	pixels, soft, its fade its depth test: soft_effect_key) */
+	if (key.vr_effect == 1 && inputs.soft_group == 2 && xgpu_effect_untested(key.texture_modes, key.sampler_type[0]))
+		pipeline_key.depth_test = 0;
 	/* ...and what the settings make of it as they are now: its targets'
 	samples and format, its alpha test (a sample mask, where the backend
 	has one), its tag (display.hdr: from its blend), and its lighting

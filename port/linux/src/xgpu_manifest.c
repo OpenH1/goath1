@@ -91,7 +91,8 @@ screen colour), cd the dynamic lights
 (present, the lightmap pass), ch the HDR tag's (category, 3D view, kind),
 cw the world's occlusion's light (a recording without it: none), cf its
 window found once a pixel by the pre-pass (none), cs the effect's group soft
-with display.soft_particles, cp its alpha test one no pixel fails */
+with display.soft_particles (2 a first-person weapon's over its own pixels,
+untested where soft), cp its alpha test one no pixel fails */
 static const struct field context_fields[] = {
 	CONTEXT_FIELD("cl", lights, 1, 2),
 	CONTEXT_FIELD("ct", multisampled, 1, 2),
@@ -921,7 +922,14 @@ int xgpu_manifest_derive(const struct xgpu_manifest_draw *draw, const struct xgp
 	/* (display.soft_particles: the effect soft, on a flat screen: d3d8_device.c's
 	soft_effect_key) */
 	if (settings->soft && context->soft && !derived->key.pixel.vr_effect)
+	{
 		derived->key.pixel.vr_effect = 1;
+		/* (2: a first-person weapon's over its own pixels, its fade its
+		depth test: xgpu.h's xgpu_effect_untested) */
+		if (context->soft == 2 && xgpu_effect_untested(derived->key.pixel.texture_modes,
+			derived->key.pixel.sampler_type[0]))
+			derived->key.depth_test = 0;
+	}
 	return lit;
 }
 
