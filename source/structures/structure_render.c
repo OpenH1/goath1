@@ -646,7 +646,7 @@ static void structure_render_pass(
 	return;
 }
 
-/* port: debug.retained_shadows: a shadow's receivers, the level's surfaces
+/* port: (unless HALO_SHADOWS_REDRAWN is set) a shadow's receivers, the level's surfaces
 in its volume (structure_render_shadow), kept for its place. The volume's
 surfaces of every view (structure_visibility_surfaces_unfiltered) are found
 once and kept, sorted, for its exact bounds (an object at rest's shadow);
@@ -666,6 +666,7 @@ enum
 struct shadow_receivers_key
 {
 	struct structure_bsp const *structure_bsp;
+	long structure_bsp_index;
 	real_point3d center;
 	real radius;
 	real_rectangle3d bounds;
@@ -692,6 +693,7 @@ static unsigned long shadow_receivers_frames = 0;
 
 int config_boolean(char const *name);
 void platform_log(char const *format, ...);
+char *getenv(char const *name);
 
 static long structure_render_shadow_receivers(
 	long *surface_indices,
@@ -712,8 +714,8 @@ static long structure_render_shadow_receivers(
 	if (render.frame_index != shadow_receivers_frame)
 	{
 		shadow_receivers_frame = render.frame_index;
-		shadow_receivers_on = config_boolean("debug.retained_shadows") != 0;
-		if (shadow_receivers_on && ++shadow_receivers_frames >= 1200)
+		shadow_receivers_on = getenv("HALO_SHADOWS_REDRAWN") == NULL;
+		if (shadow_receivers_on && ++shadow_receivers_frames >= 1200 && config_boolean("debug.gpu_stats"))
 		{
 			platform_log("retained shadows: %lu receivers' walks kept of %lu", shadow_receivers_hits,
 				shadow_receivers_hits + shadow_receivers_walks);
@@ -730,6 +732,7 @@ static long structure_render_shadow_receivers(
 
 	csmemset(&key, 0, sizeof(key));
 	key.structure_bsp = global_structure_bsp_get();
+	key.structure_bsp_index = global_structure_bsp_index_get();
 	key.center = *center;
 	key.radius = radius;
 	key.bounds = *bounds;
@@ -822,6 +825,19 @@ static long structure_render_shadow_receivers(
 }
 
 /* ---------- public code */
+
+void structure_render_shadow_receivers_new_map(
+	void)
+{
+	long index;
+
+	for (index = 0; index < SHADOW_RECEIVER_ENTRIES; index++)
+	{
+		shadow_receivers[index].valid = FALSE;
+	}
+
+	return;
+}
 
 void structure_render_preprocess(
 	void)
@@ -1293,7 +1309,7 @@ void structure_render_shadow(
 		return;
 	}
 
-	/* port: debug.retained_shadows: the surfaces kept for the shadow's
+	/* port: the surfaces kept for the shadow's
 	place (structure_render_shadow_receivers) */
 	surface_count = structure_render_shadow_receivers(
 		surface_indices,

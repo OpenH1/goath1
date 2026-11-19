@@ -307,8 +307,12 @@ void d3d8_clear_viewport_alone(unsigned long color);
 /* the indexed draws that follow (until 0) keep the last's state but their
 vertices and indices: the caller sets nothing else between them, and each
 is drawn with the last's pipeline, textures and constants as they were
-prepared (port/linux/src/d3d8_device.c: debug.retained_shadows' receivers) */
+prepared (port/linux/src/d3d8_device.c: the shadows' receivers) */
 void d3d8_draw_state_kept(int kept);
+/* the renderer's number for a render target's surface, another whenever its
+pixels are made anew (0: none): what a caller keeps in it from frame to
+frame is gone once it changes (port/linux/src/d3d8_device.c) */
+unsigned long d3d8_target_identity(void *surface);
 /* takes up a new width between frames (F11); returns the width */
 long halo_screen_commit(void);
 /* the shadow maps' pixels for each of their 128 texels each way, a power of
