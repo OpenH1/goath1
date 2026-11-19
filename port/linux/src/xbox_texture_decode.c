@@ -668,3 +668,155 @@ float xgpu_texture_alpha_coverage(unsigned int format_word, unsigned int size_wo
 	free(decoded);
 	return (float)drawn / (float)(width * height);
 }
+
+/* ---------- levels that keep an alpha test's coverage (xgpu.h) */
+
+void xgpu_texture_coverage_begin(struct xgpu_texture_coverage *coverage, unsigned int pass)
+{
+	memset(coverage, 0, sizeof(*coverage));
+	coverage->pass = pass;
+}
+
+void xgpu_texture_coverage_end(struct xgpu_texture_coverage *coverage)
+{
+	free(coverage->made);
+	coverage->made = NULL;
+}
+
+/* the level before as made (coverage->made), box-filtered to width by
+height: each texel's alpha the mean of those it covers, its colour theirs
+weighted by their alphas (their plain mean where all are 0) */
+static DWORD *coverage_filter(const struct xgpu_texture_coverage *coverage, unsigned long width, unsigned long height)
+{
+	unsigned long step_x = coverage->width > width ? 2 : 1, step_y = coverage->height > height ? 2 : 1, x, y;
+	DWORD *made = malloc(width * height * sizeof(*made));
+
+	if (!made)
+		return NULL;
+	for (y = 0; y < height; y++)
+	{
+		for (x = 0; x < width; x++)
+		{
+			unsigned long sums[4] = { 0, 0, 0, 0 }, weighted[3] = { 0, 0, 0 }, alpha = 0, count = 0, dx, dy, channel;
+			DWORD texel = 0;
+
+			for (dy = 0; dy < step_y; dy++)
+			{
+				for (dx = 0; dx < step_x; dx++)
+				{
+					unsigned long sx = x * step_x + dx, sy = y * step_y + dy;
+					DWORD source;
+					unsigned long a;
+
+					if (sx >= coverage->width)
+						sx = coverage->width - 1;
+					if (sy >= coverage->height)
+						sy = coverage->height - 1;
+					source = coverage->made[sy * coverage->width + sx];
+					a = source >> 24;
+					for (channel = 0; channel < 3; channel++)
+					{
+						sums[channel] += (source >> (channel * 8)) & 0xff;
+						weighted[channel] += ((source >> (channel * 8)) & 0xff) * a;
+					}
+					alpha += a;
+					count++;
+				}
+			}
+			for (channel = 0; channel < 3; channel++)
+			{
+				unsigned long value = alpha ? (weighted[channel] + alpha / 2) / alpha : (sums[channel] + count / 2) / count;
+
+				texel |= (DWORD)value << (channel * 8);
+			}
+			texel |= (DWORD)((alpha + count / 2) / count) << 24;
+			made[y * width + x] = texel;
+		}
+	}
+	return made;
+}
+
+void xgpu_texture_coverage_level(struct xgpu_texture_coverage *coverage, unsigned long level, unsigned long width,
+	unsigned long height, DWORD *texels)
+{
+	unsigned long count = width * height, histogram[257], passing[258], index, cut, best;
+	unsigned char scaled[256];
+	double wanted, scale;
+	DWORD *made;
+
+	if (coverage->failed || !count || coverage->pass < 1 || coverage->pass > 255)
+		return;
+	if (level == 0)
+	{
+		unsigned long passed = 0;
+
+		free(coverage->made);
+		coverage->made = malloc(count * sizeof(*coverage->made));
+		if (!coverage->made)
+		{
+			coverage->failed = TRUE;
+			return;
+		}
+		memcpy(coverage->made, texels, count * sizeof(*texels));
+		for (index = 0; index < count; index++)
+			passed += (texels[index] >> 24) >= coverage->pass;
+		coverage->share = (double)passed / (double)count;
+		coverage->width = width;
+		coverage->height = height;
+		return;
+	}
+	/* (none passing, or all: so is each level made from it, as stored) */
+	if (!coverage->made || coverage->share <= 0.0 || coverage->share >= 1.0)
+		return;
+	made = coverage_filter(coverage, width, height);
+	if (!made)
+	{
+		coverage->failed = TRUE;
+		return;
+	}
+	free(coverage->made);
+	coverage->made = made;
+	coverage->width = width;
+	coverage->height = height;
+	/* the least alpha cut (1 to 256: none passing) of the made level whose
+	texels at or past it are nearest the first's share */
+	memset(histogram, 0, sizeof(histogram));
+	for (index = 0; index < count; index++)
+		histogram[made[index] >> 24]++;
+	passing[256] = 0;
+	for (index = 256; index-- > 0;)
+		passing[index] = passing[index + 1] + histogram[index];
+	wanted = coverage->share * (double)count;
+	best = 256;
+	for (cut = 256; cut >= 1; cut--)
+	{
+		double off = (double)passing[cut] - wanted, best_off = (double)passing[best] - wanted;
+
+		if ((off < 0 ? -off : off) <= (best_off < 0 ? -best_off : best_off))
+			best = cut;
+	}
+	/* the alphas scaled so that those at or past the cut pass and those
+	before it do not (0 stays 0) */
+	scale = ((double)coverage->pass - 0.5) / ((double)best - 0.5);
+	for (index = 0; index < 256; index++)
+	{
+		double value = (double)index * scale + 0.5;
+		unsigned long rounded = value >= 255.0 ? 255 : (unsigned long)value;
+
+		if (index >= best && rounded < coverage->pass)
+			rounded = coverage->pass;
+		else if (index < best && rounded >= coverage->pass)
+			rounded = coverage->pass - 1;
+		scaled[index] = (unsigned char)rounded;
+	}
+	for (index = 0; index < count; index++)
+	{
+		DWORD alpha = scaled[made[index] >> 24];
+
+		/* (passed now, cut out as stored: the first level's colour there) */
+		if (alpha >= coverage->pass && (texels[index] >> 24) < coverage->pass)
+			texels[index] = (made[index] & 0x00ffffffu) | (alpha << 24);
+		else
+			texels[index] = (texels[index] & 0x00ffffffu) | (alpha << 24);
+	}
+}

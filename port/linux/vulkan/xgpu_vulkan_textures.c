@@ -251,6 +251,17 @@ void xgpu_vulkan_textures_dump(const char *folder)
 
 /* ---------- Xbox textures */
 
+/* the least alpha the alpha test of the draws of the entry's copy passes,
+whose levels keep the first's share passing (xgpu.h: a 2D texture's of
+more levels than one); 0 none, its levels as stored */
+static unsigned int coverage_pass(const struct entry *entry)
+{
+	const struct xgpu_texture_description *description = &entry->description;
+
+	return description->cube_map || description->depth > 1 || description->levels <= 1 ? 0 :
+		XGPU_TEXTURE_COVERAGE_PASS(entry->channels);
+}
+
 /* the texture's image, made for its description */
 static struct xgpu_vulkan_image *xbox_texture_make(struct entry *entry)
 {
@@ -258,6 +269,7 @@ static struct xgpu_vulkan_image *xbox_texture_make(struct entry *entry)
 	struct xgpu_vulkan_image_description made;
 	struct xgpu_vulkan_capabilities capabilities;
 	uint32_t most = levels_most(description->width, description->height, description->depth);
+	unsigned int coverage = coverage_pass(entry);
 
 	xgpu_vulkan_capabilities(&capabilities);
 	memset(&made, 0, sizeof(made));
@@ -266,7 +278,7 @@ static struct xgpu_vulkan_image *xbox_texture_make(struct entry *entry)
 	/* (DXT as it is, but for a volume's, which is decoded, and on a device
 	without BC formats: ASTC, or decoded) */
 	entry->decoded = description->compressed && (description->depth > 1 || !capabilities.block_compression ||
-		cache.astc == 1);
+		cache.astc == 1 || coverage);
 	if (description->compressed && !entry->decoded)
 		made.format = description->format == 0x0c ? XGPU_VULKAN_FORMAT_DXT1 : description->format == 0x0e ?
 			XGPU_VULKAN_FORMAT_DXT3 : XGPU_VULKAN_FORMAT_DXT5;
@@ -281,7 +293,7 @@ static struct xgpu_vulkan_image *xbox_texture_make(struct entry *entry)
 	made.levels = (uint32_t)(description->levels < most ? description->levels : most);
 	if (!made.levels)
 		made.levels = 1;
-	made.channels = entry->channels;
+	made.channels = entry->channels & ~XGPU_TEXTURE_COVERAGE_MASK;
 	return xgpu_vulkan_image_create(&made);
 }
 
@@ -482,6 +494,8 @@ static void image_release(struct entry *entry)
 #endif
 }
 
+static double seconds(void);
+
 /* reads the texture's texels into it */
 static void xbox_texture_upload(struct entry *entry, const D3DCOLOR *palette)
 {
@@ -492,9 +506,12 @@ static void xbox_texture_upload(struct entry *entry, const D3DCOLOR *palette)
 	int blocks = description->compressed && !entry->decoded;
 	/* (a 2D texture's first level written out) */
 	int dump = cache.dump_folder && !description->cube_map && description->depth <= 1;
+	unsigned int pass = coverage_pass(entry);
+	struct xgpu_texture_coverage coverage;
+	double started = pass ? seconds() : 0.0;
 
 #ifdef HALO_ASTC
-	if (description->compressed && description->depth <= 1 && cache.astc == 1 && astc_read(entry))
+	if (description->compressed && description->depth <= 1 && cache.astc == 1 && !pass && astc_read(entry))
 	{
 		DWORD *converted;
 
@@ -510,6 +527,7 @@ static void xbox_texture_upload(struct entry *entry, const D3DCOLOR *palette)
 	levels = xgpu_vulkan_image_description(entry->image)->levels;
 	blocks = description->compressed && !entry->decoded;
 #endif
+	xgpu_texture_coverage_begin(&coverage, pass);
 	for (face = 0; face < faces; face++)
 	{
 		for (level = 0; level < levels; level++)
@@ -535,17 +553,27 @@ static void xbox_texture_upload(struct entry *entry, const D3DCOLOR *palette)
 				continue;
 			}
 			converted = converted_get((size_t)width * height * depth);
-			if (!converted)
+			if (!converted || (!description->compressed &&
+				!xgpu_texture_decode_level(description, level, source, palette, converted)))
+			{
+				xgpu_texture_coverage_end(&coverage);
 				return;
+			}
 			if (description->compressed)
 				xgpu_texture_decode_dxt(description, level, source, converted);
-			else if (!xgpu_texture_decode_level(description, level, source, palette, converted))
-				return;
-			xgpu_vulkan_image_upload(entry->image, (uint32_t)level, (uint32_t)face, 0, 0, 0, width, height, depth, converted,
-				width * 4, width * height * 4);
 			if (dump && !level)
 				texture_dump(description, converted);
+			if (pass)
+				xgpu_texture_coverage_level(&coverage, level, width, height, converted);
+			xgpu_vulkan_image_upload(entry->image, (uint32_t)level, (uint32_t)face, 0, 0, 0, width, height, depth, converted,
+				width * 4, width * height * 4);
 		}
+	}
+	xgpu_texture_coverage_end(&coverage);
+	if (pass)
+	{
+		cache.statistics.coverage++;
+		cache.statistics.coverage_seconds += seconds() - started;
 	}
 	cache.statistics.bytes += entry->size;
 }
@@ -599,7 +627,7 @@ static struct entry *xbox_entry_find(const struct xgpu_stream_texture_stage *sta
 	/* (made ASTC from the start where it most likely will be: most DXT1
 	textures transcode exactly, most DXT3 and DXT5 ones wait for a worker) */
 	entry->astc = entry->description.compressed && entry->description.depth <= 1 && astc_wanted() &&
-		entry->description.format == 0x0c;
+		entry->description.format == 0x0c && !coverage_pass(entry);
 #endif
 	/* (one larger than the device takes is never drawn, nor one outside the
 	contiguous memory) */

@@ -1462,8 +1462,12 @@ static void texture_stage_describe(const struct xgpu_texture_source *source, int
 			stage->resource_format = (uint32_t)header->Format;
 			stage->resource_size = (uint32_t)header->Size;
 #ifndef XGPU_STREAM_TEST
+			/* (its channels; or, as they are, the copy whose levels keep the
+			draw's alpha test's coverage it is drawn from: xgpu.h) */
 			stage->target = (uint32_t)xgpu_texture_channels((unsigned long)PLATFORM_PHYSICAL_TO_VIRTUAL(header->Data),
 				stage_index);
+			if (!stage->target)
+				stage->target = (uint32_t)(source->target & XGPU_TEXTURE_COVERAGE_MASK);
 #endif
 		}
 	}

@@ -60,6 +60,10 @@ struct xgpu_vulkan_texture_statistics
 	uint32_t made, remade, images, thickness;
 	uint64_t bytes;
 	double thickness_seconds;
+	/* the copies read whose levels keep an alpha test's coverage (xgpu.h),
+	and the time reading them took */
+	uint32_t coverage;
+	double coverage_seconds;
 };
 void xgpu_vulkan_textures_statistics(struct xgpu_vulkan_texture_statistics *statistics);
 void xgpu_vulkan_textures_statistics_peek(struct xgpu_vulkan_texture_statistics *statistics);

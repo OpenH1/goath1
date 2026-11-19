@@ -4570,11 +4570,13 @@ static uint32_t stream_prepared(void *context)
 			(unsigned long long)(now.ring_bytes - stream.trace_statistics.ring_bytes),
 			(unsigned long long)(now.waits - stream.trace_statistics.waits), now.wait_seconds - stream.trace_statistics.wait_seconds);
 		host_load_trace("prepare.vulkan.textures", "made=%u remade=%u images=%u bytes=%llu thickness=%u "
-			"thickness_seconds=%.6f",
+			"thickness_seconds=%.6f coverage=%u coverage_seconds=%.6f",
 			textures.made - stream.trace_textures.made, textures.remade - stream.trace_textures.remade,
 			textures.images - stream.trace_textures.images, (unsigned long long)(textures.bytes - stream.trace_textures.bytes),
 			textures.thickness - stream.trace_textures.thickness,
-			textures.thickness_seconds - stream.trace_textures.thickness_seconds);
+			textures.thickness_seconds - stream.trace_textures.thickness_seconds,
+			textures.coverage - stream.trace_textures.coverage,
+			textures.coverage_seconds - stream.trace_textures.coverage_seconds);
 		for (stage = 0; stage < 4; stage++)
 			host_load_trace("prepare.vulkan.stage", "stage=%s count=%llu seconds=%.6f", names[stage],
 				(unsigned long long)stream.trace_counts[stage], stream.trace_seconds[stage]);

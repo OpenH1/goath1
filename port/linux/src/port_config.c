@@ -165,6 +165,9 @@ and brought down, #671) */
 /* display.soft_particles: the effects soft against the scene's depth, as
 the VR mode's eyes draw them (#1116) */
 #define GRAPHICS_SOFT_PARTICLES "true"
+/* display.alpha_coverage: an alpha-tested texture's levels keep its first's
+coverage (#1223) */
+#define GRAPHICS_ALPHA_COVERAGE "true"
 /* display.astc_textures: "auto" everywhere (iPhones, through Metal; Android
 phones without BC, through Vulkan: seen right on a Pixel 11 Pro's PowerVR) */
 #define ASTC_TEXTURES_DEFAULT "\"auto\""
@@ -1689,6 +1692,13 @@ static const struct config_setting config_settings[] =
 		"floors, as the VR mode draws them, instead of the hard line the Xbox\n"
 		"drew where they cut into them; false draws them as the Xbox did. Not\n"
 		"your own weapon's effects. Where the renderer draws it (Vulkan's)."
+		GRAPHICS_CHOOSES },
+	{ "display.alpha_coverage", _config_boolean, GRAPHICS_ALPHA_COVERAGE, "HALO_ALPHA_COVERAGE", _environment_value,
+		_platform_all,
+		"Distant fences, grates and leaves keep their density instead of thinning\n"
+		"out and shimmering: the smaller versions of a cut-out texture keep as\n"
+		"many of their texels drawn as the full-size one has, made once as it is\n"
+		"read. false draws them as the Xbox did."
 		GRAPHICS_CHOOSES },
 	{ "display.shield_color", _config_string, "\"default\"", "HALO_SHIELD_COLOR", _environment_value, _platform_all,
 		"Your energy shield's color, as this machine draws it: \"default\" (the\n"
@@ -4630,6 +4640,7 @@ static const struct
 	{ "display.dynamic_lights", "\"classic\"" },
 	{ "display.ambient_occlusion", "\"off\"" },
 	{ "display.soft_particles", "false" },
+	{ "display.alpha_coverage", "false" },
 	{ "game.enhanced_animations", "false", 1 },
 	{ "display.menu_fade", "true", 1 },
 };
