@@ -562,6 +562,7 @@ void demo_game_state_allocation(
 		"decal vertex cache", "particle systems", "particle system particles", "particle", "contrail",
 		"contrail point", "game sound globals", "cached object render states", "motion sensor (radar)",
 		"object looping sounds", "scenario globals", "player control globals", "first person weapons",
+		"effect first person", "effect first person location",
 		/* (the lights' cluster references, and their globals, go with the
 		lights: a difference written into them would not be the lights'
 		here) */

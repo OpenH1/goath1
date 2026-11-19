@@ -63,6 +63,8 @@ FRAME_ALLOCATIONS = ["game time globals", "lights", "decals", "decal globals", "
                      "particle system particles", "particle", "contrail", "contrail point", "game sound globals",
                      "cached object render states", "motion sensor (radar)", "object looping sounds",
                      "scenario globals", "player control globals", "first person weapons",
+                     # (an effect's locations on a first-person weapon: effects.c)
+                     "effect first person", "effect first person location",
                      # (the lights' own allocations, beside "lights": the effects
                      # the frames make light them, as port/linux/game/demo.c's
                      # frames' allocations have them)
