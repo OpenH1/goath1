@@ -29,7 +29,10 @@ CONTROLS = [
     ("world_ao.rays && !world_ao.rays_missing_said && halo_world_ao_ray_queries_missing()",
      "world_ao.rays && halo_world_ao_ray_queries_missing()", "rays"),
     # the ray-traced scene's frame not handed on
-    ("\t\tif (mode & WORLD_AO_RAYS)\n\t\t\tworld_rt_frame(world_ao_scene.frame);", "", "rays"),
+    ("\t\t\tworld_rt_frame(world_ao_scene.frame);\n\t\t}", "\t\t}", "rays"),
+    # the distance-field scene's cascades still filled with "ray_traced"'s rays, which read none of them
+    ("\t\tif (mode & WORLD_AO_RAYS)\n\t\t{\n\t\t\tworld_ao_scene_release();",
+     "\t\tif (mode & WORLD_AO_RAYS)\n\t\t{\n\t\t\tworld_ao_scene_update(camera_position, world_ao.cascades);", "rays"),
     # an object's own instances not left out of its rays
     ("\t\t\trays_owner = world_rt_owner(object_index);", "\t\t\trays_owner = 0;", "rays"),
     # the scene kept past the map's end

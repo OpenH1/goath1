@@ -471,8 +471,10 @@ static void rays_case(void)
 	backend_ready = 1;
 	CHECK(world_ao_mode() == (WORLD_AO_PROXIES | WORLD_AO_FIELD), "without ray queries: %d", world_ao_mode());
 	CHECK(world_ao_mode() == (WORLD_AO_PROXIES | WORLD_AO_FIELD) && logged == 1, "said once: %d", logged);
+	scene_updates = 0;
 	world_ao_window_begin(0, 0, camera);
 	CHECK(rt_frames == 0, "the ray-traced scene's frame without ray queries");
+	CHECK(scene_updates == 1, "the distance-field scene without ray queries: %d", scene_updates);
 	world_ao_object_begin(200);
 	CHECK(object_rays_owner == 0, "an owner without ray queries: %lu", object_rays_owner);
 	world_ao_window_end();
@@ -481,6 +483,14 @@ static void rays_case(void)
 	world_ao_frame_begin();
 	world_ao_window_begin(0, 0, camera);
 	CHECK(rt_frames == 1, "the scene's frame: %lu", rt_frames);
+	/* (the rays read no cascades: none found, every one not ready) */
+	CHECK(scene_updates == 1, "the distance-field scene with ray queries: %d", scene_updates);
+	{
+		int cascade;
+
+		for (cascade = 0; cascade < WORLD_CASCADES; cascade++)
+			CHECK(world_ao.cascades[cascade][3] == 0.0f, "cascade %d named ready with ray queries", cascade);
+	}
 	world_ao_object_begin(200);
 	CHECK(object_owner == 1 && object_rays_owner == 201, "%d %lu", object_owner, object_rays_owner);
 	world_ao_object_begin(-1);
@@ -495,6 +505,7 @@ static void rays_case(void)
 	world_ao_frame_begin();
 	world_ao_window_begin(0, 0, camera);
 	CHECK(rt_frames == 1, "the scene's frame with \"world\": %lu", rt_frames);
+	CHECK(scene_updates == 2, "the distance-field scene with \"world\" again: %d", scene_updates);
 	world_ao_object_begin(200);
 	CHECK(object_rays_owner == 0, "an owner with \"world\": %lu", object_rays_owner);
 	world_ao_window_end();
