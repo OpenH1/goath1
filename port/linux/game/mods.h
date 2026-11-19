@@ -116,9 +116,12 @@ nothing is said at the console. How many of its tags the mods play */
 /* Loose sounds remain independent of remove_all (which disables packs). */
 long mod_sounds_update(boolean remove_all, boolean at_load);
 void mod_sounds_tags_unloaded(void);
-/* (sound_cache_start_loading_sound) whether a permutation is a mod's,
-read at once into buffer */
-boolean mod_sounds_read(struct sound_permutation const *permutation, void *buffer);
+/* (sound_cache_start_loading_sound) whether a permutation is a mod's, its
+samples made PCM into buffer, at once or on the decoder's thread: *loaded
+set once they are there */
+boolean mod_sounds_read(struct sound_permutation const *permutation, void *buffer, boolean *loaded);
+/* (sound_cache_flush, sound_cache_close) every mod sound piece asked for decoded */
+void mod_sounds_decode_wait(void);
 /* Whether the map's sound tag `tag_index` plays from a mod's or a loose tag file (an override) */
 boolean mod_sounds_replaced(long tag_index);
 

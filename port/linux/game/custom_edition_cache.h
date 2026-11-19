@@ -275,6 +275,38 @@ byte *custom_edition_sounds_encode(
 	unsigned long native_budget,
 	unsigned long *encoded_bytes,
 	long *kept_rate);
+/* mod_sounds.c's decoder's (custom_edition_sounds.c's own, which take no
+memory, so any thread may run them): `block_count` blocks of Xbox ADPCM
+decoded into `output`; the frames `source_total` frames at `source_rate`
+are at `rate` (-1: too many; this also makes the low pass's table, so it is
+called on the game's thread first); the source frames each side of an output
+frame that the low pass reaches; and the output frames [first, first + count)
+resampled from `source`, which holds the source's frames [source_first,
+source_first + source_count), sample for sample what a whole resample makes
+of them */
+void custom_edition_sounds_adpcm_blocks(
+	byte const *data,
+	long block_count,
+	long channels,
+	short *output);
+long custom_edition_sounds_resampled_count(
+	long source_total,
+	long source_rate,
+	long rate);
+long custom_edition_sounds_resample_reach(
+	long source_rate,
+	long rate);
+void custom_edition_sounds_resample_range(
+	short const *source,
+	long source_first,
+	long source_count,
+	long source_total,
+	long source_rate,
+	long channels,
+	long rate,
+	long first,
+	long count,
+	short *output);
 /* The most bytes of 16-bit PCM in each piece a longer permutation is split
 into: half of what one permutation is kept in as PCM, whole 4 KB pages
 (OpenH1 issue 1167) */

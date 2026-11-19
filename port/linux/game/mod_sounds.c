@@ -16,14 +16,24 @@ followed by its samples, mouth data and subtitle data. Every count, size and
 offset is checked against the file, which must end where the last of them
 does, and every value the game divides by or steps through against what the
 game takes; a file that is not is said and left out. Its samples (16-bit
-PCM, Xbox ADPCM or Ogg Vorbis, mono or stereo at 22 or 44 kHz) are kept as
-a Custom Edition map's are (custom_edition_sounds_encode: 16-bit PCM at
-their own rate, or past the memory the mods may keep, Xbox ADPCM, mono at
-22 kHz and stereo at its own rate, said once; Xbox ADPCM in that format is
-kept as it is), so they play through the map's channels as its sounds do.
-A permutation of PCM longer than the sound cache takes one in is split
-into a chain of linked pieces (range_split, OpenH1 issue 1167), which plays
-as one. The values a map's build (tool.exe, Invader) fills in are filled
+PCM, Xbox ADPCM or Ogg Vorbis, mono or stereo at 22 or 44 kHz) play as a
+Custom Edition map's do: 16-bit PCM at their own rate (up to the mixer's
+48 kHz; Xbox ADPCM in a format the channels play is played as it is), so
+they play through the map's channels as its sounds do. They stay in the
+file kept, as the mod has them, and are made PCM only as a permutation is
+loaded into the sound cache (OpenH1 issue 1202: a fully replaced campaign
+level held a gigabyte of PCM, and past the memory the mods may keep its
+sounds were Xbox ADPCM at 22 kHz or left out): PCM is swapped from the file
+there and then, Xbox ADPCM and Ogg Vorbis are decoded on a thread of their
+own (mod_sound_decoder), the cache block held until they are, as a map's
+disk read is. A permutation of PCM longer than the sound cache takes one in
+is split into a chain of linked pieces (range_split, OpenH1 issue 1167),
+which plays as one: a piece is decoded as the one before it plays
+(sound_manager.c queues the next piece as soon as one starts), an Ogg
+Vorbis stream's pieces one after the other by one decoder kept between them.
+Only a permutation whose pieces the pitch range has no room for, or of a
+rate under the PCM's least, is made Xbox ADPCM when it loads, as before,
+and said. The values a map's build (tool.exe, Invader) fills in are filled
 in as it does: the defaults of the sound's class, the pitch ranges'
 playback rates, the per-tick bend.
 The longest permutation length is Tool's measure of a permutation, a split
@@ -36,7 +46,7 @@ holds the sound keeps holding it; only what the game counts as it plays
 (promotion counter and time, scripting time and sound) stays the map's
 definition's own, kept across a reload or switch. The map's own values come
 back when the file goes. The samples are read into the sound cache from
-memory (mod_sounds_read, xbox_sound_cache.c).
+the file kept (mod_sounds_read, xbox_sound_cache.c).
 
 A sound playing holds its permutation by index and the sound cache by
 address, so nothing is changed under one: when a reload changes anything,
@@ -58,13 +68,18 @@ no cache block holds them (at the latest when the map goes).
 #include "custom_edition_cache.h"
 #include "mods.h"
 
+#define STB_VORBIS_HEADER_ONLY
+#include "../../third_party/stb_vorbis/stb_vorbis.c"
+
 #include <math.h>
+#include <pthread.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 
 /* the game's (port) */
 char *tag_get_name(long tag_index);
+unsigned long long platform_shared_clock_microseconds(void);
 
 /* ---------- constants */
 
@@ -82,6 +97,20 @@ char *tag_get_name(long tag_index);
 #define SOUND_COMPRESSION_XBOX_ADPCM 1
 #define SOUND_COMPRESSION_OGG_VORBIS 3
 #define ADPCM_BLOCK_BYTES 36
+#define ADPCM_BLOCK_FRAMES 64
+
+/* the most frames an Ogg Vorbis packet decodes to (its longest block's half) */
+#define VORBIS_PACKET_FRAMES 4096
+/* the most frames of a stream's last decoded kept between its pieces: those
+decoded past a piece, and those before its end that the next one's low pass
+reaches (resampled past the mixer's rate) */
+#define STREAM_CARRY_FRAMES (2 * VORBIS_PACKET_FRAMES)
+/* the most frames an Ogg Vorbis permutation has (its bytes of PCM within a long) */
+#define MAXIMUM_STREAM_FRAMES 0x1FFFFFFFL
+/* the highest rate a stream is taken to be at (custom_edition_sounds.c's) */
+#define MAXIMUM_STREAM_RATE 192000
+/* the pieces asked for and not yet decoded: no more than the sound cache's blocks */
+#define DECODE_QUEUE_SIZE 512
 
 /* (sound_classes.c) */
 #define NUMBER_OF_SOUND_CLASSES 51
@@ -121,7 +150,61 @@ enum
 	_class_game_event = 50,
 };
 
+enum
+{
+	/* the bytes as they are kept: Xbox ADPCM played as it is (in the file),
+	or made Xbox ADPCM when it loaded (kept) */
+	_piece_copy,
+	/* 16-bit PCM, big-endian as a tag file has it: swapped */
+	_piece_pcm,
+	/* Xbox ADPCM, decoded to 16-bit PCM */
+	_piece_adpcm,
+	/* Ogg Vorbis, decoded to 16-bit PCM (resampled past the mixer's rate) */
+	_piece_vorbis,
+};
+
 /* ---------- structures */
+
+/* an Ogg Vorbis permutation of more than one piece's decoder, kept between
+its pieces (the decoder's thread's alone) */
+struct mod_sound_stream
+{
+	stb_vorbis *vorbis;
+	/* the stream's frames decoded: the next the decoder gives is this one */
+	long position;
+	/* the last of them, at the sound's channels, up to position */
+	long carry_count;
+	short carry[STREAM_CARRY_FRAMES * 2];
+};
+
+/* what a permutation (or a piece of one) of a mod's sound is made of, at
+its samples' address: never changed once made, so the decoder's thread may
+read it */
+struct mod_sound_piece
+{
+	short kind;
+	short channels;
+	/* the samples: the whole permutation's, in the file kept or (kept) its
+	own, made Xbox ADPCM when it loaded */
+	byte const *data;
+	unsigned long data_bytes;
+	byte *kept;
+	/* the piece's frames of the permutation's, at the rate it is played
+	at, and the permutation's */
+	long first_frame;
+	long frame_count;
+	long total_frames;
+	long rate;
+	/* (Ogg Vorbis) the stream's own channels, rate and frames, and the
+	permutation's decoder, NULL for one of one piece */
+	long source_channels;
+	long source_rate;
+	long source_frames;
+	struct mod_sound_stream *stream;
+	/* the permutation's own (not a piece after it): it lets the kept bytes
+	and the decoder go */
+	boolean owner;
+};
 
 /* a sound tag file read, and what it makes */
 struct mod_sound
@@ -139,8 +222,9 @@ struct mod_sound
 	struct sound_permutation *permutations;
 	long permutation_count;
 	unsigned long kept_bytes;
-	/* its permutations kept as Xbox ADPCM, not 16-bit PCM at their own
-	rates: past the memory the mods may keep (said once, mod_sounds_update) */
+	/* its permutations made Xbox ADPCM, not 16-bit PCM at their own rates:
+	more pieces than a pitch range holds, or a rate under the PCM's least
+	(said once, mod_sounds_update) */
 	long adpcm_count;
 };
 
@@ -234,6 +318,454 @@ static byte *file_read(
 	return data;
 }
 
+/* ---------- the decoder */
+
+/* The pieces of Ogg Vorbis and Xbox ADPCM asked for are decoded on a thread
+of their own, the cache block held (not loaded) until they are, as a
+map's disk read is (xbox_sound_cache.c): neither the game's thread nor the
+mixer's decodes. One thread decodes at a time (the decoder's, or with none,
+the game's), so its buffers are its own; it takes no memory of the game's
+allocator (cseries.h's, which is not the threads'), only the C library's:
+(malloc) and (free) are the library's own, not cseries.h's macros. */
+static pthread_mutex_t mod_sound_decoder_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t mod_sound_decoder_changed = PTHREAD_COND_INITIALIZER;
+
+static struct
+{
+	boolean started;
+	boolean failed;
+	pthread_t thread;
+	/* the pieces asked for, in turn, and whether one is being decoded */
+	struct decode_job
+	{
+		struct mod_sound_piece const *piece;
+		void *buffer;
+		boolean *loaded;
+		double asked;
+	} jobs[DECODE_QUEUE_SIZE];
+	long first;
+	long count;
+	boolean busy;
+	/* what it did (said on the game's thread, mod_sounds_tags_unloaded):
+	the pieces decoded, those that could not be (silence), the longest a
+	decode took and the longest from asked to loaded, in milliseconds */
+	long decoded_count;
+	long failed_count;
+	double longest_decode;
+	double longest_wait;
+	/* a stream's decoder's buffers: a packet's frames, and the decoder of a
+	permutation of one piece */
+	short packet[VORBIS_PACKET_FRAMES * 2];
+	struct mod_sound_stream single;
+} mod_sound_decoder;
+
+/* (the shared clock, which any thread may read) */
+static double decoder_milliseconds(
+	void)
+{
+	return (double)platform_shared_clock_microseconds() / 1000.0;
+}
+
+static void stream_close(
+	struct mod_sound_stream *stream)
+{
+	if (stream->vorbis)
+		stb_vorbis_close(stream->vorbis);
+	stream->vorbis = NULL;
+	stream->position = 0;
+	stream->carry_count = 0;
+
+	return;
+}
+
+/* `count` frames of `from_channels` at `frames` made `channels` in place
+(custom_edition_sounds.c's frames_channels: a mono stream fills both
+channels, a stereo one is averaged for mono); `frames` has room for two
+channels of them */
+static void frames_to_channels(
+	short *frames,
+	long count,
+	long from_channels,
+	long channels)
+{
+	long frame;
+
+	if (from_channels == channels)
+	{
+		return;
+	}
+	if (channels == 1)
+	{
+		for (frame = 0; frame < count; frame++)
+			frames[frame] = (short)((frames[2 * frame] + frames[2 * frame + 1]) / 2);
+	}
+	else
+	{
+		for (frame = count - 1; frame >= 0; frame--)
+			frames[2 * frame] = frames[2 * frame + 1] = frames[frame];
+	}
+
+	return;
+}
+
+/* The frames [from, to) of the Ogg Vorbis stream of `piece`, at its
+sound's channels, into `output`, by `stream`'s decoder: on from where it
+left off (the frames it kept, then the next it decodes), or, for frames
+before what it kept, from the stream's start again. It keeps the last
+`keep` frames given and those decoded past them, for the next piece.
+FALSE when the stream ends before `to` or cannot be decoded. */
+static boolean stream_frames(
+	struct mod_sound_stream *stream,
+	struct mod_sound_piece const *piece,
+	long from,
+	long to,
+	long keep,
+	short *output)
+{
+	long channels = piece->channels;
+	size_t frame_bytes = (size_t)channels * sizeof(short);
+	short *packet = mod_sound_decoder.packet;
+	long packet_first = NONE;
+	long carry_first;
+	long at = from;
+
+	if (stream->vorbis && from < stream->position - stream->carry_count)
+	{
+		stream_close(stream);
+	}
+	if (!stream->vorbis)
+	{
+		int error = 0;
+
+		stream->vorbis = stb_vorbis_open_memory(piece->data, (int)piece->data_bytes, &error, NULL);
+		if (!stream->vorbis)
+		{
+			return FALSE;
+		}
+		if (stb_vorbis_get_info(stream->vorbis).channels != piece->source_channels)
+		{
+			stream_close(stream);
+			return FALSE;
+		}
+		stream->position = 0;
+		stream->carry_count = 0;
+	}
+	carry_first = stream->position - stream->carry_count;
+	if (at < stream->position)
+	{
+		long count = MIN(to, stream->position) - at;
+
+		memcpy(output, stream->carry + (at - carry_first) * channels, (size_t)count * frame_bytes);
+		at += count;
+	}
+	while (at < to)
+	{
+		int count = stb_vorbis_get_frame_short_interleaved(stream->vorbis, (int)piece->source_channels, packet,
+			(int)(VORBIS_PACKET_FRAMES * piece->source_channels));
+
+		if (count <= 0 || count > VORBIS_PACKET_FRAMES)
+		{
+			stream_close(stream);
+			return FALSE;
+		}
+		frames_to_channels(packet, count, piece->source_channels, channels);
+		packet_first = stream->position;
+		stream->position += count;
+		if (stream->position > at)
+		{
+			long end = MIN(to, stream->position);
+
+			memcpy(output + (at - from) * channels, packet + (at - packet_first) * channels,
+				(size_t)(end - at) * frame_bytes);
+			at = end;
+		}
+	}
+	/* the frames kept: the last `keep` given, then those decoded past them
+	(of the last packet, or of the frames kept before) */
+	{
+		long past = stream->position - to;
+		long given = MIN(MIN(keep, to - from), STREAM_CARRY_FRAMES - past);
+
+		if (packet_first == NONE)
+		{
+			memmove(stream->carry + given * channels, stream->carry + (to - carry_first) * channels,
+				(size_t)past * frame_bytes);
+		}
+		else
+		{
+			memcpy(stream->carry + given * channels, packet + (to - packet_first) * channels,
+				(size_t)past * frame_bytes);
+		}
+		memcpy(stream->carry, output + (to - given - from) * channels, (size_t)given * frame_bytes);
+		stream->carry_count = given + past;
+	}
+
+	return TRUE;
+}
+
+/* the frames of an Ogg Vorbis piece into `output`: its stream's own, or
+past the mixer's rate, its stream's frames that the piece's low pass
+reaches, resampled (custom_edition_sounds.c's, sample for sample what a
+whole resample makes) */
+static boolean piece_decode_vorbis(
+	struct mod_sound_piece const *piece,
+	short *output)
+{
+	struct mod_sound_stream *stream = piece->stream ? piece->stream : &mod_sound_decoder.single;
+	long last = piece->first_frame + piece->frame_count;
+	boolean decoded = FALSE;
+
+	if (piece->rate == piece->source_rate)
+	{
+		decoded = stream_frames(stream, piece, piece->first_frame, last, 0, output);
+	}
+	else
+	{
+		long reach = custom_edition_sounds_resample_reach(piece->source_rate, piece->rate);
+		long from = MAX(0L, (long)floor((double)piece->first_frame * piece->source_rate / piece->rate) - reach);
+		long to = MIN(piece->source_frames,
+			(long)ceil((double)(last - 1) * piece->source_rate / piece->rate) + reach + 1);
+		/* (what the next piece's low pass reaches back) */
+		long keep = 2 * reach + piece->source_rate / piece->rate + 4;
+		short *window = to > from ?
+			(malloc)((size_t)(to - from) * (size_t)piece->channels * sizeof(short)) : NULL;
+
+		if (window && stream_frames(stream, piece, from, to, keep, window))
+		{
+			custom_edition_sounds_resample_range(window, from, to - from, piece->source_frames,
+				piece->source_rate, piece->channels, piece->rate, piece->first_frame, piece->frame_count, output);
+			decoded = TRUE;
+		}
+		if (window)
+			(free)(window);
+	}
+	/* (a permutation's last piece, or its only one: its decoder let go) */
+	if (!piece->stream || last >= piece->total_frames)
+	{
+		stream_close(stream);
+	}
+
+	return decoded;
+}
+
+/* a piece's samples, as the sound cache loads them: 16-bit PCM at its
+rate (or the Xbox ADPCM kept); FALSE when they cannot be decoded */
+static boolean piece_decode(
+	struct mod_sound_piece const *piece,
+	void *buffer)
+{
+	short *output = buffer;
+	long channels = piece->channels;
+
+	switch (piece->kind)
+	{
+	case _piece_copy:
+		memcpy(buffer, piece->data, piece->data_bytes);
+		return TRUE;
+	case _piece_pcm:
+	{
+		byte const *data = piece->data + (unsigned long)piece->first_frame * channels * 2;
+		long index;
+
+		for (index = 0; index < piece->frame_count * channels; index++)
+		{
+			output[index] = (short)(data[2 * index + 1] | (data[2 * index] << 8));
+		}
+		return TRUE;
+	}
+	case _piece_adpcm:
+		/* (a piece is whole blocks: its frames a multiple of them) */
+		custom_edition_sounds_adpcm_blocks(
+			piece->data + (unsigned long)(piece->first_frame / ADPCM_BLOCK_FRAMES) * ADPCM_BLOCK_BYTES * channels,
+			piece->frame_count / ADPCM_BLOCK_FRAMES, channels, output);
+		return TRUE;
+	case _piece_vorbis:
+		return piece_decode_vorbis(piece, output);
+	}
+
+	return FALSE;
+}
+
+/* a piece's samples into the cache block `buffer` of `bytes`, *loaded set
+once they are there (silence where they cannot be decoded); its time, and
+from `asked`, counted */
+static void piece_load(
+	struct mod_sound_piece const *piece,
+	void *buffer,
+	unsigned long bytes,
+	boolean *loaded,
+	double asked)
+{
+	double started = decoder_milliseconds();
+	boolean decoded = piece_decode(piece, buffer);
+	double done = decoder_milliseconds();
+
+	if (!decoded)
+	{
+		memset(buffer, 0, bytes);
+	}
+	__atomic_store_n(loaded, TRUE, __ATOMIC_RELEASE);
+	pthread_mutex_lock(&mod_sound_decoder_lock);
+	mod_sound_decoder.decoded_count++;
+	if (!decoded)
+		mod_sound_decoder.failed_count++;
+	mod_sound_decoder.longest_decode = MAX(mod_sound_decoder.longest_decode, done - started);
+	mod_sound_decoder.longest_wait = MAX(mod_sound_decoder.longest_wait, done - asked);
+	pthread_mutex_unlock(&mod_sound_decoder_lock);
+
+	return;
+}
+
+static unsigned long piece_bytes_of(
+	struct mod_sound_piece const *piece)
+{
+	return piece->kind == _piece_copy ? piece->data_bytes :
+		(unsigned long)piece->frame_count * (unsigned long)piece->channels * sizeof(short);
+}
+
+static void *decoder_main(
+	void *context)
+{
+	(void)context;
+	pthread_mutex_lock(&mod_sound_decoder_lock);
+	for (;;)
+	{
+		struct decode_job job;
+
+		while (!mod_sound_decoder.count)
+			pthread_cond_wait(&mod_sound_decoder_changed, &mod_sound_decoder_lock);
+		job = mod_sound_decoder.jobs[mod_sound_decoder.first];
+		mod_sound_decoder.first = (mod_sound_decoder.first + 1) % DECODE_QUEUE_SIZE;
+		mod_sound_decoder.count--;
+		mod_sound_decoder.busy = TRUE;
+		pthread_mutex_unlock(&mod_sound_decoder_lock);
+		piece_load(job.piece, job.buffer, piece_bytes_of(job.piece), job.loaded, job.asked);
+		pthread_mutex_lock(&mod_sound_decoder_lock);
+		mod_sound_decoder.busy = FALSE;
+		pthread_cond_broadcast(&mod_sound_decoder_changed);
+	}
+
+	return NULL;
+}
+
+/* whether the decoder's thread runs (made the first time; when it cannot
+be, the game's thread decodes, said once) */
+static boolean decoder_start(
+	void)
+{
+	if (!mod_sound_decoder.started && !mod_sound_decoder.failed)
+	{
+		if (pthread_create(&mod_sound_decoder.thread, NULL, decoder_main, NULL))
+		{
+			mod_sound_decoder.failed = TRUE;
+			error(_error_silent, "mods: no thread to decode sounds on; the game's decodes them");
+		}
+		else
+		{
+			pthread_detach(mod_sound_decoder.thread);
+			mod_sound_decoder.started = TRUE;
+		}
+	}
+
+	return mod_sound_decoder.started;
+}
+
+/* Every piece asked for decoded (before the sound cache lets a block go or
+a sound's file goes). */
+static void decoder_wait(
+	void)
+{
+	if (!mod_sound_decoder.started)
+	{
+		return;
+	}
+	pthread_mutex_lock(&mod_sound_decoder_lock);
+	while (mod_sound_decoder.count || mod_sound_decoder.busy)
+		pthread_cond_wait(&mod_sound_decoder_changed, &mod_sound_decoder_lock);
+	pthread_mutex_unlock(&mod_sound_decoder_lock);
+
+	return;
+}
+
+/* A piece loaded into the cache block `buffer`: PCM swapped and Xbox
+ADPCM copied at once, Ogg Vorbis and Xbox ADPCM made PCM asked of the
+decoder's thread, *loaded set when it is done. */
+static void piece_request(
+	struct mod_sound_piece const *piece,
+	void *buffer,
+	boolean *loaded)
+{
+	double asked = decoder_milliseconds();
+
+	if (piece->kind == _piece_copy || piece->kind == _piece_pcm || !decoder_start())
+	{
+		piece_load(piece, buffer, piece_bytes_of(piece), loaded, asked);
+		return;
+	}
+	pthread_mutex_lock(&mod_sound_decoder_lock);
+	while (mod_sound_decoder.count >= DECODE_QUEUE_SIZE)
+		pthread_cond_wait(&mod_sound_decoder_changed, &mod_sound_decoder_lock);
+	{
+		struct decode_job *job =
+			&mod_sound_decoder.jobs[(mod_sound_decoder.first + mod_sound_decoder.count) % DECODE_QUEUE_SIZE];
+
+		job->piece = piece;
+		job->buffer = buffer;
+		job->loaded = loaded;
+		job->asked = asked;
+		mod_sound_decoder.count++;
+	}
+	pthread_cond_broadcast(&mod_sound_decoder_changed);
+	pthread_mutex_unlock(&mod_sound_decoder_lock);
+
+	return;
+}
+
+/* The Ogg Vorbis stream `data`'s channels, rate and frames, decoded once
+through (when its sound loads, on the game's thread) and let go; FALSE
+when it cannot be decoded or is not one a sound plays. */
+static boolean vorbis_measure(
+	byte const *data,
+	unsigned long data_bytes,
+	long *channels,
+	long *rate,
+	long *frames)
+{
+	int error = 0;
+	stb_vorbis *vorbis = data_bytes <= 0x7FFFFFFFUL ?
+		stb_vorbis_open_memory(data, (int)data_bytes, &error, NULL) : NULL;
+	short *packet = NULL;
+	stb_vorbis_info info;
+	int count;
+
+	*frames = 0;
+	if (!vorbis)
+	{
+		return FALSE;
+	}
+	info = stb_vorbis_get_info(vorbis);
+	*channels = info.channels;
+	*rate = (long)info.sample_rate;
+	if (info.channels >= 1 && info.channels <= 2 && info.sample_rate > 0 && info.sample_rate <= MAXIMUM_STREAM_RATE)
+	{
+		packet = malloc(VORBIS_PACKET_FRAMES * 2 * sizeof(short));
+	}
+	while (packet && *frames <= MAXIMUM_STREAM_FRAMES &&
+		(count = stb_vorbis_get_frame_short_interleaved(vorbis, info.channels, packet,
+			VORBIS_PACKET_FRAMES * info.channels)) > 0)
+	{
+		*frames += count;
+	}
+	stb_vorbis_close(vorbis);
+	if (!packet)
+	{
+		return FALSE;
+	}
+	free(packet);
+
+	return *frames > 0 && *frames <= MAXIMUM_STREAM_FRAMES;
+}
+
 static void mod_sound_free(
 	struct mod_sound *sound)
 {
@@ -241,8 +773,19 @@ static void mod_sound_free(
 
 	for (permutation_index = 0; permutation_index < sound->permutation_count; permutation_index++)
 	{
-		if (sound->permutations[permutation_index].samples.address)
-			free(sound->permutations[permutation_index].samples.address);
+		struct mod_sound_piece *piece = sound->permutations[permutation_index].samples.address;
+
+		if (piece)
+		{
+			if (piece->owner && piece->kept)
+				free(piece->kept);
+			if (piece->owner && piece->stream)
+			{
+				stream_close(piece->stream);
+				free(piece->stream);
+			}
+			free(piece);
+		}
 	}
 	/* (the game's free, debug_free, does not take NULL) */
 	if (sound->permutations)
@@ -353,19 +896,6 @@ static void definition_defaults(
 	return;
 }
 
-/* The bytes of 16-bit PCM a permutation of `sound` may be kept in: what
-the mods may still keep, less what the sound already keeps and its file.
-Past it, a permutation is Xbox ADPCM (custom_edition_sounds_encode). */
-static unsigned long native_budget(
-	struct mod_sound const *sound,
-	unsigned long file_size)
-{
-	unsigned long left = mods_memory_left();
-	unsigned long held = sound->kept_bytes + file_size;
-
-	return left > held ? left - held : 0;
-}
-
 /* the permutations `bytes` of 16-bit PCM are kept in: one, or where that
 is longer than one permutation is kept in (twice a piece), its pieces */
 static long piece_count(
@@ -376,6 +906,12 @@ static long piece_count(
 	return bytes <= 2 * piece_bytes ? 1 : (long)((bytes + piece_bytes - 1) / piece_bytes);
 }
 
+static unsigned long bytes_per_frame(
+	struct mod_sound_piece const *piece)
+{
+	return (unsigned long)piece->channels * sizeof(short);
+}
+
 /* Splits each permutation of the pitch range `range` (the file's `count`
 of them, from sound->permutations[first], the last made) kept as 16-bit PCM
 longer than one permutation is kept in (piece_count) into a chain of linked
@@ -383,8 +919,9 @@ pieces (OpenH1 issue 1167), so that it stays PCM at its own rate: the
 permutation keeps the first piece and its mouth and subtitle data, and the
 others are new permutations after the range's, each followed by the next
 and the last by what followed the permutation. The pieces are its frames
-in order, none left out or repeated, at its rate, so the chain plays them
-as one: sound_dsound_xbox.c queues a piece's packets after the last of the
+in order, none left out or repeated, at its rate (each decoded from the
+permutation's samples in the file as it loads, an Ogg Vorbis one's by one
+decoder kept for them all), so the chain plays them as one: sound_dsound_xbox.c queues a piece's packets after the last of the
 one before, of the same format (no switch of the channel's stream between
 them). The range's count takes them; FALSE when out of memory. */
 static boolean range_split(
@@ -404,13 +941,24 @@ static boolean range_split(
 		long more = piece_count(bytes) - 1;
 		short previous = (short)index;
 		short next = permutation->next_permutation_index;
+		struct mod_sound_piece *whole = permutation->samples.address;
+		long piece_frames;
 		unsigned long offset;
-		byte *samples;
-		byte *shrunk;
 
 		if (!sound_permutation_pcm_rate(permutation) || more <= 0)
 		{
 			continue;
+		}
+		piece_frames = (long)(piece_bytes / ((unsigned long)whole->channels * sizeof(short)));
+		if (whole->kind == _piece_vorbis)
+		{
+			whole->stream = malloc(sizeof(*whole->stream));
+			if (!whole->stream)
+			{
+				return FALSE;
+			}
+			memset(whole->stream, 0, sizeof(*whole->stream));
+			sound->kept_bytes += sizeof(*whole->stream);
 		}
 		if (sound->permutation_count + more > *capacity)
 		{
@@ -426,7 +974,6 @@ static boolean range_split(
 			*capacity += more;
 			permutation = &sound->permutations[first + index];
 		}
-		samples = permutation->samples.address;
 		for (offset = piece_bytes; offset < bytes; offset += piece_bytes)
 		{
 			struct sound_permutation *piece = &sound->permutations[sound->permutation_count];
@@ -441,23 +988,27 @@ static boolean range_split(
 			piece->subtitle_data.size = 0;
 			piece->subtitle_data.address = NULL;
 			piece->samples.size = (long)size;
-			piece->samples.address = malloc(size);
+			piece->samples.address = malloc(sizeof(*whole));
 			if (!piece->samples.address)
 			{
 				return FALSE;
 			}
-			memcpy(piece->samples.address, samples + offset, size);
+			{
+				struct mod_sound_piece *part = piece->samples.address;
+
+				*part = *whole;
+				part->owner = FALSE;
+				part->first_frame = (long)(offset / bytes_per_frame(whole));
+				part->frame_count = (long)(size / bytes_per_frame(whole));
+			}
+			sound->kept_bytes += sizeof(*whole);
 			piece->next_permutation_index = next;
 			sound->permutations[first + previous].next_permutation_index = piece_index;
 			previous = piece_index;
 			sound->permutation_count++;
 		}
 		permutation->samples.size = (long)piece_bytes;
-		shrunk = realloc(samples, piece_bytes);
-		if (shrunk)
-		{
-			permutation->samples.address = shrunk;
-		}
+		whole->frame_count = piece_frames;
 	}
 	range->permutations.count = sound->permutation_count - first;
 
@@ -739,6 +1290,7 @@ static struct mod_sound *mod_sound_new(
 				byte const *samples = file + cursor;
 				unsigned long encoded_bytes = 0;
 				long kept_rate = 0;
+				struct mod_sound_piece *piece;
 
 				sound->permutation_count++;
 				*reason = "a permutation's data is not in the file";
@@ -769,51 +1321,91 @@ static struct mod_sound *mod_sound_new(
 				lengths[permutation_index] = permutation_length(definition, range, compression,
 					samples_size, buffer_size, rate);
 
-				/* the samples (Xbox ADPCM at the rate played is played as it is) */
+				/* the samples, as the file has them, made PCM as they are
+				loaded into the sound cache (mod_sounds_read; Xbox ADPCM at the
+				rate played is played as it is) */
+				piece = malloc(sizeof(*piece));
+				if (!piece)
+				{
+					*reason = "out of memory";
+					free(lengths);
+					goto refused;
+				}
+				memset(piece, 0, sizeof(*piece));
+				permutation->samples.address = piece;
+				sound->kept_bytes += sizeof(*piece);
+				piece->owner = TRUE;
+				piece->channels = (short)channels;
+				piece->data = samples;
+				piece->data_bytes = samples_size;
 				if (compression == SOUND_COMPRESSION_XBOX_ADPCM && rate == encoded_rate)
 				{
-					permutation->samples.address = malloc(samples_size);
-					if (permutation->samples.address)
-					{
-						memcpy(permutation->samples.address, samples, samples_size);
-						encoded_bytes = samples_size;
-					}
+					piece->kind = _piece_copy;
+					encoded_bytes = samples_size;
 				}
 				else
 				{
-					permutation->samples.address = custom_edition_sounds_encode(samples, (long)samples_size,
-						compression, TRUE, channels, rate, encoded_rate, native_budget(sound, file_size),
-						&encoded_bytes, &kept_rate);
-					/* (PCM longer than one permutation is kept in is split into
-					pieces, range_split: Xbox ADPCM where the range has no room
-					for them) */
-					if (permutation->samples.address && kept_rate)
+					long frames;
+					long more;
+
+					kept_rate = rate;
+					if (compression == SOUND_COMPRESSION_NONE)
 					{
-						long more = piece_count(encoded_bytes) - 1;
-
-						if (count + range_pieces + more > MAXIMUM_PERMUTATIONS_PER_PITCH_RANGE)
+						piece->kind = _piece_pcm;
+						frames = (long)(samples_size / (2 * channels));
+					}
+					else if (compression == SOUND_COMPRESSION_XBOX_ADPCM)
+					{
+						piece->kind = _piece_adpcm;
+						frames = (long)(samples_size / (ADPCM_BLOCK_BYTES * channels)) * ADPCM_BLOCK_FRAMES;
+					}
+					else
+					{
+						piece->kind = _piece_vorbis;
+						if (!vorbis_measure(samples, samples_size, &piece->source_channels, &piece->source_rate,
+							&piece->source_frames))
 						{
-							byte *pcm = permutation->samples.address;
-
-							permutation->samples.address = custom_edition_sounds_encode(pcm, (long)encoded_bytes,
-								SOUND_COMPRESSION_NONE, FALSE, channels, kept_rate, encoded_rate, 0,
-								&encoded_bytes, &kept_rate);
-							free(pcm);
+							*reason = "a permutation's samples cannot be decoded";
+							free(lengths);
+							goto refused;
 						}
-						else
+						/* (its own rate, up to the mixer's: no more is heard) */
+						kept_rate = MIN(piece->source_rate, (long)SOUND_PERMUTATION_PCM_MAXIMUM_RATE);
+						frames = kept_rate == piece->source_rate ? piece->source_frames :
+							custom_edition_sounds_resampled_count(piece->source_frames, piece->source_rate, kept_rate);
+					}
+					piece->rate = kept_rate;
+					piece->frame_count = frames;
+					piece->total_frames = frames;
+					encoded_bytes = frames > 0 ? (unsigned long)frames * (unsigned long)channels * sizeof(short) : 0;
+					more = piece_count(encoded_bytes) - 1;
+					/* (PCM of any length is split into pieces, range_split: Xbox
+					ADPCM, made now and kept, where the range has no room for
+					them or its rate is under the PCM's least) */
+					if (frames <= 0 || kept_rate < SOUND_PERMUTATION_PCM_MINIMUM_RATE ||
+						count + range_pieces + more > MAXIMUM_PERMUTATIONS_PER_PITCH_RANGE)
+					{
+						piece->kind = _piece_copy;
+						piece->kept = custom_edition_sounds_encode(samples, (long)samples_size, compression, TRUE,
+							channels, rate, encoded_rate, 0, &encoded_bytes, &kept_rate);
+						piece->data = piece->kept;
+						piece->data_bytes = piece->kept ? encoded_bytes : 0;
+						kept_rate = 0;
+						if (piece->kept)
 						{
-							range_pieces += more;
+							sound->adpcm_count++;
+							sound->kept_bytes += encoded_bytes;
 						}
 					}
-					if (permutation->samples.address && !kept_rate)
+					else
 					{
-						sound->adpcm_count++;
+						range_pieces += more;
 					}
 				}
 				/* (PCM of any length: it is split, range_split) */
-				if (!permutation->samples.address || (!kept_rate && encoded_bytes > MAXIMUM_SOUND_DATA_SIZE))
+				if (!piece->data || (!kept_rate && encoded_bytes > MAXIMUM_SOUND_DATA_SIZE))
 				{
-					*reason = permutation->samples.address ?
+					*reason = piece->data ?
 						"a permutation is longer than a sound cache block takes" :
 						"a permutation's samples cannot be decoded";
 					free(lengths);
@@ -824,7 +1416,6 @@ static struct mod_sound *mod_sound_new(
 				/* (16-bit PCM at its own rate: sound_permutation_pcm_rate) */
 				permutation->compression = kept_rate ? SOUND_COMPRESSION_NONE : SOUND_COMPRESSION_XBOX_ADPCM;
 				permutation->sample_buffer_size = (unsigned long)kept_rate;
-				sound->kept_bytes += encoded_bytes;
 				cursor += samples_size;
 				/* (the mouth and subtitle data stay in the file kept) */
 				permutation->mouth_data.size = (long)mouth_size;
@@ -935,6 +1526,8 @@ static void sounds_let_go(
 {
 	struct mod_sound **reference = &mod_sounds_globals.sounds;
 
+	/* (no piece of one still being decoded from its file) */
+	decoder_wait();
 	while (*reference)
 	{
 		struct mod_sound *sound = *reference;
@@ -1072,8 +1665,9 @@ long mod_sounds_update(
 		}
 		if (file)
 		{
-			/* (refused before its samples are decoded when the file alone
-			is more than the mods may keep) */
+			/* (refused, said, when the file is more than the mods may
+			still keep: what a mod's sound holds is its file, its samples
+			made PCM only as they play, OpenH1 issue 1202) */
 			struct mod_sound *sound = mods_memory_left() < file_size ? NULL :
 				mod_sound_new(tag_index, file, file_size, &reason);
 
@@ -1102,8 +1696,9 @@ long mod_sounds_update(
 			made = sound;
 			if (sound->adpcm_count)
 			{
-				error(_error_silent, "mods: %s: %ld of its permutations kept as Xbox ADPCM, not 16-bit PCM at their own rates "
-					"(past the memory the mods may keep)", file_path, sound->adpcm_count);
+				error(_error_silent, "mods: %s: %ld of its permutations made Xbox ADPCM, not 16-bit PCM at their own rates "
+					"(more pieces than a pitch range holds, or a rate under %d Hz)", file_path, sound->adpcm_count,
+					SOUND_PERMUTATION_PCM_MINIMUM_RATE);
 			}
 		}
 		else if (!override->sound)
@@ -1171,6 +1766,18 @@ void mod_sounds_tags_unloaded(
 	void)
 {
 	sounds_let_go(TRUE);
+	if (mod_sound_decoder.decoded_count)
+	{
+		pthread_mutex_lock(&mod_sound_decoder_lock);
+		error(_error_silent, "mods: %ld sound pieces made PCM as they loaded (%ld could not be: silence), "
+			"the longest in %.1f ms, %.1f ms from asked to loaded", mod_sound_decoder.decoded_count,
+			mod_sound_decoder.failed_count, mod_sound_decoder.longest_decode, mod_sound_decoder.longest_wait);
+		mod_sound_decoder.decoded_count = 0;
+		mod_sound_decoder.failed_count = 0;
+		mod_sound_decoder.longest_decode = 0.0;
+		mod_sound_decoder.longest_wait = 0.0;
+		pthread_mutex_unlock(&mod_sound_decoder_lock);
+	}
 	if (mod_sounds_globals.overrides)
 		free(mod_sounds_globals.overrides);
 	memset(&mod_sounds_globals, 0, sizeof(mod_sounds_globals));
@@ -1180,7 +1787,8 @@ void mod_sounds_tags_unloaded(
 
 boolean mod_sounds_read(
 	struct sound_permutation const *permutation,
-	void *buffer)
+	void *buffer,
+	boolean *loaded)
 {
 	struct mod_sound const *sound;
 
@@ -1188,12 +1796,20 @@ boolean mod_sounds_read(
 	{
 		if (permutation >= sound->permutations && permutation < sound->permutations + sound->permutation_count)
 		{
-			memcpy(buffer, permutation->samples.address, (size_t)permutation->samples.size);
+			piece_request(permutation->samples.address, buffer, loaded);
 			return TRUE;
 		}
 	}
 
 	return FALSE;
+}
+
+void mod_sounds_decode_wait(
+	void)
+{
+	decoder_wait();
+
+	return;
 }
 
 boolean mod_sounds_replaced(
