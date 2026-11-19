@@ -1435,7 +1435,8 @@ static void dynamic_lights_functions(struct xgpu_text *text, struct xgpu_text *f
 		XGPU_DYNAMIC_LIGHTS_CLUSTERS - 1);
 	xgpu_text_append(functions,
 		"static inline float3 dynamic_light_sum(constant xgpu_dynamic_lights &lights, const device uint4 *cells,\n"
-		"\tconst device uint4 *world, float3 p, float3 n, float3 surface_normal, bool environment, float4 own)\n"
+		"\tconst device uint4 *world, float3 p, float3 n, float3 surface_normal, bool environment, float4 own,\n"
+		"\tfloat4 reflection, thread float3 &shine)\n"
 		"{\n"
 		"\tfloat3 offset = p - lights.grid[0].xyz;\n"
 		"\tfloat3 cell = sign(offset) * log2(1.0 + abs(offset) * lights.grid[1].w) * lights.grid[1].xyz +\n"
@@ -1471,6 +1472,11 @@ static void dynamic_lights_functions(struct xgpu_text *text, struct xgpu_text *f
 		"\t\t\tfloat4 color = lights.color[light];\n"
 		"\t\t\tfloat spot = saturate(dot(l, -cone.xyz) * cone.w + color.w);\n"
 		"\t\t\tsum += color.rgb * (falloff * facing * spot);\n"
+		/* (a model's reflection's highlights, xgpu.h
+		XGPU_DYNAMIC_LIGHTS_HIGHLIGHT: reflection.w, the exponent, 0 none) */
+		"\t\t\tif (reflection.w > 0.0)\n"
+		"\t\t\t\tshine += color.rgb * (falloff * spot * saturate(dot(n, l) * 4.0) *\n"
+		"\t\t\t\t\tpow(max(dot(reflection.xyz, l), 0.0), reflection.w));\n"
 		"\t\t}\n"
 		"\t}\n"
 		"\treturn sum;\n"
@@ -2542,6 +2548,9 @@ char *xgpu_msl_pixel_shader(const struct xgpu_pixel_program *program, const stru
 	of the view, x right and y down, and the pixel's depth, which the
 	resolve finds it still is; xgpu_msl_options' motion) */
 	BOOL motion = options->motion && !world_inputs && !occluder;
+	/* (a model's highlights of the lights in its reflection: xgpu.h
+	XGPU_DYNAMIC_LIGHTS_HIGHLIGHT) */
+	BOOL highlights = FALSE;
 	int stage;
 
 	pixel_usage(program, &usage);
@@ -2672,12 +2681,36 @@ char *xgpu_msl_pixel_shader(const struct xgpu_pixel_program *program, const stru
 	if (register_read(&usage, XGPU_REGISTER_V0) && program->per_pixel_lighting &&
 		program->dynamic_lights == XGPU_DYNAMIC_LIGHTS_MODEL)
 	{
+		highlights = program->stages[3].mode == XGPU_TEXTURE_CUBEMAP && register_read(&usage, XGPU_REGISTER_T3);
+		xgpu_text_append(&text, "\tfloat3 shine = float3(0.0);\n");
+		if (highlights)
+			xgpu_text_append(&text, "\tfloat highlight_scale = 0.0;\n");
 		xgpu_text_append(&text,
 			"\t{\n"
 			"\t\tfloat3 n = in.xWorldNormal.xyz * rsqrt(max(dot(in.xWorldNormal.xyz, in.xWorldNormal.xyz), 1.0e-24));\n"
+			"\t\tfloat4 reflection = float4(0.0);\n");
+		if (highlights)
+		{
+			/* (its reflection's highlights of the lights, widened where its
+			normal turns fast across the pixel: xgpu.h
+			XGPU_DYNAMIC_LIGHTS_HIGHLIGHT; xgpu_spirv.c's, operation for
+			operation) */
+			const float lobe = 2.0f / (XGPU_DYNAMIC_LIGHTS_HIGHLIGHT_EXPONENT + 2.0f);
+
+			xgpu_text_append(&text,
+				"\t\tfloat3 to_eye = dynamic_lights.grid[0].xyz - in.xWorldPosition;\n"
+				"\t\tfloat3 v = to_eye * rsqrt(max(dot(to_eye, to_eye), 1.0e-12));\n"
+				"\t\treflection.xyz = n * (dot(n, v) * 2.0) - v;\n"
+				"\t\tfloat3 reflection_dx = dfdx(reflection.xyz), reflection_dy = dfdy(reflection.xyz);\n"
+				"\t\tfloat widened = %.9g + min(dot(reflection_dx, reflection_dx) + dot(reflection_dy, reflection_dy), %.9g);\n"
+				"\t\treflection.w = 2.0 / widened - 2.0;\n"
+				"\t\thighlight_scale = %.9g / widened;\n", (double)lobe, (double)XGPU_DYNAMIC_LIGHTS_HIGHLIGHT_WIDEST,
+				(double)(lobe * XGPU_DYNAMIC_LIGHTS_HIGHLIGHT));
+		}
+		xgpu_text_append(&text,
 			"\t\tv0.rgb = dynamic_light_add(dynamic_lights, model_lighting(u, in.xWorldNormal%s),\n"
 			"\t\t\tdynamic_light_sum(dynamic_lights, dynamic_light_cells, dynamic_light_world, in.xWorldPosition, n, n, false,\n"
-			"\t\t\t\tu.model_lights[%d]));\n"
+			"\t\t\t\tu.model_lights[%d], reflection, shine));\n"
 			"\t}\n", occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_MODEL ? ", occlusion" : "",
 			XGPU_MODEL_LIGHT_OWN_LIGHTS);
 	}
@@ -2696,6 +2729,10 @@ char *xgpu_msl_pixel_shader(const struct xgpu_pixel_program *program, const stru
 
 	for (stage = 0; stage < 4; stage++)
 		texture_stage(&text, program, stage, &usage, options);
+	/* (a model's highlights of the lights, added to its reflection's texel:
+	xgpu.h XGPU_DYNAMIC_LIGHTS_HIGHLIGHT) */
+	if (highlights)
+		xgpu_text_append(&text, "\tt3.rgb = dynamic_light_add(dynamic_lights, t3.rgb, shine * highlight_scale);\n");
 	/* (the bump map's texel, which the combiners may overwrite: the enhanced
 	dynamic lights read it after them) */
 	if (environment && program->stages[0].sampler == _xgpu_sampler_2d)
@@ -2787,9 +2824,10 @@ char *xgpu_msl_pixel_shader(const struct xgpu_pixel_program *program, const stru
 			"\t\tfloat3 surface_normal = normalize(in.xWorldNormal.xyz);\n"
 			"\t\tfloat3 bump = %s;\n"
 			"\t\tfloat3 n = normalize(in.xWorldTangent * bump.x + in.xWorldBinormal * bump.y + surface_normal * max(bump.z, 0.05));\n"
+			"\t\tfloat3 no_shine = float3(0.0);\n"
 			"\t\tresult.rgb = dynamic_light_add%s(dynamic_lights, result.rgb,\n"
 			"\t\t\tdynamic_light_sum(dynamic_lights, dynamic_light_cells, dynamic_light_world, in.xWorldPosition, n, surface_normal, true,\n"
-			"\t\t\t\tfloat4(-1.0)) *\n"
+			"\t\t\t\tfloat4(-1.0), float4(0.0), no_shine) *\n"
 			"\t\t\tu.dynamic_light_tint.rgb);\n"
 			"\t}\n",
 			program->stages[0].sampler == _xgpu_sampler_2d ? "dynamic_light_bump * 2.0 - 1.0" : "float3(0.0, 0.0, 1.0)",
