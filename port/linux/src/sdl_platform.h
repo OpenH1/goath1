@@ -147,6 +147,10 @@ void platform_display_apply(void);
 /* the frames a second battery saver asks for (battery_saver.c), given the
 window's renderer: the main thread's, as it turns on or off */
 void platform_frame_rate_apply(void);
+/* the frames a second the game aims at: the display's refresh rate (60
+where it is unknown), or display.max_fps where that is lower
+(display.dynamic_resolution's budget: d3d8_device.c) */
+float platform_frame_rate_target(void);
 #ifdef HALO_VR
 /* the VR build's hidden window shown, to play flat in: no VR session */
 void platform_video_vr_unavailable(void);
