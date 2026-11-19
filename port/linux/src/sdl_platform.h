@@ -152,6 +152,13 @@ void platform_frame_rate_apply(void);
 void platform_video_vr_unavailable(void);
 #endif
 void platform_video_swap(void);
+/* the frames' limit's wait woken for a step of the game's clock that falls
+due before the frame's time (main.c's main_frame_step_due: when, 0 for
+none); whether the last wait was, once; and, for a frame woken so (which
+draws nothing), the rest of the wait */
+void platform_frame_step_hook(unsigned long long (*due)(unsigned long long now, unsigned long long frame_due));
+int platform_frame_woken_for_step(void);
+void platform_frame_wait(void);
 /* frames between the 30 Hz ticks at the display's refresh rate, unless
 display.interpolation is false (port/linux/game/render_interpolation.c) */
 int halo_interpolation_enabled(void);

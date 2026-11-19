@@ -2411,6 +2411,90 @@ static Uint64 platform_frame_slot(Uint64 interval, Uint64 now, Uint64 last)
 }
 #endif
 
+/* (the frames' limit's wait, below) a step of the game's clock that falls
+due in it, run then by a frame of its own that draws nothing (main.c's
+main_frame_step_due: when the wait wakes for it, 0 for none), not at the
+next frame's start, up to a frame after it fell due; whether the last wait
+was so woken, the frame's time still to come; and the next frame's time */
+static unsigned long long (*platform_frame_step_due)(unsigned long long now, unsigned long long frame_due);
+static int platform_frame_woken;
+static Uint64 platform_frame_next;
+
+/* the frames' limit's sleep, from now until until (nanoseconds of
+SDL_GetTicksNS) */
+static void platform_frame_sleep(Uint64 now, Uint64 until)
+{
+#ifdef HALO_ANDROID
+	/* (the Android guest's SDL waits in milliseconds) */
+	SDL_Delay((Uint32)((until - now) / 1000000u));
+#elif defined(HALO_WINDOWS)
+	/* (the host's wait, on time: Windows's timer wakes up to a
+	millisecond late; guest_windows.c) */
+	struct timespec monotonic;
+
+	clock_gettime(CLOCK_MONOTONIC, &monotonic);
+	host_windows_sleep_until((unsigned long long)monotonic.tv_sec * 1000000000ull +
+		(unsigned long long)monotonic.tv_nsec + (until - now));
+#else
+	SDL_DelayPrecise(until - now);
+#endif
+}
+
+/* waits for the frame's time (*next_frame) and sets the next's an interval
+on: TRUE. Or, where step_due (not NULL) has a step of the game's clock fall
+due before it, waits only until then: FALSE, the frame's time still to come
+(the next wait goes on to it). A frame more than an interval late starts the
+count again */
+static int platform_frame_wait_until(Uint64 *next_frame, Uint64 interval,
+	unsigned long long (*step_due)(unsigned long long now, unsigned long long frame_due), Uint64 (*clock)(void),
+	void (*sleep)(Uint64 now, Uint64 until))
+{
+	Uint64 now = clock();
+
+	if (*next_frame > now)
+	{
+		Uint64 step = step_due ? (Uint64)step_due(now, *next_frame) : 0;
+
+		if (step && step < *next_frame)
+		{
+			if (step > now)
+				sleep(now, step);
+			return FALSE;
+		}
+		sleep(now, *next_frame);
+		now = *next_frame;
+	}
+	*next_frame = now - *next_frame > interval ? now + interval : *next_frame + interval;
+	return TRUE;
+}
+
+void platform_frame_step_hook(unsigned long long (*due)(unsigned long long now, unsigned long long frame_due))
+{
+	platform_frame_step_due = due;
+}
+
+/* whether the last frame's wait woke for a step before the frame's time
+(the frame that follows draws nothing and waits again: platform_frame_wait),
+once */
+int platform_frame_woken_for_step(void)
+{
+	int woken = platform_frame_woken;
+
+	platform_frame_woken = FALSE;
+	return woken;
+}
+
+/* (a frame that drew nothing, woken for a step) the rest of the frames'
+limit's wait, which a step due first may wake again */
+void platform_frame_wait(void)
+{
+	Uint64 interval = frame_interval_ns();
+
+	platform_frame_woken = interval &&
+		!platform_frame_wait_until(&platform_frame_next, interval, platform_frame_step_due, SDL_GetTicksNS,
+			platform_frame_sleep);
+}
+
 /* The frames' limit (display.max_fps, battery saver's without vsync): no
 frame starts before its time, whatever comes meanwhile. The wait is a plain
 sleep, not one for the window's events: the keys, the mouse, the window's
@@ -2427,13 +2511,12 @@ at its start, and the view reads the mouse again after the simulation
 void platform_video_swap(void)
 {
 	Uint64 swap_start = SDL_GetTicks(), swap_time;
-	static Uint64 next_frame;
 #ifdef HALO_METAL
 	/* the last frame's start on the display's grid (platform_frame_slot) */
 	static Uint64 slot_last;
-	Uint64 slot;
+	Uint64 slot, now;
 #endif
-	Uint64 interval, now;
+	Uint64 interval;
 	/* (the host shows the frame, on its render thread: here it is paced) */
 	/* (a frame the graphics driver held for seconds: the game froze, and
 	online, a host stops hearing a machine after a few; the log says where) */
@@ -2441,10 +2524,11 @@ void platform_video_swap(void)
 	if (swap_time >= 2000)
 		platform_log("display: showing a frame took %.1f s in the graphics driver", (double)swap_time / 1000.0);
 	interval = frame_interval_ns();
+	platform_frame_woken = FALSE;
 	if (!interval)
 		return;
-	now = SDL_GetTicksNS();
 #ifdef HALO_METAL
+	now = SDL_GetTicksNS();
 	slot = platform_frame_slot(interval, now, slot_last);
 	if (slot)
 	{
@@ -2462,26 +2546,10 @@ void platform_video_swap(void)
 		return;
 	}
 #endif
-	if (next_frame > now)
-	{
-#ifdef HALO_ANDROID
-		/* (the Android guest's SDL waits in milliseconds) */
-		SDL_Delay((Uint32)((next_frame - now) / 1000000u));
-#elif defined(HALO_WINDOWS)
-		/* (the host's wait, on time: Windows's timer wakes up to a
-		millisecond late; guest_windows.c) */
-		struct timespec monotonic;
-
-		clock_gettime(CLOCK_MONOTONIC, &monotonic);
-		host_windows_sleep_until((unsigned long long)monotonic.tv_sec * 1000000000ull +
-			(unsigned long long)monotonic.tv_nsec + (next_frame - now));
-#else
-		SDL_DelayPrecise(next_frame - now);
-#endif
-		now = next_frame;
-	}
-	/* (a frame more than an interval late starts the count again) */
-	next_frame = now - next_frame > interval ? now + interval : next_frame + interval;
+	/* (a step of the game's clock due before the frame's time run when due:
+	platform_frame_step_due) */
+	platform_frame_woken = !platform_frame_wait_until(&platform_frame_next, interval, platform_frame_step_due,
+		SDL_GetTicksNS, platform_frame_sleep);
 }
 
 #if !defined(HALO_ANDROID) && !defined(HALO_GUEST)

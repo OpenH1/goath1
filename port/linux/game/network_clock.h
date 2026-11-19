@@ -93,6 +93,11 @@ void network_clock_tick_ended(void);
 /* (a client, game_time_update) the time this frame's ticks take more (or
 less) than the frame's to move the clock as planned */
 real network_clock_frame_seconds(real time_delta_sec);
+/* (a client, game_time_update) how late a frame's steps ran after the newest
+fell due (seconds) */
+void network_clock_steps_ran(real late_seconds);
+/* (main.c) whether a step that falls due in a seen frame's wait runs then */
+boolean network_clock_steps_when_due(void);
 /* (a dedicated server, main.c) whether its frame waits for its time before
 its datagrams are read: an OpenH1 game's; and, once a frame, whether it did */
 boolean network_clock_server_pace_first(void);

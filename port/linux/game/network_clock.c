@@ -381,20 +381,49 @@ real network_clock_frame_seconds(
 
 	if (game_connection() != _game_connection_network_client || !network_standard_agreed_rate() || game_time_held())
 		return 0.0f;
-	/* (the longest frame of the last second or so, of a client whose frames
-	the display paces, not its clock: network_clock_quantized_early) */
+	/* (none of a client whose frames its clock paces:
+	network_clock_steps_ran) */
 	if (halo_frames_unseen() || config_boolean("debug.network_timing_before"))
 		clock_frame_quantum_microseconds = 0;
-	else
-	{
-		long frame = (long)(time_delta_sec * 1000000.0f);
-
-		clock_frame_quantum_microseconds = MAX(MIN(frame, CLOCK_TICK_MICROSECONDS),
-			clock_frame_quantum_microseconds - clock_frame_quantum_microseconds / 128);
-	}
 	part = network_clock_frame_part(&clock_client.plan.seconds, &clock_client.plan.at_once, time_delta_sec);
 	clock_client.seconds_moved += part;
 	return part;
+}
+
+/* (a client, game_time_update, once a frame's steps have run) how long after
+the newest fell due they ran (seconds): the longest of the last second or
+so, of a client whose frames the display paces, not its clock, which its
+input comes to the host up to that much earlier than it might by its
+frames' phase (network_clock_quantized_early). Its steps ran at its frames'
+starts, up to a frame after they fell due; in an OpenH1 game whose frames
+the frames' limit paces, at their time (main.c's main_frame_step_due), all
+but those that fell due while a frame was drawn */
+void network_clock_steps_ran(
+	real late_seconds)
+{
+	long late;
+
+	if (game_connection() != _game_connection_network_client || !network_standard_agreed_rate() ||
+		halo_frames_unseen() || config_boolean("debug.network_timing_before"))
+	{
+		return;
+	}
+	late = (long)(late_seconds * 1000000.0f);
+	clock_frame_quantum_microseconds = MAX(PIN(late, 0, CLOCK_TICK_MICROSECONDS),
+		clock_frame_quantum_microseconds - clock_frame_quantum_microseconds / 128);
+}
+
+/* a machine of an OpenH1 game whose frames are seen and drawn (not a
+dedicated server's): whether a step of its clock that falls due in its
+frame's wait for the frames' limit runs then (main.c's main_frame_step_due),
+not at the next frame's start; debug.network_timing_before, not, as before */
+boolean network_clock_steps_when_due(
+	void)
+{
+	short connection = game_connection();
+
+	return (connection == _game_connection_network_server || connection == _game_connection_network_client) &&
+		network_standard_agreed_rate() && !halo_frames_unseen() && !config_boolean("debug.network_timing_before");
 }
 
 /* a dedicated server of an OpenH1 game: whether this frame waits for its

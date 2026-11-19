@@ -85,6 +85,7 @@ symbols in this file:
 void network_distributed_tick(void);
 /* port: port/linux/game/network_clock.c */
 real network_clock_frame_seconds(real time_delta_sec);
+void network_clock_steps_ran(real late_seconds);
 /* port: port/linux/game/determinism_log.c */
 void determinism_log_tick_begin(void);
 void determinism_log_tick_end(long tick);
@@ -805,6 +806,9 @@ void game_time_update(
 				reports none; port: with sub-steps, the ticks that ended) */
 				game_time_globals->last_local_time_elapsed = game_time_held() ? 0 :
 					(short)(substep_count > 1 ? ticks_ended_run : ticks_ended);
+				/* port: how long after the newest fell due they ran, for an
+				OpenH1 game's client's clock (port/linux/game/network_clock.c) */
+				network_clock_steps_ran(game_time_globals->leftover_dt);
 			}
 		}
 		/* port: and those that ended before their time in this frame

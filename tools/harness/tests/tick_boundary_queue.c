@@ -35,6 +35,7 @@ static short sim_substep_next(void) { return next_substep; }
 static short sim_substep_count(void) { return SUBSTEPS; }
 static int game_connection(void) { return connection; }
 static real network_clock_frame_seconds(real seconds) { (void)seconds; return 0.0f; }
+static void network_clock_steps_ran(real seconds) { (void)seconds; }
 static boolean halo_fixed_step(void) { return FALSE; }
 static boolean game_time_menu_scene(void) { return FALSE; }
 static boolean game_time_held(void) { return FALSE; }

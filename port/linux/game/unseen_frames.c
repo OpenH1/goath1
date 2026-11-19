@@ -101,3 +101,30 @@ void unseen_frame_wait(
 {
 	unseen_frame_wait_receiving(NULL);
 }
+
+/* A machine whose frames are seen and paced by the frames' limit
+(display.max_fps: sdl_platform.c's platform_video_swap) ran a step of the
+clock only at the first frame's start after it fell due: up to a frame late
+(6.9 ms at 144 frames a second, 16.7 at 60), by the frames' phase against
+the steps, so that its input was sampled and sent, and a host's tick run,
+that much later than the step's time. In an OpenH1 network game the
+frame's wait wakes when a step falls due before the frame's time (main.c's
+main_frame_step_due), and a frame of its own runs it then, its input read
+then, drawing nothing; the wait then goes on to the frame's time.
+
+When the wait wakes, now with left nanoseconds to the step (0 or less: due
+already) and the frame's time at frame_due: at the step, where a frame that
+runs it (cost nanoseconds) ends before the frame's time; else 0, the step
+left for the frame, at most cost after it fell due */
+unsigned long long frame_step_wake(
+	unsigned long long now,
+	unsigned long long frame_due,
+	long long left,
+	unsigned long long cost)
+{
+	unsigned long long wake = left > 0 ? now + (unsigned long long)left : now;
+
+	if (wake + cost >= frame_due)
+		return 0;
+	return wake ? wake : 1;
+}
