@@ -3108,6 +3108,9 @@ static boolean settings_condition_term(struct widget_instance *list, char const 
 	/* (... NVIDIA DLSS too: where its module and an NVIDIA GPU are) */
 	if (!strcmp(name, "temporal_dlss"))
 		return halo_temporal_dlss_drawn() != 0;
+	/* (... MetalFX: Metal's) */
+	if (!strcmp(name, "temporal_metalfx"))
+		return halo_temporal_metalfx_drawn() != 0;
 	if (!strcmp(name, "temporal_on"))
 	{
 		char technique[16];
@@ -3115,7 +3118,8 @@ static boolean settings_condition_term(struct widget_instance *list, char const 
 		if (!settings_value("display.temporal_aa", technique, sizeof(technique)))
 			return FALSE;
 		return (halo_temporal_upscale_drawn() && !strcmp(technique, "fsr")) ||
-			(halo_temporal_dlss_drawn() && !strcmp(technique, "dlss"));
+			(halo_temporal_dlss_drawn() && !strcmp(technique, "dlss")) ||
+			(halo_temporal_metalfx_drawn() && !strcmp(technique, "metalfx"));
 	}
 	/* (the renderer has ray queries: display.shadows "ray_traced") */
 	if (!strcmp(name, "ray_queries"))

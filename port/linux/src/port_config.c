@@ -308,9 +308,9 @@ static const struct config_setting config_settings[] =
 		"Windows, Android), which takes display.anti_aliasing's place and draws\n"
 		"the HUD at the display's resolution; \"dlss\", NVIDIA DLSS (DLAA at\n"
 		"render scale 1), the same way, on Vulkan with an NVIDIA GPU where the\n"
-		"game has its DLSS module (else off); \"metalfx\" (not drawn yet: each\n"
-		"window's motion and jitter are made for it, which debug.motion_vectors\n"
-		"shows). Not in VR (docs/temporal-aa.md)." },
+		"game has its DLSS module (else off); \"metalfx\", Apple MetalFX's\n"
+		"temporal scaler, the same way, on Metal (macOS, iOS; else off). Not in\n"
+		"VR (docs/temporal-aa.md)." },
 	{ "display.supersampling", _config_real, "1.0", "HALO_SUPERSAMPLING", _environment_value, _platform_desktop,
 		"Draw the game at this many times the display's resolution each way, 1.0\n"
 		"to 2.0, and scale it down to the display: smoother edges and finer\n"

@@ -111,18 +111,20 @@ static struct
 static long ui_offset;
 #define UI_OFFSET ((long)ui_offset)
 /* display.temporal_aa's technique (port/linux/game/motion_vectors.c: 0
-off, 1 "fsr", 2 "dlss") */
+off, 1 "fsr", 2 "dlss", 3 "metalfx") */
 int motion_vectors_technique(void);
 
 /* whether a window's 3D view is upscaled by the backend: AMD FSR
-(display.temporal_aa "fsr") or NVIDIA DLSS ("dlss"), where the backend has
-it (Vulkan's; DLSS's where its module and an NVIDIA GPU are) */
+(display.temporal_aa "fsr"), NVIDIA DLSS ("dlss") or MetalFX ("metalfx"),
+where the backend has it (Vulkan's; DLSS's where its module and an NVIDIA
+GPU are; MetalFX's Metal's) */
 static BOOL temporal_upscaling(void)
 {
 	int technique = motion_vectors_technique();
 
 	return technique == 1 ? xgpu_backend_capabilities.temporal_upscale :
-		technique == 2 ? xgpu_backend_capabilities.temporal_dlss : FALSE;
+		technique == 2 ? xgpu_backend_capabilities.temporal_dlss :
+		technique == 3 ? xgpu_backend_capabilities.temporal_metalfx : FALSE;
 }
 
 /* ---------- anti-aliasing
@@ -222,7 +224,7 @@ static void anti_aliasing_read(void)
 	anti_aliasing_value = value;
 	if (temporal)
 		platform_log("anti-aliasing: off (display.temporal_aa \"%s\" antialiases)",
-			motion_vectors_technique() == 2 ? "dlss" : "fsr");
+			motion_vectors_technique() == 2 ? "dlss" : motion_vectors_technique() == 3 ? "metalfx" : "fsr");
 	else if (strcmp(setting, anti_aliasing_values[value].name))
 		platform_log("anti-aliasing: \"%s\" is unknown, so off", setting);
 	else
@@ -5205,6 +5207,11 @@ int halo_temporal_upscale_drawn(void)
 int halo_temporal_dlss_drawn(void)
 {
 	return xgpu_backend_capabilities.temporal_dlss != 0;
+}
+
+int halo_temporal_metalfx_drawn(void)
+{
+	return xgpu_backend_capabilities.temporal_metalfx != 0;
 }
 
 /* the pixel key's vr_effect for a draw of these views (XGPU_MULTIVIEW_*)

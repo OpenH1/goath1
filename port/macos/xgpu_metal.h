@@ -296,7 +296,11 @@ struct xgpu_metal_pipeline
 	uint8_t depth_clamp;
 	/* the targets' formats (XGPU_METAL_FORMAT_*) and samples */
 	uint8_t color_format, depth_format, samples;
-	uint8_t pad[3];
+	/* display.temporal_aa's motion: the second colour attachment's format
+	(XGPU_METAL_FORMAT_*: NONE, none) and the channels written there
+	(XGPU_WRITE_*: 0, a draw through it; xgpu_metal_set_motion_target) */
+	uint8_t motion_format, motion_mask;
+	uint8_t pad[1];
 };
 
 /* the dynamic state (struct xgpu_dynamic_state), in the targets' pixels */
@@ -520,8 +524,18 @@ void xgpu_metal_set_pipeline(const struct xgpu_metal_pipeline *pipeline);
 void xgpu_metal_set_dynamic_state(const struct xgpu_metal_dynamic_state *state);
 /* a stage's texture (0: none) and sampler */
 void xgpu_metal_set_texture(uint32_t stage, uint32_t texture, const struct xgpu_metal_sampler *sampler);
-/* registers first to first + count of the 192 */
+/* registers first to first + count of the 192; or, first past them, of
+the previous frame's 192 (display.temporal_aa's motion), which the
+pipelines that write the motion read after the 192 (a buffer of 384 in
+the frame's upload ring) */
 void xgpu_metal_set_vertex_constants(uint32_t first, uint32_t count, const float *values);
+/* display.temporal_aa's motion (docs/temporal-aa.md): the passes into
+color's first level and layer, one sample, draw into motion (a texture of
+the same size: 0, none) as their second colour attachment, its first such
+pass clearing it to 0 (the pass open ends); and whether the pass begun
+now has it (a draw's pipeline then has its motion_format) */
+void xgpu_metal_set_motion_target(uint32_t motion, uint32_t color);
+int xgpu_metal_motion_bound(void);
 void xgpu_metal_set_draw_uniforms(const void *data, uint32_t size);
 void xgpu_metal_set_stream(uint32_t stream, struct xgpu_metal_source source);
 /* the enhanced dynamic lights' block and their grid's cells, which the
@@ -616,6 +630,8 @@ enum
 	XGPU_METAL_PASS_PANINI,
 	/* (display.ambient_occlusion "world" found once a pixel: its pass) */
 	XGPU_METAL_PASS_WORLD_AO,
+	/* (display.temporal_aa: the motion's resolve, MetalFX's upscale) */
+	XGPU_METAL_PASS_TEMPORAL,
 	XGPU_METAL_PASS_KINDS
 };
 /* sets what the passes from now on draw; returns what it was */

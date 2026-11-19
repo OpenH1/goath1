@@ -159,6 +159,15 @@ void xgpu_metal_pipeline_state_key_make(const struct xgpu_metal_pipeline *pipeli
 	key->color_format = pipeline->color_format;
 	key->depth_format = pipeline->depth_format;
 	key->samples = pipeline->samples > 1 ? pipeline->samples : 1;
+	key->motion_format = pipeline->motion_format;
+	key->motion_mask = pipeline->motion_format ? pipeline->motion_mask : 0;
+}
+
+/* a colour attachment's write mask (XGPU_WRITE_*) */
+static MTLColorWriteMask write_mask(uint8_t mask)
+{
+	return ((mask & XGPU_WRITE_RED) ? MTLColorWriteMaskRed : 0) | ((mask & XGPU_WRITE_GREEN) ? MTLColorWriteMaskGreen : 0) |
+		((mask & XGPU_WRITE_BLUE) ? MTLColorWriteMaskBlue : 0) | ((mask & XGPU_WRITE_ALPHA) ? MTLColorWriteMaskAlpha : 0);
 }
 
 MTLRenderPipelineDescriptor *xgpu_metal_pipeline_descriptor(const struct xgpu_metal_pipeline_state_key *key)
@@ -209,6 +218,13 @@ MTLRenderPipelineDescriptor *xgpu_metal_pipeline_descriptor(const struct xgpu_me
 			xgpu_metal_blend_factor(key->blend_destination);
 		attachment.rgbBlendOperation = attachment.alphaBlendOperation = xgpu_metal_blend_operation(key->blend_operation);
 	}
+	/* (display.temporal_aa: the motion, written by the objects' opaque
+	draws, the others drawn through it) */
+	if (key->motion_format)
+	{
+		descriptor.colorAttachments[1].pixelFormat = xgpu_metal_format_information(key->motion_format)->pixel_format;
+		descriptor.colorAttachments[1].writeMask = write_mask(key->motion_mask);
+	}
 	if (key->depth_format)
 	{
 		descriptor.depthAttachmentPixelFormat = xgpu_metal_format_information(key->depth_format)->pixel_format;
@@ -235,6 +251,11 @@ MTLRenderPipelineDescriptor *xgpu_metal_clear_descriptor(const struct xgpu_metal
 			((key->parts & XGPU_METAL_CLEAR_GREEN) ? MTLColorWriteMaskGreen : 0) |
 			((key->parts & XGPU_METAL_CLEAR_BLUE) ? MTLColorWriteMaskBlue : 0) |
 			((key->parts & XGPU_METAL_CLEAR_ALPHA) ? MTLColorWriteMaskAlpha : 0);
+	}
+	if (key->motion_format)
+	{
+		descriptor.colorAttachments[1].pixelFormat = xgpu_metal_format_information(key->motion_format)->pixel_format;
+		descriptor.colorAttachments[1].writeMask = MTLColorWriteMaskNone;
 	}
 	if (key->depth_format)
 	{

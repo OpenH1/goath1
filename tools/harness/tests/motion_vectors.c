@@ -65,6 +65,12 @@ int halo_temporal_dlss_drawn(void)
 	return dlss_drawn;
 }
 
+/* (and Metal's MetalFX: none here) */
+int halo_temporal_metalfx_drawn(void)
+{
+	return 0;
+}
+
 /* the front end, as the backend would have it: this frame's registers and
 the frame before's (each this frame's but where set apart) */
 static float registers[192][4], previous[192][4];

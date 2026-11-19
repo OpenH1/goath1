@@ -30,7 +30,8 @@ CONTROLS = [
     ("return dx * dx + dy * dy + dz * dz > MOTION_TELEPORT_DISTANCE * MOTION_TELEPORT_DISTANCE ||",
      "return dx * dx + dy * dy + dz * dz < 0.0f ||", "cut"),
     # "dlss" on where the renderer has no DLSS: jittered with nothing to take it away
-    ("\tif (motion_vectors.technique == 2 && !halo_temporal_dlss_drawn())\n\t\treturn 0;\n", "", "dlss_unavailable"),
+    ("\tif ((motion_vectors.technique == 2 && !halo_temporal_dlss_drawn()) ||",
+     "\tif (0 ||", "dlss_unavailable"),
     # on whatever the setting says
     ("!strcmp(setting, \"metalfx\") ? 3 : 0;", "!strcmp(setting, \"metalfx\") ? 3 : 1;", "off"),
 ]

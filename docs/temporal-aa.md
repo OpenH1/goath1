@@ -25,8 +25,7 @@ uploads are as before.
   resize, or when it was not drawn the frame before. An object has none when it appears, respawns, is teleported (its
   root moves more than 4 world units) or changes its node count. With no history the motion is the camera's alone. A
   window with no history has zero motion and its reset flag set (`motion.reset`). Split screen keeps each window apart.
-- **Not supported:** VR eyes, mirrors, feeds and MSAA. Metal is not done: the Metal backend ignores the records and
-  draws no motion.
+- **Not supported:** VR eyes, mirrors, feeds and MSAA.
 - **Hook for masks:** transparent draws (particles, decals, glass, water) write no motion. The objects' pass and the
   resolve are where a reactive or transparency mask goes later.
 
@@ -90,3 +89,25 @@ no jitter (`motion_vectors_technique`).
   made subject to an open-source license, NVIDIA's attribution is required (splash, credits) and NVIDIA is to be
   told before a commercial release. The repository holds none of the SDK.
 
+## Milestone 4: Metal's motion and `"metalfx"` (macOS, iOS)
+
+- **Motion.** As Vulkan's. The MSL emitter writes the objects' motion as the SPIR-V emitter does
+  (`xgpu_msl_options.motion`): the vertex program runs again on the previous frame's registers, 192 to 383, which the
+  backend keeps past the 192 and binds as one 6 KB buffer from the frame's upload ring (`setVertexBytes` takes 4 KB at
+  most). The pixel shader writes `[[color(1)]]`. The passes into the window's target have the objects' RGBA32F
+  texture as their second attachment, cleared by the first of them (`xgpu_metal_set_motion_target`). Every pipeline
+  drawn in them has it in its description, the writers' mask all channels and the others' none (clears too).
+  `xgpu_metal_temporal.m` holds the resolve and `debug.motion_vectors`' view as MSL. Off, nothing changes: the
+  emitter's text is the same for every other shader (the 746 of `tools/msl_corpus`), and no pass has the attachment.
+- **MetalFX.** Offered where Metal has `MTLFXTemporalScaler` (`supportsDevice`, macOS 13 and iOS 16 on; the build
+  targets macOS 14.4 and iOS 17.4): the Upscaler row's "APPLE METALFX" (`temporal_metalfx`, its own row in the FSR
+  row's place). It takes the colour before its tone map, the reversed depth (`depthReversed`), the motion (a
+  fraction of the view, previous less current, scaled by the render's size into its pixels: MetalFX's own sense),
+  the jitter, the reset and a fixed exposure of 1. Its output is a texture of the display window's size, blitted into
+  the back buffer, where the tone map, Panini and the HUD follow. Each window has a scaler of its own; a window not
+  at its target's corner is copied there first. The iOS simulator's SDK has no MetalFX: none there.
+- **Reactive mask.** FSR's generated one (the colour before and after the transparent draws, tone mapped, its largest
+  channel's change, 0.9 past 0.2), drawn into an R8 texture, MetalFX's `reactiveMaskTexture` (macOS 14.4, iOS 17.4).
+- **Preparation.** As Vulkan's: a map prepared with a technique on makes the motion variants and the passes'
+  pipelines. The scaler is made at the first upscale (MetalFX compiles its own work in the background then).
+- **Cost.** `HALO_METALFX_TIMES=<n>` logs MetalFX's GPU time, its own command buffer, every n upscales.

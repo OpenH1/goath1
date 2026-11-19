@@ -84,11 +84,12 @@ MACOS_GUEST_DEFINES = ["-DHALO_MACOS=1", "-DHALO_METAL", "-Wno-incompatible-sysr
 MACOS_BUNDLE_ID = "com.openh1.openh1"
 
 # the host's frameworks: Metal and its layer (port/macos/host_metal.m,
-# xgpu_metal.m), the mouse's own counts (host_raw_mouse.m: GameController),
+# xgpu_metal.m), display.temporal_aa's MetalFX (xgpu_metal_temporal.m), the
+# mouse's own counts (host_raw_mouse.m: GameController),
 # the output device's kind (port/android/host/host_audio_route.c: CoreAudio),
 # the sound's output unit (port/macos/host_audio_output.c: AudioToolbox), and
 # the keys' and mouse buttons' state (port/android/host/host_sdl.c: CoreGraphics)
-MACOS_FRAMEWORKS = "-framework Metal -framework QuartzCore -framework Foundation -framework AppKit -framework CoreGraphics -framework ImageIO -framework GameController -framework CoreAudio -framework AudioToolbox -lcompression"
+MACOS_FRAMEWORKS = "-framework Metal -framework MetalFX -framework QuartzCore -framework Foundation -framework AppKit -framework CoreGraphics -framework ImageIO -framework GameController -framework CoreAudio -framework AudioToolbox -lcompression"
 
 # (port/android/host's: those of the Android app alone, the fixed low
 # memory and Linux's system calls, which port/macos and host_memory_base.c

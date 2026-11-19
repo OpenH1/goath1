@@ -272,6 +272,12 @@ static struct
 	uint64_t frame_number;
 	BOOL in_frame;
 
+	/* display.temporal_aa's motion (xgpu_metal_set_motion_target): its
+	texture (0 none), the colour target whose passes draw into it too, and
+	whether the first of them clears it; whether the open pass has it */
+	uint32_t motion, motion_color;
+	BOOL motion_clear, encoder_motion;
+
 	/* the pass */
 	uint32_t color, color_level, color_layer, depth;
 	/* into the targets' multisampled attachments */
@@ -292,7 +298,7 @@ static struct
 	{
 		id<MTLRenderCommandEncoder> encoder;
 		uint32_t color, color_level, color_layer, depth, target_width, target_height;
-		BOOL multisampled;
+		BOOL multisampled, encoder_motion;
 		int32_t visibility_pass, profile_current;
 	} parked;
 	uint32_t target_width, target_height;
@@ -311,7 +317,9 @@ static struct
 	uint32_t stage_textures[XGPU_METAL_TEXTURE_STAGE_COUNT];
 	struct xgpu_metal_sampler stage_samplers[XGPU_METAL_TEXTURE_STAGE_COUNT];
 	id<MTLSamplerState> stage_sampler_states[XGPU_METAL_TEXTURE_STAGE_COUNT];
-	float vertex_constants[XGPU_METAL_VERTEX_CONSTANT_COUNT][4];
+	/* (and past the 192 the previous frame's: display.temporal_aa's
+	motion, xgpu_metal_set_vertex_constants) */
+	float vertex_constants[2 * XGPU_METAL_VERTEX_CONSTANT_COUNT][4];
 	unsigned char draw_uniforms[4096];
 	uint32_t draw_uniforms_size;
 	struct xgpu_metal_source streams[XGPU_METAL_STREAM_COUNT];
@@ -506,6 +514,34 @@ id<MTLCommandBuffer> xgpu_metal_command_buffer(void)
 	return command_buffer();
 }
 
+static void pass_end(void);
+static struct texture_entry *texture_get(uint32_t texture);
+static void texture_contents(struct texture_entry *entry);
+static void texture_first_use(struct texture_entry *entry, BOOL cleared);
+
+id<MTLCommandBuffer> xgpu_metal_outside_passes(void)
+{
+	if (!metal.in_frame)
+		xgpu_metal_frame_begin();
+	pass_end();
+	return command_buffer();
+}
+
+void xgpu_metal_texture_encoded(uint32_t texture, int written)
+{
+	struct texture_entry *entry = texture_get(texture);
+
+	if (!entry)
+		return;
+	texture_contents(entry);
+	texture_first_use(entry, NO);
+	entry->used = metal.command_serial;
+	if (written)
+		entry->main_written = metal.command_serial;
+	else
+		entry->main_sampled = metal.command_serial;
+}
+
 /* the serial the command buffer being recorded has or will have */
 static uint64_t recording_serial(void)
 {
@@ -543,7 +579,7 @@ frame's picture's copy for the presentation */
 static const char *const profile_kind_names[PROFILE_KINDS] =
 {
 	"other", "sky", "world", "transparents", "water", "effects", "hud", "tone map", "anti-aliasing", "panini", "world ao",
-	"aside",
+	"temporal", "aside",
 	"copies", "present",
 };
 
@@ -1217,6 +1253,7 @@ static void encoder_end(void)
 			encoder_stores();
 		[metal.encoder endEncoding];
 		metal.encoder = nil;
+		metal.encoder_motion = NO;
 		metal.visibility_entry = -1;
 		profile.current = -1;
 	}
@@ -1294,6 +1331,7 @@ static void aside_unpark(void)
 	metal.target_width = metal.parked.target_width;
 	metal.target_height = metal.parked.target_height;
 	metal.multisampled = metal.parked.multisampled;
+	metal.encoder_motion = metal.parked.encoder_motion;
 	metal.visibility_pass = metal.parked.visibility_pass;
 	profile.current = metal.parked.profile_current;
 	metal.parked.encoder = nil;
@@ -2962,6 +3000,7 @@ void xgpu_metal_set_targets(uint32_t color, uint32_t color_level, uint32_t color
 			metal.parked.target_width = metal.target_width;
 			metal.parked.target_height = metal.target_height;
 			metal.parked.multisampled = metal.multisampled;
+			metal.parked.encoder_motion = metal.encoder_motion;
 			metal.parked.visibility_pass = metal.visibility_pass;
 			metal.parked.profile_current = profile.current;
 			metal.encoder = nil;
@@ -3018,6 +3057,37 @@ static void visibility_entry_begin(void)
 	metal.visibility_entry = entry;
 	[metal.encoder setVisibilityResultMode:MTLVisibilityResultModeCounting
 		offset:(NSUInteger)slot->visibility_entry_offsets[entry] * sizeof(uint64_t)];
+}
+
+/* whether a pass of the targets as set draws into the motion too: its
+colour target's first level and layer, one sample, the motion's size, in
+the main command buffer */
+static BOOL motion_attached(struct texture_entry *color)
+{
+	struct texture_entry *motion = texture_get(metal.motion);
+
+	return motion && color && metal.color == metal.motion_color && !metal.color_level && !metal.color_layer &&
+		!metal.aside && !(color->multisampled && metal.multisampled) &&
+		motion->texture.width == color->texture.width && motion->texture.height == color->texture.height;
+}
+
+int xgpu_metal_motion_bound(void)
+{
+	return motion_attached(texture_get(metal.color));
+}
+
+void xgpu_metal_set_motion_target(uint32_t motion, uint32_t color)
+{
+	if (!texture_get(motion))
+		motion = color = 0;
+	if (metal.motion == motion && metal.motion_color == color)
+		return;
+	/* (the pass open ends: the next has the attachment, or has not) */
+	if (metal.encoder || metal.aside)
+		pass_end();
+	metal.motion = motion;
+	metal.motion_color = color;
+	metal.motion_clear = motion != 0;
 }
 
 /* the render command encoder for the targets, begun if there is none */
@@ -3084,6 +3154,21 @@ static id<MTLRenderCommandEncoder> encoder(void)
 		color->used = serial;
 		if (!metal.aside)
 			color->main_written = serial;
+	}
+	/* (display.temporal_aa: the objects' motion beside the colour) */
+	metal.encoder_motion = NO;
+	if (motion_attached(color))
+	{
+		struct texture_entry *motion = texture_get(metal.motion);
+		MTLRenderPassColorAttachmentDescriptor *attachment = pass.colorAttachments[1];
+
+		attachment.texture = motion->texture;
+		attachment.loadAction = metal.motion_clear ? MTLLoadActionClear : MTLLoadActionLoad;
+		attachment.clearColor = MTLClearColorMake(0.0, 0.0, 0.0, 0.0);
+		attachment.storeAction = MTLStoreActionStore;
+		metal.motion_clear = NO;
+		metal.encoder_motion = YES;
+		motion->used = motion->main_written = serial;
 	}
 	if (depth)
 	{
@@ -3219,6 +3304,8 @@ static id<MTLRenderPipelineState> clear_pipeline(uint32_t parts)
 		depth && depth->multisampled ? depth->description.samples : 1;
 	/* (the colour's channels written) */
 	key.parts = (uint8_t)(parts & XGPU_METAL_CLEAR_COLOR ? parts & XGPU_METAL_CLEAR_CHANNELS : 0);
+	/* (a pass with display.temporal_aa's motion: drawn through it) */
+	key.motion_format = metal.encoder_motion ? texture_get(metal.motion)->description.format : 0;
 	data = [NSData dataWithBytes:&key length:sizeof(key)];
 	state = metal.clear_pipelines[data];
 	if (state)
@@ -3352,6 +3439,10 @@ void xgpu_metal_set_pipeline(const struct xgpu_metal_pipeline *pipeline)
 {
 	if (metal.have_pipeline && !memcmp(&metal.pipeline, pipeline, sizeof(*pipeline)))
 		return;
+	/* (display.temporal_aa: a pipeline that writes the motion reads the
+	previous frame's registers too, in a buffer of its own) */
+	if (!metal.have_pipeline || !metal.pipeline.motion_mask != !pipeline->motion_mask)
+		metal.dirty |= _dirty_vertex_constants;
 	metal.pipeline = *pipeline;
 	metal.have_pipeline = YES;
 	metal.dirty |= _dirty_pipeline | _dirty_depth_stencil | _dirty_raster | _dirty_streams;
@@ -3711,10 +3802,10 @@ void xgpu_metal_set_texture(uint32_t stage, uint32_t texture, const struct xgpu_
 
 void xgpu_metal_set_vertex_constants(uint32_t first, uint32_t count, const float *values)
 {
-	if (first >= XGPU_METAL_VERTEX_CONSTANT_COUNT)
+	if (first >= 2 * XGPU_METAL_VERTEX_CONSTANT_COUNT)
 		return;
-	if (count > XGPU_METAL_VERTEX_CONSTANT_COUNT - first)
-		count = XGPU_METAL_VERTEX_CONSTANT_COUNT - first;
+	if (count > 2 * XGPU_METAL_VERTEX_CONSTANT_COUNT - first)
+		count = 2 * XGPU_METAL_VERTEX_CONSTANT_COUNT - first;
 	memcpy(metal.vertex_constants[first], values, count * 4 * sizeof(float));
 	metal.dirty |= _dirty_vertex_constants;
 }
@@ -3801,7 +3892,16 @@ static BOOL draw_state_apply(id<MTLRenderCommandEncoder> render)
 
 	if (dirty & _dirty_pipeline)
 	{
-		id<MTLRenderPipelineState> state = pipeline_state_get(&metal.pipeline);
+		struct xgpu_metal_pipeline pipeline = metal.pipeline;
+		id<MTLRenderPipelineState> state;
+
+		/* (display.temporal_aa: the pass's motion attachment, which a
+		pipeline's must match: drawn through, where the caller had none) */
+		if (!metal.encoder_motion)
+			pipeline.motion_format = pipeline.motion_mask = 0;
+		else if (!pipeline.motion_format)
+			pipeline.motion_format = texture_get(metal.motion)->description.format;
+		state = pipeline_state_get(&pipeline);
 
 		if (!state)
 			return NO;
@@ -3863,8 +3963,20 @@ static BOOL draw_state_apply(id<MTLRenderCommandEncoder> render)
 	if (dirty & _dirty_blend_color)
 		[render setBlendColorRed:metal.dynamic.blend_color[0] green:metal.dynamic.blend_color[1]
 			blue:metal.dynamic.blend_color[2] alpha:metal.dynamic.blend_color[3]];
-	if (dirty & _dirty_vertex_constants)
-		[render setVertexBytes:metal.vertex_constants length:sizeof(metal.vertex_constants)
+	if ((dirty & _dirty_vertex_constants) && metal.pipeline.motion_mask && metal.encoder_motion)
+	{
+		/* (display.temporal_aa: the 192 and the previous frame's, 6 KB,
+		more than setVertexBytes takes: the frame's upload ring) */
+		struct xgpu_metal_source source = xgpu_metal_stream(metal.vertex_constants, sizeof(metal.vertex_constants));
+		NSUInteger offset = 0;
+		id<MTLBuffer> buffer = source_buffer(source, &offset);
+
+		if (!buffer)
+			return NO;
+		[render setVertexBuffer:buffer offset:offset atIndex:XGPU_METAL_BUFFER_VERTEX_CONSTANTS];
+	}
+	else if (dirty & _dirty_vertex_constants)
+		[render setVertexBytes:metal.vertex_constants length:XGPU_METAL_VERTEX_CONSTANT_COUNT * sizeof(metal.vertex_constants[0])
 			atIndex:XGPU_METAL_BUFFER_VERTEX_CONSTANTS];
 	if (dirty & _dirty_constant_attributes)
 		[render setVertexBytes:metal.constant_attributes length:sizeof(metal.constant_attributes)
