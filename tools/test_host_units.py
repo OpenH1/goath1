@@ -135,6 +135,15 @@ def test_game_data_scan(tmp_path):
              [ROOT / "port" / "linux" / "src"], [str(scratch)])
 
 
+def test_game_data_places_windows(tmp_path):
+    """the GAME DATA page's places on Windows (game_data_scan.c with
+    HALO_WINDOWS): %USERPROFILE%'s Downloads and Desktop, forward slashes"""
+    run_test(tmp_path, "game_data_places_windows_test",
+             [TESTS / "game_data_places_windows_test.c", ROOT / "port" / "linux" / "src" / "game_data_scan.c",
+              ROOT / "port" / "linux" / "src" / "posix_files.c"],
+             [ROOT / "port" / "linux" / "src"], flags=["-DHALO_WINDOWS"])
+
+
 def test_posix_net_interrupted(tmp_path):
     """a select interrupted by signals waits out its time: Winsock's is never
     interrupted, and the game takes a failed one as the connection lost"""

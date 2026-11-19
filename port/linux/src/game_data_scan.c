@@ -18,6 +18,10 @@ only when its ui.map is the Xbox game's (not Halo PC's, version 7, or
 Custom Edition's, 609). (Files are reached through posix.h, as the rest of the
 platform layer's: the game's ABI cannot use the C library's struct stat.)
 
+On Windows the places are the user's folder (%USERPROFILE%, its Downloads,
+Desktop and Documents among it) and the game's, its AppData skipped; paths
+are written with forward slashes, which Windows takes as its own.
+
 On macOS the folders the system guards (Documents, Pictures, Music, Movies,
 the Library) are not looked in: each would ask the player to let the game
 in. Downloads and the Desktop are, and asking for them is the price of
@@ -25,7 +29,7 @@ finding the image there; the time the player takes to answer is not counted
 against the scan's.
 */
 
-#if !defined(HALO_WINDOWS) && !defined(HALO_ANDROID) && !defined(HALO_IOS)
+#if !defined(HALO_ANDROID) && !defined(HALO_IOS)
 
 #include "game_data_scan.h"
 #include "posix.h"
@@ -141,6 +145,9 @@ static int name_is_skipped(const char *name)
 		"maps.partial", "proc", "sys", "dev",
 #ifdef HALO_MACOS
 		"Library", "Documents", "Pictures", "Music", "Movies", "Applications",
+#endif
+#ifdef HALO_WINDOWS
+		"AppData", "Windows", "Program Files", "Program Files (x86)", "ProgramData",
 #endif
 	};
 	size_t index;
@@ -527,6 +534,8 @@ static void scan_folder(struct scan *scan, const struct scan_root *root, const c
 
 /* ---------- public code */
 
+#ifndef HALO_WINDOWS
+
 /* an XDG user folder ("XDG_DOWNLOAD_DIR") from user-dirs.dirs, else
 <home>/<fallback> */
 static void user_folder(const char *home, const char *key, const char *fallback, char *folder, size_t size)
@@ -587,8 +596,45 @@ static void earlier_folders(struct game_data_places *places)
 	}
 }
 
+#else
+/* a Windows path with forward slashes, without a last one (C:/Users/name) */
+static void forward_slashes(char *path)
+{
+	for (; *path; path++)
+	{
+		if (*path == '\\')
+			*path = '/';
+	}
+}
+
+static void windows_folder(char *folder, size_t size, const char *path)
+{
+	size_t length;
+
+	snprintf(folder, size, "%s", path);
+	forward_slashes(folder);
+	length = strlen(folder);
+	while (length > 3 && folder[length - 1] == '/')
+		folder[--length] = 0;
+}
+#endif
+
 void game_data_default_places(struct game_data_places *places, const char *destination)
 {
+#ifdef HALO_WINDOWS
+	const char *profile = getenv("USERPROFILE");
+
+	memset(places, 0, sizeof(*places));
+	windows_folder(places->destination, sizeof(places->destination), destination);
+	/* (Documents is looked in as the user's folder's) */
+	if (profile && profile[0] && profile[1] == ':')
+	{
+		windows_folder(places->home, sizeof(places->home), profile);
+		snprintf(places->downloads, sizeof(places->downloads), "%s/Downloads", places->home);
+		snprintf(places->desktop, sizeof(places->desktop), "%s/Desktop", places->home);
+	}
+	places->time_limit = 3000;
+#else
 	const char *home = getenv("HOME");
 
 	memset(places, 0, sizeof(*places));
@@ -614,10 +660,18 @@ void game_data_default_places(struct game_data_places *places, const char *desti
 #endif
 	earlier_folders(places);
 	places->time_limit = 3000;
+#endif
 }
 
 void game_data_short_path(const struct game_data_places *places, const char *path, char *result, int size)
 {
+#ifdef HALO_WINDOWS
+	char forward[GAME_DATA_PATH_SIZE];
+
+	snprintf(forward, sizeof(forward), "%s", path);
+	forward_slashes(forward);
+	path = forward;
+#endif
 	if (places->home[0] && path_is_below(path, places->home))
 		snprintf(result, (size_t)size, "~%s", path + strlen(places->home));
 	else
@@ -714,9 +768,9 @@ void game_data_places_text(const struct game_data_places *places, char *text, in
 	char destination[GAME_DATA_PATH_SIZE];
 
 	game_data_short_path(places, places->destination, destination, (int)sizeof(destination));
-	snprintf(text, (size_t)size, "%sDownloads, the Desktop, your home folder, %s, and %s",
+	snprintf(text, (size_t)size, "%sDownloads, the Desktop, your home folder, %sand %s",
 		places->earlier[0][0] ? "the maps folder an earlier version used, " : "",
-		places->mounts[0] ? "SD cards and USB drives" : "drives", destination);
+		places->mounts[0] ? "SD cards and USB drives, " : places->media[0][0] ? "drives, " : "", destination);
 }
 
 /* ---------- a folder the player picked */
