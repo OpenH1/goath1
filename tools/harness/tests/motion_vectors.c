@@ -32,7 +32,9 @@ struct render_camera
 {
 	real_point3d position;
 	real_vector3d forward;
+	real vertical_field_of_view;
 	rectangle2d viewport_bounds;
+	real z_near, z_far;
 };
 
 struct render_frustum
@@ -79,9 +81,15 @@ void halo_motion_objects(int begin)
 	(void)begin;
 }
 
-void halo_motion_resolve(short x0, short y0, short x1, short y1, float const reproject[4][4], int history)
+void halo_motion_opaque(short x0, short y0, short x1, short y1, int window)
 {
-	(void)x0; (void)y0; (void)x1; (void)y1;
+	(void)x0; (void)y0; (void)x1; (void)y1; (void)window;
+}
+
+void halo_motion_resolve(short x0, short y0, short x1, short y1, float const reproject[4][4], int history,
+	int window, float const camera[3])
+{
+	(void)x0; (void)y0; (void)x1; (void)y1; (void)window; (void)camera;
 	memcpy(resolved_rows, reproject, sizeof(resolved_rows));
 	resolved_history = history;
 	resolved++;

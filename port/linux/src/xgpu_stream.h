@@ -452,7 +452,10 @@ struct xgpu_stream_capabilities
 	uint8_t deep_sdr;
 	/* display.soft_particles: an effect drawn with no views can be soft
 	(the pixel key's vr_effect: xgpu_backend_capabilities' soft_effects) */
-	uint8_t soft_effects, pad[2];
+	uint8_t soft_effects;
+	/* display.temporal_aa "fsr": the backend upscales a window's view with
+	AMD FSR (MOTION's _UPSCALE: xgpu_backend_capabilities' temporal_upscale) */
+	uint8_t temporal_upscale, pad[1];
 	/* the GPU, its API and driver, in a few words (a report's:
 	port/linux/src/report.c), NUL terminated */
 	char device[96];
@@ -655,13 +658,20 @@ _OBJECTS_END (no more), _RESOLVE (the window whole: its motion found at
 each pixel of its corners, from its objects' where their depth is still
 the pixel's, else from the camera's, struct xgpu_motion_pass). The
 transparent draws (particles, decals, glass, water) draw none: their pixels
-have what is behind them (the place for a mask of them, later). */
+have what is behind them. _OPAQUE (the window's colour before its
+transparent draws, over the pass's corners, kept for the technique's
+reactive mask: where they changed it; the pass's motion[0] the window, 0 to
+3), _UPSCALE (the technique: the window's view, resolved, into pad, the
+window's target at the display's scale: the pass is a struct
+xgpu_temporal_pass, its bytes the same). */
 enum
 {
 	XGPU_MOTION_NONE,
 	XGPU_MOTION_OBJECTS_BEGIN,
 	XGPU_MOTION_OBJECTS_END,
 	XGPU_MOTION_RESOLVE,
+	XGPU_MOTION_OPAQUE,
+	XGPU_MOTION_UPSCALE,
 };
 /* the previous frame's registers' first, in CONSTANTS */
 #define XGPU_STREAM_PREVIOUS_CONSTANTS 192u
@@ -680,6 +690,24 @@ struct xgpu_motion_pass
 	int32_t corners[4];
 	float reproject[4][4];
 	float motion[4];
+	float jitter[4];
+};
+/* the window's corners in the source's pixels (the target its view was
+drawn into) and in the destination's (the target it is upscaled into: the
+HUD's, at the display's scale); the window (0 to 3), the technique (1
+"fsr"), whether the colour is display.hdr's linear light (else an SDR
+picture), whether its history begins again (a cut, a new map, a resize);
+the depth target's number (the view's); the camera's near and far planes
+(world units), vertical field of view (radians) and meters in a world unit;
+the frame's jitter in the source's pixels (x right, y down) */
+struct xgpu_temporal_pass
+{
+	int32_t corners[4];
+	int32_t destination[4];
+	uint32_t window, technique, hdr, reset;
+	uint32_t depth, unused[3];
+	float camera[4];
+	float pad[4];
 	float jitter[4];
 };
 struct xgpu_stream_motion
@@ -1571,6 +1599,7 @@ XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_world_ao_field, 40);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_world_ao_prepass, 96 + 64 + 64 + 16 + 16);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_world_ao_cascades, 40);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_motion, 16 + 16 + 64 + 16 + 16);
+XGPU_STREAM_ASSERT_SIZE(struct xgpu_temporal_pass, sizeof(struct xgpu_motion_pass));
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_world_ao_mesh, 32);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_world_ao_instance, 64);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_world_ao_instances, 16);

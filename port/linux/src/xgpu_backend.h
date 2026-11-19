@@ -102,6 +102,9 @@ struct xgpu_backend_capabilities
 	soft against the scene's depth, as the VR mode's eyes draw it (the pixel
 	key's vr_effect at 1: d3d8_device.c's soft_effect_key) */
 	BOOL soft_effects;
+	/* display.temporal_aa "fsr": a window's view upscaled with AMD FSR
+	(xgpu_backend_temporal) */
+	BOOL temporal_upscale;
 };
 
 extern struct xgpu_backend_capabilities xgpu_backend_capabilities;
@@ -214,6 +217,11 @@ begun or ended (XGPU_MOTION_OBJECTS_BEGIN, _END), and the window's motion
 resolved (_RESOLVE, pass) */
 struct xgpu_motion_pass;
 void xgpu_backend_motion(int phase, xgpu_target target, const struct xgpu_motion_pass *pass);
+/* ... and the window's view (its colour, the depth target's depth, its
+motion) upscaled by the technique into destination (_UPSCALE): its tone
+map, its anti-aliasing and the HUD come after, at the display's scale */
+struct xgpu_temporal_pass;
+void xgpu_backend_temporal(xgpu_target source, xgpu_target destination, const struct xgpu_temporal_pass *pass);
 /* a box of the distance-field scene's cascades' texture (xgpu.h's
 XGPU_WORLD_CASCADE*): its first texel, its size, two signed bytes a texel,
 x fastest (width 0: released) */

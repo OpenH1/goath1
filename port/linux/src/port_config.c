@@ -304,10 +304,11 @@ static const struct config_setting config_settings[] =
 		"a pixel. Each combines with display.supersampling." GRAPHICS_CHOOSES },
 	{ "display.temporal_aa", _config_string, "\"off\"", "HALO_TEMPORAL_AA", _environment_value, _platform_all,
 		"A temporal technique over the 3D view, at any render scale (the native\n"
-		"one too): \"off\", or \"fsr\", \"dlss\" or \"metalfx\" (none of them is\n"
-		"drawn yet: each window's motion and jitter are made for them, which\n"
-		"debug.motion_vectors shows). Not with multisampling, nor in VR\n"
-		"(docs/temporal-aa.md)." },
+		"one too): \"off\"; \"fsr\", AMD FSR 3.1's upscaler (Vulkan: Linux,\n"
+		"Windows, Android), which takes display.anti_aliasing's place and draws\n"
+		"the HUD at the display's resolution; \"dlss\" or \"metalfx\" (not drawn\n"
+		"yet: each window's motion and jitter are made for them, which\n"
+		"debug.motion_vectors shows). Not in VR (docs/temporal-aa.md)." },
 	{ "display.supersampling", _config_real, "1.0", "HALO_SUPERSAMPLING", _environment_value, _platform_desktop,
 		"Draw the game at this many times the display's resolution each way, 1.0\n"
 		"to 2.0, and scale it down to the display: smoother edges and finer\n"

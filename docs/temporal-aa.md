@@ -32,3 +32,33 @@ uploads are as before.
 
 `debug.motion_vectors` draws the motion over the view: grey when still, red to the right, green downward, full color
 at 8 pixels a frame.
+
+## Milestone 2: `"fsr"` (Vulkan)
+
+AMD FidelityFX Super Resolution 3.1's upscaler, on Vulkan (Linux, Windows, Android). The setting is offered where the
+renderer has it: Settings > Video > Frame Rate & Sync > Upscaler (`xgpu_backend_capabilities.temporal_upscale`).
+
+- **Source.** `port/third_party/fidelityfx-fsr3`: the SDK's (v1.1.4) Vulkan GLSL entry points of the upscaler's passes
+  and the GPU headers they include, unchanged, MIT. `tools/vulkan_fsr_shaders.py` compiles them with glslangValidator
+  (as `tools/vulkan_post_shaders.py` does the post passes) into `xgpu_vulkan_fsr_shaders.c`, with each pass's bindings
+  read back from its SPIR-V; `--check` verifies it. The game has no shader compiler. Options: no half floats, no
+  subgroup operations, reversed depth, motion at the render resolution without the jitter, no sharpening (RCAS). An
+  SDR and an HDR build of each pass (the same words but the accumulation's).
+- **Host side.** `port/linux/vulkan/xgpu_vulkan_fsr.c` is the SDK's `ffx_fsr3upscaler.cpp` (create, dispatch, the
+  generated reactive mask) in C, on the core's command buffer between wide barriers. Each window (split screen's four)
+  has its own history, made at its sizes. A window not at the target's top left corner is copied there first.
+- **Exposure.** Fixed at 1 (the SDK's default exposure, no pre-exposure). The frame time is fixed at 1/60 s: it only
+  smooths FSR's own luminance.
+- **Frame order.** The window's 3D view is drawn at `display.render_scale`'s fraction of the screen's scale (the front
+  end's targets of that scale: `d3d8_device.c`'s `temporal`). Then its motion is resolved, and FSR upscales colour,
+  depth, motion, jitter and reset into the window of the back buffer at the display's scale. The tone map
+  (`display.hdr`'s, on FSR's output), the Panini pass, the HUD and the menus follow at the display's resolution.
+  FXAA, SMAA, MSAA and supersampling are off while it is on. At the native scale the two targets are one.
+- **Reactive mask.** The window's colour is copied after the level's transparent surfaces and fog
+  (`motion_vectors_opaque`, `render.c`). Particles, effects, contrails, transparent objects, water decals, the dynamic
+  lights' glows and lens flares come after that. The SDK's generated mask marks where they changed the colour (tone
+  mapped, largest channel, 0.9 past 0.2). The first-person weapon and the objects write their own motion.
+- **Preparation.** A map prepared with a technique on also makes the objects' pipelines' motion variants. The
+  enumeration's models are drawn as the window's objects are, and FSR's compute pipelines are made then too.
+- **Not done.** Sharpening, DLSS and MetalFX. Android's render scale is its swapchain's (FSR there antialiases at the
+  swapchain's size).

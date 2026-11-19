@@ -75,6 +75,7 @@ each structure's first sight, every model and effect).
 #include <xtl.h>
 #include "rasterizer/xbox/rasterizer_xbox.h"
 #include "render/render.h"
+#include "motion_vectors.h"
 #include "scenario/scenario.h"
 #include "scenario/sky_definitions.h"
 #include "shaders/shaders.h"
@@ -1513,6 +1514,10 @@ void render_enumerate_models(void)
 
 	if (!render_enumerating)
 		return;
+	/* (display.temporal_aa: as the window's objects draw in play, their
+	motion too: those pipelines' variants made with the rest,
+	port/linux/game/motion_vectors.c) */
+	motion_vectors_objects(TRUE);
 	/* rasterizer_xbox.c: NONE (0) or REJECT (2), as model_end leaves it.
 	This also applies to the structure's draws after these models. */
 	rasterizer_set_stencil_mode(pass_stencil_reject() ? 2 : 0);
@@ -1542,6 +1547,7 @@ void render_enumerate_models(void)
 		break;
 	}
 	rasterizer_debug_options.debug_model_lod = saved_lod;
+	motion_vectors_objects(FALSE);
 }
 
 /* ---------- the shadows: every model's, cast on the structure's every

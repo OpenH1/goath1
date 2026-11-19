@@ -69,9 +69,16 @@ nodes, each the palette's (NULL: in order; past palette_most the last):
 their previous frame's beside them */
 void motion_vectors_skinning(real_matrix4x3 const *nodes, unsigned char const *palette, short count,
 	short palette_most);
+/* render_view, once its opaque surfaces are drawn and before its
+transparent ones (particles, effects, glass, water, lens flares): the
+window's colour kept for display.temporal_aa "fsr"'s reactive mask, which is
+where they change it (its view, the game's units of the screen) */
+void motion_vectors_opaque(rectangle2d const *viewport_bounds);
 /* render_window, before the tone map: the window's motion resolved over
 its view (the game's units of the screen); the jitter taken away (the HUD
-is drawn still). NULL: the window ended with none resolved */
+is drawn still); with display.temporal_aa "fsr", the view upscaled into the
+screen's targets at the display's scale, where the tone map, panini and
+HUD are drawn. NULL: the window ended with none resolved */
 void motion_vectors_window_end(rectangle2d const *viewport_bounds);
 
 /* the jitter of a frame, in pixels (x right, y down: each -0.5 to 0.5) */
@@ -85,9 +92,13 @@ int halo_motion_window(int on, float jitter_x, float jitter_y);
 /* the previous frame's registers beside c[reg] .. c[reg + count) */
 void halo_motion_previous_constants(int reg, float const (*values)[4], unsigned long count);
 void halo_motion_objects(int begin);
+/* the window's colour before its transparent draws (window: 0 to 3) */
+void halo_motion_opaque(short x0, short y0, short x1, short y1, int window);
 /* the window's motion over its view: the reprojection's rows (this frame's
 clip positions to the frame before's, the camera's), whether it has a
-frame before */
-void halo_motion_resolve(short x0, short y0, short x1, short y1, float const reproject[4][4], int history);
+frame before; with display.temporal_aa "fsr", the view upscaled (the window,
+0 to 3, and its camera's near and far planes and vertical field of view) */
+void halo_motion_resolve(short x0, short y0, short x1, short y1, float const reproject[4][4], int history,
+	int window, float const camera[3]);
 
 #endif

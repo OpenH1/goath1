@@ -1322,6 +1322,8 @@ static struct
 	int loading_stereo_drawn;
 
 	VkPipelineCache pipeline_cache;
+	/* (display.temporal_aa "fsr": the device has what AMD FSR's passes need) */
+	int fsr_features;
 	uint64_t pipeline_count;
 	/* the pipelines made (their compilation finished), and their count
 	when the cache was last written */
@@ -4747,6 +4749,59 @@ void xgpu_vulkan_image_copy_rectangle(struct xgpu_vulkan_image *source, uint32_t
 	image_written(destination);
 	vkCmdCopyImage(commands, source->image, VK_IMAGE_LAYOUT_GENERAL, destination->image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
 	image_transfer_done(commands, destination, source);
+}
+
+/* display.temporal_aa "fsr"'s work (xgpu_vulkan_fsr.c): compute passes,
+copies and a blit outside the passes, between barriers as wide as the
+replay's (inspect_after): what came before done, what comes after waiting.
+Its transfers take no numbers (the next frame's first barrier is the wide
+one) */
+VkCommandBuffer xgpu_vulkan_outside_begin(struct xgpu_vulkan_image *const *read, uint32_t read_count,
+	struct xgpu_vulkan_image *const *written, uint32_t written_count)
+{
+	VkCommandBuffer commands = main_commands();
+	uint32_t index;
+
+	for (index = 0; index < read_count + written_count; index++)
+	{
+		struct xgpu_vulkan_image *image = index < read_count ? read[index] : written[index - read_count];
+
+		if (!image)
+			continue;
+		image->used = vk.serial;
+		image_use(image);
+		if (index >= read_count)
+			image_written(image);
+	}
+	vk.transfer_unnumbered = 1;
+	barrier(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+		VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
+	return commands;
+}
+
+void xgpu_vulkan_outside_end(VkCommandBuffer commands)
+{
+	barrier(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+		VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
+	/* (the draws after it bind their state again: the compute pipelines
+	took the bind point's descriptor sets' place in the command buffer) */
+	vk.bound_pipeline = VK_NULL_HANDLE;
+	memset(&vk.bound, 0, sizeof(vk.bound));
+}
+
+VkImage xgpu_vulkan_image_handle(const struct xgpu_vulkan_image *image)
+{
+	return image ? image->image : VK_NULL_HANDLE;
+}
+
+VkImageView xgpu_vulkan_image_view(const struct xgpu_vulkan_image *image)
+{
+	return image ? image->sampled : VK_NULL_HANDLE;
+}
+
+VkFormat xgpu_vulkan_image_format(const struct xgpu_vulkan_image *image)
+{
+	return image ? image->format : VK_FORMAT_UNDEFINED;
 }
 
 /* OpenXR guarantees this layout after xrWaitSwapchainImage and requires
@@ -10290,6 +10345,11 @@ static int device_make(const struct xgpu_vulkan_options *options)
 	features.features.textureCompressionASTC_LDR = available.features.textureCompressionASTC_LDR;
 	features.features.fragmentStoresAndAtomics = available.features.fragmentStoresAndAtomics;
 	features.features.shaderImageGatherExtended = VK_FALSE;
+	/* (display.temporal_aa "fsr": AMD FSR's compute passes' storage images,
+	of the extended formats, written and read without a format) */
+	features.features.shaderStorageImageExtendedFormats = available.features.shaderStorageImageExtendedFormats;
+	features.features.shaderStorageImageReadWithoutFormat = available.features.shaderStorageImageReadWithoutFormat;
+	features.features.shaderStorageImageWriteWithoutFormat = available.features.shaderStorageImageWriteWithoutFormat;
 	timeline.timelineSemaphore = VK_TRUE;
 	query_reset.hostQueryReset = VK_TRUE;
 	rendering.dynamicRendering = VK_TRUE;
@@ -10487,6 +10547,22 @@ static int device_make(const struct xgpu_vulkan_options *options)
 		VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT |
 		VK_FORMAT_FEATURE_TRANSFER_DST_BIT);
 	vk.capabilities.fragment_stores = available.features.fragmentStoresAndAtomics;
+	/* (display.temporal_aa "fsr": its images' formats written as storage
+	images, the depth's sampled, the colour's blitted; xgpu_vulkan_fsr.c) */
+	vk.fsr_features = available.features.shaderStorageImageExtendedFormats &&
+		available.features.shaderStorageImageReadWithoutFormat &&
+		available.features.shaderStorageImageWriteWithoutFormat &&
+		format_has(VK_FORMAT_R8_UNORM, 0, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) &&
+		format_has(VK_FORMAT_R16_SFLOAT, 0, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) &&
+		format_has(VK_FORMAT_R16G16_SFLOAT, 0, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) &&
+		format_has(VK_FORMAT_R16G16B16A16_SFLOAT, 0, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT |
+			VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT) &&
+		format_has(VK_FORMAT_R8G8B8A8_UNORM, 0, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) &&
+		format_has(VK_FORMAT_R32_SFLOAT, 0, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) &&
+		format_has(VK_FORMAT_R32G32B32A32_SFLOAT, 0, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) &&
+		format_has(VK_FORMAT_R32_UINT, 0, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT |
+			VK_FORMAT_FEATURE_STORAGE_IMAGE_ATOMIC_BIT) &&
+		format_has(VK_FORMAT_B8G8R8A8_UNORM, 0, VK_FORMAT_FEATURE_BLIT_DST_BIT);
 	vk.capabilities.deep_sdr = format_has(VK_FORMAT_R16G16B16A16_UNORM, 0, VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT |
 		VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT |
 		VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT | VK_FORMAT_FEATURE_BLIT_SRC_BIT |
@@ -11199,6 +11275,20 @@ int xgpu_vulkan_initialize(const struct xgpu_vulkan_options *options)
 	if (!layouts_make() || !stand_ins_make() || !draw_set_make())
 		return 0;
 	pipeline_cache_make(options->cache_path);
+	/* (display.temporal_aa "fsr": AMD FSR 3.1's upscaler, where the device
+	writes and reads its storage images: xgpu_vulkan_fsr.c) */
+	vk.capabilities.temporal_fsr = 0;
+	if (vk.fsr_features && !getenv("HALO_VULKAN_NO_FSR"))
+	{
+		struct xgpu_vulkan_fsr_device device;
+
+		memset(&device, 0, sizeof(device));
+		device.device = vk.device;
+		device.get_device_proc_addr = vkGetDeviceProcAddr;
+		device.memory = vk.memory_properties;
+		device.cache = vk.pipeline_cache;
+		vk.capabilities.temporal_fsr = xgpu_vulkan_fsr_create(&device);
+	}
 	/* (the frame's last pass's pipelines made now, as the loading screen's
 	presentation may draw it while a map is prepared) */
 	if (vk.encode && (!options->encode_prepare || !options->encode_prepare()))
@@ -11258,6 +11348,7 @@ void xgpu_vulkan_initialize_undo(void)
 		vkDeviceWaitIdle(vk.device);
 		xgpu_vulkan_pacing_stop();
 		xgpu_vulkan_rt_destroy();
+		xgpu_vulkan_fsr_destroy();
 		if (vkDestroyDevice)
 			vkDestroyDevice(vk.device, NULL);
 	}

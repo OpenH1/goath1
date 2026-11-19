@@ -626,6 +626,10 @@ static void render_window(
 		structure_render_reflections();
 		structure_render_transparent_geometry();
 		structure_render_fog();
+		/* port: display.temporal_aa "fsr": the window's view before its
+		particles, effects, transparent objects, water and lens flares, for
+		the upscaler's reactive mask (port/linux/game/motion_vectors.c) */
+		motion_vectors_opaque(&rasterizer_camera->viewport_bounds);
 		game_engine_post_rasterize_objects();
 		/* port: (the weather's particles about the window's camera, not a
 		feed's: spartan_link.c) */
@@ -712,7 +716,9 @@ static void render_window(
 		if (rasterizer_target == _render_target_primary)
 		{
 			/* port: display.temporal_aa: the window's motion, whole, and the
-			jitter taken away (port/linux/game/motion_vectors.c) */
+			jitter taken away; with "fsr", the view upscaled into the
+			display's targets, which the tone map, panini and HUD below are
+			drawn into (port/linux/game/motion_vectors.c) */
 			motion_vectors_window_end(&rasterizer_camera->viewport_bounds);
 			halo_screen_tone_map(
 				rasterizer_camera->viewport_bounds.x0,
