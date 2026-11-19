@@ -251,6 +251,13 @@ static struct
 	NSMutableDictionary<NSData *, id<MTLRenderPipelineState>> *clear_pipelines;
 	id<MTLFunction> clear_vertex, clear_fragment;
 	id<MTLDepthStencilState> clear_depth_stencil[4];
+	/* MSAA's resolve in light (#1227, resolve_in_light): its tile
+	function, and its pipelines by a multisampled colour's pixel format
+	and samples; the function could not be made (or the GPU has no tile
+	shaders) */
+	id<MTLFunction> resolve_light_function;
+	NSMutableDictionary<NSNumber *, id<MTLRenderPipelineState>> *resolve_light_pipelines;
+	BOOL resolve_light_failed;
 
 	/* command buffers: serials, the last completed */
 	id<MTLCommandBuffer> command_buffer;
@@ -1191,6 +1198,8 @@ static void multisampled_current(struct texture_entry *entry, BOOL loads)
 	}
 }
 
+static void resolve_in_light(id<MTLRenderCommandEncoder> render, id<MTLTexture> samples);
+
 /* the stores of the pass ending (its attachments' deferred actions:
 encoder) */
 static void encoder_stores(void)
@@ -1200,6 +1209,12 @@ static void encoder_stores(void)
 	if (metal.encoder_color_deferred)
 	{
 		BOOL discard = frame_end_discards(color);
+
+		/* (the samples the pass ends resolving each made the mean of the
+		pixel's light first, in tile memory, #1227; a pass with the
+		motion beside them has none: display.temporal_aa turns MSAA off) */
+		if (color && color->multisampled && !metal.encoder_motion)
+			resolve_in_light(metal.encoder, color->multisampled);
 
 		/* (memoryless samples cannot be stored: they go as the pass ends,
 		resolved, and a pass that loads them again keeps them in memory from
@@ -1860,6 +1875,112 @@ static id<MTLFunction> function_compile(NSString *text, NSString *name)
 	return function;
 }
 
+/* ---------- MSAA's resolve in light (#1227)
+
+A pass's resolve averages a pixel's samples as they are stored: the
+frame's codes (sRGB's curve), which makes an edge half covered by a bright
+detail darker than half its light (a sample of white and one of black, 50%
+of the code, about 22% of the light). As a pass over a multisampled colour
+ends, before its resolve, a tile function reads each pixel's samples in
+tile memory, makes each linear, and writes their mean, encoded again, to
+all of them (xgpu_hdr.c's hdr_linear and hdr_encoded, as the Vulkan
+backend's RESOLVE_LIGHT, tools/vulkan_post_shaders.py): the resolve, of
+equal samples, is that mean, and memoryless samples stay so. Where the GPU
+has no tile shaders (before Apple's A11; Intel's and AMD's Macs), the
+resolve averages the codes as before. */
+static const char resolve_light_source[] =
+	"#include <metal_stdlib>\n"
+	"using namespace metal;\n"
+	"\n"
+	"struct xgpu_resolve_pixel\n"
+	"{\n"
+	"\tfloat4 color [[color(0)]];\n"
+	"};\n"
+	"\n"
+	"static float3 resolve_linear(float3 value)\n"
+	"{\n"
+	"\tfloat3 v = max(value, float3(0.0));\n"
+	"\treturn select(pow((v + 0.055) / 1.055, float3(2.4)), v / 12.92, v <= float3(0.04045));\n"
+	"}\n"
+	"\n"
+	"static float3 resolve_encoded(float3 light)\n"
+	"{\n"
+	"\tfloat3 l = max(light, float3(0.0));\n"
+	"\treturn select(1.055 * pow(l, float3(1.0 / 2.4)) - 0.055, l * 12.92, l <= float3(0.0031308));\n"
+	"}\n"
+	"\n"
+	"kernel void xgpu_resolve_light(imageblock<xgpu_resolve_pixel, imageblock_layout_implicit> block,\n"
+	"\tushort2 at [[thread_position_in_threadgroup]])\n"
+	"{\n"
+	"\tushort samples = max(block.get_num_samples(), (ushort)1);\n"
+	"\tfloat4 sum = float4(0.0);\n"
+	"\txgpu_resolve_pixel pixel;\n"
+	"\n"
+	"\tfor (ushort index = 0; index < samples; index++)\n"
+	"\t{\n"
+	"\t\tfloat4 value = block.read(at, index, imageblock_data_rate::sample).color;\n"
+	"\t\tsum += float4(resolve_linear(value.rgb), value.a);\n"
+	"\t}\n"
+	"\tsum /= float(samples);\n"
+	"\tpixel.color = float4(resolve_encoded(sum.rgb), sum.a);\n"
+	"\tblock.write(pixel, at, (ushort)((1u << samples) - 1u));\n"
+	"}\n";
+
+/* the tile pipeline of a multisampled colour's pixel format and samples,
+made once; nil where there is none (logged once) */
+static id<MTLRenderPipelineState> resolve_light_pipeline(id<MTLTexture> samples)
+{
+	MTLTileRenderPipelineDescriptor *descriptor;
+	id<MTLRenderPipelineState> state;
+	NSNumber *key;
+	NSError *error = nil;
+
+	if (metal.resolve_light_failed || !samples || samples.sampleCount <= 1)
+		return nil;
+	if (!metal.resolve_light_function)
+	{
+		if (![metal.device supportsFamily:MTLGPUFamilyApple4] ||
+			!(metal.resolve_light_function = function_compile(@(resolve_light_source), @"xgpu_resolve_light")))
+		{
+			metal.resolve_light_failed = YES;
+			host_logf(HOST_LOG_INFO, "metal: MSAA resolves average the frame's codes (no tile shaders)");
+			return nil;
+		}
+		metal.resolve_light_pipelines = [NSMutableDictionary new];
+	}
+	key = @((NSUInteger)samples.pixelFormat * 64 + samples.sampleCount);
+	state = metal.resolve_light_pipelines[key];
+	if (state)
+		return state;
+	descriptor = [MTLTileRenderPipelineDescriptor new];
+	descriptor.tileFunction = metal.resolve_light_function;
+	descriptor.rasterSampleCount = samples.sampleCount;
+	descriptor.colorAttachments[0].pixelFormat = samples.pixelFormat;
+	descriptor.threadgroupSizeMatchesTileSize = YES;
+	state = [metal.device newRenderPipelineStateWithTileDescriptor:descriptor options:MTLPipelineOptionNone
+		reflection:nil error:&error];
+	if (!state)
+	{
+		metal_log(HOST_LOG_ERROR, @"cannot make MSAA's resolve in light: %@", error ? error.localizedDescription : @"");
+		metal.resolve_light_failed = YES;
+		return nil;
+	}
+	metal.resolve_light_pipelines[key] = state;
+	return state;
+}
+
+/* in a pass over a multisampled colour, before it resolves them: its
+samples each made the mean of the pixel's light, every tile's */
+static void resolve_in_light(id<MTLRenderCommandEncoder> render, id<MTLTexture> samples)
+{
+	id<MTLRenderPipelineState> state = render ? resolve_light_pipeline(samples) : nil;
+
+	if (!state)
+		return;
+	[render setRenderPipelineState:state];
+	[render dispatchThreadsPerTile:MTLSizeMake(render.tileWidth, render.tileHeight, 1)];
+}
+
 /* the combiner's function specialised for a program's configuration (any
 thread) */
 static id<MTLFunction> combiner_specialise(const uint32_t constants[XGPU_METAL_COMBINER_CONSTANTS])
@@ -2160,6 +2281,9 @@ uint32_t xgpu_metal_texture_create(const struct xgpu_metal_texture_description *
 		entry->multisampled = [metal.device newTextureWithDescriptor:multisampled];
 		if (!entry->multisampled)
 			entry->texture = nil;
+		/* (its resolve in light's pipeline made now, not as a pass ends) */
+		else if (!format->depth)
+			(void)resolve_light_pipeline(entry->multisampled);
 	}
 	if (!entry->texture)
 	{
@@ -2279,6 +2403,8 @@ void xgpu_metal_texture_resolve(uint32_t texture)
 		pass.colorAttachments[0].storeAction = MTLStoreActionStoreAndMultisampleResolve;
 	}
 	render = [command_buffer() renderCommandEncoderWithDescriptor:pass];
+	if (!format->depth)
+		resolve_in_light(render, entry->multisampled);
 	[render endEncoding];
 	texture_first_use(entry, NO);
 	entry->used = entry->main_written = recording_serial();

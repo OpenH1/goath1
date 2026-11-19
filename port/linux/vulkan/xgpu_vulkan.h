@@ -957,6 +957,10 @@ struct xgpu_vulkan_statistics
 	resolved in the pass that drew them, and resolves of samples resolved
 	already (not made again) */
 	uint32_t stores_discarded, frame_end_discards, resolves_in_pass, resolves_skipped;
+	/* multisampled colours whose samples were made the mean of their
+	light before they were resolved (#1227: xgpu_vulkan.c's
+	resolve_in_light) */
+	uint32_t resolves_in_light;
 	/* aside passes (xgpu_vulkan.c): passes that continued the one before
 	them in one rendering, passes put aside before it, and buffers renamed
 	rather than written in order */

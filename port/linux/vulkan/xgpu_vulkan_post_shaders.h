@@ -51,6 +51,11 @@ enum xgpu_vulkan_post_program_id
 	XGPU_VULKAN_POST_LOADING,
 	XGPU_VULKAN_POST_LOADING_CAPTION,
 	XGPU_VULKAN_POST_LOADING_PICTURE,
+	/* (the core's: a multisampled target's samples made the mean of their
+	light, each, before the hardware resolves them, xgpu_vulkan.c's
+	resolve_in_light; its input attachment as the tone map's, metrics' x
+	the samples) */
+	XGPU_VULKAN_POST_RESOLVE_LIGHT,
 	XGPU_VULKAN_POST_PROGRAM_COUNT
 };
 
