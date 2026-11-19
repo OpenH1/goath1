@@ -108,8 +108,8 @@ int ce_installer_is_installer(const char *path)
 	return result;
 }
 
-int ce_installer_extract_maps(const char *installer_path, const char *destination, cabinet_progress_proc progress,
-	void *context, char *error, int error_size)
+int ce_installer_extract_maps(const char *installer_path, const char *destination, int replace,
+	cabinet_progress_proc progress, void *context, char *error, int error_size)
 {
 	struct cabinet_import import;
 	unsigned long long offset;
@@ -120,6 +120,8 @@ int ce_installer_extract_maps(const char *installer_path, const char *destinatio
 	{
 		return 0;
 	}
+	/* OpenH1: every map written again (a damaged one repaired) */
+	import.replace = replace;
 	if (!find_cabinet(&import, &offset))
 	{
 		cabinet_fail(&import, "This is not Custom Edition's installer (halocesetup_en_1.00.exe).%s", NULL);

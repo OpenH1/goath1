@@ -41,6 +41,9 @@ kept on the item of the same id.
 #include "benchmark.h" /* port: port/linux/game/benchmark.c */
 #include "keyboard.h" /* port: port/linux/game/keyboard.c */
 #include "../src/dlss_addon.h" /* port: port/linux/src/dlss_addon.c */
+#include "../src/game_data_page.h" /* port: port/linux/src/game_data_page.c */
+#include "custom_edition_maps.h"
+#include "mcc_maps.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -312,6 +315,8 @@ static boolean screen_call_layout(struct widget_instance *widget, struct event_r
 	boolean *deleted);
 static boolean screen_call_dlss(struct widget_instance *widget, struct event_record *event, char const *name,
 	boolean *deleted);
+static boolean screen_call_game_data(struct widget_instance *widget, struct event_record *event, char const *name,
+	boolean *deleted);
 /* the row of the table an action is run for (0 up, on the table), NONE for
 none (a key's, a button's) */
 static short screen_action_row = NONE;
@@ -495,6 +500,11 @@ static struct screen_action const screen_actions[] =
 	{ "dlss remove", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_dlss },
 	{ "dlss page up", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_dlss },
 	{ "dlss page down", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_dlss },
+	/* (Settings' GAME DATA, screens/game_data.xml (port/linux/src/
+	game_data_page.c): the row's source added, copied again or looked for
+	again; its folder shown on the desktop) */
+	{ "data add", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_game_data },
+	{ "data open folder", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_game_data },
 };
 
 static char const *const screen_action_names[] =
@@ -516,6 +526,7 @@ static char const *const screen_action_names[] =
 	"pause friendly fire", "pause revert", "pause restart", "pause quit",
 	"layout name", "layout legend", "layout clear", "layout shape left", "layout shape right", "layout color left",
 	"layout color right", "layout bindings use", "dlss accept", "dlss remove", "dlss page up", "dlss page down",
+	"data add", "data open folder",
 };
 
 /* a binding's value: the saved game's mission and difficulty (player 1's
@@ -558,6 +569,7 @@ static char const *const screen_binding_names[] =
 	"layout.set", "layout.unset", "layout.bindings",
 	"dlss.detail", "dlss.heading", "dlss.status", "dlss.credit", "dlss.license.empty", "dlss.can_accept",
 	"dlss.can_remove",
+	"data.detail", "data.heading", "data.status", "data.from", "data.folder", "data.opened", "data.add",
 };
 
 /* the row sources a table may name (menu_table.h), and their names */
@@ -571,6 +583,7 @@ static struct menu_table_source const *const screen_sources[] =
 	&benchmark_results_source,
 	&pc_menu_layout_source,
 	&dlss_addon_license_source,
+	&game_data_page_source,
 };
 
 static char const *const screen_source_names[] =
@@ -583,6 +596,7 @@ static char const *const screen_source_names[] =
 	"benchmark.results",
 	"layout.controls",
 	"dlss.license",
+	"data.sources",
 };
 
 /* the chats a <chat> may name (menu_table.h), and their names */
@@ -633,6 +647,9 @@ static int screen_value(void *context, char const *name, char *value, unsigned l
 	/* (the NVIDIA DLSS add-on's: port/linux/src/dlss_addon.c) */
 	if (!strncmp(name, "dlss.", 5))
 		return dlss_addon_value(name, value, size);
+	/* (Settings' GAME DATA's: port/linux/src/game_data_page.c) */
+	if (!strncmp(name, "data.", 5))
+		return game_data_page_value(name, value, size);
 	/* (Stick Test's: the sticks' readings and drift, stick_test_menu.inc) */
 	if (!strncmp(name, "stick.", 6))
 		return pc_menu_stick_value(name, value, size);
@@ -700,6 +717,32 @@ struct screen_place
 	void (*closed)(void);
 };
 
+/* Settings' GAME DATA, each frame it is drawn: the Custom Edition and MCC
+maps the map lists have (game_data_page.c) */
+static void screen_game_data_frame(struct widget_instance *screen)
+{
+	(void)screen;
+	game_data_page_map_counts(custom_edition_maps_count(FALSE), mcc_maps_count(FALSE));
+}
+
+/* each frame a screen is drawn: what GAME DATA's copies added since, the
+map lists looking again, with no restart (game_data_page.c) */
+static void screen_game_data_poll(void)
+{
+	unsigned added = game_data_page_take_added();
+
+	if (added & GAME_DATA_ADDED_CUSTOM_EDITION)
+	{
+		platform_log("game data: Custom Edition's maps added, the map lists look again");
+		custom_edition_maps_look_again();
+	}
+	if (added & GAME_DATA_ADDED_MCC)
+	{
+		platform_log("game data: the MCC maps looked for again");
+		mcc_maps_rescan();
+	}
+}
+
 static struct screen_place const screen_places[] =
 {
 	{ "main", "main_menu\\main_menu", pc_menu_main_menu_shown, NULL },
@@ -754,6 +797,10 @@ static struct screen_place const screen_places[] =
 	/* (the NVIDIA DLSS add-on, as Frame Rate & Sync's NVIDIA DLSS rows open
 	it: NVIDIA's license, the download, the removal: dlss_addon.c) */
 	{ "dlss_addon", "screens\\dlss_addon", NULL, NULL },
+	/* (Settings' GAME DATA, as Mods' GAME DATA › opens it: the sources of
+	the maps, their copies: game_data_page.c; the maps the lists have, told
+	each frame) */
+	{ "game_data", "screens\\game_data", screen_game_data_frame, NULL },
 	/* (the on-screen keyboard, a pop-up: keyboard.c opens it, reads its
 	input each frame it is drawn and takes every event of its own) */
 	{ "keyboard", "screens\\keyboard", keyboard_frame, NULL, NULL, keyboard_event, keyboard_screen_closed },
@@ -2391,6 +2438,7 @@ void menu_screen_frame(struct widget_instance *widget)
 
 	if (!open)
 		return;
+	screen_game_data_poll();
 	/* (its file read again: made again, the focus on the same item) */
 	menu_screens_poll(ui_widget_port_milliseconds());
 	if (menu_screens_generation(open->place->screen) != open->generation)
@@ -2597,6 +2645,17 @@ static boolean screen_call_dlss(struct widget_instance *widget, struct event_rec
 	(void)event;
 	*deleted = FALSE;
 	return dlss_addon_action(name) != 0;
+}
+
+/* Settings' GAME DATA's actions (port/linux/src/game_data_page.c), the row
+given */
+static boolean screen_call_game_data(struct widget_instance *widget, struct event_record *event, char const *name,
+	boolean *deleted)
+{
+	(void)widget;
+	(void)event;
+	*deleted = FALSE;
+	return game_data_page_action(name, screen_action_row) != 0;
 }
 
 /* the lobby's actions of C's own (menu_functions.c's lobby_menu.inc), the

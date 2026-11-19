@@ -126,7 +126,7 @@ static void expect(int xbox, int custom_edition, int next, int screen, const cha
 	CHECK(map_sources_next(&sources) == next, "the screen's next is %d, not %d", map_sources_next(&sources), next);
 	CHECK(map_sources_screen_at_start(&sources, 0) == screen, "the next start %s the maps screen unasked",
 		screen ? "does not show" : "shows");
-	CHECK(map_sources_screen_at_start(&sources, 1), "the next start ignores Settings' ADD MAPS");
+	CHECK(map_sources_screen_at_start(&sources, 1), "the next start ignores Settings' GAME DATA");
 	map_sources_summary(&sources, text, sizeof(text));
 	CHECK(!strcmp(text, summary), "the summary is %s, not %s", text, summary);
 }
@@ -138,7 +138,7 @@ int main(int argc, char **argv)
 	if (!strcmp(name, "iso-then-ce"))
 	{
 		/* (the disc image first: the game starts, and no start shows the
-		screen again unasked; Custom Edition's installer is ADD MAPS's) */
+		screen again unasked; Custom Edition's installer is GAME DATA's) */
 		expect(0, 0, _map_sources_list, 1, "NONE");
 		add_xbox();
 		expect(1, 0, _map_sources_play, 0, "XBOX ONLY");

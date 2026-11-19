@@ -2340,6 +2340,20 @@ static int report_open_issue(const char *url, const char *folder)
 	return opened;
 }
 
+int report_open_folder(const char *path)
+{
+	char whole[1024], current[1024], url[1400];
+
+	report_whole_path(path, getcwd(current, sizeof(current)), whole, sizeof(whole));
+	report_file_url(whole, url, sizeof(url));
+	if (report_unattended())
+	{
+		platform_log("open folder: %s", url);
+		return 1;
+	}
+	return platform_open_url(url);
+}
+
 /* ---------- the report */
 
 /* the report being finished: its name, its summary (report_text's, made as

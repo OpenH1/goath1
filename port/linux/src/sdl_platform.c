@@ -728,7 +728,7 @@ static void *data_extraction_thread(void *context)
 
 	if (extraction->installer)
 	{
-		succeeded = map_import_custom_edition(extraction->image, extraction->destination, data_extraction_progress,
+		succeeded = map_import_custom_edition(extraction->image, extraction->destination, 0, data_extraction_progress,
 			extraction, &written, extraction->error, sizeof(extraction->error)) != 0;
 	}
 	else
@@ -981,7 +981,7 @@ BOOL platform_offer_game_data(const char *destination, const char *missing)
 		{ 0, _choice_custom_edition, "Custom Edition maps" },
 		{ SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, _choice_quit, "Quit" },
 	};
-	/* (Settings' ADD MAPS, with the Xbox maps there: Start in Quit's place,
+	/* (Settings' GAME DATA, with the Xbox maps there: Start in Quit's place,
 	map_sources.c) */
 	static const SDL_MessageBoxButtonData start_buttons[] =
 	{

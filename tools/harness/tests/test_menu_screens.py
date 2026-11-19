@@ -286,6 +286,11 @@ def test_actions_registered():
             assert '"dlss."' in value, binding
             assert f'"{binding}"' in re.search(r"\nint dlss_addon_value\(.*?\n\}\n",
                                                 read("port/linux/src/dlss_addon.c"), re.S).group(0), binding
+        elif binding.startswith("data."):
+            # (Settings' GAME DATA's, port/linux/src/game_data_page.c's game_data_page_value)
+            assert '"data."' in value, binding
+            assert f'"{binding}"' in re.search(r"\nint game_data_page_value\(.*?\n\}\n",
+                                                read("port/linux/src/game_data_page.c"), re.S).group(0), binding
         else:
             assert f'"{binding}"' in value, binding
     sources =re.findall(r'"([^"]+)"', re.search(r"screen_source_names\[\] =\n\{\n(.*?)\n\};", source,

@@ -774,6 +774,21 @@ ACCEPT (`dlss accept`, X) while the license is shown and REMOVE (`dlss remove`, 
 (`dlss.can_accept`, `dlss.can_remove`). B goes back; a download goes on meanwhile. Its words and states are
 port/linux/src/dlss_addon.c's.
 
+## Game Data
+
+`screens/game_data.xml` (its stand-in `screens/game_data`) is Settings' GAME DATA, which Mods' GAME DATA › opens
+(#1216; the main menu's). The table is the sources of the game's maps, the row source `data.sources`: XBOX MAPS,
+CUSTOM EDITION MAPS and MCC CONTENT, each its state (`INSTALLED`, `COPYING 34%`, `12 MAPS`). The panel is the chosen
+row's (`data.heading`, `data.status`, `data.from`, `data.folder`), with OPEN FOLDER (`data open folder`, Y: the
+source's folder on the desktop) and ADD (`data add`, A on a row, X; its words `data.add`, none while a copy runs):
+Custom Edition's installer, looked for as the first start looks (`game_data_scan.c`) as the page opens, has its
+maps copied into custom_maps in a thread (`map_import.c`), the progress on the page; once they are there COPY AGAIN
+writes every map again, which repairs a damaged one. The map lists see what was added at once
+(`custom_edition_maps_look_again`, `mcc_maps_rescan`, from `menu_screen_frame`), with no restart. The Xbox maps
+are in use while the game runs, so their COPY AGAIN asks for the maps screen at the next start
+(`map_sources_request`); MCC's LOOK AGAIN finds the packages put in mcc_maps since. Its words and states are
+port/linux/src/game_data_page.c's.
+
 ## The pause menu
 
 `screens/pause.xml` (a multiplayer game's) and `screens/pause_campaign.xml`

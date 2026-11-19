@@ -3,7 +3,7 @@ MAP_SOURCES.H
 
 The two sources of the game's maps, and which of them a game has
 (map_sources.c): the one place the maps screen (first_start.c, Windows'
-sdl_platform.c) and Settings' ADD MAPS (menu_functions.c) ask.
+sdl_platform.c) and Settings' GAME DATA (game_data_page.c) ask.
 */
 
 #ifndef __HALO_LINUX_MAP_SOURCES_H
@@ -40,18 +40,18 @@ void map_sources_read_game(struct map_sources *sources);
 
 /* after the screen added a source (or found it added already): the game
 starts once it has its Xbox maps, which it cannot start without (Custom
-Edition's are optional, added later from Settings' ADD MAPS), else the list
+Edition's are optional, added later from Settings' GAME DATA), else the list
 comes back */
 int map_sources_next(const struct map_sources *sources);
 /* whether a start shows the maps screen: only without the Xbox maps, or
-when Settings' ADD MAPS asked for it (requested) */
+when Settings' GAME DATA asked for it (requested) */
 int map_sources_screen_at_start(const struct map_sources *sources, int requested);
 
 /* the sources in a few words, for Settings' value column: "XBOX + CE",
 "XBOX ONLY", "CE ONLY", "NONE" */
 void map_sources_summary(const struct map_sources *sources, char *text, int size);
 
-/* Settings' ADD MAPS: the maps screen asked for at the next start, or no
+/* Settings' GAME DATA: the maps screen asked for at the next start, or no
 longer; whether it is; and its request taken (xbox_files.c, as it shows) */
 void map_sources_request(int request);
 int map_sources_requested(void);
