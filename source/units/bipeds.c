@@ -558,7 +558,10 @@ sub-steps are by the share still to come (device_machines.c's
 machine_elevator_carried), so it rides a share a sub-step either way. */
 enum
 {
-	MAXIMUM_SUBSTEP_BIPEDS = 16,
+	/* a player's biped each, at most (a game's most players: past the 16
+	this once held, the others took the AI's way, every sub-step moved in the
+	tick at once with the tick's input) */
+	MAXIMUM_SUBSTEP_BIPEDS = HALO_PORT_MAXIMUM_NETWORK_PLAYERS,
 	/* the AI's bipeds whose sub-steps a tick keeps, at most (the array grows
 	to the most a tick has had) */
 	MAXIMUM_REPLAYED_BIPEDS = MAXIMUM_OBJECTS_PER_MAP
