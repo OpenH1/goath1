@@ -2081,14 +2081,22 @@ void rasterizer_transparent_geometry_group_draw(
 								/* port: on a flat screen, with display.soft_particles,
 								soft against the scene's depth as the VR mode's eyes
 								draw it (d3d8_device.c, halo_effect_soft): the same
-								groups, not the first-person weapon's nor one drawn
-								without depth; soft alone, never thick */
+								groups, not one drawn without depth; soft alone, never
+								thick. The first-person weapon's in its first pass
+								alone, over the weapon's own pixels (the stencil
+								accepts only them), against the weapon's depth, both
+								of its projection, its fade its depth test (2): a
+								flat sprite meets the gun softly, not along the line
+								where its plane cuts it. Its second pass, elsewhere,
+								tests no depth (the world's is of another projection),
+								as the Xbox drew it */
 								{
 									extern void halo_effect_soft(int soft);
 
 									halo_effect_soft(
-										!TEST_FLAG(group->geometry_flags, _rasterizer_geometry_first_person_bit) &&
-										!TEST_FLAG(group->geometry_flags, _rasterizer_geometry_no_zbuffer_bit));
+										TEST_FLAG(group->geometry_flags, _rasterizer_geometry_no_zbuffer_bit) ? 0 :
+										!TEST_FLAG(group->geometry_flags, _rasterizer_geometry_first_person_bit) ? 1 :
+										!pass ? 2 : 0);
 								}
 #ifdef HALO_VR
 								{

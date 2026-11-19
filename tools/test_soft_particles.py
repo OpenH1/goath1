@@ -3,7 +3,8 @@ as the VR mode's eyes draw it. The front end's choice (d3d8_device.c's soft_effe
 setting and the backend's capability stubbed): with the setting off the pixel key's vr_effect stays 0 for every
 draw, the draw state as it was; forced on (the negative control) an effect group's draw of no views becomes soft
 (1), and still none of the eyes' draws, a group the game left hard, or a backend that cannot draw it. The groups
-are the VR path's (not the first-person weapon's, not one drawn without depth), the key's only change is that
+are the VR path's (not one drawn without depth; the first-person weapon's in its first pass alone:
+test_first_person_soft_effects.py), the key's only change is that
 assignment, and the frame's end leaves the next frame hard. No GPU or game data."""
 import re
 import shutil
