@@ -9,12 +9,14 @@ linked pieces, each under that cap, PCM at its own rate, whose frames
 joined in the chain's order are the source's, sample for sample. The chain
 ends where the permutation's did, and the pieces are never picked to start
 a sound (sound_definitions.c's next permutation). The samples stay in the
-file kept and each piece is made PCM as the sound cache loads it (OpenH1
-issue 1202): past what the mods may keep a permutation still plays as PCM
-at its own rate, only its file held; an Ogg Vorbis one past the mixer's
-rate comes out as a whole resample would, joins and all; and an Ogg Vorbis
-piece is decoded on the decoder's thread, never the one that asks for it,
-which goes on and finds it loaded later.
+file on disk and each piece is read from it and made PCM as the sound
+cache loads it (OpenH1 issue 1202): past what the mods may keep a
+permutation still plays as PCM at its own rate, neither its file nor its
+samples held; an Ogg Vorbis one past the mixer's rate comes out as a whole
+resample would, joins and all; an Ogg Vorbis or PCM piece is read and
+decoded on the decoder's thread, never the one that asks for it, which goes
+on and finds it loaded later; and a piece of a file changed or removed
+since is silence, the file said, never the new samples nor a crash.
 test_mod_sound_split.py takes the modules (under_test.inc) and the game's
 structures (types.inc).
 */
@@ -25,7 +27,11 @@ structures (types.inc).
 #include <time.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <strings.h>
+#include <sys/stat.h>
+#include <sys/time.h>
+#include <unistd.h>
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
@@ -146,6 +152,43 @@ static long tag_loaded(unsigned long group_tag, char const *name) { (void)group_
 static char *tag_get_name(long tag_index) { (void)tag_index; return "sound\\test"; }
 static unsigned long memory_left = 512UL * 1024 * 1024;
 static unsigned long mods_memory_left(void) { return memory_left; }
+
+/* the mods' files (port_mods.c's, by path): a file's size and modification time, and a read of it; while
+`hold_reader`, a read on any thread but the asker's waits for `release_reader`, and one on the asker's is a fault */
+static int hold_reader;
+static volatile int release_reader;
+static volatile int read_on_asker;
+static volatile long reads;
+static int port_mods_path_stamp(char const *path, unsigned long *size, unsigned long stamp[2])
+{
+	struct stat information;
+
+	if (stat(path, &information) != 0)
+		return 0;
+	*size = (unsigned long)information.st_size;
+	stamp[0] = (unsigned long)information.st_mtim.tv_sec;
+	stamp[1] = (unsigned long)information.st_mtim.tv_nsec;
+	return 1;
+}
+static int port_mods_path_read(char const *path, unsigned long offset, void *buffer, unsigned long size)
+{
+	FILE *file = fopen(path, "rb");
+	int read;
+
+	if (hold_reader)
+	{
+		if (pthread_equal(pthread_self(), asking_thread))
+			read_on_asker = 1;
+		else
+			while (!release_reader)
+				sched_yield();
+	}
+	read = file && fseek(file, (long)offset, SEEK_SET) == 0 && fread(buffer, 1, size, file) == size;
+	if (file)
+		fclose(file);
+	__atomic_add_fetch(&reads, 1, __ATOMIC_RELAXED);
+	return read;
+}
 /* the game's seeded random (real_math.c's: a linear congruential step) */
 static short seed_random_range(unsigned long *seed, short lower, short upper)
 {
@@ -261,16 +304,65 @@ static void file_make(short encoding, short sample_rate, short compression, bool
 	file_size = cursor;
 }
 
-/* the sound mod_sound_new makes of the file (a copy of it, which the sound keeps) */
+/* the files written, each a new one in a folder of the test's own, removed when it ends */
+static char folder[64];
+static char last_path[128];
+static long files_written;
+
+static void files_remove(void)
+{
+	long index;
+
+	for (index = 0; index < files_written; index++)
+	{
+		char path[128];
+
+		snprintf(path, sizeof(path), "%s/%ld.sound", folder, index);
+		unlink(path);
+	}
+	if (folder[0])
+		rmdir(folder);
+}
+
+/* `size` bytes of `bytes` written over the file at `path`, modified at `seconds` (0: now) */
+static void file_write(char const *path, byte const *bytes, unsigned long size, long seconds)
+{
+	FILE *file = fopen(path, "wb");
+
+	CHECK(file && fwrite(bytes, 1, size, file) == size, "the file %s cannot be written", path);
+	fclose(file);
+	if (seconds)
+	{
+		struct timeval times[2] = { { seconds, 0 }, { seconds, 0 } };
+
+		CHECK(utimes(path, times) == 0, "the file's time cannot be set");
+	}
+}
+
+/* the sound mod_sound_new makes of the file, written to disk (its samples read from there as they load; the
+copy read whole let go) */
 static struct mod_sound *sound_load(void)
 {
 	byte *file = malloc(file_size);
 	char const *reason = NULL;
+	unsigned long size = 0;
+	unsigned long stamp[2];
 	struct mod_sound *sound;
 
+	if (!folder[0])
+	{
+		strcpy(folder, "/tmp/mod_sound_split_XXXXXX");
+		CHECK(mkdtemp(folder), "no folder for the files");
+		atexit(files_remove);
+	}
+	snprintf(last_path, sizeof(last_path), "%s/%ld.sound", folder, files_written++);
+	file_write(last_path, file_bytes, file_size, 0);
+	CHECK(port_mods_path_stamp(last_path, &size, stamp) && size == file_size, "the file was not written");
 	CHECK(file, "no memory");
 	memcpy(file, file_bytes, file_size);
-	sound = mod_sound_new(1, file, file_size, &reason);
+	sound = mod_sound_new(1, file, file_size, last_path, stamp, &reason);
+	memset(file, 0, file_size);
+	free(file);
 	CHECK(sound, "the sound was left out: %s", reason ? reason : "?");
 	return sound;
 }
@@ -395,6 +487,9 @@ int main(int argc, char **argv)
 		first = permutation_get(sound, 0);
 		CHECK(first->mouth_data.size == MOUTH_BYTES, "the first piece's mouth data is %ld bytes",
 			(long)first->mouth_data.size);
+		CHECK(((byte const *)first->mouth_data.address)[0] == 7 &&
+			((byte const *)first->mouth_data.address)[MOUTH_BYTES - 1] == 7,
+			"the mouth data is not kept once the file read is let go");
 		for (index = 1; index < 6; index++)
 		{
 			struct sound_permutation *piece = permutation_get(sound, index);
@@ -534,7 +629,8 @@ int main(int argc, char **argv)
 	{
 		/* the mods may keep 1 MB more (OpenH1 issue 1202; it was Xbox ADPCM at 22.05 kHz): the 30 s permutation
 		(2.6 MB of PCM, and Ogg Vorbis of it) is still PCM at 44.1 kHz, its six pieces the source's, sample for
-		sample, and the sound holds no more than its file and a few hundred bytes a piece, no PCM of its own */
+		sample, read from the file on disk, and the sound holds neither its file nor any PCM: its path, its mouth
+		data and a few hundred bytes a piece */
 		struct source source = { NULL, 30L * 44100, 1, 44100, NONE };
 		struct mod_sound *sound;
 		short compression;
@@ -547,7 +643,7 @@ int main(int argc, char **argv)
 			sound = sound_load();
 			CHECK(chain_check(sound, 0, NONE, &source, 44100) == 6, "not six pieces of PCM");
 			CHECK(sound->adpcm_count == 0, "a permutation was made Xbox ADPCM");
-			CHECK(sound->kept_bytes <= file_size + 6 * 512 + sizeof(struct mod_sound_stream),
+			CHECK(sound->kept_bytes <= sizeof(last_path) + MOUTH_BYTES + 6 * 512 + sizeof(struct mod_sound_stream),
 				"the sound holds %lu bytes, its file %lu", sound->kept_bytes, file_size);
 		}
 	}
@@ -612,11 +708,72 @@ int main(int argc, char **argv)
 		CHECK(sample == permutation->samples.size / 2, "sample %ld is %d, the source's %d", sample, buffer[sample],
 			source.samples[sample]);
 		hold_decoder = 0;
+		/* (a PCM piece too: read from the file on the decoder's thread, never the asker's, which goes on) */
 		file_make(MONO, RATE_44, PCM, FALSE, 1, &source, 1);
 		sound = sound_load();
+		permutation = permutation_get(sound, 0);
 		loaded = FALSE;
-		piece_request(permutation_get(sound, 0)->samples.address, buffer, (boolean *)&loaded);
-		CHECK(loaded, "a PCM piece was not loaded at once");
+		hold_reader = 1;
+		piece_request(permutation->samples.address, buffer, (boolean *)&loaded);
+		CHECK(!read_on_asker, "the PCM piece was read from the disk on the thread that asked for it");
+		CHECK(!loaded, "the PCM piece was loaded before the reader was let go: the asker waited for the disk");
+		release_reader = 1;
+		waited = 0;
+		while (!__atomic_load_n(&loaded, __ATOMIC_ACQUIRE) && waited++ < 20000000)
+			sched_yield();
+		CHECK(loaded, "the PCM piece was never loaded");
+		decoder_wait();
+		hold_reader = 0;
+		for (sample = 0; sample < permutation->samples.size / 2 && buffer[sample] == source.samples[sample]; sample++)
+			;
+		CHECK(sample == permutation->samples.size / 2, "PCM sample %ld is %d, the source's %d", sample,
+			buffer[sample], source.samples[sample]);
+	}
+	else if (!strcmp(name, "file-changed"))
+	{
+		/* a piece of a sound whose file changed (the same size, other samples, another time) or was removed
+		since the sound was made: loaded, silence, never the new samples nor a crash, and the file said once
+		(OpenH1 issue 1202) */
+		struct source source = { NULL, 30L * 44100, 1, 44100, NONE };
+		struct mod_sound *sound;
+		struct sound_permutation *permutation;
+		short *buffer;
+		byte *changed;
+		long sample;
+		int round;
+
+		source.samples = sweep_make(source.frames, 1);
+		file_make(MONO, RATE_44, PCM, FALSE, 1, &source, 1);
+		sound = sound_load();
+		permutation = permutation_get(sound, 2);
+		buffer = malloc((size_t)permutation->samples.size);
+		changed = malloc(file_size);
+		CHECK(buffer && changed, "no memory");
+		/* (as it was: the piece is the source's) */
+		CHECK(piece_decode(permutation->samples.address, buffer), "the piece cannot be read from its file");
+		memcpy(changed, file_bytes, file_size);
+		for (sample = 0x200; sample < (long)file_size; sample++)
+			changed[sample] ^= 0x5A;
+		file_write(last_path, changed, file_size, 1000000000L);
+		for (round = 0; round < 2; round++)
+		{
+			volatile boolean loaded = FALSE;
+			long waited = 0;
+
+			memset(buffer, 0x33, (size_t)permutation->samples.size);
+			piece_request(permutation->samples.address, buffer, (boolean *)&loaded);
+			while (!__atomic_load_n(&loaded, __ATOMIC_ACQUIRE) && waited++ < 20000000)
+				sched_yield();
+			CHECK(loaded, "the piece of a %s file was never loaded", round ? "removed" : "changed");
+			decoder_wait();
+			for (sample = 0; sample < permutation->samples.size / 2 && buffer[sample] == 0; sample++)
+				;
+			CHECK(sample == permutation->samples.size / 2, "the piece of a %s file is not silence (sample %ld is %d)",
+				round ? "removed" : "changed", sample, buffer[sample]);
+			CHECK(mod_sound_decoder.failure_waiting && !strcmp(mod_sound_decoder.failed_path, last_path),
+				"the file that cannot be read is not said");
+			unlink(last_path);
+		}
 	}
 	else if (!strcmp(name, "forty-variations"))
 	{
