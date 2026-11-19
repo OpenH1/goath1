@@ -4395,6 +4395,9 @@ int host_render_replay_main(int argc, char *argv[], const struct host_render_rep
 	host_render_record_set_played(record_played);
 	/* (the Screenshot key's pictures are the game's, not the replay's) */
 	host_render_stream_set_screenshot_writer(NULL);
+	/* (nor the frames' own GPU times: the recording's guest memory past
+	the pipelines' states, an older one's, holds no table for them) */
+	host_render_stream_gpu_frames(0);
 
 	/* the ring's header, as it was when the recording began */
 	ring = host_pointer(recording.header.ring_address);

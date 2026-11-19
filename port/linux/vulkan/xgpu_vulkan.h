@@ -832,6 +832,12 @@ run on the renderer's thread, with end before the frame's fence. */
 void xgpu_vulkan_gpu_time_begin(void);
 void xgpu_vulkan_gpu_time_end(void);
 int xgpu_vulkan_gpu_time_read(double *milliseconds);
+/* the tag (not 0) the frames' interval ending next is read with, and the
+function the frame's end (xgpu_vulkan_frame_end) gives each interval it
+reads to, by its tag: the frame's own time, however late it is read
+(host_render_stream_gpu_frame's) */
+void xgpu_vulkan_gpu_time_tag(uint32_t tag, void (*listener)(uint32_t tag, uint64_t nanoseconds));
+int xgpu_vulkan_gpu_time_read_tagged(double *milliseconds, uint32_t *tag);
 /* the frames' GPU time so far (nanoseconds, a running total), and whether
 it is measured (the frames timed: not the VR mode's, which reads them) */
 uint64_t xgpu_vulkan_gpu_nanoseconds(int *measured);

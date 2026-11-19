@@ -2302,6 +2302,9 @@ static uint32_t stream_prepared(void *context)
 static void stream_frame_end(void *context)
 {
 	(void)context;
+	/* (the frame's own GPU time given under its number once it is done:
+	the guest's rows take each frame's own) */
+	xgpu_metal_gpu_time_tag(host_render_stream_frame_playing(), host_render_stream_gpu_frame);
 	xgpu_metal_frame_end(target_texture(stream.back_buffer));
 	stream.back_buffer = 0;
 	xgpu_metal_textures_frame_end();

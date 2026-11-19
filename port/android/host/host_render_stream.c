@@ -35,6 +35,7 @@ then to the frame on screen.
 #include "host_render_stream.h"
 #include "host_performance.h"
 #include "frame_pacing.h"
+#include "frame_gpu.h"
 #ifdef HALO_VR
 #include "host_vr_render.h"
 #endif
@@ -1184,6 +1185,9 @@ static struct
 	/* (the render thread's: the GPU's time so far, and at the last frame's
 	performance hint) */
 	uint64_t gpu_nanoseconds, gpu_reported;
+	/* each frame's own GPU time not given the guest (a replay's ring, a
+	recording's, may have no room for it: host_render_stream_gpu_frames) */
+	int gpu_frames_off;
 	/* (frame_pacing.h) the backend paces the game by its display; the
 	frames the display has taken (shown, or dropped); its last latch and its
 	refreshes' period (nanoseconds of the game's clock); the frames' costs,
@@ -2048,6 +2052,27 @@ void host_render_stream_gpu_time(uint64_t nanoseconds)
 	render.gpu_nanoseconds = nanoseconds;
 	__atomic_store_n(&ring->gpu_microseconds, (uint32_t)(nanoseconds / 1000u), __ATOMIC_RELEASE);
 	__atomic_store_n(&ring->gpu_measured, 1u, __ATOMIC_RELEASE);
+}
+
+uint32_t host_render_stream_frame_playing(void)
+{
+	return render.submitted_at_open + (render.frames_played - render.played_at_open) + 1;
+}
+
+void host_render_stream_gpu_frame(uint32_t frame, uint64_t nanoseconds)
+{
+	struct xgpu_stream_ring *ring = render.ring;
+	uint64_t microseconds = nanoseconds / 1000u;
+
+	if (!ring || !ring->pipelines || render.gpu_frames_off)
+		return;
+	frame_gpu_publish((struct xgpu_stream_gpu_frames *)((uint8_t *)host_pointer(ring->pipelines) +
+		XGPU_STREAM_PIPELINES), frame, microseconds < 0xFFFFFFFEu ? (uint32_t)microseconds : 0xFFFFFFFEu);
+}
+
+void host_render_stream_gpu_frames(int on)
+{
+	render.gpu_frames_off = !on;
 }
 
 void host_render_stream_exiting(void)

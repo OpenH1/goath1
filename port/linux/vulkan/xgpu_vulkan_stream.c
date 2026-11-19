@@ -4607,6 +4607,9 @@ static void stream_frame_end(void *context)
 		present_window = 0;
 	}
 #endif
+	/* (the frame's GPU time read under its number, whenever it is read:
+	the guest's rows take each frame's own) */
+	xgpu_vulkan_gpu_time_tag(host_render_stream_frame_playing(), host_render_stream_gpu_frame);
 	xgpu_vulkan_frame_end(back_buffer ? back_buffer->image : NULL, present_window);
 	xgpu_vulkan_pass_owner(NULL);
 	/* (debug.load_trace: each frame's end on the render thread, whose
