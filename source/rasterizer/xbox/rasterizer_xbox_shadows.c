@@ -2149,7 +2149,15 @@ boolean rasterizer_shadow_atlas_begin(
 	shadow_atlas_count = 0;
 	shadow_atlas_region = NONE;
 	shadow_atlas_receiving = NONE;
+	/* (comparisons: every region whole, or every other frame's, the same
+	scene drawn both ways where the game is paused) */
 	shadow_atlas_sizes_on = getenv("HALO_SHADOW_SIZES_SAME") == NULL;
+	if (getenv("HALO_SHADOW_SIZES_ALTERNATE"))
+	{
+		static unsigned long frames = 0;
+
+		shadow_atlas_sizes_on = (++frames & 1) != 0;
+	}
 	/* the first page, the frame's class's; the casters past it the frame
 	before had, kept for the next page's class (shadow_atlas_spill) */
 	shadow_atlas_pages[0].atlas_class = shadow_atlas_class;
