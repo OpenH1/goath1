@@ -316,8 +316,13 @@ static struct
 {
 	long object_index;
 	unsigned long long fingerprint;
+	unsigned long long unposed_fingerprint;
 	boolean used;
 } shadow_atlas_owners[SHADOW_ATLAS_REGIONS];
+/* (diagnostic: the draws' hash but for the nodes' matrices) */
+static unsigned long long shadow_unposed_fingerprint = 0;
+static boolean shadow_hashing_pose = FALSE;
+static unsigned long shadow_retained_posed_count = 0;
 static short shadow_retained_class = NONE;
 static long shadow_retained_scale = 0;
 static unsigned long shadow_retained_changes = 0;
@@ -467,6 +472,7 @@ boolean _rasterizer_environment_shadow_begin(
 		{
 			shadow_caster_object = object_index;
 			shadow_fingerprint = 1469598103934665603ULL;
+			shadow_unposed_fingerprint = 1469598103934665603ULL;
 			shadow_retained_hash(vsh_constants__screenproj, sizeof(vsh_constants__screenproj));
 			shadow_retained_hash(&object_bounding_radius, sizeof(object_bounding_radius));
 		}
@@ -538,7 +544,9 @@ void _rasterizer_environment_shadow_model_begin(
 			shadow_retained_hash(&count, sizeof(count));
 			if (count > 0 && parameters->skinning.node_matrices)
 			{
+				shadow_hashing_pose = TRUE;
 				shadow_retained_hash(parameters->skinning.node_matrices, count * sizeof(real_matrix4x3));
+				shadow_hashing_pose = FALSE;
 			}
 			return;
 		}
@@ -1811,6 +1819,15 @@ static void shadow_retained_hash(
 		hash = (hash ^ bytes[index]) * 1099511628211ULL;
 	}
 	shadow_fingerprint = hash;
+	if (!shadow_hashing_pose)
+	{
+		hash = shadow_unposed_fingerprint;
+		for (index = 0; index < size; index++)
+		{
+			hash = (hash ^ bytes[index]) * 1099511628211ULL;
+		}
+		shadow_unposed_fingerprint = hash;
+	}
 
 	return;
 }
@@ -1868,9 +1885,11 @@ static void shadow_retained_frame_begin(
 	shadow_fingerprinting = FALSE;
 	if (on && ++shadow_retained_frames >= 1200)
 	{
-		platform_log("retained shadows: %lu casters in %lu frames, %lu kept (%.1f%%)",
+		platform_log("retained shadows: %lu casters in %lu frames, %lu kept (%.1f%%), %lu more but for their nodes' matrices",
 			shadow_retained_casters, shadow_retained_frames, shadow_retained_kept_count,
-			shadow_retained_casters ? 100.0 * (double)shadow_retained_kept_count / (double)shadow_retained_casters : 0.0);
+			shadow_retained_casters ? 100.0 * (double)shadow_retained_kept_count / (double)shadow_retained_casters : 0.0,
+			shadow_retained_posed_count);
+		shadow_retained_posed_count = 0;
 		shadow_retained_frames = 0;
 		shadow_retained_casters = 0;
 		shadow_retained_kept_count = 0;
@@ -1926,6 +1945,11 @@ boolean rasterizer_shadow_retained_caster(
 		return FALSE;
 	}
 
+	if (owned != NONE && shadow_atlas_owners[owned].fingerprint != fingerprint &&
+		shadow_atlas_owners[owned].unposed_fingerprint == shadow_unposed_fingerprint)
+	{
+		shadow_retained_posed_count++;
+	}
 	if (owned != NONE && shadow_atlas_owners[owned].fingerprint == fingerprint)
 	{
 		region = owned;
@@ -1960,6 +1984,7 @@ boolean rasterizer_shadow_retained_caster(
 			region != NONE);
 		shadow_atlas_owners[region].object_index = shadow_caster_object;
 		shadow_atlas_owners[region].fingerprint = fingerprint;
+		shadow_atlas_owners[region].unposed_fingerprint = shadow_unposed_fingerprint;
 		shadow_atlas_owners[region].used = FALSE;
 	}
 	shadow_atlas_claimed |= 1ULL << region;
