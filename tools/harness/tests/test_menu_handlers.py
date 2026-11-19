@@ -66,7 +66,7 @@ def test_every_data_input_registered():
         "unwired ")}
 
 
-@pytest.mark.parametrize("name", ["port settings add maps"])
+@pytest.mark.parametrize("name", ["port settings clear caches"])
 def test_negative_control(name):
     """a name taken out of port_function_names is caught"""
     source = read("port/linux/game/menu_tags.c")

@@ -1,6 +1,6 @@
 """Which sources of maps a game has (port/linux/src/map_sources.c), in either order: the Xbox disc image first, then
 Custom Edition's installer, or the other way; the game starts once it has its Xbox maps and no later start shows
-the maps screen unasked, Settings' ADD MAPS asks for it, and its request is taken once."""
+the maps screen unasked, Settings' GAME DATA asks for it, and its request is taken once."""
 import re
 import sys
 from pathlib import Path

@@ -389,6 +389,9 @@ picture, the line, the words for no rows) -->
 	<!-- the NVIDIA DLSS add-on's (screens/dlss_addon.xml, as Frame Rate & Sync's NVIDIA DLSS rows open it:
 	port/linux/src/dlss_addon.c), pausing the game as Settings' pages do -->
 	<widget name="screens/dlss_addon" width="640" height="480" flags="pass_unhandled_to_focused_child pause_game" bitmap="main_menu/parts/background_tall"/>
+	<!-- Settings' GAME DATA (screens/game_data.xml, as Mods' GAME DATA › opens it: port/linux/src/game_data_page.c),
+	pausing the game as Settings' pages do -->
+	<widget name="screens/game_data" width="640" height="480" flags="pass_unhandled_to_focused_child pause_game" bitmap="main_menu/parts/background_tall"/>
 	<!-- the question of a controller layout's bindings (screens/layout_bindings.xml, as Controller Layouts' ITS
 	BINDINGS opens it), a pop-up -->
 	<widget name="screens/layout_bindings" width="640" height="480" flags="pass_unhandled_to_focused_child"/>

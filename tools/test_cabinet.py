@@ -492,6 +492,26 @@ def test_import_keeps_the_players_maps(reader, tmp_path):
     assert folder_contents(folder) == expected
 
 
+def test_import_again_repairs_a_damaged_map(reader, tmp_path):
+    """Settings' GAME DATA's COPY AGAIN writes every map again, a damaged
+    one repaired; a plain import leaves it damaged (the negative control)"""
+    path = tmp_path / "halocesetup_en_1.00.exe"
+    path.write_bytes(installer(ce_cabinet()))
+    folder = tmp_path / "custom_maps"
+    folder.mkdir()
+    (folder / "bloodgulch.map").write_bytes(b"damaged")
+    (folder / "hugeass.map").write_bytes(b"another map")
+    out, log = reader("import", path, folder)
+    assert out.splitlines()[0].strip() == "1", log
+    assert (folder / "bloodgulch.map").read_bytes() == b"damaged"
+    out, log = reader("import-again", path, folder)
+    lines = [line.strip() for line in out.splitlines()]
+    assert lines[0] == "1", log
+    assert folder_contents(folder) == {**expected_ce(), "hugeass.map": b"another map"}
+    assert int(lines[1]) == sum(len(v) for v in expected_ce().values())
+    assert not list(folder.glob("*.partial"))
+
+
 def test_halo_pc_disc_maps_written(reader, tmp_path):
     """pc_disc.c: every cabinet's maps, and a maps folder stored as it is,
     into maps_pc (not offered by OpenH1, which does not play them; kept for

@@ -7,8 +7,9 @@ game needs them) and Custom Edition's installer (its multiplayer maps and
 resource maps, written into the custom_maps folder by map_import.c:
 optional). They can be added in either order and at any time: at the first
 start, which shows the screen until the game has its Xbox maps and starts
-the game the moment it has them, and later from Settings' ADD MAPS, which
-asks for the same screen at the next start. A game with one source never
+the game the moment it has them, and later from Settings' GAME DATA
+(game_data_page.c), which copies Custom Edition's in the game and asks for
+the same screen at the next start to copy the Xbox maps again. A game with one source never
 sees the screen again unasked; Custom Edition's maps alone cannot start it (first_start.c on Linux
 and macOS, sdl_platform.c on Windows).
 

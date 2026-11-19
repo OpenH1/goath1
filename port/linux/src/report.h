@@ -121,6 +121,10 @@ int report_benchmark_write(unsigned long first, unsigned long last, const char *
 filled in (percent-encoded; the body cut at a line to keep the address
 within most bytes); 1 if it fits */
 int report_issue_url(const char *title, const char *body, char *url, size_t most);
+/* a folder shown in the desktop's file manager (a relative path made whole;
+a run nobody watches leaves the desktop alone, the address logged); 0 if it
+could not be opened (Settings' GAME DATA, game_data_page.c) */
+int report_open_folder(const char *path);
 /* a text with what could say who the player is taken out, its issue being
 public: home (the account's folder) as ~, invite and party links, IPv4
 addresses (but 127.x and 0.0.0.0) and IPv6 ones (but ::1), chat lines and

@@ -286,6 +286,11 @@ def test_actions_registered():
             assert '"dlss."' in value, binding
             assert f'"{binding}"' in re.search(r"\nint dlss_addon_value\(.*?\n\}\n",
                                                 read("port/linux/src/dlss_addon.c"), re.S).group(0), binding
+        elif binding.startswith("data."):
+            # (Settings' GAME DATA's, port/linux/src/game_data_page.c's game_data_page_value)
+            assert '"data."' in value, binding
+            assert f'"{binding}"' in re.search(r"\nint game_data_page_value\(.*?\n\}\n",
+                                                read("port/linux/src/game_data_page.c"), re.S).group(0), binding
         else:
             assert f'"{binding}"' in value, binding
     sources =re.findall(r'"([^"]+)"', re.search(r"screen_source_names\[\] =\n\{\n(.*?)\n\};", source,
@@ -307,3 +312,13 @@ def test_main_menu_files_listed():
     assert "screens/quit.xml" in listed and "screens/save_changes.xml" in listed
     files = read("port/linux/src/menu_files.c")
     assert 'strncmp(files[index].path, "screens/", 8) || !strcmp(files[index].path, "screens/blocks.xml")' in files
+
+
+def test_screens_fit_the_table():
+    """every shipped screen file has a place in the reader's table (menu_screens.h's MENU_SCREEN_MAXIMUM_SCREENS):
+    past it, screens_keep drops the rest ("menus: more than 16 screens; screens/quit.xml is not read")"""
+    import json
+    listed = [path for path in json.loads(read("port/assets/menus/menus.json"))["files"]
+              if path.startswith("screens/") and path != "screens/blocks.xml"]
+    limit = int(re.search(r"#define MENU_SCREEN_MAXIMUM_SCREENS (\d+)", read("port/linux/include/menu_screens.h")).group(1))
+    assert len(listed) <= limit, (len(listed), limit)

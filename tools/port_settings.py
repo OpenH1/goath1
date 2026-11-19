@@ -797,6 +797,10 @@ STICK_TEST = "screens/stick_test"
 # the NVIDIA DLSS add-on's screen (a hand-written screen's,
 # port/assets/menus/screens/dlss_addon.xml), which Frame Rate & Sync opens
 DLSS_ADDON = "screens/dlss_addon"
+# Mods' GAME DATA (#1216: port/linux/src/game_data_page.c, port/assets/menus/
+# screens/game_data.xml): the maps' sources, each its state, ADD and OPEN
+# FOLDER, the copies run in the game
+GAME_DATA = "screens/game_data"
 # input.gyro_sensitivity's: the view's degrees for each degree the controller turns
 GYRO_SENSITIVITY = Slider(0.25, 8.0, 0.05, 0.05, 20.0)
 # input.gyro_smoothing's strengths (gyro_aim.c's gyro_aim_smoothing)
@@ -876,7 +880,7 @@ REMAP_HANDLERS = ['<on event="x" run="port controller clear"/>',
 # hdr_display_show's, the display's peak
 SETTINGS_STATUS_ROWS = {"discord_account", "link_status", "link_unlink",
                         *(f"link_master_{n}" for n in range(1, 5)), "hdr_display",
-                        "viewmodel_weapon_reset", "gyro_found", "gyro_calibrate", "clear_caches", "add_maps",
+                        "viewmodel_weapon_reset", "gyro_found", "gyro_calibrate", "clear_caches",
                         "layout_controller", "layout_export", "layout_files", "layout_bindings",
                         "remap_player", "remap_group", *(f"pad_{n}" for n in range(1, REMAP_ROWS + 1))}
 # the rows whose labels menu_functions.c writes (a master server's host): the
@@ -1287,15 +1291,14 @@ PAGES = {
             ("MODS FOLDER", None, None,
              "Each mod is a folder in the mods folder, beside the maps folder, with its mod.toml and its tags. "
              "Mods are turned on and off from the main menu's Settings, not in a game.", None, "mods_folder"),
-            # (its value the maps' sources the game has, and the screen asked
-            # for at the next start: menu_functions.c's add_maps_show,
-            # port/linux/src/map_sources.c; first_start.c's screen)
+            # (its screen, screens/game_data.xml: each source, its state, ADD
+            # and OPEN FOLDER, the copies run in the game; the main menu's,
+            # hidden in a game: SETTINGS_ROW_WHEN)
             (SECTION, "GAME MAPS"),
-            ("ADD MAPS", None, None,
-             "Your maps come from your Xbox disc image, which the game needs, and from Custom Edition's installer "
-             "(halocesetup_en_1.00.exe), whose multiplayer maps are optional.|Select it twice: the maps screen "
-             "opens the next time the game starts, to add either.",
-             "computer", "add_maps", "port settings add maps"),
+            ("GAME DATA ›", None, GAME_DATA,
+             "Where your maps come from: your Xbox disc image, which the game needs, Custom Edition's installer "
+             "(halocesetup_en_1.00.exe) and MCC's packages. Add maps, repair them or open their folders, with no "
+             "restart.", "computer", "game_data"),
             # (Online's MAP SHARING has no room for it: MCC_PACKAGES)
             (SECTION, "MASTER CHIEF COLLECTION"),
             ("MCC PACKAGES ›", None, _page_screen(*MCC_PACKAGES),
@@ -2212,7 +2215,8 @@ SETTINGS_SEARCH_WORDS = {
     "colour": ["color", "shield_color", "overshield_layer_color"],
     "gamertag": ["name"], "nickname": ["name"],
     "cache": ["map_cache_megabytes", "clear_caches"], "disk": ["map_cache_megabytes"],
-    "iso": ["add_maps"], "ce": ["add_maps"], "installer": ["add_maps"], "extract": ["add_maps"],
+    "iso": ["game_data"], "ce": ["game_data"], "installer": ["game_data"], "extract": ["game_data"],
+    "repair": ["game_data"],
     "bug": ["report"], "crash": ["report"],
     "intro": ["movies"],
     "lag": ["low_latency"],
@@ -2745,7 +2749,7 @@ SETTINGS_ROW_WHEN = {
     # (in a game: not those that would drop it or are the main menu's, nor
     # those whose screens are ui.map's or make a profile)
     "online": "!in_game", "allow_upnp": "!in_game", "join_from_clipboard": "!in_game", "auto": "!in_game",
-    "mods": "!in_game", "benchmark": "!in_game", "benchmark_pacing": "!in_game",
+    "mods": "!in_game", "game_data": "!in_game", "benchmark": "!in_game", "benchmark_pacing": "!in_game",
     "name": "profile+!in_game", "color": "profile+!in_game", "profiles": "profile+!in_game",
     "create_profile": "!profile+!in_game",
     **{key: "gyro" for key in ("gyro_aim", "gyro_sensitivity", "gyro_vertical_sensitivity", "gyro_space",

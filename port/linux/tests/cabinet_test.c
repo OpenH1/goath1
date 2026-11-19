@@ -58,7 +58,7 @@ int main(int argc, char **argv)
 
 	if (argc == 4 && !strcmp(argv[1], "ce"))
 	{
-		int result = ce_installer_extract_maps(argv[2], argv[3], NULL, NULL, error, sizeof(error));
+		int result = ce_installer_extract_maps(argv[2], argv[3], 0, NULL, NULL, error, sizeof(error));
 
 		printf("%d %s\n", result, error);
 		return 0;
@@ -70,10 +70,11 @@ int main(int argc, char **argv)
 		printf("%d %s\n", result, error);
 		return 0;
 	}
-	if (argc == 4 && !strcmp(argv[1], "import"))
+	if (argc == 4 && (!strcmp(argv[1], "import") || !strcmp(argv[1], "import-again")))
 	{
 		unsigned long long written = 0;
-		int result = map_import_custom_edition(argv[2], argv[3], NULL, NULL, &written, error, sizeof(error));
+		int result = map_import_custom_edition(argv[2], argv[3], !strcmp(argv[1], "import-again"), NULL, NULL,
+			&written, error, sizeof(error));
 
 		printf("%d %s\n%llu\n", result, error, written);
 		return 0;

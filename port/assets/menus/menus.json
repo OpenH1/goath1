@@ -330,6 +330,7 @@
   "screens/coop_join.xml",
   "screens/coop_who.xml",
   "screens/dlss_addon.xml",
+  "screens/game_data.xml",
   "screens/keyboard.xml",
   "screens/layout_bindings.xml",
   "screens/lobby.xml",

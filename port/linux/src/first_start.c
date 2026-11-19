@@ -34,10 +34,10 @@ and the installer has the same ones.
 The two sources go in either order, at any time (map_sources.c, which says
 which the game has: the screen shows it). The game starts the moment it has
 its Xbox maps, which it cannot start without; Custom Edition's alone bring
-the list back, saying the Xbox maps are still needed. Settings' ADD MAPS
+the list back, saying the Xbox maps are still needed. Settings' GAME DATA
 asks for the screen at the next start (xbox_files.c), with the Xbox maps
-there and Start among its items, to add Custom Edition's or to copy the
-Xbox maps again.
+there and Start among its items, to copy the Xbox maps again (Custom
+Edition's it adds in the game: game_data_page.c).
 
 (Windows' first start is sdl_platform.c's.)
 */
@@ -783,7 +783,7 @@ static void *copy_thread(void *context)
 
 	if (copy->installer)
 	{
-		succeeded = map_import_custom_edition(copy->source.path, copy->folder, copy_progress, copy, &written, error,
+		succeeded = map_import_custom_edition(copy->source.path, copy->folder, 0, copy_progress, copy, &written, error,
 			sizeof(error)) != 0;
 	}
 	else if (copy->source.kind == _game_data_image)
@@ -1242,7 +1242,7 @@ BOOL platform_offer_game_data(const char *destination, const char *missing)
 			else if (finished && succeeded)
 			{
 				/* (the game, now that it has its Xbox maps; Custom
-				Edition's are Settings' ADD MAPS's) */
+				Edition's are Settings' GAME DATA's) */
 				platform_log("first start: copied the maps");
 				if (map_sources_next(&chooser.sources) == _map_sources_play)
 					break;
