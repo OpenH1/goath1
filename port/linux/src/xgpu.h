@@ -390,6 +390,17 @@ camera, where lights are seen large. */
 #define XGPU_DYNAMIC_LIGHTS_REACH 128.0f
 /* the largest soft core of a light's falloff, world units (xgpu_spirv.c) */
 #define XGPU_DYNAMIC_LIGHTS_CORE 0.6
+/* a model's highlights of the lights (XGPU_DYNAMIC_LIGHTS_MODEL with a cube
+map in texture 3, its reflection): added to the cube map's texel, so that the
+model's own reflection mask, tint and fade show them where it shines. Their
+strength, and the sharpness of a light's highlight on a smooth surface (a
+Phong exponent); where the surface's normal turns fast across the pixel
+(small or far models), the highlight widens, as dim as it widens, so it does
+not flicker (XGPU_DYNAMIC_LIGHTS_HIGHLIGHT_WIDEST at most added to the lobe's
+width, 2 / (exponent + 2): an exponent no less than about 5.8) */
+#define XGPU_DYNAMIC_LIGHTS_HIGHLIGHT 1.0f
+#define XGPU_DYNAMIC_LIGHTS_HIGHLIGHT_EXPONENT 24.0f
+#define XGPU_DYNAMIC_LIGHTS_HIGHLIGHT_WIDEST 0.18f
 #define XGPU_DYNAMIC_LIGHTS_UNIT 12
 #define XGPU_DYNAMIC_LIGHTS_BINDING 1
 

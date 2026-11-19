@@ -4364,9 +4364,13 @@ static unsigned int dynamic_light_cluster_mask(struct module *m, struct pixel_st
 /* dynamic_light_sum(p, n, surface_normal, environment): the lights of the
 pixel's cell, summed (a model's but those its object's own that do not light
 it, its model_lights[XGPU_MODEL_LIGHT_OWN_LIGHTS]); its loops are SPIR-V's structured loops, its values
-kept in the function's variables */
+kept in the function's variables. With a reflection (a model's, of the eye
+about its normal; 0 none), each light's highlight along it, to the exponent,
+summed into the shine variable as well (xgpu.h XGPU_DYNAMIC_LIGHTS_HIGHLIGHT;
+xgpu_msl.c's dynamic_light_sum) */
 static unsigned int dynamic_light_sum(struct module *m, struct pixel_state *state, unsigned int p, unsigned int n,
-	unsigned int surface_normal, BOOL environment)
+	unsigned int surface_normal, BOOL environment, unsigned int reflection, unsigned int exponent,
+	unsigned int shine_variable)
 {
 	unsigned int grid0 = dynamic_light(m, 0, constant_int(m, 0)), grid1 = dynamic_light(m, 0, constant_int(m, 1));
 	unsigned int offset, cell, mask, cell_index, operands[4];
@@ -4497,6 +4501,15 @@ static unsigned int dynamic_light_sum(struct module *m, struct pixel_state *stat
 	spot = saturate(m, 1, fadd(m, 1, fmul(m, 1, fdot(m, l, fneg(m, 3, xyz(m, cone))), extract(m, cone, 3)), extract(m, color, 3)));
 	store(m, sum_variable, fadd(m, 3, load(m, m->t_v3, sum_variable),
 		fscale(m, 3, xyz(m, color), fmul(m, 1, fmul(m, 1, falloff, facing), spot))));
+	if (reflection)
+	{
+		/* shine += color.rgb * (falloff * spot * saturate(dot(n, l) * 4.0) * pow(max(dot(reflection, l), 0.0), exponent)) */
+		unsigned int lobe = ext2(m, GLSL_POW, m->t_float, fmax_scalar(m, 1, fdot(m, reflection, l), 0.0f), exponent);
+		unsigned int horizon = saturate(m, 1, fmul(m, 1, fdot(m, n, l), constant_float(m, 4.0f)));
+
+		store(m, shine_variable, fadd(m, 3, load(m, m->t_v3, shine_variable),
+			fscale(m, 3, xyz(m, color), fmul(m, 1, fmul(m, 1, fmul(m, 1, falloff, spot), horizon), lobe))));
+	}
 	branch(m, inner_continue);
 	label_at(m, inner_continue);
 	branch(m, inner_header);
@@ -5119,7 +5132,7 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 	unsigned int comparison = program->alpha_test ? comparison_opcode(program->alpha_test) : 0;
 	BOOL sample_mask = comparison && program->alpha_test_samples && program->alpha_test != D3DCMP_EQUAL &&
 		program->alpha_test != D3DCMP_NOTEQUAL;
-	unsigned int main_id, color_out, sample_mask_out = 0, result, dynamic_light_bump = 0, effect_fade_value = 0;
+	unsigned int main_id, color_out, sample_mask_out = 0, result, dynamic_light_bump = 0, shine_variable = 0, highlight_scale = 0, effect_fade_value = 0;
 	BOOL effect = options->effect != XGPU_SPIRV_EFFECT_NONE && xgpu_spirv_effect_possible(program);
 	/* a z-sprite (xgpu_shader.h): its depth written, conservatively (only
 	ever nearer than the card), or as a VR effect its fade measured from it */
@@ -5274,8 +5287,34 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 			fmax_scalar(&m, 1, fdot(&m, normal, normal), (float)1.0e-24)));
 		unsigned int lit = model_lighting(&m, &state, program->per_pixel_lighting == 2, TRUE,
 			occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_MODEL ? state.occlusion : 0);
-		unsigned int sum = dynamic_light_sum(&m, &state, pixel_input(&m, &state, state.in_world_position, m.t_v3), n, n, FALSE);
+		unsigned int p = pixel_input(&m, &state, state.in_world_position, m.t_v3);
+		unsigned int reflection = 0, exponent = 0, sum;
 		static const unsigned int rgb[4] = { 4, 5, 6, 3 };
+
+		if (program->stages[3].mode == XGPU_TEXTURE_CUBEMAP && state.in_t[3])
+		{
+			/* (its reflection's highlights of the lights: xgpu.h
+			XGPU_DYNAMIC_LIGHTS_HIGHLIGHT) */
+			unsigned int to_eye = fsub(&m, 3, xyz(&m, dynamic_light(&m, 0, constant_int(&m, 0))), p);
+			unsigned int v = fscale(&m, 3, to_eye, ext1(&m, GLSL_INVERSE_SQRT, m.t_float,
+				fmax_scalar(&m, 1, fdot(&m, to_eye, to_eye), (float)1.0e-12)));
+			unsigned int dx, dy, widened;
+			const float lobe = 2.0f / (XGPU_DYNAMIC_LIGHTS_HIGHLIGHT_EXPONENT + 2.0f);
+
+			/* reflection = 2.0 * dot(n, v) * n - v */
+			reflection = fsub(&m, 3, fscale(&m, 3, n, fmul(&m, 1, fdot(&m, n, v), constant_float(&m, 2.0f))), v);
+			/* widened = lobe + min(dot(dFdx(r), dFdx(r)) + dot(dFdy(r), dFdy(r)), WIDEST);
+			exponent = 2.0 / widened - 2.0; the shine by lobe / widened */
+			dx = op1(&m, OP_DPDX, m.t_v3, reflection);
+			dy = op1(&m, OP_DPDY, m.t_v3, reflection);
+			widened = fadd(&m, 1, constant_float(&m, lobe), ext2(&m, GLSL_F_MIN, m.t_float,
+				fadd(&m, 1, fdot(&m, dx, dx), fdot(&m, dy, dy)), constant_float(&m, XGPU_DYNAMIC_LIGHTS_HIGHLIGHT_WIDEST)));
+			exponent = fsub(&m, 1, fdiv(&m, 1, constant_float(&m, 2.0f), widened), constant_float(&m, 2.0f));
+			highlight_scale = fdiv(&m, 1, constant_float(&m, lobe * XGPU_DYNAMIC_LIGHTS_HIGHLIGHT), widened);
+			shine_variable = local(&m, &state.locals, m.t_v3);
+			store(&m, shine_variable, constant_splat(&m, 3, 0.0f));
+		}
+		sum = dynamic_light_sum(&m, &state, p, n, n, FALSE, reflection, exponent, shine_variable);
 
 		state.v0 = shuffle(&m, 4, state.v0, dynamic_light_add(&m, &state, lit, sum, FALSE), rgb);
 	}
@@ -5302,6 +5341,15 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 		effect_fade_value = effect_prelude(&m, &state);
 	for (stage = 0; stage < 4; stage++)
 		texture_stage(&m, &state, stage);
+	/* (a model's highlights of the lights, added to its reflection's texel:
+	xgpu.h XGPU_DYNAMIC_LIGHTS_HIGHLIGHT) */
+	if (shine_variable)
+	{
+		static const unsigned int rgb[4] = { 4, 5, 6, 3 };
+
+		state.t[3] = shuffle(&m, 4, state.t[3], dynamic_light_add(&m, &state, xyz(&m, state.t[3]),
+			fscale(&m, 3, load(&m, m.t_v3, shine_variable), highlight_scale), FALSE), rgb);
+	}
 	if (effect && replaces_depth && state.replaced_depth)
 		effect_fade_value = effect_zsprite_fade(&m, &state, &zsprite_hidden);
 	/* (the bump map's texel, which the combiners may overwrite: the enhanced
@@ -5374,7 +5422,8 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 			fscale(&m, 3, pixel_input(&m, &state, state.in_world_tangent, m.t_v3), extract(&m, bump, 0)),
 			fscale(&m, 3, pixel_input(&m, &state, state.in_world_binormal, m.t_v3), extract(&m, bump, 1))),
 			fscale(&m, 3, surface_normal, fmax_scalar(&m, 1, extract(&m, bump, 2), 0.05f))));
-		sum = dynamic_light_sum(&m, &state, pixel_input(&m, &state, state.in_world_position, m.t_v3), n, surface_normal, TRUE);
+		sum = dynamic_light_sum(&m, &state, pixel_input(&m, &state, state.in_world_position, m.t_v3), n, surface_normal, TRUE,
+			0, 0, 0);
 		lit = dynamic_light_add(&m, &state, xyz(&m, result), fmul(&m, 3, sum,
 			xyz(&m, uniform(&m, U_DYNAMIC_LIGHT_TINT, -1))), (program->hdr & XGPU_HDR_LIGHTS) != 0);
 		result = shuffle(&m, 4, result, lit, rgb);
