@@ -375,6 +375,16 @@ draws (port/linux/src/d3d8_device.c, xgpu_hdr.h): the category drawing now
 _end), and what the code drawing knows of them (HALO_HDR_KIND_*, 0 none) */
 void halo_screen_tone_map(short x0, short y0, short x1, short y1);
 void halo_hdr_category(int category);
+/* debug.pass_times: the draws from now on timed as the port's own category
+(HALO_TIMING_*, past rasterizer.h's _rasterizer_profile_*), or with -1 as
+halo_hdr_category's again: for the backend's timing alone, what is drawn
+and display.hdr's categories the same (port/linux/src/d3d8_device.c) */
+enum
+{
+	/* the shadow atlas's chain of passes (rasterizer_xbox_shadows.c) */
+	HALO_TIMING_SHADOW_BLUR = 29,
+};
+void halo_timing_category(int category);
 void halo_hdr_draw_kind(int kind);
 /* the game's small targets sized for the Xbox's 640x480 screen, at the
 display's detail (port/linux/src/d3d8_device.c): the scale of one `side`

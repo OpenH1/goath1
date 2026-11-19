@@ -4476,6 +4476,13 @@ static void stream_pass_times(void *context, uint32_t frames)
 	xgpu_vulkan_pass_times_follow((int)frames);
 }
 
+/* debug.pass_times: the game's renderer's category of the draws from now on */
+static void stream_category(void *context, uint32_t category)
+{
+	(void)context;
+	xgpu_vulkan_pass_category(category);
+}
+
 /* display.hdr_gamut: the encoding's gamut */
 static void stream_hdr_gamut(void *context, uint32_t value)
 {
@@ -4878,6 +4885,7 @@ const struct host_render_backend *xgpu_vulkan_stream_backend(void)
 		backend.hdr_peak_nits = stream_hdr_peak_nits;
 		backend.hdr_gamut = stream_hdr_gamut;
 		backend.pass_times = stream_pass_times;
+		backend.category = stream_category;
 		backend.panini = stream_panini;
 		/* display.ambient_occlusion "world" (#578, docs/world-ao.md): the
 		field's 3D image (XGPU_SPIRV_BINDING_WORLD_SDF) and the window's block
