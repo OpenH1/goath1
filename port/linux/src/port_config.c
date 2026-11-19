@@ -2908,7 +2908,14 @@ static const struct config_setting config_settings[] =
 		"time the mixing takes." },
 	{ "debug.audio_record", _config_string, "\"\"", "HALO_AUDIO_RECORD", _environment_value, _platform_desktop,
 		"Record the game's sound, as it plays (with or without a device), to\n"
-		"this WAV file (48 kHz, 16-bit stereo), for automated tests; empty none." },
+		"this WAV file (48 kHz), for automated tests; empty none. Written by a\n"
+		"thread of its own, never the mixer's (debug.audio_record_format)." },
+	{ "debug.audio_record_format", _config_string, "\"float\"", "HALO_AUDIO_RECORD_FORMAT", _environment_value,
+		_platform_desktop,
+		"What debug.audio_record writes: \"float\" 32-bit float with every\n"
+		"output channel (5.1's six), the mix before the limiter and the master\n"
+		"stage, nothing over full scale cut; \"stereo16\" 16-bit stereo (the\n"
+		"front pair, on 5.1) as heard, after them, as it was." },
 	{ "debug.dsound_log", _config_string, "\"\"", "HALO_DSOUND_LOG", _environment_value, _platform_desktop,
 		"Log every DirectSound call the game makes, with its time, to this\n"
 		"file, and the sound data of the packets it submits to the same name\n"
@@ -5014,6 +5021,7 @@ static const struct
 	{ "audio.resampler", { "xbox", "sinc", "linear", NULL }, NULL },
 	{ "audio.spatial", { "auto", "headphones", "speakers", NULL }, "auto" },
 	{ "audio.listening_mode", { "default", "night", NULL }, "default" },
+	{ "debug.audio_record_format", { "float", "stereo16", NULL }, "float" },
 	{ "audio.voice_chat", { "push_to_talk", "open_mic", "off", NULL }, NULL },
 	{ "input.touch_controls", { "auto", "on", "off", NULL }, NULL },
 	{ "input.touch_crouch", { "toggle", "hold", NULL }, NULL },

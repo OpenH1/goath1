@@ -27,7 +27,7 @@ from harness import skip_without_32_bit_abi  # noqa: E402
 SOURCE = "port/linux/src/dsound_sdl.c"
 CASES = ["reference", "impulse", "sines", "aliases", "silent-voice", "mono", "linear", "cut", "cuts", "adpcm", "doppler", "doppler-step",
          "parameter-ramp", "block-size",
-         "limiter", "night", "obstruction", "room-send", "room-send-images", "quiet-levels", "quiet-levels-3d", "resampler-xbox", "resampler-xbox-images", "channels", "surround", "lfe", "spatial-choice", "hrtf-cues", "hrtf-paths", "hrtf-switch", "stereo-in-world",
+         "limiter", "record", "night", "obstruction", "room-send", "room-send-images", "quiet-levels", "quiet-levels-3d", "resampler-xbox", "resampler-xbox-images", "channels", "surround", "lfe", "spatial-choice", "hrtf-cues", "hrtf-paths", "hrtf-switch", "stereo-in-world",
          "stereo-spread",
          "dry-2d",
          "master-volume", "buffers", "sound-off", "background",
@@ -81,6 +81,9 @@ NEGATIVE_CONTROLS = {
     # the mix at full level (twice the Xbox's), as it was; or held to full scale before it is halved
     "output-not-halved": (("#define OUTPUT_GAIN 0.5f", "#define OUTPUT_GAIN 1.0f"), "limiter"),
     "limited-before-halved": (("#define LIMITER_CEILING 1.0f", "#define LIMITER_CEILING 0.5f"), "limiter"),
+    # debug.audio_record's float file after the limiter (as the 16-bit one was): nothing over full scale
+    "recorded-after-limiter": (("\trecord(output, frames, FALSE);\n\tlimit(output, frames);",
+                                "\tlimit(output, frames);\n\trecord(output, frames, FALSE);"), "record"),
     # obstruction: the reverb's send left bright (as it was), lowered by its LF ratio, or no muffling at all
     "obstruction-send-bright": (("source->Occlusion.lHFLevel +\n\t\t(source->Obstruction.lHFLevel -", "source->Occlusion.lHFLevel +\n\t\t0 * (source->Obstruction.lHFLevel -"),
                                 "obstruction"),

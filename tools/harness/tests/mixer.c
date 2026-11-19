@@ -25,6 +25,9 @@ signals:
 	- the Doppler shift of a 3D voice coming, going, or with the listener
 	  moving, and its limits;
 	- the limiter: a mix up to full scale as it is, a sum over it held to it;
+	- debug.audio_record: a 5.1 mix in 32-bit float, every channel, before
+	  the limiter (over full scale whole), by its own thread; and the old
+	  16-bit stereo file of what is heard, to the step;
 	- audio.channels' choice from the device's channels, and the 5.1 pan
 	  (VBAP): each speaker's angle on its speaker alone, every angle where
 	  the tangent law hears it, never the LFE, through the mixer too, and
@@ -65,6 +68,7 @@ round the listener to a WAV file, to listen to.
 #include <math.h>
 #include <pthread.h>
 #include <stddef.h>
+#include <unistd.h>
 
 typedef int BOOL;
 typedef unsigned long DWORD;
@@ -110,11 +114,16 @@ typedef unsigned long long Uint64;
 #define platform_log(...) ((void)0)
 #define SDL_GetTicksNS() 0ull
 
-/* the settings (port_config.c): audio.resampler, which a case sets */
-static const char *resampler_setting;
+/* the settings (port_config.c): audio.resampler, debug.audio_record and
+debug.audio_record_format, which cases set */
+static const char *resampler_setting, *record_setting = "", *record_format_setting = "";
 
 static const char *config_string(const char *name)
 {
+	if (!strcmp(name, "debug.audio_record"))
+		return record_setting;
+	if (!strcmp(name, "debug.audio_record_format"))
+		return record_format_setting;
 	return !strcmp(name, "audio.resampler") ? resampler_setting : "";
 }
 
@@ -1236,6 +1245,70 @@ static void block_figures(double differences[BLOCK_SCENES][BLOCK_PARTITIONS][2])
 	free(room[1]);
 }
 
+/* ---------- the recording (debug.audio_record) */
+
+/* a file's bytes (its size in *size), NULL if it cannot be read */
+static unsigned char *file_read(const char *path, unsigned long *size)
+{
+	FILE *file = fopen(path, "rb");
+	unsigned char *bytes;
+	long length;
+
+	if (!file)
+		return NULL;
+	fseek(file, 0, SEEK_END);
+	length = ftell(file);
+	fseek(file, 0, SEEK_SET);
+	bytes = malloc(length > 0 ? (size_t)length : 1);
+	*size = (unsigned long)fread(bytes, 1, length > 0 ? (size_t)length : 0, file);
+	fclose(file);
+	return bytes;
+}
+
+static unsigned long little(const unsigned char *at, int bytes)
+{
+	unsigned long value = 0;
+
+	while (bytes--)
+		value = value << 8 | at[bytes];
+	return value;
+}
+
+/* frames of a 5.1 mix through the mix's last stages (mix_end) to a recording
+in format at path, a tone on each speaker (its own frequency) at the
+amplitudes; the front pair as heard (after the limiter and the master stage)
+in heard, frames of 2 */
+static void record_tones(const char *path, const char *format, const float *amplitudes, unsigned long frames,
+	float *heard)
+{
+	static float output[CHUNK * MAXIMUM_OUTPUT_CHANNELS];
+	unsigned long done, frame, speaker, saved = output_channels;
+
+	output_channels = 6;
+	record_setting = path;
+	record_format_setting = format;
+	record_open();
+	CHECK(record_on, "debug.audio_record %s: not recording", format);
+	for (done = 0; done < frames; done += CHUNK)
+	{
+		for (frame = 0; frame < CHUNK; frame++)
+		{
+			for (speaker = 0; speaker < 6; speaker++)
+				output[frame * 6 + speaker] = amplitudes[speaker] *
+					(float)sin(2.0 * PI * (250.0 + 100.0 * speaker) * (double)(done + frame) / OUTPUT_RATE);
+		}
+		mix_end(output, CHUNK);
+		for (frame = 0; frame < CHUNK; frame++)
+		{
+			heard[(done + frame) * 2] = output[frame * 6];
+			heard[(done + frame) * 2 + 1] = output[frame * 6 + 1];
+		}
+	}
+	record_close();
+	record_setting = "";
+	output_channels = saved;
+}
+
 int main(int argc, char **argv)
 {
 	char const *case_name = argc > 1 ? argv[1] : "";
@@ -1941,6 +2014,89 @@ int main(int argc, char **argv)
 		free(exact);
 		free(signal);
 		free(samples);
+		return 0;
+	}
+	/* debug.audio_record (#1215): a 5.1 mix of a tone on each speaker, the
+center's over full scale (1.5), recorded for 1.3 s (past the sizes
+written each second). The float file is WAVE_FORMAT_EXTENSIBLE IEEE float,
+six channels, 5.1's mask, its sizes the frames mixed, each speaker's tone
+on its own channel at its level (from a quarter second on, the 20 Hz high
+pass settled) and the center's whole at 1.5, before the limiter, which
+holds what is heard under full scale. The stereo16 file is the old one:
+16-bit PCM stereo, the front pair as heard, to the step */
+	CASE("record")
+	{
+		enum { FRAMES = 120 * CHUNK };
+		static const float amplitudes[6] = { 0.1f, 0.2f, 1.5f, 0.4f, 0.5f, 0.6f };
+		static float heard[FRAMES * 2];
+		const char *folder = getenv("TMPDIR") && getenv("TMPDIR")[0] ? getenv("TMPDIR") : "/tmp";
+		char path[1024];
+		unsigned char *bytes;
+		unsigned long size, frame, speaker;
+		float peaks[6] = { 0 }, heard_peak = 0.0f;
+		int descriptor;
+		static const unsigned char ieee_float[16] =
+		{
+			0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71,
+		};
+
+		snprintf(path, sizeof(path), "%s/mixer-record-XXXXXX", folder);
+		descriptor = mkstemp(path);
+		CHECK(descriptor >= 0, "no file in %s", folder);
+		close(descriptor);
+		reverb_initialize();
+		record_tones(path, "float", amplitudes, FRAMES, heard);
+		CHECK(record_frames == FRAMES, "%lu frames counted, %d mixed", record_frames, FRAMES);
+		bytes = file_read(path, &size);
+		CHECK(bytes && size == 80 + FRAMES * 24ul, "the float file: %lu bytes, not %lu", size, 80 + FRAMES * 24ul);
+		CHECK(!memcmp(bytes, "RIFF", 4) && little(bytes + 4, 4) == size - 8 && !memcmp(bytes + 8, "WAVEfmt ", 8),
+			"the RIFF header");
+		CHECK(little(bytes + 16, 4) == 40 && little(bytes + 20, 2) == 0xfffe, "fmt: %lu bytes, tag 0x%lx",
+			little(bytes + 16, 4), little(bytes + 20, 2));
+		CHECK(little(bytes + 22, 2) == 6 && little(bytes + 24, 4) == 48000 && little(bytes + 28, 4) == 48000 * 24 &&
+			little(bytes + 32, 2) == 24 && little(bytes + 34, 2) == 32, "fmt: %lu channels, %lu bits",
+			little(bytes + 22, 2), little(bytes + 34, 2));
+		CHECK(little(bytes + 36, 2) == 22 && little(bytes + 38, 2) == 32 && little(bytes + 40, 4) == 0x3f,
+			"the extension: mask 0x%lx", little(bytes + 40, 4));
+		CHECK(!memcmp(bytes + 44, ieee_float, 16), "the subformat is not IEEE float");
+		CHECK(!memcmp(bytes + 60, "fact", 4) && little(bytes + 68, 4) == FRAMES, "fact: %lu frames",
+			little(bytes + 68, 4));
+		CHECK(!memcmp(bytes + 72, "data", 4) && little(bytes + 76, 4) == FRAMES * 24ul, "data: %lu bytes",
+			little(bytes + 76, 4));
+		for (frame = OUTPUT_RATE / 4; frame < FRAMES; frame++)
+		{
+			for (speaker = 0; speaker < 6; speaker++)
+			{
+				float sample;
+
+				memcpy(&sample, bytes + 80 + (frame * 6 + speaker) * 4, 4);
+				peaks[speaker] = fabsf(sample) > peaks[speaker] ? fabsf(sample) : peaks[speaker];
+			}
+			heard_peak = fabsf(heard[frame * 2]) > heard_peak ? fabsf(heard[frame * 2]) : heard_peak;
+		}
+		for (speaker = 0; speaker < 6; speaker++)
+			CHECK(fabsf(peaks[speaker] - amplitudes[speaker]) < 0.01f * amplitudes[speaker],
+				"speaker %lu recorded at %f, not %f", speaker, peaks[speaker], amplitudes[speaker]);
+		CHECK(heard_peak < amplitudes[0] * 0.75f, "the front left heard at %f: the limiter did not act", heard_peak);
+		free(bytes);
+		/* (the old file) */
+		record_tones(path, "stereo16", amplitudes, FRAMES, heard);
+		bytes = file_read(path, &size);
+		CHECK(bytes && size == 44 + FRAMES * 4ul, "the stereo16 file: %lu bytes, not %lu", size, 44 + FRAMES * 4ul);
+		CHECK(!memcmp(bytes, "RIFF", 4) && little(bytes + 4, 4) == size - 8 && little(bytes + 16, 4) == 16 &&
+			little(bytes + 20, 2) == 1 && little(bytes + 22, 2) == 2 && little(bytes + 34, 2) == 16 &&
+			!memcmp(bytes + 36, "data", 4) && little(bytes + 40, 4) == FRAMES * 4ul, "the stereo16 header");
+		for (frame = 0; frame < FRAMES * 2; frame++)
+		{
+			short sample;
+			float scaled = heard[frame] * 32768.0f;
+
+			memcpy(&sample, bytes + 44 + frame * 2, 2);
+			CHECK(sample == (short)lrintf(scaled > 32767.0f ? 32767.0f : (scaled < -32768.0f ? -32768.0f : scaled)),
+				"stereo16 sample %lu: %d, heard %f", frame, sample, heard[frame]);
+		}
+		free(bytes);
+		remove(path);
 		return 0;
 	}
 	/* audio.listening_mode "night": noise two seconds quiet (-36 dBFS

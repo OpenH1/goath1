@@ -76,7 +76,8 @@ audio.resampler chooses the Xbox's low pass ("xbox"), the mixer's sinc one
 audio.channels chooses stereo or 5.1; audio.stereo_spread how far apart a
 placed stereo voice's channels are heard (0 to 1)
 (port_config.c). For automated tests, debug.audio_record records the mix to a
-WAV file (its front pair, on 5.1) and debug.audio_log logs the 3D voices' places
+WAV file (every channel in float, before the limiter; or with
+debug.audio_record_format "stereo16" 16-bit stereo as heard) and debug.audio_log logs the 3D voices' places
 and gains (record, voices_log).
 */
 
@@ -3778,92 +3779,280 @@ static void dsound_log_flush(void)
 
 /* ---------- recording
 
-debug.audio_record: the mix as it plays, to a WAV file of 16-bit stereo at
-the output rate, its sizes written again each second, so that a test that
-stops the game mid-run still leaves a whole file. On the mixer's thread (the
-device's or the clock's); opened before either starts (audio_start). */
+debug.audio_record: the mix as it plays, at the output rate, to a WAV file
+whose sizes are written again each second, so that a test that stops the
+game mid-run still leaves a whole file (and at exit). In 32-bit float
+(WAVE_FORMAT_EXTENSIBLE, IEEE float) with every output channel (on 5.1 front
+left, front right, center, LFE, back left, back right) as the mix stands
+before the limiter and the master stage (audio.enabled's fade,
+audio.background_volume): nothing over full scale is cut. With
+debug.audio_record_format "stereo16", as it was: 16-bit stereo (the front
+pair, on 5.1) as heard, after them.
+
+The mixer's thread (the device's or the clock's) never writes the file: each
+mix's frames go to a ring of slots that only it fills and only the
+recording's thread empties (record_thread), with no lock. A mix the ring has
+no room for is counted, and the thread writes as many frames of silence in
+its place, so that the file keeps its time. Opened before the mixer starts
+(audio_start). */
+
+#define RECORD_SLOTS 128 /* 2.7 s of 1024-frame mixes */
+#define RECORD_FLOAT_HEADER 80 /* RIFF, fmt (extensible, 40), fact, data */
+#define RECORD_PCM_HEADER 44
+
+struct record_slot
+{
+	unsigned long frames, channels, dropped_before;
+	float samples[MIX_CHUNK_FRAMES * MAXIMUM_OUTPUT_CHANNELS];
+};
 
 static FILE *record_file;
-static unsigned long record_frames;
+/* (the mixer's thread) the frames recorded (dsound_sdl_recorded_frames),
+and those of mixes the ring had no room for, to go with the next slot */
+static unsigned long record_frames, record_dropped;
+/* whether recording, and after the limiter (stereo16) */
+static BOOL record_on, record_limited;
+static struct record_slot *record_slots;
+static unsigned long record_slots_written, record_slots_read;
+static pthread_t record_worker;
+static int record_stopping;
+/* (the recording's thread) the header's channels (0: none written yet) and
+the frames written */
+static unsigned long record_file_channels, record_file_frames;
 
+static void record_word(unsigned char *at, unsigned long value, int bytes)
+{
+	int index;
+
+	for (index = 0; index < bytes; index++)
+		at[index] = (unsigned char)(value >> (8 * index));
+}
+
+/* (the recording's thread) the header, with the sizes of what is written */
+static void record_header(unsigned char *header)
+{
+	unsigned long channels = record_file_channels, width = record_limited ? 2 : 4;
+	unsigned long bytes = record_file_frames * channels * width;
+	unsigned long size = record_limited ? RECORD_PCM_HEADER : RECORD_FLOAT_HEADER;
+	/* (KSDATAFORMAT_SUBTYPE_IEEE_FLOAT) */
+	static const unsigned char ieee_float[16] =
+	{
+		0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71,
+	};
+
+	memset(header, 0, size);
+	memcpy(header, "RIFF", 4);
+	record_word(header + 4, size - 8 + bytes, 4);
+	memcpy(header + 8, "WAVEfmt ", 8);
+	record_word(header + 16, record_limited ? 16 : 40, 4);
+	record_word(header + 20, record_limited ? 1 : 0xfffe, 2);
+	record_word(header + 22, channels, 2);
+	record_word(header + 24, OUTPUT_RATE, 4);
+	record_word(header + 28, OUTPUT_RATE * channels * width, 4);
+	record_word(header + 32, channels * width, 2);
+	record_word(header + 34, width * 8, 2);
+	if (record_limited)
+	{
+		memcpy(header + 36, "data", 4);
+		record_word(header + 40, bytes, 4);
+		return;
+	}
+	record_word(header + 36, 22, 2);
+	record_word(header + 38, 32, 2);
+	/* (front left and right; on 5.1 center, LFE, back left and right too) */
+	record_word(header + 40, channels == 6 ? 0x3f : 0x3, 4);
+	memcpy(header + 44, ieee_float, 16);
+	memcpy(header + 60, "fact", 4);
+	record_word(header + 64, 4, 4);
+	record_word(header + 68, record_file_frames, 4);
+	memcpy(header + 72, "data", 4);
+	record_word(header + 76, bytes, 4);
+}
+
+/* (the recording's thread) the header written again, with the sizes */
 static void record_sizes(void)
 {
-	unsigned long bytes = record_frames * OUTPUT_CHANNELS * 2;
-	unsigned char size[4];
+	unsigned char header[RECORD_FLOAT_HEADER];
 	long end = ftell(record_file);
 
-	size[0] = (unsigned char)(bytes + 36);
-	size[1] = (unsigned char)((bytes + 36) >> 8);
-	size[2] = (unsigned char)((bytes + 36) >> 16);
-	size[3] = (unsigned char)((bytes + 36) >> 24);
-	fseek(record_file, 4, SEEK_SET);
-	fwrite(size, 1, 4, record_file);
-	size[0] = (unsigned char)bytes;
-	size[1] = (unsigned char)(bytes >> 8);
-	size[2] = (unsigned char)(bytes >> 16);
-	size[3] = (unsigned char)(bytes >> 24);
-	fseek(record_file, 40, SEEK_SET);
-	fwrite(size, 1, 4, record_file);
+	record_header(header);
+	fseek(record_file, 0, SEEK_SET);
+	fwrite(header, 1, record_limited ? RECORD_PCM_HEADER : RECORD_FLOAT_HEADER, record_file);
 	fseek(record_file, end, SEEK_SET);
 	fflush(record_file);
 }
 
+/* (the recording's thread) a slot's frames to the file, after the silence of
+the mixes dropped before it; frames of another count of channels than the
+header's (none so far: the channels are chosen before the first mix) as many
+as both have, the rest silent */
+static void record_write(const struct record_slot *slot)
+{
+	static float samples[MIX_CHUNK_FRAMES * MAXIMUM_OUTPUT_CHANNELS];
+	static short pcm[MIX_CHUNK_FRAMES * 2];
+	unsigned long frame, channel, silent;
+
+	if (!record_file_channels)
+	{
+		unsigned char header[RECORD_FLOAT_HEADER];
+
+		record_file_channels = record_limited ? 2 : slot->channels;
+		record_header(header);
+		fwrite(header, 1, record_limited ? RECORD_PCM_HEADER : RECORD_FLOAT_HEADER, record_file);
+	}
+	if (slot->dropped_before)
+		platform_log("audio: the recording fell behind: %lu frames recorded as silence", slot->dropped_before);
+	memset(samples, 0, sizeof(samples));
+	memset(pcm, 0, sizeof(pcm));
+	for (silent = slot->dropped_before; silent; )
+	{
+		unsigned long frames = silent < MIX_CHUNK_FRAMES ? silent : MIX_CHUNK_FRAMES;
+
+		if (record_limited)
+			fwrite(pcm, sizeof(short), frames * 2, record_file);
+		else
+			fwrite(samples, sizeof(float), frames * record_file_channels, record_file);
+		silent -= frames;
+	}
+	for (frame = 0; frame < slot->frames; frame++)
+	{
+		for (channel = 0; channel < record_file_channels; channel++)
+		{
+			float sample = channel < slot->channels ? slot->samples[frame * slot->channels + channel] : 0.0f;
+
+			if (!record_limited)
+			{
+				samples[frame * record_file_channels + channel] = sample;
+				continue;
+			}
+			/* (on 5.1, the front pair) rounded to the nearest step, at the
+			scale the mixer reads samples at, so that a voice played as it is
+			is recorded as it is; cutting toward zero took half a step off
+			each sample on average */
+			sample *= 32768.0f;
+			pcm[frame * 2 + channel] =
+				(short)lrintf(sample > 32767.0f ? 32767.0f : (sample < -32768.0f ? -32768.0f : sample));
+		}
+	}
+	if (record_limited)
+		fwrite(pcm, sizeof(short), slot->frames * 2, record_file);
+	else
+		fwrite(samples, sizeof(float), slot->frames * record_file_channels, record_file);
+	record_file_frames += slot->dropped_before + slot->frames;
+}
+
+/* the recording's thread: the slots filled, written, every 10 ms; the sizes
+each second of sound, and once stopped (record_close) */
+static void *record_thread(void *unused)
+{
+	unsigned long read = 0, sized = 0;
+	struct timespec wait = { 0, 10000000 };
+
+	(void)unused;
+	for (;;)
+	{
+		int stopping = __atomic_load_n(&record_stopping, __ATOMIC_ACQUIRE);
+
+		while (read != __atomic_load_n(&record_slots_written, __ATOMIC_ACQUIRE))
+		{
+			record_write(&record_slots[read % RECORD_SLOTS]);
+			read++;
+			__atomic_store_n(&record_slots_read, read, __ATOMIC_RELEASE);
+		}
+		if (record_file_frames / OUTPUT_RATE != sized)
+		{
+			sized = record_file_frames / OUTPUT_RATE;
+			record_sizes();
+		}
+		if (stopping)
+			break;
+		nanosleep(&wait, NULL);
+	}
+	if (record_file_channels)
+		record_sizes();
+	return NULL;
+}
+
+/* the recording stopped: what is in the ring written, the sizes, the file
+closed (at exit too, so that a game quit leaves the whole file). The ring is
+kept: at exit the mixer's thread may still be in the middle of a mix */
+static void record_close(void)
+{
+	if (!record_on)
+		return;
+	record_on = FALSE;
+	__atomic_store_n(&record_stopping, 1, __ATOMIC_RELEASE);
+	pthread_join(record_worker, NULL);
+	fclose(record_file);
+	record_file = NULL;
+}
+
 static void record_open(void)
 {
-	static const unsigned char header[44] =
-	{
-		'R', 'I', 'F', 'F', 36, 0, 0, 0, 'W', 'A', 'V', 'E',
-		'f', 'm', 't', ' ', 16, 0, 0, 0, 1, 0, OUTPUT_CHANNELS, 0,
-		OUTPUT_RATE & 0xff, (OUTPUT_RATE >> 8) & 0xff, (OUTPUT_RATE >> 16) & 0xff, 0,
-		(OUTPUT_RATE * OUTPUT_CHANNELS * 2) & 0xff, ((OUTPUT_RATE * OUTPUT_CHANNELS * 2) >> 8) & 0xff,
-		((OUTPUT_RATE * OUTPUT_CHANNELS * 2) >> 16) & 0xff, 0,
-		OUTPUT_CHANNELS * 2, 0, 16, 0,
-		'd', 'a', 't', 'a', 0, 0, 0, 0,
-	};
 	const char *path = config_string("debug.audio_record");
+	const char *format = config_string("debug.audio_record_format");
+	static BOOL closed_at_exit;
 
-	if (!path || !path[0])
+	if (!path || !path[0] || record_on)
 		return;
-	record_file = fopen(path, "wb");
+	record_limited = format && !strcmp(format, "stereo16");
+	if (!record_slots)
+		record_slots = malloc(RECORD_SLOTS * sizeof(*record_slots));
+	record_file = record_slots ? fopen(path, "wb") : NULL;
 	if (!record_file)
 	{
 		platform_log("audio: cannot record to %s", path);
 		return;
 	}
-	fwrite(header, 1, sizeof(header), record_file);
-	fflush(record_file);
-	platform_log("audio: recording to %s", path);
+	record_frames = record_dropped = 0;
+	record_slots_written = record_slots_read = 0;
+	record_file_channels = record_file_frames = 0;
+	record_stopping = 0;
+	if (pthread_create(&record_worker, NULL, record_thread, NULL))
+	{
+		platform_log("audio: cannot record to %s (no thread)", path);
+		fclose(record_file);
+		record_file = NULL;
+		return;
+	}
+	record_on = TRUE;
+	if (!closed_at_exit)
+	{
+		closed_at_exit = TRUE;
+		atexit(record_close);
+	}
+	platform_log("audio: recording to %s (%s)", path,
+		record_limited ? "16-bit stereo, as heard" : "32-bit float, every channel, before the limiter");
 }
 
-static void record(const float *output, unsigned long frames)
+/* (the mixer's thread) frames of output_channels to the ring: limited, the
+mix after the limiter and the master stage, else before them (record_limited
+says which is recorded) */
+static void record(const float *output, unsigned long frames, BOOL limited)
 {
-	short samples[MIX_CHUNK_FRAMES * OUTPUT_CHANNELS];
-	unsigned long index, count = frames * OUTPUT_CHANNELS;
+	unsigned long written;
 
-	if (!record_file)
+	if (!record_on || limited != record_limited)
 		return;
-	if (count > MIX_CHUNK_FRAMES * OUTPUT_CHANNELS)
-		count = MIX_CHUNK_FRAMES * OUTPUT_CHANNELS;
-	for (index = 0; index < count; index++)
+	if (frames > MIX_CHUNK_FRAMES)
+		frames = MIX_CHUNK_FRAMES;
+	written = record_slots_written;
+	if (written - __atomic_load_n(&record_slots_read, __ATOMIC_ACQUIRE) >= RECORD_SLOTS)
 	{
-		/* (on 5.1, the front pair) rounded to the nearest step, at the
-		scale the mixer reads samples at, so that a voice played as it is is
-		recorded as it is; cutting toward zero took half a step off each
-		sample on average */
-		float sample = output[index / OUTPUT_CHANNELS * output_channels + index % OUTPUT_CHANNELS] * 32768.0f;
-
-		samples[index] = (short)lrintf(sample > 32767.0f ? 32767.0f : (sample < -32768.0f ? -32768.0f : sample));
-	}
-	fwrite(samples, sizeof(short), count, record_file);
-	if ((record_frames + frames) / OUTPUT_RATE != record_frames / OUTPUT_RATE)
-	{
-		record_frames += frames;
-		record_sizes();
+		record_dropped += frames;
 	}
 	else
 	{
-		record_frames += frames;
+		struct record_slot *slot = &record_slots[written % RECORD_SLOTS];
+
+		slot->frames = frames;
+		slot->channels = output_channels;
+		slot->dropped_before = record_dropped;
+		record_dropped = 0;
+		memcpy(slot->samples, output, frames * output_channels * sizeof(float));
+		__atomic_store_n(&record_slots_written, written + 1, __ATOMIC_RELEASE);
 	}
+	__atomic_store_n(&record_frames, record_frames + frames, __ATOMIC_RELAXED);
 }
 
 /* ---------- the hand-off
@@ -4334,6 +4523,21 @@ static void mix_buffers(float *output, unsigned long frames)
 	pthread_mutex_unlock(&buffers_lock);
 }
 
+/* the mix's last stages (frames of output_channels): what is below hearing
+out, audio.listening_mode "night", the limiter and the master stage, and
+the recording (debug.audio_record) before or after the last two */
+static void mix_end(float *output, unsigned long frames)
+{
+	subsonic(output, frames);
+	/* (audio.listening_mode "night") */
+	night_compress(output, frames);
+	record(output, frames, FALSE);
+	limit(output, frames);
+	sound_gain = sound_fade(output, frames, output_channels, sound_gain,
+		sound_target(sound_on, in_background, background_volume));
+	record(output, frames, TRUE);
+}
+
 /* a mix of frames into output: the game's side taken over first, waiting
 for it only without a device (wait) */
 static void mix(float *output, unsigned long frames, BOOL wait)
@@ -4423,13 +4627,7 @@ static void mix(float *output, unsigned long frames, BOOL wait)
 	}
 	if (mix_profile_on)
 		mix_part_end(_mix_part_chat, &part_at);
-	subsonic(output, frames);
-	/* (audio.listening_mode "night") */
-	night_compress(output, frames);
-	limit(output, frames);
-	sound_gain = sound_fade(output, frames, output_channels, sound_gain,
-		sound_target(sound_on, in_background, background_volume));
-	record(output, frames);
+	mix_end(output, frames);
 	if (mix_profile_on)
 		mix_part_end(_mix_part_rest, &part_at);
 	mix_nanoseconds += SDL_GetTicksNS() - started;
@@ -4872,7 +5070,7 @@ void dsound_sdl_frame(double seconds)
 /* the frames of sound recorded so far (debug.audio_record) */
 unsigned long dsound_sdl_recorded_frames(void)
 {
-	return record_frames;
+	return __atomic_load_n(&record_frames, __ATOMIC_RELAXED);
 }
 
 /* audio.channels on Android: stereo; elsewhere what output_channels_choose
@@ -5491,8 +5689,9 @@ static void voices_log(void)
 		unsigned long dropouts;
 		double silence_ms;
 
-		if (record_file)
-			snprintf(recorded, sizeof(recorded), "; %.2f s recorded", (double)record_frames / OUTPUT_RATE);
+		if (record_on)
+			snprintf(recorded, sizeof(recorded), "; %.2f s recorded",
+				(double)dsound_sdl_recorded_frames() / OUTPUT_RATE);
 		pthread_mutex_lock(&timing_lock);
 		latest_ns = timing.latest_ns;
 		timing.latest_ns = 0;

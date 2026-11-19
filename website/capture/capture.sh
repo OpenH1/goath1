@@ -49,7 +49,8 @@ fi
 # (AUDIO: the game's sound on, recorded to $root/sound.wav in step with the
 # frames - debug.audio_record with the fixed frame time - and no device)
 if [ -n "${AUDIO:-}" ]; then
-  unset HALO_NO_AUDIO; export HALO_AUDIO_RECORD=$root/sound.wav
+  # (16-bit stereo as heard, which encode-audio-web.sh's wave module reads)
+  unset HALO_NO_AUDIO; export HALO_AUDIO_RECORD=$root/sound.wav HALO_AUDIO_RECORD_FORMAT=stereo16
   [ -n "${SPATIAL:-}" ] && export HALO_AUDIO_SPATIAL=$SPATIAL
 fi
 # (a relative path, which lands in the data root: an absolute one cannot be opened)
