@@ -1,7 +1,7 @@
 """spirv_check.py <directory> <module.spv> <tolerance>: the SPIR-V emitter's ray step through the distance-field
 scene (port/linux/src/xgpu_spirv.c's world_trace, in the module xgpu_spirv_world_trace_test writes) run on the CPU
 (tools/world_ao_light/spirv_run.py) at the made-up scene's rays (scene.c's rays.json, the texture's bytes in
-cascades.bin) and compared with its reference there (port/linux/game/world_cascades.c's world_trace_ray): whether
+cascades.bin, the level's field's in field_table.bin and field_atlas.bin) and compared with its reference there (port/linux/game/world_cascades.c's world_trace_ray): whether
 each hits, what, and how far. Prints the largest difference of t; exits 1 if a ray differs past the tolerance."""
 import json
 import math
@@ -13,6 +13,7 @@ import spirv_run  # noqa: E402
 
 SPAN = 65  # (xgpu.h's XGPU_WORLD_CASCADE_SPAN)
 CASCADES = 4
+ATLAS_SIDE = 16 * 9  # (the field's atlas: XGPU_WORLD_SDF_ATLAS bricks of XGPU_WORLD_SDF_BRICK_SPAN voxels a side)
 
 
 def main():
@@ -24,26 +25,42 @@ def main():
     module = spirv_run.Module([int.from_bytes(words[at:at + 4], "little") for at in range(0, len(words), 4)])
     tolerance = float(sys.argv[3])
     size = (SPAN, SPAN, SPAN * CASCADES)
+    table = (directory / "field_table.bin").read_bytes()
+    atlas = [value - 256 if value > 127 else value for value in (directory / "field_atlas.bin").read_bytes()]
+    cells = [int(value) for value in scene["field"][1][:3]]
+    atlas_size = (ATLAS_SIDE, ATLAS_SIDE, int(scene["field"][1][3]) * 9)
 
-    def sample(name, uvw):
-        # (the cascades: two signed bytes a texel, RG8 snorm, filtered, clamped to the edge)
-        assert name == "world_cascades", name
+    def filtered(texels, extent, channels, uvw):
+        # (signed bytes, snorm, filtered, clamped to the edge)
         base, fraction = [], []
         for axis in range(3):
-            coordinate = uvw[axis] * size[axis] - 0.5
+            coordinate = uvw[axis] * extent[axis] - 0.5
             floor_value = math.floor(coordinate)
             base.append(int(floor_value))
             fraction.append(coordinate - floor_value)
-        result = [0.0, 0.0]
+        result = [0.0] * channels
         for corner in range(8):
             at, weight = [], 1.0
             for axis in range(3):
                 bit = (corner >> axis) & 1
-                at.append(min(max(base[axis] + bit, 0), size[axis] - 1))
+                at.append(min(max(base[axis] + bit, 0), extent[axis] - 1))
                 weight *= fraction[axis] if bit else 1.0 - fraction[axis]
-            texel = ((at[2] * size[1] + at[1]) * size[0] + at[0]) * 2
-            for part in range(2):
+            texel = ((at[2] * extent[1] + at[1]) * extent[0] + at[0]) * channels
+            for part in range(channels):
                 result[part] += weight * max(texels[texel + part] / 127.0, -1.0)
+        return result
+
+    def sample(name, uvw):
+        if name == "world_sdf_table":
+            # (read by texel: the table's four bytes as RGBA8)
+            at = ((uvw[2] * cells[1] + uvw[1]) * cells[0] + uvw[0]) * 4
+            return [spirv_run.f32(table[at + part] / 255.0) for part in range(4)]
+        if name == "world_sdf":
+            # (the field's atlas: R8 snorm)
+            return [spirv_run.f32(filtered(atlas, atlas_size, 1, uvw)[0]), 0.0, 0.0, 1.0]
+        # (the cascades: two signed bytes a texel, RG8 snorm)
+        assert name == "world_cascades", name
+        result = filtered(texels, size, 2, uvw)
         return [spirv_run.f32(result[0]), spirv_run.f32(result[1]), 0.0, 1.0]
 
     worst, unlike = 0.0, 0
@@ -52,6 +69,8 @@ def main():
                   "parameters": [ray["t_max"], float(ray["mask"]), 0.0, 0.0]}
         for cascade in range(CASCADES):
             inputs[f"cascade{cascade}"] = scene["block"][cascade]
+        inputs["field0"] = scene["field"][0]
+        inputs["field1"] = [float(value) for value in scene["field"][1]]
         colour = spirv_run.run(module, inputs, sample)
         difference = abs(colour[1] - ray["t"])
         worst = max(worst, difference)

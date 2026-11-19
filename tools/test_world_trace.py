@@ -2,8 +2,8 @@
 scene") in both emitters against its CPU reference: the Metal emitter's world_trace (xgpu_msl.c), its very text run as
 C++ (tools/world_trace/trace_check.cpp on tools/world_ao_light/metal_shim.h), and the SPIR-V emitter's
 (xgpu_spirv.c), its module run on the CPU (tools/world_ao_light/spirv_run.py), each at a made-up scene's rays
-(tools/world_trace/scene.c: a floor and a wall, a sphere, a capsule and a turned box, in cascades whose places wrap)
-find what world_trace_ray (port/linux/game/world_cascades.c) finds: whether each ray hits, what, and how far. A fault
+(tools/world_trace/scene.c: a floor and a wall, the level's sparse field, read where the ray is; a sphere, a capsule and
+a turned box, in cascades whose places wrap) find what world_trace_ray (port/linux/game/world_cascades.c) finds: whether each ray hits, what, and how far. A fault
 in either emitter is seen. The module passes spirv-val where it is installed."""
 import shutil
 import subprocess
@@ -38,19 +38,23 @@ def check(tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def reference(tmp_path_factory):
-    """world_cascades.c and the scene, built; the scene's cascades and rays with the reference's results"""
+    """world_cascades.c, world_sdf_bake.c (the field's sample) and the scene, built; the scene's cascades, field and
+    rays with the reference's results"""
     if not CC:
         pytest.skip("no C compiler")
     build = tmp_path_factory.mktemp("world_trace_reference")
     flags = ["-std=gnu99", "-O1", "-Wall", "-iquote", str(INCLUDE)]
     cascades = build / "world_cascades.o"
     subprocess.run([CC] + flags + ["-c", str(GAME / "world_cascades.c"), "-o", str(cascades)], check=True)
+    field = build / "world_sdf_bake.o"
+    subprocess.run([CC] + flags + ["-c", str(GAME / "world_sdf_bake.c"), "-o", str(field)], check=True)
     library = build / "scene_library.o"
     subprocess.run([CC] + flags + ["-DSCENE_LIBRARY", "-c", str(TOOL / "scene.c"), "-o", str(library)], check=True)
     scene = build / "scene"
-    subprocess.run([CC] + flags + [str(TOOL / "scene.c"), str(cascades), "-o", str(scene), "-lm"], check=True)
+    subprocess.run([CC] + flags + [str(TOOL / "scene.c"), str(cascades), str(field), "-o", str(scene), "-lm"],
+                   check=True)
     subprocess.run([str(scene), str(build), str(SPIRV_RAYS)], check=True)
-    return {"build": build, "objects": [cascades, library]}
+    return {"build": build, "objects": [cascades, field, library]}
 
 
 def msl_check(reference, text, directory):

@@ -388,9 +388,11 @@ BOOL xgpu_spirv_halo_pixel_shader(const struct xgpu_spirv_options *options, stru
 /* the distance-field scene's ray step (port/linux/include/world_cascades.h's
 world_trace_ray) alone, for tools/test_world_trace.py: a fragment shader,
 entry point "main", tracing its ray from its inputs (location 0 the origin,
-1 the direction, 2 t_max and the mask, 3 to 6 the cascades' vec4s) through
-the cascades' texture (XGPU_SPIRV_SET_OCCLUSION,
-XGPU_SPIRV_BINDING_WORLD_CASCADES), writing the hit (1 or 0), t and kind.
+1 the direction, 2 t_max and the mask, 3 to 6 the cascades' vec4s, 7 and 8
+the field's block vec4s) through the cascades' texture
+(XGPU_SPIRV_SET_OCCLUSION, XGPU_SPIRV_BINDING_WORLD_CASCADES) and the
+level's field (XGPU_SPIRV_BINDING_WORLD_SDF, _WORLD_SDF_TABLE), writing the
+hit (1 or 0), t and kind.
 FALSE if out of memory. */
 BOOL xgpu_spirv_world_trace_test(struct xgpu_spirv_module *module);
 

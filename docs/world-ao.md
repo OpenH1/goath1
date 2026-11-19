@@ -448,35 +448,47 @@ camera, in four nested cascades (a clipmap), as Lumen's global distance field an
 | 2 | 1 wu | 64 wu | 4 wu |
 | 3 | 2 wu | 128 wu | 8 wu |
 
-- **Two distances a voxel** (RG8 snorm, each over its cascade's range, `WORLD_CASCADE_RANGE_VOXELS` = 4 voxels):
-  - the structure, the level's own field sampled (`world_sdf_sample`, which holds the static scenery too);
-  - the objects, the shapes of every drawn object within reach (`world_proxies_scene`: bipeds' capsules, vehicles'
-    wheels, items' boxes; not the static scenery, which is the structure's, and not the shapes an occlusion field
-    stands in for, since a field holds occlusion, not distance).
-  A ray's mask chooses which it may hit, so the level's pixels trace the objects alone (the lightmaps hold the level's
-  own occlusion) and a model's both.
-- **Still things go in once.** The structure is sampled where a cascade is filled and in the slabs the camera's
-  movement brings in. An object is stamped again only when one of its shapes changed by more than 0.005 wu (the motion
-  decides, not its kind): the region its old and new shapes reach is found again, each shape stamping the voxels
-  within range of it. A shape thinner than a quarter of a cascade's voxel isn't in it (a biped's limbs are in the
+- **The objects' distance a voxel** (snorm, over its cascade's range, `WORLD_CASCADE_RANGE_VOXELS` = 4 voxels): the
+  shapes of every drawn object within reach (`world_proxies_scene`: bipeds' capsules, vehicles' wheels, items' boxes;
+  not the static scenery, which is the level's field's, and not the shapes an occlusion field stands in for, since a
+  field holds occlusion, not distance).
+- **The structure is not in them.** Its distance is the level's own field (`world_sdf_sample`, which holds the static
+  scenery too), which never changes while a map is played and is on the GPU already: the ray step reads it where the
+  ray is (`world_sdf_distance`, the cell in the table and the brick's texel in the atlas) instead of a copy resampled
+  into the cascades. A cascade's fill is the objects' alone, so a respawn's jump samples no structure: the cascades
+  found again whole after one (about 1M voxels over 16 frames) cost 4.8 ms of the game's thread in all, at most
+  0.40 ms a frame, where the structure's resampling cost 24 ms, 1.9 ms a frame (Ryzen AI Max+ 395, a made-up field of
+  0.5 wu voxels). Before a field comes, the backends' stand-ins (a cell far outside) read as no structure, as
+  `world_trace_ray` with no sampler does.
+  A ray's mask chooses which it may hit. The AO pass's rays hit the objects alone (the lightmaps and the field's own
+  cone hold the level's occlusion), so the pass never reads the field in its step: its emitted code is the objects'
+  alone.
+- **Still things go in once.** An object is stamped again only when one of its shapes changed by more than 0.005 wu
+  (the motion decides, not its kind): the region its old and new shapes reach is found again, each shape stamping the
+  voxels within range of it. A shape thinner than a quarter of a cascade's voxel isn't in it (a biped's limbs are in the
   finest two).
 - **Toroidal places.** A cascade moves with the camera in steps of 4 voxels; a voxel's place is its world index
   modulo 64, so a step finds and uploads only the slab it brings in. Found whole (the start, a new field, a jump past
   its side), a cascade is filled 16 slices a frame, the coarsest first, and named ready when done; until then the
   coarser serve.
 - **On the GPU:** one 3D texture, 65 x 65 x 260 (each cascade with a guard texel past its last along each axis, a copy
-  of its first, so the linear filter is right across the toroidal seam), **2.2 MB** (the CPU keeps the same). The
-  game sends the boxes written (`WORLD_AO_CASCADES` records). A cascade's block vec4 is its first voxel's centre and
-  its voxel (0: not ready).
+  of its first, so the linear filter is right across the toroidal seam), **2.2 MB** (the CPU keeps the same). It is
+  still RG8 snorm, its first channel none (+range everywhere, never written): R8 would halve it, but would change the
+  command stream's cascades record and so the stream's and the recordings' versions, with older recordings' boxes to
+  convert, for 1.1 MB. The game sends the boxes written (`WORLD_AO_CASCADES` records). A cascade's block vec4 is its
+  first voxel's centre and its voxel (0: not ready).
 - **Cost** (the game's thread, `HALO_WORLD_AO_COUNTS=1`; Ryzen AI Max+ 395): a30's start with the bot walking 0.10 ms a
-  frame (4,400 voxels, 30 KB uploaded), standing 0.03 ms; a10's start 0.03 ms. A cascade filled whole is about 12 ms
-  of work, spread over its 4 frames.
+  frame (4,400 voxels, 30 KB uploaded), standing 0.03 ms; a10's start 0.03 ms (with the structure still in them). A
+  cascade filled whole, the objects' alone, is about 1.2 ms of work, spread over its 4 frames (was 6 ms with the
+  structure's resampling).
 
 ### The ray step
 
 `world_trace_ray(origin, direction, t_max, mask)` (`world_cascades.c`; `world_trace` in both emitters, checked against
-it by `tools/test_world_trace.py`): sphere tracing, at most 24 steps. Each step takes the finest ready cascade whose
-window holds the point, reads its two distances (one filtered fetch), and takes those the mask allows. A hit is a
+it by `tools/test_world_trace.py`, the structure read from a sparse field as the bake makes it): sphere
+tracing, at most 24 steps. Each step takes the finest ready cascade whose window holds the point, reads the objects'
+distance there (one filtered fetch) and, where the mask allows the structure, the level's field's there, and takes
+those the mask allows. A hit is a
 distance under a quarter voxel; a step is at least half a voxel. A distance counts only once the ray is outside it: a
 ray starting inside solid (a model's surface within its own capsules) leaves it without hitting it, as front faces
 alone would. It returns whether it hit, how far, and what (structure or objects).

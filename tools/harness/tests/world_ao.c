@@ -262,11 +262,6 @@ void world_sdf_upload(struct world_sdf_volume const *uploaded)
 /* (the distance-field scene: world_cascades.c's, tested apart; here, how
 many frames it was updated in) */
 static int scene_updates;
-float world_sdf_sample(struct world_sdf_volume const *sampled, float const point[3])
-{
-	(void)sampled;
-	return point[2];
-}
 unsigned long long SDL_GetTicksNS(void)
 {
 	return 0;
@@ -290,15 +285,11 @@ void world_cascades_free(struct world_cascades *cascades)
 {
 	(void)cascades;
 }
-void world_cascades_update(struct world_cascades *cascades, float const camera[3], int structure_changed,
-	world_cascades_structure structure, void *context, struct world_cascades_object const *objects, long object_count,
-	struct world_proxy const *shapes)
+void world_cascades_update(struct world_cascades *cascades, float const camera[3],
+	struct world_cascades_object const *objects, long object_count, struct world_proxy const *shapes)
 {
 	(void)cascades;
 	(void)camera;
-	(void)structure_changed;
-	(void)structure;
-	(void)context;
 	(void)objects;
 	(void)object_count;
 	(void)shapes;

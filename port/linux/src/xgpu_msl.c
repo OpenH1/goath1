@@ -1927,27 +1927,48 @@ static void world_ao_closeness(struct xgpu_text *text)
 		"}\n", 1.0 / XGPU_WORLD_AO_UPSAMPLE_DEPTH);
 }
 
+/* the field's distance at a point (world_sdf_sample) from the block's two
+vectors (field0: the first voxel's centre and 1 / voxel; field1: the cells
+along x, y, z and the atlas's layers): its cell in the table, all outside
+or all inside the range, or a brick of the atlas whose texel is filtered
+(xgpu.h). The AO functions and the ray step share it: once a shader */
+static void world_field_distance_text(struct xgpu_text *text)
+{
+	xgpu_text_append(text,
+		"#ifndef XGPU_WORLD_FIELD_DISTANCE\n"
+		"#define XGPU_WORLD_FIELD_DISTANCE\n"
+		"static inline float world_field_distance(float4 field0, float4 field1, texture3d<float> world_sdf,\n"
+		"\ttexture3d<float> world_sdf_table, float3 point)\n"
+		"{\n"
+		"\tconstexpr sampler field_sampler(filter::linear, address::clamp_to_edge, coord::normalized);\n"
+		"\tfloat range = %d.0 / field0.w;\n"
+		"\tfloat3 c = clamp((point - field0.xyz) * field0.w, float3(0.0), field1.xyz * %d.0);\n"
+		"\tfloat3 cell = min(floor(c * %.6f), field1.xyz - 1.0);\n"
+		"\tfloat4 entry = floor(world_sdf_table.read(uint3(cell)) * 255.0 + 0.5);\n"
+		"\tif (entry.w != %d.0)\n"
+		"\t\treturn entry.w == %d.0 ? -range : range;\n"
+		"\tfloat3 at = entry.xyz * %d.0 + (c - cell * %d.0) + 0.5;\n"
+		"\treturn world_sdf.sample(field_sampler, at / float3(%d.0, %d.0, field1.w * %d.0), level(0.0)).r * range;\n"
+		"}\n"
+		"#endif\n", XGPU_WORLD_SDF_RANGE_VOXELS, XGPU_WORLD_SDF_BRICK, 1.0 / XGPU_WORLD_SDF_BRICK,
+		XGPU_WORLD_SDF_CELL_BRICK, XGPU_WORLD_SDF_CELL_INSIDE, XGPU_WORLD_SDF_BRICK_SPAN, XGPU_WORLD_SDF_BRICK,
+		XGPU_WORLD_SDF_ATLAS * XGPU_WORLD_SDF_BRICK_SPAN, XGPU_WORLD_SDF_ATLAS * XGPU_WORLD_SDF_BRICK_SPAN,
+		XGPU_WORLD_SDF_BRICK_SPAN);
+}
+
 static void world_ao_functions(struct xgpu_text *text, int light)
 {
 	world_ao_struct(text);
 	/* (the field's: never the lightmap pass's) */
 	if (light != XGPU_AMBIENT_OCCLUSION_LIGHT_LIGHTMAP)
+		world_field_distance_text(text);
+	if (light != XGPU_AMBIENT_OCCLUSION_LIGHT_LIGHTMAP)
 		xgpu_text_append(text,
-		/* the field's distance at a point (world_sdf_sample): its cell in the
-		table, all outside or all inside the range, or a brick of the atlas
-		whose texel is filtered (xgpu.h) */
+		/* the field's distance at a point: the window's block's field */
 		"static inline float world_sdf_distance(constant xgpu_world_ao &w, texture3d<float> world_sdf,\n"
 		"\ttexture3d<float> world_sdf_table, float3 point)\n"
 		"{\n"
-		"\tconstexpr sampler field_sampler(filter::linear, address::clamp_to_edge, coord::normalized);\n"
-		"\tfloat range = %d.0 / w.field[0].w;\n"
-		"\tfloat3 c = clamp((point - w.field[0].xyz) * w.field[0].w, float3(0.0), w.field[1].xyz * %d.0);\n"
-		"\tfloat3 cell = min(floor(c * %.6f), w.field[1].xyz - 1.0);\n"
-		"\tfloat4 entry = floor(world_sdf_table.read(uint3(cell)) * 255.0 + 0.5);\n"
-		"\tif (entry.w != %d.0)\n"
-		"\t\treturn entry.w == %d.0 ? -range : range;\n"
-		"\tfloat3 at = entry.xyz * %d.0 + (c - cell * %d.0) + 0.5;\n"
-		"\treturn world_sdf.sample(field_sampler, at / float3(%d.0, %d.0, w.field[1].w * %d.0), level(0.0)).r * range;\n"
+		"\treturn world_field_distance(w.field[0], w.field[1], world_sdf, world_sdf_table, point);\n"
 		"}\n"
 		/* A_sdf(p, n): the cone of taps along the normal */
 		"static inline float world_sdf_occlusion(constant xgpu_world_ao &w, texture3d<float> world_sdf,\n"
@@ -1989,10 +2010,7 @@ static void world_ao_functions(struct xgpu_text *text, int light)
 		"\t}\n"
 		"\tn = direction;\n"
 		"\treturn field;\n"
-		"}\n", XGPU_WORLD_SDF_RANGE_VOXELS, XGPU_WORLD_SDF_BRICK, 1.0 / XGPU_WORLD_SDF_BRICK, XGPU_WORLD_SDF_CELL_BRICK,
-		XGPU_WORLD_SDF_CELL_INSIDE, XGPU_WORLD_SDF_BRICK_SPAN, XGPU_WORLD_SDF_BRICK,
-		XGPU_WORLD_SDF_ATLAS * XGPU_WORLD_SDF_BRICK_SPAN, XGPU_WORLD_SDF_ATLAS * XGPU_WORLD_SDF_BRICK_SPAN,
-		XGPU_WORLD_SDF_BRICK_SPAN, XGPU_WORLD_AO_STEP, XGPU_WORLD_AO_TAPS, XGPU_WORLD_AO_K);
+		"}\n", XGPU_WORLD_AO_STEP, XGPU_WORLD_AO_TAPS, XGPU_WORLD_AO_K);
 	xgpu_text_append(text, "%s", world_proxies_shapes);
 	xgpu_text_append(text,
 		/* a vehicle's occlusion field (its shape and the next two:
@@ -2160,8 +2178,12 @@ world_trace: port/linux/game/world_cascades.c's world_trace_ray operation
 for operation (tools/test_world_trace.py runs this text as C++ against it):
 from origin along the unit direction to at most t_max, through the
 cascades (cascades[k]: the first voxel's centre and the voxel, 0 not
-ready; the texture's at XGPU_MSL_TEXTURE_WORLD_CASCADES), hitting what mask
-allows (XGPU_WORLD_TRACE_*), each distance only once the ray is outside it.
+ready; the texture's at XGPU_MSL_TEXTURE_WORLD_CASCADES, the objects'
+distance its second channel), hitting what mask allows
+(XGPU_WORLD_TRACE_*), each distance only once the ray is outside it. The
+structure's distance is the level's field's at the ray's point
+(world_field_distance: its atlas, table and block vectors), read only where
+the mask allows it.
 The hardware's ray queries (#602) would implement the same signature
 (docs/world-ao.md) */
 static const char world_trace_functions[] =
@@ -2188,8 +2210,9 @@ static const char world_trace_functions[] =
 	"\t}\n"
 	"\treturn found;\n"
 	"}\n"
-	/* its two distances there (world units): the voxels' centres'
-	coordinate modulo the side, a texel in (the guard past the last) */
+	/* its distances there (world units: y the objects', x none): the
+	voxels' centres' coordinate modulo the side, a texel in (the guard past
+	the last) */
 	"static inline float4 world_cascade_sample(texture3d<float> world_cascades, float4 c, int cascade, float3 p)\n"
 	"{\n"
 	"\tconstexpr sampler cascades_sampler(filter::linear, address::clamp_to_edge, coord::normalized);\n"
@@ -2201,8 +2224,10 @@ static const char world_trace_functions[] =
 		WORLD_AO_TEXT(XGPU_WORLD_CASCADE_SPAN) ".0 * " WORLD_AO_TEXT(XGPU_WORLD_CASCADES) ".0));\n"
 	"\treturn world_cascades.sample(cascades_sampler, uvw, level(0.0)) * (" WORLD_AO_TEXT(XGPU_WORLD_CASCADE_RANGE_VOXELS)
 		".0 * c.w);\n"
-	"}\n"
-	"static inline world_trace_hit world_trace(texture3d<float> world_cascades, constant float4 *cascades, float3 origin,\n"
+	"}\n";
+static const char world_trace_step[] =
+	"static inline world_trace_hit world_trace(texture3d<float> world_cascades, constant float4 *cascades,\n"
+	"\ttexture3d<float> world_sdf, texture3d<float> world_sdf_table, float4 field0, float4 field1, float3 origin,\n"
 	"\tfloat3 direction, float t_max, int mask)\n"
 	"{\n"
 	"\tworld_trace_hit result;\n"
@@ -2224,6 +2249,8 @@ static const char world_trace_functions[] =
 	"\t\tfloat inside = nearest;\n"
 	"\t\tif ((mask & " WORLD_AO_TEXT(XGPU_WORLD_TRACE_STRUCTURE) ") != 0)\n"
 	"\t\t{\n"
+	/* (the structure's from the level's field where the ray is) */
+	"\t\t\td.x = world_field_distance(field0, field1, world_sdf, world_sdf_table, p);\n"
 	"\t\t\tif (d.x >= 0.0)\n"
 	"\t\t\t\tactive_structure = true;\n"
 	"\t\t\tif (active_structure)\n"
@@ -2258,6 +2285,8 @@ static const char world_trace_functions[] =
 void xgpu_msl_world_trace(struct xgpu_text *text)
 {
 	xgpu_text_append(text, "%s", world_trace_functions);
+	world_field_distance_text(text);
+	xgpu_text_append(text, "%s", world_trace_step);
 }
 
 char *xgpu_msl_world_trace_test(void)
@@ -2275,12 +2304,14 @@ char *xgpu_msl_world_trace_test(void)
 		"\tfloat4 parameters [[user(parameters), flat]];\n"
 		"};\n"
 		"fragment float4 xgpu_world_trace_test(world_trace_in in [[stage_in]],\n"
-		"\ttexture3d<float> world_cascades [[texture(%d)]], constant float4 *cascades [[buffer(0)]])\n"
+		"\ttexture3d<float> world_cascades [[texture(%d)]], constant float4 *cascades [[buffer(0)]],\n"
+		"\ttexture3d<float> world_sdf [[texture(%d)]], texture3d<float> world_sdf_table [[texture(%d)]],\n"
+		"\tconstant float4 *field [[buffer(1)]])\n"
 		"{\n"
-		"\tworld_trace_hit hit = world_trace(world_cascades, cascades, in.origin, in.direction, in.parameters.x,\n"
-		"\t\tint(in.parameters.y));\n"
+		"\tworld_trace_hit hit = world_trace(world_cascades, cascades, world_sdf, world_sdf_table, field[0], field[1],\n"
+		"\t\tin.origin, in.direction, in.parameters.x, int(in.parameters.y));\n"
 		"\treturn float4(hit.hit ? 1.0 : 0.0, hit.t, float(hit.kind), 0.0);\n"
-		"}\n", XGPU_MSL_TEXTURE_WORLD_CASCADES);
+		"}\n", XGPU_MSL_TEXTURE_WORLD_CASCADES, XGPU_MSL_TEXTURE_WORLD_SDF, XGPU_MSL_TEXTURE_WORLD_SDF_TABLE);
 	return text.buffer;
 }
 
@@ -2908,7 +2939,8 @@ char *xgpu_msl_world_ao_pass(BOOL pixel)
 		cosine-weighted about the normal (a frame of it, Duff's; the rays
 		stratified, turned for each pixel and frame), from a little off the
 		surface, to the AO's reach; a hit counts as 1 - (t / reach)^2 */
-		"static inline float world_ao_traced(texture3d<float> world_cascades, constant float4 *cascades, float3 p,\n"
+		"static inline float world_ao_traced(texture3d<float> world_cascades, constant float4 *cascades,\n"
+		"\tconstant xgpu_world_ao &world_ao, texture3d<float> world_sdf, texture3d<float> world_sdf_table, float3 p,\n"
 		"\tfloat3 n, uint2 pixel, float frame)\n"
 		"{\n"
 		"\tfloat s = n.z >= 0.0 ? 1.0 : -1.0;\n"
@@ -2929,7 +2961,8 @@ char *xgpu_msl_world_ao_pass(BOOL pixel)
 		"\t\tfloat u = (float(ray) + turn) / %d.0, angle = 6.28318531 * fract(twist + 0.618034 * float(ray));\n"
 		"\t\tfloat radius = sqrt(u);\n"
 		"\t\tfloat3 d = x * (radius * cos(angle)) + y * (radius * sin(angle)) + n * sqrt(max(1.0 - u, 0.0));\n"
-		"\t\tworld_trace_hit hit = world_trace(world_cascades, cascades, p + n * %.6f, d, %.6f, %d);\n"
+		"\t\tworld_trace_hit hit = world_trace(world_cascades, cascades, world_sdf, world_sdf_table, world_ao.field[0],\n"
+		"\t\t\tworld_ao.field[1], p + n * %.6f, d, %.6f, %d);\n"
 		"\t\tif (hit.hit)\n"
 		"\t\t{\n"
 		"\t\t\tfloat f = hit.t / %.6f;\n"
@@ -2964,7 +2997,8 @@ char *xgpu_msl_world_ao_pass(BOOL pixel)
 		"\tfloat proxies = world_proxies_occlusion(world_ao, world_ao_objects, p, n, owner, limit,\n"
 		"\t\ttraced ? int(world_ao.parameters[1].y) : 0);\n"
 		"\tif (traced)\n"
-		"\t\tproxies *= 1.0 - world_ao_traced(world_cascades, pass.cascades, p, n, pixel, pass.history.y);\n"
+		"\t\tproxies *= 1.0 - world_ao_traced(world_cascades, pass.cascades, world_ao, world_sdf, world_sdf_table, p, n,\n"
+		"\t\t\tpixel, pass.history.y);\n"
 		"\tif (lightmap)\n"
 		"\t\treturn mix(1.0, max(proxies * value, %.6f), world_ao.parameters[0].y);\n"
 		"\tfield = mix(field, saturate(field / max(baked ? 1.0 : value, %.6f)), world_ao.parameters[1].x);\n"

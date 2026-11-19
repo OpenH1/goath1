@@ -334,11 +334,12 @@ objects' atlas) */
 /* ---------- the distance-field scene (port/linux/include/world_cascades.h)
 
 The cascades about the camera, one 3D texture of two signed bytes a texel
-(RG8 snorm: the structure's distance, the objects'), each cascade
+(RG8 snorm: none, +1 everywhere; the objects' distance), each cascade
 XGPU_WORLD_CASCADE_SPAN texels a side (its side and a guard), one above the
 other along z; a cascade's block vec4 is its first voxel's centre and its
 voxel (0: not ready). world_trace, the emitters' ray step through them
-(xgpu_spirv.c's, xgpu_msl.c's), is world_cascades.c's world_trace_ray
+(xgpu_spirv.c's, xgpu_msl.c's; the structure's distance the level's field's
+where the ray is), is world_cascades.c's world_trace_ray
 operation for operation; these are world_cascades.h's WORLD_CASCADE* and
 WORLD_TRACE_* */
 #define XGPU_WORLD_CASCADES 4
