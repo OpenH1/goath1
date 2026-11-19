@@ -61,6 +61,7 @@ its swapchain.
 #include "xgpu_vulkan_post.h"
 #include "xgpu_vulkan_post_shaders.h"
 #include "xgpu_vulkan_fsr.h"
+#include "xgpu_vulkan_dlss.h"
 #include "xgpu_vulkan_stream.h"
 #include "xgpu_vulkan_textures.h"
 #ifdef HALO_VR
@@ -3868,7 +3869,11 @@ static void stream_motion(void *context, const struct xgpu_stream_motion *record
 		frame.reset = pass.reset != 0 || motion.reset;
 		frame.hdr = pass.hdr != 0;
 		destination->written++;
-		(void)xgpu_vulkan_fsr_upscale((int)pass.window, &frame);
+		/* (the technique: 2 NVIDIA DLSS, else AMD FSR) */
+		if (pass.technique == 2)
+			(void)xgpu_vulkan_dlss_upscale((int)pass.window, &frame);
+		else
+			(void)xgpu_vulkan_fsr_upscale((int)pass.window, &frame);
 		targets_bind();
 	}
 }
@@ -4518,6 +4523,8 @@ static void stream_initialize(void *context, struct xgpu_stream_capabilities *ca
 #endif
 	/* (display.temporal_aa "fsr": xgpu_vulkan_fsr.c) */
 	capabilities->temporal_upscale = stream.capabilities.temporal_fsr != 0;
+	/* (display.temporal_aa "dlss": xgpu_vulkan_dlss.c) */
+	capabilities->temporal_dlss = stream.capabilities.temporal_dlss != 0;
 	snprintf(capabilities->device, sizeof(capabilities->device), "%s", stream.capabilities.device);
 }
 

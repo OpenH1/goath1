@@ -103,6 +103,13 @@ parser.add_argument(
     "(default: --guest-llvm's for the guest, clang for the host)",
 )
 parser.add_argument(
+    "--dlss",
+    action="store_true",
+    help="NVIDIA DLSS (display.temporal_aa \"dlss\") in the Linux x86-64 build: configure.py downloads NVIDIA's "
+    "DLSS SDK (not open source: its LICENSE.txt) and builds the module beside the game that alone links it "
+    "(libopenh1_dlss.so), with the DLSS runtime staged beside it (docs/temporal-aa.md)",
+)
+parser.add_argument(
     "--vr",
     action="store_true",
     help="the VR mode (OpenXR) in the Linux build of this computer (`ninja linux_x86_64`, or `ninja linux_arm64`: "
@@ -211,6 +218,7 @@ sln = SimpleNamespace(
     linux_x86_64_cc=args.linux_x86_64_cc,
     windows_guest=args.windows_guest,
     port_vr=args.vr,
+    port_dlss=args.dlss,
     macos_cc=args.macos_cc,
     macos_guest_cc=args.macos_guest_cc,
     macos_bundle_id=args.macos_bundle_id,

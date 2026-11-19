@@ -58,6 +58,67 @@ VULKAN_DECODE_SOURCES = ["xbox_texture_decode.c"]
 # (xgpu_vulkan_port_config.h), which they read
 VR_STREAM_SOURCES = [Path("port/linux/host/host_vr_stream.c")]
 
+# display.temporal_aa "dlss" (configure.py --dlss: port/linux/vulkan/
+# xgpu_vulkan_dlss.h): NVIDIA's DLSS SDK, downloaded at configure time from
+# its GitHub release (the NVIDIA RTX SDKs license, its LICENSE.txt: not open
+# source; the repository holds none of it). Its NGX headers and static library
+# build the module beside the game (libopenh1_dlss.so), which alone links them;
+# the DLSS runtime (libnvidia-ngx-dlss.so.<version>, redistributable with the
+# game) and the license are staged beside it. Linux x86-64 only for now.
+DLSS_SDK_TAG = "v310.9.16"
+DLSS_SDK_URLS = [
+    "https://raw.githubusercontent.com/NVIDIA/DLSS/{tag}/{name}",
+    "https://cdn.jsdelivr.net/gh/NVIDIA/DLSS@{tag}/{name}",
+]
+DLSS_SDK_FILES = {
+    "LICENSE.txt": "d4216e39ebef5f9b50a6712ebb37beeb5379862a67733a9999c651f21592aaf0",
+    "include/nvsdk_ngx.h": "dc38e7467cf415379c9d12ae1b6e4a494c453ed92720fb53e92aecb523e7b848",
+    "include/nvsdk_ngx_defs.h": "ea23f33497cd274860d1c25a97644fce807dcb0037c594547203343103fad03e",
+    "include/nvsdk_ngx_defs_vk.h": "0a24d0861ace7d6b9362a67b7f08bea1b33ea123c5ce730b19133de8a891d031",
+    "include/nvsdk_ngx_params.h": "943bc8cc5cdae03b6303016fbad3183636f2335ae27a2d18776798c3b4efabbc",
+    "include/nvsdk_ngx_vk.h": "2d364ce7132881eb669e9498fd570d74cba563b1fbebc82c235f8e1ad2dd8b6d",
+    "include/nvsdk_ngx_loader.h": "abdf5f66a692620538357d29fdf78e3e2a677ee8140b7a638962ecb766585e75",
+    "lib/Linux_x86_64/libnvsdk_ngx.a": "d3c50bb0d9624fc35e502a8e929b8fc1e2b505017ebdb84c0d5b627e11a235df",
+    "lib/Linux_x86_64/rel/libnvidia-ngx-dlss.so.310.9.16":
+        "30982c937afed85c96b8d313323de9a650a2eec6de1bb0f714b21750f4ce98f6",
+}
+DLSS_RUNTIME = "libnvidia-ngx-dlss.so.310.9.16"
+
+
+def fetch_dlss_sdk(sdk_dir: Path) -> None:
+    """Download the DLSS SDK's files the module needs into sdk_dir (configure
+    time, once; a file whose SHA-256 is wrong is downloaded again)."""
+    for name, digest in DLSS_SDK_FILES.items():
+        path = sdk_dir / name
+        if path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == digest:
+            continue
+        print(f"Downloading NVIDIA's DLSS SDK's {name} ({DLSS_SDK_TAG})")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = download([url.format(tag=DLSS_SDK_TAG, name=name) for url in DLSS_SDK_URLS], digest)
+        path.with_name(path.name + ".tmp").write_bytes(data)
+        path.with_name(path.name + ".tmp").replace(path)
+
+
+def dlss_module(n: Writer, prefix: str, label: str, build: Path, host_cc: str, host_cflags: str,
+                vulkan_headers: Path, sdk_dir: Path) -> List[Path]:
+    """Build the DLSS module beside the game, and stage the DLSS runtime and
+    the SDK's license beside it: their paths"""
+    module = build / "libopenh1_dlss.so"
+    obj = build / "host" / "obj" / "dlss" / "openh1_dlss.c.o"
+    library = sdk_dir / "lib/Linux_x86_64/libnvsdk_ngx.a"
+    n.build(outputs=obj, rule=host_cc, inputs=VULKAN_DIR / "dlss" / "openh1_dlss.c",
+            variables={"cflags": f"{host_cflags} -fvisibility=hidden -I{sdk_dir / 'include'} -I{vulkan_headers}"})
+    n.rule(name=f"{prefix}_dlss_link",
+           command=f"${prefix}_cc -shared -o $out $in {library} -lstdc++ -ldl -Wl,--no-undefined",
+           description=f"{label} LINK $out")
+    n.build(outputs=module, rule=f"{prefix}_dlss_link", inputs=obj, implicit=[library])
+    runtime = build / DLSS_RUNTIME
+    n.build(outputs=runtime, rule=f"{prefix}_copy", inputs=sdk_dir / "lib/Linux_x86_64/rel" / DLSS_RUNTIME)
+    license_copy = build / "NVIDIA-DLSS-LICENSE.txt"
+    n.build(outputs=license_copy, rule=f"{prefix}_copy", inputs=sdk_dir / "LICENSE.txt")
+    return [module, runtime, license_copy]
+
+
 def fetch_vulkan_headers(vulkan_dir: Path) -> None:
     """Download the Vulkan headers into vulkan_dir (configure time, once; a
     header whose SHA-256 is wrong is downloaded again)."""

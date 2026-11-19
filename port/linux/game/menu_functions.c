@@ -3105,12 +3105,17 @@ static boolean settings_condition_term(struct widget_instance *list, char const 
 	it is on, its row on another page than the anti-aliasing it replaces) */
 	if (!strcmp(name, "temporal_upscale"))
 		return halo_temporal_upscale_drawn() != 0;
-	if (!strcmp(name, "temporal_fsr"))
+	/* (... NVIDIA DLSS too: where its module and an NVIDIA GPU are) */
+	if (!strcmp(name, "temporal_dlss"))
+		return halo_temporal_dlss_drawn() != 0;
+	if (!strcmp(name, "temporal_on"))
 	{
 		char technique[16];
 
-		return halo_temporal_upscale_drawn() && settings_value("display.temporal_aa", technique, sizeof(technique)) &&
-			!strcmp(technique, "fsr");
+		if (!settings_value("display.temporal_aa", technique, sizeof(technique)))
+			return FALSE;
+		return (halo_temporal_upscale_drawn() && !strcmp(technique, "fsr")) ||
+			(halo_temporal_dlss_drawn() && !strcmp(technique, "dlss"));
 	}
 	/* (the renderer has ray queries: display.shadows "ray_traced") */
 	if (!strcmp(name, "ray_queries"))

@@ -87,6 +87,12 @@ static BOOL temporal_upscaling(void)
 	return technique_on;
 }
 
+/* display.temporal_aa "fsr" */
+static int motion_vectors_technique(void)
+{
+	return 1;
+}
+
 static int config_boolean(const char *name)
 {
 	(void)name;

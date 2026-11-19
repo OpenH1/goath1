@@ -12,7 +12,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from harness import CHECK_FAILED, build, mutated, read, run  # noqa: E402
 
-CASES = ["camera", "rigid", "skinned", "cut", "off"]
+CASES = ["camera", "rigid", "skinned", "cut", "off", "dlss", "dlss_unavailable"]
 GAME = "port/linux/game/motion_vectors.c"
 CONTROLS = [
     # the camera's change the wrong way about: the frame before's projection not the frame before's
@@ -29,6 +29,8 @@ CONTROLS = [
     # a camera cut kept as motion
     ("return dx * dx + dy * dy + dz * dz > MOTION_TELEPORT_DISTANCE * MOTION_TELEPORT_DISTANCE ||",
      "return dx * dx + dy * dy + dz * dz < 0.0f ||", "cut"),
+    # "dlss" on where the renderer has no DLSS: jittered with nothing to take it away
+    ("\tif (motion_vectors.technique == 2 && !halo_temporal_dlss_drawn())\n\t\treturn 0;\n", "", "dlss_unavailable"),
     # on whatever the setting says
     ("!strcmp(setting, \"metalfx\") ? 3 : 0;", "!strcmp(setting, \"metalfx\") ? 3 : 1;", "off"),
 ]

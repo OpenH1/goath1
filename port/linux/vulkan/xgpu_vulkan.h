@@ -240,6 +240,9 @@ struct xgpu_vulkan_capabilities
 	(xgpu_vulkan_fsr.c): its storage images' formats, and storage images
 	written and read without a format */
 	int temporal_fsr;
+	/* display.temporal_aa "dlss": NVIDIA DLSS Super Resolution through NGX
+	(xgpu_vulkan_dlss.c: its module beside the game, an NVIDIA GPU) */
+	int temporal_dlss;
 	/* the device, its Vulkan version and driver, in a few words (a
 	report's: port/linux/src/report.c) */
 	char device[96];

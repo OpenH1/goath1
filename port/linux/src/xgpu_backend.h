@@ -105,6 +105,9 @@ struct xgpu_backend_capabilities
 	/* display.temporal_aa "fsr": a window's view upscaled with AMD FSR
 	(xgpu_backend_temporal) */
 	BOOL temporal_upscale;
+	/* display.temporal_aa "dlss": a window's view upscaled with NVIDIA DLSS
+	(xgpu_backend_temporal, technique 2) */
+	BOOL temporal_dlss;
 };
 
 extern struct xgpu_backend_capabilities xgpu_backend_capabilities;
