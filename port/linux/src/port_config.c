@@ -1489,7 +1489,9 @@ static const struct config_setting config_settings[] =
 		"The steps a second of what a player feels in their hands: their own\n"
 		"movement and aim, projectiles and thrown items: 30 (as the game was\n"
 		"made), 60 or 120, in steps inside the game's 30 ticks a second, which\n"
-		"everything else keeps. For games of this computer alone: the campaign,\n"
+		"everything else keeps. Aim and shots are taken each step, so a moving\n"
+		"target can be hit more often at 60 and 120; a hit's damage is the same.\n"
+		"For games of this computer alone: the campaign,\n"
 		"split screen and games with bots. Network games play at the rate they\n"
 		"agreed on (a Legacy game's 30, a GOAT H1 game's network.sim_rate), and\n"
 		"saved films at 30, whatever this is." },
