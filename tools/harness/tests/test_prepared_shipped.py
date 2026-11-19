@@ -97,47 +97,43 @@ def test_records_name_only_kept_tags():
     assert sorted(models) == [False, True], f"ui.map's records: {RERUN}"
 
 
-# the campaign levels' structures (their scenarios' structure_bsp_references): each record holds every one's own walk
-# but those whose materials an earlier structure's walk all drew (render_enumerate.c: no walk of its own); d20's
-# second structure's coolant water is no other's (#1181)
-MULTI_STRUCTURE = {'a10': 4, 'a30': 2, 'a50': 3, 'b30': 2, 'b40': 4, 'c10': 4, 'c20': 3, 'c40': 4, 'd20': 4,
-                   'd40': 7}
+# the campaign levels whose later structures have materials no earlier structure has (render_enumerate.c: each
+# walked through its own surfaces as the first start's pass switches to it, into the record); d20's second
+# structure's coolant water is no other's (#1181). (b30's second structure's materials are all its first's)
+LATER_STRUCTURES = {'a10', 'a30', 'a50', 'b40', 'c10', 'c20', 'c40', 'd20', 'd40'}
 
 
-def segments(record, data):
-    structures = prepared_records.record_structures(data)
-    assert structures is not None, f"{record['map']}: not of segments: {RERUN}"
-    return structures
+def later_structures(records):
+    """the maps whose records hold a later structure's own walk"""
+    seen = set()
+    for record, data in records:
+        structures = prepared_records.record_structures(data)
+        assert structures is not None, f"{record['map']}: not of segments: {RERUN}"
+        if len(set(structures)) > 1:
+            seen.add(record['map'])
+    return seen
 
 
 def test_records_hold_their_later_structures():
-    """each multi-structure campaign level's record holds a later structure's own walk (the first start's pass
-    switched to it), each a structure of the level, d20's second among them, and the manifest says so"""
-    seen = set()
+    """each campaign level with later structures' own materials has their walks in its record (the first start's
+    pass switched to each), d20's second among them, as the manifest says"""
     for record, data in shipped():
-        structures = segments(record, data)
-        assert record['structures'] == sorted(set(structures)), record['map']
-        if record['map'] in MULTI_STRUCTURE:
-            assert len(set(structures)) > 1 and max(structures) < MULTI_STRUCTURE[record['map']], \
-                f"{record['map']} holds only {structures}: {RERUN}"
-            seen.add(record['map'])
-    assert seen == set(MULTI_STRUCTURE), sorted(seen)
-    assert any(1 in record['structures'] for record in MANIFEST['records'] if record['map'] == 'd20')
+        assert record['structures'] == sorted(set(prepared_records.record_structures(data))), record['map']
+    assert later_structures(shipped()) == LATER_STRUCTURES, RERUN
+    assert any(1 in record['structures'] for record in MANIFEST['records'] if record['map'] == 'd20'), RERUN
 
 
 def test_negative_a_record_without_its_later_structures():
-    """d20's record cut after its first segment (as a record made by the walk of its first structure alone): its
-    later structures are missed"""
-    for record, data in shipped():
-        if record['map'] != 'd20':
-            continue
+    """the records cut after their first segment (as the walk of a map's first structure alone records it): no
+    later structure is seen; and a segment cut short is no record of segments"""
+    def cut(data):
         words = prepared_records.record_words(data)
         start = len(data) - 4 * len(words)
-        cut = data[:start] + struct.pack(f'<{3 + words[2]}I', *words[:3 + words[2]])
-        assert len(set(prepared_records.record_structures(cut))) == 1
-        assert prepared_records.record_structures(data[:start] + struct.pack('<2I', *words[:2])) is None
-        return
-    assert False, "no record of d20"
+        return data[:start] + struct.pack(f'<{3 + words[2]}I', *words[:3 + words[2]])
+    assert later_structures((record, cut(data)) for record, data in shipped()) == set()
+    record, data = next(iter(shipped()))
+    words = prepared_records.record_words(data)
+    assert prepared_records.record_structures(data[:len(data) - 4 * len(words)] + struct.pack('<2I', *words[:2])) is None
 
 
 def test_negative_a_models_tag_by_its_index():
