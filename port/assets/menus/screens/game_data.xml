@@ -2,9 +2,10 @@
 <!-- Settings' GAME DATA (docs/menu_screens.md, "Game Data"; #1216), as Mods' GAME DATA › opens it (its stand-in
 screens/game_data). The tall layout: the sources of the game's maps in the table at the left (the row source
 data.sources: XBOX MAPS, CUSTOM EDITION MAPS, MCC CONTENT, each its state), and in the panel the chosen one's: what it
-is, where it comes from, its folder. ADD (A on a row or on the panel, X anywhere: its words the source's, ADD, COPY
+is, where it comes from, its folder (a long path wrapped after a slash). ADD (A on a row or on the panel; its words ADD, COPY
 AGAIN, LOOK AGAIN) copies Custom Edition's maps in the game, the progress shown here, and the map lists see them at
-once; OPEN FOLDER (Y) shows the source's folder on the desktop. B goes back; a copy goes on meanwhile. Its words and
+once; OPEN FOLDER (Y, or the panel's outlined button) shows the source's folder on the desktop. B goes back; a
+copy goes on meanwhile. Its words and
 states: port/linux/src/game_data_page.c. -->
 <screen name="game_data">
 	<header title="GAME DATA" detail="{data.detail}"/>
@@ -16,14 +17,13 @@ states: port/linux/src/game_data_page.c. -->
 		<heading text="{data.heading}" lines="1"/>
 		<text text="{data.status}" lines="6"/>
 		<text text="{data.from}" lines="2" if="data.from"/>
-		<text text="{data.folder}" lines="2"/>
+		<text text="{data.folder}" lines="3"/>
 		<text text="{data.opened}" lines="2" if="data.opened"/>
 		<button key="accept" label="OPEN FOLDER" do="data open folder"/>
 		<button key="accept" label="{data.add}" do="data add" if="data.add"/>
 	</panel>
 	<buttons>
 		<button key="back" label="BACK"/>
-		<button key="x" label="{data.add}" do="data add" if="data.add" side="right"/>
 		<button key="y" label="OPEN FOLDER" do="data open folder" side="right"/>
 	</buttons>
 </screen>
