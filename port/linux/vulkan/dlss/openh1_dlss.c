@@ -87,13 +87,21 @@ static void NVSDK_CONV ngx_log(const char *message, NVSDK_NGX_Logging_Level leve
 	say(0, "NGX: %s", line);
 }
 
+/* (the game's paths are UTF-8) */
 static void wide(wchar_t *to, size_t capacity, const char *from)
 {
+#ifdef _WIN32
+	int length = MultiByteToWideChar(CP_UTF8, 0, from, -1, to, (int)capacity);
+
+	if (length <= 0)
+		to[0] = 0;
+#else
 	size_t length = mbstowcs(to, from, capacity - 1);
 
 	if (length == (size_t)-1)
 		length = 0;
 	to[length] = 0;
+#endif
 }
 
 /* the module's folder, and NGX's common information: that folder searched

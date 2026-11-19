@@ -75,7 +75,8 @@ no jitter (`motion_vectors_technique`).
   `libnvidia-ngx-dlss.so.310.9.16` (the DLSS runtime, NVIDIA's redistributable) and `NVIDIA-DLSS-LICENSE.txt` are
   staged beside it. The game loads the module at run time (`xgpu_vulkan_dlss.c`); without it, an NVIDIA GPU or the
   driver's NGX (`libnvidia-ngx.so`, which NVIDIA's Linux driver installs), nothing changes. `HALO_VULKAN_NO_DLSS=1`
-  leaves it unloaded. Linux x86-64 for now; Windows's loader is written (`openh1_dlss.dll`) but not built.
+  leaves it unloaded. Windows: `openh1_dlss.dll`, built with the game's clang and lld-link from `nvsdk_ngx_s.lib`
+  (plain MSVC objects of the static runtime, clang's default), with `nvngx_dlss.dll` and the license beside it.
 - **Device.** Only with the module and an NVIDIA GPU: the instance's and the device's extensions NGX asks for
   (`GetFeature*ExtensionRequirements`) are added, and buffer device addresses. NGX is identified by a project ID
   and the custom engine type.

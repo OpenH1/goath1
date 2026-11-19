@@ -105,9 +105,10 @@ parser.add_argument(
 parser.add_argument(
     "--dlss",
     action="store_true",
-    help="NVIDIA DLSS (display.temporal_aa \"dlss\") in the Linux x86-64 build: configure.py downloads NVIDIA's "
-    "DLSS SDK (not open source: its LICENSE.txt) and builds the module beside the game that alone links it "
-    "(libopenh1_dlss.so), with the DLSS runtime staged beside it (docs/temporal-aa.md)",
+    help="NVIDIA DLSS (display.temporal_aa \"dlss\") in the Linux x86-64 and Windows builds: configure.py "
+    "downloads NVIDIA's DLSS SDK (not open source: its LICENSE.txt) and builds the module beside the game that "
+    "alone links it "
+    "(libopenh1_dlss.so, openh1_dlss.dll), with the DLSS runtime staged beside it (docs/temporal-aa.md)",
 )
 parser.add_argument(
     "--vr",
