@@ -5401,7 +5401,7 @@ static boolean coop_player2_choose(short controller)
 bindings each */
 
 #define CONTROL_BINDINGS 2
-#define CONTROL_ROWS 8
+#define CONTROL_ROWS 9
 #define CONTROL_NAME_LENGTH 32
 
 /* (a refused change's help shown this long: control_capture_poll) */
@@ -5453,6 +5453,10 @@ static struct
 	/* (ACTIONS' last row, after CLIP: the HUD hidden, source/interface/
 	hud.c) */
 	{ "controls.hide_hud", L"HIDE HUD", 2, FALSE },
+	/* (WEAPONS' last rows, after SWITCH GRENADE: MCC's steps of the zoom, in
+	and out, beside its cycle, player_control.c) */
+	{ "controls.zoom_in", L"ZOOM IN", 1, FALSE },
+	{ "controls.zoom_out", L"ZOOM OUT", 1, FALSE },
 };
 
 static struct
@@ -5608,6 +5612,16 @@ static boolean control_capture_begin(struct widget_instance *widget)
 	return TRUE;
 }
 
+/* whether a binding is pressed by the input name is: the same input, or the
+wheel either way ("Wheel") for a turn of it one way ("Wheel Up", which a
+capture takes), so that Wheel Up taken for Zoom In comes off Switch
+Weapon's Wheel rather than pressing both */
+static boolean control_binding_taken_by(char const *binding, char const *name)
+{
+	return !_stricmp(binding, name) ||
+		(!_stricmp(binding, "Wheel") && (!_stricmp(name, "Wheel Up") || !_stricmp(name, "Wheel Down")));
+}
+
 /* whether clearing the control's bindings that are name (NULL: the one in
 slot) would take its last key: a game control must keep one */
 static boolean control_left_without_key(short control, short slot, char const *name)
@@ -5623,7 +5637,7 @@ static boolean control_left_without_key(short control, short slot, char const *n
 
 		if (!*binding)
 			continue;
-		if (name ? _stricmp(binding, name) != 0 : other_slot != slot)
+		if (name ? !control_binding_taken_by(binding, name) : other_slot != slot)
 			return FALSE;
 		taken = TRUE;
 	}
@@ -5672,7 +5686,7 @@ static void control_capture_poll(void)
 		{
 			for (other_slot = 0; other_slot < CONTROL_BINDINGS; other_slot++)
 			{
-				if (!_stricmp(controls_screen.bindings[other][other_slot], name))
+				if (control_binding_taken_by(controls_screen.bindings[other][other_slot], name))
 					controls_screen.bindings[other][other_slot][0] = 0;
 			}
 		}

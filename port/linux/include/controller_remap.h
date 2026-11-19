@@ -31,6 +31,9 @@ enum controller_remap_action
     /* (after the debug camera's, so that a v3 layout is a v4 one's start:
      * it is in the gameplay group, CONTROLLER_REMAP_DEBUG_ACTION) */
     PAD_PING,
+    /* (MCC's steps of the zoom, after Ping, so that a v4 layout is a v5
+     * one's start: unbound by default, source/input/input_abstraction.c) */
+    PAD_ZOOM_IN, PAD_ZOOM_OUT,
     CONTROLLER_REMAP_ACTIONS
 };
 /* The debug camera's actions, a group of their own: their buttons may be

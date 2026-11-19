@@ -19,7 +19,7 @@ static char const *const remap_names[CONTROLLER_REMAP_BUTTONS] = {"south","east"
 void controller_remap_defaults(unsigned char *buttons)
 {
     static unsigned char const defaults[CONTROLLER_REMAP_ACTIONS] = {
-        0,4,2,3,1,5,6,7,14,15, 13,255,255,9,10,255, 8,255,255,255, 8,9,15,7,6,4, 11
+        0,4,2,3,1,5,6,7,14,15, 13,255,255,9,10,255, 8,255,255,255, 8,9,15,7,6,4, 11, 255,255
     };
     memcpy(buttons, defaults, sizeof(defaults));
 }
@@ -97,7 +97,8 @@ int controller_remap_parse(char const *text, unsigned char *buttons)
     unsigned char parsed[CONTROLLER_REMAP_ACTIONS];
     int action, i, count;
     if (!text || !*text) return 0;
-    count = !strncmp(text, "v4:", 3) ? CONTROLLER_REMAP_ACTIONS : !strncmp(text, "v3:", 3) ? PAD_PING :
+    count = !strncmp(text, "v5:", 3) ? CONTROLLER_REMAP_ACTIONS : !strncmp(text, "v4:", 3) ? PAD_ZOOM_IN :
+        !strncmp(text, "v3:", 3) ? PAD_PING :
         !strncmp(text, "v2:", 3) ? PAD_CAMERA_CYCLE : CONTROLLER_REMAP_GAME_ACTIONS;
     if (count != CONTROLLER_REMAP_GAME_ACTIONS) text += 3;
     controller_remap_defaults(parsed);
@@ -139,7 +140,7 @@ void controller_remap_format(unsigned char const *buttons, char *text, unsigned 
     if (!size) return;
     *text = 0;
     if (size < 4) return;
-    strcpy(text, "v4:");
+    strcpy(text, "v5:");
     for (action = 0; action < CONTROLLER_REMAP_ACTIONS; action++)
     {
         char const *name = "unbound";
@@ -165,7 +166,8 @@ int controller_remap_read(short port, unsigned char *buttons)
         {
             char const *text = controller_remap_text((short)i);
             valid[i] = controller_remap_parse(text, layouts[i]);
-            if (valid[i] && i && strncmp(text, "v2:", 3) && strncmp(text, "v3:", 3) && strncmp(text, "v4:", 3))
+            if (valid[i] && i && strncmp(text, "v2:", 3) && strncmp(text, "v3:", 3) && strncmp(text, "v4:", 3) &&
+                strncmp(text, "v5:", 3))
             {
                 layouts[i][PAD_CHAT] = CONTROLLER_REMAP_UNBOUND;
                 layouts[i][PAD_FORWARD] = 8;

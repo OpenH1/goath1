@@ -192,18 +192,19 @@ data's panel) and the guest has no save dialog, so the folder is the way in and 
 ## Persistence and lifecycle
 
 `input.controller_p1` through `input.controller_p4` default to empty strings.
-New custom layouts use `v4:` followed by 27 comma-separated entries in this order:
+New custom layouts use `v5:` followed by 29 comma-separated entries in this order:
 
 ```
 jump, grenade type, use/reload, weapon, melee, flashlight, grenade, fire, crouch,
 zoom, scoreboard, screenshot, forward, backward, left, right, chat, team chat,
 vehicle chat, push to talk, camera faster, camera slower, camera/player switch,
-camera raise, camera lower, cycle camera, ping
+camera raise, camera lower, cycle camera, ping, zoom in, zoom out
 ```
 
 Ping is last so that a `v3:` layout (26 entries) is a `v4:` one's start; it is a
 gameplay and communication action (its button is unique among them), not the
-debug camera's.
+debug camera's. Zoom In and Zoom Out (MCC's steps of the zoom, beside Zoom's cycle)
+follow so that a `v4:` layout (27 entries) is a `v5:` one's start; they start unbound.
 
 Entries are physical tokens: `south,east,west,north,rb,lb,lt,rt,ls,rs,dpad_up,
 dpad_down,dpad_left,dpad_right,back,left_paddle,right_paddle,left_paddle2,right_paddle2,
@@ -212,14 +213,14 @@ and right paddle 1 and 2 (an Elite's P3, P1, P4, P2; the Steam Deck's L4, R4, L5
 `touchpad` and `misc1` to `misc6` are SDL's buttons of those names. None is the Xbox
 pad's, so only a custom layout's actions take them, and a prompt names an action on one
 in words ("L4", "TOUCHPAD") where the HUD has no icon for it
-(`controller_remap_prompt_text`). The extra tokens do not change the 27 entries, so the
-format stays `v4:`; an older version refuses a layout that uses them and falls back to
+(`controller_remap_prompt_text`). The extra tokens do not change the 29 entries, so the
+format stays `v5:`; an older version refuses a layout that uses them and falls back to
 the profile. South means A on Xbox, Cross on
 PlayStation and B on Switch. Tokens must be unique within gameplay/communication
 and separately within Debug; `unbound` may repeat. Unbound saves remain distinct
 from an empty setting (profile defaults).
 
-Old ten-action, 25-action `v2:` and 26-action `v3:` strings remain readable; Ping
+Old ten-action, 25-action `v2:`, 26-action `v3:` and 27-action `v4:` strings remain readable; Ping
 takes D-pad Right only where no older action has it. The appended Cycle
 Camera defaults to RB unless an old debug action already owns RB, in which case
 Cycle Camera starts unbound and can be assigned in the Debug group. Existing

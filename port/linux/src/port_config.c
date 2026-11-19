@@ -1392,6 +1392,13 @@ static const struct config_setting config_settings[] =
 		"Reloading.", _scope_keyboard },
 	{ "controls.zoom", _config_string, "\"Mouse Right, Z\"", "HALO_KEY_ZOOM", _environment_value, _platform_all,
 		"Zooming the scope.", _scope_keyboard },
+	{ "controls.zoom_in", _config_string, "\"\"", "HALO_KEY_ZOOM_IN", _environment_value, _platform_all,
+		"Zooming the scope in a step, as MCC does, to its closest and no further\n"
+		"(Zoom cycles back out). \"Wheel Up\" zooms with the mouse's wheel.\n"
+		"Unbound by default.", _scope_keyboard },
+	{ "controls.zoom_out", _config_string, "\"\"", "HALO_KEY_ZOOM_OUT", _environment_value, _platform_all,
+		"Zooming the scope out a step, as MCC does, to no zoom at all. \"Wheel\n"
+		"Down\" zooms out with the mouse's wheel. Unbound by default.", _scope_keyboard },
 	{ "controls.switch_weapon", _config_string, "\"Wheel, 1\"", "HALO_KEY_SWITCH_WEAPON", _environment_value,
 		_platform_all,
 		"Switching weapons.", _scope_keyboard },

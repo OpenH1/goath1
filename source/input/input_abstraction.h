@@ -60,6 +60,11 @@ byte input_abstraction_port_accept(
 	short controller_index);
 boolean input_abstraction_port_action_only(
 	short controller_index);
+/* port: MCC's Zoom In and Zoom Out pressed this frame, the keys'
+(controls.zoom_in, controls.zoom_out) or a custom controller layout's: 1 in,
+-1 out, 0 neither (or both) */
+short input_abstraction_port_zoom_step(
+	short controller_index);
 short input_abstraction_port_keyboard_action(
 	short local_player_index,
 	short game_control,

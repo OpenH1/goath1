@@ -1216,7 +1216,8 @@
 		<row key="command_6" kind="binding" label="" crumb="CONTROLS › KEY BINDINGS"/>
 		<row key="command_7" kind="binding" label="" crumb="CONTROLS › KEY BINDINGS"/>
 		<row key="command_8" kind="binding" label="" crumb="CONTROLS › KEY BINDINGS"/>
-		<section key="section_11" title="WALK"/>
+		<row key="command_9" kind="binding" label="" crumb="CONTROLS › KEY BINDINGS"/>
+		<section key="section_12" title="WALK"/>
 		<row key="walk" kind="choice" setting="input.walk" label="WALK" crumb="CONTROLS › KEY BINDINGS" search_choices="hold toggle">
 			<help>Hold walks while the Walk key is held; Toggle walks from one press to the next. Walking, the movement keys move you slowly, as a stick pushed a little does.</help>
 			<choice shown="HOLD" value="hold"/>

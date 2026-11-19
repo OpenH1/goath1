@@ -141,20 +141,25 @@ int main(void) {
  unsigned char a[CONTROLLER_REMAP_ACTIONS],b[CONTROLLER_REMAP_ACTIONS];
  char old[512],v3[512],text[512];char *last;int port;
  controller_remap_defaults(a);controller_remap_format(a,text,sizeof(text));
- assert(!strncmp(text,"v4:",3));assert(controller_remap_parse(text,b) && b[PAD_CAMERA_CYCLE]==4 && b[PAD_PING]==11);
- /* v2 is v4 without its last two actions (Cycle Camera, Ping), v3 without Ping. */
+ assert(!strncmp(text,"v5:",3));assert(controller_remap_parse(text,b) && b[PAD_CAMERA_CYCLE]==4 && b[PAD_PING]==11);
+ assert(b[PAD_ZOOM_IN]==255 && b[PAD_ZOOM_OUT]==255);
+ /* v4 is v5 without its last two actions (Zoom In, Zoom Out), unbound in it too ... */
+ text[1]='4';*strrchr(text,',')=0;*strrchr(text,',')=0;
+ assert(controller_remap_parse(text,b) && !memcmp(a,b,sizeof(a)));
+ /* ... v2 is v4 without its last two actions (Cycle Camera, Ping), v3 without Ping. */
  strcpy(old,text);old[1]='2';last=strrchr(old,',');assert(last);*last=0;last=strrchr(old,',');*last=0;
  assert(controller_remap_parse(old,b) && !memcmp(a,b,sizeof(a)));
  strcpy(v3,text);v3[1]='3';*strrchr(v3,',')=0;
  assert(controller_remap_parse(v3,b) && !memcmp(a,b,sizeof(a)));
  /* Existing debug RB bindings win over the newly introduced default. */
  controller_remap_assign(a,PAD_CAMERA_UP,4);assert(a[PAD_CAMERA_CYCLE]==255);
- controller_remap_format(a,text,sizeof(text));text[1]='2';*strrchr(text,',')=0;*strrchr(text,',')=0;
+ controller_remap_format(a,text,sizeof(text));text[1]='2';
+ *strrchr(text,',')=0;*strrchr(text,',')=0;*strrchr(text,',')=0;*strrchr(text,',')=0;
  assert(controller_remap_parse(text,b) && b[PAD_CAMERA_UP]==4 && b[PAD_CAMERA_CYCLE]==255);
  assert(!memcmp(a,b,sizeof(a)));
  /* ... and an older layout's D-pad Right (its strafe) over Ping's. */
  controller_remap_defaults(a);controller_remap_assign(a,PAD_RIGHT,11);assert(a[PAD_PING]==255);
- controller_remap_format(a,text,sizeof(text));text[1]='3';*strrchr(text,',')=0;
+ controller_remap_format(a,text,sizeof(text));text[1]='3';*strrchr(text,',')=0;*strrchr(text,',')=0;*strrchr(text,',')=0;
  assert(controller_remap_parse(text,b) && b[PAD_RIGHT]==11 && b[PAD_PING]==255);
  /* Ping is gameplay's: the debug camera may share its button. */
  controller_remap_assign(a,PAD_PING,8);assert(a[PAD_CHAT]==255 && a[PAD_CAMERA_FASTER]==8);
@@ -258,7 +263,7 @@ int main(void) {
  controller_remap_profile(0,b);controller_remap_assign(b,PAD_JUMP,CONTROLLER_REMAP_PADDLE+1);
  controller_remap_assign(b,PAD_SCOREBOARD,CONTROLLER_REMAP_PADDLE+2);
  controller_remap_format(b,text,sizeof(text));config_write("input.controller_p1",text);
- assert(strstr(text,"v4:right_paddle,") && strstr(text,",left_paddle2,"));
+ assert(strstr(text,"v5:right_paddle,") && strstr(text,",left_paddle2,"));
  assert(controller_remap_parse(text,c) && !memcmp(b,c,sizeof(b)));
  assert(!strcmp(controller_remap_button_name(CONTROLLER_REMAP_PADDLE,CONTROLLER_STEAM_DECK),"L4"));
  assert(!strcmp(controller_remap_button_name(CONTROLLER_REMAP_PADDLE+3,CONTROLLER_STEAM_DECK),"R5"));
@@ -300,7 +305,7 @@ int main(void) {
  controller_remap_assign(b,PAD_JUMP,CONTROLLER_REMAP_TOUCHPAD);
  controller_remap_assign(b,PAD_SCOREBOARD,CONTROLLER_REMAP_MISC+5);
  controller_remap_format(b,text,sizeof(text));config_write("input.controller_p1",text);
- assert(!strncmp(text,"v4:touchpad,",12) && strstr(text,",misc6,"));
+ assert(!strncmp(text,"v5:touchpad,",12) && strstr(text,",misc6,"));
  assert(controller_remap_parse(text,c) && !memcmp(b,c,sizeof(b)));
  assert(!controller_remap_parse("v4:misc7,east,west,north,rb,lb,lt,rt,ls,rs,dpad_up,unbound,unbound,dpad_right,back,"
   "unbound,ls,unbound,unbound,unbound,ls,rs,rs,rt,lt,rb,dpad_right",c));
@@ -510,7 +515,7 @@ int main(void) {
  assert(controller_remap_prompt_text(1,255)[0]=='U' && !controller_remap_prompt_text(1,0) && !controller_remap_prompt_text(1,16));
  /* a back paddle: past the icons, named as the player's controller names it (the Steam Deck's R5; an Elite's P2) */
  controller_remap_assign(b,0,CONTROLLER_REMAP_PADDLE+3);controller_remap_format(b,text,sizeof(text));
- assert(strstr(text,"v4:right_paddle2,"));config_write("input.controller_p3",text);
+ assert(strstr(text,"v5:right_paddle2,"));config_write("input.controller_p3",text);
  controller_remap_prompt(1,&profile);assert(profile.game_control_to_xbox_buttons[0]==CONTROLLER_REMAP_PROMPT_PADDLE+3);
  family=CONTROLLER_STEAM_DECK;{wchar_t const *w=controller_remap_prompt_text(1,profile.game_control_to_xbox_buttons[0]);
  assert(w[0]=='R' && w[1]=='5' && !w[2] && device_port==2);}

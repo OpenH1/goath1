@@ -38,7 +38,7 @@ def generated(fault=None):
     declarations = menus[start:menus.index("/* a setting's bindings", start)]
     code = declarations + "\n\n" + "\n\n".join(function(menus, name) for name in (
         "widget_screen_x", "control_row", "control_of_row", "control_binding_box", "control_slot_at",
-        "control_capture_begin", "control_left_without_key", "control_refuse", "control_capture_poll",
+        "control_capture_begin", "control_binding_taken_by", "control_left_without_key", "control_refuse", "control_capture_poll",
         "controls_update", "controls_help_index"))
     if fault:
         code = mutated(code, *fault)

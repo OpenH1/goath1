@@ -69,6 +69,11 @@ enum halo_keyboard_action
 	/* (Hide HUD's, which the game itself does not read: the HUD, the
 	reticle and the clock hidden or shown, source/interface/hud.c) */
 	HALO_KEYBOARD_HIDE_HUD,
+	/* (Zoom In's and Zoom Out's, MCC's: a step of the weapon's zoom in, to
+	its last level and no further, or out, to none, beside Zoom's cycle:
+	source/input/input_abstraction.c, source/game/player_control.c) */
+	HALO_KEYBOARD_ZOOM_IN,
+	HALO_KEYBOARD_ZOOM_OUT,
 	NUMBER_OF_HALO_KEYBOARD_ACTIONS
 };
 

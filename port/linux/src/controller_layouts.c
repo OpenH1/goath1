@@ -25,7 +25,7 @@ static char const *const action_names[CONTROLLER_REMAP_ACTIONS] = {
     "jump", "grenade_type", "use", "weapon", "melee", "flashlight", "grenade", "fire", "crouch", "zoom",
     "scoreboard", "screenshot", "forward", "backward", "left", "right", "chat", "team_chat", "vehicle_chat",
     "push_to_talk", "camera_faster", "camera_slower", "camera_switch", "camera_up", "camera_down", "camera_cycle",
-    "ping"
+    "ping", "zoom_in", "zoom_out"
 };
 
 char const *controller_layout_action_name(int action)
