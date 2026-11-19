@@ -3120,3 +3120,56 @@ static void effect_set_event(
 
 	return;
 }
+
+/* port: port/linux/game/light_sources.c (the enhanced dynamic lights'
+lights for the effects whose tags have none): the effect after
+effect_index (NONE: the first), its definition, the object it is on (NONE:
+none), whether it is going (not stopped or hidden from view) and where its
+first location is at the tick (the object's origin where it has none);
+NONE after the last. It only reads */
+long effects_port_next(
+	long effect_index,
+	long *definition_index,
+	long *object_index,
+	boolean *going,
+	real_point3d *position)
+{
+	if (!effect_data || !effect_data->valid || !effect_location_data || !effect_location_data->valid)
+		return NONE;
+	while ((effect_index = data_next_index(effect_data, effect_index)) != NONE)
+	{
+		struct effect_datum const *effect = effect_get(effect_index);
+		struct effect_location_datum const *instance = effect->location_datum_indices[0] != NONE
+			? (struct effect_location_datum const *)datum_try_and_get(effect_location_data,
+				effect->location_datum_indices[0])
+			: NULL;
+
+		*definition_index = effect->definition_index;
+		*object_index = effect->object_index;
+		*going = !TEST_FLAG(effect->header.flags, _effect_stopped_bit) &&
+			!TEST_FLAG(effect->header.flags, _effect_stopping_bit) &&
+			!TEST_FLAG(effect->header.flags, _effect_invisible_bit);
+		if (instance && instance->node_designator == NONE)
+		{
+			*position = instance->matrix.position;
+		}
+		else if (effect->object_index != NONE && object_try_and_get(effect->object_index))
+		{
+			if (instance)
+			{
+				matrix4x3_transform_point(object_get_node_matrix(effect->object_index, instance->node_designator),
+					&instance->matrix.position, position);
+			}
+			else
+			{
+				object_get_origin(effect->object_index, position);
+			}
+		}
+		else
+		{
+			continue;
+		}
+		return effect_index;
+	}
+	return NONE;
+}

@@ -3,8 +3,10 @@ DYNAMIC_LIGHTS.C
 
 The enhanced dynamic lights (Video Setup > Graphics > Dynamic Lights,
 display.dynamic_lights "enhanced"; "classic", the default, is the game's
-own). The lights the game attaches to projectiles (plasma bolts, needles,
-rockets), muzzle flashes and explosions are drawn by the renderer
+own). The lights the game attaches to projectiles (plasma bolts, a
+grenade), muzzle flashes and explosions, and the port's own where the tags
+have none (light_sources.c: needles, a Wraith's mortar, a fuel rod's
+explosion, fires), are drawn by the renderer
 (port/linux/src/d3d8_device.c, xgpu_spirv.c, xgpu_msl.c) for each pixel of
 the structure and of the models, through the structure's bump maps, with a softer, brighter
 falloff in linear light, and the projectiles' lights have a glow drawn about
@@ -62,6 +64,7 @@ structure's 3D BSP, from which a pixel finds its cluster
 #include "structures/structures.h"
 #include "structures/structure_bsp_definitions.h"
 #include "physics/bsp3d.h"
+#include "light_sources.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -70,6 +73,11 @@ structure's 3D BSP, from which a pixel finds its cluster
 int config_boolean(const char *name);
 /* port/linux/src (halo.log) */
 void platform_log(const char *format, ...);
+/* port/linux/src (the computer's clock) */
+unsigned long long platform_shared_clock_microseconds(void);
+/* port/linux/game/door_portals.c */
+short door_portals_clusters_in_sphere(short cluster_index, real_point3d const *position, real radius,
+	short maximum_count, short *clusters);
 
 static struct
 {
@@ -77,6 +85,9 @@ static struct
 	long flags[MAXIMUM_LIGHTS_PER_WINDOW];
 	real cone_scale[MAXIMUM_LIGHTS_PER_WINDOW];
 	real cone_offset[MAXIMUM_LIGHTS_PER_WINDOW];
+	/* its color's scale past the rasterizer's 1 (dynamic_lights_brighten:
+	0 for 1) */
+	real brightness[MAXIMUM_LIGHTS_PER_WINDOW];
 	/* (debug.dynamic_lights_log: where the game placed it, at the tick) */
 	real_point3d tick_position[MAXIMUM_LIGHTS_PER_WINDOW];
 	struct halo_dynamic_light lights[MAXIMUM_LIGHTS_PER_WINDOW];
@@ -112,6 +123,17 @@ void dynamic_lights_note(
 	dynamic_lights.cone_scale[rasterizer_light_index] = cone_scale;
 	dynamic_lights.cone_offset[rasterizer_light_index] = cone_offset;
 	dynamic_lights.tick_position[rasterizer_light_index] = *tick_position;
+}
+
+/* a rasterizer light just submitted: drawn brighter than the rasterizer's
+colors go (to 1), by scale (object_lights.c's light_port_weapon_glow) */
+void dynamic_lights_brighten(
+	long rasterizer_light_index,
+	real scale)
+{
+	if (rasterizer_light_index < 0 || rasterizer_light_index >= MAXIMUM_LIGHTS_PER_WINDOW)
+		return;
+	dynamic_lights.brightness[rasterizer_light_index] = scale;
 }
 
 /* a rasterizer light just submitted: the clusters it reaches (count less
@@ -239,6 +261,67 @@ boolean dynamic_lights_first_person(
 	return found;
 }
 
+/* the enhanced dynamic lights' own lights (light_sources.c: what glows
+with no light in its tags) after the game's count of them, in the room the
+game's leave: each with the clusters its sphere floods into from where it
+is, as the game's (none drawn where it is in no cluster); the count of all */
+static long dynamic_lights_sources(
+	long count)
+{
+	static unsigned long long timed, timed_frames;
+	boolean logging = config_boolean("debug.dynamic_lights_log") != 0;
+	unsigned long long start = logging ? platform_shared_clock_microseconds() : 0;
+	struct light_source const *sources;
+	short source_count = light_sources_gather(&sources, (short)(MAXIMUM_LIGHTS_PER_WINDOW - count));
+	short source_index;
+
+	for (source_index = 0; source_index < source_count && count < MAXIMUM_LIGHTS_PER_WINDOW; source_index++)
+	{
+		struct light_source const *source = &sources[source_index];
+		struct halo_dynamic_light *out = &dynamic_lights.lights[count];
+		short clusters[MAXIMUM_CLUSTERS_PER_STRUCTURE];
+		short cluster_count;
+		struct location location;
+
+		scenario_location_from_point(&location, &source->position);
+		if (location.cluster_index == NONE)
+			continue;
+		cluster_count = door_portals_clusters_in_sphere(location.cluster_index, &source->position, source->radius,
+			MAXIMUM_CLUSTERS_PER_STRUCTURE, clusters);
+		out->position[0] = source->position.x;
+		out->position[1] = source->position.y;
+		out->position[2] = source->position.z;
+		out->radius = source->radius;
+		out->color[0] = source->color.red;
+		out->color[1] = source->color.green;
+		out->color[2] = source->color.blue;
+		out->axis[0] = out->axis[1] = out->axis[2] = 0.0f;
+		out->cone_scale = 0.0f;
+		out->cone_offset = 1.0f;
+		out->flags = source->halo ? HALO_DYNAMIC_LIGHT_HALO | HALO_DYNAMIC_LIGHT_PROJECTILE : 0;
+		dynamic_lights_clusters(count, MIN(cluster_count, MAXIMUM_CLUSTERS_PER_STRUCTURE), clusters);
+		if (!(dynamic_lights.frame % 72) && source_index < 4 && config_boolean("debug.dynamic_lights_log"))
+		{
+			platform_log("dynamic lights: frame %lu: own light %ld at %.2f %.2f %.2f radius %.2f color %.2f %.2f %.2f",
+				dynamic_lights.frame, count, (double)source->position.x, (double)source->position.y,
+				(double)source->position.z, (double)source->radius, (double)source->color.red,
+				(double)source->color.green, (double)source->color.blue);
+		}
+		count++;
+	}
+	/* (debug.dynamic_lights_log: what they cost, on average) */
+	if (logging)
+	{
+		timed += platform_shared_clock_microseconds() - start;
+		if (++timed_frames == 600)
+		{
+			platform_log("dynamic lights: own lights %.1f us a frame (600 frames)", (double)timed / 600.0);
+			timed = timed_frames = 0;
+		}
+	}
+	return count;
+}
+
 /* the frame's lights (rasterizer_lights, as lights_preprocess_scene
 submitted them) to the renderer */
 void dynamic_lights_submit(
@@ -246,6 +329,7 @@ void dynamic_lights_submit(
 {
 	long light_index;
 	long count = MIN(rasterizer_lights.light_count, MAXIMUM_LIGHTS_PER_WINDOW);
+	long total;
 	real_vector3d right;
 	float camera[3], right_axis[3], up_axis[3];
 	long logged = 0;
@@ -263,6 +347,12 @@ void dynamic_lights_submit(
 		out->color[0] = light->color.red;
 		out->color[1] = light->color.green;
 		out->color[2] = light->color.blue;
+		if (dynamic_lights.brightness[light_index] > 0.0f)
+		{
+			out->color[0] *= dynamic_lights.brightness[light_index];
+			out->color[1] *= dynamic_lights.brightness[light_index];
+			out->color[2] *= dynamic_lights.brightness[light_index];
+		}
 		out->axis[0] = light->forward.i;
 		out->axis[1] = light->forward.j;
 		out->axis[2] = light->forward.k;
@@ -315,7 +405,8 @@ void dynamic_lights_submit(
 			dynamic_lights.cluster_masks[cluster][light_index >> 5] |= 1u << (light_index & 31);
 	}
 	dynamic_lights_world();
-	halo_dynamic_lights_set(dynamic_lights.lights, (int)count, camera, right_axis, up_axis,
+	total = dynamic_lights_sources(count);
+	halo_dynamic_lights_set(dynamic_lights.lights, (int)total, camera, right_axis, up_axis,
 		(unsigned int const (*)[4])dynamic_lights.cluster_masks);
 	memset(dynamic_lights.cluster_masks, 0, sizeof(dynamic_lights.cluster_masks));
 	memset(dynamic_lights.clusters_noted, 0, sizeof(dynamic_lights.clusters_noted));
@@ -325,6 +416,7 @@ void dynamic_lights_submit(
 		dynamic_lights.flags[light_index] = 0;
 		dynamic_lights.cone_scale[light_index] = 0.0f;
 		dynamic_lights.cone_offset[light_index] = 1.0f;
+		dynamic_lights.brightness[light_index] = 0.0f;
 		dynamic_lights.tick_position[light_index] = rasterizer_lights.lights[light_index].position;
 	}
 }

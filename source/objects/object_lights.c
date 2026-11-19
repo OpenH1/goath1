@@ -185,11 +185,13 @@ symbols in this file:
 #include "units/units.h"
 #include "cache/cache_files.h" /* port: (tag_iterator: light_port_glow_definition_get) */
 void shield_glow_update(void); /* port: port/linux/game/shield_glow.c */
+void light_sources_new_map(void); /* port: port/linux/game/light_sources.c */
 /* port: port/linux/game/dynamic_lights.c (display.dynamic_lights) */
 void dynamic_lights_note(long rasterizer_light_index, long flags, real cone_scale, real cone_offset,
 	real_point3d const *tick_position);
 boolean dynamic_lights_first_person(long weapon_index, real_point3d *position);
 void dynamic_lights_submit(void);
+void dynamic_lights_brighten(long rasterizer_light_index, real scale);
 void dynamic_lights_rank(long *lights, short count,
 	void (*describe)(long light, real_point3d *position, real *radius, real *intensity));
 void dynamic_lights_drawn(long light, real_point3d const *position, real radius, real_rgb_color const *color);
@@ -808,6 +810,7 @@ void lights_initialize_for_new_map(
 	void)
 {
 	light_port_glow_definition = NONE - 1; /* port: (looked for again) */
+	light_sources_new_map(); /* port: port/linux/game/light_sources.c */
 	data_make_valid(light_data);
 	lights_game_globals->render_lights = TRUE;
 	cluster_partition_make_valid(&light_cluster_partition);
@@ -1065,6 +1068,58 @@ static void light_port_rank_describe(
 	*intensity = MAX(light->color.red, MAX(light->color.green, light->color.blue));
 }
 
+/* port: whether a light that is only its lens flare's lights, with the
+enhanced dynamic lights, on this object as a projectile's does: a unit's
+(a Ghost's and a Banshee's running lights, a Sentinel's eye, a Hunter's fuel
+rod) and an item's (a plasma pistol's, a plasma rifle's and a needler's
+glow, held or on the ground), whose tags give them no dynamic light; not
+scenery's, a machine's or the map's, whose light the lightmap holds */
+static boolean light_port_flare_lights(
+	struct object_datum const *object)
+{
+	return object->object.type == _object_type_biped || object->object.type == _object_type_vehicle ||
+		object->object.type == _object_type_weapon || object->object.type == _object_type_equipment;
+}
+
+/* port: how strong a weapon's glow lights (light_port_flare_lights), one
+rule for every weapon's, as play tests set it: in a local player's hands in
+first person, a small bright light about the hands and the gun (a color of
+LIGHT_PORT_WEAPON_GLOW_HELD in all, reaching 0.3 world units); anywhere
+else, on the ground or in another's hands, a pool about it (0.85 in all,
+reaching 0.85). The tag's color, made by the weapon's own function (the
+charge, the heat, the needles loaded), is scaled by what this gives (the
+rasterizer's to 1 at most, the rest the enhanced lights': dynamic_lights.c's
+dynamic_lights_brighten); "in all" is over the weapon's copies of that light
+(the plasma pistol's two triggers) */
+#define LIGHT_PORT_WEAPON_GLOW_HELD 2.0f
+#define LIGHT_PORT_WEAPON_GLOW_HELD_RADIUS 0.3f
+#define LIGHT_PORT_WEAPON_GLOW_WORLD 0.85f
+#define LIGHT_PORT_WEAPON_GLOW_WORLD_RADIUS 0.85f
+
+static real light_port_weapon_glow(
+	struct light_datum const *light,
+	struct object_datum const *object,
+	boolean held,
+	real *radius)
+{
+	struct object_definition *definition = object_definition_get(object->definition_index);
+	short attachment_count = (short)MIN(definition->object.attachments.count, MAXIMUM_NUMBER_OF_ATTACHMENTS_PER_OBJECT);
+	short copies = 0;
+	short attachment_index;
+	real scale;
+
+	for (attachment_index = 0; attachment_index < attachment_count; attachment_index++)
+	{
+		struct object_attachment_definition const *attachment = TAG_BLOCK_GET_ELEMENT(
+			&definition->object.attachments, attachment_index, struct object_attachment_definition);
+
+		copies += attachment->type.index == light->definition_index;
+	}
+	scale = (held ? LIGHT_PORT_WEAPON_GLOW_HELD : LIGHT_PORT_WEAPON_GLOW_WORLD) / (real)MAX(copies, 1);
+	*radius = held ? LIGHT_PORT_WEAPON_GLOW_HELD_RADIUS : LIGHT_PORT_WEAPON_GLOW_WORLD_RADIUS;
+	return scale;
+}
+
 /* port: how far a light let go of is through its transition, so many ticks
 after it was let go: a light of no transition (the Scorpion's cannon's) is
 at its end as it is made, not 0/0 (a colour not a number) */
@@ -1168,6 +1223,9 @@ void lights_preprocess_scene(
 		real drawn_intensity;
 		real_rgb_color drawn_color;
 		real drawn_radius;
+		/* port: a weapon's glow's brightness past the rasterizer's
+		(light_port_weapon_glow) */
+		real weapon_glow_scale = 1.0f;
 
 		render_debug_light(scene_light_handle);
 		object = light->object_index != NONE
@@ -1303,11 +1361,13 @@ void lights_preprocess_scene(
 		}
 
 		/* port: with the enhanced dynamic lights, a projectile's light that
-		is only its lens flare's (a plasma bolt's, a needle's: the game lights
-		nothing with them) lights too, by its tag's color and radius
-		(port/linux/game/dynamic_lights.c) */
+		is only its lens flare's (a plasma bolt's: the game lights nothing
+		with them) lights too, by its tag's color and radius
+		(port/linux/game/dynamic_lights.c), and so does a unit's or an
+		item's (light_port_flare_lights) */
 		projectile_lights = !TEST_FLAG(light->flags, _point_light_dynamic_bit) && object &&
-			object->object.type == _object_type_projectile && halo_dynamic_lights_enhanced();
+			(object->object.type == _object_type_projectile || light_port_flare_lights(object)) &&
+			halo_dynamic_lights_enhanced();
 		if (light->color.red != 0.0f
 			|| light->color.green != 0.0f
 			|| light->color.blue != 0.0f)
@@ -1441,6 +1501,23 @@ void lights_preprocess_scene(
 						}
 					}
 
+					/* port: a weapon's glow, lit (projectile_lights), as
+					strong as one rule has every weapon's
+					(light_port_weapon_glow) */
+					if (projectile_lights && object && object->object.type == _object_type_weapon &&
+						light->parent_light_index == NONE)
+					{
+						real scale;
+
+						weapon_glow_scale = light_port_weapon_glow(light, object,
+							TEST_FLAG(light->flags, _point_light_attached_to_first_person_weapon_bit),
+							&light_parameters.radius);
+						scale = MIN(weapon_glow_scale, 1.0f);
+						light_parameters.color.red *= scale;
+						light_parameters.color.green *= scale;
+						light_parameters.color.blue *= scale;
+						weapon_glow_scale /= scale > 0.0f ? scale : 1.0f;
+					}
 					/* port: (how it is drawn ranks it next frame:
 					port/linux/game/dynamic_lights.c) */
 					dynamic_lights_drawn(scene_light_handle, &light_parameters.position, light_parameters.radius,
@@ -1498,6 +1575,8 @@ void lights_preprocess_scene(
 								flags |= HALO_DYNAMIC_LIGHT_HALO;
 						}
 						dynamic_lights_note(light->rasterizer_light_index, flags, cone_scale, cone_offset, &light->position);
+						if (weapon_glow_scale != 1.0f)
+							dynamic_lights_brighten(light->rasterizer_light_index, weapon_glow_scale);
 						/* (and the clusters it reaches: those its sphere as drawn
 						floods into through the portals from where it is drawn, as
 						the game gathers its surfaces, or its own clusters where it
