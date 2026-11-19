@@ -95,13 +95,16 @@ then takes to fade out, in nanoseconds */
  * all, the processor drawing each of them each frame), over the 480 rows'
  * trail. */
 #define LOADING_ART_HD_MINIMUM_HEIGHT 540
-#define LOADING_ART_HD_MAXIMUM_HEIGHT 2160
-#define LOADING_ART_HD_MAXIMUM_WIDTH (LOADING_ART_HD_MAXIMUM_HEIGHT * 1152 / 480)
+/* (the screen's own rows up to 8K's and past them: the widest frame, 1152
+ * of the 480 rows' units across, within 16384 pixels, every desktop and
+ * phone GPU's largest image) */
+#define LOADING_ART_HD_MAXIMUM_WIDTH 16384
+#define LOADING_ART_HD_MAXIMUM_HEIGHT (LOADING_ART_HD_MAXIMUM_WIDTH * 480 / 1152)
 /* the threads that draw it, the presenter's among them */
 #ifndef LOADING_ART_HD_THREADS
 #define LOADING_ART_HD_THREADS 4
 #endif
-/* (memory's guard: 2160 rows of 21:9) */
+/* (no fewer than the screen's: the largest frame's) */
 #ifndef LOADING_ART_HD_BUDGET
 #define LOADING_ART_HD_BUDGET (LOADING_ART_HD_MAXIMUM_WIDTH * LOADING_ART_HD_MAXIMUM_HEIGHT)
 #endif
