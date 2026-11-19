@@ -3630,6 +3630,48 @@ own, `platform_video_swap`; vsync's wait is the host's), with its input
 read then, and the frame's drawing taking the steps it finds: a change of
 the main loop's order, not made here.
 
+### Forwarded at once
+
+The trace's frame presented (`P`) is now the frame handed to the renderer
+(`xgpu_backend_frame_end`'s commit), not the end of the frame cap's sleep
+after it, which had put a whole frame (6.9 ms at 144) on every "to
+presented" figure above; the owner's own frame after its change and the
+host's after it applies one are timed too, and `tools/net_latency.py
+--align` puts machines on computers of their own on the host's clock (each
+client's offset from the fastest datagram each way, per 15 s, with a line
+for the drift).
+
+Three copies on one computer's loopback at 120, the host and one client
+drawing at 144 frames a second (mailbox), a third client without a
+renderer; medians in ms (95th percentile in brackets):
+
+| Stage | Before | After |
+| --- | --- | --- |
+| A client's control: input read to its step, to its datagram | 0.02, 0.06 | 0.02, 0.05 |
+| ... input to the host's applied, to the host's frame | 12.7 (17.8), 13.5 (18.4) | 12.6 (18.1), 13.6 (18.8) |
+| ... the host's read to sent on to the other clients | 4.3 (6.4) | 0.0 (1.6) |
+| ... the drawing client: arrival to read, read to applied, applied to frame | 2.6, 0.0, 0.4 | 2.8, 0.0, 0.4 |
+| ... input to the other drawing client's frame (a sender without a renderer, whose input waits 8.3 for its step) | 15.7 (24.2) | 13.0 (15.9) |
+| Own input to own frame (client; host) | 0.5; 0.8 | 0.4; 0.8 |
+
+A host reading as its datagrams come (`network_distributed_server_receive`:
+a drawing host's thread in its frame's wait, a host without a renderer in
+its wait for its step) held what it read for its step's datagram whenever
+the step (or the wait's end) was due within 8 ms, and sent on no sooner
+than 8 ms after its last forward: at 120, nearly always. It now sends on at
+the dedicated server's interval (2 ms), with the step's datagram only what
+it reads within 2 ms of it (`distributed_forward_waits_for_step`'s
+interval, `distributed_reading_as_they_come`); read once a frame, as
+before. Nothing on the wire changes but when: the host's datagrams went
+from 170 to 190 a second for its two clients. `debug.network_timing_before`
+keeps the frame's interval.
+
+What is left on the way to the host is its hold before its sub-step (8 ms
+median): the clock's 5th percentile came 4.2 ms early, within its 1 to 5 ms
+band; the rest is the frames' phase on both machines (a step runs at the
+first frame after it falls due), which only running the sub-steps when due
+would take away (above).
+
 ## Numbers on parallel branches
 
 GOAT H1's own numbers (`HALO_PORT_STANDARD_NETWORK_VERSION`, its
