@@ -2053,6 +2053,12 @@ static void test_stream_hdr(void)
 		xgpu_metal_set_texture(0, source, &sampler);
 		memset(&uniforms, 0, sizeof(uniforms));
 		uniforms.metrics[2] = uniforms.metrics[3] = 1.0f / SIZE;
+		/* (the picture's size and the presentation's power, as host_metal.m
+		sets them: the pass places its samples by the picture since #1108,
+		and a zero size samples nothing) */
+		uniforms.bounds[0] = uniforms.bounds[1] = (float)SIZE;
+		uniforms.bounds[2] = uniforms.bounds[3] = 1.0f;
+		uniforms.window[2] = 1.0f;
 		uniforms.hdr[0] = frame.paper_white;
 		uniforms.hdr[1] = frame.peak;
 		uniforms.hdr[2] = (float)frame.output;
