@@ -62,6 +62,9 @@ def generated(fault=None):
     if fault == 'soft':
         # (a record made with display.soft_particles off: an effect's soft group and its other draws merged)
         code = mutated(code, '\twords[2] |= (unsigned long)(of->soft_group != 0) << 16;\n', '')
+    if fault == 'motion':
+        # (a record made with display.temporal_aa off: an object's draw and the same draw outside the objects merged)
+        code = mutated(code, '\twords[2] |= (unsigned long)(of->motion_objects != 0) << 17;\n', '')
     if fault == 'span':
         # (a record made with the setting off: a found window's draw and a mirror's merged)
         code = mutated(code, ' | (unsigned long)of->world_span << 3;', ';')
@@ -85,6 +88,7 @@ def test_prepared_journal(case):
 @pytest.mark.parametrize('fault,case', [('repeats', 'roundtrip'), ('delta', 'roundtrip'), ('type', 'malformed'),
                                         ('missing', 'missing'), ('key', 'stale'), ('blind', 'settings'),
                                         ('tags', 'settings'), ('span', 'settings'), ('soft', 'settings'),
+                                        ('motion', 'settings'),
                                         ('derivation', 'key'),
                                         ('scenario', 'key'), ('numbers', 'pages'), ('own_pages', 'pages'),
                                         ('floor', 'pages'), ('shared', 'pages')])
@@ -111,6 +115,11 @@ CARRIED = {
     # in the frame's format, whatever the shape of the display the record was made on)
     'screen view': ('journal_identify', 'to->value |= JOURNAL_VIEW_SCREEN;'),
     'screen view sized': ('journal_view', '(unsigned long)halo_screen_width(), SCREEN_HEIGHT);'),
+    # (display.temporal_aa: the window's objects' span, an input whatever the setting, and told the backend as a
+    # record plays, so that its draws' motion variants are made whatever the setting was as it was recorded)
+    'motion span': ('halo_motion_objects', 'inputs.motion_objects = begin &&'),
+    'motion span played': ('journal_play', 'journal_motion_span(inputs.motion_objects != 0);'),
+    'motion span closed': ('halo_gpu_journal_replay', 'journal_motion_span(FALSE);'),
 }
 
 
@@ -123,7 +132,8 @@ def test_draw_inputs_journaled():
     assert uncarried(read(DEVICE)) == []
 
 
-@pytest.mark.parametrize('name', ['inputs', 'inputs set', 'text atlas named', 'screen view'])
+@pytest.mark.parametrize('name', ['inputs', 'inputs set', 'text atlas named', 'screen view', 'motion span',
+                                  'motion span played'])
 def test_draw_inputs_negative(name):
     device = read(DEVICE)
     line = CARRIED[name][1]
@@ -167,6 +177,12 @@ KEPT_ELSEWHERE = {
     'd3d8_resource_freed': "the resources' table",
     'halo_gpu_journal_record': "the journal's own", 'halo_gpu_journal_texture': "the journal's own",
     'halo_gpu_journal_take': "the journal's own", 'halo_gpu_journal_replay': "the journal's own",
+    'halo_motion_window': "display.temporal_aa's jitter, a uniform (draw_uniforms_update), and whether the window's "
+                          "objects draw their motion: the backend's own record, sent again as a record plays",
+    'halo_motion_objects': "the backend's motion target bound (its own record); the objects' span, which their "
+                           "variants are derived from, is struct draw_inputs' motion_objects",
+    'd3d8_draw_state_kept': "debug.retained_shadows' hint that a draw's state is the one before's: no draw is "
+                            "kept so while a preparation runs or a journal records",
 }
 
 

@@ -470,8 +470,11 @@ static void node_registers(real_matrix4x3 const *matrix, motion_node registers)
 
 void motion_vectors_objects(boolean begin)
 {
-	if (motion_vectors.active)
-		halo_motion_objects(begin);
+	/* (whether or not the motion is drawn: the span is the draws' input,
+	journaled, so that a record made with the setting off makes their
+	motion's variants as it plays with it on; d3d8_device.c draws the
+	motion only in an active window) */
+	halo_motion_objects(begin);
 }
 
 /* an object's entry: its own, or a free one, or the one drawn longest ago */
