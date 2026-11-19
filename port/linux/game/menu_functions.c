@@ -3529,8 +3529,39 @@ static short settings_text_width(long font, wchar_t const *text)
 	return (short)(MAX(text_bounds.x1, cursor.x0) - bounds.x0);
 }
 
+/* how much of a word (its spaces before it counted) goes on a line of its
+own when it is wider than width alone (a folder's path): up to its last '/'
+or '\' that fits, else its last character that fits (at least one); all of
+it when it fits, or while the font is not known */
+static short settings_word_fit(wchar_t const *text, short word, long font, short width)
+{
+	wchar_t piece[128];
+	short start = 0, end, fit = 0, slash = 0;
+
+	while (start < word && text[start] == ' ')
+		start++;
+	if (font == NONE || word - start < 2 || word - start >= (short)NUMBEROF(piece))
+		return word;
+	memcpy(piece, text + start, (word - start) * sizeof(wchar_t));
+	piece[word - start] = 0;
+	if (settings_text_width(font, piece) <= width)
+		return word;
+	for (end = (short)(start + 1); end <= word; end++)
+	{
+		piece[end - start] = 0;
+		if (settings_text_width(font, piece) > width)
+			break;
+		fit = end;
+		if (text[end - 1] == '/' || text[end - 1] == '\\')
+			slash = end;
+		piece[end - start] = text[end];
+	}
+	return slash > start ? slash : MAX(fit, (short)(start + 1));
+}
+
 /* the words in lines that fit across width in the font (the game's line
-breaks, \r\n), broken at spaces; as they are while the font is not known */
+breaks, \r\n), broken at spaces, and a word wider than a line (a path)
+after a slash; as they are while the font is not known */
 static short settings_text_wrap(wchar_t const *text, wchar_t *wrapped, short size, long font, short width)
 {
 	short length = 0, line_start = 0, lines = 1;
@@ -3544,6 +3575,8 @@ static short settings_text_wrap(wchar_t const *text, wchar_t *wrapped, short siz
 			word++;
 		while (text[word] && text[word] != ' ')
 			word++;
+		/* (the rest of a word too wide for a line: the next word) */
+		word = settings_word_fit(text, word, font, width);
 		if (length + word + 2 >= size)
 			break;
 		memcpy(wrapped + length, text, word * sizeof(wchar_t));

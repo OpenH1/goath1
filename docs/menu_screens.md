@@ -780,7 +780,7 @@ port/linux/src/dlss_addon.c's.
 (#1216; the main menu's). The table is the sources of the game's maps, the row source `data.sources`: XBOX MAPS,
 CUSTOM EDITION MAPS and MCC CONTENT, each its state (`INSTALLED`, `COPYING 34%`, `12 MAPS`). The panel is the chosen
 row's (`data.heading`, `data.status`, `data.from`, `data.folder`), with OPEN FOLDER (`data open folder`, Y: the
-source's folder on the desktop) and ADD (`data add`, A on a row, X; its words `data.add`, none while a copy runs):
+source's folder on the desktop) and ADD (`data add`, A on a row or the panel; its words `data.add`, none while a copy runs):
 Custom Edition's installer, looked for as the first start looks (`game_data_scan.c`) as the page opens, has its
 maps copied into custom_maps in a thread (`map_import.c`), the progress on the page; once they are there COPY AGAIN
 writes every map again, which repairs a damaged one. The map lists see what was added at once

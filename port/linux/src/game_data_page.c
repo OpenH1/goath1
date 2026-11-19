@@ -109,7 +109,6 @@ static struct
 	struct map_sources sources;
 	int requested;
 	int read;
-	char places_text[GAME_DATA_PATH_SIZE + 128];
 	char opened[GAME_DATA_PATH_SIZE + 64];
 } game_data;
 
@@ -132,7 +131,6 @@ static void game_data_read(void)
 		game_data.lock = SDL_CreateMutex();
 	game_data_root(root, sizeof(root));
 	game_data_default_places(&game_data.places, root);
-	game_data_places_text(&game_data.places, game_data.places_text, (int)sizeof(game_data.places_text));
 	map_sources_read(root, &game_data.sources);
 	game_data.requested = map_sources_requested();
 	game_data.read = 1;
@@ -341,48 +339,48 @@ static void game_data_status(char *value, unsigned long size)
 	if (game_data_rows.chosen == _row_xbox)
 	{
 		if (game_data.requested)
-			snprintf(value, size, "The maps screen opens the next time the game starts, to copy them again from "
-				"your disc image. Cancel Copy leaves it closed.");
+			snprintf(value, size, "The maps will be copied again from your disc image the next time the game "
+				"starts. Cancel Copy keeps them as they are.");
 		else
-			snprintf(value, size, "Your Xbox disc's maps, which the game needs. It plays from them, so they are "
-				"copied again only at a start: Copy Again opens the maps screen then.");
+			snprintf(value, size, "The maps from your Xbox disc. The game is using them, so Copy Again runs the "
+				"next time the game starts.");
 		return;
 	}
 	if (game_data_rows.chosen == _row_mcc)
 	{
-		snprintf(value, size, "The Master Chief Collection's map packages in the mcc_maps folder%s. Put a "
-			"package's folder there, then Look Again.", config_boolean("game.workshop_maps") ?
-			", and the Halo CE Workshop maps Steam has installed" : "");
+		snprintf(value, size, "Map packages from the Master Chief Collection, in the mcc_maps folder.%s Put a "
+			"package's folder there, then choose Look Again.", config_boolean("game.workshop_maps") ?
+			" Steam's Workshop maps are found too." : "");
 		return;
 	}
 	if (job == _job_copying)
 	{
 		game_data_size(game_data.done, done, sizeof(done));
 		game_data_size(game_data.total, total, sizeof(total));
-		snprintf(value, size, "Copying %s: %s of %s (%d%%). You can leave this page: the copy goes on.",
-			game_data.file[0] ? game_data.file : "the maps", done, total, game_data_percent());
+		snprintf(value, size, "Copying %s: %s of %s. You can leave this page while it copies.",
+			game_data.file[0] ? game_data.file : "the maps", done, total);
 	}
 	else if (job == _job_looking)
-		snprintf(value, size, "Looking for Custom Edition's installer in %s.", game_data.places_text);
+		snprintf(value, size, "Looking for Custom Edition's installer...");
 	else if (game_data.copy == _copy_failed)
-		snprintf(value, size, "Nothing more was copied: %s", game_data.error);
+		snprintf(value, size, "The copy stopped. %s", game_data.error);
 	else if (game_data.copy == _copy_done && game_data.written)
 	{
 		game_data_size(game_data.written, done, sizeof(done));
-		snprintf(value, size, "%s %s of maps: they are in the map lists' Custom Multiplayer now.",
-			game_data.replaced ? "Copied again," : "Added,", done);
+		snprintf(value, size, "%s %s of maps. They're in the map lists under Custom Multiplayer.",
+			game_data.replaced ? "Copied again:" : "Added", done);
 	}
 	else if (game_data.copy == _copy_done)
-		snprintf(value, size, "The custom_maps folder has every map the installer has: nothing was copied.");
+		snprintf(value, size, "You already have every map in the installer. Nothing was copied.");
 	else if (game_data_custom_edition_added())
-		snprintf(value, size, "Halo PC's multiplayer maps, Gearbox's among them, from Custom Edition's installer. "
-			"Copy Again writes every one again, which repairs a damaged map.");
+		snprintf(value, size, "Multiplayer maps from Custom Edition's installer. Copy Again copies them all again, "
+			"which repairs a damaged map.");
 	else if (game_data.found)
-		snprintf(value, size, "Halo PC's multiplayer maps, Gearbox's among them, from Custom Edition's installer "
-			"(optional). Add copies them.");
+		snprintf(value, size, "Multiplayer maps from Custom Edition's installer. They're optional. Add copies "
+			"them.");
 	else
-		snprintf(value, size, "No Custom Edition installer (halocesetup_en_1.00.exe) was found. Put it in %s, then "
-			"Look Again.", game_data.places_text);
+		snprintf(value, size, "Custom Edition's installer (halocesetup_en_1.00.exe) wasn't found. Put it in "
+			"Downloads or on the Desktop, then choose Look Again.");
 }
 
 /* where the chosen source comes from */
@@ -429,10 +427,12 @@ int game_data_page_value(const char *name, char *value, unsigned long size)
 	SDL_LockMutex(game_data.lock);
 	if (!strcmp(name, "data.detail"))
 	{
+		/* (how many of the three sources have maps: "2 OF 3 ADDED") */
 		if (job == _job_copying)
-			snprintf(value, size, "Copying %d%%", game_data_percent());
+			snprintf(value, size, "COPYING %d%%", game_data_percent());
 		else
-			map_sources_summary(&game_data.sources, value, (int)size);
+			snprintf(value, size, "%d OF %d ADDED", (game_data.sources.present[_map_source_xbox] != 0) +
+				(game_data_custom_edition_added() != 0) + (game_data_rows.mcc_maps > 0), NUMBER_OF_ROWS);
 	}
 	else if (!strcmp(name, "data.heading"))
 		snprintf(value, size, "%s", game_data_rows.chosen == _row_xbox ? "Xbox maps" :
