@@ -158,6 +158,17 @@ void host_render_stream_gpu_time(uint64_t nanoseconds)
 	(void)nanoseconds;
 }
 
+uint32_t host_render_stream_frame_playing(void)
+{
+	return 0;
+}
+
+void host_render_stream_gpu_frame(uint32_t frame, uint64_t nanoseconds)
+{
+	(void)frame;
+	(void)nanoseconds;
+}
+
 int host_render_stream_playing(void)
 {
 	return 0;
