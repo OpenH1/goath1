@@ -270,6 +270,22 @@ static struct
 	float effect_scale[4], effect_offset[4], effect_screen_offset;
 	/* (and made for a flat screen's one view: effect_views) */
 	int effect_flat;
+	/* the uniforms last uploaded, as they were made (uniforms_update), and
+	a flat screen's soft effect's copy of them for the first-person
+	weapon's pixels (effect_first_person_uniforms: their scene's depth as
+	the world's projection would have it, xgpu_stream.h's
+	xgpu_depth_remap), uploaded for the serial of the first */
+	struct xgpu_spirv_uniforms made;
+	uint32_t made_count, first_person_made;
+	struct xgpu_vulkan_range first_person_range;
+	uint64_t first_person_uploaded;
+	float first_person_remap[2];
+	/* the first-person weapon's depth line (xgpu_depth_line) in the depth
+	target its draws marked with the stencil's first bit since that
+	target's stencil was last cleared (first_person_depth: 0 none; the
+	target's number), its pixels' projection (first_person_latch) */
+	uint32_t first_person_depth;
+	float first_person_line[2];
 	/* (and past them the previous frame's, display.temporal_aa's: the
 	192 as they are, but where a record of them sets them apart,
 	xgpu_stream.h's MOTION) */
@@ -837,6 +853,9 @@ static void stream_clear(void *context, const struct xgpu_stream_clear *record)
 	/* (none in the pre-pass) */
 	if (prepass.active)
 		return;
+	/* (the first-person weapon's marks cleared: its pixels the world's) */
+	if (parts & XGPU_VULKAN_CLEAR_STENCIL)
+		stream.first_person_depth = 0;
 	if (target_get(stream.color))
 		target_get(stream.color)->written++;
 	targets_bind();
@@ -1822,10 +1841,13 @@ static int uniforms_update(const struct stream_pipeline *entry)
 	if (stream.uniforms_dirty || stream.uniforms_uploaded != serial)
 	{
 		const struct xgpu_stream_draw_uniforms *from = &stream.uniforms;
-		struct xgpu_spirv_uniforms *to = xgpu_vulkan_upload(UNIFORMS_RANGE, 256, &stream.uniforms_range);
+		struct xgpu_spirv_uniforms *ring = xgpu_vulkan_upload(UNIFORMS_RANGE, 256, &stream.uniforms_range);
+		/* (a flat screen's soft effect's made in stream.made first, kept for
+		its first-person copy: effect_first_person_uniforms) */
+		struct xgpu_spirv_uniforms *to = effect_flat ? &stream.made : ring;
 		int stage, light;
 
-		if (!to)
+		if (!ring)
 			return 0;
 		memset(to, 0, sizeof(*to));
 		memcpy(to->viewport_scale, from->viewport_scale, sizeof(to->viewport_scale));
@@ -1900,6 +1922,11 @@ static int uniforms_update(const struct stream_pipeline *entry)
 			memcpy(to->effect_unproject, stream.effect_unproject, sizeof(to->effect_unproject));
 			memcpy(to->effect_eye, stream.effect_eye, sizeof(to->effect_eye));
 			stream.uniforms_effect = 1 + effect_flat;
+		}
+		if (to != ring)
+		{
+			memcpy(ring, to, sizeof(*to));
+			stream.made_count++;
 		}
 		stream.uniforms_dirty = 0;
 		stream.uniforms_uploaded = serial;
@@ -2230,6 +2257,83 @@ uniforms, its vertices and indices; nothing if it cannot be drawn. Apart
 (a world pipeline that has a stand-in): its shaders not made here, its
 pipeline made apart from the draws (xgpu_vulkan_pipeline_ready), and FALSE
 before anything is done where either is not made yet; else TRUE */
+/* ---------- the first-person weapon's depth (xgpu_stream.h, "the depth
+buffer's two projections")
+
+The weapon's draws mark its pixels with the stencil's first bit, and
+write their depth with its own projection: a draw that marks them gives
+the projection (first_person_latch), until the target's stencil is cleared
+(stream_clear). A flat screen's soft effect (display.soft_particles) is
+drawn where the game tests no stencil in two draws, by that bit: over the
+world's pixels as ever, and over the weapon's with the scene's depth it
+reads remapped to the world's projection (its uniforms' effect_eye[1]:
+xgpu_spirv.c's effect_prelude), so that it fades against the weapon's own
+distance, not about 5 times it (its near plane's 0.0117 against the
+world's 0.0625). Its hardware test passes more of it than that fade
+leaves (the weapon's depth stands for a point farther away): a sprite cut
+by it is already faded out, so the cut is not seen. Without the setting,
+nothing is drawn apart: as the Xbox drew. */
+
+/* the draw's projection's depth line (xgpu_depth_line): the registers as
+they are, in the draw's viewport and depth range */
+static int draw_depth_line(float line[2])
+{
+	float projection[6][4];
+
+	memcpy(projection, stream.constants[0], 4 * sizeof(projection[0]));
+	memcpy(projection[4], stream.constants[SCREEN_CONVERSION], 2 * sizeof(projection[0]));
+	return xgpu_depth_line((const float (*)[4])projection, stream.uniforms.viewport_scale,
+		stream.uniforms.viewport_offset, stream.dynamic.depth_range, line);
+}
+
+/* a draw that marks the first-person weapon's pixels (the stencil's first
+bit replaced with 1, rasterizer_xbox_models.c's STENCIL_MODE_WRITE): their
+depth is of its projection */
+static void first_person_latch(const struct xgpu_stream_pipeline_key *key)
+{
+	if (!key->stencil_test || !(key->stencil_write_mask & 1) || key->stencil_pass != XGPU_STENCIL_REPLACE ||
+		!(stream.dynamic.stencil_reference & 1) || !stream.depth || !key->depth_write)
+		return;
+	if (draw_depth_line(stream.first_person_line))
+		stream.first_person_depth = stream.depth;
+}
+
+/* the weapon's pixels in the depth target drawn into have a projection of
+their own (first_person_latch) */
+static int first_person_drawn(void)
+{
+	return stream.first_person_depth && stream.first_person_depth == stream.depth && !stream.preparing;
+}
+
+/* a flat screen's soft effect's uniforms over the weapon's pixels: the
+draw's (stream.made) with the remap of its scene's depth to the world's
+projection in effect_eye[1] (its scale, its offset, 1), in the ring for
+this submission (stream.first_person_range); 0 if not */
+static int effect_first_person_uniforms(void)
+{
+	uint64_t serial = xgpu_vulkan_serial();
+	struct xgpu_spirv_uniforms *to;
+	float world[2], remap[2];
+
+	if (!draw_depth_line(world) || !xgpu_depth_remap(world, stream.first_person_line, remap))
+		return 0;
+	if (stream.first_person_uploaded == serial && stream.first_person_made == stream.made_count &&
+		!memcmp(remap, stream.first_person_remap, sizeof(remap)))
+		return 1;
+	to = xgpu_vulkan_upload(UNIFORMS_RANGE, 256, &stream.first_person_range);
+	if (!to)
+		return 0;
+	memcpy(to, &stream.made, sizeof(*to));
+	to->effect_eye[1][0] = remap[0];
+	to->effect_eye[1][1] = remap[1];
+	to->effect_eye[1][2] = 1.0f;
+	to->effect_eye[1][3] = 0.0f;
+	memcpy(stream.first_person_remap, remap, sizeof(remap));
+	stream.first_person_made = stream.made_count;
+	stream.first_person_uploaded = serial;
+	return 1;
+}
+
 /* (display.temporal_aa's: below) */
 static int motion_tables(void);
 static int motion_writer(const struct xgpu_stream_pipeline_define *definition);
@@ -2242,8 +2346,9 @@ static int draw_pipeline(const struct draw_input *input, int apart)
 	struct xgpu_vulkan_range previous_range;
 	struct stream_pipeline *entry;
 	struct variant variant;
+	struct xgpu_vulkan_dynamic_state split_dynamic;
 	uint32_t index, attempt;
-	int motion_drawn, motion_writes, made;
+	int motion_drawn, motion_writes, made, split, first_person;
 	double traced;
 
 	if (!stream.pipeline_id || !stream.definition || !input->count)
@@ -2338,6 +2443,21 @@ static int draw_pipeline(const struct draw_input *input, int apart)
 #ifdef HALO_VR
 	pipeline.depth_clamp = host_vulkan_vr_sky() != 0;
 #endif
+	/* (a flat screen's soft effect where the game tests no stencil: drawn
+	apart over the world's pixels and the first-person weapon's, by the
+	stencil's first bit, its reference the draws' own; "the first-person
+	weapon's depth" above) */
+	split = !prepass.drawing && entry->effect && stream.definition->key.views == XGPU_MULTIVIEW_NONE &&
+		!pipeline.stencil_test && pipeline.depth_format == XGPU_VULKAN_FORMAT_D24S8;
+	if (split)
+	{
+		pipeline.stencil_test = 1;
+		pipeline.stencil_function = XGPU_COMPARE_EQUAL;
+		pipeline.stencil_fail = pipeline.stencil_depth_fail = pipeline.stencil_pass = XGPU_STENCIL_KEEP;
+		pipeline.stencil_read_mask = 1;
+		pipeline.stencil_write_mask = 0;
+	}
+	first_person = split && first_person_drawn();
 	{
 		uint64_t before = xgpu_vulkan_pipeline_count();
 		uint64_t vertex_program = stream.definition->key.vertex_program[0] |
@@ -2392,7 +2512,7 @@ static int draw_pipeline(const struct draw_input *input, int apart)
 		preparation_end(0, traced);
 		serial = xgpu_vulkan_serial();
 		traced = preparation_start();
-		if (!uniforms_update(entry))
+		if (!uniforms_update(entry) || (first_person && !effect_first_person_uniforms()))
 		{
 			preparation_end(1, traced);
 			continue;
@@ -2473,8 +2593,22 @@ static int draw_pipeline(const struct draw_input *input, int apart)
 		target_get(stream.depth)->unresolved = 1;
 	if (!prepass.drawing && target_get(stream.color))
 		target_get(stream.color)->written++;
+	/* (the weapon's pixels' projection, where they are marked) */
+	first_person_latch(&stream.definition->key);
 	traced = preparation_start();
+	if (split)
+	{
+		split_dynamic = stream.dynamic;
+		split_dynamic.stencil_reference = 0;
+		draw.dynamic = &split_dynamic;
+	}
 	xgpu_vulkan_draw(&draw);
+	if (first_person)
+	{
+		split_dynamic.stencil_reference = 1;
+		draw.uniforms = stream.first_person_range;
+		xgpu_vulkan_draw(&draw);
+	}
 	preparation_end(3, traced);
 	return 1;
 }
@@ -3019,7 +3153,8 @@ static void stream_dynamic_lights_halos(void *context, const struct xgpu_stream_
 	struct xgpu_vulkan_dynamic_state dynamic;
 	struct xgpu_vulkan_draw draw;
 	uint32_t layers = record->layers > 1 ? (uint32_t)record->layers : 1, attempt;
-	int slot = layers == 1 ? 0 : layers == 2 ? 1 : 2, halo, corner, merged;
+	int slot = layers == 1 ? 0 : layers == 2 ? 1 : 2, halo, corner, merged, split, first_person;
+	struct xgpu_vulkan_range first_person_constants;
 	uint64_t before;
 
 	(void)context;
@@ -3051,6 +3186,21 @@ static void stream_dynamic_lights_halos(void *context, const struct xgpu_stream_
 	merged = layers > 1 && !color->multisampled && !depth->multisampled;
 	if (merged)
 		pipeline.depth_format = XGPU_VULKAN_FORMAT_D24S8;
+	/* (a flat screen's: with the depth attachment bound too, untested and
+	unwritten, its stencil tested: drawn apart over the world's pixels and
+	the first-person weapon's, by the stencil's first bit, each with its
+	projection's depth: "the first-person weapon's depth" above) */
+	split = layers == 1 && !color->multisampled == !depth->multisampled;
+	if (split)
+	{
+		pipeline.depth_format = XGPU_VULKAN_FORMAT_D24S8;
+		pipeline.stencil_test = 1;
+		pipeline.stencil_function = XGPU_COMPARE_EQUAL;
+		pipeline.stencil_fail = pipeline.stencil_depth_fail = pipeline.stencil_pass = XGPU_STENCIL_KEEP;
+		pipeline.stencil_read_mask = 1;
+		pipeline.stencil_write_mask = 0;
+	}
+	first_person = split && stream.first_person_depth && stream.first_person_depth == record->depth;
 	before = xgpu_vulkan_pipeline_count();
 	if (stream.preparing)
 	{
@@ -3095,8 +3245,10 @@ static void stream_dynamic_lights_halos(void *context, const struct xgpu_stream_
 		struct halo_vertex *vertices = xgpu_vulkan_upload(draw.count * (uint32_t)sizeof(*vertices), 16, &draw.vertices[0]);
 		float (*constants)[4] = xgpu_vulkan_upload(CONSTANTS_RANGE, 256, &draw.constants);
 		struct xgpu_spirv_uniforms *uniforms = xgpu_vulkan_upload(UNIFORMS_RANGE, 256, &draw.uniforms);
+		/* (and the weapon's pixels' own: their depth's line) */
+		float (*weapon)[4] = first_person ? xgpu_vulkan_upload(CONSTANTS_RANGE, 256, &first_person_constants) : NULL;
 
-		if (!vertices || !constants || !uniforms)
+		if (!vertices || !constants || !uniforms || (first_person && !weapon))
 			return;
 		if (serial != xgpu_vulkan_serial())
 			continue;
@@ -3117,6 +3269,16 @@ static void stream_dynamic_lights_halos(void *context, const struct xgpu_stream_
 		memcpy(constants[XGPU_SPIRV_HALO_CAMERA_AXES], record->camera_right, sizeof(record->camera_right));
 		memcpy(constants[XGPU_SPIRV_HALO_CAMERA_AXES + 1], record->camera_up, sizeof(record->camera_up));
 		halo_depth_parameters(record, constants[XGPU_SPIRV_HALO_DEPTH]);
+		if (weapon)
+		{
+			memset(weapon, 0, CONSTANTS_RANGE);
+			memcpy(weapon[XGPU_SPIRV_HALO_PROJECTION], record->projection, sizeof(record->projection));
+			memcpy(weapon[XGPU_SPIRV_HALO_CAMERA_AXES], record->camera_right, sizeof(record->camera_right));
+			memcpy(weapon[XGPU_SPIRV_HALO_CAMERA_AXES + 1], record->camera_up, sizeof(record->camera_up));
+			halo_depth_parameters(record, weapon[XGPU_SPIRV_HALO_DEPTH]);
+			weapon[XGPU_SPIRV_HALO_DEPTH][0] = stream.first_person_line[0];
+			weapon[XGPU_SPIRV_HALO_DEPTH][1] = stream.first_person_line[1];
+		}
 		memset(uniforms, 0, sizeof(*uniforms));
 		memcpy(uniforms->viewport_scale, record->viewport_scale, sizeof(uniforms->viewport_scale));
 		memcpy(uniforms->viewport_offset, record->viewport_offset, sizeof(uniforms->viewport_offset));
@@ -3133,10 +3295,17 @@ static void stream_dynamic_lights_halos(void *context, const struct xgpu_stream_
 	if (color->multisampled)
 		color->unresolved = 1;
 	color->written++;
-	xgpu_vulkan_set_target_views(color->multisampled ? color->multisampled : color->image, merged ? depth->image : NULL,
-		0, layers);
-	draw.reads_depth = (uint8_t)merged;
+	xgpu_vulkan_set_target_views(color->multisampled ? color->multisampled : color->image, merged ? depth->image :
+		split ? (depth->multisampled ? depth->multisampled : depth->image) : NULL, 0, layers);
+	draw.reads_depth = (uint8_t)(merged || (split && !depth->multisampled));
+	dynamic.stencil_reference = 0;
 	xgpu_vulkan_draw(&draw);
+	if (first_person)
+	{
+		dynamic.stencil_reference = 1;
+		draw.constants = first_person_constants;
+		xgpu_vulkan_draw(&draw);
+	}
 	/* (the stream's targets again, for what follows) */
 	targets_bind();
 }
