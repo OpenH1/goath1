@@ -3727,6 +3727,16 @@ before the step's time is shown in the same frame as before; a press between
 the step's time and the frame's start, which the step took before, now waits
 for the next step (the view's turning is read at each frame as before).
 
+Tried and left: only the host stepping when due, a drawing client at its
+frames' starts. The client's own input to its frame was as before (1.2, 1.8
+at 60), but the host's own player's grew as with both (4.0, 6.7), and the
+client's input, now up to a frame late against the host's ticks on time,
+came after the host's tick in some (at 60 the input to the host's applied
+7.6 (34.1), a tick at the 95th percentile). Nor can a client send its input
+at the step's time and run the step at its frame with a later press merged
+in: the host runs the client's tick from the input sent, and the client's
+prediction from a different input would come apart from it every time.
+
 ## Numbers on parallel branches
 
 GOAT H1's own numbers (`HALO_PORT_STANDARD_NETWORK_VERSION`, its
