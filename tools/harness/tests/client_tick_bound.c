@@ -20,12 +20,13 @@ enum { NOW = 100000, FAR = 5000 };
 
 static boolean valid;
 static long last;
+static unsigned short last_flags;
 static unsigned long pending;
 static unsigned short const flags[4] = { 1, 2, 4, 8 };
 
 static boolean input(long tick, long now)
 {
-	return distributed_add_new_ticks(&valid, &last, tick, flags, 4, &pending, now);
+	return distributed_add_new_ticks(&valid, &last, &last_flags, tick, flags, 4, &pending, now);
 }
 
 static struct substep_record records[4];

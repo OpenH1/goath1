@@ -264,6 +264,7 @@ static struct
 	long update_number;
 	struct player_action action;
 	unsigned long pending_control_flags;
+	unsigned short last_control_flags;
 } update_client_relayed_actions[MAXIMUM_NUMBER_OF_PLAYERS];
 
 /* ... an OpenH1 game's: the latest action of another client's player that
@@ -277,6 +278,7 @@ static struct
 	long tick;
 	struct player_action action;
 	unsigned long pending_control_flags;
+	unsigned short last_control_flags;
 	long heard_time;
 	boolean taken;
 } update_client_forwarded_actions[MAXIMUM_NUMBER_OF_PLAYERS];
@@ -288,6 +290,8 @@ static struct
 {
 	boolean valid;
 	long tick;
+	/* (its buttons: the tick before the next one's) */
+	unsigned short control_flags;
 	long received_time;
 } update_server_distributed_inputs[MAXIMUM_NUMBER_OF_PLAYERS];
 
@@ -1165,19 +1169,29 @@ boolean distributed_tick_stuck(
 }
 
 /* the buttons of the ticks after last up to tick (control_flags newest
-first), added to pending; FALSE for a tick already had, or (now not NONE: a
+first, count of them) pressed in them, added to pending: those down in a
+tick and not in the one before it (the oldest's, the tick last had, where
+the history reaches it, else the buttons kept of the tick last had, the
+one before the oldest). A button held from a tick already had into one
+lost is no press: added, a trigger let go of in a lost tick's later
+sub-step was pulled again in the tick after (a shot more) wherever a tick
+went missing after a tap. FALSE for a tick already had, or (now not NONE: a
 tick another machine states) one no clock near now could have run. A kept
 last that no clock could have run gives way (distributed_tick_stuck), and the
 tick after it brings its own buttons only */
 static boolean distributed_add_new_ticks(
 	boolean *valid,
 	long *last,
+	unsigned short *last_flags,
 	long tick,
 	unsigned short const *control_flags,
 	short count,
 	unsigned long *pending,
 	long now)
 {
+	short history = count;
+	boolean had = *valid;
+	long had_tick = *last;
 	short index;
 
 	if (now != NONE && !distributed_tick_plausible(tick, now))
@@ -1190,9 +1204,18 @@ static boolean distributed_add_new_ticks(
 	else if (tick - *last < count)
 		count = (short)(tick - *last);
 	for (index = 0; index < count; index++)
-		*pending |= control_flags[index];
+	{
+		unsigned short before = 0;
+
+		if (index + 1 < history)
+			before = control_flags[index + 1];
+		else if (had && had_tick == tick - count)
+			before = *last_flags;
+		*pending |= control_flags[index] & ~before;
+	}
 	*valid = TRUE;
 	*last = tick;
+	*last_flags = control_flags[0];
 	return TRUE;
 }
 
@@ -1216,7 +1239,8 @@ boolean update_server_handle_distributed_input(
 	if (!queue)
 		return FALSE;
 	if (!distributed_add_new_ticks(&update_server_distributed_inputs[absolute_index].valid,
-		&update_server_distributed_inputs[absolute_index].tick, tick, control_flags, count,
+		&update_server_distributed_inputs[absolute_index].tick,
+		&update_server_distributed_inputs[absolute_index].control_flags, tick, control_flags, count,
 		&update_server_pending_control_flags[absolute_index], now))
 	{
 		return FALSE;
@@ -1303,7 +1327,8 @@ void update_client_handle_relayed_action(
 	if (player_index < 0 || player_index >= MAXIMUM_NUMBER_OF_PLAYERS || count <= 0 || !distributed_action_valid(action))
 		return;
 	if (distributed_add_new_ticks(&update_client_relayed_actions[player_index].valid,
-		&update_client_relayed_actions[player_index].update_number, update_number, control_flags, count,
+		&update_client_relayed_actions[player_index].update_number,
+		&update_client_relayed_actions[player_index].last_control_flags, update_number, control_flags, count,
 		&update_client_relayed_actions[player_index].pending_control_flags, NONE))
 	{
 		update_client_relayed_actions[player_index].action = *action;
@@ -1326,7 +1351,8 @@ void update_client_handle_forwarded_action(
 		update_client_forwarded_actions[player_index].valid = FALSE;
 	}
 	if (distributed_add_new_ticks(&update_client_forwarded_actions[player_index].valid,
-		&update_client_forwarded_actions[player_index].tick, tick, control_flags, count,
+		&update_client_forwarded_actions[player_index].tick,
+		&update_client_forwarded_actions[player_index].last_control_flags, tick, control_flags, count,
 		&update_client_forwarded_actions[player_index].pending_control_flags,
 		game_time_initialized() ? game_time_get() : NONE))
 	{
