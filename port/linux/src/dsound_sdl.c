@@ -117,8 +117,11 @@ step of the position through its HRTF too) */
 #define RESAMPLER_TABLE_STEPS 256
 #define RESAMPLER_CUTOFF 0.96
 #define RESAMPLER_KAISER_BETA 6.5
-#define RESAMPLER_MAXIMUM_STRETCH 2
-#define RESAMPLER_HISTORY 128
+/* (4: the game's own highest frequency, 4 times the output rate) */
+#define RESAMPLER_MAXIMUM_STRETCH 4
+/* (the frames a low pass narrowed the most reaches, 2 x RESAMPLER_ZERO_CROSSINGS
+x RESAMPLER_MAXIMUM_STRETCH, and the one it is at, rounded up) */
+#define RESAMPLER_HISTORY 256
 /* the Xbox's resampler, which a voice's reverb send goes through
 (send_phases): a low pass of SEND_ZERO_CROSSINGS source frames each side, in
 SEND_TAPS taps (whole vectors: those past it are 0) */
@@ -2036,10 +2039,16 @@ static void resampler_reset(struct sdl_stream *stream)
 
 /* how much the low pass is narrowed for a voice taking frames step at a time:
 for one faster than the output rate, to keep what it takes above the output's
-band out (up to RESAMPLER_MAXIMUM_STRETCH times) */
+band out (up to RESAMPLER_MAXIMUM_STRETCH times). The Xbox's and the linear
+resamplers are never narrowed, but the frames taken ahead (and so when a
+packet is finished, and a voice run dry stops) follow it: theirs stays at
+RESAMPLER_UNNARROWED_STRETCH, as it always was */
+#define RESAMPLER_UNNARROWED_STRETCH 2
 static float resampler_scale(double step)
 {
-	return step > 1.0 ? (float)(1.0 / (step < RESAMPLER_MAXIMUM_STRETCH ? step : RESAMPLER_MAXIMUM_STRETCH)) : 1.0f;
+	double most = resampler_mode == RESAMPLER_SINC ? RESAMPLER_MAXIMUM_STRETCH : RESAMPLER_UNNARROWED_STRETCH;
+
+	return step > 1.0 ? (float)(1.0 / (step < most ? step : most)) : 1.0f;
 }
 
 static float packet_sample(const struct voice_packet *packet, unsigned long frame, unsigned long channel,
