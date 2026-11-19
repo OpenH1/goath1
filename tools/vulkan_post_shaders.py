@@ -70,7 +70,8 @@ UNIFORMS = ("metrics", "bounds", "hdr", "window", "panini", "tangents", "gamut",
             "reproject2", "reproject3", "motion")
 # the fragment programs, in xgpu_vulkan_post_shaders.h's order
 PROGRAMS = ("fxaa", "smaa_edges", "smaa_weights", "smaa_blend", "rotate", "hdr_tone_map", "hdr_tone_map_ms",
-            "hdr_encode", "panini", "motion_resolve", "motion_view")
+            "hdr_encode", "panini", "motion_resolve", "motion_view", "loading", "loading_caption",
+            "loading_picture")
 # one triangle over the whole viewport
 VERTEX_SOURCE = (
     "void main()\n"
@@ -223,7 +224,10 @@ SMAA_PREFIX = (
 )
 # each sampler's texture unit, which becomes its binding
 UNITS = {"color_texture": 0, "edges_texture": 0, "area_texture": 1, "search_texture": 2, "weights_texture": 1,
-         "objects_texture": 0, "depth_texture": 1}
+         "objects_texture": 0, "depth_texture": 1,
+         # the loading screen's (LOADING_SOURCE's, LOADING_CAPTION_SOURCE's and LOADING_PICTURE_SOURCE's)
+         "trail_texture": 0, "still_texture": 1, "frame_texture": 1, "table_texture": 2, "word_texture": 3,
+         "caption_texture": 3, "picture_texture": 0}
 # Vulkan's own program: the frame turned for a swapchain the display turns
 # (a phone held sideways: xgpu_vulkan_post_rotate). Each pixel takes the
 # texel the bounds' matrix (its rows xy and zw) turns it to, about the
@@ -360,6 +364,260 @@ MOTION_VIEW_SOURCE = (
     "}\n"
 )
 # the clears' pixel shader (its uniforms at the passes' binding)
+# The loading screen's sharp frame, drawn by the GPU at the screen's rows
+# (port/linux/src/loading_art.h, "the sharp frame drawn by the GPU"): each
+# pixel as loading_art_hd_rows draws it, in its integer arithmetic, from the
+# 480 rows' trail between the last two steps and the sweep's glint
+# (trail_texture: the step before's rows 0 to 479, the last's 480 to 959,
+# its alpha the glint), the scene's still layers packed (still_texture,
+# loading_art_hd_pack's) or, without a scene, the picture resampled
+# (LOADING_PICTURE_SOURCE's), the picture's hues and the sweep's mask
+# (table_texture, loading_art_hd_table's) and the words (word_texture: their
+# coverage, red, green, blue, over the box window gives). Every texture is
+# read texel by texel (texelFetch), no filter.
+LOADING_COMMON = """
+ivec4 texel_of(sampler2D image, ivec2 place)
+{
+\treturn ivec4(round(texelFetch(image, place, 0) * 255.0));
+}
+
+/* the sweep's mask (loading_art_mask) */
+int mask_at(sampler2D table, int x, int y)
+{
+\treturn x < 0 || x >= 128 ? 5 : texel_of(table, ivec2(x, 16 + y)).r;
+}
+
+/* the mask at a place of the 480 rows' columns (column, its 16 rows' row
+in 256ths): loading_art_hd_compose's and loading_art_hd_rows' */
+int mask_between(sampler2D table, float column, int mask_row)
+{
+\tfloat whole = floor(column);
+\tint ix = int(clamp(whole, -1.0, 128.0));
+\tint fx = int((column - whole) * 256.0);
+\tint iy = mask_row >> 8, my = mask_row & 255, iy1 = min(iy + 1, 15);
+\tint upper = mask_at(table, ix, iy) * (256 - fx) + mask_at(table, ix + 1, iy) * fx;
+\tint lower = mask_at(table, ix, iy1) * (256 - fx) + mask_at(table, ix + 1, iy1) * fx;
+\treturn (upper * (256 - my) + lower * my + 32768) >> 16;
+}
+
+/* (2 * pixel + 1) * size * 128 / shown - 128, without overflow */
+int sample_place(int pixel, int size, int shown)
+{
+\tint a = (2 * pixel + 1) * size;
+\treturn (a / shown) * 128 + ((a % shown) * 128) / shown - 128;
+}
+"""
+
+LOADING_SOURCE = (
+    "uniform sampler2D trail_texture;\n"
+    "uniform sampler2D still_texture;\n"
+    "uniform sampler2D table_texture;\n"
+    "uniform sampler2D word_texture;\n"
+    "\n"
+    "uniform vec4 metrics;\n"
+    "uniform vec4 bounds;\n"
+    "uniform vec4 hdr;\n"
+    "uniform vec4 window;\n"
+    "out vec4 result;\n"
+    + LOADING_COMMON + """
+/* a row of the trail between the steps (fraction of 256), at a column and
+the next by f (of 256): red, green, blue and glint, of 65536 */
+ivec4 trail_row(int row, int c0, int c1, int f, int fraction)
+{
+\tivec4 p0 = texel_of(trail_texture, ivec2(c0, row)), q0 = texel_of(trail_texture, ivec2(c0, row + 480));
+\tivec4 p1 = texel_of(trail_texture, ivec2(c1, row)), q1 = texel_of(trail_texture, ivec2(c1, row + 480));
+\tivec3 a = (p0.rgb * (256 - fraction) + q0.rgb * fraction + 128) >> 8;
+\tivec3 b = (p1.rgb * (256 - fraction) + q1.rgb * fraction + 128) >> 8;
+\treturn ivec4(a * (256 - f) + b * f, q0.a * (256 - f) + q1.a * f);
+}
+
+void main()
+{
+\tivec2 p = ivec2(gl_FragCoord.xy);
+\tint width = int(metrics.x), height = int(metrics.y), frame_width = int(metrics.z);
+\tint fraction = int(bounds.x), base = int(bounds.y), completion = int(bounds.z), light_scale = int(bounds.w);
+\t/* (the 480 rows' column and row of the pixel's middle, in 256ths) */
+\tint column = clamp(sample_place(p.x, frame_width, width), 0, (frame_width - 1) * 256 - 1);
+\tint c0 = column >> 8, f = column & 255, c1 = min(c0 + 1, frame_width - 1);
+\tint row = max(((2 * p.y + 1) * 480 * 128) / height - 128, 0);
+\tint r0 = row >> 8, fy = row & 255;
+\tif (r0 >= 479)
+\t{
+\t\tr0 = 479;
+\t\tfy = 0;
+\t}
+\tint r1 = min(r0 + 1, 479);
+\tivec4 upper = trail_row(r0, c0, c1, f, fraction), lower = trail_row(r1, c0, c1, f, fraction);
+\tivec4 trail = (upper * (256 - fy) + lower * fy + 32768) >> 16;
+\t/* the sweep's band at the pixel, at its brightness */
+\tprecise float place = (float(p.x) + 0.5) * hdr.y - 0.5 + hdr.x;
+\tint mask_row = clamp(((2 * p.y + 1) * 16 * 128) / height - 128, 0, 15 * 256);
+\tint mask = mask_between(table_texture, place, mask_row);
+\tint scale = (light_scale * mask + 128) >> 8;
+\tivec4 still = texel_of(still_texture, p);
+\tivec3 value = trail.rgb;
+\tif (metrics.w > 0.5)
+\t{
+\t\t/* the scene: its colour and what the sweep lights of it (its glint
+\t\tadded), the words over both */
+\t\tint hue = still.a & 15, white = (still.a >> 4) & 1, sky = (still.a >> 5) & 1;
+\t\tint light = still.g | ((still.a >> 6) << 8), edge = still.b;
+\t\tint shown = sky != 0 ? base * 112 / 24 : base;
+\t\tint lit = light + trail.a * (64 + edge) * 7 / 2048;
+\t\tif (white == 0 && lit > 110)
+\t\t\tlit = min(110 + (lit - 110) / 3, 190);
+\t\tivec3 feed = texel_of(table_texture, ivec2(min(lit, 255), hue)).rgb;
+\t\tivec3 scene = texel_of(table_texture, ivec2(still.r, hue)).rgb;
+\t\tif (p.x >= int(window.x) && p.x < int(window.z) && p.y >= int(window.y) && p.y < int(window.w))
+\t\t{
+\t\t\tivec4 word = texel_of(word_texture, p - ivec2(window.xy));
+\t\t\tif (word.r != 0)
+\t\t\t{
+\t\t\t\tscene = scene + (word.gba - scene) * word.r / 255;
+\t\t\t\tfeed = feed + (word.gba - feed) * word.r / 255;
+\t\t\t}
+\t\t}
+\t\tvalue = min(value + (feed * scale + 32512) / 65025 + ((scene * shown) >> 16), ivec3(255));
+\t\t/* (kept in the picture's blues) */
+\t\tvalue.r = min(value.r, (value.b * 196) >> 8);
+\t\tvalue.g = min(value.g, (value.b * 228) >> 8);
+\t}
+\telse
+\t\tvalue = min(value + (still.rgb * scale + 32512) / 65025, ivec3(255));
+\tif (completion < 256)
+\t\tvalue = (value * completion) >> 8;
+\tresult = vec4(vec3(value) / 255.0, 1.0);
+}
+""")
+
+# The caption over the sharp frame at the screen's pixels
+# (loading_art_caption_shown's, loading_art_caption_gpu's uniforms): the
+# frame (frame_texture) as the presenter's filter shows it, and where the
+# caption's letters are (caption_texture's alpha; its colour the words' of
+# the row) the words' light (loading_art_caption_lit's). Drawn over the
+# caption's box (window: its top left in the shown frame; panini: the shown
+# frame's top left in the target), its viewport the box.
+LOADING_CAPTION_SOURCE = (
+    "uniform sampler2D trail_texture;\n"
+    "uniform sampler2D frame_texture;\n"
+    "uniform sampler2D table_texture;\n"
+    "uniform sampler2D caption_texture;\n"
+    "\n"
+    "uniform vec4 metrics;\n"
+    "uniform vec4 bounds;\n"
+    "uniform vec4 hdr;\n"
+    "uniform vec4 window;\n"
+    "uniform vec4 panini;\n"
+    "out vec4 result;\n"
+    + LOADING_COMMON + """
+int trail_bilinear(int x0, int x1, int y0, int y1, int fx, int fy, int channel)
+{
+\tint upper = texel_of(trail_texture, ivec2(x0, y0))[channel] * (256 - fx) +
+\t\ttexel_of(trail_texture, ivec2(x1, y0))[channel] * fx;
+\tint lower = texel_of(trail_texture, ivec2(x0, y1))[channel] * (256 - fx) +
+\t\ttexel_of(trail_texture, ivec2(x1, y1))[channel] * fx;
+\treturn (upper * (256 - fy) + lower * fy + 32768) >> 16;
+}
+
+void main()
+{
+\tivec2 shown = ivec2(metrics.xy), frame = ivec2(metrics.zw);
+\tivec2 s = ivec2(gl_FragCoord.xy) - ivec2(panini.xy);
+\tivec4 caption = texel_of(caption_texture, s - ivec2(window.xy));
+\t/* the frame there, as the bilinear filter shows it */
+\tint px = clamp(sample_place(s.x, frame.x, shown.x), 0, (frame.x - 1) * 256);
+\tint py = clamp(sample_place(s.y, frame.y, shown.y), 0, (frame.y - 1) * 256);
+\tint x0 = px >> 8, x1 = min(x0 + 1, frame.x - 1), across = px & 255;
+\tint y0 = py >> 8, y1 = min(y0 + 1, frame.y - 1), down = py & 255;
+\tivec3 above = texel_of(frame_texture, ivec2(x0, y0)).rgb * (256 - across) +
+\t\ttexel_of(frame_texture, ivec2(x1, y0)).rgb * across;
+\tivec3 below = texel_of(frame_texture, ivec2(x0, y1)).rgb * (256 - across) +
+\t\ttexel_of(frame_texture, ivec2(x1, y1)).rgb * across;
+\tivec3 value = (above * (256 - down) + below * down + 32768) >> 16;
+\tif (caption.a != 0)
+\t{
+\t\tint frame_width = int(hdr.y), fraction = int(bounds.x), base = int(bounds.y);
+\t\tint completion = int(bounds.z);
+\t\tprecise float x = (float(s.x) + 0.5) * hdr.y / metrics.x - 0.5;
+\t\tprecise float y = (float(s.y) + 0.5) * 480.0 / metrics.y - 0.5;
+\t\tx = clamp(x, 0.0, float(frame_width - 1));
+\t\ty = clamp(y, 0.0, 479.0);
+\t\tint lx0 = int(x), ly0 = int(y);
+\t\tint fx = int((x - float(lx0)) * 256.0), fy = int((y - float(ly0)) * 256.0);
+\t\tint lx1 = min(lx0 + 1, frame_width - 1), ly1 = min(ly0 + 1, 479);
+\t\tprecise float column = x + hdr.x;
+\t\tint mask_row = clamp(int((y + 0.5) * 16.0 * 256.0 / 480.0) - 128, 0, 15 * 256);
+\t\tint scale = (int(bounds.w) * mask_between(table_texture, column, mask_row) + 128) >> 8;
+\t\tivec3 lit;
+\t\tfor (int channel = 0; channel < 3; channel++)
+\t\t{
+\t\t\tint before = trail_bilinear(lx0, lx1, ly0, ly1, fx, fy, channel);
+\t\t\tint after = trail_bilinear(lx0, lx1, ly0 + 480, ly1 + 480, fx, fy, channel);
+\t\t\tint word = caption[channel];
+\t\t\tlit[channel] = min(((before * (256 - fraction) + after * fraction + 128) >> 8) +
+\t\t\t\t(word * scale + 32512) / 65025 + ((word * base) >> 16), 255);
+\t\t}
+\t\tif (hdr.z > 0.5)
+\t\t{
+\t\t\tlit.r = min(lit.r, (lit.b * 196) >> 8);
+\t\t\tlit.g = min(lit.g, (lit.b * 228) >> 8);
+\t\t}
+\t\tif (completion < 256)
+\t\t\tlit = (lit * completion) >> 8;
+\t\tvalue = value + (lit - value) * caption.a / 255;
+\t}
+\tresult = vec4(vec3(value) / 255.0, 1.0);
+}
+""")
+
+# Without a scene, the picture at its own size (picture_texture: 1600x1200,
+# or the 640x480 one) resampled once a load to the sharp frame's pixels, as
+# loading_art_source_resample does on the processor: Catmull-Rom's cubic
+# each way, widened by as many of the picture's pixels as a pixel covers
+# where it covers more than one, edges clamped (metrics: the picture's
+# width, height and its pixels to the 480 rows'; bounds: a and b across
+# and down, loading_art_hd_picture_uniforms').
+LOADING_PICTURE_SOURCE = (
+    "uniform sampler2D picture_texture;\n"
+    "\n"
+    "uniform vec4 metrics;\n"
+    "uniform vec4 bounds;\n"
+    "out vec4 result;\n"
+    """
+float cubic(float t)
+{
+\tt = abs(t);
+\treturn t < 1.0 ? (1.5 * t - 2.5) * t * t + 1.0 : t < 2.0 ? ((-0.5 * t + 2.5) * t - 4.0) * t + 2.0 : 0.0;
+}
+
+void main()
+{
+\tivec2 p = ivec2(gl_FragCoord.xy), size = ivec2(metrics.xy);
+\tfloat units = metrics.z;
+\tvec2 step = bounds.xz * units;
+\tvec2 wide = max(step, vec2(1.0));
+\tvec2 middle = (vec2(p) + 0.5) * step + bounds.yw * units - 0.5;
+\tint left = int(floor(middle.x - 2.0 * wide.x)) + 1, right = int(floor(middle.x + 2.0 * wide.x));
+\tint top = int(floor(middle.y - 2.0 * wide.y)) + 1, bottom = int(floor(middle.y + 2.0 * wide.y));
+\tfloat total_x = 0.0, total_y = 0.0;
+\tfor (int i = left; i <= right; i++)
+\t\ttotal_x += cubic((float(i) - middle.x) / wide.x);
+\tvec3 sum = vec3(0.0);
+\tfor (int j = top; j <= bottom; j++)
+\t{
+\t\tfloat weight_y = cubic((float(j) - middle.y) / wide.y);
+\t\tvec3 across = vec3(0.0);
+\t\ttotal_y += weight_y;
+\t\tfor (int i = left; i <= right; i++)
+\t\t\tacross += cubic((float(i) - middle.x) / wide.x) *
+\t\t\t\ttexelFetch(picture_texture, clamp(ivec2(i, j), ivec2(0), size - 1), 0).rgb * 255.0;
+\t\tsum += weight_y * (total_x != 0.0 ? across / total_x : vec3(0.0));
+\t}
+\tvec3 value = total_y != 0.0 ? sum / total_y : vec3(0.0);
+\tresult = vec4(clamp(floor(value + 0.5), 0.0, 255.0) / 255.0, 1.0);
+}
+""")
+
 CLEAR = """#version 450
 layout(std140, set = 0, binding = 1) uniform ClearUniforms
 {
@@ -460,6 +718,9 @@ def generate(args):
     programs["panini"] = ("frag", PANINI_SOURCE)
     programs["motion_resolve"] = ("frag", MOTION_RESOLVE_SOURCE)
     programs["motion_view"] = ("frag", MOTION_VIEW_SOURCE)
+    programs["loading"] = ("frag", LOADING_SOURCE)
+    programs["loading_caption"] = ("frag", LOADING_CAPTION_SOURCE)
+    programs["loading_picture"] = ("frag", LOADING_PICTURE_SOURCE)
     programs["clear"] = ("frag", CLEAR)
     text = [
         "/* Generated by tools/vulkan_post_shaders.py from its GLSL, xgpu_hdr.c and port/third_party/smaa. "

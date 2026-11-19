@@ -82,6 +82,17 @@ image of its own (its width and height swapped for an odd count), in the
 stream's order, and returns it; the targets bound before are not bound
 after. NULL if it cannot. */
 int xgpu_vulkan_post_rotate_prepare(void);
+
+/* The loading screen's sharp frame drawn by the GPU (port/linux/src/
+loading_art.h): its programs' pipelines made at the start (0 if they cannot
+be: the processor draws it), and one of them (XGPU_VULKAN_POST_LOADING,
+_LOADING_CAPTION, _LOADING_PICTURE) drawn into an image over a rectangle
+(x0, y0, x1, y1) with its four textures and its uniforms (the block's
+first five vec4s), in the stream's order; the targets bound before are not
+bound after. */
+int xgpu_vulkan_post_loading_prepare(void);
+void xgpu_vulkan_post_loading(int program, struct xgpu_vulkan_image *into, const int32_t rectangle[4],
+	struct xgpu_vulkan_image *const images[4], const float uniforms[5][4]);
 struct xgpu_vulkan_image *xgpu_vulkan_post_rotate(struct xgpu_vulkan_image *image, int quarter_turns);
 
 #endif

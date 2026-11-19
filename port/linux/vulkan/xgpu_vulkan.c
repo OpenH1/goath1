@@ -49,6 +49,7 @@ options' gamma) first, where the setting is not 1.
 #include "xgpu_vulkan_dlss.h"
 #include "xgpu_vulkan_loading.h"
 #include "xgpu_vulkan_pacing.h"
+#include "xgpu_vulkan_post.h"
 #include "xgpu_vulkan_post_shaders.h"
 #include "host.h"
 #include "host_load_trace.h"
@@ -1319,6 +1320,16 @@ static struct
 	(loading_art_caption_shown) */
 	struct xgpu_vulkan_image *loading_caption_image;
 	struct loading_art loading_art;
+	/* the sharp frame drawn by the GPU (loading_art.h's "drawn by the GPU",
+	xgpu_vulkan_post_loading): the trail and glint, the table, the still
+	layers, the words, the picture at its own size, the caption's texels,
+	and the frame under a caption; which load's layers, which step's trail
+	and which caption the images hold; and the trail's staging memory */
+	struct xgpu_vulkan_image *loading_dynamic, *loading_table, *loading_still, *loading_words, *loading_source,
+		*loading_caption_texels, *loading_frame;
+	unsigned int loading_still_serial, loading_steps, loading_caption_serial;
+	int loading_table_valid;
+	uint8_t *loading_staging;
 	/* the last loading image held VR's stereo pair (loading_presentation.h) */
 	int loading_stereo_drawn;
 
@@ -9555,6 +9566,264 @@ static void loading_caption_draw(const uint8_t *pixels, uint32_t x, uint32_t y, 
 	image_transfer_done(commands, vk.loading_image, vk.loading_caption_image);
 }
 
+/* ---------- the loading screen's sharp frame drawn by the GPU */
+
+/* an image of the loading screen's of a size and format: kept, or made
+again (*made then 1); 0 without it */
+static int loading_image_fit(struct xgpu_vulkan_image **image, uint32_t width, uint32_t height, uint8_t format,
+	uint8_t usage, int *made)
+{
+	struct xgpu_vulkan_image_description description;
+
+	if (*image && (*image)->description.width == width && (*image)->description.height == height &&
+		(*image)->description.format == format)
+		return 1;
+	xgpu_vulkan_image_destroy(*image);
+	memset(&description, 0, sizeof(description));
+	description.type = XGPU_VULKAN_IMAGE_2D;
+	description.format = format;
+	description.usage = usage;
+	description.width = width;
+	description.height = height;
+	description.depth_or_layers = description.levels = 1;
+	*image = xgpu_vulkan_image_create(&description);
+	if (made)
+		*made = 1;
+	return *image != NULL;
+}
+
+static void loading_gpu_images_free(void)
+{
+	xgpu_vulkan_image_destroy(vk.loading_dynamic);
+	xgpu_vulkan_image_destroy(vk.loading_table);
+	xgpu_vulkan_image_destroy(vk.loading_still);
+	xgpu_vulkan_image_destroy(vk.loading_words);
+	xgpu_vulkan_image_destroy(vk.loading_source);
+	xgpu_vulkan_image_destroy(vk.loading_caption_texels);
+	xgpu_vulkan_image_destroy(vk.loading_frame);
+	vk.loading_dynamic = vk.loading_table = vk.loading_still = vk.loading_words = vk.loading_source = NULL;
+	vk.loading_caption_texels = vk.loading_frame = NULL;
+	vk.loading_still_serial = vk.loading_steps = vk.loading_caption_serial = 0;
+	vk.loading_table_valid = 0;
+	free(vk.loading_staging);
+	vk.loading_staging = NULL;
+}
+
+int xgpu_vulkan_loading_check(const uint8_t **pixels, uint32_t *width, uint32_t *height)
+{
+	const struct loading_art_hd *hd = &vk.loading_art.hd;
+
+	if (!hd->check || !loading_art_hd_gpu_drawn(&vk.loading_art) || !hd->output)
+		return 0;
+	*pixels = hd->output;
+	*width = hd->width;
+	*height = hd->height;
+	return 1;
+}
+
+/* a blit of an image's whole into a rectangle of another, filtered */
+static void loading_blit(struct xgpu_vulkan_image *from, struct xgpu_vulkan_image *into, uint32_t x, uint32_t y,
+	uint32_t width, uint32_t height)
+{
+	VkCommandBuffer commands;
+	VkImageBlit blit;
+
+	pass_end();
+	commands = main_commands();
+	memset(&blit, 0, sizeof(blit));
+	blit.srcSubresource.aspectMask = blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	blit.srcSubresource.layerCount = blit.dstSubresource.layerCount = 1;
+	blit.srcOffsets[1].x = (int32_t)from->description.width;
+	blit.srcOffsets[1].y = (int32_t)from->description.height;
+	blit.srcOffsets[1].z = 1;
+	blit.dstOffsets[0].x = (int32_t)x;
+	blit.dstOffsets[0].y = (int32_t)y;
+	blit.dstOffsets[1].x = (int32_t)(x + width);
+	blit.dstOffsets[1].y = (int32_t)(y + height);
+	blit.dstOffsets[1].z = 1;
+	from->used = into->used = vk.serial;
+	image_use(from);
+	image_use(into);
+	image_written(into);
+	vkCmdBlitImage(commands, from->image, VK_IMAGE_LAYOUT_GENERAL, into->image, VK_IMAGE_LAYOUT_GENERAL, 1, &blit,
+		VK_FILTER_LINEAR);
+	image_transfer_done(commands, into, from);
+}
+
+/* The sharp frame (the last render left it to the GPU) drawn into the
+loading image, width by height: its textures brought up to date (the
+table once, the still layers once a load, the trail at each step), the
+frame drawn (into the image where it is the frame's size and has no
+caption, else into a frame of its own, scaled into the image as the
+processor's frame is), the caption over it at the image's pixels. 0 if it
+cannot be. */
+static int loading_gpu_draw(uint32_t width, uint32_t height)
+{
+	struct loading_art *art = &vk.loading_art;
+	struct loading_art_hd *hd = &art->hd;
+	struct xgpu_vulkan_image *images[4], *target;
+	float uniforms[5][4];
+	int32_t rectangle[4];
+	uint32_t frame_width = hd->width, frame_height = hd->height, fit_width, fit_height, x, y;
+	int made = 0, framed;
+
+	if (!loading_image_fit(&vk.loading_table, LOADING_ART_GPU_TABLE_WIDTH, LOADING_ART_GPU_TABLE_HEIGHT,
+		XGPU_VULKAN_FORMAT_RGBA8, XGPU_VULKAN_USAGE_SAMPLED, &made))
+		return 0;
+	if (made || !vk.loading_table_valid)
+	{
+		static uint8_t table[LOADING_ART_GPU_TABLE_WIDTH * LOADING_ART_GPU_TABLE_HEIGHT * 4];
+
+		loading_art_hd_table(art, table);
+		pass_end();
+		xgpu_vulkan_image_upload(vk.loading_table, 0, 0, 0, 0, 0, LOADING_ART_GPU_TABLE_WIDTH,
+			LOADING_ART_GPU_TABLE_HEIGHT, 1, table, LOADING_ART_GPU_TABLE_WIDTH * 4, 0);
+		vk.loading_table_valid = 1;
+	}
+	/* (the still layers: the scene's packed, or the picture resampled) */
+	made = 0;
+	if (!loading_image_fit(&vk.loading_still, frame_width, frame_height, XGPU_VULKAN_FORMAT_RGBA8,
+		XGPU_VULKAN_USAGE_SAMPLED | XGPU_VULKAN_USAGE_TARGET, &made))
+		return 0;
+	if (made)
+		vk.loading_still_serial = 0;
+	if (vk.loading_still_serial != hd->serial)
+	{
+		unsigned int left, top, right, bottom;
+		const uint8_t *words = loading_art_hd_words(art, &left, &top, &right, &bottom);
+
+		if (hd->packed_ready)
+		{
+			pass_end();
+			xgpu_vulkan_image_upload(vk.loading_still, 0, 0, 0, 0, 0, frame_width, frame_height, 1, hd->packed,
+				frame_width * 4, 0);
+			loading_art_hd_packed_done(art);
+		}
+		else if (hd->picture)
+		{
+			const uint8_t *picture = art->source ? art->source : art->picture;
+			uint32_t picture_width = art->source ? LOADING_ART_SOURCE_WIDTH : LOADING_ART_WIDTH;
+			uint32_t picture_height = art->source ? LOADING_ART_SOURCE_HEIGHT : LOADING_ART_HEIGHT;
+			float picture_uniforms[5][4];
+
+			if (!loading_image_fit(&vk.loading_source, picture_width, picture_height, XGPU_VULKAN_FORMAT_RGBA8,
+				XGPU_VULKAN_USAGE_SAMPLED, NULL))
+				return 0;
+			pass_end();
+			xgpu_vulkan_image_upload(vk.loading_source, 0, 0, 0, 0, 0, picture_width, picture_height, 1, picture,
+				picture_width * 4, 0);
+			memset(picture_uniforms, 0, sizeof(picture_uniforms));
+			loading_art_hd_picture_uniforms(art, picture_width, picture_height, picture_uniforms);
+			images[0] = vk.loading_source;
+			images[1] = images[2] = images[3] = NULL;
+			rectangle[0] = rectangle[1] = 0;
+			rectangle[2] = (int32_t)frame_width;
+			rectangle[3] = (int32_t)frame_height;
+			xgpu_vulkan_post_loading(XGPU_VULKAN_POST_LOADING_PICTURE, vk.loading_still, rectangle, images,
+				picture_uniforms);
+			pass_end();
+		}
+		else
+			return 0;
+		if (words)
+		{
+			if (!loading_image_fit(&vk.loading_words, right - left, bottom - top, XGPU_VULKAN_FORMAT_RGBA8,
+				XGPU_VULKAN_USAGE_SAMPLED, NULL))
+				return 0;
+			pass_end();
+			xgpu_vulkan_image_upload(vk.loading_words, 0, 0, 0, 0, 0, right - left, bottom - top, 1, words,
+				(right - left) * 4, 0);
+		}
+		vk.loading_still_serial = hd->serial;
+	}
+	/* (the trail and glint, at each step) */
+	made = 0;
+	if (!loading_image_fit(&vk.loading_dynamic, art->width, LOADING_ART_GPU_DYNAMIC_ROWS, XGPU_VULKAN_FORMAT_RGBA8,
+		XGPU_VULKAN_USAGE_SAMPLED, &made))
+		return 0;
+	if (made || vk.loading_steps != hd->steps)
+	{
+		if (!vk.loading_staging)
+			vk.loading_staging = malloc((size_t)LOADING_ART_FRAME_MAXIMUM_WIDTH * LOADING_ART_GPU_DYNAMIC_ROWS * 4);
+		if (!vk.loading_staging)
+			return 0;
+		loading_art_hd_dynamic(art, vk.loading_staging);
+		pass_end();
+		xgpu_vulkan_image_upload(vk.loading_dynamic, 0, 0, 0, 0, 0, art->width, LOADING_ART_GPU_DYNAMIC_ROWS, 1,
+			vk.loading_staging, art->width * 4, 0);
+		vk.loading_steps = hd->steps;
+	}
+	/* (the frame: into the image, or a frame of its own) */
+	framed = art->caption || width != frame_width || height != frame_height;
+	target = vk.loading_image;
+	if (framed)
+	{
+		if (!loading_image_fit(&vk.loading_frame, frame_width, frame_height, XGPU_VULKAN_FORMAT_BGRA8,
+			XGPU_VULKAN_USAGE_SAMPLED | XGPU_VULKAN_USAGE_TARGET, NULL))
+			return 0;
+		target = vk.loading_frame;
+	}
+	loading_art_hd_uniforms(art, uniforms);
+	images[0] = vk.loading_dynamic;
+	images[1] = vk.loading_still;
+	images[2] = vk.loading_table;
+	images[3] = vk.loading_words ? vk.loading_words : vk.loading_table;
+	rectangle[0] = rectangle[1] = 0;
+	rectangle[2] = (int32_t)frame_width;
+	rectangle[3] = (int32_t)frame_height;
+	pass_end();
+	xgpu_vulkan_post_loading(XGPU_VULKAN_POST_LOADING, target, rectangle, images, uniforms);
+	pass_end();
+	if (!framed)
+		return 1;
+	/* (scaled into the image, filling it as the processor's frame does) */
+	fit_width = width;
+	fit_height = (uint32_t)((uint64_t)width * frame_height / frame_width);
+	if (fit_height > height)
+	{
+		fit_height = height;
+		fit_width = (uint32_t)((uint64_t)height * frame_width / frame_height);
+	}
+	fit_width = fit_width ? fit_width : 1;
+	fit_height = fit_height ? fit_height : 1;
+	x = (width - fit_width) / 2;
+	y = (height - fit_height) / 2;
+	loading_blit(vk.loading_frame, vk.loading_image, x, y, fit_width, fit_height);
+	/* (the caption over it, at the image's pixels) */
+	{
+		unsigned int left, top, tile_width, tile_height, serial = 0;
+		const uint8_t *tile = loading_art_caption_gpu(art, fit_width, fit_height, &left, &top, &tile_width,
+			&tile_height, &serial, uniforms);
+
+		if (!tile)
+			return 1;
+		made = 0;
+		if (!loading_image_fit(&vk.loading_caption_texels, tile_width, tile_height, XGPU_VULKAN_FORMAT_RGBA8,
+			XGPU_VULKAN_USAGE_SAMPLED, &made))
+			return 1;
+		if (made || serial != vk.loading_caption_serial)
+		{
+			pass_end();
+			xgpu_vulkan_image_upload(vk.loading_caption_texels, 0, 0, 0, 0, 0, tile_width, tile_height, 1, tile,
+				tile_width * 4, 0);
+			vk.loading_caption_serial = serial;
+		}
+		uniforms[4][0] = (float)x;
+		uniforms[4][1] = (float)y;
+		images[0] = vk.loading_dynamic;
+		images[1] = vk.loading_frame;
+		images[2] = vk.loading_table;
+		images[3] = vk.loading_caption_texels;
+		rectangle[0] = (int32_t)(x + left);
+		rectangle[1] = (int32_t)(y + top);
+		rectangle[2] = (int32_t)(x + left + tile_width);
+		rectangle[3] = (int32_t)(y + top + tile_height);
+		xgpu_vulkan_post_loading(XGPU_VULKAN_POST_LOADING_CAPTION, vk.loading_image, rectangle, images, uniforms);
+		pass_end();
+	}
+	return 1;
+}
+
 struct xgpu_vulkan_image *xgpu_vulkan_loading_draw(const struct loading_presentation_frame *frame,
 	uint32_t width, uint32_t height, uint32_t format)
 {
@@ -9568,7 +9837,7 @@ struct xgpu_vulkan_image *xgpu_vulkan_loading_draw(const struct loading_presenta
 	int32_t rectangle[1][4];
 	const uint8_t *pixels;
 	uint32_t art_width, art_height;
-	int stereo;
+	int stereo, gpu;
 
 	vk.loading_stereo_drawn = 0;
 	if (!frame || !frame->active)
@@ -9599,19 +9868,26 @@ struct xgpu_vulkan_image *xgpu_vulkan_loading_draw(const struct loading_presenta
 			return NULL;
 	}
 	pixels = loading_art_render(&vk.loading_art, frame);
+	/* (the sharp frame the GPU's: drawn below, with no picture uploaded) */
+	gpu = pixels && loading_art_hd_gpu_drawn(&vk.loading_art);
+	if (gpu)
+	{
+		xgpu_vulkan_image_destroy(vk.loading_art_image);
+		vk.loading_art_image = NULL;
+	}
 	/* (the picture's size: the sharp frame's, or the 480 rows') */
 	art_width = loading_art_output_width(&vk.loading_art);
 	art_height = loading_art_output_height(&vk.loading_art);
 	/* (VR's stereo pair side by side, where the image holds them) */
 	stereo = pixels && loading_art_stereo_drawn(&vk.loading_art) &&
 		width >= 2 * LOADING_PRESENTATION_VR_EYE_WIDTH && height >= LOADING_PRESENTATION_VR_EYE_HEIGHT;
-	if (pixels && vk.loading_art_image && (vk.loading_art_image->description.width < art_width ||
+	if (!gpu && pixels && vk.loading_art_image && (vk.loading_art_image->description.width < art_width ||
 		vk.loading_art_image->description.height < art_height))
 	{
 		xgpu_vulkan_image_destroy(vk.loading_art_image);
 		vk.loading_art_image = NULL;
 	}
-	if (pixels && !vk.loading_art_image)
+	if (pixels && !gpu && !vk.loading_art_image)
 	{
 		memset(&description, 0, sizeof(description));
 		description.type = XGPU_VULKAN_IMAGE_2D;
@@ -9627,7 +9903,7 @@ struct xgpu_vulkan_image *xgpu_vulkan_loading_draw(const struct loading_presenta
 		description.depth_or_layers = description.levels = 1;
 		vk.loading_art_image = xgpu_vulkan_image_create(&description);
 	}
-	if (!vk.loading_art_image)
+	if (!vk.loading_art_image && !gpu)
 		pixels = NULL;
 	/* A loading pass must not contribute samples or advance the game's
 	visibility frame. Ending and restoring the target also restores the
@@ -9640,7 +9916,17 @@ struct xgpu_vulkan_image *xgpu_vulkan_loading_draw(const struct loading_presenta
 	rectangle[0][3] = (int32_t)height;
 	xgpu_vulkan_clear(rectangle, 1, XGPU_VULKAN_CLEAR_COLOR | XGPU_VULKAN_CLEAR_CHANNELS,
 		pixels ? black : background, 0.0f, 0);
-	if (pixels)
+	if (gpu && !loading_gpu_draw(width, height))
+	{
+		/* (it cannot be: the processor draws it from the next frame on) */
+		host_logf(HOST_LOG_WARN, "vulkan: the loading screen's sharp frame cannot be drawn on the GPU: "
+			"the processor draws it");
+		loading_gpu_images_free();
+		loading_art_gpu(&vk.loading_art, 0);
+	}
+	else if (gpu)
+		;
+	else if (pixels)
 	{
 		VkCommandBuffer commands;
 		VkImageBlit blit;
@@ -11352,6 +11638,15 @@ int xgpu_vulkan_initialize(const struct xgpu_vulkan_options *options)
 	presentation may draw it while a map is prepared) */
 	if (vk.encode && (!options->encode_prepare || !options->encode_prepare()))
 		vk.encode = NULL;
+	/* (and the loading screen's sharp frame's, which it then draws on the
+	GPU) */
+	if (vk.surface && options->loading_prepare && options->loading_prepare())
+	{
+		const char *check = getenv("HALO_LOADING_GPU_CHECK");
+
+		loading_art_gpu(&vk.loading_art, 1);
+		vk.loading_art.hd.check = check && *check && *check != '0';
+	}
 	if (vk.surface && options->rotation_prepare && options->rotate)
 	{
 		VkSurfaceCapabilitiesKHR capabilities;
@@ -11384,6 +11679,7 @@ void xgpu_vulkan_shutdown(void)
 	vk.loading_art_image = NULL;
 	xgpu_vulkan_image_destroy(vk.loading_caption_image);
 	vk.loading_caption_image = NULL;
+	loading_gpu_images_free();
 	/* (the loading screen's sharp frame and its threads) */
 	loading_art_hd_free(&vk.loading_art);
 	if (vk.recording)

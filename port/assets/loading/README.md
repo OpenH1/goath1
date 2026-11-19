@@ -76,12 +76,29 @@ at the screen's own rows (at most 2160, and 1920x1080's pixels in all,
 - each frame, the 480 rows' trail (blurry by nature) is scaled up, and the
   sweep's light added at the sharp pixels, between the steps where the band
   is, the ring lit by the sweep's glint as the 480 rows' feed is;
-- the rows are drawn by four threads, the presenter's one of them, and the
-  still ring's glint alone is drawn again each step (`loading_ring_glint`):
-  a 1080p frame takes about 9 ms on a Ryzen 9 5900X, the 480 rows' frame
-  alone about 9 (it took 15).
+- on Vulkan (Linux, Windows, Android) and Metal (macOS, iOS) the GPU draws
+  the sharp frame each frame, in the processor's integer arithmetic, so
+  that it is the processor's byte for byte
+  (`tools/vulkan_post_shaders.py`'s `LOADING_SOURCE`, its pipelines made at
+  the start): from the 480 rows' trail and glint (given again at each
+  step), the picture's hues and the sweep's mask, the words, and the
+  scene's still layers packed into four bytes a pixel once a load
+  (`loading_art_hd_pack`); without a scene, the GPU resamples the picture
+  from its own 1600x1200 (`LOADING_PICTURE_SOURCE`). The processor then
+  draws only the 480 rows' steps: about 2.5 ms a frame at any size on
+  omarchy (it took 7.2 at 1080p and 21 at 4K), and keeps nothing of the
+  sharp frame's size between frames. A wait's caption is drawn at the
+  window's pixels the same way (`LOADING_CAPTION_SOURCE`; on Metal, by the
+  processor, as before). `HALO_LOADING_GPU_CHECK=1` has the processor draw
+  the frame too, and `HALO_LOADING_CAPTURE_DIR` writes its frames beside
+  the GPU's (`-cpu`);
+- elsewhere, or where the pipelines cannot be made, the rows are drawn by
+  four threads, the presenter's one of them, and the still ring's glint
+  alone is drawn again each step (`loading_ring_glint`).
 
-VR's window stays at 640x480, bit for bit as before.
+The ring itself is still drawn on the processor once a load at the screen's
+size, for the still layers. VR's window stays at 640x480, bit for bit as
+before.
 
 ## The chant
 

@@ -723,6 +723,8 @@ int host_vulkan_window_open(uint32_t window, uint32_t debug, uint32_t shader_fol
 			options.instance_extension_count = count;
 			options.surface_create = surface_create;
 			options.rotation_prepare = xgpu_vulkan_post_rotate_prepare;
+			/* (the loading screen's sharp frame drawn on the GPU) */
+			options.loading_prepare = xgpu_vulkan_post_loading_prepare;
 			options.rotate = xgpu_vulkan_post_rotate;
 #if !defined(__ANDROID__) && !defined(HALO_VR)
 			/* (display.hdr: an HDR swapchain, and the display told the front
