@@ -159,6 +159,9 @@ draws nothing), the rest of the wait */
 void platform_frame_step_hook(unsigned long long (*due)(unsigned long long now, unsigned long long frame_due));
 int platform_frame_woken_for_step(void);
 void platform_frame_wait(void);
+/* (D3DDevice_Present) whether the frame shown is counted only once its wait
+runs to the frame's time (platform_frame_wait counts it then) */
+int platform_frame_report_held(void);
 /* frames between the 30 Hz ticks at the display's refresh rate, unless
 display.interpolation is false (port/linux/game/render_interpolation.c) */
 int halo_interpolation_enabled(void);

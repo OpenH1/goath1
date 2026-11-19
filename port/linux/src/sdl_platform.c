@@ -2419,6 +2419,8 @@ was so woken, the frame's time still to come; and the next frame's time */
 static unsigned long long (*platform_frame_step_due)(unsigned long long now, unsigned long long frame_due);
 static int platform_frame_woken;
 static Uint64 platform_frame_next;
+/* (the frame shown waits to be counted: platform_frame_report_held) */
+static int platform_frame_report_waits;
 
 /* the frames' limit's sleep, from now until until (nanoseconds of
 SDL_GetTicksNS) */
@@ -2484,6 +2486,17 @@ int platform_frame_woken_for_step(void)
 	return woken;
 }
 
+/* whether the frame just shown is counted (report_frame_presented, its time
+the frames' report's and the performance overlay's) only once its wait has
+run to the frame's time, its wait having woken for a step first: it is
+counted then (platform_frame_wait), so that the frames' times are as the
+display gets them */
+int platform_frame_report_held(void)
+{
+	platform_frame_report_waits = platform_frame_woken;
+	return platform_frame_report_waits;
+}
+
 /* (a frame that drew nothing, woken for a step) the rest of the frames'
 limit's wait, which a step due first may wake again */
 void platform_frame_wait(void)
@@ -2493,6 +2506,11 @@ void platform_frame_wait(void)
 	platform_frame_woken = interval &&
 		!platform_frame_wait_until(&platform_frame_next, interval, platform_frame_step_due, SDL_GetTicksNS,
 			platform_frame_sleep);
+	if (platform_frame_report_waits && !platform_frame_woken)
+	{
+		platform_frame_report_waits = FALSE;
+		report_frame_presented();
+	}
 }
 
 /* The frames' limit (display.max_fps, battery saver's without vsync): no

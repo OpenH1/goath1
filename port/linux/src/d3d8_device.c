@@ -8557,7 +8557,11 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 	/* (a light's or a shadow's pass that never said its draws are done
 	clips nothing of the next frame: draw_bounds_state.h) */
 	draw_bounds_state_frame_end(&draw_bounds);
-	report_frame_presented();
+	/* (a frame whose wait woke for a step of the game's clock is counted
+	once its wait has run to the frame's time: sdl_platform.c's
+	platform_frame_wait) */
+	if (!platform_frame_report_held())
+		report_frame_presented();
 	/* (display.hdr: a frame begins with no 3D view drawn) */
 	inputs.hdr_view = FALSE;
 	inputs.hdr_category = -1;
