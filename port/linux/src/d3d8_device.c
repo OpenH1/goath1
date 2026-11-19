@@ -5583,8 +5583,9 @@ Kept while what else it was made from is the same (retained_tokens): the
 memory the textures are in, their replacements and images, the settings,
 the render targets made. Not kept: a map's preparation (its records and
 journal), the render manifest's recording, a draw that samples a render
-target (its pixels written since), the world ambient occlusion's stand-ins,
-the VR mode. debug.retained_draws_verify (HALO_RETAINED_DRAWS_VERIFY)
+target (its pixels written since), the VR mode; a pipeline with the world
+ambient occlusion's light is found once its stand-in is told
+(world_ao_stand_in). debug.retained_draws_verify (HALO_RETAINED_DRAWS_VERIFY)
 prepares each found draw anyway and says where the kept one differs. */
 
 #define RETAINED_DRAWS 1024
@@ -5648,7 +5649,8 @@ static struct
 	struct retained_draw *told;
 	unsigned long told_count, told_sent;
 	/* counted (logged every 600 frames with either setting) */
-	unsigned long found, found_told, prepared, not_kept, differed, targets_differed, hash_differed;
+	unsigned long found, found_told, prepared, not_kept, not_kept_moved, not_kept_target, differed, targets_differed,
+		hash_differed;
 	/* the times each of retained_tokens' moved (as a draw was found, or
 	as it was prepared) */
 	unsigned long moved[sizeof(struct retained_tokens) / sizeof(unsigned long)];
@@ -5846,6 +5848,18 @@ static int retained_draw_find(struct vertex_shader_object *program, BOOL immedia
 		retained.told = NULL;
 		return -1;
 	}
+	/* (display.ambient_occlusion "world": its stand-in told the first time
+	the pipeline's number is drawn with, as world_ao_stand_in tells it) */
+	if (draw->key.pixel.ambient_occlusion & XGPU_AMBIENT_OCCLUSION_WORLD)
+	{
+		unsigned long number = xgpu_backend_pipeline_number();
+
+		if (world_ao_stand_ins.number[number % WORLD_AO_STAND_INS] != number + 1)
+		{
+			retained.told = NULL;
+			return -1;
+		}
+	}
 	if (immediate)
 		stats.immediate_draws++;
 	else
@@ -5886,17 +5900,16 @@ static void retained_draw_keep(const struct xgpu_texture_source *sources, const 
 	if (memcmp(&tokens, &retained.tokens, sizeof(tokens)))
 		retained_tokens_moved(&tokens);
 	if (memcmp(&tokens, &retained.tokens, sizeof(tokens)) || (program->lighting_failed != 0) !=
-		retained.context.lighting_failed || (program->split_failed != 0) != retained.context.split_failed ||
-		(key->pixel.ambient_occlusion & XGPU_AMBIENT_OCCLUSION_WORLD))
+		retained.context.lighting_failed || (program->split_failed != 0) != retained.context.split_failed)
 	{
-		retained.not_kept++;
+		retained.not_kept_moved++;
 		return;
 	}
 	for (stage = 0; stage < D3DTSS_MAXSTAGES; stage++)
 	{
 		if (sources[stage].source == XGPU_SOURCE_TARGET)
 		{
-			retained.not_kept++;
+			retained.not_kept_target++;
 			return;
 		}
 	}
@@ -5928,6 +5941,10 @@ static void retained_draw_keep(const struct xgpu_texture_source *sources, const 
 	draw->samples = target_samples;
 	draw->hdr_target = hdr.target;
 	draw->deep = target_deep;
+	/* (a pipeline with the world's light: its stand-in's binding between,
+	world_ao_stand_in, the backend told it again) */
+	if (key->pixel.ambient_occlusion & XGPU_AMBIENT_OCCLUSION_WORLD)
+		return;
 	retained.told = draw;
 	retained.told_count = prepare_draw_count;
 	retained.told_sent = xgpu_backend_sent_serial();
@@ -5942,12 +5959,14 @@ static void retained_draws_frame(void)
 	if (device.frame - retained.logged_frame < 600)
 		return;
 	retained.logged_frame = device.frame;
-	platform_log("GPU: retained draws: %lu found (%lu as the draw before's), %lu prepared, %lu not kept; %lu differed, "
+	platform_log("GPU: retained draws: %lu found (%lu as the draw before's), %lu prepared, not kept: %lu not "
+		"retainable, %lu as what they were made from moved, %lu sampling a target; %lu differed, "
 		"%lu targets differed, %lu hash differed; moved: memory %lu, choices %lu, images %lu, settings %lu, "
 		"GPU settings %lu, targets %lu", retained.found, retained.found_told, retained.prepared,
-		retained.not_kept, retained.differed, retained.targets_differed, retained.hash_differed, retained.moved[0],
+		retained.not_kept, retained.not_kept_moved, retained.not_kept_target, retained.differed, retained.targets_differed, retained.hash_differed, retained.moved[0],
 		retained.moved[1], retained.moved[2], retained.moved[3], retained.moved[4], retained.moved[5]);
 	retained.found = retained.found_told = retained.prepared = retained.not_kept = 0;
+	retained.not_kept_moved = retained.not_kept_target = 0;
 	memset(retained.moved, 0, sizeof(retained.moved));
 	retained.targets_differed = 0;
 }
