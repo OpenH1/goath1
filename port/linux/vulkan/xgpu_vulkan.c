@@ -1350,8 +1350,9 @@ static struct
 		VkShaderModule module;
 	} constant_shaders[CONSTANT_SHADERS];
 	uint32_t constant_shader_count;
-	/* the shaders of the clears of some of the colour's channels */
-	VkShaderModule clear_vertex, clear_pixel;
+	/* the shaders of the clears of some of the colour's channels, and of
+	the MSAA resolve in light (resolve_in_light) */
+	VkShaderModule clear_vertex, clear_pixel, resolve_pixel;
 	struct
 	{
 		struct xgpu_vulkan_sampler_description description;
@@ -4298,6 +4299,9 @@ static void transient_clear(struct xgpu_vulkan_image *image, uint32_t layers)
 	garbage_add(&item);
 }
 
+static void resolve_light_prepare(const struct xgpu_vulkan_image *multisampled);
+static int resolve_in_light(struct xgpu_vulkan_image *multisampled);
+
 struct xgpu_vulkan_image *xgpu_vulkan_image_create(const struct xgpu_vulkan_image_description *description)
 {
 	struct xgpu_vulkan_image *image = calloc(1, sizeof(*image));
@@ -4390,6 +4394,11 @@ struct xgpu_vulkan_image *xgpu_vulkan_image_create(const struct xgpu_vulkan_imag
 			description->type == XGPU_VULKAN_IMAGE_2D_ARRAY ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
 
 		image->sampled = view_make(image, type, 0, layers, 1);
+	}
+	else
+	{
+		/* (a multisampled colour's resolve in light, #1227) */
+		resolve_light_prepare(image);
 	}
 	if (image->transient)
 	{
@@ -4931,19 +4940,23 @@ void xgpu_vulkan_image_resolve(struct xgpu_vulkan_image *multisampled, struct xg
 {
 	VkCommandBuffer commands;
 
+	/* (samples not drawn since they were last resolved into this image,
+	which nothing has written since: the same pixels again, not resolved,
+	as the samples may since have been discarded at a frame's end; the
+	stream resolves a target bound but not drawn into) */
+	if (vk.deferred && multisampled->resolved_into == image->number &&
+		multisampled->resolved_writes == multisampled->writes && multisampled->resolved_into_writes == image->writes)
+	{
+		vk.statistics.resolves_skipped++;
+		return;
+	}
+	/* (a colour's samples first each made the mean of the pixel's light,
+	in the pass, so that the resolves below, which average codes, average
+	equal samples, #1227) */
+	if (!(image->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) && resolve_in_light(multisampled))
+		vk.statistics.resolves_in_light++;
 	if (vk.deferred)
 	{
-		/* (samples not drawn since they were last resolved into this
-		image, which nothing has written since: the same pixels again,
-		not resolved, as the samples may since have been discarded at a
-		frame's end; the stream resolves a target bound but not drawn
-		into) */
-		if (multisampled->resolved_into == image->number && multisampled->resolved_writes == multisampled->writes &&
-			multisampled->resolved_into_writes == image->writes)
-		{
-			vk.statistics.resolves_skipped++;
-			return;
-		}
 		image->writes++;
 		multisampled->resolved_into = image->number;
 		multisampled->resolved_writes = multisampled->writes;
@@ -6788,6 +6801,122 @@ void xgpu_vulkan_clear(const int32_t (*rectangles)[4], uint32_t count, uint32_t 
 	free(rects);
 }
 
+/* ---------- MSAA's resolve in light (#1227)
+
+The hardware's resolves (a pass's, vkCmdResolveImage) average a pixel's
+samples as they are stored: the frame's codes (sRGB's curve), which makes
+an edge half covered by a bright detail darker than half its light (a
+sample of white and one of black, 50% of the code, about 22% of the
+light). Before a multisampled colour is resolved, a draw in a pass over it
+reads each pixel's samples where it draws (the core's local reads, as
+display.hdr's tone map reads them), makes each linear, and writes their
+mean, encoded again, to all of them (the RESOLVE_LIGHT program,
+tools/vulkan_post_shaders.py): the resolve after it, in its pass or not,
+of equal samples, is that mean. The draw is in the pass that drew the
+samples where it is still open, so that they are read where they are and
+may still be discarded after the resolve, and a transient image's too.
+Where the device has no local reads (Android's, and any without
+VK_KHR_dynamic_rendering_local_read), the resolve averages the codes as
+before. Depth and stencil keep their first sample. */
+
+/* its pipeline, into a multisampled colour of its format and samples, with
+a depth attachment beside it or none and the motion's format (none 0),
+every channel written, reading the samples it draws over; 0 if there is
+none (no local reads, or no input, depth, a layered image, one sample) */
+static int resolve_light_description(const struct xgpu_vulkan_image *multisampled, int depth, uint8_t motion_format,
+	struct xgpu_vulkan_pipeline_description *description)
+{
+	const struct xgpu_vulkan_image_description *about = &multisampled->description;
+
+	if (!vk.capabilities.color_read || about->samples <= 1 || (multisampled->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) ||
+		!(about->usage & XGPU_VULKAN_USAGE_INPUT) || (about->type == XGPU_VULKAN_IMAGE_2D_ARRAY && about->depth_or_layers > 1))
+		return 0;
+	if (!vk.clear_vertex)
+		vk.clear_vertex = xgpu_vulkan_shader(xgpu_vulkan_post_vertex.words, xgpu_vulkan_post_vertex.count);
+	if (!vk.resolve_pixel)
+		vk.resolve_pixel = xgpu_vulkan_shader(xgpu_vulkan_post_programs[XGPU_VULKAN_POST_RESOLVE_LIGHT].words,
+			xgpu_vulkan_post_programs[XGPU_VULKAN_POST_RESOLVE_LIGHT].count);
+	if (!vk.clear_vertex || !vk.resolve_pixel)
+		return 0;
+	memset(description, 0, sizeof(*description));
+	description->vertex_shader = vk.clear_vertex;
+	description->pixel_shader = vk.resolve_pixel;
+	description->primitive_class = XGPU_VULKAN_CLASS_TRIANGLES;
+	description->color_mask = XGPU_VULKAN_CLEAR_CHANNELS;
+	description->color_format = about->format;
+	description->depth_format = depth ? XGPU_VULKAN_FORMAT_D24S8 : XGPU_VULKAN_FORMAT_NONE;
+	description->samples = about->samples;
+	description->color_read = 1;
+	description->motion_format = motion_format;
+	return 1;
+}
+
+/* the pipelines of a multisampled colour's resolve in light, queued as it
+is made (with the depth beside it and alone), so that no frame waits for
+them */
+static void resolve_light_prepare(const struct xgpu_vulkan_image *multisampled)
+{
+	struct xgpu_vulkan_pipeline_description description;
+	int depth;
+
+	for (depth = 0; depth < 2; depth++)
+	{
+		if (resolve_light_description(multisampled, depth, 0, &description))
+			(void)xgpu_vulkan_pipeline_prepare(&description);
+	}
+}
+
+/* a multisampled colour's samples made the mean of each pixel's light,
+in the pass drawing into it where it is bound (its depth and motion
+beside it), else in one of its own; the targets bound before are bound
+after. 0 if it was not drawn (none of its pipeline) */
+static int resolve_in_light(struct xgpu_vulkan_image *multisampled)
+{
+	struct xgpu_vulkan_image *color = vk.color, *depth = vk.depth;
+	uint32_t layer = vk.layer, views = vk.views;
+	int bound = vk.color == multisampled && !vk.layer && vk.views == 1;
+	struct xgpu_vulkan_pipeline_description description;
+	struct xgpu_vulkan_dynamic_state dynamic;
+	struct xgpu_vulkan_draw draw;
+	float *uniforms;
+	int counting, index;
+
+	if (!resolve_light_description(multisampled, bound && vk.depth,
+		bound && xgpu_vulkan_motion_bound() ? vk.motion->description.format : 0, &description))
+		return 0;
+	/* (the pipeline and its uniforms first, as uploading may submit the
+	recording, and end a pass) */
+	memset(&draw, 0, sizeof(draw));
+	draw.pipeline = xgpu_vulkan_pipeline(&description);
+	uniforms = draw.pipeline ? xgpu_vulkan_upload(CLEAR_UNIFORMS_RANGE, 256, &draw.uniforms) : NULL;
+	if (!uniforms)
+		return 0;
+	/* (its metrics' x the samples) */
+	memset(uniforms, 0, 8 * sizeof(float));
+	uniforms[0] = (float)multisampled->description.samples;
+	draw.constants = draw.uniforms;
+	for (index = 0; index < 4; index++)
+		draw.textures[index].kind = XGPU_VULKAN_IMAGE_2D;
+	memset(&dynamic, 0, sizeof(dynamic));
+	dynamic.viewport[2] = dynamic.scissor[2] = (int32_t)multisampled->description.width;
+	dynamic.viewport[3] = dynamic.scissor[3] = (int32_t)multisampled->description.height;
+	dynamic.depth_range[1] = 1.0f;
+	draw.dynamic = &dynamic;
+	draw.topology = XGPU_VULKAN_TOPOLOGY_TRIANGLES;
+	draw.count = 3;
+	draw.reads_color = 1;
+	if (!bound)
+		xgpu_vulkan_set_target_views(multisampled, NULL, 0, 1);
+	/* (counted by no visibility test) */
+	counting = vk.test_query_open;
+	test_query_end();
+	xgpu_vulkan_draw(&draw);
+	if (counting && vk.pass_active)
+		test_query_begin();
+	xgpu_vulkan_set_target_views(color, depth, layer, views);
+	return 1;
+}
+
 /* ---------- draws */
 
 static VkDescriptorPool descriptor_pool_get(void)
@@ -6905,8 +7034,10 @@ static VkDescriptorSet input_set(void)
 	write.pImageInfo = &image;
 	vkUpdateDescriptorSets(vk.device, 1, &write, 0, NULL);
 	/* (the interlocked draws': the same view as a storage image,
-	XGPU_SPIRV_BINDING_STORE) */
-	if (vk.capabilities.pixel_interlock)
+	XGPU_SPIRV_BINDING_STORE, of the half floats' targets, which alone are
+	storage images: xgpu_vulkan_image_create; another's, a multisampled
+	colour's resolve in light, reads its input alone) */
+	if (vk.capabilities.pixel_interlock && vk.color->format == VK_FORMAT_R16G16B16A16_SFLOAT)
 	{
 		write.dstBinding = XGPU_VULKAN_BINDING_STORE;
 		write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;

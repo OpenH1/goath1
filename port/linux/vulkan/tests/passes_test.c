@@ -3773,6 +3773,61 @@ static void aside_draw(struct xgpu_vulkan_image *color, struct xgpu_vulkan_image
 		(depth ? XGPU_VULKAN_CLEAR_DEPTH | XGPU_VULKAN_CLEAR_STENCIL : 0), grey, 0.5f, 1);
 }
 
+/* #1227: a multisampled colour resolved in light: before the hardware's
+resolve, a draw in the pass that drew the samples (no new rendering, before
+its end) reads them as its input and writes all of them, every channel,
+into its 4 samples of its format, the samples its metrics' x; the targets
+bound before stay bound. The negative control: a device with no local
+reads resolves as before, drawing nothing. */
+static void resolve_light_test(void)
+{
+	static struct xgpu_vulkan_image samples, resolved;
+	const float *uniforms;
+	const char *drawn;
+	int reads;
+
+	for (reads = 1; reads >= 0; reads--)
+	{
+		hdr_reset();
+		vk.capabilities.color_read = (uint8_t)reads;
+		post_image(&samples, 1, XGPU_VULKAN_FORMAT_BGRA8, 64, 48);
+		samples.sampled = VK_NULL_HANDLE;
+		samples.description.samples = 4;
+		samples.description.usage = XGPU_VULKAN_USAGE_TARGET | XGPU_VULKAN_USAGE_INPUT;
+		post_image(&resolved, 2, XGPU_VULKAN_FORMAT_BGRA8, 64, 48);
+		vk.clear_vertex = (VkShaderModule)(uintptr_t)61;
+		vk.resolve_pixel = (VkShaderModule)(uintptr_t)63;
+		vkCmdResolveImage = discards_resolve;
+		discards_resolves = 0;
+		xgpu_vulkan_set_target_views(&samples, NULL, 0, 1);
+		hdr_triangle(0);
+		memset(hdr_events, 0, sizeof(hdr_events));
+		xgpu_vulkan_image_resolve(&samples, &resolved);
+		assert(discards_resolves == 1 && vk.color == &samples && !vk.depth);
+		if (!reads)
+		{
+			assert(!vk.statistics.resolves_in_light && !strchr(hdr_events, 'D') && !strchr(hdr_events, 'I'));
+			break;
+		}
+		drawn = strchr(hdr_events, 'D');
+		assert(vk.statistics.resolves_in_light == 1 && drawn && strchr(hdr_events, 'E') > drawn);
+		assert(!strchr(hdr_events, 'B') && strstr(hdr_events, "URI"));
+		assert(hdr_samples == VK_SAMPLE_COUNT_4_BIT && hdr_color_format == VK_FORMAT_B8G8R8A8_UNORM &&
+			hdr_depth_format == VK_FORMAT_UNDEFINED);
+		assert(!hdr_blend_attachment.blendEnable && hdr_blend_attachment.colorWriteMask == 15);
+		assert(hdr_write_image.imageView == samples.attachments[0]);
+		uniforms = (const float *)(post_ring + vk.bound.offsets[1]);
+		assert(uniforms[0] == 4.0f);
+	}
+	free(samples.attachments);
+	free(resolved.attachments);
+	memset(&samples, 0, sizeof(samples));
+	memset(&resolved, 0, sizeof(resolved));
+	recording.descriptor_pools = NULL;
+	recording.descriptor_pool_count = 0;
+	reset();
+}
+
 /* the view cleared, a pass of the aside target, the view drawn again (with
 work outside passes between, if asked for): the view's three secondary
 command buffers */
@@ -4278,6 +4333,7 @@ int main(void)
 	hdr_post_test();
 	half_test();
 	discards_test();
+	resolve_light_test();
 	aside_test();
 	transfers_test();
 	reset();

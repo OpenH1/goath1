@@ -540,7 +540,9 @@ static struct xgpu_vulkan_image *target_image_make(const struct stream_target *t
 		target->format == XGPU_VULKAN_FORMAT_RGBA16F || target->format == XGPU_VULKAN_FORMAT_RGBA16 ? target->format :
 		XGPU_VULKAN_FORMAT_BGRA8;
 	description.usage = XGPU_VULKAN_USAGE_SAMPLED | XGPU_VULKAN_USAGE_TARGET;
-	if (description.format == XGPU_VULKAN_FORMAT_RGBA16F)
+	/* (an input of the draws that read it: display.hdr's, and a
+	multisampled colour's resolve in light, #1227) */
+	if (description.format == XGPU_VULKAN_FORMAT_RGBA16F || (samples > 1 && !target->depth))
 		description.usage |= XGPU_VULKAN_USAGE_INPUT;
 	description.samples = (uint8_t)(samples > 1 ? samples : 0);
 	description.width = target->width;
@@ -4436,7 +4438,7 @@ static void stream_frame_end(void *context)
 			host_logf(HOST_LOG_INFO, "vulkan: %u frames: %u submissions, %u passes, %u draws, %u clears (%u drawn), "
 				"%u attachment loads, %u attachment clears, %u texture sets written, %u reused, %u pipelines made "
 				"(%.1f ms), %u uploads ordered, %u early, %llu ring bytes; %u stores discarded (%u at frames' ends), "
-				"%u resolves in passes, %u skipped; %u passes continued, %u put aside, %u buffers renamed; "
+				"%u resolves in passes, %u skipped, %u in light; %u passes continued, %u put aside, %u buffers renamed; "
 				"textures %u made, %u remade, %u images, %u effects' thicknesses baked (%.1f ms); "
 				"GPU %.3f ms a frame, %.3f ms between frames",
 				statistics.frames, statistics.submissions, statistics.passes, statistics.draws, statistics.clears,
@@ -4446,7 +4448,7 @@ static void stream_frame_end(void *context)
 				statistics.pipelines_made, statistics.pipeline_seconds * 1000.0, statistics.uploads_ordered,
 				statistics.uploads_early, (unsigned long long)statistics.ring_bytes, statistics.stores_discarded,
 				statistics.frame_end_discards, statistics.resolves_in_pass, statistics.resolves_skipped,
-				statistics.passes_continued, statistics.passes_aside, statistics.buffers_renamed, textures.made, textures.remade,
+				statistics.resolves_in_light, statistics.passes_continued, statistics.passes_aside, statistics.buffers_renamed, textures.made, textures.remade,
 				textures.images, textures.thickness, textures.thickness_seconds * 1000.0,
 				statistics.gpu_frames ? statistics.gpu_milliseconds / statistics.gpu_frames : 0.0,
 				statistics.frames_timed ? statistics.frame_seconds * 1000.0 / statistics.frames_timed : 0.0);
