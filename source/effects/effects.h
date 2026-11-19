@@ -41,6 +41,14 @@ void effects_dispose(
 outside it, put right (game_state.c) */
 void effects_port_game_state_rewritten(
 	void);
+/* port: an effect, its definition, object and first location, read
+(port/linux/game/light_sources.c) */
+long effects_port_next(
+	long effect_index,
+	long *definition_index,
+	long *object_index,
+	boolean *going,
+	real_point3d *position);
 void effect_delete(
 	long effect_index);
 /* port: discard delayed gameplay producers at a client checkpoint boundary. */
