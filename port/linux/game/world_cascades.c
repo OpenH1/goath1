@@ -599,6 +599,7 @@ void world_cascades_update(struct world_cascades *cascades, float const camera[3
 		float voxel = WORLD_CASCADE_FINEST * (float)(1 << cascade);
 		long first[3], last[3], index;
 		int restart = structure_changed || c->voxel != voxel;
+		long brought = 0;
 
 		/* (its window: the camera's voxel in its middle, in steps) */
 		for (axis = 0; axis < 3; axis++)
@@ -611,7 +612,14 @@ void world_cascades_update(struct world_cascades *cascades, float const camera[3
 			again where it is) */
 			if (labs(first[axis] - c->first[axis]) >= WORLD_CASCADE_SIDE || (!c->ready && first[axis] != c->first[axis]))
 				restart = 1;
+			brought += labs(first[axis] - c->first[axis]);
 		}
+		/* (moved by more slices than a frame fills, a spawn's or a
+		teleport's jump within its side: found again a few slices a frame,
+		as a jump past its side is; its slabs at once would hold up the
+		frame, a coarse cascade's up to most of its voxels) */
+		if (brought > WORLD_CASCADES_FILL_SLICES)
+			restart = 1;
 		if (restart)
 		{
 			c->voxel = voxel;

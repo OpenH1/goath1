@@ -582,11 +582,21 @@ void world_ao_window_begin(short local_player_index, short rasterizer_target, fl
 		if (mode & WORLD_AO_FIELD)
 			world_ao.volume = (struct world_sdf_volume const *)world_sdf_current();
 		world_ao.fade = world_ao.volume ? world_sdf_fade() : 0.0f;
-		/* (the distance-field scene about the camera, once a frame; the
-		ray-traced scene's instances too, with "ray_traced") */
-		world_ao_scene_update(camera_position, world_ao.cascades);
+		/* (the distance-field scene about the camera, once a frame, for
+		"world"'s pass, which steps its rays through it. "ray_traced"'s pass
+		traces the objects' meshes instead and reads none of it (the
+		level's own term is the field's): none kept, its cascades named not
+		ready, so a frame the backend steps for want of its pipeline or
+		scene shades no objects. The cascades' fills, a respawn's most of
+		all, are then no frame's work) */
 		if (mode & WORLD_AO_RAYS)
+		{
+			world_ao_scene_release();
+			memset(world_ao.cascades, 0, sizeof(world_ao.cascades));
 			world_rt_frame(world_ao_scene.frame);
+		}
+		else
+			world_ao_scene_update(camera_position, world_ao.cascades);
 		if (world_ao_scene.windows_frame != world_ao_scene.frame)
 		{
 			world_ao_scene.last_windows = world_ao_scene.windows;
