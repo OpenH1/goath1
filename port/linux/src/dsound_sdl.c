@@ -4904,13 +4904,15 @@ heard sooner, but each request must be answered sooner too, or the device
 runs dry (timing). 0, the default: BUFFER_FRAMES_AUTO to start, doubled up
 to BUFFER_FRAMES_AUTO_MOST each time the device runs dry, which the log
 says (timing_check; the sound stops for a moment as the device opens
-again). On Android and iOS 1024: there 512 broke the menus' music up (the
-thread that runs the guest getting too little time). */
-#ifdef HALO_WINDOWS
-#define BUFFER_FRAMES_AUTO 512
-#else
+again). On Windows too: SDL's WASAPI driver rounds a request to the steps
+of the system's audio engine (IAudioClient3's shared mode periods) within
+the driver's smallest and its default, so 256 starts at the device's
+smallest period, or the step nearest 256 (336 frames, 7 ms, on a driver
+that allows less than the engine's 10 ms; 480 on most), where 512, as it
+was, took the default alone; and a dropout grows it to the default. On Android and iOS 1024:
+there 512 broke the menus' music up (the thread that runs the guest
+getting too little time). */
 #define BUFFER_FRAMES_AUTO 256
-#endif
 #define BUFFER_FRAMES_AUTO_MOST 2048
 static long buffer_frames = 1024;
 static BOOL buffer_frames_auto;

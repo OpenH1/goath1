@@ -1470,7 +1470,7 @@ the setting for one start of the game. It has priority over the file.
 | `audio.dialogue_volume` | `1.0` | `HALO_DIALOGUE_VOLUME` | The characters' speech's volume (the units' lines, Cortana's and the cutscenes' dialogue: the sound classes marked speech), of the master volume. |
 | `audio.effects_volume` | `1.0` | `HALO_EFFECTS_VOLUME` | The volume of the other sounds (weapons, vehicles, the world), of the master volume. |
 | `audio.background_volume` | `1.0` | `HALO_BACKGROUND_VOLUME` | The volume while the game's window is in the background (#1212): shown without the focus, another window in front of it or minimized. `0.0` to `1.0` of what is played (Settings > Audio > BACKGROUND VOLUME, 0 to 100%); `0.0` mutes it. The output's gain fades there and back over 10 ms, no click, after the limiter, the mix and a network game going on as before. `1.0`: as before, the same in the background. Not in VR (the headset is looked at, not the window). Desktop builds only: on Android and iOS the game waits in the background and the system stops its sound. |
-| `audio.buffer_frames` | `0` | `HALO_AUDIO_BUFFER_FRAMES` | The frames the sound device asks for at a time, at 48 kHz, from `64` to `8192`: smaller is heard sooner, larger rides out stalls that would cut the sound out (256 is 5.3 ms, 1024 is 21 ms). `0`: automatic, `256` to start (`512` on Windows), doubled up to `2048` each time the device runs dry, which the log says. Refer to "Sound delay". Not on Android or iOS (1024). |
+| `audio.buffer_frames` | `0` | `HALO_AUDIO_BUFFER_FRAMES` | The frames the sound device asks for at a time, at 48 kHz, from `64` to `8192`: smaller is heard sooner, larger rides out stalls that would cut the sound out (256 is 5.3 ms, 1024 is 21 ms). `0`: automatic, `256` to start (on Windows the device's smallest period, or the step nearest 256), doubled up to `2048` each time the device runs dry, which the log says. Refer to "Sound delay". Not on Android or iOS (1024). |
 | `audio.channels` | `"auto"` | `HALO_AUDIO_CHANNELS` | `"stereo"`, or `"5.1"` for surround sound as with Dolby Digital on the Xbox: the world's sounds from the front and back pairs of speakers as the Xbox's (through the HRTF, or panned with `audio.spatial` `"speakers"`), never the center or the LFE, the game's 2D sounds on the speakers it sends them to, nothing on the LFE (the game sends it none). `"auto"`: 5.1 if the sound device has 6 or more channels (the host's SDL says how many the device plays: a 5.1 or 7.1 receiver or headset), else stereo. Read when the game starts. Not on Android. |
 | `audio.reverb` | `true` | `HALO_REVERB` | `true`: the sounds of the world reverberate as the place the player is in does: the sound environments of the maps (a corridor, a cave, a large hall, outdoors) set the reverberation, as the I3DL2 reverb of the Xbox did. A sound behind a wall or a door is muffled in it too. `false`: no reverberation (sounds behind a wall are still muffled). |
 | `audio.doppler` | `true` | `HALO_DOPPLER` | `true`: a sound of the world moving towards the player rises in pitch and one moving away falls (a Banshee or a Ghost passing by, a plasma bolt), from the velocities the game gives each sound, as the Xbox's DirectSound shifted them (the speed of sound 343 m/s, the shift held to an octave either way). `false`: each keeps its pitch. |
@@ -2556,11 +2556,11 @@ with the lock held used to make the mix wait up to 50 ms, and the device
 run dry. The game times each answer against what the device had
 queued (`src/dsound_sdl.c`, "the device's timing"), counts a dropout when it
 waited longer, and logs it ("sound: the device ran dry ..."). With
-`audio.buffer_frames = 0`, the default, the buffer starts at 256 frames (512
-on Windows) and doubles, up to 2048, each time the device runs dry (not
-counting the first 5 seconds after it opens, the game starting up); the
-device opens again at the new size, a moment of silence. A number keeps
-that size.
+`audio.buffer_frames = 0`, the default, the buffer starts at 256 frames (on
+Windows the driver's smallest period, or the step nearest 256) and
+doubles, up to 2048, each time the device runs dry (not counting the
+first 5 seconds after it opens, the game starting up); the device opens
+again at the new size, a moment of silence. A number keeps that size.
 
 What the drivers queue (SDL 3.4):
 
@@ -2583,10 +2583,11 @@ What the drivers queue (SDL 3.4):
   becomes the buffer, for the other programs on the device too. PulseAudio
   (without PipeWire) targets the buffer in all.
 - Windows (WASAPI, shared): the buffer rounded to the steps the system's
-  audio engine allows, within the driver's range: most drivers allow only
-  10 ms (480 frames), so 512 is the engine's own period on most computers,
-  and a driver that allows less gets 512 frames. Not measured here: no
-  Windows computer to measure on.
+  audio engine allows, within the driver's range (IAudioClient3's shared
+  mode periods): most drivers allow only 10 ms (480 frames), and 256 gets
+  that; a driver that allows less gets its smallest, or the step nearest
+  256 (a 48 kHz endpoint's 336 frames, 7 ms, where 512 got 480), and a
+  dropout grows it to the 480.
 
 On the Mac, what is left after the I/O buffer is the device's: its
 latency, safety offset and stream latency (the MacBook Air M2's speakers:
