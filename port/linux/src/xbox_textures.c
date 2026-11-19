@@ -78,9 +78,18 @@ the pictures, and its texels in the Xbox's order are sampled in the meters'
 for the meter's draw alone (its first stage) */
 static int custom_edition_hud_meter_active;
 
+/* (xgpu_texture_choices_serial) the choices not kept and the MCC
+textures' images found so far */
+static unsigned long choices_unkept;
+
 void halo_custom_edition_hud_meter(int active)
 {
 	custom_edition_hud_meter_active = active;
+}
+
+int xgpu_texture_hud_meter(void)
+{
+	return custom_edition_hud_meter_active != 0;
 }
 
 /* the order of the texels at address */
@@ -370,6 +379,16 @@ void xgpu_texture_replacements_changed(void)
 	__atomic_fetch_add(&replacement_epoch, 1, __ATOMIC_RELEASE);
 }
 
+unsigned long xgpu_texture_choices_serial(void)
+{
+	return __atomic_load_n(&replacement_epoch, __ATOMIC_ACQUIRE);
+}
+
+unsigned long xgpu_texture_choices_unkept(void)
+{
+	return choices_unkept;
+}
+
 void xgpu_texture_cache_begin_frame(void)
 {
 	unsigned long changed = hud_hires_settings_changed();
@@ -636,7 +655,10 @@ unsigned int xgpu_texture_replacement(DWORD resource, struct xgpu_texture_descri
 	/* (an MCC texture, drawn as an image of its own: below; every one's Data
 	is the same, so none is kept among the choices) */
 	if (data == XGPU_MCC_TEXTURE_DATA)
+	{
+		choices_unkept++;
 		return xgpu_mcc_texture_image(resource, 0, description);
+	}
 	choice = &replacement_choices[replacement_hash(data, format_word, size_word) % REPLACEMENT_CHOICE_COUNT];
 	epoch = __atomic_load_n(&replacement_epoch, __ATOMIC_ACQUIRE);
 	watched_serial = memory_watch_serial();
@@ -664,6 +686,8 @@ unsigned int xgpu_texture_replacement(DWORD resource, struct xgpu_texture_descri
 	}
 	image = replacement_choose(resource, description, &entry, &overridden, &keep);
 	choice->kept = keep;
+	if (!keep)
+		choices_unkept++;
 	if (keep)
 	{
 		choice->data = data;

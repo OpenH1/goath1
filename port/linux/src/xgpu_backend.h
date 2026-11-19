@@ -588,6 +588,13 @@ BOOL xgpu_backend_pipeline(const struct xgpu_pipeline_key *key);
 alone (with the times the numbers have begun again), so that the front
 end's map preparation tells draws apart by it, not by the key's bytes */
 unsigned long xgpu_backend_pipeline_number(void);
+
+/* (the front end's kept draws: d3d8_device.c's retained_draw_find) counts
+the times what the backend was last sent is forgotten (sent again as it is
+next used: xgpu_backend_invalidate, the pipelines' numbers begun again);
+and whether the pipeline last bound draws (not known to have failed) */
+unsigned long xgpu_backend_sent_serial(void);
+BOOL xgpu_backend_pipeline_usable(void);
 /* the pipeline keys defined so far (the performance overlay's count,
 debug.timings): read, never counted for it */
 unsigned long xgpu_backend_pipelines_defined(void);
