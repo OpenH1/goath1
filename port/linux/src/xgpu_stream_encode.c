@@ -2528,17 +2528,19 @@ void xgpu_backend_frame_extra(unsigned long microseconds)
 	frame_extra_frames = microseconds ? XGPU_FRAME_EXTRA_FRAMES : 0;
 }
 
-void xgpu_backend_loading_art(const unsigned char *rgba)
+void xgpu_backend_loading_art(const unsigned char *rgba, const unsigned char *source)
 {
 	struct xgpu_stream_value *body;
-	uint32_t bytes = rgba ? XGPU_STREAM_LOADING_ART_BYTES : 0;
+	uint32_t bytes = rgba ? XGPU_STREAM_LOADING_ART_BYTES + (source ? XGPU_STREAM_LOADING_ART_SOURCE_BYTES : 0) : 0;
 
 	if (!stream.open)
 		return;
 	body = record(XGPU_STREAM_LOADING_ART, sizeof(*body) + bytes);
 	body->value = bytes;
 	if (bytes)
-		memcpy(body + 1, rgba, bytes);
+		memcpy(body + 1, rgba, XGPU_STREAM_LOADING_ART_BYTES);
+	if (bytes > XGPU_STREAM_LOADING_ART_BYTES)
+		memcpy((unsigned char *)(body + 1) + XGPU_STREAM_LOADING_ART_BYTES, source, XGPU_STREAM_LOADING_ART_SOURCE_BYTES);
 	synchronous();
 }
 

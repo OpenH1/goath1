@@ -365,6 +365,17 @@ _end), and what the code drawing knows of them (HALO_HDR_KIND_*, 0 none) */
 void halo_screen_tone_map(short x0, short y0, short x1, short y1);
 void halo_hdr_category(int category);
 void halo_hdr_draw_kind(int kind);
+/* the game's small targets sized for the Xbox's 640x480 screen, at the
+display's detail (port/linux/src/d3d8_device.c): the scale of one `side`
+units across (the display's pixels for each of the 480 lines; 1 at
+640x480); the targets the game draws into from now on at that scale (0:
+the Xbox's); and the screen sampled from now on averaged, all the pixels a
+smaller target's texel covers blended (the sun glow's copy) */
+float halo_target_detail_scale(int side);
+void halo_target_detail(int side);
+void halo_target_averaged(int averaged);
+/* the back buffer's pixels for each of the screen's units, across and down */
+void halo_screen_scale_axes(float scale[2]);
 /* ... and the draws from now on the HUD's and menus' again, after a view of
 the world's drawn among them (port/linux/game/menu_spartan.c) */
 void halo_hdr_interface(void);

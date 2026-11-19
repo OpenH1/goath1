@@ -16,6 +16,14 @@ The committed conversion used Pillow 13.0.0 and zlib 1.3.2. The input is
 The compressed payload's SHA-256 is
 `f66b23eb3960213d8f0c821cf8feed577fad5116ec8762bab21fdd199ad51359`.
 
+`loading-source.rgba.zlib` is the same picture at its own 1600×1200 (RGBA,
+7,680,000 uncompressed bytes, not resized), made by the same script. The
+sharp frame above 540 rows resamples it to the screen's own pixels
+(`loading_art_source_resample`: Catmull-Rom, widened when the screen has
+fewer pixels than it) for the LOADING words and the first load's picture;
+the 640×480 copy stays the 480-row frame's, the trail's and VR's. Its
+SHA-256 is `d9ffc7ff2f0a7c69f7997185b56b5cbc0f10e3b93221248f6f10c7528cbba688`.
+
 ## The main menu's ring
 
 Once the main menu has been shown, the loading screen draws the menu's own

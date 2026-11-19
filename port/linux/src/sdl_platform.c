@@ -61,25 +61,41 @@ static int loading_presentation_active;
 
 extern const unsigned int platform_loading_picture[];
 extern const unsigned long platform_loading_picture_size;
+extern const unsigned int platform_loading_source[];
+extern const unsigned long platform_loading_source_size;
 
 void halo_loading_art(void)
 {
-	unsigned char *pixels;
-	uLongf size = LOADING_ART_BYTES;
+	unsigned char *pixels, *source = NULL;
+	uLongf size = LOADING_ART_BYTES, source_size = LOADING_ART_SOURCE_BYTES;
 
 	if (!platform_loading_picture_size)
 		return;
 	pixels = malloc(LOADING_ART_BYTES);
 	if (!pixels)
 		return;
+	/* (and the picture at its own size, which the sharp frame resamples to
+	the screen's pixels: loading_art.h) */
+	if (platform_loading_source_size)
+	{
+		source = malloc(LOADING_ART_SOURCE_BYTES);
+		if (source && (uncompress(source, &source_size, (const unsigned char *)platform_loading_source,
+			platform_loading_source_size) != Z_OK || source_size != LOADING_ART_SOURCE_BYTES))
+		{
+			free(source);
+			source = NULL;
+		}
+	}
 	if (uncompress(pixels, &size, (const unsigned char *)platform_loading_picture,
 		platform_loading_picture_size) == Z_OK && size == LOADING_ART_BYTES)
 	{
-		xgpu_backend_loading_art(pixels);
-		platform_log("loading: using the bundled loading picture");
+		xgpu_backend_loading_art(pixels, source);
+		platform_log(source ? "loading: using the bundled loading picture, and at its own size" :
+			"loading: using the bundled loading picture");
 	}
 	else
 		platform_log("loading: could not decode the bundled loading picture");
+	free(source);
 	free(pixels);
 }
 

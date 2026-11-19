@@ -4648,6 +4648,7 @@ const struct host_render_backend *xgpu_vulkan_stream_backend(void)
 		backend.loading = xgpu_vulkan_loading;
 		backend.loading_owned = xgpu_vulkan_loading_owned;
 		backend.loading_art = xgpu_vulkan_loading_art;
+		backend.loading_art_source = xgpu_vulkan_loading_art_source;
 		backend.loading_scene = xgpu_vulkan_loading_scene;
 		backend.loading_progress = xgpu_vulkan_loading_progress;
 		backend.loading_mode = xgpu_vulkan_loading_mode;

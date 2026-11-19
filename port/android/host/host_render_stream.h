@@ -185,6 +185,9 @@ struct host_render_backend
 	int (*loading_owned)(void *context);
 	/* Copy 640x480 RGBA before returning; NULL clears the owned picture. */
 	void (*loading_art)(void *context, const unsigned char *rgba);
+	/* after it, the picture at its own size (1600x1200 RGBA), copied before
+	returning; not called without one */
+	void (*loading_art_source)(void *context, const unsigned char *rgba);
 	/* The menu's scene (loading_scene.h), unchecked bytes the backend
 	validates; copied before returning, none clears it. */
 	void (*loading_scene)(void *context, const void *data, uint32_t bytes);

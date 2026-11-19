@@ -121,6 +121,9 @@ static struct
 	texture, as of which of its draws */
 	uint32_t feedback, feedback_target, feedback_written;
 	struct xgpu_metal_texture_description feedback_description;
+	/* a target sampled with mip levels made from it (averaged_copy) */
+	uint32_t averaged, averaged_target, averaged_written;
+	struct xgpu_metal_texture_description averaged_description;
 	struct xgpu_metal_vertex_attribute attributes[16];
 	uint16_t strides[XGPU_METAL_STREAM_COUNT];
 	struct xgpu_metal_source streams[XGPU_METAL_STREAM_COUNT];
@@ -672,6 +675,46 @@ static uint32_t feedback_copy(struct stream_target *target)
 	return stream.feedback ? stream.feedback : target->texture;
 }
 
+/* a target sampled with levels made from its first (the screen the sun
+glow's copy averages: d3d8_device.c's halo_target_averaged): copied into a
+texture of them, the levels made from the first, again once the target has
+been drawn into since. (The levels a game draws one by one are not: its
+first is sampled.) */
+static uint32_t averaged_copy(struct stream_target *target, uint32_t levels)
+{
+	if (target->description.depth_or_layers > 1 ||
+		(target->description.format != XGPU_METAL_FORMAT_BGRA8 && target->description.format != XGPU_METAL_FORMAT_RGBA16F &&
+			target->description.format != XGPU_METAL_FORMAT_RGBA16))
+		return target->texture;
+	if (!stream.averaged || stream.averaged_description.width != target->description.width ||
+		stream.averaged_description.height != target->description.height ||
+		stream.averaged_description.format != target->description.format || stream.averaged_description.levels != levels)
+	{
+		struct xgpu_metal_texture_description description = target->description;
+
+		if (stream.averaged)
+			xgpu_metal_texture_destroy(stream.averaged);
+		description.type = XGPU_METAL_TEXTURE_2D;
+		description.usage = XGPU_METAL_USAGE_SAMPLED | XGPU_METAL_USAGE_TARGET;
+		description.samples = 0;
+		description.depth_or_layers = 1;
+		description.levels = (uint16_t)levels;
+		stream.averaged = xgpu_metal_texture_create(&description);
+		stream.averaged_description = description;
+		stream.averaged_target = 0;
+	}
+	if (!stream.averaged)
+		return target->texture;
+	if (stream.averaged_target != target->texture || stream.averaged_written != target->written)
+	{
+		xgpu_metal_texture_copy(target->texture, stream.averaged);
+		xgpu_metal_texture_make_levels(stream.averaged);
+		stream.averaged_target = target->texture;
+		stream.averaged_written = target->written;
+	}
+	return stream.averaged;
+}
+
 /* the stages' textures and samplers for a draw: the textures are looked up
 again where a stage changed or a watched page has been written since (the
 textures' cache makes them again from pages written since), and a target the
@@ -703,6 +746,12 @@ static void textures_bind(void)
 				if (stage->drawn == stage->target && stage->target == stream.color)
 				{
 					texture = feedback_copy(target);
+					stream.feedback_bound = YES;
+				}
+				else if (stage->levels > 1 && stage->rendered_levels == 1 &&
+					stage->width == target->description.width && stage->height == target->description.height)
+				{
+					texture = averaged_copy(target, stage->levels);
 					stream.feedback_bound = YES;
 				}
 			}
@@ -2342,6 +2391,7 @@ const struct host_render_backend *xgpu_metal_stream_backend(void)
 		backend.loading = host_metal_loading;
 		backend.loading_owned = host_metal_loading_owned;
 		backend.loading_art = host_metal_loading_art;
+		backend.loading_art_source = host_metal_loading_art_source;
 		backend.loading_scene = host_metal_loading_scene;
 		backend.loading_progress = host_metal_loading_progress;
 		backend.loading_mode = host_metal_loading_mode;

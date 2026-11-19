@@ -1116,6 +1116,67 @@ float halo_screen_scale(void)
 	return screen_scale[0] > screen_scale[1] ? screen_scale[0] : screen_scale[1];
 }
 
+/* ---------- the game's small targets at the display's detail
+
+The game sizes some of its own targets for the Xbox's 640x480 screen: the
+motion sensor's blips are drawn into a 64x64 one and stretched over the
+sensor (rasterizer_xbox_motion_sensor.c), the water's ripples composited
+into a 128x128 one (rasterizer_xbox_water.c). Drawn at more pixels than
+the Xbox's screen has, they stay at that detail, stretched. The rule for
+each is the same: as many pixels a unit as the display has for each of the
+480 lines (its own pixels, not the 3D view's of display.temporal_aa or
+supersampling), a side's pixels a multiple of TARGET_DETAIL_STEP (so that
+three mip levels past the first still halve it exactly), at most
+TARGET_DETAIL_LARGEST pixels a side (memory's guard: 8K's 576 and 1152 are
+within it). 1 at 640x480 and with display.resolution_scaling "original":
+the Xbox's target. */
+#define TARGET_DETAIL_STEP 8
+#define TARGET_DETAIL_LARGEST 2048
+
+float halo_target_detail_scale(int side)
+{
+	float lines;
+	long pixels;
+
+	if (side <= 0)
+		return 1.0f;
+	halo_screen_width();
+	lines = screen_scale[1] / screen_supersampling;
+	if (temporal.rendering)
+		lines /= temporal.factor;
+	if (lines <= 1.0f)
+		return 1.0f;
+	pixels = (long)((float)side * lines / (float)TARGET_DETAIL_STEP + 0.5f) * TARGET_DETAIL_STEP;
+	if (pixels > TARGET_DETAIL_LARGEST)
+		pixels = TARGET_DETAIL_LARGEST;
+	return pixels > side ? (float)pixels / (float)side : 1.0f;
+}
+
+/* the game's targets drawn into from now on, that are not the screen's or a
+shadow map: at the detail of a target `side` units across
+(halo_target_detail_scale), or the Xbox's (0) */
+static int target_detail_side;
+
+void halo_target_detail(int side)
+{
+	target_detail_side = side > 0 ? side : 0;
+}
+
+/* a render target the next draws sample, which the game sized for the
+Xbox's screen in pixels but the port draws at more (the screen's): sampled
+with mip levels made from it, so that a smaller target the game copies it
+into gets the average of each texel's pixels, not a pixel of them (the sun
+glow's 64x64 copy of its square of the screen: rasterizer_xbox_lights.c) */
+static BOOL target_averaged;
+/* (and only a target of up to 4K's pixels: its copy with its levels is the
+backend's to keep) */
+#define TARGET_AVERAGED_LARGEST (3840ull * 2160ull)
+
+void halo_target_averaged(int averaged)
+{
+	target_averaged = averaged != 0;
+}
+
 /* display.shadow_resolution: the size the shadow maps are drawn at.
 
 Each object's shadow is drawn from above into a 128x128 map, blurred into
@@ -1241,6 +1302,9 @@ enum render_target_kind
 	_render_target_screen,
 	/* a shadow map: halo_shadow_map_scale's */
 	_render_target_shadow_map,
+	/* one of the game's small targets at the display's detail
+	(halo_target_detail): halo_target_detail_scale's of its side */
+	_render_target_detail,
 };
 
 /* a render target: the Xbox surface it is, and its description; its
@@ -1284,6 +1348,8 @@ struct render_target_entry
 	/* a screen's target's view: 0 the screen's own, else an extra view's
 	(halo_view_begin), whose targets are its own */
 	int view;
+	/* _render_target_detail's: the side its scale is of */
+	int detail_side;
 };
 
 /* every draw looks up its targets and whether its textures are render
@@ -1908,7 +1974,7 @@ static struct
 	DWORD data, format, size;
 	long screen_width;
 	float scale[2];
-	int view;
+	int view, detail_side;
 	struct render_target_entry *entry;
 } recent_render_targets[RECENT_RENDER_TARGET_COUNT];
 static unsigned long recent_render_target_next;
@@ -1925,6 +1991,7 @@ static struct render_target_entry *render_target_remember(const D3DSurface *surf
 	recent_render_targets[slot].scale[0] = screen_scale[0];
 	recent_render_targets[slot].scale[1] = screen_scale[1];
 	recent_render_targets[slot].view = screen_view;
+	recent_render_targets[slot].detail_side = target_detail_side;
 	recent_render_targets[slot].entry = entry;
 	return entry;
 }
@@ -1961,7 +2028,8 @@ static struct render_target_entry *render_target_get(const D3DSurface *surface)
 		if (recent_render_targets[slot].entry && recent_render_targets[slot].data == surface->Data &&
 			recent_render_targets[slot].format == surface->Format && recent_render_targets[slot].size == surface->Size &&
 			recent_render_targets[slot].screen_width == screen && recent_render_targets[slot].scale[0] == screen_scale[0] &&
-			recent_render_targets[slot].scale[1] == screen_scale[1] && recent_render_targets[slot].view == screen_view)
+			recent_render_targets[slot].scale[1] == screen_scale[1] && recent_render_targets[slot].view == screen_view &&
+			recent_render_targets[slot].detail_side == target_detail_side)
 		{
 			return recent_render_targets[slot].entry;
 		}
@@ -2002,6 +2070,13 @@ static struct render_target_entry *render_target_get(const D3DSurface *surface)
 		scale[1] = scale[0];
 		kind = _render_target_shadow_map;
 	}
+	/* (one of the game's small targets: at the display's detail where the
+	code drawing it asks, square, its texels the game's halved) */
+	else if (!depth && target_detail_side && halo_target_detail_scale(target_detail_side) > 1.0f)
+	{
+		scale[0] = scale[1] = halo_target_detail_scale(target_detail_side);
+		kind = _render_target_detail;
+	}
 	for (entry = *render_target_bucket(surface->Data); entry; entry = entry->next_in_bucket)
 	{
 		if (entry->target.data == surface->Data && entry->target.width == width &&
@@ -2023,6 +2098,7 @@ static struct render_target_entry *render_target_get(const D3DSurface *surface)
 	entry->target.scale[1] = scale[1];
 	entry->kind = kind;
 	entry->view = kind == _render_target_screen ? screen_view : 0;
+	entry->detail_side = kind == _render_target_detail ? target_detail_side : 0;
 	entry->target.pixel_width = (unsigned long)(width * scale[0] + 0.5f);
 	entry->target.pixel_height = (unsigned long)(height * scale[1] + 0.5f);
 	entry->target.layers = layers;
@@ -3898,6 +3974,8 @@ static BOOL render_target_stale(const struct render_target_entry *entry)
 			(render_target_screen_colour(entry) && entry->target.format != hdr_back_buffer_format());
 	case _render_target_shadow_map:
 		return entry->target.scale[0] != (float)halo_shadow_map_scale();
+	case _render_target_detail:
+		return entry->target.scale[0] != halo_target_detail_scale(entry->detail_side);
 	default:
 		return FALSE;
 	}
@@ -4294,6 +4372,7 @@ static void bind_textures(struct nv2a_pixel_shader_key *key, float texture_scale
 		struct xgpu_render_target *target;
 		struct xgpu_texture_description description;
 		int kind = XGPU_TEXTURE_KIND_2D;
+		BOOL averaged = FALSE;
 
 		texture_scale[stage][0] = texture_scale[stage][1] = 1.0f;
 		texture_scale[stage][2] = texture_scale[stage][3] = 1.0f;
@@ -4343,27 +4422,50 @@ static void bind_textures(struct nv2a_pixel_shader_key *key, float texture_scale
 				target->layers == 1)
 			{
 				/* the levels the game has rendered, each a target of its own
-				the level's size */
+				the level's size, at the first's pixels a unit (the water's
+				ripples at the display's detail: halo_target_detail) */
 				unsigned long level;
 
 				source->data = texture->Data;
-				source->width = description.width;
-				source->height = description.height;
+				source->width = target->pixel_width;
+				source->height = target->pixel_height;
 				source->levels = description.levels;
 				for (level = 0; level < description.levels && level < XGPU_MIP_LEVELS; level++)
 				{
 					unsigned long width = description.width >> level ? description.width >> level : 1;
 					unsigned long height = description.height >> level ? description.height >> level : 1;
+					unsigned long pixel_width = target->pixel_width >> level ? target->pixel_width >> level : 1;
+					unsigned long pixel_height = target->pixel_height >> level ? target->pixel_height >> level : 1;
 					struct xgpu_render_target *level_target =
 						xgpu_render_target_find(texture->Data + xgpu_texture_level_offset(&description, level));
 
 					if (!level_target || level_target->width != width || level_target->height != height ||
-						level_target->pixel_width != width || level_target->pixel_height != height)
+						level_target->pixel_width != pixel_width || level_target->pixel_height != pixel_height)
 						break;
 					source->level_targets[level] = level_target->number;
 					source->level_written[level] = level_target->written;
 					source->rendered_levels++;
 				}
+			}
+			else if (target_averaged && stage == 0 && !description.linear && !description.cube_map &&
+				target->layers == 1 && (target->pixel_width > target->width || target->pixel_height > target->height) &&
+				(unsigned long long)target->pixel_width * target->pixel_height <= TARGET_AVERAGED_LARGEST)
+			{
+				/* (averaged: its first level the target, the levels past it
+				made from it, as many as halve it past a pixel a unit) */
+				unsigned long levels = 1;
+
+				while ((target->pixel_width >> (levels - 1)) > target->width && levels < XGPU_MIP_LEVELS)
+					levels++;
+				source->data = texture->Data;
+				source->width = target->pixel_width;
+				source->height = target->pixel_height;
+				source->levels = levels;
+				source->level_targets[0] = target->number;
+				source->level_written[0] = target->written;
+				source->rendered_levels = 1;
+				description.levels = levels;
+				averaged = TRUE;
 			}
 			else
 			{
@@ -4390,6 +4492,13 @@ static void bind_textures(struct nv2a_pixel_shader_key *key, float texture_scale
 			}
 		}
 		sampler_describe(stage, description.levels > 1, description.hires, target != NULL, &source->sampler);
+		/* (halo_target_averaged: its levels blended at the copy's size) */
+		if (averaged)
+		{
+			source->sampler.minify = source->sampler.mip = sampler_filter(D3DTEXF_LINEAR);
+			source->sampler.lod_bias = 0.0f;
+			source->sampler.first_level = 0;
+		}
 		/* (alpha_test_always_passes: the game's own texture, sampled as a 2D
 		texture, never past its edge into a border colour) */
 		if (!target && D3D__RenderState[D3DRS_ALPHATESTENABLE] && mode == 0x01 && kind == XGPU_TEXTURE_KIND_2D &&

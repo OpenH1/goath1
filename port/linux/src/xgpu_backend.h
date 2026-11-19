@@ -925,8 +925,10 @@ unsigned long xgpu_backend_frame_extra_pending(void);
 /* Acknowledged loading ownership change, before map storage is reused. */
 void xgpu_backend_loading(int active);
 int xgpu_backend_loading_owned(void);
-/* Copy the 640 by 480 RGBA loading picture before returning; NULL clears. */
-void xgpu_backend_loading_art(const unsigned char *rgba);
+/* Copy the 640 by 480 RGBA loading picture before returning, and the
+picture at its own size (1600x1200 RGBA) where there is one (NULL: none);
+NULL clears. */
+void xgpu_backend_loading_art(const unsigned char *rgba, const unsigned char *source);
 /* The main menu's scene the loading screen draws (loading_scene.h), copied
 before returning; no bytes return to the picture. */
 void xgpu_backend_loading_scene(const void *data, unsigned long bytes);

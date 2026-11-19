@@ -63,6 +63,7 @@ MENU_LIST = MENU_ASSETS / "menus.json"
 # the desktop windows' icon (tools/app_icon.py; port/linux/src/sdl_platform.c)
 WINDOW_ICON = Path("port/assets/icon/openh1-icon-256.png")
 LOADING_PICTURE = Path("port/assets/loading/loading.rgba.zlib")
+LOADING_SOURCE = Path("port/assets/loading/loading-source.rgba.zlib")
 # the pointer the menus show in place of the system's (port/linux/src/sdl_platform.c)
 MENU_CURSOR = Path("port/assets/cursor/menu_cursor.png")
 # the menus' pictures drawn again from the player's maps: a pose each (any
@@ -196,6 +197,7 @@ def hud_asset_inputs() -> List[Path]:
             *([MSDF_ATLAS] if (ROOT / MSDF_ATLAS).is_file() else []),
             *([WINDOW_ICON] if (ROOT / WINDOW_ICON).is_file() else []),
             *([LOADING_PICTURE] if (ROOT / LOADING_PICTURE).is_file() else []),
+            *([LOADING_SOURCE] if (ROOT / LOADING_SOURCE).is_file() else []),
             *([MENU_CURSOR] if (ROOT / MENU_CURSOR).is_file() else []),
             *([PICTURE_MAPS] if (ROOT / PICTURE_MAPS).is_file() else []), *picture_poses()]
 
@@ -438,6 +440,13 @@ def main() -> None:
     lines.extend(words(data) if data else ["\t0,"])
     lines.append("};")
     lines.append(f"const unsigned long platform_loading_picture_size = {len(data)};")
+    # and at its own size (1600x1200), which the sharp frame resamples
+    data = (ROOT / LOADING_SOURCE).read_bytes() if (ROOT / LOADING_SOURCE).is_file() else b""
+    lines.append("")
+    lines.append("const unsigned int platform_loading_source[] = {")
+    lines.extend(words(data) if data else ["\t0,"])
+    lines.append("};")
+    lines.append(f"const unsigned long platform_loading_source_size = {len(data)};")
     lines.append("")
     lines.extend(picture_lines())
     # the assets' file, its size and CRC-32 in its header too

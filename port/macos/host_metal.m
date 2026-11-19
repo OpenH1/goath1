@@ -565,6 +565,15 @@ void host_metal_loading_art(void *context, const uint8_t *rgba)
 	pthread_mutex_unlock(&presentation.lock);
 }
 
+void host_metal_loading_art_source(void *context, const uint8_t *rgba)
+{
+	(void)context;
+	pthread_mutex_lock(&presentation.lock);
+	loading_art_source(&presentation.loading_art, rgba);
+	presentation.loading_texture_valid = NO;
+	pthread_mutex_unlock(&presentation.lock);
+}
+
 void host_metal_loading_progress(void *context, float progress)
 {
 	(void)context;
