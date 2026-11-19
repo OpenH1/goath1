@@ -57,6 +57,10 @@ unsigned int halo_gpu_journal_form(void);
 the objects not found */
 int halo_gpu_journal_replay(unsigned int const *words, unsigned int count,
 	struct halo_gpu_journal_bitmaps const *bitmaps, unsigned int *unknown);
+/* the words played next are a structure's not loaded now: a draw whose
+vertices are not there reads a few from memory a draw played before read
+(on); off, and what was read forgotten, before a record's first words */
+void halo_gpu_journal_elsewhere(int on);
 /* Discard measured listener motion at camera cuts and lifecycle boundaries
 (source/sound/sound_manager.c). NONE resets every local listener. */
 void sound_listener_motion_reset(short local_player_index);

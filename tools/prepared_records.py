@@ -136,6 +136,30 @@ def run_game(halo: Path, maps: Path, work: Path, seconds: int, name: str = "run"
     return run
 
 
+# a record's segments (render_prepared.c's PREPARED_SEGMENT, an entry of one pair): each a structure's own walk
+SEGMENT = 0x142
+SEGMENT_MIRRORS = 0x10000
+
+
+def record_words(data: bytes) -> tuple:
+    """a record's journal words (after its header and draws)"""
+    header_size, = struct.unpack_from("<I", data, 8)
+    draw_count, = struct.unpack_from("<I", data, 28)
+    start = header_size + 8 * draw_count
+    return struct.unpack_from(f"<{(len(data) - start) // 4}I", data, start)
+
+
+def record_structures(data: bytes) -> list:
+    """the structures whose own walks a record holds, in its segments' order (None: a record not of segments)"""
+    words, structures, at = record_words(data), [], 0
+    while at < len(words):
+        if at + 3 > len(words) or words[at] != SEGMENT or words[at + 2] > len(words) - at - 3:
+            return None
+        structures.append(words[at + 1] & 0xFFFF)
+        at += 3 + words[at + 2]
+    return structures
+
+
 def record_tags(data: bytes) -> list:
     """the tags of the bitmaps a record's journal loads (its JOURNAL_TEXTURE entries), as it keeps them"""
     header_size, = struct.unpack_from("<I", data, 8)
@@ -198,8 +222,12 @@ def collect(runs: list, out: Path) -> dict:
                      f"{', '.join(f'{tag:08x}' for tag in unkept[:8])}")
         # (a map recorded under two keys, ui.map's before and after the first start's pass makes the menus'
         # models: each)
+        structures = record_structures(data)
+        if structures is None:
+            sys.exit(f"{name}'s record is not of segments (render_prepared.c's PREPARED_SEGMENT)")
         records[(checksum, key)] = {"map": name, "scenario": scenario, "checksum": checksum, "key": key,
                                     "draws": int(draws), "words": int(words), "size": len(data),
+                                    "structures": sorted(set(structures)),
                                     "tags": int(stable_tags), "data": zlib.compress(data, 9)}
     maps = {record["map"] for record in records.values()}
     if len(maps) != STOCK_MAP_COUNT:

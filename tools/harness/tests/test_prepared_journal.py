@@ -177,6 +177,7 @@ KEPT_ELSEWHERE = {
     'd3d8_resource_freed': "the resources' table",
     'halo_gpu_journal_record': "the journal's own", 'halo_gpu_journal_texture': "the journal's own",
     'halo_gpu_journal_take': "the journal's own", 'halo_gpu_journal_replay': "the journal's own",
+    'halo_gpu_journal_elsewhere': "the journal's own: where a played draw of a structure not loaded reads its vertices",
     'halo_motion_window': "display.temporal_aa's jitter, a uniform (draw_uniforms_update), and whether the window's "
                           "objects draw their motion: the backend's own record, sent again as a record plays",
     'halo_motion_objects': "the backend's motion target bound (its own record); the objects' span, which their "

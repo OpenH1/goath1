@@ -79,11 +79,7 @@ Edition map) has its shaders and pipelines made as it loads instead: with
 first through every shader its tags hold, in each way the game's code draws
 them (`port/linux/game/render_enumerate.c`): every material of the
 structure (one of each shader, lightmap and flags), in each fog, with every
-light tag's light and every model's shadow; then the materials of its other
-structures, read as the map loaded, each drawn by a material of the first
-standing in for it, so that a load zone's switch has nothing to make (a
-structure with materials none could stand in for draws those at its own
-first frame); every
+light tag's light and every model's shadow; every
 model's every geometry, in each lighting, function and colour the models'
 code tells apart, with its objects' effects (shields, camouflage) and in
 first person; every effect, decal, lens flare, sky, detail object, HUD
@@ -91,6 +87,20 @@ element, font, screen flash and screen effect; a mirror's window where the
 structure has one. The draws are the map's enumeration
 (`xgpu_manifest_enumeration`), which a backend that makes its pipelines
 apart from the draws (macOS's Metal) makes during the loading screen.
+
+The map's other structures are never drawn by the first's materials: each
+structure's own first frame is walked through its own surfaces, in its
+world's passes, and recorded into the map's record beside the first's
+(`render_prepared.c`'s segments), so that the record played as the map loads
+makes every structure's pipelines from the draws its own walk made, and a
+load zone's switch has nothing to make. The first start's pass, which makes
+the stock maps' records (`tools/prepared_records.py`), switches to each
+structure of a map that the record does not hold yet
+(`menu_pictures_render.c`); another map's later structure is walked, and
+recorded, as the game first switches to it. A later structure's draws played
+back read their few vertices from memory a draw before read, its own not
+loaded (`halo_gpu_journal_elsewhere`: a pipeline is made of the declaration
+and the strides alone).
 
 The front end makes a draw's keys canonical first, so that what an earlier
 draw left in the device's state is not part of them where the draw does not

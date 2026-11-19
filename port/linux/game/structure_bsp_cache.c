@@ -214,6 +214,35 @@ boolean structure_bsp_cache_has_mirrors(
 	return FALSE;
 }
 
+/* each of a kept bsp's lightmaps' materials, read from its copy */
+static void structure_bsp_cache_entry_materials(
+	struct structure_bsp_cache_entry const *entry,
+	void (*visit)(void *context, struct structure_lightmap const *lightmap, struct structure_material const *material),
+	void *context)
+{
+	/* (the bsp's header: where its structure is, first) */
+	void *const *header = structure_bsp_cache_at(entry, entry->base_address, 1, sizeof(void *));
+	struct structure_bsp const *structure_bsp =
+		header ? structure_bsp_cache_at(entry, *header, 1, sizeof(struct structure_bsp)) : NULL;
+	struct structure_lightmap const *lightmaps;
+	long lightmap_index;
+
+	if (!structure_bsp)
+		return;
+	lightmaps = structure_bsp_cache_at(entry, structure_bsp->lightmaps.address, structure_bsp->lightmaps.count,
+		sizeof(struct structure_lightmap));
+	for (lightmap_index = 0; lightmaps && lightmap_index < structure_bsp->lightmaps.count; lightmap_index++)
+	{
+		struct structure_lightmap const *lightmap = &lightmaps[lightmap_index];
+		struct structure_material const *materials = structure_bsp_cache_at(entry, lightmap->materials.address,
+			lightmap->materials.count, sizeof(struct structure_material));
+		long material_index;
+
+		for (material_index = 0; materials && material_index < lightmap->materials.count; material_index++)
+			visit(context, lightmap, &materials[material_index]);
+	}
+}
+
 void structure_bsp_cache_materials(
 	void (*visit)(void *context, struct structure_lightmap const *lightmap, struct structure_material const *material),
 	void *context)
@@ -221,30 +250,20 @@ void structure_bsp_cache_materials(
 	short index;
 
 	for (index = 0; index < structure_bsp_cache.count; index++)
-	{
-		struct structure_bsp_cache_entry const *entry = &structure_bsp_cache.entries[index];
-		/* (the bsp's header: where its structure is, first) */
-		void *const *header = structure_bsp_cache_at(entry, entry->base_address, 1, sizeof(void *));
-		struct structure_bsp const *structure_bsp =
-			header ? structure_bsp_cache_at(entry, *header, 1, sizeof(struct structure_bsp)) : NULL;
-		struct structure_lightmap const *lightmaps;
-		long lightmap_index;
+		structure_bsp_cache_entry_materials(&structure_bsp_cache.entries[index], visit, context);
+}
 
-		if (!structure_bsp)
-			continue;
-		lightmaps = structure_bsp_cache_at(entry, structure_bsp->lightmaps.address, structure_bsp->lightmaps.count,
-			sizeof(struct structure_lightmap));
-		for (lightmap_index = 0; lightmaps && lightmap_index < structure_bsp->lightmaps.count; lightmap_index++)
-		{
-			struct structure_lightmap const *lightmap = &lightmaps[lightmap_index];
-			struct structure_material const *materials = structure_bsp_cache_at(entry, lightmap->materials.address,
-				lightmap->materials.count, sizeof(struct structure_material));
-			long material_index;
+boolean structure_bsp_cache_reference_materials(
+	struct scenario_structure_bsp_reference const *reference,
+	void (*visit)(void *context, struct structure_lightmap const *lightmap, struct structure_material const *material),
+	void *context)
+{
+	struct structure_bsp_cache_entry const *entry = structure_bsp_cache_find(reference);
 
-			for (material_index = 0; materials && material_index < lightmap->materials.count; material_index++)
-				visit(context, lightmap, &materials[material_index]);
-		}
-	}
+	if (!entry)
+		return FALSE;
+	structure_bsp_cache_entry_materials(entry, visit, context);
+	return TRUE;
 }
 
 void structure_bsp_cache_dispose(

@@ -97,6 +97,49 @@ def test_records_name_only_kept_tags():
     assert sorted(models) == [False, True], f"ui.map's records: {RERUN}"
 
 
+# the campaign levels' structures (their scenarios' structure_bsp_references): each record holds every one's own walk
+# but those whose materials an earlier structure's walk all drew (render_enumerate.c: no walk of its own); d20's
+# second structure's coolant water is no other's (#1181)
+MULTI_STRUCTURE = {'a10': 4, 'a30': 2, 'a50': 3, 'b30': 2, 'b40': 4, 'c10': 4, 'c20': 3, 'c40': 4, 'd20': 4,
+                   'd40': 7}
+
+
+def segments(record, data):
+    structures = prepared_records.record_structures(data)
+    assert structures is not None, f"{record['map']}: not of segments: {RERUN}"
+    return structures
+
+
+def test_records_hold_their_later_structures():
+    """each multi-structure campaign level's record holds a later structure's own walk (the first start's pass
+    switched to it), each a structure of the level, d20's second among them, and the manifest says so"""
+    seen = set()
+    for record, data in shipped():
+        structures = segments(record, data)
+        assert record['structures'] == sorted(set(structures)), record['map']
+        if record['map'] in MULTI_STRUCTURE:
+            assert len(set(structures)) > 1 and max(structures) < MULTI_STRUCTURE[record['map']], \
+                f"{record['map']} holds only {structures}: {RERUN}"
+            seen.add(record['map'])
+    assert seen == set(MULTI_STRUCTURE), sorted(seen)
+    assert any(1 in record['structures'] for record in MANIFEST['records'] if record['map'] == 'd20')
+
+
+def test_negative_a_record_without_its_later_structures():
+    """d20's record cut after its first segment (as a record made by the walk of its first structure alone): its
+    later structures are missed"""
+    for record, data in shipped():
+        if record['map'] != 'd20':
+            continue
+        words = prepared_records.record_words(data)
+        start = len(data) - 4 * len(words)
+        cut = data[:start] + struct.pack(f'<{3 + words[2]}I', *words[:3 + words[2]])
+        assert len(set(prepared_records.record_structures(cut))) == 1
+        assert prepared_records.record_structures(data[:start] + struct.pack('<2I', *words[:2])) is None
+        return
+    assert False, "no record of d20"
+
+
 def test_negative_a_models_tag_by_its_index():
     """the menus' models' tags named by the index they had as the record was made (the leak of a record made before
     PREPARED_MODELS_TAG): seen past the tags a fresh start has"""
