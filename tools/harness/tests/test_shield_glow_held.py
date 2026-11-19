@@ -12,7 +12,7 @@ CASES = ["jackal", "destroyed", "off", "no-shield", "untinted", "standing-radius
 CONTROLS = {
     "destroyed-glows": (("TEST_FLAG(object->object.regions_destroyed_flags, region_index) ||", "FALSE ||"),
                         "destroyed"),
-    "off-glows": (("if (permutation->name[0] == '~')", "if (FALSE)"), "off"),
+    "off-glows": (("if (permutation->name[0] == '~')", "if (permutation->name[0] == '!')"), "off"),
     "root-node": (("candidate->node_index = instance->node_index;", "candidate->node_index = 0;"), "jackal"),
     "any-instance": (("if (!found || instance->region_index == region_index)", "if (!found)"), "jackal"),
 }
