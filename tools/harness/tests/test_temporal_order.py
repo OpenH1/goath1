@@ -1,7 +1,8 @@
 """display.temporal_aa "fsr"'s frame order (docs/temporal-aa.md): the window's 3D view drawn at the render scale, its
 motion resolved, the view upscaled into the display's back buffer, and the tone map and the HUD drawn over it there, at
 the display's scale (port/linux/src/d3d8_device.c's own functions against fake targets and a fake backend); at the
-native scale the same order in one target; off, nothing upscaled. And render.c's window: the opaque view kept after
+native scale the same order in one target; off below it, the view and its tone map at the render scale, stretched into
+the display's back buffer before the HUD; off at it, nothing moved. And render.c's window: the opaque view kept after
 the fog and before the particles, the upscale (the motion's end) before the tone map, the anti-aliasing, the Panini
 pass and the HUD. The upscaler's texture LOD bias (each vendor's) on the view's draws alone, and the jitter's phases
 at the render scale."""
@@ -23,8 +24,12 @@ CONTROLS = [
     ("\ttemporal_scale_display();\n\tdestination = render_target_get(&device.back_buffer);",
      "\tdestination = render_target_get(&device.back_buffer);", "upscaled"),
     # the view drawn at the display's scale, the render scale never taken
-    ("\tif (on && device.gl_ready && !screen_view && temporal_upscaling())\n\t\ttemporal_scale_render();\n", "",
-     "upscaled"),
+    ("\tif (eligible && device.gl_ready && !screen_view)\n\t\ttemporal_scale_render();\n", "", "upscaled"),
+    # display.render_scale off the upscaler: the screen's targets all at it (the HUD too), the view never stretched
+    ("\tif (eligible && device.gl_ready && !screen_view)\n\t\ttemporal_scale_render();\n", "", "stretched"),
+    # the stretch's destination taken at the view's scale: the HUD drawn into the view's target
+    ("\tsource = drawn && device.gl_ready ? render_target_get(&device.back_buffer) : NULL;\n\ttemporal_scale_display();\n",
+     "\tsource = drawn && device.gl_ready ? render_target_get(&device.back_buffer) : NULL;\n", "stretched"),
     # the upscale sent before the motion it reads is resolved
     ("\txgpu_backend_motion(XGPU_MOTION_RESOLVE, target->target.number, &pass);\n"
      "\t/* (display.temporal_aa \"fsr\": then upscaled, debug.motion_vectors' view\n\tof it too) */\n"
@@ -54,8 +59,8 @@ def generated(fault=None):
         r"^static struct\n\{\n\tfloat factor;.*?^\} temporal = .*?;\n", r"^static struct\n\{\n\tBOOL on, objects;.*?^\} motion;\n"))
     code = "\n\n".join([states] + [function(device, name) for name in (
         "scaled_pixel", "view_corners", "temporal_scale_render", "temporal_scale_display", "temporal_lod_bias",
-        "draw_lod_bias", "halo_motion_window", "temporal_upscale", "halo_motion_resolve", "halo_screen_tone_map",
-        "halo_motion_jitter_phases", "render_scale_configured")])
+        "draw_lod_bias", "halo_screen_view_begin", "halo_screen_view_end", "halo_motion_window", "temporal_upscale",
+        "halo_motion_resolve", "halo_screen_tone_map", "halo_motion_jitter_phases", "render_scale_configured")])
     types = "\n\n".join([enum_with(stream, "XGPU_MOTION_RESOLVE"), structure(stream, "xgpu_motion_pass"),
                          structure(stream, "xgpu_temporal_pass")])
     return (("stream.inc", types), ("under_test.inc", code))
@@ -67,7 +72,8 @@ def window_order(render):
     order = ["structure_render_fog();", "motion_vectors_opaque(&rasterizer_camera->viewport_bounds);",
              "render_particles();", "rasterizer_lens_flares_draw();",
              "motion_vectors_window_end(&rasterizer_camera->viewport_bounds);", "halo_screen_tone_map(",
-             "halo_screen_anti_alias(", "panini_window_draw();", "interface_draw_screen();"]
+             "halo_screen_anti_alias(", "panini_window_draw();", "halo_screen_view_end(TRUE,",
+             "interface_draw_screen();"]
     at = 0
     for call in order:
         found = text.find(call, at)
@@ -77,7 +83,7 @@ def window_order(render):
     return None
 
 
-@pytest.mark.parametrize("case", ["upscaled", "native", "off", "sharpness", "lod_bias", "phone_scale"])
+@pytest.mark.parametrize("case", ["upscaled", "native", "off", "stretched", "sharpness", "lod_bias", "phone_scale"])
 def test_case(case):
     status, output = run(build("temporal_order", generated()), case)
     assert status == 0, output

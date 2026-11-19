@@ -351,6 +351,13 @@ rectilinear view's tangents at its left, right, top and bottom */
 /* (projection NULL: the setting off, the pass journaled alone for a map's
 preparation's record) */
 void halo_screen_panini(short x0, short y0, short x1, short y1, const float projection[8]);
+/* display.render_scale: a window's 3D view begun, drawn at the render
+scale where it is the screen's own (eligible), and ended (drawn: its bounds
+on the screen; 0 none): after its tone map, anti-aliasing and Panini pass,
+stretched into the display's targets, where the HUD and menus are drawn
+(port/linux/src/d3d8_device.c) */
+void halo_screen_view_begin(int eligible);
+void halo_screen_view_end(int drawn, short x0, short y0, short x1, short y1);
 /* the enhanced dynamic lights (display.dynamic_lights) */
 #include "halo_dynamic_lights.h"
 

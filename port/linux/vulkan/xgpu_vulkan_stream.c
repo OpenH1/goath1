@@ -152,6 +152,7 @@ pre-pass, and the frame's last pass (its composition, encoding, present) */
 #define PASS_OWNER_AO "AO"
 #define PASS_OWNER_FINAL "FINAL PASS"
 #define PASS_OWNER_MOTION "MOTION"
+#define PASS_OWNER_VIEW_STRETCH "RENDER SCALE"
 
 struct stream_target
 {
@@ -3890,11 +3891,42 @@ static int motion_rectangle(const struct stream_target *target, const int32_t co
 	return rectangle[2] > rectangle[0] && rectangle[3] > rectangle[1];
 }
 
+/* display.render_scale's view stretched (MOTION's _UPSCALE, technique 0: no
+upscaler, nor any motion) over the destination's rectangle: its pixels
+resolved where it is multisampled, then nearest by whole multiples and
+linear, as a smaller frame is presented (xgpu_vulkan_image_stretch) */
+static void view_stretch(const struct xgpu_stream_motion *record)
+{
+	struct stream_target *target = target_get(record->target), *destination = target_get(record->pad);
+	struct xgpu_temporal_pass pass;
+	int32_t from[4], to[4];
+
+	memcpy(&pass, &record->pass, sizeof(pass));
+	if (stream.preparing || !target || target->depth || target->layers > 1 || !destination || destination->depth ||
+		destination->samples > 1 || target->format != destination->format ||
+		!motion_rectangle(target, pass.corners, from) || !motion_rectangle(destination, pass.destination, to))
+		return;
+	xgpu_vulkan_pass_owner(PASS_OWNER_VIEW_STRETCH);
+	target_resolve(target);
+	destination->written++;
+	xgpu_vulkan_image_stretch(target->image, from, destination->image, to);
+	xgpu_vulkan_pass_owner(NULL);
+	targets_bind();
+}
+
 static void stream_motion(void *context, const struct xgpu_stream_motion *record)
 {
 	struct stream_target *target = target_get(record->target);
+	struct xgpu_temporal_pass upscale;
 
 	(void)context;
+	/* (display.render_scale's stretch: no motion's) */
+	memcpy(&upscale, &record->pass, sizeof(upscale));
+	if (record->phase == XGPU_MOTION_UPSCALE && upscale.technique == 0)
+	{
+		view_stretch(record);
+		return;
+	}
 	/* (the previous frame's registers this frame's, from the first: the
 	game sets some of them once) */
 	if (!motion.on)

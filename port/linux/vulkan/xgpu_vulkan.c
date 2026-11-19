@@ -1558,6 +1558,9 @@ static struct
 	int hdr_gamut;
 	uint32_t window_gamut;
 	struct xgpu_vulkan_image *sharp_image;
+	/* display.render_scale's 3D view scaled up by nearest before its
+	linear stretch into the display's back buffer (xgpu_vulkan_image_stretch) */
+	struct xgpu_vulkan_image *view_sharp_image;
 	void (*display_hdr)(int hdr, float headroom, float white_nits, int white_reported);
 	/* the frame's last pass (the options' encode: HDR's encoding,
 	display.gamma's curve, the dither; NULL: none, or it could not be
@@ -9193,6 +9196,97 @@ static VkFilter present_sharp(VkCommandBuffer commands, struct xgpu_vulkan_image
 	blit->srcOffsets[1].y = (int32_t)height;
 	*image = vk.sharp_image;
 	return VK_FILTER_LINEAR;
+}
+
+void xgpu_vulkan_image_stretch(struct xgpu_vulkan_image *source, const int32_t from[4],
+	struct xgpu_vulkan_image *destination, const int32_t to[4])
+{
+	struct xgpu_vulkan_image_description description;
+	VkCommandBuffer commands;
+	VkImageBlit blit, nearest;
+	VkFilter filter = VK_FILTER_LINEAR;
+	uint32_t factors[2], width, height;
+	int plan = SHARP_LINEAR;
+
+	if (!source || !destination || source == destination || source->transient || destination->transient ||
+		(source->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) || source->description.samples > 1 ||
+		destination->description.samples > 1 || from[0] < 0 || from[1] < 0 || to[0] < 0 || to[1] < 0 ||
+		from[2] <= from[0] || from[3] <= from[1] || to[2] <= to[0] || to[3] <= to[1] ||
+		from[2] > (int32_t)source->description.width || from[3] > (int32_t)source->description.height ||
+		to[2] > (int32_t)destination->description.width || to[3] > (int32_t)destination->description.height)
+		return;
+	vk.aside_allowed = 1;
+	commands = main_commands();
+	memset(&blit, 0, sizeof(blit));
+	blit.srcSubresource.aspectMask = blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	blit.srcSubresource.layerCount = blit.dstSubresource.layerCount = 1;
+	blit.srcOffsets[0].x = from[0];
+	blit.srcOffsets[0].y = from[1];
+	blit.srcOffsets[1].x = from[2];
+	blit.srcOffsets[1].y = from[3];
+	blit.srcOffsets[1].z = 1;
+	blit.dstOffsets[0].x = to[0];
+	blit.dstOffsets[0].y = to[1];
+	blit.dstOffsets[1].x = to[2];
+	blit.dstOffsets[1].y = to[3];
+	blit.dstOffsets[1].z = 1;
+	source->used = destination->used = vk.serial;
+	image_use(source);
+	image_use(destination);
+	image_written(destination);
+	/* (sharply where the options allow it, as present_sharp scales a
+	frame: nearest by whole multiples, then linear) */
+	if (vk.sharp_upscale)
+		plan = sharp_plan((uint32_t)(from[2] - from[0]), (uint32_t)(from[3] - from[1]), (uint32_t)(to[2] - to[0]),
+			(uint32_t)(to[3] - to[1]), factors);
+	if (plan == SHARP_NEAREST)
+		filter = VK_FILTER_NEAREST;
+	else if (plan == SHARP_PRESCALED)
+	{
+		width = (uint32_t)(from[2] - from[0]) * factors[0];
+		height = (uint32_t)(from[3] - from[1]) * factors[1];
+		if (vk.view_sharp_image && (vk.view_sharp_image->description.format != source->description.format ||
+			vk.view_sharp_image->description.width < width || vk.view_sharp_image->description.height < height))
+		{
+			xgpu_vulkan_image_destroy(vk.view_sharp_image);
+			vk.view_sharp_image = NULL;
+		}
+		if (!vk.view_sharp_image)
+		{
+			memset(&description, 0, sizeof(description));
+			description.type = XGPU_VULKAN_IMAGE_2D;
+			description.format = source->description.format;
+			description.width = width;
+			description.height = height;
+			description.depth_or_layers = 1;
+			description.levels = 1;
+			vk.view_sharp_image = xgpu_vulkan_image_create(&description);
+		}
+		if (vk.view_sharp_image)
+		{
+			nearest = blit;
+			nearest.dstOffsets[0].x = nearest.dstOffsets[0].y = 0;
+			nearest.dstOffsets[1].x = (int32_t)width;
+			nearest.dstOffsets[1].y = (int32_t)height;
+			vk.view_sharp_image->used = vk.serial;
+			image_use(vk.view_sharp_image);
+			image_written(vk.view_sharp_image);
+			vkCmdBlitImage(commands, source->image, VK_IMAGE_LAYOUT_GENERAL, vk.view_sharp_image->image,
+				VK_IMAGE_LAYOUT_GENERAL, 1, &nearest, VK_FILTER_NEAREST);
+			barrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+				VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+			blit.srcOffsets[0].x = blit.srcOffsets[0].y = 0;
+			blit.srcOffsets[1].x = (int32_t)width;
+			blit.srcOffsets[1].y = (int32_t)height;
+			vkCmdBlitImage(commands, vk.view_sharp_image->image, VK_IMAGE_LAYOUT_GENERAL, destination->image,
+				VK_IMAGE_LAYOUT_GENERAL, 1, &blit, VK_FILTER_LINEAR);
+			image_transfer_done(commands, destination, source);
+			return;
+		}
+	}
+	vkCmdBlitImage(commands, source->image, VK_IMAGE_LAYOUT_GENERAL, destination->image, VK_IMAGE_LAYOUT_GENERAL, 1,
+		&blit, filter);
+	image_transfer_done(commands, destination, source);
 }
 
 /* the levels a channel of the SDR swapchain's format is dithered to: 255

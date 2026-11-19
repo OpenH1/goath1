@@ -5,7 +5,10 @@ and a fake backend that keeps what it was sent. A window's 3D view is drawn
 at the render scale's targets; its motion resolved there; the upscale then
 takes it into the display's back buffer, where the tone map and the HUD are
 drawn after it. At the native scale the two are one target, the order the
-same; off, nothing is upscaled and nothing moves. */
+same. Off, below the native scale, the view is drawn at the render
+scale too and stretched (technique 0) into the display's back buffer after
+its tone map, where the HUD is drawn at the display's scale; at the native
+scale off, nothing is stretched and nothing moves. */
 
 #include "harness.h"
 
@@ -29,7 +32,7 @@ struct xgpu_render_target
 {
 	xgpu_target number;
 	float scale[2];
-	int format, depth;
+	int format, depth, samples;
 	unsigned long written;
 };
 
@@ -132,6 +135,11 @@ static struct
 } sent[16];
 static int sent_count;
 
+static void render_target_resolve(struct xgpu_render_target *target)
+{
+	(void)target;
+}
+
 static void sent_add(int kind, xgpu_target target)
 {
 	CHECK(sent_count < 16, "too much sent");
@@ -214,12 +222,17 @@ static void window(float factor)
 
 	screen_scale[0] = screen_scale[1] = display;
 	temporal.factor = factor;
-	CHECK(halo_motion_window(TRUE, 0.25f, -0.25f), "the window's motion not begun");
+	halo_screen_view_begin(TRUE);
+	CHECK(halo_motion_window(technique_on, 0.25f, -0.25f) == technique_on, "the window's motion begun %d",
+		!technique_on);
 	draw(SENT_DRAW);
-	halo_motion_resolve(0, 0, 852, 480, rows, 1, 0, camera);
+	if (technique_on)
+		halo_motion_resolve(0, 0, 852, 480, rows, 1, 0, camera);
 	halo_screen_tone_map(0, 0, 852, 480);
+	halo_screen_view_end(TRUE, 0, 0, 852, 480);
 	draw(SENT_HUD);
 	halo_motion_window(FALSE, 0.0f, 0.0f);
+	halo_screen_view_end(FALSE, 0, 0, 0, 0);
 	CHECK(screen_scale[0] == display && screen_scale[1] == display, "the display's scale not back: %f",
 		screen_scale[0]);
 }
@@ -274,18 +287,49 @@ static void upscaled(float factor)
 		"the HUD drawn at %f, not over the upscaled view", sent[hud].scale);
 }
 
+/* off at the native scale: one target, nothing moved */
 static void off(void)
 {
-	int resolve, tone_map;
+	int tone_map;
 
 	technique_on = FALSE;
-	window(0.67f);
-	resolve = sent_find(SENT_RESOLVE);
+	window(1.0f);
 	tone_map = sent_find(SENT_TONE_MAP);
-	CHECK(sent_find(SENT_UPSCALE) < 0, "upscaled while off");
-	CHECK(resolve > sent_find(SENT_DRAW) && tone_map > resolve, "the order off");
+	CHECK(sent_find(SENT_UPSCALE) < 0 && sent_find(SENT_RESOLVE) < 0, "upscaled or resolved while off");
+	CHECK(tone_map > sent_find(SENT_DRAW), "the order off");
 	CHECK(sent[sent_find(SENT_DRAW)].target == sent[sent_find(SENT_HUD)].target &&
 		sent[tone_map].target == sent[sent_find(SENT_DRAW)].target, "another target off");
+}
+
+/* display.render_scale off below the native scale: the view (and its tone
+map) at the render scale, stretched (technique 0) into the display's back
+buffer, the HUD drawn there at the display's scale */
+static void stretched(void)
+{
+	float display = 1080.0f / 480.0f, factor = 0.67f;
+	int draw_at, tone_map, stretch, hud;
+
+	technique_on = FALSE;
+	window(factor);
+	draw_at = sent_find(SENT_DRAW);
+	tone_map = sent_find(SENT_TONE_MAP);
+	stretch = sent_find(SENT_UPSCALE);
+	hud = sent_find(SENT_HUD);
+	CHECK(sent_find(SENT_RESOLVE) < 0, "motion resolved while off");
+	CHECK(draw_at >= 0 && tone_map > draw_at && stretch > tone_map && hud > stretch,
+		"the order: draw %d tone map %d stretch %d HUD %d", draw_at, tone_map, stretch, hud);
+	CHECK(sent[draw_at].scale == display * factor, "the view drawn at %f, not %f", sent[draw_at].scale,
+		display * factor);
+	CHECK(sent[tone_map].target == sent[draw_at].target, "the tone map not over the view at its scale");
+	CHECK(sent[stretch].pass.technique == 0 && sent[stretch].target == sent[draw_at].target &&
+		sent[stretch].destination != sent[stretch].target &&
+		entry(sent[stretch].destination)->target.scale[0] == display &&
+		!entry(sent[stretch].destination)->target.depth, "the stretch not from the view into the display's back buffer");
+	CHECK(sent[stretch].pass.corners[2] == (int32_t)(852 * display * factor + 0.5f) &&
+		sent[stretch].pass.destination[2] == (int32_t)(852 * display + 0.5f), "the corners %d %d",
+		sent[stretch].pass.corners[2], sent[stretch].pass.destination[2]);
+	CHECK(sent[hud].target == sent[stretch].destination && sent[hud].scale == display, "the HUD drawn at %f, not %f",
+		sent[hud].scale, display);
 }
 
 /* display.temporal_aa_sharpness sent with the upscale (FSR's RCAS), 0 to 1:
@@ -368,6 +412,8 @@ int main(int argc, char **argv)
 		upscaled(1.0f);
 	else if (!strcmp(which, "off"))
 		off();
+	else if (!strcmp(which, "stretched"))
+		stretched();
 	else if (!strcmp(which, "lod_bias"))
 		lod_bias();
 	else if (!strcmp(which, "phone_scale"))

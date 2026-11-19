@@ -254,6 +254,24 @@ void xgpu_metal_motion_view(uint32_t into, uint8_t format, uint32_t motion, cons
 	pass_draw(FUNCTION_VIEW, into, format, WRITE_COLOR, rectangle, motion, 0, uniforms);
 }
 
+void xgpu_metal_view_stretch(uint32_t color, const int32_t source[4], uint32_t into, uint8_t format,
+	const int32_t place[4])
+{
+	struct xgpu_metal_motion_uniforms uniforms;
+
+	/* (the stretch MetalFX's view has while its scaler is made) */
+	memset(&uniforms, 0, sizeof(uniforms));
+	uniforms.metrics[0] = (float)source[0];
+	uniforms.metrics[1] = (float)source[1];
+	uniforms.metrics[2] = (float)(source[2] - source[0]);
+	uniforms.metrics[3] = (float)(source[3] - source[1]);
+	uniforms.window[0] = (float)place[0];
+	uniforms.window[1] = (float)place[1];
+	uniforms.window[2] = (float)(place[2] - place[0]);
+	uniforms.window[3] = (float)(place[3] - place[1]);
+	pass_draw(FUNCTION_STRETCH, into, format, WRITE_ALL, place, color, 0, &uniforms);
+}
+
 /* ---------- MetalFX */
 
 int xgpu_metal_metalfx_supported(void)

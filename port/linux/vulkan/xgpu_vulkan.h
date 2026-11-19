@@ -369,6 +369,13 @@ same place of another's first layer, of the same format, in the stream's
 order */
 void xgpu_vulkan_image_copy_rectangle(struct xgpu_vulkan_image *source, uint32_t source_layer,
 	struct xgpu_vulkan_image *destination, const int32_t rectangle[4]);
+/* a rectangle (x0, y0, x1, y1) of a colour image's first layer stretched
+over a rectangle of another's, of the same format, one sample each
+(display.render_scale's 3D view into the display's back buffer): sharply
+where the options allow it (as a smaller frame is presented: nearest by
+whole multiples, then linear), else linear, in the stream's order */
+void xgpu_vulkan_image_stretch(struct xgpu_vulkan_image *source, const int32_t from[4],
+	struct xgpu_vulkan_image *destination, const int32_t to[4]);
 /* a multisampled image's samples resolved into an image of one (colour:
 averaged; depth and stencil: the first sample), in the stream's order */
 void xgpu_vulkan_image_resolve(struct xgpu_vulkan_image *multisampled, struct xgpu_vulkan_image *image);
