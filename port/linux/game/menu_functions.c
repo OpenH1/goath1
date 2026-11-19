@@ -5428,10 +5428,6 @@ static struct
 	{ "controls.melee", L"MELEE", 1, TRUE },
 	{ "controls.reload", L"RELOAD", 1, TRUE },
 	{ "controls.zoom", L"ZOOM", 1, TRUE },
-	/* (MCC's steps of the zoom, in and out, beside its cycle:
-	player_control.c) */
-	{ "controls.zoom_in", L"ZOOM IN", 1, FALSE },
-	{ "controls.zoom_out", L"ZOOM OUT", 1, FALSE },
 	{ "controls.switch_weapon", L"SWITCH WEAPON", 1, TRUE },
 	{ "controls.switch_grenade", L"SWITCH GRENADE", 1, TRUE },
 	{ "controls.action", L"ACTION", 2, TRUE },
@@ -5457,6 +5453,10 @@ static struct
 	/* (ACTIONS' last row, after CLIP: the HUD hidden, source/interface/
 	hud.c) */
 	{ "controls.hide_hud", L"HIDE HUD", 2, FALSE },
+	/* (WEAPONS' last rows, after SWITCH GRENADE: MCC's steps of the zoom, in
+	and out, beside its cycle, player_control.c) */
+	{ "controls.zoom_in", L"ZOOM IN", 1, FALSE },
+	{ "controls.zoom_out", L"ZOOM OUT", 1, FALSE },
 };
 
 static struct
