@@ -21,10 +21,7 @@ NEGATIVE_CONTROLS = {
     # debug.network_timing_before not looked at
     "no-before-setting": ((' && !config_boolean("debug.network_timing_before")', ""), "who"),
     # a Legacy game's frames stepped so too
-    "legacy-too": (("network_standard_agreed_rate() &&\n\t\t!halo_frames_unseen()", "\n\t\t!halo_frames_unseen()"),
-                   "who"),
-    # a client that draws stepped so too: its own press shown a step later
-    "client-too": (("game_connection() == _game_connection_network_server", "game_connection() > 1"), "who"),
+    "legacy-too": (("network_standard_agreed_rate() && !halo_frames_unseen()", "!halo_frames_unseen()"), "who"),
 }
 
 

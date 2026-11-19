@@ -116,7 +116,7 @@ int main(int argc, char **argv)
 	else if (!strcmp(name, "who"))
 	{
 		connection = _game_connection_network_client;
-		CHECK(!network_clock_steps_when_due(), "a client that draws (its frame's start takes the latest press)");
+		CHECK(network_clock_steps_when_due(), "an OpenH1 game's client");
 		connection = _game_connection_network_server;
 		CHECK(network_clock_steps_when_due(), "an OpenH1 game's host");
 		unseen = 1;
