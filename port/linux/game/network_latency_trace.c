@@ -20,7 +20,8 @@ Each change is keyed by its kind, its player (absolute index) and its key:
 The lines (times in microseconds; tick the machine's game time, sub-step its
 next sub-step's index):
 
-    # network latency trace 1 rate <sim rate> host|client
+    # network latency trace 1 rate <sim rate> host|client vsync <0|1> max_fps <n>
+                                                       (the display's pacing, as set)
     S <kind> <player> <key> <sub> <input> <step>      the owner: the change, with
                                                        the frame's input read and
                                                        the sub-step's start
@@ -36,7 +37,9 @@ next sub-step's index):
     A <kind> <player> <key> <sub> <time> <tick> <step> applied to the machine's
                                                        copy of the player, first
     P <time>                                           a frame presented, after
-                                                       one applied since the last
+                                                       one applied or sampled since
+                                                       the last (the owner's own
+                                                       view of its change)
     B <tick> <time>                                    a tick begun
     K <tick> <host tick> <time>                        a client's tick begun, with
                                                        the host's latest it had
@@ -54,6 +57,8 @@ next sub-step's index):
 #include <string.h>
 
 const char *config_string(char const *name);
+int config_boolean(char const *name);
+long config_integer(char const *name);
 void platform_log(char const *format, ...);
 unsigned long long platform_shared_clock_microseconds(void);
 
@@ -178,7 +183,8 @@ void network_latency_trace_header(
 {
 	if (!network_latency_trace_check())
 		return;
-	fprintf(trace.file, "# network latency trace 1 rate %d %s\n", rate, host ? "host" : "client");
+	fprintf(trace.file, "# network latency trace 1 rate %d %s vsync %d max_fps %ld\n", rate, host ? "host" : "client",
+		config_boolean("display.vsync"), config_integer("display.max_fps"));
 }
 
 void network_latency_trace_frame_input(
@@ -237,6 +243,8 @@ void network_latency_trace_sample(
 		return;
 	fprintf(trace.file, "S %c %d %ld %d %llu %llu\n", kind, player, key, substep, trace.frame_input,
 		trace.step_begun);
+	/* (its own copy takes it in this step: the next frame presented shows it) */
+	trace.applied_since_present = 1;
 }
 
 /* a change written into the next datagram to the machine (-1 the host;
