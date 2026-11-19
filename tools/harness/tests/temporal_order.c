@@ -9,6 +9,7 @@ same; off, nothing is upscaled and nothing moves. */
 
 #include "harness.h"
 
+#include <math.h>
 #include <stdint.h>
 
 typedef int BOOL;
@@ -44,7 +45,10 @@ static struct
 	BOOL gl_ready;
 	D3DSurface back_buffer, depth_buffer;
 	unsigned long frame;
-} device = { TRUE, { 0x1000 }, { 0x2000 }, 10 };
+	/* the draws' target (the back buffer, or a shadow map's) */
+	const D3DSurface *render_target;
+} device = { TRUE, { 0x1000 }, { 0x2000 }, 10, NULL };
+static D3DSurface shadow_map = { 0x3000 };
 
 static float screen_scale[2];
 static int screen_view;
@@ -87,10 +91,12 @@ static BOOL temporal_upscaling(void)
 	return technique_on;
 }
 
-/* display.temporal_aa "fsr" */
+/* display.temporal_aa: 1 "fsr", 2 "dlss", 3 "metalfx" */
+static int technique = 1;
+
 static int motion_vectors_technique(void)
 {
-	return 1;
+	return technique;
 }
 
 static int config_boolean(const char *name)
@@ -281,6 +287,53 @@ static void sharpness(void)
 	}
 }
 
+/* the upscaler's texture LOD bias: each vendor's at the render scale, for
+the view's draws into the back buffer alone, while the window's motion is
+on; and the jitter's phases (AMD's 8 times the display's pixels per the
+render's, squared) */
+static void lod_bias_at(int which, float factor, float expected, int phases)
+{
+	float display = 1080.0f / 480.0f;
+
+	technique = which;
+	technique_on = TRUE;
+	screen_scale[0] = screen_scale[1] = display;
+	temporal.factor = factor;
+	CHECK(halo_motion_jitter_phases() == phases, "technique %d at %g: %d phases, not %d", which, factor,
+		halo_motion_jitter_phases(), phases);
+	device.render_target = &device.back_buffer;
+	CHECK(draw_lod_bias() == 0.0f, "a bias before the window's motion");
+	CHECK(halo_motion_window(TRUE, 0.25f, -0.25f), "the window's motion not begun");
+	CHECK(fabsf(draw_lod_bias() - expected) < 0.001f, "technique %d at %g: bias %f, not %f", which, factor,
+		draw_lod_bias(), expected);
+	device.render_target = &shadow_map;
+	CHECK(draw_lod_bias() == 0.0f, "a shadow map's draws biased: %f", draw_lod_bias());
+	device.render_target = &device.back_buffer;
+	halo_motion_window(FALSE, 0.0f, 0.0f);
+	CHECK(draw_lod_bias() == 0.0f, "the HUD's draws biased: %f", draw_lod_bias());
+	device.render_target = NULL;
+}
+
+static void lod_bias(void)
+{
+	/* (FSR: log2 less 1; DLSS, MetalFX: log2) */
+	lod_bias_at(1, 0.67f, log2f(0.67f) - 1.0f, 17);
+	lod_bias_at(1, 1.0f, -1.0f, 8);
+	lod_bias_at(1, 0.5f, -2.0f, 32);
+	lod_bias_at(2, 0.67f, log2f(0.67f), 17);
+	lod_bias_at(2, 1.0f, 0.0f, 8);
+	lod_bias_at(3, 0.67f, log2f(0.67f), 17);
+	/* (off: none, the base phases) */
+	technique = 1;
+	technique_on = FALSE;
+	temporal.factor = 1.0f;
+	device.render_target = &device.back_buffer;
+	CHECK(halo_motion_jitter_phases() == 8, "off: %d phases", halo_motion_jitter_phases());
+	halo_motion_window(TRUE, 0.25f, -0.25f);
+	CHECK(draw_lod_bias() == 0.0f, "biased while off: %f", draw_lod_bias());
+	halo_motion_window(FALSE, 0.0f, 0.0f);
+}
+
 int main(int argc, char **argv)
 {
 	const char *which = argc > 1 ? argv[1] : "";
@@ -293,6 +346,8 @@ int main(int argc, char **argv)
 		upscaled(1.0f);
 	else if (!strcmp(which, "off"))
 		off();
+	else if (!strcmp(which, "lod_bias"))
+		lod_bias();
 	else
 		return 2;
 	return 0;

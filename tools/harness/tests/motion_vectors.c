@@ -84,6 +84,12 @@ int halo_motion_window(int on, float jitter_x, float jitter_y)
 	return on;
 }
 
+/* (the jitter's phases at a render scale of 0.67) */
+int halo_motion_jitter_phases(void)
+{
+	return 17;
+}
+
 void halo_motion_previous_constants(int reg, float const (*values)[4], unsigned long count)
 {
 	memcpy(previous[reg + 96], values, count * sizeof(values[0]));

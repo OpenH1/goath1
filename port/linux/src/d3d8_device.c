@@ -554,7 +554,25 @@ static struct
 {
 	BOOL on, objects;
 	float jitter[2];
+	/* the upscaler's texture LOD bias, added to the game's for the
+	textures with mip levels that the window's 3D view samples (0 none:
+	draw_lod_bias) */
+	float lod_bias;
 } motion;
+
+/* display.temporal_aa: the upscaler's texture LOD bias at the render
+scale (its fraction of the display's pixels each way), each vendor's: AMD
+FSR's log2 of it less 1 (-1 at the native scale, -1.58 at 0.67), NVIDIA
+DLSS's and Apple MetalFX's log2 of it (0 at the native scale); 0 where the
+window is not upscaled */
+static float temporal_lod_bias(void)
+{
+	float fraction = temporal.factor < 1.0f ? temporal.factor : 1.0f;
+
+	if (!temporal_upscaling() || !(fraction > 0.0f))
+		return 0.0f;
+	return log2f(fraction) - (motion_vectors_technique() == 1 ? 1.0f : 0.0f);
+}
 
 /* the draw takes the world's light where its window is given: one of the
 window's opaque surfaces, not the first-person weapon, not lighting itself
@@ -1373,6 +1391,15 @@ struct d3d8_device
 };
 
 static struct d3d8_device device;
+
+/* the draw's share of it: the window's 3D view's draws into the screen's
+targets, which the upscaler reads (not a shadow map's, a mirror's, the HUD's
+or the menus') */
+static float draw_lod_bias(void)
+{
+	return motion.on && device.render_target == &device.back_buffer ? motion.lod_bias : 0.0f;
+}
+
 /* (the states' hash: debug.retained_draws) */
 static void state_hash_forget(void);
 
@@ -3838,6 +3865,9 @@ static void sampler_describe(int stage, BOOL mipmapped, BOOL hires, BOOL rendere
 		sampler->address[0] = sampler->address[1] = XGPU_ADDRESS_REGION;
 	sampler->address[2] = sampler_address(state[D3DTSS_ADDRESSW]);
 	sampler->lod_bias = hires ? 0.0f : dword_to_float(state[D3DTSS_MIPMAPLODBIAS]);
+	/* (display.temporal_aa: the upscaler's, where it has levels to fetch) */
+	if (!hires && mip != D3DTEXF_NONE)
+		sampler->lod_bias += draw_lod_bias();
 	sampler->first_level = hires ? 0 : state[D3DTSS_MAXMIPLEVEL];
 	sampler->anisotropy = anisotropy;
 	sampler->border_color = state[D3DTSS_BORDERCOLOR];
@@ -4572,7 +4602,7 @@ static void pipeline_state_describe(BOOL has_depth, struct xgpu_pipeline_key *ke
 }
 /* the uniforms of the latest draws, converted from these inputs; the serial
 counts the conversions */
-#define DRAW_UNIFORM_INPUT_COUNT (4 + 4 + 16 + 1 + 16 + 2 + 4 + 1 + 1 + 7 * D3DTSS_MAXSTAGES + 4)
+#define DRAW_UNIFORM_INPUT_COUNT (4 + 4 + 16 + 1 + 16 + 2 + 4 + 1 + 1 + 7 * D3DTSS_MAXSTAGES + 4 + 1)
 
 static DWORD draw_uniform_inputs[DRAW_UNIFORM_INPUT_COUNT];
 static struct xgpu_draw_uniforms draw_uniforms;
@@ -4602,6 +4632,8 @@ static void draw_uniforms_update(const float texture_scale[4][4])
 	DWORD inputs[DRAW_UNIFORM_INPUT_COUNT];
 	unsigned long count = 0;
 	float world_object[4];
+	/* (display.temporal_aa: the upscaler's LOD bias, the shaders' on Metal) */
+	float lod_bias = draw_lod_bias();
 	int stage;
 
 	/* (display.temporal_aa: the window's jitter, its draws' pixels moved by
@@ -4651,6 +4683,8 @@ static void draw_uniforms_update(const float texture_scale[4][4])
 		inputs[count++] = state[D3DTSS_BUMPENVLOFFSET];
 		inputs[count++] = state[D3DTSS_MIPMAPLODBIAS];
 	}
+	memcpy(&inputs[count], &lod_bias, sizeof(lod_bias));
+	count++;
 	if (!draw_uniforms_serial || !words_equal(inputs, draw_uniform_inputs, sizeof(inputs)))
 	{
 		struct xgpu_draw_uniforms *converted = &draw_uniforms;
@@ -4686,7 +4720,7 @@ static void draw_uniforms_update(const float texture_scale[4][4])
 			converted->bump_luminance[stage][0] = dword_to_float(state[D3DTSS_BUMPENVLSCALE]);
 			converted->bump_luminance[stage][1] = dword_to_float(state[D3DTSS_BUMPENVLOFFSET]);
 			converted->bump_luminance[stage][2] = converted->bump_luminance[stage][3] = 0.0f;
-			converted->texture_lod_bias[stage] = dword_to_float(state[D3DTSS_MIPMAPLODBIAS]);
+			converted->texture_lod_bias[stage] = dword_to_float(state[D3DTSS_MIPMAPLODBIAS]) + lod_bias;
 		}
 		converted->screen_offset = (float)UI_OFFSET;
 		converted->world_ao[0] = world_object[0];
@@ -5639,6 +5673,8 @@ struct retained_context
 	struct draw_inputs inputs;
 	uint32_t cutout_depth, lights_unreached, model_unreached, per_pixel, lights_active, world_ao, hud_meter;
 	int32_t hdr_mode, hdr_boost;
+	/* display.temporal_aa's LOD bias (draw_lod_bias: its samplers') */
+	float lod_bias;
 };
 
 struct retained_draw
@@ -5819,6 +5855,7 @@ static BOOL retained_context_make(struct retained_context *context, struct verte
 	context->hud_meter = xgpu_texture_hud_meter() != 0;
 	context->hdr_mode = hdr.mode;
 	context->hdr_boost = hdr.boost;
+	context->lod_bias = draw_lod_bias();
 	return TRUE;
 }
 
@@ -7549,6 +7586,7 @@ int halo_motion_window(int on, float jitter_x, float jitter_y)
 
 	motion.on = FALSE;
 	motion.jitter[0] = motion.jitter[1] = 0.0f;
+	motion.lod_bias = 0.0f;
 	/* (display.temporal_aa "fsr": the window's 3D view at its own scale,
 	before anything of it is drawn, until halo_motion_resolve upscales it) */
 	temporal_scale_display();
@@ -7563,9 +7601,23 @@ int halo_motion_window(int on, float jitter_x, float jitter_y)
 		return FALSE;
 	}
 	motion.on = TRUE;
+	motion.lod_bias = temporal_lod_bias();
 	motion.jitter[0] = jitter_x / target->target.scale[0];
 	motion.jitter[1] = jitter_y / target->target.scale[1];
 	return TRUE;
+}
+
+int halo_motion_jitter_phases(void)
+{
+	float fraction = temporal.factor < 1.0f ? temporal.factor : 1.0f;
+	int phases;
+
+	/* (AMD's ffxFsr3GetJitterPhaseCount: 8 times the display's pixels per
+	the render's, squared; NVIDIA's and Apple's guides ask as many) */
+	if (!temporal_upscaling() || !(fraction > 0.0f))
+		return 8;
+	phases = (int)(8.0f / (fraction * fraction));
+	return phases < 8 ? 8 : phases;
 }
 
 void halo_motion_previous_constants(int reg, float const (*values)[4], unsigned long count)
