@@ -111,6 +111,7 @@ symbols in this file:
 #include "network_host_controls.h" /* port: port/linux/game/network_host_controls.c */
 #include "stats_log.h" /* port: port/linux/game/stats_log.c */
 #include "touch_cinematic.h" /* port: port/linux/game/touch_cinematic.c */
+#include "subtitles.h" /* port: port/linux/game/subtitles.c */
 
 /* ---------- constants */
 
@@ -399,6 +400,9 @@ void interface_draw_fullscreen_overlays(
 	/* port: the touchscreen's skip button, in the letterbox's bar
 	(port/linux/game/touch_cinematic.c) */
 	touch_cinematic_draw();
+	/* port: the dialogue's subtitles (display.subtitles,
+	port/linux/game/subtitles.c), once over the whole screen */
+	subtitles_draw();
 	interface_splitscreen_render();
 	hud_render_timer();
 	/* port: a map's download (port/linux/game/map_share.c) */

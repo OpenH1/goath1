@@ -114,8 +114,8 @@
 			<choice shown="ON" value="true"/>
 			<choice shown="OFF" value="false"/>
 		</row>
-		<row key="advanced_audio" kind="link" label="ADVANCED AUDIO ›" crumb="AUDIO › SOUND" open="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/advanced_audio_screen">
-			<help>The resampler, and how wide stereo sounds from mods and custom maps are heard.</help>
+		<row key="subtitles_more" kind="link" label="SUBTITLES &amp; MORE ›" crumb="AUDIO › SOUND" open="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/advanced_audio_screen">
+			<help>Subtitles for the campaign's dialogue, the resampler, and how wide stereo sounds from mods and custom maps are heard.</help>
 		</row>
 		<row key="enabled" kind="choice" setting="audio.enabled" label="SOUND" crumb="AUDIO › SOUND">
 			<help>Turns all sound off or on, at once.</help>
@@ -150,12 +150,34 @@
 		<button key="button_ok" kind="ok" run="port settings ok" help="Keeps your changes, on every tab, and applies them."/>
 		<button key="button_cancel" kind="cancel" run="port settings cancel" help="Leaves Settings without keeping any change."/>
 	</screen>
-	<screen name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/advanced_audio_screen" kind="settings" layout="page" geometry="tall" title="ADVANCED AUDIO">
-		<section key="section_0" title="ADVANCED AUDIO"/>
-		<row key="stereo_spread" kind="slider" setting="audio.stereo_spread" label="STEREO SPREAD" crumb="AUDIO › ADVANCED AUDIO" least="0" most="1" step="0.05" typed_least="0" typed_most="1">
+	<screen name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/advanced_audio_screen" kind="settings" layout="page" geometry="tall" title="SUBTITLES &amp; ADVANCED AUDIO">
+		<section key="section_0" title="SUBTITLES"/>
+		<row key="subtitles" kind="choice" setting="display.subtitles" label="SUBTITLES" crumb="AUDIO › SUBTITLES &amp; MORE" enabled="mcc_subtitles">
+			<help>Shows the campaign's dialogue at the bottom of the screen as it plays, with its speaker.</help>
+			<note>Read from your own Halo: The Master Chief Collection installed with Steam: without it, this is off.</note>
+			<choice shown="ON" value="true"/>
+			<choice shown="OFF" value="false"/>
+		</row>
+		<row key="subtitles_language" kind="choice" setting="display.subtitles_language" label="SUBTITLE LANGUAGE" crumb="AUDIO › SUBTITLES &amp; MORE" search_choices="game english french german italian spanish latam portuguese japanese korean trad chinese simp" enabled="mcc_subtitles+subtitles=true">
+			<help>The subtitles' language. Game's follows the game's language. A line the game's font cannot draw is shown in English.</help>
+			<choice shown="GAME'S" value="game"/>
+			<choice shown="ENGLISH" value="english"/>
+			<choice shown="FRENCH" value="french"/>
+			<choice shown="GERMAN" value="german"/>
+			<choice shown="ITALIAN" value="italian"/>
+			<choice shown="SPANISH" value="spanish"/>
+			<choice shown="LATAM SPANISH" value="latam_spanish"/>
+			<choice shown="PORTUGUESE" value="portuguese"/>
+			<choice shown="JAPANESE" value="japanese"/>
+			<choice shown="KOREAN" value="korean"/>
+			<choice shown="TRAD. CHINESE" value="chinese"/>
+			<choice shown="SIMP. CHINESE" value="chinese_simplified"/>
+		</row>
+		<section key="section_3" title="ADVANCED AUDIO"/>
+		<row key="stereo_spread" kind="slider" setting="audio.stereo_spread" label="STEREO SPREAD" crumb="AUDIO › SUBTITLES &amp; MORE" least="0" most="1" step="0.05" typed_least="0" typed_most="1">
 			<help>How wide stereo sounds from mods and custom maps are heard: left and right from either side, narrowing with distance. 0 makes each one point. The game's own sounds play as on the Xbox.</help>
 		</row>
-		<row key="resampler" kind="choice" setting="audio.resampler" label="RESAMPLER" crumb="AUDIO › ADVANCED AUDIO" search_choices="xbox clean">
+		<row key="resampler" kind="choice" setting="audio.resampler" label="RESAMPLER" crumb="AUDIO › SUBTITLES &amp; MORE" search_choices="xbox clean">
 			<help>How sounds are converted to your speakers' rate. Xbox sounds as the Xbox did; Clean is clearer; Classic is brighter but harsher. Xbox and Classic cost a little less.</help>
 			<choice shown="XBOX" value="xbox"/>
 			<choice shown="CLEAN" value="sinc"/>

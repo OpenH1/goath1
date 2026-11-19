@@ -197,6 +197,7 @@ struct game_options;
 #include "basic_training.h" /* port: port/linux/game/basic_training.c */
 #include "demo.h" /* port: port/linux/game/demo.c */
 #include "speedrun_state.h" /* port: port/linux/game/speedrun_state.c */
+#include "subtitles.h" /* port: port/linux/game/subtitles.c */
 #include "practice.h" /* port: port/linux/game/practice.c */
 #include "network_latency_trace.h" /* port: port/linux/game/network_latency_trace.c */
 
@@ -720,6 +721,9 @@ boolean game_load(
 {
 	halo_loading_begin(); /* port: keep presentation alive while loading */
 	speedrun_state_map_load(); /* port: port/linux/game/speedrun_state.c */
+	/* port: the subtitles' lines read under the loading screen, not as the
+	first line plays (port/linux/game/subtitles.c) */
+	subtitles_map_load();
 #ifdef HALO_PROFILE
 	/* port: the profiling build's recording learns of the map (every map
 	load passes here: main_new_map's and a network game's,

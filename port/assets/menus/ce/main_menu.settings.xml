@@ -149,7 +149,7 @@
 	</widget>
 	<strings name="main_menu/settings/tall_titles">
 		<string text="SETTINGS"/>
-		<string text="ADVANCED AUDIO"/>
+		<string text="SUBTITLES &amp; ADVANCED AUDIO"/>
 		<string text="MULTIPLAYER AUDIO"/>
 		<string text="ADVANCED GRAPHICS"/>
 		<string text="BRIGHTNESS"/>

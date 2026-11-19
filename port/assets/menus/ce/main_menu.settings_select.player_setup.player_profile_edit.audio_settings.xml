@@ -19,7 +19,7 @@
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_output_device" x="28" y="124" platform="desktop"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_spatial" x="28" y="145"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_reverb" x="28" y="166"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_advanced_audio" x="28" y="187"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_subtitles_more" x="28" y="187"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_enabled" x="28" y="208"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_voice_chat_settings" x="28" y="229"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/section_7" x="28" y="256"/>
@@ -191,13 +191,13 @@
 		<on event="created" run="port setting load"/>
 		<on event="a" run="port setting segment"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_advanced_audio" width="344" height="20" flags="pass_unhandled_to_focused_child" bitmap="main_menu/settings/row" color="#FF2896FF" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_subtitles_more" width="344" height="20" flags="pass_unhandled_to_focused_child" bitmap="main_menu/settings/row" color="#FF2896FF" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
 		<on event="a" open="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/advanced_audio_screen"/>
 		<on event="start" open="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/advanced_audio_screen"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio_label"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/subtitles_more_label"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio_label" type="text" controller="1" width="332" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/labels" string_index="4" color="#FF2896FF" text_x="10" text_y="1" wide="0 244" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/subtitles_more_label" type="text" controller="1" width="332" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/labels" string_index="4" color="#FF2896FF" text_x="10" text_y="1" wide="0 244" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/op_enabled" width="344" height="20" flags="pass_unhandled_to_focused_child" bitmap="main_menu/settings/row" color="#FF2896FF" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/enabled_label"/>
@@ -354,7 +354,7 @@
 		<string text="OUTPUT DEVICE"/>
 		<string text="3D AUDIO"/>
 		<string text="REVERB"/>
-		<string text="ADVANCED AUDIO ›"/>
+		<string text="SUBTITLES &amp; MORE ›"/>
 		<string text="SOUND"/>
 		<string text="MULTIPLAYER ›"/>
 		<string text="VOLUME"/>
@@ -371,7 +371,7 @@
 		<string text="Where the game's sound and the other players' voices play."/>
 		<string text="Where the sounds around you come from. Auto and Headphones place each ahead, behind, above or below you, as the Xbox's 3D audio did on speakers and headphones alike; Speakers pans them left and right."/>
 		<string text="Echoes sounds as the place you are in would, and muffles those behind walls, as the Xbox did. It costs a little of the processor."/>
-		<string text="The resampler, and how wide stereo sounds from mods and custom maps are heard."/>
+		<string text="Subtitles for the campaign's dialogue, the resampler, and how wide stereo sounds from mods and custom maps are heard."/>
 		<string text="Turns all sound off or on, at once."/>
 		<string text="Voice chat in network games (your microphone and the other players' voices' volume) and hit sounds."/>
 		<string text=""/>

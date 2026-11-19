@@ -97,5 +97,9 @@ int steam_workshop_package_folder(const char *item_id, char *folder, unsigned lo
 int steam_workshop_resource_path(const char *request, const char *data_root, char *path, unsigned long size);
 /* the item's title; 1 if some scanned map belongs to the id (the title may still be "") */
 int steam_workshop_item_title(const char *item_id, char *title, unsigned long size);
+/* a file of the MCC install (relative: '/' separators, under its folder, e.g. halo1/prebuild/paks/...) in the
+first Steam library that has it, each part found case-blind; 1 and its host path, or 0. Not gated on
+game.workshop_maps: MCC's own files, not Workshop items (subtitles: mcc_subtitles.c) */
+int steam_workshop_mcc_file(const char *relative, char *path, unsigned long size);
 
 #endif

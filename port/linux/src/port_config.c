@@ -512,6 +512,20 @@ static const struct config_setting config_settings[] =
 		"stick (or W, A, S, D), the look, the fire trigger and the actions held\n"
 		"(grenade, melee, jump, crouch, reload, action, swap, flashlight). In a\n"
 		"demo's playback, the recorded input. Hide HUD hides it." },
+	{ "display.subtitles", _config_boolean, "false", "HALO_SUBTITLES", _environment_value, _platform_all,
+		"Show the campaign's dialogue (the radio, the cutscenes, the Marines'\n"
+		"conversations) as subtitles at the bottom of the screen while each line\n"
+		"plays, with its speaker where the sound's name gives it. The lines are\n"
+		"read from your own copy of Halo: The Master Chief Collection, installed\n"
+		"with Steam (paths.steam finds another library); without it none are\n"
+		"shown. Nothing of MCC's comes with the game." },
+	{ "display.subtitles_language", _config_string, "\"game\"", "HALO_SUBTITLES_LANGUAGE", _environment_value,
+		_platform_all,
+		"The subtitles' language: \"game\" (game.language's, English for\n"
+		"none) or one of MCC's: \"english\", \"french\", \"german\", \"italian\",\n"
+		"\"spanish\", \"latam_spanish\", \"portuguese\", \"japanese\", \"korean\",\n"
+		"\"chinese\" or \"chinese_simplified\". A line with letters the game's\n"
+		"font cannot draw is shown in English." },
 	{ "display.perf_overlay", _config_string, "\"off\"", "HALO_PERF_OVERLAY", _environment_value, _platform_all,
 		"The performance overlay at the bottom right: \"off\"; \"simple\", the\n"
 		"frame rate averaged over half a second, green at 30 and over (the\n"
@@ -4964,6 +4978,8 @@ static const struct
 	{ "display.player_names", { "all", "allies", "enemies", "none", NULL }, NULL },
 	{ "display.scoreboard_team_layout", { "teams", "score", NULL }, NULL },
 	{ "display.chat_style", { "colors", "white", NULL }, NULL },
+	{ "display.subtitles_language", { "game", "english", "french", "german", "italian", "spanish", "latam_spanish",
+		"portuguese", "japanese", "korean", "chinese", "chinese_simplified", NULL }, "game" },
 	{ "display.shield_glow_intensity", { "default", "light_show", NULL }, NULL },
 	{ "display.shield_color", { "default", "white", "black", "red", "blue", "gray", "yellow", "green", "pink",
 		"purple", "cyan", "cobalt", "orange", "teal", "sage", "brown", "tan", "maroon", "salmon", NULL }, NULL },
