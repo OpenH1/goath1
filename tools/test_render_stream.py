@@ -86,3 +86,27 @@ def test_render_stream(tmp_path, sanitizer):
     result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=900)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "ThreadSanitizer" not in result.stderr, result.stderr
+
+
+def test_render_stream_numbered_pipeline_control(tmp_path):
+    """The negative control of the kept draws' pipelines bound by number (xgpu_backend_pipeline_numbered): bound by
+    another key's number, the host's pipeline is not the key the front end bound, and the round trip says so."""
+    cc = compiler()
+    if not cc:
+        pytest.skip("no C compiler")
+    if sys.platform not in ("linux", "darwin") or platform.architecture()[0] != "64bit":
+        pytest.skip("needs a 64-bit Linux or macOS host")
+    folder = interface_folder()
+    if not folder:
+        pytest.skip("the renderer's interface (xgpu_backend.h) is not there yet")
+    headers = tmp_path / "headers"
+    headers.mkdir()
+    for name in INTERFACE_HEADERS:
+        shutil.copy(folder / name, headers / name)
+    for name in ("xgpu_stream_encode.c", "xgpu_stream_describe.c"):
+        shutil.copy(ROOT / "port" / "linux" / "src" / name, headers / name)
+    shutil.copy(ROOT / "port" / "android" / "tests" / "render_stream" / "platform.h", headers / "platform.h")
+    binary = tmp_path / "host_render_stream_test"
+    build(cc, headers, binary, ["-DRETAINED_MUTATION=1"])
+    result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=900)
+    assert result.returncode != 0, result.stdout + result.stderr

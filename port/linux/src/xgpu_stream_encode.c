@@ -135,6 +135,7 @@ struct numbering
 	unsigned char *definitions;
 	uint32_t last;      /* the number found last */
 	uint32_t rounds;    /* the times the numbers have begun again */
+	uint32_t begun;     /* rounds as the stream began (its first round) */
 };
 
 static struct
@@ -525,6 +526,10 @@ static BOOL numbering_initialize(struct numbering *numbering, uint32_t size, uin
 	numbering->slots = calloc(limit * 2, sizeof(*numbering->slots));
 	numbering->definitions = malloc((size_t)size * limit);
 	numbering->last = 0;
+	/* (a round of its own: a number of an earlier stream's is not this
+	one's, xgpu_backend_pipeline_numbered) */
+	numbering->rounds++;
+	numbering->begun = numbering->rounds;
 	return numbering->slots && numbering->definitions;
 }
 
@@ -1463,24 +1468,20 @@ static void texture_stage_describe(const struct xgpu_texture_source *source, int
 	}
 }
 
-void xgpu_backend_set_textures(const struct xgpu_texture_source stages[4])
+/* the stages described sent: those that differ from what the host has */
+static void textures_send(const struct xgpu_stream_texture_stage described[4],
+	const struct xgpu_stream_texture_level levels[4][XGPU_STREAM_MIP_LEVELS])
 {
-	struct xgpu_stream_texture_stage described[4];
-	struct xgpu_stream_texture_level levels[4][XGPU_STREAM_MIP_LEVELS];
 	struct xgpu_stream_set_textures *record_body;
 	uint32_t changed = 0;
 	uint32_t size = sizeof(*record_body);
 	unsigned char *place;
 	int stage;
 
-	if (!stream.open)
-		return;
 	for (stage = 0; stage < 4; stage++)
 	{
-		uint32_t level_bytes;
+		uint32_t level_bytes = described[stage].level_count * sizeof(levels[0][0]);
 
-		texture_stage_describe(&stages[stage], stage, &described[stage], levels[stage]);
-		level_bytes = described[stage].level_count * sizeof(levels[0][0]);
 		if (stream.stages_sent[stage] && !memcmp(&described[stage], &stream.stages[stage], sizeof(described[stage])) &&
 			!memcmp(levels[stage], stream.levels[stage], level_bytes))
 			continue;
@@ -1506,6 +1507,73 @@ void xgpu_backend_set_textures(const struct xgpu_texture_source stages[4])
 		memcpy(stream.levels[stage], levels[stage], level_bytes);
 		stream.stages_sent[stage] = TRUE;
 	}
+}
+
+void xgpu_backend_set_textures(const struct xgpu_texture_source stages[4])
+{
+	struct xgpu_stream_texture_stage described[4];
+	struct xgpu_stream_texture_level levels[4][XGPU_STREAM_MIP_LEVELS];
+	int stage;
+
+	if (!stream.open)
+		return;
+	for (stage = 0; stage < 4; stage++)
+		texture_stage_describe(&stages[stage], stage, &described[stage], levels[stage]);
+	textures_send(described, (const struct xgpu_stream_texture_level (*)[XGPU_STREAM_MIP_LEVELS])levels);
+}
+
+/* (xgpu_backend_textures_kept's words: the stages, then their levels) */
+struct textures_described
+{
+	struct xgpu_stream_texture_stage stages[4];
+	struct xgpu_stream_texture_level levels[4][XGPU_STREAM_MIP_LEVELS];
+};
+_Static_assert(sizeof(struct textures_described) <= sizeof(((struct xgpu_backend_textures_kept *)0)->words),
+	"kept textures");
+
+void xgpu_backend_set_textures_kept(const struct xgpu_texture_source stages[4], struct xgpu_backend_textures_kept *kept,
+	unsigned long frame)
+{
+	struct textures_described *described = (struct textures_described *)kept->words;
+	int stage;
+
+	if (!stream.open)
+		return;
+	/* (described as xgpu_backend_set_textures describes them, the first
+	time in the frame: a replacement's use is noted once in a frame) */
+	if (kept->frame != frame + 1)
+	{
+		for (stage = 0; stage < 4; stage++)
+			texture_stage_describe(&stages[stage], stage, &described->stages[stage], described->levels[stage]);
+		kept->frame = frame + 1;
+	}
+	textures_send(described->stages,
+		(const struct xgpu_stream_texture_level (*)[XGPU_STREAM_MIP_LEVELS])described->levels);
+}
+
+BOOL xgpu_backend_textures_kept_same(const struct xgpu_texture_source stages[4],
+	struct xgpu_backend_textures_kept *kept, unsigned long frame)
+{
+	struct textures_described *described = (struct textures_described *)kept->words;
+	struct textures_described now;
+	int stage;
+
+	memset(&now, 0, sizeof(now));
+	for (stage = 0; stage < 4; stage++)
+		texture_stage_describe(&stages[stage], stage, &now.stages[stage], now.levels[stage]);
+	if (kept->frame != frame + 1)
+	{
+		*described = now;
+		kept->frame = frame + 1;
+		return TRUE;
+	}
+	for (stage = 0; stage < 4; stage++)
+	{
+		if (memcmp(&now.stages[stage], &described->stages[stage], sizeof(now.stages[stage])) ||
+			memcmp(now.levels[stage], described->levels[stage], now.stages[stage].level_count * sizeof(now.levels[0][0])))
+			return FALSE;
+	}
+	return TRUE;
 }
 
 /* ---------- pipelines */
@@ -1637,6 +1705,26 @@ void xgpu_backend_pipeline_stand_in(unsigned long number)
 	record_body->stand_in = number >> 16 == stream.pipeline_keys.rounds ? (uint32_t)(number & 0xffff) : 0;
 }
 
+BOOL xgpu_backend_pipeline_numbered(unsigned long number, const struct xgpu_pipeline_key *key)
+{
+	uint32_t id = (uint32_t)(number & 0xffff);
+
+	if (!stream.open)
+		return FALSE;
+	/* (a number of this round of them is its key's alone: numbering_find) */
+	if (!id || number >> 16 != stream.pipeline_keys.rounds || id >= stream.pipeline_keys.next)
+		return xgpu_backend_pipeline(key);
+	if (id != stream.pipeline)
+	{
+		/* (as xgpu_backend_pipeline finds it: the last key found, and bound) */
+		stream.pipeline_keys.last = id;
+		memcpy(&stream.last_key, key, sizeof(*key));
+		record_value(XGPU_STREAM_PIPELINE, id);
+		stream.pipeline = id;
+	}
+	return __atomic_load_n(&stream.pipelines[id], __ATOMIC_RELAXED) != XGPU_STREAM_PIPELINE_FAILED;
+}
+
 unsigned long xgpu_backend_sent_serial(void)
 {
 	return sent_forgotten;
@@ -1661,7 +1749,8 @@ unsigned long xgpu_backend_pipelines_defined(void)
 
 	if (!keys->next)
 		return 0;
-	return (unsigned long)keys->rounds * (unsigned long)(keys->limit - 1u) + (unsigned long)(keys->next - 1u);
+	return (unsigned long)(keys->rounds - keys->begun) * (unsigned long)(keys->limit - 1u) +
+		(unsigned long)(keys->next - 1u);
 }
 
 static void dynamic_state_describe(const struct xgpu_dynamic_state *dynamic, struct xgpu_stream_dynamic_state *wire)
@@ -1679,6 +1768,19 @@ static void dynamic_state_describe(const struct xgpu_dynamic_state *dynamic, str
 	wire->stencil_reference = (uint32_t)dynamic->stencil_reference;
 	wire->depth_bias[0] = dynamic->depth_bias[0];
 	wire->depth_bias[1] = dynamic->depth_bias[1];
+}
+
+/* (a piece of the uniforms: 16 bytes but the last, compared in place
+rather than by a call for each) */
+static BOOL piece_equal(const unsigned char *now, const unsigned char *had, uint32_t bytes)
+{
+	uint64_t a[2], b[2];
+
+	if (bytes != 16)
+		return !memcmp(now, had, bytes);
+	__builtin_memcpy(a, now, 16);
+	__builtin_memcpy(b, had, 16);
+	return ((a[0] ^ b[0]) | (a[1] ^ b[1])) == 0;
 }
 
 void xgpu_backend_draw_state(const struct xgpu_dynamic_state *dynamic, const struct xgpu_draw_uniforms *uniforms,
@@ -1711,7 +1813,7 @@ void xgpu_backend_draw_state(const struct xgpu_dynamic_state *dynamic, const str
 			uint32_t offset = piece * 16;
 			uint32_t bytes = sizeof(stream.uniforms) - offset < 16 ? sizeof(stream.uniforms) - offset : 16;
 
-			if (!stream.uniforms_sent || memcmp(now + offset, had + offset, bytes))
+			if (!stream.uniforms_sent || !piece_equal(now + offset, had + offset, bytes))
 			{
 				pieces[piece / 32] |= 1u << (piece % 32);
 				size += 16;

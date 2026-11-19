@@ -394,6 +394,26 @@ struct xgpu_texture_source
 };
 
 void xgpu_backend_set_textures(const struct xgpu_texture_source stages[4]);
+/* (the front end's kept draws: d3d8_device.c's retained_draw_find) the
+same, the stages as the backend describes them kept in kept: described
+once in a frame of the textures' replacements (frame:
+xgpu_texture_replacement_frame), then sent as described. kept's frame 0:
+not described yet. The caller keeps it while what the stages are
+described from is the same (the sources, the textures' headers, their
+replacements' choices and images) */
+#define XGPU_BACKEND_TEXTURES_KEPT_WORDS 256
+struct xgpu_backend_textures_kept
+{
+	unsigned long frame;
+	unsigned int words[XGPU_BACKEND_TEXTURES_KEPT_WORDS];
+};
+void xgpu_backend_set_textures_kept(const struct xgpu_texture_source stages[4], struct xgpu_backend_textures_kept *kept,
+	unsigned long frame);
+/* (debug.retained_draws_verify) whether the stages are described now as
+kept has them, if it was described in this frame (sent nothing; else
+described into it, TRUE) */
+BOOL xgpu_backend_textures_kept_same(const struct xgpu_texture_source stages[4],
+	struct xgpu_backend_textures_kept *kept, unsigned long frame);
 
 /* ---------- pipelines */
 
@@ -601,6 +621,11 @@ next used: xgpu_backend_invalidate, the pipelines' numbers begun again);
 and whether the pipeline last bound draws (not known to have failed) */
 unsigned long xgpu_backend_sent_serial(void);
 BOOL xgpu_backend_pipeline_usable(void);
+/* (the same) xgpu_backend_pipeline for a key that was given number
+(xgpu_backend_pipeline_number's, as it was bound): bound by its number
+while the numbers have not begun again, without its bytes compared or
+hashed; else as xgpu_backend_pipeline */
+BOOL xgpu_backend_pipeline_numbered(unsigned long number, const struct xgpu_pipeline_key *key);
 /* the pipeline keys defined so far (the performance overlay's count,
 debug.timings): read, never counted for it */
 unsigned long xgpu_backend_pipelines_defined(void);
