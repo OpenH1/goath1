@@ -21,6 +21,15 @@ pass is found: they write only where there is an edge. The intermediate
 images are the target's size (the shaders' coordinates are the
 target's).
 
+As SMAA's own design has it, the edges' pass marks its pixels in a
+stencil (emptied with the edges; the edge shader discards a pixel with no
+edge, which then writes neither), and the weights' pass runs only where
+it is marked: elsewhere the shader would write zero over the zero the
+clear left, so the weights are the same, without the searches' cost over
+every pixel. The blend runs over every pixel still: where its weights
+(its own, its right and its lower neighbor's) are zero it writes the
+copy's texel back unchanged.
+
 The present step's turn (xgpu_vulkan_post_rotate) is a pass of the same
 kind: the frame drawn turned by quarter turns into an image of its own, for
 a swapchain made for the display's orientation while the phone is held
@@ -79,8 +88,9 @@ static struct
 	uint32_t width, height;
 	uint8_t format;
 	/* the target's pixels before the pass, and SMAA's edges and blending
-	weights */
-	struct xgpu_vulkan_image *color, *edges, *weights;
+	weights, and the stencil marking the edges' pixels (a stencil alone,
+	XGPU_VULKAN_FORMAT_S8) */
+	struct xgpu_vulkan_image *color, *edges, *weights, *marks;
 	/* SMAA's lookup textures */
 	struct xgpu_vulkan_image *area, *search;
 	/* linear and clamped, as FXAA and SMAA sample */
@@ -147,6 +157,15 @@ static struct xgpu_vulkan_image *lookup_texture(const uint32_t *words, uint32_t 
 	return image;
 }
 
+/* SMAA's images let go (FXAA chosen instead) */
+static void smaa_images_release(void)
+{
+	xgpu_vulkan_image_destroy(post.edges);
+	xgpu_vulkan_image_destroy(post.weights);
+	xgpu_vulkan_image_destroy(post.marks);
+	post.edges = post.weights = post.marks = NULL;
+}
+
 /* the passes' images, of the target's size (SMAA's only for SMAA); color
 is the target's format, so that the copy is exact */
 static int images_fit(int smaa, uint8_t format, uint32_t width, uint32_t height)
@@ -156,7 +175,8 @@ static int images_fit(int smaa, uint8_t format, uint32_t width, uint32_t height)
 		xgpu_vulkan_image_destroy(post.color);
 		xgpu_vulkan_image_destroy(post.edges);
 		xgpu_vulkan_image_destroy(post.weights);
-		post.color = post.edges = post.weights = NULL;
+		xgpu_vulkan_image_destroy(post.marks);
+		post.color = post.edges = post.weights = post.marks = NULL;
 		post.width = width;
 		post.height = height;
 		post.format = format;
@@ -168,8 +188,9 @@ static int images_fit(int smaa, uint8_t format, uint32_t width, uint32_t height)
 			width, height);
 		post.weights = image_make(XGPU_VULKAN_FORMAT_BGRA8, XGPU_VULKAN_USAGE_SAMPLED | XGPU_VULKAN_USAGE_TARGET,
 			width, height);
+		post.marks = image_make(XGPU_VULKAN_FORMAT_S8, XGPU_VULKAN_USAGE_TARGET, width, height);
 	}
-	return post.color && (!smaa || (post.edges && post.weights));
+	return post.color && (!smaa || (post.edges && post.weights && post.marks));
 }
 
 /* ---------- pipelines */
@@ -223,6 +244,30 @@ static int target_format_drawn(uint8_t format)
 		format == XGPU_VULKAN_FORMAT_RGBA16;
 }
 
+/* the core's comparisons and stencil operations (xgpu_backend.h's
+XGPU_COMPARE_* and XGPU_STENCIL_*: xgpu_vulkan.c compare_op, stencil_op) */
+enum { COMPARE_EQUAL = 2, COMPARE_ALWAYS = 7, STENCIL_REPLACE = 2 };
+
+/* SMAA's edges' pass marks its pixels in the stencil (the shader discards
+a pixel with no edge); the weights' pass runs where they are marked. No
+depth is tested or written */
+static void marks_describe(int program, struct xgpu_vulkan_pipeline_description *description)
+{
+	if (program != XGPU_VULKAN_POST_SMAA_EDGES && program != XGPU_VULKAN_POST_SMAA_WEIGHTS)
+		return;
+	description->depth_format = XGPU_VULKAN_FORMAT_S8;
+	description->stencil_test = 1;
+	description->stencil_read_mask = 0xff;
+	if (program == XGPU_VULKAN_POST_SMAA_EDGES)
+	{
+		description->stencil_function = COMPARE_ALWAYS;
+		description->stencil_pass = STENCIL_REPLACE;
+		description->stencil_write_mask = 0xff;
+	}
+	else
+		description->stencil_function = COMPARE_EQUAL;
+}
+
 int xgpu_vulkan_post_prepare(int smaa, uint8_t format, int preparing)
 {
 	int first = smaa ? XGPU_VULKAN_POST_SMAA_EDGES : XGPU_VULKAN_POST_FXAA;
@@ -254,6 +299,7 @@ int xgpu_vulkan_post_prepare(int smaa, uint8_t format, int preparing)
 		description->color_mask = into_target ? 7 : 15;
 		description->color_format = into_target ? format : XGPU_VULKAN_FORMAT_BGRA8;
 		description->samples = 1;
+		marks_describe(program, description);
 		if (preparing ? !xgpu_vulkan_pipeline_prepare(description) : !xgpu_vulkan_pipeline(description))
 			return prepare_failed(smaa, "pipelines");
 	}
@@ -311,6 +357,9 @@ static void pass_draw_with(int program, struct xgpu_vulkan_image *into, uint32_t
 	struct xgpu_vulkan_image *image0, struct xgpu_vulkan_image *image1, struct xgpu_vulkan_image *image2,
 	const float bounds[4], const float window[4], const float panini[8])
 {
+	/* (SMAA's edges and weights with the stencil of their marks) */
+	struct xgpu_vulkan_image *marks = program == XGPU_VULKAN_POST_SMAA_EDGES ||
+		program == XGPU_VULKAN_POST_SMAA_WEIGHTS ? post.marks : NULL;
 	uint8_t format = xgpu_vulkan_image_description(into)->format;
 	uint32_t into_samples = xgpu_vulkan_image_description(into)->samples;
 	struct xgpu_vulkan_pipeline_description pipeline;
@@ -361,10 +410,11 @@ static void pass_draw_with(int program, struct xgpu_vulkan_image *into, uint32_t
 	dynamic.viewport[2] = dynamic.scissor[2] = rectangle[2] - rectangle[0];
 	dynamic.viewport[3] = dynamic.scissor[3] = rectangle[3] - rectangle[1];
 	dynamic.depth_range[1] = 1.0f;
+	dynamic.stencil_reference = 1;
 	draw.dynamic = &dynamic;
 	draw.topology = XGPU_VULKAN_TOPOLOGY_TRIANGLES;
 	draw.count = 3;
-	xgpu_vulkan_set_target_views(into, NULL, layer, 1);
+	xgpu_vulkan_set_target_views(into, marks, layer, 1);
 	xgpu_vulkan_draw(&draw);
 }
 
@@ -376,8 +426,12 @@ static void pass_draw(int program, struct xgpu_vulkan_image *into, uint32_t laye
 }
 
 /* an intermediate emptied, all of it, so that no edge of another window's
-pass is found: SMAA's passes write only where there is an edge */
-static void intermediate_clear(struct xgpu_vulkan_image *image)
+pass is found: SMAA's passes write only where there is an edge; with the
+edges, the stencil of their marks; with the weights, the marks bound as
+their pass will have them, and kept. The marks' depth (where the device
+has no stencil alone), which nothing reads, cleared with each (so that
+none of it is loaded or kept) */
+static void intermediate_clear(struct xgpu_vulkan_image *image, int marks)
 {
 	static const float transparent[4];
 	int32_t whole[1][4];
@@ -385,9 +439,9 @@ static void intermediate_clear(struct xgpu_vulkan_image *image)
 	whole[0][0] = whole[0][1] = 0;
 	whole[0][2] = (int32_t)post.width;
 	whole[0][3] = (int32_t)post.height;
-	xgpu_vulkan_set_targets(image, NULL, 0);
-	xgpu_vulkan_clear((const int32_t (*)[4])whole, 1, XGPU_VULKAN_CLEAR_COLOR | XGPU_VULKAN_CLEAR_CHANNELS,
-		transparent, 1.0f, 0);
+	xgpu_vulkan_set_targets(image, post.marks, 0);
+	xgpu_vulkan_clear((const int32_t (*)[4])whole, 1, XGPU_VULKAN_CLEAR_COLOR | XGPU_VULKAN_CLEAR_CHANNELS |
+		XGPU_VULKAN_CLEAR_DEPTH | (marks ? XGPU_VULKAN_CLEAR_STENCIL : 0), transparent, 1.0f, 0);
 }
 
 int xgpu_vulkan_post_anti_alias(int smaa, struct xgpu_vulkan_image *target, uint32_t layer, const int32_t corners[4])
@@ -414,6 +468,9 @@ int xgpu_vulkan_post_anti_alias(int smaa, struct xgpu_vulkan_image *target, uint
 	}
 	if (rectangle[2] <= rectangle[0] || rectangle[3] <= rectangle[1])
 		return 1;
+	/* (SMAA's images kept only while SMAA is chosen) */
+	if (!smaa && post.edges)
+		smaa_images_release();
 	if (!images_fit(smaa, description->format, description->width, description->height))
 		return 0;
 
@@ -432,10 +489,10 @@ int xgpu_vulkan_post_anti_alias(int smaa, struct xgpu_vulkan_image *target, uint
 	}
 	else
 	{
-		intermediate_clear(post.edges);
+		intermediate_clear(post.edges, 1);
 		pass_draw(XGPU_VULKAN_POST_SMAA_EDGES, post.edges, 0, rectangle, post.color, NULL, NULL, NULL);
 
-		intermediate_clear(post.weights);
+		intermediate_clear(post.weights, 0);
 		pass_draw(XGPU_VULKAN_POST_SMAA_WEIGHTS, post.weights, 0, rectangle, post.edges, post.area, post.search, NULL);
 
 		pass_draw(XGPU_VULKAN_POST_SMAA_BLEND, target, layer, rectangle, post.color, post.weights, NULL, NULL);

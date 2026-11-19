@@ -149,6 +149,9 @@ enum
 	/* four 16-bit unsigned normalized channels (display.output_depth's SDR
 	back buffer: clamped and blended as BGRA8, 65535 levels) */
 	XGPU_METAL_FORMAT_RGBA16,
+	/* a stencil alone (Stencil8): SMAA's marks (xgpu_metal_post.c), an
+	attachment only */
+	XGPU_METAL_FORMAT_S8,
 	XGPU_METAL_FORMAT_COUNT
 };
 
