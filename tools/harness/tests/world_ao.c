@@ -8,6 +8,7 @@ test_world_sdf.py and test_world_proxies.py; the shading's arithmetic,
 tools/test_world_ao_light.py. */
 
 #include "harness.h"
+#include "rt_shadows.h"
 #include "world_ao.h"
 #include "world_cascades.h"
 #include "world_proxies.h"
@@ -74,8 +75,17 @@ void halo_world_ao_prepass_end(short x0, short y0, short x1, short y1, float con
 	(void)x0; (void)y0; (void)x1; (void)y1; (void)camera; (void)cascades; (void)frame; (void)history;
 }
 
+/* (display.shadows "ray_traced", where the backend has ray queries:
+rt_shadows.c's, tested apart: test_rt_shadows.py) */
+static int shadows_on, scene_loads;
+
+int rt_shadows_on(void)
+{
+	return shadows_on;
+}
+
 /* the parts (their stubs' behaviour: the real ones are tested apart) */
-void world_scene_map_loaded(void) {}
+void world_scene_map_loaded(void) { scene_loads++; }
 void world_scene_map_unloaded(void) {}
 void world_scene_bsp_switched(short bsp_index) { (void)bsp_index; }
 void world_scene_frame_begin(void) { scene_frames++; }
@@ -504,6 +514,38 @@ static void rays_case(void)
 	CHECK(rt_unloads == 1, "the scene let go of at the map's end: %d", rt_unloads);
 }
 
+/* display.shadows "ray_traced" with this setting off: the frame's objects
+found and the ray-traced scene built for it, nothing of the occlusion's;
+off again, nothing */
+static void shadows_case(void)
+{
+	float const camera[3] = { 0.0f, 0.0f, 0.0f };
+
+	setting = "off";
+	changes++;
+	shadows_on = 1;
+	world_ao_map_loaded();
+	CHECK(scene_loads == 1, "the scene found as the map loads: %d", scene_loads);
+	world_ao_frame_begin();
+	CHECK(scene_frames == 1 && sdf_frames == 0, "the frame's objects: %d %d", scene_frames, sdf_frames);
+	world_ao_window_begin(0, 0, camera);
+	CHECK(windows_handed == 0 && rt_frames == 0, "the occlusion's window: %d %lu", windows_handed, rt_frames);
+	world_ao_window_end();
+	world_ao_rt_frame();
+	CHECK(rt_frames == 1, "the ray-traced scene's frame: %lu", rt_frames);
+	world_ao_map_unloaded();
+	CHECK(rt_unloads == 1, "the scene let go of at the map's end: %d", rt_unloads);
+	/* (on in play: the map's scene found at the next frame, once) */
+	world_ao_frame_begin();
+	world_ao_frame_begin();
+	CHECK(scene_loads == 2 && scene_frames == 3, "on in play: %d %d", scene_loads, scene_frames);
+	/* (off: nothing) */
+	shadows_on = 0;
+	world_ao_map_loaded();
+	world_ao_frame_begin();
+	CHECK(scene_loads == 2 && scene_frames == 3, "off: %d %d", scene_loads, scene_frames);
+}
+
 static void test_case(void)
 {
 	float const camera[3] = { 0.0f, 0.0f, 0.0f };
@@ -539,6 +581,8 @@ int main(int argc, char **argv)
 		test_case();
 	else if (!strcmp(name, "rays"))
 		rays_case();
+	else if (!strcmp(name, "shadows"))
+		shadows_case();
 	else
 		return 2;
 	return 0;

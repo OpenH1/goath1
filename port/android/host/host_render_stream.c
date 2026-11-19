@@ -243,6 +243,7 @@ static const uint32_t record_minimum[XGPU_STREAM_RECORD_TYPES] =
 	[XGPU_STREAM_HDR_GAMUT] = sizeof(struct xgpu_stream_value),
 	[XGPU_STREAM_PASS_TIMES] = sizeof(struct xgpu_stream_value),
 	[XGPU_STREAM_MOTION] = sizeof(struct xgpu_stream_motion),
+	[XGPU_STREAM_RT_SHADOWS] = sizeof(struct xgpu_stream_rt_shadows),
 	[XGPU_STREAM_PANINI] = sizeof(struct xgpu_stream_panini),
 	[XGPU_STREAM_WORLD_AO_WINDOW] = sizeof(struct xgpu_stream_world_ao_window),
 	[XGPU_STREAM_WORLD_AO_FIELD] = sizeof(struct xgpu_stream_world_ao_field),
@@ -575,6 +576,16 @@ static int decode_record(struct host_render_decoder *decoder, const unsigned cha
 			return XGPU_STREAM_ERROR_BOUNDS;
 		CALL(motion, (const void *)start);
 		break;
+	case XGPU_STREAM_RT_SHADOWS:
+	{
+		const struct xgpu_stream_rt_shadows *shadows = (const void *)start;
+
+		if (shadows->count < 0 || shadows->count > XGPU_STREAM_RT_SHADOWS_CASTERS ||
+			(uint32_t)shadows->count * sizeof(shadows->casters[0]) > size - sizeof(*shadows))
+			return XGPU_STREAM_ERROR_RECORD;
+		CALL(rt_shadows, shadows);
+		break;
+	}
 	case XGPU_STREAM_WORLD_AO_PREPASS:
 		if (((const struct xgpu_stream_world_ao_prepass *)(const void *)start)->phase > XGPU_WORLD_AO_PREPASS_TWINS)
 			return XGPU_STREAM_ERROR_BOUNDS;

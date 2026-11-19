@@ -9,13 +9,23 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from harness import CHECK_FAILED, build, mutated, read, run  # noqa: E402
 
-CASES = ["off", "world", "window", "test", "rays"]
+CASES = ["off", "world", "window", "test", "rays", "shadows"]
 GAME = "port/linux/game/world_ao.c"
 CONTROLS = [
     # on whatever the setting says
     ('world_ao.mode = setting && (!strcmp(setting, "world") || world_ao.rays) ?', 'world_ao.mode = setting ?', "off"),
     # the frame's work done when it is off
-    ("\tif (!world_ao_mode())\n\t\treturn;\n\tworld_scene_frame_begin();", "\tworld_scene_frame_begin();", "off"),
+    ("\t\treturn;\n\t}\n\tworld_scene_frame_begin();", "\t}\n\tworld_scene_frame_begin();", "off"),
+    # display.shadows "ray_traced": the frame's objects not found without this setting (no ray-traced scene)
+    ("\t\tif (rt_shadows_on())\n\t\t{\n\t\t\tif (!world_ao_scene_found)", "\t\tif (0)\n\t\t{\n\t\t\tif (!world_ao_scene_found)",
+     "shadows"),
+    # ... nor the map's scene where it came on in play
+    ("\t\t\tif (!world_ao_scene_found)\n\t\t\t\tworld_scene_map_loaded();\n", "", "shadows"),
+    # ... the frame's objects found whatever display.shadows says
+    ("\t\tif (rt_shadows_on())\n\t\t{\n\t\t\tif (!world_ao_scene_found)", "\t\tif (1)\n\t\t{\n\t\t\tif (!world_ao_scene_found)",
+     "shadows"),
+    # ... the ray-traced scene's frame not built for them
+    ("\tworld_rt_frame(world_ao_scene.frame);\n}", "}", "shadows"),
     # an object's slot taken from its shape's place, not its owner's slot
     ("owner = (int)world_ao.proxies[index].v[1][3];", "owner = (int)index;", "window"),
     # the reference found without the field faded in
@@ -60,7 +70,7 @@ def generated(fault=None):
     if fault:
         game = mutated(game, *fault)
     headers = [(name, read(f"port/linux/include/{name}"))
-               for name in ("world_ao.h", "world_cascades.h", "world_proxies.h", "world_rt.h", "world_scene.h",
+               for name in ("rt_shadows.h", "world_ao.h", "world_cascades.h", "world_proxies.h", "world_rt.h", "world_scene.h",
                             "world_sdf.h")]
     return tuple(headers) + (("under_test.inc", game),)
 

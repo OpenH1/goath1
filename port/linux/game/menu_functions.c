@@ -3112,6 +3112,9 @@ static boolean settings_condition_term(struct widget_instance *list, char const 
 		return halo_temporal_upscale_drawn() && settings_value("display.temporal_aa", technique, sizeof(technique)) &&
 			!strcmp(technique, "fsr");
 	}
+	/* (the renderer has ray queries: display.shadows "ray_traced") */
+	if (!strcmp(name, "ray_queries"))
+		return halo_world_ao_ray_queries() != 0;
 	if (!strcmp(name, "gyro"))
 		return halo_gyro_found() == 2;
 	/* (the player's Aim Style Modern, on another page than the rows it

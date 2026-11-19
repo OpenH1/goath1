@@ -2344,6 +2344,32 @@ void xgpu_backend_dynamic_lights_halos(xgpu_target color, xgpu_target depth, int
 	stream_finite(&record_body->halos[0][0], (unsigned long)count * 2 * 4, "dynamic light glow value", 0);
 }
 
+_Static_assert(sizeof(struct xgpu_rt_shadow_caster) == sizeof(struct xgpu_stream_rt_shadow_caster) &&
+	XGPU_RT_SHADOWS_CASTERS == XGPU_STREAM_RT_SHADOWS_CASTERS, "a ray-traced shadow's caster (xgpu_stream.h)");
+
+void xgpu_backend_rt_shadows(xgpu_target color, xgpu_target depth, const struct xgpu_rt_shadows *shadows)
+{
+	struct xgpu_stream_rt_shadows *record_body;
+	int count = shadows->count;
+
+	if (!stream.open)
+		return;
+	if (count < 0)
+		count = 0;
+	if (count > XGPU_RT_SHADOWS_CASTERS)
+		count = XGPU_RT_SHADOWS_CASTERS;
+	record_body = record(XGPU_STREAM_RT_SHADOWS, sizeof(*record_body) + count * sizeof(record_body->casters[0]));
+	record_body->color = color;
+	record_body->depth = depth;
+	record_body->count = count;
+	memcpy(record_body->projection, shadows->projection, sizeof(record_body->projection));
+	memcpy(record_body->viewport_scale, shadows->viewport_scale, sizeof(record_body->viewport_scale));
+	memcpy(record_body->viewport_offset, shadows->viewport_offset, sizeof(record_body->viewport_offset));
+	memcpy(record_body->camera, shadows->camera, sizeof(record_body->camera));
+	record_body->screen_offset = shadows->screen_offset;
+	memcpy(record_body->casters, shadows->casters, count * sizeof(record_body->casters[0]));
+}
+
 /* ---------- the VR mode */
 
 BOOL xgpu_backend_vr_supported(void)

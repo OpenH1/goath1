@@ -1444,6 +1444,15 @@ PAGES = {
             ("UPSCALER", "display.temporal_aa", [("OFF", "off"), ("AMD FSR", "fsr")],
              "AMD FSR builds each frame from the frames before it: smooth edges, and a sharp picture at a Render "
              "Resolution below 100% for more frames. While it is on, it replaces Anti-Aliasing.", "desktop android"),
+            (SECTION, "RAY TRACING"),
+            # (display.shadows: where the graphics card has ray queries alone,
+            # SETTINGS_ROW_WHEN; Advanced Graphics and Brightness
+            # have no room: the processor's shadows' work taken off it)
+            ("RAY TRACED SHADOWS", "display.shadows", [("OFF", "classic"), ("ON", "ray_traced")],
+             "The shadows of characters and vehicles traced by the graphics card from their own shapes, soft at "
+             "the edges, in the same place and darkness as the game's, which frees the processor's shadow work. Off "
+             "draws them as the Xbox did.",
+             "desktop android"),
             (SECTION, "BENCHMARK"),
             ("BENCHMARK PACING", "display.benchmark_pacing", [("UNCAPPED", "uncapped"), ("YOUR SETTINGS", "settings")],
              "What the benchmark measures. Uncapped turns VSync, Variable Refresh and the frame cap off for the run: "
@@ -2099,7 +2108,7 @@ SETTINGS_SEARCH_WORDS = {
     "frametime": ["perf_overlay"], "gpu": ["perf_overlay"], "stats": ["perf_overlay"],
     "gsync": ["vrr", "vrr_cap_margin"], "freesync": ["vrr", "vrr_cap_margin"], "vrr": ["vrr"],
     "aa": ["anti_aliasing", "anti_aliasing_android"],
-    "shadows": ["shadow_resolution"],
+    "shadows": ["shadow_resolution", "shadows"],
     "ao": ["ambient_occlusion"], "ssao": ["ambient_occlusion"],
     "anisotropic": ["anisotropic_filtering"], "af": ["anisotropic_filtering"],
     "lod": ["model_detail"],
@@ -2640,6 +2649,8 @@ SETTINGS_ROW_WHEN = {
     # (display.temporal_aa: where the renderer upscales, Vulkan's AMD FSR;
     # settings_condition_term's temporal_upscale; not in the headset)
     "temporal_aa": "temporal_upscale+!vr",
+    # (the renderer has ray queries: settings_condition_term's ray_queries)
+    "shadows": "ray_queries",
     # (the Mac's display paces its frames already)
     "low_latency": "!vrr_system",
     # (in a game: not those that would drop it or are the main menu's, nor

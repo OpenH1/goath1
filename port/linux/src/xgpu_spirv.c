@@ -6109,6 +6109,302 @@ BOOL xgpu_spirv_world_ao_pass(int which, const struct xgpu_spirv_options *option
 	return TRUE;
 }
 
+/* ---------- display.shadows "ray_traced" (xgpu_spirv.h)
+
+The pass's pixel shader, over the 3D view after its lightmap pass, the
+level's pixels alone (the pipeline's stencil test leaves the models'), as
+GLSL:
+
+float d = texelFetch(scene_depth, ivec2(gl_FragCoord.xy), 0).r;  (1 - it, reversed)
+vec3 light = vec3(1.0);
+if (d < 1.0) {
+  vec4 h = unproject * vec4(gl_FragCoord.xy, d, 1.0); vec3 p = h.xyz / h.w;
+  float far = length(camera - p);
+  vec3 from = p + (camera - p) / far * (BIAS + BIAS_FAR * far);
+  float noise = fract(52.9829189 * fract(dot(gl_FragCoord.xy - 0.5, vec2(0.06711056, 0.00583715))));
+  for (int i = 0; i < count; i++) {
+    vec4 a = casters[2 i], b = casters[2 i + 1];
+    vec3 v = vec3(b.xy, -sqrt(max(1.0 - dot(b.xy, b.xy), 0.0)));
+    vec3 rel = p - a.xyz; float along = dot(rel, v); vec3 side = rel - v * along;
+    if (along > -0.5 a.w && along < 4.0 a.w && dot(side, side) < (1.5 a.w)^2) {
+      float fade = along >= 0.0 ? 1.0 - along / (4.0 a.w) : 1.0 + along / (0.5 a.w);
+      vec3 l = -v, x, y (Duff's frame about l); float hits = 0.0;
+      for (int k = 0; k < RAYS; k++) {
+        float angle = 2 pi fract(noise + 0.618034 k), r = SPREAD sqrt((k + 0.5) / RAYS);
+        vec3 d = normalize(l + (x cos(angle) + y sin(angle)) * r);
+        rayQueryInitializeEXT(q, scene, 0, 0xFF, from, 0.0, d, along + 1.5 a.w);
+        while (rayQueryProceedEXT(q))   (an object's candidate committed if it is the caster's)
+          if (owner(candidate) == owner0 || owner(candidate) == owner1) rayQueryConfirmIntersectionEXT(q);
+        if (committed and its custom index not 0) hits += 1.0;   (the structure, opaque, stops it)
+      }
+      light *= 1.0 - unpack(b.z) * fade * hits / RAYS;
+    }
+  }
+}
+fragment_light = vec4(light, 1.0);   (multiplied into the pixel by the blend) */
+
+/* the header's (the uniforms' binding) vec4s: the unprojection's rows (the
+framebuffer's x, y and depth, 1, to the world's homogeneous point), then
+the camera and the casters' count */
+_Static_assert(XGPU_RT_SHADOWS_RAYS == 4, "the rays' strata (xgpu_spirv_rt_shadows_pass)");
+
+enum
+{
+	RT_SHADOWS_UNPROJECT = 0,
+	RT_SHADOWS_CAMERA = 4,
+	RT_SHADOWS_VIEW = 5,
+	RT_SHADOWS_HEADER = 8,
+};
+
+/* a vec4 of a block of vec4s at an index (an id: constant or not) */
+static unsigned int rt_shadows_vector(struct module *m, unsigned int block, unsigned int index)
+{
+	unsigned int operands[3];
+
+	operands[0] = block;
+	operands[1] = constant_int(m, 0);
+	operands[2] = index;
+	return load(m, m->t_v4, op(m, OP_ACCESS_CHAIN, type_pointer(m, STORAGE_UNIFORM, m->t_v4), 3, operands));
+}
+
+/* a block of count vec4s at the draw set's binding */
+static unsigned int rt_shadows_block(struct module *m, unsigned int count, unsigned int binding, const char *block_name)
+{
+	unsigned int array = block_array(m, count), block = type_struct(m, 1, &array), id;
+
+	decorate(m, block, DECORATION_BLOCK, 0, NULL);
+	member_decorate(m, block, 0, DECORATION_OFFSET, 0);
+	name(m, block, block_name);
+	id = variable(m, block, STORAGE_UNIFORM, NULL);
+	decorate1(m, id, DECORATION_DESCRIPTOR_SET, XGPU_SPIRV_SET_DRAW);
+	decorate1(m, id, DECORATION_BINDING, binding);
+	return id;
+}
+
+BOOL xgpu_spirv_rt_shadows_pass(const struct xgpu_spirv_options *options, struct xgpu_spirv_module *module)
+{
+	struct module m;
+	struct words locals = { 0 };
+	unsigned int header, casters, scene_depth, frag_coord, scene, out, main_id, query_type, query;
+	unsigned int light_variable, index_variable, hits_variable, operands[8];
+	unsigned int coord, pixel, sampled, depth, sky_merge, h, p, camera, to_camera, far, from, noise, count;
+	unsigned int header_id, condition, body, next, merge, i, a, b, bxy, v, rel, along, side, radius, inside_merge;
+	unsigned int fade, l, nx, ny, nz, s, fa, fb, x, y, darkness, owners, owner0, owner1, reach, ray_light;
+	int ray, row, channel;
+	BOOL result;
+
+	module_begin(&m, EXECUTION_MODEL_FRAGMENT);
+	header = rt_shadows_block(&m, RT_SHADOWS_HEADER, XGPU_SPIRV_BINDING_UNIFORMS, "rt_shadows_header");
+	casters = rt_shadows_block(&m, XGPU_VERTEX_CONSTANT_COUNT, XGPU_SPIRV_BINDING_CONSTANTS, "rt_shadows_casters");
+	scene_depth = variable(&m, type_sampled_image(&m, DIM_2D, FALSE, FALSE, TRUE), STORAGE_UNIFORM_CONSTANT, "scene_depth");
+	decorate1(&m, scene_depth, DECORATION_DESCRIPTOR_SET, XGPU_SPIRV_SET_TEXTURES);
+	decorate1(&m, scene_depth, DECORATION_BINDING, 0);
+	frag_coord = variable(&m, m.t_v4, STORAGE_INPUT, "gl_FragCoord");
+	decorate1(&m, frag_coord, DECORATION_BUILT_IN, BUILT_IN_FRAG_COORD);
+	scene = variable(&m, type0(&m, OP_TYPE_ACCELERATION_STRUCTURE), STORAGE_UNIFORM_CONSTANT, "world_ao_scene");
+	decorate1(&m, scene, DECORATION_DESCRIPTOR_SET, XGPU_SPIRV_SET_OCCLUSION);
+	decorate1(&m, scene, DECORATION_BINDING, XGPU_SPIRV_BINDING_WORLD_AO_SCENE);
+	m.ray_query = TRUE;
+	out = interface_variable(&m, m.t_v4, STORAGE_OUTPUT, 0, "fragment_light");
+
+	main_id = function_begin(&m);
+	query_type = type0(&m, OP_TYPE_RAY_QUERY);
+	query = local(&m, &locals, query_type);
+	light_variable = local(&m, &locals, m.t_v3);
+	index_variable = local(&m, &locals, m.t_int);
+	hits_variable = local(&m, &locals, m.t_float);
+	store(&m, light_variable, constant_splat(&m, 3, 1.0f));
+	/* the scene's depth at the pixel */
+	coord = load(&m, m.t_v4, frag_coord);
+	pixel = op1(&m, OP_CONVERT_F_TO_S, m.t_iv2, xy(&m, coord));
+	sampled = load(&m, type_sampled_image(&m, DIM_2D, FALSE, FALSE, TRUE), scene_depth);
+	operands[0] = op(&m, OP_IMAGE, type_sampled_image(&m, DIM_2D, FALSE, FALSE, FALSE), 1, &sampled);
+	operands[1] = pixel;
+	operands[2] = IMAGE_OPERANDS_LOD;
+	operands[3] = constant_int(&m, 0);
+	depth = extract(&m, op(&m, OP_IMAGE_FETCH, m.t_v4, 4, operands), 0);
+	if (options->reversed_depth)
+		depth = fsub(&m, 1, constant_float(&m, 1.0f), depth);
+	/* (none where nothing was drawn: the sky's) */
+	selection_begin(&m, compare(&m, OP_F_ORD_LESS_THAN, depth, constant_float(&m, 1.0f)), &sky_merge);
+	{
+		unsigned int framebuffer = construct4(&m, extract(&m, coord, 0), extract(&m, coord, 1), depth,
+			constant_float(&m, 1.0f)), rows[4];
+
+		for (row = 0; row < 4; row++)
+			rows[row] = fdot(&m, rt_shadows_vector(&m, header, constant_int(&m, RT_SHADOWS_UNPROJECT + row)),
+				framebuffer);
+		h = construct(&m, 4, rows);
+		p = fdiv(&m, 3, xyz(&m, h), splat(&m, 3, extract(&m, h, 3)));
+	}
+	camera = rt_shadows_vector(&m, header, constant_int(&m, RT_SHADOWS_CAMERA));
+	count = op1(&m, OP_CONVERT_F_TO_S, m.t_int, extract(&m, camera, 3));
+	/* the rays' start: off the surface toward the camera, which sees it */
+	to_camera = fsub(&m, 3, xyz(&m, camera), p);
+	far = ext2(&m, GLSL_F_MAX, m.t_float, ext1(&m, GLSL_LENGTH, m.t_float, to_camera), constant_float(&m, 1.0e-4f));
+	from = fadd(&m, 3, p, fscale(&m, 3, fdiv(&m, 3, to_camera, splat(&m, 3, far)), fadd(&m, 1,
+		constant_float(&m, XGPU_RT_SHADOWS_BIAS), fmul(&m, 1, constant_float(&m, XGPU_RT_SHADOWS_BIAS_FAR), far))));
+	/* (interleaved gradient noise: the rays turned at each pixel) */
+	{
+		unsigned int px = fsub(&m, 1, extract(&m, coord, 0), constant_float(&m, 0.5f));
+		unsigned int py = fsub(&m, 1, extract(&m, coord, 1), constant_float(&m, 0.5f));
+
+		noise = ext1(&m, GLSL_FRACT, m.t_float, fmul(&m, 1, constant_float(&m, 52.9829189f), ext1(&m, GLSL_FRACT,
+			m.t_float, fadd(&m, 1, fmul(&m, 1, constant_float(&m, 0.06711056f), px), fmul(&m, 1,
+			constant_float(&m, 0.00583715f), py)))));
+	}
+	/* for (int i = 0; i < count; i++) */
+	header_id = id_new(&m);
+	condition = id_new(&m);
+	body = id_new(&m);
+	next = id_new(&m);
+	merge = id_new(&m);
+	store(&m, index_variable, constant_int(&m, 0));
+	branch(&m, header_id);
+	label_at(&m, header_id);
+	operands[0] = merge;
+	operands[1] = next;
+	operands[2] = 0;
+	op_void(&m, OP_LOOP_MERGE, 3, operands);
+	branch(&m, condition);
+	label_at(&m, condition);
+	i = load(&m, m.t_int, index_variable);
+	branch_conditional(&m, op2(&m, OP_S_LESS_THAN, m.t_bool, i, count), body, merge);
+	label_at(&m, body);
+	a = rt_shadows_vector(&m, casters, op2(&m, OP_I_MUL, m.t_int, i, constant_int(&m, 2)));
+	b = rt_shadows_vector(&m, casters, op2(&m, OP_I_ADD, m.t_int, op2(&m, OP_I_MUL, m.t_int, i, constant_int(&m, 2)),
+		constant_int(&m, 1)));
+	radius = extract(&m, a, 3);
+	bxy = xy(&m, b);
+	v = construct(&m, 3, (unsigned int[]){ extract(&m, b, 0), extract(&m, b, 1), fneg(&m, 1, fsqrt(&m, fmax_scalar(&m, 1,
+		fsub(&m, 1, constant_float(&m, 1.0f), fdot(&m, bxy, bxy)), 0.0f))) });
+	rel = fsub(&m, 3, p, xyz(&m, a));
+	along = fdot(&m, rel, v);
+	side = fsub(&m, 3, rel, fscale(&m, 3, v, along));
+	/* inside its volume: half its radius toward the light, four away, its
+	radius (and the penumbra's half again) to each side */
+	selection_begin(&m, op2(&m, OP_LOGICAL_AND, m.t_bool, op2(&m, OP_LOGICAL_AND, m.t_bool,
+		compare(&m, OP_F_ORD_GREATER_THAN, along, fmul(&m, 1, constant_float(&m, -0.5f), radius)),
+		compare(&m, OP_F_ORD_LESS_THAN, along, fmul(&m, 1, constant_float(&m, 4.0f), radius))),
+		compare(&m, OP_F_ORD_LESS_THAN, fdot(&m, side, side), fmul(&m, 1, fmul(&m, 1, constant_float(&m, 2.25f), radius),
+		radius))), &inside_merge);
+	fade = fselect(&m, compare(&m, OP_F_ORD_GREATER_THAN_EQUAL, along, constant_float(&m, 0.0f)),
+		fsub(&m, 1, constant_float(&m, 1.0f), fdiv(&m, 1, along, fmul(&m, 1, constant_float(&m, 4.0f), radius))),
+		fadd(&m, 1, constant_float(&m, 1.0f), fdiv(&m, 1, along, fmul(&m, 1, constant_float(&m, 0.5f), radius))));
+	darkness = op1(&m, OP_BITCAST, m.t_uint, extract(&m, b, 2));
+	owners = op1(&m, OP_BITCAST, m.t_uint, extract(&m, b, 3));
+	owner0 = uand(&m, owners, constant_uint(&m, 0xFFFFu));
+	owner1 = op2(&m, OP_SHIFT_RIGHT_LOGICAL, m.t_uint, owners, constant_uint(&m, 16));
+	/* the light's direction and Duff's frame about it */
+	l = fneg(&m, 3, v);
+	nx = extract(&m, l, 0);
+	ny = extract(&m, l, 1);
+	nz = extract(&m, l, 2);
+	s = fselect(&m, compare(&m, OP_F_ORD_GREATER_THAN_EQUAL, nz, constant_float(&m, 0.0f)), constant_float(&m, 1.0f),
+		constant_float(&m, -1.0f));
+	fa = fdiv(&m, 1, constant_float(&m, -1.0f), fadd(&m, 1, s, nz));
+	fb = fmul(&m, 1, fmul(&m, 1, nx, ny), fa);
+	x = construct(&m, 3, (unsigned int[]){ fadd(&m, 1, constant_float(&m, 1.0f), fmul(&m, 1, fmul(&m, 1, fmul(&m, 1, s, nx),
+		nx), fa)), fmul(&m, 1, s, fb), fneg(&m, 1, fmul(&m, 1, s, nx)) });
+	y = construct(&m, 3, (unsigned int[]){ fb, fadd(&m, 1, s, fmul(&m, 1, fmul(&m, 1, ny, ny), fa)), fneg(&m, 1, ny) });
+	reach = fadd(&m, 1, along, fmul(&m, 1, constant_float(&m, 1.5f), radius));
+	store(&m, hits_variable, constant_float(&m, 0.0f));
+	for (ray = 0; ray < XGPU_RT_SHADOWS_RAYS; ray++)
+	{
+		unsigned int angle = fmul(&m, 1, constant_float(&m, 6.28318531f), ext1(&m, GLSL_FRACT, m.t_float, fadd(&m, 1, noise,
+			constant_float(&m, 0.618034f * (float)ray))));
+		/* (stratified over the cone's disc: sqrt((ray + 0.5) / RAYS)) */
+		static const float stratum[4] = { 0.35355339f, 0.61237244f, 0.79056942f, 0.93541435f };
+		float spread = XGPU_RT_SHADOWS_SPREAD * stratum[ray];
+		unsigned int d = ext1(&m, GLSL_NORMALIZE, m.t_v3, fadd(&m, 3, l, fadd(&m, 3,
+			fscale(&m, 3, x, fmul(&m, 1, constant_float(&m, spread), ext1(&m, GLSL_COS, m.t_float, angle))),
+			fscale(&m, 3, y, fmul(&m, 1, constant_float(&m, spread), ext1(&m, GLSL_SIN, m.t_float, angle))))));
+		unsigned int ray_header = id_new(&m), ray_condition = id_new(&m), ray_body = id_new(&m), ray_next = id_new(&m);
+		unsigned int ray_merge = id_new(&m), mine_merge, hit_merge, kind, candidate, mine;
+
+		operands[0] = query;
+		operands[1] = load(&m, type0(&m, OP_TYPE_ACCELERATION_STRUCTURE), scene);
+		operands[2] = constant_uint(&m, 0);
+		operands[3] = constant_uint(&m, 0xFFu);
+		operands[4] = from;
+		operands[5] = constant_float(&m, 0.0f);
+		operands[6] = d;
+		operands[7] = reach;
+		op_void(&m, OP_RAY_QUERY_INITIALIZE, 8, operands);
+		branch(&m, ray_header);
+		label_at(&m, ray_header);
+		operands[0] = ray_merge;
+		operands[1] = ray_next;
+		operands[2] = 0;
+		op_void(&m, OP_LOOP_MERGE, 3, operands);
+		branch(&m, ray_condition);
+		label_at(&m, ray_condition);
+		branch_conditional(&m, op1(&m, OP_RAY_QUERY_PROCEED, m.t_bool, query), ray_body, ray_merge);
+		label_at(&m, ray_body);
+		candidate = uand(&m, op1(&m, OP_BITCAST, m.t_uint, op2(&m, OP_RAY_QUERY_GET_INTERSECTION_INSTANCE_CUSTOM_INDEX,
+			m.t_int, query, constant_int(&m, RAY_QUERY_CANDIDATE))), constant_uint(&m, 0xFFFFu));
+		mine = op2(&m, OP_LOGICAL_OR, m.t_bool, op2(&m, OP_I_EQUAL, m.t_bool, candidate, owner0),
+			op2(&m, OP_LOGICAL_AND, m.t_bool, op2(&m, OP_I_NOT_EQUAL, m.t_bool, owner1, constant_uint(&m, 0)),
+			op2(&m, OP_I_EQUAL, m.t_bool, candidate, owner1)));
+		selection_begin(&m, mine, &mine_merge);
+		op_void(&m, OP_RAY_QUERY_CONFIRM_INTERSECTION, 1, &query);
+		selection_end(&m, mine_merge);
+		branch(&m, ray_next);
+		label_at(&m, ray_next);
+		branch(&m, ray_header);
+		label_at(&m, ray_merge);
+		/* the nearest met an object's (the caster's: the structure, opaque,
+		has custom index 0 and stops the ray) */
+		kind = op2(&m, OP_RAY_QUERY_GET_INTERSECTION_TYPE, m.t_uint, query, constant_int(&m, RAY_QUERY_COMMITTED));
+		selection_begin(&m, op2(&m, OP_I_NOT_EQUAL, m.t_bool, kind, constant_uint(&m, 0)), &hit_merge);
+		{
+			unsigned int object_merge, committed = op2(&m, OP_RAY_QUERY_GET_INTERSECTION_INSTANCE_CUSTOM_INDEX, m.t_int,
+				query, constant_int(&m, RAY_QUERY_COMMITTED));
+
+			selection_begin(&m, op2(&m, OP_I_NOT_EQUAL, m.t_bool, committed, constant_int(&m, 0)), &object_merge);
+			store(&m, hits_variable, fadd(&m, 1, load(&m, m.t_float, hits_variable), constant_float(&m, 1.0f)));
+			selection_end(&m, object_merge);
+		}
+		selection_end(&m, hit_merge);
+	}
+	/* light *= 1 - darkness * fade * hits / RAYS (darkness a byte each) */
+	{
+		unsigned int share = fmul(&m, 1, saturate(&m, 1, fade), fdiv(&m, 1, load(&m, m.t_float, hits_variable),
+			constant_float(&m, (float)XGPU_RT_SHADOWS_RAYS)));
+		unsigned int channels[3];
+
+		for (channel = 0; channel < 3; channel++)
+			channels[channel] = fmul(&m, 1, op1(&m, OP_CONVERT_U_TO_F, m.t_float, uand(&m, op2(&m, OP_SHIFT_RIGHT_LOGICAL,
+				m.t_uint, darkness, constant_uint(&m, 8u * (unsigned int)channel)), constant_uint(&m, 0xFFu))),
+				constant_float(&m, 1.0f / 255.0f));
+		ray_light = fsub(&m, 3, constant_splat(&m, 3, 1.0f), fscale(&m, 3, construct(&m, 3, channels), share));
+		/* (HALO_VULKAN_RT_SHADOWS_VIEW, checking: a volume's pixels magenta,
+		green as its rays meet the caster) */
+		{
+			unsigned int met = fdiv(&m, 1, load(&m, m.t_float, hits_variable),
+				constant_float(&m, (float)XGPU_RT_SHADOWS_RAYS));
+			unsigned int unmet = fsub(&m, 1, constant_float(&m, 1.0f), met);
+
+			ray_light = select_n(&m, 3, compare(&m, OP_F_ORD_GREATER_THAN, extract(&m, rt_shadows_vector(&m, header,
+				constant_int(&m, RT_SHADOWS_VIEW)), 0), constant_float(&m, 0.0f)), construct(&m, 3, (unsigned int[]){
+				unmet, fadd(&m, 1, constant_float(&m, 0.6f), fmul(&m, 1, constant_float(&m, 0.4f), met)), unmet }),
+				ray_light);
+		}
+		store(&m, light_variable, fmul(&m, 3, load(&m, m.t_v3, light_variable), ray_light));
+	}
+	selection_end(&m, inside_merge);
+	branch(&m, next);
+	label_at(&m, next);
+	store(&m, index_variable, op2(&m, OP_I_ADD, m.t_int, i, constant_int(&m, 1)));
+	branch(&m, header_id);
+	label_at(&m, merge);
+	selection_end(&m, sky_merge);
+	store(&m, out, vec4_of(&m, load(&m, m.t_v3, light_variable), constant_float(&m, 1.0f)));
+	result = module_end(&m, EXECUTION_MODEL_FRAGMENT, main_id, &locals, module);
+	free(locals.words);
+	return result;
+}
+
 /* ---------- the enhanced dynamic lights' glows (xgpu_spirv.h) */
 
 /* With the VR mode's effects: each glow as the light its bolt scatters

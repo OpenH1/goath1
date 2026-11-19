@@ -21,6 +21,7 @@ Nothing here runs unless the setting is "world" or "ray_traced": every
 other value (and the Classic preset's "off") draws exactly as before.
 */
 
+#include "rt_shadows.h"
 #include "world_ao.h"
 #include "world_cascades.h"
 #include "world_proxies.h"
@@ -103,18 +104,36 @@ int world_ao_mode(void)
 	return world_ao.mode;
 }
 
+/* (display.shadows "ray_traced" where this setting is not: the scene of the
+frame's objects, which the ray-traced scene is made of, alone; found at the
+next frame where the setting came on in play) */
+static int world_ao_scene_found;
+
 void world_ao_map_loaded(void)
 {
+	world_ao_scene_found = 0;
 	if (!world_ao_mode())
+	{
+		if (rt_shadows_on())
+		{
+			world_scene_map_loaded();
+			world_ao_scene_found = 1;
+		}
 		return;
+	}
 	world_scene_map_loaded();
+	world_ao_scene_found = 1;
 	world_sdf_map_loaded();
 }
 
 void world_ao_bsp_switched(short bsp_index)
 {
 	if (!world_ao_mode())
+	{
+		if (rt_shadows_on())
+			world_scene_bsp_switched(bsp_index);
 		return;
+	}
 	world_scene_bsp_switched(bsp_index);
 	world_sdf_bsp_switched(bsp_index);
 }
@@ -123,6 +142,7 @@ static void world_ao_scene_release(void);
 
 void world_ao_map_unloaded(void)
 {
+	world_ao_scene_found = 0;
 	world_rt_map_unloaded();
 	world_ao_scene_release();
 	world_sdf_map_unloaded();
@@ -298,7 +318,18 @@ void world_ao_frame_begin(void)
 
 	world_ao_scene.frame++;
 	if (!world_ao_mode())
+	{
+		/* (display.shadows "ray_traced": the frame's objects, for the
+		ray-traced scene) */
+		if (rt_shadows_on())
+		{
+			if (!world_ao_scene_found)
+				world_scene_map_loaded();
+			world_ao_scene_found = 1;
+			world_scene_frame_begin();
+		}
 		return;
+	}
 	world_scene_frame_begin();
 	/* (not with debug.world_ao_test's made-up field, which the level's
 	would overwrite in the backend's one texture) */
@@ -698,6 +729,11 @@ void world_ao_object_begin(long object_index)
 			rays_owner = world_rt_owner(object_index);
 	}
 	halo_world_ao_object(owner, reference, rays_owner);
+}
+
+void world_ao_rt_frame(void)
+{
+	world_rt_frame(world_ao_scene.frame);
 }
 
 void world_ao_cards(int cards)

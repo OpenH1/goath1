@@ -386,6 +386,8 @@ void halo_effect_soft(int soft);
 int halo_soft_effects_drawn(void);
 /* display.temporal_aa "fsr": the renderer upscales with AMD FSR (port/linux/src/d3d8_device.c) */
 int halo_temporal_upscale_drawn(void);
+/* port: the renderer has ray queries (port/linux/src/d3d8_device.c; world_ao.h) */
+int halo_world_ao_ray_queries(void);
 #ifndef HALO_HDR_KIND_NONE
 #define HALO_HDR_KIND_NONE 0
 #define HALO_HDR_KIND_FIRST_PERSON 1
