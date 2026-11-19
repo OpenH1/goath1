@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_loading_hitch_has_no_game_compile_totals(tmp_path):
     source = (ROOT / 'port/macos/host_metal.m').read_text()
     begin = source.index('static void presented(double when,')
-    end = source.index('\nstatic void pacing_log(', begin)
+    end = source.index('\n}\n', begin) + 3
     function = source[begin:end]
     executable = build(tmp_path, r'''
 #include <assert.h>
