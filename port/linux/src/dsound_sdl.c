@@ -71,6 +71,8 @@ audio.volume sets the master volume (default 1.0); audio.reverb = false
 turns the reverb off, and audio.doppler = false the Doppler shift;
 audio.listening_mode "night" evens the loudness out (night_compress);
 audio.spatial chooses the HRTF or the pan ("auto", "headphones", "speakers");
+audio.hrtf_file fits the HRTF to a SOFA file's measured responses in place of the
+Xbox's (hrtf_load, hrtf_fit);
 audio.resampler chooses the Xbox's low pass ("xbox"), the mixer's sinc one
 ("sinc") or between neighbouring frames ("linear"); audio.enabled = false skips opening a device;
 audio.channels chooses stereo or 5.1; audio.stereo_spread how far apart a
@@ -85,6 +87,7 @@ and gains (record, voices_log).
 #include "sdl_platform.h"
 #include "port_config.h"
 #include "voice_audio.h"
+#include "hrtf_sofa.h"
 
 #include <SDL3/SDL.h>
 #include <math.h>
@@ -1009,6 +1012,16 @@ static const struct
 	  { 0.1f, -0.2f, 0.1f, 0.3f, 0.1f, 0.3f, -0.8f, 0.6f, 1.1f } },
 };
 
+/* the table hrtf_lookup reads: the Xbox's (hrtf_table, hrtf_poles), or with
+audio.hrtf_file one fitted to a SOFA file's measured responses (hrtf_fit,
+hrtf_load) */
+static struct hrtf_direction hrtf_fitted[HRTF_ELEVATIONS][HRTF_AZIMUTHS], hrtf_fitted_poles[2];
+static const struct hrtf_direction (*hrtf_rows)[HRTF_AZIMUTHS] = hrtf_table;
+static const struct hrtf_direction *hrtf_ends = hrtf_poles;
+
+/* the elevations of the table's rows, with the poles below and above */
+static const float hrtf_elevations[HRTF_ELEVATIONS + 2] = { -90.0f, -60.0f, -40.0f, -20.0f, 0.0f, 20.0f, 40.0f, 60.0f, 90.0f };
+
 static struct
 {
 	/* each low pass's b0 (and b2), b1, a1 and a2 (a0 1) */
@@ -1076,7 +1089,7 @@ elevation (-90 to 90), interpolated round, and up and down between its rows
 and the poles */
 static void hrtf_lookup(float azimuth, float elevation, struct hrtf_direction *out)
 {
-	static const float rows[HRTF_ELEVATIONS + 2] = { -90.0f, -60.0f, -40.0f, -20.0f, 0.0f, 20.0f, 40.0f, 60.0f, 90.0f };
+	const float *rows = hrtf_elevations;
 	float column = azimuth / 15.0f, round;
 	struct hrtf_direction at[2];
 	int first, row, side;
@@ -1092,13 +1105,358 @@ static void hrtf_lookup(float azimuth, float elevation, struct hrtf_direction *o
 		int at_row = row + side;
 
 		if (at_row == 0)
-			at[side] = hrtf_poles[0];
+			at[side] = hrtf_ends[0];
 		else if (at_row == HRTF_ELEVATIONS + 1)
-			at[side] = hrtf_poles[1];
+			at[side] = hrtf_ends[1];
 		else
-			hrtf_blend(&hrtf_table[at_row - 1][first], &hrtf_table[at_row - 1][first + 1], round, &at[side]);
+			hrtf_blend(&hrtf_rows[at_row - 1][first], &hrtf_rows[at_row - 1][first + 1], round, &at[side]);
 	}
 	hrtf_blend(&at[0], &at[1], (elevation - rows[row]) / (rows[row + 1] - rows[row]), out);
+}
+
+/* ---------- the HRTF fitted to measured responses (audio.hrtf_file)
+
+With audio.hrtf_file, the table is fitted when the sound starts to a SOFA
+file's measured head-related impulse responses (hrtf_sofa.c reads them;
+hrtf_load), in the same bands and one delay a direction, at the Xbox's
+directions and poles, so the mixer and its cost are the Xbox's table's. For
+each of the table's directions: the measured directions within
+HRTF_FIT_SAME_DEGREES of it on the sphere (great-circle), all alike; if
+none is that near, the HRTF_FIT_NEAREST nearest, weighted by the inverse of
+their distance. A direction measured to the left counts as its mirror to the
+right (its ears swapped). Each ear's level in each band: its response's
+mean power over the band (from 0 Hz, split at hrtf_crossovers, to
+HRTF_FIT_TOP_HERTZ or the file's half rate), the directions' blended as
+power. The delay: the left ear's onset (where its response first reaches
+HRTF_FIT_ONSET of its peak, -20 dB, interpolated), with its Data.Delay,
+after the right's, in output frames (blended as frames), 0 to
+HRTF_FRAMES - 3. Ahead, behind and at the poles the ears are made alike
+(their mean power) and the delay 0, as the Xbox's are, so that a sound
+crossing from right to left does not step. Then every level is moved alike,
+so that a sound ahead is as loud overall (the mean power of both ears'
+bands) as the Xbox's. On 5.1 hrtf_behind is added as to the Xbox's. */
+
+#define HRTF_FIT_NEAREST 3
+#define HRTF_FIT_SAME_DEGREES 0.5
+#define HRTF_FIT_TOP_HERTZ 20000.0
+#define HRTF_FIT_ONSET 0.1
+#define HRTF_FIT_PI 3.14159265358979323846
+
+/* a measured direction's figures: each ear's bands (dB) and the left ear's
+delay after the right (output frames), worked out when first needed */
+struct hrtf_fit_measured
+{
+	BOOL done;
+	double decibels[2][HRTF_BANDS];
+	double delay;
+};
+
+struct hrtf_fit_input
+{
+	unsigned long measurements, samples;
+	double rate;
+	const float *responses;
+	const double *delays;
+	double (*vectors)[3]; /* each measured direction's right, up and ahead */
+	struct hrtf_fit_measured *measured;
+};
+
+static void hrtf_fit_fft(double *re, double *im, unsigned long size)
+{
+	unsigned long i, j = 0, bit, length, k;
+
+	for (i = 1; i < size; i++)
+	{
+		for (bit = size >> 1; j & bit; bit >>= 1)
+			j ^= bit;
+		j ^= bit;
+		if (i < j)
+		{
+			double r = re[i], m = im[i];
+
+			re[i] = re[j];
+			im[i] = im[j];
+			re[j] = r;
+			im[j] = m;
+		}
+	}
+	for (length = 2; length <= size; length <<= 1)
+		for (k = 0; k < length / 2; k++)
+		{
+			double angle = -2.0 * HRTF_FIT_PI * (double)k / (double)length, wr = cos(angle), wi = sin(angle);
+
+			for (i = k; i < size; i += length)
+			{
+				unsigned long other = i + length / 2;
+				double r = re[other] * wr - im[other] * wi, m = re[other] * wi + im[other] * wr;
+
+				re[other] = re[i] - r;
+				im[other] = im[i] - m;
+				re[i] += r;
+				im[i] += m;
+			}
+		}
+}
+
+/* where response first reaches HRTF_FIT_ONSET of its peak (samples) */
+static double hrtf_fit_onset(const float *response, unsigned long samples)
+{
+	double peak = 0.0, threshold;
+	unsigned long n;
+
+	for (n = 0; n < samples; n++)
+		peak = fabs(response[n]) > peak ? fabs(response[n]) : peak;
+	threshold = HRTF_FIT_ONSET * peak;
+	for (n = 0; peak > 0.0 && n < samples; n++)
+		if (fabs(response[n]) >= threshold)
+		{
+			double before = n ? fabs(response[n - 1]) : 0.0, at = fabs(response[n]);
+
+			return n ? (double)(n - 1) + (threshold - before) / (at - before) : 0.0;
+		}
+	return 0.0;
+}
+
+/* measured direction m's figures (input->measured[m]); FALSE if a band
+holds no frequency of its responses (a rate too low) */
+static BOOL hrtf_fit_measure(const struct hrtf_fit_input *input, unsigned long m)
+{
+	struct hrtf_fit_measured *measured = &input->measured[m];
+	unsigned long size = 512, k;
+	double top = input->rate / 2.0 < HRTF_FIT_TOP_HERTZ ? input->rate / 2.0 : HRTF_FIT_TOP_HERTZ, onset[2];
+	double *re, *im;
+	int ear, band;
+
+	if (measured->done)
+		return TRUE;
+	while (size < input->samples)
+		size <<= 1;
+	re = malloc(size * sizeof(double));
+	im = malloc(size * sizeof(double));
+	if (!re || !im)
+	{
+		free(re);
+		free(im);
+		return FALSE;
+	}
+	for (ear = 0; ear < 2; ear++)
+	{
+		const float *response = input->responses + (m * 2 + (unsigned long)ear) * input->samples;
+		double power[HRTF_BANDS] = { 0 };
+		unsigned long bins[HRTF_BANDS] = { 0 };
+
+		for (k = 0; k < size; k++)
+		{
+			re[k] = k < input->samples ? response[k] : 0.0;
+			im[k] = 0.0;
+		}
+		hrtf_fit_fft(re, im, size);
+		for (k = 0; k <= size / 2; k++)
+		{
+			double hertz = (double)k * input->rate / (double)size;
+
+			if (hertz >= top)
+				break;
+			for (band = 0; band < HRTF_BANDS - 1 && hertz >= hrtf_crossovers[band]; band++)
+				;
+			power[band] += re[k] * re[k] + im[k] * im[k];
+			bins[band]++;
+		}
+		for (band = 0; band < HRTF_BANDS; band++)
+		{
+			if (!bins[band])
+			{
+				free(re);
+				free(im);
+				return FALSE;
+			}
+			measured->decibels[ear][band] = 10.0 * log10(power[band] / (double)bins[band] + 1.0e-30);
+		}
+		onset[ear] = input->delays[m * 2 + (unsigned long)ear] + hrtf_fit_onset(response, input->samples);
+	}
+	free(re);
+	free(im);
+	measured->delay = (onset[0] - onset[1]) * OUTPUT_RATE / input->rate;
+	measured->done = TRUE;
+	return TRUE;
+}
+
+/* the dot product of the table's direction target (right, up, ahead) with
+candidate c: measured direction c / 2, mirrored (to the other side, its
+ears swapped) if c is odd */
+static double hrtf_fit_dot(const struct hrtf_fit_input *input, const double *target, unsigned long c)
+{
+	const double *v = input->vectors[c / 2];
+
+	return target[0] * (c & 1 ? -v[0] : v[0]) + target[1] * v[1] + target[2] * v[2];
+}
+
+/* the table's direction target (a unit vector right, up and ahead) fitted
+from the measured ones (out); FALSE if a band is empty */
+static BOOL hrtf_fit_direction(const struct hrtf_fit_input *input, const double *target, struct hrtf_direction *out)
+{
+	double same = cos(HRTF_FIT_SAME_DEGREES * HRTF_FIT_PI / 180.0);
+	double power[2][HRTF_BANDS] = { { 0 } }, delay = 0.0, weights = 0.0, nearest_dot[HRTF_FIT_NEAREST];
+	unsigned long nearest[HRTF_FIT_NEAREST], c, candidates = input->measurements * 2;
+	int found = 0, i, ear, band;
+
+	/* (the nearest few, nearest first) */
+	for (c = 0; c < candidates; c++)
+	{
+		double dot = hrtf_fit_dot(input, target, c);
+
+		if (found == HRTF_FIT_NEAREST && dot <= nearest_dot[HRTF_FIT_NEAREST - 1])
+			continue;
+		i = found < HRTF_FIT_NEAREST ? found++ : HRTF_FIT_NEAREST - 1;
+		for (; i > 0 && nearest_dot[i - 1] < dot; i--)
+		{
+			nearest_dot[i] = nearest_dot[i - 1];
+			nearest[i] = nearest[i - 1];
+		}
+		nearest_dot[i] = dot;
+		nearest[i] = c;
+	}
+	for (c = 0; c < candidates; c++)
+	{
+		double dot = hrtf_fit_dot(input, target, c), weight = 0.0;
+		unsigned long m = c / 2;
+		int mirrored = (int)(c & 1);
+
+		if (nearest_dot[0] >= same)
+			weight = dot >= same ? 1.0 : 0.0;
+		else
+			for (i = 0; i < found; i++)
+				if (nearest[i] == c)
+					weight = 1.0 / acos(dot > -1.0 ? dot : -1.0);
+		if (weight <= 0.0)
+			continue;
+		if (!hrtf_fit_measure(input, m))
+			return FALSE;
+		for (ear = 0; ear < 2; ear++)
+			for (band = 0; band < HRTF_BANDS; band++)
+				power[ear][band] += weight * pow(10.0, input->measured[m].decibels[ear ^ mirrored][band] / 10.0);
+		delay += weight * (mirrored ? -input->measured[m].delay : input->measured[m].delay);
+		weights += weight;
+	}
+	if (weights <= 0.0)
+		return FALSE;
+	for (ear = 0; ear < 2; ear++)
+		for (band = 0; band < HRTF_BANDS; band++)
+			(ear ? out->right : out->left)[band] = (float)(10.0 * log10(power[ear][band] / weights + 1.0e-30));
+	delay /= weights;
+	out->delay = (float)(delay < 0.0 ? 0.0 : delay > HRTF_FRAMES - 3 ? HRTF_FRAMES - 3 : delay);
+	return TRUE;
+}
+
+/* direction's ears alike (their mean power) and no delay */
+static void hrtf_fit_alike(struct hrtf_direction *direction)
+{
+	int band;
+
+	for (band = 0; band < HRTF_BANDS; band++)
+	{
+		double power = 0.5 * (pow(10.0, direction->left[band] / 10.0) + pow(10.0, direction->right[band] / 10.0));
+
+		direction->left[band] = direction->right[band] = (float)(10.0 * log10(power + 1.0e-30));
+	}
+	direction->delay = 0.0f;
+}
+
+/* a direction's overall level (dB): the mean power of both ears' bands */
+static double hrtf_fit_level(const struct hrtf_direction *direction)
+{
+	double power = 0.0;
+	int band;
+
+	for (band = 0; band < HRTF_BANDS; band++)
+		power += pow(10.0, direction->left[band] / 10.0) + pow(10.0, direction->right[band] / 10.0);
+	return 10.0 * log10(power / (2.0 * HRTF_BANDS));
+}
+
+/* the table fitted to measured responses (hrtf_sofa.h's: measurements x 2
+ears x samples at rate; each one's direction, its azimuth counterclockwise
+and elevation in degrees, and each ear's delay in samples), and the mixer
+switched to it (hrtf_rows, hrtf_ends); FALSE, and why, if it cannot be */
+static BOOL hrtf_fit(unsigned long measurements, unsigned long samples, double rate, const float *responses,
+	const double *directions, const double *delays, char *why, size_t why_size)
+{
+	static struct hrtf_direction table[HRTF_ELEVATIONS][HRTF_AZIMUTHS], poles[2];
+	struct hrtf_fit_input input;
+	double offset;
+	unsigned long m;
+	int row, column, band;
+	BOOL fitted = TRUE;
+
+	if (!measurements || samples < 8 || !(rate > 0.0))
+	{
+		snprintf(why, why_size, "it holds no responses");
+		return FALSE;
+	}
+	input.measurements = measurements;
+	input.samples = samples;
+	input.rate = rate;
+	input.responses = responses;
+	input.delays = delays;
+	input.vectors = malloc(measurements * sizeof(*input.vectors));
+	input.measured = calloc(measurements, sizeof(*input.measured));
+	if (!input.vectors || !input.measured)
+	{
+		free(input.vectors);
+		free(input.measured);
+		snprintf(why, why_size, "there is not the memory to fit it");
+		return FALSE;
+	}
+	for (m = 0; m < measurements; m++)
+	{
+		double azimuth = directions[m * 2] * (HRTF_FIT_PI / 180.0), elevation = directions[m * 2 + 1] * (HRTF_FIT_PI / 180.0);
+
+		/* (SOFA's azimuth is to the left) */
+		input.vectors[m][0] = -sin(azimuth) * cos(elevation);
+		input.vectors[m][1] = sin(elevation);
+		input.vectors[m][2] = cos(azimuth) * cos(elevation);
+	}
+	for (row = 0; row < HRTF_ELEVATIONS + 2 && fitted; row++)
+	{
+		BOOL pole = row == 0 || row == HRTF_ELEVATIONS + 1;
+		double elevation = hrtf_elevations[row] * (HRTF_FIT_PI / 180.0);
+
+		for (column = 0; column < (pole ? 1 : HRTF_AZIMUTHS) && fitted; column++)
+		{
+			double azimuth = column * 15.0 * (HRTF_FIT_PI / 180.0);
+			double target[3] = { sin(azimuth) * cos(elevation), sin(elevation), cos(azimuth) * cos(elevation) };
+			struct hrtf_direction *direction = pole ? &poles[row != 0] : &table[row - 1][column];
+
+			fitted = hrtf_fit_direction(&input, target, direction);
+			if (pole || column == 0 || column == HRTF_AZIMUTHS - 1)
+				hrtf_fit_alike(direction);
+		}
+	}
+	free(input.vectors);
+	free(input.measured);
+	if (!fitted)
+	{
+		snprintf(why, why_size, "its responses do not reach every band (a rate of %.0f Hz; at least %.0f)", rate,
+			2.0 * hrtf_crossovers[HRTF_BANDS - 2] + 1000.0);
+		return FALSE;
+	}
+	/* (as loud ahead as the Xbox's) */
+	offset = hrtf_fit_level(&hrtf_table[HRTF_ELEVATIONS / 2][0]) - hrtf_fit_level(&table[HRTF_ELEVATIONS / 2][0]);
+	for (row = 0; row < HRTF_ELEVATIONS + 2; row++)
+		for (column = 0; column < (row < HRTF_ELEVATIONS ? HRTF_AZIMUTHS : 1); column++)
+		{
+			struct hrtf_direction *direction = row < HRTF_ELEVATIONS ? &table[row][column] : &poles[row - HRTF_ELEVATIONS];
+
+			for (band = 0; band < HRTF_BANDS; band++)
+			{
+				direction->left[band] = (float)(direction->left[band] + offset);
+				direction->right[band] = (float)(direction->right[band] + offset);
+			}
+		}
+	memcpy(hrtf_fitted, table, sizeof(hrtf_fitted));
+	memcpy(hrtf_fitted_poles, poles, sizeof(hrtf_fitted_poles));
+	hrtf_rows = (const struct hrtf_direction (*)[HRTF_AZIMUTHS])hrtf_fitted;
+	hrtf_ends = hrtf_fitted_poles;
+	return TRUE;
 }
 
 /* the HRTF's parameters for a sound right, up and ahead of the head, as
@@ -5290,6 +5648,30 @@ static float stereo_spread_read(void)
 	return value > 0.0 ? (value < 1.0 ? (float)value : 1.0f) : 0.0f;
 }
 
+/* audio.hrtf_file: the HRTF fitted to the measured responses of a SOFA
+file (hrtf_sofa.c, hrtf_fit); none, or one that cannot be read or fitted
+(logged once), the Xbox's */
+static void hrtf_load(const char *path)
+{
+	struct hrtf_sofa sofa;
+	char why[192];
+
+	if (!path || !*path)
+		return;
+	if (!hrtf_sofa_read(path, &sofa, why, sizeof(why)))
+	{
+		platform_log("audio: audio.hrtf_file \"%s\" is not read (%s): the Xbox's HRTF instead", path, why);
+		return;
+	}
+	if (!hrtf_fit(sofa.measurements, sofa.samples, sofa.rate, sofa.responses, sofa.directions, sofa.delays, why,
+		sizeof(why)))
+		platform_log("audio: audio.hrtf_file \"%s\" is not fitted (%s): the Xbox's HRTF instead", path, why);
+	else
+		platform_log("audio: the HRTF is fitted to %s (%lu directions measured, %lu samples at %.0f Hz)", path,
+			sofa.measurements, sofa.samples, sofa.rate);
+	hrtf_sofa_free(&sofa);
+}
+
 static void audio_start(void)
 {
 	if (audio_started)
@@ -5309,6 +5691,7 @@ static void audio_start(void)
 	resampler_phases_initialize();
 	reverb_initialize();
 	hrtf_initialize();
+	hrtf_load(config_string("audio.hrtf_file"));
 	record_open();
 	paced = frames_clock(NULL);
 	if (paced)

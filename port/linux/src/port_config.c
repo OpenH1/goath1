@@ -759,6 +759,12 @@ static const struct config_setting config_settings[] =
 		"right. The menus, music and HUD are not placed. On 5.1 the same, on\n"
 		"the front and back pairs of speakers, as the Xbox's Dolby Digital.\n"
 		"The VR mode keeps vr.hrtf." },
+	{ "audio.hrtf_file", _config_string, "\"\"", "HALO_AUDIO_HRTF_FILE", _environment_value, _platform_all,
+		"A SOFA file of measured head-related impulse responses (AES69,\n"
+		"SimpleFreeFieldHRIR) to hear the world's sounds through, in place of\n"
+		"the Xbox's HRTF: fitted when the game starts into the same nine bands\n"
+		"and one delay a direction, so it costs the same. Empty: the Xbox's.\n"
+		"A file that cannot be read is logged, and the Xbox's used." },
 	{ "audio.resampler", _config_string, "\"xbox\"", "HALO_AUDIO_RESAMPLER", _environment_value, _platform_all,
 		"How sounds are converted to the output's rate: \"xbox\" as the\n"
 		"Xbox did, through its short low pass, which lets a little of the\n"
