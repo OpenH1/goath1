@@ -413,17 +413,20 @@ void network_clock_steps_ran(
 		clock_frame_quantum_microseconds - clock_frame_quantum_microseconds / 128);
 }
 
-/* a machine of an OpenH1 game whose frames are seen and drawn (not a
-dedicated server's): whether a step of its clock that falls due in its
-frame's wait for the frames' limit runs then (main.c's main_frame_step_due),
-not at the next frame's start; debug.network_timing_before, not, as before */
+/* the host of an OpenH1 game whose frames are seen and drawn (not a
+dedicated server, which paces its own): whether a step of its clock that
+falls due in its frame's wait for the frames' limit runs then (main.c's
+main_frame_step_due), not at the next frame's start, so that its ticks, and
+the clients' input they take, run on time. Not a client that draws: its step
+at its frame's start takes the latest press, which the frame then shows; run
+in the wait, it took its input up to a frame before the frame that shows it,
+and a press between the two waited a step more on its own screen.
+debug.network_timing_before, not, as before */
 boolean network_clock_steps_when_due(
 	void)
 {
-	short connection = game_connection();
-
-	return (connection == _game_connection_network_server || connection == _game_connection_network_client) &&
-		network_standard_agreed_rate() && !halo_frames_unseen() && !config_boolean("debug.network_timing_before");
+	return game_connection() == _game_connection_network_server && network_standard_agreed_rate() &&
+		!halo_frames_unseen() && !config_boolean("debug.network_timing_before");
 }
 
 /* a dedicated server of an OpenH1 game: whether this frame waits for its
