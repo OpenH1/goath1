@@ -191,8 +191,10 @@ char *xgpu_msl_halo_shader(BOOL pixel);
 
 /* the distance-field scene's ray step (port/linux/include/world_cascades.h's
 world_trace_ray: struct world_trace_hit and world_trace(world_cascades,
-cascades, origin, direction, t_max, mask), the cascades' texture and their
-four vec4s as xgpu.h's XGPU_WORLD_CASCADE* describes them) appended to a
+cascades, world_sdf, world_sdf_table, field0, field1, origin, direction,
+t_max, mask), the cascades' texture and their four vec4s as xgpu.h's
+XGPU_WORLD_CASCADE* describes them, the level's field's atlas, table and
+block vectors as the AO block has them) appended to a
 shader's text; and a fragment function of it alone,
 xgpu_world_trace_test (its ray from its inputs, the hit, t and kind
 written), for tools/test_world_trace.py. A malloc'd string */

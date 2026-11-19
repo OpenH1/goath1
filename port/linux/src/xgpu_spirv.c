@@ -2665,6 +2665,18 @@ static void world_ao_declare_pixels(struct module *m)
 	decorate1(m, m->world_ao_pixels, DECORATION_BINDING, XGPU_SPIRV_BINDING_WORLD_AO_PIXELS);
 }
 
+/* the level's field: its atlas and its table */
+static void world_sdf_declare(struct module *m)
+{
+	m->world_sdf = variable(m, type_sampled_image(m, DIM_3D, FALSE, FALSE, TRUE), STORAGE_UNIFORM_CONSTANT, "world_sdf");
+	decorate1(m, m->world_sdf, DECORATION_DESCRIPTOR_SET, XGPU_SPIRV_SET_OCCLUSION);
+	decorate1(m, m->world_sdf, DECORATION_BINDING, XGPU_SPIRV_BINDING_WORLD_SDF);
+	m->world_sdf_table = variable(m, type_sampled_image(m, DIM_3D, FALSE, FALSE, TRUE), STORAGE_UNIFORM_CONSTANT,
+		"world_sdf_table");
+	decorate1(m, m->world_sdf_table, DECORATION_DESCRIPTOR_SET, XGPU_SPIRV_SET_OCCLUSION);
+	decorate1(m, m->world_sdf_table, DECORATION_BINDING, XGPU_SPIRV_BINDING_WORLD_SDF_TABLE);
+}
+
 static void world_ao_declare(struct module *m)
 {
 	unsigned int members[5], block, operands[3];
@@ -2691,13 +2703,7 @@ static void world_ao_declare(struct module *m)
 	m->world_ao = variable(m, block, STORAGE_UNIFORM, "world_ao");
 	decorate1(m, m->world_ao, DECORATION_DESCRIPTOR_SET, XGPU_SPIRV_SET_OCCLUSION);
 	decorate1(m, m->world_ao, DECORATION_BINDING, XGPU_SPIRV_BINDING_WORLD_AO);
-	m->world_sdf = variable(m, type_sampled_image(m, DIM_3D, FALSE, FALSE, TRUE), STORAGE_UNIFORM_CONSTANT, "world_sdf");
-	decorate1(m, m->world_sdf, DECORATION_DESCRIPTOR_SET, XGPU_SPIRV_SET_OCCLUSION);
-	decorate1(m, m->world_sdf, DECORATION_BINDING, XGPU_SPIRV_BINDING_WORLD_SDF);
-	m->world_sdf_table = variable(m, type_sampled_image(m, DIM_3D, FALSE, FALSE, TRUE), STORAGE_UNIFORM_CONSTANT,
-		"world_sdf_table");
-	decorate1(m, m->world_sdf_table, DECORATION_DESCRIPTOR_SET, XGPU_SPIRV_SET_OCCLUSION);
-	decorate1(m, m->world_sdf_table, DECORATION_BINDING, XGPU_SPIRV_BINDING_WORLD_SDF_TABLE);
+	world_sdf_declare(m);
 	world_ao_declare_scenery(m);
 	m->world_ao_objects = variable(m, type_sampled_image(m, DIM_3D, FALSE, FALSE, TRUE), STORAGE_UNIFORM_CONSTANT,
 		"world_ao_objects");
@@ -2726,7 +2732,7 @@ static void selection_end(struct module *m, unsigned int merge);
 (from the first voxel's centre, clamped to the field's edge), its cell in
 the table; a cell all outside or all inside its range, else its brick's
 trilinear texel in the atlas, times the range */
-static unsigned int world_sdf_distance(struct module *m, struct pixel_state *state, unsigned int field0,
+static unsigned int world_sdf_distance(struct module *m, struct words *locals, unsigned int field0,
 	unsigned int field1, unsigned int point)
 {
 	unsigned int range = fdiv(m, 1, constant_float(m, (float)XGPU_WORLD_SDF_RANGE_VOXELS), extract(m, field0, 3));
@@ -2736,7 +2742,7 @@ static unsigned int world_sdf_distance(struct module *m, struct pixel_state *sta
 	unsigned int cell = ext2(m, GLSL_F_MIN, m->t_v3, ext1(m, GLSL_FLOOR, m->t_v3, fscale(m, 3, coordinate,
 		constant_float(m, 1.0f / (float)XGPU_WORLD_SDF_BRICK))), fsub(m, 3, xyz(m, field1), constant_splat(m, 3, 1.0f)));
 	unsigned int sampled = load(m, type_sampled_image(m, DIM_3D, FALSE, FALSE, TRUE), m->world_sdf_table), operands[4];
-	unsigned int entry, kind, result = local(m, &state->locals, m->t_float), body = id_new(m), merge = id_new(m);
+	unsigned int entry, kind, result = local(m, locals, m->t_float), body = id_new(m), merge = id_new(m);
 	unsigned int at, uvw, atlas, size[3], brick;
 
 	operands[0] = op(m, OP_IMAGE, type_sampled_image(m, DIM_3D, FALSE, FALSE, FALSE), 1, &sampled);
@@ -2786,7 +2792,7 @@ static unsigned int world_sdf_occlusion(struct module *m, struct pixel_state *st
 	for (tap = 0; tap < XGPU_WORLD_AO_TAPS; tap++)
 	{
 		unsigned int h = fmul(m, 1, step, constant_float(m, (float)(1 << tap)));
-		unsigned int d = fsub(m, 1, world_sdf_distance(m, state, field0, field1, fadd(m, 3, p, fscale(m, 3, n, h))), own);
+		unsigned int d = fsub(m, 1, world_sdf_distance(m, &state->locals, field0, field1, fadd(m, 3, p, fscale(m, 3, n, h))), own);
 
 		occlusion = fadd(m, 1, occlusion, fmul(m, 1, constant_float(m, 1.0f / (float)(2 << tap)),
 			saturate(m, 1, fdiv(m, 1, fsub(m, 1, h, d), h))));
@@ -3505,9 +3511,12 @@ world_trace: port/linux/game/world_cascades.c's world_trace_ray operation
 for operation (tools/test_world_trace.py runs it against it): from origin
 along the unit direction to at most t_max, through the cascades (their four
 vec4s: the first voxel's centre and the voxel, 0 not ready; their texture,
-cascades_texture, a combined image sampler of RG8 snorm), hitting what mask
-(an int: XGPU_WORLD_TRACE_*) allows, each distance only once the ray is
-outside it. A structured loop, its values in locals; the hit (1 or 0), t
+cascades_texture, a combined image sampler of RG8 snorm, the objects'
+distance its second channel), hitting what mask (an int:
+XGPU_WORLD_TRACE_*) allows, each distance only once the ray is outside it.
+The structure's distance is the level's field's at the ray's point
+(world_sdf_distance; field its block's two vec4s), read only where field
+is given: NULL, the ray step meets the objects alone (the AO pass's). A structured loop, its values in locals; the hit (1 or 0), t
 and kind (as floats) in result. A hardware backend's ray queries (#602)
 would take the same arguments (docs/world-ao.md) */
 /* the cascade a point is in: the finest ready, from first on, whose window
@@ -3538,8 +3547,8 @@ static unsigned int world_cascade_find(struct module *m, const unsigned int casc
 	return found;
 }
 
-/* its two distances at a point (world units: a vec4's x and y), and its
-voxel (world_cascades_sample) */
+/* its distances at a point (world units: a vec4's y, the objects'; x is
+none), and its voxel (world_cascades_sample) */
 static unsigned int world_cascade_sample(struct module *m, unsigned int cascades_texture,
 	const unsigned int cascades[XGPU_WORLD_CASCADES], unsigned int found, unsigned int p, unsigned int *voxel_out)
 {
@@ -3578,8 +3587,8 @@ static unsigned int world_cascade_sample(struct module *m, unsigned int cascades
 }
 
 static void world_trace(struct module *m, struct words *locals, unsigned int cascades_texture,
-	const unsigned int cascades[XGPU_WORLD_CASCADES], unsigned int origin, unsigned int direction, unsigned int t_max,
-	unsigned int mask, unsigned int result[3])
+	const unsigned int cascades[XGPU_WORLD_CASCADES], const unsigned int *field, unsigned int origin,
+	unsigned int direction, unsigned int t_max, unsigned int mask, unsigned int result[3])
 {
 	unsigned int t_variable = local(m, locals, m->t_float), step_variable = local(m, locals, m->t_int);
 	unsigned int done_variable = local(m, locals, m->t_bool), structure_variable = local(m, locals, m->t_bool);
@@ -3621,14 +3630,16 @@ static void world_trace(struct module *m, struct words *locals, unsigned int cas
 		&found_merge);
 	sampled = world_cascade_sample(m, cascades_texture, cascades, found, p, &voxel);
 	range = fmul(m, 1, constant_float(m, (float)XGPU_WORLD_CASCADE_RANGE_VOXELS), voxel);
-	d[0] = extract(m, sampled, 0);
+	/* (the structure's from the level's field where the ray is, the
+	objects' from the cascade) */
+	d[0] = field ? world_sdf_distance(m, locals, field[0], field[1], p) : 0;
 	d[1] = extract(m, sampled, 1);
 	/* each channel the mask allows, once the ray is outside it; inside one
 	yet, how far it is to its way out */
 	nearest = inside = range;
 	variables[0] = structure_variable;
 	variables[1] = objects_variable;
-	for (channel = 0; channel < 2; channel++)
+	for (channel = field ? 0 : 1; channel < 2; channel++)
 	{
 		unsigned int count;
 
@@ -3645,9 +3656,11 @@ static void world_trace(struct module *m, struct words *locals, unsigned int cas
 			ext2(m, GLSL_F_MIN, m->t_float, inside, fneg(m, 1, d[channel])), inside);
 	}
 	is_hit = compare(m, OP_F_ORD_LESS_THAN, nearest, fmul(m, 1, constant_float(m, XGPU_WORLD_TRACE_HIT), voxel));
-	kind = fselect(m, op2(m, OP_LOGICAL_AND, m->t_bool, op2(m, OP_LOGICAL_AND, m->t_bool, enabled[0], active[0]),
-		compare(m, OP_F_ORD_LESS_THAN_EQUAL, d[0], nearest)), constant_float(m, (float)XGPU_WORLD_TRACE_STRUCTURE),
-		constant_float(m, (float)XGPU_WORLD_TRACE_OBJECTS));
+	kind = constant_float(m, (float)XGPU_WORLD_TRACE_OBJECTS);
+	if (field)
+		kind = fselect(m, op2(m, OP_LOGICAL_AND, m->t_bool, op2(m, OP_LOGICAL_AND, m->t_bool, enabled[0], active[0]),
+			compare(m, OP_F_ORD_LESS_THAN_EQUAL, d[0], nearest)), constant_float(m, (float)XGPU_WORLD_TRACE_STRUCTURE),
+			kind);
 	selection_begin(m, is_hit, &hit_merge);
 	store(m, hit_variable, constant_float(m, 1.0f));
 	store(m, distance_variable, t);
@@ -3687,11 +3700,12 @@ BOOL xgpu_spirv_world_trace_test(struct xgpu_spirv_module *module)
 	struct module m;
 	struct words locals = { 0 };
 	unsigned int main_id, texture, origin_in, direction_in, parameters_in, cascades_in[XGPU_WORLD_CASCADES], color_out;
-	unsigned int cascades[XGPU_WORLD_CASCADES], parameters, result[3];
+	unsigned int cascades[XGPU_WORLD_CASCADES], parameters, result[3], field_in[2], field[2];
 	int cascade;
 
 	module_begin(&m, EXECUTION_MODEL_FRAGMENT);
 	texture = world_cascades_declare(&m);
+	world_sdf_declare(&m);
 	origin_in = interface_variable(&m, m.t_v3, STORAGE_INPUT, 0, "origin");
 	direction_in = interface_variable(&m, m.t_v3, STORAGE_INPUT, 1, "direction");
 	parameters_in = interface_variable(&m, m.t_v4, STORAGE_INPUT, 2, "parameters");
@@ -3703,12 +3717,18 @@ BOOL xgpu_spirv_world_trace_test(struct xgpu_spirv_module *module)
 		cascades_in[cascade] = interface_variable(&m, m.t_v4, STORAGE_INPUT, 3 + cascade, names[cascade]);
 		decorate(&m, cascades_in[cascade], DECORATION_FLAT, 0, NULL);
 	}
+	field_in[0] = interface_variable(&m, m.t_v4, STORAGE_INPUT, 3 + XGPU_WORLD_CASCADES, "field0");
+	field_in[1] = interface_variable(&m, m.t_v4, STORAGE_INPUT, 4 + XGPU_WORLD_CASCADES, "field1");
+	decorate(&m, field_in[0], DECORATION_FLAT, 0, NULL);
+	decorate(&m, field_in[1], DECORATION_FLAT, 0, NULL);
 	color_out = interface_variable(&m, m.t_v4, STORAGE_OUTPUT, 0, "fragment_color");
 	main_id = function_begin(&m);
 	for (cascade = 0; cascade < XGPU_WORLD_CASCADES; cascade++)
 		cascades[cascade] = load(&m, m.t_v4, cascades_in[cascade]);
 	parameters = load(&m, m.t_v4, parameters_in);
-	world_trace(&m, &locals, texture, cascades, load(&m, m.t_v3, origin_in), load(&m, m.t_v3, direction_in),
+	field[0] = load(&m, m.t_v4, field_in[0]);
+	field[1] = load(&m, m.t_v4, field_in[1]);
+	world_trace(&m, &locals, texture, cascades, field, load(&m, m.t_v3, origin_in), load(&m, m.t_v3, direction_in),
 		extract(&m, parameters, 0), op1(&m, OP_CONVERT_F_TO_S, m.t_int, extract(&m, parameters, 1)), result);
 	store(&m, color_out, construct4(&m, result[0], result[1], result[2], constant_float(&m, 0.0f)));
 	return module_end(&m, EXECUTION_MODEL_FRAGMENT, main_id, &locals, module);
@@ -3775,7 +3795,7 @@ static unsigned int world_ao_read(struct module *m, struct pixel_state *state, i
 	{
 		unsigned int baked = compare(m, OP_F_ORD_LESS_THAN, extract(m, object, 1), constant_float(m, 0.0f));
 		unsigned int field0 = world_ao_vector(m, 0, constant_int(m, 0)), field1 = world_ao_vector(m, 0, constant_int(m, 1));
-		unsigned int inside = ext2(m, GLSL_F_MIN, m->t_float, world_sdf_distance(m, state, field0, field1, p),
+		unsigned int inside = ext2(m, GLSL_F_MIN, m->t_float, world_sdf_distance(m, &state->locals, field0, field1, p),
 			constant_float(m, 0.0f));
 		unsigned int reference = fselect(m, baked, constant_float(m, 1.0f), extract(m, object, 1));
 
@@ -5608,7 +5628,7 @@ static unsigned int world_ao_traced(struct module *m, struct pixel_state *state,
 	{
 		unsigned int d = world_ao_ray_direction(m, ray, x, y, n, turn, twist), hit[3], f;
 
-		world_trace(m, &state->locals, pass->cascades, cascades, origin, d, constant_float(m, XGPU_WORLD_AO_RAY_REACH),
+		world_trace(m, &state->locals, pass->cascades, cascades, NULL, origin, d, constant_float(m, XGPU_WORLD_AO_RAY_REACH),
 			constant_int(m, XGPU_WORLD_TRACE_OBJECTS), hit);
 		f = fdiv(m, 1, hit[1], constant_float(m, XGPU_WORLD_AO_RAY_REACH));
 		occlusion = fadd(m, 1, occlusion, fmul(m, 1, hit[0], fsub(m, 1, constant_float(m, 1.0f), fmul(m, 1, f, f))));
@@ -5723,7 +5743,7 @@ static unsigned int world_ao_evaluate(struct module *m, struct pixel_state *stat
 	/* (a negative reference, a static scenery placement's own draw: its
 	taps from the pixel's own depth in the field, relative to none) */
 	unsigned int baked = compare(m, OP_F_ORD_LESS_THAN, value, constant_float(m, 0.0f));
-	unsigned int inside = ext2(m, GLSL_F_MIN, m->t_float, world_sdf_distance(m, state, field0, field1, p),
+	unsigned int inside = ext2(m, GLSL_F_MIN, m->t_float, world_sdf_distance(m, &state->locals, field0, field1, p),
 		constant_float(m, 0.0f));
 	/* (a two-sided shader's cards: about their most open direction, the
 	shapes and rays too) */

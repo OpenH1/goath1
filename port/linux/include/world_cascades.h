@@ -7,21 +7,24 @@ cascades (a clipmap: the finest nearest the camera, each next twice as
 coarse and twice as wide), and the ray step through it that ray tracing's
 effects share (#602).
 
-Each cascade is WORLD_CASCADE_SIDE voxels a side, two distances a voxel:
-- the structure (the level's own field, world_sdf.h's, which holds the static
-  scenery too): written when the cascade is filled, and where the camera's
-  movement brings new voxels into it;
-- the objects (their shapes, world_proxies.h's: bipeds' capsules, vehicles'
-  boxes and wheels, items): an object is stamped once, and stamped again only
-  when it has moved (its shapes changed by more than WORLD_CASCADE_MOVED: the
-  motion decides, not the object's kind), and then only the region its old
-  and new shapes reach is found again. A frame's work goes as what moved.
+Each cascade is WORLD_CASCADE_SIDE voxels a side, the objects' distance a
+voxel (their shapes, world_proxies.h's: bipeds' capsules, vehicles' boxes and
+wheels, items): an object is stamped once, and stamped again only when it
+has moved (its shapes changed by more than WORLD_CASCADE_MOVED: the motion
+decides, not the object's kind), and then only the region its old and new
+shapes reach is found again. A frame's work goes as what moved. The
+structure's distance is not in them: the ray step reads the level's own
+field (world_sdf.h's, which holds the static scenery too, and never changes
+while a map is played) where the ray is, as the GPU reads its atlas, so a
+camera's jump never samples it again.
 
 The cascades move with the camera in whole steps of WORLD_CASCADE_SNAP
 voxels, and are addressed toroidally (a voxel's place in its cascade is its
 world index modulo the side), so that a step finds only the slab it
 brings in. On the GPU they are one 3D texture of signed bytes, two a texel
-(RG8 snorm), the cascades one above the other along z, each with one more
+(RG8 snorm: the first is none, +range everywhere, kept so that the
+texture's format and the command stream are as they were; the second the
+objects'), the cascades one above the other along z, each with one more
 texel along each axis than its side (the guard: a copy of the first, so that
 a linear filter at the toroidal seam reads the right neighbour); see
 world_cascades_texture.
@@ -50,7 +53,7 @@ enum
 	WORLD_CASCADE_RANGE_VOXELS = 4,
 	/* the cascades move in steps of this many of their voxels */
 	WORLD_CASCADE_SNAP = 4,
-	/* bytes a texel: the structure's distance, the objects' */
+	/* bytes a texel: none (always +range), the objects' distance */
 	WORLD_CASCADE_TEXEL = 2,
 	WORLD_CASCADES_BYTES = WORLD_CASCADE_SPAN * WORLD_CASCADE_SPAN * WORLD_CASCADE_SPAN * WORLD_CASCADES *
 		WORLD_CASCADE_TEXEL,
@@ -60,7 +63,7 @@ enum
 	WORLD_CASCADES_MAXIMUM_SHAPES = 2048,
 	WORLD_CASCADES_MAXIMUM_BOXES = 128,
 	/* the slices along z a frame fills of cascades found whole (at the
-start, after a field comes or the camera jumps), the coarsest first: a
+start, or after the camera jumps), the coarsest first: a
 cascade being filled is not named ready, and the coarser serve */
 	WORLD_CASCADES_FILL_SLICES = 16,
 	/* a ray's most steps */
@@ -114,7 +117,8 @@ struct world_cascades_box
 };
 
 /* the structure's distance at a point (world units; a large positive one
-where there is none): world_sdf.h's world_sdf_sample */
+where there is none): world_sdf.h's world_sdf_sample, read by the ray step
+(world_trace_ray), never stored in the cascades */
 typedef float (*world_cascades_structure)(void *context, float const point[3]);
 
 struct world_cascades
@@ -132,9 +136,9 @@ struct world_cascades
 	struct world_cascades_box boxes[WORLD_CASCADES_MAXIMUM_BOXES];
 	long box_count;
 	int whole;
-	/* this update's work: voxels whose structure was found, whose objects
-	were, and the objects that moved (counted, measured) */
-	long structure_voxels, object_voxels, moved;
+	/* this update's work: voxels whose objects were found, and the objects
+	that moved (counted, measured) */
+	long object_voxels, moved;
 };
 
 /* the result of a ray (world_trace_ray): whether it hit, how far along it
@@ -153,16 +157,13 @@ int world_cascades_create(struct world_cascades *cascades);
 void world_cascades_free(struct world_cascades *cascades);
 
 /* a frame's update about the camera: each cascade moved with it (the slabs
-it brings in found; one moved past its side found whole again,
-WORLD_CASCADES_FILL_SLICES slices a frame); the structure found again
-everywhere where it changed (a field come, a BSP switched to); and the
-objects' shapes (objects[i]'s, of
-shapes) compared with those stamped: each that moved, came or went found
-again where its old and new shapes reach. The regions written are in
-boxes (whole: all of it) */
-void world_cascades_update(struct world_cascades *cascades, float const camera[3], int structure_changed,
-	world_cascades_structure structure, void *context, struct world_cascades_object const *objects, long object_count,
-	struct world_proxy const *shapes);
+it brings in found; one moved past its side, or by more slices than a
+frame fills, found whole again, WORLD_CASCADES_FILL_SLICES slices a frame);
+and the objects' shapes (objects[i]'s, of shapes) compared with those
+stamped: each that moved, came or went found again where its old and new
+shapes reach. The regions written are in boxes (whole: all of it) */
+void world_cascades_update(struct world_cascades *cascades, float const camera[3],
+	struct world_cascades_object const *objects, long object_count, struct world_proxy const *shapes);
 
 /* the cascades as the GPU's block has them: each [k] the first voxel's
 centre (xyz) and the voxel (w; 0 where not ready) */
@@ -173,21 +174,24 @@ for a kind that has none: an occlusion field) */
 float world_cascades_shape_distance(struct world_proxy const *shape, float const point[3]);
 
 /* the cascade a point is in (the finest ready whose window holds it with
-its linear filter's neighbours; -1 none), and the two distances there
-(world units), as the GPU finds them */
+its linear filter's neighbours; -1 none), and the objects' distance there
+(world units), as the GPU finds it */
 int world_cascades_find(float const block[WORLD_CASCADES][4], float const point[3]);
-void world_cascades_sample(struct world_cascades const *cascades, float const block[WORLD_CASCADES][4],
-	int cascade, float const point[3], float distances[2]);
+float world_cascades_sample(struct world_cascades const *cascades, float const block[WORLD_CASCADES][4],
+	int cascade, float const point[3]);
 
 /* the shared ray step (sphere tracing through the cascades): from origin
 along the unit direction to at most t_max, hitting what mask allows
-(WORLD_TRACE_*). A distance counts only once the ray is outside it: a ray
+(WORLD_TRACE_*): the objects' distance from the cascades, the structure's
+from structure (context its own; none: nothing of it, as before a field
+comes) at the ray's point, as the emitters read the field's atlas. A distance counts only once the ray is outside it: a ray
 that starts inside solid (an object's own shapes about its surface) hits
 nothing of it until it has left it, as front faces alone would. The
 emitters' world_trace finds the same. A hardware backend (ray queries,
 #602) implements the same: docs/world-ao.md */
 void world_trace_ray(struct world_cascades const *cascades, float const block[WORLD_CASCADES][4],
-	float const origin[3], float const direction[3], float t_max, int mask, struct world_trace_hit *hit);
+	world_cascades_structure structure, void *context, float const origin[3], float const direction[3], float t_max,
+	int mask, struct world_trace_hit *hit);
 
 /* a distance encoded (a voxel's byte, over range), and decoded as the
 GPU's snorm is */

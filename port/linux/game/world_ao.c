@@ -134,9 +134,10 @@ void world_ao_map_unloaded(void)
 "The distance-field scene")
 
 Its cascades about the first window's camera, updated once a frame: the
-structure's field sampled where they move or it changes, the objects'
-shapes (world_proxies_scene) stamped where they moved, and the boxes
-written handed to the renderer. HALO_WORLD_AO_COUNTS logs, every 600
+objects' shapes (world_proxies_scene) stamped where they or the cascades
+moved, and the boxes written handed to the renderer (the structure's
+distance is the level's field's, read where a ray is: never resampled
+here). HALO_WORLD_AO_COUNTS logs, every 600
 frames, its mean time and voxels a frame. */
 
 enum
@@ -150,10 +151,8 @@ static struct
 {
 	struct world_cascades cascades;
 	int made, failed;
-	/* the frame (world_ao_frame_begin's count) it was last updated in, and
-	the structure's field it holds (NULL none) */
+	/* the frame (world_ao_frame_begin's count) it was last updated in */
 	unsigned long frame, updated;
-	struct world_sdf_volume const *structure;
 	/* the frame's shapes and their objects */
 	struct world_proxy shapes[WORLD_AO_SCENE_SHAPES];
 	long owners[WORLD_AO_SCENE_SHAPES];
@@ -170,11 +169,6 @@ static struct
 	unsigned long bytes;
 } world_ao_scene;
 
-static float world_ao_scene_structure(void *context, float const point[3])
-{
-	return world_sdf_sample((struct world_sdf_volume const *)context, point);
-}
-
 static void world_ao_scene_release(void)
 {
 	if (world_ao_scene.made)
@@ -185,14 +179,12 @@ static void world_ao_scene_release(void)
 	free(world_ao_scene.box);
 	world_ao_scene.box = NULL;
 	world_ao_scene.made = world_ao_scene.failed = 0;
-	world_ao_scene.structure = NULL;
 }
 
 /* the cascades about the camera, once a frame; their block (each [k] the
 first voxel's centre and the voxel, 0 not ready) */
 static void world_ao_scene_update(float const camera[3], float block[WORLD_CASCADES][4])
 {
-	struct world_sdf_volume const *structure = (struct world_sdf_volume const *)world_sdf_current();
 	unsigned long long start = SDL_GetTicksNS();
 	float reach = WORLD_CASCADE_FINEST * (float)(1 << (WORLD_CASCADES - 1)) *
 		(float)(WORLD_CASCADE_SIDE / 2 + WORLD_CASCADE_RANGE_VOXELS + 1);
@@ -212,7 +204,6 @@ static void world_ao_scene_update(float const camera[3], float block[WORLD_CASCA
 			return;
 		}
 		world_ao_scene.made = 1;
-		world_ao_scene.structure = NULL;
 		world_ao_scene.updated = world_ao_scene.frame - 1;
 	}
 	if (world_ao_scene.updated != world_ao_scene.frame)
@@ -236,10 +227,7 @@ static void world_ao_scene_update(float const camera[3], float block[WORLD_CASCA
 			object_count++;
 		}
 		world_ao_scene.shapes_seconds += (double)(SDL_GetTicksNS() - start) * 1.0e-9;
-		world_cascades_update(cascades, camera, structure != world_ao_scene.structure,
-			structure ? world_ao_scene_structure : NULL, (void *)structure, world_ao_scene.objects, object_count,
-			world_ao_scene.shapes);
-		world_ao_scene.structure = structure;
+		world_cascades_update(cascades, camera, world_ao_scene.objects, object_count, world_ao_scene.shapes);
 		world_ao_scene.cascades_seconds += (double)(SDL_GetTicksNS() - start) * 1.0e-9;
 		/* (the boxes written: each its texels, x fastest; or the whole) */
 		if (cascades->whole)
@@ -276,7 +264,7 @@ static void world_ao_scene_update(float const camera[3], float block[WORLD_CASCA
 
 			world_ao_scene.seconds += seconds;
 			world_ao_scene.most_seconds = seconds > world_ao_scene.most_seconds ? seconds : world_ao_scene.most_seconds;
-			world_ao_scene.voxels += cascades->structure_voxels + cascades->object_voxels;
+			world_ao_scene.voxels += cascades->object_voxels;
 			world_ao_scene.moved += cascades->moved;
 			world_ao_scene.boxes += cascades->box_count;
 			if (++world_ao_scene.frames >= 600)
