@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from .android_build import (GUEST_ARCH_SCRIPT, GUEST_TOOLCHAIN_SCRIPT, SDL_ANDROID_MOUSE_PATCH,
-                            SDL_TAG, SDL_WAYLAND_REFERENCE_PATCH, TOML_DIR, fetch_third_party, generate_guest_image, host_memory_sources)
+                            SDL_STEAMDECK_WATCHDOG_PATCH, SDL_TAG, SDL_WAYLAND_REFERENCE_PATCH, TOML_DIR, fetch_third_party, generate_guest_image, host_memory_sources)
 from .build_common import (MBEDTLS_DIR, MINIUPNPC_DEFINES, MINIUPNPC_DIR, OWN_CODE_ERRORS, REPLAY_DIR,
                            SDL_RPATH_LDFLAGS, compile_launcher, download, miniupnpc_sources, replay_build_label,
                            sdl3_desktop_check, sdl3_rule, pgo_generate_defines, updater_defines)
@@ -263,7 +263,8 @@ def _generate(n: Writer, sln: Any, target: LinuxGuest, config_path: Path, third_
     # (built again when a patch of it changes: fetch_third_party applies them
     # at configure)
     n.build(outputs=libsdl, rule=f"{prefix}_sdl3",
-            implicit=[sdl_dir / "CMakeLists.txt", SDL_ANDROID_MOUSE_PATCH, SDL_WAYLAND_REFERENCE_PATCH])
+            implicit=[sdl_dir / "CMakeLists.txt", SDL_ANDROID_MOUSE_PATCH, SDL_WAYLAND_REFERENCE_PATCH,
+                      SDL_STEAMDECK_WATCHDOG_PATCH])
 
     # ---------- the host
 
