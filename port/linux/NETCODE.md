@@ -3672,6 +3672,61 @@ band; the rest is the frames' phase on both machines (a step runs at the
 first frame after it falls due), which only running the sub-steps when due
 would take away (above).
 
+### Steps when due
+
+A machine whose frames are seen ran a step of its clock only at the first
+frame's start after the step fell due: up to a frame late (6.9 ms at 144
+frames a second, 16.7 at 60), so a client's input was sampled and sent, and
+the host's tick run, that much after the step's time, by each machine's
+frames' phase. Now, in an OpenH1 game whose frames the frames' limit paces
+(display.max_fps, the game's own sleep: `sdl_platform.c`'s
+`platform_video_swap`), the frame's wait wakes when a step falls due before
+the frame's time (`main.c`'s `main_frame_step_due`), and a frame of its own
+runs it then, on the game's thread: its input read, its datagrams read, the
+step run and its datagrams sent, the menus and the world updated as in any
+frame, nothing drawn. The wait then goes on to the frame's time
+(`platform_frame_wait`), on the same grid, a host's datagrams read by its
+thread meanwhile as in a frame's present ("A host that draws"). Such a frame
+runs only where it ends before the frame's time (its cost the longest of
+late, at most 4 ms, and 0.3 ms more: `frame_step_wake`); a step due nearer
+the frame's time, or while a frame is drawn, runs at the next frame's start
+as before. The frames' report and the performance overlay count a frame
+once its wait has run to its time, as before.
+
+A machine whose frames nobody sees waits for its step before it reads its
+input too, not only its datagrams (`main.c`): the step takes input read at
+its time, not up to a step before. A client's clock's allowance for its
+frames' phase (`network_clock_quantized_early`) is now how late its steps ran
+of late (`network_clock_steps_ran`), not its longest frame. Nothing goes on
+the wire differently, and the steps and their order are as before (the
+identity check passes). Not covered: frames paced by vsync's wait (the
+host's, in the frame's commit), a Metal frame grid's slot, VR. A Legacy game,
+a dedicated server and `debug.network_timing_before` step as before.
+`tools/harness/tests/test_frame_step_wait.py` checks the wait's wake and who
+steps so.
+
+The same three copies as above (bloodgulch, 13 bots, at 120; the host and one
+client drawing, mailbox; a third without a renderer), the build before and
+after; medians in ms (95th percentile in brackets):
+
+| Stage | 144 before | 144 after | 60 before | 60 after |
+| --- | --- | --- | --- | --- |
+| A client's input, input to the host's applied | 12.7 (18.5) | 4.7 (5.5) | 6.5 (13.6) | 4.9 (5.9) |
+| A client's live control, input to the host's applied | 12.2 (17.8) | 4.4 (5.3) | 6.0 (20.9) | 4.6 (5.4) |
+| A client's input came before the host's tick that runs it | 10.1 (11.3) | 4.0 (4.8) | 5.3 (5.9) | 3.9 (5.4) |
+| A live control to the other drawing client's frame | 13.2 (16.6) | 10.4 (13.6) | 17.5 (26.0) | 20.0 (20.9) |
+| The host's player to the drawing client's step | 2.9 (9.8) | 3.9 (4.2) | 10.9 (11.0) | 3.3 (3.8) |
+| Own input read to own frame (client) | 1.2 (1.8) | 3.6 (6.9) | 1.7 (2.5) | 5.5 (14.7) |
+| Frame time p50, p99 (host; client) | 6.94, 6.97; 6.94, 6.98 | 6.94, 6.98; 6.94, 6.98 | 16.67, 16.68; 16.67, 16.70 | 16.67, 16.70; 16.67, 16.70 |
+
+The input now waits on the host for its tick about the clock's margin, not
+the margin and two frames' phases. Own input to own frame grows because the
+input is read earlier, at the step's time, not at the frame's start: the
+frame that shows a step is the first after it fell due either way, so a press
+before the step's time is shown in the same frame as before; a press between
+the step's time and the frame's start, which the step took before, now waits
+for the next step (the view's turning is read at each frame as before).
+
 ## Numbers on parallel branches
 
 GOAT H1's own numbers (`HALO_PORT_STANDARD_NETWORK_VERSION`, its
