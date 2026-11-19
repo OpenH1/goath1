@@ -109,5 +109,9 @@ no jitter (`motion_vectors_technique`).
 - **Reactive mask.** FSR's generated one (the colour before and after the transparent draws, tone mapped, its largest
   channel's change, 0.9 past 0.2), drawn into an R8 texture, MetalFX's `reactiveMaskTexture` (macOS 14.4, iOS 17.4).
 - **Preparation.** As Vulkan's: a map prepared with a technique on makes the motion variants and the passes'
-  pipelines. The scaler is made at the first upscale (MetalFX compiles its own work in the background then).
-- **Cost.** `HALO_METALFX_TIMES=<n>` logs MetalFX's GPU time, its own command buffer, every n upscales.
+  pipelines. A scaler is made off the render thread when a window first needs one or its sizes or formats change
+  (100 to 300 ms each on an M1 Max, over a second the first time after a system update); until it is ready the view
+  is stretched into the window (linear filtering), and its history begins with it. The first upscale's frame went
+  from 183 ms of the render thread to under 1 ms (M1 Max, 1280x960 to 2560x1920).
+- **Cost.** `HALO_METALFX_TIMES=<n>` logs MetalFX's GPU time, its own command buffer, every n upscales, and each
+  window's first upscale's time on the render thread.
