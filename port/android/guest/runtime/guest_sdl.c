@@ -216,8 +216,10 @@ SDL_PowerState SDL_GetPowerInfo(int *seconds, int *percent)
 	return state;
 }
 
+#ifdef HALO_ANDROID
 /* (SDL_AtomicInt's reads and writes, with the compiler's atomics: the
-shared code's flags between its threads, dlss_addon.c's state) */
+shared code's flags between its threads, dlss_addon.c's state; the desktop
+builds have guest_desktop.c's) */
 int SDL_GetAtomicInt(SDL_AtomicInt *a)
 {
 	return __atomic_load_n(&a->value, __ATOMIC_SEQ_CST);
@@ -227,6 +229,7 @@ int SDL_SetAtomicInt(SDL_AtomicInt *a, int v)
 {
 	return __atomic_exchange_n(&a->value, v, __ATOMIC_SEQ_CST);
 }
+#endif
 
 void SDL_Delay(Uint32 milliseconds)
 {
@@ -256,13 +259,16 @@ bool SDL_GetWindowSizeInPixels(SDL_Window *window, int *width, int *height)
 	return true;
 }
 
+#ifdef HALO_ANDROID
 /* (the phone's one window: shown and full screen while the game runs; in
 the background the app is paused in the event poll, so focus alone tells
-it apart: sdl_platform.c's platform_window_background) */
+it apart: sdl_platform.c's platform_window_background; the desktop builds
+have guest_desktop.c's) */
 SDL_WindowFlags SDL_GetWindowFlags(SDL_Window *window)
 {
 	return window ? SDL_WINDOW_FULLSCREEN : 0;
 }
+#endif
 
 bool SDL_SetWindowRelativeMouseMode(SDL_Window *window, bool enabled)
 {
