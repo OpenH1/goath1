@@ -5649,6 +5649,9 @@ static struct
 	unsigned long told_count, told_sent;
 	/* counted (logged every 600 frames with either setting) */
 	unsigned long found, found_told, prepared, not_kept, differed, targets_differed, hash_differed;
+	/* the times each of retained_tokens' moved (as a draw was found, or
+	as it was prepared) */
+	unsigned long moved[sizeof(struct retained_tokens) / sizeof(unsigned long)];
 	unsigned long logged_frame;
 } retained;
 
@@ -5676,6 +5679,15 @@ static void retained_tokens_now(struct retained_tokens *tokens)
 	tokens->settings = config_changes();
 	tokens->gpu_settings = halo_gpu_settings_taken();
 	tokens->targets = render_target_serial;
+}
+
+static void retained_tokens_moved(const struct retained_tokens *tokens)
+{
+	const unsigned long *now = (const unsigned long *)tokens, *had = (const unsigned long *)&retained.tokens;
+	unsigned long index;
+
+	for (index = 0; index < sizeof(*tokens) / sizeof(*now); index++)
+		retained.moved[index] += now[index] != had[index];
 }
 
 static uint32_t retained_context_hash(const struct retained_context *context)
@@ -5787,6 +5799,7 @@ static int retained_draw_find(struct vertex_shader_object *program, BOOL immedia
 	retained_tokens_now(&tokens);
 	if (memcmp(&tokens, &retained.tokens, sizeof(tokens)))
 	{
+		retained_tokens_moved(&tokens);
 		retained.tokens = tokens;
 		retained.generation++;
 		retained.told = NULL;
@@ -5870,6 +5883,8 @@ static void retained_draw_keep(const struct xgpu_texture_source *sources, const 
 	/* (not: what it was made from changed as it was prepared, a choice of a
 	texture's not kept, a program's lighting failed) */
 	retained_tokens_now(&tokens);
+	if (memcmp(&tokens, &retained.tokens, sizeof(tokens)))
+		retained_tokens_moved(&tokens);
 	if (memcmp(&tokens, &retained.tokens, sizeof(tokens)) || (program->lighting_failed != 0) !=
 		retained.context.lighting_failed || (program->split_failed != 0) != retained.context.split_failed ||
 		(key->pixel.ambient_occlusion & XGPU_AMBIENT_OCCLUSION_WORLD))
@@ -5928,9 +5943,12 @@ static void retained_draws_frame(void)
 		return;
 	retained.logged_frame = device.frame;
 	platform_log("GPU: retained draws: %lu found (%lu as the draw before's), %lu prepared, %lu not kept; %lu differed, "
-		"%lu targets differed, %lu hash differed", retained.found, retained.found_told, retained.prepared,
-		retained.not_kept, retained.differed, retained.targets_differed, retained.hash_differed);
+		"%lu targets differed, %lu hash differed; moved: memory %lu, choices %lu, images %lu, settings %lu, "
+		"GPU settings %lu, targets %lu", retained.found, retained.found_told, retained.prepared,
+		retained.not_kept, retained.differed, retained.targets_differed, retained.hash_differed, retained.moved[0],
+		retained.moved[1], retained.moved[2], retained.moved[3], retained.moved[4], retained.moved[5]);
 	retained.found = retained.found_told = retained.prepared = retained.not_kept = 0;
+	memset(retained.moved, 0, sizeof(retained.moved));
 	retained.targets_differed = 0;
 }
 
