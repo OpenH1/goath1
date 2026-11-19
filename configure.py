@@ -11,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from tools import ninja_syntax
+from tools.vulkan_build import DLSS_ADDON_TARGETS
 from tools.android_build import android_configure_inputs, generate_android_build
 from tools.build_common import check_profile_options, common_configure_inputs, generate_msvc_semantics
 from tools.guest_toolchain import LLVM_VERSION, default_cache
@@ -256,6 +257,9 @@ generate_linux_guest_builds(n, sln)
 generate_windows_build(n, sln)
 generate_macos_build(n, sln)
 generate_ios_build(n, sln)
+# (configure.py --dlss: ninja dlss_addon, each build's NVIDIA DLSS add-on, tools/dlss_addon.py)
+if DLSS_ADDON_TARGETS:
+    n.build(outputs="dlss_addon", rule="phony", inputs=DLSS_ADDON_TARGETS)
 
 n.comment("Reconfigure on change")
 n.rule(

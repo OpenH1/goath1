@@ -457,8 +457,10 @@ static int zip_extract_entry(SDL_IOStream *zip, unsigned long local_offset, int 
 }
 
 /* the zip's files (the Linux release's tree, or the Windows release's folder) into
-update.partial/, their names in names */
-static int zip_extract(SDL_IOStream *zip, char names[][256], int *name_count, char *error, size_t error_size)
+folder (update.partial/; the DLSS add-on's, dlss_addon.c's), their names in
+names */
+static int zip_extract(SDL_IOStream *zip, const char *folder, char names[][256], int *name_count, char *error,
+	size_t error_size)
 {
 	unsigned char tail[65536 + 22];
 	Sint64 size;
@@ -524,8 +526,9 @@ static int zip_extract(SDL_IOStream *zip, char names[][256], int *name_count, ch
 				snprintf(error, error_size, "the download packs %s in a way this build cannot read", name);
 				goto done;
 			}
-			updater_partial_path(path, sizeof(path), name);
-			if (!updater_make_folders(path, strlen(updater_directory) + 1) ||
+			snprintf(path, sizeof(path), "%s" PATH_SEPARATOR "%s", folder, name);
+			updater_local_separators(path, strlen(folder));
+			if (!updater_make_folders(path, strlen(folder) + 1) ||
 				!zip_extract_entry(zip, zip_long(header + 42), method, zip_long(header + 20), zip_long(header + 24),
 				zip_long(header + 16), path, reason, sizeof(reason)))
 			{
@@ -549,6 +552,29 @@ static int zip_extract(SDL_IOStream *zip, char names[][256], int *name_count, ch
 done:
 	if (!succeeded && !error[0])
 		snprintf(error, error_size, "the download is not a zip file this build can read");
+	return succeeded;
+}
+
+/* the zip at zip_path, no larger than maximum, unpacked into folder (there
+already) as a release's is: its files' names in names (at most
+MAXIMUM_UPDATE_FILES); 1 on success, else 0 and why in error, what was
+unpacked left for the caller to delete (dlss_addon.c's add-on) */
+int updater_zip_unpack(const char *zip_path, const char *folder, unsigned long long maximum, char names[][256],
+	int *name_count, char *error, size_t error_size)
+{
+	SDL_IOStream *stream = SDL_IOFromFile(zip_path, "rb");
+	Sint64 size = stream ? SDL_GetIOSize(stream) : -1;
+	int succeeded = 0;
+
+	*name_count = 0;
+	if (error_size)
+		error[0] = 0;
+	if (size < 0 || (unsigned long long)size > maximum)
+		snprintf(error, error_size, "could not read the download");
+	else
+		succeeded = zip_extract(stream, folder, names, name_count, error, error_size);
+	if (stream)
+		SDL_CloseIO(stream);
 	return succeeded;
 }
 
@@ -1576,7 +1602,12 @@ static int updater_unpack(const char *zip_path, int downloaded, char names[][256
 	if (size < 0 || (unsigned long long)size > MAXIMUM_UPDATE_SIZE)
 		snprintf(error, error_size, "could not read the download");
 	else
-		succeeded = zip_extract(stream, names, name_count, error, error_size);
+	{
+		char folder[1100];
+
+		snprintf(folder, sizeof(folder), "%s" PATH_SEPARATOR "%s", updater_directory, updater_partial);
+		succeeded = zip_extract(stream, folder, names, name_count, error, error_size);
+	}
 	if (stream)
 		SDL_CloseIO(stream);
 	if (downloaded)

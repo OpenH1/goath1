@@ -138,6 +138,7 @@ their handlers open opens.
 /* (internet play's server browser: the platform layer's) */
 #include "../src/p2p.h"
 #include "../src/browser_favorites.h"
+#include "../src/dlss_addon.h"
 /* (the server browser's master servers, and Server Setup's publisher key) */
 #include "../src/master_list.h"
 #include "../src/player_link.h" /* port: port/linux/src/player_link.c */
@@ -3108,6 +3109,12 @@ static boolean settings_condition_term(struct widget_instance *list, char const 
 	/* (... NVIDIA DLSS too: where its module and an NVIDIA GPU are) */
 	if (!strcmp(name, "temporal_dlss"))
 		return halo_temporal_dlss_drawn() != 0;
+	/* (the DLSS add-on's download offered: an NVIDIA GPU with Vulkan, an
+	add-on this build pins; and the add-on installed: dlss_addon.c) */
+	if (!strcmp(name, "dlss_addon_offer"))
+		return dlss_addon_offered() != 0;
+	if (!strcmp(name, "dlss_addon_installed"))
+		return dlss_addon_installed() != 0;
 	/* (... MetalFX: Metal's) */
 	if (!strcmp(name, "temporal_metalfx"))
 		return halo_temporal_metalfx_drawn() != 0;
@@ -3923,7 +3930,8 @@ static boolean about_panel(struct widget_instance *row, wchar_t *value, wchar_t 
 	for (length = 0; words[length]; length++)
 	{
 	}
-	snprintf(text, sizeof(text), "|%s. Made from the Xbox game's build 01.01.14.2342.", version);
+	snprintf(text, sizeof(text), "|%s. Made from the Xbox game's build 01.01.14.2342.%s%s", version,
+		dlss_addon_attribution() ? " " : "", dlss_addon_attribution() ? dlss_addon_attribution() : "");
 	discord_widen(text, words + length, (short)(SETTINGS_PANEL_TEXT_LENGTH - length));
 	*help = words;
 	return TRUE;
@@ -4930,6 +4938,37 @@ static boolean settings_segment_pick(struct widget_instance *widget)
 		spinner->parameters.list.selected_index = chosen;
 		ui_play_audio_feedback_sound(SOUND_CURSOR);
 	}
+	return TRUE;
+}
+
+/* "port setting segment" on the Upscaler row that offers NVIDIA DLSS's
+add-on (tools/port_settings.py's temporal_aa_dlss_get): its NVIDIA DLSS
+(DOWNLOAD) chosen opens the add-on's screen (screens/dlss_addon.xml:
+NVIDIA's license, the download), the row's choice kept as it was; FALSE
+for another row (or the new menus' screen not ready) */
+static boolean dlss_addon_segment(struct widget_instance *widget, struct event_record *event, boolean *deleted)
+{
+	struct pc_menu_setting *setting = widget ? settings_setting_of(widget) : NULL;
+	short before, after;
+	int open_deleted = FALSE;
+
+	if (!setting || strcmp(widget->name, "temporal_aa_dlss_get_spinner") || !dlss_addon_offered() ||
+		!menu_screen_open_ready("dlss_addon"))
+	{
+		return FALSE;
+	}
+	before = widget->parameters.list.selected_index;
+	/* (segments: the one clicked, or the next; a spinner: its choice) */
+	if (!widget->visible)
+		settings_segment_pick(widget);
+	after = widget->parameters.list.selected_index;
+	if (after < 0 || after >= setting->value_count || strcmp(setting->values[after], "dlss"))
+		return TRUE;
+	if (before >= 0 && before < setting->value_count && strcmp(setting->values[before], "dlss"))
+		widget->parameters.list.selected_index = before;
+	platform_log("menus: the NVIDIA DLSS add-on's screen opened from Upscaler");
+	menu_screen_open_named(widget, event, "dlss_addon", &open_deleted);
+	*deleted = open_deleted != 0;
 	return TRUE;
 }
 
@@ -16717,6 +16756,8 @@ boolean pc_menu_event_function_invoke(
 		}
 		else if (!strcmp(name, "port setting segment"))
 		{
+			if (dlss_addon_segment(widget, event, widget_deleted))
+				return TRUE;
 			return settings_segment_pick(widget);
 		}
         else if (!strcmp(name,"port mcc share closed"))

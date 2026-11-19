@@ -40,6 +40,7 @@ kept on the item of the same id.
 #include "network_host_controls.h"
 #include "benchmark.h" /* port: port/linux/game/benchmark.c */
 #include "keyboard.h" /* port: port/linux/game/keyboard.c */
+#include "../src/dlss_addon.h" /* port: port/linux/src/dlss_addon.c */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -309,6 +310,8 @@ static boolean screen_call_add_player(struct widget_instance *widget, struct eve
 	boolean *deleted);
 static boolean screen_call_layout(struct widget_instance *widget, struct event_record *event, char const *name,
 	boolean *deleted);
+static boolean screen_call_dlss(struct widget_instance *widget, struct event_record *event, char const *name,
+	boolean *deleted);
 /* the row of the table an action is run for (0 up, on the table), NONE for
 none (a key's, a button's) */
 static short screen_action_row = NONE;
@@ -485,6 +488,13 @@ static struct screen_action const screen_actions[] =
 	/* (the question of a layout's bindings, screens/layout_bindings.xml:
 	USE THIS LAYOUT'S, and back) */
 	{ "layout bindings use", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_layout },
+	/* (the NVIDIA DLSS add-on's, screens/dlss_addon.xml (port/linux/src/
+	dlss_addon.c): NVIDIA's license accepted and the add-on downloaded, the
+	add-on removed, the license's lines paged) */
+	{ "dlss accept", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_dlss },
+	{ "dlss remove", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_dlss },
+	{ "dlss page up", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_dlss },
+	{ "dlss page down", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_dlss },
 };
 
 static char const *const screen_action_names[] =
@@ -505,7 +515,7 @@ static char const *const screen_action_names[] =
 	"close", "close all", "pause leave", "open host controls", "pause end game", "pause chapters",
 	"pause friendly fire", "pause revert", "pause restart", "pause quit",
 	"layout name", "layout legend", "layout clear", "layout shape left", "layout shape right", "layout color left",
-	"layout color right", "layout bindings use",
+	"layout color right", "layout bindings use", "dlss accept", "dlss remove", "dlss page up", "dlss page down",
 };
 
 /* a binding's value: the saved game's mission and difficulty (player 1's
@@ -546,6 +556,8 @@ static char const *const screen_binding_names[] =
 	"benchmark.settings", "benchmark.gpu", "benchmark.cpu", "benchmark.file", "benchmark.scenario",
 	"layout.controller", "layout.title", "layout.state", "layout.shape", "layout.color", "layout.about",
 	"layout.set", "layout.unset", "layout.bindings",
+	"dlss.detail", "dlss.heading", "dlss.status", "dlss.credit", "dlss.license.empty", "dlss.can_accept",
+	"dlss.can_remove",
 };
 
 /* the row sources a table may name (menu_table.h), and their names */
@@ -558,6 +570,7 @@ static struct menu_table_source const *const screen_sources[] =
 	&pc_menu_add_player_source,
 	&benchmark_results_source,
 	&pc_menu_layout_source,
+	&dlss_addon_license_source,
 };
 
 static char const *const screen_source_names[] =
@@ -569,6 +582,7 @@ static char const *const screen_source_names[] =
 	"add.players",
 	"benchmark.results",
 	"layout.controls",
+	"dlss.license",
 };
 
 /* the chats a <chat> may name (menu_table.h), and their names */
@@ -616,6 +630,9 @@ static int screen_value(void *context, char const *name, char *value, unsigned l
 	/* (Controller Layout's: controller_layout_menu.inc) */
 	if (!strncmp(name, "layout.", 7))
 		return pc_menu_layout_value(name, value, size);
+	/* (the NVIDIA DLSS add-on's: port/linux/src/dlss_addon.c) */
+	if (!strncmp(name, "dlss.", 5))
+		return dlss_addon_value(name, value, size);
 	/* (Stick Test's: the sticks' readings and drift, stick_test_menu.inc) */
 	if (!strncmp(name, "stick.", 6))
 		return pc_menu_stick_value(name, value, size);
@@ -734,6 +751,9 @@ static struct screen_place const screen_places[] =
 	/* (the question of a controller layout's bindings, a pop-up: ITS
 	BINDINGS opens it, #1144) */
 	{ "layout_bindings", "screens\\layout_bindings", NULL, NULL },
+	/* (the NVIDIA DLSS add-on, as Frame Rate & Sync's NVIDIA DLSS rows open
+	it: NVIDIA's license, the download, the removal: dlss_addon.c) */
+	{ "dlss_addon", "screens\\dlss_addon", NULL, NULL },
 	/* (the on-screen keyboard, a pop-up: keyboard.c opens it, reads its
 	input each frame it is drawn and takes every event of its own) */
 	{ "keyboard", "screens\\keyboard", keyboard_frame, NULL, NULL, keyboard_event, keyboard_screen_closed },
@@ -2567,6 +2587,16 @@ static boolean screen_call_layout(struct widget_instance *widget, struct event_r
 	if (!strcmp(name, "layout bindings use"))
 		menu_tags_back(widget, event, deleted);
 	return TRUE;
+}
+
+/* the NVIDIA DLSS add-on's actions (port/linux/src/dlss_addon.c) */
+static boolean screen_call_dlss(struct widget_instance *widget, struct event_record *event, char const *name,
+	boolean *deleted)
+{
+	(void)widget;
+	(void)event;
+	*deleted = FALSE;
+	return dlss_addon_action(name) != 0;
 }
 
 /* the lobby's actions of C's own (menu_functions.c's lobby_menu.inc), the

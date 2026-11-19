@@ -54,7 +54,7 @@ from .build_common import (MINIUPNPC_DIR, OPTIMISATION, OWN_CODE_ERRORS, REPLAY_
 from .guest_arch import X32
 from .guest_toolchain import LLVM_VERSION, GuestToolchain, guest_toolchain
 from .ninja_syntax import Writer
-from .vulkan_build import (VULKAN_DIR, dlss_module_windows, fetch_dlss_sdk, fetch_vulkan_headers,
+from .vulkan_build import (VULKAN_DIR, dlss_addon, dlss_module_windows, fetch_dlss_sdk, fetch_vulkan_headers,
                            host_vulkan_renderer)
 from .windows_cross_build import cross_toolchain_prefix
 
@@ -391,6 +391,8 @@ def _generate_host(n: Writer, sln: Any, guest: Dict[str, Path]) -> None:
         try:
             fetch_dlss_sdk(THIRD_PARTY / "dlss", "windows")
             dlss_outputs = dlss_module_windows(n, BUILD, host_cflags, cross_prefix, THIRD_PARTY / "dlss")
+            # (... and the DLSS add-on the game downloads: ninja dlss_addon, tools/dlss_addon.py)
+            dlss_addon(n, "windows", "windows-x64", dlss_outputs, Path("build") / "dlss-addon")
         except (RuntimeError, OSError) as error:
             print(f"Windows build: no DLSS module, cannot fetch NVIDIA's DLSS SDK ({error})", file=sys.stderr)
     n.build(outputs="windows", rule="phony",

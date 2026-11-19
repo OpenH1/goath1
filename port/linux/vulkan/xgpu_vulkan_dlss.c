@@ -7,7 +7,12 @@ the executable, which alone holds NVIDIA's NGX library.
 
 - Loaded before the instance is made: the instance's and the device's
   extensions NGX asks for are added (those they have), and only then; NGX
-  begun once the device is made, on an NVIDIA GPU alone.
+  begun once the device is made, on an NVIDIA GPU alone. The module is the
+  DLSS add-on's, in the player's add-ons folder (dlss_addon_folder.h: the
+  game downloads it, port/linux/src/dlss_addon.c), else a build's beside
+  the executable (configure.py --dlss). Installed while the game runs, it
+  is loaded at the next start: NGX's extensions are the instance's and
+  the device's from their making, which the backend does not make again.
 - Each window (split screen's four) has its own feature, made for its
   render size and output size, and made again when they change. The
   inputs are FSR's (xgpu_vulkan_fsr.h's frame): the colour, the depth
@@ -23,7 +28,9 @@ Render thread alone, as the core.
 #include "xgpu_vulkan_dlss.h"
 #include "host.h"
 #include "host_load_trace.h"
+#include "dlss_addon_folder.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -79,6 +86,40 @@ static struct
 
 /* ---------- the module */
 
+#if !defined(__ANDROID__) && !defined(__APPLE__)
+/* the module at path (NULL: the one beside the executable) loaded: its
+entry, NULL if it could not be */
+static openh1_dlss_entry module_open(const char *path)
+{
+#ifdef _WIN32
+	HMODULE library;
+
+	if (path)
+	{
+		wchar_t wide[1200];
+
+		/* (the DLSS runtime beside it found there: the module's own folder,
+		openh1_dlss.c's) */
+		if (!MultiByteToWideChar(CP_UTF8, 0, path, -1, wide, (int)(sizeof(wide) / sizeof(wide[0]))))
+			return NULL;
+		library = LoadLibraryExW(wide, NULL, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+	}
+	else
+		library = LoadLibraryExW(L"openh1_dlss.dll", NULL,
+			LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+	return library ? (openh1_dlss_entry)(void *)GetProcAddress(library, "openh1_dlss") : NULL;
+#else
+	/* (beside the executable: its rpath's $ORIGIN) */
+	void *library = dlopen(path ? path : "libopenh1_dlss.so", RTLD_NOW | RTLD_LOCAL);
+
+	if (!library && path)
+		host_logf(HOST_LOG_WARN, "vulkan: display.temporal_aa \"dlss\": the DLSS add-on's module did not load (%s)",
+			dlerror());
+	return library ? (openh1_dlss_entry)dlsym(library, "openh1_dlss") : NULL;
+#endif
+}
+#endif
+
 int xgpu_vulkan_dlss_load(void)
 {
 #if defined(__ANDROID__) || defined(__APPLE__)
@@ -90,23 +131,35 @@ int xgpu_vulkan_dlss_load(void)
 		return 1;
 	if (getenv("HALO_VULKAN_NO_DLSS"))
 		return 0;
-#ifdef _WIN32
+	/* (the add-on's, unless it is to be removed: dlss_addon_folder.h) */
 	{
-		HMODULE library = LoadLibraryExW(L"openh1_dlss.dll", NULL,
-			LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+		char folder[1024], path[1200], mark[1200];
+		FILE *file;
 
-		if (library)
-			entry = (openh1_dlss_entry)(void *)GetProcAddress(library, "openh1_dlss");
+		if (dlss_addon_folder(folder, sizeof(folder)))
+		{
+			snprintf(path, sizeof(path), "%s" DLSS_ADDON_SEPARATOR DLSS_ADDON_NAME DLSS_ADDON_SEPARATOR
+				DLSS_ADDON_MODULE, folder);
+			snprintf(mark, sizeof(mark), "%s" DLSS_ADDON_SEPARATOR DLSS_ADDON_NAME DLSS_ADDON_SEPARATOR
+				DLSS_ADDON_REMOVE_MARK, folder);
+			if ((file = fopen(mark, "rb")) != NULL)
+			{
+				fclose(file);
+				path[0] = 0;
+			}
+			else if ((file = fopen(path, "rb")) != NULL)
+				fclose(file);
+			else
+				path[0] = 0;
+			if (path[0])
+				entry = module_open(path);
+			if (entry)
+				host_logf(HOST_LOG_INFO, "vulkan: display.temporal_aa \"dlss\": the DLSS add-on's module, %s", path);
+		}
 	}
-#else
-	{
-		/* (beside the executable: its rpath's $ORIGIN) */
-		void *library = dlopen("libopenh1_dlss.so", RTLD_NOW | RTLD_LOCAL);
-
-		if (library)
-			entry = (openh1_dlss_entry)dlsym(library, "openh1_dlss");
-	}
-#endif
+	/* (a build's, beside the executable) */
+	if (!entry)
+		entry = module_open(NULL);
 	if (!entry)
 		return 0;
 	dlss.calls = entry();

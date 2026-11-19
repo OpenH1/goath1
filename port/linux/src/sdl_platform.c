@@ -452,6 +452,9 @@ void dsound_sdl_output_device_check(void);
 /* updater.c's: the desktop self-updater */
 void updater_start(void);
 void updater_poll(SDL_Window *window);
+/* dlss_addon.c's: what the DLSS add-on's install or removal left, deleted
+before the renderer loads it */
+void dlss_addon_start(void);
 /* the windows' icon, a PNG (tools/embed_assets.py, from port/assets/icon) */
 extern const unsigned int platform_window_icon[];
 extern const unsigned long platform_window_icon_size;
@@ -638,6 +641,7 @@ BOOL platform_sdl_initialize(void)
 	dedicated server's is server.auto_update's) */
 	if (!halo_server_mode())
 	{
+		dlss_addon_start();
 		updater_start();
 		/* (a player's public game on the master servers too, with a
 		publisher key: server_master.c) */

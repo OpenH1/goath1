@@ -104,6 +104,43 @@ no jitter (`motion_vectors_technique`).
   made subject to an open-source license, NVIDIA's attribution is required (splash, credits) and NVIDIA is to be
   told before a commercial release. The repository holds none of the SDK.
 
+### The add-on
+
+The game's packages hold none of NVIDIA's files (`tools/dlss_addon.py check-package`, run by `linux_package.py` and
+`ci_build.py`'s Windows staging). DLSS is an add-on the player downloads from inside the game:
+
+- **Package.** `configure.py --dlss` then `ninja dlss_addon` writes `build/dlss-addon/`:
+  `openh1-dlss-<platform>-<version>.zip` (linux-x86_64: `libopenh1_dlss.so`, `libnvidia-ngx-dlss.so.310.9.16`;
+  windows-x64: `openh1_dlss.dll`, `nvngx_dlss.dll`; and `NVIDIA-DLSS-LICENSE.txt`, `OPENH1-DLSS-LICENSE.txt`), its
+  manifest (`.json`: version, platform, size, SHA-256, each file's) and `openh1-dlss-license-<version>.txt`. The
+  version is the SDK's and the module's source's (`310.9.16-<8 hex>`). The same inputs make the same bytes.
+  `openh1_dlss.c` is MIT licensed (its header; the interface it includes, `xgpu_vulkan_dlss.h`, may be used so too):
+  only the add-on links NVIDIA's NGX.
+- **Pin.** The game downloads only what it is built with: `port/linux/src/dlss_addon_pin.h`, written by
+  `tools/dlss_addon.py pin --tag <release> <manifests>` (each platform's URL,
+  `https://github.com/OpenH1/goath1/releases/download/<tag>/<file>`, its size and SHA-256, and the license's). The
+  committed file pins nothing: such a build offers no download.
+- **In the game** (`port/linux/src/dlss_addon.c`). On an NVIDIA GPU with Vulkan (`dlss_gpu` in the renderer's
+  capabilities) where the pinned add-on is not installed, Frame Rate & Sync's Upscaler row has GET DLSS; choosing it
+  opens `screens/dlss_addon.xml`: NVIDIA's license (fetched and checked against the pin), ACCEPT, the download's
+  progress. The archive is checked (size, SHA-256), unpacked into `<add-ons>/dlss.partial`, its files checked, then
+  renamed into place as `<add-ons>/dlss` with `installed.txt` last; any failure (no network, a refused download, a
+  full disk, an archive that is not the add-on's, a GPU without DLSS) says why and deletes `dlss.partial`. The
+  add-ons' folder is the player's (`dlss_addon_folder.h`: `$XDG_DATA_HOME/openh1/addons`,
+  `%LOCALAPPDATA%\OpenH1\addons`), never the game's.
+- **Restart.** NGX's Vulkan extensions are the instance's and the device's from their making, and the backend does
+  not make them again, so the module (the add-on's first, else a `--dlss` build's beside the executable:
+  `xgpu_vulkan_dlss.c`) is loaded at the next start.
+- **Remove.** Mods > Add-ons > NVIDIA DLSS ADD-ON (and the screen's REMOVE) deletes it. Where its module is loaded and
+  cannot be deleted (Windows) a `remove` file marks it; the next start deletes it before the renderer loads anything.
+- **Credit.** While it is installed, NVIDIA's attribution is in the add-on's screen and in Profiles' ABOUT (GOAT H1)
+  panel. NVIDIA's logo is not shown: its marks' use needs NVIDIA's approval of a sample.
+- **Tests.** `HALO_DLSS_ADDON_URL` (a folder's address, `http://127.0.0.1:<port>/` allowed) serves the pinned files in
+  place of the release; `HALO_DLSS_ADDON_FOLDER` is another add-ons' folder.
+- **The release workflow must** (not done; CI is off): build with `--dlss` on Linux and Windows, `ninja dlss_addon`,
+  upload each `build/dlss-addon/openh1-dlss-*` file to the release, `tools/dlss_addon.py pin --tag <the release's tag>`
+  with both manifests, and only then build the game's packages, so that they pin the uploaded bytes.
+
 ## Milestone 4: Metal's motion and `"metalfx"` (macOS, iOS)
 
 - **Motion.** As Vulkan's. The MSL emitter writes the objects' motion as the SPIR-V emitter does

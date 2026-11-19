@@ -386,6 +386,9 @@ picture, the line, the words for no rows) -->
 	<!-- Controller Layout's (screens/controller_layout.xml, as Button Remapping's Controller Layouts' EDIT BUTTONS ›
 	opens it: menu_functions.c's controller_layout_menu.inc), pausing the game as Settings' pages do -->
 	<widget name="screens/controller_layout" width="640" height="480" flags="pass_unhandled_to_focused_child pause_game" bitmap="main_menu/parts/background_tall"/>
+	<!-- the NVIDIA DLSS add-on's (screens/dlss_addon.xml, as Frame Rate & Sync's NVIDIA DLSS rows open it:
+	port/linux/src/dlss_addon.c), pausing the game as Settings' pages do -->
+	<widget name="screens/dlss_addon" width="640" height="480" flags="pass_unhandled_to_focused_child pause_game" bitmap="main_menu/parts/background_tall"/>
 	<!-- the question of a controller layout's bindings (screens/layout_bindings.xml, as Controller Layouts' ITS
 	BINDINGS opens it), a pop-up -->
 	<widget name="screens/layout_bindings" width="640" height="480" flags="pass_unhandled_to_focused_child"/>

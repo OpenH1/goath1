@@ -243,6 +243,9 @@ struct xgpu_vulkan_capabilities
 	/* display.temporal_aa "dlss": NVIDIA DLSS Super Resolution through NGX
 	(xgpu_vulkan_dlss.c: its module beside the game, an NVIDIA GPU) */
 	int temporal_dlss;
+	/* ... and the GPU an NVIDIA one where DLSS's add-on could run (Linux,
+	Windows): the game offers the add-on's download there (dlss_addon.c) */
+	int dlss_gpu;
 	/* the device, its Vulkan version and driver, in a few words (a
 	report's: port/linux/src/report.c) */
 	char device[96];

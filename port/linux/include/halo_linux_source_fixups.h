@@ -389,6 +389,9 @@ int halo_temporal_upscale_drawn(void);
 /* display.temporal_aa "dlss": the renderer upscales with NVIDIA DLSS (its
 module beside the game, an NVIDIA GPU: port/linux/src/d3d8_device.c) */
 int halo_temporal_dlss_drawn(void);
+/* the GPU an NVIDIA one on Vulkan, where the DLSS add-on could run
+(port/linux/src/dlss_addon.c offers its download) */
+int halo_dlss_gpu(void);
 int halo_temporal_metalfx_drawn(void);
 /* port: the renderer has ray queries (port/linux/src/d3d8_device.c; world_ao.h) */
 int halo_world_ao_ray_queries(void);

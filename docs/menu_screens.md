@@ -763,6 +763,17 @@ has no rows, and the table's words for none (`benchmark.failure`) say why.
 CLOSE (B) goes back to the main menu. The classic menus have no results
 screen: the results are in `benchmarks/` and the log.
 
+## The DLSS add-on
+
+`screens/dlss_addon.xml` (its stand-in `screens/dlss_addon`) is NVIDIA DLSS's add-on (docs/temporal-aa.md, "The
+add-on"), which Frame Rate & Sync's Upscaler row's GET DLSS (on an NVIDIA GPU while it is not installed:
+menu_functions.c's `dlss_addon_segment`) and Mods' NVIDIA DLSS ADD-ON › open. The table is NVIDIA's license, the
+row source `dlss.license` (fetched as the screen opens; left and right page it: `dlss page up`, `dlss page down`);
+the panel says what the add-on is doing (`dlss.heading`, `dlss.status`, NVIDIA's attribution `dlss.credit`), with
+ACCEPT (`dlss accept`, X) while the license is shown and REMOVE (`dlss remove`, Y) while it is installed
+(`dlss.can_accept`, `dlss.can_remove`). B goes back; a download goes on meanwhile. Its words and states are
+port/linux/src/dlss_addon.c's.
+
 ## The pause menu
 
 `screens/pause.xml` (a multiplayer game's) and `screens/pause_campaign.xml`

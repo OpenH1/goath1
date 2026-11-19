@@ -685,6 +685,7 @@ void xgpu_backend_initialize(void)
 	xgpu_backend_capabilities.temporal_upscale = stream.capabilities.temporal_upscale;
 	xgpu_backend_capabilities.temporal_dlss = stream.capabilities.temporal_dlss;
 	xgpu_backend_capabilities.temporal_metalfx = stream.capabilities.temporal_metalfx;
+	xgpu_backend_capabilities.dlss_gpu = stream.capabilities.dlss_gpu;
 	stream.capabilities.device[sizeof(stream.capabilities.device) - 1] = 0;
 }
 

@@ -11315,6 +11315,11 @@ int xgpu_vulkan_initialize(const struct xgpu_vulkan_options *options)
 	/* (display.temporal_aa "dlss": NVIDIA DLSS through NGX, where its module
 	is and the GPU is NVIDIA's: xgpu_vulkan_dlss.c) */
 	vk.capabilities.temporal_dlss = 0;
+#if !defined(__ANDROID__) && !defined(__APPLE__)
+	/* (where the DLSS add-on could run, the game offers it: none with
+	HALO_VULKAN_NO_DLSS) */
+	vk.capabilities.dlss_gpu = vk.properties.vendorID == 0x10de && !getenv("HALO_VULKAN_NO_DLSS");
+#endif
 	if (vk.properties.vendorID == 0x10de && xgpu_vulkan_dlss_load())
 	{
 		struct xgpu_vulkan_dlss_device device;
