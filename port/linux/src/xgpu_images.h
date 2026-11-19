@@ -71,6 +71,9 @@ picture being made, an MCC texture's image); and whether a Custom Edition
 HUD meter's channels are sampled now */
 unsigned long xgpu_texture_choices_serial(void);
 unsigned long xgpu_texture_choices_unkept(void);
+/* the frame of the replacements' (a replacement's use is noted once in
+each: xgpu_backend_set_textures_kept) */
+unsigned long xgpu_texture_replacement_frame(void);
 int xgpu_texture_hud_meter(void);
 unsigned long xgpu_texture_channels(unsigned long address, int stage);
 

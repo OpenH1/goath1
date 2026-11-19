@@ -389,6 +389,11 @@ unsigned long xgpu_texture_choices_unkept(void)
 	return choices_unkept;
 }
 
+unsigned long xgpu_texture_replacement_frame(void)
+{
+	return replacement_frame;
+}
+
 void xgpu_texture_cache_begin_frame(void)
 {
 	unsigned long changed = hud_hires_settings_changed();

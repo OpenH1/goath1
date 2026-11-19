@@ -5599,6 +5599,13 @@ the textures and their headers, the targets, the game's draw inputs and
 the settings' parts it reads), and used again by a later draw with the
 same: its uniforms and dynamic state are made again, from the states that
 change from object to object (draw_uniforms_update), as every draw's are.
+What the backend was told of it is kept with it too: its pipeline's number
+(bound again by it, xgpu_backend_pipeline_numbered, while the numbers have
+not begun again) and its textures as the backend described them (once in
+each frame of the textures' replacements, xgpu_backend_set_textures_kept);
+the draws of a model drawn for each player, part after part, then send
+only what differs from the part before, found without its bytes hashed or
+described again.
 Where it is the preparation of the draw before, with nothing prepared
 between and nothing the backend had forgotten, the backend is not told
 again either (what it would have found the same).
@@ -5645,6 +5652,10 @@ struct retained_draw
 	/* bind_targets' */
 	BOOL has_depth, has_color, hdr_target, deep;
 	int samples;
+	/* what the backend was told: the pipeline's number (0: bound by its
+	key), and the textures as it described them */
+	unsigned long pipeline_number;
+	struct xgpu_backend_textures_kept textures;
 };
 
 /* what else the kept preparations were made from */
@@ -5676,7 +5687,7 @@ static struct
 	unsigned long unkept_at;
 	/* counted (logged every 600 frames with either setting) */
 	unsigned long found, found_told, prepared, not_kept, not_kept_moved, not_kept_target, differed, targets_differed,
-		hash_differed;
+		hash_differed, told_differed;
 	/* the times each of retained_tokens' moved (as a draw was found, or
 	as it was prepared) */
 	unsigned long moved[sizeof(struct retained_tokens) / sizeof(unsigned long)];
@@ -5860,7 +5871,7 @@ static int retained_draw_find(struct vertex_shader_object *program, BOOL immedia
 	told = retained.told == draw && retained.told_count + 1 == prepare_draw_count &&
 		retained.told_sent == xgpu_backend_sent_serial();
 	if (!told)
-		xgpu_backend_set_textures(draw->sources);
+		xgpu_backend_set_textures_kept(draw->sources, &draw->textures, xgpu_texture_replacement_frame());
 	if (!bind_targets(&has_depth))
 	{
 		retained.told = NULL;
@@ -5878,7 +5889,7 @@ static int retained_draw_find(struct vertex_shader_object *program, BOOL immedia
 	}
 	if (device.gl_ready)
 		world_ao_twins();
-	if (told ? !xgpu_backend_pipeline_usable() : !xgpu_backend_pipeline(&draw->key))
+	if (told ? !xgpu_backend_pipeline_usable() : !xgpu_backend_pipeline_numbered(draw->pipeline_number, &draw->key))
 	{
 		retained.told = NULL;
 		return -1;
@@ -5965,6 +5976,22 @@ static void retained_draw_keep(const struct xgpu_texture_source *sources, const 
 		}
 		else
 			retained.found++;
+		/* (and what the backend was told of it: the number its key has now,
+		in the same round of them; its textures, described in this frame) */
+		if (!differs && ((draw->pipeline_number && draw->pipeline_number >> 16 == xgpu_backend_pipeline_number() >> 16 &&
+			draw->pipeline_number != xgpu_backend_pipeline_number()) ||
+			!xgpu_backend_textures_kept_same(sources, &draw->textures, xgpu_texture_replacement_frame())))
+		{
+			if (retained.told_differed++ < 16)
+				platform_log("GPU: retained draws: what the backend was told of a kept draw differs (vertex shader %lu)",
+					program->id);
+		}
+		if (!differs)
+		{
+			draw->pipeline_number = key->pixel.ambient_occlusion & XGPU_AMBIENT_OCCLUSION_WORLD ? 0 :
+				xgpu_backend_pipeline_number();
+			return;
+		}
 	}
 	draw->generation = retained.generation;
 	draw->context = retained.context;
@@ -5977,6 +6004,11 @@ static void retained_draw_keep(const struct xgpu_texture_source *sources, const 
 	draw->samples = target_samples;
 	draw->hdr_target = hdr.target;
 	draw->deep = target_deep;
+	/* (the number of the key just bound: pipeline_bind's; a pipeline with
+	the world's light bound by its key, its stand-in told between) */
+	draw->pipeline_number = key->pixel.ambient_occlusion & XGPU_AMBIENT_OCCLUSION_WORLD ? 0 :
+		xgpu_backend_pipeline_number();
+	draw->textures.frame = 0;
 	/* (a pipeline with the world's light: its stand-in's binding between,
 	world_ao_stand_in, the backend told it again) */
 	if (key->pixel.ambient_occlusion & XGPU_AMBIENT_OCCLUSION_WORLD)
@@ -5997,9 +6029,10 @@ static void retained_draws_frame(void)
 	retained.logged_frame = device.frame;
 	platform_log("GPU: retained draws: %lu found (%lu as the draw before's), %lu prepared, not kept: %lu not "
 		"retainable, %lu as what they were made from moved, %lu sampling a target; %lu differed, "
-		"%lu targets differed, %lu hash differed; moved: memory %lu, choices %lu, images %lu, settings %lu, "
-		"GPU settings %lu, targets %lu", retained.found, retained.found_told, retained.prepared,
-		retained.not_kept, retained.not_kept_moved, retained.not_kept_target, retained.differed, retained.targets_differed, retained.hash_differed, retained.moved[0],
+		"%lu targets differed, %lu hash differed, %lu told differed; moved: memory %lu, choices %lu, images %lu, "
+		"settings %lu, GPU settings %lu, targets %lu", retained.found, retained.found_told, retained.prepared,
+		retained.not_kept, retained.not_kept_moved, retained.not_kept_target, retained.differed, retained.targets_differed,
+		retained.hash_differed, retained.told_differed, retained.moved[0],
 		retained.moved[1], retained.moved[2], retained.moved[3], retained.moved[4], retained.moved[5]);
 	retained.found = retained.found_told = retained.prepared = retained.not_kept = 0;
 	retained.not_kept_moved = retained.not_kept_target = 0;
