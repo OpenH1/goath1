@@ -283,6 +283,9 @@ enum
 	_player_control_debug_rotate_units_bit,
 	_player_control_debug_rotate_all_units_bit,
 	_player_control_debug_ninja_rope_bit,
+	/* port: MCC's Zoom In and Zoom Out (player_control_zoom_input) */
+	_player_control_input_zoom_in_bit,
+	_player_control_input_zoom_out_bit,
 };
 
 /* ---------- macros */
@@ -622,6 +625,34 @@ static void player_action_clear(
 	return;
 }
 
+/* port: the zoom's controls, the original's cycle and MCC's Zoom In and
+Zoom Out (controls.zoom_in and zoom_out, a custom controller layout's
+ZOOM IN and ZOOM OUT: input_abstraction_port_zoom_step) */
+#define PLAYER_CONTROL_INPUT_ZOOM_FLAGS ( \
+	FLAG(_player_control_input_zoom_bit) | \
+	FLAG(_player_control_input_zoom_in_bit) | \
+	FLAG(_player_control_input_zoom_out_bit))
+
+/* port: the zoom level the player's control has after a frame's presses of
+them: the cycle's, as the original's, else a step in or out (to the last
+level and no further, or to none). Only the player's control's zoom level
+changes, which the player's action carries (desired_zoom_level) as it does
+the cycle's: the levels are the cycle's own, so the unit, the network's
+messages and the other machines see a zoom as the cycle could make it. */
+static short player_control_zoom_input(
+	long weapon_index,
+	short zoom_level,
+	unsigned long player_control_flags)
+{
+	if (TEST_FLAG(player_control_flags, _player_control_input_zoom_bit))
+		return weapon_rotate_zoom_level(weapon_index, zoom_level);
+	if (TEST_FLAG(player_control_flags, _player_control_input_zoom_in_bit))
+		return weapon_step_zoom_level(weapon_index, zoom_level, 1);
+	if (TEST_FLAG(player_control_flags, _player_control_input_zoom_out_bit))
+		return weapon_step_zoom_level(weapon_index, zoom_level, -1);
+	return zoom_level;
+}
+
 /* port: whether a menu of the player's own is up (a network game's pause
 menu, which pauses nothing): its controller drives the menu, not the player,
 whose D-pad and sticks would otherwise move them as they move about it. The
@@ -769,14 +800,15 @@ static void handle_one_player_input(
 			if (unit->unit.current_zoom_level != NONE || unit->unit.desired_zoom_level != NONE)
 				unit_unzoom(player->unit_index);
 		}
-		else if (TEST_FLAG(input.player_control_flags, _player_control_input_zoom_bit) &&
+		else if ((input.player_control_flags & PLAYER_CONTROL_INPUT_ZOOM_FLAGS) &&
 			player_control_camera_control_is_active() &&
 			current_weapon_index != NONE &&
 			!cinematic_in_progress())
 		{
-			player->zoom_level = weapon_rotate_zoom_level(
+			player->zoom_level = player_control_zoom_input(
 				current_weapon_index,
-				player->zoom_level);
+				player->zoom_level,
+				input.player_control_flags);
 		}
 
 		if (!director_inhibited_facing(local_player_index))
@@ -2055,6 +2087,16 @@ static void get_local_player_input_blob(
 					input->player_control_flags,
 					_player_control_input_zoom_bit,
 					effective_buttons[_button_scope_zoom] == TRUE);
+				/* port: and MCC's Zoom In and Zoom Out, held back as the
+				zoom is (their presses taken either way) */
+				{
+					short zoom_step = input_abstraction_port_zoom_step(gamepad_index);
+
+					if (TEST_FLAG(control->inhibited_button_bit_vector, _button_scope_zoom))
+						zoom_step = 0;
+					SET_FLAG(input->player_control_flags, _player_control_input_zoom_in_bit, zoom_step > 0);
+					SET_FLAG(input->player_control_flags, _player_control_input_zoom_out_bit, zoom_step < 0);
+				}
 				SET_FLAG(
 					input->unit_control_flags,
 					_unit_control_action_bit,
@@ -2488,7 +2530,8 @@ static void player_control_action_test_check_reset_input_blob(
 	{
 		globals->action_flags |= FLAG(_player_control_back_bit);
 	}
-	if (TEST_FLAG(input->player_control_flags, _player_control_input_zoom_bit))
+	/* port: (Zoom In and Zoom Out a zoom too, for the scripts' tests of it) */
+	if (input->player_control_flags & PLAYER_CONTROL_INPUT_ZOOM_FLAGS)
 	{
 		globals->action_flags |= FLAG(_player_control_zoom_bit);
 	}

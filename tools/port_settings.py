@@ -801,7 +801,7 @@ KEY_BINDINGS = ("controls_setup", "controls_settings_screen")
 # port/linux/game/menu_functions.c's table of them), and its rows for a
 # group's actions (the most a group has), each its action's two bindings
 CONTROL_GROUPS = ["MOVEMENT", "WEAPONS", "ACTIONS", "COMMUNICATION"]
-CONTROL_ROWS = 8
+CONTROL_ROWS = 9
 CONTROL_COMMAND_ROWS = {f"command_{n}" for n in range(1, CONTROL_ROWS + 1)}
 # (an action's row: its name, then its two bindings' columns, to the row's end)
 CONTROL_BINDINGS_X, CONTROL_BINDING_WIDTH = (136, 240), 104

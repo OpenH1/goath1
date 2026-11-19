@@ -1263,7 +1263,7 @@ static const char *const binding_settings[NUMBER_OF_HALO_KEYBOARD_ACTIONS] =
 	"controls.flashlight", "controls.scoreboard", "controls.pause", "controls.screenshot",
 	"controls.report", "controls.push_to_talk", "controls.chat", "controls.team_chat", "controls.party_accept",
 	"controls.vote_yes", "controls.vote_no", "controls.clip", "controls.ping", "controls.walk",
-	"controls.spartan_link", "controls.hide_hud",
+	"controls.spartan_link", "controls.hide_hud", "controls.zoom_in", "controls.zoom_out",
 };
 
 static const struct

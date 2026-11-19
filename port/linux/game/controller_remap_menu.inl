@@ -19,9 +19,9 @@ static wchar_t const *const pad_action_labels[CONTROLLER_REMAP_ACTIONS] = {
     L"SCOREBOARD", L"SCREENSHOT", L"MOVE FORWARD", L"MOVE BACKWARD", L"STRAFE LEFT", L"STRAFE RIGHT",
     L"CHAT", L"TEAM CHAT", L"VEHICLE CHAT", L"PUSH TO TALK",
     L"CAMERA SPEED UP", L"CAMERA SPEED DOWN", L"CAMERA / PLAYER SWITCH", L"CAMERA RAISE", L"CAMERA LOWER", L"CYCLE CAMERA",
-    L"PING"
+    L"PING", L"ZOOM IN", L"ZOOM OUT"
 };
-static short const pad_action_groups[CONTROLLER_REMAP_ACTIONS] = {0,1,1,1,1,2,1,1,0,2,2,2,0,0,0,0,3,3,3,3,4,4,4,4,4,4,3};
+static short const pad_action_groups[CONTROLLER_REMAP_ACTIONS] = {0,1,1,1,1,2,1,1,0,2,2,2,0,0,0,0,3,3,3,3,4,4,4,4,4,4,3,2,2};
 static char const *const pad_group_names[] = { "MOVEMENT", "COMBAT", "GENERAL", "COMMUNICATION", "DEBUG CAMERA" };
 #define PAD_GROUPS ((short)NUMBEROF(pad_group_names))
 static struct

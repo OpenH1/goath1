@@ -209,6 +209,9 @@ static struct
 	long down_times[NUMBER_OF_GAME_CONTROLS];
 	byte reload_ticks;
 	long reload_down_time;
+	/* (Zoom In's and Zoom Out's: input_abstraction_port_zoom_step) */
+	byte zoom_in_ticks, zoom_out_ticks;
+	long zoom_in_down_time, zoom_out_down_time;
 } keyboard_controls[MAXIMUM_GAMEPADS];
 
 static void keyboard_hold_ticks(
@@ -519,6 +522,14 @@ static void keyboard_controls_update(
 		&keyboard_controls[controller_index].reload_ticks,
 		&keyboard_controls[controller_index].reload_down_time,
 		TEST_FLAG(held, HALO_KEYBOARD_RELOAD));
+	keyboard_hold_ticks(
+		&keyboard_controls[controller_index].zoom_in_ticks,
+		&keyboard_controls[controller_index].zoom_in_down_time,
+		TEST_FLAG(held, HALO_KEYBOARD_ZOOM_IN));
+	keyboard_hold_ticks(
+		&keyboard_controls[controller_index].zoom_out_ticks,
+		&keyboard_controls[controller_index].zoom_out_down_time,
+		TEST_FLAG(held, HALO_KEYBOARD_ZOOM_OUT));
 	walk_toggle_update(controller_index, held); /* port */
 	keyboard_controls_apply(controller_index, held, state);
 	return;
@@ -572,6 +583,22 @@ boolean input_abstraction_port_action_only(
 {
 	return controller_index >= 0 && controller_index < MAXIMUM_GAMEPADS &&
 		keyboard_controls[controller_index].ticks[_game_control_action] != 0;
+}
+
+/* (a press is its first frame down, as the zoom's own is to player_control.c:
+a key's first count, a custom layout's press taken once) */
+short input_abstraction_port_zoom_step(
+	short controller_index)
+{
+	unsigned int pad;
+	short step;
+
+	if (controller_index < 0 || controller_index >= MAXIMUM_GAMEPADS)
+		return 0;
+	pad = controller_remap_pressed(controller_index, (1u << PAD_ZOOM_IN) | (1u << PAD_ZOOM_OUT));
+	step = (short)((keyboard_controls[controller_index].zoom_in_ticks == 1 || (pad & (1u << PAD_ZOOM_IN))) -
+		(keyboard_controls[controller_index].zoom_out_ticks == 1 || (pad & (1u << PAD_ZOOM_OUT))));
+	return step;
 }
 
 byte input_abstraction_port_accept(

@@ -624,6 +624,8 @@ the other way side to side. Refer to
 | change the grenade | X |
 | flashlight | Q |
 | zoom | right mouse button, Z |
+| zoom in a step, to the closest and no further, as in MCC | (unbound) |
+| zoom out a step, to no zoom | (unbound) |
 | show the scores (hold) | tab |
 | pause menu | escape |
 | screenshot | F10 |
@@ -645,6 +647,14 @@ party invite (refer to "Parties"). With the stock layouts D-pad Right pings
 (refer to "Pings"), where pings can be sent: in co-op and in games with
 teams it then no longer strafes right; with a custom layout, PING is its
 own action (Button Remapping's COMMUNICATION).
+
+Zoom In and Zoom Out are MCC's: each press steps the zoom one level in
+(stopping at the weapon's closest, never wrapping) or out (to no zoom),
+beside Zoom, which cycles. They start unbound: Key Bindings' WEAPONS (with
+the mouse's wheel, Wheel Up and Wheel Down, which then come off changing
+the weapon's wheel) and a custom layout's ZOOM IN and ZOOM OUT (Button
+Remapping's GENERAL). The zoom they make is one Zoom could make, so other
+players, older versions and OpenCE players see an ordinary zoom.
 
 Always: \` opens the developer console, F12 releases or captures the mouse,
 F11 changes between fullscreen and window. Screenshot (default F10,
@@ -1514,7 +1524,7 @@ the setting for one start of the game. It has priority over the file.
 | `input.flick_stick_time` | `0.1` | `HALO_FLICK_STICK_TIME` | How long a flick of `input.flick_stick` takes, in seconds: `0` turns at once, up to `0.25`; it turns as far either way (fast, then easing in). |
 | `input.invert_mouse` | `false` | `HALO_MOUSE_INVERT=1` sets `true` | `true`: the vertical mouse aim is inverted. |
 | `input.mouse_aim_assist` | `false` | `HALO_MOUSE_AIM_ASSIST` | `true`: the magnetism of the controller also operates for the mouse. `false`: when the mouse moved after the right stick, the view is not slowed or dragged by a target. The autoaim of the bullets operates in both cases. |
-| `controls.<action>` | (the table in "Controls") | `HALO_KEY_<ACTION>` | The keys and mouse buttons of an action, up to two, separated by a comma: `move_forward`, `move_backward`, `strafe_left`, `strafe_right`, `jump`, `crouch`, `walk`, `fire`, `throw_grenade`, `melee`, `reload`, `zoom`, `switch_weapon`, `switch_grenade`, `action`, `flashlight`, `scoreboard`, `pause`, `screenshot`, `report`, `clip`, `hide_hud`, `push_to_talk`, `chat`, `team_chat`, `party_accept`, `vote_yes`, `vote_no`, `ping`. Keys by their names on a US keyboard (`"W"`, `"Space"`, `"Left Ctrl"`, `"F1"`): a key is the one in that place on any keyboard, which Controls Setup shows by its own label (the US name on Android). Buttons: `"Mouse Left"`, `"Mouse Right"`, `"Mouse Middle"`, `"Mouse 4"`, `"Mouse 5"`, `"Wheel"` (either way), `"Wheel Up"`, `"Wheel Down"`. |
+| `controls.<action>` | (the table in "Controls") | `HALO_KEY_<ACTION>` | The keys and mouse buttons of an action, up to two, separated by a comma: `move_forward`, `move_backward`, `strafe_left`, `strafe_right`, `jump`, `crouch`, `walk`, `fire`, `throw_grenade`, `melee`, `reload`, `zoom`, `zoom_in`, `zoom_out`, `switch_weapon`, `switch_grenade`, `action`, `flashlight`, `scoreboard`, `pause`, `screenshot`, `report`, `clip`, `hide_hud`, `push_to_talk`, `chat`, `team_chat`, `party_accept`, `vote_yes`, `vote_no`, `ping`. Keys by their names on a US keyboard (`"W"`, `"Space"`, `"Left Ctrl"`, `"F1"`): a key is the one in that place on any keyboard, which Controls Setup shows by its own label (the US name on Android). Buttons: `"Mouse Left"`, `"Mouse Right"`, `"Mouse Middle"`, `"Mouse 4"`, `"Mouse 5"`, `"Wheel"` (either way), `"Wheel Up"`, `"Wheel Down"`. |
 | `game.downloaded_maps` | `""` | `HALO_DOWNLOADED_MAPS` | Maps to play as downloaded maps, besides the maps that map sharing downloaded (it names them in `downloaded_maps.txt` in `custom_maps`): their names (`bloodgulch`, `hugeass`), separated by commas, or `"*"` for all the maps. The scripts of a downloaded map cannot change the settings of the player or the games of other players. `debug.txt` names what the game refused. |
 | `game.console_log` | `"important"` | `HALO_CONSOLE_LOG` | What the console shows on the screen. `"important"`: bans, players that the host drops for cheating, the reasons that the game refuses a command, and the asserts that stop the game. `"all"`: all the lines. `"none"`: only the asserts that stop the game. The output of a command always shows. `debug.txt` gets all the lines. |
 | `game.language` | `""` | `HALO_LANGUAGE` | The language of the menus: `ja`, `de`, `fr`, `es` or `it`. Empty: English. |
