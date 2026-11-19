@@ -646,6 +646,181 @@ static void structure_render_pass(
 	return;
 }
 
+/* port: debug.retained_shadows: a shadow's receivers, the level's surfaces
+in its volume (structure_render_shadow), kept for its place. The volume's
+surfaces of every view (structure_visibility_surfaces_unfiltered) are found
+once and kept, sorted, for its exact bounds (an object at rest's shadow);
+each frame takes those the window's view has (render.environment_surface_flags),
+which are the surfaces the walk would find, in the order it would draw them:
+it takes the view's surfaces among the same leaves' and clusters', and the
+triangles are sorted (structure_render_dynamic_triangles_from_indices). A
+volume with as many surfaces as the walk takes (MAXIMUM_LOCALLY_RENDERED_SURFACES)
+is walked each frame, as before. Returns NONE where the walk is to be made. */
+
+enum
+{
+	SHADOW_RECEIVER_ENTRIES = 64,
+	SHADOW_RECEIVER_PLANES = 6,
+};
+
+struct shadow_receivers_key
+{
+	struct structure_bsp const *structure_bsp;
+	real_point3d center;
+	real radius;
+	real_rectangle3d bounds;
+	long plane_count;
+	real_plane3d planes[SHADOW_RECEIVER_PLANES];
+};
+
+static struct
+{
+	unsigned long long hash;
+	struct shadow_receivers_key key;
+	long *surfaces;
+	long count;
+	long capacity;
+	unsigned long used;
+	boolean valid;
+} shadow_receivers[SHADOW_RECEIVER_ENTRIES];
+static unsigned long shadow_receivers_clock = 0;
+static long shadow_receivers_frame = NONE;
+static boolean shadow_receivers_on = FALSE;
+static unsigned long shadow_receivers_hits = 0;
+static unsigned long shadow_receivers_walks = 0;
+static unsigned long shadow_receivers_frames = 0;
+
+int config_boolean(char const *name);
+void platform_log(char const *format, ...);
+
+static long structure_render_shadow_receivers(
+	long *surface_indices,
+	real_point3d const *center,
+	real radius,
+	real_rectangle3d const *bounds,
+	short plane_count,
+	real_plane3d const *planes)
+{
+	struct shadow_receivers_key key;
+	unsigned long long hash = 1469598103934665603ULL;
+	unsigned char const *bytes = (unsigned char const *)&key;
+	long entry = NONE;
+	long oldest = 0;
+	long count;
+	long index;
+
+	if (render.frame_index != shadow_receivers_frame)
+	{
+		shadow_receivers_frame = render.frame_index;
+		shadow_receivers_on = config_boolean("debug.retained_shadows") != 0;
+		if (shadow_receivers_on && ++shadow_receivers_frames >= 1200)
+		{
+			platform_log("retained shadows: %lu receivers' walks kept of %lu", shadow_receivers_hits,
+				shadow_receivers_hits + shadow_receivers_walks);
+			shadow_receivers_frames = 0;
+			shadow_receivers_hits = 0;
+			shadow_receivers_walks = 0;
+		}
+	}
+	if (!shadow_receivers_on || !bounds || plane_count < 0 || plane_count > SHADOW_RECEIVER_PLANES ||
+		(plane_count && !planes))
+	{
+		return NONE;
+	}
+
+	csmemset(&key, 0, sizeof(key));
+	key.structure_bsp = global_structure_bsp_get();
+	key.center = *center;
+	key.radius = radius;
+	key.bounds = *bounds;
+	key.plane_count = plane_count;
+	if (plane_count)
+	{
+		csmemcpy(key.planes, planes, plane_count * sizeof(real_plane3d));
+	}
+	for (index = 0; index < (long)sizeof(key); index++)
+	{
+		hash = (hash ^ bytes[index]) * 1099511628211ULL;
+	}
+
+	shadow_receivers_clock++;
+	for (index = 0; index < SHADOW_RECEIVER_ENTRIES; index++)
+	{
+		if (shadow_receivers[index].valid && shadow_receivers[index].hash == hash &&
+			!memcmp(&shadow_receivers[index].key, &key, sizeof(key)))
+		{
+			entry = index;
+			break;
+		}
+		if (!shadow_receivers[index].valid ||
+			(shadow_receivers[oldest].valid && shadow_receivers[index].used < shadow_receivers[oldest].used))
+		{
+			oldest = index;
+		}
+	}
+
+	if (entry == NONE)
+	{
+		structure_visibility_surfaces_unfiltered = TRUE;
+		count = structure_visibility_build_surfaces(
+			surface_indices,
+			MAXIMUM_LOCALLY_RENDERED_SURFACES,
+			center,
+			radius,
+			bounds,
+			plane_count,
+			planes,
+			0,
+			NULL);
+		structure_visibility_surfaces_unfiltered = FALSE;
+		if (count >= MAXIMUM_LOCALLY_RENDERED_SURFACES)
+		{
+			return NONE;
+		}
+		entry = oldest;
+		if (shadow_receivers[entry].capacity < count)
+		{
+			long capacity = count < 64 ? 64 : count;
+			long *grown = (long *)realloc(shadow_receivers[entry].surfaces, capacity * sizeof(long));
+
+			if (!grown)
+			{
+				return NONE;
+			}
+			shadow_receivers[entry].surfaces = grown;
+			shadow_receivers[entry].capacity = capacity;
+		}
+		structure_render_sort_surface_indices(surface_indices, count);
+		if (count)
+		{
+			csmemcpy(shadow_receivers[entry].surfaces, surface_indices, count * sizeof(long));
+		}
+		shadow_receivers[entry].count = count;
+		shadow_receivers[entry].hash = hash;
+		shadow_receivers[entry].key = key;
+		shadow_receivers[entry].valid = TRUE;
+		shadow_receivers_walks++;
+	}
+	else
+	{
+		shadow_receivers_hits++;
+	}
+	shadow_receivers[entry].used = shadow_receivers_clock;
+
+	count = 0;
+	for (index = 0; index < shadow_receivers[entry].count; index++)
+	{
+		long surface_index = shadow_receivers[entry].surfaces[index];
+
+		if (BIT_VECTOR_TEST_FLAG(render.environment_surface_flags, surface_index))
+		{
+			surface_indices[count++] = surface_index;
+		}
+	}
+
+	return count;
+}
+
 /* ---------- public code */
 
 void structure_render_preprocess(
@@ -1118,16 +1293,28 @@ void structure_render_shadow(
 		return;
 	}
 
-	surface_count = structure_visibility_build_surfaces(
+	/* port: debug.retained_shadows: the surfaces kept for the shadow's
+	place (structure_render_shadow_receivers) */
+	surface_count = structure_render_shadow_receivers(
 		surface_indices,
-		MAXIMUM_LOCALLY_RENDERED_SURFACES,
 		bounding_sphere_center,
 		bounding_sphere_radius,
 		bounding_box,
 		bounding_surface_count,
-		bounding_surfaces,
-		0,
-		NULL);
+		bounding_surfaces);
+	if (surface_count < 0)
+	{
+		surface_count = structure_visibility_build_surfaces(
+			surface_indices,
+			MAXIMUM_LOCALLY_RENDERED_SURFACES,
+			bounding_sphere_center,
+			bounding_sphere_radius,
+			bounding_box,
+			bounding_surface_count,
+			bounding_surfaces,
+			0,
+			NULL);
+	}
 
 	dynamic_triangles_index = structure_render_build_dynamic_triangles(
 		surface_indices,

@@ -340,6 +340,10 @@ static boolean warned_about_portal_hull_vertices;
 static boolean warned_about_invalid_structure_bsp;
 static boolean warned_about_rendered_clusters;
 static boolean warned_about_structure_bsp_depth;
+/* port: structure_visibility_build_surfaces finds every surface in its
+bounds, not those of the window's view alone (render.environment_surface_flags),
+while this is set (structure_render.c: a shadow's receivers, kept) */
+boolean structure_visibility_surfaces_unfiltered = FALSE;
 static boolean warned_about_environment_surfaces;
 static struct structure_visibility_globals structure_visibility_globals;
 static struct profile_section render_structure_visibility_portal_traversal =
@@ -1259,7 +1263,8 @@ static short structure_visibility_build_surfaces_traverse_clusters(
 						continue;
 					}
 
-					if (BIT_VECTOR_TEST_FLAG(render.environment_surface_flags, *surface_index_buffer) &&
+					if ((structure_visibility_surfaces_unfiltered || /* port: (below) */
+				BIT_VECTOR_TEST_FLAG(render.environment_surface_flags, *surface_index_buffer)) &&
 						!BIT_VECTOR_TEST_FLAG(surface_flags, *surface_index_buffer))
 					{
 						if (found_count >= maximum_count)
@@ -1369,7 +1374,8 @@ static short structure_visibility_build_surfaces_traverse_leaf(
 				continue;
 			}
 
-			if (BIT_VECTOR_TEST_FLAG(render.environment_surface_flags, surface_index) &&
+			if ((structure_visibility_surfaces_unfiltered || /* port: (below) */
+				BIT_VECTOR_TEST_FLAG(render.environment_surface_flags, surface_index)) &&
 				!BIT_VECTOR_TEST_FLAG(surface_flags, surface_index))
 			{
 				if (found_count >= maximum_count)

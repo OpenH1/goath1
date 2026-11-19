@@ -57,6 +57,8 @@ boolean structure_visibility_find_mirror(
 	struct render_camera const *camera,
 	struct render_frustum const *frustum,
 	struct render_mirror *result);
+/* port: (structure_visibility.c) */
+extern boolean structure_visibility_surfaces_unfiltered;
 short structure_visibility_build_surfaces(
 	long *surface_indices,
 	short maximum_count,

@@ -5290,6 +5290,19 @@ static void world_ao_stand_in(struct vertex_shader_object *program, const struct
 /* the draw's description to the backend: its textures, its targets, its
 pipeline (shaders and fixed-function state), its dynamic state and its
 uniforms; FALSE if it is not drawn */
+/* d3d8_draw_state_kept: asked, each prepare_draw counted, and the count
+when a plain indexed draw (not a cut-out's, nor the dynamic lights' parts)
+was last prepared */
+static BOOL draw_state_kept_asked;
+static unsigned long prepare_draw_count;
+static unsigned long plain_prepared_count = ~0UL;
+static BOOL plain_drawing;
+
+void d3d8_draw_state_kept(int kept)
+{
+	draw_state_kept_asked = kept != 0;
+}
+
 static BOOL prepare_draw(BOOL immediate, unsigned long primitive)
 {
 	struct vertex_shader_object *program = current_program();
@@ -5305,6 +5318,7 @@ static BOOL prepare_draw(BOOL immediate, unsigned long primitive)
 	int stage;
 	double traced;
 
+	prepare_draw_count++;
 	preparation.duplicate = FALSE;
 	preparation.sample = preparation.active && preparation.trace &&
 		((preparation.attempts ^ (preparation.attempts >> 6)) & 63) == 0;
@@ -6301,7 +6315,9 @@ static void draw_indexed_cutout(D3DPRIMITIVETYPE primitive_type, UINT vertex_cou
 
 	if (stage < 0)
 	{
+		plain_drawing = !inputs.lights_environment;
 		draw_indexed_vertices(primitive_type, vertex_count, index_data);
+		plain_drawing = FALSE;
 		return;
 	}
 	/* (a map's preparation: as one draw too, a model's small in the view, so
@@ -6343,8 +6359,27 @@ static void draw_indexed_vertices(D3DPRIMITIVETYPE primitive_type, UINT vertex_c
 	BOOL mirrored;
 	double traced;
 
-	if (!vertex_count || !index_data || !prepare_draw(FALSE, primitive_type))
+	/* (d3d8_draw_state_kept: as the plain draw prepared last, and nothing
+	prepared since) */
+	BOOL kept = draw_state_kept_asked && plain_drawing && plain_prepared_count == prepare_draw_count &&
+		!preparation.active && !journal_recording && !xgpu_manifest_recording();
+
+#ifdef HALO_VR
+	kept = FALSE;
+#endif
+	if (!vertex_count || !index_data)
 		return;
+	if (!kept)
+	{
+		if (!prepare_draw(FALSE, primitive_type))
+		{
+			plain_prepared_count = ~0UL;
+			return;
+		}
+		plain_prepared_count = plain_drawing ? prepare_draw_count : ~0UL;
+	}
+	else
+		stats.draws++;
 	traced = preparation_time();
 	/* quads are drawn as triangles, from indices made for the draw */
 	mirrored = primitive_type != D3DPT_QUADLIST && xgpu_backend_capabilities.base_vertex &&

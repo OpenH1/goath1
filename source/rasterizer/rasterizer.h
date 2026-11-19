@@ -621,6 +621,16 @@ void rasterizer_shadow_atlas_receive(
 	short region);
 void rasterizer_shadow_atlas_end(
 	void);
+/* port: debug.retained_shadows (rasterizer_xbox_shadows.c): the view drawing
+the frame's shadows, before the atlas begins; after a caster begins, whether
+its models are walked for their draws' hash alone, and after that walk,
+whether its region is kept (else its models are walked again, drawn) */
+void rasterizer_shadow_retained_view(
+	long view);
+boolean rasterizer_shadow_retained_fingerprinting(
+	void);
+boolean rasterizer_shadow_retained_caster(
+	void);
 void rasterizer_environment_diffuse_textures_end(
 	void);
 void rasterizer_environment_diffuse_texture_draw(

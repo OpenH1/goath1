@@ -197,6 +197,18 @@ static long shadow_atlas_y(
 	short region);
 static void shadow_atlas_caster_target(
 	short region);
+/* port: the caster's target (its region's, NONE: its map's), the shadow
+model's texture transform, and the retained casters' hash (below) */
+static void shadow_caster_target(
+	short region);
+static void shadow_model_vertex_constants(
+	struct shader_model_definition const *model,
+	real_vector4d vertex_constants[3]);
+static void shadow_retained_hash(
+	void const *data,
+	unsigned long size);
+static void shadow_retained_frame_begin(
+	void);
 
 /* ---------- port: the shadow atlas
 
@@ -275,6 +287,67 @@ static struct
 	boolean used;
 } shadow_atlas_shadows[SHADOW_ATLAS_REGIONS];
 
+/* ---------- port: the retained casters (debug.retained_shadows)
+
+A caster drawn into the atlas the frame before, whose draws this frame would
+be the same, is not drawn nor blurred again: its region of the chain's last
+atlas holds what they would make. Its draws are known before any is made: its
+models are walked once with nothing drawn (shadow_fingerprinting), their
+draws' every input hashed (the shadow's projection, each model's nodes'
+matrices, each part's shader, map, triangles, vertices and texture
+transform); the same hash as its region's the frame before keeps the region,
+else the caster is drawn as before (its models walked again) into the region
+it had, or one no caster had. Each region's cell is emptied alone, as on a
+tile-based GPU (shadow_atlas_set_target), never the whole atlas, so a kept
+region stays as it was; the chain draws the regions drawn this frame alone.
+The receivers are drawn as before, each sampling its own region. Kept only
+while the atlas's class, the maps' scale, the settings and the view drawing
+the shadows (a window's: split screen and mirrors alternate) stay the same.
+
+Not yet the same pictures: a kept region's shadow is drawn fainter than one
+drawn again (measured: the regions, cells and order alone, every caster
+drawn, are the same pictures), so the casters are kept only with
+HALO_RETAINED_CASTERS set as well, for measuring. */
+
+static boolean shadow_retained_on = FALSE;
+static boolean shadow_fingerprinting = FALSE;
+static unsigned long long shadow_fingerprint = 0;
+static long shadow_caster_object = NONE;
+/* the regions taken this frame, and those kept from the frame before */
+static unsigned long long shadow_atlas_claimed = 0;
+static unsigned long long shadow_atlas_kept = 0;
+/* each region's caster as it was last drawn (NONE: none) */
+static struct
+{
+	long object_index;
+	unsigned long long fingerprint;
+	unsigned long long unposed_fingerprint;
+	boolean used;
+} shadow_atlas_owners[SHADOW_ATLAS_REGIONS];
+/* (diagnostic: the draws' hash but for the nodes' matrices) */
+static unsigned long long shadow_unposed_fingerprint = 0;
+static boolean shadow_hashing_pose = FALSE;
+static unsigned long shadow_retained_posed_count = 0;
+static short shadow_retained_class = NONE;
+static long shadow_retained_scale = 0;
+static unsigned long shadow_retained_changes = 0;
+static long shadow_retained_view = NONE;
+/* the casters and those kept, logged now and then */
+static unsigned long shadow_retained_casters = 0;
+static unsigned long shadow_retained_kept_count = 0;
+static unsigned long shadow_retained_frames = 0;
+/* the shadow's receivers drawn yet, and their vertices' type
+(_rasterizer_environment_shadow_draw: d3d8_draw_state_kept) */
+static boolean shadow_receiver_drawn = FALSE;
+static long shadow_receiver_type = NONE;
+/* debug.retained_shadows, read as the frame's casters begin */
+static boolean shadow_receivers_kept = FALSE;
+
+int config_boolean(char const *name);
+unsigned long config_changes(void);
+void platform_log(char const *format, ...);
+char *getenv(char const *name);
+
 /* ---------- globals */
 
 extern D3DDevice *global_d3d_device;
@@ -315,6 +388,7 @@ boolean _rasterizer_environment_shadow_begin(
 		147,
 		global_d3d_device);
 
+	shadow_fingerprinting = FALSE; /* port: (the retained casters) */
 	if (global_window_parameters.rasterizer_target ==
 			_rasterizer_target_render_primary &&
 		rasterizer_debug_options.draw_environment_shadows)
@@ -402,21 +476,25 @@ boolean _rasterizer_environment_shadow_begin(
 		{
 			shadow_atlas_casters++;
 		}
-		shadow_atlas_region = shadow_atlas_active && shadow_atlas_count < shadow_atlas_capacity(shadow_atlas_class) ?
-			shadow_atlas_count++ :
-			NONE;
-		if (shadow_atlas_region != NONE)
+		/* port: (the retained casters, above) its region chosen once its
+		draws are known (rasterizer_shadow_retained_caster) */
+		shadow_fingerprinting = shadow_retained_on && shadow_atlas_active;
+		shadow_atlas_region = NONE;
+		if (shadow_fingerprinting)
 		{
-			shadow_atlas_caster_target(shadow_atlas_region);
+			shadow_caster_object = object_index;
+			shadow_fingerprint = 1469598103934665603ULL;
+			shadow_unposed_fingerprint = 1469598103934665603ULL;
+			shadow_retained_hash(vsh_constants__screenproj, sizeof(vsh_constants__screenproj));
+			shadow_retained_hash(&object_bounding_radius, sizeof(object_bounding_radius));
 		}
 		else
 		{
-			rasterizer_set_target(
-				2,
-				0,
-				rasterizer_debug_options.shadow_debug_enabled ? 0x88888888 : 0,
-				TRUE,
-				FALSE);
+			if (shadow_atlas_active && shadow_atlas_count < shadow_atlas_capacity(shadow_atlas_class))
+			{
+				shadow_atlas_region = shadow_atlas_count++;
+			}
+			shadow_caster_target(shadow_atlas_region);
 		}
 		rasterizer_set_stencil_mode(0);
 
@@ -468,10 +546,24 @@ void _rasterizer_environment_shadow_model_begin(
 			245,
 			parameters);
 
-		rasterizer_set_model_skinning(&parameters->skinning);
-
 		local_parameters = parameters;
 		shadow_used = TRUE;
+		/* port: (the retained casters) its nodes' matrices hashed, not set */
+		if (shadow_fingerprinting)
+		{
+			short count = parameters->skinning.node_matrix_count;
+
+			shadow_retained_hash(&count, sizeof(count));
+			if (count > 0 && parameters->skinning.node_matrices)
+			{
+				shadow_hashing_pose = TRUE;
+				shadow_retained_hash(parameters->skinning.node_matrices, count * sizeof(real_matrix4x3));
+				shadow_hashing_pose = FALSE;
+			}
+			return;
+		}
+
+		rasterizer_set_model_skinning(&parameters->skinning);
 
 		if (rasterizer_debug_options.statistics_mode ==
 			_rasterizer_statistics_mode_enabled)
@@ -532,6 +624,39 @@ void _rasterizer_environment_shadow_model_draw(
 				288,
 				local_parameters);
 
+			/* port: (the retained casters) the draw's inputs hashed, nothing
+			drawn: its shader and map, triangles and vertices, and texture
+			transform (shadow_model_vertex_constants, as below) */
+			if (shadow_fingerprinting)
+			{
+				real_vector4d vertex_constants[3];
+				struct
+				{
+					void const *shader;
+					void const *triangle_buffer;
+					void const *vertex_buffer;
+					long triangle_count;
+					long triangle_type;
+					long vertex_type;
+					short bitmap_index;
+					word flags;
+				} draw;
+
+				csmemset(&draw, 0, sizeof(draw));
+				draw.shader = shader;
+				draw.triangle_buffer = triangle_buffer;
+				draw.vertex_buffer = vertex_buffer;
+				draw.triangle_count = triangle_buffer->count;
+				draw.triangle_type = triangle_buffer->type;
+				draw.vertex_type = vertex_buffer->type;
+				draw.bitmap_index = bitmap_index;
+				draw.flags = model->flags;
+				shadow_retained_hash(&draw, sizeof(draw));
+				shadow_model_vertex_constants(model, vertex_constants);
+				shadow_retained_hash(vertex_constants, sizeof(vertex_constants));
+				return;
+			}
+
 			if (TEST_FLAG(model->flags, _shader_model_two_sided_bit))
 			{
 				IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_CULLMODE, D3DCULL_NONE);
@@ -586,29 +711,9 @@ void _rasterizer_environment_shadow_model_draw(
 			}
 
 			{
-				real_vector4d vertex_constants[3] =
-				{
-					{
-						model->detail_map_scale,
-						model->detail_map_scale * model->detail_map_v_scale,
-						1.0f,
-						1.0f
-					},
-					{1.0f, 0.0f, 0.0f, 0.0f},
-					{0.0f, 1.0f, 0.0f, 0.0f}
-				};
+				real_vector4d vertex_constants[3];
 
-				shader_texture_animation_evaluate(
-					&model->animation,
-					&local_parameters->animation,
-					local_parameters->base_map_scale.i * model->map_scale.i,
-					local_parameters->base_map_scale.j * model->map_scale.j,
-					0.0f,
-					0.0f,
-					0.0f,
-					global_frame_parameters.game_time_sec,
-					&vertex_constants[1],
-					&vertex_constants[2]);
+				shadow_model_vertex_constants(model, vertex_constants);
 				IDirect3DDevice8_SetVertexShaderConstant(
 					global_d3d_device,
 					-84,
@@ -700,6 +805,7 @@ void _rasterizer_environment_shadow_draw(
 	{
 		if (!shadow_setup)
 		{
+			shadow_receiver_drawn = FALSE; /* port: (below) */
 			/* port: a shadow of the atlas is blurred already, into its region
 			of the chain's last atlas, sampled as its own map
 			(rasterizer_shadow_atlas_convolve) */
@@ -985,11 +1091,18 @@ void _rasterizer_environment_shadow_draw(
 		}
 
 		rasterizer_set_stencil_mode(RASTERIZER_STENCIL_MODE_REJECT);
+		/* port: debug.retained_shadows: the shadow's draws after its first
+		(its setup's), of other materials' vertices of the same type, keep
+		its state as it was prepared (d3d8_draw_state_kept) */
+		d3d8_draw_state_kept(shadow_receivers_kept && shadow_receiver_drawn && vertex_buffer->type == shadow_receiver_type);
 		rasterizer_draw_dynamic_triangles_static_vertices(
 			dynamic_triangle_buffer_index,
 			first_triangle_index,
 			triangle_count,
 			vertex_buffer);
+		d3d8_draw_state_kept(FALSE);
+		shadow_receiver_drawn = TRUE;
+		shadow_receiver_type = vertex_buffer->type;
 
 		if (rasterizer_debug_options.statistics_mode ==
 			_rasterizer_statistics_mode_enabled)
@@ -1367,13 +1480,15 @@ static void shadow_atlas_set_target(
 	viewport.Height = shadow_atlas_heights[shadow_atlas_class];
 	viewport.MinZ = 0.0f;
 	viewport.MaxZ = 1.0f;
-	if (region != NONE && d3d8_clears_alone())
+	/* port: (the retained casters) each cell emptied alone, and what the
+	atlas holds elsewhere kept (not d3d8_clear_viewport_alone's) */
+	if (region != NONE && (d3d8_clears_alone() || shadow_retained_on))
 	{
 		D3DVIEWPORT8 cell = viewport;
 
 		shadow_atlas_cell(region, &cell);
 		IDirect3DDevice8_SetViewport(global_d3d_device, &cell);
-		if (clear)
+		if (clear && !shadow_retained_on)
 		{
 			d3d8_clear_viewport_alone(0);
 		}
@@ -1548,6 +1663,7 @@ boolean rasterizer_shadow_atlas_begin(
 	{
 		shadow_atlas_active = TRUE;
 	}
+	shadow_retained_frame_begin();
 
 	return shadow_atlas_active;
 }
@@ -1557,10 +1673,15 @@ short rasterizer_shadow_atlas_caster_end(
 {
 	short region = shadow_atlas_region;
 
+	shadow_fingerprinting = FALSE; /* port: (the retained casters) */
 	if (region != NONE)
 	{
 		shadow_atlas_shadows[region].used = shadow_used;
 		shadow_atlas_region = NONE;
+		if (shadow_retained_on)
+		{
+			shadow_atlas_owners[region].used = shadow_used;
+		}
 	}
 
 	return region;
@@ -1588,9 +1709,20 @@ void rasterizer_shadow_atlas_convolve(
 	(its quads cover their regions) */
 	for (pass = 0; pass < pass_count; pass++)
 	{
-		shadow_atlas_states(pass & 1);
-		for (region = 0; region < shadow_atlas_count; region++)
+		/* port: (the retained casters) the regions drawn this frame alone,
+		each cell emptied alone (shadow_atlas_set_target) */
+		if (shadow_retained_on && !(shadow_atlas_claimed & ~shadow_atlas_kept))
 		{
+			break;
+		}
+		shadow_atlas_states(pass & 1);
+		for (region = 0; region < (shadow_retained_on ? SHADOW_ATLAS_REGIONS : shadow_atlas_count); region++)
+		{
+			if (shadow_retained_on &&
+				!((shadow_atlas_claimed & ~shadow_atlas_kept) & (1ULL << region)))
+			{
+				continue;
+			}
 			shadow_atlas_set_target(!(pass & 1), region, region == 0);
 			shadow_atlas_quad(region, shadow_atlas_pass_offset(pass, scale));
 		}
@@ -1612,7 +1744,8 @@ void rasterizer_shadow_atlas_receive(
 	match_assert(
 		"c:\\halo\\SOURCE\\rasterizer\\xbox\\rasterizer_xbox_shadows.c",
 		0,
-		region >= 0 && region < shadow_atlas_count);
+		region >= 0 && (shadow_retained_on ? region < SHADOW_ATLAS_REGIONS && (shadow_atlas_claimed & (1ULL << region)) :
+			region < shadow_atlas_count));
 
 	local_shadow_matrix = shadow_atlas_shadows[region].matrix;
 	local_shadow_color = shadow_atlas_shadows[region].color;
@@ -1636,4 +1769,259 @@ void rasterizer_shadow_atlas_end(
 	shadow_atlas_receiving = NONE;
 
 	return;
+}
+
+/* ---------- port: the retained casters (above) */
+
+static void shadow_caster_target(
+	short region)
+{
+	if (region != NONE)
+	{
+		shadow_atlas_caster_target(region);
+	}
+	else
+	{
+		rasterizer_set_target(
+			2,
+			0,
+			rasterizer_debug_options.shadow_debug_enabled ? 0x88888888 : 0,
+			TRUE,
+			FALSE);
+	}
+
+	return;
+}
+
+static void shadow_model_vertex_constants(
+	struct shader_model_definition const *model,
+	real_vector4d vertex_constants[3])
+{
+	vertex_constants[0].i = model->detail_map_scale;
+	vertex_constants[0].j = model->detail_map_scale * model->detail_map_v_scale;
+	vertex_constants[0].k = 1.0f;
+	vertex_constants[0].l = 1.0f;
+	vertex_constants[1].i = 1.0f;
+	vertex_constants[1].j = 0.0f;
+	vertex_constants[1].k = 0.0f;
+	vertex_constants[1].l = 0.0f;
+	vertex_constants[2].i = 0.0f;
+	vertex_constants[2].j = 1.0f;
+	vertex_constants[2].k = 0.0f;
+	vertex_constants[2].l = 0.0f;
+
+	shader_texture_animation_evaluate(
+		&model->animation,
+		&local_parameters->animation,
+		local_parameters->base_map_scale.i * model->map_scale.i,
+		local_parameters->base_map_scale.j * model->map_scale.j,
+		0.0f,
+		0.0f,
+		0.0f,
+		global_frame_parameters.game_time_sec,
+		&vertex_constants[1],
+		&vertex_constants[2]);
+
+	return;
+}
+
+/* FNV-1a, 64 bits, over the bytes */
+static void shadow_retained_hash(
+	void const *data,
+	unsigned long size)
+{
+	unsigned char const *bytes = (unsigned char const *)data;
+	unsigned long long hash = shadow_fingerprint;
+	unsigned long index;
+
+	for (index = 0; index < size; index++)
+	{
+		hash = (hash ^ bytes[index]) * 1099511628211ULL;
+	}
+	shadow_fingerprint = hash;
+	if (!shadow_hashing_pose)
+	{
+		hash = shadow_unposed_fingerprint;
+		for (index = 0; index < size; index++)
+		{
+			hash = (hash ^ bytes[index]) * 1099511628211ULL;
+		}
+		shadow_unposed_fingerprint = hash;
+	}
+
+	return;
+}
+
+static void shadow_retained_forget(
+	void)
+{
+	short region;
+
+	for (region = 0; region < SHADOW_ATLAS_REGIONS; region++)
+	{
+		shadow_atlas_owners[region].object_index = NONE;
+		shadow_atlas_owners[region].fingerprint = 0;
+		shadow_atlas_owners[region].used = FALSE;
+	}
+
+	return;
+}
+
+/* the view drawing the frame's shadows (render_object_shadows): a window's,
+its player's, a mirror's */
+void rasterizer_shadow_retained_view(
+	long view)
+{
+	if (view != shadow_retained_view)
+	{
+		shadow_retained_class = NONE;
+	}
+	shadow_retained_view = view;
+
+	return;
+}
+
+/* the casters' frame begins (rasterizer_shadow_atlas_begin): what the
+regions hold is forgotten if the atlas's class, the maps' scale or the
+settings changed, or the setting is off */
+static void shadow_retained_frame_begin(
+	void)
+{
+	long scale = halo_shadow_map_scale();
+	unsigned long changes = config_changes();
+	boolean on;
+
+	shadow_receivers_kept = config_boolean("debug.retained_shadows") != 0;
+	on = shadow_receivers_kept && shadow_atlas_active && getenv("HALO_RETAINED_CASTERS") != NULL;
+
+	if (!on || shadow_retained_class != shadow_atlas_class || shadow_retained_scale != scale ||
+		shadow_retained_changes != changes)
+	{
+		shadow_retained_forget();
+	}
+	shadow_retained_on = on;
+	shadow_retained_class = on ? shadow_atlas_class : NONE;
+	shadow_retained_scale = scale;
+	shadow_retained_changes = changes;
+	shadow_atlas_claimed = 0;
+	shadow_atlas_kept = 0;
+	shadow_fingerprinting = FALSE;
+	if (on && ++shadow_retained_frames >= 1200)
+	{
+		platform_log("retained shadows: %lu casters in %lu frames, %lu kept (%.1f%%), %lu more but for their nodes' matrices",
+			shadow_retained_casters, shadow_retained_frames, shadow_retained_kept_count,
+			shadow_retained_casters ? 100.0 * (double)shadow_retained_kept_count / (double)shadow_retained_casters : 0.0,
+			shadow_retained_posed_count);
+		shadow_retained_posed_count = 0;
+		shadow_retained_frames = 0;
+		shadow_retained_casters = 0;
+		shadow_retained_kept_count = 0;
+	}
+
+	return;
+}
+
+/* whether the caster begun last is being walked for its draws' hash, its
+models to be walked again if rasterizer_shadow_retained_caster says so */
+boolean rasterizer_shadow_retained_fingerprinting(
+	void)
+{
+	return shadow_fingerprinting;
+}
+
+/* the caster walked: TRUE if its region holds what it would draw (nothing
+to draw), else its target set (its region, or its map's once the atlas is
+full, as rasterizer_environment_shadow_begin chooses) and its models to be
+walked again to draw them */
+boolean rasterizer_shadow_retained_caster(
+	void)
+{
+	unsigned long long fingerprint = shadow_fingerprint;
+	short owned = NONE;
+	short region = NONE;
+	short index;
+
+	if (!shadow_fingerprinting)
+	{
+		return FALSE;
+	}
+	shadow_fingerprinting = FALSE;
+	shadow_retained_casters++;
+	for (index = 0; index < SHADOW_ATLAS_REGIONS && owned == NONE; index++)
+	{
+		if (shadow_atlas_owners[index].object_index == shadow_caster_object &&
+			!(shadow_atlas_claimed & (1ULL << index)))
+		{
+			owned = index;
+		}
+	}
+
+	/* (no region left: its map's, as before) */
+	if (shadow_atlas_count >= shadow_atlas_capacity(shadow_atlas_class))
+	{
+		if (owned != NONE)
+		{
+			shadow_atlas_owners[owned].object_index = NONE;
+		}
+		shadow_atlas_region = NONE;
+		shadow_caster_target(NONE);
+		return FALSE;
+	}
+
+	if (owned != NONE && shadow_atlas_owners[owned].fingerprint != fingerprint &&
+		shadow_atlas_owners[owned].unposed_fingerprint == shadow_unposed_fingerprint)
+	{
+		shadow_retained_posed_count++;
+	}
+	if (owned != NONE && shadow_atlas_owners[owned].fingerprint == fingerprint)
+	{
+		region = owned;
+		shadow_atlas_kept |= 1ULL << region;
+		shadow_used = shadow_atlas_owners[region].used;
+		shadow_retained_kept_count++;
+	}
+	else
+	{
+		region = owned;
+		/* a region no caster had, else one whose caster has not come yet */
+		for (index = 0; index < SHADOW_ATLAS_REGIONS && region == NONE; index++)
+		{
+			if (index < shadow_atlas_capacity(shadow_atlas_class) &&
+				shadow_atlas_owners[index].object_index == NONE &&
+				!(shadow_atlas_claimed & (1ULL << index)))
+			{
+				region = index;
+			}
+		}
+		for (index = 0; index < SHADOW_ATLAS_REGIONS && region == NONE; index++)
+		{
+			if (index < shadow_atlas_capacity(shadow_atlas_class) &&
+				!(shadow_atlas_claimed & (1ULL << index)))
+			{
+				region = index;
+			}
+		}
+		match_assert(
+			"c:\\halo\\SOURCE\\rasterizer\\xbox\\rasterizer_xbox_shadows.c",
+			0,
+			region != NONE);
+		shadow_atlas_owners[region].object_index = shadow_caster_object;
+		shadow_atlas_owners[region].fingerprint = fingerprint;
+		shadow_atlas_owners[region].unposed_fingerprint = shadow_unposed_fingerprint;
+		shadow_atlas_owners[region].used = FALSE;
+	}
+	shadow_atlas_claimed |= 1ULL << region;
+	shadow_atlas_count++;
+	shadow_atlas_region = region;
+	shadow_atlas_shadows[region].matrix = local_shadow_matrix;
+	shadow_atlas_shadows[region].color = local_shadow_color;
+	shadow_atlas_shadows[region].radius = local_object_bounding_radius;
+	if (shadow_atlas_kept & (1ULL << region))
+	{
+		return TRUE;
+	}
+	shadow_caster_target(region);
+	shadow_used = FALSE;
+
+	return FALSE;
 }
