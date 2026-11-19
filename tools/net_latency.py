@@ -4,9 +4,14 @@ port/linux/game/network_latency_trace.c). Each control change is followed from t
 sent) through the host (arrived, read, applied to its copy, sent on) to each other client (arrived, read, applied,
 first frame presented); each hop's median, 95th percentile and worst in milliseconds, and what the host and the
 clients hold: the ticks a client's input comes ahead of the host's tick that runs it, and the host's latest a
-client's tick has.
+client's tick has. A machine that draws gives its frame presented after the change: the owner's own view of it, the
+host's, each other client's.
 
-    tools/net_latency.py p1/latency.txt p2/latency.txt p3/latency.txt [--json out.json]
+Machines on computers of their own (--align) are put on the host's clock: each client's offset from the fastest
+datagrams each way in each window of 15 s (the host's to it, its to the host; their transit taken alike), a line
+fitted through the windows' offsets for the clocks' drift.
+
+    tools/net_latency.py p1/latency.txt p2/latency.txt p3/latency.txt [--align] [--json out.json]
 """
 import argparse
 import json
@@ -24,7 +29,10 @@ def parse(path):
         if part[0] == "#":
             if "rate" in part:
                 trace["rate"] = int(part[part.index("rate") + 1])
-                trace["role"] = part[-1]
+                trace["role"] = part[part.index("rate") + 2]
+                for name in ("vsync", "max_fps"):
+                    if name in part:
+                        trace[name] = part[part.index(name) + 1]
             continue
         kind = part[0]
         try:
@@ -47,6 +55,57 @@ def parse(path):
             continue
     trace["P"].sort()
     return trace
+
+
+def shift(trace, offset):
+    """The trace's times less offset(t) (its clock's lead over the host's at its time t)."""
+    at = lambda t: t - offset(t) if t else t
+    for kind, fields in (("S", (0, 1)), ("V", (0, 1, 2)), ("A", (0,))):
+        for key, values in trace[kind].items():
+            trace[kind][key] = [at(v) if i in fields else v for i, v in enumerate(values)]
+    trace["T"] = {key: [[v[0], at(v[1])] for v in values] for key, values in trace["T"].items()}
+    trace["P"] = sorted(at(t) for t in trace["P"])
+    trace["B"] = {tick: at(t) for tick, t in trace["B"].items()}
+    trace["K"] = [(tick, heard, at(t)) for tick, heard, t in trace["K"]]
+
+
+def align(traces, window=15000000):
+    """Each client's clock put on the host's: per window, the fastest datagram each way (its to the host: its sent to
+    the host's arrival; the host's to it: the host's first sending of a change to its arrival there); the offset is
+    half their difference, the transit taken alike each way, and a line fitted through the windows' offsets."""
+    host = next((t for t in traces if t["role"] == "host"), None)
+    report = {}
+    for client in traces:
+        if client is host:
+            continue
+        up, down = {}, {}
+        for key, values in client["T"].items():
+            sent = min((v[1] for v in values if v[0] == -1), default=None)
+            received = host["V"].get(key)
+            if sent and received:
+                b = sent // window
+                up[b] = min(up.get(b, 1 << 62), (received[0] or received[1]) - sent)
+        for key, received in client["V"].items():
+            forwards = host["T"].get(key)
+            if not forwards:
+                continue
+            arrival = received[0] or received[1]
+            b = arrival // window
+            down[b] = min(down.get(b, 1 << 62), arrival - min(v[1] for v in forwards))
+        points = [((b + 0.5) * window, (down[b] - up[b]) / 2.0, (down[b] + up[b]) / 2.0)
+                  for b in sorted(set(up) & set(down))]
+        if not points:
+            report[client["name"]] = None
+            continue
+        n = len(points)
+        mx = sum(p[0] for p in points) / n
+        my = sum(p[1] for p in points) / n
+        sxx = sum((p[0] - mx) ** 2 for p in points)
+        slope = sum((p[0] - mx) * (p[1] - my) for p in points) / sxx if sxx else 0.0
+        shift(client, lambda t, mx=mx, my=my, slope=slope: int(my + slope * (t - mx)))
+        report[client["name"]] = {"offset_ms": my / 1000.0, "drift_ppm": slope * 1e6, "windows": n,
+                                  "one_way_fastest_ms": min(p[2] for p in points) / 1000.0}
+    return report
 
 
 def stats(values):
@@ -82,6 +141,10 @@ def hops(traces):
             own_sent = min((v[1] for v in sent if v[0] == -1), default=None) if sent and owner is not host else None
             path = "client" if owner is not host else "host"
             add(f"{kind} {path}: input read to step", step - sampled if sampled else None)
+            own_shown = first_after(owner["P"], step) if owner["P"] and sampled else None
+            if own_shown:
+                add(f"{kind} {path}: step to own presented", own_shown - step)
+                add(f"{kind} = {path}: own input to own presented", own_shown - sampled)
             if owner is not host:
                 if own_sent is None:
                     continue
@@ -98,6 +161,10 @@ def hops(traces):
                 if applied:
                     add(f"{kind} b4. host: handled to applied", applied[0] - handled)
                     add(f"{kind} = owner's input to host's applied", applied[0] - sampled)
+                    shown = first_after(host["P"], applied[0]) if host["P"] else None
+                    if shown:
+                        add(f"{kind} b6. host: applied to presented", shown - applied[0])
+                        add(f"{kind} = owner's input to host's presented", shown - sampled)
                 forwards = sorted(v[1] for v in host["T"].get(key, []))
                 if forwards:
                     add(f"{kind} b5. host: handled to sent on", forwards[0] - handled)
@@ -156,14 +223,23 @@ def leads(traces):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("traces", nargs="+")
+    parser.add_argument("--align", action="store_true", help="the clients' clocks put on the host's (machines on "
+                        "computers of their own)")
     parser.add_argument("--json")
     args = parser.parse_args()
     traces = [parse(path) for path in args.traces]
+    aligned = align(traces) if args.align else {}
+    for name, figure in aligned.items():
+        print(f"{name}: " + (f"clock {figure['offset_ms']:+.3f} ms on the host's, drift {figure['drift_ppm']:+.1f} ppm, "
+                             f"fastest one way {figure['one_way_fastest_ms']:.3f} ms ({figure['windows']} windows)"
+                             if figure else "no datagrams each way to align by"))
     rate = next((t["rate"] for t in traces if t["rate"]), None)
     table = hops(traces)
     held = leads(traces)
     close = {t["name"]: t["C"] for t in traces if t["C"]}
-    print(f"rate {rate}: " + ", ".join(f"{t['name']} {t['role']}" for t in traces))
+    print(f"rate {rate}: " + ", ".join(f"{t['name']} {t['role']} (vsync {t.get('vsync', '-')}, max_fps "
+                                        f"{t.get('max_fps', '-')}, {'draws' if t['P'] else 'no frames'})"
+                                        for t in traces))
     print(f"{'hop':64} {'n':>6} {'median':>8} {'p95':>8} {'worst':>8}")
     for name, figure in list(table.items()) + list(held.items()):
         if figure:
@@ -172,7 +248,8 @@ def main():
         print(f"{name}: {figure[0]} datagrams, {figure[1]} within 1 ms of the one before to the same peer; "
               f"{figure[2]} stream writes, {figure[3]} within 1 ms of a datagram to the same peer")
     if args.json:
-        Path(args.json).write_text(json.dumps({"rate": rate, "hops": table, "held": held, "close": close}, indent=1))
+        Path(args.json).write_text(json.dumps({"rate": rate, "hops": table, "held": held, "close": close,
+                                                    "aligned": aligned}, indent=1))
 
 
 if __name__ == "__main__":

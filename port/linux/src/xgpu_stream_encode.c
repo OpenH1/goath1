@@ -65,6 +65,9 @@ void xgpu_stream_encode_close(void);
 display, begun and ended (a host reads its datagrams meanwhile) */
 void network_receive_frame_wait_begin(void);
 void network_receive_frame_wait_end(void);
+/* port/linux/game/network_latency_trace.c: the frame handed to the host */
+extern int network_latency_trace_on;
+void network_latency_trace_frame_committed(void);
 #endif
 
 /* the guest address of guest memory; guest memory at one of the
@@ -2179,6 +2182,8 @@ void xgpu_backend_frame_end(void)
 	network game reads its datagrams meanwhile on a thread of its own,
 	network_receive.c) */
 	network_receive_frame_wait_begin();
+	if (network_latency_trace_on)
+		network_latency_trace_frame_committed();
 #endif
 	commit(XGPU_STREAM_SUBMIT_FRAME);
 #ifndef XGPU_STREAM_TEST

@@ -624,8 +624,10 @@ enum
 	FORWARDED_INPUT_RELAY_TICKS = 2,
 	/* ... and sends what came on no sooner than this after it last did
 	(milliseconds: a host drawing hundreds of frames a second sent a datagram
-	to each client nearly every frame); a dedicated server, which reads its
-	datagrams as they come (network_distributed_server_receive), this */
+	to each client nearly every frame, as it read them once a frame); a host
+	that reads its datagrams as they come (network_distributed_server_receive:
+	a dedicated server, a host's wait for its step or for the display), this,
+	and with its step's datagram only what it reads within this of it */
 	FORWARDED_INPUT_INTERVAL_MILLISECONDS = 8,
 	FORWARDED_INPUT_SERVER_INTERVAL_MILLISECONDS = 2,
 	/* (an OpenH1 client's) a player's relayed input goes on a change only
@@ -7262,15 +7264,19 @@ enum
 
 /* (the host, as it reads, not a dedicated server) whether what it read goes
 on with its step's datagram, at the step's end: its step due (in
-step_milliseconds; negative, overdue) within the forwarding interval. In a
-frame's wait for the display (display_wait: network_receive.c's thread
-reads) its step runs once the wait ends, not as it falls due: with it only
-where the wait is likely to end within the interval too (wait_left_
-milliseconds, by the last wait's length); not known how soon, at once */
+step_milliseconds; negative, overdue) within interval_milliseconds (the
+forwarding interval of its reads: as they come, the server's, so that a
+press waits for a step only as long as a dedicated server's would between
+two datagrams; once a frame, the frame's). In a frame's wait for the display
+(display_wait: network_receive.c's thread reads) its step runs once the wait
+ends, not as it falls due: with it only where the wait is likely to end
+within the interval too (wait_left_milliseconds, by the last wait's length);
+not known how soon, at once */
 static boolean distributed_forward_waits_for_step(
 	real step_milliseconds,
 	boolean display_wait,
-	real wait_left_milliseconds)
+	real wait_left_milliseconds,
+	real interval_milliseconds)
 {
 	if (display_wait)
 	{
@@ -7279,8 +7285,11 @@ static boolean distributed_forward_waits_for_step(
 		if (step_milliseconds < wait_left_milliseconds)
 			step_milliseconds = wait_left_milliseconds;
 	}
-	return step_milliseconds >= 0.0f && step_milliseconds < (real)FORWARDED_INPUT_INTERVAL_MILLISECONDS;
+	return step_milliseconds >= 0.0f && step_milliseconds < interval_milliseconds;
 }
+
+/* (network_distributed_server_receive) its reads, as the datagrams come */
+static boolean distributed_reading_as_they_come;
 
 /* (the host) the inputs heard since last sent on (and the live controls of
 the sub-steps, network_substeps.c's), to each OpenH1 client in one datagram:
@@ -7296,6 +7305,7 @@ static void distributed_forward_flush(
 	boolean inputs = FALSE;
 	boolean live = network_substeps_live_pending() || distributed_far_owed_any();
 	static unsigned long long last_sent;
+	long interval;
 	/* (not system_milliseconds, which the determinism log notes in a tick:
 	the host's own players' controls are sent on from a sub-step) */
 	unsigned long long now = platform_shared_clock_microseconds() / 1000ull;
@@ -7308,11 +7318,13 @@ static void distributed_forward_flush(
 	one goes anyway, with what is due then) */
 	if (!inputs && !live)
 		return;
-	if (occasion == _forward_at_read && now - last_sent < (unsigned long long)(halo_server_mode() ?
-		FORWARDED_INPUT_SERVER_INTERVAL_MILLISECONDS : FORWARDED_INPUT_INTERVAL_MILLISECONDS))
-	{
+	/* (read as they come, the server's interval: debug.network_timing_before
+	keeps the frame's for a host's wait) */
+	interval = halo_server_mode() || (distributed_reading_as_they_come &&
+		!config_boolean("debug.network_timing_before")) ? FORWARDED_INPUT_SERVER_INTERVAL_MILLISECONDS :
+		FORWARDED_INPUT_INTERVAL_MILLISECONDS;
+	if (occasion == _forward_at_read && now - last_sent < (unsigned long long)interval)
 		return;
-	}
 	/* (a host's own step due within the interval: with its datagram, at the
 	step's end, not in one of their own just before it; a dedicated server,
 	and debug.network_timing_before, at once) */
@@ -7321,8 +7333,11 @@ static void distributed_forward_flush(
 		real left;
 		boolean display_wait = network_receive_in_wait(&left);
 
-		if (distributed_forward_waits_for_step(game_time_seconds_to_next_step() * 1000.0f, display_wait, left))
+		if (distributed_forward_waits_for_step(game_time_seconds_to_next_step() * 1000.0f, display_wait, left,
+			(real)interval))
+		{
 			return;
+		}
 	}
 	machine_count = distributed_client_machines(machine_indices, HALO_PORT_MAXIMUM_NETWORK_MACHINES);
 	for (machine_number = 0; machine_number < machine_count; machine_number++)
@@ -7468,6 +7483,7 @@ int network_distributed_server_receive(
 	ready = xnet_socket_wait_readable(socket, milliseconds);
 	if (ready < 0)
 		return FALSE;
+	distributed_reading_as_they_come = TRUE;
 	if (ready)
 	{
 		network_game_server_port_read_datagrams();
@@ -7480,6 +7496,7 @@ int network_distributed_server_receive(
 	{
 		distributed_forward_flush(_forward_at_read);
 	}
+	distributed_reading_as_they_come = FALSE;
 	return TRUE;
 }
 

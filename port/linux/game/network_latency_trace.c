@@ -20,7 +20,8 @@ Each change is keyed by its kind, its player (absolute index) and its key:
 The lines (times in microseconds; tick the machine's game time, sub-step its
 next sub-step's index):
 
-    # network latency trace 1 rate <sim rate> host|client
+    # network latency trace 1 rate <sim rate> host|client vsync <0|1> max_fps <n>
+                                                       (the display's pacing, as set)
     S <kind> <player> <key> <sub> <input> <step>      the owner: the change, with
                                                        the frame's input read and
                                                        the sub-step's start
@@ -35,8 +36,13 @@ next sub-step's index):
                                                        message handled
     A <kind> <player> <key> <sub> <time> <tick> <step> applied to the machine's
                                                        copy of the player, first
-    P <time>                                           a frame presented, after
-                                                       one applied since the last
+    P <time>                                           a frame presented (handed to
+                                                       the host's renderer, which
+                                                       presents it: before the frame
+                                                       cap's sleep), after
+                                                       one applied or sampled since
+                                                       the last (the owner's own
+                                                       view of its change)
     B <tick> <time>                                    a tick begun
     K <tick> <host tick> <time>                        a client's tick begun, with
                                                        the host's latest it had
@@ -54,6 +60,8 @@ next sub-step's index):
 #include <string.h>
 
 const char *config_string(char const *name);
+int config_boolean(char const *name);
+long config_integer(char const *name);
 void platform_log(char const *format, ...);
 unsigned long long platform_shared_clock_microseconds(void);
 
@@ -85,6 +93,8 @@ static struct
 	unsigned long long step_begun;
 	unsigned long long last_flush;
 	int applied_since_present;
+	/* the frame's commands handed to the host's renderer (0: not this frame) */
+	unsigned long long committed;
 	short destination;
 	struct trace_change queued[TRACE_QUEUED];
 	int queued_count;
@@ -178,7 +188,8 @@ void network_latency_trace_header(
 {
 	if (!network_latency_trace_check())
 		return;
-	fprintf(trace.file, "# network latency trace 1 rate %d %s\n", rate, host ? "host" : "client");
+	fprintf(trace.file, "# network latency trace 1 rate %d %s vsync %d max_fps %ld\n", rate, host ? "host" : "client",
+		config_boolean("display.vsync"), config_integer("display.max_fps"));
 }
 
 void network_latency_trace_frame_input(
@@ -237,6 +248,8 @@ void network_latency_trace_sample(
 		return;
 	fprintf(trace.file, "S %c %d %ld %d %llu %llu\n", kind, player, key, substep, trace.frame_input,
 		trace.step_begun);
+	/* (its own copy takes it in this step: the next frame presented shows it) */
+	trace.applied_since_present = 1;
 }
 
 /* a change written into the next datagram to the machine (-1 the host;
@@ -420,13 +433,26 @@ void network_latency_trace_applied(
 	trace.applied_since_present = 1;
 }
 
+/* (xgpu_stream_encode.c) the frame's commands handed to the host's renderer,
+which presents it then: before the frame cap's sleep, which
+network_latency_trace_presented comes after */
+void network_latency_trace_frame_committed(
+	void)
+{
+	if (network_latency_trace_on)
+		trace.committed = trace_now();
+}
+
 void network_latency_trace_presented(
 	void)
 {
+	unsigned long long committed = trace.committed;
+
+	trace.committed = 0;
 	if (!network_latency_trace_on || !trace.applied_since_present)
 		return;
 	trace.applied_since_present = 0;
-	fprintf(trace.file, "P %llu\n", trace_now());
+	fprintf(trace.file, "P %llu\n", committed ? committed : trace_now());
 }
 
 /* (the socket layer) a datagram, or a stream's write, to the peer's address
