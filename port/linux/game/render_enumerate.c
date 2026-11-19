@@ -604,7 +604,15 @@ static boolean stand_ins_next(struct structure_bsp *structure_bsp, struct enumer
 			}
 		}
 	}
-	return stand_ins.count != 0;
+	/* (no round to draw: the lightmap taken for one given its picture back,
+	which no later call would; else the level's draws of it lit by no
+	lightmap, black, until the map is loaded again) */
+	if (!stand_ins.count)
+	{
+		stand_ins_restore(enumerated);
+		return FALSE;
+	}
+	return TRUE;
 }
 
 static short pass_fog(void)
