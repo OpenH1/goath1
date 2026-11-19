@@ -289,7 +289,15 @@ static void frame(struct render_camera *camera, struct render_frustum *frustum, 
 		set_registers(-36, (float const (*)[4])node_rows, object->count * 3);
 		motion_vectors_skinning(object->nodes, object->palette, (short)object->count, (short)(object->count - 1));
 	}
-	motion_vectors_window_end(&camera->viewport_bounds);
+	{
+		/* (a window drawing its motion resolves it once as it ends; one
+		not drawing it, never) */
+		int drawing = window_on, resolves = resolved;
+
+		motion_vectors_window_end(&camera->viewport_bounds);
+		CHECK(resolved == resolves + (drawing != 0), "the window's motion resolved %d times",
+			resolved - resolves);
+	}
 	CHECK(!window_on, "the jitter kept past the window");
 }
 
