@@ -349,17 +349,19 @@ under settings is derived as the front end derives it: the tag only with the
 HDR on, the lights only enhanced, the world's light (read from the pre-pass
 in a window it finds once a pixel: world_ao_key) only with
 display.ambient_occlusion "world", the effect soft (the pixel key's
-vr_effect: soft_effect_key) only with display.soft_particles.
+vr_effect: soft_effect_key) only with display.soft_particles, an object's
+motion variant (the window's objects' span: draw_inputs' motion_objects)
+only with display.temporal_aa.
 Recorded under some settings (a draw journaled where it is new in its
 derived pipeline or in journal_settings_blind_of's words:
 preparation_seen), played back under others, the record's pipelines must
 be the walk's under those. */
 
-enum { SETTING_HDR = 1, SETTING_LIGHTS = 2, SETTING_WORLD = 4, SETTING_SOFT = 8, SETTINGS = 16 };
+enum { SETTING_HDR = 1, SETTING_LIGHTS = 2, SETTING_WORLD = 4, SETTING_SOFT = 8, SETTING_MOTION = 16, SETTINGS = 32 };
 #define WALK 400
 #define DERIVED_MAXIMUM (WALK * 2)
 
-struct derived { uint32_t pipeline, tag, lit, world, soft; };
+struct derived { uint32_t pipeline, tag, lit, world, soft, motion; };
 
 static struct journal_state walk[WALK];
 
@@ -376,6 +378,7 @@ static struct derived derive(const struct journal_state *state, int settings)
 	if ((settings & SETTING_WORLD) && state->inputs.world_span >= 0 && state->inputs.world_span < 5)
 		derived.world = (uint32_t[]){ 0, 1, 0, 2, 3 }[state->inputs.world_span];
 	derived.soft = (settings & SETTING_SOFT) && state->inputs.soft_group;
+	derived.motion = (settings & SETTING_MOTION) && state->inputs.motion_objects;
 	return derived;
 }
 
@@ -420,6 +423,7 @@ static void walk_make(void)
 		/* (world_ao.h's WORLD_AO_SPAN_*: none, open, its first person, found, its first person) */
 		state->inputs.world_span = rand() % 5;
 		state->inputs.soft_group = (uint32_t)(rand() % 2);
+		state->inputs.motion_objects = (uint32_t)(rand() % 2);
 	}
 }
 

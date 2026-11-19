@@ -361,6 +361,11 @@ struct draw_inputs
 	/* display.soft_particles: the effect's group drawn can be soft
 	(halo_effect_soft), whatever the setting */
 	uint32_t soft_group;
+	/* display.temporal_aa: the window's objects drawn into the screen's
+	targets (halo_motion_objects), whatever the setting: in play, their
+	draws into the motion too; a record's playback tells the backend so
+	(journal_motion_span), its variants made as a walk makes them */
+	uint32_t motion_objects;
 	/* the region of its texture each stage samples, as a texture of its own
 	with its border beyond it (d3d8_texture_region: its size and origin, in
 	the texture's coordinates; size 0: the whole texture) */
@@ -7539,6 +7544,9 @@ void halo_motion_objects(int begin)
 {
 	struct render_target_entry *target;
 
+	/* (the span, whatever the setting: the draws' input, journaled) */
+	inputs.motion_objects = begin && device.render_target == &device.back_buffer &&
+		device.depth_stencil == &device.depth_buffer;
 	if (!motion.on || (begin ? motion.objects : !motion.objects))
 		return;
 	motion.objects = FALSE;
@@ -8617,6 +8625,9 @@ static struct
 	unsigned long unknown;
 	const struct halo_gpu_journal_bitmaps *bitmaps;
 	unsigned char pages[MIRROR_PAGE_SLOTS / 8];
+	/* (played) display.temporal_aa's motion drawn now, and the backend
+	told the objects' span is open (journal_motion_span) */
+	BOOL motion, motion_objects;
 } journal;
 
 /* ---------- geometry by name (#1169)
@@ -9284,6 +9295,7 @@ static void journal_settings_blind_of(unsigned long words[3], const struct draw_
 	words[2] = (unsigned long)(of->hdr_view != 0) | (unsigned long)(of->lights_count > 0) << 1 |
 		(unsigned long)(of->lights_environment != 0) << 2 | (unsigned long)of->world_span << 3;
 	words[2] |= (unsigned long)(of->soft_group != 0) << 16;
+	words[2] |= (unsigned long)(of->motion_objects != 0) << 17;
 }
 
 static void journal_settings_blind(unsigned long words[3])
@@ -9380,8 +9392,9 @@ group, the stages' texture regions and the high-res text's atlas as itself;
 10: a bitmap's tag as the record keeps it, halo_gpu_journal_bitmaps' keep;
 11: a view the screen's size played back at the screen's size now,
 JOURNAL_VIEW_SCREEN; 12: the front end's inputs whole, struct draw_inputs;
-13: a stream's memory by its geometry's name and offset, #1169) */
-#define JOURNAL_FORM 13
+13: a stream's memory by its geometry's name and offset, #1169; 14: the
+objects' span for display.temporal_aa, draw_inputs' motion_objects) */
+#define JOURNAL_FORM 14
 
 unsigned int halo_gpu_journal_form(void)
 {
@@ -9451,6 +9464,19 @@ static void journal_restore(const struct journal_state *state)
 	dynamic_lights.halos.count = (int)state->halos_count;
 }
 
+/* display.temporal_aa on as a record plays (journal.motion): the backend
+told where its draws' objects' span opens and closes (draw_inputs'
+motion_objects, journaled whatever the setting), as a walk's
+halo_motion_objects tells it, so that the preparation makes those draws'
+motion variants, whatever the setting was as the record was made */
+static void journal_motion_span(BOOL objects)
+{
+	if (!journal.motion || objects == journal.motion_objects)
+		return;
+	journal.motion_objects = objects;
+	xgpu_backend_motion(objects ? XGPU_MOTION_OBJECTS_BEGIN : XGPU_MOTION_OBJECTS_END, 0, NULL);
+}
+
 static void journal_play(unsigned long op, const struct journal_state *state)
 {
 	static WORD indices[4];
@@ -9458,6 +9484,7 @@ static void journal_play(unsigned long op, const struct journal_state *state)
 	float z;
 
 	journal_restore(state);
+	journal_motion_span(inputs.motion_objects != 0);
 	switch (op)
 	{
 	/* (a draw whose vertices are not there now: skipped, unknown, #1169) */
@@ -9674,9 +9701,18 @@ int halo_gpu_journal_replay(const unsigned int *words, unsigned int count, const
 	journal_recording = FALSE;
 	journal.bitmaps = bitmaps;
 	journal.unknown = 0;
+	/* (display.temporal_aa: the objects' motion drawn in play, as
+	halo_motion_window draws it; the technique's own passes then prepared
+	too, as a walk's window's resolve prepares them) */
+	journal.motion = motion_vectors_technique() != 0 && anti_aliasing() != _anti_aliasing_msaa;
+	journal.motion_objects = FALSE;
 	memset(&journal.last, 0, sizeof(journal.last));
 	well_formed = journal_read((const uint32_t *)words, count, &journal.last, PLATFORM_CONTIGUOUS_SIZE,
 		MIRROR_PAGE_SIZE, &reader);
+	journal_motion_span(FALSE);
+	if (journal.motion)
+		xgpu_backend_motion(XGPU_MOTION_RESOLVE, 0, NULL);
+	journal.motion = FALSE;
 
 	memcpy(D3D__RenderState, saved.render_states, sizeof(saved.render_states));
 	memcpy(D3D__TextureState, saved.texture_states, sizeof(saved.texture_states));

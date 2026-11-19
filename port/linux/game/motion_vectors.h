@@ -91,6 +91,8 @@ none), and whether its motion can be drawn (the back buffer, one sample) */
 int halo_motion_window(int on, float jitter_x, float jitter_y);
 /* the previous frame's registers beside c[reg] .. c[reg + count) */
 void halo_motion_previous_constants(int reg, float const (*values)[4], unsigned long count);
+/* the window's objects' span begun or ended, whatever the setting (the
+draws' input, journaled); their motion drawn while the window's is */
 void halo_motion_objects(int begin);
 /* the window's colour before its transparent draws (window: 0 to 3) */
 void halo_motion_opaque(short x0, short y0, short x1, short y1, int window);

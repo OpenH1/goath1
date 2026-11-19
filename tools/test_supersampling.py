@@ -9,6 +9,7 @@ settings, the display and the backend's capabilities, for the desktop, the
 Mac (whose "ssaa2x" drew none), iOS and Android (no supersampling).
 """
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -27,6 +28,11 @@ def function_text(text, signature):
         depth += (text[end] == "{") - (text[end] == "}")
         end += 1
     return text[start:end] + "\n"
+
+
+def temporal_text(text):
+    """display.temporal_aa "fsr"'s scale of the 3D view (struct temporal), as the file declares it"""
+    return re.search(r"static struct\n\{\n\tfloat factor;.*?\n\} temporal = [^;]*;\n", text, re.S).group(0)
 
 
 def settings_text(text):
@@ -81,6 +87,10 @@ static BOOL platform_screen_mode(long *width, long *height)
 	*height = display_height;
 	return TRUE;
 }
+/* (display.temporal_aa "fsr" where the backend has it: upscaling) */
+static BOOL upscaling;
+static BOOL temporal_upscaling(void) { return upscaling; }
+static int motion_vectors_technique(void) { return upscaling ? 1 : 0; }
 %FUNCTIONS%
 static long drawn[2];
 static float factor;
@@ -185,6 +195,16 @@ int main(void)
 	original = TRUE;
 	assert(DRAWN(640, 480) && factor == 1.0f);
 	original = FALSE;
+	/* display.temporal_aa "fsr": the render scale the 3D view's alone
+	(temporal.factor), the screen's targets at the display's pixels, which
+	the upscale fills */
+	supersampling_setting = 1.0;
+	display_width = 1920;
+	display_height = 1080;
+	upscaling = TRUE;
+	assert(DRAWN(1920, 1080) && factor == 1.0f && temporal.factor == 0.5f);
+	upscaling = FALSE;
+	assert(DRAWN(960, 540) && temporal.factor == 1.0f);
 	render_scale_setting = 1.0;
 #else
 	/* (the negative control) iOS and Android: the render scale is their
@@ -212,7 +232,7 @@ def test_supersampling(tmp_path, build, defines, supersampled, legacy):
     if not cc:
         pytest.skip("needs a native C compiler")
     text = (ROOT / "port/linux/src/d3d8_device.c").read_text()
-    functions = settings_text(text) + "".join(
+    functions = temporal_text(text) + settings_text(text) + "".join(
         function_text(text, signature) for signature in (
             "static long screen_narrowest_width(", "static void screen_mode_choose(")
     )

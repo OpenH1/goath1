@@ -61,6 +61,45 @@ void xgpu_vulkan_fsr_destroy(void)
 {
 }
 
+/* display.temporal_aa "dlss" (xgpu_vulkan_dlss.c): its module never loaded
+over the fake device */
+int xgpu_vulkan_dlss_load(void)
+{
+	return 0;
+}
+
+uint32_t xgpu_vulkan_dlss_instance_extensions(const char **names, uint32_t count, uint32_t capacity,
+	int (*available)(const char *name))
+{
+	(void)names;
+	(void)capacity;
+	(void)available;
+	return count;
+}
+
+uint32_t xgpu_vulkan_dlss_device_extensions(VkInstance instance, VkPhysicalDevice physical,
+	PFN_vkGetInstanceProcAddr get_instance_proc_addr, const char **names, uint32_t count, uint32_t capacity,
+	int (*available)(const char *name))
+{
+	(void)instance;
+	(void)physical;
+	(void)get_instance_proc_addr;
+	(void)names;
+	(void)capacity;
+	(void)available;
+	return count;
+}
+
+int xgpu_vulkan_dlss_create(const struct xgpu_vulkan_dlss_device *device)
+{
+	(void)device;
+	return 0;
+}
+
+void xgpu_vulkan_dlss_destroy(void)
+{
+}
+
 void host_render_stream_frames_ahead(int frames)
 {
 	(void)frames;
