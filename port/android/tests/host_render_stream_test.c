@@ -1609,13 +1609,13 @@ static void test_loading_art_transfer(void)
 		pixels[index] = (unsigned char)(index * 37u + index / 251u);
 	calls = loading_art_calls;
 	stream_begin(8u << 20, 2, 0);
-	xgpu_backend_loading_art(pixels);
+	xgpu_backend_loading_art(pixels, NULL);
 	CHECK(loading_art_calls == calls + 1 && loading_art_valid);
 	CHECK(!memcmp(pixels, loading_art_copy, sizeof(loading_art_copy)));
 	memset(pixels, 0xA5, sizeof(loading_art_copy));
 	for (index = 0; index < sizeof(loading_art_copy); index++)
 		CHECK(loading_art_copy[index] == (unsigned char)(index * 37u + index / 251u));
-	xgpu_backend_loading_art(NULL);
+	xgpu_backend_loading_art(NULL, NULL);
 	CHECK(loading_art_calls == calls + 2 && !loading_art_valid);
 	for (index = 0; index < sizeof(loading_art_copy); index++)
 		CHECK(loading_art_copy[index] == 0);

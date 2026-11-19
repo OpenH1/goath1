@@ -419,6 +419,10 @@ void rasterizer_water_build_bumpmap(
 		rasterizer_set_pixel_shader(&pixel_shader);
 		rasterizer_set_stencil_mode(0);
 
+		/* port: the ripples' 128x128 map and its levels at the display's
+		detail (d3d8_device.c); its vertices' half-texel offsets are of the
+		map's units, the same at any scale */
+		halo_target_detail(WATER_BUMPMAP_RESOLUTION);
 		for (mipmap_index = 0; mipmap_index < mipmap_level_count; mipmap_index++)
 		{
 			if (water->ripple_mipmap_levels > 1)
@@ -589,6 +593,7 @@ void rasterizer_water_build_bumpmap(
 			}
 		}
 
+		halo_target_detail(0); /* port */
 		rasterizer_set_target(
 			global_window_parameters.rasterizer_target,
 			0,

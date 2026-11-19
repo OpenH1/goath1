@@ -16,6 +16,11 @@
 #define LOADING_ART_HEIGHT 480
 #define LOADING_ART_PIXELS (LOADING_ART_WIDTH * LOADING_ART_HEIGHT)
 #define LOADING_ART_BYTES (LOADING_ART_PIXELS * 4)
+/* the supplied picture at its own size (port/assets/loading: 1600x1200
+ * RGBA), which the sharp frame resamples to its pixels (loading_art_source) */
+#define LOADING_ART_SOURCE_WIDTH 1600
+#define LOADING_ART_SOURCE_HEIGHT 1200
+#define LOADING_ART_SOURCE_BYTES (LOADING_ART_SOURCE_WIDTH * LOADING_ART_SOURCE_HEIGHT * 4)
 #define LOADING_ART_FRAME_WIDTH LOADING_ART_WIDTH
 #define LOADING_ART_FRAME_HEIGHT LOADING_ART_HEIGHT
 #define LOADING_ART_FRAME_PIXELS (LOADING_ART_FRAME_WIDTH * LOADING_ART_FRAME_HEIGHT)
@@ -96,8 +101,9 @@ then takes to fade out, in nanoseconds */
 #ifndef LOADING_ART_HD_THREADS
 #define LOADING_ART_HD_THREADS 4
 #endif
+/* (memory's guard: 2160 rows of 21:9) */
 #ifndef LOADING_ART_HD_BUDGET
-#define LOADING_ART_HD_BUDGET (1920u * 1080u)
+#define LOADING_ART_HD_BUDGET (LOADING_ART_HD_MAXIMUM_WIDTH * LOADING_ART_HD_MAXIMUM_HEIGHT)
 #endif
 
 /* The words of the supplied picture ("LOADING..."), bright blue over its
@@ -195,6 +201,8 @@ struct loading_art
 	from at each width */
 	unsigned int width;
 	uint8_t picture[LOADING_ART_BYTES];
+	/* the picture at its own size (LOADING_ART_SOURCE_BYTES, kept), or NULL */
+	uint8_t *source;
 	uint64_t epoch, step;
 	unsigned int valid, started, current;
 	/* the menu's scene (loading_ring.h), when the presenter has one: drawn
@@ -512,7 +520,9 @@ static inline void loading_art_set(struct loading_art *art, const uint8_t *rgba)
 	uint8_t *caption = art->caption, *caption_coverage = art->caption_coverage, *caption_tile = art->caption_tile;
 	unsigned int caption_width = art->caption_width, caption_height = art->caption_height, follow = art->follow;
 	size_t caption_tile_capacity = art->caption_tile_capacity;
+	uint8_t *source = art->source;
 	memset(art, 0, sizeof(*art));
+	art->source = source;
 	art->ring = ring;
 	art->hd = hd;
 	art->caption = caption;
@@ -1452,6 +1462,113 @@ static inline void loading_art_picture_sample(const uint8_t *picture, float x, f
 		rgb[channel] = (uint8_t)(sum[channel] <= 0.0f ? 0 : sum[channel] >= 255.0f ? 255 : (int)(sum[channel] + 0.5f));
 }
 
+/* The picture at its own size (loading_art_source) resampled to the sharp
+ * frame's pixels x0 to x1 and y0 to y1 (RGB, their rows (x1 - x0) * 3
+ * bytes): a pixel's middle at `a` (each way) of the picture's 480 rows for
+ * each of the frame's pixels from its first's, offset by `b` of them.
+ * Catmull-Rom's cubic each way, widened by as many of the picture's pixels
+ * as a frame's pixel covers where it has fewer (all of them blended, not a
+ * few), across then down. 0 without the memory. */
+static inline float loading_art_cubic(float t)
+{
+	t = t < 0.0f ? -t : t;
+	return t < 1.0f ? (1.5f * t - 2.5f) * t * t + 1.0f : t < 2.0f ? ((-0.5f * t + 2.5f) * t - 4.0f) * t + 2.0f : 0.0f;
+}
+
+static inline int loading_art_source_resample(const uint8_t *source, float ax, float bx, float ay, float by,
+	unsigned int x0, unsigned int x1, unsigned int y0, unsigned int y1, uint8_t *rgb)
+{
+	const float units = (float)LOADING_ART_SOURCE_HEIGHT / (float)LOADING_ART_HEIGHT;
+	float step_x = ax * units, step_y = ay * units;
+	float wide_x = step_x > 1.0f ? step_x : 1.0f, wide_y = step_y > 1.0f ? step_y : 1.0f;
+	unsigned int columns = x1 - x0, rows = y1 - y0, x, y;
+	int first, last, row;
+	float *across;
+	if (!columns || !rows)
+		return 1;
+	/* (the picture's rows the frame's reach) */
+	first = (int)floorf(((float)y0 + 0.5f) * step_y + by * units - 0.5f - 2.0f * wide_y);
+	last = (int)ceilf(((float)y1 - 0.5f) * step_y + by * units - 0.5f + 2.0f * wide_y);
+	first = first < 0 ? 0 : first;
+	last = last >= LOADING_ART_SOURCE_HEIGHT ? LOADING_ART_SOURCE_HEIGHT - 1 : last;
+	if (last < first)
+		last = first;
+	across = malloc((size_t)(last - first + 1) * columns * 3 * sizeof(float));
+	if (!across)
+		return 0;
+	for (x = 0; x < columns; x++)
+	{
+		float middle = ((float)(x0 + x) + 0.5f) * step_x + bx * units - 0.5f, total = 0.0f, sum;
+		int left = (int)floorf(middle - 2.0f * wide_x) + 1, right = (int)floorf(middle + 2.0f * wide_x), i;
+		for (i = left; i <= right; i++)
+			total += loading_art_cubic(((float)i - middle) / wide_x);
+		for (row = first; row <= last; row++)
+		{
+			float value[3] = { 0.0f, 0.0f, 0.0f };
+			for (i = left; i <= right; i++)
+			{
+				int column = i < 0 ? 0 : i >= LOADING_ART_SOURCE_WIDTH ? LOADING_ART_SOURCE_WIDTH - 1 : i;
+				const uint8_t *p = source + ((size_t)row * LOADING_ART_SOURCE_WIDTH + column) * 4;
+				float weight = loading_art_cubic(((float)i - middle) / wide_x);
+				value[0] += weight * (float)p[0];
+				value[1] += weight * (float)p[1];
+				value[2] += weight * (float)p[2];
+			}
+			sum = total != 0.0f ? 1.0f / total : 0.0f;
+			memcpy(across + ((size_t)(row - first) * columns + x) * 3, value, sizeof(value));
+			across[((size_t)(row - first) * columns + x) * 3 + 0] *= sum;
+			across[((size_t)(row - first) * columns + x) * 3 + 1] *= sum;
+			across[((size_t)(row - first) * columns + x) * 3 + 2] *= sum;
+		}
+	}
+	for (y = 0; y < rows; y++)
+	{
+		float middle = ((float)(y0 + y) + 0.5f) * step_y + by * units - 0.5f, total = 0.0f;
+		int top = (int)floorf(middle - 2.0f * wide_y) + 1, bottom = (int)floorf(middle + 2.0f * wide_y), j;
+		for (j = top; j <= bottom; j++)
+			total += loading_art_cubic(((float)j - middle) / wide_y);
+		for (x = 0; x < columns; x++)
+		{
+			float value[3] = { 0.0f, 0.0f, 0.0f };
+			unsigned int channel;
+			for (j = top; j <= bottom; j++)
+			{
+				int clamped = j < 0 ? 0 : j >= LOADING_ART_SOURCE_HEIGHT ? LOADING_ART_SOURCE_HEIGHT - 1 : j;
+				const float *p;
+				float weight = loading_art_cubic(((float)j - middle) / wide_y);
+				clamped = clamped < first ? first : clamped > last ? last : clamped;
+				p = across + ((size_t)(clamped - first) * columns + x) * 3;
+				value[0] += weight * p[0];
+				value[1] += weight * p[1];
+				value[2] += weight * p[2];
+			}
+			for (channel = 0; channel < 3; channel++)
+			{
+				float v = total != 0.0f ? value[channel] / total : 0.0f;
+				rgb[((size_t)y * columns + x) * 3 + channel] = (uint8_t)(v <= 0.0f ? 0 : v >= 255.0f ? 255 : (int)(v + 0.5f));
+			}
+		}
+	}
+	free(across);
+	return 1;
+}
+
+/* The picture at its own size, kept (a copy) for the sharp frame; NULL
+ * forgets it. */
+static inline void loading_art_source(struct loading_art *art, const uint8_t *rgba)
+{
+	if (rgba && !art->source)
+		art->source = malloc(LOADING_ART_SOURCE_BYTES);
+	if (rgba && art->source)
+		memcpy(art->source, rgba, LOADING_ART_SOURCE_BYTES);
+	else if (!rgba)
+	{
+		free(art->source);
+		art->source = NULL;
+	}
+	art->hd.built = 0;
+}
+
 /* The sharp frame's still layers, once a load (after its first step: the
  * scene's brightness matched then): the scene drawn at the sharp frame's
  * size, coloured and etched as loading_art_scene_draw colours the 480 rows,
@@ -1525,8 +1642,20 @@ static inline int loading_art_hd_build(struct loading_art *art)
 			uint8_t *word;
 			right = right < width ? right : width;
 			bottom = bottom < height ? bottom : height;
+			uint8_t *resampled = NULL;
 			free(hd->word);
 			hd->word = word = malloc((size_t)(right - left) * (bottom - top) * 4);
+			/* (from the picture at its own size where there is one) */
+			if (word && art->source)
+			{
+				resampled = malloc((size_t)(right - left) * (bottom - top) * 3);
+				if (resampled && !loading_art_source_resample(art->source, across, -(float)middle, down, 0.0f,
+						left, right, top, bottom, resampled))
+				{
+					free(resampled);
+					resampled = NULL;
+				}
+			}
 			if (word)
 			{
 				hd->word_left = left;
@@ -1543,7 +1672,10 @@ static inline int loading_art_hd_build(struct loading_art *art)
 						if (px < (float)LOADING_ART_TEXT_LEFT - 0.5f || px > (float)LOADING_ART_TEXT_RIGHT - 0.5f ||
 							py < (float)LOADING_ART_TEXT_TOP - 0.5f || py > (float)LOADING_ART_TEXT_BOTTOM - 0.5f)
 							continue;
-						loading_art_picture_sample(art->picture, px, py, word + 1);
+						if (resampled)
+							memcpy(word + 1, resampled + ((size_t)(y - top) * (right - left) + (x - left)) * 3, 3);
+						else
+							loading_art_picture_sample(art->picture, px, py, word + 1);
 						blue = word[3];
 						word[0] = (uint8_t)(blue <= 130 ? 0 : blue >= 210 ? 255 : (blue - 130) * 255 / 80);
 						for (channel = 0; channel < 3; channel++)
@@ -1551,6 +1683,7 @@ static inline int loading_art_hd_build(struct loading_art *art)
 								(word[1 + channel] - hd->scene[pixel * 3 + channel]) * word[0] / 255);
 					}
 			}
+			free(resampled);
 		}
 	}
 	else if (art->valid)
@@ -1558,11 +1691,13 @@ static inline int loading_art_hd_build(struct loading_art *art)
 		/* (the picture covering the frame, its middle in the frame's: as
 		wide as the frame, as loading_art_color has it) */
 		float step = (float)LOADING_ART_WIDTH / (float)width;
-		for (y = 0; y < height; y++)
-			for (x = 0; x < width; x++)
-				loading_art_picture_sample(art->picture, ((float)x + 0.5f) * step - 0.5f,
-					(float)LOADING_ART_HEIGHT * 0.5f + ((float)y + 0.5f - (float)height * 0.5f) * step - 0.5f,
-					hd->scene + (y * width + x) * 3);
+		if (!art->source || !loading_art_source_resample(art->source, step, 0.0f, step,
+				(float)LOADING_ART_HEIGHT * 0.5f - (float)height * 0.5f * step, 0, width, 0, height, hd->scene))
+			for (y = 0; y < height; y++)
+				for (x = 0; x < width; x++)
+					loading_art_picture_sample(art->picture, ((float)x + 0.5f) * step - 0.5f,
+						(float)LOADING_ART_HEIGHT * 0.5f + ((float)y + 0.5f - (float)height * 0.5f) * step - 0.5f,
+						hd->scene + (y * width + x) * 3);
 	}
 	else
 		return 0;

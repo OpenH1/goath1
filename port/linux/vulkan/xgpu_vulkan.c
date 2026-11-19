@@ -9409,6 +9409,12 @@ void xgpu_vulkan_loading_art(void *context, const uint8_t *rgba)
 	loading_art_set(&vk.loading_art, rgba);
 }
 
+void xgpu_vulkan_loading_art_source(void *context, const uint8_t *rgba)
+{
+	(void)context;
+	loading_art_source(&vk.loading_art, rgba);
+}
+
 void xgpu_vulkan_loading_scene(void *context, const void *data, uint32_t bytes)
 {
 	(void)context;

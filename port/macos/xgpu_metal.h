@@ -88,6 +88,7 @@ struct loading_presentation_frame;
 uint64_t host_metal_loading(void *context, const struct loading_presentation_frame *frame);
 int host_metal_loading_owned(void *context);
 void host_metal_loading_art(void *context, const uint8_t *rgba);
+void host_metal_loading_art_source(void *context, const uint8_t *rgba);
 void host_metal_loading_scene(void *context, const void *data, uint32_t bytes);
 void host_metal_loading_progress(void *context, float progress);
 void host_metal_loading_mode(void *context, int follow_progress);

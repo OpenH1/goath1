@@ -43,6 +43,8 @@ temporal_metalfx before device: a guest and a host of 23 and 24 would read
 each other's device and temporal_metalfx out of place */
 #define XGPU_STREAM_VERSION 24
 #define XGPU_STREAM_LOADING_ART_BYTES (640u * 480u * 4u)
+/* and the picture at its own size after it, where there is one (loading_art.h's LOADING_ART_SOURCE_BYTES) */
+#define XGPU_STREAM_LOADING_ART_SOURCE_BYTES (1600u * 1200u * 4u)
 
 /* ---------- the ring
 
@@ -254,7 +256,8 @@ enum
 	XGPU_STREAM_VR_EYE_TINT,
 	XGPU_STREAM_LOADING,
 	XGPU_STREAM_LOADING_OWNED,          /* synchronous: current presenter ownership */
-	XGPU_STREAM_LOADING_ART,            /* value: byte count, followed by owned 640x480 RGBA pixels */
+	XGPU_STREAM_LOADING_ART,            /* value: byte count, followed by owned 640x480 RGBA pixels, and
+	                                       the picture's own 1600x1200 RGBA after them where it has them */
 	XGPU_STREAM_LOADING_SCENE,          /* value: byte count, followed by the menu's scene (loading_scene.h) */
 	XGPU_STREAM_LOADING_PROGRESS,       /* value: the load's progress, a float's bits (0 to 1) */
 	XGPU_STREAM_LOADING_MODE,           /* value: 1 the sweep follows the progress (the Xbox's), 0 it loops */
