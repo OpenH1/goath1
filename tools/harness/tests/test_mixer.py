@@ -39,7 +39,9 @@ NEGATIVE_CONTROLS = {
                          "(stream->center + 2 - RESAMPLER_ZERO_CROSSINGS) % RESAMPLER_HISTORY"), "reference"),
     "phase-not-blended": (("for (phase = 0; phase <= RESAMPLER_TABLE_STEPS; phase++)",
                            "for (phase = 0; phase <= RESAMPLER_TABLE_STEPS; phase += 2)"), "impulse"),
-    "no-stretch": (("#define RESAMPLER_MAXIMUM_STRETCH 2", "#define RESAMPLER_MAXIMUM_STRETCH 1"), "aliases"),
+    "no-stretch": (("#define RESAMPLER_MAXIMUM_STRETCH 4", "#define RESAMPLER_MAXIMUM_STRETCH 1"), "aliases"),
+    # narrowed only up to 2 times, as it was: a voice at 3 or 4 times the output rate aliases
+    "stretch-2": (("#define RESAMPLER_MAXIMUM_STRETCH 4", "#define RESAMPLER_MAXIMUM_STRETCH 2"), "aliases"),
     "linear-nearest": (("left_frames[0] + (left_frames[1] - left_frames[0]) * fraction", "left_frames[0]"), "linear"),
     # a voice cut off: stopped dead (as it was), not faded, not cut at the hand-off, or a cut playing over the
     # earlier one read past what is left of it

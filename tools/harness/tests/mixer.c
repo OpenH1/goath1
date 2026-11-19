@@ -1320,6 +1320,12 @@ int main(int argc, char **argv)
 		/* 15 kHz at 44.1 kHz, played at 88.2 kHz: 30 kHz */
 		sine_figures(15000.0, 44100, 88200, &gain_db, &rest_db);
 		CHECK(rest_db < -60.0, "an alias of 30 kHz %.1f dB", rest_db);
+		/* 10 kHz at 44.1 kHz, played at 144 kHz (3 times): 33 kHz */
+		sine_figures(10000.0, 44100, 144000, &gain_db, &rest_db);
+		CHECK(rest_db < -60.0, "an alias of 33 kHz %.1f dB", rest_db);
+		/* 8 kHz at 44.1 kHz, played at 192 kHz (4 times): 35 kHz */
+		sine_figures(8000.0, 44100, 192000, &gain_db, &rest_db);
+		CHECK(rest_db < -60.0, "an alias of 35 kHz %.1f dB", rest_db);
 		return 0;
 	}
 	/* a voice out of earshot moves on as one heard does: once it is audible
