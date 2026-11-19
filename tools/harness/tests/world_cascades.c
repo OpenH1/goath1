@@ -335,6 +335,37 @@ static void update_case(void)
 	world_cascades_free(&fresh);
 }
 
+/* the camera's jump within the coarse cascades' sides (a spawn across the
+level): no frame finds more than a frame's slices, and once filled the
+cascades are alike to those found whole there */
+static void jump_case(void)
+{
+	static struct world_cascades cascades, fresh;
+	float camera[3] = { 0.3f, -0.2f, 1.7f };
+	long difference = -1, most = 0;
+	int frames;
+
+	CHECK(world_cascades_create(&cascades) && world_cascades_create(&fresh), "no memory");
+	scene(0.5f);
+	fill(&cascades, camera);
+	/* (40 wu along x and 20 along y: past the finest two's sides, within
+	the coarser two's) */
+	camera[0] += 40.0f;
+	camera[1] -= 20.0f;
+	for (frames = 0; frames < 64; frames++)
+	{
+		world_cascades_update(&cascades, camera, 0, structure_distance, NULL, objects, SHAPES, shapes);
+		most = cascades.structure_voxels > most ? cascades.structure_voxels : most;
+	}
+	CHECK(most <= (long)WORLD_CASCADES_FILL_SLICES * WORLD_CASCADE_SIDE * WORLD_CASCADE_SIDE,
+		"%ld voxels' structure in one frame", most);
+	fill(&fresh, camera);
+	CHECK(texels_alike(&cascades, &fresh, &difference), "the jump differs from the whole at byte %ld", difference);
+	printf("the camera jumped: at most %ld voxels' structure a frame\n", most);
+	world_cascades_free(&cascades);
+	world_cascades_free(&fresh);
+}
+
 int main(int argc, char **argv)
 {
 	const char *name = argc > 1 ? argv[1] : "";
@@ -343,6 +374,8 @@ int main(int argc, char **argv)
 		trace_case();
 	else if (!strcmp(name, "update"))
 		update_case();
+	else if (!strcmp(name, "jump"))
+		jump_case();
 	else
 		return 2;
 	return 0;
