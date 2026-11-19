@@ -123,7 +123,7 @@ int main(int argc, char **argv)
 		CHECK(!network_clock_steps_when_due(), "a host whose frames nobody sees (it waits for its step)");
 		unseen = 0;
 		timing_before = 1;
-		CHECK(!network_clock_steps_when_due(), "debug.network_timing_before");
+		CHECK(network_clock_steps_when_due(), "debug.network_timing_before (steps when due, always)");
 		timing_before = 0;
 		agreed_rate = 0;
 		CHECK(!network_clock_steps_when_due(), "a Legacy game");

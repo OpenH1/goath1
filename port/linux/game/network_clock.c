@@ -416,14 +416,14 @@ void network_clock_steps_ran(
 /* a machine of an OpenH1 game whose frames are seen and drawn (not a
 dedicated server's): whether a step of its clock that falls due in its
 frame's wait for the frames' limit runs then (main.c's main_frame_step_due),
-not at the next frame's start; debug.network_timing_before, not, as before */
+not at the next frame's start. Always so: no setting turns it off */
 boolean network_clock_steps_when_due(
 	void)
 {
 	short connection = game_connection();
 
 	return (connection == _game_connection_network_server || connection == _game_connection_network_client) &&
-		network_standard_agreed_rate() && !halo_frames_unseen() && !config_boolean("debug.network_timing_before");
+		network_standard_agreed_rate() && !halo_frames_unseen();
 }
 
 /* a dedicated server of an OpenH1 game: whether this frame waits for its

@@ -2,7 +2,7 @@
 frame's time (sdl_platform.c's platform_frame_wait_until, unseen_frames.c's frame_step_wake): the wait wakes at the
 step and goes on to the frame's time after, its grid kept; a step due after the frame's time, or too near it for a
 frame to run it first, is left for the frame; and which machines step so (network_clock.c: an OpenH1 game's host and
-clients whose frames are seen, not a Legacy game's, not with debug.network_timing_before)."""
+clients whose frames are seen, not a Legacy game's; always, debug.network_timing_before or not)."""
 import sys
 from pathlib import Path
 
@@ -18,8 +18,10 @@ NEGATIVE_CONTROLS = {
     "no-wake": (("if (step && step < *next_frame)", "if (0 && step < *next_frame)"), "step-first"),
     # the step's frame's cost not counted: it runs past the frame's time, and the frame is late
     "no-cost": (("if (wake + cost >= frame_due)", "if (wake >= frame_due)"), "wake"),
-    # debug.network_timing_before not looked at
-    "no-before-setting": ((' && !config_boolean("debug.network_timing_before")', ""), "who"),
+    # the old switch back: debug.network_timing_before turning steps when due off
+    "before-setting-back": (("network_standard_agreed_rate() && !halo_frames_unseen();",
+                             'network_standard_agreed_rate() && !halo_frames_unseen() && '
+                             '!config_boolean("debug.network_timing_before");'), "who"),
     # a Legacy game's frames stepped so too
     "legacy-too": (("network_standard_agreed_rate() && !halo_frames_unseen()", "!halo_frames_unseen()"), "who"),
 }

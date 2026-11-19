@@ -3700,8 +3700,10 @@ frames' phase (`network_clock_quantized_early`) is now how late its steps ran
 of late (`network_clock_steps_ran`), not its longest frame. Nothing goes on
 the wire differently, and the steps and their order are as before (the
 identity check passes). Not covered: frames paced by vsync's wait (the
-host's, in the frame's commit), a Metal frame grid's slot, VR. A Legacy game,
-a dedicated server and `debug.network_timing_before` step as before.
+host's, in the frame's commit), a Metal frame grid's slot, VR. A Legacy game
+and a dedicated server step as before. It is always on: no setting turns it
+off (`debug.network_timing_before` leaves it on, its client's clock taking no
+account of its frames as before).
 `tools/harness/tests/test_frame_step_wait.py` checks the wait's wake and who
 steps so.
 
@@ -3727,15 +3729,7 @@ before the step's time is shown in the same frame as before; a press between
 the step's time and the frame's start, which the step took before, now waits
 for the next step (the view's turning is read at each frame as before).
 
-Tried and left: only the host stepping when due, a drawing client at its
-frames' starts. The client's own input to its frame was as before (1.2, 1.8
-at 60), but the host's own player's grew as with both (4.0, 6.7), and the
-client's input, now up to a frame late against the host's ticks on time,
-came after the host's tick in some (at 60 the input to the host's applied
-7.6 (34.1), a tick at the 95th percentile). Nor can a client send its input
-at the step's time and run the step at its frame with a later press merged
-in: the host runs the client's tick from the input sent, and the client's
-prediction from a different input would come apart from it every time.
+Tried and left: only the host stepping when due (no better, client input late).
 
 ## Numbers on parallel branches
 
