@@ -7624,6 +7624,9 @@ static void temporal_upscale(struct render_target_entry *source, short x0, short
 	pass.camera[2] = camera[2];
 	/* (a world unit is 10 feet) */
 	pass.camera[3] = 3.048f;
+	/* (FSR's RCAS, 0 to 1) */
+	pass.sharpness = (float)config_real("display.temporal_aa_sharpness");
+	pass.sharpness = pass.sharpness > 0.0f ? (pass.sharpness < 1.0f ? pass.sharpness : 1.0f) : 0.0f;
 	xgpu_backend_temporal(source->target.number, destination->target.number, &pass);
 	destination->target.written = ++render_target_write_serial;
 	destination->last_rendered = device.frame + 1;

@@ -99,6 +99,15 @@ static int config_boolean(const char *name)
 	return 0;
 }
 
+/* display.temporal_aa_sharpness as the player set it */
+static double sharpness_setting;
+
+static double config_real(const char *name)
+{
+	CHECK(!strcmp(name, "display.temporal_aa_sharpness"), "another setting read: %s", name);
+	return sharpness_setting;
+}
+
 static void journal_operation(int operation, const void *arguments, unsigned long size)
 {
 	(void)operation;
@@ -251,12 +260,35 @@ static void off(void)
 		sent[tone_map].target == sent[sent_find(SENT_DRAW)].target, "another target off");
 }
 
+/* display.temporal_aa_sharpness sent with the upscale (FSR's RCAS), 0 to 1:
+0 none, past either end the end */
+static void sharpness(void)
+{
+	static const double set[] = { 0.0, 0.5, 1.0, 3.0, -1.0 };
+	static const float sent_as[] = { 0.0f, 0.5f, 1.0f, 1.0f, 0.0f };
+	int index, upscale;
+
+	technique_on = TRUE;
+	for (index = 0; index < 5; index++)
+	{
+		sent_count = 0;
+		sharpness_setting = set[index];
+		window(0.67f);
+		upscale = sent_find(SENT_UPSCALE);
+		CHECK(upscale >= 0, "not upscaled");
+		CHECK(sent[upscale].pass.sharpness == sent_as[index], "sharpness %g sent as %g, not %g", set[index],
+			sent[upscale].pass.sharpness, sent_as[index]);
+	}
+}
+
 int main(int argc, char **argv)
 {
 	const char *which = argc > 1 ? argv[1] : "";
 
 	if (!strcmp(which, "upscaled"))
 		upscaled(0.67f);
+	else if (!strcmp(which, "sharpness"))
+		sharpness();
 	else if (!strcmp(which, "native"))
 		upscaled(1.0f);
 	else if (!strcmp(which, "off"))

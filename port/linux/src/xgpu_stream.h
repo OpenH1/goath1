@@ -709,7 +709,8 @@ HUD's, at the display's scale); the window (0 to 3), the technique (1
 picture), whether its history begins again (a cut, a new map, a resize);
 the depth target's number (the view's); the camera's near and far planes
 (world units), vertical field of view (radians) and meters in a world unit;
-the frame's jitter in the source's pixels (x right, y down) */
+display.temporal_aa_sharpness (0 to 1, 0 none: FSR's RCAS); the frame's
+jitter in the source's pixels (x right, y down) */
 struct xgpu_temporal_pass
 {
 	int32_t corners[4];
@@ -717,7 +718,7 @@ struct xgpu_temporal_pass
 	uint32_t window, technique, hdr, reset;
 	uint32_t depth, unused[3];
 	float camera[4];
-	float pad[4];
+	float sharpness, pad[3];
 	float jitter[4];
 };
 struct xgpu_stream_motion

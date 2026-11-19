@@ -25,8 +25,12 @@ C, on the core's command buffer:
   changed the opaque view (xgpu_vulkan_fsr_opaque's copy of it), tone
   mapped, the largest channel's change, 0.9 past 0.2 (the SDK's suggested
   values). No transparency and composition mask.
-- No sharpening (RCAS): the output is the accumulation's, RGBA16F, blitted
-  into the destination's rectangle.
+- The sharpening is the SDK's RCAS (display.temporal_aa_sharpness, the
+  SDK's sharpness: 0 none, the pass not dispatched; else the accumulation's
+  ACCUMULATE_SHARPEN build leaves the output to RCAS, which sharpens its
+  upscaled colour into it). As in the SDK it is part of the upscale: before
+  the tone map, on display.hdr's linear light too. The output, RGBA16F, is
+  blitted into the destination's rectangle.
 
 Render thread alone, as the core.
 */
@@ -121,6 +125,12 @@ struct fsr_reactive_constants
 {
 	float scale, threshold, binary_value;
 	uint32_t flags;
+};
+
+/* cbRCAS (FsrRcasCon's) */
+struct fsr_rcas_constants
+{
+	uint32_t config[4];
 };
 
 /* the SDK's FFX_FSR3UPSCALER_AUTOREACTIVEFLAGS_* */
@@ -617,7 +627,8 @@ struct dispatch_state
 	struct fsr_context *context;
 	int odd, reactive;
 	VkImageView color, depth, motion;
-	struct xgpu_vulkan_range blocks[3];
+	/* cbFSR3Upscaler, cbSPD, cbGenerateReactive, cbRCAS */
+	struct xgpu_vulkan_range blocks[4];
 };
 
 static VkImageView resource_view(const struct dispatch_state *state, int kind, int resource)
@@ -665,6 +676,8 @@ static VkImageView resource_view(const struct dispatch_state *state, int kind, i
 	case XGPU_VULKAN_FSR_SHADING_CHANGE: return images[IMAGE_SHADING_CHANGE].view;
 	case XGPU_VULKAN_FSR_UPSCALED_OUTPUT: return images[IMAGE_OUTPUT].view;
 	case XGPU_VULKAN_FSR_AUTOREACTIVE: case XGPU_VULKAN_FSR_AUTOCOMPOSITION: return images[IMAGE_REACTIVE].view;
+	/* (the upscaled colour the accumulation wrote this frame) */
+	case XGPU_VULKAN_FSR_RCAS_INPUT: return images[odd ? IMAGE_UPSCALED_1 : IMAGE_UPSCALED_2].view;
 	default: return VK_NULL_HANDLE;
 	}
 }
@@ -702,7 +715,8 @@ static int dispatch(VkCommandBuffer commands, const struct dispatch_state *state
 		if (binding->kind == XGPU_VULKAN_FSR_BUFFER)
 		{
 			int block = binding->resource == XGPU_VULKAN_FSR_CONSTANTS ? 0 :
-				binding->resource == XGPU_VULKAN_FSR_SPD_CONSTANTS ? 1 : 2;
+				binding->resource == XGPU_VULKAN_FSR_SPD_CONSTANTS ? 1 :
+				binding->resource == XGPU_VULKAN_FSR_REACTIVE_CONSTANTS ? 2 : 3;
 
 			if (buffer_count == 4)
 				return 0;
@@ -776,6 +790,33 @@ static void depth_parameters(struct fsr_constants *constants, const struct xgpu_
 	constants->device_to_view_depth[1] = q * minimum;
 	constants->device_to_view_depth[2] = aspect / cotangent;
 	constants->device_to_view_depth[3] = 1.0f / cotangent;
+}
+
+/* a positive normal float as a half's bits (rounded to the nearest) */
+static uint32_t half_bits(float value)
+{
+	uint32_t bits;
+	int32_t exponent;
+
+	memcpy(&bits, &value, sizeof(bits));
+	exponent = (int32_t)((bits >> 23) & 0xFF) - 127 + 15;
+	if (exponent <= 0)
+		return 0;
+	if (exponent >= 31)
+		return 0x7C00;
+	return (((uint32_t)exponent << 10) | ((bits >> 13) & 0x3FF)) + ((bits >> 12) & 1);
+}
+
+/* the SDK's FsrRcasCon, of fsr3upscalerDispatch's sharpness (0 to 1): the
+strength 2 - 2 * sharpness stops below RCAS's most */
+static void rcas_constants(struct fsr_rcas_constants *constants, float sharpness)
+{
+	float linear = exp2f(-(2.0f - 2.0f * sharpness));
+	uint32_t half = half_bits(linear);
+
+	memset(constants, 0, sizeof(*constants));
+	memcpy(&constants->config[0], &linear, sizeof(linear));
+	constants->config[1] = half | (half << 16);
 }
 
 /* (a frame FSR cannot do: the view scaled into the destination as it is,
@@ -870,6 +911,7 @@ static int upscale(int window, const struct xgpu_vulkan_fsr_frame *frame)
 	struct dispatch_state state;
 	struct fsr_spd_constants spd;
 	struct fsr_reactive_constants reactive;
+	struct fsr_rcas_constants rcas;
 	struct xgpu_vulkan_image *read[3], *written[1];
 	const struct xgpu_vulkan_image_description *source, *destination;
 	VkCommandBuffer commands;
@@ -877,6 +919,8 @@ static int upscale(int window, const struct xgpu_vulkan_fsr_frame *frame)
 	int32_t render[2], upscale[2];
 	uint32_t groups_x, groups_y, largest, mips, phases;
 	int staged, reset, hdr = frame->hdr != 0, ok = 1;
+	/* (RCAS: only with a sharpness) */
+	int sharpen = frame->sharpness > 0.0f;
 	void *bytes;
 	int index;
 
@@ -1029,7 +1073,8 @@ static int upscale(int window, const struct xgpu_vulkan_fsr_frame *frame)
 	reactive.threshold = 0.2f;
 	reactive.binary_value = 0.9f;
 	reactive.flags = AUTOREACTIVE_APPLY_TONEMAP | AUTOREACTIVE_APPLY_THRESHOLD | AUTOREACTIVE_USE_COMPONENTS_MAX;
-	for (index = 0; index < 3 && ok; index++)
+	rcas_constants(&rcas, frame->sharpness > 1.0f ? 1.0f : frame->sharpness);
+	for (index = 0; index < (sharpen ? 4 : 3) && ok; index++)
 	{
 		bytes = xgpu_vulkan_upload(256, 256, &state.blocks[index]);
 		if (!bytes)
@@ -1038,8 +1083,9 @@ static int upscale(int window, const struct xgpu_vulkan_fsr_frame *frame)
 			break;
 		}
 		memset(bytes, 0, 256);
-		memcpy(bytes, index == 0 ? (const void *)constants : index == 1 ? (const void *)&spd : (const void *)&reactive,
-			index == 0 ? sizeof(*constants) : index == 1 ? sizeof(spd) : sizeof(reactive));
+		memcpy(bytes, index == 0 ? (const void *)constants : index == 1 ? (const void *)&spd :
+			index == 2 ? (const void *)&reactive : (const void *)&rcas,
+			index == 0 ? sizeof(*constants) : index == 1 ? sizeof(spd) : index == 2 ? sizeof(reactive) : sizeof(rcas));
 	}
 
 	/* the passes */
@@ -1056,8 +1102,12 @@ static int upscale(int window, const struct xgpu_vulkan_fsr_frame *frame)
 		((uint32_t)render[1] + 7) / 8);
 	ok = ok && dispatch(commands, &state, hdr, XGPU_VULKAN_FSR_PASS_LUMA_INSTABILITY, ((uint32_t)render[0] + 7) / 8,
 		((uint32_t)render[1] + 7) / 8);
-	ok = ok && dispatch(commands, &state, hdr, XGPU_VULKAN_FSR_PASS_ACCUMULATE, ((uint32_t)upscale[0] + 7) / 8,
-		((uint32_t)upscale[1] + 7) / 8);
+	ok = ok && dispatch(commands, &state, hdr, sharpen ? XGPU_VULKAN_FSR_PASS_ACCUMULATE_SHARPEN :
+		XGPU_VULKAN_FSR_PASS_ACCUMULATE, ((uint32_t)upscale[0] + 7) / 8, ((uint32_t)upscale[1] + 7) / 8);
+	/* (RCAS: 16 by 16 pixels a group) */
+	if (sharpen)
+		ok = ok && dispatch(commands, &state, hdr, XGPU_VULKAN_FSR_PASS_RCAS, ((uint32_t)upscale[0] + 15) / 16,
+			((uint32_t)upscale[1] + 15) / 16);
 
 	/* the output into the destination's rectangle (its format's: a blit) */
 	if (ok)

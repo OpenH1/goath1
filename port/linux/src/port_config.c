@@ -311,6 +311,11 @@ static const struct config_setting config_settings[] =
 		"game has its DLSS module (else off); \"metalfx\", Apple MetalFX's\n"
 		"temporal scaler, the same way, on Metal (macOS, iOS; else off). Not in\n"
 		"VR (docs/temporal-aa.md)." },
+	{ "display.temporal_aa_sharpness", _config_real, "0.8", "HALO_TEMPORAL_AA_SHARPNESS", _environment_value,
+		_platform_all,
+		"How much display.temporal_aa \"fsr\" sharpens its picture, 0.0 to 1.0:\n"
+		"AMD FSR's own sharpening (RCAS), which offsets the softness of a\n"
+		"render scale below 1. 0.0 none. DLSS and MetalFX ignore it." },
 	{ "display.supersampling", _config_real, "1.0", "HALO_SUPERSAMPLING", _environment_value, _platform_desktop,
 		"Draw the game at this many times the display's resolution each way, 1.0\n"
 		"to 2.0, and scale it down to the display: smoother edges and finer\n"

@@ -41,8 +41,9 @@ renderer has it: Settings > Video > Frame Rate & Sync > Upscaler (`xgpu_backend_
   and the GPU headers they include, unchanged, MIT. `tools/vulkan_fsr_shaders.py` compiles them with glslangValidator
   (as `tools/vulkan_post_shaders.py` does the post passes) into `xgpu_vulkan_fsr_shaders.c`, with each pass's bindings
   read back from its SPIR-V; `--check` verifies it. The game has no shader compiler. Options: no half floats, no
-  subgroup operations, reversed depth, motion at the render resolution without the jitter, no sharpening (RCAS). An
-  SDR and an HDR build of each pass (the same words but the accumulation's).
+  subgroup operations, reversed depth, motion at the render resolution without the jitter; the accumulation built
+  again with the SDK's sharpening option, and RCAS (`fsr1/ffx_fsr1.h`). An SDR and an HDR build of each pass (the same
+  words but the accumulations').
 - **Host side.** `port/linux/vulkan/xgpu_vulkan_fsr.c` is the SDK's `ffx_fsr3upscaler.cpp` (create, dispatch, the
   generated reactive mask) in C, on the core's command buffer between wide barriers. Each window (split screen's four)
   has its own history, made at its sizes. A window not at the target's top left corner is copied there first.
@@ -59,7 +60,12 @@ renderer has it: Settings > Video > Frame Rate & Sync > Upscaler (`xgpu_backend_
   mapped, largest channel, 0.9 past 0.2). The first-person weapon and the objects write their own motion.
 - **Preparation.** A map prepared with a technique on also makes the objects' pipelines' motion variants. The
   enumeration's models are drawn as the window's objects are, and FSR's compute pipelines are made then too.
-- **Not done.** Sharpening and MetalFX. Android's render scale is its swapchain's (FSR there antialiases at the
+- **Sharpening.** `display.temporal_aa_sharpness` (0 to 1, default 0.8; Settings > Video > Frame Rate & Sync > FSR
+  Sharpness) is the SDK's sharpness: FSR's own RCAS pass at 2 - 2 × sharpness stops below its strongest
+  (`FsrRcasCon`). As in the SDK it is part of the upscale, so it runs before the tone map, on `display.hdr`'s linear
+  light too: the accumulation's sharpening build leaves the output to RCAS, which reads this frame's upscaled colour.
+  0 dispatches neither (the frame as without it). DLSS and MetalFX ignore it.
+- **Not done.** Android's render scale is its swapchain's (FSR there antialiases at the
   swapchain's size).
 
 ## Milestone 3: `"dlss"` (Vulkan, NVIDIA)

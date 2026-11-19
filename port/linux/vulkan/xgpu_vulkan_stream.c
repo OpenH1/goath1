@@ -3868,6 +3868,7 @@ static void stream_motion(void *context, const struct xgpu_stream_motion *record
 		frame.meters = pass.camera[3];
 		frame.reset = pass.reset != 0 || motion.reset;
 		frame.hdr = pass.hdr != 0;
+		frame.sharpness = pass.sharpness > 0.0f ? pass.sharpness : 0.0f;
 		destination->written++;
 		/* (the technique: 2 NVIDIA DLSS, else AMD FSR) */
 		if (pass.technique == 2)
