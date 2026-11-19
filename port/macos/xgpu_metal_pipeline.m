@@ -307,6 +307,67 @@ NSString *const xgpu_metal_fixed_source =
 	"\treturn float4(picture.sample(linear, in.coordinates).rgb, 1.0);\n"
 	"}\n";
 
+/* display.temporal_aa's passes (xgpu_metal_temporal.m): the uniforms at
+the backend's draw uniforms' place, 17 */
+NSString *const xgpu_metal_temporal_source =
+	@"#include <metal_stdlib>\n"
+	"using namespace metal;\n"
+	"struct motion_uniforms { float4 metrics; float4 window; float4 reproject[4]; float4 motion; };\n"
+	"struct temporal_out { float4 position [[position]]; };\n"
+	"vertex temporal_out xgpu_temporal_vertex(uint id [[vertex_id]])\n"
+	"{\n"
+	"\ttemporal_out out;\n"
+	"\tout.position = float4(float((id & 1) << 2) - 1.0, float((id & 2) << 1) - 1.0, 0.0, 1.0);\n"
+	"\treturn out;\n"
+	"}\n"
+	/* (the window's motion, as MOTION_RESOLVE_SOURCE) */
+	"fragment float4 xgpu_temporal_resolve(temporal_out in [[stage_in]], constant motion_uniforms &u [[buffer(17)]],\n"
+	"\ttexture2d<float> objects [[texture(0)]], depth2d<float> depth_texture [[texture(1)]])\n"
+	"{\n"
+	"\tuint2 texel = uint2(in.position.xy);\n"
+	"\tfloat4 object = objects.read(texel);\n"
+	"\tfloat depth = depth_texture.read(texel);\n"
+	"\tif (object.w > 0.5 && abs(object.z - depth) <= max(1.5e-7, depth * 1.0e-6))\n"
+	"\t\treturn float4(object.xy, 0.0, 1.0);\n"
+	"\tif (u.motion.w == 0.0)\n"
+	"\t\treturn float4(0.0);\n"
+	"\tfloat2 place = (in.position.xy - u.window.xy) / u.window.zw;\n"
+	"\tfloat2 ndc = float2(place.x * 2.0 - 1.0, 1.0 - place.y * 2.0) - u.motion.xy;\n"
+	"\tfloat4 current = float4(ndc, u.motion.z != 0.0 ? 1.0 - depth : depth, 1.0);\n"
+	"\tfloat4 previous = float4(dot(u.reproject[0], current), dot(u.reproject[1], current), dot(u.reproject[2], current),\n"
+	"\t\tdot(u.reproject[3], current));\n"
+	"\tfloat2 before = previous.w > 0.0 ? previous.xy / previous.w : ndc;\n"
+	"\treturn float4((before - ndc) * float2(0.5, -0.5), 0.0, 0.0);\n"
+	"}\n"
+	/* (debug.motion_vectors: grey still, red to the right, green downward,
+	full at 8 pixels a frame, as MOTION_VIEW_SOURCE) */
+	"fragment float4 xgpu_temporal_view(temporal_out in [[stage_in]], constant motion_uniforms &u [[buffer(17)]],\n"
+	"\ttexture2d<float> motion [[texture(0)]])\n"
+	"{\n"
+	"\tfloat2 moved = motion.read(uint2(in.position.xy)).xy * u.window.zw;\n"
+	"\tfloat2 shown = clamp(moved / 8.0, -1.0, 1.0);\n"
+	"\treturn float4(0.5 + 0.5 * shown.x, 0.5 + 0.5 * shown.y, 0.5 - 0.25 * (shown.x + shown.y), 1.0);\n"
+	"}\n"
+	/* (the reactive mask, FSR's generated one: tone mapped, the largest
+	channel's change, 0.9 past 0.2) */
+	"static float3 reactive_tone_map(float3 c) { return c / (max(c.r, max(c.g, c.b)) + 1.0); }\n"
+	"fragment float4 xgpu_temporal_reactive(temporal_out in [[stage_in]], texture2d<float> opaque [[texture(0)]],\n"
+	"\ttexture2d<float> color [[texture(1)]])\n"
+	"{\n"
+	"\tuint2 texel = uint2(in.position.xy);\n"
+	"\tfloat3 change = abs(reactive_tone_map(max(color.read(texel).rgb, 0.0)) -\n"
+	"\t\treactive_tone_map(max(opaque.read(texel).rgb, 0.0)));\n"
+	"\treturn float4(max(change.r, max(change.g, change.b)) < 0.2 ? 0.0 : 0.9);\n"
+	"}\n"
+	/* (the view stretched while its scaler is made: the source's rectangle
+	(metrics: x0, y0, width, height) over the destination's (window)) */
+	"fragment float4 xgpu_temporal_stretch(temporal_out in [[stage_in]], constant motion_uniforms &u [[buffer(17)]],\n"
+	"\ttexture2d<float> color [[texture(0)]])\n"
+	"{\n"
+	"\tconstexpr sampler linear(coord::pixel, filter::linear, address::clamp_to_edge);\n"
+	"\treturn color.sample(linear, u.metrics.xy + (in.position.xy - u.window.xy) / u.window.zw * u.metrics.zw);\n"
+	"}\n";
+
 /* ---------- the command stream's pipelines */
 
 /* the stream's target formats (XGPU_FORMAT_*: BGRA8 1, D24S8 2, RGBA16F 3,

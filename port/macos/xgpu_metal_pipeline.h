@@ -102,6 +102,9 @@ MTLRenderPipelineDescriptor *xgpu_metal_present_descriptor(void);
 into the app's library, and compiled from this source where there is none,
 as the tests run) */
 extern NSString *const xgpu_metal_fixed_source;
+/* display.temporal_aa's passes' functions (xgpu_metal_temporal.m), built
+into the app's library too */
+extern NSString *const xgpu_metal_temporal_source;
 #endif
 
 /* ---------- the command stream's pipelines (xgpu_metal_stream.m) */
