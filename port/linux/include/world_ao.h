@@ -125,6 +125,11 @@ the window's viewport (the game's screen's bounds) as the camera saw it
 (xgpu_stream.h's struct xgpu_world_ao_pass's camera) */
 int world_ao_prepass_begin(void);
 void world_ao_prepass_end(short x0, short y0, short x1, short y1, float const camera[4][4]);
+/* the pre-pass begun is the window's own walk of its opaque surfaces,
+which the renderer draws as the pre-pass's and then again as the
+surfaces' (render_window walks them once); once it is ended, whether it
+is drawn again (FALSE: the surfaces to be walked again) */
+int world_ao_prepass_walked(void);
 /* which object is drawn now (render_objects: its own proxies do not shade
 it; -1 none, the structure); the first-person weapon drawn (TRUE) and done
 (FALSE: none drawn now), which the occlusion leaves as it is */
@@ -334,6 +339,12 @@ number, and whether this window's previous frame's occlusion may be
 reprojected (one window a frame, this and the last) */
 int halo_world_ao_prepass_found(void);
 int halo_world_ao_prepass_begin(void);
+/* the pre-pass begun is the window's own walk of its opaque surfaces,
+played as the pre-pass's and then again as the surfaces' (xgpu_stream.h's
+WORLD_AO_PREPASS replay; FALSE: the pre-pass walked alone, then the
+surfaces, as before); once it is ended, whether it is played again (FALSE:
+drawn as the pre-pass's alone, the surfaces to be walked again) */
+int halo_world_ao_prepass_walked(void);
 void halo_world_ao_prepass_end(short x0, short y0, short x1, short y1, float const camera[4][4],
 	float const cascades[4][4], unsigned long frame, int history);
 /* a part of the field uploaded (WORLD_AO_FIELD_*: world_sdf.h's table of

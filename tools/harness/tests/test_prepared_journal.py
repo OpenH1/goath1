@@ -164,6 +164,7 @@ KEPT_ELSEWHERE = {
     'd3d8_clear_viewport_alone': "a clear, journaled as JOURNAL_CLEAR",
     'halo_world_ao_prepass_begin': "the pre-pass's pass, journaled as its operation",
     'halo_world_ao_prepass_end': "the pre-pass's pass, journaled as its operation",
+    'halo_world_ao_prepass_walked': "whether the pre-pass's walk is played again: no draw's state",
     'halo_view_begin': "an extra view's targets: the journal's objects (views of the device's targets)",
     'halo_view_end': "an extra view's targets: the journal's objects",
     'halo_view_sample': "a view sampled: its target as a stage's texture, the journal's objects",

@@ -181,6 +181,11 @@ opaque surfaces is being drawn (port/linux/game/world_ao.c): their draws
 alone, not what they queue for later (the transparent parts, the widgets,
 the fog screen's models), nor a second search for the objects (render.c) */
 extern boolean render_world_ao_prepass;
+/* port: ... and the window's own walk, played twice by the renderer (as the
+pre-pass's and as the surfaces'), was drawn as the pre-pass's alone: the
+surfaces walked again as the pre-pass is (nothing queued again, the
+objects found once), their motion drawn (render.c) */
+extern boolean render_world_ao_again;
 
 /* ---------- public code */
 

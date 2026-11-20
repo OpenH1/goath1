@@ -43,11 +43,13 @@ render_frame ──► world_ao_frame_begin ─► world_scene_frame_begin (obje
                                       └► world_sdf_frame (upload a finished field, a few slices a frame)
 render_window ─► world_ao_window_begin ─► world_proxies_window (≤64 shapes) + field place
                                        └► halo_world_ao_window ─► XGPU_STREAM_WORLD_AO_WINDOW ─► backend block
-                 world_ao_prepass_begin ─► the pre-pass: render_objects + structure_render_lightmaps again,
-                                           each world draw as its twin, writing its pixel's inputs
-                 world_ao_prepass_end ─► the occlusion's pass (a quarter of the pixels) ─► the AO texture
+                 world_ao_prepass_begin (the walk's BEGIN, replay 1)
                  render_objects (world_ao_object_begin per object: owner slot, reference)
-                 structure_render_lightmaps (each surface reads its pixel's occlusion, upsampled)
+                 structure_render_lightmaps
+                 world_ao_prepass_end (its END) ─► the decoder plays the walk as the pre-pass (each world draw
+                                           as its twin, writing its pixel's inputs), the occlusion's pass (a
+                                           quarter of the pixels) ─► the AO texture, then the walk again as the
+                                           surfaces' (each reads its pixel's occlusion, upsampled)
                ─► world_ao_window_end (block withdrawn; later passes never see it)
 ```
 
@@ -60,9 +62,16 @@ The occlusion was found in the surfaces' shaders as each draws, so a pixel paid 
 drawn over it (a30's start on a Radeon 8060S: 2.0 to 2.4 evaluations a visible pixel; an Apple GPU's hidden
 surface removal leaves the opaque layers' overdraw out, not the alpha-tested foliage's). It is now found once:
 
-- **The pre-pass.** `render_window` walks the window's opaque surfaces twice (`render_world_ao_prepass`: their
-  transparent parts, widgets and fog screen left for the second walk, the objects found once). In the first, the
-  backend draws each draw with the world's light as its **twin** (`xgpu_stream_world_ao_twin`: the same pipeline, its
+- **The pre-pass.** `render_window` walks the window's opaque surfaces once, and the render stream's decoder plays
+  that walk twice (`host_render_stream.c`'s `walk_replay`; `xgpu_stream.h`'s WORLD_AO_PREPASS `replay`): first as
+  the pre-pass (its MOTION records left out), then, after the occlusion's pass, again from the state it began with
+  (the textures, constants, draw state, vertex input, targets and pipeline the decoder keeps) as the surfaces'. Only
+  the draws and their state are played again; what the walk sent once (definitions, vertex programs, the mirror's
+  writes) is had already. The guest asks for the replay only where the walk's END is in the same submit as its
+  BEGIN (no ring bytes of it released); otherwise the game walks the surfaces again (`render_world_ao_again`), as
+  `HALO_WORLD_AO_NO_REPLAY=1` (for measuring) walks the pre-pass alone first, as before. Each opaque draw is so
+  submitted once (the 5900X hosting Hang 'Em High, 62 players, 120 ticks, ray-traced, highest model detail: the
+  game thread's frame 4.79 to 4.20 ms on average, the render thread's alike). In the pre-pass the backend draws each draw with the world's light as its **twin** (`xgpu_stream_world_ao_twin`: the same pipeline, its
   pixel key `XGPU_AMBIENT_OCCLUSION_WORLD_INPUTS`, into an RGBA32Uint target and a depth target of its own) and
   draws every other opaque depth-writing draw as an **occluder** (its test made strictly nearer, writing no inputs:
   the first-person weapon, a surface lighting itself), so no hidden surface's occlusion is found. Blended draws and

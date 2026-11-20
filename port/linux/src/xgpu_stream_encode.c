@@ -1104,16 +1104,30 @@ void xgpu_backend_temporal(xgpu_target source, xgpu_target destination, const st
 	memcpy(&record_body->pass, pass, sizeof(record_body->pass));
 }
 
-void xgpu_backend_world_ao_prepass(int phase, xgpu_target target, const struct xgpu_world_ao_pass *pass)
+/* the window's opaque surfaces walked once and played twice (xgpu_stream.h's
+WORLD_AO_PREPASS replay): begun, and the submits so far then (one since:
+the walk handed over in parts, its first bytes perhaps released before its
+END, so not played again) */
+static struct
+{
+	BOOL open;
+	uint32_t batch;
+} walk;
+
+/* (ending: a walk's END, played again where the walk is in the same submit
+as it, the record's room made first, which may submit) */
+static BOOL world_ao_prepass_record(int phase, xgpu_target target, const struct xgpu_world_ao_pass *pass,
+	BOOL beginning, BOOL ending)
 {
 	struct xgpu_stream_world_ao_prepass *record_body;
+	BOOL replay;
 
-	if (!stream.open)
-		return;
 	record_body = record(XGPU_STREAM_WORLD_AO_PREPASS, sizeof(*record_body));
+	replay = beginning || (ending && walk.open && walk.batch == stream.batch);
+	walk.open = FALSE;
 	record_body->phase = (uint32_t)phase;
 	record_body->target = (uint32_t)target;
-	record_body->pad = 0;
+	record_body->replay = replay ? 1 : 0;
 	if (pass)
 	{
 		record_body->pass = *pass;
@@ -1125,6 +1139,30 @@ void xgpu_backend_world_ao_prepass(int phase, xgpu_target target, const struct x
 	{
 		memset(&record_body->pass, 0, sizeof(record_body->pass));
 	}
+	return replay;
+}
+
+/* (a walk ended by another phase is not played again) */
+void xgpu_backend_world_ao_prepass(int phase, xgpu_target target, const struct xgpu_world_ao_pass *pass)
+{
+	if (!stream.open)
+		return;
+	(void)world_ao_prepass_record(phase, target, pass, FALSE, FALSE);
+}
+
+int xgpu_backend_world_ao_walk(int phase, xgpu_target target, const struct xgpu_world_ao_pass *pass)
+{
+	BOOL beginning = phase == XGPU_WORLD_AO_PREPASS_BEGIN, replay;
+
+	if (!stream.open)
+		return FALSE;
+	replay = world_ao_prepass_record(phase, target, pass, beginning, !beginning);
+	if (beginning)
+	{
+		walk.open = TRUE;
+		walk.batch = stream.batch;
+	}
+	return replay;
 }
 
 void xgpu_backend_world_ao_cascades(unsigned long x, unsigned long y, unsigned long z, unsigned long width,
