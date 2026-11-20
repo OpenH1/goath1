@@ -4062,15 +4062,22 @@ own (main_loop's frame_for_step) runs it then: its input read, the
 datagrams read, the step run and its datagrams sent, the menus and the
 world updated as in any frame, nothing drawn; then the wait goes on to the
 frame's time (platform_frame_wait). Only in main.c's own waits (not a
-load's progress screen's), and only where such a frame ends before the
-frame's time: how long one takes (nanoseconds), the longest of late, each at
-most MAIN_STEP_FRAME_LONGEST_COST (a hitch is not the next's), and the
-margin over it */
+load's progress screen's), and only where such a frame's work beside the
+step ends before the frame's time: the step itself takes as long in the
+frame, so a step frame that ends past the frame's time still has the frame
+start sooner than one that runs the step (a step of 5 to 7 ms with 60 bots
+on a weak processor, left to the frame for want of a whole step's room, had
+the frame shown that much later). How long that work takes (nanoseconds:
+the step frame's own less its game_time_update's), the longest of late,
+each at most MAIN_STEP_FRAME_LONGEST_COST (a hitch is not the next's), and
+the margin over it */
 #define MAIN_STEP_FRAME_FIRST_COST 1500000ULL
 #define MAIN_STEP_FRAME_LONGEST_COST 4000000ULL
 #define MAIN_STEP_FRAME_MARGIN 300000ULL
 static boolean main_frame_waiting;
 static unsigned long long main_step_frame_cost = MAIN_STEP_FRAME_FIRST_COST;
+/* (a frame woken for a step) its game_time_update's time, nanoseconds */
+static unsigned long long main_step_frame_step;
 
 static boolean main_frame_steps_when_due(
 	void)
@@ -4121,6 +4128,8 @@ static void main_frame_wait_after_step(
 {
 	unsigned long long cost = SDL_GetTicksNS() - began;
 
+	cost = cost > main_step_frame_step ? cost - main_step_frame_step : 0;
+	main_step_frame_step = 0;
 	cost = MIN(cost, MAIN_STEP_FRAME_LONGEST_COST);
 	main_step_frame_cost = MAX(main_step_frame_cost, cost);
 	main_frame_waiting = TRUE;
@@ -4528,8 +4537,15 @@ void main_loop(
 					}
 					profile_scope_exit(main_network_end_frame_section)
 
-					profile_scope(main_game_time_update_section,
-						game_time_update((real)main_globals.halt_time_scale*main_globals.seconds_elapsed);)
+					{
+						unsigned long long step_began = frame_for_step ? SDL_GetTicksNS() : 0;
+
+						profile_scope(main_game_time_update_section,
+							game_time_update((real)main_globals.halt_time_scale*main_globals.seconds_elapsed);)
+						/* port: (the step frame's work beside its step: main_frame_wait_after_step) */
+						if (frame_for_step)
+							main_step_frame_step = SDL_GetTicksNS() - step_began;
+					}
 					frame_ticks = game_time_get_elapsed();
 
 					render_frame = main_globals.main_menu_scenario_loaded ||

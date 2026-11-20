@@ -114,8 +114,10 @@ then, drawing nothing; the wait then goes on to the frame's time.
 
 When the wait wakes, now with left nanoseconds to the step (0 or less: due
 already) and the frame's time at frame_due: at the step, where a frame that
-runs it (cost nanoseconds) ends before the frame's time; else 0, the step
-left for the frame, at most cost after it fell due */
+runs it does its work beside the step (cost nanoseconds) before the frame's
+time, the frame then starting sooner than if it ran the step itself, even
+where the step ends past the frame's time; else 0, the step left for the
+frame, at most cost after it fell due */
 unsigned long long frame_step_wake(
 	unsigned long long now,
 	unsigned long long frame_due,
