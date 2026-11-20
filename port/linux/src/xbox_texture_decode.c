@@ -135,7 +135,24 @@ void xgpu_texture_describe(DWORD format_word, DWORD size_word, struct xgpu_textu
 	information = format_information(description->format);
 	description->cube_map = (format_word & D3DFORMAT_CUBEMAP) != 0;
 	description->compressed = kind_compressed(information.kind);
-	if (size_word)
+	if (size_word && description->compressed)
+	{
+		/* a compressed texture of sides only Halo PC draws (an Xbox has no
+		linear DXT format, so this is never a linear texture's Size word):
+		its true sides, its levels as the Format word says, a volume's depth
+		less one where the power-of-two sides would be, and its blocks
+		unswizzled one level after another, as any DXT texture's
+		(xbox_texture_cache.c, texture_cache_initialize_hardware_format) */
+		description->width = (size_word & D3DSIZE_WIDTH_MASK) + 1;
+		description->height = ((size_word & D3DSIZE_HEIGHT_MASK) >> D3DSIZE_HEIGHT_SHIFT) + 1;
+		description->depth = ((format_word >> D3DFORMAT_USIZE_SHIFT) & 0xfff) + 1;
+		description->levels = (format_word & D3DFORMAT_MIPMAP_MASK) >> D3DFORMAT_MIPMAP_SHIFT;
+		if (!description->levels)
+			description->levels = 1;
+		description->linear = FALSE;
+		description->pitch = ((description->width + 3) / 4) * information.bytes;
+	}
+	else if (size_word)
 	{
 		description->width = (size_word & D3DSIZE_WIDTH_MASK) + 1;
 		description->height = ((size_word & D3DSIZE_HEIGHT_MASK) >> D3DSIZE_HEIGHT_SHIFT) + 1;

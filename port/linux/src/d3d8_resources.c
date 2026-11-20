@@ -328,6 +328,13 @@ HRESULT WINAPI D3DTexture_GetSurfaceLevel(D3DTexture *texture, UINT level, D3DSu
 		(floor_log2_unsigned(height) << D3DFORMAT_VSIZE_SHIFT) |
 		(1 << D3DFORMAT_MIPMAP_SHIFT);
 	surface->Size = base->Size;
+	/* (a compressed texture's Size word gives its true sides,
+	xgpu_texture_describe: the level's) */
+	if (base->Size && description.compressed)
+	{
+		surface->Format &= ~(D3DFORMAT_USIZE_MASK | D3DFORMAT_VSIZE_MASK | D3DFORMAT_PSIZE_MASK);
+		surface->Size = ((height - 1) << D3DSIZE_HEIGHT_SHIFT) | (width - 1);
+	}
 	surface->Parent = base;
 	d3d8_resource_created(surface);
 	*result = surface;

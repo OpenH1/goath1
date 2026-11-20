@@ -328,7 +328,9 @@ tag lays them out, as rasterizer_xbox_bitmap_rebuild_hardware_format and
 the texture cache assume without checking: the game's own bitmap_verify, a
 format with a hardware texture, a compressed flag that says whether the
 format is compressed, power-of-two dimensions for the swizzle (or else a
-linear 2D bitmap), square cube maps, and every pixel its levels need. */
+linear 2D bitmap, or a compressed one of any sides, whose blocks are not
+swizzled: rasterizer_xbox_bitmap_unswizzled_compressed), square cube maps,
+and every pixel its levels need. */
 boolean custom_edition_bitmap_drawable(
 	struct bitmap_data *bitmap)
 {
@@ -340,7 +342,8 @@ boolean custom_edition_bitmap_drawable(
 		(TEST_FLAG(bitmap->flags, _bitmap_compressed_bit) != 0) == compressed_format &&
 		(linear ?
 			bitmap->type == _bitmap_type_2d :
-			power_of_two(bitmap->width) && power_of_two(bitmap->height) && power_of_two(bitmap->depth)) &&
+			compressed_format ||
+				(power_of_two(bitmap->width) && power_of_two(bitmap->height) && power_of_two(bitmap->depth))) &&
 		(bitmap->type != _bitmap_type_cube_map || bitmap->width == bitmap->height) &&
 		bitmap->pixels_size >= bitmap_get_pixel_data_size(bitmap);
 }
@@ -736,6 +739,7 @@ boolean custom_edition_bitmaps_verify(
 	struct bitmap_group *group;
 	int32_t tag_index = NONE;
 	long bitmap_count = 0;
+	long blank_count = 0;
 
 	while ((group = custom_edition_cache_tag_next(tag_cache, loaded_bytes, BITMAP_GROUP_TAG, sizeof(*group), &tag_index)) != NULL)
 	{
@@ -749,7 +753,7 @@ boolean custom_edition_bitmaps_verify(
 			{
 				error(
 					_error_silent,
-					"custom edition: bitmap %ld of '%s' (type %d, format %d, %dx%dx%d, flags 0x%X) cannot be drawn by this build",
+					"custom edition: bitmap %ld of '%s' (type %d, format %d, %dx%dx%d, flags 0x%X) cannot be drawn by this build: one blank texel instead",
 					bitmap_index,
 					custom_edition_cache_tag_name(tag_cache, loaded_bytes, tag_index),
 					bitmap->type,
@@ -758,15 +762,31 @@ boolean custom_edition_bitmaps_verify(
 					bitmap->height,
 					bitmap->depth,
 					bitmap->flags);
-				return FALSE;
+				/* one bitmap the texture cache cannot draw is no reason to
+				lose the map: it is drawn as one a8 texel of its own pixels
+				(its first byte; it is checked to have one) */
+				bitmap->signature = BITMAP_GROUP_TAG;
+				bitmap->type = _bitmap_type_2d;
+				bitmap->format = _bitmap_format_a8;
+				bitmap->width = 1;
+				bitmap->height = 1;
+				bitmap->depth = 1;
+				bitmap->mipmap_count = 0;
+				bitmap->flags = FLAG(_bitmap_has_power_of_two_dimensions_bit);
+				if (!custom_edition_bitmap_drawable(bitmap))
+				{
+					return FALSE;
+				}
+				blank_count++;
 			}
 			bitmap_count++;
 		}
 	}
 	error(
 		_error_silent,
-		"custom edition: %ld bitmaps can be drawn",
-		bitmap_count);
+		"custom edition: %ld bitmaps can be drawn (%ld of them blank)",
+		bitmap_count,
+		blank_count);
 
 	return TRUE;
 }

@@ -210,9 +210,10 @@ void custom_edition_cache_read(
 
 /* ---------- prototypes/CUSTOM_EDITION_BITMAPS.C */
 
-/* Whether this build can draw every bitmap of a tag cache
+/* Checks that this build can draw every bitmap of a tag cache
 custom_edition_cache_load filled (`loaded_bytes` of it in use) from
-Custom Edition pixels; logs the first it cannot. */
+Custom Edition pixels: one it cannot is logged and made one blank texel of
+its pixels, and FALSE only if even that cannot be drawn. */
 boolean custom_edition_bitmaps_verify(
 	byte *tag_cache,
 	unsigned long loaded_bytes);
@@ -239,7 +240,8 @@ short custom_edition_bitmap_channel_order(
 /* Whether the texture cache can draw `bitmap` from pixels laid out as a
 Halo PC tag lays them out (rasterizer_xbox_bitmap_rebuild_hardware_format
 makes them the hardware's): the game's bitmap_verify, a format with a
-hardware texture, sizes it can swizzle, and every pixel its levels need. */
+hardware texture, sizes it can swizzle (or compressed, of any sides), and
+every pixel its levels need. */
 boolean custom_edition_bitmap_drawable(
 	struct bitmap_data *bitmap);
 /* Decodes every sound permutation of a tag cache custom_edition_cache_load
