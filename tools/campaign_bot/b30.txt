@@ -1,0 +1,8 @@
+# The Silent Cartographer (levels\b30\b30): the landing beach, south from the Pelican with the Marines
+# (docs/campaign_bot.md). Points in world units, yaw and pitch in degrees, hold in seconds.
+place beach      -58.9  23.6  2.0
+place rocks      -57.2  14.6  2.3
+hold  ridge      -55.8   9.0  4.0  -90  0  2
+place bend       -54.4  -0.5  3.1
+place cove       -55.1 -11.3  3.4
+place cove_end   -53.2 -20.3  3.6
