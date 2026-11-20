@@ -27,9 +27,10 @@
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/op_stick_settings" x="28" y="315"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/op_vibration" x="28" y="336"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/op_rumble_strength" x="28" y="357"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/op_ingame_help" x="28" y="378"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/section_15" x="28" y="405"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/op_create_profile" x="28" y="425"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/op_trigger_resistance" x="28" y="378"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/op_ingame_help" x="28" y="399"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/section_16" x="28" y="426"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/op_create_profile" x="28" y="446"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/button_bar" y="414"/>
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items" source="tools/port_settings.py settings_files/_settings_page">
@@ -195,13 +196,29 @@
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/rumble_strength_spinner" type="spinner" top="1" width="140" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="0%|10%|20%|30%|40%|50%|60%|70%|80%|90%|100%" setting="input.rumble_strength" values="0|10|20|30|40|50|60|70|80|90|100" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="4 -6 16 0" footer_bounds="4 140 16 146" wide="20 120" source="tools/port_settings.py settings_files/_settings_page">
 		<on event="created" run="port setting load"/>
 	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/op_trigger_resistance" width="344" height="20" flags="pass_unhandled_to_focused_child" bitmap="main_menu/settings/row" color="#FF2896FF" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/trigger_resistance_label"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/trigger_resistance_spinner" x="188"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/trigger_resistance_seg0" x="188" y="1"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/trigger_resistance_seg1" x="240" y="1"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/trigger_resistance_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/labels" string_index="14" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/trigger_resistance_seg0" type="text" controller="1" width="48" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="ON" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/trigger_resistance_seg1" type="text" controller="1" width="48" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="OFF" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/trigger_resistance_spinner" type="spinner" top="1" width="140" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="ON|OFF" setting="input.trigger_resistance" values="true|false" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="4 -6 16 0" footer_bounds="4 140 16 146" wide="20 120" source="tools/port_settings.py settings_files/_settings_page">
+		<on event="created" run="port setting load"/>
+		<on event="a" run="port setting segment"/>
+	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/op_ingame_help" width="344" height="20" flags="pass_unhandled_to_focused_child" bitmap="main_menu/settings/row" color="#FF2896FF" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/ingame_help_label"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/ingame_help_spinner" x="188"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/ingame_help_seg0" x="188" y="1"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/ingame_help_seg1" x="240" y="1"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/ingame_help_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/labels" string_index="14" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/ingame_help_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/labels" string_index="15" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/ingame_help_seg0" type="text" controller="1" width="48" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="ON" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
@@ -211,10 +228,10 @@
 		<on event="created" run="port setting load"/>
 		<on event="a" run="port setting segment"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/section_15" width="344" height="18" bitmap="main_menu/settings/section" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/section_15_title"/>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/section_16" width="344" height="18" bitmap="main_menu/settings/section" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/section_16_title"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/section_15_title" type="text" controller="1" width="344" height="18" wide="0 244" string_list="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/labels" string_index="15" color="#FF6F9CD0" text_x="2" text_y="1" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/section_16_title" type="text" controller="1" width="344" height="18" wide="0 244" string_list="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/labels" string_index="16" color="#FF6F9CD0" text_x="2" text_y="1" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/op_create_profile" width="344" height="20" flags="pass_unhandled_to_focused_child" bitmap="main_menu/settings/row" color="#FF2896FF" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
 		<on event="a" run="port settings new profile" branch="true"/>
@@ -223,7 +240,7 @@
 		<conditional widget="main_menu/settings/settings_creating_profile" if_failed="true"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/create_profile_label"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/create_profile_label" type="text" controller="1" width="332" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/labels" string_index="16" color="#FF2896FF" text_x="10" text_y="1" wide="0 244" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/create_profile_label" type="text" controller="1" width="332" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/labels" string_index="17" color="#FF2896FF" text_x="10" text_y="1" wide="0 244" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
 	<strings name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/labels">
 		<string text="LOOK"/>
@@ -240,6 +257,7 @@
 		<string text="STICK SETTINGS ›"/>
 		<string text="VIBRATION"/>
 		<string text="RUMBLE STRENGTH"/>
+		<string text="TRIGGER RESISTANCE"/>
 		<string text="IN-GAME HELP"/>
 		<string text="PROFILE"/>
 		<string text="CREATE PROFILE ›"/>
@@ -260,6 +278,7 @@
 		<string text="Each stick's dead zones, the look stick's shape and zoomed speed, and Modern aim's acceleration: for a worn stick, or finer aim."/>
 		<string text="Rumbles the controller."/>
 		<string text="How strongly the controller rumbles. 100% is the game's own; Vibration Off turns it off."/>
+		<string text="A DualSense's fire trigger pushes back while you play: whichever trigger fires in your layout. Never in menus, on pause or while dead."/>
 		<string text="Shows the game's hints about its controls."/>
 		<string text=""/>
 		<string text="Your name, color and controller layout are kept in a player profile. Make one to set them; the rest of Settings works without one."/>

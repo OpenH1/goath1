@@ -531,6 +531,14 @@ int host_sdl_rumble_gamepad(uint32_t gamepad, uint32_t low, uint32_t high, uint3
 	return object ? SDL_RumbleGamepad(object, (Uint16)low, (Uint16)high, milliseconds) : 0;
 }
 
+/* (a DualSense's trigger resistance: port/linux/src/xinput_sdl.c) */
+int host_sdl_send_gamepad_effect(uint32_t gamepad, const void *data, int size)
+{
+	SDL_Gamepad *object = host_sdl_handle_get(gamepad, _handle_gamepad);
+
+	return object && data && size > 0 ? SDL_SendGamepadEffect(object, data, size) : 0;
+}
+
 /* (gyro aiming: port/linux/src/xinput_sdl.c) */
 int host_sdl_gamepad_has_sensor(uint32_t gamepad, int type)
 {

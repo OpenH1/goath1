@@ -237,6 +237,20 @@ int controller_remap_connected(short port)
         device.instance == remap_ports[port].instance;
 }
 
+/* The trigger that fires for the port's player while their fire works (the
+ * player's context, not the menus' or a debug camera's), as its last
+ * controller_remap_input saw it: the custom layout's, else the profile's. */
+int controller_remap_fire_trigger(short port)
+{
+    int button;
+    if (port < 0 || port >= 4 || !controller_remap_connected(port)) return -1;
+    if (remap_ports[port].context != 1 && remap_ports[port].context != 2) return -1;
+    button = remap_ports[port].layout[PAD_FIRE];
+    /* (physical 6 and 7: the pad's analog left and right triggers,
+     * XINPUT_GAMEPAD_LEFT_TRIGGER and XINPUT_GAMEPAD_RIGHT_TRIGGER) */
+    return button == 6 || button == 7 ? button : -1;
+}
+
 unsigned int controller_remap_held(short port)
 {
     return controller_remap_connected(port) && controller_remap_context(port) == remap_ports[port].context ?

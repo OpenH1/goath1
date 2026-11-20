@@ -4050,6 +4050,168 @@ static void split_screen_pad_read(int port, XINPUT_GAMEPAD *pad, const XINPUT_GA
 	spartan_link_pad_read(port, pad, reserved);
 }
 
+/* ---------- a DualSense's firing trigger resistance (input.trigger_resistance) */
+
+/* SDL's DualSense effect report, which SDL_SendGamepadEffect sends as it is
+(SDL_hidapi_ps5.c's DS5EffectsState_t, 47 bytes): its first byte's bits say
+which triggers it sets (the rest, the rumble and the lights, stay SDL's),
+each trigger's effect eleven bytes from its offset, the right's first */
+#define TRIGGER_REPORT_SIZE 47
+#define TRIGGER_REPORT_RIGHT_BIT 0x04
+#define TRIGGER_REPORT_LEFT_BIT 0x08
+#define TRIGGER_REPORT_RIGHT 10
+#define TRIGGER_REPORT_LEFT 21
+/* a trigger's effects: off (the trigger's own travel), and rigid, a steady
+resistance from the start of the pull at a firm force (SDL's test's) */
+#define TRIGGER_EFFECT_OFF 0x05
+#define TRIGGER_EFFECT_RIGID 0x01
+#define TRIGGER_RIGID_START 0
+#define TRIGGER_RIGID_FORCE 110
+/* (TRIGGER_NONE: both triggers off; TRIGGER_UNSENT: nothing sent to the
+gamepad yet, its triggers as it has them) */
+#define TRIGGER_NONE (-1)
+#define TRIGGER_UNSENT (-2)
+/* how often the state is sent again while it resists, and for how long
+after it changes: SDL may replace a report still waiting to be written with
+a later one of its size (a rumble's, which sets no trigger) */
+#define TRIGGER_RESEND_MS 1000
+#define TRIGGER_SETTLE_MS 3000
+
+/* the report that sets both triggers: the one that fires
+(XINPUT_GAMEPAD_LEFT_TRIGGER or XINPUT_GAMEPAD_RIGHT_TRIGGER) resisting, the
+other off; both off for any other */
+static void trigger_resistance_report(int trigger, unsigned char report[TRIGGER_REPORT_SIZE])
+{
+	unsigned char *effect;
+
+	memset(report, 0, TRIGGER_REPORT_SIZE);
+	report[0] = TRIGGER_REPORT_RIGHT_BIT | TRIGGER_REPORT_LEFT_BIT;
+	report[TRIGGER_REPORT_RIGHT] = TRIGGER_EFFECT_OFF;
+	report[TRIGGER_REPORT_LEFT] = TRIGGER_EFFECT_OFF;
+	if (trigger != XINPUT_GAMEPAD_LEFT_TRIGGER && trigger != XINPUT_GAMEPAD_RIGHT_TRIGGER)
+		return;
+	effect = report + (trigger == XINPUT_GAMEPAD_LEFT_TRIGGER ? TRIGGER_REPORT_LEFT : TRIGGER_REPORT_RIGHT);
+	effect[0] = TRIGGER_EFFECT_RIGID;
+	effect[1] = TRIGGER_RIGID_START;
+	effect[2] = TRIGGER_RIGID_FORCE;
+}
+
+/* a gamepad's player's input.trigger_resistance (off by default) */
+static int trigger_resistance_wanted(short gamepad)
+{
+	static struct
+	{
+		unsigned long read_at;
+		int read, on;
+	} pads[PAD_PLAYERS + 1];
+	int slot = PAD_PLAYER_SLOT(gamepad);
+
+	if (!pads[slot].read || pads[slot].read_at != config_changes())
+	{
+		pads[slot].read = 1;
+		pads[slot].read_at = config_changes();
+		pads[slot].on = config_player_boolean(slot < PAD_PLAYERS ? slot : -1, "input.trigger_resistance");
+	}
+	return pads[slot].on;
+}
+
+/* each port's gamepad the triggers were last sent to, and what: the
+trigger resisting, TRIGGER_NONE, or TRIGGER_UNSENT */
+static struct
+{
+	SDL_JoystickID id;
+	int sent;
+	Uint64 sent_at, changed_at;
+} trigger_ports[PORT_COUNT];
+static int trigger_exit_hooked;
+
+static void trigger_send(SDL_Gamepad *gamepad, int trigger)
+{
+	unsigned char report[TRIGGER_REPORT_SIZE];
+
+	trigger_resistance_report(trigger, report);
+	SDL_SendGamepadEffect(gamepad, report, sizeof(report));
+}
+
+/* (at exit) every gamepad sent a resistance let go of: a DualSense keeps
+its triggers' effect until told otherwise */
+static void trigger_resistance_exit(void)
+{
+	int port, sent = 0;
+
+	for (port = 0; port < PORT_COUNT; port++)
+	{
+		SDL_Gamepad *gamepad = trigger_ports[port].id && trigger_ports[port].sent != TRIGGER_UNSENT ?
+			SDL_GetGamepadFromID(trigger_ports[port].id) : NULL;
+
+		if (gamepad)
+		{
+			trigger_send(gamepad, TRIGGER_NONE);
+			sent = 1;
+		}
+	}
+	/* (SDL's thread writes the reports: it drops those left at its end) */
+	if (sent)
+		SDL_Delay(50);
+}
+
+/* a port's DualSense's triggers, at each reading: the one bound to fire
+(its player's Button Remapping, else their profile's BUTTON LAYOUT) resists
+while their player has the setting on and plays alive with nothing over
+the game (a menu, the pause, the console, a chat line, the window out of
+focus); else both off. Nothing is sent to a gamepad that is not a
+DualSense (an Edge is one to SDL) or, the setting off, was never sent one.
+A gamepad that leaves the port, still connected and not another port's, is
+let go of; one new to the port (reconnected) is sent its state anew. Only
+the controller is written: no game state, nothing on the network */
+static void trigger_port_update(int port, SDL_Gamepad *gamepad, SDL_JoystickID id)
+{
+	Uint64 now = SDL_GetTicks();
+	int want = TRIGGER_NONE, wanted, other;
+
+	if (!gamepad)
+		id = 0;
+	if (trigger_ports[port].id != id)
+	{
+		if (trigger_ports[port].id && trigger_ports[port].sent >= 0)
+		{
+			SDL_Gamepad *left = SDL_GetGamepadFromID(trigger_ports[port].id);
+
+			for (other = 0; other < PORT_COUNT; other++)
+			{
+				if (other != port && trigger_ports[other].id == trigger_ports[port].id)
+					left = NULL;
+			}
+			if (left)
+				trigger_send(left, TRIGGER_NONE);
+		}
+		trigger_ports[port].id = id;
+		trigger_ports[port].sent = TRIGGER_UNSENT;
+	}
+	if (!gamepad || SDL_GetGamepadType(gamepad) != SDL_GAMEPAD_TYPE_PS5)
+		return;
+	wanted = trigger_resistance_wanted((short)port);
+	if (wanted && controller_remap_alive((short)port))
+		want = controller_remap_fire_trigger((short)port);
+	if (!wanted && trigger_ports[port].sent == TRIGGER_UNSENT)
+		return;
+	if (want != trigger_ports[port].sent)
+		trigger_ports[port].changed_at = now;
+	else if (now - trigger_ports[port].sent_at < TRIGGER_RESEND_MS ||
+		(want == TRIGGER_NONE && now - trigger_ports[port].changed_at >= TRIGGER_SETTLE_MS))
+	{
+		return;
+	}
+	trigger_send(gamepad, want);
+	trigger_ports[port].sent = want;
+	trigger_ports[port].sent_at = now;
+	if (!trigger_exit_hooked)
+	{
+		trigger_exit_hooked = 1;
+		atexit(trigger_resistance_exit);
+	}
+}
+
 /* reads a controller's state; for port 0 the keyboard, mouse, debug input
 and touchscreen are merged into the first gamepad's; runs on the game's main
 thread (touch_input_gamepad relies on it); returns ERROR_SUCCESS or
@@ -4239,7 +4401,8 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 	else if (test_input_menu_ports & (1U << port))
 		test_input_menu_gamepad(&state->Gamepad, port);
 	if (captured) memset(&state->Gamepad, 0, sizeof(state->Gamepad));
-	/* (the port's gyroscope, and its right stick as the flick stick) */
+	/* (the port's gyroscope, its right stick as the flick stick, and a
+	DualSense's firing trigger's resistance) */
 	{
 		SDL_Gamepad *gamepad = port_gamepad(gamepads, count, port);
 		SDL_JoystickID id = 0;
@@ -4252,6 +4415,7 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 		}
 		gyro_port_update(port, gamepad, id);
 		flick_port_update(port, &state->Gamepad);
+		trigger_port_update(port, gamepad, id);
 	}
 
 	if (memcmp(&state->Gamepad, &controllers[port].previous, sizeof(state->Gamepad)))

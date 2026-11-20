@@ -1195,12 +1195,17 @@
 			<choice shown="90%" value="90"/>
 			<choice shown="100%" value="100"/>
 		</row>
+		<row key="trigger_resistance" kind="choice" setting="input.trigger_resistance" label="TRIGGER RESISTANCE" crumb="CONTROLS › CONTROLLER" search="haptics dualsense adaptive">
+			<help>A DualSense's fire trigger pushes back while you play: whichever trigger fires in your layout. Never in menus, on pause or while dead.</help>
+			<choice shown="ON" value="true"/>
+			<choice shown="OFF" value="false"/>
+		</row>
 		<row key="ingame_help" kind="choice" setting="profile.ingame_help" label="IN-GAME HELP" crumb="CONTROLS › CONTROLLER" when="profile">
 			<help>Shows the game's hints about its controls.</help>
 			<choice shown="ON" value="true"/>
 			<choice shown="OFF" value="false"/>
 		</row>
-		<section key="section_15" title="PROFILE"/>
+		<section key="section_16" title="PROFILE"/>
 		<row key="create_profile" kind="link" label="CREATE PROFILE ›" crumb="CONTROLS › CONTROLLER" when="!profile+!in_game" run="port settings new profile">
 			<help>Your name, color and controller layout are kept in a player profile. Make one to set them; the rest of Settings works without one.</help>
 		</row>

@@ -333,6 +333,12 @@ bool SDL_RumbleGamepad(SDL_Gamepad *gamepad, Uint16 low, Uint16 high, Uint32 mil
 	return host_sdl_rumble_gamepad((unsigned int)gamepad, low, high, milliseconds) != 0;
 }
 
+/* (a DualSense's trigger resistance: xinput_sdl.c) */
+bool SDL_SendGamepadEffect(SDL_Gamepad *gamepad, const void *data, int size)
+{
+	return host_sdl_send_gamepad_effect((unsigned int)gamepad, data, size) != 0;
+}
+
 void SDL_CloseGamepad(SDL_Gamepad *gamepad)
 {
 	host_sdl_close_gamepad((unsigned int)gamepad);

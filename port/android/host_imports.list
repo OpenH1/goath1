@@ -47,6 +47,7 @@ host_sdl_gamepad_axis
 host_sdl_gamepad_button
 host_sdl_gamepad_type
 host_sdl_rumble_gamepad
+host_sdl_send_gamepad_effect
 host_sdl_close_gamepad
 host_sdl_gamepad_has_sensor
 host_sdl_set_gamepad_sensor_enabled
