@@ -144,6 +144,18 @@ def test_game_data_places_windows(tmp_path):
              [ROOT / "port" / "linux" / "src"], flags=["-DHALO_WINDOWS"])
 
 
+def test_game_data_places_ios(tmp_path):
+    """the GAME DATA page's places on iOS (game_data_scan.c with HALO_IOS, as
+    the iOS guest builds it, HALO_MACOS too): the app's Documents alone, its
+    paths shown as the Files app names its folder"""
+    scratch = tmp_path / "container"
+    scratch.mkdir()
+    run_test(tmp_path, "game_data_places_ios_test",
+             [TESTS / "game_data_places_ios_test.c", ROOT / "port" / "linux" / "src" / "game_data_scan.c",
+              ROOT / "port" / "linux" / "src" / "posix_files.c"],
+             [ROOT / "port" / "linux" / "src"], [str(scratch)], flags=["-DHALO_MACOS", "-DHALO_IOS"])
+
+
 def test_posix_net_interrupted(tmp_path):
     """a select interrupted by signals waits out its time: Winsock's is never
     interrupted, and the game takes a failed one as the connection lost"""

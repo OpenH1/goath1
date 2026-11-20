@@ -102,8 +102,6 @@ static void SDL_GetWindowSizeInPixels(void *window, int *width, int *height)
     *height = drawable_height;
 }
 static const char *config_string(const char *name) { assert(!strcmp(name, "display.picture_shape")); return "4:3"; }
-/* (display.temporal_aa "fsr": Vulkan's alone, not upscaling here) */
-static BOOL temporal_upscaling(void) { return FALSE; }
 ''' + re.search(r"static struct\n\{\n\tfloat factor;.*?\n\} temporal = [^;]*;\n", renderer, re.S).group(0) + function(
         renderer, "static void temporal_scale_display(void)\n{") + function(platform, "BOOL platform_screen_mode(") + function(
         renderer, "static long screen_narrowest_width("

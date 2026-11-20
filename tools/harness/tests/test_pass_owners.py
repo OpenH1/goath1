@@ -1,7 +1,9 @@
 """#1151: the passes each graphics setting owns labeled by it ("SMAA 0.09 ms", not "ended by
 xgpu_vulkan_set_target_views") in debug.pass_times' log and the performance overlay's detailed view (debug.timings).
-Off (no passes timed), no owner is kept and the labels are what they were. The groups' log line is read back by the
-overlay as the backend writes it; and each owner is set around its setting's work in the Vulkan stream's decoder."""
+Off (no passes timed), no owner is kept and the labels are what they were. An unowned pass's draws are labeled by
+the renderer's category and size ("MODELS 1280x800"), which the groups keep as OTHER. The groups' log line is read
+back by the overlay as the backend writes it; and each owner is set around its setting's work in the Vulkan stream's
+decoder."""
 
 import re
 import sys
@@ -21,7 +23,11 @@ NEGATIVE_CONTROLS = {
     # the owner not used for the label
     "unlabeled": ("owned", "\tif (segment->owner)\n\t\treturn segment->owner;\n", ""),
     # every label taken for an owner's: the passes' detailed labels each a group
-    "all-owned": ("groups", "return label[0] >= 'A' && label[0] <= 'Z';", "return label[0] != 0;"),
+    "all-owned": ("groups", "return at != label && !*at;", "return label[0] != 0;"),
+    # a category's label ("MODELS 1280x800", capitals first) taken for an owner's: each category and size a group
+    "categories-owned": ("groups", "return at != label && !*at;", "return label[0] >= 'A' && label[0] <= 'Z';"),
+    # a pass's category not used for its label
+    "uncategorized": ("owned", "\tif (segment->category)\n", "\tif (0)\n"),
     # the overlay reads the first line logged, not the last
     "first-line": ("groups", "\twhile ((at = strstr(at, prefix)) != NULL)\n\t\tfound = at++;",
                    "\tfound = strstr(at, prefix);"),
@@ -35,8 +41,9 @@ def generated(fault=None):
             "static struct\n{\n\tstruct\n\t{\n\t\tchar label[PASS_TIMES_LABEL];\n\t\tdouble milliseconds, count;\n"
             "\t} sums[PASS_TIMES_LABELS];\n\tuint32_t sum_count;\n\tdouble frames;\n"
             "\tuint32_t draws_before, frames_before;\n} pass_times;\n")
-    code = "\n\n".join([fake, function(vulkan, "pass_times_owned"), function(vulkan, "xgpu_vulkan_pass_owner"),
-                        function(vulkan, "pass_times_label"), function(vulkan, "pass_times_groups_log"),
+    categories = re.search(r"static const char \*const pass_times_categories\[\] =\n\{\n.*?\n\};", vulkan, re.S)
+    code = "\n\n".join([fake, categories.group(0), function(vulkan, "pass_times_owned"),
+                        function(vulkan, "xgpu_vulkan_pass_owner"), function(vulkan, "pass_times_label"), function(vulkan, "pass_times_groups_log"),
                         function(read("port/linux/game/perf_overlay.c"), "perf_overlay_pass_groups")])
     if fault:
         code = mutated(code, *NEGATIVE_CONTROLS[fault][1:])
@@ -65,6 +72,7 @@ OWNED_WORK = [
     ("stream_world_ao_prepass", "PASS_OWNER_AO", "xgpu_vulkan_set_target_views(prepass.inputs"),
     ("stream_world_ao_prepass", "PASS_OWNER_AO", "prepass_pass_draw("),
     ("stream_motion", "PASS_OWNER_MOTION", "motion_pass_draw(motion.resolve"),
+    ("view_stretch", "PASS_OWNER_VIEW_STRETCH", "xgpu_vulkan_image_stretch("),
 ]
 
 
@@ -86,7 +94,7 @@ def test_owners_named_by_their_settings():
     owners = dict(re.findall(r'#define (PASS_OWNER_\w+) "([^"]+)"', stream))
     assert owners == {"PASS_OWNER_FXAA": "FXAA", "PASS_OWNER_SMAA": "SMAA", "PASS_OWNER_MSAA_RESOLVE": "MSAA RESOLVE",
                       "PASS_OWNER_PANINI": "PANINI", "PASS_OWNER_AO": "AO", "PASS_OWNER_FINAL": "FINAL PASS",
-                      "PASS_OWNER_MOTION": "MOTION"}
+                      "PASS_OWNER_MOTION": "MOTION", "PASS_OWNER_VIEW_STRETCH": "RENDER SCALE"}
     # (capitals: pass_times_owned tells them from the passes' own labels)
     assert all(re.fullmatch(r"[A-Z][A-Z ]*", name) for name in owners.values())
 

@@ -225,5 +225,6 @@ def test_draw_inputs_kept():
 
 def test_draw_inputs_kept_negative():
     """the soft group kept in a static of its own again (as #1159 kept it): seen"""
-    device = mutated(read(DEVICE), '\tinputs.soft_group = soft != 0;\n', '\tsoft_effects.read = soft != 0;\n')
+    device = mutated(read(DEVICE), '\tinputs.soft_group = soft == 2 ? 2 : soft != 0;\n',
+                     '\tsoft_effects.read = soft == 2 ? 2 : soft != 0;\n')
     assert kept_outside(device).get('halo_effect_soft') == ['soft_effects']

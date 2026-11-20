@@ -4,9 +4,13 @@
 The screen's targets are drawn at display.supersampling's factor each way,
 or an older "ssaa2x"'s 2, or display.panini's, whichever is most, at most
 the GPU's largest target, and independently of display.anti_aliasing's pass
-or samples; times display.render_scale's fraction (0.25 to 1) on a computer. The front end's code is compiled on its own over stubs of the
-settings, the display and the backend's capabilities, for the desktop, the
-Mac (whose "ssaa2x" drew none), iOS and Android (no supersampling).
+or samples. display.render_scale's fraction (0.25 to 1) is the 3D view's
+alone (temporal.factor), in every mode: the screen's targets stay at the
+display's pixels (times the supersampling), and the view is upscaled or
+stretched into them. The front end's code is compiled on its own over stubs
+of the settings, the display and the backend's capabilities, for the
+desktop, the Mac (whose "ssaa2x" drew none), iOS and Android (no
+supersampling; the render scale their hosts' HALO_UPSCALE_RENDER_SCALE).
 """
 import os
 import re
@@ -46,6 +50,7 @@ HARNESS = r"""
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 typedef int BOOL;
 #define TRUE 1
@@ -109,6 +114,8 @@ static void choose(void)
 	(void)anti_aliasing;
 }
 #define DRAWN(w, h) (choose(), drawn[0] == (w) && drawn[1] == (h))
+/* (the 3D view's pixels: the targets' times the render scale) */
+#define VIEW(w, h) ((long)(drawn[0] * temporal.factor + 0.5f) == (w) && (long)(drawn[1] * temporal.factor + 0.5f) == (h))
 int main(void)
 {
 	/* unset (1): the display's pixels, whatever the anti-aliasing */
@@ -169,48 +176,52 @@ int main(void)
 	/* (said once a change, not each frame) */
 	logs = 0;
 	assert(DRAWN(2400, 1800) && DRAWN(2400, 1800) && !logs);
-	/* display.render_scale: half the pixels each way at 1080p and 1440p,
-	the display blit scaling them up; 0.25 at least, 1 (or 0) at most; it
-	multiplies the supersampling; not with "original" */
+	/* display.render_scale: the 3D view's alone, at half the pixels each
+	way at 1080p and 1440p, the screen's targets (the HUD's and the menus')
+	at the display's; 0.25 at least, 1 (or 0) at most; under the
+	supersampling, the view a fraction of the supersampled targets; not with
+	"original" */
 	supersampling_setting = 1.0;
 	render_scale_setting = 0.5;
 	display_width = 1920;
 	display_height = 1080;
-	assert(DRAWN(960, 540) && factor == 0.5f);
+	assert(DRAWN(1920, 1080) && factor == 1.0f && temporal.factor == 0.5f && VIEW(960, 540));
 	display_width = 2560;
 	display_height = 1440;
-	assert(DRAWN(1280, 720));
+	assert(DRAWN(2560, 1440) && VIEW(1280, 720));
 	render_scale_setting = 0.75;
-	assert(DRAWN(1920, 1080));
+	assert(DRAWN(2560, 1440) && VIEW(1920, 1080));
 	render_scale_setting = 0.1;
-	assert(DRAWN(640, 360) && factor == 0.25f);
+	assert(DRAWN(2560, 1440) && factor == 1.0f && temporal.factor == 0.25f);
 	render_scale_setting = 1.5;
-	assert(DRAWN(2560, 1440) && factor == 1.0f);
+	assert(DRAWN(2560, 1440) && factor == 1.0f && temporal.factor == 1.0f);
 	render_scale_setting = 0.0;
-	assert(DRAWN(2560, 1440) && factor == 1.0f);
+	assert(DRAWN(2560, 1440) && factor == 1.0f && temporal.factor == 1.0f);
 	render_scale_setting = 0.5;
 	supersampling_setting = 1.5;
-	assert(DRAWN(1920, 1080));
+	assert(DRAWN(3840, 2160) && factor == 1.5f && VIEW(1920, 1080));
 	supersampling_setting = 1.0;
 	original = TRUE;
-	assert(DRAWN(640, 480) && factor == 1.0f);
+	assert(DRAWN(640, 480) && factor == 1.0f && temporal.factor == 1.0f);
 	original = FALSE;
-	/* display.temporal_aa "fsr": the render scale the 3D view's alone
-	(temporal.factor), the screen's targets at the display's pixels, which
-	the upscale fills */
-	supersampling_setting = 1.0;
+	/* (the same with display.temporal_aa's upscaler as without: it upscales
+	the view where the stretch would) */
 	display_width = 1920;
 	display_height = 1080;
 	upscaling = TRUE;
 	assert(DRAWN(1920, 1080) && factor == 1.0f && temporal.factor == 0.5f);
 	upscaling = FALSE;
-	assert(DRAWN(960, 540) && temporal.factor == 1.0f);
 	render_scale_setting = 1.0;
+	assert(DRAWN(1920, 1080) && temporal.factor == 1.0f);
 #else
-	/* (the negative control) iOS and Android: the render scale is their
-	hosts' (a smaller swapchain or drawable), not the targets' */
+	/* (the negative control) iOS and Android: display.render_scale is not
+	read; the render scale is the host's, HALO_UPSCALE_RENDER_SCALE (run once
+	without and once with it), the 3D view's alone as a computer's */
 	render_scale_setting = 0.5;
-	assert(DRAWN(2560, 1440) && factor == 1.0f);
+	if (getenv("HALO_UPSCALE_RENDER_SCALE"))
+		assert(DRAWN(2560, 1440) && factor == 1.0f && temporal.factor == 0.5f && VIEW(1280, 720));
+	else
+		assert(DRAWN(2560, 1440) && factor == 1.0f && temporal.factor == 1.0f);
 	/* none: the display's pixels */
 	supersampling_setting = 2.0;
 	anti_aliasing_setting = "ssaa2x";
@@ -242,5 +253,10 @@ def test_supersampling(tmp_path, build, defines, supersampled, legacy):
     subprocess.run([cc, "-std=gnu89", "-Wall", "-Werror", "-Wno-unused-function", "-Wno-unused-variable", *defines,
                     f"-DSUPERSAMPLED={supersampled}", f"-DLEGACY={legacy}", str(source), "-o", str(binary)],
                    check=True)
-    run = subprocess.run([str(binary)], capture_output=True, text=True)
+    environment = {name: value for name, value in os.environ.items() if name != "HALO_UPSCALE_RENDER_SCALE"}
+    run = subprocess.run([str(binary)], capture_output=True, text=True, env=environment)
     assert run.returncode == 0, run.stdout + run.stderr
+    if not supersampled:
+        run = subprocess.run([str(binary)], capture_output=True, text=True,
+                             env={**environment, "HALO_UPSCALE_RENDER_SCALE": "0.5"})
+        assert run.returncode == 0, run.stdout + run.stderr

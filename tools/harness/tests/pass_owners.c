@@ -32,6 +32,7 @@ struct segment
 {
 	const char *ended_by;
 	const char *owner;
+	uint32_t category;
 	struct
 	{
 		struct
@@ -115,8 +116,15 @@ int main(int argc, char **argv)
 		xgpu_vulkan_pass_owner(NULL);
 		CHECK(vk.pass_owner == NULL, "the owner kept past its work");
 		CHECK(pass_times_owned("SMAA") && pass_times_owned("MSAA RESOLVE") && !pass_times_owned("outside passes") &&
-			!pass_times_owned("1920x1080 colour, ended by x") && !pass_times_owned("aside 64x64 colour"),
+			!pass_times_owned("1920x1080 colour, ended by x") && !pass_times_owned("aside 64x64 colour") &&
+			!pass_times_owned("MODELS 1280x800") && !pass_times_owned(""),
 			"owned labels told apart wrongly");
+		/* (unowned: the category of its draws, plus one, and its size) */
+		segment.owner = NULL;
+		segment.category = 3;
+		segment.area.extent.width = 1280;
+		segment.area.extent.height = 800;
+		CHECK(!strcmp(pass_times_label(&segment, 0), "MODELS 1280x800"), "label %s", pass_times_label(&segment, 0));
 		return 0;
 	}
 	if (!strcmp(test, "groups"))
@@ -134,10 +142,12 @@ int main(int argc, char **argv)
 		sum_add("PANINI", 0.5);
 		sum_add("MSAA RESOLVE", 0.04);
 		sum_add("FINAL PASS", 0.1);
+		sum_add("MODELS 1920x1080", 0.4);
+		sum_add("SHADOW BLUR 4096x4096", 0.2);
 		vk.statistics.frames = 300;
 		vk.statistics.draws = 300 * 812;
 		pass_times_groups_log();
-		CHECK(strstr(logged, "vulkan: pass groups: draws 812; OTHER 2.100; PANINI 0.250; SMAA 0.093; FINAL PASS 0.050; "
+		CHECK(strstr(logged, "vulkan: pass groups: draws 812; OTHER 2.400; PANINI 0.250; SMAA 0.093; FINAL PASS 0.050; "
 			"MSAA RESOLVE 0.020") == logged, "logged %s", logged);
 		/* (as the host's recent lines hold it, among others) */
 		{

@@ -378,9 +378,16 @@ static void game_data_status(char *value, unsigned long size)
 	else if (game_data.found)
 		snprintf(value, size, "Multiplayer maps from Custom Edition's installer. They're optional. Add copies "
 			"them.");
+#ifdef HALO_IOS
+	/* (the one place the app can look in: game_data_scan.c) */
+	else
+		snprintf(value, size, "Custom Edition's installer (halocesetup_en_1.00.exe) wasn't found. Put it in "
+			"GOAT H1's folder in the Files app, then choose Look Again.");
+#else
 	else
 		snprintf(value, size, "Custom Edition's installer (halocesetup_en_1.00.exe) wasn't found. Put it in "
 			"Downloads or on the Desktop, then choose Look Again.");
+#endif
 }
 
 /* where the chosen source comes from */
@@ -495,8 +502,14 @@ int game_data_page_action(const char *name, short row)
 		posix_make_directory(folder);
 		game_data_short_path(&game_data.places, folder, shown, (int)sizeof(shown));
 		SDL_LockMutex(game_data.lock);
+#ifdef HALO_IOS
+		/* (an app cannot open its own folder in Files by a file's URL: the
+		player is told where it is) */
+		snprintf(game_data.opened, sizeof(game_data.opened), "Open the Files app: it's %s.", shown);
+#else
 		snprintf(game_data.opened, sizeof(game_data.opened), report_open_folder(folder) ?
 			"Opened %s on the desktop." : "Could not open %s: open it yourself.", shown);
+#endif
 		SDL_UnlockMutex(game_data.lock);
 		return 1;
 	}

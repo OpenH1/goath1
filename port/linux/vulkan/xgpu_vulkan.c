@@ -3277,12 +3277,17 @@ static struct
 	uint32_t draws_before, frames_before;
 } pass_times;
 
-/* an owner's label (xgpu_vulkan_pass_owner's names are capitals), not one
-that says what a pass draws into ("1920x1080 colour...", "aside ...",
-"outside passes") */
+/* an owner's label (xgpu_vulkan_pass_owner's names are capitals and
+spaces alone), not one that says what a pass draws into ("1920x1080
+colour...", "aside ...", "outside passes") nor a category's, which carries
+its size ("MODELS 1280x800": pass_times_label) */
 static int pass_times_owned(const char *label)
 {
-	return label[0] >= 'A' && label[0] <= 'Z';
+	const char *at = label;
+
+	while ((*at >= 'A' && *at <= 'Z') || *at == ' ')
+		at++;
+	return at != label && !*at;
 }
 
 void xgpu_vulkan_pass_owner(const char *owner)
