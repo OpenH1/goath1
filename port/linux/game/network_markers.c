@@ -61,6 +61,8 @@ tools/harness/tests/test_markers.py's; the name over the arrow
 #include "game/game_engine.h"
 #include "game/players.h"
 #include "camera/observer.h"
+#include "camera/first_person_camera.h"
+#include "camera/static_camera.h"
 #include "cutscene/cinematics.h"
 #include "interface/hud.h"
 #include "interface/hud_draw.h"
@@ -409,6 +411,36 @@ static void markers_object_drawn_point(
 	}
 }
 
+/* where a ping's arrow is drawn this frame: over its object as drawn,
+while it is there (its object given back); then where it was (NONE) */
+static long markers_drawn_position(
+	struct marker *marker,
+	real_point3d *position)
+{
+	if (marker->kind == _marker_kind_object && object_try_and_get_and_verify_type(marker->object_index,
+		MARKER_OBJECT_MASK))
+	{
+		markers_object_drawn_point(marker->object_index, &marker->point, position);
+		return marker->object_index;
+	}
+	if (marker->kind == _marker_kind_object)
+	{
+		marker->kind = _marker_kind_point;
+		marker->object_index = NONE;
+	}
+	*position = marker->point;
+	position->z += MARKER_POINT_HEIGHT;
+	return NONE;
+}
+
+/* a ping's fade at an age: whole while shown, then faded out */
+static real markers_alpha(
+	unsigned long age)
+{
+	return age < MARKER_SHOWN_MILLISECONDS ? 1.0f :
+		1.0f - (real)(age - MARKER_SHOWN_MILLISECONDS) / (real)MARKER_FADE_MILLISECONDS;
+}
+
 /* the pinger's name over their arrow (drawn at drawn, half_height tall
 each way), where the arrow is, not the nearest whole unit of the screen (3
 to 5 of a display's pixels) short of it (hud_draw_mark_begin), as a
@@ -746,16 +778,17 @@ static long markers_root_object(
 	return object_index;
 }
 
-/* what a local player aims at: TRUE with the kind, the object and the point */
-static boolean markers_aim(
-	short local_player_index,
+/* what a player aims at from their camera (origin, along forward): TRUE
+with the kind, the object and the point */
+static boolean markers_aim_from(
+	long player_index,
+	real_point3d const *camera_position,
+	real_vector3d const *camera_forward,
 	byte *kind,
 	long *object_index,
 	real_point3d *point)
 {
-	long player_index = local_player_get_player_index(local_player_index);
 	struct player_datum *player = player_index != NONE ? player_get(player_index) : NULL;
-	struct observer_result const *camera;
 	struct collision_result result;
 	real_point3d origin;
 	real_vector3d forward;
@@ -769,11 +802,8 @@ static boolean markers_aim(
 
 	if (!player || (unit_index = distributed_living_unit(player)) == NONE)
 		return FALSE;
-	camera = observer_get_camera(local_player_index);
-	if (!camera)
-		return FALSE;
-	origin = camera->position;
-	forward = camera->forward;
+	origin = *camera_position;
+	forward = *camera_forward;
 	if (normalize3d(&forward) == 0.0f)
 		return FALSE;
 	root_index = markers_root_object(unit_index);
@@ -805,7 +835,7 @@ static boolean markers_aim(
 	{
 		struct object_iterator iterator;
 		struct object_datum *object;
-		real hit_distance = hit ? distance3d(&camera->position, &result.point) : MARKER_RANGE;
+		real hit_distance = hit ? distance3d(camera_position, &result.point) : MARKER_RANGE;
 		real best = 0.0f;
 
 		object_iterator_new(&iterator, MARKER_OBJECT_MASK, 0);
@@ -824,7 +854,7 @@ static boolean markers_aim(
 				continue;
 			}
 			object_get_bounding_sphere(iterator.index, &center, &radius);
-			vector_from_points3d(&camera->position, &center, &to);
+			vector_from_points3d(camera_position, &center, &to);
 			along = dot_product3d(&to, &forward);
 			if (along <= 0.0f || along - radius > hit_distance)
 				continue;
@@ -855,6 +885,19 @@ static boolean markers_aim(
 	*object_index = NONE;
 	*point = result.point;
 	return TRUE;
+}
+
+/* what a local player aims at, from their camera */
+static boolean markers_aim(
+	short local_player_index,
+	byte *kind,
+	long *object_index,
+	real_point3d *point)
+{
+	struct observer_result const *camera = observer_get_camera(local_player_index);
+
+	return camera && markers_aim_from(local_player_get_player_index(local_player_index), &camera->position,
+		&camera->forward, kind, object_index, point);
 }
 
 /* a local player's ping: aimed, then the host's to decide; forged: (a
@@ -1033,25 +1076,8 @@ void network_markers_render(
 		}
 		if (!markers_shown_to(pinger, viewer))
 			continue;
-		/* (over its object as drawn, while it is there; then where it was) */
-		if (marker->kind == _marker_kind_object && object_try_and_get_and_verify_type(marker->object_index,
-			MARKER_OBJECT_MASK))
-		{
-			markers_object_drawn_point(marker->object_index, &marker->point, &position);
-			reference_index = marker->object_index;
-		}
-		else
-		{
-			if (marker->kind == _marker_kind_object)
-			{
-				marker->kind = _marker_kind_point;
-				marker->object_index = NONE;
-			}
-			position = marker->point;
-			position.z += MARKER_POINT_HEIGHT;
-		}
-		alpha = age < MARKER_SHOWN_MILLISECONDS ? 1.0f :
-			1.0f - (real)(age - MARKER_SHOWN_MILLISECONDS) / (real)MARKER_FADE_MILLISECONDS;
+		reference_index = markers_drawn_position(marker, &position);
+		alpha = markers_alpha(age);
 		markers_player_color(DATUM_INDEX_NEW(player_index, pinger->identifier), &color);
 		if (!hud_render_nav_point_colored(local_player_index, &position, markers_globals.nav_index,
 			hud_get_nav_point_render_type(local_player_index, &head, &position, reference_index), &color, alpha,
@@ -1073,6 +1099,41 @@ void network_markers_render(
 	}
 }
 
+boolean network_markers_ping_shown(
+	short local_player_index,
+	long player_index,
+	struct network_marker_shown *shown)
+{
+	short absolute_index = player_index != NONE ? (short)DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index) : NONE;
+	long viewer_index = local_player_index != NONE ? local_player_get_player_index(local_player_index) : NONE;
+	struct player_datum *pinger = player_try_and_get(player_index);
+	struct marker *marker;
+	unsigned long age;
+
+	if (!markers_globals.in_game || !game_in_progress() || cinematic_in_progress() || viewer_index == NONE ||
+		!pinger || pinger->quit_out_of_game || absolute_index < 0 || absolute_index >= MAXIMUM_MARKER_PLAYERS)
+	{
+		return FALSE;
+	}
+	marker = &markers_globals.markers[absolute_index];
+	age = system_milliseconds() - marker->shown_at;
+	if (!marker->active || age >= MARKER_SHOWN_MILLISECONDS + MARKER_FADE_MILLISECONDS ||
+		!markers_shown_to(pinger, player_get(viewer_index)))
+	{
+		return FALSE;
+	}
+	if (shown)
+	{
+		shown->age = age;
+		shown->object_index = markers_drawn_position(marker, &shown->position);
+		shown->alpha = markers_alpha(age);
+		markers_player_color(player_index, &shown->color);
+		markers_look_up();
+		shown->nav_index = markers_globals.nav_index;
+	}
+	return TRUE;
+}
+
 boolean network_markers_ping_aimed(
 	void)
 {
@@ -1087,6 +1148,41 @@ boolean network_markers_ping_forged(
 	short local_player_index = local_player_get_next(NONE);
 
 	return local_player_index != NONE && markers_ping_as(local_player_index, TRUE);
+}
+
+boolean network_markers_ping_teammate(
+	void)
+{
+	short local_player_index = local_player_get_next(NONE);
+	long viewer_index = local_player_index != NONE ? local_player_get_player_index(local_player_index) : NONE;
+	struct data_iterator iterator;
+	struct player_datum *player;
+
+	if (viewer_index == NONE || !markers_available() || game_connection() == _game_connection_network_client)
+		return FALSE;
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		struct camera_command command;
+		long unit_index;
+		byte kind;
+		long object_index;
+		real_point3d point;
+		short absolute_index = (short)DATUM_INDEX_TO_ABSOLUTE_INDEX(iterator.datum_index);
+
+		if (player->local_player_index != NONE || iterator.datum_index == viewer_index ||
+			!markers_sees(player, player_get(viewer_index)) || (unit_index = distributed_living_unit(player)) == NONE ||
+			absolute_index >= MAXIMUM_MARKER_PLAYERS)
+		{
+			continue;
+		}
+		first_person_camera_fake(unit_index, &command);
+		if (!markers_aim_from(iterator.datum_index, &command.position, &command.forward, &kind, &object_index, &point))
+			continue;
+		markers_host_take(absolute_index, kind, object_index, &point);
+		return TRUE;
+	}
+	return FALSE;
 }
 
 short network_markers_ping_burst(

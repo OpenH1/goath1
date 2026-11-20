@@ -273,6 +273,9 @@ static struct
 	/* debug.network_test_ping's, and the steps done this game */
 	real ping_time;
 	short ping_steps;
+	/* debug.network_test_teammate_ping's, and whether it pinged this game */
+	real teammate_ping_time;
+	boolean teammate_pinged;
 	long score_to_win;
 	/* the most players the host's games take (debug.network_test_most_players;
 	0: the game's own) */
@@ -404,6 +407,7 @@ static void network_test_read_settings(
 	network_test.chat_time = (real)config_real("debug.network_test_chat");
 	network_test.party_time = (real)config_real("debug.network_test_party");
 	network_test.ping_time = (real)config_real("debug.network_test_ping");
+	network_test.teammate_ping_time = (real)config_real("debug.network_test_teammate_ping");
 	snprintf(network_test.pickup_weapon, sizeof(network_test.pickup_weapon), "%s",
 		config_string("debug.network_test_pickup_weapon"));
 	{
@@ -2944,6 +2948,22 @@ void network_test_update(
 			network_test_party();
 		if (network_test.ping_time > 0.0f)
 			network_test_pings();
+		/* debug.network_test_teammate_ping: an ally's ping, once a game */
+		if (network_test.teammate_ping_time > 0.0f)
+		{
+			long start = (long)(network_test.teammate_ping_time * TICKS_PER_SECOND);
+
+			if (game_time_get() < start - TICKS_PER_SECOND)
+			{
+				network_test.teammate_pinged = FALSE;
+			}
+			else if (game_time_get() >= start && !network_test.teammate_pinged)
+			{
+				network_test.teammate_pinged = TRUE;
+				platform_log("network test: a teammate's ping %s",
+					network_markers_ping_teammate() ? "sent" : "not sent");
+			}
+		}
 		/* debug.network_test_chat: each machine's player says a line to
 		everyone that many seconds in, one to the team two seconds on, and
 		one to the vehicle two more on, the host having seated the last two

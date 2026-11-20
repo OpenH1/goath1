@@ -933,6 +933,49 @@ boolean hud_render_nav_point_colored(
 	return drawn;
 }
 
+/* port: a ping's arrow alone (port/linux/game/spartan_link.c's, on a
+teammate's feed), as custom_render_nav_point draws it, in its colour and
+faded to its alpha, of its kind (on the screen, or behind something), its
+middle at center (the viewport's units) and drawn height tall: FALSE where
+the map has no arrow */
+boolean hud_render_nav_point_arrow(
+	short nav_index,
+	short waypoint_type,
+	real_point2d const *center,
+	real height,
+	real_rgb_color const *color,
+	real alpha)
+{
+	struct hud_waypoint_arrow *arrow;
+	struct bitmap_data const *bitmap = NULL;
+	real_rectangle2d const *clip = NULL;
+	real bitmap_height;
+	point2d corner;
+	byte byte_alpha;
+
+	if (!hud_globals || nav_index<0 || nav_index>=hud_globals->waypoint.arrows.count ||
+		hud_globals->waypoint.arrow_bitmap.index==NONE || waypoint_type<0 || waypoint_type>=NUMBER_OF_WAYPOINT_TYPES ||
+		!(height>0.f))
+	{
+		return FALSE;
+	}
+	arrow = TAG_BLOCK_GET_ELEMENT(&hud_globals->waypoint.arrows, nav_index, struct hud_waypoint_arrow);
+	hud_retrieve_bitmap_and_bounding_rect(hud_globals->waypoint.arrow_bitmap.index, arrow->sequence_indices[waypoint_type],
+		0, &bitmap, &clip);
+	if (!bitmap || !clip || !_texture_cache_bitmap_get_hardware_format((struct bitmap_data *)bitmap, FALSE, TRUE))
+		return FALSE;
+	bitmap_height = bitmap->height*(clip->y1-clip->y0);
+	if (!(bitmap_height>0.f))
+		return FALSE;
+	byte_alpha = (byte)PIN((long)(255.f*alpha+0.5f), 0, 255);
+	hud_draw_mark_begin(center->x, center->y, &corner);
+	hud_draw_bitmap_direct(bitmap, _hud_anchor_center, &corner, clip, height/bitmap_height, 0.f,
+		((pixel32)byte_alpha<<24) | real_rgb_color_to_pixel32(color), FALSE);
+	hud_draw_mark_end();
+
+	return TRUE;
+}
+
 void hud_render_nav_points(
 	short local_player_index)
 {

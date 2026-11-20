@@ -53,6 +53,21 @@ hidden (spectating fills the screen: dead_spectate.c) and comes back with
 the respawn. Split screen: each window has its own link, of its own
 player's teammates, beside its own tracker.
 
+A teammate's ping (network_markers.c: one this player is shown, as it
+reaches every machine that shows it) calls their feed up: with the row
+hidden by its key, the pinging teammate's feed comes up in it for
+SPARTAN_LINK_PING_MILLISECONDS (4 s, half the world marker's time), the
+latest ping's first, up to four (only pings since the player last hid it;
+a teammate who dies meanwhile drops out); with the row showing, their feed
+is not added again but its frame brightens for that time (the tracker's
+color paler and whole, the edge thicker, the glow wider), as a popped
+feed's does. None where the link is not (SPARTAN LINK off in Settings, the
+host's off, a game without it), nor for the player's own pings. On the
+feed, while the ping is drawn in the world, its arrow (the world's, in the
+pinger's color and fade, behind-a-wall look from the teammate's eye) where
+the pinged point or object is in their view, sized to the feed and over the
+object as it moves; none where it is off the feed's picture.
+
 The cost: one feed is drawn a frame (render.c's render_frame, before the
 window's view), each kept in its own images between (d3d8_device.c's extra
 views, halo_view_begin) at the size it is drawn on the screen, without the
@@ -113,6 +128,7 @@ over the network, in the game record (OpenH1's protocol version 36).
 #include "controller_remap.h"
 #include "far_clip.h"
 #include "network_coop.h"
+#include "network_markers.h"
 #include "network_standard.h"
 #include "player_settings.h"
 #include "spartan_link.h"
@@ -152,6 +168,11 @@ void lights_port_keep(boolean keep);
 void render_interpolation_unit_camera_position(long unit_index, real_point3d *position);
 real render_interpolation_fraction(void);
 real render_interpolation_first_person_feed_phase(void);
+
+/* source/interface/hud_nav_points.c: a ping's arrow alone, its middle at
+center and height tall */
+boolean hud_render_nav_point_arrow(short nav_index, short waypoint_type, real_point2d const *center, real height,
+	real_rgb_color const *color, real alpha);
 
 /* port/linux/src/xinput_sdl.c */
 int halo_spartan_link_pad_pressed(short port);
@@ -207,6 +228,15 @@ height, and its curve's steps; and its red, on an enemy (Halo's reticle's) */
 #define SPARTAN_LINK_RETICLE_SIZE 0.05f
 #define SPARTAN_LINK_RETICLE_SEGMENTS 16
 #define SPARTAN_LINK_RETICLE_RED 0xF2FF3424UL
+/* a teammate's ping (network_markers.c): how long it brings their feed up
+while the row is hidden, and brightens their feed's frame (milliseconds),
+the brightening fading out over the last of it; and its arrow on their feed:
+its height, of the feed's, far off (nearer, as the world's arrow grows,
+up to the most) */
+#define SPARTAN_LINK_PING_MILLISECONDS 4000
+#define SPARTAN_LINK_PING_FADE_MILLISECONDS 1000
+#define SPARTAN_LINK_PING_HEIGHT 0.16f
+#define SPARTAN_LINK_PING_HEIGHT_MOST 0.3f
 
 /* ---------- structures */
 
@@ -238,6 +268,10 @@ struct spartan_link_window
 	/* the player has it on (display.spartan_link_shown, read as each game
 	starts), whether any feed shows */
 	boolean open;
+	/* (hidden) brought up by teammates' pings, and when the player last
+	hid it (the pings before that bring nothing up) */
+	boolean popped;
+	unsigned long closed_at;
 	short count;
 	struct spartan_link_feed feeds[SPARTAN_LINK_FEEDS];
 	/* a line under the tracker's row (a refusal: free for all, Pro 2V2, the
@@ -283,10 +317,14 @@ static struct
 	boolean drawing;
 	long hidden_unit;
 	long posed_unit;
-	/* the views drawn in this game (to free them as it ends) */
+	/* the views drawn in this game (to free them as it ends), and whose
+	view each last drew (a feed moved to another's view waits for its own) */
 	unsigned long views_used;
-	/* (debug.spartan_link_log: a red reticle's frame saved, once a run) */
+	long view_players[1 + MAXIMUM_LOCAL_PLAYERS * SPARTAN_LINK_FEEDS];
+	/* (debug.spartan_link_log: a red reticle's frame saved, once a run, and
+	a ping's on a feed) */
 	boolean red_saved;
+	boolean ping_saved;
 } spartan_link = { FALSE, 0, (unsigned long)-1, TRUE, 1.0f, FALSE };
 
 /* ---------- private code */
@@ -352,6 +390,93 @@ static boolean spartan_link_teammate(
 	if (TEST_FLAG(object_get(player->unit_index)->object.damage_flags, _object_dead_bit))
 		return FALSE;
 	return !game_engine_running() || player->team_index == player_get(self)->team_index;
+}
+
+/* a teammate's ping the window's player is shown (their own pings never:
+the link has no feed of theirs), come within SPARTAN_LINK_PING_MILLISECONDS:
+TRUE with its age (milliseconds) */
+static boolean spartan_link_pinged(
+	short local_player_index,
+	long player_index,
+	unsigned long *age)
+{
+	struct network_marker_shown ping;
+
+	if (player_index == NONE || player_index == local_player_get_player_index(local_player_index) ||
+		!network_markers_ping_shown(local_player_index, player_index, &ping) ||
+		ping.age >= SPARTAN_LINK_PING_MILLISECONDS)
+	{
+		return FALSE;
+	}
+	if (age)
+		*age = ping.age;
+	return TRUE;
+}
+
+/* the hidden window's feeds: the teammates whose pings came since it was
+hidden, for SPARTAN_LINK_PING_MILLISECONDS each, the latest first, up to
+four (each kept as it was while it stays, so its image and meters go on) */
+static void spartan_link_window_pings(
+	short local_player_index,
+	unsigned long now)
+{
+	struct spartan_link_window *window = &spartan_link.windows[local_player_index];
+	long self = local_player_get_player_index(local_player_index);
+	struct spartan_link_feed feeds[SPARTAN_LINK_FEEDS];
+	unsigned long ages[SPARTAN_LINK_FEEDS];
+	struct data_iterator iterator;
+	struct player_datum *player;
+	short count = 0;
+	short index;
+
+	if (self == NONE)
+	{
+		window->count = 0;
+		window->popped = FALSE;
+		return;
+	}
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		unsigned long age;
+		short at;
+
+		if (!spartan_link_teammate(self, iterator.datum_index) ||
+			!spartan_link_pinged(local_player_index, iterator.datum_index, &age) ||
+			(window->closed_at && age > now - window->closed_at))
+		{
+			continue;
+		}
+		/* (in its place by age, the latest first) */
+		for (at = count; at > 0 && ages[at - 1] > age; at--)
+		{
+			if (at < SPARTAN_LINK_FEEDS)
+			{
+				feeds[at] = feeds[at - 1];
+				ages[at] = ages[at - 1];
+			}
+		}
+		if (at >= SPARTAN_LINK_FEEDS)
+			continue;
+		csmemset(&feeds[at], 0, sizeof(feeds[at]));
+		feeds[at].player_index = iterator.datum_index;
+		feeds[at].unit_index = player->unit_index;
+		ages[at] = age;
+		for (index = 0; index < window->count; index++)
+		{
+			if (window->feeds[index].player_index == iterator.datum_index &&
+				window->feeds[index].unit_index == player->unit_index)
+			{
+				feeds[at] = window->feeds[index];
+				feeds[at].down_at = 0;
+			}
+		}
+		if (count < SPARTAN_LINK_FEEDS)
+			count++;
+	}
+	csmemcpy(window->feeds, feeds, sizeof(feeds[0]) * count);
+	window->count = count;
+	window->popped = count > 0;
 }
 
 /* the window's feeds brought up to date: the downed kept for a moment,
@@ -427,7 +552,8 @@ static boolean spartan_link_shown(
 	long self;
 
 	if (local_player_index < 0 || local_player_index >= MAXIMUM_LOCAL_PLAYERS ||
-		!spartan_link.windows[local_player_index].open || !spartan_link_game())
+		(!spartan_link.windows[local_player_index].open && !spartan_link.windows[local_player_index].popped) ||
+		!spartan_link_game())
 	{
 		return FALSE;
 	}
@@ -499,6 +625,13 @@ static void spartan_link_toggle(
 	}
 	window->open = !window->open;
 	spartan_link_setting_write(local_player_index, "display.spartan_link_shown", window->open);
+	/* (hidden: only the pings from now on bring feeds up) */
+	window->popped = FALSE;
+	if (!window->open)
+	{
+		window->count = 0;
+		window->closed_at = now ? now : 1;
+	}
 	if (window->open)
 	{
 		spartan_link_window_update(local_player_index, now);
@@ -551,6 +684,18 @@ static void spartan_link_hint(
 		platform_log("spartan link: local player %d hint: %ls", (int)local_player_index, window->line);
 }
 
+/* whether a feed's view holds its teammate's image (drawn, and last for
+them: a feed moved to another's place by a drop or a ping has none yet) */
+static boolean spartan_link_feed_image(
+	short local_player_index,
+	short feed)
+{
+	int view = SPARTAN_LINK_VIEW(local_player_index, feed);
+
+	return halo_view_drawn(view) &&
+		spartan_link.view_players[view] == spartan_link.windows[local_player_index].feeds[feed].player_index;
+}
+
 /* the feed drawn this frame: one a frame of every window's, a feed whose
 image was never drawn first, else the next after the last drawn */
 static void spartan_link_schedule(
@@ -580,7 +725,7 @@ static void spartan_link_schedule(
 			if (window->feeds[feed].down_at)
 				continue;
 			distance = slot > last ? slot - last : slot - last + MAXIMUM_LOCAL_PLAYERS * SPARTAN_LINK_FEEDS;
-			if (!halo_view_drawn(SPARTAN_LINK_VIEW(local_player_index, feed)))
+			if (!spartan_link_feed_image(local_player_index, feed))
 				distance -= MAXIMUM_LOCAL_PLAYERS * SPARTAN_LINK_FEEDS;
 			if (distance < best_distance)
 			{
@@ -1190,14 +1335,36 @@ static void spartan_link_draw_feed(
 	pixel32 tracker = spartan_link_tracker_color(local_player_index);
 	pixel32 edge_color = tracker;
 	pixel32 glow_color = (tracker & 0x00FFFFFFUL) | ((pixel32)(((tracker >> 24) & 0xFF) / 4) << 24);
+	unsigned long age;
 	short side;
+
+	/* (their ping: the frame brightened, the tracker's color made paler and
+	whole, its edge thicker and its glow wider and stronger, fading back over
+	the last of it) */
+	if (spartan_link_pinged(local_player_index, feed->player_index, &age))
+	{
+		real lit = age + SPARTAN_LINK_PING_FADE_MILLISECONDS < SPARTAN_LINK_PING_MILLISECONDS ? 1.0f :
+			(real)(SPARTAN_LINK_PING_MILLISECONDS - age) / (real)SPARTAN_LINK_PING_FADE_MILLISECONDS;
+		real_argb_color color;
+
+		pixel32_to_real_argb_color(tracker, &color);
+		color.red += (1.0f - color.red) * 0.55f * lit;
+		color.green += (1.0f - color.green) * 0.55f * lit;
+		color.blue += (1.0f - color.blue) * 0.55f * lit;
+		color.alpha += (1.0f - color.alpha) * lit;
+		edge_color = real_argb_color_to_pixel32(&color);
+		color.alpha *= 0.25f + 0.35f * lit;
+		glow_color = real_argb_color_to_pixel32(&color);
+		edge *= 1.0f + lit;
+		glow *= 1.0f + 0.6f * lit;
+	}
 
 	/* the image in its own colors (a down teammate's darkened) */
 	x[0] = bounds->x0; y[0] = bounds->y0;
 	x[1] = bounds->x1; y[1] = bounds->y0;
 	x[2] = bounds->x1; y[2] = bounds->y1;
 	x[3] = bounds->x0; y[3] = bounds->y1;
-	if (halo_view_drawn(view))
+	if (spartan_link_feed_image(local_player_index, index))
 	{
 		halo_view_sample(view);
 		spartan_link_quad(white, x, y, feed->down_at ? 0xFF585858UL : 0xFFFFFFFFUL, bounds);
@@ -1663,6 +1830,81 @@ static void spartan_link_draw_row(
 	spartan_link_text(name, bounds->x0, top, name_width, 0, text_scale, &text_color);
 }
 
+/* ---------- the teammate's ping on their feed */
+
+/* whether the ping's point is behind something from the teammate's eye
+(hud_nav_points.c's hud_get_nav_point_render_type, from their side): the
+level or an object other than the pinged one (or what it rides) between. A
+collision test only, which reads the world */
+static boolean spartan_link_ping_behind(
+	long unit_index,
+	real_point3d const *eye,
+	real_point3d const *position,
+	long object_index)
+{
+	struct collision_result result;
+	real_vector3d vector;
+	boolean behind;
+
+	if (global_current_collision_user_depth >= MAXIMUM_COLLISION_USER_STACK_DEPTH)
+		return FALSE;
+	global_current_collision_users[global_current_collision_user_depth++] = _collision_user_ui;
+	vector.i = position->x - eye->x;
+	vector.j = position->y - eye->y;
+	vector.k = position->z - eye->z;
+	behind = collision_test_vector(_collision_test_for_line_of_sight_flags, eye, &vector,
+		spartan_link_root(unit_index), &result) &&
+		(result.type != _collision_result_object || object_index == NONE ||
+			spartan_link_root(result.object_index) != spartan_link_root(object_index));
+	--global_current_collision_user_depth;
+	return behind;
+}
+
+/* the teammate's ping on their feed (bounds), where it is in their view:
+the world's arrow (network_markers.c's: in their colour and fade, its
+behind-a-wall look from their eye), sized to the feed, over its object as
+it moves; none where it is off the feed's picture */
+static void spartan_link_draw_ping(
+	short local_player_index,
+	struct spartan_link_feed const *feed,
+	real_rectangle2d const *bounds)
+{
+	struct network_marker_shown ping;
+	struct render_camera camera;
+	real_point3d eye;
+	real_point2d place;
+	real distance, size, height;
+
+	if (feed->down_at || !object_try_and_get_and_verify_type(feed->unit_index, _object_mask_unit) ||
+		!network_markers_ping_shown(local_player_index, feed->player_index, &ping) || ping.nav_index == NONE)
+	{
+		return;
+	}
+	spartan_link_feed_view(feed->unit_index, &camera);
+	render_interpolation_unit_camera_position(feed->unit_index, &eye);
+	/* (as the world's arrow is sized: its least past 15 units, larger
+	nearer, hud_nav_points.c's) */
+	distance = distance3d(&eye, &ping.position);
+	size = distance > 15.0f ? 0.5f : (real)pow(1.0f - distance / 15.0f, 0.7) + 0.5f;
+	height = MIN((bounds->y1 - bounds->y0) * SPARTAN_LINK_PING_HEIGHT * size / 0.5f,
+		(bounds->y1 - bounds->y0) * SPARTAN_LINK_PING_HEIGHT_MOST);
+	if (!spartan_link_aim_place(&camera, bounds, height * 0.5f, &ping.position, &place))
+		return;
+	hud_render_nav_point_arrow(ping.nav_index,
+		spartan_link_ping_behind(feed->unit_index, &eye, &ping.position, ping.object_index) ? 2 /* occluded */ : 0,
+		&place, height, &ping.color, ping.alpha);
+	/* (debug.spartan_link_log: the first ping on a feed logged and its
+	frame saved, once a run) */
+	if (spartan_link.log && !spartan_link.ping_saved)
+	{
+		spartan_link.ping_saved = TRUE;
+		platform_log("spartan link ping: %ld local %d (player %ld) at %.1f %.1f of %.1f-%.1f %.1f-%.1f, %.1f tall",
+			game_time_get(), (int)local_player_index, (long)DATUM_INDEX_TO_ABSOLUTE_INDEX(feed->player_index), place.x,
+			place.y, bounds->x0, bounds->x1, bounds->y0, bounds->y1, height);
+		halo_screenshot_named("spartan_link_ping");
+	}
+}
+
 /* ---------- public code */
 
 void spartan_link_update(
@@ -1698,6 +1940,8 @@ void spartan_link_update(
 			csmemset(spartan_link.windows, 0, sizeof(spartan_link.windows));
 			spartan_link.last_local_player = NONE;
 			spartan_link.last_feed = NONE;
+			for (port = 0; port < (short)NUMBEROF(spartan_link.view_players); port++)
+				spartan_link.view_players[port] = NONE;
 			/* (each player's link as they left it, their profile's;
 			debug.spartan_link_open: on from the start, for the tests) */
 			spartan_link.debug_open = config_boolean("debug.spartan_link_open");
@@ -1756,9 +2000,13 @@ void spartan_link_update(
 		struct spartan_link_window *window = &spartan_link.windows[local_player_index];
 
 		/* (on, it stays on: hidden while the game has none, a cutscene's
-		too) */
+		too; hidden, the teammates' pings bring their feeds up a while) */
 		if (window->open && spartan_link_game())
 			spartan_link_window_update(local_player_index, now);
+		else if (!window->open && spartan_link_game())
+			spartan_link_window_pings(local_player_index, now);
+		else if (!window->open)
+			window->popped = FALSE;
 		spartan_link_hint(local_player_index, now);
 		/* (the teammates' aims, while the link is shown) */
 		if (spartan_link_shown(local_player_index))
@@ -1866,6 +2114,7 @@ boolean spartan_link_feed_begin(
 
 	view = SPARTAN_LINK_VIEW(local_player_index, spartan_link.last_feed);
 	spartan_link.views_used |= 1UL << view;
+	spartan_link.view_players[view] = feed->player_index;
 	spartan_link.drawing = TRUE;
 	spartan_link.hidden_unit = through_eyes ? feed->unit_index : NONE;
 	spartan_link.posed_unit = through_eyes && object_get(feed->unit_index)->object.parent_object_index == NONE ?
@@ -2004,6 +2253,7 @@ void spartan_link_draw(
 			boolean enemy = feed->aim_enemy;
 			boolean shown = spartan_link_feed_aim_place(feed, &rectangles[index], radius, &place);
 
+			spartan_link_draw_ping(local_player_index, feed, &rectangles[index]);
 			if (shown)
 				spartan_link_draw_reticle(white, &place, radius, enemy);
 			/* (debug.spartan_link_log: the reticle's and the health's

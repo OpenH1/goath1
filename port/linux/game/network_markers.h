@@ -20,6 +20,22 @@ unsigned char network_markers_pad_open(short port);
 boolean network_markers_handles_message(word const *message, word size);
 void network_markers_handle_message(long machine_index, word const *message, word size, boolean from_stream);
 
+/* a player's ping (their datum index) as a local player is shown it (their
+own, an ally's they see, not a player's this machine muted), while it is
+drawn: FALSE for none; else (shown, if not NULL) how long ago it came, where
+its arrow is drawn this frame (over its object as drawn, while it is there:
+the object, else NONE), its colour and fade, and this map's arrow (NONE for
+none). The Spartan link's feeds (spartan_link.c) */
+struct network_marker_shown
+{
+	unsigned long age;
+	real_point3d position;
+	long object_index;
+	real_rgb_color color;
+	real alpha;
+	short nav_index;
+};
+boolean network_markers_ping_shown(short local_player_index, long player_index, struct network_marker_shown *shown);
 /* (the tests: debug.network_test_ping) the first local player pings what
 it aims at, as a press does; FALSE if it could not */
 boolean network_markers_ping_aimed(void);
@@ -28,6 +44,11 @@ could send it, for the host to refuse; and count sent at once, past the
 client's own limit, for the host to count */
 boolean network_markers_ping_forged(void);
 short network_markers_ping_burst(short count);
+/* ... (the host, or a game of one machine: debug.network_test_teammate_ping)
+the first local player's first ally of another machine or a bot pings what
+they aim at, as their press would (the Spartan link's pop-up, spartan_link.c);
+FALSE if none could */
+boolean network_markers_ping_teammate(void);
 /* ... and the pings this machine shows now: each one's player (absolute
 index), and the count */
 short network_markers_shown(short *player_indices, short maximum);
