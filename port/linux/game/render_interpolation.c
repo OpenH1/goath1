@@ -5350,15 +5350,17 @@ real render_interpolation_ticks_behind(void)
 	return interpolation_rendering ? 1.0f - interpolation_fraction : 0.0f;
 }
 
-/* a timer that the frames count down by the ticks each ran (by
-game_time_get_elapsed(), after reading it: the screen's flash, the camera's
-impulse and shake), read before this frame's count as it stands at the time
-of the frame drawn: what is left after this frame's ticks, and the part of a
-tick the frame is behind them. When frames are not drawn between ticks, as
-it is (before this frame's ticks), as the game read it. */
+/* a timer that the ticks count down as each begins (the screen's flash,
+the camera's impulse and shake: player_effect_tick_begin), as it stands at
+the time of the frame drawn: the next tick's step is the frame's way to it
+(the frame a tick behind, as the objects), and a tick open (sub-steps at
+game.sim_rate 60 and 120) has taken its step already. When frames are not
+drawn between ticks, as it is, as the game read it. */
 real render_interpolation_ticks_left(long ticks_left)
 {
 	if (!interpolation_rendering)
 		return (real)ticks_left;
-	return (real)(ticks_left - game_time_get_elapsed()) + 1.0f - interpolation_fraction;
+	if (sim_substep_next())
+		ticks_left++;
+	return (real)ticks_left - interpolation_fraction;
 }

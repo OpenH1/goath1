@@ -368,6 +368,10 @@ static void game_tick_macro_step(
 	/* port: the cameras as the tick begins, which its fast phase decides
 	material effects by (material_effects.c) */
 	material_effects_tick_begin();
+	/* port: the screen's fade and flash, the camera's impulse and shake,
+	the scripted shake and the damage indicators counted down once a tick,
+	as the tick begins (player_effects.c: the frames counted them) */
+	player_effect_tick_begin();
 
 	/* port: a client of another's game, the host's rules (its own cheats and
 	game speed, set before it joined too, put back) */
