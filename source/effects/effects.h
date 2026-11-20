@@ -109,6 +109,16 @@ long effect_new_unattached_from_markers(
 	boolean can_be_deterministic);
 void effects_update(
 	real dt);
+/* port: the particles' effects (an effect a particle makes as it dies or
+strikes), the frames': made in an array of their own, outside the game
+state, between particles_effects_begin and _end (particles.c), and moved by
+the frames (game_frame) */
+boolean effects_port_particles_begin(
+	void);
+void effects_port_particles_end(
+	boolean began);
+void effects_port_particles_update(
+	real dt);
 void effects_start_on_first_person_weapon(
 	short local_player_index,
 	long object_index);

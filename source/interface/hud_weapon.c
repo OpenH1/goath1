@@ -440,6 +440,10 @@ static void render_weapon_hud(
 static boolean weapon_hud_state_index_valid(
 	short state_index,
 	short state_count);
+static void weapon_hud_state_flags(
+	struct weapon_flash_state_definition const *cutoffs,
+	struct weapon_interface_state const *weapon_state,
+	short *state_flags);
 
 /* ---------- globals */
 
@@ -582,6 +586,61 @@ static void play_weapon_hud_sounds(
 	return;
 }
 
+/* port: the grenades' HUD a unit shows, and its draw flags (flashing,
+disabled, in multiplayer); NULL when it shows none (render_grenade_hud's
+tests, which hud_weapon_interface_tick keeps its flash time by too) */
+static struct grenade_hud_interface_definition *grenade_hud_shown(
+	long unit_index,
+	short *draw_flags)
+{
+	struct unit_datum *unit = unit_get(unit_index);
+	long weapon_index = unit_inventory_get_weapon(
+		unit_index,
+		unit->unit.current_weapon_index);
+	struct unit_datum *parent_unit;
+	short grenade_type;
+	struct game_globals_grenade *grenade;
+	long hud_index;
+	struct grenade_hud_interface_definition *definition;
+
+	if (weapon_prevents_grenade_throwing(weapon_index) ||
+		unit->unit.current_grenade_index == NONE)
+	{
+		return NULL;
+	}
+
+	parent_unit = unit_try_and_get(unit->object.parent_object_index);
+	if (parent_unit &&
+		(parent_unit->unit.driver_object_index == unit_index ||
+			parent_unit->unit.gunner_object_index == unit_index))
+	{
+		return NULL;
+	}
+
+	grenade_type = unit_get_current_grenade_type(unit_index);
+	if (grenade_type == NONE)
+		return NULL;
+
+	grenade = TAG_BLOCK_GET_ELEMENT(
+		&scenario_get_game_globals()->grenades,
+		grenade_type,
+		struct game_globals_grenade);
+	hud_index = grenade->hud_interface.index;
+	if (hud_index == NONE)
+		return NULL;
+
+	definition = grenade_hud_interface_definition_get(hud_index);
+	*draw_flags = unit->unit.grenade_counts[unit->unit.current_grenade_index] <=
+		definition->grenade_count_panel.flash_cutoff;
+	SET_FLAG(
+		*draw_flags,
+		_hud_draw_disabled_bit,
+		unit->unit.grenade_counts[unit->unit.current_grenade_index] == 0);
+	SET_FLAG(*draw_flags, _hud_draw_in_multiplayer_bit, local_player_count() > 1);
+
+	return definition;
+}
+
 static void render_grenade_hud(
 	short local_player_index,
 	long unit_index)
@@ -589,15 +648,9 @@ static void render_grenade_hud(
 	long return_eip = get_return_eip();
 	long stack_buffer[STACK_BUFFER_LENGTH];
 	struct unit_datum *unit;
-	long weapon_index;
-	long parent_index;
-	struct unit_datum *parent_unit;
-	short grenade_type;
-	struct game_globals_grenade *grenade;
 	struct weapon_hud_state *hud_state;
-	long hud_index;
 	struct grenade_hud_interface_definition *definition;
-	short draw_flags;
+	short draw_flags = 0;
 
 	/* port: MCC's expanded grenade types have their own HUD (mcc_grenades.c) */
 	if (mcc_grenades_active())
@@ -611,57 +664,12 @@ static void render_grenade_hud(
 		sizeof(stack_buffer));
 
 	unit = unit_get(unit_index);
-	weapon_index = unit_inventory_get_weapon(
-		unit_index,
-		unit->unit.current_weapon_index);
-	unit = unit_get(unit_index);
-	(void)unit_definition_get(unit->definition_index);
-	if (weapon_prevents_grenade_throwing(weapon_index) ||
-		unit->unit.current_grenade_index == NONE)
-	{
-		goto finished;
-	}
-
-	parent_index = unit->object.parent_object_index;
-	parent_unit = unit_try_and_get(parent_index);
-	if (parent_unit &&
-		(parent_unit->unit.driver_object_index == unit_index ||
-			parent_unit->unit.gunner_object_index == unit_index))
-	{
-		goto finished;
-	}
-
-	grenade_type = unit_get_current_grenade_type(unit_index);
-	if (grenade_type == NONE)
-		goto finished;
-
-	grenade = TAG_BLOCK_GET_ELEMENT(
-		&scenario_get_game_globals()->grenades,
-		grenade_type,
-		struct game_globals_grenade);
-	hud_index = grenade->hud_interface.index;
 	hud_state = get_hud_state(local_player_index);
-	if (hud_index == NONE)
+	definition = grenade_hud_shown(unit_index, &draw_flags);
+	if (!definition)
 		goto finished;
-
-	definition = grenade_hud_interface_definition_get(hud_index);
-	draw_flags = unit->unit.grenade_counts[unit->unit.current_grenade_index] <=
-		definition->grenade_count_panel.flash_cutoff;
-	SET_FLAG(
-		draw_flags,
-		_hud_draw_disabled_bit,
-		unit->unit.grenade_counts[unit->unit.current_grenade_index] == 0);
-	SET_FLAG(draw_flags, _hud_draw_in_multiplayer_bit, local_player_count() > 1);
-
-	if (TEST_FLAG(draw_flags, _hud_draw_flashing_bit))
-	{
-		if (hud_state->last_grenade_flash_time == NONE)
-			hud_state->last_grenade_flash_time = game_time_get();
-	}
-	else
-	{
-		hud_state->last_grenade_flash_time = NONE;
-	}
+	/* port: (its flash time the ticks', hud_weapon_interface_tick: the frames
+	set it, game state) */
 
 	if (definition->background.interface_bitmap.index != NONE)
 	{
@@ -1016,7 +1024,6 @@ static void crosshairs_draw(
 {
 	long return_eip = get_return_eip();
 	long stack_buffer[STACK_BUFFER_LENGTH];
-	boolean firing_active = FALSE;
 
 	/* port: project the passenger's shot once for all pieces of its reticle */
 	if (!passenger_camera_reticle_begin(player->local_player_index, weapon_index))
@@ -1037,7 +1044,6 @@ static void crosshairs_draw(
 		SET_FLAG(map_type_flags, 2, local_player_count() > 1);
 		if (unit_index != NONE)
 		{
-			struct unit_datum *unit = unit_get(unit_index);
 			struct weapon_definition *weapon_definition = weapon_index == NONE ?
 				NULL :
 				weapon_definition_get(weapon_get(weapon_index)->definition_index);
@@ -1175,37 +1181,10 @@ static void crosshairs_draw(
 								case _crosshair_state_threw_with_no_grenade:
 								case _crosshair_state_fired_secondary_with_no_ammo:
 								case _crosshair_state_flash_fired_battery_depleted:
-									if (state_index == _crosshair_state_flash_fired_battery_depleted)
-									{
-										firing_active = weapon_state->age == 0.0f &&
-											TEST_FLAG(unit->unit.control_flags, _unit_control_weapon_primary_trigger_bit);
-									}
-									else if (state_index == _crosshair_state_fired_with_no_ammo)
-									{
-										firing_active = !weapon_state->magazines[0].rounds_loaded &&
-											!weapon_state->magazines[0].rounds_remaining &&
-											TEST_FLAG(unit->unit.control_flags, _unit_control_weapon_primary_trigger_bit);
-									}
-									else if (state_index == _crosshair_state_threw_with_no_grenade)
-									{
-										boolean no_grenades = TRUE;
-										short grenade_type;
-
-										for (grenade_type = 0; grenade_type < NUMBER_OF_UNIT_GRENADE_TYPES; grenade_type++)
-										{
-											no_grenades = no_grenades && !unit->unit.grenade_counts[grenade_type];
-										}
-										/* port: and MCC's expanded grenade types */
-										if (mcc_grenades_active() && mcc_grenades_total(unit_index)) no_grenades = FALSE;
-										firing_active = no_grenades &&
-											!unit->unit.grenade_throw_state &&
-											TEST_FLAG(unit->unit.control_flags, _unit_control_throw_grenade_bit);
-									}
-									if (!firing_active &&
-										game_time_get() - state->value.reference_data >= get_flash_duration(&item->colors))
-									{
-										state->value.reference_data = NONE;
-									}
+									/* port: let go of once a tick, when the
+									first item drawn has flashed its time
+									(weapon_hud_crosshairs_tick): the frames
+									let go of it, game state */
 									if (state->value.reference_data == NONE)
 										continue;
 									/* fall through */
@@ -1496,121 +1475,13 @@ static void render_weapon_hud(
 	{
 		struct weapon_flash_state_definition const *cutoffs =
 			&definition->flash_cutoffs;
-		short flags = state_flags[0];
+		short flags;
 		long age_percentage;
 
-		SET_FLAG(
-			flags,
-			_hud_draw_flashing_bit,
-			weapon_state->magazines[0].rounds_remaining <= cutoffs->total_ammo);
-		SET_FLAG(
-			flags,
-			_hud_draw_disabled_bit,
-			weapon_state->magazines[0].rounds_remaining == 0);
-		SET_FLAG(
-			flags,
-			_hud_draw_in_multiplayer_bit,
-			local_player_count() > 1);
-		state_flags[0] = flags;
-
-		flags = state_flags[1];
-		SET_FLAG(
-			flags,
-			_hud_draw_flashing_bit,
-			weapon_state->magazines[0].rounds_loaded <= cutoffs->loaded_ammo &&
-				!weapon_state->magazines[0].reloading);
-		SET_FLAG(flags, _hud_draw_disabled_bit, FALSE);
-		SET_FLAG(
-			flags,
-			_hud_draw_in_multiplayer_bit,
-			local_player_count() > 1);
-		state_flags[1] = flags;
-
-		flags = state_flags[2];
-		SET_FLAG(
-			flags,
-			_hud_draw_flashing_bit,
-			weapon_state->heat * 100.0f >= cutoffs->heat);
-		SET_FLAG(flags, _hud_draw_disabled_bit, FALSE);
-		SET_FLAG(
-			flags,
-			_hud_draw_in_multiplayer_bit,
-			local_player_count() > 1);
-		state_flags[2] = flags;
-
-		flags = state_flags[3];
-		SET_FLAG(
-			flags,
-			_hud_draw_flashing_bit,
-			(1.0f - weapon_state->age) * 100.0f <= cutoffs->age);
-		age_percentage = PIN(
-			fast_ftol_C(weapon_state->age * 100.0f),
-			0,
-			100);
-		SET_FLAG(
-			flags,
-			_hud_draw_disabled_bit,
-			100 - age_percentage == 0);
-		SET_FLAG(
-			flags,
-			_hud_draw_in_multiplayer_bit,
-			local_player_count() > 1);
-		state_flags[3] = flags;
-
-		/* port: a weapon of one magazine has no secondary ammunition, so
-		nothing of it flashes or shows empty (the overlays below likewise) */
-		if (weapon_state->magazine_count > 1)
-		{
-			flags = state_flags[4];
-			SET_FLAG(
-				flags,
-				_hud_draw_flashing_bit,
-				weapon_state->magazines[1].rounds_remaining <= cutoffs->total_ammo);
-			SET_FLAG(
-				flags,
-				_hud_draw_disabled_bit,
-				weapon_state->magazines[1].rounds_remaining == 0);
-			SET_FLAG(
-				flags,
-				_hud_draw_in_multiplayer_bit,
-				local_player_count() > 1);
-			state_flags[4] = flags;
-
-			flags = state_flags[5];
-			SET_FLAG(
-				flags,
-				_hud_draw_flashing_bit,
-				weapon_state->magazines[1].rounds_loaded <= cutoffs->loaded_ammo &&
-					!weapon_state->magazines[1].reloading);
-			SET_FLAG(flags, _hud_draw_disabled_bit, FALSE);
-			SET_FLAG(
-				flags,
-				_hud_draw_in_multiplayer_bit,
-				local_player_count() > 1);
-			state_flags[5] = flags;
-		}
-		else
-		{
-			state_flags[4] = local_player_count() > 1 ? FLAG(_hud_draw_in_multiplayer_bit) : 0;
-			state_flags[5] = state_flags[4];
-		}
-
-		for (state_index = 0;
-			state_index < NUMBER_OF_WEAPON_HUD_FLASH_REFERENCES;
-			state_index++)
-		{
-			if (TEST_FLAG(state_flags[state_index], _hud_draw_flashing_bit))
-			{
-				if (hud_state->last_weapon_flash_time[state_index] == NONE)
-				{
-					hud_state->last_weapon_flash_time[state_index] = game_time_get();
-				}
-			}
-			else
-			{
-				hud_state->last_weapon_flash_time[state_index] = NONE;
-			}
-		}
+		/* port: (the state flags, weapon_hud_state_flags; their flash times
+		the ticks', hud_weapon_interface_tick: the frames set them, game
+		state) */
+		weapon_hud_state_flags(cutoffs, weapon_state, state_flags);
 
 		flags = overlay_flags[0];
 		SET_FLAG(
@@ -2042,6 +1913,362 @@ void hud_fix_weapon_data(
 	return;
 }
 
+/* port: a weapon HUD's state flags (flashing, disabled, in multiplayer) by
+its flash cutoffs, the first six of state_flags (render_weapon_hud's, which
+hud_weapon_interface_tick keeps the flash times by too) */
+static void weapon_hud_state_flags(
+	struct weapon_flash_state_definition const *cutoffs,
+	struct weapon_interface_state const *weapon_state,
+	short *state_flags)
+{
+	short flags = state_flags[0];
+	long age_percentage;
+
+	SET_FLAG(
+		flags,
+		_hud_draw_flashing_bit,
+		weapon_state->magazines[0].rounds_remaining <= cutoffs->total_ammo);
+	SET_FLAG(
+		flags,
+		_hud_draw_disabled_bit,
+		weapon_state->magazines[0].rounds_remaining == 0);
+	SET_FLAG(
+		flags,
+		_hud_draw_in_multiplayer_bit,
+		local_player_count() > 1);
+	state_flags[0] = flags;
+
+	flags = state_flags[1];
+	SET_FLAG(
+		flags,
+		_hud_draw_flashing_bit,
+		weapon_state->magazines[0].rounds_loaded <= cutoffs->loaded_ammo &&
+			!weapon_state->magazines[0].reloading);
+	SET_FLAG(flags, _hud_draw_disabled_bit, FALSE);
+	SET_FLAG(
+		flags,
+		_hud_draw_in_multiplayer_bit,
+		local_player_count() > 1);
+	state_flags[1] = flags;
+
+	flags = state_flags[2];
+	SET_FLAG(
+		flags,
+		_hud_draw_flashing_bit,
+		weapon_state->heat * 100.0f >= cutoffs->heat);
+	SET_FLAG(flags, _hud_draw_disabled_bit, FALSE);
+	SET_FLAG(
+		flags,
+		_hud_draw_in_multiplayer_bit,
+		local_player_count() > 1);
+	state_flags[2] = flags;
+
+	flags = state_flags[3];
+	SET_FLAG(
+		flags,
+		_hud_draw_flashing_bit,
+		(1.0f - weapon_state->age) * 100.0f <= cutoffs->age);
+	age_percentage = PIN(
+		fast_ftol_C(weapon_state->age * 100.0f),
+		0,
+		100);
+	SET_FLAG(
+		flags,
+		_hud_draw_disabled_bit,
+		100 - age_percentage == 0);
+	SET_FLAG(
+		flags,
+		_hud_draw_in_multiplayer_bit,
+		local_player_count() > 1);
+	state_flags[3] = flags;
+
+	/* port: a weapon of one magazine has no secondary ammunition, so
+	nothing of it flashes or shows empty (the overlays below likewise) */
+	if (weapon_state->magazine_count > 1)
+	{
+		flags = state_flags[4];
+		SET_FLAG(
+			flags,
+			_hud_draw_flashing_bit,
+			weapon_state->magazines[1].rounds_remaining <= cutoffs->total_ammo);
+		SET_FLAG(
+			flags,
+			_hud_draw_disabled_bit,
+			weapon_state->magazines[1].rounds_remaining == 0);
+		SET_FLAG(
+			flags,
+			_hud_draw_in_multiplayer_bit,
+			local_player_count() > 1);
+		state_flags[4] = flags;
+
+		flags = state_flags[5];
+		SET_FLAG(
+			flags,
+			_hud_draw_flashing_bit,
+			weapon_state->magazines[1].rounds_loaded <= cutoffs->loaded_ammo &&
+				!weapon_state->magazines[1].reloading);
+		SET_FLAG(flags, _hud_draw_disabled_bit, FALSE);
+		SET_FLAG(
+			flags,
+			_hud_draw_in_multiplayer_bit,
+			local_player_count() > 1);
+		state_flags[5] = flags;
+	}
+	else
+	{
+		state_flags[4] = local_player_count() > 1 ? FLAG(_hud_draw_in_multiplayer_bit) : 0;
+		state_flags[5] = state_flags[4];
+	}
+
+	return;
+}
+
+/* port: the weapon HUD's game state, a frame's step of it, once a tick as
+it begins (hud_tick_begin: the time and the state the frames after the last
+tick saw), for a player the HUD is drawn for. The frames drawing it set it
+(render_weapon_hud's flash times, render_grenade_hud's, crosshairs_draw's
+flashes let go of, the last weapon), as often as they were drawn: between
+two frames several ticks (a cutscene's skip, sixteen times its speed), so
+the game played at another frame rate was another game (OpenH1 #1233). The
+frames only read it now. */
+static void weapon_hud_flash_times_tick(
+	long hud_index,
+	short local_player_index,
+	struct weapon_interface_state const *weapon_state)
+{
+	struct weapon_hud_state *hud_state = get_hud_state(local_player_index);
+	short depth;
+
+	/* (the weapon's HUD, then each parent's that keeps its own flash cutoffs,
+	as render_weapon_hud draws them: the last such sets them) */
+	for (depth = 0;
+		hud_index != NONE && depth < MAXIMUM_WEAPON_HUD_DEFINITION_DEPTH;
+		depth++)
+	{
+		struct weapon_hud_interface_definition *definition =
+			weapon_hud_interface_definition_get(hud_index);
+
+		if (depth == 0 || !TEST_FLAG(
+			definition->flash_cutoffs.flags,
+			_hud_use_parent_flash_parameters_bit))
+		{
+			short state_flags[NUMBER_OF_WEAPON_HUD_FLASH_REFERENCES] = { 0 };
+			short state_index;
+
+			weapon_hud_state_flags(&definition->flash_cutoffs, weapon_state, state_flags);
+			for (state_index = 0;
+				state_index < NUMBER_OF_WEAPON_HUD_FLASH_REFERENCES;
+				state_index++)
+			{
+				if (TEST_FLAG(state_flags[state_index], _hud_draw_flashing_bit))
+				{
+					if (hud_state->last_weapon_flash_time[state_index] == NONE)
+						hud_state->last_weapon_flash_time[state_index] = game_time_get();
+				}
+				else
+				{
+					hud_state->last_weapon_flash_time[state_index] = NONE;
+				}
+			}
+		}
+		hud_index = definition->parent_hud.index;
+	}
+
+	return;
+}
+
+/* ... and the crosshairs' flashes that hold on after what set them (fired
+or thrown with nothing to, fired with the battery spent), let go of when
+the first of their items drawn has flashed its time, as crosshairs_draw let
+go of them */
+static void weapon_hud_crosshairs_tick(
+	struct player_datum *player,
+	long hud_index,
+	struct weapon_interface_state const *weapon_state)
+{
+	struct crosshair_hud_state *crosshair = get_crosshair_state(player->local_player_index);
+	long unit_index = player->unit_index;
+	struct unit_datum *unit = unit_get(unit_index);
+	short map_type_flags = global_scenario_get()->type != _scenario_type_main_menu;
+	short depth;
+
+	if (!TEST_FLAG(weapon_hud_globals->script_flags, _hud_crosshair_show_bit))
+		return;
+	SET_FLAG(map_type_flags, 1, local_player_count() == 1);
+	SET_FLAG(map_type_flags, 2, local_player_count() > 1);
+
+	for (depth = 0;
+		hud_index != NONE && depth < MAXIMUM_WEAPON_HUD_DEFINITION_DEPTH;
+		depth++)
+	{
+		struct weapon_hud_interface_definition *definition =
+			weapon_hud_interface_definition_get(hud_index);
+		short crosshair_index;
+
+		for (crosshair_index = 0;
+			crosshair_index < definition->crosshairs.count;
+			crosshair_index++)
+		{
+			struct weapon_hud_crosshairs_element *element = TAG_BLOCK_GET_ELEMENT(
+				&definition->crosshairs,
+				crosshair_index,
+				struct weapon_hud_crosshairs_element);
+			short state_index = element->crosshair_type;
+			struct crosshair_state *state;
+			boolean firing_active;
+			short item_index;
+
+			if (!VALID_INDEX(state_index, NUMBER_OF_WEAPON_HUD_CROSSHAIR_STATES) ||
+				!TEST_FLAG(crosshair->render_flags, state_index) ||
+				!TEST_FLAG(map_type_flags, element->use_on_map_type))
+			{
+				continue;
+			}
+			state = &crosshair->states[state_index];
+			if (state->value.reference_data == NONE)
+				continue;
+
+			switch (state_index)
+			{
+			case _crosshair_state_flash_fired_battery_depleted:
+				firing_active = weapon_state->age == 0.0f &&
+					TEST_FLAG(unit->unit.control_flags, _unit_control_weapon_primary_trigger_bit);
+				break;
+
+			case _crosshair_state_fired_with_no_ammo:
+				firing_active = !weapon_state->magazines[0].rounds_loaded &&
+					!weapon_state->magazines[0].rounds_remaining &&
+					TEST_FLAG(unit->unit.control_flags, _unit_control_weapon_primary_trigger_bit);
+				break;
+
+			case _crosshair_state_threw_with_no_grenade:
+			{
+				boolean no_grenades = TRUE;
+				short grenade_type;
+
+				for (grenade_type = 0; grenade_type < NUMBER_OF_UNIT_GRENADE_TYPES; grenade_type++)
+					no_grenades = no_grenades && !unit->unit.grenade_counts[grenade_type];
+				if (mcc_grenades_active() && mcc_grenades_total(unit_index))
+					no_grenades = FALSE;
+				firing_active = no_grenades &&
+					!unit->unit.grenade_throw_state &&
+					TEST_FLAG(unit->unit.control_flags, _unit_control_throw_grenade_bit);
+				break;
+			}
+
+			case _crosshair_state_fired_secondary_with_no_ammo:
+				firing_active = FALSE;
+				break;
+
+			default:
+				continue;
+			}
+			if (firing_active)
+				continue;
+
+			for (item_index = 0;
+				item_index < element->crosshairs.items.count;
+				item_index++)
+			{
+				struct weapon_hud_crosshair_item *item = TAG_BLOCK_GET_ELEMENT(
+					&element->crosshairs.items,
+					item_index,
+					struct weapon_hud_crosshair_item);
+
+				if (!TEST_FLAG(item->flags, _hud_crosshair_runtime_invalid_bit) &&
+					(!TEST_FLAG(item->flags, _hud_crosshair_not_on_default_zoom_bit) ||
+						crosshair->states[_crosshair_state_zoom].value.reference_data > 0) &&
+					(!TEST_FLAG(item->flags, _hud_crosshair_only_on_default_zoom_bit) ||
+						crosshair->states[_crosshair_state_zoom].value.reference_data == 0) &&
+					game_time_get() - state->value.reference_data >= get_flash_duration(&item->colors))
+				{
+					state->value.reference_data = NONE;
+					break;
+				}
+			}
+		}
+		hud_index = definition->parent_hud.index;
+	}
+
+	return;
+}
+
+/* port: the weapon HUD's frame step, once a tick (weapon_hud_flash_times_tick) */
+void hud_weapon_interface_tick(
+	struct player_datum *player)
+{
+	long weapon_index = unit_inventory_get_weapon(
+		player->unit_index,
+		unit_get(player->unit_index)->unit.current_weapon_index);
+	boolean seat_disallows_hud = FALSE;
+	short draw_flags = 0;
+
+	if (weapon_index == NONE)
+	{
+		struct unit_datum *unit = unit_get(player->unit_index);
+
+		if (unit->object.parent_object_index != NONE && unit->unit.parent_seat_index != NONE)
+		{
+			struct unit_datum *parent = unit_get(unit->object.parent_object_index);
+			struct unit_seat *seat = TAG_BLOCK_GET_ELEMENT(
+				&unit_definition_get(parent->definition_index)->unit.seats,
+				unit->unit.parent_seat_index,
+				struct unit_seat);
+
+			if (TEST_FLAG(seat->flags, _unit_seat_gunner_bit))
+			{
+				weapon_index = unit_inventory_get_weapon(
+					unit->object.parent_object_index,
+					unit_get(unit->object.parent_object_index)->unit.current_weapon_index);
+			}
+			else
+			{
+				seat_disallows_hud = TRUE;
+			}
+		}
+	}
+
+	if (weapon_index != NONE)
+	{
+		struct weapon_definition *definition = weapon_definition_get(
+			weapon_get(weapon_index)->definition_index);
+		long hud_index = definition->weapon.interface_definition.hud_interface.index;
+		struct weapon_interface_state weapon_state;
+
+		weapon_build_weapon_interface_state(weapon_index, &weapon_state);
+		if (hud_index != NONE)
+		{
+			weapon_hud_crosshairs_tick(player, hud_index, &weapon_state);
+			weapon_hud_flash_times_tick(hud_index, player->local_player_index, &weapon_state);
+		}
+	}
+	else if (!seat_disallows_hud && !unit_get_weapon_count(player->unit_index))
+	{
+		struct weapon_interface_state weapon_state = { 0 };
+
+		if (hud_globals->defaults.default_weapon_hud.index != NONE)
+			weapon_hud_crosshairs_tick(player, hud_globals->defaults.default_weapon_hud.index, &weapon_state);
+	}
+
+	/* (none when the grenades' HUD is not shown, or MCC's is: as it was) */
+	if (!mcc_grenades_active() && grenade_hud_shown(player->unit_index, &draw_flags))
+	{
+		struct weapon_hud_state *hud_state = get_hud_state(player->local_player_index);
+
+		if (TEST_FLAG(draw_flags, _hud_draw_flashing_bit))
+		{
+			if (hud_state->last_grenade_flash_time == NONE)
+				hud_state->last_grenade_flash_time = game_time_get();
+		}
+		else
+		{
+			hud_state->last_grenade_flash_time = NONE;
+		}
+	}
+
+	return;
+}
+
 void hud_update_weapon(
 	void)
 {
@@ -2228,10 +2455,8 @@ void hud_render_weapon_interface(
 	render_grenade_hud(
 		player->local_player_index,
 		player->unit_index);
-	if (player->local_player_index != NONE)
-	{
-		get_hud_state(player->local_player_index)->last_weapon_index = weapon_index;
-	}
+	/* port: (the last weapon the ticks', hud_update_weapon: the frames set
+	it too, game state) */
 
 	return;
 }

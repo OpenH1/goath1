@@ -372,6 +372,10 @@ static void game_tick_macro_step(
 	the scripted shake and the damage indicators counted down once a tick,
 	as the tick begins (player_effects.c: the frames counted them) */
 	player_effect_tick_begin();
+	/* port: the HUD's flash times, its crosshairs' flashes and its warning
+	sounds, a frame's step once a tick, as the tick begins (hud.c: the
+	frames drawing the HUD stepped them) */
+	hud_tick_begin();
 
 	/* port: a client of another's game, the host's rules (its own cheats and
 	game speed, set before it joined too, put back) */
@@ -1170,6 +1174,9 @@ void game_frame(
 
 	collision_log_begin_period(1);
 	particles_update(frame_dt, xbox_frame_dt);
+	/* port: the effects the particles made, the frames' (effects.c's
+	effect_particle_data: OpenH1 #1233) */
+	effects_port_particles_update(frame_dt);
 	contrails_update(frame_dt);
 	particle_systems_update(frame_dt);
 	widgets_update(frame_dt);
