@@ -77,6 +77,9 @@ static void data_delete_all(struct data_array *array)
 static struct data_array *effect_data, *effect_location_data;
 static struct effect_first_person *effect_first_persons;
 static struct data_array *effect_first_person_location_data;
+/* (the particles' own effects, outside the game state: effects.c) */
+static struct data_array *effect_particle_data, *effect_particle_location_data;
+static boolean effects_particles_active;
 
 /* one effect definition, with two locations, each at one marker */
 static struct effect_location_definition locations[2] = { { "primary" }, { "secondary" } };
@@ -260,6 +263,9 @@ int main(int argc, char **argv)
 	effect_first_persons = calloc(HALO_PORT_MAXIMUM_EFFECTS, sizeof(*effect_first_persons));
 	effect_first_person_location_data = game_state_data_new("effect first person location",
 		MAXIMUM_EFFECT_FIRST_PERSON_LOCATIONS, sizeof(struct effect_location_datum));
+	effect_particle_data = game_state_data_new("particle effect", HALO_PORT_MAXIMUM_EFFECTS, sizeof(struct effect_datum));
+	effect_particle_location_data = game_state_data_new("particle effect location", HALO_PORT_MAXIMUM_EFFECT_LOCATIONS,
+		sizeof(struct effect_location_datum));
 
 	CASE("drawn-or-not")
 	{
