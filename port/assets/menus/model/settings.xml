@@ -804,7 +804,7 @@
 			<choice shown="OFF" value="off"/>
 		</row>
 		<row key="performance_tools" kind="link" label="PERFORMANCE TOOLS ›" crumb="VIDEO › FRAME RATE &amp; SYNC" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/performance_tools/performance_tools_screen">
-			<help>The performance overlay, and timings and logs of where each frame's time goes, for finding what slows the game down.</help>
+			<help>The performance overlay, the benchmark, and timings and logs of where each frame's time goes, for finding what slows the game down.</help>
 		</row>
 		<section key="section_6" title="UPSCALING" when="desktop android"/>
 		<row key="temporal_aa" kind="choice" setting="display.temporal_aa" label="UPSCALER" crumb="VIDEO › FRAME RATE &amp; SYNC" search_choices="amd fsr" when="desktop+temporal_upscale+!temporal_dlss+!dlss_addon_offer+!vr android+temporal_upscale+!temporal_dlss+!dlss_addon_offer+!vr">
@@ -854,16 +854,6 @@
 			<choice shown="OFF" value="classic"/>
 			<choice shown="ON" value="ray_traced"/>
 		</row>
-		<section key="section_15" title="BENCHMARK"/>
-		<row key="benchmark_pacing" kind="choice" setting="display.benchmark_pacing" label="BENCHMARK PACING" crumb="VIDEO › FRAME RATE &amp; SYNC" search_choices="uncapped your settings" when="!in_game">
-			<help>What the benchmark measures. Uncapped turns VSync, Variable Refresh and the frame cap off for the run: what your computer can draw. Your Settings keeps them: what you see as you play.</help>
-			<choice shown="UNCAPPED" value="uncapped"/>
-			<choice shown="YOUR SETTINGS" value="settings"/>
-		</row>
-		<row key="benchmark" kind="link" label="RUN BENCHMARK" crumb="VIDEO › FRAME RATE &amp; SYNC" when="!in_game" run="port settings benchmark">
-			<help>Plays a fixed minute of Blood Gulch with 40 bots, then shows the average frame rate, the 1% low, the frame times, the GPU and CPU time and your settings, and saves them in the benchmarks folder.</help>
-			<note>From the main menu only.</note>
-		</row>
 		<button key="button_defaults" kind="defaults" run="port settings defaults" help="Puts this page's settings back to their defaults."/>
 		<button key="button_ok" kind="ok" run="port settings keep" help="Saves your changes, on this page and every tab, and applies them."/>
 		<button key="button_cancel" kind="cancel" run="port settings page cancel" help="Goes back without these changes."/>
@@ -884,6 +874,35 @@
 			<help>Saves a log of each frame's times beside every demo recorded, lined up with the demo's ticks, so a hitch seen in play can be found in the demo. The demo itself is unchanged.</help>
 			<choice shown="ON" value="true"/>
 			<choice shown="OFF" value="false"/>
+		</row>
+		<section key="section_3" title="BENCHMARK"/>
+		<row key="benchmark_pacing" kind="choice" setting="display.benchmark_pacing" label="BENCHMARK PACING" crumb="VIDEO › FRAME RATE &amp; SYNC › PERFORMANCE TOOLS" search_choices="uncapped your settings" when="!in_game">
+			<help>What the benchmark measures. Uncapped turns VSync, Variable Refresh and the frame cap off for the run: what your computer can draw. Your Settings keeps them: what you see as you play.</help>
+			<choice shown="UNCAPPED" value="uncapped"/>
+			<choice shown="YOUR SETTINGS" value="settings"/>
+		</row>
+		<row key="benchmark_map" kind="choice" setting="display.benchmark_map" label="BENCHMARK MAP" crumb="VIDEO › FRAME RATE &amp; SYNC › PERFORMANCE TOOLS" search_choices="blood gulch" when="!in_game">
+			<help>The map the benchmark plays, of the multiplayer maps you have. Compare results only from the same map, bots and player: the results name all three.</help>
+			<choice shown="BLOOD GULCH" value="bloodgulch"/>
+		</row>
+		<row key="benchmark_bots" kind="choice" setting="display.benchmark_bots" label="BENCHMARK BOTS" crumb="VIDEO › FRAME RATE &amp; SYNC › PERFORMANCE TOOLS" when="!in_game">
+			<help>How many bots fight in the benchmark's match. A map takes only as many as suit it: 40 on the big maps, 16 on Hang 'Em High, 8 on Longest. The results say how many played.</help>
+			<choice shown="4" value="4"/>
+			<choice shown="8" value="8"/>
+			<choice shown="12" value="12"/>
+			<choice shown="16" value="16"/>
+			<choice shown="24" value="24"/>
+			<choice shown="32" value="32"/>
+			<choice shown="40" value="40"/>
+		</row>
+		<row key="benchmark_player" kind="choice" setting="display.benchmark_player" label="BENCHMARK PLAYER" crumb="VIDEO › FRAME RATE &amp; SYNC › PERFORMANCE TOOLS" search_choices="bot scripted" when="!in_game">
+			<help>Who plays the view measured. Bot plays as the other bots do, the same match every run. Scripted is the walker of earlier results, to compare with them; it differs a little from run to run.</help>
+			<choice shown="BOT" value="bot"/>
+			<choice shown="SCRIPTED" value="scripted"/>
+		</row>
+		<row key="benchmark" kind="link" label="RUN BENCHMARK" crumb="VIDEO › FRAME RATE &amp; SYNC › PERFORMANCE TOOLS" when="!in_game" run="port settings benchmark">
+			<help>Plays a fixed minute of the Benchmark Map with its bots, then shows the average frame rate, the 1% low, the frame times, the GPU and CPU time and your settings, and saves them in the benchmarks folder.</help>
+			<note>From the main menu only.</note>
 		</row>
 		<button key="button_defaults" kind="defaults" run="port settings defaults" help="Puts this page's settings back to their defaults."/>
 		<button key="button_ok" kind="ok" run="port settings keep" help="Saves your changes, on this page and every tab, and applies them."/>

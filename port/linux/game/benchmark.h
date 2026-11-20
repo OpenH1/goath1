@@ -1,8 +1,9 @@
 /*
 BENCHMARK.H
 
-The built-in benchmark (benchmark.c): a fixed minute of Blood Gulch with
-bots, measured and written to benchmarks/, its results shown.
+The built-in benchmark (benchmark.c): a fixed minute of a multiplayer map
+(Blood Gulch by default) with bots, measured and written to benchmarks/,
+its results shown.
 */
 
 #ifndef __BENCHMARK_H
@@ -28,8 +29,15 @@ no player, no bots or no kills */
 char const *benchmark_live_problem(struct benchmark_live const *live, int measure);
 
 /* Settings' RUN BENCHMARK (menu_functions.c): begun at the next frame of
-the main menu; pacing "uncapped" or "settings" (NULL: display.benchmark_pacing) */
-void benchmark_request(char const *pacing);
+the main menu; pacing "uncapped" or "settings", the map's name, the bots
+and the player, "bot" or "scripted", as the page shows them (each NULL:
+display.benchmark_pacing's, _map's, _bots' and _player's) */
+void benchmark_request(char const *pacing, char const *map, char const *bots, char const *player);
+/* Settings' BENCHMARK MAP's choices (menu_tags.c's spinner_expand): the
+stock multiplayer maps in the maps folder but Blood Gulch (the row's own),
+added at count, MOST at most, each its name (values) or the name the game
+shows, in capitals; the new count */
+long benchmark_map_choices(int values, char const **pieces, long count, long most);
 /* each frame (main.c): begun when asked (or by halo --benchmark), measured,
 and its results written and shown */
 void benchmark_frame(int main_menu_loaded);

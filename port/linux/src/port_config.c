@@ -551,11 +551,28 @@ static const struct config_setting config_settings[] =
 	{ "display.benchmark_pacing", _config_string, "\"uncapped\"", "HALO_BENCHMARK_PACING", _environment_value,
 		_platform_all,
 		"The built-in benchmark's frame pacing (Settings > Video > Frame Rate &\n"
-		"Sync's RUN BENCHMARK, halo --benchmark: port/linux/game/benchmark.c):\n"
+		"Sync > Performance Tools' RUN BENCHMARK, halo --benchmark:\n"
+		"port/linux/game/benchmark.c):\n"
 		"\"uncapped\", vsync, variable refresh and the frame cap off for the run,\n"
 		"what the computer can draw; \"settings\", as they are set, what you see\n"
 		"as you play. The results say which, and how much of the time the\n"
 		"frames waited for the display." },
+	{ "display.benchmark_map", _config_string, "\"bloodgulch\"", "HALO_BENCHMARK_MAP", _environment_value,
+		_platform_all,
+		"The map the built-in benchmark plays: a stock multiplayer map's name\n"
+		"(bloodgulch, hangemhigh, longest...); another plays bloodgulch. The\n"
+		"results' file is named after it." },
+	{ "display.benchmark_bots", _config_integer, "40", "HALO_BENCHMARK_BOTS", _environment_value, _platform_all,
+		"The bots in the built-in benchmark's match, at most as many as its\n"
+		"map takes (40 on the big maps, 16 on Hang 'Em High, 8 on Longest); the\n"
+		"results say how many played." },
+	{ "display.benchmark_player", _config_string, "\"bot\"", "HALO_BENCHMARK_PLAYER", _environment_value,
+		_platform_all,
+		"The player the built-in benchmark measures: \"bot\", a bot of its own\n"
+		"that plays as the others do (debug.bot_player at bots.skill), the\n"
+		"same each run at any frame rate; or \"scripted\", the scripted walker\n"
+		"of earlier results (it turns by each frame's time, so it is not the\n"
+		"same each run), to compare with them." },
 	{ "display.movies", _config_boolean, "false", "HALO_MOVIES", _environment_value, _platform_all,
 		"Play the Xbox's Bink movies from the game data's bink folder: the intro\n"
 		"as the game starts, the attract movies on an idle main menu and the\n"
@@ -5004,6 +5021,7 @@ static const struct
 {
 	{ "display.mode", { "", "fullscreen", "borderless", "windowed", NULL }, "display.fullscreen's" },
 	{ "display.benchmark_pacing", { "uncapped", "settings", NULL }, NULL },
+	{ "display.benchmark_player", { "bot", "scripted", NULL }, NULL },
 	{ "display.resolution_scaling", { "native", "original", NULL }, NULL },
 	{ "display.anti_aliasing", { "off", "fxaa", "smaa", "ssaa2x", "msaa2x", "msaa4x", "msaa8x", NULL }, NULL },
 	{ "display.ambient_occlusion", { "off", "world", "ray_traced", NULL }, "off" },

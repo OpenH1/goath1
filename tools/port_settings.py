@@ -72,6 +72,9 @@ VERTICAL_SENSITIVITIES = [(f"{value:g}X", f"{value:g}") for value in (0.25, 0.5,
 # MENU_PLATFORM, "vr": the VR build, playing in the headset, and "hdr": a
 # renderer that draws display.hdr)
 MENU_PLATFORMS = ("desktop", "android", "vr", "hdr", "touch", "pointer", "computer")
+# display.benchmark_bots's: the bots in the built-in benchmark's match (at most its map's most: benchmark.c's
+# benchmark_maps)
+BENCHMARK_BOTS = [(str(count), str(count)) for count in (4, 8, 12, 16, 24, 32, 40)]
 # display.hdr_paper_white_nits's values: the system's SDR white, or nits
 PAPER_WHITES = [("SYSTEM", "0")] + [(f"{nits} NITS", str(nits)) for nits in range(80, 501, 20)]
 # display.hdr_ui_nits's: paper white's, or nits
@@ -523,7 +526,7 @@ SETTINGS_WIDE_SPINNER = 120
 SEGMENTED_MOST = 3
 SEGMENT_PAD, SEGMENT_LEAST, SEGMENT_GAP, SEGMENT_HEIGHT = 8, 48, 4, 18
 SEGMENT_NOT = {"display.vrr", "display.resolution", "display.window_size", "display.refresh_rate",
-               "audio.output_device", "audio.input_device"}
+               "audio.output_device", "audio.input_device", "display.benchmark_map"}
 
 # ---------- the tall layout (the menu engine's: docs/menu_engine.md, "Deliberate differences")
 #
@@ -768,8 +771,9 @@ FIRST_PERSON = ("video_settings/first_person", "first_person_screen")
 # (display.vsync, display.vrr and its margin, display.max_fps and
 # display.low_latency: how the frames meet the display)
 FRAME_RATE = ("video_settings/frame_rate", "frame_rate_screen")
-# (Frame Rate & Sync's PERFORMANCE TOOLS: the performance overlay and the
-# developers' timings and logs, their own page as Frame Rate's is full)
+# (Frame Rate & Sync's PERFORMANCE TOOLS: the performance overlay, the
+# developers' timings and logs and the benchmark, their own page as Frame
+# Rate's is full)
 PERFORMANCE_TOOLS = ("video_settings/frame_rate/performance_tools", "performance_tools_screen")
 # (display.gamma, and display.hdr's settings and the display's peak on the
 # renderers that draw it)
@@ -1479,13 +1483,10 @@ PAGES = {
              "With VSync on, starts each frame just in time for the refresh it is shown at, so a press reaches the "
              "screen sooner. Off starts each frame as soon as the one before is waiting. Auto is on.", None),
             # (the performance overlay and the developers' timings: their own
-            # page, PERFORMANCE_TOOLS)
+            # page, PERFORMANCE_TOOLS, with the benchmark)
             ("PERFORMANCE TOOLS ›", None, _page_screen(*PERFORMANCE_TOOLS),
-             "The performance overlay, and timings and logs of where each frame's time goes, for finding what "
-             "slows the game down.", None),
-            # (port/linux/game/benchmark.c: from the main menu only, its match
-            # taking the place of the game: SETTINGS_ROW_WHEN; its results
-            # the new menus' screens/benchmark.xml)
+             "The performance overlay, the benchmark, and timings and logs of where each frame's time goes, for "
+             "finding what slows the game down.", None),
             # (display.temporal_aa: shown where the renderer has a technique,
             # Vulkan's AMD FSR, and NVIDIA DLSS where its module and an NVIDIA
             # GPU are, and Metal's MetalFX (a row of its own each in the same
@@ -1535,14 +1536,6 @@ PAGES = {
              "the edges, in the same place and darkness as the game's, which frees the processor's shadow work. Off "
              "draws them as the Xbox did.",
              "desktop android"),
-            (SECTION, "BENCHMARK"),
-            ("BENCHMARK PACING", "display.benchmark_pacing", [("UNCAPPED", "uncapped"), ("YOUR SETTINGS", "settings")],
-             "What the benchmark measures. Uncapped turns VSync, Variable Refresh and the frame cap off for the run: "
-             "what your computer can draw. Your Settings keeps them: what you see as you play.", None),
-            ("RUN BENCHMARK", None, None,
-             "Plays a fixed minute of Blood Gulch with 40 bots, then shows the average frame rate, the 1% low, the "
-             "frame times, the GPU and CPU time and your settings, and saves them in the benchmarks folder.|From "
-             "the main menu only.", None, "benchmark", "port settings benchmark"),
         ],
     },
     PERFORMANCE_TOOLS[0]: {
@@ -1567,6 +1560,31 @@ PAGES = {
             ("DEMO FRAME TIMES", "debug.demo_perf_log", ON_OFF,
              "Saves a log of each frame's times beside every demo recorded, lined up with the demo's ticks, so a "
              "hitch seen in play can be found in the demo. The demo itself is unchanged.", None),
+            # (port/linux/game/benchmark.c: from the main menu only, its match
+            # taking the place of the game: SETTINGS_ROW_WHEN; its results
+            # the new menus' screens/benchmark.xml. Its own section here, as
+            # Frame Rate & Sync has no room for its map, bots and player)
+            (SECTION, "BENCHMARK"),
+            ("BENCHMARK PACING", "display.benchmark_pacing", [("UNCAPPED", "uncapped"), ("YOUR SETTINGS", "settings")],
+             "What the benchmark measures. Uncapped turns VSync, Variable Refresh and the frame cap off for the run: "
+             "what your computer can draw. Your Settings keeps them: what you see as you play.", None),
+            # (display.benchmark_map: port/linux/game/menu_tags.c adds the
+            # stock multiplayer maps in the maps folder after Blood Gulch,
+            # benchmark.c's benchmark_map_choices; the bots at most the map's
+            # most, benchmark.c's benchmark_maps)
+            ("BENCHMARK MAP", "display.benchmark_map", [("BLOOD GULCH", "bloodgulch")],
+             "The map the benchmark plays, of the multiplayer maps you have. Compare results only from the same map, "
+             "bots and player: the results name all three.", None),
+            ("BENCHMARK BOTS", "display.benchmark_bots", BENCHMARK_BOTS,
+             "How many bots fight in the benchmark's match. A map takes only as many as suit it: 40 on the big "
+             "maps, 16 on Hang 'Em High, 8 on Longest. The results say how many played.", None),
+            ("BENCHMARK PLAYER", "display.benchmark_player", [("BOT", "bot"), ("SCRIPTED", "scripted")],
+             "Who plays the view measured. Bot plays as the other bots do, the same match every run. Scripted is "
+             "the walker of earlier results, to compare with them; it differs a little from run to run.", None),
+            ("RUN BENCHMARK", None, None,
+             "Plays a fixed minute of the Benchmark Map with its bots, then shows the average frame rate, the 1% low, "
+             "the frame times, the GPU and CPU time and your settings, and saves them in the benchmarks "
+             "folder.|From the main menu only.", None, "benchmark", "port settings benchmark"),
         ],
     },
     FIRST_PERSON[0]: {
@@ -2757,6 +2775,7 @@ SETTINGS_ROW_WHEN = {
     # those whose screens are ui.map's or make a profile)
     "online": "!in_game", "allow_upnp": "!in_game", "join_from_clipboard": "!in_game", "auto": "!in_game",
     "mods": "!in_game", "game_data": "!in_game", "benchmark": "!in_game", "benchmark_pacing": "!in_game",
+    "benchmark_map": "!in_game", "benchmark_bots": "!in_game", "benchmark_player": "!in_game",
     "name": "profile+!in_game", "color": "profile+!in_game", "profiles": "profile+!in_game",
     "create_profile": "!profile+!in_game",
     **{key: "gyro" for key in ("gyro_aim", "gyro_sensitivity", "gyro_vertical_sensitivity", "gyro_space",
