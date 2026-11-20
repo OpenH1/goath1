@@ -68,12 +68,13 @@ def test_every_game_draws_it():
 
 def test_the_hud_drawn_by_it():
     """The HUD's drawing asks hud_shown (the scripts' show_hud and the player's Hide HUD), not show_hud alone; its
-    sounds stay the scripts'."""
+    sounds stay the scripts', played once a tick (hud_tick_begin, #1233), not by the drawing."""
     hud = read("source/interface/hud.c")
     screen = function(hud, "hud_draw_screen")
     assert "\t\tif (hud_shown())\n" in screen
     assert "if (hud_scripted_globals->show_hud)" not in screen
-    assert "hud_play_unit_sounds(player, hud_scripted_globals->show_hud);" in screen
+    assert "hud_play_unit_sounds" not in screen
+    assert "hud_play_unit_sounds(player, hud_scripted_globals->show_hud);" in function(hud, "hud_tick_begin")
 
 
 # the keys the port takes for itself, whatever the bindings (sdl_platform.c, xinput_sdl.c): F1 the menus' Back, F9 the
