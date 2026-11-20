@@ -316,6 +316,59 @@ boolean scripted_show_hud_help_text(
 	return hud_scripted_globals->show_hud_help_text;
 }
 
+/* port: the HUD's state that the frames drawing it stepped (the weapon's
+and the unit's flash times, the crosshairs' flashes, the unit HUD's state
+made anew, the warning sounds and the vitality they compare), once a tick
+as it begins: the time and the state the frames after the last tick saw,
+and for the players and in the way hud_draw_screen drew them (the first
+local player alone in one window: a cinematic, a game of one screen; the
+HUD shown, its unit's interfaces in a camera of the player's). The frames
+stepped it as often as they were drawn: between two frames several ticks (a
+cutscene's skip, sixteen times its speed), so the game played at another
+frame rate was another game (OpenH1 #1233). They only draw it now, a tick
+behind at most, as the player effects (player_effect_tick_begin). */
+static boolean hud_shown(
+	void);
+
+void hud_tick_begin(
+	void)
+{
+	short local_player_index;
+	boolean single_window = game_engine_force_single_screen() || cinematic_in_progress();
+
+	for (local_player_index = local_player_get_next(NONE);
+		local_player_index != NONE;
+		local_player_index = local_player_get_next(local_player_index))
+	{
+		long player_index = local_player_get_player_index(local_player_index);
+		struct player_datum *player;
+
+		if (player_index == NONE)
+			continue;
+		if (single_window && local_player_index != local_player_get_next(NONE))
+			break;
+		player = player_get(player_index);
+		if (!hud_shown())
+		{
+			hud_play_unit_sounds(player, FALSE);
+			continue;
+		}
+		/* (hud_draw_screen: a camera of the player's, not the scripts') */
+		if (player->unit_index != NONE && !*director_camera_scripted)
+		{
+			hud_weapon_interface_tick(player);
+			hud_play_unit_sounds(player, hud_scripted_globals->show_hud);
+			hud_unit_interface_tick(player);
+		}
+		else
+		{
+			hud_play_unit_sounds(player, hud_scripted_globals->show_hud);
+		}
+	}
+
+	return;
+}
+
 void hud_update(
 	void)
 {
@@ -1737,7 +1790,7 @@ void hud_draw_screen(
 				halo_vr_hud_group(HALO_VR_HUD_GROUP_CENTRE);
 #endif
 				hud_show_action_response(player_index);
-				hud_play_unit_sounds(player, hud_scripted_globals->show_hud);
+				/* port: (the warning sounds, once a tick: hud_tick_begin) */
 #ifdef HALO_VR
 				halo_vr_hud_group(HALO_VR_HUD_BY_ANCHOR);
 #endif
@@ -1756,13 +1809,10 @@ void hud_draw_screen(
 			else
 			{
 				hud_show_action_response(player_index);
-				hud_play_unit_sounds(player, hud_scripted_globals->show_hud);
 			}
 		}
-		else
-		{
-			hud_play_unit_sounds(player, FALSE);
-		}
+		/* port: (the warning sounds, once a tick, hud_tick_begin: the frames
+		played them, their state game state) */
 
 #ifdef HALO_VR
 		halo_vr_hud_group(HALO_VR_HUD_GROUP_CENTRE);

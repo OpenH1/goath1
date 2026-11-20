@@ -38,6 +38,9 @@ boolean scripted_show_hud(
 	boolean show);
 boolean scripted_show_hud_help_text(
 	boolean show);
+/* port: the HUD's frame-drawn state, once a tick as it begins (hud.c) */
+void hud_tick_begin(
+	void);
 void hud_update(
 	void);
 void hud_initialize_for_new_map(

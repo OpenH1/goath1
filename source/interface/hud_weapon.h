@@ -34,6 +34,10 @@ void hud_fix_weapon_data(
 
 void hud_update_weapon(
 	void);
+/* port: the weapon HUD's flash times and the crosshairs' flashes let go
+of, a frame's step of them once a tick (hud.c's hud_tick_begin) */
+void hud_weapon_interface_tick(
+	struct player_datum *player);
 void hud_render_weapon_interface(
 	struct player_datum *player);
 #ifdef HALO_VR
