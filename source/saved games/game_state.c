@@ -328,11 +328,15 @@ game_state_check_data_arrays' report */
 static char const *game_state_last_event = "startup";
 static long game_state_last_event_time = NONE;
 
+/* port: the campaign bot's log of the checkpoints (port/linux/game/bots.c) */
+void bots_campaign_note_event(char const *event);
+
 static void game_state_note_event(
 	char const *event)
 {
 	game_state_last_event = event;
 	game_state_last_event_time = game_time_initialized() ? game_time_get() : NONE;
+	bots_campaign_note_event(event);
 }
 
 static void game_state_data_arrays_new_map(void);
