@@ -742,6 +742,10 @@ the registers written (a bit each), the others' values (attributes); the
 quads' triangles' indices when there are some */
 void xgpu_backend_draw_immediate(int primitive, const float *vertices, unsigned long count, unsigned long written,
 	const float (*attributes)[4], const WORD *indices, unsigned long index_count);
+/* the same draw of vertices given packed as the record has them: the
+registers written alone, in register order, a vec4 each */
+void xgpu_backend_draw_immediate_packed(int primitive, const float *vertices, unsigned long count,
+	unsigned long written, const float (*attributes)[4], const WORD *indices, unsigned long index_count);
 
 /* ---------- visibility (occlusion) tests
 
