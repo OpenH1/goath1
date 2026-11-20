@@ -2149,7 +2149,9 @@ static void texture_clear_new(id<MTLTexture> texture)
 	MTLPixelFormat format = texture.pixelFormat;
 	BOOL depth = format == MTLPixelFormatDepth32Float_Stencil8 || format == MTLPixelFormatDepth32Float ||
 		format == MTLPixelFormatDepth16Unorm || format == MTLPixelFormatX32_Stencil8;
-	BOOL stencil = format == MTLPixelFormatDepth32Float_Stencil8;
+	/* (a stencil alone, XGPU_METAL_FORMAT_S8's: a stencil attachment, no depth) */
+	BOOL stencil_only = format == MTLPixelFormatStencil8;
+	BOOL stencil = format == MTLPixelFormatDepth32Float_Stencil8 || stencil_only;
 	NSUInteger slices = texture.textureType == MTLTextureTypeCube ? 6 :
 		texture.textureType == MTLTextureType2DArray ? texture.arrayLength : 1, slice;
 
@@ -2164,14 +2166,17 @@ static void texture_clear_new(id<MTLTexture> texture)
 	{
 		MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
 
-		if (depth)
+		if (depth || stencil_only)
 		{
-			pass.depthAttachment.texture = texture;
-			pass.depthAttachment.slice = slice;
-			pass.depthAttachment.loadAction = MTLLoadActionClear;
-			pass.depthAttachment.storeAction = MTLStoreActionStore;
-			/* (the far plane: depth reversed, xgpu_backend.h) */
-			pass.depthAttachment.clearDepth = 0.0;
+			if (depth)
+			{
+				pass.depthAttachment.texture = texture;
+				pass.depthAttachment.slice = slice;
+				pass.depthAttachment.loadAction = MTLLoadActionClear;
+				pass.depthAttachment.storeAction = MTLStoreActionStore;
+				/* (the far plane: depth reversed, xgpu_backend.h) */
+				pass.depthAttachment.clearDepth = 0.0;
+			}
 			if (stencil)
 			{
 				pass.stencilAttachment.texture = texture;
