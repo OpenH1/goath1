@@ -71,6 +71,9 @@ void cinematic_stop(
 void cinematic_set_title_delayed(
 	short title_index,
 	real delay);
+/* port: the letterbox's slide and the chapter titles' time, once a tick */
+void cinematic_update(
+	void);
 void cinematic_render(
 	void);
 void draw_quad(

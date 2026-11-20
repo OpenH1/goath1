@@ -458,6 +458,9 @@ static void game_tick_after_substeps(
 	profile_scope(game_tick_players_after_section, players_update_after_game();)
 	profile_scope(game_tick_hud_section, hud_update();)
 	profile_scope(game_tick_player_effect_section, player_effect_update();)
+	/* port: the letterbox's slide and the chapter titles' time
+	(cinematics.c: they moved with the frames) */
+	cinematic_update();
 	/* port: the wind's step, once a tick (scenario.c: it stepped by the
 	frames' time) */
 	scenario_tick_update();

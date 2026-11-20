@@ -1,13 +1,15 @@
 /*
 CINEMATIC_TITLES.C (test)
 
-The real cinematic_render (cinematics.c) over a fake scenario with one title, as
-some Custom Edition maps show their name for the whole game: drawn in the game,
-not over a menu (the screen's overlays are drawn after the players' menus), and
-its time going on under one. On a screen wider than 640 columns, the edge the
-title is justified to (its middle, if centered) keeps its place relative to the
-screen's sides, as on the Xbox's 4:3 screen. test_cinematic_titles.py takes the
-structures, the slots' count (config.inc) and the code (under_test.inc).
+The real cinematic_update and cinematic_render (cinematics.c) over a fake
+scenario with one title, as some Custom Edition maps show their name for the
+whole game: drawn in the game, not over a menu (the screen's overlays are drawn
+after the players' menus), and its time going on under one. On a screen wider
+than 640 columns, the edge the title is justified to (its middle, if centered)
+keeps its place relative to the screen's sides, as on the Xbox's 4:3 screen.
+The frames between the ticks leave the title's time and the letterbox as the
+ticks left them (OpenH1 #1233). test_cinematic_titles.py takes the structures,
+the slots' count (config.inc) and the code (under_test.inc).
 */
 
 #include <math.h>
@@ -34,12 +36,14 @@ static struct cinematic_global_data *cinematic_globals = &globals_data;
 static boolean menu_up;
 static boolean ui_widgets_active(void) { return menu_up; }
 
-/* the game's clock: one tick a frame */
+/* the game's clock: one tick a frame (frame), or frames between the ticks at a fraction */
 static long ticks;
+static real fraction = 1.0f;
 #define game_time_get() (ticks)
-#define game_time_get_paused() FALSE
-#define game_time_get_elapsed() 1
 #define game_in_editor() FALSE
+static real render_interpolation_fraction(void) { return fraction; }
+static real cinematic_letterbox_previous_amount;
+static long cinematic_letterbox_previous_time = NONE;
 
 /* the letterbox's camera and bars */
 static struct { struct { rectangle2d viewport_bounds; } camera; } render;
@@ -122,11 +126,12 @@ static void queue_title(real up_time, real fade_out_time)
 	titles[0].justification = _cinematic_title_justified_right;
 }
 
-/* one frame: the draws it made */
+/* one tick and its frame: the draws it made */
 static long frame(void)
 {
 	draws = 0;
 	ticks++;
+	cinematic_update();
 	cinematic_render();
 	return draws;
 }
@@ -222,6 +227,39 @@ int main(int argc, char **argv)
 			CHECK(centre.x0 + centre.x1 - width == 597 - 640 && centre.x1 - centre.x0 == 597,
 				"a centred title drawn at %d-%d on a screen %d wide", centre.x0, centre.x1, width);
 		}
+		return 0;
+	}
+	/* a title and the letterbox coming in, drawn at 4 frames a tick: the frames between the ticks draw them but
+	leave the game's state as the ticks left it, so another frame rate plays the same game */
+	CASE("frames-leave-the-state")
+	{
+		struct cinematic_global_data after_tick;
+
+		queue_title(5.0f, 5.0f);
+		globals_data.show_letterbox = TRUE;
+		globals_data.letterbox_last_game_time = ticks;
+		for (index = 0; index < 3; index++)
+		{
+			short between;
+
+			fraction = 1.0f;
+			frame();
+			after_tick = globals_data;
+			for (between = 1; between < 4; between++)
+			{
+				fraction = (real)between / 4.0f;
+				cinematic_render();
+				CHECK(!memcmp(&after_tick, &globals_data, sizeof(globals_data)),
+					"a frame between ticks %ld and %ld changed the cinematic globals", ticks, ticks + 1);
+			}
+			ticks++;
+			cinematic_update();
+			fraction = 1.0f;
+			cinematic_render();
+		}
+		CHECK(slot->time == 6, "the title's time is %d after 6 ticks", slot->time);
+		CHECK(fabs(globals_data.letterbox_amount - 6.0f / TICKS_PER_SECOND) < 0.0001f,
+			"the letterbox is %f in after 6 ticks", globals_data.letterbox_amount);
 		return 0;
 	}
 	fprintf(stderr, "unknown case: %s\n", case_name);
