@@ -408,19 +408,26 @@ static void particle_effect_new(
 
 		normalize3d(&marker_forwards[_particle_effect_velocity_marker]);
 
-		effect_new_unattached_from_markers(
-			effect_index,
-			NONE,
-			&velocity,
-			NUMBER_OF_PARTICLE_EFFECT_MARKERS,
-			particle_effect_marker_names,
-			marker_points,
-			marker_forwards,
-			scale,
-			0.0f,
-			NULL,
-			NULL,
-			FALSE);
+		{
+			/* port: in the frames' array, not the game state's
+			(effects_port_particles_begin: OpenH1 #1233) */
+			boolean particles_effects = effects_port_particles_begin();
+
+			effect_new_unattached_from_markers(
+				effect_index,
+				NONE,
+				&velocity,
+				NUMBER_OF_PARTICLE_EFFECT_MARKERS,
+				particle_effect_marker_names,
+				marker_points,
+				marker_forwards,
+				scale,
+				0.0f,
+				NULL,
+				NULL,
+				FALSE);
+			effects_port_particles_end(particles_effects);
+		}
 	}
 	else if (group_tag == SOUND_DEFINITION_TAG)
 	{
@@ -689,6 +696,9 @@ static boolean particle_update_physics(
 					if (definition->collision_material_effects.index != NONE &&
 						material_effect_visible(&particle->position))
 					{
+						/* port: (its effect the frames', as particle_effect_new's) */
+						boolean particles_effects = effects_port_particles_begin();
+
 						material_effect_new(
 							definition->collision_material_effects.index,
 							_material_effect_impact,
@@ -697,6 +707,7 @@ static boolean particle_update_physics(
 							&collision_normal,
 							&particle->location,
 							scale);
+						effects_port_particles_end(particles_effects);
 					}
 				}
 

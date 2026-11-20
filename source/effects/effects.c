@@ -629,6 +629,29 @@ static struct effect_first_person effect_first_person_slots[HALO_PORT_MAXIMUM_EF
 static struct effect_first_person *effect_first_persons;
 static struct data_array *effect_first_person_location_data;
 
+/* port: the particles' effects (one a particle makes as it dies or strikes:
+particles.c's particle_effect_new and its material effects), and their
+locations. The particles move by the frames (game_frame), so the effects
+they made in the game state's array took its slots and identifiers as the
+frames went: at another frame rate, another count of them, and the ticks'
+own effects after them in other slots, so the game played at another frame
+rate was another game (OpenH1 #1233). They are the frames' now: arrays of
+the process's, outside the game state (a saved game's layout and size as
+before), which effect_data and effect_location_data point at while a
+particle makes one (effects_port_particles_begin) and while the frames move
+them (effects_port_particles_update), with the frame's time as the
+particles. Such an effect makes no objects, damage or lights (effect_allocate
+refuses one that must be deterministic), nor first-person locations. */
+#define MAXIMUM_PARTICLE_EFFECTS 512
+#define MAXIMUM_PARTICLE_EFFECT_LOCATIONS 1024
+
+static struct data_array *effect_particle_data;
+static struct data_array *effect_particle_location_data;
+/* the game state's two, while the particles' stand in for them */
+static struct data_array *effect_game_state_data;
+static struct data_array *effect_game_state_location_data;
+static boolean effects_particles_active = FALSE;
+
 boolean effects_corpse_nonviolent = TRUE;
 
 boolean debug_effects_nonviolent = FALSE;
@@ -653,7 +676,12 @@ void effects_initialize(
 	effect_first_persons = effect_first_person_slots;
 	effect_first_person_location_data = data_new(
 		"effect first person location", MAXIMUM_EFFECT_FIRST_PERSON_LOCATIONS, 0x3C);
-	if (!effect_data || !effect_location_data || !effect_first_persons || !effect_first_person_location_data)
+	/* port: (the particles' effects, the frames': effect_particle_data) */
+	effect_particle_data = data_new("particle effect", MAXIMUM_PARTICLE_EFFECTS, 0xFC);
+	effect_particle_location_data = data_new(
+		"particle effect location", MAXIMUM_PARTICLE_EFFECT_LOCATIONS, 0x3C);
+	if (!effect_data || !effect_location_data || !effect_first_persons || !effect_first_person_location_data ||
+		!effect_particle_data || !effect_particle_location_data)
 		error(_error_immediate, "couldn't allocate effect globals");
 
 	return;
@@ -667,6 +695,8 @@ void effects_initialize_for_new_map(
 	data_make_valid(effect_data);
 	data_make_valid(effect_location_data);
 	data_make_valid(effect_first_person_location_data);
+	data_make_valid(effect_particle_data);
+	data_make_valid(effect_particle_location_data);
 	for (index = 0; index < HALO_PORT_MAXIMUM_EFFECTS; index++)
 	{
 		effect_first_persons[index].identifier = 0;
@@ -682,6 +712,8 @@ void effects_dispose_from_old_map(
 	data_make_invalid(effect_data);
 	data_make_invalid(effect_location_data);
 	data_make_invalid(effect_first_person_location_data);
+	data_make_invalid(effect_particle_data);
+	data_make_invalid(effect_particle_location_data);
 
 	return;
 }
@@ -697,6 +729,12 @@ void effects_dispose(
 	if (effect_first_person_location_data)
 		data_dispose(effect_first_person_location_data);
 	effect_first_person_location_data = NULL;
+	if (effect_particle_data)
+		data_dispose(effect_particle_data);
+	effect_particle_data = NULL;
+	if (effect_particle_location_data)
+		data_dispose(effect_particle_location_data);
+	effect_particle_location_data = NULL;
 
 	return;
 }
@@ -735,7 +773,8 @@ static struct effect_first_person *effect_first_person_try_and_get(
 	struct effect_first_person *first_person;
 	short identifier = (short)(effect_index >> 16);
 
-	if (effect_index == NONE || !effect_first_persons || !identifier)
+	/* (a particle's effect has none: effect_particle_data) */
+	if (effect_index == NONE || !effect_first_persons || !identifier || effects_particles_active)
 		return NULL;
 	first_person = &effect_first_persons[(short)effect_index];
 	return first_person->identifier == identifier ? first_person : NULL;
@@ -748,7 +787,7 @@ static struct effect_first_person *effect_first_person_of(
 	long absolute_index = (long)(((char const *)effect - (char const *)effect_data->data) / effect_data->size);
 	struct effect_first_person *first_person;
 
-	if (!effect_first_persons || !effect->header.identifier)
+	if (!effect_first_persons || !effect->header.identifier || effects_particles_active)
 		return NULL;
 	first_person = &effect_first_persons[absolute_index];
 	return first_person->identifier == effect->header.identifier ? first_person : NULL;
@@ -774,7 +813,8 @@ static void effect_first_person_free(
 	struct effect_first_person *first_person = &effect_first_persons[absolute_index];
 	short location_index;
 
-	if (!first_person->identifier)
+	/* (a particle's effect's slot is another's: effect_particle_data) */
+	if (!first_person->identifier || effects_particles_active)
 		return;
 	for (location_index = 0; location_index < MAXIMUM_EFFECT_LOCATIONS; location_index++)
 	{
@@ -1243,6 +1283,56 @@ void effects_update(
 	}
 
 	profile_exit(effects_update_section);
+
+	return;
+}
+
+/* port: the particles' effects' arrays stand in for the game state's
+(effect_particle_data, above), until effects_port_particles_end; FALSE when
+they already did */
+boolean effects_port_particles_begin(
+	void)
+{
+	if (effects_particles_active || !effect_particle_data || !effect_particle_data->valid)
+		return FALSE;
+	effect_game_state_data = effect_data;
+	effect_game_state_location_data = effect_location_data;
+	effect_data = effect_particle_data;
+	effect_location_data = effect_particle_location_data;
+	effects_particles_active = TRUE;
+
+	return TRUE;
+}
+
+void effects_port_particles_end(
+	boolean began)
+{
+	if (!began)
+		return;
+	effect_data = effect_game_state_data;
+	effect_location_data = effect_game_state_location_data;
+	effects_particles_active = FALSE;
+
+	return;
+}
+
+/* port: the particles' effects moved by a frame's time, as the particles
+(game_frame), never by the ticks */
+void effects_port_particles_update(
+	real dt)
+{
+	boolean began = effects_port_particles_begin();
+	long effect_index;
+
+	if (!began)
+		return;
+	for (effect_index = data_next_index(effect_data, NONE);
+		effect_index != NONE;
+		effect_index = data_next_index(effect_data, effect_index))
+	{
+		effect_update(effect_index, dt);
+	}
+	effects_port_particles_end(began);
 
 	return;
 }
@@ -1809,6 +1899,19 @@ static void effect_generate_part(
 {
 	real_vector3d direction;
 	real_vector3d velocity;
+
+	/* port: a particle's effect (the frames': effect_particle_data) makes no
+	objects, damage or lights, which the game has as its own: its tag says it
+	makes none (effect_allocate refuses one whose tag says it must be
+	deterministic), and a map whose tag says otherwise has them skipped here
+	rather than made by the frames */
+	if (effects_particles_active &&
+		(part_definition->runtime_base_class_tag == OBJECT_DEFINITION_TAG ||
+			part_definition->runtime_base_class_tag == DAMAGE_EFFECT_DEFINITION_TAG ||
+			part_definition->runtime_base_class_tag == LIGHT_DEFINITION_TAG))
+	{
+		return;
+	}
 
 	switch (part_definition->runtime_base_class_tag)
 	{

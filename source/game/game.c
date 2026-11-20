@@ -1170,6 +1170,9 @@ void game_frame(
 
 	collision_log_begin_period(1);
 	particles_update(frame_dt, xbox_frame_dt);
+	/* port: the effects the particles made, the frames' (effects.c's
+	effect_particle_data: OpenH1 #1233) */
+	effects_port_particles_update(frame_dt);
 	contrails_update(frame_dt);
 	particle_systems_update(frame_dt);
 	widgets_update(frame_dt);
