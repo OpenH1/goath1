@@ -771,10 +771,8 @@ void hud_render_damage_indicators(
 			}
 		}
 	}
-	else
-	{
-		player_effect_clear_damage_indicators(local_player_index);
-	}
+	/* port: (a player without a unit has none: player_effect_update, in
+	the tick; the HUD cleared them in its frames, game state) */
 
 	return;
 }
