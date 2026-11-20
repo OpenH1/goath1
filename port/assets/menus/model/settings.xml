@@ -1139,7 +1139,7 @@
 			<choice shown="NO" value="false"/>
 		</row>
 		<row key="gyro_flick_stick" kind="link" label="GYRO &amp; FLICK STICK ›" crumb="CONTROLS › CONTROLLER" open="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/gyro_screen">
-			<help>Aim by turning a controller that has a gyroscope; the right stick's aim style (Classic or Modern) and turning direction, and the right stick as a flick stick.</help>
+			<help>Aim by turning a controller that has a gyroscope; the right stick's aim style (Classic or Modern) and turning direction, the right stick as a flick stick, and a DualSense's trigger resistance.</help>
 		</row>
 		<row key="flight_inversion" kind="choice" setting="profile.flight_inversion" label="INVERT FLIGHT" crumb="CONTROLS › CONTROLLER" when="profile">
 			<help>Flying vehicles pitch as aircraft do: pushing up flies down.</help>
@@ -1195,17 +1195,12 @@
 			<choice shown="90%" value="90"/>
 			<choice shown="100%" value="100"/>
 		</row>
-		<row key="trigger_resistance" kind="choice" setting="input.trigger_resistance" label="TRIGGER RESISTANCE" crumb="CONTROLS › CONTROLLER" search="haptics dualsense adaptive">
-			<help>A DualSense's fire trigger pushes back while you play: whichever trigger fires in your layout. Never in menus, on pause or while dead.</help>
-			<choice shown="ON" value="true"/>
-			<choice shown="OFF" value="false"/>
-		</row>
 		<row key="ingame_help" kind="choice" setting="profile.ingame_help" label="IN-GAME HELP" crumb="CONTROLS › CONTROLLER" when="profile">
 			<help>Shows the game's hints about its controls.</help>
 			<choice shown="ON" value="true"/>
 			<choice shown="OFF" value="false"/>
 		</row>
-		<section key="section_16" title="PROFILE"/>
+		<section key="section_15" title="PROFILE"/>
 		<row key="create_profile" kind="link" label="CREATE PROFILE ›" crumb="CONTROLS › CONTROLLER" when="!profile+!in_game" run="port settings new profile">
 			<help>Your name, color and controller layout are kept in a player profile. Make one to set them; the rest of Settings works without one.</help>
 		</row>
@@ -1282,7 +1277,7 @@
 		<button key="button_cancel" kind="cancel" run="port settings page cancel" help="Goes back without these changes."/>
 	</screen>
 	<screen name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/gyro_screen" kind="settings" layout="page" geometry="tall" title="GYRO &amp; FLICK STICK">
-		<section key="section_0" title="GYRO AIMING"/>
+		<section key="section_0" title="GYRO AIMING &amp; TRIGGERS"/>
 		<row key="gyro_found" kind="status" label="GYRO" crumb="CONTROLS › CONTROLLER › GYRO &amp; FLICK STICK">
 			<help>Whether a controller with a gyroscope is connected: a DualSense, a DualShock 4, a Switch Pro Controller or Joy-Cons, a Steam Deck.</help>
 			<note>With Steam Input, turn it off for GOAT H1.</note>
@@ -1370,7 +1365,12 @@
 			<help>Put the controller down on something still, then select this: it measures the gyroscope at rest for a second and a half.</help>
 			<note>It also does so whenever it is held still.</note>
 		</row>
-		<section key="section_12" title="RIGHT STICK"/>
+		<row key="trigger_resistance" kind="choice" setting="input.trigger_resistance" label="TRIGGER RESISTANCE" crumb="CONTROLS › CONTROLLER › GYRO &amp; FLICK STICK" search="haptics dualsense adaptive">
+			<help>A DualSense's fire trigger pushes back while you play: whichever trigger fires in your layout. Never in menus, on pause or while dead.</help>
+			<choice shown="ON" value="true"/>
+			<choice shown="OFF" value="false"/>
+		</row>
+		<section key="section_13" title="RIGHT STICK"/>
 		<row key="invert_look_horizontal" kind="choice" setting="input.invert_look_horizontal" label="INVERT TURNING" crumb="CONTROLS › CONTROLLER › GYRO &amp; FLICK STICK">
 			<help>Pushing the right stick right turns the view left. For every controller on this device.</help>
 			<choice shown="YES" value="true"/>

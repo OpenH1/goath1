@@ -1709,7 +1709,8 @@ PAGES = {
             ("INVERT LOOK", "profile.invert_look", YES_NO, "Pushing the right stick up looks down.", None),
             ("GYRO & FLICK STICK ›", None, _page_screen(*GYRO),
              "Aim by turning a controller that has a gyroscope; the right stick's aim style (Classic or "
-             "Modern) and turning direction, and the right stick as a flick stick.", None),
+             "Modern) and turning direction, the right stick as a flick stick, and a DualSense's trigger "
+             "resistance.", None),
             ("INVERT FLIGHT", "profile.flight_inversion", YES_NO,
              "Flying vehicles pitch as aircraft do: pushing up flies down.", None),
             ("AUTO-CENTER LOOK", "profile.autocenter", YES_NO, "Levels the view while you walk.", None),
@@ -1734,9 +1735,6 @@ PAGES = {
             ("VIBRATION", "profile.vibration", ON_OFF, "Rumbles the controller.", None),
             ("RUMBLE STRENGTH", "input.rumble_strength", RUMBLE_STRENGTHS,
              "How strongly the controller rumbles. 100% is the game's own; Vibration Off turns it off.", None),
-            ("TRIGGER RESISTANCE", "input.trigger_resistance", ON_OFF,
-             "A DualSense's fire trigger pushes back while you play: whichever trigger fires in your layout. Never "
-             "in menus, on pause or while dead.", None),
             ("IN-GAME HELP", "profile.ingame_help", ON_OFF, "Shows the game's hints about its controls.", None),
             (SECTION, "PROFILE"),
             CREATE_PROFILE,
@@ -1799,7 +1797,7 @@ PAGES = {
             # first row and the flick stick's: menu_functions.c's
             # gyro_rows_show, which writes the first's value and
             # Calibrate's; Gyro Button's only while Gyro Aiming holds)
-            (SECTION, "GYRO AIMING"),
+            (SECTION, "GYRO AIMING & TRIGGERS"),
             ("GYRO", None, None,
              "Whether a controller with a gyroscope is connected: a DualSense, a DualShock 4, a Switch Pro "
              "Controller or Joy-Cons, a Steam Deck.|With Steam Input, turn it off for GOAT H1.", None, "gyro_found"),
@@ -1842,6 +1840,11 @@ PAGES = {
              "Put the controller down on something still, then select this: it measures the gyroscope at rest "
              "for a second and a half.|It also does so whenever it is held still.", None,
              "gyro_calibrate", "port settings gyro calibrate"),
+            # (a DualSense's own, beside its gyro: the Controller page has no
+            # room for another row, nor this page for another section)
+            ("TRIGGER RESISTANCE", "input.trigger_resistance", ON_OFF,
+             "A DualSense's fire trigger pushes back while you play: whichever trigger fires in your layout. Never "
+             "in menus, on pause or while dead.", None),
             (SECTION, "RIGHT STICK"),
             # (the Controller page has no room for it: its VERTICAL
             # SENSITIVITY took its place)
