@@ -4658,19 +4658,10 @@ void sound_render(
 				((real)render_time - sound_manager_globals.render_time) *
 				0.029999999f;
 			sound_manager_globals.render_time = render_time;
-			/* Sounds are rendered once a frame, and a frame is well under a
-			tick on the native builds, so the ticks truncate to none and
-			scripted sound class fades would never move: carry the
-			fraction over. */
-			{
-				static real leftover_ticks = 0.f;
-				long ticks;
-
-				leftover_ticks += sound_manager_globals.ticks_elapsed;
-				ticks = (long)leftover_ticks;
-				leftover_ticks -= (real)ticks;
-				sound_classes_update(ticks);
-			}
+			/* port: the sound classes' fades step with the game's ticks
+			(game_tick_after_substeps, game.c), not here: their gains live in
+			the game state, and stepped by the frames' clock they differed
+			between frame rates (#1233) */
 			refresh_listener();
 			process_looping_sounds();
 			refresh_sounds();
