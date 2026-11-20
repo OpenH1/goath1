@@ -1078,20 +1078,14 @@ static void host_game_row_change(struct widget_instance *row_widget, short row, 
 		network_host_controls_set_opence_joins(!network_host_controls_opence_joins());
 		break;
 	/* (the host's rule at once, its clients told, and config.toml's for the
-	next game hosted: network_standard.c) */
+	next game hosted: lobby_menu.inc's, as the lobby's choice does it) */
 	case _host_game_vehicle_hijack:
-	{
-		boolean on = !network_standard_hosting_vehicle_hijack();
-
-		if (!network_standard_set_vehicle_hijack(on))
+		if (!menu_host_vehicle_hijack_toggle())
 		{
 			ui_play_audio_feedback_sound(SOUND_ERROR);
 			return;
 		}
-		if (!config_write("game.vehicle_hijack", on ? "true" : "false"))
-			platform_log("menus: could not write game.vehicle_hijack to config.toml");
 		break;
-	}
 	/* (written to config.toml, which the host's chat and voice read again
 	at once and tell every machine: network_chat.c, network_voice.c) */
 	case _host_game_lobby_text_chat:

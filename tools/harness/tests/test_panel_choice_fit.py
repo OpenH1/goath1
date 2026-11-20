@@ -1,4 +1,4 @@
-"""A tall screen's panel choices (docs/menu_screens.md, <choice>: the lobby's BOTS, SKILL, TEAMS and FRIEND,
+"""A tall screen's panel choices (docs/menu_screens.md, <choice>: the lobby's BOTS, SKILL, TEAMS, HIJACK and FRIEND,
 Controller Layout's SHAPE and COLOR): each label, in the small font (the blocks' text is drawn at its size), in its
 own width and clear of its left arrow by a gap (menu_screen_tall.inc's PANEL_CHOICE_*), and the room between the
 arrows still the widest value's (NORMAL, SQUARE). A negative control: the spacing before this check (the value,
