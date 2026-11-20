@@ -1812,6 +1812,9 @@ static void view_stretch(const struct xgpu_stream_motion *record)
 	int32_t from[4], to[4];
 
 	memcpy(&pass, &record->pass, sizeof(pass));
+	/* (the map's preparation: the pipeline the stretch draws with) */
+	if (stream.preparing && destination && destination->description.samples <= 1)
+		xgpu_metal_view_stretch_prepare(destination->description.format);
 	if (stream.preparing || !target || target->description.format == XGPU_METAL_FORMAT_D24S8 ||
 		target->description.depth_or_layers > 1 || !destination ||
 		destination->description.format != target->description.format || destination->description.samples > 1 ||

@@ -272,6 +272,16 @@ void xgpu_metal_view_stretch(uint32_t color, const int32_t source[4], uint32_t i
 	pass_draw(FUNCTION_STRETCH, into, format, WRITE_ALL, place, color, 0, &uniforms);
 }
 
+void xgpu_metal_view_stretch_prepare(uint8_t format)
+{
+	struct xgpu_metal_pipeline pipeline;
+
+	if (!functions_make())
+		return;
+	pipeline_describe(FUNCTION_STRETCH, format, WRITE_ALL, &pipeline);
+	xgpu_metal_prepare(&pipeline);
+}
+
 /* ---------- MetalFX */
 
 int xgpu_metal_metalfx_supported(void)

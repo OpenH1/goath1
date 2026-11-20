@@ -49,6 +49,9 @@ frame) over a rectangle of another, one sample, of the format
 drawn after it). The backend's state is the pass's afterwards */
 void xgpu_metal_view_stretch(uint32_t color, const int32_t source[4], uint32_t into, uint8_t format,
 	const int32_t place[4]);
+/* (the map's preparation) the stretch's pipeline into a target of the format
+made, so that its first frame does not miss it */
+void xgpu_metal_view_stretch_prepare(uint8_t format);
 
 /* whether the GPU and the system have MetalFX's temporal scaler (macOS 13,
 iOS 16 on): 1; 2 on iOS where they have only its spatial one (#1228); 0
