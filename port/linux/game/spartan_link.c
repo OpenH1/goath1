@@ -182,7 +182,14 @@ narrowest feed's width (a row of four; a wider row of fewer is as tall),
 the gap between them, and the row under each (name, shield and health) */
 #define SPARTAN_LINK_NARROWEST 112.0f
 #define SPARTAN_LINK_GAP 6.4f
-#define SPARTAN_LINK_ROW 11.0f
+#define SPARTAN_LINK_ROW 12.0f
+/* the gap between a feed's picture and the strip of its name and meters */
+#define SPARTAN_LINK_STRIP_GAP 2.5f
+/* the name's look: the motion tracker's own range label's (its "15m", a
+picture in the tracker's bitmap, pale and translucent): the tracker's color
+made this much paler, at this opacity */
+#define SPARTAN_LINK_NAME_PALER 0.35f
+#define SPARTAN_LINK_NAME_ALPHA 0.75f
 /* the row's room: from the tracker's right (a gap of SPARTAN_LINK_TRACKER_GAP
 of the HUD's units) to this much of the window's width, the bottom right
 left to its timer and input display (display.match_timer, input_display.c) */
@@ -672,7 +679,9 @@ static short spartan_link_layout(
 	spartan_link_room(local_player_index, camera, &room, scale);
 	row = SPARTAN_LINK_ROW * *scale;
 	gap = SPARTAN_LINK_GAP * *scale;
-	feed_height = (room.y1 - room.y0 - row) * spartan_link.size / 1.2f;
+	/* (medium and large fill the tracker's height, the strip included:
+	the row's top and bottom the tracker's circle's) */
+	feed_height = (room.y1 - room.y0 - row) * MIN(spartan_link.size, 1.0f);
 	feed_width = feed_height * 16.0f / 9.0f;
 	total = feed_width * count + gap * (count - 1);
 	if (total > room.x1 - room.x0)
@@ -1547,7 +1556,8 @@ static boolean spartan_link_draw_meters(
 	return TRUE;
 }
 
-/* under a feed, within its width: the teammate's name at its left edge, and
+/* under a feed, after a small gap, within its width: the teammate's name at
+its left edge (in the look of the tracker's range label), and
 at its right edge their shield and health as their HUD draws them
 (spartan_link_draw_meters; else thin bars of the shield and under it the
 health), or DOWN; a clear gap between (the name cut short where it would
@@ -1564,7 +1574,7 @@ static void spartan_link_draw_row(
 	real pixel = 1.0f / (halo_screen_pixel_scale() > 0.0f ? halo_screen_pixel_scale() : 1.0f);
 	real_argb_color text_color;
 	real width = bounds->x1 - bounds->x0;
-	real top = bounds->y1 + 1.5f * scale;
+	real top = bounds->y1 + SPARTAN_LINK_STRIP_GAP * scale;
 	real gap = 4.0f * scale;
 	/* (the text as large as the design's at a feed's width of four, smaller
 	in a narrower feed, to a point) */
@@ -1580,8 +1590,12 @@ static void spartan_link_draw_row(
 
 	if (!teammate)
 		return;
-	hud_get_text_color(&text_color);
-	text_color.alpha = 1.0f;
+	/* (the tracker's range label's look) */
+	pixel32_to_real_argb_color(spartan_link_tracker_color(local_player_index), &text_color);
+	text_color.red += (1.0f - text_color.red) * SPARTAN_LINK_NAME_PALER;
+	text_color.green += (1.0f - text_color.green) * SPARTAN_LINK_NAME_PALER;
+	text_color.blue += (1.0f - text_color.blue) * SPARTAN_LINK_NAME_PALER;
+	text_color.alpha = SPARTAN_LINK_NAME_ALPHA;
 	ustrncpy(name, teammate->name, NUMBEROF(name) - 1);
 	name[NUMBEROF(name) - 1] = 0;
 	if (!feed->down_at && object_try_and_get(feed->unit_index))
@@ -1617,7 +1631,7 @@ static void spartan_link_draw_row(
 		meters.x0 = bounds->x1 - width * 0.5f;
 		meters.x1 = bounds->x1;
 		meters.y0 = top + 0.5f * scale;
-		meters.y1 = top + SPARTAN_LINK_ROW * scale;
+		meters.y1 = top + (SPARTAN_LINK_ROW - SPARTAN_LINK_STRIP_GAP) * scale;
 		if (!spartan_link_draw_meters(local_player_index, feed, &meters, &right_left))
 		{
 			real bar_x0 = bounds->x1 - width * 0.4f;
