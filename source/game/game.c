@@ -458,6 +458,13 @@ static void game_tick_after_substeps(
 	profile_scope(game_tick_players_after_section, players_update_after_game();)
 	profile_scope(game_tick_hud_section, hud_update();)
 	profile_scope(game_tick_player_effect_section, player_effect_update();)
+	/* port: the sound classes' fades (sound_class_set_gain, from the scripts
+	and the game's end, in ticks), a tick's step once a tick: their gains are
+	game state (sound_classes.c), and the sound manager stepped them by the
+	frames' clock, so the game state differed between frame rates (#1233).
+	Only the sound manager reads the gains, as it mixes; heard, the fade
+	moves in whole ticks as it did there */
+	sound_classes_update(1);
 	/* port: the wind's step, once a tick (scenario.c: it stepped by the
 	frames' time) */
 	scenario_tick_update();
