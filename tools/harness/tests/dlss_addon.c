@@ -6,7 +6,8 @@ the whole file: src/under_test.inc), with updater.c's zip unpacking
 (zip_functions.inc) and the real SHA-256 (p2p_crypto.c), on this
 computer's files: an archive checked against its pin and put in place, a
 tampered one or one that is not the add-on's refused with nothing left
-half installed, a removal, and what a crash left deleted at the next start.
+half installed, a removal, and what a crash left deleted at the next start;
+and whether GET DLSS is offered (only by a build that pins an add-on).
 test_dlss_addon_install.py makes the archives and runs each case in a process of
 its own: <case> <add-ons folder> <zip> <size> <sha256>.
 
@@ -246,6 +247,13 @@ int main(int argc, char **argv)
 		dlss_clean_in(addons);
 		CHECK(!exists(addons, "dlss"), "the marked add-on was kept");
 		check_no_partial(addons);
+		return 0;
+	}
+	if (!strcmp(test, "offered"))
+	{
+		/* (GET DLSS's row, settings.xml's dlss_addon_offer: an NVIDIA GPU, no
+		add-on installed; offered only when the build pins one) */
+		printf("offered %d\n", dlss_addon_offered());
 		return 0;
 	}
 	fprintf(stderr, "no case %s\n", test);

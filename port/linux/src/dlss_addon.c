@@ -689,7 +689,7 @@ void dlss_addon_start(void)
 static int dlss_pinned(void)
 {
 #ifdef DLSS_ADDON_PLATFORM
-	return DLSS_ADDON_VERSION[0] && DLSS_ADDON_SHA256[0] && DLSS_ADDON_URL[0];
+	return DLSS_ADDON_VERSION[0] != 0 && DLSS_ADDON_SHA256[0] != 0 && DLSS_ADDON_URL[0] != 0;
 #else
 	return 0;
 #endif

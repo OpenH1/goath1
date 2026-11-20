@@ -2,7 +2,8 @@
 unpacking and the real SHA-256): an archive packed as tools/dlss_addon.py packs it is checked against its pin and put
 in place; a tampered one, or one that is not the add-on's, is refused with nothing installed and nothing left half
 installed; an older add-on is replaced; a removal leaves nothing; and what a crash left is deleted at the next start.
-Each with negative controls.
+Each with negative controls. And GET DLSS (settings.xml's dlss_addon_offer) is offered only by a build that pins an
+add-on: the committed pin, which pins none, hides it; a pinned build (the negative control) shows it.
 
 Compiled for this computer (dlss_addon.c), as test_update_fallback.py's is, on Linux and macOS."""
 
@@ -45,7 +46,17 @@ NEGATIVE_CONTROLS = {
 }
 
 
-def generated(fault=None):
+# a pin as tools/dlss_addon.py pin writes one for a release (the Linux add-on's)
+PINNED = {'#define DLSS_ADDON_VERSION ""': '#define DLSS_ADDON_VERSION "310.9.16-test"',
+          'DLSS_ADDON_URL_LINUX_X86_64 ""': 'DLSS_ADDON_URL_LINUX_X86_64 "https://example.invalid/dlss.zip"',
+          'DLSS_ADDON_SHA256_LINUX_X86_64 ""': 'DLSS_ADDON_SHA256_LINUX_X86_64 "' + "0" * 64 + '"'}
+
+
+def generated(fault=None, pinned=False):
+    pin = read("port/linux/src/dlss_addon_pin.h")
+    if pinned:
+        for old, new in PINNED.items():
+            pin = mutated(pin, old, new)
     source = read("port/linux/src/dlss_addon.c")
     if fault:
         source = mutated(source, *NEGATIVE_CONTROLS[fault][0])
@@ -57,7 +68,7 @@ def generated(fault=None):
         "update.h": read("port/linux/src/update.h"),
         "src/dlss_addon.h": read("port/linux/src/dlss_addon.h"),
         "src/dlss_addon_folder.h": read("port/linux/src/dlss_addon_folder.h"),
-        "src/dlss_addon_pin.h": read("port/linux/src/dlss_addon_pin.h"),
+        "src/dlss_addon_pin.h": pin,
         "game/menu_table.h": read("port/linux/game/menu_table.h"),
         "SDL3/SDL.h": "", "src/platform.h": "",
     }
@@ -66,11 +77,11 @@ def generated(fault=None):
 _built = {}
 
 
-def build(tmp_path_factory, fault=None):
-    if fault in _built:
-        return _built[fault]
-    work = tmp_path_factory.mktemp(f"dlss_addon-{fault or 'as-is'}")
-    for name, text in generated(fault).items():
+def build(tmp_path_factory, fault=None, pinned=False):
+    if (fault, pinned) in _built:
+        return _built[fault, pinned]
+    work = tmp_path_factory.mktemp(f"dlss_addon-{fault or 'as-is'}{'-pinned' if pinned else ''}")
+    for name, text in generated(fault, pinned).items():
         (work / name).parent.mkdir(parents=True, exist_ok=True)
         (work / name).write_text(text, encoding="latin-1")
     executable = work / "dlss_addon"
@@ -81,7 +92,7 @@ def build(tmp_path_factory, fault=None):
                              "-o", str(executable), "-lpthread"], capture_output=True, text=True)
     if result.returncode:
         raise RuntimeError(f"dlss_addon.c does not compile:\n{result.stderr}")
-    _built[fault] = executable
+    _built[fault, pinned] = executable
     return executable
 
 
@@ -141,3 +152,27 @@ def test_negative_control(control, tmp_path, tmp_path_factory):
     case = NEGATIVE_CONTROLS[control][1]
     status, output = run(build(tmp_path_factory, control), case, tmp_path)
     assert status == CHECK_FAILED, f"dlss_addon.c with a fault ({control}) passed '{case}'\n{output}"
+
+
+def offered(executable, folder):
+    """dlss_addon_offered() on an NVIDIA GPU with no add-on installed (the add-ons' folder empty)"""
+    result = subprocess.run([str(executable), "offered"], capture_output=True, text=True, timeout=60,
+                            env=dict(os.environ, HALO_DLSS_ADDON_FOLDER=str(folder)))
+    assert result.returncode == 0, result.stdout + result.stderr
+    return result.stdout.strip()
+
+
+def test_unpinned_build_hides_get_dlss(tmp_path, tmp_path_factory):
+    """the committed pin pins nothing, so a release built from it offers no GET DLSS row and no download"""
+    assert offered(build(tmp_path_factory), tmp_path) == "offered 0"
+    # (the row is settings.xml's, shown only while dlss_addon_offered() says so)
+    settings = read("port/assets/menus/model/settings.xml")
+    row = settings[settings.index('<row key="temporal_aa_dlss_get"'):]
+    assert "+dlss_addon_offer+" in row[:row.index(">")]
+    assert 'if (!strcmp(name, "dlss_addon_offer"))\n\t\treturn dlss_addon_offered() != 0;' in read(
+        "port/linux/game/menu_functions.c")
+
+
+def test_pinned_build_shows_get_dlss(tmp_path, tmp_path_factory):
+    """the negative control: a build that pins an add-on offers it"""
+    assert offered(build(tmp_path_factory, pinned=True), tmp_path) == "offered 1"
