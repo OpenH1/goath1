@@ -4070,12 +4070,18 @@ on a weak processor, left to the frame for want of a whole step's room, had
 the frame shown that much later). How long that work takes (nanoseconds:
 the step frame's own less its game_time_update's), the longest of late,
 each at most MAIN_STEP_FRAME_LONGEST_COST (a hitch is not the next's), and
-the margin over it */
+the margin over it. And the step frame starts as late as it can and still
+end by the frame's time, never before the step falls due: its whole cost
+(the longest of late, at most MAIN_STEP_FRAME_LONGEST_WHOLE) and the margin
+before it, so that the step's input is read as late as the frame's would
+be, and no later than the frame would have read it */
 #define MAIN_STEP_FRAME_FIRST_COST 1500000ULL
 #define MAIN_STEP_FRAME_LONGEST_COST 4000000ULL
+#define MAIN_STEP_FRAME_LONGEST_WHOLE 10000000ULL
 #define MAIN_STEP_FRAME_MARGIN 300000ULL
 static boolean main_frame_waiting;
 static unsigned long long main_step_frame_cost = MAIN_STEP_FRAME_FIRST_COST;
+static unsigned long long main_step_frame_whole = MAIN_STEP_FRAME_FIRST_COST;
 /* (a frame woken for a step) its game_time_update's time, nanoseconds */
 static unsigned long long main_step_frame_step;
 
@@ -4102,10 +4108,12 @@ static unsigned long long main_frame_step_due(
 	LARGE_INTEGER counter;
 	LARGE_INTEGER frequency;
 	double since;
+	long long left;
 	real seconds;
 
 	/* (the cost of late, let go of slowly) */
 	main_step_frame_cost -= main_step_frame_cost / 256;
+	main_step_frame_whole -= main_step_frame_whole / 256;
 	if (!main_frame_steps_when_due())
 		return 0;
 	seconds = game_time_seconds_to_next_step();
@@ -4116,8 +4124,11 @@ static unsigned long long main_frame_step_due(
 	/* (the step's time counted from the frame's time read; a microsecond
 	more, so that the step is due, not a rounding short of it) */
 	since = (double)(counter.QuadPart - previous_counter.QuadPart) / (double)frequency.QuadPart;
-	return frame_step_wake(now, frame_due, (long long)(((double)seconds - since) * 1e9) + 1000,
-		main_step_frame_cost + MAIN_STEP_FRAME_MARGIN);
+	left = (long long)(((double)seconds - since) * 1e9) + 1000;
+	/* (not before the frame's time less the step frame's whole cost) */
+	if (frame_due > now)
+		left = MAX(left, (long long)(frame_due - now) - (long long)(main_step_frame_whole + MAIN_STEP_FRAME_MARGIN));
+	return frame_step_wake(now, frame_due, left, main_step_frame_cost + MAIN_STEP_FRAME_MARGIN);
 }
 
 /* (a frame woken for a step, which drew nothing) the rest of the frame's
@@ -4128,6 +4139,7 @@ static void main_frame_wait_after_step(
 {
 	unsigned long long cost = SDL_GetTicksNS() - began;
 
+	main_step_frame_whole = MAX(main_step_frame_whole, MIN(cost, MAIN_STEP_FRAME_LONGEST_WHOLE));
 	cost = cost > main_step_frame_step ? cost - main_step_frame_step : 0;
 	main_step_frame_step = 0;
 	cost = MIN(cost, MAIN_STEP_FRAME_LONGEST_COST);
