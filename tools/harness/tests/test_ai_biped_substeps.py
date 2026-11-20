@@ -62,8 +62,10 @@ def test_the_ais_input_and_aim_stay_on_the_tick():
 
 def test_the_ais_tick_in_its_own_update():
     # (an AI's biped is never left to the fast phase: its sub-steps run in its update, the rest of it after them)
+    # (nor is a bot's, whose controls are the tick's at every sub-step: a person's alone moves in it)
     moves = function(read('source/units/bipeds.c'), 'biped_moves_in_substeps')
-    assert 'biped_get(biped_index)->unit.player_index != NONE &&' in moves
+    assert 'long player_index = biped_get(biped_index)->unit.player_index;' in moves
+    assert 'player_index != NONE &&\n\t\t!bots_player_is_bot(player_index) &&' in moves
     moving = function(read('source/units/bipeds.c'), 'biped_update_moving')
     assert moving.index('biped_substep_defer(') < moving.index('biped_substep_inline(')
     # (a lift carries the AI's riders in its update, as at 30: only the players' are held for the sub-steps)

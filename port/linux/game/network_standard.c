@@ -828,7 +828,7 @@ boolean network_standard_vehicle_hijack(
 	{
 	case _game_connection_network_server:
 		/* (a Legacy game's machines, OpenCE's among them, play none) */
-		return network_standard_globals.hosting && network_standard_globals.hosting_vehicle_hijack;
+		return network_standard_hosting_vehicle_hijack();
 	case _game_connection_network_client:
 		/* (the host's word: since the game began, else its record's; a
 		Legacy host's, none) */

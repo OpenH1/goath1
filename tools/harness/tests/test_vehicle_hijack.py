@@ -62,8 +62,8 @@ def generated(fault=None):
     ]) + "\n"
     code = "\n".join([
         function(read("port/linux/game/vehicle_hijack.c"), "vehicle_hijack_seat_allowed"),
-        function(read("port/linux/game/network_standard.c"), "network_standard_vehicle_hijack"),
         function(read("port/linux/game/network_standard.c"), "network_standard_hosting_vehicle_hijack"),
+        function(read("port/linux/game/network_standard.c"), "network_standard_vehicle_hijack"),
         function(read("port/linux/game/network_standard.c"), "network_standard_set_vehicle_hijack"),
         function(read("port/linux/game/lobby_menu.inc"), "menu_host_vehicle_hijack_toggle"),
     ])
