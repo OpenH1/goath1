@@ -50,8 +50,10 @@ name: Build
 # checks are always reported: the changes job decides whether they build)
 on:
   pull_request:
+  # (a release's tag runs the full suite; a push to master runs nothing, so
+  # a release's master push and its tag don't run it twice: the full suite
+  # on master is Run workflow's)
   push:
-    branches: [master, dev]
     tags: ["build-*"]
   workflow_dispatch:
     inputs:
