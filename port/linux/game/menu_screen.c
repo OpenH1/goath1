@@ -567,7 +567,7 @@ static char const *const screen_binding_names[] =
 	"add.done", "pause.friendly_fire", "pause.host_controls", "pause.end_game",
 	"pause.chapters", "stick.left", "stick.right", "stick.left.drift", "stick.right.drift",
 	"benchmark.failure", "benchmark.verdict", "benchmark.held", "benchmark.pacing",
-	"benchmark.settings", "benchmark.gpu", "benchmark.cpu", "benchmark.file", "benchmark.scenario",
+	"benchmark.settings", "benchmark.gpu", "benchmark.cpu", "benchmark.file", "benchmark.scenario", "benchmark.player",
 	"layout.controller", "layout.title", "layout.state", "layout.shape", "layout.color", "layout.about",
 	"layout.set", "layout.unset", "layout.bindings",
 	"dlss.detail", "dlss.heading", "dlss.status", "dlss.credit", "dlss.license.empty", "dlss.can_accept",

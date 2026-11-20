@@ -3,16 +3,31 @@ BENCHMARK.C
 
 The built-in benchmark: tools/bench.py's scenario, run by the game itself
 for a player, with no Python and no source tree. Settings > Video > Frame
-Rate & Sync's RUN BENCHMARK (menu_functions.c's benchmark_request) or
-halo --benchmark starts it from the main menu.
+Rate & Sync > Performance Tools' RUN BENCHMARK (menu_functions.c's
+benchmark_request), below its pacing, map, bots and player, or halo
+--benchmark starts it from the main menu.
 
-The scenario is bench.py's: a local game of Slayer on Blood Gulch
-(debug.network_test "local:bloodgulch:slayer", network_test.c) with
-BENCHMARK_BOTS bots, the network game's seed fixed (debug.random_seed) and
-the scripted player (debug.test_input "bot:<seed>", a bot of the player's
-own that runs the map and fights), each set for this run alone
-(config_set_for_run) and given back at its end. It runs in real time, so
-the frames are those a player sees; the game's ticks are the same each run.
+The scenario is bench.py's: a local game of Slayer on a stock multiplayer
+map (display.benchmark_map, Blood Gulch by default: debug.network_test
+"local:<map>:slayer", network_test.c) with display.benchmark_bots bots (40
+by default, at most the map's most: benchmark_maps), the network game's
+seed fixed (debug.random_seed) and the measured player
+display.benchmark_player's: "bot", a bot of the player's own that plays as
+the others do at their skill (bots.c's debug.bot_player, with
+debug.bot_player_skill), or "scripted", the scripted walker of the results
+before it (debug.test_input "bot:<seed>": it strafes and turns in circles
+and fires every few seconds), each set for this run alone
+(config_set_for_run) and given back at its end. The results name all three,
+so that two runs are compared only on the same scenario.
+
+It runs in real time, so the frames are those a player sees. With the bot
+player the game's ticks are the same each run at any frame rate: the bots
+decide at the tick from the game state and their own random numbers, seeded
+by the bot and the game's fixed seed (bots.c), and the player's bot turns
+the view at the tick (bots_player_set_facing). The scripted player's are
+not: its turns are the stick's rate over each frame's time (xinput_sdl.c's
+debug.test_input), so its path, and the fights it meets, follow the frame
+rate. That is why the bot player is the default.
 display.benchmark_pacing chooses what is measured: "uncapped" turns vsync,
 variable refresh and the frame cap off for the run (a cap of
 BENCHMARK_UNCAPPED_FPS, not none: a GPU never left to rest can hang,
@@ -29,7 +44,7 @@ that passes, and the run fails if none has by BENCHMARK_WARMUP_MOST, or if
 nobody is killed in the measured minute. The frames are the Save Report's
 ring's (report.c's report_frames_mark): from the measure's first to its
 last, summed as the report and the performance overlay sum theirs, and
-written to benchmarks/<date>_<time>-bloodgulch.txt beside reports/
+written to benchmarks/<date>_<time>-<map>.txt beside reports/
 (report_benchmark_write). The game goes back to the main menu, whose
 results screen (menu_functions.c's pc_menu_benchmark_results_open) shows
 the average, the 1% low, the 95th and 99th percentile frame times, the
@@ -50,6 +65,7 @@ GPU's and the CPU's time a frame, the settings and the computer.
 #include "../src/report.h" /* port: port/linux/src/report.c */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 void platform_log(char const *format, ...);
@@ -69,8 +85,13 @@ int config_command_line_value(char const *name, char *value, unsigned long size)
 /* xgpu_backend.c's: the GPU's name (its header is the host's, not the game's) */
 char const *xgpu_backend_device(void);
 
+/* server_rotation.c's: each multiplayer map in the maps folder (kind
+"xbox") and custom_maps, by its name */
+int server_maps_each(void (*each)(void *context, const char *name, const char *level, const char *kind),
+	void *context);
+
 #define BENCHMARK_MAP "bloodgulch"
-#define BENCHMARK_BOTS "40"
+#define BENCHMARK_BOTS 40
 #define BENCHMARK_SEED "1"
 #define BENCHMARK_UNCAPPED_FPS "1000"
 /* the scenario's seconds before the measure may begin, the most it may
@@ -120,13 +141,65 @@ enum
 	_benchmark_done
 };
 
+/* the maps the benchmark plays: the stock multiplayer maps, by their
+file's name, as the game shows them (server_status.c's), and the most bots
+each takes: the big maps 40, as the benchmark always had, a small one fewer
+so that its fight stays a match and not a crowd. Settings' BENCHMARK MAP
+lists those in the maps folder (benchmark_map_choices); another name plays
+Blood Gulch */
+static struct
+{
+	char const *name;
+	char const *title;
+	short most_bots;
+} const benchmark_maps[] =
+{
+	{ "bloodgulch", "Blood Gulch", 40 },
+	{ "sidewinder", "Sidewinder", 40 },
+	{ "deathisland", "Death Island", 40 },
+	{ "infinity", "Infinity", 40 },
+	{ "timberland", "Timberland", 40 },
+	{ "dangercanyon", "Danger Canyon", 40 },
+	{ "icefields", "Ice Fields", 32 },
+	{ "gephyrophobia", "Gephyrophobia", 32 },
+	{ "boardingaction", "Boarding Action", 24 },
+	{ "hangemhigh", "Hang 'Em High", 16 },
+	{ "damnation", "Damnation", 16 },
+	{ "carousel", "Derelict", 16 },
+	{ "putput", "Chiron TL-34", 16 },
+	{ "beavercreek", "Battle Creek", 12 },
+	{ "chillout", "Chill Out", 12 },
+	{ "prisoner", "Prisoner", 12 },
+	{ "ratrace", "Rat Race", 12 },
+	{ "wizard", "Wizard", 8 },
+	{ "longest", "Longest", 8 },
+};
+
+static short benchmark_map_find(
+	char const *name)
+{
+	short index;
+
+	for (index = 0; name && index < (short)NUMBEROF(benchmark_maps); index++)
+	{
+		if (!strcmp(name, benchmark_maps[index].name))
+			return index;
+	}
+	return NONE;
+}
+
 /* the settings set for the run, and what they were */
-#define BENCHMARK_SETTINGS 16
+#define BENCHMARK_SETTINGS 20
 static struct
 {
 	int state;
 	int command_line_checked;
 	char pacing[16];
+	/* the scenario: its map (benchmark_maps'), its bots (and those asked
+	for, where the map takes fewer) and its player, TRUE the bot's */
+	short map;
+	long bots, bots_asked;
+	int bot_player;
 	struct
 	{
 		char const *name;
@@ -179,16 +252,25 @@ static void benchmark_restore(
 static void benchmark_begin(
 	void)
 {
+	char text[64];
+
 	benchmark.setting_count = 0;
-	benchmark_set("debug.network_test", "local:" BENCHMARK_MAP ":slayer");
+	snprintf(text, sizeof(text), "local:%s:slayer", benchmark_maps[benchmark.map].name);
+	benchmark_set("debug.network_test", text);
 	benchmark_set("debug.network_test_start", "3");
 	benchmark_set("debug.network_test_score", "1000");
 	benchmark_set("debug.network_test_players", "1");
-	benchmark_set("bots.count", BENCHMARK_BOTS);
+	snprintf(text, sizeof(text), "%ld", benchmark.bots);
+	benchmark_set("bots.count", text);
 	benchmark_set("bots.make_room", "false");
 	benchmark_set("bots.fill_to", "0");
 	benchmark_set("bots.skill", "normal");
-	benchmark_set("debug.test_input", "bot:" BENCHMARK_SEED);
+	/* (the player: a bot of its own at the others' skill, with no weapon of
+	its own to go for and no scripted input; or the scripted player alone) */
+	benchmark_set("debug.bot_player", benchmark.bot_player ? "true" : "false");
+	benchmark_set("debug.bot_player_skill", benchmark.bot_player ? "true" : "false");
+	benchmark_set("debug.bot_player_weapon", "");
+	benchmark_set("debug.test_input", benchmark.bot_player ? "" : "bot:" BENCHMARK_SEED);
 	benchmark_set("debug.random_seed", BENCHMARK_SEED);
 	benchmark_set("debug.skip_cinematics", "true");
 	if (!strcmp(benchmark.pacing, "uncapped"))
@@ -205,7 +287,8 @@ static void benchmark_begin(
 	benchmark.failure[0] = 0;
 	memset(&benchmark.measure, 0, sizeof(benchmark.measure));
 	benchmark.file[0] = benchmark.verdict[0] = 0;
-	platform_log("benchmark: begun (%s, pacing %s)", BENCHMARK_MAP, benchmark.pacing);
+	platform_log("benchmark: begun (%s, %ld bots, the %s player, pacing %s)", benchmark_maps[benchmark.map].name,
+		benchmark.bots, benchmark.bot_player ? "bot" : "scripted", benchmark.pacing);
 }
 
 /* the run over: its settings given back and the main menu asked for, its
@@ -253,11 +336,17 @@ static void benchmark_about(
 	long kills,
 	long ticks)
 {
+	char bots[64] = "";
+
+	if (benchmark.bots_asked > benchmark.bots)
+		snprintf(bots, sizeof(bots), " (%ld asked for: the most this map takes)", benchmark.bots_asked);
 	snprintf(text, size,
-		"Scenario: %s, Slayer, %s bots, seed %s, the scripted player; %.0f seconds measured from %.1f s of "
+		"Scenario: %s (%s), Slayer, %ld bots%s, seed %s, %s; %.0f seconds measured from %.1f s of "
 		"the match (%ld game ticks, %ld kills in them)\n"
 		"Frame pacing: %s\n",
-		BENCHMARK_MAP, BENCHMARK_BOTS, BENCHMARK_SEED, BENCHMARK_SECONDS, benchmark.measure_second, ticks, kills,
+		benchmark_maps[benchmark.map].title, benchmark_maps[benchmark.map].name, benchmark.bots, bots,
+		BENCHMARK_SEED, benchmark.bot_player ? "a bot player (bots.skill normal)" : "the scripted player",
+		BENCHMARK_SECONDS, benchmark.measure_second, ticks, kills,
 		!strcmp(benchmark.pacing, "uncapped") ?
 			"uncapped (vsync, variable refresh and the frame cap off for the run; a cap of " BENCHMARK_UNCAPPED_FPS
 			" fps)" :
@@ -268,14 +357,14 @@ static void benchmark_finish(
 	long kills,
 	long ticks)
 {
-	char about[512];
+	char about[640];
 	int width = 0, height = 0;
 
 	benchmark_about(about, sizeof(about), kills, ticks);
 	platform_video_drawable_size(&width, &height);
 	snprintf(benchmark.window, sizeof(benchmark.window), "%dx%d", width, height);
 	report_processor_text(benchmark.processor, sizeof(benchmark.processor));
-	if (!report_benchmark_write(benchmark.first_frame, report_frames_mark(), BENCHMARK_MAP, about, &benchmark.measure,
+	if (!report_benchmark_write(benchmark.first_frame, report_frames_mark(), benchmark_maps[benchmark.map].name, about, &benchmark.measure,
 		benchmark.verdict, sizeof(benchmark.verdict), benchmark.file, sizeof(benchmark.file)))
 	{
 		if (!benchmark.measure.frames)
@@ -293,14 +382,75 @@ static void benchmark_finish(
 }
 
 void benchmark_request(
-	char const *pacing)
+	char const *pacing,
+	char const *map,
+	char const *bots,
+	char const *player)
 {
 	if (benchmark.state != _benchmark_idle && benchmark.state != _benchmark_done)
 		return;
 	if (!pacing || (strcmp(pacing, "uncapped") && strcmp(pacing, "settings")))
 		pacing = config_string("display.benchmark_pacing");
 	snprintf(benchmark.pacing, sizeof(benchmark.pacing), "%s", strcmp(pacing, "settings") ? "uncapped" : "settings");
+	/* (the scenario: a map not of benchmark_maps Blood Gulch; 1 bot at
+	least, and the map's most at most) */
+	if (!map)
+		map = config_string("display.benchmark_map");
+	benchmark.map = benchmark_map_find(map);
+	if (benchmark.map == NONE)
+	{
+		platform_log("benchmark: \"%s\" is not a map it plays: %s instead", map, BENCHMARK_MAP);
+		benchmark.map = benchmark_map_find(BENCHMARK_MAP);
+	}
+	benchmark.bots_asked = bots ? atol(bots) : config_integer("display.benchmark_bots");
+	if (benchmark.bots_asked < 1)
+		benchmark.bots_asked = 1;
+	benchmark.bots = benchmark.bots_asked < benchmark_maps[benchmark.map].most_bots ? benchmark.bots_asked :
+		benchmark_maps[benchmark.map].most_bots;
+	benchmark.bot_player = strcmp(player ? player : config_string("display.benchmark_player"), "scripted") != 0;
 	benchmark.state = _benchmark_asked;
+}
+
+static void benchmark_map_present(
+	void *context,
+	char const *name,
+	char const *level,
+	char const *kind)
+{
+	int *present = context;
+	short index = benchmark_map_find(name);
+
+	(void)level;
+	if (index != NONE && !strcmp(kind, "xbox"))
+		present[index] = TRUE;
+}
+
+long benchmark_map_choices(
+	int values,
+	char const **pieces,
+	long count,
+	long most)
+{
+	static char shown[NUMBEROF(benchmark_maps)][32];
+	int present[NUMBEROF(benchmark_maps)] = { 0 };
+	short index, at;
+
+	server_maps_each(benchmark_map_present, present);
+	for (index = 0; index < (short)NUMBEROF(benchmark_maps) && count < most; index++)
+	{
+		/* (Blood Gulch is the row's own choice, first) */
+		if (!present[index] || !strcmp(benchmark_maps[index].name, BENCHMARK_MAP))
+			continue;
+		for (at = 0; benchmark_maps[index].title[at] && at < (short)sizeof(shown[0]) - 1; at++)
+		{
+			char letter = benchmark_maps[index].title[at];
+
+			shown[index][at] = letter >= 'a' && letter <= 'z' ? (char)(letter - 'a' + 'A') : letter;
+		}
+		shown[index][at] = 0;
+		pieces[count++] = values ? benchmark_maps[index].name : shown[index];
+	}
+	return count;
 }
 
 void benchmark_frame(
@@ -321,12 +471,12 @@ void benchmark_frame(
 		if (config_command_line_value("--benchmark", value, sizeof(value)) &&
 			(!strcmp(value, "uncapped") || !strcmp(value, "settings")))
 		{
-			benchmark_request(value);
+			benchmark_request(value, NULL, NULL, NULL);
 		}
 		else if (config_command_line_flag("--benchmark"))
-			benchmark_request(NULL);
+			benchmark_request(NULL, NULL, NULL, NULL);
 		else if (config_string("debug.benchmark")[0])
-			benchmark_request(config_string("debug.benchmark"));
+			benchmark_request(config_string("debug.benchmark"), NULL, NULL, NULL);
 	}
 	switch (benchmark.state)
 	{
@@ -355,7 +505,13 @@ void benchmark_frame(
 		if (main_menu_loaded || !game_time_initialized() || !game_in_progress())
 		{
 			if (system_milliseconds() - benchmark.started_ms > BENCHMARK_START_MOST_MS)
-				benchmark_end("the match did not start (is bloodgulch.map in the maps folder?)");
+			{
+				char failure[96];
+
+				snprintf(failure, sizeof(failure), "the match did not start (is %s.map in the maps folder?)",
+					benchmark_maps[benchmark.map].name);
+				benchmark_end(failure);
+			}
 			return;
 		}
 		benchmark.playing = TRUE;
@@ -576,6 +732,10 @@ int benchmark_value(
 	else if (!strcmp(name, "benchmark.file") && !failed)
 		snprintf(value, size, "%s", benchmark.file);
 	else if (!strcmp(name, "benchmark.scenario"))
-		snprintf(value, size, "Blood Gulch, %s bots, %.0f seconds", BENCHMARK_BOTS, BENCHMARK_SECONDS);
+		snprintf(value, size, "%s, %ld bots, %.0f seconds", benchmark_maps[benchmark.map].title, benchmark.bots,
+			BENCHMARK_SECONDS);
+	else if (!strcmp(name, "benchmark.player"))
+		snprintf(value, size, "%s", benchmark.bot_player ? "a bot, at the bots' Normal skill" :
+			"scripted (as before, not the same each run)");
 	return value[0] != 0;
 }

@@ -2996,10 +2996,12 @@ static boolean settings_function(char const *name, struct widget_instance *widge
 	}
 	else if (!strcmp(name, "benchmark"))
 	{
-		/* (RUN BENCHMARK: begun from the main menu, at its pacing as this
-		page shows it, port/linux/game/benchmark.c; Settings closed by the
-		match it starts) */
-		benchmark_request(settings_pending_value("display.benchmark_pacing"));
+		/* (RUN BENCHMARK: begun from the main menu, at its pacing, map,
+		bots and player as this page shows them, port/linux/game/benchmark.c;
+		Settings closed by the match it starts) */
+		benchmark_request(settings_pending_value("display.benchmark_pacing"),
+			settings_pending_value("display.benchmark_map"), settings_pending_value("display.benchmark_bots"),
+			settings_pending_value("display.benchmark_player"));
 		ui_play_audio_feedback_sound(SOUND_FORWARD);
 	}
 	else if (!strcmp(name, "report"))
