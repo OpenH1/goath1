@@ -1418,6 +1418,7 @@ jobs:
         with:
           sparse-checkout: |
             tools/ci_build.py
+            tools/dlss_addon.py
             tools/linux_package.py
             tools/macos_appcast.py
             tools/release_names.py
