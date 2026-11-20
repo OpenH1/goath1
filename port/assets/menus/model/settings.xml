@@ -385,12 +385,8 @@
 			<choice shown="GEMS" value="gems"/>
 			<choice shown="DARK GEMS" value="menu_gems"/>
 		</row>
-		<row key="spartan_link" kind="choice" setting="display.spartan_link" label="SPARTAN LINK" crumb="INTERFACE › HUD" search_choices="small medium large">
-			<help>Your living teammates' views in the HUD's top line, with their names, shields and distances, in co-op and team games: the SPARTAN LINK key (or D-pad Down) shows and hides them. Off: the key does nothing.</help>
-			<choice shown="SMALL" value="small"/>
-			<choice shown="MEDIUM" value="medium"/>
-			<choice shown="LARGE" value="large"/>
-			<choice shown="OFF" value="off"/>
+		<row key="spartan_link" kind="link" label="SPARTAN LINK ›" crumb="INTERFACE › HUD" open="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/spartan_link_screen">
+			<help>Your teammates' views beside the motion tracker in co-op and team games: on or off (B or D-pad Down in a game), and their size.</help>
 		</row>
 		<row key="streaming_speedrun" kind="link" label="STREAMING &amp; SPEEDRUN ›" crumb="INTERFACE › HUD" open="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/streaming/streaming_screen">
 			<help>A state file for stream overlays, an on-screen input display, the match timer, and practice keys for speedrunners.</help>
@@ -1590,6 +1586,29 @@
 			<help>Hold the action button beside an enemy's Ghost, Warthog or landed Banshee to throw the rider out and take it. Online: the host's choice.</help>
 			<choice shown="ON" value="true"/>
 			<choice shown="OFF" value="false"/>
+		</row>
+		<row key="spartan_link" kind="choice" setting="game.spartan_link" label="SPARTAN LINK" crumb="ONLINE › GAMEPLAY">
+			<help>Team games you host: players may show their teammates' views beside the motion tracker. Co-op always has it. Online: the host's choice.</help>
+			<choice shown="ON" value="true"/>
+			<choice shown="OFF" value="false"/>
+		</row>
+		<button key="button_defaults" kind="defaults" run="port settings defaults" help="Puts this page's settings back to their defaults."/>
+		<button key="button_ok" kind="ok" run="port settings keep" help="Saves your changes, on this page and every tab, and applies them."/>
+		<button key="button_cancel" kind="cancel" run="port settings page cancel" help="Goes back without these changes."/>
+	</screen>
+	<screen name="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/spartan_link_screen" kind="settings" layout="page" geometry="tall" title="SPARTAN LINK">
+		<section key="section_0" title="SPARTAN LINK"/>
+		<row key="spartan_link_shown" kind="choice" setting="display.spartan_link_shown" label="SPARTAN LINK" crumb="INTERFACE › SPARTAN LINK">
+			<help>Your living teammates' views beside the motion tracker, with their names, shields and distances, in co-op and team games. In a game the SPARTAN LINK key (B) or D-pad Down turns it on and off, and it stays as you left it.</help>
+			<choice shown="ON" value="true"/>
+			<choice shown="OFF" value="false"/>
+		</row>
+		<row key="spartan_link" kind="choice" setting="display.spartan_link" label="FEED SIZE" crumb="INTERFACE › SPARTAN LINK" search_choices="small medium large">
+			<help>How large the teammates' views are. Off turns the Spartan link off altogether: its key and D-pad Down do nothing.</help>
+			<choice shown="SMALL" value="small"/>
+			<choice shown="MEDIUM" value="medium"/>
+			<choice shown="LARGE" value="large"/>
+			<choice shown="OFF" value="off"/>
 		</row>
 		<button key="button_defaults" kind="defaults" run="port settings defaults" help="Puts this page's settings back to their defaults."/>
 		<button key="button_ok" kind="ok" run="port settings keep" help="Saves your changes, on this page and every tab, and applies them."/>

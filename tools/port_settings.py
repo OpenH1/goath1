@@ -827,6 +827,9 @@ STREAMER = ("interface_settings/streamer_mode", "streamer_mode_screen")
 # stream_state.c), display.input_display (input_display.c) and
 # game.practice_keys (practice.c))
 STREAMING = ("interface_settings/streaming", "streaming_screen")
+# (Interface's SPARTAN LINK: display.spartan_link_shown and display.spartan_link,
+# port/linux/game/spartan_link.c)
+SPARTAN_LINK = ("interface_settings/spartan_link", "spartan_link_screen")
 # (Online's multiplayer rules, the host's choice in a network game, a page of
 # their own once Online had no room for VEHICLE HIJACKING)
 GAMEPLAY = ("network_setup/gameplay", "gameplay_screen")
@@ -1197,12 +1200,11 @@ PAGES = {
              "The buttons the HUD draws. Classic: plain Xbox buttons. Gems: shaded Xbox buttons. Dark Gems: the "
              "menus' button artwork.", None),
             # (port/linux/game/spartan_link.c: co-op and team games; HIGH-RES
-            # TEXT moved to Video's GRAPHICS to make room)
-            ("SPARTAN LINK", "display.spartan_link",
-             [("SMALL", "small"), ("MEDIUM", "medium"), ("LARGE", "large"), ("OFF", "off")],
-             "Your living teammates' views in the HUD's top line, with their names, shields and distances, in "
-             "co-op and team games: the SPARTAN LINK key (or D-pad Down) shows and hides them. Off: the key does "
-             "nothing.", None),
+            # TEXT moved to Video's GRAPHICS to make room; its rows a page of
+            # their own once it had two)
+            ("SPARTAN LINK ›", None, _page_screen(*SPARTAN_LINK),
+             "Your teammates' views beside the motion tracker in co-op and team games: on or off (B or D-pad Down "
+             "in a game), and their size.", None),
             # (the streamers' and runners' tools: a state file, the input
             # display, the match timer, the practice keys; MATCH TIMER moved
             # there to make room for the row)
@@ -1969,6 +1971,27 @@ PAGES = {
             ("VEHICLE HIJACKING", "game.vehicle_hijack", ON_OFF,
              "Hold the action button beside an enemy's Ghost, Warthog or landed Banshee to throw the rider out "
              "and take it. Online: the host's choice.", None),
+            # (port/linux/game/spartan_link.c: a team game's host's,
+            # network_standard.c's network_standard_spartan_link_allowed)
+            ("SPARTAN LINK", "game.spartan_link", ON_OFF,
+             "Team games you host: players may show their teammates' views beside the motion tracker. Co-op "
+             "always has it. Online: the host's choice.", None),
+        ],
+    },
+    SPARTAN_LINK[0]: {
+        "screen": SPARTAN_LINK[1], "title": "SPARTAN LINK",
+        "rows": [
+            (SECTION, "SPARTAN LINK"),
+            # (each player's own, remembered from game to game; the key turns
+            # it over in a game and writes it)
+            ("SPARTAN LINK", "display.spartan_link_shown", ON_OFF,
+             "Your living teammates' views beside the motion tracker, with their names, shields and distances, in "
+             "co-op and team games. In a game the SPARTAN LINK key (B) or D-pad Down turns it on and off, and it "
+             "stays as you left it.", None),
+            ("FEED SIZE", "display.spartan_link",
+             [("SMALL", "small"), ("MEDIUM", "medium"), ("LARGE", "large"), ("OFF", "off")],
+             "How large the teammates' views are. Off turns the Spartan link off altogether: its key and D-pad "
+             "Down do nothing.", None),
         ],
     },
     STREAMING[0]: {
