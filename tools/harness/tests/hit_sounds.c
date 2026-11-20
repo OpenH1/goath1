@@ -135,7 +135,8 @@ static int config_boolean(char const *name)
 {
 	if (!strcmp(name, "network.allow_hit_sounds"))
 		return allow_setting;
-	if (!strcmp(name, "game.auto_pickup") || !strcmp(name, "game.enhanced_animations"))
+	if (!strcmp(name, "game.auto_pickup") || !strcmp(name, "game.enhanced_animations") ||
+		!strcmp(name, "game.spartan_link"))
 		return TRUE;
 	if (!strcmp(name, "game.vehicle_hijack"))
 		return FALSE;
@@ -163,6 +164,8 @@ static struct
 	boolean hosting_no_hit_sounds;
 	boolean hosting_no_direct_camera;
 	boolean hosting_vehicle_hijack;
+	/* (the Spartan link's host rule, stamped with the rest) */
+	boolean hosting_spartan_link;
 	boolean joined;
 } network_standard_globals;
 static struct network_game record;

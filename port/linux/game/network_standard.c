@@ -109,6 +109,10 @@ static struct
 	/* ... and whether it forbids its players' hit sounds (network.allow_hit_sounds
 	false: hit_sounds.c), read so too */
 	boolean hosting_no_hit_sounds;
+	/* ... and whether its team games' players may show their Spartan link
+	(game.spartan_link: spartan_link.c), read so too, and changed in the
+	lobby by its SPARTAN LINK (network_standard_set_spartan_link) */
+	boolean hosting_spartan_link;
 	/* ... OpenCE players may join it (network.allow_opence as the server
 	was made, or as Host Controls' Allow OpenCE players has it since); and
 	OpenCE players may be in it, having been let join since the server was
@@ -230,6 +234,7 @@ void network_standard_server_created(
 	network_standard_globals.hosting_classic_turning = !config_boolean("game.enhanced_animations");
 	network_standard_globals.hosting_vehicle_hijack = config_boolean("game.vehicle_hijack") != 0;
 	network_standard_globals.hosting_no_hit_sounds = !config_boolean("network.allow_hit_sounds");
+	network_standard_globals.hosting_spartan_link = config_boolean("game.spartan_link") != 0;
 	/* (a matchmaking playlist's game: OpenH1's alone, every machine playing
 	by the host's word, Classic's views included) */
 	network_standard_globals.hosting_no_direct_camera = network_standard_globals.hosting && !halo_server_mode() &&
@@ -305,6 +310,50 @@ boolean network_standard_teammate_feeds_allowed(
 	void)
 {
 	return !network_standard_pro_game();
+}
+
+boolean network_standard_spartan_link_allowed(
+	void)
+{
+	struct network_game *game;
+
+	switch (game_connection())
+	{
+	case _game_connection_network_server:
+		/* (the record's word, as the lobby stamped it: a change in a game
+		under way waits for the next game, as its clients' does) */
+		game = global_network_game_server_get() ? network_game_server_get_game(global_network_game_server_get()) :
+			NULL;
+		return !(network_standard_globals.hosting && game &&
+			TEST_FLAG(game->standard_flags, _network_game_no_spartan_link_bit));
+	case _game_connection_network_client:
+		/* (the host's word, as its record brought it; a Legacy host's none) */
+		game = network_game_get_game();
+		return !(network_standard_globals.joined && game &&
+			TEST_FLAG(game->standard_flags, _network_game_no_spartan_link_bit));
+	}
+	return TRUE;
+}
+
+boolean network_standard_hosting_spartan_link(
+	void)
+{
+	return network_standard_globals.hosting && network_standard_globals.hosting_spartan_link;
+}
+
+boolean network_standard_set_spartan_link(
+	boolean on)
+{
+	struct network_game_server *server = global_network_game_server_get();
+
+	if (!server || !network_standard_globals.hosting)
+		return FALSE;
+	network_standard_globals.hosting_spartan_link = on;
+	/* (the lobby's record, which its clients read; in a game under way, the
+	next game's lobby stamps it) */
+	if (!game_in_progress())
+		SET_FLAG(network_game_server_get_game(server)->standard_flags, _network_game_no_spartan_link_bit, !on);
+	return TRUE;
 }
 
 boolean network_standard_direct_camera_allowed(
@@ -698,6 +747,14 @@ void network_standard_stamp_game(
 		network_standard_globals.hosting_classic_turning = !config_boolean("game.enhanced_animations");
 		network_standard_globals.hosting_vehicle_hijack = config_boolean("game.vehicle_hijack") != 0;
 		network_standard_globals.hosting_no_hit_sounds = !config_boolean("network.allow_hit_sounds");
+		network_standard_globals.hosting_spartan_link = config_boolean("game.spartan_link") != 0;
+		/* (the Spartan link's word stamped only here: a change during a
+		game is the next game's) */
+		if (game)
+		{
+			SET_FLAG(game->standard_flags, _network_game_no_spartan_link_bit,
+				network_standard_globals.hosting && !network_standard_globals.hosting_spartan_link);
+		}
 	}
 	if (game)
 	{

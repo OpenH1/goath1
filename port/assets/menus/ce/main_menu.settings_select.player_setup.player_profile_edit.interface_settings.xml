@@ -183,13 +183,12 @@
 		<on event="a" run="port setting segment"/>
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/op_spartan_link" width="344" height="20" flags="pass_unhandled_to_focused_child" bitmap="main_menu/settings/row" color="#FF2896FF" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
+		<on event="a" open="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/spartan_link_screen"/>
+		<on event="start" open="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/spartan_link_screen"/>
+		<on event="left_mouse" run="mouse emit accept event"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link_label"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link_spinner" x="188"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/labels" string_index="3" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
-	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link_spinner" type="spinner" top="1" width="140" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="SMALL|MEDIUM|LARGE|OFF" setting="display.spartan_link" values="small|medium|large|off" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="4 -6 16 0" footer_bounds="4 140 16 146" wide="20 120" source="tools/port_settings.py settings_files/_settings_page">
-		<on event="created" run="port setting load"/>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link_label" type="text" controller="1" width="332" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/labels" string_index="3" color="#FF2896FF" text_x="10" text_y="1" wide="0 244" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/op_streaming_speedrun" width="344" height="20" flags="pass_unhandled_to_focused_child" bitmap="main_menu/settings/row" color="#FF2896FF" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
 		<on event="a" open="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/streaming/streaming_screen"/>
@@ -311,7 +310,7 @@
 		<string text="HUD"/>
 		<string text="HIGH-RES HUD"/>
 		<string text="BUTTON STYLE"/>
-		<string text="SPARTAN LINK"/>
+		<string text="SPARTAN LINK ›"/>
 		<string text="STREAMING &amp; SPEEDRUN ›"/>
 		<string text="MULTIPLAYER"/>
 		<string text="PLAYER NAMES"/>
@@ -328,7 +327,7 @@
 		<string text=""/>
 		<string text="Draws the HUD from sharp high-resolution redraws. Off draws the game's own pictures."/>
 		<string text="The buttons the HUD draws. Classic: plain Xbox buttons. Gems: shaded Xbox buttons. Dark Gems: the menus' button artwork."/>
-		<string text="Your living teammates' views in the HUD's top line, with their names, shields and distances, in co-op and team games: the SPARTAN LINK key (or D-pad Down) shows and hides them. Off: the key does nothing."/>
+		<string text="Your teammates' views beside the motion tracker in co-op and team games: on or off (B or D-pad Down in a game), and their size."/>
 		<string text="A state file for stream overlays, an on-screen input display, the match timer, and practice keys for speedrunners."/>
 		<string text=""/>
 		<string text="In multiplayer, whose names are drawn above their heads."/>

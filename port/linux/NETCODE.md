@@ -2228,6 +2228,14 @@ A party's leader joins a game first and its members follow it in
   bitmaps or models, or are unlisted or unsaid, after a notice to it. The
   host trusts what a client says: a client that leaves a mod out is not
   caught.
+- From protocol version 36 the host of a team game can turn its players'
+  Spartan link off (`game.spartan_link` false: the lobby's and Host
+  Controls' SPARTAN LINK): bit 6 of `standard_flags`
+  (`_network_game_no_spartan_link_bit`), set only as the record is stamped
+  in the lobby, so a change during a game is the next game's, on the host
+  as on its clients (`network_standard_spartan_link_allowed`). Co-op
+  ignores it. A machine of protocol 35 would show its feeds anyway, so the
+  version is raised.
 - The listing's stamp says the host holds room (its fifth byte, 1). A
   Legacy host, and an older OpenH1 one (which drops 128 as a kind it does not
   know), hold nothing: the browser says there is no room guarantee and the

@@ -88,6 +88,7 @@ symbols in this file:
 #include "units/unit_definitions.h"
 #include "units/units.h"
 #include "network_chat.h" /* port: port/linux/game/network_chat.c */
+#include "spartan_link.h" /* port: port/linux/game/spartan_link.c */
 
 #ifdef HALO_VR
 /* port/linux/game/vr_death.c: as the player is back from the VR mode's
@@ -1228,6 +1229,8 @@ void hud_render_unit_interface(
 					{
 						network_chat_note_motion_sensor(local_player_index, motion_sensor_left,
 							(short)(corner.y - (corner.x - motion_sensor_left)));
+						/* port: and the Spartan link goes beside it */
+						spartan_link_note_motion_sensor(local_player_index, motion_sensor_left, corner.x, corner.y);
 					}
 				}
 

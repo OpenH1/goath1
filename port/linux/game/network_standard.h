@@ -58,6 +58,16 @@ view's cap is view_fov.c's (PRO_FIELD_OF_VIEW) */
 boolean network_standard_pro_game(void);
 boolean network_standard_enhanced_lights_allowed(void);
 boolean network_standard_teammate_feeds_allowed(void);
+/* whether a team game's players may show their Spartan link
+(spartan_link.c): not in an OpenH1 network game whose host turned it off
+(game.spartan_link false, as read in the lobby, which the record carries to
+its OpenH1 clients: _network_game_no_spartan_link_bit; a change during a
+game is the next game's); co-op asks none of this. And the host's own word
+(the lobby's and Host Controls' row) and its change: FALSE for a Legacy host
+or a client */
+boolean network_standard_spartan_link_allowed(void);
+boolean network_standard_hosting_spartan_link(void);
+boolean network_standard_set_spartan_link(boolean on);
 /* whether this machine's views may be drawn from the newest step
 (display.direct_camera, render_interpolation.c): not in a game whose host
 says no (a 2V2 Classic game's), whatever the player's setting, which stays

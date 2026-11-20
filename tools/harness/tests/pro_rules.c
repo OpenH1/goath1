@@ -28,6 +28,8 @@ static struct
 	boolean hosting_classic_turning;
 	/* (the hijacks' rule: test_vehicle_hijack.py's) */
 	boolean hosting_vehicle_hijack;
+	/* (the Spartan link's host rule, stamped with the rest) */
+	boolean hosting_spartan_link;
 	/* (hit sounds: hit_sounds.c's host rule) */
 	boolean hosting_no_hit_sounds;
 	boolean mixed;

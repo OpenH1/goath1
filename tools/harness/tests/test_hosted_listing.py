@@ -67,7 +67,8 @@ def generated(fault=None):
         "server_settings_initialize", "ui_widget_port_cooperative_settings_apply",
         "server_start")] + [
         # (Host Controls' VEHICLE HIJACKING row: the lobby's toggle, lobby_menu.inc's, before it as in the build)
-        function(read("port/linux/game/lobby_menu.inc"), "menu_host_vehicle_hijack_toggle")] + [
+        function(read("port/linux/game/lobby_menu.inc"), "menu_host_vehicle_hijack_toggle"),
+        function(read("port/linux/game/lobby_menu.inc"), "menu_host_spartan_link_toggle")] + [
         function(host, name) for name in (
         "host_notice", "host_confirming", "host_confirmed", "host_game", "host_game_teams", "host_game_rows_read",
         "host_game_limits", "host_game_row_text", "host_step_value", "host_password_done", "host_announce_done",

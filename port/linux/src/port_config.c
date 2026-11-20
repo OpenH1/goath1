@@ -437,11 +437,19 @@ static const struct config_setting config_settings[] =
 		"and Jessie's art from Halo PC Restored, 4x the maps' bitmaps;\n"
 		"false draws the maps' own bitmaps." },
 	{ "display.spartan_link", _config_string, "\"medium\"", "HALO_SPARTAN_LINK", _environment_value, _platform_all,
-		"The Spartan link: live feeds of your living teammates' views in the\n"
-		"HUD's top line, each with their name, shield and distance, shown and\n"
-		"hidden with controls.spartan_link (a controller's D-pad Down), off as\n"
-		"each game starts. Co-op and team games only (not Pro 2v2). \"small\",\n"
-		"\"medium\" or \"large\" feeds; \"off\": the key does nothing." },
+		"The Spartan link: live feeds of your living teammates' views beside\n"
+		"the motion tracker, each with their name, shield and distance, shown\n"
+		"and hidden with controls.spartan_link (a controller's D-pad Down).\n"
+		"Co-op and team games only (not Pro 2v2, nor a team game whose host\n"
+		"turned it off: game.spartan_link). \"small\", \"medium\" or \"large\"\n"
+		"feeds; \"off\": the key does nothing." },
+	{ "display.spartan_link_shown", _config_boolean, "false", "HALO_SPARTAN_LINK_SHOWN", _environment_value, _platform_all,
+		"Whether the Spartan link is shown (display.spartan_link): the key\n"
+		"turns it on and off and it stays so from game to game, each player\n"
+		"profile's own.", _scope_player },
+	{ "display.spartan_link_hint", _config_boolean, "false", "HALO_SPARTAN_LINK_HINT", _environment_value, _platform_all,
+		"Whether the Spartan link's key has been shown to this player (once,\n"
+		"in their first co-op or team game that has the link).", _scope_player },
 	{ "display.hud_button_style", _config_string, "\"classic\"", "HALO_HUD_BUTTON_STYLE", _environment_value, _platform_all,
 		"High-res gameplay controller buttons: classic uses the Xbox's stencils;\n"
 		"gems uses shaded Xbox faces; menu_gems uses the menu's button art.\n"
@@ -1587,6 +1595,12 @@ static const struct config_setting config_settings[] =
 		"of this computer's reads it as its map begins; in a network game the\n"
 		"host's decides, read in the lobby; a Legacy game, and OpenCE's\n"
 		"players, always walk over (OpenCE's way)." },
+	{ "game.spartan_link", _config_boolean, "true", "HALO_GAME_SPARTAN_LINK", _environment_value, _platform_all,
+		"Hosting a team game: whether its players may show their Spartan link\n"
+		"(display.spartan_link); false, nobody's shows in it. Co-op always\n"
+		"has it. A network game's host's decides, read in the lobby (the\n"
+		"lobby's and Host Controls' SPARTAN LINK change it); a Legacy game's\n"
+		"OpenCE players have none." },
 	{ "game.vehicle_hijack", _config_boolean, "false", "HALO_VEHICLE_HIJACK", _environment_value, _platform_all,
 		"Halo 2's boarding: a player beside an enemy's Ghost, Warthog or landed\n"
 		"Banshee holds the action button to leap at the seat, throw the rider\n"
