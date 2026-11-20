@@ -282,6 +282,12 @@ void structure_port_clusters_forget(
 		structure_port_sphere_generation = 1;
 }
 
+unsigned long structure_port_clusters_generation(
+	void)
+{
+	return structure_port_sphere_generation;
+}
+
 void structures_initialize(
 	void)
 {

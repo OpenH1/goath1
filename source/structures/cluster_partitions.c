@@ -414,6 +414,7 @@ void cluster_partition_reconnect(
 		radius,
 		NUMBEROF(cluster_indices),
 		cluster_indices);
+	partition->port_reconnect_complete = TRUE;
 
 	if (cluster_count > 64)
 	{
@@ -437,6 +438,8 @@ void cluster_partition_reconnect(
 			partition->port_previous_references);
 
 		partition->port_modification_count++;
+		if (cluster_reference_index == NONE || data_reference_index == NONE)
+			partition->port_reconnect_complete = FALSE;
 		if (cluster_reference_index != NONE && partition->port_cluster_data_references)
 		{
 			partition->port_cluster_data_references[DATUM_INDEX_TO_ABSOLUTE_INDEX(cluster_reference_index)] =
@@ -481,6 +484,80 @@ void cluster_partition_disconnect(
 	return;
 }
 
+boolean cluster_partition_port_bring_first(
+	struct cluster_partition *partition,
+	long datum_index,
+	long first_cluster_reference)
+{
+	struct data_array *array = partition->data_reference_data;
+	long *previous_references = partition->port_previous_references;
+	long *cluster_data_references = partition->port_cluster_data_references;
+	long cluster_reference_index;
+
+	if (!previous_references || !cluster_data_references)
+		return FALSE;
+	/* (each reference where it was put: in a cluster's list, first or after
+	the one noted before it, else nothing is moved) */
+	for (cluster_reference_index = first_cluster_reference;
+		cluster_reference_index != NONE;
+		cluster_reference_index = ((struct data_reference *)datum_get(
+			partition->cluster_reference_data, cluster_reference_index))->next_reference_index)
+	{
+		struct data_reference *cluster_reference = (struct data_reference *)datum_try_and_get(
+			partition->cluster_reference_data, cluster_reference_index);
+		long reference_index;
+		struct data_reference *reference;
+		long noted_previous;
+		struct data_reference *previous;
+		short cluster_index;
+
+		if (!cluster_reference)
+			return FALSE;
+		cluster_index = (short)cluster_reference->datum_index;
+		if (cluster_index < 0 || cluster_index >= MAXIMUM_CLUSTERS_PER_STRUCTURE ||
+			cluster_index >= global_structure_bsp_get()->clusters.count)
+			return FALSE;
+		reference_index = cluster_data_references[DATUM_INDEX_TO_ABSOLUTE_INDEX(cluster_reference_index)];
+		reference = reference_index != NONE ? (struct data_reference *)datum_try_and_get(array, reference_index) : NULL;
+		if (!reference || reference->datum_index != datum_index)
+			return FALSE;
+		noted_previous = previous_references[DATUM_INDEX_TO_ABSOLUTE_INDEX(reference_index)];
+		previous = noted_previous != NONE ? (struct data_reference *)datum_try_and_get(array, noted_previous) : NULL;
+		if (noted_previous == NONE ?
+			partition->cluster_first_data_references[cluster_index] != reference_index :
+			!previous || previous->next_reference_index != reference_index)
+			return FALSE;
+	}
+	/* (each taken out of its list and put first: the list as a disconnect
+	and reconnect leave it, the other references in their order) */
+	for (cluster_reference_index = first_cluster_reference;
+		cluster_reference_index != NONE;
+		cluster_reference_index = ((struct data_reference *)datum_get(
+			partition->cluster_reference_data, cluster_reference_index))->next_reference_index)
+	{
+		struct data_reference *cluster_reference = (struct data_reference *)datum_get(
+			partition->cluster_reference_data, cluster_reference_index);
+		long *first_reference_index = &partition->cluster_first_data_references[(short)cluster_reference->datum_index];
+		long reference_index = cluster_data_references[DATUM_INDEX_TO_ABSOLUTE_INDEX(cluster_reference_index)];
+		struct data_reference *reference = (struct data_reference *)datum_get(array, reference_index);
+		long previous_index = previous_references[DATUM_INDEX_TO_ABSOLUTE_INDEX(reference_index)];
+		long next_index = reference->next_reference_index;
+
+		if (previous_index == NONE)
+			continue;
+		((struct data_reference *)datum_get(array, previous_index))->next_reference_index = next_index;
+		if (next_index != NONE)
+			previous_references[DATUM_INDEX_TO_ABSOLUTE_INDEX(next_index)] = previous_index;
+		reference->next_reference_index = *first_reference_index;
+		previous_references[DATUM_INDEX_TO_ABSOLUTE_INDEX(*first_reference_index)] = reference_index;
+		previous_references[DATUM_INDEX_TO_ABSOLUTE_INDEX(reference_index)] = NONE;
+		*first_reference_index = reference_index;
+		partition->port_modification_count++;
+	}
+
+	return TRUE;
+}
+
 long cluster_partition_get_first_datum(
 	struct cluster_partition const *partition,
 	long *reference_index,
@@ -508,6 +585,7 @@ static void cluster_partition_port_forget(
 	struct cluster_partition *partition)
 {
 	partition->port_modification_count++;
+	partition->port_forget_count++;
 	if (partition->port_previous_references)
 		csmemset(partition->port_previous_references, 0xFF, HALO_PORT_MAXIMUM_CLUSTER_REFERENCES * sizeof(long));
 	if (partition->port_cluster_data_references)

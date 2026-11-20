@@ -35,6 +35,13 @@ struct cluster_partition
 	of them), for what is kept of them while they don't change
 	(object_lights.c's lights_port_cluster) */
 	unsigned long port_modification_count;
+	/* port: counts each forgetting of the references' places (a game state
+	loaded, a new map's lists), and whether the last reconnect put each of
+	its references in (none left out for a full list): what a datum kept
+	in its clusters as they are (object_lights.c's light_port_follow)
+	trusts */
+	unsigned long port_forget_count;
+	boolean port_reconnect_complete;
 };
 
 /* ---------- prototypes/CLUSTER_PARTITIONS.C */
@@ -66,6 +73,13 @@ void cluster_partition_disconnect(
 	struct cluster_partition *partition,
 	long datum_index,
 	long *first_cluster_reference);
+/* port: a datum's references put first in each of its clusters' lists, as
+a disconnect and a reconnect to the same clusters leave them, without
+either: FALSE (nothing changed) when one is not where it should be */
+boolean cluster_partition_port_bring_first(
+	struct cluster_partition *partition,
+	long datum_index,
+	long first_cluster_reference);
 long cluster_partition_get_first_datum(
 	struct cluster_partition const *partition,
 	long *reference_index,

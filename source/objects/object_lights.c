@@ -494,6 +494,11 @@ static boolean light_port_lights_structure(
 static void light_port_drawn_center(
 	struct light_datum const *light,
 	real_point3d *center);
+static void light_port_reconnect(
+	long light_index,
+	short *marker_node_index);
+static void light_port_follow_forget(
+	long light_index);
 
 /* ---------- globals */
 
@@ -534,6 +539,41 @@ boolean debug_lights;
 boolean debug_object_lights;
 struct data_array *light_data;
 struct cluster_partition light_cluster_partition;
+
+/* port: An object's lights follow it: each tick an item, a unit or a
+projectile (_object_dynamic_lighting_recompute_bit) lets its lights go of
+their clusters and puts them back (object_connect_lights), each where its
+marker is, first in its clusters' lists. A weapon lying still, a unit
+standing, did it all again, the same: the marker found by name, the
+clusters by its sphere, the references let go and made anew. What a light
+was put back by is kept here: the marker's node and its matrix, the
+object's permutations and mirroring, the cluster it is in, and where that
+put the light. While all of it is as it was (and the clusters' answers and
+the partition's references the same: structure_port_clusters_generation,
+the partition's port_forget_count, and whether the light joins clusters), it would be put
+in the same clusters at the same place: it is only put first in them again
+(cluster_partition_port_bring_first), the lists as they were left, and
+the light where it was. Not in the game state: forgotten with each new map,
+a bsp's lights let go or put back, and each light let go or put back
+otherwise; a game state loaded changes the partition's count. */
+struct light_port_follow
+{
+	long light_index; /* (NONE: nothing kept) */
+	unsigned long epoch;
+	unsigned long clusters_generation;
+	unsigned long partition_forget_count;
+	boolean connects;
+	short node_index;
+	short cluster_index;
+	boolean mirrored;
+	byte region_permutations[MAXIMUM_REGIONS_PER_OBJECT];
+	real_matrix4x3 node_matrix;
+	real_point3d position;
+	real_vector3d forward;
+	real_vector3d up;
+};
+static struct light_port_follow light_port_follows[MAXIMUM_LIGHTS_PER_MAP];
+static unsigned long light_port_follow_epoch = 1;
 
 /* port: the clusters' lights kept for lighting objects (lights_port_cluster):
 as many as the light partition's lists can hold */
@@ -810,6 +850,7 @@ void lights_initialize_for_new_map(
 	void)
 {
 	light_port_glow_definition = NONE - 1; /* port: (looked for again) */
+	light_port_follow_epoch++; /* port: (light_port_follow) */
 	light_sources_new_map(); /* port: port/linux/game/light_sources.c */
 	data_make_valid(light_data);
 	lights_game_globals->render_lights = TRUE;
@@ -821,6 +862,7 @@ void lights_initialize_for_new_map(
 void lights_dispose_from_old_map(
 	void)
 {
+	light_port_follow_epoch++; /* port: (light_port_follow) */
 	data_make_invalid(light_data);
 	cluster_partition_make_invalid(&light_cluster_partition);
 
@@ -1724,6 +1766,7 @@ void light_delete(
 	/* port: not one let go of (lights_port_recover) */
 	if (!light)
 		return;
+	light_port_follow_forget(light_index);
 	cluster_partition_disconnect(
 		&light_cluster_partition,
 		light_index,
@@ -1898,6 +1941,8 @@ void light_disconnect_from_map(
 {
 	struct light_datum *light = light_get(light_index);
 
+	light_port_follow_forget(light_index);
+
 	if (TEST_FLAG(light->flags, _point_light_connects_to_map_bit))
 	{
 		match_assert(
@@ -1919,6 +1964,8 @@ void lights_disconnect_from_structure_bsp(
 {
 	long light_index;
 
+	light_port_follow_epoch++; /* port: (light_port_follow) */
+
 	for (light_index = data_next_index(light_data, NONE);
 		light_index != NONE;
 		light_index = data_next_index(light_data, light_index))
@@ -1939,6 +1986,8 @@ void lights_reconnect_to_structure_bsp(
 	void)
 {
 	long light_index;
+
+	light_port_follow_epoch++; /* port: (light_port_follow) */
 
 	for (light_index = data_next_index(light_data, NONE);
 		light_index != NONE;
@@ -2381,6 +2430,18 @@ void lights_render_specular(
 void light_reconnect_to_map(
 	long light_index)
 {
+	light_port_follow_forget(light_index);
+	light_port_reconnect(light_index, NULL);
+
+	return;
+}
+
+/* light_reconnect_to_map's, with the node of the object's marker the light
+was put at (NONE: not at one) */
+static void light_port_reconnect(
+	long light_index,
+	short *marker_node_index)
+{
 	struct light_datum *light = light_get(light_index);
 	struct point_light_definition *definition = light_definition_get(light->definition_index);
 	struct object_marker markers[1];
@@ -2388,6 +2449,8 @@ void light_reconnect_to_map(
 	real_point3d position;
 	real radius;
 
+	if (marker_node_index)
+		*marker_node_index = NONE;
 	if (light->parent_light_index == NONE)
 	{
 		object_get_marker_by_name(
@@ -2395,6 +2458,8 @@ void light_reconnect_to_map(
 			object_get_attachment_marker_name(light->object_index, light->attachment_marker_index),
 			markers,
 			1);
+		if (marker_node_index)
+			*marker_node_index = markers[0].node_index;
 		light->position = markers[0].matrix.position;
 		light->forward = markers[0].matrix.forward;
 		light->up = markers[0].matrix.up;
@@ -2438,6 +2503,88 @@ void light_reconnect_to_map(
 			radius,
 			&location);
 		SET_FLAG(light->flags, _point_light_connected_to_map_bit, TRUE);
+	}
+
+	return;
+}
+
+static void light_port_follow_forget(
+	long light_index)
+{
+	short absolute_index = DATUM_INDEX_TO_ABSOLUTE_INDEX(light_index);
+
+	if (absolute_index >= 0 && absolute_index < MAXIMUM_LIGHTS_PER_MAP)
+		light_port_follows[absolute_index].light_index = NONE;
+
+	return;
+}
+
+/* port: light_disconnect_from_map and light_reconnect_to_map, for an
+object's light following it (object_connect_lights): put first in its
+clusters again when it would be put in the same ones at the same place
+(light_port_follow) */
+void light_port_follow_object(
+	long light_index)
+{
+	struct light_datum *light = light_get(light_index);
+	short absolute_index = DATUM_INDEX_TO_ABSOLUTE_INDEX(light_index);
+	struct light_port_follow *follow = absolute_index >= 0 && absolute_index < MAXIMUM_LIGHTS_PER_MAP ?
+		&light_port_follows[absolute_index] : NULL;
+	struct object_datum *object = light->parent_light_index == NONE ?
+		object_try_and_get(light->object_index) : NULL;
+	boolean connects = TEST_FLAG(light->flags, _point_light_connects_to_map_bit);
+	struct location location;
+	short node_index;
+
+	if (!follow || !object)
+	{
+		light_disconnect_from_map(light_index);
+		light_reconnect_to_map(light_index);
+		return;
+	}
+	object_get_location(light->object_index, &location);
+	if (follow->light_index == light_index &&
+		follow->epoch == light_port_follow_epoch &&
+		follow->clusters_generation == structure_port_clusters_generation() &&
+		follow->partition_forget_count == light_cluster_partition.port_forget_count &&
+		follow->connects == connects &&
+		(!connects || TEST_FLAG(light->flags, _point_light_connected_to_map_bit)) &&
+		follow->cluster_index == location.cluster_index &&
+		follow->mirrored == TEST_FLAG(object->object.flags, _object_mirrored_bit) &&
+		!csmemcmp(follow->region_permutations, object->object.region_permutations,
+			sizeof(follow->region_permutations)) &&
+		!csmemcmp(&follow->node_matrix, &object_get_node_matrices(light->object_index)[follow->node_index],
+			sizeof(follow->node_matrix)) &&
+		!csmemcmp(&follow->position, &light->position, sizeof(follow->position)) &&
+		!csmemcmp(&follow->forward, &light->forward, sizeof(follow->forward)) &&
+		!csmemcmp(&follow->up, &light->up, sizeof(follow->up)) &&
+		(!connects || cluster_partition_port_bring_first(&light_cluster_partition, light_index,
+			light->cluster_reference)))
+	{
+		return;
+	}
+
+	light_disconnect_from_map(light_index);
+	light_port_reconnect(light_index, &node_index);
+	/* (kept only when it was put in each of its clusters: one a full list
+	left it out of, it tries again each tick, as before) */
+	if (node_index != NONE &&
+		(!connects || light_cluster_partition.port_reconnect_complete))
+	{
+		follow->light_index = light_index;
+		follow->epoch = light_port_follow_epoch;
+		follow->clusters_generation = structure_port_clusters_generation();
+		follow->partition_forget_count = light_cluster_partition.port_forget_count;
+		follow->connects = connects;
+		follow->node_index = node_index;
+		follow->cluster_index = location.cluster_index;
+		follow->mirrored = TEST_FLAG(object->object.flags, _object_mirrored_bit);
+		csmemcpy(follow->region_permutations, object->object.region_permutations,
+			sizeof(follow->region_permutations));
+		follow->node_matrix = object_get_node_matrices(light->object_index)[node_index];
+		follow->position = light->position;
+		follow->forward = light->forward;
+		follow->up = light->up;
 	}
 
 	return;

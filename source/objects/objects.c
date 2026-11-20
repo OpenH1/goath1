@@ -5228,11 +5228,16 @@ static void object_connect_lights(
 		{
 			if (!object->object.attachment_types[i] && object->object.attachment_indices[i]!=NONE)
 			{
-				if (disconnect)
+				/* port: as both, put back only if it moved (light_port_follow_object) */
+				if (disconnect && reconnect)
+				{
+					light_port_follow_object(object->object.attachment_indices[i]);
+				}
+				else if (disconnect)
 				{
 					light_disconnect_from_map(object->object.attachment_indices[i]);
 				}
-				if (reconnect)
+				else if (reconnect)
 				{
 					light_reconnect_to_map(object->object.attachment_indices[i]);
 				}
