@@ -1,7 +1,8 @@
 """The real vehicle_hijack_seat_allowed (vehicle_hijack.c) and network_standard.c's rule: an enemy's Ghost or Warthog
 driver, a Warthog's gunner, a landed Banshee's pilot may be hijacked; an ally, the Scorpion, a turret, a passenger, a
 flying Banshee never; the rule is an OpenH1 host's (its record and its word), never a Legacy game's, a local game's
-setting, a demo's recording's."""
+setting, a demo's recording's. The host's lobby's VEHICLE HIJACKING (lobby_menu.inc's menu_host_vehicle_hijack_toggle,
+Host Controls' row's too) sets the host's rule, the record a client in the lobby reads and config.toml's."""
 
 import re
 import sys
@@ -12,7 +13,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from harness import CHECK_FAILED, build, enum_with, function, mutated, read, run, structure  # noqa: E402
 
-CASES = ["enemy", "seat", "banshee", "rule-off", "host", "client", "local"]
+CASES = ["enemy", "seat", "banshee", "rule-off", "host", "client", "local", "lobby-toggle"]
 
 # a fault in the code and the case that must catch it
 NEGATIVE_CONTROLS = {
@@ -38,6 +39,9 @@ NEGATIVE_CONTROLS = {
     # (a client's own setting, not its host's)
     "client-own-setting": (("return TEST_FLAG(game->standard_flags, _network_game_vehicle_hijack_bit);\n\tdefault:",
                             "return network_standard_globals.local_vehicle_hijack;\n\tdefault:"), "client"),
+    # (the lobby's choice only config.toml's: the host's rule and the record its clients read unchanged until the
+    # game starts)
+    "lobby-config-only": (("\tif (!network_standard_set_vehicle_hijack(on))\n\t\treturn FALSE;\n", ""), "lobby-toggle"),
     # (a demo played by this machine's setting)
     "demo-own-setting": (("if (demo_playback_rules(&rules))\n\t{\n\t\tgame = demo_playback_recorded_game();",
                           "if (FALSE && demo_playback_rules(&rules))\n\t{\n\t\tgame = demo_playback_recorded_game();"),
@@ -59,6 +63,9 @@ def generated(fault=None):
     code = "\n".join([
         function(read("port/linux/game/vehicle_hijack.c"), "vehicle_hijack_seat_allowed"),
         function(read("port/linux/game/network_standard.c"), "network_standard_vehicle_hijack"),
+        function(read("port/linux/game/network_standard.c"), "network_standard_hosting_vehicle_hijack"),
+        function(read("port/linux/game/network_standard.c"), "network_standard_set_vehicle_hijack"),
+        function(read("port/linux/game/lobby_menu.inc"), "menu_host_vehicle_hijack_toggle"),
     ])
     if fault:
         code = mutated(code, *fault)

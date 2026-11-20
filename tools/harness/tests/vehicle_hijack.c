@@ -59,6 +59,26 @@ static boolean demo_playback_rules(unsigned long *rules)
 	return TRUE;
 }
 static struct network_game *demo_playback_recorded_game(void) { return demo_game; }
+static boolean demo_playing(void) { return playing; }
+
+/* the host's server (none on a client), the word its clients are sent, and
+config.toml's game.vehicle_hijack as written */
+struct network_game_server { int unused; };
+static struct network_game_server server;
+static boolean serving;
+static struct network_game_server *global_network_game_server_get(void) { return serving ? &server : NULL; }
+static struct network_game *network_game_server_get_game(struct network_game_server *of) { (void)of; return &record; }
+static short sent_rule = NONE;
+static void network_hijack_send_rule(boolean on) { sent_rule = (short)on; }
+static char written[8];
+static int config_write(char const *name, char const *value)
+{
+	if (strcmp(name, "game.vehicle_hijack"))
+		return 0;
+	snprintf(written, sizeof(written), "%s", value);
+	return 1;
+}
+static void platform_log(char const *format, ...) { (void)format; }
 
 #include "under_test.inc"
 
@@ -212,6 +232,34 @@ int main(int argc, char **argv)
 		SET_FLAG(record.standard_flags, _network_game_vehicle_hijack_bit, TRUE);
 		network_standard_globals.local_vehicle_hijack = FALSE;
 		CHECK(network_standard_vehicle_hijack(), "a host's demo played this machine's setting");
+		return 0;
+	}
+	/* the host's lobby's VEHICLE HIJACKING turned on: the host's rule, the
+	record a client in the lobby reads (and its word sent), config.toml's;
+	then off again; a Legacy host's does nothing */
+	CASE("lobby-toggle")
+	{
+		connection = _game_connection_network_server;
+		serving = TRUE;
+		network_standard_globals.hosting = TRUE;
+		CHECK(menu_host_vehicle_hijack_toggle(), "an OpenH1 host could not turn hijacking on");
+		CHECK(network_standard_vehicle_hijack(), "the host does not play the rule it turned on");
+		CHECK(sent_rule == TRUE, "the host's clients were not told");
+		CHECK(!strcmp(written, "true"), "config.toml's game.vehicle_hijack was not written on");
+		/* (a client in the lobby: the host's record) */
+		connection = _game_connection_network_client;
+		network_standard_globals.joined = TRUE;
+		CHECK(network_standard_vehicle_hijack(), "a client does not see the rule its host turned on");
+		connection = _game_connection_network_server;
+		CHECK(menu_host_vehicle_hijack_toggle(), "an OpenH1 host could not turn hijacking off");
+		CHECK(!network_standard_vehicle_hijack() && sent_rule == FALSE && !strcmp(written, "false"),
+			"the host's rule, its word or config.toml's stayed on");
+		connection = _game_connection_network_client;
+		CHECK(!network_standard_vehicle_hijack(), "a client still sees the rule its host turned off");
+		connection = _game_connection_network_server;
+		network_standard_globals.hosting = FALSE;
+		written[0] = 0;
+		CHECK(!menu_host_vehicle_hijack_toggle() && !written[0], "a Legacy host turned hijacking on");
 		return 0;
 	}
 	fprintf(stderr, "no case %s\n", case_name);

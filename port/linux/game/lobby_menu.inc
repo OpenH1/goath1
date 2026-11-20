@@ -27,7 +27,9 @@ the host's bots in any game but co-op (BOTS: NONE, ADD n or FILL TO n, the
 choices Host Controls' BOTS steps, network_host_controls.c; SKILL and
 TEAMS, bots.skill and bots.teams: each written as it changes, which the
 host's bots follow, dimmed for a gametype the bots do not play, and BOTS
-for a matchmaking game's, its playlist's), how the game is, and the host's
+for a matchmaking game's, its playlist's), a GOAT H1 game's host's
+HIJACK (game.vehicle_hijack, as Host Controls' row has it), how the
+game is, and the host's
 GAME SETTINGS (Server Setup, in the lobby's place), HOST CONTROLS and START
 GAME, or a player's WAITING FOR THE HOST.
 
@@ -1862,6 +1864,23 @@ void pc_menu_speaker_note(struct widget_instance *text, long machine)
 	lobby_icons.updated_at = system_milliseconds();
 }
 
+/* the host's VEHICLE HIJACKING turned the other way (the lobby's choice and
+Host Controls' row): the rule at once, the game's record's (which a client
+in the lobby reads) and the clients of a game under way told
+(network_standard.c), and config.toml's game.vehicle_hijack, which the
+lobby's record is stamped from again until the game starts and the next
+game hosted takes. FALSE for a Legacy host, whose machines never hijack */
+static boolean menu_host_vehicle_hijack_toggle(void)
+{
+	boolean on = !network_standard_hosting_vehicle_hijack();
+
+	if (!network_standard_set_vehicle_hijack(on))
+		return FALSE;
+	if (!config_write("game.vehicle_hijack", on ? "true" : "false"))
+		platform_log("menus: could not write game.vehicle_hijack to config.toml");
+	return TRUE;
+}
+
 /* text (UTF-16) as a binding's value, UTF-8: nonzero if it has any */
 static int lobby_screen_words(wchar_t const *text, char *value, unsigned long size)
 {
@@ -2007,6 +2026,11 @@ int pc_menu_lobby_value(char const *name, char *value, unsigned long size)
 		yes = controls->bots_locked;
 	else if (!strcmp(name, "lobby.bots.count.locked"))
 		yes = controls->bots_locked || bots_matchmaking_on();
+	/* (the host's VEHICLE HIJACKING: a GOAT H1 game's, co-op's too) */
+	else if (!strcmp(name, "lobby.hijack"))
+		usnprintf(text, NUMBEROF(text) - 1, network_standard_hosting_vehicle_hijack() ? L"ON" : L"OFF");
+	else if (!strcmp(name, "lobby.hijack.shown"))
+		yes = controls->start && model->standard;
 	/* (how the game is; START GAME's words, the countdown; a player's
 	waiting) */
 	else if (!strcmp(name, "lobby.status"))
@@ -2079,6 +2103,9 @@ int pc_menu_lobby_action(struct widget_instance *widget, struct event_record *ev
 			return TRUE;
 		return lobby_board_team(widget, controller, (short)(row / rows == 1 ? 1 : 0));
 	}
+	/* (either way turns it over: ON and OFF) */
+	if (!strncmp(name, "lobby hijack ", 13))
+		return model->controls.start && model->standard && menu_host_vehicle_hijack_toggle();
 	if (!model->controls.bots || model->controls.bots_locked)
 		return FALSE;
 	if (!strncmp(name, "lobby bots ", 11))

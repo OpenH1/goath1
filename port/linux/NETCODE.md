@@ -2024,8 +2024,9 @@ game (its numbers pending: `port/linux/net_changes/vehicle-hijack.txt`):
 - The rule is the host's `game.vehicle_hijack`, read in the lobby as the
   pickup's way is, carried in bit 7 of the record's `cooperative_flags`
   (`_network_game_vehicle_hijack_bit`), which an OpenCE machine's copy leaves
-  clear (`network_standard_vehicle_hijack`). Host Controls' VEHICLE
-  HIJACKING changes it during a game: the host's own at once, its record's
+  clear (`network_standard_vehicle_hijack`). The lobby's HIJACK (the
+  host's, beside its bots) and Host Controls' VEHICLE HIJACKING change it
+  in the lobby or during a game, writing `game.vehicle_hijack` too: the host's own at once, its record's
   bit (which a machine that joins takes, and a host's demo has each tick),
   and its OpenH1 clients told. A Legacy game never hijacks, nor does an
   OpenCE machine's player, nor is one hijacked, in a mixed game.
