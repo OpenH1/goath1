@@ -2798,6 +2798,18 @@ static const struct config_setting config_settings[] =
 		"With debug.bot_player, a vehicle (part of its tag's name: \"warthog\",\n"
 		"\"ghost\") the player's bot boards when it is on foot, and drives at the\n"
 		"enemies it fights." },
+	{ "debug.campaign_bot", _config_boolean, "false", "HALO_CAMPAIGN_BOT", _environment_set_is_true, _platform_all,
+		"Benchmarks: a campaign level's first player played by code, the same\n"
+		"every run (port/linux/game/bots.c, docs/campaign_bot.md): it fights\n"
+		"the enemies in sight and walks debug.campaign_bot_route's places,\n"
+		"logging them and the checkpoints with their ticks." },
+	{ "debug.campaign_bot_route", _config_string, "\"\"", "HALO_CAMPAIGN_BOT_ROUTE", _environment_value, _platform_all,
+		"With debug.campaign_bot, the route file it walks, in the data folder\n"
+		"(beside maps: campaign_bot/b30.txt, from tools/campaign_bot); empty:\n"
+		"none, it fights and walks on ahead." },
+	{ "debug.campaign_bot_seconds", _config_real, "0.0", "HALO_CAMPAIGN_BOT_SECONDS", _environment_value, _platform_all,
+		"With debug.campaign_bot, quit once it has played this many seconds of\n"
+		"the level (game time); 0 never." },
 	{ "debug.update_answer", _config_string, "\"\"", "HALO_UPDATE_ANSWER", _environment_value, _platform_desktop,
 		"The answer to the new version question, for automated tests: \"yes\",\n"
 		"\"no\" or \"never\" (do not ask again, confirmed); empty asks." },
