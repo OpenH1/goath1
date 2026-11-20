@@ -105,7 +105,7 @@ takes it for a newer version and does not join. Raise it with any change to
 what a Standard game's machines send each other, and with every raise of
 HALO_PORT_NETWORK_VERSION: HALO_PORT_STANDARD_BASE_VERSION is the network
 version it was last raised for, and the build fails until they agree. */
-#define HALO_PORT_STANDARD_NETWORK_VERSION 34
+#define HALO_PORT_STANDARD_NETWORK_VERSION 35
 /* (1: the rate agreed; 2: the players' sub-steps sent, network_substeps.c;
 3: OpenCE players in the game, network_standard.c's mixed games; 4: a
 player moved to the other team by the host, network_host_controls.c; 5:
@@ -194,7 +194,9 @@ _distributed_message_vehicle_hijack); 33: an OpenH1 game's smaller
 messages and their timing, NETCODE.md's "Versions", on network version 44
 still; 34: every player of a 60 or 120 game moves in the fast phase with each
 sub-step's input, not only the first 16 (bipeds.c's MAXIMUM_SUBSTEP_BIPEDS,
-vehicles.c's MAXIMUM_SUBSTEP_VEHICLES).
+vehicles.c's MAXIMUM_SUBSTEP_VEHICLES); 35: a bot's biped moves its
+sub-steps in its update, as the AI's does, not in the fast phase (bipeds.c's
+biped_moves_in_substeps).
 Legacy games, and what an OpenCE machine sees, are unchanged) */
 #define HALO_PORT_STANDARD_BASE_VERSION 44
 #define HALO_PORT_STANDARD_VERSION_BIT 0x8000

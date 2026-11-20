@@ -278,6 +278,9 @@ symbols in this file:
 #include "structures/structure_bsp_definitions.h"
 #include "network_coop.h" /* port: port/linux/game/network_coop.c */
 #include "sim_rate.h" /* port: port/linux/game/sim_rate.c */
+/* port: port/linux/game/bots.c's: a player a bot plays, as every machine
+of the game tells it */
+int bots_player_is_bot(long player_index);
 
 /* port: a lift's carry of an AI's biped this tick, a share a sub-step
 (devices/device_machines.c; its header's scenario structures are this
@@ -558,9 +561,10 @@ sub-steps are by the share still to come (device_machines.c's
 machine_elevator_carried), so it rides a share a sub-step either way. */
 enum
 {
-	/* a player's biped each, at most (a game's most players: past the 16
+	/* a person's biped each, at most (a game's most players: past the 16
 	this once held, the others took the AI's way, every sub-step moved in the
-	tick at once with the tick's input) */
+	tick at once with the tick's input). A bot's takes the AI's way: its
+	controls are the tick's, the same at each sub-step */
 	MAXIMUM_SUBSTEP_BIPEDS = HALO_PORT_MAXIMUM_NETWORK_PLAYERS,
 	/* the AI's bipeds whose sub-steps a tick keeps, at most (the array grows
 	to the most a tick has had) */
@@ -4652,8 +4656,13 @@ in the order the game always had */
 static boolean biped_moves_in_substeps(
 	long biped_index)
 {
+	long player_index = biped_get(biped_index)->unit.player_index;
+
+	/* (a bot's, whose controls are the tick's at every sub-step, moves its
+	sub-steps in its update as the AI's does: biped_substep_inline) */
 	return sim_substep_index() == NONE &&
-		biped_get(biped_index)->unit.player_index != NONE &&
+		player_index != NONE &&
+		!bots_player_is_bot(player_index) &&
 		object_lane_moves_in_substeps(biped_index);
 }
 
