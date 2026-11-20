@@ -561,6 +561,13 @@ def graphics_values(run):
     return [run("get", f"display.{name}") for name in GRAPHICS_SETTINGS]
 
 
+def classic_but(**values):
+    # Classic's values with the named settings' own, so a setting the preset
+    # gains later is checked here too
+    assert set(values) <= set(GRAPHICS_SETTINGS)
+    return [values.get(name, value) for name, value in zip(GRAPHICS_SETTINGS, GRAPHICS_CLASSIC)]
+
+
 def test_graphics_preset_chooses_the_settings_left_to_it(config_check_mac):
     """display.graphics gives the settings it covers their values where the
     player has not set them; Classic and Enhanced written choose them all,
@@ -587,7 +594,7 @@ def test_graphics_preset_keeps_a_setting_set(config_check_mac, monkeypatch):
     run("write", "display.anisotropic_filtering", "8")
     assert "\nanisotropic_filtering = 8\n" in run.config.read_text()
     run("write", "display.graphics", "classic")
-    assert graphics_values(run) == ["off", "8", "128", "false", "auto", "classic", "false", "false"]
+    assert graphics_values(run) == classic_but(anisotropic_filtering="8")
     # (at the preset's value: commented out, the preset's again)
     run("write", "display.anisotropic_filtering", "0")
     assert "\n# anisotropic_filtering = 0\n" in run.config.read_text()
@@ -603,7 +610,7 @@ def test_graphics_preset_keeps_a_setting_set(config_check_mac, monkeypatch):
     # (and by their variables, for one run)
     monkeypatch.setenv("HALO_GRAPHICS", "classic")
     monkeypatch.setenv("HALO_MODEL_DETAIL", "highest")
-    assert graphics_values(run) == ["off", "0", "128", "false", "highest", "classic", "false", "false"]
+    assert graphics_values(run) == classic_but(model_detail="highest")
     # (display.soft_particles set wins over the preset, either way)
     monkeypatch.delenv("HALO_MODEL_DETAIL")
     run("write", "display.soft_particles", "true")
