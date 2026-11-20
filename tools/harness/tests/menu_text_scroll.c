@@ -285,6 +285,9 @@ static void case_wrap(void)
 		"a short value: %ls", value.text);
 	CHECK(settings_panel_wrap(&short_wrapping, &value, LONG_NAME L" " LONG_NAME, 3) == 3 &&
 		ends_with_dots(value.text), "a value past its lines: %ls", value.text);
+	/* (a folder's path wider than a line: wrapped after its slashes, whole) */
+	CHECK(settings_panel_wrap(&short_wrapping, &value, L"C:/Users/someone/Halo/maps", 3) == 3 &&
+		!wcscmp(value.text, L"C:/Users/\r\nsomeone/Halo/\r\nmaps"), "a path: %ls", value.text);
 }
 
 int main(int argc, char **argv)

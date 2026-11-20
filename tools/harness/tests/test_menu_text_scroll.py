@@ -1,7 +1,7 @@
 """A menu's line too long for its box (issue 899; port/linux/game/menu_functions.c): while its row has the focus the
 whole line scrolls (still at its start, moved at a steady speed, still at its end, again), cut to its box; while not,
 it is cut short with "..."; a line a fit cut short keeps its whole text for it; the settings panel wraps a long value
-onto more lines, whole; and none of it is measured again as it is drawn each frame. ui_widget.c draws each text box's
+onto more lines, whole, a word too wide for a line (a folder's path) after a slash; and none of it is measured again as it is drawn each frame. ui_widget.c draws each text box's
 and spinner's line through it, the high-res text by fractions of a unit (rasterizer_text.c)."""
 
 import re
@@ -38,6 +38,8 @@ NEGATIVE_CONTROLS = {
                       "\tif (FALSE && text && !menu_text_same(fitted, text))\n\t{"), "fitted"),
     # a row hidden and shown again goes on where it was
     "hidden-goes-on": ((" || now - line->drawn_time > MENU_TEXT_SCROLL_GONE", ""), "refocus"),
+    # a word too wide for a line (a folder's path) left whole, wider than its box, not wrapped after a slash
+    "path-not-wrapped": (("\t\tword = settings_word_fit(text, word, font, width);\n", ""), "wrap"),
     # the panel cuts its value to one line
     "panel-cuts": (("menu_text_wrap_lines(font, text, width, most, wrapping->wrapped)",
                     "menu_text_wrap_lines(font, text, width, 1, wrapping->wrapped)"), "wrap"),
@@ -53,7 +55,8 @@ def generated(fault=None):
     code = "\n\n".join([defines, structure(menus, "menu_text_line"), structure(menus, "settings_panel_wrapping"),
                         "static struct menu_text_line menu_text_lines[MENU_TEXT_LINES];"] +
                        [function(menus, name) for name in (
-                           "settings_wide_copy", "menu_text_same", "menu_text_one_line", "settings_text_wrap",
+                           "settings_wide_copy", "menu_text_same", "menu_text_one_line", "settings_word_fit",
+                           "settings_text_wrap",
                            "menu_text_cut", "menu_text_fit", "menu_text_wrap_lines", "menu_text_scroll_offset",
                            "menu_text_line_of", "menu_text_box_fit_to", "pc_menu_text_line", "settings_panel_wrap")])
     if fault:
