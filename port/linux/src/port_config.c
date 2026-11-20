@@ -2617,6 +2617,12 @@ static const struct config_setting config_settings[] =
 		"pings what it aims at, again (taking it away) and again; then a client\n"
 		"sends one as another's player (refused) and a burst (counted)\n"
 		"(port/linux/NETCODE.md); 0 never." },
+	{ "debug.network_test_teammate_ping", _config_real, "0.0", "HALO_NETWORK_TEST_TEAMMATE_PING", _environment_value,
+		_platform_all,
+		"This many seconds into an automated test game (the host's, or a game of\n"
+		"one machine) the first player's first ally of another machine, or a bot,\n"
+		"pings what they aim at, once (the Spartan link's pop-up:\n"
+		"port/linux/game/spartan_link.c); 0 never." },
 	{ "debug.network_test_party", _config_real, "0.0", "HALO_NETWORK_TEST_PARTY", _environment_value, _platform_all,
 		"This many seconds into an automated test game the host invites each\n"
 		"player it may to its party (unless debug.party leads one), a client asks\n"
