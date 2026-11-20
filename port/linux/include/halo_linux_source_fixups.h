@@ -313,6 +313,11 @@ vertices and indices: the caller sets nothing else between them, and each
 is drawn with the last's pipeline, textures and constants as they were
 prepared (port/linux/src/d3d8_device.c: the shadows' receivers) */
 void d3d8_draw_state_kept(int kept);
+/* an immediate-mode draw (Begin, the vertices, End) of vertices kept packed:
+the registers of written alone, in register order, four floats each
+(port/linux/src/d3d8_device.c: the decals) */
+void d3d8_draw_immediate_packed(int primitive, unsigned long written, const float *vertices,
+	unsigned long count);
 /* the renderer's number for a render target's surface, another whenever its
 pixels are made anew (0: none): what a caller keeps in it from frame to
 frame is gone once it changes (port/linux/src/d3d8_device.c) */

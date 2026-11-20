@@ -139,6 +139,7 @@ symbols in this file:
 #include "rasterizer/xbox/rasterizer_xbox.h"
 #include "rasterizer/xbox/rasterizer_xbox_pixel_shader.h"
 #include "saved games/game_state.h"
+#include "structures/structures.h" /* port: (decal_orders) */
 #include "cache/cache_files.h" /* port: (rasterizer_decals_port_enumerate) */
 
 /* ---------- constants */
@@ -298,38 +299,76 @@ vertices, instead of a draw each. A long fight leaves hundreds of decals in
 view, and a draw is work for the command stream and the driver; on the
 Xbox each was a few words of push buffer. The
 vertices are the decal's own (position, then its texture coordinates as the
-declaration's normalized shorts), given as immediate data. */
+declaration's normalized shorts), given as immediate data, packed as the
+draw's record has them (d3d8_draw_immediate_packed): each vertex its
+position, its texture coordinates and its decal's color, four floats each
+(registers 0, 4 and 9, as SetVertexData4f, SetVertexData2f and
+SetVertexData4ub gave them), from what is kept of the decal
+(decal_draw_kept). */
 #define DECAL_BATCH_MAXIMUM_DECALS 256
+#define DECAL_BATCH_REGISTERS ((1UL << 0) | (1UL << 4) | (1UL << 9))
+#define DECAL_BATCH_VERTEX_FLOATS 12
+#define DECAL_VERTEX_SLOTS (DECAL_VERTEX_CACHE_SIZE / sizeof(struct decal_vertex))
 static struct
 {
-	struct decal_vertex const *vertices;
-	short vertex_count;
-	byte color[4];
 	real bounds[6]; /* its vertices' box: x0, x1, y0, y1, z0, z1 */
 } decal_batch[DECAL_BATCH_MAXIMUM_DECALS];
 static short decal_batch_count = 0;
+/* (a batch's decals are each in its own block of the vertex cache: no more
+vertices than it has) */
+static float decal_batch_vertices[DECAL_VERTEX_SLOTS * DECAL_BATCH_VERTEX_FLOATS];
+static unsigned long decal_batch_vertex_count = 0;
 
 static void rasterizer_decals_draw_batch(void);
 
-/* port: whether a decal of these vertices overlaps one already in the batch.
-A double multiply decal's draw blends in its pixel shader with display.hdr
-(docs/hdr.md: its ceiling at paper white), reading the pixel it draws over,
-and a draw's triangles see one another's writes in order only where the GPU
-orders those reads (Metal's programmable blending does; Vulkan's local reads
-on most desktop GPUs do not). Two such decals one over the other in a draw
-(a Scorpion's scorch over the last one) blended each over the pixel as it was
-before the draw: the one under was lost inside a lighter patch with a quad's
-straight edges, and which one changed from frame to frame. Decals that
-overlap are drawn as the Xbox drew them, one draw after another. Their boxes
-are grown by a margin: two decals on one flat floor lie a little off it,
-each by its own amount. */
-#define DECAL_BATCH_OVERLAP_MARGIN 0.05f
-static boolean rasterizer_decal_batch_overlaps(
+/* port: what drawing a decal takes from it, kept from the first frame it is
+drawn on (rasterizer_decal_draw_kept) rather than found again each frame,
+for each layer and each of its vertices: its definition's blend function
+and bitmap, its key and place in its cluster's draw order, its vertices'
+box and its vertices as the draw gives them (decal_vertex_floats, at its
+block of the vertex cache). A decal's vertices, definition and bitmap are
+made once, with it (decal_new_from_collision writes its vertices under
+_rasterizer_decal_vertices_lock, which forgets what was kept of the decal
+there); its color and its intensity (fading out) are read every frame. What
+is kept is the decal's while its index, its time made, its definition, its
+bitmap and its block of the vertex cache are the same, and nothing is kept
+once the game state is read back over
+(rasterizer_decals_port_game_state_rewritten) or the vertex cache flushed. */
+struct decal_draw_kept
+{
+	long decal_index; /* NONE: nothing kept */
+	long creation_time;
+	long definition_index;
+	unsigned long vertex_offset;
+	short quad_count;
+	byte bitmap_index;
+	short framebuffer_blend_function;
+	long map_index;
+	/* its key in the order (rasterizer_decals_draw_order): 0xFFFFFFFF if its
+	blend function does not commute */
+	unsigned long order_key;
+	/* its first vertex in decal_vertex_floats (NONE: its vertices could not
+	be read, and it is not drawn) */
+	long vertex_slot;
+	real bounds[6];
+	/* the order it was last put in (decal_orders' serial, 0 none) and its
+	place in that cluster's list */
+	unsigned long order_serial;
+	long order_position;
+};
+
+static struct decal_draw_kept decal_draw_kepts[MAXIMUM_DECALS_PER_MAP];
+/* each vertex of the vertex cache as the draw gives it: its position (and
+1), then its texture coordinates (and 0, 1) */
+static float decal_vertex_floats[DECAL_VERTEX_SLOTS][8];
+
+/* the box of a decal's vertices: x0, x1, y0, y1, z0, z1 */
+static void rasterizer_decal_bounds(
 	struct decal_vertex const *vertices,
 	short vertex_count,
 	real bounds[6])
 {
-	short vertex_index, batch_index;
+	short vertex_index;
 
 	bounds[0] = bounds[2] = bounds[4] = 1e30f;
 	bounds[1] = bounds[3] = bounds[5] = -1e30f;
@@ -344,6 +383,29 @@ static boolean rasterizer_decal_batch_overlaps(
 		bounds[4] = MIN(bounds[4], point->z);
 		bounds[5] = MAX(bounds[5], point->z);
 	}
+
+	return;
+}
+
+/* port: whether a decal of this box (rasterizer_decal_bounds) overlaps one
+already in the batch.
+A double multiply decal's draw blends in its pixel shader with display.hdr
+(docs/hdr.md: its ceiling at paper white), reading the pixel it draws over,
+and a draw's triangles see one another's writes in order only where the GPU
+orders those reads (Metal's programmable blending does; Vulkan's local reads
+on most desktop GPUs do not). Two such decals one over the other in a draw
+(a Scorpion's scorch over the last one) blended each over the pixel as it was
+before the draw: the one under was lost inside a lighter patch with a quad's
+straight edges, and which one changed from frame to frame. Decals that
+overlap are drawn as the Xbox drew them, one draw after another. Their boxes
+are grown by a margin: two decals on one flat floor lie a little off it,
+each by its own amount. */
+#define DECAL_BATCH_OVERLAP_MARGIN 0.05f
+static boolean rasterizer_decal_batch_overlaps(
+	real const bounds[6])
+{
+	short batch_index;
+
 	for (batch_index = 0; batch_index < decal_batch_count; batch_index++)
 	{
 		real const *other = decal_batch[batch_index].bounds;
@@ -357,17 +419,95 @@ static boolean rasterizer_decal_batch_overlaps(
 	return FALSE;
 }
 
+/* port: a decal into the batch: its vertices (decal_vertex_floats) each
+with its color (a SetVertexData4ub's: each byte over 255) */
+static void rasterizer_decal_batch_add(
+	float const (*vertices)[8],
+	short vertex_count,
+	byte const color[4],
+	real const bounds[6])
+{
+	float rgba[4];
+	float *out = decal_batch_vertices + decal_batch_vertex_count * DECAL_BATCH_VERTEX_FLOATS;
+	short vertex_index;
+
+	rgba[0] = color[0] / 255.0f;
+	rgba[1] = color[1] / 255.0f;
+	rgba[2] = color[2] / 255.0f;
+	rgba[3] = color[3] / 255.0f;
+	for (vertex_index = 0; vertex_index < vertex_count; vertex_index++)
+	{
+		csmemcpy(out, vertices[vertex_index], 8 * sizeof(float));
+		csmemcpy(out + 8, rgba, sizeof(rgba));
+		out += DECAL_BATCH_VERTEX_FLOATS;
+	}
+	decal_batch_vertex_count += vertex_count;
+	csmemcpy(decal_batch[decal_batch_count].bounds, bounds, 6 * sizeof(real));
+	decal_batch_count++;
+
+	return;
+}
+
 /* port: the order the decals of a cluster are drawn in. Where it makes no
 difference (a run of decals whose blend functions commute: they do not
 write depth, and multiplying, adding, the least or the most of the
 framebuffer and them comes to the same in any order, but for rounding in
 the last bit), they go by their
 blend function and bitmap, so that more of them share a batch
-(decal_batch): a definition's decals pick among its bitmaps at random. */
+(decal_batch): a definition's decals pick among its bitmaps at random.
+Each cluster's order of each layer is kept (decal_orders) until its list
+changes: a walk of the list finds each decal at the place it had when the
+order was made, or the order is made again. */
 static long decal_draw_order[MAXIMUM_DECALS_PER_MAP];
 static unsigned long decal_draw_keys[MAXIMUM_DECALS_PER_MAP];
 static long decal_sort_scratch[MAXIMUM_DECALS_PER_MAP];
 static unsigned long decal_sort_scratch_keys[MAXIMUM_DECALS_PER_MAP];
+
+#define DECAL_ORDER_ARENA_SIZE (8 * MAXIMUM_DECALS_PER_MAP)
+#define DECAL_ORDER_MINIMUM_CAPACITY 8
+static struct
+{
+	unsigned long serial; /* 0: none kept */
+	long count;
+	long first; /* in decal_order_arena */
+	long capacity;
+} decal_orders[NUMBER_OF_DECAL_LAYERS][MAXIMUM_CLUSTERS_PER_STRUCTURE];
+static long decal_order_arena[DECAL_ORDER_ARENA_SIZE];
+static long decal_order_arena_used = 0;
+static unsigned long decal_order_serial = 0;
+
+/* port: nothing kept of any decal or any cluster's order */
+static void rasterizer_decals_forget_kept(
+	void)
+{
+	long index;
+
+	for (index = 0; index < MAXIMUM_DECALS_PER_MAP; index++)
+	{
+		decal_draw_kepts[index].decal_index = NONE;
+		decal_draw_kepts[index].order_serial = 0;
+	}
+	csmemset(decal_orders, 0, sizeof(decal_orders));
+	decal_order_arena_used = 0;
+
+	return;
+}
+
+/* port: nothing kept of the decal of this index (its vertices written, or
+its block given up) */
+static void rasterizer_decal_forget_kept(
+	long decal_index)
+{
+	long absolute_index = DATUM_INDEX_TO_ABSOLUTE_INDEX(decal_index);
+
+	if (absolute_index < MAXIMUM_DECALS_PER_MAP)
+	{
+		decal_draw_kepts[absolute_index].decal_index = NONE;
+		decal_draw_kepts[absolute_index].order_serial = 0;
+	}
+
+	return;
+}
 
 static boolean rasterizer_decal_blend_function_commutes(
 	short framebuffer_blend_function)
@@ -377,6 +517,68 @@ static boolean rasterizer_decal_blend_function_commutes(
 		framebuffer_blend_function == _shader_framebuffer_blend_function_min ||
 		framebuffer_blend_function == _shader_framebuffer_blend_function_max ||
 		framebuffer_blend_function == _shader_framebuffer_blend_function_reverse_subtract;
+}
+
+/* port: what is kept of the decal for drawing it (decal_draw_kept), made
+again if what is kept is another's or none */
+static struct decal_draw_kept *rasterizer_decal_draw_kept(
+	long decal_index)
+{
+	struct decal_datum *decal = DECAL_GET(decal_index);
+	struct decal_draw_kept *kept = &decal_draw_kepts[DATUM_INDEX_TO_ABSOLUTE_INDEX(decal_index)];
+	unsigned long vertex_offset = (unsigned long)lruv_block_get_address(local_vertex_cache, decal_index);
+
+	if (kept->decal_index != decal_index || kept->creation_time != decal->creation_time ||
+		kept->definition_index != decal->definition_index || kept->vertex_offset != vertex_offset ||
+		kept->quad_count != decal->quad_count || kept->bitmap_index != decal->bitmap_index)
+	{
+		struct decal_definition *definition = decal_definition_get(decal->definition_index);
+		short framebuffer_blend_function = definition->shader.framebuffer_blend_function;
+		long vertex_count = 4 * decal->quad_count;
+		byte *vertex_data;
+
+		kept->decal_index = decal_index;
+		kept->creation_time = decal->creation_time;
+		kept->definition_index = decal->definition_index;
+		kept->vertex_offset = vertex_offset;
+		kept->quad_count = decal->quad_count;
+		kept->bitmap_index = decal->bitmap_index;
+		kept->framebuffer_blend_function = framebuffer_blend_function;
+		kept->map_index = definition->shader.map.index;
+		kept->order_key = rasterizer_decal_blend_function_commutes(framebuffer_blend_function) ?
+			((unsigned long)(framebuffer_blend_function & 0xF) << 28) |
+				((unsigned long)(definition->shader.map.index & 0xFFFFF) << 8) |
+				(decal->bitmap_index & 0xFF) :
+			0xFFFFFFFF;
+		kept->vertex_slot = NONE;
+		kept->order_serial = 0;
+		IDirect3DVertexBuffer8_Lock(local_d3d_vertex_buffer, 0, 0, &vertex_data, D3DLOCK_READONLY);
+		if (vertex_data && vertex_count > 0 && vertex_offset % sizeof(struct decal_vertex) == 0 &&
+			vertex_offset / sizeof(struct decal_vertex) + vertex_count <= DECAL_VERTEX_SLOTS)
+		{
+			struct decal_vertex const *vertices = (struct decal_vertex const *)(vertex_data + vertex_offset);
+			long vertex_index;
+
+			kept->vertex_slot = (long)(vertex_offset / sizeof(struct decal_vertex));
+			rasterizer_decal_bounds(vertices, (short)vertex_count, kept->bounds);
+			for (vertex_index = 0; vertex_index < vertex_count; vertex_index++)
+			{
+				struct decal_vertex const *vertex = &vertices[vertex_index];
+				float *floats = decal_vertex_floats[kept->vertex_slot + vertex_index];
+
+				floats[0] = vertex->position.x;
+				floats[1] = vertex->position.y;
+				floats[2] = vertex->position.z;
+				floats[3] = 1.0f;
+				floats[4] = (real)(short)(vertex->texcoord & 0xFFFF) / 32767.0f;
+				floats[5] = (real)(short)(vertex->texcoord >> 16) / 32767.0f;
+				floats[6] = 0.0f;
+				floats[7] = 1.0f;
+			}
+		}
+	}
+
+	return kept;
 }
 
 /* sorts first to last (exclusive) of decal_draw_order by decal_draw_keys,
@@ -412,28 +614,54 @@ static void rasterizer_decals_sort_run(
 	return;
 }
 
-/* the cluster's decals of the layer in the order they are drawn, into
-decal_draw_order; their count */
-static long rasterizer_decals_draw_order(
-	short cluster_index)
+/* the cluster's decals of the layer in the order they are drawn, and their
+count; what is kept of each (decal_draw_kept) is current */
+static long const *rasterizer_decals_draw_order(
+	short cluster_index,
+	long *decal_count)
 {
 	long count = 0, first, decal_index;
+	long first_decal_index = decal_get_first_decal_index(cluster_index, local_layer);
+	boolean same;
 
-	for (decal_index = decal_get_first_decal_index(cluster_index, local_layer);
+	*decal_count = 0;
+	if (first_decal_index == NONE)
+		return decal_draw_order;
+	/* (the order kept: each decal of the list where it was when it was made) */
+	same = decal_orders[local_layer][cluster_index].serial != 0;
+	for (decal_index = first_decal_index;
 		decal_index != NONE && count < MAXIMUM_DECALS_PER_MAP;
 		decal_index = DECAL_GET(decal_index)->next_decal_index)
 	{
-		struct decal_datum *decal = DECAL_GET(decal_index);
-		struct decal_definition *definition = decal_definition_get(decal->definition_index);
-		short framebuffer_blend_function = definition->shader.framebuffer_blend_function;
+		struct decal_draw_kept const *kept = rasterizer_decal_draw_kept(decal_index);
 
+		if (kept->order_serial != decal_orders[local_layer][cluster_index].serial || kept->order_position != count)
+			same = FALSE;
+		count++;
+	}
+	if (same && count == decal_orders[local_layer][cluster_index].count)
+	{
+		*decal_count = count;
+		return &decal_order_arena[decal_orders[local_layer][cluster_index].first];
+	}
+
+	/* (made again) */
+	if (++decal_order_serial == 0)
+	{
+		rasterizer_decals_forget_kept();
+		decal_order_serial = 1;
+	}
+	count = 0;
+	for (decal_index = first_decal_index;
+		decal_index != NONE && count < MAXIMUM_DECALS_PER_MAP;
+		decal_index = DECAL_GET(decal_index)->next_decal_index)
+	{
+		struct decal_draw_kept *kept = rasterizer_decal_draw_kept(decal_index);
+
+		kept->order_serial = decal_order_serial;
+		kept->order_position = count;
 		decal_draw_order[count] = decal_index;
-		decal_draw_keys[count] = rasterizer_decal_blend_function_commutes(framebuffer_blend_function) &&
-			local_layer != _decal_layer_alpha_tested ?
-			((unsigned long)(framebuffer_blend_function & 0xF) << 28) |
-				((unsigned long)(definition->shader.map.index & 0xFFFFF) << 8) |
-				(decal->bitmap_index & 0xFF) :
-			0xFFFFFFFF;
+		decal_draw_keys[count] = local_layer != _decal_layer_alpha_tested ? kept->order_key : 0xFFFFFFFF;
 		count++;
 	}
 	for (first = 0; first < count; )
@@ -446,8 +674,30 @@ static long rasterizer_decals_draw_order(
 			rasterizer_decals_sort_run(first, last);
 		first = last + 1;
 	}
+	*decal_count = count;
 
-	return count;
+	/* (kept) */
+	if (decal_orders[local_layer][cluster_index].capacity < count)
+	{
+		long capacity = MAX(DECAL_ORDER_MINIMUM_CAPACITY, 2 * count);
+
+		if (decal_order_arena_used + capacity > DECAL_ORDER_ARENA_SIZE)
+		{
+			/* (the arena full: every order kept is made again when its
+			cluster is next drawn) */
+			csmemset(decal_orders, 0, sizeof(decal_orders));
+			decal_order_arena_used = 0;
+		}
+		decal_orders[local_layer][cluster_index].first = decal_order_arena_used;
+		decal_orders[local_layer][cluster_index].capacity = capacity;
+		decal_order_arena_used += capacity;
+	}
+	csmemcpy(&decal_order_arena[decal_orders[local_layer][cluster_index].first], decal_draw_order,
+		count * sizeof(long));
+	decal_orders[local_layer][cluster_index].serial = decal_order_serial;
+	decal_orders[local_layer][cluster_index].count = count;
+
+	return decal_draw_order;
 }
 
 /* ---------- public code */
@@ -480,6 +730,7 @@ void *_rasterizer_decal_vertices_lock(
 	vertex_data_offset = (unsigned long)lruv_block_get_address(
 		local_vertex_cache,
 		cache_index);
+	rasterizer_decal_forget_kept(cache_index); /* port: (decal_draw_kept: its vertices written) */
 	rasterizer_globals.current_lock_operation = _rasterizer_lock_decal_vertices;
 	IDirect3DVertexBuffer8_Lock(
 		local_d3d_vertex_buffer,
@@ -507,6 +758,7 @@ void _rasterizer_decals_initialize_for_new_map(
 	cache was flushed at the old map's end), as render.frame_index is
 	(render.c) */
 	local_vertex_cache->tick = 1;
+	rasterizer_decals_forget_kept(); /* port: (decal_draw_kept) */
 	return;
 }
 
@@ -519,6 +771,7 @@ void _rasterizer_decals_dispose_from_old_map(
 		local_vertex_cache);
 	decals_unlock(TRUE);
 	lruv_flush(local_vertex_cache);
+	rasterizer_decals_forget_kept(); /* port: (decal_draw_kept) */
 
 	return;
 }
@@ -641,6 +894,7 @@ void _rasterizer_decal_vertices_delete(
 		0x107,
 		local_vertex_cache);
 	lruv_block_delete(local_vertex_cache, cache_index);
+	rasterizer_decal_forget_kept(cache_index); /* port: (decal_draw_kept) */
 
 	return;
 }
@@ -872,6 +1126,7 @@ void _rasterizer_decals_draw(
 {
 	long decal_index;
 	long decal_count, decal_order_index; /* port: (rasterizer_decals_draw_order) */
+	long const *decal_order; /* port: (rasterizer_decals_draw_order) */
 
 	match_assert(
 		"c:\\halo\\SOURCE\\rasterizer\\xbox\\rasterizer_xbox_decals.c",
@@ -882,14 +1137,14 @@ void _rasterizer_decals_draw(
 	if (!rasterizer_debug_options.draw_environment_decals)
 		return;
 
-	/* port: in the order rasterizer_decals_draw_order gives */
-	decal_count = rasterizer_decals_draw_order(cluster_index);
+	/* port: in the order rasterizer_decals_draw_order gives, from what is
+	kept of each decal (decal_draw_kept) */
+	decal_order = rasterizer_decals_draw_order(cluster_index, &decal_count);
 	for (decal_order_index = 0; decal_order_index < decal_count; decal_order_index++)
 	{
-		struct decal_datum *decal = DECAL_GET(decal_index = decal_draw_order[decal_order_index]);
-		struct decal_definition *definition = decal_definition_get(decal->definition_index);
-		struct decal_shader_definition *shader = &definition->shader;
-		short framebuffer_blend_function = shader->framebuffer_blend_function;
+		struct decal_datum *decal = DECAL_GET(decal_index = decal_order[decal_order_index]);
+		struct decal_draw_kept const *kept = &decal_draw_kepts[DATUM_INDEX_TO_ABSOLUTE_INDEX(decal_index)];
+		short framebuffer_blend_function = kept->framebuffer_blend_function;
 		unsigned long vertex_data_offset;
 		pixel32 color;
 		unsigned long intensity;
@@ -899,11 +1154,11 @@ void _rasterizer_decals_draw(
 			rasterizer_decals_blend_function_set(framebuffer_blend_function); /* port: (the run's state) */
 		}
 
-		if (rasterizer_decal_cached_bitmap_group_index != shader->map.index ||
+		if (rasterizer_decal_cached_bitmap_group_index != kept->map_index ||
 			rasterizer_decal_cached_bitmap_index != (char)decal->bitmap_index)
 		{
 			rasterizer_decals_draw_batch(); /* port: (decal_batch) */
-			rasterizer_decal_cached_bitmap_group_index = shader->map.index;
+			rasterizer_decal_cached_bitmap_group_index = kept->map_index;
 			rasterizer_decal_cached_bitmap_index = (char)decal->bitmap_index;
 			rasterizer_set_texture(
 				0,
@@ -915,7 +1170,7 @@ void _rasterizer_decals_draw(
 				rasterizer_frame_statistics.decal_texture_change_count++;
 		}
 
-		vertex_data_offset = (unsigned long)lruv_block_get_address(local_vertex_cache, decal_index);
+		vertex_data_offset = kept->vertex_offset;
 		color = decal->color;
 		intensity = (decal->intensity * (color >> 24) + 127) >> 8;
 		match_assert(
@@ -928,28 +1183,25 @@ void _rasterizer_decals_draw(
 			vertex_data_offset%sizeof(struct decal_vertex)==0);
 		/* port: batched (decal_batch), in place of
 		SetVertexData4ub(9, color) and DrawPrimitive(D3DPT_QUADLIST) */
+		if (kept->vertex_slot != NONE)
 		{
-			byte *vertex_data;
+			short vertex_count = (short)(4 * decal->quad_count);
+			boolean overlaps = framebuffer_blend_function == _shader_framebuffer_blend_function_double_multiply &&
+				rasterizer_decal_batch_overlaps(kept->bounds);
+			byte decal_color[4];
 
-			IDirect3DVertexBuffer8_Lock(local_d3d_vertex_buffer, 0, 0, &vertex_data, D3DLOCK_READONLY);
-			if (vertex_data)
-			{
-				struct decal_vertex const *vertices = (struct decal_vertex const *)(vertex_data + vertex_data_offset);
-				real bounds[6] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
-				boolean overlaps = framebuffer_blend_function == _shader_framebuffer_blend_function_double_multiply &&
-					rasterizer_decal_batch_overlaps(vertices, (short)(4 * decal->quad_count), bounds);
-
-				if (decal_batch_count == DECAL_BATCH_MAXIMUM_DECALS || overlaps)
-					rasterizer_decals_draw_batch();
-				csmemcpy(decal_batch[decal_batch_count].bounds, bounds, sizeof(bounds));
-				decal_batch[decal_batch_count].vertices = vertices;
-				decal_batch[decal_batch_count].vertex_count = (short)(4 * decal->quad_count);
-				decal_batch[decal_batch_count].color[0] = (byte)(color >> 16);
-				decal_batch[decal_batch_count].color[1] = (byte)(color >> 8);
-				decal_batch[decal_batch_count].color[2] = (byte)color;
-				decal_batch[decal_batch_count].color[3] = (byte)(PIXEL32_COMPONENT_MASK - intensity);
-				decal_batch_count++;
-			}
+			if (decal_batch_count == DECAL_BATCH_MAXIMUM_DECALS || overlaps ||
+				decal_batch_vertex_count + vertex_count > DECAL_VERTEX_SLOTS)
+				rasterizer_decals_draw_batch();
+			decal_color[0] = (byte)(color >> 16);
+			decal_color[1] = (byte)(color >> 8);
+			decal_color[2] = (byte)color;
+			decal_color[3] = (byte)(PIXEL32_COMPONENT_MASK - intensity);
+			rasterizer_decal_batch_add(
+				(float const (*)[8])decal_vertex_floats[kept->vertex_slot],
+				vertex_count,
+				decal_color,
+				kept->bounds);
 		}
 		if (rasterizer_debug_options.statistics_mode == _rasterizer_statistics_mode_geometry)
 		{
@@ -965,33 +1217,17 @@ void _rasterizer_decals_draw(
 	return;
 }
 
-/* port: draws the decals batched (decal_batch) */
+/* port: draws the decals batched (decal_batch), as Begin(D3DPT_QUADLIST),
+SetVertexData4ub(9), SetVertexData2f(4) and SetVertexData4f(0) for each
+vertex and End drew them */
 static void rasterizer_decals_draw_batch(
 	void)
 {
-	short batch_index;
-
 	if (!decal_batch_count)
 		return;
-	IDirect3DDevice8_Begin(global_d3d_device, D3DPT_QUADLIST);
-	for (batch_index = 0; batch_index < decal_batch_count; batch_index++)
-	{
-		byte const *color = decal_batch[batch_index].color;
-		short vertex_index;
-
-		for (vertex_index = 0; vertex_index < decal_batch[batch_index].vertex_count; vertex_index++)
-		{
-			struct decal_vertex const *vertex = &decal_batch[batch_index].vertices[vertex_index];
-
-			IDirect3DDevice8_SetVertexData4ub(global_d3d_device, 9, color[0], color[1], color[2], color[3]);
-			IDirect3DDevice8_SetVertexData2f(global_d3d_device, 4,
-				(real)(short)(vertex->texcoord & 0xFFFF) / 32767.0f, (real)(short)(vertex->texcoord >> 16) / 32767.0f);
-			IDirect3DDevice8_SetVertexData4f(global_d3d_device, 0,
-				vertex->position.x, vertex->position.y, vertex->position.z, 1.0f);
-		}
-	}
-	IDirect3DDevice8_End(global_d3d_device);
+	d3d8_draw_immediate_packed(D3DPT_QUADLIST, DECAL_BATCH_REGISTERS, decal_batch_vertices, decal_batch_vertex_count);
 	decal_batch_count = 0;
+	decal_batch_vertex_count = 0;
 
 	return;
 }
@@ -1029,6 +1265,18 @@ void _rasterizer_decals_flush(
 		local_vertex_cache);
 	decals_unlock(FALSE);
 	lruv_flush(local_vertex_cache);
+	rasterizer_decals_forget_kept(); /* port: (decal_draw_kept) */
+
+	return;
+}
+
+/* port: the game state read back over (game_state_port_rewritten): the
+decals and their vertices are its, and nothing kept of them is theirs now
+(decal_draw_kept) */
+void rasterizer_decals_port_game_state_rewritten(
+	void)
+{
+	rasterizer_decals_forget_kept();
 
 	return;
 }
@@ -1114,7 +1362,16 @@ map's decals have is drawn first in a layer and after each other */
 static void rasterizer_decals_port_quad(
 	long definition_index)
 {
-	static struct decal_vertex const vertices[4] = { 0 };
+	/* (four vertices at 0, as the draw gives them) */
+	static float const vertices[4][8] =
+	{
+		{ 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f },
+		{ 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f },
+		{ 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f },
+		{ 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f }
+	};
+	static byte const color[4] = { 0xff, 0xff, 0xff, 0x80 };
+	static real const bounds[6] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
 	struct decal_shader_definition *shader = &decal_definition_get(definition_index)->shader;
 
 	if (local_framebuffer_blend_function != shader->framebuffer_blend_function)
@@ -1123,11 +1380,7 @@ static void rasterizer_decals_port_quad(
 	rasterizer_decal_cached_bitmap_group_index = shader->map.index;
 	rasterizer_decal_cached_bitmap_index = 0;
 	rasterizer_set_texture(0, 0, 1, shader->map.index, 0);
-	decal_batch[0].vertices = vertices;
-	decal_batch[0].vertex_count = 4;
-	decal_batch[0].color[0] = decal_batch[0].color[1] = decal_batch[0].color[2] = 0xff;
-	decal_batch[0].color[3] = 0x80;
-	decal_batch_count = 1;
+	rasterizer_decal_batch_add(vertices, 4, color, bounds);
 	rasterizer_decals_draw_batch();
 
 	return;

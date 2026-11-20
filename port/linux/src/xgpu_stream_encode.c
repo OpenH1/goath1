@@ -2208,8 +2208,8 @@ void xgpu_backend_draw_indexed(int primitive, const WORD *indices, unsigned long
 	record_body->indices = carry_one(&place, indices, bytes);
 }
 
-void xgpu_backend_draw_immediate(int primitive, const float *vertices, unsigned long count, unsigned long written,
-	const float (*attributes)[4], const WORD *indices, unsigned long index_count)
+static void draw_immediate(int primitive, const float *vertices, BOOL vertices_packed, unsigned long count,
+	unsigned long written, const float (*attributes)[4], const WORD *indices, unsigned long index_count)
 {
 	struct xgpu_stream_draw_immediate *record_body;
 	uint32_t registers = (uint32_t)written & 0xffff;
@@ -2248,16 +2248,23 @@ void xgpu_backend_draw_immediate(int primitive, const float *vertices, unsigned 
 	{
 		float *values = packed ? packed : (float *)place;
 
-		for (vertex = 0; vertex < count; vertex++)
+		if (vertices_packed)
 		{
-			int reg;
-
-			for (reg = 0; reg < XGPU_VERTEX_ATTRIBUTE_COUNT; reg++)
+			memcpy(values, vertices, vertex_bytes);
+		}
+		else
+		{
+			for (vertex = 0; vertex < count; vertex++)
 			{
-				if (registers & (1u << reg))
+				int reg;
+
+				for (reg = 0; reg < XGPU_VERTEX_ATTRIBUTE_COUNT; reg++)
 				{
-					memcpy(values, vertices + (vertex * XGPU_VERTEX_ATTRIBUTE_COUNT + reg) * 4, 16);
-					values += 4;
+					if (registers & (1u << reg))
+					{
+						memcpy(values, vertices + (vertex * XGPU_VERTEX_ATTRIBUTE_COUNT + reg) * 4, 16);
+						values += 4;
+					}
 				}
 			}
 		}
@@ -2274,6 +2281,20 @@ void xgpu_backend_draw_immediate(int primitive, const float *vertices, unsigned 
 		}
 	}
 	record_body->indices = carry_one(&place, indices, index_bytes);
+}
+
+void xgpu_backend_draw_immediate(int primitive, const float *vertices, unsigned long count, unsigned long written,
+	const float (*attributes)[4], const WORD *indices, unsigned long index_count)
+{
+	draw_immediate(primitive, vertices, FALSE, count, written, attributes, indices, index_count);
+}
+
+/* (the same record: the vertices already packed, the decals' kept from
+frame to frame: rasterizer_xbox_decals.c) */
+void xgpu_backend_draw_immediate_packed(int primitive, const float *vertices, unsigned long count,
+	unsigned long written, const float (*attributes)[4], const WORD *indices, unsigned long index_count)
+{
+	draw_immediate(primitive, vertices, TRUE, count, written, attributes, indices, index_count);
 }
 
 /* ---------- visibility tests */

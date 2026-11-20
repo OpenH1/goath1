@@ -7601,6 +7601,54 @@ void WINAPI D3DDevice_End(void)
 	preparation_draw_complete();
 }
 
+/* d3d8_draw_immediate_packed: the draw Begin, the vertices given one by one
+(each register of written set in turn, register 0 last) and End make, of
+vertices the caller keeps packed as the record has them (the registers of
+written alone, in register order, a vec4 each): the same record and the
+registers left as the last vertex left them, without a call a register
+(the decals' kept vertices: rasterizer_xbox_decals.c) */
+void d3d8_draw_immediate_packed(int primitive, unsigned long written, const float *vertices,
+	unsigned long count)
+{
+	unsigned long registers = written & ((1UL << XGPU_VERTEX_ATTRIBUTE_COUNT) - 1);
+	unsigned long floats = (unsigned long)__builtin_popcountl(registers) * 4, index_count = 0, at = 0;
+	float first[XGPU_VERTEX_ATTRIBUTE_COUNT][4];
+	WORD *indices = NULL;
+	D3DPRIMITIVETYPE primitive_type = (D3DPRIMITIVETYPE)primitive;
+	int reg;
+
+	device.immediate_active = FALSE;
+	device.immediate_type = primitive_type;
+	device.immediate_count = count;
+	device.immediate_written = count ? registers : 0;
+	if (!count)
+		return;
+	for (reg = 0; reg < XGPU_VERTEX_ATTRIBUTE_COUNT; reg++)
+	{
+		if (!(registers & (1UL << reg)))
+			continue;
+		memcpy(first[reg], vertices + at, sizeof(first[reg]));
+		memcpy(device.attributes[reg], vertices + (count - 1) * floats + at, sizeof(device.attributes[reg]));
+		at += 4;
+	}
+	if (!prepare_draw(TRUE, primitive_type))
+		return;
+	trace_draw("immediate", primitive_type, count, &first[0][0]);
+	if (preparation.duplicate)
+	{
+		preparation_draw_complete();
+		return;
+	}
+	if (journal_recording)
+		journal_draw(JOURNAL_DRAW_IMMEDIATE, primitive_type, 0, count, 0, 0);
+	xgpu_manifest_record_draw(1, device.immediate_written);
+	if (primitive_type == D3DPT_QUADLIST)
+		indices = quad_indices(NULL, count, &index_count);
+	xgpu_backend_draw_immediate_packed(primitive_type == D3DPT_QUADLIST ? XGPU_TRIANGLES : primitive_kind(primitive_type),
+		vertices, count, device.immediate_written, (const float (*)[4])device.attributes, indices, index_count);
+	preparation_draw_complete();
+}
+
 static void set_attribute(INT reg, float a, float b, float c, float d)
 {
 	BOOL emit = FALSE;

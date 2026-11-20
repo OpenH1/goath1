@@ -888,6 +888,10 @@ void rasterizer_detail_objects_port_enumerate(
 /* port: (rasterizer_xbox_decals.c) */
 void rasterizer_decals_port_enumerate(
 	short stencil_mode);
+/* port: the game state read back over: nothing kept for drawing its decals
+is theirs now (rasterizer_xbox_decals.c) */
+void rasterizer_decals_port_game_state_rewritten(
+	void);
 /* port: (rasterizer_transparent_geometry.c) */
 void rasterizer_transparent_geometry_flush(
 	long room);

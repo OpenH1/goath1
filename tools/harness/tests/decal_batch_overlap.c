@@ -1,5 +1,6 @@
 /* A batch of decals (rasterizer_xbox_decals.c's decal_batch) and the test of
-whether a decal of some vertices overlaps one already in it. */
+whether a decal of some vertices (their box: rasterizer_decal_bounds)
+overlaps one already in it. */
 #include "harness.h"
 #include <string.h>
 
@@ -15,9 +16,6 @@ struct decal_vertex
 #define DECAL_BATCH_MAXIMUM_DECALS 256
 static struct
 {
-	struct decal_vertex const *vertices;
-	short vertex_count;
-	byte color[4];
 	real bounds[6];
 } decal_batch[DECAL_BATCH_MAXIMUM_DECALS];
 static short decal_batch_count = 0;
@@ -45,11 +43,10 @@ static boolean add(struct decal_vertex const *vertices)
 {
 	real bounds[6];
 
-	if (rasterizer_decal_batch_overlaps(vertices, 4, bounds))
+	rasterizer_decal_bounds(vertices, 4, bounds);
+	if (rasterizer_decal_batch_overlaps(bounds))
 		return TRUE;
 	memcpy(decal_batch[decal_batch_count].bounds, bounds, sizeof(bounds));
-	decal_batch[decal_batch_count].vertices = vertices;
-	decal_batch[decal_batch_count].vertex_count = 4;
 	decal_batch_count++;
 	return FALSE;
 }

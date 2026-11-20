@@ -190,6 +190,8 @@ KEPT_ELSEWHERE = {
                             "pipeline inputs are its source, sampler type, addressing and border: xgpu_manifest_stage)",
     'd3d8_draw_state_kept': "debug.retained_shadows' hint that a draw's state is the one before's: no draw is "
                             "kept so while a preparation runs or a journal records",
+    'd3d8_draw_immediate_packed': "Begin, SetVertexData and End's own: the registers and the immediate draw as "
+                                  "they leave them, journaled as the immediate draw (JOURNAL_DRAW_IMMEDIATE)",
 }
 
 
