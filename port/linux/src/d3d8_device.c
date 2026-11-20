@@ -600,7 +600,11 @@ static struct
 	unsigned long rays_owner;
 	/* the draws are a two-sided model shader's cards (halo_world_ao_cards) */
 	BOOL cards;
-} world_ao = { FALSE, FALSE, WORLD_AO_OWNER_NONE, 1.0f, FALSE, FALSE, FALSE, 2.0f, FALSE, FALSE, 0, FALSE };
+	/* the pre-pass begun is the window's own walk of its surfaces, played
+	twice (xgpu_backend_world_ao_walk); once it is ended, whether it is
+	played again (halo_world_ao_prepass_walked) */
+	BOOL walk;
+} world_ao = { FALSE, FALSE, WORLD_AO_OWNER_NONE, 1.0f, FALSE, FALSE, FALSE, 2.0f, FALSE, FALSE, 0, FALSE, FALSE };
 
 /* display.temporal_aa's motion (port/linux/game/motion_vectors.c,
 halo_motion_*): a window's draws jittered (on) by so many of the game's
@@ -737,7 +741,7 @@ void halo_world_ao_window(float const field[2][4], float const parameters[2][4],
 	/* (found once a pixel: no more) */
 	if (world_ao.sampled || world_ao.prepass)
 		xgpu_backend_world_ao_prepass(XGPU_WORLD_AO_PREPASS_NONE, 0, NULL);
-	world_ao.sampled = world_ao.prepass = FALSE;
+	world_ao.sampled = world_ao.prepass = world_ao.walk = FALSE;
 	if (count < 0)
 	{
 		xgpu_backend_world_ao_window(NULL);
@@ -7825,8 +7829,25 @@ int halo_world_ao_prepass_begin(void)
 		device.depth_stencil != &device.depth_buffer || !(target = render_target_get(&device.back_buffer)))
 		return FALSE;
 	world_ao.prepass = world_ao.sampled = TRUE;
-	xgpu_backend_world_ao_prepass(XGPU_WORLD_AO_PREPASS_BEGIN, target->target.number, NULL);
+	/* (the window's surfaces walked once, played twice; with
+	HALO_WORLD_AO_NO_REPLAY=1, for measuring, walked twice as before) */
+	{
+		static int replay = -1;
+
+		if (replay < 0)
+			replay = getenv("HALO_WORLD_AO_NO_REPLAY") == NULL;
+		world_ao.walk = replay;
+	}
+	if (world_ao.walk)
+		(void)xgpu_backend_world_ao_walk(XGPU_WORLD_AO_PREPASS_BEGIN, target->target.number, NULL);
+	else
+		xgpu_backend_world_ao_prepass(XGPU_WORLD_AO_PREPASS_BEGIN, target->target.number, NULL);
 	return TRUE;
+}
+
+int halo_world_ao_prepass_walked(void)
+{
+	return world_ao.walk;
 }
 
 /* ... done: the occlusion found from it over the window's view (its bounds
@@ -7847,6 +7868,7 @@ void halo_world_ao_prepass_end(short x0, short y0, short x1, short y1, float con
 	if (!target || !world_ao.sampled)
 	{
 		previous_made = 0;
+		world_ao.walk = FALSE;
 		return;
 	}
 	memset(&pass, 0, sizeof(pass));
@@ -7880,7 +7902,10 @@ void halo_world_ao_prepass_end(short x0, short y0, short x1, short y1, float con
 	}
 	previous = pass;
 	previous_made = 1;
-	xgpu_backend_world_ao_prepass(XGPU_WORLD_AO_PREPASS_END, target->target.number, &pass);
+	if (world_ao.walk)
+		world_ao.walk = xgpu_backend_world_ao_walk(XGPU_WORLD_AO_PREPASS_END, target->target.number, &pass) != 0;
+	else
+		xgpu_backend_world_ao_prepass(XGPU_WORLD_AO_PREPASS_END, target->target.number, &pass);
 }
 
 /* ---------- display.temporal_aa's motion (port/linux/game/motion_vectors.c;

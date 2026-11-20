@@ -400,13 +400,15 @@ void render_objects(
 	/* port: display.temporal_aa: the window's objects draw their motion
 	too (not in display.ambient_occlusion "world"'s pre-pass:
 	port/linux/game/motion_vectors.c) */
-	if (!render_world_ao_prepass)
+	if (!render_world_ao_prepass || render_world_ao_again)
 		motion_vectors_objects(TRUE);
-	if (!rendered_objects_found_early)
+	/* port: (nor found again where the window's walk, played twice by the
+	renderer, is walked a second time: render_world_ao_again) */
+	if (!rendered_objects_found_early && !render_world_ao_again)
 	{
 		find_rendered_objects();
 	}
-	rendered_objects_found_early = render_world_ao_prepass;
+	rendered_objects_found_early = render_world_ao_prepass && !render_world_ao_again;
 
 	data.shadow = FALSE;
 
@@ -434,7 +436,7 @@ void render_objects(
 	/* port: the projectiles deleted in the last tick, drawn through it
 	(port/linux/game/render_interpolation.c) */
 	render_interpolation_ghosts_draw();
-	if (!render_world_ao_prepass)
+	if (!render_world_ao_prepass || render_world_ao_again)
 		motion_vectors_objects(FALSE);
 
 	rasterizer_models_end();

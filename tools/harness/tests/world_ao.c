@@ -69,6 +69,11 @@ int halo_world_ao_prepass_begin(void)
 	return 0;
 }
 
+int halo_world_ao_prepass_walked(void)
+{
+	return 0;
+}
+
 void halo_world_ao_prepass_end(short x0, short y0, short x1, short y1, float const camera[4][4],
 	float const cascades[4][4], unsigned long frame, int history)
 {

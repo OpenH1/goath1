@@ -230,6 +230,12 @@ void xgpu_backend_world_ao_field(int part, unsigned long width, unsigned long he
 begun (XGPU_WORLD_AO_PREPASS_BEGIN, its targets target's size), ended and
 the occlusion found from it over the window (_END, pass), or none (_NONE) */
 void xgpu_backend_world_ao_prepass(int phase, xgpu_target target, const struct xgpu_world_ao_pass *pass);
+/* ... the window's opaque surfaces walked once and played twice, as the
+pre-pass's and then as the surfaces' (xgpu_stream.h's replay): the walk
+begun (XGPU_WORLD_AO_PREPASS_BEGIN), and ended (_END, pass), nonzero where
+it is played again (0: drawn as the pre-pass's alone, the surfaces to be
+walked again) */
+int xgpu_backend_world_ao_walk(int phase, xgpu_target target, const struct xgpu_world_ao_pass *pass);
 /* display.temporal_aa's motion (xgpu_stream.h's MOTION): a window's objects
 begun or ended (XGPU_MOTION_OBJECTS_BEGIN, _END), and the window's motion
 resolved (_RESOLVE, pass) */

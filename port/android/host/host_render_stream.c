@@ -191,6 +191,29 @@ static void loading_set(const struct host_render_backend *backend, int active)
 		backend->loading(backend->context, &loading.frame);
 }
 
+/* The state the records leave the backend's draws in, as the decoder plays
+them (the definitions, programs and memory, which persist, apart): kept
+where display.ambient_occlusion "world"'s walk begins and given again as
+it is played a second time (walk_replay). The textures' stages, the vertex
+input, immediate mode's other inputs, the draw state as they are; the
+targets, the category and the pipeline as last set; the vertex constants
+and the previous frame's past them, as the backends keep them
+(display.temporal_aa's: the 192 copied there by each record of them once
+a MOTION has come, but a render scale's stretch's) */
+struct host_render_draw_state
+{
+	struct host_render_texture_stage stages[4];
+	struct host_render_vertex_input input;
+	float immediate_attributes[16][4];
+	struct xgpu_stream_dynamic_state dynamic;
+	struct xgpu_stream_draw_uniforms uniforms;
+	uint32_t uniforms_serial;
+	struct xgpu_stream_set_targets targets;
+	uint32_t category, pipeline;
+	int targets_set, category_set, motion;
+	float constants[2 * XGPU_STREAM_PREVIOUS_CONSTANTS][4];
+};
+
 struct host_render_decoder
 {
 	const struct host_render_backend *backend;
@@ -200,12 +223,20 @@ struct host_render_decoder
 	uint32_t size, mask;
 	volatile uint8_t *pipeline_states;
 
-	struct host_render_texture_stage stages[4];
-	struct host_render_vertex_input input;
-	float immediate_attributes[16][4];
-	struct xgpu_stream_dynamic_state dynamic;
-	struct xgpu_stream_draw_uniforms uniforms;
-	uint32_t uniforms_serial;
+	struct host_render_draw_state state;
+	/* display.ambient_occlusion "world"'s walk (xgpu_stream.h's
+	WORLD_AO_PREPASS replay): being played as the pre-pass's (twins), or
+	again as the surfaces' (replaying); its first record's position, and
+	the state as it began (start); the record being played's position */
+	struct
+	{
+		int twins, replaying;
+		uint32_t from;
+		struct host_render_draw_state start;
+		/* the walks played again, and those ended without (said once) */
+		uint32_t replayed, single;
+	} walk;
+	uint32_t position;
 	struct xgpu_stream_pipeline_define *pipelines[XGPU_STREAM_PIPELINES];
 	struct xgpu_stream_layout_define *layouts[XGPU_STREAM_LAYOUTS];
 
@@ -428,6 +459,147 @@ static uint32_t screenshot(const struct host_render_backend *backend, void *cont
 #define CALL(name, ...) do { if (backend->name) backend->name(context, __VA_ARGS__); } while (0)
 #define CALL0(name) do { if (backend->name) backend->name(context); } while (0)
 
+static int decode_record(struct host_render_decoder *decoder, const unsigned char *start, uint32_t type,
+	uint32_t size);
+
+/* ---------- display.ambient_occlusion "world"'s walk played twice
+(xgpu_stream.h's WORLD_AO_PREPASS replay; docs/world-ao.md)
+
+The game walks the window's opaque surfaces once. Its records, from the
+BEGIN to the END, are played first as the pre-pass's (the backend draws
+each draw's twin, as it did the game's own walk of the pre-pass), their
+MOTION records left out; the END finds the occlusion; then the same
+records are played again, from the state they began with, as the
+surfaces'. Played again: the draws and the state they are drawn with, which
+the game's second walk sent again before. Not: what the game sent once
+(the definitions, the vertex programs, the mirror's writes, uploads), had
+already, as it had them before the surfaces' walk. The ring's bytes from the
+BEGIN are not released before the END is played: the guest marks the END
+to be played again only where it is in the same submit as the BEGIN
+(xgpu_stream_encode.c's walk). */
+
+/* a record of the walk played again as the surfaces' */
+static int walk_replayed(uint32_t type)
+{
+	switch (type)
+	{
+	case XGPU_STREAM_CATEGORY:
+	case XGPU_STREAM_SET_TARGETS:
+	case XGPU_STREAM_CLEAR:
+	case XGPU_STREAM_CLEAR_TARGET:
+	case XGPU_STREAM_SET_TEXTURES:
+	case XGPU_STREAM_CONSTANTS:
+	case XGPU_STREAM_PIPELINE:
+	case XGPU_STREAM_PIPELINE_STAND_IN:
+	case XGPU_STREAM_DRAW_STATE:
+	case XGPU_STREAM_VERTICES:
+	case XGPU_STREAM_DRAW:
+	case XGPU_STREAM_DRAW_INDICES:
+	case XGPU_STREAM_DRAW_INDEXED:
+	case XGPU_STREAM_DRAW_IMMEDIATE:
+	case XGPU_STREAM_VISIBILITY_BEGIN:
+	case XGPU_STREAM_VISIBILITY_END:
+	case XGPU_STREAM_MOTION:
+		return 1;
+	default:
+		return 0;
+	}
+}
+
+/* the vertex constants as a record of them sets them (as the backends do:
+the previous frame's past the 192, copied there with them once a MOTION
+has come) */
+static void constants_kept(struct host_render_draw_state *state, const struct xgpu_stream_constants *record)
+{
+	uint32_t first = record->first, count = record->count;
+
+	if (first >= XGPU_STREAM_PREVIOUS_CONSTANTS)
+	{
+		if (count > 2 * XGPU_STREAM_PREVIOUS_CONSTANTS - first)
+			count = 2 * XGPU_STREAM_PREVIOUS_CONSTANTS - first;
+		memcpy(state->constants[first], record->values, (size_t)count * sizeof(state->constants[0]));
+		return;
+	}
+	if (count > XGPU_STREAM_PREVIOUS_CONSTANTS - first)
+		count = XGPU_STREAM_PREVIOUS_CONSTANTS - first;
+	if (state->motion)
+		memcpy(state->constants[XGPU_STREAM_PREVIOUS_CONSTANTS + first], record->values,
+			(size_t)count * sizeof(state->constants[0]));
+	memcpy(state->constants[first], record->values, (size_t)count * sizeof(state->constants[0]));
+}
+
+/* the walk's records played again, from its first to the END at to, from
+the state they began with (given to the backend again first) */
+static int walk_replay(struct host_render_decoder *decoder, uint32_t to)
+{
+	const struct host_render_backend *backend = decoder->backend;
+	void *context = decoder->context;
+	struct host_render_draw_state *state = &decoder->state;
+	uint32_t constants_words[(sizeof(struct xgpu_stream_constants) +
+		XGPU_STREAM_PREVIOUS_CONSTANTS * 4 * sizeof(float)) / sizeof(uint32_t)];
+	struct xgpu_stream_constants *constants = (struct xgpu_stream_constants *)(void *)constants_words;
+	uint32_t position = decoder->walk.from, bank;
+	int error = XGPU_STREAM_ERROR_NONE;
+
+	*state = decoder->walk.start;
+	if (state->targets_set)
+		CALL(set_targets, &state->targets);
+	if (state->category_set)
+		CALL(category, state->category);
+	if (state->pipeline && decoder->pipelines[state->pipeline] && backend->pipeline)
+		(void)backend->pipeline(context, state->pipeline, decoder->pipelines[state->pipeline]);
+	CALL(set_textures, state->stages);
+	/* (this frame's, then the previous frame's where they are apart) */
+	for (bank = 0; bank < (state->motion ? 2u : 1u); bank++)
+	{
+		constants->header = XGPU_STREAM_HEADER(XGPU_STREAM_CONSTANTS, sizeof(constants_words));
+		constants->first = bank * XGPU_STREAM_PREVIOUS_CONSTANTS;
+		constants->count = XGPU_STREAM_PREVIOUS_CONSTANTS;
+		memcpy(constants->values, state->constants[bank * XGPU_STREAM_PREVIOUS_CONSTANTS],
+			XGPU_STREAM_PREVIOUS_CONSTANTS * sizeof(state->constants[0]));
+		CALL(set_constants, constants);
+	}
+	CALL(draw_state, &state->dynamic, &state->uniforms, state->uniforms_serial);
+	if (state->input.layout)
+		CALL(set_vertices, &state->input);
+
+	decoder->walk.replaying = 1;
+	while (position != to)
+	{
+		uint32_t offset = position & decoder->mask;
+		const unsigned char *start = decoder->buffer + offset;
+		uint32_t header = *(const uint32_t *)start;
+		uint32_t type = XGPU_STREAM_HEADER_TYPE(header), size = XGPU_STREAM_HEADER_SIZE(header);
+
+		if (type == XGPU_STREAM_SKIP && !size)
+			size = decoder->size - offset;
+		if (size > to - position || size > decoder->size - offset)
+		{
+			error = XGPU_STREAM_ERROR_BOUNDS;
+			break;
+		}
+		if (type >= XGPU_STREAM_RECORD_TYPES || size < record_minimum[type] || size % XGPU_STREAM_RECORD_ALIGNMENT)
+		{
+			error = XGPU_STREAM_ERROR_RECORD;
+			break;
+		}
+		if (walk_replayed(type))
+		{
+			decoder->position = position;
+			error = decode_record(decoder, start, type, size);
+			if (error)
+				break;
+		}
+		position += size;
+	}
+	decoder->walk.replaying = 0;
+	decoder->position = to;
+	if (!error && !decoder->walk.replayed++)
+		host_logf(HOST_LOG_INFO, "render stream: display.ambient_occlusion \"world\"'s walk played twice, as the "
+			"pre-pass's and as the surfaces'");
+	return error;
+}
+
 /* plays one record; 0, or an XGPU_STREAM_ERROR_* */
 static int decode_record(struct host_render_decoder *decoder, const unsigned char *start, uint32_t type, uint32_t size)
 {
@@ -554,6 +726,8 @@ static int decode_record(struct host_render_decoder *decoder, const unsigned cha
 	case XGPU_STREAM_MARK_OWNER:
 		break;
 	case XGPU_STREAM_CATEGORY:
+		decoder->state.category = value->value;
+		decoder->state.category_set = 1;
 		CALL(category, value->value);
 		break;
 	case XGPU_STREAM_PANINI:
@@ -576,10 +750,28 @@ static int decode_record(struct host_render_decoder *decoder, const unsigned cha
 		break;
 	}
 	case XGPU_STREAM_MOTION:
-		if (((const struct xgpu_stream_motion *)(const void *)start)->phase > XGPU_MOTION_UPSCALE)
+	{
+		const struct xgpu_stream_motion *motion = (const void *)start;
+		struct xgpu_temporal_pass upscale;
+
+		if (motion->phase > XGPU_MOTION_UPSCALE)
 			return XGPU_STREAM_ERROR_BOUNDS;
-		CALL(motion, (const void *)start);
+		/* (none in the walk played as the pre-pass's) */
+		if (decoder->walk.twins)
+			break;
+		/* (the previous frame's constants this frame's, from the first but
+		a render scale's stretch's, as the backends keep them) */
+		memcpy(&upscale, &motion->pass, sizeof(upscale));
+		if (!(motion->phase == XGPU_MOTION_UPSCALE && upscale.technique == 0))
+		{
+			if (!decoder->state.motion)
+				memcpy(decoder->state.constants[XGPU_STREAM_PREVIOUS_CONSTANTS], decoder->state.constants[0],
+					XGPU_STREAM_PREVIOUS_CONSTANTS * sizeof(decoder->state.constants[0]));
+			decoder->state.motion = 1;
+		}
+		CALL(motion, motion);
 		break;
+	}
 	case XGPU_STREAM_RT_SHADOWS:
 	{
 		const struct xgpu_stream_rt_shadows *shadows = (const void *)start;
@@ -591,10 +783,30 @@ static int decode_record(struct host_render_decoder *decoder, const unsigned cha
 		break;
 	}
 	case XGPU_STREAM_WORLD_AO_PREPASS:
-		if (((const struct xgpu_stream_world_ao_prepass *)(const void *)start)->phase > XGPU_WORLD_AO_PREPASS_TWINS)
+	{
+		const struct xgpu_stream_world_ao_prepass *prepass = (const void *)start;
+
+		if (prepass->phase > XGPU_WORLD_AO_PREPASS_TWINS)
 			return XGPU_STREAM_ERROR_BOUNDS;
-		CALL(world_ao_prepass, (const void *)start);
+		CALL(world_ao_prepass, prepass);
+		/* (the window's walk, played twice: walk_replay) */
+		if (prepass->phase == XGPU_WORLD_AO_PREPASS_BEGIN && prepass->replay)
+		{
+			decoder->walk.twins = 1;
+			decoder->walk.from = decoder->position + size;
+			decoder->walk.start = decoder->state;
+		}
+		else if (decoder->walk.twins)
+		{
+			decoder->walk.twins = 0;
+			if (prepass->phase == XGPU_WORLD_AO_PREPASS_END && prepass->replay)
+				return walk_replay(decoder, decoder->position);
+			if (!decoder->walk.single++)
+				host_logf(HOST_LOG_INFO, "render stream: display.ambient_occlusion \"world\"'s walk handed over "
+					"in parts: walked again by the game");
+		}
 		break;
+	}
 	case XGPU_STREAM_WORLD_AO_CASCADES:
 	{
 		const struct xgpu_stream_world_ao_cascades *box = (const void *)start;
@@ -646,6 +858,8 @@ static int decode_record(struct host_render_decoder *decoder, const unsigned cha
 		CALL(target_resolve, value->value);
 		break;
 	case XGPU_STREAM_SET_TARGETS:
+		memcpy(&decoder->state.targets, start, sizeof(decoder->state.targets));
+		decoder->state.targets_set = 1;
 		CALL(set_targets, (const void *)start);
 		break;
 	case XGPU_STREAM_CLEAR:
@@ -687,7 +901,7 @@ static int decode_record(struct host_render_decoder *decoder, const unsigned cha
 
 		for (stage = 0; stage < 4; stage++)
 		{
-			struct host_render_texture_stage *to = &decoder->stages[stage];
+			struct host_render_texture_stage *to = &decoder->state.stages[stage];
 			uint32_t level_bytes;
 
 			if (!(textures->changed & (1u << stage)))
@@ -705,7 +919,7 @@ static int decode_record(struct host_render_decoder *decoder, const unsigned cha
 			memcpy(to->levels, place, level_bytes);
 			place += level_bytes;
 		}
-		CALL(set_textures, decoder->stages);
+		CALL(set_textures, decoder->state.stages);
 		break;
 	}
 	case XGPU_STREAM_CONSTANTS:
@@ -716,6 +930,7 @@ static int decode_record(struct host_render_decoder *decoder, const unsigned cha
 			constants->first > 2 * XGPU_STREAM_PREVIOUS_CONSTANTS ||
 			constants->count > 2 * XGPU_STREAM_PREVIOUS_CONSTANTS - constants->first)
 			return XGPU_STREAM_ERROR_RECORD;
+		constants_kept(&decoder->state, constants);
 		CALL(set_constants, constants);
 		break;
 	}
@@ -754,6 +969,7 @@ static int decode_record(struct host_render_decoder *decoder, const unsigned cha
 
 		if (!id || id >= XGPU_STREAM_PIPELINES || !decoder->pipelines[id])
 			return XGPU_STREAM_ERROR_ID;
+		decoder->state.pipeline = id;
 		if (backend->pipeline)
 			made = backend->pipeline(context, id, decoder->pipelines[id]);
 		if (__atomic_load_n(&decoder->pipeline_states[id], __ATOMIC_RELAXED) == XGPU_STREAM_PIPELINE_UNKNOWN)
@@ -776,9 +992,9 @@ static int decode_record(struct host_render_decoder *decoder, const unsigned cha
 	{
 		const struct xgpu_stream_draw_state *state = (const void *)start;
 		const unsigned char *place = (const unsigned char *)(state + 1);
-		unsigned char *uniforms = (unsigned char *)&decoder->uniforms;
+		unsigned char *uniforms = (unsigned char *)&decoder->state.uniforms;
 		uint32_t pieces = (uint32_t)__builtin_popcount(state->pieces[0]) + (uint32_t)__builtin_popcount(state->pieces[1]);
-		uint32_t needed = sizeof(*state) + (state->parts & XGPU_STREAM_DRAW_DYNAMIC ? sizeof(decoder->dynamic) : 0) +
+		uint32_t needed = sizeof(*state) + (state->parts & XGPU_STREAM_DRAW_DYNAMIC ? sizeof(decoder->state.dynamic) : 0) +
 			pieces * 16;
 		uint32_t piece;
 
@@ -786,8 +1002,8 @@ static int decode_record(struct host_render_decoder *decoder, const unsigned cha
 			return XGPU_STREAM_ERROR_RECORD;
 		if (state->parts & XGPU_STREAM_DRAW_DYNAMIC)
 		{
-			memcpy(&decoder->dynamic, place, sizeof(decoder->dynamic));
-			place += sizeof(decoder->dynamic);
+			memcpy(&decoder->state.dynamic, place, sizeof(decoder->state.dynamic));
+			place += sizeof(decoder->state.dynamic);
 		}
 		for (piece = 0; piece < XGPU_STREAM_UNIFORM_PIECES; piece++)
 		{
@@ -795,12 +1011,12 @@ static int decode_record(struct host_render_decoder *decoder, const unsigned cha
 
 			if (!(state->pieces[piece / 32] & (1u << (piece % 32))))
 				continue;
-			memcpy(uniforms + offset, place, sizeof(decoder->uniforms) - offset < 16 ? sizeof(decoder->uniforms) - offset : 16);
+			memcpy(uniforms + offset, place, sizeof(decoder->state.uniforms) - offset < 16 ? sizeof(decoder->state.uniforms) - offset : 16);
 			place += 16;
 		}
 		if (state->parts & XGPU_STREAM_DRAW_UNIFORMS)
-			decoder->uniforms_serial = state->uniforms_serial;
-		CALL(draw_state, &decoder->dynamic, &decoder->uniforms, decoder->uniforms_serial);
+			decoder->state.uniforms_serial = state->uniforms_serial;
+		CALL(draw_state, &decoder->state.dynamic, &decoder->state.uniforms, decoder->state.uniforms_serial);
 		break;
 	}
 	case XGPU_STREAM_MIRROR_WRITE:
@@ -832,7 +1048,7 @@ static int decode_record(struct host_render_decoder *decoder, const unsigned cha
 	{
 		const struct xgpu_stream_vertices *vertices = (const void *)start;
 		const struct xgpu_stream_vertex_stream *streams = (const void *)(vertices + 1);
-		struct host_render_vertex_input *input = &decoder->input;
+		struct host_render_vertex_input *input = &decoder->state.input;
 		uint32_t stream_count = (uint32_t)__builtin_popcount(vertices->streams);
 		uint32_t attribute_count = (uint32_t)__builtin_popcount(vertices->attributes);
 		const float (*values)[4];
@@ -899,9 +1115,9 @@ static int decode_record(struct host_render_decoder *decoder, const unsigned cha
 		for (reg = 0; reg < 16; reg++)
 		{
 			if (draw->attributes & (1u << reg))
-				memcpy(decoder->immediate_attributes[reg], *values++, 16);
+				memcpy(decoder->state.immediate_attributes[reg], *values++, 16);
 		}
-		CALL(draw_immediate, draw, (const float (*)[4])decoder->immediate_attributes);
+		CALL(draw_immediate, draw, (const float (*)[4])decoder->state.immediate_attributes);
 		break;
 	}
 	case XGPU_STREAM_VISIBILITY_BEGIN:
@@ -1078,6 +1294,7 @@ uint32_t host_render_decode(struct host_render_decoder *decoder, uint32_t from, 
 			trace_start = host_load_trace_clock(CLOCK_MONOTONIC);
 		if (type == XGPU_STREAM_SKIP && !size)
 			size = decoder->size - offset;
+		decoder->position = position;
 		if (size > available || size > decoder->size - offset)
 		{
 			error = XGPU_STREAM_ERROR_BOUNDS;

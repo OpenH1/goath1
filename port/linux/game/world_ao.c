@@ -678,6 +678,11 @@ void world_ao_prepass_end(short x0, short y0, short x1, short y1, float const ca
 		world_ao_scene.windows_frame == world_ao_scene.last_frame + 1);
 }
 
+int world_ao_prepass_walked(void)
+{
+	return halo_world_ao_prepass_walked();
+}
+
 void world_ao_window_end(void)
 {
 	world_ao.span = WORLD_AO_SPAN_NONE;

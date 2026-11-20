@@ -640,7 +640,20 @@ xgpu_world_ao_pass)), or _NONE (the occlusion found no more: the surfaces
 read 1 from here on). While a map is prepared (the others then ignored):
 _TWINS (the draws from here on would be drawn in the pre-pass in play:
 each one's twin made with it, xgpu_stream_world_ao_twin) and _NONE (no
-more) */
+more).
+
+replay (BEGIN and END): the walk played twice. BEGIN's 1: the records
+from it to the END are the window's opaque surfaces' own draws, walked once
+by the game (render.c), which the decoder plays first as the pre-pass's
+(each draw's twin, as above; their MOTION records not played), and, at an
+END of 1, again from the state as it was at the BEGIN, as the surfaces'
+(after the occlusion is found: host_render_stream.c's walk_replay). Only
+their draws and the state they are drawn with are played again; what the
+walk sent once (definitions, writes to memory, uploads) is had already.
+An END of 0 after a BEGIN of 1: the walk was handed over in parts (the
+ring's bytes of its start may be released), not played again: the game
+walks the surfaces a second time instead. 0 at both: as before, the game
+walks the pre-pass and then the surfaces. */
 enum
 {
 	XGPU_WORLD_AO_PREPASS_NONE,
@@ -683,7 +696,7 @@ struct xgpu_stream_world_ao_prepass
 	uint32_t header;
 	uint32_t phase;
 	uint32_t target;
-	uint32_t pad;
+	uint32_t replay;
 	struct xgpu_world_ao_pass pass;
 };
 
