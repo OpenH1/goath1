@@ -86,6 +86,11 @@ short structure_clusters_in_sphere(
 current bsp changes) */
 void structure_port_clusters_forget(
 	void);
+/* port: counts those forgettings (what is kept of the spheres' clusters
+elsewhere is as good as this count is unchanged: object_lights.c's
+light_port_follow) */
+unsigned long structure_port_clusters_generation(
+	void);
 void render_debug_fog_planes(
 	void);
 
