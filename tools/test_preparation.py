@@ -11,7 +11,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_loading_scheduler_keeps_deadlines_and_work_after_slow_callbacks(tmp_path):
     text = (ROOT / "port/android/host/host_render_stream.c").read_text()
-    functions = text[text.index("static uint64_t monotonic_nanoseconds(void);"):text.index("struct host_render_decoder\n")]
+    # (the loading picture's code, from its state to loading_set's end: what follows is the decoder's)
+    start = text.index("static uint64_t monotonic_nanoseconds(void);")
+    end = text.index("{", text.index("static void loading_set(const struct host_render_backend *backend, int active)\n"))
+    depth = 1
+    while depth:
+        end += 1
+        depth += {"{": 1, "}": -1}.get(text[end], 0)
+    functions = text[start:end + 1] + "\n"
     source = r'''
 #include <assert.h>
 #include <string.h>
