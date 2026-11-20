@@ -465,6 +465,9 @@ static void game_tick_after_substeps(
 	Only the sound manager reads the gains, as it mixes; heard, the fade
 	moves in whole ticks as it did there */
 	sound_classes_update(1);
+	/* port: the letterbox's slide and the chapter titles' time
+	(cinematics.c: they moved with the frames) */
+	cinematic_update();
 	/* port: the wind's step, once a tick (scenario.c: it stepped by the
 	frames' time) */
 	scenario_tick_update();
