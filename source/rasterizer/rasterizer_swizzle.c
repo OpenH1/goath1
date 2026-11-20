@@ -72,6 +72,23 @@ static unsigned long rasterizer_swizzle_x_mask;
 
 /* ---------- public code */
 
+/* port: whether `bitmap` is a compressed one whose sides are not all powers
+of two (Halo PC draws any: a Custom Edition map's 200 by 112 HUD icon). An
+Xbox has no such texture. DXT blocks are not swizzled, so its pixels stay as
+the tag lays them out, every level the tag has (a cube map's face by face,
+as any's), and its hardware format gives its true sides in the Size word
+(xbox_texture_cache.c, texture_cache_initialize_hardware_format; read by
+port/linux/src/xbox_texture_decode.c, xgpu_texture_describe). */
+boolean rasterizer_xbox_bitmap_unswizzled_compressed(
+	struct bitmap_data const *bitmap)
+{
+	short depth = (short)bitmap->depth;
+
+	return TEST_FLAG(bitmap->flags, _bitmap_compressed_bit) &&
+		!TEST_FLAG(bitmap->flags, _bitmap_linear_bit) &&
+		(((bitmap->width - 1) & bitmap->width) || ((bitmap->height - 1) & bitmap->height) || ((depth - 1) & depth));
+}
+
 short rasterizer_xbox_bitmap_get_max_mipmap_count(
 	struct bitmap_data *bitmap)
 {
@@ -79,6 +96,12 @@ short rasterizer_xbox_bitmap_get_max_mipmap_count(
 
 	match_assert("c:\\halo\\SOURCE\\rasterizer\\rasterizer_swizzle.c", 459, bitmap_verify(bitmap, FALSE));
 
+	/* port: every level the tag has, down to 1 by 1, as Halo PC draws them */
+	if (rasterizer_xbox_bitmap_unswizzled_compressed(bitmap))
+	{
+		return MIN((short)bitmap->mipmap_count,
+			floor_log2(MAX(bitmap->width, MAX(bitmap->height, (short)bitmap->depth))));
+	}
 	if (TEST_FLAG(bitmap->flags, _bitmap_has_power_of_two_dimensions_bit) &&
 		!TEST_FLAG(bitmap->flags, _bitmap_linear_bit))
 	{

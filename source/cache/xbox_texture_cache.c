@@ -870,6 +870,27 @@ static void texture_cache_initialize_hardware_format(
 			((bitmap->height - 1) << D3DSIZE_HEIGHT_SHIFT) |
 			(bitmap->width - 1);
 	}
+	else if (rasterizer_xbox_bitmap_unswizzled_compressed(bitmap))
+	{
+		/* port: a compressed bitmap of sides only Halo PC draws (a 200 by 112
+		HUD icon) cannot be described by the power-of-two sides of the
+		Format word. An Xbox has no linear DXT format, so a Size word on a
+		compressed texture is free to give its true sides, and the sides it
+		makes no use of (USIZE to PSIZE) a volume's depth less one; its
+		levels are the tag's, unswizzled blocks one after another
+		(xgpu_texture_describe) */
+		texture->Format =
+			(bitmap->type == _bitmap_type_3d ? ((DWORD)bitmap->depth - 1) << D3DFORMAT_USIZE_SHIFT : 0) |
+			(bitmap_format_to_d3d_format(bitmap->format, bitmap->flags) << D3DFORMAT_FORMAT_SHIFT) |
+			((bitmap->type == _bitmap_type_3d ? 3 : 2) << D3DFORMAT_DIMENSION_SHIFT) |
+			((rasterizer_xbox_bitmap_get_max_mipmap_count(bitmap) + 1) << D3DFORMAT_MIPMAP_SHIFT) |
+			(bitmap->type == _bitmap_type_cube_map ? D3DFORMAT_CUBEMAP : 0) |
+			D3DFORMAT_BORDERSOURCE_COLOR |
+			D3DFORMAT_DMACHANNEL_A;
+		texture->Size =
+			((bitmap->height - 1) << D3DSIZE_HEIGHT_SHIFT) |
+			(bitmap->width - 1);
+	}
 	else
 	{
 		texture->Format =
