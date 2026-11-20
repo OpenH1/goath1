@@ -77,6 +77,12 @@ int controller_remap_context(short port);
 int controller_remap_camera(short local_player, int available, int controlling,
     unsigned int *held, unsigned int *pressed);
 unsigned int controller_remap_held(short port);
+/* The physical trigger bound to Fire (XINPUT_GAMEPAD_LEFT_TRIGGER or
+ * XINPUT_GAMEPAD_RIGHT_TRIGGER) while the port's player is in play with
+ * nothing over the game, else -1; and whether that player has a living
+ * unit (a DualSense's trigger resistance: xinput_sdl.c). */
+int controller_remap_fire_trigger(short port);
+int controller_remap_alive(short port);
 unsigned int controller_remap_pressed(short port, unsigned int mask);
 int controller_remap_connected(short port);
 int controller_remap_camera_cycle(short port, int fast);

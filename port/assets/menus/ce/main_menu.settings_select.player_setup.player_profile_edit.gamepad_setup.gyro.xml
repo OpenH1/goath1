@@ -25,11 +25,12 @@
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/op_gyro_smoothing" x="28" y="226"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/op_touch_gyro_smoothing" x="28" y="226" platform="touch"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/op_gyro_calibrate" x="28" y="247"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/section_12" x="28" y="274"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/op_invert_look_horizontal" x="28" y="294"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/op_aim_style" x="28" y="315"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/op_flick_stick" x="28" y="336"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/op_flick_stick_time" x="28" y="357"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/op_trigger_resistance" x="28" y="268"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/section_13" x="28" y="295"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/op_invert_look_horizontal" x="28" y="315"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/op_aim_style" x="28" y="336"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/op_flick_stick" x="28" y="357"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/op_flick_stick_time" x="28" y="378"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/button_bar" y="414"/>
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items" source="tools/port_settings.py settings_files/_settings_page">
@@ -188,10 +189,26 @@
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/gyro_calibrate_value" type="text" controller="1" width="140" height="16" color="#FF2896FF" align="center" text_y="-1" text_flags="no_focus_test" wide="20 120" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/section_12" width="344" height="18" bitmap="main_menu/settings/section" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/section_12_title"/>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/op_trigger_resistance" width="344" height="20" flags="pass_unhandled_to_focused_child" bitmap="main_menu/settings/row" color="#FF2896FF" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/trigger_resistance_label"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/trigger_resistance_spinner" x="188"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/trigger_resistance_seg0" x="188" y="1"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/trigger_resistance_seg1" x="240" y="1"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/section_12_title" type="text" controller="1" width="344" height="18" wide="0 244" string_list="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/labels" string_index="12" color="#FF6F9CD0" text_x="2" text_y="1" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/trigger_resistance_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/labels" string_index="12" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/trigger_resistance_seg0" type="text" controller="1" width="48" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="ON" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/trigger_resistance_seg1" type="text" controller="1" width="48" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="OFF" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/trigger_resistance_spinner" type="spinner" top="1" width="140" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="ON|OFF" setting="input.trigger_resistance" values="true|false" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="4 -6 16 0" footer_bounds="4 140 16 146" wide="20 120" source="tools/port_settings.py settings_files/_settings_page">
+		<on event="created" run="port setting load"/>
+		<on event="a" run="port setting segment"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/section_13" width="344" height="18" bitmap="main_menu/settings/section" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/section_13_title"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/section_13_title" type="text" controller="1" width="344" height="18" wide="0 244" string_list="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/labels" string_index="13" color="#FF6F9CD0" text_x="2" text_y="1" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/op_invert_look_horizontal" width="344" height="20" flags="pass_unhandled_to_focused_child" bitmap="main_menu/settings/row" color="#FF2896FF" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/invert_look_horizontal_label"/>
@@ -199,7 +216,7 @@
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/invert_look_horizontal_seg0" x="188" y="1"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/invert_look_horizontal_seg1" x="240" y="1"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/invert_look_horizontal_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/labels" string_index="13" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/invert_look_horizontal_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/labels" string_index="14" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/invert_look_horizontal_seg0" type="text" controller="1" width="48" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="YES" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
@@ -215,7 +232,7 @@
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/aim_style_seg0" x="188" y="1"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/aim_style_seg1" x="267" y="1"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/aim_style_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/labels" string_index="14" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/aim_style_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/labels" string_index="15" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/aim_style_seg0" type="text" controller="1" width="75" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="CLASSIC" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
@@ -231,7 +248,7 @@
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/flick_stick_seg0" x="188" y="1"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/flick_stick_seg1" x="240" y="1"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/flick_stick_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/labels" string_index="15" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/flick_stick_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/labels" string_index="16" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/flick_stick_seg0" type="text" controller="1" width="48" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="ON" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
@@ -245,13 +262,13 @@
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/flick_stick_time_label"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/flick_stick_time_spinner" x="188"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/flick_stick_time_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/labels" string_index="16" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/flick_stick_time_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/labels" string_index="17" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/flick_stick_time_spinner" type="spinner" top="1" width="140" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="INSTANT|0.05 S|0.1 S|0.15 S|0.2 S|0.25 S" setting="input.flick_stick_time" values="0|0.05|0.1|0.15|0.2|0.25" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="4 -6 16 0" footer_bounds="4 140 16 146" wide="20 120" source="tools/port_settings.py settings_files/_settings_page">
 		<on event="created" run="port setting load"/>
 	</widget>
 	<strings name="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gyro/labels">
-		<string text="GYRO AIMING"/>
+		<string text="GYRO AIMING &amp; TRIGGERS"/>
 		<string text="GYRO"/>
 		<string text="GYRO AIMING"/>
 		<string text="GYRO BUTTON"/>
@@ -263,6 +280,7 @@
 		<string text="SMOOTHING"/>
 		<string text="SMOOTHING"/>
 		<string text="CALIBRATE"/>
+		<string text="TRIGGER RESISTANCE"/>
 		<string text="RIGHT STICK"/>
 		<string text="INVERT TURNING"/>
 		<string text="AIM STYLE"/>
@@ -283,6 +301,7 @@
 		<string text="Steadies the smallest motions, your hand's tremor, but never a real turn. Higher steadies faster motions, over a little longer. Off: every motion as it comes."/>
 		<string text="Steadies this device's smallest motions, your hand's tremor, but never a real turn. Higher steadies faster motions, over a little longer. Off: every motion as it comes."/>
 		<string text="Put the controller down on something still, then select this: it measures the gyroscope at rest for a second and a half.|It also does so whenever it is held still."/>
+		<string text="A DualSense's fire trigger pushes back while you play: whichever trigger fires in your layout. Never in menus, on pause or while dead."/>
 		<string text=""/>
 		<string text="Pushing the right stick right turns the view left. For every controller on this device."/>
 		<string text="Classic aims as the original: a diagonal turns faster, and can speed up the turn as a full push does. Modern aims as MCC's: the same speed whichever way you push, and only a push straight to the side speeds up the turn.|The mouse and touch controls are not changed."/>

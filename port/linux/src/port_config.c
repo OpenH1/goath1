@@ -1326,6 +1326,10 @@ static const struct config_setting config_settings[] =
 	{ "input.rumble_strength", _config_integer, "100", "HALO_RUMBLE_STRENGTH", _environment_value, _platform_all,
 		"How strongly the controller rumbles, in percent (0 to 100): 100 the\n"
 		"game's own. The profile's VIBRATION still turns it off.", _scope_player },
+	{ "input.trigger_resistance", _config_boolean, "false", "HALO_TRIGGER_RESISTANCE", _environment_value,
+		_platform_all,
+		"A DualSense's trigger that fires (the player's layout's) stiffens while\n"
+		"they play: never in a menu, on pause or dead. Off by default.", _scope_player },
 	{ "input.aim_style", _config_string, "\"classic\"", "HALO_AIM_STYLE", _environment_value, _platform_all,
 		"How a controller's look stick aims: \"classic\", the original's (each\n"
 		"direction curved on its own, so a diagonal turns faster, and pushed far\n"

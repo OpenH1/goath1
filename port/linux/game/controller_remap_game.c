@@ -60,6 +60,14 @@ short controller_remap_local_player(short port)
     return NONE;
 }
 
+/* (read only: a dead player's unit_index is NONE until they respawn) */
+int controller_remap_alive(short port)
+{
+    short local = controller_remap_local_player(port);
+    long player = local != NONE ? local_player_get_player_index(local) : NONE;
+    return player != NONE && player_get(player)->unit_index != NONE;
+}
+
 int controller_remap_playing(short port)
 {
     short local = controller_remap_local_player(port);

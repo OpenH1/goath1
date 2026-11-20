@@ -250,7 +250,7 @@
 		<string text="How fast the right stick turns the view."/>
 		<string text="How fast the right stick looks up and down, times LOOK SENSITIVITY's. 1X is the game's own, half as fast as it turns side to side."/>
 		<string text="Pushing the right stick up looks down."/>
-		<string text="Aim by turning a controller that has a gyroscope; the right stick's aim style (Classic or Modern) and turning direction, and the right stick as a flick stick."/>
+		<string text="Aim by turning a controller that has a gyroscope; the right stick's aim style (Classic or Modern) and turning direction, the right stick as a flick stick, and a DualSense's trigger resistance."/>
 		<string text="Flying vehicles pitch as aircraft do: pushing up flies down."/>
 		<string text="Levels the view while you walk."/>
 		<string text=""/>

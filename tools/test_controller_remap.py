@@ -490,7 +490,7 @@ int controller_remap_connected(short p){return 1;}
 unsigned int controller_remap_held(short p){return 0;}
 unsigned int controller_remap_pressed(short p,unsigned int m){return 0;}
 static short local_player_get_next(short p){return p<1?1:NONE;}
-static struct {short local_player_index;} fake_player={2};
+static struct {short local_player_index;long unit_index;} fake_player={2,0};
 static void input_abstraction_get_local_player_preferences(short port,struct game_input_preferences *p){*p=profile;}
 static int game_time_initialized(void){return 1;}
 static int game_in_progress(void){return in_game;}
@@ -650,7 +650,7 @@ short network_chat_controller(void){return -1;}
 static int console_is_active(void){return 0;}
 static short local_player_get_next(short port){return port<0?0:NONE;}
 static long local_player_get_player_index(short port){return port==0?1:NONE;}
-static struct {short local_player_index;} fake_player;
+static struct {short local_player_index;long unit_index;} fake_player;
 #define player_get(index) (&fake_player)
 """ + '#define PRESET_COUNT ' + str(len(presets)) + '\nenum {' + enums + '};\n' + source('port/linux/game/controller_remap_game.c') +
           source('port/linux/src/controller_remap_input.c') + r"""
