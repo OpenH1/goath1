@@ -533,6 +533,9 @@ static void scene_approach(void)
 	}
 }
 
+/* (hrtf-simd: a voice's worth a call, as the paced game mixes) */
+#define HRTF_SIMD_FRAMES 480
+
 static void bench(unsigned long voices, unsigned long silent, BOOL indoor, double seconds)
 {
 	unsigned long chunks = (unsigned long)(seconds * OUTPUT_RATE / CHUNK), chunk;
@@ -3986,6 +3989,65 @@ holds what is heard under full scale. The stereo16 file is the old one:
 				printf("\n");
 			}
 		}
+		return 0;
+	}
+	/* "hrtf-simd": hrtf_run's SSE2 frames against its scalar loop, bit for
+	bit: the output, the parameters, the lines and the low passes' state,
+	over 200 calls carrying their state, held, ramped within a call and
+	across calls, the crossfade ramping, stereo and 5.1, noise and silence
+	(the low passes decaying to rest) */
+	CASE("hrtf-simd")
+	{
+#if defined(__SSE2__) && HRTF_BANDS == 9
+		static float signal[HRTF_SIMD_FRAMES], out[2][HRTF_SIMD_FRAMES * 6];
+		struct hrtf_parameters current[2], place[4];
+		static float kept[2][2][HRTF_FRAMES], bands[2][HRTF_BANDS - 1][2];
+		int call, pass, ears;
+
+		hrtf_initialize();
+		hrtf_place(0.6f, 0.1f, 0.8f, 100.0f, FALSE, &place[0]);
+		hrtf_place(-0.4f, 0.0f, 0.9f, 3.0f, FALSE, &place[1]);
+		hrtf_place(0.0f, 0.9f, -0.2f, 1.0f, TRUE, &place[2]);
+		hrtf_place(-0.9f, -0.3f, 0.1f, 20.0f, TRUE, &place[3]);
+		place[0].pair[0] = 0.7f; place[0].pair[1] = 0.3f;
+		place[1].pair[0] = 0.2f; place[1].pair[1] = 0.9f;
+		place[2].pair[0] = 1.0f; place[2].pair[1] = 0.0f;
+		place[3].pair[0] = 0.5f; place[3].pair[1] = 0.5f;
+		current[0] = current[1] = place[0];
+		memset(kept, 0, sizeof(kept));
+		memset(bands, 0, sizeof(bands));
+		for (call = 0; call < 200; call++)
+		{
+			unsigned long frames = call % 7 == 3 ? 37 : HRTF_SIMD_FRAMES;
+			unsigned long ramp = call % 5 == 0 ? 0 : call % 5 == 1 ? frames / 3 : call % 5 == 2 ? frames * 2 : frames;
+			float mix = call % 9 == 4 ? 0.2f : 1.0f, ramp_mix = call % 9 == 4 ? 0.01f : 0.0f;
+
+			output_channels = call % 11 < 6 ? 2 : 6;
+			random_state = 500 + call;
+			if (call % 50 < 40)
+				for (ears = 0; ears < (int)frames; ears++)
+					signal[ears] = 0.25f * (float)random_uniform();
+			else
+				memset(signal, 0, sizeof(signal));
+			for (pass = 0; pass < 2; pass++)
+			{
+				hrtf_simd = pass;
+				memset(out[pass], 0, sizeof(out[pass]));
+				hrtf_run(&current[pass], kept[pass], bands[pass], signal, out[pass], frames, ramp,
+					&place[call % 4], mix, ramp_mix, 1.0f);
+			}
+			ears = (int)(frames * (unsigned long)output_channels);
+			CHECK(!memcmp(out[0], out[1], sizeof(float) * (size_t)ears), "call %d: the output differs", call);
+			CHECK(!memcmp(&current[0], &current[1], sizeof(current[0])), "call %d: the parameters differ", call);
+			CHECK(!memcmp(kept[0], kept[1], sizeof(kept[0])) && !memcmp(bands[0], bands[1], sizeof(bands[0])),
+				"call %d: the lines or the low passes differ", call);
+		}
+		hrtf_simd = 1;
+		output_channels = 2;
+		printf("hrtf-simd: the same bit for bit over 200 calls\n");
+#else
+		printf("hrtf-simd: no SSE2 here, nothing to compare\n");
+#endif
 		return 0;
 	}
 	/* "bench [voices] [out of earshot] [indoor|outdoor] [hrtf] [spread|mixed]":

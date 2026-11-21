@@ -1552,6 +1552,159 @@ static float hrtf_mix_step(float mix, float ramp_mix, float end)
 	return (ramp_mix > 0.0f && mix > end) || (ramp_mix < 0.0f && mix < end) ? end : mix;
 }
 
+#if defined(__SSE2__) && HRTF_BANDS == 9
+#include <emmintrin.h>
+
+/* hrtf_run's frames with SSE2 (1), or its scalar loop (0: the harness's
+"hrtf-simd" case compares them). Each lane does the scalar's operations in
+the scalar's order: with SSE's float arithmetic and no contraction
+(-ffp-contract=off) the same bits */
+static int hrtf_simd = 1;
+
+/* flush_denormal's four at once: a lane under 1e-20 in size to +0 */
+static __m128 hrtf_flush4(__m128 value)
+{
+	__m128 size = _mm_and_ps(value, _mm_castsi128_ps(_mm_set1_epi32(0x7fffffff)));
+
+	return _mm_andnot_ps(_mm_cmplt_ps(size, _mm_set1_ps(1.0e-20f)), value);
+}
+
+/* hrtf_run's loop over its frames: the low passes four bands to a vector,
+the two ears' weighted sums two lanes of one; the delays, the gains and
+the output as the scalar loop has them */
+static void hrtf_run_sse(struct hrtf_parameters *now_at, struct hrtf_parameters *ramp_at, float line[2][HRTF_FRAMES + MIX_CHUNK_FRAMES],
+	float state[HRTF_BANDS - 1][2], const float *direct, float *output, unsigned long frames, unsigned long ramp_frames,
+	const struct hrtf_parameters *target, float mix, float ramp_mix, float mix_end)
+{
+	struct hrtf_parameters now = *now_at, ramp = *ramp_at;
+	__m128 c0[2], c1[2], c2[2], c3[2], s0[2], s1[2], w[HRTF_BANDS], r[HRTF_BANDS];
+	unsigned long frame;
+	int half, band;
+
+	for (half = 0; half < 2; half++)
+	{
+		const float (*c)[4] = (const float (*)[4])&hrtf.lowpass[half * 4];
+
+		c0[half] = _mm_setr_ps(c[0][0], c[1][0], c[2][0], c[3][0]);
+		c1[half] = _mm_setr_ps(c[0][1], c[1][1], c[2][1], c[3][1]);
+		c2[half] = _mm_setr_ps(c[0][2], c[1][2], c[2][2], c[3][2]);
+		c3[half] = _mm_setr_ps(c[0][3], c[1][3], c[2][3], c[3][3]);
+		s0[half] = _mm_setr_ps(state[half * 4][0], state[half * 4 + 1][0], state[half * 4 + 2][0], state[half * 4 + 3][0]);
+		s1[half] = _mm_setr_ps(state[half * 4][1], state[half * 4 + 1][1], state[half * 4 + 2][1], state[half * 4 + 3][1]);
+	}
+	for (band = 0; band < HRTF_BANDS; band++)
+	{
+		w[band] = _mm_setr_ps(now.weights[0][band], now.weights[1][band], 0.0f, 0.0f);
+		r[band] = _mm_setr_ps(ramp.weights[0][band], ramp.weights[1][band], 0.0f, 0.0f);
+	}
+	for (frame = 0; frame < frames; frame++)
+	{
+		float x = direct[frame];
+		__m128 vx = _mm_set1_ps(x), low[2], heard;
+		float ears[4];
+		for (half = 0; half < 2; half++)
+		{
+			__m128 y = _mm_add_ps(_mm_mul_ps(c0[half], vx), s0[half]);
+
+			s0[half] = hrtf_flush4(_mm_add_ps(_mm_sub_ps(_mm_mul_ps(c1[half], vx), _mm_mul_ps(c2[half], y)), s1[half]));
+			s1[half] = hrtf_flush4(_mm_sub_ps(_mm_mul_ps(c0[half], vx), _mm_mul_ps(c3[half], y)));
+			low[half] = y;
+		}
+		heard = _mm_mul_ps(w[HRTF_BANDS - 1], vx);
+		heard = _mm_add_ps(heard, _mm_mul_ps(w[0], _mm_shuffle_ps(low[0], low[0], _MM_SHUFFLE(0, 0, 0, 0))));
+		heard = _mm_add_ps(heard, _mm_mul_ps(w[1], _mm_shuffle_ps(low[0], low[0], _MM_SHUFFLE(1, 1, 1, 1))));
+		heard = _mm_add_ps(heard, _mm_mul_ps(w[2], _mm_shuffle_ps(low[0], low[0], _MM_SHUFFLE(2, 2, 2, 2))));
+		heard = _mm_add_ps(heard, _mm_mul_ps(w[3], _mm_shuffle_ps(low[0], low[0], _MM_SHUFFLE(3, 3, 3, 3))));
+		heard = _mm_add_ps(heard, _mm_mul_ps(w[4], _mm_shuffle_ps(low[1], low[1], _MM_SHUFFLE(0, 0, 0, 0))));
+		heard = _mm_add_ps(heard, _mm_mul_ps(w[5], _mm_shuffle_ps(low[1], low[1], _MM_SHUFFLE(1, 1, 1, 1))));
+		heard = _mm_add_ps(heard, _mm_mul_ps(w[6], _mm_shuffle_ps(low[1], low[1], _MM_SHUFFLE(2, 2, 2, 2))));
+		heard = _mm_add_ps(heard, _mm_mul_ps(w[7], _mm_shuffle_ps(low[1], low[1], _MM_SHUFFLE(3, 3, 3, 3))));
+		_mm_storeu_ps(ears, heard);
+		line[0][HRTF_FRAMES + frame] = ears[0];
+		line[1][HRTF_FRAMES + frame] = ears[1];
+		{
+			/* (hrtf_read's, an ear to a lane) */
+			float delay0 = 1.0f + now.delay[0], delay1 = 1.0f + now.delay[1];
+			unsigned long whole0 = (unsigned long)delay0, whole1 = (unsigned long)delay1;
+			const float *at0 = line[0] + HRTF_FRAMES + frame - whole0, *at1 = line[1] + HRTF_FRAMES + frame - whole1;
+			__m128 t = _mm_setr_ps(delay0 - (float)whole0, delay1 - (float)whole1, 0.0f, 0.0f);
+			__m128 newer = _mm_setr_ps(at0[1], at1[1], 0.0f, 0.0f), x0 = _mm_setr_ps(at0[0], at1[0], 0.0f, 0.0f);
+			__m128 x1 = _mm_setr_ps(at0[-1], at1[-1], 0.0f, 0.0f), older = _mm_setr_ps(at0[-2], at1[-2], 0.0f, 0.0f);
+			__m128 inner = _mm_sub_ps(_mm_add_ps(_mm_mul_ps(_mm_set1_ps(3.0f), _mm_sub_ps(x0, x1)), older), newer);
+			__m128 middle = _mm_add_ps(_mm_sub_ps(_mm_add_ps(_mm_sub_ps(_mm_mul_ps(_mm_set1_ps(2.0f), newer),
+				_mm_mul_ps(_mm_set1_ps(5.0f), x0)), _mm_mul_ps(_mm_set1_ps(4.0f), x1)), older), _mm_mul_ps(t, inner));
+			__m128 sound = _mm_add_ps(x0, _mm_mul_ps(_mm_mul_ps(_mm_set1_ps(0.5f), t),
+				_mm_add_ps(_mm_sub_ps(x1, newer), _mm_mul_ps(t, middle))));
+
+			sound = _mm_mul_ps(_mm_mul_ps(sound, _mm_set1_ps(now.gain)), _mm_set1_ps(mix));
+			if (output_channels == 6)
+			{
+				float *front = output + frame * 6, *back = front + 4;
+
+				_mm_storel_pi((__m64 *)front, _mm_add_ps(_mm_loadl_pi(_mm_setzero_ps(), (const __m64 *)front),
+					_mm_mul_ps(sound, _mm_set1_ps(now.pair[0]))));
+				_mm_storel_pi((__m64 *)back, _mm_add_ps(_mm_loadl_pi(_mm_setzero_ps(), (const __m64 *)back),
+					_mm_mul_ps(sound, _mm_set1_ps(now.pair[1]))));
+			}
+			else
+			{
+				float *pair = output + frame * 2;
+
+				_mm_storel_pi((__m64 *)pair, _mm_add_ps(_mm_loadl_pi(_mm_setzero_ps(), (const __m64 *)pair), sound));
+			}
+		}
+		/* (at the ramp's end, exactly the new ones, held) */
+		if (frame + 1 == ramp_frames)
+		{
+			memcpy(now.delay, target->delay, sizeof(now.delay));
+			now.gain = target->gain;
+			now.pair[0] = target->pair[0];
+			now.pair[1] = target->pair[1];
+			memset(&ramp, 0, sizeof(ramp));
+			for (band = 0; band < HRTF_BANDS; band++)
+			{
+				w[band] = _mm_setr_ps(target->weights[0][band], target->weights[1][band], 0.0f, 0.0f);
+				r[band] = _mm_setzero_ps();
+			}
+		}
+		else
+		{
+			/* (hrtf_step's adds, the weights' in their lanes) */
+			now.delay[0] += ramp.delay[0];
+			now.delay[1] += ramp.delay[1];
+			for (band = 0; band < HRTF_BANDS; band++)
+				w[band] = _mm_add_ps(w[band], r[band]);
+			now.gain += ramp.gain;
+			now.pair[0] += ramp.pair[0];
+			now.pair[1] += ramp.pair[1];
+		}
+		mix = hrtf_mix_step(mix, ramp_mix, mix_end);
+	}
+	for (band = 0; band < HRTF_BANDS; band++)
+	{
+		float lanes[4];
+
+		_mm_storeu_ps(lanes, w[band]);
+		now.weights[0][band] = lanes[0];
+		now.weights[1][band] = lanes[1];
+	}
+	for (half = 0; half < 2; half++)
+	{
+		float a[4], b[4];
+
+		_mm_storeu_ps(a, s0[half]);
+		_mm_storeu_ps(b, s1[half]);
+		for (band = 0; band < 4; band++)
+		{
+			state[half * 4 + band][0] = a[band];
+			state[half * 4 + band][1] = b[band];
+		}
+	}
+	*now_at = now;
+	*ramp_at = ramp;
+}
+#endif
+
 /* frames of a mono voice's direct path (direct) through the HRTF to each
 ear, added to output (frames of output_channels: on 5.1 to the front pair
 and the back pair, at their gains) at mix of the voice (the crossfade with
@@ -1582,6 +1735,11 @@ static void hrtf_run(struct hrtf_parameters *current, float kept[2][HRTF_FRAMES]
 	ramp.pair[0] = (target->pair[0] - now.pair[0]) * share;
 	ramp.pair[1] = (target->pair[1] - now.pair[1]) * share;
 	memcpy(state, bands, sizeof(state));
+#if defined(__SSE2__) && HRTF_BANDS == 9
+	if (hrtf_simd)
+		hrtf_run_sse(&now, &ramp, line, state, direct, output, frames, ramp_frames, target, mix, ramp_mix, mix_end);
+	else
+#endif
 	for (frame = 0; frame < frames; frame++)
 	{
 		/* the low passes (transposed direct form II), then each ear its
