@@ -49,12 +49,33 @@ written to benchmarks/<date>_<time>-<map>.txt beside reports/
 results screen (menu_functions.c's pc_menu_benchmark_results_open) shows
 the average, the 1% low, the 95th and 99th percentile frame times, the
 GPU's and the CPU's time a frame, the settings and the computer.
+
+The stress test (Performance Tools' STRESS TEST, halo --stress-test or
+debug.stress_test) measures the same way a campaign scene that drops the
+frame rate: the second half of Halo (levels\a30\a30, structure BSP 1, after
+the Warthog drive), its open ground with dropships unloading Covenant. It
+hosts a network co-op game of the level alone (debug.network_test
+"host:levels\a30\a30:coop"), so that co-op's extra enemies' STATIC
+MULTIPLIER (coop_enemies.c, debug.stress_test_multiplier times, 4 by
+default) grows every squad, and skips the first part with console cues
+(stress_cues): the level's startup script put to sleep, BSP 1 loaded, the
+player stood at the river site's flag, deathless, and the level's own
+scripts for that part woken on a fixed timeline: the river's waves (its
+dropship among them), the middle's hovering dropships and Banshees, then
+the rubble site's dropship waves, so enemies keep arriving. The player is
+the campaign bot (bots.c's debug.campaign_bot, as a network co-op host's
+first player), which holds a few looks across the ground (stress_route)
+and then fights where it stands, the same each run. The measure is
+STRESS_SECONDS from STRESS_WARMUP; the enemies alive are logged every
+STRESS_LOG_SECONDS.
 */
 
 #include "cseries.h"
 #include "memory/data.h"
 #include "game/game.h"
 #include "game/players.h"
+#include "game/game_allegiance.h"
+#include "ai/actors.h"
 #include "main/main.h"
 
 #include "benchmark.h"
@@ -85,6 +106,9 @@ int config_command_line_value(char const *name, char *value, unsigned long size)
 /* xgpu_backend.c's: the GPU's name (its header is the host's, not the game's) */
 char const *xgpu_backend_device(void);
 
+/* platform.h's: the data folder (the one with maps/) */
+const char *platform_data_root(void);
+
 /* server_rotation.c's: each multiplayer map in the maps folder (kind
 "xbox") and custom_maps, by its name */
 int server_maps_each(void (*each)(void *context, const char *name, const char *level, const char *kind),
@@ -106,6 +130,47 @@ frozen: its game time under a quarter of the real time's */
 /* the share of the time (percent) waiting for vsync or the frame cap the
 results call held back (report.c's REPORT_PACED_PERCENT) */
 #define BENCHMARK_PACED_PERCENT 20.0
+
+/* the stress test's level, results' name, measure and log (its seconds
+from the player's first unit, as the cues') */
+#define STRESS_LEVEL "levels\\a30\\a30"
+#define STRESS_NAME "a30-stress"
+#define STRESS_WARMUP 15.0
+#define STRESS_WARMUP_MOST 60.0
+#define STRESS_SECONDS 90.0
+#define STRESS_LOG_SECONDS 5.0
+#define STRESS_MULTIPLIER_MOST 8
+/* the river site's hiding place (a30's cutscene flag river_hide_flag), where
+the player is stood and the campaign bot's route holds its looks: toward
+the middle's dropships, the river's dropship, the rubble site, the middle */
+#define STRESS_SPOT "-535.3 183.2 66.4"
+static char const stress_route[] =
+	"# the stress test's (benchmark.c): looks across BSP 1 from river_hide_flag\n"
+	"hold middle " STRESS_SPOT " -44 -4 12\n"
+	"hold river_dropship " STRESS_SPOT " -142 0 10\n"
+	"hold rubble " STRESS_SPOT " 0 -2 10\n"
+	"hold middle_again " STRESS_SPOT " -44 -4 10\n";
+/* the timeline (debug.network_test_cues: "<second> <console line>|..."): the
+startup script (mission_a30) put to sleep before it wakes the first part's
+encounters, BSP 1, the player stood there, the cinematic's hold on the view
+and input let go, then a30's own scripts for that part, as its mission_obj,
+mission_river and mission_rubble wake them */
+static char const stress_cues[] =
+	"0.5 (begin (sleep -1 mission_a30) (set cheat_deathless_player true) (switch_bsp 1))|"
+	"1 (object_teleport (player0) river_hide_flag)|"
+	"1.5 (begin (cinematic_stop) (camera_control false) (cinematic_show_letterbox false) "
+		"(player_camera_control true) (player_enable_input true) (show_hud true) "
+		"(hud_show_motion_sensor true) (fade_in 0 0 0 0))|"
+	"2 (begin (ai_allegiance player human) (wake mission_river_marine) (wake mission_river_wave_1))|"
+	"4 (wake mission_river_wave_2)|"
+	"8 (wake mission_river_wave_3)|"
+	"12 (begin (wake mission_mid_river_1) (wake mission_mid_cliff_2))|"
+	"20 (begin (ai_place rubble_wave/wave_1_toon) (wake mission_rubble_wave_2))|"
+	"30 (begin (wake mission_mid_rubble_1) (ai_place mid_rubble_2) (wake mission_mid_banshee))|"
+	"40 (wake mission_rubble_wave_3)|"
+	"55 (wake mission_rubble_wave_5)|"
+	"70 (wake mission_mid_cliff_1)|"
+	"85 (wake mission_rubble_wave_4)";
 
 char const *benchmark_live_problem(
 	struct benchmark_live const *live,
@@ -189,12 +254,19 @@ static short benchmark_map_find(
 }
 
 /* the settings set for the run, and what they were */
-#define BENCHMARK_SETTINGS 20
+#define BENCHMARK_SETTINGS 32
 static struct
 {
 	int state;
 	int command_line_checked;
 	char pacing[16];
+	/* the stress test's (a30, co-op, its multiplier) rather than a match's;
+	its enemies' log's next second and the most alive at once */
+	int stress;
+	long multiplier;
+	double stress_log_second;
+	long enemies_most;
+	char route[256];
 	/* the scenario: its map (benchmark_maps'), its bots (and those asked
 	for, where the map takes fewer) and its player, TRUE the bot's */
 	short map;
@@ -249,12 +321,47 @@ static void benchmark_restore(
 	halo_test_input_reread();
 }
 
-static void benchmark_begin(
+/* the stress test's settings: a30 hosted for network co-op, its enemies
+multiplied, the campaign bot its player */
+static void benchmark_begin_stress(
+	void)
+{
+	char text[64];
+	FILE *file;
+
+	snprintf(benchmark.route, sizeof(benchmark.route), "%s/stress_test_route.txt", platform_data_root());
+	file = fopen(benchmark.route, "w");
+	if (file)
+	{
+		fputs(stress_route, file);
+		fclose(file);
+	}
+	else
+		platform_log("stress test: cannot write %s: the campaign bot fights where it is", benchmark.route);
+	benchmark_set("debug.network_test", "host:" STRESS_LEVEL ":coop");
+	benchmark_set("debug.network_test_start", "3");
+	benchmark_set("debug.network_test_players", "1");
+	benchmark_set("debug.network_test_cues", stress_cues);
+	benchmark_set("debug.network_test_cue_players", "1");
+	benchmark_set("network.coop_enemies_mode", "multiplier");
+	snprintf(text, sizeof(text), "%ld", benchmark.multiplier);
+	benchmark_set("network.coop_enemies_multiplier", text);
+	benchmark_set("bots.count", "0");
+	benchmark_set("bots.fill_to", "0");
+	benchmark_set("debug.bot_player", "false");
+	benchmark_set("debug.test_input", "");
+	benchmark_set("debug.campaign_bot", "true");
+	benchmark_set("debug.campaign_bot_route", file ? benchmark.route : "");
+	benchmark_set("debug.campaign_bot_seconds", "0");
+	benchmark_set("display.spartan_link_shown", "true");
+}
+
+/* the benchmark's match's: Slayer on its map with its bots and player */
+static void benchmark_begin_match(
 	void)
 {
 	char text[64];
 
-	benchmark.setting_count = 0;
 	snprintf(text, sizeof(text), "local:%s:slayer", benchmark_maps[benchmark.map].name);
 	benchmark_set("debug.network_test", text);
 	benchmark_set("debug.network_test_start", "3");
@@ -271,6 +378,16 @@ static void benchmark_begin(
 	benchmark_set("debug.bot_player_skill", benchmark.bot_player ? "true" : "false");
 	benchmark_set("debug.bot_player_weapon", "");
 	benchmark_set("debug.test_input", benchmark.bot_player ? "" : "bot:" BENCHMARK_SEED);
+}
+
+static void benchmark_begin(
+	void)
+{
+	benchmark.setting_count = 0;
+	if (benchmark.stress)
+		benchmark_begin_stress();
+	else
+		benchmark_begin_match();
 	benchmark_set("debug.random_seed", BENCHMARK_SEED);
 	benchmark_set("debug.skip_cinematics", "true");
 	if (!strcmp(benchmark.pacing, "uncapped"))
@@ -287,8 +404,16 @@ static void benchmark_begin(
 	benchmark.failure[0] = 0;
 	memset(&benchmark.measure, 0, sizeof(benchmark.measure));
 	benchmark.file[0] = benchmark.verdict[0] = 0;
-	platform_log("benchmark: begun (%s, %ld bots, the %s player, pacing %s)", benchmark_maps[benchmark.map].name,
-		benchmark.bots, benchmark.bot_player ? "bot" : "scripted", benchmark.pacing);
+	benchmark.stress_log_second = 0.0;
+	benchmark.enemies_most = 0;
+	if (benchmark.stress)
+		platform_log("stress test: begun (%s co-op, enemies %ld times, the campaign bot, pacing %s)", STRESS_LEVEL,
+			benchmark.multiplier, benchmark.pacing);
+	else
+	{
+		platform_log("benchmark: begun (%s, %ld bots, the %s player, pacing %s)", benchmark_maps[benchmark.map].name,
+			benchmark.bots, benchmark.bot_player ? "bot" : "scripted", benchmark.pacing);
+	}
 }
 
 /* the run over: its settings given back and the main menu asked for, its
@@ -329,6 +454,31 @@ static void benchmark_count(
 	}
 }
 
+/* the stress test's: the players' enemies alive (an actor with a unit, or a
+swarm's units) and every actor */
+static void benchmark_count_enemies(
+	long *enemies,
+	long *actors)
+{
+	struct data_iterator iterator;
+	struct actor_datum *actor;
+
+	*enemies = *actors = 0;
+	if (!actor_data)
+		return;
+	data_iterator_new(&iterator, actor_data);
+	while ((actor = (struct actor_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		(*actors)++;
+		if (!game_team_is_enemy(_game_team_player, actor->meta.team_index))
+			continue;
+		if (actor->meta.swarm)
+			*enemies += actor->meta.swarm_unit_count;
+		else if (actor->meta.unit_index != NONE)
+			(*enemies)++;
+	}
+}
+
 /* the results' lines above the frames' (report_benchmark_write's about) */
 static void benchmark_about(
 	char *text,
@@ -338,6 +488,20 @@ static void benchmark_about(
 {
 	char bots[64] = "";
 
+	if (benchmark.stress)
+	{
+		snprintf(text, size,
+			"Scenario: Halo (%s), the second half (BSP 1) from the river site, network co-op hosted alone, "
+			"enemies %ld times (co-op's static multiplier), the campaign bot deathless, seed %s; %.0f seconds "
+			"measured from %.1f s (%ld game ticks, at most %ld enemies alive)\n"
+			"Frame pacing: %s\n",
+			STRESS_LEVEL, benchmark.multiplier, BENCHMARK_SEED, STRESS_SECONDS, benchmark.measure_second, ticks,
+			benchmark.enemies_most,
+			!strcmp(benchmark.pacing, "uncapped") ? "uncapped (vsync, variable refresh and the frame cap off)" :
+				"your settings (vsync, variable refresh and the frame cap as set)");
+		(void)kills;
+		return;
+	}
 	if (benchmark.bots_asked > benchmark.bots)
 		snprintf(bots, sizeof(bots), " (%ld asked for: the most this map takes)", benchmark.bots_asked);
 	snprintf(text, size,
@@ -364,7 +528,8 @@ static void benchmark_finish(
 	platform_video_drawable_size(&width, &height);
 	snprintf(benchmark.window, sizeof(benchmark.window), "%dx%d", width, height);
 	report_processor_text(benchmark.processor, sizeof(benchmark.processor));
-	if (!report_benchmark_write(benchmark.first_frame, report_frames_mark(), benchmark_maps[benchmark.map].name, about, &benchmark.measure,
+	if (!report_benchmark_write(benchmark.first_frame, report_frames_mark(),
+		benchmark.stress ? STRESS_NAME : benchmark_maps[benchmark.map].name, about, &benchmark.measure,
 		benchmark.verdict, sizeof(benchmark.verdict), benchmark.file, sizeof(benchmark.file)))
 	{
 		if (!benchmark.measure.frames)
@@ -374,6 +539,8 @@ static void benchmark_finish(
 		}
 		snprintf(benchmark.file, sizeof(benchmark.file), "(the results could not be saved)");
 	}
+	if (benchmark.stress)
+		platform_log("stress test: at most %ld enemies alive in the measure", benchmark.enemies_most);
 	platform_log("benchmark: %lu frames, %.1f fps average, %.1f fps 1%% low, p95 %.2f ms, p99 %.2f ms, GPU %.2f ms, "
 		"game %.2f ms, %s", benchmark.measure.frames, benchmark.measure.average_fps, benchmark.measure.low_1_fps,
 		benchmark.measure.p95_ms, benchmark.measure.p99_ms, benchmark.measure.gpu_ms, benchmark.measure.game_ms,
@@ -408,6 +575,24 @@ void benchmark_request(
 	benchmark.bots = benchmark.bots_asked < benchmark_maps[benchmark.map].most_bots ? benchmark.bots_asked :
 		benchmark_maps[benchmark.map].most_bots;
 	benchmark.bot_player = strcmp(player ? player : config_string("display.benchmark_player"), "scripted") != 0;
+	benchmark.stress = FALSE;
+	benchmark.state = _benchmark_asked;
+}
+
+void benchmark_request_stress(
+	char const *pacing)
+{
+	if (benchmark.state != _benchmark_idle && benchmark.state != _benchmark_done)
+		return;
+	if (!pacing || (strcmp(pacing, "uncapped") && strcmp(pacing, "settings")))
+		pacing = config_string("display.benchmark_pacing");
+	snprintf(benchmark.pacing, sizeof(benchmark.pacing), "%s", strcmp(pacing, "settings") ? "uncapped" : "settings");
+	benchmark.multiplier = config_integer("debug.stress_test_multiplier");
+	if (benchmark.multiplier < 2)
+		benchmark.multiplier = 2;
+	if (benchmark.multiplier > STRESS_MULTIPLIER_MOST)
+		benchmark.multiplier = STRESS_MULTIPLIER_MOST;
+	benchmark.stress = TRUE;
 	benchmark.state = _benchmark_asked;
 }
 
@@ -477,6 +662,19 @@ void benchmark_frame(
 			benchmark_request(NULL, NULL, NULL, NULL);
 		else if (config_string("debug.benchmark")[0])
 			benchmark_request(config_string("debug.benchmark"), NULL, NULL, NULL);
+		/* (halo --stress-test [uncapped|settings], or debug.stress_test) */
+		else if (config_command_line_value("--stress-test", value, sizeof(value)) &&
+			(!strcmp(value, "uncapped") || !strcmp(value, "settings")))
+		{
+			benchmark_request_stress(value);
+		}
+		else if (config_command_line_flag("--stress-test"))
+			benchmark_request_stress(NULL);
+		else if (config_string("debug.stress_test")[0] && strcmp(config_string("debug.stress_test"), "0") &&
+			strcmp(config_string("debug.stress_test"), "false"))
+		{
+			benchmark_request_stress(config_string("debug.stress_test"));
+		}
 	}
 	switch (benchmark.state)
 	{
@@ -509,7 +707,7 @@ void benchmark_frame(
 				char failure[96];
 
 				snprintf(failure, sizeof(failure), "the match did not start (is %s.map in the maps folder?)",
-					benchmark_maps[benchmark.map].name);
+					benchmark.stress ? "a30" : benchmark_maps[benchmark.map].name);
 				benchmark_end(failure);
 			}
 			return;
@@ -521,6 +719,27 @@ void benchmark_frame(
 	}
 
 	benchmark_count(&players, &bots, &kills);
+	/* (the stress test's: its enemies stand for the bots, and need not be
+	killed) */
+	if (benchmark.stress)
+	{
+		long actors;
+
+		benchmark_count_enemies(&bots, &actors);
+		kills = 1;
+		if (bots > benchmark.enemies_most && benchmark.state == _benchmark_measuring)
+			benchmark.enemies_most = bots;
+		cues_start = network_test_cues_start_tick();
+		if (cues_start != NONE && cues_start > 0)
+		{
+			scenario = (double)(game_time_get() - cues_start) / TICKS_PER_SECOND;
+			if (scenario >= benchmark.stress_log_second)
+			{
+				platform_log("stress test: %.0f s, %ld enemies alive, %ld actors", scenario, bots, actors);
+				benchmark.stress_log_second = scenario + STRESS_LOG_SECONDS;
+			}
+		}
+	}
 	live.real_seconds = (double)(system_milliseconds() - benchmark.playing_ms) / 1000.0;
 	live.ticks = game_time_get() - benchmark.playing_tick;
 	live.players = players;
@@ -541,12 +760,12 @@ void benchmark_frame(
 	if (benchmark.state == _benchmark_warming || benchmark.state == _benchmark_starting)
 	{
 		benchmark.state = _benchmark_warming;
-		if (scenario < BENCHMARK_WARMUP)
+		if (scenario < (benchmark.stress ? STRESS_WARMUP : BENCHMARK_WARMUP))
 			return;
 		problem = benchmark_live_problem(&live, TRUE);
 		if (problem)
 		{
-			if (scenario >= BENCHMARK_WARMUP_MOST)
+			if (scenario >= (benchmark.stress ? STRESS_WARMUP_MOST : BENCHMARK_WARMUP_MOST))
 				benchmark_end(problem);
 			return;
 		}
@@ -561,9 +780,9 @@ void benchmark_frame(
 		return;
 	}
 	/* _benchmark_measuring */
-	if (scenario < benchmark.measure_second + BENCHMARK_SECONDS)
+	if (scenario < benchmark.measure_second + (benchmark.stress ? STRESS_SECONDS : BENCHMARK_SECONDS))
 		return;
-	live.kills = kills - benchmark.kills_before;
+	live.kills = benchmark.stress ? 1 : kills - benchmark.kills_before;
 	problem = benchmark_live_problem(&live, TRUE);
 	if (problem)
 	{
@@ -731,9 +950,14 @@ int benchmark_value(
 		snprintf(value, size, "%s", benchmark.processor);
 	else if (!strcmp(name, "benchmark.file") && !failed)
 		snprintf(value, size, "%s", benchmark.file);
+	else if (!strcmp(name, "benchmark.scenario") && benchmark.stress)
+		snprintf(value, size, "Stress test: Halo, second half, enemies %ldx (up to %ld at once), %.0f seconds",
+			benchmark.multiplier, benchmark.enemies_most, STRESS_SECONDS);
 	else if (!strcmp(name, "benchmark.scenario"))
 		snprintf(value, size, "%s, %ld bots, %.0f seconds", benchmark_maps[benchmark.map].title, benchmark.bots,
 			BENCHMARK_SECONDS);
+	else if (!strcmp(name, "benchmark.player") && benchmark.stress)
+		snprintf(value, size, "the campaign bot, which can't die");
 	else if (!strcmp(name, "benchmark.player"))
 		snprintf(value, size, "%s", benchmark.bot_player ? "a bot, at the bots' Normal skill" :
 			"scripted (as before, not the same each run)");

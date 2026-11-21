@@ -61,4 +61,9 @@
 		<on event="start" run="port settings benchmark"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
 	</behaviour>
+	<behaviour name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/performance_tools/op_stress_test" flags="pass_unhandled_to_focused_child">
+		<on event="a" run="port settings stress test"/>
+		<on event="start" run="port settings stress test"/>
+		<on event="left_mouse" run="mouse emit accept event"/>
+	</behaviour>
 </model>

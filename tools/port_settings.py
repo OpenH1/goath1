@@ -1587,6 +1587,13 @@ PAGES = {
              "Plays a fixed minute of the Benchmark Map with its bots, then shows the average frame rate, the 1% low, "
              "the frame times, the GPU and CPU time and your settings, and saves them in the benchmarks "
              "folder.|From the main menu only.", None, "benchmark", "port settings benchmark"),
+            # (benchmark.c's stress test: Halo's second half, hosted for
+            # co-op, its enemies multiplied; at the Benchmark Pacing above,
+            # its results the benchmark's screen)
+            ("STRESS TEST", None, None,
+             "Plays 90 seconds of Halo's second half, where dropships keep landing, with four times the enemies, "
+             "then shows the same results as the benchmark. Needs the campaign's maps.|From the main menu only.",
+             None, "stress_test", "port settings stress test"),
         ],
     },
     FIRST_PERSON[0]: {
@@ -2797,7 +2804,7 @@ SETTINGS_ROW_WHEN = {
     # (in a game: not those that would drop it or are the main menu's, nor
     # those whose screens are ui.map's or make a profile)
     "online": "!in_game", "allow_upnp": "!in_game", "join_from_clipboard": "!in_game", "auto": "!in_game",
-    "mods": "!in_game", "game_data": "!in_game", "benchmark": "!in_game", "benchmark_pacing": "!in_game",
+    "mods": "!in_game", "game_data": "!in_game", "benchmark": "!in_game", "stress_test": "!in_game", "benchmark_pacing": "!in_game",
     "benchmark_map": "!in_game", "benchmark_bots": "!in_game", "benchmark_player": "!in_game",
     "name": "profile+!in_game", "color": "profile+!in_game", "profiles": "profile+!in_game",
     "create_profile": "!profile+!in_game",

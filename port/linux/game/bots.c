@@ -7704,8 +7704,11 @@ static void bots_campaign_update(struct player_action *actions)
 	real move_direction = 0.0f;
 	unsigned long flags = 0;
 
+	/* (a game of this computer alone, or a network co-op game it hosts: the
+	stress test's, benchmark.c, its host's first player) */
 	if (!config_boolean("debug.campaign_bot") || !global_scenario || global_scenario->type != _scenario_type_solo ||
-		game_connection() != _game_connection_local || player_index == NONE)
+		(game_connection() != _game_connection_local && game_connection() != _game_connection_network_server) ||
+		player_index == NONE)
 	{
 		return;
 	}

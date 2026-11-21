@@ -900,6 +900,10 @@
 			<help>Plays a fixed minute of the Benchmark Map with its bots, then shows the average frame rate, the 1% low, the frame times, the GPU and CPU time and your settings, and saves them in the benchmarks folder.</help>
 			<note>From the main menu only.</note>
 		</row>
+		<row key="stress_test" kind="link" label="STRESS TEST" crumb="VIDEO › FRAME RATE &amp; SYNC › PERFORMANCE TOOLS" when="!in_game" run="port settings stress test">
+			<help>Plays 90 seconds of Halo's second half, where dropships keep landing, with four times the enemies, then shows the same results as the benchmark. Needs the campaign's maps.</help>
+			<note>From the main menu only.</note>
+		</row>
 		<button key="button_defaults" kind="defaults" run="port settings defaults" help="Puts this page's settings back to their defaults."/>
 		<button key="button_ok" kind="ok" run="port settings keep" help="Saves your changes, on this page and every tab, and applies them."/>
 		<button key="button_cancel" kind="cancel" run="port settings page cancel" help="Goes back without these changes."/>
