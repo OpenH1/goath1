@@ -109,6 +109,10 @@ int menu_pictures_preparing(void);
 /* (port/linux/game/speedrun_state.c) */
 void speedrun_state_loading(void);
 
+/* (main/main.c: the menus' map is loaded, the menus up over no game, the
+lobby too: frame_interval_ns's display.menu_max_fps) */
+extern unsigned char main_menu_is_loaded(void);
+
 void halo_loading_begin(void)
 {
 	/* (the speedrun state block's loading flag, whatever is shown) */
@@ -2348,7 +2352,7 @@ display.max_fps.) */
 static Uint64 frame_interval_ns(void)
 {
 	static int vsync;
-	static long maximum;
+	static long maximum, menu_maximum;
 	static unsigned long read_at = (unsigned long)-1;
 	float rate = 0.0f;
 
@@ -2359,8 +2363,10 @@ static Uint64 frame_interval_ns(void)
 		read_at = config_changes();
 #ifdef HALO_ANDROID
 		maximum = -1;
+		menu_maximum = -1;
 #else
 		maximum = config_integer("display.max_fps");
+		menu_maximum = config_integer("display.menu_max_fps");
 #endif
 	}
 	/* (a display.max_fps in step with the display's refresh rate, or no
@@ -2393,6 +2399,20 @@ static Uint64 frame_interval_ns(void)
 
 		if (!rate || saving < rate)
 			rate = saving;
+	}
+	/* (display.menu_max_fps: the main menu's map up, over no game. Its
+	refresh rate is the display's own pace already with vsync or VRR on:
+	only a lower cap is the clock's then) */
+	if (menu_maximum >= 0 && main_menu_is_loaded())
+	{
+		float refresh = platform_refresh_rate() > 0.0f ? platform_refresh_rate() : 60.0f;
+		float menu_rate = menu_maximum ? (float)menu_maximum : refresh;
+
+		if ((!vsync && !platform_vrr()) || menu_rate < refresh - 1.0f)
+		{
+			if (!rate || menu_rate < rate)
+				rate = menu_rate;
+		}
 	}
 	return rate > 0.0f ? (Uint64)(1e9f / rate) : 0;
 }

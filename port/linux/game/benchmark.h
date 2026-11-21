@@ -33,6 +33,11 @@ the main menu; pacing "uncapped" or "settings", the map's name, the bots
 and the player, "bot" or "scripted", as the page shows them (each NULL:
 display.benchmark_pacing's, _map's, _bots' and _player's) */
 void benchmark_request(char const *pacing, char const *map, char const *bots, char const *player);
+/* Settings' STRESS TEST (menu_functions.c), halo --stress-test or
+debug.stress_test: a30's second half in network co-op, its enemies
+multiplied (debug.stress_test_multiplier), measured as the benchmark is;
+pacing as benchmark_request's */
+void benchmark_request_stress(char const *pacing);
 /* Settings' BENCHMARK MAP's choices (menu_tags.c's spinner_expand): the
 stock multiplayer maps in the maps folder but Blood Gulch (the row's own),
 added at count, MOST at most, each its name (values) or the name the game

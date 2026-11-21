@@ -722,6 +722,9 @@ VEHICLE_FIELDS_OF_VIEW = FIELDS_OF_VIEW._replace(
 FRAME_RATE_LIMITS = Slider(30, 540, 1, 10, 1000, whole=True,
                            stops=(("AUTO", "0"),) + tuple((str(n), str(n)) for n in (
                                30, 60, 75, 90, 100, 120, 144, 165, 200, 240, 280, 360, 480, 540)) + (("NONE", "-1"),))
+# display.menu_max_fps's: the display's refresh rate (0), common rates, or
+# display.max_fps's alone (-1)
+MENU_FRAME_RATE_LIMITS = [("REFRESH", "0")] + [(str(n), str(n)) for n in (30, 60, 120, 144, 240)] + [("OFF", "-1")]
 # display.gamma's: Halo PC's gamma, past 1 brighter; 1 none (d3d8_device.c's
 # GAMMA_LEAST and GAMMA_MOST)
 GAMMA = Slider(0.5, 2.0, 0.05, 0.5, 2.0)
@@ -1481,6 +1484,12 @@ PAGES = {
              "The most frames drawn a second with VSync off. Auto is twice the display's refresh rate. More feels "
              "smoother and uses more power; None draws as fast as it can.|Click the number (or press A) to type 10 "
              "to 1000.", "desktop"),
+            # (display.menu_max_fps: sdl_platform.c's frame_interval_ns, while
+            # the main menu's map is up; with VSync on too)
+            ("MENU MAX FPS", "display.menu_max_fps", MENU_FRAME_RATE_LIMITS,
+             "The most frames drawn a second in the main menu and the lobby, so the graphics card rests there "
+             "instead of drawing hundreds. Refresh is the display's refresh rate; Off keeps Max FPS. Games are not "
+             "changed.", "desktop"),
             ("LOW LATENCY", "display.low_latency", [("AUTO", "auto"), ("ON", "on"), ("OFF", "off")],
              "With VSync on, starts each frame just in time for the refresh it is shown at, so a press reaches the "
              "screen sooner. Off starts each frame as soon as the one before is waiting. Auto is on.", None),
@@ -1587,6 +1596,13 @@ PAGES = {
              "Plays a fixed minute of the Benchmark Map with its bots, then shows the average frame rate, the 1% low, "
              "the frame times, the GPU and CPU time and your settings, and saves them in the benchmarks "
              "folder.|From the main menu only.", None, "benchmark", "port settings benchmark"),
+            # (benchmark.c's stress test: Halo's second half, hosted for
+            # co-op, its enemies multiplied; at the Benchmark Pacing above,
+            # its results the benchmark's screen)
+            ("STRESS TEST", None, None,
+             "Plays 90 seconds of Halo's second half, where dropships keep landing, with four times the enemies, "
+             "then shows the same results as the benchmark. Needs the campaign's maps.|From the main menu only.",
+             None, "stress_test", "port settings stress test"),
         ],
     },
     FIRST_PERSON[0]: {
@@ -2232,8 +2248,8 @@ SETTINGS_SEARCH_WORDS = {
              "look_vertical_sensitivity", "stick_zoom_sensitivity", "gyro_sensitivity",
              "gyro_vertical_sensitivity", "touch_gyro_sensitivity", "touch_gyro_vertical_sensitivity"],
     "dpi": ["mouse_sensitivity"],
-    "fps": ["max_fps", "perf_overlay", "frame_rate_sync"],
-    "framerate": ["frame_rate_sync", "max_fps", "perf_overlay"],
+    "fps": ["max_fps", "menu_max_fps", "perf_overlay", "frame_rate_sync"],
+    "framerate": ["frame_rate_sync", "max_fps", "menu_max_fps", "perf_overlay"],
     "frametime": ["perf_overlay"], "gpu": ["perf_overlay"], "stats": ["perf_overlay"],
     "gsync": ["vrr", "vrr_cap_margin"], "freesync": ["vrr", "vrr_cap_margin"], "vrr": ["vrr"],
     "aa": ["anti_aliasing", "anti_aliasing_android"],
@@ -2797,7 +2813,7 @@ SETTINGS_ROW_WHEN = {
     # (in a game: not those that would drop it or are the main menu's, nor
     # those whose screens are ui.map's or make a profile)
     "online": "!in_game", "allow_upnp": "!in_game", "join_from_clipboard": "!in_game", "auto": "!in_game",
-    "mods": "!in_game", "game_data": "!in_game", "benchmark": "!in_game", "benchmark_pacing": "!in_game",
+    "mods": "!in_game", "game_data": "!in_game", "benchmark": "!in_game", "stress_test": "!in_game", "benchmark_pacing": "!in_game",
     "benchmark_map": "!in_game", "benchmark_bots": "!in_game", "benchmark_player": "!in_game",
     "name": "profile+!in_game", "color": "profile+!in_game", "profiles": "profile+!in_game",
     "create_profile": "!profile+!in_game",

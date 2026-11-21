@@ -4,7 +4,9 @@ A benchmark driver for the campaign: with `debug.campaign_bot` on, code plays th
 on this computer alone. Its input depends only on the game's state, so a level plays the same every run, at any
 frame rate. Its input goes into the demo like any player's, so a run recorded with `demo.record` and
 `debug.demo_perf_log` lines up with its performance log tick by tick ([demos.md](demos.md)). It is a test tool.
-Off (the default), nothing of it runs. It has no menu row.
+Off (the default), nothing of it runs. It has no menu row. It also plays the first player of a network co-op game
+this computer hosts: the stress test's (`debug.stress_test`, `port/linux/game/benchmark.c`), which holds a few
+looks at a30's river site and then fights there.
 
 The code is the "campaign bot" section of `port/linux/game/bots.c`. It uses the bots' own parts:
 

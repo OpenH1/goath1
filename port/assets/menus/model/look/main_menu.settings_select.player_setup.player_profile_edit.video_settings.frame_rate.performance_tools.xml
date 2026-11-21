@@ -19,6 +19,7 @@
 		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/performance_tools/op_benchmark_bots" x="28" y="203"/>
 		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/performance_tools/op_benchmark_player" x="28" y="228"/>
 		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/performance_tools/op_benchmark" x="28" y="253"/>
+		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/performance_tools/op_stress_test" x="28" y="278"/>
 		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/performance_tools/button_bar" x="0" y="448"/>
 	</look>
 	<look name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/performance_tools/button_bar" role="buttons" type="column_list" box="0 0 640 28" place="foot">
@@ -168,5 +169,12 @@
 	</look>
 	<look name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/performance_tools/benchmark_label" type="text" box="0 0 332 24" wide="0 244" past="0 193">
 		<text font="ui\small_ui" color="#FF2896FF" at="10 3" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/performance_tools/labels" index="8" scale="1 1.2"/>
+	</look>
+	<look name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/performance_tools/op_stress_test" box="0 0 344 24" wide="-106 244" past="-143 193" picture="main_menu/settings/row_tall">
+		<text color="#FF2896FF"/>
+		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/performance_tools/stress_test_label" x="0" y="0"/>
+	</look>
+	<look name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/performance_tools/stress_test_label" type="text" box="0 0 332 24" wide="0 244" past="0 193">
+		<text font="ui\small_ui" color="#FF2896FF" at="10 3" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/performance_tools/labels" index="9" scale="1 1.2"/>
 	</look>
 </model>

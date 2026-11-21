@@ -3005,6 +3005,13 @@ static boolean settings_function(char const *name, struct widget_instance *widge
 			settings_pending_value("display.benchmark_player"));
 		ui_play_audio_feedback_sound(SOUND_FORWARD);
 	}
+	else if (!strcmp(name, "stress test"))
+	{
+		/* (STRESS TEST: a30's second half in co-op, at the pacing this page
+		shows, benchmark.c's benchmark_request_stress) */
+		benchmark_request_stress(settings_pending_value("display.benchmark_pacing"));
+		ui_play_audio_feedback_sound(SOUND_FORWARD);
+	}
 	else if (!strcmp(name, "report"))
 	{
 		/* (REPORT A PROBLEM: saved at the next frame and a GitHub issue

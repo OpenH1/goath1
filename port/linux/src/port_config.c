@@ -287,6 +287,13 @@ static const struct config_setting config_settings[] =
 		"refresh rate, -1 for no limit (which can hang some Intel graphics). On\n"
 		"Linux, the display's refresh rate or a whole fraction of it (60 at\n"
 		"60 Hz, 30) shows the frames in step with the display, as vsync does." },
+	{ "display.menu_max_fps", _config_integer, "0", "HALO_MENU_MAX_FPS", _environment_value, _platform_desktop,
+		"While the main menu's map is up (the main menu, its menus and the\n"
+		"lobby, over no game), the most frames a second, with vsync on or off:\n"
+		"0 for the display's refresh rate (60 where it is unknown), -1 for\n"
+		"display.max_fps's alone. A cap below the game's keeps the menus from\n"
+		"drawing hundreds of frames a second (a GPU's coil whine, the power).\n"
+		"Not in a game, nor its pause menu, nor the loading screens." },
 	{ "display.stats_log", _config_boolean, "false", "HALO_STATS_LOG", _environment_value, _platform_all,
 		"A line a second in the log with the frame rate, the mode, the map, the\n"
 		"renderer and the size of the 3D view, so a graphics bug's report or two\n"
@@ -2944,6 +2951,18 @@ static const struct config_setting config_settings[] =
 		"--benchmark does (port/linux/game/benchmark.c): \"uncapped\" or\n"
 		"\"settings\" its pacing (display.benchmark_pacing's), \"on\" that\n"
 		"setting's; empty for none." },
+	{ "debug.stress_test", _config_string, "\"\"", "HALO_STRESS_TEST", _environment_value, _platform_all,
+		"Runs the stress test once the main menu is up, as halo --stress-test\n"
+		"does (port/linux/game/benchmark.c): the second half of Halo (a30, BSP\n"
+		"1) hosted for network co-op with debug.stress_test_multiplier times\n"
+		"its enemies, the campaign bot deathless, measured as the benchmark is.\n"
+		"\"uncapped\" or \"settings\" its pacing, \"1\" or \"on\"\n"
+		"display.benchmark_pacing's; empty (or \"0\") for none." },
+	{ "debug.stress_test_multiplier", _config_integer, "4", "HALO_STRESS_TEST_MULTIPLIER", _environment_value,
+		_platform_all,
+		"The stress test's enemies: co-op's static multiplier\n"
+		"(network.coop_enemies_multiplier) for its run, 2 to 8 (co-op's most\n"
+		"growth, coop_enemies.c's COOP_ENEMIES_MAXIMUM_GROWTH)." },
 	{ "debug.frame_log", _config_string, "\"\"", "HALO_FRAME_LOG", _environment_value, _platform_all,
 		"A file to write a line to for each frame presented once the scenario's\n"
 		"simulation has started: its seconds, then microseconds of the frame,\n"

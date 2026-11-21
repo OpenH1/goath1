@@ -22,6 +22,7 @@
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/performance_tools/op_benchmark_bots" x="28" y="211"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/performance_tools/op_benchmark_player" x="28" y="232"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/performance_tools/op_benchmark" x="28" y="253"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/performance_tools/op_stress_test" x="28" y="274"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/performance_tools/button_bar" y="414"/>
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/performance_tools/button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items" source="tools/port_settings.py settings_files/_settings_page">
@@ -158,6 +159,14 @@
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/performance_tools/benchmark_label" type="text" controller="1" width="332" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/performance_tools/labels" string_index="8" color="#FF2896FF" text_x="10" text_y="1" wide="0 244" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/performance_tools/op_stress_test" width="344" height="20" flags="pass_unhandled_to_focused_child" bitmap="main_menu/settings/row" color="#FF2896FF" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
+		<on event="a" run="port settings stress test"/>
+		<on event="start" run="port settings stress test"/>
+		<on event="left_mouse" run="mouse emit accept event"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/performance_tools/stress_test_label"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/performance_tools/stress_test_label" type="text" controller="1" width="332" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/performance_tools/labels" string_index="9" color="#FF2896FF" text_x="10" text_y="1" wide="0 244" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
 	<strings name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/performance_tools/labels">
 		<string text="PERFORMANCE OVERLAY"/>
 		<string text="DEVELOPER TIMINGS"/>
@@ -168,6 +177,7 @@
 		<string text="BENCHMARK BOTS"/>
 		<string text="BENCHMARK PLAYER"/>
 		<string text="RUN BENCHMARK"/>
+		<string text="STRESS TEST"/>
 	</strings>
 	<strings name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/performance_tools/help_strings">
 		<string text=""/>
@@ -180,5 +190,6 @@
 		<string text="How many bots fight in the benchmark's match. A map takes only as many as suit it: 40 on the big maps, 16 on Hang 'Em High, 8 on Longest. The results say how many played."/>
 		<string text="Who plays the view measured. Bot plays as the other bots do, the same match every run. Scripted is the walker of earlier results, to compare with them; it differs a little from run to run."/>
 		<string text="Plays a fixed minute of the Benchmark Map with its bots, then shows the average frame rate, the 1% low, the frame times, the GPU and CPU time and your settings, and saves them in the benchmarks folder.|From the main menu only."/>
+		<string text="Plays 90 seconds of Halo's second half, where dropships keep landing, with four times the enemies, then shows the same results as the benchmark. Needs the campaign's maps.|From the main menu only."/>
 	</strings>
 </menus>

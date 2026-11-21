@@ -793,6 +793,16 @@
 			<stop shown="540" value="540"/>
 			<stop shown="NONE" value="-1"/>
 		</row>
+		<row key="menu_max_fps" kind="choice" setting="display.menu_max_fps" label="MENU MAX FPS" crumb="VIDEO › FRAME RATE &amp; SYNC" search="fps framerate" search_choices="refresh" when="desktop">
+			<help>The most frames drawn a second in the main menu and the lobby, so the graphics card rests there instead of drawing hundreds. Refresh is the display's refresh rate; Off keeps Max FPS. Games are not changed.</help>
+			<choice shown="REFRESH" value="0"/>
+			<choice shown="30" value="30"/>
+			<choice shown="60" value="60"/>
+			<choice shown="120" value="120"/>
+			<choice shown="144" value="144"/>
+			<choice shown="240" value="240"/>
+			<choice shown="OFF" value="-1"/>
+		</row>
 		<row key="low_latency" kind="choice" setting="display.low_latency" label="LOW LATENCY" crumb="VIDEO › FRAME RATE &amp; SYNC" search="lag" when="!vrr_system">
 			<help>With VSync on, starts each frame just in time for the refresh it is shown at, so a press reaches the screen sooner. Off starts each frame as soon as the one before is waiting. Auto is on.</help>
 			<choice shown="AUTO" value="auto"/>
@@ -802,7 +812,7 @@
 		<row key="performance_tools" kind="link" label="PERFORMANCE TOOLS ›" crumb="VIDEO › FRAME RATE &amp; SYNC" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/performance_tools/performance_tools_screen">
 			<help>The performance overlay, the benchmark, and timings and logs of where each frame's time goes, for finding what slows the game down.</help>
 		</row>
-		<section key="section_6" title="UPSCALING" when="desktop android"/>
+		<section key="section_7" title="UPSCALING" when="desktop android"/>
 		<row key="temporal_aa" kind="choice" setting="display.temporal_aa" label="UPSCALER" crumb="VIDEO › FRAME RATE &amp; SYNC" search_choices="amd fsr" when="desktop+temporal_upscale+!temporal_dlss+!dlss_addon_offer+!vr android+temporal_upscale+!temporal_dlss+!dlss_addon_offer+!vr">
 			<help>AMD FSR builds each frame from the frames before it: smooth edges, and a sharp picture at a Render Resolution below 100% for more frames. While it is on, it replaces Anti-Aliasing.</help>
 			<choice shown="OFF" value="off"/>
@@ -844,7 +854,7 @@
 			<choice shown="ON" value="true"/>
 			<choice shown="OFF" value="false"/>
 		</row>
-		<section key="section_13" title="RAY TRACING" when="desktop android"/>
+		<section key="section_14" title="RAY TRACING" when="desktop android"/>
 		<row key="shadows" kind="choice" setting="display.shadows" label="RAY TRACED SHADOWS" crumb="VIDEO › FRAME RATE &amp; SYNC" search="shadows" when="desktop+ray_queries android+ray_queries">
 			<help>The shadows of characters and vehicles traced by the graphics card from their own shapes, soft at the edges, in the same place and darkness as the game's, which frees the processor's shadow work. Off draws them as the Xbox did.</help>
 			<choice shown="OFF" value="classic"/>
@@ -898,6 +908,10 @@
 		</row>
 		<row key="benchmark" kind="link" label="RUN BENCHMARK" crumb="VIDEO › FRAME RATE &amp; SYNC › PERFORMANCE TOOLS" when="!in_game" run="port settings benchmark">
 			<help>Plays a fixed minute of the Benchmark Map with its bots, then shows the average frame rate, the 1% low, the frame times, the GPU and CPU time and your settings, and saves them in the benchmarks folder.</help>
+			<note>From the main menu only.</note>
+		</row>
+		<row key="stress_test" kind="link" label="STRESS TEST" crumb="VIDEO › FRAME RATE &amp; SYNC › PERFORMANCE TOOLS" when="!in_game" run="port settings stress test">
+			<help>Plays 90 seconds of Halo's second half, where dropships keep landing, with four times the enemies, then shows the same results as the benchmark. Needs the campaign's maps.</help>
 			<note>From the main menu only.</note>
 		</row>
 		<button key="button_defaults" kind="defaults" run="port settings defaults" help="Puts this page's settings back to their defaults."/>
