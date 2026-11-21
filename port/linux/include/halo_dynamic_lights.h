@@ -60,6 +60,9 @@ world: count texels of four words, count at most
 HALO_DYNAMIC_LIGHTS_WORLD_TEXELS), when it changes; copied */
 void halo_dynamic_lights_world(const unsigned int (*texels)[4], int count);
 void halo_dynamic_lights_environment(int drawing);
+/* the map's structure switched, or the map let go: what the renderer kept of
+the structure's lists dropped */
+void halo_dynamic_lights_structure_changed(void);
 void halo_dynamic_lights_halos_draw(void);
 
 #endif

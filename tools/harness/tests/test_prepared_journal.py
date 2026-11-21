@@ -159,6 +159,9 @@ KEPT_ELSEWHERE = {
     'halo_model_bounds': "the model's bounds: the cut-out prepass and the lights' reach, decided as each frame draws; "
                          "a map's preparation draws both (draw_indexed_cutout) and journal_restore lights its models",
     'halo_gpu_prepare': "the preparation's own bookkeeping",
+    'halo_dynamic_lights_structure_changed': "the lightmap pass's kept runs' boxes dropped (lights_reach_list_find): "
+                                             "which triangles a light reaches, decided as each frame draws, no "
+                                             "pipeline's input",
     'halo_gpu_prepared': "the preparation's own bookkeeping",
     'd3d8_mirror_rewritten': "the mirror's pages, journaled as JOURNAL_PAGES",
     'd3d8_clear_viewport_alone': "a clear, journaled as JOURNAL_CLEAR",

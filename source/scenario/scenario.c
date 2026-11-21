@@ -385,6 +385,8 @@ void scenario_unload(
 	/* port: and what was kept of its tags (models.c, structures.c) */
 	model_port_markers_forget();
 	structure_port_clusters_forget();
+	/* port: and what the renderer kept of its lists (port/linux/src/d3d8_device.c) */
+	halo_dynamic_lights_structure_changed();
 	global_scenario_index = NONE;
 	global_structure_bsp_index = NONE;
 	scenario_globals->structure_bsp_index = NONE;
@@ -1096,6 +1098,8 @@ boolean scenario_switch_structure_bsp(
 		halo_load_trace("bsp.switch.begin", NULL); /* port: loading measurement */
 		/* port: the old bsp's spheres forgotten (structures.c) */
 		structure_port_clusters_forget();
+		/* port: and what the renderer kept of its lists (port/linux/src/d3d8_device.c) */
+		halo_dynamic_lights_structure_changed();
 		reference = TAG_BLOCK_GET_ELEMENT(
 			&global_scenario->structure_bsp_references,
 			structure_bsp_index,

@@ -8,7 +8,11 @@ against every light gives (reference_part, the split as it was before the
 lights were found once for a run of triangles), on random triangle soups and
 light sets: no lights, lights reaching everything, lights far away, triangles
 exactly on a reach's edge (and a float either side of it), positions that are
-no number, the most lights. test_lights_reach_part.py takes the code.
+no number, the most lights. Each list is parted three ways: its runs' boxes
+made as it is parted, kept (lights_reach_list_find: found again under other
+lights, by its indices wherever they are, made again once its vertices are
+written, dropped as the structure changes, no more kept than the most), and
+the reference. test_lights_reach_part.py takes the code.
 */
 
 #include "harness.h"
@@ -18,6 +22,23 @@ no number, the most lights. test_lights_reach_part.py takes the code.
 
 typedef unsigned short WORD;
 typedef int BOOL;
+
+/* the write watch (memory_watch.c): each write the test makes to the
+vertices is counted, as a page's generation would be */
+static unsigned long vertices_written = 1;
+
+static void memory_watch_protect(unsigned long address, unsigned long size)
+{
+	(void)address;
+	(void)size;
+}
+
+static unsigned long memory_watch_generation(unsigned long address, unsigned long size)
+{
+	(void)address;
+	(void)size;
+	return vertices_written;
+}
 
 #include "under_test.inc"
 
@@ -133,21 +154,42 @@ static void light_add(float x, float y, float z, float reach)
 static float vertices[MOST_VERTICES][5];
 static WORD indices[MOST_INDICES];
 static WORD parts[4][MOST_INDICES];
+static WORD moved[MOST_INDICES];
 
-/* both splits of the list's count indices the same */
-static void same(const char *what, unsigned long count)
+/* the list's kept runs' boxes */
+static const struct lights_reach_list *kept(const WORD *list, unsigned long count)
+{
+	return lights_reach_list_find((const unsigned char *)vertices, sizeof(vertices[0]), list, count);
+}
+
+/* the split of the list's count indices (with its runs' boxes made as it is
+parted where runs is NULL) the reference's */
+static void same_as(const char *what, const WORD *list, unsigned long count, const struct lights_reach_run *runs)
 {
 	unsigned long lit[2], unlit[2];
 
 	memset(parts, 0xEE, sizeof(parts));
-	lights_reach_part((const unsigned char *)vertices, sizeof(vertices[0]), indices, count, parts[0], &lit[0],
+	lights_reach_part((const unsigned char *)vertices, sizeof(vertices[0]), list, count, runs, parts[0], &lit[0],
 		parts[1], &unlit[0]);
-	reference_part((const unsigned char *)vertices, sizeof(vertices[0]), indices, count, parts[2], &lit[1],
+	reference_part((const unsigned char *)vertices, sizeof(vertices[0]), list, count, parts[2], &lit[1],
 		parts[3], &unlit[1]);
-	CHECK(lit[0] == lit[1] && unlit[0] == unlit[1], "%s (%lu indices, %d lights): %lu reached and %lu not, not %lu "
-		"and %lu", what, count, dynamic_lights.reach_count, lit[0], unlit[0], lit[1], unlit[1]);
+	CHECK(lit[0] == lit[1] && unlit[0] == unlit[1], "%s (%lu indices, %d lights, %s): %lu reached and %lu not, not "
+		"%lu and %lu", what, count, dynamic_lights.reach_count, runs ? "kept" : "made", lit[0], unlit[0], lit[1],
+		unlit[1]);
 	CHECK(!memcmp(parts[0], parts[2], lit[0] * sizeof(WORD)) && !memcmp(parts[1], parts[3], unlit[0] * sizeof(WORD)),
-		"%s (%lu indices, %d lights): the parts' triangles differ", what, count, dynamic_lights.reach_count);
+		"%s (%lu indices, %d lights, %s): the parts' triangles differ", what, count, dynamic_lights.reach_count,
+		runs ? "kept" : "made");
+}
+
+/* both splits (made, kept) of the list's count indices the reference's */
+static void same(const char *what, unsigned long count)
+{
+	const struct lights_reach_list *list = kept(indices, count);
+
+	same_as(what, indices, count, NULL);
+	CHECK(list || count < 3, "%s (%lu indices): not kept", what, count);
+	if (list)
+		same_as(what, indices, count, list->runs);
 }
 
 /* a soup of count indices into vertex_count vertices: in a walk about a world
@@ -176,6 +218,7 @@ static void soup(unsigned long vertex_count, unsigned long count, float size, BO
 		}
 		vertices[index][3] = vertices[index][4] = -1.0f;
 	}
+	vertices_written++;
 	for (index = 0; index < count; index++)
 	{
 		if (walk)
@@ -260,6 +303,7 @@ static int edges(void)
 				memset(vertices, 0, 3 * sizeof(vertices[0]));
 				for (vertex = 0; vertex < 3; vertex++)
 					vertices[vertex][axis] = corner + (float)vertex;
+				vertices_written++;
 				indices[0] = 0, indices[1] = 1, indices[2] = 2;
 				same("a triangle at a reach's edge", 3);
 				/* and among triangles far off, which the run's box spreads past */
@@ -273,6 +317,7 @@ static int edges(void)
 						indices[others * 3 + vertex] = (WORD)(others * 3 + vertex);
 					}
 				}
+				vertices_written++;
 				same("a triangle at a reach's edge among others", 40 * 3);
 				/* a light on the far side too */
 				light_add(1000.0f, 1000.0f, 1000.0f, 1.0f);
@@ -294,17 +339,91 @@ static int unordered(void)
 		lights_random(20, 40.0f, 1.0f, 4.0f);
 		for (axis = 0; axis < 3; axis++)
 			vertices[indices[(next() % 96) * 3 + next() % 3]][next() % 3] = NAN;
+		vertices_written++;
 		same("positions that are no number", 96 * 3);
 	}
 	return 1;
 }
 
-/* the time each takes on a big list (50,000 triangles, 60 lights) */
+/* a list kept: found again frame after frame under other lights, by its
+indices wherever they are; made again once its vertices are written, and as
+the structure changes; no more lists kept than the most */
+static int cached(void)
+{
+	const struct lights_reach_list *list, *again;
+	unsigned long count, index;
+	int round, frame;
+
+	for (round = 0; round < 6; round++)
+	{
+		count = 3000 * 3 + (unsigned long)round;
+		soup(4000, count, 100.0f, round & 1);
+		list = kept(indices, count);
+		CHECK(list != NULL, "a list of %lu indices not kept", count);
+		for (frame = 0; frame < 8; frame++)
+		{
+			lights_random(frame * 9, 100.0f, frame & 1 ? 0.5f : 5.0f, frame & 1 ? 6.0f : 30.0f);
+			again = kept(indices, count);
+			CHECK(again == list, "frame %d: the list kept not found again", frame);
+			same_as("a list kept, under the frame's lights", indices, count, again->runs);
+		}
+		/* the same indices elsewhere: the same list */
+		memcpy(moved, indices, count * sizeof(WORD));
+		CHECK(kept(moved, count) == list, "the same indices elsewhere not found by what they are");
+		/* another triangle in the list's place: another list */
+		indices[3] = (WORD)((indices[3] + 1) % 4000);
+		again = kept(indices, count);
+		CHECK(again && again != list, "other indices found as the list kept before");
+		same_as("other indices in the list's place", indices, count, again->runs);
+	}
+
+	/* its vertices written: made again (kept far off, drawn where the lights are) */
+	soup(4000, 3000 * 3, 100.0f, TRUE);
+	lights_random(40, 100.0f, 5.0f, 20.0f);
+	for (index = 0; index < 4000; index++)
+		vertices[index][0] += 10000.0f;
+	vertices_written++;
+	list = kept(indices, 3000 * 3);
+	same_as("far off", indices, 3000 * 3, list->runs);
+	for (index = 0; index < 4000; index++)
+		vertices[index][0] -= 10000.0f;
+	vertices_written++;
+	list = kept(indices, 3000 * 3);
+	same_as("its vertices written since it was kept", indices, 3000 * 3, list->runs);
+
+	/* the structure changed: every list dropped */
+	CHECK(lights_reach_lists.count > 1, "%lu lists kept", lights_reach_lists.count);
+	lights_reach_structure_changes++;
+	list = kept(indices, 3000 * 3);
+	CHECK(list && lights_reach_lists.count == 1, "the structure changed: %lu lists kept, not 1",
+		lights_reach_lists.count);
+	same_as("the structure changed", indices, 3000 * 3, list->runs);
+
+	/* more lists than are kept: the least lately found let go */
+	for (index = 0; index < LIGHTS_REACH_KEPT_LISTS + 300; index++)
+	{
+		indices[0] = (WORD)(index % 4000);
+		indices[1] = (WORD)(index / 4000);
+		list = kept(indices, 96);
+		CHECK(list && lights_reach_lists.count <= LIGHTS_REACH_KEPT_LISTS &&
+			lights_reach_lists.bytes <= LIGHTS_REACH_KEPT_BYTES, "%lu lists kept (%lu bytes)",
+			lights_reach_lists.count, lights_reach_lists.bytes);
+	}
+	CHECK(lights_reach_lists.count == LIGHTS_REACH_KEPT_LISTS, "%lu lists kept, not the most",
+		lights_reach_lists.count);
+	CHECK(kept(indices, 96) == list, "the list last found let go");
+	same_as("among the most lists kept", indices, 96, list->runs);
+	return 1;
+}
+
+/* the time each takes on a big list (50,000 triangles, 60 lights): its runs'
+boxes kept (from the second frame on), made as it is parted, the reference */
 static int speed(void)
 {
 	unsigned long lit, unlit, count = 150000;
+	const struct lights_reach_list *list;
 	clock_t start;
-	double times[2];
+	double times[3];
 	int round;
 
 	soup(MOST_VERTICES, count, 300.0f, TRUE);
@@ -312,17 +431,26 @@ static int speed(void)
 	same("a big list", count);
 	start = clock();
 	for (round = 0; round < 20; round++)
-		lights_reach_part((const unsigned char *)vertices, sizeof(vertices[0]), indices, count, parts[0], &lit,
-			parts[1], &unlit);
+	{
+		list = kept(indices, count);
+		lights_reach_part((const unsigned char *)vertices, sizeof(vertices[0]), indices, count, list->runs,
+			parts[0], &lit, parts[1], &unlit);
+	}
 	times[0] = (double)(clock() - start);
+	start = clock();
+	for (round = 0; round < 20; round++)
+		lights_reach_part((const unsigned char *)vertices, sizeof(vertices[0]), indices, count, NULL, parts[0], &lit,
+			parts[1], &unlit);
+	times[1] = (double)(clock() - start);
 	start = clock();
 	for (round = 0; round < 20; round++)
 		reference_part((const unsigned char *)vertices, sizeof(vertices[0]), indices, count, parts[2], &lit,
 			parts[3], &unlit);
-	times[1] = (double)(clock() - start);
-	printf("50,000 triangles, 60 lights: %.2f ms a split, was %.2f ms (%.1fx); %lu of %lu reached\n",
+	times[2] = (double)(clock() - start);
+	printf("50,000 triangles, 60 lights: %.3f ms a split with its boxes kept (the list found again: hashed and "
+		"compared), %.2f ms with them made, %.2f ms by every light; %lu of %lu reached\n",
 		times[0] * 1000.0 / CLOCKS_PER_SEC / 20, times[1] * 1000.0 / CLOCKS_PER_SEC / 20,
-		times[0] > 0.0 ? times[1] / times[0] : 0.0, lit / 3, count / 3);
+		times[2] * 1000.0 / CLOCKS_PER_SEC / 20, lit / 3, count / 3);
 	return 1;
 }
 
@@ -336,6 +464,8 @@ int main(int argc, char **argv)
 		return !edges();
 	if (!strcmp(name, "unordered"))
 		return !unordered();
+	if (!strcmp(name, "cached"))
+		return !cached();
 	if (!strcmp(name, "speed"))
 		return !speed();
 	fprintf(stderr, "no case %s\n", name);

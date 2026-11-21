@@ -7299,6 +7299,53 @@ lie in one plane, which of them is seen may change.) */
 /* the triangles a run's lights are found for at once (lights_reach_part) */
 #define LIGHTS_REACH_RUN 32
 
+/* a run's box, about its triangles' boxes; unordered where a corner's
+position is no number (NaN), which keeps all the lights for the run */
+struct lights_reach_run
+{
+	float box[2][3];
+	BOOL unordered;
+};
+
+/* the boxes about the triangles of the run from the list's index on (at most
+LIGHTS_REACH_RUN of them) and about the run: the count of its triangles */
+static int lights_reach_run_boxes(const unsigned char *vertices, unsigned long stride, const WORD *index_data,
+	unsigned long index, unsigned long count, float (*boxes)[2][3], struct lights_reach_run *run)
+{
+	int triangles, axis;
+
+	run->unordered = FALSE;
+	for (triangles = 0; triangles < LIGHTS_REACH_RUN && index + (triangles + 1) * 3 <= count; triangles++)
+	{
+		float *low = boxes[triangles][0], *high = boxes[triangles][1];
+		int corner;
+
+		for (corner = 0; corner < 3; corner++)
+		{
+			float point[3];
+
+			memcpy(point, vertices + index_data[index + triangles * 3 + corner] * stride, sizeof(point));
+			for (axis = 0; axis < 3; axis++)
+			{
+				if (!corner || point[axis] < low[axis])
+					low[axis] = point[axis];
+				if (!corner || point[axis] > high[axis])
+					high[axis] = point[axis];
+			}
+		}
+		for (axis = 0; axis < 3; axis++)
+		{
+			if (low[axis] != low[axis] || high[axis] != high[axis])
+				run->unordered = TRUE;
+			if (!triangles || low[axis] < run->box[0][axis])
+				run->box[0][axis] = low[axis];
+			if (!triangles || high[axis] > run->box[1][axis])
+				run->box[1][axis] = high[axis];
+		}
+	}
+	return triangles;
+}
+
 /* the triangles of a list (its positions' vertices, stride bytes apart) apart:
 those some light reaches (dynamic_lights.reach) to reached, the rest to
 unreached, each in the list's order. A triangle is reached where the box
@@ -7310,47 +7357,26 @@ distances from the light is no more than the triangle's, in floats too (a
 rounding keeps the order of what it rounds, floats evaluated as floats), so
 the run's lights hold every light the triangle's own test finds, and that
 test (the same as for all the lights) decides as it would. A run with a
-position that is no number (NaN) keeps all the lights. */
+position that is no number (NaN) keeps all the lights. The runs' boxes are
+the list's kept ones where it has them (runs: lights_reach_list_find), so
+that a run no light may reach goes to unreached whole, its vertices unread;
+else they are made as the list is parted. */
 static void lights_reach_part(const unsigned char *vertices, unsigned long stride, const WORD *index_data,
-	unsigned long count, WORD *reached, unsigned long *reached_count, WORD *unreached, unsigned long *unreached_count)
+	unsigned long count, const struct lights_reach_run *runs, WORD *reached, unsigned long *reached_count,
+	WORD *unreached, unsigned long *unreached_count)
 {
-	unsigned long index, lit = 0, unlit = 0;
+	unsigned long index, run_index, lit = 0, unlit = 0;
 
-	for (index = 0; index + 3 <= count; )
+	for (index = 0, run_index = 0; index + 3 <= count; run_index++)
 	{
-		float boxes[LIGHTS_REACH_RUN][2][3], run[2][3];
+		float boxes[LIGHTS_REACH_RUN][2][3];
+		struct lights_reach_run made;
+		const struct lights_reach_run *run = runs ? &runs[run_index] : &made;
 		unsigned char lights[XGPU_DYNAMIC_LIGHTS_MAXIMUM];
-		int triangles, triangle, light, lights_count = 0, axis;
-		BOOL unordered = FALSE;
+		int triangles = 0, triangle, light, lights_count = 0, axis;
 
-		for (triangles = 0; triangles < LIGHTS_REACH_RUN && index + (triangles + 1) * 3 <= count; triangles++)
-		{
-			float *low = boxes[triangles][0], *high = boxes[triangles][1];
-			int corner;
-
-			for (corner = 0; corner < 3; corner++)
-			{
-				float point[3];
-
-				memcpy(point, vertices + index_data[index + triangles * 3 + corner] * stride, sizeof(point));
-				for (axis = 0; axis < 3; axis++)
-				{
-					if (!corner || point[axis] < low[axis])
-						low[axis] = point[axis];
-					if (!corner || point[axis] > high[axis])
-						high[axis] = point[axis];
-				}
-			}
-			for (axis = 0; axis < 3; axis++)
-			{
-				if (low[axis] != low[axis] || high[axis] != high[axis])
-					unordered = TRUE;
-				if (!triangles || low[axis] < run[0][axis])
-					run[0][axis] = low[axis];
-				if (!triangles || high[axis] > run[1][axis])
-					run[1][axis] = high[axis];
-			}
-		}
+		if (!runs)
+			triangles = lights_reach_run_boxes(vertices, stride, index_data, index, count, boxes, &made);
 		for (light = 0; light < dynamic_lights.reach_count; light++)
 		{
 			const float *reach = dynamic_lights.reach[light];
@@ -7358,18 +7384,31 @@ static void lights_reach_part(const unsigned char *vertices, unsigned long strid
 
 			for (axis = 0; axis < 3; axis++)
 			{
-				float away = reach[axis] < run[0][axis] ? run[0][axis] - reach[axis] :
-					reach[axis] > run[1][axis] ? reach[axis] - run[1][axis] : 0.0f;
+				float away = reach[axis] < run->box[0][axis] ? run->box[0][axis] - reach[axis] :
+					reach[axis] > run->box[1][axis] ? reach[axis] - run->box[1][axis] : 0.0f;
 
 				distance += away * away;
 			}
-			if (unordered || !(distance > reach[3] * reach[3]))
+			if (run->unordered || !(distance > reach[3] * reach[3]))
 				lights[lights_count++] = (unsigned char)light;
 		}
+		/* (no light may reach the run: each of its triangles is unreached) */
+		if (!lights_count)
+		{
+			unsigned long indices = (count - index) / 3 < LIGHTS_REACH_RUN ? (count - index) / 3 * 3 :
+				LIGHTS_REACH_RUN * 3;
+
+			memcpy(unreached + unlit, index_data + index, indices * sizeof(WORD));
+			unlit += indices;
+			index += indices;
+			continue;
+		}
+		if (runs)
+			triangles = lights_reach_run_boxes(vertices, stride, index_data, index, count, boxes, &made);
 		for (triangle = 0; triangle < triangles; triangle++, index += 3)
 		{
 			const float *low = boxes[triangle][0], *high = boxes[triangle][1];
-			BOOL touched = lights_count > 0;
+			BOOL touched = TRUE;
 
 			for (axis = 0; axis < 3; axis++)
 			{
@@ -7410,6 +7449,194 @@ static void lights_reach_part(const unsigned char *vertices, unsigned long strid
 	*unreached_count = unlit;
 }
 
+/* ---------- the lightmap pass's lists' runs' boxes, kept
+
+The lightmap pass draws the structure, whose vertices never move: what a
+frame costs in parting its lists is in reading their vertices for the runs'
+boxes. Its lists are not the structure's own, though: each frame the game
+writes the triangles of the surfaces it sees into the one dynamic index
+buffer (structure_render.c's dynamic triangles: the clusters seen, their
+buckets culled by the view), a material's draw a stretch of that, so one
+list's place in it holds other triangles as the view turns, and the same
+triangles may be drawn from another place. A list's runs' boxes are kept by
+what decides them: its indices themselves (a copy, compared whole), its
+vertices' place and stride, and the newest write to the vertices it reads
+(memory_watch: written, they are made again). The kept lists are dropped as
+the structure changes (halo_dynamic_lights_structure_changed: a switch of
+the map's structure, or the map let go), and the least lately found let go
+past LIGHTS_REACH_KEPT_LISTS or LIGHTS_REACH_KEPT_BYTES. */
+
+#define LIGHTS_REACH_SLOTS 4096
+#define LIGHTS_REACH_KEPT_LISTS 2048
+#define LIGHTS_REACH_KEPT_BYTES (24UL << 20)
+
+struct lights_reach_list
+{
+	/* (the slot's next, and the kept lists' order from the most lately found) */
+	struct lights_reach_list *next, *newer, *older;
+	uint32_t hash;
+	const unsigned char *vertices;
+	unsigned long stride, count, bytes;
+	/* the vertices' bytes its triangles read, and their newest write then */
+	unsigned long watched, watched_bytes, generation;
+	struct lights_reach_run *runs;
+	WORD *indices;
+};
+
+static struct
+{
+	struct lights_reach_list *slots[LIGHTS_REACH_SLOTS];
+	struct lights_reach_list *newest, *oldest;
+	unsigned long count, bytes, changes;
+} lights_reach_lists;
+
+/* the structure's changes (halo_dynamic_lights_structure_changed): counted as
+the game changes it, the kept lists dropped as a draw next finds one */
+static volatile unsigned long lights_reach_structure_changes;
+
+/* a hash of a list's indices, four words at a time, so that it costs little
+more than reading them */
+static uint32_t lights_reach_hash(const WORD *index_data, unsigned long count)
+{
+	uint32_t lanes[4] = { 0x9E3779B1u, 0x85EBCA77u, 0xC2B2AE3Du, 0x27D4EB2Fu }, word;
+	unsigned long index = 0;
+	int lane;
+
+	for (; index + 8 <= count; index += 8)
+	{
+		for (lane = 0; lane < 4; lane++)
+		{
+			memcpy(&word, index_data + index + lane * 2, sizeof(word));
+			lanes[lane] = (lanes[lane] ^ word) * 0x9E3779B1u;
+			lanes[lane] ^= lanes[lane] >> 15;
+		}
+	}
+	for (; index < count; index++)
+		lanes[0] = (lanes[0] ^ index_data[index]) * 0x85EBCA77u;
+	return (lanes[0] ^ (lanes[1] << 7 | lanes[1] >> 25) ^ (lanes[2] << 13 | lanes[2] >> 19) ^
+		(lanes[3] << 21 | lanes[3] >> 11) ^ (uint32_t)count) * 0xC2B2AE3Du;
+}
+
+static void lights_reach_list_drop(struct lights_reach_list *list)
+{
+	struct lights_reach_list **link = &lights_reach_lists.slots[list->hash % LIGHTS_REACH_SLOTS];
+
+	while (*link != list)
+		link = &(*link)->next;
+	*link = list->next;
+	if (list->newer)
+		list->newer->older = list->older;
+	else
+		lights_reach_lists.newest = list->older;
+	if (list->older)
+		list->older->newer = list->newer;
+	else
+		lights_reach_lists.oldest = list->newer;
+	lights_reach_lists.count--;
+	lights_reach_lists.bytes -= list->bytes;
+	free(list);
+}
+
+/* the kept runs' boxes of the list (its positions' vertices, stride bytes
+apart), made where none are kept; NULL where it is not kept (too big, or no
+memory) */
+static const struct lights_reach_list *lights_reach_list_find(const unsigned char *vertices, unsigned long stride,
+	const WORD *index_data, unsigned long count)
+{
+	struct lights_reach_list *list;
+	unsigned long changes = lights_reach_structure_changes, runs, bytes, index, low = 0xFFFF, high = 0, run_index;
+	uint32_t hash;
+
+	if (lights_reach_lists.changes != changes)
+	{
+		while (lights_reach_lists.newest)
+			lights_reach_list_drop(lights_reach_lists.newest);
+		lights_reach_lists.changes = changes;
+	}
+	hash = lights_reach_hash(index_data, count);
+	for (list = lights_reach_lists.slots[hash % LIGHTS_REACH_SLOTS]; list; list = list->next)
+	{
+		if (list->hash != hash || list->vertices != vertices || list->stride != stride || list->count != count ||
+			memcmp(list->indices, index_data, count * sizeof(WORD)))
+		{
+			continue;
+		}
+		/* (its vertices written since: made again) */
+		if (memory_watch_generation(list->watched, list->watched_bytes) != list->generation)
+		{
+			lights_reach_list_drop(list);
+			break;
+		}
+		if (list->newer)
+		{
+			list->newer->older = list->older;
+			if (list->older)
+				list->older->newer = list->newer;
+			else
+				lights_reach_lists.oldest = list->newer;
+			list->newer = NULL;
+			list->older = lights_reach_lists.newest;
+			lights_reach_lists.newest->newer = list;
+			lights_reach_lists.newest = list;
+		}
+		return list;
+	}
+	if (count < 3)
+		return NULL;
+	runs = (count / 3 + LIGHTS_REACH_RUN - 1) / LIGHTS_REACH_RUN;
+	bytes = sizeof(*list) + runs * sizeof(struct lights_reach_run) + count * sizeof(WORD);
+	if (bytes > LIGHTS_REACH_KEPT_BYTES / 4)
+		return NULL;
+	while (lights_reach_lists.oldest && (lights_reach_lists.count >= LIGHTS_REACH_KEPT_LISTS ||
+		lights_reach_lists.bytes + bytes > LIGHTS_REACH_KEPT_BYTES))
+	{
+		lights_reach_list_drop(lights_reach_lists.oldest);
+	}
+	list = malloc(bytes);
+	if (!list)
+		return NULL;
+	list->runs = (struct lights_reach_run *)(list + 1);
+	list->indices = (WORD *)(list->runs + runs);
+	memcpy(list->indices, index_data, count * sizeof(WORD));
+	list->hash = hash;
+	list->vertices = vertices;
+	list->stride = stride;
+	list->count = count;
+	list->bytes = bytes;
+	for (index = 0; index < count / 3 * 3; index++)
+	{
+		if (index_data[index] < low)
+			low = index_data[index];
+		if (index_data[index] > high)
+			high = index_data[index];
+	}
+	/* (watched before its boxes are made, so that a write as they are made
+	is seen) */
+	list->watched = (unsigned long)(vertices + low * stride);
+	list->watched_bytes = (high - low) * stride + 3 * sizeof(float);
+	memory_watch_protect(list->watched, list->watched_bytes);
+	list->generation = memory_watch_generation(list->watched, list->watched_bytes);
+	for (index = 0, run_index = 0; index + 3 <= count; run_index++)
+	{
+		float boxes[LIGHTS_REACH_RUN][2][3];
+
+		index += 3 * (unsigned long)lights_reach_run_boxes(vertices, stride, index_data, index, count, boxes,
+			&list->runs[run_index]);
+	}
+	list->next = lights_reach_lists.slots[hash % LIGHTS_REACH_SLOTS];
+	lights_reach_lists.slots[hash % LIGHTS_REACH_SLOTS] = list;
+	list->newer = NULL;
+	list->older = lights_reach_lists.newest;
+	if (lights_reach_lists.newest)
+		lights_reach_lists.newest->newer = list;
+	else
+		lights_reach_lists.oldest = list;
+	lights_reach_lists.newest = list;
+	lights_reach_lists.count++;
+	lights_reach_lists.bytes += bytes;
+	return list;
+}
+
 /* the triangles of a list apart: FALSE if they cannot be told apart (all
 are drawn lit) */
 static BOOL lights_reach_split(const WORD *index_data, unsigned long count, WORD **reached, unsigned long *reached_count,
@@ -7419,6 +7646,7 @@ static BOOL lights_reach_split(const WORD *index_data, unsigned long count, WORD
 	static unsigned long capacity;
 	struct vertex_shader_object *declaration = device.vertex_shader;
 	const struct xgpu_vertex_element *position = NULL;
+	const struct lights_reach_list *list;
 	const unsigned char *vertices;
 	unsigned long stride, index;
 
@@ -7446,10 +7674,19 @@ static BOOL lights_reach_split(const WORD *index_data, unsigned long count, WORD
 	stride = device.streams[position->stream].stride;
 	vertices = (const unsigned char *)PLATFORM_PHYSICAL_TO_VIRTUAL(device.streams[position->stream].data) +
 		device.base_vertex_index * stride + position->offset;
+	list = lights_reach_list_find(vertices, stride, index_data, count);
 	*reached = buffer;
 	*unreached = buffer + count;
-	lights_reach_part(vertices, stride, index_data, count, *reached, reached_count, *unreached, unreached_count);
+	lights_reach_part(vertices, stride, index_data, count, list ? list->runs : NULL, *reached, reached_count,
+		*unreached, unreached_count);
 	return TRUE;
+}
+
+/* the map's structure switched, or the map let go (scenario.c): the lists'
+kept runs' boxes dropped (lights_reach_list_find) */
+void halo_dynamic_lights_structure_changed(void)
+{
+	lights_reach_structure_changes++;
 }
 
 void WINAPI D3DDevice_DrawIndexedVertices(D3DPRIMITIVETYPE primitive_type, UINT vertex_count, CONST WORD *index_data)
