@@ -13,6 +13,14 @@ it on a thread of its own, so that a frame never waits on the disk. Its
 queue holds at most WRITER_QUEUE_BYTES: past half of it, a block that may
 be dropped (a seek's snapshot) is, and past all of it, the game waits for
 room rather than lose the input of its ticks.
+
+A block is handed on in memory of the writer's own (demo_writer_reserve,
+filled by the caller, then demo_writer_commit), so that a snapshot is
+copied once on the game's thread, straight from the game state. The
+writer keeps the largest block it has written for the next large one
+(WRITER_SPARE_HEADROOM more than it held, as the game state grows): a
+snapshot's megabytes then go into memory already touched, not new pages
+the system faults in one by one as they are first written.
 */
 
 #include "platform.h"
@@ -21,6 +29,7 @@ room rather than lose the input of its ticks.
 #include "memory/zlib/zlib.h"
 
 #include <pthread.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,6 +37,10 @@ room rather than lose the input of its ticks.
 enum
 {
 	WRITER_QUEUE_BYTES = 96 << 20,
+	/* a block's room past what it is asked for, for the next of its kind
+	(a fourth more), and the smallest block worth keeping */
+	WRITER_SPARE_HEADROOM_SHIFT = 2,
+	WRITER_SPARE_SMALLEST = 1 << 20,
 };
 
 struct demo_writer_block
@@ -36,6 +49,8 @@ struct demo_writer_block
 	unsigned long kind;
 	unsigned long first_tick;
 	unsigned long size;
+	/* (the room its data has) */
+	unsigned long capacity;
 	unsigned char data[1];
 };
 
@@ -47,6 +62,8 @@ struct demo_writer
 	pthread_cond_t changed;
 	struct demo_writer_block *first;
 	struct demo_writer_block *last;
+	/* the largest block written, kept for the next large one */
+	struct demo_writer_block *spare;
 	unsigned long queued_bytes;
 	/* (64 bits: a long demo passes 4 GB, which an ILP32 guest's long wraps at) */
 	unsigned long long written_bytes;
@@ -310,6 +327,13 @@ static void *demo_writer_thread(void *context)
 		}
 		pthread_mutex_lock(&writer->lock);
 		writer->queued_bytes -= block->size;
+		if (block->capacity >= WRITER_SPARE_SMALLEST && (!writer->spare || block->capacity > writer->spare->capacity))
+		{
+			struct demo_writer_block *old = writer->spare;
+
+			writer->spare = block;
+			block = old;
+		}
 		pthread_cond_broadcast(&writer->changed);
 		pthread_mutex_unlock(&writer->lock);
 		free(block);
@@ -350,31 +374,61 @@ struct demo_writer *demo_writer_open(char const *path, void const *header, unsig
 	return writer;
 }
 
-void demo_writer_block(struct demo_writer *writer, unsigned long kind, unsigned long first_tick,
-	void const *data, unsigned long size, int droppable)
+void *demo_writer_reserve(struct demo_writer *writer, unsigned long size, int droppable)
 {
-	struct demo_writer_block *block;
+	struct demo_writer_block *block = NULL;
 
 	if (!writer || !size || size > DEMO_BLOCK_MAXIMUM_SIZE)
-		return;
+		return NULL;
 	pthread_mutex_lock(&writer->lock);
 	if (droppable && writer->queued_bytes + size > WRITER_QUEUE_BYTES / 2)
 	{
 		pthread_mutex_unlock(&writer->lock);
-		return;
+		return NULL;
 	}
 	while (writer->queued_bytes && writer->queued_bytes + size > WRITER_QUEUE_BYTES)
 		pthread_cond_wait(&writer->changed, &writer->lock);
+	/* (the spare, for a block as large as half of it or more: a small one
+	takes memory of its own) */
+	if (writer->spare && writer->spare->capacity >= size && size >= writer->spare->capacity / 2)
+	{
+		block = writer->spare;
+		writer->spare = NULL;
+	}
 	pthread_mutex_unlock(&writer->lock);
 
-	block = malloc(sizeof(*block) + size);
 	if (!block)
-		return;
+	{
+		unsigned long capacity = size;
+
+		if (size >= WRITER_SPARE_SMALLEST / 2)
+			capacity = size + (size >> WRITER_SPARE_HEADROOM_SHIFT);
+		block = malloc(sizeof(*block) + capacity);
+		if (!block)
+			return NULL;
+		block->capacity = capacity;
+	}
 	block->next = NULL;
+	block->size = 0;
+	return block->data;
+}
+
+void demo_writer_commit(struct demo_writer *writer, void *data, unsigned long kind, unsigned long first_tick,
+	unsigned long size)
+{
+	struct demo_writer_block *block;
+
+	if (!writer || !data)
+		return;
+	block = (struct demo_writer_block *)((unsigned char *)data - offsetof(struct demo_writer_block, data));
+	if (!size || size > block->capacity)
+	{
+		free(block);
+		return;
+	}
 	block->kind = kind;
 	block->first_tick = first_tick;
 	block->size = size;
-	memcpy(block->data, data, size);
 	pthread_mutex_lock(&writer->lock);
 	if (writer->last)
 		writer->last->next = block;
@@ -384,6 +438,17 @@ void demo_writer_block(struct demo_writer *writer, unsigned long kind, unsigned 
 	writer->queued_bytes += size;
 	pthread_cond_broadcast(&writer->changed);
 	pthread_mutex_unlock(&writer->lock);
+}
+
+void demo_writer_block(struct demo_writer *writer, unsigned long kind, unsigned long first_tick,
+	void const *data, unsigned long size, int droppable)
+{
+	void *room = demo_writer_reserve(writer, size, droppable);
+
+	if (!room)
+		return;
+	memcpy(room, data, size);
+	demo_writer_commit(writer, room, kind, first_tick, size);
 }
 
 unsigned long long demo_writer_bytes(struct demo_writer *writer)
@@ -411,6 +476,7 @@ unsigned long long demo_writer_close(struct demo_writer *writer)
 	pthread_join(writer->thread, NULL);
 	fclose(writer->file);
 	bytes = writer->written_bytes;
+	free(writer->spare);
 	pthread_mutex_destroy(&writer->lock);
 	pthread_cond_destroy(&writer->changed);
 	free(writer);

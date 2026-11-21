@@ -163,8 +163,9 @@ A co-op game this machine hosted plays its ticks as the host's
 (`demo_playback_connection`, `demo_playback_network_game`): inside them
 the connection is the host's and the network game is the recording's, so
 the host's co-op code there (its players spawning beside a teammate, the
-extra enemies by the network game's players, the respawns, the loading
-zones) runs as it ran; outside them (the frames, the menus) the playback is
+extra enemies by the network game's players, the riders a dropship
+had no seat for, which the host places at its ticks' ends,
+`network_coop_tick_end`, the respawns, the loading zones) runs as it ran; outside them (the frames, the menus) the playback is
 a game of this machine's own. Before format 4 the ticks of such a playback
 ran as the campaign's, a game of one machine: its other players spawned at
 once at the level's start, and the playback parted from the recording at
@@ -295,7 +296,9 @@ campaign) and the whole game states of reloads (a revert's). Recording
 takes 0.05 to 0.1 ms of the game's thread a tick (the comparison of the
 allocations the ticks keep, about 1 MB, with what the tick before left),
 and packing and writing are on a thread of their own; the co-op game above
-took 0.28 ms a tick.
+took 0.28 ms a tick. A snapshot is copied once on the game's thread, straight into the
+writer's memory (kept from the last one, so its pages are not faulted in
+again): about 1 ms for the 6 MB of a30's stress test with 270 enemies.
 
 Before the host's predictions after a tick were recorded as their bytes, a
 mixed game took a whole game state for each tick an OpenCE player moved in:

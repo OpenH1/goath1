@@ -262,6 +262,8 @@ struct demo_buffer
 	unsigned long size;
 	unsigned long capacity;
 	boolean failed;
+	/* (memory not its own, the writer's: never grown) */
+	boolean fixed;
 };
 
 /* what a unit was given in a sub-step */
@@ -335,7 +337,8 @@ static struct
 	unsigned char *input;
 	boolean input_valid;
 	struct demo_buffer records;
-	struct demo_buffer scratch;
+	/* a snapshot that could not be had (no memory for it) */
+	boolean snapshot_failed;
 	long block_first_tick;
 	long block_ticks;
 	long ticks;
@@ -475,6 +478,11 @@ static boolean demo_buffer_reserve(
 		return FALSE;
 	if (buffer->size + size <= buffer->capacity)
 		return TRUE;
+	if (buffer->fixed)
+	{
+		buffer->failed = TRUE;
+		return FALSE;
+	}
 	capacity = buffer->capacity ? buffer->capacity : 65536;
 	while (capacity < buffer->size + size)
 		capacity *= 2;
@@ -1019,12 +1027,26 @@ static void demo_header_write(
 	snprintf((char *)header + 128, DEMO_MAP_NAME_SIZE, "%s", tag_get_name(global_scenario_index));
 }
 
-/* the game state's allocations in use (all, or but the frames'), as K and P
-records hold them */
+/* a K record's bytes: its type and length, its tick, flags and seeds, and
+each allocation's offset and size in use (used, demo_allocation_used's) */
+static unsigned long demo_snapshot_size(
+	unsigned long const *used)
+{
+	unsigned long size = 1 + 4 + 4 * 4;
+	long index;
+
+	for (index = 0; index < demo_allocations.count; index++)
+		size += 8 + used[index];
+	return size;
+}
+
+/* the game state's allocations in use, as a K record holds them (used:
+each one's part in use) */
 static void demo_snapshot_write(
 	struct demo_buffer *buffer,
 	long tick,
-	unsigned long flags)
+	unsigned long flags,
+	unsigned long const *used)
 {
 	unsigned long seeds[2];
 	unsigned long start = demo_record_begin(buffer, 'K');
@@ -1038,11 +1060,10 @@ static void demo_snapshot_write(
 	for (index = 0; index < demo_allocations.count; index++)
 	{
 		struct demo_allocation const *allocation = &demo_allocations.list[index];
-		unsigned long used = demo_allocation_used(allocation);
 
 		demo_buffer_u32(buffer, allocation->offset);
-		demo_buffer_u32(buffer, used);
-		demo_buffer_bytes(buffer, demo_allocations.base + allocation->offset, used);
+		demo_buffer_u32(buffer, used[index]);
+		demo_buffer_bytes(buffer, demo_allocations.base + allocation->offset, used[index]);
 	}
 	demo_record_end(buffer, start);
 }
@@ -1063,21 +1084,41 @@ static void demo_records_flush(
 	demo_recorder.block_ticks = 0;
 }
 
+/* a snapshot handed to the writer, written straight into its memory: the
+game state copied once on the game's thread (its packing is the writer's
+thread's). A seek's is dropped when the writer is behind; another, never */
 static void demo_snapshot_block(
 	long tick,
 	unsigned long flags)
 {
+	static unsigned long used[MAXIMUM_DEMO_ALLOCATIONS];
 	boolean seek = TEST_FLAG(flags, _demo_snapshot_seek_bit);
+	struct demo_buffer buffer;
+	unsigned long size;
+	long index;
 
 	demo_records_flush();
-	demo_recorder.scratch.size = 0;
-	demo_snapshot_write(&demo_recorder.scratch, tick, flags);
-	if (!demo_recorder.scratch.failed)
-	{
-		demo_writer_block(demo_recorder.writer, seek ? _demo_block_seek_snapshot : _demo_block_snapshot,
-			(unsigned long)tick, demo_recorder.scratch.data, demo_recorder.scratch.size, seek);
-	}
 	demo_recorder.last_snapshot_tick = tick;
+	if (!demo_recorder.writer)
+		return;
+	for (index = 0; index < demo_allocations.count; index++)
+		used[index] = demo_allocation_used(&demo_allocations.list[index]);
+	size = demo_snapshot_size(used);
+	memset(&buffer, 0, sizeof(buffer));
+	buffer.data = demo_writer_reserve(demo_recorder.writer, size, seek);
+	if (!buffer.data)
+	{
+		if (!seek)
+			demo_recorder.snapshot_failed = TRUE;
+		return;
+	}
+	buffer.capacity = size;
+	buffer.fixed = TRUE;
+	demo_snapshot_write(&buffer, tick, flags, used);
+	if (buffer.failed && !seek)
+		demo_recorder.snapshot_failed = TRUE;
+	demo_writer_commit(demo_recorder.writer, buffer.data, seek ? _demo_block_seek_snapshot : _demo_block_snapshot,
+		(unsigned long)tick, buffer.failed ? 0 : buffer.size);
 }
 
 /* the allocations the ticks keep copied as the tick left them, to find
@@ -2051,7 +2092,7 @@ static void demo_record_start(
 	demo_recorder.recording = TRUE;
 	demo_recorder.records.size = 0;
 	demo_recorder.records.failed = FALSE;
-	demo_recorder.scratch.failed = FALSE;
+	demo_recorder.snapshot_failed = FALSE;
 	demo_recorder.block_first_tick = tick;
 	demo_recorder.block_ticks = 0;
 	demo_recorder.ticks = 0;
@@ -2240,7 +2281,7 @@ static void demo_record_tick_end(
 	}
 	if (++demo_recorder.block_ticks >= DEMO_BLOCK_TICKS)
 		demo_records_flush();
-	if (demo_recorder.records.failed || demo_recorder.scratch.failed)
+	if (demo_recorder.records.failed || demo_recorder.snapshot_failed)
 	{
 		demo_record_stop("out of memory");
 		demo_recorder.stopped = TRUE;

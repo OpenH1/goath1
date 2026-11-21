@@ -3543,6 +3543,20 @@ boolean network_coop_skip_vote_status(
 	return TRUE;
 }
 
+/* host, at each tick's end, inside it (game.c's game_tick_after_substeps):
+the extra enemies placed, a dropship's riders left without a seat as they
+get out and those that waited for their ground. What they make is the
+tick's own, which the playback of a demo of the host's ticks makes again as
+they ran (docs/demos.md); made after the tick, outside it, each was a whole
+game state recorded, several megabytes every few ticks of a dropship's
+unloading */
+void network_coop_tick_end(
+	void)
+{
+	if (coop_host())
+		coop_enemies_update();
+}
+
 /* host, after each tick */
 void network_coop_host_tick(
 	void)
@@ -3554,7 +3568,6 @@ void network_coop_host_tick(
 	host_resend_update();
 	players_vitality_keep();
 	host_friendly_fire_update();
-	coop_enemies_update();
 	coop_pickups_update();
 	coop_vehicles_update();
 	host_count_skip_votes();
