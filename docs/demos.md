@@ -117,10 +117,12 @@ take (`source/math/random_math.c`) and the players' input of each tick
   structure BSP, a dedicated server's loading-zone rules), then the
   revert's stamp (`game_state_port_demo_state`: the scripts' `game_reverted`
   compares it with the clock, and a skippable cutscene's start plays it
-  where its save was not reverted to) and whether the map is being saved
+  where its save was not reverted to), whether the map is being saved
   (`main_port_demo_saving_state`: the scripts' `game_saving`, which the
   frames clear as they save; a playback's main loop makes no save of its
-  own), whole with each
+  own) and the scripted camera's time left
+  (`scripted_camera_port_demo_state`: the scripts' `camera_time`, which the
+  frames count down by their own time), whole with each
   snapshot and, as the bytes that changed, wherever it changed outside the
   ticks; the playback puts it back as it was.
 - **The frames' choices a tick takes**: whether a particle waits for a
@@ -483,6 +485,19 @@ at its sixth tick, from its start and after a seek:
   sound's update then read (a crash). A playback leaves the respawn and the
   lost level's revert to the recording now, and a looping sound whose
   object is gone is deleted.
+
+A fresh recording of the same game then parted at its tick 220, in the
+script threads, wherever both players voted to skip the intro (on one test
+machine nearly every time, on another not):
+
+- **The scripted camera's time left.** a30's mission script sleeps for
+  `camera_time`, the time left of the camera's move, which the frames count
+  down by their own time as they move the camera (`scripted_camera_update`),
+  not the ticks'. At tick 218 the recording read 2.16670 seconds (65 ticks)
+  and the playback 2.16665 (64), and the mission woke a tick apart. It is
+  recorded now (`G`, a later part), and the playback's scripts read the
+  recording's. The same three-minute recordings, the skip's revert in them,
+  play back whole (496 of 496 hashes).
 
 `tools/test_demo_files.py` checks the files without the game: a demo
 written and read back, a damaged block refused, the retention, and the

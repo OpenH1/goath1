@@ -373,6 +373,17 @@ long scripted_camera_object_relative_to(
 	return camera_script_globals.relative_object_index;
 }
 
+/* port: the scripted camera's time left, which the frames count down as they
+move it (scripted_camera_update, by their own time) and the scripts'
+camera_time reads, for the demos (port/linux/game/demo.c's G records): a
+playback's is the recording's */
+void *scripted_camera_port_demo_state(
+	long *size)
+{
+	*size = sizeof(camera_script_globals.timer);
+	return &camera_script_globals.timer;
+}
+
 short scripted_camera_time(
 	void)
 {

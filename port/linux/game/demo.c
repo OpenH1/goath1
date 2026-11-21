@@ -156,6 +156,7 @@ void *wind_port_demo_state(long *size);
 void *network_standard_port_demo_state(long *size);
 void *main_port_demo_state(short part, long *size);
 void *main_port_demo_saving_state(long *size);
+void *scripted_camera_port_demo_state(long *size);
 unsigned long network_standard_demo_rules(void);
 extern struct game_variant game_variant_global;
 void main_build_identity(long *number, char *flavor, size_t flavor_size, char *repository, size_t repository_size,
@@ -1689,9 +1690,11 @@ points are blown by); NULL past the last */
 /* the last parts of what the game keeps outside the game state, which a
 demo recorded before them has not (demo_engine_state_set): the revert's
 stamp, which the scripts' game_reverted compares with the clock
-(game_state.c), and whether the map is being saved, which the scripts'
+(game_state.c), whether the map is being saved, which the scripts'
 game_saving reads and the main loop's frames clear as they save it
-(main.c); NULL past the last */
+(main.c), and the scripted camera's time left, which the frames count down
+by their own time and the scripts' camera_time reads (camera_scripting.c);
+NULL past the last */
 static void *demo_outside_later_part(
 	short part,
 	long *size)
@@ -1700,6 +1703,7 @@ static void *demo_outside_later_part(
 	{
 	case 0: return game_state_port_demo_state(size);
 	case 1: return main_port_demo_saving_state(size);
+	case 2: return scripted_camera_port_demo_state(size);
 	}
 	return NULL;
 }
