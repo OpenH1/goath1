@@ -62,7 +62,7 @@ boolean coop_enemies_rider_unseated(
 	long vehicle_index,
 	long unit_index);
 
-/* network_coop.c, after each of the host's ticks: the riders kept placed
+/* network_coop.c, at each of the host's ticks' ends: the riders kept placed
 at their vehicle's seats once its own riders get out */
 void coop_enemies_update(
 	void);

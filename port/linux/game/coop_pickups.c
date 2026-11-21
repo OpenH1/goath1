@@ -319,8 +319,9 @@ void coop_pickups_register(long object_index, struct scenario_object_datum const
 		((unsigned long)extra << PICKUPS_COUNT_SHIFT) | ((unsigned long)identity << PICKUPS_ID_SHIFT);
 }
 
-/* After the host's tick, outside object iteration/physics: object_new may
-compact the object pool. Gather indices before allocating any copies. */
+/* At the host's tick's end (network_coop_tick_end), outside object
+iteration/physics: object_new may compact the object pool. Gather indices
+before allocating any copies. */
 void coop_pickups_update(void)
 {
 	struct object_iterator iterator;

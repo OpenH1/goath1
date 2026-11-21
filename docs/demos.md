@@ -164,8 +164,8 @@ A co-op game this machine hosted plays its ticks as the host's
 the connection is the host's and the network game is the recording's, so
 the host's co-op code there (its players spawning beside a teammate, the
 extra enemies by the network game's players, the riders a dropship
-had no seat for, which the host places at its ticks' ends,
-`network_coop_tick_end`, the respawns, the loading zones) runs as it ran; outside them (the frames, the menus) the playback is
+had no seat for, the extra pickups' copies and the extra vehicles' replacements, which the host places at
+its ticks' ends, `network_coop_tick_end`, the respawns, the loading zones) runs as it ran; outside them (the frames, the menus) the playback is
 a game of this machine's own. Before format 4 the ticks of such a playback
 ran as the campaign's, a game of one machine: its other players spawned at
 once at the level's start, and the playback parted from the recording at
