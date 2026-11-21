@@ -1098,7 +1098,15 @@ detailed level; "auto" is "native" in the headset's eyes, which have far more
 lines than a display and are seen close, and "stock" elsewhere. Other than
 "stock", each permutation then draws the level that
 port/linux/game/model_detail.c chooses from the model's. level: the scale for
-choosing the level, otherwise for whether to draw at all. */
+choosing the level, otherwise for whether to draw at all.
+
+An extra view (a Spartan link feed: halo_view_begin) is measured in its own
+frustum, its window's size, and chooses its level coarser than the screen's
+setting would: at half the display's pixels a line (FEED_MODEL_DETAIL), never
+under stock's measure nor over the setting's ("highest" too); whether a model
+is drawn at all is the setting's, so nothing drops out of it that the screen
+would draw at that size. */
+#define FEED_MODEL_DETAIL 0.5f
 enum
 {
 	_model_detail_stock,
@@ -1149,7 +1157,9 @@ int halo_model_detail_stock(void)
 	return model_detail_setting(&eyes) == _model_detail_stock;
 }
 
-float halo_model_detail_scale(int level)
+static int halo_view_drawing(void);
+
+static float model_detail_screen_scale(int level)
 {
 	float display_scale;
 	int detail, eyes;
@@ -1166,6 +1176,22 @@ float halo_model_detail_scale(int level)
 	if (!eyes && temporal.rendering)
 		display_scale /= temporal.factor;
 	return display_scale > 1.0f ? display_scale : 1.0f;
+}
+
+float halo_model_detail_scale(int level)
+{
+	float setting = model_detail_screen_scale(level);
+	float feed;
+
+	if (!level || !halo_view_drawing())
+		return setting;
+	/* (an extra view: its images at the screen's scale, shown at the
+	display's pixels) */
+	halo_screen_width();
+	feed = screen_scale[1] / screen_supersampling * FEED_MODEL_DETAIL;
+	if (feed > setting)
+		feed = setting;
+	return feed > 1.0f ? feed : 1.0f;
 }
 
 /* how many pixels the screen's targets draw to the Xbox's one, the larger
@@ -1458,6 +1484,12 @@ static int screen_view;
 static int sampled_view;
 /* views' images no longer drawn, freed between frames (halo_screen_commit) */
 static BOOL views_released;
+
+/* an extra view is being drawn (halo_model_detail_scale) */
+static int halo_view_drawing(void)
+{
+	return screen_view != 0;
+}
 
 /* the target that holds the Xbox surface at this physical address (the
 latest drawn into, of the pass drawing now), or NULL */

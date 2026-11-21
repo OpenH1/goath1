@@ -47,6 +47,12 @@ enum
 	MAXIMUM_RENDERED_PARTICLE_GROUPS = HALO_PORT_MAXIMUM_RENDERED_PARTICLE_GROUPS,
 };
 
+/* port: a feed of the HUD's Spartan link (port/linux/game/spartan_link.c)
+leaves out a particle narrower than this in its own 480-line measure (its
+frustum's: a few of the display's pixels at most), which its definition's
+minimum size would otherwise grow to a dot */
+#define RENDER_PARTICLES_FEED_SMALLEST 0.5f
+
 /* ---------- macros */
 
 /* ---------- structures */
@@ -524,7 +530,10 @@ void render_particles(
 									diameter *= vr_render_level_of_detail_scale();
 								}
 #endif
-								if (diameter > definition->lod_cutoff)
+								/* port: (and in a Spartan link feed, the fine ones
+								left out: RENDER_PARTICLES_FEED_SMALLEST) */
+								if (diameter > definition->lod_cutoff &&
+									(diameter >= RENDER_PARTICLES_FEED_SMALLEST || !spartan_link_drawing()))
 								{
 									real fade;
 									real scale;

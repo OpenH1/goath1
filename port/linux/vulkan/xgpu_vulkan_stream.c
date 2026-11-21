@@ -366,13 +366,15 @@ static struct
 	/* display.ambient_occlusion "world": each pipeline's definition as last
 	bound, and its stand-in (0 none: PIPELINE_STAND_IN), which draws until
 	its own is made (prepared only where its own cannot be); the pipelines whose
-	shaders wait to be made after the load (and in which variant) */
+	shaders wait to be made after the load (and in which variant, and
+	whether the window's motion's: motion.entries') */
 	const struct xgpu_stream_pipeline_define *definitions[XGPU_STREAM_PIPELINES];
 	uint16_t stand_ins[XGPU_STREAM_PIPELINES];
 	struct
 	{
 		uint16_t id;
 		struct variant variant;
+		uint8_t motion;
 	} world_waiting[WORLD_WAITING_MOST];
 	uint32_t world_waiting_count;
 	/* the debugging settings (xgpu_vulkan_stream_debug): the statistics
@@ -2357,6 +2359,19 @@ static int effect_first_person_uniforms(void)
 static int motion_tables(void);
 static int motion_writer(const struct xgpu_stream_pipeline_define *definition);
 
+/* whether a draw now is drawn into the window's motion (display.temporal_aa),
+and, the bound pipeline's, with its variant that writes it (motion.entries') */
+static int draw_motion_drawn(void)
+{
+	return (motion.objects && !prepass.drawing && !stream.preparing && xgpu_vulkan_motion_bound()) ||
+		motion.prepare_variant;
+}
+
+static int draw_writes_motion(void)
+{
+	return draw_motion_drawn() && motion_writer(stream.definition) && motion_tables();
+}
+
 static int draw_pipeline(const struct draw_input *input, int apart)
 {
 	struct xgpu_vulkan_pipeline_description pipeline = stream.pipeline;
@@ -2382,14 +2397,14 @@ static int draw_pipeline(const struct draw_input *input, int apart)
 	}
 	/* (display.temporal_aa: a window's objects, into the motion too; those
 	that write it with their variant's shaders, the rest through it) */
-	motion_drawn = (motion.objects && !prepass.drawing && !stream.preparing && xgpu_vulkan_motion_bound()) ||
-		motion.prepare_variant;
+	motion_drawn = draw_motion_drawn();
 	motion_writes = motion_drawn && motion_writer(stream.definition) && motion_tables();
 	entry = prepass.drawing ? prepass.drawing : motion_writes ? &motion.entries[stream.pipeline_id] :
 		&stream.pipelines[stream.pipeline_id];
 	variant_current(&stream.definition->key, &variant);
 	variant.integer_attributes = stream.definition->key.immediate ? 0 : input->integers;
-	if (apart && (entry->state != XGPU_STREAM_PIPELINE_MADE || memcmp(&entry->variant, &variant, sizeof(variant))))
+	if (apart && (entry->state != XGPU_STREAM_PIPELINE_MADE || memcmp(&entry->variant, &variant, sizeof(variant)) ||
+		(motion_writes && memcmp(&motion.definitions[stream.pipeline_id], stream.definition, sizeof(*stream.definition)))))
 		return 0;
 	if (motion_writes && memcmp(&motion.definitions[stream.pipeline_id], stream.definition, sizeof(*stream.definition)))
 	{
@@ -2632,16 +2647,30 @@ static int draw_pipeline(const struct draw_input *input, int apart)
 	return 1;
 }
 
-/* display.ambient_occlusion "world": a world pipeline's shaders to be made
-after the load, in this variant (once) */
-static void world_wait(uint32_t id, const struct variant *variant)
+/* a world pipeline's entry: its own, or (motion_variant) its variant that
+writes the window's motion (display.temporal_aa), NULL where there is none */
+static struct stream_pipeline *world_entry(uint32_t id, int motion_variant)
 {
+	if (!motion_variant)
+		return &stream.pipelines[id];
+	return motion_tables() ? &motion.entries[id] : NULL;
+}
+
+/* display.ambient_occlusion "world": a world pipeline's shaders to be made
+after the load, in this variant, its own or the motion's (once: a draw
+waiting finds it waiting, and one whose shaders cannot be made draws its
+stand-in) */
+static void world_wait(uint32_t id, const struct variant *variant, int motion_variant)
+{
+	struct stream_pipeline *entry = world_entry(id, motion_variant);
 	uint32_t index;
 
+	if (!entry || entry->state == XGPU_STREAM_PIPELINE_FAILED)
+		return;
 	for (index = 0; index < stream.world_waiting_count; index++)
 	{
-		if (stream.world_waiting[index].id == id && !memcmp(&stream.world_waiting[index].variant, variant,
-			sizeof(*variant)))
+		if (stream.world_waiting[index].id == id && stream.world_waiting[index].motion == motion_variant &&
+			!memcmp(&stream.world_waiting[index].variant, variant, sizeof(*variant)))
 		{
 			return;
 		}
@@ -2651,9 +2680,10 @@ static void world_wait(uint32_t id, const struct variant *variant)
 	/* (its shaders not made as the map was prepared: a miss, as a
 	pipeline's) */
 	if (stream.prepared && !stream.preparing)
-		shaders_missed("a world pipeline's", stream.definition);
+		shaders_missed(motion_variant ? "a world pipeline's motion" : "a world pipeline's", stream.definition);
 	stream.world_waiting[stream.world_waiting_count].id = (uint16_t)id;
 	stream.world_waiting[stream.world_waiting_count].variant = *variant;
+	stream.world_waiting[stream.world_waiting_count].motion = (uint8_t)(motion_variant != 0);
 	stream.world_waiting_count++;
 }
 
@@ -2668,17 +2698,30 @@ static void world_make_some(void)
 	{
 		uint32_t id = stream.world_waiting[0].id;
 		struct variant variant = stream.world_waiting[0].variant;
-		struct stream_pipeline *entry = &stream.pipelines[id];
+		int motion_variant = stream.world_waiting[0].motion;
+		struct stream_pipeline *entry = world_entry(id, motion_variant);
+		const struct xgpu_stream_pipeline_define *definition = stream.definitions[id];
 
 		memmove(&stream.world_waiting[0], &stream.world_waiting[1],
 			(stream.world_waiting_count - 1) * sizeof(stream.world_waiting[0]));
 		stream.world_waiting_count--;
-		if (!stream.stand_ins[id] || !stream.definitions[id] || entry->state == XGPU_STREAM_PIPELINE_FAILED ||
+		if (!entry || !stream.stand_ins[id] || !definition)
+			continue;
+		/* (the motion's variant: as draw_pipeline makes it, again where its
+		pipeline's definition is another) */
+		if (motion_variant && memcmp(&motion.definitions[id], definition, sizeof(*definition)))
+		{
+			motion.definitions[id] = *definition;
+			memset(entry, 0, sizeof(*entry));
+		}
+		if (entry->state == XGPU_STREAM_PIPELINE_FAILED ||
 			(entry->state == XGPU_STREAM_PIPELINE_MADE && !memcmp(&entry->variant, &variant, sizeof(variant))))
 		{
 			continue;
 		}
-		pipeline_shaders(entry, stream.definitions[id], &variant);
+		motion.making = motion_variant;
+		pipeline_shaders(entry, definition, &variant);
+		motion.making = 0;
 		made++;
 	}
 }
@@ -2735,7 +2778,7 @@ static void draw_input(const struct draw_input *input)
 
 		variant_current(&definition->key, &variant);
 		variant.integer_attributes = definition->key.immediate ? 0 : input->integers;
-		world_wait(id, &variant);
+		world_wait(id, &variant, draw_writes_motion());
 	}
 	pipeline = stream.pipeline;
 	if (stream_pipeline(NULL, stand_in, stream.definitions[stand_in]))

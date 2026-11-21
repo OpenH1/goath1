@@ -626,43 +626,59 @@ static void render_window(
 		/* port: and every light's */
 		render_enumerate_lights(FALSE);
 
-		rasterizer_decals_begin(_decal_layer_light);
-		for (rendered_cluster_index = 0;
-			rendered_cluster_index < render.rendered_cluster_count;
-			rendered_cluster_index++)
+		/* port: (no decals in a Spartan link feed: spartan_link.c) */
+		if (!render_link_pass)
 		{
-			rasterizer_decals_draw(rendered_cluster_get(rendered_cluster_index)->cluster_index);
+			rasterizer_decals_begin(_decal_layer_light);
+			for (rendered_cluster_index = 0;
+				rendered_cluster_index < render.rendered_cluster_count;
+				rendered_cluster_index++)
+			{
+				rasterizer_decals_draw(rendered_cluster_get(rendered_cluster_index)->cluster_index);
+			}
+			rasterizer_decals_end();
 		}
-		rasterizer_decals_end();
 
-		rasterizer_decals_begin(_decal_layer_alpha_tested);
-		for (rendered_cluster_index = 0;
-			rendered_cluster_index < render.rendered_cluster_count;
-			rendered_cluster_index++)
+		/* port: (no decals in a Spartan link feed: spartan_link.c) */
+		if (!render_link_pass)
 		{
-			rasterizer_decals_draw(rendered_cluster_get(rendered_cluster_index)->cluster_index);
+			rasterizer_decals_begin(_decal_layer_alpha_tested);
+			for (rendered_cluster_index = 0;
+				rendered_cluster_index < render.rendered_cluster_count;
+				rendered_cluster_index++)
+			{
+				rasterizer_decals_draw(rendered_cluster_get(rendered_cluster_index)->cluster_index);
+			}
+			rasterizer_decals_end();
 		}
-		rasterizer_decals_end();
 
 		structure_render_diffuse_texture();
 
-		rasterizer_decals_begin(_decal_layer_primary);
-		for (rendered_cluster_index = 0;
-			rendered_cluster_index < render.rendered_cluster_count;
-			rendered_cluster_index++)
+		/* port: (no decals in a Spartan link feed: spartan_link.c) */
+		if (!render_link_pass)
 		{
-			rasterizer_decals_draw(rendered_cluster_get(rendered_cluster_index)->cluster_index);
+			rasterizer_decals_begin(_decal_layer_primary);
+			for (rendered_cluster_index = 0;
+				rendered_cluster_index < render.rendered_cluster_count;
+				rendered_cluster_index++)
+			{
+				rasterizer_decals_draw(rendered_cluster_get(rendered_cluster_index)->cluster_index);
+			}
+			rasterizer_decals_end();
 		}
-		rasterizer_decals_end();
 
-		rasterizer_decals_begin(_decal_layer_secondary);
-		for (rendered_cluster_index = 0;
-			rendered_cluster_index < render.rendered_cluster_count;
-			rendered_cluster_index++)
+		/* port: (no decals in a Spartan link feed: spartan_link.c) */
+		if (!render_link_pass)
 		{
-			rasterizer_decals_draw(rendered_cluster_get(rendered_cluster_index)->cluster_index);
+			rasterizer_decals_begin(_decal_layer_secondary);
+			for (rendered_cluster_index = 0;
+				rendered_cluster_index < render.rendered_cluster_count;
+				rendered_cluster_index++)
+			{
+				rasterizer_decals_draw(rendered_cluster_get(rendered_cluster_index)->cluster_index);
+			}
+			rasterizer_decals_end();
 		}
-		rasterizer_decals_end();
 		/* port: and every decal's (port/linux/game/render_enumerate.c) */
 		render_enumerate_decals();
 
@@ -697,16 +713,21 @@ static void render_window(
 		render_enumerate_effects();
 		rasterizer_transparent_geometry_draw(TRUE);
 
-		rasterizer_decals_begin(_decal_layer_water);
-		for (rendered_cluster_index = 0;
-			rendered_cluster_index < render.rendered_cluster_count;
-			rendered_cluster_index++)
+		/* port: a Spartan link feed draws no decals, nor the grass and the
+		other detail objects, too fine to see in it (spartan_link.c) */
+		if (!render_link_pass)
 		{
-			rasterizer_decals_draw(rendered_cluster_get(rendered_cluster_index)->cluster_index);
-		}
-		rasterizer_decals_end();
+			rasterizer_decals_begin(_decal_layer_water);
+			for (rendered_cluster_index = 0;
+				rendered_cluster_index < render.rendered_cluster_count;
+				rendered_cluster_index++)
+			{
+				rasterizer_decals_draw(rendered_cluster_get(rendered_cluster_index)->cluster_index);
+			}
+			rasterizer_decals_end();
 
-		structure_render_detail_objects();
+			structure_render_detail_objects();
+		}
 		rasterizer_transparent_geometry_draw(FALSE);
 		rasterizer_transparent_geometry_stop();
 		/* port: the plasma bolts' lights' glows (display.dynamic_lights,
