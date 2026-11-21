@@ -39,7 +39,7 @@ not paced by the display: it draws as many frames as display.max_fps lets
 it (sdl_platform.c's platform_video_swap, twice the display's rate by
 default), and each frame is presented as soon as it is queued
 (immediate_present), into the layer's next drawable, the layer out of sync
-with the display (displaySyncEnabled NO) and the link paused: as with
+with the display (displaySyncEnabled NO), the link let go: as with
 vsync off elsewhere, a frame's time is its own, not rounded up to the
 refreshes' (at 120 Hz, frames of 17 ms had been shown for 25), and
 fullscreen it may tear; in a window the window server shows the newest
@@ -260,11 +260,13 @@ static struct
 	BOOL unpaced_forced;
 	/* (macOS, display.vsync off: host_metal_vsync) each frame presented as
 	soon as it is queued, not at the link's refreshes (immediate_present):
-	a present asked of the link's thread and not yet run; the link paused
+	a present asked of the link's thread and not yet run; no link
 	while the game's frames come (the link's thread's), and the last time
 	the screen's headroom was read for them */
 	_Atomic int immediate, immediate_pending;
 	BOOL link_paused;
+	/* the link's delegate (HaloDisplayLinkTarget), for a link made again */
+	id link_target;
 	double immediate_edr_read;
 	/* battery saver, as the guest asks (host_metal_battery_saver), and as the
 	link's rate was last set for it (the link's thread's) */
@@ -1094,7 +1096,7 @@ uint64_t host_metal_loading(void *context, const struct loading_presentation_fra
 	pthread_mutex_unlock(&presentation.lock);
 	while (discarded-- > 0)
 		host_render_stream_frame_taken();
-	/* (vsync off: the link, paused while the game's frames come, draws the
+	/* (vsync off: the link, let go while the game's frames come, draws the
 	loading screen's pictures) */
 	if (frame->active && !frame->ready && atomic_load(&presentation.immediate))
 		immediate_request();
@@ -2149,10 +2151,14 @@ static void drawable_size_apply(void)
 Vsync off (presentation.immediate, macOS): the game's frames are presented
 as they come (immediate_present), the layer not waiting for the display's
 refresh (displaySyncEnabled NO: a frame may tear, as with vsync off
-elsewhere), and the link paused, but for the loading screen (loading: its
+elsewhere), and no link, but for the loading screen (loading: its
 pictures are the link's refreshes') and before the game's first frame (the
-window's black). Else the link presents at the display's refreshes, the
+window's black): a layer with a link refuses nextDrawable (an exception,
+even with the link paused), so the link is invalidated, and made again
+when it is wanted. Else the link presents at the display's refreshes, the
 layer in sync with them, as ever */
+static void link_make(void);
+
 static void link_state_apply(BOOL loading)
 {
 	BOOL immediate = atomic_load(&presentation.immediate) != 0;
@@ -2162,12 +2168,20 @@ static void link_state_apply(BOOL loading)
 	if (presentation.layer.displaySyncEnabled != !immediate)
 		presentation.layer.displaySyncEnabled = !immediate;
 #endif
-	if (!presentation.link || paused == presentation.link_paused)
+	if (!presentation.link_target || paused == presentation.link_paused)
 		return;
 	presentation.link_paused = paused;
-	/* (the link's first refresh back is no gap: refresh:'s statistics) */
+	/* (the link's first refresh back is no gap: refresh:'s statistics; its
+	period measured again) */
 	presentation.last_tick = 0.0;
-	presentation.link.paused = paused;
+	presentation.last_target = 0.0;
+	if (paused)
+	{
+		[presentation.link invalidate];
+		presentation.link = nil;
+	}
+	else
+		link_make();
 }
 
 /* (the link's thread, as a frame is queued with vsync off:
@@ -2215,7 +2229,7 @@ static void immediate_present(void)
 		if (!taken.image)
 			return;
 		presentation.ticks++;
-		drawable = [presentation.layer nextDrawable];
+		drawable = presentation.link ? nil : [presentation.layer nextDrawable];
 		if (!drawable)
 		{
 			image_release(taken.index);
@@ -2253,7 +2267,7 @@ static void immediate_present(void)
 	CAMetalDisplayLink *link = presentation.link;
 
 	/* (vsync off: the game's frames are immediate_present's, the link
-	paused, once they come and while no loading screen is up) */
+	let go, once they come and while no loading screen is up) */
 	if (atomic_load(&presentation.immediate) && presentation.frames_seen)
 	{
 		BOOL loading;
@@ -2397,6 +2411,19 @@ static CAFrameRateRange link_rate_range(int saving)
 #endif
 }
 
+/* (the link's thread) the display link, on its run loop */
+static void link_make(void)
+{
+	CAMetalDisplayLink *link = [[CAMetalDisplayLink alloc] initWithMetalLayer:presentation.layer];
+
+	link.delegate = presentation.link_target;
+	presentation.battery_saver_set = atomic_load(&presentation.battery_saver);
+	link.preferredFrameRateRange = link_rate_range(presentation.battery_saver_set);
+	link.preferredFrameLatency = 1.0f;
+	presentation.link = link;
+	[link addToRunLoop:[NSRunLoop currentRunLoop] forMode:NSDefaultRunLoopMode];
+}
+
 static void *presentation_thread(void *context)
 {
 	HaloDisplayLinkTarget *target = (__bridge_transfer HaloDisplayLinkTarget *)context;
@@ -2404,16 +2431,10 @@ static void *presentation_thread(void *context)
 	pthread_setname_np("metal presentation");
 	@autoreleasepool
 	{
-		CAMetalDisplayLink *link = [[CAMetalDisplayLink alloc] initWithMetalLayer:presentation.layer];
-
-		link.delegate = target;
-		presentation.battery_saver_set = atomic_load(&presentation.battery_saver);
-		link.preferredFrameRateRange = link_rate_range(presentation.battery_saver_set);
-		link.preferredFrameLatency = 1.0f;
-		presentation.link = link;
-		[link addToRunLoop:[NSRunLoop currentRunLoop] forMode:NSDefaultRunLoopMode];
+		presentation.link_target = target;
+		link_make();
 		/* (a port of its own keeps the run loop waiting, not spinning,
-		while the link is paused: link_state_apply) */
+		while there is no link: link_state_apply) */
 		[[NSRunLoop currentRunLoop] addPort:[NSMachPort port] forMode:NSDefaultRunLoopMode];
 #if !TARGET_OS_IPHONE
 		/* (the hidden window's refreshes: hidden_refresh, from here; the
