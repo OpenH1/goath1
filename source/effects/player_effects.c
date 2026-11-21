@@ -170,6 +170,11 @@ enum
 	_player_effect_screen_flash_just_started_bit,
 	_player_effect_camera_impulse_just_started_bit,
 	_player_effect_camera_shake_just_started_bit,
+	/* port: each countdown run out as this tick began (player_effect_tick_begin):
+	the frames of this tick alone draw what was left of its last tick */
+	_player_effect_screen_flash_ran_out_bit,
+	_player_effect_camera_impulse_ran_out_bit,
+	_player_effect_camera_shake_ran_out_bit,
 
 	NUMBER_OF_PLAYER_EFFECT_FLAGS
 };
@@ -542,18 +547,24 @@ void player_effect_clear_damage_indicators(
 /* port: a countdown of a local player's effects (the screen's flash, the
 camera's impulse and shake: the ticks left of its duration) as a frame
 draws it: TRUE while it is drawn (ticks left, begun in the tick the frame
-follows, or time left at the time of the frame drawn), and that time,
-between the ticks (render_interpolation_ticks_left). The ticks count it
-down (player_effect_tick_begin): the frames only read it. */
+follows, or, in the tick it ran out at, the rest of its last tick at the
+time of the frame drawn), and that time, between the ticks
+(render_interpolation_ticks_left). The ticks count it down
+(player_effect_tick_begin): the frames only read it. A countdown run out
+before this tick is not drawn: its 0 left read in an open tick (a sub-step
+of game.sim_rate 60 or 120 run) is a tick more, so it came back at a sliver
+of its last intensity in each open tick's frames and went in the others',
+a strobe for as long as the map ran after the first flash */
 static boolean player_effect_drawn(
 	short ticks_left,
 	real duration,
 	boolean just_started,
+	boolean ran_out,
 	real *time_left)
 {
 	*time_left = render_interpolation_ticks_left(ticks_left);
 
-	return ticks_left > 0 || just_started || (duration > 0.0f && *time_left > 0.0f);
+	return ticks_left > 0 || just_started || (ran_out && duration > 0.0f && *time_left > 0.0f);
 }
 
 /* port: ... and its step, once a tick: what the first frame after the tick
@@ -562,13 +573,22 @@ after it again by none */
 static void player_effect_count_down(
 	short *ticks_left,
 	byte *flags,
-	short just_started_bit)
+	short just_started_bit,
+	short ran_out_bit)
 {
+	boolean ran_out = FALSE;
+
 	if (*ticks_left > 0 || TEST_FLAG(*flags, just_started_bit))
 	{
 		*ticks_left -= 1;
 		SET_FLAG(*flags, just_started_bit, FALSE);
+		ran_out = *ticks_left <= 0;
 	}
+	/* (run out at this step, not at one before: what the frames of this
+	tick alone draw the rest of. One not counted in a tick, the flash under
+	a fade and the impulse and shake under a scripted shake, is not drawn
+	in its frames, the fade or the scripted shake drawn in its place) */
+	SET_FLAG(*flags, ran_out_bit, ran_out);
 
 	return;
 }
@@ -718,7 +738,8 @@ void player_effect_tick_begin(
 			player_effect_count_down(
 				&effect->screen_flash_time_left,
 				&effect->flags,
-				_player_effect_screen_flash_just_started_bit);
+				_player_effect_screen_flash_just_started_bit,
+				_player_effect_screen_flash_ran_out_bit);
 		}
 
 		/* (a scripted shake is drawn in the impulse's and shake's place) */
@@ -727,11 +748,13 @@ void player_effect_tick_begin(
 			player_effect_count_down(
 				&effect->camera_impulse_time_left,
 				&effect->flags,
-				_player_effect_camera_impulse_just_started_bit);
+				_player_effect_camera_impulse_just_started_bit,
+				_player_effect_camera_impulse_ran_out_bit);
 			player_effect_count_down(
 				&effect->camera_shake_time_left,
 				&effect->flags,
-				_player_effect_camera_shake_just_started_bit);
+				_player_effect_camera_shake_just_started_bit,
+				_player_effect_camera_shake_ran_out_bit);
 		}
 
 		for (index = 0; index < NUMBER_OF_DAMAGE_INDICATORS; index++)
@@ -922,6 +945,7 @@ void player_effect_get_screen_flash(
 				effect->screen_flash_time_left,
 				effect->screen_flash.duration,
 				TEST_FLAG(effect->flags, _player_effect_screen_flash_just_started_bit),
+				TEST_FLAG(effect->flags, _player_effect_screen_flash_ran_out_bit),
 				&time_left))
 			{
 				struct screen_flash_definition const *flash = &effect->screen_flash;
@@ -1159,6 +1183,7 @@ void player_effect_get_camera_effect_matrix(
 				effect->camera_impulse_time_left,
 				effect->camera_impulse.temporary_duration,
 				TEST_FLAG(effect->flags, _player_effect_camera_impulse_just_started_bit),
+				TEST_FLAG(effect->flags, _player_effect_camera_impulse_ran_out_bit),
 				&impulse_time_left))
 			{
 				real_vector3d axis;
@@ -1210,6 +1235,7 @@ void player_effect_get_camera_effect_matrix(
 				camera_shake_ticks,
 				effect->camera_shake.duration,
 				TEST_FLAG(effect->flags, _player_effect_camera_shake_just_started_bit),
+				TEST_FLAG(effect->flags, _player_effect_camera_shake_ran_out_bit),
 				&shake_time_left))
 			{
 				struct continuous_player_effect_datum *continuous =
