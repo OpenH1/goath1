@@ -5754,9 +5754,14 @@ behind each short burst. Jobs contain descriptions, never vertex/texture data. *
 /* Compilers, each the driver's on one processor: one left the Steam Frame's
 eight cores idle while it made a map's 442 pipelines in 2 s, the game
 waiting 0.9 s of them. The game's and the render thread, and the VR
-runtime's, keep theirs. (A pipeline cache needs no lock of ours: Vulkan
-synchronizes one not made externally synchronized.) */
-#define PIPELINE_WORKERS_MOST 4
+runtime's, keep theirs; the rest compile. They work only while pipelines
+are asked for, and the game waits for those at a preparation's end (a
+load, or a setting that makes other pipelines in play: four of a Ryzen
+5900X's 24 made HDR's 575 in play in 0.4 s, no frame made). The most
+bounds the driver's memory of the compiles at once. (A pipeline cache
+needs no lock of ours: Vulkan synchronizes one not made externally
+synchronized.) */
+#define PIPELINE_WORKERS_MOST 16
 static VkPipeline pipeline_build(const struct xgpu_vulkan_pipeline_description *description,
 	VkResult *result, double *elapsed);
 static struct
