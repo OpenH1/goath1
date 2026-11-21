@@ -594,7 +594,7 @@ gives a frame's mean costs: the time the GPU was busy (with the game's
 command buffers or the presentation's: the union of their times, which
 overlap) and its share of the time, the GPU's time on the frame's command
 buffers, the render thread's CPU time, its draws, passes, uploads in the
-frame's order, copies of a target drawn into, and pictures copied back
+frame's order (and early ones), copies of a target drawn into, and pictures copied back
 into the back buffer;
 the last frame's time to play (from its first record to its end, the wait
 for a presentation image included) and its bytes in the stream (and the
@@ -824,7 +824,11 @@ command stream's backend table. They run on one thread, the render thread.
   the depth formats (D24S8 is 32-bit float depth with 8-bit stencil: Apple's
   GPUs have no 24-bit depth), depth kept reversed, 1 - the game's
   (`xgpu_backend.h`, "Reversed depth"). An upload writes a texture at once where no
-  work the GPU still has reads it, else it is a blit in the frame's order.
+  work the GPU still has reads it, else it is a blit: where nothing the
+  command buffer being recorded has encoded uses the texture, one of the
+  early uploads, which share a blit encoder of a command buffer enqueued
+  before it (the open pass goes on), else in the frame's order
+  (`HALO_METAL_EARLY_UPLOADS=0`: never early).
   A buffer (the mirrored vertices' segments) written while the GPU's work
   still reads it, and no blit of the GPU's still writes, is renamed
   instead: another buffer of its size (one the GPU is done with, kept for

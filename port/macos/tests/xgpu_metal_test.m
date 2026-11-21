@@ -933,6 +933,47 @@ static void test_upload_order(void)
 	xgpu_metal_texture_destroy(target);
 }
 
+/* an upload into a texture the frame has not used yet goes before the
+frame's command buffer (xgpu_metal.m's early_blit): the open pass goes on,
+two uploads whose regions overlap keep their order, and the draw after
+them reads the later */
+static void test_early_uploads(void)
+{
+	uint32_t target = target_make(XGPU_METAL_FORMAT_BGRA8, SIZE, SIZE, 0);
+	/* (a target's texture: private, every upload a blit) */
+	uint32_t texture = target_make(XGPU_METAL_FORMAT_BGRA8, 1, 1, 0);
+	uint32_t red = 0xffff0000, blue = 0xff0000ff;
+	struct xgpu_metal_pipeline pipeline;
+	struct xgpu_metal_sampler sampler;
+	struct xgpu_metal_statistics statistics;
+
+	begin("early uploads");
+	frame_begin(target, 0);
+	draw_rectangle(0, 0, SIZE, SIZE, 0.5f, 0xffffffff);
+	xgpu_metal_frame_wait(xgpu_metal_frame_end(0));
+	statistics_take(&statistics);
+	frame_begin(target, 0);
+	pipeline_default(&pipeline, 0);
+	xgpu_metal_set_pipeline(&pipeline);
+	sampler_point(&sampler);
+	uniforms_set(1, 1, 1, 1, 1);
+	draw_rectangle(0, 0, 32, SIZE, 0.5f, 0xffffffff);
+	/* (the pass open) */
+	xgpu_metal_texture_upload(texture, 0, 0, 0, 0, 0, 1, 1, 1, &red, 4, 0);
+	xgpu_metal_texture_upload(texture, 0, 0, 0, 0, 0, 1, 1, 1, &blue, 4, 0);
+	xgpu_metal_set_texture(0, texture, &sampler);
+	draw_rectangle(32, 0, SIZE, SIZE, 0.5f, 0xffffffff);
+	xgpu_metal_frame_wait(xgpu_metal_frame_end(0));
+	statistics_take(&statistics);
+	read_target(target);
+	CHECK(pixel(8, 8) == 0xffffffff && pixel(40, 8) == blue, "the later upload drawn: %08x %08x", pixel(8, 8),
+		pixel(40, 8));
+	CHECK(statistics.uploads_early == 2 && statistics.uploads_ordered == 0 && statistics.passes == 1,
+		"early %u, ordered %u, passes %u", statistics.uploads_early, statistics.uploads_ordered, statistics.passes);
+	xgpu_metal_texture_destroy(texture);
+	xgpu_metal_texture_destroy(target);
+}
+
 static void test_texture_kinds(void)
 {
 	uint32_t cube = texture_make(XGPU_METAL_TEXTURE_CUBE, XGPU_METAL_FORMAT_BGRA8, 4, 4, 1);
@@ -2831,6 +2872,7 @@ int main(int argc, char *argv[])
 		test_visibility();
 		test_multisampling();
 		test_upload_order();
+		test_early_uploads();
 		test_texture_kinds();
 		test_guest_memory();
 		test_frames();

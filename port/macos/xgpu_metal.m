@@ -67,6 +67,9 @@ offsets of chunk n starting at n << RING_CHUNK_SHIFT */
 #define RING_ALIGNMENT 256
 /* the guest's buffers: at most this many, each inside a granule */
 #define GUEST_REGION_MAXIMUM 512
+/* the regions an early uploads' blit encoder writes before another is begun
+(early_blit) */
+#define EARLY_REGIONS 256
 /* the render thread's last buffers found, looked at before the regions */
 #define GUEST_RECENT 4
 #define GUEST_GRANULE (4u << 20)
@@ -111,6 +114,8 @@ struct texture_entry
 	/* the last command buffer whose own passes or blits wrote it, and whose
 	own draws read it (not those it put aside: the aside passes) */
 	uint64_t main_written, main_sampled;
+	/* the last command buffer whose early uploads (early_blit) wrote it */
+	uint64_t early;
 	/* a back buffer given to the presentation (xgpu_metal_frame_end): its
 	pictures, which texture (another) has yet to be given, unless a clear of
 	the whole of it comes first */
@@ -264,6 +269,18 @@ static struct
 	/* the aside passes' command buffer, enqueued before the one being
 	recorded */
 	id<MTLCommandBuffer> aside_buffer;
+	/* the early uploads' command buffer, enqueued before the one being
+	recorded, its blit encoder (nil: none open), the encoder's timed pass,
+	and the regions it has written (early_blit) */
+	id<MTLCommandBuffer> early_buffer;
+	id<MTLBlitCommandEncoder> early_blit;
+	int32_t early_profile;
+	struct early_region
+	{
+		uint32_t texture, level, layer;
+		uint32_t first[3], end[3];
+	} early_regions[EARLY_REGIONS];
+	uint32_t early_region_count;
 	/* textures that renamed targets had, kept until the GPU is done with
 	them, to be renamed into again */
 	NSMutableArray<id<MTLTexture>> *aside_spares;
@@ -1315,13 +1332,11 @@ static id<MTLCommandBuffer> aside_buffer(void)
 	return metal.aside_buffer;
 }
 
-/* commits the aside passes (before the command buffer they were put aside
-from) */
-static void aside_buffer_commit(void)
+/* commits a command buffer enqueued before the one being recorded (the
+aside passes', the early uploads'), its GPU time counted */
+static void side_buffer_commit(id<MTLCommandBuffer> buffer)
 {
-	if (!metal.aside_buffer)
-		return;
-	[metal.aside_buffer addCompletedHandler:^(id<MTLCommandBuffer> done) {
+	[buffer addCompletedHandler:^(id<MTLCommandBuffer> done) {
 		if (done.status == MTLCommandBufferStatusError)
 			host_logf(HOST_LOG_ERROR, "metal: a command buffer failed: %s",
 				done.error.localizedDescription.UTF8String);
@@ -1334,8 +1349,122 @@ static void aside_buffer_commit(void)
 			pthread_mutex_unlock(&metal.statistics_lock);
 		}
 	}];
-	[metal.aside_buffer commit];
+	[buffer commit];
+}
+
+/* commits the aside passes (before the command buffer they were put aside
+from) */
+static void aside_buffer_commit(void)
+{
+	if (!metal.aside_buffer)
+		return;
+	side_buffer_commit(metal.aside_buffer);
 	metal.aside_buffer = nil;
+}
+
+/* ---------- early uploads
+
+An upload in the command buffer's order is a blit, which ends the open pass
+(its targets stored, and loaded again by the pass after it: on a tile-based
+GPU, tens of megabytes at the screen's size), and each in an encoder of its
+own costs the GPU an encoder's start and end: the distance-field scene's
+boxes (WORLD_AO_CASCADES records, xgpu_metal_world_ao.c), dozens a frame in
+a fight, each did. Where nothing the command
+buffer being recorded has encoded so far (its passes and blits, and the
+passes put aside from it) reads or writes the texture, the upload goes
+instead into a blit encoder of a command buffer of its own, enqueued before
+that one (early_buffer), and the uploads share that encoder: what the
+command buffer draws later reads what they wrote, as in its order. An
+upload whose region overlaps one the open encoder has written (the same
+texture, level and layer) begins another encoder after it, so that the
+later texels win. HALO_METAL_EARLY_UPLOADS=0: none. */
+
+static int early_enabled = -1;
+
+static id<MTLCommandBuffer> early_buffer(void)
+{
+	if (!metal.early_buffer)
+	{
+		metal.early_buffer = [metal.queue commandBuffer];
+		[metal.early_buffer enqueue];
+	}
+	return metal.early_buffer;
+}
+
+static void early_blit_end(void)
+{
+	if (!metal.early_blit)
+		return;
+	[metal.early_blit endEncoding];
+	metal.early_blit = nil;
+	metal.early_region_count = 0;
+}
+
+/* commits the early uploads (before the command buffer they came before) */
+static void early_buffer_commit(void)
+{
+	if (!metal.early_buffer)
+		return;
+	early_blit_end();
+	side_buffer_commit(metal.early_buffer);
+	metal.early_buffer = nil;
+}
+
+/* whether an upload into the texture can be an early one */
+static BOOL early_possible(struct texture_entry *entry)
+{
+	if (early_enabled < 0)
+		early_enabled = !getenv("HALO_METAL_EARLY_UPLOADS") || atoi(getenv("HALO_METAL_EARLY_UPLOADS")) != 0;
+	return early_enabled && (!metal.command_buffer || entry->used != metal.command_serial);
+}
+
+/* the early uploads' encoder for a region of a texture's level and layer */
+static id<MTLBlitCommandEncoder> early_blit(uint32_t texture, uint32_t level, uint32_t layer, MTLRegion region)
+{
+	struct early_region *written;
+	uint32_t first[3] = { (uint32_t)region.origin.x, (uint32_t)region.origin.y, (uint32_t)region.origin.z };
+	uint32_t end[3] = { first[0] + (uint32_t)region.size.width, first[1] + (uint32_t)region.size.height,
+		first[2] + (uint32_t)region.size.depth };
+
+	if (metal.early_blit)
+	{
+		BOOL overlaps = metal.early_region_count >= EARLY_REGIONS;
+		uint32_t index;
+
+		for (index = 0; !overlaps && index < metal.early_region_count; index++)
+		{
+			written = &metal.early_regions[index];
+			overlaps = written->texture == texture && written->level == level && written->layer == layer &&
+				first[0] < written->end[0] && written->first[0] < end[0] && first[1] < written->end[1] &&
+				written->first[1] < end[1] && first[2] < written->end[2] && written->first[2] < end[2];
+		}
+		if (overlaps)
+			early_blit_end();
+	}
+	if (!metal.early_blit)
+	{
+		int32_t index = profile_pass_add("upload");
+
+		if (index < 0)
+			metal.early_blit = [early_buffer() blitCommandEncoder];
+		else
+		{
+			MTLBlitPassDescriptor *descriptor = [MTLBlitPassDescriptor blitPassDescriptor];
+
+			profile.passes[index].kind = PROFILE_KIND_COPY;
+			descriptor.sampleBufferAttachments[0].sampleBuffer = profile.samples;
+			descriptor.sampleBufferAttachments[0].startOfEncoderSampleIndex = (NSUInteger)index * 4;
+			descriptor.sampleBufferAttachments[0].endOfEncoderSampleIndex = (NSUInteger)index * 4 + 1;
+			metal.early_blit = [early_buffer() blitCommandEncoderWithDescriptor:descriptor];
+		}
+	}
+	written = &metal.early_regions[metal.early_region_count++];
+	written->texture = texture;
+	written->level = level;
+	written->layer = layer;
+	memcpy(written->first, first, sizeof(first));
+	memcpy(written->end, end, sizeof(end));
+	return metal.early_blit;
 }
 
 /* the parked pass made the open one again (its encoder goes on) */
@@ -1398,7 +1527,8 @@ static BOOL aside_possible(struct texture_entry *color, uint32_t color_level, BO
 	if (aside_enabled < 0)
 		aside_enabled = !getenv("HALO_METAL_ASIDE") || atoi(getenv("HALO_METAL_ASIDE")) != 0;
 	if (!aside_enabled || (!metal.encoder && !metal.aside) || !color || depth || multisampled || color->multisampled ||
-		color->previous || metal.visibility_active || color->main_written == metal.command_serial)
+		color->previous || metal.visibility_active || color->main_written == metal.command_serial ||
+		color->early == metal.command_serial)
 		return NO;
 	open = metal.aside ? (uint64_t)metal.parked.target_width * metal.parked.target_height :
 		(uint64_t)metal.target_width * metal.target_height;
@@ -1422,7 +1552,9 @@ static BOOL aside_reads_written(struct xgpu_metal_source indices)
 	{
 		struct texture_entry *entry = texture_get(metal.stage_textures[index]);
 
-		if (entry && entry->main_written == metal.command_serial)
+		/* (or its early uploads have: their command buffer may be enqueued
+		after the aside passes') */
+		if (entry && (entry->main_written == metal.command_serial || entry->early == metal.command_serial))
 			return YES;
 	}
 	for (index = 0; index < XGPU_METAL_STREAM_COUNT; index++)
@@ -1511,6 +1643,7 @@ static uint64_t command_buffer_commit(void (^completed)(void))
 
 	pass_end();
 	aside_buffer_commit();
+	early_buffer_commit();
 	[buffer addCompletedHandler:^(id<MTLCommandBuffer> done) {
 		if (done.status == MTLCommandBufferStatusError)
 			host_logf(HOST_LOG_ERROR, "metal: a command buffer failed: %s",
@@ -1755,7 +1888,7 @@ void xgpu_metal_shutdown(void)
 {
 	if (!metal.ready)
 		return;
-	if (metal.command_buffer)
+	if (metal.command_buffer || metal.early_buffer)
 		xgpu_metal_frame_wait(command_buffer_commit(nil));
 	xgpu_metal_frame_wait(metal.command_serial);
 	archive_save(-1.0);
@@ -2328,7 +2461,7 @@ uint32_t xgpu_metal_texture_create(const struct xgpu_metal_texture_description *
 		return 0;
 	}
 	entry->description = *description;
-	entry->used = 0;
+	entry->used = entry->early = 0;
 	entry->previous = nil;
 	entry->present = 1;
 	if (description->usage & XGPU_METAL_USAGE_TARGET)
@@ -2499,7 +2632,8 @@ void xgpu_metal_texture_upload(uint32_t texture, uint32_t level, uint32_t layer,
 	size = bytes_per_image * (depth - 1) + bytes_per_row * (rows - 1) +
 		(format->compressed ? (width + 3) / 4 * format->bytes : width * format->bytes);
 	region = MTLRegionMake3D(x, y, z, width, height, depth);
-	if (entry->texture.storageMode == MTLStorageModeShared && entry->used <= xgpu_metal_frame_completed())
+	if (entry->texture.storageMode == MTLStorageModeShared && entry->used <= xgpu_metal_frame_completed() &&
+		entry->early <= xgpu_metal_frame_completed())
 	{
 		/* nothing the GPU has to do reads it: written now */
 		[entry->texture replaceRegion:region mipmapLevel:level slice:layer withBytes:data bytesPerRow:bytes_per_row
@@ -2516,6 +2650,19 @@ void xgpu_metal_texture_upload(uint32_t texture, uint32_t level, uint32_t layer,
 
 		if (!buffer)
 			return;
+		if (early_possible(entry))
+		{
+			/* (before the command buffer being recorded, nothing of which
+			uses it yet: early_blit) */
+			blit = early_blit(texture, level, layer, region);
+			[blit copyFromBuffer:buffer sourceOffset:offset sourceBytesPerRow:bytes_per_row
+				sourceBytesPerImage:entry->description.type == XGPU_METAL_TEXTURE_3D ? bytes_per_image : 0
+				sourceSize:MTLSizeMake(width, height, depth) toTexture:entry->texture destinationSlice:layer
+				destinationLevel:level destinationOrigin:MTLOriginMake(x, y, z)];
+			entry->early = metal.command_buffer ? metal.command_serial : metal.command_serial + 1;
+			statistics_add(&metal.statistics.uploads_early, 1);
+			return;
+		}
 		pass_end();
 		blit = blit_encoder("upload");
 		[blit copyFromBuffer:buffer sourceOffset:offset sourceBytesPerRow:bytes_per_row
@@ -2891,7 +3038,7 @@ loaded again for a few kilobytes) */
 
 uint64_t xgpu_metal_fence(void)
 {
-	if (metal.command_buffer || metal.encoder || metal.color_load == MTLLoadActionClear ||
+	if (metal.command_buffer || metal.early_buffer || metal.encoder || metal.color_load == MTLLoadActionClear ||
 		metal.depth_load == MTLLoadActionClear || metal.stencil_load == MTLLoadActionClear)
 	{
 		if (!metal.in_frame)

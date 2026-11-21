@@ -673,7 +673,9 @@ struct xgpu_metal_statistics
 {
 	uint32_t frames, passes, draws, clears_as_quads, clears_as_loads;
 	uint32_t pipelines_made, pipelines_from_archive, depth_stencil_states_made, samplers_made;
-	uint32_t uploads_direct, uploads_ordered;
+	/* (early: before the command buffer being recorded, which has not used the
+	texture yet, in one encoder: xgpu_metal.m's early_blit) */
+	uint32_t uploads_direct, uploads_ordered, uploads_early;
 	/* copies of a target being drawn, for a draw that samples it */
 	uint32_t feedback_copies;
 	/* passes of small targets put aside (xgpu_metal.m: encoded before the
