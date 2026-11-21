@@ -1,0 +1,669 @@
+# Silent Cartographer's island (b30) as a Royale map: port/linux/game/royale_map.c plays it as a
+# multiplayer map (no AI, scripts or BSP switches; the exterior structure BSP 0). World units (1 = 10 ft).
+# Made from the exterior BSP's collision geometry and debug-camera pictures.
+
+map = "b30"
+structure_bsp = 0
+# the play area: outside it (or below its bottom: wading out into the sea) a player is put back where
+# they last stood inside; the beam's sweep runs over its x (east, west) or y (north, south)
+drop_height = 60.0
+bounds_min = [-95.00, -90.00, -1.00]
+bounds_max = [108.00, 80.00, 120.00]
+# the glassing beam starts from one of these sides (drawn at random) and sweeps toward the far one:
+# from the east it ends on the west beach's pier and towers, from the south on the north cove, outcrop and
+# the north tower, the final areas with the most cover
+beam_sides = ["east", "south"]
+
+# Pelican flights across the island at drop_height, in from the sea and out the far side
+[[flight_path]]
+start = [-140.00, 0.00, 60.00]
+end = [150.00, 0.00, 60.00]
+speed = 9.0
+
+[[flight_path]]
+start = [-130.00, -120.00, 60.00]
+end = [140.00, 110.00, 60.00]
+speed = 9.0
+
+[[flight_path]]
+start = [5.00, -130.00, 60.00]
+end = [5.00, 120.00, 60.00]
+speed = 9.0
+
+[[flight_path]]
+start = [-130.00, 100.00, 60.00]
+end = [140.00, -120.00, 60.00]
+speed = 9.0
+
+[[flight_path]]
+start = [-140.00, 40.00, 60.00]
+end = [150.00, 40.00, 60.00]
+speed = 9.0
+
+[[flight_path]]
+start = [-140.00, -45.00, 60.00]
+end = [150.00, -45.00, 60.00]
+speed = 9.0
+
+[[flight_path]]
+start = [-50.00, -130.00, 60.00]
+end = [-50.00, 120.00, 60.00]
+speed = 9.0
+
+[[flight_path]]
+start = [55.00, -130.00, 60.00]
+end = [55.00, 120.00, 60.00]
+speed = 9.0
+
+# the beam's stages: wait delay seconds, then move the front from start to end (fractions of the map's
+# length from its side) over duration seconds; damage_per_second behind it
+[[beam_stage]]
+delay = 90.0
+start = 0.00
+end = 0.25
+duration = 60.0
+damage_per_second = 0.03
+
+[[beam_stage]]
+delay = 60.0
+start = 0.25
+end = 0.45
+duration = 50.0
+damage_per_second = 0.05
+
+[[beam_stage]]
+delay = 50.0
+start = 0.45
+end = 0.60
+duration = 40.0
+damage_per_second = 0.08
+
+[[beam_stage]]
+delay = 40.0
+start = 0.60
+end = 0.72
+duration = 30.0
+damage_per_second = 0.12
+
+[[beam_stage]]
+delay = 30.0
+start = 0.72
+end = 0.80
+duration = 25.0
+damage_per_second = 0.18
+
+[[beam_stage]]
+delay = 45.0
+start = 0.80
+end = 1.00
+duration = 60.0
+damage_per_second = 0.30
+
+# the gulag: the cove behind the crashed Pelican, north of the north tower, between the tower and the
+# outcrop (walled by cliffs on three sides; the blocked box over it keeps everyone else out)
+[gulag]
+spawn_a = [-26.00, 43.50, 2.70]
+facing_a = 0.0000
+spawn_b = [-20.00, 43.50, 2.80]
+facing_b = 3.1416
+bounds_min = [-28.50, 39.50, 1.00]
+bounds_max = [-17.50, 47.50, 9.00]
+
+# the interior's entrances, closed: no player passes these boxes (pushed out of the nearest side). The east shaft
+# (the Cartographer's, its lens closed) needs none: a player who falls below the bounds' bottom is put back
+[[blocked]]
+name = "north tower: the door in the passage under the tower"
+bounds_min = [-11.00, 26.50, 11.50]
+bounds_max = [-1.50, 30.50, 17.50]
+
+[[blocked]]
+name = "south facility: the door under the roof on its east platform"
+bounds_min = [21.00, -25.50, 8.50]
+bounds_max = [29.00, -18.50, 14.50]
+
+[[blocked]]
+name = "round platform: the covered walkway down to its center"
+bounds_min = [25.80, 7.00, 12.00]
+bounds_max = [29.20, 26.00, 26.00]
+
+[[blocked]]
+name = "gulag cove (only the gulag's fighters)"
+bounds_min = [-28.50, 39.50, 1.00]
+bounds_max = [-17.50, 47.50, 9.00]
+
+# supply pods: open, flat ground, far apart
+[[pod]]
+position = [-18.00, -60.00, 1.87]
+
+[[pod]]
+position = [35.50, -52.50, 8.77]
+
+[[pod]]
+position = [-71.00, 9.00, 0.74]
+
+[[pod]]
+position = [57.00, 56.00, 1.51]
+
+[[pod]]
+position = [-66.00, -37.00, 1.25]
+
+[[pod]]
+position = [-17.00, -22.50, 21.44]
+
+[[pod]]
+position = [72.00, 9.00, 14.25]
+
+[[pod]]
+position = [16.00, -11.00, 23.94]
+
+[[pod]]
+position = [53.00, -18.50, 2.80]
+
+[[pod]]
+position = [-24.50, 12.00, 22.06]
+
+[[pod]]
+position = [5.00, 26.00, 24.00]
+
+[[pod]]
+position = [25.50, 63.50, 1.61]
+
+[[pod]]
+position = [-56.50, 42.50, 1.27]
+
+[[pod]]
+position = [-51.50, -66.50, 0.68]
+
+# ground loot by tier (common, rare, epic, legendary): beaches, high ground and cliff tops, outsides of
+# the structures
+[[loot]]
+position = [-7.50, -70.00, 0.61]
+tier = "common"
+
+[[loot]]
+position = [-46.00, -66.50, 0.70]
+tier = "common"
+
+[[loot]]
+position = [-57.00, -64.50, 0.62]
+tier = "rare"
+
+[[loot]]
+position = [1.00, -64.00, 2.24]
+tier = "common"
+
+[[loot]]
+position = [45.00, -63.00, 0.86]
+tier = "rare"
+
+[[loot]]
+position = [-18.00, -60.00, 1.82]
+tier = "common"
+
+[[loot]]
+position = [-31.50, -56.00, 2.26]
+tier = "common"
+
+[[loot]]
+position = [-1.50, -54.00, 2.27]
+tier = "rare"
+
+[[loot]]
+position = [-66.00, -48.50, 0.78]
+tier = "common"
+
+[[loot]]
+position = [-9.00, -46.50, 2.07]
+tier = "common"
+
+[[loot]]
+position = [-66.00, -37.00, 1.20]
+tier = "rare"
+
+[[loot]]
+position = [53.50, -35.50, 1.02]
+tier = "epic"
+
+[[loot]]
+position = [-58.50, -27.50, 2.74]
+tier = "epic"
+
+[[loot]]
+position = [-47.00, -27.50, 4.02]
+tier = "common"
+
+[[loot]]
+position = [46.00, -26.50, 3.01]
+tier = "epic"
+
+[[loot]]
+position = [53.00, -18.50, 2.75]
+tier = "common"
+
+[[loot]]
+position = [45.00, -7.50, 4.18]
+tier = "common"
+
+[[loot]]
+position = [62.00, -6.00, 2.06]
+tier = "common"
+
+[[loot]]
+position = [70.00, 1.00, 0.86]
+tier = "common"
+
+[[loot]]
+position = [-71.00, 9.00, 0.69]
+tier = "common"
+
+[[loot]]
+position = [-52.00, 14.00, 3.05]
+tier = "common"
+
+[[loot]]
+position = [-65.50, 19.50, 1.33]
+tier = "common"
+
+[[loot]]
+position = [75.00, 22.50, 1.32]
+tier = "common"
+
+[[loot]]
+position = [-53.50, 27.00, 2.96]
+tier = "rare"
+
+[[loot]]
+position = [-65.00, 29.50, 1.08]
+tier = "common"
+
+[[loot]]
+position = [55.00, 36.00, 3.17]
+tier = "common"
+
+[[loot]]
+position = [-35.00, 38.50, 2.38]
+tier = "common"
+
+[[loot]]
+position = [-56.50, 42.50, 1.22]
+tier = "common"
+
+[[loot]]
+position = [-45.50, 46.00, 1.72]
+tier = "common"
+
+[[loot]]
+position = [68.00, 47.00, 0.83]
+tier = "common"
+
+[[loot]]
+position = [57.00, 56.00, 1.46]
+tier = "common"
+
+[[loot]]
+position = [3.50, 57.50, 0.66]
+tier = "common"
+
+[[loot]]
+position = [14.00, 59.50, 2.13]
+tier = "common"
+
+[[loot]]
+position = [45.00, 63.00, 1.57]
+tier = "rare"
+
+[[loot]]
+position = [25.50, 63.50, 1.56]
+tier = "rare"
+
+[[loot]]
+position = [38.00, 71.00, 0.58]
+tier = "common"
+
+[[loot]]
+position = [25.50, -55.00, 20.28]
+tier = "legendary"
+
+[[loot]]
+position = [-53.50, -53.00, 15.08]
+tier = "rare"
+
+[[loot]]
+position = [15.50, -53.00, 19.61]
+tier = "rare"
+
+[[loot]]
+position = [-41.00, -45.50, 17.31]
+tier = "rare"
+
+[[loot]]
+position = [23.50, -44.50, 21.98]
+tier = "common"
+
+[[loot]]
+position = [32.00, -40.00, 9.40]
+tier = "rare"
+
+[[loot]]
+position = [-17.00, -38.50, 19.74]
+tier = "rare"
+
+[[loot]]
+position = [16.50, -38.00, 23.43]
+tier = "common"
+
+[[loot]]
+position = [7.50, -37.00, 21.14]
+tier = "rare"
+
+[[loot]]
+position = [-32.50, -35.00, 19.54]
+tier = "epic"
+
+[[loot]]
+position = [-1.50, -35.00, 19.92]
+tier = "epic"
+
+[[loot]]
+position = [-27.00, -27.00, 20.54]
+tier = "epic"
+
+[[loot]]
+position = [8.50, -27.00, 23.34]
+tier = "rare"
+
+[[loot]]
+position = [-17.00, -22.50, 21.39]
+tier = "rare"
+
+[[loot]]
+position = [2.50, -15.50, 23.92]
+tier = "common"
+
+[[loot]]
+position = [-15.00, -11.50, 23.20]
+tier = "common"
+
+[[loot]]
+position = [16.00, -11.00, 23.89]
+tier = "rare"
+
+[[loot]]
+position = [35.00, -8.00, 21.19]
+tier = "common"
+
+[[loot]]
+position = [0.50, -5.50, 24.38]
+tier = "rare"
+
+[[loot]]
+position = [-20.50, -2.50, 23.51]
+tier = "common"
+
+[[loot]]
+position = [11.50, -2.00, 24.62]
+tier = "common"
+
+[[loot]]
+position = [-35.50, 0.00, 19.97]
+tier = "rare"
+
+[[loot]]
+position = [27.50, -0.50, 25.09]
+tier = "common"
+
+[[loot]]
+position = [19.00, 3.00, 25.91]
+tier = "rare"
+
+[[loot]]
+position = [-5.00, 6.00, 16.81]
+tier = "common"
+
+[[loot]]
+position = [44.00, 6.50, 23.41]
+tier = "rare"
+
+[[loot]]
+position = [20.50, 9.00, 20.17]
+tier = "rare"
+
+[[loot]]
+position = [72.00, 9.00, 14.20]
+tier = "common"
+
+[[loot]]
+position = [-24.50, 12.00, 22.01]
+tier = "epic"
+
+[[loot]]
+position = [14.50, 17.50, 19.94]
+tier = "rare"
+
+[[loot]]
+position = [-36.00, 20.50, 19.55]
+tier = "common"
+
+[[loot]]
+position = [52.50, 19.50, 21.71]
+tier = "rare"
+
+[[loot]]
+position = [5.00, 26.00, 23.95]
+tier = "rare"
+
+[[loot]]
+position = [-23.00, 30.00, 17.06]
+tier = "rare"
+
+[[loot]]
+position = [-32.50, 33.00, 16.73]
+tier = "rare"
+
+[[loot]]
+position = [-49.00, 35.00, 15.79]
+tier = "common"
+
+[[loot]]
+position = [18.00, 37.50, 22.03]
+tier = "common"
+
+[[loot]]
+position = [37.00, 39.50, 22.62]
+tier = "rare"
+
+[[loot]]
+position = [22.50, 49.00, 18.50]
+tier = "rare"
+
+[[loot]]
+position = [33.50, 62.50, 15.94]
+tier = "common"
+
+[[loot]]
+position = [6.00, -69.50, 7.11]
+tier = "common"
+
+[[loot]]
+position = [23.00, -65.50, 8.21]
+tier = "common"
+
+[[loot]]
+position = [12.00, -62.50, 5.63]
+tier = "rare"
+
+[[loot]]
+position = [35.50, -52.50, 8.72]
+tier = "common"
+
+[[loot]]
+position = [-28.00, -47.50, 4.12]
+tier = "common"
+
+[[loot]]
+position = [42.50, -45.00, 5.55]
+tier = "common"
+
+[[loot]]
+position = [87.00, 2.00, 7.87]
+tier = "rare"
+
+[[loot]]
+position = [48.00, 3.00, 7.17]
+tier = "common"
+
+[[loot]]
+position = [56.00, 7.50, 5.87]
+tier = "epic"
+
+[[loot]]
+position = [-32.00, 47.00, 6.89]
+tier = "common"
+
+[[loot]]
+position = [39.50, 48.50, 5.70]
+tier = "common"
+
+[[loot]]
+position = [52.50, 47.50, 6.03]
+tier = "rare"
+
+[[loot]]
+position = [-14.50, 55.00, 5.86]
+tier = "common"
+
+[[loot]]
+position = [24.50, -34.00, 22.15]
+tier = "rare"
+
+[[loot]]
+position = [22.00, -28.50, 22.14]
+tier = "epic"
+
+[[loot]]
+position = [29.50, -28.00, 9.19]
+tier = "rare"
+
+[[loot]]
+position = [18.00, -24.00, 24.42]
+tier = "epic"
+
+[[loot]]
+position = [31.50, -22.50, 25.68]
+tier = "common"
+
+[[loot]]
+position = [-66.00, -20.00, 2.05]
+tier = "rare"
+
+[[loot]]
+position = [-50.50, -20.00, 14.41]
+tier = "common"
+
+[[loot]]
+position = [-41.50, -20.00, 19.74]
+tier = "rare"
+
+[[loot]]
+position = [-34.50, -18.00, 20.87]
+tier = "epic"
+
+[[loot]]
+position = [40.50, -17.50, 4.20]
+tier = "epic"
+
+[[loot]]
+position = [21.00, -17.00, 23.23]
+tier = "epic"
+
+[[loot]]
+position = [-65.50, -13.00, 15.50]
+tier = "epic"
+
+[[loot]]
+position = [-58.50, -13.00, 15.97]
+tier = "rare"
+
+[[loot]]
+position = [-73.00, -12.50, 14.66]
+tier = "rare"
+
+[[loot]]
+position = [-41.50, -12.00, 22.12]
+tier = "epic"
+
+[[loot]]
+position = [25.00, -11.50, 22.76]
+tier = "rare"
+
+[[loot]]
+position = [-33.00, -10.50, 21.29]
+tier = "rare"
+
+[[loot]]
+position = [-65.00, -7.00, 1.95]
+tier = "epic"
+
+[[loot]]
+position = [-42.50, -6.00, 18.85]
+tier = "rare"
+
+[[loot]]
+position = [-59.00, -1.50, 3.29]
+tier = "rare"
+
+[[loot]]
+position = [31.50, 5.50, 25.63]
+tier = "common"
+
+[[loot]]
+position = [-6.50, 18.50, 23.39]
+tier = "common"
+
+[[loot]]
+position = [0.50, 20.50, 24.27]
+tier = "epic"
+
+[[loot]]
+position = [35.50, 21.50, 18.69]
+tier = "rare"
+
+[[loot]]
+position = [20.00, 25.00, 18.69]
+tier = "legendary"
+
+[[loot]]
+position = [32.00, 31.00, 18.44]
+tier = "rare"
+
+[[loot]]
+position = [23.50, 32.00, 18.37]
+tier = "rare"
+
+[[loot]]
+position = [-2.50, 36.50, 21.07]
+tier = "rare"
+
+[[loot]]
+position = [-7.50, 41.00, 21.65]
+tier = "legendary"
+
+[[loot]]
+position = [-14.00, 42.50, 18.65]
+tier = "rare"
+
+[[loot]]
+position = [2.50, 42.50, 18.29]
+tier = "epic"
+
+[[loot]]
+position = [6.00, 46.00, 1.68]
+tier = "rare"
+
+[[loot]]
+position = [-6.00, 49.50, 18.65]
+tier = "rare"
+
+[[loot]]
+position = [2.50, 51.50, 0.78]
+tier = "legendary"

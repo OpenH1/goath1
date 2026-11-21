@@ -287,6 +287,7 @@ symbols in this file:
 #include "units/vehicle_definitions.h"
 #include "units/vehicles.h"
 #include "mcc_seats.h" /* port: port/linux/game/mcc_seats.c */
+#include "royale.h" /* port: port/linux/game/royale.c */
 
 /* network_game_globals.c's */
 boolean network_game_distributed_client(void);
@@ -5297,6 +5298,9 @@ void players_update_before_game(
 						"c:\\halo\\SOURCE\\game\\players.c",
 						0x2E5,
 						(NONE == control_data.zoom_level) || ((control_data.zoom_level >= 0)));
+					/* port: Royale: a downed player crawls, and a held action
+					revives (port/linux/game/royale.c) */
+					royale_player_control(iterator.datum_index, &control_data);
 					unit_control(player->unit_index, &control_data);
 				}
 				else if (unit->unit.swarm_actor_index == NONE &&

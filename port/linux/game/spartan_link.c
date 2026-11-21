@@ -132,6 +132,7 @@ over the network, in the game record (OpenH1's protocol version 36).
 #include "network_standard.h"
 #include "player_settings.h"
 #include "spartan_link.h"
+#include "royale.h"
 
 #include <limits.h>
 #include <math.h>
@@ -371,6 +372,9 @@ static boolean spartan_link_game(
 	}
 	if (network_coop_active())
 		return TRUE;
+	/* (Royale: the squad, royale.c) */
+	if (royale_active())
+		return game_engine_in_play() && !spartan_link_pro_doubles();
 	return game_engine_running() ? game_engine_has_teams() && game_engine_in_play() &&
 		!spartan_link_pro_doubles() && network_standard_spartan_link_allowed() : TRUE;
 }
@@ -389,6 +393,8 @@ static boolean spartan_link_teammate(
 	}
 	if (TEST_FLAG(object_get(player->unit_index)->object.damage_flags, _object_dead_bit))
 		return FALSE;
+	if (royale_active())
+		return royale_squadmate_of(self) == other;
 	return !game_engine_running() || player->team_index == player_get(self)->team_index;
 }
 

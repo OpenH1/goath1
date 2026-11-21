@@ -536,12 +536,16 @@ boolean network_host_game_cooperative(
 	void)
 {
 	struct network_game_server *server = global_network_game_server_get();
+	struct network_game *game = server ? network_game_server_get_game(server) : NULL;
 
 	/* (a co-op game played, or one whose lobby has a campaign level: the
 	record's variant, which has no game engine in co-op, has none either as
-	a lobby is set up again after any game) */
+	a lobby is set up again after any game. Not Royale's, a multiplayer game
+	on a campaign level: its options' mode says so, the variant's engine
+	or not; its next game is the playlist's or a host_map's) */
 	return server && (network_coop_active() ||
-		custom_edition_maps_level_campaign(network_game_server_get_game(server)->map.name));
+		(custom_edition_maps_level_campaign(game->map.name) &&
+			game_modes_variant_mode(&game->variant, &game->variant_options) != _game_mode_royale));
 }
 
 boolean network_host_game_hosting(

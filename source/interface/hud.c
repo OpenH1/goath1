@@ -124,6 +124,8 @@ symbols in this file:
 #include "text/text_group.h"
 #include "units/unit_definitions.h"
 #include "units/units.h"
+#include "royale.h" /* port: port/linux/game/royale.c */
+#include "royale_cinema.h" /* port: port/linux/game/royale_cinema.c */
 #ifdef HALO_VR
 #include "../../port/linux/src/vr.h"
 /* port/linux/game/vr_render.c: the marks over the world (the teammates'
@@ -1705,7 +1707,8 @@ void hud_draw_screen(
 	void)
 {
 	long player_index = local_player_get_player_index(render.local_player_index);
-	director_perspective perspective = director_get_perspective(render.local_player_index);
+	director_perspective perspective = (director_perspective)royale_cinema_hud_perspective(render.local_player_index,
+		(short)director_get_perspective(render.local_player_index)); /* port: royale_cinema.c */
 
 	rasterizer_hud_begin();
 	if (player_index != NONE)
@@ -1827,6 +1830,8 @@ void hud_draw_screen(
 		network_votekick_draw(render.local_player_index);
 		/* port: Basic Training's step, its progress and its skip buttons */
 		basic_training_draw(render.local_player_index);
+		/* port: Royale's HUD and its lanes' (port/linux/game/royale.c) */
+		royale_draw(render.local_player_index);
 		mcc_hud_view_end(); /* port: no frame choice leaks to another view */
 	}
 
@@ -1846,7 +1851,8 @@ void hud_draw_vr_crosshairs(
 	void)
 {
 	long player_index = local_player_get_player_index(render.local_player_index);
-	director_perspective perspective = director_get_perspective(render.local_player_index);
+	director_perspective perspective = (director_perspective)royale_cinema_hud_perspective(render.local_player_index,
+		(short)director_get_perspective(render.local_player_index)); /* port: royale_cinema.c */
 
 	if (player_index != NONE && hud_shown() &&
 		perspective != _director_perspective_neutral &&
@@ -1872,7 +1878,8 @@ void hud_draw_vr_zoomed(
 	void)
 {
 	long player_index = local_player_get_player_index(render.local_player_index);
-	director_perspective perspective = director_get_perspective(render.local_player_index);
+	director_perspective perspective = (director_perspective)royale_cinema_hud_perspective(render.local_player_index,
+		(short)director_get_perspective(render.local_player_index)); /* port: royale_cinema.c */
 
 	if (player_index != NONE && hud_shown() &&
 		perspective != _director_perspective_neutral &&
@@ -1899,7 +1906,8 @@ void hud_draw_vr_world_marks(
 	void)
 {
 	long player_index = local_player_get_player_index(render.local_player_index);
-	director_perspective perspective = director_get_perspective(render.local_player_index);
+	director_perspective perspective = (director_perspective)royale_cinema_hud_perspective(render.local_player_index,
+		(short)director_get_perspective(render.local_player_index)); /* port: royale_cinema.c */
 
 	if (player_index == NONE || cinematic_in_progress() || hud_hidden_by_player())
 		return;
