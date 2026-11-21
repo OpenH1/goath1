@@ -173,6 +173,10 @@ static boolean network_substeps_live_pending(void)
 			return TRUE;
 	return FALSE;
 }
+/* (the network test's bytes by message type, network_distributed.c's) */
+static long distributed_type_bytes[256];
+/* (Royale's bots, left out in its games alone: none here) */
+static boolean distributed_player_is_bot(short player_index) { (void)player_index; return FALSE; }
 static struct player_datum *distributed_player(short player_index)
 {
 	return near[player_index] || far[player_index] ? &players[player_index] : NULL;
