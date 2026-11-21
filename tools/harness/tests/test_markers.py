@@ -2,7 +2,8 @@
 world, never NaN or infinite), a ping that takes the player's last away (the same object, or a point near the last;
 an object and a point never the same), the pings a player sends at once and over time, where a ping of an object
 is drawn in a frame between the ticks: over it as drawn, a biped's head (read from the pose drawn) not moved again;
-and whose pings a viewer is shown: a team's, none of a player this machine muted (the scoreboard's mute)."""
+and whose pings a viewer is shown: a team's, none of a player this machine muted (the scoreboard's mute); and that
+the host measures a ping's range from where the pinger is in the world, seated in a vehicle or not."""
 import re
 import sys
 from pathlib import Path
@@ -15,8 +16,8 @@ from harness import CHECK_FAILED, build, function, mutated, read, run  # noqa: E
 SOURCE = "port/linux/game/network_markers.c"
 FUNCTIONS = ("network_markers_point_valid", "network_markers_same_spot", "markers_rate_take",
              "markers_object_drawn_point", "markers_network_game", "markers_sees", "markers_muted_here",
-             "markers_shown_to")
-CASES = ["point", "same-spot", "rate-burst", "rate-refill", "rate-wrap", "object-point", "muted"]
+             "markers_shown_to", "markers_unit_near")
+CASES = ["point", "same-spot", "rate-burst", "rate-refill", "rate-wrap", "object-point", "muted", "seated"]
 
 # a fault in the code under test and the case that must catch it
 NEGATIVE_CONTROLS = {
@@ -42,6 +43,9 @@ NEGATIVE_CONTROLS = {
     "mute-of-viewer": (("!markers_muted_here(pinger))", "!markers_muted_here(viewer))"), "muted"),
     # the mute asked in a game of this machine alone too (a network game's left over)
     "mute-local-game": (("return pinger && markers_network_game() &&", "return pinger &&"), "muted"),
+    # (as it was) measured from the unit's own position: a seated one's is its seat's in the vehicle
+    "seat-position": (("object_get_origin(unit_index, &origin);", "origin = object_get(unit_index)->object.position;"),
+                      "seated"),
 }
 
 

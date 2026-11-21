@@ -640,6 +640,19 @@ static void markers_host_send(
 	}
 }
 
+/* (the host) whether a pinger's unit is near enough their point: from where
+the unit is in the world (a seated unit's own position is its seat's in the
+vehicle, near the world's origin wherever the vehicle is) */
+static boolean markers_unit_near(
+	long unit_index,
+	real_point3d const *point)
+{
+	real_point3d origin;
+
+	object_get_origin(unit_index, &origin);
+	return distance3d(&origin, point) <= MARKER_HOST_RANGE;
+}
+
 /* (the host, or a game of this machine alone) a player's ping, checked,
 decided (a new one, or the last taken away), sent on and shown */
 static void markers_host_take(
@@ -672,7 +685,7 @@ static void markers_host_take(
 	}
 	/* (a player with a living unit, near enough the point) */
 	unit_index = distributed_living_unit(pinger);
-	if (unit_index == NONE || distance3d(&object_get(unit_index)->object.position, point) > MARKER_HOST_RANGE)
+	if (unit_index == NONE || !markers_unit_near(unit_index, point))
 	{
 		markers_refused(player_index, "no living unit near the point");
 		return;
