@@ -52,6 +52,12 @@ real mouse_zoom_look_scale(short local_player_index, long unit_index, short zoom
 passes: balanced and nestable, the current local render view only */
 void viewmodel_projection_begin(void);
 void viewmodel_projection_end(void);
+/* the local player's view as the weapon was drawn in it in the last frames
+(the world's camera, and the vertical angle the weapon is seen at), FALSE
+when it was not (not in the first person, a scripted camera, none drawn):
+projectile_muzzle.c */
+struct render_camera;
+boolean viewmodel_projection_seen(short local_player_index, struct render_camera *camera, real *weapon_vertical);
 /* the first-person weapon's near clip distance for the projection drawn now
 (near_clip.c's render_first_person_near_clip_distance): the game's
 (rasterizer_first_person_weapon_near_clip_distance) at the weapon's stock

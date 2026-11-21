@@ -97,6 +97,7 @@ symbols in this file:
 #include "motion_vectors.h" /* port: port/linux/game/motion_vectors.c */
 #include "royale_beam.h" /* port: port/linux/game/royale_beam.c */
 #include "royale_fx.h" /* port: port/linux/game/royale_fx.c */
+#include "projectile_muzzle.h" /* port: port/linux/game/projectile_muzzle.c */
 
 #ifdef HALO_VR
 #include "../../port/linux/src/vr.h"
@@ -1213,6 +1214,9 @@ void render_frame(
 	/* port: display.temporal_aa: the frame's number, the jitter's phase
 	(port/linux/game/motion_vectors.c) */
 	motion_vectors_frame_begin();
+	/* port: a local player's own shot drawn leaving its weapon in its view
+	(port/linux/game/projectile_muzzle.c) */
+	projectile_muzzle_views(TRUE);
 
 	for (window_index = 0; window_index < window_count; window_index++)
 	{
@@ -1279,6 +1283,7 @@ void render_frame(
 	halo_screen_ui_offset(FALSE);
 	rasterizer_windows_end();
 	rasterizer_frame_end();
+	projectile_muzzle_views(FALSE);
 
 	return;
 }

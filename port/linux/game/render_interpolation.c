@@ -138,6 +138,7 @@ the frame takes its view.
 #include "demo.h"
 #include "network_standard.h"
 #include "vehicle_riding.h" /* port: port/linux/game/vehicle_riding.c */
+#include "projectile_muzzle.h" /* port/linux/game/projectile_muzzle.c */
 
 /* port/linux/src/port_config.c */
 int config_boolean(const char *name);
@@ -581,6 +582,11 @@ static struct
 static long interpolation_tick;
 static long interpolation_frame;
 static boolean interpolation_rendering;
+/* a frame is drawn (render_interpolation_frame_begin and _end), and whether
+between the ticks (interpolation_rendering then, but for a moment where the
+tick's own pose is read: render_interpolation_object_origin) */
+static boolean interpolation_drawing;
+static boolean interpolation_drawing_between;
 static real interpolation_fraction = 1.0f;
 /* how long ago the clock's newest step fell due, in ticks
 (game_time_get_step_age): what is drawn from the newest step is carried on
@@ -2250,10 +2256,13 @@ void render_interpolation_frame_begin(void)
 	}
 	render_interpolation_newest_vehicles(rendering);
 	interpolation_rendering = rendering;
+	interpolation_drawing = TRUE;
+	interpolation_drawing_between = rendering;
 }
 
 void render_interpolation_frame_end(void)
 {
+	interpolation_drawing = FALSE;
 	interpolation_rendering = FALSE;
 }
 
@@ -2343,7 +2352,7 @@ static void render_interpolation_blend_in_frame(
 	}
 }
 
-real_matrix4x3 *render_interpolation_object_node_matrices(long object_index)
+static real_matrix4x3 *render_interpolation_object_between(long object_index)
 {
 	struct interpolated_object *record;
 	long absolute_index;
@@ -2482,6 +2491,18 @@ real_matrix4x3 *render_interpolation_object_node_matrices(long object_index)
 		record->blended_frame = interpolation_frame;
 	}
 	return record->nodes + 2 * record->node_capacity;
+}
+
+/* (the frames) what an object is drawn with: between the ticks (above), or
+its own, and a local player's own shot moved toward where its weapon is seen
+(projectile_muzzle.c), at 30 too or with display.interpolation off */
+real_matrix4x3 *render_interpolation_object_node_matrices(long object_index)
+{
+	real_matrix4x3 *nodes = render_interpolation_object_between(object_index);
+
+	if (interpolation_drawing && (interpolation_rendering || !interpolation_drawing_between))
+		nodes = projectile_muzzle_nodes(object_index, nodes);
+	return nodes;
 }
 
 /* ---------- what objects are drawn with */

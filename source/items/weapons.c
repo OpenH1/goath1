@@ -236,6 +236,7 @@ symbols in this file:
 #include "units/units.h"
 #include "sim_rate.h" /* port: port/linux/game/sim_rate.c */
 #include "mcc_projectiles.h" /* port: port/linux/game/mcc_projectiles.c */
+#include "projectile_muzzle.h" /* port: port/linux/game/projectile_muzzle.c */
 
 #ifdef HALO_PORT_MAXIMUM_NETWORK_PLAYERS
 #include "bitmaps/bitmap_group.h"
@@ -2746,6 +2747,15 @@ static void trigger_create_projectiles(
 					if (!tracer)
 					{
 						projectile_kill_tracer(projectile_object_index);
+					}
+					/* port: a player's shot from the camera, seen in its own view
+					leaving the first-person weapon (drawing only:
+					port/linux/game/projectile_muzzle.c) */
+					if (unit && unit->unit.player_index!=NONE && unit->unit.gunner_object_index==NONE &&
+						!TEST_FLAG(trigger_definition->flags, _weapon_trigger_uses_weapon_origin_bit))
+					{
+						projectile_muzzle_fired(projectile_object_index, owner_object_index, weapon_index,
+							trigger_marker_names[trigger_index], marker_index);
 					}
 				}
 			}

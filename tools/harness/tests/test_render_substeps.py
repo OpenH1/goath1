@@ -183,6 +183,9 @@ def generated(fault=None, newest=False):
     else:
         text += NEWEST_STUBS
     text += LEAD_STUB
+    # (no local player's own shot here: projectile_muzzle.c draws none moved)
+    text += ("static real_matrix4x3 *projectile_muzzle_nodes(long object_index, real_matrix4x3 *nodes)\n"
+             "{\n\t(void)object_index;\n\treturn nodes;\n}\n")
     for name in ("lerp", "point_lerp", "vector_length", "vector_nlerp", "basis_is_rotation", "quaternion_from_basis",
                  "basis_from_quaternion", "rotation_from_matrix", "quaternion_multiply", "quaternion_nlerp",
                  "vector_turned_by", "matrix_blend_rotations", "correction_significant",
@@ -201,6 +204,7 @@ def generated(fault=None, newest=False):
                  "render_interpolation_substep_offset", "render_interpolation_substep_frame",
                  "render_interpolation_frame_begin", "render_interpolation_frame_end",
                  "render_interpolation_pending_from", "render_interpolation_blend_in_frame",
+                 "render_interpolation_object_between",
                  "render_interpolation_object_node_matrices", "observer_blend", "observer_cut", "observer_timed_cut",
                  "render_interpolation_camera_timed",
                  "render_interpolation_camera_substep_unit", "render_interpolation_camera_at_tick",

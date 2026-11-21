@@ -590,6 +590,61 @@ static boolean viewmodel_angles(short local_player_index, real *drawn, real *sto
 	return TRUE;
 }
 
+/* each local player's view as its weapon was last drawn in it: the world's
+camera, the angle the weapon is seen at, and the frame
+(viewmodel_projection_seen) */
+static struct
+{
+	long frame_index;
+	struct render_camera camera;
+	real weapon_vertical;
+} seen_views[MAXIMUM_LOCAL_PLAYERS];
+static boolean seen_views_initialized;
+
+static void viewmodel_projection_note_seen(short local_player_index)
+{
+	real angle;
+
+	if (!seen_views_initialized)
+	{
+		short index;
+
+		for (index = 0; index < MAXIMUM_LOCAL_PLAYERS; index++)
+			seen_views[index].frame_index = NONE;
+		seen_views_initialized = TRUE;
+	}
+	if (global_window_parameters.rasterizer_target != _rasterizer_target_render_primary ||
+		!viewmodel_projection_view(local_player_index))
+	{
+		return;
+	}
+	/* (display.viewmodel_fov's, else the stock one the weapon keeps, else
+	the view's own: display.panini's widening keeps the weapon that size) */
+	angle = viewmodel_vertical(local_player_index);
+	if (!angle)
+		angle = render_fov_authored_vertical(local_player_index);
+	if (!angle)
+		angle = render.camera.vertical_field_of_view;
+	seen_views[local_player_index].frame_index = render.frame_index;
+	seen_views[local_player_index].camera = render.camera;
+	seen_views[local_player_index].weapon_vertical = angle;
+}
+
+boolean viewmodel_projection_seen(short local_player_index, struct render_camera *camera, real *weapon_vertical)
+{
+	if (!seen_views_initialized || local_player_index < 0 || local_player_index >= MAXIMUM_LOCAL_PLAYERS ||
+		seen_views[local_player_index].frame_index == NONE ||
+		(unsigned long)(render.frame_index - seen_views[local_player_index].frame_index) > 2)
+	{
+		return FALSE;
+	}
+	if (camera)
+		*camera = seen_views[local_player_index].camera;
+	if (weapon_vertical)
+		*weapon_vertical = seen_views[local_player_index].weapon_vertical;
+	return TRUE;
+}
+
 void viewmodel_projection_begin(void)
 {
 	real angle, panini_scale;
@@ -598,6 +653,7 @@ void viewmodel_projection_begin(void)
 	if (projection_depth++ != 0)
 		return;
 	projection_applied = FALSE;
+	viewmodel_projection_note_seen(render.local_player_index);
 	/* (display.viewmodel_fov's angle; by default the view's own, from before
 	display.fov widened it: arms and a gun right against the camera stretch
 	at a wide angle) */
