@@ -68,6 +68,12 @@ while it holds */
 extern unsigned long texture_cache_binding_generation;
 void texture_cache_bindings_changed(
 	void);
+/* port: whether the texture a bitmap was just resolved to is the one it
+resolves to again while the binding generation holds: one in the cache's
+memory, an MCC map's, or the bitmap's own (not the stand-in for one that
+would not load) */
+boolean texture_cache_bitmap_texture_kept(
+	struct bitmap_data const *bitmap);
 
 /* ---------- globals */
 

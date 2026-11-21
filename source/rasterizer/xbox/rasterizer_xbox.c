@@ -2340,13 +2340,10 @@ static union point2d *rasterizer_set_texture_resolve(
 		}
 	}
 	/* port: kept (rasterizer_texture_binding) when the texture found is the
-	one a resolve finds again this frame: one in the cache's memory, an MCC
-	map's, or the bitmap's own (not the stand-in for one that would not load) */
+	one a resolve finds again this frame (texture_cache_bitmap_texture_kept) */
 	if (success && keep && texture &&
 		stage >= 0 && stage < RASTERIZER_MAXIMUM_TEXTURE_STAGES &&
-		(!TEST_FLAG(bitmap->flags, _bitmap_cached_bit) ||
-			bitmap->cache_block_index != NONE ||
-			mcc_cache_tags_loaded()))
+		texture_cache_bitmap_texture_kept(bitmap))
 	{
 		binding->generation = texture_cache_binding_generation;
 		binding->bitmap_definition_index = bitmap_definition_index;

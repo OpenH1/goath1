@@ -474,6 +474,15 @@ void texture_cache_bindings_changed(
 	return;
 }
 
+/* port: (texture_cache.h) */
+boolean texture_cache_bitmap_texture_kept(
+	struct bitmap_data const *bitmap)
+{
+	return !TEST_FLAG(bitmap->flags, _bitmap_cached_bit) ||
+		bitmap->cache_block_index != NONE ||
+		mcc_cache_tags_loaded();
+}
+
 void texture_cache_delete(
 	void)
 {
