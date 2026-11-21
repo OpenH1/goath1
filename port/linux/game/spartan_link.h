@@ -24,6 +24,8 @@ unsigned char spartan_link_pad_open(short port);
 targets (halo_view_begin) until spartan_link_feed_end */
 boolean spartan_link_feed_begin(short local_player_index, struct render_camera *camera);
 void spartan_link_feed_end(void);
+/* the feeds drawn since the game began (the stress test's log, benchmark.c) */
+unsigned long spartan_link_feeds_drawn(void);
 
 /* while a feed is drawn: the teammate whose body is hidden from it
 (render_objects.c), and whose weapon and arms are posed in it

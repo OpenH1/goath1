@@ -2083,6 +2083,9 @@ unsigned char spartan_link_pad_open(
 		(game_engine_running() || network_coop_active() || local_player_count() > 1);
 }
 
+/* the feeds drawn (spartan_link_feeds_drawn) */
+static unsigned long spartan_link_feeds_count;
+
 boolean spartan_link_feed_begin(
 	short local_player_index,
 	struct render_camera *camera)
@@ -2148,6 +2151,7 @@ boolean spartan_link_feed_begin(
 	}
 
 	view = SPARTAN_LINK_VIEW(local_player_index, spartan_link.last_feed);
+	spartan_link_feeds_count++;
 	spartan_link.views_used |= 1UL << view;
 	spartan_link.view_players[view] = feed->player_index;
 	spartan_link.drawing = TRUE;
@@ -2176,6 +2180,12 @@ void spartan_link_feed_end(
 	spartan_link.drawing = FALSE;
 	spartan_link.hidden_unit = NONE;
 	spartan_link.posed_unit = NONE;
+}
+
+unsigned long spartan_link_feeds_drawn(
+	void)
+{
+	return spartan_link_feeds_count;
 }
 
 boolean spartan_link_drawing(
