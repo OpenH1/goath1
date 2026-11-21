@@ -150,6 +150,7 @@ boolean rasterizer_bitmap_new(
 	boolean success = TRUE;
 	long result;
 
+	texture_cache_bindings_changed(); /* port: (texture_cache.h) */
 	match_assert(
 		"c:\\halo\\SOURCE\\rasterizer\\xbox\\rasterizer_xbox_hardware_bitmaps.c",
 		51,

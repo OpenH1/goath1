@@ -346,6 +346,7 @@ static struct xbox_texture_cache_globals xbox_texture_cache_globals;
 struct texture_cache_debug_options texture_cache_debug_options = {0};
 boolean debug_texture_cache = FALSE;
 static unsigned long texture_cache_last_failure_time = 0;
+unsigned long texture_cache_binding_generation = 1;
 /* port: the pages the map being played may take, and the most any map has
 taken since the memory of those past it went back to the system
 (texture_cache_size_for_map) */
@@ -425,6 +426,7 @@ void texture_cache_size_for_map(
 	{
 		return;
 	}
+	texture_cache_bindings_changed();
 	if (page_count < texture_cache_map_pages)
 	{
 		texture_cache_flush();
@@ -458,9 +460,24 @@ unsigned long texture_cache_mod_bitmap_size_limit(
 		XBOX_TEXTURE_CACHE_PAGE_SIZE / 4;
 }
 
+/* port: (texture_cache.h) */
+void texture_cache_bindings_changed(
+	void)
+{
+	texture_cache_binding_generation++;
+	/* (never 0, which no kept texture is resolved in) */
+	if (!texture_cache_binding_generation)
+	{
+		texture_cache_binding_generation = 1;
+	}
+
+	return;
+}
+
 void texture_cache_delete(
 	void)
 {
+	texture_cache_bindings_changed();
 	data_dispose(xbox_texture_cache_globals.textures);
 	lruv_delete(xbox_texture_cache_globals.cache);
 
@@ -470,6 +487,7 @@ void texture_cache_delete(
 void texture_cache_open(
 	void)
 {
+	texture_cache_bindings_changed();
 	data_make_valid(xbox_texture_cache_globals.textures);
 
 	return;
@@ -478,6 +496,7 @@ void texture_cache_open(
 void texture_cache_idle(
 	void)
 {
+	texture_cache_bindings_changed();
 	lruv_idle(xbox_texture_cache_globals.cache);
 
 	return;
@@ -527,6 +546,7 @@ void texture_cache_bitmap_new(
 		"c:\\halo\\SOURCE\\cache\\xbox_texture_cache.c",
 		157,
 		!TEST_FLAG(bitmap->flags, _bitmap_cached_bit));
+	texture_cache_bindings_changed();
 	SET_FLAG(bitmap->flags, _bitmap_cached_bit, TRUE);
 	bitmap->cache_block_index = NONE;
 	bitmap->base_address = NULL;
@@ -632,6 +652,7 @@ void texture_cache_bitmap_delete(
 {
 	long cache_block_index;
 
+	texture_cache_bindings_changed();
 	if (TEST_FLAG(bitmap->flags, _bitmap_cached_bit))
 	{
 		cache_block_index = bitmap->cache_block_index;
@@ -675,6 +696,7 @@ void *texture_cache_steal_memory(
 		"c:\\halo\\SOURCE\\cache\\xbox_texture_cache.c",
 		0x140,
 		!xbox_texture_cache_globals.stolen_memory);
+	texture_cache_bindings_changed();
 	lruv_resize(
 		xbox_texture_cache_globals.cache,
 		remaining_page_count);
@@ -702,6 +724,7 @@ void texture_cache_return_memory(
 		"c:\\halo\\SOURCE\\cache\\xbox_texture_cache.c",
 		345,
 		xbox_texture_cache_globals.stolen_memory);
+	texture_cache_bindings_changed();
 	/* port: the map's pages (texture_cache_size_for_map) */
 	lruv_resize(
 		xbox_texture_cache_globals.cache,
@@ -790,6 +813,7 @@ void texture_cache_flush(
 {
 	IDirect3DDevice8_KickPushBuffer(global_d3d_device);
 	IDirect3DDevice8_IsBusy(global_d3d_device);
+	texture_cache_bindings_changed();
 	lruv_flush(xbox_texture_cache_globals.cache);
 
 	return;
@@ -812,6 +836,7 @@ static void texture_cache_delete_block_proc(
 	struct xbox_texture_cache_texture *texture;
 	struct xbox_texture_cache_texture *cache_entry;
 
+	texture_cache_bindings_changed();
 	texture = datum_get(
 		xbox_texture_cache_globals.textures,
 		block_index);
@@ -993,6 +1018,7 @@ void texture_cache_close(
 		"c:\\halo\\SOURCE\\cache\\xbox_texture_cache.c",
 		133,
 		!xbox_texture_cache_globals.stolen_memory);
+	texture_cache_bindings_changed();
 	texture_cache_flush();
 	data_make_invalid(xbox_texture_cache_globals.textures);
 
@@ -1086,6 +1112,7 @@ static boolean texture_cache_start_loading_bitmap(
 	size = rasterizer_xbox_bitmap_get_pixel_data_size(bitmap);
 
 	size = MAX(size, bitmap->pixels_size);
+	texture_cache_bindings_changed();
 	cache_block_index = lruv_block_new(
 		xbox_texture_cache_globals.cache,
 		size);

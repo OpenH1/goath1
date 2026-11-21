@@ -60,6 +60,14 @@ void texture_cache_size_for_map(
 	void);
 unsigned long texture_cache_mod_bitmap_size_limit(
 	void);
+/* port: a count that changes whenever a texture a bitmap was resolved to may
+no longer be its own (each frame's idle, a texture loaded or let go, the
+cache flushed, opened or closed, a bitmap made, deleted or played over by a
+mod's): what rasterizer_set_texture keeps of a resolved texture is good only
+while it holds */
+extern unsigned long texture_cache_binding_generation;
+void texture_cache_bindings_changed(
+	void);
 
 /* ---------- globals */
 

@@ -2164,6 +2164,52 @@ boolean rasterizer_set_texture_direct_non_blocking(
 	return texture_pending;
 }
 
+/* port: the texture a shader's bitmap (its group, its sequence index, the
+type and usage it is drawn as) was last resolved to, kept while the texture
+cache's binding generation holds (texture_cache.h: within a frame, with no
+texture loaded or let go since). A model's every part binds its shader's maps
+each frame; resolving one again finds the same bitmap and the same texture,
+and touches its cache block in the same tick, so what is kept is what would be
+found. Only a resolve that found a texture without an error is kept. */
+struct rasterizer_texture_binding
+{
+	unsigned long generation;
+	long bitmap_definition_index;
+	short bitmap_sequence_index;
+	short key;
+	D3DBaseTexture *texture;
+	short width;
+	short height;
+};
+
+#define RASTERIZER_TEXTURE_BINDING_COUNT 512
+
+static struct rasterizer_texture_binding rasterizer_texture_bindings[RASTERIZER_TEXTURE_BINDING_COUNT];
+
+/* port: rasterizer_set_texture_bitmap_data's, saying the texture it bound */
+static D3DBaseTexture *rasterizer_set_texture_bitmap_data_bound(
+	short stage,
+	struct bitmap_data *bitmap)
+{
+	D3DBaseTexture *d3d_texture;
+
+	profile_texture_start();
+	d3d_texture = _texture_cache_bitmap_get_hardware_format(bitmap, TRUE, TRUE);
+	profile_texture_end();
+	IDirect3DDevice8_SetTexture(global_d3d_device, stage, d3d_texture);
+
+	return d3d_texture;
+}
+
+static union point2d *rasterizer_set_texture_resolve(
+	short stage,
+	short type,
+	short usage,
+	long bitmap_definition_index,
+	short bitmap_sequence_index,
+	struct rasterizer_texture_binding *binding,
+	short key);
+
 union point2d *rasterizer_set_texture(
 	short stage,
 	short type,
@@ -2171,8 +2217,54 @@ union point2d *rasterizer_set_texture(
 	long bitmap_definition_index,
 	short bitmap_sequence_index)
 {
+	/* (and whether the shader's own bitmap is looked at, as the resolve
+	decides it) */
+	short key = (short)(type | (usage << 4) |
+		(((rasterizer_debug_options.bump_mapping_enabled ||
+			usage != _bitmap_usage_bump_map) &&
+			bitmap_definition_index != NONE) << 8));
+	unsigned long hash =
+		(unsigned long)bitmap_definition_index * 0x9E3779B1UL ^
+		(unsigned long)(unsigned short)bitmap_sequence_index * 0x85EBCA77UL ^
+		(unsigned long)key * 0xC2B2AE3DUL;
+	struct rasterizer_texture_binding *binding = &rasterizer_texture_bindings[
+		(hash ^ (hash >> 15)) & (RASTERIZER_TEXTURE_BINDING_COUNT - 1)];
+
+	if (binding->generation == texture_cache_binding_generation &&
+		binding->bitmap_definition_index == bitmap_definition_index &&
+		binding->bitmap_sequence_index == bitmap_sequence_index &&
+		binding->key == key &&
+		stage >= 0 && stage < RASTERIZER_MAXIMUM_TEXTURE_STAGES)
+	{
+		IDirect3DDevice8_SetTexture(global_d3d_device, stage, binding->texture);
+		bitmap_dimensions.x = binding->width;
+		bitmap_dimensions.y = binding->height;
+		return &bitmap_dimensions;
+	}
+
+	return rasterizer_set_texture_resolve(
+		stage,
+		type,
+		usage,
+		bitmap_definition_index,
+		bitmap_sequence_index,
+		binding,
+		key);
+}
+
+static union point2d *rasterizer_set_texture_resolve(
+	short stage,
+	short type,
+	short usage,
+	long bitmap_definition_index,
+	short bitmap_sequence_index,
+	struct rasterizer_texture_binding *binding,
+	short key)
+{
 	boolean success = FALSE;
+	boolean keep = TRUE;
 	struct bitmap_data *bitmap = NULL;
+	D3DBaseTexture *texture = NULL;
 
 	match_assert(
 		"c:\\halo\\SOURCE\\rasterizer\\xbox\\rasterizer_xbox.c",
@@ -2199,13 +2291,14 @@ union point2d *rasterizer_set_texture(
 				bitmap_sequence_index % bitmap_count);
 			if (bitmap->type == type)
 			{
-				rasterizer_set_texture_bitmap_data(stage, bitmap);
+				texture = rasterizer_set_texture_bitmap_data_bound(stage, bitmap);
 				success = TRUE;
 				bitmap_dimensions.x = bitmap->width;
 				bitmap_dimensions.y = bitmap->height;
 			}
 			else
 			{
+				keep = FALSE;
 				error(
 					_error_silent,
 					"### ERROR incompatible bitmap type in shader got %s expected %s",
@@ -2226,7 +2319,7 @@ union point2d *rasterizer_set_texture(
 				usage);
 		if (bitmap)
 		{
-			rasterizer_set_texture_bitmap_data(stage, bitmap);
+			texture = rasterizer_set_texture_bitmap_data_bound(stage, bitmap);
 			success = TRUE;
 			bitmap_dimensions.x = bitmap->width;
 			bitmap_dimensions.y = bitmap->height;
@@ -2245,6 +2338,23 @@ union point2d *rasterizer_set_texture(
 				type,
 				usage);
 		}
+	}
+	/* port: kept (rasterizer_texture_binding) when the texture found is the
+	one a resolve finds again this frame: one in the cache's memory, an MCC
+	map's, or the bitmap's own (not the stand-in for one that would not load) */
+	if (success && keep && texture &&
+		stage >= 0 && stage < RASTERIZER_MAXIMUM_TEXTURE_STAGES &&
+		(!TEST_FLAG(bitmap->flags, _bitmap_cached_bit) ||
+			bitmap->cache_block_index != NONE ||
+			mcc_cache_tags_loaded()))
+	{
+		binding->generation = texture_cache_binding_generation;
+		binding->bitmap_definition_index = bitmap_definition_index;
+		binding->bitmap_sequence_index = bitmap_sequence_index;
+		binding->key = key;
+		binding->texture = texture;
+		binding->width = bitmap->width;
+		binding->height = bitmap->height;
 	}
 	return success ? &bitmap_dimensions : NULL;
 }

@@ -906,6 +906,7 @@ static void bitmap_unplug(
 	struct mod_bitmap *made = override->bitmap;
 	long index;
 
+	texture_cache_bindings_changed();
 	memcpy(bitmap_group_get(tag_index), &override->map_group, sizeof(override->map_group));
 	override->bitmap = NULL;
 	for (index = 0; made && index < made->group.bitmaps.count; index++)
@@ -926,6 +927,7 @@ static void bitmap_plug(
 	struct bitmap_group *definition = bitmap_group_get(tag_index);
 	long index;
 
+	texture_cache_bindings_changed();
 	for (index = 0; index < made->group.bitmaps.count; index++)
 	{
 		SET_FLAG(made->bitmaps[index].flags, _bitmap_cached_bit, TRUE);

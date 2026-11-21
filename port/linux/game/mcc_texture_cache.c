@@ -6,6 +6,7 @@
 #include "rasterizer/rasterizer_swizzle.h"
 #include "mcc_cache.h"
 #include "mcc_texture_cache.h"
+#include "cache/texture_cache.h"
 #include "../src/mcc_texture_bridge.h"
 #include <xtl.h>
 
@@ -71,4 +72,4 @@ void *mcc_texture_cache_get(struct bitmap_data const *bitmap,boolean load)
     return registered;
 }
 
-void mcc_texture_cache_dispose(void) {mcc_texture_bridge_dispose();}
+void mcc_texture_cache_dispose(void) {texture_cache_bindings_changed();mcc_texture_bridge_dispose();}
