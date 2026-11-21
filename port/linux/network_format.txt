@@ -435,7 +435,7 @@ struct distributed_voice_down e3751d692f16
 struct distributed_voice_up 3d74ee44e4cb
 struct distributed_votekick_request bc673b3da126
 struct distributed_votekick_status 72507e56a9cf
-struct game_variant_options 0e258e4cf85b
+struct game_variant_options b40041535100
 struct mcc_admission_identity ba88dfe0091d
 struct mcc_admission_message 0a2136c026a5
 struct mcc_load_message 587f305ba598
