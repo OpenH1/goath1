@@ -2306,34 +2306,40 @@ static const char world_trace_functions[] =
 	"\tint kind;\n"
 	"};\n"
 	/* the cascade a point is in: the finest ready whose window holds it
-	with its filter's neighbours (-1 none) */
+	with its filter's neighbours (-1 none), finest first. No divide: the
+	backend compiles with safe maths, where each is an IEEE divide of about
+	25 instructions, and the ray step takes this and the sample below at
+	every step (most of the pass's time on an Apple GPU). The window is
+	compared in world units, the voxel's multiple; a voxel is a power of
+	two (world_cascades.h), so it is the same test as in voxels */
 	"static inline int world_cascade_find(constant float4 *cascades, float3 p, int first)\n"
 	"{\n"
-	"\tint found = -1;\n"
-	"\tfor (int cascade = " WORLD_AO_TEXT(XGPU_WORLD_CASCADES) " - 1; cascade >= first; cascade--)\n"
+	"\tfor (int cascade = first; cascade < " WORLD_AO_TEXT(XGPU_WORLD_CASCADES) "; cascade++)\n"
 	"\t{\n"
 	"\t\tfloat4 c = cascades[cascade];\n"
 	"\t\tif (c.w <= 0.0)\n"
 	"\t\t\tcontinue;\n"
-	"\t\tfloat3 q = (p - c.xyz) / c.w;\n"
+	"\t\tfloat3 q = p - c.xyz;\n"
 	"\t\tfloat least = min(min(q.x, q.y), q.z), most = max(max(q.x, q.y), q.z);\n"
-	"\t\tif (least >= 0.0 && most <= " WORLD_AO_TEXT(XGPU_WORLD_CASCADE_SIDE) ".0 - 1.0)\n"
-	"\t\t\tfound = cascade;\n"
+	"\t\tif (least >= 0.0 && most <= (" WORLD_AO_TEXT(XGPU_WORLD_CASCADE_SIDE) ".0 - 1.0) * c.w)\n"
+	"\t\t\treturn cascade;\n"
 	"\t}\n"
-	"\treturn found;\n"
+	"\treturn -1;\n"
 	"}\n"
 	/* its distances there (world units: y the objects', x none): the
 	voxels' centres' coordinate modulo the side, a texel in (the guard past
-	the last) */
+	the last; the voxel's reciprocal, a power of two's, exact, and the
+	constant divisors' reciprocals multiplied) */
 	"static inline float4 world_cascade_sample(texture3d<float> world_cascades, float4 c, int cascade, float3 p)\n"
 	"{\n"
 	"\tconstexpr sampler cascades_sampler(filter::linear, address::clamp_to_edge, coord::normalized);\n"
-	"\tfloat3 at = p / c.w - 0.5;\n"
-	"\tfloat3 place = at - " WORLD_AO_TEXT(XGPU_WORLD_CASCADE_SIDE) ".0 * floor(at / " WORLD_AO_TEXT(XGPU_WORLD_CASCADE_SIDE) ".0);\n"
-	"\tfloat3 uvw = float3((place.x + 0.5) / " WORLD_AO_TEXT(XGPU_WORLD_CASCADE_SPAN) ".0, (place.y + 0.5) / "
-		WORLD_AO_TEXT(XGPU_WORLD_CASCADE_SPAN) ".0,\n"
-	"\t\t(place.z + 0.5 + " WORLD_AO_TEXT(XGPU_WORLD_CASCADE_SPAN) ".0 * float(cascade)) / ("
-		WORLD_AO_TEXT(XGPU_WORLD_CASCADE_SPAN) ".0 * " WORLD_AO_TEXT(XGPU_WORLD_CASCADES) ".0));\n"
+	"\tfloat3 at = p * (1.0 / c.w) - 0.5;\n"
+	"\tfloat3 place = at - " WORLD_AO_TEXT(XGPU_WORLD_CASCADE_SIDE) ".0 * floor(at * (1.0 / "
+		WORLD_AO_TEXT(XGPU_WORLD_CASCADE_SIDE) ".0));\n"
+	"\tfloat3 uvw = float3((place.x + 0.5) * (1.0 / " WORLD_AO_TEXT(XGPU_WORLD_CASCADE_SPAN) ".0), (place.y + 0.5) * (1.0 / "
+		WORLD_AO_TEXT(XGPU_WORLD_CASCADE_SPAN) ".0),\n"
+	"\t\t(place.z + 0.5 + " WORLD_AO_TEXT(XGPU_WORLD_CASCADE_SPAN) ".0 * float(cascade)) * (1.0 / ("
+		WORLD_AO_TEXT(XGPU_WORLD_CASCADE_SPAN) ".0 * " WORLD_AO_TEXT(XGPU_WORLD_CASCADES) ".0)));\n"
 	"\treturn world_cascades.sample(cascades_sampler, uvw, level(0.0)) * (" WORLD_AO_TEXT(XGPU_WORLD_CASCADE_RANGE_VOXELS)
 		".0 * c.w);\n"
 	"}\n";
