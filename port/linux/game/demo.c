@@ -132,6 +132,7 @@ void random_math_port_set_frame_seed(unsigned long seed);
 /* source/saved games/game_state.c */
 void *game_state_port_base(long *size, unsigned long *checksum);
 boolean game_state_port_demo_load(void (*write)(void *context), void *context, boolean procedures);
+void *game_state_port_demo_state(long *size);
 /* source/main/main.c */
 void main_disallow_persistent_storage(void);
 /* port/linux/src/xbox_kernel.c */
@@ -154,6 +155,8 @@ void *game_sound_port_demo_state(short part, long *size);
 void *wind_port_demo_state(long *size);
 void *network_standard_port_demo_state(long *size);
 void *main_port_demo_state(short part, long *size);
+void *main_port_demo_saving_state(long *size);
+void *scripted_camera_port_demo_state(long *size);
 unsigned long network_standard_demo_rules(void);
 extern struct game_variant game_variant_global;
 void main_build_identity(long *number, char *flavor, size_t flavor_size, char *repository, size_t repository_size,
@@ -436,6 +439,10 @@ static struct
 	unsigned long controls_held;
 	real speed;
 	boolean seek_tested;
+	/* whether the demo's G records hold their later parts (the revert's
+	stamp, the map's save: demo_outside_later_part): one recorded before
+	has not */
+	boolean later_parts_recorded;
 } demo_player;
 
 /* ---------- the settings */
@@ -1680,6 +1687,40 @@ the game began with; its goals, the vehicles' homes, a game type's scores),
 then the speakers' mouths (game_sound_port_demo_state), then the wind
 (wind.c: its random walk, which the ticks step and an antenna's or a flag's
 points are blown by); NULL past the last */
+/* the last parts of what the game keeps outside the game state, which a
+demo recorded before them has not (demo_engine_state_set): the revert's
+stamp, which the scripts' game_reverted compares with the clock
+(game_state.c), whether the map is being saved, which the scripts'
+game_saving reads and the main loop's frames clear as they save it
+(main.c), and the scripted camera's time left, which the frames count down
+by their own time and the scripts' camera_time reads (camera_scripting.c);
+NULL past the last */
+static void *demo_outside_later_part(
+	short part,
+	long *size)
+{
+	switch (part)
+	{
+	case 0: return game_state_port_demo_state(size);
+	case 1: return main_port_demo_saving_state(size);
+	case 2: return scripted_camera_port_demo_state(size);
+	}
+	return NULL;
+}
+
+/* ... their size */
+static unsigned long demo_outside_later_size(
+	void)
+{
+	unsigned long total = 0;
+	long size;
+	short part;
+
+	for (part = 0; demo_outside_later_part(part, &size); part++)
+		total += (unsigned long)size;
+	return total;
+}
+
 static void *demo_outside_part(
 	short part,
 	long *size)
@@ -1725,7 +1766,8 @@ static void *demo_outside_part(
 	}
 	/* (and what the ticks asked of the main loop, with its timers: main.c;
 	then what the co-op host's ticks read from outside the game state:
-	network_coop.c) */
+	network_coop.c; then the later parts, which a demo recorded before them
+	has not: demo_outside_later_part) */
 	part = (short)(part - count - 3);
 	address = main_port_demo_state(part, size);
 	if (address)
@@ -1733,9 +1775,16 @@ static void *demo_outside_part(
 	count = 0;
 	while (main_port_demo_state(count, &part_size))
 		count++;
-	if (part >= count)
-		return network_coop_port_demo_state((short)(part - count), size);
-	return NULL;
+	if (part < count)
+		return NULL;
+	part = (short)(part - count);
+	address = network_coop_port_demo_state(part, size);
+	if (address)
+		return address;
+	count = 0;
+	while (network_coop_port_demo_state(count, &part_size))
+		count++;
+	return part >= count ? demo_outside_later_part((short)(part - count), size) : NULL;
 }
 
 /* ... its parts one after another into state: its size, 0 if it cannot be
@@ -1852,6 +1901,7 @@ static void demo_engine_state_set(
 	unsigned long size;
 	short part;
 	long part_size;
+	unsigned long later_size;
 	void *address;
 
 	if (!state)
@@ -1859,6 +1909,13 @@ static void demo_engine_state_set(
 	if (!state || length < 4)
 		return;
 	size = demo_engine_state_get(state);
+	later_size = demo_outside_later_size();
+	/* (a demo recorded before the later parts has the rest: they are then
+	the playback's own, demo_playback_revert_stamp's and the main loop's) */
+	if (size > later_size && demo_read_u32(bytes) == size - later_size)
+		size -= later_size;
+	else if (size && demo_read_u32(bytes) == size)
+		demo_player.later_parts_recorded = TRUE;
 	if (!size || demo_read_u32(bytes) != size)
 		return;
 	while (position < length)
@@ -3050,6 +3107,40 @@ static void demo_ranges_write(
 	demo_ranges_apply(ranges->bytes, ranges->length, ranges->whole_allocations, TRUE);
 }
 
+/* the revert's stamp (game_state.c's: the scripts' game_reverted compares
+it with the clock) after a whole game state the playback took, as it was
+before it and the objects' next identifier then, where the demo's G records
+do not hold the recording's (one recorded before they did). The loading's
+procedures stamp every load at its tick; the recording's stamp was a load's
+(a checkpoint's revert, a saved game: stamped so, a co-op host's restamped
+at the same tick), not a whole game state taken for what the game's code
+made outside the ticks (a co-op host's players spawned and pickups placed
+as its game began), nor the start's or a seek's. The code's is told by its
+objects: it made some since the tick before, where a load took the
+identifier back (deleting alone, it is taken as a load) */
+static void demo_playback_revert_stamp(
+	unsigned long flags,
+	boolean seek,
+	long stamp_before,
+	short identifier_before)
+{
+	long size;
+	long *stamp = (long *)game_state_port_demo_state(&size);
+	unsigned short ahead;
+
+	if (demo_player.later_parts_recorded)
+		return;
+	if (seek || TEST_FLAG(flags, _demo_snapshot_start_bit))
+	{
+		*stamp = NONE;
+		return;
+	}
+	ahead = (unsigned short)((unsigned short)object_header_data->next_identifier -
+		(unsigned short)identifier_before) & 0x7FFF;
+	if (ahead && ahead < 0x4000)
+		*stamp = stamp_before;
+}
+
 static boolean demo_playback_snapshot(
 	unsigned char const *bytes,
 	unsigned long length,
@@ -3057,6 +3148,9 @@ static boolean demo_playback_snapshot(
 {
 	struct demo_ranges ranges;
 	unsigned long flags;
+	long stamp_size;
+	long stamp_before = *(long *)game_state_port_demo_state(&stamp_size);
+	short identifier_before = object_header_data->next_identifier;
 
 	if (length < 16 || !demo_ranges_apply(bytes + 16, length - 16, TRUE, FALSE))
 		return FALSE;
@@ -3082,6 +3176,7 @@ static boolean demo_playback_snapshot(
 			return FALSE;
 	}
 	random_math_port_set_seeds(demo_read_u32(bytes + 8), demo_read_u32(bytes + 12));
+	demo_playback_revert_stamp(flags, seek, stamp_before, identifier_before);
 	return TRUE;
 }
 
@@ -3196,6 +3291,11 @@ static void demo_playback_tick_begin(
 		demo_player.cursor = demo_player.block_size;
 		demo_player.ticks = (long)entry->position;
 		demo_player.last_tick = (long)entry->first_tick;
+		/* (the recording's game state again: a playback that had parted
+		before the seek writes the recording's differences in from here,
+		and its hash says whether it parts again) */
+		demo_player.diverged = FALSE;
+		demo_player.records_left_logged = FALSE;
 	}
 	else
 	{
@@ -3970,6 +4070,14 @@ void demo_frame(
 }
 
 /* ---------- the clock's ticks */
+
+/* whether a demo's playback has the recording's save of the map (its G
+records' later part): its main loop then makes none of its own (main.c) */
+boolean demo_playback_saves_recorded(
+	void)
+{
+	return demo_player.playing && demo_player.later_parts_recorded;
+}
 
 void demo_tick_begin(
 	long tick)
