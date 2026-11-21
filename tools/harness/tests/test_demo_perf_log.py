@@ -21,6 +21,10 @@ NEGATIVE_CONTROLS = {
     "retain-all": ("rows", "\t\tif (demo_files_path(demo, path, sizeof(path)))\n\t\t\tcontinue;\n", ""),
     # the frame rows' numbers not counted
     "numbers": ("rows", "++demo_perf.frames", "demo_perf.frames"),
+    # the sections not written with the summary
+    "no-sections": ("rows", "\tdemo_perf_sections(tick);\n", ""),
+    # a section's name written with its space, splitting the line's fields
+    "spaces": ("rows", "*letter == ' ' || *letter == '\\t' ? '_' : *letter", "*letter"),
 }
 
 PROTOTYPES = """typedef void (*demo_recording_listener)(int started, const char *name, long tick);
@@ -35,7 +39,8 @@ def generated(fault=None):
     code = report[start:end]
     for declaration in ("typedef void (*demo_recording_listener)(int started, const char *name, long tick);\n",
                         "void demo_set_recording_listener(demo_recording_listener listener);\n",
-                        "unsigned char game_time_initialized(void);\n", "long game_time_get(void);\n"):
+                        "unsigned char game_time_initialized(void);\n", "long game_time_get(void);\n",
+                        "short profile_port_busiest(char const **names, float *milliseconds, float *calls, short most);\n"):
         assert declaration in code, declaration
         code = code.replace(declaration, "", 1)
     code = PROTOTYPES + code
@@ -80,7 +85,10 @@ def test_join_tool_reads_the_log(tmp_path):
     from demo_perf import read_perf
     path = tmp_path / "x.perf"
     path.write_text("# demo perf log 1 x.demo 100\n# f tick frame ...\nf 100 1 4166 1000 2000 800 1000\n"
-                    "e 105 stall 60.0\ns 400 2880 4.2 160.0 16.6\n# end 460\n")
+                    "e 105 stall 60.0\ns 400 2880 4.2 160.0 16.6\nc 400 1.250 2.0 ai_update 0.500 1.0 object_update\n"
+                    "# end 460\n")
     header, frames, events, summaries, end = read_perf(path)
     assert header == ("x.demo", 100) and frames == [(100, 1, 4166, 1000, 2000, 800, 1000)]
     assert events == [(105, "stall", 60.0)] and summaries == [(400, 2880, 4.2, 160.0, 16.6)] and end == 460
+    from demo_perf import read_sections
+    assert read_sections(path) == [(400, [("ai_update", 1.25, 2.0), ("object_update", 0.5, 1.0)])]

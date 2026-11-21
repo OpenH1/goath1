@@ -67,6 +67,22 @@ static long game_time_get(void)
 	return tick;
 }
 
+/* (debug.timings: on, two sections, the second's name with a space) */
+static int timed;
+
+static short profile_port_busiest(char const **names, float *milliseconds, float *calls, short most)
+{
+	if (!timed || most < 2)
+		return 0;
+	names[0] = "ai_update";
+	milliseconds[0] = 1.25f;
+	calls[0] = 2.0f;
+	names[1] = "object update";
+	milliseconds[1] = 0.5f;
+	calls[1] = 1.0f;
+	return 2;
+}
+
 static unsigned long xgpu_backend_pipelines_defined(void)
 {
 	return pipelines;
@@ -176,9 +192,10 @@ int main(int argc, char **argv)
 	{
 		char path[1024], line[256];
 		FILE *file;
-		long index, rows = 0, last_tick = -1, stalls = 0, built = 0, summaries = 0, ended = 0;
+		long index, rows = 0, last_tick = -1, stalls = 0, built = 0, summaries = 0, sections = 0, ended = 0;
 
 		setting = 1;
+		timed = 1;
 		frame(1, 4166);
 		CHECK(listeners_set == 1 && listener, "the listener not set with the setting on");
 		touch("x.demo");
@@ -232,6 +249,13 @@ int main(int argc, char **argv)
 			}
 			else if (line[0] == 's')
 				summaries++;
+			else if (line[0] == 'c')
+			{
+				/* (each summary's, its tick, the sections the most first) */
+				CHECK(sscanf(line, "c %ld", &row_tick) == 1 && row_tick >= 100, "sections line %s", line);
+				CHECK(strstr(line, " 1.250 2.0 ai_update 0.500 1.0 object_update\n") != NULL, "sections %s", line);
+				sections++;
+			}
 			else if (!strncmp(line, "# end ", 6))
 				ended = atol(line + 6) == 100 + 30 * 12;
 		}
@@ -240,6 +264,7 @@ int main(int argc, char **argv)
 		CHECK(stalls == 1 && built == 1, "stalls %ld, pipelines %ld", stalls, built);
 		/* (one at 10 s, one as it stopped) */
 		CHECK(summaries == 2, "%ld summaries", summaries);
+		CHECK(sections == summaries, "%ld sections lines for %ld summaries", sections, summaries);
 		CHECK(ended, "no end line, or the wrong tick");
 		return 0;
 	}

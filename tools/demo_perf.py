@@ -40,6 +40,19 @@ def read_perf(path: Path):
     return header, frames, events, summaries, end
 
 
+def read_sections(path: Path):
+    """the log's c lines (debug.timings on): each summary's tick and the game thread's busiest CPU sections, the most
+    first, as (name, milliseconds a frame, calls a frame)"""
+    sections = []
+    for line in path.read_text().splitlines():
+        fields = line.split()
+        if len(fields) < 5 or fields[0] != "c" or (len(fields) - 2) % 3:
+            continue
+        sections.append((int(fields[1]), [(fields[index + 2], float(fields[index]), float(fields[index + 1]))
+                                          for index in range(2, len(fields), 3)]))
+    return sections
+
+
 def demo_ticks(demo: Demo):
     """the first and last tick the demo recorded (its T records)"""
     first = last = None
@@ -78,6 +91,9 @@ def main() -> int:
     for tick, count, average, low1, low01 in summaries:
         print(f"  to tick {tick}: {count} frames, {average:.2f} ms average, 1% low {low1:.0f} fps, "
               f"0.1% low {low01:.0f} fps")
+    for tick, busiest in read_sections(path):
+        print(f"  tick {tick}, the game's busiest: " +
+              ", ".join(f"{name} {milliseconds:.2f} ms" for name, milliseconds, _ in busiest))
     for tick, kind, value in events:
         print(f"  tick {tick}: {kind} {value:g}" + (" ms" if kind in ("stall", "load") else ""))
     for tick, frame, frame_us, cpu_us, gpu_us, render_us, waited_us in sorted(frames, key=lambda f: -f[2])[:args.slowest]:

@@ -357,6 +357,12 @@ Text, a line each:
       pipeline keys defined (the backend builds a pipeline for each)
   s <tick> <frames> <average ms> <1% low fps> <0.1% low fps>
       every DEMO_PERF_SUMMARY_SECONDS, of the frames since the last
+  c <tick> {<ms> <calls> <section>}...
+      with debug.timings on, after each summary: the game thread's busiest
+      CPU sections (at most DEMO_PERF_SECTIONS, the most first), each's
+      milliseconds and calls a frame over the last frames profile.c keeps
+      (profile_port_busiest, the performance overlay's), the section's name
+      with its spaces as underscores
   # end <last tick>
 At 240 frames a second about 0.5 MB a minute, written through the C
 library's buffer (DEMO_PERF_BUFFER), flushed at each summary. The logs of
@@ -368,6 +374,7 @@ tools/demo_info.py --perf joins a demo and its log. */
 #define DEMO_PERF_SUMMARY_SECONDS 10
 #define DEMO_PERF_SUMMARY_FRAMES 16384
 #define DEMO_PERF_BUFFER (64 * 1024)
+#define DEMO_PERF_SECTIONS 8
 
 /* demo.h's (port/linux/game/demo.c): the listener told as a recording
 starts and stops */
@@ -376,6 +383,8 @@ void demo_set_recording_listener(demo_recording_listener listener);
 /* game_time.c's (boolean: the engine's byte) */
 unsigned char game_time_initialized(void);
 long game_time_get(void);
+/* profile.c's (debug.timings; none with it off) */
+short profile_port_busiest(char const **names, float *milliseconds, float *calls, short most);
 
 static struct
 {
@@ -397,6 +406,26 @@ static int demo_perf_compare(const void *first, const void *second)
 	uint32_t a = *(const uint32_t *)first, b = *(const uint32_t *)second;
 
 	return a < b ? 1 : a > b ? -1 : 0;
+}
+
+/* (debug.timings) the game thread's busiest CPU sections, a c line */
+static void demo_perf_sections(long tick)
+{
+	char const *names[DEMO_PERF_SECTIONS];
+	float milliseconds[DEMO_PERF_SECTIONS], calls[DEMO_PERF_SECTIONS];
+	short count = profile_port_busiest(names, milliseconds, calls, DEMO_PERF_SECTIONS), index;
+	char const *letter;
+
+	if (count <= 0)
+		return;
+	fprintf(demo_perf.file, "c %ld", tick);
+	for (index = 0; index < count; index++)
+	{
+		fprintf(demo_perf.file, " %.3f %.1f ", (double)milliseconds[index], (double)calls[index]);
+		for (letter = names[index] && *names[index] ? names[index] : "?"; *letter; letter++)
+			fputc(*letter == ' ' || *letter == '\t' ? '_' : *letter, demo_perf.file);
+	}
+	fputc('\n', demo_perf.file);
 }
 
 /* the frames since the last summary summed: their count, average, and the
@@ -426,6 +455,7 @@ static void demo_perf_summary(long tick)
 	}
 	fprintf(demo_perf.file, "s %ld %lu %.3f %.1f %.1f\n", tick, count, total / (double)count / 1000.0, lows[0],
 		lows[1]);
+	demo_perf_sections(tick);
 	fflush(demo_perf.file);
 	demo_perf.summary_count = 0;
 }
