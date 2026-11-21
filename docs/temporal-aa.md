@@ -141,9 +141,11 @@ The game's packages hold none of NVIDIA's files (`tools/dlss_addon.py check-pack
   panel. NVIDIA's logo is not shown: its marks' use needs NVIDIA's approval of a sample.
 - **Tests.** `HALO_DLSS_ADDON_URL` (a folder's address, `http://127.0.0.1:<port>/` allowed) serves the pinned files in
   place of the release; `HALO_DLSS_ADDON_FOLDER` is another add-ons' folder.
-- **The release workflow must** (not done; CI is off): build with `--dlss` on Linux and Windows, `ninja dlss_addon`,
-  upload each `build/dlss-addon/openh1-dlss-*` file to the release, `tools/dlss_addon.py pin --tag <the release's tag>`
-  with both manifests, and only then build the game's packages, so that they pin the uploaded bytes.
+- **The release workflow** (`.github/workflows/build.yml`, a release run's alone): `dlss-addon-linux` and
+  `dlss-addon-windows` build with `--dlss` and `ninja dlss_addon`; `dlss-pin` runs `tools/dlss_addon.py pin --tag
+  build-<N>` (the changes job's number, the release's tag) with both manifests; `linux-x86_64` and `windows` wait for
+  it and build the game with that pin; the release job checks the packages hold none of NVIDIA's files, then publishes
+  each `openh1-dlss-*` file beside them, the very bytes pinned. Other runs build none of it and keep the committed pin.
 
 ## Milestone 4: Metal's motion and `"metalfx"` (macOS, iOS)
 
