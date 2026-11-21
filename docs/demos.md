@@ -121,8 +121,10 @@ take (`source/math/random_math.c`) and the players' input of each tick
   later frame (`render_interpolation.c`), which decides whether the tick's
   local seed makes it.
 - **A hash of the game state three times a second**, and of each allocation, which
-  the playback compares with its own (a data array's free datums left out:
-  what the frames made and deleted again there, which no tick reads).
+  the playback compares with its own (a data array's free datums and the
+  objects' pool's holes left out: what the frames made and deleted again
+  there, which no tick reads). The recording takes it on a thread of its
+  own, from the copy of the game state the tick's end takes anyway.
 - **A snapshot every `demo.snapshot_seconds`** (10), for seeking.
 - **Bookmarks** (the clip key) and the game's variant.
 
@@ -171,6 +173,10 @@ playback is. Backspace switches the camera as it does in a game: the
 player's eyes, a flying camera (hold Tab or the right mouse button and fly
 with W, A, S, D, R, F), and one following the player.
 
+With `display.input_display` on, each view shows its player's recorded input as the playback takes it (`A`):
+the move and look, the fire trigger and the actions held (`port/linux/game/input_display.c`). A demo holds no
+device, so the move is drawn as a stick, never as the W, A, S and D keys.
+
 The playback checks its hash against the recording's three times a second. If they
 differ, it says where in the log ("parted from the recording by tick 1680:
 effect"), names the allocations that differ, and plays on as its own game:
@@ -211,6 +217,7 @@ its bytes:
 | `V` | the game's variant and its options |
 | `B` | a bookmark: its tick and how far back it reaches |
 | `W` | a line of the host's to its bots (`docs/bot_control.md`) as the tick applied it, before the tick's `A`: its tick, then the line; the playback logs it, and the bots' recorded input (`A`) plays it |
+| `Q` | the PRACTICE mark as it changed (`port/linux/game/practice.c`), after the tick's `T`: its tick, 1 for on or 0 for off, and why ("cheat", "game_speed", "core_load", "practice key", "skip_cinematics"); the playback shows the recording's mark |
 | `E` | the end |
 
 Each tick has one shape, whatever came when: its `T`; what came from

@@ -21,6 +21,7 @@ Nothing here runs unless the setting is "world" or "ray_traced": every
 other value (and the Classic preset's "off") draws exactly as before.
 */
 
+#include "rt_shadows.h"
 #include "world_ao.h"
 #include "world_cascades.h"
 #include "world_proxies.h"
@@ -103,18 +104,36 @@ int world_ao_mode(void)
 	return world_ao.mode;
 }
 
+/* (display.shadows "ray_traced" where this setting is not: the scene of the
+frame's objects, which the ray-traced scene is made of, alone; found at the
+next frame where the setting came on in play) */
+static int world_ao_scene_found;
+
 void world_ao_map_loaded(void)
 {
+	world_ao_scene_found = 0;
 	if (!world_ao_mode())
+	{
+		if (rt_shadows_on())
+		{
+			world_scene_map_loaded();
+			world_ao_scene_found = 1;
+		}
 		return;
+	}
 	world_scene_map_loaded();
+	world_ao_scene_found = 1;
 	world_sdf_map_loaded();
 }
 
 void world_ao_bsp_switched(short bsp_index)
 {
 	if (!world_ao_mode())
+	{
+		if (rt_shadows_on())
+			world_scene_bsp_switched(bsp_index);
 		return;
+	}
 	world_scene_bsp_switched(bsp_index);
 	world_sdf_bsp_switched(bsp_index);
 }
@@ -123,6 +142,7 @@ static void world_ao_scene_release(void);
 
 void world_ao_map_unloaded(void)
 {
+	world_ao_scene_found = 0;
 	world_rt_map_unloaded();
 	world_ao_scene_release();
 	world_sdf_map_unloaded();
@@ -134,9 +154,10 @@ void world_ao_map_unloaded(void)
 "The distance-field scene")
 
 Its cascades about the first window's camera, updated once a frame: the
-structure's field sampled where they move or it changes, the objects'
-shapes (world_proxies_scene) stamped where they moved, and the boxes
-written handed to the renderer. HALO_WORLD_AO_COUNTS logs, every 600
+objects' shapes (world_proxies_scene) stamped where they or the cascades
+moved, and the boxes written handed to the renderer (the structure's
+distance is the level's field's, read where a ray is: never resampled
+here). HALO_WORLD_AO_COUNTS logs, every 600
 frames, its mean time and voxels a frame. */
 
 enum
@@ -150,10 +171,8 @@ static struct
 {
 	struct world_cascades cascades;
 	int made, failed;
-	/* the frame (world_ao_frame_begin's count) it was last updated in, and
-	the structure's field it holds (NULL none) */
+	/* the frame (world_ao_frame_begin's count) it was last updated in */
 	unsigned long frame, updated;
-	struct world_sdf_volume const *structure;
 	/* the frame's shapes and their objects */
 	struct world_proxy shapes[WORLD_AO_SCENE_SHAPES];
 	long owners[WORLD_AO_SCENE_SHAPES];
@@ -170,11 +189,6 @@ static struct
 	unsigned long bytes;
 } world_ao_scene;
 
-static float world_ao_scene_structure(void *context, float const point[3])
-{
-	return world_sdf_sample((struct world_sdf_volume const *)context, point);
-}
-
 static void world_ao_scene_release(void)
 {
 	if (world_ao_scene.made)
@@ -185,14 +199,12 @@ static void world_ao_scene_release(void)
 	free(world_ao_scene.box);
 	world_ao_scene.box = NULL;
 	world_ao_scene.made = world_ao_scene.failed = 0;
-	world_ao_scene.structure = NULL;
 }
 
 /* the cascades about the camera, once a frame; their block (each [k] the
 first voxel's centre and the voxel, 0 not ready) */
 static void world_ao_scene_update(float const camera[3], float block[WORLD_CASCADES][4])
 {
-	struct world_sdf_volume const *structure = (struct world_sdf_volume const *)world_sdf_current();
 	unsigned long long start = SDL_GetTicksNS();
 	float reach = WORLD_CASCADE_FINEST * (float)(1 << (WORLD_CASCADES - 1)) *
 		(float)(WORLD_CASCADE_SIDE / 2 + WORLD_CASCADE_RANGE_VOXELS + 1);
@@ -212,7 +224,6 @@ static void world_ao_scene_update(float const camera[3], float block[WORLD_CASCA
 			return;
 		}
 		world_ao_scene.made = 1;
-		world_ao_scene.structure = NULL;
 		world_ao_scene.updated = world_ao_scene.frame - 1;
 	}
 	if (world_ao_scene.updated != world_ao_scene.frame)
@@ -236,10 +247,7 @@ static void world_ao_scene_update(float const camera[3], float block[WORLD_CASCA
 			object_count++;
 		}
 		world_ao_scene.shapes_seconds += (double)(SDL_GetTicksNS() - start) * 1.0e-9;
-		world_cascades_update(cascades, camera, structure != world_ao_scene.structure,
-			structure ? world_ao_scene_structure : NULL, (void *)structure, world_ao_scene.objects, object_count,
-			world_ao_scene.shapes);
-		world_ao_scene.structure = structure;
+		world_cascades_update(cascades, camera, world_ao_scene.objects, object_count, world_ao_scene.shapes);
 		world_ao_scene.cascades_seconds += (double)(SDL_GetTicksNS() - start) * 1.0e-9;
 		/* (the boxes written: each its texels, x fastest; or the whole) */
 		if (cascades->whole)
@@ -276,7 +284,7 @@ static void world_ao_scene_update(float const camera[3], float block[WORLD_CASCA
 
 			world_ao_scene.seconds += seconds;
 			world_ao_scene.most_seconds = seconds > world_ao_scene.most_seconds ? seconds : world_ao_scene.most_seconds;
-			world_ao_scene.voxels += cascades->structure_voxels + cascades->object_voxels;
+			world_ao_scene.voxels += cascades->object_voxels;
 			world_ao_scene.moved += cascades->moved;
 			world_ao_scene.boxes += cascades->box_count;
 			if (++world_ao_scene.frames >= 600)
@@ -310,7 +318,18 @@ void world_ao_frame_begin(void)
 
 	world_ao_scene.frame++;
 	if (!world_ao_mode())
+	{
+		/* (display.shadows "ray_traced": the frame's objects, for the
+		ray-traced scene) */
+		if (rt_shadows_on())
+		{
+			if (!world_ao_scene_found)
+				world_scene_map_loaded();
+			world_ao_scene_found = 1;
+			world_scene_frame_begin();
+		}
 		return;
+	}
 	world_scene_frame_begin();
 	/* (not with debug.world_ao_test's made-up field, which the level's
 	would overwrite in the backend's one texture) */
@@ -582,11 +601,21 @@ void world_ao_window_begin(short local_player_index, short rasterizer_target, fl
 		if (mode & WORLD_AO_FIELD)
 			world_ao.volume = (struct world_sdf_volume const *)world_sdf_current();
 		world_ao.fade = world_ao.volume ? world_sdf_fade() : 0.0f;
-		/* (the distance-field scene about the camera, once a frame; the
-		ray-traced scene's instances too, with "ray_traced") */
-		world_ao_scene_update(camera_position, world_ao.cascades);
+		/* (the distance-field scene about the camera, once a frame, for
+		"world"'s pass, which steps its rays through it. "ray_traced"'s pass
+		traces the objects' meshes instead and reads none of it (the
+		level's own term is the field's): none kept, its cascades named not
+		ready, so a frame the backend steps for want of its pipeline or
+		scene shades no objects. The cascades' fills, a respawn's most of
+		all, are then no frame's work) */
 		if (mode & WORLD_AO_RAYS)
+		{
+			world_ao_scene_release();
+			memset(world_ao.cascades, 0, sizeof(world_ao.cascades));
 			world_rt_frame(world_ao_scene.frame);
+		}
+		else
+			world_ao_scene_update(camera_position, world_ao.cascades);
 		if (world_ao_scene.windows_frame != world_ao_scene.frame)
 		{
 			world_ao_scene.last_windows = world_ao_scene.windows;
@@ -649,6 +678,11 @@ void world_ao_prepass_end(short x0, short y0, short x1, short y1, float const ca
 		world_ao_scene.windows_frame == world_ao_scene.last_frame + 1);
 }
 
+int world_ao_prepass_walked(void)
+{
+	return halo_world_ao_prepass_walked();
+}
+
 void world_ao_window_end(void)
 {
 	world_ao.span = WORLD_AO_SPAN_NONE;
@@ -700,6 +734,11 @@ void world_ao_object_begin(long object_index)
 			rays_owner = world_rt_owner(object_index);
 	}
 	halo_world_ao_object(owner, reference, rays_owner);
+}
+
+void world_ao_rt_frame(void)
+{
+	world_rt_frame(world_ao_scene.frame);
 }
 
 void world_ao_cards(int cards)

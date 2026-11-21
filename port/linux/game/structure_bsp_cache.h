@@ -31,6 +31,10 @@ in it: their pointers lead into the copy, not where the bsp loads) */
 void structure_bsp_cache_materials(
 	void (*visit)(void *context, struct structure_lightmap const *lightmap, struct structure_material const *material),
 	void *context);
+/* ...and those of one bsp's copy: FALSE where it is not kept */
+boolean structure_bsp_cache_reference_materials(struct scenario_structure_bsp_reference const *reference,
+	void (*visit)(void *context, struct structure_lightmap const *lightmap, struct structure_material const *material),
+	void *context);
 /* whether a kept bsp has a mirror (a cluster's), read from its copy */
 boolean structure_bsp_cache_has_mirrors(void);
 /* every copy let go of (the map's scenario unloaded) */

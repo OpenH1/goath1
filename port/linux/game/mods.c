@@ -49,9 +49,10 @@ int menu_pictures_stock_maps(void);
 
 /* ---------- constants */
 
-/* the most the mods' tags keep in memory (their files, their sounds'
-samples, their bitmaps' tags and their models' geometry; bitmaps' pixels
-are read as they are drawn) */
+/* the most the mods' tags keep in memory (their sounds' values and mouth
+and subtitle data, their bitmaps' tags and their models' geometry; sounds'
+samples are read from their files as they load into the sound cache, and
+bitmaps' pixels as they are drawn, so neither counts: OpenH1 issue 1202) */
 #ifdef HALO_ANDROID
 #define MAXIMUM_KEPT_BYTES (192UL * 1024 * 1024)
 #else
@@ -249,11 +250,26 @@ boolean mods_map_loaded(
 	return mods_globals.map_loaded;
 }
 
-/* how many of the map's bitmaps the mods play (texture_cache_size_for_map) */
+/* how many of the map's bitmaps the mods play (texture_cache_size_for_map):
+and their lightmaps waiting for their bsp, which the cache is sized for as
+the map loads */
 long mods_bitmap_count(
 	void)
 {
-	return mods_globals.bitmap_count;
+	return mods_globals.bitmap_count + mod_bitmaps_waiting_count();
+}
+
+void mods_structure_bsp_read(
+	short structure_bsp_index,
+	struct structure_bsp const *structure_bsp)
+{
+	if (!mods_globals.map_loaded || !structure_bsp)
+	{
+		return;
+	}
+	mods_globals.bitmap_count = mod_bitmaps_structure_bsp_read(structure_bsp_index, structure_bsp);
+
+	return;
 }
 
 boolean mods_played_on_map(

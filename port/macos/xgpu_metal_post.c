@@ -19,7 +19,12 @@ is there for the next to sample). SMAA's edges and weights are emptied
 whole as their passes begin (a clear of the whole attachment, which loads
 none of it), so that no edge of another window's pass is found: they write
 only where there is an edge. The intermediate textures are the target's
-size (the shaders' coordinates are the target's).
+size (the shaders' coordinates are the target's). As the Vulkan backend's
+do, the edges' pass marks its pixels in a stencil (emptied with the edges;
+the edge shader discards a pixel with no edge) and the weights' pass runs
+only where it is marked: the weights are the same, without the searches
+over every pixel. The blend runs over every pixel (where its weights are
+zero it writes the copy's texel back unchanged).
 
 The functions, pipelines and SMAA's lookup textures are made as the setting
 is chosen (xgpu_metal_post_prepare), or asked for as a map is prepared, not
@@ -46,8 +51,9 @@ static struct
 	uint32_t width, height;
 	uint8_t color_format;
 	/* the target's pixels before the pass, and SMAA's edges and blending
-	weights */
-	uint32_t color, edges, weights;
+	weights, and the stencil marking the edges' pixels (a stencil alone,
+	XGPU_METAL_FORMAT_S8) */
+	uint32_t color, edges, weights, marks;
 	/* SMAA's lookup textures */
 	uint32_t area, search;
 	/* display.hdr's tone map's functions could not be made */
@@ -111,7 +117,8 @@ static int textures_fit(int smaa, uint8_t format, uint32_t width, uint32_t heigh
 		xgpu_metal_texture_destroy(post.color);
 		xgpu_metal_texture_destroy(post.edges);
 		xgpu_metal_texture_destroy(post.weights);
-		post.color = post.edges = post.weights = 0;
+		xgpu_metal_texture_destroy(post.marks);
+		post.color = post.edges = post.weights = post.marks = 0;
 		post.width = width;
 		post.height = height;
 		post.color_format = format;
@@ -121,8 +128,9 @@ static int textures_fit(int smaa, uint8_t format, uint32_t width, uint32_t heigh
 	{
 		post.edges = texture_make(XGPU_METAL_FORMAT_BGRA8, usage, width, height);
 		post.weights = texture_make(XGPU_METAL_FORMAT_BGRA8, usage, width, height);
+		post.marks = texture_make(XGPU_METAL_FORMAT_S8, XGPU_METAL_USAGE_TARGET, width, height);
 	}
-	return post.color && (!smaa || (post.edges && post.weights));
+	return post.color && (!smaa || (post.edges && post.weights && post.marks));
 }
 
 /* ---------- pipelines */
@@ -144,6 +152,23 @@ static void pipeline_describe(int function, uint8_t format, uint32_t samples, st
 	/* (display.panini's into a multisampled target's samples, every sample
 	of a pixel given its value) */
 	pipeline->samples = (uint8_t)(samples > 1 ? samples : 1);
+	/* (SMAA's edges mark their pixels in the stencil, the shader
+	discarding a pixel with no edge; the weights run where they are
+	marked; no depth tested or written) */
+	if (function == XGPU_METAL_POST_SMAA_EDGES || function == XGPU_METAL_POST_SMAA_WEIGHTS)
+	{
+		pipeline->depth_format = XGPU_METAL_FORMAT_S8;
+		pipeline->stencil_test = 1;
+		pipeline->stencil_read_mask = 0xff;
+		if (function == XGPU_METAL_POST_SMAA_EDGES)
+		{
+			pipeline->stencil_function = XGPU_COMPARE_ALWAYS;
+			pipeline->stencil_pass = XGPU_STENCIL_REPLACE;
+			pipeline->stencil_write_mask = 0xff;
+		}
+		else
+			pipeline->stencil_function = XGPU_COMPARE_EQUAL;
+	}
 }
 
 static int prepare_failed(int smaa, const char *what)
@@ -190,6 +215,9 @@ int xgpu_metal_post_prepare(int smaa)
 		{
 			pipeline_describe(function, XGPU_METAL_FORMAT_RGBA16F, 1, &pipeline);
 			xgpu_metal_prepare(&pipeline);
+			/* (display.output_depth's 16 bits) */
+			pipeline_describe(function, XGPU_METAL_FORMAT_RGBA16, 1, &pipeline);
+			xgpu_metal_prepare(&pipeline);
 		}
 	}
 	if (smaa && !post.area)
@@ -219,7 +247,9 @@ static void pass_draw_with(int function, uint32_t into, uint8_t format, uint32_t
 	const uint32_t textures[4] = { texture0, texture1, texture2, 0 };
 	uint32_t stage;
 
-	xgpu_metal_set_targets(into, 0, 0, 0, samples > 1);
+	/* (SMAA's edges and weights with the stencil of their marks) */
+	xgpu_metal_set_targets(into, 0, 0, function == XGPU_METAL_POST_SMAA_EDGES ||
+		function == XGPU_METAL_POST_SMAA_WEIGHTS ? post.marks : 0, samples > 1);
 	pipeline_describe(function, format, samples, &pipeline);
 	xgpu_metal_set_pipeline(&pipeline);
 	memset(&dynamic, 0, sizeof(dynamic));
@@ -228,6 +258,7 @@ static void pass_draw_with(int function, uint32_t into, uint8_t format, uint32_t
 	dynamic.viewport[2] = dynamic.scissor[2] = rectangle[2] - rectangle[0];
 	dynamic.viewport[3] = dynamic.scissor[3] = rectangle[3] - rectangle[1];
 	dynamic.depth_range[1] = 1.0f;
+	dynamic.stencil_reference = 1;
 	xgpu_metal_set_dynamic_state(&dynamic);
 	/* (linear and clamped, as FXAA and SMAA sample) */
 	memset(&sampler, 0, sizeof(sampler));
@@ -263,13 +294,16 @@ static void pass_draw(int function, uint32_t into, uint8_t format, const int32_t
 
 /* an intermediate emptied, all of it, as its pass begins, so that no edge
 of another window's pass is found: SMAA's passes write only where there
-is an edge */
-static void intermediate_clear(uint32_t texture)
+is an edge; with the edges, the stencil of their marks; with the
+weights, the marks bound as their pass will have them, and kept (a
+stencil alone: no depth to clear, xgpu_metal_clear leaves it out) */
+static void intermediate_clear(uint32_t texture, int marks)
 {
 	static const float transparent[4];
 
-	xgpu_metal_set_targets(texture, 0, 0, 0, 0);
-	xgpu_metal_clear(NULL, 0, XGPU_METAL_CLEAR_COLOR | XGPU_METAL_CLEAR_CHANNELS, transparent, 1.0f, 0);
+	xgpu_metal_set_targets(texture, 0, 0, post.marks, 0);
+	xgpu_metal_clear(NULL, 0, XGPU_METAL_CLEAR_COLOR | XGPU_METAL_CLEAR_CHANNELS |
+		(marks ? XGPU_METAL_CLEAR_STENCIL : 0), transparent, 1.0f, 0);
 }
 
 int xgpu_metal_post_anti_alias(int smaa, uint32_t target, uint8_t format, uint32_t width, uint32_t height,
@@ -291,6 +325,14 @@ int xgpu_metal_post_anti_alias(int smaa, uint32_t target, uint8_t format, uint32
 	}
 	if (rectangle[2] <= rectangle[0] || rectangle[3] <= rectangle[1])
 		return 1;
+	/* (SMAA's textures kept only while SMAA is chosen) */
+	if (!smaa && post.edges)
+	{
+		xgpu_metal_texture_destroy(post.edges);
+		xgpu_metal_texture_destroy(post.weights);
+		xgpu_metal_texture_destroy(post.marks);
+		post.edges = post.weights = post.marks = 0;
+	}
 	if (!textures_fit(smaa, format, width, height))
 		return 0;
 
@@ -309,10 +351,10 @@ int xgpu_metal_post_anti_alias(int smaa, uint32_t target, uint8_t format, uint32
 	}
 	else
 	{
-		intermediate_clear(post.edges);
+		intermediate_clear(post.edges, 1);
 		pass_draw(XGPU_METAL_POST_SMAA_EDGES, post.edges, XGPU_METAL_FORMAT_BGRA8, rectangle, post.color, 0, 0, NULL);
 
-		intermediate_clear(post.weights);
+		intermediate_clear(post.weights, 0);
 		pass_draw(XGPU_METAL_POST_SMAA_WEIGHTS, post.weights, XGPU_METAL_FORMAT_BGRA8, rectangle, post.edges, post.area,
 			post.search, NULL);
 
@@ -349,6 +391,8 @@ int xgpu_metal_post_panini_prepare(uint32_t samples)
 	pipeline_describe(XGPU_METAL_POST_PANINI, XGPU_METAL_FORMAT_BGRA8, samples, &pipeline);
 	xgpu_metal_prepare(&pipeline);
 	pipeline_describe(XGPU_METAL_POST_PANINI, XGPU_METAL_FORMAT_RGBA16F, samples, &pipeline);
+	xgpu_metal_prepare(&pipeline);
+	pipeline_describe(XGPU_METAL_POST_PANINI, XGPU_METAL_FORMAT_RGBA16, samples, &pipeline);
 	xgpu_metal_prepare(&pipeline);
 	return 1;
 }

@@ -1818,7 +1818,14 @@ boolean network_game_client_game_has_started(
 
 		{
 			struct message_client_loaded loaded = {0};
-			message_header *message = create_network_game_message(
+			message_header *message;
+
+			/* port: the game loaded, by its number plus one (0 named none
+			before: a host of this build ignores a load of another game,
+			network_game_server_client_machine_loaded; one before reads
+			nothing of it) */
+			loaded.opaque = (long)((unsigned long)client->game.number_of_games_played + 1);
+			message = create_network_game_message(
 				_message_client_loaded,
 				&loaded,
 				sizeof(loaded));
@@ -2949,6 +2956,24 @@ static void network_game_client_update_precache_status(
 	}
 
 	return;
+}
+
+/* port: the postgame keep-alive answered (every five seconds, as the host
+sends it), so that the host hears this machine in the postgame, where it
+sends nothing else: the map it has, which a host of this build takes as the
+answer (network_game_server_client_machine_is_precached) and one before
+ignores, outside its pregame */
+void network_game_client_answer_postgame_keep_alive(
+	struct network_game_client *client)
+{
+	struct message_client_map_is_precached_pregame map_is_precached = {0};
+	message_header *message;
+
+	csstrncpy(map_is_precached.map_name, main_get_multiplayer_map_name(), sizeof(map_is_precached.map_name) - 1);
+	message = create_network_game_message(_message_client_map_is_precached_pregame, &map_is_precached,
+		sizeof(map_is_precached));
+	if (message && !network_game_client_write(client->connection, message, GET_MESSAGE_SIZE(*message), NULL, 1))
+		network_event("network_game_client_write() failed while answering the postgame keep-alive");
 }
 
 static boolean network_game_client_idle_searching(

@@ -1,6 +1,6 @@
-"""The real cinematic_render (cinematics.c) over a fake scenario: a scenario's title is drawn in the game, not over a
-menu, and its time goes on under one; on a wide screen it keeps its place against the letterbox, by its justified
-edge."""
+"""The real cinematic_update and cinematic_render (cinematics.c) over a fake scenario: a scenario's title is drawn in
+the game, not over a menu, and its time goes on under one; on a wide screen it keeps its place against the letterbox,
+by its justified edge. The title's time and the letterbox move with the ticks, not the frames (OpenH1 #1233)."""
 
 import sys
 from pathlib import Path
@@ -10,14 +10,18 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from harness import CHECK_FAILED, build, constant, enum_with, function, mutated, read, run, structure  # noqa: E402
 
-CASES = ["drawn-in-the-game", "not-over-a-menu", "time-goes-on-under-a-menu", "xbox-screen", "wide-screens"]
+CASES = ["drawn-in-the-game", "not-over-a-menu", "time-goes-on-under-a-menu", "xbox-screen", "wide-screens",
+         "frames-leave-the-state"]
 
-# a fault in cinematic_render and the case that must catch it
+# a fault in cinematics.c and the case that must catch it
 NEGATIVE_CONTROLS = {
     "drawn-over-a-menu": (("if (!ui_widgets_active())", "if (TRUE)"), "not-over-a-menu"),
-    "time-stops-under-a-menu": (("active_title->time += game_time_get_paused()",
-                                 "active_title->time += ui_widgets_active() || game_time_get_paused()"),
+    "time-stops-under-a-menu": (("active_title->time++;", "active_title->time += !ui_widgets_active();"),
                                 "time-goes-on-under-a-menu"),
+    # (the frames moving the letterbox and the titles' time again, as before #1233)
+    "moved-by-the-frames": (("real letterbox_amount = cinematic_letterbox_drawn_amount();",
+                             "real letterbox_amount = cinematic_letterbox_drawn_amount(); cinematic_update();"),
+                            "frames-leave-the-state"),
     # (the title moved by its middle's share of the screen, as before: a10's chapter titles short of the
     # letterbox's right end)
     "moved-by-its-middle": (("short shift = title->justification == _cinematic_title_justified_left ? 0 :\n"
@@ -38,7 +42,9 @@ def generated(fault=None):
     for source, name in ((cinematics, "scenario_cutscene_title"), (header, "cinematic_title"),
                          (header, "cinematic_global_data")):
         config += structure(source, name) + "\n"
-    code = function(cinematics, "cinematic_render")
+    code = "\n".join(function(cinematics, name) for name in (
+        "cinematic_title_shown", "cinematic_frame_fraction", "cinematic_letterbox_drawn_amount",
+        "cinematic_update", "cinematic_render"))
     if fault:
         code = mutated(code, *fault)
     return (("config.inc", config), ("under_test.inc", code + "\n"))

@@ -45,6 +45,8 @@ static void euler_angles2d_from_vector3d(real_euler_angles2d *facing, real_vecto
 static void live_control_give(short player_index, struct player_datum const *player, struct live_control const *live,
 	short substep_index)
 { (void)player_index; (void)player; (void)substep_index; given_live = live; }
+/* (debug.network_latency_trace, off) */
+#define NETWORK_LATENCY_TRACE(call) ((void)0)
 #include "under_test.inc"
 
 /* the client's controls of a tick's sub-step, as they came */

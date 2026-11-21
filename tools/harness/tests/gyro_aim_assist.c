@@ -47,6 +47,11 @@ static boolean player_control_stick_look(struct game_globals_player_control cons
 	return *clamped_yaw >= constants->look_pegging_threshold;
 }
 static void player_control_scale_look(long unit_index, short zoom_level, real_euler_angles2d *look) {}
+/* (the stick's zoomed speed, input.stick_zoom_sensitivity: its default, 1, changes nothing) */
+static void player_control_stick_zoom_look(short gamepad_index, long unit_index, short zoom_level,
+	real_euler_angles2d *look_delta)
+{
+}
 static long local_player_aim_assist(short local_player_index, real *autoaim, real *magnetism,
 	real_euler_angles2d *position, real_euler_angles2d *velocity)
 {
@@ -73,6 +78,12 @@ static int halo_linux_mouse_aiming(short gamepad_index) { return 0; }
 static int player_control_aim_modern(short local_player_index, float *acceleration_tangent, float *acceleration_threshold)
 {
 	return 0;
+}
+/* (the look acceleration at its defaults: test_look_acceleration.py's) */
+static void player_control_look_acceleration_tuning(short gamepad_index, real *strength, real *time)
+{
+	*strength = 1.0f;
+	*time = 1.0f;
 }
 static void input_trace_aim(int controller, int modern, int accelerating, float acceleration_seconds) {}
 static int halo_linux_touch_aiming(short gamepad_index) { return 0; }

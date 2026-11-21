@@ -28,7 +28,7 @@ CONTROLS = [
     # Classic touched: its diagonal no longer stretched to the square
     ("\tif (absolute_pitch > 0.1f && absolute_yaw > 0.1f)", "\tif (0)", "classic"),
     # the round dead zone's push not taken from its edge
-    ("(MIN(length, (real)SHORT_MAX) - dead_range)", "(MIN(length, (real)SHORT_MAX))", "round_dead_zone"),
+    ("(MIN(length, (real)live_range) - dead_range)", "(MIN(length, (real)live_range))", "round_dead_zone"),
 ]
 
 
@@ -63,6 +63,6 @@ def test_one_aim_for_the_tick_and_the_sub_step():
     # the frame's turn and a sub-step's both take the stick's look and its acceleration from the one aim
     code = read("source/game/player_control.c")
     assert code.count("player_control_stick_look(constants, ") == 2
-    assert code.count("player_control_look_acceleration(constants, control)") == 2
+    assert code.count("player_control_look_acceleration(constants, control,") == 2
     assert "look_pegging_threshold" not in function(code, "get_local_player_input_blob")
     assert "look_pegging_threshold" not in function(code, "player_control_substep_read")

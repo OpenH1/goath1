@@ -37,12 +37,13 @@ drawn in the map's first frame too, whatever structure it starts in: the
 mirrors' window (render_window's through a mirror: the world again, its
 models, decals, effects and lens flares, unlit by the ambient occlusion, which the
 3D view's window alone has) where any structure of the map has a mirror
-(structure_bsp_cache_has_mirrors: the kept copies of its bsps), and the
-other structures' materials (the stand-ins) drawn through it too; and the
+(structure_bsp_cache_has_mirrors: the kept copies of its bsps); and the
 fog screen of each of the map's fogs (the planar fog's layers a camera
 inside a fog plane's depth sees), each in a world pass of its own with the
-camera inside it (fog_screens_collect). A later structure then draws
-nothing new as the game switches to it.
+camera inside it (fog_screens_collect). A later structure's own materials
+are drawn by its own walk, recorded into the map's record ("the map's other
+structures' materials", below): a later structure then draws nothing new as
+the game switches to it.
 
 A setting that changes what the draws' pipelines are (render_prepared.c's
 prepared_settings: the ambient occlusion, the lights, HDR, multisampling)
@@ -62,6 +63,7 @@ each structure's first sight, every model and effect).
 #include "objects/light_definitions.h"
 #include "objects/object_definitions.h"
 #include "objects/object_types.h"
+#include "objects/widgets/glow.h"
 #include "objects/widgets/light_volumes.h"
 #include "rasterizer/rasterizer.h"
 #include "rasterizer/rasterizer_cinematics.h"
@@ -74,7 +76,9 @@ each structure's first sight, every model and effect).
 #include <xtl.h>
 #include "rasterizer/xbox/rasterizer_xbox.h"
 #include "render/render.h"
+#include "motion_vectors.h"
 #include "scenario/scenario.h"
+#include "scenario/scenario_definitions.h"
 #include "scenario/sky_definitions.h"
 #include "shaders/shaders.h"
 #include "structures/structure_bsp_definitions.h"
@@ -232,10 +236,6 @@ map's enumerations have made, at most */
 #define MATERIAL_KEY_MIRROR 0x80000000UL
 /* (its class: whether its lightmap has a picture, and its flags) */
 #define MATERIAL_KEY_CLASS(key) ((key) >> 16)
-/* the rounds of the map's other structures' materials drawn as its first
-frame's (stand_ins_next), at most */
-#define MAXIMUM_STAND_IN_ROUNDS 4
-
 /* (an object index no object has, but not 0: camouflage's source) */
 #define STAND_IN_OBJECT_INDEX 0x7ffe0000
 
@@ -448,15 +448,93 @@ static boolean structure_materials(struct structure_bsp *structure_bsp, struct e
 
 /* ---------- the map's other structures' materials
 
-As a map starts, the materials of its other structures (each kept as it
-was read: structure_bsp_cache.c) whose keys the first structure has not are
-drawn too, so that no switch to another structure (a load zone) has
-anything to make: after the frame's passes, rounds of its world's passes in
-which materials of the first structure of the same class (MATERIAL_KEY_CLASS)
-each stand in for one of them, drawn with its shader (and its permutation
-0), and given their own back after the round. A key no material of the
-first structure can stand in for is left to its structure's own
-enumeration, at the switch to it. */
+A map's other structures are drawn as themselves, never by another's
+materials standing in: each structure's first frame is walked through its
+own surfaces (a new structure's world passes alone, below), and that walk is
+recorded into the map's record beside the first structure's
+(render_prepared.c's segments), so that the record played as the map loads
+makes every structure's pipelines from the draws each structure's own walk
+recorded (#1181). The first start's pass, which makes the records, switches
+to each structure of a map whose materials no record holds
+(menu_pictures_render.c: render_enumerate_structure_wanted); a structure a
+record does not hold is walked, and recorded, as the game first switches to
+it. */
+
+/* the map's structure's reference (NONE: the one loaded), or NULL */
+static struct scenario_structure_bsp_reference const *structure_reference(short structure_bsp_index)
+{
+	struct scenario *scenario = global_scenario_try_and_get();
+
+	if (!scenario || structure_bsp_index < 0 || structure_bsp_index >= scenario->structure_bsp_references.count)
+		return NULL;
+	return TAG_BLOCK_GET_ELEMENT(&scenario->structure_bsp_references, structure_bsp_index,
+		struct scenario_structure_bsp_reference);
+}
+
+static struct
+{
+	struct enumerated_materials *materials;
+	boolean mirrors, add, found;
+} structure_keys;
+
+static void structure_keys_visit(void *context, struct structure_lightmap const *lightmap,
+	struct structure_material const *material)
+{
+	unsigned long key = material_key(lightmap, material);
+
+	(void)context;
+	if (material->shader.index == NONE || !tag_index_is_group(material->shader.index, SHADER_DEFINITION_TAG))
+		return;
+	if (!structure_keys.add)
+	{
+		structure_keys.found = structure_keys.found || !materials_have(structure_keys.materials, key);
+		return;
+	}
+	materials_add(structure_keys.materials, key);
+	if (structure_keys.mirrors)
+		materials_add(structure_keys.materials, key | MATERIAL_KEY_MIRROR);
+}
+
+/* a structure's keys (read from its kept copy) counted as made: a record
+played back holds its walk (mirrors: through the mirrors' window too) */
+static void structure_keys_add(short structure_bsp_index, struct enumerated_materials *materials, boolean mirrors)
+{
+	struct scenario_structure_bsp_reference const *reference = structure_reference(structure_bsp_index);
+
+	if (!reference || !materials)
+		return;
+	structure_keys.materials = materials;
+	structure_keys.mirrors = mirrors;
+	structure_keys.add = TRUE;
+	structure_bsp_cache_reference_materials(reference, structure_keys_visit, NULL);
+}
+
+boolean render_enumerate_structure_wanted(short structure_bsp_index)
+{
+	struct scenario_structure_bsp_reference const *reference = structure_reference(structure_bsp_index);
+
+	if (!reference || structure_bsp_index == global_structure_bsp_index_get() || !enumerate.materials_enumerated[0])
+		return FALSE;
+	structure_keys.materials = enumerate.materials_enumerated[0];
+	structure_keys.add = FALSE;
+	structure_keys.found = FALSE;
+	return structure_bsp_cache_reference_materials(reference, structure_keys_visit, NULL) && structure_keys.found;
+}
+
+#ifdef HALO_VR
+/* The VR mode records no preparation (render_prepared.c's
+prepared_enabled: its eyes' and HUD's views are not journaled), so no record
+can carry a later structure's own walk: there, until it does, the map's
+first frame draws its other structures' materials as it did before #1181,
+each by a material of the first structure of the same class
+(MATERIAL_KEY_CLASS) standing in for it, drawn with its shader (and its
+permutation 0) and given its own back after the round, in rounds of its
+world's passes after the frame's; a key no material of the first can stand
+in for is left to its structure's own walk, at the switch to it. */
+
+/* the rounds of the map's other structures' materials drawn as its first
+frame's (stand_ins_next), at most */
+#define MAXIMUM_STAND_IN_ROUNDS 4
 
 static struct
 {
@@ -602,8 +680,18 @@ static boolean stand_ins_next(struct structure_bsp *structure_bsp, struct enumer
 			}
 		}
 	}
-	return stand_ins.count != 0;
+	/* (no round to draw: the lightmap taken for one given its picture back,
+	which no later call would; else the level's draws of it lit by no
+	lightmap, black, until the map is loaded again: #1203) */
+	if (!stand_ins.count)
+	{
+		stand_ins_restore(enumerated);
+		return FALSE;
+	}
+	return TRUE;
 }
+
+#endif
 
 static short pass_fog(void)
 {
@@ -848,11 +936,13 @@ boolean render_enumerate_begin(boolean mirrors, boolean scope)
 	/* A map's models and effects once, each structure once, in each view. */
 	enumerate.everything = *enumerate.structure_bsps_enumerated[view] == 0;
 	enumerate.map_drawn = enumerate.everything;
-	/* (and with them, its other structures' materials) */
+#ifdef HALO_VR
+	/* (and with them, its other structures' materials, standing in) */
 	if (enumerate.everything)
 		stand_ins_collect(global_structure_bsp_get(), enumerate.materials_enumerated[view]);
 	else
 		stand_ins.pending.count = stand_ins.round = 0;
+#endif
 	enumerate.scope = scope;
 	enumerate.interface_drawn = FALSE;
 	if (enumerate.everything)
@@ -873,13 +963,22 @@ boolean render_enumerate_begin(boolean mirrors, boolean scope)
 	{
 		struct structure_bsp *structure_bsp = global_structure_bsp_get();
 		struct enumerated_materials *enumerated = enumerate.materials_enumerated[view];
+		unsigned long structures, mirrored;
+		short index, counted = 0;
 
 		if (structure_bsp)
 			structure_materials(structure_bsp, enumerated, TRUE, enumerate.mirrors);
-		while (stand_ins_next(structure_bsp, enumerated))
-			;
-		platform_log("render: the map's and its structure %d's shaders and pipelines made from its record, %d "
-			"rounds of the other structures' materials counted", structure_bsp_index, stand_ins.round);
+		/* (and every structure whose own walk the record holds) */
+		structures = render_prepared_structures(&mirrored);
+		for (index = 0; index < LONG_BITS; index++)
+		{
+			if (!TEST_FLAG(structures, index) || index == structure_bsp_index)
+				continue;
+			structure_keys_add(index, enumerated, TEST_FLAG(mirrored, index));
+			counted++;
+		}
+		platform_log("render: the map's and its structure %d's shaders and pipelines made from its record, with %d "
+			"other structures' own", structure_bsp_index, counted);
 		return FALSE;
 	}
 	enumerate.own_fog = render.fog;
@@ -892,10 +991,15 @@ boolean render_enumerate_begin(boolean mirrors, boolean scope)
 		enumerate.pass++;
 	fog_set(pass_fog());
 	render_enumerating = TRUE;
+	prepared_coverage_label(scope ? "scope" : "walk");
 	halo_gpu_prepare(enumerate.everything);
 	texture_cache_preparation_begin();
 	if (enumerate.everything && !scope)
 		render_prepared_record_begin(enumerate.mirrors);
+	/* (a later structure's own walk, recorded into the map's record beside
+	the walks it holds: render_prepared.c) */
+	else if (!scope)
+		render_prepared_structure_begin(structure_bsp_index, enumerate.mirrors);
 	return TRUE;
 }
 
@@ -926,7 +1030,9 @@ boolean render_enumerate_next(void)
 		return TRUE;
 	}
 	enumerate.fog_screen = NONE;
+#ifdef HALO_VR
 	if (!stand_ins.round)
+#endif
 	{
 		if (!enumerate.scope)
 			enumerate.interface_pending = enumerate.everything && !enumerate.interface_drawn;
@@ -936,10 +1042,11 @@ boolean render_enumerate_next(void)
 			structure_materials(global_structure_bsp_get(), enumerate.materials_enumerated[enumerate.scope ? 1 : 0], TRUE,
 				enumerate.mirrors);
 	}
-	/* the map's other structures' materials, in the world's passes alone */
+#ifdef HALO_VR
+	/* (VR: the map's other structures' materials, standing in, in the
+	world's passes alone) */
 	if (stand_ins_next(global_structure_bsp_get(), enumerate.materials_enumerated[enumerate.scope ? 1 : 0]))
 	{
-		/* (and through the mirrors' window, where the map has one) */
 		enumerate.everything = FALSE;
 		enumerate.pass = 0;
 		while (!pass_drawn())
@@ -947,6 +1054,7 @@ boolean render_enumerate_next(void)
 		fog_set(pass_fog());
 		return TRUE;
 	}
+#endif
 	render.fog = enumerate.own_fog;
 	rasterizer_lens_flares_port_truncate(enumerate.lens_flare_count);
 	render_enumerating = FALSE;
@@ -964,22 +1072,11 @@ boolean render_enumerate_next(void)
 	bitmaps instead of defaults when this enumeration filled the cache.
 	Never unlock between a draw's texture stages. */
 	texture_cache_idle();
-	platform_log("render: %s structure %d%s: its shaders and pipelines made (drawn in %d passes and %d rounds of the "
-		"other structures' materials, %d left, in %lu ms, %.0f ms of the CPU's, %.0f ms waited for the GPU's)",
+	platform_log("render: %s structure %d%s: its shaders and pipelines made (drawn in %d passes, in %lu ms, %.0f ms "
+		"of the CPU's, %.0f ms waited for the GPU's)",
 		enumerate.map_drawn ? "the map's and its" : "its", enumerate.structure_bsp_index,
-		enumerate.scope ? " (scope)" : "", passes(), stand_ins.round, stand_ins.pending.count,
-		system_milliseconds() - enumerate.started, cpu < 0.0 ? -1.0 : cpu * 1000.0,
-		waited * 1000.0);
-	{
-		short index;
-
-		for (index = 0; index < stand_ins.pending.count; index++)
-		{
-			platform_log("render: no material of structure %d stands in for %s (lightmap %d, flags %lx)",
-				enumerate.structure_bsp_index, tag_get_name(stand_ins.pending_shader_indices[index]),
-				(int)(stand_ins.pending.keys[index] >> 16 & 1), stand_ins.pending.keys[index] >> 17);
-		}
-	}
+		enumerate.scope ? " (scope)" : "", passes(), system_milliseconds() - enumerate.started,
+		cpu < 0.0 ? -1.0 : cpu * 1000.0, waited * 1000.0);
 	return FALSE;
 }
 
@@ -1511,6 +1608,10 @@ void render_enumerate_models(void)
 
 	if (!render_enumerating)
 		return;
+	/* (display.temporal_aa: as the window's objects draw in play, their
+	motion too: those pipelines' variants made with the rest,
+	port/linux/game/motion_vectors.c) */
+	motion_vectors_objects(TRUE);
 	/* rasterizer_xbox.c: NONE (0) or REJECT (2), as model_end leaves it.
 	This also applies to the structure's draws after these models. */
 	rasterizer_set_stencil_mode(pass_stencil_reject() ? 2 : 0);
@@ -1540,6 +1641,7 @@ void render_enumerate_models(void)
 		break;
 	}
 	rasterizer_debug_options.debug_model_lod = saved_lod;
+	motion_vectors_objects(FALSE);
 }
 
 /* ---------- the shadows: every model's, cast on the structure's every
@@ -1646,11 +1748,17 @@ void render_enumerate_decals(void)
 system state's sprite, a sprite before the camera, which the transparent geometry's pass
 then draws as it would theirs */
 
+/* the sprites drawn as light (display.hdr_highlight_boost's emitters, whose
+HDR tag makes a pipeline of their own): a self-illuminated particle's, a
+glow's (render_particles.c, glow.c) */
+static boolean effect_sprite_emitter = FALSE;
+
 static void effect_sprite(long bitmap_group_index, struct shader_effect_definition const *shader)
 {
 	/* (not on the screen: its sprites' vertices are the dynamic screen
 	type's, which has no buffer in a map: render_sprite.c) */
-	unsigned long flags = pass_part() == _part_first_person ? FLAG(_build_sprites_first_person_bit) : 0;
+	unsigned long flags = (pass_part() == _part_first_person ? FLAG(_build_sprites_first_person_bit) : 0) |
+		(effect_sprite_emitter ? FLAG(_build_sprites_emitter_bit) : 0);
 	real_argb_color color = { 1.0f, 1.0f, 1.0f, 1.0f };
 	struct build_sprite_data data;
 	real_point3d origin;
@@ -1768,8 +1876,13 @@ void render_enumerate_effects(void)
 	{
 		struct particle_definition *definition = particle_definition_get(tag_index);
 
+		/* (particles.c's _particle_definition_self_illuminated_bit, 9) */
+		effect_sprite_emitter = TEST_FLAG(definition->flags, 9);
 		effect_sprite(definition->bitmap.index, &definition->shader);
 	}
+	effect_sprite_emitter = TRUE;
+	glow_port_enumerate(effect_sprite);
+	effect_sprite_emitter = FALSE;
 	weather_particle_systems_port_enumerate(effect_sprite);
 	/* (a contrail's shader is drawn as an effect's: rasterizer_xbox_transparent_geometry.c) */
 	tag_iterator_new(&iterator, CONTRAIL_DEFINITION_TAG);

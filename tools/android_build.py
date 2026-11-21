@@ -81,6 +81,12 @@ SDL_ANDROID_MOUSE_PATCH = Path("port/android/patches/sdl-relative-mouse.patch")
 # (port/linux/vulkan/host_vulkan.c)
 SDL_WAYLAND_REFERENCE_PATCH = Path("port/android/patches/sdl-wayland-reference-luminance.patch")
 SDL_WAYLAND_REFERENCE_FILE = "src/video/wayland/SDL_waylandcolor.c"
+# the Steam Deck controller's lizard-mode watchdog fed every 3 seconds on a
+# thread of its own: SDL 3.4.16 feeds it every 202 joystick updates on the
+# thread that pumps them, three USB feature reports, about 8 ms that stalled
+# a frame every 50 on the Deck with Steam Input off (gyro aiming)
+SDL_STEAMDECK_WATCHDOG_PATCH = Path("port/android/patches/sdl-steamdeck-lizard-watchdog.patch")
+SDL_STEAMDECK_WATCHDOG_FILE = "src/joystick/hidapi/SDL_hidapi_steamdeck.c"
 SDL_ANDROID_MOUSE_LISTENER = "android-project/app/src/main/java/org/libsdl/app/SDLControllerManager.java"
 ANDROID_API = 28
 # what Gradle builds the APK from beside what ninja stages: the app's Java,
@@ -283,6 +289,14 @@ def fetch_third_party(third_party: Path = THIRD_PARTY) -> None:
     if reverse.returncode != 0:
         subprocess.run(["git", "-C", str(sdl_dir), "checkout", "--", SDL_WAYLAND_REFERENCE_FILE], check=True)
         subprocess.run(["git", "-C", str(sdl_dir), "apply", str(SDL_WAYLAND_REFERENCE_PATCH.resolve())], check=True)
+    # (and the Steam Deck's watchdog, the same way)
+    reverse = subprocess.run(
+        ["git", "-C", str(sdl_dir), "apply", "--reverse", "--check", str(SDL_STEAMDECK_WATCHDOG_PATCH.resolve())],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    if reverse.returncode != 0:
+        subprocess.run(["git", "-C", str(sdl_dir), "checkout", "--", SDL_STEAMDECK_WATCHDOG_FILE], check=True)
+        subprocess.run(["git", "-C", str(sdl_dir), "apply", str(SDL_STEAMDECK_WATCHDOG_PATCH.resolve())], check=True)
     # the Bink movies' decoders (display.movies)
     fetch_ffmpeg(third_party)
 
@@ -325,7 +339,7 @@ def app_sources() -> List[Path]:
 def android_configure_inputs() -> List[Path]:
     # (app/src's folders, so that adding or removing a file there re-runs it)
     app_folders = [APP_SOURCES, *sorted(path for path in APP_SOURCES.rglob("*") if path.is_dir())]
-    return [Path(__file__), GUEST_ARCH_SCRIPT, GUEST_TOOLCHAIN_SCRIPT, SDL_ANDROID_MOUSE_PATCH, SDL_WAYLAND_REFERENCE_PATCH, PORT_DIR / "guest" / "runtime", PORT_DIR / "host",
+    return [Path(__file__), GUEST_ARCH_SCRIPT, GUEST_TOOLCHAIN_SCRIPT, SDL_ANDROID_MOUSE_PATCH, SDL_WAYLAND_REFERENCE_PATCH, SDL_STEAMDECK_WATCHDOG_PATCH, PORT_DIR / "guest" / "runtime", PORT_DIR / "host",
             LINUX_DIR / "src", Path("tools/vulkan_build.py"), VULKAN_DIR, *app_folders, *hud_configure_inputs()]
 
 

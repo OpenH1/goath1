@@ -158,8 +158,10 @@ cinematic, or because the mission failed); now is the game time before the
 revert */
 void network_coop_reverted(long now);
 void network_coop_reset_recovery(void);
-/* main.c: the skip vote is over once the skip has reverted */
-void network_coop_skip_done(void);
+/* main.c, the co-op host: its answer to a skip (main_skip_cinematic),
+skipped (reverted) or refused. Either way the vote is over: after a short
+cooldown the cutscene can be voted on again while it is skippable. */
+void network_coop_skip_answered(boolean skipped);
 /* the vote count to show, if a skippable cinematic is playing */
 boolean network_coop_skip_vote_status(short *votes, short *voters, boolean *voted);
 

@@ -60,6 +60,15 @@ void host_render_stream_wait(unsigned int position);
 void host_render_stream_close(void);
 
 void xgpu_stream_encode_close(void);
+#ifndef XGPU_STREAM_TEST
+/* port/linux/game/network_receive.c: the frame's wait for the host and the
+display, begun and ended (a host reads its datagrams meanwhile) */
+void network_receive_frame_wait_begin(void);
+void network_receive_frame_wait_end(void);
+/* port/linux/game/network_latency_trace.c: the frame handed to the host */
+extern int network_latency_trace_on;
+void network_latency_trace_frame_committed(void);
+#endif
 
 /* the guest address of guest memory; guest memory at one of the
 interface's addresses (DWORD, unsigned long); and at one of the stream's
@@ -126,6 +135,7 @@ struct numbering
 	unsigned char *definitions;
 	uint32_t last;      /* the number found last */
 	uint32_t rounds;    /* the times the numbers have begun again */
+	uint32_t begun;     /* rounds as the stream began (its first round) */
 };
 
 static struct
@@ -491,8 +501,11 @@ static void synchronous(void)
 
 /* what the host had is unknown to it now (or the stream began): sent
 again as it is next used */
+static uint32_t sent_forgotten;
+
 static void forget_sent(void)
 {
+	sent_forgotten++;
 	stream.category = 0;
 	stream.pipeline = 0;
 	stream.dynamic_sent = FALSE;
@@ -513,6 +526,10 @@ static BOOL numbering_initialize(struct numbering *numbering, uint32_t size, uin
 	numbering->slots = calloc(limit * 2, sizeof(*numbering->slots));
 	numbering->definitions = malloc((size_t)size * limit);
 	numbering->last = 0;
+	/* (a round of its own: a number of an earlier stream's is not this
+	one's, xgpu_backend_pipeline_numbered) */
+	numbering->rounds++;
+	numbering->begun = numbering->rounds;
 	return numbering->slots && numbering->definitions;
 }
 
@@ -599,7 +616,8 @@ void xgpu_backend_initialize(void)
 	stream.buffer = stream_allocate(XGPU_STREAM_RING_ALIGNMENT, stream.ring_size);
 	/* (the counts, then the numbers of the tests they are of) */
 	stream.visibility = stream_allocate(64, XGPU_STREAM_VISIBILITY_SLOTS * 2 * sizeof(uint32_t));
-	stream.pipelines = stream_allocate(64, XGPU_STREAM_PIPELINES);
+	/* (the pipelines' states, then the frames' GPU times) */
+	stream.pipelines = stream_allocate(64, XGPU_STREAM_PIPELINES_AREA);
 	stream.replies = stream_allocate(64, sizeof(*stream.replies));
 	if (!ring || !stream.buffer || !stream.visibility || !stream.pipelines || !stream.replies ||
 		!numbering_initialize(&stream.pipeline_keys, sizeof(struct xgpu_pipeline_key), XGPU_STREAM_PIPELINES) ||
@@ -610,7 +628,7 @@ void xgpu_backend_initialize(void)
 	}
 	memset(ring, 0, sizeof(*ring));
 	memset((void *)stream.visibility, 0, XGPU_STREAM_VISIBILITY_SLOTS * 2 * sizeof(uint32_t));
-	memset((void *)stream.pipelines, 0, XGPU_STREAM_PIPELINES);
+	memset((void *)stream.pipelines, 0, XGPU_STREAM_PIPELINES_AREA);
 	ring->magic = XGPU_STREAM_MAGIC;
 	ring->version = XGPU_STREAM_VERSION;
 	ring->header_size = sizeof(*ring);
@@ -652,13 +670,23 @@ void xgpu_backend_initialize(void)
 	xgpu_backend_capabilities.most_samples = stream.capabilities.most_samples;
 	xgpu_backend_capabilities.most_anisotropy = stream.capabilities.most_anisotropy;
 	xgpu_backend_capabilities.sample_counting = stream.capabilities.sample_counting;
+	xgpu_backend_capabilities.alpha_test_drop = (stream.capabilities.cutout_prepass & 1) != 0;
+	xgpu_backend_capabilities.cutout_prepass = (stream.capabilities.cutout_prepass & 2) != 0;
+	xgpu_backend_capabilities.clear_alone = stream.capabilities.clear_alone;
+	xgpu_backend_capabilities.draw_bounds = stream.capabilities.draw_bounds;
 	xgpu_backend_capabilities.bgra_vertex_colors = stream.capabilities.bgra_vertex_colors;
 	xgpu_backend_capabilities.base_vertex = stream.capabilities.base_vertex;
 	xgpu_backend_capabilities.sample_mask = stream.capabilities.sample_mask;
 	xgpu_backend_capabilities.mixed_constant_blend = stream.capabilities.mixed_constant_blend;
 	xgpu_backend_capabilities.dynamic_lights = stream.capabilities.dynamic_lights;
 	xgpu_backend_capabilities.hdr = stream.capabilities.hdr;
+	xgpu_backend_capabilities.deep_sdr = stream.capabilities.deep_sdr;
 	xgpu_backend_capabilities.ray_queries = stream.capabilities.ray_queries;
+	xgpu_backend_capabilities.soft_effects = stream.capabilities.soft_effects;
+	xgpu_backend_capabilities.temporal_upscale = stream.capabilities.temporal_upscale;
+	xgpu_backend_capabilities.temporal_dlss = stream.capabilities.temporal_dlss;
+	xgpu_backend_capabilities.temporal_metalfx = stream.capabilities.temporal_metalfx;
+	xgpu_backend_capabilities.dlss_gpu = stream.capabilities.dlss_gpu;
 	stream.capabilities.device[sizeof(stream.capabilities.device) - 1] = 0;
 }
 
@@ -680,6 +708,17 @@ int xgpu_backend_frame_times(struct xgpu_backend_frame_times *times)
 		return 0;
 	times->gpu = load_acquire(&stream.ring->gpu_microseconds);
 	return 1;
+}
+
+unsigned long xgpu_backend_frame_number(void)
+{
+	return stream.open ? stream.ring->frames_submitted : 0;
+}
+
+const volatile struct xgpu_stream_gpu_frames *xgpu_backend_gpu_frames(void)
+{
+	return stream.open ? (const volatile struct xgpu_stream_gpu_frames *)(stream.pipelines + XGPU_STREAM_PIPELINES) :
+		NULL;
 }
 
 #ifndef XGPU_STREAM_TEST
@@ -934,6 +973,36 @@ static void marks_draw(void)
 	marks.owner_sent = TRUE;
 }
 
+void xgpu_backend_sharp_upscale(int sharp)
+{
+	if (stream.open)
+		record_value(XGPU_STREAM_SHARP_UPSCALE, sharp ? 1u : 0u);
+}
+
+void xgpu_backend_hdr_gamut(int value)
+{
+	if (stream.open)
+		record_value(XGPU_STREAM_HDR_GAMUT, (uint32_t)value);
+}
+
+void xgpu_backend_pass_times(int frames)
+{
+	if (stream.open)
+		record_value(XGPU_STREAM_PASS_TIMES, frames > 0 ? (uint32_t)frames : 0u);
+}
+
+void xgpu_backend_hdr_peak_nits(int value)
+{
+	if (stream.open)
+		record_value(XGPU_STREAM_HDR_PEAK_NITS, (uint32_t)value);
+}
+
+void xgpu_backend_hdr_sdr_curve(int curve)
+{
+	if (stream.open)
+		record_value(XGPU_STREAM_HDR_SDR_CURVE, (uint32_t)curve);
+}
+
 void xgpu_backend_picture_top(int top)
 {
 	/* (0 centered, n + 1 at n pixels from the top) */
@@ -1000,16 +1069,65 @@ void xgpu_backend_world_ao_field(int part, unsigned long width, unsigned long he
 	record_body->data = size ? carry_one(&place, data, size) : 0;
 }
 
-void xgpu_backend_world_ao_prepass(int phase, xgpu_target target, const struct xgpu_world_ao_pass *pass)
+void xgpu_backend_motion(int phase, xgpu_target target, const struct xgpu_motion_pass *pass)
 {
-	struct xgpu_stream_world_ao_prepass *record_body;
+	struct xgpu_stream_motion *record_body;
 
 	if (!stream.open)
 		return;
-	record_body = record(XGPU_STREAM_WORLD_AO_PREPASS, sizeof(*record_body));
+	record_body = record(XGPU_STREAM_MOTION, sizeof(*record_body));
 	record_body->phase = (uint32_t)phase;
 	record_body->target = (uint32_t)target;
 	record_body->pad = 0;
+	if (pass)
+	{
+		record_body->pass = *pass;
+		stream_finite(&record_body->pass.reproject[0][0], 24, "motion's reprojection", 0);
+	}
+	else
+	{
+		memset(&record_body->pass, 0, sizeof(record_body->pass));
+	}
+}
+
+void xgpu_backend_temporal(xgpu_target source, xgpu_target destination, const struct xgpu_temporal_pass *pass)
+{
+	struct xgpu_stream_motion *record_body;
+
+	if (!stream.open || !pass)
+		return;
+	record_body = record(XGPU_STREAM_MOTION, sizeof(*record_body));
+	record_body->phase = XGPU_MOTION_UPSCALE;
+	record_body->target = (uint32_t)source;
+	record_body->pad = (uint32_t)destination;
+	/* (its bytes the pass's: xgpu_stream.h) */
+	memcpy(&record_body->pass, pass, sizeof(record_body->pass));
+}
+
+/* the window's opaque surfaces walked once and played twice (xgpu_stream.h's
+WORLD_AO_PREPASS replay): begun, and the submits so far then (one since:
+the walk handed over in parts, its first bytes perhaps released before its
+END, so not played again) */
+static struct
+{
+	BOOL open;
+	uint32_t batch;
+} walk;
+
+/* (ending: a walk's END, played again where the walk is in the same submit
+as it, the record's room made first, which may submit) */
+static BOOL world_ao_prepass_record(int phase, xgpu_target target, const struct xgpu_world_ao_pass *pass,
+	BOOL beginning, BOOL ending)
+{
+	struct xgpu_stream_world_ao_prepass *record_body;
+	BOOL replay;
+
+	record_body = record(XGPU_STREAM_WORLD_AO_PREPASS, sizeof(*record_body));
+	replay = beginning || (ending && walk.open && walk.batch == stream.batch);
+	walk.open = FALSE;
+	record_body->phase = (uint32_t)phase;
+	record_body->target = (uint32_t)target;
+	record_body->replay = replay ? 1 : 0;
 	if (pass)
 	{
 		record_body->pass = *pass;
@@ -1021,6 +1139,30 @@ void xgpu_backend_world_ao_prepass(int phase, xgpu_target target, const struct x
 	{
 		memset(&record_body->pass, 0, sizeof(record_body->pass));
 	}
+	return replay;
+}
+
+/* (a walk ended by another phase is not played again) */
+void xgpu_backend_world_ao_prepass(int phase, xgpu_target target, const struct xgpu_world_ao_pass *pass)
+{
+	if (!stream.open)
+		return;
+	(void)world_ao_prepass_record(phase, target, pass, FALSE, FALSE);
+}
+
+int xgpu_backend_world_ao_walk(int phase, xgpu_target target, const struct xgpu_world_ao_pass *pass)
+{
+	BOOL beginning = phase == XGPU_WORLD_AO_PREPASS_BEGIN, replay;
+
+	if (!stream.open)
+		return FALSE;
+	replay = world_ao_prepass_record(phase, target, pass, beginning, !beginning);
+	if (beginning)
+	{
+		walk.open = TRUE;
+		walk.batch = stream.batch;
+	}
+	return replay;
 }
 
 void xgpu_backend_world_ao_cascades(unsigned long x, unsigned long y, unsigned long z, unsigned long width,
@@ -1370,31 +1512,31 @@ static void texture_stage_describe(const struct xgpu_texture_source *source, int
 			stage->resource_format = (uint32_t)header->Format;
 			stage->resource_size = (uint32_t)header->Size;
 #ifndef XGPU_STREAM_TEST
+			/* (its channels; or, as they are, the copy whose levels keep the
+			draw's alpha test's coverage it is drawn from: xgpu.h) */
 			stage->target = (uint32_t)xgpu_texture_channels((unsigned long)PLATFORM_PHYSICAL_TO_VIRTUAL(header->Data),
 				stage_index);
+			if (!stage->target)
+				stage->target = (uint32_t)(source->target & XGPU_TEXTURE_COVERAGE_MASK);
 #endif
 		}
 	}
 }
 
-void xgpu_backend_set_textures(const struct xgpu_texture_source stages[4])
+/* the stages described sent: those that differ from what the host has */
+static void textures_send(const struct xgpu_stream_texture_stage described[4],
+	const struct xgpu_stream_texture_level levels[4][XGPU_STREAM_MIP_LEVELS])
 {
-	struct xgpu_stream_texture_stage described[4];
-	struct xgpu_stream_texture_level levels[4][XGPU_STREAM_MIP_LEVELS];
 	struct xgpu_stream_set_textures *record_body;
 	uint32_t changed = 0;
 	uint32_t size = sizeof(*record_body);
 	unsigned char *place;
 	int stage;
 
-	if (!stream.open)
-		return;
 	for (stage = 0; stage < 4; stage++)
 	{
-		uint32_t level_bytes;
+		uint32_t level_bytes = described[stage].level_count * sizeof(levels[0][0]);
 
-		texture_stage_describe(&stages[stage], stage, &described[stage], levels[stage]);
-		level_bytes = described[stage].level_count * sizeof(levels[0][0]);
 		if (stream.stages_sent[stage] && !memcmp(&described[stage], &stream.stages[stage], sizeof(described[stage])) &&
 			!memcmp(levels[stage], stream.levels[stage], level_bytes))
 			continue;
@@ -1420,6 +1562,73 @@ void xgpu_backend_set_textures(const struct xgpu_texture_source stages[4])
 		memcpy(stream.levels[stage], levels[stage], level_bytes);
 		stream.stages_sent[stage] = TRUE;
 	}
+}
+
+void xgpu_backend_set_textures(const struct xgpu_texture_source stages[4])
+{
+	struct xgpu_stream_texture_stage described[4];
+	struct xgpu_stream_texture_level levels[4][XGPU_STREAM_MIP_LEVELS];
+	int stage;
+
+	if (!stream.open)
+		return;
+	for (stage = 0; stage < 4; stage++)
+		texture_stage_describe(&stages[stage], stage, &described[stage], levels[stage]);
+	textures_send(described, (const struct xgpu_stream_texture_level (*)[XGPU_STREAM_MIP_LEVELS])levels);
+}
+
+/* (xgpu_backend_textures_kept's words: the stages, then their levels) */
+struct textures_described
+{
+	struct xgpu_stream_texture_stage stages[4];
+	struct xgpu_stream_texture_level levels[4][XGPU_STREAM_MIP_LEVELS];
+};
+_Static_assert(sizeof(struct textures_described) <= sizeof(((struct xgpu_backend_textures_kept *)0)->words),
+	"kept textures");
+
+void xgpu_backend_set_textures_kept(const struct xgpu_texture_source stages[4], struct xgpu_backend_textures_kept *kept,
+	unsigned long frame)
+{
+	struct textures_described *described = (struct textures_described *)kept->words;
+	int stage;
+
+	if (!stream.open)
+		return;
+	/* (described as xgpu_backend_set_textures describes them, the first
+	time in the frame: a replacement's use is noted once in a frame) */
+	if (kept->frame != frame + 1)
+	{
+		for (stage = 0; stage < 4; stage++)
+			texture_stage_describe(&stages[stage], stage, &described->stages[stage], described->levels[stage]);
+		kept->frame = frame + 1;
+	}
+	textures_send(described->stages,
+		(const struct xgpu_stream_texture_level (*)[XGPU_STREAM_MIP_LEVELS])described->levels);
+}
+
+BOOL xgpu_backend_textures_kept_same(const struct xgpu_texture_source stages[4],
+	struct xgpu_backend_textures_kept *kept, unsigned long frame)
+{
+	struct textures_described *described = (struct textures_described *)kept->words;
+	struct textures_described now;
+	int stage;
+
+	memset(&now, 0, sizeof(now));
+	for (stage = 0; stage < 4; stage++)
+		texture_stage_describe(&stages[stage], stage, &now.stages[stage], now.levels[stage]);
+	if (kept->frame != frame + 1)
+	{
+		*described = now;
+		kept->frame = frame + 1;
+		return TRUE;
+	}
+	for (stage = 0; stage < 4; stage++)
+	{
+		if (memcmp(&now.stages[stage], &described->stages[stage], sizeof(now.stages[stage])) ||
+			memcmp(now.levels[stage], described->levels[stage], now.stages[stage].level_count * sizeof(now.levels[0][0])))
+			return FALSE;
+	}
+	return TRUE;
 }
 
 /* ---------- pipelines */
@@ -1551,10 +1760,52 @@ void xgpu_backend_pipeline_stand_in(unsigned long number)
 	record_body->stand_in = number >> 16 == stream.pipeline_keys.rounds ? (uint32_t)(number & 0xffff) : 0;
 }
 
+BOOL xgpu_backend_pipeline_numbered(unsigned long number, const struct xgpu_pipeline_key *key)
+{
+	uint32_t id = (uint32_t)(number & 0xffff);
+
+	if (!stream.open)
+		return FALSE;
+	/* (a number of this round of them is its key's alone: numbering_find) */
+	if (!id || number >> 16 != stream.pipeline_keys.rounds || id >= stream.pipeline_keys.next)
+		return xgpu_backend_pipeline(key);
+	if (id != stream.pipeline)
+	{
+		/* (as xgpu_backend_pipeline finds it: the last key found, and bound) */
+		stream.pipeline_keys.last = id;
+		memcpy(&stream.last_key, key, sizeof(*key));
+		record_value(XGPU_STREAM_PIPELINE, id);
+		stream.pipeline = id;
+	}
+	return __atomic_load_n(&stream.pipelines[id], __ATOMIC_RELAXED) != XGPU_STREAM_PIPELINE_FAILED;
+}
+
+unsigned long xgpu_backend_sent_serial(void)
+{
+	return sent_forgotten;
+}
+
+BOOL xgpu_backend_pipeline_usable(void)
+{
+	return stream.open && stream.pipeline &&
+		__atomic_load_n(&stream.pipelines[stream.pipeline], __ATOMIC_RELAXED) != XGPU_STREAM_PIPELINE_FAILED;
+}
+
 unsigned long xgpu_backend_pipeline_number(void)
 {
 	/* (XGPU_STREAM_PIPELINES: 14 bits) */
 	return (unsigned long)stream.pipeline | (unsigned long)stream.pipeline_keys.rounds << 16;
+}
+
+unsigned long xgpu_backend_pipelines_defined(void)
+{
+	/* (numbers 1 to limit - 1 each round) */
+	const struct numbering *keys = &stream.pipeline_keys;
+
+	if (!keys->next)
+		return 0;
+	return (unsigned long)(keys->rounds - keys->begun) * (unsigned long)(keys->limit - 1u) +
+		(unsigned long)(keys->next - 1u);
 }
 
 static void dynamic_state_describe(const struct xgpu_dynamic_state *dynamic, struct xgpu_stream_dynamic_state *wire)
@@ -1572,6 +1823,19 @@ static void dynamic_state_describe(const struct xgpu_dynamic_state *dynamic, str
 	wire->stencil_reference = (uint32_t)dynamic->stencil_reference;
 	wire->depth_bias[0] = dynamic->depth_bias[0];
 	wire->depth_bias[1] = dynamic->depth_bias[1];
+}
+
+/* (a piece of the uniforms: 16 bytes but the last, compared in place
+rather than by a call for each) */
+static BOOL piece_equal(const unsigned char *now, const unsigned char *had, uint32_t bytes)
+{
+	uint64_t a[2], b[2];
+
+	if (bytes != 16)
+		return !memcmp(now, had, bytes);
+	__builtin_memcpy(a, now, 16);
+	__builtin_memcpy(b, had, 16);
+	return ((a[0] ^ b[0]) | (a[1] ^ b[1])) == 0;
 }
 
 void xgpu_backend_draw_state(const struct xgpu_dynamic_state *dynamic, const struct xgpu_draw_uniforms *uniforms,
@@ -1604,7 +1868,7 @@ void xgpu_backend_draw_state(const struct xgpu_dynamic_state *dynamic, const str
 			uint32_t offset = piece * 16;
 			uint32_t bytes = sizeof(stream.uniforms) - offset < 16 ? sizeof(stream.uniforms) - offset : 16;
 
-			if (!stream.uniforms_sent || memcmp(now + offset, had + offset, bytes))
+			if (!stream.uniforms_sent || !piece_equal(now + offset, had + offset, bytes))
 			{
 				pieces[piece / 32] |= 1u << (piece % 32);
 				size += 16;
@@ -1944,8 +2208,8 @@ void xgpu_backend_draw_indexed(int primitive, const WORD *indices, unsigned long
 	record_body->indices = carry_one(&place, indices, bytes);
 }
 
-void xgpu_backend_draw_immediate(int primitive, const float *vertices, unsigned long count, unsigned long written,
-	const float (*attributes)[4], const WORD *indices, unsigned long index_count)
+static void draw_immediate(int primitive, const float *vertices, BOOL vertices_packed, unsigned long count,
+	unsigned long written, const float (*attributes)[4], const WORD *indices, unsigned long index_count)
 {
 	struct xgpu_stream_draw_immediate *record_body;
 	uint32_t registers = (uint32_t)written & 0xffff;
@@ -1984,16 +2248,23 @@ void xgpu_backend_draw_immediate(int primitive, const float *vertices, unsigned 
 	{
 		float *values = packed ? packed : (float *)place;
 
-		for (vertex = 0; vertex < count; vertex++)
+		if (vertices_packed)
 		{
-			int reg;
-
-			for (reg = 0; reg < XGPU_VERTEX_ATTRIBUTE_COUNT; reg++)
+			memcpy(values, vertices, vertex_bytes);
+		}
+		else
+		{
+			for (vertex = 0; vertex < count; vertex++)
 			{
-				if (registers & (1u << reg))
+				int reg;
+
+				for (reg = 0; reg < XGPU_VERTEX_ATTRIBUTE_COUNT; reg++)
 				{
-					memcpy(values, vertices + (vertex * XGPU_VERTEX_ATTRIBUTE_COUNT + reg) * 4, 16);
-					values += 4;
+					if (registers & (1u << reg))
+					{
+						memcpy(values, vertices + (vertex * XGPU_VERTEX_ATTRIBUTE_COUNT + reg) * 4, 16);
+						values += 4;
+					}
 				}
 			}
 		}
@@ -2010,6 +2281,20 @@ void xgpu_backend_draw_immediate(int primitive, const float *vertices, unsigned 
 		}
 	}
 	record_body->indices = carry_one(&place, indices, index_bytes);
+}
+
+void xgpu_backend_draw_immediate(int primitive, const float *vertices, unsigned long count, unsigned long written,
+	const float (*attributes)[4], const WORD *indices, unsigned long index_count)
+{
+	draw_immediate(primitive, vertices, FALSE, count, written, attributes, indices, index_count);
+}
+
+/* (the same record: the vertices already packed, the decals' kept from
+frame to frame: rasterizer_xbox_decals.c) */
+void xgpu_backend_draw_immediate_packed(int primitive, const float *vertices, unsigned long count,
+	unsigned long written, const float (*attributes)[4], const WORD *indices, unsigned long index_count)
+{
+	draw_immediate(primitive, vertices, TRUE, count, written, attributes, indices, index_count);
 }
 
 /* ---------- visibility tests */
@@ -2071,6 +2356,15 @@ void xgpu_backend_frame_end(void)
 	record_body = record(XGPU_STREAM_FRAME_END, sizeof(*record_body));
 	record_body->input_low = (uint32_t)input;
 	record_body->input_high = (uint32_t)(input >> 32);
+#ifndef XGPU_STREAM_TEST
+	/* (from here to the frame cap's sleep's end the game's thread waits for
+	the host and the display and touches nothing of the game: a host of a
+	network game reads its datagrams meanwhile on a thread of its own,
+	network_receive.c) */
+	network_receive_frame_wait_begin();
+	if (network_latency_trace_on)
+		network_latency_trace_frame_committed();
+#endif
 	commit(XGPU_STREAM_SUBMIT_FRAME);
 #ifndef XGPU_STREAM_TEST
 	/* (the deleted images' pixels freed once no frame in flight reads them) */
@@ -2097,6 +2391,7 @@ void xgpu_backend_frame_end(void)
 		stream.waited_nanoseconds += swapped;
 		stream.capped_nanoseconds += swapped;
 	}
+	network_receive_frame_wait_end();
 #endif
 }
 
@@ -2248,6 +2543,32 @@ void xgpu_backend_dynamic_lights_halos(xgpu_target color, xgpu_target depth, int
 	stream_finite(&record_body->halos[0][0], (unsigned long)count * 2 * 4, "dynamic light glow value", 0);
 }
 
+_Static_assert(sizeof(struct xgpu_rt_shadow_caster) == sizeof(struct xgpu_stream_rt_shadow_caster) &&
+	XGPU_RT_SHADOWS_CASTERS == XGPU_STREAM_RT_SHADOWS_CASTERS, "a ray-traced shadow's caster (xgpu_stream.h)");
+
+void xgpu_backend_rt_shadows(xgpu_target color, xgpu_target depth, const struct xgpu_rt_shadows *shadows)
+{
+	struct xgpu_stream_rt_shadows *record_body;
+	int count = shadows->count;
+
+	if (!stream.open)
+		return;
+	if (count < 0)
+		count = 0;
+	if (count > XGPU_RT_SHADOWS_CASTERS)
+		count = XGPU_RT_SHADOWS_CASTERS;
+	record_body = record(XGPU_STREAM_RT_SHADOWS, sizeof(*record_body) + count * sizeof(record_body->casters[0]));
+	record_body->color = color;
+	record_body->depth = depth;
+	record_body->count = count;
+	memcpy(record_body->projection, shadows->projection, sizeof(record_body->projection));
+	memcpy(record_body->viewport_scale, shadows->viewport_scale, sizeof(record_body->viewport_scale));
+	memcpy(record_body->viewport_offset, shadows->viewport_offset, sizeof(record_body->viewport_offset));
+	memcpy(record_body->camera, shadows->camera, sizeof(record_body->camera));
+	record_body->screen_offset = shadows->screen_offset;
+	memcpy(record_body->casters, shadows->casters, count * sizeof(record_body->casters[0]));
+}
+
 /* ---------- the VR mode */
 
 BOOL xgpu_backend_vr_supported(void)
@@ -2271,23 +2592,30 @@ void xgpu_backend_prepare(void)
 	stream.preparing = TRUE;
 }
 
+unsigned long xgpu_backend_frame_extra_pending(void)
+{
+	return frame_extra_frames;
+}
+
 void xgpu_backend_frame_extra(unsigned long microseconds)
 {
 	frame_extra_microseconds = (uint32_t)microseconds;
 	frame_extra_frames = microseconds ? XGPU_FRAME_EXTRA_FRAMES : 0;
 }
 
-void xgpu_backend_loading_art(const unsigned char *rgba)
+void xgpu_backend_loading_art(const unsigned char *rgba, const unsigned char *source)
 {
 	struct xgpu_stream_value *body;
-	uint32_t bytes = rgba ? XGPU_STREAM_LOADING_ART_BYTES : 0;
+	uint32_t bytes = rgba ? XGPU_STREAM_LOADING_ART_BYTES + (source ? XGPU_STREAM_LOADING_ART_SOURCE_BYTES : 0) : 0;
 
 	if (!stream.open)
 		return;
 	body = record(XGPU_STREAM_LOADING_ART, sizeof(*body) + bytes);
 	body->value = bytes;
 	if (bytes)
-		memcpy(body + 1, rgba, bytes);
+		memcpy(body + 1, rgba, XGPU_STREAM_LOADING_ART_BYTES);
+	if (bytes > XGPU_STREAM_LOADING_ART_BYTES)
+		memcpy((unsigned char *)(body + 1) + XGPU_STREAM_LOADING_ART_BYTES, source, XGPU_STREAM_LOADING_ART_SOURCE_BYTES);
 	synchronous();
 }
 

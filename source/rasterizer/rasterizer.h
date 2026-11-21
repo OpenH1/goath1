@@ -609,8 +609,9 @@ void rasterizer_environment_shadows_end(
 drawn into it if begin returns TRUE; after each caster's models, its region
 (NONE: its shadow was drawn into the map as before, its receivers to be
 drawn now); after every caster, the chain over the atlas; then each
-region's receivers, after receive */
-#define RASTERIZER_SHADOW_ATLAS_REGIONS 49
+region's receivers, after receive; the regions a frame has at most (of
+every page, of every size) */
+#define RASTERIZER_SHADOW_ATLAS_REGIONS 256
 boolean rasterizer_shadow_atlas_begin(
 	void);
 short rasterizer_shadow_atlas_caster_end(
@@ -620,6 +621,20 @@ void rasterizer_shadow_atlas_convolve(
 void rasterizer_shadow_atlas_receive(
 	short region);
 void rasterizer_shadow_atlas_end(
+	void);
+/* port: the retained casters (rasterizer_xbox_shadows.c): the view drawing
+the frame's shadows, before the atlas begins; after a caster begins, whether
+its models are walked for their draws' hash alone, and after that walk,
+whether its region is kept (else its models are walked again, drawn) */
+void rasterizer_shadow_retained_view(
+	long view);
+boolean rasterizer_shadow_retained_fingerprinting(
+	void);
+boolean rasterizer_shadow_retained_caster(
+	void);
+/* port: (as above) what the atlas's regions hold forgotten: a new map's
+objects and tags are not the old one's */
+void rasterizer_shadow_retained_new_map(
 	void);
 void rasterizer_environment_diffuse_textures_end(
 	void);
@@ -873,6 +888,10 @@ void rasterizer_detail_objects_port_enumerate(
 /* port: (rasterizer_xbox_decals.c) */
 void rasterizer_decals_port_enumerate(
 	short stencil_mode);
+/* port: the game state read back over: nothing kept for drawing its decals
+is theirs now (rasterizer_xbox_decals.c) */
+void rasterizer_decals_port_game_state_rewritten(
+	void);
 /* port: (rasterizer_transparent_geometry.c) */
 void rasterizer_transparent_geometry_flush(
 	long room);

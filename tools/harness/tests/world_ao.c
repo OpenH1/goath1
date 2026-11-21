@@ -8,6 +8,7 @@ test_world_sdf.py and test_world_proxies.py; the shading's arithmetic,
 tools/test_world_ao_light.py. */
 
 #include "harness.h"
+#include "rt_shadows.h"
 #include "world_ao.h"
 #include "world_cascades.h"
 #include "world_proxies.h"
@@ -68,14 +69,28 @@ int halo_world_ao_prepass_begin(void)
 	return 0;
 }
 
+int halo_world_ao_prepass_walked(void)
+{
+	return 0;
+}
+
 void halo_world_ao_prepass_end(short x0, short y0, short x1, short y1, float const camera[4][4],
 	float const cascades[4][4], unsigned long frame, int history)
 {
 	(void)x0; (void)y0; (void)x1; (void)y1; (void)camera; (void)cascades; (void)frame; (void)history;
 }
 
+/* (display.shadows "ray_traced", where the backend has ray queries:
+rt_shadows.c's, tested apart: test_rt_shadows.py) */
+static int shadows_on, scene_loads;
+
+int rt_shadows_on(void)
+{
+	return shadows_on;
+}
+
 /* the parts (their stubs' behaviour: the real ones are tested apart) */
-void world_scene_map_loaded(void) {}
+void world_scene_map_loaded(void) { scene_loads++; }
 void world_scene_map_unloaded(void) {}
 void world_scene_bsp_switched(short bsp_index) { (void)bsp_index; }
 void world_scene_frame_begin(void) { scene_frames++; }
@@ -262,11 +277,6 @@ void world_sdf_upload(struct world_sdf_volume const *uploaded)
 /* (the distance-field scene: world_cascades.c's, tested apart; here, how
 many frames it was updated in) */
 static int scene_updates;
-float world_sdf_sample(struct world_sdf_volume const *sampled, float const point[3])
-{
-	(void)sampled;
-	return point[2];
-}
 unsigned long long SDL_GetTicksNS(void)
 {
 	return 0;
@@ -290,15 +300,11 @@ void world_cascades_free(struct world_cascades *cascades)
 {
 	(void)cascades;
 }
-void world_cascades_update(struct world_cascades *cascades, float const camera[3], int structure_changed,
-	world_cascades_structure structure, void *context, struct world_cascades_object const *objects, long object_count,
-	struct world_proxy const *shapes)
+void world_cascades_update(struct world_cascades *cascades, float const camera[3],
+	struct world_cascades_object const *objects, long object_count, struct world_proxy const *shapes)
 {
 	(void)cascades;
 	(void)camera;
-	(void)structure_changed;
-	(void)structure;
-	(void)context;
 	(void)objects;
 	(void)object_count;
 	(void)shapes;
@@ -471,8 +477,10 @@ static void rays_case(void)
 	backend_ready = 1;
 	CHECK(world_ao_mode() == (WORLD_AO_PROXIES | WORLD_AO_FIELD), "without ray queries: %d", world_ao_mode());
 	CHECK(world_ao_mode() == (WORLD_AO_PROXIES | WORLD_AO_FIELD) && logged == 1, "said once: %d", logged);
+	scene_updates = 0;
 	world_ao_window_begin(0, 0, camera);
 	CHECK(rt_frames == 0, "the ray-traced scene's frame without ray queries");
+	CHECK(scene_updates == 1, "the distance-field scene without ray queries: %d", scene_updates);
 	world_ao_object_begin(200);
 	CHECK(object_rays_owner == 0, "an owner without ray queries: %lu", object_rays_owner);
 	world_ao_window_end();
@@ -481,6 +489,14 @@ static void rays_case(void)
 	world_ao_frame_begin();
 	world_ao_window_begin(0, 0, camera);
 	CHECK(rt_frames == 1, "the scene's frame: %lu", rt_frames);
+	/* (the rays read no cascades: none found, every one not ready) */
+	CHECK(scene_updates == 1, "the distance-field scene with ray queries: %d", scene_updates);
+	{
+		int cascade;
+
+		for (cascade = 0; cascade < WORLD_CASCADES; cascade++)
+			CHECK(world_ao.cascades[cascade][3] == 0.0f, "cascade %d named ready with ray queries", cascade);
+	}
 	world_ao_object_begin(200);
 	CHECK(object_owner == 1 && object_rays_owner == 201, "%d %lu", object_owner, object_rays_owner);
 	world_ao_object_begin(-1);
@@ -495,11 +511,44 @@ static void rays_case(void)
 	world_ao_frame_begin();
 	world_ao_window_begin(0, 0, camera);
 	CHECK(rt_frames == 1, "the scene's frame with \"world\": %lu", rt_frames);
+	CHECK(scene_updates == 2, "the distance-field scene with \"world\" again: %d", scene_updates);
 	world_ao_object_begin(200);
 	CHECK(object_rays_owner == 0, "an owner with \"world\": %lu", object_rays_owner);
 	world_ao_window_end();
 	world_ao_map_unloaded();
 	CHECK(rt_unloads == 1, "the scene let go of at the map's end: %d", rt_unloads);
+}
+
+/* display.shadows "ray_traced" with this setting off: the frame's objects
+found and the ray-traced scene built for it, nothing of the occlusion's;
+off again, nothing */
+static void shadows_case(void)
+{
+	float const camera[3] = { 0.0f, 0.0f, 0.0f };
+
+	setting = "off";
+	changes++;
+	shadows_on = 1;
+	world_ao_map_loaded();
+	CHECK(scene_loads == 1, "the scene found as the map loads: %d", scene_loads);
+	world_ao_frame_begin();
+	CHECK(scene_frames == 1 && sdf_frames == 0, "the frame's objects: %d %d", scene_frames, sdf_frames);
+	world_ao_window_begin(0, 0, camera);
+	CHECK(windows_handed == 0 && rt_frames == 0, "the occlusion's window: %d %lu", windows_handed, rt_frames);
+	world_ao_window_end();
+	world_ao_rt_frame();
+	CHECK(rt_frames == 1, "the ray-traced scene's frame: %lu", rt_frames);
+	world_ao_map_unloaded();
+	CHECK(rt_unloads == 1, "the scene let go of at the map's end: %d", rt_unloads);
+	/* (on in play: the map's scene found at the next frame, once) */
+	world_ao_frame_begin();
+	world_ao_frame_begin();
+	CHECK(scene_loads == 2 && scene_frames == 3, "on in play: %d %d", scene_loads, scene_frames);
+	/* (off: nothing) */
+	shadows_on = 0;
+	world_ao_map_loaded();
+	world_ao_frame_begin();
+	CHECK(scene_loads == 2 && scene_frames == 3, "off: %d %d", scene_loads, scene_frames);
 }
 
 static void test_case(void)
@@ -537,6 +586,8 @@ int main(int argc, char **argv)
 		test_case();
 	else if (!strcmp(name, "rays"))
 		rays_case();
+	else if (!strcmp(name, "shadows"))
+		shadows_case();
 	else
 		return 2;
 	return 0;

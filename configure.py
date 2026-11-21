@@ -11,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from tools import ninja_syntax
+from tools.vulkan_build import DLSS_ADDON_TARGETS
 from tools.android_build import android_configure_inputs, generate_android_build
 from tools.build_common import check_profile_options, common_configure_inputs, generate_msvc_semantics
 from tools.guest_toolchain import LLVM_VERSION, default_cache
@@ -101,6 +102,14 @@ parser.add_argument(
     type=str,
     help="clang (with the x32 target) for `ninja linux_x86_64`, the 64-bit x86 Linux build, its guest and its host "
     "(default: --guest-llvm's for the guest, clang for the host)",
+)
+parser.add_argument(
+    "--dlss",
+    action="store_true",
+    help="NVIDIA DLSS (display.temporal_aa \"dlss\") in the Linux x86-64 and Windows builds: configure.py "
+    "downloads NVIDIA's DLSS SDK (not open source: its LICENSE.txt) and builds the module beside the game that "
+    "alone links it "
+    "(libopenh1_dlss.so, openh1_dlss.dll), with the DLSS runtime staged beside it (docs/temporal-aa.md)",
 )
 parser.add_argument(
     "--vr",
@@ -211,6 +220,7 @@ sln = SimpleNamespace(
     linux_x86_64_cc=args.linux_x86_64_cc,
     windows_guest=args.windows_guest,
     port_vr=args.vr,
+    port_dlss=args.dlss,
     macos_cc=args.macos_cc,
     macos_guest_cc=args.macos_guest_cc,
     macos_bundle_id=args.macos_bundle_id,
@@ -247,6 +257,9 @@ generate_linux_guest_builds(n, sln)
 generate_windows_build(n, sln)
 generate_macos_build(n, sln)
 generate_ios_build(n, sln)
+# (configure.py --dlss: ninja dlss_addon, each build's NVIDIA DLSS add-on, tools/dlss_addon.py)
+if DLSS_ADDON_TARGETS:
+    n.build(outputs="dlss_addon", rule="phony", inputs=DLSS_ADDON_TARGETS)
 
 n.comment("Reconfigure on change")
 n.rule(

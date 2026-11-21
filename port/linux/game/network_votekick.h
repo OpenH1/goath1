@@ -46,6 +46,8 @@ struct network_votekick_status
 	boolean voted;
 	boolean voted_no;
 	boolean may_vote;
+	/* the vote's serial, which a choice in it names (the host's: 1 to 255) */
+	short serial;
 };
 
 /* ---------- prototypes/NETWORK_VOTEKICK.C */
@@ -54,8 +56,8 @@ struct network_votekick_status
 boolean network_votekick_available(void);
 /* the vote running; FALSE for none */
 boolean network_votekick_get_status(struct network_votekick_status *status);
-/* this machine votes against the player (absolute index): starts a vote,
-or votes in the one running; the host answers on the console */
+/* this machine votes against the player (absolute index): yes in the vote
+running against them, else starts one; the host answers on the console */
 boolean network_votekick_request(short player_index);
 /* this machine starts a vote to end the game (the chat's "!endgame") */
 boolean network_vote_end_game(void);

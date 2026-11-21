@@ -20,7 +20,7 @@ FUNCTIONS = ('network_game_server_client_machine_is_joined_to_game', 'network_ga
 NEGATIVE_CONTROLS = {
     'held-kept': (('\t\t\t\tnetwork_game_server_discard_held_players(client->machine_index);\n', ''),
                   'network_game_server_remove_client_machine_from_game', 'index-taken-again'),
-    'pending-kept': (('network_game_server_map_pending[client->machine_index] = FALSE;', ';'),
+    'pending-kept': (('network_game_server_machine_event(&server->client_machines[i], _machine_event_drop);', ';'),
                      'network_game_server_remove_client_machine_from_game', 'gone-while-held'),
     'restore-unchecked': (('||\n\t\t\t!network_game_server_client_machine_is_joined_to_game(server, '
                            '&server->client_machines[player.machine_index])', ''),
@@ -53,11 +53,13 @@ def generated(fault=None, faulty_function=None):
         config += f'#define {name} {constant(limits, name)}\n'
     config += f'#define MILLISECONDS_PER_SECOND {constant(read("source/cseries/cseries.h"), "MILLISECONDS_PER_SECOND")}\n'
     config += f'#define MAXIMUM_LOCAL_PLAYERS {constant(read("source/game/players.h"), "MAXIMUM_LOCAL_PLAYERS")}\n'
-    for member in ('_network_client_machine_validated_bit', '_network_game_server_state_pregame'):
+    for member in ('_network_client_machine_precached_bit', '_network_game_server_state_pregame'):
         config += enum_with(server, member) + '\n'
     config += enum_with(read('source/networking/network_messages.h'), '_message_server_remove_player_ingame') + '\n'
     messages = structure(server, 'message_server_remove_player_ingame') + '\n'
-    code = ''
+    # (the machines' states: network_game_server_machine_event)
+    code = server[server.index("/* ---------- each client machine's state"):
+                  server.index("/* ---------- (the client machines' states end")] + '\n'
     for name in FUNCTIONS:
         text = function(server, name)
         if fault and name == faulty_function:

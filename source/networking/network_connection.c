@@ -213,6 +213,7 @@ symbols in this file:
 #include "memory/circular_queue.h"
 #include "network_connection.h"
 #include "networking/network_messages.h" /* port: NETWORK_GAME_CLIENT_PORT */
+#include "network_latency_trace.h" /* port: port/linux/game/network_latency_trace.c */
 
 /* ---------- constants */
 
@@ -705,6 +706,8 @@ static boolean network_client_unreliable_connection_read(
 				source_address->address_length = IPV4_ADDRESS_LENGTH;
 			}
 			*buffer_size = message_size;
+			/* port: when it came and was read, for debug.network_latency_trace */
+			NETWORK_LATENCY_TRACE(network_latency_trace_datagram_dequeued(connection, TRUE));
 			return TRUE;
 		}
 		else
@@ -716,6 +719,7 @@ static boolean network_client_unreliable_connection_read(
 				message_size);
 		}
 		circular_queue_reset(connection->unreliable_incoming_queue);
+		NETWORK_LATENCY_TRACE(network_latency_trace_queue_reset(connection));
 	}
 
 	return FALSE;
@@ -1380,6 +1384,8 @@ boolean network_connection_read(
 {
 	boolean result;
 
+	/* port: (a message of a stream has no datagram's times: debug.network_latency_trace) */
+	NETWORK_LATENCY_TRACE(network_latency_trace_datagram_dequeued(connection, FALSE));
 	if (TEST_FLAG(connection->flags, _connection_create_server_bit))
 	{
 		return network_client_unreliable_connection_read(connection, buffer, buffer_size, source_address);
@@ -1872,6 +1878,9 @@ static boolean network_connection_read_unreliable_endpoint(
 				connection->unreliable_incoming_queue,
 				buffer,
 				buffer_size);
+			/* port: (when it came and was read: debug.network_latency_trace) */
+			if (success)
+				NETWORK_LATENCY_TRACE(network_latency_trace_datagram_queued(connection));
 			match_vassert(
 				"c:\\halo\\SOURCE\\networking\\network_connection.c",
 				0x279,

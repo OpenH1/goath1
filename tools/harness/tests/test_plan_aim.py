@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from harness import CHECK_FAILED, build, enum_with, function, mutated, read, run
 
 SOURCE = "port/linux/game/network_distributed.c"
-CASES = ["aimed", "legacy-sends", "unaimed", "scoped", "substep-due"]
+CASES = ["aimed", "legacy-sends", "unaimed", "scoped", "substep-due", "reacts", "budget"]
 
 # a fault in the plan and the case that must catch it
 NEGATIVE_CONTROLS = {
@@ -36,21 +36,36 @@ NEGATIVE_CONTROLS = {
     # an OpenCE player's (the host runs no sub-steps of theirs as they come)
     "substep-opence": (("(player_machine == NONE || distributed_prediction_at_tick_start(player_index))", "TRUE"),
                        "substep-due"),
+    # an unseen player near a client's taken for one it cannot react to (by the plan)
+    "unseen-near-deferred": (("reacts = visible || nearest < MIDDLE_PLAYER_DISTANCE * MIDDLE_PLAYER_DISTANCE;",
+                              "reacts = visible;"), "reacts"),
+    # every player taken for one the client can react to
+    # the budget's stretch on players the client can react to too
+    "budget-on-seen": (("if (!own && placed[player_index] && !reacts && stretch > 1)",
+                        "if (!own && placed[player_index] && stretch > 1)"), "budget"),
+    # the stretch unbounded: the far and unseen left out ever longer
+    "budget-unbounded": (("if (*balance < 0 && *stretch < CLIENT_BUDGET_MAXIMUM_STRETCH)", "if (*balance < 0)"),
+                         "budget"),
+    # never back once over budget
+    "budget-stuck": (("else if (*balance > capacity / 2 && *stretch > 1)", "else if (FALSE)"), "budget"),
+    "always-reacts": (("reacts = visible || nearest", "reacts = TRUE || visible || nearest"), "reacts"),
 }
 
 
 def generated(fault=None):
     source = read(SOURCE)
     code = "\n".join(function(source, name) for name in
-                     ("distributed_aimed_period", "distributed_host_plan_players", "distributed_substep_state_due"))
+                     ("distributed_pvs_sees", "distributed_machine_sees_cluster", "distributed_reacts_at",
+                      "distributed_budget_tick", "distributed_budget_stretch",
+                      "distributed_aimed_period", "distributed_host_plan_players", "distributed_substep_state_due"))
     if fault:
         code = mutated(code, *fault)
-    config = "#define MAX(a, b) ((a) > (b) ? (a) : (b))\n"
+    config = "#define MAX(a, b) ((a) > (b) ? (a) : (b))\n#define TICKS_PER_SECOND 30\n"
     for name in ("NEAR_PLAYER_DISTANCE", "MIDDLE_PLAYER_DISTANCE", "FAR_PLAYER_DISTANCE", "AIMED_AT_COSINE",
                  "SCOPED_AT_COSINE"):
         config += f"#define {name} " + re.search(rf"^#define {name}\s+(\S+)", source, re.M)[1] + "\n"
-    for member in ("HIDDEN_PLAYER_PERIOD_TICKS", "_distributed_send_state_bit"):
-        config += enum_with(source, member) + "\n"
+    config += enum_with(read("port/linux/game/network_distributed.h"), "HIDDEN_PLAYER_PERIOD_TICKS") + "\n"
+    config += enum_with(source, "_distributed_send_state_bit") + "\n"
     config += enum_with(read("port/linux/game/network_legacy.h"), "_distributed_unit_alive_bit") + "\n"
     config += re.search(r"static (struct distributed_viewer\s*\{.*?\n\} distributed_viewers\[.*?\];)", source,
                         re.S)[1] + "\n"

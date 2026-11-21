@@ -204,9 +204,6 @@ enum
 	this many, and no more */
 	RELAY_OFFER_INTERVAL = 2000,
 	RELAY_OFFERS_UNANSWERED = 3,
-	/* a peer whose relay is lost, and none other paired, has its relays
-	bound again this often */
-	RELAY_REBIND_INTERVAL = 2000,
 	/* while relayed, the peer's own addresses are tried again this often
 	(a direct path may open: a router's port forwarded), for this long, then
 	this seldom */
@@ -235,11 +232,22 @@ enum
 	relays for its game's players itself; then a count, and each relay's
 	address and port), which builds before relays pass over */
 	_packet_relays,
+	/* a peer reached: the relays this machine would keep a standby on for
+	the session (_relay_offer_*, then an offer as p2p_relay_offer_write
+	makes it, signalling's), which builds before pass over (they keep no
+	standby: their sessions get the relays they had) */
+	_packet_relay_offer,
 };
 
 enum
 {
 	_relays_server_relays = 1,
+};
+
+enum
+{
+	/* the sender heard the peer's offer already (no answer wanted) */
+	_relay_offer_answer = 1,
 };
 
 /* the messages of a stream, inside KCP */
@@ -304,7 +312,7 @@ struct peer
 	/* relays (p2p_relay.c): the path it is reached by (directly, or a
 	relay's attempt); the relays tried for it (both machines' offers);
 	whether it offered any, the offers it sent and was sent; when this
-	machine last offered, bound its relays again, and tried its own
+	machine last offered, and tried its own
 	addresses while relayed; the address a direct path was heard from while
 	relayed; the times a dedicated server told it of its relays */
 	struct p2p_relay_path path;
@@ -314,12 +322,18 @@ struct peer
 	int relay_offers_sent;
 	struct p2p_relay_offers_heard relay_offers_heard;
 	unsigned long relay_offer_time;
-	unsigned long relay_rebind_time;
 	unsigned long direct_retry_time;
 	struct p2p_candidate direct;
 	unsigned long relayed_time;
 	int relays_told;
 	unsigned long relays_told_time;
+	/* its relays offered through the tunnel once reached (the standbys
+	both keep): how many times, last when; whether its own offer came,
+	and when it may next be taken */
+	int tunnel_offers_sent;
+	unsigned long tunnel_offer_time;
+	int tunnel_offer_heard;
+	struct p2p_relay_offers_heard tunnel_offers_heard;
 };
 
 /* a UDP stand-in for one port of a peer */
@@ -613,8 +627,10 @@ static int has_identifier;
 static void relay_corrupt(unsigned char *packet, int *size);
 static void relay_peer_reached(struct peer *peer, int via);
 static void relay_path_changed(struct peer *peer, int via, unsigned long address, unsigned short port);
-static void update_relayed_peer(struct peer *peer);
+static void update_peer_paths(struct peer *peer);
 static void relays_told_received(struct peer *peer, const unsigned char *inner, int size);
+static void relay_tunnel_offer_received(struct peer *peer, const unsigned char *inner, int size);
+static int relay_own_offer(const struct peer *peer, struct p2p_candidate *relays);
 static int relayed_peer_address(const struct peer *peer, struct p2p_candidate *address);
 /* halo --relay's run (p2p_relay_run): its log is the terminal's alone */
 static int relay_standalone;
@@ -1545,13 +1561,8 @@ static void update_peers(void)
 		{
 			if (elapsed(peer->heard_time, PEER_TIMEOUT))
 				drop_peer(peer, "lost the connection");
-			else if (peer->path.carrier || peer->relay_count)
-				update_relayed_peer(peer);
-			else if (elapsed(peer->sent_time, PING_INTERVAL))
-			{
-				peer_ping(peer, &peer->endpoint);
-				peer->sent_time = p2p_now();
-			}
+			else
+				update_peer_paths(peer);
 		}
 		else if (elapsed(peer->offered_time, PUNCH_TIMEOUT))
 		{
@@ -2921,6 +2932,9 @@ static int tunnel_received(unsigned char *packet, int size, const struct sockadd
 	case _packet_relays:
 		relays_told_received(peer, inner, inner_size);
 		break;
+	case _packet_relay_offer:
+		relay_tunnel_offer_received(peer, inner, inner_size);
+		break;
 	}
 	return 1;
 }
@@ -4102,23 +4116,87 @@ static void relay_bind_all(struct peer *peer)
 		p2p_relay_attempt_start(peer->identifier, peer->secret, relay_side(peer), &peer->relays[index], p2p_now());
 }
 
+/* this machine's relays, offered to a peer reached (through the tunnel:
+signalling's offers are for peers not reached yet), so that both keep a
+standby on one both know, whatever path met them; answer: the peer's offer
+was heard (it wants none back) */
+static void relay_tunnel_offer(struct peer *peer, int answer)
+{
+	struct p2p_candidate relays[P2P_RELAY_OFFERED];
+	unsigned char inner[2 + P2P_RELAY_OFFER_MAXIMUM_SIZE];
+	int count, size;
+
+	if (peer->probe || !peer->connected || !config_boolean("network.use_relays"))
+		return;
+	count = relay_own_offer(peer, relays);
+	p2p_relay_merge(peer->relays, &peer->relay_count, relays, count);
+	inner[0] = _packet_relay_offer;
+	inner[1] = (unsigned char)(answer ? _relay_offer_answer : 0);
+	size = p2p_relay_offer_write(identifier, relay_side(peer), relays, count, peer->secret, inner + 2);
+	peer_send(peer, inner, 2 + size);
+	if (!answer)
+	{
+		peer->tunnel_offers_sent++;
+		peer->tunnel_offer_time = p2p_now();
+	}
+}
+
+static void relay_tunnel_offer_received(struct peer *peer, const unsigned char *inner, int size)
+{
+	struct p2p_candidate relays[P2P_RELAY_OFFERED];
+	struct p2p_candidate usable[P2P_RELAY_OFFERED];
+	int count, index, usable_count = 0;
+
+	if (size < 2 + P2P_IDENTIFIER_SIZE || peer->probe || !config_boolean("network.use_relays") ||
+		memcmp(inner + 2, peer->identifier, P2P_IDENTIFIER_SIZE))
+	{
+		return;
+	}
+	count = p2p_relay_offer_read(inner + 2, size - 2, !relay_side(peer), peer->secret, relays);
+	if (count < 0 || !p2p_relay_offer_take(&peer->tunnel_offers_heard, p2p_now()))
+		return;
+	for (index = 0; index < count; index++)
+	{
+		if (candidate_usable(&relays[index]))
+			usable[usable_count++] = relays[index];
+	}
+	p2p_relay_merge(peer->relays, &peer->relay_count, usable, usable_count);
+	if (!peer->tunnel_offer_heard)
+	{
+		p2p_log("Internet play: %s %s keeps a standby path: %d relay%s known for its session", peer_kind_text(peer),
+			peer->name, peer->relay_count, peer->relay_count == 1 ? "" : "s");
+	}
+	peer->tunnel_offer_heard = 1;
+	peer->relay_offered = 1;
+	if (!(inner[1] & _relay_offer_answer))
+		relay_tunnel_offer(peer, 1);
+}
+
+/* whether a peer keeps no standby (an older build, or one not using relays:
+its offer never came through the tunnel, though this machine's went a few
+times; a probe's, which is no session) */
+static int peer_paths_legacy(const struct peer *peer)
+{
+	return peer->probe || (!peer->tunnel_offer_heard && (!config_boolean("network.use_relays") ||
+		(peer->tunnel_offers_sent >= RELAY_OFFERS_UNANSWERED && elapsed(peer->tunnel_offer_time, RELAY_OFFER_INTERVAL))));
+}
+
 /* a peer reached at last (via: 0 directly, else a relay's attempt + 1) */
 static void relay_peer_reached(struct peer *peer, int via)
 {
 	memset(&peer->path, 0, sizeof(peer->path));
 	peer->path.carrier = via;
 	peer->path.carrier_heard = p2p_now();
-	if (!via)
+	/* (every relay stays, paired or not: those that pair become the
+	standbys to fail over to, trimmed to P2P_RELAY_STANDBYS. An older
+	build's peer keeps none, and its are let go once it is known not to
+	offer: update_peer_paths) */
+	if (via)
 	{
-		/* (met directly: no relay is needed) */
-		p2p_relay_forget_peer(peer->identifier, 0);
-		peer->relay_count = 0;
-		return;
+		peer->relayed_time = p2p_now();
+		peer->direct_retry_time = p2p_now();
 	}
-	/* (the relays paired too stay, to fail over to; the rest go) */
-	peer->relayed_time = p2p_now();
-	peer->direct_retry_time = p2p_now();
-	p2p_relay_forget_peer(peer->identifier, 1);
+	relay_tunnel_offer(peer, 0);
 }
 
 static void relay_path_changed(struct peer *peer, int via, unsigned long address, unsigned short port)
@@ -4144,40 +4222,64 @@ static void relay_path_changed(struct peer *peer, int via, unsigned long address
 	}
 }
 
-/* a peer that is, or was lately, reached through a relay: pinged on its
-path; its other relays tried while that one is silent, and bound again if
-none is paired; its own addresses tried now and then (a direct path may
-open); its relays released once a direct path has lasted */
-static void update_relayed_peer(struct peer *peer)
+/* a reached peer's paths (p2p_relay_paths_update): pinged on its carrier;
+while that is silent, the peer pinged through each other paired relay and
+at its own addresses, and its relays bound if none is paired; a standby
+kept warm on one relay, whatever the carrier (a direct path too dies: a
+router's reboot, a forwarding's lease lapsed); its own addresses tried now
+and then while relayed (a direct path may open). An older build's peer
+keeps no standby: its relays go once a direct path has lasted, as it lets
+its own go */
+static void update_peer_paths(struct peer *peer)
 {
 	unsigned long now = p2p_now();
 	int attempts[P2P_RELAY_PEER_RELAYS];
 	struct p2p_relay_attempt_state attempt;
-	int count, index, paired = 0;
+	int count, index, flags;
+	int legacy = peer_paths_legacy(peer);
 
-	if (p2p_relay_path_relays_done(&peer->path, now) || (!peer->path.carrier && !peer->path.direct_time))
+	/* (its offer through the tunnel again, until the peer's came) */
+	if (!peer->tunnel_offer_heard && peer->tunnel_offers_sent < RELAY_OFFERS_UNANSWERED &&
+		elapsed(peer->tunnel_offer_time, RELAY_OFFER_INTERVAL))
+	{
+		relay_tunnel_offer(peer, 0);
+	}
+	if (legacy && peer->relay_count &&
+		(p2p_relay_path_relays_done(&peer->path, now) || (!peer->path.carrier && !peer->path.direct_time)))
 	{
 		p2p_relay_forget_peer(peer->identifier, 0);
 		peer->relay_count = 0;
 		memset(&peer->path, 0, sizeof(peer->path));
 		peer->path.carrier_heard = now;
-		return;
 	}
-	count = p2p_relay_peer_attempts(peer->identifier, attempts, P2P_RELAY_PEER_RELAYS);
-	if (elapsed(peer->sent_time, PING_INTERVAL))
+	flags = p2p_relay_paths_update(&peer->path, peer->identifier, !legacy, now);
+	if (flags & P2P_RELAY_PATHS_BIND)
+		relay_bind_all(peer);
+	if (flags & P2P_RELAY_PATHS_PROBE)
 	{
-		int silent = p2p_relay_path_silent(&peer->path, now);
+		int candidate;
 
-		if (peer->path.carrier >= 0)
-			peer_ping_via(peer, &peer->endpoint, peer->path.carrier);
+		count = p2p_relay_peer_attempts(peer->identifier, attempts, P2P_RELAY_PEER_RELAYS);
 		for (index = 0; index < count; index++)
 		{
-			if (!p2p_relay_attempt(attempts[index], &attempt) || !attempt.paired)
-				continue;
-			paired++;
-			if (silent && attempts[index] + 1 != peer->path.carrier)
+			if (p2p_relay_attempt(attempts[index], &attempt) && attempt.paired &&
+				attempts[index] + 1 != peer->path.carrier)
+			{
 				peer_ping_via(peer, NULL, attempts[index] + 1);
+			}
 		}
+		/* (a direct carrier silent: its addresses too, the router may have
+		given the peer another port) */
+		if (!peer->path.carrier)
+		{
+			for (candidate = 0; candidate < peer->candidate_count; candidate++)
+				peer_ping(peer, &peer->candidates[candidate]);
+		}
+	}
+	if (elapsed(peer->sent_time, PING_INTERVAL))
+	{
+		if (peer->path.carrier >= 0)
+			peer_ping_via(peer, &peer->endpoint, peer->path.carrier);
 		/* (a direct path heard lately, while relayed: kept up, to see that
 		it lasts) */
 		if (peer->path.carrier > 0 && peer->path.direct_last && !elapsed(peer->path.direct_last, 2 * PING_INTERVAL) &&
@@ -4186,12 +4288,6 @@ static void update_relayed_peer(struct peer *peer)
 			peer_ping(peer, &peer->direct);
 		}
 		peer->sent_time = now;
-		/* (none paired, the path lost: its relays bound again) */
-		if (peer->path.carrier < 0 && !paired && elapsed(peer->relay_rebind_time, RELAY_REBIND_INTERVAL))
-		{
-			peer->relay_rebind_time = now;
-			relay_bind_all(peer);
-		}
 	}
 	/* (its own addresses, while relayed: often at first, seldom later; the
 	addresses are its own word, so not for ever often) */
@@ -4837,7 +4933,19 @@ static DWORD WINAPI upnp_thread(void *unused)
 		p2p.upnp_candidate.address = address;
 		p2p.upnp_candidate.port = external_port;
 	}
-	else if (!p2p.upnp_forwarded)
+	else if (p2p.upnp_forwarded)
+	{
+		char text[LOG_ADDRESS_SIZE];
+
+		/* (a renewal refused, or the router not answering: its forwarding
+		may be gone (a reboot), and a dead port offered sends joiners to
+		punch it and counts this NAT not strict. Withdrawn: offered no more,
+		the NAT as STUN found it, and asked for again as one never had) */
+		p2p_log("Internet play: the router no longer forwards %s (UPnP: %s): no longer offered",
+			log_address_ipv4(p2p.upnp_candidate.address, p2p.upnp_candidate.port, text, sizeof(text)), error);
+		p2p.upnp_forwarded = 0;
+	}
+	else
 	{
 		p2p_log("Internet play: UPnP: %s", error);
 	}

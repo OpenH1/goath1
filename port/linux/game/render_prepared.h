@@ -25,7 +25,14 @@ boolean render_prepared_stock_recorded(void);
 void render_prepared_stock_done(void);
 /* the walk recorded, from its preparation's beginning to its end */
 void render_prepared_record_begin(boolean mirrors);
+/* a later structure's own walk (its first frame, in its world's passes:
+render_enumerate.c) recorded into the record the map was prepared from, as a
+segment of its own beside the walks it holds, by render_prepared_record_end */
+void render_prepared_structure_begin(short structure_bsp_index, boolean mirrors);
 void render_prepared_record_end(void);
+/* the structures whose own walks the record played last holds (a bit each),
+and of those, the ones walked through the mirrors' window */
+unsigned long render_prepared_structures(unsigned long *mirrored);
 /* of the draws a record has (their hashes, in order), those the draws made
 (in order) do not have */
 unsigned long render_prepared_draws_missing(unsigned long long const *recorded, unsigned long recorded_count,
@@ -38,5 +45,10 @@ boolean render_prepared_played(int formed, unsigned long unknown, unsigned long 
 the settings that change them, render_prepared.c's prepared_settings): a
 map prepared under another is prepared again (render_enumerate.c) */
 unsigned long long render_prepared_derivation(void);
+
+/* the enumeration's label for HALO_RENDER_COVERAGE (xgpu_manifest.h's
+xgpu_manifest_coverage_label): the map, how (walk, replay, scope), its
+screen's width */
+void prepared_coverage_label(char const *how);
 
 #endif

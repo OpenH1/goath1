@@ -65,7 +65,11 @@ def generated(fault=None):
     code = "\n\n".join([function(menus, name) for name in (
         "multiplayer_mode_set", "multiplayer_host", "server_settings_private", "server_settings_private_set",
         "server_settings_initialize", "ui_widget_port_cooperative_settings_apply",
-        "server_start")] + [function(host, name) for name in (
+        "server_start")] + [
+        # (Host Controls' VEHICLE HIJACKING row: the lobby's toggle, lobby_menu.inc's, before it as in the build)
+        function(read("port/linux/game/lobby_menu.inc"), "menu_host_vehicle_hijack_toggle"),
+        function(read("port/linux/game/lobby_menu.inc"), "menu_host_spartan_link_toggle")] + [
+        function(host, name) for name in (
         "host_notice", "host_confirming", "host_confirmed", "host_game", "host_game_teams", "host_game_rows_read",
         "host_game_limits", "host_game_row_text", "host_step_value", "host_password_done", "host_announce_done",
         "host_teams_arrange", "host_game_row_change")] + [function(coop, name) for name in (

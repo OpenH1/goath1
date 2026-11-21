@@ -11,7 +11,8 @@ one list, PLAYERS, down both), each a row of its dot, name and tag (HOST,
 BOT and the bots' skill, PARTY, GOAT H1, OPENCE), this machine's own
 framed. Beside them a panel, one of three: the next game (its map's
 picture, its gametype and what wins it, the map and limits, the host's bots
-(BOTS, SKILL, TEAMS), how the game is, and HOST CONTROLS, GAME SETTINGS and
+(BOTS, SKILL, TEAMS), a GOAT H1 game's HIJACK (vehicle hijacking) and, in a team game, its LINK (the Spartan link:
+the teammates' feeds), how the game is, and HOST CONTROLS, GAME SETTINGS and
 START GAME, a player's WAITING FOR THE HOST); a player's card (A, a click
 or a tap on their row: their Spartan, name, ping, platform and party, and
 ADD FRIEND, MUTE and the host's KICK); or INVITE FRIENDS (the friends
@@ -57,6 +58,8 @@ touchscreen; the host's LOBBY TEXT CHAT has it on or off for everyone. -->
 		<choice label="BOTS" value="{lobby.bots}" left="lobby bots left" right="lobby bots right" if="lobby.bots.shown" dim="lobby.bots.count.locked"/>
 		<choice label="SKILL" value="{lobby.skill}" left="lobby skill left" right="lobby skill right" if="lobby.bots.some" dim="lobby.bots.locked"/>
 		<choice label="TEAMS" value="{lobby.teams}" left="lobby teams left" right="lobby teams right" if="lobby.bots.some" dim="lobby.bots.locked"/>
+		<choice label="HIJACK" value="{lobby.hijack}" left="lobby hijack left" right="lobby hijack right" if="lobby.hijack.shown"/>
+		<choice label="LINK" value="{lobby.spartan_link}" left="lobby spartan link left" right="lobby spartan link right" if="lobby.spartan_link.shown"/>
 		<text text="{lobby.status}" lines="2"/>
 		<heading text="{lobby.waiting}" if="lobby.waiting"/>
 		<button key="accept" label="{coop.fix}" if="coop.fix" do="lobby fix"/>

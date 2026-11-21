@@ -1123,11 +1123,29 @@ static void pool_make(void)
 	random_bytes(&pool.uniforms, sizeof(pool.uniforms));
 }
 
+/* (the front end's kept draws: d3d8_device.c's retained_draw_find) each
+key's number as it was last bound, the key bound again by it now and then;
+RETAINED_MUTATION binds by another key's number (the negative control: the
+stream's pipeline is not the key's) */
+static unsigned long front_numbers[KEY_POOL];
+
 static void front_pipeline(void)
 {
-	const struct xgpu_pipeline_key *key = &pool.keys[random_below(KEY_POOL)];
+	uint32_t index = random_below(KEY_POOL);
+	const struct xgpu_pipeline_key *key = &pool.keys[index];
 
-	xgpu_backend_pipeline(key);
+	if (front_numbers[index] && random_below(2))
+	{
+#ifdef RETAINED_MUTATION
+		xgpu_backend_pipeline_numbered(front_numbers[(index + 1) % KEY_POOL] ?
+			front_numbers[(index + 1) % KEY_POOL] : front_numbers[index], key);
+#else
+		xgpu_backend_pipeline_numbered(front_numbers[index], key);
+#endif
+	}
+	else
+		xgpu_backend_pipeline(key);
+	front_numbers[index] = xgpu_backend_pipeline_number();
 	front.key = *key;
 	front.keyed = TRUE;
 }
@@ -1169,12 +1187,27 @@ static void front_draw_state(void)
 	front.stated = TRUE;
 }
 
+/* (the same) textures described once in a frame of the replacements and
+sent as described: the stages kept, sent again now and then */
+static struct xgpu_backend_textures_kept front_kept;
+static struct xgpu_texture_source front_kept_stages[4];
+static unsigned long front_kept_frame;
+
 static void front_textures(void)
 {
 	struct xgpu_texture_source stages[4];
+	BOOL kept = FALSE;
 	int stage;
 
+	if (front_kept.frame && random_below(3) == 0)
+	{
+		/* (described before, in the same frame: as they were) */
+		memcpy(stages, front_kept_stages, sizeof(stages));
+		xgpu_backend_set_textures_kept(stages, &front_kept, front_kept_frame);
+		goto sent;
+	}
 	memcpy(stages, front.stages, sizeof(stages));
+	kept = random_below(2) == 0;
 	for (stage = 0; stage < 4; stage++)
 	{
 		struct xgpu_texture_source *source = &stages[stage];
@@ -1217,7 +1250,16 @@ static void front_textures(void)
 		source->sampler.anisotropy = random_below(17);
 		source->sampler.border_color = random_next();
 	}
-	xgpu_backend_set_textures(stages);
+	if (kept)
+	{
+		/* (a frame of the replacements' own: described again) */
+		front_kept_frame++;
+		memcpy(front_kept_stages, stages, sizeof(stages));
+		xgpu_backend_set_textures_kept(stages, &front_kept, front_kept_frame);
+	}
+	else
+		xgpu_backend_set_textures(stages);
+sent:
 	memcpy(front.stages, stages, sizeof(stages));
 	for (stage = 0; stage < 4; stage++)
 	{
@@ -1567,13 +1609,13 @@ static void test_loading_art_transfer(void)
 		pixels[index] = (unsigned char)(index * 37u + index / 251u);
 	calls = loading_art_calls;
 	stream_begin(8u << 20, 2, 0);
-	xgpu_backend_loading_art(pixels);
+	xgpu_backend_loading_art(pixels, NULL);
 	CHECK(loading_art_calls == calls + 1 && loading_art_valid);
 	CHECK(!memcmp(pixels, loading_art_copy, sizeof(loading_art_copy)));
 	memset(pixels, 0xA5, sizeof(loading_art_copy));
 	for (index = 0; index < sizeof(loading_art_copy); index++)
 		CHECK(loading_art_copy[index] == (unsigned char)(index * 37u + index / 251u));
-	xgpu_backend_loading_art(NULL);
+	xgpu_backend_loading_art(NULL, NULL);
 	CHECK(loading_art_calls == calls + 2 && !loading_art_valid);
 	for (index = 0; index < sizeof(loading_art_copy); index++)
 		CHECK(loading_art_copy[index] == 0);

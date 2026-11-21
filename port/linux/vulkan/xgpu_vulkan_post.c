@@ -21,6 +21,15 @@ pass is found: they write only where there is an edge. The intermediate
 images are the target's size (the shaders' coordinates are the
 target's).
 
+As SMAA's own design has it, the edges' pass marks its pixels in a
+stencil (emptied with the edges; the edge shader discards a pixel with no
+edge, which then writes neither), and the weights' pass runs only where
+it is marked: elsewhere the shader would write zero over the zero the
+clear left, so the weights are the same, without the searches' cost over
+every pixel. The blend runs over every pixel still: where its weights
+(its own, its right and its lower neighbor's) are zero it writes the
+copy's texel back unchanged.
+
 The present step's turn (xgpu_vulkan_post_rotate) is a pass of the same
 kind: the frame drawn turned by quarter turns into an image of its own, for
 a swapchain made for the display's orientation while the phone is held
@@ -40,15 +49,15 @@ a draw in the pass that drew the view, reading each pixel where it is drawn
 as the core's local reads let a draw (as Metal's reads tile memory), each
 sample's own of a multisampled target, writing its colour (the game keeps
 values of its own in alpha). Its pipeline is made as HDR is chosen, or
-queued as a map is prepared. The encoding for an HDR swapchain
-(xgpu_vulkan_post_encode) is a pass like the turn's: the frame drawn
-encoded into an image of the swapchain's format, which the core then
-letterboxes into the swapchain as it does an SDR frame; its pipelines are
-made at the start (xgpu_vulkan_post_encode_prepare). display.gamma's curve
-(xgpu_vulkan_post_gamma) is the same kind of pass for an SDR frame: the
-swapchain's image is filled by a blit, which has no arithmetic, so the curve
-is drawn into an image of its own first, and only where the setting is not
-1 (the core's present skips it).
+queued as a map is prepared. The frame's last pass
+(xgpu_vulkan_post_encode, #1108) is a pass like the turn's: the frame drawn
+at the picture's size in the swapchain (scaled up sharply in the pass, as
+present_sharp's blits would), encoded for the swapchain (HDR's encoding, or
+display.gamma's curve over an SDR frame) and dithered to its levels, into
+an image of the swapchain's format, which the core then copies 1:1 into
+the swapchain (a blit has no arithmetic, and would scale the dither's
+pattern). Its pipelines are made at the start
+(xgpu_vulkan_post_encode_prepare).
 */
 
 #include "xgpu_vulkan_post.h"
@@ -69,16 +78,19 @@ static struct
 {
 	VkShaderModule vertex, pixel[XGPU_VULKAN_POST_PROGRAM_COUNT];
 	struct xgpu_vulkan_pipeline_description pipelines[XGPU_VULKAN_POST_PROGRAM_COUNT];
-	/* FXAA's and SMAA's blend into display.hdr's half floats */
+	/* FXAA's and SMAA's blend into display.hdr's half floats, and into
+	display.output_depth's 16-bit channels */
 	struct xgpu_vulkan_pipeline_description half_float[XGPU_VULKAN_POST_PROGRAM_COUNT];
+	struct xgpu_vulkan_pipeline_description deep[XGPU_VULKAN_POST_PROGRAM_COUNT];
 	/* FXAA's, and SMAA's, pipelines or textures could not be made */
 	int failed[2];
 	/* the size and format of the images below */
 	uint32_t width, height;
 	uint8_t format;
 	/* the target's pixels before the pass, and SMAA's edges and blending
-	weights */
-	struct xgpu_vulkan_image *color, *edges, *weights;
+	weights, and the stencil marking the edges' pixels (a stencil alone,
+	XGPU_VULKAN_FORMAT_S8) */
+	struct xgpu_vulkan_image *color, *edges, *weights, *marks;
 	/* SMAA's lookup textures */
 	struct xgpu_vulkan_image *area, *search;
 	/* linear and clamped, as FXAA and SMAA sample */
@@ -89,15 +101,14 @@ static struct
 	int rotate_failed;
 	struct xgpu_vulkan_image *turned;
 	/* display.hdr: the tone map's pipeline could not be made (logged
-	once); the encoding's pipelines (scRGB's, HDR10's), and its image */
+	once); the last pass's pipelines (ENCODE_FORMATS'), and its image */
 	int tone_map_failed;
-	VkPipeline encode[2];
+	VkPipeline encode[3];
 	struct xgpu_vulkan_image *encoded;
-	/* display.gamma: its curve's pipeline, and the frame curved */
-	VkPipeline gamma;
-	struct xgpu_vulkan_image *curved;
 	/* display.panini's pipelines could not be made (logged once) */
 	int panini_failed;
+	/* the loading screen's sharp frame's pipelines (made at the start) */
+	VkPipeline loading[3];
 } post;
 
 /* ---------- images */
@@ -146,6 +157,15 @@ static struct xgpu_vulkan_image *lookup_texture(const uint32_t *words, uint32_t 
 	return image;
 }
 
+/* SMAA's images let go (FXAA chosen instead) */
+static void smaa_images_release(void)
+{
+	xgpu_vulkan_image_destroy(post.edges);
+	xgpu_vulkan_image_destroy(post.weights);
+	xgpu_vulkan_image_destroy(post.marks);
+	post.edges = post.weights = post.marks = NULL;
+}
+
 /* the passes' images, of the target's size (SMAA's only for SMAA); color
 is the target's format, so that the copy is exact */
 static int images_fit(int smaa, uint8_t format, uint32_t width, uint32_t height)
@@ -155,7 +175,8 @@ static int images_fit(int smaa, uint8_t format, uint32_t width, uint32_t height)
 		xgpu_vulkan_image_destroy(post.color);
 		xgpu_vulkan_image_destroy(post.edges);
 		xgpu_vulkan_image_destroy(post.weights);
-		post.color = post.edges = post.weights = NULL;
+		xgpu_vulkan_image_destroy(post.marks);
+		post.color = post.edges = post.weights = post.marks = NULL;
 		post.width = width;
 		post.height = height;
 		post.format = format;
@@ -167,8 +188,9 @@ static int images_fit(int smaa, uint8_t format, uint32_t width, uint32_t height)
 			width, height);
 		post.weights = image_make(XGPU_VULKAN_FORMAT_BGRA8, XGPU_VULKAN_USAGE_SAMPLED | XGPU_VULKAN_USAGE_TARGET,
 			width, height);
+		post.marks = image_make(XGPU_VULKAN_FORMAT_S8, XGPU_VULKAN_USAGE_TARGET, width, height);
 	}
-	return post.color && (!smaa || (post.edges && post.weights));
+	return post.color && (!smaa || (post.edges && post.weights && post.marks));
 }
 
 /* ---------- pipelines */
@@ -198,13 +220,52 @@ static int prepare_failed(int smaa, const char *what)
 }
 
 /* a pass's pipeline for a target of a format: FXAA's and SMAA's blend into
-the target's (display.hdr's half floats, or 8 bits), the rest into their
-own 8-bit images */
+the target's (display.hdr's half floats, display.output_depth's 16 bits, or
+8 bits), the rest into their own 8-bit images */
 static struct xgpu_vulkan_pipeline_description *pipeline_of(int program, uint8_t format)
 {
-	return format == XGPU_VULKAN_FORMAT_RGBA16F && (program == XGPU_VULKAN_POST_FXAA ||
-		program == XGPU_VULKAN_POST_SMAA_BLEND || program == XGPU_VULKAN_POST_PANINI) ?
-		&post.half_float[program] : &post.pipelines[program];
+	int into_target = program == XGPU_VULKAN_POST_FXAA || program == XGPU_VULKAN_POST_SMAA_BLEND ||
+		program == XGPU_VULKAN_POST_PANINI;
+
+	return into_target && format == XGPU_VULKAN_FORMAT_RGBA16F ? &post.half_float[program] :
+		into_target && format == XGPU_VULKAN_FORMAT_RGBA16 ? &post.deep[program] : &post.pipelines[program];
+}
+
+/* a target's format the passes draw into: its own, BGRA8 for any other */
+static uint8_t target_format(uint8_t format)
+{
+	return format == XGPU_VULKAN_FORMAT_RGBA16F || format == XGPU_VULKAN_FORMAT_RGBA16 ? format :
+		XGPU_VULKAN_FORMAT_BGRA8;
+}
+
+static int target_format_drawn(uint8_t format)
+{
+	return format == XGPU_VULKAN_FORMAT_BGRA8 || format == XGPU_VULKAN_FORMAT_RGBA16F ||
+		format == XGPU_VULKAN_FORMAT_RGBA16;
+}
+
+/* the core's comparisons and stencil operations (xgpu_backend.h's
+XGPU_COMPARE_* and XGPU_STENCIL_*: xgpu_vulkan.c compare_op, stencil_op) */
+enum { COMPARE_EQUAL = 2, COMPARE_ALWAYS = 7, STENCIL_REPLACE = 2 };
+
+/* SMAA's edges' pass marks its pixels in the stencil (the shader discards
+a pixel with no edge); the weights' pass runs where they are marked. No
+depth is tested or written */
+static void marks_describe(int program, struct xgpu_vulkan_pipeline_description *description)
+{
+	if (program != XGPU_VULKAN_POST_SMAA_EDGES && program != XGPU_VULKAN_POST_SMAA_WEIGHTS)
+		return;
+	description->depth_format = XGPU_VULKAN_FORMAT_S8;
+	description->stencil_test = 1;
+	description->stencil_read_mask = 0xff;
+	if (program == XGPU_VULKAN_POST_SMAA_EDGES)
+	{
+		description->stencil_function = COMPARE_ALWAYS;
+		description->stencil_pass = STENCIL_REPLACE;
+		description->stencil_write_mask = 0xff;
+	}
+	else
+		description->stencil_function = COMPARE_EQUAL;
 }
 
 int xgpu_vulkan_post_prepare(int smaa, uint8_t format, int preparing)
@@ -214,8 +275,7 @@ int xgpu_vulkan_post_prepare(int smaa, uint8_t format, int preparing)
 	int program;
 
 	smaa = smaa != 0;
-	if (format != XGPU_VULKAN_FORMAT_RGBA16F)
-		format = XGPU_VULKAN_FORMAT_BGRA8;
+	format = target_format(format);
 	if (post.failed[smaa])
 		return 0;
 	if (!post.vertex)
@@ -239,6 +299,7 @@ int xgpu_vulkan_post_prepare(int smaa, uint8_t format, int preparing)
 		description->color_mask = into_target ? 7 : 15;
 		description->color_format = into_target ? format : XGPU_VULKAN_FORMAT_BGRA8;
 		description->samples = 1;
+		marks_describe(program, description);
 		if (preparing ? !xgpu_vulkan_pipeline_prepare(description) : !xgpu_vulkan_pipeline(description))
 			return prepare_failed(smaa, "pipelines");
 	}
@@ -296,6 +357,9 @@ static void pass_draw_with(int program, struct xgpu_vulkan_image *into, uint32_t
 	struct xgpu_vulkan_image *image0, struct xgpu_vulkan_image *image1, struct xgpu_vulkan_image *image2,
 	const float bounds[4], const float window[4], const float panini[8])
 {
+	/* (SMAA's edges and weights with the stencil of their marks) */
+	struct xgpu_vulkan_image *marks = program == XGPU_VULKAN_POST_SMAA_EDGES ||
+		program == XGPU_VULKAN_POST_SMAA_WEIGHTS ? post.marks : NULL;
 	uint8_t format = xgpu_vulkan_image_description(into)->format;
 	uint32_t into_samples = xgpu_vulkan_image_description(into)->samples;
 	struct xgpu_vulkan_pipeline_description pipeline;
@@ -346,10 +410,11 @@ static void pass_draw_with(int program, struct xgpu_vulkan_image *into, uint32_t
 	dynamic.viewport[2] = dynamic.scissor[2] = rectangle[2] - rectangle[0];
 	dynamic.viewport[3] = dynamic.scissor[3] = rectangle[3] - rectangle[1];
 	dynamic.depth_range[1] = 1.0f;
+	dynamic.stencil_reference = 1;
 	draw.dynamic = &dynamic;
 	draw.topology = XGPU_VULKAN_TOPOLOGY_TRIANGLES;
 	draw.count = 3;
-	xgpu_vulkan_set_target_views(into, NULL, layer, 1);
+	xgpu_vulkan_set_target_views(into, marks, layer, 1);
 	xgpu_vulkan_draw(&draw);
 }
 
@@ -361,8 +426,12 @@ static void pass_draw(int program, struct xgpu_vulkan_image *into, uint32_t laye
 }
 
 /* an intermediate emptied, all of it, so that no edge of another window's
-pass is found: SMAA's passes write only where there is an edge */
-static void intermediate_clear(struct xgpu_vulkan_image *image)
+pass is found: SMAA's passes write only where there is an edge; with the
+edges, the stencil of their marks; with the weights, the marks bound as
+their pass will have them, and kept. The marks' depth (where the device
+has no stencil alone), which nothing reads, cleared with each (so that
+none of it is loaded or kept) */
+static void intermediate_clear(struct xgpu_vulkan_image *image, int marks)
 {
 	static const float transparent[4];
 	int32_t whole[1][4];
@@ -370,9 +439,9 @@ static void intermediate_clear(struct xgpu_vulkan_image *image)
 	whole[0][0] = whole[0][1] = 0;
 	whole[0][2] = (int32_t)post.width;
 	whole[0][3] = (int32_t)post.height;
-	xgpu_vulkan_set_targets(image, NULL, 0);
-	xgpu_vulkan_clear((const int32_t (*)[4])whole, 1, XGPU_VULKAN_CLEAR_COLOR | XGPU_VULKAN_CLEAR_CHANNELS,
-		transparent, 1.0f, 0);
+	xgpu_vulkan_set_targets(image, post.marks, 0);
+	xgpu_vulkan_clear((const int32_t (*)[4])whole, 1, XGPU_VULKAN_CLEAR_COLOR | XGPU_VULKAN_CLEAR_CHANNELS |
+		XGPU_VULKAN_CLEAR_DEPTH | (marks ? XGPU_VULKAN_CLEAR_STENCIL : 0), transparent, 1.0f, 0);
 }
 
 int xgpu_vulkan_post_anti_alias(int smaa, struct xgpu_vulkan_image *target, uint32_t layer, const int32_t corners[4])
@@ -385,8 +454,7 @@ int xgpu_vulkan_post_anti_alias(int smaa, struct xgpu_vulkan_image *target, uint
 	if (!target)
 		return 0;
 	description = xgpu_vulkan_image_description(target);
-	if ((description->format != XGPU_VULKAN_FORMAT_BGRA8 && description->format != XGPU_VULKAN_FORMAT_RGBA16F) ||
-		description->samples > 1)
+	if (!target_format_drawn(description->format) || description->samples > 1)
 		return 0;
 	/* (made already, as the setting was chosen) */
 	if (!xgpu_vulkan_post_prepare(smaa, description->format, 0))
@@ -400,6 +468,9 @@ int xgpu_vulkan_post_anti_alias(int smaa, struct xgpu_vulkan_image *target, uint
 	}
 	if (rectangle[2] <= rectangle[0] || rectangle[3] <= rectangle[1])
 		return 1;
+	/* (SMAA's images kept only while SMAA is chosen) */
+	if (!smaa && post.edges)
+		smaa_images_release();
 	if (!images_fit(smaa, description->format, description->width, description->height))
 		return 0;
 
@@ -418,10 +489,10 @@ int xgpu_vulkan_post_anti_alias(int smaa, struct xgpu_vulkan_image *target, uint
 	}
 	else
 	{
-		intermediate_clear(post.edges);
+		intermediate_clear(post.edges, 1);
 		pass_draw(XGPU_VULKAN_POST_SMAA_EDGES, post.edges, 0, rectangle, post.color, NULL, NULL, NULL);
 
-		intermediate_clear(post.weights);
+		intermediate_clear(post.weights, 0);
 		pass_draw(XGPU_VULKAN_POST_SMAA_WEIGHTS, post.weights, 0, rectangle, post.edges, post.area, post.search, NULL);
 
 		pass_draw(XGPU_VULKAN_POST_SMAA_BLEND, target, layer, rectangle, post.color, post.weights, NULL, NULL);
@@ -445,8 +516,7 @@ int xgpu_vulkan_post_panini_prepare(uint8_t format, uint32_t samples, int prepar
 {
 	struct xgpu_vulkan_pipeline_description *description, multisampled;
 
-	if (format != XGPU_VULKAN_FORMAT_RGBA16F)
-		format = XGPU_VULKAN_FORMAT_BGRA8;
+	format = target_format(format);
 	if (post.panini_failed)
 		return 0;
 	description = pipeline_of(XGPU_VULKAN_POST_PANINI, format);
@@ -488,7 +558,7 @@ int xgpu_vulkan_post_panini(struct xgpu_vulkan_image *source, struct xgpu_vulkan
 		return 0;
 	description = xgpu_vulkan_image_description(source);
 	into_description = xgpu_vulkan_image_description(into);
-	if ((description->format != XGPU_VULKAN_FORMAT_BGRA8 && description->format != XGPU_VULKAN_FORMAT_RGBA16F) ||
+	if (!target_format_drawn(description->format) ||
 		description->samples > 1 || into_description->format != description->format ||
 		into_description->width != description->width || into_description->height != description->height)
 		return 0;
@@ -717,55 +787,67 @@ static void encode_description(uint8_t format, struct xgpu_vulkan_pipeline_descr
 	description->samples = 1;
 }
 
+/* the last pass's formats (the swapchains': scRGB's; HDR10's and a 10-bit
+SDR one's; SDR's), its pipelines' order */
+static const uint8_t ENCODE_FORMATS[3] =
+{
+	XGPU_VULKAN_FORMAT_RGBA16F, XGPU_VULKAN_FORMAT_RGB10A2, XGPU_VULKAN_FORMAT_BGRA8,
+};
+
 int xgpu_vulkan_post_encode_prepare(void)
 {
 	struct xgpu_vulkan_pipeline_description description;
 	int index;
 
-	if (post.encode[0] && post.encode[1])
+	if (post.encode[0] && post.encode[1] && post.encode[2])
 		return 1;
 	if (shaders_make(XGPU_VULKAN_POST_HDR_ENCODE) && sampler_make())
 	{
-		for (index = 0; index < 2; index++)
+		for (index = 0; index < 3; index++)
 		{
-			encode_description(index ? XGPU_VULKAN_FORMAT_RGB10A2 : XGPU_VULKAN_FORMAT_RGBA16F, &description);
+			encode_description(ENCODE_FORMATS[index], &description);
 			post.encode[index] = xgpu_vulkan_pipeline(&description);
 		}
 	}
-	if (!post.encode[0] || !post.encode[1])
+	if (!post.encode[0] || !post.encode[1] || !post.encode[2])
 	{
-		host_logf(HOST_LOG_WARN, "vulkan: display.hdr's encoding cannot be made: the window is SDR");
+		host_logf(HOST_LOG_WARN, "vulkan: the frame's last pass cannot be made: the window is SDR, without "
+			"display.gamma or dither");
 		return 0;
 	}
 	return 1;
 }
 
 struct xgpu_vulkan_image *xgpu_vulkan_post_encode(struct xgpu_vulkan_image *image, const struct xgpu_hdr_frame *frame,
-	uint8_t format)
+	uint8_t format, const struct xgpu_vulkan_output *output)
 {
 	const struct xgpu_vulkan_image_description *description, *encoded;
 	struct xgpu_vulkan_post_uniforms *uniforms;
 	struct xgpu_vulkan_dynamic_state dynamic;
 	struct xgpu_vulkan_draw draw;
-	VkPipeline pipeline;
-	int stage;
+	VkPipeline pipeline = VK_NULL_HANDLE;
+	int stage, index;
 
-	if (!image || (format != XGPU_VULKAN_FORMAT_RGBA16F && format != XGPU_VULKAN_FORMAT_RGB10A2))
+	if (!image || !output || !output->width || !output->height)
 		return NULL;
-	pipeline = post.encode[format == XGPU_VULKAN_FORMAT_RGB10A2];
+	for (index = 0; index < 3; index++)
+	{
+		if (format == ENCODE_FORMATS[index])
+			pipeline = post.encode[index];
+	}
 	if (!pipeline)
 		return NULL;
 	description = xgpu_vulkan_image_description(image);
 	encoded = post.encoded ? xgpu_vulkan_image_description(post.encoded) : NULL;
-	if (encoded && (encoded->width != description->width || encoded->height != description->height ||
+	if (encoded && (encoded->width != output->width || encoded->height != output->height ||
 		encoded->format != format))
 	{
 		xgpu_vulkan_image_destroy(post.encoded);
 		post.encoded = NULL;
 	}
 	if (!post.encoded)
-		post.encoded = image_make(format, XGPU_VULKAN_USAGE_SAMPLED | XGPU_VULKAN_USAGE_TARGET, description->width,
-			description->height);
+		post.encoded = image_make(format, XGPU_VULKAN_USAGE_SAMPLED | XGPU_VULKAN_USAGE_TARGET, output->width,
+			output->height);
 	if (!post.encoded)
 		return NULL;
 	memset(&draw, 0, sizeof(draw));
@@ -780,18 +862,30 @@ struct xgpu_vulkan_image *xgpu_vulkan_post_encode(struct xgpu_vulkan_image *imag
 	if (!uniforms)
 		return NULL;
 	/* (the viewport's corner, and its size's reciprocals: the frame over
-	all of it) */
+	all of it; the frame's size and the sharp factors; the encoding; the
+	SDR curve, the dither's levels, display.gamma's power, the display's
+	black) */
 	memset(uniforms, 0, sizeof(*uniforms));
-	uniforms->metrics[2] = 1.0f / (float)description->width;
-	uniforms->metrics[3] = 1.0f / (float)description->height;
+	uniforms->metrics[2] = 1.0f / (float)output->width;
+	uniforms->metrics[3] = 1.0f / (float)output->height;
+	uniforms->bounds[0] = (float)description->width;
+	uniforms->bounds[1] = (float)description->height;
+	uniforms->bounds[2] = (float)(output->factors[0] ? output->factors[0] : 1);
+	uniforms->bounds[3] = (float)(output->factors[1] ? output->factors[1] : 1);
 	uniforms->hdr[0] = frame->paper_white;
 	uniforms->hdr[1] = frame->peak;
 	uniforms->hdr[2] = (float)frame->output;
 	uniforms->hdr[3] = frame->ui;
+	uniforms->window[0] = (float)frame->sdr_curve;
+	uniforms->window[1] = output->levels;
+	uniforms->window[2] = output->power > 0.0f ? output->power : 1.0f;
+	uniforms->window[3] = frame->black;
+	uniforms->gamut[0] = frame->gamut ? 1.0f : 0.0f;
+	uniforms->gamut[1] = frame->gamut_target;
 	draw.constants = draw.uniforms;
 	memset(&dynamic, 0, sizeof(dynamic));
-	dynamic.viewport[2] = dynamic.scissor[2] = (int32_t)description->width;
-	dynamic.viewport[3] = dynamic.scissor[3] = (int32_t)description->height;
+	dynamic.viewport[2] = dynamic.scissor[2] = (int32_t)output->width;
+	dynamic.viewport[3] = dynamic.scissor[3] = (int32_t)output->height;
 	dynamic.depth_range[1] = 1.0f;
 	draw.dynamic = &dynamic;
 	draw.topology = XGPU_VULKAN_TOPOLOGY_TRIANGLES;
@@ -801,82 +895,92 @@ struct xgpu_vulkan_image *xgpu_vulkan_post_encode(struct xgpu_vulkan_image *imag
 	return post.encoded;
 }
 
-/* ---------- display.gamma */
+/* ---------- the loading screen's sharp frame (loading_art.h's "drawn by the GPU")
 
-int xgpu_vulkan_post_gamma_prepare(void)
+Its programs draw into BGRA8 images (the loading image, and the frame under
+a caption), the picture's into the still layers' RGBA8 one. Made at the
+start, as the loading screen presents while a map is prepared and may not
+ask for a pipeline. */
+
+static const uint8_t LOADING_FORMATS[3] = { XGPU_VULKAN_FORMAT_BGRA8, XGPU_VULKAN_FORMAT_BGRA8, XGPU_VULKAN_FORMAT_RGBA8 };
+
+static void loading_description(int index, struct xgpu_vulkan_pipeline_description *description)
 {
-	struct xgpu_vulkan_pipeline_description *description = &post.pipelines[XGPU_VULKAN_POST_GAMMA];
+	memset(description, 0, sizeof(*description));
+	description->vertex_shader = post.vertex;
+	description->pixel_shader = post.pixel[XGPU_VULKAN_POST_LOADING + index];
+	description->primitive_class = XGPU_VULKAN_CLASS_TRIANGLES;
+	description->color_mask = 15;
+	description->color_format = LOADING_FORMATS[index];
+	description->samples = 1;
+}
 
-	if (post.gamma)
+int xgpu_vulkan_post_loading_prepare(void)
+{
+	struct xgpu_vulkan_pipeline_description description;
+	int index;
+
+	if (post.loading[0] && post.loading[1] && post.loading[2])
 		return 1;
-	if (shaders_make(XGPU_VULKAN_POST_GAMMA) && sampler_make())
+	for (index = 0; index < 3; index++)
 	{
-		/* (into BGRA8, every channel: the swapchain's alpha is opaque) */
-		memset(description, 0, sizeof(*description));
-		description->vertex_shader = post.vertex;
-		description->pixel_shader = post.pixel[XGPU_VULKAN_POST_GAMMA];
-		description->primitive_class = XGPU_VULKAN_CLASS_TRIANGLES;
-		description->color_mask = 15;
-		description->color_format = XGPU_VULKAN_FORMAT_BGRA8;
-		description->samples = 1;
-		post.gamma = xgpu_vulkan_pipeline(description);
+		if (!shaders_make(XGPU_VULKAN_POST_LOADING + index) || !sampler_make())
+			break;
+		loading_description(index, &description);
+		post.loading[index] = xgpu_vulkan_pipeline(&description);
+		if (!post.loading[index])
+			break;
 	}
-	if (!post.gamma)
+	if (index < 3)
 	{
-		host_logf(HOST_LOG_WARN, "vulkan: display.gamma's pass cannot be made: the frame is shown as drawn");
+		host_logf(HOST_LOG_WARN, "vulkan: the loading screen's sharp frame's pipelines cannot be made: "
+			"the processor draws it");
 		return 0;
 	}
 	return 1;
 }
 
-struct xgpu_vulkan_image *xgpu_vulkan_post_gamma(struct xgpu_vulkan_image *image, float power)
+void xgpu_vulkan_post_loading(int program, struct xgpu_vulkan_image *into, const int32_t rectangle[4],
+	struct xgpu_vulkan_image *const images[4], const float uniforms[5][4])
 {
-	const struct xgpu_vulkan_image_description *description, *curved;
-	struct xgpu_vulkan_post_uniforms *uniforms;
+	struct xgpu_vulkan_pipeline_description description;
+	struct xgpu_vulkan_post_uniforms *block;
 	struct xgpu_vulkan_dynamic_state dynamic;
 	struct xgpu_vulkan_draw draw;
-	int stage;
+	int stage, index = program - XGPU_VULKAN_POST_LOADING;
 
-	if (!image || !post.gamma)
-		return NULL;
-	description = xgpu_vulkan_image_description(image);
-	curved = post.curved ? xgpu_vulkan_image_description(post.curved) : NULL;
-	if (curved && (curved->width != description->width || curved->height != description->height))
-	{
-		xgpu_vulkan_image_destroy(post.curved);
-		post.curved = NULL;
-	}
-	if (!post.curved)
-		post.curved = image_make(XGPU_VULKAN_FORMAT_BGRA8, XGPU_VULKAN_USAGE_SAMPLED | XGPU_VULKAN_USAGE_TARGET,
-			description->width, description->height);
-	if (!post.curved)
-		return NULL;
+	if (index < 0 || index > 2 || !post.loading[index])
+		return;
 	memset(&draw, 0, sizeof(draw));
-	draw.pipeline = post.gamma;
+	loading_description(index, &description);
+	draw.pipeline = xgpu_vulkan_pipeline(&description);
+	if (!draw.pipeline)
+		return;
 	for (stage = 0; stage < 4; stage++)
 	{
-		draw.textures[stage].image = stage ? NULL : image;
+		draw.textures[stage].image = images[stage];
 		draw.textures[stage].kind = XGPU_VULKAN_IMAGE_2D;
 		draw.textures[stage].sampler = post.sampler;
 	}
-	uniforms = xgpu_vulkan_upload(UNIFORMS_RANGE, 256, &draw.uniforms);
-	if (!uniforms)
-		return NULL;
-	/* (the viewport's corner, and its size's reciprocals: the frame over
-	all of it, each pixel its own texel) */
-	memset(uniforms, 0, sizeof(*uniforms));
-	uniforms->metrics[2] = 1.0f / (float)description->width;
-	uniforms->metrics[3] = 1.0f / (float)description->height;
-	uniforms->bounds[0] = power;
+	block = xgpu_vulkan_upload(UNIFORMS_RANGE, 256, &draw.uniforms);
+	if (!block)
+		return;
+	memset(block, 0, sizeof(*block));
+	memcpy(block->metrics, uniforms[0], sizeof(block->metrics));
+	memcpy(block->bounds, uniforms[1], sizeof(block->bounds));
+	memcpy(block->hdr, uniforms[2], sizeof(block->hdr));
+	memcpy(block->window, uniforms[3], sizeof(block->window));
+	memcpy(block->panini, uniforms[4], sizeof(block->panini));
 	draw.constants = draw.uniforms;
 	memset(&dynamic, 0, sizeof(dynamic));
-	dynamic.viewport[2] = dynamic.scissor[2] = (int32_t)description->width;
-	dynamic.viewport[3] = dynamic.scissor[3] = (int32_t)description->height;
+	dynamic.viewport[0] = dynamic.scissor[0] = rectangle[0];
+	dynamic.viewport[1] = dynamic.scissor[1] = rectangle[1];
+	dynamic.viewport[2] = dynamic.scissor[2] = rectangle[2] - rectangle[0];
+	dynamic.viewport[3] = dynamic.scissor[3] = rectangle[3] - rectangle[1];
 	dynamic.depth_range[1] = 1.0f;
 	draw.dynamic = &dynamic;
 	draw.topology = XGPU_VULKAN_TOPOLOGY_TRIANGLES;
 	draw.count = 3;
-	xgpu_vulkan_set_target_views(post.curved, NULL, 0, 1);
+	xgpu_vulkan_set_target_views(into, NULL, 0, 1);
 	xgpu_vulkan_draw(&draw);
-	return post.curved;
 }

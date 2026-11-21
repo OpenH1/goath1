@@ -13,7 +13,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from harness import CHECK_FAILED, build, constant, enum_with, mutated, read, run  # noqa: E402
 
-CASES = ["actions", "route", "list", "status", "accept", "invite", "holds", "friends"]
+CASES = ["actions", "route", "list", "status", "accept", "invite", "holds", "holds-loading", "friends"]
 
 # a fault in network_party.c, and the case that must catch it
 NEGATIVE_CONTROLS = {
@@ -37,7 +37,7 @@ NEGATIVE_CONTROLS = {
     "no-rate": (("\t\tif (*burst <= 0)\n\t\t\treturn;", ""), "route"),
     "other-format-taken": (("if (request.format != PARTY_FORMAT || request.kind >= NUMBER_OF_PARTY_REQUESTS)",
                             "if (request.kind >= NUMBER_OF_PARTY_REQUESTS)"), "route"),
-    "machine-gone-kept": (("\t\tif (present[index])\n\t\t\tcontinue;", "\t\tif (1)\n\t\t\tcontinue;"), "route"),
+    "machine-gone-kept": (("\t\t\tparty_machine_forget(index);\n\t\t\tcontinue;", "\t\t\tcontinue;"), "route"),
     "list-every-time": (("(!changed && party_globals.machines[machine_index].listed)", "(changed && 0)"), "list"),
     "status-legacy": (("\tif (!party_game())\n\t{\n\t\tif (party_globals.active)\n\t\t\tparty_reset();\n\t\treturn;",
                        "\tif (0)\n\t{\n\t\treturn;"), "status"),
@@ -68,10 +68,13 @@ NEGATIVE_CONTROLS = {
                          "holds"),
     "holds-never-lapse": (("\t\tshort released = party_holds_expire(party_globals.holds, now);",
                            "\t\tshort released = 0;"), "holds"),
-    "leader-gone-holds-kept": (("\t\tif (party_holds_release(party_globals.holds, index))",
-                                "\t\tif (0)"), "holds"),
-    "own-machine-forgotten": (("\t\tif (own >= 0 && own < MAXIMUM_PARTY_MACHINES)\n\t\t\tpresent[own] = TRUE;",
-                               "\t\t(void)own;"), "holds"),
+    "leader-gone-holds-kept": (("\tif (party_holds_release(party_globals.holds, (short)machine_index))",
+                                "\tif (0)"), "holds"),
+    "own-machine-forgotten": (("\t\tif (index == own)\n\t\t\tcontinue;", ""), "holds"),
+    # holds while a machine loads: the code before took a machine the game's messages do not reach for gone
+    "loading-leader-forgotten": (("\t\tif (network_game_server_machine_phase(server, index) == "
+                                  "_network_machine_phase_none)", "\t\tif (!present[index])"), "holds-loading"),
+    "drop-holds-kept": (("\tparty_machine_forget(machine_index);\n}", "\t(void)machine_index;\n}"), "holds-loading"),
     "taken-not-let-go": (("\tparty_globals.holds[index].used = FALSE;\n\terror(_error_log, \"party: machine #%ld took",
                           "\terror(_error_log, \"party: machine #%ld took"), "holds"),
     "joiner-of-no-party": (("\tgroup = party_machine_group(machine_index, address);",
@@ -132,6 +135,7 @@ def generated(fault=None):
     config += enum_with(distributed, "_distributed_to_host_reliably") + "\n"
     config += enum_with(keyboard, "HALO_KEYBOARD_PARTY_ACCEPT") + "\n"
     config += enum_with(keyboard, "HALO_CHAT_PAD_DOWN") + "\n"
+    config += enum_with(read("source/networking/network_server_manager.h"), "_network_machine_phase_none") + "\n"
     p2p = read("port/linux/src/p2p.h")
     config += "".join(f"#define {name} {constant(p2p, name)}\n"
                       for name in ("P2P_PLAYER_KEY_HASH_SIZE", "P2P_PARTY_MAXIMUM_MEMBERS", "P2P_FRIEND_CODE_BYTES"))

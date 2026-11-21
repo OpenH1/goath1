@@ -14,6 +14,12 @@ host_log_ring.inc.
 #define HOST_LOG_ERROR 6
 #define HOST_LOG_FATAL 7
 
+/* (host_log_recent's flush of the log's queue: none here) */
+static void host_log_queue_flush(unsigned timeout_ms)
+{
+	(void)timeout_ms;
+}
+
 #include "host_log_ring.inc"
 
 static int failures;

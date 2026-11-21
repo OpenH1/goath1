@@ -29,16 +29,22 @@ enum
 	XGPU_METAL_POST_SMAA_BLEND,
 	/* display.hdr's (port/linux/src/xgpu_hdr.c): the tone map, which reads
 	the pixel it draws over ([[color(0)]]: programmable blending), and the
-	encoding, which samples the frame (texture 0) over the viewport */
+	frame's last pass, which samples the frame (texture 0) over the viewport:
+	the encoding for an EDR drawable, display.gamma's curve and the dither
+	for an SDR one */
 	XGPU_METAL_POST_HDR_TONE_MAP,
 	XGPU_METAL_POST_HDR_ENCODE,
-	/* display.gamma's curve (the Vulkan backend's), which the presentation
-	draws into an SDR drawable, sampling the frame (texture 0) over the
-	viewport */
-	XGPU_METAL_POST_GAMMA,
 	/* display.panini's projection (the Vulkan backend's), over a window's
 	3D view in the target, sampling its copy (texture 0) */
 	XGPU_METAL_POST_PANINI,
+	/* the loading screen's sharp frame (port/linux/src/loading_art.h's
+	loading_art_hd_uniforms): the trail (texture 0), the still layers (1),
+	the table (2) and the words (3); its caption at the drawable's pixels,
+	the frame at 1 and the caption's texels at 3; and the picture resampled
+	from its own size (0) */
+	XGPU_METAL_POST_LOADING,
+	XGPU_METAL_POST_LOADING_CAPTION,
+	XGPU_METAL_POST_LOADING_PICTURE,
 	XGPU_METAL_POST_FUNCTION_COUNT
 };
 
@@ -48,8 +54,9 @@ struct xgpu_metal_post_uniforms
 	/* 1 / width, 1 / height, width, height of the target */
 	float metrics[4];
 	/* FXAA's: the rectangle's outermost texel centres, as texture
-	coordinates (x0, y0, x1, y1); display.gamma's: the power (x), its
-	metrics the viewport's x, y, 1 / width, 1 / height */
+	coordinates (x0, y0, x1, y1); the last pass's: the frame's width and
+	height and the sharp upscale's factors (1, 1), its metrics the
+	viewport's x, y, 1 / width, 1 / height */
 	float bounds[4];
 	/* display.hdr's: the tone map's mode and peak; the encoding's paper
 	white, peak and output (xgpu_hdr.h; its metrics are the viewport's x, y,
@@ -61,6 +68,9 @@ struct xgpu_metal_post_uniforms
 	float window[4];
 	float panini[4];
 	float tangents[4];
+	/* display.hdr_gamut's (#1124): the encoding's expansion (1, 0 none)
+	and its target (xgpu_hdr_frame.gamut_target) */
+	float gamut[4];
 };
 
 /* a function's source (each its own: SPIRV-Cross names the structures

@@ -4,7 +4,9 @@ routability); it tells the host's side alone where the joiner is (the address a 
 forwards only tunnel packets between the pair's two addresses, within its limits and buckets (which keep the
 thousandths of a short refill), and survives anything sent to it; the machines' attempts are timed from their last
 demotion; offers are tagged and taken a few at most, a second apart; a peer's path fails over from a silent relay
-to another, and goes direct only once the direct path has lasted."""
+to another, and goes direct only once the direct path has lasted; a standby relay is kept warm on keep-alives alone,
+relayed or direct, and takes over from a silent carrier well inside the game's connection timeout, never from a slow
+one."""
 
 import sys
 from pathlib import Path
@@ -17,7 +19,7 @@ from harness import skip_without_32_bit_abi  # noqa: E402
 
 CASES = [
     "pairing", "return-routability", "token-per-relay", "verified-address", "offers", "path", "demoted", "buckets",
-    "game-mode", "limits", "malformed", "front-path",
+    "game-mode", "limits", "malformed", "front-path", "standby", "direct-standby", "no-flap",
 ]
 
 # a fault in p2p_relay.c and the case that must catch it
@@ -95,6 +97,17 @@ NEGATIVE_CONTROLS = {
                                "\tif (!free_attempt || peer_attempts >= MAXIMUM_ATTEMPTS)\n\t\treturn -1;\n"
                                "\tmemset(free_attempt, 0, sizeof(*free_attempt));\n\tfree_attempt->used = 1;\n"
                                "\tfree_attempt->front = 1;"), "front-path"),
+    # failover only once the carrier's attempt is lost, after 12 s of silence (N3, as it was)
+    "failover-at-attempt-silence": (("\tif (silent && relay_elapsed(", "\tif (path->carrier < 0 && relay_elapsed("),
+                                    "standby"),
+    # no standby while the path is direct (N4, as it was)
+    "no-standby-while-direct": (("(keep_standby && standby_count < P2P_RELAY_STANDBYS)", "0"), "direct-standby"),
+    # standbys probed while the carrier is heard (a slow path abandoned)
+    "probe-while-heard": (("\tif (silent && relay_elapsed(now, path->probe_time, PROBE_INTERVAL))",
+                           "\tif (relay_elapsed(now, path->probe_time, PROBE_INTERVAL))"), "no-flap"),
+    # standbys released while the carrier is silent (the one to fail over to)
+    "trim-while-silent": (("\tif (keep_standby && !silent && standby_count > P2P_RELAY_STANDBYS)",
+                           "\tif (keep_standby && standby_count > P2P_RELAY_STANDBYS)"), "no-flap"),
 }
 
 STUB_HEADERS = (

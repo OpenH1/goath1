@@ -128,6 +128,7 @@ symbols in this file:
 #include "units/units.h"
 #include "view_fov.h" /* port: port/linux/game/view_fov.c */
 #include "lowered_reticle.h" /* port: port/linux/game/lowered_reticle.c */
+#include "motion_vectors.h" /* port: port/linux/game/motion_vectors.c */
 #include "shaders/shader_definitions.h" /* port: (the shield's flare on the arms) */
 #include "shaders/shaders.h"
 /* port: port/linux/game/shield_color.c */
@@ -648,6 +649,31 @@ long first_person_weapon_get_local_index(
 	return (local_player_index==MAXIMUM_NUMBER_OF_LOCAL_PLAYERS) ? NONE : local_player_index;
 }
 
+/* port: the game state written over as a whole (effects_port_game_state_rewritten):
+the effects' first-person locations are outside it, and freed; a weapon
+the state has shown already is not shown again by its next frame
+(first_person_weapon_set_visibility), so its effects are started on it
+here, as showing it starts them (the players first_person_weapon_get_local_index
+gives: not a feed's slot, nor a dead player's showing a teammate's) */
+void first_person_weapons_port_effects_restart(
+	void)
+{
+	short local_player_index;
+
+	if (!first_person_weapons)
+		return;
+	for (local_player_index=0; local_player_index<MAXIMUM_NUMBER_OF_LOCAL_PLAYERS; local_player_index++)
+	{
+		struct first_person_weapon *first_person_weapon= first_person_weapon_get(local_player_index);
+
+		if (first_person_weapon->visible && first_person_weapon->weapon_index!=NONE &&
+			dead_spectate_eyes_unit(local_player_index)==NONE)
+		{
+			effects_start_on_first_person_weapon(local_player_index, first_person_weapon->weapon_index);
+		}
+	}
+}
+
 void first_person_weapon_draw(
 	void)
 {
@@ -780,6 +806,10 @@ static void first_person_weapon_draw_slot(
 						model_node_matrices);
 				}
 #endif
+				/* port: display.temporal_aa: its nodes, kept for its motion
+				(port/linux/game/motion_vectors.c) */
+				motion_vectors_object(first_person_weapon->weapon_index, (short)(local_player_index + 1),
+					model_node_matrices);
 				render_model(
 					weapon_definition->weapon.interface_definition.first_person_model.index,
 					0.0f,
@@ -846,6 +876,9 @@ static void first_person_weapon_draw_slot(
 					weapon_definition->weapon.interface_definition.first_person_animations.index,
 					first_person_weapon->node_matrices,
 					first_person_weapon->hands_node_remapping_table);
+				/* port: (and the arms': motion_vectors.c) */
+				motion_vectors_object(first_person_weapon->weapon_index, (short)(local_player_index + 5),
+					model_node_matrices);
 				render_model(
 					first_person_interface->hands.index,
 					0.0f,

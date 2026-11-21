@@ -54,7 +54,8 @@ from .build_common import (MINIUPNPC_DIR, OPTIMISATION, OWN_CODE_ERRORS, REPLAY_
 from .guest_arch import X32
 from .guest_toolchain import LLVM_VERSION, GuestToolchain, guest_toolchain
 from .ninja_syntax import Writer
-from .vulkan_build import VULKAN_DIR, fetch_vulkan_headers, host_vulkan_renderer
+from .vulkan_build import (VULKAN_DIR, dlss_addon, dlss_module_windows, fetch_dlss_sdk, fetch_vulkan_headers,
+                           host_vulkan_renderer)
 from .windows_cross_build import cross_toolchain_prefix
 
 BUILD = Path("build/windows")
@@ -88,8 +89,8 @@ WINDOWS_GUEST_DEFINES = ["-DHALO_WINDOWS=1", "-DHALO_VULKAN=1", "-mno-red-zone",
 # the host's files of port/android/host (the rest is port/windows/host's: the
 # memory below 4 GB, threads on low stacks, Windows's system calls, the
 # exception handlers, the entry point)
-SHARED_HOST_SOURCES = ["host_audio_route.c", "host_common.c", "host_https.c", "host_loader.c", "host_memory_watch.c",
-                       "host_render_record.c", "host_render_stream.c", "host_screenshot.c", "host_sdl.c", "host_stall.c",
+SHARED_HOST_SOURCES = ["host_audio_route.c", "host_common.c", "host_https.c", "host_loader.c", "host_log_queue.c",
+                       "host_memory_watch.c", "host_render_record.c", "host_render_stream.c", "host_screenshot.c", "host_sdl.c", "host_stall.c",
                        "host_watch_hash.c"]
 # the posix.h and update.h functions the guest's platform layer calls, on
 # Windows (port/windows/src)
@@ -384,7 +385,18 @@ def _generate_host(n: Writer, sln: Any, guest: Dict[str, Path]) -> None:
     # ... and the textures', fonts' and menus' bytes (port/linux/src/embedded_assets.h)
     assets = BUILD / "openh1.assets"
     n.build(outputs=assets, rule="windows_copy", inputs=guest["assets"])
-    n.build(outputs="windows", rule="phony", inputs=[output, sdl_dll, brokers, masters, relays, records, assets])
+    # (configure.py --dlss: the DLSS module, its runtime and license beside the game)
+    dlss_outputs: List[Path] = []
+    if getattr(sln, "port_dlss", False):
+        try:
+            fetch_dlss_sdk(THIRD_PARTY / "dlss", "windows")
+            dlss_outputs = dlss_module_windows(n, BUILD, host_cflags, cross_prefix, THIRD_PARTY / "dlss")
+            # (... and the DLSS add-on the game downloads: ninja dlss_addon, tools/dlss_addon.py)
+            dlss_addon(n, "windows", "windows-x64", dlss_outputs, Path("build") / "dlss-addon")
+        except (RuntimeError, OSError) as error:
+            print(f"Windows build: no DLSS module, cannot fetch NVIDIA's DLSS SDK ({error})", file=sys.stderr)
+    n.build(outputs="windows", rule="phony",
+            inputs=[output, sdl_dll, brokers, masters, relays, records, assets, *dlss_outputs])
 
     # the command stream's replay: the renderer and the render stream of the
     # host, with the POSIX functions they use, offscreen

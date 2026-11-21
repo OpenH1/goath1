@@ -41,6 +41,21 @@ chooses:
   player whose vote failed starts none for STARTER_COOLDOWN_SECONDS, and a
   player a vote failed against is not voted against again for
   TARGET_PROTECTION_SECONDS, both by address and hardware id.
+- Each vote has a serial, and every choice in it names that serial: a
+  choice for a vote that has ended (or another) is refused, so a yes sent
+  before a vote ended (or before a new game) never counts in, or starts,
+  the next. Only a request that names no vote starts one (the scoreboard's
+  pick, the console, "!endgame"; it is the starter's yes, and a yes in the
+  vote running if it is the same vote). Every end is defined, and its
+  rules outlast the game (they are kept by the wall clock and by address
+  and hardware id): passed (kicked, kept out); failed, lost or timed out
+  (the starter cools down, the target is protected); the target left
+  (passed); the game ended under a vote to kick (the starter cools down,
+  as if it failed: no restarting it every game; the target is not
+  protected, as no one voted it down; the gap after it carries into the
+  next game). The starter leaving ends nothing: the vote is the players'
+  once started, the starter's yes no longer counts, and its end's
+  cooldown still finds the starter by address and hardware id.
 - The host's own players are never voted against; the host kicks and bans
   as it likes (network_server_manager.c), and its machine votes as any
   other.
@@ -65,6 +80,7 @@ know: its players cannot vote, and count as players who did not.
 #include "networking/network_game_globals.h"
 #include "network_distributed.h"
 #include "network_votekick.h"
+#include "network_standard.h"
 #include "server_director.h"
 #include "halo_keyboard.h"
 #include "cutscene/cinematics.h"
@@ -153,9 +169,11 @@ struct distributed_votekick_request
 	byte kind;
 	/* the player voted against (absolute index; a kick's) */
 	byte player_index;
-	/* _votekick_choice_yes (which starts a vote when none runs), _no */
+	/* _votekick_choice_yes, _no */
 	byte choice;
-	byte pad;
+	/* the serial of the vote the choice is in (its status's); 0: starts a
+	vote (a yes), or is a yes in the one running if it is that vote */
+	byte vote;
 };
 
 struct distributed_votekick_status
@@ -169,7 +187,8 @@ struct distributed_votekick_status
 	byte needed;
 	byte seconds_left;
 	byte flags;
-	byte pad;
+	/* the vote's serial (0: none, or a host before serials) */
+	byte vote;
 };
 
 typedef char distributed_votekick_request_size_assert[sizeof(struct distributed_votekick_request) == 4 ? 1 : -1];
@@ -217,6 +236,8 @@ static boolean votekick_requested[MAXIMUM_VOTEKICK_MACHINES];
 static struct
 {
 	boolean active;
+	/* its serial, which every choice in it names (1 to 255) */
+	byte serial;
 	/* _network_vote_kick, _network_vote_end_game */
 	short kind;
 	/* the machine voted against, and its players' first (for the clients) */
@@ -245,6 +266,8 @@ static struct
 /* the host: no vote before this (a vote's end and the gap after) */
 static unsigned long votekick_next_allowed;
 static boolean votekick_gap;
+/* the host: the last vote's serial (kept across games) */
+static byte votekick_last_serial;
 
 static struct votekick_identity votekick_kept_out_identities[MAXIMUM_REMEMBERED];
 static struct votekick_identity votekick_cooling_starters[MAXIMUM_REMEMBERED];
@@ -670,6 +693,7 @@ static void votekick_send_status(
 
 			votekick_voter_get(machine_indices[index], &voter);
 			message.status.kind = (byte)votekick.kind;
+			message.status.vote = votekick.serial;
 			if (votekick.kind == _network_vote_kick)
 				message.status.player_index = distributed_player_to_byte(votekick.target_player);
 			message.status.votes = (byte)PIN(votekick.votes, 0, 255);
@@ -781,6 +805,24 @@ static void votekick_fail(
 	votekick_end();
 }
 
+/* the vote ended with its game (network_votekick_new_game): no one voted
+it down, so its target is not protected; but its starter cools down as if
+it failed, or the same vote could be started again at once in each game;
+and the gap after it runs on into the next game. A vote to end the game
+ended with that game: done, no one cooled down */
+static void votekick_end_with_game(
+	void)
+{
+	if (votekick.kind == _network_vote_kick)
+	{
+		votekick_remember(votekick_cooling_starters, votekick.starter_address, votekick.starter_hardware_id,
+			STARTER_COOLDOWN_SECONDS * 1000UL);
+	}
+	votekick.active = FALSE;
+	votekick_next_allowed = system_milliseconds() + VOTE_GAP_SECONDS * 1000;
+	votekick_gap = TRUE;
+}
+
 /* a refusal, to the asking machine alone */
 static void votekick_refuse(
 	long machine_index,
@@ -853,13 +895,16 @@ static void votekick_host_choose(
 	votekick_settle();
 }
 
-/* a machine's vote (NONE: the host's own machine): a new vote of the kind
-(yes; against the player for a kick), or its choice in the one running */
+/* a machine's vote (NONE: the host's own machine): a choice in the vote of
+the serial, refused unless that vote runs; or, naming none (0), a new vote
+of the kind (yes; against the player for a kick), or a yes in the one
+running if it is the same */
 static void votekick_host_request(
 	long machine_index,
 	short kind,
 	short player_index,
-	byte choice)
+	byte choice,
+	byte serial)
 {
 	struct player_datum *player = NULL;
 	long target_machine = NONE;
@@ -874,6 +919,23 @@ static void votekick_host_request(
 
 	if (machine_index == NONE && local_player_get_next(NONE) == NONE)
 		return;
+	/* (a choice in a vote that has ended, or another: never this one's, nor
+	a new one's) */
+	if (serial && (!votekick.active || serial != votekick.serial))
+	{
+		votekick_refuse(machine_index, "vote: that vote has ended");
+		return;
+	}
+	/* (a start is a yes; but a machine of a build before serials, an OpenCE
+	one or one in a Legacy game, names none in any choice: its no is one in
+	the vote running) */
+	if (!serial && choice != _votekick_choice_yes &&
+		(!votekick.active || machine_index == NONE || network_standard_machine_is_openh1(machine_index)))
+	{
+		votekick_refuse(machine_index, votekick.active ? "vote: vote yes or no in the vote running" :
+			"vote: no vote is running");
+		return;
+	}
 	/* a choice in the vote running */
 	if (votekick.active)
 	{
@@ -885,11 +947,6 @@ static void votekick_host_request(
 			return;
 		}
 		votekick_host_choose(machine_index, choice);
-		return;
-	}
-	if (choice != _votekick_choice_yes)
-	{
-		votekick_refuse(machine_index, "vote: no vote is running");
 		return;
 	}
 	csmemset(&target, 0, sizeof(target));
@@ -981,6 +1038,9 @@ static void votekick_host_request(
 	}
 	csmemset(&votekick, 0, sizeof(votekick));
 	votekick.active = TRUE;
+	/* (a new serial, never 0: a choice names it) */
+	votekick_last_serial = (byte)(votekick_last_serial % 255 + 1);
+	votekick.serial = votekick_last_serial;
 	votekick.kind = kind;
 	votekick.target_machine = target_machine;
 	votekick.target_player = NONE;
@@ -1038,7 +1098,7 @@ void network_votekick_handle_request(
 		return;
 	}
 	votekick_host_request(machine_index, request.kind,
-		request.kind == _network_vote_kick ? (short)request.player_index : NONE, request.choice);
+		request.kind == _network_vote_kick ? (short)request.player_index : NONE, request.choice, request.vote);
 }
 
 word network_votekick_request_entry_size(
@@ -1050,9 +1110,13 @@ word network_votekick_request_entry_size(
 void network_votekick_new_game(
 	void)
 {
-	/* (a vote ends with its game, failing nobody; the time played stays) */
+	/* (a vote ends with its game: votekick_end_with_game; the time played
+	stays) */
 	if (votekick.active && votekick_host())
+	{
 		distributed_send_notice("The vote ended with the game");
+		votekick_end_with_game();
+	}
 	votekick.active = FALSE;
 	csmemset(&votekick_status, 0, sizeof(votekick_status));
 	votekick_status_heard = 0;
@@ -1156,6 +1220,7 @@ boolean network_votekick_get_status(
 		status->seconds_left = (short)MAX(0, VOTE_SECONDS - (long)(elapsed / 1000));
 		status->voted = votekick.host_voted == _votekick_choice_yes;
 		status->voted_no = votekick.host_voted == _votekick_choice_no;
+		status->serial = votekick.serial;
 		/* (the host's machine with a player to vote) */
 		status->may_vote = local_player_get_next(NONE) != NONE;
 		return TRUE;
@@ -1176,6 +1241,7 @@ boolean network_votekick_get_status(
 	status->voted = TEST_FLAG(votekick_status.flags, _votekick_status_voted_bit);
 	status->voted_no = TEST_FLAG(votekick_status.flags, _votekick_status_voted_no_bit);
 	status->may_vote = TEST_FLAG(votekick_status.flags, _votekick_status_may_vote_bit);
+	status->serial = votekick_status.vote;
 	return status->kind != _network_vote_kick || status->player_index != NONE;
 }
 
@@ -1320,12 +1386,14 @@ boolean network_votekick_available(
 		game_connection() == _game_connection_network_server;
 }
 
-/* this machine's vote of the kind (a kick's against the player) and choice:
-the host counts it at once, a client sends it */
+/* this machine's vote of the kind (a kick's against the player) and choice,
+in the vote of the serial (0: starting one): the host counts it at once, a
+client sends it */
 static boolean votekick_send_request(
 	short kind,
 	short player_index,
-	byte choice)
+	byte choice,
+	short serial)
 {
 	struct
 	{
@@ -1335,7 +1403,7 @@ static boolean votekick_send_request(
 
 	if (votekick_host())
 	{
-		votekick_host_request(NONE, kind, player_index, choice);
+		votekick_host_request(NONE, kind, player_index, choice, (byte)serial);
 		return TRUE;
 	}
 	if (game_connection() != _game_connection_network_client)
@@ -1347,6 +1415,7 @@ static boolean votekick_send_request(
 	message.request.kind = (byte)kind;
 	message.request.player_index = kind == _network_vote_kick ? distributed_player_to_byte(player_index) : NO_PLAYER;
 	message.request.choice = choice;
+	message.request.vote = (byte)serial;
 	distributed_send(&message, _distributed_message_votekick, 1, (word)sizeof(message), _distributed_to_host_reliably);
 	return TRUE;
 }
@@ -1354,6 +1423,8 @@ static boolean votekick_send_request(
 boolean network_votekick_request(
 	short player_index)
 {
+	struct network_votekick_status status;
+
 	if (!distributed_player(player_index))
 		return FALSE;
 	if (distributed_player_is_local(player_index))
@@ -1361,13 +1432,16 @@ boolean network_votekick_request(
 		console_warning("votekick: not against your own players");
 		return FALSE;
 	}
-	return votekick_send_request(_network_vote_kick, player_index, _votekick_choice_yes);
+	/* (a yes in the vote running against them, by its serial; else a start) */
+	if (network_votekick_get_status(&status) && status.kind == _network_vote_kick && status.player_index == player_index)
+		return votekick_send_request(_network_vote_kick, player_index, _votekick_choice_yes, status.serial);
+	return votekick_send_request(_network_vote_kick, player_index, _votekick_choice_yes, 0);
 }
 
 boolean network_vote_end_game(
 	void)
 {
-	return votekick_send_request(_network_vote_end_game, NONE, _votekick_choice_yes);
+	return votekick_send_request(_network_vote_end_game, NONE, _votekick_choice_yes, 0);
 }
 
 boolean network_vote_choose(
@@ -1377,7 +1451,8 @@ boolean network_vote_choose(
 
 	if (!network_votekick_get_status(&status) || !status.may_vote || status.voted || status.voted_no)
 		return FALSE;
-	return votekick_send_request(status.kind, status.player_index, yes ? _votekick_choice_yes : _votekick_choice_no);
+	return votekick_send_request(status.kind, status.player_index, yes ? _votekick_choice_yes : _votekick_choice_no,
+		status.serial);
 }
 
 /* ---------- the vote's box (hud.c) */

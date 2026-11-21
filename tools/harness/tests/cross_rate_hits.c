@@ -82,7 +82,7 @@ static void history(real speed)
 	for (back = 0; back < TARGET_HISTORY_TICKS; back++)
 	{
 		long time = now - back;
-		struct damage_history_tick *tick = &damage_history[time & (TARGET_HISTORY_TICKS - 1)];
+		struct damage_history_tick *tick = damage_history_at(time);
 		short player;
 
 		tick->time = time;

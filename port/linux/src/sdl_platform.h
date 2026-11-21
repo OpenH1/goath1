@@ -78,6 +78,9 @@ struct platform_keystroke
 	BYTE virtual_key;
 	CHAR ascii;
 	BYTE flags;
+	/* the character typed, Unicode to U+017F, 0 for none: its ASCII, or a
+	letter with a mark (keystroke_character, #1134) */
+	unsigned short character;
 };
 
 BOOL platform_sdl_initialize(void);
@@ -144,11 +147,29 @@ void platform_display_apply(void);
 /* the frames a second battery saver asks for (battery_saver.c), given the
 window's renderer: the main thread's, as it turns on or off */
 void platform_frame_rate_apply(void);
+/* the frames a second the game aims at: the display's refresh rate (60
+where it is unknown), or display.max_fps where that is lower
+(display.dynamic_resolution's budget: d3d8_device.c) */
+float platform_frame_rate_target(void);
 #ifdef HALO_VR
 /* the VR build's hidden window shown, to play flat in: no VR session */
 void platform_video_vr_unavailable(void);
 #endif
 void platform_video_swap(void);
+/* whether the window is in the background: shown, without the focus
+(another window in front of it, or minimized); none, or a hidden one, never
+(audio.background_volume: dsound_sdl.c's sound_target) */
+BOOL platform_window_background(void);
+/* the frames' limit's wait woken for a step of the game's clock that falls
+due before the frame's time (main.c's main_frame_step_due: when, 0 for
+none); whether the last wait was, once; and, for a frame woken so (which
+draws nothing), the rest of the wait */
+void platform_frame_step_hook(unsigned long long (*due)(unsigned long long now, unsigned long long frame_due));
+int platform_frame_woken_for_step(void);
+void platform_frame_wait(void);
+/* (D3DDevice_Present) whether the frame shown is counted only once its wait
+runs to the frame's time (platform_frame_wait counts it then) */
+int platform_frame_report_held(void);
 /* frames between the 30 Hz ticks at the display's refresh rate, unless
 display.interpolation is false (port/linux/game/render_interpolation.c) */
 int halo_interpolation_enabled(void);

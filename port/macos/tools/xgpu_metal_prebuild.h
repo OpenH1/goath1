@@ -21,8 +21,10 @@ pipelines (exits on failure) */
 unsigned long prebuild_script_write(const char *path, const char *library);
 
 /* writes text into a file (1 on success); the clears' and the
-presentation's functions' source (exits on failure) */
+presentation's functions' source, display.temporal_aa's passes' (exits on
+failure) */
 int prebuild_write_text(const char *path, const char *text, unsigned long size);
 void prebuild_write_fixed(const char *path);
+void prebuild_write_temporal(const char *path);
 
 #endif

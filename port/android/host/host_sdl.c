@@ -531,6 +531,14 @@ int host_sdl_rumble_gamepad(uint32_t gamepad, uint32_t low, uint32_t high, uint3
 	return object ? SDL_RumbleGamepad(object, (Uint16)low, (Uint16)high, milliseconds) : 0;
 }
 
+/* (a DualSense's trigger resistance: port/linux/src/xinput_sdl.c) */
+int host_sdl_send_gamepad_effect(uint32_t gamepad, const void *data, int size)
+{
+	SDL_Gamepad *object = host_sdl_handle_get(gamepad, _handle_gamepad);
+
+	return object && data && size > 0 ? SDL_SendGamepadEffect(object, data, size) : 0;
+}
+
 /* (gyro aiming: port/linux/src/xinput_sdl.c) */
 int host_sdl_gamepad_has_sensor(uint32_t gamepad, int type)
 {
@@ -558,6 +566,20 @@ int host_sdl_gamepad_steam(uint32_t gamepad)
 	SDL_Gamepad *object = host_sdl_handle_get(gamepad, _handle_gamepad);
 
 	return object && SDL_GetGamepadSteamHandle(object) != 0;
+}
+
+/* the gamepad's SDL GUID, its 32 hex digits (what SDL keys its mappings
+by: the bus, vendor, product, version and driver), which a controller layout
+is kept by (port/linux/src/controller_layouts.c); empty for none */
+void host_sdl_gamepad_guid(uint32_t gamepad, char *buffer, uint32_t size)
+{
+	SDL_Gamepad *object = host_sdl_handle_get(gamepad, _handle_gamepad);
+
+	if (!size)
+		return;
+	buffer[0] = 0;
+	if (object && size >= 33)
+		SDL_GUIDToString(SDL_GetJoystickGUID(SDL_GetGamepadJoystick(object)), buffer, (int)size);
 }
 
 /* ---------- audio */
@@ -1116,6 +1138,33 @@ void host_sdl_get_clipboard_text(char *buffer, uint32_t size)
 int host_sdl_open_url(const char *url)
 {
 	return SDL_OpenURL(url) ? 1 : 0;
+}
+
+/* ---------- the system's languages (the on-screen keyboard's automatic
+layout: port/linux/game/keyboard.c) */
+
+void host_sdl_preferred_locales(char *buffer, uint32_t size)
+{
+	int count = 0, index;
+	SDL_Locale **locales = SDL_GetPreferredLocales(&count);
+
+	if (!size)
+		return;
+	buffer[0] = 0;
+	for (index = 0; locales && index < count; index++)
+	{
+		char each[64];
+
+		if (!locales[index]->language)
+			continue;
+		SDL_snprintf(each, sizeof(each), "%s%s%s%s", buffer[0] ? " " : "", locales[index]->language,
+			locales[index]->country ? "_" : "", locales[index]->country ? locales[index]->country : "");
+		if (SDL_strlen(buffer) + SDL_strlen(each) >= size)
+			break;
+		SDL_strlcat(buffer, each, size);
+	}
+	if (locales)
+		SDL_free(locales);
 }
 
 int host_sdl_show_toast(const char *message, int duration, int gravity, int x, int y)

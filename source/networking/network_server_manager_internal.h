@@ -48,6 +48,12 @@ boolean network_game_server_client_machine_is_loaded(
 void network_game_server_late_joiner_loaded(
 	struct network_game_server *server,
 	struct network_game_server_client_machine *machine);
+/* port: a machine's _message_client_loaded, for the game it names (NONE:
+none): ignored, never fatal, unless the machine was told to load that game */
+void network_game_server_client_machine_loaded(
+	struct network_game_server *server,
+	struct network_game_server_client_machine *machine,
+	long game_number);
 /* the machine was heard from (its timeout, network_server_manager.c) */
 void network_game_server_client_machine_heard(
 	struct network_game_server *server,

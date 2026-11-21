@@ -14,6 +14,20 @@ header included in hcex build.
 
 /* ---------- constants */
 
+/* port: where a client machine is, as the host sees it
+(network_game_server_machine_phase, from its one state) */
+enum
+{
+	_network_machine_phase_none = 0, /* no machine in the slot */
+	_network_machine_phase_connecting, /* connected, not joined yet */
+	_network_machine_phase_lobby, /* joined, in the lobby */
+	_network_machine_phase_downloading, /* joined, downloading the map (in the lobby, or left out of the start) */
+	_network_machine_phase_waiting, /* joined the game in progress, its players being added */
+	_network_machine_phase_loading, /* told to start, has not loaded yet: in game but hears none of it */
+	_network_machine_phase_loaded, /* loaded the game (and in its postgame) */
+	NUMBER_OF_NETWORK_MACHINE_PHASES
+};
+
 /* ---------- macros */
 
 /* ---------- structures */
@@ -26,6 +40,12 @@ boolean network_game_server_playing(
 
 struct network_game_server;
 struct game_variant;
+
+/* port: the client machine at the index's phase (_network_machine_phase_*),
+from the host's one state for it (network_server_manager.c) */
+short network_game_server_machine_phase(
+	struct network_game_server *server,
+	long machine_index);
 
 struct network_game_server *network_game_server_create(
 	void);

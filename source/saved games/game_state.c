@@ -136,6 +136,8 @@ void determinism_log_game_state_allocation(char const *name, void const *address
 
 /* port: riding taken from the settings after every load (bipeds.c) */
 void bipeds_riding_latch(void);
+/* port: (effects.c) */
+void effects_port_game_state_rewritten(void);
 
 /* port: (object_types.c) */
 extern struct object_type_definition *object_type_definitions[NUMBER_OF_OBJECT_TYPES];
@@ -277,6 +279,23 @@ static void game_state_call_before_load_procs(
 	return;
 }
 
+/* port: the game state written over as a whole, whatever wrote it (a
+saved game, a checkpoint's revert, a core: the loading's procedures; a
+demo's snapshot or tick: game_state_port_demo_load, with them or not):
+what is kept outside it for its sake put right, the one place for it.
+The effects' first-person locations, outside it so that it is the same
+whether a frame was drawn, are its effects' no longer (effects.c) */
+static void game_state_port_rewritten(
+	void)
+{
+	effects_port_game_state_rewritten();
+	/* port: what the renderer keeps of the decals for drawing them
+	(rasterizer_xbox_decals.c) */
+	rasterizer_decals_port_game_state_rewritten();
+
+	return;
+}
+
 static void game_state_call_after_load_procs(
 	void)
 {
@@ -287,6 +306,7 @@ static void game_state_call_after_load_procs(
 	{
 		(*proc)();
 	}
+	game_state_port_rewritten();
 	/* port: the game state rewritten as a whole, for the demo being
 	recorded (port/linux/game/demo.c) */
 	demo_note_state_loaded();
@@ -308,11 +328,15 @@ game_state_check_data_arrays' report */
 static char const *game_state_last_event = "startup";
 static long game_state_last_event_time = NONE;
 
+/* port: the campaign bot's log of the checkpoints (port/linux/game/bots.c) */
+void bots_campaign_note_event(char const *event);
+
 static void game_state_note_event(
 	char const *event)
 {
 	game_state_last_event = event;
 	game_state_last_event_time = game_time_initialized() ? game_time_get() : NONE;
+	bots_campaign_note_event(event);
 }
 
 static void game_state_data_arrays_new_map(void);
@@ -1066,6 +1090,8 @@ boolean game_state_port_demo_load(
 		return FALSE;
 	if (procedures)
 		game_state_call_after_load_procs();
+	else
+		game_state_port_rewritten();
 	return TRUE;
 }
 

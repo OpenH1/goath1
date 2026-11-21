@@ -124,6 +124,9 @@ enum
 	/* the players' Halo 2 boarding (game.vehicle_hijack: vehicle_hijack.c),
 	an OpenH1 game's, at once for everyone */
 	_host_game_vehicle_hijack,
+	/* a team game's players' Spartan link (game.spartan_link:
+	spartan_link.c), an OpenH1 game's, from the next game in a game under way */
+	_host_game_spartan_link,
 	/* the lobby's chats: its text (network.lobby_text_chat, network_chat.c)
 	and its voice (network.voice_lobby, network_voice.c), on or off for
 	everyone in it, the host's settings reaching each machine as they do */
@@ -643,6 +646,10 @@ static void host_game_rows_read(void)
 		case _host_game_vehicle_hijack:
 			shown = network_standard_hosting();
 			break;
+		/* (an OpenH1 team game's: co-op always has the link) */
+		case _host_game_spartan_link:
+			shown = network_standard_hosting() && teams;
+			break;
 		default:
 			break;
 		}
@@ -803,6 +810,12 @@ static void host_game_row_text(short row, wchar_t *label, wchar_t *value, wchar_
 		usnprintf(value, size - 1, network_standard_hosting_vehicle_hijack() ? L"ON" : L"OFF");
 		usnprintf(help, size - 1, L"Players hold the action button beside an enemy's Ghost, Warthog or landed "
 			L"Banshee to throw the rider out and take it. Changes at once, for everyone.");
+		break;
+	case _host_game_spartan_link:
+		usnprintf(label, size - 1, L"SPARTAN LINK");
+		usnprintf(value, size - 1, network_standard_hosting_spartan_link() ? L"ON" : L"OFF");
+		usnprintf(help, size - 1, L"Players may show their teammates' views beside the motion tracker. Off, "
+			L"nobody's shows. In a game under way, from the next game.");
 		break;
 	case _host_game_lobby_text_chat:
 		usnprintf(label, size - 1, L"LOBBY TEXT CHAT");
@@ -1078,20 +1091,22 @@ static void host_game_row_change(struct widget_instance *row_widget, short row, 
 		network_host_controls_set_opence_joins(!network_host_controls_opence_joins());
 		break;
 	/* (the host's rule at once, its clients told, and config.toml's for the
-	next game hosted: network_standard.c) */
+	next game hosted: lobby_menu.inc's, as the lobby's choice does it) */
 	case _host_game_vehicle_hijack:
-	{
-		boolean on = !network_standard_hosting_vehicle_hijack();
-
-		if (!network_standard_set_vehicle_hijack(on))
+		if (!menu_host_vehicle_hijack_toggle())
 		{
 			ui_play_audio_feedback_sound(SOUND_ERROR);
 			return;
 		}
-		if (!config_write("game.vehicle_hijack", on ? "true" : "false"))
-			platform_log("menus: could not write game.vehicle_hijack to config.toml");
 		break;
-	}
+	/* (config.toml's for the lobby's record, as the lobby's choice does it) */
+	case _host_game_spartan_link:
+		if (!menu_host_spartan_link_toggle())
+		{
+			ui_play_audio_feedback_sound(SOUND_ERROR);
+			return;
+		}
+		break;
 	/* (written to config.toml, which the host's chat and voice read again
 	at once and tell every machine: network_chat.c, network_voice.c) */
 	case _host_game_lobby_text_chat:

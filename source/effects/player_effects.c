@@ -170,6 +170,11 @@ enum
 	_player_effect_screen_flash_just_started_bit,
 	_player_effect_camera_impulse_just_started_bit,
 	_player_effect_camera_shake_just_started_bit,
+	/* port: each countdown run out as this tick began (player_effect_tick_begin):
+	the frames of this tick alone draw what was left of its last tick */
+	_player_effect_screen_flash_ran_out_bit,
+	_player_effect_camera_impulse_ran_out_bit,
+	_player_effect_camera_shake_ran_out_bit,
 
 	NUMBER_OF_PLAYER_EFFECT_FLAGS
 };
@@ -308,9 +313,11 @@ static struct player_effect_globals_definition *player_effect_globals;
 far the frame is drawn from them to the tick's (get_shake_random) */
 static unsigned long shake_previous_seed;
 static real shake_blend = 1.0f;
-/* port: the game's time (plus one: none is zero) whose ticks each local
-player's flash, impulse and shake ran out in (player_effect_countdown) */
-static long countdown_ended_time[MAXIMUM_NUMBER_OF_LOCAL_PLAYERS][3];
+/* port: the looping sounds' continuous shake and rumble, which the sound
+manager adds once a frame (player_effect_continuous_refresh) and the frame's
+camera uses up (player_effect_get_camera_effect_matrix): the frames', not
+the game state's, whose own (continuous_effect) is left at none */
+static struct continuous_player_effect_datum continuous_frame_effect[MAXIMUM_NUMBER_OF_LOCAL_PLAYERS];
 
 static short render_screen_flash_type_map[NUMBER_OF_SCREEN_FLASH_TYPES] =
 {
@@ -358,8 +365,8 @@ void player_effect_initialize_for_new_map(
 	csmemset(player_effect_globals, 0, sizeof(struct player_effect_globals_definition));
 	player_effect_globals->screen_fade.ticks = NONE;
 	player_effect_globals->reference_time = game_time_get();
-	/* port: (and the last map's countdowns' ends) */
-	csmemset(countdown_ended_time, 0, sizeof(countdown_ended_time));
+	/* port: (and the last map's continuous shake) */
+	csmemset(continuous_frame_effect, 0, sizeof(continuous_frame_effect));
 
 	return;
 }
@@ -380,20 +387,14 @@ void player_effect_add_continuous_effect(
 
 	if (distance < definition->cutoff_radius)
 	{
-		struct player_effect_datum *effect = player_effect_get(local_player_index);
-		struct continuous_player_effect_datum *continuous = &effect->continuous_effect;
+		/* port: (the frames', continuous_frame_effect) */
+		struct continuous_player_effect_datum *continuous = &continuous_frame_effect[local_player_index];
 		real scale = PIN(1.0f - (distance - definition->falloff_radius) / (definition->falloff_radius - definition->cutoff_radius), 0.0f, 1.0f);
 		real magnitude;
 
 		magnitude = ((1.0f - definition->camera_shake.periodic_weight) +
 			periodic_function_evaluate(definition->camera_shake.periodic_function, game_time_get() / definition->camera_shake.periodic_period) *
 			definition->camera_shake.periodic_weight) * scale;
-
-		if (effect->continuous_effect_timer > 0)
-		{
-			effect->continuous_effect_timer = 0;
-			csmemset(continuous, 0, sizeof(*continuous));
-		}
 
 		continuous->translational_shake += MAX(
 			magnitude * definition->camera_shake.random_translation_magnitude,
@@ -524,19 +525,9 @@ void player_effect_get_damage_indicators(
 	byte *damage_indicators)
 {
 	struct player_effect_datum *effect = player_effect_get(local_player_index);
-	short index;
 
+	/* port: (their ticks counted by the ticks, player_effect_tick_begin) */
 	csmemcpy(damage_indicators, effect->damage_indicator_ticks, sizeof(effect->damage_indicator_ticks));
-
-	for (index = 0; index < NUMBER_OF_DAMAGE_INDICATORS; index++)
-	{
-		if (effect->damage_indicator_ticks[index])
-		{
-			effect->damage_indicator_ticks[index] = (byte)((game_time_get_elapsed() + effect->damage_indicator_ticks[index] < 255)
-				? game_time_get_elapsed() + effect->damage_indicator_ticks[index]
-				: 255);
-		}
-	}
 
 	return;
 }
@@ -553,32 +544,53 @@ void player_effect_clear_damage_indicators(
 	return;
 }
 
-/* port: a countdown of a local player's effects (0 the screen's flash, 1
-the camera's impulse, 2 its shake: of the duration in ticks), which the
-frames count down by the ticks each ran, read at the time of the frame
-drawn (time_left: between the ticks, render_interpolation_ticks_left);
-TRUE while it is to be drawn: counting down, as before, or through the
-rest of the tick it ran out in, fading to none, where it had been cut at
-the tick's first frame */
-static boolean player_effect_countdown(
-	short local_player_index,
-	short countdown,
+/* port: a countdown of a local player's effects (the screen's flash, the
+camera's impulse and shake: the ticks left of its duration) as a frame
+draws it: TRUE while it is drawn (ticks left, begun in the tick the frame
+follows, or, in the tick it ran out at, the rest of its last tick at the
+time of the frame drawn), and that time, between the ticks
+(render_interpolation_ticks_left). The ticks count it down
+(player_effect_tick_begin): the frames only read it. A countdown run out
+before this tick is not drawn: its 0 left read in an open tick (a sub-step
+of game.sim_rate 60 or 120 run) is a tick more, so it came back at a sliver
+of its last intensity in each open tick's frames and went in the others',
+a strobe for as long as the map ran after the first flash */
+static boolean player_effect_drawn(
 	short ticks_left,
 	real duration,
 	boolean just_started,
+	boolean ran_out,
 	real *time_left)
 {
 	*time_left = render_interpolation_ticks_left(ticks_left);
-	if (ticks_left > 0 || just_started)
-	{
-		if (ticks_left - game_time_get_elapsed() <= 0)
-			countdown_ended_time[local_player_index][countdown] = game_time_get() + 1;
-		return TRUE;
-	}
 
-	return countdown_ended_time[local_player_index][countdown] == game_time_get() + 1 &&
-		duration > 0.0f &&
-		*time_left > 0.0f;
+	return ticks_left > 0 || just_started || (ran_out && duration > 0.0f && *time_left > 0.0f);
+}
+
+/* port: ... and its step, once a tick: what the first frame after the tick
+before did, by the ticks it ran (game_time_get_elapsed), and every frame
+after it again by none */
+static void player_effect_count_down(
+	short *ticks_left,
+	byte *flags,
+	short just_started_bit,
+	short ran_out_bit)
+{
+	boolean ran_out = FALSE;
+
+	if (*ticks_left > 0 || TEST_FLAG(*flags, just_started_bit))
+	{
+		*ticks_left -= 1;
+		SET_FLAG(*flags, just_started_bit, FALSE);
+		ran_out = *ticks_left <= 0;
+	}
+	/* (run out at this step, not at one before: what the frames of this
+	tick alone draw the rest of. One not counted in a tick, the flash under
+	a fade and the impulse and shake under a scripted shake, is not drawn
+	in its frames, the fade or the scripted shake drawn in its place) */
+	SET_FLAG(*flags, ran_out_bit, ran_out);
+
+	return;
 }
 
 static real effect_scale_factor(
@@ -680,6 +692,110 @@ void player_effect_update(
 			player_effect_clear_damage_indicators(local_player_index);
 			csmemset(player_effect_get(local_player_index), 0, sizeof(struct player_effect_datum));
 			rumble_player_clear(local_player_index);
+		}
+	}
+
+	return;
+}
+
+/* port: the player effects' timers, once a tick, as it begins (game.c's
+game_tick_macro_step). The frames counted them down as they drew them
+(player_effect_get_screen_flash, player_effect_get_camera_effect_matrix:
+the screen's fade ended, the flash's, impulse's and shake's ticks left and
+their first frame, the scripted shake's timer and its end; the HUD's damage
+indicators' ticks), each by the ticks it ran: the same sum, but the game
+state took the frames' steps between the ticks, at a frame of the next
+tick's or between, so the game played at another frame rate was another
+game (OpenH1 #1233); a view drawn twice (a mirror, a split screen's
+scripted shake) counted twice. Here each is the step the first frame after
+the tick before took, as the Xbox drew a frame a tick, before anything of
+this tick starts another; the frames draw them between the ticks. */
+void player_effect_tick_begin(
+	void)
+{
+	struct screen_fade_definition *screen_fade = &player_effect_globals->screen_fade;
+	struct scripted_player_effect_definition *scripted_effect = &player_effect_globals->scripted_effect;
+	boolean scripted_active = TEST_FLAG(player_effect_globals->global_flags, _scripted_player_effect_active_bit);
+	short local_player_index;
+
+	if (screen_fade->ticks != NONE &&
+		!screen_fade->fading_out &&
+		game_time_get() - screen_fade->start_time > screen_fade->ticks)
+	{
+		screen_fade->ticks = NONE;
+	}
+
+	for (local_player_index = local_player_get_next(NONE);
+		local_player_index != NONE;
+		local_player_index = local_player_get_next(local_player_index))
+	{
+		struct player_effect_datum *effect = player_effect_get(local_player_index);
+		short index;
+
+		/* (a fade drawn is drawn in the flash's place) */
+		if (screen_fade->ticks == NONE)
+		{
+			player_effect_count_down(
+				&effect->screen_flash_time_left,
+				&effect->flags,
+				_player_effect_screen_flash_just_started_bit,
+				_player_effect_screen_flash_ran_out_bit);
+		}
+
+		/* (a scripted shake is drawn in the impulse's and shake's place) */
+		if (!scripted_active)
+		{
+			player_effect_count_down(
+				&effect->camera_impulse_time_left,
+				&effect->flags,
+				_player_effect_camera_impulse_just_started_bit,
+				_player_effect_camera_impulse_ran_out_bit);
+			player_effect_count_down(
+				&effect->camera_shake_time_left,
+				&effect->flags,
+				_player_effect_camera_shake_just_started_bit,
+				_player_effect_camera_shake_ran_out_bit);
+		}
+
+		for (index = 0; index < NUMBER_OF_DAMAGE_INDICATORS; index++)
+		{
+			if (effect->damage_indicator_ticks[index] &&
+				effect->damage_indicator_ticks[index] < 255)
+			{
+				effect->damage_indicator_ticks[index]++;
+			}
+		}
+	}
+
+	/* the scripted shake: its timer, its end, and the rumble's scale as the
+	frames left it for this tick's rumble_update */
+	if (scripted_active)
+	{
+		real intensity = scripted_effect->max_intensity;
+
+		if (scripted_effect->timer > 0)
+		{
+			real timer = PIN((real)scripted_effect->timer, 0.0f, (real)scripted_effect->total_time);
+
+			if (TEST_FLAG(player_effect_globals->global_flags, _scripted_player_effect_stopping_bit))
+				intensity = (timer / scripted_effect->total_time) * intensity;
+			else
+				intensity = (1.0f - timer / scripted_effect->total_time) * intensity;
+
+			scripted_effect->timer--;
+			rumble_player_set_scale(PIN(intensity, 0.0f, 1.0f));
+		}
+		else if (TEST_FLAG(player_effect_globals->global_flags, _scripted_player_effect_stopping_bit))
+		{
+			SET_FLAG(
+				player_effect_globals->global_flags,
+				_scripted_player_effect_active_bit,
+				FALSE);
+			rumble_player_set_scale(0.0f);
+		}
+		else
+		{
+			rumble_player_set_scale(PIN(intensity, 0.0f, 1.0f));
 		}
 	}
 
@@ -820,25 +936,19 @@ void player_effect_get_screen_flash(
 		}
 		else if (local_player_index != NONE)
 		{
+			/* port: (the fade's end and the flash's ticks are the ticks',
+			player_effect_tick_begin: the frames only draw them) */
 			struct player_effect_datum *effect = player_effect_get(local_player_index);
 			real time_left;
 
-			player_effect_globals->screen_fade.ticks = NONE;
-
-			if (player_effect_countdown(
-				local_player_index,
-				0,
+			if (player_effect_drawn(
 				effect->screen_flash_time_left,
 				effect->screen_flash.duration,
 				TEST_FLAG(effect->flags, _player_effect_screen_flash_just_started_bit),
+				TEST_FLAG(effect->flags, _player_effect_screen_flash_ran_out_bit),
 				&time_left))
 			{
 				struct screen_flash_definition const *flash = &effect->screen_flash;
-
-				SET_FLAG(
-					effect->flags,
-					_player_effect_screen_flash_just_started_bit,
-					FALSE);
 
 				screen_flash->type = render_screen_flash_type_map[flash->type];
 				screen_flash->color = flash->screen_flash_color;
@@ -848,8 +958,6 @@ void player_effect_get_screen_flash(
 						flash->zero_scale_factor * (PIN(time_left, 0.0f, flash->duration) / flash->duration));
 				else
 					screen_flash->intensity = flash->zero_scale_factor;
-
-				effect->screen_flash_time_left -= game_time_get_elapsed();
 
 				match_assert("c:\\halo\\SOURCE\\effects\\player_effects.c", 530, screen_flash->intensity>=0.0f && screen_flash->intensity<=1.0f);
 			}
@@ -994,7 +1102,8 @@ void player_effect_get_camera_effect_matrix(
 		Xbox, by drawing from a seed made from the tick, and in the frames
 		between ticks, between the tick's shake and the tick before's
 		(get_shake_random_range). Its curves are read at the time of the
-		frame drawn (render_interpolation_ticks_left). */
+		frame drawn (render_interpolation_ticks_left); their timers are the
+		ticks' (player_effect_tick_begin), which the frames only read. */
 		unsigned long *local_seed = get_global_local_random_seed_address();
 		unsigned long saved_local_seed = *local_seed;
 
@@ -1009,6 +1118,8 @@ void player_effect_get_camera_effect_matrix(
 				&player_effect_globals->scripted_effect;
 			real intensity = scripted_effect->max_intensity;
 
+			boolean shaking = TRUE;
+
 			*matrix = *global_identity4x3;
 
 			if (scripted_effect->timer > 0)
@@ -1022,19 +1133,14 @@ void player_effect_get_camera_effect_matrix(
 					intensity = (timer / scripted_effect->total_time) * intensity;
 				else
 					intensity = (1.0f - timer / scripted_effect->total_time) * intensity;
-
-				scripted_effect->timer -= game_time_get_elapsed();
 			}
 			else if (TEST_FLAG(player_effect_globals->global_flags, _scripted_player_effect_stopping_bit))
 			{
-				SET_FLAG(
-					player_effect_globals->global_flags,
-					_scripted_player_effect_active_bit,
-					FALSE);
-				rumble_player_set_scale(0.0f);
+				/* (stopped: the next tick ends it, and the rumble's scale) */
+				shaking = FALSE;
 			}
 
-			if (TEST_FLAG(player_effect_globals->global_flags, _scripted_player_effect_active_bit))
+			if (shaking)
 			{
 				real random_roll;
 				real random_pitch;
@@ -1044,7 +1150,6 @@ void player_effect_get_camera_effect_matrix(
 				real random_vertical;
 
 				intensity = PIN(intensity, 0.0f, 1.0f);
-				rumble_player_set_scale(intensity);
 
 				random_roll = get_shake_random_range(-1.0f, 1.0f);
 				random_pitch = get_shake_random_range(-1.0f, 1.0f);
@@ -1074,12 +1179,11 @@ void player_effect_get_camera_effect_matrix(
 			real impulse_time_left;
 			real shake_time_left;
 
-			if (player_effect_countdown(
-				local_player_index,
-				1,
+			if (player_effect_drawn(
 				effect->camera_impulse_time_left,
 				effect->camera_impulse.temporary_duration,
 				TEST_FLAG(effect->flags, _player_effect_camera_impulse_just_started_bit),
+				TEST_FLAG(effect->flags, _player_effect_camera_impulse_ran_out_bit),
 				&impulse_time_left))
 			{
 				real_vector3d axis;
@@ -1102,11 +1206,6 @@ void player_effect_get_camera_effect_matrix(
 						duration);
 				}
 
-				SET_FLAG(
-					effect->flags,
-					_player_effect_camera_impulse_just_started_bit,
-					FALSE);
-
 				cross_product3d(global_up3d, &effect->direction, &axis);
 
 				rotation = scale * effect->camera_impulse.temporary_rotation;
@@ -1121,7 +1220,6 @@ void player_effect_get_camera_effect_matrix(
 				effect_matrix.position.y = effect->direction.j * translation + effect->jitter.j * scale;
 				effect_matrix.position.z = effect->direction.k * translation + effect->jitter.k * scale;
 
-				effect->camera_impulse_time_left -= game_time_get_elapsed();
 				source = &effect_matrix;
 			}
 			else
@@ -1133,16 +1231,15 @@ void player_effect_get_camera_effect_matrix(
 
 			camera_shake_ticks = effect->camera_shake_time_left;
 
-			if (player_effect_countdown(
-				local_player_index,
-				2,
+			if (player_effect_drawn(
 				camera_shake_ticks,
 				effect->camera_shake.duration,
 				TEST_FLAG(effect->flags, _player_effect_camera_shake_just_started_bit),
+				TEST_FLAG(effect->flags, _player_effect_camera_shake_ran_out_bit),
 				&shake_time_left))
 			{
 				struct continuous_player_effect_datum *continuous =
-					&effect->continuous_effect;
+					&continuous_frame_effect[local_player_index];
 				real scale;
 				real magnitude;
 				real random_translation_magnitude;
@@ -1180,11 +1277,6 @@ void player_effect_get_camera_effect_matrix(
 					magnitude * effect->camera_shake.random_rotation_magnitude,
 					0.0f);
 
-				SET_FLAG(
-					effect->flags,
-					_player_effect_camera_shake_just_started_bit,
-					FALSE);
-
 				get_shake_matrix(
 					random_translation_magnitude + continuous->translational_shake,
 					random_rotation_magnitude + continuous->rotational_shake,
@@ -1195,28 +1287,21 @@ void player_effect_get_camera_effect_matrix(
 					continuous->vibrate_frequencies[0],
 					continuous->vibrate_frequencies[1]);
 
-				/* Looping sounds add their continuous shake once a frame
-				(game_sound.c), so it is used up once a frame too: a frame that
-				runs no tick (port/linux/game/render_interpolation.c) must not
-				keep it and have the next frame's shake added on top. */
-				effect->continuous_effect_timer = 1;
-
-				if (effect->continuous_effect_timer > 0)
-				{
-					effect->continuous_effect_timer = 0;
-					csmemset(continuous, 0, sizeof(*continuous));
-				}
-
 				get_shake_matrix(
 					random_translation_magnitude,
 					random_rotation_magnitude,
 					&effect_matrix);
 
-				effect->camera_shake_time_left -= game_time_get_elapsed();
-
 				matrix4x3_multiply(matrix, &effect_matrix, matrix);
 			}
 		}
+		/* Looping sounds add their continuous shake once a frame
+		(sound_manager.c), so it is used up once a frame too: a frame that
+		runs no tick (port/linux/game/render_interpolation.c) must not keep
+		it and have the next frame's shake added on top (port: the frames'
+		own, continuous_frame_effect) */
+		csmemset(&continuous_frame_effect[local_player_index], 0,
+			sizeof(continuous_frame_effect[local_player_index]));
 		*local_seed = saved_local_seed;
 	}
 

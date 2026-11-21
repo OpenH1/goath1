@@ -109,7 +109,7 @@ enum
 	EXECUTION_MODE_DEPTH_GREATER = 14, EXECUTION_MODE_DEPTH_LESS = 15,
 	EXECUTION_MODE_PIXEL_INTERLOCK_ORDERED = 5366, EXECUTION_MODE_SAMPLE_INTERLOCK_ORDERED = 5368,
 	DIM_2D = 1, DIM_3D = 2, DIM_CUBE = 3, DIM_SUBPASS_DATA = 6, IMAGE_FORMAT_RGBA16F = 2,
-	IMAGE_OPERANDS_LOD = 2, IMAGE_OPERANDS_SAMPLE = 0x40,
+	IMAGE_OPERANDS_LOD = 2, IMAGE_OPERANDS_GRAD = 4, IMAGE_OPERANDS_SAMPLE = 0x40,
 	SCOPE_DEVICE = 1, SCOPE_SUBGROUP = 3, GROUP_OPERATION_REDUCE = 0,
 };
 
@@ -168,6 +168,10 @@ bitwise or (GroupNonUniformArithmetic) */
 	unsigned int world_ao_pixels, t_uv2;
 	/* the vertex constants read (xgpu_spirv_module's) */
 	unsigned long long constants_read[3];
+	/* display.temporal_aa's motion (xgpu_spirv_options' motion): the constants'
+	block holds the previous frame's registers after the 192, and the
+	program reads them while previous is set */
+	BOOL motion, previous;
 };
 
 static void words_push(struct module *m, struct words *words, unsigned int word)
@@ -804,7 +808,7 @@ static unsigned int local(struct module *m, struct words *locals, unsigned int t
 /* the vertex constants: a block of 192 vec4 */
 static void declare_constants(struct module *m)
 {
-	unsigned int length = constant_uint(m, XGPU_VERTEX_CONSTANT_COUNT);
+	unsigned int length = constant_uint(m, m->motion ? 2 * XGPU_VERTEX_CONSTANT_COUNT : XGPU_VERTEX_CONSTANT_COUNT);
 	unsigned int array, block;
 
 	array = id_new(m);
@@ -1004,6 +1008,8 @@ static unsigned int vertex_constant(struct module *m, unsigned int index_id)
 	unsigned int operands[3], pointer;
 
 	memset(m->constants_read, 0xff, sizeof(m->constants_read));
+	if (m->previous)
+		index_id = op2(m, OP_I_ADD, m->t_int, index_id, constant_int(m, XGPU_VERTEX_CONSTANT_COUNT));
 	operands[0] = m->constants;
 	operands[1] = constant_int(m, 0);
 	operands[2] = index_id;
@@ -1020,7 +1026,7 @@ static unsigned int vertex_constant_at(struct module *m, int index)
 		m->constants_read[index >> 6] |= 1ull << (index & 63);
 	operands[0] = m->constants;
 	operands[1] = constant_int(m, 0);
-	operands[2] = constant_int(m, index);
+	operands[2] = constant_int(m, m->previous ? index + XGPU_VERTEX_CONSTANT_COUNT : index);
 	pointer = op(m, OP_ACCESS_CHAIN, type_pointer(m, STORAGE_UNIFORM, m->t_v4), 3, operands);
 	return load(m, m->t_v4, pointer);
 }
@@ -1584,6 +1590,124 @@ unsigned long xgpu_spirv_vertex_inputs(const struct xgpu_vertex_program *program
 	return vertex_inputs(program, lighting);
 }
 
+/* ---------- display.temporal_aa's motion
+
+The objects' draws while a window's objects draw with the motion
+(xgpu_spirv_options' motion): the program run a second time on the previous
+frame's registers (the 192 after the 192: the game's previous projection
+and nodes where it has them, d3d8_device.c's halo_motion_previous_constants,
+else the registers as they are), each position taken through the screen's
+conversion as the draw's is (the same jitter and half pixel, which the
+difference leaves out), and handed to the pixel shader as x, y and w: the
+pixel's motion, the previous less the current, as a fraction of the view. */
+
+/* a position as the screen's conversion has it, before the depth: x, y, w
+(the window's clip position, the conversion's half pixel and the jitter in
+it; no multiview) */
+static unsigned int motion_screen(struct module *m, BOOL clip_captured, unsigned int clip_position,
+	unsigned int position)
+{
+	unsigned int viewport_scale = uniform(m, U_VIEWPORT_SCALE, -1), viewport_offset = uniform(m, U_VIEWPORT_OFFSET, -1);
+	unsigned int screen_offset = uniform(m, U_SCREEN_OFFSET, -1);
+	unsigned int scale_parts[2], scale, shift_parts[2], shift, xy_value, w, parts[3];
+	BOOL previous = m->previous;
+	int component;
+
+	m->previous = FALSE;
+	for (component = 0; component < 2; component++)
+	{
+		unsigned int value = extract(m, viewport_scale, component);
+
+		scale_parts[component] = op3(m, OP_SELECT, m->t_float,
+			compare(m, OP_F_UNORD_NOT_EQUAL, value, constant_float(m, 0.0f)), value, constant_float(m, 1.0f));
+	}
+	scale = construct(m, 2, scale_parts);
+	shift_parts[0] = fadd(m, 1, constant_float(m, 0.5f), screen_offset);
+	shift_parts[1] = constant_float(m, 0.5f);
+	shift = construct(m, 2, shift_parts);
+	if (clip_captured)
+	{
+		w = extract(m, clip_position, 3);
+		xy_value = fdiv(m, 2, fadd(m, 2, fmul(m, 2, xy(m, clip_position),
+			xy(m, vertex_constant_at(m, XGPU_VERTEX_CONSTANT_BIAS - 38))),
+			fscale(m, 2, fsub(m, 2, fadd(m, 2, xy(m, vertex_constant_at(m, XGPU_VERTEX_CONSTANT_BIAS - 37)), shift),
+			xy(m, viewport_offset)), w)), scale);
+	}
+	else
+	{
+		w = extract(m, position, 3);
+		xy_value = fscale(m, 2, fdiv(m, 2, fsub(m, 2, fadd(m, 2, xy(m, position), shift), xy(m, viewport_offset)),
+			scale), w);
+	}
+	m->previous = previous;
+	parts[0] = extract(m, xy_value, 0);
+	parts[1] = extract(m, xy_value, 1);
+	parts[2] = w;
+	return construct(m, 3, parts);
+}
+
+/* the program run on the previous frame's registers, from its state before
+its first instruction: its position as motion_screen has it */
+static unsigned int motion_previous(struct module *m, const struct xgpu_vertex_program *program,
+	const struct vertex_state *initial)
+{
+	struct vertex_state state = *initial;
+	unsigned int clip_position = 0;
+	BOOL clip_captured = FALSE;
+	unsigned long index;
+
+	m->previous = TRUE;
+	for (index = 0; index < program->instruction_count; index++)
+	{
+		const struct xgpu_vertex_instruction *instruction = &program->instructions[index];
+		unsigned int operands = mac_operands(instruction->mac) |
+			(instruction->ilu != XGPU_ILU_NOP && instruction->ilu <= XGPU_ILU_LIT ? 4 : 0);
+		unsigned int a = 0, b = 0, c = 0;
+
+		if (operands & 1)
+			a = vertex_operand(m, &state, &instruction->a, instruction->relative);
+		if (operands & 2)
+			b = vertex_operand(m, &state, &instruction->b, instruction->relative);
+		if (operands & 4)
+			c = vertex_operand(m, &state, &instruction->c, instruction->relative);
+		if (instruction->mac != XGPU_MAC_NOP)
+			state.mac = mac_operation(m, &state, instruction->mac, a, b, c);
+		if (instruction->ilu != XGPU_ILU_NOP)
+			state.ilu = ilu_operation(m, &state, instruction->ilu, c);
+		if (instruction->captures_clip)
+		{
+			clip_position = state.position;
+			clip_captured = TRUE;
+		}
+		if (instruction->mac == XGPU_MAC_ARL)
+		{
+			state.a0 = op1(m, OP_CONVERT_F_TO_S, m->t_int, ext1(m, GLSL_FLOOR, m->t_float,
+				fadd(m, 1, extract(m, state.mac, 0), constant_float(m, (float)0.001))));
+		}
+		else if (instruction->mac != XGPU_MAC_NOP && instruction->mac_mask)
+		{
+			if (instruction->mac_temporary == XGPU_VERTEX_POSITION)
+				state.position = write_masked(m, state.position, state.mac, instruction->mac_mask);
+			else if (instruction->mac_temporary < XGPU_VERTEX_POSITION)
+				state.r[instruction->mac_temporary] = write_masked(m, state.r[instruction->mac_temporary], state.mac,
+					instruction->mac_mask);
+		}
+		if (instruction->ilu != XGPU_ILU_NOP && instruction->ilu_mask)
+		{
+			if (instruction->ilu_temporary == XGPU_VERTEX_POSITION)
+				state.position = write_masked(m, state.position, state.ilu, instruction->ilu_mask);
+			else if (instruction->ilu_temporary < XGPU_VERTEX_POSITION)
+				state.r[instruction->ilu_temporary] = write_masked(m, state.r[instruction->ilu_temporary], state.ilu,
+					instruction->ilu_mask);
+		}
+		if (instruction->writes_output && output_slot(instruction->output) == OUT_POSITION)
+			state.position = write_masked(m, state.position, instruction->output_from_ilu ? state.ilu : state.mac,
+				instruction->output_mask);
+	}
+	m->previous = FALSE;
+	return motion_screen(m, clip_captured, clip_position, state.position);
+}
+
 BOOL xgpu_spirv_vertex_shader(const struct xgpu_vertex_program *program, unsigned long packed_attribute_mask,
 	unsigned long integer_attribute_mask, const struct nv2a_vertex_lighting *lighting,
 	const struct xgpu_spirv_options *options, struct xgpu_spirv_module *module)
@@ -1608,8 +1732,14 @@ BOOL xgpu_spirv_vertex_shader(const struct xgpu_vertex_program *program, unsigne
 	unsigned long depth_z = 0, depth_w = 0;
 	BOOL depth_rows = options->reversed_depth && xgpu_vertex_program_depth_rows(program, &depth_z, &depth_w);
 	unsigned int depth_point = 0, depth_z_row = 0, depth_w_row = 0;
+	/* (display.temporal_aa: the positions this frame and the frame before,
+	as the screen's conversion has them; none with views) */
+	BOOL motion = options->motion && !options->multiview;
+	unsigned int motion_current_out = 0, motion_previous_out = 0;
+	struct vertex_state initial;
 
 	module_begin(&m, EXECUTION_MODEL_VERTEX);
+	m.motion = motion;
 	inputs = vertex_inputs(program, lighting);
 	declare_constants(&m);
 	declare_uniforms(&m);
@@ -1652,6 +1782,13 @@ BOOL xgpu_spirv_vertex_shader(const struct xgpu_vertex_program *program, unsigne
 		light_ambient_out = interface_variable(&m, m.t_v3, STORAGE_OUTPUT, XGPU_SPIRV_LOCATION_LIGHT_AMBIENT, "xLightAmbient");
 		light_point_out = interface_variable(&m, m.t_v3, STORAGE_OUTPUT, XGPU_SPIRV_LOCATION_LIGHT_POINT, "xLightPoint");
 	}
+	if (motion)
+	{
+		motion_current_out = interface_variable(&m, m.t_v3, STORAGE_OUTPUT, XGPU_SPIRV_LOCATION_MOTION_CURRENT,
+			"xMotionCurrent");
+		motion_previous_out = interface_variable(&m, m.t_v3, STORAGE_OUTPUT, XGPU_SPIRV_LOCATION_MOTION_PREVIOUS,
+			"xMotionPrevious");
+	}
 
 	main_id = function_begin(&m);
 	memset(&state, 0, sizeof(state));
@@ -1678,6 +1815,7 @@ BOOL xgpu_spirv_vertex_shader(const struct xgpu_vertex_program *program, unsigne
 	state.outputs[OUT_PTS] = splat(&m, 4, uniform(&m, U_POINT_SIZE, -1));
 	state.a0 = constant_int(&m, 0);
 	state.mac = state.ilu = state.zero;
+	initial = state;
 	/* a structure's vertices are in the world: as they are */
 	if (environment)
 	{
@@ -1772,6 +1910,11 @@ BOOL xgpu_spirv_vertex_shader(const struct xgpu_vertex_program *program, unsigne
 		}
 	}
 
+	if (motion)
+	{
+		store(&m, motion_current_out, motion_screen(&m, clip_captured, clip_position, state.position));
+		store(&m, motion_previous_out, motion_previous(&m, program, &initial));
+	}
 	if (options->multiview)
 	{
 		unsigned int correction, corrected;
@@ -2044,6 +2187,55 @@ static unsigned int image_size(struct module *m, unsigned int image, unsigned in
 	return op(m, OP_IMAGE_QUERY_SIZE_LOD, type, 2, operands);
 }
 
+/* display.smooth_lightmaps (xgpu.h's XGPU_TEXTURE_MODES_LIGHTMAP_CUBIC): the
+lightmap at uv (a vec2, the texture's own coordinates) by the uniform cubic
+B-spline over the 4x4 texels about it, in four bilinear lookups: along each
+axis, of t = uv size - 0.5, its texel i = floor(t) and f = t - i, the weights
+w0 = (1-f)^3/6, w1 = (3f^3 - 6f^2 + 4)/6, w2 = (-3f^3 + 3f^2 + 3f + 1)/6,
+w3 = f^3/6, paired: g0 = w0 + w1 at (i - 0.5 + w1/g0)/size, g1 = 1 - g0 at
+(i + 1.5 + w3/g1)/size (each pair's two texels mixed by the bilinear
+filter; g0 and g1 at least 1/6). The weights sum to 1 (a flat area as
+bilinear draws it). Each lookup by the gradients of uv itself, so that its
+level and anisotropy are bilinear's (the lookups' own coordinates jump at a
+texel's edge), the sampler's LOD bias (display.temporal_aa's) applied */
+static unsigned int lightmap_cubic(struct module *m, unsigned int image, unsigned int uv)
+{
+	unsigned int raw = op(m, OP_IMAGE, type_sampled_image(m, DIM_2D, FALSE, FALSE, FALSE), 1, &image);
+	unsigned int size = op1(m, OP_CONVERT_S_TO_F, m->t_v2, image_size(m, raw, m->t_iv2));
+	unsigned int one = splat(m, 2, constant_float(m, 1.0f)), sixth = constant_float(m, 1.0f / 6.0f);
+	unsigned int t = fsub(m, 2, fmul(m, 2, uv, size), splat(m, 2, constant_float(m, 0.5f)));
+	unsigned int i = ext1(m, GLSL_FLOOR, m->t_v2, t), f = fsub(m, 2, t, i);
+	unsigned int f2 = fmul(m, 2, f, f), f3 = fmul(m, 2, f2, f), r = fsub(m, 2, one, f);
+	unsigned int w0 = fscale(m, 2, fmul(m, 2, fmul(m, 2, r, r), r), sixth);
+	unsigned int w1 = fscale(m, 2, fadd(m, 2, fsub(m, 2, fscale(m, 2, f3, constant_float(m, 3.0f)),
+		fscale(m, 2, f2, constant_float(m, 6.0f))), splat(m, 2, constant_float(m, 4.0f))), sixth);
+	unsigned int w3 = fscale(m, 2, f3, sixth);
+	unsigned int g0 = fadd(m, 2, w0, w1), g1 = fsub(m, 2, one, g0);
+	unsigned int p0 = fdiv(m, 2, fadd(m, 2, fsub(m, 2, i, splat(m, 2, constant_float(m, 0.5f))), fdiv(m, 2, w1, g0)), size);
+	unsigned int p1 = fdiv(m, 2, fadd(m, 2, fadd(m, 2, i, splat(m, 2, constant_float(m, 1.5f))), fdiv(m, 2, w3, g1)), size);
+	unsigned int dx = op1(m, OP_DPDX, m->t_v2, uv), dy = op1(m, OP_DPDY, m->t_v2, uv);
+	unsigned int texels[4], operands[5], row[2];
+	int corner;
+
+	for (corner = 0; corner < 4; corner++)
+	{
+		unsigned int parts[2];
+
+		parts[0] = extract(m, corner & 1 ? p1 : p0, 0);
+		parts[1] = extract(m, corner & 2 ? p1 : p0, 1);
+		operands[0] = image;
+		operands[1] = construct(m, 2, parts);
+		operands[2] = IMAGE_OPERANDS_GRAD;
+		operands[3] = dx;
+		operands[4] = dy;
+		texels[corner] = op(m, OP_IMAGE_SAMPLE_EXPLICIT_LOD, m->t_v4, 5, operands);
+	}
+	for (corner = 0; corner < 2; corner++)
+		row[corner] = fadd(m, 4, fscale(m, 4, texels[2 * corner], extract(m, g0, 0)),
+			fscale(m, 4, texels[2 * corner + 1], extract(m, g1, 0)));
+	return fadd(m, 4, fscale(m, 4, row[0], extract(m, g0, 1)), fscale(m, 4, row[1], extract(m, g1, 1)));
+}
+
 /* the stage's lookup at coordinates (a vec4); where the shader draws the
 border, the texel mixed with the border color by how much of the lookup's
 footprint is inside the texture along each axis the border is on (xgpu_msl.c
@@ -2109,6 +2301,12 @@ static unsigned int sample(struct module *m, struct pixel_state *state, int stag
 		parts[0] = uv;
 		parts[1] = op1(m, OP_CONVERT_S_TO_F, m->t_float, layer);
 		texel = op2(m, OP_IMAGE_SAMPLE_IMPLICIT_LOD, m->t_v4, image, op(m, OP_COMPOSITE_CONSTRUCT, m->t_v3, 2, parts));
+	}
+	else if (stage == 2 && state->program->lightmap_filter && sampler == _xgpu_sampler_2d && !border &&
+		!(state->options->border[stage] & XGPU_BORDER_MSDF))
+	{
+		/* (display.smooth_lightmaps: the lightmap pass's lightmap) */
+		return lightmap_cubic(m, image, uv);
 	}
 	else
 	{
@@ -2665,6 +2863,18 @@ static void world_ao_declare_pixels(struct module *m)
 	decorate1(m, m->world_ao_pixels, DECORATION_BINDING, XGPU_SPIRV_BINDING_WORLD_AO_PIXELS);
 }
 
+/* the level's field: its atlas and its table */
+static void world_sdf_declare(struct module *m)
+{
+	m->world_sdf = variable(m, type_sampled_image(m, DIM_3D, FALSE, FALSE, TRUE), STORAGE_UNIFORM_CONSTANT, "world_sdf");
+	decorate1(m, m->world_sdf, DECORATION_DESCRIPTOR_SET, XGPU_SPIRV_SET_OCCLUSION);
+	decorate1(m, m->world_sdf, DECORATION_BINDING, XGPU_SPIRV_BINDING_WORLD_SDF);
+	m->world_sdf_table = variable(m, type_sampled_image(m, DIM_3D, FALSE, FALSE, TRUE), STORAGE_UNIFORM_CONSTANT,
+		"world_sdf_table");
+	decorate1(m, m->world_sdf_table, DECORATION_DESCRIPTOR_SET, XGPU_SPIRV_SET_OCCLUSION);
+	decorate1(m, m->world_sdf_table, DECORATION_BINDING, XGPU_SPIRV_BINDING_WORLD_SDF_TABLE);
+}
+
 static void world_ao_declare(struct module *m)
 {
 	unsigned int members[5], block, operands[3];
@@ -2691,13 +2901,7 @@ static void world_ao_declare(struct module *m)
 	m->world_ao = variable(m, block, STORAGE_UNIFORM, "world_ao");
 	decorate1(m, m->world_ao, DECORATION_DESCRIPTOR_SET, XGPU_SPIRV_SET_OCCLUSION);
 	decorate1(m, m->world_ao, DECORATION_BINDING, XGPU_SPIRV_BINDING_WORLD_AO);
-	m->world_sdf = variable(m, type_sampled_image(m, DIM_3D, FALSE, FALSE, TRUE), STORAGE_UNIFORM_CONSTANT, "world_sdf");
-	decorate1(m, m->world_sdf, DECORATION_DESCRIPTOR_SET, XGPU_SPIRV_SET_OCCLUSION);
-	decorate1(m, m->world_sdf, DECORATION_BINDING, XGPU_SPIRV_BINDING_WORLD_SDF);
-	m->world_sdf_table = variable(m, type_sampled_image(m, DIM_3D, FALSE, FALSE, TRUE), STORAGE_UNIFORM_CONSTANT,
-		"world_sdf_table");
-	decorate1(m, m->world_sdf_table, DECORATION_DESCRIPTOR_SET, XGPU_SPIRV_SET_OCCLUSION);
-	decorate1(m, m->world_sdf_table, DECORATION_BINDING, XGPU_SPIRV_BINDING_WORLD_SDF_TABLE);
+	world_sdf_declare(m);
 	world_ao_declare_scenery(m);
 	m->world_ao_objects = variable(m, type_sampled_image(m, DIM_3D, FALSE, FALSE, TRUE), STORAGE_UNIFORM_CONSTANT,
 		"world_ao_objects");
@@ -2726,7 +2930,7 @@ static void selection_end(struct module *m, unsigned int merge);
 (from the first voxel's centre, clamped to the field's edge), its cell in
 the table; a cell all outside or all inside its range, else its brick's
 trilinear texel in the atlas, times the range */
-static unsigned int world_sdf_distance(struct module *m, struct pixel_state *state, unsigned int field0,
+static unsigned int world_sdf_distance(struct module *m, struct words *locals, unsigned int field0,
 	unsigned int field1, unsigned int point)
 {
 	unsigned int range = fdiv(m, 1, constant_float(m, (float)XGPU_WORLD_SDF_RANGE_VOXELS), extract(m, field0, 3));
@@ -2736,7 +2940,7 @@ static unsigned int world_sdf_distance(struct module *m, struct pixel_state *sta
 	unsigned int cell = ext2(m, GLSL_F_MIN, m->t_v3, ext1(m, GLSL_FLOOR, m->t_v3, fscale(m, 3, coordinate,
 		constant_float(m, 1.0f / (float)XGPU_WORLD_SDF_BRICK))), fsub(m, 3, xyz(m, field1), constant_splat(m, 3, 1.0f)));
 	unsigned int sampled = load(m, type_sampled_image(m, DIM_3D, FALSE, FALSE, TRUE), m->world_sdf_table), operands[4];
-	unsigned int entry, kind, result = local(m, &state->locals, m->t_float), body = id_new(m), merge = id_new(m);
+	unsigned int entry, kind, result = local(m, locals, m->t_float), body = id_new(m), merge = id_new(m);
 	unsigned int at, uvw, atlas, size[3], brick;
 
 	operands[0] = op(m, OP_IMAGE, type_sampled_image(m, DIM_3D, FALSE, FALSE, FALSE), 1, &sampled);
@@ -2786,7 +2990,7 @@ static unsigned int world_sdf_occlusion(struct module *m, struct pixel_state *st
 	for (tap = 0; tap < XGPU_WORLD_AO_TAPS; tap++)
 	{
 		unsigned int h = fmul(m, 1, step, constant_float(m, (float)(1 << tap)));
-		unsigned int d = fsub(m, 1, world_sdf_distance(m, state, field0, field1, fadd(m, 3, p, fscale(m, 3, n, h))), own);
+		unsigned int d = fsub(m, 1, world_sdf_distance(m, &state->locals, field0, field1, fadd(m, 3, p, fscale(m, 3, n, h))), own);
 
 		occlusion = fadd(m, 1, occlusion, fmul(m, 1, constant_float(m, 1.0f / (float)(2 << tap)),
 			saturate(m, 1, fdiv(m, 1, fsub(m, 1, h, d), h))));
@@ -3505,9 +3709,12 @@ world_trace: port/linux/game/world_cascades.c's world_trace_ray operation
 for operation (tools/test_world_trace.py runs it against it): from origin
 along the unit direction to at most t_max, through the cascades (their four
 vec4s: the first voxel's centre and the voxel, 0 not ready; their texture,
-cascades_texture, a combined image sampler of RG8 snorm), hitting what mask
-(an int: XGPU_WORLD_TRACE_*) allows, each distance only once the ray is
-outside it. A structured loop, its values in locals; the hit (1 or 0), t
+cascades_texture, a combined image sampler of RG8 snorm, the objects'
+distance its second channel), hitting what mask (an int:
+XGPU_WORLD_TRACE_*) allows, each distance only once the ray is outside it.
+The structure's distance is the level's field's at the ray's point
+(world_sdf_distance; field its block's two vec4s), read only where field
+is given: NULL, the ray step meets the objects alone (the AO pass's). A structured loop, its values in locals; the hit (1 or 0), t
 and kind (as floats) in result. A hardware backend's ray queries (#602)
 would take the same arguments (docs/world-ao.md) */
 /* the cascade a point is in: the finest ready, from first on, whose window
@@ -3538,8 +3745,8 @@ static unsigned int world_cascade_find(struct module *m, const unsigned int casc
 	return found;
 }
 
-/* its two distances at a point (world units: a vec4's x and y), and its
-voxel (world_cascades_sample) */
+/* its distances at a point (world units: a vec4's y, the objects'; x is
+none), and its voxel (world_cascades_sample) */
 static unsigned int world_cascade_sample(struct module *m, unsigned int cascades_texture,
 	const unsigned int cascades[XGPU_WORLD_CASCADES], unsigned int found, unsigned int p, unsigned int *voxel_out)
 {
@@ -3578,8 +3785,8 @@ static unsigned int world_cascade_sample(struct module *m, unsigned int cascades
 }
 
 static void world_trace(struct module *m, struct words *locals, unsigned int cascades_texture,
-	const unsigned int cascades[XGPU_WORLD_CASCADES], unsigned int origin, unsigned int direction, unsigned int t_max,
-	unsigned int mask, unsigned int result[3])
+	const unsigned int cascades[XGPU_WORLD_CASCADES], const unsigned int *field, unsigned int origin,
+	unsigned int direction, unsigned int t_max, unsigned int mask, unsigned int result[3])
 {
 	unsigned int t_variable = local(m, locals, m->t_float), step_variable = local(m, locals, m->t_int);
 	unsigned int done_variable = local(m, locals, m->t_bool), structure_variable = local(m, locals, m->t_bool);
@@ -3621,14 +3828,16 @@ static void world_trace(struct module *m, struct words *locals, unsigned int cas
 		&found_merge);
 	sampled = world_cascade_sample(m, cascades_texture, cascades, found, p, &voxel);
 	range = fmul(m, 1, constant_float(m, (float)XGPU_WORLD_CASCADE_RANGE_VOXELS), voxel);
-	d[0] = extract(m, sampled, 0);
+	/* (the structure's from the level's field where the ray is, the
+	objects' from the cascade) */
+	d[0] = field ? world_sdf_distance(m, locals, field[0], field[1], p) : 0;
 	d[1] = extract(m, sampled, 1);
 	/* each channel the mask allows, once the ray is outside it; inside one
 	yet, how far it is to its way out */
 	nearest = inside = range;
 	variables[0] = structure_variable;
 	variables[1] = objects_variable;
-	for (channel = 0; channel < 2; channel++)
+	for (channel = field ? 0 : 1; channel < 2; channel++)
 	{
 		unsigned int count;
 
@@ -3645,9 +3854,11 @@ static void world_trace(struct module *m, struct words *locals, unsigned int cas
 			ext2(m, GLSL_F_MIN, m->t_float, inside, fneg(m, 1, d[channel])), inside);
 	}
 	is_hit = compare(m, OP_F_ORD_LESS_THAN, nearest, fmul(m, 1, constant_float(m, XGPU_WORLD_TRACE_HIT), voxel));
-	kind = fselect(m, op2(m, OP_LOGICAL_AND, m->t_bool, op2(m, OP_LOGICAL_AND, m->t_bool, enabled[0], active[0]),
-		compare(m, OP_F_ORD_LESS_THAN_EQUAL, d[0], nearest)), constant_float(m, (float)XGPU_WORLD_TRACE_STRUCTURE),
-		constant_float(m, (float)XGPU_WORLD_TRACE_OBJECTS));
+	kind = constant_float(m, (float)XGPU_WORLD_TRACE_OBJECTS);
+	if (field)
+		kind = fselect(m, op2(m, OP_LOGICAL_AND, m->t_bool, op2(m, OP_LOGICAL_AND, m->t_bool, enabled[0], active[0]),
+			compare(m, OP_F_ORD_LESS_THAN_EQUAL, d[0], nearest)), constant_float(m, (float)XGPU_WORLD_TRACE_STRUCTURE),
+			kind);
 	selection_begin(m, is_hit, &hit_merge);
 	store(m, hit_variable, constant_float(m, 1.0f));
 	store(m, distance_variable, t);
@@ -3687,11 +3898,12 @@ BOOL xgpu_spirv_world_trace_test(struct xgpu_spirv_module *module)
 	struct module m;
 	struct words locals = { 0 };
 	unsigned int main_id, texture, origin_in, direction_in, parameters_in, cascades_in[XGPU_WORLD_CASCADES], color_out;
-	unsigned int cascades[XGPU_WORLD_CASCADES], parameters, result[3];
+	unsigned int cascades[XGPU_WORLD_CASCADES], parameters, result[3], field_in[2], field[2];
 	int cascade;
 
 	module_begin(&m, EXECUTION_MODEL_FRAGMENT);
 	texture = world_cascades_declare(&m);
+	world_sdf_declare(&m);
 	origin_in = interface_variable(&m, m.t_v3, STORAGE_INPUT, 0, "origin");
 	direction_in = interface_variable(&m, m.t_v3, STORAGE_INPUT, 1, "direction");
 	parameters_in = interface_variable(&m, m.t_v4, STORAGE_INPUT, 2, "parameters");
@@ -3703,12 +3915,18 @@ BOOL xgpu_spirv_world_trace_test(struct xgpu_spirv_module *module)
 		cascades_in[cascade] = interface_variable(&m, m.t_v4, STORAGE_INPUT, 3 + cascade, names[cascade]);
 		decorate(&m, cascades_in[cascade], DECORATION_FLAT, 0, NULL);
 	}
+	field_in[0] = interface_variable(&m, m.t_v4, STORAGE_INPUT, 3 + XGPU_WORLD_CASCADES, "field0");
+	field_in[1] = interface_variable(&m, m.t_v4, STORAGE_INPUT, 4 + XGPU_WORLD_CASCADES, "field1");
+	decorate(&m, field_in[0], DECORATION_FLAT, 0, NULL);
+	decorate(&m, field_in[1], DECORATION_FLAT, 0, NULL);
 	color_out = interface_variable(&m, m.t_v4, STORAGE_OUTPUT, 0, "fragment_color");
 	main_id = function_begin(&m);
 	for (cascade = 0; cascade < XGPU_WORLD_CASCADES; cascade++)
 		cascades[cascade] = load(&m, m.t_v4, cascades_in[cascade]);
 	parameters = load(&m, m.t_v4, parameters_in);
-	world_trace(&m, &locals, texture, cascades, load(&m, m.t_v3, origin_in), load(&m, m.t_v3, direction_in),
+	field[0] = load(&m, m.t_v4, field_in[0]);
+	field[1] = load(&m, m.t_v4, field_in[1]);
+	world_trace(&m, &locals, texture, cascades, field, load(&m, m.t_v3, origin_in), load(&m, m.t_v3, direction_in),
 		extract(&m, parameters, 0), op1(&m, OP_CONVERT_F_TO_S, m.t_int, extract(&m, parameters, 1)), result);
 	store(&m, color_out, construct4(&m, result[0], result[1], result[2], constant_float(&m, 0.0f)));
 	return module_end(&m, EXECUTION_MODEL_FRAGMENT, main_id, &locals, module);
@@ -3775,7 +3993,7 @@ static unsigned int world_ao_read(struct module *m, struct pixel_state *state, i
 	{
 		unsigned int baked = compare(m, OP_F_ORD_LESS_THAN, extract(m, object, 1), constant_float(m, 0.0f));
 		unsigned int field0 = world_ao_vector(m, 0, constant_int(m, 0)), field1 = world_ao_vector(m, 0, constant_int(m, 1));
-		unsigned int inside = ext2(m, GLSL_F_MIN, m->t_float, world_sdf_distance(m, state, field0, field1, p),
+		unsigned int inside = ext2(m, GLSL_F_MIN, m->t_float, world_sdf_distance(m, &state->locals, field0, field1, p),
 			constant_float(m, 0.0f));
 		unsigned int reference = fselect(m, baked, constant_float(m, 1.0f), extract(m, object, 1));
 
@@ -4201,9 +4419,13 @@ static unsigned int dynamic_light_cluster_mask(struct module *m, struct pixel_st
 /* dynamic_light_sum(p, n, surface_normal, environment): the lights of the
 pixel's cell, summed (a model's but those its object's own that do not light
 it, its model_lights[XGPU_MODEL_LIGHT_OWN_LIGHTS]); its loops are SPIR-V's structured loops, its values
-kept in the function's variables */
+kept in the function's variables. With a reflection (a model's, of the eye
+about its normal; 0 none), each light's highlight along it, to the exponent,
+summed into the shine variable as well (xgpu.h XGPU_DYNAMIC_LIGHTS_HIGHLIGHT;
+xgpu_msl.c's dynamic_light_sum) */
 static unsigned int dynamic_light_sum(struct module *m, struct pixel_state *state, unsigned int p, unsigned int n,
-	unsigned int surface_normal, BOOL environment)
+	unsigned int surface_normal, BOOL environment, unsigned int reflection, unsigned int exponent,
+	unsigned int shine_variable)
 {
 	unsigned int grid0 = dynamic_light(m, 0, constant_int(m, 0)), grid1 = dynamic_light(m, 0, constant_int(m, 1));
 	unsigned int offset, cell, mask, cell_index, operands[4];
@@ -4334,6 +4556,15 @@ static unsigned int dynamic_light_sum(struct module *m, struct pixel_state *stat
 	spot = saturate(m, 1, fadd(m, 1, fmul(m, 1, fdot(m, l, fneg(m, 3, xyz(m, cone))), extract(m, cone, 3)), extract(m, color, 3)));
 	store(m, sum_variable, fadd(m, 3, load(m, m->t_v3, sum_variable),
 		fscale(m, 3, xyz(m, color), fmul(m, 1, fmul(m, 1, falloff, facing), spot))));
+	if (reflection)
+	{
+		/* shine += color.rgb * (falloff * spot * saturate(dot(n, l) * 4.0) * pow(max(dot(reflection, l), 0.0), exponent)) */
+		unsigned int lobe = ext2(m, GLSL_POW, m->t_float, fmax_scalar(m, 1, fdot(m, reflection, l), 0.0f), exponent);
+		unsigned int horizon = saturate(m, 1, fmul(m, 1, fdot(m, n, l), constant_float(m, 4.0f)));
+
+		store(m, shine_variable, fadd(m, 3, load(m, m->t_v3, shine_variable),
+			fscale(m, 3, xyz(m, color), fmul(m, 1, fmul(m, 1, fmul(m, 1, falloff, spot), horizon), lobe))));
+	}
 	branch(m, inner_continue);
 	label_at(m, inner_continue);
 	branch(m, inner_header);
@@ -4403,6 +4634,19 @@ static unsigned int brightest_of(struct module *m, unsigned int rgb)
 {
 	return ext2(m, GLSL_F_MAX, m->t_float, extract(m, rgb, 0), ext2(m, GLSL_F_MAX, m->t_float, extract(m, rgb, 1),
 		extract(m, rgb, 2)));
+}
+
+/* display.hdr_highlight_boost (#1123): what a boost's level adds to rgb,
+the light it has past what was under it (added, at least 0) gained, its
+brightest no further than the ceiling, nor than itself where it is
+already past: xgpu_hdr_boost_toward */
+static unsigned int boost_extra(struct module *m, unsigned int rgb, unsigned int added, int level, float ceiling)
+{
+	unsigned int extra = fscale(m, 3, added, constant_float(m, XGPU_HDR_BOOST_STEP * (float)level));
+	unsigned int share = fclamp(m, 1, fdiv(m, 1, fsub(m, 1, constant_float(m, ceiling), brightest_of(m, rgb)),
+		fmax_scalar(m, 1, brightest_of(m, extra), 1.0e-6f)), 0.0f, 1.0f);
+
+	return fscale(m, 3, extra, share);
 }
 
 /* where an interlocked draw writes its colour (hdr_destination): its
@@ -4679,9 +4923,17 @@ XGPU_VULKAN_THICKNESS_UNIT: texels a stored 1 is) */
 
 BOOL xgpu_spirv_effect_possible(const struct xgpu_pixel_program *program)
 {
-	return program->multiview == XGPU_MULTIVIEW_EYES && program->stages[0].mode == XGPU_TEXTURE_PROJECT2D &&
+	return (program->multiview == XGPU_MULTIVIEW_EYES || program->multiview == XGPU_MULTIVIEW_NONE) &&
+		program->stages[0].mode == XGPU_TEXTURE_PROJECT2D &&
 		program->stages[0].sampler == _xgpu_sampler_2d && !stage_samples(program->stages[2].mode) &&
 		!stage_samples(program->stages[3].mode);
+}
+
+/* the effect's depth is the views' layers (an array), else on a flat
+screen (no views: display.soft_particles) one 2D image */
+static BOOL effect_depth_arrayed(const struct pixel_state *state)
+{
+	return state->options->multiview != XGPU_MULTIVIEW_NONE;
 }
 
 /* the effect's textures: the scene's depth (the views' layers) and the
@@ -4690,8 +4942,8 @@ static void effect_declare(struct module *m, struct pixel_state *state)
 {
 	state->frag_coord = variable(m, m->t_v4, STORAGE_INPUT, "gl_FragCoord");
 	decorate1(m, state->frag_coord, DECORATION_BUILT_IN, BUILT_IN_FRAG_COORD);
-	state->effect_depth = variable(m, type_sampled_image(m, DIM_2D, TRUE, FALSE, TRUE), STORAGE_UNIFORM_CONSTANT,
-		"effect_depth");
+	state->effect_depth = variable(m, type_sampled_image(m, DIM_2D, effect_depth_arrayed(state), FALSE, TRUE),
+		STORAGE_UNIFORM_CONSTANT, "effect_depth");
 	decorate1(m, state->effect_depth, DECORATION_DESCRIPTOR_SET, XGPU_SPIRV_SET_TEXTURES);
 	decorate1(m, state->effect_depth, DECORATION_BINDING, XGPU_SPIRV_EFFECT_DEPTH_BINDING);
 	state->effect_thickness = variable(m, type_sampled_image(m, DIM_2D, FALSE, FALSE, TRUE), STORAGE_UNIFORM_CONSTANT,
@@ -4725,6 +4977,7 @@ gone). As GLSL:
 vec4 base = unproject[view][0] * gl_FragCoord.x + unproject[view][1] * gl_FragCoord.y + unproject[view][3];
 vec3 p = point(base + unproject[view][2] * gl_FragCoord.z);
 float depth = texelFetch(effect_depth, ivec3(gl_FragCoord.xy, view), 0).r;
+(a flat screen's: depth = eye[1].z > 0.5 ? depth * eye[1].x + eye[1].y : depth)
 vec4 behind = base + unproject[view][2] * depth;
 float to_scene = depth >= 1.0 || behind.w <= 0.0 ? 1.0e9 : length(point(behind) - eye[view]);
 float to_pixel = length(p - eye[view]); vec3 ray = (p - eye[view]) / to_pixel;
@@ -4749,7 +5002,9 @@ static unsigned int effect_prelude(struct module *m, struct pixel_state *state)
 	const struct xgpu_spirv_options *options = state->options;
 	/* (a z-sprite's front is its own depth: effect_zsprite_fade) */
 	BOOL thick = options->effect == XGPU_SPIRV_EFFECT_THICK && !xgpu_pixel_program_depth_stage(state->program);
-	unsigned int view = view_number(m, XGPU_MULTIVIEW_EYES, options->foveated);
+	/* (a flat screen's: the first view, 0) */
+	BOOL arrayed = effect_depth_arrayed(state);
+	unsigned int view = arrayed ? view_number(m, XGPU_MULTIVIEW_EYES, options->foveated) : constant_int(m, 0);
 	unsigned int frag = load(m, m->t_v4, state->frag_coord), columns[4], first_column, base, p, depth, behind;
 	unsigned int eye, to_scene, far, to_pixel, offset_to_pixel, ray, xt, w, uv, scaled, thick_texel, texels;
 	unsigned int dpx, dpy, dux, duy, texel, radius, front, span, operands[4];
@@ -4764,16 +5019,28 @@ static unsigned int effect_prelude(struct module *m, struct pixel_state *state)
 	p = effect_point(m, fadd(m, 4, base, fscale(m, 4, columns[2], effect_game_depth(m, options, extract(m, frag, 2)))));
 	/* the scene's depth behind the pixel, in the view's layer */
 	{
-		unsigned int sampled = load(m, type_sampled_image(m, DIM_2D, TRUE, FALSE, TRUE), state->effect_depth);
+		unsigned int sampled = load(m, type_sampled_image(m, DIM_2D, arrayed, FALSE, TRUE), state->effect_depth);
 		unsigned int parts[2];
 
 		parts[0] = op1(m, OP_CONVERT_F_TO_S, m->t_iv2, xy(m, frag));
 		parts[1] = view;
-		operands[0] = op(m, OP_IMAGE, type_sampled_image(m, DIM_2D, TRUE, FALSE, FALSE), 1, &sampled);
-		operands[1] = op(m, OP_COMPOSITE_CONSTRUCT, m->t_iv3, 2, parts);
+		operands[0] = op(m, OP_IMAGE, type_sampled_image(m, DIM_2D, arrayed, FALSE, FALSE), 1, &sampled);
+		operands[1] = arrayed ? op(m, OP_COMPOSITE_CONSTRUCT, m->t_iv3, 2, parts) : parts[0];
 		operands[2] = IMAGE_OPERANDS_LOD;
 		operands[3] = constant_int(m, 0);
 		depth = effect_game_depth(m, options, extract(m, op(m, OP_IMAGE_FETCH, m->t_v4, 4, operands), 0));
+	}
+	/* (a flat screen's draw over the first-person weapon's pixels: their
+	depth of its own projection, as the world's would have it, the
+	uniforms' effect_eye[1] its scale and offset where its z is 1, else
+	unused: xgpu_stream.h's xgpu_depth_remap, xgpu_vulkan_stream.c's
+	effect_first_person_uniforms) */
+	if (!arrayed)
+	{
+		unsigned int remap = uniform_index(m, U_EFFECT_EYE, constant_int(m, 1));
+
+		depth = op3(m, OP_SELECT, m->t_float, compare(m, OP_F_ORD_GREATER_THAN, extract(m, remap, 2),
+			constant_float(m, 0.5f)), fadd(m, 1, fmul(m, 1, depth, extract(m, remap, 0)), extract(m, remap, 1)), depth);
 	}
 	behind = fadd(m, 4, base, fscale(m, 4, columns[2], depth));
 	eye = xyz(m, uniform_index(m, U_EFFECT_EYE, view));
@@ -4933,7 +5200,7 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 	unsigned int comparison = program->alpha_test ? comparison_opcode(program->alpha_test) : 0;
 	BOOL sample_mask = comparison && program->alpha_test_samples && program->alpha_test != D3DCMP_EQUAL &&
 		program->alpha_test != D3DCMP_NOTEQUAL;
-	unsigned int main_id, color_out, sample_mask_out = 0, result, dynamic_light_bump = 0, effect_fade_value = 0;
+	unsigned int main_id, color_out, sample_mask_out = 0, result, dynamic_light_bump = 0, shine_variable = 0, highlight_scale = 0, effect_fade_value = 0;
 	BOOL effect = options->effect != XGPU_SPIRV_EFFECT_NONE && xgpu_spirv_effect_possible(program);
 	/* a z-sprite (xgpu_shader.h): its depth written, conservatively (only
 	ever nearer than the card), or as a VR effect its fade measured from it */
@@ -4946,6 +5213,7 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 	self-illumination, and the light that adds past white) */
 	BOOL self_illuminated = XGPU_HDR_IS_SELF_ILLUMINATED(program->hdr) && !program->source_blend;
 	unsigned int self_illumination_base = 0, self_illumination = 0;
+	unsigned int in_motion_current = 0, in_motion_previous = 0, motion_out = 0;
 	int stage;
 
 	memset(&state, 0, sizeof(state));
@@ -5032,6 +5300,22 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 		state.in_world_tangent = interface_variable(&m, m.t_v3, STORAGE_INPUT, XGPU_SPIRV_LOCATION_WORLD_TANGENT, "xWorldTangent");
 	}
 	color_out = interface_variable(&m, world_inputs || occluder ? m.t_uv4 : m.t_v4, STORAGE_OUTPUT, 0, "fragment_color");
+	/* (display.temporal_aa: the motion, the second attachment's: the
+	previous position less the current, as a fraction of the view, x right
+	and y down, and the pixel's depth, which the resolve finds it still is) */
+	if (options->motion && !program->multiview && !world_inputs && !occluder)
+	{
+		in_motion_current = interface_variable(&m, m.t_v3, STORAGE_INPUT, XGPU_SPIRV_LOCATION_MOTION_CURRENT,
+			"xMotionCurrent");
+		in_motion_previous = interface_variable(&m, m.t_v3, STORAGE_INPUT, XGPU_SPIRV_LOCATION_MOTION_PREVIOUS,
+			"xMotionPrevious");
+		motion_out = interface_variable(&m, m.t_v4, STORAGE_OUTPUT, 1, "fragment_motion");
+		if (!state.frag_coord)
+		{
+			state.frag_coord = variable(&m, m.t_v4, STORAGE_INPUT, "gl_FragCoord");
+			decorate1(&m, state.frag_coord, DECORATION_BUILT_IN, BUILT_IN_FRAG_COORD);
+		}
+	}
 	if (sample_mask)
 	{
 		unsigned int operands[3], array = id_new(&m);
@@ -5071,8 +5355,34 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 			fmax_scalar(&m, 1, fdot(&m, normal, normal), (float)1.0e-24)));
 		unsigned int lit = model_lighting(&m, &state, program->per_pixel_lighting == 2, TRUE,
 			occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_MODEL ? state.occlusion : 0);
-		unsigned int sum = dynamic_light_sum(&m, &state, pixel_input(&m, &state, state.in_world_position, m.t_v3), n, n, FALSE);
+		unsigned int p = pixel_input(&m, &state, state.in_world_position, m.t_v3);
+		unsigned int reflection = 0, exponent = 0, sum;
 		static const unsigned int rgb[4] = { 4, 5, 6, 3 };
+
+		if (program->stages[3].mode == XGPU_TEXTURE_CUBEMAP && state.in_t[3])
+		{
+			/* (its reflection's highlights of the lights: xgpu.h
+			XGPU_DYNAMIC_LIGHTS_HIGHLIGHT) */
+			unsigned int to_eye = fsub(&m, 3, xyz(&m, dynamic_light(&m, 0, constant_int(&m, 0))), p);
+			unsigned int v = fscale(&m, 3, to_eye, ext1(&m, GLSL_INVERSE_SQRT, m.t_float,
+				fmax_scalar(&m, 1, fdot(&m, to_eye, to_eye), (float)1.0e-12)));
+			unsigned int dx, dy, widened;
+			const float lobe = 2.0f / (XGPU_DYNAMIC_LIGHTS_HIGHLIGHT_EXPONENT + 2.0f);
+
+			/* reflection = 2.0 * dot(n, v) * n - v */
+			reflection = fsub(&m, 3, fscale(&m, 3, n, fmul(&m, 1, fdot(&m, n, v), constant_float(&m, 2.0f))), v);
+			/* widened = lobe + min(dot(dFdx(r), dFdx(r)) + dot(dFdy(r), dFdy(r)), WIDEST);
+			exponent = 2.0 / widened - 2.0; the shine by lobe / widened */
+			dx = op1(&m, OP_DPDX, m.t_v3, reflection);
+			dy = op1(&m, OP_DPDY, m.t_v3, reflection);
+			widened = fadd(&m, 1, constant_float(&m, lobe), ext2(&m, GLSL_F_MIN, m.t_float,
+				fadd(&m, 1, fdot(&m, dx, dx), fdot(&m, dy, dy)), constant_float(&m, XGPU_DYNAMIC_LIGHTS_HIGHLIGHT_WIDEST)));
+			exponent = fsub(&m, 1, fdiv(&m, 1, constant_float(&m, 2.0f), widened), constant_float(&m, 2.0f));
+			highlight_scale = fdiv(&m, 1, constant_float(&m, lobe * XGPU_DYNAMIC_LIGHTS_HIGHLIGHT), widened);
+			shine_variable = local(&m, &state.locals, m.t_v3);
+			store(&m, shine_variable, constant_splat(&m, 3, 0.0f));
+		}
+		sum = dynamic_light_sum(&m, &state, p, n, n, FALSE, reflection, exponent, shine_variable);
 
 		state.v0 = shuffle(&m, 4, state.v0, dynamic_light_add(&m, &state, lit, sum, FALSE), rgb);
 	}
@@ -5099,6 +5409,15 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 		effect_fade_value = effect_prelude(&m, &state);
 	for (stage = 0; stage < 4; stage++)
 		texture_stage(&m, &state, stage);
+	/* (a model's highlights of the lights, added to its reflection's texel:
+	xgpu.h XGPU_DYNAMIC_LIGHTS_HIGHLIGHT) */
+	if (shine_variable)
+	{
+		static const unsigned int rgb[4] = { 4, 5, 6, 3 };
+
+		state.t[3] = shuffle(&m, 4, state.t[3], dynamic_light_add(&m, &state, xyz(&m, state.t[3]),
+			fscale(&m, 3, load(&m, m.t_v3, shine_variable), highlight_scale), FALSE), rgb);
+	}
 	if (effect && replaces_depth && state.replaced_depth)
 		effect_fade_value = effect_zsprite_fade(&m, &state, &zsprite_hidden);
 	/* (the bump map's texel, which the combiners may overwrite: the enhanced
@@ -5140,6 +5459,12 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 		more = op3(&m, OP_SELECT, m.t_float, compare(&m, OP_F_ORD_GREATER_THAN, added_most, constant_float(&m, 0.0f)),
 			more, constant_float(&m, 0.0f));
 		self_illumination = fscale(&m, 3, added, more);
+		/* (... gained by display.hdr_highlight_boost's level, toward the
+		same ceiling: xgpu_hdr_self_illuminate_boost) */
+		if (XGPU_HDR_BOOST_OF(program->hdr))
+			self_illumination = fadd(&m, 3, self_illumination, boost_extra(&m, fadd(&m, 3, lit, self_illumination),
+				fadd(&m, 3, added, self_illumination), XGPU_HDR_BOOST_OF(program->hdr),
+				XGPU_HDR_SELF_ILLUMINATION_VALUE));
 	}
 	/* (display.ambient_occlusion: a lightmap pass's light, by the
 	occlusion, before the enhanced dynamic lights add theirs) */
@@ -5165,7 +5490,8 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 			fscale(&m, 3, pixel_input(&m, &state, state.in_world_tangent, m.t_v3), extract(&m, bump, 0)),
 			fscale(&m, 3, pixel_input(&m, &state, state.in_world_binormal, m.t_v3), extract(&m, bump, 1))),
 			fscale(&m, 3, surface_normal, fmax_scalar(&m, 1, extract(&m, bump, 2), 0.05f))));
-		sum = dynamic_light_sum(&m, &state, pixel_input(&m, &state, state.in_world_position, m.t_v3), n, surface_normal, TRUE);
+		sum = dynamic_light_sum(&m, &state, pixel_input(&m, &state, state.in_world_position, m.t_v3), n, surface_normal, TRUE,
+			0, 0, 0);
 		lit = dynamic_light_add(&m, &state, xyz(&m, result), fmul(&m, 3, sum,
 			xyz(&m, uniform(&m, U_DYNAMIC_LIGHT_TINT, -1))), (program->hdr & XGPU_HDR_LIGHTS) != 0);
 		result = shuffle(&m, 4, result, lit, rgb);
@@ -5266,6 +5592,17 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 		result = vec4_of(&m, fadd(&m, 3, xyz(&m, result), self_illumination), extract(&m, result, 3));
 	if (effect)
 		result = effect_fade(&m, options->effect_fade, result, effect_fade_value);
+	/* (an emitter's light gained by display.hdr_highlight_boost's level,
+	before the fixed function adds it: xgpu_hdr_boost_emitter) */
+	if (!program->source_blend && XGPU_HDR_IS_EMITTER(program->hdr))
+	{
+		unsigned int rgb = xyz(&m, result);
+		int bound = XGPU_HDR_EMITTER_BOUND(program->hdr);
+
+		result = vec4_of(&m, fadd(&m, 3, rgb, boost_extra(&m, rgb, rgb, XGPU_HDR_BOOST_OF(program->hdr),
+			bound == XGPU_HDR_CEILING_WEAPON ? XGPU_HDR_CEILING_WEAPON_VALUE : XGPU_HDR_CEILING_LIGHT_VALUE)),
+			extract(&m, result, 3));
+	}
 	if (program->source_blend)
 	{
 		unsigned int blend = uniform(&m, U_BLEND_CONSTANT, -1), factor;
@@ -5302,6 +5639,25 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 			constant_uint(&m, 0), constant_uint(&m, 0), constant_uint(&m, 0) }));
 	else
 		store(&m, color_out, finite4(&m, result));
+	if (motion_out)
+	{
+		static const float half_down[2] = { 0.5f, -0.5f };
+		unsigned int current = load(&m, m.t_v3, in_motion_current), previous = load(&m, m.t_v3, in_motion_previous);
+		unsigned int current_w = extract(&m, current, 2), previous_w = extract(&m, previous, 2);
+		unsigned int now = fdiv(&m, 2, xy(&m, current), splat(&m, 2, current_w));
+		unsigned int before = fdiv(&m, 2, xy(&m, previous), splat(&m, 2, previous_w));
+		unsigned int moved, depth, both;
+
+		moved = fmul(&m, 2, fsub(&m, 2, before, now), constant_vector(&m, 2, half_down));
+		/* (none where either is behind the eye) */
+		both = op2(&m, OP_LOGICAL_AND, m.t_bool,
+			compare(&m, OP_F_ORD_GREATER_THAN, current_w, constant_float(&m, 0.0f)),
+			compare(&m, OP_F_ORD_GREATER_THAN, previous_w, constant_float(&m, 0.0f)));
+		moved = select_n(&m, 2, both, moved, constant_splat(&m, 2, 0.0f));
+		depth = extract(&m, load(&m, m.t_v4, state.frag_coord), 2);
+		store(&m, motion_out, construct4(&m, extract(&m, moved, 0), extract(&m, moved, 1), depth,
+			constant_float(&m, 1.0f)));
+	}
 	if (interlocked)
 	{
 		unsigned int operands[2];
@@ -5568,7 +5924,7 @@ static unsigned int world_ao_traced(struct module *m, struct pixel_state *state,
 	{
 		unsigned int d = world_ao_ray_direction(m, ray, x, y, n, turn, twist), hit[3], f;
 
-		world_trace(m, &state->locals, pass->cascades, cascades, origin, d, constant_float(m, XGPU_WORLD_AO_RAY_REACH),
+		world_trace(m, &state->locals, pass->cascades, cascades, NULL, origin, d, constant_float(m, XGPU_WORLD_AO_RAY_REACH),
 			constant_int(m, XGPU_WORLD_TRACE_OBJECTS), hit);
 		f = fdiv(m, 1, hit[1], constant_float(m, XGPU_WORLD_AO_RAY_REACH));
 		occlusion = fadd(m, 1, occlusion, fmul(m, 1, hit[0], fsub(m, 1, constant_float(m, 1.0f), fmul(m, 1, f, f))));
@@ -5683,7 +6039,7 @@ static unsigned int world_ao_evaluate(struct module *m, struct pixel_state *stat
 	/* (a negative reference, a static scenery placement's own draw: its
 	taps from the pixel's own depth in the field, relative to none) */
 	unsigned int baked = compare(m, OP_F_ORD_LESS_THAN, value, constant_float(m, 0.0f));
-	unsigned int inside = ext2(m, GLSL_F_MIN, m->t_float, world_sdf_distance(m, state, field0, field1, p),
+	unsigned int inside = ext2(m, GLSL_F_MIN, m->t_float, world_sdf_distance(m, &state->locals, field0, field1, p),
 		constant_float(m, 0.0f));
 	/* (a two-sided shader's cards: about their most open direction, the
 	shapes and rays too) */
@@ -5868,6 +6224,302 @@ BOOL xgpu_spirv_world_ao_pass(int which, const struct xgpu_spirv_options *option
 	}
 	free(state.locals.words);
 	return TRUE;
+}
+
+/* ---------- display.shadows "ray_traced" (xgpu_spirv.h)
+
+The pass's pixel shader, over the 3D view after its lightmap pass, the
+level's pixels alone (the pipeline's stencil test leaves the models'), as
+GLSL:
+
+float d = texelFetch(scene_depth, ivec2(gl_FragCoord.xy), 0).r;  (1 - it, reversed)
+vec3 light = vec3(1.0);
+if (d < 1.0) {
+  vec4 h = unproject * vec4(gl_FragCoord.xy, d, 1.0); vec3 p = h.xyz / h.w;
+  float far = length(camera - p);
+  vec3 from = p + (camera - p) / far * (BIAS + BIAS_FAR * far);
+  float noise = fract(52.9829189 * fract(dot(gl_FragCoord.xy - 0.5, vec2(0.06711056, 0.00583715))));
+  for (int i = 0; i < count; i++) {
+    vec4 a = casters[2 i], b = casters[2 i + 1];
+    vec3 v = vec3(b.xy, -sqrt(max(1.0 - dot(b.xy, b.xy), 0.0)));
+    vec3 rel = p - a.xyz; float along = dot(rel, v); vec3 side = rel - v * along;
+    if (along > -0.5 a.w && along < 4.0 a.w && dot(side, side) < (1.5 a.w)^2) {
+      float fade = along >= 0.0 ? 1.0 - along / (4.0 a.w) : 1.0 + along / (0.5 a.w);
+      vec3 l = -v, x, y (Duff's frame about l); float hits = 0.0;
+      for (int k = 0; k < RAYS; k++) {
+        float angle = 2 pi fract(noise + 0.618034 k), r = SPREAD sqrt((k + 0.5) / RAYS);
+        vec3 d = normalize(l + (x cos(angle) + y sin(angle)) * r);
+        rayQueryInitializeEXT(q, scene, 0, 0xFF, from, 0.0, d, along + 1.5 a.w);
+        while (rayQueryProceedEXT(q))   (an object's candidate committed if it is the caster's)
+          if (owner(candidate) == owner0 || owner(candidate) == owner1) rayQueryConfirmIntersectionEXT(q);
+        if (committed and its custom index not 0) hits += 1.0;   (the structure, opaque, stops it)
+      }
+      light *= 1.0 - unpack(b.z) * fade * hits / RAYS;
+    }
+  }
+}
+fragment_light = vec4(light, 1.0);   (multiplied into the pixel by the blend) */
+
+/* the header's (the uniforms' binding) vec4s: the unprojection's rows (the
+framebuffer's x, y and depth, 1, to the world's homogeneous point), then
+the camera and the casters' count */
+_Static_assert(XGPU_RT_SHADOWS_RAYS == 4, "the rays' strata (xgpu_spirv_rt_shadows_pass)");
+
+enum
+{
+	RT_SHADOWS_UNPROJECT = 0,
+	RT_SHADOWS_CAMERA = 4,
+	RT_SHADOWS_VIEW = 5,
+	RT_SHADOWS_HEADER = 8,
+};
+
+/* a vec4 of a block of vec4s at an index (an id: constant or not) */
+static unsigned int rt_shadows_vector(struct module *m, unsigned int block, unsigned int index)
+{
+	unsigned int operands[3];
+
+	operands[0] = block;
+	operands[1] = constant_int(m, 0);
+	operands[2] = index;
+	return load(m, m->t_v4, op(m, OP_ACCESS_CHAIN, type_pointer(m, STORAGE_UNIFORM, m->t_v4), 3, operands));
+}
+
+/* a block of count vec4s at the draw set's binding */
+static unsigned int rt_shadows_block(struct module *m, unsigned int count, unsigned int binding, const char *block_name)
+{
+	unsigned int array = block_array(m, count), block = type_struct(m, 1, &array), id;
+
+	decorate(m, block, DECORATION_BLOCK, 0, NULL);
+	member_decorate(m, block, 0, DECORATION_OFFSET, 0);
+	name(m, block, block_name);
+	id = variable(m, block, STORAGE_UNIFORM, NULL);
+	decorate1(m, id, DECORATION_DESCRIPTOR_SET, XGPU_SPIRV_SET_DRAW);
+	decorate1(m, id, DECORATION_BINDING, binding);
+	return id;
+}
+
+BOOL xgpu_spirv_rt_shadows_pass(const struct xgpu_spirv_options *options, struct xgpu_spirv_module *module)
+{
+	struct module m;
+	struct words locals = { 0 };
+	unsigned int header, casters, scene_depth, frag_coord, scene, out, main_id, query_type, query;
+	unsigned int light_variable, index_variable, hits_variable, operands[8];
+	unsigned int coord, pixel, sampled, depth, sky_merge, h, p, camera, to_camera, far, from, noise, count;
+	unsigned int header_id, condition, body, next, merge, i, a, b, bxy, v, rel, along, side, radius, inside_merge;
+	unsigned int fade, l, nx, ny, nz, s, fa, fb, x, y, darkness, owners, owner0, owner1, reach, ray_light;
+	int ray, row, channel;
+	BOOL result;
+
+	module_begin(&m, EXECUTION_MODEL_FRAGMENT);
+	header = rt_shadows_block(&m, RT_SHADOWS_HEADER, XGPU_SPIRV_BINDING_UNIFORMS, "rt_shadows_header");
+	casters = rt_shadows_block(&m, XGPU_VERTEX_CONSTANT_COUNT, XGPU_SPIRV_BINDING_CONSTANTS, "rt_shadows_casters");
+	scene_depth = variable(&m, type_sampled_image(&m, DIM_2D, FALSE, FALSE, TRUE), STORAGE_UNIFORM_CONSTANT, "scene_depth");
+	decorate1(&m, scene_depth, DECORATION_DESCRIPTOR_SET, XGPU_SPIRV_SET_TEXTURES);
+	decorate1(&m, scene_depth, DECORATION_BINDING, 0);
+	frag_coord = variable(&m, m.t_v4, STORAGE_INPUT, "gl_FragCoord");
+	decorate1(&m, frag_coord, DECORATION_BUILT_IN, BUILT_IN_FRAG_COORD);
+	scene = variable(&m, type0(&m, OP_TYPE_ACCELERATION_STRUCTURE), STORAGE_UNIFORM_CONSTANT, "world_ao_scene");
+	decorate1(&m, scene, DECORATION_DESCRIPTOR_SET, XGPU_SPIRV_SET_OCCLUSION);
+	decorate1(&m, scene, DECORATION_BINDING, XGPU_SPIRV_BINDING_WORLD_AO_SCENE);
+	m.ray_query = TRUE;
+	out = interface_variable(&m, m.t_v4, STORAGE_OUTPUT, 0, "fragment_light");
+
+	main_id = function_begin(&m);
+	query_type = type0(&m, OP_TYPE_RAY_QUERY);
+	query = local(&m, &locals, query_type);
+	light_variable = local(&m, &locals, m.t_v3);
+	index_variable = local(&m, &locals, m.t_int);
+	hits_variable = local(&m, &locals, m.t_float);
+	store(&m, light_variable, constant_splat(&m, 3, 1.0f));
+	/* the scene's depth at the pixel */
+	coord = load(&m, m.t_v4, frag_coord);
+	pixel = op1(&m, OP_CONVERT_F_TO_S, m.t_iv2, xy(&m, coord));
+	sampled = load(&m, type_sampled_image(&m, DIM_2D, FALSE, FALSE, TRUE), scene_depth);
+	operands[0] = op(&m, OP_IMAGE, type_sampled_image(&m, DIM_2D, FALSE, FALSE, FALSE), 1, &sampled);
+	operands[1] = pixel;
+	operands[2] = IMAGE_OPERANDS_LOD;
+	operands[3] = constant_int(&m, 0);
+	depth = extract(&m, op(&m, OP_IMAGE_FETCH, m.t_v4, 4, operands), 0);
+	if (options->reversed_depth)
+		depth = fsub(&m, 1, constant_float(&m, 1.0f), depth);
+	/* (none where nothing was drawn: the sky's) */
+	selection_begin(&m, compare(&m, OP_F_ORD_LESS_THAN, depth, constant_float(&m, 1.0f)), &sky_merge);
+	{
+		unsigned int framebuffer = construct4(&m, extract(&m, coord, 0), extract(&m, coord, 1), depth,
+			constant_float(&m, 1.0f)), rows[4];
+
+		for (row = 0; row < 4; row++)
+			rows[row] = fdot(&m, rt_shadows_vector(&m, header, constant_int(&m, RT_SHADOWS_UNPROJECT + row)),
+				framebuffer);
+		h = construct(&m, 4, rows);
+		p = fdiv(&m, 3, xyz(&m, h), splat(&m, 3, extract(&m, h, 3)));
+	}
+	camera = rt_shadows_vector(&m, header, constant_int(&m, RT_SHADOWS_CAMERA));
+	count = op1(&m, OP_CONVERT_F_TO_S, m.t_int, extract(&m, camera, 3));
+	/* the rays' start: off the surface toward the camera, which sees it */
+	to_camera = fsub(&m, 3, xyz(&m, camera), p);
+	far = ext2(&m, GLSL_F_MAX, m.t_float, ext1(&m, GLSL_LENGTH, m.t_float, to_camera), constant_float(&m, 1.0e-4f));
+	from = fadd(&m, 3, p, fscale(&m, 3, fdiv(&m, 3, to_camera, splat(&m, 3, far)), fadd(&m, 1,
+		constant_float(&m, XGPU_RT_SHADOWS_BIAS), fmul(&m, 1, constant_float(&m, XGPU_RT_SHADOWS_BIAS_FAR), far))));
+	/* (interleaved gradient noise: the rays turned at each pixel) */
+	{
+		unsigned int px = fsub(&m, 1, extract(&m, coord, 0), constant_float(&m, 0.5f));
+		unsigned int py = fsub(&m, 1, extract(&m, coord, 1), constant_float(&m, 0.5f));
+
+		noise = ext1(&m, GLSL_FRACT, m.t_float, fmul(&m, 1, constant_float(&m, 52.9829189f), ext1(&m, GLSL_FRACT,
+			m.t_float, fadd(&m, 1, fmul(&m, 1, constant_float(&m, 0.06711056f), px), fmul(&m, 1,
+			constant_float(&m, 0.00583715f), py)))));
+	}
+	/* for (int i = 0; i < count; i++) */
+	header_id = id_new(&m);
+	condition = id_new(&m);
+	body = id_new(&m);
+	next = id_new(&m);
+	merge = id_new(&m);
+	store(&m, index_variable, constant_int(&m, 0));
+	branch(&m, header_id);
+	label_at(&m, header_id);
+	operands[0] = merge;
+	operands[1] = next;
+	operands[2] = 0;
+	op_void(&m, OP_LOOP_MERGE, 3, operands);
+	branch(&m, condition);
+	label_at(&m, condition);
+	i = load(&m, m.t_int, index_variable);
+	branch_conditional(&m, op2(&m, OP_S_LESS_THAN, m.t_bool, i, count), body, merge);
+	label_at(&m, body);
+	a = rt_shadows_vector(&m, casters, op2(&m, OP_I_MUL, m.t_int, i, constant_int(&m, 2)));
+	b = rt_shadows_vector(&m, casters, op2(&m, OP_I_ADD, m.t_int, op2(&m, OP_I_MUL, m.t_int, i, constant_int(&m, 2)),
+		constant_int(&m, 1)));
+	radius = extract(&m, a, 3);
+	bxy = xy(&m, b);
+	v = construct(&m, 3, (unsigned int[]){ extract(&m, b, 0), extract(&m, b, 1), fneg(&m, 1, fsqrt(&m, fmax_scalar(&m, 1,
+		fsub(&m, 1, constant_float(&m, 1.0f), fdot(&m, bxy, bxy)), 0.0f))) });
+	rel = fsub(&m, 3, p, xyz(&m, a));
+	along = fdot(&m, rel, v);
+	side = fsub(&m, 3, rel, fscale(&m, 3, v, along));
+	/* inside its volume: half its radius toward the light, four away, its
+	radius (and the penumbra's half again) to each side */
+	selection_begin(&m, op2(&m, OP_LOGICAL_AND, m.t_bool, op2(&m, OP_LOGICAL_AND, m.t_bool,
+		compare(&m, OP_F_ORD_GREATER_THAN, along, fmul(&m, 1, constant_float(&m, -0.5f), radius)),
+		compare(&m, OP_F_ORD_LESS_THAN, along, fmul(&m, 1, constant_float(&m, 4.0f), radius))),
+		compare(&m, OP_F_ORD_LESS_THAN, fdot(&m, side, side), fmul(&m, 1, fmul(&m, 1, constant_float(&m, 2.25f), radius),
+		radius))), &inside_merge);
+	fade = fselect(&m, compare(&m, OP_F_ORD_GREATER_THAN_EQUAL, along, constant_float(&m, 0.0f)),
+		fsub(&m, 1, constant_float(&m, 1.0f), fdiv(&m, 1, along, fmul(&m, 1, constant_float(&m, 4.0f), radius))),
+		fadd(&m, 1, constant_float(&m, 1.0f), fdiv(&m, 1, along, fmul(&m, 1, constant_float(&m, 0.5f), radius))));
+	darkness = op1(&m, OP_BITCAST, m.t_uint, extract(&m, b, 2));
+	owners = op1(&m, OP_BITCAST, m.t_uint, extract(&m, b, 3));
+	owner0 = uand(&m, owners, constant_uint(&m, 0xFFFFu));
+	owner1 = op2(&m, OP_SHIFT_RIGHT_LOGICAL, m.t_uint, owners, constant_uint(&m, 16));
+	/* the light's direction and Duff's frame about it */
+	l = fneg(&m, 3, v);
+	nx = extract(&m, l, 0);
+	ny = extract(&m, l, 1);
+	nz = extract(&m, l, 2);
+	s = fselect(&m, compare(&m, OP_F_ORD_GREATER_THAN_EQUAL, nz, constant_float(&m, 0.0f)), constant_float(&m, 1.0f),
+		constant_float(&m, -1.0f));
+	fa = fdiv(&m, 1, constant_float(&m, -1.0f), fadd(&m, 1, s, nz));
+	fb = fmul(&m, 1, fmul(&m, 1, nx, ny), fa);
+	x = construct(&m, 3, (unsigned int[]){ fadd(&m, 1, constant_float(&m, 1.0f), fmul(&m, 1, fmul(&m, 1, fmul(&m, 1, s, nx),
+		nx), fa)), fmul(&m, 1, s, fb), fneg(&m, 1, fmul(&m, 1, s, nx)) });
+	y = construct(&m, 3, (unsigned int[]){ fb, fadd(&m, 1, s, fmul(&m, 1, fmul(&m, 1, ny, ny), fa)), fneg(&m, 1, ny) });
+	reach = fadd(&m, 1, along, fmul(&m, 1, constant_float(&m, 1.5f), radius));
+	store(&m, hits_variable, constant_float(&m, 0.0f));
+	for (ray = 0; ray < XGPU_RT_SHADOWS_RAYS; ray++)
+	{
+		unsigned int angle = fmul(&m, 1, constant_float(&m, 6.28318531f), ext1(&m, GLSL_FRACT, m.t_float, fadd(&m, 1, noise,
+			constant_float(&m, 0.618034f * (float)ray))));
+		/* (stratified over the cone's disc: sqrt((ray + 0.5) / RAYS)) */
+		static const float stratum[4] = { 0.35355339f, 0.61237244f, 0.79056942f, 0.93541435f };
+		float spread = XGPU_RT_SHADOWS_SPREAD * stratum[ray];
+		unsigned int d = ext1(&m, GLSL_NORMALIZE, m.t_v3, fadd(&m, 3, l, fadd(&m, 3,
+			fscale(&m, 3, x, fmul(&m, 1, constant_float(&m, spread), ext1(&m, GLSL_COS, m.t_float, angle))),
+			fscale(&m, 3, y, fmul(&m, 1, constant_float(&m, spread), ext1(&m, GLSL_SIN, m.t_float, angle))))));
+		unsigned int ray_header = id_new(&m), ray_condition = id_new(&m), ray_body = id_new(&m), ray_next = id_new(&m);
+		unsigned int ray_merge = id_new(&m), mine_merge, hit_merge, kind, candidate, mine;
+
+		operands[0] = query;
+		operands[1] = load(&m, type0(&m, OP_TYPE_ACCELERATION_STRUCTURE), scene);
+		operands[2] = constant_uint(&m, 0);
+		operands[3] = constant_uint(&m, 0xFFu);
+		operands[4] = from;
+		operands[5] = constant_float(&m, 0.0f);
+		operands[6] = d;
+		operands[7] = reach;
+		op_void(&m, OP_RAY_QUERY_INITIALIZE, 8, operands);
+		branch(&m, ray_header);
+		label_at(&m, ray_header);
+		operands[0] = ray_merge;
+		operands[1] = ray_next;
+		operands[2] = 0;
+		op_void(&m, OP_LOOP_MERGE, 3, operands);
+		branch(&m, ray_condition);
+		label_at(&m, ray_condition);
+		branch_conditional(&m, op1(&m, OP_RAY_QUERY_PROCEED, m.t_bool, query), ray_body, ray_merge);
+		label_at(&m, ray_body);
+		candidate = uand(&m, op1(&m, OP_BITCAST, m.t_uint, op2(&m, OP_RAY_QUERY_GET_INTERSECTION_INSTANCE_CUSTOM_INDEX,
+			m.t_int, query, constant_int(&m, RAY_QUERY_CANDIDATE))), constant_uint(&m, 0xFFFFu));
+		mine = op2(&m, OP_LOGICAL_OR, m.t_bool, op2(&m, OP_I_EQUAL, m.t_bool, candidate, owner0),
+			op2(&m, OP_LOGICAL_AND, m.t_bool, op2(&m, OP_I_NOT_EQUAL, m.t_bool, owner1, constant_uint(&m, 0)),
+			op2(&m, OP_I_EQUAL, m.t_bool, candidate, owner1)));
+		selection_begin(&m, mine, &mine_merge);
+		op_void(&m, OP_RAY_QUERY_CONFIRM_INTERSECTION, 1, &query);
+		selection_end(&m, mine_merge);
+		branch(&m, ray_next);
+		label_at(&m, ray_next);
+		branch(&m, ray_header);
+		label_at(&m, ray_merge);
+		/* the nearest met an object's (the caster's: the structure, opaque,
+		has custom index 0 and stops the ray) */
+		kind = op2(&m, OP_RAY_QUERY_GET_INTERSECTION_TYPE, m.t_uint, query, constant_int(&m, RAY_QUERY_COMMITTED));
+		selection_begin(&m, op2(&m, OP_I_NOT_EQUAL, m.t_bool, kind, constant_uint(&m, 0)), &hit_merge);
+		{
+			unsigned int object_merge, committed = op2(&m, OP_RAY_QUERY_GET_INTERSECTION_INSTANCE_CUSTOM_INDEX, m.t_int,
+				query, constant_int(&m, RAY_QUERY_COMMITTED));
+
+			selection_begin(&m, op2(&m, OP_I_NOT_EQUAL, m.t_bool, committed, constant_int(&m, 0)), &object_merge);
+			store(&m, hits_variable, fadd(&m, 1, load(&m, m.t_float, hits_variable), constant_float(&m, 1.0f)));
+			selection_end(&m, object_merge);
+		}
+		selection_end(&m, hit_merge);
+	}
+	/* light *= 1 - darkness * fade * hits / RAYS (darkness a byte each) */
+	{
+		unsigned int share = fmul(&m, 1, saturate(&m, 1, fade), fdiv(&m, 1, load(&m, m.t_float, hits_variable),
+			constant_float(&m, (float)XGPU_RT_SHADOWS_RAYS)));
+		unsigned int channels[3];
+
+		for (channel = 0; channel < 3; channel++)
+			channels[channel] = fmul(&m, 1, op1(&m, OP_CONVERT_U_TO_F, m.t_float, uand(&m, op2(&m, OP_SHIFT_RIGHT_LOGICAL,
+				m.t_uint, darkness, constant_uint(&m, 8u * (unsigned int)channel)), constant_uint(&m, 0xFFu))),
+				constant_float(&m, 1.0f / 255.0f));
+		ray_light = fsub(&m, 3, constant_splat(&m, 3, 1.0f), fscale(&m, 3, construct(&m, 3, channels), share));
+		/* (HALO_VULKAN_RT_SHADOWS_VIEW, checking: a volume's pixels magenta,
+		green as its rays meet the caster) */
+		{
+			unsigned int met = fdiv(&m, 1, load(&m, m.t_float, hits_variable),
+				constant_float(&m, (float)XGPU_RT_SHADOWS_RAYS));
+			unsigned int unmet = fsub(&m, 1, constant_float(&m, 1.0f), met);
+
+			ray_light = select_n(&m, 3, compare(&m, OP_F_ORD_GREATER_THAN, extract(&m, rt_shadows_vector(&m, header,
+				constant_int(&m, RT_SHADOWS_VIEW)), 0), constant_float(&m, 0.0f)), construct(&m, 3, (unsigned int[]){
+				unmet, fadd(&m, 1, constant_float(&m, 0.6f), fmul(&m, 1, constant_float(&m, 0.4f), met)), unmet }),
+				ray_light);
+		}
+		store(&m, light_variable, fmul(&m, 3, load(&m, m.t_v3, light_variable), ray_light));
+	}
+	selection_end(&m, inside_merge);
+	branch(&m, next);
+	label_at(&m, next);
+	store(&m, index_variable, op2(&m, OP_I_ADD, m.t_int, i, constant_int(&m, 1)));
+	branch(&m, header_id);
+	label_at(&m, merge);
+	selection_end(&m, sky_merge);
+	store(&m, out, vec4_of(&m, load(&m, m.t_v3, light_variable), constant_float(&m, 1.0f)));
+	result = module_end(&m, EXECUTION_MODEL_FRAGMENT, main_id, &locals, module);
+	free(locals.words);
+	return result;
 }
 
 /* ---------- the enhanced dynamic lights' glows (xgpu_spirv.h) */

@@ -16,6 +16,14 @@ The committed conversion used Pillow 13.0.0 and zlib 1.3.2. The input is
 The compressed payload's SHA-256 is
 `f66b23eb3960213d8f0c821cf8feed577fad5116ec8762bab21fdd199ad51359`.
 
+`loading-source.rgba.zlib` is the same picture at its own 1600×1200 (RGBA,
+7,680,000 uncompressed bytes, not resized), made by the same script. The
+sharp frame above 540 rows resamples it to the screen's own pixels
+(`loading_art_source_resample`: Catmull-Rom, widened when the screen has
+fewer pixels than it) for the LOADING words and the first load's picture;
+the 640×480 copy stays the 480-row frame's, the trail's and VR's. Its
+SHA-256 is `d9ffc7ff2f0a7c69f7997185b56b5cbc0f10e3b93221248f6f10c7528cbba688`.
+
 ## The main menu's ring
 
 Once the main menu has been shown, the loading screen draws the menu's own
@@ -68,12 +76,29 @@ at the screen's own rows (at most 2160, and 1920x1080's pixels in all,
 - each frame, the 480 rows' trail (blurry by nature) is scaled up, and the
   sweep's light added at the sharp pixels, between the steps where the band
   is, the ring lit by the sweep's glint as the 480 rows' feed is;
-- the rows are drawn by four threads, the presenter's one of them, and the
-  still ring's glint alone is drawn again each step (`loading_ring_glint`):
-  a 1080p frame takes about 9 ms on a Ryzen 9 5900X, the 480 rows' frame
-  alone about 9 (it took 15).
+- on Vulkan (Linux, Windows, Android) and Metal (macOS, iOS) the GPU draws
+  the sharp frame each frame, in the processor's integer arithmetic, so
+  that it is the processor's byte for byte
+  (`tools/vulkan_post_shaders.py`'s `LOADING_SOURCE`, its pipelines made at
+  the start): from the 480 rows' trail and glint (given again at each
+  step), the picture's hues and the sweep's mask, the words, and the
+  scene's still layers packed into four bytes a pixel once a load
+  (`loading_art_hd_pack`); without a scene, the GPU resamples the picture
+  from its own 1600x1200 (`LOADING_PICTURE_SOURCE`). The processor then
+  draws only the 480 rows' steps: about 2.5 ms a frame at any size on
+  omarchy (it took 7.2 at 1080p and 21 at 4K), and keeps nothing of the
+  sharp frame's size between frames. A wait's caption is drawn at the
+  window's pixels the same way (`LOADING_CAPTION_SOURCE`; on Metal, by the
+  processor, as before). `HALO_LOADING_GPU_CHECK=1` has the processor draw
+  the frame too, and `HALO_LOADING_CAPTURE_DIR` writes its frames beside
+  the GPU's (`-cpu`);
+- elsewhere, or where the pipelines cannot be made, the rows are drawn by
+  four threads, the presenter's one of them, and the still ring's glint
+  alone is drawn again each step (`loading_ring_glint`).
 
-VR's window stays at 640x480, bit for bit as before.
+The ring itself is still drawn on the processor once a load at the screen's
+size, for the still layers. VR's window stays at 640x480, bit for bit as
+before.
 
 ## The chant
 

@@ -39,7 +39,8 @@ static int host_loading_capture_due(const struct loading_presentation_frame *fra
 		host_loading_capture_count == 1 && frame->elapsed_ns >= 500000000;
 }
 
-static void host_loading_capture_write(const struct loading_presentation_frame *frame,
+/* (suffix: after the frame's numbers, "" for the frame shown) */
+static void host_loading_capture_write_named(const struct loading_presentation_frame *frame, const char *suffix,
 	const unsigned char *pixels, uint32_t width, uint32_t height, int bottom_up, int bgra)
 {
 	char path[1024];
@@ -47,9 +48,10 @@ static void host_loading_capture_write(const struct loading_presentation_frame *
 	uint32_t x, y;
 	unsigned char *row;
 
-	host_loading_capture_count++;
-	if (snprintf(path, sizeof(path), "%s/loading-%llu-%llu.ppm", host_loading_capture_directory,
-		(unsigned long long)frame->epoch, (unsigned long long)frame->serial) >= (int)sizeof(path))
+	if (!*suffix)
+		host_loading_capture_count++;
+	if (snprintf(path, sizeof(path), "%s/loading-%llu-%llu%s.ppm", host_loading_capture_directory,
+		(unsigned long long)frame->epoch, (unsigned long long)frame->serial, suffix) >= (int)sizeof(path))
 		return;
 	row = malloc((size_t)width * 3);
 	if (!row)
@@ -75,6 +77,12 @@ static void host_loading_capture_write(const struct loading_presentation_frame *
 			(unsigned long long)frame->epoch, (unsigned long long)frame->serial, path);
 	}
 	free(row);
+}
+
+static void host_loading_capture_write(const struct loading_presentation_frame *frame,
+	const unsigned char *pixels, uint32_t width, uint32_t height, int bottom_up, int bgra)
+{
+	host_loading_capture_write_named(frame, "", pixels, width, height, bottom_up, bgra);
 }
 
 #endif

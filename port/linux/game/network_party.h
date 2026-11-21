@@ -81,6 +81,11 @@ boolean network_party_machine_in_party(long machine_index);
 /* ... the slots held, not taken up yet (the advertisement and the server
 browser's listing count them as players') */
 short network_party_held_slots(void);
+/* ... the host dropped the machine (its index in the game): its word and
+its party's holds let go at once. Until then they are its own in every
+phase it is in (loading, downloading, waiting to be added), whatever the
+game's messages reach */
+void network_party_machine_dropped(long machine_index);
 /* ... the team (0, 1) for a player of a party joining a team game: its
 party's (party_counts: its players on each team), if that team has room for
 it (team_counts: each team's players; maximum: the game's most); NONE: none */

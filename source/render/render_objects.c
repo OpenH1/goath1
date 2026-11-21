@@ -90,6 +90,7 @@ symbols in this file:
 #include "math/real_math.h"
 #include "bitmaps/bitmaps.h"
 #include "render/render.h"
+#include "motion_vectors.h" /* port: port/linux/game/motion_vectors.c */
 #include "camera/camera_scripting.h"
 #include "editor/editor_stubs.h"
 #include "rasterizer/rasterizer.h"
@@ -114,6 +115,7 @@ symbols in this file:
 #include "rasterizer/rasterizer_model_types.h"
 #include "panini.h" /* port: port/linux/game/panini.c */
 #include "world_ao.h" /* port: port/linux/game/world_ao.c */
+#include "rt_shadows.h" /* port: port/linux/game/rt_shadows.c */
 #include "royale_cinema.h" /* port: port/linux/game/royale_cinema.c */
 
 /* ---------- constants */
@@ -261,6 +263,9 @@ static void render_object(
 	struct object_render_data *data);
 static void process_rendered_objects(
 	struct object_render_data *data);
+/* port: display.shadows "ray_traced" (port/linux/game/rt_shadows.c) */
+static void render_object_rt_shadows(
+	void);
 
 short structure_visibility_find_objects(
 	long *object_indices,
@@ -395,11 +400,18 @@ void render_objects(
 	profile_enter(render_objects_section);
 
 	rasterizer_models_begin(FALSE);
-	if (!rendered_objects_found_early)
+	/* port: display.temporal_aa: the window's objects draw their motion
+	too (not in display.ambient_occlusion "world"'s pre-pass:
+	port/linux/game/motion_vectors.c) */
+	if (!render_world_ao_prepass || render_world_ao_again)
+		motion_vectors_objects(TRUE);
+	/* port: (nor found again where the window's walk, played twice by the
+	renderer, is walked a second time: render_world_ao_again) */
+	if (!rendered_objects_found_early && !render_world_ao_again)
 	{
 		find_rendered_objects();
 	}
-	rendered_objects_found_early = render_world_ao_prepass;
+	rendered_objects_found_early = render_world_ao_prepass && !render_world_ao_again;
 
 	data.shadow = FALSE;
 
@@ -427,6 +439,8 @@ void render_objects(
 	/* port: the projectiles deleted in the last tick, drawn through it
 	(port/linux/game/render_interpolation.c) */
 	render_interpolation_ghosts_draw();
+	if (!render_world_ao_prepass || render_world_ao_again)
+		motion_vectors_objects(FALSE);
 
 	rasterizer_models_end();
 
@@ -480,6 +494,18 @@ void render_object_shadows(
 	void)
 {
 	profile_enter(render_object_shadows_section);
+	rt_shadows_measure(TRUE); /* port: (HALO_SHADOW_TIMES: rt_shadows.c) */
+
+	/* port: display.shadows "ray_traced": the casters' shadows found by the
+	GPU's ray queries, none of the below (no atlas, blur, receivers' walk
+	or draws: port/linux/game/rt_shadows.c) */
+	if (render_shadows && rt_shadows_on())
+	{
+		render_object_rt_shadows();
+		rt_shadows_measure(FALSE);
+		profile_exit(render_object_shadows_section);
+		return;
+	}
 
 	if (render_shadows)
 	{
@@ -490,6 +516,12 @@ void render_object_shadows(
 		/* port: the casters into the shadow atlas, all of them blurred at
 		once, then each one's receivers (rasterizer_xbox_shadows.c) */
 		deferred_shadow_count = 0;
+		/* port: the retained casters: those kept from the frame
+		before are this view's (rasterizer_xbox_shadows.c) */
+		rasterizer_shadow_retained_view(
+			(render.window_index & 0xff) |
+			((render.local_player_index & 0xff) << 8) |
+			((render.camera.mirrored != FALSE) << 16));
 		rasterizer_shadow_atlas_begin();
 
 		data.shadow = TRUE;
@@ -513,6 +545,7 @@ void render_object_shadows(
 		rasterizer_environment_shadows_end();
 	}
 
+	rt_shadows_measure(FALSE);
 	profile_exit(render_object_shadows_section);
 
 	return;
@@ -824,6 +857,9 @@ static void render_object_list(
 					(its own proxies do not shade it; its reference:
 					port/linux/game/world_ao.c) */
 					world_ao_object_begin(object_index);
+					/* port: display.temporal_aa: its nodes, kept for its motion
+					(port/linux/game/motion_vectors.c) */
+					motion_vectors_object(object_index, 0, node_matrices);
 #ifdef HALO_VR
 					/* port: a weapon the VR mode's right hand reaches for, lit
 					up as the holsters' weapons are (port/linux/game/
@@ -1419,7 +1455,21 @@ static void render_object(
 					after every caster's (render_object_shadows) */
 					short region;
 
-					render_object_list(data, NULL, data->object_index);
+					/* port: the retained casters: walked for its draws'
+					hash first, drawn only if its region of the frame before
+					does not hold them (rasterizer_xbox_shadows.c) */
+					if (!rasterizer_shadow_retained_fingerprinting())
+					{
+						render_object_list(data, NULL, data->object_index);
+					}
+					else
+					{
+						render_object_list(data, NULL, data->object_index);
+						if (!rasterizer_shadow_retained_caster())
+						{
+							render_object_list(data, NULL, data->object_index);
+						}
+					}
 					region = rasterizer_shadow_atlas_caster_end();
 					if (region != NONE)
 					{
@@ -1502,6 +1552,78 @@ static void process_rendered_objects(
 			render_object_globals.rendered_object_indices[rendered_object_index];
 		render_object(data);
 	}
+
+	return;
+}
+
+/* port: display.shadows "ray_traced": the window's casters, as render_object
+and render_object_shadow_begin choose them and their strength, handed to
+the backend's pass with their shadow's direction and colour, which traces
+them through the ray-traced scene (port/linux/game/rt_shadows.c); the
+classic shadows' primary target alone */
+static void render_object_rt_shadows(
+	void)
+{
+	short rendered_object_index;
+
+	if (global_window_parameters.rasterizer_target != 0 /* _rasterizer_target_render_primary */ ||
+		!rasterizer_debug_options.draw_environment_shadows)
+	{
+		return;
+	}
+	rt_shadows_begin();
+	for (rendered_object_index = 0;
+		rendered_object_index < render_object_globals.rendered_object_count;
+		rendered_object_index++)
+	{
+		long object_index = render_object_globals.rendered_object_indices[rendered_object_index];
+		struct object_datum *object = object_get(object_index);
+
+		if ((!object_is_first_person_camera(object_index) ||
+				(first_person_legs_wanted(object_index) && first_person_legs_shadow_node_matrices(
+					object_index, object_get_node_matrices(object_index)))) &&
+			!TEST_FLAG(object->object.flags, _object_shadowless_bit) &&
+			(!TEST_FLAG(object->object.flags, _object_invisible_bit) ||
+				object->object.first_child_object_index != NONE))
+		{
+			real level_of_detail_pixels = object_get_level_of_detail_pixels(object_index);
+			struct render_lighting *lighting = object_get_cached_render_lighting(object_index, level_of_detail_pixels);
+			real shadow_darkness = 1.f - real_rgb_color_brightness(&lighting->shadow_color);
+
+			if (level_of_detail_pixels > OBJECT_SHADOW_MINIMUM_PIXELS &&
+				shadow_darkness > OBJECT_SHADOW_MINIMUM_DARKNESS)
+			{
+				real size_fraction = (level_of_detail_pixels - OBJECT_SHADOW_MINIMUM_PIXELS) * 0.06666667f;
+				real darkness_fraction = (shadow_darkness - OBJECT_SHADOW_MINIMUM_DARKNESS) * 9.0909081f;
+				real strength;
+				real_point3d center;
+				real radius;
+
+				size_fraction = PIN(size_fraction, 0.f, 1.f);
+				darkness_fraction = PIN(darkness_fraction, 0.f, 1.f);
+				strength = darkness_fraction * size_fraction;
+				if (TEST_FLAG(_object_mask_unit, object->object.type))
+				{
+					real super_amount;
+					real active_camouflage = render_interpolation_unit_camouflage(object_index, &super_amount);
+
+					if (active_camouflage > 0.f)
+						strength *= 1.f - active_camouflage;
+				}
+				object_get_bounding_sphere(object_index, &center, &radius);
+				rt_shadows_caster(
+					object_index,
+					object->object.first_child_object_index,
+					&center.x,
+					radius,
+					&lighting->shadow_vector.i,
+					&lighting->shadow_color.red,
+					strength,
+					level_of_detail_pixels);
+			}
+		}
+	}
+	rt_shadows_window(&render.camera.position.x);
 
 	return;
 }

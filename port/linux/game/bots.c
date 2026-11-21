@@ -2216,6 +2216,8 @@ static void bots_prepare_map(void)
 	}
 }
 
+static void bots_campaign_reset(void);
+
 void bots_initialize_for_new_map(void)
 {
 	long index;
@@ -2229,6 +2231,8 @@ void bots_initialize_for_new_map(void)
 	for (index = 0; index < BOTS_MAXIMUM; index++)
 		bots_set_order(index, NULL);
 	bots_globals.map_ready = FALSE;
+	/* (debug.campaign_bot begins again on the new level) */
+	bots_campaign_reset();
 	bots_globals.roam_point_count = 0;
 	bots_globals.teleporter_count = 0;
 	bots_globals.teleports = 0;
@@ -3071,26 +3075,30 @@ within 3 degrees. It moves the player too (forward and strafe, -1 to 1):
 closing on a target far off with a weave, strafing one at middle range,
 backing from one close, and on ahead with none; a move in the script
 overrides it. Nothing is random, so a script plays the same again. */
-boolean bots_hunt(float *forward, float *strafe)
+/* (from a facing given, the campaign bot's own too, debug.campaign_bot: the
+facing turned toward the target in angles, and the target's middle;
+*found FALSE, angles as facing, for none. Crewed, the campaign bot's: a
+vehicle is an enemy only with an enemy in it) */
+static boolean bots_hunt_from(long player_index, real_euler_angles2d const *facing, real_euler_angles2d *angles,
+	float *forward, float *strafe, boolean *found, real_point3d *target, boolean crewed)
 {
-	long player_index = local_player_get_player_index(0);
 	struct player_datum *player;
 	struct object_iterator iterator;
 	struct unit_datum *other;
-	real_euler_angles2d const *facing;
 	real_point3d eye, best_point;
 	real best_score = REAL_MAX;
 	short team;
 
 	*forward = 0.6f;
 	*strafe = 0.0f;
+	*found = FALSE;
+	*angles = *facing;
 	if (player_index == NONE)
 		return FALSE;
 	player = player_get(player_index);
 	if (player->unit_index == NONE)
 		return FALSE;
 	team = object_get(player->unit_index)->object.owner_team_index;
-	facing = player_control_get_facing_angles(0);
 	unit_get_head_position(player->unit_index, &eye);
 	object_iterator_new(&iterator, _object_mask_biped|_object_mask_vehicle, 0);
 	while ((other = (struct unit_datum *)object_iterator_next(&iterator)) != NULL)
@@ -3104,6 +3112,28 @@ boolean bots_hunt(float *forward, float *strafe)
 		{
 			continue;
 		}
+		/* (crewed: a vehicle only with an enemy in it, not a landed
+		Pelican, whose team is no one's) */
+		if (crewed && TEST_FLAG(_object_mask_vehicle, other->object.type))
+		{
+			long child;
+			boolean manned = FALSE;
+
+			for (child = other->object.first_child_object_index; child != NONE;
+				child = object_get(child)->object.next_object_index)
+			{
+				struct object_datum *rider = object_get(child);
+
+				if (TEST_FLAG(_object_mask_unit, rider->object.type) &&
+					!TEST_FLAG(rider->object.damage_flags, _object_dead_bit) &&
+					game_team_is_enemy(team, rider->object.owner_team_index))
+				{
+					manned = TRUE;
+				}
+			}
+			if (!manned)
+				continue;
+		}
 		bearing = (real)fabs(bots_angle_difference((real)atan2(point.y - eye.y, point.x - eye.x), facing->yaw));
 		if (bearing > 50.0f * BOTS_DEGREES || distance + bearing * 8.0f >= best_score ||
 			!bots_line_of_sight(player->unit_index, &eye, &point, iterator.index))
@@ -3115,8 +3145,6 @@ boolean bots_hunt(float *forward, float *strafe)
 	}
 	if (best_score < REAL_MAX)
 	{
-		real_euler_angles2d angles;
-		real_vector3d direction;
 		real yaw = (real)atan2(best_point.y - eye.y, best_point.x - eye.x);
 		real pitch = (real)atan2(best_point.z - eye.z, bots_distance2d(&eye, &best_point));
 		real turn = 300.0f * BOTS_DEGREES / TICKS_PER_SECOND;
@@ -3128,13 +3156,31 @@ boolean bots_hunt(float *forward, float *strafe)
 
 		*forward = distance > 14.0f ? 1.0f : distance < 6.0f ? -0.4f : 0.2f;
 		*strafe = distance > 14.0f ? side * 0.35f : side;
-		angles.yaw = facing->yaw + PIN(dyaw, -turn, turn);
-		angles.pitch = facing->pitch + PIN(dpitch, -turn, turn);
-		vector3d_from_euler_angles2d(&direction, &angles);
-		bots_player_set_facing(&direction);
+		angles->yaw = facing->yaw + PIN(dyaw, -turn, turn);
+		angles->pitch = facing->pitch + PIN(dpitch, -turn, turn);
+		*found = TRUE;
+		*target = best_point;
 		return (real)fabs(dyaw) < 3.0f * BOTS_DEGREES && (real)fabs(dpitch) < 3.0f * BOTS_DEGREES;
 	}
 	return FALSE;
+}
+
+boolean bots_hunt(float *forward, float *strafe)
+{
+	real_euler_angles2d angles;
+	real_point3d target;
+	boolean found;
+	boolean fire = bots_hunt_from(local_player_get_player_index(0), player_control_get_facing_angles(0), &angles,
+		forward, strafe, &found, &target, FALSE);
+
+	if (found)
+	{
+		real_vector3d direction;
+
+		vector3d_from_euler_angles2d(&direction, &angles);
+		bots_player_set_facing(&direction);
+	}
+	return fire;
 }
 
 /* ---------- moving */
@@ -7482,14 +7528,476 @@ static void bots_report(void)
 	}
 }
 
+/* ---------- the campaign bot (debug.campaign_bot)
+
+A benchmark's driver for the campaign (docs/campaign_bot.md): the first
+local player of a level of this computer alone played by code, on the
+game's clock and nothing else, so that two runs of a level play the same
+(its input is in the demo recorded, as any player's: players.c). It fights
+with bots_hunt's choice and aim, and walks a route (debug.campaign_bot_route:
+a file of places) by the bots' path search; at a place of a "hold" line it
+stops, faces the way the line says for its seconds, then walks on. Seated
+in a seat that has not moved for 5 seconds (a10's cryo tube, a landed
+Pelican) it presses the action button every 2 seconds; stuck (under a unit
+moved in 2 seconds) it jumps and steps aside a second. halo.log has a line
+for each place reached or given up, its position every 5 seconds, each
+checkpoint saved or reverted to (bots_campaign_note_event), and the end
+(debug.campaign_bot_seconds), each with its tick. Off, nothing here runs */
+
+#define CAMPAIGN_BOT_MAXIMUM_PLACES 64
+/* (a place reached: within this across, and from below to above it) */
+#define CAMPAIGN_BOT_REACH 1.5f
+#define CAMPAIGN_BOT_REACH_BELOW 4.5f
+#define CAMPAIGN_BOT_REACH_ABOVE 3.0f
+/* (a place given up: this long walking toward it, the fights not counted) */
+#define CAMPAIGN_BOT_GIVE_UP_TICKS (TICKS_PER_SECOND * 60)
+/* (a fight this long without coming nearer the place: on while firing) */
+#define CAMPAIGN_BOT_FIGHT_TICKS (TICKS_PER_SECOND * 10)
+
+boolean cinematic_in_progress(void);
+void platform_request_quit(void);
+double config_real(char const *name);
+
+struct campaign_bot_place
+{
+	char name[32];
+	real_point3d point;
+	boolean hold;
+	real yaw, pitch;
+	long hold_ticks;
+};
+
+static struct
+{
+	/* (begun again each level: bots_initialize_for_new_map) */
+	boolean started;
+	boolean ended;
+	long place_count;
+	struct campaign_bot_place places[CAMPAIGN_BOT_MAXIMUM_PLACES];
+	long place_index;
+	/* the ticks the bot has played (the time limit's: a revert takes the
+	game's clock back, not these) */
+	long ticks;
+	long last_tick;
+	long unit_index;
+	real yaw, pitch;
+	struct bots_bot bot;
+	/* the place's walk (the fights not counted), holding until (NONE: not),
+	fighting since (NONE: not) and the nearest it came in the fight */
+	long walk_ticks;
+	long hold_until;
+	long fight_since;
+	real fight_best_distance;
+	boolean fighting;
+	real_point3d target;
+	/* stuck: where it was 2 seconds ago, a side step's end and side */
+	real_point3d stuck_position;
+	long stuck_tick;
+	long side_until;
+	real side;
+	/* seated: the seat's position, still since (NONE: not seated) */
+	real_point3d seat_position;
+	long seat_tick;
+} bots_campaign;
+
+static void bots_campaign_load_route(char const *path)
+{
+	FILE *file;
+	char line[256];
+	long number = 0;
+
+	bots_campaign.place_count = 0;
+	if (!*path)
+	{
+		platform_log("campaign bot: no route (debug.campaign_bot_route): it fights, and walks on ahead");
+		return;
+	}
+	file = fopen(path, "r");
+	if (!file)
+	{
+		platform_log("campaign bot: the route %s cannot be read: it fights, and walks on ahead", path);
+		return;
+	}
+	while (fgets(line, sizeof(line), file))
+	{
+		struct campaign_bot_place place;
+		char kind[16];
+		double x, y, z, yaw = 0.0, pitch = 0.0, seconds = 0.0;
+		int count;
+
+		number++;
+		csmemset(&place, 0, sizeof(place));
+		count = sscanf(line, "%15s %31s %lf %lf %lf %lf %lf %lf", kind, place.name, &x, &y, &z, &yaw, &pitch,
+			&seconds);
+		if (count <= 0 || kind[0] == '#')
+			continue;
+		if (!((!strcmp(kind, "place") && count == 5) || (!strcmp(kind, "hold") && count == 8)) ||
+			bots_campaign.place_count >= CAMPAIGN_BOT_MAXIMUM_PLACES)
+		{
+			platform_log("campaign bot: %s line %ld not taken: \"place <name> <x> <y> <z>\" or "
+				"\"hold <name> <x> <y> <z> <yaw> <pitch> <seconds>\", at most %d", path, number,
+				CAMPAIGN_BOT_MAXIMUM_PLACES);
+			continue;
+		}
+		place.point.x = (real)x;
+		place.point.y = (real)y;
+		place.point.z = (real)z;
+		place.hold = !strcmp(kind, "hold");
+		place.yaw = (real)yaw * BOTS_DEGREES;
+		place.pitch = (real)pitch * BOTS_DEGREES;
+		place.hold_ticks = (long)(seconds * TICKS_PER_SECOND + 0.5);
+		bots_campaign.places[bots_campaign.place_count++] = place;
+	}
+	fclose(file);
+	platform_log("campaign bot: route %s, %ld places", path, bots_campaign.place_count);
+}
+
+/* a turn toward an angle, at most 360 degrees a second */
+static real bots_campaign_turn(real from, real to)
+{
+	real turn = 360.0f * BOTS_DEGREES / TICKS_PER_SECOND;
+
+	return from + PIN(bots_angle_difference(to, from), -turn, turn);
+}
+
+static void bots_campaign_next_place(char const *how)
+{
+	struct campaign_bot_place const *place = &bots_campaign.places[bots_campaign.place_index];
+
+	platform_log("campaign bot: tick %ld, place %ld of %ld, %s, %s", game_time_get(), bots_campaign.place_index + 1,
+		bots_campaign.place_count, place->name, how);
+	bots_campaign.place_index++;
+	bots_campaign.walk_ticks = 0;
+	bots_campaign.hold_until = NONE;
+	bots_campaign.fight_since = NONE;
+	bots_campaign.bot.goal_kind = _bots_goal_none;
+	bots_campaign.bot.path.valid = FALSE;
+	if (bots_campaign.place_index == bots_campaign.place_count)
+		platform_log("campaign bot: tick %ld, route done: it fights where it stands", game_time_get());
+}
+
+static void bots_campaign_reset(void)
+{
+	bots_campaign.started = FALSE;
+}
+
+/* a checkpoint saved, reverted to or loaded (game_state.c's events), logged
+with its tick while the campaign bot plays */
+void bots_campaign_note_event(char const *event)
+{
+	if (bots_campaign.started && !bots_campaign.ended && game_time_initialized())
+		platform_log("campaign bot: tick %ld, %s", game_time_get(), event);
+}
+
+static void bots_campaign_update(struct player_action *actions)
+{
+	long player_index = local_player_get_player_index(0);
+	long absolute_index, now, unit_index;
+	struct player_datum *player;
+	struct player_action *action;
+	struct object_datum *object;
+	struct unit_datum *unit;
+	real_point3d position;
+	real_euler_angles2d facing, aimed;
+	float forward, strafe;
+	boolean found, fire, moving = FALSE, seated;
+	real move_direction = 0.0f;
+	unsigned long flags = 0;
+
+	if (!config_boolean("debug.campaign_bot") || !global_scenario || global_scenario->type != _scenario_type_solo ||
+		game_connection() != _game_connection_local || player_index == NONE)
+	{
+		return;
+	}
+	absolute_index = DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index);
+	if (absolute_index < 0 || absolute_index >= HALO_PORT_MAXIMUM_NETWORK_PLAYERS)
+		return;
+	now = game_time_get();
+	if (!bots_campaign.started)
+	{
+		csmemset(&bots_campaign, 0, sizeof(bots_campaign));
+		bots_campaign.started = TRUE;
+		bots_campaign.unit_index = NONE;
+		bots_campaign.hold_until = NONE;
+		bots_campaign.fight_since = NONE;
+		bots_campaign.seat_tick = NONE;
+		bots_campaign.last_tick = now;
+		platform_log("campaign bot: tick %ld, playing %s, %.0f seconds (debug.campaign_bot)", now,
+			global_scenario_index != NONE ? tag_get_name(global_scenario_index) : "?",
+			config_real("debug.campaign_bot_seconds"));
+		bots_campaign_load_route(config_string("debug.campaign_bot_route"));
+	}
+	if (bots_campaign.ended)
+		return;
+	/* (a revert: the game's clock taken back; the walk to the place and its
+	timers begin again from there) */
+	if (now < bots_campaign.last_tick)
+	{
+		bots_campaign.unit_index = NONE;
+		bots_campaign.hold_until = NONE;
+		bots_campaign.fight_since = NONE;
+		bots_campaign.walk_ticks = 0;
+	}
+	bots_campaign.last_tick = now;
+	bots_campaign.ticks++;
+	if (config_real("debug.campaign_bot_seconds") > 0.0 &&
+		bots_campaign.ticks > (long)(config_real("debug.campaign_bot_seconds") * TICKS_PER_SECOND))
+	{
+		bots_campaign.ended = TRUE;
+		platform_log("campaign bot: tick %ld, %ld ticks played, %ld of %ld places passed: quitting", now,
+			bots_campaign.ticks - 1, bots_campaign.place_index, bots_campaign.place_count);
+		platform_request_quit();
+		return;
+	}
+
+	action = &actions[absolute_index];
+	csmemset(action, 0, sizeof(*action));
+	action->desired_weapon_index = NONE;
+	action->desired_grenade_index = NONE;
+	action->desired_zoom_level = NONE;
+	action->desired_facing.yaw = bots_campaign.yaw;
+	action->desired_facing.pitch = bots_campaign.pitch;
+	player = player_get(player_index);
+	unit_index = player->unit_index;
+	if (unit_index == NONE)
+	{
+		bots_campaign.unit_index = NONE;
+		return;
+	}
+	object = object_get(unit_index);
+	unit = unit_get(unit_index);
+	position = object->object.position;
+	seated = object->object.parent_object_index != NONE;
+	if (bots_campaign.unit_index != unit_index)
+	{
+		/* (a new unit, or the same after a revert: it looks the way the unit
+		aims, and finds its way again) */
+		bots_campaign.unit_index = unit_index;
+		bots_campaign.yaw = (real)atan2(unit->unit.aiming_vector.j, unit->unit.aiming_vector.i);
+		bots_campaign.pitch = 0.0f;
+		/* (the bots' walk's state alone: no random numbers, which are the
+		network game's) */
+		csmemset(&bots_campaign.bot, 0, sizeof(bots_campaign.bot));
+		bots_campaign.bot.player_index = player_index;
+		bots_campaign.bot.unit_index = unit_index;
+		bots_campaign.bot.index = BOTS_MAXIMUM + 1;
+		bots_campaign.bot.smooth = TRUE;
+		bots_campaign.bot.via_teleporter = NONE;
+		bots_campaign.bot.target_player_index = NONE;
+		bots_campaign.bot.target_last_surface_index = NONE;
+		bots_campaign.bot.goal_surface_index = NONE;
+		bots_campaign.bot.power_item_index = NONE;
+		bots_campaign.bot.cover_surface_index = NONE;
+		bots_campaign.stuck_position = position;
+		bots_campaign.stuck_tick = now;
+		bots_campaign.seat_tick = NONE;
+		bots_campaign.side_until = 0;
+		bots_campaign.side = 1.0f;
+		action->desired_facing.yaw = bots_campaign.yaw;
+		action->desired_facing.pitch = bots_campaign.pitch;
+	}
+	/* (the walkable surfaces once a level is in, those with no room above
+	closed a few a tick, as for the bots) */
+	if (!bots_globals.map_ready)
+		bots_prepare_map();
+	bots_globals.tick_searches = 0;
+	bots_paths_scan();
+
+	/* (where it is, every 5 seconds; fighting as of the last tick) */
+	if (bots_campaign.ticks % (TICKS_PER_SECOND * 5) == 0)
+	{
+		char fight[64] = "not fighting";
+
+		if (bots_campaign.fighting)
+		{
+			snprintf(fight, sizeof(fight), "fighting one at %.1f %.1f %.1f", (double)bots_campaign.target.x,
+				(double)bots_campaign.target.y, (double)bots_campaign.target.z);
+		}
+		platform_log("campaign bot: tick %ld, at %.2f %.2f %.2f, place %ld of %ld, %s, body %.2f shield %.2f%s%s", now,
+			(double)position.x, (double)position.y, (double)position.z,
+			MIN(bots_campaign.place_index + 1, bots_campaign.place_count), bots_campaign.place_count, fight,
+			(double)object->object.body_vitality, (double)object->object.shield_vitality, seated ? ", seated" : "",
+			cinematic_in_progress() ? ", in a cutscene" : "");
+	}
+	/* (a cutscene: the input taken by none) */
+	bots_campaign.fighting = FALSE;
+	if (cinematic_in_progress())
+		return;
+
+	/* (seated in a seat that stays still: out with the action button) */
+	if (seated)
+	{
+		struct object_datum *seat = object_get(object->object.parent_object_index);
+
+		if (bots_campaign.seat_tick == NONE ||
+			bots_distance3d(&seat->object.position, &bots_campaign.seat_position) > 0.1f)
+		{
+			bots_campaign.seat_position = seat->object.position;
+			bots_campaign.seat_tick = now;
+		}
+		else if (now - bots_campaign.seat_tick >= TICKS_PER_SECOND * 5 &&
+			(now - bots_campaign.seat_tick) % (TICKS_PER_SECOND * 2) < BOTS_PRESS_TICKS)
+		{
+			flags |= FLAG(_unit_control_action_bit);
+		}
+	}
+	else
+		bots_campaign.seat_tick = NONE;
+
+	/* the fight: bots_hunt's target and aim */
+	facing.yaw = bots_campaign.yaw;
+	facing.pitch = bots_campaign.pitch;
+	fire = bots_hunt_from(player_index, &facing, &aimed, &forward, &strafe, &found, &bots_campaign.target, TRUE);
+	if (found)
+	{
+		bots_campaign.yaw = aimed.yaw;
+		bots_campaign.pitch = aimed.pitch;
+		if (fire)
+			flags |= FLAG(_unit_control_weapon_primary_trigger_bit);
+	}
+
+	/* the route */
+	if (bots_campaign.place_index < bots_campaign.place_count && !seated)
+	{
+		struct campaign_bot_place const *place = &bots_campaign.places[bots_campaign.place_index];
+		real distance = bots_distance2d(&place->point, &position);
+		real height = position.z - place->point.z;
+
+		if (bots_campaign.hold_until != NONE)
+		{
+			/* (holding the pose: no fight turns it) */
+			bots_campaign.yaw = bots_campaign_turn(bots_campaign.yaw, place->yaw);
+			bots_campaign.pitch = bots_campaign_turn(bots_campaign.pitch, place->pitch);
+			flags &= ~FLAG(_unit_control_weapon_primary_trigger_bit);
+			found = FALSE;
+			if (now >= bots_campaign.hold_until)
+				bots_campaign_next_place("held");
+		}
+		else if (distance < CAMPAIGN_BOT_REACH && height > -CAMPAIGN_BOT_REACH_BELOW &&
+			height < CAMPAIGN_BOT_REACH_ABOVE)
+		{
+			if (place->hold)
+			{
+				platform_log("campaign bot: tick %ld, place %ld of %ld, %s, reached: holding %.1f seconds", now,
+					bots_campaign.place_index + 1, bots_campaign.place_count, place->name,
+					(double)place->hold_ticks / TICKS_PER_SECOND);
+				bots_campaign.hold_until = now + place->hold_ticks;
+			}
+			else
+				bots_campaign_next_place("reached");
+		}
+		else
+		{
+			/* (fighting: as bots_hunt moves, unless the fight has gone on
+			this long without coming nearer: on, while firing) */
+			boolean walk = !found;
+
+			if (found)
+			{
+				if (bots_campaign.fight_since == NONE || distance < bots_campaign.fight_best_distance - 1.0f)
+				{
+					bots_campaign.fight_since = now;
+					bots_campaign.fight_best_distance = distance;
+				}
+				walk = now - bots_campaign.fight_since >= CAMPAIGN_BOT_FIGHT_TICKS;
+			}
+			else
+				bots_campaign.fight_since = NONE;
+			if (walk && ++bots_campaign.walk_ticks >= CAMPAIGN_BOT_GIVE_UP_TICKS)
+			{
+				bots_campaign_next_place("given up (not reached in 60 seconds of walking)");
+			}
+			else if (walk)
+			{
+				real_point3d ground;
+				long surface_index = bots_point_ground(&place->point, &ground);
+
+				if (surface_index != NONE)
+					bots_set_goal(&bots_campaign.bot, _bots_goal_objective, &ground, surface_index);
+				if (surface_index == NONE ||
+					!bots_follow_path(&bots_campaign.bot, unit_index, &position, &move_direction))
+				{
+					move_direction = (real)atan2(place->point.y - position.y, place->point.x - position.x);
+				}
+				moving = TRUE;
+				if (!found)
+				{
+					bots_campaign.yaw = bots_campaign_turn(bots_campaign.yaw, move_direction);
+					bots_campaign.pitch = bots_campaign_turn(bots_campaign.pitch, 0.0f);
+				}
+			}
+		}
+	}
+
+	/* the throttle: the walk's, else bots_hunt's (with no route, on ahead
+	when there is no target) */
+	if (moving)
+	{
+		real relative = bots_angle_difference(move_direction, bots_campaign.yaw);
+
+		action->throttle.i = (real)cos(relative);
+		action->throttle.j = (real)sin(relative);
+	}
+	else if (!seated && bots_campaign.hold_until == NONE && (found || bots_campaign.place_count == 0))
+	{
+		action->throttle.i = forward;
+		action->throttle.j = -strafe;
+	}
+
+	/* stuck: a jump and a side step of a second, the other way each time */
+	if (!seated && bots_campaign.hold_until == NONE && (action->throttle.i != 0.0f || action->throttle.j != 0.0f))
+	{
+		if (now < bots_campaign.side_until)
+			action->throttle.j = bots_campaign.side;
+		else if (now - bots_campaign.stuck_tick >= TICKS_PER_SECOND * 2)
+		{
+			if (bots_distance3d(&position, &bots_campaign.stuck_position) < 1.0f)
+			{
+				flags |= FLAG(_unit_control_jump_bit);
+				bots_campaign.side = -bots_campaign.side;
+				bots_campaign.side_until = now + TICKS_PER_SECOND;
+				bots_campaign.bot.path.valid = FALSE;
+			}
+			bots_campaign.stuck_position = position;
+			bots_campaign.stuck_tick = now;
+		}
+	}
+	else
+	{
+		bots_campaign.stuck_position = position;
+		bots_campaign.stuck_tick = now;
+	}
+
+	bots_campaign.pitch = PIN(bots_campaign.pitch, -1.4f, 1.4f);
+	bots_campaign.yaw = bots_angle_difference(bots_campaign.yaw, 0.0f);
+	action->desired_facing.yaw = bots_campaign.yaw;
+	action->desired_facing.pitch = bots_campaign.pitch;
+	action->control_flags = flags;
+	action->primary_trigger = TEST_FLAG(flags, _unit_control_weapon_primary_trigger_bit) ? 1.0f : 0.0f;
+	bots_campaign.fighting = found;
+	/* (the view drawn turned with it, as debug.bot_player's) */
+	{
+		real_vector3d view;
+
+		vector3d_from_euler_angles2d(&view, &action->desired_facing);
+		bots_player_set_facing(&view);
+	}
+}
+
 void bots_update_actions(struct player_action *actions)
 {
 	struct data_iterator iterator;
 	struct player_datum *player;
 	long count = 0;
 
+	/* (the campaign's: debug.campaign_bot) */
+	if (!game_engine_running())
+	{
+		bots_campaign_update(actions);
+		return;
+	}
 	/* (the host's alone: a client replays the bots from the host's input) */
-	if (!game_engine_running() || !global_network_game_server_get() ||
+	if (!global_network_game_server_get() ||
 		game_connection() != _game_connection_network_server)
 	{
 		return;

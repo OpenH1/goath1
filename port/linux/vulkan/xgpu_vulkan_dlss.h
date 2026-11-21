@@ -1,0 +1,126 @@
+/*
+XGPU_VULKAN_DLSS.H
+
+display.temporal_aa "dlss" in the Vulkan backend (docs/temporal-aa.md):
+NVIDIA DLSS Super Resolution (DLAA at the native scale), through NVIDIA's
+NGX on Vulkan (Linux; Windows's the same calls).
+
+The game itself holds none of NVIDIA's code. Its module beside the
+executable (libopenh1_dlss.so, openh1_dlss.dll: port/linux/vulkan/dlss/
+openh1_dlss.c, built by configure.py --dlss with the DLSS SDK's NGX library
+and its DLSS runtime, libnvidia-ngx-dlss.so / nvngx_dlss.dll, staged beside
+it) is loaded at run time (xgpu_vulkan_dlss.c). Without the module, an
+NVIDIA GPU or its driver's NGX, nothing changes: no extension, no feature,
+and the setting is not offered. Render thread alone, as the core.
+
+The module's interface below (OPENH1_DLSS_MODULE's part: the openh1_dlss
+structures and calls) may also be used under the MIT license, as
+openh1_dlss.c is, which includes it (the DLSS add-on: tools/dlss_addon.py).
+*/
+
+#ifndef XGPU_VULKAN_DLSS_H
+#define XGPU_VULKAN_DLSS_H
+
+#ifndef OPENH1_DLSS_MODULE
+#include "xgpu_vulkan_fsr.h"
+#else
+#include <vulkan/vulkan_core.h>
+#endif
+
+#include <stdint.h>
+
+/* ---------- the module's calls (its one export, openh1_dlss) */
+
+#define OPENH1_DLSS_ABI 1
+
+/* an image the feature reads or writes (in the GENERAL layout): its view (a
+depth image's depth alone), size and format */
+struct openh1_dlss_image
+{
+	VkImage image;
+	VkImageView view;
+	VkFormat format;
+	uint32_t width, height;
+	VkImageAspectFlags aspect;
+};
+
+/* a window's feature: its render size (the most it is given), its output
+size; display.hdr's linear light (else an SDR picture); its render preset
+(0 NGX's own) */
+struct openh1_dlss_create
+{
+	uint32_t render[2], output[2];
+	int hdr, preset;
+};
+
+/* a frame: the colour, the depth (reversed), the motion (the frame before's
+place less this one's, scaled by motion_scale into the render's pixels),
+the output (the whole of it, the output size); the window's corner in the
+inputs and its size; the jitter in its pixels; the history begun again */
+struct openh1_dlss_frame
+{
+	struct openh1_dlss_image color, depth, motion, output;
+	uint32_t corner[2], render[2];
+	float jitter[2], motion_scale[2];
+	int reset;
+};
+
+struct openh1_dlss
+{
+	uint32_t abi;
+	/* the instance's and the device's extensions NGX needs (each a name the
+	module keeps); their count, at most capacity */
+	uint32_t (*instance_extensions)(const char **names, uint32_t capacity);
+	uint32_t (*device_extensions)(VkInstance instance, VkPhysicalDevice physical,
+		PFN_vkGetInstanceProcAddr get_instance_proc_addr, const char **names, uint32_t capacity);
+	/* NGX begun on the device; 1 where DLSS Super Resolution is available.
+	data_folder: where NGX may write (its logs); log: a line of NGX's (with
+	HALO_DLSS_LOG) or the module's own */
+	int (*initialize)(VkInstance instance, VkPhysicalDevice physical, VkDevice device,
+		PFN_vkGetInstanceProcAddr get_instance_proc_addr, PFN_vkGetDeviceProcAddr get_device_proc_addr,
+		const char *data_folder, void (*log)(int warning, const char *line));
+	/* a window's feature made (its work recorded in commands); NULL if not */
+	void *(*feature_create)(VkCommandBuffer commands, const struct openh1_dlss_create *create);
+	/* a frame's work recorded in commands; 1 done */
+	int (*feature_evaluate)(VkCommandBuffer commands, void *feature, const struct openh1_dlss_frame *frame);
+	/* (the work that used it done) */
+	void (*feature_release)(void *feature);
+	/* (the device idle, every feature released) */
+	void (*shutdown)(VkDevice device);
+};
+
+typedef const struct openh1_dlss *(*openh1_dlss_entry)(void);
+
+#ifndef OPENH1_DLSS_MODULE
+/* ---------- the backend's (xgpu_vulkan.c) */
+
+/* the module loaded (not on Android or Apple, nor with
+HALO_VULKAN_NO_DLSS); 1 if it was. Then the extensions it asks for, those
+the instance or the device has, added to names (their count, at most
+capacity: not already there) */
+int xgpu_vulkan_dlss_load(void);
+uint32_t xgpu_vulkan_dlss_instance_extensions(const char **names, uint32_t count, uint32_t capacity,
+	int (*available)(const char *name));
+uint32_t xgpu_vulkan_dlss_device_extensions(VkInstance instance, VkPhysicalDevice physical,
+	PFN_vkGetInstanceProcAddr get_instance_proc_addr, const char **names, uint32_t count, uint32_t capacity,
+	int (*available)(const char *name));
+/* NGX begun on the device made with them: 1 where DLSS is available */
+struct xgpu_vulkan_dlss_device
+{
+	VkInstance instance;
+	VkPhysicalDevice physical;
+	VkDevice device;
+	PFN_vkGetInstanceProcAddr get_instance_proc_addr;
+	PFN_vkGetDeviceProcAddr get_device_proc_addr;
+	VkPhysicalDeviceMemoryProperties memory;
+	const char *data_folder;
+};
+int xgpu_vulkan_dlss_create(const struct xgpu_vulkan_dlss_device *device);
+/* (the device idle) */
+void xgpu_vulkan_dlss_destroy(void);
+/* the window's view upscaled into its destination (the same frame as
+FSR's); 0 if it could not be (then scaled as it is) */
+int xgpu_vulkan_dlss_upscale(int window, const struct xgpu_vulkan_fsr_frame *frame);
+#endif
+
+#endif

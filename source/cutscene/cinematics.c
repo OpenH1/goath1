@@ -130,9 +130,22 @@ typedef char verify_hud_global_default_title_bounds_offset[
 
 /* ---------- prototypes */
 
+static struct scenario_cutscene_title *cinematic_title_shown(
+	struct cinematic_title const *active_title);
+static real cinematic_frame_fraction(
+	void);
+static real cinematic_letterbox_drawn_amount(
+	void);
+
 /* ---------- globals */
 
 struct cinematic_global_data *cinematic_globals = NULL;
+
+/* port: the letterbox's amount as the tick before left it, for the frames
+between it and the next (cinematic_letterbox_drawn_amount; drawing only, not
+the game's state), and the game time cinematic_update took it at */
+static real cinematic_letterbox_previous_amount;
+static long cinematic_letterbox_previous_time = NONE;
 
 /* ---------- public code */
 
@@ -302,6 +315,74 @@ void cinematic_set_title_delayed(
 	return;
 }
 
+/* port: the letterbox's slide and the chapter titles' time, once a tick
+(game.c's game_tick_after_substeps). cinematic_render moved them once a
+frame by the frame's elapsed ticks: the same sum, but the game state took the
+frames' steps between the ticks (the amount's float sums, a title's slot
+freed at the frame that crossed its end, which a title queued after it
+takes), so the game played at another frame rate was another game
+(OpenH1 #1233). The frames only draw them now. */
+void cinematic_update(
+	void)
+{
+	short title_slot_index;
+
+	if (cinematic_globals->show_letterbox ||
+		cinematic_globals->letterbox_amount > 0.0f)
+	{
+		long game_time = game_time_get();
+		long elapsed_ticks = game_time - cinematic_globals->letterbox_last_game_time;
+
+		cinematic_letterbox_previous_amount = cinematic_globals->letterbox_amount;
+		cinematic_globals->letterbox_last_game_time = game_time;
+		if (cinematic_globals->show_letterbox)
+		{
+			cinematic_globals->letterbox_amount = MIN(
+				cinematic_globals->letterbox_amount +
+					(real)elapsed_ticks * (1.0f / (real)TICKS_PER_SECOND),
+				1.0f);
+		}
+		else
+		{
+			cinematic_globals->letterbox_amount = MAX(
+				cinematic_globals->letterbox_amount -
+					(real)elapsed_ticks * (1.0f / (real)TICKS_PER_SECOND),
+				0.0f);
+		}
+		cinematic_letterbox_previous_time = game_time;
+	}
+	else
+	{
+		cinematic_letterbox_previous_time = NONE;
+	}
+
+	for (title_slot_index = 0;
+		title_slot_index < MAXIMUM_QUEUED_CINEMATIC_TITLES;
+		title_slot_index++)
+	{
+		struct cinematic_title *active_title =
+			&cinematic_globals->queued_titles[title_slot_index];
+		struct scenario_cutscene_title *title =
+			cinematic_title_shown(active_title);
+
+		/* (a title that cannot be drawn keeps its slot and its time, as
+		in cinematic_render before) */
+		if (!title)
+			continue;
+
+		active_title->time++;
+		if (!game_in_editor() &&
+			(real)active_title->time >=
+				title->up_time + title->fade_out_time)
+		{
+			active_title->title_index = NONE;
+			active_title->time = NONE;
+		}
+	}
+
+	return;
+}
+
 void cinematic_render(
 	void)
 {
@@ -309,39 +390,18 @@ void cinematic_render(
 		cinematic_globals->letterbox_amount > 0.0f) &&
 		!ui_widgets_active())
 	{
-		long game_time;
-		long elapsed_ticks;
-		real letterbox_amount;
+		/* port: the amount is the ticks' (cinematic_update); a frame between
+		two ticks draws it that far from the tick before's
+		(render_interpolation.c) */
+		real letterbox_amount = cinematic_letterbox_drawn_amount();
 
-		game_time = game_time_get();
-		elapsed_ticks =
-			game_time - cinematic_globals->letterbox_last_game_time;
-		cinematic_globals->letterbox_last_game_time = game_time;
-		if (cinematic_globals->show_letterbox)
-		{
-			cinematic_globals->letterbox_amount +=
-				(real)elapsed_ticks * (1.0f / (real)TICKS_PER_SECOND);
-			letterbox_amount =
-				MIN(cinematic_globals->letterbox_amount, 1.0f);
-		}
-		else
-		{
-			cinematic_globals->letterbox_amount =
-				cinematic_globals->letterbox_amount -
-				(real)elapsed_ticks * (1.0f / (real)TICKS_PER_SECOND);
-			letterbox_amount =
-				MAX(cinematic_globals->letterbox_amount, 0.0f);
-		}
-
-		cinematic_globals->letterbox_amount = letterbox_amount;
-
-		if (cinematic_globals->letterbox_amount > 0.0f)
+		if (letterbox_amount > 0.0f)
 		{
 			rectangle2d bar;
 			real bar_height;
 			real viewport_height;
 
-			bar_height = cinematic_globals->letterbox_amount * 0.125f;
+			bar_height = letterbox_amount * 0.125f;
 			viewport_height = (real)(
 				render.camera.viewport_bounds.y1 -
 				render.camera.viewport_bounds.y0);
@@ -418,7 +478,12 @@ void cinematic_render(
 
 			if (!game_in_editor())
 			{
-				real title_time = (real)active_title->time;
+				/* port: the time is the ticks' (cinematic_update): it
+				counted this tick already, so the frame at the tick's end
+				draws the time before it, as the frame that advanced it
+				did, and a frame between two ticks that far on */
+				real title_time = (real)active_title->time - 1.0f +
+					cinematic_frame_fraction();
 
 				if (title_time < title->fade_in_time)
 				{
@@ -506,17 +571,6 @@ void cinematic_render(
 				rasterizer_text_set_shadow_color(0);
 			}
 
-			active_title->time += game_time_get_paused()
-				? 0
-				: game_time_get_elapsed();
-
-			if (!game_in_editor() &&
-				(real)active_title->time >=
-					title->up_time + title->fade_out_time)
-			{
-				active_title->title_index = NONE;
-				active_title->time = NONE;
-			}
 		}
 	}
 
@@ -532,6 +586,64 @@ void cinematic_set_title(
 }
 
 /* ---------- private code */
+
+/* port: a queued title's tag, if it is drawn (a font, the help text and its
+string): cinematic_render's tests, which cinematic_update keeps time by */
+static struct scenario_cutscene_title *cinematic_title_shown(
+	struct cinematic_title const *active_title)
+{
+	struct scenario_cutscene_title *title;
+	struct string_list *string_list;
+	long help_text_tag_index;
+
+	if (active_title->title_index == NONE ||
+		hud_globals->messaging.single_player_font.index == NONE)
+	{
+		return NULL;
+	}
+	title = TAG_BLOCK_GET_ELEMENT(
+		&global_scenario_get()->cutscene_chapter_titles,
+		active_title->title_index,
+		struct scenario_cutscene_title);
+	help_text_tag_index = global_scenario_get()->ingame_help_text.index;
+	if (help_text_tag_index == NONE)
+		return NULL;
+	string_list = unicode_string_list_definition_get(help_text_tag_index);
+	if (title->text_index < 0 ||
+		title->text_index >= string_list->strings.count)
+	{
+		return NULL;
+	}
+
+	return title;
+}
+
+/* port: how far the frame is from the tick before to the last tick
+(render_interpolation.c; 1 when frames are not drawn between them) */
+static real cinematic_frame_fraction(
+	void)
+{
+	return PIN((real)render_interpolation_fraction(), 0.0f, 1.0f);
+}
+
+/* port: the letterbox's amount a frame draws: the last tick's, or, between
+two ticks, that far from the tick before's */
+static real cinematic_letterbox_drawn_amount(
+	void)
+{
+	real amount = cinematic_globals->letterbox_amount;
+
+	if (cinematic_letterbox_previous_time != NONE &&
+		cinematic_letterbox_previous_time == cinematic_globals->letterbox_last_game_time)
+	{
+		real fraction = cinematic_frame_fraction();
+
+		amount = cinematic_letterbox_previous_amount +
+			(amount - cinematic_letterbox_previous_amount) * fraction;
+	}
+
+	return PIN(amount, 0.0f, 1.0f);
+}
 
 void draw_quad(
 	rectangle2d *rectangle,

@@ -89,6 +89,22 @@ struct host_render_backend
 	void (*picture_top)(void *context, uint32_t top);
 	/* display.gamma: the setting (a float's bits), from the next present on */
 	void (*gamma)(void *context, uint32_t gamma);
+	/* display.render_scale: a smaller frame scaled up sharply (1) or
+	smoothly (0), from the next present on */
+	void (*sharp_upscale)(void *context, uint32_t sharp);
+	/* display.hdr_sdr_curve: the HDR encoding's SDR curve
+	(XGPU_HDR_SDR_CURVE_*), from the next present on */
+	void (*hdr_sdr_curve)(void *context, uint32_t curve);
+	/* display.hdr_peak_nits: the display's peak in nits (0 the
+	system's), from the next frame on */
+	void (*hdr_peak_nits)(void *context, uint32_t value);
+	/* display.hdr_gamut: the highlights' colours expanded (1) or not
+	(0), from the next frame on */
+	void (*hdr_gamut)(void *context, uint32_t value);
+	/* debug.timings: each pass timed every so many frames (0: no more,
+	but where debug.pass_times times them); NULL where the backend has
+	no passes' times (Metal's) */
+	void (*pass_times)(void *context, uint32_t frames);
 	/* the game's renderer's category of the draws from now on
 	(XGPU_STREAM_CATEGORY's value), for the GPU's timing */
 	void (*category)(void *context, uint32_t category);
@@ -103,6 +119,12 @@ struct host_render_backend
 	/* ... found once a pixel (xgpu_stream.h's WORLD_AO_PREPASS); none: the
 	pre-pass's draws are drawn as the surfaces' (xgpu_stream.h) */
 	void (*world_ao_prepass)(void *context, const struct xgpu_stream_world_ao_prepass *record);
+	/* display.temporal_aa's motion (xgpu_stream.h's MOTION); none: the
+	window's objects draw as ever, and no motion is found */
+	void (*motion)(void *context, const struct xgpu_stream_motion *record);
+	/* display.shadows "ray_traced" (xgpu_stream.h's RT_SHADOWS: the decoder
+	has checked its casters are inside the record); none: no shadows */
+	void (*rt_shadows)(void *context, const struct xgpu_stream_rt_shadows *record);
 	void (*world_ao_cascades)(void *context, const struct xgpu_stream_world_ao_cascades *record);
 	/* display.ambient_occlusion "ray_traced" (xgpu_stream.h's WORLD_AO_MESH,
 	_INSTANCES: the decoder has checked their sizes, not the instances'
@@ -120,6 +142,13 @@ struct host_render_backend
 	/* pixels: host_pointer(record->pixels), record->size bytes; returns
 	nonzero if written */
 	int (*read_target)(void *context, const struct xgpu_stream_read_target *record);
+	/* the screenshot key's target (width by height) read now as it is, when
+	it is display.hdr's RGBA16F back buffer: its half floats, RGBA rows from
+	the top, into *halves (malloc'd, the caller's to free), for the
+	screenshot's writer to tone map off the render thread. 1 read, 0 it
+	cannot be read, -1 not RGBA16F (read with read_target). NULL: every
+	screenshot is read with read_target */
+	int (*read_target_halves)(void *context, uint32_t target, uint32_t width, uint32_t height, uint16_t **halves);
 
 	void (*set_textures)(void *context, const struct host_render_texture_stage stages[4]);
 
@@ -163,6 +192,9 @@ struct host_render_backend
 	int (*loading_owned)(void *context);
 	/* Copy 640x480 RGBA before returning; NULL clears the owned picture. */
 	void (*loading_art)(void *context, const unsigned char *rgba);
+	/* after it, the picture at its own size (1600x1200 RGBA), copied before
+	returning; not called without one */
+	void (*loading_art_source)(void *context, const unsigned char *rgba);
 	/* The menu's scene (loading_scene.h), unchecked bytes the backend
 	validates; copied before returning, none clears it. */
 	void (*loading_scene)(void *context, const void *data, uint32_t bytes);
@@ -231,11 +263,25 @@ reason in name. Set by the platform's host with its backend
 typedef int (*host_render_screenshot_writer)(unsigned char *bgra, uint32_t width, uint32_t height, const char *directory,
 	char *name, uint32_t name_size);
 void host_render_stream_set_screenshot_writer(host_render_screenshot_writer writer);
+/* the same of a display.hdr back buffer's half floats (read_target_halves'),
+which it takes (free'd, written or not), tone mapped as read_target's
+tone_map is (xgpu_hdr_sdr_pixel) where the file is written: on the PNG's
+thread. Set by the host with the writer; without one, HDR screenshots are
+read tone mapped on the render thread as before */
+typedef int (*host_render_screenshot_halves_writer)(uint16_t *halves, uint32_t width, uint32_t height,
+	const char *directory, char *name, uint32_t name_size);
+void host_render_stream_set_screenshot_halves_writer(host_render_screenshot_halves_writer writer);
 /* host_screenshot.c's, with SDL: YYYY-MM-DD_HH.MM.SS.png in local time
 (host_screenshot_name: the how manyth of its second, collision, from 0,
-adds _2, _3 and on) */
+adds _2, _3 and on). The name is answered at once and the file written on
+a thread of its own (as <name>.part, renamed once whole): it appears a
+moment later; host_screenshot_finish waits for every one being written
+(at exit too) */
 int host_screenshot_write(unsigned char *bgra, uint32_t width, uint32_t height, const char *directory, char *name,
 	uint32_t name_size);
+int host_screenshot_write_halves(uint16_t *halves, uint32_t width, uint32_t height, const char *directory, char *name,
+	uint32_t name_size);
+void host_screenshot_finish(void);
 void host_screenshot_name(char *name, uint32_t name_size, int year, int month, int day, int hour, int minute,
 	int second, unsigned collision);
 
@@ -271,10 +317,29 @@ void host_render_stream_call(void (*function)(void *argument), void *argument);
 statistics, for the host's logs (read as they are, racing with their
 writers) */
 const struct xgpu_stream_ring *host_render_stream_ring(void);
+/* (render thread) the display holds the render thread from now (1), or no
+longer (0): a call that waits for the display's pacing (a FIFO swapchain's
+vkAcquireNextImageKHR or vkQueuePresentKHR). That time is no work of the
+thread's (the ring's render_microseconds leave it out), and a guest's wait
+for the render thread or the GPU meanwhile is the display's pacing
+(paced_microseconds: a report's) */
+void host_render_stream_display_blocking(int blocking);
 /* the backend's GPU time on the frames so far, in nanoseconds (a running
 total; at a frame's end, on the render thread): written into the ring for
 the guest (gpu_microseconds: a report's) */
 void host_render_stream_gpu_time(uint64_t nanoseconds);
+/* (render thread) the number of the frame being played, as the guest's
+frames_submitted counts it: a backend tags the frame's GPU timestamps with
+it as it ends the frame (its frame_end), and once they are read gives the
+frame's own GPU time under it (host_render_stream_gpu_frame, from one
+thread: the render thread's, or a backend's completions'), into the ring's
+xgpu_stream_gpu_frames for the guest (port/linux/src/frame_gpu.h: each
+frame's row, its GPU time its own, not a running count's change).
+host_render_stream_gpu_frames(0): none given (a replay: its ring is a
+recording's, whose memory after the pipelines' states may be no table) */
+uint32_t host_render_stream_frame_playing(void);
+void host_render_stream_gpu_frame(uint32_t frame, uint64_t nanoseconds);
+void host_render_stream_gpu_frames(int on);
 
 /* ---------- pacing by the display (frame_pacing.h)
 

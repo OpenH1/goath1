@@ -32,6 +32,7 @@ and the debug keyboard that the game's console reads.
 #include "xiso.h"
 #include "map_unpack.h"
 #include "map_import.h"
+#include "map_sources.h"
 #ifdef HALO_VR
 #include "vr.h"
 #include "vr_host.h"
@@ -60,25 +61,41 @@ static int loading_presentation_active;
 
 extern const unsigned int platform_loading_picture[];
 extern const unsigned long platform_loading_picture_size;
+extern const unsigned int platform_loading_source[];
+extern const unsigned long platform_loading_source_size;
 
 void halo_loading_art(void)
 {
-	unsigned char *pixels;
-	uLongf size = LOADING_ART_BYTES;
+	unsigned char *pixels, *source = NULL;
+	uLongf size = LOADING_ART_BYTES, source_size = LOADING_ART_SOURCE_BYTES;
 
 	if (!platform_loading_picture_size)
 		return;
 	pixels = malloc(LOADING_ART_BYTES);
 	if (!pixels)
 		return;
+	/* (and the picture at its own size, which the sharp frame resamples to
+	the screen's pixels: loading_art.h) */
+	if (platform_loading_source_size)
+	{
+		source = malloc(LOADING_ART_SOURCE_BYTES);
+		if (source && (uncompress(source, &source_size, (const unsigned char *)platform_loading_source,
+			platform_loading_source_size) != Z_OK || source_size != LOADING_ART_SOURCE_BYTES))
+		{
+			free(source);
+			source = NULL;
+		}
+	}
 	if (uncompress(pixels, &size, (const unsigned char *)platform_loading_picture,
 		platform_loading_picture_size) == Z_OK && size == LOADING_ART_BYTES)
 	{
-		xgpu_backend_loading_art(pixels);
-		platform_log("loading: using the bundled loading picture");
+		xgpu_backend_loading_art(pixels, source);
+		platform_log(source ? "loading: using the bundled loading picture, and at its own size" :
+			"loading: using the bundled loading picture");
 	}
 	else
 		platform_log("loading: could not decode the bundled loading picture");
+	free(source);
 	free(pixels);
 }
 
@@ -89,8 +106,13 @@ void halo_loading_fade_begin(void);
 /* (port/linux/game/menu_pictures_render.c) */
 int menu_pictures_preparing(void);
 
+/* (port/linux/game/speedrun_state.c) */
+void speedrun_state_loading(void);
+
 void halo_loading_begin(void)
 {
+	/* (the speedrun state block's loading flag, whatever is shown) */
+	speedrun_state_loading();
 	/* the menus' pictures' maps: the loading screen of their whole pass
 	stays (halo_loading_screen_begin), the old draws retired all the same */
 	if (menu_pictures_preparing())
@@ -446,6 +468,9 @@ void dsound_sdl_output_device_check(void);
 /* updater.c's: the desktop self-updater */
 void updater_start(void);
 void updater_poll(SDL_Window *window);
+/* dlss_addon.c's: what the DLSS add-on's install or removal left, deleted
+before the renderer loads it */
+void dlss_addon_start(void);
 /* the windows' icon, a PNG (tools/embed_assets.py, from port/assets/icon) */
 extern const unsigned int platform_window_icon[];
 extern const unsigned long platform_window_icon_size;
@@ -632,6 +657,7 @@ BOOL platform_sdl_initialize(void)
 	dedicated server's is server.auto_update's) */
 	if (!halo_server_mode())
 	{
+		dlss_addon_start();
 		updater_start();
 		/* (a player's public game on the master servers too, with a
 		publisher key: server_master.c) */
@@ -702,7 +728,7 @@ static void *data_extraction_thread(void *context)
 
 	if (extraction->installer)
 	{
-		succeeded = map_import_custom_edition(extraction->image, extraction->destination, data_extraction_progress,
+		succeeded = map_import_custom_edition(extraction->image, extraction->destination, 0, data_extraction_progress,
 			extraction, &written, extraction->error, sizeof(extraction->error)) != 0;
 	}
 	else
@@ -906,6 +932,7 @@ static void data_import_custom_edition(const char *destination)
 	char message[1600];
 	unsigned long long written = 0;
 	BOOL failed = FALSE;
+	struct map_sources sources;
 	int kind;
 
 	if (!data_choose_image(installer, sizeof(installer), TRUE, &failed, error, sizeof(error)))
@@ -932,9 +959,11 @@ static void data_import_custom_edition(const char *destination)
 		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Halo", error, NULL);
 		return;
 	}
-	snprintf(message, sizeof(message), "%s %s. They show in the map lists' CUSTOM MULTIPLAYER.\n\n"
-		"Halo still needs the maps of your Xbox disc to start: choose Xbox disc image next.",
-		written ? "Custom Edition's maps are in" : "Custom Edition's maps were already in", folder);
+	map_sources_read(destination, &sources);
+	snprintf(message, sizeof(message), "%s %s. They show in the map lists' CUSTOM MULTIPLAYER.%s",
+		written ? "Custom Edition's maps are in" : "Custom Edition's maps were already in", folder,
+		sources.present[_map_source_xbox] ? "" :
+		"\n\nHalo still needs the maps of your Xbox disc to start: choose Xbox disc image next.");
 	SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "Halo", message, NULL);
 }
 
@@ -952,9 +981,18 @@ BOOL platform_offer_game_data(const char *destination, const char *missing)
 		{ 0, _choice_custom_edition, "Custom Edition maps" },
 		{ SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, _choice_quit, "Quit" },
 	};
+	/* (Settings' GAME DATA, with the Xbox maps there: Start in Quit's place,
+	map_sources.c) */
+	static const SDL_MessageBoxButtonData start_buttons[] =
+	{
+		{ 0, _choice_xbox, "Xbox disc image" },
+		{ 0, _choice_custom_edition, "Custom Edition maps" },
+		{ SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT | SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, _choice_quit, "Start" },
+	};
 	char message[2600];
 	char found[1024];
 	BOOL image_found;
+	struct map_sources sources;
 
 	/* not for runs nobody is watching */
 	if (config_boolean("debug.hidden_window") || config_real("debug.exit_after") > 0.0 ||
@@ -995,8 +1033,21 @@ BOOL platform_offer_game_data(const char *destination, const char *missing)
 		int answer = _choice_quit;
 		BOOL failed = FALSE;
 
+		map_sources_read(destination, &sources);
+		if (sources.present[_map_source_xbox])
+		{
+			snprintf(message, sizeof(message),
+				"Halo's maps: the Xbox maps are installed; Custom Edition's maps are %s.\n\n"
+				"Xbox disc image: copy the Xbox maps from a disc image to %s/maps again.\n\n"
+				"Custom Edition maps: add the multiplayer maps of Custom Edition's installer "
+				"(halocesetup_en_1.00.exe) to custom_maps; only those missing are written.",
+				sources.present[_map_source_custom_edition] ? "added" : "not added", destination);
+			question.buttons = start_buttons;
+		}
 		if (!SDL_ShowMessageBox(&question, &answer) || answer == _choice_quit)
 		{
+			if (sources.present[_map_source_xbox])
+				return TRUE;
 			platform_log("no game data: quitting");
 			exit(EXIT_SUCCESS);
 		}
@@ -1978,6 +2029,18 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	return TRUE;
 }
 
+BOOL platform_window_background(void)
+{
+	SDL_WindowFlags flags;
+
+	if (!platform_window)
+		return FALSE;
+	flags = SDL_GetWindowFlags(platform_window);
+	if (flags & SDL_WINDOW_HIDDEN)
+		return FALSE;
+	return !input_state.focused || (flags & SDL_WINDOW_MINIMIZED) != 0;
+}
+
 #ifdef HALO_VR
 /* the VR build's window, made hidden for the headset (platform_video_
 initialize), shown as a build without VR shows it when there is no VR
@@ -2041,6 +2104,14 @@ static float platform_refresh_rate(void)
 
 	return mode && mode->refresh_rate > 0.0f ? mode->refresh_rate : 0.0f;
 #endif
+}
+
+float platform_frame_rate_target(void)
+{
+	float refresh = platform_refresh_rate() > 0.0f ? platform_refresh_rate() : 60.0f;
+	long maximum = config_integer("display.max_fps");
+
+	return maximum > 0 && (float)maximum < refresh ? (float)maximum : refresh;
 }
 
 /* ---------- display.vrr
@@ -2380,6 +2451,108 @@ static Uint64 platform_frame_slot(Uint64 interval, Uint64 now, Uint64 last)
 }
 #endif
 
+/* (the frames' limit's wait, below) a step of the game's clock that falls
+due in it, run then by a frame of its own that draws nothing (main.c's
+main_frame_step_due: when the wait wakes for it, 0 for none), not at the
+next frame's start, up to a frame after it fell due; whether the last wait
+was so woken, the frame's time still to come; and the next frame's time */
+static unsigned long long (*platform_frame_step_due)(unsigned long long now, unsigned long long frame_due);
+static int platform_frame_woken;
+static Uint64 platform_frame_next;
+/* (the frame shown waits to be counted: platform_frame_report_held) */
+static int platform_frame_report_waits;
+
+/* the frames' limit's sleep, from now until until (nanoseconds of
+SDL_GetTicksNS) */
+static void platform_frame_sleep(Uint64 now, Uint64 until)
+{
+#ifdef HALO_ANDROID
+	/* (the Android guest's SDL waits in milliseconds) */
+	SDL_Delay((Uint32)((until - now) / 1000000u));
+#elif defined(HALO_WINDOWS)
+	/* (the host's wait, on time: Windows's timer wakes up to a
+	millisecond late; guest_windows.c) */
+	struct timespec monotonic;
+
+	clock_gettime(CLOCK_MONOTONIC, &monotonic);
+	host_windows_sleep_until((unsigned long long)monotonic.tv_sec * 1000000000ull +
+		(unsigned long long)monotonic.tv_nsec + (until - now));
+#else
+	SDL_DelayPrecise(until - now);
+#endif
+}
+
+/* waits for the frame's time (*next_frame) and sets the next's an interval
+on: TRUE. Or, where step_due (not NULL) has a step of the game's clock fall
+due before it, waits only until then: FALSE, the frame's time still to come
+(the next wait goes on to it). A frame more than an interval late starts the
+count again */
+static int platform_frame_wait_until(Uint64 *next_frame, Uint64 interval,
+	unsigned long long (*step_due)(unsigned long long now, unsigned long long frame_due), Uint64 (*clock)(void),
+	void (*sleep)(Uint64 now, Uint64 until))
+{
+	Uint64 now = clock();
+
+	if (*next_frame > now)
+	{
+		Uint64 step = step_due ? (Uint64)step_due(now, *next_frame) : 0;
+
+		if (step && step < *next_frame)
+		{
+			if (step > now)
+				sleep(now, step);
+			return FALSE;
+		}
+		sleep(now, *next_frame);
+		now = *next_frame;
+	}
+	*next_frame = now - *next_frame > interval ? now + interval : *next_frame + interval;
+	return TRUE;
+}
+
+void platform_frame_step_hook(unsigned long long (*due)(unsigned long long now, unsigned long long frame_due))
+{
+	platform_frame_step_due = due;
+}
+
+/* whether the last frame's wait woke for a step before the frame's time
+(the frame that follows draws nothing and waits again: platform_frame_wait),
+once */
+int platform_frame_woken_for_step(void)
+{
+	int woken = platform_frame_woken;
+
+	platform_frame_woken = FALSE;
+	return woken;
+}
+
+/* whether the frame just shown is counted (report_frame_presented, its time
+the frames' report's and the performance overlay's) only once its wait has
+run to the frame's time, its wait having woken for a step first: it is
+counted then (platform_frame_wait), so that the frames' times are as the
+display gets them */
+int platform_frame_report_held(void)
+{
+	platform_frame_report_waits = platform_frame_woken;
+	return platform_frame_report_waits;
+}
+
+/* (a frame that drew nothing, woken for a step) the rest of the frames'
+limit's wait, which a step due first may wake again */
+void platform_frame_wait(void)
+{
+	Uint64 interval = frame_interval_ns();
+
+	platform_frame_woken = interval &&
+		!platform_frame_wait_until(&platform_frame_next, interval, platform_frame_step_due, SDL_GetTicksNS,
+			platform_frame_sleep);
+	if (platform_frame_report_waits && !platform_frame_woken)
+	{
+		platform_frame_report_waits = FALSE;
+		report_frame_presented();
+	}
+}
+
 /* The frames' limit (display.max_fps, battery saver's without vsync): no
 frame starts before its time, whatever comes meanwhile. The wait is a plain
 sleep, not one for the window's events: the keys, the mouse, the window's
@@ -2396,13 +2569,12 @@ at its start, and the view reads the mouse again after the simulation
 void platform_video_swap(void)
 {
 	Uint64 swap_start = SDL_GetTicks(), swap_time;
-	static Uint64 next_frame;
 #ifdef HALO_METAL
 	/* the last frame's start on the display's grid (platform_frame_slot) */
 	static Uint64 slot_last;
-	Uint64 slot;
+	Uint64 slot, now;
 #endif
-	Uint64 interval, now;
+	Uint64 interval;
 	/* (the host shows the frame, on its render thread: here it is paced) */
 	/* (a frame the graphics driver held for seconds: the game froze, and
 	online, a host stops hearing a machine after a few; the log says where) */
@@ -2410,10 +2582,11 @@ void platform_video_swap(void)
 	if (swap_time >= 2000)
 		platform_log("display: showing a frame took %.1f s in the graphics driver", (double)swap_time / 1000.0);
 	interval = frame_interval_ns();
+	platform_frame_woken = FALSE;
 	if (!interval)
 		return;
-	now = SDL_GetTicksNS();
 #ifdef HALO_METAL
+	now = SDL_GetTicksNS();
 	slot = platform_frame_slot(interval, now, slot_last);
 	if (slot)
 	{
@@ -2431,26 +2604,10 @@ void platform_video_swap(void)
 		return;
 	}
 #endif
-	if (next_frame > now)
-	{
-#ifdef HALO_ANDROID
-		/* (the Android guest's SDL waits in milliseconds) */
-		SDL_Delay((Uint32)((next_frame - now) / 1000000u));
-#elif defined(HALO_WINDOWS)
-		/* (the host's wait, on time: Windows's timer wakes up to a
-		millisecond late; guest_windows.c) */
-		struct timespec monotonic;
-
-		clock_gettime(CLOCK_MONOTONIC, &monotonic);
-		host_windows_sleep_until((unsigned long long)monotonic.tv_sec * 1000000000ull +
-			(unsigned long long)monotonic.tv_nsec + (next_frame - now));
-#else
-		SDL_DelayPrecise(next_frame - now);
-#endif
-		now = next_frame;
-	}
-	/* (a frame more than an interval late starts the count again) */
-	next_frame = now - next_frame > interval ? now + interval : next_frame + interval;
+	/* (a step of the game's clock due before the frame's time run when due:
+	platform_frame_step_due) */
+	platform_frame_woken = !platform_frame_wait_until(&platform_frame_next, interval, platform_frame_step_due,
+		SDL_GetTicksNS, platform_frame_sleep);
 }
 
 #if !defined(HALO_ANDROID) && !defined(HALO_GUEST)
@@ -2624,8 +2781,63 @@ static CHAR ascii_from_key(SDL_Keycode key, SDL_Keycode typed, SDL_Keymod modifi
 	return 0;
 }
 
+/* a letter with a mark a player's name keeps and the host folds to its plain
+letter (players.c's player_name_character_ascii): Latin-1's and Latin
+Extended-A's, U+00C0 to U+017F, but for the signs x and / */
+static BOOL typed_letter_kept(unsigned long character)
+{
+	return character >= 0xC0 && character <= 0x17F && character != 0xD7 && character != 0xF7;
+}
+
+/* the character a key types for a text field (#1134): its ASCII
+(ascii_from_key's), or a letter with a mark its layout types itself (typed:
+SDL_GetKeyFromScancode's, whose keycode is the character): é on a French
+keyboard's 2, ñ on a Spanish one's, ł with AltGr on a Polish one. 0 for
+none */
+static unsigned short keystroke_character(SDL_Keycode typed, CHAR ascii)
+{
+	if ((unsigned char)ascii >= ' ' && (unsigned char)ascii <= '~')
+		return (unsigned char)ascii;
+	if (typed_letter_kept((unsigned long)typed))
+		return (unsigned short)typed;
+	return 0;
+}
+
+/* the next character of UTF-8 text, the text moved past it; 0 at its end,
+0xFFFD for a broken sequence */
+static unsigned long utf8_next(const char **text)
+{
+	const unsigned char *at = (const unsigned char *)*text;
+	unsigned long character;
+	int more, index;
+
+	if (!*at)
+		return 0;
+	if (*at < 0x80)
+	{
+		*text += 1;
+		return *at;
+	}
+	more = *at >= 0xF0 ? 3 : *at >= 0xE0 ? 2 : *at >= 0xC0 ? 1 : 0;
+	character = *at & (0x3F >> more);
+	for (index = 1; index <= more; index++)
+	{
+		if ((at[index] & 0xC0) != 0x80)
+		{
+			*text += index;
+			return 0xFFFD;
+		}
+		character = character << 6 | (at[index] & 0x3F);
+	}
+	*text += more + 1;
+	return more ? character : 0xFFFD;
+}
+
+static BOOL screen_keyboard_active(void);
+
 static void queue_keystroke(const SDL_KeyboardEvent *event)
 {
+	SDL_Keycode typed = SDL_GetKeyFromScancode(event->scancode, event->mod, false);
 	struct platform_keystroke *keystroke;
 	BYTE flags = 0;
 
@@ -2643,10 +2855,36 @@ static void queue_keystroke(const SDL_KeyboardEvent *event)
 	if (!event->down) flags |= 0x40;
 	if (event->repeat) flags |= 0x80;
 	keystroke->virtual_key = virtual_key_from_scancode(event->scancode);
-	keystroke->ascii = event->down ? ascii_from_key(event->key,
-		SDL_GetKeyFromScancode(event->scancode, event->mod, false), event->mod) : 0;
+	keystroke->ascii = event->down ? ascii_from_key(event->key, typed, event->mod) : 0;
+	keystroke->character = event->down ? keystroke_character(typed, keystroke->ascii) : 0;
+	/* (while the system's keyboard is up, its text events give the letters
+	beyond ASCII: queue_text, not twice) */
+	if (keystroke->character > '~' && screen_keyboard_active())
+		keystroke->character = 0;
 	keystroke->flags = flags;
 	keystroke_count++;
+}
+
+/* (input_lock) the letters with a mark of a text event (the system's
+on-screen keyboard's: Steam's, a phone's), each a keystroke of its own with
+no key: SDL makes a key of each of ASCII's, which queue_keystroke has */
+static void queue_text(const char *text)
+{
+	unsigned long character;
+
+	while ((character = utf8_next(&text)) != 0)
+	{
+		struct platform_keystroke *keystroke;
+
+		if (!typed_letter_kept(character))
+			continue;
+		if (keystroke_count == KEYSTROKE_QUEUE_SIZE)
+			return;
+		keystroke = &keystroke_queue[(keystroke_head + keystroke_count) % KEYSTROKE_QUEUE_SIZE];
+		memset(keystroke, 0, sizeof(*keystroke));
+		keystroke->character = (unsigned short)character;
+		keystroke_count++;
+	}
 }
 
 /* (input_lock) a key pressed and let go of, as its events queue it */
@@ -2663,6 +2901,7 @@ static void queue_test_keystroke(BYTE virtual_key, CHAR ascii)
 		keystroke = &keystroke_queue[(keystroke_head + keystroke_count) % KEYSTROKE_QUEUE_SIZE];
 		keystroke->virtual_key = virtual_key;
 		keystroke->ascii = up ? 0 : ascii;
+		keystroke->character = up ? 0 : keystroke_character(0, ascii);
 		keystroke->flags = up ? 0x40 : 0;
 		keystroke_count++;
 	}
@@ -3686,6 +3925,11 @@ void platform_pump_events(void)
 				if (event.button.down)
 					mouse_buttons_pressed[event.button.button] = 1;
 			}
+			break;
+		/* (the system's on-screen keyboard's text, while a text field has it
+		up: its letters with a mark, which no key types) */
+		case SDL_EVENT_TEXT_INPUT:
+			queue_text(event.text.text);
 			break;
 		case SDL_EVENT_MOUSE_WHEEL:
 #ifndef HALO_ANDROID

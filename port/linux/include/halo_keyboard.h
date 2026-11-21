@@ -66,6 +66,14 @@ enum halo_keyboard_action
 	/* (the HUD's Spartan link's, which the game itself does not read: the
 	teammates' feeds shown or hidden, port/linux/game/spartan_link.c) */
 	HALO_KEYBOARD_SPARTAN_LINK,
+	/* (Hide HUD's, which the game itself does not read: the HUD, the
+	reticle and the clock hidden or shown, source/interface/hud.c) */
+	HALO_KEYBOARD_HIDE_HUD,
+	/* (Zoom In's and Zoom Out's, MCC's: a step of the weapon's zoom in, to
+	its last level and no further, or out, to none, beside Zoom's cycle:
+	source/input/input_abstraction.c, source/game/player_control.c) */
+	HALO_KEYBOARD_ZOOM_IN,
+	HALO_KEYBOARD_ZOOM_OUT,
 	NUMBER_OF_HALO_KEYBOARD_ACTIONS
 };
 
@@ -78,6 +86,10 @@ int halo_keyboard_binding_label(int action, int slot, char *shown, unsigned int 
 /* whether voice chat's push to talk is held (controls.push_to_talk), in the
 game and in the menus alike */
 int halo_push_to_talk_held(void);
+/* whether a binding setting's keys ("F5, Mouse 4", named as the controls.*
+settings name them) are held now: the practice keys' (game.practice_*_key),
+which are not keyboard actions */
+int halo_named_binding_held(const char *setting);
 /* whether the HUD's button prompts name the keyboard and mouse's bindings
 in place of the controller's buttons (input.button_prompts: "auto" follows
 the device the first player played with last); the first binding of an
@@ -121,6 +133,9 @@ enum halo_chat_pad_button
 	HALO_CHAT_PAD_STICK_DOWN,
 	HALO_CHAT_PAD_STICK_LEFT,
 	HALO_CHAT_PAD_STICK_RIGHT,
+	/* the bumpers (the on-screen keyboard's cursor: port/linux/game/keyboard.c) */
+	HALO_CHAT_PAD_LB,
+	HALO_CHAT_PAD_RB,
 	NUMBER_OF_HALO_CHAT_PAD_BUTTONS
 };
 

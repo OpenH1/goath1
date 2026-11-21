@@ -88,6 +88,8 @@ on the render thread, as report_write is); a log line a copy into the ring.
 #include "report.h"
 #include "input_trace.h"
 #include "xgpu_backend.h"
+#include "frame_gpu.h"
+#include "demo_files.h"
 
 #include <pthread.h>
 #include <stdio.h>
@@ -128,10 +130,13 @@ port/android/host/host_stall.c) */
 #define REPORT_LONGEST 8
 /* a frame's GPU time not measured (the backend gives none) */
 #define REPORT_GPU_UNKNOWN 0xFFFFFFFFu
-/* the share of the frames' time (percent) the game waits for vsync or the
-frame cap for them to be what holds the frames back, unless a part is busy
-for REPORT_BUSY_PERCENT of it (it would hold them back without them) */
-#define REPORT_PACED_PERCENT 20
+/* a frame held back by vsync or the frame cap: one the game waited for
+them on, for REPORT_PACED_FRAME_PERCENT of its time or more (it would have
+been shorter without them); they hold the frames back if they held
+REPORT_PACED_FRAMES_PERCENT of the frames or more, unless a part is busy
+for REPORT_BUSY_PERCENT of the time (it would hold them back without them) */
+#define REPORT_PACED_FRAME_PERCENT 2
+#define REPORT_PACED_FRAMES_PERCENT 50
 #define REPORT_BUSY_PERCENT 95
 /* the fewest frames of GPU time a verdict is given on */
 #define REPORT_GPU_FEWEST 30
@@ -149,14 +154,16 @@ static struct
 {
 	uint32_t micros[REPORT_FRAMES];
 	uint32_t at_ms[REPORT_FRAMES];
-	/* the work in each (xgpu_backend_frame_times; the GPU's
-	REPORT_GPU_UNKNOWN where not measured) */
+	/* the work in each (xgpu_backend_frame_times; the GPU's each frame's
+	own, REPORT_GPU_UNKNOWN where not measured, and until it comes: the
+	frames held, frame_gpu.h) */
 	struct report_frame_work work[REPORT_FRAMES];
 	unsigned long count;
 	long long start_ns, last_ns;
 	/* the backend's counts at the last frame, and whether the GPU's was */
 	struct xgpu_backend_frame_times last;
 	int gpu_last_known;
+	struct frame_gpu_hold held;
 } report_frames;
 
 static struct
@@ -226,15 +233,27 @@ static long long report_now_ns(void)
 A line for each frame presented once the scenario's simulation has started
 (sim_trace_scenario_seconds: the clock of debug.test_input's scripts), for a
 benchmark (tools/bench.py): the scenario's seconds, then microseconds of the
-frame's time, the GPU's (-1 not measured), the render thread's playing its
-records, the game's waits for the renderer and the display, and the game
-thread's CPU (CLOCK_THREAD_CPUTIME_ID, -1 not known). With
-debug.frame_log_seconds the game quits once the scenario's clock reaches it,
-so that every build runs the same ticks and then stops. */
+frame's time, the GPU's on that frame (-1 not measured), the render thread's
+playing its records, the game's waits for the renderer and the display, and
+the game thread's CPU (CLOCK_THREAD_CPUTIME_ID, -1 not known). A frame's
+line is written once its GPU time has come, a few frames on (frame_gpu.h:
+report_frames_settle), so the lines are in order but a few frames behind.
+With debug.frame_log_seconds the game quits once the line of the scenario's
+clock reaching it is written, so that every build logs the same ticks and
+then stops. */
 static FILE *frame_log;
 static int frame_log_opened;
 static double frame_log_seconds;
 static long long frame_log_cpu_ns = -1;
+/* (the game exiting otherwise: the lines held written, as they are) */
+static int frame_log_exiting;
+/* the frames held for their GPU times: their scenario's seconds (-1: no
+line) and game thread's CPU, by their index's slot */
+static struct
+{
+	double seconds;
+	long long cpu;
+} frame_log_held[FRAME_GPU_ROWS];
 
 /* port/linux/game/sim_trace.c's */
 extern double sim_trace_scenario_seconds(void);
@@ -250,10 +269,21 @@ static long long report_thread_cpu_ns(void)
 	return -1;
 }
 
-static void report_frame_log(long long micros, const struct report_frame_work *work)
+static void report_frames_settle(int flushing);
+
+/* the game's end before debug.frame_log_seconds: the lines still held
+written, their GPU times unknown if they have not come */
+static void report_frame_log_at_exit(void)
 {
-	long long cpu_ns, cpu;
-	double seconds;
+	frame_log_exiting = 1;
+	report_frames_settle(1);
+}
+
+/* a frame presented, its line held (index: report_frames'; micros < 0: no
+line) */
+static void report_frame_log_hold(unsigned long index, long long micros)
+{
+	long long cpu_ns;
 
 	if (!frame_log_opened)
 	{
@@ -265,7 +295,9 @@ static void report_frame_log(long long micros, const struct report_frame_work *w
 		{
 			frame_log = fopen(path, "w");
 			if (frame_log)
-				fprintf(frame_log, "# frame log 1: seconds frame gpu render waited cpu (microseconds)\n");
+				atexit(report_frame_log_at_exit);
+			if (frame_log)
+				fprintf(frame_log, "# frame log 2: seconds frame gpu render waited cpu (microseconds; gpu the frame's own)\n");
 			else
 				platform_log("debug.frame_log: cannot write %s", path);
 		}
@@ -273,24 +305,303 @@ static void report_frame_log(long long micros, const struct report_frame_work *w
 	if (!frame_log)
 		return;
 	cpu_ns = report_thread_cpu_ns();
-	cpu = cpu_ns >= 0 && frame_log_cpu_ns >= 0 ? (cpu_ns - frame_log_cpu_ns) / 1000 : -1;
+	frame_log_held[index % FRAME_GPU_ROWS].cpu = cpu_ns >= 0 && frame_log_cpu_ns >= 0 ?
+		(cpu_ns - frame_log_cpu_ns) / 1000 : -1;
 	frame_log_cpu_ns = cpu_ns;
-	seconds = sim_trace_scenario_seconds();
-	if (seconds < 0.0 || micros < 0)
+	frame_log_held[index % FRAME_GPU_ROWS].seconds = micros < 0 ? -1.0 : sim_trace_scenario_seconds();
+}
+
+/* a held frame's line, its GPU time come (or given up) */
+static void report_frame_log(unsigned long index, long long micros, const struct report_frame_work *work)
+{
+	double seconds = frame_log_held[index % FRAME_GPU_ROWS].seconds;
+
+	if (!frame_log || seconds < 0.0)
 		return;
 	fprintf(frame_log, "%.6f %lld %ld %lu %lu %lld\n", seconds, micros,
 		work->gpu == REPORT_GPU_UNKNOWN ? -1L : (long)work->gpu, (unsigned long)work->render,
-		(unsigned long)work->waited, cpu);
+		(unsigned long)work->waited, frame_log_held[index % FRAME_GPU_ROWS].cpu);
 	if (frame_log_seconds > 0.0 && seconds >= frame_log_seconds - 1e-9)
 	{
 		fclose(frame_log);
 		frame_log = NULL;
 		platform_log("debug.frame_log: %.3f seconds of the scenario logged", seconds);
-		exit(EXIT_SUCCESS);
+		if (!frame_log_exiting)
+			exit(EXIT_SUCCESS);
 	}
 }
 
+/* ---------- debug.demo_perf_log (#1148)
+
+With the setting on (off by default), each demo recorded (port/linux/game/
+demo.c, docs/demos.md) has a performance log beside it in the demos folder:
+<name>.perf for <name>.demo, its frames lined up with the demo's ticks. The
+demo's recording is told nothing and changes in nothing: the log is begun
+and ended by the demos' listener (demo_set_recording_listener: told on the
+game's thread as a recording starts, with its file and first tick, and as
+it stops), and its rows are written as each frame is presented, from the
+frames' times this file keeps already. A shared demo carries no machine's
+data, and the demo's format and determinism are the same.
+
+Text, a line each:
+  # demo perf log 1 <name> <first tick>      (and the columns' names)
+  f <tick> <frame> <frame> <cpu> <gpu> <render> <waited>
+      a frame presented: the game's tick then (the demo's tick numbers:
+      demo_tick_begin's), the frame's number in the log (from 1), then
+      microseconds of the frame, the game thread's CPU (-1 not known), the
+      GPU's (-1 not measured), the render thread's and the game's waits
+      for the renderer and the display (Save Report's, report_frame_work)
+  e <tick> stall <ms> | load <ms> | pipelines <count>
+      a frame of DEMO_PERF_STALL_MS or more (a load: while the game said a
+      load zone's switch was coming, xgpu_backend_frame_extra), and new
+      pipeline keys defined (the backend builds a pipeline for each)
+  s <tick> <frames> <average ms> <1% low fps> <0.1% low fps>
+      every DEMO_PERF_SUMMARY_SECONDS, of the frames since the last
+  c <tick> {<ms> <calls> <section>}...
+      with debug.timings on, after each summary: the game thread's busiest
+      CPU sections (at most DEMO_PERF_SECTIONS, the most first), each's
+      milliseconds and calls a frame over the last frames profile.c keeps
+      (profile_port_busiest, the performance overlay's), the section's name
+      with its spaces as underscores
+  # end <last tick>
+At 240 frames a second about 0.5 MB a minute, written through the C
+library's buffer (DEMO_PERF_BUFFER), flushed at each summary. The logs of
+demos that are gone (deleted, or past demos.keep_count) are deleted as the
+next recording starts; a pinned demo's (demos/kept) stays in demos.
+tools/demo_info.py --perf joins a demo and its log. */
+
+#define DEMO_PERF_STALL_MS 50
+#define DEMO_PERF_SUMMARY_SECONDS 10
+#define DEMO_PERF_SUMMARY_FRAMES 16384
+#define DEMO_PERF_BUFFER (64 * 1024)
+#define DEMO_PERF_SECTIONS 8
+
+/* demo.h's (port/linux/game/demo.c): the listener told as a recording
+starts and stops */
+typedef void (*demo_recording_listener)(int started, const char *name, long tick);
+void demo_set_recording_listener(demo_recording_listener listener);
+/* game_time.c's (boolean: the engine's byte) */
+unsigned char game_time_initialized(void);
+long game_time_get(void);
+/* profile.c's (debug.timings; none with it off) */
+short profile_port_busiest(char const **names, float *milliseconds, float *calls, short most);
+
+static struct
+{
+	pthread_mutex_t lock;
+	/* the setting as last read, and whether the listener is set */
+	unsigned long read_at;
+	int on, listening;
+	FILE *file;
+	unsigned long frames;
+	long long cpu_ns, summary_ns;
+	unsigned long pipelines;
+	/* the frames since the last summary, microseconds */
+	uint32_t summary[DEMO_PERF_SUMMARY_FRAMES];
+	unsigned long summary_count;
+} demo_perf = { PTHREAD_MUTEX_INITIALIZER, (unsigned long)-1, 0, 0, NULL, 0, -1, 0, 0, { 0 }, 0 };
+
+static int demo_perf_compare(const void *first, const void *second)
+{
+	uint32_t a = *(const uint32_t *)first, b = *(const uint32_t *)second;
+
+	return a < b ? 1 : a > b ? -1 : 0;
+}
+
+/* (debug.timings) the game thread's busiest CPU sections, a c line */
+static void demo_perf_sections(long tick)
+{
+	char const *names[DEMO_PERF_SECTIONS];
+	float milliseconds[DEMO_PERF_SECTIONS], calls[DEMO_PERF_SECTIONS];
+	short count = profile_port_busiest(names, milliseconds, calls, DEMO_PERF_SECTIONS), index;
+	char const *letter;
+
+	if (count <= 0)
+		return;
+	fprintf(demo_perf.file, "c %ld", tick);
+	for (index = 0; index < count; index++)
+	{
+		fprintf(demo_perf.file, " %.3f %.1f ", (double)milliseconds[index], (double)calls[index]);
+		for (letter = names[index] && *names[index] ? names[index] : "?"; *letter; letter++)
+			fputc(*letter == ' ' || *letter == '\t' ? '_' : *letter, demo_perf.file);
+	}
+	fputc('\n', demo_perf.file);
+}
+
+/* the frames since the last summary summed: their count, average, and the
+1% and 0.1% lows (the frame rate of the average of the slowest 1% and
+0.1% of them, Save Report's way) */
+static void demo_perf_summary(long tick)
+{
+	unsigned long count = demo_perf.summary_count, index, slowest;
+	double total = 0.0, lows[2];
+	int low;
+
+	if (!count)
+		return;
+	for (index = 0; index < count; index++)
+		total += demo_perf.summary[index];
+	qsort(demo_perf.summary, count, sizeof(demo_perf.summary[0]), demo_perf_compare);
+	for (low = 0; low < 2; low++)
+	{
+		double slow_total = 0.0;
+
+		slowest = count / (low ? 1000 : 100);
+		if (!slowest)
+			slowest = 1;
+		for (index = 0; index < slowest; index++)
+			slow_total += demo_perf.summary[index];
+		lows[low] = slow_total > 0.0 ? 1e6 * (double)slowest / slow_total : 0.0;
+	}
+	fprintf(demo_perf.file, "s %ld %lu %.3f %.1f %.1f\n", tick, count, total / (double)count / 1000.0, lows[0],
+		lows[1]);
+	demo_perf_sections(tick);
+	fflush(demo_perf.file);
+	demo_perf.summary_count = 0;
+}
+
+/* the logs in the demos folder whose demos are gone, deleted */
+static void demo_perf_retain(const char *folder)
+{
+	void *directory = posix_directory_open(folder);
+	char name[256];
+
+	if (!directory)
+		return;
+	while (posix_directory_next(directory, name, sizeof(name)))
+	{
+		size_t length = strlen(name);
+		char demo[256], path[1024];
+
+		if (length < 6 || length >= sizeof(demo) || strcmp(name + length - 5, ".perf"))
+			continue;
+		snprintf(demo, sizeof(demo), "%.*s.demo", (int)(length - 5), name);
+		if (demo_files_path(demo, path, sizeof(path)))
+			continue;
+		snprintf(path, sizeof(path), "%s/%s", folder, name);
+		remove(path);
+	}
+	posix_directory_close(directory);
+}
+
+static void demo_perf_close(long tick)
+{
+	if (!demo_perf.file)
+		return;
+	demo_perf_summary(tick);
+	fprintf(demo_perf.file, "# end %ld\n", tick);
+	fclose(demo_perf.file);
+	demo_perf.file = NULL;
+}
+
+/* the demos' listener: a recording started (its file's name, its first
+tick) or stopped (its last tick) */
+static void demo_perf_listener(int started, const char *name, long tick)
+{
+	char folder[512], path[1024];
+	size_t length;
+
+	pthread_mutex_lock(&demo_perf.lock);
+	demo_perf_close(tick);
+	length = started && name ? strlen(name) : 0;
+	if (demo_perf.on && length > 5 && !strcmp(name + length - 5, ".demo") &&
+		demo_files_folder(folder, sizeof(folder), 0))
+	{
+		demo_perf_retain(folder);
+		snprintf(path, sizeof(path), "%s/%.*s.perf", folder, (int)(length - 5), name);
+		demo_perf.file = fopen(path, "w");
+		if (demo_perf.file)
+		{
+			setvbuf(demo_perf.file, NULL, _IOFBF, DEMO_PERF_BUFFER);
+			fprintf(demo_perf.file, "# demo perf log 1 %s %ld\n# f tick frame frame_us cpu_us gpu_us render_us "
+				"waited_us\n# e tick stall|load ms, e tick pipelines count\n# s tick frames average_ms low1_fps "
+				"low01_fps\n", name, tick);
+			demo_perf.frames = 0;
+			demo_perf.cpu_ns = report_thread_cpu_ns();
+			demo_perf.summary_ns = report_now_ns();
+			demo_perf.summary_count = 0;
+			demo_perf.pipelines = xgpu_backend_pipelines_defined();
+		}
+		else
+			platform_log("debug.demo_perf_log: cannot write %s", path);
+	}
+	pthread_mutex_unlock(&demo_perf.lock);
+}
+
+/* the setting followed: the listener set once it is first on (and left
+set: off, it writes nothing) */
+static void demo_perf_follow(void)
+{
+	if (demo_perf.read_at == config_changes())
+		return;
+	demo_perf.read_at = config_changes();
+	demo_perf.on = config_boolean("debug.demo_perf_log");
+	if (demo_perf.on && !demo_perf.listening)
+	{
+		demo_perf.listening = 1;
+		demo_set_recording_listener(demo_perf_listener);
+	}
+}
+
+/* a frame presented: its row, and the events and summary it brings */
+static void demo_perf_frame(long long micros, const struct report_frame_work *work, long long now)
+{
+	long long cpu_ns, cpu;
+	long tick;
+	unsigned long pipelines;
+
+	demo_perf_follow();
+	if (!demo_perf.file)
+		return;
+	pthread_mutex_lock(&demo_perf.lock);
+	if (!demo_perf.file || !game_time_initialized())
+	{
+		pthread_mutex_unlock(&demo_perf.lock);
+		return;
+	}
+	tick = game_time_get();
+	cpu_ns = report_thread_cpu_ns();
+	cpu = cpu_ns >= 0 && demo_perf.cpu_ns >= 0 ? (cpu_ns - demo_perf.cpu_ns) / 1000 : -1;
+	demo_perf.cpu_ns = cpu_ns;
+	fprintf(demo_perf.file, "f %ld %lu %lld %lld %ld %lu %lu\n", tick, ++demo_perf.frames, micros, cpu,
+		work->gpu == REPORT_GPU_UNKNOWN ? -1L : (long)work->gpu, (unsigned long)work->render,
+		(unsigned long)work->waited);
+	if (micros >= DEMO_PERF_STALL_MS * 1000LL)
+		fprintf(demo_perf.file, "e %ld %s %.1f\n", tick, xgpu_backend_frame_extra_pending() ? "load" : "stall",
+			(double)micros / 1000.0);
+	pipelines = xgpu_backend_pipelines_defined();
+	if (pipelines > demo_perf.pipelines)
+		fprintf(demo_perf.file, "e %ld pipelines %lu\n", tick, pipelines - demo_perf.pipelines);
+	demo_perf.pipelines = pipelines;
+	if (demo_perf.summary_count < DEMO_PERF_SUMMARY_FRAMES)
+		demo_perf.summary[demo_perf.summary_count++] = (uint32_t)(micros > 0xFFFFFFFFLL ? 0xFFFFFFFFLL : micros);
+	if (now - demo_perf.summary_ns >= DEMO_PERF_SUMMARY_SECONDS * 1000000000LL)
+	{
+		demo_perf.summary_ns = now;
+		demo_perf_summary(tick);
+	}
+	pthread_mutex_unlock(&demo_perf.lock);
+}
+
 /* ---------- what is kept */
+
+/* the frames held whose GPU times have come (frame_gpu.h), or all of them
+(flushing: the game's end): their GPU times kept (unknown if not come) and
+their frame log lines written, oldest first */
+static void report_frames_settle(int flushing)
+{
+	unsigned long held;
+	uint32_t gpu;
+
+	frame_gpu_hold_settle(&report_frames.held, xgpu_backend_gpu_frames());
+	while (frame_gpu_hold_next(&report_frames.held, flushing, &held, &gpu))
+	{
+		struct report_frame_work *work = &report_frames.work[held & (REPORT_FRAMES - 1)];
+
+		work->gpu = gpu;
+		report_frame_log(held, report_frames.micros[held & (REPORT_FRAMES - 1)], work);
+	}
+}
 
 void report_frame_presented(void)
 {
@@ -311,25 +622,36 @@ void report_frame_presented(void)
 	{
 		unsigned long index = report_frames.count & (REPORT_FRAMES - 1);
 		long long micros = (now - report_frames.last_ns) / 1000;
-		struct report_frame_work *work = &report_frames.work[index];
+		struct report_frame_work *work = &report_frames.work[index], demo;
 
 		report_frames.micros[index] = (uint32_t)(micros > 0xFFFFFFFFLL ? 0xFFFFFFFFLL : micros);
 		report_frames.at_ms[index] = (uint32_t)((now - report_frames.start_ns) / 1000000);
-		/* (the counts' changes since the last frame, modulo 2^32) */
-		work->gpu = (uint32_t)times.gpu - (uint32_t)report_frames.last.gpu;
-		if (!gpu_known || !report_frames.gpu_last_known)
-			work->gpu = REPORT_GPU_UNKNOWN;
+		/* (the counts' changes since the last frame, modulo 2^32; the GPU's
+		the frame's own, once it comes: report_frames_settle) */
+		work->gpu = REPORT_GPU_UNKNOWN;
 		work->render = (uint32_t)times.render - (uint32_t)report_frames.last.render;
 		work->waited = (uint32_t)times.waited - (uint32_t)report_frames.last.waited;
 		work->paced = (uint32_t)times.paced - (uint32_t)report_frames.last.paced;
+		/* (debug.demo_perf_log's rows are written at once: the GPU's the
+		running count's change, as they always had) */
+		demo = *work;
+		demo.gpu = (uint32_t)times.gpu - (uint32_t)report_frames.last.gpu;
+		if (!gpu_known || !report_frames.gpu_last_known)
+			demo.gpu = REPORT_GPU_UNKNOWN;
+		frame_gpu_hold_add(&report_frames.held, (uint32_t)xgpu_backend_frame_number(), gpu_known,
+			report_frames.count);
+		report_frame_log_hold(report_frames.count, micros);
 		report_frames.count++;
-		report_frame_log(micros, work);
+		demo_perf_frame(micros, &demo, now);
 	}
 	else
 		report_frames.start_ns = now;
 	report_frames.last_ns = now;
 	report_frames.last = times;
 	report_frames.gpu_last_known = gpu_known;
+	/* (the frames held whose GPU times have come: theirs kept, their lines
+	written, in order) */
+	report_frames_settle(0);
 }
 
 void report_log_line(const char *line)
@@ -375,12 +697,19 @@ static int report_compare_micros(const void *a, const void *b)
 }
 
 /* the frame rate of the slowest share (per mille) of the frames sorted: their
-mean time's */
+mean time's. The stalls (REPORT_STALL_MS or more: a load, a hitch of a
+second) are left out, unless all are: counted and listed on their own, one
+would else take a 1% low of minutes from 80 fps to 60 */
 static double report_low_fps(const uint32_t *sorted, unsigned long count, unsigned long per_mille)
 {
-	unsigned long slowest = count * per_mille / 1000, index;
+	unsigned long slowest, index, kept = count;
 	double total = 0;
 
+	while (kept && sorted[kept - 1] >= REPORT_STALL_MS * 1000)
+		kept--;
+	if (kept)
+		count = kept;
+	slowest = count * per_mille / 1000;
 	if (slowest < 1)
 		slowest = 1;
 	for (index = count - slowest; index < count; index++)
@@ -517,6 +846,54 @@ void report_frames_log(double seconds)
 	free(work);
 }
 
+void report_recent_frames(const uint32_t *micros, const uint32_t *at_ms, const struct report_frame_work *work,
+	unsigned long ring, unsigned long count, unsigned long most, uint32_t milliseconds, uint32_t *scratch,
+	struct perf_times *times)
+{
+	unsigned long taken, gpu_frames = 0;
+	double frame_total = 0, gpu_total = 0, render_total = 0, waited_total = 0;
+	uint32_t newest_ms = count ? at_ms[(count - 1) & (ring - 1)] : 0;
+
+	for (taken = 0; taken < count && taken < most && taken < ring; taken++)
+	{
+		unsigned long index = (count - 1 - taken) & (ring - 1);
+
+		/* (the newest frame always counted) */
+		if (taken && newest_ms - at_ms[index] >= milliseconds)
+			break;
+		frame_total += micros[index];
+		if (scratch)
+			scratch[taken] = micros[index];
+		render_total += work[index].render;
+		waited_total += work[index].waited;
+		if (work[index].gpu != REPORT_GPU_UNKNOWN)
+		{
+			gpu_total += work[index].gpu;
+			gpu_frames++;
+		}
+	}
+	times->frames = taken;
+	times->frame_ms = taken ? (float)(frame_total / 1000.0 / taken) : 0.0f;
+	times->render_ms = taken ? (float)(render_total / 1000.0 / taken) : 0.0f;
+	times->waited_ms = taken ? (float)(waited_total / 1000.0 / taken) : 0.0f;
+	times->gpu_ms = gpu_frames ? (float)(gpu_total / 1000.0 / gpu_frames) : -1.0f;
+	times->low_fps = 0.0f;
+	if (scratch && taken)
+	{
+		qsort(scratch, taken, sizeof(*scratch), report_compare_micros);
+		times->low_fps = (float)report_low_fps(scratch, taken, 10);
+	}
+}
+
+void perf_times_recent(unsigned long most, unsigned long milliseconds, struct perf_times *times)
+{
+	static uint32_t sorted[PERF_TIMES_MOST];
+
+	report_recent_frames(report_frames.micros, report_frames.at_ms, report_frames.work, REPORT_FRAMES,
+		report_frames.count, most < PERF_TIMES_MOST ? most : PERF_TIMES_MOST, (uint32_t)milliseconds, sorted,
+		times);
+}
+
 /* What held the frames back, from their times (micros) and the work in
 each (work: the GPU's time on it, REPORT_GPU_UNKNOWN where not measured;
 the renderer's thread's, playing its records; the game's waits for the
@@ -524,9 +901,13 @@ renderer and the display, and of those the display's pacing and
 display.max_fps's). Each part's share of the time: the GPU's, its time
 over the measured frames' time; the game's (its thread on the CPU), a
 frame's time less its waits; the renderer's thread's, its time; the
-pacing's, its waits; each over all the frames' time. The verdict: limited
-by vsync or the frame cap if the pacing is REPORT_PACED_PERCENT of the
-time or more and no part is busy for REPORT_BUSY_PERCENT of it; else the
+pacing's, its waits; each over all the frames' time. A frame the game
+waited for the pacing on (REPORT_PACED_FRAME_PERCENT of its time) was held
+back by it: without it the frame would have been shorter, however busy the
+parts were (with vsync's FIFO the game, the renderer's thread and the GPU
+take their turns, and none is busy all the frame). The verdict: limited by
+vsync or the frame cap if REPORT_PACED_FRAMES_PERCENT of the frames were so
+held and no part is busy for REPORT_BUSY_PERCENT of the time; else the
 busiest of the GPU, the game and the renderer's thread (GPU-bound,
 CPU-bound: the game, or the renderer's thread). No verdict on fewer than
 REPORT_GPU_FEWEST measured frames. */
@@ -534,9 +915,9 @@ void report_gpu_summary(const uint32_t *micros, const struct report_frame_work *
 	char *text, size_t size)
 {
 	uint32_t *sorted;
-	unsigned long index, measured = 0;
+	unsigned long index, measured = 0, paced_frames = 0;
 	double total = 0, measured_total = 0, gpu_total = 0, game_total = 0, render_total = 0, paced_total = 0,
-		gpu_share, game_share, render_share, paced_share, busiest;
+		gpu_share, game_share, render_share, paced_share, paced_frames_share, busiest;
 	size_t used = 0;
 	const char *verdict;
 
@@ -552,10 +933,13 @@ void report_gpu_summary(const uint32_t *micros, const struct report_frame_work *
 	for (index = 0; index < count; index++)
 	{
 		uint32_t waited = work[index].waited < micros[index] ? work[index].waited : micros[index];
+		uint32_t paced = work[index].paced < waited ? work[index].paced : waited;
 
 		total += micros[index];
 		game_total += micros[index] - waited;
-		paced_total += work[index].paced < waited ? work[index].paced : waited;
+		paced_total += paced;
+		if (paced && (uint64_t)paced * 100 >= (uint64_t)micros[index] * REPORT_PACED_FRAME_PERCENT)
+			paced_frames++;
 		render_total += work[index].render < micros[index] ? work[index].render : micros[index];
 		if (work[index].gpu == REPORT_GPU_UNKNOWN)
 			continue;
@@ -578,9 +962,10 @@ void report_gpu_summary(const uint32_t *micros, const struct report_frame_work *
 	game_share = 100.0 * game_total / total;
 	render_share = 100.0 * render_total / total;
 	paced_share = 100.0 * paced_total / total;
+	paced_frames_share = 100.0 * (double)paced_frames / (double)count;
 	busiest = gpu_share > game_share ? gpu_share : game_share;
 	busiest = busiest > render_share ? busiest : render_share;
-	if (paced_share >= REPORT_PACED_PERCENT && busiest < REPORT_BUSY_PERCENT)
+	if (paced_frames_share >= REPORT_PACED_FRAMES_PERCENT && busiest < REPORT_BUSY_PERCENT)
 		verdict = "limited by vsync or the frame cap";
 	else if (gpu_share >= busiest)
 		verdict = "GPU-bound";
@@ -592,10 +977,65 @@ void report_gpu_summary(const uint32_t *micros, const struct report_frame_work *
 		sorted[(measured - 1) * 99 / 100] / 1000.0);
 	REPORT_PRINT("Busy: the GPU %.0f%%, the game %.0f%%, the renderer's thread %.0f%% of the time\n", gpu_share,
 		game_share, render_share);
-	REPORT_PRINT("Waiting for vsync or the frame cap: %.0f%% of the time\n", paced_share);
+	REPORT_PRINT("Waiting for vsync or the frame cap: %.0f%% of the time, on %.0f%% of the frames\n",
+		paced_share, paced_frames_share);
 	REPORT_PRINT("Verdict: %s\n", verdict);
 #undef REPORT_PRINT
 	free(sorted);
+}
+
+/* ---------- the benchmark's measure (port/linux/game/benchmark.c)
+
+The frames of a benchmark's measured minute, summed as the report and the
+performance overlay sum theirs: the average, the 1% and 0.1% lows (the
+slowest frames' mean, report_low_fps), the frame time's percentiles
+(nearest rank), and the work in a frame: the GPU's (over the frames it was
+measured on), the game's (a frame's time less its waits), the renderer's
+thread's, and the waits for vsync or the frame cap as a share of the
+time. */
+void report_measure_frames(const uint32_t *micros, const struct report_frame_work *work, unsigned long count,
+	uint32_t *scratch, struct report_measure *measure)
+{
+	unsigned long index, gpu_frames = 0;
+	double total = 0, gpu_total = 0, game_total = 0, render_total = 0, waited_total = 0, paced_total = 0;
+
+	memset(measure, 0, sizeof(*measure));
+	measure->gpu_ms = -1.0;
+	if (!count)
+		return;
+	for (index = 0; index < count; index++)
+	{
+		uint32_t waited = work[index].waited < micros[index] ? work[index].waited : micros[index];
+
+		scratch[index] = micros[index];
+		total += micros[index];
+		game_total += micros[index] - waited;
+		waited_total += waited;
+		paced_total += work[index].paced < waited ? work[index].paced : waited;
+		render_total += work[index].render < micros[index] ? work[index].render : micros[index];
+		if (micros[index] >= REPORT_HITCH_MS * 1000)
+			measure->hitches++;
+		if (work[index].gpu != REPORT_GPU_UNKNOWN)
+		{
+			gpu_total += work[index].gpu;
+			gpu_frames++;
+		}
+	}
+	qsort(scratch, count, sizeof(*scratch), report_compare_micros);
+	measure->frames = count;
+	measure->seconds = total / 1000000.0;
+	measure->average_ms = total / 1000.0 / (double)count;
+	measure->average_fps = total > 0 ? 1000000.0 * (double)count / total : 0;
+	measure->low_1_fps = report_low_fps(scratch, count, 10);
+	measure->low_01_fps = report_low_fps(scratch, count, 1);
+	measure->p50_ms = scratch[(count - 1) * 50 / 100] / 1000.0;
+	measure->p95_ms = scratch[(count - 1) * 95 / 100] / 1000.0;
+	measure->p99_ms = scratch[(count - 1) * 99 / 100] / 1000.0;
+	measure->gpu_ms = gpu_frames ? gpu_total / 1000.0 / (double)gpu_frames : -1.0;
+	measure->game_ms = game_total / 1000.0 / (double)count;
+	measure->render_ms = render_total / 1000.0 / (double)count;
+	measure->waited_ms = waited_total / 1000.0 / (double)count;
+	measure->paced_percent = total > 0 ? 100.0 * paced_total / total : 0;
 }
 
 /* ---------- the zip (stored, not compressed: the PNG is already) */
@@ -1406,7 +1846,8 @@ static char *report_text(const char *name, int crash)
 	REPORT_PRINT("```\n");
 	if (crash)
 		return text;
-	REPORT_PRINT("\n## Frame times\n\nThe last %d seconds, loading screens included\n\n```\n", REPORT_SECONDS);
+	REPORT_PRINT("\n## Frame times\n\nThe last %d seconds, loading screens included (the lows leave out the frames "
+		"of %d ms or more)\n\n```\n", REPORT_SECONDS, REPORT_STALL_MS);
 	count = report_frames.count < REPORT_FRAMES ? report_frames.count : REPORT_FRAMES;
 	first = report_frames.count - count;
 	while (count && report_frames.at_ms[first & (REPORT_FRAMES - 1)] + REPORT_SECONDS * 1000u < now_ms)
@@ -1994,6 +2435,20 @@ static int report_open_issue(const char *url, const char *folder)
 	return opened;
 }
 
+int report_open_folder(const char *path)
+{
+	char whole[1024], current[1024], url[1400];
+
+	report_whole_path(path, getcwd(current, sizeof(current)), whole, sizeof(whole));
+	report_file_url(whole, url, sizeof(url));
+	if (report_unattended())
+	{
+		platform_log("open folder: %s", url);
+		return 1;
+	}
+	return platform_open_url(url);
+}
+
 /* ---------- the report */
 
 /* the report being finished: its name, its summary (report_text's, made as
@@ -2117,6 +2572,24 @@ static int report_job_zip(const char *path)
 	return saved;
 }
 
+/* (the job's thread) the frame's PNG, which the host writes on a thread
+of its own as <name>.part and renames to <name> once whole
+(host_screenshot.c), waited for: while its .part is there, and for at most
+REPORT_SHOT_WAIT_MS */
+#define REPORT_SHOT_WAIT_MS 20000
+
+static void report_shot_wait(const char *shot)
+{
+	char part[sizeof(report_job.shot) + 8];
+	struct timespec wait = { 0, 10 * 1000 * 1000 };
+	int waited;
+
+	if (snprintf(part, sizeof(part), "%s.part", shot) >= (int)sizeof(part))
+		return;
+	for (waited = 0; waited < REPORT_SHOT_WAIT_MS && access(shot, F_OK) != 0 && access(part, F_OK) == 0; waited += 10)
+		nanosleep(&wait, NULL);
+}
+
 /* (the job's thread) the zip written in reports/, or, if it cannot be,
 in the fallback folder */
 static void *report_job_write(void *unused)
@@ -2124,6 +2597,8 @@ static void *report_job_write(void *unused)
 	long long started = report_now_ns();
 
 	(void)unused;
+	if (report_job.shot[0])
+		report_shot_wait(report_job.shot);
 	report_job.saved = report_job_zip(report_job.path);
 	if (!report_job.saved && report_job.fallback[0])
 	{
@@ -2457,4 +2932,133 @@ void report_note_done(const char *note)
 {
 	if (report_capture.waiting)
 		report_finish(note, 0);
+}
+
+/* ---------- the benchmark's results (port/linux/game/benchmark.c)
+
+benchmarks/<date>_<time>-<map>.txt beside reports/: what was measured
+(benchmark.c's lines), the frames' measure (report_measure_frames), what
+held them back (report_gpu_summary's words), the settings the run drew
+with, and the computer. */
+
+/* sdl_platform.c's: the window's size in pixels */
+void platform_video_drawable_size(int *width, int *height);
+
+void report_processor_text(char *text, size_t size)
+{
+	report_processor(text, size);
+}
+
+unsigned long report_frames_mark(void)
+{
+	return report_frames.count;
+}
+
+int report_benchmark_write(unsigned long first, unsigned long last, const char *map, const char *about,
+	struct report_measure *measure, char *verdict, size_t verdict_size, char *name, size_t name_size)
+{
+	static const char *const settings[] = {
+		"display.graphics", "display.mode", "display.resolution", "display.window_size",
+		"display.resolution_scaling", "display.anti_aliasing", "display.ambient_occlusion",
+		"display.dynamic_lights", "display.vsync", "display.vrr", "display.max_fps", "display.low_latency",
+		"game.sim_rate",
+	};
+	unsigned long count = last - first, index;
+	uint32_t *micros, *scratch;
+	struct report_frame_work *work;
+	char *gpu_text, folder[1024], path[1200], when[64], line[512];
+	const char *found;
+	time_t now = time(NULL);
+	struct tm local;
+	FILE *file;
+	int written = 0;
+
+	memset(measure, 0, sizeof(*measure));
+	measure->gpu_ms = -1.0;
+	verdict[0] = 0;
+	name[0] = 0;
+	/* (the newest frames kept, if more were drawn than the ring holds) */
+	if (count > REPORT_FRAMES)
+	{
+		first = last - REPORT_FRAMES;
+		count = REPORT_FRAMES;
+	}
+	micros = malloc((count ? count : 1) * sizeof(*micros));
+	scratch = malloc((count ? count : 1) * sizeof(*scratch));
+	work = malloc((count ? count : 1) * sizeof(*work));
+	gpu_text = malloc(4096);
+	if (!micros || !scratch || !work || !gpu_text)
+		goto done;
+	for (index = 0; index < count; index++)
+	{
+		micros[index] = report_frames.micros[(first + index) & (REPORT_FRAMES - 1)];
+		work[index] = report_frames.work[(first + index) & (REPORT_FRAMES - 1)];
+	}
+	report_measure_frames(micros, work, count, scratch, measure);
+	report_gpu_summary(micros, work, count, gpu_text, 4096);
+	found = strstr(gpu_text, "Verdict: ");
+	if (found)
+		snprintf(verdict, verdict_size, "%.*s", (int)strcspn(found + 9, "\n"), found + 9);
+	if (!count)
+		goto done;
+
+	snprintf(folder, sizeof(folder), "%s/benchmarks", platform_data_root());
+	mkdir(folder, 0755);
+	localtime_r(&now, &local);
+	strftime(when, sizeof(when), "%Y-%m-%d_%H.%M.%S", &local);
+	snprintf(path, sizeof(path), "%s/%s-%s.txt", folder, when, map);
+	file = fopen(path, "w");
+	if (!file)
+	{
+		platform_log("benchmark: cannot write %s", path);
+		goto done;
+	}
+	strftime(when, sizeof(when), "%Y-%m-%d %H:%M:%S", &local);
+	fprintf(file, "GOAT H1 benchmark, %s\n\n%s\n", when, about);
+	fprintf(file, "## Frames\n\n");
+	fprintf(file, "Frames: %lu in %.1f seconds\n", measure->frames, measure->seconds);
+	fprintf(file, "Average: %.1f fps (%.2f ms a frame)\n", measure->average_fps, measure->average_ms);
+	fprintf(file, "1%% low: %.1f fps\n0.1%% low: %.1f fps\n", measure->low_1_fps, measure->low_01_fps);
+	fprintf(file, "Frame time: p50 %.2f ms, p95 %.2f ms, p99 %.2f ms\n", measure->p50_ms, measure->p95_ms,
+		measure->p99_ms);
+	fprintf(file, "Frames of %d ms or more: %lu\n\n", REPORT_HITCH_MS, measure->hitches);
+	fprintf(file, "## CPU and GPU\n\n");
+	if (measure->gpu_ms >= 0.0)
+		fprintf(file, "GPU: %.2f ms a frame\n", measure->gpu_ms);
+	else
+		fprintf(file, "GPU: not measured\n");
+	fprintf(file, "Game thread (CPU): %.2f ms a frame\nRender thread (CPU): %.2f ms a frame\n", measure->game_ms,
+		measure->render_ms);
+	fprintf(file, "Waiting for the renderer or the display: %.2f ms a frame\n", measure->waited_ms);
+	fprintf(file, "%s\n", gpu_text);
+	fprintf(file, "## Settings\n\n");
+	{
+		int width = 0, height = 0;
+
+		platform_video_drawable_size(&width, &height);
+		fprintf(file, "- window: %dx%d pixels\n", width, height);
+	}
+	for (index = 0; index < sizeof(settings) / sizeof(settings[0]); index++)
+	{
+		if (config_text(settings[index], line, sizeof(line)))
+			fprintf(file, "- %s: %s\n", settings[index], line);
+	}
+	fprintf(file, "\n## Computer\n\n");
+	updater_build_text(line, sizeof(line));
+	fprintf(file, "- Build: %s\n- Platform: %s\n", line, report_platform());
+	fprintf(file, "- GPU: %s\n", xgpu_backend_device()[0] ? xgpu_backend_device() : "unknown");
+	report_processor(line, sizeof(line));
+	fprintf(file, "- Processor: %s\n", line);
+	written = fclose(file) == 0;
+	if (written)
+	{
+		snprintf(name, name_size, "benchmarks/%s", strrchr(path, '/') + 1);
+		platform_log("benchmark: results written to %s", path);
+	}
+done:
+	free(micros);
+	free(scratch);
+	free(work);
+	free(gpu_text);
+	return written;
 }

@@ -270,6 +270,16 @@ static void operand(struct xgpu_text *text, const struct xgpu_vertex_operand *op
 		swizzle_names[operand->swizzle[2]], swizzle_names[operand->swizzle[3]]);
 }
 
+/* (the screen conversion's registers, c[-38] and c[-37], as text) */
+#define XGPU_MSL_TEXT(value) #value
+#define XGPU_MSL_NUMBER(value) XGPU_MSL_TEXT(value)
+#define XGPU_MSL_SCREEN_SCALE XGPU_MSL_NUMBER(XGPU_MSL_SCREEN_SCALE_REGISTER)
+#define XGPU_MSL_SCREEN_OFFSET XGPU_MSL_NUMBER(XGPU_MSL_SCREEN_OFFSET_REGISTER)
+#define XGPU_MSL_SCREEN_SCALE_REGISTER 58
+#define XGPU_MSL_SCREEN_OFFSET_REGISTER 59
+_Static_assert(XGPU_MSL_SCREEN_SCALE_REGISTER == XGPU_VERTEX_CONSTANT_BIAS - 38 &&
+	XGPU_MSL_SCREEN_OFFSET_REGISTER == XGPU_VERTEX_CONSTANT_BIAS - 37, "the screen conversion's registers");
+
 static const char vertex_functions[] =
 	"static inline float4 nv2a_finite(float4 v)\n"
 	"{\n"
@@ -304,12 +314,141 @@ static const char vertex_functions[] =
 	"{\n"
 	"\tfloat specular = s.x > 0.0 ? pow(max(s.y, 0.0), clamp(s.w, -127.9961, 127.9961)) : 0.0;\n"
 	"\treturn float4(1.0, max(s.x, 0.0), specular, 1.0);\n"
+	"}\n"
+	/* (display.temporal_aa's motion: a position as the screen's conversion
+	has it, before the depth: x, y and w, the half pixel and the jitter in
+	it, as xgpu_spirv.c's motion_screen; c the frame's registers) */
+	"static inline float3 xgpu_motion_screen(bool clip_captured, float4 clip_position, float4 position,\n"
+	"\tconstant float4 *c, constant xgpu_uniforms &u)\n"
+	"{\n"
+	"\tfloat2 scale = float2(u.viewport_scale.x != 0.0 ? u.viewport_scale.x : 1.0,\n"
+	"\t\tu.viewport_scale.y != 0.0 ? u.viewport_scale.y : 1.0);\n"
+	"\tfloat2 shift = float2(0.5 + u.screen_offset, 0.5);\n"
+	"\tif (clip_captured)\n"
+	"\t\treturn float3((clip_position.xy * c[" XGPU_MSL_SCREEN_SCALE "].xy + (c[" XGPU_MSL_SCREEN_OFFSET "].xy + shift -\n"
+	"\t\t\tu.viewport_offset.xy) * clip_position.w) / scale, clip_position.w);\n"
+	"\treturn float3((position.xy + shift - u.viewport_offset.xy) / scale * position.w, position.w);\n"
 	"}\n";
 
 /* the lighting's outputs (the pixel shader's model_lighting) */
 static BOOL lighting_position(const struct nv2a_vertex_lighting *lighting)
 {
 	return lighting && (lighting->lights == 2 || lighting->world_found || lighting->lights == XGPU_ENVIRONMENT_LIGHTING);
+}
+
+/* the program's instructions (previous: run again on the previous frame's
+registers for display.temporal_aa's motion, xgpu_msl_options' motion: its
+position alone, no lighting's nor depth rows' captures) */
+static void vertex_instructions(struct xgpu_text *text, const struct xgpu_vertex_program *program,
+	const struct vertex_usage *usage, const struct nv2a_vertex_lighting *lighting, BOOL environment, BOOL depth_rows,
+	unsigned long depth_z, unsigned long depth_w, BOOL previous)
+{
+	unsigned long index;
+
+	for (index = 0; index < program->instruction_count; index++)
+	{
+		const struct xgpu_vertex_instruction *instruction = &program->instructions[index];
+		unsigned int operands = (usage->mac[index] ? mac_operands(instruction->mac) : 0) |
+			(usage->ilu[index] ? ilu_operands(instruction->ilu) : 0);
+		const char *output = output_name(instruction->output);
+		char mask[5];
+
+		if (!previous)
+			xgpu_text_append(text, "\t/* %lu */\n", index);
+		/* the lighting's normal and position, before the program reuses them */
+		if (!previous && lighting && !environment && index == lighting->normal_instruction)
+		{
+			xgpu_text_append(text, "\txWorldNormal = float4(r%lu.xyz, length(r%lu.xyz));\n",
+				lighting->normal_register, lighting->normal_register);
+		}
+		if (!previous && lighting && lighting->lights == 2 && index == lighting->position_instruction)
+			xgpu_text_append(text, "\txWorldPosition = r%lu.xyz;\n", lighting->position_register);
+		else if (!previous && lighting && lighting->lights == 1 && lighting->world_found && index == lighting->world_instruction)
+			xgpu_text_append(text, "\txWorldPosition = r%lu.xyz;\n", lighting->world_register);
+		if (operands & 1)
+		{
+			xgpu_text_append(text, "\tA = "); operand(text, &instruction->a, instruction->relative); xgpu_text_append(text, ";\n");
+		}
+		if (operands & 2)
+		{
+			xgpu_text_append(text, "\tB = "); operand(text, &instruction->b, instruction->relative); xgpu_text_append(text, ";\n");
+		}
+		if (operands & 4)
+		{
+			xgpu_text_append(text, "\tC = "); operand(text, &instruction->c, instruction->relative); xgpu_text_append(text, ";\n");
+		}
+		if (!previous && depth_rows && index == depth_z)
+			xgpu_text_append(text, "\tdepth_point = A;\n\tdepth_z_row = B;\n");
+		if (!previous && depth_rows && index == depth_w)
+			xgpu_text_append(text, "\tdepth_w_row = B;\n");
+
+		if (usage->mac[index])
+		{
+			switch (instruction->mac)
+			{
+			case XGPU_MAC_MOV: xgpu_text_append(text, "\tmac = A;\n"); break;
+			case XGPU_MAC_MUL: xgpu_text_append(text, "\tmac = A * B;\n"); break;
+			case XGPU_MAC_ADD: xgpu_text_append(text, "\tmac = A + C;\n"); break;
+			case XGPU_MAC_MAD: xgpu_text_append(text, "\tmac = A * B + C;\n"); break;
+			case XGPU_MAC_DP3: xgpu_text_append(text, "\tmac = float4(dot(A.xyz, B.xyz));\n"); break;
+			case XGPU_MAC_DPH: xgpu_text_append(text, "\tmac = float4(dot(A.xyz, B.xyz) + B.w);\n"); break;
+			case XGPU_MAC_DP4: xgpu_text_append(text, "\tmac = float4(dot(A, B));\n"); break;
+			case XGPU_MAC_DST: xgpu_text_append(text, "\tmac = float4(1.0, A.y * B.y, A.z, B.w);\n"); break;
+			case XGPU_MAC_MIN: xgpu_text_append(text, "\tmac = min(A, B);\n"); break;
+			case XGPU_MAC_MAX: xgpu_text_append(text, "\tmac = max(A, B);\n"); break;
+			case XGPU_MAC_SLT: xgpu_text_append(text, "\tmac = float4(A < B);\n"); break;
+			case XGPU_MAC_SGE: xgpu_text_append(text, "\tmac = float4(A >= B);\n"); break;
+			case XGPU_MAC_ARL: xgpu_text_append(text, "\tmac = A;\n"); break;
+			default: xgpu_text_append(text, "\tmac = float4(0.0);\n"); break;
+			}
+		}
+		if (usage->ilu[index])
+		{
+			switch (instruction->ilu)
+			{
+			case XGPU_ILU_MOV: xgpu_text_append(text, "\tilu = C;\n"); break;
+			case XGPU_ILU_RCP: xgpu_text_append(text, "\tilu = float4(1.0 / C.x);\n"); break;
+			case XGPU_ILU_RCC: xgpu_text_append(text, "\tilu = nv2a_rcc(C.x);\n"); break;
+			case XGPU_ILU_RSQ: xgpu_text_append(text, "\tilu = float4(rsqrt(abs(C.x)));\n"); break;
+			case XGPU_ILU_EXP: xgpu_text_append(text, "\tilu = nv2a_exp(C.x);\n"); break;
+			case XGPU_ILU_LOG: xgpu_text_append(text, "\tilu = nv2a_log(C.x);\n"); break;
+			case XGPU_ILU_LIT: xgpu_text_append(text, "\tilu = nv2a_lit(C);\n"); break;
+			default: xgpu_text_append(text, "\tilu = float4(0.0);\n"); break;
+			}
+		}
+		/* the screen-space conversion takes the reciprocal of the clip-space
+		position's w (rcc of r12.w); keep the position it converts */
+		if (instruction->captures_clip)
+			xgpu_text_append(text, "\tclip_position = oPos;\n\tclip_captured = true;\n");
+
+		/* results are written only after both units have read their inputs */
+		if (usage->mac[index] && instruction->mac == XGPU_MAC_ARL && usage->a0)
+		{
+			xgpu_text_append(text, "\ta0 = int(floor(mac.x + 0.001));\n");
+		}
+		else if (usage->mac[index] && instruction->mac != XGPU_MAC_ARL && instruction->mac_mask && temporary_read(usage, instruction->mac_temporary))
+		{
+			write_mask(instruction->mac_mask, mask);
+			if (instruction->mac_temporary == XGPU_VERTEX_POSITION)
+				xgpu_text_append(text, "\toPos.%s = mac.%s;\n", mask, mask);
+			else
+				xgpu_text_append(text, "\tr%lu.%s = mac.%s;\n", (unsigned long)instruction->mac_temporary, mask, mask);
+		}
+		if (usage->ilu[index] && instruction->ilu_mask && temporary_read(usage, instruction->ilu_temporary))
+		{
+			write_mask(instruction->ilu_mask, mask);
+			if (instruction->ilu_temporary == XGPU_VERTEX_POSITION)
+				xgpu_text_append(text, "\toPos.%s = ilu.%s;\n", mask, mask);
+			else
+				xgpu_text_append(text, "\tr%lu.%s = ilu.%s;\n", (unsigned long)instruction->ilu_temporary, mask, mask);
+		}
+		if (instruction->writes_output && output && (!previous || instruction->output == XGPU_OUTPUT_POSITION))
+		{
+			write_mask(instruction->output_mask, mask);
+			xgpu_text_append(text, "\t%s.%s = %s.%s;\n", output, mask, instruction->output_from_ilu ? "ilu" : "mac", mask);
+		}
+	}
+
 }
 
 char *xgpu_msl_vertex_shader(const struct xgpu_vertex_program *program, unsigned long packed_attribute_mask,
@@ -321,8 +460,10 @@ char *xgpu_msl_vertex_shader(const struct xgpu_vertex_program *program, unsigned
 	unsigned long index, functions_at, depth_z, depth_w;
 	BOOL environment = lighting && lighting->lights == XGPU_ENVIRONMENT_LIGHTING;
 	BOOL depth_rows = xgpu_vertex_program_depth_rows(program, &depth_z, &depth_w);
+	/* (display.temporal_aa: the positions this frame and the frame before,
+	as the screen's conversion has them, xgpu_msl_options' motion) */
+	BOOL motion = options && options->motion;
 
-	(void)options;
 	vertex_usage(program, lighting, &usage);
 	xgpu_text_append(&text, uniforms_declaration, XGPU_MODEL_LIGHT_COUNT, "");
 
@@ -364,6 +505,9 @@ char *xgpu_msl_vertex_shader(const struct xgpu_vertex_program *program, unsigned
 	apart: xgpu_spirv.c's vertex_light_split) */
 	if (lighting && lighting->split && !environment)
 		xgpu_text_append(&text, "\tfloat3 xLightAmbient [[user(xLightAmbient)]];\n\tfloat3 xLightPoint [[user(xLightPoint)]];\n");
+	if (motion)
+		xgpu_text_append(&text, "\tfloat3 xMotionCurrent [[user(xMotionCurrent)]];\n"
+			"\tfloat3 xMotionPrevious [[user(xMotionPrevious)]];\n");
 	xgpu_text_append(&text, "};\n");
 
 	functions_at = text.length;
@@ -420,107 +564,42 @@ char *xgpu_msl_vertex_shader(const struct xgpu_vertex_program *program, unsigned
 			"\tfloat3 xWorldBinormal = v2.xyz;\n\tfloat3 xWorldTangent = v3.xyz;\n");
 	}
 
-	for (index = 0; index < program->instruction_count; index++)
+	vertex_instructions(&text, program, &usage, lighting, environment, depth_rows, depth_z, depth_w, FALSE);
+	/* (display.temporal_aa: the program run again on the previous frame's
+	registers, the 192 past the 192, from its state before its first
+	instruction, as xgpu_spirv.c's motion_previous; the screen's conversion
+	this frame's) */
+	if (motion)
 	{
-		const struct xgpu_vertex_instruction *instruction = &program->instructions[index];
-		unsigned int operands = (usage.mac[index] ? mac_operands(instruction->mac) : 0) |
-			(usage.ilu[index] ? ilu_operands(instruction->ilu) : 0);
-		const char *output = output_name(instruction->output);
-		char mask[5];
-
-		xgpu_text_append(&text, "\t/* %lu */\n", index);
-		/* the lighting's normal and position, before the program reuses them */
-		if (lighting && !environment && index == lighting->normal_instruction)
+		xgpu_text_append(&text,
+			"\tconstant float4 *motion_registers = c;\n"
+			"\tfloat3 motion_current = xgpu_motion_screen(clip_captured, clip_position, oPos, c, u);\n"
+			"\tfloat3 motion_previous;\n"
+			"\t{\n"
+			"\tconstant float4 *c = motion_registers + %d;\n", XGPU_VERTEX_CONSTANT_COUNT);
+		for (index = 0; index < XGPU_VERTEX_POSITION; index++)
 		{
-			xgpu_text_append(&text, "\txWorldNormal = float4(r%lu.xyz, length(r%lu.xyz));\n",
-				lighting->normal_register, lighting->normal_register);
+			if (usage.temporaries & (1UL << index))
+				xgpu_text_append(&text, "\tfloat4 r%lu = float4(0.0);\n", index);
 		}
-		if (lighting && lighting->lights == 2 && index == lighting->position_instruction)
-			xgpu_text_append(&text, "\txWorldPosition = r%lu.xyz;\n", lighting->position_register);
-		else if (lighting && lighting->lights == 1 && lighting->world_found && index == lighting->world_instruction)
-			xgpu_text_append(&text, "\txWorldPosition = r%lu.xyz;\n", lighting->world_register);
-		if (operands & 1)
-		{
-			xgpu_text_append(&text, "\tA = "); operand(&text, &instruction->a, instruction->relative); xgpu_text_append(&text, ";\n");
-		}
-		if (operands & 2)
-		{
-			xgpu_text_append(&text, "\tB = "); operand(&text, &instruction->b, instruction->relative); xgpu_text_append(&text, ";\n");
-		}
-		if (operands & 4)
-		{
-			xgpu_text_append(&text, "\tC = "); operand(&text, &instruction->c, instruction->relative); xgpu_text_append(&text, ";\n");
-		}
-		if (depth_rows && index == depth_z)
-			xgpu_text_append(&text, "\tdepth_point = A;\n\tdepth_z_row = B;\n");
-		if (depth_rows && index == depth_w)
-			xgpu_text_append(&text, "\tdepth_w_row = B;\n");
-
-		if (usage.mac[index])
-		{
-			switch (instruction->mac)
-			{
-			case XGPU_MAC_MOV: xgpu_text_append(&text, "\tmac = A;\n"); break;
-			case XGPU_MAC_MUL: xgpu_text_append(&text, "\tmac = A * B;\n"); break;
-			case XGPU_MAC_ADD: xgpu_text_append(&text, "\tmac = A + C;\n"); break;
-			case XGPU_MAC_MAD: xgpu_text_append(&text, "\tmac = A * B + C;\n"); break;
-			case XGPU_MAC_DP3: xgpu_text_append(&text, "\tmac = float4(dot(A.xyz, B.xyz));\n"); break;
-			case XGPU_MAC_DPH: xgpu_text_append(&text, "\tmac = float4(dot(A.xyz, B.xyz) + B.w);\n"); break;
-			case XGPU_MAC_DP4: xgpu_text_append(&text, "\tmac = float4(dot(A, B));\n"); break;
-			case XGPU_MAC_DST: xgpu_text_append(&text, "\tmac = float4(1.0, A.y * B.y, A.z, B.w);\n"); break;
-			case XGPU_MAC_MIN: xgpu_text_append(&text, "\tmac = min(A, B);\n"); break;
-			case XGPU_MAC_MAX: xgpu_text_append(&text, "\tmac = max(A, B);\n"); break;
-			case XGPU_MAC_SLT: xgpu_text_append(&text, "\tmac = float4(A < B);\n"); break;
-			case XGPU_MAC_SGE: xgpu_text_append(&text, "\tmac = float4(A >= B);\n"); break;
-			case XGPU_MAC_ARL: xgpu_text_append(&text, "\tmac = A;\n"); break;
-			default: xgpu_text_append(&text, "\tmac = float4(0.0);\n"); break;
-			}
-		}
-		if (usage.ilu[index])
-		{
-			switch (instruction->ilu)
-			{
-			case XGPU_ILU_MOV: xgpu_text_append(&text, "\tilu = C;\n"); break;
-			case XGPU_ILU_RCP: xgpu_text_append(&text, "\tilu = float4(1.0 / C.x);\n"); break;
-			case XGPU_ILU_RCC: xgpu_text_append(&text, "\tilu = nv2a_rcc(C.x);\n"); break;
-			case XGPU_ILU_RSQ: xgpu_text_append(&text, "\tilu = float4(rsqrt(abs(C.x)));\n"); break;
-			case XGPU_ILU_EXP: xgpu_text_append(&text, "\tilu = nv2a_exp(C.x);\n"); break;
-			case XGPU_ILU_LOG: xgpu_text_append(&text, "\tilu = nv2a_log(C.x);\n"); break;
-			case XGPU_ILU_LIT: xgpu_text_append(&text, "\tilu = nv2a_lit(C);\n"); break;
-			default: xgpu_text_append(&text, "\tilu = float4(0.0);\n"); break;
-			}
-		}
-		/* the screen-space conversion takes the reciprocal of the clip-space
-		position's w (rcc of r12.w); keep the position it converts */
-		if (instruction->captures_clip)
-			xgpu_text_append(&text, "\tclip_position = oPos;\n\tclip_captured = true;\n");
-
-		/* results are written only after both units have read their inputs */
-		if (usage.mac[index] && instruction->mac == XGPU_MAC_ARL && usage.a0)
-		{
-			xgpu_text_append(&text, "\ta0 = int(floor(mac.x + 0.001));\n");
-		}
-		else if (usage.mac[index] && instruction->mac != XGPU_MAC_ARL && instruction->mac_mask && temporary_read(&usage, instruction->mac_temporary))
-		{
-			write_mask(instruction->mac_mask, mask);
-			if (instruction->mac_temporary == XGPU_VERTEX_POSITION)
-				xgpu_text_append(&text, "\toPos.%s = mac.%s;\n", mask, mask);
-			else
-				xgpu_text_append(&text, "\tr%lu.%s = mac.%s;\n", (unsigned long)instruction->mac_temporary, mask, mask);
-		}
-		if (usage.ilu[index] && instruction->ilu_mask && temporary_read(&usage, instruction->ilu_temporary))
-		{
-			write_mask(instruction->ilu_mask, mask);
-			if (instruction->ilu_temporary == XGPU_VERTEX_POSITION)
-				xgpu_text_append(&text, "\toPos.%s = ilu.%s;\n", mask, mask);
-			else
-				xgpu_text_append(&text, "\tr%lu.%s = ilu.%s;\n", (unsigned long)instruction->ilu_temporary, mask, mask);
-		}
-		if (instruction->writes_output && output)
-		{
-			write_mask(instruction->output_mask, mask);
-			xgpu_text_append(&text, "\t%s.%s = %s.%s;\n", output, mask, instruction->output_from_ilu ? "ilu" : "mac", mask);
-		}
+		xgpu_text_append(&text, "\tfloat4 oPos = float4(0.0, 0.0, 0.0, 1.0);\n");
+		if (usage.a0)
+			xgpu_text_append(&text, "\tint a0 = 0;\n");
+		if (usage.operands[0])
+			xgpu_text_append(&text, "\tfloat4 A;\n");
+		if (usage.operands[1])
+			xgpu_text_append(&text, "\tfloat4 B;\n");
+		if (usage.operands[2])
+			xgpu_text_append(&text, "\tfloat4 C;\n");
+		if (usage.mac_used)
+			xgpu_text_append(&text, "\tfloat4 mac;\n");
+		if (usage.ilu_used)
+			xgpu_text_append(&text, "\tfloat4 ilu;\n");
+		xgpu_text_append(&text, "\tfloat4 clip_position = float4(0.0);\n\tbool clip_captured = false;\n");
+		vertex_instructions(&text, program, &usage, lighting, environment, depth_rows, depth_z, depth_w, TRUE);
+		xgpu_text_append(&text,
+			"\tmotion_previous = xgpu_motion_screen(clip_captured, clip_position, oPos, motion_registers, u);\n"
+			"\t}\n");
 	}
 
 	/* the clip position, as the SPIR-V's (xgpu_spirv.c: the conversion done
@@ -579,6 +658,8 @@ char *xgpu_msl_vertex_shader(const struct xgpu_vertex_program *program, unsigned
 		xgpu_text_append(&text, "\toutput.xWorldPosition = xWorldPosition;\n");
 	if (environment)
 		xgpu_text_append(&text, "\toutput.xWorldBinormal = xWorldBinormal;\n\toutput.xWorldTangent = xWorldTangent;\n");
+	if (motion)
+		xgpu_text_append(&text, "\toutput.xMotionCurrent = motion_current;\n\toutput.xMotionPrevious = motion_previous;\n");
 	if (lighting && lighting->split && !environment)
 	{
 		int light;
@@ -1045,6 +1126,13 @@ static void sample(struct xgpu_text *text, const struct xgpu_pixel_program *prog
 	else
 		snprintf(uv, sizeof(uv), "(%s).xy * u.texture_scale[%d].xy", coordinates, stage);
 	/* (the high-res text's distance fields: msdf_coverage) */
+	/* (display.smooth_lightmaps: the lightmap pass's lightmap, lightmap_cubic) */
+	if (stage == 2 && program->lightmap_filter && sampler == _xgpu_sampler_2d && !border &&
+		!(options->border[stage] & XGPU_BORDER_MSDF))
+	{
+		xgpu_text_append(text, "lightmap_cubic(tex%d, tex%d_sampler, %s, u.texture_lod_bias[%d])", stage, stage, uv, stage);
+		return;
+	}
 	if ((options->border[stage] & XGPU_BORDER_MSDF) && sampler == _xgpu_sampler_2d)
 	{
 		xgpu_text_append(text, "msdf_coverage(tex%d.sample(tex%d_sampler, %s, bias(u.texture_lod_bias[%d])), %s, "
@@ -1354,7 +1442,8 @@ static void dynamic_lights_functions(struct xgpu_text *text, struct xgpu_text *f
 		XGPU_DYNAMIC_LIGHTS_CLUSTERS - 1);
 	xgpu_text_append(functions,
 		"static inline float3 dynamic_light_sum(constant xgpu_dynamic_lights &lights, const device uint4 *cells,\n"
-		"\tconst device uint4 *world, float3 p, float3 n, float3 surface_normal, bool environment, float4 own)\n"
+		"\tconst device uint4 *world, float3 p, float3 n, float3 surface_normal, bool environment, float4 own,\n"
+		"\tfloat4 reflection, thread float3 &shine)\n"
 		"{\n"
 		"\tfloat3 offset = p - lights.grid[0].xyz;\n"
 		"\tfloat3 cell = sign(offset) * log2(1.0 + abs(offset) * lights.grid[1].w) * lights.grid[1].xyz +\n"
@@ -1390,6 +1479,11 @@ static void dynamic_lights_functions(struct xgpu_text *text, struct xgpu_text *f
 		"\t\t\tfloat4 color = lights.color[light];\n"
 		"\t\t\tfloat spot = saturate(dot(l, -cone.xyz) * cone.w + color.w);\n"
 		"\t\t\tsum += color.rgb * (falloff * facing * spot);\n"
+		/* (a model's reflection's highlights, xgpu.h
+		XGPU_DYNAMIC_LIGHTS_HIGHLIGHT: reflection.w, the exponent, 0 none) */
+		"\t\t\tif (reflection.w > 0.0)\n"
+		"\t\t\t\tshine += color.rgb * (falloff * spot * saturate(dot(n, l) * 4.0) *\n"
+		"\t\t\t\t\tpow(max(dot(reflection.xyz, l), 0.0), reflection.w));\n"
 		"\t\t}\n"
 		"\t}\n"
 		"\treturn sum;\n"
@@ -1486,6 +1580,24 @@ static const char border_function[] =
 	"\treturn float4(1.0, 1.0, 1.0, saturate((distance - 0.5) * pixels + 0.5));\n"
 	"}\n";
 
+/* display.smooth_lightmaps: the lightmap by the cubic B-spline in four
+bilinear lookups (xgpu_spirv.c's lightmap_cubic), each by the gradients of
+uv itself scaled by the LOD bias (Metal samplers have none; a gradient
+twice as long is a level coarser) */
+static const char lightmap_cubic_function[] =
+	"static inline float4 lightmap_cubic(texture2d<float> t, sampler s, float2 uv, float lod_bias)\n"
+	"{\n"
+	"\tfloat2 size = float2(float(t.get_width()), float(t.get_height()));\n"
+	"\tfloat2 c = uv * size - 0.5, i = floor(c), f = c - i, r = 1.0 - f;\n"
+	"\tfloat2 w0 = r * r * r * (1.0 / 6.0), w1 = (3.0 * f * f * f - 6.0 * f * f + 4.0) * (1.0 / 6.0);\n"
+	"\tfloat2 w3 = f * f * f * (1.0 / 6.0), g0 = w0 + w1, g1 = 1.0 - g0;\n"
+	"\tfloat2 p0 = (i - 0.5 + w1 / g0) / size, p1 = (i + 1.5 + w3 / g1) / size;\n"
+	"\tfloat scale = exp2(lod_bias);\n"
+	"\tgradient2d g = gradient2d(dfdx(uv) * scale, dfdy(uv) * scale);\n"
+	"\treturn g0.y * (g0.x * t.sample(s, float2(p0.x, p0.y), g) + g1.x * t.sample(s, float2(p1.x, p0.y), g)) +\n"
+	"\t\tg1.y * (g0.x * t.sample(s, float2(p0.x, p1.y), g) + g1.x * t.sample(s, float2(p1.x, p1.y), g));\n"
+	"}\n";
+
 /* ---------- display.hdr's tags (xgpu_hdr.h) */
 
 /* a blend factor, of the source (s), the destination (d: the pixel drawn
@@ -1536,6 +1648,17 @@ static void hdr_output(struct xgpu_text *text, unsigned short hdr)
 
 	if (!XGPU_HDR_SHADER_BLENDS(hdr))
 	{
+		/* (an emitter's light gained by display.hdr_highlight_boost's
+		level, before the fixed function adds it: xgpu_hdr_boost_emitter) */
+		if (XGPU_HDR_IS_EMITTER(hdr))
+			xgpu_text_append(text,
+				"\t{\n"
+				"\t\tfloat3 boost_extra = source.rgb * %.6f;\n"
+				"\t\tsource.rgb += boost_extra * clamp((%.6f - max(source.r, max(source.g, source.b))) / "
+				"max(max(boost_extra.r, max(boost_extra.g, boost_extra.b)), 1.0e-6), 0.0, 1.0);\n"
+				"\t}\n", XGPU_HDR_BOOST_STEP * (float)XGPU_HDR_BOOST_OF(hdr),
+				XGPU_HDR_EMITTER_BOUND(hdr) == XGPU_HDR_CEILING_WEAPON ? XGPU_HDR_CEILING_WEAPON_VALUE :
+				XGPU_HDR_CEILING_LIGHT_VALUE);
 		xgpu_text_append(text, "\toutput.color = source;\n");
 		return;
 	}
@@ -1916,27 +2039,48 @@ static void world_ao_closeness(struct xgpu_text *text)
 		"}\n", 1.0 / XGPU_WORLD_AO_UPSAMPLE_DEPTH);
 }
 
+/* the field's distance at a point (world_sdf_sample) from the block's two
+vectors (field0: the first voxel's centre and 1 / voxel; field1: the cells
+along x, y, z and the atlas's layers): its cell in the table, all outside
+or all inside the range, or a brick of the atlas whose texel is filtered
+(xgpu.h). The AO functions and the ray step share it: once a shader */
+static void world_field_distance_text(struct xgpu_text *text)
+{
+	xgpu_text_append(text,
+		"#ifndef XGPU_WORLD_FIELD_DISTANCE\n"
+		"#define XGPU_WORLD_FIELD_DISTANCE\n"
+		"static inline float world_field_distance(float4 field0, float4 field1, texture3d<float> world_sdf,\n"
+		"\ttexture3d<float> world_sdf_table, float3 point)\n"
+		"{\n"
+		"\tconstexpr sampler field_sampler(filter::linear, address::clamp_to_edge, coord::normalized);\n"
+		"\tfloat range = %d.0 / field0.w;\n"
+		"\tfloat3 c = clamp((point - field0.xyz) * field0.w, float3(0.0), field1.xyz * %d.0);\n"
+		"\tfloat3 cell = min(floor(c * %.6f), field1.xyz - 1.0);\n"
+		"\tfloat4 entry = floor(world_sdf_table.read(uint3(cell)) * 255.0 + 0.5);\n"
+		"\tif (entry.w != %d.0)\n"
+		"\t\treturn entry.w == %d.0 ? -range : range;\n"
+		"\tfloat3 at = entry.xyz * %d.0 + (c - cell * %d.0) + 0.5;\n"
+		"\treturn world_sdf.sample(field_sampler, at / float3(%d.0, %d.0, field1.w * %d.0), level(0.0)).r * range;\n"
+		"}\n"
+		"#endif\n", XGPU_WORLD_SDF_RANGE_VOXELS, XGPU_WORLD_SDF_BRICK, 1.0 / XGPU_WORLD_SDF_BRICK,
+		XGPU_WORLD_SDF_CELL_BRICK, XGPU_WORLD_SDF_CELL_INSIDE, XGPU_WORLD_SDF_BRICK_SPAN, XGPU_WORLD_SDF_BRICK,
+		XGPU_WORLD_SDF_ATLAS * XGPU_WORLD_SDF_BRICK_SPAN, XGPU_WORLD_SDF_ATLAS * XGPU_WORLD_SDF_BRICK_SPAN,
+		XGPU_WORLD_SDF_BRICK_SPAN);
+}
+
 static void world_ao_functions(struct xgpu_text *text, int light)
 {
 	world_ao_struct(text);
 	/* (the field's: never the lightmap pass's) */
 	if (light != XGPU_AMBIENT_OCCLUSION_LIGHT_LIGHTMAP)
+		world_field_distance_text(text);
+	if (light != XGPU_AMBIENT_OCCLUSION_LIGHT_LIGHTMAP)
 		xgpu_text_append(text,
-		/* the field's distance at a point (world_sdf_sample): its cell in the
-		table, all outside or all inside the range, or a brick of the atlas
-		whose texel is filtered (xgpu.h) */
+		/* the field's distance at a point: the window's block's field */
 		"static inline float world_sdf_distance(constant xgpu_world_ao &w, texture3d<float> world_sdf,\n"
 		"\ttexture3d<float> world_sdf_table, float3 point)\n"
 		"{\n"
-		"\tconstexpr sampler field_sampler(filter::linear, address::clamp_to_edge, coord::normalized);\n"
-		"\tfloat range = %d.0 / w.field[0].w;\n"
-		"\tfloat3 c = clamp((point - w.field[0].xyz) * w.field[0].w, float3(0.0), w.field[1].xyz * %d.0);\n"
-		"\tfloat3 cell = min(floor(c * %.6f), w.field[1].xyz - 1.0);\n"
-		"\tfloat4 entry = floor(world_sdf_table.read(uint3(cell)) * 255.0 + 0.5);\n"
-		"\tif (entry.w != %d.0)\n"
-		"\t\treturn entry.w == %d.0 ? -range : range;\n"
-		"\tfloat3 at = entry.xyz * %d.0 + (c - cell * %d.0) + 0.5;\n"
-		"\treturn world_sdf.sample(field_sampler, at / float3(%d.0, %d.0, w.field[1].w * %d.0), level(0.0)).r * range;\n"
+		"\treturn world_field_distance(w.field[0], w.field[1], world_sdf, world_sdf_table, point);\n"
 		"}\n"
 		/* A_sdf(p, n): the cone of taps along the normal */
 		"static inline float world_sdf_occlusion(constant xgpu_world_ao &w, texture3d<float> world_sdf,\n"
@@ -1978,10 +2122,7 @@ static void world_ao_functions(struct xgpu_text *text, int light)
 		"\t}\n"
 		"\tn = direction;\n"
 		"\treturn field;\n"
-		"}\n", XGPU_WORLD_SDF_RANGE_VOXELS, XGPU_WORLD_SDF_BRICK, 1.0 / XGPU_WORLD_SDF_BRICK, XGPU_WORLD_SDF_CELL_BRICK,
-		XGPU_WORLD_SDF_CELL_INSIDE, XGPU_WORLD_SDF_BRICK_SPAN, XGPU_WORLD_SDF_BRICK,
-		XGPU_WORLD_SDF_ATLAS * XGPU_WORLD_SDF_BRICK_SPAN, XGPU_WORLD_SDF_ATLAS * XGPU_WORLD_SDF_BRICK_SPAN,
-		XGPU_WORLD_SDF_BRICK_SPAN, XGPU_WORLD_AO_STEP, XGPU_WORLD_AO_TAPS, XGPU_WORLD_AO_K);
+		"}\n", XGPU_WORLD_AO_STEP, XGPU_WORLD_AO_TAPS, XGPU_WORLD_AO_K);
 	xgpu_text_append(text, "%s", world_proxies_shapes);
 	xgpu_text_append(text,
 		/* a vehicle's occlusion field (its shape and the next two:
@@ -2149,8 +2290,12 @@ world_trace: port/linux/game/world_cascades.c's world_trace_ray operation
 for operation (tools/test_world_trace.py runs this text as C++ against it):
 from origin along the unit direction to at most t_max, through the
 cascades (cascades[k]: the first voxel's centre and the voxel, 0 not
-ready; the texture's at XGPU_MSL_TEXTURE_WORLD_CASCADES), hitting what mask
-allows (XGPU_WORLD_TRACE_*), each distance only once the ray is outside it.
+ready; the texture's at XGPU_MSL_TEXTURE_WORLD_CASCADES, the objects'
+distance its second channel), hitting what mask allows
+(XGPU_WORLD_TRACE_*), each distance only once the ray is outside it. The
+structure's distance is the level's field's at the ray's point
+(world_field_distance: its atlas, table and block vectors), read only where
+the mask allows it.
 The hardware's ray queries (#602) would implement the same signature
 (docs/world-ao.md) */
 static const char world_trace_functions[] =
@@ -2177,8 +2322,9 @@ static const char world_trace_functions[] =
 	"\t}\n"
 	"\treturn found;\n"
 	"}\n"
-	/* its two distances there (world units): the voxels' centres'
-	coordinate modulo the side, a texel in (the guard past the last) */
+	/* its distances there (world units: y the objects', x none): the
+	voxels' centres' coordinate modulo the side, a texel in (the guard past
+	the last) */
 	"static inline float4 world_cascade_sample(texture3d<float> world_cascades, float4 c, int cascade, float3 p)\n"
 	"{\n"
 	"\tconstexpr sampler cascades_sampler(filter::linear, address::clamp_to_edge, coord::normalized);\n"
@@ -2190,8 +2336,10 @@ static const char world_trace_functions[] =
 		WORLD_AO_TEXT(XGPU_WORLD_CASCADE_SPAN) ".0 * " WORLD_AO_TEXT(XGPU_WORLD_CASCADES) ".0));\n"
 	"\treturn world_cascades.sample(cascades_sampler, uvw, level(0.0)) * (" WORLD_AO_TEXT(XGPU_WORLD_CASCADE_RANGE_VOXELS)
 		".0 * c.w);\n"
-	"}\n"
-	"static inline world_trace_hit world_trace(texture3d<float> world_cascades, constant float4 *cascades, float3 origin,\n"
+	"}\n";
+static const char world_trace_step[] =
+	"static inline world_trace_hit world_trace(texture3d<float> world_cascades, constant float4 *cascades,\n"
+	"\ttexture3d<float> world_sdf, texture3d<float> world_sdf_table, float4 field0, float4 field1, float3 origin,\n"
 	"\tfloat3 direction, float t_max, int mask)\n"
 	"{\n"
 	"\tworld_trace_hit result;\n"
@@ -2213,6 +2361,8 @@ static const char world_trace_functions[] =
 	"\t\tfloat inside = nearest;\n"
 	"\t\tif ((mask & " WORLD_AO_TEXT(XGPU_WORLD_TRACE_STRUCTURE) ") != 0)\n"
 	"\t\t{\n"
+	/* (the structure's from the level's field where the ray is) */
+	"\t\t\td.x = world_field_distance(field0, field1, world_sdf, world_sdf_table, p);\n"
 	"\t\t\tif (d.x >= 0.0)\n"
 	"\t\t\t\tactive_structure = true;\n"
 	"\t\t\tif (active_structure)\n"
@@ -2247,6 +2397,8 @@ static const char world_trace_functions[] =
 void xgpu_msl_world_trace(struct xgpu_text *text)
 {
 	xgpu_text_append(text, "%s", world_trace_functions);
+	world_field_distance_text(text);
+	xgpu_text_append(text, "%s", world_trace_step);
 }
 
 char *xgpu_msl_world_trace_test(void)
@@ -2264,12 +2416,14 @@ char *xgpu_msl_world_trace_test(void)
 		"\tfloat4 parameters [[user(parameters), flat]];\n"
 		"};\n"
 		"fragment float4 xgpu_world_trace_test(world_trace_in in [[stage_in]],\n"
-		"\ttexture3d<float> world_cascades [[texture(%d)]], constant float4 *cascades [[buffer(0)]])\n"
+		"\ttexture3d<float> world_cascades [[texture(%d)]], constant float4 *cascades [[buffer(0)]],\n"
+		"\ttexture3d<float> world_sdf [[texture(%d)]], texture3d<float> world_sdf_table [[texture(%d)]],\n"
+		"\tconstant float4 *field [[buffer(1)]])\n"
 		"{\n"
-		"\tworld_trace_hit hit = world_trace(world_cascades, cascades, in.origin, in.direction, in.parameters.x,\n"
-		"\t\tint(in.parameters.y));\n"
+		"\tworld_trace_hit hit = world_trace(world_cascades, cascades, world_sdf, world_sdf_table, field[0], field[1],\n"
+		"\t\tin.origin, in.direction, in.parameters.x, int(in.parameters.y));\n"
 		"\treturn float4(hit.hit ? 1.0 : 0.0, hit.t, float(hit.kind), 0.0);\n"
-		"}\n", XGPU_MSL_TEXTURE_WORLD_CASCADES);
+		"}\n", XGPU_MSL_TEXTURE_WORLD_CASCADES, XGPU_MSL_TEXTURE_WORLD_SDF, XGPU_MSL_TEXTURE_WORLD_SDF_TABLE);
 	return text.buffer;
 }
 
@@ -2414,6 +2568,14 @@ char *xgpu_msl_pixel_shader(const struct xgpu_pixel_program *program, const stru
 	BOOL occluder = !world && (program->ambient_occlusion & XGPU_AMBIENT_OCCLUSION_WORLD_INPUTS);
 	BOOL world_sampled = world && !world_inputs && (program->ambient_occlusion & XGPU_AMBIENT_OCCLUSION_WORLD_SAMPLED);
 	BOOL world_inline = world && !world_inputs && !world_sampled;
+	/* (display.temporal_aa: the motion, the second attachment's, as
+	xgpu_spirv.c's: the previous position less the current, as a fraction
+	of the view, x right and y down, and the pixel's depth, which the
+	resolve finds it still is; xgpu_msl_options' motion) */
+	BOOL motion = options->motion && !world_inputs && !occluder;
+	/* (a model's highlights of the lights in its reflection: xgpu.h
+	XGPU_DYNAMIC_LIGHTS_HIGHLIGHT) */
+	BOOL highlights = FALSE;
 	int stage;
 
 	pixel_usage(program, &usage);
@@ -2440,8 +2602,11 @@ char *xgpu_msl_pixel_shader(const struct xgpu_pixel_program *program, const stru
 		"\tfloat4 xT2 [[user(xT2)]];\n"
 		"\tfloat4 xT3 [[user(xT3)]];\n"
 		"\tfloat xFog [[user(xFog)]];\n");
-	if (replaces_depth || world_sampled)
+	if (replaces_depth || world_sampled || motion)
 		xgpu_text_append(&text, "\tfloat4 frag_position [[position]];\n");
+	if (motion)
+		xgpu_text_append(&text, "\tfloat3 xMotionCurrent [[user(xMotionCurrent)]];\n"
+			"\tfloat3 xMotionPrevious [[user(xMotionPrevious)]];\n");
 	if (occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_VERTEX)
 		xgpu_text_append(&text, "\tfloat3 xLightAmbient [[user(xLightAmbient)]];\n\tfloat3 xLightPoint [[user(xLightPoint)]];\n");
 	if (program->per_pixel_lighting || environment || world)
@@ -2452,6 +2617,8 @@ char *xgpu_msl_pixel_shader(const struct xgpu_pixel_program *program, const stru
 		xgpu_text_append(&text, "\tfloat3 xWorldBinormal [[user(xWorldBinormal)]];\n\tfloat3 xWorldTangent [[user(xWorldTangent)]];\n");
 	xgpu_text_append(&text, "};\nstruct xgpu_fragment_out\n{\n\t%s color [[color(0)]];\n",
 		world_inputs || occluder ? "uint4" : "float4");
+	if (motion)
+		xgpu_text_append(&text, "\tfloat4 motion [[color(1)]];\n");
 	if (sample_mask)
 		xgpu_text_append(&text, "\tuint sample_mask [[sample_mask]];\n");
 	if (replaces_depth)
@@ -2464,6 +2631,8 @@ char *xgpu_msl_pixel_shader(const struct xgpu_pixel_program *program, const stru
 		model_lighting(&functions, program->per_pixel_lighting == 2, program->dynamic_lights == XGPU_DYNAMIC_LIGHTS_MODEL,
 			occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_MODEL);
 	xgpu_text_append(&functions, "%s%s", pixel_functions, border_function);
+	if (program->lightmap_filter)
+		xgpu_text_append(&functions, "%s", lightmap_cubic_function);
 	functions_at = text.length;
 
 	/* samples that pass the depth and stencil tests, as the NV2A's
@@ -2539,12 +2708,36 @@ char *xgpu_msl_pixel_shader(const struct xgpu_pixel_program *program, const stru
 	if (register_read(&usage, XGPU_REGISTER_V0) && program->per_pixel_lighting &&
 		program->dynamic_lights == XGPU_DYNAMIC_LIGHTS_MODEL)
 	{
+		highlights = program->stages[3].mode == XGPU_TEXTURE_CUBEMAP && register_read(&usage, XGPU_REGISTER_T3);
+		xgpu_text_append(&text, "\tfloat3 shine = float3(0.0);\n");
+		if (highlights)
+			xgpu_text_append(&text, "\tfloat highlight_scale = 0.0;\n");
 		xgpu_text_append(&text,
 			"\t{\n"
 			"\t\tfloat3 n = in.xWorldNormal.xyz * rsqrt(max(dot(in.xWorldNormal.xyz, in.xWorldNormal.xyz), 1.0e-24));\n"
+			"\t\tfloat4 reflection = float4(0.0);\n");
+		if (highlights)
+		{
+			/* (its reflection's highlights of the lights, widened where its
+			normal turns fast across the pixel: xgpu.h
+			XGPU_DYNAMIC_LIGHTS_HIGHLIGHT; xgpu_spirv.c's, operation for
+			operation) */
+			const float lobe = 2.0f / (XGPU_DYNAMIC_LIGHTS_HIGHLIGHT_EXPONENT + 2.0f);
+
+			xgpu_text_append(&text,
+				"\t\tfloat3 to_eye = dynamic_lights.grid[0].xyz - in.xWorldPosition;\n"
+				"\t\tfloat3 v = to_eye * rsqrt(max(dot(to_eye, to_eye), 1.0e-12));\n"
+				"\t\treflection.xyz = n * (dot(n, v) * 2.0) - v;\n"
+				"\t\tfloat3 reflection_dx = dfdx(reflection.xyz), reflection_dy = dfdy(reflection.xyz);\n"
+				"\t\tfloat widened = %.9g + min(dot(reflection_dx, reflection_dx) + dot(reflection_dy, reflection_dy), %.9g);\n"
+				"\t\treflection.w = 2.0 / widened - 2.0;\n"
+				"\t\thighlight_scale = %.9g / widened;\n", (double)lobe, (double)XGPU_DYNAMIC_LIGHTS_HIGHLIGHT_WIDEST,
+				(double)(lobe * XGPU_DYNAMIC_LIGHTS_HIGHLIGHT));
+		}
+		xgpu_text_append(&text,
 			"\t\tv0.rgb = dynamic_light_add(dynamic_lights, model_lighting(u, in.xWorldNormal%s),\n"
 			"\t\t\tdynamic_light_sum(dynamic_lights, dynamic_light_cells, dynamic_light_world, in.xWorldPosition, n, n, false,\n"
-			"\t\t\t\tu.model_lights[%d]));\n"
+			"\t\t\t\tu.model_lights[%d], reflection, shine));\n"
 			"\t}\n", occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_MODEL ? ", occlusion" : "",
 			XGPU_MODEL_LIGHT_OWN_LIGHTS);
 	}
@@ -2563,6 +2756,10 @@ char *xgpu_msl_pixel_shader(const struct xgpu_pixel_program *program, const stru
 
 	for (stage = 0; stage < 4; stage++)
 		texture_stage(&text, program, stage, &usage, options);
+	/* (a model's highlights of the lights, added to its reflection's texel:
+	xgpu.h XGPU_DYNAMIC_LIGHTS_HIGHLIGHT) */
+	if (highlights)
+		xgpu_text_append(&text, "\tt3.rgb = dynamic_light_add(dynamic_lights, t3.rgb, shine * highlight_scale);\n");
 	/* (the bump map's texel, which the combiners may overwrite: the enhanced
 	dynamic lights read it after them) */
 	if (environment && program->stages[0].sampler == _xgpu_sampler_2d)
@@ -2629,6 +2826,17 @@ char *xgpu_msl_pixel_shader(const struct xgpu_pixel_program *program, const stru
 			"\t\tif (added_most > 0.0)\n"
 			"\t\t\tself_illumination = added * min(%.6f * smoothstep(%.6f, 1.0, most) * most / added_most, %.6f);\n"
 			"\t}\n", XGPU_HDR_SELF_ILLUMINATION_VALUE - 1.0f, XGPU_HDR_SELF_ILLUMINATION_KNEE, XGPU_HDR_EXPAND_MOST);
+	/* (... gained by display.hdr_highlight_boost's level, toward the same
+	ceiling: xgpu_hdr_self_illuminate_boost) */
+	if (self_illuminated && XGPU_HDR_BOOST_OF(program->hdr))
+		xgpu_text_append(&text,
+			"\t{\n"
+			"\t\tfloat3 boost_rgb = saturate(result.rgb) + self_illumination;\n"
+			"\t\tfloat3 boost_extra = (max(saturate(result.rgb) - self_illumination_base, float3(0.0)) + "
+			"self_illumination) * %.6f;\n"
+			"\t\tself_illumination += boost_extra * clamp((%.6f - max(boost_rgb.r, max(boost_rgb.g, boost_rgb.b))) / "
+			"max(max(boost_extra.r, max(boost_extra.g, boost_extra.b)), 1.0e-6), 0.0, 1.0);\n"
+			"\t}\n", XGPU_HDR_BOOST_STEP * (float)XGPU_HDR_BOOST_OF(program->hdr), XGPU_HDR_SELF_ILLUMINATION_VALUE);
 	/* (display.ambient_occlusion: a lightmap pass's light, by the
 	occlusion, before the enhanced dynamic lights add theirs) */
 	if (occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_LIGHTMAP)
@@ -2643,9 +2851,10 @@ char *xgpu_msl_pixel_shader(const struct xgpu_pixel_program *program, const stru
 			"\t\tfloat3 surface_normal = normalize(in.xWorldNormal.xyz);\n"
 			"\t\tfloat3 bump = %s;\n"
 			"\t\tfloat3 n = normalize(in.xWorldTangent * bump.x + in.xWorldBinormal * bump.y + surface_normal * max(bump.z, 0.05));\n"
+			"\t\tfloat3 no_shine = float3(0.0);\n"
 			"\t\tresult.rgb = dynamic_light_add%s(dynamic_lights, result.rgb,\n"
 			"\t\t\tdynamic_light_sum(dynamic_lights, dynamic_light_cells, dynamic_light_world, in.xWorldPosition, n, surface_normal, true,\n"
-			"\t\t\t\tfloat4(-1.0)) *\n"
+			"\t\t\t\tfloat4(-1.0), float4(0.0), no_shine) *\n"
 			"\t\t\tu.dynamic_light_tint.rgb);\n"
 			"\t}\n",
 			program->stages[0].sampler == _xgpu_sampler_2d ? "dynamic_light_bump * 2.0 - 1.0" : "float3(0.0, 0.0, 1.0)",
@@ -2744,6 +2953,15 @@ char *xgpu_msl_pixel_shader(const struct xgpu_pixel_program *program, const stru
 	/* (finite: the NV2A wrote no colour that is not a number, nor an
 	infinite one; by its bits, which Metal's fast arithmetic keeps) */
 	xgpu_text_append(&text, "\toutput.color = nv2a_finite(output.color);\n");
+	/* (none where either position is behind the eye) */
+	if (motion)
+		xgpu_text_append(&text,
+			"\t{\n"
+			"\t\tfloat2 now = in.xMotionCurrent.xy / in.xMotionCurrent.z;\n"
+			"\t\tfloat2 before = in.xMotionPrevious.xy / in.xMotionPrevious.z;\n"
+			"\t\tbool both = in.xMotionCurrent.z > 0.0 && in.xMotionPrevious.z > 0.0;\n"
+			"\t\toutput.motion = float4(both ? (before - now) * float2(0.5, -0.5) : float2(0.0), in.frag_position.z, 1.0);\n"
+			"\t}\n");
 	xgpu_text_append(&text, "\treturn output;\n}\n");
 	functions_insert(&text, functions_at, functions.buffer);
 	free(functions.buffer);
@@ -2886,7 +3104,8 @@ char *xgpu_msl_world_ao_pass(BOOL pixel)
 		cosine-weighted about the normal (a frame of it, Duff's; the rays
 		stratified, turned for each pixel and frame), from a little off the
 		surface, to the AO's reach; a hit counts as 1 - (t / reach)^2 */
-		"static inline float world_ao_traced(texture3d<float> world_cascades, constant float4 *cascades, float3 p,\n"
+		"static inline float world_ao_traced(texture3d<float> world_cascades, constant float4 *cascades,\n"
+		"\tconstant xgpu_world_ao &world_ao, texture3d<float> world_sdf, texture3d<float> world_sdf_table, float3 p,\n"
 		"\tfloat3 n, uint2 pixel, float frame)\n"
 		"{\n"
 		"\tfloat s = n.z >= 0.0 ? 1.0 : -1.0;\n"
@@ -2907,7 +3126,8 @@ char *xgpu_msl_world_ao_pass(BOOL pixel)
 		"\t\tfloat u = (float(ray) + turn) / %d.0, angle = 6.28318531 * fract(twist + 0.618034 * float(ray));\n"
 		"\t\tfloat radius = sqrt(u);\n"
 		"\t\tfloat3 d = x * (radius * cos(angle)) + y * (radius * sin(angle)) + n * sqrt(max(1.0 - u, 0.0));\n"
-		"\t\tworld_trace_hit hit = world_trace(world_cascades, cascades, p + n * %.6f, d, %.6f, %d);\n"
+		"\t\tworld_trace_hit hit = world_trace(world_cascades, cascades, world_sdf, world_sdf_table, world_ao.field[0],\n"
+		"\t\t\tworld_ao.field[1], p + n * %.6f, d, %.6f, %d);\n"
 		"\t\tif (hit.hit)\n"
 		"\t\t{\n"
 		"\t\t\tfloat f = hit.t / %.6f;\n"
@@ -2942,7 +3162,8 @@ char *xgpu_msl_world_ao_pass(BOOL pixel)
 		"\tfloat proxies = world_proxies_occlusion(world_ao, world_ao_objects, p, n, owner, limit,\n"
 		"\t\ttraced ? int(world_ao.parameters[1].y) : 0);\n"
 		"\tif (traced)\n"
-		"\t\tproxies *= 1.0 - world_ao_traced(world_cascades, pass.cascades, p, n, pixel, pass.history.y);\n"
+		"\t\tproxies *= 1.0 - world_ao_traced(world_cascades, pass.cascades, world_ao, world_sdf, world_sdf_table, p, n,\n"
+		"\t\t\tpixel, pass.history.y);\n"
 		"\tif (lightmap)\n"
 		"\t\treturn mix(1.0, max(proxies * value, %.6f), world_ao.parameters[0].y);\n"
 		"\tfield = mix(field, saturate(field / max(baked ? 1.0 : value, %.6f)), world_ao.parameters[1].x);\n"

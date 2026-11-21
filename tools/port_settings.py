@@ -68,19 +68,21 @@ SHIELD_COLORS = ["white", "black", "red", "blue", "gray", "yellow", "green", "pi
 # input.mouse_vertical_sensitivity's: a multiplier of the horizontal
 VERTICAL_SENSITIVITIES = [(f"{value:g}X", f"{value:g}") for value in (0.25, 0.5, 0.6, 0.7, 0.75, 0.8, 0.9, 1, 1.1, 1.25,
                                                                        1.5, 2)]
-VOLUMES = [(str(step), f"{step / 10:g}") for step in range(11)]
-# audio.volume's: past 10 (the Xbox's level) to 20, as loud as before the
-# Xbox's level was matched (dsound_sdl.c's limiter keeps it under full scale)
-MASTER_VOLUMES = [(str(step), f"{step / 10:g}") for step in range(21)]
 # the platforms a menu element's platform attribute names (menu_files.c's
 # MENU_PLATFORM, "vr": the VR build, playing in the headset, and "hdr": a
 # renderer that draws display.hdr)
 MENU_PLATFORMS = ("desktop", "android", "vr", "hdr", "touch", "pointer", "computer")
+# display.benchmark_bots's: the bots in the built-in benchmark's match (at most its map's most: benchmark.c's
+# benchmark_maps)
+BENCHMARK_BOTS = [(str(count), str(count)) for count in (4, 8, 12, 16, 24, 32, 40)]
 # display.hdr_paper_white_nits's values: the system's SDR white, or nits
 PAPER_WHITES = [("SYSTEM", "0")] + [(f"{nits} NITS", str(nits)) for nits in range(80, 501, 20)]
 # display.hdr_ui_nits's: paper white's, or nits
 # (0's name the shortest that fits the spinner: "same as paper white" is too wide)
 UI_WHITES = [("PAPER WHITE", "0")] + [(f"{nits} NITS", str(nits)) for nits in range(80, 501, 20)]
+# display.hdr_peak_nits's: the system's, or nits (#1122)
+PEAKS = [("SYSTEM", "0")] + [(f"{nits} NITS", str(nits)) for nits in
+                             [*range(200, 1001, 100), 1250, 1500, 1750, 2000, 2500, 3000, 4000]]
 
 # the old settings screens' layout (rows of a label and a spinner over their
 # row backgrounds, a line of help for the row chosen, Defaults, OK and Cancel),
@@ -322,6 +324,9 @@ class Slider(NamedTuple):
     typed_most: float
     whole: bool = False
     stops: tuple = ()
+    # "volume": the slider is a percentage, its setting the amplitude
+    # (menu_functions.c's settings_volume_amplitude)
+    curve: str = ""
 
 
 # a slider's track, its thumb and its number, in the value's column
@@ -329,6 +334,17 @@ SLIDER_TRACK_WIDTH, SLIDER_THUMB_WIDTH, SLIDER_TRACK_HEIGHT = 62, 8, 14
 SLIDER_VALUE_X, SLIDER_VALUE_WIDTH, SLIDER_VALUE_HEIGHT = 64, 76, 20
 # input.mouse_sensitivity's: CS2's sensitivity (port/linux/include/mouse_sensitivity.h)
 MOUSE_SENSITIVITY = Slider(0.1, 10.0, 0.05, 0.01, 100.0)
+# the volumes' (audio.*volume): 0 to 100%, evenly loud along the track, each
+# setting keeping the amplitude (an old 0 to 1 value shows where it plays)
+VOLUMES = Slider(0, 100, 1, 0, 100, whole=True, curve="volume")
+# audio.volume's: past 100% (the Xbox's level) to 200%, an amplitude of 2.0, as
+# loud as before the Xbox's level was matched (dsound_sdl.c's limiter keeps it
+# under full scale). Its places, 0 to 110, are the track's: past 100 each step
+# is as loud a step as below, its percentage shown the amplitude's
+# (menu_functions.c's settings_volume_shown: 105 is 141%, 110 is 200%)
+MASTER_VOLUMES = Slider(0, 110, 1, 0, 110, whole=True, curve="volume")
+# audio.stereo_spread's: 0 (mixed to one) to 1
+STEREO_SPREADS = Slider(0.0, 1.0, 0.05, 0.0, 1.0)
 # the geometry, in the 640x480 menu units (menu_functions.c's SETTINGS_*
 # have the same): the rows' column and the panel beside it
 SETTINGS_ROW_X, SETTINGS_ROW_WIDTH, SETTINGS_ROW_HEIGHT, SETTINGS_ROW_STEP = 28, 344, 20, 21
@@ -510,7 +526,7 @@ SETTINGS_WIDE_SPINNER = 120
 SEGMENTED_MOST = 3
 SEGMENT_PAD, SEGMENT_LEAST, SEGMENT_GAP, SEGMENT_HEIGHT = 8, 48, 4, 18
 SEGMENT_NOT = {"display.vrr", "display.resolution", "display.window_size", "display.refresh_rate",
-               "audio.output_device", "audio.input_device"}
+               "audio.output_device", "audio.input_device", "display.benchmark_map"}
 
 # ---------- the tall layout (the menu engine's: docs/menu_engine.md, "Deliberate differences")
 #
@@ -663,8 +679,22 @@ DISPLAY_MODES = [("FULLSCREEN", "fullscreen"), ("BORDERLESS", "borderless"), ("W
 # side to side, in degrees, and the push that starts it, in percent of the
 # stick's travel (-1 the game's own)
 MODERN_AIM_ANGLES = [(str(degrees), str(degrees)) for degrees in range(0, 46, 5)]
+# input.look_acceleration_strength's and _time's: times the map's own ramp
+# (player_control.c's LOOK_ACCELERATION_STRENGTH_MAXIMUM and _TIME_'s)
+LOOK_ACCELERATION_STRENGTHS = [("OFF", "0")] + [(f"{value:g}X", f"{value:g}") for value in
+                                                (0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2)]
+LOOK_ACCELERATION_TIMES = [(f"{value:g}X", f"{value:g}") for value in (0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2)]
 MODERN_AIM_THRESHOLDS = [("DEFAULT", "-1")] + [(f"{percent}%", str(percent)) for percent in range(50, 101, 5)]
+# input.keyboard_layout's: the on-screen keyboard's layouts (port/linux/game/keyboard_core.c's keyboard_layouts)
+KEYBOARD_LAYOUTS = [("AUTO", "auto"), ("QWERTY", "qwerty"), ("AZERTY", "azerty"), ("QWERTZ", "qwertz"),
+                    ("SWEDISH/FINNISH", "swedish"), ("NORWEGIAN", "norwegian"), ("DANISH", "danish"),
+                    ("SPANISH", "spanish"), ("PORTUGUESE", "portuguese")]
+# input.rumble_strength's: the motors' strength, in percent
+RUMBLE_STRENGTHS = [(f"{percent}%", str(percent)) for percent in range(0, 101, 10)]
 STICK_DEAD_ZONES = [("DEFAULT (27%)", "-1")] + [(f"{percent}%", str(percent)) for percent in range(0, 51, 5)]
+# input.left_stick_outer_dead_zone's and right's: the part of the travel at
+# the rim read as full (none, the game's own: full only at the rim)
+STICK_OUTER_DEAD_ZONES = [("NONE", "0")] + [(f"{percent}%", str(percent)) for percent in range(5, 31, 5)]
 # display.fov's stops: the game's own (0), or degrees; any of 20 to 160
 # typed, above 150 drawn only with Panini Projection on (panini_projection.h's
 # PANINI_FIELD_OF_VIEW_MOST: why 160)
@@ -700,6 +730,10 @@ GAMMA = Slider(0.5, 2.0, 0.05, 0.5, 2.0)
 PANINI_STRENGTHS = Slider(0.0, 1.0, 0.25, 0.0, 1.0,
                           stops=(("OFF", "0"), ("0.25", "0.25"), ("0.5", "0.5"), ("0.75", "0.75"), ("1", "1")))
 PANINI_VERTICAL = Slider(0.0, 1.0, 0.05, 0.0, 1.0)
+# display.temporal_aa_sharpness's: FSR's RCAS (FSR's, and MetalFX's with
+# it), off (0) to 1; any of 0 to 1 typed
+UPSCALER_SHARPNESS = Slider(0.0, 1.0, 0.05, 0.0, 1.0, stops=(("OFF", "0"),) + tuple(
+    (f"{n / 10:g}", f"{n / 10:g}") for n in range(1, 11)))
 # display.draw_distance's: the far clip plane in world units, the game's own
 # 1024 to ChupathingyCE's farthest (port/linux/game/far_clip.c); any of 1024
 # to 10000 typed
@@ -707,13 +741,21 @@ DRAW_DISTANCES = Slider(1024, 10000, 1, 1024, 10000, whole=True,
                         stops=(("DEFAULT", "1024"),) + tuple((str(n), str(n)) for n in (
                             1536, 2048, 3072, 4096, 6144, 8192, 10000)))
 # Render Resolution's: display.resolution_scaling's Xbox 640x480, or Full at
-# display.supersampling's factors each way (d3d8_device.c: 1 to 2), as a
-# percentage (menu_functions.c's render_resolution_text)
-RENDER_RESOLUTIONS = [("XBOX 640X480", "original"), ("FULL", "1")] + \
+# display.render_scale's fractions (below 1) or display.supersampling's
+# factors (above) each way (d3d8_device.c: 0.25 to 2), as a percentage
+# (menu_functions.c's render_resolution_text)
+RENDER_RESOLUTIONS = [("XBOX 640X480", "original")] + \
+    [(f"{round(factor * 100)}%", f"{factor:g}") for factor in (0.25, 0.5, 0.75)] + [("FULL", "1")] + \
     [(f"{round(factor * 100)}%", f"{factor:g}") for factor in (1.25, 1.5, 1.75, 2)]
 ANTI_ALIASING_HELP = "Smooths jagged edges. FXAA and SMAA cost little; {} sharper and {} more of the graphics card."
 # (STRONG & WORSE: its row's spinner's 140 units, STRONG AND WORSE did not fit)
 STREAMER_LEVELS = [("OFF", "off"), ("SEVERE", "severe"), ("STRONG & WORSE", "strong"), ("MILD & WORSE", "mild")]
+# (display.subtitles_language: MCC's eleven, and the game's; short for the
+# spinner's 140 units)
+SUBTITLE_LANGUAGES = [("GAME'S", "game"), ("ENGLISH", "english"), ("FRENCH", "french"), ("GERMAN", "german"),
+                      ("ITALIAN", "italian"), ("SPANISH", "spanish"), ("LATAM SPANISH", "latam_spanish"),
+                      ("PORTUGUESE", "portuguese"), ("JAPANESE", "japanese"), ("KOREAN", "korean"),
+                      ("TRAD. CHINESE", "chinese"), ("SIMP. CHINESE", "chinese_simplified")]
 SEED_UPLOADS = (64, 128, 256, 512, 1024, 2048, 4096, 8192, 10240)
 VR_CONTROLS = f"{PE}/vr_controls/vr_controls_screen"
 
@@ -729,6 +771,10 @@ FIRST_PERSON = ("video_settings/first_person", "first_person_screen")
 # (display.vsync, display.vrr and its margin, display.max_fps and
 # display.low_latency: how the frames meet the display)
 FRAME_RATE = ("video_settings/frame_rate", "frame_rate_screen")
+# (Frame Rate & Sync's PERFORMANCE TOOLS: the performance overlay, the
+# developers' timings and logs and the benchmark, their own page as Frame
+# Rate's is full)
+PERFORMANCE_TOOLS = ("video_settings/frame_rate/performance_tools", "performance_tools_screen")
 # (display.gamma, and display.hdr's settings and the display's peak on the
 # renderers that draw it)
 BRIGHTNESS_PAGE = ("video_settings/brightness", "brightness_screen")
@@ -749,8 +795,20 @@ DEAD_ZONES = ("gamepad_setup/dead_zones", "dead_zones_screen")
 # (aiming with a controller's gyroscope, and the flick stick: port/linux/src/xinput_sdl.c;
 # menu_functions.c's gyro_rows_show)
 GYRO = ("gamepad_setup/gyro", "gyro_screen")
+# (opened from Advanced Stick Settings: each stick's reading and its circle,
+# a hand-written screen's, port/assets/menus/screens/stick_test.xml)
+STICK_TEST = "screens/stick_test"
+# the NVIDIA DLSS add-on's screen (a hand-written screen's,
+# port/assets/menus/screens/dlss_addon.xml), which Frame Rate & Sync opens
+DLSS_ADDON = "screens/dlss_addon"
+# Mods' GAME DATA (#1216: port/linux/src/game_data_page.c, port/assets/menus/
+# screens/game_data.xml): the maps' sources, each its state, ADD and OPEN
+# FOLDER, the copies run in the game
+GAME_DATA = "screens/game_data"
 # input.gyro_sensitivity's: the view's degrees for each degree the controller turns
 GYRO_SENSITIVITY = Slider(0.25, 8.0, 0.05, 0.05, 20.0)
+# input.gyro_smoothing's strengths (gyro_aim.c's gyro_aim_smoothing)
+GYRO_SMOOTHING = [("OFF", "off"), ("LOW", "low"), ("MEDIUM", "medium"), ("HIGH", "high")]
 GYRO_BUTTONS = [("TOUCHPAD", "touchpad"), ("LEFT PADDLE", "left_paddle"), ("RIGHT PADDLE", "right_paddle"),
                 ("CAPTURE / SHARE", "misc"), ("LEFT BUMPER", "left_bumper"), ("RIGHT BUMPER", "right_bumper"),
                 ("LEFT TRIGGER", "left_trigger"), ("RIGHT TRIGGER", "right_trigger"), ("LEFT STICK", "left_stick"),
@@ -760,13 +818,26 @@ KEY_BINDINGS = ("controls_setup", "controls_settings_screen")
 # port/linux/game/menu_functions.c's table of them), and its rows for a
 # group's actions (the most a group has), each its action's two bindings
 CONTROL_GROUPS = ["MOVEMENT", "WEAPONS", "ACTIONS", "COMMUNICATION"]
-CONTROL_ROWS = 8
+CONTROL_ROWS = 9
 CONTROL_COMMAND_ROWS = {f"command_{n}" for n in range(1, CONTROL_ROWS + 1)}
 # (an action's row: its name, then its two bindings' columns, to the row's end)
 CONTROL_BINDINGS_X, CONTROL_BINDING_WIDTH = (136, 240), 104
 STREAMER = ("interface_settings/streamer_mode", "streamer_mode_screen")
+# (Interface's STREAMING & SPEEDRUN: display.state_file (port/linux/game/
+# stream_state.c), display.input_display (input_display.c) and
+# game.practice_keys (practice.c))
+STREAMING = ("interface_settings/streaming", "streaming_screen")
+# (Interface's SPARTAN LINK: display.spartan_link_shown and display.spartan_link,
+# port/linux/game/spartan_link.c)
+SPARTAN_LINK = ("interface_settings/spartan_link", "spartan_link_screen")
+# (Online's multiplayer rules, the host's choice in a network game, a page of
+# their own once Online had no room for VEHICLE HIJACKING)
+GAMEPLAY = ("network_setup/gameplay", "gameplay_screen")
 # (Audio's voice chat, a page of its own)
 VOICE_CHAT = ("audio_settings/voice_chat", "voice_chat_screen")
+# (Audio's stereo spread and resampler, a page of their own once Audio had no
+# room for BACKGROUND VOLUME)
+ADVANCED_AUDIO = ("audio_settings/advanced_audio", "advanced_audio_screen")
 # (Online's Discord account: port/linux/src/player_link.c)
 DISCORD_ACCOUNT = ("network_setup/discord_account", "discord_account_screen")
 # (the server browsers' Filters, which their FILTERS opens too: menu_functions.c's
@@ -781,6 +852,13 @@ MCC_PACKAGES = ("network_setup/mcc_packages", "mcc_packages_screen")
 # hud_hires_tags.c): the HUD's buttons drawn as the controller playing has
 # them, Xbox, PlayStation or Switch, in the style chosen for each
 CONTROLLER_BUTTONS = ("gamepad_setup/button_remapping/controller_buttons", "controller_buttons_screen")
+# Button Remapping's CONTROLLER LAYOUTS (#1143: port/linux/include/controller_layouts.h): a controller's extra
+# buttons named and drawn as symbols in the prompts; its EDIT BUTTONS › opens a hand-written screen,
+# port/assets/menus/screens/controller_layout.xml (menu_functions.c's controller_layout_menu.inc)
+CONTROLLER_LAYOUTS = ("gamepad_setup/button_remapping/controller_layouts", "controller_layouts_screen")
+CONTROLLER_LAYOUT = "screens/controller_layout"
+# (#1144: the question whether to use an imported layout's bindings, a hand-written pop-up)
+LAYOUT_BINDINGS = "screens/layout_bindings"
 MCC_DOWNLOADS = f"{PE}/network_setup/mcc_downloads"
 MCC_DOWNLOAD = f"{PE}/network_setup/mcc_download"
 BROWSER_FILTERS_TITLE = "main_menu/multiplayer_type_select/join_game/filters/header_filters"
@@ -810,6 +888,7 @@ REMAP_HANDLERS = ['<on event="x" run="port controller clear"/>',
 SETTINGS_STATUS_ROWS = {"discord_account", "link_status", "link_unlink",
                         *(f"link_master_{n}" for n in range(1, 5)), "hdr_display",
                         "viewmodel_weapon_reset", "gyro_found", "gyro_calibrate", "clear_caches",
+                        "layout_controller", "layout_export", "layout_files", "layout_bindings",
                         "remap_player", "remap_group", *(f"pad_{n}" for n in range(1, REMAP_ROWS + 1))}
 # the rows whose labels menu_functions.c writes (a master server's host): the
 # label's text its own, not its list's; their values the narrower column at
@@ -901,8 +980,8 @@ PAGES = {
             # (display.gamma's page, and display.hdr's rows on the renderers
             # that draw it: menu_files.c's "hdr")
             ("BRIGHTNESS ›", None, _page_screen(*BRIGHTNESS_PAGE),
-             "How bright the picture is: its gamma, and on an HDR display, HDR's look, how bright white and the "
-             "HUD are, and the display's peak.", None, "brightness_settings"),
+             "How bright the picture is: its gamma, soft particles, and on an HDR display, HDR's look, how bright "
+             "white and the HUD are, and the display's peak.", None, "brightness_settings"),
             ("ADVANCED GRAPHICS ›", None, _page_screen(*ADVANCED),
              "Render resolution, anti-aliasing, texture filtering, model detail, shadows, the lighting and the "
              "shields' glow, smooth motion and the tick rate.", None),
@@ -925,34 +1004,59 @@ PAGES = {
             ("REVERB", "audio.reverb", ON_OFF,
              "Echoes sounds as the place you are in would, and muffles those behind walls, as the Xbox did. It "
              "costs a little of the processor.", None),
+            # (the subtitles' rows on its page: this one had no room)
+            ("SUBTITLES & MORE ›", None, _page_screen(*ADVANCED_AUDIO),
+             "Subtitles for the campaign's dialogue, the resampler, and how wide stereo sounds from mods and "
+             "custom maps are heard.", None),
+            ("SOUND", "audio.enabled", ON_OFF,
+             "Turns all sound off or on, at once.", None),
+            # (voice chat: this machine's own, port/linux/game/network_voice.c;
+            # its page has the hit sounds' rows too, leaving the volumes room)
+            ("MULTIPLAYER ›", None, _page_screen(*VOICE_CHAT),
+             "Voice chat in network games (your microphone and the other players' voices' volume) and hit "
+             "sounds.", None, "voice_chat_settings"),
+            (SECTION, "VOLUME"),
+            ("MASTER VOLUME", "audio.volume", MASTER_VOLUMES,
+             "The volume of everything the game plays. 100% is the Xbox's level; up to 200% is louder.", None),
+            ("MUSIC VOLUME", "audio.music_volume", VOLUMES, "The music's volume.", None),
+            ("DIALOGUE VOLUME", "audio.dialogue_volume", VOLUMES,
+             "The characters' speech: Cortana, the Marines and the cutscenes' lines.", None),
+            ("EFFECTS VOLUME", "audio.effects_volume", VOLUMES,
+             "Every other sound: weapons, vehicles and the world.", None),
+            # (port/linux/src/dsound_sdl.c's sound_target)
+            ("BACKGROUND VOLUME", "audio.background_volume", VOLUMES,
+             "The volume while the game's window is in the background or minimized. 0% mutes it; 100% keeps it "
+             "as it is.", "desktop"),
+            # (port/linux/src/dsound_sdl.c's night_compress)
+            ("LISTENING MODE", "audio.listening_mode", [("DEFAULT", "default"), ("NIGHT", "night")],
+             "Default plays the sound as it is. Night evens it out for playing quietly: speech and quiet sounds "
+             "come up, explosions and gunfire come down.", None),
+        ],
+    },
+    ADVANCED_AUDIO[0]: {
+        "screen": ADVANCED_AUDIO[1], "title": "SUBTITLES & ADVANCED AUDIO",
+        "rows": [
+            # (port/linux/game/subtitles.c: MCC's lines, read from the player's
+            # own install; dimmed without it: SETTINGS_ROW_ENABLED)
+            (SECTION, "SUBTITLES"),
+            ("SUBTITLES", "display.subtitles", ON_OFF,
+             "Shows the campaign's dialogue at the bottom of the screen as it plays, with its speaker.|Read from "
+             "your own Halo: The Master Chief Collection installed with Steam: without it, this is off.", None),
+            ("SUBTITLE LANGUAGE", "display.subtitles_language", SUBTITLE_LANGUAGES,
+             "The subtitles' language. Game's follows the game's language. A line the game's font cannot draw "
+             "is shown in English.", None),
+            (SECTION, "ADVANCED AUDIO"),
+            # (port/linux/src/dsound_sdl.c's stereo spread)
+            ("STEREO SPREAD", "audio.stereo_spread", STEREO_SPREADS,
+             "How wide stereo sounds from mods and custom maps are heard: left and right from either side, "
+             "narrowing with distance. 0 makes each one point. The game's own sounds play as on the Xbox.", None),
             ("RESAMPLER", "audio.resampler", [("XBOX", "xbox"), ("CLEAN", "sinc"), ("CLASSIC", "linear")],
              "How sounds are converted to your speakers' rate. Xbox sounds as the Xbox did; Clean is clearer; "
              "Classic is brighter but harsher. Xbox and Classic cost a little less.", None),
-            ("SOUND", "audio.enabled", ON_OFF,
-             "Turns all sound off or on, at once.", None),
-            (SECTION, "VOLUME"),
-            ("MASTER VOLUME", "audio.volume", MASTER_VOLUMES,
-             "The volume of everything the game plays. 10 is the Xbox's level; up to 20 is louder.", None),
-            ("MUSIC VOLUME", "audio.music_volume", VOLUMES, "The music's volume.", None),
-            ("EFFECTS VOLUME", "audio.effects_volume", VOLUMES,
-             "Every other sound: weapons, vehicles, the world and the characters' speech.", None),
-            (SECTION, "MULTIPLAYER"),
-            # (voice chat: this machine's own, port/linux/game/network_voice.c)
-            ("VOICE CHAT ›", None, _page_screen(*VOICE_CHAT),
-             "Talking to the other players in network games, your microphone and their voices' volume.", None,
-             "voice_chat_settings"),
-            # (port/linux/game/hit_sounds.c, and the host's rule for its
-            # games: network_standard.c's network_standard_hit_sounds_allowed)
-            ("HIT SOUNDS", "audio.hit_sounds", ON_OFF,
-             "A short beep each time you damage another player, as the host dealt it. A host may forbid them in "
-             "its games.|The beep is a placeholder for now.", None),
-            ("ALLOW HIT SOUNDS", "network.allow_hit_sounds", YES_NO,
-             "In the games you host, whether the players may hear their hit sounds. A Legacy game's players "
-             "cannot be told.", None),
         ],
     },
     VOICE_CHAT[0]: {
-        "screen": VOICE_CHAT[1], "title": "VOICE CHAT",
+        "screen": VOICE_CHAT[1], "title": "MULTIPLAYER AUDIO",
         "rows": [
             # voice chat: this machine's own (port/linux/game/network_voice.c)
             (SECTION, "VOICE CHAT"),
@@ -963,6 +1067,15 @@ PAGES = {
             ("INPUT DEVICE", "audio.input_device", [("SYSTEM DEFAULT", "default")],
              "The microphone voice chat listens to.", "desktop"),
             ("VOICE VOLUME", "audio.voice_volume", VOLUMES, "How loud the other players' voices are.", None),
+            # (port/linux/game/hit_sounds.c, and the host's rule for its
+            # games: network_standard.c's network_standard_hit_sounds_allowed)
+            (SECTION, "HIT SOUNDS"),
+            ("HIT SOUNDS", "audio.hit_sounds", ON_OFF,
+             "A short beep each time you damage another player, as the host dealt it. A host may forbid them in "
+             "its games.|The beep is a placeholder for now.", None),
+            ("ALLOW HIT SOUNDS", "network.allow_hit_sounds", YES_NO,
+             "In the games you host, whether the players may hear their hit sounds. A Legacy game's players "
+             "cannot be told.", None),
         ],
     },
     # (CONTROLS: the mouse's rows, in Mouse Setup's place)
@@ -1053,16 +1166,9 @@ PAGES = {
             # other players send, so Online's; its files keep their names)
             ("STREAMER MODE ›", None, _page_screen(*STREAMER),
              "Hides offensive words in names and text from other players, maps and mods, as stars.", None),
-            # (players.c's unit_should_autopick_weapon: a network game's
-            # host's, network_standard.c's network_standard_walk_over_pickup)
-            ("WEAPON PICKUP", "game.auto_pickup", [("HOLD (XBOX)", "false"), ("WALK OVER (CE)", "true")],
-             "Multiplayer, with a weapon slot empty: Hold picks up a weapon as you hold the action button, as on "
-             "the Xbox; Walk Over as you walk over it, as in Custom Edition. Online: the host's choice.", None),
-            # (port/linux/game/vehicle_hijack.c: a network game's host's,
-            # network_standard.c's network_standard_vehicle_hijack)
-            ("VEHICLE HIJACKING", "game.vehicle_hijack", ON_OFF,
-             "Hold the action button beside an enemy's Ghost, Warthog or landed Banshee to throw the rider out "
-             "and take it. Online: the host's choice.", None),
+            ("GAMEPLAY ›", None, _page_screen(*GAMEPLAY),
+             "Multiplayer's rules: how weapons are picked up, and vehicle hijacking. Online: the host's choice.",
+             None),
             # (port/linux/game/map_share.c: this machine's part in another's
             # game)
             (SECTION, "MAP SHARING"),
@@ -1094,12 +1200,17 @@ PAGES = {
              "The buttons the HUD draws. Classic: plain Xbox buttons. Gems: shaded Xbox buttons. Dark Gems: the "
              "menus' button artwork.", None),
             # (port/linux/game/spartan_link.c: co-op and team games; HIGH-RES
-            # TEXT moved to Video's GRAPHICS to make room)
-            ("SPARTAN LINK", "display.spartan_link",
-             [("SMALL", "small"), ("MEDIUM", "medium"), ("LARGE", "large"), ("OFF", "off")],
-             "Your living teammates' views in the HUD's top line, with their names, shields and distances, in "
-             "co-op and team games: the SPARTAN LINK key (or D-pad Down) shows and hides them. Off: the key does "
-             "nothing.", None),
+            # TEXT moved to Video's GRAPHICS to make room; its rows a page of
+            # their own once it had two)
+            ("SPARTAN LINK ›", None, _page_screen(*SPARTAN_LINK),
+             "Your teammates' views beside the motion tracker in co-op and team games: on or off (B or D-pad Down "
+             "in a game), and their size.", None),
+            # (the streamers' and runners' tools: a state file, the input
+            # display, the match timer, the practice keys; MATCH TIMER moved
+            # there to make room for the row)
+            ("STREAMING & SPEEDRUN ›", None, _page_screen(*STREAMING),
+             "A state file for stream overlays, an on-screen input display, the match timer, and practice keys "
+             "for speedrunners.", None),
             (SECTION, "MULTIPLAYER"),
             ("PLAYER NAMES", "display.player_names",
              [("ALL", "all"), ("ALLIES", "allies"), ("ENEMIES", "enemies"), ("NONE", "none")],
@@ -1115,8 +1226,6 @@ PAGES = {
             ("WHILE DEAD", "game.spectate_on_death", [("TEAMMATE'S VIEW", "teammates"), ("DEATH CAMERA", "off")],
              "While you wait to respawn in co-op or a team game: watch a living teammate through their eyes "
              "(A or Jump for the next), or the game's death camera.", None),
-            ("MATCH TIMER", "display.match_timer", ON_OFF,
-             "Draws a clock at the bottom right in multiplayer, counting up from the start of the game.", None),
             # (the text chat's: port/linux/game/network_chat.c)
             (SECTION, "CHAT"),
             ("TEXT CHAT", "display.text_chat", [("SHOW", "true"), ("HIDE", "false")],
@@ -1146,6 +1255,10 @@ PAGES = {
             ("MANAGE PROFILES ›", None, PROFILE_MANAGER,
              "Switch to another player profile, make a new one or delete one. Your changes so far are kept.", None,
              "profiles", "port settings profiles"),
+            # (input.keyboard_layout: the on-screen keyboard's letters, keyboard_core.c's layouts)
+            ("ON-SCREEN KEYBOARD", "input.keyboard_layout", KEYBOARD_LAYOUTS,
+             "The letters of the on-screen keyboard that names and chat are typed with. Auto follows your system's "
+             "language.|Where a text can't take a letter with a mark (the chat), it types the plain letter.", None),
             # (game.map_cache_megabytes: 0 keeps every stock map unpacked, 730
             # the Xbox's room, the least it takes; another number shows the
             # nearer: port/linux/src/map_cache.c, port/linux/game/map_cache_prefill.c)
@@ -1184,11 +1297,27 @@ PAGES = {
             ("MODS FOLDER", None, None,
              "Each mod is a folder in the mods folder, beside the maps folder, with its mod.toml and its tags. "
              "Mods are turned on and off from the main menu's Settings, not in a game.", None, "mods_folder"),
+            # (its screen, screens/game_data.xml: each source, its state, ADD
+            # and OPEN FOLDER, the copies run in the game; the main menu's,
+            # hidden in a game: SETTINGS_ROW_WHEN)
+            (SECTION, "GAME MAPS"),
+            ("GAME DATA ›", None, GAME_DATA,
+             "Where your maps come from: your Xbox disc image, which the game needs, Custom Edition's installer "
+             "(halocesetup_en_1.00.exe) and MCC's packages. Add maps, repair them or open their folders, with no "
+             "restart.", "computer", "game_data"),
             # (Online's MAP SHARING has no room for it: MCC_PACKAGES)
             (SECTION, "MASTER CHIEF COLLECTION"),
             ("MCC PACKAGES ›", None, _page_screen(*MCC_PACKAGES),
              "The Master Chief Collection's maps: finding them, their campaign missions and collections, and "
              "the copies downloaded from hosts.", None),
+            # (NVIDIA DLSS's add-on, once it is installed (port/linux/src/
+            # dlss_addon.c, downloaded from Frame Rate & Sync's Upscaler): its
+            # screen, screens/dlss_addon.xml, which removes it:
+            # SETTINGS_ROW_WHEN)
+            (SECTION, "ADD-ONS"),
+            ("NVIDIA DLSS ADD-ON ›", None, DLSS_ADDON,
+             "NVIDIA DLSS, installed from its own download under NVIDIA's license, in your own folder. Open it to "
+             "see whether it runs, or to remove it.", "desktop", "dlss_addon"),
         ],
     },
     # ---- the pages the rows open
@@ -1202,9 +1331,9 @@ PAGES = {
             # with any anti-aliasing, drawn at their resolution:
             # d3d8_device.c's screen_mode_choose; not iOS's)
             ("RENDER RESOLUTION", "display.render_resolution", RENDER_RESOLUTIONS,
-             "Full draws the game at your screen's resolution. Above 100% draws it larger and scales it down: "
-             "finer and smoother, for over twice the graphics card's work at 150%, four times at 200%. Xbox draws "
-             "640x480, scaled up: softer, and very light.",
+             "Full draws at your screen's resolution. Below 100% draws fewer pixels, scaled up sharply: a "
+             "steadier frame rate. Above 100% draws more, scaled down: smoother, for over twice the work at 150%. "
+             "Xbox draws 640x480.",
              "computer"),
             ("ANTI-ALIASING", "display.anti_aliasing",
              [("OFF", "off"), ("FXAA", "fxaa"), ("SMAA", "smaa"), ("MSAA 2X", "msaa2x"), ("MSAA 4X", "msaa4x"),
@@ -1221,7 +1350,7 @@ PAGES = {
             ("MODEL DETAIL", "display.model_detail",
              [("AUTO", "auto"), ("XBOX", "stock"), ("FULL", "native"), ("HIGHEST", "highest")],
              "How detailed characters and vehicles stay in the distance. Xbox simplifies them as on a TV; Full keeps "
-             "their detail for your screen; Highest always draws the most. Auto is Full in VR.", None),
+             "their detail for your screen; Highest always draws the most. Auto is Full.", None),
             ("SMOOTH MOTION", "display.interpolation", ON_OFF,
              "Draws movement smoothly between the game's 30 updates a second, so that it looks fluid at any frame "
              "rate. Off shows each update as it is.", None),
@@ -1275,6 +1404,21 @@ PAGES = {
              "parts; lower darkens them. 1.0 shows the game as it is drawn. With HDR on an HDR display, Paper "
              "White sets the brightness instead.|Click the number (or press A) to type any from 0.5 to 2.0.",
              None),
+            # (display.output_depth, #1152: a computer's, not the VR build's,
+            # dimmed while the frame is drawn in HDR: SETTINGS_ROW_WHEN,
+            # SETTINGS_ROW_ENABLED)
+            ("COLOR DEPTH", "display.output_depth", [("AUTO", "auto"), ("8-BIT", "8"), ("10-BIT", "10")],
+             "10-Bit draws finer shades, so fog and skies show no bands: a 10-bit display shows them all, others "
+             "a fine grain. 8-Bit draws as before, lighter on the graphics card. Auto picks for you: 10-Bit, or "
+             "8-Bit with battery saver.|HDR has its own depth: this applies with HDR off.",
+             "computer"),
+            # (display.soft_particles: shown where the renderer draws it,
+            # not in the headset, whose eyes draw them soft already:
+            # SETTINGS_ROW_WHEN; Advanced
+            # Graphics and Video have no room)
+            ("SOFT PARTICLES", "display.soft_particles", ON_OFF,
+             "Smoke, dust, steam and weather fade softly where they meet walls and floors, at a small cost. Off "
+             "draws them as the Xbox did: a hard line where they cut in.", "desktop"),
             (SECTION, "HDR"),
             ("HDR", "display.hdr", [("AUTO", "auto"), ("ON", "on"), ("OFF", "off")],
              "Brighter highlights on an HDR display. Auto turns it on while the display shows HDR; a display "
@@ -1288,6 +1432,19 @@ PAGES = {
             ("UI BRIGHTNESS", "display.hdr_ui_nits", UI_WHITES,
              "With HDR, how bright the HUD and the menus are, in nits, apart from the picture. Paper White keeps "
              "them where paper white is. The HUD's glows stay as far above it.", "hdr"),
+            ("SDR CURVE", "display.hdr_sdr_curve", [("AUTO", "auto"), ("SRGB", "srgb"), ("2.2", "2.2")],
+             "With HDR, how dark the darkest shadows are: the curve an SDR display shows them by. 2.2 is most PC "
+             "monitors' and TVs', darker; sRGB is a Mac's. Auto picks sRGB on a Mac, 2.2 elsewhere.", "hdr"),
+            ("PEAK BRIGHTNESS", "display.hdr_peak_nits", PEAKS,
+             "With HDR, the brightest your display shows, in nits, for a display that reports a wrong peak. "
+             "System uses the one it reports. Only the highlights change.", "hdr"),
+            ("HIGHLIGHT COLORS", "display.hdr_gamut", [("SRGB", "srgb"), ("EXPANDED", "expanded")],
+             "With HDR, Expanded lets the brightest colors, like plasma and needler shards, grow more vivid than "
+             "sRGB, keeping their hue. sRGB keeps the picture as it is.", "hdr"),
+            ("HIGHLIGHT BOOST", "display.hdr_highlight_boost",
+             [("OFF", "0"), ("LOW", "1"), ("MEDIUM", "2"), ("HIGH", "3"), ("MAX", "4")],
+             "With HDR, brighter lights of the game's own: the sun's flares, glows, glowing particles, vehicle "
+             "lights and panels. Off keeps the picture as it is. The HUD and menus stay as they are.", "hdr"),
             (SECTION, "DISPLAY"),
             # (the display's peak and SDR white as the system reports them:
             # menu_functions.c's hdr_display_show)
@@ -1327,12 +1484,109 @@ PAGES = {
             ("LOW LATENCY", "display.low_latency", [("AUTO", "auto"), ("ON", "on"), ("OFF", "off")],
              "With VSync on, starts each frame just in time for the refresh it is shown at, so a press reaches the "
              "screen sooner. Off starts each frame as soon as the one before is waiting. Auto is on.", None),
+            # (the performance overlay and the developers' timings: their own
+            # page, PERFORMANCE_TOOLS, with the benchmark)
+            ("PERFORMANCE TOOLS ›", None, _page_screen(*PERFORMANCE_TOOLS),
+             "The performance overlay, the benchmark, and timings and logs of where each frame's time goes, for "
+             "finding what slows the game down.", None),
+            # (display.temporal_aa: shown where the renderer has a technique,
+            # Vulkan's AMD FSR, and NVIDIA DLSS where its module and an NVIDIA
+            # GPU are, and Metal's MetalFX (a row of its own each in the same
+            # place: SETTINGS_ROW_WHEN). Advanced Graphics, beside Render
+            # Resolution, has no room)
+            (SECTION, "UPSCALING"),
+            ("UPSCALER", "display.temporal_aa", [("OFF", "off"), ("AMD FSR", "fsr")],
+             "AMD FSR builds each frame from the frames before it: smooth edges, and a sharp picture at a Render "
+             "Resolution below 100% for more frames. While it is on, it replaces Anti-Aliasing.", "desktop android"),
+            ("UPSCALER", "display.temporal_aa", [("OFF", "off"), ("AMD FSR", "fsr"), ("NVIDIA DLSS", "dlss")],
+             "AMD FSR and NVIDIA DLSS build each frame from the frames before it: smooth edges, and a sharp picture "
+             "at a Render Resolution below 100% for more frames (DLSS at 100% is DLAA). While one is on, it replaces "
+             "Anti-Aliasing.", "desktop", "temporal_aa_dlss"),
+            ("UPSCALER", "display.temporal_aa", [("OFF", "off"), ("APPLE METALFX", "metalfx")],
+             "Apple MetalFX builds each frame from the frames before it: smooth edges, and a sharp picture at a "
+             "Render Resolution below 100% for more frames. While it is on, it replaces Anti-Aliasing.", "desktop",
+             "temporal_aa_metalfx"),
+            # (on an NVIDIA GPU with Vulkan while NVIDIA DLSS's add-on is not
+            # installed (port/linux/src/dlss_addon.c): its choice opens
+            # screens/dlss_addon.xml, NVIDIA's license and the download, as
+            # it is selected (menu_functions.c's dlss_addon_segment); its own
+            # row in the same place: SETTINGS_ROW_WHEN)
+            ("UPSCALER", "display.temporal_aa",
+             [("OFF", "off"), ("AMD FSR", "fsr"), ("GET DLSS", "dlss")],
+             "AMD FSR builds each frame from the frames before it: smooth edges, and a sharp picture at a Render "
+             "Resolution below 100%. Get DLSS is NVIDIA DLSS, NVIDIA's own download (about 30 MB): select it to "
+             "read its license and install it, for the next start.", "desktop", "temporal_aa_dlss_get"),
+            # (display.temporal_aa_sharpness: FSR's RCAS, after FSR's and
+            # MetalFX's upscale; where either is, as the Upscaler rows:
+            # SETTINGS_ROW_WHEN; DLSS sharpens its own)
+            ("SHARPNESS", "display.temporal_aa_sharpness", UPSCALER_SHARPNESS,
+             "How much AMD FSR or Apple MetalFX sharpens its picture, which offsets the softness of a Render "
+             "Resolution below 100%. Higher is crisper; too high outlines edges. Off adds no sharpening.",
+             "desktop android"),
+            # (display.dynamic_resolution: d3d8_device.c's
+            # dynamic_resolution_update, port/linux/src/dynamic_resolution.h)
+            ("DYNAMIC RESOLUTION", "display.dynamic_resolution", ON_OFF,
+             "Lowers the Render Resolution for a moment when the graphics card cannot keep up with the display, "
+             "down to 50%, instead of dropping frames, and raises it again as it can. Best with an Upscaler.",
+             "desktop"),
+            (SECTION, "RAY TRACING"),
+            # (display.shadows: where the graphics card has ray queries alone,
+            # SETTINGS_ROW_WHEN; Advanced Graphics and Brightness
+            # have no room: the processor's shadows' work taken off it)
+            ("RAY TRACED SHADOWS", "display.shadows", [("OFF", "classic"), ("ON", "ray_traced")],
+             "The shadows of characters and vehicles traced by the graphics card from their own shapes, soft at "
+             "the edges, in the same place and darkness as the game's, which frees the processor's shadow work. Off "
+             "draws them as the Xbox did.",
+             "desktop android"),
+        ],
+    },
+    PERFORMANCE_TOOLS[0]: {
+        "screen": PERFORMANCE_TOOLS[1], "title": "PERFORMANCE TOOLS",
+        "rows": [
             # (main.c's main_framerate_render, as the console's
-            # display_framerate draws it: Video's page has no room, and
-            # Interface's none since WHILE DEAD)
-            ("SHOW FRAME RATE", "display.show_frame_rate", ON_OFF,
-             "Draws the frame rate at the bottom right of the screen, to see how the game runs: the frames drawn "
-             "each second, averaged over half a second. Green is 30 or more, red under 30.", None),
+            # display_framerate draws it, and port/linux/game/perf_overlay.c)
+            ("PERFORMANCE OVERLAY", "display.perf_overlay",
+             [("OFF", "off"), ("SIMPLE", "simple"), ("DETAILED", "detailed")],
+             "Shows how the game runs, at the bottom right. Simple is the frame rate: green is 30 or more, red "
+             "under 30. Detailed adds the frame time, the 1% low, and the milliseconds spent on the GPU, the render "
+             "thread, the game and waiting for the display.",
+             None),
+            # (debug.timings: profile.c's sections, perf_overlay.c's lines,
+            # the Vulkan passes' owners)
+            ("DEVELOPER TIMINGS", "debug.timings", ON_OFF,
+             "Times the game's own work (AI, objects, effects, scripts...) and, with Vulkan, each graphics "
+             "setting's passes on the GPU, shown in the Detailed overlay with counts of objects and effects. Off "
+             "times nothing.", None),
+            # (debug.demo_perf_log: report.c's log beside each demo, told by
+            # demo.c's listener)
+            ("DEMO FRAME TIMES", "debug.demo_perf_log", ON_OFF,
+             "Saves a log of each frame's times beside every demo recorded, lined up with the demo's ticks, so a "
+             "hitch seen in play can be found in the demo. The demo itself is unchanged.", None),
+            # (port/linux/game/benchmark.c: from the main menu only, its match
+            # taking the place of the game: SETTINGS_ROW_WHEN; its results
+            # the new menus' screens/benchmark.xml. Its own section here, as
+            # Frame Rate & Sync has no room for its map, bots and player)
+            (SECTION, "BENCHMARK"),
+            ("BENCHMARK PACING", "display.benchmark_pacing", [("UNCAPPED", "uncapped"), ("YOUR SETTINGS", "settings")],
+             "What the benchmark measures. Uncapped turns VSync, Variable Refresh and the frame cap off for the run: "
+             "what your computer can draw. Your Settings keeps them: what you see as you play.", None),
+            # (display.benchmark_map: port/linux/game/menu_tags.c adds the
+            # stock multiplayer maps in the maps folder after Blood Gulch,
+            # benchmark.c's benchmark_map_choices; the bots at most the map's
+            # most, benchmark.c's benchmark_maps)
+            ("BENCHMARK MAP", "display.benchmark_map", [("BLOOD GULCH", "bloodgulch")],
+             "The map the benchmark plays, of the multiplayer maps you have. Compare results only from the same map, "
+             "bots and player: the results name all three.", None),
+            ("BENCHMARK BOTS", "display.benchmark_bots", BENCHMARK_BOTS,
+             "How many bots fight in the benchmark's match. A map takes only as many as suit it: 40 on the big "
+             "maps, 16 on Hang 'Em High, 8 on Longest. The results say how many played.", None),
+            ("BENCHMARK PLAYER", "display.benchmark_player", [("BOT", "bot"), ("SCRIPTED", "scripted")],
+             "Who plays the view measured. Bot plays as the other bots do, the same match every run. Scripted is "
+             "the walker of earlier results, to compare with them; it differs a little from run to run.", None),
+            ("RUN BENCHMARK", None, None,
+             "Plays a fixed minute of the Benchmark Map with its bots, then shows the average frame rate, the 1% low, "
+             "the frame times, the GPU and CPU time and your settings, and saves them in the benchmarks "
+             "folder.|From the main menu only.", None, "benchmark", "port settings benchmark"),
         ],
     },
     FIRST_PERSON[0]: {
@@ -1469,16 +1723,18 @@ PAGES = {
             (SECTION, "LOOK"),
             ("LOOK SENSITIVITY", "profile.look_sensitivity", [(str(step), str(step)) for step in range(1, 11)],
              "How fast the right stick turns the view.", None),
+            ("VERTICAL SENSITIVITY", "input.look_vertical_sensitivity", VERTICAL_SENSITIVITIES,
+             "How fast the right stick looks up and down, times LOOK SENSITIVITY's. 1X is the game's own, half as "
+             "fast as it turns side to side.", None),
             ("INVERT LOOK", "profile.invert_look", YES_NO, "Pushing the right stick up looks down.", None),
-            ("INVERT TURNING", "input.invert_look_horizontal", YES_NO,
-             "Pushing the right stick right turns the view left. For every controller on this device.", None),
             ("GYRO & FLICK STICK ›", None, _page_screen(*GYRO),
              "Aim by turning a controller that has a gyroscope; the right stick's aim style (Classic or "
-             "Modern), and the right stick as a flick stick.", None),
+             "Modern) and turning direction, the right stick as a flick stick, and a DualSense's trigger "
+             "resistance.", None),
             ("INVERT FLIGHT", "profile.flight_inversion", YES_NO,
              "Flying vehicles pitch as aircraft do: pushing up flies down.", None),
             ("AUTO-CENTER LOOK", "profile.autocenter", YES_NO, "Levels the view while you walk.", None),
-            (SECTION, "LAYOUT"),
+            (SECTION, "LAYOUT & FEEDBACK"),
             ("BUTTON LAYOUT", "profile.button_preset",
              [("DEFAULT", "0"), ("SWAP TRIGGERS", "1"), ("SWAP A, L TRIGGER", "2"), ("SWAP B, L TRIGGER", "3"),
               ("SWAP B, R STICK", "4"), ("BUMPER JUMPER", "5"),
@@ -1491,11 +1747,14 @@ PAGES = {
             ("BUTTON REMAPPING ›", None, _page_screen(*BUTTON_REMAPPING),
              "Put any action on any button, each player their own layout, the D-pad and Back too: chat, push to "
              "talk, the scoreboard, a screenshot.", None),
-            ("STICK DEAD ZONES ›", None, _page_screen(*DEAD_ZONES),
-             "How far each stick moves before it does anything: more for a worn stick that drifts, less for "
-             "finer aim.", None),
-            (SECTION, "FEEDBACK"),
+            ("STICK SETTINGS ›", None, _page_screen(*DEAD_ZONES),
+             "Each stick's dead zones, the look stick's shape and zoomed speed, and Modern aim's acceleration: "
+             "for a worn stick, or finer aim.", None),
+            # (one section with the layout's: the page has no room for
+            # another section's title)
             ("VIBRATION", "profile.vibration", ON_OFF, "Rumbles the controller.", None),
+            ("RUMBLE STRENGTH", "input.rumble_strength", RUMBLE_STRENGTHS,
+             "How strongly the controller rumbles. 100% is the game's own; Vibration Off turns it off.", None),
             ("IN-GAME HELP", "profile.ingame_help", ON_OFF, "Shows the game's hints about its controls.", None),
             (SECTION, "PROFILE"),
             CREATE_PROFILE,
@@ -1522,6 +1781,9 @@ PAGES = {
             ("CONTROLLER BUTTONS ›", None, _page_screen(*CONTROLLER_BUTTONS),
              "The HUD's buttons drawn as your controller has them, Xbox, PlayStation or Switch, and the style "
              "of each.", None),
+            ("CONTROLLER LAYOUTS ›", None, _page_screen(*CONTROLLER_LAYOUTS),
+             "Name your controller's paddles and extra buttons and give each a symbol, which the prompts then "
+             "draw in place of words like P3.", None),
         ],
     },
     KEY_BINDINGS[0]: {
@@ -1555,7 +1817,7 @@ PAGES = {
             # first row and the flick stick's: menu_functions.c's
             # gyro_rows_show, which writes the first's value and
             # Calibrate's; Gyro Button's only while Gyro Aiming holds)
-            (SECTION, "GYRO AIMING"),
+            (SECTION, "GYRO AIMING & TRIGGERS"),
             ("GYRO", None, None,
              "Whether a controller with a gyroscope is connected: a DualSense, a DualShock 4, a Switch Pro "
              "Controller or Joy-Cons, a Steam Deck.|With Steam Input, turn it off for GOAT H1.", None, "gyro_found"),
@@ -1572,38 +1834,60 @@ PAGES = {
             ("SENSITIVITY", "input.gyro_sensitivity", GYRO_SENSITIVITY,
              "How far the view turns for each degree you turn the controller: 1 as far, 2 twice as far. Press A, "
              "or click the number, to type a value.|Zoomed in: as Zoom Aim Speed sets.", None),
+            # (the touch controls' gyroscope, the device's own, in the
+            # controller's rows' place while no controller with a gyroscope
+            # is connected: SETTINGS_SAME_PLACE, SETTINGS_ROW_WHEN)
+            ("SENSITIVITY", "input.touch_gyro_sensitivity", GYRO_SENSITIVITY,
+             "How far the view turns for each degree you turn this device, with the touch controls' Gyroscope "
+             "aiming on: 1 as far, 2 twice as far. Press A, or tap the number, to type a value.|A controller's "
+             "gyro has its own, shown while one is connected.", "touch"),
             ("VERTICAL SENSITIVITY", "input.gyro_vertical_sensitivity", VERTICAL_SENSITIVITIES,
              "How far the view turns up and down, of how far it turns side to side. 1X turns it as far.", None),
+            ("VERTICAL SENSITIVITY", "input.touch_gyro_vertical_sensitivity", VERTICAL_SENSITIVITIES,
+             "How far the view turns up and down as you tilt this device, of how far it turns side to side. 1X "
+             "turns it as far.", "touch"),
             ("TURN AXIS", "input.gyro_space", [("PLAYER SPACE", "player"), ("LOCAL SPACE", "local")],
              "Player Space turns you as you turn the controller about the up direction, however you hold it: "
              "flat, upright or between. Local Space turns you about the controller's own axis, as if held flat.",
              None),
-            ("SMOOTHING", "input.gyro_smoothing", ON_OFF,
-             "Steadies the smallest motions, your hand's tremor, but never a real turn. Off: every motion as it "
-             "comes.", None),
+            ("SMOOTHING", "input.gyro_smoothing", GYRO_SMOOTHING,
+             "Steadies the smallest motions, your hand's tremor, but never a real turn. Higher steadies faster "
+             "motions, over a little longer. Off: every motion as it comes.", None),
+            ("SMOOTHING", "input.touch_gyro_smoothing", GYRO_SMOOTHING,
+             "Steadies this device's smallest motions, your hand's tremor, but never a real turn. Higher steadies "
+             "faster motions, over a little longer. Off: every motion as it comes.", "touch"),
             ("CALIBRATE", None, None,
              "Put the controller down on something still, then select this: it measures the gyroscope at rest "
              "for a second and a half.|It also does so whenever it is held still.", None,
              "gyro_calibrate", "port settings gyro calibrate"),
+            # (a DualSense's own, beside its gyro: the Controller page has no
+            # room for another row, nor this page for another section)
+            ("TRIGGER RESISTANCE", "input.trigger_resistance", ON_OFF,
+             "A DualSense's fire trigger pushes back while you play: whichever trigger fires in your layout. Never "
+             "in menus, on pause or while dead.", None),
             (SECTION, "RIGHT STICK"),
+            # (the Controller page has no room for it: its VERTICAL
+            # SENSITIVITY took its place)
+            ("INVERT TURNING", "input.invert_look_horizontal", YES_NO,
+             "Pushing the right stick right turns the view left. For every controller on this device.", None),
             ("AIM STYLE", "input.aim_style", [("CLASSIC", "classic"), ("MODERN", "modern")],
              "Classic aims as the original: a diagonal turns faster, and can speed up the turn as a full push "
              "does. Modern aims as MCC's: the same speed whichever way you push, and only a push straight to the "
              "side speeds up the turn.|The mouse and touch controls are not changed.", None),
-            ("ACCELERATION ANGLE", "input.modern_aim_acceleration_angle", MODERN_AIM_ANGLES,
-             "Modern aim: how far from straight to the side, in degrees, a full push still speeds up the turn. "
-             "Lower keeps more diagonals from speeding it up.", None),
-            ("ACCELERATION START", "input.modern_aim_acceleration_threshold", MODERN_AIM_THRESHOLDS,
-             "Modern aim: how far you push the stick before the turn speeds up. Default is the game's own, as "
-             "Classic's.", None),
             ("FLICK STICK", "input.flick_stick", ON_OFF,
              "Point the right stick and you turn at once to face that way: right, a quarter turn; down, about "
              "face. Turn it round its rim and you turn with it. Aim up and down with the gyro.|With the default "
              "stick layout.", None),
+            # (dimmed while the flick stick is off: SETTINGS_ROW_ENABLED)
+            ("FLICK TIME", "input.flick_stick_time",
+             [("INSTANT", "0"), ("0.05 S", "0.05"), ("0.1 S", "0.1"), ("0.15 S", "0.15"), ("0.2 S", "0.2"),
+              ("0.25 S", "0.25")],
+             "How long a flick takes to turn you: shorter is snappier, longer smoother. You turn as far either "
+             "way.", None),
         ],
     },
     DEAD_ZONES[0]: {
-        "screen": DEAD_ZONES[1], "title": "STICK DEAD ZONES",
+        "screen": DEAD_ZONES[1], "title": "ADVANCED STICK SETTINGS",
         "rows": [
             (SECTION, "DEAD ZONES"),
             ("LEFT STICK", "input.left_stick_dead_zone", STICK_DEAD_ZONES,
@@ -1612,6 +1896,42 @@ PAGES = {
             ("RIGHT STICK", "input.right_stick_dead_zone", STICK_DEAD_ZONES,
              "How far the right stick moves before the view turns. Raise it for a stick that drifts; lower it for "
              "finer aim. Default is the game's own, 27%.", None),
+            ("STICK TEST ›", None, STICK_TEST,
+             "See what each stick reads, and what the game takes from it with the dead zones and shape set here: "
+             "find a stick's drift, then set its dead zone just past it.", None),
+            (SECTION, "OUTER DEAD ZONES"),
+            ("LEFT STICK", "input.left_stick_outer_dead_zone", STICK_OUTER_DEAD_ZONES,
+             "How much of the left stick's travel at its edge counts as a full push. Raise it for a worn stick "
+             "that stops short of its edge and never reaches full speed. None is the game's own.", None),
+            ("RIGHT STICK", "input.right_stick_outer_dead_zone", STICK_OUTER_DEAD_ZONES,
+             "How much of the right stick's travel at its edge counts as a full push, so a worn stick still turns "
+             "at full speed and speeds up the turn. None is the game's own.", None),
+            (SECTION, "LOOK STICK"),
+            ("SHAPE", "input.look_dead_zone_shape", [("AUTO", "auto"), ("AXIAL", "axial"), ("ROUND", "round")],
+             "The shape of the look stick's dead zone. Axial: each direction its own, a square in the middle, as "
+             "Classic aim. Round: the same whichever way you push, as Modern aim. Auto follows your Aim Style.",
+             None),
+            ("ZOOM SENSITIVITY", "input.stick_zoom_sensitivity", VERTICAL_SENSITIVITIES,
+             "How fast the right stick turns the view while zoomed in, as with a sniper rifle's scope. 1X is the "
+             "game's own.", None),
+            # (the look acceleration, either aim style's: how much and how
+            # fast (player_control.c's player_control_look_acceleration);
+            # then Modern aim's tuning of when, with the sticks' other tuning:
+            # the aim style itself is on Gyro & Flick Stick. One section with
+            # the look stick's, for the rows to fit above the footer)
+            ("ACCELERATION", "input.look_acceleration_strength", LOOK_ACCELERATION_STRENGTHS,
+             "How much the turn speeds up while you hold the right stick at its edge, times the map's own: 1X "
+             "is the game's own, Off never speeds it up, 2X twice the extra speed.|Both aim styles. The mouse "
+             "and gyro are not changed.", None),
+            ("ACCELERATION TIME", "input.look_acceleration_time", LOOK_ACCELERATION_TIMES,
+             "How long the turn takes to reach its full speed while you hold the right stick at its edge, times "
+             "the map's own (1 second on every stock map): 0.5X is twice as quick.", None),
+            ("ACCELERATION ANGLE", "input.modern_aim_acceleration_angle", MODERN_AIM_ANGLES,
+             "Modern aim: how far from straight to the side, in degrees, a full push still speeds up the turn. "
+             "Lower keeps more diagonals from speeding it up.", None),
+            ("ACCELERATION START", "input.modern_aim_acceleration_threshold", MODERN_AIM_THRESHOLDS,
+             "Modern aim: how far you push the stick before the turn speeds up. Default is the game's own, as "
+             "Classic's.", None),
         ],
     },
     SCREEN_LAYOUT[0]: {
@@ -1635,6 +1955,64 @@ PAGES = {
             ("PORTRAIT FRAME", "display.frame_style", [("PLAIN", "plain"), ("HALO", "halo"), ("XBOX", "xbox")],
              "The look of the screen around the picture when you play in portrait: plain black, Halo's blue lines "
              "and rings, or Xbox green. It is never drawn over the picture.", "android"),
+        ],
+    },
+    GAMEPLAY[0]: {
+        "screen": GAMEPLAY[1], "title": "GAMEPLAY",
+        "rows": [
+            (SECTION, "MULTIPLAYER"),
+            # (players.c's unit_should_autopick_weapon: a network game's
+            # host's, network_standard.c's network_standard_walk_over_pickup)
+            ("WEAPON PICKUP", "game.auto_pickup", [("HOLD (XBOX)", "false"), ("WALK OVER (CE)", "true")],
+             "Multiplayer, with a weapon slot empty: Hold picks up a weapon as you hold the action button, as on "
+             "the Xbox; Walk Over as you walk over it, as in Custom Edition. Online: the host's choice.", None),
+            # (port/linux/game/vehicle_hijack.c: a network game's host's,
+            # network_standard.c's network_standard_vehicle_hijack)
+            ("VEHICLE HIJACKING", "game.vehicle_hijack", ON_OFF,
+             "Hold the action button beside an enemy's Ghost, Warthog or landed Banshee to throw the rider out "
+             "and take it. Online: the host's choice.", None),
+            # (port/linux/game/spartan_link.c: a team game's host's,
+            # network_standard.c's network_standard_spartan_link_allowed)
+            ("SPARTAN LINK", "game.spartan_link", ON_OFF,
+             "Team games you host: players may show their teammates' views beside the motion tracker. Co-op "
+             "always has it. Online: the host's choice.", None),
+        ],
+    },
+    SPARTAN_LINK[0]: {
+        "screen": SPARTAN_LINK[1], "title": "SPARTAN LINK",
+        "rows": [
+            (SECTION, "SPARTAN LINK"),
+            # (each player's own, remembered from game to game; the key turns
+            # it over in a game and writes it)
+            ("SPARTAN LINK", "display.spartan_link_shown", ON_OFF,
+             "Your living teammates' views beside the motion tracker, with their names, shields and distances, in "
+             "co-op and team games. In a game the SPARTAN LINK key (B) or D-pad Down turns it on and off, and it "
+             "stays as you left it.", None),
+            ("FEED SIZE", "display.spartan_link",
+             [("SMALL", "small"), ("MEDIUM", "medium"), ("LARGE", "large"), ("OFF", "off")],
+             "How large the teammates' views are. Off turns the Spartan link off altogether: its key and D-pad "
+             "Down do nothing.", None),
+        ],
+    },
+    STREAMING[0]: {
+        "screen": STREAMING[1], "title": "STREAMING & SPEEDRUN",
+        "rows": [
+            (SECTION, "STREAMING"),
+            ("STATE FILE", "display.state_file", ON_OFF,
+             "Writes the game's state (map, mode, score, kills, deaths, loading, cutscene, pause) to "
+             "game_state.json in the game's folder, for stream overlays and scene switchers.", None),
+            ("INPUT DISPLAY", "display.input_display", ON_OFF,
+             "Draws each player's sticks, trigger and buttons (or keys and mouse) at the bottom right, in demos "
+             "too. Hide HUD hides it.", None),
+            (SECTION, "SPEEDRUN"),
+            # (source/interface/hud.c: the mission's timer in the campaign and co-op)
+            ("MATCH TIMER", "display.match_timer", ON_OFF,
+             "Draws a clock at the bottom right: in multiplayer the game's, counting up from its start; in the "
+             "campaign and co-op the mission's, which stops while the game is paused.", None),
+            ("PRACTICE KEYS", "game.practice_keys", ON_OFF,
+             "Keys that save and load a state and restart the level (game.practice_save_key, _load_key and "
+             "_restart_key in config.toml). They, a cheat or game_speed show PRACTICE until a fresh start.",
+             None),
         ],
     },
     STREAMER[0]: {
@@ -1699,6 +2077,33 @@ PAGES = {
              "A Switch controller's buttons.", None),
             ("BUMPERS", "display.hud_bumper_style", [("ORIGINAL XBOX", "original"), ("MODERN XBOX", "modern")],
              "The Xbox's bumpers as the original controller's black and white buttons, or as LB and RB.", None),
+        ],
+    },
+    CONTROLLER_LAYOUTS[0]: {
+        "screen": CONTROLLER_LAYOUTS[1], "title": "CONTROLLER LAYOUTS",
+        "rows": [
+            # (its value menu_functions.c's layout_rows_show, each frame)
+            (SECTION, "THIS CONTROLLER"),
+            ("CONTROLLER", None, None,
+             "The controller of the player whose settings these are, and how many of its paddles and extra "
+             "buttons its layout describes. Each controller keeps its own layout.", None, "layout_controller"),
+            ("EDIT BUTTONS ›", None, CONTROLLER_LAYOUT,
+             "Name each paddle and extra button, and pick its symbol: a legend of up to 3 characters, a shape "
+             "and a color. Button Remapping's prompts draw it.", None),
+            # (#1144: EXPORT's, FILES' and ITS BINDINGS' values layout_rows_show's)
+            (SECTION, "SHARE"),
+            ("INCLUDE MY BINDINGS", "input.controller_layout_bindings", YES_NO,
+             "Export adds your Button Remapping buttons to the file. Whoever imports it still keeps theirs unless "
+             "they choose yours.", None),
+            ("EXPORT", None, None,
+             "Saves this controller's layout as a file in the data folder's controller_layouts/shared, to give "
+             "to another player.", None, "layout_export", "port settings layout export"),
+            ("FILES", None, None,
+             "To import a layout, copy its file into the data folder's controller_layouts: it is read when Edit "
+             "Buttons opens. A file with a mistake is refused whole.", None, "layout_files"),
+            ("ITS BINDINGS ›", None, LAYOUT_BINDINGS,
+             "This controller's layout came with its owner's Button Remapping buttons. Yours stay unless you "
+             "choose to use them.", None, "layout_bindings"),
         ],
     },
     MCC_PACKAGES[0]: {
@@ -1824,13 +2229,15 @@ SEARCH_BUTTON_HELP = ["Saves your changes, on every tab, and applies them.",
 SETTINGS_SEARCH_WORDS = {
     "fov": ["video_settings:fov", "vehicle_fov", "scale_scoped_fov", "viewmodel_fov"],
     "sens": ["mouse_sensitivity", "mouse_vertical_sensitivity", "zoom_sensitivity", "look_sensitivity",
-             "gyro_sensitivity", "gyro_vertical_sensitivity"],
+             "look_vertical_sensitivity", "stick_zoom_sensitivity", "gyro_sensitivity",
+             "gyro_vertical_sensitivity", "touch_gyro_sensitivity", "touch_gyro_vertical_sensitivity"],
     "dpi": ["mouse_sensitivity"],
-    "fps": ["max_fps", "show_frame_rate", "frame_rate_sync"],
-    "framerate": ["frame_rate_sync", "max_fps", "show_frame_rate"],
+    "fps": ["max_fps", "perf_overlay", "frame_rate_sync"],
+    "framerate": ["frame_rate_sync", "max_fps", "perf_overlay"],
+    "frametime": ["perf_overlay"], "gpu": ["perf_overlay"], "stats": ["perf_overlay"],
     "gsync": ["vrr", "vrr_cap_margin"], "freesync": ["vrr", "vrr_cap_margin"], "vrr": ["vrr"],
     "aa": ["anti_aliasing", "anti_aliasing_android"],
-    "shadows": ["shadow_resolution"],
+    "shadows": ["shadow_resolution", "shadows"],
     "ao": ["ambient_occlusion"], "ssao": ["ambient_occlusion"],
     "anisotropic": ["anisotropic_filtering"], "af": ["anisotropic_filtering"],
     "lod": ["model_detail"],
@@ -1839,10 +2246,15 @@ SETTINGS_SEARCH_WORDS = {
     "crosshair": ["lowered_reticle", "lowered_reticle_amount"],
     "viewmodel": ["viewmodel_visible", "viewmodel_fov", "weapon_position"],
     "gun": ["viewmodel_visible", "viewmodel_fov", "weapon_position"],
-    "aim": ["aim_style", "modern_aim_acceleration_angle", "modern_aim_acceleration_threshold"],
-    "acceleration": ["aim_style", "modern_aim_acceleration_angle", "modern_aim_acceleration_threshold"],
-    "deadzone": ["stick_dead_zones", "left_stick_dead_zone", "right_stick_dead_zone"],
-    "rumble": ["vibration"],
+    "aim": ["aim_style", "modern_aim_acceleration_angle", "modern_aim_acceleration_threshold",
+            "look_dead_zone_shape"],
+    "acceleration": ["look_acceleration_strength", "look_acceleration_time", "aim_style",
+                     "modern_aim_acceleration_angle", "modern_aim_acceleration_threshold"],
+    "deadzone": ["stick_settings", "left_stick_dead_zone", "right_stick_dead_zone", "left_stick_outer_dead_zone",
+                 "right_stick_outer_dead_zone", "look_dead_zone_shape", "stick_test"],
+    "drift": ["stick_test", "left_stick_dead_zone", "right_stick_dead_zone"],
+    "rumble": ["vibration", "rumble_strength"], "haptics": ["rumble_strength", "trigger_resistance"],
+    "dualsense": ["trigger_resistance"], "adaptive": ["trigger_resistance"],
     "keybinds": ["key_bindings"], "keys": ["key_bindings"],
     "mic": ["input_device", "voice_chat"], "microphone": ["input_device", "voice_chat"],
     "upnp": ["allow_upnp"],
@@ -1851,6 +2263,8 @@ SETTINGS_SEARCH_WORDS = {
     "colour": ["color", "shield_color", "overshield_layer_color"],
     "gamertag": ["name"], "nickname": ["name"],
     "cache": ["map_cache_megabytes", "clear_caches"], "disk": ["map_cache_megabytes"],
+    "iso": ["game_data"], "ce": ["game_data"], "installer": ["game_data"], "extract": ["game_data"],
+    "repair": ["game_data"],
     "bug": ["report"], "crash": ["report"],
     "intro": ["movies"],
     "lag": ["low_latency"],
@@ -2331,7 +2745,9 @@ def _settings_platform(rows: list, start: int):
 # the rows in the place of the row before them, each platform having one of
 # them at most, or the model's conditions showing one (SETTINGS_ROW_WHEN):
 # Window Size in Resolution's, Android's anti-aliasing in the desktop's
-SETTINGS_SAME_PLACE = {"window_size", "anti_aliasing_android"}
+SETTINGS_SAME_PLACE = {"window_size", "anti_aliasing_android", "temporal_aa_dlss", "temporal_aa_metalfx", "temporal_aa_dlss_get",
+"touch_gyro_sensitivity",
+                       "touch_gyro_vertical_sensitivity", "touch_gyro_smoothing"}
 # the rows hidden while VR Setup's row is shown (the game in the headset),
 # which takes their room: Mouse's Menu Cursor; and Brightness's Gamma, which
 # the VR build hides always (their conditions: SETTINGS_ROW_WHEN)
@@ -2357,29 +2773,67 @@ SETTINGS_ROW_WHEN = {
     # (the headset's menus have no desktop pointer; the VR build never curves
     # its frames, nor draws through the Panini projection)
     "menu_cursor": "!vr", "gamma": "!vr_build", "panini": "!vr_build", "panini_vertical": "!vr_build",
+    # (the VR build draws its eyes in 8 bits)
+    "output_depth": "!vr_build",
+    # (display.soft_particles: where the renderer draws it, Vulkan's;
+    # settings_condition_term's soft_effects)
+    "soft_particles": "soft_effects+!vr",
+    # (display.temporal_aa: where the renderer upscales, Vulkan's AMD FSR;
+    # with NVIDIA DLSS too where the renderer has it, its own row:
+    # settings_condition_term's temporal_upscale and temporal_dlss; Metal's
+    # MetalFX, temporal_metalfx; not in the headset)
+    "temporal_aa": "temporal_upscale+!temporal_dlss+!dlss_addon_offer+!vr", "temporal_aa_dlss": "temporal_dlss+!vr",
+    "temporal_aa_metalfx": "temporal_metalfx+!vr",
+    # (the DLSS add-on's download offered in the Upscaler row, and the add-on
+    # on Mods' page once it is installed: settings_condition_term's
+    # dlss_addon_offer and dlss_addon_installed)
+    "temporal_aa_dlss_get": "temporal_upscale+dlss_addon_offer+!temporal_dlss+!vr",
+    "dlss_addon": "dlss_addon_installed+!vr",
+    "temporal_aa_sharpness": "temporal_upscale+!vr temporal_metalfx+!vr",
+    # (the renderer has ray queries: settings_condition_term's ray_queries)
+    "shadows": "ray_queries",
     # (the Mac's display paces its frames already)
     "low_latency": "!vrr_system",
     # (in a game: not those that would drop it or are the main menu's, nor
     # those whose screens are ui.map's or make a profile)
     "online": "!in_game", "allow_upnp": "!in_game", "join_from_clipboard": "!in_game", "auto": "!in_game",
-    "mods": "!in_game",
+    "mods": "!in_game", "game_data": "!in_game", "benchmark": "!in_game", "benchmark_pacing": "!in_game",
+    "benchmark_map": "!in_game", "benchmark_bots": "!in_game", "benchmark_player": "!in_game",
     "name": "profile+!in_game", "color": "profile+!in_game", "profiles": "profile+!in_game",
     "create_profile": "!profile+!in_game",
     **{key: "gyro" for key in ("gyro_aim", "gyro_sensitivity", "gyro_vertical_sensitivity", "gyro_space",
                                "gyro_smoothing", "gyro_calibrate")},
     "gyro_button": "gyro+gyro_aim=hold gyro+gyro_aim=pause",
+    # (the touch controls' gyroscope's, in the controller's rows' place)
+    **{key: "!gyro" for key in ("touch_gyro_sensitivity", "touch_gyro_vertical_sensitivity", "touch_gyro_smoothing")},
     **{f"viewmodel_weapon_{name}": "weapon_held" for name in ("x", "y", "z", "pitch", "yaw", "roll", "reset")},
     # (Discord's UNLINK an account linked, or waiting for its code)
     "link_unlink": "discord_linked",
+    # (Controller Layouts' ITS BINDINGS: the controller's layout came with them, #1144)
+    "layout_bindings": "layout_bindings",
 }
 SETTINGS_ROW_ENABLED = {
+    # (the flick's time while the flick stick is on)
+    "flick_stick_time": "flick_stick=true",
     # (macOS's Metal and ProMotion set it: SET BY MACOS; its frame cap only
     # while it is on)
     "vrr": "!vrr_system",
     "vrr_cap_margin": "vrr=on+!vrr_system vrr=auto+vrr_found+!vrr_system",
-    # (Modern aim's tunables only while it aims: input.aim_style)
-    "modern_aim_acceleration_angle": "aim_style=modern",
-    "modern_aim_acceleration_threshold": "aim_style=modern",
+    # (Modern aim's tunables only while it aims: input.aim_style, on the
+    # Gyro & Flick Stick page: menu_functions.c's aim_modern)
+    "modern_aim_acceleration_angle": "aim_modern",
+    "modern_aim_acceleration_threshold": "aim_modern",
+    # (display.output_depth: the SDR frame's; dimmed while the frame is drawn
+    # in HDR, whose half floats are its own: settings_condition_term's
+    # hdr_drawn)
+    "output_depth": "!hdr_drawn",
+    # (display.temporal_aa's AMD FSR, NVIDIA DLSS or MetalFX antialiases in its place,
+    # its row on Frame Rate & Sync: d3d8_device.c's anti_aliasing_read,
+    # settings_condition_term's temporal_on)
+    "anti_aliasing": "!temporal_on", "anti_aliasing_android": "!temporal_on",
+    # (the subtitles: MCC's install found, its pack's; the language while
+    # they are on: subtitles.c's subtitles_available)
+    "subtitles": "mcc_subtitles", "subtitles_language": "mcc_subtitles+subtitles=true",
 }
 
 
@@ -9085,7 +9539,7 @@ def _model_slider(choices) -> list:
         return []
     return [("least", f"{choices.least:g}"), ("most", f"{choices.most:g}"), ("step", f"{choices.step:g}"),
             ("typed_least", f"{choices.typed_least:g}"), ("typed_most", f"{choices.typed_most:g}"),
-            ("whole", "true" if choices.whole else None)]
+            ("whole", "true" if choices.whole else None), ("curve", choices.curve or None)]
 
 
 def _model_page(folder: str, page: dict) -> list:

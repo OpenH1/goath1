@@ -18,9 +18,11 @@ that clients need to see is sent from this file:
 - Events, which happen once: script sounds (dialogue, music, ambience),
   chapter titles, help and objective text, "Checkpoint" messages, screen
   shake, nav points, and custom animations on units and scenery. Each is
-  sent in three ticks' messages in case one is lost, and numbered so a
-  client applies each exactly once, in order. The engine calls the
-  network_coop_note_ functions (network_coop.h) to queue them.
+  sent once over each client's reliable, ordered stream, and numbered so a
+  client applies each exactly once, in order; one that only happens at a
+  moment (dialogue, a title) is not applied once it comes too late
+  (event_late_ticks). The engine calls the network_coop_note_ functions
+  (network_coop.h) to queue them.
 - Devices (doors, elevators, switches, lights). A device moves toward its
   device group's value (devices.c). On a client nothing sets those values
   but this file: doors a player walks up to and switches a player uses are
@@ -172,8 +174,15 @@ enum
 	FIELD_OF_VIEW_SCALE = 10000,
 
 	MAXIMUM_QUEUED_EVENTS = 128,
-	/* each event is sent in this many ticks' messages */
-	EVENT_SENDS = 3,
+	/* How late (by the host's ticks: the newest a client has heard from it,
+	less the event's own) a one-shot event may still be applied
+	(event_late_ticks). Events go over each client's reliable, ordered
+	stream, so none is lost, but a loss burst delays them: what happens only
+	at a moment is dropped once it has passed, so a line of dialogue never
+	plays over the next scene. */
+	EVENT_LATE_SOUND_TICKS = 2 * TICKS_PER_SECOND,
+	EVENT_LATE_TEXT_TICKS = 3 * TICKS_PER_SECOND,
+	EVENT_LATE_EFFECT_TICKS = TICKS_PER_SECOND,
 
 	/* the size of devices.c's device group array (devices_initialize's;
 	every index into the arrays below is checked against this too) */
@@ -194,8 +203,12 @@ enum
 	/* the host forgets a client's skip vote it hasn't heard again for this long */
 	SKIP_VOTE_HELD_TICKS = TICKS_PER_SECOND,
 	/* After a skip the cutscene stays skippable until the script reaches
-	cinematic_skip_stop; votes still in flight must not skip it again. */
+	cinematic_skip_stop; votes still in flight must not skip it again. A
+	refused skip waits as long before it can be voted again. */
 	SKIP_COOLDOWN_TICKS = 2 * TICKS_PER_SECOND,
+	/* a vote passed that main.c has not answered within this long counts
+	as refused (main.c answers in the frame the tick ran in) */
+	SKIP_ANSWER_TICKS = TICKS_PER_SECOND,
 
 	/* a Pelican's Warthog drop: one Warthog for every this many players,
 	at most this many in all */
@@ -500,11 +513,10 @@ static struct
 	long played_time;
 } coop_presentation;
 
-/* host: events still to be sent; client: the last one applied */
+/* host: this tick's events, sent as it ends; client: the last one applied */
 static struct
 {
 	struct distributed_coop_event events[MAXIMUM_QUEUED_EVENTS];
-	short sends[MAXIMUM_QUEUED_EVENTS];
 	short count;
 	word next_number;
 	word applied_number;
@@ -586,6 +598,26 @@ static struct
 /* client: the object names that differed from the host's last time */
 static byte client_names_differing[OBJECT_NAME_BYTES];
 
+/* The host's cutscene skip vote (skip_vote.state). Every state leads on:
+	idle       no skippable cutscene with its save written (or none to
+	           revert to), or the cooldown after an answer still running
+	voting     offered: the votes counted each tick
+	requested  passed: main_skip_cinematic called once; main.c answers in
+	           its frame (network_coop_skip_answered), skipped or refused,
+	           or after SKIP_ANSWER_TICKS it counts as refused
+	answered   skipped or refused: the votes cleared, no vote until
+	           cooldown_until, then voting again while the cutscene is
+	           skippable, else idle
+Any state but requested goes to idle at once when the cutscene stops being
+skippable. */
+enum
+{
+	_skip_vote_idle,
+	_skip_vote_voting,
+	_skip_vote_requested,
+	_skip_vote_answered,
+};
+
 /* The cutscene skip vote. The host records when it last heard from each
 client that is showing the cutscene, and when that client last voted. A
 client keeps the host's latest tally for display. */
@@ -597,10 +629,11 @@ static struct
 	short voters;
 	long client_heard_times[HALO_PORT_MAXIMUM_NETWORK_MACHINES];
 	long client_vote_times[HALO_PORT_MAXIMUM_NETWORK_MACHINES];
-	/* host: no voting before this game time (set after a skip) */
+	/* host: no voting before this game time (set by an answer) */
 	long cooldown_until;
-	/* host: the vote passed and main_skip_cinematic was called once */
-	boolean requested;
+	/* host: the state above, and when it was requested */
+	short state;
+	long requested_time;
 	/* host: the save the script makes as the cutscene becomes skippable is
 	written (a skip reverts to it) */
 	boolean skip_save_written;
@@ -766,36 +799,31 @@ static struct distributed_coop_event *event_new(
 	event->tag_index = NONE;
 	event->definition_index = NONE;
 	event->name_index = NONE;
-	coop_events.sends[coop_events.count] = 0;
 	coop_events.count++;
 
 	return event;
 }
 
+/* host, as each tick ends: its events, once, over each loaded client's
+reliable, ordered stream (they must all arrive, in order, and after the
+objects they name, which come over the same stream). A machine still loading
+gets none: once loaded, the state they leave (objective, nav points,
+attachments, looping sounds) is sent again (host_resend). */
 static void host_send_events(
 	void)
 {
 	struct distributed_coop_events_message message;
-	short index;
+	short limit = MIN(MAXIMUM_QUEUED_EVENTS, RELIABLE_ENTRIES(struct distributed_coop_event));
+	short first, count;
 
-	if (!coop_events.count)
-		return;
-	csmemcpy(message.events, coop_events.events, coop_events.count * sizeof(message.events[0]));
-	send_to_clients(&message, _distributed_message_coop_events, coop_events.count, sizeof(message.events[0]));
-	/* drop the ones sent EVENT_SENDS times, keeping the rest in order */
-	for (index = 0; index < coop_events.count; )
+	for (first = 0; first < coop_events.count; first += count)
 	{
-		if (++coop_events.sends[index] < EVENT_SENDS)
-		{
-			index++;
-			continue;
-		}
-		coop_events.count--;
-		csmemmove(&coop_events.events[index], &coop_events.events[index + 1],
-			(coop_events.count - index) * sizeof(coop_events.events[0]));
-		csmemmove(&coop_events.sends[index], &coop_events.sends[index + 1],
-			(coop_events.count - index) * sizeof(coop_events.sends[0]));
+		count = MIN(limit, coop_events.count - first);
+		csmemcpy(message.events, &coop_events.events[first], count * sizeof(message.events[0]));
+		distributed_send(&message, _distributed_message_coop_events, count,
+			(word)(sizeof(message.header) + count * sizeof(message.events[0])), _distributed_to_clients_reliably);
 	}
+	coop_events.count = 0;
 }
 
 /* Fills in the group's value, flags and snap count. Returns FALSE if the
@@ -1414,6 +1442,32 @@ static void skip_vote_clear(
 	}
 }
 
+/* host: the vote over, skipped or refused (skip_vote's answered state) */
+static void skip_vote_answer(
+	boolean skipped)
+{
+	skip_vote_clear();
+	skip_vote.offered = FALSE;
+	skip_vote.voters = 0;
+	skip_vote.state = _skip_vote_answered;
+	skip_vote.cooldown_until = game_time_get() + SKIP_COOLDOWN_TICKS;
+	if (!skipped)
+		error(_error_silent, "co-op: the cutscene skip was refused; it can be voted again");
+}
+
+/* host: back to no vote, for a new game */
+static void skip_vote_reset(
+	void)
+{
+	skip_vote_clear();
+	skip_vote.offered = FALSE;
+	skip_vote.voters = 0;
+	skip_vote.cooldown_until = 0;
+	skip_vote.skip_save_written = FALSE;
+	skip_vote.state = _skip_vote_idle;
+	skip_vote.requested_time = 0;
+}
+
 /* host: counts the votes to skip the cinematic, and skips when more than
 half the machines showing it have voted (one still loading, or joined since
 it began, has no say until it shows it) */
@@ -1425,6 +1479,7 @@ static void host_count_skip_votes(
 	long now = game_time_get();
 	boolean skippable = cinematic_in_progress() && cinematic_can_be_skipped();
 	boolean was_offered = skip_vote.offered;
+	boolean can_skip;
 	short index;
 
 	/* Wait until the save the script makes when the cutscene becomes
@@ -1435,19 +1490,30 @@ static void host_count_skip_votes(
 		skip_vote.skip_save_written = FALSE;
 	else if (!main_saving_map())
 		skip_vote.skip_save_written = TRUE;
-	skip_vote.offered = skippable && skip_vote.skip_save_written && now >= skip_vote.cooldown_until;
+	/* (a skip reverts to the saved state: with none, no vote) */
+	can_skip = skippable && skip_vote.skip_save_written && game_state_port_saved_game_valid();
+	/* passed: main.c skips at the end of this frame and answers; a request
+	it never answered is a refusal */
+	if (skip_vote.state == _skip_vote_requested)
+	{
+		if (now >= skip_vote.requested_time && now - skip_vote.requested_time <= SKIP_ANSWER_TICKS)
+			return;
+		error(_error_silent, "co-op: the cutscene skip was never answered");
+		skip_vote_answer(FALSE);
+	}
+	if (!can_skip)
+		skip_vote.state = _skip_vote_idle;
+	else if (now >= skip_vote.cooldown_until)
+		skip_vote.state = _skip_vote_voting;
+	skip_vote.offered = skip_vote.state == _skip_vote_voting;
 	if (skip_vote.offered && !was_offered)
 		error(_error_silent, "co-op: the cutscene can be skipped");
 	if (!skip_vote.offered)
 	{
 		skip_vote_clear();
 		skip_vote.voters = 0;
-		skip_vote.requested = FALSE;
 		return;
 	}
-	/* already requested: main.c skips at the end of this frame */
-	if (skip_vote.requested)
-		return;
 	/* the host votes too, unless it is a dedicated server with no player */
 	skip_vote.voters = local_player_get_next(NONE) != NONE ? 1 : 0;
 	skip_vote.votes = skip_vote.voted ? 1 : 0;
@@ -1465,7 +1531,8 @@ static void host_count_skip_votes(
 	if (skip_vote.votes * 2 > skip_vote.voters)
 	{
 		error(_error_silent, "co-op: skipping the cutscene (%d of %d voted)", skip_vote.votes, skip_vote.voters);
-		skip_vote.requested = TRUE;
+		skip_vote.state = _skip_vote_requested;
+		skip_vote.requested_time = now;
 		main_skip_cinematic();
 	}
 }
@@ -2259,11 +2326,7 @@ void network_coop_new_game(
 	coop_sound_sync_reset();
 	host_hud_state.objective = NONE;
 	host_hud_state.nav_point_count = 0;
-	skip_vote_clear();
-	skip_vote.offered = FALSE;
-	skip_vote.voters = 0;
-	skip_vote.cooldown_until = 0;
-	skip_vote.skip_save_written = FALSE;
+	skip_vote_reset();
 	coop_enemies_new_game();
 	coop_pickups_new_game();
 	coop_vehicles_new_game();
@@ -3106,8 +3169,7 @@ void network_coop_note_unit_animation_frame(
 
 		if (event->kind == _coop_event_unit_animation && event->object_index == unit_index)
 		{
-			if (coop_events.sends[index] == 0)
-				event->frame = frame_index;
+			event->frame = frame_index;
 			return;
 		}
 	}
@@ -3455,14 +3517,15 @@ void network_coop_reverted(
 	event_new(_coop_event_reverted);
 }
 
-void network_coop_skip_done(
-	void)
+void network_coop_skip_answered(
+	boolean skipped)
 {
 	if (!coop_host())
 		return;
-	skip_vote_clear();
-	skip_vote.requested = FALSE;
-	skip_vote.cooldown_until = game_time_get() + SKIP_COOLDOWN_TICKS;
+	/* (a skip asked for without a vote, by a menu, still holds off the
+	votes in flight; its refusal leaves the vote as it was) */
+	if (skip_vote.state == _skip_vote_requested || skipped)
+		skip_vote_answer(skipped);
 }
 
 boolean network_coop_skip_vote_status(
@@ -3806,18 +3869,53 @@ void network_coop_handle_object_names(
 	}
 }
 
-/* client: applies each event once, in order */
+/* how late (the host's ticks) an event may still be applied, NONE for
+however late. What sets a state (an objective, a nav point, an animation,
+an attachment, a dropship's doors, broken glass, a looping sound, the shake's
+settings and its stop, a revert) always applies, in order, or the client
+would stay out of step; what only happens at a moment (a line of dialogue, a
+chapter title, help text, the checkpoint message, an effect, a shake
+starting) not once its moment has passed. */
+static long event_late_ticks(
+	struct distributed_coop_event const *event)
+{
+	switch (event->kind)
+	{
+	case _coop_event_sound:
+		return event->type == _coop_sound_impulse ? EVENT_LATE_SOUND_TICKS : NONE;
+	case _coop_event_title:
+		return EVENT_LATE_TEXT_TICKS;
+	case _coop_event_hud:
+		return event->type == _coop_hud_help_text || event->type == _coop_hud_checkpoint ?
+			EVENT_LATE_TEXT_TICKS : NONE;
+	case _coop_event_player_effect:
+		return event->type == _coop_player_effect_start ? EVENT_LATE_EFFECT_TICKS : NONE;
+	case _coop_event_effect:
+		return EVENT_LATE_EFFECT_TICKS;
+	default:
+		return NONE;
+	}
+}
+
+/* client: applies each event once, in order; host_time is the host's tick
+the message was sent in (an older host sends each event in three ticks'
+datagrams, which the numbers take once) */
 void network_coop_handle_events(
 	void const *entries,
-	short count)
+	short count,
+	long host_time)
 {
 	struct distributed_coop_event const *events = entries;
+	long latest = distributed_latest_host_time();
+	long age = latest != NONE && host_time >= 0 && latest > host_time ? latest - host_time : 0;
 	short index;
 
 	if (!coop_client())
 		return;
 	for (index = 0; index < count; index++)
 	{
+		long late_ticks;
+
 		/* already applied (the comparison handles the number wrapping) */
 		if (coop_events.applied_any && (short)(events[index].number - coop_events.applied_number) <= 0)
 			continue;
@@ -3827,6 +3925,13 @@ void network_coop_handle_events(
 		if (!distributed_real_valid(events[index].reals[0]) || !distributed_real_valid(events[index].reals[1]) ||
 			!distributed_real_valid(events[index].reals[2]))
 		{
+			continue;
+		}
+		late_ticks = event_late_ticks(&events[index]);
+		if (late_ticks != NONE && age > late_ticks)
+		{
+			error(_error_silent, "co-op: an event (kind %d) came %ld ticks late; its moment has passed",
+				events[index].kind, age);
 			continue;
 		}
 		client_apply_event(&events[index]);

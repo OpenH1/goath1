@@ -20,7 +20,8 @@ CASES = ["scorches", "apart", "touching", "inside", "later"]
 
 def generated(fault=None):
     source = read("source/rasterizer/xbox/rasterizer_xbox_decals.c")
-    code = constant_define(source, "DECAL_BATCH_OVERLAP_MARGIN") + "\n" + function(source, "rasterizer_decal_batch_overlaps")
+    code = (constant_define(source, "DECAL_BATCH_OVERLAP_MARGIN") + "\n" + function(source, "rasterizer_decal_bounds") +
+            "\n" + function(source, "rasterizer_decal_batch_overlaps"))
     if fault:
         code = mutated(code, *fault)
     return (("under_test.inc", code),)

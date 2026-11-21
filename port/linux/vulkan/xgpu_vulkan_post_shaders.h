@@ -32,14 +32,30 @@ enum xgpu_vulkan_post_program_id
 	/* (Vulkan's own: the frame turned for the swapchain, xgpu_vulkan_post_rotate) */
 	XGPU_VULKAN_POST_ROTATE,
 	/* display.hdr's (xgpu_hdr.c): the tone map in place, of a target of one
-	sample and of more, and the encoding for the display */
+	sample and of more, and the frame's last pass (the encoding for the
+	display, display.gamma's curve over an SDR frame, the dither) */
 	XGPU_VULKAN_POST_HDR_TONE_MAP,
 	XGPU_VULKAN_POST_HDR_TONE_MAP_MS,
 	XGPU_VULKAN_POST_HDR_ENCODE,
-	/* display.gamma's curve over an SDR frame (xgpu_vulkan_post_gamma) */
-	XGPU_VULKAN_POST_GAMMA,
 	/* display.panini's projection (xgpu_vulkan_post_panini) */
 	XGPU_VULKAN_POST_PANINI,
+	/* display.temporal_aa's motion: the window's resolved from its objects'
+	and the camera's, and debug.motion_vectors' view of it */
+	XGPU_VULKAN_POST_MOTION_RESOLVE,
+	XGPU_VULKAN_POST_MOTION_VIEW,
+	/* the loading screen's sharp frame (loading_art.h's "drawn by the
+	GPU"): the frame (the trail 0, the still layers 1, the table 2, the
+	words 3), its caption at the window's pixels (the trail 0, the frame 1,
+	the table 2, the caption's texels 3), and the picture resampled from its
+	own size (0) */
+	XGPU_VULKAN_POST_LOADING,
+	XGPU_VULKAN_POST_LOADING_CAPTION,
+	XGPU_VULKAN_POST_LOADING_PICTURE,
+	/* (the core's: a multisampled target's samples made the mean of their
+	light, each, before the hardware resolves them, xgpu_vulkan.c's
+	resolve_in_light; its input attachment as the tone map's, metrics' x
+	the samples) */
+	XGPU_VULKAN_POST_RESOLVE_LIGHT,
 	XGPU_VULKAN_POST_PROGRAM_COUNT
 };
 
@@ -65,6 +81,15 @@ struct xgpu_vulkan_post_uniforms
 	float window[4];
 	float panini[4];
 	float tangents[4];
+	/* display.hdr_gamut's (#1124): the encoding's expansion (1, 0 none)
+	and its target (xgpu_hdr_frame.gamut_target) */
+	float gamut[4];
+	/* display.temporal_aa's motion (tools/vulkan_post_shaders.py's
+	MOTION_RESOLVE_SOURCE): the rows of the reprojection from this frame's
+	clip positions to the frame before's, and the drawn pixels' offset (x,
+	y), the depth reversed, the window's frame before (z, w) */
+	float reproject[4][4];
+	float motion[4];
 };
 
 struct xgpu_vulkan_post_module

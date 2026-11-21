@@ -11,9 +11,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from harness import CHECK_FAILED, build, function, mutated, read, run
 
 SOURCE = "port/linux/game/network_clock.c"
-FUNCTIONS = ("network_clock_window_figure", "network_clock_plan_report", "network_clock_frame_part")
+FUNCTIONS = ("network_clock_window_figure", "network_clock_plan_report", "network_clock_frame_part",
+             "network_clock_quantized_early")
 CASES = ["figure", "start", "nearest", "lead-limit", "near", "far-ahead", "frame", "converge-20", "converge-31",
-         "converge-61", "converge-lan", "frames-server", "frames-60"]
+         "converge-61", "converge-lan", "frames-server", "frames-60", "quantized"]
 
 # a fault in the code under test and the case that must catch it
 NEGATIVE_CONTROLS = {
@@ -31,6 +32,9 @@ NEGATIVE_CONTROLS = {
     "no-jump": (("if (error > CLOCK_JUMP_MICROSECONDS)", "if (FALSE)"), "start"),
     # held to the target alone: back and forth across a host's frame, every report
     "no-hold": (("else if (early > CLOCK_EARLY_HIGH_MICROSECONDS)", "else if (TRUE)"), "near"),
+    # a client's frame not allowed for: moved back across its frames' phase, late every other report
+    "no-quantum": (("if (early_microseconds <= CLOCK_EARLY_HIGH_MICROSECONDS + quantum_microseconds)",
+                    "if (early_microseconds <= CLOCK_EARLY_HIGH_MICROSECONDS)"), "quantized"),
     # the slew not limited
     "no-slew": (("part = PIN(*seconds, -limit, limit);", "part = *seconds;"), "frame"),
 }

@@ -131,22 +131,38 @@ CONTROL_OPTIMISATION = "-O0"
 _controls = set()  # the generated includes found to be a control's
 
 
-def build(test, generated):
+def build(test, generated, sanitizer=None):
     """tests/<test>.c compiled with the generated includes ((name, text), ...) for the game's 32-bit ABI (or, where
-    it cannot run, the machine's own: NATIVE_64_BIT); without optimisation when it is a negative control's."""
+    it cannot run, the machine's own: NATIVE_64_BIT); without optimisation when it is a negative control's. With a
+    sanitizer ("thread": ThreadSanitizer, which has no 32-bit x86), for the machine's own 64-bit ABI, at -O1."""
     if generated not in _controls and any(faulty in text for _, text in generated for faulty in _faulty):
         _controls.add(generated)
+    if sanitizer:
+        return _compile(test, generated, "-O1", sanitizer)
     return _compile(test, generated, CONTROL_OPTIMISATION if generated in _controls else TEST_OPTIMISATION)
 
 
 @functools.lru_cache(maxsize=None)
-def _compile(test, generated, optimisation):
-    work = Path(_directory.name) / f"{test}-{optimisation[1:]}-{abs(hash(generated)):x}"
+def sanitizer_available(sanitizer):
+    """Whether the compiler here builds and runs a program with the sanitizer."""
+    work = Path(_directory.name) / f"sanitizer-{sanitizer}"
+    work.mkdir(parents=True, exist_ok=True)
+    (work / "probe.c").write_text("int main(void) { return 0; }\n")
+    probe = [os.environ.get("CC", "clang"), f"-fsanitize={sanitizer}", str(work / "probe.c"), "-o", str(work / "probe")]
+    if subprocess.run(probe, capture_output=True).returncode:
+        return False
+    return subprocess.run([str(work / "probe")], capture_output=True).returncode == 0
+
+
+@functools.lru_cache(maxsize=None)
+def _compile(test, generated, optimisation, sanitizer=None):
+    work = Path(_directory.name) / f"{test}-{optimisation[1:]}-{sanitizer or 'plain'}-{abs(hash(generated)):x}"
     work.mkdir(parents=True, exist_ok=True)
     for name, text in generated:
         (work / name).write_text(text)
     executable = work / (test + (".exe" if os.name == "nt" else ""))
-    command = [os.environ.get("CC", "clang"), *ABI_FLAGS, "-std=gnu99", optimisation, "-Wall", "-Werror",
+    abi = ["-ffp-contract=off", f"-fsanitize={sanitizer}", "-g"] if sanitizer else ABI_FLAGS
+    command = [os.environ.get("CC", "clang"), *abi, "-std=gnu99", optimisation, "-Wall", "-Werror",
                "-Wno-unused-function", "-Wno-unused-variable", "-I", str(HARNESS / "include"), "-I", str(work),
                str(HARNESS / "tests" / f"{test}.c"), "-o", str(executable)]
     # MSVC's runtime includes maths; there is no separate m.lib on Windows.

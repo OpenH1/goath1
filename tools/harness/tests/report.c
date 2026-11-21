@@ -24,13 +24,14 @@ test_report.py takes the code.
 #define REPORT_LONGEST 8
 #define REPORT_ZIP_FILES 8
 #define REPORT_GPU_UNKNOWN 0xFFFFFFFFu
-#define REPORT_PACED_PERCENT 20
+#define REPORT_PACED_FRAME_PERCENT 2
+#define REPORT_PACED_FRAMES_PERCENT 50
 #define REPORT_BUSY_PERCENT 95
 #define REPORT_GPU_FEWEST 30
 
 #include "under_test.inc"
 
-static uint32_t micros[2048], at_ms[2048];
+static uint32_t micros[2048], at_ms[2048], scratch[2048];
 static struct report_frame_work work[2048];
 
 /* 600 frames of 10 ms, each with the GPU's time, the renderer's thread's,
@@ -67,7 +68,7 @@ int main(int argc, char **argv)
 	char const *test = argc > 1 ? argv[1] : "";
 	static char text[4096];
 	/* (CHECK's condition is printed as a format: no percent signs in it) */
-	static char const low_10[] = "1% low: 10.0 fps\n", lowest_10[] = "0.1% low: 10.0 fps\n";
+	static char const low_100[] = "1% low: 100.0 fps\n", lowest_100[] = "0.1% low: 100.0 fps\n";
 	static char const low_60[] = "1% low: 60.0 fps";
 
 	if (!strcmp(test, "crc"))
@@ -92,13 +93,48 @@ int main(int argc, char **argv)
 		CHECK(strstr(text, "Frames: 1000 in the last 10.9 seconds\n"), "the frames and their time");
 		CHECK(strstr(text, "Average: 91.7 fps (10.90 ms a frame)\n"), "the average");
 		CHECK(strstr(text, "Median frame: 10.00 ms\n"), "the median");
-		CHECK(strstr(text, low_10), "the 1 percent low (the slowest 10 frames)");
-		CHECK(strstr(text, lowest_10), "the 0.1 percent low (the slowest frame)");
+		/* (the stalls, 100 ms, left out of the lows: they are counted below) */
+		CHECK(strstr(text, low_100), "the 1 percent low (the slowest 9 frames but the stalls)");
+		CHECK(strstr(text, lowest_100), "the 0.1 percent low (the slowest frame but the stalls)");
 		CHECK(strstr(text, "Frames of 50 ms or more: 10\n"), "the frames of 50 ms or more");
 		CHECK(strstr(text, "Frames of 100 ms or more: 10 (the stall: lines"), "the frames of 100 ms or more");
 		/* (the latest of the longest first, and how long before the report) */
 		CHECK(strstr(text, "Longest frames:\n  100.0 ms, 2.0 s ago\n  100.0 ms, 3.0 s ago\n"), "the longest");
 		CHECK(!strstr(text, "  10.0 ms,"), "a frame of the median's time listed as one of the longest");
+		return 0;
+	}
+	if (!strcmp(test, "stall"))
+	{
+		static uint32_t many[24000], many_at[24000];
+		static char const low_80[] = "1% low: 80.0 fps\n", low_20[] = "1% low: 20.0 fps\n",
+			low_all[] = "1% low: 1.0 fps\n";
+		unsigned long index;
+
+		/* (5 minutes at 80 fps, and one stall of a second, a load: the 1%
+		low is the frames', not the stall's 62 fps) */
+		for (index = 0; index < 24000; index++)
+		{
+			many[index] = 12500;
+			many_at[index] = (uint32_t)(index * 12);
+		}
+		many[12000] = 1000000;
+		report_frame_summary(many, many_at, 24000, 300000, text, sizeof(text));
+		printf("%s", text);
+		CHECK(strstr(text, low_80), "the 1 percent low without the stall");
+		CHECK(strstr(text, "Frames of 100 ms or more: 1 ("), "the stall counted on its own");
+		CHECK(strstr(text, "  1000.0 ms, "), "the stall listed");
+		/* (a hitch under a stall's time is no stall: 1% of the frames of 50
+		ms, counted in the low) */
+		many[12000] = 12500;
+		for (index = 0; index < 24000; index += 100)
+			many[index] = 50000;
+		report_frame_summary(many, many_at, 24000, 300000, text, sizeof(text));
+		CHECK(strstr(text, low_20), "the hitches in the 1 percent low");
+		/* (all of them stalls: those) */
+		for (index = 0; index < 24000; index++)
+			many[index] = 1000000;
+		report_frame_summary(many, many_at, 24000, 300000, text, sizeof(text));
+		CHECK(strstr(text, low_all), "stalls alone");
 		return 0;
 	}
 	if (!strcmp(test, "steady"))
@@ -124,6 +160,54 @@ int main(int argc, char **argv)
 		CHECK(!strcmp(text, "No frames yet.\n"), "no frames");
 		return 0;
 	}
+	if (!strcmp(test, "recent"))
+	{
+		struct perf_times times;
+		unsigned long index;
+
+		/* (a ring of 1024: 1500 frames of 10 ms kept, the oldest 476 written
+		over; the GPU 4 ms a frame, the last 50 frames 6 ms, every other one
+		of them not measured) */
+		for (index = 0; index < 1500; index++)
+		{
+			unsigned long slot = index & 1023;
+
+			micros[slot] = 10000;
+			at_ms[slot] = (uint32_t)(index * 10);
+			work[slot].gpu = index >= 1450 ? (index % 2 ? 6000 : REPORT_GPU_UNKNOWN) : 4000;
+			work[slot].render = 2000;
+			work[slot].waited = 3000;
+		}
+		/* (the last half second: 50 frames, the newest's end and 49 before) */
+		report_recent_frames(micros, at_ms, work, 1024, 1500, 0xFFFFFFFFu, 500, NULL, &times);
+		printf("%lu frames, %.3f ms, GPU %.3f ms\n", times.frames, times.frame_ms, times.gpu_ms);
+		CHECK(times.frames == 50, "the frames of the last half second");
+		CHECK(times.frame_ms > 9.999f && times.frame_ms < 10.001f, "the frame's time");
+		CHECK(times.gpu_ms > 5.999f && times.gpu_ms < 6.001f, "the GPU's, of the frames it was measured on");
+		CHECK(times.render_ms > 1.999f && times.render_ms < 2.001f, "the renderer's thread's");
+		CHECK(times.waited_ms > 2.999f && times.waited_ms < 3.001f, "the waits");
+		/* (the last 100 frames: 50 of 4 ms, 25 of 6) */
+		report_recent_frames(micros, at_ms, work, 1024, 1500, 100, 0xFFFFFFFFu, NULL, &times);
+		CHECK(times.frames == 100, "at most 100 frames");
+		CHECK(times.gpu_ms > 4.666f && times.gpu_ms < 4.667f, "the GPU's over 100 frames");
+		/* (no further back than the ring) */
+		report_recent_frames(micros, at_ms, work, 1024, 1500, 0xFFFFFFFFu, 0xFFFFFFFFu, NULL, &times);
+		CHECK(times.frames == 1024, "the ring's frames alone");
+		/* (the 1% low of the last 200 frames: two of 50 ms, the rest 10) */
+		micros[1499 & 1023] = micros[1400 & 1023] = 50000;
+		micros[1299 & 1023] = 100000;
+		report_recent_frames(micros, at_ms, work, 1024, 1500, 200, 0xFFFFFFFFu, scratch, &times);
+		printf("1%% low %.2f fps\n", times.low_fps);
+		CHECK(times.low_fps > 19.99f && times.low_fps < 20.01f, "the 1%% low: the slowest 2 of 200, not older");
+		/* (none measured) */
+		for (index = 0; index < 1024; index++)
+			work[index].gpu = REPORT_GPU_UNKNOWN;
+		report_recent_frames(micros, at_ms, work, 1024, 1500, 0xFFFFFFFFu, 500, NULL, &times);
+		CHECK(times.gpu_ms < 0.0f, "the GPU's not measured");
+		report_recent_frames(micros, at_ms, work, 1024, 0, 0xFFFFFFFFu, 500, scratch, &times);
+		CHECK(times.frames == 0 && times.frame_ms == 0.0f, "no frames");
+		return 0;
+	}
 	if (!strcmp(test, "gpu"))
 	{
 		unsigned long index;
@@ -134,7 +218,8 @@ int main(int argc, char **argv)
 		printf("%s", text);
 		CHECK(strstr(text, "GPU time: 9.60 ms a frame, 9.60 ms at the 99th percentile\n"), "the GPU's time");
 		CHECK(strstr(text, "Busy: the GPU 96%, the game 40%, the renderer's thread 30% of the time\n"), "the shares");
-		CHECK(strstr(text, "Waiting for vsync or the frame cap: 0% of the time\n"), "the pacing's share");
+		CHECK(strstr(text, "Waiting for vsync or the frame cap: 0% of the time, on 0% of the frames\n"),
+			"the pacing's share");
 		CHECK(strstr(text, "Verdict: GPU-bound\n"), "GPU-bound");
 		/* (the game busy, the GPU and the renderer not) */
 		gpu_frames(3000, 2000, 600, 0);
@@ -151,7 +236,8 @@ int main(int argc, char **argv)
 		gpu_frames(3000, 2000, 8500, 7000);
 		report_gpu_summary(micros, work, 600, text, sizeof(text));
 		printf("%s", text);
-		CHECK(strstr(text, "Waiting for vsync or the frame cap: 70% of the time\n"), "the pacing's share, paced");
+		CHECK(strstr(text, "Waiting for vsync or the frame cap: 70% of the time, on 100% of the frames\n"),
+			"the pacing's share, paced");
 		CHECK(strstr(text, "Verdict: limited by vsync or the frame cap\n"), "vsync or the cap");
 		/* (at the frame cap, the GPU busy for most but not all of the time) */
 		gpu_frames(8600, 4400, 8800, 4800);
@@ -161,13 +247,43 @@ int main(int argc, char **argv)
 		gpu_frames(9700, 3000, 6000, 3000);
 		report_gpu_summary(micros, work, 600, text, sizeof(text));
 		CHECK(strstr(text, "Verdict: GPU-bound\n"), "the cap, the GPU saturated");
-		/* (few waits for the cap, none busy most of the time: the busiest) */
-		gpu_frames(6500, 5000, 8000, 1000);
+		/* (a 135 fps cap on a 138 Hz display, vsync's FIFO: the game, the
+		renderer's thread and the GPU take their turns, none busy for half
+		the frame, and the game waits for the cap on each, 12% of the time:
+		the cap, not the busiest) */
+		gpu_frames(2300, 1040, 4370, 890);
+		for (index = 0; index < 600; index++)
+			micros[index] = 7410;
+		report_gpu_summary(micros, work, 600, text, sizeof(text));
+		printf("%s", text);
+		CHECK(strstr(text, "the game 41%"), "the game's share at the cap");
+		CHECK(strstr(text, "Waiting for vsync or the frame cap: 12% of the time, on 100% of the frames\n"),
+			"the cap's share");
+		CHECK(strstr(text, "Verdict: limited by vsync or the frame cap\n"), "the cap, none busy");
+		/* (the cap waited for on a few frames, a quarter, none busy most of
+		the time: the busiest) */
+		gpu_frames(6500, 5000, 8000, 0);
+		for (index = 0; index < 600; index += 4)
+			work[index].paced = 4000;
 		report_gpu_summary(micros, work, 600, text, sizeof(text));
 		CHECK(strstr(text, "Verdict: GPU-bound\n"), "the busiest, the GPU");
-		gpu_frames(5000, 6500, 8000, 1000);
+		gpu_frames(5000, 6500, 8000, 0);
+		for (index = 0; index < 600; index += 4)
+			work[index].paced = 4000;
 		report_gpu_summary(micros, work, 600, text, sizeof(text));
 		CHECK(strstr(text, "Verdict: CPU-bound (the renderer's thread)\n"), "the busiest, the renderer's thread");
+		/* (the game busy, a frame in four just under the cap's time:
+		CPU-bound, the game) */
+		gpu_frames(3000, 2000, 1000, 0);
+		for (index = 0; index < 600; index += 4)
+			work[index].paced = 500;
+		report_gpu_summary(micros, work, 600, text, sizeof(text));
+		CHECK(strstr(text, "Verdict: CPU-bound (the game)\n"), "the game busy, the cap seldom");
+		/* (a wait for the cap too short to have held a frame back: a part's
+		verdict) */
+		gpu_frames(9000, 2000, 7000, 100);
+		report_gpu_summary(micros, work, 600, text, sizeof(text));
+		CHECK(strstr(text, "Verdict: GPU-bound\n"), "the GPU busy, the cap's waits a trifle");
 		/* (the 99th percentile: 10 of the 600 frames of 20 ms) */
 		gpu_frames(3000, 2000, 8500, 7000);
 		for (index = 0; index < 600; index += 60)

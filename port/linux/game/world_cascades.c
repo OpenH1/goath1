@@ -4,8 +4,8 @@ WORLD_CASCADES.C
 display.ambient_occlusion "world"'s distance-field scene (world_cascades.h,
 docs/world-ao.md "The distance-field scene"): the cascades about the camera,
 their updates as the camera and the objects move, and the ray step through
-them. Pure arithmetic: the game hands it the camera, the structure's field
-(a sampler) and the objects' shapes (world_ao.c).
+them. Pure arithmetic: the game hands it the camera and the objects' shapes
+(world_ao.c); the ray step, the structure's field (a sampler).
 */
 
 #include "world_cascades.h"
@@ -210,10 +210,9 @@ static signed char *texel_at(struct world_cascades *cascades, int cascade, long 
 		WORLD_CASCADE_SPAN + (size_t)x) * WORLD_CASCADE_TEXEL;
 }
 
-/* a voxel's two channels written at its place, and at its guard's where
-its place is first along an axis (structure_too FALSE: the objects' alone) */
-static void texel_store(struct world_cascades *cascades, int cascade, long const place[3], int structure_too,
-	signed char structure, signed char objects)
+/* a voxel's objects' distance written at its place, and at its guard's
+where its place is first along an axis (the texel's first byte stays none) */
+static void texel_store(struct world_cascades *cascades, int cascade, long const place[3], signed char objects)
 {
 	int copy;
 
@@ -235,8 +234,6 @@ static void texel_store(struct world_cascades *cascades, int cascade, long const
 		if (!good)
 			continue;
 		texel = texel_at(cascades, cascade, at[0], at[1], at[2]);
-		if (structure_too)
-			texel[0] = structure;
 		texel[1] = objects;
 		/* (no guard to write: the first alone) */
 		if (!copy && place[0] && place[1] && place[2])
@@ -301,12 +298,10 @@ static void box_add(struct world_cascades *cascades, int cascade, long const fir
 }
 
 /* a region of a cascade's window (world indices first to last, each way,
-at most its side) found again: the structure's channel and/or the
-objects'. Each shape within range of it stamps its distance on the voxels
+at most its side) found again. Each shape within range of it stamps its distance on the voxels
 within range of it (a frame's work goes as the shapes' reach, not as the
 region's voxels times the shapes) */
-static void region_fill(struct world_cascades *cascades, int cascade, long const first[3], long const last[3],
-	int structure_too, world_cascades_structure structure, void *context)
+static void region_fill(struct world_cascades *cascades, int cascade, long const first[3], long const last[3])
 {
 	static float nearest[WORLD_CASCADE_SIDE * WORLD_CASCADE_SIDE * WORLD_CASCADE_SIDE];
 	struct world_cascade const *c = &cascades->cascades[cascade];
@@ -371,29 +366,16 @@ static void region_fill(struct world_cascades *cascades, int cascade, long const
 		{
 			float const *row = nearest + ((z - first[2]) * size[1] + (y - first[1])) * size[0] - first[0];
 			long place[3];
-			float point[3];
 
 			place[1] = cascade_place(y);
 			place[2] = cascade_place(z);
-			point[1] = ((float)y + 0.5f) * voxel;
-			point[2] = ((float)z + 0.5f) * voxel;
 			for (x = first[0]; x <= last[0]; x++)
 			{
-				signed char structure_value = 0;
-
 				place[0] = cascade_place(x);
-				if (structure_too)
-				{
-					point[0] = ((float)x + 0.5f) * voxel;
-					structure_value = world_cascades_encode(structure ? structure(context, point) : CASCADES_FAR, range);
-				}
-				texel_store(cascades, cascade, place, structure_too, structure_value,
-					world_cascades_encode(row[x], range));
+				texel_store(cascades, cascade, place, world_cascades_encode(row[x], range));
 			}
 		}
 	}
-	if (structure_too)
-		cascades->structure_voxels += count;
 	cascades->object_voxels += count;
 	box_add(cascades, cascade, first, last);
 }
@@ -576,9 +558,8 @@ static int region_voxels(struct world_cascade const *c, float const bounds[6], l
 	return 1;
 }
 
-void world_cascades_update(struct world_cascades *cascades, float const camera[3], int structure_changed,
-	world_cascades_structure structure, void *context, struct world_cascades_object const *objects, long object_count,
-	struct world_proxy const *shapes)
+void world_cascades_update(struct world_cascades *cascades, float const camera[3],
+	struct world_cascades_object const *objects, long object_count, struct world_proxy const *shapes)
 {
 	static struct cascades_dirty dirty;
 	long budget = WORLD_CASCADES_FILL_SLICES;
@@ -586,7 +567,7 @@ void world_cascades_update(struct world_cascades *cascades, float const camera[3
 
 	cascades->box_count = 0;
 	cascades->whole = 0;
-	cascades->structure_voxels = cascades->object_voxels = cascades->moved = 0;
+	cascades->object_voxels = cascades->moved = 0;
 	if (!cascades->texels)
 		return;
 	dirty.count = 0;
@@ -598,7 +579,8 @@ void world_cascades_update(struct world_cascades *cascades, float const camera[3
 		struct world_cascade *c = &cascades->cascades[cascade];
 		float voxel = WORLD_CASCADE_FINEST * (float)(1 << cascade);
 		long first[3], last[3], index;
-		int restart = structure_changed || c->voxel != voxel;
+		int restart = c->voxel != voxel;
+		long brought = 0;
 
 		/* (its window: the camera's voxel in its middle, in steps) */
 		for (axis = 0; axis < 3; axis++)
@@ -611,7 +593,14 @@ void world_cascades_update(struct world_cascades *cascades, float const camera[3
 			again where it is) */
 			if (labs(first[axis] - c->first[axis]) >= WORLD_CASCADE_SIDE || (!c->ready && first[axis] != c->first[axis]))
 				restart = 1;
+			brought += labs(first[axis] - c->first[axis]);
 		}
+		/* (moved by more slices than a frame fills, a spawn's or a
+		teleport's jump within its side: found again a few slices a frame,
+		as a jump past its side is; its slabs at once would hold up the
+		frame, a coarse cascade's up to most of its voxels) */
+		if (brought > WORLD_CASCADES_FILL_SLICES)
+			restart = 1;
 		if (restart)
 		{
 			c->voxel = voxel;
@@ -634,7 +623,7 @@ void world_cascades_update(struct world_cascades *cascades, float const camera[3
 				}
 				first[2] = c->first[2] + c->filled;
 				last[2] = first[2] + slices - 1;
-				region_fill(cascades, cascade, first, last, 1, structure, context);
+				region_fill(cascades, cascade, first, last);
 				c->filled += slices;
 				budget -= slices;
 			}
@@ -647,7 +636,7 @@ void world_cascades_update(struct world_cascades *cascades, float const camera[3
 				{
 					if (last[2] > c->first[2] + c->filled - slices - 1)
 						last[2] = c->first[2] + c->filled - slices - 1;
-					region_fill(cascades, cascade, first, last, 0, structure, context);
+					region_fill(cascades, cascade, first, last);
 				}
 			}
 			continue;
@@ -671,7 +660,7 @@ void world_cascades_update(struct world_cascades *cascades, float const camera[3
 			else
 				slab_last[axis] = first[axis] - delta - 1;
 			c->first[axis] = first[axis];
-			region_fill(cascades, cascade, slab_first, slab_last, 1, structure, context);
+			region_fill(cascades, cascade, slab_first, slab_last);
 		}
 		memcpy(c->first, first, sizeof(first));
 		/* (the objects that moved, came or went: where they reach) */
@@ -680,7 +669,7 @@ void world_cascades_update(struct world_cascades *cascades, float const camera[3
 			if (dirty.bounds[index][6] >= WORLD_CASCADE_THINNEST * voxel && region_voxels(c, dirty.bounds[index], first,
 				last))
 			{
-				region_fill(cascades, cascade, first, last, 0, structure, context);
+				region_fill(cascades, cascade, first, last);
 			}
 		}
 	}
@@ -726,12 +715,12 @@ int world_cascades_find(float const block[WORLD_CASCADES][4], float const point[
 	return -1;
 }
 
-void world_cascades_sample(struct world_cascades const *cascades, float const block[WORLD_CASCADES][4],
-	int cascade, float const point[3], float distances[2])
+float world_cascades_sample(struct world_cascades const *cascades, float const block[WORLD_CASCADES][4],
+	int cascade, float const point[3])
 {
-	float voxel = block[cascade][3], range = (float)WORLD_CASCADE_RANGE_VOXELS * voxel, fraction[3], sums[2] = { 0.0f, 0.0f };
+	float voxel = block[cascade][3], range = (float)WORLD_CASCADE_RANGE_VOXELS * voxel, fraction[3], sum = 0.0f;
 	long base[3];
-	int axis, corner, channel;
+	int axis, corner;
 
 	for (axis = 0; axis < 3; axis++)
 	{
@@ -754,15 +743,14 @@ void world_cascades_sample(struct world_cascades const *cascades, float const bl
 		signed char const *texel = texel_at((struct world_cascades *)cascades, cascade, base[0] + (corner & 1),
 			base[1] + ((corner >> 1) & 1), base[2] + ((corner >> 2) & 1));
 
-		for (channel = 0; channel < 2; channel++)
-			sums[channel] += weight * world_cascades_decode(texel[channel], 1.0f);
+		sum += weight * world_cascades_decode(texel[1], 1.0f);
 	}
-	distances[0] = sums[0] * range;
-	distances[1] = sums[1] * range;
+	return sum * range;
 }
 
 void world_trace_ray(struct world_cascades const *cascades, float const block[WORLD_CASCADES][4],
-	float const origin[3], float const direction[3], float t_max, int mask, struct world_trace_hit *hit)
+	world_cascades_structure structure, void *context, float const origin[3], float const direction[3], float t_max,
+	int mask, struct world_trace_hit *hit)
 {
 	int active[2] = { 0, 0 }, step;
 	float t = 0.0f;
@@ -782,7 +770,10 @@ void world_trace_ray(struct world_cascades const *cascades, float const block[WO
 		if (cascade < 0)
 			return;
 		voxel = block[cascade][3];
-		world_cascades_sample(cascades, block, cascade, point, distances);
+		/* (the structure's from the level's field where the ray is, the
+		objects' from the cascade) */
+		distances[0] = (mask & WORLD_TRACE_STRUCTURE) && structure ? structure(context, point) : CASCADES_FAR;
+		distances[1] = world_cascades_sample(cascades, block, cascade, point);
 		/* (each channel the mask allows, once the ray is outside it; inside
 		one yet, how far it is to its way out) */
 		nearest = inside = (float)WORLD_CASCADE_RANGE_VOXELS * voxel;

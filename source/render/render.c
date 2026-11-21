@@ -94,6 +94,7 @@ symbols in this file:
 #include "panini.h" /* port: port/linux/game/panini.c */
 #include "near_clip.h" /* port: port/linux/game/near_clip.c */
 #include "world_ao.h" /* port: port/linux/game/world_ao.c */
+#include "motion_vectors.h" /* port: port/linux/game/motion_vectors.c */
 #include "royale_beam.h" /* port: port/linux/game/royale_beam.c */
 #include "royale_fx.h" /* port: port/linux/game/royale_fx.c */
 
@@ -161,6 +162,8 @@ extern short global_screenshot_count;
 
 /* port: display.ambient_occlusion "world"'s pre-pass is being drawn (render_window) */
 boolean render_world_ao_prepass = FALSE;
+/* port: ... the surfaces walked a second time, the renderer's replay of the first not had (render_window) */
+boolean render_world_ao_again = FALSE;
 boolean render_contrails_enabled = TRUE;
 boolean render_particles_enabled = TRUE;
 boolean render_particle_systems_enabled = TRUE;
@@ -256,6 +259,10 @@ void render_initialize_for_new_map(
 	/* port: the new map's shaders and pipelines made at its first frame
 	(port/linux/game/render_enumerate.c) */
 	render_enumerate_new_map();
+	/* port: the kept shadows (rasterizer_xbox_shadows.c) and their receivers
+	(structure_render.c) are the map before's */
+	rasterizer_shadow_retained_new_map();
+	structure_render_shadow_receivers_new_map();
 #ifdef HALO_VR
 	/* port: the VR mode's trigger on the assault rifle's first-person model
 	(port/linux/game/vr_trigger.c) */
@@ -418,6 +425,8 @@ static void render_window(
 	struct rasterizer_window_begin_parameters parameters;
 	short rendered_cluster_index;
 	boolean world_ao_prepassed; /* port: (below) */
+	boolean world_ao_walked; /* port: (below) */
+	float world_ao_camera[4][4]; /* port: (below) */
 
 	profile_render_window_start(TRUE);
 	render.scene_index++;
@@ -442,6 +451,23 @@ static void render_window(
 	(port/linux/game/panini.c) */
 	if (!render_link_pass) /* port: (spartan_link.c) */
 		panini_window_begin(local_player_index, rasterizer_target, rasterizer_camera, &parameters.frustum);
+	/* port: display.temporal_aa: the screen's 3D view's motion and jitter,
+	the frame before's camera kept (port/linux/game/motion_vectors.c; not a
+	mirror's view, a feed's, nor the VR mode's eyes) */
+	/* port: display.render_scale: the screen's 3D view drawn at it (the
+	HUD and menus at the display's: port/linux/src/d3d8_device.c) */
+	halo_screen_view_begin(rasterizer_target == _render_target_primary &&
+		!rasterizer_camera->mirrored && !render_link_pass && !bink_playback_in_progress()
+#ifdef HALO_VR
+		&& !render_vr_eye_pass && !render_vr_scope_pass
+#endif
+		);
+	motion_vectors_window_begin(local_player_index, rasterizer_target == _render_target_primary &&
+		!rasterizer_camera->mirrored && !render_link_pass && !bink_playback_in_progress() &&
+#ifdef HALO_VR
+		!render_vr_eye_pass && !render_vr_scope_pass &&
+#endif
+		TRUE, rasterizer_camera, &parameters.frustum);
 	rasterizer_window_begin(&parameters);
 	/* port: debug.render_marks: the window's camera, its viewport the
 	rasterizer's (port/linux/game/render_marks.c) */
@@ -482,15 +508,23 @@ static void render_window(
 		transparent parts, widgets and fog left for below:
 		render_world_ao_prepass), the occlusion found from them at each
 		pixel, and the surfaces then drawn reading theirs (not in the VR
-		mode's eye or scope passes, nor a mirror's view) */
+		mode's eye or scope passes, nor a mirror's view). The surfaces are
+		walked once: the renderer draws their walk as the pre-pass's, finds
+		the occlusion, and draws it again as the surfaces'
+		(world_ao_prepass_walked; port/linux/src/xgpu_stream.h's
+		WORLD_AO_PREPASS replay). Where it cannot (the walk handed to it in
+		parts), they are walked again for it; with
+		HALO_WORLD_AO_NO_REPLAY=1 the pre-pass is walked alone first, as
+		before. */
 		world_ao_prepassed = FALSE;
+		world_ao_walked = FALSE;
 		if (rasterizer_target == _render_target_primary && !rasterizer_camera->mirrored && !render_link_pass &&
 #ifdef HALO_VR
 			!render_vr_eye_pass && !render_vr_scope_pass &&
 #endif
 			parameters.frustum.projection_valid)
 		{
-			float pass_camera[4][4];
+			float (*pass_camera)[4] = world_ao_camera;
 			real_point2d screen_point;
 			real_vector3d view_vector, middle, step;
 			short axis;
@@ -521,7 +555,8 @@ static void render_window(
 				pass_camera[2 + axis][3] = 0.0f;
 			}
 			world_ao_prepassed = world_ao_prepass_begin();
-			if (world_ao_prepassed)
+			world_ao_walked = world_ao_prepassed && world_ao_prepass_walked();
+			if (world_ao_prepassed && !world_ao_walked)
 			{
 				render_world_ao_prepass = TRUE;
 				render_objects();
@@ -540,11 +575,32 @@ static void render_window(
 		render_objects();
 		/* port: and through every model's parts */
 		render_enumerate_models();
-		if (!world_ao_prepassed)
+		if (!world_ao_prepassed || world_ao_walked)
 		{
 			structure_render_preprocess();
 		}
 		structure_render_lightmaps();
+		/* port: (the walk drawn as the pre-pass's, then again as the
+		surfaces': above) */
+		if (world_ao_walked)
+		{
+			world_ao_prepass_end(
+				parameters.camera.viewport_bounds.x0,
+				parameters.camera.viewport_bounds.y0,
+				parameters.camera.viewport_bounds.x1,
+				parameters.camera.viewport_bounds.y1,
+				(float const (*)[4])world_ao_camera);
+			if (!world_ao_prepass_walked())
+			{
+				render_world_ao_prepass = TRUE;
+				render_world_ao_again = TRUE;
+				render_objects();
+				render_enumerate_models();
+				structure_render_lightmaps();
+				render_world_ao_again = FALSE;
+				render_world_ao_prepass = FALSE;
+			}
+		}
 		if (!render_link_pass) /* port: (spartan_link.c) */
 			world_ao_window_end();
 		/* port: nor in a feed of the Spartan link's (spartan_link.c), as the
@@ -618,6 +674,10 @@ static void render_window(
 		structure_render_reflections();
 		structure_render_transparent_geometry();
 		structure_render_fog();
+		/* port: display.temporal_aa "fsr": the window's view before its
+		particles, effects, transparent objects, water and lens flares, for
+		the upscaler's reactive mask (port/linux/game/motion_vectors.c) */
+		motion_vectors_opaque(&rasterizer_camera->viewport_bounds);
 		game_engine_post_rasterize_objects();
 		/* port: (the weather's particles about the window's camera, not a
 		feed's: spartan_link.c) */
@@ -706,6 +766,11 @@ static void render_window(
 		(not the VR mode's eye pass: its targets have a layer for each eye) */
 		if (rasterizer_target == _render_target_primary)
 		{
+			/* port: display.temporal_aa: the window's motion, whole, and the
+			jitter taken away; with "fsr", the view upscaled into the
+			display's targets, which the tone map, panini and HUD below are
+			drawn into (port/linux/game/motion_vectors.c) */
+			motion_vectors_window_end(&rasterizer_camera->viewport_bounds);
 			halo_screen_tone_map(
 				rasterizer_camera->viewport_bounds.x0,
 				rasterizer_camera->viewport_bounds.y0,
@@ -719,6 +784,14 @@ static void render_window(
 			/* port: and drawn through display.panini's projection, the HUD
 			not (port/linux/game/panini.c) */
 			panini_window_draw();
+			/* port: display.render_scale: the view stretched to the
+			display's pixels, where the HUD and menus are drawn, where no
+			upscaler took it there (port/linux/src/d3d8_device.c) */
+			halo_screen_view_end(TRUE,
+				rasterizer_camera->viewport_bounds.x0,
+				rasterizer_camera->viewport_bounds.y0,
+				rasterizer_camera->viewport_bounds.x1,
+				rasterizer_camera->viewport_bounds.y1);
 		}
 		interface_draw_screen();
 		/* port: the HUD's Spartan link: the teammates' feeds in its top line
@@ -752,6 +825,9 @@ static void render_window(
 	render_enumerate_loading_screen();
 	if (!render_link_pass) /* port: (spartan_link.c) */
 		panini_window_end(); /* port */
+	/* port: (and none of its jitter past the window: motion_vectors.c) */
+	motion_vectors_window_end(NULL);
+	halo_screen_view_end(FALSE, 0, 0, 0, 0); /* port */
 	rasterizer_window_end();
 	profile_render_window_end();
 
@@ -1113,6 +1189,9 @@ void render_frame(
 	this frame, the field's upload continued (port/linux/game/world_ao.c;
 	nothing unless it is on) */
 	world_ao_frame_begin();
+	/* port: display.temporal_aa: the frame's number, the jitter's phase
+	(port/linux/game/motion_vectors.c) */
+	motion_vectors_frame_begin();
 
 	for (window_index = 0; window_index < window_count; window_index++)
 	{

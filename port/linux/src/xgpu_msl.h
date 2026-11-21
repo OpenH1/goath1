@@ -126,6 +126,13 @@ struct xgpu_msl_options
 	unsigned char border[4];
 	const char *debug_expression;
 	BOOL debug_texture0, debug_flat;
+	/* display.temporal_aa: the draw writes its motion as the second colour
+	attachment ([[color(1)]]: the previous position less the current, as a
+	fraction of the view, x right, y down; its depth; 1), its vertex
+	program run again on the previous frame's registers, which the
+	constants' buffer holds after the 192 (384 float4s then), as
+	xgpu_spirv_options' motion */
+	BOOL motion;
 };
 
 /* display.ambient_occlusion "world" found once a pixel (xgpu_stream.h's
@@ -191,8 +198,10 @@ char *xgpu_msl_halo_shader(BOOL pixel);
 
 /* the distance-field scene's ray step (port/linux/include/world_cascades.h's
 world_trace_ray: struct world_trace_hit and world_trace(world_cascades,
-cascades, origin, direction, t_max, mask), the cascades' texture and their
-four vec4s as xgpu.h's XGPU_WORLD_CASCADE* describes them) appended to a
+cascades, world_sdf, world_sdf_table, field0, field1, origin, direction,
+t_max, mask), the cascades' texture and their four vec4s as xgpu.h's
+XGPU_WORLD_CASCADE* describes them, the level's field's atlas, table and
+block vectors as the AO block has them) appended to a
 shader's text; and a fragment function of it alone,
 xgpu_world_trace_test (its ray from its inputs, the hit, t and kind
 written), for tools/test_world_trace.py. A malloc'd string */

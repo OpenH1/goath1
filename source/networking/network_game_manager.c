@@ -532,9 +532,14 @@ boolean network_game_spawn_player(
 
 			/* (the host's choice stands: a client whose clock has not yet
 			come to the quit of the player there gives way too, to another
-			machine's player) */
+			machine's player, or to a player at the same machine and
+			controller once that one's quit was heard: a machine that loaded
+			the game in progress is told a player gone and the one that took
+			his machine index, controller and slot meanwhile together,
+			network_game_server_late_joiner_loaded) */
 			if (((struct datum_header *)quitter)->identifier != 0 &&
 				(network_game_player_slot_reusable(quitter) ||
+					quitter->quit_out_of_game_time != NONE ||
 					quitter->network_player_data.machine_index != player->machine_index ||
 					quitter->network_player_data.controller_index != player->controller_index))
 			{

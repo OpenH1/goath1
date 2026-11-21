@@ -34,12 +34,13 @@ int map_import_kind(const char *path);
 paths.custom_maps when it is set, else <destination>/custom_maps */
 void map_import_custom_maps_folder(const char *destination, char *folder, int size);
 
-/* writes the maps of Custom Edition's installer that folder lacks (each as
-<name>.partial until complete); returns nonzero on success, with the bytes
+/* writes the maps of Custom Edition's installer that folder lacks (with
+replace, every one: those it has replaced, which repairs a damaged map),
+each as <name>.partial until complete; returns nonzero on success, with the bytes
 written in *written (0 when the folder had them all), or 0 with the reason
 (for the player) in error. Called from any thread */
-int map_import_custom_edition(const char *installer, const char *folder, map_import_progress_proc progress,
-	void *context, unsigned long long *written, char *error, int error_size);
+int map_import_custom_edition(const char *installer, const char *folder, int replace,
+	map_import_progress_proc progress, void *context, unsigned long long *written, char *error, int error_size);
 
 /* what the player is told about a CD image that is not an Xbox disc */
 extern const char map_import_cd_image_text[];

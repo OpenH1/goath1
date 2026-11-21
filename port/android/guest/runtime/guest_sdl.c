@@ -97,6 +97,63 @@ bool SDL_OpenURL(const char *url)
 	return host_sdl_open_url(url) != 0;
 }
 
+/* ---------- the system's languages (the on-screen keyboard's automatic
+layout: xinput_sdl.c's platform_locales) */
+
+/* (one block, SDL's: the pointers, NULL ended, then the locales, then
+their words; SDL_free frees it) */
+SDL_Locale **SDL_GetPreferredLocales(int *count)
+{
+	char words[256];
+	int found = 0, index;
+	char *each, *copy;
+	SDL_Locale **locales, *locale;
+	size_t length;
+
+	host_sdl_preferred_locales(words, sizeof(words));
+	words[sizeof(words) - 1] = 0;
+	for (each = words; *each;)
+	{
+		while (*each == ' ')
+			each++;
+		if (*each)
+			found++;
+		while (*each && *each != ' ')
+			each++;
+	}
+	length = strlen(words) + 1;
+	locales = malloc((size_t)(found + 1) * sizeof(*locales) + (size_t)found * sizeof(*locale) + length);
+	if (count)
+		*count = locales ? found : 0;
+	if (!locales)
+		return NULL;
+	locale = (SDL_Locale *)(locales + found + 1);
+	copy = (char *)(locale + found);
+	memcpy(copy, words, length);
+	for (index = 0, each = copy; index < found; index++)
+	{
+		char *place;
+
+		while (*each == ' ')
+			*each++ = 0;
+		locale[index].language = each;
+		locale[index].country = NULL;
+		while (*each && *each != ' ')
+			each++;
+		if (*each)
+			*each++ = 0;
+		place = strchr(locale[index].language, '_');
+		if (place)
+		{
+			*place = 0;
+			locale[index].country = place + 1;
+		}
+		locales[index] = &locale[index];
+	}
+	locales[found] = NULL;
+	return locales;
+}
+
 bool SDL_ShowAndroidToast(const char *message, int duration, int gravity, int xoffset, int yoffset)
 {
 	return host_sdl_show_toast(message, duration, gravity, xoffset, yoffset) != 0;
@@ -159,6 +216,21 @@ SDL_PowerState SDL_GetPowerInfo(int *seconds, int *percent)
 	return state;
 }
 
+#ifdef HALO_ANDROID
+/* (SDL_AtomicInt's reads and writes, with the compiler's atomics: the
+shared code's flags between its threads, dlss_addon.c's state; the desktop
+builds have guest_desktop.c's) */
+int SDL_GetAtomicInt(SDL_AtomicInt *a)
+{
+	return __atomic_load_n(&a->value, __ATOMIC_SEQ_CST);
+}
+
+int SDL_SetAtomicInt(SDL_AtomicInt *a, int v)
+{
+	return __atomic_exchange_n(&a->value, v, __ATOMIC_SEQ_CST);
+}
+#endif
+
 void SDL_Delay(Uint32 milliseconds)
 {
 	struct timespec duration;
@@ -186,6 +258,17 @@ bool SDL_GetWindowSizeInPixels(SDL_Window *window, int *width, int *height)
 		*height = h;
 	return true;
 }
+
+#ifdef HALO_ANDROID
+/* (the phone's one window: shown and full screen while the game runs; in
+the background the app is paused in the event poll, so focus alone tells
+it apart: sdl_platform.c's platform_window_background; the desktop builds
+have guest_desktop.c's) */
+SDL_WindowFlags SDL_GetWindowFlags(SDL_Window *window)
+{
+	return window ? SDL_WINDOW_FULLSCREEN : 0;
+}
+#endif
 
 bool SDL_SetWindowRelativeMouseMode(SDL_Window *window, bool enabled)
 {
@@ -248,6 +331,12 @@ SDL_GamepadType SDL_GetGamepadType(SDL_Gamepad *gamepad)
 bool SDL_RumbleGamepad(SDL_Gamepad *gamepad, Uint16 low, Uint16 high, Uint32 milliseconds)
 {
 	return host_sdl_rumble_gamepad((unsigned int)gamepad, low, high, milliseconds) != 0;
+}
+
+/* (a DualSense's trigger resistance: xinput_sdl.c) */
+bool SDL_SendGamepadEffect(SDL_Gamepad *gamepad, const void *data, int size)
+{
+	return host_sdl_send_gamepad_effect((unsigned int)gamepad, data, size) != 0;
 }
 
 void SDL_CloseGamepad(SDL_Gamepad *gamepad)

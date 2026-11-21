@@ -110,8 +110,8 @@ symbols in this file:
 #include "latency_meter.h" /* port: port/linux/game/latency_meter.c */
 #include "network_host_controls.h" /* port: port/linux/game/network_host_controls.c */
 #include "stats_log.h" /* port: port/linux/game/stats_log.c */
-#include "frame_rate_display.h" /* port: port/linux/game/frame_rate_display.c */
 #include "touch_cinematic.h" /* port: port/linux/game/touch_cinematic.c */
+#include "subtitles.h" /* port: port/linux/game/subtitles.c */
 #include "royale_cinema.h" /* port: port/linux/game/royale_cinema.c */
 
 /* ---------- constants */
@@ -288,6 +288,9 @@ void interface_initialize_for_new_map(
 	return;
 }
 
+/* port: (ui_widget.c) */
+void ui_widget_port_popups_close(void);
+
 void interface_dispose_from_old_map(
 	void)
 {
@@ -298,6 +301,9 @@ void interface_dispose_from_old_map(
 	(ui.map's: main_screen_shell_load sets it up again); a game map has none,
 	so it cannot open there (the PC menus' Settings, from the pause menu) */
 	virtual_keyboard_dispose();
+	/* port: and the menus' pop-ups (ui_widget.c), whose screens were the old
+	map's */
+	ui_widget_port_popups_close();
 
 	return;
 }
@@ -395,6 +401,9 @@ void interface_draw_fullscreen_overlays(
 	/* port: the touchscreen's skip button, in the letterbox's bar
 	(port/linux/game/touch_cinematic.c) */
 	touch_cinematic_draw();
+	/* port: the dialogue's subtitles (display.subtitles,
+	port/linux/game/subtitles.c), once over the whole screen */
+	subtitles_draw();
 	interface_splitscreen_render();
 	hud_render_timer();
 	/* port: a map's download (port/linux/game/map_share.c) */
@@ -403,9 +412,6 @@ void interface_draw_fullscreen_overlays(
 	latency_meter_draw();
 	/* port: display.stats_log, a line a second in the log (stats_log.c) */
 	stats_log_tick();
-	/* port: the frame rate counter as display.show_fps says
-	(port/linux/game/frame_rate_display.c) */
-	frame_rate_display_update();
 	terminal_draw();
 	main_framerate_render();
 	render_debug_profile();

@@ -49,6 +49,8 @@ static struct sound_datum *checked_sound(long index) {
 /* coop_sound_sync.c's: no co-op client's sounds here */
 #define coop_sound_sync_place(...) _coop_sound_sync_play
 #define coop_sound_sync_refreshed(...) ((void)0)
+/* subtitles.c's: no subtitles here */
+#define subtitles_sound_started(...) ((void)0)
 static int _sound_cache_sound_request(struct sound_permutation *p,int a,int b,int c) {
  (void)p;(void)a;(void)b;(void)c;return TRUE;
 }

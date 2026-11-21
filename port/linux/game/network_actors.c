@@ -186,6 +186,12 @@ struct client_actor
 
 static struct host_actor host_actors[MAXIMUM_NETWORK_ACTORS];
 static short host_actor_count;
+/* each unit's place in host_actors by its object's absolute index (taken
+only where that place holds the unit: a stale one is no harm), so that
+finding a unit's entry, done for every actor's control every tick, does not
+search the table (with every actor's control a search, the ticks' cost grew
+as the square of the actors) */
+static short host_actor_places[MAXIMUM_OBJECTS_PER_MAP];
 /* host: the numbers of every unit's impulses, speech and animations, from
 one counter, so a unit that drops out of the table and comes back can't
 repeat the number a client last played */
@@ -193,6 +199,8 @@ static byte host_event_number;
 
 static struct client_actor client_actors[MAXIMUM_NETWORK_ACTORS];
 static short client_actor_count;
+/* (client_actors' places, as host_actor_places) */
+static short client_actor_places[MAXIMUM_OBJECTS_PER_MAP];
 
 /* host: the bytes of actors' states sent since the tests last asked, and of
 those the entries an OpenH1 game's press or aim alone sent */
@@ -577,19 +585,59 @@ static byte next_event_number(
 	return host_event_number;
 }
 
+/* (host_actor_places, client_actor_places) the place noted for a unit's
+object (a unit is always one of the map's objects; NONE for an index past
+them), which holds the unit only if the table there says so */
+static short actor_place_get(
+	short const *places,
+	long unit_index)
+{
+	long absolute_index = DATUM_INDEX_TO_ABSOLUTE_INDEX(unit_index);
+
+	return absolute_index >= 0 && absolute_index < MAXIMUM_OBJECTS_PER_MAP ? places[absolute_index] : NONE;
+}
+
+/* the unit's place in host_actors, NONE for none */
+static short host_actor_find(
+	long unit_index)
+{
+	short index = actor_place_get(host_actor_places, unit_index);
+
+	return index >= 0 && index < host_actor_count && host_actors[index].unit_index == unit_index ? index : NONE;
+}
+
+/* the unit's place in client_actors, NONE for none */
+static short client_actor_find(
+	long unit_index)
+{
+	short index = actor_place_get(client_actor_places, unit_index);
+
+	return index >= 0 && index < client_actor_count && client_actors[index].unit_index == unit_index ? index : NONE;
+}
+
+/* a unit's place noted (its entry added, or moved into a place freed) */
+static void actor_place_note(
+	short *places,
+	long unit_index,
+	short index)
+{
+	long absolute_index = DATUM_INDEX_TO_ABSOLUTE_INDEX(unit_index);
+
+	if (absolute_index >= 0 && absolute_index < MAXIMUM_OBJECTS_PER_MAP)
+		places[absolute_index] = index;
+}
+
 /* the unit's entry, adding one if needed; NULL if the table is full */
 static struct host_actor *host_actor_for(
 	long unit_index)
 {
-	short index;
+	short index = host_actor_find(unit_index);
 
-	for (index = 0; index < host_actor_count; index++)
-	{
-		if (host_actors[index].unit_index == unit_index)
-			return &host_actors[index];
-	}
+	if (index != NONE)
+		return &host_actors[index];
 	if (host_actor_count >= MAXIMUM_NETWORK_ACTORS)
 		return NULL;
+	actor_place_note(host_actor_places, unit_index, host_actor_count);
 	csmemset(&host_actors[host_actor_count], 0, sizeof(host_actors[0]));
 	host_actors[host_actor_count].unit_index = unit_index;
 	host_actors[host_actor_count].impulse = NONE;
@@ -601,15 +649,13 @@ static struct host_actor *host_actor_for(
 static struct client_actor *client_actor_for(
 	long unit_index)
 {
-	short index;
+	short index = client_actor_find(unit_index);
 
-	for (index = 0; index < client_actor_count; index++)
-	{
-		if (client_actors[index].unit_index == unit_index)
-			return &client_actors[index];
-	}
+	if (index != NONE)
+		return &client_actors[index];
 	if (client_actor_count >= MAXIMUM_NETWORK_ACTORS)
 		return NULL;
+	actor_place_note(client_actor_places, unit_index, client_actor_count);
 	csmemset(&client_actors[client_actor_count], 0, sizeof(client_actors[0]));
 	client_actors[client_actor_count].unit_index = unit_index;
 	client_actors[client_actor_count].impulse = NONE;
@@ -1086,7 +1132,10 @@ void network_actors_host_tick(
 			(!vehicle_riding_enabled() || unit_get(actor->unit_index)->object.parent_object_index == NONE ||
 			unit_get(actor->unit_index)->unit.parent_seat_index == NONE)))
 		{
-			host_actors[index--] = host_actors[--host_actor_count];
+			host_actors[index] = host_actors[--host_actor_count];
+			if (index < host_actor_count)
+				actor_place_note(host_actor_places, host_actors[index].unit_index, index);
+			index--;
 			continue;
 		}
 		actor_state_from_unit(actor, &states[state_count]);
@@ -1239,7 +1288,10 @@ void network_actors_drive(
 		{
 			if (actor->driven && object_try_and_get_and_verify_type(actor->unit_index, _object_mask_unit))
 				unit_set_actively_controlled(actor->unit_index, FALSE);
-			client_actors[index--] = client_actors[--client_actor_count];
+			client_actors[index] = client_actors[--client_actor_count];
+			if (index < client_actor_count)
+				actor_place_note(client_actor_places, client_actors[index].unit_index, index);
+			index--;
 			continue;
 		}
 		/* vehicles follow the host's transform instead (network_objects.c) */

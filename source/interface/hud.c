@@ -117,6 +117,9 @@ symbols in this file:
 #include "network_party.h" /* port: port/linux/game/network_party.c */
 #include "network_votekick.h" /* port: port/linux/game/network_votekick.c */
 #include "basic_training.h" /* port: port/linux/game/basic_training.c */
+#include "halo_keyboard.h" /* port: port/linux/src/xinput_sdl.c */
+#include "input_display.h" /* port: port/linux/game/input_display.c */
+#include "practice.h" /* port: port/linux/game/practice.c */
 #include "text/font_group.h"
 #include "text/text_group.h"
 #include "units/unit_definitions.h"
@@ -313,6 +316,59 @@ boolean scripted_show_hud_help_text(
 {
 	hud_scripted_globals->show_hud_help_text = show;
 	return hud_scripted_globals->show_hud_help_text;
+}
+
+/* port: the HUD's state that the frames drawing it stepped (the weapon's
+and the unit's flash times, the crosshairs' flashes, the unit HUD's state
+made anew, the warning sounds and the vitality they compare), once a tick
+as it begins: the time and the state the frames after the last tick saw,
+and for the players and in the way hud_draw_screen drew them (the first
+local player alone in one window: a cinematic, a game of one screen; the
+HUD shown, its unit's interfaces in a camera of the player's). The frames
+stepped it as often as they were drawn: between two frames several ticks (a
+cutscene's skip, sixteen times its speed), so the game played at another
+frame rate was another game (OpenH1 #1233). They only draw it now, a tick
+behind at most, as the player effects (player_effect_tick_begin). */
+static boolean hud_shown(
+	void);
+
+void hud_tick_begin(
+	void)
+{
+	short local_player_index;
+	boolean single_window = game_engine_force_single_screen() || cinematic_in_progress();
+
+	for (local_player_index = local_player_get_next(NONE);
+		local_player_index != NONE;
+		local_player_index = local_player_get_next(local_player_index))
+	{
+		long player_index = local_player_get_player_index(local_player_index);
+		struct player_datum *player;
+
+		if (player_index == NONE)
+			continue;
+		if (single_window && local_player_index != local_player_get_next(NONE))
+			break;
+		player = player_get(player_index);
+		if (!hud_shown())
+		{
+			hud_play_unit_sounds(player, FALSE);
+			continue;
+		}
+		/* (hud_draw_screen: a camera of the player's, not the scripts') */
+		if (player->unit_index != NONE && !*director_camera_scripted)
+		{
+			hud_weapon_interface_tick(player);
+			hud_play_unit_sounds(player, hud_scripted_globals->show_hud);
+			hud_unit_interface_tick(player);
+		}
+		else
+		{
+			hud_play_unit_sounds(player, hud_scripted_globals->show_hud);
+		}
+	}
+
+	return;
 }
 
 void hud_update(
@@ -1527,7 +1583,10 @@ static void temporary_hud_draw(
 Edition's HUD has none), counting up from the game's
 first tick, which the items' respawn periods count from as well
 (game_engine_update_item_spawn's game_time_get() % respawn_period): an item
-is back on the map at every multiple of its period on the clock. */
+is back on the map at every multiple of its period on the clock. In the
+campaign and co-op it is the mission's timer: the level's game time, which
+stops while the game is paused and loads, and which a checkpoint's revert
+takes back with the rest of the game's state. */
 static boolean hud_match_timer_setting(
 	void)
 {
@@ -1544,6 +1603,68 @@ static boolean hud_match_timer_setting(
 	return setting;
 }
 
+boolean menu_studio_on(void); /* port: port/linux/game/menu_studio.c */
+
+/* port: the player's Hide HUD (controls.hide_hud, F3 by default;
+display.hide_hud, off by default, its state as the game starts and whenever
+Settings changes it): the HUD, the reticle, the clock, the teammates' marks
+and the names over the players hidden until
+the key shows them again, over map loads, which reset the scripts' show_hud
+(hud_initialize_for_new_map) and not this. It hides them only: the scripts'
+show_hud still hides them with it off, and the HUD's sounds are the
+scripts' alone. The key is the keyboard's (the first player's), read as
+pressed here, whichever view draws first; none while a menu, the console or
+a chat line has the keys (halo_keyboard_actions), nor while the menu
+studio is on, whose F3 steps its input (menu_studio.c's menu_studio_on) */
+static struct
+{
+	boolean hidden;
+	boolean key_held;
+	/* the setting as read last (NONE: not yet), and when */
+	short setting;
+	unsigned long read_at;
+} hud_hide = { FALSE, FALSE, NONE, (unsigned long)-1 };
+
+static boolean hud_hidden_by_player(
+	void)
+{
+	boolean key;
+
+	/* (the setting's own change sets the state, not another's in Settings) */
+	if (hud_hide.read_at != config_changes())
+	{
+		short setting = config_boolean("display.hide_hud") != 0;
+
+		hud_hide.read_at = config_changes();
+		if (setting != hud_hide.setting)
+			hud_hide.hidden = setting;
+		hud_hide.setting = setting;
+	}
+	key = (halo_keyboard_actions(0) & FLAG(HALO_KEYBOARD_HIDE_HUD)) != 0;
+	if (key && !hud_hide.key_held && !menu_studio_on())
+		hud_hide.hidden = !hud_hide.hidden;
+	hud_hide.key_held = key;
+
+	return hud_hide.hidden;
+}
+
+/* whether the HUD is drawn: the scripts' show_hud, and the player's Hide
+HUD off */
+static boolean hud_shown(
+	void)
+{
+	return hud_scripted_globals->show_hud && !hud_hidden_by_player();
+}
+
+/* whether this view draws the clock: the match's in multiplayer, the
+mission's in the campaign and co-op; none in a cinematic or with the HUD
+hidden */
+static boolean hud_match_timer_shown(
+	void)
+{
+	return hud_match_timer_setting() && !cinematic_in_progress() && hud_shown();
+}
+
 static void hud_draw_match_timer(
 	void)
 {
@@ -1553,7 +1674,7 @@ static void hud_draw_match_timer(
 	rectangle2d bounds;
 	struct font_header *font;
 
-	if (!hud_match_timer_setting() || font_index == NONE)
+	if (!hud_match_timer_shown() || font_index == NONE)
 		return;
 	ticks_to_unicode_time_string(game_time_get(), NUMBEROF(time_string), time_string);
 	/* (a time under a minute is drawn with no minutes digit, which a clock
@@ -1606,6 +1727,10 @@ void hud_draw_screen(
 		(hud_draw_vr_world_marks), unless the eyes were not drawn */
 		if (!vr_render_world_marks_drawn())
 #endif
+		/* (the teammates' marks and the names over the players: the
+		player's Hide HUD hides them, which the scripts' show_hud never
+		did) */
+		if (!hud_hidden_by_player())
 		{
 		if ((!game_engine_running() || game_engine_display_team_indicators()) &&
 			!cinematic_in_progress())
@@ -1634,12 +1759,17 @@ void hud_draw_screen(
 		if (cinematic_in_progress())
 			coop_skip_vote_draw(render.local_player_index);
 
-		/* port: the match clock, in multiplayer */
-		if (game_engine_running() && !cinematic_in_progress() &&
-			hud_scripted_globals->show_hud)
-		{
-			hud_draw_match_timer();
-		}
+		/* port: the match clock, in multiplayer; the mission's timer in the
+		campaign and co-op */
+		hud_draw_match_timer();
+		/* port: the player's input (display.input_display), hidden with the
+		HUD and in a cinematic */
+		if (hud_shown() && !cinematic_in_progress())
+			input_display_draw(render.local_player_index, player_index,
+				interface_get_tag_index(_interface_font_terminal));
+		/* port: the PRACTICE mark, which Hide HUD does not hide
+		(port/linux/game/practice.c) */
+		practice_draw();
 
 		if (!game_time_get_paused() &&
 			render.local_player_index == local_player_get_next(NONE))
@@ -1647,7 +1777,7 @@ void hud_draw_screen(
 			motion_sensor_tick();
 		}
 
-		if (hud_scripted_globals->show_hud)
+		if (hud_shown())
 		{
 			if (perspective != _director_perspective_neutral &&
 				perspective != _director_perspective_scripted &&
@@ -1663,7 +1793,7 @@ void hud_draw_screen(
 				halo_vr_hud_group(HALO_VR_HUD_GROUP_CENTRE);
 #endif
 				hud_show_action_response(player_index);
-				hud_play_unit_sounds(player, hud_scripted_globals->show_hud);
+				/* port: (the warning sounds, once a tick: hud_tick_begin) */
 #ifdef HALO_VR
 				halo_vr_hud_group(HALO_VR_HUD_BY_ANCHOR);
 #endif
@@ -1682,13 +1812,10 @@ void hud_draw_screen(
 			else
 			{
 				hud_show_action_response(player_index);
-				hud_play_unit_sounds(player, hud_scripted_globals->show_hud);
 			}
 		}
-		else
-		{
-			hud_play_unit_sounds(player, FALSE);
-		}
+		/* port: (the warning sounds, once a tick, hud_tick_begin: the frames
+		played them, their state game state) */
 
 #ifdef HALO_VR
 		halo_vr_hud_group(HALO_VR_HUD_GROUP_CENTRE);
@@ -1727,7 +1854,7 @@ void hud_draw_vr_crosshairs(
 	director_perspective perspective = (director_perspective)royale_cinema_hud_perspective(render.local_player_index,
 		(short)director_get_perspective(render.local_player_index)); /* port: royale_cinema.c */
 
-	if (player_index != NONE && hud_scripted_globals->show_hud &&
+	if (player_index != NONE && hud_shown() &&
 		perspective != _director_perspective_neutral &&
 		perspective != _director_perspective_scripted)
 	{
@@ -1754,7 +1881,7 @@ void hud_draw_vr_zoomed(
 	director_perspective perspective = (director_perspective)royale_cinema_hud_perspective(render.local_player_index,
 		(short)director_get_perspective(render.local_player_index)); /* port: royale_cinema.c */
 
-	if (player_index != NONE && hud_scripted_globals->show_hud &&
+	if (player_index != NONE && hud_shown() &&
 		perspective != _director_perspective_neutral &&
 		perspective != _director_perspective_scripted)
 	{
@@ -1782,7 +1909,7 @@ void hud_draw_vr_world_marks(
 	director_perspective perspective = (director_perspective)royale_cinema_hud_perspective(render.local_player_index,
 		(short)director_get_perspective(render.local_player_index)); /* port: royale_cinema.c */
 
-	if (player_index == NONE || cinematic_in_progress())
+	if (player_index == NONE || cinematic_in_progress() || hud_hidden_by_player())
 		return;
 	rasterizer_hud_begin();
 	if (!game_engine_running() || game_engine_display_team_indicators())
@@ -1791,7 +1918,7 @@ void hud_draw_vr_world_marks(
 		hud_draw_player_names();
 	/* (the waypoints on the screen: those off it stay at the HUD's edge,
 	hud_nav_points.c) */
-	if (hud_scripted_globals->show_hud && perspective != _director_perspective_neutral &&
+	if (hud_shown() && perspective != _director_perspective_neutral &&
 		perspective != _director_perspective_scripted && player_get(player_index)->unit_index != NONE)
 	{
 		hud_render_nav_points(render.local_player_index);

@@ -284,6 +284,21 @@ static void synthetic_pixel_programs(synthetic_pixel_callback callback)
 		snprintf(name, sizeof(name), "synthetic-lighting%d", i);
 		callback(name, &program);
 	}
+	/* (a model lit by the enhanced dynamic lights with its reflection's cube
+	map in stage 3, which their highlights are added to; and the same lit
+	for each pixel without them, which has none) */
+	for (i = 0; i < 4; i++)
+	{
+		synthetic_base(&program);
+		synthetic_stage(&program, 0, XGPU_TEXTURE_PROJECT2D, _xgpu_sampler_2d);
+		synthetic_stage(&program, 3, XGPU_TEXTURE_CUBEMAP, _xgpu_sampler_cube);
+		program.final.inputs[1].reg = XGPU_REGISTER_V0;
+		program.final.inputs[2].reg = XGPU_REGISTER_T3;
+		program.per_pixel_lighting = (unsigned char)(1 + (i & 1));
+		program.dynamic_lights = (unsigned char)(i < 2 ? XGPU_DYNAMIC_LIGHTS_MODEL : 0);
+		snprintf(name, sizeof(name), "synthetic-lighting-reflection%d", i);
+		callback(name, &program);
+	}
 }
 
 /* each MAC and ILU operation, each operand file, relative constants, each

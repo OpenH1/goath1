@@ -141,6 +141,13 @@ enum
 	DIRECT_GAP = 2500,
 	CARRIER_SILENCE = 2500,
 	RELAYS_KEPT_TIME = 30000,
+	/* while the carrier is silent, its standbys are probed this often; a
+	peer's relays are bound again at most this often; a paired attempt is
+	a standby while its relay answered this lately (its keep-alives: two
+	may go unanswered) */
+	PROBE_INTERVAL = 1000,
+	PATHS_BIND_INTERVAL = 2000,
+	STANDBY_SILENCE = 2 * KEEP_ALIVE_INTERVAL + 1000,
 	/* the offers taken from one peer: one each this long, this many */
 	OFFER_INTERVAL = 1000,
 	OFFERS_PER_SESSION = 8,
@@ -1193,6 +1200,104 @@ int p2p_relay_path_silent(const struct p2p_relay_path *path, unsigned long now)
 int p2p_relay_path_relays_done(const struct p2p_relay_path *path, unsigned long now)
 {
 	return path->carrier == 0 && path->direct_time && relay_elapsed(now, path->direct_time, RELAYS_KEPT_TIME);
+}
+
+int p2p_relay_path_state(const struct p2p_relay_path *path, int via, unsigned long now)
+{
+	struct attempt const *attempt;
+
+	if (via == path->carrier)
+		return p2p_relay_path_silent(path, now) ? _p2p_path_dead : _p2p_path_active;
+	if (!via)
+	{
+		return path->direct_last && !relay_elapsed(now, path->direct_last, DIRECT_GAP) ? _p2p_path_candidate :
+			_p2p_path_dead;
+	}
+	if (via < 0 || via > MAXIMUM_ATTEMPTS)
+		return _p2p_path_dead;
+	attempt = &relay.attempts[via - 1];
+	if (!attempt->used)
+		return _p2p_path_dead;
+	switch (attempt->state)
+	{
+	case _attempt_binding:
+	case _attempt_waiting:
+	case _attempt_refused:
+		return _p2p_path_candidate;
+	case _attempt_paired:
+		return relay_elapsed(now, attempt->heard_time, STANDBY_SILENCE) ? _p2p_path_paired : _p2p_path_standby;
+	}
+	return _p2p_path_dead;
+}
+
+/* (both machines order a peer's relays alike: by address, then port) */
+static int attempt_before(struct attempt const *one, struct attempt const *other)
+{
+	if (one->relay.address != other->relay.address)
+		return one->relay.address < other->relay.address;
+	return one->relay.port < other->relay.port;
+}
+
+int p2p_relay_paths_update(struct p2p_relay_path *path, const unsigned char *peer, int keep_standby,
+	unsigned long now)
+{
+	struct attempt *standbys[MAXIMUM_ATTEMPTS];
+	int silent = p2p_relay_path_silent(path, now);
+	int standby_count = 0, flags = 0;
+	int index;
+
+	/* (a front's path is the server's way to its client, kept by the
+	client's packets: no standby of a relay's, and never released here) */
+	for (index = 0; index < MAXIMUM_ATTEMPTS; index++)
+	{
+		struct attempt *attempt = &relay.attempts[index];
+
+		if (attempt->used && !attempt->front && !memcmp(attempt->peer, peer, P2P_IDENTIFIER_SIZE) &&
+			p2p_relay_path_state(path, index + 1, now) == _p2p_path_standby)
+		{
+			standbys[standby_count++] = attempt;
+		}
+	}
+	/* (the carrier silent: the standbys tried at once, then once a second,
+	whatever else the peer is sent; the first heard through takes over,
+	p2p_relay_path_heard) */
+	if (silent && relay_elapsed(now, path->probe_time, PROBE_INTERVAL))
+	{
+		flags |= P2P_RELAY_PATHS_PROBE;
+		path->probe_time = now;
+	}
+	if (((silent && !standby_count) || (keep_standby && standby_count < P2P_RELAY_STANDBYS)) &&
+		relay_elapsed(now, path->bind_time, PATHS_BIND_INTERVAL))
+	{
+		flags |= P2P_RELAY_PATHS_BIND;
+		path->bind_time = now;
+	}
+	/* (more standbys than kept, with a carrier heard: the first by address
+	stay, as the peer keeps the same ones; the rest released) */
+	if (keep_standby && !silent && standby_count > P2P_RELAY_STANDBYS)
+	{
+		int kept, other;
+
+		for (kept = 0; kept < P2P_RELAY_STANDBYS; kept++)
+		{
+			for (other = kept + 1; other < standby_count; other++)
+			{
+				if (attempt_before(standbys[other], standbys[kept]))
+				{
+					struct attempt *swap = standbys[kept];
+
+					standbys[kept] = standbys[other];
+					standbys[other] = swap;
+				}
+			}
+		}
+		for (index = P2P_RELAY_STANDBYS; index < standby_count; index++)
+		{
+			send_release(standbys[index]);
+			memset(standbys[index], 0, sizeof(*standbys[index]));
+		}
+	}
+	return flags;
 }
 
 /* ---------- both */

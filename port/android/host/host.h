@@ -353,9 +353,16 @@ void host_debug_start_sampler(const char *setting);
 #define HOST_STALL_GAME 0
 #define HOST_STALL_RENDER 1
 #define HOST_STALL_THREADS 2
-/* starts the watchdog: a frame later than milliseconds is sampled and
-logged (0: never) */
+/* starts the watchdog: a frame later than milliseconds (or twice the
+recent frames' time, if longer) is sampled and logged (0: never) */
 void host_stall_start(double milliseconds);
+/* (host_stall_start's parts, which the tests drive with their own clock)
+the threshold set, without the watchdog (1 if it was); a frame handed
+over at now; one wake-up of the watchdog at now, which returns when it
+wants the next (CLOCK_MONOTONIC's nanoseconds) */
+int host_stall_configure(double milliseconds);
+void host_stall_frame_at(uint64_t now);
+uint64_t host_stall_watch(uint64_t now);
 /* a frame handed to the render thread (host_render_stream_submit, on the
 game's thread) */
 void host_stall_frame(void);

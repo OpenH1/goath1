@@ -18,6 +18,17 @@ only when its ui.map is the Xbox game's (not Halo PC's, version 7, or
 Custom Edition's, 609). (Files are reached through posix.h, as the rest of the
 platform layer's: the game's ABI cannot use the C library's struct stat.)
 
+On Windows the places are the user's folder (%USERPROFILE%, its Downloads,
+Desktop and Documents among it) and the game's, its AppData skipped; paths
+are written with forward slashes, which Windows takes as its own.
+
+On iOS the game reaches its own folder alone (the app's sandbox): the
+app's Documents, which is its data root and which the Files app shows as
+GOAT H1's folder (On My iPhone, On My iPad). The player puts a file there,
+so that is the one place looked in, and a path in it is shown from there
+("GOAT H1/custom_maps"). (The iOS app's first start imports the Xbox maps
+itself: port/ios/data_import.m.)
+
 On macOS the folders the system guards (Documents, Pictures, Music, Movies,
 the Library) are not looked in: each would ask the player to let the game
 in. Downloads and the Desktop are, and asking for them is the price of
@@ -25,7 +36,7 @@ finding the image there; the time the player takes to answer is not counted
 against the scan's.
 */
 
-#if !defined(HALO_WINDOWS) && !defined(HALO_ANDROID) && !defined(HALO_IOS)
+#ifndef HALO_ANDROID
 
 #include "game_data_scan.h"
 #include "posix.h"
@@ -141,6 +152,9 @@ static int name_is_skipped(const char *name)
 		"maps.partial", "proc", "sys", "dev",
 #ifdef HALO_MACOS
 		"Library", "Documents", "Pictures", "Music", "Movies", "Applications",
+#endif
+#ifdef HALO_WINDOWS
+		"AppData", "Windows", "Program Files", "Program Files (x86)", "ProgramData",
 #endif
 	};
 	size_t index;
@@ -527,6 +541,12 @@ static void scan_folder(struct scan *scan, const struct scan_root *root, const c
 
 /* ---------- public code */
 
+/* the iOS app's folder, as the Files app names it (tools/ios_app.py's
+DISPLAY_NAME) */
+#define IOS_FILES_FOLDER "GOAT H1"
+
+#if !defined(HALO_WINDOWS) && !defined(HALO_IOS)
+
 /* an XDG user folder ("XDG_DOWNLOAD_DIR") from user-dirs.dirs, else
 <home>/<fallback> */
 static void user_folder(const char *home, const char *key, const char *fallback, char *folder, size_t size)
@@ -587,8 +607,51 @@ static void earlier_folders(struct game_data_places *places)
 	}
 }
 
+#elif defined(HALO_WINDOWS)
+/* a Windows path with forward slashes, without a last one (C:/Users/name) */
+static void forward_slashes(char *path)
+{
+	for (; *path; path++)
+	{
+		if (*path == '\\')
+			*path = '/';
+	}
+}
+
+static void windows_folder(char *folder, size_t size, const char *path)
+{
+	size_t length;
+
+	snprintf(folder, size, "%s", path);
+	forward_slashes(folder);
+	length = strlen(folder);
+	while (length > 3 && folder[length - 1] == '/')
+		folder[--length] = 0;
+}
+#endif
+
 void game_data_default_places(struct game_data_places *places, const char *destination)
 {
+#ifdef HALO_WINDOWS
+	const char *profile = getenv("USERPROFILE");
+
+	memset(places, 0, sizeof(*places));
+	windows_folder(places->destination, sizeof(places->destination), destination);
+	/* (Documents is looked in as the user's folder's) */
+	if (profile && profile[0] && profile[1] == ':')
+	{
+		windows_folder(places->home, sizeof(places->home), profile);
+		snprintf(places->downloads, sizeof(places->downloads), "%s/Downloads", places->home);
+		snprintf(places->desktop, sizeof(places->desktop), "%s/Desktop", places->home);
+	}
+	places->time_limit = 3000;
+#elif defined(HALO_IOS)
+	/* (the app's Documents, the data root: no home folder, Downloads,
+	Desktop, drives nor earlier versions' folders can be reached) */
+	memset(places, 0, sizeof(*places));
+	snprintf(places->destination, sizeof(places->destination), "%s", destination);
+	places->time_limit = 3000;
+#else
 	const char *home = getenv("HOME");
 
 	memset(places, 0, sizeof(*places));
@@ -614,10 +677,25 @@ void game_data_default_places(struct game_data_places *places, const char *desti
 #endif
 	earlier_folders(places);
 	places->time_limit = 3000;
+#endif
 }
 
 void game_data_short_path(const struct game_data_places *places, const char *path, char *result, int size)
 {
+#ifdef HALO_WINDOWS
+	char forward[GAME_DATA_PATH_SIZE];
+
+	snprintf(forward, sizeof(forward), "%s", path);
+	forward_slashes(forward);
+	path = forward;
+#endif
+#ifdef HALO_IOS
+	if (places->destination[0] && path_is_below(path, places->destination))
+	{
+		snprintf(result, (size_t)size, IOS_FILES_FOLDER "%s", path + strlen(places->destination));
+		return;
+	}
+#endif
 	if (places->home[0] && path_is_below(path, places->home))
 		snprintf(result, (size_t)size, "~%s", path + strlen(places->home));
 	else
@@ -711,12 +789,16 @@ int game_data_scan(const struct game_data_places *places, game_data_image_check 
 
 void game_data_places_text(const struct game_data_places *places, char *text, int size)
 {
+#ifdef HALO_IOS
+	snprintf(text, (size_t)size, "%s", places->destination[0] ? IOS_FILES_FOLDER "'s folder in the Files app" : "");
+#else
 	char destination[GAME_DATA_PATH_SIZE];
 
 	game_data_short_path(places, places->destination, destination, (int)sizeof(destination));
-	snprintf(text, (size_t)size, "%sDownloads, the Desktop, your home folder, %s, and %s",
+	snprintf(text, (size_t)size, "%sDownloads, the Desktop, your home folder, %sand %s",
 		places->earlier[0][0] ? "the maps folder an earlier version used, " : "",
-		places->mounts[0] ? "SD cards and USB drives" : "drives", destination);
+		places->mounts[0] ? "SD cards and USB drives, " : places->media[0][0] ? "drives, " : "", destination);
+#endif
 }
 
 /* ---------- a folder the player picked */

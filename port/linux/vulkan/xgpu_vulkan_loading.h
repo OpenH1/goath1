@@ -7,6 +7,7 @@ struct loading_presentation_frame;
 uint64_t xgpu_vulkan_loading(void *context, const struct loading_presentation_frame *frame);
 int xgpu_vulkan_loading_owned(void *context);
 void xgpu_vulkan_loading_art(void *context, const uint8_t *rgba);
+void xgpu_vulkan_loading_art_source(void *context, const uint8_t *rgba);
 void xgpu_vulkan_loading_scene(void *context, const void *data, uint32_t bytes);
 /* VR: the loading image is the stereo pair when the scene allows; whether
 the last one drawn was */
@@ -26,5 +27,8 @@ uint32_t xgpu_vulkan_loading_frame_height(void);
 (drawn at its pixels); else 0 */
 int xgpu_vulkan_loading_caption_size(uint32_t *width, uint32_t *height);
 uint64_t host_vulkan_display_period(void);
+/* HALO_LOADING_GPU_CHECK: the processor's sharp frame of the last loading
+frame the GPU drew, RGBA (its size); 0: none */
+int xgpu_vulkan_loading_check(const uint8_t **pixels, uint32_t *width, uint32_t *height);
 
 #endif

@@ -12,6 +12,7 @@ fail with ENOSYS, logged once.
 */
 
 #include "host.h"
+#include "host_log_queue.h"
 #include "halo_guest_syscall.h"
 
 #include <dirent.h>
@@ -584,6 +585,14 @@ static long guest_vector(int descriptor, uint64_t vector, int count, int64_t off
 		host_vector[index].iov_base = GUEST(void *, guest[index].base);
 		host_vector[index].iov_len = guest[index].length;
 	}
+	/* (the standard output and error: by the log's queue) */
+	if (write && !positional)
+	{
+		long queued = host_log_queue_output(descriptor, host_vector, count);
+
+		if (queued >= 0)
+			return queued;
+	}
 	if (write)
 		return result_of(positional ? pwritev(descriptor, host_vector, count, offset) :
 			writev(descriptor, host_vector, count));
@@ -649,7 +658,14 @@ static long long dispatch(long long number, long long a, long long b, long long 
 	case __NR_read:
 		return result_of(read((int)a, GUEST(void *, b), (size_t)(uint32_t)c));
 	case __NR_write:
+	{
+		/* (the standard output and error: by the log's queue) */
+		struct iovec part = { GUEST(void *, b), (size_t)(uint32_t)c };
+
+		if (host_log_queue_output((int)a, &part, 1) >= 0)
+			return (uint32_t)c;
 		return result_of(write((int)a, GUEST(const void *, b), (size_t)(uint32_t)c));
+	}
 	case __NR_pread64:
 		return result_of(pread((int)a, GUEST(void *, b), (size_t)(uint32_t)c, (off_t)d));
 	case __NR_pwrite64:

@@ -1,6 +1,7 @@
 """Android sizes render targets from drawable pixels, including after resize."""
 
 from pathlib import Path
+import re
 import shutil
 import subprocess
 
@@ -63,6 +64,14 @@ static void bink_import_update(void) {}
 static void hdr_read(void) {}
 static void picture_position_send(void) {}
 static void gamma_send(void) {}
+static void output_depth_read(void) {}
+static void hdr_sdr_curve_send(void) {}
+static void hdr_peak_nits_send(void) {}
+static void hdr_gamut_send(void) {}
+static void pass_times_send(void) {}
+static void sharp_upscale_send(void) {}
+/* (display.render_scale: none on Android's test) */
+static float render_scale_wanted(void) { return 1.0f; }
 static unsigned long screen_settings_taken;
 static unsigned long config_changes(void) { return 0; }
 static long shadow_scale_choose(void) { return 1; }
@@ -93,7 +102,8 @@ static void SDL_GetWindowSizeInPixels(void *window, int *width, int *height)
     *height = drawable_height;
 }
 static const char *config_string(const char *name) { assert(!strcmp(name, "display.picture_shape")); return "4:3"; }
-''' + function(platform, "BOOL platform_screen_mode(") + function(
+''' + re.search(r"static struct\n\{\n\tfloat factor;.*?\n\} temporal = [^;]*;\n", renderer, re.S).group(0) + function(
+        renderer, "static void temporal_scale_display(void)\n{") + function(platform, "BOOL platform_screen_mode(") + function(
         renderer, "static long screen_narrowest_width("
     ) + function(renderer, "static void screen_mode_choose(") + function(renderer, "long halo_screen_width(") + function(
         renderer, "long halo_screen_commit("

@@ -135,7 +135,24 @@ void xgpu_texture_describe(DWORD format_word, DWORD size_word, struct xgpu_textu
 	information = format_information(description->format);
 	description->cube_map = (format_word & D3DFORMAT_CUBEMAP) != 0;
 	description->compressed = kind_compressed(information.kind);
-	if (size_word)
+	if (size_word && description->compressed)
+	{
+		/* a compressed texture of sides only Halo PC draws (an Xbox has no
+		linear DXT format, so this is never a linear texture's Size word):
+		its true sides, its levels as the Format word says, a volume's depth
+		less one where the power-of-two sides would be, and its blocks
+		unswizzled one level after another, as any DXT texture's
+		(xbox_texture_cache.c, texture_cache_initialize_hardware_format) */
+		description->width = (size_word & D3DSIZE_WIDTH_MASK) + 1;
+		description->height = ((size_word & D3DSIZE_HEIGHT_MASK) >> D3DSIZE_HEIGHT_SHIFT) + 1;
+		description->depth = ((format_word >> D3DFORMAT_USIZE_SHIFT) & 0xfff) + 1;
+		description->levels = (format_word & D3DFORMAT_MIPMAP_MASK) >> D3DFORMAT_MIPMAP_SHIFT;
+		if (!description->levels)
+			description->levels = 1;
+		description->linear = FALSE;
+		description->pitch = ((description->width + 3) / 4) * information.bytes;
+	}
+	else if (size_word)
 	{
 		description->width = (size_word & D3DSIZE_WIDTH_MASK) + 1;
 		description->height = ((size_word & D3DSIZE_HEIGHT_MASK) >> D3DSIZE_HEIGHT_SHIFT) + 1;
@@ -190,6 +207,105 @@ unsigned long xgpu_texture_face_size(const struct xgpu_texture_description *desc
 	if (description->cube_map)
 		size = (size + D3DTEXTURE_CUBEFACE_ALIGNMENT - 1) & ~(unsigned long)(D3DTEXTURE_CUBEFACE_ALIGNMENT - 1);
 	return size;
+}
+
+int xgpu_texture_minimum_alpha(const struct xgpu_texture_description *description, const unsigned char *texels)
+{
+	struct format_information information = format_information(description->format);
+	unsigned long level, least = 255;
+
+	switch (information.kind)
+	{
+	case _texel_x8r8g8b8:
+	case _texel_r5g6b5:
+	case _texel_x1r5g5b5:
+		return 255;
+	case _texel_dxt1:
+	case _texel_dxt3:
+	case _texel_dxt5:
+	case _texel_a8r8g8b8:
+		break;
+	default:
+		return -1;
+	}
+	if (!texels || description->cube_map || description->depth > 1)
+		return -1;
+	for (level = 0; level < description->levels && least; level++)
+	{
+		const unsigned char *data = texels + xgpu_texture_level_offset(description, level);
+		unsigned long size = xgpu_texture_level_size(description, level), offset;
+
+		if (information.kind == _texel_a8r8g8b8)
+		{
+			/* (a linear texture's rows' padding is read with them: no more than
+			the least) */
+			for (offset = 3; offset < size; offset += 4)
+			{
+				if (data[offset] < least)
+					least = data[offset];
+			}
+		}
+		else if (information.kind == _texel_dxt1)
+		{
+			for (offset = 0; offset + 8 <= size; offset += 8)
+			{
+				const unsigned char *block = data + offset;
+				unsigned long c0 = block[0] | (unsigned long)block[1] << 8, c1 = block[2] | (unsigned long)block[3] << 8;
+				unsigned long indices = block[4] | (unsigned long)block[5] << 8 | (unsigned long)block[6] << 16 |
+					(unsigned long)block[7] << 24;
+
+				/* (three colours and transparent: a texel whose index is 3) */
+				if (c0 <= c1 && (indices & (indices >> 1) & 0x55555555UL))
+					return 0;
+			}
+		}
+		else if (information.kind == _texel_dxt3)
+		{
+			/* (a block's first eight bytes: its texels' alphas, four bits each) */
+			for (offset = 0; offset + 16 <= size; offset += 16)
+			{
+				int byte;
+
+				for (byte = 0; byte < 8; byte++)
+				{
+					unsigned long low = data[offset + byte] & 0x0f, high = data[offset + byte] >> 4;
+
+					if (low * 17 < least)
+						least = low * 17;
+					if (high * 17 < least)
+						least = high * 17;
+				}
+			}
+		}
+		else
+		{
+			/* (a block's two alphas, then its texels' indices, three bits each:
+			eight alphas from the first down to the second; or, the first not
+			the greater, six from it up to the second, then 0 and 255) */
+			for (offset = 0; offset + 16 <= size; offset += 16)
+			{
+				const unsigned char *block = data + offset;
+				unsigned long a0 = block[0], a1 = block[1], lower = a0 > a1 ? a1 : a0;
+
+				if (a0 <= a1)
+				{
+					unsigned long long indices = 0;
+					int texel;
+
+					for (texel = 0; texel < 6; texel++)
+						indices |= (unsigned long long)block[2 + texel] << (8 * texel);
+					for (texel = 0; texel < 16; texel++)
+					{
+						if (((indices >> (3 * texel)) & 7) == 6)
+							return 0;
+					}
+				}
+				if (lower < least)
+					least = lower;
+			}
+		}
+	}
+	return (int)least;
 }
 
 /* whether the size is one D3DDevice_GetDeviceCaps allows (d3d8_device.c): up
@@ -568,4 +684,156 @@ float xgpu_texture_alpha_coverage(unsigned int format_word, unsigned int size_wo
 		drawn += ((decoded[texel] >> 24) & 0xFFu) > reference;
 	free(decoded);
 	return (float)drawn / (float)(width * height);
+}
+
+/* ---------- levels that keep an alpha test's coverage (xgpu.h) */
+
+void xgpu_texture_coverage_begin(struct xgpu_texture_coverage *coverage, unsigned int pass)
+{
+	memset(coverage, 0, sizeof(*coverage));
+	coverage->pass = pass;
+}
+
+void xgpu_texture_coverage_end(struct xgpu_texture_coverage *coverage)
+{
+	free(coverage->made);
+	coverage->made = NULL;
+}
+
+/* the level before as made (coverage->made), box-filtered to width by
+height: each texel's alpha the mean of those it covers, its colour theirs
+weighted by their alphas (their plain mean where all are 0) */
+static DWORD *coverage_filter(const struct xgpu_texture_coverage *coverage, unsigned long width, unsigned long height)
+{
+	unsigned long step_x = coverage->width > width ? 2 : 1, step_y = coverage->height > height ? 2 : 1, x, y;
+	DWORD *made = malloc(width * height * sizeof(*made));
+
+	if (!made)
+		return NULL;
+	for (y = 0; y < height; y++)
+	{
+		for (x = 0; x < width; x++)
+		{
+			unsigned long sums[4] = { 0, 0, 0, 0 }, weighted[3] = { 0, 0, 0 }, alpha = 0, count = 0, dx, dy, channel;
+			DWORD texel = 0;
+
+			for (dy = 0; dy < step_y; dy++)
+			{
+				for (dx = 0; dx < step_x; dx++)
+				{
+					unsigned long sx = x * step_x + dx, sy = y * step_y + dy;
+					DWORD source;
+					unsigned long a;
+
+					if (sx >= coverage->width)
+						sx = coverage->width - 1;
+					if (sy >= coverage->height)
+						sy = coverage->height - 1;
+					source = coverage->made[sy * coverage->width + sx];
+					a = source >> 24;
+					for (channel = 0; channel < 3; channel++)
+					{
+						sums[channel] += (source >> (channel * 8)) & 0xff;
+						weighted[channel] += ((source >> (channel * 8)) & 0xff) * a;
+					}
+					alpha += a;
+					count++;
+				}
+			}
+			for (channel = 0; channel < 3; channel++)
+			{
+				unsigned long value = alpha ? (weighted[channel] + alpha / 2) / alpha : (sums[channel] + count / 2) / count;
+
+				texel |= (DWORD)value << (channel * 8);
+			}
+			texel |= (DWORD)((alpha + count / 2) / count) << 24;
+			made[y * width + x] = texel;
+		}
+	}
+	return made;
+}
+
+void xgpu_texture_coverage_level(struct xgpu_texture_coverage *coverage, unsigned long level, unsigned long width,
+	unsigned long height, DWORD *texels)
+{
+	unsigned long count = width * height, histogram[257], passing[258], index, cut, best;
+	unsigned char scaled[256];
+	double wanted, scale;
+	DWORD *made;
+
+	if (coverage->failed || !count || coverage->pass < 1 || coverage->pass > 255)
+		return;
+	if (level == 0)
+	{
+		unsigned long passed = 0;
+
+		free(coverage->made);
+		coverage->made = malloc(count * sizeof(*coverage->made));
+		if (!coverage->made)
+		{
+			coverage->failed = TRUE;
+			return;
+		}
+		memcpy(coverage->made, texels, count * sizeof(*texels));
+		for (index = 0; index < count; index++)
+			passed += (texels[index] >> 24) >= coverage->pass;
+		coverage->share = (double)passed / (double)count;
+		coverage->width = width;
+		coverage->height = height;
+		return;
+	}
+	/* (none passing, or all: so is each level made from it, as stored) */
+	if (!coverage->made || coverage->share <= 0.0 || coverage->share >= 1.0)
+		return;
+	made = coverage_filter(coverage, width, height);
+	if (!made)
+	{
+		coverage->failed = TRUE;
+		return;
+	}
+	free(coverage->made);
+	coverage->made = made;
+	coverage->width = width;
+	coverage->height = height;
+	/* the least alpha cut (1 to 256: none passing) of the made level whose
+	texels at or past it are nearest the first's share */
+	memset(histogram, 0, sizeof(histogram));
+	for (index = 0; index < count; index++)
+		histogram[made[index] >> 24]++;
+	passing[256] = 0;
+	for (index = 256; index-- > 0;)
+		passing[index] = passing[index + 1] + histogram[index];
+	wanted = coverage->share * (double)count;
+	best = 256;
+	for (cut = 256; cut >= 1; cut--)
+	{
+		double off = (double)passing[cut] - wanted, best_off = (double)passing[best] - wanted;
+
+		if ((off < 0 ? -off : off) <= (best_off < 0 ? -best_off : best_off))
+			best = cut;
+	}
+	/* the alphas scaled so that those at or past the cut pass and those
+	before it do not (0 stays 0) */
+	scale = ((double)coverage->pass - 0.5) / ((double)best - 0.5);
+	for (index = 0; index < 256; index++)
+	{
+		double value = (double)index * scale + 0.5;
+		unsigned long rounded = value >= 255.0 ? 255 : (unsigned long)value;
+
+		if (index >= best && rounded < coverage->pass)
+			rounded = coverage->pass;
+		else if (index < best && rounded >= coverage->pass)
+			rounded = coverage->pass - 1;
+		scaled[index] = (unsigned char)rounded;
+	}
+	for (index = 0; index < count; index++)
+	{
+		DWORD alpha = scaled[made[index] >> 24];
+
+		/* (passed now, cut out as stored: the first level's colour there) */
+		if (alpha >= coverage->pass && (texels[index] >> 24) < coverage->pass)
+			texels[index] = (made[index] & 0x00ffffffu) | (alpha << 24);
+		else
+			texels[index] = (texels[index] & 0x00ffffffu) | (alpha << 24);
+	}
 }

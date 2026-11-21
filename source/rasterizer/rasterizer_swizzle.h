@@ -71,6 +71,8 @@ void rasterizer_xbox_bitmap_swizzle3d_long(
 	short depth);
 void rasterizer_xbox_bitmap_swizzle(
 	struct bitmap_data *bitmap);
+boolean rasterizer_xbox_bitmap_unswizzled_compressed(
+	struct bitmap_data const *bitmap);
 short rasterizer_xbox_bitmap_get_max_mipmap_count(
 	struct bitmap_data *bitmap);
 long rasterizer_xbox_bitmap_get_pixel_data_size(

@@ -78,6 +78,7 @@ names another file, or none (empty).
 #include "host_render_record.h"
 #include "host_render_stream.h"
 #include "xgpu_vulkan.h"
+#include "../src/xgpu_hdr.h"
 #include "xgpu_vulkan_loading.h"
 #include "xgpu_vulkan_post.h"
 #include "xgpu_vulkan_stream.h"
@@ -144,8 +145,17 @@ static void suspend_call(void *argument)
 the SDL the Linux builds bring */
 #define WAYLAND_REFERENCE_LUMINANCE "openh1.wayland.reference_luminance"
 
-/* display.hdr: what the window's display says (SDL's), told the backend
-(any thread) */
+#ifdef _WIN32
+/* the window's display's black, peak and full-frame peak in nits, and its
+primaries (red, green, blue, white: x, y each; may be NULL), as DXGI
+reports them (port/windows/host/host_display_win.c); 0 where it says
+nothing */
+int host_display_luminance(const unsigned char luid[8], void *window, float *black_nits, float *peak_nits,
+	float *full_frame_nits, float primaries[8]);
+#endif
+
+/* display.hdr: what the window's display says (SDL's; and, on Windows,
+DXGI's black and full-frame peak), told the backend (any thread) */
 static void window_hdr_read(void)
 {
 	SDL_PropertiesID properties = vulkan_window ? SDL_GetWindowProperties(vulkan_window) : 0;
@@ -159,13 +169,46 @@ static void window_hdr_read(void)
 		return;
 	}
 	enabled = properties && SDL_GetBooleanProperty(properties, SDL_PROP_WINDOW_HDR_ENABLED_BOOLEAN, false);
-	sdr_white = properties ? SDL_GetFloatProperty(properties, SDL_PROP_WINDOW_SDR_WHITE_LEVEL_FLOAT, 1.0f) : 1.0f;
+	/* (the SDR white in 80-nit units, 0 where none is reported. Windows'
+	is its SDRWhiteLevel over 1000: its least SDR brightness, 80 nits, is
+	1.0, a value like any other, so any it has counts. Elsewhere SDL's 1.0
+	is its default, in no nits: none) */
+#ifdef _WIN32
+	sdr_white = properties && SDL_HasProperty(properties, SDL_PROP_WINDOW_SDR_WHITE_LEVEL_FLOAT) ?
+		SDL_GetFloatProperty(properties, SDL_PROP_WINDOW_SDR_WHITE_LEVEL_FLOAT, 0.0f) : 0.0f;
+#else
+	sdr_white = properties ? SDL_GetFloatProperty(properties, SDL_PROP_WINDOW_SDR_WHITE_LEVEL_FLOAT, 0.0f) : 0.0f;
+	if (!(sdr_white > 1.0f))
+		sdr_white = 0.0f;
+#endif
 	/* (on Wayland SDL's SDR white is 1.0, the compositor's reference white,
 	in no nits: its nits are the patched SDL's property,
 	port/android/patches/sdl-wayland-reference-luminance.patch) */
 	if (properties && SDL_GetFloatProperty(properties, WAYLAND_REFERENCE_LUMINANCE, 0.0f) > 0.0f)
 		sdr_white = SDL_GetFloatProperty(properties, WAYLAND_REFERENCE_LUMINANCE, 0.0f) / 80.0f;
 	headroom = properties ? SDL_GetFloatProperty(properties, SDL_PROP_WINDOW_HDR_HEADROOM_FLOAT, 1.0f) : 1.0f;
+#ifdef _WIN32
+	{
+		/* (logged as they change) */
+		static float logged[3];
+		unsigned char luid[8];
+		float black = 0.0f, peak = 0.0f, full_frame = 0.0f, primaries[8] = { 0.0f };
+		void *window = properties ? SDL_GetPointerProperty(properties, SDL_PROP_WINDOW_WIN32_HWND_POINTER, NULL) : NULL;
+
+		if (enabled && host_display_luminance(xgpu_vulkan_device_luid(luid) ? luid : NULL, window, &black, &peak,
+			&full_frame, primaries) && (black != logged[0] || peak != logged[1] || full_frame != logged[2]))
+		{
+			host_logf(HOST_LOG_INFO, "hdr: DXGI: black %.4f nits, peak %.0f nits, full-frame %.0f nits", (double)black,
+				(double)peak, (double)full_frame);
+			logged[0] = black;
+			logged[1] = peak;
+			logged[2] = full_frame;
+		}
+		xgpu_vulkan_window_luminance(black, full_frame);
+		/* (display.hdr_gamut's target: the display's primaries, #1124) */
+		xgpu_vulkan_window_gamut(xgpu_hdr_gamut_target(primaries));
+	}
+#endif
 	xgpu_vulkan_window_hdr(enabled, sdr_white, headroom);
 }
 
@@ -680,18 +723,21 @@ int host_vulkan_window_open(uint32_t window, uint32_t debug, uint32_t shader_fol
 			options.instance_extension_count = count;
 			options.surface_create = surface_create;
 			options.rotation_prepare = xgpu_vulkan_post_rotate_prepare;
+			/* (the loading screen's sharp frame drawn on the GPU) */
+			options.loading_prepare = xgpu_vulkan_post_loading_prepare;
 			options.rotate = xgpu_vulkan_post_rotate;
 #if !defined(__ANDROID__) && !defined(HALO_VR)
 			/* (display.hdr: an HDR swapchain, and the display told the front
 			end) */
 			options.display_hdr = host_render_stream_display_hdr;
-			options.encode_prepare = xgpu_vulkan_post_encode_prepare;
-			options.encode = xgpu_vulkan_post_encode;
+			/* (display.render_scale's frame scaled up sharply) */
+			options.sharp_upscale = 1;
 #endif
 #ifndef HALO_VR
-			/* (display.gamma's curve over an SDR frame: not the VR build's) */
-			options.gamma_prepare = xgpu_vulkan_post_gamma_prepare;
-			options.gamma = xgpu_vulkan_post_gamma;
+			/* (the frame's last pass: HDR's encoding, display.gamma's curve
+			over an SDR frame, the dither; not the VR build's) */
+			options.encode_prepare = xgpu_vulkan_post_encode_prepare;
+			options.encode = xgpu_vulkan_post_encode;
 #endif
 		}
 	}
@@ -777,6 +823,7 @@ int host_vulkan_window_open(uint32_t window, uint32_t debug, uint32_t shader_fol
 	backend.exiting = vulkan_exiting;
 	host_render_stream_set_backend(&backend);
 	host_render_stream_set_screenshot_writer(host_screenshot_write);
+	host_render_stream_set_screenshot_halves_writer(host_screenshot_write_halves);
 	/* (HALO_RENDER_SHOTS' pictures: host_render_record.h) */
 	host_render_record_set_shooter(xgpu_vulkan_stream_shot);
 	atexit(vulkan_shutdown);

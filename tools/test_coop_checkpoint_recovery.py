@@ -50,9 +50,10 @@ def generated(fault=None):
         (distributed, ("DEATH_BLOW_WAIT_TICKS", "SEAT_DISAGREEMENT_TICKS", "SEAT_DISAGREEMENT_SLACK_TICKS")),
         (distributed_h, ("REMOTE_CORRECTION_TOLERANCE", "REMOTE_BLEND_DISTANCE", "NO_PLAYER")),
         (damage, ("REPORT_WORLD_BOUND", "REPORT_IMPACT_TOLERANCE", "TARGET_HISTORY_TICKS",
+                  "TARGET_HISTORY_SLACK_TICKS", "REPORT_DELAY_SLACK_TICKS", "REPORT_MAXIMUM_AGE_TICKS",
                   "MAXIMUM_RECENT_WEAPONS", "MAXIMUM_GRENADE_THROWS", "MAXIMUM_STUCK_PROJECTILES",
                   "RECENT_WEAPON_TICKS", "HIT_REPORT_BURST_SECONDS", "PLAYER_TRAIL_POINTS",
-                  "DAMAGE_RATE_CACHE_SIZE", "MAXIMUM_HIT_REPORTS_PER_TICK")),
+                  "DAMAGE_RATE_CACHE_SIZE", "MAXIMUM_HIT_REPORTS_PER_TICK", "ROUND_TRIP_WINDOW_TICKS")),
     ):
         config.extend(define_value(source, name) for name in names)
     config.append(define_value(distributed_h, 'DISTRIBUTED_UNIT_SCALE'))
@@ -133,7 +134,7 @@ def generated(fault=None):
     code += "\n" + "\n".join(function(damage, name) for name in (
         "distributed_damage_to_data", "distributed_damage_indices_valid",
         "distributed_damage_numbers_valid", "network_damage_handle_events",
-        "network_damage_new_game", "network_damage_client_tick"))
+        "distributed_reset_player_slot", "network_damage_new_game", "network_damage_client_tick"))
     code += "\n" + function(distributed, "distributed_message_epoch_valid")
     code += "\n" + "\n".join(function(objects, name) for name in (
         "distributed_inventory_from_unit", "distributed_host_send_inventories_to_machine",

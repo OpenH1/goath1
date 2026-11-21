@@ -13,8 +13,10 @@ definitions. An entry the netcode packs itself (a unit's state, a relayed
 action) is covered by its flags and its least and largest sizes only.
 
 test_linux_port.py fails when the sources differ from the record. An item
-changed or removed is one older builds cannot read: raise the version and
-say why in NETCODE.md. An item added (a message kind, a bit) may be one they
+changed or removed is one older builds cannot read: raise the version (or,
+where only OpenH1 machines send and read it, OpenH1's own protocol version,
+HALO_PORT_STANDARD_NETWORK_VERSION, which is recorded too) and say why in
+NETCODE.md. An item added (a message kind, a bit) may be one they
 ignore. Then record it: network_format.py --record
 """
 
@@ -156,12 +158,22 @@ def items():
     add("struct mcc_load_message", _hash(next(_blocks(loading, r"^struct mcc_load_message\s*\{"))))
     for name, value in re.findall(r"^#define (MCC_LOAD_NETWORK_\w+) ([^\n]+)", loading, re.M):
         add(f"define {name}", value)
+    add(STANDARD, standard_version())
     return result
 
 
 def version():
     limits = (ROOT / "port/linux/include/halo_port_limits.h").read_text()
     return int(re.search(r"#define HALO_PORT_NETWORK_VERSION (\d+)", limits).group(1))
+
+
+STANDARD = "define HALO_PORT_STANDARD_NETWORK_VERSION"
+
+
+def standard_version():
+    """OpenH1's own protocol version (its Standard games'), raised for a change between OpenH1 machines alone"""
+    limits = (ROOT / "port/linux/include/halo_port_limits.h").read_text()
+    return re.search(r"#define HALO_PORT_STANDARD_NETWORK_VERSION (\d+)", limits).group(1)
 
 
 def recorded():
@@ -196,8 +208,9 @@ def record():
     new = items()
     recorded_version, old = recorded()
     breaking = changes(old, new)[0]
-    if breaking and recorded_version == version():
-        sys.exit("changed or removed: " + ", ".join(breaking) + "\nraise HALO_PORT_NETWORK_VERSION first")
+    if breaking and recorded_version == version() and old.get(STANDARD) == new[STANDARD]:
+        sys.exit("changed or removed: " + ", ".join(breaking) + "\nraise HALO_PORT_NETWORK_VERSION first (or, for a "
+                 "change between OpenH1 machines alone, HALO_PORT_STANDARD_NETWORK_VERSION)")
     RECORD.write_text(f"version {version()}\n" + "".join(f"{name} {new[name]}\n" for name in sorted(new)))
 
 

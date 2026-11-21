@@ -123,6 +123,13 @@ struct xgpu_manifest_context
 	uint8_t lights_present, environment, hdr_category, hdr_view;
 	uint16_t hdr_kind;
 	uint8_t world, found;
+	/* the effect's group can be soft (display.soft_particles: d3d8_device.c's
+	soft_effect_key, on a flat screen; 2 a first-person weapon's over its
+	own pixels, its fade its depth test: xgpu.h's xgpu_effect_untested), and its alpha test passes every pixel
+	(its texture's least alpha: d3d8_device.c's alpha_test_always_passes),
+	the draw kept with the test (where a backend drops it:
+	xgpu_backend_capabilities.alpha_test_drop) */
+	uint8_t soft, alpha_passes;
 };
 
 struct xgpu_manifest
@@ -175,9 +182,12 @@ struct xgpu_draw_facts
 	failed (the backend could not make it: d3d8_device.c) */
 	int lights, world_found, lighting_failed, split_failed;
 	/* the targets' samples a pixel; the colour target in half floats
-	(display.hdr), and the draw's tag there (xgpu_hdr_classify) */
+	(display.hdr), and the draw's tag there (xgpu_hdr_classify); the colour
+	target in 16-bit unsigned normalized (display.output_depth's SDR back
+	buffer: XGPU_FORMAT_RGBA16) */
 	int samples, hdr_target;
 	uint16_t hdr;
+	int deep_target;
 	/* display.ambient_occlusion "world"'s light for the draw (xgpu.h's
 	XGPU_AMBIENT_OCCLUSION_WORLD, and _WORLD_VIEW with debug.world_ao_view;
 	0 none) */
@@ -188,6 +198,10 @@ struct xgpu_draw_facts
 	int per_pixel, lights_active, environment;
 	/* the backend has a sample mask (xgpu_backend_capabilities) */
 	int sample_mask;
+	/* display.smooth_lightmaps on, and the draw's texture 2 a 2D lookup
+	(PSTextureModes' PROJECT2D of a 2D texture: the lightmap pass's
+	lightmap), filtered linearly where the front end knows its filter */
+	int smooth_lightmaps, lightmap_stage;
 };
 
 /* what the facts make of the pipeline (xgpu_backend.h's XGPU_LIGHTING_*,
@@ -197,6 +211,9 @@ struct xgpu_draw_derived
 	uint8_t lighting, color_format, samples;
 	uint8_t alpha_test_samples, per_pixel_lighting, dynamic_lights, ambient_occlusion;
 	uint16_t hdr;
+	/* the lightmap sampled by the cubic B-spline (xgpu.h's
+	XGPU_TEXTURE_MODES_LIGHTMAP_CUBIC in the pixel key's texture_modes) */
+	uint8_t lightmap_cubic;
 };
 
 /* the pipeline the facts give a draw, lit as the settings light it, or
@@ -207,11 +224,17 @@ int xgpu_draw_derive(const struct xgpu_draw_facts *facts, int unlit, struct xgpu
 /* the settings a manifest's draw is derived under: the targets' samples (1,
 or display.anti_aliasing's multisampling's), display.hdr on, each pixel lit
 (display.per_pixel_lighting), the enhanced dynamic lights, the ambient
-occlusion (XGPU_MANIFEST_OCCLUSION_*); with the stream's backends' sample
-mask and dynamic lights (Metal's and Vulkan's) */
+occlusion (XGPU_MANIFEST_OCCLUSION_*), the SDR back buffer in RGBA16
+(display.output_depth's 16-bit frame: deep, where display.hdr is off), the
+effects soft (display.soft_particles), display.hdr_highlight_boost's level
+(0 to XGPU_HDR_BOOST_MOST), an alpha test that cannot fail dropped (the
+backend's alpha_test_drop) and the lightmaps filtered by the cubic
+(display.smooth_lightmaps); with the stream's backends' sample mask and
+dynamic lights (Metal's and Vulkan's) */
 struct xgpu_manifest_settings
 {
-	int samples, hdr, per_pixel_lighting, enhanced_lights, ambient_occlusion;
+	int samples, hdr, per_pixel_lighting, enhanced_lights, ambient_occlusion, deep, soft, boost, alpha_drop;
+	int smooth_lightmaps;
 };
 
 /* display.ambient_occlusion: off, or found in the world ("world"; without
@@ -277,6 +300,14 @@ void xgpu_manifest_enumerating(int enumerating, int new_map);
 stages, as the stream describes them), and the vertex programs recorded
 (debug.render_manifest; else none: the backend has made them all) */
 const struct xgpu_manifest *xgpu_manifest_enumeration(void);
+/* HALO_RENDER_COVERAGE=<file> (with debug.render_manifest): each map's
+enumeration's draws, as no setting changes them with their contexts (d
+records), written there after a comment line "# coverage <label>" as it
+ends, the label the enumeration's (its map, walked or played back from its
+record, the screen's width: render_enumerate.c, render_prepared.c), so that
+tools/test_preparation_coverage.py compares a map's walk with its record's
+playback under every setting (tools/prepared_records.py records them) */
+void xgpu_manifest_coverage_label(const char *label);
 
 #endif
 

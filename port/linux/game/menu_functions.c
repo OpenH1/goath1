@@ -89,6 +89,7 @@ their handlers open opens.
 #include "cache/cache_files.h"
 #include "game/game.h"
 #include "input/input.h"
+#include "input/input_abstraction.h"
 #include "interface/event_manager.h"
 #include "interface/player_ui.h"
 #include "interface/ui_widget.h"
@@ -106,6 +107,7 @@ their handlers open opens.
 #include "halo_menus.h"
 #include "controller_buttons.h"
 #include "controller_remap.h"
+#include "controller_layouts.h"
 #include "custom_edition_cache.h"
 #include "mcc_ui.h"
 #include "mcc_pause.h"
@@ -131,16 +133,20 @@ their handlers open opens.
 #include "network_map_vote.h"
 #include "text/draw_string.h"
 #include "halo_keyboard.h"
+#include "keyboard.h" /* port: port/linux/game/keyboard.c */
 #include "menu_search.h"
 #include "menu_table.h"
 /* (internet play's server browser: the platform layer's) */
 #include "../src/p2p.h"
 #include "../src/browser_favorites.h"
+#include "../src/dlss_addon.h"
+#include "subtitles.h" /* port: port/linux/game/subtitles.c */
 /* (the server browser's master servers, and Server Setup's publisher key) */
 #include "../src/master_list.h"
 #include "../src/player_link.h" /* port: port/linux/src/player_link.c */
 #include "../src/server_master.h"
 #include "../src/report.h"
+#include "benchmark.h" /* port: port/linux/game/benchmark.c */
 #include "../src/game_caches.h" /* port: port/linux/src/game_caches.c */
 #include "text_filter.h"
 /* (the party: party_menu.inc) */
@@ -153,6 +159,7 @@ their handlers open opens.
 #include "bungie_net/network/transport.h"
 
 #include <ctype.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include <xtl.h>
@@ -454,11 +461,12 @@ static boolean profile_setting_boolean(short field)
 	return field != 0 && field != 4 && field != 5;
 }
 
-/* ---------- Advanced Graphics' RENDER RESOLUTION row: two settings as one
+/* ---------- Advanced Graphics' RENDER RESOLUTION row: three settings as one
 spinner, a setting named "display.render_resolution" (tools/port_settings.py):
-"original", display.resolution_scaling's Xbox 640x480, or the factor of
-display.supersampling's that "native" draws at (1, the screen's pixels, to
-2); written as both (render_resolution_write) */
+"original", display.resolution_scaling's Xbox 640x480, or the factor that
+"native" draws at: below 1 display.render_scale's (0.25 to 1), else
+display.supersampling's (1, the screen's pixels, to 2); written as all three
+(render_resolution_write), the other factor 1 */
 
 #define RENDER_RESOLUTION_SETTING "display.render_resolution"
 
@@ -475,6 +483,16 @@ static boolean render_resolution_text(char *text, unsigned int size, boolean def
 	{
 		snprintf(text, size, "%s", "original");
 		return TRUE;
+	}
+	if (!default_value)
+	{
+		double below;
+
+		if (config_text("display.render_scale", text, size) && text_is_number(text, &below) && below > 0.0 &&
+			below < 1.0)
+		{
+			return TRUE;
+		}
 	}
 	return default_value ? config_default("display.supersampling", text, size) != 0 :
 		config_text("display.supersampling", text, size) != 0;
@@ -496,12 +514,20 @@ static boolean render_resolution_write(char const *value)
 	}
 	if (original)
 		return TRUE;
-	config_text("display.supersampling", factor, sizeof(factor));
 	if (!text_is_number(value, &number))
 		return FALSE;
-	if (text_is_number(factor, &current) && current == number)
+	/* (below 1 the render scale's, the supersampling 1; else the
+	supersampling's, the render scale 1) */
+	config_text("display.render_scale", factor, sizeof(factor));
+	if (!(text_is_number(factor, &current) && current == (number < 1.0 ? number : 1.0)) &&
+		!config_write("display.render_scale", number < 1.0 ? value : "1.0"))
+	{
+		return FALSE;
+	}
+	config_text("display.supersampling", factor, sizeof(factor));
+	if (text_is_number(factor, &current) && current == (number < 1.0 ? 1.0 : number))
 		return TRUE;
-	return config_write("display.supersampling", value) != 0;
+	return config_write("display.supersampling", number < 1.0 ? "1.0" : value) != 0;
 }
 
 /* ---------- First Person's THIS WEAPON rows (Weapon Position's): the
@@ -2541,6 +2567,15 @@ static void gyro_rows_show(struct widget_instance *list)
 		"");
 }
 
+/* Stick Test's readings and circles, its screen's (screens/stick_test.xml) */
+#include "stick_test_menu.inc"
+
+/* (Button Remapping's Controller Layouts page's rows: controller_layout_menu.inc) */
+static void layout_rows_show(struct widget_instance *list);
+static boolean layout_has_bindings(void);
+static void layout_export_press(void);
+static boolean layout_files_panel(struct widget_instance *row, wchar_t const **help);
+
 static void sim_rate_row_show(struct widget_instance *list)
 {
 	struct widget_instance *row = named(list, "op_sim_rate", 0);
@@ -2942,6 +2977,11 @@ static boolean settings_function(char const *name, struct widget_instance *widge
 		settings_weapon_reset(screen);
 		ui_play_audio_feedback_sound(SOUND_CURSOR);
 	}
+	else if (!strcmp(name, "layout export"))
+	{
+		/* (Controller Layouts' EXPORT: at once, not kept for OK) */
+		layout_export_press();
+	}
 	else if (!strcmp(name, "gyro calibrate"))
 	{
 		/* (Gyro & Flick Stick's CALIBRATE: at once, not kept for OK) */
@@ -2954,6 +2994,16 @@ static boolean settings_function(char const *name, struct widget_instance *widge
 		/* (CLEAR CACHES: asked, then asked for at the next start,
 		port/linux/src/game_caches.c) */
 		clear_caches_press();
+	}
+	else if (!strcmp(name, "benchmark"))
+	{
+		/* (RUN BENCHMARK: begun from the main menu, at its pacing, map,
+		bots and player as this page shows them, port/linux/game/benchmark.c;
+		Settings closed by the match it starts) */
+		benchmark_request(settings_pending_value("display.benchmark_pacing"),
+			settings_pending_value("display.benchmark_map"), settings_pending_value("display.benchmark_bots"),
+			settings_pending_value("display.benchmark_player"));
+		ui_play_audio_feedback_sound(SOUND_FORWARD);
 	}
 	else if (!strcmp(name, "report"))
 	{
@@ -3042,8 +3092,54 @@ static boolean settings_condition_term(struct widget_instance *list, char const 
 		return platform_vrr_detected() == 1 /* PLATFORM_VRR_FOUND */;
 	if (!strcmp(name, "vrr_system"))
 		return platform_vrr_detected() == 3 /* PLATFORM_VRR_SYSTEM */;
+	/* (the frame drawn in HDR now: display.output_depth's row dimmed) */
+	if (!strcmp(name, "hdr_drawn"))
+		return halo_hdr_drawn() != 0;
+	/* (the renderer draws display.soft_particles: Vulkan's) */
+	if (!strcmp(name, "soft_effects"))
+		return halo_soft_effects_drawn() != 0;
+	/* (the renderer upscales with display.temporal_aa "fsr": Vulkan's; and
+	it is on, its row on another page than the anti-aliasing it replaces) */
+	if (!strcmp(name, "temporal_upscale"))
+		return halo_temporal_upscale_drawn() != 0;
+	/* (... NVIDIA DLSS too: where its module and an NVIDIA GPU are) */
+	if (!strcmp(name, "temporal_dlss"))
+		return halo_temporal_dlss_drawn() != 0;
+	/* (the DLSS add-on's download offered: an NVIDIA GPU with Vulkan, an
+	add-on this build pins; and the add-on installed: dlss_addon.c) */
+	if (!strcmp(name, "dlss_addon_offer"))
+		return dlss_addon_offered() != 0;
+	if (!strcmp(name, "dlss_addon_installed"))
+		return dlss_addon_installed() != 0;
+	/* (... MetalFX: Metal's) */
+	if (!strcmp(name, "temporal_metalfx"))
+		return halo_temporal_metalfx_drawn() != 0;
+	if (!strcmp(name, "temporal_on"))
+	{
+		char technique[16];
+
+		if (!settings_value("display.temporal_aa", technique, sizeof(technique)))
+			return FALSE;
+		return (halo_temporal_upscale_drawn() && !strcmp(technique, "fsr")) ||
+			(halo_temporal_dlss_drawn() && !strcmp(technique, "dlss")) ||
+			(halo_temporal_metalfx_drawn() && !strcmp(technique, "metalfx"));
+	}
+	/* (the renderer has ray queries: display.shadows "ray_traced") */
+	if (!strcmp(name, "ray_queries"))
+		return halo_world_ao_ray_queries() != 0;
+	/* (MCC's install found, whose subtitles display.subtitles shows) */
+	if (!strcmp(name, "mcc_subtitles"))
+		return subtitles_available();
 	if (!strcmp(name, "gyro"))
 		return halo_gyro_found() == 2;
+	/* (the player's Aim Style Modern, on another page than the rows it
+	enables: Advanced Stick Settings' Modern aim rows) */
+	if (!strcmp(name, "aim_modern"))
+	{
+		char style[16];
+
+		return settings_value("input.aim_style", style, sizeof(style)) && !strcmp(style, "modern");
+	}
 	if (!strcmp(name, "weapon_held"))
 	{
 		char path[sizeof(settings_weapon)];
@@ -3052,6 +3148,10 @@ static boolean settings_condition_term(struct widget_instance *list, char const 
 	}
 	if (!strcmp(name, "discord_linked"))
 		return discord_linked();
+	/* (Controller Layouts' ITS BINDINGS: the controller's layout came with
+	them, #1144) */
+	if (!strcmp(name, "layout_bindings"))
+		return layout_has_bindings();
 	if (!strcmp(name, "cooperative"))
 		return hosting_cooperative();
 	if (!strcmp(name, "local"))
@@ -3432,8 +3532,39 @@ static short settings_text_width(long font, wchar_t const *text)
 	return (short)(MAX(text_bounds.x1, cursor.x0) - bounds.x0);
 }
 
+/* how much of a word (its spaces before it counted) goes on a line of its
+own when it is wider than width alone (a folder's path): up to its last '/'
+or '\' that fits, else its last character that fits (at least one); all of
+it when it fits, or while the font is not known */
+static short settings_word_fit(wchar_t const *text, short word, long font, short width)
+{
+	wchar_t piece[128];
+	short start = 0, end, fit = 0, slash = 0;
+
+	while (start < word && text[start] == ' ')
+		start++;
+	if (font == NONE || word - start < 2 || word - start >= (short)NUMBEROF(piece))
+		return word;
+	memcpy(piece, text + start, (word - start) * sizeof(wchar_t));
+	piece[word - start] = 0;
+	if (settings_text_width(font, piece) <= width)
+		return word;
+	for (end = (short)(start + 1); end <= word; end++)
+	{
+		piece[end - start] = 0;
+		if (settings_text_width(font, piece) > width)
+			break;
+		fit = end;
+		if (text[end - 1] == '/' || text[end - 1] == '\\')
+			slash = end;
+		piece[end - start] = text[end];
+	}
+	return slash > start ? slash : MAX(fit, (short)(start + 1));
+}
+
 /* the words in lines that fit across width in the font (the game's line
-breaks, \r\n), broken at spaces; as they are while the font is not known */
+breaks, \r\n), broken at spaces, and a word wider than a line (a path)
+after a slash; as they are while the font is not known */
 static short settings_text_wrap(wchar_t const *text, wchar_t *wrapped, short size, long font, short width)
 {
 	short length = 0, line_start = 0, lines = 1;
@@ -3447,6 +3578,8 @@ static short settings_text_wrap(wchar_t const *text, wchar_t *wrapped, short siz
 			word++;
 		while (text[word] && text[word] != ' ')
 			word++;
+		/* (the rest of a word too wide for a line: the next word) */
+		word = settings_word_fit(text, word, font, width);
 		if (length + word + 2 >= size)
 			break;
 		memcpy(wrapped + length, text, word * sizeof(wchar_t));
@@ -3829,7 +3962,8 @@ static boolean about_panel(struct widget_instance *row, wchar_t *value, wchar_t 
 	for (length = 0; words[length]; length++)
 	{
 	}
-	snprintf(text, sizeof(text), "|%s. Made from the Xbox game's build 01.01.14.2342.", version);
+	snprintf(text, sizeof(text), "|%s. Made from the Xbox game's build 01.01.14.2342.%s%s", version,
+		dlss_addon_attribution() ? " " : "", dlss_addon_attribution() ? dlss_addon_attribution() : "");
 	discord_widen(text, words + length, (short)(SETTINGS_PANEL_TEXT_LENGTH - length));
 	*help = words;
 	return TRUE;
@@ -4450,6 +4584,8 @@ static void settings_panel_show(struct widget_instance *list, short tab)
 		hdr_display_panel(row, value, &help);
 		/* (Gyro's STEAM INPUT HAS IT: how to turn it off) */
 		gyro_found_panel(row, &help);
+		/* (Controller Layouts' FILES: why a file was refused) */
+		layout_files_panel(row, &help);
 		/* (Variable Refresh: what the system says of it) */
 		vrr_panel(row, &help);
 		/* (Profile's ABOUT: this build) */
@@ -4742,6 +4878,37 @@ static boolean settings_segment_pick(struct widget_instance *widget)
 	return TRUE;
 }
 
+/* "port setting segment" on the Upscaler row that offers NVIDIA DLSS's
+add-on (tools/port_settings.py's temporal_aa_dlss_get): its NVIDIA DLSS
+(DOWNLOAD) chosen opens the add-on's screen (screens/dlss_addon.xml:
+NVIDIA's license, the download), the row's choice kept as it was; FALSE
+for another row (or the new menus' screen not ready) */
+static boolean dlss_addon_segment(struct widget_instance *widget, struct event_record *event, boolean *deleted)
+{
+	struct pc_menu_setting *setting = widget ? settings_setting_of(widget) : NULL;
+	short before, after;
+	int open_deleted = FALSE;
+
+	if (!setting || strcmp(widget->name, "temporal_aa_dlss_get_spinner") || !dlss_addon_offered() ||
+		!menu_screen_open_ready("dlss_addon"))
+	{
+		return FALSE;
+	}
+	before = widget->parameters.list.selected_index;
+	/* (segments: the one clicked, or the next; a spinner: its choice) */
+	if (!widget->visible)
+		settings_segment_pick(widget);
+	after = widget->parameters.list.selected_index;
+	if (after < 0 || after >= setting->value_count || strcmp(setting->values[after], "dlss"))
+		return TRUE;
+	if (before >= 0 && before < setting->value_count && strcmp(setting->values[before], "dlss"))
+		widget->parameters.list.selected_index = before;
+	platform_log("menus: the NVIDIA DLSS add-on's screen opened from Upscaler");
+	menu_screen_open_named(widget, event, "dlss_addon", &open_deleted);
+	*deleted = open_deleted != 0;
+	return TRUE;
+}
+
 /* "port settings page": each frame of a tab's or a page's list */
 static void settings_page_update(struct widget_instance *list)
 {
@@ -4788,6 +4955,7 @@ static void settings_page_update(struct widget_instance *list)
 	settings_held_rows_show(list);
 	viewmodel_weapon_rows_show(list);
 	gyro_rows_show(list);
+	layout_rows_show(list);
 	settings_each(screen, setting_stash);
 	settings_segments_show(list);
 	settings_sliders_show(list);
@@ -5208,7 +5376,7 @@ static boolean coop_player2_choose(short controller)
 bindings each */
 
 #define CONTROL_BINDINGS 2
-#define CONTROL_ROWS 8
+#define CONTROL_ROWS 9
 #define CONTROL_NAME_LENGTH 32
 
 /* (a refused change's help shown this long: control_capture_poll) */
@@ -5257,6 +5425,13 @@ static struct
 	/* (COMMUNICATION's last row, after PING: the HUD's Spartan link,
 	spartan_link.c) */
 	{ "controls.spartan_link", L"SPARTAN LINK", 3, FALSE },
+	/* (ACTIONS' last row, after CLIP: the HUD hidden, source/interface/
+	hud.c) */
+	{ "controls.hide_hud", L"HIDE HUD", 2, FALSE },
+	/* (WEAPONS' last rows, after SWITCH GRENADE: MCC's steps of the zoom, in
+	and out, beside its cycle, player_control.c) */
+	{ "controls.zoom_in", L"ZOOM IN", 1, FALSE },
+	{ "controls.zoom_out", L"ZOOM OUT", 1, FALSE },
 };
 
 static struct
@@ -5412,6 +5587,16 @@ static boolean control_capture_begin(struct widget_instance *widget)
 	return TRUE;
 }
 
+/* whether a binding is pressed by the input name is: the same input, or the
+wheel either way ("Wheel") for a turn of it one way ("Wheel Up", which a
+capture takes), so that Wheel Up taken for Zoom In comes off Switch
+Weapon's Wheel rather than pressing both */
+static boolean control_binding_taken_by(char const *binding, char const *name)
+{
+	return !_stricmp(binding, name) ||
+		(!_stricmp(binding, "Wheel") && (!_stricmp(name, "Wheel Up") || !_stricmp(name, "Wheel Down")));
+}
+
 /* whether clearing the control's bindings that are name (NULL: the one in
 slot) would take its last key: a game control must keep one */
 static boolean control_left_without_key(short control, short slot, char const *name)
@@ -5427,7 +5612,7 @@ static boolean control_left_without_key(short control, short slot, char const *n
 
 		if (!*binding)
 			continue;
-		if (name ? _stricmp(binding, name) != 0 : other_slot != slot)
+		if (name ? !control_binding_taken_by(binding, name) : other_slot != slot)
 			return FALSE;
 		taken = TRUE;
 	}
@@ -5476,7 +5661,7 @@ static void control_capture_poll(void)
 		{
 			for (other_slot = 0; other_slot < CONTROL_BINDINGS; other_slot++)
 			{
-				if (!_stricmp(controls_screen.bindings[other][other_slot], name))
+				if (control_binding_taken_by(controls_screen.bindings[other][other_slot], name))
 					controls_screen.bindings[other][other_slot][0] = 0;
 			}
 		}
@@ -6169,6 +6354,19 @@ int pc_menu_crash_question_open(void)
 	return main_menu_question_open("pc\\main_menu\\crash\\crash_screen");
 }
 
+/* benchmark.c's: the benchmark's results, the new menus' screens/benchmark.xml
+(its stand-in, screens/benchmark), over the main menu; the classic menus
+have none: the results are in benchmarks/ and the log */
+int pc_menu_benchmark_results_open(void)
+{
+	if (!menu_screen_open_ready("benchmark"))
+	{
+		platform_log("benchmark: the results screen is the new menus' (display.menu_engine \"new\")");
+		return 1;
+	}
+	return main_menu_question_open("pc\\screens\\benchmark");
+}
+
 /* updater.c's, the macOS app's: 1 while a game is played (its pause menu
 too), 0 at the main menu, where the app's updater may show its window
 (port/macos/host_app.m) */
@@ -6318,6 +6516,7 @@ boolean playlist_profile_get(long index, struct game_variant *variant);
 boolean playlist_profile_get_display_name(long index, wchar_t *name);
 boolean playlist_profile_get_options(long index, struct game_variant_options *options);
 boolean input_get_key(struct key_stroke *key);
+wchar_t input_key_character(void);
 boolean game_engine_running(void);
 void game_engine_end_game(void);
 /* the platform layer's */
@@ -6471,7 +6670,23 @@ static void text_field_end(boolean keep)
 		done(text_field.text);
 }
 
-static void text_field_insert(char const *text)
+/* whether a character typed is put in the field, whose text is Latin-1
+(shown widened, game_name_done's too): ASCII's visible ones, and Latin-1's
+letters with a mark, U+00C0 to U+00FF but for the signs x and / (#1134: a
+layout's é, ñ, ü; a password's too). Latin Extended-A's (ł), beyond a
+byte, are a name's alone (the on-screen keyboard's: keyboard.c) */
+static boolean text_field_character_kept(wchar_t character)
+{
+	unsigned long code = (unsigned long)character;
+
+	return (code >= ' ' && code <= '~') || (code >= 0xC0 && code <= 0xFF && code != 0xD7 && code != 0xF7);
+}
+
+/* text put in, after what is there: ASCII's visible characters; and, for
+a character typed (letters: text_field_insert_character), Latin-1's letters
+with a mark, where text pasted (the clipboard's, UTF-8) keeps its ASCII
+alone */
+static void text_field_insert(char const *text, boolean letters)
 {
 	size_t length;
 
@@ -6483,10 +6698,18 @@ static void text_field_insert(char const *text)
 
 	for (; *text && length < (size_t)text_field.maximum; text++)
 	{
-		if (*text >= ' ' && *text <= '~')
+		if ((*text >= ' ' && *text <= '~') || (letters && text_field_character_kept((unsigned char)*text)))
 			text_field.text[length++] = *text;
 	}
 	text_field.text[length] = 0;
+}
+
+/* a character typed put in (text_field_character_kept's) */
+static void text_field_insert_character(char character)
+{
+	char text[2] = { character, 0 };
+
+	text_field_insert(text, TRUE);
 }
 
 /* (ui_widget.c) a text box's caret, lit this frame or not: a bar after its
@@ -6536,14 +6759,10 @@ static void text_field_show(struct widget_instance *value, char const *text, boo
 				char clipboard[TEXT_FIELD_LENGTH];
 
 				if (platform_clipboard_get(clipboard, sizeof(clipboard)))
-					text_field_insert(clipboard);
+					text_field_insert(clipboard, FALSE);
 			}
-			else if ((unsigned char)key.ascii_code >= ' ' && (unsigned char)key.ascii_code <= '~')
-			{
-				char character[2] = { key.ascii_code, 0 };
-
-				text_field_insert(character);
-			}
+			else if (text_field_character_kept(input_key_character()))
+				text_field_insert_character((char)input_key_character());
 		}
 		text = text_field.text;
 	}
@@ -6604,7 +6823,9 @@ port/assets/menus/model): its setting, its track's range and step, the
 values it may be typed, whether they are whole numbers, and its stops. A
 stop whose value is a word of the setting's (display.vehicle_fov's
 "default" and "match") is placed below the numbers, at -1 for the last
-such, -2 for the one before */
+such, -2 for the one before. A volume's slider (curve "volume") shows and
+takes a percentage, while its setting keeps the amplitude
+(settings_volume_amplitude) */
 struct settings_slider
 {
 	struct halo_menu_model_row const *row;
@@ -6612,9 +6833,61 @@ struct settings_slider
 	double least, most, step;
 	double typed_least, typed_most;
 	boolean whole;
+	boolean volume;
 	struct settings_slider_stop stops[SETTINGS_SLIDER_MAXIMUM_STOPS];
 	short stop_count;
 };
+
+/* A volume slider's place (0 to 100, the master's to 110) as the amplitude
+its setting keeps (#1106): the ear hears loudness as the logarithm of the
+amplitude, so the track spans 60 dB evenly, 1/1000 at 0 to 1 at 100 (an
+exponential), and falls straight to 0, an exact mute, below 10. Past 100
+(the master's), each 10 doubles it, 6 dB as before: 110 is 2.0. A linear
+slider gave 20 dB at its first step above mute and 6 dB over its whole top
+half. (dr-lex.be/info-stuff/implement-a-volume-control.html) */
+#define SETTINGS_VOLUME_RANGE 1000.0
+#define SETTINGS_VOLUME_KNEE 10.0
+#define SETTINGS_VOLUME_DOUBLING 10.0
+
+static double settings_volume_amplitude(double place)
+{
+	double knee = exp(log(SETTINGS_VOLUME_RANGE) * (SETTINGS_VOLUME_KNEE / 100.0 - 1.0));
+
+	if (place <= 0.0)
+		return 0.0;
+	if (place < SETTINGS_VOLUME_KNEE)
+		return knee * place / SETTINGS_VOLUME_KNEE;
+	if (place > 100.0)
+		return pow(2.0, (place - 100.0) / SETTINGS_VOLUME_DOUBLING);
+	return exp(log(SETTINGS_VOLUME_RANGE) * (place / 100.0 - 1.0));
+}
+
+/* (and the place of an amplitude a setting keeps: a value saved from the
+old 0 to 10 and 0 to 20 spinners sits where it plays) */
+static double settings_volume_place(double amplitude)
+{
+	double knee = settings_volume_amplitude(SETTINGS_VOLUME_KNEE);
+
+	if (amplitude <= 0.0)
+		return 0.0;
+	if (amplitude < knee)
+		return SETTINGS_VOLUME_KNEE * amplitude / knee;
+	if (amplitude > 1.0)
+		return 100.0 + SETTINGS_VOLUME_DOUBLING * log(amplitude) / log(2.0);
+	return 100.0 * (1.0 + log(amplitude) / log(SETTINGS_VOLUME_RANGE));
+}
+
+/* the percentage a place is shown as (and typed): the place itself to 100,
+past it the amplitude's (the master's 2.0 is 200%, as its old 20 was) */
+static double settings_volume_shown(double place)
+{
+	return place > 100.0 ? 100.0 * settings_volume_amplitude(place) : place;
+}
+
+static double settings_volume_typed(double shown)
+{
+	return shown > 100.0 ? settings_volume_place(shown / 100.0) : shown;
+}
 
 static struct
 {
@@ -6676,6 +6949,7 @@ static struct settings_slider const *settings_slider_made(struct halo_menu_model
 	slider->typed_least = row->typed_least;
 	slider->typed_most = row->typed_most;
 	slider->whole = row->whole != 0;
+	slider->volume = row->curve && !strcmp(row->curve, "volume");
 	for (index = 0; index < row->choice_count; index++)
 	{
 		double value;
@@ -6742,7 +7016,13 @@ static boolean settings_slider_text_value(struct settings_slider const *slider, 
 			return TRUE;
 		}
 	}
-	return text_is_number(text, value);
+	if (!text_is_number(text, value))
+		return FALSE;
+	/* (a volume's amplitude as its place, in the slider's range: a volume
+	saved past it sits at the slider's most) */
+	if (slider->volume)
+		*value = PIN(settings_volume_place(*value), slider->typed_least, slider->typed_most);
+	return TRUE;
 }
 
 /* whether the slider takes the value: one it may be typed, or a word's */
@@ -6796,7 +7076,10 @@ static void settings_slider_text(struct settings_slider const *slider, double va
 	if (word != NONE)
 		snprintf(text, size, "%s", slider->stops[word].word);
 	else
-		settings_slider_number(slider, value, text, size);
+		settings_slider_number(slider, slider->volume ? settings_volume_shown(value) : value, text, size);
+	/* (a volume's, a percentage) */
+	if (slider->volume && strlen(text) + 1 < size)
+		strcat(text, "%");
 }
 
 /* a value as the slider's field starts to be typed into: its number, or
@@ -6806,7 +7089,7 @@ static void settings_slider_field_text(struct settings_slider const *slider, dou
 	if (settings_slider_word(slider, value) != NONE)
 		text[0] = 0;
 	else
-		settings_slider_number(slider, value, text, size);
+		settings_slider_number(slider, slider->volume ? settings_volume_shown(value) : value, text, size);
 }
 
 /* the value kept as a change, or none if it is the setting's */
@@ -6819,6 +7102,17 @@ static void settings_slider_set(struct settings_slider const *slider, double val
 		value = PIN(value, slider->typed_least, slider->typed_most);
 	if (word != NONE && slider->stops[word].text)
 		snprintf(text, sizeof(text), "%s", slider->stops[word].text);
+	else if (slider->volume)
+	{
+		/* (a volume's percentage written as its amplitude, to six decimals:
+		1%'s is 0.0002) */
+		size_t length;
+
+		snprintf(text, sizeof(text), "%.6f", settings_volume_amplitude(value));
+		length = strlen(text);
+		while (length > 3 && text[length - 1] == '0' && text[length - 2] != '.')
+			text[--length] = 0;
+	}
 	else
 		settings_slider_number(slider, value, text, sizeof(text));
 	if (setting_text(slider->setting, current, sizeof(current), FALSE) &&
@@ -6920,7 +7214,8 @@ static void settings_slider_typed(char const *text)
 	if (text_is_number(text, &value) && (value > 0.0 || slider->typed_least <= 0.0 ||
 		settings_slider_word(slider, value) != NONE))
 	{
-		settings_slider_set(slider, value);
+		/* (a volume's percentage typed, as its place) */
+		settings_slider_set(slider, slider->volume ? settings_volume_typed(value) : value);
 		return;
 	}
 	for (stop = 0; stop < slider->stop_count; stop++)
@@ -7961,7 +8256,7 @@ static void wide_to_text(wchar_t const *wide, char *text, short size)
 	short index;
 
 	for (index = 0; wide[index] && index < size - 1; index++)
-		text[index] = wide[index] < 0x80 ? (char)wide[index] : '?';
+		text[index] = wide[index] < 0x80 || text_field_character_kept(wide[index]) ? (char)wide[index] : '?';
 	text[index] = 0;
 }
 
@@ -8042,7 +8337,23 @@ static void server_password_done(char const *text)
 	snprintf(multiplayer.game_password, sizeof(multiplayer.game_password), "%s", text);
 }
 
-/* "ss edit server password" (its row's A: begins, or ends) */
+/* PASSWORD's on-screen keyboard (a controller's, the new menus'): its text,
+and the password typed on it the game's, unless it was cancelled */
+static wchar_t server_password_keyboard_text[PASSWORD_LENGTH + 1];
+
+static void server_password_keyboard_closed(boolean kept, wchar_t const *text, void *context)
+{
+	char typed[PASSWORD_LENGTH + 1];
+
+	if (!kept)
+		return;
+	wide_to_text(text, typed, sizeof(typed));
+	server_password_done(typed);
+}
+
+/* "ss edit server password" (its row's A: begins, or ends): with a
+controller's prompts, the new menus' on-screen keyboard, its stars for the
+letters (as GAME NAME's); else the field typed into */
 static boolean server_password_edit(struct widget_instance *row)
 {
 	if (text_field_editing(row))
@@ -8050,16 +8361,31 @@ static boolean server_password_edit(struct widget_instance *row)
 		text_field_end(TRUE);
 		return TRUE;
 	}
+	if (keyboard_new() && !halo_keyboard_prompts() && !ui_widget_port_touch_menus() && !keyboard_active())
+	{
+		struct keyboard_request request;
+		short index;
+
+		for (index = 0; multiplayer.game_password[index] && index < PASSWORD_LENGTH; index++)
+			server_password_keyboard_text[index] = (wchar_t)(unsigned char)multiplayer.game_password[index];
+		server_password_keyboard_text[index] = 0;
+		memset(&request, 0, sizeof(request));
+		request.kind = KEYBOARD_FIELD;
+		request.local_player = NONE;
+		request.controller = NONE;
+		request.text = server_password_keyboard_text;
+		request.maximum = PASSWORD_LENGTH;
+		request.title = L"PASSWORD";
+		request.caption = L"The password players type to join";
+		request.masked = TRUE;
+		request.closed = server_password_keyboard_closed;
+		if (keyboard_open(&request))
+			return TRUE;
+	}
 	text_field_begin_masked(row, multiplayer.game_password, PASSWORD_LENGTH, server_password_done);
 	return TRUE;
 }
 
-/* (virtual_keyboard.c's: the on-screen keyboard, with a title and caption
-of the caller's) */
-boolean virtual_keyboard_port_launch(wchar_t *text_buffer, word buffer_size, wchar_t const *title,
-	wchar_t const *caption);
-boolean virtual_keyboard_active(void);
-boolean virtual_keyboard_last_exit_saved_text(void);
 
 /* GAME NAME's on-screen keyboard (a controller's): up, and the name typed
 on it, taken as it closes with its text kept (server_name_keyboard_closed) */
@@ -8082,11 +8408,11 @@ static boolean server_name_edit(struct widget_instance *row)
 		text_field_end(TRUE);
 		return TRUE;
 	}
-	if (!halo_keyboard_prompts() && !ui_widget_port_touch_menus() && !virtual_keyboard_active())
+	if (!halo_keyboard_prompts() && !ui_widget_port_touch_menus() && !keyboard_active())
 	{
 		csmemcpy(server_name_keyboard.text, multiplayer.game_name, sizeof(server_name_keyboard.text));
 		server_name_keyboard.text[NUMBEROF(server_name_keyboard.text) - 1] = 0;
-		server_name_keyboard.up = virtual_keyboard_port_launch(server_name_keyboard.text,
+		server_name_keyboard.up = keyboard_field_launch(server_name_keyboard.text,
 			(word)sizeof(server_name_keyboard.text), L"GAME NAME", L"The name the game shows in the lists of games");
 		if (server_name_keyboard.up)
 			return TRUE;
@@ -8102,10 +8428,10 @@ static void server_name_keyboard_closed(void)
 {
 	char text[TEXT_FIELD_LENGTH];
 
-	if (!server_name_keyboard.up || virtual_keyboard_active())
+	if (!server_name_keyboard.up || keyboard_active())
 		return;
 	server_name_keyboard.up = FALSE;
-	if (!virtual_keyboard_last_exit_saved_text() || !server_name_keyboard.text[0])
+	if (!keyboard_last_kept() || !server_name_keyboard.text[0])
 		return;
 	wide_to_text(server_name_keyboard.text, text, sizeof(text));
 	game_name_done(text);
@@ -15891,8 +16217,8 @@ struct widget_instance *ui_widget_port_active_screen(short local_player_index);
 /* "port edit leave" (B on a screen that edits a gametype or a profile, as
 its CANCEL presses B; its handler opens the question where this succeeds):
 with nothing changed, back to the screen before, as B went, the question not
-asked; with changes, TRUE, the screen kept in the history for the question's
-CANCEL */
+asked; with changes, TRUE: the question opens over the editor, a pop-up, the
+editor kept as it is under it for its CANCEL (ui_widget.c) */
 static boolean edit_leave_ask(struct widget_instance *widget, boolean *widget_deleted)
 {
 	if (player_ui_edit_profile_is_dirty())
@@ -15907,7 +16233,7 @@ static boolean edit_leave_ask(struct widget_instance *widget, boolean *widget_de
 }
 
 /* the question's SAVE and DON'T SAVE (menu_screen.c's "edit save" and "edit
-discard"), on the editor it went back to: the changes saved as the editor's
+discard"), on the editor under it, the question closed: the changes saved as the editor's
 OK saves them (a built-in gametype's new name asked first, the editor kept
 open for its OK), or let go of, and the editor closed as its OK closes it */
 boolean pc_menu_edit_leave(short local_player_index, boolean save)
@@ -15938,6 +16264,9 @@ boolean pc_menu_edit_leave(short local_player_index, boolean save)
 #include "campaign_menu.inc"
 /* (co-op's screens, the new engine's: HOST, JOIN, the lobby's WHO CAN JOIN) */
 #include "coop_menu.inc"
+
+/* Controller Layouts' page and Controller Layout's screen (screens/controller_layout.xml) */
+#include "controller_layout_menu.inc"
 
 /* ---------- the hand-written screens' (menu_screen.c) */
 
@@ -16399,6 +16728,8 @@ boolean pc_menu_event_function_invoke(
 		}
 		else if (!strcmp(name, "port setting segment"))
 		{
+			if (dlss_addon_segment(widget, event, widget_deleted))
+				return TRUE;
 			return settings_segment_pick(widget);
 		}
         else if (!strcmp(name,"port mcc share closed"))

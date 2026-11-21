@@ -52,9 +52,10 @@ bound P2P_PLAYER_KEY_HASH_SIZE 16
 bound PARTY_KEY_HASH_SIZE P2P_PLAYER_KEY_HASH_SIZE
 bound PARTY_TOKEN_SIZE 16
 define DISTRIBUTED_ANGULAR_VELOCITY_SCALE 4096.0f
-define DISTRIBUTED_TIME_WINDOW_TICKS (15 * TICKS_PER_SECOND)
+define DISTRIBUTED_TIME_WINDOW_TICKS DISTRIBUTED_TICK_WINDOW_TICKS
 define DISTRIBUTED_UNIT_SCALE 32767.0f
 define DISTRIBUTED_VELOCITY_SCALE 1024.0f
+define HALO_PORT_STANDARD_NETWORK_VERSION 36
 define MCC_ADMISSION_DEADLINE 120000u
 define MCC_ADMISSION_GRACE 15000u
 define MCC_ADMISSION_HEARD 20000u
@@ -112,6 +113,7 @@ enum _distributed_message_client_build 92
 enum _distributed_message_client_identity 18
 enum _distributed_message_client_ready 9
 enum _distributed_message_clock_phase 135
+enum _distributed_message_compact_batch 148
 enum _distributed_message_coop_device_groups 68
 enum _distributed_message_coop_device_states 77
 enum _distributed_message_coop_events 71
@@ -153,6 +155,7 @@ enum _distributed_message_mcc_share_response 104
 enum _distributed_message_notice 17
 enum _distributed_message_object_changes 5
 enum _distributed_message_object_states 6
+enum _distributed_message_object_states_packed 149
 enum _distributed_message_objects_synchronized 8
 enum _distributed_message_opence_players 122
 enum _distributed_message_party_down 124
@@ -163,16 +166,23 @@ enum _distributed_message_party_up 123
 enum _distributed_message_pickups 13
 enum _distributed_message_pings 19
 enum _distributed_message_player_inputs 14
+enum _distributed_message_player_inputs_held 145
 enum _distributed_message_player_live_controls 132
+enum _distributed_message_player_live_controls_packed 155
 enum _distributed_message_player_prediction 1
+enum _distributed_message_player_prediction_held 146
 enum _distributed_message_player_statistics 3
 enum _distributed_message_player_substeps 120
+enum _distributed_message_player_substeps_packed 156
 enum _distributed_message_relayed_actions 15
+enum _distributed_message_relayed_actions_packed 159
 enum _distributed_message_relayed_substeps 121
 enum _distributed_message_shield_effects 91
 enum _distributed_message_structure_bsp 65
+enum _distributed_message_substep_state_requests 147
 enum _distributed_message_substep_states 136
 enum _distributed_message_unit_state_differences 141
+enum _distributed_message_unit_state_differences_joined 158
 enum _distributed_message_unit_states 2
 enum _distributed_message_vehicle_hijack 144
 enum _distributed_message_vehicle_prediction 12
@@ -406,6 +416,7 @@ struct distributed_party_request b2550530abf9
 struct distributed_party_request_message 4cfd458d0c52
 struct distributed_pickup 46e6f981ac40
 struct distributed_pings_message 35c6009dee29
+struct distributed_player_held c2d63a676a7e
 struct distributed_player_input a0cf65a1197c
 struct distributed_player_ping 377e0e3045f4
 struct distributed_player_statistics 2a44afb8f96c
@@ -416,13 +427,14 @@ struct distributed_structure_bsp 53f7d5067cc9
 struct distributed_structure_bsp_message 096278a05681
 struct distributed_substep_input 79949fc6d82c
 struct distributed_substep_input_control 4b2645f870ed
+struct distributed_substep_request 36ed5e727d88
 struct distributed_vector e80d7f9fc970
 struct distributed_vehicle_hijack 1f4aa46b3ee8
 struct distributed_voice_config 665bdc14478b
 struct distributed_voice_down e3751d692f16
 struct distributed_voice_up 3d74ee44e4cb
-struct distributed_votekick_request 7e29ffd54bd1
-struct distributed_votekick_status b94458cdc180
+struct distributed_votekick_request bc673b3da126
+struct distributed_votekick_status 72507e56a9cf
 struct game_variant_options 0e258e4cf85b
 struct mcc_admission_identity ba88dfe0091d
 struct mcc_admission_message 0a2136c026a5

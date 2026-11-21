@@ -26,6 +26,9 @@ CONTROLS = {
     'transport-not-terminated': ('transport_server_terminate();', ';', 'windows', 'back'),
     'connections-not-closed': ('network_connection_delete(server->connection);', ';', 'windows', 'reopen'),
     'server-state-not-cleared': ('csmemset(server, 0, sizeof(*server));', ';', 'windows', 'back'),
+    # the host quitting in game says nothing again: its machines learn of it by their timeout
+    'ingame-no-farewell': ('if (network_game_server_send_message_to_remote_machines(server, message))',
+                           'if (0)', 'windows', 'ingame'),
 }
 
 

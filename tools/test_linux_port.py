@@ -552,13 +552,20 @@ def test_config_mouse_sensitivity_in_cs2_units(config_check_mac):
 # the settings display.graphics chooses, and their values in Classic and in
 # Enhanced (the same on every build)
 GRAPHICS_SETTINGS = ["anti_aliasing", "anisotropic_filtering", "shadow_resolution", "per_pixel_lighting",
-                     "model_detail", "dynamic_lights"]
-GRAPHICS_CLASSIC = ["off", "0", "128", "false", "auto", "classic"]
-GRAPHICS_ENHANCED = ["smaa", "16", "512", "true", "native", "enhanced"]
+                     "model_detail", "dynamic_lights", "soft_particles", "alpha_coverage", "smooth_lightmaps"]
+GRAPHICS_CLASSIC = ["off", "0", "128", "false", "auto", "classic", "false", "false", "false"]
+GRAPHICS_ENHANCED = ["smaa", "16", "512", "true", "native", "enhanced", "true", "true", "true"]
 
 
 def graphics_values(run):
     return [run("get", f"display.{name}") for name in GRAPHICS_SETTINGS]
+
+
+def classic_but(**values):
+    # Classic's values with the named settings' own, so a setting the preset
+    # gains later is checked here too
+    assert set(values) <= set(GRAPHICS_SETTINGS)
+    return [values.get(name, value) for name, value in zip(GRAPHICS_SETTINGS, GRAPHICS_CLASSIC)]
 
 
 def test_graphics_preset_chooses_the_settings_left_to_it(config_check_mac):
@@ -587,7 +594,7 @@ def test_graphics_preset_keeps_a_setting_set(config_check_mac, monkeypatch):
     run("write", "display.anisotropic_filtering", "8")
     assert "\nanisotropic_filtering = 8\n" in run.config.read_text()
     run("write", "display.graphics", "classic")
-    assert graphics_values(run) == ["off", "8", "128", "false", "auto", "classic"]
+    assert graphics_values(run) == classic_but(anisotropic_filtering="8")
     # (at the preset's value: commented out, the preset's again)
     run("write", "display.anisotropic_filtering", "0")
     assert "\n# anisotropic_filtering = 0\n" in run.config.read_text()
@@ -603,7 +610,17 @@ def test_graphics_preset_keeps_a_setting_set(config_check_mac, monkeypatch):
     # (and by their variables, for one run)
     monkeypatch.setenv("HALO_GRAPHICS", "classic")
     monkeypatch.setenv("HALO_MODEL_DETAIL", "highest")
-    assert graphics_values(run) == ["off", "0", "128", "false", "highest", "classic"]
+    assert graphics_values(run) == classic_but(model_detail="highest")
+    # (display.soft_particles set wins over the preset, either way)
+    monkeypatch.delenv("HALO_MODEL_DETAIL")
+    run("write", "display.soft_particles", "true")
+    assert "\nsoft_particles = true\n" in run.config.read_text()
+    assert run("get", "display.soft_particles") == "true"
+    monkeypatch.delenv("HALO_GRAPHICS")
+    run("write", "display.graphics", "enhanced")
+    run("write", "display.soft_particles", "false")
+    assert "\nsoft_particles = false\n" in run.config.read_text()
+    assert run("get", "display.soft_particles") == "false"
 
 
 def test_battery_saver_reads_the_classic_values(config_check_mac):
@@ -1092,13 +1109,12 @@ def test_config_has_each_section_once(tmp_path):
 # ---------- system link's stand-in machines (tools/system_link_bots.py)
 
 
-def test_system_link_bots_messages_are_the_games():
+def test_system_link_bots_messages_are_the_games(monkeypatch):
     """the stand-in machines number their messages as network_messages.h does,
     and send each at the size network_messages.c's fields decode (pad 0,
     bytes 1, shorts 2, longs 4; an array a count byte and one element)"""
     import struct
     import time
-    import types
     from tools import system_link_bots as bots
 
     root = Path(__file__).resolve().parents[1]
@@ -1117,10 +1133,28 @@ def test_system_link_bots_messages_are_the_games():
     from tools import network_format
     assert bots.NETWORK_VERSION == network_format.version()
     sent = []
+
+    class Socket:
+        """(no real socket: macOS has no 127.0.0.2, and the port may be a running game's)"""
+
+        def __init__(self, *args):
+            pass
+
+        def setsockopt(self, *args):
+            pass
+
+        def bind(self, address):
+            pass
+
+        def setblocking(self, flag):
+            pass
+
+        def sendto(self, data, address):
+            sent.append(data)
+
+    monkeypatch.setattr(bots.socket, "socket", Socket)
     machine = bots.Machine(1, "127.0.0.2", "127.0.0.1", print)
-    machine.udp.close()
     machine.send = sent.append
-    machine.udp = types.SimpleNamespace(sendto=lambda data, address: sent.append(data))
     machine.joined()
     machine.handle(bots.SERVER_MACHINE_ACCEPTED, struct.pack(">ih", 0, 1))
     settings = bytes(0x24) + b"levels\\test\\bloodgulch\\bloodgulch".ljust(0x80, b"\0")

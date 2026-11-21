@@ -179,6 +179,22 @@ int main(int argc, char **argv) {
 		part = network_clock_frame_part(&seconds, &at_once, 0.02f);
 		CHECK(part == 0.01f && seconds == 0.0f && !at_once, "at once %f", part);
 	}
+	else if (!strcmp(name, "quantized"))
+	{
+		/* (a client drawing frames of 8.3 ms: an input a frame early held,
+		one later moved back to a frame above the target, a late one ahead
+		as before; one whose frames its clock paces as before) */
+		struct network_clock_plan plan;
+
+		CHECK(network_clock_quantized_early(7800, 8333) == CLOCK_EARLY_TARGET_MICROSECONDS, "a frame early: %ld",
+			network_clock_quantized_early(7800, 8333));
+		network_clock_plan_report(network_clock_quantized_early(7800, 8333), 1, &plan);
+		expect_plan("a frame early", &plan, 0, 0.0f, FALSE);
+		CHECK(network_clock_quantized_early(20000, 8333) == 20000 - 8333, "further: %ld",
+			network_clock_quantized_early(20000, 8333));
+		CHECK(network_clock_quantized_early(-500, 8333) == -500, "late: %ld", network_clock_quantized_early(-500, 8333));
+		CHECK(network_clock_quantized_early(7800, 0) == 7800, "unpaced: %ld", network_clock_quantized_early(7800, 0));
+	}
 	else if (!strcmp(name, "converge-20"))
 		simulate(name, 20000, 3000, 0);
 	else if (!strcmp(name, "converge-31"))

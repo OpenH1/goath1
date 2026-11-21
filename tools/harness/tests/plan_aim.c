@@ -4,7 +4,9 @@ client's forwarded set (period 1 or 2) on every tick of the aim, and its
 state goes on the ticks it went before; and which players' states go at the
 host's sub-steps (distributed_substep_state_due, stage 2d). Machine 0 has
 player 0 at the origin, machine 1 player 1, 100 world units along x (sent
-every third tick by its distance). No map: every cluster is in sight. */
+every third tick by its distance). No map: every cluster is in sight; but
+for the reacts case, whose map has two clusters, the second out of the
+first's sight. */
 #include "harness.h"
 typedef unsigned short word;
 enum { MAXIMUM_TRACKED_PLAYERS = 4, HALO_PORT_MAXIMUM_NETWORK_MACHINES = 4, MAXIMUM_LOCAL_PLAYERS = 1,
@@ -26,6 +28,12 @@ static long distributed_host_update_number;
 static byte distributed_sends[HALO_PORT_MAXIMUM_NETWORK_MACHINES][MAXIMUM_TRACKED_PLAYERS];
 static long distributed_player_machines[MAXIMUM_TRACKED_PLAYERS];
 static byte distributed_forward_periods[HALO_PORT_MAXIMUM_NETWORK_MACHINES][MAXIMUM_TRACKED_PLAYERS];
+static boolean distributed_forward_immediate[HALO_PORT_MAXIMUM_NETWORK_MACHINES][MAXIMUM_TRACKED_PLAYERS];
+static long distributed_budget_balances[HALO_PORT_MAXIMUM_NETWORK_MACHINES];
+static short distributed_budget_stretches[HALO_PORT_MAXIMUM_NETWORK_MACHINES];
+/* (network.client_budget, KB a second) */
+static long client_budget;
+static long config_integer(char const *name) { (void)name; return client_budget; }
 static boolean distributed_seen[HALO_PORT_MAXIMUM_NETWORK_MACHINES][MAXIMUM_TRACKED_PLAYERS];
 static struct { byte flags; long unit_index; long vehicle_index; short seat_index; }
     distributed_sent_units[MAXIMUM_TRACKED_PLAYERS];
@@ -41,9 +49,14 @@ static long game_time_get(void) { return now_time; }
 static short distributed_client_machines(long *indices, short maximum) {
     (void)maximum; indices[0] = 0; indices[1] = 1; return 2;
 }
-static struct structure_bsp *global_structure_bsp_get(void) { return NULL; }
+/* (the reacts case's map: cluster 0 sees itself alone, cluster 1 both) */
+static boolean have_map;
+static struct structure_bsp map = { { 2 } };
+static unsigned long pvs_rows[2][1] = { { 1 }, { 3 } };
+static short unit_clusters[2];
+static struct structure_bsp *global_structure_bsp_get(void) { return have_map ? &map : NULL; }
 static unsigned long *structure_bsp_get_cluster_pvs(struct structure_bsp *bsp, short cluster) {
-    (void)bsp; (void)cluster; return NULL;
+    (void)bsp; return have_map ? pvs_rows[cluster] : NULL;
 }
 static long update_server_ticked_update_number(void) { return NONE; }
 static struct player_action const *update_server_update_actions(long update, short *count) {
@@ -64,12 +77,20 @@ static void distributed_state_from_player(short player_index, long time, struct 
     state->unit_index = player_index; state->vehicle_index = NONE; state->seat_index = NONE;
 }
 static void object_get_origin(long unit_index, real_point3d *origin) { *origin = origins[unit_index]; }
-static short distributed_object_cluster(long unit_index) { (void)unit_index; return 0; }
+static short distributed_object_cluster(long unit_index) { return unit_clusters[unit_index]; }
 static struct unit_datum *unit_get(long unit_index) { return &units[unit_index]; }
 static boolean distributed_forward_covers(long machine_index, short player_index) {
     (void)machine_index; (void)player_index; return FALSE;
 }
 static boolean distributed_prediction_at_tick_start(short player_index) { return at_tick_start[player_index]; }
+/* (no input in this world: relayed on a change only, which its own test checks) */
+static struct { boolean covered; } distributed_relayed_sent[HALO_PORT_MAXIMUM_NETWORK_MACHINES][MAXIMUM_TRACKED_PLAYERS];
+static boolean network_legacy_machine(long machine_index) { (void)machine_index; return FALSE; }
+static boolean network_substeps_host_relays(short player_index) { (void)player_index; return FALSE; }
+static boolean distributed_relayed_action_due(long machine_index, short player_index, boolean pressed,
+    boolean substeps, boolean planned, long now) {
+    (void)machine_index; (void)player_index; (void)pressed; (void)substeps; (void)planned; (void)now; return FALSE;
+}
 #include "under_test.inc"
 
 static void aim(real_vector3d direction, char zoom) {
@@ -118,6 +139,104 @@ int main(int argc, char **argv) {
             /* (its own player never forwarded to it) */
             CHECK(distributed_forward_periods[0][0] == 0, "a client's own player in its forwarded set");
         }
+        return 0;
+    }
+    if (!strcmp(name, "reacts")) {
+        /* (whether machine 0 can react to player 1: in sight, or near though
+        unseen; the plan's word, and the same test of where it is now) */
+        static struct { real x; short cluster; boolean reacts; } const steps[] = {
+            { 100.0f, 0, TRUE },  /* far, in sight */
+            { 100.0f, 1, FALSE }, /* far, unseen */
+            { 40.0f, 1, TRUE },   /* unseen but near */
+            { 59.0f, 1, TRUE },
+            { 61.0f, 1, FALSE },
+        };
+        short step;
+
+        have_map = TRUE;
+        aim(away, (char)NONE);
+        for (step = 0; step < (short)(sizeof(steps) / sizeof(steps[0])); step++) {
+            origins[1].x = steps[step].x;
+            unit_clusters[1] = steps[step].cluster;
+            now_time = 2000 + step;
+            distributed_host_plan_players();
+            CHECK(distributed_forward_immediate[0][1] == steps[step].reacts, "step %d: the plan has it %s", step,
+                distributed_forward_immediate[0][1] ? "at once" : "for the tick's end");
+            CHECK(distributed_reacts_at(0, &origins[1], unit_clusters[1]) == steps[step].reacts,
+                "step %d: the test of where it is now differs from the plan's", step);
+            CHECK(!distributed_forward_immediate[0][0], "its own player");
+        }
+        return 0;
+    }
+    if (!strcmp(name, "budget")) {
+        /* (machine 0 over its byte budget: player 1 far, then unseen; then
+        unseen but near. Each tick spends past the balance until tick 2010) */
+        static struct { real x; short cluster; byte period; } const places[] = {
+            { 100.0f, 0, 3 },  /* far, in sight: as its distance says, whatever the budget */
+            { 100.0f, 1, 0 },  /* far, unseen: stretched */
+            { 40.0f, 1, 6 },   /* unseen but near: as before */
+        };
+        short place;
+
+        have_map = TRUE;
+        aim(away, (char)NONE);
+        client_budget = 16;
+        for (place = 0; place < 3; place++) {
+            short stretches[3] = { 0, 0, 0 };
+
+            origins[1].x = places[place].x;
+            unit_clusters[1] = places[place].cluster;
+            memset(distributed_budget_balances, 0, sizeof(distributed_budget_balances));
+            memset(distributed_budget_stretches, 0, sizeof(distributed_budget_stretches));
+            for (tick = 2000; tick < 2100; tick++) {
+                long first_sent = NONE;
+                long sent_tick;
+
+                /* (the last tick's datagrams: twice the tick's share, then none) */
+                if (tick < 2010)
+                    distributed_budget_balances[0] -= 2 * client_budget * 1024 / TICKS_PER_SECOND;
+                now_time = tick;
+                distributed_host_plan_players();
+                CHECK(distributed_budget_stretch(0) >= 1 && distributed_budget_stretch(0) <= CLIENT_BUDGET_MAXIMUM_STRETCH,
+                    "tick %ld: a stretch of %d", tick, distributed_budget_stretch(0));
+                if (tick == 2003)
+                    stretches[0] = distributed_budget_stretch(0);
+                if (tick == 2099)
+                    stretches[1] = distributed_budget_stretch(0);
+                /* (the state's ticks over the next while: the period it goes at) */
+                if (tick == 2005) {
+                    for (sent_tick = 2005; sent_tick < 2005 + 2 * CLIENT_BUDGET_MAXIMUM_STRETCH * HIDDEN_PLAYER_PERIOD_TICKS; sent_tick++) {
+                        now_time = sent_tick;
+                        distributed_budget_balances[0] = -1;
+                        distributed_host_plan_players();
+                        if (TEST_FLAG(distributed_sends[0][1], _distributed_send_state_bit)) {
+                            if (first_sent == NONE)
+                                first_sent = sent_tick;
+                            else {
+                                stretches[2] = (short)(sent_tick - first_sent);
+                                break;
+                            }
+                        }
+                    }
+                    tick = sent_tick;
+                }
+            }
+            CHECK(stretches[0] == CLIENT_BUDGET_MAXIMUM_STRETCH, "place %d: over budget, a stretch of %d", place,
+                stretches[0]);
+            CHECK(stretches[1] == 1, "place %d: back under budget, a stretch of %d", place, stretches[1]);
+            if (places[place].period)
+                CHECK(stretches[2] == places[place].period, "place %d: sent every %d ticks over budget, not %d", place,
+                    stretches[2], places[place].period);
+            else
+                CHECK(stretches[2] == HIDDEN_PLAYER_PERIOD_TICKS * CLIENT_BUDGET_MAXIMUM_STRETCH,
+                    "place %d: the far and unseen sent every %d ticks over budget", place, stretches[2]);
+        }
+        /* (no budget: no stretch) */
+        client_budget = 0;
+        distributed_budget_balances[0] = -100000;
+        distributed_host_plan_players();
+        distributed_host_plan_players();
+        CHECK(distributed_budget_stretch(0) == 1, "no budget, a stretch of %d", distributed_budget_stretch(0));
         return 0;
     }
     if (!strcmp(name, "substep-due")) {

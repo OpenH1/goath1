@@ -24,22 +24,32 @@ threads, asynchronous procedure calls, time, memory and debug output.
 
 /* ---------- logging */
 
+/* (each line one write, whole: in the builds with a host, the host's log
+queue takes it and the caller goes on, port/android/host/host_log_queue.c) */
 void platform_log(const char *format, ...)
 {
+	static const char prefix[] = "halo-linux: ";
 	va_list arguments, copy;
-	char line[2048];
+	char text[sizeof(prefix) - 1 + 2048 + 1], *line = text + sizeof(prefix) - 1;
 	int length;
 
 	va_start(arguments, format);
 	va_copy(copy, arguments);
-	length = vsnprintf(line, sizeof(line), format, arguments);
-	fputs("halo-linux: ", stderr);
-	/* (a line longer than the copy's room written whole) */
-	if (length >= (int)sizeof(line))
+	memcpy(text, prefix, sizeof(prefix) - 1);
+	length = vsnprintf(line, 2048, format, arguments);
+	/* (a line longer than the copy's room written whole, in parts) */
+	if (length >= 2048)
+	{
+		fputs(prefix, stderr);
 		vfprintf(stderr, format, copy);
-	else
-		fputs(line, stderr);
-	fputc('\n', stderr);
+		fputc('\n', stderr);
+	}
+	else if (length >= 0)
+	{
+		line[length] = '\n';
+		fwrite(text, 1, sizeof(prefix) - 1 + (size_t)length + 1, stderr);
+		line[length] = 0;
+	}
 	va_end(copy);
 	va_end(arguments);
 	/* (the last lines kept for a report: report.c) */

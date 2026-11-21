@@ -185,11 +185,13 @@ symbols in this file:
 #include "units/units.h"
 #include "cache/cache_files.h" /* port: (tag_iterator: light_port_glow_definition_get) */
 void shield_glow_update(void); /* port: port/linux/game/shield_glow.c */
+void light_sources_new_map(void); /* port: port/linux/game/light_sources.c */
 /* port: port/linux/game/dynamic_lights.c (display.dynamic_lights) */
 void dynamic_lights_note(long rasterizer_light_index, long flags, real cone_scale, real cone_offset,
 	real_point3d const *tick_position);
 boolean dynamic_lights_first_person(long weapon_index, real_point3d *position);
 void dynamic_lights_submit(void);
+void dynamic_lights_brighten(long rasterizer_light_index, real scale);
 void dynamic_lights_rank(long *lights, short count,
 	void (*describe)(long light, real_point3d *position, real *radius, real *intensity));
 void dynamic_lights_drawn(long light, real_point3d const *position, real radius, real_rgb_color const *color);
@@ -492,6 +494,11 @@ static boolean light_port_lights_structure(
 static void light_port_drawn_center(
 	struct light_datum const *light,
 	real_point3d *center);
+static void light_port_reconnect(
+	long light_index,
+	short *marker_node_index);
+static void light_port_follow_forget(
+	long light_index);
 
 /* ---------- globals */
 
@@ -532,6 +539,41 @@ boolean debug_lights;
 boolean debug_object_lights;
 struct data_array *light_data;
 struct cluster_partition light_cluster_partition;
+
+/* port: An object's lights follow it: each tick an item, a unit or a
+projectile (_object_dynamic_lighting_recompute_bit) lets its lights go of
+their clusters and puts them back (object_connect_lights), each where its
+marker is, first in its clusters' lists. A weapon lying still, a unit
+standing, did it all again, the same: the marker found by name, the
+clusters by its sphere, the references let go and made anew. What a light
+was put back by is kept here: the marker's node and its matrix, the
+object's permutations and mirroring, the cluster it is in, and where that
+put the light. While all of it is as it was (and the clusters' answers and
+the partition's references the same: structure_port_clusters_generation,
+the partition's port_forget_count, and whether the light joins clusters), it would be put
+in the same clusters at the same place: it is only put first in them again
+(cluster_partition_port_bring_first), the lists as they were left, and
+the light where it was. Not in the game state: forgotten with each new map,
+a bsp's lights let go or put back, and each light let go or put back
+otherwise; a game state loaded changes the partition's count. */
+struct light_port_follow
+{
+	long light_index; /* (NONE: nothing kept) */
+	unsigned long epoch;
+	unsigned long clusters_generation;
+	unsigned long partition_forget_count;
+	boolean connects;
+	short node_index;
+	short cluster_index;
+	boolean mirrored;
+	byte region_permutations[MAXIMUM_REGIONS_PER_OBJECT];
+	real_matrix4x3 node_matrix;
+	real_point3d position;
+	real_vector3d forward;
+	real_vector3d up;
+};
+static struct light_port_follow light_port_follows[MAXIMUM_LIGHTS_PER_MAP];
+static unsigned long light_port_follow_epoch = 1;
 
 /* port: the clusters' lights kept for lighting objects (lights_port_cluster):
 as many as the light partition's lists can hold */
@@ -808,6 +850,8 @@ void lights_initialize_for_new_map(
 	void)
 {
 	light_port_glow_definition = NONE - 1; /* port: (looked for again) */
+	light_port_follow_epoch++; /* port: (light_port_follow) */
+	light_sources_new_map(); /* port: port/linux/game/light_sources.c */
 	data_make_valid(light_data);
 	lights_game_globals->render_lights = TRUE;
 	cluster_partition_make_valid(&light_cluster_partition);
@@ -818,6 +862,7 @@ void lights_initialize_for_new_map(
 void lights_dispose_from_old_map(
 	void)
 {
+	light_port_follow_epoch++; /* port: (light_port_follow) */
 	data_make_invalid(light_data);
 	cluster_partition_make_invalid(&light_cluster_partition);
 
@@ -1065,6 +1110,58 @@ static void light_port_rank_describe(
 	*intensity = MAX(light->color.red, MAX(light->color.green, light->color.blue));
 }
 
+/* port: whether a light that is only its lens flare's lights, with the
+enhanced dynamic lights, on this object as a projectile's does: a unit's
+(a Ghost's and a Banshee's running lights, a Sentinel's eye, a Hunter's fuel
+rod) and an item's (a plasma pistol's, a plasma rifle's and a needler's
+glow, held or on the ground), whose tags give them no dynamic light; not
+scenery's, a machine's or the map's, whose light the lightmap holds */
+static boolean light_port_flare_lights(
+	struct object_datum const *object)
+{
+	return object->object.type == _object_type_biped || object->object.type == _object_type_vehicle ||
+		object->object.type == _object_type_weapon || object->object.type == _object_type_equipment;
+}
+
+/* port: how strong a weapon's glow lights (light_port_flare_lights), one
+rule for every weapon's, as play tests set it: in a local player's hands in
+first person, a small bright light about the hands and the gun (a color of
+LIGHT_PORT_WEAPON_GLOW_HELD in all, reaching 0.3 world units); anywhere
+else, on the ground or in another's hands, a pool about it (0.85 in all,
+reaching 0.85). The tag's color, made by the weapon's own function (the
+charge, the heat, the needles loaded), is scaled by what this gives (the
+rasterizer's to 1 at most, the rest the enhanced lights': dynamic_lights.c's
+dynamic_lights_brighten); "in all" is over the weapon's copies of that light
+(the plasma pistol's two triggers) */
+#define LIGHT_PORT_WEAPON_GLOW_HELD 2.0f
+#define LIGHT_PORT_WEAPON_GLOW_HELD_RADIUS 0.3f
+#define LIGHT_PORT_WEAPON_GLOW_WORLD 0.85f
+#define LIGHT_PORT_WEAPON_GLOW_WORLD_RADIUS 0.85f
+
+static real light_port_weapon_glow(
+	struct light_datum const *light,
+	struct object_datum const *object,
+	boolean held,
+	real *radius)
+{
+	struct object_definition *definition = object_definition_get(object->definition_index);
+	short attachment_count = (short)MIN(definition->object.attachments.count, MAXIMUM_NUMBER_OF_ATTACHMENTS_PER_OBJECT);
+	short copies = 0;
+	short attachment_index;
+	real scale;
+
+	for (attachment_index = 0; attachment_index < attachment_count; attachment_index++)
+	{
+		struct object_attachment_definition const *attachment = TAG_BLOCK_GET_ELEMENT(
+			&definition->object.attachments, attachment_index, struct object_attachment_definition);
+
+		copies += attachment->type.index == light->definition_index;
+	}
+	scale = (held ? LIGHT_PORT_WEAPON_GLOW_HELD : LIGHT_PORT_WEAPON_GLOW_WORLD) / (real)MAX(copies, 1);
+	*radius = held ? LIGHT_PORT_WEAPON_GLOW_HELD_RADIUS : LIGHT_PORT_WEAPON_GLOW_WORLD_RADIUS;
+	return scale;
+}
+
 /* port: how far a light let go of is through its transition, so many ticks
 after it was let go: a light of no transition (the Scorpion's cannon's) is
 at its end as it is made, not 0/0 (a colour not a number) */
@@ -1168,6 +1265,9 @@ void lights_preprocess_scene(
 		real drawn_intensity;
 		real_rgb_color drawn_color;
 		real drawn_radius;
+		/* port: a weapon's glow's brightness past the rasterizer's
+		(light_port_weapon_glow) */
+		real weapon_glow_scale = 1.0f;
 
 		render_debug_light(scene_light_handle);
 		object = light->object_index != NONE
@@ -1303,11 +1403,13 @@ void lights_preprocess_scene(
 		}
 
 		/* port: with the enhanced dynamic lights, a projectile's light that
-		is only its lens flare's (a plasma bolt's, a needle's: the game lights
-		nothing with them) lights too, by its tag's color and radius
-		(port/linux/game/dynamic_lights.c) */
+		is only its lens flare's (a plasma bolt's: the game lights nothing
+		with them) lights too, by its tag's color and radius
+		(port/linux/game/dynamic_lights.c), and so does a unit's or an
+		item's (light_port_flare_lights) */
 		projectile_lights = !TEST_FLAG(light->flags, _point_light_dynamic_bit) && object &&
-			object->object.type == _object_type_projectile && halo_dynamic_lights_enhanced();
+			(object->object.type == _object_type_projectile || light_port_flare_lights(object)) &&
+			halo_dynamic_lights_enhanced();
 		if (light->color.red != 0.0f
 			|| light->color.green != 0.0f
 			|| light->color.blue != 0.0f)
@@ -1441,6 +1543,23 @@ void lights_preprocess_scene(
 						}
 					}
 
+					/* port: a weapon's glow, lit (projectile_lights), as
+					strong as one rule has every weapon's
+					(light_port_weapon_glow) */
+					if (projectile_lights && object && object->object.type == _object_type_weapon &&
+						light->parent_light_index == NONE)
+					{
+						real scale;
+
+						weapon_glow_scale = light_port_weapon_glow(light, object,
+							TEST_FLAG(light->flags, _point_light_attached_to_first_person_weapon_bit),
+							&light_parameters.radius);
+						scale = MIN(weapon_glow_scale, 1.0f);
+						light_parameters.color.red *= scale;
+						light_parameters.color.green *= scale;
+						light_parameters.color.blue *= scale;
+						weapon_glow_scale /= scale > 0.0f ? scale : 1.0f;
+					}
 					/* port: (how it is drawn ranks it next frame:
 					port/linux/game/dynamic_lights.c) */
 					dynamic_lights_drawn(scene_light_handle, &light_parameters.position, light_parameters.radius,
@@ -1498,6 +1617,8 @@ void lights_preprocess_scene(
 								flags |= HALO_DYNAMIC_LIGHT_HALO;
 						}
 						dynamic_lights_note(light->rasterizer_light_index, flags, cone_scale, cone_offset, &light->position);
+						if (weapon_glow_scale != 1.0f)
+							dynamic_lights_brighten(light->rasterizer_light_index, weapon_glow_scale);
 						/* (and the clusters it reaches: those its sphere as drawn
 						floods into through the portals from where it is drawn, as
 						the game gathers its surfaces, or its own clusters where it
@@ -1645,6 +1766,7 @@ void light_delete(
 	/* port: not one let go of (lights_port_recover) */
 	if (!light)
 		return;
+	light_port_follow_forget(light_index);
 	cluster_partition_disconnect(
 		&light_cluster_partition,
 		light_index,
@@ -1819,6 +1941,8 @@ void light_disconnect_from_map(
 {
 	struct light_datum *light = light_get(light_index);
 
+	light_port_follow_forget(light_index);
+
 	if (TEST_FLAG(light->flags, _point_light_connects_to_map_bit))
 	{
 		match_assert(
@@ -1840,6 +1964,8 @@ void lights_disconnect_from_structure_bsp(
 {
 	long light_index;
 
+	light_port_follow_epoch++; /* port: (light_port_follow) */
+
 	for (light_index = data_next_index(light_data, NONE);
 		light_index != NONE;
 		light_index = data_next_index(light_data, light_index))
@@ -1860,6 +1986,8 @@ void lights_reconnect_to_structure_bsp(
 	void)
 {
 	long light_index;
+
+	light_port_follow_epoch++; /* port: (light_port_follow) */
 
 	for (light_index = data_next_index(light_data, NONE);
 		light_index != NONE;
@@ -2302,6 +2430,18 @@ void lights_render_specular(
 void light_reconnect_to_map(
 	long light_index)
 {
+	light_port_follow_forget(light_index);
+	light_port_reconnect(light_index, NULL);
+
+	return;
+}
+
+/* light_reconnect_to_map's, with the node of the object's marker the light
+was put at (NONE: not at one) */
+static void light_port_reconnect(
+	long light_index,
+	short *marker_node_index)
+{
 	struct light_datum *light = light_get(light_index);
 	struct point_light_definition *definition = light_definition_get(light->definition_index);
 	struct object_marker markers[1];
@@ -2309,6 +2449,8 @@ void light_reconnect_to_map(
 	real_point3d position;
 	real radius;
 
+	if (marker_node_index)
+		*marker_node_index = NONE;
 	if (light->parent_light_index == NONE)
 	{
 		object_get_marker_by_name(
@@ -2316,6 +2458,8 @@ void light_reconnect_to_map(
 			object_get_attachment_marker_name(light->object_index, light->attachment_marker_index),
 			markers,
 			1);
+		if (marker_node_index)
+			*marker_node_index = markers[0].node_index;
 		light->position = markers[0].matrix.position;
 		light->forward = markers[0].matrix.forward;
 		light->up = markers[0].matrix.up;
@@ -2359,6 +2503,88 @@ void light_reconnect_to_map(
 			radius,
 			&location);
 		SET_FLAG(light->flags, _point_light_connected_to_map_bit, TRUE);
+	}
+
+	return;
+}
+
+static void light_port_follow_forget(
+	long light_index)
+{
+	short absolute_index = DATUM_INDEX_TO_ABSOLUTE_INDEX(light_index);
+
+	if (absolute_index >= 0 && absolute_index < MAXIMUM_LIGHTS_PER_MAP)
+		light_port_follows[absolute_index].light_index = NONE;
+
+	return;
+}
+
+/* port: light_disconnect_from_map and light_reconnect_to_map, for an
+object's light following it (object_connect_lights): put first in its
+clusters again when it would be put in the same ones at the same place
+(light_port_follow) */
+void light_port_follow_object(
+	long light_index)
+{
+	struct light_datum *light = light_get(light_index);
+	short absolute_index = DATUM_INDEX_TO_ABSOLUTE_INDEX(light_index);
+	struct light_port_follow *follow = absolute_index >= 0 && absolute_index < MAXIMUM_LIGHTS_PER_MAP ?
+		&light_port_follows[absolute_index] : NULL;
+	struct object_datum *object = light->parent_light_index == NONE ?
+		object_try_and_get(light->object_index) : NULL;
+	boolean connects = TEST_FLAG(light->flags, _point_light_connects_to_map_bit);
+	struct location location;
+	short node_index;
+
+	if (!follow || !object)
+	{
+		light_disconnect_from_map(light_index);
+		light_reconnect_to_map(light_index);
+		return;
+	}
+	object_get_location(light->object_index, &location);
+	if (follow->light_index == light_index &&
+		follow->epoch == light_port_follow_epoch &&
+		follow->clusters_generation == structure_port_clusters_generation() &&
+		follow->partition_forget_count == light_cluster_partition.port_forget_count &&
+		follow->connects == connects &&
+		(!connects || TEST_FLAG(light->flags, _point_light_connected_to_map_bit)) &&
+		follow->cluster_index == location.cluster_index &&
+		follow->mirrored == TEST_FLAG(object->object.flags, _object_mirrored_bit) &&
+		!csmemcmp(follow->region_permutations, object->object.region_permutations,
+			sizeof(follow->region_permutations)) &&
+		!csmemcmp(&follow->node_matrix, &object_get_node_matrices(light->object_index)[follow->node_index],
+			sizeof(follow->node_matrix)) &&
+		!csmemcmp(&follow->position, &light->position, sizeof(follow->position)) &&
+		!csmemcmp(&follow->forward, &light->forward, sizeof(follow->forward)) &&
+		!csmemcmp(&follow->up, &light->up, sizeof(follow->up)) &&
+		(!connects || cluster_partition_port_bring_first(&light_cluster_partition, light_index,
+			light->cluster_reference)))
+	{
+		return;
+	}
+
+	light_disconnect_from_map(light_index);
+	light_port_reconnect(light_index, &node_index);
+	/* (kept only when it was put in each of its clusters: one a full list
+	left it out of, it tries again each tick, as before) */
+	if (node_index != NONE &&
+		(!connects || light_cluster_partition.port_reconnect_complete))
+	{
+		follow->light_index = light_index;
+		follow->epoch = light_port_follow_epoch;
+		follow->clusters_generation = structure_port_clusters_generation();
+		follow->partition_forget_count = light_cluster_partition.port_forget_count;
+		follow->connects = connects;
+		follow->node_index = node_index;
+		follow->cluster_index = location.cluster_index;
+		follow->mirrored = TEST_FLAG(object->object.flags, _object_mirrored_bit);
+		csmemcpy(follow->region_permutations, object->object.region_permutations,
+			sizeof(follow->region_permutations));
+		follow->node_matrix = object_get_node_matrices(light->object_index)[node_index];
+		follow->position = light->position;
+		follow->forward = light->forward;
+		follow->up = light->up;
 	}
 
 	return;

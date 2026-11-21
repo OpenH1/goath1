@@ -135,6 +135,27 @@ def test_game_data_scan(tmp_path):
              [ROOT / "port" / "linux" / "src"], [str(scratch)])
 
 
+def test_game_data_places_windows(tmp_path):
+    """the GAME DATA page's places on Windows (game_data_scan.c with
+    HALO_WINDOWS): %USERPROFILE%'s Downloads and Desktop, forward slashes"""
+    run_test(tmp_path, "game_data_places_windows_test",
+             [TESTS / "game_data_places_windows_test.c", ROOT / "port" / "linux" / "src" / "game_data_scan.c",
+              ROOT / "port" / "linux" / "src" / "posix_files.c"],
+             [ROOT / "port" / "linux" / "src"], flags=["-DHALO_WINDOWS"])
+
+
+def test_game_data_places_ios(tmp_path):
+    """the GAME DATA page's places on iOS (game_data_scan.c with HALO_IOS, as
+    the iOS guest builds it, HALO_MACOS too): the app's Documents alone, its
+    paths shown as the Files app names its folder"""
+    scratch = tmp_path / "container"
+    scratch.mkdir()
+    run_test(tmp_path, "game_data_places_ios_test",
+             [TESTS / "game_data_places_ios_test.c", ROOT / "port" / "linux" / "src" / "game_data_scan.c",
+              ROOT / "port" / "linux" / "src" / "posix_files.c"],
+             [ROOT / "port" / "linux" / "src"], [str(scratch)], flags=["-DHALO_MACOS", "-DHALO_IOS"])
+
+
 def test_posix_net_interrupted(tmp_path):
     """a select interrupted by signals waits out its time: Winsock's is never
     interrupted, and the game takes a failed one as the connection lost"""
@@ -217,8 +238,55 @@ def test_host_screenshot(tmp_path):
     subprocess.run(
         [cc, "-std=gnu11", "-Wall", "-Wextra", "-Werror", "-O1", f"-I{HOST}", f"-I{headers}",
          f"-I{ROOT / 'port' / 'linux' / 'src'}", str(TESTS / "host_screenshot_test.c"), str(HOST / "host_screenshot.c"),
-         str(library), f"-Wl,-rpath,{library.parent}", "-o", str(binary)],
+         str(library), f"-Wl,-rpath,{library.parent}", "-lm", "-o", str(binary)],
         check=True,
     )
     result = subprocess.run([str(binary), str(scratch)], capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def host_stall_old(text: str) -> str:
+    """host_stall.c as it was: a 20 ms floor, whatever the frames' time, and
+    a wake-up every 10 ms rather than at the frame's deadline"""
+    for old, new in (("uint64_t floor = period ? 2 * period : STALL_UNKNOWN_FLOOR;",
+                      "uint64_t floor = STALL_UNKNOWN_FLOOR; (void)period;"),
+                     ("\t\t\treturn at + threshold;\n", "\t\t\treturn now + 10000000ull;\n"),
+                     ("return late < threshold + 1000000000ull ? interval : 4 * interval;",
+                      "(void)late; return 10000000ull;"),
+                     ("return at + threshold > now ? at + threshold : now;", "return now + 10000000ull;")):
+        assert text.count(old) == 1, old
+        text = text.replace(old, new)
+    return text
+
+
+@pytest.mark.parametrize("broken", [False, True])
+def test_host_stall(tmp_path, broken):
+    """the stall detector with a clock of the test's (host_stall.c): a 25 ms
+    frame among 7.4 ms ones sampled, the ordinary frames costing no more
+    wake-ups than their deadlines, an unsampled slow frame given its line. The
+    negative control is the old 20 ms floor and 10 ms poll, which miss it"""
+    stall = HOST / "host_stall.c"
+    if broken:
+        stall = tmp_path / "host_stall.c"
+        stall.write_text(host_stall_old((HOST / "host_stall.c").read_text()))
+    sources = [TESTS / "host_stall_test.c", stall]
+    if not broken:
+        run_test(tmp_path, "host_stall_test", sources)
+        return
+    with pytest.raises(AssertionError):
+        run_test(tmp_path, "host_stall_test", sources)
+
+
+@pytest.mark.parametrize("broken", [False, True])
+def test_host_log_queue(tmp_path, broken):
+    """the log's queue (host_log_queue.c) with a writer that blocks, as a
+    full pipe does: the callers not held up, the lines in order once it is
+    not, those past its room dropped and counted in a line of their own, a
+    flush that writes them all. The negative control writes each line on its
+    caller's thread, as before, and is held up as long as the writer is"""
+    sources = [TESTS / "host_log_queue_test.c", HOST / "host_log_queue.c"]
+    if not broken:
+        run_test(tmp_path, "host_log_queue_test", sources)
+        return
+    with pytest.raises(AssertionError):
+        run_test(tmp_path, "host_log_queue_test", sources, flags=["-DLOG_DIRECT"])

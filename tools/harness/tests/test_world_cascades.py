@@ -1,7 +1,7 @@
 """display.ambient_occlusion "world"'s distance-field scene (port/linux/include/world_cascades.h,
 port/linux/game/world_cascades.c, docs/world-ao.md "The distance-field scene"): the ray step through the cascades
 against exact intersections, and the updates: an object found again only where it moved, the camera's step only
-where it brings voxels in, each alike to the cascades found whole."""
+where it brings voxels in, each alike to the cascades found whole; a jump stores no structure in them."""
 import sys
 from pathlib import Path
 
@@ -10,7 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from harness import CHECK_FAILED, build, mutated, read, run  # noqa: E402
 
-CASES = ["trace", "update"]
+CASES = ["trace", "update", "jump"]
 HEADER = "port/linux/include/world_cascades.h"
 GAME = "port/linux/game/world_cascades.c"
 CONTROLS = [
@@ -19,6 +19,10 @@ CONTROLS = [
      "float place = at - (float)WORLD_CASCADE_SIDE * floorf(at / (float)WORLD_CASCADE_SIDE + 0.5f);", "trace"),
     # a moved object found again where it is, not where it was (its old place keeps it)
     ("any = shapes_bounds(cascades->shapes + before->first, before->count, bounds, 0);", "any = 0;", "update"),
+    # a jump within a cascade's side found in one frame (a spawn's stall), not a few slices a frame
+    ("if (brought > WORLD_CASCADES_FILL_SLICES)", "if (brought < 0)", "jump"),
+    # a fill that stores a distance in the structure's byte too (the cascades holding the structure again)
+    ("\t\ttexel[1] = objects;", "\t\ttexel[0] = texel[1] = objects;", "jump"),
 ]
 
 

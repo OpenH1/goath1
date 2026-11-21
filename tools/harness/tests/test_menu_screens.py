@@ -55,10 +55,10 @@ NEGATIVE_CONTROLS = {
     # a table's left not checked: an action the game has not got taken
     "table-left-unchecked": ("\t\t\t\taction_check(reader, table->left_action);\n", "\n", "lanes"),
     # a dot's column refused (the kinds counted short)
-    "dot-unknown": ("for (kind = 0; kind < 6 && values[2]; kind++)", "for (kind = 0; kind < 4 && values[2]; kind++)",
+    "dot-unknown": ("for (kind = 0; kind < 7 && values[2]; kind++)", "for (kind = 0; kind < 4 && values[2]; kind++)",
                     "lanes"),
     # a swatch's column refused (the kinds counted short): Profile Color's file refused
-    "swatch-unknown": ("for (kind = 0; kind < 6 && values[2]; kind++)",
+    "swatch-unknown": ("for (kind = 0; kind < 7 && values[2]; kind++)",
                        "for (kind = 0; kind < 5 && values[2]; kind++)", "profile_color"),
     # a choice with no right taken
     "choice-no-right": ("else if (!choice->left_action || !choice->right_action)", "else if (!choice->left_action)",
@@ -96,6 +96,11 @@ NEGATIVE_CONTROLS = {
     "box-align-unchecked": ("values[3] && strcmp(values[3], \"top\") && strcmp(values[3], \"middle\")", "0", "box"),
     # a dialog's choices not counted: a fifth taken (#901)
     "dialog-choices-uncounted": ("else if (choices > MENU_SCREEN_MAXIMUM_CHOICES)", "else if (choices > 99)", "dialog"),
+    # a <stick> of an id no stick has taken
+    "stick-id-unchecked": ("(!values[0] || (strcmp(values[0], \"left\") && strcmp(values[0], \"right\")))",
+                           "(!values[0])", "stick"),
+    # two keyboards on a screen taken
+    "keyboard-twice": ("\t\t\tif (screen->blocks[index].kind == MENU_SCREEN_KEYBOARD)\n", "\t\t\tif (0)\n", "keyboard"),
     # a dialog taken with no list of its choices
     "dialog-no-list": ("\t\tif (list < 0)\n\t\t\treader_problem(reader, \"a <dialog> has a <list> of its choices\", NULL);\n"
                        "\t\telse if", "\t\tif", "dialog"),
@@ -185,7 +190,8 @@ def built(fault=None):
                                        c_string((ROOT / "port/assets/menus/screens/quit.xml").read_bytes()) + ";\n" + "".join(
                                            f"static char const {name}_xml[] =\n" +
                                            c_string((ROOT / f"port/assets/menus/screens/{name}.xml").read_bytes()) +
-                                           ";\n" for name in ("coop", "coop_who", "coop_join", "add_player")))
+                                           ";\n" for name in ("coop", "coop_who", "coop_join", "add_player", "stick_test", "keyboard",
+                                                        "controller_layout")))
     (work / "menu_screens.h").write_text(read("port/linux/include/menu_screens.h"))
     executable = work / "menu_screens"
     command = ["clang", *ABI_FLAGS, "-std=gnu99", "-O1", "-Wall", "-Werror", "-Wno-unused-function",
@@ -199,7 +205,8 @@ def built(fault=None):
 
 CASES = ["main", "hints", "good", "syntax", "elements", "spartan", "items", "actions", "bindings", "when",
          "kept", "browser", "profile_select", "profile_color", "tabs", "table", "panel", "buttons", "lanes", "choice", "lobby", "chat",
-         "box", "picture", "panels", "dialog", "coop", "add_player"]
+         "box", "picture", "panels", "dialog", "coop", "add_player", "stick", "keyboard",
+         "controller_layout"]
 
 
 @pytest.mark.parametrize("case", CASES)
@@ -258,9 +265,35 @@ def test_actions_registered():
             assert '"coop."' in value, binding
             assert f'"{binding}"' in re.search(r"\nint pc_menu_coop_value\(.*?\n\}\n",
                                                 read("port/linux/game/coop_menu.inc"), re.S).group(0), binding
+        elif binding.startswith("benchmark."):
+            # (the built-in benchmark's results, benchmark.c's benchmark_value)
+            assert '"benchmark."' in value, binding
+            assert f'"{binding}"' in re.search(r"\nint benchmark_value\(.*?\n\}\n",
+                                                read("port/linux/game/benchmark.c"), re.S).group(0), binding
+        elif binding.startswith("stick."):
+            # (Stick Test's, stick_test_menu.inc's pc_menu_stick_value)
+            assert '"stick."' in value, binding
+            assert f'"{binding}"' in re.search(r"\nint pc_menu_stick_value\(.*?\n\}\n",
+                                                read("port/linux/game/stick_test_menu.inc"), re.S).group(0), binding
+        elif binding.startswith("layout."):
+            # (Controller Layout's, controller_layout_menu.inc's pc_menu_layout_value)
+            assert '"layout."' in value, binding
+            assert f'"{binding}"' in re.search(r"\nint pc_menu_layout_value\(.*?\n\}\n",
+                                                read("port/linux/game/controller_layout_menu.inc"), re.S).group(0), \
+                binding
+        elif binding.startswith("dlss."):
+            # (the NVIDIA DLSS add-on's, port/linux/src/dlss_addon.c's dlss_addon_value)
+            assert '"dlss."' in value, binding
+            assert f'"{binding}"' in re.search(r"\nint dlss_addon_value\(.*?\n\}\n",
+                                                read("port/linux/src/dlss_addon.c"), re.S).group(0), binding
+        elif binding.startswith("data."):
+            # (Settings' GAME DATA's, port/linux/src/game_data_page.c's game_data_page_value)
+            assert '"data."' in value, binding
+            assert f'"{binding}"' in re.search(r"\nint game_data_page_value\(.*?\n\}\n",
+                                                read("port/linux/src/game_data_page.c"), re.S).group(0), binding
         else:
             assert f'"{binding}"' in value, binding
-    sources = re.findall(r'"([^"]+)"', re.search(r"screen_source_names\[\] =\n\{\n(.*?)\n\};", source,
+    sources =re.findall(r'"([^"]+)"', re.search(r"screen_source_names\[\] =\n\{\n(.*?)\n\};", source,
                                                  re.S).group(1))
     table = re.search(r"screen_sources\[\] =\n\{\n(.*?)\n\};", source, re.S).group(1)
     assert len(sources) == len(re.findall(r"&\w+", table)), (sources, table)
@@ -279,3 +312,13 @@ def test_main_menu_files_listed():
     assert "screens/quit.xml" in listed and "screens/save_changes.xml" in listed
     files = read("port/linux/src/menu_files.c")
     assert 'strncmp(files[index].path, "screens/", 8) || !strcmp(files[index].path, "screens/blocks.xml")' in files
+
+
+def test_screens_fit_the_table():
+    """every shipped screen file has a place in the reader's table (menu_screens.h's MENU_SCREEN_MAXIMUM_SCREENS):
+    past it, screens_keep drops the rest ("menus: more than 16 screens; screens/quit.xml is not read")"""
+    import json
+    listed = [path for path in json.loads(read("port/assets/menus/menus.json"))["files"]
+              if path.startswith("screens/") and path != "screens/blocks.xml"]
+    limit = int(re.search(r"#define MENU_SCREEN_MAXIMUM_SCREENS (\d+)", read("port/linux/include/menu_screens.h")).group(1))
+    assert len(listed) <= limit, (len(listed), limit)

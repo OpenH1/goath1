@@ -66,6 +66,12 @@ int host_memory_window_protection(uintptr_t address)
 	return PROT_READ | PROT_WRITE;
 }
 
+/* (the log's queue: none here) */
+void host_log_queue_direct(unsigned timeout_ms)
+{
+	(void)timeout_ms;
+}
+
 /* host_common.c's crash record and host_abort */
 #include "host_crash_record.inc"
 

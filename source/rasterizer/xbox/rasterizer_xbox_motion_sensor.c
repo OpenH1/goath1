@@ -126,6 +126,8 @@ void _rasterizer_hud_motion_sensor_blip_begin(
 		_texture_cache_bitmap_get_hardware_format(large_blip_bitmap, FALSE, TRUE))
 	{
 		bss_00465e27 = TRUE;
+		/* port: the blips' 64x64 target at the display's detail (d3d8_device.c) */
+		halo_target_detail(64);
 		rasterizer_set_target(4, FALSE, FALSE, TRUE, FALSE);
 		rasterizer_set_texture_bitmap_data(0, blip_bitmap);
 
@@ -504,6 +506,7 @@ void _rasterizer_hud_motion_sensor_blip_end(
 			IDirect3DDevice8_SetVertexData2f(global_d3d_device, 0, -1.015625f, -1.015625f);
 			IDirect3DDevice8_End(global_d3d_device);
 
+			halo_target_detail(0); /* port */
 			rasterizer_set_target(
 				global_window_parameters.rasterizer_target,
 				FALSE,
@@ -605,6 +608,7 @@ void _rasterizer_hud_motion_sensor_blip_end(
 
 	if (rasterizer_debug_options.draw_hud_motion_sensor && bss_00465e27)
 	{
+		halo_target_detail(0); /* port */
 		rasterizer_set_target(
 			global_window_parameters.rasterizer_target,
 			FALSE,

@@ -50,6 +50,9 @@ static const struct xgpu_metal_format_information formats[XGPU_METAL_FORMAT_COUN
 	[XGPU_METAL_FORMAT_RGBA32UI] = { MTLPixelFormatRGBA32Uint, 16, 0, 0, 0, SWIZZLE(Red, Green, Blue, Alpha), 0 },
 	[XGPU_METAL_FORMAT_RGBA32F] = { MTLPixelFormatRGBA32Float, 16, 0, 0, 0, SWIZZLE(Red, Green, Blue, Alpha), 0 },
 	[XGPU_METAL_FORMAT_RG8_SNORM] = { MTLPixelFormatRG8Snorm, 2, 0, 0, 0, SWIZZLE(Red, Green, Blue, Alpha), 0 },
+	[XGPU_METAL_FORMAT_RGBA16] = { MTLPixelFormatRGBA16Unorm, 8, 0, 0, 0, SWIZZLE(Red, Green, Blue, Alpha), 0 },
+	/* (a stencil alone: no depth) */
+	[XGPU_METAL_FORMAT_S8] = { MTLPixelFormatStencil8, 1, 0, 0, 1, SWIZZLE(Red, Green, Blue, Alpha), 0 },
 };
 
 const struct xgpu_metal_format_information *xgpu_metal_format_information(uint32_t format)
@@ -158,6 +161,15 @@ void xgpu_metal_pipeline_state_key_make(const struct xgpu_metal_pipeline *pipeli
 	key->color_format = pipeline->color_format;
 	key->depth_format = pipeline->depth_format;
 	key->samples = pipeline->samples > 1 ? pipeline->samples : 1;
+	key->motion_format = pipeline->motion_format;
+	key->motion_mask = pipeline->motion_format ? pipeline->motion_mask : 0;
+}
+
+/* a colour attachment's write mask (XGPU_WRITE_*) */
+static MTLColorWriteMask write_mask(uint8_t mask)
+{
+	return ((mask & XGPU_WRITE_RED) ? MTLColorWriteMaskRed : 0) | ((mask & XGPU_WRITE_GREEN) ? MTLColorWriteMaskGreen : 0) |
+		((mask & XGPU_WRITE_BLUE) ? MTLColorWriteMaskBlue : 0) | ((mask & XGPU_WRITE_ALPHA) ? MTLColorWriteMaskAlpha : 0);
 }
 
 MTLRenderPipelineDescriptor *xgpu_metal_pipeline_descriptor(const struct xgpu_metal_pipeline_state_key *key)
@@ -208,11 +220,22 @@ MTLRenderPipelineDescriptor *xgpu_metal_pipeline_descriptor(const struct xgpu_me
 			xgpu_metal_blend_factor(key->blend_destination);
 		attachment.rgbBlendOperation = attachment.alphaBlendOperation = xgpu_metal_blend_operation(key->blend_operation);
 	}
+	/* (display.temporal_aa: the motion, written by the objects' opaque
+	draws, the others drawn through it) */
+	if (key->motion_format)
+	{
+		descriptor.colorAttachments[1].pixelFormat = xgpu_metal_format_information(key->motion_format)->pixel_format;
+		descriptor.colorAttachments[1].writeMask = write_mask(key->motion_mask);
+	}
 	if (key->depth_format)
 	{
-		descriptor.depthAttachmentPixelFormat = xgpu_metal_format_information(key->depth_format)->pixel_format;
-		if (xgpu_metal_format_information(key->depth_format)->stencil)
-			descriptor.stencilAttachmentPixelFormat = descriptor.depthAttachmentPixelFormat;
+		const struct xgpu_metal_format_information *format = xgpu_metal_format_information(key->depth_format);
+
+		/* (a stencil alone: XGPU_METAL_FORMAT_S8) */
+		if (format->depth)
+			descriptor.depthAttachmentPixelFormat = format->pixel_format;
+		if (format->stencil)
+			descriptor.stencilAttachmentPixelFormat = format->pixel_format;
 	}
 	return descriptor;
 }
@@ -235,11 +258,20 @@ MTLRenderPipelineDescriptor *xgpu_metal_clear_descriptor(const struct xgpu_metal
 			((key->parts & XGPU_METAL_CLEAR_BLUE) ? MTLColorWriteMaskBlue : 0) |
 			((key->parts & XGPU_METAL_CLEAR_ALPHA) ? MTLColorWriteMaskAlpha : 0);
 	}
+	if (key->motion_format)
+	{
+		descriptor.colorAttachments[1].pixelFormat = xgpu_metal_format_information(key->motion_format)->pixel_format;
+		descriptor.colorAttachments[1].writeMask = MTLColorWriteMaskNone;
+	}
 	if (key->depth_format)
 	{
-		descriptor.depthAttachmentPixelFormat = xgpu_metal_format_information(key->depth_format)->pixel_format;
-		if (xgpu_metal_format_information(key->depth_format)->stencil)
-			descriptor.stencilAttachmentPixelFormat = descriptor.depthAttachmentPixelFormat;
+		const struct xgpu_metal_format_information *format = xgpu_metal_format_information(key->depth_format);
+
+		/* (a stencil alone: XGPU_METAL_FORMAT_S8) */
+		if (format->depth)
+			descriptor.depthAttachmentPixelFormat = format->pixel_format;
+		if (format->stencil)
+			descriptor.stencilAttachmentPixelFormat = format->pixel_format;
 	}
 	return descriptor;
 }
@@ -285,13 +317,137 @@ NSString *const xgpu_metal_fixed_source =
 	"\treturn float4(picture.sample(linear, in.coordinates).rgb, 1.0);\n"
 	"}\n";
 
+/* display.temporal_aa's passes (xgpu_metal_temporal.m): the uniforms at
+the backend's draw uniforms' place, 17 */
+NSString *const xgpu_metal_temporal_source =
+	@"#include <metal_stdlib>\n"
+	"using namespace metal;\n"
+	"struct motion_uniforms { float4 metrics; float4 window; float4 reproject[4]; float4 motion; };\n"
+	"struct temporal_out { float4 position [[position]]; };\n"
+	"vertex temporal_out xgpu_temporal_vertex(uint id [[vertex_id]])\n"
+	"{\n"
+	"\ttemporal_out out;\n"
+	"\tout.position = float4(float((id & 1) << 2) - 1.0, float((id & 2) << 1) - 1.0, 0.0, 1.0);\n"
+	"\treturn out;\n"
+	"}\n"
+	/* (the window's motion, as MOTION_RESOLVE_SOURCE) */
+	"fragment float4 xgpu_temporal_resolve(temporal_out in [[stage_in]], constant motion_uniforms &u [[buffer(17)]],\n"
+	"\ttexture2d<float> objects [[texture(0)]], depth2d<float> depth_texture [[texture(1)]])\n"
+	"{\n"
+	"\tuint2 texel = uint2(in.position.xy);\n"
+	"\tfloat4 object = objects.read(texel);\n"
+	"\tfloat depth = depth_texture.read(texel);\n"
+	"\tif (object.w > 0.5 && abs(object.z - depth) <= max(1.5e-7, depth * 1.0e-6))\n"
+	"\t\treturn float4(object.xy, 0.0, 1.0);\n"
+	"\tif (u.motion.w == 0.0)\n"
+	"\t\treturn float4(0.0);\n"
+	"\tfloat2 place = (in.position.xy - u.window.xy) / u.window.zw;\n"
+	"\tfloat2 ndc = float2(place.x * 2.0 - 1.0, 1.0 - place.y * 2.0) - u.motion.xy;\n"
+	"\tfloat4 current = float4(ndc, u.motion.z != 0.0 ? 1.0 - depth : depth, 1.0);\n"
+	"\tfloat4 previous = float4(dot(u.reproject[0], current), dot(u.reproject[1], current), dot(u.reproject[2], current),\n"
+	"\t\tdot(u.reproject[3], current));\n"
+	"\tfloat2 before = previous.w > 0.0 ? previous.xy / previous.w : ndc;\n"
+	"\treturn float4((before - ndc) * float2(0.5, -0.5), 0.0, 0.0);\n"
+	"}\n"
+	/* (debug.motion_vectors: grey still, red to the right, green downward,
+	full at 8 pixels a frame, as MOTION_VIEW_SOURCE) */
+	"fragment float4 xgpu_temporal_view(temporal_out in [[stage_in]], constant motion_uniforms &u [[buffer(17)]],\n"
+	"\ttexture2d<float> motion [[texture(0)]])\n"
+	"{\n"
+	"\tfloat2 moved = motion.read(uint2(in.position.xy)).xy * u.window.zw;\n"
+	"\tfloat2 shown = clamp(moved / 8.0, -1.0, 1.0);\n"
+	"\treturn float4(0.5 + 0.5 * shown.x, 0.5 + 0.5 * shown.y, 0.5 - 0.25 * (shown.x + shown.y), 1.0);\n"
+	"}\n"
+	/* (the reactive mask, FSR's generated one: tone mapped, the largest
+	channel's change, 0.9 past 0.2) */
+	"static float3 reactive_tone_map(float3 c) { return c / (max(c.r, max(c.g, c.b)) + 1.0); }\n"
+	"fragment float4 xgpu_temporal_reactive(temporal_out in [[stage_in]], texture2d<float> opaque [[texture(0)]],\n"
+	"\ttexture2d<float> color [[texture(1)]])\n"
+	"{\n"
+	"\tuint2 texel = uint2(in.position.xy);\n"
+	"\tfloat3 change = abs(reactive_tone_map(max(color.read(texel).rgb, 0.0)) -\n"
+	"\t\treactive_tone_map(max(opaque.read(texel).rgb, 0.0)));\n"
+	"\treturn float4(max(change.r, max(change.g, change.b)) < 0.2 ? 0.0 : 0.9);\n"
+	"}\n"
+	/* (the view stretched while its scaler is made: the source's rectangle
+	(metrics: x0, y0, width, height) over the destination's (window)) */
+	"fragment float4 xgpu_temporal_stretch(temporal_out in [[stage_in]], constant motion_uniforms &u [[buffer(17)]],\n"
+	"\ttexture2d<float> color [[texture(0)]])\n"
+	"{\n"
+	"\tconstexpr sampler linear(coord::pixel, filter::linear, address::clamp_to_edge);\n"
+	"\treturn color.sample(linear, u.metrics.xy + (in.position.xy - u.window.xy) / u.window.zw * u.metrics.zw);\n"
+	"}\n"
+	/* FSR's RCAS (port/third_party/fidelityfx-fsr3/gpu/fsr1/ffx_fsr1.h's
+	FsrRcasF, as ffx_fsr3upscaler_rcas.h builds it: 32-bit, FSR_RCAS_DENOISE,
+	the exposure 1), ported to MSL as a pass over the destination's rectangle
+	(window.xy its corner) reading MetalFX's output (its pixels clamped at its
+	edges); metrics.x FsrRcasCon's con[0], exp2(-(2 - 2 * sharpness)); the
+	alpha passed through. Where a ring's channel is 0 or 1 throughout, its
+	limits' reciprocals are kept finite (the SDK's are infinite there and its
+	GPUs' max takes the other side of the NaN), the result the same.
+
+	This part is ported from the AMD FidelityFX SDK:
+
+	Copyright (C) 2024 Advanced Micro Devices, Inc.
+
+	Permission is hereby granted, free of charge, to any person obtaining a copy
+	of this software and associated documentation files(the "Software"), to deal
+	in the Software without restriction, including without limitation the rights
+	to use, copy, modify, merge, publish, distribute, sublicense, and /or sell
+	copies of the Software, and to permit persons to whom the Software is
+	furnished to do so, subject to the following conditions :
+
+	The above copyright notice and this permission notice shall be included in
+	all copies or substantial portions of the Software.
+
+	THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+	IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+	FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+	AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+	LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+	OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+	THE SOFTWARE. */
+	"static float rcas_reciprocal_medium(float a)\n"
+	"{\n"
+	"\tfloat b = as_type<float>(0x7ef19fffu - as_type<uint>(a));\n"
+	"\treturn b * (-b * a + 2.0);\n"
+	"}\n"
+	"static float rcas_luma(float3 c) { return c.b * 0.5 + (c.r * 0.5 + c.g); }\n"
+	"fragment float4 xgpu_temporal_rcas(temporal_out in [[stage_in]], constant motion_uniforms &u [[buffer(17)]],\n"
+	"\ttexture2d<float> color [[texture(0)]])\n"
+	"{\n"
+	"\tint2 last = int2(color.get_width(), color.get_height()) - 1;\n"
+	"\tint2 sp = int2(in.position.xy - u.window.xy);\n"
+	"\tfloat3 b = color.read(uint2(clamp(sp + int2(0, -1), int2(0), last))).rgb;\n"
+	"\tfloat3 d = color.read(uint2(clamp(sp + int2(-1, 0), int2(0), last))).rgb;\n"
+	"\tfloat4 ee = color.read(uint2(clamp(sp, int2(0), last)));\n"
+	"\tfloat3 e = ee.rgb;\n"
+	"\tfloat3 f = color.read(uint2(clamp(sp + int2(1, 0), int2(0), last))).rgb;\n"
+	"\tfloat3 h = color.read(uint2(clamp(sp + int2(0, 1), int2(0), last))).rgb;\n"
+	"\tfloat bL = rcas_luma(b), dL = rcas_luma(d), eL = rcas_luma(e), fL = rcas_luma(f), hL = rcas_luma(h);\n"
+	"\tfloat nz = 0.25 * bL + 0.25 * dL + 0.25 * fL + 0.25 * hL - eL;\n"
+	"\tnz = saturate(abs(nz) * rcas_reciprocal_medium(max(max(max(bL, dL), eL), max(fL, hL)) -\n"
+	"\t\tmin(min(min(bL, dL), eL), min(fL, hL))));\n"
+	"\tnz = -0.5 * nz + 1.0;\n"
+	"\tfloat3 mn4 = min(min(min(b, d), f), h);\n"
+	"\tfloat3 mx4 = max(max(max(b, d), f), h);\n"
+	"\tfloat3 hit_min = mn4 * (1.0 / max(4.0 * mx4, 1.0e-30));\n"
+	"\tfloat3 hit_max = (1.0 - mx4) * (1.0 / min(4.0 * mn4 - 4.0, -1.0e-30));\n"
+	"\tfloat3 lobe3 = max(-hit_min, hit_max);\n"
+	"\tfloat lobe = max(-(0.25 - 1.0 / 16.0), min(max(max(lobe3.r, lobe3.g), lobe3.b), 0.0)) * u.metrics.x;\n"
+	"\tlobe *= nz;\n"
+	"\tfloat rcpL = rcas_reciprocal_medium(4.0 * lobe + 1.0);\n"
+	"\treturn float4((lobe * b + lobe * d + lobe * h + lobe * f + e) * rcpL, ee.a);\n"
+	"}\n";
+
 /* ---------- the command stream's pipelines */
 
-/* the stream's target formats (XGPU_FORMAT_*: BGRA8 1, D24S8 2, RGBA16F 3) */
+/* the stream's target formats (XGPU_FORMAT_*: BGRA8 1, D24S8 2, RGBA16F 3,
+RGBA16 5) */
 static uint8_t target_format(uint8_t format)
 {
 	return format == 1 ? XGPU_METAL_FORMAT_BGRA8 : format == 2 ? XGPU_METAL_FORMAT_D24S8 :
-		format == 3 ? XGPU_METAL_FORMAT_RGBA16F :
+		format == 3 ? XGPU_METAL_FORMAT_RGBA16F : format == 5 ? XGPU_METAL_FORMAT_RGBA16 :
 		format == XGPU_STREAM_FORMAT_WORLD_AO_INPUTS ? XGPU_METAL_FORMAT_RGBA32UI : XGPU_METAL_FORMAT_NONE;
 }
 

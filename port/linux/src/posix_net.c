@@ -444,6 +444,28 @@ int posix_socket_getpeername(int socket, void *address, int *address_length)
 	return succeed(result);
 }
 
+unsigned long long posix_socket_received_time(int socket)
+{
+#ifdef SIOCGSTAMPNS
+	struct timespec stamp;
+
+	/* (the first asks the kernel to stamp the socket's datagrams from then) */
+	if (ioctl(socket, SIOCGSTAMPNS, &stamp) == 0)
+		return (unsigned long long)stamp.tv_sec * 1000000000ULL + (unsigned long long)stamp.tv_nsec;
+#else
+	(void)socket;
+#endif
+	return 0;
+}
+
+unsigned long long posix_realtime_nanoseconds(void)
+{
+	struct timespec now;
+
+	clock_gettime(CLOCK_REALTIME, &now);
+	return (unsigned long long)now.tv_sec * 1000000000ULL + (unsigned long long)now.tv_nsec;
+}
+
 int posix_socket_select(int *read, int *read_count, int *write, int *write_count,
 	int *error, int *error_count, posix_long timeout_seconds, posix_long timeout_microseconds, int infinite)
 {

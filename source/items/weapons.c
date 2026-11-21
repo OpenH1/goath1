@@ -1262,6 +1262,30 @@ short weapon_rotate_zoom_level(
 	return zoom_level;
 }
 
+/* port: weapons.h */
+short weapon_step_zoom_level(
+	long weapon_index,
+	short zoom_level,
+	short direction)
+{
+	struct weapon_datum *weapon = weapon_get(weapon_index);
+	struct weapon_definition *weapon_definition = weapon_definition_get(weapon->definition_index);
+	short last = (short)(weapon_definition->weapon.zoom_level_count - 1);
+
+	if (!weapon_reloading(weapon_index))
+	{
+		/* (a level the weapon has not, a weapon's swapped for one of fewer
+		levels: the nearest it has) */
+		zoom_level = (short)PIN(zoom_level, NONE, last);
+		if (direction > 0 && zoom_level < last)
+			zoom_level++;
+		else if (direction < 0 && zoom_level > NONE)
+			zoom_level--;
+	}
+
+	return zoom_level;
+}
+
 real weapon_get_zoom_magnification(
 	long weapon_index,
 	short zoom_level)

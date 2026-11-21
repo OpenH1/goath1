@@ -65,6 +65,26 @@ static boolean network_voice_machine_muted(long machine_index)
 	return machine_index >= 0 && machine_index < 4 && machine_muted[machine_index];
 }
 
+/* the pinger's unit (markers_unit_near): seated in a vehicle far from the
+world's origin, its own position its seat's in the vehicle (objects.c's
+object_get_origin turns that into the world's) */
+struct object_datum { struct { real_point3d position; } object; };
+static struct object_datum seated_unit = { { { 0.4f, -0.3f, 0.6f } } };
+static real_point3d const seated_world = { -471.9f, 121.9f, 62.5f };
+static struct object_datum *object_get(long object_index) { (void)object_index; return &seated_unit; }
+static real_point3d *object_get_origin(long object_index, real_point3d *origin)
+{
+	(void)object_index;
+	*origin = seated_world;
+	return origin;
+}
+static real distance3d(real_point3d const *a, real_point3d const *b)
+{
+	real dx = a->x - b->x, dy = a->y - b->y, dz = a->z - b->z;
+
+	return sqrtf(dx * dx + dy * dy + dz * dz);
+}
+
 #include "under_test.inc"
 
 int main(int argc, char **argv) {
@@ -210,6 +230,16 @@ int main(int argc, char **argv) {
 					parts[index]);
 			}
 		}
+	}
+	else if (!strcmp(name, "seated"))
+	{
+		/* (a Warthog's driver far from the world's origin pings the ground
+		ahead of them; and a point past the range, refused) */
+		real_point3d ahead = { -460.0f, 122.0f, 61.0f };
+		real_point3d far = { seated_world.x + MARKER_HOST_RANGE + 5.0f, seated_world.y, seated_world.z };
+
+		CHECK(markers_unit_near(0x10003, &ahead), "a seated pinger's ping beside them refused");
+		CHECK(!markers_unit_near(0x10003, &far), "a ping past the range taken");
 	}
 	else
 	{

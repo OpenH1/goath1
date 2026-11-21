@@ -51,6 +51,7 @@ _llseek's pointer.
 */
 
 #include "host.h"
+#include "host_log_queue.h"
 #include "halo_guest_syscall.h"
 
 #include <errno.h>
@@ -443,6 +444,14 @@ static long guest_writev(int fd, uint64_t vector, int count, int64_t offset, int
 		iovec_free(host_vector, buffer);
 		return result;
 	}
+#else
+	/* (the standard output and error: by the log's queue) */
+	if (!positional && (result = host_log_queue_output(fd, host_vector, count)) >= 0)
+	{
+		iovec_free(host_vector, buffer);
+		return result;
+	}
+	result = 0;
 #endif
 	if (positional)
 		result = result_of(pwritev(fd, host_vector, count, offset));
@@ -702,6 +711,14 @@ long long host_syscall(long long number, long long a, long long b, long long c,
 		{
 			log_bytes((int)a, GUEST(const char *, b), (size_t)(uint32_t)c);
 			return (uint32_t)c;
+		}
+#else
+		{
+			/* (the standard output and error: by the log's queue) */
+			struct iovec part = { GUEST(void *, b), (size_t)(uint32_t)c };
+
+			if (host_log_queue_output((int)a, &part, 1) >= 0)
+				return (uint32_t)c;
 		}
 #endif
 		return result_of(write((int)a, GUEST(const void *, b), (size_t)(uint32_t)c));

@@ -23,6 +23,9 @@ screen file's, set on each widget as the screen is made. -->
 	<!-- Add Player's (screens/add_player.xml: menu_functions.c), as the lobby's and a game under way's ADD PLAYER
 	and another controller's START open it -->
 	<widget name="screens/add_player" width="640" height="480" flags="pass_unhandled_to_focused_child" bitmap="main_menu/parts/background_tall"/>
+	<!-- the built-in benchmark's results (screens/benchmark.xml: port/linux/game/benchmark.c), over the main menu
+	as its match ends -->
+	<widget name="screens/benchmark" width="640" height="480" flags="pass_unhandled_to_focused_child" bitmap="main_menu/parts/background_tall"/>
 	<!-- a header's title in the tall layout's band, as Settings' and the browsers' titles (port_settings.py's tall_title) -->
 	<widget name="screens/header_text" type="text" left="24" width="592" height="40" font="heading" color="#FF2995FD" text_y="9" wide="-106 0" text_flags="no_focus_test"/>
 	<!-- an inner screen's header: its lettered picture (the file's picture=), where the campaign menu's is -->
@@ -279,7 +282,7 @@ picture, the line, the words for no rows) -->
 		<on event="right" run="port screen right"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
 	</widget>
-	<widget name="screens/choice_label" type="text" width="58" height="16" font="ui\small_ui" color="#FF2896FF" text_flags="no_focus_test"/>
+	<widget name="screens/choice_label" type="text" width="52" height="16" font="ui\small_ui" color="#FF2896FF" text_flags="no_focus_test"/>
 	<widget name="screens/choice_value" type="text" width="86" height="16" font="ui\small_ui" color="#FFFFFFFF" align="center" text_flags="no_focus_test"/>
 	<widget name="screens/choice_left" width="6" height="12" bitmap="bitmaps/arrow_sm_left"/>
 	<widget name="screens/choice_right" width="6" height="12" bitmap="bitmaps/arrow_sm_right"/>
@@ -373,4 +376,36 @@ picture, the line, the words for no rows) -->
 		<on event="start" run="port screen do"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
 	</widget>
+	<!-- Stick Test's (screens/stick_test.xml, as Advanced Stick Settings' STICK TEST › opens it; its sticks read
+	each frame: menu_functions.c's stick_test_menu.inc), pausing the game as Settings' pages do; B and Back go back
+	to the page it was opened from -->
+	<widget name="screens/stick_test" width="640" height="480" flags="pass_unhandled_to_focused_child pause_game" bitmap="main_menu/parts/background_tall">
+		<on event="b" back="true"/>
+		<on event="back" back="true"/>
+	</widget>
+	<!-- Controller Layout's (screens/controller_layout.xml, as Button Remapping's Controller Layouts' EDIT BUTTONS ›
+	opens it: menu_functions.c's controller_layout_menu.inc), pausing the game as Settings' pages do -->
+	<widget name="screens/controller_layout" width="640" height="480" flags="pass_unhandled_to_focused_child pause_game" bitmap="main_menu/parts/background_tall"/>
+	<!-- the NVIDIA DLSS add-on's (screens/dlss_addon.xml, as Frame Rate & Sync's NVIDIA DLSS rows open it:
+	port/linux/src/dlss_addon.c), pausing the game as Settings' pages do -->
+	<widget name="screens/dlss_addon" width="640" height="480" flags="pass_unhandled_to_focused_child pause_game" bitmap="main_menu/parts/background_tall"/>
+	<!-- Settings' GAME DATA (screens/game_data.xml, as Mods' GAME DATA › opens it: port/linux/src/game_data_page.c),
+	pausing the game as Settings' pages do -->
+	<widget name="screens/game_data" width="640" height="480" flags="pass_unhandled_to_focused_child pause_game" bitmap="main_menu/parts/background_tall"/>
+	<!-- the question of a controller layout's bindings (screens/layout_bindings.xml, as Controller Layouts' ITS
+	BINDINGS opens it), a pop-up -->
+	<widget name="screens/layout_bindings" width="640" height="480" flags="pass_unhandled_to_focused_child"/>
+	<!-- a <stick>'s (Stick Test's): its label, its circle's anchor (the engine draws the circle there, as large as
+	its radius: menu_screen.c), its reading, its detail and its hint, each about its middle -->
+	<widget name="screens/stick_label" type="text" width="240" height="24" font="ui\large_ui" color="#FF8DB6E6" align="center" text_flags="no_focus_test"/>
+	<widget name="screens/stick" width="16" height="16"/>
+	<widget name="screens/stick_value" type="text" width="240" height="16" font="ui\small_ui" color="#FFFFFFFF" align="center" text_flags="no_focus_test"/>
+	<widget name="screens/stick_note" type="text" width="240" height="16" font="ui\small_ui" color="#FF2896FF" align="center" text_flags="no_focus_test"/>
+	<widget name="screens/stick_hint" type="text" width="240" height="16" font="ui\small_ui" color="#FF6F9CD0" align="center" text_flags="no_focus_test"/>
+	<!-- the on-screen keyboard's (screens/keyboard.xml: port/linux/game/keyboard.c), a pop-up over the screen it is
+	typed for (or a game's view: the chat), which waits under it; every event its own (keyboard.c reads the
+	controller each frame); its anchor, where keyboard.c draws it (its dim, its block, its text, its keys and its
+	prompts) -->
+	<widget name="screens/keyboard" width="640" height="480" flags="pass_unhandled_to_focused_child"/>
+	<widget name="screens/keyboard_area" width="640" height="480"/>
 </menus>

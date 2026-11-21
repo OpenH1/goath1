@@ -579,14 +579,58 @@ int p2p_relay_merge(struct p2p_candidate *relays, int *count, const struct p2p_c
 attempt (its index + 1), or none while its relay is replaced (-1); when it
 was last heard through it; a direct path heard while relayed (since when,
 without a gap, and lately), which takes over only once it has lasted; when
-it went direct from a relay (its relays kept a while, to go back to) */
+it went direct from a relay; when its standbys were last probed (the
+carrier silent), and its relays last bound (p2p_relay_paths_update) */
 struct p2p_relay_path
 {
 	int carrier;
 	unsigned long carrier_heard;
 	unsigned long direct_first, direct_last;
 	unsigned long direct_time;
+	unsigned long probe_time;
+	unsigned long bind_time;
 };
+
+/* a peer's paths, each in one state (p2p_relay_path_state; via: 0 the
+direct path, else a relay's attempt + 1):
+- candidate: a relay bound, not paired yet (or refused, asked again); the
+  direct path heard lately while relayed
+- paired: paired at its relay, but the relay not heard lately (its
+  keep-alives unanswered): not trusted to take over, nor counted a standby
+- active: the carrier, heard lately
+- standby: paired, its relay heard lately, kept warm by keep-alives alone
+  (a relay's bind every few seconds, no tunnel packet): the first tried when
+  the carrier falls silent
+- dead: no such path, or the carrier silent (failing over) */
+enum
+{
+	_p2p_path_candidate,
+	_p2p_path_paired,
+	_p2p_path_active,
+	_p2p_path_standby,
+	_p2p_path_dead,
+};
+
+enum
+{
+	/* the standbys a peer keeps (more paired are released, the lowest
+	address kept, as both machines choose alike) */
+	P2P_RELAY_STANDBYS = 1,
+	/* what p2p_relay_paths_update asks of p2p.c: the peer pinged through
+	each paired attempt but the carrier, and at its addresses (the carrier
+	silent); the peer's relays bound (a standby short, or the carrier
+	silent with none) */
+	P2P_RELAY_PATHS_PROBE = 1,
+	P2P_RELAY_PATHS_BIND = 2,
+};
+int p2p_relay_path_state(const struct p2p_relay_path *path, int via, unsigned long now);
+/* a peer's paths' pass (every pass of the p2p thread, whatever the game
+sends): what p2p.c is to do now (P2P_RELAY_PATHS_*). keep_standby: the
+peer keeps standbys too (it offered its relays through the tunnel); an
+older build's peer (0) is bound again only once its carrier is silent with
+no standby, and nothing is released */
+int p2p_relay_paths_update(struct p2p_relay_path *path, const unsigned char *peer, int keep_standby,
+	unsigned long now);
 /* a packet of the peer's newest heard by a path (via: 0 directly, else an
 attempt's index + 1): whether the peer's path is now that one. A direct
 path takes over from a relay once heard for a few seconds without a gap; a

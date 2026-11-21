@@ -883,6 +883,51 @@ static void party_friends_heard(
 	}
 }
 
+/* (the host) a machine gone: its word let go (a machine new to its slot
+tells its own), and its party's holds (a leader gone: its party follows it
+elsewhere) */
+static void party_machine_forget(
+	long machine_index)
+{
+	if (machine_index < 0 || machine_index >= MAXIMUM_PARTY_MACHINES)
+		return;
+	csmemset(&party_globals.machines[machine_index], 0, sizeof(party_globals.machines[machine_index]));
+	if (party_holds_release(party_globals.holds, (short)machine_index))
+		error(_error_log, "party: machine #%ld left; the room held for its party is let go", machine_index);
+}
+
+/* (the host) each machine's word, and its party's holds, are its own for as
+long as the host has it, in every phase (network_game_server_machine_phase:
+loading, downloading, waiting to be added, as well as in the lobby or
+loaded); they end with it (network_party_machine_dropped, and here, once it
+has no phase, should a drop not have said so). One the game's messages do
+not reach now (not present: loading, or not started yet) is sent the lists
+again once they do (listed: whether it has them) */
+static void party_host_machines_update(
+	boolean const *present)
+{
+	struct network_game_server *server = global_network_game_server_get();
+	short own = network_game_client_get_local_machine_index();
+	short index;
+
+	for (index = 0; index < MAXIMUM_PARTY_MACHINES; index++)
+	{
+		/* (the host's own, whose party's holds are its own) */
+		if (index == own)
+			continue;
+		if (network_game_server_machine_phase(server, index) == _network_machine_phase_none)
+		{
+			party_machine_forget(index);
+			continue;
+		}
+		if (!present[index])
+		{
+			party_globals.machines[index].listed = FALSE;
+			party_globals.machines[index].friends_listed = FALSE;
+		}
+	}
+}
+
 /* (the host) who can party, made again; sent on to the machines that told
 it they can, when it changed (and to a machine new to it) */
 static void party_host_list(
@@ -900,8 +945,7 @@ static void party_host_list(
 	if (party_globals.list_time && now - party_globals.list_time < PARTY_LIST_MILLISECONDS)
 		return;
 	party_globals.list_time = now | 1;
-	/* (a machine gone has its word let go: a machine new to its slot tells
-	its own) */
+	/* (the machines the game's messages reach: loaded, or in the lobby) */
 	machine_count = distributed_client_machines(machine_indices, MAXIMUM_PARTY_MACHINES);
 	csmemset(present, 0, sizeof(present));
 	for (index = 0; index < machine_count; index++)
@@ -909,22 +953,7 @@ static void party_host_list(
 		if (machine_indices[index] >= 0 && machine_indices[index] < MAXIMUM_PARTY_MACHINES)
 			present[machine_indices[index]] = TRUE;
 	}
-	/* (and the host's own, whose party's holds are its own) */
-	{
-		short own = network_game_client_get_local_machine_index();
-
-		if (own >= 0 && own < MAXIMUM_PARTY_MACHINES)
-			present[own] = TRUE;
-	}
-	for (index = 0; index < MAXIMUM_PARTY_MACHINES; index++)
-	{
-		if (present[index])
-			continue;
-		csmemset(&party_globals.machines[index], 0, sizeof(party_globals.machines[index]));
-		/* (a leader gone: its party follows it elsewhere) */
-		if (party_holds_release(party_globals.holds, index))
-			error(_error_log, "party: machine #%d left; the room held for its party is let go", index);
-	}
+	party_host_machines_update(present);
 	csmemset(&message, 0, sizeof(message));
 	for (player_index = 0; player_index < MAXIMUM_TRACKED_PLAYERS; player_index++)
 	{
@@ -1890,6 +1919,12 @@ short network_party_held_slots(
 	void)
 {
 	return party_globals.active && party_host() ? party_holds_count(party_globals.holds) : 0;
+}
+
+void network_party_machine_dropped(
+	long machine_index)
+{
+	party_machine_forget(machine_index);
 }
 
 short network_party_team_choice(

@@ -6,7 +6,9 @@ made Metal's by SPIRV-Cross and run on its GPU (tools/hdr_backends/harness.m):
 - the tone map and the encoding as the Vulkan backend ships them (the
   modules of port/linux/vulkan/xgpu_vulkan_post_shaders.c) over the golden
   colours the Metal backend's own are held to, against the reference
-  (port/linux/src/xgpu_hdr.h);
+  (port/linux/src/xgpu_hdr.h); and its dither (#1108) into a real 8-bit
+  target: bounded, black and white exact, each column's mean kept, and
+  without it (the negative control) each value merely rounded;
 - each tagged draw (every ceiling, a glow's expansion, the alpha limit, over
   each blend) as the Vulkan backend's SPIR-V emitter writes it (reading the
   pixel drawn over as an input attachment) and as the Metal backend's MSL
@@ -122,8 +124,12 @@ def test_post_shaders_on_the_gpu(harness):
         spv.write_bytes(struct.pack(f"<{len(arrays[name])}I", *arrays[name]))
         _cross(spv, post / (name.replace("_frag", "") + ".metal"), stage, entry, fetch)
     output = _run(binary, "post", str(post))
-    assert "post: 1152 values checked" in output, output
+    assert "post: 1536 values checked" in output, output
     assert "post: 9 values not a number or infinite tone mapped finite" in output, output
+    assert "dither: means within" in output, output
+    assert "depth: 16-bit frame" in output, output
+    assert "area: at 1.5 the mean light" in output, output
+    assert "area: at 2 half white and half black" in output, output
 
 
 def test_draws_agree_on_the_gpu(harness):
@@ -143,7 +149,7 @@ def test_draws_agree_on_the_gpu(harness):
     out = folder / "draws"
     subprocess.run([str(tool), str(out)], check=True)
     names = [line.split()[0] for line in (out / "index.txt").read_text().splitlines()[1:]]
-    assert len(names) == 141
+    assert len(names) == 144
     validator = shutil.which("spirv-val")
     for name in names:
         # (the interlocked draws: valid for Vulkan 1.3, their target a storage image under a raster order group)
@@ -155,4 +161,4 @@ def test_draws_agree_on_the_gpu(harness):
         for stem in (f"{name}.vk", name):
             (out / f"{stem}.vertex.metal").write_text(_vertex((out / f"{stem}.metal").read_text()))
     output = _run(binary, "draws", str(out))
-    assert "draws: 141 draws (72 interlocked), 288768 values compared" in output, output
+    assert "draws: 144 draws (72 interlocked), 294912 values compared" in output, output

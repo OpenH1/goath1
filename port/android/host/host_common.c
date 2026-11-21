@@ -6,10 +6,12 @@ the Linux executable's, port/linux/host): logging and termination, the
 guest's environment and boot block, and the debugging settings of
 config.toml that the host reads itself.
 
-The log's lines go to the sink the host's main chooses (host_log_set_sink).
-Signal handlers log through it too (host_memory.c, host_debug.c), so a sink
-writes with neither locks nor stdio. The last HOST_LOG_KEPT bytes of them
-are kept as well, for the guest's Save Report (host_log_recent,
+The log's lines go to the sink the host's main chooses (host_log_set_sink),
+by way of the log's queue (host_log_queue.c: the sink's writes, which may
+block, made by a thread of their own; from the exit, a fatal error or a
+crash on, by their callers). Signal handlers log through it too
+(host_memory.c, host_debug.c), so a sink writes with neither locks nor
+stdio. The last HOST_LOG_KEPT bytes of them are kept as well, for the guest's Save Report (host_log_recent,
 port/linux/src/report.c: host.log), since on Linux and Android they go only
 to the standard error stream or logcat.
 
@@ -24,6 +26,7 @@ and its lines written by the host's crash report (host_memory_watch_win.c).
 */
 
 #include "host.h"
+#include "host_log_queue.h"
 #include "host_render_record.h"
 #include "host_render_stream.h"
 #include "tomlc17.h"
@@ -61,6 +64,20 @@ static void default_sink(int priority, const char *line)
 }
 
 static host_log_sink log_sink = default_sink;
+
+/* (the log's queue's) a line written by the sink */
+static void sink_line(int priority, const char *line, size_t size)
+{
+	(void)size;
+	log_sink(priority, line);
+}
+
+static void queue_note(int priority, const char *line, size_t size)
+{
+	(void)priority;
+	(void)size;
+	log_sink(HOST_LOG_WARN, line);
+}
 
 /* the host's last lines, each ended by a newline (a power of 2) */
 #define HOST_LOG_KEPT (64 * 1024)
@@ -120,6 +137,9 @@ uint32_t host_log_recent(char *buffer, uint32_t size)
 
 	if (!buffer || !size)
 		return 0;
+	/* (Save Report's: the log's files, which it reads next, given every
+	line so far) */
+	host_log_queue_flush(1000);
 	if (!log_kept_take())
 	{
 		buffer[0] = 0;
@@ -148,12 +168,15 @@ uint32_t host_log_recent(char *buffer, uint32_t size)
 void host_log_set_sink(host_log_sink sink)
 {
 	log_sink = sink ? sink : default_sink;
+	/* (the writer thread, once: the host's main sets the sink first) */
+	host_log_queue_start(queue_note);
 }
 
 void host_log(int priority, const char *text)
 {
 	log_keep(priority, text ? text : "");
-	log_sink(priority, text ? text : "");
+	if (!host_log_queue_line(sink_line, priority, text ? text : ""))
+		log_sink(priority, text ? text : "");
 }
 
 void host_logf(int priority, const char *format, ...)
@@ -165,7 +188,8 @@ void host_logf(int priority, const char *format, ...)
 	vsnprintf(line, sizeof(line), format, arguments);
 	va_end(arguments);
 	log_keep(priority, line);
-	log_sink(priority, line);
+	if (!host_log_queue_line(sink_line, priority, line))
+		log_sink(priority, line);
 }
 
 /* ---------- the crash record */
@@ -227,6 +251,8 @@ static void crash_record_write(const char *text, size_t length)
 
 int host_crash_record_begin(const char *reason)
 {
+	/* (what is queued written first, and the crash's lines directly) */
+	host_log_queue_direct(500);
 	/* (the first thread to crash writes it; the others' crashes are left out) */
 	if (!crash_record_path[0] || __atomic_exchange_n(&crash_record_taken, 1, __ATOMIC_ACQ_REL))
 		return 0;
@@ -294,6 +320,7 @@ void host_fatal(const char *format, ...)
 	va_start(arguments, format);
 	vsnprintf(message, sizeof(message), format, arguments);
 	va_end(arguments);
+	host_log_queue_direct(500);
 	log_keep(HOST_LOG_FATAL, message);
 	log_sink(HOST_LOG_FATAL, message);
 	if (host_crash_record_begin("fatal error"))
@@ -310,6 +337,7 @@ host_memory_watch.c's, on Windows host_crash_win.c's; the reason a line of
 it) */
 void host_abort(const char *reason)
 {
+	host_log_queue_direct(500);
 	host_logf(HOST_LOG_FATAL, "guest abort: %s", reason ? reason : "");
 	host_crash_cause = reason;
 	abort();
@@ -324,6 +352,8 @@ void host_exit(int code)
 		host_render_stream_close();
 	/* (the backend's pipeline cache written: port/macos/xgpu_metal.m) */
 	host_render_stream_exiting();
+	/* (the log's queue written out, however long its reader takes) */
+	host_log_queue_direct(5000);
 	/* (what the host itself printed: the guest's output does not go
 	through the host's stdio, host_syscall.c) */
 	fflush(stdout);

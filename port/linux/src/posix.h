@@ -126,6 +126,11 @@ int posix_socket_setsockopt(int socket, int level, int name, const void *value, 
 int posix_socket_getsockopt(int socket, int level, int name, void *value, int *length);
 int posix_socket_getsockname(int socket, void *address, int *address_length);
 int posix_socket_getpeername(int socket, void *address, int *address_length);
+/* when the kernel had the datagram last read from the socket, in nanoseconds
+of CLOCK_REALTIME (0: not known: not Linux, or none yet), and that clock now;
+for debug.network_latency_trace */
+unsigned long long posix_socket_received_time(int socket);
+unsigned long long posix_realtime_nanoseconds(void);
 /* select over explicit descriptor lists (any descriptor numbers: poll on
 Linux); each list is rewritten in place to hold only the ready descriptors,
 in the order given, and its count updated */

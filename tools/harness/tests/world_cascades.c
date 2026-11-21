@@ -2,7 +2,8 @@
 test_world_cascades.py): the ray step through the cascades against exact intersections with a made-up scene (a
 floor and a wall, a sphere, a capsule and a turned box), and the updates: an object that moves is found again only
 where it reaches (the result alike, byte for byte, to cascades found whole with it there; every texel changed in an
-upload box), one that stays is not found at all, and the camera's step finds the slabs it brings in alone. */
+upload box), one that stays is not found at all, and the camera's step finds the slabs it brings in alone; a jump
+samples no structure (its distance is the field's, read by the ray step alone). */
 
 #include "harness.h"
 
@@ -12,12 +13,14 @@ upload box), one that stays is not found at all, and the camera's step finds the
 
 /* ---------- the made-up scene */
 
-/* (the structure: solid below z = 0 and past x = 3) */
+/* (the structure: solid below z = 0 and past x = 3; context, where given, a
+count of its samples) */
 static float structure_distance(void *context, float const point[3])
 {
 	float floor_distance = point[2], wall = 3.0f - point[0];
 
-	(void)context;
+	if (context)
+		(*(long *)context)++;
 	return floor_distance < wall ? floor_distance : wall;
 }
 
@@ -147,10 +150,10 @@ static void fill(struct world_cascades *cascades, float const camera[3])
 {
 	int frames, cascade, ready = 0;
 
-	world_cascades_update(cascades, camera, 1, structure_distance, NULL, objects, SHAPES, shapes);
+	world_cascades_update(cascades, camera, objects, SHAPES, shapes);
 	for (frames = 0; frames < 64 && !ready; frames++)
 	{
-		world_cascades_update(cascades, camera, 0, structure_distance, NULL, objects, SHAPES, shapes);
+		world_cascades_update(cascades, camera, objects, SHAPES, shapes);
 		for (ready = 1, cascade = 0; cascade < WORLD_CASCADES; cascade++)
 			ready = ready && cascades->cascades[cascade].ready;
 	}
@@ -193,7 +196,7 @@ static void trace_case(void)
 		direction[0] /= length;
 		direction[1] /= length;
 		direction[2] /= length;
-		world_trace_ray(&cascades, block, origin, direction, t_max, mask, &hit);
+		world_trace_ray(&cascades, block, structure_distance, NULL, origin, direction, t_max, mask, &hit);
 		t_exact = exact_ray(origin, direction, t_max, mask, &clearance, &depth);
 		/* (a hit well within its reach that goes into what it meets, or a
 		miss with room to spare: the voxels' sampling may go either way where
@@ -232,9 +235,9 @@ static void trace_case(void)
 		struct world_trace_hit hit;
 		float origin[3] = { 0.5f, -1.0f, 0.6f }, up[3] = { 0.0f, 0.0f, 1.0f }, down[3] = { 0.0f, 0.0f, -1.0f };
 
-		world_trace_ray(&cascades, block, origin, up, 2.0f, WORLD_TRACE_STRUCTURE | WORLD_TRACE_OBJECTS, &hit);
+		world_trace_ray(&cascades, block, structure_distance, NULL, origin, up, 2.0f, WORLD_TRACE_STRUCTURE | WORLD_TRACE_OBJECTS, &hit);
 		CHECK(!hit.hit, "hit its own sphere at %g", hit.t);
-		world_trace_ray(&cascades, block, origin, down, 2.0f, WORLD_TRACE_STRUCTURE | WORLD_TRACE_OBJECTS, &hit);
+		world_trace_ray(&cascades, block, structure_distance, NULL, origin, down, 2.0f, WORLD_TRACE_STRUCTURE | WORLD_TRACE_OBJECTS, &hit);
 		CHECK(hit.hit && hit.kind == WORLD_TRACE_STRUCTURE && fabsf(hit.t - 0.6f) < 0.15f, "%d %d %g", hit.hit, hit.kind,
 			hit.t);
 	}
@@ -292,23 +295,21 @@ static void update_case(void)
 
 	CHECK(world_cascades_create(&cascades) && world_cascades_create(&fresh), "no memory");
 	scene(0.5f);
-	world_cascades_update(&cascades, camera, 1, structure_distance, NULL, objects, SHAPES, shapes);
+	world_cascades_update(&cascades, camera, objects, SHAPES, shapes);
 	CHECK(cascades.moved == SHAPES, "%ld", cascades.moved);
 	/* (found whole a few slices a frame: never the whole in one) */
-	CHECK(cascades.structure_voxels <= (long)WORLD_CASCADES_FILL_SLICES * WORLD_CASCADE_SIDE * WORLD_CASCADE_SIDE,
-		"%ld voxels in a frame", cascades.structure_voxels);
+	CHECK(cascades.object_voxels <= (long)WORLD_CASCADES_FILL_SLICES * WORLD_CASCADE_SIDE * WORLD_CASCADE_SIDE,
+		"%ld voxels in a frame", cascades.object_voxels);
 	fill(&cascades, camera);
 	/* (still: nothing found again, nothing to upload) */
-	world_cascades_update(&cascades, camera, 0, structure_distance, NULL, objects, SHAPES, shapes);
-	CHECK(cascades.moved == 0 && cascades.box_count == 0 && cascades.object_voxels == 0 &&
-		cascades.structure_voxels == 0, "%ld moved, %ld boxes, %ld voxels", cascades.moved, cascades.box_count,
+	world_cascades_update(&cascades, camera, objects, SHAPES, shapes);
+	CHECK(cascades.moved == 0 && cascades.box_count == 0 && cascades.object_voxels == 0, "%ld moved, %ld boxes, %ld voxels", cascades.moved, cascades.box_count,
 		cascades.object_voxels);
 	/* (the sphere moved 1.5 wu: it alone, where it was and is) */
 	memcpy(before, cascades.texels, WORLD_CASCADES_BYTES);
 	scene(2.0f);
-	world_cascades_update(&cascades, camera, 0, structure_distance, NULL, objects, SHAPES, shapes);
+	world_cascades_update(&cascades, camera, objects, SHAPES, shapes);
 	CHECK(cascades.moved == 1, "%ld moved", cascades.moved);
-	CHECK(cascades.structure_voxels == 0, "%ld", cascades.structure_voxels);
 	CHECK(cascades.object_voxels < total / 20, "%ld of %ld voxels found again", cascades.object_voxels, total);
 	fill(&fresh, camera);
 	CHECK(texels_alike(&cascades, &fresh, &difference), "the update differs from the whole at byte %ld", difference);
@@ -326,11 +327,72 @@ static void update_case(void)
 	/* (the camera's step: the slabs it brings in alone) */
 	camera[0] += 1.3f;
 	camera[2] -= 0.6f;
-	world_cascades_update(&cascades, camera, 0, structure_distance, NULL, objects, SHAPES, shapes);
-	CHECK(cascades.structure_voxels > 0 && cascades.structure_voxels < total / 4, "%ld", cascades.structure_voxels);
+	world_cascades_update(&cascades, camera, objects, SHAPES, shapes);
+	CHECK(cascades.object_voxels > 0 && cascades.object_voxels < total / 4, "%ld", cascades.object_voxels);
 	fill(&fresh, camera);
 	CHECK(texels_alike(&cascades, &fresh, &difference), "the step differs from the whole at byte %ld", difference);
-	printf("the camera stepped: %ld voxels' structure found\n", cascades.structure_voxels);
+	printf("the camera stepped: %ld voxels found\n", cascades.object_voxels);
+	world_cascades_free(&cascades);
+	world_cascades_free(&fresh);
+}
+
+/* whether every texel's first byte is none (+range: no structure stored) */
+static int structure_none(struct world_cascades const *cascades)
+{
+	long index;
+
+	for (index = 0; index < WORLD_CASCADES_BYTES; index += WORLD_CASCADE_TEXEL)
+	{
+		if (cascades->texels[index] != 127)
+			return 0;
+	}
+	return 1;
+}
+
+/* the camera's jump within the coarse cascades' sides (a spawn across the
+level): no frame finds more than a frame's slices or stores the structure
+(it has no sampler to: the ray step's alone reads it), and once filled the cascades are alike to those
+found whole there; the ray step then reads the structure where it goes */
+static void jump_case(void)
+{
+	static struct world_cascades cascades, fresh;
+	float camera[3] = { 0.3f, -0.2f, 1.7f }, block[WORLD_CASCADES][4];
+	long difference = -1, most = 0, samples = 0;
+	int frames, none = 1;
+
+	CHECK(world_cascades_create(&cascades) && world_cascades_create(&fresh), "no memory");
+	scene(0.5f);
+	fill(&cascades, camera);
+	/* (40 wu along x and 20 along y: past the finest two's sides, within
+	the coarser two's) */
+	camera[0] += 40.0f;
+	camera[1] -= 20.0f;
+	for (frames = 0; frames < 64; frames++)
+	{
+		world_cascades_update(&cascades, camera, objects, SHAPES, shapes);
+		most = cascades.object_voxels > most ? cascades.object_voxels : most;
+		none = none && structure_none(&cascades);
+	}
+	CHECK(most <= (long)WORLD_CASCADES_FILL_SLICES * WORLD_CASCADE_SIDE * WORLD_CASCADE_SIDE,
+		"%ld voxels in one frame", most);
+	CHECK(none, "the structure stored in the cascades");
+	fill(&fresh, camera);
+	CHECK(texels_alike(&cascades, &fresh, &difference), "the jump differs from the whole at byte %ld", difference);
+	/* (a ray down in front of the wall, in the coarsest cascade: the floor
+found by the field's samples along it, as the GPU reads its atlas) */
+	{
+		struct world_trace_hit hit;
+		float origin[3], down[3] = { 0.0f, 0.0f, -1.0f };
+
+		memcpy(origin, camera, sizeof(origin));
+		origin[0] = 1.0f;
+		world_cascades_block(&cascades, block);
+		world_trace_ray(&cascades, block, structure_distance, &samples, origin, down, 4.0f, WORLD_TRACE_STRUCTURE, &hit);
+		CHECK(hit.hit && hit.kind == WORLD_TRACE_STRUCTURE && fabsf(hit.t - camera[2]) < 0.15f && samples > 0,
+			"%d %d %g, %ld samples", hit.hit, hit.kind, hit.t, samples);
+	}
+	printf("the camera jumped: at most %ld voxels a frame, the structure sampled %ld times by a ray alone\n", most,
+		samples);
 	world_cascades_free(&cascades);
 	world_cascades_free(&fresh);
 }
@@ -343,6 +405,8 @@ int main(int argc, char **argv)
 		trace_case();
 	else if (!strcmp(name, "update"))
 		update_case();
+	else if (!strcmp(name, "jump"))
+		jump_case();
 	else
 		return 2;
 	return 0;

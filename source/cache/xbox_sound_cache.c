@@ -198,6 +198,9 @@ static void sound_cache_delete_block_proc(
 	long block_index);
 static struct xbox_cache_sound_datum *sound_cache_sound_get_cache_sound(
 	struct sound_permutation *sound);
+/* port: (port/linux/game/mod_sounds.c) */
+void mod_sounds_decode_wait(
+	void);
 
 /* ---------- globals */
 
@@ -410,6 +413,8 @@ void sound_cache_flush(
 	struct data_iterator iterator;
 	struct xbox_cache_sound_datum *cache_sound;
 
+	/* port: no mod sound's block let go while it is being decoded into */
+	mod_sounds_decode_wait();
 	data_iterator_new(&iterator, xbox_sound_cache_globals.cache_sounds);
 	while ((cache_sound = data_iterator_next(&iterator)) != NULL)
 	{
@@ -429,6 +434,8 @@ void sound_cache_close(
 	struct data_iterator iterator;
 	struct xbox_cache_sound_datum *cache_sound;
 
+	/* port: (as sound_cache_flush) */
+	mod_sounds_decode_wait();
 	data_iterator_new(&iterator, xbox_sound_cache_globals.cache_sounds);
 	while ((cache_sound = data_iterator_next(&iterator)) != NULL)
 	{
@@ -606,17 +613,19 @@ static void sound_cache_start_loading_sound(
 		sound->cache_block_index = cache_block_index;
 		sound->cache_base_address = (unsigned long)cache_address;
 		cache_sound->sound = sound;
-		/* port: or, the sound of a mod played over the map's, from memory,
-		at once (port/linux/game/mod_sounds.c) */
+		/* port: or, the sound of a mod played over the map's, made PCM
+		from its file, at once or on the mods' decoder's thread, loaded
+		once it is, as a disk read is (port/linux/game/mod_sounds.c) */
 		{
-			extern boolean mod_sounds_read(struct sound_permutation const *permutation, void *buffer);
+			extern boolean mod_sounds_read(struct sound_permutation const *permutation, void *buffer,
+				boolean *loaded);
 			/* (and Royale's announcer, borrowed: port/linux/game/royale_audio.c) */
 			extern boolean royale_audio_read(struct sound_permutation const *permutation, void *buffer);
 
-			if (mod_sounds_read(sound, cache_address) || royale_audio_read(sound, cache_address))
-			{
+			if (mod_sounds_read(sound, cache_address, &cache_sound->loaded))
+				;
+			else if (royale_audio_read(sound, cache_address))
 				cache_sound->loaded = TRUE;
-			}
 			else
 			{
 				cache_file_read(
@@ -626,15 +635,16 @@ static void sound_cache_start_loading_sound(
 					cache_address,
 					&cache_sound->loaded,
 					FALSE);
-				/* port: with the frames' time fixed (debug.frame_time,
-				debug.fixed_step), waited for: a sound starts on the frame that
-				asks for it, not whenever the disk has read it, so that two runs
-				of the same input play the same (port/linux/game/frames_clock.c) */
-				if (frames_clock(NULL))
-				{
-					while (!*(volatile boolean *)&cache_sound->loaded)
-						SwitchToThread();
-				}
+			}
+			/* port: with the frames' time fixed (debug.frame_time,
+			debug.fixed_step), waited for: a sound starts on the frame that
+			asks for it, not whenever the disk has read it (or the decoder
+			made it), so that two runs of the same input play the same
+			(port/linux/game/frames_clock.c) */
+			if (frames_clock(NULL))
+			{
+				while (!*(volatile boolean *)&cache_sound->loaded)
+					SwitchToThread();
 			}
 		}
 	}

@@ -98,6 +98,11 @@ enum
 	network_standard_vehicle_hijack). Only a Standard host sets it, and its
 	OpenH1 machines alone read it */
 	_network_game_vehicle_hijack_bit = 5,
+	/* an OpenH1 team game's host turned its players' Spartan link off (the
+	host's game.spartan_link false, as read in the lobby:
+	network_standard_spartan_link_allowed); co-op has it whatever this
+	says. Only a Standard host sets it, and its OpenH1 machines alone read it */
+	_network_game_no_spartan_link_bit = 6,
 };
 
 struct network_game

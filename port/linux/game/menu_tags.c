@@ -56,6 +56,7 @@ looks", below).
 #include "network_admin.h"
 #include "network_host_controls.h"
 #include "basic_training.h"
+#include "benchmark.h"
 #include "halo_keyboard.h"
 #include "menu_models.h"
 #include "menu_view.h"
@@ -586,7 +587,8 @@ static char const *const port_function_names[] =
 	"port settings begin", "port settings tab", "port settings tab next", "port settings tab previous",
 	"port settings ok", "port settings cancel", "port settings keep", "port settings page cancel",
 	"port settings new profile", "port settings profiles", "port settings report", "port settings weapon reset",
-	"port settings gyro calibrate", "port settings clear caches",
+	"port settings gyro calibrate", "port settings layout export", "port settings clear caches",
+	"port settings benchmark",
 	/* (Settings' search, the menu engine's: settings_search_menu.inc) */
 	"port settings search", "port settings search edit", "port settings search back",
 	/* (Online's Discord account: menu_functions.c's discord_link and
@@ -1440,9 +1442,10 @@ the platform adds: Video Setup's
 sizes are the display's (sdl_platform.c), shown "1920 x 1080" and set
 "1920x1080": its resolutions after Resolution's own (NATIVE), and the
 window sizes that fit it in place of Window Size's own; its refresh rates
-after Refresh Rate's own (AUTO); and Audio Setup's
+after Refresh Rate's own (AUTO); Audio Setup's
 devices SDL finds, after their SYSTEM DEFAULT, each set by its name and
-shown by it (in capitals, as the menus' words are, and cut short) */
+shown by it (in capitals, as the menus' words are, and cut short); and the
+benchmark's maps in the maps folder, after BLOOD GULCH */
 static long spinner_expand(char const *setting, boolean values, char const **pieces, long count)
 {
 	long widths[MAXIMUM_STRINGS], heights[MAXIMUM_STRINGS];
@@ -1466,6 +1469,11 @@ static long spinner_expand(char const *setting, boolean values, char const **pie
 		}
 		return count;
 	}
+
+	/* (Frame Rate & Sync's Benchmark Map: the stock multiplayer maps in the
+	maps folder after its own, Blood Gulch, benchmark.c's) */
+	if (setting && !strcmp(setting, "display.benchmark_map"))
+		return benchmark_map_choices(values, pieces, count, MAXIMUM_STRINGS);
 
 	if (setting && (!strcmp(setting, "audio.output_device") ||
 		!strcmp(setting, "audio.input_device")))

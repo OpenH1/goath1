@@ -416,6 +416,19 @@ static struct network_game_server *global_network_game_server_get(void)
 	return connection == _game_connection_network_server ? &host_server : NULL;
 }
 
+/* each machine's phase, as the host's server has it
+(network_game_server_machine_phase): a machine the game's messages reach
+(machine_present) loaded, unless the test says otherwise; none else */
+static short machine_phase[MACHINES];
+static short network_game_server_machine_phase(struct network_game_server *server, long machine_index)
+{
+	if (!server || machine_index < 0 || machine_index >= MACHINES)
+		return _network_machine_phase_none;
+	if (machine_phase[machine_index] != _network_machine_phase_none)
+		return machine_phase[machine_index];
+	return machine_present[machine_index] ? _network_machine_phase_loaded : _network_machine_phase_none;
+}
+
 static long network_game_server_port_bots_humans(struct network_game_server *server, long *bots, long *maximum)
 {
 	(void)server;
@@ -608,6 +621,7 @@ static void game(short as)
 {
 	memset(players, 0, sizeof(players));
 	memset(machine_present, 0, sizeof(machine_present));
+	memset(machine_phase, 0, sizeof(machine_phase));
 	memset(muted, 0, sizeof(muted));
 	memset(opence_heard, 0, sizeof(opence_heard));
 	connection = as;
@@ -1360,6 +1374,58 @@ static short seen_index(char const *name)
 	return NONE;
 }
 
+/* a machine's word and its party's held room are its own in every phase it
+is in, loading or not: a leader joining the game in progress asks while it
+loads, and keeps its room through the list's passes and through a game's
+start (every machine loading); once loaded it is sent the lists again; its
+room ends with its drop, and only with its own */
+static void case_holds_loading(void)
+{
+	short tick;
+	short index;
+
+	game(_game_connection_network_server);
+	status_told(OPENH1_MACHINE, OPENH1_PLAYER, ONLINE, 0);
+	status_told(OTHER_MACHINE, OTHER_PLAYER, ONLINE, 0);
+	frame(PARTY_LIST_MILLISECONDS + 1);
+	/* (the leader joined the game in progress: loading, the game's messages
+	not reaching it) */
+	machine_present[OPENH1_MACHINE] = FALSE;
+	machine_phase[OPENH1_MACHINE] = _network_machine_phase_loading;
+	host_hears_hold(OPENH1_MACHINE, 5, 2, TRUE);
+	CHECK(network_party_held_slots() == 2, "a loading leader's ask was not held");
+	for (tick = 0; tick < 5; tick++)
+		frame(PARTY_LIST_MILLISECONDS + 1);
+	CHECK(network_party_held_slots() == 2, "a leader loading the game lost its party's room");
+	CHECK(!slot_open(INTERNET_ADDRESS(7), 14, 16), "a stranger took a slot held while the leader loaded");
+	CHECK(slot_open(INTERNET_ADDRESS(5), 14, 16), "a member was refused while its leader loaded");
+	/* (the next game's start: every machine loading) */
+	host_game.player_count = 5;
+	machine_present[OTHER_MACHINE] = FALSE;
+	machine_phase[OTHER_MACHINE] = _network_machine_phase_loading;
+	for (tick = 0; tick < 3; tick++)
+		frame(PARTY_LIST_MILLISECONDS + 1);
+	CHECK(network_party_held_slots() == 2, "a game's start let a party's room go");
+	CHECK(party_globals.machines[OPENH1_MACHINE].heard && party_globals.machines[OTHER_MACHINE].heard,
+		"a game's start let the machines' word go");
+	/* (loaded: the game's messages reach it again) */
+	machine_present[OPENH1_MACHINE] = TRUE;
+	machine_phase[OPENH1_MACHINE] = _network_machine_phase_loaded;
+	sent_count = 0;
+	frame(PARTY_LIST_MILLISECONDS + 1);
+	index = sent_last(_distributed_message_party_players);
+	CHECK(index != NONE && sent[index].machine_index == OPENH1_MACHINE,
+		"a machine that loaded was not sent the list it missed");
+	/* (another machine dropped: no other party's room goes with it) */
+	network_party_machine_dropped(OTHER_MACHINE);
+	CHECK(network_party_held_slots() == 2 && !party_globals.machines[OTHER_MACHINE].heard,
+		"another machine's drop let a party's room go, or kept its word");
+	/* (the leader dropped: its party's room let go at once) */
+	network_party_machine_dropped(OPENH1_MACHINE);
+	CHECK(network_party_held_slots() == 0 && !party_globals.machines[OPENH1_MACHINE].heard,
+		"a leader's drop kept its party's room");
+}
+
 /* friends: the host tells its OpenH1 machines that told it each player's
 friend code (each client's own in its status), Add friend offered for a
 player of a code not a friend, and the game's players noted for the recent
@@ -1500,6 +1566,7 @@ int main(int argc, char **argv)
 	else CASE("accept") case_accept();
 	else CASE("invite") case_invite();
 	else CASE("holds") case_holds();
+	else CASE("holds-loading") case_holds_loading();
 	else CASE("friends") case_friends();
 	else
 	{

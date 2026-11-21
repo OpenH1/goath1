@@ -38,8 +38,15 @@ port/linux/README.md.
 #include <stdint.h>
 
 #define XGPU_STREAM_MAGIC 0x53504758u /* "XGPS" */
-#define XGPU_STREAM_VERSION 23
+/* 24: INITIALIZE's answer (xgpu_stream_capabilities) 128 bytes, its
+temporal_metalfx before device: a guest and a host of 23 and 24 would read
+each other's device and temporal_metalfx out of place. 25: each frame's
+own GPU time (xgpu_stream_gpu_frames) after the pipelines' states, which a
+host of 24 would not write and a guest of 24 has no room for */
+#define XGPU_STREAM_VERSION 25
 #define XGPU_STREAM_LOADING_ART_BYTES (640u * 480u * 4u)
+/* and the picture at its own size after it, where there is one (loading_art.h's LOADING_ART_SOURCE_BYTES) */
+#define XGPU_STREAM_LOADING_ART_SOURCE_BYTES (1600u * 1200u * 4u)
 
 /* ---------- the ring
 
@@ -77,7 +84,8 @@ struct xgpu_stream_ring
 	test; 0: none yet), written after its count with a release store, so
 	that a guest reading the number first (an acquire load) reads a count
 	of that test or a later one; pipelines: XGPU_STREAM_PIPELINES states (uint8_t,
-	XGPU_STREAM_PIPELINE_*) of the pipeline ids */
+	XGPU_STREAM_PIPELINE_*) of the pipeline ids, then the frames' GPU times
+	(struct xgpu_stream_gpu_frames: XGPU_STREAM_PIPELINES_AREA bytes in all) */
 	uint32_t visibility, pipelines;
 
 	/* the guest's (written before each host_render_stream_submit, read by
@@ -122,8 +130,13 @@ struct xgpu_stream_ring
 	end (host_render_stream_gpu_time: Metal's, the time the GPU was busy;
 	Vulkan's, from each frame's first work to its last), and nonzero once
 	the backend measures it; the render thread's time playing records (the
-	backend's calls included); the guest's waits for the display's pacing
-	(display_wait, a part of wait_nanoseconds) */
+	backend's calls included, but its waits for the display:
+	host_render_stream_display_blocking); the guest's waits for the
+	display's pacing, a part of wait_nanoseconds (display_wait's, and its
+	waits for the render thread or the GPU while the display held the render
+	thread). The GPU's running count's change from one frame presented to
+	the next is not that frame's (its timestamps are read late): each
+	frame's own is in xgpu_stream_gpu_frames */
 	uint32_t gpu_microseconds;
 	uint32_t gpu_measured;
 	uint32_t render_microseconds;
@@ -153,6 +166,23 @@ enum
 #define XGPU_STREAM_VISIBILITY_SLOTS 4096
 #define XGPU_STREAM_PIPELINES 16384
 #define XGPU_STREAM_LAYOUTS 4096
+
+/* the host's, after the pipelines' states: the GPU's time on each of the
+last XGPU_STREAM_GPU_FRAMES frames, each its own (not a running count's
+change, which puts two frames' in one frame and none in another when a
+frame's timestamps are read late), in the slot of its number (frames_submitted's
+count of it) modulo XGPU_STREAM_GPU_FRAMES. The host writes a slot's frame 0,
+then its microseconds, then its frame (release stores); a guest reads the
+frame, the microseconds and the frame again (acquire loads), and takes the
+time only for the frame it asked of, read alike both times
+(port/linux/src/frame_gpu.h) */
+#define XGPU_STREAM_GPU_FRAMES 16
+struct xgpu_stream_gpu_frames
+{
+	uint32_t frame[XGPU_STREAM_GPU_FRAMES];
+	uint32_t microseconds[XGPU_STREAM_GPU_FRAMES];
+};
+#define XGPU_STREAM_PIPELINES_AREA (XGPU_STREAM_PIPELINES + sizeof(struct xgpu_stream_gpu_frames))
 
 /* a pipeline id's state, written by the host when the backend first makes
 it (the front end's lighting fallback reads it from the next frame) */
@@ -248,7 +278,8 @@ enum
 	XGPU_STREAM_VR_EYE_TINT,
 	XGPU_STREAM_LOADING,
 	XGPU_STREAM_LOADING_OWNED,          /* synchronous: current presenter ownership */
-	XGPU_STREAM_LOADING_ART,            /* value: byte count, followed by owned 640x480 RGBA pixels */
+	XGPU_STREAM_LOADING_ART,            /* value: byte count, followed by owned 640x480 RGBA pixels, and
+	                                       the picture's own 1600x1200 RGBA after them where it has them */
 	XGPU_STREAM_LOADING_SCENE,          /* value: byte count, followed by the menu's scene (loading_scene.h) */
 	XGPU_STREAM_LOADING_PROGRESS,       /* value: the load's progress, a float's bits (0 to 1) */
 	XGPU_STREAM_LOADING_MODE,           /* value: 1 the sweep follows the progress (the Xbox's), 0 it loops */
@@ -300,6 +331,28 @@ enum
 	(xgpu_backend_dynamic_lights_upload; DYNAMIC_LIGHTS_UPLOAD's records,
 	of the whole, are the stream's version 22's) */
 	XGPU_STREAM_DYNAMIC_LIGHTS_CHANGE,
+	/* display.render_scale: a frame smaller than the window scaled up
+	sharply (value 1: the render scale's) or smoothly (0: "original"
+	resolution scaling's 640x480, as it always was) */
+	XGPU_STREAM_SHARP_UPSCALE,
+	/* display.hdr_sdr_curve: the curve the HDR encoding takes the frame's
+	values to light by (value: xgpu_hdr.h's XGPU_HDR_SDR_CURVE_*, AUTO the
+	backend's platform's) */
+	XGPU_STREAM_HDR_SDR_CURVE,
+	/* display.hdr_peak_nits (#1122): the display's peak in nits, of the
+	player's (value; 0 the system's) */
+	XGPU_STREAM_HDR_PEAK_NITS,
+	/* display.hdr_gamut (#1124): the highlights' colours expanded past
+	sRGB's (value 1; 0 sRGB's) */
+	XGPU_STREAM_HDR_GAMUT,
+	/* debug.timings: each pass timed on the GPU (value: every so many
+	frames, 0 none), as the setting changes (xgpu_backend_pass_times) */
+	XGPU_STREAM_PASS_TIMES,
+	/* display.temporal_aa: a window's motion (xgpu_backend_motion) */
+	XGPU_STREAM_MOTION,
+	/* display.shadows "ray_traced": a window's casters' shadows
+	(xgpu_backend_rt_shadows) */
+	XGPU_STREAM_RT_SHADOWS,
 	XGPU_STREAM_RECORD_TYPES,
 };
 
@@ -321,7 +374,7 @@ struct xgpu_stream_frame_end
 };
 
 /* a record of one value: ANTI_ALIASING_PREPARE (smaa), TARGET_DELETE,
-TARGET_RESOLVE, PRESENT (the back buffer's target), PICTURE_POSITION, GAMMA, VR_PASS, VR_TIMING
+TARGET_RESOLVE, PRESENT (the back buffer's target), PICTURE_POSITION, GAMMA, SHARP_UPSCALE, HDR_SDR_CURVE, HDR_PEAK_NITS, HDR_GAMUT, PASS_TIMES, VR_PASS, VR_TIMING
 (mark), PIPELINE (the id, XGPU_STREAM_PIPELINE_DEFINE's), VR_SKY (sky) */
 struct xgpu_stream_value
 {
@@ -422,7 +475,30 @@ struct xgpu_stream_capabilities
 	/* display.ambient_occlusion "ray_traced": the backend traces the
 	occlusion's rays by the GPU's ray queries (xgpu_backend_world_ao_mesh,
 	_instances: Vulkan's VK_KHR_ray_query) */
-	uint8_t ray_queries, pad[3];
+	/* (and xgpu_backend_capabilities' clear_alone and draw_bounds, and in
+	cutout_prepass its alpha_test_drop, 1, and cutout_prepass, 2) */
+	uint8_t ray_queries, cutout_prepass, clear_alone, draw_bounds;
+	/* display.output_depth: the SDR back buffer can be RGBA16
+	(xgpu_backend.h's XGPU_FORMAT_RGBA16) */
+	uint8_t deep_sdr;
+	/* display.soft_particles: an effect drawn with no views can be soft
+	(the pixel key's vr_effect: xgpu_backend_capabilities' soft_effects) */
+	uint8_t soft_effects;
+	/* display.temporal_aa "fsr": the backend upscales a window's view with
+	AMD FSR (MOTION's _UPSCALE: xgpu_backend_capabilities' temporal_upscale) */
+	uint8_t temporal_upscale;
+	/* display.temporal_aa "dlss": the backend upscales a window's view with
+	NVIDIA DLSS (MOTION's _UPSCALE, technique 2: xgpu_backend_capabilities'
+	temporal_dlss) */
+	uint8_t temporal_dlss;
+	/* display.temporal_aa "metalfx": ... with MetalFX's temporal scaler
+	(technique 3: xgpu_backend_capabilities' temporal_metalfx); 2 with its
+	spatial one alone (iOS, #1228) */
+	uint8_t temporal_metalfx;
+	/* the GPU an NVIDIA one where the DLSS add-on could run
+	(xgpu_backend_capabilities' dlss_gpu; a pad byte before, 0 from an
+	older host: the size and the version are as they were) */
+	uint8_t dlss_gpu, pad[2];
 	/* the GPU, its API and driver, in a few words (a report's:
 	port/linux/src/report.c), NUL terminated */
 	char device[96];
@@ -564,7 +640,20 @@ xgpu_world_ao_pass)), or _NONE (the occlusion found no more: the surfaces
 read 1 from here on). While a map is prepared (the others then ignored):
 _TWINS (the draws from here on would be drawn in the pre-pass in play:
 each one's twin made with it, xgpu_stream_world_ao_twin) and _NONE (no
-more) */
+more).
+
+replay (BEGIN and END): the walk played twice. BEGIN's 1: the records
+from it to the END are the window's opaque surfaces' own draws, walked once
+by the game (render.c), which the decoder plays first as the pre-pass's
+(each draw's twin, as above; their MOTION records not played), and, at an
+END of 1, again from the state as it was at the BEGIN, as the surfaces'
+(after the occlusion is found: host_render_stream.c's walk_replay). Only
+their draws and the state they are drawn with are played again; what the
+walk sent once (definitions, writes to memory, uploads) is had already.
+An END of 0 after a BEGIN of 1: the walk was handed over in parts (the
+ring's bytes of its start may be released), not played again: the game
+walks the surfaces a second time instead. 0 at both: as before, the game
+walks the pre-pass and then the surfaces. */
 enum
 {
 	XGPU_WORLD_AO_PREPASS_NONE,
@@ -607,8 +696,84 @@ struct xgpu_stream_world_ao_prepass
 	uint32_t header;
 	uint32_t phase;
 	uint32_t target;
-	uint32_t pad;
+	uint32_t replay;
 	struct xgpu_world_ao_pass pass;
+};
+
+/* display.temporal_aa's motion (docs/temporal-aa.md): a window's pixels'
+movement since the frame before, for a temporal technique (FSR, DLSS,
+MetalFX; at any render scale, the native one too).
+
+MOTION: phase XGPU_MOTION_OBJECTS_BEGIN (the draws from here on into
+target, the window's objects, draw their motion too: the second colour
+attachment, xgpu_spirv_options' motion, those that write depth and blend
+nothing writing it, the others drawn through it; the constants' registers
+192 to 383 are the previous frame's, CONSTANTS's past the 192: the backend
+keeps a copy of the 192 there, which a record of the first 192 writes too),
+_OBJECTS_END (no more), _RESOLVE (the window whole: its motion found at
+each pixel of its corners, from its objects' where their depth is still
+the pixel's, else from the camera's, struct xgpu_motion_pass). The
+transparent draws (particles, decals, glass, water) draw none: their pixels
+have what is behind them. _OPAQUE (the window's colour before its
+transparent draws, over the pass's corners, kept for the technique's
+reactive mask: where they changed it; the pass's motion[0] the window, 0 to
+3), _UPSCALE (the technique: the window's view, resolved, into pad, the
+window's target at the display's scale: the pass is a struct
+xgpu_temporal_pass, its bytes the same). */
+enum
+{
+	XGPU_MOTION_NONE,
+	XGPU_MOTION_OBJECTS_BEGIN,
+	XGPU_MOTION_OBJECTS_END,
+	XGPU_MOTION_RESOLVE,
+	XGPU_MOTION_OPAQUE,
+	XGPU_MOTION_UPSCALE,
+};
+/* the previous frame's registers' first, in CONSTANTS */
+#define XGPU_STREAM_PREVIOUS_CONSTANTS 192u
+/* the window's corners in its target's pixels (left, top, right, bottom);
+the rows of the matrix from a pixel's clip position (unjittered, the game's
+projection: x, y -1 to 1 up, depth 0 near to 1 far, w 1) to where it was
+the frame before, the camera's movement alone; motion: [0] and [1] the
+drawn pixels' offset from their clip positions (the jitter and the screen's
+half pixel, in the same units), [2] 1, [3] 1 where the window has its frame
+before (0: a cut, a new map, a resize: no motion, and the technique's
+history reset); jitter: the frame's jitter in the target's pixels (x right,
+y down), and [2] 1 where debug.motion_vectors draws the motion over the
+view */
+struct xgpu_motion_pass
+{
+	int32_t corners[4];
+	float reproject[4][4];
+	float motion[4];
+	float jitter[4];
+};
+/* the window's corners in the source's pixels (the target its view was
+drawn into) and in the destination's (the target it is upscaled into: the
+HUD's, at the display's scale); the window (0 to 3), the technique (1
+"fsr", 2 "dlss"), whether the colour is display.hdr's linear light (else an SDR
+picture), whether its history begins again (a cut, a new map, a resize);
+the depth target's number (the view's); the camera's near and far planes
+(world units), vertical field of view (radians) and meters in a world unit;
+display.temporal_aa_sharpness (0 to 1, 0 none: FSR's RCAS); the frame's
+jitter in the source's pixels (x right, y down) */
+struct xgpu_temporal_pass
+{
+	int32_t corners[4];
+	int32_t destination[4];
+	uint32_t window, technique, hdr, reset;
+	uint32_t depth, unused[3];
+	float camera[4];
+	float sharpness, pad[3];
+	float jitter[4];
+};
+struct xgpu_stream_motion
+{
+	uint32_t header;
+	uint32_t phase;
+	uint32_t target;
+	uint32_t pad;
+	struct xgpu_motion_pass pass;
 };
 
 /* PIPELINE_STAND_IN: pipeline id (one with the world's light) has a stand-in
@@ -672,8 +837,8 @@ struct xgpu_stream_target_create
 	uint32_t header;
 	uint32_t target;
 	uint32_t width, height;
-	/* (format: XGPU_FORMAT_* of a colour target: BGRA8, or RGBA16F the
-	back buffer with display.hdr) */
+	/* (format: XGPU_FORMAT_* of a colour target: BGRA8, RGBA16F the back
+	buffer with display.hdr, or RGBA16 with display.output_depth) */
 	uint8_t depth, layers, format, pad;
 };
 
@@ -770,7 +935,9 @@ made (the header is at resource). For an Xbox texture (XGPU_SOURCE_TEXTURE)
 target is the channels its texels are sampled from: 0 as they are, else
 0x100 and two bits for each of red, green, blue and alpha (red's lowest),
 the channel of the texels it is taken from (a Custom Edition map's model
-masks and meters: xbox_textures.c).
+masks and meters: xbox_textures.c); of one sampled as it is, the copy
+drawn whose levels keep an alpha test's coverage in XGPU_TEXTURE_COVERAGE_MASK
+(xgpu.h: the least alpha the test passes, 0 the texture as stored).
 
 A stage may instead draw an image (XGPU_STREAM_SOURCE_IMAGE: a high-res
 replacement for the Xbox texture, xgpu_images.h): resource is its number,
@@ -900,6 +1067,8 @@ struct xgpu_stream_pixel_program
 	uint8_t count_samples, coverage_alpha, point_threshold, per_pixel_lighting, dynamic_lights, multiview;
 	uint8_t source_blend;
 	uint8_t ambient_occlusion;
+	/* display.smooth_lightmaps (xgpu_shader.h's lightmap_filter) */
+	uint8_t lightmap_filter;
 	/* display.hdr's tag (xgpu_hdr.h) */
 	uint16_t hdr;
 };
@@ -1002,6 +1171,58 @@ add it to reversed depth: toward the camera, positive */
 static __inline float xgpu_reversed_depth_bias(int biased, float offset)
 {
 	return biased ? -offset / 16777215.0f : 0.0f;
+}
+
+/* ---------- the depth buffer's two projections
+
+The depth buffer holds two projections' depths: the first-person weapon's
+(its own near plane and field of view: rasterizer_xbox_models.c's
+STENCIL_MODE_WRITE, which marks its pixels with the stencil's first bit)
+and the world's (everything else). Both are perspective along the same
+camera's forward, so each writes the game's depth (as the game has it, not
+reversed) d = a + b / w of a point w ahead of the camera, with its own a
+and b; a pixel's depth read back is the world's only where the stencil's
+first bit is clear. Where it is set, a' + b' / w of the world's is
+a + (b / b') (d' - a') of the weapon's: what a reader that unprojects with
+the world's projection must read there instead (xgpu_depth_remap). */
+
+/* a projection's (c[-96] to c[-93], then the screen conversion c[-38] and
+c[-37], rows), drawn in a viewport of the draw's scale and offset
+(xgpu_draw_uniforms') and depth range, line: the game's depth a + b / w
+of a point w ahead (line[0] a, line[1] b). 0 where the projection has no
+forward (its w row none) or no depth (b 0). */
+static __inline int xgpu_depth_line(const float projection[6][4], const float scale[4], const float offset[4],
+	const float depth_range[2], float line[2])
+{
+	/* (z = A w + B over the world: its z row the w row's A times, plus B) */
+	float w_w = projection[3][0] * projection[3][0] + projection[3][1] * projection[3][1] +
+		projection[3][2] * projection[3][2];
+	float a, b, scale_z, near_z, far_z;
+
+	if (!(w_w > 0.0f))
+		return 0;
+	a = (projection[2][0] * projection[3][0] + projection[2][1] * projection[3][1] +
+		projection[2][2] * projection[3][2]) / w_w;
+	b = projection[2][3] - a * projection[3][3];
+	scale_z = scale[2] != 0.0f ? scale[2] : 1.0f;
+	near_z = depth_range[0] >= 0.0f && depth_range[0] <= 1.0f ? depth_range[0] : 0.0f;
+	far_z = depth_range[1] >= 0.0f && depth_range[1] <= 1.0f ? depth_range[1] : 1.0f;
+	line[0] = near_z + (far_z - near_z) * (a * projection[4][2] + projection[5][2] - offset[2]) / scale_z;
+	line[1] = (far_z - near_z) * b * projection[4][2] / scale_z;
+	return line[1] != 0.0f;
+}
+
+/* a weapon's pixel's depth (the game's) as the world's projection would
+have written it at the same distance: world[0] + world[1] / w, its w from
+the weapon's line, remap[0] * depth + remap[1]. 0 where either has no
+depth (nothing to remap: the world's own) */
+static __inline int xgpu_depth_remap(const float world[2], const float first_person[2], float remap[2])
+{
+	if (world[1] == 0.0f || first_person[1] == 0.0f)
+		return 0;
+	remap[0] = world[1] / first_person[1];
+	remap[1] = world[0] - remap[0] * first_person[0];
+	return 1;
 }
 
 /* xgpu_backend.h's struct xgpu_draw_uniforms (floats alone: alike on both
@@ -1230,6 +1451,29 @@ struct xgpu_stream_dynamic_lights_halos
 	float softness;
 	float screen_offset;
 	float halos[][4];
+};
+
+/* xgpu_backend.h's struct xgpu_rt_shadows but its casters, which follow
+(count of them, 32 bytes each: the sphere, the direction's x and y, the
+darkness's and owners' words); color and depth 0 (and count 0) while a map
+is prepared: the pass's pipeline made for its targets */
+#define XGPU_STREAM_RT_SHADOWS_CASTERS 96
+struct xgpu_stream_rt_shadow_caster
+{
+	float sphere[4];
+	float direction[2];
+	uint32_t darkness, owners;
+};
+struct xgpu_stream_rt_shadows
+{
+	uint32_t header;
+	uint32_t color, depth;
+	int32_t count;
+	float projection[6][4];
+	float viewport_scale[4], viewport_offset[4];
+	float camera[3];
+	float screen_offset;
+	struct xgpu_stream_rt_shadow_caster casters[];
 };
 
 /* ---------- the VR mode
@@ -1480,8 +1724,9 @@ struct xgpu_stream_world_ao_instances
 #define XGPU_STREAM_ASSERT_SIZE(type, size) _Static_assert(sizeof(type) == (size), #type "'s size")
 
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_ring, 120);
+XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_gpu_frames, 128);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_frame_end, 12);
-XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_capabilities, 120);
+XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_capabilities, 128);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_hdr, 24);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_tone_map, 24);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_panini, 56);
@@ -1490,6 +1735,8 @@ XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_world_ao_window, 16 + 32 + 32 + XGPU_
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_world_ao_field, 40);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_world_ao_prepass, 96 + 64 + 64 + 16 + 16);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_world_ao_cascades, 40);
+XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_motion, 16 + 16 + 64 + 16 + 16);
+XGPU_STREAM_ASSERT_SIZE(struct xgpu_temporal_pass, sizeof(struct xgpu_motion_pass));
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_world_ao_mesh, 32);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_world_ao_instance, 64);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_world_ao_instances, 16);
@@ -1516,6 +1763,8 @@ XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_vertices, 12);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_draw_immediate, 28);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_dynamic_lights_block, 6192);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_dynamic_lights_halos, 192);
+XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_rt_shadow_caster, 32);
+XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_rt_shadows, 160);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_dynamic_lights_world, 12);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_vr_info, 108);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_vr_eyes, 36 + 4 * 52);

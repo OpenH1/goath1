@@ -93,9 +93,15 @@ void network_clock_tick_ended(void);
 /* (a client, game_time_update) the time this frame's ticks take more (or
 less) than the frame's to move the clock as planned */
 real network_clock_frame_seconds(real time_delta_sec);
+/* (a client, game_time_update) how late a frame's steps ran after the newest
+fell due (seconds) */
+void network_clock_steps_ran(real late_seconds);
+/* (main.c) whether a step that falls due in a seen frame's wait runs then */
+boolean network_clock_steps_when_due(void);
 /* (a dedicated server, main.c) whether its frame waits for its time before
 its datagrams are read: an OpenH1 game's; and, once a frame, whether it did */
 boolean network_clock_server_pace_first(void);
+boolean network_clock_unseen_wait_first(void);
 boolean network_clock_server_paced(void);
 boolean network_clock_handles_message(word const *message, word size);
 void network_clock_handle_message(long machine_index, word const *message, word size, boolean from_stream);
@@ -110,5 +116,11 @@ had; the part of the time planned a frame takes */
 long network_clock_window_figure(long *samples, short count);
 void network_clock_plan_report(long early_microseconds, long ticks_ahead, struct network_clock_plan *plan);
 real network_clock_frame_part(real *seconds, boolean *at_once, real time_delta_sec);
+/* (a client) the host's figure as the plan is to take it, of a client whose
+steps run up to quantum_microseconds after they fall due (its frames paced by
+its display): one whose input comes up to that much earlier than the band
+by its frames' phase is held there, as one in the band, not moved back
+toward the target and across the frame's phase, late every other report */
+long network_clock_quantized_early(long early_microseconds, long quantum_microseconds);
 
 #endif

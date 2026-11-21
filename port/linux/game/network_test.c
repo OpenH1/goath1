@@ -143,6 +143,7 @@ int player_settings_profile_folder(long profile_index, char *folder, unsigned lo
 void player_settings_update(void);
 int config_boolean(char const *name);
 double config_real(char const *name);
+unsigned long config_changes(void);
 long config_integer(char const *name);
 int config_write(char const *name, char const *value);
 void platform_log(char const *format, ...);
@@ -159,6 +160,9 @@ void network_damage_demo_hit_begin(struct damage_data const *damage, long object
 /* network_distributed.c's */
 void network_distributed_statistics(long *sent, long *received, long *corrections);
 void network_distributed_remote_statistics(long *corrections, long *history_corrections, long *history_kept);
+void network_distributed_remote_kind_statistics(short kind, long *corrections, long *history_corrections,
+	long *history_kept, long *wrong);
+void network_distributed_substep_request_statistics(long *asked, long *corrected, long *missed, long *taken);
 void network_distributed_batch_bytes(long *to_host, long *to_clients, short *clients);
 void network_distributed_batch_datagrams(long *to_host, long *to_clients);
 void network_distributed_type_bytes(long bytes[256]);
@@ -270,6 +274,9 @@ static struct
 	/* debug.network_test_ping's, and the steps done this game */
 	real ping_time;
 	short ping_steps;
+	/* debug.network_test_teammate_ping's, and whether it pinged this game */
+	real teammate_ping_time;
+	boolean teammate_pinged;
 	long score_to_win;
 	/* the most players the host's games take (debug.network_test_most_players;
 	0: the game's own) */
@@ -412,6 +419,7 @@ static void network_test_read_settings(
 	network_test.chat_time = (real)config_real("debug.network_test_chat");
 	network_test.party_time = (real)config_real("debug.network_test_party");
 	network_test.ping_time = (real)config_real("debug.network_test_ping");
+	network_test.teammate_ping_time = (real)config_real("debug.network_test_teammate_ping");
 	snprintf(network_test.pickup_weapon, sizeof(network_test.pickup_weapon), "%s",
 		config_string("debug.network_test_pickup_weapon"));
 	{
@@ -821,6 +829,34 @@ static void network_test_log_players(
 			network_distributed_remote_statistics(&remote_corrections, &history_corrections, &history_kept);
 			platform_log("network test: remote corrected %ld history %ld kept %ld", remote_corrections,
 				history_corrections, history_kept);
+			/* (by kind: a bot, the host's player, a client's the forwarded
+			input drives, a client's the relayed input does; each corrected,
+			against its history, kept by it, and copies found wrong) */
+			{
+				static char const *const kinds[] = { "bot", "host", "forwarded", "relayed" };
+				short kind;
+
+				for (kind = 0; kind < (short)(sizeof(kinds) / sizeof(kinds[0])); kind++)
+				{
+					long wrong;
+
+					network_distributed_remote_kind_statistics(kind, &remote_corrections, &history_corrections,
+						&history_kept, &wrong);
+					platform_log("network test: remote %s corrected %ld history %ld kept %ld wrong %ld", kinds[kind],
+						remote_corrections, history_corrections, history_kept, wrong);
+				}
+			}
+		}
+		/* (an OpenH1 game of several sub-steps a tick: a client's asks for
+		the host's states at its sub-steps, and its copies found wrong by a
+		correction past the tolerance or a missed input; the host's asks
+		taken: since the game began) */
+		{
+			long asked, corrected, missed, taken;
+
+			network_distributed_substep_request_statistics(&asked, &corrected, &missed, &taken);
+			platform_log("network test: substep asks %ld (wrong corrected %ld missed %ld) taken %ld", asked,
+				corrected, missed, taken);
 		}
 		/* (the host: its ticks of each take of its OpenH1 clients' players'
 		predictions as its ticks began, and the drift samples of the ticks
@@ -1059,6 +1095,29 @@ static void network_test_hitch(
 		return;
 	platform_log("network test: the frame stops for %.1f seconds", network_test.hitch_seconds);
 	while (system_milliseconds() - start < length)
+		;
+}
+
+/* debug.network_test_step_cost: a network game's client spends that many
+milliseconds more on each step (each sub-step at 60 and 120) it runs, busy,
+as a slower computer's heavier ticks would: a test of how its frames and
+clock bear ticks that cost more than their time (game_time.c) */
+void network_test_step_cost(
+	void)
+{
+	static unsigned long read_at = (unsigned long)-1;
+	static unsigned long long microseconds;
+	unsigned long long start;
+
+	if (read_at != config_changes())
+	{
+		read_at = config_changes();
+		microseconds = (unsigned long long)(MAX(0.0, config_real("debug.network_test_step_cost")) * 1000.0);
+	}
+	if (!microseconds || !network_game_distributed_client())
+		return;
+	start = platform_shared_clock_microseconds();
+	while (platform_shared_clock_microseconds() - start < microseconds)
 		;
 }
 
@@ -2930,6 +2989,22 @@ void network_test_update(
 			network_test_party();
 		if (network_test.ping_time > 0.0f)
 			network_test_pings();
+		/* debug.network_test_teammate_ping: an ally's ping, once a game */
+		if (network_test.teammate_ping_time > 0.0f)
+		{
+			long start = (long)(network_test.teammate_ping_time * TICKS_PER_SECOND);
+
+			if (game_time_get() < start - TICKS_PER_SECOND)
+			{
+				network_test.teammate_pinged = FALSE;
+			}
+			else if (game_time_get() >= start && !network_test.teammate_pinged)
+			{
+				network_test.teammate_pinged = TRUE;
+				platform_log("network test: a teammate's ping %s",
+					network_markers_ping_teammate() ? "sent" : "not sent");
+			}
+		}
 		/* debug.network_test_chat: each machine's player says a line to
 		everyone that many seconds in, one to the team two seconds on, and
 		one to the vehicle two more on, the host having seated the last two
@@ -3528,6 +3603,15 @@ void network_test_update(
 		}
 		break;
 	}
+}
+
+/* the built-in benchmark's (benchmark.c): debug.network_test and the
+rest read again at the next frame, the test begun anew (its settings set
+for the run, config_set_for_run) */
+void network_test_restart(
+	void)
+{
+	csmemset(&network_test, 0, sizeof(network_test));
 }
 
 /* the game's time in seconds while a game runs, -1 otherwise: the scripted

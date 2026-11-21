@@ -75,6 +75,21 @@ work recorded so far and returns its number, xgpu_vulkan_wait waits for it.
 struct xgpu_hdr_frame;
 struct xgpu_vulkan_image;
 
+/* the frame's last pass before the swapchain (the options' encode,
+xgpu_vulkan_post.c's; xgpu_hdr.c's encoding program): its size, the
+picture's rectangle in the swapchain (which the core then copies 1:1); the
+sharp upscale's whole factors across and down (present_sharp's, in the
+pass: 1, 1 linear alone); display.gamma's power over an SDR output (1:
+none); the levels a channel is dithered to (255, 1023: the output's; 0:
+none) */
+struct xgpu_vulkan_output
+{
+	uint32_t width, height;
+	uint32_t factors[2];
+	float power;
+	float levels;
+};
+
 struct xgpu_vulkan_options
 {
 	/* the instance extensions the window's surface needs (SDL's), count of
@@ -124,23 +139,27 @@ swapchain takes where the surface has it (0: the swap interval's choice) */
 	thread, as it changes): whether it shows HDR (the window's display
 	does, and the surface has an HDR colour space), its headroom over
 	SDR white, that white in nits and whether the system gave it
-	(host_render_stream_display_hdr). And the encoding of a
-	frame for an HDR swapchain (xgpu_vulkan_post.c's): encode_prepare
-	makes its pipelines at the start (1 if it can), encode draws the frame
-	into an image of its own of the swapchain's format
-	(XGPU_VULKAN_FORMAT_*) and returns it, NULL if it cannot. NULL: no HDR
-	swapchain. */
+	(host_render_stream_display_hdr); NULL: no HDR swapchain. And the
+	frame's last pass (xgpu_vulkan_post.c's): encode_prepare makes its
+	pipelines at the start (1 if it can), encode draws the frame scaled to
+	the output's size, encoded for the swapchain (HDR's encoding, or
+	display.gamma's curve over SDR) and dithered, into an image of its own
+	of the swapchain's format (XGPU_VULKAN_FORMAT_*), and returns it, NULL if
+	it cannot. NULL: none (no HDR swapchain, no curve, no dither: the VR
+	build's). */
 	void (*display_hdr)(int hdr, float headroom, float white_nits, int white_reported);
 	int (*encode_prepare)(void);
+	/* the loading screen's sharp frame drawn by the GPU (port/linux/src/
+	loading_art.h): its pipelines made at the start (1 if they are;
+	xgpu_vulkan_post_loading_prepare). NULL: the processor draws it. */
+	int (*loading_prepare)(void);
 	struct xgpu_vulkan_image *(*encode)(struct xgpu_vulkan_image *image, const struct xgpu_hdr_frame *frame,
-		uint8_t format);
-	/* display.gamma: its curve over an SDR frame before the swapchain
-	(xgpu_vulkan_post.c's): gamma_prepare makes its pipeline at the start
-	(1 if it can), gamma draws the frame curved (each channel raised to a
-	power) into an image of its own and returns it, NULL if it cannot.
-	NULL: no curve (the VR build's). */
-	int (*gamma_prepare)(void);
-	struct xgpu_vulkan_image *(*gamma)(struct xgpu_vulkan_image *image, float power);
+		uint8_t format, const struct xgpu_vulkan_output *output);
+	/* a frame smaller than the window (display.render_scale on a computer,
+	"original" resolution scaling) scaled up sharply: nearest by whole
+	multiples, then linear for the rest (present_sharp). 0: linear alone
+	(Android's, whose compositor scales its smaller swapchain). */
+	int sharp_upscale;
 };
 
 /* 1 on success: a device that has what the backend needs (logged if not) */
@@ -176,6 +195,21 @@ struct xgpu_vulkan_capabilities
 	/* pixel shaders can write storage buffers (the visibility tests' counts
 	in the shader) */
 	int fragment_stores;
+	/* the visibility tests' counts are better made in the shader than by
+	occlusion queries, outside VR too (a driver whose queries are costly) */
+	int shader_visibility;
+	/* a pixel shader that may discard gets no early depth test: the front
+	end makes no alpha test that cannot fail, and draws a cut-out's depth
+	first (xgpu_backend.h) */
+	int alpha_test_drop, cutout_prepass;
+	/* a pass is kept to the part of its target it clears and draws
+	(xgpu_backend.h) */
+	int clear_alone;
+	/* the render thread is told when the GPU has done a frame rather than
+	waiting for it (xgpu_vulkan_completion_notify) */
+	int completion_told;
+	/* the front end scissors the draws the game bounds (xgpu_backend.h) */
+	int draw_bounds;
 	uint32_t multiview_views;
 	int depth_clamp;
 	/* Timestamp queries on the selected graphics queue. */
@@ -203,6 +237,19 @@ struct xgpu_vulkan_capabilities
 	acceleration structures (VK_KHR_ray_query, VK_KHR_acceleration_structure:
 	xgpu_vulkan_rt.c), unless HALO_VULKAN_NO_RAY_QUERIES */
 	int ray_queries;
+	/* display.output_depth: RGBA16 (unsigned normalized) targets drawn
+	into, blended, multisampled, sampled linearly and copied */
+	int deep_sdr;
+	/* display.temporal_aa "fsr": AMD FSR 3.1's upscaler's compute passes
+	(xgpu_vulkan_fsr.c): its storage images' formats, and storage images
+	written and read without a format */
+	int temporal_fsr;
+	/* display.temporal_aa "dlss": NVIDIA DLSS Super Resolution through NGX
+	(xgpu_vulkan_dlss.c: its module beside the game, an NVIDIA GPU) */
+	int temporal_dlss;
+	/* ... and the GPU an NVIDIA one where DLSS's add-on could run (Linux,
+	Windows): the game offers the add-on's download there (dlss_addon.c) */
+	int dlss_gpu;
 	/* the device, its Vulkan version and driver, in a few words (a
 	report's: port/linux/src/report.c) */
 	char device[96];
@@ -255,6 +302,12 @@ enum
 	XGPU_VULKAN_FORMAT_RGBA32F,
 	/* two signed bytes (its distance-field scene's cascades) */
 	XGPU_VULKAN_FORMAT_RG8_SNORM,
+	/* four 16-bit unsigned normalized channels (display.output_depth's SDR
+	back buffer: clamped and blended as BGRA8, 65535 levels) */
+	XGPU_VULKAN_FORMAT_RGBA16,
+	/* a stencil alone (S8_UINT; D24S8's format where the device draws into
+	none): SMAA's marks (xgpu_vulkan_post.c), an attachment only */
+	XGPU_VULKAN_FORMAT_S8,
 	XGPU_VULKAN_FORMAT_COUNT
 };
 
@@ -267,6 +320,10 @@ enum
 	/* and read where it is drawn (an input attachment: display.hdr's back
 	buffer) */
 	XGPU_VULKAN_USAGE_INPUT = 4,
+	/* copied into while the frames are drawn (the levels of a texture the
+	game renders): with a target's, its memory is its own ("memory of its
+	own", xgpu_vulkan.c) */
+	XGPU_VULKAN_USAGE_COPIED = 8,
 };
 
 struct xgpu_vulkan_image_description
@@ -291,6 +348,11 @@ struct xgpu_vulkan_image *xgpu_vulkan_image_create(const struct xgpu_vulkan_imag
 /* (after the work recorded so far that uses it) */
 void xgpu_vulkan_image_destroy(struct xgpu_vulkan_image *image);
 const struct xgpu_vulkan_image_description *xgpu_vulkan_image_description(const struct xgpu_vulkan_image *image);
+/* marks an image (NULL: none) as one a vertex stage samples, before
+anything is written to it, and returns it: what is written to it is then
+ordered before the draws' vertex stages too, as a buffer's is, not before
+their fragment stages alone (xgpu_vulkan.c's AFTER_IMAGE_STAGES) */
+struct xgpu_vulkan_image *xgpu_vulkan_image_vertex_read(struct xgpu_vulkan_image *image);
 /* writes a region of a level and layer (a cube's face, a 3D image's slices
 z to z + depth); bytes_per_row is a compressed format's row of blocks. In
 the stream's order: draws recorded before it see the old texels, draws after
@@ -310,6 +372,13 @@ same place of another's first layer, of the same format, in the stream's
 order */
 void xgpu_vulkan_image_copy_rectangle(struct xgpu_vulkan_image *source, uint32_t source_layer,
 	struct xgpu_vulkan_image *destination, const int32_t rectangle[4]);
+/* a rectangle (x0, y0, x1, y1) of a colour image's first layer stretched
+over a rectangle of another's, of the same format, one sample each
+(display.render_scale's 3D view into the display's back buffer): sharply
+where the options allow it (as a smaller frame is presented: nearest by
+whole multiples, then linear), else linear, in the stream's order */
+void xgpu_vulkan_image_stretch(struct xgpu_vulkan_image *source, const int32_t from[4],
+	struct xgpu_vulkan_image *destination, const int32_t to[4]);
 /* a multisampled image's samples resolved into an image of one (colour:
 averaged; depth and stencil: the first sample), in the stream's order */
 void xgpu_vulkan_image_resolve(struct xgpu_vulkan_image *multisampled, struct xgpu_vulkan_image *image);
@@ -320,6 +389,13 @@ xgpu_hdr_sdr_pixel) from the first, after the work recorded so far: waits
 for the GPU (screenshots, tests); 1 on success */
 int xgpu_vulkan_read_pixels(struct xgpu_vulkan_image *image, uint32_t layer, void *pixels, uint32_t bytes_per_row,
 	int tone_map);
+/* an RGBA16F image's layer (display.hdr's back buffer) as it is: its half
+floats, RGBA rows from the first, into *halves (malloc'd, the caller's to
+free), after the work recorded so far: waits for the GPU, but leaves the
+tone mapping to the caller (the screenshot key's, on the PNG's thread:
+host_screenshot.c). 1 on success, 0 if it cannot be read, -1 if the image
+is not RGBA16F */
+int xgpu_vulkan_read_halves(struct xgpu_vulkan_image *image, uint32_t layer, uint16_t **halves);
 
 /* ---------- samplers */
 
@@ -427,6 +503,9 @@ struct xgpu_vulkan_pipeline_description
 	/* and, interlocked (capabilities pixel_interlock), reads and writes it
 	as a storage image: the pipeline writes no colour */
 	uint8_t color_store;
+	/* display.temporal_aa: the motion's attachment, the second (its format,
+	XGPU_VULKAN_FORMAT_*, 0 none), and the channels written into it */
+	uint8_t motion_format, motion_mask;
 };
 
 /* the pipeline of a description, made the first time; VK_NULL_HANDLE if it
@@ -481,6 +560,11 @@ void xgpu_vulkan_set_targets(struct xgpu_vulkan_image *color, struct xgpu_vulkan
 /* views is 1, 2 or 4, relative to the image view's first layer. */
 void xgpu_vulkan_set_target_views(struct xgpu_vulkan_image *color, struct xgpu_vulkan_image *depth,
 	uint32_t layer, uint32_t views);
+/* display.temporal_aa: the motion drawn into motion (NULL none) as the second
+colour attachment of the passes into color (the 3D view's target, while a
+window's objects draw); whether the targets bound now draw it */
+void xgpu_vulkan_set_motion_target(struct xgpu_vulkan_image *motion, struct xgpu_vulkan_image *color);
+int xgpu_vulkan_motion_bound(void);
 /* Copy to a runtime image of the matching channel order or exact depth
 format. It enters and leaves in COLOR_ATTACHMENT_OPTIMAL (colour) or
 DEPTH_STENCIL_ATTACHMENT_OPTIMAL (depth); OpenXR owns its lifetime. */
@@ -493,6 +577,7 @@ enum
 {
 	XGPU_VULKAN_CLEAR_RED = 1, XGPU_VULKAN_CLEAR_GREEN = 2, XGPU_VULKAN_CLEAR_BLUE = 4, XGPU_VULKAN_CLEAR_ALPHA = 8,
 	XGPU_VULKAN_CLEAR_COLOR = 16, XGPU_VULKAN_CLEAR_DEPTH = 32, XGPU_VULKAN_CLEAR_STENCIL = 64,
+	XGPU_VULKAN_CLEAR_ALONE = 128,
 	XGPU_VULKAN_CLEAR_CHANNELS = 15,
 };
 
@@ -669,6 +754,30 @@ struct xgpu_vulkan_rt_device
 };
 int xgpu_vulkan_rt_create(const struct xgpu_vulkan_rt_device *device);
 void xgpu_vulkan_rt_destroy(void);
+/* display.temporal_aa "fsr" (xgpu_vulkan_fsr.c): the device it makes its
+images, pipelines and sets on, and the pipeline cache */
+struct xgpu_vulkan_fsr_device
+{
+	VkDevice device;
+	PFN_vkGetDeviceProcAddr get_device_proc_addr;
+	VkPhysicalDeviceMemoryProperties memory;
+	VkPipelineCache cache;
+};
+int xgpu_vulkan_fsr_create(const struct xgpu_vulkan_fsr_device *device);
+void xgpu_vulkan_fsr_destroy(void);
+/* (the core's, for xgpu_vulkan_fsr.c) work outside the passes in the main
+command buffer, in the stream's order: the pass ended, the images it reads
+and writes noted as used (and written), everything recorded before it done
+first; _end: everything recorded after it waits for it */
+VkCommandBuffer xgpu_vulkan_outside_begin(struct xgpu_vulkan_image *const *read, uint32_t read_count,
+	struct xgpu_vulkan_image *const *written, uint32_t written_count);
+void xgpu_vulkan_outside_end(VkCommandBuffer commands);
+/* an image's handle, its view sampled (a depth image's depth alone) and its
+format, for xgpu_vulkan_fsr.c's work (in the GENERAL layout, as all are) */
+VkImage xgpu_vulkan_image_handle(const struct xgpu_vulkan_image *image);
+VkImageView xgpu_vulkan_image_view(const struct xgpu_vulkan_image *image);
+VkFormat xgpu_vulkan_image_format(const struct xgpu_vulkan_image *image);
+
 /* (the core's, for xgpu_vulkan_rt.c) the early commands, begun: before the
 draws of the submission being recorded, which are ordered after them; and
 the latest submission the GPU is done with */
@@ -730,14 +839,39 @@ run on the renderer's thread, with end before the frame's fence. */
 void xgpu_vulkan_gpu_time_begin(void);
 void xgpu_vulkan_gpu_time_end(void);
 int xgpu_vulkan_gpu_time_read(double *milliseconds);
+/* the tag (not 0) the frames' interval ending next is read with, and the
+function the frame's end (xgpu_vulkan_frame_end) gives each interval it
+reads to, by its tag: the frame's own time, however late it is read
+(host_render_stream_gpu_frame's) */
+void xgpu_vulkan_gpu_time_tag(uint32_t tag, void (*listener)(uint32_t tag, uint64_t nanoseconds));
+int xgpu_vulkan_gpu_time_read_tagged(double *milliseconds, uint32_t *tag);
 /* the frames' GPU time so far (nanoseconds, a running total), and whether
 it is measured (the frames timed: not the VR mode's, which reads them) */
 uint64_t xgpu_vulkan_gpu_nanoseconds(int *measured);
+/* (debug.pass_times) the passes begun and the work outside passes recorded
+from now on belong to a graphics setting's work (its label, capitals, a
+string that lives as long as the backend: "SMAA", "PANINI"...; NULL none),
+as debug.pass_times sums and logs them; nothing kept while the passes are
+not timed */
+void xgpu_vulkan_pass_owner(const char *owner);
+/* (debug.pass_times) the game's renderer's category of the draws from now
+on (XGPU_STREAM_CATEGORY's value: rasterizer.h's _rasterizer_profile_*,
+the port's own past them, XGPU_STREAM_CATEGORY_NONE none): an unowned
+pass is timed by the categories of its draws, a timestamp where the
+category changes within it (without discards) */
+void xgpu_vulkan_pass_category(uint32_t category);
 
 uint64_t xgpu_vulkan_fence(void);
 /* returns once the GPU has done the submission of that number and those
 before (the visibility tests' counts of the frames they end are written) */
 void xgpu_vulkan_wait(uint64_t fence);
+/* whether the GPU has done that submission, without waiting; and a
+function called (from a thread of the backend's) after each submission of
+xgpu_vulkan_fence's the GPU has done, from then on: nonzero if it will be
+(the render thread plays the next frame while the GPU draws this one:
+host_render_stream.h's fence_ready) */
+int xgpu_vulkan_fence_ready(uint64_t fence);
+int xgpu_vulkan_completion_notify(void (*completed)(void));
 
 /* the window's size in pixels changed (any thread): the swapchain is made
 again */
@@ -780,6 +914,31 @@ void xgpu_vulkan_hdr_state(int active, int mode, int paper_white_nits, int paper
 this many pixels from its top (no lower than its bottom) or centered (-1)
 (present), from the next present on */
 void xgpu_vulkan_picture_top(int top);
+/* display.render_scale: a frame smaller than the window scaled up sharply
+(where the options allow it: sharp_upscale), else smoothly, as
+"original" resolution scaling's 640x480 always was (any thread) */
+void xgpu_vulkan_sharp_upscale(int sharp);
+/* display.hdr_sdr_curve (XGPU_HDR_SDR_CURVE_*; AUTO: sRGB's on Apple's
+platforms, gamma 2.2 elsewhere), for the encoding (any thread) */
+void xgpu_vulkan_hdr_sdr_curve(int curve);
+/* display.hdr_peak_nits (#1122): the display's peak in nits, of the
+player's (0: the window's, the system's), for the encoding (any thread) */
+void xgpu_vulkan_hdr_peak_nits(int nits);
+/* the window's display's black and full-frame peak in nits, where the
+system reports them (Windows' DXGI; 0 none), which the tone map and the
+encoding take with a peak of the player's (any thread) */
+void xgpu_vulkan_window_luminance(float black_nits, float full_frame_nits);
+/* display.hdr_gamut (#1124): the highlights' colours expanded past sRGB's
+(any thread) */
+void xgpu_vulkan_hdr_gamut(int expanded);
+/* debug.timings as it changes: each pass timed every so many frames from
+the next on (0: no more), where debug.pass_times does not time them */
+void xgpu_vulkan_pass_times_follow(int frames);
+/* the gamut the window's display's primaries make (xgpu_hdr_gamut_target:
+0, P3's, where the system says none; any thread) */
+void xgpu_vulkan_window_gamut(float target);
+/* the device's LUID (Windows' adapter's), 0 where it has none */
+int xgpu_vulkan_device_luid(unsigned char luid[8]);
 /* display.gamma (the stream's record, render thread): the setting, 1 for
 none, from the next present on; an SDR frame is curved by one over it
 (present), an HDR swapchain's never */
@@ -827,6 +986,10 @@ struct xgpu_vulkan_statistics
 	resolved in the pass that drew them, and resolves of samples resolved
 	already (not made again) */
 	uint32_t stores_discarded, frame_end_discards, resolves_in_pass, resolves_skipped;
+	/* multisampled colours whose samples were made the mean of their
+	light before they were resolved (#1227: xgpu_vulkan.c's
+	resolve_in_light) */
+	uint32_t resolves_in_light;
 	/* aside passes (xgpu_vulkan.c): passes that continued the one before
 	them in one rendering, passes put aside before it, and buffers renamed
 	rather than written in order */

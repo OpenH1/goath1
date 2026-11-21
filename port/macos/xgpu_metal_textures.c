@@ -191,6 +191,27 @@ static uint16_t levels_most(unsigned long width, unsigned long height, unsigned 
 
 /* ---------- Xbox textures */
 
+/* the least alpha the alpha test of the draws of the entry's copy passes,
+whose levels keep the first's share passing (xgpu.h: a 2D texture's of
+more levels than one); 0 none, its levels as stored */
+static unsigned int coverage_pass(const struct entry *entry)
+{
+	const struct xgpu_texture_description *description = &entry->description;
+
+	return description->cube_map || description->depth > 1 || description->levels <= 1 ? 0 :
+		XGPU_TEXTURE_COVERAGE_PASS(entry->channels);
+}
+
+/* the entry's DXT blocks are uploaded as they are (BC): not a volume's, on
+a GPU with BC's formats, not read as ASTC, nor decoded for its coverage */
+static int stored_blocks(const struct entry *entry)
+{
+	const struct xgpu_texture_description *description = &entry->description;
+
+	return description->compressed && description->depth == 1 && xgpu_metal_block_compression() && cache.astc != 1 &&
+		!coverage_pass(entry);
+}
+
 /* the texture's storage, made for its description */
 static uint32_t xbox_texture_make(const struct entry *entry)
 {
@@ -203,7 +224,7 @@ static uint32_t xbox_texture_make(const struct entry *entry)
 		XGPU_METAL_TEXTURE_2D;
 	/* (DXT as it is, but for a volume's, which is decoded, and on a GPU
 	without BC's formats: ASTC, or decoded) */
-	if (description->compressed && description->depth == 1 && xgpu_metal_block_compression() && cache.astc != 1)
+	if (stored_blocks(entry))
 		made.format = description->format == 0x0c ? XGPU_METAL_FORMAT_DXT1 : description->format == 0x0e ?
 			XGPU_METAL_FORMAT_DXT3 : XGPU_METAL_FORMAT_DXT5;
 	else if (entry->astc)
@@ -215,7 +236,7 @@ static uint32_t xbox_texture_make(const struct entry *entry)
 	made.height = (uint16_t)description->height;
 	made.depth_or_layers = (uint16_t)(description->depth > 1 ? description->depth : 1);
 	made.levels = (uint16_t)(description->levels < most ? description->levels : most);
-	made.channels = (uint16_t)entry->channels;
+	made.channels = (uint16_t)(entry->channels & ~XGPU_TEXTURE_COVERAGE_MASK);
 	return xgpu_metal_texture_create(&made);
 }
 
@@ -266,7 +287,7 @@ static uint32_t texture_make(struct entry *entry)
 		entry->bytes = texture_bytes(entry, XGPU_ASTC_BLOCK_BYTES, 1);
 		entry->resident = _resident_astc;
 	}
-	else if (description->compressed && description->depth == 1 && xgpu_metal_block_compression() && cache.astc != 1)
+	else if (stored_blocks(entry))
 	{
 		entry->bytes = texture_bytes(entry, description->format == 0x0c ? 8 : 16, 1);
 		entry->resident = _resident_bc;
@@ -501,15 +522,18 @@ static void xbox_texture_upload(struct entry *entry, const D3DCOLOR *palette)
 	const unsigned char *base = host_pointer(entry->address);
 	unsigned long faces = description->cube_map ? 6 : 1, face_size = xgpu_texture_face_size(description);
 	unsigned long levels = levels_most(description->width, description->height, description->depth), face, level;
-	BOOL blocks = description->compressed && description->depth == 1 && xgpu_metal_block_compression() && cache.astc != 1;
+	BOOL blocks = stored_blocks(entry);
+	unsigned int pass = coverage_pass(entry);
+	struct xgpu_texture_coverage coverage;
 
 	if (description->levels < levels)
 		levels = description->levels;
-	if (description->compressed && description->depth == 1 && cache.astc == 1 && astc_read(entry))
+	if (description->compressed && description->depth == 1 && cache.astc == 1 && !pass && astc_read(entry))
 	{
 		cache.statistics.bytes += entry->size;
 		return;
 	}
+	xgpu_texture_coverage_begin(&coverage, pass);
 	for (face = 0; face < faces; face++)
 	{
 		for (level = 0; level < levels; level++)
@@ -529,16 +553,21 @@ static void xbox_texture_upload(struct entry *entry, const D3DCOLOR *palette)
 				continue;
 			}
 			converted = converted_get((size_t)width * height * depth);
-			if (!converted)
+			if (!converted || (!description->compressed &&
+				!xgpu_texture_decode_level(description, level, source, palette, converted)))
+			{
+				xgpu_texture_coverage_end(&coverage);
 				return;
+			}
 			if (description->compressed)
 				xgpu_texture_decode_dxt(description, level, source, converted);
-			else if (!xgpu_texture_decode_level(description, level, source, palette, converted))
-				return;
+			if (pass)
+				xgpu_texture_coverage_level(&coverage, level, width, height, converted);
 			xgpu_metal_texture_upload(entry->texture, (uint32_t)level, (uint32_t)face, 0, 0, 0, width, height, depth,
 				converted, width * 4, width * height * 4);
 		}
 	}
+	xgpu_texture_coverage_end(&coverage);
 	cache.statistics.bytes += entry->size;
 }
 
@@ -597,7 +626,7 @@ static struct entry *xbox_entry_find(const struct xgpu_stream_texture_stage *sta
 	/* (made ASTC from the start where it most likely will be: most DXT1
 	textures transcode exactly, most DXT3 and DXT5 ones wait for a worker) */
 	entry->astc = (uint8_t)(entry->description.compressed && entry->description.depth == 1 && astc_wanted() &&
-		entry->description.format == 0x0c);
+		entry->description.format == 0x0c && !coverage_pass(entry));
 	if (entry->size)
 		texture_make(entry);
 	if (!entry->size || !entry->texture)

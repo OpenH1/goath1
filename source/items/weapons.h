@@ -223,6 +223,13 @@ struct weapon_datum
 short weapon_rotate_zoom_level(
 	long weapon_index,
 	short zoom_level);
+/* port: MCC's Zoom In and Zoom Out (direction 1 and -1): a step of the
+zoom, to the last level and no further, or to none, of the levels the
+cycle above goes through (unchanged while it reloads, as there) */
+short weapon_step_zoom_level(
+	long weapon_index,
+	short zoom_level,
+	short direction);
 
 void weapons_initialize(
 	void);

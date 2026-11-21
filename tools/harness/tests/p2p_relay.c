@@ -30,6 +30,7 @@ enum
 	tunnel's; their values matter only as distinct numbers) */
 	RELAY = 0x0A000001,
 	RELAY2 = 0x0A000002,
+	RELAY3 = 0x0A000003,
 	A = 0x0B000002,
 	B = 0x0C000003,
 	C = 0x0D000004,
@@ -714,6 +715,264 @@ static int case_demoted(void)
 	return 0;
 }
 
+/* ---------- a peer's paths (p2p_relay_paths_update): a standby kept warm,
+failover inside the game's connection timeout, no flapping */
+
+enum
+{
+	/* the game drops a player not heard from in this long (the host's
+	client timeout, the client's link-down); a failover is to be done
+	well inside it */
+	GAME_TIMEOUT = 15000,
+	FAILOVER_BUDGET = 4000,
+	STEP = 100,
+};
+
+static const unsigned char path_peer[P2P_IDENTIFIER_SIZE] = { 7, 7, 7, 7, 7, 7 };
+
+/* an attempt for path_peer at a relay, still binding */
+static int path_attempt_binding(unsigned long relay_address)
+{
+	unsigned char secret[P2P_SHA256_SIZE];
+	struct p2p_candidate relay_candidate;
+
+	secret_of(11, secret);
+	relay_at(relay_address, &relay_candidate);
+	return p2p_relay_attempt_start(path_peer, secret, 0, &relay_candidate, now);
+}
+
+/* a live relay's answer to the binds (keep-alives) sent to it since sent
+index from: BOUND, paired (its channel's bytes: seed) */
+static void relay_answers(unsigned long relay_address, int seed, int from)
+{
+	unsigned char channel[8];
+
+	memset(channel, seed, sizeof(channel));
+	if (sent_of(relay_address, 'B', from) >= 0)
+		answer_attempt(relay_address, 1, channel, B);
+}
+
+/* an attempt for path_peer at a relay, paired */
+static int path_attempt(unsigned long relay_address, int seed)
+{
+	int index = path_attempt_binding(relay_address);
+
+	relay_answers(relay_address, seed, 0);
+	return index;
+}
+
+/* the bytes sent to an address since sent index from, and whether all
+of them were binds (a standby's keep-alives: no tunnel packet) */
+static int bytes_sent_to(unsigned long address, int from, int *binds_only)
+{
+	int bytes = 0;
+	int index;
+
+	*binds_only = 1;
+	for (index = from; index < sent_count; index++)
+	{
+		if (sent[index].address != address)
+			continue;
+		bytes += sent[index].size;
+		if (sent[index].data[1] != 'B')
+			*binds_only = 0;
+	}
+	return bytes;
+}
+
+/* N3: relayed through RELAY, a spare at RELAY2 still binding at the first
+contact is kept, and pairs; it stays warm on keep-alives alone (a few bytes
+a second); RELAY dies mid-game, and the peer is on RELAY2 inside the
+failover budget, well before the game's timeout (not after the 12 s of an
+attempt's silence) */
+static int case_standby(void)
+{
+	unsigned long died, switched = 0;
+	int one, two, step, mark, binds_only, bytes, answered = 0;
+	struct p2p_relay_path path;
+
+	one = path_attempt(RELAY, 1);
+	memset(&path, 0, sizeof(path));
+	path.carrier = one + 1;
+	path.carrier_heard = now;
+	two = path_attempt_binding(RELAY2);
+	REQUIRE(two >= 0 && p2p_relay_path_state(&path, two + 1, now) == _p2p_path_candidate);
+	REQUIRE(p2p_relay_path_state(&path, one + 1, now) == _p2p_path_active);
+	/* a minute in game: the peer's packets through RELAY ten a second */
+	mark = sent_count;
+	for (step = 0; step < 600; step++)
+	{
+		int before = sent_count;
+
+		now += STEP;
+		p2p_relay_update(now);
+		relay_answers(RELAY, 1, before);
+		relay_answers(RELAY2, 2, step == 5 ? 0 : before);
+		p2p_relay_path_heard(&path, one + 1, now);
+		REQUIRE(!(p2p_relay_paths_update(&path, path_peer, 1, now) & P2P_RELAY_PATHS_PROBE));
+		if (step == 200)
+			mark = sent_count;
+	}
+	REQUIRE(path.carrier == one + 1);
+	REQUIRE(p2p_relay_path_state(&path, two + 1, now) == _p2p_path_standby);
+	/* (its cost: a keep-alive bind every KEEP_ALIVE_INTERVAL, 15 bytes a
+	second of payload; 25 at most allowed) */
+	bytes = bytes_sent_to(RELAY2, mark, &binds_only);
+	REQUIRE(binds_only && bytes > 0 && bytes * 1000 / (400 * STEP) <= 25);
+	/* RELAY dies: nothing through it any more, its keep-alives unanswered */
+	died = now;
+	for (step = 0; step < GAME_TIMEOUT / STEP && !switched; step++)
+	{
+		int before = sent_count;
+
+		now += STEP;
+		p2p_relay_update(now);
+		relay_answers(RELAY2, 2, before);
+		/* (the peer's answer to a probe through the standby, a step later:
+		it takes over) */
+		if (answered && p2p_relay_path_heard(&path, two + 1, now))
+			switched = now;
+		answered = 0;
+		if (p2p_relay_paths_update(&path, path_peer, 1, now) & P2P_RELAY_PATHS_PROBE)
+		{
+			/* (p2p.c pings through each paired attempt: the standby is one,
+			and sends) */
+			unsigned char packet[P2P_TUNNEL_MINIMUM_PACKET] = { P2P_TUNNEL_MAGIC };
+
+			REQUIRE(p2p_relay_path_state(&path, two + 1, now) == _p2p_path_standby);
+			REQUIRE(p2p_relay_send(two, packet, (int)sizeof(packet)));
+			answered = 1;
+		}
+	}
+	REQUIRE(switched && path.carrier == two + 1);
+	REQUIRE(switched - died <= FAILOVER_BUDGET);
+	return 0;
+}
+
+/* N4: met directly, the peer keeping standbys too: one relay bound and kept
+warm while the direct path lives (an older build's peer: none bound); the
+direct path dies (a router's reboot) and the relay takes over inside the
+budget; the direct path back takes over again only once it lasted */
+static int case_direct_standby(void)
+{
+	unsigned long died, switched = 0, back = 0, returned;
+	int one = -1, step, flags, answered = 0;
+	struct p2p_relay_path path;
+
+	memset(&path, 0, sizeof(path));
+	path.carrier = 0;
+	path.carrier_heard = now;
+	/* an older build's peer: nothing bound while the direct path lives */
+	for (step = 0; step < 100; step++)
+	{
+		now += STEP;
+		p2p_relay_path_heard(&path, 0, now);
+		REQUIRE(!p2p_relay_paths_update(&path, path_peer, 0, now));
+	}
+	/* one that keeps standbys: its relays bound (p2p.c's relay_bind_all)
+	once, and the standby kept */
+	for (step = 0; step < 300; step++)
+	{
+		int before = sent_count;
+
+		now += STEP;
+		p2p_relay_update(now);
+		if (one >= 0)
+			relay_answers(RELAY, 1, before);
+		p2p_relay_path_heard(&path, 0, now);
+		flags = p2p_relay_paths_update(&path, path_peer, 1, now);
+		REQUIRE(!(flags & P2P_RELAY_PATHS_PROBE));
+		if (flags & P2P_RELAY_PATHS_BIND)
+		{
+			REQUIRE(one < 0);
+			one = path_attempt(RELAY, 1);
+		}
+	}
+	REQUIRE(one >= 0 && path.carrier == 0);
+	REQUIRE(p2p_relay_path_state(&path, one + 1, now) == _p2p_path_standby);
+	/* the direct path dies */
+	died = now;
+	for (step = 0; step < GAME_TIMEOUT / STEP && !switched; step++)
+	{
+		int before = sent_count;
+
+		now += STEP;
+		p2p_relay_update(now);
+		relay_answers(RELAY, 1, before);
+		if (answered && p2p_relay_path_heard(&path, one + 1, now))
+			switched = now;
+		answered = (p2p_relay_paths_update(&path, path_peer, 1, now) & P2P_RELAY_PATHS_PROBE) != 0;
+	}
+	REQUIRE(switched && path.carrier == one + 1 && switched - died <= FAILOVER_BUDGET);
+	/* the direct path back (the router up again): the relay keeps the
+	session until it lasted DIRECT_SWITCH_TIME */
+	returned = now;
+	for (step = 0; step < 100 && !back; step++)
+	{
+		int before = sent_count;
+
+		now += STEP;
+		p2p_relay_update(now);
+		relay_answers(RELAY, 1, before);
+		p2p_relay_path_heard(&path, one + 1, now);
+		if (p2p_relay_path_heard(&path, 0, now))
+			back = now;
+		p2p_relay_paths_update(&path, path_peer, 1, now);
+	}
+	REQUIRE(back && path.carrier == 0 && back - returned >= 5000);
+	/* (the relay stays, the standby) */
+	REQUIRE(p2p_relay_path_state(&path, one + 1, now) == _p2p_path_standby);
+	return 0;
+}
+
+/* a slow carrier (heard every 2 s, under its silence) is kept: nothing
+probed, nothing bound, no other path takes over; extra standbys are
+released down to P2P_RELAY_STANDBYS (the lowest address kept, as the peer
+keeps), but never while the carrier is silent */
+static int case_no_flap(void)
+{
+	struct p2p_relay_attempt_state state;
+	struct p2p_relay_path path;
+	int one, two, three, step, release;
+
+	one = path_attempt(RELAY, 1);
+	two = path_attempt(RELAY2, 2);
+	memset(&path, 0, sizeof(path));
+	path.carrier = one + 1;
+	path.carrier_heard = now;
+	for (step = 0; step < 600; step++)
+	{
+		int before = sent_count;
+
+		now += STEP;
+		p2p_relay_update(now);
+		relay_answers(RELAY, 1, before);
+		relay_answers(RELAY2, 2, before);
+		if (step % 20 == 19)
+			REQUIRE(!p2p_relay_path_heard(&path, one + 1, now));
+		/* (the peer's packets through the standby too: not taken) */
+		REQUIRE(!p2p_relay_path_heard(&path, two + 1, now));
+		REQUIRE(!p2p_relay_paths_update(&path, path_peer, 1, now));
+	}
+	REQUIRE(path.carrier == one + 1);
+	/* a third paired while the carrier is silent: nothing released */
+	three = path_attempt(RELAY3, 3);
+	now += 3000;
+	release = sent_count;
+	relay_answers(RELAY2, 2, 0);
+	p2p_relay_paths_update(&path, path_peer, 1, now);
+	REQUIRE(p2p_relay_attempt(two, NULL) && p2p_relay_attempt(three, NULL));
+	REQUIRE(sent_of(RELAY3, 'X', release) < 0 && sent_of(RELAY2, 'X', release) < 0);
+	/* the carrier heard again: one standby kept, the lowest address
+	(RELAY2), the other released at its relay */
+	REQUIRE(!p2p_relay_path_heard(&path, one + 1, now));
+	p2p_relay_paths_update(&path, path_peer, 1, now);
+	REQUIRE(p2p_relay_attempt(two, &state) && state.paired);
+	REQUIRE(!p2p_relay_attempt(three, NULL) && sent_of(RELAY3, 'X', release) >= 0);
+	REQUIRE(p2p_relay_attempt(one, &state) && state.paired);
+	return 0;
+}
+
 /* a bucket refilled a few milliseconds at a time keeps every thousandth:
 binds every 10 ms from one address, 20 a second allowed, about 20 a
 second taken (not none, as each refill rounded down would make it) */
@@ -996,6 +1255,9 @@ int main(int argc, char **argv)
 		{ "limits", case_limits },
 		{ "malformed", case_malformed },
 		{ "front-path", case_front_path },
+		{ "standby", case_standby },
+		{ "direct-standby", case_direct_standby },
+		{ "no-flap", case_no_flap },
 	};
 	size_t index;
 

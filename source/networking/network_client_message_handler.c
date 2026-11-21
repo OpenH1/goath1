@@ -1183,6 +1183,9 @@ static boolean network_game_client_handle_message_server_postgame_keep_alive(
 			{
 				network_event("failed to decode a message_server_postgame_keep_alive packet");
 			}
+			/* port: answered, so that the host hears this machine in the
+			postgame (network_server_manager.c's postgame timeout) */
+			network_game_client_answer_postgame_keep_alive(client);
 		}
 		else
 		{
@@ -1263,7 +1266,11 @@ static boolean network_game_client_handle_message_server_graceful_game_exit_preg
 {
 	if (network_game_client_address_matches_server(client, source_address))
 	{
-		if (network_game_client_get_state(client, NULL) == _network_game_client_state_pregame)
+		/* (port: in game too: a host of this build quitting its game says
+		so, network_game_server_dispose, where the Xbox game said nothing and
+		its machines learned of it by its silence) */
+		if (network_game_client_get_state(client, NULL) == _network_game_client_state_pregame ||
+			network_game_client_get_state(client, NULL) == _network_game_client_state_ingame)
 		{
 			struct message_server_graceful_game_exit_pregame game_exit;
 			short packet_type = _message_server_graceful_game_exit_pregame;

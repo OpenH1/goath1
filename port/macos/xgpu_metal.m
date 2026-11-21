@@ -251,6 +251,13 @@ static struct
 	NSMutableDictionary<NSData *, id<MTLRenderPipelineState>> *clear_pipelines;
 	id<MTLFunction> clear_vertex, clear_fragment;
 	id<MTLDepthStencilState> clear_depth_stencil[4];
+	/* MSAA's resolve in light (#1227, resolve_in_light): its tile
+	function, and its pipelines by a multisampled colour's pixel format
+	and samples; the function could not be made (or the GPU has no tile
+	shaders) */
+	id<MTLFunction> resolve_light_function;
+	NSMutableDictionary<NSNumber *, id<MTLRenderPipelineState>> *resolve_light_pipelines;
+	BOOL resolve_light_failed;
 
 	/* command buffers: serials, the last completed */
 	id<MTLCommandBuffer> command_buffer;
@@ -272,6 +279,12 @@ static struct
 	uint64_t frame_number;
 	BOOL in_frame;
 
+	/* display.temporal_aa's motion (xgpu_metal_set_motion_target): its
+	texture (0 none), the colour target whose passes draw into it too, and
+	whether the first of them clears it; whether the open pass has it */
+	uint32_t motion, motion_color;
+	BOOL motion_clear, encoder_motion;
+
 	/* the pass */
 	uint32_t color, color_level, color_layer, depth;
 	/* into the targets' multisampled attachments */
@@ -292,7 +305,7 @@ static struct
 	{
 		id<MTLRenderCommandEncoder> encoder;
 		uint32_t color, color_level, color_layer, depth, target_width, target_height;
-		BOOL multisampled;
+		BOOL multisampled, encoder_motion;
 		int32_t visibility_pass, profile_current;
 	} parked;
 	uint32_t target_width, target_height;
@@ -311,7 +324,9 @@ static struct
 	uint32_t stage_textures[XGPU_METAL_TEXTURE_STAGE_COUNT];
 	struct xgpu_metal_sampler stage_samplers[XGPU_METAL_TEXTURE_STAGE_COUNT];
 	id<MTLSamplerState> stage_sampler_states[XGPU_METAL_TEXTURE_STAGE_COUNT];
-	float vertex_constants[XGPU_METAL_VERTEX_CONSTANT_COUNT][4];
+	/* (and past the 192 the previous frame's: display.temporal_aa's
+	motion, xgpu_metal_set_vertex_constants) */
+	float vertex_constants[2 * XGPU_METAL_VERTEX_CONSTANT_COUNT][4];
 	unsigned char draw_uniforms[4096];
 	uint32_t draw_uniforms_size;
 	struct xgpu_metal_source streams[XGPU_METAL_STREAM_COUNT];
@@ -506,6 +521,34 @@ id<MTLCommandBuffer> xgpu_metal_command_buffer(void)
 	return command_buffer();
 }
 
+static void pass_end(void);
+static struct texture_entry *texture_get(uint32_t texture);
+static void texture_contents(struct texture_entry *entry);
+static void texture_first_use(struct texture_entry *entry, BOOL cleared);
+
+id<MTLCommandBuffer> xgpu_metal_outside_passes(void)
+{
+	if (!metal.in_frame)
+		xgpu_metal_frame_begin();
+	pass_end();
+	return command_buffer();
+}
+
+void xgpu_metal_texture_encoded(uint32_t texture, int written)
+{
+	struct texture_entry *entry = texture_get(texture);
+
+	if (!entry)
+		return;
+	texture_contents(entry);
+	texture_first_use(entry, NO);
+	entry->used = metal.command_serial;
+	if (written)
+		entry->main_written = metal.command_serial;
+	else
+		entry->main_sampled = metal.command_serial;
+}
+
 /* the serial the command buffer being recorded has or will have */
 static uint64_t recording_serial(void)
 {
@@ -543,7 +586,7 @@ frame's picture's copy for the presentation */
 static const char *const profile_kind_names[PROFILE_KINDS] =
 {
 	"other", "sky", "world", "transparents", "water", "effects", "hud", "tone map", "anti-aliasing", "panini", "world ao",
-	"aside",
+	"temporal", "aside",
 	"copies", "present",
 };
 
@@ -1155,6 +1198,8 @@ static void multisampled_current(struct texture_entry *entry, BOOL loads)
 	}
 }
 
+static void resolve_in_light(id<MTLRenderCommandEncoder> render, id<MTLTexture> samples);
+
 /* the stores of the pass ending (its attachments' deferred actions:
 encoder) */
 static void encoder_stores(void)
@@ -1164,6 +1209,12 @@ static void encoder_stores(void)
 	if (metal.encoder_color_deferred)
 	{
 		BOOL discard = frame_end_discards(color);
+
+		/* (the samples the pass ends resolving each made the mean of the
+		pixel's light first, in tile memory, #1227; a pass with the
+		motion beside them has none: display.temporal_aa turns MSAA off) */
+		if (color && color->multisampled && !metal.encoder_motion)
+			resolve_in_light(metal.encoder, color->multisampled);
 
 		/* (memoryless samples cannot be stored: they go as the pass ends,
 		resolved, and a pass that loads them again keeps them in memory from
@@ -1181,7 +1232,8 @@ static void encoder_stores(void)
 			profile.passes[profile.current].stores[0] = (int8_t)(discard ? MTLStoreActionMultisampleResolve :
 				MTLStoreActionStoreAndMultisampleResolve);
 	}
-	if (metal.encoder_depth_deferred)
+	/* (a stencil alone has no depth's: XGPU_METAL_FORMAT_S8) */
+	if (metal.encoder_depth_deferred || metal.encoder_stencil_deferred)
 	{
 		BOOL discard = frame_end_discards(depth);
 		MTLStoreAction action;
@@ -1192,14 +1244,16 @@ static void encoder_stores(void)
 		}
 		action = discard ? MTLStoreActionDontCare : MTLStoreActionStore;
 
-		[metal.encoder setDepthStoreAction:action];
+		if (metal.encoder_depth_deferred)
+			[metal.encoder setDepthStoreAction:action];
 		if (metal.encoder_stencil_deferred)
 			[metal.encoder setStencilStoreAction:action];
 		if (discard)
 			depth->end_discarded_frame = metal.frame_number;
 		if (profile.current >= 0)
 		{
-			profile.passes[profile.current].stores[1] = (int8_t)action;
+			if (metal.encoder_depth_deferred)
+				profile.passes[profile.current].stores[1] = (int8_t)action;
 			if (metal.encoder_stencil_deferred)
 				profile.passes[profile.current].stores[2] = (int8_t)action;
 		}
@@ -1217,6 +1271,7 @@ static void encoder_end(void)
 			encoder_stores();
 		[metal.encoder endEncoding];
 		metal.encoder = nil;
+		metal.encoder_motion = NO;
 		metal.visibility_entry = -1;
 		profile.current = -1;
 	}
@@ -1294,6 +1349,7 @@ static void aside_unpark(void)
 	metal.target_width = metal.parked.target_width;
 	metal.target_height = metal.parked.target_height;
 	metal.multisampled = metal.parked.multisampled;
+	metal.encoder_motion = metal.parked.encoder_motion;
 	metal.visibility_pass = metal.parked.visibility_pass;
 	profile.current = metal.parked.profile_current;
 	metal.parked.encoder = nil;
@@ -1751,6 +1807,34 @@ void xgpu_metal_gpu_interval(double start, double end)
 	pthread_mutex_unlock(&metal.statistics_lock);
 }
 
+/* the frames' own GPU times (xgpu_metal_gpu_time_tag): the tag the frame
+ending next takes and who is told, and the busy time as the last frame's
+work was done */
+static uint32_t gpu_frame_tag;
+static void (*gpu_frame_listener)(uint32_t tag, uint64_t nanoseconds);
+static double gpu_busy_at_frame;
+
+void xgpu_metal_gpu_time_tag(uint32_t tag, void (*listener)(uint32_t tag, uint64_t nanoseconds))
+{
+	gpu_frame_tag = tag;
+	gpu_frame_listener = listener;
+}
+
+/* (a completion's) a frame's last command buffer done: its own time, the
+busy time since the frame before's was (its aside and earlier buffers, and
+the presentation of the frame before, all done before it on the queue) */
+static void gpu_frame_done(uint32_t tag, void (*listener)(uint32_t tag, uint64_t nanoseconds))
+{
+	double busy;
+
+	pthread_mutex_lock(&metal.statistics_lock);
+	busy = gpu_busy_total - gpu_busy_at_frame;
+	gpu_busy_at_frame = gpu_busy_total;
+	pthread_mutex_unlock(&metal.statistics_lock);
+	if (tag && listener)
+		listener(tag, (uint64_t)(busy * 1e9));
+}
+
 uint64_t xgpu_metal_gpu_busy_nanoseconds(void)
 {
 	double total;
@@ -1820,6 +1904,112 @@ static id<MTLFunction> function_compile(NSString *text, NSString *name)
 	if (!function)
 		metal_log(HOST_LOG_ERROR, @"cannot compile %@: %@", name, error ? error.localizedDescription : @"no such function");
 	return function;
+}
+
+/* ---------- MSAA's resolve in light (#1227)
+
+A pass's resolve averages a pixel's samples as they are stored: the
+frame's codes (sRGB's curve), which makes an edge half covered by a bright
+detail darker than half its light (a sample of white and one of black, 50%
+of the code, about 22% of the light). As a pass over a multisampled colour
+ends, before its resolve, a tile function reads each pixel's samples in
+tile memory, makes each linear, and writes their mean, encoded again, to
+all of them (xgpu_hdr.c's hdr_linear and hdr_encoded, as the Vulkan
+backend's RESOLVE_LIGHT, tools/vulkan_post_shaders.py): the resolve, of
+equal samples, is that mean, and memoryless samples stay so. Where the GPU
+has no tile shaders (before Apple's A11; Intel's and AMD's Macs), the
+resolve averages the codes as before. */
+static const char resolve_light_source[] =
+	"#include <metal_stdlib>\n"
+	"using namespace metal;\n"
+	"\n"
+	"struct xgpu_resolve_pixel\n"
+	"{\n"
+	"\tfloat4 color [[color(0)]];\n"
+	"};\n"
+	"\n"
+	"static float3 resolve_linear(float3 value)\n"
+	"{\n"
+	"\tfloat3 v = max(value, float3(0.0));\n"
+	"\treturn select(pow((v + 0.055) / 1.055, float3(2.4)), v / 12.92, v <= float3(0.04045));\n"
+	"}\n"
+	"\n"
+	"static float3 resolve_encoded(float3 light)\n"
+	"{\n"
+	"\tfloat3 l = max(light, float3(0.0));\n"
+	"\treturn select(1.055 * pow(l, float3(1.0 / 2.4)) - 0.055, l * 12.92, l <= float3(0.0031308));\n"
+	"}\n"
+	"\n"
+	"kernel void xgpu_resolve_light(imageblock<xgpu_resolve_pixel, imageblock_layout_implicit> block,\n"
+	"\tushort2 at [[thread_position_in_threadgroup]])\n"
+	"{\n"
+	"\tushort samples = max(block.get_num_samples(), (ushort)1);\n"
+	"\tfloat4 sum = float4(0.0);\n"
+	"\txgpu_resolve_pixel pixel;\n"
+	"\n"
+	"\tfor (ushort index = 0; index < samples; index++)\n"
+	"\t{\n"
+	"\t\tfloat4 value = block.read(at, index, imageblock_data_rate::sample).color;\n"
+	"\t\tsum += float4(resolve_linear(value.rgb), value.a);\n"
+	"\t}\n"
+	"\tsum /= float(samples);\n"
+	"\tpixel.color = float4(resolve_encoded(sum.rgb), sum.a);\n"
+	"\tblock.write(pixel, at, (ushort)((1u << samples) - 1u));\n"
+	"}\n";
+
+/* the tile pipeline of a multisampled colour's pixel format and samples,
+made once; nil where there is none (logged once) */
+static id<MTLRenderPipelineState> resolve_light_pipeline(id<MTLTexture> samples)
+{
+	MTLTileRenderPipelineDescriptor *descriptor;
+	id<MTLRenderPipelineState> state;
+	NSNumber *key;
+	NSError *error = nil;
+
+	if (metal.resolve_light_failed || !samples || samples.sampleCount <= 1)
+		return nil;
+	if (!metal.resolve_light_function)
+	{
+		if (![metal.device supportsFamily:MTLGPUFamilyApple4] ||
+			!(metal.resolve_light_function = function_compile(@(resolve_light_source), @"xgpu_resolve_light")))
+		{
+			metal.resolve_light_failed = YES;
+			host_logf(HOST_LOG_INFO, "metal: MSAA resolves average the frame's codes (no tile shaders)");
+			return nil;
+		}
+		metal.resolve_light_pipelines = [NSMutableDictionary new];
+	}
+	key = @((NSUInteger)samples.pixelFormat * 64 + samples.sampleCount);
+	state = metal.resolve_light_pipelines[key];
+	if (state)
+		return state;
+	descriptor = [MTLTileRenderPipelineDescriptor new];
+	descriptor.tileFunction = metal.resolve_light_function;
+	descriptor.rasterSampleCount = samples.sampleCount;
+	descriptor.colorAttachments[0].pixelFormat = samples.pixelFormat;
+	descriptor.threadgroupSizeMatchesTileSize = YES;
+	state = [metal.device newRenderPipelineStateWithTileDescriptor:descriptor options:MTLPipelineOptionNone
+		reflection:nil error:&error];
+	if (!state)
+	{
+		metal_log(HOST_LOG_ERROR, @"cannot make MSAA's resolve in light: %@", error ? error.localizedDescription : @"");
+		metal.resolve_light_failed = YES;
+		return nil;
+	}
+	metal.resolve_light_pipelines[key] = state;
+	return state;
+}
+
+/* in a pass over a multisampled colour, before it resolves them: its
+samples each made the mean of the pixel's light, every tile's */
+static void resolve_in_light(id<MTLRenderCommandEncoder> render, id<MTLTexture> samples)
+{
+	id<MTLRenderPipelineState> state = render ? resolve_light_pipeline(samples) : nil;
+
+	if (!state)
+		return;
+	[render setRenderPipelineState:state];
+	[render dispatchThreadsPerTile:MTLSizeMake(render.tileWidth, render.tileHeight, 1)];
 }
 
 /* the combiner's function specialised for a program's configuration (any
@@ -1959,7 +2149,9 @@ static void texture_clear_new(id<MTLTexture> texture)
 	MTLPixelFormat format = texture.pixelFormat;
 	BOOL depth = format == MTLPixelFormatDepth32Float_Stencil8 || format == MTLPixelFormatDepth32Float ||
 		format == MTLPixelFormatDepth16Unorm || format == MTLPixelFormatX32_Stencil8;
-	BOOL stencil = format == MTLPixelFormatDepth32Float_Stencil8;
+	/* (a stencil alone, XGPU_METAL_FORMAT_S8's: a stencil attachment, no depth) */
+	BOOL stencil_only = format == MTLPixelFormatStencil8;
+	BOOL stencil = format == MTLPixelFormatDepth32Float_Stencil8 || stencil_only;
 	NSUInteger slices = texture.textureType == MTLTextureTypeCube ? 6 :
 		texture.textureType == MTLTextureType2DArray ? texture.arrayLength : 1, slice;
 
@@ -1974,14 +2166,17 @@ static void texture_clear_new(id<MTLTexture> texture)
 	{
 		MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
 
-		if (depth)
+		if (depth || stencil_only)
 		{
-			pass.depthAttachment.texture = texture;
-			pass.depthAttachment.slice = slice;
-			pass.depthAttachment.loadAction = MTLLoadActionClear;
-			pass.depthAttachment.storeAction = MTLStoreActionStore;
-			/* (the far plane: depth reversed, xgpu_backend.h) */
-			pass.depthAttachment.clearDepth = 0.0;
+			if (depth)
+			{
+				pass.depthAttachment.texture = texture;
+				pass.depthAttachment.slice = slice;
+				pass.depthAttachment.loadAction = MTLLoadActionClear;
+				pass.depthAttachment.storeAction = MTLStoreActionStore;
+				/* (the far plane: depth reversed, xgpu_backend.h) */
+				pass.depthAttachment.clearDepth = 0.0;
+			}
 			if (stencil)
 			{
 				pass.stencilAttachment.texture = texture;
@@ -2078,6 +2273,8 @@ uint32_t xgpu_metal_texture_create(const struct xgpu_metal_texture_description *
 		/* (drawn into, and copied out of by blits: private) */
 		descriptor.usage |= MTLTextureUsageRenderTarget;
 		descriptor.storageMode = MTLStorageModePrivate;
+		if (description->usage & XGPU_METAL_USAGE_WRITTEN)
+			descriptor.usage |= MTLTextureUsageShaderWrite;
 	}
 	else
 	{
@@ -2120,6 +2317,9 @@ uint32_t xgpu_metal_texture_create(const struct xgpu_metal_texture_description *
 		entry->multisampled = [metal.device newTextureWithDescriptor:multisampled];
 		if (!entry->multisampled)
 			entry->texture = nil;
+		/* (its resolve in light's pipeline made now, not as a pass ends) */
+		else if (!format->depth)
+			(void)resolve_light_pipeline(entry->multisampled);
 	}
 	if (!entry->texture)
 	{
@@ -2239,6 +2439,8 @@ void xgpu_metal_texture_resolve(uint32_t texture)
 		pass.colorAttachments[0].storeAction = MTLStoreActionStoreAndMultisampleResolve;
 	}
 	render = [command_buffer() renderCommandEncoderWithDescriptor:pass];
+	if (!format->depth)
+		resolve_in_light(render, entry->multisampled);
 	[render endEncoding];
 	texture_first_use(entry, NO);
 	entry->used = entry->main_written = recording_serial();
@@ -2836,12 +3038,19 @@ uint64_t xgpu_metal_frame_end(uint32_t present)
 	completion that frees that slot. Waiting first would form a cycle. */
 	if (image)
 		host_metal_present_signal(command_buffer(), number);
-	slot->fence = command_buffer_commit(entries || timed ? ^{
-		if (entries)
-			visibility_publish(slot, entries, number);
-		if (timed)
-			profile_log();
-	} : nil);
+	{
+		/* (the frame's own GPU time, under its tag, once its work is done) */
+		uint32_t tag = gpu_frame_tag;
+		void (*listener)(uint32_t tag, uint64_t nanoseconds) = gpu_frame_listener;
+
+		slot->fence = command_buffer_commit(entries || timed || (tag && listener) ? ^{
+			if (entries)
+				visibility_publish(slot, entries, number);
+			if (timed)
+				profile_log();
+			gpu_frame_done(tag, listener);
+		} : nil);
+	}
 	if (image)
 	{
 		id<MTLTexture> next = host_metal_present_exchange(image);
@@ -2962,6 +3171,7 @@ void xgpu_metal_set_targets(uint32_t color, uint32_t color_level, uint32_t color
 			metal.parked.target_width = metal.target_width;
 			metal.parked.target_height = metal.target_height;
 			metal.parked.multisampled = metal.multisampled;
+			metal.parked.encoder_motion = metal.encoder_motion;
 			metal.parked.visibility_pass = metal.visibility_pass;
 			metal.parked.profile_current = profile.current;
 			metal.encoder = nil;
@@ -3018,6 +3228,37 @@ static void visibility_entry_begin(void)
 	metal.visibility_entry = entry;
 	[metal.encoder setVisibilityResultMode:MTLVisibilityResultModeCounting
 		offset:(NSUInteger)slot->visibility_entry_offsets[entry] * sizeof(uint64_t)];
+}
+
+/* whether a pass of the targets as set draws into the motion too: its
+colour target's first level and layer, one sample, the motion's size, in
+the main command buffer */
+static BOOL motion_attached(struct texture_entry *color)
+{
+	struct texture_entry *motion = texture_get(metal.motion);
+
+	return motion && color && metal.color == metal.motion_color && !metal.color_level && !metal.color_layer &&
+		!metal.aside && !(color->multisampled && metal.multisampled) &&
+		motion->texture.width == color->texture.width && motion->texture.height == color->texture.height;
+}
+
+int xgpu_metal_motion_bound(void)
+{
+	return motion_attached(texture_get(metal.color));
+}
+
+void xgpu_metal_set_motion_target(uint32_t motion, uint32_t color)
+{
+	if (!texture_get(motion))
+		motion = color = 0;
+	if (metal.motion == motion && metal.motion_color == color)
+		return;
+	/* (the pass open ends: the next has the attachment, or has not) */
+	if (metal.encoder || metal.aside)
+		pass_end();
+	metal.motion = motion;
+	metal.motion_color = color;
+	metal.motion_clear = motion != 0;
 }
 
 /* the render command encoder for the targets, begun if there is none */
@@ -3085,6 +3326,21 @@ static id<MTLRenderCommandEncoder> encoder(void)
 		if (!metal.aside)
 			color->main_written = serial;
 	}
+	/* (display.temporal_aa: the objects' motion beside the colour) */
+	metal.encoder_motion = NO;
+	if (motion_attached(color))
+	{
+		struct texture_entry *motion = texture_get(metal.motion);
+		MTLRenderPassColorAttachmentDescriptor *attachment = pass.colorAttachments[1];
+
+		attachment.texture = motion->texture;
+		attachment.loadAction = metal.motion_clear ? MTLLoadActionClear : MTLLoadActionLoad;
+		attachment.clearColor = MTLClearColorMake(0.0, 0.0, 0.0, 0.0);
+		attachment.storeAction = MTLStoreActionStore;
+		metal.motion_clear = NO;
+		metal.encoder_motion = YES;
+		motion->used = motion->main_written = serial;
+	}
 	if (depth)
 	{
 		const struct xgpu_metal_format_information *format = format_get(depth->description.format);
@@ -3103,13 +3359,17 @@ static id<MTLRenderCommandEncoder> encoder(void)
 		}
 		texture = depth->multisampled && metal.multisampled ? depth->multisampled : depth->texture;
 
-		pass.depthAttachment.texture = texture;
-		pass.depthAttachment.loadAction = metal.depth_load;
-		pass.depthAttachment.clearDepth = metal.clear_depth;
-		/* (decided as the pass ends: encoder_stores; the main command
-		buffer's passes alone have depth) */
-		pass.depthAttachment.storeAction = metal.aside ? MTLStoreActionStore : MTLStoreActionUnknown;
-		metal.encoder_depth_deferred = !metal.aside;
+		/* (a stencil alone has no depth: XGPU_METAL_FORMAT_S8) */
+		if (format->depth)
+		{
+			pass.depthAttachment.texture = texture;
+			pass.depthAttachment.loadAction = metal.depth_load;
+			pass.depthAttachment.clearDepth = metal.clear_depth;
+			/* (decided as the pass ends: encoder_stores; the main command
+			buffer's passes alone have depth) */
+			pass.depthAttachment.storeAction = metal.aside ? MTLStoreActionStore : MTLStoreActionUnknown;
+			metal.encoder_depth_deferred = !metal.aside;
+		}
 		if (format->stencil)
 		{
 			pass.stencilAttachment.texture = texture;
@@ -3118,7 +3378,7 @@ static id<MTLRenderCommandEncoder> encoder(void)
 			pass.stencilAttachment.storeAction = metal.aside ? MTLStoreActionStore : MTLStoreActionUnknown;
 			metal.encoder_stencil_deferred = !metal.aside;
 		}
-		texture_first_use(depth, metal.depth_load == MTLLoadActionClear &&
+		texture_first_use(depth, (!format->depth || metal.depth_load == MTLLoadActionClear) &&
 			(!format->stencil || metal.stencil_load == MTLLoadActionClear));
 		depth->used = serial;
 		depth->main_written = serial;
@@ -3219,6 +3479,8 @@ static id<MTLRenderPipelineState> clear_pipeline(uint32_t parts)
 		depth && depth->multisampled ? depth->description.samples : 1;
 	/* (the colour's channels written) */
 	key.parts = (uint8_t)(parts & XGPU_METAL_CLEAR_COLOR ? parts & XGPU_METAL_CLEAR_CHANNELS : 0);
+	/* (a pass with display.temporal_aa's motion: drawn through it) */
+	key.motion_format = metal.encoder_motion ? texture_get(metal.motion)->description.format : 0;
 	data = [NSData dataWithBytes:&key length:sizeof(key)];
 	state = metal.clear_pipelines[data];
 	if (state)
@@ -3248,7 +3510,7 @@ void xgpu_metal_clear(const int32_t (*rectangles)[4], uint32_t count, uint32_t p
 	depth = 1.0f - depth;
 	if (!color_entry || !(parts & XGPU_METAL_CLEAR_CHANNELS))
 		parts &= ~(uint32_t)XGPU_METAL_CLEAR_COLOR;
-	if (!depth_entry)
+	if (!depth_entry || !format_get(depth_entry->description.format)->depth)
 		parts &= ~(uint32_t)XGPU_METAL_CLEAR_DEPTH;
 	if (!has_stencil)
 		parts &= ~(uint32_t)XGPU_METAL_CLEAR_STENCIL;
@@ -3352,6 +3614,10 @@ void xgpu_metal_set_pipeline(const struct xgpu_metal_pipeline *pipeline)
 {
 	if (metal.have_pipeline && !memcmp(&metal.pipeline, pipeline, sizeof(*pipeline)))
 		return;
+	/* (display.temporal_aa: a pipeline that writes the motion reads the
+	previous frame's registers too, in a buffer of its own) */
+	if (!metal.have_pipeline || !metal.pipeline.motion_mask != !pipeline->motion_mask)
+		metal.dirty |= _dirty_vertex_constants;
 	metal.pipeline = *pipeline;
 	metal.have_pipeline = YES;
 	metal.dirty |= _dirty_pipeline | _dirty_depth_stencil | _dirty_raster | _dirty_streams;
@@ -3711,10 +3977,10 @@ void xgpu_metal_set_texture(uint32_t stage, uint32_t texture, const struct xgpu_
 
 void xgpu_metal_set_vertex_constants(uint32_t first, uint32_t count, const float *values)
 {
-	if (first >= XGPU_METAL_VERTEX_CONSTANT_COUNT)
+	if (first >= 2 * XGPU_METAL_VERTEX_CONSTANT_COUNT)
 		return;
-	if (count > XGPU_METAL_VERTEX_CONSTANT_COUNT - first)
-		count = XGPU_METAL_VERTEX_CONSTANT_COUNT - first;
+	if (count > 2 * XGPU_METAL_VERTEX_CONSTANT_COUNT - first)
+		count = 2 * XGPU_METAL_VERTEX_CONSTANT_COUNT - first;
 	memcpy(metal.vertex_constants[first], values, count * 4 * sizeof(float));
 	metal.dirty |= _dirty_vertex_constants;
 }
@@ -3801,7 +4067,16 @@ static BOOL draw_state_apply(id<MTLRenderCommandEncoder> render)
 
 	if (dirty & _dirty_pipeline)
 	{
-		id<MTLRenderPipelineState> state = pipeline_state_get(&metal.pipeline);
+		struct xgpu_metal_pipeline pipeline = metal.pipeline;
+		id<MTLRenderPipelineState> state;
+
+		/* (display.temporal_aa: the pass's motion attachment, which a
+		pipeline's must match: drawn through, where the caller had none) */
+		if (!metal.encoder_motion)
+			pipeline.motion_format = pipeline.motion_mask = 0;
+		else if (!pipeline.motion_format)
+			pipeline.motion_format = texture_get(metal.motion)->description.format;
+		state = pipeline_state_get(&pipeline);
 
 		if (!state)
 			return NO;
@@ -3863,8 +4138,20 @@ static BOOL draw_state_apply(id<MTLRenderCommandEncoder> render)
 	if (dirty & _dirty_blend_color)
 		[render setBlendColorRed:metal.dynamic.blend_color[0] green:metal.dynamic.blend_color[1]
 			blue:metal.dynamic.blend_color[2] alpha:metal.dynamic.blend_color[3]];
-	if (dirty & _dirty_vertex_constants)
-		[render setVertexBytes:metal.vertex_constants length:sizeof(metal.vertex_constants)
+	if ((dirty & _dirty_vertex_constants) && metal.pipeline.motion_mask && metal.encoder_motion)
+	{
+		/* (display.temporal_aa: the 192 and the previous frame's, 6 KB,
+		more than setVertexBytes takes: the frame's upload ring) */
+		struct xgpu_metal_source source = xgpu_metal_stream(metal.vertex_constants, sizeof(metal.vertex_constants));
+		NSUInteger offset = 0;
+		id<MTLBuffer> buffer = source_buffer(source, &offset);
+
+		if (!buffer)
+			return NO;
+		[render setVertexBuffer:buffer offset:offset atIndex:XGPU_METAL_BUFFER_VERTEX_CONSTANTS];
+	}
+	else if (dirty & _dirty_vertex_constants)
+		[render setVertexBytes:metal.vertex_constants length:XGPU_METAL_VERTEX_CONSTANT_COUNT * sizeof(metal.vertex_constants[0])
 			atIndex:XGPU_METAL_BUFFER_VERTEX_CONSTANTS];
 	if (dirty & _dirty_constant_attributes)
 		[render setVertexBytes:metal.constant_attributes length:sizeof(metal.constant_attributes)

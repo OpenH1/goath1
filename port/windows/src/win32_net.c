@@ -224,6 +224,18 @@ int posix_socket_getpeername(int socket, void *address, int *address_length)
 	return succeed(getpeername((SOCKET)socket, address, address_length));
 }
 
+/* (not known here: debug.network_latency_trace takes the read's time) */
+unsigned long long posix_socket_received_time(int socket)
+{
+	(void)socket;
+	return 0;
+}
+
+unsigned long long posix_realtime_nanoseconds(void)
+{
+	return 0;
+}
+
 static int fill_set(fd_set *set, const int *descriptors, int count)
 {
 	int index, filled = 0;

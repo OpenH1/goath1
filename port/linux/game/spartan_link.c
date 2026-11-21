@@ -2,12 +2,19 @@
 SPARTAN_LINK.C
 
 The HUD's Spartan link (display.spartan_link): live feeds of the living
-teammates' views in the HUD's top line, between the ammunition's panel at
-the top left and the shield's at the top right. A key shows and hides it
+teammates' views in a row at the bottom of the window, beside the motion
+tracker (right of it, within its height, so clear of the text chat and the
+messages above it, the panels at the top, and the bottom right's timer;
+where the tracker is hidden, where it would be). A key shows and hides it
 (controls.spartan_link, B; on a controller in the stock layouts, D-pad
-Down), off at the start of every game. Co-op (network and split screen)
-and team games only, teammates only; a free-for-all game, and a Pro 2V2
-game, have none, and the key says so on the HUD.
+Down), and it stays as the player left it from game to game
+(display.spartan_link_shown, their profile's own). The first time a player
+is in a game that has it, its key is shown under the tracker's row, once a
+profile (display.spartan_link_hint). Co-op (network and split screen) and
+team games only, teammates only; a free-for-all game, a Pro 2V2 game, and a
+team game whose host turned it off (game.spartan_link: the lobby's and Host
+Controls' SPARTAN LINK, network_standard_spartan_link_allowed) have none,
+and the key says so on the HUD.
 
 Each feed is the teammate's first-person view as this machine has the
 world: their eye (where their body is drawn, render_interpolation.c), their
@@ -23,9 +30,12 @@ their own machine) and from their unit as this machine has it each tick
 (the weapon in their hand, their throttle's moving overlay, their aim's
 turning sway). It is hidden while they zoom, as on their screen. Drawn at
 the frame's time, so it moves every frame though the feed is drawn in turn. A teammate in a seat whose camera follows the vehicle
-is seen from behind. Under each: their name, their shield, their health
-under it (the HUD's health colours, flashing as the HUD's does while their
-shield is down) and their distance.
+is seen from behind. Framed as upright rectangles in the motion tracker's
+own color and translucency, the image in its true colors. Under each, within
+its width: their name at the left, and at the right their shield and
+health as their unit's HUD draws them (its interface's shield and health
+meters and their panels, made small, flashing as the HUD's do; thin bars
+where a map's HUD has no meter).
 
 On each feed, the teammate's reticle: a dot in a thin ring where they aim,
 in the HUD's blue, red with an enemy under it as Halo's turns red (a living
@@ -36,11 +46,27 @@ feed looking along their aim; from behind them in a gunner's seat, the
 point their aim meets, seen through the feed's camera. None in a seat
 without a weapon (a driver's or a passenger's), nor while they are down.
 
-A teammate who dies is shown down for a moment, then dropped;
-with none left alive the link closes. While this player is dead the link
-is hidden (spectating fills the screen: dead_spectate.c) and comes back
-with the respawn. Split screen: each window has its own link, of its own
-player's teammates.
+A teammate who dies is shown down for a moment, then dropped, and comes
+back as they respawn: the link stays on, with none alive showing nothing,
+until the player turns it off. While this player is dead the link is
+hidden (spectating fills the screen: dead_spectate.c) and comes back with
+the respawn. Split screen: each window has its own link, of its own
+player's teammates, beside its own tracker.
+
+A teammate's ping (network_markers.c: one this player is shown, as it
+reaches every machine that shows it) calls their feed up: with the row
+hidden by its key, the pinging teammate's feed comes up in it for
+SPARTAN_LINK_PING_MILLISECONDS (4 s, half the world marker's time), the
+latest ping's first, up to four (only pings since the player last hid it;
+a teammate who dies meanwhile drops out); with the row showing, their feed
+is not added again but its frame brightens for that time (the tracker's
+color paler and whole, the edge thicker, the glow wider), as a popped
+feed's does. None where the link is not (SPARTAN LINK off in Settings, the
+host's off, a game without it), nor for the player's own pings. On the
+feed, while the ping is drawn in the world, its arrow (the world's, in the
+pinger's color and fade, behind-a-wall look from the teammate's eye) where
+the pinged point or object is in their view, sized to the feed and over the
+object as it moves; none where it is off the feed's picture.
 
 The cost: one feed is drawn a frame (render.c's render_frame, before the
 window's view), each kept in its own images between (d3d8_device.c's extra
@@ -51,10 +77,12 @@ detail chosen for that size. So the frame pays for about one small view,
 however many feeds there are; with the link hidden, nothing.
 
 Only what this machine draws: nothing is sent, the game state is not
-touched (no seed is taken, no effect or sound made: the feeds' slots are
-first_person_weapons.c's own, beside the game state, with their own idle
-poses' generator), and the network version is unchanged. The feeds' slots'
-animations step once a tick, a slot's few nodes, for each linked teammate.
+touched (no seed is taken, no effect, sound or HUD message made: the
+feeds' slots are first_person_weapons.c's own, beside the game state, with
+their own idle poses' generator; the key's hint and the refusals are drawn
+here). The feeds' slots' animations step once a tick, a slot's few nodes,
+for each linked teammate. Only the host's word on a team game's link goes
+over the network, in the game record (OpenH1's protocol version 36).
 */
 
 #include "cseries.h"
@@ -68,6 +96,8 @@ animations step once a tick, a slot's few nodes, for each linked teammate.
 #include "game/players.h"
 #include "interface/hud.h"
 #include "interface/hud_messaging.h"
+#include "interface/hud_draw.h"
+#include "interface/player_ui.h"
 #include "interface/ui_widget.h"
 #include "game/game_allegiance.h"
 #include "interface/hud_definitions.h"
@@ -98,7 +128,9 @@ animations step once a tick, a slot's few nodes, for each linked teammate.
 #include "controller_remap.h"
 #include "far_clip.h"
 #include "network_coop.h"
+#include "network_markers.h"
 #include "network_standard.h"
+#include "player_settings.h"
 #include "spartan_link.h"
 #include "royale.h"
 
@@ -106,6 +138,7 @@ animations step once a tick, a slot's few nodes, for each linked teammate.
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <wctype.h>
 
 /* ---------- prototypes */
 
@@ -137,11 +170,21 @@ void render_interpolation_unit_camera_position(long unit_index, real_point3d *po
 real render_interpolation_fraction(void);
 real render_interpolation_first_person_feed_phase(void);
 
+/* source/interface/hud_nav_points.c: a ping's arrow alone, its middle at
+center and height tall */
+boolean hud_render_nav_point_arrow(short nav_index, short waypoint_type, real_point2d const *center, real height,
+	real_rgb_color const *color, real alpha);
+
 /* port/linux/src/xinput_sdl.c */
 int halo_spartan_link_pad_pressed(short port);
 
 /* port/linux/game/network_chat.c */
 boolean network_chat_typing(void);
+
+/* port/linux/src/port_config.c: a setting written to config.toml, or to a
+player profile's own settings */
+int config_write(const char *name, const char *value);
+int config_profile_write(const char *folder, const char *name, const char *value);
 
 /* ---------- constants */
 
@@ -153,27 +196,48 @@ boolean network_chat_typing(void);
 and a refusal's line shown (milliseconds) */
 #define SPARTAN_LINK_DOWN_MILLISECONDS 1500
 #define SPARTAN_LINK_REFUSAL_MILLISECONDS 2000
+/* how long the key's hint is shown, the first time */
+#define SPARTAN_LINK_HINT_MILLISECONDS 8000
 
-/* the layout, in the screen's units of a window 480 tall (the HUD's): each
-feed's width for one to four feeds, the gap between them, the top (from the
-view's top edge, not the title-safe frame's), and the row under each (name,
-shield, distance). At 1600x900 these are the design's 300, 260, 228 and 210
-pixels */
-static real const spartan_link_widths[SPARTAN_LINK_FEEDS] = { 160.0f, 138.7f, 121.6f, 112.0f };
+/* the layout, in the screen's units of a window 480 tall (the HUD's): the
+narrowest feed's width (a row of four; a wider row of fewer is as tall),
+the gap between them, and the row under each (name, shield and health) */
+#define SPARTAN_LINK_NARROWEST 112.0f
 #define SPARTAN_LINK_GAP 6.4f
-#define SPARTAN_LINK_TOP 11.0f
-#define SPARTAN_LINK_ROW 11.0f
-/* what the HUD's panels take of each side of the top line, which the feeds
-stay clear of (the stock HUD's and the high-res HUD's, at the HUD's scale) */
-#define SPARTAN_LINK_PANEL_LEFT 180.0f
-#define SPARTAN_LINK_PANEL_RIGHT 198.0f
-/* the frame's angled ends: how far in its top corners are, of its height */
-#define SPARTAN_LINK_SLANT 0.12f
+#define SPARTAN_LINK_ROW 12.0f
+/* the gap between a feed's picture and the strip of its name and meters */
+#define SPARTAN_LINK_STRIP_GAP 2.5f
+/* the name's look: the motion tracker's own range label's (its "15m", a
+picture in the tracker's bitmap, pale and translucent): the tracker's color
+made this much paler, at this opacity */
+#define SPARTAN_LINK_NAME_PALER 0.35f
+#define SPARTAN_LINK_NAME_ALPHA 0.75f
+/* the row's room: from the tracker's right (a gap of SPARTAN_LINK_TRACKER_GAP
+of the HUD's units) to this much of the window's width, the bottom right
+left to its timer and input display (display.match_timer, input_display.c) */
+#define SPARTAN_LINK_TRACKER_GAP 8.0f
+#define SPARTAN_LINK_ROOM_RIGHT 0.76f
+/* where the motion tracker would be while it is not drawn (its circle's
+middle from the window's left and bottom, and its radius, in the HUD's units
+at its scale): the stock HUD's, as drawn at 16:9 (left 63, middle 104, 403 of
+an 854x480 view whose window is 726x408) */
+#define SPARTAN_LINK_TRACKER_X 40.0f
+#define SPARTAN_LINK_TRACKER_BOTTOM 41.0f
+#define SPARTAN_LINK_TRACKER_RADIUS 41.0f
 /* the teammate's reticle on their feed: its ring's radius, of the feed's
 height, and its curve's steps; and its red, on an enemy (Halo's reticle's) */
 #define SPARTAN_LINK_RETICLE_SIZE 0.05f
 #define SPARTAN_LINK_RETICLE_SEGMENTS 16
 #define SPARTAN_LINK_RETICLE_RED 0xF2FF3424UL
+/* a teammate's ping (network_markers.c): how long it brings their feed up
+while the row is hidden, and brightens their feed's frame (milliseconds),
+the brightening fading out over the last of it; and its arrow on their feed:
+its height, of the feed's, far off (nearer, as the world's arrow grows,
+up to the most) */
+#define SPARTAN_LINK_PING_MILLISECONDS 4000
+#define SPARTAN_LINK_PING_FADE_MILLISECONDS 1000
+#define SPARTAN_LINK_PING_HEIGHT 0.16f
+#define SPARTAN_LINK_PING_HEIGHT_MOST 0.3f
 
 /* ---------- structures */
 
@@ -188,6 +252,9 @@ struct spartan_link_feed
 	unsigned long width, height;
 	/* since when their health has flashed, their shield down (0: not) */
 	unsigned long health_flash_at;
+	/* the game's tick their shield's and their health's HUD pictures began
+	flashing (the shield low, the shield down), as the HUD's do (0: not) */
+	long shield_flash_tick, health_flash_tick;
 	/* (debug.spartan_link_log's: the reticle (0 none, 1 blue, 2 red) and
 	the health last logged) */
 	short logged_state;
@@ -199,12 +266,34 @@ struct spartan_link_feed
 
 struct spartan_link_window
 {
+	/* the player has it on (display.spartan_link_shown, read as each game
+	starts), whether any feed shows */
 	boolean open;
+	/* (hidden) brought up by teammates' pings, and when the player last
+	hid it (the pings before that bring nothing up) */
+	boolean popped;
+	unsigned long closed_at;
 	short count;
 	struct spartan_link_feed feeds[SPARTAN_LINK_FEEDS];
-	/* a refusal's line (free for all, Pro 2V2), and since when */
-	wchar_t const *refusal;
-	unsigned long refusal_at;
+	/* a line under the tracker's row (a refusal: free for all, Pro 2V2, the
+	host's off; the key's hint), since when, and for how long */
+	wchar_t line[64];
+	unsigned long line_at;
+	unsigned long line_milliseconds;
+	/* the key's hint asked about in this game (once a game: once a profile
+	by display.spartan_link_hint) */
+	boolean hint_checked;
+};
+
+/* the motion tracker as the HUD last drew it in a window (hud_unit.c): its
+picture's left and its circle's middle, in the view's units, and the view's
+size and players it was drawn for */
+struct spartan_link_tracker
+{
+	boolean valid;
+	real left, center_x, center_y;
+	short view_width, view_height;
+	short players;
 };
 
 static struct
@@ -218,6 +307,7 @@ static struct
 	boolean debug_open;
 	long logged_tick;
 	struct spartan_link_window windows[MAXIMUM_LOCAL_PLAYERS];
+	struct spartan_link_tracker trackers[MAXIMUM_LOCAL_PLAYERS];
 	boolean key_held;
 	/* the feed drawn this frame (local player, feed; NONE none), and the
 	one drawn last, which the next follows round */
@@ -228,10 +318,14 @@ static struct
 	boolean drawing;
 	long hidden_unit;
 	long posed_unit;
-	/* the views drawn in this game (to free them as it ends) */
+	/* the views drawn in this game (to free them as it ends), and whose
+	view each last drew (a feed moved to another's view waits for its own) */
 	unsigned long views_used;
-	/* (debug.spartan_link_log: a red reticle's frame saved, once a run) */
+	long view_players[1 + MAXIMUM_LOCAL_PLAYERS * SPARTAN_LINK_FEEDS];
+	/* (debug.spartan_link_log: a red reticle's frame saved, once a run, and
+	a ping's on a feed) */
 	boolean red_saved;
+	boolean ping_saved;
 } spartan_link = { FALSE, 0, (unsigned long)-1, TRUE, 1.0f, FALSE };
 
 /* ---------- private code */
@@ -266,7 +360,8 @@ static boolean spartan_link_pro_doubles(
 }
 
 /* whether this game has a link: co-op (a campaign, network or split
-screen) or a team game, in play, and not Pro 2V2 */
+screen) or a team game, in play, not Pro 2V2, and not one whose host turned
+it off */
 static boolean spartan_link_game(
 	void)
 {
@@ -281,7 +376,7 @@ static boolean spartan_link_game(
 	if (royale_active())
 		return game_engine_in_play() && !spartan_link_pro_doubles();
 	return game_engine_running() ? game_engine_has_teams() && game_engine_in_play() &&
-		!spartan_link_pro_doubles() : TRUE;
+		!spartan_link_pro_doubles() && network_standard_spartan_link_allowed() : TRUE;
 }
 
 /* other is self's living teammate (co-op: anyone) */
@@ -301,6 +396,93 @@ static boolean spartan_link_teammate(
 	if (royale_active())
 		return royale_squadmate_of(self) == other;
 	return !game_engine_running() || player->team_index == player_get(self)->team_index;
+}
+
+/* a teammate's ping the window's player is shown (their own pings never:
+the link has no feed of theirs), come within SPARTAN_LINK_PING_MILLISECONDS:
+TRUE with its age (milliseconds) */
+static boolean spartan_link_pinged(
+	short local_player_index,
+	long player_index,
+	unsigned long *age)
+{
+	struct network_marker_shown ping;
+
+	if (player_index == NONE || player_index == local_player_get_player_index(local_player_index) ||
+		!network_markers_ping_shown(local_player_index, player_index, &ping) ||
+		ping.age >= SPARTAN_LINK_PING_MILLISECONDS)
+	{
+		return FALSE;
+	}
+	if (age)
+		*age = ping.age;
+	return TRUE;
+}
+
+/* the hidden window's feeds: the teammates whose pings came since it was
+hidden, for SPARTAN_LINK_PING_MILLISECONDS each, the latest first, up to
+four (each kept as it was while it stays, so its image and meters go on) */
+static void spartan_link_window_pings(
+	short local_player_index,
+	unsigned long now)
+{
+	struct spartan_link_window *window = &spartan_link.windows[local_player_index];
+	long self = local_player_get_player_index(local_player_index);
+	struct spartan_link_feed feeds[SPARTAN_LINK_FEEDS];
+	unsigned long ages[SPARTAN_LINK_FEEDS];
+	struct data_iterator iterator;
+	struct player_datum *player;
+	short count = 0;
+	short index;
+
+	if (self == NONE)
+	{
+		window->count = 0;
+		window->popped = FALSE;
+		return;
+	}
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		unsigned long age;
+		short at;
+
+		if (!spartan_link_teammate(self, iterator.datum_index) ||
+			!spartan_link_pinged(local_player_index, iterator.datum_index, &age) ||
+			(window->closed_at && age > now - window->closed_at))
+		{
+			continue;
+		}
+		/* (in its place by age, the latest first) */
+		for (at = count; at > 0 && ages[at - 1] > age; at--)
+		{
+			if (at < SPARTAN_LINK_FEEDS)
+			{
+				feeds[at] = feeds[at - 1];
+				ages[at] = ages[at - 1];
+			}
+		}
+		if (at >= SPARTAN_LINK_FEEDS)
+			continue;
+		csmemset(&feeds[at], 0, sizeof(feeds[at]));
+		feeds[at].player_index = iterator.datum_index;
+		feeds[at].unit_index = player->unit_index;
+		ages[at] = age;
+		for (index = 0; index < window->count; index++)
+		{
+			if (window->feeds[index].player_index == iterator.datum_index &&
+				window->feeds[index].unit_index == player->unit_index)
+			{
+				feeds[at] = window->feeds[index];
+				feeds[at].down_at = 0;
+			}
+		}
+		if (count < SPARTAN_LINK_FEEDS)
+			count++;
+	}
+	csmemcpy(window->feeds, feeds, sizeof(feeds[0]) * count);
+	window->count = count;
+	window->popped = count > 0;
 }
 
 /* the window's feeds brought up to date: the downed kept for a moment,
@@ -365,12 +547,8 @@ static void spartan_link_window_update(
 		window->feeds[window->count].unit_index = player->unit_index;
 		window->count++;
 	}
-	/* (nobody left alive: the link closes; debug.spartan_link_open's opens
-	again as they come) */
-	if (window->open && window->count == 0 && !spartan_link.debug_open)
-		window->open = FALSE;
-	if (spartan_link.debug_open && window->count > 0)
-		window->open = TRUE;
+	/* (nobody left alive: the link stays on, showing nothing, and each
+	teammate comes back into it as they respawn; only its key turns it off) */
 }
 
 /* the window's player is alive, and sees the link */
@@ -380,7 +558,8 @@ static boolean spartan_link_shown(
 	long self;
 
 	if (local_player_index < 0 || local_player_index >= MAXIMUM_LOCAL_PLAYERS ||
-		!spartan_link.windows[local_player_index].open || !spartan_link_game())
+		(!spartan_link.windows[local_player_index].open && !spartan_link.windows[local_player_index].popped) ||
+		!spartan_link_game())
 	{
 		return FALSE;
 	}
@@ -388,8 +567,42 @@ static boolean spartan_link_shown(
 	return self != NONE && player_get(self)->unit_index != NONE;
 }
 
-/* a press of the key for a local player: the link shown or hidden, or why
-there is none */
+/* a line under the tracker's row, for a while */
+static void spartan_link_line(
+	struct spartan_link_window *window,
+	wchar_t const *text,
+	unsigned long now,
+	unsigned long milliseconds)
+{
+	ustrncpy(window->line, text, NUMBEROF(window->line) - 1);
+	window->line[NUMBEROF(window->line) - 1] = 0;
+	window->line_at = now;
+	window->line_milliseconds = milliseconds;
+}
+
+/* one of a local player's own settings written: their profile's (its
+settings.toml), else config.toml's, as Settings writes it (menu_functions.c's
+setting_write) */
+static void spartan_link_setting_write(
+	short local_player_index,
+	char const *name,
+	boolean value)
+{
+	char folder[1024];
+
+	if (player_settings_profile_folder(player_ui_get_active_player_profile_index(local_player_index), folder,
+		sizeof(folder)))
+	{
+		config_profile_write(folder, name, value ? "true" : "false");
+	}
+	else
+	{
+		config_write(name, value ? "true" : "false");
+	}
+}
+
+/* a press of the key for a local player: the link on or off (and so it
+stays, from game to game), or why there is none */
 static void spartan_link_toggle(
 	short local_player_index,
 	unsigned long now)
@@ -402,30 +615,91 @@ static void spartan_link_toggle(
 		return;
 	}
 	window = &spartan_link.windows[local_player_index];
-	window->refusal = NULL;
+	window->line_milliseconds = 0;
 	if (!spartan_link_game())
 	{
-		window->refusal = spartan_link_pro_doubles() ? L"Spartan link is off in Pro 2v2" :
-			L"Spartan link: no teammates in free for all";
-		window->refusal_at = now;
+		spartan_link_line(window, spartan_link_pro_doubles() ? L"Spartan link is off in Pro 2v2" :
+			!network_standard_spartan_link_allowed() && game_engine_running() && game_engine_has_teams() ?
+			L"Spartan link: the host turned it off" : L"Spartan link: no teammates in free for all", now,
+			SPARTAN_LINK_REFUSAL_MILLISECONDS);
 		if (spartan_link.log)
 		{
-			platform_log("spartan link: local player %d: %ls", (int)local_player_index, window->refusal);
+			platform_log("spartan link: local player %d: %ls", (int)local_player_index, window->line);
 			halo_screenshot_named("spartan_link_refusal");
 		}
 		return;
 	}
-	spartan_link_window_update(local_player_index, now);
-	if (!window->open && window->count == 0)
-	{
-		window->refusal = L"Spartan link: no teammates alive";
-		window->refusal_at = now;
-		return;
-	}
 	window->open = !window->open;
+	spartan_link_setting_write(local_player_index, "display.spartan_link_shown", window->open);
+	/* (hidden: only the pings from now on bring feeds up) */
+	window->popped = FALSE;
+	if (!window->open)
+	{
+		window->count = 0;
+		window->closed_at = now ? now : 1;
+	}
+	if (window->open)
+	{
+		spartan_link_window_update(local_player_index, now);
+		/* (on with nobody to show: said, the feeds coming as they spawn) */
+		if (window->count == 0)
+			spartan_link_line(window, L"Spartan link on: no teammates alive", now, SPARTAN_LINK_REFUSAL_MILLISECONDS);
+	}
 	if (spartan_link.log)
 		platform_log("spartan link: local player %d %s, %d feeds", (int)local_player_index,
 			window->open ? "open" : "closed", (int)window->count);
+}
+
+/* the key's hint, the first time a player is alive in a game that has the
+link and it is off: their key (the keyboard's while the keyboard and mouse
+play, the first player's; else the controller's D-pad Down), once a
+profile */
+static void spartan_link_hint(
+	short local_player_index,
+	unsigned long now)
+{
+	struct spartan_link_window *window = &spartan_link.windows[local_player_index];
+	long self = local_player_get_player_index(local_player_index);
+	char name[64];
+	wchar_t text[64];
+	short index;
+
+	if (window->hint_checked || self == NONE || player_get(self)->unit_index == NONE || !spartan_link_game())
+		return;
+	window->hint_checked = TRUE;
+	if (config_player_boolean(local_player_index, "display.spartan_link_hint"))
+		return;
+	spartan_link_setting_write(local_player_index, "display.spartan_link_hint", TRUE);
+	/* (one who has it on knows it) */
+	if (window->open)
+		return;
+	name[0] = 0;
+	if (local_player_index == controller_remap_local_player(0) || controller_remap_local_player(0) == NONE)
+	{
+		if (halo_keyboard_prompts() && !halo_keyboard_action_name(HALO_KEYBOARD_SPARTAN_LINK, name, sizeof(name)))
+			name[0] = 0;
+	}
+	if (!name[0])
+		csstrcpy(name, "D-pad Down");
+	for (index = 0; name[index] && index < (short)NUMBEROF(text) - 1; index++)
+		text[index] = (wchar_t)towupper((unsigned char)name[index]);
+	text[index] = 0;
+	ustrncat(text, L": SPARTAN LINK", NUMBEROF(text) - 1 - ustrlen(text));
+	spartan_link_line(window, text, now, SPARTAN_LINK_HINT_MILLISECONDS);
+	if (spartan_link.log)
+		platform_log("spartan link: local player %d hint: %ls", (int)local_player_index, window->line);
+}
+
+/* whether a feed's view holds its teammate's image (drawn, and last for
+them: a feed moved to another's place by a drop or a ping has none yet) */
+static boolean spartan_link_feed_image(
+	short local_player_index,
+	short feed)
+{
+	int view = SPARTAN_LINK_VIEW(local_player_index, feed);
+
+	return halo_view_drawn(view) &&
+		spartan_link.view_players[view] == spartan_link.windows[local_player_index].feeds[feed].player_index;
 }
 
 /* the feed drawn this frame: one a frame of every window's, a feed whose
@@ -457,7 +731,7 @@ static void spartan_link_schedule(
 			if (window->feeds[feed].down_at)
 				continue;
 			distance = slot > last ? slot - last : slot - last + MAXIMUM_LOCAL_PLAYERS * SPARTAN_LINK_FEEDS;
-			if (!halo_view_drawn(SPARTAN_LINK_VIEW(local_player_index, feed)))
+			if (!spartan_link_feed_image(local_player_index, feed))
 				distance -= MAXIMUM_LOCAL_PLAYERS * SPARTAN_LINK_FEEDS;
 			if (distance < best_distance)
 			{
@@ -471,13 +745,71 @@ static void spartan_link_schedule(
 	spartan_link.due_feed = best_feed;
 }
 
+/* the window's motion tracker in the view's units: its circle's middle and
+radius, where the HUD last drew it in a view of this size (dead, or a
+gametype without it, too); where it has not been, where the stock HUD
+draws it */
+static void spartan_link_tracker_place(
+	short local_player_index,
+	struct render_camera const *camera,
+	real *center_x,
+	real *center_y,
+	real *radius)
+{
+	struct spartan_link_tracker const *tracker = &spartan_link.trackers[local_player_index];
+	short view_width = (short)(camera->window_bounds.x1 - camera->window_bounds.x0);
+	short view_height = (short)(camera->window_bounds.y1 - camera->window_bounds.y0);
+
+	if (tracker->valid && tracker->view_width == view_width && tracker->view_height == view_height &&
+		tracker->players == local_player_count() && tracker->center_x > tracker->left)
+	{
+		*center_x = tracker->center_x;
+		*center_y = tracker->center_y;
+		*radius = tracker->center_x - tracker->left;
+	}
+	else
+	{
+		real hud_scale = hud_globals_get_scale(local_player_count() > 1);
+
+		*center_x = (real)(camera->window_bounds.x0 - camera->viewport_bounds.x0) + SPARTAN_LINK_TRACKER_X * hud_scale;
+		*center_y = (real)(camera->window_bounds.y1 - camera->viewport_bounds.y0) -
+			SPARTAN_LINK_TRACKER_BOTTOM * hud_scale;
+		*radius = SPARTAN_LINK_TRACKER_RADIUS * hud_scale;
+	}
+}
+
+/* the room of the window's row beside its tracker, in the view's units: its
+left, right, top and bottom (the tracker's circle's height), and the scale
+of the units the design's are in */
+static void spartan_link_room(
+	short local_player_index,
+	struct render_camera const *camera,
+	real_rectangle2d *room,
+	real *scale)
+{
+	real frame_x0 = (real)(camera->window_bounds.x0 - camera->viewport_bounds.x0);
+	real width = (real)(camera->window_bounds.x1 - camera->window_bounds.x0);
+	real height = (real)(camera->window_bounds.y1 - camera->window_bounds.y0);
+	real hud_scale = hud_globals_get_scale(local_player_count() > 1);
+	real center_x, center_y, radius;
+
+	spartan_link_tracker_place(local_player_index, camera, &center_x, &center_y, &radius);
+	/* (a split screen's window keeps the HUD's size, and the text most of
+	its) */
+	*scale = PIN(height / 480.0f * 1.5f, 0.6f, 1.0f);
+	room->x0 = center_x + radius + SPARTAN_LINK_TRACKER_GAP * hud_scale;
+	room->x1 = MAX(frame_x0 + width * SPARTAN_LINK_ROOM_RIGHT, room->x0);
+	room->y0 = center_y - radius;
+	room->y1 = center_y + radius;
+}
+
 /* the window's feeds' layout: each feed's rectangle in the view's units, from
 its top left (left, top, right, bottom), and the scale of the units the
-design's are in. The HUD's panels are placed in the window's title-safe frame
-(its window bounds, 36 of 480 below the top of a whole screen's view), so the
-feeds are sized and placed across between the panels in it; but they hang
-from the view's own top edge, up in the panels' line, not under the frame's
-inset */
+design's are in. A row beside the motion tracker, from its right, each feed
+with its name's row under it within the tracker's circle's height (so the
+text chat and the messages above the tracker stay clear), as tall as
+display.spartan_link's size takes of that (large all of it), narrower where
+the window's room is too narrow for them */
 static short spartan_link_layout(
 	short local_player_index,
 	struct render_camera const *camera,
@@ -485,37 +817,35 @@ static short spartan_link_layout(
 	real *scale)
 {
 	struct spartan_link_window *window = &spartan_link.windows[local_player_index];
-	/* (the title-safe frame in the view's units) */
-	real frame_x0 = (real)(camera->window_bounds.x0 - camera->viewport_bounds.x0);
-	real width = (real)(camera->window_bounds.x1 - camera->window_bounds.x0);
-	real height = (real)(camera->window_bounds.y1 - camera->window_bounds.y0);
-	real feed_width, total, room, left;
+	real_rectangle2d room;
+	real feed_width, feed_height, total, row, gap;
 	short count = window->count;
 	short index;
 
-	if (count <= 0 || width <= 0.0f || height <= 0.0f)
-		return 0;
-	/* (a split screen's window keeps the HUD's size, and the feeds most of
-	theirs) */
-	*scale = PIN(height / 480.0f * 1.5f, 0.6f, 1.0f);
-	feed_width = spartan_link_widths[count - 1] * spartan_link.size * *scale;
-	total = feed_width * count + SPARTAN_LINK_GAP * *scale * (count - 1);
-	room = width - (SPARTAN_LINK_PANEL_LEFT + SPARTAN_LINK_PANEL_RIGHT) * *scale;
-	if (total > room && room > 0.0f)
+	if (count <= 0 || camera->window_bounds.x1 <= camera->window_bounds.x0 ||
+		camera->window_bounds.y1 <= camera->window_bounds.y0)
 	{
-		real fit = room / total;
-
-		feed_width *= fit;
-		total = room;
+		return 0;
 	}
-	/* (centred between the panels) */
-	left = frame_x0 + SPARTAN_LINK_PANEL_LEFT * *scale + (room - total) * 0.5f;
+	spartan_link_room(local_player_index, camera, &room, scale);
+	row = SPARTAN_LINK_ROW * *scale;
+	gap = SPARTAN_LINK_GAP * *scale;
+	/* (medium and large fill the tracker's height, the strip included:
+	the row's top and bottom the tracker's circle's) */
+	feed_height = (room.y1 - room.y0 - row) * MIN(spartan_link.size, 1.0f);
+	feed_width = feed_height * 16.0f / 9.0f;
+	total = feed_width * count + gap * (count - 1);
+	if (total > room.x1 - room.x0)
+	{
+		feed_width = MAX(room.x1 - room.x0 - gap * (count - 1), 0.0f) / count;
+		feed_height = feed_width * 9.0f / 16.0f;
+	}
 	for (index = 0; index < count; index++)
 	{
-		rectangles[index].x0 = left + index * (feed_width + SPARTAN_LINK_GAP * *scale);
+		rectangles[index].x0 = room.x0 + index * (feed_width + gap);
 		rectangles[index].x1 = rectangles[index].x0 + feed_width;
-		rectangles[index].y0 = SPARTAN_LINK_TOP * *scale;
-		rectangles[index].y1 = rectangles[index].y0 + feed_width * 9.0f / 16.0f;
+		rectangles[index].y1 = room.y1 - row;
+		rectangles[index].y0 = rectangles[index].y1 - feed_height;
 	}
 	return count;
 }
@@ -962,8 +1292,39 @@ static void spartan_link_text(
 	rasterizer_text_set_scale(1.0f, 0.0f, 0.0f);
 }
 
-/* the frame about a feed: its image (or, never drawn, dark glass), a tint,
-an edge of the HUD's colour, its top corners cut in */
+/* the motion tracker's own color in a window: its picture's tint in the
+local player's unit HUD (the motion sensor's background), its alpha its
+translucency; a tint without a hue of its own (the stock HUD's white, the
+picture's blue its bitmap's) takes the HUD's blue, at the tint's alpha */
+static pixel32 spartan_link_tracker_color(
+	short local_player_index)
+{
+	long self = local_player_get_player_index(local_player_index);
+	struct unit_datum *unit = self != NONE ? unit_try_and_get(player_get(self)->unit_index) : NULL;
+	pixel32 color = 0xFFFFFFFFUL;
+	long hud_index;
+	real_argb_color tint;
+	real highest, lowest;
+
+	if (unit)
+	{
+		hud_index = unit_definition_get_active_hud_index(unit_definition_get(unit->definition_index),
+			local_player_count() > 1);
+		if (hud_index != NONE)
+			color = unit_hud_interface_definition_get(hud_index)->motion_sensor.background.colors.color;
+	}
+	pixel32_to_real_argb_color(color, &tint);
+	highest = MAX(tint.red, MAX(tint.green, tint.blue));
+	lowest = MIN(tint.red, MIN(tint.green, tint.blue));
+	if (highest - lowest < 0.15f)
+		return spartan_link_color(tint.alpha > 0.0f ? tint.alpha : 1.0f, 1.0f);
+	return color;
+}
+
+/* the frame about a feed: its image in its own colors (or, never drawn,
+dark glass), and an upright edge in the motion tracker's color, line and translucency
+(spartan_link_tracker_color), with a soft glow about it as the tracker's
+ring has, so the feeds read as part of its cluster */
 static void spartan_link_draw_feed(
 	struct bitmap_data *white,
 	short local_player_index,
@@ -973,40 +1334,67 @@ static void spartan_link_draw_feed(
 {
 	struct spartan_link_feed const *feed = &spartan_link.windows[local_player_index].feeds[index];
 	int view = SPARTAN_LINK_VIEW(local_player_index, index);
-	real slant = (bounds->y1 - bounds->y0) * SPARTAN_LINK_SLANT;
-	real edge = MAX(1.0f / (halo_screen_pixel_scale() > 0.0f ? halo_screen_pixel_scale() : 1.0f), 0.75f * scale);
+	real pixel = 1.0f / (halo_screen_pixel_scale() > 0.0f ? halo_screen_pixel_scale() : 1.0f);
+	real edge = MAX(pixel, 0.6f * scale);
+	real glow = edge * 2.5f;
 	real x[4], y[4];
-	pixel32 edge_color = spartan_link_color(0.9f, 1.0f);
+	pixel32 tracker = spartan_link_tracker_color(local_player_index);
+	pixel32 edge_color = tracker;
+	pixel32 glow_color = (tracker & 0x00FFFFFFUL) | ((pixel32)(((tracker >> 24) & 0xFF) / 4) << 24);
+	unsigned long age;
+	short side;
 
-	/* the image, tinted toward the HUD's blue (a down teammate's darkened) */
-	x[0] = bounds->x0 + slant; y[0] = bounds->y0;
-	x[1] = bounds->x1 - slant; y[1] = bounds->y0;
+	/* (their ping: the frame brightened, the tracker's color made paler and
+	whole, its edge thicker and its glow wider and stronger, fading back over
+	the last of it) */
+	if (spartan_link_pinged(local_player_index, feed->player_index, &age))
+	{
+		real lit = age + SPARTAN_LINK_PING_FADE_MILLISECONDS < SPARTAN_LINK_PING_MILLISECONDS ? 1.0f :
+			(real)(SPARTAN_LINK_PING_MILLISECONDS - age) / (real)SPARTAN_LINK_PING_FADE_MILLISECONDS;
+		real_argb_color color;
+
+		pixel32_to_real_argb_color(tracker, &color);
+		color.red += (1.0f - color.red) * 0.55f * lit;
+		color.green += (1.0f - color.green) * 0.55f * lit;
+		color.blue += (1.0f - color.blue) * 0.55f * lit;
+		color.alpha += (1.0f - color.alpha) * lit;
+		edge_color = real_argb_color_to_pixel32(&color);
+		color.alpha *= 0.25f + 0.35f * lit;
+		glow_color = real_argb_color_to_pixel32(&color);
+		edge *= 1.0f + lit;
+		glow *= 1.0f + 0.6f * lit;
+	}
+
+	/* the image in its own colors (a down teammate's darkened) */
+	x[0] = bounds->x0; y[0] = bounds->y0;
+	x[1] = bounds->x1; y[1] = bounds->y0;
 	x[2] = bounds->x1; y[2] = bounds->y1;
 	x[3] = bounds->x0; y[3] = bounds->y1;
-	if (halo_view_drawn(view))
+	if (spartan_link_feed_image(local_player_index, index))
 	{
 		halo_view_sample(view);
-		spartan_link_quad(white, x, y, feed->down_at ? 0xFF505868UL : 0xFFDCEBFFUL, bounds);
+		spartan_link_quad(white, x, y, feed->down_at ? 0xFF585858UL : 0xFFFFFFFFUL, bounds);
 		halo_view_sample(0);
-		spartan_link_quad(white, x, y, spartan_link_color(0.10f, 1.0f), NULL);
 	}
 	else
 	{
 		spartan_link_quad(white, x, y, 0xC0081018UL, NULL);
 	}
-	/* the edge: top and bottom, and the angled ends */
-	spartan_link_rectangle(white, bounds->x0 + slant, bounds->y0, bounds->x1 - slant, bounds->y0 + edge, edge_color);
-	spartan_link_rectangle(white, bounds->x0, bounds->y1 - edge, bounds->x1, bounds->y1, edge_color);
-	x[0] = bounds->x0 + slant; y[0] = bounds->y0;
-	x[1] = bounds->x0 + slant + edge; y[1] = bounds->y0;
-	x[2] = bounds->x0 + edge; y[2] = bounds->y1;
-	x[3] = bounds->x0; y[3] = bounds->y1;
-	spartan_link_quad(white, x, y, edge_color, NULL);
-	x[0] = bounds->x1 - slant - edge; y[0] = bounds->y0;
-	x[1] = bounds->x1 - slant; y[1] = bounds->y0;
-	x[2] = bounds->x1; y[2] = bounds->y1;
-	x[3] = bounds->x1 - edge; y[3] = bounds->y1;
-	spartan_link_quad(white, x, y, edge_color, NULL);
+	/* the glow (outside the edge, faint), then the edge: top, bottom, left,
+	right */
+	for (side = 0; side < 2; side++)
+	{
+		real out = side == 0 ? glow : 0.0f;
+		real width = side == 0 ? glow : edge;
+		pixel32 color = side == 0 ? glow_color : edge_color;
+
+		spartan_link_rectangle(white, bounds->x0 - out, bounds->y0 - out, bounds->x1 + out, bounds->y0 - out + width, color);
+		spartan_link_rectangle(white, bounds->x0 - out, bounds->y1 + out - width, bounds->x1 + out, bounds->y1 + out, color);
+		spartan_link_rectangle(white, bounds->x0 - out, bounds->y0 - out + width, bounds->x0 - out + width,
+			bounds->y1 + out - width, color);
+		spartan_link_rectangle(white, bounds->x1 + out - width, bounds->y0 - out + width, bounds->x1 + out,
+			bounds->y1 + out - width, color);
+	}
 }
 
 /* the reticle's radius on a feed: a twentieth of its height, three of the
@@ -1128,9 +1516,225 @@ static real spartan_link_text_width(
 	return (real)(text_bounds.x1 - text_bounds.x0);
 }
 
-/* under a feed: the teammate's name, thin bars of their shield and under it
-their health, and how far away they are (the name cut short, and the bars
-left out, where the feed is too narrow for them all) */
+/* ---------- the teammate's shield and health, the HUD's own */
+
+/* (bitmap_group.c's: a group of interface bitmaps, whose sprites' rectangles
+are in pixels) */
+#define SPARTAN_LINK_INTERFACE_BITMAPS 4
+
+/* a HUD element's rectangle in the view's units as the HUD draws it in this
+window (hud_draw.c's hud_calculate_point and its bounds, at the HUD's
+scale): FALSE for no picture, or an anchor of MCC's HUD the link does not
+place */
+static boolean spartan_link_element_rect(
+	short corner,
+	struct hud_placement_definition const *placement,
+	long bitmap_group_index,
+	short sequence_index,
+	real_rectangle2d *rect)
+{
+	rectangle2d const *window = &render.camera.window_bounds;
+	rectangle2d const *viewport = &render.camera.viewport_bounds;
+	struct bitmap_data const *bitmap = NULL;
+	real_rectangle2d const *clip = NULL;
+	real hud_scale = hud_globals_get_scale(FALSE);
+	real width, height, x, y;
+	boolean right = corner == _hud_anchor_top_right || corner == _hud_anchor_bottom_right;
+	boolean bottom = corner == _hud_anchor_bottom_left || corner == _hud_anchor_bottom_right;
+
+	if (bitmap_group_index == NONE || corner < _hud_anchor_top_left || corner > _hud_anchor_center)
+		return FALSE;
+	hud_retrieve_bitmap_and_bounding_rect(bitmap_group_index, sequence_index, 0, &bitmap, &clip);
+	if (!bitmap)
+		return FALSE;
+	if (clip && bitmap_group_get(bitmap_group_index)->type == SPARTAN_LINK_INTERFACE_BITMAPS)
+	{
+		width = clip->x1 - clip->x0;
+		height = clip->y1 - clip->y0;
+	}
+	else if (clip)
+	{
+		width = (clip->x1 - clip->x0) * bitmap->width;
+		height = (clip->y1 - clip->y0) * bitmap->height;
+	}
+	else
+	{
+		width = (real)bitmap->width;
+		height = (real)bitmap->height;
+	}
+	width *= placement->scale.i * hud_scale;
+	height *= placement->scale.j * hud_scale;
+	if (!(width > 0.0f) || !(height > 0.0f))
+		return FALSE;
+	if (corner == _hud_anchor_center)
+	{
+		x = (real)((window->x0 + window->x1) / 2 - viewport->x0) + placement->offset.x * hud_scale - width * 0.5f;
+		y = (real)((window->y0 + window->y1) / 2 - viewport->y0) + placement->offset.y * hud_scale - height * 0.5f;
+	}
+	else
+	{
+		x = (right ? window->x1 - placement->offset.x * hud_scale - width : window->x0 + placement->offset.x * hud_scale) -
+			viewport->x0;
+		y = (bottom ? window->y1 - placement->offset.y * hud_scale - height : window->y0 + placement->offset.y * hud_scale) -
+			viewport->y0;
+	}
+	rect->x0 = x;
+	rect->y0 = y;
+	rect->x1 = x + width;
+	rect->y1 = y + height;
+	return TRUE;
+}
+
+/* an element's placement moved from where the HUD draws it (from) to where
+the link draws it, the HUD's whole panel (from the union of its pieces) made
+k as large and its corner put at the target's: anchored at the top left, its
+offset and scale */
+static void spartan_link_element_moved(
+	struct hud_placement_definition const *placement,
+	real_rectangle2d const *from,
+	real_rectangle2d const *pieces,
+	real_point2d const *target,
+	real k,
+	struct hud_placement_definition *moved)
+{
+	real hud_scale = hud_globals_get_scale(FALSE);
+	real x = target->x + (from->x0 - pieces->x0) * k -
+		(real)(render.camera.window_bounds.x0 - render.camera.viewport_bounds.x0);
+	real y = target->y + (from->y0 - pieces->y0) * k -
+		(real)(render.camera.window_bounds.y0 - render.camera.viewport_bounds.y0);
+
+	*moved = *placement;
+	moved->offset.x = (short)floorf(x / hud_scale + 0.5f);
+	moved->offset.y = (short)floorf(y / hud_scale + 0.5f);
+	moved->scale.i = placement->scale.i * k;
+	moved->scale.j = placement->scale.j * k;
+	moved->multiplayer_scaling_flags = 0;
+}
+
+/* the teammate's shield and health as their unit's HUD draws them (its
+interface's shield and health meters and their panels' pictures, colors and
+flashing: hud_unit.c's), made small enough for the room under their feed
+(bounds), the panel's proportions kept, at the room's right (its drawn
+left given back); FALSE where their HUD has no meter
+to draw (the caller draws bars of its own) */
+static boolean spartan_link_draw_meters(
+	short local_player_index,
+	struct spartan_link_feed *feed,
+	real_rectangle2d const *bounds,
+	real *left)
+{
+	struct unit_datum *unit = unit_try_and_get(feed->unit_index);
+	struct unit_hud_interface_definition const *hud;
+	struct hud_absolute_placement_definition top_left;
+	struct metered_panel_definition const *panels[2];
+	real_rectangle2d meter_rects[2], background_rects[2], pieces;
+	boolean meter_drawn[2], background_drawn[2];
+	real_point2d target;
+	real k, vitality[2];
+	short draw_flags[2];
+	short index;
+	long hud_index;
+	boolean any = FALSE;
+
+	if (!unit || !(bounds->x1 > bounds->x0) || !(bounds->y1 > bounds->y0))
+		return FALSE;
+	hud_index = unit_definition_get_active_hud_index(unit_definition_get(unit->definition_index), FALSE);
+	if (hud_index == NONE)
+		return FALSE;
+	hud = unit_hud_interface_definition_get(hud_index);
+	panels[0] = &hud->shield_meter;
+	panels[1] = &hud->health_meter;
+	vitality[0] = PIN(unit->object.shield_vitality, 0.0f, 1.0f);
+	vitality[1] = PIN(unit->object.body_vitality, 0.0f, 1.0f);
+	/* (the HUD's flashing: the shield's below a quarter, the health's while
+	the shield is down; from the tick each began) */
+	draw_flags[0] = unit->object.shield_vitality < 0.25f;
+	draw_flags[1] = TEST_FLAG(unit->object.damage_flags, _object_shield_depleted_bit) != 0;
+	if (!draw_flags[0])
+		feed->shield_flash_tick = 0;
+	else if (!feed->shield_flash_tick)
+		feed->shield_flash_tick = MAX(game_time_get(), 1);
+	if (!draw_flags[1])
+		feed->health_flash_tick = 0;
+	else if (!feed->health_flash_tick)
+		feed->health_flash_tick = MAX(game_time_get(), 1);
+	for (index = 0; index < 2; index++)
+	{
+		meter_drawn[index] = spartan_link_element_rect(hud->absolute_placement.corner, &panels[index]->meter.placement,
+			panels[index]->meter.meter_bitmap.index, panels[index]->meter.sequence_index, &meter_rects[index]);
+		background_drawn[index] = meter_drawn[index] && spartan_link_element_rect(hud->absolute_placement.corner,
+			&panels[index]->background.placement, panels[index]->background.interface_bitmap.index,
+			panels[index]->background.sequence_index, &background_rects[index]);
+		if (meter_drawn[index])
+		{
+			if (!any)
+				pieces = meter_rects[index];
+			any = TRUE;
+			pieces.x0 = MIN(pieces.x0, meter_rects[index].x0);
+			pieces.y0 = MIN(pieces.y0, meter_rects[index].y0);
+			pieces.x1 = MAX(pieces.x1, meter_rects[index].x1);
+			pieces.y1 = MAX(pieces.y1, meter_rects[index].y1);
+		}
+		if (background_drawn[index])
+		{
+			pieces.x0 = MIN(pieces.x0, background_rects[index].x0);
+			pieces.y0 = MIN(pieces.y0, background_rects[index].y0);
+			pieces.x1 = MAX(pieces.x1, background_rects[index].x1);
+			pieces.y1 = MAX(pieces.y1, background_rects[index].y1);
+		}
+	}
+	/* (both meters, or bars: never one of each) */
+	if (!meter_drawn[0] || !meter_drawn[1] || !(pieces.x1 > pieces.x0) || !(pieces.y1 > pieces.y0))
+		return FALSE;
+	k = MIN((bounds->x1 - bounds->x0) / (pieces.x1 - pieces.x0), (bounds->y1 - bounds->y0) / (pieces.y1 - pieces.y0));
+	target.x = bounds->x1 - (pieces.x1 - pieces.x0) * k;
+	*left = target.x;
+	target.y = (bounds->y0 + bounds->y1 - (pieces.y1 - pieces.y0) * k) * 0.5f;
+	csmemset(&top_left, 0, sizeof(top_left));
+	top_left.corner = _hud_anchor_top_left;
+	for (index = 0; index < 2; index++)
+	{
+		struct meter_hud_element_definition meter = panels[index]->meter;
+		short value_scale = meter.value_scale ? meter.value_scale : index == 0 ? UNSIGNED_CHAR_MAX : 8;
+		byte value = (byte)PIN((long)floorf((real)value_scale * vitality[index]), 0, UNSIGNED_CHAR_MAX);
+
+		/* (the health's color by its cutoffs, as the HUD's) */
+		if (index == 1)
+		{
+			struct health_meter_extras_definition const *extras = &panels[1]->health_extras;
+
+			if (unit->object.body_vitality >= extras->max_cutoff)
+				meter.min_color = meter.max_color;
+			else if (unit->object.body_vitality <= extras->min_cutoff)
+				meter.max_color = meter.min_color;
+			else
+				meter.min_color = meter.max_color = extras->mid_color;
+		}
+		spartan_link_element_moved(&panels[index]->meter.placement, &meter_rects[index], &pieces, &target, k,
+			&meter.placement);
+		hud_draw_meter(local_player_index, &top_left, &meter, value, value, draw_flags[index], -1.0f,
+			vitality[index]);
+		if (background_drawn[index])
+		{
+			struct static_hud_element_definition background = panels[index]->background;
+
+			spartan_link_element_moved(&panels[index]->background.placement, &background_rects[index], &pieces,
+				&target, k, &background.placement);
+			/* (its multitexture overlays left out: the HUD's own corner's) */
+			background.multitexture_overlays.count = 0;
+			hud_draw_static_element(local_player_index, &top_left, &background, draw_flags[index],
+				index == 0 ? feed->shield_flash_tick : feed->health_flash_tick);
+		}
+	}
+	return TRUE;
+}
+
+/* under a feed, after a small gap, within its width: the teammate's name at
+its left edge (in the look of the tracker's range label), and
+at its right edge their shield and health as their HUD draws them
+(spartan_link_draw_meters; else thin bars of the shield and under it the
+health), or DOWN; a clear gap between (the name cut short where it would
+reach the meters) */
 static void spartan_link_draw_row(
 	struct bitmap_data *white,
 	short local_player_index,
@@ -1140,44 +1744,37 @@ static void spartan_link_draw_row(
 {
 	struct spartan_link_feed *feed = &spartan_link.windows[local_player_index].feeds[index];
 	struct player_datum *teammate = player_try_and_get(feed->player_index);
-	long self = local_player_get_player_index(local_player_index);
 	real pixel = 1.0f / (halo_screen_pixel_scale() > 0.0f ? halo_screen_pixel_scale() : 1.0f);
 	real_argb_color text_color;
 	real width = bounds->x1 - bounds->x0;
-	real top = bounds->y1 + 1.5f * scale;
-	real margin = 2.0f * scale;
+	real top = bounds->y1 + SPARTAN_LINK_STRIP_GAP * scale;
+	real gap = 4.0f * scale;
 	/* (the text as large as the design's at a feed's width of four, smaller
 	in a narrower feed, to a point) */
 	real text_scale = 0.6f * MAX(scale, 0.9f) * MAX(spartan_link.size, 0.9f) *
-		PIN(width / (spartan_link_widths[SPARTAN_LINK_FEEDS - 1] * scale), 0.75f, 1.0f);
+		PIN(width / (SPARTAN_LINK_NARROWEST * scale), 0.75f, 1.0f);
 	real shield = 0.0f, health = 0.0f;
 	real bar_height = MAX(2.0f * scale, pixel);
 	real health_height = MAX(1.5f * scale, pixel);
-	real name_width, distance_width, bar_x0, bar_x1, bar_y, health_y;
+	real right_left = bounds->x1;
+	real name_width;
 	wchar_t name[16];
-	wchar_t distance[16];
 	short length;
 
 	if (!teammate)
 		return;
-	hud_get_text_color(&text_color);
+	/* (the tracker's range label's look) */
+	pixel32_to_real_argb_color(spartan_link_tracker_color(local_player_index), &text_color);
+	text_color.red += (1.0f - text_color.red) * SPARTAN_LINK_NAME_PALER;
+	text_color.green += (1.0f - text_color.green) * SPARTAN_LINK_NAME_PALER;
+	text_color.blue += (1.0f - text_color.blue) * SPARTAN_LINK_NAME_PALER;
+	text_color.alpha = SPARTAN_LINK_NAME_ALPHA;
 	ustrncpy(name, teammate->name, NUMBEROF(name) - 1);
 	name[NUMBEROF(name) - 1] = 0;
-	distance[0] = 0;
-	if (feed->down_at)
+	if (!feed->down_at && object_try_and_get(feed->unit_index))
 	{
-		usnprintf(distance, NUMBEROF(distance) - 1, L"DOWN");
-	}
-	else if (self != NONE && player_get(self)->unit_index != NONE &&
-		object_try_and_get(feed->unit_index))
-	{
-		real_point3d here, there;
-
-		object_get_origin(player_get(self)->unit_index, &here);
-		object_get_origin(feed->unit_index, &there);
-		usnprintf(distance, NUMBEROF(distance) - 1, L"%ldm", (long)floorf(distance3d(&here, &there) * 3.048f + 0.5f));
-		shield = object_get(feed->unit_index)->object.shield_vitality;
-		health = object_get(feed->unit_index)->object.body_vitality;
+		shield = PIN(object_get(feed->unit_index)->object.shield_vitality, 0.0f, 1.0f);
+		health = PIN(object_get(feed->unit_index)->object.body_vitality, 0.0f, 1.0f);
 	}
 	/* (the health flashing while the shield is down, as the HUD's: from
 	when it went down) */
@@ -1191,41 +1788,126 @@ static void spartan_link_draw_row(
 	{
 		feed->health_flash_at = 0;
 	}
-	distance[NUMBEROF(distance) - 1] = 0;
-	distance_width = spartan_link_text_width(distance) * text_scale;
-	/* (the name as long as fits beside the distance) */
+	/* (the right: DOWN, else the HUD's own meters in at most half the
+	width, the row's height; else bars) */
+	if (feed->down_at)
+	{
+		real down_width = spartan_link_text_width(L"DOWN") * text_scale;
+
+		right_left = bounds->x1 - down_width;
+		spartan_link_text(L"DOWN", right_left, top, down_width, 0, text_scale, &text_color);
+	}
+	else
+	{
+		real_rectangle2d meters;
+
+		meters.x0 = bounds->x1 - width * 0.5f;
+		meters.x1 = bounds->x1;
+		meters.y0 = top + 0.5f * scale;
+		meters.y1 = top + (SPARTAN_LINK_ROW - SPARTAN_LINK_STRIP_GAP) * scale;
+		if (!spartan_link_draw_meters(local_player_index, feed, &meters, &right_left))
+		{
+			real bar_x0 = bounds->x1 - width * 0.4f;
+			real bar_y = top + SPARTAN_LINK_ROW * scale * 0.30f;
+			real health_y = bar_y + bar_height + MAX(1.25f * scale, 2.0f * pixel);
+			pixel32 health_color = object_try_and_get_and_verify_type(feed->unit_index, _object_mask_unit) ?
+				spartan_link_health_color(feed->unit_index, health, feed->health_flash_at) :
+				spartan_link_color(0.95f, 1.0f);
+
+			right_left = bar_x0;
+			spartan_link_rectangle(white, bar_x0, bar_y, bounds->x1, bar_y + bar_height, spartan_link_color(0.35f, 0.6f));
+			spartan_link_rectangle(white, bar_x0, bar_y, bar_x0 + (bounds->x1 - bar_x0) * shield, bar_y + bar_height,
+				spartan_link_color(0.95f, 1.0f));
+			spartan_link_rectangle(white, bar_x0, health_y, bounds->x1, health_y + health_height,
+				(health_color & 0x00FFFFFFUL) | 0x40000000UL);
+			spartan_link_rectangle(white, bar_x0, health_y, bar_x0 + (bounds->x1 - bar_x0) * health,
+				health_y + health_height, health_color);
+		}
+	}
+	/* (the name as long as fits before the gap) */
 	for (length = (short)ustrlen(name); length > 0; length--)
 	{
 		name[length] = 0;
 		name_width = spartan_link_text_width(name) * text_scale;
-		if (name_width + distance_width + 3.0f * margin <= width)
+		if (bounds->x0 + name_width + gap <= right_left)
 			break;
 	}
 	name_width = spartan_link_text_width(name) * text_scale;
-	text_color.alpha = 1.0f;
-	spartan_link_text(name, bounds->x0 + margin, top, name_width, 0, text_scale, &text_color);
-	spartan_link_text(distance, bounds->x1 - margin - distance_width, top, distance_width, 0, text_scale,
-		&text_color);
-	/* (the shield: a thin bar between them, where there is room for one;
-	the health a thinner one under it, the two about the text's middle) */
-	bar_x0 = bounds->x0 + margin * 2.0f + name_width;
-	bar_x1 = bounds->x1 - margin * 2.0f - distance_width;
-	bar_y = top + SPARTAN_LINK_ROW * scale * 0.30f;
-	health_y = bar_y + bar_height + MAX(1.25f * scale, 2.0f * pixel);
-	if (bar_x1 - bar_x0 >= 6.0f * scale)
-	{
-		pixel32 health_color = object_try_and_get_and_verify_type(feed->unit_index, _object_mask_unit) ?
-			spartan_link_health_color(feed->unit_index, health, feed->health_flash_at) : spartan_link_color(0.95f, 1.0f);
+	spartan_link_text(name, bounds->x0, top, name_width, 0, text_scale, &text_color);
+}
 
-		shield = PIN(shield, 0.0f, 1.0f);
-		health = PIN(health, 0.0f, 1.0f);
-		spartan_link_rectangle(white, bar_x0, bar_y, bar_x1, bar_y + bar_height, spartan_link_color(0.35f, 0.6f));
-		spartan_link_rectangle(white, bar_x0, bar_y, bar_x0 + (bar_x1 - bar_x0) * shield, bar_y + bar_height,
-			spartan_link_color(0.95f, 1.0f));
-		spartan_link_rectangle(white, bar_x0, health_y, bar_x1, health_y + health_height,
-			(health_color & 0x00FFFFFFUL) | 0x40000000UL);
-		spartan_link_rectangle(white, bar_x0, health_y, bar_x0 + (bar_x1 - bar_x0) * health, health_y + health_height,
-			health_color);
+/* ---------- the teammate's ping on their feed */
+
+/* whether the ping's point is behind something from the teammate's eye
+(hud_nav_points.c's hud_get_nav_point_render_type, from their side): the
+level or an object other than the pinged one (or what it rides) between. A
+collision test only, which reads the world */
+static boolean spartan_link_ping_behind(
+	long unit_index,
+	real_point3d const *eye,
+	real_point3d const *position,
+	long object_index)
+{
+	struct collision_result result;
+	real_vector3d vector;
+	boolean behind;
+
+	if (global_current_collision_user_depth >= MAXIMUM_COLLISION_USER_STACK_DEPTH)
+		return FALSE;
+	global_current_collision_users[global_current_collision_user_depth++] = _collision_user_ui;
+	vector.i = position->x - eye->x;
+	vector.j = position->y - eye->y;
+	vector.k = position->z - eye->z;
+	behind = collision_test_vector(_collision_test_for_line_of_sight_flags, eye, &vector,
+		spartan_link_root(unit_index), &result) &&
+		(result.type != _collision_result_object || object_index == NONE ||
+			spartan_link_root(result.object_index) != spartan_link_root(object_index));
+	--global_current_collision_user_depth;
+	return behind;
+}
+
+/* the teammate's ping on their feed (bounds), where it is in their view:
+the world's arrow (network_markers.c's: in their colour and fade, its
+behind-a-wall look from their eye), sized to the feed, over its object as
+it moves; none where it is off the feed's picture */
+static void spartan_link_draw_ping(
+	short local_player_index,
+	struct spartan_link_feed const *feed,
+	real_rectangle2d const *bounds)
+{
+	struct network_marker_shown ping;
+	struct render_camera camera;
+	real_point3d eye;
+	real_point2d place;
+	real distance, size, height;
+
+	if (feed->down_at || !object_try_and_get_and_verify_type(feed->unit_index, _object_mask_unit) ||
+		!network_markers_ping_shown(local_player_index, feed->player_index, &ping) || ping.nav_index == NONE)
+	{
+		return;
+	}
+	spartan_link_feed_view(feed->unit_index, &camera);
+	render_interpolation_unit_camera_position(feed->unit_index, &eye);
+	/* (as the world's arrow is sized: its least past 15 units, larger
+	nearer, hud_nav_points.c's) */
+	distance = distance3d(&eye, &ping.position);
+	size = distance > 15.0f ? 0.5f : (real)pow(1.0f - distance / 15.0f, 0.7) + 0.5f;
+	height = MIN((bounds->y1 - bounds->y0) * SPARTAN_LINK_PING_HEIGHT * size / 0.5f,
+		(bounds->y1 - bounds->y0) * SPARTAN_LINK_PING_HEIGHT_MOST);
+	if (!spartan_link_aim_place(&camera, bounds, height * 0.5f, &ping.position, &place))
+		return;
+	hud_render_nav_point_arrow(ping.nav_index,
+		spartan_link_ping_behind(feed->unit_index, &eye, &ping.position, ping.object_index) ? 2 /* occluded */ : 0,
+		&place, height, &ping.color, ping.alpha);
+	/* (debug.spartan_link_log: the first ping on a feed logged and its
+	frame saved, once a run) */
+	if (spartan_link.log && !spartan_link.ping_saved)
+	{
+		spartan_link.ping_saved = TRUE;
+		platform_log("spartan link ping: %ld local %d (player %ld) at %.1f %.1f of %.1f-%.1f %.1f-%.1f, %.1f tall",
+			game_time_get(), (int)local_player_index, (long)DATUM_INDEX_TO_ABSOLUTE_INDEX(feed->player_index), place.x,
+			place.y, bounds->x0, bounds->x1, bounds->y0, bounds->y1, height);
+		halo_screenshot_named("spartan_link_ping");
 	}
 }
 
@@ -1264,8 +1946,16 @@ void spartan_link_update(
 			csmemset(spartan_link.windows, 0, sizeof(spartan_link.windows));
 			spartan_link.last_local_player = NONE;
 			spartan_link.last_feed = NONE;
-			/* (debug.spartan_link_open: open from the start, for the tests) */
+			for (port = 0; port < (short)NUMBEROF(spartan_link.view_players); port++)
+				spartan_link.view_players[port] = NONE;
+			/* (each player's link as they left it, their profile's;
+			debug.spartan_link_open: on from the start, for the tests) */
 			spartan_link.debug_open = config_boolean("debug.spartan_link_open");
+			for (local_player_index = 0; local_player_index < MAXIMUM_LOCAL_PLAYERS; local_player_index++)
+			{
+				spartan_link.windows[local_player_index].open = spartan_link.debug_open ||
+					config_player_boolean(local_player_index, "display.spartan_link_shown");
+			}
 		}
 		spartan_link.in_game = TRUE;
 		spartan_link.last_game_time = game_time_get();
@@ -1315,10 +2005,15 @@ void spartan_link_update(
 	{
 		struct spartan_link_window *window = &spartan_link.windows[local_player_index];
 
-		if ((window->open || spartan_link.debug_open) && spartan_link_game())
+		/* (on, it stays on: hidden while the game has none, a cutscene's
+		too; hidden, the teammates' pings bring their feeds up a while) */
+		if (window->open && spartan_link_game())
 			spartan_link_window_update(local_player_index, now);
-		else if (window->open && !spartan_link_game())
-			window->open = FALSE;
+		else if (!window->open && spartan_link_game())
+			spartan_link_window_pings(local_player_index, now);
+		else if (!window->open)
+			window->popped = FALSE;
+		spartan_link_hint(local_player_index, now);
 		/* (the teammates' aims, while the link is shown) */
 		if (spartan_link_shown(local_player_index))
 		{
@@ -1329,6 +2024,35 @@ void spartan_link_update(
 		}
 	}
 	spartan_link_schedule();
+}
+
+void spartan_link_note_motion_sensor(
+	short local_player_index,
+	short left,
+	short center_x,
+	short center_y)
+{
+	struct spartan_link_tracker *tracker;
+
+	if (local_player_index < 0 || local_player_index >= MAXIMUM_LOCAL_PLAYERS || spartan_link.drawing)
+		return;
+	tracker = &spartan_link.trackers[local_player_index];
+	if (spartan_link.log && (!tracker->valid || tracker->left != left || tracker->center_x != center_x ||
+		tracker->center_y != center_y))
+	{
+		platform_log("spartan link tracker: local player %d left %d middle %d %d of %dx%d, HUD scale %.3f",
+			(int)local_player_index, (int)left, (int)center_x, (int)center_y,
+			(int)(render.camera.window_bounds.x1 - render.camera.window_bounds.x0),
+			(int)(render.camera.window_bounds.y1 - render.camera.window_bounds.y0),
+			hud_globals_get_scale(local_player_count() > 1));
+	}
+	tracker->valid = TRUE;
+	tracker->left = (real)left;
+	tracker->center_x = (real)center_x;
+	tracker->center_y = (real)center_y;
+	tracker->view_width = (short)(render.camera.window_bounds.x1 - render.camera.window_bounds.x0);
+	tracker->view_height = (short)(render.camera.window_bounds.y1 - render.camera.window_bounds.y0);
+	tracker->players = local_player_count();
 }
 
 unsigned char spartan_link_pad_open(
@@ -1396,6 +2120,7 @@ boolean spartan_link_feed_begin(
 
 	view = SPARTAN_LINK_VIEW(local_player_index, spartan_link.last_feed);
 	spartan_link.views_used |= 1UL << view;
+	spartan_link.view_players[view] = feed->player_index;
 	spartan_link.drawing = TRUE;
 	spartan_link.hidden_unit = through_eyes ? feed->unit_index : NONE;
 	spartan_link.posed_unit = through_eyes && object_get(feed->unit_index)->object.parent_object_index == NONE ?
@@ -1501,18 +2226,19 @@ void spartan_link_draw(
 	window = &spartan_link.windows[local_player_index];
 	white = NULL;
 	/* (the HUD's coordinates are the view's own, from its top left: a split
-	screen's lower window's too) */
-	if (window->refusal && system_milliseconds() - window->refusal_at < SPARTAN_LINK_REFUSAL_MILLISECONDS)
+	screen's lower window's too. A line where the row goes, beside the
+	tracker, as the HUD's text: a refusal, or the key's hint) */
+	if (window->line_milliseconds && system_milliseconds() - window->line_at < window->line_milliseconds)
 	{
 		real_argb_color color;
-		rectangle2d const *frame = &render.camera.window_bounds;
-		real height = (real)(frame->y1 - frame->y0);
-		real line_scale = PIN(height / 480.0f * 1.5f, 0.6f, 1.0f);
+		real_rectangle2d room;
+		real line_scale;
 
+		spartan_link_room(local_player_index, &render.camera, &room, &line_scale);
 		hud_get_text_color(&color);
 		color.alpha = 1.0f;
-		spartan_link_text(window->refusal, (real)(frame->x0 - render.camera.viewport_bounds.x0),
-			SPARTAN_LINK_TOP * line_scale, (real)(frame->x1 - frame->x0), 2, 0.8f * line_scale, &color);
+		spartan_link_text(window->line, room.x0, (room.y0 + room.y1) * 0.5f - SPARTAN_LINK_ROW * 0.5f * line_scale,
+			room.x1 - room.x0, 0, 0.8f * line_scale, &color);
 	}
 	if (!spartan_link_shown(local_player_index))
 		return;
@@ -1533,6 +2259,7 @@ void spartan_link_draw(
 			boolean enemy = feed->aim_enemy;
 			boolean shown = spartan_link_feed_aim_place(feed, &rectangles[index], radius, &place);
 
+			spartan_link_draw_ping(local_player_index, feed, &rectangles[index]);
 			if (shown)
 				spartan_link_draw_reticle(white, &place, radius, enemy);
 			/* (debug.spartan_link_log: the reticle's and the health's

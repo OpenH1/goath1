@@ -19,6 +19,14 @@ definition the map already has: no new assets. The units that glow are those
 near any local player's camera, the same for each of a split screen's views
 (lights_preprocess_scene runs for each), so each keeps its one light.
 
+A shield that is a model's region rather than a modifier shader (a Jackal's
+hand-held shield, the Covenant's standing field generators) glows too, as
+long as it stands: a model with a region named "shield", while that region
+is not destroyed and its permutation is not one of its off ones ("~..."),
+glows steadily at its "shield light" marker, in its change color C (the
+shield's tint), and a standing one (scenery) at least as far as its own size.
+The nearest of all of them glow, at most SHIELD_GLOW_MAXIMUM.
+
 Only the drawing changes: nothing the game simulates, nothing sent between
 machines.
 */
@@ -35,6 +43,8 @@ machines.
 #include "camera/observer.h"
 #include "game/players.h"
 #include "objects/object_lights.h"
+#include "objects/object_types.h"
+#include "models/model_definitions.h"
 #include "network_shield_effects.h"
 
 #include <math.h>
@@ -65,6 +75,14 @@ enum
 #define SHIELD_GLOW_RADIUS_MAXIMUM 1.4f
 /* a flare fainter than this lights nothing */
 #define SHIELD_GLOW_THRESHOLD 0.03f
+/* a model's shield region's steady glow: its strength, and how far it
+reaches (world units; a standing shield's at least its own bounding radius,
+to SHIELD_GLOW_HELD_RADIUS_MAXIMUM) */
+#define SHIELD_GLOW_HELD_STRENGTH 0.55f
+#define SHIELD_GLOW_HELD_RADIUS 1.0f
+#define SHIELD_GLOW_HELD_RADIUS_MAXIMUM 3.0f
+/* the candidates looked at each frame, of which the nearest glow */
+#define SHIELD_GLOW_CANDIDATES 64
 
 /* the plasma shader's fields after its header (rasterizer_xbox_plasma_energy.c's) */
 struct shield_glow_plasma
@@ -85,6 +103,19 @@ struct shield_glow
 	long unit_index; /* NONE: free */
 	long light_index;
 	unsigned long frame;
+};
+
+/* an object that glows this frame: how near, how bright (to 1), its color,
+radius, and where its light is (a node, and the offset in its space) */
+struct shield_glow_candidate
+{
+	long object_index;
+	real distance;
+	real strength;
+	real radius;
+	real_rgb_color color;
+	short node_index;
+	real_point3d offset;
 };
 
 static struct shield_glow shield_glows[SHIELD_GLOW_MAXIMUM];
@@ -120,16 +151,16 @@ static boolean shield_glow_enabled(
 	return enabled;
 }
 
-/* a glow's light, on the unit's root node (NONE: none, or the map has no
-light definition to draw it with) */
+/* a glow's light, on the object's node (NONE: none, or the map has no light
+definition to draw it with) */
 static long shield_glow_light_new(
-	long unit_index)
+	struct shield_glow_candidate const *candidate)
 {
 	long definition_index = light_port_glow_definition_get();
 
 	if (definition_index == NONE)
 		return NONE;
-	return light_new_unattached(definition_index, unit_index, 0, (real_point3d const *)global_zero_vector3d,
+	return light_new_unattached(definition_index, candidate->object_index, candidate->node_index, &candidate->offset,
 		global_forward3d, 0.0f);
 }
 
@@ -188,6 +219,8 @@ static real shield_glow_flare(
 	if (!(value > 0.f))
 		return 0.f;
 	value = (real)pow((double)value, (double)plasma->intensity_exponent);
+	if (!(value > SHIELD_GLOW_THRESHOLD))
+		return 0.f;
 
 	*color = plasma->perpendicular_color;
 	/* (an overshield: its own color) */
@@ -202,6 +235,93 @@ static real shield_glow_flare(
 	if (unit_get(unit_index)->unit.active_camouflage > 0.f)
 		value *= 1.f - unit_get(unit_index)->unit.active_camouflage;
 	return PIN(value, 0.f, 1.f);
+}
+
+/* a model's shield region, standing now (a Jackal's, a field
+generator's): TRUE, its color and where its light goes; FALSE if the object
+has none, or it is destroyed or off */
+static boolean shield_glow_held(
+	long object_index,
+	struct shield_glow_candidate *candidate)
+{
+	struct object_datum *object = object_try_and_get(object_index);
+	struct object_definition *definition;
+	struct model *model;
+	struct model_region *region = NULL;
+	struct model_region_permutation *permutation;
+	short region_index, marker_index, instance_index;
+	real_rgb_color color;
+	real peak;
+
+	if (!object || TEST_FLAG(object->object.flags, _object_invisible_bit))
+		return FALSE;
+	definition = object_definition_get(object->definition_index);
+	if (!definition || definition->object.model.index == NONE)
+		return FALSE;
+	model = model_definition_get(definition->object.model.index);
+	if (!model)
+		return FALSE;
+	for (region_index = 0; region_index < MIN(model->regions.count, MAXIMUM_REGIONS_PER_OBJECT); region_index++)
+	{
+		region = TAG_BLOCK_GET_ELEMENT(&model->regions, region_index, struct model_region);
+		if (!_stricmp(region->name, "shield"))
+			break;
+	}
+	if (region_index >= MIN(model->regions.count, MAXIMUM_REGIONS_PER_OBJECT) ||
+		TEST_FLAG(object->object.regions_destroyed_flags, region_index) ||
+		object->object.region_permutations[region_index] >= region->permutations.count)
+	{
+		return FALSE;
+	}
+	permutation = TAG_BLOCK_GET_ELEMENT(&region->permutations, object->object.region_permutations[region_index],
+		struct model_region_permutation);
+	if (permutation->name[0] == '~')
+		return FALSE;
+	/* (its tint: change color C, at full brightness) */
+	color = object->object.outgoing_change_colors[2];
+	peak = MAX(color.red, MAX(color.green, color.blue));
+	if (!(peak > 0.f))
+		return FALSE;
+	candidate->color.red = color.red / peak;
+	candidate->color.green = color.green / peak;
+	candidate->color.blue = color.blue / peak;
+	candidate->strength = SHIELD_GLOW_HELD_STRENGTH;
+	if (TEST_FLAG(_object_mask_unit, object_get_type(object_index)) && unit_get(object_index)->unit.active_camouflage > 0.f)
+		candidate->strength *= 1.f - unit_get(object_index)->unit.active_camouflage;
+	candidate->radius = SHIELD_GLOW_HELD_RADIUS;
+	if (object_get_type(object_index) == _object_type_scenery)
+		candidate->radius = PIN(object->object.bounding_sphere_radius, SHIELD_GLOW_HELD_RADIUS,
+			SHIELD_GLOW_HELD_RADIUS_MAXIMUM);
+	/* (its "shield light" marker, the region's own where it has one: else the
+	root node) */
+	candidate->node_index = 0;
+	candidate->offset = *(real_point3d const *)global_zero_vector3d;
+	for (marker_index = 0; marker_index < model->markers.count; marker_index++)
+	{
+		struct model_marker *marker = TAG_BLOCK_GET_ELEMENT(&model->markers, marker_index, struct model_marker);
+		boolean found = FALSE;
+
+		if (_stricmp(marker->name, "shield light"))
+			continue;
+		for (instance_index = 0; instance_index < marker->instances.count; instance_index++)
+		{
+			struct model_marker_instance *instance = TAG_BLOCK_GET_ELEMENT(&marker->instances, instance_index,
+				struct model_marker_instance);
+
+			if (instance->node_index >= model->nodes.count)
+				continue;
+			if (!found || instance->region_index == region_index)
+			{
+				candidate->node_index = instance->node_index;
+				candidate->offset = instance->translation;
+				found = TRUE;
+			}
+			if (instance->region_index == region_index)
+				break;
+		}
+		break;
+	}
+	return candidate->strength > SHIELD_GLOW_THRESHOLD;
 }
 
 static struct shield_glow *shield_glow_find(
@@ -242,37 +362,91 @@ void shield_glow_update(
 	shield_glow_frame++;
 	if (shield_glow_enabled())
 	{
-		object_iterator_new(&iterator, _object_mask_unit, 0);
-		while (object_iterator_next(&iterator))
+		static struct shield_glow_candidate candidates[SHIELD_GLOW_CANDIDATES];
+		short count = 0, kept;
+
+		/* (the shields near the cameras: a unit's flaring, a model's shield
+		region standing) */
+		object_iterator_new(&iterator, _object_mask_unit | _object_mask_scenery, 0);
+		while (object_iterator_next(&iterator) && count < SHIELD_GLOW_CANDIDATES)
 		{
 			struct object_datum *object = object_get(iterator.index);
-			real_rgb_color color;
+			struct shield_glow_candidate *candidate = &candidates[count];
 			real flare;
-			struct shield_glow *glow;
 
-			if (shield_glow_camera_distance(&object->object.bounding_sphere_center) > SHIELD_GLOW_RANGE)
+			candidate->distance = shield_glow_camera_distance(&object->object.bounding_sphere_center);
+			if (candidate->distance > SHIELD_GLOW_RANGE)
 				continue;
-			flare = shield_glow_flare(iterator.index, &color);
-			glow = shield_glow_find(iterator.index, flare > SHIELD_GLOW_THRESHOLD);
+			candidate->object_index = iterator.index;
+			flare = TEST_FLAG(_object_mask_unit, object_get_type(iterator.index)) ?
+				shield_glow_flare(iterator.index, &candidate->color) : 0.f;
+			if (flare > SHIELD_GLOW_THRESHOLD)
+			{
+				candidate->strength = flare;
+				candidate->radius = SHIELD_GLOW_RADIUS_MINIMUM + (SHIELD_GLOW_RADIUS_MAXIMUM - SHIELD_GLOW_RADIUS_MINIMUM) * flare;
+				candidate->node_index = 0;
+				candidate->offset = *(real_point3d const *)global_zero_vector3d;
+			}
+			else if (!shield_glow_held(iterator.index, candidate))
+			{
+				continue;
+			}
+			count++;
+		}
+		/* (the nearest first: at most SHIELD_GLOW_MAXIMUM glow) */
+		for (index = 1; index < count; index++)
+		{
+			struct shield_glow_candidate moved = candidates[index];
+			short at = index;
+
+			while (at > 0 && candidates[at - 1].distance > moved.distance)
+			{
+				candidates[at] = candidates[at - 1];
+				at--;
+			}
+			candidates[at] = moved;
+		}
+		if (count > SHIELD_GLOW_MAXIMUM)
+			count = SHIELD_GLOW_MAXIMUM;
+		/* (those that glowed and are no longer among them let go first, so
+		that each of them has a slot) */
+		for (index = 0; index < SHIELD_GLOW_MAXIMUM; index++)
+		{
+			struct shield_glow *glow = &shield_glows[index];
+
+			if (glow->unit_index == NONE)
+				continue;
+			for (kept = 0; kept < count && candidates[kept].object_index != glow->unit_index; kept++)
+				;
+			if (kept < count)
+				continue;
+			if (glow->light_index != NONE)
+				light_port_glow_set(glow->light_index, glow->unit_index, global_real_rgb_black, 0.f);
+			glow->unit_index = NONE;
+			glow->light_index = NONE;
+		}
+		for (kept = 0; kept < count; kept++)
+		{
+			struct shield_glow_candidate *candidate = &candidates[kept];
+			struct shield_glow *glow = shield_glow_find(candidate->object_index, TRUE);
+			real_rgb_color color = candidate->color;
+
 			if (!glow)
 				continue;
-			if (flare <= SHIELD_GLOW_THRESHOLD)
-				continue; /* (let go below) */
 			if (glow->light_index == NONE)
-				glow->light_index = shield_glow_light_new(iterator.index);
+				glow->light_index = shield_glow_light_new(candidate);
 			/* (brighter, to full, every channel alike: the shield's color
 			kept) */
 			{
-				real strength = MIN(flare * shield_glow_scale, 1.f);
+				real strength = MIN(candidate->strength * shield_glow_scale, 1.f);
 
 				color.red *= strength;
 				color.green *= strength;
 				color.blue *= strength;
 			}
 			if (glow->light_index != NONE &&
-				light_port_glow_set(glow->light_index, iterator.index, &color,
-					(SHIELD_GLOW_RADIUS_MINIMUM + (SHIELD_GLOW_RADIUS_MAXIMUM - SHIELD_GLOW_RADIUS_MINIMUM) * flare) *
-						shield_glow_scale))
+				light_port_glow_set(glow->light_index, candidate->object_index, &color,
+					candidate->radius * shield_glow_scale))
 			{
 				glow->frame = shield_glow_frame;
 			}

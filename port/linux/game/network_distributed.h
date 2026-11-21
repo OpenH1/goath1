@@ -234,7 +234,9 @@ enum
 	/* an OpenH1 game's states of the players near a client, or aimed at, as
 	each of the host's sub-steps but a tick's last ends (network_distributed.c,
 	unreliable, to each OpenH1 client): the sub-step and the count, then
-	the states as the tick's */
+	the states as the tick's; only of the players the client asked for
+	(_distributed_message_substep_state_requests), unless
+	debug.network_forms_before */
 	_distributed_message_substep_states = 136,
 	/* a dedicated server's admins in the game (network_admin.c), reliably,
 	over the host's connection alone: the host's to each OpenH1 client (its
@@ -265,6 +267,52 @@ enum
 	/* a vehicle hijack the host began or called off, and the rule changed
 	during a game (network_hijack.c), reliably, to every OpenH1 client */
 	_distributed_message_vehicle_hijack = 144,
+	/* an OpenH1 client's input, and its prediction, of a tick the same as
+	the last it sent whole (network_distributed.c, unreliable, to an OpenH1
+	host, in place of _distributed_message_player_inputs and
+	_distributed_message_player_prediction): the player, the tick, the
+	host's tick it has had, and the checksum of what it repeats */
+	_distributed_message_player_inputs_held = 145,
+	_distributed_message_player_prediction_held = 146,
+	/* an OpenH1 client's ask for the host's states of a player at its
+	sub-steps (_distributed_message_substep_states) for a while
+	(network_distributed.c, unreliable, to an OpenH1 host, with the tick's
+	messages): each entry the player and the host's ticks to send them for,
+	asked where its copy of the player went wrong (a correction past
+	REMOTE_CORRECTION_TOLERANCE, or a forwarded input missed) */
+	_distributed_message_substep_state_requests = 147,
+	/* an OpenH1 machine's datagram of messages to an OpenH1 machine, in
+	place of _distributed_message_batch (network_distributed.c,
+	distributed_batch_flush): the batch's world and tick in 3 bytes, and
+	each message's length, kind and count in 3 or 4 bytes, not 12 */
+	_distributed_message_compact_batch = 148,
+	/* an OpenH1 game's objects' states (network_objects.c, unreliable, to each
+	OpenH1 client, in place of _distributed_message_object_states unless
+	debug.network_forms_before): each in bits (network_objects_pack_state),
+	read as the whole one would be (network_objects_unpack_states) */
+	_distributed_message_object_states_packed = 149,
+	/* an OpenH1 client's controls packed (network_substeps.c, unreliable, to
+	an OpenH1 host), at the moments the forms before go, in their place
+	unless debug.network_forms_before: its live controls (of
+	_distributed_message_player_live_controls) and its sub-steps (of
+	_distributed_message_player_substeps), every number the host reads as it
+	read the whole ones. (150 to 154 are kept for other kinds) */
+	_distributed_message_player_live_controls_packed = 155,
+	_distributed_message_player_substeps_packed = 156,
+	/* an OpenH1 game's tick states of the players to its OpenH1 clients
+	(network_distributed.c, unreliable), in place of
+	_distributed_message_unit_state_differences unless
+	debug.network_forms_before: the same entries joined in bits, each head
+	against the one before (distributed_unit_entry_join), which the client
+	makes back into the message they came from (157 is kept for another kind) */
+	_distributed_message_unit_state_differences_joined = 158,
+	/* an OpenH1 game's relayed input of the players to its OpenH1 clients
+	(network_distributed.c, unreliable), in place of
+	_distributed_message_relayed_actions unless debug.network_forms_before:
+	each entry without the parts at their usual values and its player where
+	it is the one after the entry before's (distributed_relayed_action_pack),
+	which the client makes back into the message they came from */
+	_distributed_message_relayed_actions_packed = 159,
 
 	NUMBER_OF_DISTRIBUTED_MESSAGES
 };
@@ -469,6 +517,10 @@ ticks (and its jitter), as its players' input messages tell */
 real distributed_machine_round_trip_ticks(long machine_index);
 /* (a client) the host's latest tick it has had a message of, NONE for none */
 long distributed_latest_host_time(void);
+/* the clock a sender's ticks are checked by (the world gate's): this
+machine's own, moved by the offset the sender's stream last set; the host's
+of a client machine (machine_index), a client's of the host (NONE) */
+long distributed_sender_clock(long machine_index);
 /* (a client) how long the host takes to have this machine's players and
 tell it back, in ticks (0 before it is measured) */
 real distributed_own_round_trip_ticks(void);
@@ -503,6 +555,25 @@ long distributed_player_machine(short player_index);
 /* (the host, in its tick) whether the client's players can see the player
 (or the player is its own, or it has none alive to see with) */
 boolean distributed_machine_sees_player(long machine_index, short player_index);
+/* (the host) whether any of a client's players, where they are or were when
+last alive, could see the map's cluster, by the player plan's test
+(distributed_pvs_sees; a client with none watches anyone, and a cluster
+outside the map's is in sight); and how often the plan sends a player none
+of them can see (or dead), in ticks */
+boolean distributed_machine_sees_cluster(long machine_index, short cluster_index);
+enum
+{
+	HIDDEN_PLAYER_PERIOD_TICKS = 6,
+	/* the most times over its period a client is sent what it cannot react
+	to (far and unseen) while over its byte budget (network.client_budget):
+	such a player or object goes to it every HIDDEN_PLAYER_PERIOD_TICKS
+	times this at most, never left out longer */
+	CLIENT_BUDGET_MAXIMUM_STRETCH = 4,
+};
+/* (the host) how many times over its period (1, 2 or 4) the client is sent
+what it cannot react to, by its byte budget's balance as its last tick
+began (distributed_budget_tick): 1 under budget, or with no budget */
+short distributed_budget_stretch(long machine_index);
 /* what a message says, checked: a number finite; a point's parts finite
 and within bound of the origin; an object's index whole (its identifier
 never 0, which any object at the index matches) */
@@ -635,7 +706,8 @@ void network_coop_client_tick(void);
 word network_coop_presentation_entry_size(void);
 void network_coop_handle_presentation(void const *entries, long host_time);
 word network_coop_event_entry_size(void);
-void network_coop_handle_events(void const *entries, short count);
+/* (host_time: the message's header's, the host's tick it was sent in) */
+void network_coop_handle_events(void const *entries, short count, long host_time);
 word network_coop_device_group_entry_size(void);
 void network_coop_handle_device_groups(void const *entries, short count);
 word network_coop_object_names_entry_size(void);
@@ -688,6 +760,15 @@ the tick ends, or (at_tick_start) as it begins, of the drivers
 distributed_prediction_at_tick_start names */
 void network_objects_apply_vehicle_predictions(boolean at_tick_start);
 word network_objects_entry_size(byte type);
+/* (a client) a packed message of the objects' states
+(_distributed_message_object_states_packed) as the whole one, into unpacked
+(maximum bytes): its size, 0 for none; the whole one's entries of
+NETWORK_OBJECT_STATE_SIZE */
+enum
+{
+	NETWORK_OBJECT_STATE_SIZE = 44,
+};
+word network_objects_unpack_states(void const *message, word size, void *unpacked, word maximum);
 /* whether this client has the host's object at this index */
 boolean network_objects_client_has(long object_index);
 /* Host says alive: recover a dead client copy after a co-op restore. */

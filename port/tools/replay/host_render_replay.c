@@ -3512,6 +3512,10 @@ static const char *const record_type_names[XGPU_STREAM_RECORD_TYPES] =
 	[XGPU_STREAM_PREPARED] = "prepared", [XGPU_STREAM_PREPARE] = "prepare", [XGPU_STREAM_LOADING] = "loading",
 	[XGPU_STREAM_HDR] = "hdr", [XGPU_STREAM_TONE_MAP] = "tone_map", [XGPU_STREAM_SCREENSHOT] = "screenshot",
 	[XGPU_STREAM_PICTURE_POSITION] = "picture_position", [XGPU_STREAM_GAMMA] = "gamma", [XGPU_STREAM_PANINI] = "panini",
+	[XGPU_STREAM_SHARP_UPSCALE] = "sharp_upscale", [XGPU_STREAM_HDR_SDR_CURVE] = "hdr_sdr_curve",
+	[XGPU_STREAM_HDR_PEAK_NITS] = "hdr_peak_nits",
+	[XGPU_STREAM_HDR_GAMUT] = "hdr_gamut",
+	[XGPU_STREAM_PASS_TIMES] = "pass_times", [XGPU_STREAM_MOTION] = "motion", [XGPU_STREAM_RT_SHADOWS] = "rt_shadows",
 	[XGPU_STREAM_WORLD_AO_WINDOW] = "world_ao_window", [XGPU_STREAM_WORLD_AO_FIELD] = "world_ao_field",
 	[XGPU_STREAM_PIPELINE_STAND_IN] = "pipeline_stand_in", [XGPU_STREAM_CATEGORY] = "category",
 	[XGPU_STREAM_DYNAMIC_LIGHTS_WORLD] = "dynamic_lights_world", [XGPU_STREAM_WORLD_AO_PREPASS] = "world_ao_prepass",
@@ -4391,6 +4395,9 @@ int host_render_replay_main(int argc, char *argv[], const struct host_render_rep
 	host_render_record_set_played(record_played);
 	/* (the Screenshot key's pictures are the game's, not the replay's) */
 	host_render_stream_set_screenshot_writer(NULL);
+	/* (nor the frames' own GPU times: the recording's guest memory past
+	the pipelines' states, an older one's, holds no table for them) */
+	host_render_stream_gpu_frames(0);
 
 	/* the ring's header, as it was when the recording began */
 	ring = host_pointer(recording.header.ring_address);

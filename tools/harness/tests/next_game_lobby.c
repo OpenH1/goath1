@@ -47,7 +47,7 @@ typedef word message_header;
 /* the record's pickup bit (network_game_manager.h) */
 enum { _network_game_hold_to_pick_up_bit = 0, _network_game_classic_turning_bit = 1,
 	_network_game_no_direct_camera_bit = 2, _network_game_pro_rules_bit = 3, _network_game_no_hit_sounds_bit = 4,
-	_network_game_vehicle_hijack_bit = 5 };
+	_network_game_vehicle_hijack_bit = 5, _network_game_no_spartan_link_bit = 6 };
 #define SET_FLAG(f, b, v) ((v) ? ((f) |= (unsigned)FLAG(b)) : ((f) &= (unsigned)~FLAG(b)))
 
 struct network_game
@@ -205,6 +205,8 @@ static void update_client_start(void) {}
 static void error(int level, char const *format, ...) {}
 static void halo_load_trace(char const *phase, char const *detail) {}
 static void input_flush(void) {}
+/* (co-op's count of failure reverts, reset as a map loads: main.c's) */
+static void main_coop_failure_reverts_reset(void) {}
 static boolean game_load(struct game_options *options) { return TRUE; }
 /* (game.c's, for every map, the main menu's too: the new map's clock, and
 nothing of the last game's netcode carried into it, network_distributed.c's

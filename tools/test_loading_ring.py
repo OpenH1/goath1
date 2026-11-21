@@ -274,3 +274,79 @@ int main(void) {
     loading_art_scene(art, NULL, 0); free(b); free(art); return 0;
 }
 ''')
+
+
+# The sharp frame drawn by the GPU (loading_art.h's "drawn by the GPU"): with
+# a presenter that draws it, the processor keeps nothing of the sharp frame's
+# size from frame to frame, and the still layers it packs once a load are
+# the processor's own (each pixel's colour, light, edges and hue, decoded as
+# the shader decodes them: tools/vulkan_post_shaders.py's LOADING_SOURCE).
+# Its negative control: a packed texel's light changed is found.
+GPU_LAYERS = r'''
+int main(void) {
+    struct loading_art *art = calloc(1, sizeof(*art)), *gpu = calloc(1, sizeof(*gpu));
+    struct loading_presentation_frame frame;
+    struct block *b = scene_new(0xff3060c0u);
+    struct loading_art_hd *hd = &art->hd;
+    unsigned int i, step, width, height, compared = 0, lit = 0;
+    assert(art && gpu);
+    memset(&frame, 0, sizeof(frame));
+    /* (one presenter that draws it, one that also has the processor draw
+    it to compare) */
+    loading_art_gpu(art, 1); art->hd.check = 1;
+    loading_art_gpu(gpu, 1);
+    assert(loading_art_scene(art, b, sizeof(*b)) && loading_art_scene(gpu, b, sizeof(*b)));
+    loading_art_width(art, 1920, 1080); loading_art_width(gpu, 1920, 1080);
+    frame.epoch = 1; frame.active = 1;
+    for (step = 0; step < 4; step++) {
+        frame.elapsed_ns = (uint64_t)step * 16666667u;
+        assert(loading_art_render(art, &frame) && loading_art_render(gpu, &frame));
+        assert(loading_art_hd_gpu_drawn(art) && loading_art_hd_gpu_drawn(gpu));
+        /* (the presenter takes the packed layers, once) */
+        if (gpu->hd.packed_ready) loading_art_hd_packed_done(gpu);
+    }
+    /* nothing of the sharp frame's size kept by the processor */
+    assert(gpu->hd.width == 1916 && gpu->hd.height == 1080);
+    assert(!gpu->hd.scene && !gpu->hd.light && !gpu->hd.edge && !gpu->hd.tint && !gpu->hd.output);
+    assert(!gpu->hd.packed && gpu->ring.width <= LOADING_ART_FRAME_MAXIMUM_WIDTH);
+    /* the packed layers are the processor's */
+    width = hd->width; height = hd->height;
+    assert(hd->packed_ready && hd->packed && hd->scene && width == 1916);
+#ifdef CONTROL
+    for (i = 0; i < width * height && !(hd->light[i] > 0 && hd->light[i] < 255); i++);
+    assert(i < width * height);
+    hd->packed[i * 4 + 1] ^= 1;
+#endif
+    for (i = 0; i < width * height; i++) {
+        const uint8_t *t = hd->packed + i * 4;
+        unsigned int x = i % width, y = i / width, hue = t[3] & 15u, light = t[1] | (t[3] >> 6 << 8);
+        unsigned int tint = hue | (t[3] & 16u ? LOADING_ART_TINT_WHITE : 0u) | (t[3] & 32u ? LOADING_ART_TINT_SKY : 0u);
+        assert(light == (hd->light[i] < 511 ? hd->light[i] : 511u));
+        assert(t[2] == hd->edge[i] && tint == hd->tint[i]);
+        if (hd->word && x >= hd->word_left && x < hd->word_right && y >= hd->word_top && y < hd->word_bottom &&
+            hd->word[((y - hd->word_top) * (hd->word_right - hd->word_left) + x - hd->word_left) * 4])
+            continue;
+        assert(!memcmp(art->tints[hue][t[0]], hd->scene + i * 3, 3));
+        compared++;
+        lit += t[0] > 0;
+    }
+    assert(compared > width * height / 2 && lit > 1000);
+    loading_art_hd_free(art); loading_art_hd_free(gpu);
+    loading_ring_clear(&art->ring); loading_ring_clear(&gpu->ring);
+    free(b); free(gpu); free(art); return 0;
+}
+'''
+
+
+def test_sharp_frame_on_the_gpu_keeps_no_frame_sized_memory(tmp_path):
+    run(tmp_path, GPU_LAYERS)
+
+
+def test_negative_control_changed_packed_light_is_found(tmp_path):
+    source = tmp_path / "ring.c"
+    source.write_text("#define CONTROL 1\n" + SCENE + GPU_LAYERS)
+    binary = tmp_path / "ring"
+    subprocess.run([os.environ.get("CC", "cc"), "-std=gnu89", "-O1", "-Wall", "-Wextra", "-Werror",
+                    "-Wno-unused-function", "-I", str(ROOT / "port/linux/src"), str(source), "-lm",
+                    "-o", str(binary)], check=True, timeout=120)
+    assert subprocess.run([str(binary)], timeout=60, stderr=subprocess.DEVNULL).returncode != 0

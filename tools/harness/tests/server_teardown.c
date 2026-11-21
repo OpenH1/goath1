@@ -60,6 +60,12 @@ static boolean network_game_server_send_message_to_all_machines(struct network_g
 	CHECK(server == disposing && packet == &message && !closed && !terminated, "exit notice sent after cleanup");
 	broadcasts++; note('B'); return !send_fails;
 }
+/* (in game: the farewell to every machine but the host's own) */
+static boolean network_game_server_send_message_to_remote_machines(struct network_game_server *server, struct network_message *packet)
+{
+	CHECK(server == disposing && packet == &message && !closed && !terminated, "exit notice sent after cleanup");
+	broadcasts++; note('B'); return !send_fails;
+}
 static boolean network_game_server_handle_client_machines(struct network_game_server *server)
 {
 	CHECK(server == disposing && !server->time_of_first_client_loading_completion && !server->sent_start_game_message &&
@@ -140,7 +146,8 @@ int main(int argc, char **argv)
 	else network_game_server_dispose(&host);
 	CHECK(slept == EXPECTED_SLEEP && closed == 1 && handled == 1 && terminated == 1, "wrong sleep or incomplete teardown: %s", order);
 	CHECK(errors == (machines_fail ? 1 : 0), "error handling changed");
-	int expected_messages = strcmp(case_name, "ingame") ? 1 : 0;
+	/* (in every state: in game too, where the Xbox game said nothing) */
+	int expected_messages = 1;
 	CHECK(messages == expected_messages && broadcasts == (message_fails ? 0 : expected_messages), "graceful-exit notice lost");
 	char expected[64] = "";
 	if (back || reopen) strcat(expected, "L");

@@ -115,7 +115,8 @@ is keyed by these bytes */
 struct nv2a_pixel_shader_key
 {
 	DWORD combiner_state[D3DRS_PS_MAX];
-	/* D3DRS_PSTEXTUREMODES lies past D3DRS_PS_MAX */
+	/* D3DRS_PSTEXTUREMODES lies past D3DRS_PS_MAX: its four stages' 20
+	bits, and past them the port's (XGPU_TEXTURE_MODES_*, below) */
 	DWORD texture_modes;
 	unsigned char sampler_type[4];
 	unsigned char alpha_kill[4];
@@ -174,6 +175,39 @@ struct nv2a_pixel_shader_key
 	XGPU_HDR_*); 0 into any other target, and without HDR */
 	unsigned short hdr;
 };
+
+/* display.smooth_lightmaps (#1225): a structure's lightmap pass samples its
+lightmap (texture 2, in 2D: rasterizer_xbox_environment.c) with a uniform
+cubic B-spline over the 4x4 texels about the point, in four bilinear
+lookups, instead of the hardware's bilinear filter over 2x2, so that the
+level's coarse baked light shows no stair steps or diamonds at high
+resolutions. The weights are positive and sum to 1 (a flat area is as it
+was; the lightmap never brighter or darker). Each page is a texture of
+its own (clamped at its edge: no lookup reaches another page), and its
+charts are dilated into the gutters between them by the light's bake:
+measured on bloodgulch's and a10's first structures, the cubic's weight on
+another chart's texels is 0.006% of it at most (bilinear's 0.001%), and
+its light off what the chart's own texels alone give 0.003 on average, 0.11
+at the 99.9th percentile (bilinear's 0.001 and 0.09), so no chart's bounds
+are needed (xgpu_spirv.c's, xgpu_msl.c's lightmap_cubic). The bit in the pixel key's texture_modes,
+set by xgpu_draw_derive; nv2a_pixel_program_decode gives the program's
+lightmap_filter */
+#define XGPU_TEXTURE_MODES_LIGHTMAP_CUBIC 0x80000000u
+/* (the stages' own bits) */
+#define XGPU_TEXTURE_MODES_STAGES 0x000fffffu
+/* display.soft_particles: a first-person weapon's effect drawn over the
+weapon's own pixels (d3d8_device.c's halo_effect_soft 2) tests no depth
+where it is soft, its fade against the weapon's depth its test, so that a
+flat sprite meets the gun without a straight cut. Only where the backend's
+fade is sure to be drawn for the draw's pixel program: texture 0 sampled in
+2D and textures 2 and 3 not at all (xgpu_spirv.c's
+xgpu_spirv_effect_possible, which samples none in 2 and 3 more strictly);
+else the draw keeps its test, as the Xbox drew it (its pixel key's
+texture modes and texture 0's sampler) */
+static __inline int xgpu_effect_untested(unsigned long texture_modes, unsigned int sampler_0)
+{
+	return (texture_modes & 0x1f) == 1 && sampler_0 == _xgpu_sampler_2d && !((texture_modes >> 10) & 0x3ff);
+}
 
 /* the vertex constants the per-pixel model lighting reads, in a uniform of
 their own (the vertex shader's 192 would pass the least fragment uniform
@@ -334,11 +368,12 @@ objects' atlas) */
 /* ---------- the distance-field scene (port/linux/include/world_cascades.h)
 
 The cascades about the camera, one 3D texture of two signed bytes a texel
-(RG8 snorm: the structure's distance, the objects'), each cascade
+(RG8 snorm: none, +1 everywhere; the objects' distance), each cascade
 XGPU_WORLD_CASCADE_SPAN texels a side (its side and a guard), one above the
 other along z; a cascade's block vec4 is its first voxel's centre and its
 voxel (0: not ready). world_trace, the emitters' ray step through them
-(xgpu_spirv.c's, xgpu_msl.c's), is world_cascades.c's world_trace_ray
+(xgpu_spirv.c's, xgpu_msl.c's; the structure's distance the level's field's
+where the ray is), is world_cascades.c's world_trace_ray
 operation for operation; these are world_cascades.h's WORLD_CASCADE* and
 WORLD_TRACE_* */
 #define XGPU_WORLD_CASCADES 4
@@ -389,6 +424,18 @@ camera, where lights are seen large. */
 #define XGPU_DYNAMIC_LIGHTS_REACH 128.0f
 /* the largest soft core of a light's falloff, world units (xgpu_spirv.c) */
 #define XGPU_DYNAMIC_LIGHTS_CORE 0.6
+/* a model's highlights of the lights (XGPU_DYNAMIC_LIGHTS_MODEL with a cube
+map in texture 3, its reflection): added to the cube map's texel, so that the
+model's own reflection mask, tint and fade show them where it shines. Their
+strength at their peak (a normalized Phong lobe's, (exponent + 8) / 8, of the
+light's diffuse on a surface facing it), and the sharpness of a light's
+highlight on a smooth surface (a Phong exponent); where the surface's normal turns fast across the pixel
+(small or far models), the highlight widens, as dim as it widens, so it does
+not flicker (XGPU_DYNAMIC_LIGHTS_HIGHLIGHT_WIDEST at most added to the lobe's
+width, 2 / (exponent + 2): an exponent no less than about 5.8) */
+#define XGPU_DYNAMIC_LIGHTS_HIGHLIGHT 4.0f
+#define XGPU_DYNAMIC_LIGHTS_HIGHLIGHT_EXPONENT 24.0f
+#define XGPU_DYNAMIC_LIGHTS_HIGHLIGHT_WIDEST 0.18f
 #define XGPU_DYNAMIC_LIGHTS_UNIT 12
 #define XGPU_DYNAMIC_LIGHTS_BINDING 1
 
@@ -489,6 +536,14 @@ unsigned long xgpu_texture_level_pitch(const struct xgpu_texture_description *de
 or depth from the first level's */
 unsigned long xgpu_texture_level_size(const struct xgpu_texture_description *description, unsigned long level);
 unsigned long xgpu_texture_level_dimension(unsigned long base, unsigned long level);
+/* the least alpha any texel of any level reads, 0 to 255, from its texels
+(a 2D texture's): 255 for a format with no alpha; a DXT1 texture's 255, or
+0 with a block of three colours that uses the fourth index, the
+transparent one; a DXT3 texture's least alpha; a DXT5 texture's blocks'
+lower end points (0 where a block of six alphas uses its 0); an
+A8R8G8B8 texture's. Never more than the least: -1 where it is not known
+(the other formats are not read) */
+int xgpu_texture_minimum_alpha(const struct xgpu_texture_description *description, const unsigned char *texels);
 /* the size is one D3DDevice_GetDeviceCaps allows (d3d8_device.c) */
 BOOL xgpu_texture_size_supported(const struct xgpu_texture_description *description);
 /* a level of a texture that is not compressed (a volume's slices one after
@@ -500,6 +555,50 @@ BOOL xgpu_texture_decode_level(const struct xgpu_texture_description *descriptio
 /* a level of a DXT texture, as xgpu_texture_decode_level */
 void xgpu_texture_decode_dxt(const struct xgpu_texture_description *description, unsigned long level,
 	const unsigned char *source, DWORD *destination);
+
+/* ---------- levels that keep an alpha test's coverage
+
+display.alpha_coverage (Enhanced; the Xbox drew the levels as stored, #1223):
+a 2D texture whose alpha a draw's alpha test reads alone (d3d8_device.c's
+alpha_test_stage) is drawn from a copy of its own (the stage's
+xgpu_stream_texture_stage target, XGPU_TEXTURE_COVERAGE_*: the texture of
+any other draw is the one stored), whose levels past the first have the
+share of texels the test passes that the first has. Averaged, a level's
+alphas fall under the test's reference where the first's are thin (a
+fence's wires, a tree's leaves), and far away those vanish and shimmer.
+Each level's alpha is made from the one before's as it was made (not as
+scaled), box-filtered, then scaled so that as many of its texels pass as
+the first's share would have (I. Castaño's, "Computing Alpha Mipmaps",
+2010); a texel the test passes now that it failed as stored takes the
+colour the first level's passing texels average to there (a stored level's
+cut-out texels are of any colour, DXT1's black). The colours of the rest
+are the level's as stored. The backends decode such a copy to BGRA
+(xgpu_vulkan_textures.c, xgpu_metal_textures.c), once as it is read. */
+#define XGPU_TEXTURE_COVERAGE_SHIFT 16
+#define XGPU_TEXTURE_COVERAGE_MASK 0x00ff0000u
+/* the least alpha the test passes (2 to 255) in a stage's target */
+#define XGPU_TEXTURE_COVERAGE_PASS(target) (((target) & XGPU_TEXTURE_COVERAGE_MASK) >> XGPU_TEXTURE_COVERAGE_SHIFT)
+
+struct xgpu_texture_coverage
+{
+	/* the least alpha passing; the first level's share passing */
+	unsigned int pass;
+	double share;
+	/* the level before as made, unscaled: its colour averaged over its
+	alpha, and that (ARGB words) */
+	DWORD *made;
+	unsigned long width, height;
+	BOOL failed;
+};
+
+void xgpu_texture_coverage_begin(struct xgpu_texture_coverage *coverage, unsigned int pass);
+/* the texture's next level (0 first, then each in order), its texels
+decoded (ARGB words, as xgpu_texture_decode_level), width by height: the
+first's share taken from it; a later one's alpha (and colour where it is
+passed now and was not) made as above, in place */
+void xgpu_texture_coverage_level(struct xgpu_texture_coverage *coverage, unsigned long level, unsigned long width,
+	unsigned long height, DWORD *texels);
+void xgpu_texture_coverage_end(struct xgpu_texture_coverage *coverage);
 
 /* ---------- MCC textures
 

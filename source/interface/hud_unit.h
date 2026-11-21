@@ -22,6 +22,10 @@ void hud_update_unit(
 	void);
 void hud_render_unit_interface(
 	struct player_datum *player);
+/* port: the unit HUD's flash times and the like, a frame's step of them once
+a tick (hud.c's hud_tick_begin) */
+void hud_unit_interface_tick(
+	struct player_datum *player);
 void hud_render_damage_indicators(
 	short local_player_index);
 void hud_play_unit_sounds(

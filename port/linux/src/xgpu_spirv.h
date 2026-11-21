@@ -111,6 +111,10 @@ enum
 	/* (a model lit for each vertex, its ambient light apart: xgpu.h's
 	XGPU_AMBIENT_OCCLUSION_LIGHT_VERTEX) */
 	XGPU_SPIRV_LOCATION_LIGHT_AMBIENT, XGPU_SPIRV_LOCATION_LIGHT_POINT,
+	/* (display.temporal_aa: the position this frame and the frame before,
+	x, y and w as the screen's conversion has them: xgpu_spirv_options'
+	motion) */
+	XGPU_SPIRV_LOCATION_MOTION_CURRENT, XGPU_SPIRV_LOCATION_MOTION_PREVIOUS,
 };
 
 /* the draw's values both stages read, laid out alike in C and in the
@@ -230,6 +234,12 @@ struct xgpu_spirv_options
 	xgpu_spirv_world_ao_pass) through the scene at
 	XGPU_SPIRV_BINDING_WORLD_AO_SCENE */
 	BOOL ray_queries;
+	/* display.temporal_aa: the draw writes its motion as the second colour
+	attachment (location 1: the previous position less the current, as a
+	fraction of the view, x right, y down; its depth; 1), its vertex
+	program run again on the previous frame's registers, which the
+	constants' block holds after the 192 (384 vec4s then); not with views */
+	BOOL motion;
 };
 
 /* ---------- the VR mode's effects
@@ -255,7 +265,9 @@ halo_vr_effect_depth):
 
 The pixel program must sample texture 0 in 2D (the effect's bitmap) and
 not textures 2 and 3, whose bindings the depth and thickness take
-(xgpu_spirv_effect_possible), drawn into both eyes. The fade is drawn as
+(xgpu_spirv_effect_possible), drawn into both eyes, or on a flat screen
+into no views (display.soft_particles: soft alone; the depth then one
+layer, a 2D image, and the uniforms' first view). The fade is drawn as
 the blend's own nothing (XGPU_SPIRV_FADE_*): alpha to 0 over an alpha
 blend, colour to 0 when added, to white when multiplied, to grey when
 multiplied twice. */
@@ -334,6 +346,16 @@ enum
 };
 BOOL xgpu_spirv_world_ao_pass(int pass, const struct xgpu_spirv_options *options, struct xgpu_spirv_module *module);
 
+/* display.shadows "ray_traced" (xgpu_backend.h's xgpu_backend_rt_shadows):
+its pass's pixel shader, drawn with world_ao_pass's vertex shader (the
+triangle over the viewport): the scene's depth at texture 0, a header of
+8 vec4 at the uniforms' binding (the unprojection's rows from the
+framebuffer's x, y and depth to the world's homogeneous point; the camera
+and the casters' count), the casters (2 vec4 each) at the constants', the
+ray-traced scene at the occlusion set's; its colour the light the pixel
+keeps, which the blend multiplies it by */
+BOOL xgpu_spirv_rt_shadows_pass(const struct xgpu_spirv_options *options, struct xgpu_spirv_module *module);
+
 /* the enhanced dynamic lights' glows (xgpu_backend.h's
 xgpu_backend_dynamic_lights_halos):
 a camera-facing quad about each light, six vertices of a triangle list,
@@ -386,9 +408,11 @@ BOOL xgpu_spirv_halo_pixel_shader(const struct xgpu_spirv_options *options, stru
 /* the distance-field scene's ray step (port/linux/include/world_cascades.h's
 world_trace_ray) alone, for tools/test_world_trace.py: a fragment shader,
 entry point "main", tracing its ray from its inputs (location 0 the origin,
-1 the direction, 2 t_max and the mask, 3 to 6 the cascades' vec4s) through
-the cascades' texture (XGPU_SPIRV_SET_OCCLUSION,
-XGPU_SPIRV_BINDING_WORLD_CASCADES), writing the hit (1 or 0), t and kind.
+1 the direction, 2 t_max and the mask, 3 to 6 the cascades' vec4s, 7 and 8
+the field's block vec4s) through the cascades' texture
+(XGPU_SPIRV_SET_OCCLUSION, XGPU_SPIRV_BINDING_WORLD_CASCADES) and the
+level's field (XGPU_SPIRV_BINDING_WORLD_SDF, _WORLD_SDF_TABLE), writing the
+hit (1 or 0), t and kind.
 FALSE if out of memory. */
 BOOL xgpu_spirv_world_trace_test(struct xgpu_spirv_module *module);
 

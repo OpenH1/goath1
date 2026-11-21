@@ -34,15 +34,21 @@ NEGATIVE_CONTROLS = {
 }
 
 
+def expression(source, name):
+    """An enum constant's expression as the source writes it (the history's length is the age's and its slack)."""
+    return re.search(r"^\s*" + re.escape(name) + r" = ([^,]+),", source, re.M).group(1)
+
+
 def generated(fault=None):
     source = read("port/linux/game/network_damage.c")
-    config = ""
-    for name in ("TARGET_HISTORY_TICKS", "TARGET_HISTORY_SLACK_TICKS"):
-        config += f"#define {name} {constant(source, name)}\n"
+    config = f"#define TICKS_PER_SECOND {constant(read('source/cseries/cseries.h'), 'TICKS_PER_SECOND')}\n"
+    for name in ("TARGET_HISTORY_TICKS", "TARGET_HISTORY_SLACK_TICKS", "REPORT_DELAY_SLACK_TICKS",
+                 "REPORT_MAXIMUM_AGE_TICKS"):
+        config += f"#define {name} ({expression(source, name)})\n"
     for name in ("REPORT_HISTORY_TOLERANCE", "REPORT_HISTORY_LEAD_TICKS"):
         config += f"#define {name} {re.search(rf'#define {name} ([0-9.]+f)', source).group(1)}\n"
     code = "\n".join(function(source, name) for name in (
-        "distributed_distance_squared", "distributed_target_seen"))
+        "damage_history_at", "distributed_distance_squared", "distributed_target_seen"))
     if fault:
         code = mutated(code, *fault)
     return (("config.inc", config), ("under_test.inc", code))
@@ -69,5 +75,5 @@ def test_the_host_checks_every_report_so():
     # (and every point hit's line of sight, the shooter's rate not asked: traced to the pose the check gave)
     assert "!distributed_report_line_of_sight(machine_index, player_index, &report->damage.origin, &centre," in valid
     assert "centre.x = seen_position.x +" in valid
-    assert "ticks = MIN(now - report->host_time + TARGET_HISTORY_SLACK_TICKS, TARGET_HISTORY_TICKS - 1);" in valid
+    assert "ticks = now - report->host_time + TARGET_HISTORY_SLACK_TICKS;" in valid
     assert "sim_" not in valid and "substep" not in valid

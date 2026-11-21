@@ -11,6 +11,8 @@ machine for the player to send.
 #include <stddef.h>
 #include <stdint.h>
 
+#include "perf_times.h"
+
 /* a frame presented (d3d8_device.c's present): its time kept, the last
 REPORT_FRAMES of them */
 void report_frame_presented(void);
@@ -78,10 +80,51 @@ renderer's thread's shares of the time, the pacing's, and the verdict
 frame's time, work, the work in it */
 void report_gpu_summary(const uint32_t *micros, const struct report_frame_work *work, unsigned long count,
 	char *text, size_t size);
+/* the last frames' times (perf_times.h's perf_times_recent) from a ring of
+them (ring frames, a power of 2; count kept so far, the newest at
+count - 1): those that ended within milliseconds of the newest's end, at
+most most of them; scratch (NULL: no 1% low), room for their times */
+void report_recent_frames(const uint32_t *micros, const uint32_t *at_ms, const struct report_frame_work *work,
+	unsigned long ring, unsigned long count, unsigned long most, uint32_t milliseconds, uint32_t *scratch,
+	struct perf_times *times);
+/* a benchmark's frames summed (report_measure_frames): their count and
+seconds; the average (milliseconds and frames a second); the 1% and 0.1%
+lows (frames a second); the frame time's 50th, 95th and 99th percentiles;
+the frames of REPORT_HITCH_MS or more; a frame's milliseconds on the GPU
+(negative: not measured), the game's thread (its time less its waits), the
+renderer's thread and waiting; and the share of the time (percent) the game
+waited for vsync or the frame cap */
+struct report_measure
+{
+	unsigned long frames, hitches;
+	double seconds, average_ms, average_fps, low_1_fps, low_01_fps, p50_ms, p95_ms, p99_ms;
+	double gpu_ms, game_ms, render_ms, waited_ms, paced_percent;
+};
+/* ... of count frames (micros, each frame's time; work, the work in it),
+scratch room for count times */
+void report_measure_frames(const uint32_t *micros, const struct report_frame_work *work, unsigned long count,
+	uint32_t *scratch, struct report_measure *measure);
+/* the processor's name and its cores, as report.md gives them */
+void report_processor_text(char *text, size_t size);
+/* the frames presented so far: a mark a benchmark's measure begins or ends
+at */
+unsigned long report_frames_mark(void);
+/* the frames presented between two marks measured, and written with about
+(the benchmark's own lines), the settings and the computer to
+benchmarks/<date>_<time>-<map>.txt in the data root: name (that path,
+relative), and verdict, what held the frames back (report_gpu_summary's);
+1 if it was written */
+int report_benchmark_write(unsigned long first, unsigned long last, const char *map, const char *about,
+	struct report_measure *measure, char *verdict, size_t verdict_size, char *name, size_t name_size);
+
 /* a new GitHub issue's address on OpenH1's repository, its title and body
 filled in (percent-encoded; the body cut at a line to keep the address
 within most bytes); 1 if it fits */
 int report_issue_url(const char *title, const char *body, char *url, size_t most);
+/* a folder shown in the desktop's file manager (a relative path made whole;
+a run nobody watches leaves the desktop alone, the address logged); 0 if it
+could not be opened (Settings' GAME DATA, game_data_page.c) */
+int report_open_folder(const char *path);
 /* a text with what could say who the player is taken out, its issue being
 public: home (the account's folder) as ~, invite and party links, IPv4
 addresses (but 127.x and 0.0.0.0) and IPv6 ones (but ::1), chat lines and

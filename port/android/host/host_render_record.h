@@ -35,8 +35,13 @@ HOST_RENDER_RECORD_VERSION); the stream's own is unchanged.
 replay's inspector reads; a recording of 1 (the stream's 21) plays as it
 did, without marks. 3: the stream's 23, whose dynamic lights' cells come
 as their changes (DYNAMIC_LIGHTS_CHANGE); a recording of 2 plays its
-whole cells (DYNAMIC_LIGHTS_UPLOAD) as it did */
-#define HOST_RENDER_RECORD_VERSION 3
+whole cells (DYNAMIC_LIGHTS_UPLOAD) as it did. 4: the stream's 24, whose
+records are 23's (only INITIALIZE's answer grew, which the replay's own
+backend gives; a recording holds none); a recording of 3 plays as it did.
+5: the stream's 25, whose records are 24's (only the frames' GPU times
+after the pipelines' states, which a replay does not give:
+host_render_stream_gpu_frames); a recording of 4 plays as it did */
+#define HOST_RENDER_RECORD_VERSION 5
 
 /* the file: this header, then blocks, each a block header and its bytes:
 together, the events, each an event header and its bytes (an event may

@@ -602,6 +602,56 @@ static void effect_set_event(
 extern struct data_array *effect_data;
 struct data_array *effect_location_data;
 
+/* port: an effect's locations on a first-person weapon, and the local
+player whose weapon it is, kept apart from the effect's: they are made and
+deleted as the renderer shows or hides the weapon (first_person_weapon_draw),
+and only the particles drawn from that player's eyes are placed at them
+(effect_location_get_next_instance). In the effect's own locations they
+took identifiers of its array, which the ticks keep, so the game state
+parted with whether a frame was drawn (a demo recorded with the renderer
+on, played back without it). The effects, their locations and their
+parts are the same whether the weapon is drawn or not; these two are
+outside the game state (the process's memory: a saved game's layout, size
+and allocations' checksum as before them), the ticks never read them but
+to place those particles, and a game state written over as a whole puts
+them right (effects_port_game_state_rewritten). */
+#define MAXIMUM_EFFECT_FIRST_PERSON_LOCATIONS 512
+
+struct effect_first_person
+{
+	/* the effect's identifier (its datum's), 0 when the slot is free */
+	short identifier;
+	short local_player_index;
+	long location_datum_indices[MAXIMUM_EFFECT_LOCATIONS];
+};
+
+static struct effect_first_person effect_first_person_slots[HALO_PORT_MAXIMUM_EFFECTS];
+static struct effect_first_person *effect_first_persons;
+static struct data_array *effect_first_person_location_data;
+
+/* port: the particles' effects (one a particle makes as it dies or strikes:
+particles.c's particle_effect_new and its material effects), and their
+locations. The particles move by the frames (game_frame), so the effects
+they made in the game state's array took its slots and identifiers as the
+frames went: at another frame rate, another count of them, and the ticks'
+own effects after them in other slots, so the game played at another frame
+rate was another game (OpenH1 #1233). They are the frames' now: arrays of
+the process's, outside the game state (a saved game's layout and size as
+before), which effect_data and effect_location_data point at while a
+particle makes one (effects_port_particles_begin) and while the frames move
+them (effects_port_particles_update), with the frame's time as the
+particles. Such an effect makes no objects, damage or lights (effect_allocate
+refuses one that must be deterministic), nor first-person locations. */
+#define MAXIMUM_PARTICLE_EFFECTS 512
+#define MAXIMUM_PARTICLE_EFFECT_LOCATIONS 1024
+
+static struct data_array *effect_particle_data;
+static struct data_array *effect_particle_location_data;
+/* the game state's two, while the particles' stand in for them */
+static struct data_array *effect_game_state_data;
+static struct data_array *effect_game_state_location_data;
+static boolean effects_particles_active = FALSE;
+
 boolean effects_corpse_nonviolent = TRUE;
 
 boolean debug_effects_nonviolent = FALSE;
@@ -621,7 +671,17 @@ void effects_initialize(
 	pool drops deterministic effects, damage included */
 	effect_data = game_state_data_new("effect", HALO_PORT_MAXIMUM_EFFECTS, 0xFC);
 	effect_location_data = game_state_data_new("effect location", HALO_PORT_MAXIMUM_EFFECT_LOCATIONS, 0x3C);
-	if (!effect_data || !effect_location_data)
+	/* port: (the first-person weapons' locations, the frames': not the
+	game state's, data_new's and an array of the process's) */
+	effect_first_persons = effect_first_person_slots;
+	effect_first_person_location_data = data_new(
+		"effect first person location", MAXIMUM_EFFECT_FIRST_PERSON_LOCATIONS, 0x3C);
+	/* port: (the particles' effects, the frames': effect_particle_data) */
+	effect_particle_data = data_new("particle effect", MAXIMUM_PARTICLE_EFFECTS, 0xFC);
+	effect_particle_location_data = data_new(
+		"particle effect location", MAXIMUM_PARTICLE_EFFECT_LOCATIONS, 0x3C);
+	if (!effect_data || !effect_location_data || !effect_first_persons || !effect_first_person_location_data ||
+		!effect_particle_data || !effect_particle_location_data)
 		error(_error_immediate, "couldn't allocate effect globals");
 
 	return;
@@ -630,8 +690,18 @@ void effects_initialize(
 void effects_initialize_for_new_map(
 	void)
 {
+	long index;
+
 	data_make_valid(effect_data);
 	data_make_valid(effect_location_data);
+	data_make_valid(effect_first_person_location_data);
+	data_make_valid(effect_particle_data);
+	data_make_valid(effect_particle_location_data);
+	for (index = 0; index < HALO_PORT_MAXIMUM_EFFECTS; index++)
+	{
+		effect_first_persons[index].identifier = 0;
+		effect_first_persons[index].local_player_index = NONE;
+	}
 
 	return;
 }
@@ -641,6 +711,9 @@ void effects_dispose_from_old_map(
 {
 	data_make_invalid(effect_data);
 	data_make_invalid(effect_location_data);
+	data_make_invalid(effect_first_person_location_data);
+	data_make_invalid(effect_particle_data);
+	data_make_invalid(effect_particle_location_data);
 
 	return;
 }
@@ -652,8 +725,135 @@ void effects_dispose(
 		effect_data = NULL;
 	if (effect_location_data)
 		effect_location_data = NULL;
+	effect_first_persons = NULL;
+	if (effect_first_person_location_data)
+		data_dispose(effect_first_person_location_data);
+	effect_first_person_location_data = NULL;
+	if (effect_particle_data)
+		data_dispose(effect_particle_data);
+	effect_particle_data = NULL;
+	if (effect_particle_location_data)
+		data_dispose(effect_particle_location_data);
+	effect_particle_location_data = NULL;
 
 	return;
+}
+
+/* port: the game state written over as a whole (a saved game, a
+checkpoint's revert, a core, a demo's snapshot or tick: game_state.c's
+game_state_port_rewritten): the first-person slots, outside it, were the
+state's before it, whatever its effects' identifiers are now. All of them
+freed, never walked again, and each first-person weapon the state now has
+shown given its effects' locations again, as showing it does
+(first_person_weapons_port_effects_restart): the weapon's own state says
+it is shown already, so its next frame would not */
+void effects_port_game_state_rewritten(
+	void)
+{
+	long index;
+
+	if (!effect_first_persons || !effect_first_person_location_data)
+		return;
+	for (index = 0; index < HALO_PORT_MAXIMUM_EFFECTS; index++)
+	{
+		effect_first_persons[index].identifier = 0;
+		effect_first_persons[index].local_player_index = NONE;
+	}
+	data_delete_all(effect_first_person_location_data);
+	first_person_weapons_port_effects_restart();
+
+	return;
+}
+
+/* port: an effect's first-person slot (effect_first_person, above): its
+own, or NULL when it has none (another effect's, before it, in that slot) */
+static struct effect_first_person *effect_first_person_try_and_get(
+	long effect_index)
+{
+	struct effect_first_person *first_person;
+	short identifier = (short)(effect_index >> 16);
+
+	/* (a particle's effect has none: effect_particle_data) */
+	if (effect_index == NONE || !effect_first_persons || !identifier || effects_particles_active)
+		return NULL;
+	first_person = &effect_first_persons[(short)effect_index];
+	return first_person->identifier == identifier ? first_person : NULL;
+}
+
+/* ... the slot of an effect's datum */
+static struct effect_first_person *effect_first_person_of(
+	struct effect_datum const *effect)
+{
+	long absolute_index = (long)(((char const *)effect - (char const *)effect_data->data) / effect_data->size);
+	struct effect_first_person *first_person;
+
+	if (!effect_first_persons || !effect->header.identifier || effects_particles_active)
+		return NULL;
+	first_person = &effect_first_persons[absolute_index];
+	return first_person->identifier == effect->header.identifier ? first_person : NULL;
+}
+
+/* the local player whose first-person weapon an effect's particles are
+also drawn at, or NONE */
+static short effect_local_player_index(
+	struct effect_datum const *effect)
+{
+	struct effect_first_person const *first_person =
+		effect_first_person_of(effect);
+
+	return first_person ? first_person->local_player_index : NONE;
+}
+
+/* the first-person locations of a slot deleted, and the slot freed (an
+effect deleted, or one new in its slot: an effect the frames' slot outlived,
+its game state put back or rewritten) */
+static void effect_first_person_free(
+	short absolute_index)
+{
+	struct effect_first_person *first_person = &effect_first_persons[absolute_index];
+	short location_index;
+
+	/* (a particle's effect's slot is another's: effect_particle_data) */
+	if (!first_person->identifier || effects_particles_active)
+		return;
+	for (location_index = 0; location_index < MAXIMUM_EFFECT_LOCATIONS; location_index++)
+	{
+		long location_datum_index = first_person->location_datum_indices[location_index];
+		struct effect_location_datum *location;
+
+		while (location_datum_index != NONE &&
+			(location = (struct effect_location_datum *)datum_try_and_get(
+				effect_first_person_location_data, location_datum_index)) != NULL)
+		{
+			long next = location->next_instance_location_index;
+
+			datum_delete(effect_first_person_location_data, location_datum_index);
+			location_datum_index = next;
+		}
+		first_person->location_datum_indices[location_index] = NONE;
+	}
+	first_person->identifier = 0;
+	first_person->local_player_index = NONE;
+}
+
+/* an effect's slot, taken for it (empty, its player's) */
+static struct effect_first_person *effect_first_person_new(
+	long effect_index,
+	short local_player_index)
+{
+	struct effect_first_person *first_person = effect_first_person_try_and_get(effect_index);
+	short location_index;
+
+	if (!first_person)
+	{
+		effect_first_person_free((short)effect_index);
+		first_person = &effect_first_persons[(short)effect_index];
+		first_person->identifier = (short)(effect_index >> 16);
+		for (location_index = 0; location_index < MAXIMUM_EFFECT_LOCATIONS; location_index++)
+			first_person->location_datum_indices[location_index] = NONE;
+	}
+	first_person->local_player_index = local_player_index;
+	return first_person;
 }
 
 void effect_delete(
@@ -689,6 +889,9 @@ void effect_delete(
 			}
 		}
 
+		/* port: (and its first-person locations) */
+		if (effect_first_person_try_and_get(effect_index))
+			effect_first_person_free((short)effect_index);
 		datum_delete(effect_data, effect_index);
 	}
 
@@ -944,12 +1147,14 @@ long effect_new_from_object(
 	if (effect_index != NONE)
 	{
 		struct effect_datum *effect = effect_get(effect_index);
+		short local_player_index;
 
 		impulse_effect_initialize(effect, scale_a, scale_b, color, impulse_field);
 
 		effect->object_index = object_index;
-		effect->local_player_index =
-			first_person_weapon_get_local_index(object_index);
+		/* port: the weapon's player kept with its first-person locations,
+		the frames' (effect_first_person): the effect's own is NONE */
+		local_player_index = (short)first_person_weapon_get_local_index(object_index);
 
 		if (effects_corpse_nonviolent &&
 			effects_object_is_corpse(effect->object_index))
@@ -978,11 +1183,14 @@ long effect_new_from_object(
 			sizeof(effect->location_datum_indices));
 
 		effect_build_locations(effect, object_get_marker_by_name);
-		if (effect->local_player_index != NONE)
+		if (local_player_index != NONE)
+		{
+			effect_first_person_new(effect_index, local_player_index);
 			effect_build_locations(effect, first_person_weapon_get_marker_by_name);
+		}
 
 		if (force_local_player_index != NONE)
-			effect->local_player_index = force_local_player_index;
+			effect_first_person_new(effect_index, force_local_player_index);
 
 		effect_update(effect_index, 0.0f);
 	}
@@ -1008,10 +1216,10 @@ long effect_new_looping(
 	if (effect_index != NONE)
 	{
 		struct effect_datum *effect = effect_get(effect_index);
+		/* port: (the frames', as in effect_new_from_object) */
+		short local_player_index = (short)first_person_weapon_get_local_index(object_index);
 
 		effect->object_index = object_index;
-		effect->local_player_index =
-			first_person_weapon_get_local_index(object_index);
 		effect->scale_a_function_index = scale_a_function_index;
 		effect->scale_b_function_index = scale_b_function_index;
 		/* port: the index is the map's attachment's (its change color less
@@ -1048,8 +1256,11 @@ long effect_new_looping(
 			sizeof(effect->location_datum_indices));
 
 		effect_build_locations(effect, object_get_marker_by_name);
-		if (effect->local_player_index != NONE)
+		if (local_player_index != NONE)
+		{
+			effect_first_person_new(effect_index, local_player_index);
 			effect_build_locations(effect, first_person_weapon_get_marker_by_name);
+		}
 
 		effect_update(effect_index, 0.0f);
 	}
@@ -1076,6 +1287,56 @@ void effects_update(
 	return;
 }
 
+/* port: the particles' effects' arrays stand in for the game state's
+(effect_particle_data, above), until effects_port_particles_end; FALSE when
+they already did */
+boolean effects_port_particles_begin(
+	void)
+{
+	if (effects_particles_active || !effect_particle_data || !effect_particle_data->valid)
+		return FALSE;
+	effect_game_state_data = effect_data;
+	effect_game_state_location_data = effect_location_data;
+	effect_data = effect_particle_data;
+	effect_location_data = effect_particle_location_data;
+	effects_particles_active = TRUE;
+
+	return TRUE;
+}
+
+void effects_port_particles_end(
+	boolean began)
+{
+	if (!began)
+		return;
+	effect_data = effect_game_state_data;
+	effect_location_data = effect_game_state_location_data;
+	effects_particles_active = FALSE;
+
+	return;
+}
+
+/* port: the particles' effects moved by a frame's time, as the particles
+(game_frame), never by the ticks */
+void effects_port_particles_update(
+	real dt)
+{
+	boolean began = effects_port_particles_begin();
+	long effect_index;
+
+	if (!began)
+		return;
+	for (effect_index = data_next_index(effect_data, NONE);
+		effect_index != NONE;
+		effect_index = data_next_index(effect_data, effect_index))
+	{
+		effect_update(effect_index, dt);
+	}
+	effects_port_particles_end(began);
+
+	return;
+}
+
 void effects_start_on_first_person_weapon(
 	short local_player_index,
 	long object_index)
@@ -1087,17 +1348,17 @@ void effects_start_on_first_person_weapon(
 		effect_index = data_next_index(effect_data, effect_index))
 	{
 		struct effect_datum *effect = effect_get(effect_index);
-		struct effect_definition *definition =
-			effect_definition_get(effect->definition_index);
 
 		if (effect->object_index == object_index)
 		{
 			match_assert(
 				"c:\\halo\\SOURCE\\effects\\effects.c",
 				585,
-				effect->local_player_index==NONE);
+				effect_local_player_index(effect)==NONE);
 
-			effect->local_player_index = local_player_index;
+			/* port: in the effect's first-person slot (effect_first_person),
+			the frames': the effect itself is as it was */
+			effect_first_person_new(effect_index, local_player_index);
 			effect_build_locations(
 				effect,
 				first_person_weapon_get_marker_by_name);
@@ -1116,50 +1377,10 @@ void effects_stop_on_first_person_weapon(
 		effect_index != NONE;
 		effect_index = data_next_index(effect_data, effect_index))
 	{
-		struct effect_datum *effect = effect_get(effect_index);
-		struct effect_definition *definition =
-			effect_definition_get(effect->definition_index);
-
-		if (effect->local_player_index == local_player_index)
-		{
-			short location_index;
-			/* port: no more locations than the effect holds (the map's count) */
-			short location_count = (short)MIN(
-				definition->locations.count,
-				(long)NUMBEROF(effect->location_datum_indices));
-
-			for (location_index = 0;
-				location_index < location_count;
-				location_index++)
-			{
-				long *location_datum_index =
-					&effect->location_datum_indices[location_index];
-
-				while (*location_datum_index != NONE)
-				{
-					struct effect_location_datum *location =
-						effect_location_get(*location_datum_index);
-
-					if (location->node_designator == NONE ||
-						!TEST_FLAG(location->node_designator, _effect_location_first_person_bit))
-					{
-						location_datum_index =
-							&location->next_instance_location_index;
-					}
-					else
-					{
-						/* See effect_delete: deletion leaves this fixed-array slot backed. */
-						datum_delete(
-							effect_location_data,
-							*location_datum_index);
-						*location_datum_index =
-							location->next_instance_location_index;
-					}
-				}
-			}
-
-			effect->local_player_index = NONE;
-		}
+		/* port: its first-person locations, and its player, are its
+		first-person slot's (effect_first_person): only they go */
+		if (effect_local_player_index(effect_get(effect_index)) == local_player_index)
+			effect_first_person_free((short)effect_index);
 	}
 
 	return;
@@ -1243,6 +1464,37 @@ void effects_reconnect_to_structure_bsp(
 	return;
 }
 
+/* port: whether an effect's particles of this camera mode go at its
+first-person weapon's locations (the player's eyes it is drawn from)
+rather than the object's */
+static boolean effect_camera_mode_first_person(
+	struct effect_datum const *effect,
+	short camera_mode)
+{
+	return camera_mode == _effect_camera_mode_first_person_only ||
+		(camera_mode == _effect_camera_mode_both &&
+		effect_local_player_index(effect) != NONE &&
+		local_player_count() == 1);
+}
+
+/* port: the first instance of an effect's location that
+effect_location_get_next_instance walks for this camera mode: the
+object's, or the first-person weapon's (effect_first_person) */
+static long effect_location_first_instance(
+	struct effect_datum const *effect,
+	short location_index,
+	short camera_mode)
+{
+	if (effect_camera_mode_first_person(effect, camera_mode))
+	{
+		struct effect_first_person const *first_person =
+			effect_first_person_of(effect);
+
+		return first_person ? first_person->location_datum_indices[location_index] : NONE;
+	}
+	return effect->location_datum_indices[location_index];
+}
+
 static struct effect_location_datum *effect_location_get_next_instance(
 	struct effect_datum const *effect,
 	long *location_datum_index,
@@ -1261,13 +1513,23 @@ static struct effect_location_datum *effect_location_get_next_instance(
 
 	if (*location_datum_index != NONE)
 	{
-		location = effect_location_get(*location_datum_index);
+		/* port: a first-person camera mode walks the effect's first-person
+		locations (effect_first_person), the frames', which
+		effect_location_first_instance began it on */
+		boolean first_person = effect_camera_mode_first_person(effect, camera_mode);
+
+		location = first_person
+			? (struct effect_location_datum *)datum_try_and_get(
+				effect_first_person_location_data, *location_datum_index)
+			: effect_location_get(*location_datum_index);
+		if (!location)
+		{
+			*location_datum_index = NONE;
+			return NULL;
+		}
 		*location_datum_index = location->next_instance_location_index;
 
-		if (camera_mode == _effect_camera_mode_first_person_only ||
-			(camera_mode == _effect_camera_mode_both &&
-			effect->local_player_index != NONE &&
-			local_player_count() == 1))
+		if (first_person)
 		{
 			if (location->node_designator == NONE ||
 				!TEST_FLAG(location->node_designator, _effect_location_first_person_bit))
@@ -1376,7 +1638,7 @@ boolean dangerous_effects_near_player(
 								_effect_location_first_person_bit))
 							{
 								node_matrix = first_person_weapon_get_node_matrix(
-									effect->local_player_index,
+									effect_local_player_index(effect),
 									(short)(instance->node_designator &
 										(FLAG(_effect_location_first_person_bit) - 1)));
 							}
@@ -1585,6 +1847,9 @@ static long effect_allocate(
 				effect->definition_index = definition_index;
 				effect->owner_object_index = owner_object_index;
 				effect->local_player_index = NONE;
+				/* port: (an effect before it in its first-person slot, which
+				the frames' slots outlived) */
+				effect_first_person_free((short)effect_index);
 				effect->header.flags = 0;
 
 				effect_set_event(effect_index, 0);
@@ -1634,6 +1899,19 @@ static void effect_generate_part(
 {
 	real_vector3d direction;
 	real_vector3d velocity;
+
+	/* port: a particle's effect (the frames': effect_particle_data) makes no
+	objects, damage or lights, which the game has as its own: its tag says it
+	makes none (effect_allocate refuses one whose tag says it must be
+	deterministic), and a map whose tag says otherwise has them skipped here
+	rather than made by the frames */
+	if (effects_particles_active &&
+		(part_definition->runtime_base_class_tag == OBJECT_DEFINITION_TAG ||
+			part_definition->runtime_base_class_tag == DAMAGE_EFFECT_DEFINITION_TAG ||
+			part_definition->runtime_base_class_tag == LIGHT_DEFINITION_TAG))
+	{
+		return;
+	}
 
 	switch (part_definition->runtime_base_class_tag)
 	{
@@ -2005,8 +2283,10 @@ static void effect_generate_particles(
 		if (count_delta <= 0)
 			continue;
 
-		location_datum_index =
-			effect->location_datum_indices[particles->location_index];
+		location_datum_index = effect_location_first_instance(
+			effect,
+			particles->location_index,
+			particles->camera_mode);
 		instance = effect_location_get_next_instance(
 			effect,
 			&location_datum_index,
@@ -2199,7 +2479,7 @@ static void effect_generate_particles(
 						data.color.rgb.blue *= effect->color.blue;
 					}
 
-					data.local_player_index = effect->local_player_index;
+					data.local_player_index = effect_local_player_index(effect);
 					data.attached_to_local_player = instance->node_designator != NONE &&
 						TEST_FLAG(
 							instance->node_designator,
@@ -2742,7 +3022,7 @@ static real_matrix4x3 *effect_get_node_matrix(
 		TEST_FLAG(node_designator, _effect_location_first_person_bit))
 	{
 		return first_person_weapon_get_node_matrix(
-			effect->local_player_index,
+			effect_local_player_index(effect),
 			(short)(node_designator &
 				(FLAG(_effect_location_first_person_bit) - 1)));
 	}
@@ -2812,12 +3092,21 @@ static long effect_build_location(
 	short location_index,
 	boolean first_person_weapon)
 {
-	long location_datum_index = datum_new(effect_location_data);
+	/* port: a first-person weapon's in the effect's first-person slot
+	(effect_first_person), the frames', which effect_first_person_new took */
+	struct effect_first_person *first_person = first_person_weapon
+		? effect_first_person_of(effect)
+		: NULL;
+	struct data_array *data = first_person ? effect_first_person_location_data : effect_location_data;
+	long *first_instance = first_person
+		? &first_person->location_datum_indices[location_index]
+		: &effect->location_datum_indices[location_index];
+	long location_datum_index = first_person_weapon && !first_person ? NONE : datum_new(data);
 
 	if (location_datum_index != NONE)
 	{
 		struct effect_location_datum *location =
-			effect_location_get(location_datum_index);
+			(struct effect_location_datum *)datum_get(data, location_datum_index);
 		long node_designator;
 
 		if (marker->node_index == NONE)
@@ -2829,9 +3118,8 @@ static long effect_build_location(
 
 		location->node_designator = (short)node_designator;
 		location->matrix = marker->node_matrix;
-		location->next_instance_location_index =
-			effect->location_datum_indices[location_index];
-		effect->location_datum_indices[location_index] = location_datum_index;
+		location->next_instance_location_index = *first_instance;
+		*first_instance = location_datum_index;
 	}
 
 	return location_datum_index;
@@ -2934,4 +3222,57 @@ static void effect_set_event(
 	}
 
 	return;
+}
+
+/* port: port/linux/game/light_sources.c (the enhanced dynamic lights'
+lights for the effects whose tags have none): the effect after
+effect_index (NONE: the first), its definition, the object it is on (NONE:
+none), whether it is going (not stopped or hidden from view) and where its
+first location is at the tick (the object's origin where it has none);
+NONE after the last. It only reads */
+long effects_port_next(
+	long effect_index,
+	long *definition_index,
+	long *object_index,
+	boolean *going,
+	real_point3d *position)
+{
+	if (!effect_data || !effect_data->valid || !effect_location_data || !effect_location_data->valid)
+		return NONE;
+	while ((effect_index = data_next_index(effect_data, effect_index)) != NONE)
+	{
+		struct effect_datum const *effect = effect_get(effect_index);
+		struct effect_location_datum const *instance = effect->location_datum_indices[0] != NONE
+			? (struct effect_location_datum const *)datum_try_and_get(effect_location_data,
+				effect->location_datum_indices[0])
+			: NULL;
+
+		*definition_index = effect->definition_index;
+		*object_index = effect->object_index;
+		*going = !TEST_FLAG(effect->header.flags, _effect_stopped_bit) &&
+			!TEST_FLAG(effect->header.flags, _effect_stopping_bit) &&
+			!TEST_FLAG(effect->header.flags, _effect_invisible_bit);
+		if (instance && instance->node_designator == NONE)
+		{
+			*position = instance->matrix.position;
+		}
+		else if (effect->object_index != NONE && object_try_and_get(effect->object_index))
+		{
+			if (instance)
+			{
+				matrix4x3_transform_point(object_get_node_matrix(effect->object_index, instance->node_designator),
+					&instance->matrix.position, position);
+			}
+			else
+			{
+				object_get_origin(effect->object_index, position);
+			}
+		}
+		else
+		{
+			continue;
+		}
+		return effect_index;
+	}
+	return NONE;
 }

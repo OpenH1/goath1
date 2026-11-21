@@ -31,6 +31,10 @@ next of them begun: what the frames put into the game state in between
 (a host's netcode dealing a client's reported hits) */
 void demo_tick_pause(void);
 void demo_substep_resume(short substep_index);
+/* a frame's steps all run (after game_time.c's loops of them): the open
+tick's state, as its last sub-step left it, is copied now, before anything
+else runs; a sub-step run straight after another needs none */
+void demo_steps_end(void);
 
 /* the tick's players' input (players.c): TRUE if a demo's playback gave it
 (the bots then take no part); else, around the bots' turn, it is recorded */
@@ -122,5 +126,18 @@ void demo_bookmark(void);
 /* a line of the host's to its bots, applied in the tick (bots_command.c):
 recorded where it was, for demo_info.py and the playback's log */
 void demo_record_bot_command(char const *line);
+
+/* listeners told as a recording starts (started 1, the demo's file name,
+its first tick) and stops (started 0, NULL, its last tick), on the game's
+thread, each in the order added; none by default. They are only told:
+nothing of the recording or the game changes with them */
+typedef void (*demo_recording_listener)(int started, const char *name, long tick);
+/* up to DEMO_RECORDING_LISTENERS; one added again (or NULL) is a no-op.
+FALSE if the list is full */
+#define DEMO_RECORDING_LISTENERS 4
+boolean demo_add_recording_listener(demo_recording_listener listener);
+void demo_remove_recording_listener(demo_recording_listener listener);
+/* (demo_add_recording_listener's other name) */
+void demo_set_recording_listener(demo_recording_listener listener);
 
 #endif

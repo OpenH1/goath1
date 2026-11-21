@@ -42,6 +42,8 @@ drive the controller.
 #include "port_config.h"
 #include "touch_input.h"
 #include "mouse_sensitivity.h"
+/* (halo_look_dead_zone_shape's HALO_LOOK_DEAD_ZONE_*, the game's too) */
+#include "halo_linux_source_fixups.h"
 /* port/linux/game/network_aim_assist.c */
 extern unsigned char network_aim_assist_block_mouse(void);
 #include "halo_keyboard.h"
@@ -195,8 +197,14 @@ static float mouse_sensitivity(void)
 
 /* the game's own dead zone of each stick, of 32767 (source/input/input_xbox.c) */
 #define STICK_DEAD_RANGE 9000
+/* the most input.look_vertical_sensitivity and input.stick_zoom_sensitivity
+take (multipliers) */
+#define LOOK_VERTICAL_SENSITIVITY_MAXIMUM 4.0f
 /* the most a stick's dead zone setting takes, in percent */
 #define STICK_DEAD_ZONE_MAXIMUM 50
+/* the most a stick's outer dead zone setting takes, in percent: with the
+inner's most (STICK_DEAD_ZONE_MAXIMUM), a fifth of the travel still between */
+#define STICK_OUTER_DEAD_ZONE_MAXIMUM 30
 
 /* each gamepad's player's settings: the local player of the gamepad's
 index (as controller_remap.c's ports are), their profile's; another
@@ -204,16 +212,26 @@ gamepad's config.toml's */
 #define PAD_PLAYERS 4
 #define PAD_PLAYER_SLOT(gamepad) ((gamepad) >= 0 && (gamepad) < PAD_PLAYERS ? (gamepad) : PAD_PLAYERS)
 
-/* the deflection a stick reads as none, of 32767, for the game's sticks
-(stick 0 the left, 1 the right) of a gamepad: its player's
-input.left_stick_dead_zone and input.right_stick_dead_zone as a
-percentage, else the game's own */
-short halo_stick_dead_range(short gamepad, short stick)
+void halo_stick_ranges(long percent, long outer, short *dead_range, short *live_range)
+{
+	*dead_range = percent < 0 || percent > STICK_DEAD_ZONE_MAXIMUM ? STICK_DEAD_RANGE : (short)(percent * 32767 / 100);
+	*live_range = outer <= 0 || outer > STICK_OUTER_DEAD_ZONE_MAXIMUM ? 32767 : (short)(32767 - outer * 32767 / 100);
+}
+
+/* a gamepad's sticks' dead zones (stick 0 the left, 1 the right), of 32767:
+the deflection read as none, its player's input.left_stick_dead_zone and
+input.right_stick_dead_zone as a percentage, else the game's own; and the one
+read as full, 32767 less input.left_stick_outer_dead_zone and
+input.right_stick_outer_dead_zone (none: the original's, full only at the rim) */
+static void stick_dead_zones(short gamepad, short ranges[2], short live_ranges[2])
 {
 	static const char *const settings[2] = { "input.left_stick_dead_zone", "input.right_stick_dead_zone" };
+	static const char *const outer_settings[2] =
+		{ "input.left_stick_outer_dead_zone", "input.right_stick_outer_dead_zone" };
 	static struct
 	{
 		short ranges[2];
+		short live_ranges[2];
 		unsigned long read_at;
 		int read;
 	} pads[PAD_PLAYERS + 1];
@@ -226,13 +244,57 @@ short halo_stick_dead_range(short gamepad, short stick)
 		pads[slot].read_at = config_changes();
 		for (index = 0; index < 2; index++)
 		{
-			long percent = config_player_integer(slot < PAD_PLAYERS ? slot : -1, settings[index]);
-
-			pads[slot].ranges[index] = percent < 0 || percent > STICK_DEAD_ZONE_MAXIMUM
-				? STICK_DEAD_RANGE : (short)(percent * 32767 / 100);
+			halo_stick_ranges(config_player_integer(slot < PAD_PLAYERS ? slot : -1, settings[index]),
+				config_player_integer(slot < PAD_PLAYERS ? slot : -1, outer_settings[index]),
+				&pads[slot].ranges[index], &pads[slot].live_ranges[index]);
 		}
 	}
-	return pads[slot].ranges[stick ? 1 : 0];
+	ranges[0] = pads[slot].ranges[0];
+	ranges[1] = pads[slot].ranges[1];
+	live_ranges[0] = pads[slot].live_ranges[0];
+	live_ranges[1] = pads[slot].live_ranges[1];
+}
+
+/* the deflection a gamepad's stick reads as none, of 32767 (stick_dead_zones) */
+short halo_stick_dead_range(short gamepad, short stick)
+{
+	short ranges[2], live_ranges[2];
+
+	stick_dead_zones(gamepad, ranges, live_ranges);
+	return ranges[stick ? 1 : 0];
+}
+
+/* the deflection from which a gamepad's stick reads as full, of 32767:
+32767, the rim, with no outer dead zone (stick_dead_zones) */
+short halo_stick_live_range(short gamepad, short stick)
+{
+	short ranges[2], live_ranges[2];
+
+	stick_dead_zones(gamepad, ranges, live_ranges);
+	return live_ranges[stick ? 1 : 0];
+}
+
+/* a gamepad's player's input.look_dead_zone_shape (HALO_LOOK_DEAD_ZONE_*):
+"auto", or anything it does not know, the aim style's own */
+int halo_look_dead_zone_shape(short gamepad)
+{
+	static struct
+	{
+		unsigned long read_at;
+		int read, shape;
+	} pads[PAD_PLAYERS + 1];
+	int slot = PAD_PLAYER_SLOT(gamepad);
+
+	if (!pads[slot].read || pads[slot].read_at != config_changes())
+	{
+		const char *shape = config_player_string(slot < PAD_PLAYERS ? slot : -1, "input.look_dead_zone_shape");
+
+		pads[slot].read = 1;
+		pads[slot].read_at = config_changes();
+		pads[slot].shape = !strcmp(shape, "axial") ? HALO_LOOK_DEAD_ZONE_AXIAL
+			: !strcmp(shape, "round") ? HALO_LOOK_DEAD_ZONE_ROUND : HALO_LOOK_DEAD_ZONE_AUTO;
+	}
+	return pads[slot].shape;
 }
 
 /* whether a gamepad's look turns the other way side to side (its player's
@@ -253,6 +315,79 @@ int halo_look_horizontal_inverted(short gamepad)
 		pads[slot].inverted = config_player_boolean(slot < PAD_PLAYERS ? slot : -1, "input.invert_look_horizontal");
 	}
 	return pads[slot].inverted;
+}
+
+/* a gamepad's player's input.look_vertical_sensitivity: the look stick's
+turn up and down times it (player_control.c's player_control_stick_look), 1
+the original's, half the side to side of each LOOK SENSITIVITY step */
+float halo_look_vertical_sensitivity(short gamepad)
+{
+	static struct
+	{
+		unsigned long read_at;
+		int read;
+		float scale;
+	} pads[PAD_PLAYERS + 1];
+	int slot = PAD_PLAYER_SLOT(gamepad);
+
+	if (!pads[slot].read || pads[slot].read_at != config_changes())
+	{
+		float scale = (float)config_player_real(slot < PAD_PLAYERS ? slot : -1, "input.look_vertical_sensitivity");
+
+		pads[slot].read = 1;
+		pads[slot].read_at = config_changes();
+		pads[slot].scale = scale > 0.0f && scale <= LOOK_VERTICAL_SENSITIVITY_MAXIMUM ? scale : 1.0f;
+	}
+	return pads[slot].scale;
+}
+
+/* a gamepad's player's input.stick_zoom_sensitivity: the look stick's turn
+zoomed in times it (player_control.c's player_control_stick_zoom_look), 1
+the original's, each zoom level's magnification dividing it */
+float halo_stick_zoom_sensitivity(short gamepad)
+{
+	static struct
+	{
+		unsigned long read_at;
+		int read;
+		float scale;
+	} pads[PAD_PLAYERS + 1];
+	int slot = PAD_PLAYER_SLOT(gamepad);
+
+	if (!pads[slot].read || pads[slot].read_at != config_changes())
+	{
+		float scale = (float)config_player_real(slot < PAD_PLAYERS ? slot : -1, "input.stick_zoom_sensitivity");
+
+		pads[slot].read = 1;
+		pads[slot].read_at = config_changes();
+		pads[slot].scale = scale > 0.0f && scale <= LOOK_VERTICAL_SENSITIVITY_MAXIMUM ? scale : 1.0f;
+	}
+	return pads[slot].scale;
+}
+
+/* a gamepad's player's input.rumble_strength, in percent: its motors'
+speeds times it at their write (input_xbox.c's input_port_write_rumble);
+100, the default, the game's own. The profile's VIBRATION still turns them
+off */
+unsigned long halo_rumble_strength(short gamepad)
+{
+	static struct
+	{
+		unsigned long read_at;
+		int read;
+		unsigned long percent;
+	} pads[PAD_PLAYERS + 1];
+	int slot = PAD_PLAYER_SLOT(gamepad);
+
+	if (!pads[slot].read || pads[slot].read_at != config_changes())
+	{
+		long percent = config_player_integer(slot < PAD_PLAYERS ? slot : -1, "input.rumble_strength");
+
+		pads[slot].read = 1;
+		pads[slot].read_at = config_changes();
+		pads[slot].percent = percent < 0 || percent > 100 ? 100 : (unsigned long)percent;
+	}
+	return pads[slot].percent;
 }
 
 /* radians of yaw and pitch for the mouse motion since the last call: each
@@ -372,6 +507,8 @@ static unsigned long chat_pad_bits(const XINPUT_GAMEPAD *pad)
 	if (pad->sThumbLY < -PUSHED) buttons |= 1UL << HALO_CHAT_PAD_STICK_DOWN;
 	if (pad->sThumbLX < -PUSHED) buttons |= 1UL << HALO_CHAT_PAD_STICK_LEFT;
 	if (pad->sThumbLX > PUSHED) buttons |= 1UL << HALO_CHAT_PAD_STICK_RIGHT;
+	if (pad->bAnalogButtons[XINPUT_GAMEPAD_WHITE] >= PRESSED) buttons |= 1UL << HALO_CHAT_PAD_LB;
+	if (pad->bAnalogButtons[XINPUT_GAMEPAD_BLACK] >= PRESSED) buttons |= 1UL << HALO_CHAT_PAD_RB;
 	return buttons;
 }
 
@@ -924,6 +1061,35 @@ void platform_text_field(int typing, int password)
 	platform_screen_keyboard(text_typing_field, typing && password);
 }
 
+/* the system's languages, the most wanted first, as SDL has them ("fr_FR
+de_CH en": a language, and its place where it has one), for the on-screen
+keyboard's automatic layout (keyboard.c); their count */
+int platform_locales(char *locales, int size)
+{
+	int count = 0, index, used = 0;
+	SDL_Locale **each = SDL_GetPreferredLocales(&count);
+
+	if (size > 0)
+		locales[0] = 0;
+	for (index = 0; each && index < count && size > 0; index++)
+	{
+		int written = snprintf(locales + used, (size_t)(size - used), "%s%s%s%s", used ? " " : "",
+			each[index]->language ? each[index]->language : "", each[index]->country ? "_" : "",
+			each[index]->country ? each[index]->country : "");
+
+		if (written < 0 || used + written >= size)
+		{
+			locales[used] = 0;
+			break;
+		}
+		used += written;
+	}
+	if (!each)
+		return 0;
+	SDL_free(each);
+	return count;
+}
+
 static void typing_gamepad(const struct platform_input_state *input, XINPUT_GAMEPAD *pad)
 {
 	const unsigned char *k = input->keys;
@@ -1097,7 +1263,7 @@ static const char *const binding_settings[NUMBER_OF_HALO_KEYBOARD_ACTIONS] =
 	"controls.flashlight", "controls.scoreboard", "controls.pause", "controls.screenshot",
 	"controls.report", "controls.push_to_talk", "controls.chat", "controls.team_chat", "controls.party_accept",
 	"controls.vote_yes", "controls.vote_no", "controls.clip", "controls.ping", "controls.walk",
-	"controls.spartan_link",
+	"controls.spartan_link", "controls.hide_hud", "controls.zoom_in", "controls.zoom_out",
 };
 
 static const struct
@@ -1369,6 +1535,39 @@ int halo_push_to_talk_held(void)
 			return 1;
 	}
 	return controller_remap_talk();
+}
+
+/* whether a binding setting's keys ("F5, Mouse 4", as the controls.*
+settings name them; unbound: "") are held now, read at each call: the
+practice keys' (port/linux/game/practice.c), which are not among the
+keyboard's actions (their bits are full) */
+int halo_named_binding_held(const char *setting)
+{
+	struct platform_input_state input;
+	const char *text = config_player_string(0, setting);
+	int slot;
+
+	if (!text || !*text)
+		return 0;
+	platform_input_read(&input, FALSE);
+	for (slot = 0; slot < MAXIMUM_BINDINGS && *text; slot++)
+	{
+		char name[64];
+		size_t length;
+
+		while (*text == ' ' || *text == ',')
+			text++;
+		length = strcspn(text, ",");
+		if (!length)
+			break;
+		snprintf(name, sizeof(name), "%.*s", (int)length, text);
+		while (*name && name[strlen(name) - 1] == ' ')
+			name[strlen(name) - 1] = 0;
+		if (input_held(&input, halo_input_from_name(name)))
+			return 1;
+		text += length;
+	}
+	return 0;
 }
 
 /* ---------- a Discord friend's ask to join (p2p_discord.c) */
@@ -2554,6 +2753,16 @@ void halo_test_input_pump(struct platform_input_state *state, unsigned char *but
 	test_latency.mouse_played = test_latency.pressed;
 }
 
+/* debug.test_input read again at the next reading (halo_test_input_reread) */
+static int test_input_generation;
+
+/* the built-in benchmark's (port/linux/game/benchmark.c): debug.test_input,
+set for the run, read again */
+void halo_test_input_reread(void)
+{
+	test_input_generation++;
+}
+
 static void test_input_gamepad(XINPUT_GAMEPAD *pad)
 {
 	static const WORD digital[] =
@@ -2589,11 +2798,13 @@ static void test_input_gamepad(XINPUT_GAMEPAD *pad)
 	if (network_chat_keyboard_open() && network_chat_controller() == 0)
 		return;
 
-	if (!checked)
+	if (checked != test_input_generation + 1)
 	{
 		const char *setting = config_string("debug.test_input");
 
-		checked = 1;
+		checked = test_input_generation + 1;
+		seed = -1;
+		looking = walking = pad_test = 0;
 		if (!strncmp(setting, "menu:", 5))
 		{
 			snprintf(test_input_menu, sizeof(test_input_menu), "%s", setting + 5);
@@ -2988,25 +3199,63 @@ static void sdl_gamepad_state(SDL_Gamepad *gamepad, const struct gamepad_taps *t
 	if (abs(value) > abs(pad->sThumbRY)) pad->sThumbRY = value;
 }
 
-/* the back paddles held (controller_remap_paddles' bits: the left, the
-right, the second left, the second right; a Steam Deck's L4, R4, L5, R5),
-which only a custom layout's actions take (Button Remapping) */
+/* the extra buttons held (controller_remap_paddles' bits: the back paddles,
+the left, the right, the second left, the second right, a Steam Deck's L4,
+R4, L5, R5; the touchpad's click; misc1 to misc6), which only a custom
+layout's actions take (Button Remapping); a Valve pad's Quick Access button
+and its touches never (controller_extras_reserved) */
 static unsigned int sdl_gamepad_paddles(SDL_Gamepad *gamepad, const struct gamepad_taps *taps)
 {
-	static const SDL_GamepadButton paddles[4] =
+	static const SDL_GamepadButton paddles[CONTROLLER_REMAP_EXTRAS] =
 	{
 		SDL_GAMEPAD_BUTTON_LEFT_PADDLE1, SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1,
 		SDL_GAMEPAD_BUTTON_LEFT_PADDLE2, SDL_GAMEPAD_BUTTON_RIGHT_PADDLE2,
+		SDL_GAMEPAD_BUTTON_TOUCHPAD, SDL_GAMEPAD_BUTTON_MISC1, SDL_GAMEPAD_BUTTON_MISC2,
+		SDL_GAMEPAD_BUTTON_MISC3, SDL_GAMEPAD_BUTTON_MISC4, SDL_GAMEPAD_BUTTON_MISC5,
+		SDL_GAMEPAD_BUTTON_MISC6,
 	};
 	unsigned int held = 0;
 	int index;
 
-	for (index = 0; gamepad && index < 4; index++)
+	for (index = 0; gamepad && index < CONTROLLER_REMAP_EXTRAS; index++)
 	{
 		if (gamepad_button_down(gamepad, taps, paddles[index]))
 			held |= 1u << index;
 	}
+#ifndef HALO_GUEST
+	if (held)
+		held &= ~controller_extras_reserved(SDL_GetGamepadVendor(gamepad), SDL_GetGamepadProduct(gamepad));
+#endif
 	return held;
+}
+
+/* each port's controller's own sticks as last read (halo_controller_stick):
+the left's x and y, the right's, as XInput has them (up positive), before
+the keyboard, the mouse, the touch controls, the scripted player and VR are
+merged into the port's reading; none without a controller */
+static SHORT controller_sticks[PORT_COUNT][4];
+
+static void controller_sticks_read(int port, SDL_Gamepad *gamepad)
+{
+	static const SDL_GamepadAxis axes[4] =
+	{
+		SDL_GAMEPAD_AXIS_LEFTX, SDL_GAMEPAD_AXIS_LEFTY, SDL_GAMEPAD_AXIS_RIGHTX, SDL_GAMEPAD_AXIS_RIGHTY,
+	};
+	int index;
+
+	if (port < 0 || port >= PORT_COUNT)
+		return;
+	for (index = 0; index < 4; index++)
+		controller_sticks[port][index] = gamepad ? stick(SDL_GetGamepadAxis(gamepad, axes[index]), index & 1) : 0;
+}
+
+void halo_controller_stick(short port, short which, short *x, short *y)
+{
+	*x = *y = 0;
+	if (port < 0 || port >= PORT_COUNT || which < 0 || which > 1)
+		return;
+	*x = controller_sticks[port][which * 2];
+	*y = controller_sticks[port][which * 2 + 1];
 }
 
 /* ---------- gyro aiming and the flick stick (gyro_aim.h)
@@ -3064,6 +3313,8 @@ static struct
 	int button;
 	struct gyro_aim_settings aim;
 	int flick_stick;
+	/* the flick's time, seconds (input.flick_stick_time) */
+	float flick_seconds;
 } gyro_settings;
 
 static void gyro_settings_read(void)
@@ -3092,8 +3343,13 @@ static void gyro_settings_read(void)
 	if (!(gyro_settings.aim.vertical_sensitivity > 0.0f))
 		gyro_settings.aim.vertical_sensitivity = 1.0f;
 	gyro_settings.aim.player_space = strcmp(config_string("input.gyro_space"), "local") != 0;
-	gyro_settings.aim.smoothing = config_boolean("input.gyro_smoothing");
+	gyro_settings.aim.smoothing = gyro_aim_smoothing(config_string("input.gyro_smoothing"), 1.0f);
 	gyro_settings.flick_stick = config_boolean("input.flick_stick");
+	gyro_settings.flick_seconds = (float)config_real("input.flick_stick_time");
+	if (!(gyro_settings.flick_seconds >= 0.0f))
+		gyro_settings.flick_seconds = FLICK_STICK_SECONDS;
+	else if (gyro_settings.flick_seconds > FLICK_STICK_SECONDS_MOST)
+		gyro_settings.flick_seconds = FLICK_STICK_SECONDS_MOST;
 }
 
 #define GYRO_DEVICES 8
@@ -3581,7 +3837,7 @@ static void flick_port_update(int port, const XINPUT_GAMEPAD *pad)
 	if (seconds < 0.0 || seconds > 0.1)
 		seconds = 0.0;
 	flick_ports[port].pending += flick_stick_update(&flick_ports[port].stick, pad->sThumbRX / 32767.0f,
-		pad->sThumbRY / 32767.0f, (float)seconds);
+		pad->sThumbRY / 32767.0f, (float)seconds, gyro_settings.flick_seconds);
 }
 
 /* input.flick_stick (input_abstraction.c: with the default stick layout,
@@ -3794,6 +4050,168 @@ static void split_screen_pad_read(int port, XINPUT_GAMEPAD *pad, const XINPUT_GA
 	spartan_link_pad_read(port, pad, reserved);
 }
 
+/* ---------- a DualSense's firing trigger resistance (input.trigger_resistance) */
+
+/* SDL's DualSense effect report, which SDL_SendGamepadEffect sends as it is
+(SDL_hidapi_ps5.c's DS5EffectsState_t, 47 bytes): its first byte's bits say
+which triggers it sets (the rest, the rumble and the lights, stay SDL's),
+each trigger's effect eleven bytes from its offset, the right's first */
+#define TRIGGER_REPORT_SIZE 47
+#define TRIGGER_REPORT_RIGHT_BIT 0x04
+#define TRIGGER_REPORT_LEFT_BIT 0x08
+#define TRIGGER_REPORT_RIGHT 10
+#define TRIGGER_REPORT_LEFT 21
+/* a trigger's effects: off (the trigger's own travel), and rigid, a steady
+resistance from the start of the pull at a firm force (SDL's test's) */
+#define TRIGGER_EFFECT_OFF 0x05
+#define TRIGGER_EFFECT_RIGID 0x01
+#define TRIGGER_RIGID_START 0
+#define TRIGGER_RIGID_FORCE 110
+/* (TRIGGER_NONE: both triggers off; TRIGGER_UNSENT: nothing sent to the
+gamepad yet, its triggers as it has them) */
+#define TRIGGER_NONE (-1)
+#define TRIGGER_UNSENT (-2)
+/* how often the state is sent again while it resists, and for how long
+after it changes: SDL may replace a report still waiting to be written with
+a later one of its size (a rumble's, which sets no trigger) */
+#define TRIGGER_RESEND_MS 1000
+#define TRIGGER_SETTLE_MS 3000
+
+/* the report that sets both triggers: the one that fires
+(XINPUT_GAMEPAD_LEFT_TRIGGER or XINPUT_GAMEPAD_RIGHT_TRIGGER) resisting, the
+other off; both off for any other */
+static void trigger_resistance_report(int trigger, unsigned char report[TRIGGER_REPORT_SIZE])
+{
+	unsigned char *effect;
+
+	memset(report, 0, TRIGGER_REPORT_SIZE);
+	report[0] = TRIGGER_REPORT_RIGHT_BIT | TRIGGER_REPORT_LEFT_BIT;
+	report[TRIGGER_REPORT_RIGHT] = TRIGGER_EFFECT_OFF;
+	report[TRIGGER_REPORT_LEFT] = TRIGGER_EFFECT_OFF;
+	if (trigger != XINPUT_GAMEPAD_LEFT_TRIGGER && trigger != XINPUT_GAMEPAD_RIGHT_TRIGGER)
+		return;
+	effect = report + (trigger == XINPUT_GAMEPAD_LEFT_TRIGGER ? TRIGGER_REPORT_LEFT : TRIGGER_REPORT_RIGHT);
+	effect[0] = TRIGGER_EFFECT_RIGID;
+	effect[1] = TRIGGER_RIGID_START;
+	effect[2] = TRIGGER_RIGID_FORCE;
+}
+
+/* a gamepad's player's input.trigger_resistance (off by default) */
+static int trigger_resistance_wanted(short gamepad)
+{
+	static struct
+	{
+		unsigned long read_at;
+		int read, on;
+	} pads[PAD_PLAYERS + 1];
+	int slot = PAD_PLAYER_SLOT(gamepad);
+
+	if (!pads[slot].read || pads[slot].read_at != config_changes())
+	{
+		pads[slot].read = 1;
+		pads[slot].read_at = config_changes();
+		pads[slot].on = config_player_boolean(slot < PAD_PLAYERS ? slot : -1, "input.trigger_resistance");
+	}
+	return pads[slot].on;
+}
+
+/* each port's gamepad the triggers were last sent to, and what: the
+trigger resisting, TRIGGER_NONE, or TRIGGER_UNSENT */
+static struct
+{
+	SDL_JoystickID id;
+	int sent;
+	Uint64 sent_at, changed_at;
+} trigger_ports[PORT_COUNT];
+static int trigger_exit_hooked;
+
+static void trigger_send(SDL_Gamepad *gamepad, int trigger)
+{
+	unsigned char report[TRIGGER_REPORT_SIZE];
+
+	trigger_resistance_report(trigger, report);
+	SDL_SendGamepadEffect(gamepad, report, sizeof(report));
+}
+
+/* (at exit) every gamepad sent a resistance let go of: a DualSense keeps
+its triggers' effect until told otherwise */
+static void trigger_resistance_exit(void)
+{
+	int port, sent = 0;
+
+	for (port = 0; port < PORT_COUNT; port++)
+	{
+		SDL_Gamepad *gamepad = trigger_ports[port].id && trigger_ports[port].sent != TRIGGER_UNSENT ?
+			SDL_GetGamepadFromID(trigger_ports[port].id) : NULL;
+
+		if (gamepad)
+		{
+			trigger_send(gamepad, TRIGGER_NONE);
+			sent = 1;
+		}
+	}
+	/* (SDL's thread writes the reports: it drops those left at its end) */
+	if (sent)
+		SDL_Delay(50);
+}
+
+/* a port's DualSense's triggers, at each reading: the one bound to fire
+(its player's Button Remapping, else their profile's BUTTON LAYOUT) resists
+while their player has the setting on and plays alive with nothing over
+the game (a menu, the pause, the console, a chat line, the window out of
+focus); else both off. Nothing is sent to a gamepad that is not a
+DualSense (an Edge is one to SDL) or, the setting off, was never sent one.
+A gamepad that leaves the port, still connected and not another port's, is
+let go of; one new to the port (reconnected) is sent its state anew. Only
+the controller is written: no game state, nothing on the network */
+static void trigger_port_update(int port, SDL_Gamepad *gamepad, SDL_JoystickID id)
+{
+	Uint64 now = SDL_GetTicks();
+	int want = TRIGGER_NONE, wanted, other;
+
+	if (!gamepad)
+		id = 0;
+	if (trigger_ports[port].id != id)
+	{
+		if (trigger_ports[port].id && trigger_ports[port].sent >= 0)
+		{
+			SDL_Gamepad *left = SDL_GetGamepadFromID(trigger_ports[port].id);
+
+			for (other = 0; other < PORT_COUNT; other++)
+			{
+				if (other != port && trigger_ports[other].id == trigger_ports[port].id)
+					left = NULL;
+			}
+			if (left)
+				trigger_send(left, TRIGGER_NONE);
+		}
+		trigger_ports[port].id = id;
+		trigger_ports[port].sent = TRIGGER_UNSENT;
+	}
+	if (!gamepad || SDL_GetGamepadType(gamepad) != SDL_GAMEPAD_TYPE_PS5)
+		return;
+	wanted = trigger_resistance_wanted((short)port);
+	if (wanted && controller_remap_alive((short)port))
+		want = controller_remap_fire_trigger((short)port);
+	if (!wanted && trigger_ports[port].sent == TRIGGER_UNSENT)
+		return;
+	if (want != trigger_ports[port].sent)
+		trigger_ports[port].changed_at = now;
+	else if (now - trigger_ports[port].sent_at < TRIGGER_RESEND_MS ||
+		(want == TRIGGER_NONE && now - trigger_ports[port].changed_at >= TRIGGER_SETTLE_MS))
+	{
+		return;
+	}
+	trigger_send(gamepad, want);
+	trigger_ports[port].sent = want;
+	trigger_ports[port].sent_at = now;
+	if (!trigger_exit_hooked)
+	{
+		trigger_exit_hooked = 1;
+		atexit(trigger_resistance_exit);
+	}
+}
+
 /* reads a controller's state; for port 0 the keyboard, mouse, debug input
 and touchscreen are merged into the first gamepad's; runs on the game's main
 thread (touch_input_gamepad relies on it); returns ERROR_SUCCESS or
@@ -3819,6 +4237,7 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 	split_players = pc_menu_split_players() != 0;
 	count = sdl_gamepads(gamepads);
 	controller_device_update((short)port, port_gamepad(gamepads, count, port));
+	controller_sticks_read(port, port_gamepad(gamepads, count, port));
 	/* Keep physical remapping separate from the keyboard and touch controls. */
 	memset(&physical, 0, sizeof(physical));
 	/* (what was pressed and let go of since the last reading counts once,
@@ -3982,7 +4401,8 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 	else if (test_input_menu_ports & (1U << port))
 		test_input_menu_gamepad(&state->Gamepad, port);
 	if (captured) memset(&state->Gamepad, 0, sizeof(state->Gamepad));
-	/* (the port's gyroscope, and its right stick as the flick stick) */
+	/* (the port's gyroscope, its right stick as the flick stick, and a
+	DualSense's firing trigger's resistance) */
 	{
 		SDL_Gamepad *gamepad = port_gamepad(gamepads, count, port);
 		SDL_JoystickID id = 0;
@@ -3995,6 +4415,7 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 		}
 		gyro_port_update(port, gamepad, id);
 		flick_port_update(port, &state->Gamepad);
+		trigger_port_update(port, gamepad, id);
 	}
 
 	if (memcmp(&state->Gamepad, &controllers[port].previous, sizeof(state->Gamepad)))
@@ -4058,6 +4479,16 @@ DWORD WINAPI XInputDebugInitKeyboardQueue(PXINPUT_DEBUG_KEYQUEUE_PARAMETERS para
 	return ERROR_SUCCESS;
 }
 
+/* the character of the keystroke XInputDebugGetKeystroke gave last (the
+Xbox's has its ASCII alone): source/input/input_xbox.c keeps it with its key
+(#1134) */
+static unsigned short keystroke_character_given;
+
+unsigned short platform_keystroke_character(void)
+{
+	return keystroke_character_given;
+}
+
 DWORD WINAPI XInputDebugGetKeystroke(PXINPUT_DEBUG_KEYSTROKE keystroke)
 {
 	struct platform_keystroke next;
@@ -4085,6 +4516,7 @@ DWORD WINAPI XInputDebugGetKeystroke(PXINPUT_DEBUG_KEYSTROKE keystroke)
 			keystroke->VirtualKey = next.virtual_key;
 			keystroke->Ascii = next.ascii;
 			keystroke->Flags = next.flags;
+			keystroke_character_given = next.character;
 			return ERROR_SUCCESS;
 		}
 	}

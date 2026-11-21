@@ -33,6 +33,9 @@ struct cabinet_import
 	they are) */
 	int found;
 	int kept;
+	/* OpenH1: every map written again, those the folder has replaced (a
+	damaged map repaired: Settings' GAME DATA, game_data_page.c) */
+	int replace;
 	char *error;
 	int error_size;
 };

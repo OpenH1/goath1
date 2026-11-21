@@ -66,6 +66,8 @@ struct xgpu_metal_pipeline_state_key
 	uint16_t strides[XGPU_METAL_STREAM_COUNT];
 	uint8_t blend, blend_source, blend_destination, blend_operation, color_mask;
 	uint8_t color_format, depth_format, samples;
+	/* (display.temporal_aa's motion attachment: xgpu_metal_pipeline's) */
+	uint8_t motion_format, motion_mask;
 };
 
 void xgpu_metal_pipeline_state_key_make(const struct xgpu_metal_pipeline *pipeline,
@@ -86,6 +88,9 @@ formats, their samples, and the colour's channels written
 struct xgpu_metal_clear_key
 {
 	uint8_t color_format, depth_format, samples, parts;
+	/* (the pass's display.temporal_aa motion attachment's format, not
+	written: 0 none) */
+	uint8_t motion_format;
 };
 
 #ifdef __OBJC__
@@ -97,6 +102,9 @@ MTLRenderPipelineDescriptor *xgpu_metal_present_descriptor(void);
 into the app's library, and compiled from this source where there is none,
 as the tests run) */
 extern NSString *const xgpu_metal_fixed_source;
+/* display.temporal_aa's passes' functions (xgpu_metal_temporal.m), built
+into the app's library too */
+extern NSString *const xgpu_metal_temporal_source;
 #endif
 
 /* ---------- the command stream's pipelines (xgpu_metal_stream.m) */

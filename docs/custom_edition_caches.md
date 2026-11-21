@@ -319,10 +319,16 @@ changed:
 - **Bitmaps.** Every bitmap must pass the game's own `bitmap_verify` and be
   of a kind the texture cache and the swizzling code handle (a format with a
   hardware texture, a compressed flag that agrees with the format,
-  power-of-two sizes unless linear, square cube maps, all its pixels
-  present). Halo PC draws a 2D bitmap of any size, so an uncompressed one
+  power-of-two sizes unless linear or compressed, square cube maps, all its
+  pixels present); one that is not is drawn as one blank texel, and the map
+  still loads. Halo PC draws a 2D bitmap of any size, so an uncompressed one
   whose sides are not powers of two is made linear as the map loads, and
-  drawn from its first level (birdcage-plus's 3840 by 64 needler plasma).
+  drawn from its first level (birdcage-plus's 3840 by 64 needler plasma). A
+  compressed (DXT) one of any sides (a 200 by 112 HUD icon), 2D, cube or
+  volume, keeps every level: DXT blocks are not swizzled, and its texture
+  gives its true sides in the Size word, which an Xbox never sets on a
+  compressed texture (`texture_cache_initialize_hardware_format`,
+  `xgpu_texture_describe`).
   Its pixels are laid out for Halo PC, levels as the tag stores them,
   unswizzled; as they arrive, the game's own
   `rasterizer_xbox_bitmap_rebuild_hardware_format` lays them out as an Xbox
@@ -590,9 +596,11 @@ checked against the sample maps.
   validator corrects (an index past its block, an enum past its values) is
   what the game then runs; Halo PC read past such data unchecked.
 - **Ogg Vorbis sounds** are decoded when the map loads (stb_vorbis, with
-  added bounds checks: `port/third_party/stb_vorbis`) and encoded again as
-  Xbox ADPCM in memory (`port/linux/game/custom_edition_sounds.c`); one that
-  cannot be decoded is silenced, and still logs when played.
+  added bounds checks: `port/third_party/stb_vorbis`) and kept in memory as
+  16-bit PCM at their own rate, as uncompressed and mono 44 kHz sounds are
+  (`port/linux/game/custom_edition_sounds.c`); one too long for that is
+  encoded again as Xbox ADPCM, resampled with a band-limited low pass. One
+  that cannot be decoded is silenced, and still logs when played.
 - **Models of 44 nodes or more** are drawn a part's nodes at a time, given
   local nodes when they have none; one whose part's vertices name more
   nodes than a part holds is refused.

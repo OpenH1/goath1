@@ -165,6 +165,10 @@ void network_game_client_rejected_by_game(
 	struct network_game_client *client,
 	struct transport_address *source_address,
 	word rejection_code);
+/* port: the host's postgame keep-alive answered, so that it hears this
+machine in the postgame */
+void network_game_client_answer_postgame_keep_alive(
+	struct network_game_client *client);
 boolean network_game_client_game_settings_updated(
 	struct network_game_client *client,
 	struct network_game *message_packet);

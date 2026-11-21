@@ -343,12 +343,15 @@ static void cabinet_close(struct cabinet *cabinet)
 	cabinet->files = NULL;
 }
 
-/* whether the import's folder has a file */
+/* whether the import's folder has a file (OpenH1: never, while every map
+is written again) */
 static int folder_has(struct cabinet_import *import, const char *name)
 {
 	char path[MAXIMUM_PATH];
 	int descriptor;
 
+	if (import->replace)
+		return 0;
 	snprintf(path, sizeof(path), "%s/%s", import->folder, name);
 	descriptor = open(path, O_RDONLY | O_CLOEXEC);
 	if (descriptor < 0)

@@ -58,6 +58,123 @@ VULKAN_DECODE_SOURCES = ["xbox_texture_decode.c"]
 # (xgpu_vulkan_port_config.h), which they read
 VR_STREAM_SOURCES = [Path("port/linux/host/host_vr_stream.c")]
 
+# display.temporal_aa "dlss" (configure.py --dlss: port/linux/vulkan/
+# xgpu_vulkan_dlss.h): NVIDIA's DLSS SDK, downloaded at configure time from
+# its GitHub release (the NVIDIA RTX SDKs license, its LICENSE.txt: not open
+# source; the repository holds none of it). Its NGX headers and static library
+# build the module beside the game (libopenh1_dlss.so), which alone links them;
+# the DLSS runtime (libnvidia-ngx-dlss.so.<version>, redistributable with the
+# game) and the license are staged beside it. Linux x86-64, and Windows x64
+# (openh1_dlss.dll, nvngx_dlss.dll beside it: tools/windows_build.py).
+DLSS_SDK_TAG = "v310.9.16"
+DLSS_SDK_URLS = [
+    "https://raw.githubusercontent.com/NVIDIA/DLSS/{tag}/{name}",
+    "https://cdn.jsdelivr.net/gh/NVIDIA/DLSS@{tag}/{name}",
+]
+DLSS_SDK_FILES = {
+    "LICENSE.txt": "d4216e39ebef5f9b50a6712ebb37beeb5379862a67733a9999c651f21592aaf0",
+    "include/nvsdk_ngx.h": "dc38e7467cf415379c9d12ae1b6e4a494c453ed92720fb53e92aecb523e7b848",
+    "include/nvsdk_ngx_defs.h": "ea23f33497cd274860d1c25a97644fce807dcb0037c594547203343103fad03e",
+    "include/nvsdk_ngx_defs_vk.h": "0a24d0861ace7d6b9362a67b7f08bea1b33ea123c5ce730b19133de8a891d031",
+    "include/nvsdk_ngx_params.h": "943bc8cc5cdae03b6303016fbad3183636f2335ae27a2d18776798c3b4efabbc",
+    "include/nvsdk_ngx_vk.h": "2d364ce7132881eb669e9498fd570d74cba563b1fbebc82c235f8e1ad2dd8b6d",
+    "include/nvsdk_ngx_loader.h": "abdf5f66a692620538357d29fdf78e3e2a677ee8140b7a638962ecb766585e75",
+}
+# (each platform's NGX library and DLSS runtime)
+DLSS_SDK_PLATFORM_FILES = {
+    "linux": {
+        "lib/Linux_x86_64/libnvsdk_ngx.a": "d3c50bb0d9624fc35e502a8e929b8fc1e2b505017ebdb84c0d5b627e11a235df",
+        "lib/Linux_x86_64/rel/libnvidia-ngx-dlss.so.310.9.16":
+            "30982c937afed85c96b8d313323de9a650a2eec6de1bb0f714b21750f4ce98f6",
+    },
+    "windows": {
+        "lib/Windows_x86_64/x64/nvsdk_ngx_s.lib": "7b9a5239c1145af5f645ab472aa066f9ea79db36ac819562312aae69d65f3765",
+        "lib/Windows_x86_64/rel/nvngx_dlss.dll": "d00b5b0ab29c3ca101b70c3a5ecb3a01b7ef33766a3383a28a18623083e6123e",
+    },
+}
+DLSS_RUNTIME = "libnvidia-ngx-dlss.so.310.9.16"
+DLSS_RUNTIME_WINDOWS = "nvngx_dlss.dll"
+
+
+def fetch_dlss_sdk(sdk_dir: Path, platform: str = "linux") -> None:
+    """Download the DLSS SDK's files the module needs into sdk_dir (configure
+    time, once; a file whose SHA-256 is wrong is downloaded again): the
+    headers, the license, and platform's (linux, windows) library and runtime."""
+    for name, digest in {**DLSS_SDK_FILES, **DLSS_SDK_PLATFORM_FILES[platform]}.items():
+        path = sdk_dir / name
+        if path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == digest:
+            continue
+        print(f"Downloading NVIDIA's DLSS SDK's {name} ({DLSS_SDK_TAG})")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = download([url.format(tag=DLSS_SDK_TAG, name=name) for url in DLSS_SDK_URLS], digest)
+        path.with_name(path.name + ".tmp").write_bytes(data)
+        path.with_name(path.name + ".tmp").replace(path)
+
+
+def dlss_module(n: Writer, prefix: str, label: str, build: Path, host_cc: str, host_cflags: str,
+                vulkan_headers: Path, sdk_dir: Path) -> List[Path]:
+    """Build the DLSS module beside the game, and stage the DLSS runtime and
+    the SDK's license beside it: their paths"""
+    module = build / "libopenh1_dlss.so"
+    obj = build / "host" / "obj" / "dlss" / "openh1_dlss.c.o"
+    library = sdk_dir / "lib/Linux_x86_64/libnvsdk_ngx.a"
+    n.build(outputs=obj, rule=host_cc, inputs=VULKAN_DIR / "dlss" / "openh1_dlss.c",
+            variables={"cflags": f"{host_cflags} -fvisibility=hidden -I{sdk_dir / 'include'} -I{vulkan_headers}"})
+    n.rule(name=f"{prefix}_dlss_link",
+           command=f"${prefix}_cc -shared -o $out $in {library} -lstdc++ -ldl -Wl,--no-undefined",
+           description=f"{label} LINK $out")
+    n.build(outputs=module, rule=f"{prefix}_dlss_link", inputs=obj, implicit=[library])
+    runtime = build / DLSS_RUNTIME
+    n.build(outputs=runtime, rule=f"{prefix}_copy", inputs=sdk_dir / "lib/Linux_x86_64/rel" / DLSS_RUNTIME)
+    license_copy = build / "NVIDIA-DLSS-LICENSE.txt"
+    n.build(outputs=license_copy, rule=f"{prefix}_copy", inputs=sdk_dir / "LICENSE.txt")
+    return [module, runtime, license_copy]
+
+
+def dlss_module_windows(n: Writer, build: Path, host_cflags: str, cross_prefix: str, sdk_dir: Path) -> List[Path]:
+    """The Windows build's DLSS module, openh1_dlss.dll (the same source, with
+    the game's clang and lld-link: NGX's nvsdk_ngx_s.lib is plain MSVC
+    objects of the static runtime, clang's default), and the DLSS runtime and
+    the SDK's license beside it: their paths"""
+    module = build / "openh1_dlss.dll"
+    obj = build / "host" / "obj" / "dlss" / "openh1_dlss.c.o"
+    library = sdk_dir / "lib/Windows_x86_64/x64/nvsdk_ngx_s.lib"
+    n.build(outputs=obj, rule="windows_host_cc", inputs=VULKAN_DIR / "dlss" / "openh1_dlss.c",
+            variables={"cflags": f"{host_cflags} -I{sdk_dir / 'include'}"})
+    n.rule(name="windows_dlss_link",
+           command=f"{cross_prefix}$windows_cc --target=x86_64-pc-windows-msvc -fuse-ld=lld -shared -g "
+           f"-Wl,/DYNAMICBASE -Wl,/HIGHENTROPYVA -o $out $in {library} -ladvapi32 -luser32",
+           description="WINDOWS LINK $out")
+    n.build(outputs=module, rule="windows_dlss_link", inputs=obj, implicit=[library])
+    runtime = build / DLSS_RUNTIME_WINDOWS
+    n.build(outputs=runtime, rule="windows_copy", inputs=sdk_dir / "lib/Windows_x86_64/rel" / DLSS_RUNTIME_WINDOWS)
+    license_copy = build / "NVIDIA-DLSS-LICENSE.txt"
+    n.build(outputs=license_copy, rule="windows_copy", inputs=sdk_dir / "LICENSE.txt")
+    return [module, runtime, license_copy]
+
+
+# the DLSS add-on's targets the builds made (configure.py's ninja dlss_addon)
+DLSS_ADDON_TARGETS: List[str] = []
+
+
+def dlss_addon(n: Writer, prefix: str, platform: str, outputs: List[Path], out: Path) -> str:
+    """ninja dlss_addon_<prefix>: the add-on's archive, manifest and license
+    (tools/dlss_addon.py pack) in out from the module, the DLSS runtime and
+    NVIDIA's license (dlss_module's outputs); its target's name"""
+    module, runtime, license_copy = outputs
+    stamp = out / f"{platform}.stamp"
+    n.rule(name=f"{prefix}_dlss_addon",
+           command=(f"$python tools/dlss_addon.py pack --platform {platform} --module {module} "
+                    f"--runtime {runtime} --license {license_copy} --out {out} --stamp $out"),
+           description=f"DLSS ADD-ON {platform}")
+    n.build(outputs=stamp, rule=f"{prefix}_dlss_addon", inputs=[module, runtime, license_copy],
+            implicit=[Path("tools/dlss_addon.py")])
+    target = f"dlss_addon_{prefix}"
+    n.build(outputs=target, rule="phony", inputs=[stamp])
+    DLSS_ADDON_TARGETS.append(target)
+    return target
+
+
 def fetch_vulkan_headers(vulkan_dir: Path) -> None:
     """Download the Vulkan headers into vulkan_dir (configure time, once; a
     header whose SHA-256 is wrong is downloaded again)."""

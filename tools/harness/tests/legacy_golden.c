@@ -44,6 +44,9 @@ static struct distributed_unit_state distributed_tick_states[MAXIMUM_TRACKED_PLA
 static long distributed_tick_state_times[MAXIMUM_TRACKED_PLAYERS][UNIT_BASE_TICKS];
 static long distributed_unit_sent_times[HALO_PORT_MAXIMUM_NETWORK_MACHINES][MAXIMUM_TRACKED_PLAYERS][UNIT_SENT_TICKS];
 static long distributed_unit_acked_times[HALO_PORT_MAXIMUM_NETWORK_MACHINES];
+/* (the OpenH1 differences recorded in the forms before packing, as
+debug.network_forms_before sends them: unit_difference.c tests the packed) */
+static boolean distributed_tick_states_unpacked = TRUE;
 static long now_time;
 static long game_time_get(void) { return now_time; }
 static boolean distributed_point_valid(real_point3d const *point, real bound) {

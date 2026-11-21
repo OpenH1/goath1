@@ -388,6 +388,12 @@ def main() -> int:
     shutil.copy2(ROOT / "port/assets/prepared/prepared.records", dist / "prepared.records")
     # ... and the textures', fonts' and menus' bytes (port/linux/src/embedded_assets.h)
     shutil.copy2(ROOT / "build/windows/openh1.assets", dist / "openh1.assets")
+    # (none of NVIDIA's files: DLSS is the add-on's, downloaded apart, tools/dlss_addon.py)
+    from dlss_addon import check_package
+    found = check_package(dist)
+    if found:
+        print(f"the package holds NVIDIA's or the DLSS add-on's files: {found}", file=sys.stderr)
+        return 1
     return 0
 
 

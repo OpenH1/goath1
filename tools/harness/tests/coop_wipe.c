@@ -58,6 +58,8 @@ static long game_time_get(void){return tick;}
 static boolean game_time_get_paused(void){return paused;}
 static boolean players_are_all_dead(void){return all_dead;}
 static boolean main_coop_host_revert(void){if(!game_state_globals.saved_game_valid)return FALSE;reverts++;return TRUE;}
+/* (its limit on failure loops: test_coop_skip_vote.py) */
+static boolean main_coop_host_failure_revert(void){return main_coop_host_revert();}
 static void players_respawn_at_checkpoint(void){respawns++;}
 static void game_state_revert(void){reverts++;}
 static void game_state_call_before_save_procs(void){}
@@ -72,8 +74,7 @@ static int host_sent_screen_effect,host_resend,players_vitality,host_attachment_
 static struct {int definition_indices[4];} client_script_sounds;
 static struct {int count;} client_looping_sounds;
 static struct {int objective,nav_point_count;} host_hud_state;
-static struct {boolean offered,skip_save_written;int voters,cooldown_until;} skip_vote;
-static void skip_vote_clear(void){}
+static void skip_vote_reset(void){}
 static void coop_enemies_new_game(void){}
 static void coop_pickups_new_game(void){}
 static void coop_vehicles_new_game(void){}

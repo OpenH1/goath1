@@ -38,6 +38,12 @@ kept on the item of the same id.
 #include "menu_widget.h"
 #include "menu_spartan.h"
 #include "network_host_controls.h"
+#include "benchmark.h" /* port: port/linux/game/benchmark.c */
+#include "keyboard.h" /* port: port/linux/game/keyboard.c */
+#include "../src/dlss_addon.h" /* port: port/linux/src/dlss_addon.c */
+#include "../src/game_data_page.h" /* port: port/linux/src/game_data_page.c */
+#include "custom_edition_maps.h"
+#include "mcc_maps.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -64,7 +70,6 @@ void pc_menu_browser_visit(char const *tab);
 int pc_menu_browser_visit_kind(void);
 void pc_menu_main_menu_shown(struct widget_instance *screen);
 boolean pc_menu_edit_leave(short local_player_index, boolean save);
-long ui_widget_port_previous_screen(short local_player_index);
 int halo_keyboard_prompts(void);
 long ui_widget_port_text_box_font(struct widget_instance *widget, short *width);
 short ui_widget_port_past_move(void);
@@ -93,6 +98,16 @@ int pc_menu_coop_action(struct widget_instance *widget, struct event_record *eve
 char const *pc_menu_coop_who_word(void);
 int pc_menu_coop_fix_hosts(void);
 void pc_menu_coop_opened(void);
+/* (menu_functions.c's stick_test_menu.inc: Stick Test's sticks read each
+frame, their words, and a stick's circle drawn) */
+void pc_menu_stick_test_frame(struct widget_instance *screen);
+int pc_menu_stick_value(char const *name, char *value, unsigned long size);
+boolean pc_menu_stick_test_draw(short stick, real x, real y, real radius);
+/* (menu_functions.c's controller_layout_menu.inc: Controller Layout's
+buttons, their words, and its actions, the row given) */
+extern struct menu_table_source const pc_menu_layout_source;
+int pc_menu_layout_value(char const *name, char *value, unsigned long size);
+int pc_menu_layout_action(char const *name, short row);
 
 /* ---------- constants */
 
@@ -233,6 +248,18 @@ this far above the box's foot */
 #define DIALOG_CHOICES_UP 27
 #define DIALOG_CHOICES_ROOM 5
 
+/* a <stick>'s layout (Stick Test's), from its top, about its middle: its
+label (blocks.xml's screens/stick_label, this tall), its circle this far
+below its top, its reading this far below the circle, its detail this far
+below the reading and its hint this far below the detail; its column this
+wide (the blocks' width) */
+#define STICK_COLUMN_WIDTH 240
+#define STICK_CIRCLE_TOP 32
+#define STICK_VALUE_GAP 10
+#define STICK_DETAIL_STEP 18
+#define STICK_HINT_STEP 22
+#define SCREEN_MAXIMUM_STICKS 2
+
 #define SCREEN_BUTTON_B 1
 #define SCREEN_BUTTON_X 2
 #define SCREEN_BUTTON_Y 3
@@ -283,6 +310,12 @@ static boolean screen_call_edit(struct widget_instance *widget, struct event_rec
 static boolean screen_call_coop(struct widget_instance *widget, struct event_record *event, char const *name,
 	boolean *deleted);
 static boolean screen_call_add_player(struct widget_instance *widget, struct event_record *event, char const *name,
+	boolean *deleted);
+static boolean screen_call_layout(struct widget_instance *widget, struct event_record *event, char const *name,
+	boolean *deleted);
+static boolean screen_call_dlss(struct widget_instance *widget, struct event_record *event, char const *name,
+	boolean *deleted);
+static boolean screen_call_game_data(struct widget_instance *widget, struct event_record *event, char const *name,
 	boolean *deleted);
 /* the row of the table an action is run for (0 up, on the table), NONE for
 none (a key's, a button's) */
@@ -410,6 +443,12 @@ static struct screen_action const screen_actions[] =
 	{ "lobby skill right", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_lobby },
 	{ "lobby teams left", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_lobby },
 	{ "lobby teams right", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_lobby },
+	/* (the host's VEHICLE HIJACKING turned over) */
+	{ "lobby hijack left", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_lobby },
+	{ "lobby hijack right", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_lobby },
+	/* (the host's SPARTAN LINK in a team game turned over) */
+	{ "lobby spartan link left", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_lobby },
+	{ "lobby spartan link right", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_lobby },
 	/* (the lobby's chat: a line begun, the on-screen keyboard's on a
 	controller or a touchscreen) */
 	{ "lobby chat", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_lobby },
@@ -447,6 +486,31 @@ static struct screen_action const screen_actions[] =
 	{ "pause revert", NULL, NULL, NULL, NULL, "ui\\shell\\error\\confirm_restartatsave_modal_fullscreen", NULL },
 	{ "pause restart", NULL, NULL, NULL, NULL, "ui\\shell\\error\\confirm_restartlevel_modal_fullscreen", NULL },
 	{ "pause quit", NULL, NULL, "pause game return to main menu", NULL, NULL, NULL },
+	/* (Controller Layout's, screens/controller_layout.xml (menu_functions.c's
+	controller_layout_menu.inc): the chosen button named or its legend typed
+	on the keyboard, its description cleared, its shape and color stepped) */
+	{ "layout name", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_layout },
+	{ "layout legend", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_layout },
+	{ "layout clear", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_layout },
+	{ "layout shape left", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_layout },
+	{ "layout shape right", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_layout },
+	{ "layout color left", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_layout },
+	{ "layout color right", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_layout },
+	/* (the question of a layout's bindings, screens/layout_bindings.xml:
+	USE THIS LAYOUT'S, and back) */
+	{ "layout bindings use", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_layout },
+	/* (the NVIDIA DLSS add-on's, screens/dlss_addon.xml (port/linux/src/
+	dlss_addon.c): NVIDIA's license accepted and the add-on downloaded, the
+	add-on removed, the license's lines paged) */
+	{ "dlss accept", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_dlss },
+	{ "dlss remove", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_dlss },
+	{ "dlss page up", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_dlss },
+	{ "dlss page down", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_dlss },
+	/* (Settings' GAME DATA, screens/game_data.xml (port/linux/src/
+	game_data_page.c): the row's source added, copied again or looked for
+	again; its folder shown on the desktop) */
+	{ "data add", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_game_data },
+	{ "data open folder", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_game_data },
 };
 
 static char const *const screen_action_names[] =
@@ -461,11 +525,14 @@ static char const *const screen_action_names[] =
 	"profile new", "profile delete", "profile color", "lobby row", "lobby start", "lobby team red", "lobby team blue",
 	"lobby team toggle", "lobby invite", "lobby settings", "lobby host", "lobby add player", "lobby bots left",
 	"lobby bots right", "lobby skill left", "lobby skill right", "lobby teams left", "lobby teams right",
-	"lobby chat", "lobby card", "lobby card friend", "lobby card mute", "lobby card kick", "lobby friends",
+	"lobby hijack left", "lobby hijack right", "lobby spartan link left", "lobby spartan link right", "lobby chat", "lobby card", "lobby card friend", "lobby card mute", "lobby card kick", "lobby friends",
 	"lobby friend left", "lobby friend right", "lobby friend invite", "lobby close",
 	"add player done", "add player back",
 	"close", "close all", "pause leave", "open host controls", "pause end game", "pause chapters",
 	"pause friendly fire", "pause revert", "pause restart", "pause quit",
+	"layout name", "layout legend", "layout clear", "layout shape left", "layout shape right", "layout color left",
+	"layout color right", "layout bindings use", "dlss accept", "dlss remove", "dlss page up", "dlss page down",
+	"data add", "data open folder",
 };
 
 /* a binding's value: the saved game's mission and difficulty (player 1's
@@ -493,7 +560,7 @@ static char const *const screen_binding_names[] =
 	"lobby.red.count", "lobby.red.tone", "lobby.blue", "lobby.blue.count", "lobby.blue.tone", "lobby.gametype",
 	"lobby.map", "lobby.limits", "lobby.kind", "lobby.kind.tone", "lobby.tick", "lobby.opence", "lobby.after",
 	"lobby.bots", "lobby.bots.shown", "lobby.bots.some", "lobby.bots.locked", "lobby.bots.count.locked", "lobby.skill", "lobby.teams",
-	"lobby.status", "lobby.start", "lobby.host", "lobby.settings", "lobby.controls", "lobby.waiting",
+	"lobby.hijack", "lobby.hijack.shown", "lobby.spartan_link", "lobby.spartan_link.shown", "lobby.status", "lobby.start", "lobby.host", "lobby.settings", "lobby.controls", "lobby.waiting",
 	"lobby.team.change", "lobby.invite", "lobby.add", "lobby.chat", "lobby.details", "lobby.card", "lobby.inviting",
 	"lobby.panel.open", "lobby.card.name", "lobby.card.color", "lobby.card.ping", "lobby.card.platform",
 	"lobby.card.party", "lobby.card.note", "lobby.card.facts", "lobby.card.friend",
@@ -501,7 +568,14 @@ static char const *const screen_binding_names[] =
 	"lobby.friend", "lobby.friend.where", "lobby.friends.said", "lobby.map.picture", "lobby.description",
 	"lobby.where", "lobby.lineup", "lobby.lineup.names", "add.count", "add.title", "add.profile", "add.color", "add.help",
 	"add.done", "pause.friendly_fire", "pause.host_controls", "pause.end_game",
-	"pause.chapters",
+	"pause.chapters", "stick.left", "stick.right", "stick.left.drift", "stick.right.drift",
+	"benchmark.failure", "benchmark.verdict", "benchmark.held", "benchmark.pacing",
+	"benchmark.settings", "benchmark.gpu", "benchmark.cpu", "benchmark.file", "benchmark.scenario", "benchmark.player",
+	"layout.controller", "layout.title", "layout.state", "layout.shape", "layout.color", "layout.about",
+	"layout.set", "layout.unset", "layout.bindings",
+	"dlss.detail", "dlss.heading", "dlss.status", "dlss.credit", "dlss.license.empty", "dlss.can_accept",
+	"dlss.can_remove",
+	"data.detail", "data.heading", "data.status", "data.from", "data.folder", "data.opened", "data.add",
 };
 
 /* the row sources a table may name (menu_table.h), and their names */
@@ -512,6 +586,10 @@ static struct menu_table_source const *const screen_sources[] =
 	&pc_menu_lobby_source,
 	&pc_menu_color_source,
 	&pc_menu_add_player_source,
+	&benchmark_results_source,
+	&pc_menu_layout_source,
+	&dlss_addon_license_source,
+	&game_data_page_source,
 };
 
 static char const *const screen_source_names[] =
@@ -521,6 +599,10 @@ static char const *const screen_source_names[] =
 	"lobby.players",
 	"profile.colors",
 	"add.players",
+	"benchmark.results",
+	"layout.controls",
+	"dlss.license",
+	"data.sources",
 };
 
 /* the chats a <chat> may name (menu_table.h), and their names */
@@ -558,10 +640,25 @@ static int screen_value(void *context, char const *name, char *value, unsigned l
 	/* (Add Player's: menu_functions.c's) */
 	if (!strncmp(name, "add.", 4))
 		return pc_menu_add_player_value(name, value, size);
+	/* (the built-in benchmark's results: benchmark.c's) */
+	if (!strncmp(name, "benchmark.", 10))
+		return benchmark_value(name, value, size);
 	/* (co-op's, the lobby's WHO CAN JOIN and what keeps people from the
 	game: coop_menu.inc) */
 	if (!strncmp(name, "coop.", 5))
 		return pc_menu_coop_value(name, value, size);
+	/* (Controller Layout's: controller_layout_menu.inc) */
+	if (!strncmp(name, "layout.", 7))
+		return pc_menu_layout_value(name, value, size);
+	/* (the NVIDIA DLSS add-on's: port/linux/src/dlss_addon.c) */
+	if (!strncmp(name, "dlss.", 5))
+		return dlss_addon_value(name, value, size);
+	/* (Settings' GAME DATA's: port/linux/src/game_data_page.c) */
+	if (!strncmp(name, "data.", 5))
+		return game_data_page_value(name, value, size);
+	/* (Stick Test's: the sticks' readings and drift, stick_test_menu.inc) */
+	if (!strncmp(name, "stick.", 6))
+		return pc_menu_stick_value(name, value, size);
 	/* (the pause menu's: the rows this machine's has for the screen's local
 	player, as menu_tags.c adds them to the map's, the host's for its first
 	local player alone; FRIENDLY FIRE's words, this machine's choice) */
@@ -620,7 +717,37 @@ struct screen_place
 	/* (a controller's key (MENU_SCREEN_KEY_*), before the screen's own and its
 	focus take it: MENU_SCREEN_KEY_FREE, theirs; NULL, all theirs) */
 	int (*key)(short controller, int key);
+	/* (an event of the screen's, before everything: TRUE, its own) */
+	int (*event)(struct event_record const *event);
+	/* (the screen closed) */
+	void (*closed)(void);
 };
+
+/* Settings' GAME DATA, each frame it is drawn: the Custom Edition and MCC
+maps the map lists have (game_data_page.c) */
+static void screen_game_data_frame(struct widget_instance *screen)
+{
+	(void)screen;
+	game_data_page_map_counts(custom_edition_maps_count(FALSE), mcc_maps_count(FALSE));
+}
+
+/* each frame a screen is drawn: what GAME DATA's copies added since, the
+map lists looking again, with no restart (game_data_page.c) */
+static void screen_game_data_poll(void)
+{
+	unsigned added = game_data_page_take_added();
+
+	if (added & GAME_DATA_ADDED_CUSTOM_EDITION)
+	{
+		platform_log("game data: Custom Edition's maps added, the map lists look again");
+		custom_edition_maps_look_again();
+	}
+	if (added & GAME_DATA_ADDED_MCC)
+	{
+		platform_log("game data: the MCC maps looked for again");
+		mcc_maps_rescan();
+	}
+}
 
 static struct screen_place const screen_places[] =
 {
@@ -661,6 +788,28 @@ static struct screen_place const screen_places[] =
 	question as an editor is left with changes, a screen of its own) */
 	{ "quit", "main_menu\\quit_select\\quit_screen", NULL, NULL },
 	{ "save_changes", "screens\\save_changes", NULL, NULL },
+	/* (the built-in benchmark's results, over the main menu as its match
+	ends: benchmark.c, menu_functions.c's pc_menu_benchmark_results_open) */
+	{ "benchmark", "screens\\benchmark", NULL, NULL },
+	/* (Stick Test, as Advanced Stick Settings' STICK TEST › opens it: its
+	sticks read each frame it is drawn, stick_test_menu.inc) */
+	{ "stick_test", "screens\\stick_test", pc_menu_stick_test_frame, NULL },
+	/* (Controller Layout, as Button Remapping's Controller Layouts' EDIT
+	BUTTONS › opens it: controller_layout_menu.inc) */
+	{ "controller_layout", "screens\\controller_layout", NULL, NULL },
+	/* (the question of a controller layout's bindings, a pop-up: ITS
+	BINDINGS opens it, #1144) */
+	{ "layout_bindings", "screens\\layout_bindings", NULL, NULL },
+	/* (the NVIDIA DLSS add-on, as Frame Rate & Sync's NVIDIA DLSS rows open
+	it: NVIDIA's license, the download, the removal: dlss_addon.c) */
+	{ "dlss_addon", "screens\\dlss_addon", NULL, NULL },
+	/* (Settings' GAME DATA, as Mods' GAME DATA › opens it: the sources of
+	the maps, their copies: game_data_page.c; the maps the lists have, told
+	each frame) */
+	{ "game_data", "screens\\game_data", screen_game_data_frame, NULL },
+	/* (the on-screen keyboard, a pop-up: keyboard.c opens it, reads its
+	input each frame it is drawn and takes every event of its own) */
+	{ "keyboard", "screens\\keyboard", keyboard_frame, NULL, NULL, keyboard_event, keyboard_screen_closed },
 };
 
 /* ---------- the screens open */
@@ -676,6 +825,18 @@ struct screen_spartan
 	short first;
 	short places;
 	boolean shown;
+};
+
+/* a <stick> of an open screen: its block, its circle's anchor (the circle
+drawn where it is in the widgets' order: menu_screen_widget_drawing), and
+its reading's and detail's words, filled each frame */
+struct screen_stick
+{
+	struct menu_screen_block block;
+	short stick;
+	struct widget_instance *circle;
+	struct widget_instance *value;
+	struct widget_instance *detail;
 };
 
 struct screen_open
@@ -742,6 +903,11 @@ struct screen_open
 	the screen behind) */
 	struct widget_instance *dialog_under[4];
 	short dialog_width, dialog_height;
+	/* (its <stick>s) */
+	struct screen_stick sticks[SCREEN_MAXIMUM_STICKS];
+	long stick_count;
+	/* (its <keyboard>'s anchor, where keyboard.c draws it) */
+	struct widget_instance *keyboard_area;
 };
 
 static struct
@@ -762,6 +928,10 @@ static struct
 	/* (a <dialog>'s) */
 	long dialog_tag, dialog_title_tag, dialog_text_tag, dialog_list_tag, dialog_choice_tag, dialog_foot_tag,
 		dialog_dim_tag;
+	/* (a <stick>'s) */
+	long stick_tag, stick_label_tag, stick_value_tag, stick_note_tag, stick_hint_tag;
+	/* (a <keyboard>'s) */
+	long keyboard_area_tag;
 } screens = { FALSE };
 
 static void screens_names_give(void)
@@ -846,6 +1016,12 @@ static boolean screen_blocks_found(void)
 	screens.dialog_choice_tag = screen_block_tag("pc\\screens\\dialog_choice");
 	screens.dialog_foot_tag = screen_block_tag("pc\\screens\\dialog_foot");
 	screens.dialog_dim_tag = screen_block_tag("pc\\screens\\dialog_dim");
+	screens.stick_tag = screen_block_tag("pc\\screens\\stick");
+	screens.stick_label_tag = screen_block_tag("pc\\screens\\stick_label");
+	screens.stick_value_tag = screen_block_tag("pc\\screens\\stick_value");
+	screens.stick_note_tag = screen_block_tag("pc\\screens\\stick_note");
+	screens.stick_hint_tag = screen_block_tag("pc\\screens\\stick_hint");
+	screens.keyboard_area_tag = screen_block_tag("pc\\screens\\keyboard_area");
 	if (screens.title_art_tag == NONE || screens.list_tag == NONE || screens.item_tag == NONE ||
 		screens.hint_tag == NONE || screens.prompt_left_tag == NONE || screens.button_tag == NONE ||
 		screens.cards_tag == NONE || screens.card_tag == NONE || screens.card_title_tag == NONE ||
@@ -858,7 +1034,9 @@ static boolean screen_blocks_found(void)
 		screens.objectives_right_tag == NONE || screens.objectives_title_tag == NONE ||
 		screens.objectives_text_tag == NONE || screens.dialog_tag == NONE || screens.dialog_title_tag == NONE ||
 		screens.dialog_text_tag == NONE || screens.dialog_list_tag == NONE || screens.dialog_choice_tag == NONE ||
-		screens.dialog_foot_tag == NONE || screens.dialog_dim_tag == NONE)
+		screens.dialog_foot_tag == NONE || screens.dialog_dim_tag == NONE || screens.stick_tag == NONE ||
+		screens.stick_label_tag == NONE || screens.stick_value_tag == NONE || screens.stick_note_tag == NONE ||
+		screens.stick_hint_tag == NONE || screens.keyboard_area_tag == NONE)
 	{
 		platform_log("menus: the screens' blocks (screens/blocks.xml) are not all there");
 		screens.blocks_found = FALSE;
@@ -1106,6 +1284,8 @@ static boolean screen_build(struct screen_open *open, struct menu_screen const *
 	open->item_count = 0;
 	open->colors = FALSE;
 	open->spartan_count = 0;
+	open->stick_count = 0;
+	open->keyboard_area = NULL;
 	focus_id = screens.focused[place_index][0] ? screens.focused[place_index] : NULL;
 	top = 0;
 	spaces_left = spaces;
@@ -1323,6 +1503,43 @@ static boolean screen_build(struct screen_open *open, struct menu_screen const *
 			screen_spartan_add(open, block, screen_widget_add(widget, screens.spartan_tag,
 				(short)(block->box_x + (block->box_width - SCREEN_SPARTAN_PICTURE_WIDTH) / 2),
 				(short)(block->box_y + block->box_height - SCREEN_SPARTAN_PICTURE_HEIGHT)));
+			break;
+		case MENU_SCREEN_KEYBOARD:
+			/* (its anchor over the screen's other blocks: keyboard.c draws it) */
+			open->keyboard_area = screen_widget_add(widget, screens.keyboard_area_tag, 0, 0);
+			break;
+		case MENU_SCREEN_STICK:
+			/* (where its box is, over the screen's other blocks: its label,
+			its circle's anchor, its reading, detail and hint under it) */
+			if (menu_screen_when(block->when) && open->stick_count < SCREEN_MAXIMUM_STICKS)
+			{
+				struct screen_stick *stick = &open->sticks[open->stick_count++];
+				short left = (short)(block->box_x - STICK_COLUMN_WIDTH / 2);
+				short radius = (short)block->box_width;
+				short y = (short)(block->box_y + STICK_CIRCLE_TOP + 2 * radius + STICK_VALUE_GAP);
+				struct widget_instance *made;
+
+				memset(stick, 0, sizeof(*stick));
+				stick->block = *block;
+				stick->stick = (short)(strcmp(block->id, "left") != 0);
+				made = screen_widget_add(widget, screens.stick_label_tag, left, (short)block->box_y);
+				if (made)
+				{
+					menu_screen_text(block->label, screen_value, &values, label, sizeof(label));
+					screen_text_set(made, label);
+				}
+				stick->circle = screen_widget_add(widget, screens.stick_tag, (short)(block->box_x - radius),
+					(short)(block->box_y + STICK_CIRCLE_TOP));
+				stick->value = screen_widget_add(widget, screens.stick_value_tag, left, y);
+				stick->detail = screen_widget_add(widget, screens.stick_note_tag, left, (short)(y + STICK_DETAIL_STEP));
+				made = block->hint_count ? screen_widget_add(widget, screens.stick_hint_tag, left,
+					(short)(y + STICK_DETAIL_STEP + STICK_HINT_STEP)) : NULL;
+				if (made)
+				{
+					menu_screen_text(block->hints[0], screen_value, &values, text, sizeof(text));
+					screen_text_set(made, text);
+				}
+			}
 			break;
 		case MENU_SCREEN_BUTTONS:
 		{
@@ -1637,21 +1854,9 @@ static boolean box_picture_of(struct widget_instance const *widget, long *bitmap
 quit_screen draws it): its box in the middle of the screen, its title, its
 words and its choices side by side in its foot */
 
-/* a screen's widgets and all in them taken out of the events and the
-pointer's targets: drawn alone (a pop-up's screen behind it) */
-static void dialog_still(struct widget_instance *widget)
-{
-	struct widget_instance *child;
-
-	widget->disabled = TRUE;
-	for (child = widget->child; child; child = child->next)
-		dialog_still(child);
-}
-
-/* the dialog's widgets made: the screen it was opened from behind it, as it
-was and dimmed, taking nothing (where that is a generated screen: an editor's
-question over the editor; Quit's main menu is a hand-written one, so Quit's
-is over the menus' scene, as before); its box as wide as Quit's, or as its
+/* the dialog's widgets made: a dim over the screen it was opened over, which
+is a pop-up's (menu_screen_popup: ui_widget.c draws that screen under it,
+as it is, taking nothing); its box as wide as Quit's, or as its
 choices need (its picture's ends kept), as tall as its words need, in the
 middle of the screen: its title in the box's top band, its words under it
 (wrapped to the box), and its choices, each a button of Quit's, side by side
@@ -1663,7 +1868,7 @@ static boolean dialog_build(struct screen_open *open, struct menu_screen const *
 	struct screen_values values;
 	char label[MENU_SCREEN_MAXIMUM_TEXT];
 	struct menu_screen_block const *dialog = NULL, *list = NULL;
-	long index, choices = 0, list_index = NONE, focus_index = 0, behind_tag;
+	long index, choices = 0, list_index = NONE, focus_index = 0;
 	short width, height, shown, left, top, x, lines = 1;
 	struct widget_instance *focus = NULL;
 	char const *focus_id;
@@ -1708,18 +1913,8 @@ static boolean dialog_build(struct screen_open *open, struct menu_screen const *
 	open->header = NULL;
 	open->prompt_count = 0;
 	open->box = FALSE;
-	/* (the screen it was opened from, behind it and dimmed) */
-	behind_tag = ui_widget_port_previous_screen(widget->local_player_index);
-	if (behind_tag != NONE && !screen_place_of(behind_tag))
-	{
-		struct widget_instance *behind = screen_widget_add(widget, behind_tag, 0, 0);
-
-		if (behind)
-		{
-			dialog_still(behind);
-			screen_widget_add(widget, screens.dialog_dim_tag, 0, 0);
-		}
-	}
+	/* (the screen under it dimmed) */
+	screen_widget_add(widget, screens.dialog_dim_tag, 0, 0);
 	for (index = 0; index < NUMBEROF(open->dialog_under); index++)
 	{
 		open->dialog_under[index] = screen_widget_add(widget, index % 2 ? screens.dialog_foot_tag : screens.dialog_tag,
@@ -1840,8 +2035,8 @@ static boolean dialog_picture_of(struct widget_instance const *widget, long *bit
 }
 
 /* "edit save" and "edit discard" (screens/save_changes.xml's SAVE and DON'T
-SAVE): back to the editor the question was opened from (the screen before),
-then its changes saved as its OK saves them, or let go of, and the editor
+SAVE): the question closed, the editor under it up again as it was (a
+pop-up's: ui_widget.c), then its changes saved as its OK saves them, or let go of, and the editor
 closed, as its OK closes it (menu_functions.c) */
 static boolean screen_call_edit(struct widget_instance *widget, struct event_record *event, char const *name,
 	boolean *deleted)
@@ -1981,7 +2176,14 @@ void menu_screen_closed(struct widget_instance *widget)
 			tall_search_screen = NULL;
 		tall_screens[open - screens.open] = NULL;
 	}
-	memset(open, 0, sizeof(*open));
+	{
+		void (*closed)(void) = open->place ? open->place->closed : NULL;
+
+		memset(open, 0, sizeof(*open));
+		/* (its place told: the on-screen keyboard's, closed by another than it, a Cancel) */
+		if (closed)
+			closed();
+	}
 }
 
 /* the item focused now (its index, NONE for none) */
@@ -2152,6 +2354,28 @@ static void screen_spartan_frame(struct screen_open *open, long focused)
 	}
 }
 
+/* a screen's <stick>s' words, filled again each frame (after its place's
+frame has read the sticks): a line whose binding has no value empty */
+static void screen_sticks_frame(struct screen_open *open)
+{
+	struct screen_values values;
+	char text[MENU_SCREEN_MAXIMUM_TEXT];
+	long index;
+
+	screen_values_clear(&values, open);
+	for (index = 0; index < open->stick_count; index++)
+	{
+		struct screen_stick const *stick = &open->sticks[index];
+
+		if (stick->value)
+			screen_text_set(stick->value, stick->block.text &&
+				menu_screen_text(stick->block.text, screen_value, &values, text, sizeof(text)) ? text : "");
+		if (stick->detail)
+			screen_text_set(stick->detail, stick->block.detail &&
+				menu_screen_text(stick->block.detail, screen_value, &values, text, sizeof(text)) ? text : "");
+	}
+}
+
 void menu_screen_widget_drawing(struct widget_instance const *widget, point2d offset)
 {
 	long index;
@@ -2170,6 +2394,23 @@ void menu_screen_widget_drawing(struct widget_instance const *widget, point2d of
 			if (each->picture == widget && each->shown)
 				menu_spartan_draw(offset.x, offset.y, each->first, each->places);
 		}
+		/* (its <stick>s' circles, each where its anchor is: Stick Test's) */
+		for (spartan = 0; open->widget && spartan < open->stick_count; spartan++)
+		{
+			struct screen_stick const *stick = &open->sticks[spartan];
+			real radius = (real)stick->block.box_width;
+
+			if (stick->circle == widget)
+				pc_menu_stick_test_draw(stick->stick, (real)(offset.x + widget->horizontal_offset) + radius,
+					(real)(offset.y + widget->vertical_offset) + radius, radius);
+		}
+		/* (its <keyboard>, where its anchor is) */
+		if (open->widget && open->keyboard_area == widget)
+			keyboard_draw((real)(offset.x + widget->horizontal_offset), (real)(offset.y + widget->vertical_offset));
+		/* (its table's symbols' caps, under their legends: Controller
+		Layout's) */
+		if (open->widget && tall_screens[index])
+			tall_symbol_draw(tall_screens[index], widget, offset);
 		/* (its chat's on-screen keyboard, over everything) */
 		if (open->widget && tall_screens[index] && tall_screens[index]->chat_keyboard == widget)
 			tall_chat_keyboard_draw(tall_screens[index], offset);
@@ -2203,6 +2444,7 @@ void menu_screen_frame(struct widget_instance *widget)
 
 	if (!open)
 		return;
+	screen_game_data_poll();
 	/* (its file read again: made again, the focus on the same item) */
 	menu_screens_poll(ui_widget_port_milliseconds());
 	if (menu_screens_generation(open->place->screen) != open->generation)
@@ -2253,6 +2495,8 @@ void menu_screen_frame(struct widget_instance *widget)
 		screen_spartan_frame(open, focused);
 	if (open->place->shown)
 		open->place->shown(widget);
+	if (open->stick_count)
+		screen_sticks_frame(open);
 }
 
 /* an action run from the widget (an item, or the screen) */
@@ -2385,6 +2629,41 @@ static boolean screen_call_color(struct widget_instance *widget, struct event_re
 	return TRUE;
 }
 
+/* Controller Layout's actions (menu_functions.c's controller_layout_menu.inc),
+the row given */
+static boolean screen_call_layout(struct widget_instance *widget, struct event_record *event, char const *name,
+	boolean *deleted)
+{
+	*deleted = FALSE;
+	if (!pc_menu_layout_action(name, screen_action_row))
+		return FALSE;
+	/* (the question's USE THIS LAYOUT'S: back to the page) */
+	if (!strcmp(name, "layout bindings use"))
+		menu_tags_back(widget, event, deleted);
+	return TRUE;
+}
+
+/* the NVIDIA DLSS add-on's actions (port/linux/src/dlss_addon.c) */
+static boolean screen_call_dlss(struct widget_instance *widget, struct event_record *event, char const *name,
+	boolean *deleted)
+{
+	(void)widget;
+	(void)event;
+	*deleted = FALSE;
+	return dlss_addon_action(name) != 0;
+}
+
+/* Settings' GAME DATA's actions (port/linux/src/game_data_page.c), the row
+given */
+static boolean screen_call_game_data(struct widget_instance *widget, struct event_record *event, char const *name,
+	boolean *deleted)
+{
+	(void)widget;
+	(void)event;
+	*deleted = FALSE;
+	return game_data_page_action(name, screen_action_row) != 0;
+}
+
 /* the lobby's actions of C's own (menu_functions.c's lobby_menu.inc), the
 row given */
 static boolean screen_call_lobby(struct widget_instance *widget, struct event_record *event, char const *name,
@@ -2438,6 +2717,32 @@ static struct screen_place const *screen_place_named(char const *name)
 			return &screen_places[index];
 	}
 	return NULL;
+}
+
+/* (ui_widget.c) whether a screen opens as a pop-up: a hand-written screen
+of the menu engine's with a <dialog> (the Quit question, Save Changes) or a
+<keyboard> (the on-screen keyboard),
+opened over the screen up without deleting it or adding to its history,
+which stays as it was under it, taking nothing, until the pop-up closes */
+int menu_screen_popup(long tag_index)
+{
+	struct screen_place const *place;
+	struct menu_screen const *screen;
+	long index;
+
+	if (tag_index == NONE || !menu_engine_looks())
+		return FALSE;
+	place = screen_place_of(tag_index);
+	if (!place)
+		return FALSE;
+	screens_names_give();
+	screen = menu_screens_find(place->screen);
+	for (index = 0; screen && index < screen->block_count; index++)
+	{
+		if (screen->blocks[index].kind == MENU_SCREEN_DIALOG || screen->blocks[index].kind == MENU_SCREEN_KEYBOARD)
+			return TRUE;
+	}
+	return FALSE;
 }
 
 int menu_screen_open_ready(char const *name)
@@ -2562,6 +2867,9 @@ boolean menu_screen_back(struct widget_instance *widget, struct event_record *ev
 	struct screen_open *open = screen_open_of(widget);
 
 	*deleted = FALSE;
+	/* (a screen that takes its events itself: the on-screen keyboard's) */
+	if (open && open->place->event && open->place->event(event))
+		return TRUE;
 	/* (a screen that takes keys by controller (Add Player's: a controller
 	not in the game joining with its own), before its focus and its own
 	keys: those it takes, and its done, back to the screen before) */

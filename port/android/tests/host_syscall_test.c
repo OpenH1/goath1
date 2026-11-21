@@ -44,6 +44,13 @@ void host_logf(int priority, const char *format, ...)
 	warnings++;
 }
 
+/* (the guest's output to the terminal, which the host queues for its
+writer thread: host_log_queue.c's; written at once here) */
+long host_log_queue_output(int fd, const struct iovec *vector, int count)
+{
+	return (long)writev(fd, vector, count);
+}
+
 void host_exit(int code)
 {
 	_exit(code);

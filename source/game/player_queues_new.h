@@ -67,16 +67,47 @@ enum
 {
 	/* the ticks of buttons in each message */
 	DISTRIBUTED_INPUT_HISTORY = 4,
+	/* the one bound on a tick another machine states (an input's, a sub-step
+	key's), against the clock it is checked by (distributed_tick_plausible):
+	no further either way than a machine's clock can be from another's while
+	it stays connected (network_distributed.c's datagram window, 15 seconds:
+	as long as a machine may go silent before it is dropped) ... */
+	DISTRIBUTED_TICK_WINDOW_TICKS = 15 * TICKS_PER_SECOND,
+	/* ... and the most a real tick leads that clock: an OpenH1 client's clock
+	leads the host's latest it heard by its trip there, jumping no further than
+	12 ticks ahead of it (network_clock.h's CLOCK_LEAD_LIMIT_TICKS), and the
+	host's check of a fast clock allows 15 (CLIENT_CLOCK_AHEAD_TICKS); a
+	second, twice that. A kept latest further ahead than this was no real
+	tick, and gives way to the next that is not (distributed_tick_stuck) */
+	DISTRIBUTED_TICK_LEAD_TICKS = TICKS_PER_SECOND,
 };
 
+/* whether a tick another machine states is near enough now (the clock it is
+checked by: the host's own, moved by the sender's offset, of a client's; a
+client's own, of the host's and the other clients') to be one at all */
+boolean distributed_tick_plausible(
+	long tick,
+	long now);
+/* whether a kept latest tick (last) was none a machine could have run, and
+gives way to tick, which is: last further ahead of now than a clock leads,
+tick not. A tick far ahead, taken, would otherwise refuse every real one
+after it until now passed it */
+boolean distributed_tick_stuck(
+	long last,
+	long tick,
+	long now);
+
 /* (the host) a client machine's player's action at the client's tick:
-whether it was taken (valid, and of a tick after the last taken) */
+whether it was taken (valid, and of a tick after the last taken, or after
+one that was none: distributed_tick_stuck); now, the host's clock as the
+client's offset from it puts it (distributed_tick_plausible) */
 boolean update_server_handle_distributed_input(
 	long player_index,
 	long tick,
 	struct player_action const *action,
 	unsigned short const *control_flags,
-	short count);
+	short count,
+	long now);
 /* (the host) the update its last tick ran (NONE for none), and an update's
 actions (NULL once it is gone) */
 long update_server_ticked_update_number(

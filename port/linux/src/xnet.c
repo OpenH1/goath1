@@ -53,6 +53,12 @@ alone peers reach.
 #include <stdlib.h>
 #include <string.h>
 
+/* port/linux/game/network_latency_trace.c's (debug.network_latency_trace) */
+extern int network_latency_trace_on;
+void network_latency_trace_datagram_read(unsigned long long kernel_realtime_nanoseconds,
+	unsigned long long realtime_now_nanoseconds);
+void network_latency_trace_send(unsigned long address, int datagram);
+
 /* ---------- address settings */
 
 /* Winsock's, which the SDK headers here leave out */
@@ -506,7 +512,22 @@ SOCKET WSAAPI halo_ws_accept(SOCKET socket, struct sockaddr *address, int *addre
 
 int WSAAPI halo_ws_send(SOCKET socket, const char *buffer, int length, int flags)
 {
-	return winsock_result(posix_socket_send((int)socket, buffer, length, flags));
+	int result = posix_socket_send((int)socket, buffer, length, flags);
+
+	/* (debug.network_latency_trace: a connected socket's datagram, or a
+	stream's write beside the datagrams) */
+	if (network_latency_trace_on && result >= 0)
+	{
+		struct sockaddr_in peer;
+		int peer_length = (int)sizeof(peer);
+		int type = SOCK_STREAM;
+		int type_length = sizeof(type);
+
+		posix_socket_getsockopt((int)socket, SOL_SOCKET, SO_TYPE, &type, &type_length);
+		if (posix_socket_getpeername((int)socket, &peer, &peer_length) == 0 && peer.sin_family == AF_INET)
+			network_latency_trace_send(peer.sin_addr.s_addr, type == SOCK_DGRAM);
+	}
+	return winsock_result(result);
 }
 
 int WSAAPI halo_ws_sendto(SOCKET socket, const char *buffer, int length, int flags,
@@ -617,6 +638,8 @@ int WSAAPI halo_ws_sendto(SOCKET socket, const char *buffer, int length, int fla
 	}
 	result = posix_socket_sendto((int)socket, buffer, length, flags, address, address_length);
 	send_error = result < 0 ? posix_socket_last_error() : 0;
+	if (network_latency_trace_on && result >= 0 && address && address->sa_family == AF_INET)
+		network_latency_trace_send(((const struct sockaddr_in *)address)->sin_addr.s_addr, 1);
 	/* the port the send gave it (one that failed binds it too) */
 	if (!source_port)
 		note_socket_port(socket, 0);
@@ -946,9 +969,21 @@ static int delayed_receive(SOCKET socket, char *buffer, int length, int flags,
 
 int WSAAPI halo_ws_recv(SOCKET socket, char *buffer, int length, int flags)
 {
+	int result;
+
 	if (delayed_enabled())
-		return delayed_receive(socket, buffer, length, flags, NULL, NULL, 0);
-	return winsock_result(posix_socket_recv((int)socket, buffer, length, flags));
+	{
+		result = delayed_receive(socket, buffer, length, flags, NULL, NULL, 0);
+		if (network_latency_trace_on && result >= 0)
+			network_latency_trace_datagram_read(0, 0);
+		return result;
+	}
+	result = posix_socket_recv((int)socket, buffer, length, flags);
+	/* (debug.network_latency_trace: when the kernel had it, a connected
+	socket's datagram) */
+	if (network_latency_trace_on && result >= 0)
+		network_latency_trace_datagram_read(posix_socket_received_time((int)socket), posix_realtime_nanoseconds());
+	return winsock_result(result);
 }
 
 int WSAAPI halo_ws_recvfrom(SOCKET socket, char *buffer, int length, int flags,
@@ -957,10 +992,19 @@ int WSAAPI halo_ws_recvfrom(SOCKET socket, char *buffer, int length, int flags,
 	int result;
 
 	if (delayed_enabled())
-		return delayed_receive(socket, buffer, length, flags, address, address_length, 1);
+	{
+		result = delayed_receive(socket, buffer, length, flags, address, address_length, 1);
+		/* (held back: when the game read it alone) */
+		if (network_latency_trace_on && result >= 0)
+			network_latency_trace_datagram_read(0, 0);
+		return result;
+	}
 	result = posix_socket_recvfrom((int)socket, buffer, length, flags, address, address_length);
 	if (result >= 0)
 		peer_incoming_address(0, address, address_length);
+	/* (debug.network_latency_trace: when the kernel had it) */
+	if (network_latency_trace_on && result >= 0)
+		network_latency_trace_datagram_read(posix_socket_received_time((int)socket), posix_realtime_nanoseconds());
 	return winsock_result(result);
 }
 
@@ -1016,8 +1060,19 @@ int xnet_socket_wait_readable(long socket, long milliseconds)
 	int readable = (int)socket;
 	int readable_count = 1;
 
+	/* (debug.network_latency: what is held back comes due by the clock, not
+	by the socket; a millisecond's wait at a time, readable when something
+	is due or has come to be held back, so that a waiting frame reads it
+	then, as it would come over a network) */
 	if (delayed_enabled())
-		return -1;
+	{
+		if (posix_socket_select(&readable, &readable_count, NULL, NULL, NULL, NULL, 0,
+			(posix_long)(milliseconds < 1 ? milliseconds : 1) * 1000, 0) < 0)
+		{
+			return -1;
+		}
+		return readable_count > 0 || delayed_due((int)socket);
+	}
 	if (posix_socket_select(&readable, &readable_count, NULL, NULL, NULL, NULL, 0,
 		(posix_long)milliseconds * 1000, 0) < 0)
 	{

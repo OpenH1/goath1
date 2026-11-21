@@ -58,7 +58,13 @@ static char const *config_player_string(int local,char const *name) {(void)name;
 static int config_pinned_by_environment(char const *name) {(void)name;return 0;}
 '''
 POLICY = (source('port/linux/include/controller_buttons.h') +
-          source('port/linux/include/controller_remap.h') + source('port/linux/src/controller_remap.c'))
+          source('port/linux/include/controller_remap.h') + source('port/linux/src/controller_remap.c') +
+          source('port/linux/include/controller_layouts.h') + r'''
+/* (no controller has a layout here: tools/test_controller_layouts.py tests them) */
+struct controller_layout const *controller_layout_for(char const *guid) {(void)guid;return 0;}
+char const *controller_layout_button_name(int button, struct controller_device const *device)
+{return controller_remap_device_button_name(button, device);}
+''')
 
 
 def test_profile_layout_in_place_of_the_port(tmp_path):
@@ -135,20 +141,25 @@ int main(void) {
  unsigned char a[CONTROLLER_REMAP_ACTIONS],b[CONTROLLER_REMAP_ACTIONS];
  char old[512],v3[512],text[512];char *last;int port;
  controller_remap_defaults(a);controller_remap_format(a,text,sizeof(text));
- assert(!strncmp(text,"v4:",3));assert(controller_remap_parse(text,b) && b[PAD_CAMERA_CYCLE]==4 && b[PAD_PING]==11);
- /* v2 is v4 without its last two actions (Cycle Camera, Ping), v3 without Ping. */
+ assert(!strncmp(text,"v5:",3));assert(controller_remap_parse(text,b) && b[PAD_CAMERA_CYCLE]==4 && b[PAD_PING]==11);
+ assert(b[PAD_ZOOM_IN]==255 && b[PAD_ZOOM_OUT]==255);
+ /* v4 is v5 without its last two actions (Zoom In, Zoom Out), unbound in it too ... */
+ text[1]='4';*strrchr(text,',')=0;*strrchr(text,',')=0;
+ assert(controller_remap_parse(text,b) && !memcmp(a,b,sizeof(a)));
+ /* ... v2 is v4 without its last two actions (Cycle Camera, Ping), v3 without Ping. */
  strcpy(old,text);old[1]='2';last=strrchr(old,',');assert(last);*last=0;last=strrchr(old,',');*last=0;
  assert(controller_remap_parse(old,b) && !memcmp(a,b,sizeof(a)));
  strcpy(v3,text);v3[1]='3';*strrchr(v3,',')=0;
  assert(controller_remap_parse(v3,b) && !memcmp(a,b,sizeof(a)));
  /* Existing debug RB bindings win over the newly introduced default. */
  controller_remap_assign(a,PAD_CAMERA_UP,4);assert(a[PAD_CAMERA_CYCLE]==255);
- controller_remap_format(a,text,sizeof(text));text[1]='2';*strrchr(text,',')=0;*strrchr(text,',')=0;
+ controller_remap_format(a,text,sizeof(text));text[1]='2';
+ *strrchr(text,',')=0;*strrchr(text,',')=0;*strrchr(text,',')=0;*strrchr(text,',')=0;
  assert(controller_remap_parse(text,b) && b[PAD_CAMERA_UP]==4 && b[PAD_CAMERA_CYCLE]==255);
  assert(!memcmp(a,b,sizeof(a)));
  /* ... and an older layout's D-pad Right (its strafe) over Ping's. */
  controller_remap_defaults(a);controller_remap_assign(a,PAD_RIGHT,11);assert(a[PAD_PING]==255);
- controller_remap_format(a,text,sizeof(text));text[1]='3';*strrchr(text,',')=0;
+ controller_remap_format(a,text,sizeof(text));text[1]='3';*strrchr(text,',')=0;*strrchr(text,',')=0;*strrchr(text,',')=0;
  assert(controller_remap_parse(text,b) && b[PAD_RIGHT]==11 && b[PAD_PING]==255);
  /* Ping is gameplay's: the debug camera may share its button. */
  controller_remap_assign(a,PAD_PING,8);assert(a[PAD_CHAT]==255 && a[PAD_CAMERA_FASTER]==8);
@@ -252,13 +263,13 @@ int main(void) {
  controller_remap_profile(0,b);controller_remap_assign(b,PAD_JUMP,CONTROLLER_REMAP_PADDLE+1);
  controller_remap_assign(b,PAD_SCOREBOARD,CONTROLLER_REMAP_PADDLE+2);
  controller_remap_format(b,text,sizeof(text));config_write("input.controller_p1",text);
- assert(strstr(text,"v4:right_paddle,") && strstr(text,",left_paddle2,"));
+ assert(strstr(text,"v5:right_paddle,") && strstr(text,",left_paddle2,"));
  assert(controller_remap_parse(text,c) && !memcmp(b,c,sizeof(b)));
  assert(!strcmp(controller_remap_button_name(CONTROLLER_REMAP_PADDLE,CONTROLLER_STEAM_DECK),"L4"));
  assert(!strcmp(controller_remap_button_name(CONTROLLER_REMAP_PADDLE+3,CONTROLLER_STEAM_DECK),"R5"));
  assert(!strcmp(controller_remap_button_name(CONTROLLER_REMAP_PADDLE+1,CONTROLLER_XBOX),"P1"));
  assert(!strcmp(controller_remap_button_name(13,CONTROLLER_STEAM_DECK),"VIEW"));
- assert(controller_remap_cycle(13,1)==CONTROLLER_REMAP_PADDLE && controller_remap_cycle(CONTROLLER_REMAP_PADDLE+3,1)==255);
+ assert(controller_remap_cycle(13,1)==CONTROLLER_REMAP_PADDLE && controller_remap_cycle(CONTROLLER_REMAP_PADDLE+3,1)==CONTROLLER_REMAP_TOUCHPAD);
  /* (the layout's change waits for the paddles held across it to be let go) */
  controller_remap_paddles(0,0);memset(&pad,0,sizeof(pad));controller_remap_input(0,&pad,1);
  controller_remap_paddles(0,2);memset(&pad,0,sizeof(pad));controller_remap_input(0,&pad,1);
@@ -277,6 +288,64 @@ int main(void) {
  return 0;
 }
 """)
+
+def test_touchpad_and_misc_buttons_press_a_custom_layouts_actions(tmp_path):
+    """#1145: the touchpad's click and misc1 to misc6 are tokens (touchpad, misc1..misc6) a custom layout's actions
+    take, pressed through controller_remap_paddles' bits 4 to 10, captured, named per controller (PlayStation's Back
+    by its generation), and cycled to; a layout without them reads as before (the negative control)"""
+    run_c(tmp_path, COMMON + POLICY + INPUT + source('port/linux/src/controller_remap_input.c') + r"""
+int main(void) {
+ XINPUT_GAMEPAD pad={0};unsigned char b[CONTROLLER_REMAP_ACTIONS],c[CONTROLLER_REMAP_ACTIONS];char text[512];int button=-1;
+ struct controller_device ps={0};
+ /* a layout of the old tokens formats as it did, and reads back the same */
+ controller_remap_profile(0,b);controller_remap_format(b,text,sizeof(text));
+ assert(!strstr(text,"touchpad") && !strstr(text,"misc"));
+ assert(controller_remap_parse(text,c) && !memcmp(b,c,sizeof(b)));
+ /* the new tokens round-trip; an unknown one still refuses the layout */
+ controller_remap_assign(b,PAD_JUMP,CONTROLLER_REMAP_TOUCHPAD);
+ controller_remap_assign(b,PAD_SCOREBOARD,CONTROLLER_REMAP_MISC+5);
+ controller_remap_format(b,text,sizeof(text));config_write("input.controller_p1",text);
+ assert(!strncmp(text,"v5:touchpad,",12) && strstr(text,",misc6,"));
+ assert(controller_remap_parse(text,c) && !memcmp(b,c,sizeof(b)));
+ assert(!controller_remap_parse("v4:misc7,east,west,north,rb,lb,lt,rt,ls,rs,dpad_up,unbound,unbound,dpad_right,back,"
+  "unbound,ls,unbound,unbound,unbound,ls,rs,rs,rt,lt,rb,dpad_right",c));
+ /* (the layout's change waits for the buttons held across it to be let go) */
+ controller_remap_paddles(0,0);memset(&pad,0,sizeof(pad));controller_remap_input(0,&pad,1);
+ /* the touchpad's click jumps; misc1 (bit 5) is bound to nothing and presses nothing */
+ controller_remap_paddles(0,1u<<4);memset(&pad,0,sizeof(pad));controller_remap_input(0,&pad,1);
+ assert(pad.bAnalogButtons[0]==255);
+ controller_remap_paddles(0,1u<<5);memset(&pad,0,sizeof(pad));controller_remap_input(0,&pad,1);
+ assert(!pad.bAnalogButtons[0] && !pad.wButtons);
+ /* (bits past the eleven extra buttons are dropped) */
+ controller_remap_paddles(0,1u<<11);memset(&pad,0,sizeof(pad));controller_remap_input(0,&pad,1);
+ assert(!pad.bAnalogButtons[0] && !pad.wButtons);
+ /* capture takes misc3 */
+ controller_remap_paddles(0,0);
+ menu[0]=1;controller_remap_capture_begin(0);memset(&pad,0,sizeof(pad));controller_remap_input(0,&pad,1);
+ controller_remap_paddles(0,1u<<7);controller_remap_input(0,&pad,1);
+ assert(controller_remap_capture_poll(&button)==1 && button==CONTROLLER_REMAP_MISC+2);
+ /* cycling: right paddle 2, the touchpad, misc1 ... misc6, unbound */
+ assert(controller_remap_cycle(CONTROLLER_REMAP_TOUCHPAD,1)==CONTROLLER_REMAP_MISC);
+ assert(controller_remap_cycle(CONTROLLER_REMAP_MISC+5,1)==255 && controller_remap_cycle(255,-1)==CONTROLLER_REMAP_MISC+5);
+ /* names: PlayStation's Back by generation; the family's otherwise */
+ ps.family=CONTROLLER_PLAYSTATION;
+ ps.playstation=3;assert(!strcmp(controller_remap_device_button_name(13,&ps),"SELECT"));
+ ps.playstation=4;assert(!strcmp(controller_remap_device_button_name(13,&ps),"SHARE"));
+ ps.playstation=5;assert(!strcmp(controller_remap_device_button_name(13,&ps),"CREATE"));
+ assert(!strcmp(controller_remap_device_button_name(CONTROLLER_REMAP_TOUCHPAD,&ps),"TOUCHPAD"));
+ assert(!strcmp(controller_remap_device_button_name(CONTROLLER_REMAP_MISC,&ps),"MIC"));
+ assert(!strcmp(controller_remap_device_button_name(0,&ps),"CROSS"));
+ ps.family=CONTROLLER_XBOX;ps.playstation=0;
+ assert(!strcmp(controller_remap_device_button_name(13,&ps),"BACK / SELECT"));
+ assert(!strcmp(controller_remap_device_button_name(CONTROLLER_REMAP_MISC,&ps),"SHARE"));
+ assert(!strcmp(controller_remap_button_name(CONTROLLER_REMAP_MISC,CONTROLLER_SWITCH),"CAPTURE"));
+ assert(!strcmp(controller_remap_button_name(CONTROLLER_REMAP_MISC+3,CONTROLLER_UNKNOWN),"MISC 4"));
+ assert(!strcmp(controller_remap_button_name(CONTROLLER_REMAP_MISC+1,CONTROLLER_STEAM_DECK),"RIGHT TRACKPAD"));
+ assert(!strcmp(controller_remap_device_button_name(CONTROLLER_REMAP_MISC,NULL),"MISC 1"));
+ return 0;
+}
+""")
+
 
 def test_disabled_matches_original_sdl_merge(tmp_path):
     original = (ROOT / 'port/linux/src/xinput_sdl.c').read_text()
@@ -397,7 +466,8 @@ def test_generated_remapping_and_dead_zone_pages():
     assert 'setting="input.left_stick_dead_zone"' in dead_zones and 'setting="input.right_stick_dead_zone"' in dead_zones
     controller = '\n'.join(files[prefix + '.gamepad_setup.xml'])
     assert 'button_remapping_screen' in controller and 'dead_zones_screen' in controller
-    assert 'setting="input.invert_look_horizontal"' in controller
+    assert 'setting="input.look_vertical_sensitivity"' in controller
+    assert 'setting="input.invert_look_horizontal"' in '\n'.join(files[prefix + '.gamepad_setup.gyro.xml'])
     for name in ('gamepad_setup.xml', 'gamepad_setup.button_remapping.xml', 'gamepad_setup.dead_zones.xml'):
         filename = prefix + '.' + name
         assert 'ce/' + filename in manifest
@@ -420,7 +490,7 @@ int controller_remap_connected(short p){return 1;}
 unsigned int controller_remap_held(short p){return 0;}
 unsigned int controller_remap_pressed(short p,unsigned int m){return 0;}
 static short local_player_get_next(short p){return p<1?1:NONE;}
-static struct {short local_player_index;} fake_player={2};
+static struct {short local_player_index;long unit_index;} fake_player={2,0};
 static void input_abstraction_get_local_player_preferences(short port,struct game_input_preferences *p){*p=profile;}
 static int game_time_initialized(void){return 1;}
 static int game_in_progress(void){return in_game;}
@@ -445,12 +515,19 @@ int main(void) {
  assert(controller_remap_prompt_text(1,255)[0]=='U' && !controller_remap_prompt_text(1,0) && !controller_remap_prompt_text(1,16));
  /* a back paddle: past the icons, named as the player's controller names it (the Steam Deck's R5; an Elite's P2) */
  controller_remap_assign(b,0,CONTROLLER_REMAP_PADDLE+3);controller_remap_format(b,text,sizeof(text));
- assert(strstr(text,"v4:right_paddle2,"));config_write("input.controller_p3",text);
+ assert(strstr(text,"v5:right_paddle2,"));config_write("input.controller_p3",text);
  controller_remap_prompt(1,&profile);assert(profile.game_control_to_xbox_buttons[0]==CONTROLLER_REMAP_PROMPT_PADDLE+3);
  family=CONTROLLER_STEAM_DECK;{wchar_t const *w=controller_remap_prompt_text(1,profile.game_control_to_xbox_buttons[0]);
  assert(w[0]=='R' && w[1]=='5' && !w[2] && device_port==2);}
  family=CONTROLLER_XBOX;{wchar_t const *w=controller_remap_prompt_text(1,CONTROLLER_REMAP_PROMPT_PADDLE+3);
  assert(w[0]=='P' && w[1]=='2' && !w[2]);}
+ /* the touchpad and misc6 too, the last before UNBOUND (255) */
+ controller_remap_assign(b,0,CONTROLLER_REMAP_MISC+5);controller_remap_format(b,text,sizeof(text));
+ config_write("input.controller_p3",text);controller_remap_prompt(1,&profile);
+ assert(profile.game_control_to_xbox_buttons[0]==254);
+ {wchar_t const *w=controller_remap_prompt_text(1,254);assert(w[0]=='M' && w[5]=='6' && !w[6]);}
+ {wchar_t const *w=controller_remap_prompt_text(1,CONTROLLER_REMAP_PROMPT_PADDLE+4);assert(w[0]=='T' && w[7]=='D');}
+ assert(!controller_remap_prompt_text(1,CONTROLLER_REMAP_PROMPT_PADDLE-1));
  family=0;
  profile=original;controller_remap_prompt(0,&profile);assert(!memcmp(&profile,&original,sizeof(profile)));
  assert(controller_remap_playing(2) && !controller_remap_playing(0));menus=1;assert(!controller_remap_playing(2));menus=0;
@@ -573,7 +650,7 @@ short network_chat_controller(void){return -1;}
 static int console_is_active(void){return 0;}
 static short local_player_get_next(short port){return port<0?0:NONE;}
 static long local_player_get_player_index(short port){return port==0?1:NONE;}
-static struct {short local_player_index;} fake_player;
+static struct {short local_player_index;long unit_index;} fake_player;
 #define player_get(index) (&fake_player)
 """ + '#define PRESET_COUNT ' + str(len(presets)) + '\nenum {' + enums + '};\n' + source('port/linux/game/controller_remap_game.c') +
           source('port/linux/src/controller_remap_input.c') + r"""
@@ -730,6 +807,9 @@ static int input_get_key(struct key_stroke *key){return 0;}
 static short chat_scroll;
 static WORD chat_held_buttons[4];
 static unsigned char chat_held_analog[4];
+/* (the new menus' keyboard, port/linux/game/keyboard.c: not up here) */
+static int keyboard_chat_up(void){return 0;}
+static void keyboard_close(void){}
 '''
     code+='\n'.join(function(chat,n) for n in ['chat_speaker','chat_input_begin','network_chat_controller','chat_input_end','chat_keyboard_buttons'])
     code+=function(xinput,'chat_pad_hold_over')+r'''

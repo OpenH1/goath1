@@ -43,14 +43,15 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from .android_build import (GUEST_ARCH_SCRIPT, GUEST_TOOLCHAIN_SCRIPT, SDL_ANDROID_MOUSE_PATCH,
-                            SDL_TAG, SDL_WAYLAND_REFERENCE_PATCH, TOML_DIR, fetch_third_party, generate_guest_image, host_memory_sources)
+                            SDL_STEAMDECK_WATCHDOG_PATCH, SDL_TAG, SDL_WAYLAND_REFERENCE_PATCH, TOML_DIR, fetch_third_party, generate_guest_image, host_memory_sources)
 from .build_common import (MBEDTLS_DIR, MINIUPNPC_DEFINES, MINIUPNPC_DIR, OWN_CODE_ERRORS, REPLAY_DIR,
                            SDL_RPATH_LDFLAGS, compile_launcher, download, miniupnpc_sources, replay_build_label,
                            sdl3_desktop_check, sdl3_rule, pgo_generate_defines, updater_defines)
 from .guest_arch import ARM64_32, X32, GuestArch
 from .guest_toolchain import LLVM_VERSION, guest_toolchain
 from .ninja_syntax import Writer, escape
-from .vulkan_build import VULKAN_DIR, fetch_vulkan_headers, host_vulkan_renderer
+from .vulkan_build import (VULKAN_DIR, dlss_addon, dlss_module, fetch_dlss_sdk, fetch_vulkan_headers,
+                           host_vulkan_renderer)
 
 # the desktop host's own files (its entry point, SDL's desktop functions, VR)
 PORT_DIR = Path("port/linux/host")
@@ -202,6 +203,14 @@ def _generate(n: Writer, sln: Any, target: LinuxGuest, config_path: Path, third_
         fetch_vulkan_headers(vulkan_headers)
     except (RuntimeError, OSError) as error:
         raise RuntimeError(f"cannot fetch the Vulkan headers ({error})") from error
+    # (configure.py --dlss: NVIDIA's DLSS SDK, for the module beside the game,
+    # Linux x86-64's)
+    dlss = bool(getattr(sln, "port_dlss", False)) and target.name == "linux_x86_64"
+    if dlss:
+        try:
+            fetch_dlss_sdk(third_party / "dlss")
+        except (RuntimeError, OSError) as error:
+            raise RuntimeError(f"cannot fetch NVIDIA's DLSS SDK ({error})") from error
     if vr:
         try:
             fetch_openxr_headers(openxr_dir)
@@ -254,7 +263,8 @@ def _generate(n: Writer, sln: Any, target: LinuxGuest, config_path: Path, third_
     # (built again when a patch of it changes: fetch_third_party applies them
     # at configure)
     n.build(outputs=libsdl, rule=f"{prefix}_sdl3",
-            implicit=[sdl_dir / "CMakeLists.txt", SDL_ANDROID_MOUSE_PATCH, SDL_WAYLAND_REFERENCE_PATCH])
+            implicit=[sdl_dir / "CMakeLists.txt", SDL_ANDROID_MOUSE_PATCH, SDL_WAYLAND_REFERENCE_PATCH,
+                      SDL_STEAMDECK_WATCHDOG_PATCH])
 
     # ---------- the host
 
@@ -376,8 +386,15 @@ def _generate(n: Writer, sln: Any, target: LinuxGuest, config_path: Path, third_
     # ... and the textures', fonts' and menus' bytes (port/linux/src/embedded_assets.h)
     assets = build / "openh1.assets"
     n.build(outputs=assets, rule=f"{prefix}_copy", inputs=guest["assets"])
+    # (configure.py --dlss: the DLSS module, its runtime and license beside the game)
+    dlss_outputs = (dlss_module(n, prefix, label, build, host_cc, host_cflags, vulkan_headers, third_party / "dlss")
+                    if dlss else [])
+    # (... and the DLSS add-on that the game downloads, built from them: ninja dlss_addon, tools/dlss_addon.py;
+    # never in the game's package)
+    if dlss:
+        dlss_addon(n, prefix, "linux-x86_64", dlss_outputs, Path("build") / "dlss-addon")
     n.build(outputs=target.name, rule="phony", inputs=[output, staged_sdl, sdl_license, brokers, masters, relays,
-                                                         records, assets])
+                                                         records, assets, *dlss_outputs])
 
     # ---------- the command stream's replay (port/linux/vulkan/tools/halo_replay.c), with the replays' shared
     # part (port/tools/replay): the render stream and its recording, and the Vulkan renderer, without the

@@ -19,7 +19,9 @@ player is told that the installer has the same multiplayer maps as Custom
 Edition's.
 
 Only maps the folder lacks are written, so a map the player has already
-(their own bitmaps.map, a newer bloodgulch.map) is left as it is.
+(their own bitmaps.map, a newer bloodgulch.map) is left as it is, unless
+the import is asked to write every map again (Settings' GAME DATA's COPY
+AGAIN, game_data_page.c), which repairs a damaged one.
 */
 
 #include "platform.h"
@@ -78,8 +80,8 @@ static void import_progress(void *context, const char *file, unsigned long long 
 		import->progress(import->context, file, done, total);
 }
 
-int map_import_custom_edition(const char *installer, const char *folder, map_import_progress_proc progress,
-	void *context, unsigned long long *written, char *error, int error_size)
+int map_import_custom_edition(const char *installer, const char *folder, int replace,
+	map_import_progress_proc progress, void *context, unsigned long long *written, char *error, int error_size)
 {
 	struct import_progress import;
 	int result;
@@ -87,8 +89,9 @@ int map_import_custom_edition(const char *installer, const char *folder, map_imp
 	import.progress = progress;
 	import.context = context;
 	import.done = 0;
-	platform_log("importing Custom Edition's maps from %s into %s", installer, folder);
-	result = ce_installer_extract_maps(installer, folder, import_progress, &import, error, error_size);
+	platform_log("importing Custom Edition's maps from %s into %s%s", installer, folder,
+		replace ? ", every map written again" : "");
+	result = ce_installer_extract_maps(installer, folder, replace, import_progress, &import, error, error_size);
 	*written = import.done;
 	if (result)
 		platform_log("imported %.1f MB of Custom Edition's maps", (double)import.done / 1e6);
@@ -141,7 +144,7 @@ void map_import_command_line(const char *path)
 	platform_translate_path("d:\\custom_maps", folder, sizeof(folder));
 	fprintf(stdout, "Importing Custom Edition's maps from %s into %s\n", path, folder);
 	fflush(stdout);
-	if (!map_import_custom_edition(path, folder, command_line_progress, &shown, &written, error, sizeof(error)))
+	if (!map_import_custom_edition(path, folder, 0, command_line_progress, &shown, &written, error, sizeof(error)))
 	{
 		fprintf(stderr, "%s\n", error);
 		exit(EXIT_FAILURE);

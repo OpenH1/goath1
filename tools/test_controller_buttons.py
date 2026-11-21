@@ -32,9 +32,18 @@ static char const *SDL_GetGamepadName(SDL_Gamepad *p){return "Test controller";}
 static unsigned SDL_GetGamepadID(SDL_Gamepad *p){return p->id;}
 static unsigned short SDL_GetGamepadVendor(SDL_Gamepad *p){return 123;}
 static unsigned short SDL_GetGamepadProduct(SDL_Gamepad *p){return 456;}
-typedef enum {SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1=16,SDL_GAMEPAD_BUTTON_LEFT_PADDLE1,
- SDL_GAMEPAD_BUTTON_RIGHT_PADDLE2,SDL_GAMEPAD_BUTTON_LEFT_PADDLE2} SDL_GamepadButton;
+typedef enum {SDL_GAMEPAD_BUTTON_MISC1=15,SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1,SDL_GAMEPAD_BUTTON_LEFT_PADDLE1,
+ SDL_GAMEPAD_BUTTON_RIGHT_PADDLE2,SDL_GAMEPAD_BUTTON_LEFT_PADDLE2,SDL_GAMEPAD_BUTTON_TOUCHPAD,
+ SDL_GAMEPAD_BUTTON_MISC2,SDL_GAMEPAD_BUTTON_MISC3,SDL_GAMEPAD_BUTTON_MISC4,SDL_GAMEPAD_BUTTON_MISC5,
+ SDL_GAMEPAD_BUTTON_MISC6} SDL_GamepadButton;
 static int SDL_GamepadHasButton(SDL_Gamepad *p,SDL_GamepadButton b){(void)p;return b==SDL_GAMEPAD_BUTTON_LEFT_PADDLE1;}
+/* (the pad's GUID, a layout's key: SDL's on a desktop, the host's in a guest) */
+typedef struct {unsigned char data[16];} SDL_GUID;
+typedef SDL_Gamepad SDL_Joystick;
+static SDL_Joystick *SDL_GetGamepadJoystick(SDL_Gamepad *p){return p;}
+static SDL_GUID SDL_GetJoystickGUID(SDL_Joystick *j){SDL_GUID g;memset(&g,0,sizeof(g));g.data[0]=(unsigned char)j->id;return g;}
+static void SDL_GUIDToString(SDL_GUID g,char *s,int n){snprintf(s,(size_t)n,"%02x%030d",g.data[0],0);}
+void host_sdl_gamepad_guid(unsigned int pad,char *s,unsigned int n){snprintf(s,n,"%032x",pad);}
 static int automatic;
 static char const *manual="ps_modern",*xbox="menu_gems",*ps="ps_gems",*sw="switch_modern";
 static int config_boolean(char const *s){assert(!strcmp(s,"input.auto_button_detection"));return automatic;}
@@ -53,10 +62,17 @@ int main(void){
  struct controller_device info;int type;
  controller_device_update(0,&a);controller_device_update(1,&b);controller_device_update(2,&c);
  controller_device_get(0,&info);assert(info.family==CONTROLLER_PLAYSTATION && info.type==SDL_GAMEPAD_TYPE_PS5);
+ assert(strlen(info.guid)==32);
+#ifndef HALO_GUEST
+ assert(!strncmp(info.guid,"07",2));
+#endif
 #ifndef HALO_GUEST
  assert(info.instance==7 && info.vendor==123 && info.product==456 && !strcmp(info.name,"Test controller"));
- assert(info.paddles==1);
+ assert(info.paddles==1 && info.playstation==5);
 #endif
+ /* a Valve pad's Quick Access (misc1) and touches (misc3 to misc6) are no layout's; other pads keep theirs */
+ assert(controller_extras_reserved(0x28de,0x1205)==0x7a0 && controller_extras_reserved(0x28de,0x1303)==0x7a0);
+ assert(!controller_extras_reserved(0x28de,0x11ff) && !controller_extras_reserved(123,456));
  assert(controller_button_style_for_port(0)==7 && controller_button_style_for_port(1)==7);
  automatic=1;
  assert(controller_button_style_for_port(0)==5 && controller_button_style_for_port(1)==2 && controller_button_style_for_port(2)==10);

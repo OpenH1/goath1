@@ -33,6 +33,7 @@ MB; a bitmap's pixels are read as they are drawn) */
 struct sound_permutation;
 struct bitmap_data;
 struct vertex_buffer;
+struct structure_bsp;
 
 /* ---------- prototypes/PORT_MODS.C (the platform layer's: port_mods.h) */
 
@@ -42,6 +43,8 @@ long port_mods_played(void);
 long port_mods_file_find(char const *tag_file, char const *map_name);
 int port_mods_file_stamp(long file, unsigned long *size, unsigned long stamp[2]);
 int port_mods_file_read(long file, unsigned long offset, void *buffer, unsigned long size);
+int port_mods_path_stamp(char const *path, unsigned long *size, unsigned long stamp[2]);
+int port_mods_path_read(char const *path, unsigned long offset, void *buffer, unsigned long size);
 long port_mods_file_order(long file);
 char const *port_mods_file_mod(long file);
 char const *port_mods_file_path(long file);
@@ -56,6 +59,10 @@ int port_mods_report(char *text, unsigned long size, char const *map_name, int m
 /* the game's (cache_files.c, scenario_tags_load and scenario_tags_unload) */
 void mods_tags_loaded(char const *map_name);
 void mods_tags_unloaded(void);
+/* the game's (cache_files.c, scenario_structure_bsps_read_ahead, and
+scenario.c, scenario_switch_structure_bsp): a structure bsp of the map read
+where it loads, its lightmap layout known (mod_bitmaps_structure_bsp_read) */
+void mods_structure_bsp_read(short structure_bsp_index, struct structure_bsp const *structure_bsp);
 /* the console's (hs.c) */
 void mods_reload(void);
 void mods_enable(boolean enabled);
@@ -111,9 +118,14 @@ nothing is said at the console. How many of its tags the mods play */
 /* Loose sounds remain independent of remove_all (which disables packs). */
 long mod_sounds_update(boolean remove_all, boolean at_load);
 void mod_sounds_tags_unloaded(void);
-/* (sound_cache_start_loading_sound) whether a permutation is a mod's,
-read at once into buffer */
-boolean mod_sounds_read(struct sound_permutation const *permutation, void *buffer);
+/* (sound_cache_start_loading_sound) whether a permutation is a mod's, its
+samples made PCM into buffer, at once or on the decoder's thread: *loaded
+set once they are there */
+boolean mod_sounds_read(struct sound_permutation const *permutation, void *buffer, boolean *loaded);
+/* (sound_cache_flush, sound_cache_close) every mod sound piece asked for decoded */
+void mod_sounds_decode_wait(void);
+/* Whether the map's sound tag `tag_index` plays from a mod's or a loose tag file (an override) */
+boolean mod_sounds_replaced(long tag_index);
 
 /* ---------- prototypes/MOD_BITMAPS.C */
 
@@ -124,6 +136,37 @@ pixels read at once into buffer and made the hardware's */
 boolean mod_bitmaps_read(struct bitmap_data *bitmap, void *buffer);
 /* whether a bitmap is a mod's (whose linear rows are padded as they load) */
 boolean mod_bitmaps_contain(struct bitmap_data const *bitmap);
+/* a structure bsp of the map read (as the map loads, or switched to): its
+lightmap layout known, the mods' lightmaps for it are taken or left out.
+How many of the map's bitmaps the mods play then */
+long mod_bitmaps_structure_bsp_read(short structure_bsp_index, struct structure_bsp const *structure_bsp);
+/* the mods' lightmaps waiting for their bsp to be read (they are the
+map's until then) */
+long mod_bitmaps_waiting_count(void);
+
+/* ---------- prototypes/MOD_LIGHTMAPS.C */
+
+/* "lm1-" and 16 hexadecimal digits */
+#define MOD_LIGHTMAP_FINGERPRINT_TEXT_SIZE 21
+/* (the picture check's: docs/mods.md) */
+#define MOD_LIGHTMAP_MINIMUM_CORRELATION 0.9f
+
+/* the structure bsp's lightmap layout fingerprint, and as text */
+unsigned long long mod_lightmap_fingerprint(struct structure_bsp const *structure_bsp);
+void mod_lightmap_fingerprint_text(unsigned long long fingerprint, char text[MOD_LIGHTMAP_FINGERPRINT_TEXT_SIZE]);
+/* the fingerprint a lightmap's layout file holds, lower case: FALSE if it
+holds none */
+boolean mod_lightmap_sidecar_parse(char const *bytes, unsigned long size, char text[MOD_LIGHTMAP_FINGERPRINT_TEXT_SIZE]);
+/* the bytes of a page's first level, 0 for a format the picture check
+cannot read */
+unsigned long mod_lightmap_page_size(struct bitmap_data const *bitmap);
+/* the luminance of a page's first level (0 to 255, width x height of them),
+from its pixels: FALSE for a format it cannot read */
+boolean mod_lightmap_page_luminance(struct bitmap_data const *bitmap, byte const *pixels, real *luminance);
+/* the correlation of the map's page with the mod's of the same layout (1:
+the same picture), each reduced to the map's size and blurred */
+real mod_lightmap_page_correlation(real const *map_luminance, long map_width, long map_height,
+	real const *mod_luminance, long mod_width, long mod_height);
 
 /* ---------- prototypes/MOD_STRINGS.C */
 

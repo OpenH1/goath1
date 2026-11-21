@@ -162,6 +162,15 @@ from 90 to 102 frames a second, its 1% low from 18 to 28 and its frames of
 Graphics > Ambient Occlusion, while its cost on the slower GPUs is measured
 and brought down, #671) */
 #define GRAPHICS_AMBIENT_OCCLUSION "\"off\""
+/* display.soft_particles: the effects soft against the scene's depth, as
+the VR mode's eyes draw them (#1116) */
+#define GRAPHICS_SOFT_PARTICLES "true"
+/* display.alpha_coverage: an alpha-tested texture's levels keep its first's
+coverage (#1223) */
+#define GRAPHICS_ALPHA_COVERAGE "true"
+/* display.smooth_lightmaps: the level's baked light filtered by a cubic
+B-spline in the lightmap pass (#1225) */
+#define GRAPHICS_SMOOTH_LIGHTMAPS "true"
 /* display.astc_textures: "auto" everywhere (iPhones, through Metal; Android
 phones without BC, through Vulkan: seen right on a Pixel 11 Pro's PowerVR) */
 #define ASTC_TEXTURES_DEFAULT "\"auto\""
@@ -180,6 +189,14 @@ Steam Deck's Game Mode) on, with display.low_latency's pacing
 #define VSYNC_DEFAULT "false"
 #else
 #define VSYNC_DEFAULT "true"
+#endif
+/* display.render_scale's: the device's on the phones and tablets
+(port/android/host/host_main.c, port/ios/host_app.m), all the display's
+pixels on a computer */
+#if defined(HALO_ANDROID) || defined(HALO_IOS)
+#define RENDER_SCALE_DEFAULT "0.0"
+#else
+#define RENDER_SCALE_DEFAULT "1.0"
 #endif
 /* (in the comment of each setting it chooses) */
 #define GRAPHICS_CHOOSES "\nCommented out, display.graphics chooses it."
@@ -213,14 +230,24 @@ static const struct config_setting config_settings[] =
 		"\"native\" draws at the window's resolution (fullscreen, the display's or\n"
 		"display.resolution); \"original\" draws the Xbox's 640x480 and scales it\n"
 		"up." },
-	{ "display.render_scale", _config_real, "0.0", "HALO_RENDER_SCALE", _environment_value,
-		_platform_ios | _platform_android,
+	{ "display.render_scale", _config_real, RENDER_SCALE_DEFAULT, "HALO_RENDER_SCALE", _environment_value,
+		_platform_all,
 		"The fraction of the screen's pixels the game draws, each way (0.25 to\n"
 		"1.0), which the display scales up: 0.67 draws less than half the\n"
 		"pixels, for a cooler phone and a steadier frame rate. 0: the device's:\n"
 		"0.67 on an iPhone of 3x pixels, 0.8 on another iPhone, 1.0 on an iPad;\n"
 		"on Android 0.8, or about 1080 rows where 0.8 would draw more. Read at\n"
-		"start." },
+		"start on a phone or tablet. On a computer 1.0 (or 0) draws all the\n"
+		"display's pixels, and the HUD is drawn at the scale too; Vulkan scales\n"
+		"up sharply (whole multiples of the pixels, then smoothed), and it\n"
+		"multiplies display.supersampling." },
+	{ "display.dynamic_resolution", _config_boolean, "false", "HALO_DYNAMIC_RESOLUTION", _environment_value,
+		_platform_desktop,
+		"On a computer: lower the render scale, in steps of 0.05 down to 0.5,\n"
+		"while the graphics card cannot keep to the display's refresh rate (or\n"
+		"display.max_fps where that is lower), and raise it again up to\n"
+		"display.render_scale as it can, checked each second. Best with\n"
+		"display.temporal_aa. The game plays the same." },
 	{ "display.window_size", _config_string, "\"\"", "HALO_WINDOW_SIZE", _environment_value, _platform_desktop,
 		"The window's size, \"<width>x<height>\" (\"1920x1080\"), 640x480 or more (it\n"
 		"can be resized). Empty: display.window_scale's." },
@@ -260,9 +287,6 @@ static const struct config_setting config_settings[] =
 		"refresh rate, -1 for no limit (which can hang some Intel graphics). On\n"
 		"Linux, the display's refresh rate or a whole fraction of it (60 at\n"
 		"60 Hz, 30) shows the frames in step with the display, as vsync does." },
-	{ "display.show_fps", _config_boolean, "false", "HALO_SHOW_FPS", _environment_set_is_true, _platform_all,
-		"Draw the frame rate at the bottom right of a game, counted over half a\n"
-		"second: green from 30 frames a second, red below." },
 	{ "display.stats_log", _config_boolean, "false", "HALO_STATS_LOG", _environment_value, _platform_all,
 		"A line a second in the log with the frame rate, the mode, the map, the\n"
 		"renderer and the size of the 3D view, so a graphics bug's report or two\n"
@@ -291,6 +315,21 @@ static const struct config_setting config_settings[] =
 		"or \"smaa\" smooth the 3D view once it is drawn (the HUD and menus stay\n"
 		"sharp); \"msaa2x\", \"msaa4x\" or \"msaa8x\" draw with that many samples\n"
 		"a pixel. Each combines with display.supersampling." GRAPHICS_CHOOSES },
+	{ "display.temporal_aa", _config_string, "\"off\"", "HALO_TEMPORAL_AA", _environment_value, _platform_all,
+		"A temporal technique over the 3D view, at any render scale (the native\n"
+		"one too): \"off\"; \"fsr\", AMD FSR 3.1's upscaler (Vulkan: Linux,\n"
+		"Windows, Android), which takes display.anti_aliasing's place and draws\n"
+		"the HUD at the display's resolution; \"dlss\", NVIDIA DLSS (DLAA at\n"
+		"render scale 1), the same way, on Vulkan with an NVIDIA GPU where the\n"
+		"game has its DLSS module (else off); \"metalfx\", Apple MetalFX's\n"
+		"temporal scaler, the same way, on Metal (macOS, iOS; else off). Not in\n"
+		"VR (docs/temporal-aa.md)." },
+	{ "display.temporal_aa_sharpness", _config_real, "0.8", "HALO_TEMPORAL_AA_SHARPNESS", _environment_value,
+		_platform_all,
+		"How much display.temporal_aa \"fsr\" or \"metalfx\" sharpens its\n"
+		"picture, 0.0 to 1.0: AMD FSR's own sharpening (RCAS; MetalFX's output\n"
+		"through the same), which offsets the softness of a render scale below\n"
+		"1. 0.0 none. DLSS ignores it." },
 	{ "display.supersampling", _config_real, "1.0", "HALO_SUPERSAMPLING", _environment_value, _platform_desktop,
 		"Draw the game at this many times the display's resolution each way, 1.0\n"
 		"to 2.0, and scale it down to the display: smoother edges and finer\n"
@@ -398,11 +437,19 @@ static const struct config_setting config_settings[] =
 		"and Jessie's art from Halo PC Restored, 4x the maps' bitmaps;\n"
 		"false draws the maps' own bitmaps." },
 	{ "display.spartan_link", _config_string, "\"medium\"", "HALO_SPARTAN_LINK", _environment_value, _platform_all,
-		"The Spartan link: live feeds of your living teammates' views in the\n"
-		"HUD's top line, each with their name, shield and distance, shown and\n"
-		"hidden with controls.spartan_link (a controller's D-pad Down), off as\n"
-		"each game starts. Co-op and team games only (not Pro 2v2). \"small\",\n"
-		"\"medium\" or \"large\" feeds; \"off\": the key does nothing." },
+		"The Spartan link: live feeds of your living teammates' views beside\n"
+		"the motion tracker, each with their name, shield and distance, shown\n"
+		"and hidden with controls.spartan_link (a controller's D-pad Down).\n"
+		"Co-op and team games only (not Pro 2v2, nor a team game whose host\n"
+		"turned it off: game.spartan_link). \"small\", \"medium\" or \"large\"\n"
+		"feeds; \"off\": the key does nothing." },
+	{ "display.spartan_link_shown", _config_boolean, "false", "HALO_SPARTAN_LINK_SHOWN", _environment_value, _platform_all,
+		"Whether the Spartan link is shown (display.spartan_link): the key\n"
+		"turns it on and off and it stays so from game to game, each player\n"
+		"profile's own.", _scope_player },
+	{ "display.spartan_link_hint", _config_boolean, "false", "HALO_SPARTAN_LINK_HINT", _environment_value, _platform_all,
+		"Whether the Spartan link's key has been shown to this player (once,\n"
+		"in their first co-op or team game that has the link).", _scope_player },
 	{ "display.hud_button_style", _config_string, "\"classic\"", "HALO_HUD_BUTTON_STYLE", _environment_value, _platform_all,
 		"High-res gameplay controller buttons: classic uses the Xbox's stencils;\n"
 		"gems uses shaded Xbox faces; menu_gems uses the menu's button art.\n"
@@ -435,6 +482,14 @@ static const struct config_setting config_settings[] =
 		_environment_value, _platform_all,
 		"The size the objects' shadows are drawn at, in pixels each way: 128 as\n"
 		"on the Xbox, or 256, 512 or 1024 for smoother edges, as soft." GRAPHICS_CHOOSES },
+	{ "display.shadows", _config_string, "\"classic\"", "HALO_SHADOWS", _environment_value, _platform_all,
+		"The objects' shadows on the level: \"classic\" as the game draws them\n"
+		"(each drawn into a map, blurred and laid over the ground under it), or\n"
+		"\"ray_traced\": each traced by the GPU's ray queries through the\n"
+		"objects' own shapes, in the same direction and darkness, soft at their\n"
+		"edges, with none of the classic shadows' work on the processor; where\n"
+		"the GPU and its Vulkan driver have ray queries (\"classic\" elsewhere,\n"
+		"Metal included). docs/world-ao.md, \"Ray-traced shadows\"." },
 	{ "display.menus", _config_string, "\"pc\"", "HALO_MENUS", _environment_value, _platform_all,
 		"The menus: \"pc\" for the PC version's main menu (port/assets/menus,\n"
 		"and a menus folder here for your own), \"xbox\" for the Xbox's." },
@@ -455,16 +510,77 @@ static const struct config_setting config_settings[] =
 	{ "display.player_name_scale", _config_real, "0.75", "HALO_PLAYER_NAME_SCALE", _environment_value, _platform_all,
 		"How large the players' names are drawn: 1.0 three quarters of the size of\n"
 		"the HUD's text, 0.25 to 4." },
+	{ "display.hide_hud", _config_boolean, "false", "HALO_HIDE_HUD", _environment_value, _platform_all,
+		"Hide the HUD, the reticle, the clock, the teammates' marks and the names\n"
+		"over the players, for clean footage and screenshots. The Hide HUD key\n"
+		"(controls.hide_hud) shows and hides them in a game, over map loads; this\n"
+		"is their state as the game starts. Scripts still hide the HUD in\n"
+		"cutscenes." },
 	{ "display.match_timer", _config_boolean, "false", "HALO_MATCH_TIMER", _environment_value, _platform_all,
 		"Draw the match clock at the bottom right in multiplayer. It counts up\n"
 		"from the game's first tick, which the items' respawn periods count from\n"
 		"too: a weapon is back on the map at every multiple of its period on the\n"
-		"clock." },
-	{ "display.show_frame_rate", _config_boolean, "false", "HALO_SHOW_FRAME_RATE", _environment_value,
+		"clock. In the campaign and co-op it is the mission's timer: the level's\n"
+		"game time, which stops while the game is paused." },
+	{ "display.state_file", _config_boolean, "false", "HALO_STATE_FILE", _environment_value, _platform_all,
+		"Write the game's state to game_state.json in the data root, for stream\n"
+		"overlays and scene switchers: state (loading, menu, cutscene, paused,\n"
+		"playing), map, mode, clock (seconds), and the first player's score,\n"
+		"kills and deaths. Written only when it changes, at most four times a\n"
+		"second, and replaced whole (never half written)." },
+	{ "display.input_display", _config_boolean, "false", "HALO_INPUT_DISPLAY", _environment_value, _platform_all,
+		"Draw each player's input at the bottom right of their view: the move\n"
+		"stick (or W, A, S, D), the look, the fire trigger and the actions held\n"
+		"(grenade, melee, jump, crouch, reload, action, swap, flashlight). In a\n"
+		"demo's playback, the recorded input. Hide HUD hides it." },
+	{ "display.subtitles", _config_boolean, "false", "HALO_SUBTITLES", _environment_value, _platform_all,
+		"Show the campaign's dialogue (the radio, the cutscenes, the Marines'\n"
+		"conversations) as subtitles at the bottom of the screen while each line\n"
+		"plays, with its speaker where the sound's name gives it. The lines are\n"
+		"read from your own copy of Halo: The Master Chief Collection, installed\n"
+		"with Steam (paths.steam finds another library); without it none are\n"
+		"shown. Nothing of MCC's comes with the game." },
+	{ "display.subtitles_language", _config_string, "\"game\"", "HALO_SUBTITLES_LANGUAGE", _environment_value,
 		_platform_all,
-		"Draw the frame rate at the bottom right: the frames drawn a second,\n"
-		"averaged over half a second, green at 30 and over (the console's\n"
-		"display_framerate draws it too)." },
+		"The subtitles' language: \"game\" (game.language's, English for\n"
+		"none) or one of MCC's: \"english\", \"french\", \"german\", \"italian\",\n"
+		"\"spanish\", \"latam_spanish\", \"portuguese\", \"japanese\", \"korean\",\n"
+		"\"chinese\" or \"chinese_simplified\". A line with letters the game's\n"
+		"font cannot draw is shown in English." },
+	{ "display.perf_overlay", _config_string, "\"off\"", "HALO_PERF_OVERLAY", _environment_value, _platform_all,
+		"The performance overlay at the bottom right: \"off\"; \"simple\", the\n"
+		"frame rate averaged over half a second, green at 30 and over (the\n"
+		"console's display_framerate draws it too); or \"detailed\", with the\n"
+		"frame's time, the 1% low over the last 10 seconds, and a frame's\n"
+		"milliseconds on the GPU (as the backend measures it), the renderer's\n"
+		"thread, waiting for the display and on the game's thread. An older\n"
+		"version's display.show_fps or display.show_frame_rate = true reads as\n"
+		"\"simple\"." },
+	{ "display.benchmark_pacing", _config_string, "\"uncapped\"", "HALO_BENCHMARK_PACING", _environment_value,
+		_platform_all,
+		"The built-in benchmark's frame pacing (Settings > Video > Frame Rate &\n"
+		"Sync > Performance Tools' RUN BENCHMARK, halo --benchmark:\n"
+		"port/linux/game/benchmark.c):\n"
+		"\"uncapped\", vsync, variable refresh and the frame cap off for the run,\n"
+		"what the computer can draw; \"settings\", as they are set, what you see\n"
+		"as you play. The results say which, and how much of the time the\n"
+		"frames waited for the display." },
+	{ "display.benchmark_map", _config_string, "\"bloodgulch\"", "HALO_BENCHMARK_MAP", _environment_value,
+		_platform_all,
+		"The map the built-in benchmark plays: a stock multiplayer map's name\n"
+		"(bloodgulch, hangemhigh, longest...); another plays bloodgulch. The\n"
+		"results' file is named after it." },
+	{ "display.benchmark_bots", _config_integer, "40", "HALO_BENCHMARK_BOTS", _environment_value, _platform_all,
+		"The bots in the built-in benchmark's match, at most as many as its\n"
+		"map takes (40 on the big maps, 16 on Hang 'Em High, 8 on Longest); the\n"
+		"results say how many played." },
+	{ "display.benchmark_player", _config_string, "\"bot\"", "HALO_BENCHMARK_PLAYER", _environment_value,
+		_platform_all,
+		"The player the built-in benchmark measures: \"bot\", a bot of its own\n"
+		"that plays as the others do (debug.bot_player at bots.skill), the\n"
+		"same each run at any frame rate; or \"scripted\", the scripted walker\n"
+		"of earlier results (it turns by each frame's time, so it is not the\n"
+		"same each run), to compare with them." },
 	{ "display.movies", _config_boolean, "false", "HALO_MOVIES", _environment_value, _platform_all,
 		"Play the Xbox's Bink movies from the game data's bink folder: the intro\n"
 		"as the game starts, the attract movies on an idle main menu and the\n"
@@ -542,6 +658,35 @@ static const struct config_setting config_settings[] =
 		"white. The HUD's glows stay as far above it as they are above paper\n"
 		"white; the weapon's displays stay with the scene. No brighter than the\n"
 		"display's peak." },
+	{ "display.hdr_sdr_curve", _config_string, "\"auto\"", "HALO_HDR_SDR_CURVE", _environment_value, _platform_all,
+		"With HDR, the curve the picture's SDR colors are shown by, as an SDR\n"
+		"display would: \"2.2\" (most PC monitors and TVs: the darkest shadows\n"
+		"darker), \"srgb\" (a Mac's), or \"auto\": sRGB on macOS and iOS, 2.2\n"
+		"elsewhere. Only the shadows differ: colors from code 51 up are the\n"
+		"same in both." },
+	{ "display.output_depth", _config_string, "\"auto\"", "HALO_OUTPUT_DEPTH", _environment_value, _platform_all,
+		"The SDR picture's depth: \"10\" draws it in 16 bits a channel and shows it\n"
+		"on a 10-bit display at 10 bits, else at 8 with a fine dither, so fog\n"
+		"and dusk skies show no steps; \"8\" draws it in 8 bits, as before (half\n"
+		"the memory and bandwidth); \"auto\" is 10 on a computer and 8 on a phone\n"
+		"or tablet, or with battery saver on." },
+	{ "display.hdr_peak_nits", _config_integer, "0", "HALO_HDR_PEAK_NITS", _environment_value, _platform_all,
+		"With HDR, the display's peak in nits, 200 to 10000, for a display that\n"
+		"reports a wrong one; 0 is the system's. Only the highlights change.\n"
+		"With a peak of your own, the display's full-frame peak and black,\n"
+		"where Windows reports them, shape the highlights and the shadows too." },
+	{ "display.hdr_gamut", _config_string, "\"srgb\"", "HALO_HDR_GAMUT", _environment_value, _platform_all,
+		"With HDR, \"expanded\" lets the brightest colors (plasma, needler\n"
+		"shards) grow more vivid than sRGB, toward the display's own gamut (P3\n"
+		"where it says none, never past BT.2020), keeping their hue; \"srgb\"\n"
+		"keeps the picture as it is. Colors at or under paper white never change." },
+	{ "display.hdr_highlight_boost", _config_integer, "0", "HALO_HDR_HIGHLIGHT_BOOST", _environment_value,
+		_platform_all,
+		"With HDR, how much brighter the game's own lights are, 0 to 4: the\n"
+		"sun's lens flares and glow, glows, self-illuminated particles and\n"
+		"surfaces (vehicle lights, panels). 0 keeps the picture as it is. Never\n"
+		"past the ceilings the lights already have; the HUD, the menus, fog and\n"
+		"screen flashes stay at paper white." },
 	{ "display.gamma", _config_real, "1.0", "HALO_GAMMA", _environment_value, _platform_all,
 		"The picture's gamma, 0.5 to 2.0, as Halo PC's: above 1 brighter (the\n"
 		"dark parts lifted most), below 1 darker; white and black stay. The\n"
@@ -597,9 +742,16 @@ static const struct config_setting config_settings[] =
 		"2.0 is louder (2.0 as loud as before the Xbox's level was matched)." },
 	{ "audio.music_volume", _config_real, "1.0", "HALO_MUSIC_VOLUME", _environment_value, _platform_all,
 		"The music's volume, 0.0 to 1.0 (of audio.volume)." },
+	{ "audio.dialogue_volume", _config_real, "1.0", "HALO_DIALOGUE_VOLUME", _environment_value, _platform_all,
+		"The characters' speech's volume (the units' lines and the scripts'\n"
+		"dialogue), 0.0 to 1.0 (of audio.volume)." },
 	{ "audio.effects_volume", _config_real, "1.0", "HALO_EFFECTS_VOLUME", _environment_value, _platform_all,
-		"The volume of every other sound (effects and speech), 0.0 to 1.0 (of\n"
-		"audio.volume)." },
+		"The volume of every other sound, 0.0 to 1.0 (of audio.volume)." },
+	{ "audio.background_volume", _config_real, "1.0", "HALO_BACKGROUND_VOLUME", _environment_value,
+		_platform_desktop,
+		"The volume while the game's window is in the background (another window\n"
+		"in front of it, or minimized), 0.0 to 1.0 of what it plays; 0.0 mutes\n"
+		"it. It fades there and back in 10 ms. 1.0 keeps it as it is." },
 	{ "audio.buffer_frames", _config_integer, "0", "HALO_AUDIO_BUFFER_FRAMES", _environment_value,
 		_platform_desktop,
 		"The frames the sound device asks for at a time, at 48 kHz (64 to 8192):\n"
@@ -619,6 +771,11 @@ static const struct config_setting config_settings[] =
 		"Shift the pitch of the world's sounds as they move towards or away\n"
 		"from the player, as the Xbox's DirectSound did (a Banshee passing by);\n"
 		"false keeps their pitch." },
+	{ "audio.stereo_spread", _config_real, "0.5", "HALO_AUDIO_STEREO_SPREAD", _environment_value, _platform_all,
+		"How wide a mod's stereo sound in place of a map's sound is heard, 0.0\n"
+		"to 1.0: its left and right channels from either side of where it is,\n"
+		"narrowing to one point as it goes away; 0.0 mixes them to one. The\n"
+		"game's own stereo sounds play as the Xbox played them, at any value." },
 	{ "audio.spatial", _config_string, "\"auto\"", "HALO_AUDIO_SPATIAL", _environment_value, _platform_all,
 		"How the world's sounds are placed around you: \"auto\" and\n"
 		"\"headphones\" through a model of a head (HRTF), each from its\n"
@@ -627,12 +784,23 @@ static const struct config_setting config_settings[] =
 		"right. The menus, music and HUD are not placed. On 5.1 the same, on\n"
 		"the front and back pairs of speakers, as the Xbox's Dolby Digital.\n"
 		"The VR mode keeps vr.hrtf." },
+	{ "audio.hrtf_file", _config_string, "\"\"", "HALO_AUDIO_HRTF_FILE", _environment_value, _platform_all,
+		"A SOFA file of measured head-related impulse responses (AES69,\n"
+		"SimpleFreeFieldHRIR) to hear the world's sounds through, in place of\n"
+		"the Xbox's HRTF: fitted when the game starts into the same nine bands\n"
+		"and one delay a direction, so it costs the same. Empty: the Xbox's.\n"
+		"A file that cannot be read is logged, and the Xbox's used." },
 	{ "audio.resampler", _config_string, "\"xbox\"", "HALO_AUDIO_RESAMPLER", _environment_value, _platform_all,
 		"How sounds are converted to the output's rate: \"xbox\" as the\n"
 		"Xbox did, through its short low pass, which lets a little of the\n"
 		"images above a sound's own rate through; \"sinc\" with a band-limited low\n"
 		"pass, which keeps them out; \"linear\" between neighbouring samples,\n"
 		"brighter for the aliasing it lets through." },
+	{ "audio.listening_mode", _config_string, "\"default\"", "HALO_AUDIO_LISTENING_MODE", _environment_value,
+		_platform_all,
+		"How wide the sound's range of loudness is: \"default\" plays the mix as\n"
+		"it is; \"night\" evens it out for quiet play, bringing quiet sounds and\n"
+		"speech up and loud ones (explosions, gunfire) down." },
 	{ "audio.voice_chat", _config_string, "\"push_to_talk\"", "HALO_VOICE_CHAT", _environment_value, _platform_all,
 		"Talking in network games' voice chat: \"push_to_talk\" (while\n"
 		"controls.push_to_talk is held; the microphone opens the first time),\n"
@@ -1005,6 +1173,21 @@ static const struct config_setting config_settings[] =
 		"The touch controls' swipe aiming gets a controller's aim assist: the\n"
 		"aim slows over a target and follows a moving one. false: none, as a\n"
 		"mouse (the bullets' own autoaim stays)." },
+	{ "input.touch_gyro_sensitivity", _config_real, "1.0", "HALO_TOUCH_GYRO_SENSITIVITY", _environment_value,
+		_platform_android | _platform_ios,
+		"The touch controls' gyroscope aiming (the phone's or the tablet's\n"
+		"own, switched on in the touch controls' settings): how far the view\n"
+		"turns side to side for each degree the device turns, 1 as far. A\n"
+		"controller's gyroscope has input.gyro_sensitivity." },
+	{ "input.touch_gyro_vertical_sensitivity", _config_real, "1.0", "HALO_TOUCH_GYRO_VERTICAL_SENSITIVITY",
+		_environment_value, _platform_android | _platform_ios,
+		"How far the view turns up and down for the device's gyroscope, times\n"
+		"input.touch_gyro_sensitivity: 1 the same as side to side." },
+	{ "input.touch_gyro_smoothing", _config_string, "\"off\"", "HALO_TOUCH_GYRO_SMOOTHING", _environment_value,
+		_platform_android | _platform_ios,
+		"Steadies the device's gyroscope's smallest motions, as\n"
+		"input.gyro_smoothing does a controller's: \"off\", \"low\", \"medium\" or\n"
+		"\"high\"." },
 	{ "input.touch_crouch", _config_string, "\"toggle\"", "HALO_TOUCH_CROUCH", _environment_value,
 		_platform_android | _platform_ios,
 		"The touch controls' Crouch: \"toggle\" crouches at a tap until Crouch\n"
@@ -1100,13 +1283,18 @@ static const struct config_setting config_settings[] =
 		"the Xbox; \"keyboard\" always the keys. In VR (but \"controller\"):\n"
 		"what presses it on the controllers in the hands, as the runtime names\n"
 		"it (\"A Button\", \"Right Hand Trigger\"), or the gesture that does.", _scope_player },
+	{ "input.keyboard_layout", _config_string, "\"auto\"", "HALO_KEYBOARD_LAYOUT", _environment_value, _platform_all,
+		"The on-screen keyboard's letters: \"qwerty\", \"azerty\", \"qwertz\",\n"
+		"\"swedish\" (Finnish too), \"norwegian\", \"danish\", \"spanish\",\n"
+		"\"portuguese\" or \"auto\", the\n"
+		"system's language's (else game.language's, else QWERTY)." },
 	{ "input.controller_p1", _config_string, "\"\"", "HALO_CONTROLLER_P1", _environment_value, _platform_all,
 		"P1 custom controller layout; empty uses the profile's preset. Edit in\n"
 		"Settings > Controls > Controller > Button Remapping. v4: 27 physical\n"
-		"button names (the back paddles too), unbound among them; gameplay and\n"
-		"the debug camera have separate bindings. Old ten-action, v2 and v3\n"
-		"layouts are accepted. See docs/controller_remapping.md for the full\n"
-		"order." },
+		"button names (the back paddles, touchpad and misc1-6 too), unbound\n"
+		"among them; gameplay and the debug camera have separate bindings.\n"
+		"Old ten-action, v2 and v3 layouts are accepted. See\n"
+		"docs/controller_remapping.md for the full order." },
 	{ "input.controller_p2", _config_string, "\"\"", "HALO_CONTROLLER_P2", _environment_value, _platform_all,
 		"P2 custom controller buttons, same format as controller_p1. Empty uses the profile." },
 	{ "input.controller_p3", _config_string, "\"\"", "HALO_CONTROLLER_P3", _environment_value, _platform_all,
@@ -1125,11 +1313,48 @@ static const struct config_setting config_settings[] =
 	{ "input.right_stick_dead_zone", _config_integer, "-1", "HALO_RIGHT_STICK_DEAD_ZONE", _environment_value, _platform_all,
 		"How far the controller's right stick moves before it turns the view, in\n"
 		"percent of its travel (0 to 50); -1 for the game's own (27%).", _scope_player },
+	{ "input.left_stick_outer_dead_zone", _config_integer, "0", "HALO_LEFT_STICK_OUTER_DEAD_ZONE", _environment_value,
+		_platform_all,
+		"How much of the controller's left stick's travel at its rim reads as a\n"
+		"full push, in percent (0 to 30): raise it for a worn stick that never\n"
+		"reaches its rim; 0, the game's own, full only at the rim.", _scope_player },
+	{ "input.right_stick_outer_dead_zone", _config_integer, "0", "HALO_RIGHT_STICK_OUTER_DEAD_ZONE",
+		_environment_value, _platform_all,
+		"The same for the right stick, which turns the view.", _scope_player },
+	{ "input.look_dead_zone_shape", _config_string, "\"auto\"", "HALO_LOOK_DEAD_ZONE_SHAPE", _environment_value,
+		_platform_all,
+		"The shape of the look stick's dead zone: \"auto\", the aim style's\n"
+		"(input.aim_style: Classic's each direction's own, a square in the\n"
+		"middle; Modern's round); \"axial\", each direction's own; \"round\", none\n"
+		"within the dead zone whichever way the stick points.", _scope_player },
+	{ "input.stick_zoom_sensitivity", _config_real, "1.0", "HALO_STICK_ZOOM_SENSITIVITY", _environment_value,
+		_platform_all,
+		"How fast a controller's look stick turns the view zoomed in, times the\n"
+		"original's (which the zoom's magnification divides): 1 the original's,\n"
+		"2 twice as fast. The mouse's is input.zoom_sensitivity.", _scope_player },
+	{ "input.look_vertical_sensitivity", _config_real, "1.0", "HALO_LOOK_VERTICAL_SENSITIVITY", _environment_value,
+		_platform_all,
+		"How fast a controller's look stick turns the view up and down, times\n"
+		"what the profile's LOOK SENSITIVITY gives (half its side to side): 1\n"
+		"the original's, 2 twice as fast. The mouse and the gyroscope have\n"
+		"their own.", _scope_player },
+	{ "input.controller_layout_bindings", _config_boolean, "false", "HALO_CONTROLLER_LAYOUT_BINDINGS",
+		_environment_value, _platform_all,
+		"Settings > Controls > Controller > Button Remapping > Controller Layouts'\n"
+		"EXPORT adds the player's Button Remapping buttons to the layout's file\n"
+		"([bindings]). Off by default." },
 	{ "input.invert_look_horizontal", _config_boolean, "false", "HALO_INVERT_LOOK_HORIZONTAL", _environment_value,
 		_platform_all,
 		"A controller's look turns the other way: pushing the stick that looks to\n"
 		"the right turns the view left. The profile's INVERT LOOK is the up and\n"
 		"down; this is the side to side, for every controller.", _scope_player },
+	{ "input.rumble_strength", _config_integer, "100", "HALO_RUMBLE_STRENGTH", _environment_value, _platform_all,
+		"How strongly the controller rumbles, in percent (0 to 100): 100 the\n"
+		"game's own. The profile's VIBRATION still turns it off.", _scope_player },
+	{ "input.trigger_resistance", _config_boolean, "false", "HALO_TRIGGER_RESISTANCE", _environment_value,
+		_platform_all,
+		"A DualSense's trigger that fires (the player's layout's) stiffens while\n"
+		"they play: never in a menu, on pause or dead. Off by default.", _scope_player },
 	{ "input.aim_style", _config_string, "\"classic\"", "HALO_AIM_STYLE", _environment_value, _platform_all,
 		"How a controller's look stick aims: \"classic\", the original's (each\n"
 		"direction curved on its own, so a diagonal turns faster, and pushed far\n"
@@ -1145,6 +1370,17 @@ static const struct config_setting config_settings[] =
 		_environment_value, _platform_all,
 		"Modern aim: how far the look stick is pushed, in percent of its travel\n"
 		"(0 to 100), before the turn accelerates; -1 for the game's own.", _scope_player },
+	{ "input.look_acceleration_strength", _config_real, "1.0", "HALO_LOOK_ACCELERATION_STRENGTH",
+		_environment_value, _platform_all,
+		"How much a controller's look stick speeds up the turn when held at its\n"
+		"edge, times the map's own extra speed (every stock map's: up to 3X over\n"
+		"1 s): 1 the map's own, 0 no speeding up, 2 twice the extra speed. For\n"
+		"both aim styles; the mouse and the gyroscope are not changed.", _scope_player },
+	{ "input.look_acceleration_time", _config_real, "1.0", "HALO_LOOK_ACCELERATION_TIME",
+		_environment_value, _platform_all,
+		"How long a controller's look stick takes to reach its full sped-up\n"
+		"turn, times the map's own time (0.25 to 2): 1 the map's own, 0.5 twice\n"
+		"as quickly.", _scope_player },
 	{ "input.gyro_aim", _config_string, "\"off\"", "HALO_GYRO_AIM", _environment_value, _platform_all,
 		"Aiming by turning a controller that has a gyroscope (a DualSense, a\n"
 		"DualShock 4, a Switch Pro Controller or Joy-Cons, a Steam Deck with\n"
@@ -1173,15 +1409,20 @@ static const struct config_setting config_settings[] =
 		"a turn about the up direction, however the controller is held (flat,\n"
 		"upright or between); \"local\", a turn about the controller's own\n"
 		"vertical axis, as if it were held flat." },
-	{ "input.gyro_smoothing", _config_boolean, "true", "HALO_GYRO_SMOOTHING", _environment_value, _platform_all,
+	{ "input.gyro_smoothing", _config_string, "\"medium\"", "HALO_GYRO_SMOOTHING", _environment_value,
+		_platform_all,
 		"Steadies the gyroscope's smallest motions (the hand's tremor), never a\n"
 		"real turn's; nothing is lost, only spread over a few hundredths of a\n"
-		"second." },
+		"second: \"off\", \"low\", \"medium\" or \"high\" (a stronger one steadies\n"
+		"faster motions, over a longer time)." },
 	{ "input.flick_stick", _config_boolean, "false", "HALO_FLICK_STICK", _environment_value, _platform_all,
 		"The right stick as a flick stick, with the default stick layout: pushed\n"
 		"to its rim, you turn at once to face where it points (pushed right, a\n"
 		"quarter turn right; down, about face); turned round the rim, you turn\n"
 		"with it. It does not look up or down: the gyroscope does." },
+	{ "input.flick_stick_time", _config_real, "0.1", "HALO_FLICK_STICK_TIME", _environment_value, _platform_all,
+		"How long a flick of input.flick_stick takes to turn you, in seconds,\n"
+		"0 (at once) to 0.25; it turns as far either way." },
 
 	/* the keyboard and mouse's own controls (port/linux/src/xinput_sdl.c) */
 	{ "controls.move_forward", _config_string, "\"W\"", "HALO_KEY_MOVE_FORWARD", _environment_value, _platform_all,
@@ -1213,6 +1454,13 @@ static const struct config_setting config_settings[] =
 		"Reloading.", _scope_keyboard },
 	{ "controls.zoom", _config_string, "\"Mouse Right, Z\"", "HALO_KEY_ZOOM", _environment_value, _platform_all,
 		"Zooming the scope.", _scope_keyboard },
+	{ "controls.zoom_in", _config_string, "\"\"", "HALO_KEY_ZOOM_IN", _environment_value, _platform_all,
+		"Zooming the scope in a step, as MCC does, to its closest and no further\n"
+		"(Zoom cycles back out). \"Wheel Up\" zooms with the mouse's wheel.\n"
+		"Unbound by default.", _scope_keyboard },
+	{ "controls.zoom_out", _config_string, "\"\"", "HALO_KEY_ZOOM_OUT", _environment_value, _platform_all,
+		"Zooming the scope out a step, as MCC does, to no zoom at all. \"Wheel\n"
+		"Down\" zooms out with the mouse's wheel. Unbound by default.", _scope_keyboard },
 	{ "controls.switch_weapon", _config_string, "\"Wheel, 1\"", "HALO_KEY_SWITCH_WEAPON", _environment_value,
 		_platform_all,
 		"Switching weapons.", _scope_keyboard },
@@ -1262,6 +1510,10 @@ static const struct config_setting config_settings[] =
 	{ "controls.spartan_link", _config_string, "\"B\"", "HALO_KEY_SPARTAN_LINK", _environment_value, _platform_all,
 		"The Spartan link: your teammates' feeds in the HUD shown or hidden\n"
 		"(display.spartan_link).", _scope_keyboard },
+	{ "controls.hide_hud", _config_string, "\"F3\"", "HALO_KEY_HIDE_HUD", _environment_value, _platform_all,
+		"Hide HUD: the HUD, the reticle and the clock hidden or shown again, for\n"
+		"clean footage and screenshots (display.hide_hud). Not while the menu\n"
+		"studio is on (debug.menu_studio), whose F3 is its own.", _scope_keyboard },
 
 	{ "game.console_log", _config_string, "\"important\"", "HALO_CONSOLE_LOG", _environment_value, _platform_all,
 		"What the game's console shows on screen of what it logs: \"important\"\n"
@@ -1299,7 +1551,9 @@ static const struct config_setting config_settings[] =
 		"The steps a second of what a player feels in their hands: their own\n"
 		"movement and aim, projectiles and thrown items: 30 (as the game was\n"
 		"made), 60 or 120, in steps inside the game's 30 ticks a second, which\n"
-		"everything else keeps. For games of this computer alone: the campaign,\n"
+		"everything else keeps. Aim and shots are taken each step, so a moving\n"
+		"target can be hit more often at 60 and 120; a hit's damage is the same.\n"
+		"For games of this computer alone: the campaign,\n"
 		"split screen and games with bots. Network games play at the rate they\n"
 		"agreed on (a Legacy game's 30, a GOAT H1 game's network.sim_rate), and\n"
 		"saved films at 30, whatever this is." },
@@ -1316,6 +1570,24 @@ static const struct config_setting config_settings[] =
 		"most 5 GB), which it always keeps free. 730 (Disk Space Saver): the Xbox's\n"
 		"six cache files' room, the least it takes; a map is unpacked as it is\n"
 		"played, and none ahead. A change gives maps up at once." },
+	{ "game.practice_keys", _config_boolean, "false", "HALO_PRACTICE_KEYS", _environment_value, _platform_all,
+		"Practice keys for speedrunners: game.practice_save_key, _load_key and\n"
+		"_restart_key save and load the game's state (core_save, core_load)\n"
+		"and start the level over, in a game of this computer's.\n"
+		"Using one, a cheat, game_speed or a core's load shows a PRACTICE mark\n"
+		"until the level's next fresh start, whatever this is; the speedrun\n"
+		"state block and demos record it too." },
+	{ "game.practice_save_key", _config_string, "\"\"", "HALO_PRACTICE_SAVE_KEY", _environment_value, _platform_all,
+		"Practice: the key (as controls.* name one, \"F5\") that saves the game's\n"
+		"state, as the console's core_save does (game.practice_keys). Unbound\n"
+		"by default." },
+	{ "game.practice_load_key", _config_string, "\"\"", "HALO_PRACTICE_LOAD_KEY", _environment_value, _platform_all,
+		"Practice: the key that loads the state saved, as the console's\n"
+		"core_load does (game.practice_keys). Unbound by default." },
+	{ "game.practice_restart_key", _config_string, "\"\"", "HALO_PRACTICE_RESTART_KEY", _environment_value,
+		_platform_all,
+		"Practice: the key that starts the level over, as the pause menu's\n"
+		"restart does (game.practice_keys). Unbound by default." },
 	{ "game.auto_pickup", _config_boolean, "false", "HALO_AUTO_PICKUP", _environment_value, _platform_all,
 		"Multiplayer: a player with an empty weapon slot picks up a weapon by\n"
 		"walking over it, as Custom Edition does. false (the Xbox's way): they\n"
@@ -1323,6 +1595,12 @@ static const struct config_setting config_settings[] =
 		"of this computer's reads it as its map begins; in a network game the\n"
 		"host's decides, read in the lobby; a Legacy game, and OpenCE's\n"
 		"players, always walk over (OpenCE's way)." },
+	{ "game.spartan_link", _config_boolean, "true", "HALO_GAME_SPARTAN_LINK", _environment_value, _platform_all,
+		"Hosting a team game: whether its players may show their Spartan link\n"
+		"(display.spartan_link); false, nobody's shows in it. Co-op always\n"
+		"has it. A network game's host's decides, read in the lobby (the\n"
+		"lobby's and Host Controls' SPARTAN LINK change it); a Legacy game's\n"
+		"OpenCE players have none." },
 	{ "game.vehicle_hijack", _config_boolean, "false", "HALO_VEHICLE_HIJACK", _environment_value, _platform_all,
 		"Halo 2's boarding: a player beside an enemy's Ghost, Warthog or landed\n"
 		"Banshee holds the action button to leap at the seat, throw the rider\n"
@@ -1461,6 +1739,26 @@ static const struct config_setting config_settings[] =
 		"through their own shapes, where the GPU and its Vulkan driver have ray\n"
 		"queries; \"world\" elsewhere, the Mac's and iOS's Metal included). The\n"
 		"older \"subtle\" and \"strong\" are read as \"world\"."
+		GRAPHICS_CHOOSES },
+	{ "display.soft_particles", _config_boolean, GRAPHICS_SOFT_PARTICLES, "HALO_SOFT_PARTICLES", _environment_value,
+		_platform_desktop,
+		"Smoke, dust, steam and weather fade softly where they meet walls and\n"
+		"floors, as the VR mode draws them, instead of the hard line the Xbox\n"
+		"drew where they cut into them; false draws them as the Xbox did. Not\n"
+		"your own weapon's effects. Where the renderer draws it (Vulkan's)."
+		GRAPHICS_CHOOSES },
+	{ "display.alpha_coverage", _config_boolean, GRAPHICS_ALPHA_COVERAGE, "HALO_ALPHA_COVERAGE", _environment_value,
+		_platform_all,
+		"Distant fences, grates and leaves keep their density instead of thinning\n"
+		"out and shimmering: the smaller versions of a cut-out texture keep as\n"
+		"many of their texels drawn as the full-size one has, made once as it is\n"
+		"read. false draws them as the Xbox did."
+		GRAPHICS_CHOOSES },
+	{ "display.smooth_lightmaps", _config_boolean, GRAPHICS_SMOOTH_LIGHTMAPS, "HALO_SMOOTH_LIGHTMAPS",
+		_environment_value, _platform_all,
+		"The level's baked lighting filtered smoothly, so that its coarse texels\n"
+		"don't show as stair steps and diamonds on walls and floors at high\n"
+		"resolutions; false filters it as the Xbox did."
 		GRAPHICS_CHOOSES },
 	{ "display.shield_color", _config_string, "\"default\"", "HALO_SHIELD_COLOR", _environment_value, _platform_all,
 		"Your energy shield's color, as this machine draws it: \"default\" (the\n"
@@ -1633,6 +1931,12 @@ static const struct config_setting config_settings[] =
 		"Hosting a GOAT H1 game: its tick rate, 30, 60 or 120 (game.sim_rate's\n"
 		"steps), which every machine of it takes as the game starts. A Legacy game\n"
 		"plays at 30." },
+	{ "network.client_budget", _config_integer, "256", "HALO_NET_CLIENT_BUDGET", _environment_value, _platform_all,
+		"Hosting: the most KB a second the game's datagrams send each client\n"
+		"before what that client cannot react to (players and moving objects\n"
+		"far from its players and out of their sight) goes to it less often, at\n"
+		"most four times less (under a second apart). What is near its players\n"
+		"or in their sight is never held back. 0: no budget." },
 	{ "network.allow_opence", _config_boolean, "false", "HALO_NET_ALLOW_OPENCE", _environment_value, _platform_all,
 		"Hosting a GOAT H1 game: true lets OpenCE players join it too. They play\n"
 		"at 30 ticks a second, as on their own machine, and GOAT H1 players at\n"
@@ -2268,6 +2572,9 @@ static const struct config_setting config_settings[] =
 	{ "debug.network_test_hitch", _config_real, "0.0", "HALO_NETWORK_TEST_HITCH", _environment_value, _platform_all,
 		"As debug.network_test_vehicle seats the player, the frame stops for this\n"
 		"many seconds, as a stall of the renderer or the VR runtime would; 0 never." },
+	{ "debug.network_test_step_cost", _config_real, "0.0", "HALO_NETWORK_TEST_STEP_COST", _environment_value, _platform_all,
+		"A network game's client spends this many milliseconds more on each step\n"
+		"(sub-step at 60 and 120) it runs, as a slower computer would; 0 none." },
 	{ "debug.bsp_switch_test", _config_real, "0.0", "HALO_BSP_SWITCH_TEST", _environment_value, _platform_all,
 		"Every this many seconds of a campaign level the game switches to its next\n"
 		"structure bsp, as a load zone does, puts the player in it and logs the\n"
@@ -2313,6 +2620,12 @@ static const struct config_setting config_settings[] =
 		"pings what it aims at, again (taking it away) and again; then a client\n"
 		"sends one as another's player (refused) and a burst (counted)\n"
 		"(port/linux/NETCODE.md); 0 never." },
+	{ "debug.network_test_teammate_ping", _config_real, "0.0", "HALO_NETWORK_TEST_TEAMMATE_PING", _environment_value,
+		_platform_all,
+		"This many seconds into an automated test game (the host's, or a game of\n"
+		"one machine) the first player's first ally of another machine, or a bot,\n"
+		"pings what they aim at, once (the Spartan link's pop-up:\n"
+		"port/linux/game/spartan_link.c); 0 never." },
 	{ "debug.network_test_party", _config_real, "0.0", "HALO_NETWORK_TEST_PARTY", _environment_value, _platform_all,
 		"This many seconds into an automated test game the host invites each\n"
 		"player it may to its party (unless debug.party leads one), a client asks\n"
@@ -2388,6 +2701,13 @@ static const struct config_setting config_settings[] =
 		"machines of twice it), to test the netcode as over the internet; 0 none." },
 	{ "debug.network_loss", _config_real, "0.0", "HALO_NETWORK_LOSS", _environment_value, _platform_all,
 		"Percent of datagrams received that are dropped, for the same; 0 none." },
+	{ "debug.network_forms_before", _config_boolean, "false", "HALO_NETWORK_FORMS_BEFORE",
+		_environment_set_is_true, _platform_all,
+		"Send an OpenH1 game's messages in the forms and at the rates before\n"
+		"they were cut down (the players' states at every sub-step, the tick\n"
+		"states, objects, controls, relayed input and predictions unpacked, the\n"
+		"statistics and inventories every second); to compare the two, and as\n"
+		"a fallback." },
 	{ "debug.network_relay_only", _config_boolean, "false", "HALO_NETWORK_RELAY_ONLY", _environment_set_is_true,
 		_platform_all,
 		"Send internet play's tunnel packets to other players only through a\n"
@@ -2501,6 +2821,18 @@ static const struct config_setting config_settings[] =
 		"With debug.bot_player, a vehicle (part of its tag's name: \"warthog\",\n"
 		"\"ghost\") the player's bot boards when it is on foot, and drives at the\n"
 		"enemies it fights." },
+	{ "debug.campaign_bot", _config_boolean, "false", "HALO_CAMPAIGN_BOT", _environment_set_is_true, _platform_all,
+		"Benchmarks: a campaign level's first player played by code, the same\n"
+		"every run (port/linux/game/bots.c, docs/campaign_bot.md): it fights\n"
+		"the enemies in sight and walks debug.campaign_bot_route's places,\n"
+		"logging them and the checkpoints with their ticks." },
+	{ "debug.campaign_bot_route", _config_string, "\"\"", "HALO_CAMPAIGN_BOT_ROUTE", _environment_value, _platform_all,
+		"With debug.campaign_bot, the route file it walks, in the data folder\n"
+		"(beside maps: campaign_bot/b30.txt, from tools/campaign_bot); empty:\n"
+		"none, it fights and walks on ahead." },
+	{ "debug.campaign_bot_seconds", _config_real, "0.0", "HALO_CAMPAIGN_BOT_SECONDS", _environment_value, _platform_all,
+		"With debug.campaign_bot, quit once it has played this many seconds of\n"
+		"the level (game time); 0 never." },
 	{ "debug.update_answer", _config_string, "\"\"", "HALO_UPDATE_ANSWER", _environment_value, _platform_desktop,
 		"The answer to the new version question, for automated tests: \"yes\",\n"
 		"\"no\" or \"never\" (do not ask again, confirmed); empty asks." },
@@ -2555,6 +2887,21 @@ static const struct config_setting config_settings[] =
 	{ "debug.voice_test", _config_boolean, "false", "HALO_VOICE_TEST", _environment_set_is_true, _platform_all,
 		"Voice chat's automated tests: a tone instead of the microphone, and\n"
 		"each voice heard logged once a second." },
+	{ "debug.network_timing_before", _config_boolean, "false", "HALO_NETWORK_TIMING_BEFORE", _environment_set_is_true,
+		_platform_all,
+		"A network game's machine whose frames nobody sees (a headless host or\n"
+		"client) reads its datagrams before it waits for its next step, not\n"
+		"after (a datagram that came in the wait then ran a step later); a host\n"
+		"sends on what it read just before its step in a datagram of its own;\n"
+		"a host that draws reads its datagrams only at its frames, not while\n"
+		"each waits for the display; and a client's clock takes no account of\n"
+		"its frames: as before, to compare the two, and as a fallback." },
+	{ "debug.network_latency_trace", _config_string, "\"\"", "HALO_NETWORK_LATENCY_TRACE", _environment_value,
+		_platform_all,
+		"A file to write, in a network game, when each of the players' control\n"
+		"changes was sampled, sent, received, read, applied and shown on this\n"
+		"machine (the network tests' latency by hop: tools/net_latency.py joins\n"
+		"the machines' files); empty, none." },
 	{ "debug.latency_log", _config_string, "\"\"", "HALO_LATENCY_LOG", _environment_value, _platform_all,
 		"A file to write a line to for each press of the fire control and each\n"
 		"move from standing of the first player, on the controller and the mouse,\n"
@@ -2592,6 +2939,11 @@ static const struct config_setting config_settings[] =
 		"memory never written: two runs, one of each, compared with\n"
 		"tools/determinism_compare.py, part where one reaches the game; empty\n"
 		"as the game always has (the game's malloc fills with 0xCA)." },
+	{ "debug.benchmark", _config_string, "\"\"", "HALO_BENCHMARK", _environment_value, _platform_all,
+		"Runs the built-in benchmark once the main menu is up, as halo\n"
+		"--benchmark does (port/linux/game/benchmark.c): \"uncapped\" or\n"
+		"\"settings\" its pacing (display.benchmark_pacing's), \"on\" that\n"
+		"setting's; empty for none." },
 	{ "debug.frame_log", _config_string, "\"\"", "HALO_FRAME_LOG", _environment_value, _platform_all,
 		"A file to write a line to for each frame presented once the scenario's\n"
 		"simulation has started: its seconds, then microseconds of the frame,\n"
@@ -2621,7 +2973,14 @@ static const struct config_setting config_settings[] =
 		"time the mixing takes." },
 	{ "debug.audio_record", _config_string, "\"\"", "HALO_AUDIO_RECORD", _environment_value, _platform_desktop,
 		"Record the game's sound, as it plays (with or without a device), to\n"
-		"this WAV file (48 kHz, 16-bit stereo), for automated tests; empty none." },
+		"this WAV file (48 kHz), for automated tests; empty none. Written by a\n"
+		"thread of its own, never the mixer's (debug.audio_record_format)." },
+	{ "debug.audio_record_format", _config_string, "\"float\"", "HALO_AUDIO_RECORD_FORMAT", _environment_value,
+		_platform_desktop,
+		"What debug.audio_record writes: \"float\" 32-bit float with every\n"
+		"output channel (5.1's six), the mix before the limiter and the master\n"
+		"stage, nothing over full scale cut; \"stereo16\" 16-bit stereo (the\n"
+		"front pair, on 5.1) as heard, after them, as it was." },
 	{ "debug.dsound_log", _config_string, "\"\"", "HALO_DSOUND_LOG", _environment_value, _platform_desktop,
 		"Log every DirectSound call the game makes, with its time, to this\n"
 		"file, and the sound data of the packets it submits to the same name\n"
@@ -2783,6 +3142,10 @@ static const struct config_setting config_settings[] =
 	{ "debug.world_ao_view", _config_boolean, "false", "HALO_WORLD_AO_VIEW", _environment_value, _platform_all,
 		"With display.ambient_occlusion \"world\", the surfaces it shades drawn as\n"
 		"its occlusion alone, in grey." },
+	{ "debug.motion_vectors", _config_boolean, "false", "HALO_MOTION_VECTORS", _environment_value, _platform_all,
+		"With display.temporal_aa on, each pixel's motion since the frame before\n"
+		"drawn over the 3D view as colour: grey still, red to the right, green\n"
+		"downward, full at 8 pixels a frame." },
 	{ "debug.world_ao_inline", _config_boolean, "false", "HALO_WORLD_AO_INLINE", _environment_value, _platform_all,
 		"With display.ambient_occlusion \"world\", each surface finds its own\n"
 		"occlusion as it draws (as before it was found once a pixel), to compare." },
@@ -2820,6 +3183,17 @@ static const struct config_setting config_settings[] =
 		"structure's shader, an effect, the HUD, a menu widget, text), for the\n"
 		"inspector's replay of a recording (HALO_RENDER_RECORD; port/macos/README.md).\n"
 		"The backends draw nothing for them; off, nothing is sent." },
+	{ "debug.retained_draws", _config_boolean, "true", "HALO_RETAINED_DRAWS", _environment_value, _platform_all,
+		"Keep each draw's preparation (its textures' description and its\n"
+		"pipeline) and use it again for a later draw made from the same states,\n"
+		"program, textures and targets: a model's parts drawn for each player,\n"
+		"a run of decals. The pictures the same. HALO_RETAINED_DRAWS=0 prepares\n"
+		"every draw as before." },
+	{ "debug.retained_draws_verify", _config_boolean, "false", "HALO_RETAINED_DRAWS_VERIFY", _environment_set_is_true,
+		_platform_all,
+		"Prepare each draw debug.retained_draws would find kept anyway, and log\n"
+		"where the kept preparation differs (and a state written past its\n"
+		"setters). For checking debug.retained_draws." },
 	{ "debug.gpu_validation", _config_boolean, "false", "HALO_GPU_VALIDATION", _environment_set_is_true, _platform_all,
 		"Report the graphics API's errors in the log: Vulkan's validation layers\n"
 		"(which must be installed)." },
@@ -2844,6 +3218,11 @@ static const struct config_setting config_settings[] =
 	{ "debug.menu_open", _config_string, "\"\"", "HALO_MENU_OPEN", _environment_value, _platform_all,
 		"Start on this screen of the menus (port/assets/menus) instead of the main\n"
 		"menu, a player profile being edited; empty for the main menu." },
+	{ "debug.controller_layout_guid", _config_string, "\"\"", "HALO_CONTROLLER_LAYOUT_GUID", _environment_value,
+		_platform_all,
+		"Controller Layout describes the controller of this SDL GUID (32 hex\n"
+		"digits) while the player has none connected: for tests and pictures.\n"
+		"Empty for none." },
 	{ "debug.menu_layout", _config_string, "\"\"", "HALO_MENU_LAYOUT", _environment_value, _platform_all,
 		"Write the open menu screen's geometry to this file (in the data root) as\n"
 		"JSON, every 30th frame of the menus: each widget's box, each text's box,\n"
@@ -2971,9 +3350,27 @@ static const struct config_setting config_settings[] =
 		"host, port/android/host/host_debug.c); 0 never." },
 	{ "debug.stall_ms", _config_real, "100.0", "HALO_STALL_MS", _environment_value, _platform_android | _platform_guest,
 		"When the game goes this many milliseconds without a frame, log where\n"
-		"its thread and the render thread were (sampled every 10 ms while it\n"
-		"lasts) and the work in progress, once the frame comes; and count such\n"
-		"frames. Read by the host (port/android/host/host_stall.c); 0 never." },
+		"its thread and the render thread were (sampled from that moment on,\n"
+		"every eighth of it, 1 to 10 ms, while it lasts) and the work in\n"
+		"progress, once the frame comes; and count such frames. Never less than\n"
+		"twice the recent frames' time (1: each frame twice as long as the\n"
+		"others). Read by the host (port/android/host/host_stall.c); 0 never." },
+	{ "debug.demo_perf_log", _config_boolean, "false", "HALO_DEMO_PERF_LOG", _environment_value, _platform_all,
+		"Beside each demo recorded, write a performance log, demos/<name>.perf:\n"
+		"a line for each frame with the demo's tick, the frame's, the game\n"
+		"thread's CPU, the GPU's, the render thread's and the wait's\n"
+		"microseconds; stalls, loads and pipelines built as events; and a\n"
+		"summary every 10 seconds (the average, 1% and 0.1% lows). The demo\n"
+		"itself is unchanged (port/linux/src/report.c; tools/demo_info.py\n"
+		"--perf joins them)." },
+	{ "debug.timings", _config_boolean, "false", "HALO_TIMINGS", _environment_value, _platform_all,
+		"Time the game's CPU sections (the original's profile_enter sections\n"
+		"and the port's: input, AI, objects, effects, scripts, present...) from\n"
+		"the next frame on, and show the busiest, the counts of objects,\n"
+		"effects, particles and pipelines and, with Vulkan, each setting's\n"
+		"passes on the GPU in the performance overlay's detailed view. Off,\n"
+		"nothing is timed. With Vulkan it times the passes every 10 frames\n"
+		"from the next frame on, where debug.pass_times is 0." },
 	{ "debug.pass_times", _config_integer, "0", "HALO_PASS_TIMES", _environment_value, _platform_all,
 		"Every this many frames, time each of the frame's passes on the GPU and\n"
 		"log, every 30 timed frames, each kind of pass's milliseconds a frame and\n"
@@ -3256,6 +3653,10 @@ static const struct
 	place) */
 	{ "display.ambient_occlusion", "subtle", "world" },
 	{ "display.ambient_occlusion", "strong", "world" },
+	/* (the gyroscope's smoothing on or off: a strength now, on's the
+	medium one; a file's true or false read as these words too) */
+	{ "input.gyro_smoothing", "true", "medium" },
+	{ "input.gyro_smoothing", "false", "off" },
 	{ NULL, NULL, NULL },
 };
 
@@ -3277,6 +3678,10 @@ static const char *const config_retired_settings[] =
 	/* (online co-op's PUBLIC or PRIVATE, which most never saw change from
 	PRIVATE: who can join it, network.coop_join) */
 	"network.coop_public",
+	/* (the frame rate counter's two settings: display.perf_overlay's
+	"simple", config_migrate_frame_rate) */
+	"display.show_fps",
+	"display.show_frame_rate",
 	NULL,
 };
 
@@ -3721,14 +4126,14 @@ static char *config_migrate_words(const char *text, toml_datum_t table)
 		long setting = config_setting_index(name);
 		toml_datum_t datum = toml_seek(table, name);
 		const char *word;
+		/* (a word, or an older version's true or false) */
+		const char *old = datum.type == TOML_STRING ? datum.u.s :
+			datum.type == TOML_BOOLEAN ? (datum.u.boolean ? "true" : "false") : NULL;
 		char value[80];
 		char *updated;
 
-		if (setting < 0 || datum.type != TOML_STRING ||
-			!config_word_is(datum.u.s, strlen(datum.u.s), config_renamed_words[index].old_word))
-		{
+		if (setting < 0 || !old || !config_word_is(old, strlen(old), config_renamed_words[index].old_word))
 			continue;
-		}
 		word = config_renamed_words[index].word;
 		snprintf(value, sizeof(value), "\"%s\"", word);
 		updated = config_replace_setting(result ? result : text, &config_settings[setting], value);
@@ -3736,7 +4141,7 @@ static char *config_migrate_words(const char *text, toml_datum_t table)
 			continue;
 		free(result);
 		result = updated;
-		platform_log("settings: %s = \"%s\" is an older version's: now \"%s\"", name, datum.u.s, word);
+		platform_log("settings: %s = \"%s\" is an older version's: now \"%s\"", name, old, word);
 	}
 	return result;
 }
@@ -3855,6 +4260,38 @@ static char *config_migrate_supersampling(const char *text, toml_datum_t table)
 		platform_log("settings: display.anti_aliasing = \"%s\" is an older version's, which drew none here: now "
 			"\"off\"", datum.u.s);
 #endif
+	return result;
+}
+
+/* a file of an older version with display.show_fps or
+display.show_frame_rate true (the frame rate counter's two settings, which
+config_retired_settings then takes out): display.perf_overlay "simple", if
+the file has not a word for it of its own. Returns the new text, or NULL */
+static char *config_migrate_frame_rate(const char *text, toml_datum_t table)
+{
+	static const char *const old_names[] = { "display.show_fps", "display.show_frame_rate" };
+	long overlay = config_setting_index("display.perf_overlay");
+	toml_datum_t set = toml_seek(table, "display.perf_overlay");
+	char *completed = NULL, *result;
+	size_t index;
+	int on = 0;
+
+	for (index = 0; index < sizeof(old_names) / sizeof(old_names[0]); index++)
+	{
+		toml_datum_t datum = toml_seek(table, old_names[index]);
+
+		on |= datum.type == TOML_BOOLEAN && datum.u.boolean;
+	}
+	if (overlay < 0 || !on || set.type != TOML_UNKNOWN)
+		return NULL;
+	/* (its block, in a file older than it, as config_add_missing would add
+	it after) */
+	completed = config_add_missing(text, table);
+	result = config_replace_setting(completed ? completed : text, &config_settings[overlay], "\"simple\"");
+	free(completed);
+	if (result)
+		platform_log("settings: the frame rate counter's setting is an older version's: now display.perf_overlay = "
+			"\"simple\"");
 	return result;
 }
 
@@ -4150,6 +4587,13 @@ static int config_set_from_file(struct config_value *value, const struct config_
 			free(value->string);
 			value->string = strdup(datum.u.s);
 		}
+		else if (datum.type == TOML_BOOLEAN && config_renamed_word(setting->name, datum.u.boolean ? "true" : "false"))
+		{
+			/* (an older version's true or false, which config_check_words
+			reads as the word in its place) */
+			free(value->string);
+			value->string = strdup(datum.u.boolean ? "true" : "false");
+		}
 		else if ((datum.type == TOML_FP64 || datum.type == TOML_INT64) && config_string_takes_number(setting))
 		{
 			char number[64];
@@ -4279,10 +4723,13 @@ static const struct
 	{ "display.anisotropic_filtering", "0" },
 	{ "display.shadow_resolution", "128" },
 	{ "display.per_pixel_lighting", "false" },
-	/* ("native" in VR, whose eyes' many lines the Xbox's 480 stand for) */
+	/* ("native": the models measured in the display's lines, not the Xbox's 480) */
 	{ "display.model_detail", "\"auto\"" },
 	{ "display.dynamic_lights", "\"classic\"" },
 	{ "display.ambient_occlusion", "\"off\"" },
+	{ "display.soft_particles", "false" },
+	{ "display.alpha_coverage", "false" },
+	{ "display.smooth_lightmaps", "false" },
 	{ "game.enhanced_animations", "false", 1 },
 	{ "display.menu_fade", "true", 1 },
 };
@@ -4608,9 +5055,13 @@ static const struct
 } config_words[] =
 {
 	{ "display.mode", { "", "fullscreen", "borderless", "windowed", NULL }, "display.fullscreen's" },
+	{ "display.benchmark_pacing", { "uncapped", "settings", NULL }, NULL },
+	{ "display.benchmark_player", { "bot", "scripted", NULL }, NULL },
 	{ "display.resolution_scaling", { "native", "original", NULL }, NULL },
 	{ "display.anti_aliasing", { "off", "fxaa", "smaa", "ssaa2x", "msaa2x", "msaa4x", "msaa8x", NULL }, NULL },
 	{ "display.ambient_occlusion", { "off", "world", "ray_traced", NULL }, "off" },
+	{ "display.temporal_aa", { "off", "fsr", "dlss", "metalfx", NULL }, "off" },
+	{ "display.shadows", { "classic", "ray_traced", NULL }, "classic" },
 	{ "display.astc_textures", { "auto", "always", "off", NULL }, NULL },
 	{ "display.picture_position", { "center", "top", "bottom", NULL }, NULL },
 	{ "display.orientation", { "landscape", "portrait", "auto", NULL }, NULL },
@@ -4628,11 +5079,15 @@ static const struct
 	{ "display.player_names", { "all", "allies", "enemies", "none", NULL }, NULL },
 	{ "display.scoreboard_team_layout", { "teams", "score", NULL }, NULL },
 	{ "display.chat_style", { "colors", "white", NULL }, NULL },
+	{ "display.subtitles_language", { "game", "english", "french", "german", "italian", "spanish", "latam_spanish",
+		"portuguese", "japanese", "korean", "chinese", "chinese_simplified", NULL }, "game" },
 	{ "display.shield_glow_intensity", { "default", "light_show", NULL }, NULL },
 	{ "display.shield_color", { "default", "white", "black", "red", "blue", "gray", "yellow", "green", "pink",
 		"purple", "cyan", "cobalt", "orange", "teal", "sage", "brown", "tan", "maroon", "salmon", NULL }, NULL },
 	{ "audio.resampler", { "xbox", "sinc", "linear", NULL }, NULL },
 	{ "audio.spatial", { "auto", "headphones", "speakers", NULL }, "auto" },
+	{ "audio.listening_mode", { "default", "night", NULL }, "default" },
+	{ "debug.audio_record_format", { "float", "stereo16", NULL }, "float" },
 	{ "audio.voice_chat", { "push_to_talk", "open_mic", "off", NULL }, NULL },
 	{ "input.touch_controls", { "auto", "on", "off", NULL }, NULL },
 	{ "input.touch_crouch", { "toggle", "hold", NULL }, NULL },
@@ -4642,7 +5097,11 @@ static const struct
 	{ "input.gyro_button", { "touchpad", "left_paddle", "right_paddle", "misc", "left_bumper", "right_bumper",
 		"left_trigger", "right_trigger", "left_stick", "right_stick", NULL }, NULL },
 	{ "input.gyro_space", { "player", "local", NULL }, NULL },
+	{ "input.gyro_smoothing", { "off", "low", "medium", "high", NULL }, "medium" },
+	{ "input.touch_gyro_smoothing", { "off", "low", "medium", "high", NULL }, "off" },
 	{ "input.button_prompts", { "auto", "controller", "keyboard", NULL }, NULL },
+	{ "input.keyboard_layout", { "auto", "qwerty", "azerty", "qwertz", "swedish", "norwegian", "danish", "spanish",
+		"portuguese", NULL }, "qwerty" },
 	{ "input.zoom_sensitivity", { "cs2", "halo", NULL }, "cs2" },
 	{ "game.console_log", { "important", "all", "none", NULL }, NULL },
 	{ "game.spectate_on_death", { "teammates", "off", NULL }, NULL },
@@ -5027,6 +5486,21 @@ static void config_load(void)
 				toml_free(result);
 				free(text);
 				text = supersampling;
+				result = toml_parse(text, (int)strlen(text));
+				migrated = text;
+			}
+		}
+		/* (the frame rate counter's older settings, display.perf_overlay's
+		now) */
+		if (result.ok && !skipped)
+		{
+			char *frame_rate = config_migrate_frame_rate(text, result.toptab);
+
+			if (frame_rate)
+			{
+				toml_free(result);
+				free(text);
+				text = frame_rate;
 				result = toml_parse(text, (int)strlen(text));
 				migrated = text;
 			}

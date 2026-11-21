@@ -89,6 +89,7 @@ unsigned long config_changes(void);
 boolean network_distributed_client_send_reliably(void *message, word size);
 boolean network_distributed_server_send_to_machine_reliably(long machine_index, void *message, word size);
 unsigned long network_game_server_machine_address(long machine_index);
+void network_game_server_kick_machine(long machine_index, boolean kept_out);
 word network_game_server_get_state(struct network_game_server *server, short *substate);
 unsigned long system_milliseconds(void);
 
@@ -148,6 +149,18 @@ enum
 	fails) */
 	DOWNLOADING_TIMEOUT = 20000,
 	DOWNLOADING_STALL_TIMEOUT = STALL_TIMEOUT + DOWNLOADING_TIMEOUT,
+	/* (the host) a machine's download of the game's map, however it says it
+	goes, lasts from the first offer at most DOWNLOAD_GRACE and the files'
+	bytes at DOWNLOAD_FLOOR_KILOBYTES a second (or at a quarter of the host's
+	own upload, network.map_share_upload, if that is less), and never more
+	than DOWNLOAD_CAP: what the host knows (the bytes it offered, its own
+	clock), not the machine's word. The largest map a cache takes
+	(MAXIMUM_MAP_BYTES, 768 MiB) at 64 KB/s is 3.4 hours; at the host's
+	1024 KB/s, sixteen machines downloading from it alone at once each still
+	get that */
+	DOWNLOAD_FLOOR_KILOBYTES = 64,
+	DOWNLOAD_GRACE = 5 * 60 * 1000,
+	DOWNLOAD_CAP = 4 * 60 * 60 * 1000,
 	CONNECTION_IDLE_TIMEOUT = 30000,
 	CONNECT_TIMEOUT = 10000,
 	/* a connection open this long without the other end's hello is closed */
@@ -507,6 +520,9 @@ struct host_machine
 	/* the game's map that progress is counted for (another request does
 	not start it again, whatever level it names) */
 	char advanced_level[LEVEL_NAME_BYTES];
+	/* when the download overruns, set at that first offer and kept as
+	advanced_at is (host_download_bound; 0: not offered) */
+	unsigned long deadline;
 	/* when its last request was taken, and one that came sooner after it
 	than MAP_REQUEST_INTERVAL, taken then (host_asked) */
 	unsigned long requested_at;
@@ -3151,17 +3167,70 @@ static boolean host_machine_valid(
 	return machine_index >= 0 && machine_index < MAP_SHARE_MACHINES;
 }
 
-/* whether a machine says it is downloading, lately, and what it says it
-has grew lately (once offered the files): one that only says so, its
-download going nowhere, holds its slot no longer than an honest one's
+/* whether a machine's transfer is of the game's map: a transfer is of the
+map its request named, and once the game is on another map it is over (the
+client ends its own at the change and says nothing), whatever the machine
+said of it last */
+static boolean host_machine_transfer_current(
+	struct host_machine const *machine)
+{
+	struct network_game *game = map_share_network_game();
+
+	return game && !csstrcmp(game->map.name, machine->request.level_name);
+}
+
+/* whether a machine says it is downloading the game's map, lately, and what
+it says it has grew lately (once offered the files): one that only says so,
+its download going nowhere, holds its slot no longer than an honest one's
 download would last before it failed */
 static boolean host_machine_downloading(
 	struct host_machine const *machine)
 {
 	unsigned long now = system_milliseconds();
 
-	return machine->downloading && !elapsed(machine->heard_at, now, DOWNLOADING_TIMEOUT) &&
-		(!machine->offered || !elapsed(machine->advanced_at, now, DOWNLOADING_STALL_TIMEOUT));
+	return machine->downloading && host_machine_transfer_current(machine) &&
+		!elapsed(machine->heard_at, now, DOWNLOADING_TIMEOUT) &&
+		(!machine->offered || !elapsed(machine->advanced_at, now, DOWNLOADING_STALL_TIMEOUT)) &&
+		(!machine->deadline || (long)(now - machine->deadline) < 0);
+}
+
+/* the time a machine has to download the files offered (bytes), from the
+first offer: DOWNLOAD_GRACE, and the bytes at the slowest rate the host
+waits for, DOWNLOAD_CAP at most */
+static unsigned long host_download_bound(
+	unsigned long bytes)
+{
+	unsigned long floor = MIN((unsigned long)DOWNLOAD_FLOOR_KILOBYTES * 1024, (unsigned long)upload_limit() / 4);
+	unsigned long long milliseconds = DOWNLOAD_GRACE + (unsigned long long)bytes * 1000 / MAX(floor, 1UL);
+
+	return (unsigned long)MIN(milliseconds, (unsigned long long)DOWNLOAD_CAP);
+}
+
+/* the machines whose download overran its bound: ended, and the machine
+removed, as a client whose download fails leaves the game by itself (left
+in, it would hold the lobby's start, or its players held, for nothing) */
+static void host_bound_downloads(
+	void)
+{
+	unsigned long now = system_milliseconds();
+	long index;
+
+	for (index = 0; index < MAP_SHARE_MACHINES; index++)
+	{
+		struct host_machine *machine = &map_share_globals.machines[index];
+
+		if (!machine->downloading || machine->downloaded || !machine->deadline ||
+			(long)(now - machine->deadline) < 0)
+		{
+			continue;
+		}
+		machine->downloading = FALSE;
+		machine->end_said = TRUE;
+		error(_error_silent, "map sharing: machine #%ld did not download %s in its time: removed", index,
+			machine->request.level_name);
+		server_event_map_share(index, machine->request.level_name, "failed", machine->done, machine->offered_total);
+		network_game_server_kick_machine(index, FALSE);
+	}
 }
 
 boolean map_share_machine_downloading(
@@ -3235,6 +3304,7 @@ static void host_offer(
 	if (!machine->advanced_at && result == _offer_ok)
 	{
 		machine->advanced_at = system_milliseconds() | 1;
+		machine->deadline = (machine->advanced_at + host_download_bound(machine->offered_total)) | 1;
 		level_name_copy(machine->advanced_level, machine->request.level_name);
 	}
 	machine->offered = TRUE;
@@ -3309,6 +3379,7 @@ static void host_request(
 		game && !csstrncmp(machine->advanced_level, game->map.name, LEVEL_NAME_BYTES - 1);
 	unsigned long advanced_at = again ? machine->advanced_at : 0;
 	unsigned long advanced_done = again ? machine->advanced_done : 0;
+	unsigned long deadline = again ? machine->deadline : 0;
 	char advanced_level[LEVEL_NAME_BYTES];
 
 	csmemcpy(advanced_level, machine->advanced_level, LEVEL_NAME_BYTES);
@@ -3320,6 +3391,7 @@ static void host_request(
 	machine->address = network_game_server_machine_address(machine_index);
 	machine->advanced_at = advanced_at;
 	machine->advanced_done = advanced_done;
+	machine->deadline = deadline;
 	if (again)
 		csmemcpy(machine->advanced_level, advanced_level, LEVEL_NAME_BYTES);
 	if (!config_boolean("network.map_share"))
@@ -3406,6 +3478,17 @@ static void host_update(
 		{
 			csmemset(machine, 0, sizeof(*machine));
 			continue;
+		}
+		/* (the game on another map: the transfer of the last one over at
+		once, not once the machine has been silent long enough; what it
+		counted for that map is kept, host_request) */
+		if ((machine->asked || machine->downloading) && !host_machine_transfer_current(machine))
+		{
+			error(_error_silent, "map sharing: the game left %s: machine #%ld's transfer of it is over",
+				machine->request.level_name, index);
+			machine->asked = FALSE;
+			machine->downloading = FALSE;
+			machine->downloaded = FALSE;
 		}
 		/* (a request that came too soon after the last, its turn come) */
 		if (machine->request_waiting && elapsed(machine->requested_at, now, MAP_REQUEST_INTERVAL))
@@ -3644,7 +3727,10 @@ void map_share_update(
 	}
 	current_files_update(FALSE);
 	if (map_share_host())
+	{
 		host_update();
+		host_bound_downloads();
+	}
 	download_update();
 	listener_update();
 	connection_accept();

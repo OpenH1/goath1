@@ -85,6 +85,11 @@ symbols in this file:
 void network_distributed_tick(void);
 /* port: port/linux/game/network_clock.c */
 real network_clock_frame_seconds(real time_delta_sec);
+void network_clock_steps_ran(real late_seconds);
+/* port: port/linux/game/network_test.c (debug.network_test_step_cost) */
+void network_test_step_cost(void);
+/* xbox_kernel.c's: the computer's monotonic clock */
+unsigned long long platform_shared_clock_microseconds(void);
 /* port: port/linux/game/determinism_log.c */
 void determinism_log_tick_begin(void);
 void determinism_log_tick_end(long tick);
@@ -95,6 +100,12 @@ void determinism_log_tick_pause(void);
 PROFILE_SECTION(game_time_network_distributed_tick_section, "network_distributed_tick")
 PROFILE_SECTION(game_time_render_interpolation_tick_section, "render_interpolation_tick")
 PROFILE_SECTION(game_time_game_frame_section, "game_frame")
+/* port: the demo's hooks (port/linux/game/demo.c) */
+PROFILE_SECTION(game_time_demo_tick_begin_section, "demo.tick_begin")
+PROFILE_SECTION(game_time_demo_substep_resume_section, "demo.substep_resume")
+PROFILE_SECTION(game_time_demo_tick_end_section, "demo.tick_end")
+PROFILE_SECTION(game_time_demo_tick_pause_section, "demo.tick_pause")
+PROFILE_SECTION(game_time_demo_steps_end_section, "demo.steps_end")
 
 /* ---------- constants */
 
@@ -154,6 +165,35 @@ for a tick's end, before the tick is ended at once: a clock that runs a
 sub-step every 8 ms runs one within a frame or a few, one that has stopped
 (paused, the console, a menu over the game) never does */
 #define GAME_TIME_MAXIMUM_BOUNDARY_WAITS 8
+
+/* port: the most of the computer's time an OpenH1 game's client gives a
+frame's steps: a tick's (game_time_client_steps_over) */
+#define GAME_TIME_CLIENT_STEPS_MICROSECONDS (1000000ULL / TICKS_PER_SECOND)
+
+/* port: whether an OpenH1 game's client stops its frame's steps here, they
+having run since steps_began for a tick's time or more (the rest of the
+frame's steps not run, their time given up).
+
+A client's clock runs every step that has fallen due by the frame's start
+(up to a second's), and a frame runs while its next steps fall due. While the
+steps of a second take the computer less than a second (s of it), a frame of
+r without them settles at r/(1-s): slower as s nears 1, but settled. Once the
+steps take a second or more (the computer slower than the game: a heavy tick
+at 120 a second), each frame owed more steps than the one before, and ran
+them, so it took longer still: the frames grew to a second's steps each
+(the cap), about one a second, and the clock fell behind the host's anyway,
+which its reports made up by skipping whole ticks (network_clock.c). The
+steps a frame runs now stop at a tick's time: a frame takes at most about
+that more than its drawing, and what is not run falls behind, as it did,
+for the clock to skip (it leads the host's by its reports, not by its own
+count of steps). Only the client: its game is the host's, which corrects
+it; the host and a local game run every step. */
+static boolean game_time_client_steps_over(
+	unsigned long long steps_began)
+{
+	return network_game_distributed_client() && network_standard_agreed_rate() && !game_time_menu_scene() &&
+		platform_shared_clock_microseconds() - steps_began >= GAME_TIME_CLIENT_STEPS_MICROSECONDS;
+}
 
 /* ---------- public code */
 
@@ -465,6 +505,7 @@ void game_time_finish_tick(
 		if (game_time_run_substep())
 			game_time_substeps.ticks_ended_ahead++;
 	}
+	profile_scope(game_time_demo_steps_end_section, demo_steps_end();) /* port: port/linux/game/demo.c */
 	game_time_substeps.boundary_wanted = FALSE;
 	game_time_substeps.boundary_waits = 0;
 
@@ -737,6 +778,9 @@ void game_time_update(
 				long maximum_possible_server_time;
 				long server_updates = 0;
 				long step_index;
+				/* (when the frame's steps began, and whether they stopped there) */
+				unsigned long long steps_began = platform_shared_clock_microseconds();
+				boolean steps_cut = FALSE;
 
 				final_local_time = game_time_globals->local_time + (next_substep != 0) + ticks_begun;
 				switch (game_connection())
@@ -780,6 +824,13 @@ void game_time_update(
 				go) */
 				for (step_index = 0; step_index < steps_elapsed; step_index++)
 				{
+					/* port: an OpenH1 game's client stops once its steps have
+					taken a tick's time (game_time_client_steps_over) */
+					if (step_index > 0 && game_time_client_steps_over(steps_began))
+					{
+						steps_cut = TRUE;
+						break;
+					}
 					if (!sim_substep_next())
 					{
 						if (server_updates <= 0)
@@ -789,12 +840,20 @@ void game_time_update(
 					if (game_time_run_substep())
 						ticks_ended_run++;
 					game_time_substeps.boundary_waits = 0;
+					/* port: (debug.network_test_step_cost) */
+					network_test_step_cost();
 				}
+				/* port: the open tick copied as its last sub-step left it, once
+				(port/linux/game/demo.c) */
+				profile_scope(game_time_demo_steps_end_section, demo_steps_end();)
 
 				/* (none while a client's clock waits: a frame that runs no tick
 				reports none; port: with sub-steps, the ticks that ended) */
 				game_time_globals->last_local_time_elapsed = game_time_held() ? 0 :
-					(short)(substep_count > 1 ? ticks_ended_run : ticks_ended);
+					(short)(substep_count > 1 || steps_cut ? ticks_ended_run : ticks_ended);
+				/* port: how long after the newest fell due they ran, for an
+				OpenH1 game's client's clock (port/linux/game/network_clock.c) */
+				network_clock_steps_ran(game_time_globals->leftover_dt);
 			}
 		}
 		/* port: and those that ended before their time in this frame
@@ -835,11 +894,11 @@ static boolean game_time_run_substep(
 	/* port: a tick begun: the demo being recorded or played (port/linux/
 	game/demo.c), as nothing of the tick has run */
 	if (sim_substep_next() == 0 && !game_time_menu_scene())
-		demo_tick_begin(game_time_globals->server_time);
+		profile_scope(game_time_demo_tick_begin_section, demo_tick_begin(game_time_globals->server_time);)
 	/* port: (or a later sub-step: what the frames put in while the tick
 	was open) */
 	else if (!game_time_menu_scene())
-		demo_substep_resume(sim_substep_next());
+		profile_scope(game_time_demo_substep_resume_section, demo_substep_resume(sim_substep_next());)
 	determinism_log_tick_begin();
 	random_math_port_set_ticking(TRUE);
 	LATENCY_LOG(latency_log_substep_begin()); /* port: debug.latency_log */
@@ -848,7 +907,7 @@ static boolean game_time_run_substep(
 	/* port: (and ended, before the netcode's work of the tick, which a
 	demo has as what reached the game state from outside the ticks) */
 	if (tick_ended && !game_time_menu_scene())
-		demo_tick_end(game_time_globals->server_time + 1);
+		profile_scope(game_time_demo_tick_end_section, demo_tick_end(game_time_globals->server_time + 1);)
 	if (tick_ended)
 	{
 		sim_trace_step(game_time_globals->server_time, sim_substep_count() - 1, sim_substep_count()); /* port: debug.trace */
@@ -872,7 +931,7 @@ static boolean game_time_run_substep(
 		determinism_log_tick_pause();
 		/* port: (and the demo's, port/linux/game/demo.c) */
 		if (!game_time_menu_scene())
-			demo_tick_pause();
+			profile_scope(game_time_demo_tick_pause_section, demo_tick_pause();)
 	}
 
 	return tick_ended;

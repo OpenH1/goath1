@@ -389,6 +389,8 @@ symbols in this file:
 #include "network_host_controls.h" /* port: port/linux/game/network_host_controls.c */
 #include "party.h" /* port: port/linux/game/party_menu.inc */
 #include "matchmaking.h" /* port: port/linux/game/matchmaking.c */
+#include "perf_overlay.h" /* port: port/linux/game/perf_overlay.c */
+#include "benchmark.h" /* port: port/linux/game/benchmark.c */
 #include "network_aim_assist.h" /* port: port/linux/game/network_aim_assist.c */
 #include "network_shield_effects.h" /* port: port/linux/game/network_shield_effects.c */
 #include "network_riding_map.h" /* port: port/linux/game/network_riding_map.c */
@@ -726,15 +728,36 @@ void network_distributed_frame_received(void);
 int network_distributed_server_receive(long milliseconds);
 /* port: port/linux/game/network_clock.c */
 boolean network_clock_server_pace_first(void);
+boolean network_clock_unseen_wait_first(void);
+/* port: port/linux/game/network_receive.c */
+void network_receive_frame_presenting(boolean presenting);
+void network_receive_frame_wait_begin(void);
+void network_receive_frame_wait_end(void);
 boolean network_clock_server_paced(void);
+boolean network_clock_steps_when_due(void);
+/* port: a step that falls due in a frame's wait for the frames' limit run
+then (port/linux/src/sdl_platform.c, port/linux/game/unseen_frames.c) */
+void platform_frame_step_hook(unsigned long long (*due)(unsigned long long now, unsigned long long frame_due));
+int platform_frame_woken_for_step(void);
+void platform_frame_wait(void);
+unsigned long long SDL_GetTicksNS(void);
+unsigned long long frame_step_wake(unsigned long long now, unsigned long long frame_due, long long left,
+	unsigned long long cost);
 /* port: port/linux/src/port_config.c */
 double config_real(const char *name);
+/* the display's pixels a screen unit (port/linux/game/menu_shapes.c: the
+performance overlay's text scaled to be readable) */
+real menu_shape_pixels(void);
 #ifdef HALO_VR
 void vr_seat_test_update(void);
 void vr_death_test_update(void);
 #endif
 #include "server_director.h" /* port: port/linux/game/server_director.c */
 #include "load_zone.h" /* port: port/linux/game/load_zone.c */
+#include "speedrun_state.h" /* port: port/linux/game/speedrun_state.c */
+#include "stream_state.h" /* port: port/linux/game/stream_state.c */
+#include "practice.h" /* port: port/linux/game/practice.c */
+#include "network_latency_trace.h" /* port: port/linux/game/network_latency_trace.c */
 
 /* ---------- prototypes */
 
@@ -1633,6 +1656,7 @@ boolean main_menu_is_loaded(
 }
 
 static void main_map_change_failed(char const *map_name); /* port: (below) */
+static void main_coop_failure_reverts_reset(void); /* port: (below) */
 
 static void main_new_map(
 	struct game_options *options)
@@ -1642,6 +1666,7 @@ static void main_new_map(
 	if (game_load(options))
 	{
 		game_initialize_for_new_map();
+		main_coop_failure_reverts_reset(); /* port */
 	}
 	/* port: a map that does not load (its tags damaged: tag_validate.c)
 	leaves the game at the main menu, with its error, where the Xbox's
@@ -2290,26 +2315,61 @@ on the host alone. */
 static boolean main_coop_host_revert(
 	void)
 {
-	/* (the last reverts' times: a script whose failure holds again at once
-	after the revert would pull everyone back to the save over and over; a
-	third in a minute respawns the players at the checkpoint instead) */
-	static unsigned long revert_times[2];
-	unsigned long milliseconds = system_milliseconds();
 	long now = game_time_get();
 
 	if (!game_state_port_saved_game_valid())
 		return FALSE;
-	if (revert_times[0] && milliseconds - revert_times[0] < 60000)
-	{
-		error(_error_log, "co-op: a third revert in a minute: the players respawn at the checkpoint instead");
-		revert_times[0] = revert_times[1] = 0;
-		return FALSE;
-	}
-	revert_times[0] = revert_times[1];
-	revert_times[1] = milliseconds;
 	game_state_revert();
 	network_coop_reverted(now);
 	ui_widgets_disable_pause_game(30);
+	return TRUE;
+}
+
+/* port: the co-op host's last two failure reverts on this map (a team wipe,
+the scripts' game_lost), by game time, NONE for none. A script whose failure
+holds again at once after the revert would pull everyone back to the save
+over and over: a third failure within a minute of play respawns the players
+at the checkpoint instead. The host's clock only goes forward through its
+reverts (network_coop_reverted). A skip (voted, with its own cooldown:
+network_coop.c) or a revert a player chose is no failure and not counted;
+a new map, or the level restarted, starts the count again. */
+enum
+{
+	MAIN_COOP_FAILURE_REVERT_WINDOW_TICKS = 60 * TICKS_PER_SECOND,
+};
+
+static long main_coop_failure_reverts[2] = { NONE, NONE };
+
+static void main_coop_failure_reverts_reset(
+	void)
+{
+	main_coop_failure_reverts[0] = main_coop_failure_reverts[1] = NONE;
+	return;
+}
+
+static boolean main_coop_host_failure_revert(
+	void)
+{
+	long now = game_time_get();
+	short index;
+
+	/* (a time ahead of the clock is another game's) */
+	for (index = 0; index < 2; index++)
+	{
+		if (main_coop_failure_reverts[index] > now)
+			main_coop_failure_reverts[index] = NONE;
+	}
+	if (main_coop_failure_reverts[0] != NONE &&
+		now - main_coop_failure_reverts[0] < MAIN_COOP_FAILURE_REVERT_WINDOW_TICKS)
+	{
+		error(_error_log, "co-op: a third failure revert in a minute: the players respawn at the checkpoint instead");
+		main_coop_failure_reverts_reset();
+		return FALSE;
+	}
+	if (!main_coop_host_revert())
+		return FALSE;
+	main_coop_failure_reverts[0] = main_coop_failure_reverts[1];
+	main_coop_failure_reverts[1] = now;
 	return TRUE;
 }
 
@@ -2343,11 +2403,7 @@ static void main_skip_cinematic_private(
 	boolean skipped = FALSE;
 
 	if (skippable && main_coop_host())
-	{
 		skipped = main_coop_host_revert();
-		if (skipped)
-			network_coop_skip_done();
-	}
 	else if (skippable && game_connection() == _game_connection_local)
 	{
 		game_state_revert();
@@ -2361,6 +2417,9 @@ static void main_skip_cinematic_private(
 		error(_error_silent, "co-op: cutscene not skipped (skippable %d, saved state %d)",
 			skippable, game_state_port_saved_game_valid());
 	}
+	/* (the vote's answer, either way: a refusal must leave it votable) */
+	if (main_coop_host())
+		network_coop_skip_answered(skipped);
 	main_globals.skip_cinematic = FALSE;
 	return;
 }
@@ -2525,7 +2584,7 @@ static void main_lost_map_private(
 		never end. A missing save falls back to checkpoint positions. */
 		if (game_connection() != _game_connection_network_server)
 			game_state_revert();
-		else if ((players_are_all_dead() && !network_coop_wipe_reverts()) || !main_coop_host_revert())
+		else if ((players_are_all_dead() && !network_coop_wipe_reverts()) || !main_coop_host_failure_revert())
 			players_respawn_at_checkpoint();
 	}
 	return;
@@ -2722,6 +2781,8 @@ static void main_won_map_private(
 	if they did */
 	char next[NUMBEROF(main_script_next_level)];
 
+	/* port: (port/linux/game/speedrun_state.c) */
+	speedrun_state_level_won();
 	csstrncpy(next, main_script_next_level, sizeof(next) - 1);
 	next[sizeof(next) - 1] = 0;
 	main_script_next_level[0] = 0;
@@ -2942,10 +3003,13 @@ static real main_frame_time_fixed(
 by vsync, and frames fall between the 30 Hz ticks
 (port/linux/game/render_interpolation.c): no vertical blank throttle, and
 the frame is timed with the performance counter. */
+/* (the last frame's time read: main_frame_step_due times the clock's next
+step from it) */
+static LARGE_INTEGER previous_counter;
+
 static void main_update_time_unthrottled(
 	void)
 {
-	static LARGE_INTEGER previous_counter;
 	LARGE_INTEGER counter;
 	LARGE_INTEGER frequency;
 	real seconds_elapsed = 0.0f;
@@ -3419,6 +3483,7 @@ static void main_reset_map_private(
 		game_dispose_from_old_map();
 		input_flush();
 		game_initialize_for_new_map();
+		main_coop_failure_reverts_reset(); /* port */
 		create_local_players();
 		game_time_start();
 		game_initial_pulse();
@@ -3514,31 +3579,15 @@ static void screenshot_render(
 	return;
 }
 
-/* port: Settings > Video's SHOW FRAME RATE (display.show_frame_rate, off by
-default), read again when it changes, which draws the frame rate as the
-console's display_framerate does */
-int config_boolean(const char *name);
-unsigned long config_changes(void);
-
-static boolean main_show_frame_rate_setting(
-	void)
-{
-	static boolean setting = FALSE;
-	static unsigned long read_at = (unsigned long)-1;
-
-	if (read_at != config_changes())
-	{
-		read_at = config_changes();
-		setting = config_boolean("display.show_frame_rate") != 0;
-	}
-
-	return setting;
-}
-
 void main_framerate_render(
 	void)
 {
-	if (display_framerate || main_show_frame_rate_setting()) /* port: or the setting */
+	/* port: Settings > Video's PERFORMANCE OVERLAY (display.perf_overlay,
+	port/linux/game/perf_overlay.c): "simple" draws the frame rate as the
+	console's display_framerate does, "detailed" the frame's times above it */
+	short perf_overlay = perf_overlay_mode();
+
+	if (display_framerate || perf_overlay != _perf_overlay_off) /* port: or the setting */
 	{
 		long font_tag_index;
 
@@ -3594,6 +3643,57 @@ void main_framerate_render(
 				(short)frame_rate >= 30 ? global_real_argb_green : global_real_argb_red);
 			draw_string_set_font(font_tag_index);
 			rasterizer_draw_string(&bounds, NULL, NULL, 0, frame_rate_string);
+
+			/* port: "detailed": the frame's times in cells above the
+			counter, two to a row, a label at each cell's left and its value
+			at its right, scaled about the view's bottom right corner
+			(perf_overlay_place: compact, and readable from 720p to 4K and in
+			split screen) */
+			if (perf_overlay == _perf_overlay_detailed)
+			{
+				/* (the widest label seen, so that the cells keep their width
+				as the sections shown change) */
+				static short label_most = 0;
+				struct perf_overlay_cell cells[PERF_OVERLAY_CELLS];
+				struct perf_overlay_place place;
+				rectangle2d window = render.camera.window_bounds;
+				rectangle2d wide = window, text, cursor;
+				short count = perf_overlay_cells(cells);
+				short value_width, cell;
+
+				wide.x0 = 0;
+				wide.x1 = 0x3FFF;
+				draw_string_set_format(NONE, _text_justification_left, 0);
+				for (cell = 0; cell < count; cell++)
+				{
+					draw_string_compute_bounds(&wide, cells[cell].label, &text, &cursor);
+					label_most = (short)MAX(label_most, text.x1 - text.x0);
+				}
+				/* (a value as wide as the widest a cell shows) */
+				draw_string_compute_bounds(&wide, "000.00 ms", &text, &cursor);
+				value_width = (short)(text.x1 - text.x0);
+				perf_overlay_place(window.x0, window.y0, window.x1, window.y1, menu_shape_pixels(),
+					local_player_count() > 1, count, (short)(label_most + 24 + value_width),
+					draw_string_capital_height(), &place);
+				rasterizer_text_set_scale(place.scale, (real)place.anchor_x, (real)place.anchor_y);
+				draw_string_set_color(global_real_argb_white);
+				for (cell = 0; cell < place.rows * PERF_OVERLAY_COLUMNS && cell < count; cell++)
+				{
+					short row = (short)(cell / PERF_OVERLAY_COLUMNS);
+					short column = (short)(cell % PERF_OVERLAY_COLUMNS);
+
+					bounds.x0 = (short)(place.anchor_x - place.width + column * (place.cell_width + place.column_gap));
+					bounds.x1 = (short)(bounds.x0 + place.cell_width);
+					bounds.y0 = (short)(place.anchor_y - place.height + row * place.row_height);
+					bounds.y1 = window.y1;
+					draw_string_set_format(NONE, _text_justification_left, 0);
+					rasterizer_draw_string(&bounds, NULL, NULL, 0, cells[cell].label);
+					draw_string_set_format(NONE, _text_justification_right, 0);
+					rasterizer_draw_string(&bounds, NULL, NULL, 0, cells[cell].value);
+				}
+				rasterizer_text_set_scale(1.0f, 0.0f, 0.0f);
+				draw_string_set_format(NONE, _text_justification_left, 0);
+			}
 		}
 	}
 
@@ -3961,6 +4061,106 @@ static boolean main_frame_work_pending(
 		main_globals.queue_map;
 }
 
+/* port: a step of the game's clock run when it falls due, not at the next
+frame's start (port/linux/game/unseen_frames.c's frame_step_wake): in an
+OpenH1 network game whose frames are seen and paced by the frames' limit,
+the frame's wait for it (main_present_frame's, sdl_platform.c's
+platform_video_swap) wakes when a step falls due first, and a frame of its
+own (main_loop's frame_for_step) runs it then: its input read, the
+datagrams read, the step run and its datagrams sent, the menus and the
+world updated as in any frame, nothing drawn; then the wait goes on to the
+frame's time (platform_frame_wait). Only in main.c's own waits (not a
+load's progress screen's), and only where such a frame's work beside the
+step ends before the frame's time: the step itself takes as long in the
+frame, so a step frame that ends past the frame's time still has the frame
+start sooner than one that runs the step (a step of 5 to 7 ms with 60 bots
+on a weak processor, left to the frame for want of a whole step's room, had
+the frame shown that much later). How long that work takes (nanoseconds:
+the step frame's own less its game_time_update's), the longest of late,
+each at most MAIN_STEP_FRAME_LONGEST_COST (a hitch is not the next's), and
+the margin over it. And the step frame starts as late as it can and still
+end by the frame's time, never before the step falls due: its whole cost
+(the longest of late, at most MAIN_STEP_FRAME_LONGEST_WHOLE) and the margin
+before it, so that the step's input is read as late as the frame's would
+be, and no later than the frame would have read it */
+#define MAIN_STEP_FRAME_FIRST_COST 1500000ULL
+#define MAIN_STEP_FRAME_LONGEST_COST 4000000ULL
+#define MAIN_STEP_FRAME_LONGEST_WHOLE 10000000ULL
+#define MAIN_STEP_FRAME_MARGIN 300000ULL
+static boolean main_frame_waiting;
+static unsigned long long main_step_frame_cost = MAIN_STEP_FRAME_FIRST_COST;
+static unsigned long long main_step_frame_whole = MAIN_STEP_FRAME_FIRST_COST;
+/* (a frame woken for a step) its game_time_update's time, nanoseconds */
+static unsigned long long main_step_frame_step;
+
+static boolean main_frame_steps_when_due(
+	void)
+{
+#ifdef HALO_VR
+	/* (VR's frames are timed by its runtime: main_update_time_unthrottled) */
+	return FALSE;
+#else
+	return main_frame_waiting && game_in_progress() && main_globals.halt_time_scale && !main_globals.movie &&
+		halo_interpolation_enabled() && main_frame_time_fixed() <= 0.0f && !main_frame_work_pending() &&
+		!demo_playing() && !menu_pictures_preparing() && !game_time_get_paused() &&
+		network_clock_steps_when_due();
+#endif
+}
+
+/* (sdl_platform.c, in a frame's wait for the frames' limit, its time at
+frame_due) when the wait wakes for the clock's next step: 0, not */
+static unsigned long long main_frame_step_due(
+	unsigned long long now,
+	unsigned long long frame_due)
+{
+	LARGE_INTEGER counter;
+	LARGE_INTEGER frequency;
+	double since;
+	long long left;
+	real seconds;
+
+	/* (the cost of late, let go of slowly) */
+	main_step_frame_cost -= main_step_frame_cost / 256;
+	main_step_frame_whole -= main_step_frame_whole / 256;
+	if (!main_frame_steps_when_due())
+		return 0;
+	seconds = game_time_seconds_to_next_step();
+	QueryPerformanceCounter(&counter);
+	QueryPerformanceFrequency(&frequency);
+	if (seconds < 0.0f || !previous_counter.QuadPart || !frequency.QuadPart)
+		return 0;
+	/* (the step's time counted from the frame's time read; a microsecond
+	more, so that the step is due, not a rounding short of it) */
+	since = (double)(counter.QuadPart - previous_counter.QuadPart) / (double)frequency.QuadPart;
+	left = (long long)(((double)seconds - since) * 1e9) + 1000;
+	/* (not before the frame's time less the step frame's whole cost) */
+	if (frame_due > now)
+		left = MAX(left, (long long)(frame_due - now) - (long long)(main_step_frame_whole + MAIN_STEP_FRAME_MARGIN));
+	return frame_step_wake(now, frame_due, left, main_step_frame_cost + MAIN_STEP_FRAME_MARGIN);
+}
+
+/* (a frame woken for a step, which drew nothing) the rest of the frame's
+wait, a host reading its datagrams meanwhile as in a frame's present
+(port/linux/game/network_receive.c), and how long the frame took */
+static void main_frame_wait_after_step(
+	unsigned long long began)
+{
+	unsigned long long cost = SDL_GetTicksNS() - began;
+
+	main_step_frame_whole = MAX(main_step_frame_whole, MIN(cost, MAIN_STEP_FRAME_LONGEST_WHOLE));
+	cost = cost > main_step_frame_step ? cost - main_step_frame_step : 0;
+	main_step_frame_step = 0;
+	cost = MIN(cost, MAIN_STEP_FRAME_LONGEST_COST);
+	main_step_frame_cost = MAX(main_step_frame_cost, cost);
+	main_frame_waiting = TRUE;
+	network_receive_frame_presenting(TRUE);
+	network_receive_frame_wait_begin();
+	platform_frame_wait();
+	network_receive_frame_wait_end();
+	network_receive_frame_presenting(FALSE);
+	main_frame_waiting = FALSE;
+}
+
 void main_loop(
 	void)
 {
@@ -3969,6 +4169,10 @@ void main_loop(
 	boolean loading_game_frame; /* port: only a completed game picture ends loading */
 	boolean frames_unseen; /* port: nobody sees the frames (port/linux/game/unseen_frames.c) */
 	boolean frames_undrawn; /* port: ... and they need not be drawn */
+	boolean unseen_waited; /* port: ... and the frame waited for its step before its reads */
+	long frame_ticks; /* port: the ticks the game ran this frame (speedrun_state.c) */
+	boolean frame_for_step; /* port: the frame's wait woke for a step: this frame draws nothing (main_frame_step_due) */
+	unsigned long long frame_began; /* port: ... and when it began (nanoseconds of SDL_GetTicksNS) */
 
 	if (!game_in_editor())
 	{
@@ -3986,10 +4190,19 @@ void main_loop(
 	console_startup();
 	main_setup_connection();
 	main_initialize_time();
+	/* port: a step that falls due in a frame's wait run then */
+	platform_frame_step_hook(main_frame_step_due);
 
 	while (TRUE)
 	{
 		loading_game_frame = FALSE; /* port: loading presentation is independent of game frames */
+		frame_ticks = 0;
+		frames_undrawn = FALSE;
+		/* port: the frame's wait woke for a step before the frame's time:
+		this frame runs it and draws nothing, then waits again
+		(main_frame_step_due) */
+		frame_for_step = platform_frame_woken_for_step() != 0;
+		frame_began = frame_for_step ? SDL_GetTicksNS() : 0;
 		/* port: what follows changes the game as a whole (saves it, loads a
 		saved game, changes the map), between two ticks: with game.sim_rate's
 		sub-steps spread over the frames, not while a tick is open between two
@@ -4094,10 +4307,27 @@ void main_loop(
 			main_reset_map_private();
 		}
 
+		/* port: a host or client of an OpenH1 game whose frames nobody sees
+		waits for its step before its reads, a host reading what comes
+		meanwhile: what came in the wait is read before the step it waited
+		for, not after it (port/linux/game/unseen_frames.c); and before its
+		input is read too, which the step then takes as fresh as a step run
+		when due by a frame that is seen (main_frame_step_due), not read up to
+		a step before it */
+		unseen_waited = FALSE;
+		if (!halo_server_mode() && !shell_application_is_paused() && halo_frames_unseen() &&
+			main_frame_time_fixed() <= 0.0f && !main_globals.movie && network_clock_unseen_wait_first())
+		{
+			unseen_frame_wait_receiving(main_globals.connection == _game_connection_network_server ?
+				network_distributed_server_receive : NULL);
+			unseen_waited = TRUE;
+		}
 		profile_frame_start();
 		profile_scope_enter(main_input_section)
 		input_frame_begin();
 		input_update();
+		/* port: the frame's input read, for debug.network_latency_trace */
+		network_latency_trace_frame_input();
 		input_abstraction_update();
 		profile_scope_exit(main_input_section)
 		profile_scope_enter(main_platform_events_section)
@@ -4126,6 +4356,9 @@ void main_loop(
 			/* port: a demo asked for played, and the end of one
 			(port/linux/game/demo.c) */
 			demo_frame(main_globals.main_menu_scenario_loaded, main_globals.seconds_elapsed);
+			/* port: the built-in benchmark, begun, measured and its results
+			shown (port/linux/game/benchmark.c) */
+			benchmark_frame(main_globals.main_menu_scenario_loaded);
 			/* port: Basic Training's game started, its skip buttons
 			(port/linux/game/basic_training.c) */
 			basic_training_update(main_globals.main_menu_scenario_loaded, main_globals.seconds_elapsed);
@@ -4204,6 +4437,8 @@ void main_loop(
 			time their input for (port/linux/game/network_clock.c); and while it
 			waits it reads them as they come, sending their input on at once
 			(port/linux/game/network_distributed.c) */
+			/* (and so does a host or client of an OpenH1 game whose frames
+			nobody sees, before its input is read: above) */
 			if (halo_server_mode() && network_clock_server_pace_first())
 				server_mode_pace_frame_receiving(network_distributed_server_receive);
 			profile_scope_enter(main_network_start_frame_section)
@@ -4259,7 +4494,7 @@ void main_loop(
 			movie), which run as fast as they can */
 			else if (frames_unseen)
 			{
-				if (main_frame_time_fixed() <= 0.0f && !main_globals.movie &&
+				if (!unseen_waited && main_frame_time_fixed() <= 0.0f && !main_globals.movie &&
 					!(halo_fixed_step() && main_globals.connection == _game_connection_local))
 				{
 					unseen_frame_wait();
@@ -4322,8 +4557,16 @@ void main_loop(
 					}
 					profile_scope_exit(main_network_end_frame_section)
 
-					profile_scope(main_game_time_update_section,
-						game_time_update((real)main_globals.halt_time_scale*main_globals.seconds_elapsed);)
+					{
+						unsigned long long step_began = frame_for_step ? SDL_GetTicksNS() : 0;
+
+						profile_scope(main_game_time_update_section,
+							game_time_update((real)main_globals.halt_time_scale*main_globals.seconds_elapsed);)
+						/* port: (the step frame's work beside its step: main_frame_wait_after_step) */
+						if (frame_for_step)
+							main_step_frame_step = SDL_GetTicksNS() - step_began;
+					}
+					frame_ticks = game_time_get_elapsed();
 
 					render_frame = main_globals.main_menu_scenario_loaded ||
 						(main_globals.halt_time_scale &&
@@ -4336,6 +4579,8 @@ void main_loop(
 					kept (menu_pictures_render.c) */
 					if (menu_pictures_preparing())
 						render_frame = menu_pictures_frame_drawn();
+					/* port: nor one woken for a step before its time (main_frame_step_due) */
+					render_frame &= !frame_for_step;
 
 					profile_scope_enter(main_non_deterministic_update_section)
 					collision_log_continue_period(1);
@@ -4377,8 +4622,9 @@ void main_loop(
 					profile_render_end();
 				}
 			}
-			/* port: nothing drawn on a dedicated server, nor waited for */
-			else if (!halo_server_mode())
+			/* port: nothing drawn on a dedicated server, nor waited for (nor
+			in a frame woken for a step before its time) */
+			else if (!halo_server_mode() && !frame_for_step)
 			{
 				profile_render_start();
 				main_pregame_render();
@@ -4386,13 +4632,27 @@ void main_loop(
 			}
 
 			/* port: (none for a frame not drawn: menu_pictures_render.c) */
-			if (!halo_server_mode() && !frames_unseen && menu_pictures_frame_drawn())
+			if (!halo_server_mode() && !frames_unseen && !frame_for_step && menu_pictures_frame_drawn())
 				profile_scope(main_throttle_section, main_rasterizer_throttle();)
 
-			if (render_frame && !debug_no_drawing && !frames_undrawn)
+			/* port: a frame woken for a step before its time, which drew
+			nothing, waits on for its time (main_frame_step_due) */
+			if (frame_for_step)
+				main_frame_wait_after_step(frame_began);
+			else if (render_frame && !debug_no_drawing && !frames_undrawn)
 			{
+				/* port: a host of a network game reads its datagrams while the
+				frame waits for the display (port/linux/game/network_receive.c);
+				a step that falls due first runs then (main_frame_step_due) */
+				network_receive_frame_presenting(TRUE);
+				main_frame_waiting = TRUE;
 				profile_scope(main_present_section, main_present_frame();)
+				main_frame_waiting = FALSE;
+				network_receive_frame_presenting(FALSE);
 				LATENCY_LOG(latency_log_frame_presented()); /* port: debug.latency_log */
+				/* port: debug.network_latency_trace (a frame seen) */
+				if (!frames_unseen)
+					NETWORK_LATENCY_TRACE(network_latency_trace_presented());
 				if (loading_game_frame)
 					halo_loading_end(); /* port: return presentation after the first complete game picture */
 				/* port: submission returned; host traces measure presentation */
@@ -4405,6 +4665,16 @@ void main_loop(
 		}
 
 		input_frame_end();
+		/* port: the practice keys and the PRACTICE mark
+		(port/linux/game/practice.c), before the block that holds the mark */
+		practice_frame();
+		/* port: the speedrun state block, for timers' autosplitters
+		(port/linux/game/speedrun_state.c) */
+		speedrun_state_frame(frame_ticks, loading_game_frame, frames_undrawn || debug_no_drawing,
+			main_globals.main_menu_scenario_loaded || menu_pictures_preparing());
+		/* port: the game's state for stream overlays (display.state_file,
+		port/linux/game/stream_state.c) */
+		stream_state_frame();
 		profile_frame_end();
 		main_frame_rate_debug();
 		halo_load_trace_frame(); /* port: debug.load_trace's long frames */

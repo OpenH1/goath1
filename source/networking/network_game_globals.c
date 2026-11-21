@@ -116,6 +116,8 @@ symbols in this file:
 /* port: source/math/random_math.c's, port/linux/src/port_config.c's */
 unsigned long get_number_suitable_for_initializing_random_seed(void);
 long config_integer(const char *name);
+/* port/linux/game/network_standard.c */
+long network_standard_agreed_rate(void);
 /* cseries_windows.c's */
 unsigned long system_milliseconds(void);
 
@@ -644,8 +646,11 @@ boolean network_game_client_end_frame(
 			/* (the input goes in its own message, network_distributed.c,
 			and the host takes its own players' at each tick,
 			update_server_next_update: this one only says the client is
-			there) */
-			100 &&
+			there. An OpenH1 host, which takes none of its actions
+			(update_server_handle_client_update) and hears the client in
+			each of its messages, once a second; an OpenCE host's ten times
+			a second, as the original game's) */
+			(unsigned long)(network_standard_agreed_rate() != 0 ? 1000 : 100) &&
 			network_game_client_server_has_started_game(global_network_game_client))
 		{
 			update_client_build_client_update(&update);

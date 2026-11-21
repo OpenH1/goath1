@@ -34,7 +34,8 @@ DISTRIBUTED_FUNCTIONS = ("distributed_put", "distributed_take", "distributed_rea
                          "distributed_vector_pack", "distributed_vector_unpack", "distributed_deck_put",
                          "distributed_deck_take",
                          "distributed_vector_difference", "distributed_grid_steps", "distributed_unit_state_snap",
-                         "distributed_unit_state_as_written", "distributed_unit_difference_write")
+                         "distributed_unit_state_as_written", "distributed_unit_packed_time",
+                         "distributed_unit_packed_write", "distributed_unit_difference_write")
 ACTOR_FUNCTIONS = ("actor_put", "actor_take", "actor_state_compact_write", "actor_state_compact_read")
 
 # a fault in an encoding and the case whose bytes must show it
@@ -153,6 +154,7 @@ def generated(fault=None):
     distributed_header = read(DISTRIBUTED_HEADER)
     actors = read(ACTORS)
     code = "\n".join(function(legacy, name) for name in LEGACY_FUNCTIONS)
+    code += "\n" + read("port/linux/game/network_bits.h")
     code += "\n" + "\n".join(function(distributed, name) for name in DISTRIBUTED_FUNCTIONS)
     code += "\n" + "\n".join(function(actors, name) for name in ACTOR_FUNCTIONS)
     if fault:
@@ -174,8 +176,10 @@ def generated(fault=None):
     config += legacy_header[legacy_header.index("/* ---------- constants */"):legacy_header.rindex("#endif")]
     config += "boolean distributed_real_valid(real value);\n"
     config += legacy[legacy.index("/* ---------- constants */"):legacy.index("/* ---------- private code */")]
-    for member in ("UNIT_BASE_TICKS", "_unit_difference_form_whole", "_unit_difference_flags_bit"):
+    for member in ("UNIT_BASE_TICKS", "_unit_difference_form_whole", "_unit_difference_flags_bit",
+                   "UNIT_PACKED_FORM_BIT", "_unit_packed_position_bit"):
         config += enum_with(distributed, member) + "\n"
+    config += re.search(r"^#define UNIT_PACKED_VELOCITY_STEPS .*$", distributed, re.M)[0] + "\n"
     for member in ("_actor_part_riding_bit", "ACTOR_COMPACT_MINIMUM_SIZE"):
         config += enum_with(actors, member) + "\n"
     return (("config.inc", config), ("under_test.inc", code))

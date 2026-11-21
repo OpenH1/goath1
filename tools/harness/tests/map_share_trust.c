@@ -22,6 +22,7 @@ typedef unsigned short word;
 #define csstrncmp(first, second, count) strncmp(first, second, count)
 #define csstrncpy(destination, source, count) strncpy(destination, source, count)
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define _error_silent 0
 #define error(level, ...) ((void)0)
 #define server_event_map_share(machine_index, map, state, done, total) ((void)0)
@@ -114,6 +115,20 @@ static char const *tag_name_strip_path(char const *name)
 	char const *slash = strrchr(name, '\\');
 
 	return slash ? slash + 1 : name;
+}
+
+/* the host's upload (network.map_share_upload, bytes a second), and the
+machine it removed (NONE: none) */
+static long fake_upload = 1024 * 1024;
+static long upload_limit(void)
+{
+	return fake_upload;
+}
+static long fake_kicked = NONE;
+static void network_game_server_kick_machine(long machine_index, boolean kept_out)
+{
+	(void)kept_out;
+	fake_kicked = machine_index;
 }
 
 #define config_boolean(name) 1
@@ -233,6 +248,22 @@ static void host_told(unsigned long done)
 	progress.done = done;
 	progress.total = fake_file.size;
 	host_progress(3, &progress);
+}
+
+/* the largest map a cache takes, as the game's */
+static void host_setup_largest(void)
+{
+	host_setup();
+	fake_file.size = MAXIMUM_MAP_BYTES;
+	fake_file.piece_count = MAXIMUM_MAP_BYTES / MAP_SHARE_PIECE_BYTES;
+}
+
+/* two seconds pass, the host's frame run, machine 3 saying it has `done` */
+static void host_frame(unsigned long done)
+{
+	fake_now += 2000;
+	host_told(done);
+	host_bound_downloads();
 }
 
 /* `time` milliseconds pass, machine 3 saying it has `done` bytes every two
@@ -360,6 +391,73 @@ int main(int argc, char **argv)
 		CHECK(!map_share_machine_downloading(3), "saying it has it all kept a machine downloading");
 		return 0;
 	}
+	/* a machine that says a piece more just often enough, its download going
+	nowhere the host can see, is ended at the bound (the files' bytes at the
+	floor rate after the grace), and removed */
+	CASE("progress-bounded")
+	{
+		unsigned long start;
+		unsigned long bound;
+		unsigned long done = 0;
+
+		host_setup_largest();
+		host_ask();
+		start = fake_now;
+		bound = DOWNLOAD_GRACE + (unsigned long)((unsigned long long)MAXIMUM_MAP_BYTES * 1000 /
+			(DOWNLOAD_FLOOR_KILOBYTES * 1024));
+		while (fake_now - start < bound - 4000)
+		{
+			/* (a piece every 70 seconds: within the stall's 80) */
+			if ((fake_now - start) % 70000 < 2000)
+				done += MAP_SHARE_PIECE_BYTES;
+			host_frame(done);
+			CHECK(fake_kicked == NONE, "removed after %lu s, before its bound of %lu s", (fake_now - start) / 1000,
+				bound / 1000);
+		}
+		CHECK(map_share_machine_needs_map(3), "a machine still advancing was given up on before its bound");
+		host_frame(done += MAP_SHARE_PIECE_BYTES);
+		host_frame(done += MAP_SHARE_PIECE_BYTES);
+		host_frame(done += MAP_SHARE_PIECE_BYTES);
+		CHECK(!map_share_machine_downloading(3) && !map_share_machine_needs_map(3),
+			"a machine past its bound still holds its slot as downloading");
+		CHECK(fake_kicked == 3, "a machine past its bound was not removed");
+		/* (asking again does not start its time again) */
+		fake_kicked = NONE;
+		host_ask();
+		CHECK(!map_share_machine_needs_map(3), "asking again gave a machine past its bound more time");
+		return 0;
+	}
+	/* a host that sends slowly waits longer, never past the cap */
+	CASE("progress-bound-capped")
+	{
+		host_setup_largest();
+		fake_upload = 16 * 1024;
+		host_ask();
+		CHECK(map_share_globals.machines[3].deadline - fake_now <= (unsigned long)DOWNLOAD_CAP + 1,
+			"a download's bound is past the cap: %lu s", (map_share_globals.machines[3].deadline - fake_now) / 1000);
+		CHECK(map_share_globals.machines[3].deadline - fake_now >= (unsigned long)DOWNLOAD_CAP - 1,
+			"a slow host's bound is not its slow rate's (to the cap): %lu s",
+			(map_share_globals.machines[3].deadline - fake_now) / 1000);
+		return 0;
+	}
+	/* a genuinely slow download of the largest map, just over the floor
+	rate, is never ended */
+	CASE("progress-slow-largest-map")
+	{
+		/* (66 KB/s: 132 KB a frame of two seconds) */
+		unsigned long done = 0;
+
+		host_setup_largest();
+		host_ask();
+		while (done < MAXIMUM_MAP_BYTES)
+		{
+			done = MIN(done + 132 * 1024, (unsigned long)MAXIMUM_MAP_BYTES);
+			host_frame(done);
+			CHECK(fake_kicked == NONE && (done == MAXIMUM_MAP_BYTES || map_share_machine_needs_map(3)),
+				"a download at 66 KB/s was ended at %lu of %lu MB", done >> 20, (unsigned long)MAXIMUM_MAP_BYTES >> 20);
+		}
+		return 0;
+	}
 	/* asking again does not start the count again; a machine that left is
 	forgotten */
 	CASE("progress-asked-again")
@@ -472,6 +570,35 @@ int main(int argc, char **argv)
 		host_asked_for(fake_game.map.name);
 		CHECK(map_share_globals.machines[3].address == ADDRESS(10, 0, 0, 4),
 			"another machine in the slot waited for the last's turn");
+		return 0;
+	}
+	/* a transfer is of the map it named: the game on another map ends it at
+	once (the client ends its own and says nothing), so the machine is not
+	taken for downloading the new map, and starts with the others; back on
+	the first map, the old transfer does not come back */
+	CASE("map-change-ends-transfer")
+	{
+		host_setup();
+		host_ask();
+		host_told(MAP_SHARE_PIECE_BYTES);
+		CHECK(map_share_machine_downloading(3) && map_share_machine_needs_map(3), "an offered machine is not downloading");
+		/* (the host's game on a map the machine has; no word from it) */
+		strcpy(fake_game.map.name, "custom_maps\\bloodgulch");
+		fake_now += 100;
+		CHECK(!map_share_machine_needs_map(3), "a machine was held for the last map's transfer after the map changed");
+		CHECK(!map_share_machine_downloading(3), "a machine was taken for downloading the new map");
+		host_update();
+		CHECK(!map_share_globals.machines[3].downloading && !map_share_globals.machines[3].asked,
+			"the last map's transfer was kept");
+		/* (back on the first map within the time a silent machine is kept) */
+		strcpy(fake_game.map.name, "custom_maps\\hugeass");
+		fake_now += 100;
+		host_update();
+		CHECK(!map_share_machine_downloading(3), "the transfer the map change ended came back with its map");
+		/* (a request for the game's map now starts one) */
+		fake_now += MAP_REQUEST_INTERVAL + 1;
+		host_ask();
+		CHECK(map_share_machine_downloading(3), "a request for the game's map did not start a transfer");
 		return 0;
 	}
 	fprintf(stderr, "unknown case: %s\n", case_name);

@@ -235,6 +235,7 @@ symbols in this file:
 #include "sound_preferences.h"
 #include "camera/director.h" /* port: the listener's velocity (refresh_listener) */
 #include "coop_sound_sync.h" /* port: port/linux/game/coop_sound_sync.c */
+#include "subtitles.h" /* port: port/linux/game/subtitles.c */
 #include "camera/observer.h"
 #include "effects/player_effects.h"
 #include "game/game.h"
@@ -248,11 +249,17 @@ symbols in this file:
 #include <math.h>
 #include <stdio.h>
 
-/* port: a stereo channel's sound in the world panned towards it, muffled
-and reverberated as a 3D channel's is (sound_dsound_xbox.c; update_channels) */
-void dsound_port_set_channel_stereo_position(short virtual_channel_index, boolean positioned, real pan,
-	real distance, real minimum_distance, real distance_fade, real obstruction, real occlusion,
+/* port: a stereo channel's sound in the world heard from where it is, as a
+3D channel's is (sound_dsound_xbox.c; update_channels) */
+void dsound_port_set_channel_stereo_position(short virtual_channel_index, boolean positioned,
+	struct sound_location const *location, real minimum_distance, real obstruction, real occlusion,
 	boolean attenuate_direct_path);
+/* port: whether a map's sound tag plays from a mod's or a loose tag file
+(port/linux/game/mod_sounds.c), and whether a Custom Edition map is loaded
+and a tag of it is one of Halo PC's own (custom_edition_cache.c) */
+boolean mod_sounds_replaced(long tag_index);
+boolean custom_edition_cache_tags_loaded(void);
+boolean custom_edition_cache_stock_tag(long tag_index);
 
 #ifdef HALO_VR
 /* port: the VR mode's listener, the head (port/linux/game/vr_render.c) */
@@ -960,6 +967,10 @@ boolean sound_scripted_dialog_is_playing(
 void sound_initialize_for_new_map(
 	void)
 {
+	/* port: the new map's ranges of more than 32 permutations start with
+	none of those past 32 played (sound_definitions.c) */
+	sound_definitions_played_beyond_clear();
+
 	return;
 }
 
@@ -1207,8 +1218,10 @@ static short sound_definition_promote(
 	return result;
 }
 
-/* port: config.toml's audio.music_volume and audio.effects_volume, read
-again when Settings changes them */
+/* port: config.toml's audio.music_volume, audio.dialogue_volume (the classes
+marked speech: the units' and the scripts' dialogue, #1107) and
+audio.effects_volume (every other class), read again when Settings changes
+them */
 double config_real(const char *name);
 unsigned long config_changes(void);
 
@@ -1217,15 +1230,21 @@ static real sound_manager_port_volume(
 {
 	static unsigned long read_at = (unsigned long)-1;
 	static real music_volume = 1.f;
+	static real dialogue_volume = 1.f;
 	static real effects_volume = 1.f;
 
 	if (read_at != config_changes())
 	{
 		read_at = config_changes();
 		music_volume = PIN((real)config_real("audio.music_volume"), 0.f, 1.f);
+		dialogue_volume = PIN((real)config_real("audio.dialogue_volume"), 0.f, 1.f);
 		effects_volume = PIN((real)config_real("audio.effects_volume"), 0.f, 1.f);
 	}
-	return class_index == _sound_class_music ? music_volume : effects_volume;
+	if (class_index == _sound_class_music)
+	{
+		return music_volume;
+	}
+	return sound_class_get(class_index)->speech ? dialogue_volume : effects_volume;
 }
 
 static real sound_manager_master_gain(
@@ -2303,6 +2322,14 @@ static real source_distance_squared(
 	return distance_squared;
 }
 
+/* port: music and speech (the classes marked speech: the units' and the
+scripts' dialogue) */
+static boolean sound_class_is_music_or_speech(
+	short class_index)
+{
+	return class_index == _sound_class_music || sound_class_get(class_index)->speech;
+}
+
 static boolean sound_preempts_sound(
 	long challenger_sound_index,
 	long champion_sound_index,
@@ -2314,11 +2341,24 @@ static boolean sound_preempts_sound(
 	struct sound_datum *champion_sound = sound_get(champion_sound_index);
 	struct sound_definition *champion_definition =
 		sound_definition_get(champion_sound->definition_index);
+	boolean challenger_kept = sound_class_is_music_or_speech(challenger_definition->sound_class);
 
 	match_assert(
 		"c:\\halo\\SOURCE\\sound\\sound_manager.c",
 		0x763,
 		challenger_sound_index!=champion_sound_index);
+
+	/* port: music and speech outrank every other class, whatever its
+	priority. Music's is 2 and the units' speech 3, under the weapons' 4 and
+	the engines' 3, so when a channel type was full (a sound mod's stereo 44 kHz
+	weapons and engines, in the 9 channels the music plays in) an effect took
+	the music's or a line's channel and cut it off (#1125). Between two of
+	music or speech, or two others, the priorities and distances decide as
+	before. */
+	if (challenger_kept != sound_class_is_music_or_speech(champion_definition->sound_class))
+	{
+		return challenger_kept;
+	}
 
 	return
 		sound_class_get(challenger_definition->sound_class)->priority >
@@ -2496,6 +2536,58 @@ static short sound_find_like_channel(
 	return NONE;
 }
 
+/* port: an impulse sound plays on through its permutation's linked pieces
+of 16-bit PCM at its own rate: those a mod's long permutation is split into
+(mod_sounds.c's range_split, OpenH1 issue 1167), or a Halo PC map's chain
+kept as PCM (custom_edition_sounds.c). The channel's
+playing permutation with none queued after it is given the next of its
+chain, from the sound cache, as a looping sound's track is
+(update_channel_for_looping_sound), so that its packets follow the last of
+the one before (sound_dsound_xbox.c: of the same format, no switch). Only
+a permutation of PCM at its own rate is followed: the Xbox's own linked
+permutations, all Xbox ADPCM, play as the Xbox played them (an impulse
+sound, its first). */
+static void update_channel_for_impulse_sound_piece(
+	short channel_index)
+{
+	struct sound_channel_datum *channel = channel_get(channel_index);
+	struct sound_datum *sound = sound_get(channel->sound_index);
+	struct sound_definition *definition =
+		sound_definition_get(sound->definition_index);
+	struct sound_pitch_range *pitch_range;
+	struct sound_permutation *next;
+	short next_index;
+
+	if (!channel->playing_permutation ||
+		channel->queued_permutation ||
+		!sound_permutation_pcm_rate(channel->playing_permutation) ||
+		!VALID_INDEX(sound->pitch_range_index, definition->pitch_ranges.count))
+	{
+		return;
+	}
+	pitch_range = TAG_BLOCK_GET_ELEMENT(
+		&definition->pitch_ranges,
+		sound->pitch_range_index,
+		struct sound_pitch_range);
+	next_index = sound_permutation_next(definition, pitch_range, channel->playing_permutation);
+	if (!VALID_INDEX(next_index, pitch_range->permutations.count))
+	{
+		return;
+	}
+	next = TAG_BLOCK_GET_ELEMENT(
+		&pitch_range->permutations,
+		next_index,
+		struct sound_permutation);
+	if (sound_permutation_pcm_rate(next) == sound_permutation_pcm_rate(channel->playing_permutation) &&
+		_sound_cache_sound_request(next, FALSE, TRUE, TRUE))
+	{
+		sound->permutation_index = next_index;
+		channel_queue_sound(channel_index, next);
+	}
+
+	return;
+}
+
 static void update_channel_for_impulse_sound(
 	short channel_index,
 	real fade)
@@ -2551,6 +2643,7 @@ static void update_channel_for_impulse_sound(
 
 		channel_set_properties_hardware(channel_index, &properties, TRUE);
 	}
+	update_channel_for_impulse_sound_piece(channel_index);
 
 	sound_manager_globals.platform_definition->channel_update(channel_index);
 
@@ -2785,6 +2878,18 @@ long sound_new_impulse(
 				definition->sample_rate);
 		}
 	}
+
+	/* port: its subtitle (display.subtitles: port/linux/game/subtitles.c), a
+	scripted line's always, another's as it plays or with the sound off */
+	subtitles_sound_started(
+		definition_index,
+		definition->longest_permutation_length,
+		definition->sound_class == _sound_class_scripted_dialog_to_player ||
+			definition->sound_class == _sound_class_scripted_dialog_to_other ||
+			definition->sound_class == _sound_class_scripted_dialog_force_unspatialized ||
+			sound_index != NONE ||
+			!sound_manager_globals.initialized ||
+			!sound_manager_globals.enabled);
 
 	return sound_index;
 }
@@ -3860,6 +3965,44 @@ boolean sound_vr_listener_head(
 }
 #endif
 
+/* port: whether a stereo sound of the world is heard from where it is
+(dsound_port_set_channel_stereo_position: placed, its two channels spread
+either side of it, port/linux/src/dsound_sdl.c), the one place this is
+decided. The Xbox never placed a stereo channel: its own stereo world sounds
+(the bullet, plasma, needle and tank-shell flybys, the Pelican's wind, the
+vent and wind sound scenery) play full stereo, dry, faded linearly with
+distance, and so do a Halo PC tag's on a Custom Edition map. Placed are the
+stereo sounds that are not the game's: a mod's or a loose tag file's in
+place of a map's sound (mod_sounds_replaced), and a Custom Edition map's own
+(not in Halo PC's resource maps: custom_edition_cache_stock_tag), whose
+stereo gunfire would otherwise come from nowhere. */
+static boolean sound_stereo_placed(
+	long definition_index)
+{
+	return mod_sounds_replaced(definition_index) ||
+		(custom_edition_cache_tags_loaded() && !custom_edition_cache_stock_tag(definition_index));
+}
+
+/* port: a stereo channel's fade with distance: placed (sound_stereo_placed),
+the inverse distance gain a 3D channel's stream gives it, from the minimum
+distance (the listener's rolloff factor is 1), which the 2D stream it plays
+on lacks; otherwise the Xbox's, the linear fade from the minimum to the
+maximum distance (linear_fade). A 3D sound is not cut off at the tag's
+maximum distance either: none starts past it. */
+static real sound_stereo_fade(
+	boolean placed,
+	real linear_fade,
+	real distance,
+	real minimum_distance)
+{
+	if (!placed)
+	{
+		return linear_fade;
+	}
+
+	return minimum_distance > 0.f && distance > minimum_distance ? minimum_distance / distance : 1.f;
+}
+
 static void update_channels(
 	void)
 {
@@ -3976,8 +4119,10 @@ static void update_channels(
 			else
 			{
 				real_point3d relative_position = sound->source.location.position;
-				/* port: what a 3D channel is given of its sound's surroundings,
-				for a stereo one's (dsound_port_set_channel_stereo_position) */
+				/* port: what a 3D channel is given of its sound's place and
+				surroundings, for a stereo one's (its velocity as the 3D
+				channels' above: dsound_port_set_channel_stereo_position) */
+				real_vector3d relative_velocity = sound->source.location.translational_velocity;
 				real stereo_obstruction = 0.f;
 				real stereo_occlusion = 0.f;
 				boolean stereo_underwater = FALSE;
@@ -3988,7 +4133,10 @@ static void update_channels(
 					/* port: (unpanned and dry: dsound_port_set_channel_stereo_position) */
 					if (TEST_FLAG(channel->type_flags, _sound_channel_stereo_bit))
 					{
-						dsound_port_set_channel_stereo_position(channel_index, FALSE, 0.f, 0.f, 0.f, 1.f,
+						struct sound_location nowhere;
+
+						csmemset(&nowhere, 0, sizeof(nowhere));
+						dsound_port_set_channel_stereo_position(channel_index, FALSE, &nowhere, 0.f,
 							0.f, 0.f, FALSE);
 					}
 					break;
@@ -4006,6 +4154,13 @@ static void update_channels(
 							&listener->matrix,
 							&sound->source.location.position,
 							&relative_position);
+						matrix4x3_inverse_transform_vector(
+							&listener->matrix,
+							&sound->source.location.translational_velocity,
+							&relative_velocity);
+						relative_velocity.i = TICKS_PER_SECOND * relative_velocity.i - listener->velocity.i;
+						relative_velocity.j = TICKS_PER_SECOND * relative_velocity.j - listener->velocity.j;
+						relative_velocity.k = TICKS_PER_SECOND * relative_velocity.k - listener->velocity.k;
 						stereo_obstruction = sound->source.obstruction;
 						stereo_occlusion = sound->source.occlusion;
 						stereo_underwater = listener->underwater;
@@ -4021,6 +4176,7 @@ static void update_channels(
 
 						sound_vr_relative(&location);
 						relative_position = location.position;
+						relative_velocity = location.translational_velocity;
 					}
 #endif
 					{
@@ -4039,40 +4195,38 @@ static void update_channels(
 							(maximum_distance - minimum_distance);
 						real distance_fade = PIN(attenuation, 0.f, 1.f);
 
-						/* port: positioned stereo uses a 2D stream, so it misses
-						the 3D stream's inverse-distance gain: it takes that
-						instead of the linear fade (the listener's rolloff
-						factor is 1), so that it fades as a mono sound does. A
-						3D sound is not cut off at the tag's maximum distance
-						either: none starts past it. */
+						/* port: a stereo sound placed in the world
+						(sound_stereo_placed) is heard from where it is, as a
+						3D one is: the mixer spreads its two channels either
+						side of its place and spatializes each, with its
+						velocity relative to the listener (port/linux/src/dsound_sdl.c,
+						voice_in_world), the HRTF's direction, the Doppler
+						shift, obstruction and reverb, and the fade of a 3D
+						stream (sound_stereo_fade). (Obstruction and occlusion
+						go where the 3D channels' call above puts them.)
+						Any other plays as the Xbox played it: unplaced, dry,
+						faded linearly. */
 						if (TEST_FLAG(channel->type_flags, _sound_channel_stereo_bit))
 						{
-							distance_fade = minimum_distance > 0.f && distance > minimum_distance ?
-								minimum_distance / distance : 1.f;
+							boolean placed = sound_stereo_placed(sound->definition_index);
+							struct sound_location stereo_location = sound->source.location;
+
+							distance_fade = sound_stereo_fade(placed, distance_fade, distance, minimum_distance);
+							if (placed)
+							{
+								stereo_location.position = relative_position;
+								stereo_location.translational_velocity = relative_velocity;
+								dsound_port_set_channel_stereo_position(channel_index, TRUE, &stereo_location,
+									minimum_distance, stereo_obstruction, stereo_occlusion, stereo_underwater);
+							}
+							else
+							{
+								csmemset(&stereo_location, 0, sizeof(stereo_location));
+								dsound_port_set_channel_stereo_position(channel_index, FALSE, &stereo_location, 0.f,
+									0.f, 0.f, FALSE);
+							}
 						}
 						fade *= distance_fade;
-						/* port: and a stereo sound is panned towards where it
-						is, as the mixer pans a 3D one (port/linux/src/dsound_sdl.c,
-						spatialize: ahead is x, right -y; centred when close),
-						and muffled and reverberated as one is, which the Xbox's
-						stereo channels never were: a Custom Edition map's stereo
-						gunfire came from nowhere. (Obstruction and occlusion go
-						where the 3D channels' call above puts them.) */
-						if (TEST_FLAG(channel->type_flags, _sound_channel_stereo_bit))
-						{
-							real horizontal = square_root(
-								relative_position.x * relative_position.x +
-								relative_position.y * relative_position.y);
-							real pan = horizontal > 1.0e-4f ? -relative_position.y / horizontal : 0.f;
-
-							if (distance < minimum_distance && minimum_distance > 0.f)
-							{
-								pan *= distance / minimum_distance;
-							}
-							dsound_port_set_channel_stereo_position(channel_index, TRUE, 0.75f * pan,
-								distance, minimum_distance, distance_fade,
-								stereo_obstruction, stereo_occlusion, stereo_underwater);
-						}
 					}
 					break;
 
@@ -4504,19 +4658,10 @@ void sound_render(
 				((real)render_time - sound_manager_globals.render_time) *
 				0.029999999f;
 			sound_manager_globals.render_time = render_time;
-			/* Sounds are rendered once a frame, and a frame is well under a
-			tick on the native builds, so the ticks truncate to none and
-			scripted sound class fades would never move: carry the
-			fraction over. */
-			{
-				static real leftover_ticks = 0.f;
-				long ticks;
-
-				leftover_ticks += sound_manager_globals.ticks_elapsed;
-				ticks = (long)leftover_ticks;
-				leftover_ticks -= (real)ticks;
-				sound_classes_update(ticks);
-			}
+			/* port: the sound classes' fades step with the game's ticks
+			(game_tick_after_substeps, game.c), not here: their gains live in
+			the game state, and stepped by the frames' clock they differed
+			between frame rates (#1233) */
 			refresh_listener();
 			process_looping_sounds();
 			refresh_sounds();

@@ -83,6 +83,9 @@ unsigned int host_sdl_input_held(unsigned char *keys, int count);
 int host_sdl_set_clipboard_text(const char *text);
 void host_sdl_get_clipboard_text(char *buffer, unsigned int size);
 int host_sdl_open_url(const char *url);
+/* SDL_GetPreferredLocales: the system's languages, the most wanted first,
+as "fr_FR de en_US" (a language, then "_" and its place where it has one) */
+void host_sdl_preferred_locales(char *buffer, unsigned int size);
 /* the keyboard's keys by name (the controls' bindings, xinput_sdl.c) */
 void host_sdl_scancode_name(int scancode, char *buffer, unsigned int size);
 int host_sdl_scancode_from_name(const char *name);
@@ -107,12 +110,17 @@ int host_sdl_gamepad_axis(unsigned int gamepad, int axis);
 int host_sdl_gamepad_button(unsigned int gamepad, int button);
 int host_sdl_gamepad_type(unsigned int gamepad);
 int host_sdl_rumble_gamepad(unsigned int gamepad, unsigned int low, unsigned int high, unsigned int milliseconds);
+/* SDL_SendGamepadEffect: size bytes of the controller's own effect report */
+int host_sdl_send_gamepad_effect(unsigned int gamepad, const void *data, int size);
 void host_sdl_close_gamepad(unsigned int gamepad);
 /* the gamepad's sensor (SDL_SensorType) there, and turned on or off; and
 whether the gamepad is Steam Input's virtual one (gyro aiming) */
 int host_sdl_gamepad_has_sensor(unsigned int gamepad, int type);
 int host_sdl_set_gamepad_sensor_enabled(unsigned int gamepad, int type, int enabled);
 int host_sdl_gamepad_steam(unsigned int gamepad);
+/* the gamepad's SDL GUID as its 32 hex digits (a controller layout's key,
+port/linux/src/controller_layouts.c); empty for none */
+void host_sdl_gamepad_guid(unsigned int gamepad, char *buffer, unsigned int size);
 /* callback: void (*)(void *userdata, unsigned int stream, int additional, int total),
 called on the audio thread */
 unsigned int host_sdl_open_audio_stream(unsigned int device, const void *spec, unsigned int callback, unsigned int userdata);

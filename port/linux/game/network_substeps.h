@@ -15,6 +15,8 @@ boolean network_substeps_active(void);
 
 /* a new game: nothing heard or kept of the last */
 void network_substeps_new_game(void);
+/* a co-op revert: the records and controls heard, of the world reverted from, forgotten */
+void network_substeps_reverted(void);
 
 /* the fast phase (player_control.c's slot): its first sub-step, before
 which each player's tick input was taken, and each later one, after the
@@ -35,6 +37,9 @@ to the host; the host's of the players it relays to a client this tick (by
 absolute index), with the update their input is of */
 void network_substeps_client_send(void);
 void network_substeps_host_send(long machine_index, long update_number, short const *player_indices, short count);
+/* (the host) whether the player's sub-steps of the tick just run changed
+anything (then their record goes with the player's relayed input) */
+boolean network_substeps_host_relays(short player_index);
 /* a client's player's input forwarded as it comes (network_distributed.c):
 (the host) the sub-steps it heard of the player's tick with it, their count
 then the relayed record's bytes (a count of 0 alone for none); the bytes
@@ -55,18 +60,22 @@ which the host sends on to its clients as they come, with its own players'
 (network_distributed.c's forwarded input), and a client gives another
 player's unit while they are later than the input its tick took. Not at 30.
 
-(the host) a player's latest not yet sent on, in LIVE_CONTROL_FORWARD_SIZE
-bytes (0: none), and all of them sent; whether any is to send */
+(the host) a player's latest not yet sent on, in at most
+LIVE_CONTROL_FORWARD_MAXIMUM_SIZE bytes (0: none), and all of them sent;
+whether any is to send. Its tick is written against the tick the message
+goes at (the host's game time, its header's): 12 bytes within 127 ticks of
+it, 15 further (network_substeps.c's live_control_forward_pack) */
 enum
 {
-	LIVE_CONTROL_FORWARD_SIZE = 19,
+	LIVE_CONTROL_FORWARD_MAXIMUM_SIZE = 15,
 };
 word network_substeps_live_forward_write(short player_index, byte *buffer);
 /* (the host) a player's controls as its own sub-steps ran them, at their
 latest press (the held controls changed, or a stick or the trigger moved
 far), for a client its plan does not send the player's every control to
 (NETCODE.md, "Presses to far clients"): last, what was last sent that
-client; whether this is to go (then last is it), and its bytes */
+client; whether this is to go (then last is it), and the latest press's
+bytes (sent on already or not: 0 for none) */
 struct live_control_far
 {
 	boolean valid;
@@ -90,6 +99,10 @@ void network_substeps_actions_given(void);
 last tick ran (the input's client's), NONE for none: the relayed input, or
 none, drove it */
 long network_substeps_forwarded_key(short player_index);
+
+/* (a client) whether the latest live control heard of a player was keyed by
+the host's update (the host's own player's), for the tests' reports */
+boolean network_substeps_host_live_heard(short player_index);
 
 /* the messages (network_distributed.c's handling, before its own) */
 boolean network_substeps_handles_message(word const *message, word size);

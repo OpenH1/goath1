@@ -69,6 +69,8 @@ centred, and the bar's wide layout reaches the screen's edges up to 16:9.
 | `<button>` | `key` (`accept`, `back`, `x`, `y`, `lb`, `rb`, `lt`, `rt`, `r3`, `view`, `dpad`), `label`, `side`, `do`, `width`, `touch-width`, `if`, `when` | One hint in the bar: the key's picture (on the keyboard, the key the menus use for it) and its word. `do` is the action the key (anywhere on the screen) and a click run; without it, the key is pressed. In a tall screen's bar (below), `width` is its least width, `if` a binding that must have a value for it to be shown, two buttons of one key share one place, shown as their `if`s say, and the buttons run from the left one after another, but those of `side="right"` (written after the rest) end at the right margin, as Select Profile's BACK at the left and OK, CREATE NEW and DELETE at the right (on a touchscreen, `side` changes nothing; on a wide screen those of `side="right"` keep to its right edge, wherever their place); `touch-width` is its width on a touchscreen (the bar's own by default). `dpad`'s picture is the D-pad's left and right (on the keyboard, the left and right arrow keys' caps, `<` and `>`, which are the menus' left and right) and no key presses it: it is a click's, a tap's or A's on it. A prompt hidden by its `if` leaves no gap: the shown ones are laid out again as their `if`s change |
 | `<colors>` | `id` | The player profile's colors, one item each, under one another in its name and its color (white while focused). It is the screen's list (a screen has one `<list>`, `<cards>` or `<colors>`). The profile's own color is focused first. A chooses the color for the profile being edited, as the PC version's color picker did, and goes back. No shipped screen uses it now (Profile Color is a tall screen, its colors the `profile.colors` table's); it is kept for a simple screen of the colors, with `<spartan color="focus">` beside them |
 | `<spartan>` | `x`, `y`, `width`, `height`, `touch-height`, `color` (`focus`, `profile`, or a binding), `players` (1 to 4) | The Spartan, which the game draws (port/linux/game/menu_spartan.c) standing in this box of the 640 by 480 canvas, its feet at the box's foot, as tall as the box. Each Spartan is drawn in a view of its own where its block is in the screen's order: over the screen's background and the blocks before it, under those after, with its own fixed camera looking at it from about its knees, a little up, as the original pictures were taken (one at a screen's edge is drawn as one in its middle, not seen from the side), depth and light, so nothing of the menus' scene (the ring, the sky) cuts it and the scene's camera never moves or tilts it. It takes no room in the layout. `color="focus"` follows the focused `<colors>` item; `profile` (the default) is the color of the profile being edited, else the player's own, live as it changes; any other word is a binding, read each frame, whose value is the color's word: a profile color's number, `random`, or a team game's `red` or `blue` (as the game gives its teams their colors); while it has no value there is neither Spartan nor picture. A binding of a screen's own `<spartan>` may give several words, up to 8, each a place side by side (`-` an empty place): a lineup. `players` puts that many side by side, each its local player's profile's color. A screen has one `<spartan>` of its own and one in each `<panel>`; `touch-height` is its height on a touchscreen, `when` the platforms it is on. A random color's Spartan cycles through the profile colors in their list's order, one a second (each held three quarters of a second, then blended into the next), on the menus' frame clock, so it cycles while the game is paused too; side by side, each random one is an eighth of the round on from the one before. Where there is no Spartan (no multiplayer map exported one, a refused file, `display.menu_pictures` off, no profile), the box shows the original picture of the color (ui.map's `player_color_marine_large`, frame 18, the "?", for random or no profile). It stands in the rifle's idle, aimed nearly at the camera (the rifle at its shoulder, its muzzle at the viewer, as the original pictures hold it), both hands on the rifle as a unit's are (the rifle class's weapon IK puts the left hand on the rifle's forend; off while it reloads or readies, whose own hands are blended to), and every 10 to 20 seconds, each at its own times (never two starting together), fidgets: reloads, checks its weapon (puts it away and readies it again), looks around (its aim and head turned slowly to one side and the other, through the cyborg's aiming and looking screens) or dips into a crouch and stands again, each blended in from the idle and back out to it; all on the menus' frame clock, drawn only. It is gone as soon as its screen closes |
+| `<keyboard/>` | | The on-screen keyboard's block ("The on-screen keyboard", below): the game draws it and reads its input; a screen with one is a pop-up. A screen has one |
+| `<stick>` | `id` (required: `left`, `right`), `label` (required), `x`, `y` (required), `value`, `detail`, `hint`, `radius`, `when` | A stick's reading (Stick Test's): its label, large, at the top of a column 240 wide about `x`, from `y`; under it the stick's circle, `radius` (16 to 120, 88 by default) round, which the engine draws (menu_screen.c's `menu_screen_widget_drawing`, `stick_test_menu.inc`'s `pc_menu_stick_test_draw`): its travel, its outer and inner dead zones (round, or square for each direction's own), the raw reading a white dot and the reading after the dead zones a blue one (without a controller, the rings alone); under the circle its `value` and `detail`, filled again every frame (a line whose binding has no value empty), and its `hint`, a line. It takes no room in the layout. A screen has one of each id |
 
 ### A box of rows: the pause menu's
 
@@ -96,10 +98,21 @@ in the box's bottom band, each a button of Quit's OK and BACK. The box is
 Quit's width, or wider for three or four choices (its picture's ends kept),
 and as tall as its words' lines need (up to 4): the box's picture cut above
 its bottom band, and that band drawn under the cut (`dialog/dialog_foot`,
-`tools/port_settings.py`'s `dialog_foot_svg`). Behind it is the screen it was
-opened from, as it was, dimmed and taking no input (where that is a generated
-screen: the gametype editor; Quit's is over the menus' scene, its main menu
-being a hand-written screen). Left and right (the d-pad, the stick, the arrow keys)
+`tools/port_settings.py`'s `dialog_foot_svg`). It is a pop-up
+(`menu_screen_popup`): `ui_widget.c` opens it over the screen up without
+deleting that screen or adding to its history (`ui_widget_port_popups`, one
+for each local player). The screen under it is drawn as it is, dimmed,
+but takes no events (not even the empty one that runs its timers, so a
+screen that closes itself after a moment waits) and none of the pointer's
+targets. Its back closes it alone, and the screen under it is up again as it
+was; a screen opened from it closes it, the history remembering the screen
+under it; a screen opened otherwise (by the screen under it, or the game)
+takes that screen's place under the pop-up, and waits there; the screen
+under it deleted, or every screen closed (`close all`,
+a map let go of, `debug.menu_open`), closes it too. A pop-up over no screen
+(in a game) is drawn in its player's view; in split screen, over a screen
+drawn in the player's view, in that view, and over a screen drawn over
+every view (`menu_view_over_views`), over them too. Left and right (the d-pad, the stick, the arrow keys)
 step the choices, the pointer over one focuses it, and A, Start, a click or a
 tap does its `do`; B does the screen's `back`, else goes back. It is the same
 at every aspect ratio (in the menus' middle 640) and on a phone.
@@ -139,7 +152,7 @@ Profile's, whose generated screen's was its inner screen's).
 | `<tab>` | `id` (required), `label` (required), `do` (required), `when` | One tab |
 | `<table>` | `source` (required), `sorted`, `do`, `empty`, `lanes`, `left`, `right` | A live table: its rows come from the row source C names `source` (below), as many as fit over the panel's foot, scrolling at their ends. `do` is the action A, a click or a double click on a row runs (the row given to it); `sorted` names the binding whose value is the column sorted by and its way (`players down`); `empty` the words in the rows' place while there are none. `left` and `right` are the actions left and right on a row run (the row given). `lanes` (1 to 4, 1 by default) lays its rows out in that many lanes side by side, as the generated lobby's teams' columns: each lane a panel from the titles' place to the rows' foot, its `<lane>`'s title and detail at its top, its rows (18 tall, 20 apart, 8 in from its sides, the computer's on a touchscreen too) under them; it has no columns' titles nor headings, and no row scrolls: the source's rows are each lane's places in turn (the first lane's, then the next's), every place a row, shown while the source says one is there (its `state`). A row's picture is framed while the source marks it as its own, the brighter with the focus. Its columns' places are from a row's left, their `width` and `grow` a lane's |
 | `<lane>` | `label` (required), `detail`, `tone` | (in a `<table lanes="N">`, one for each lane, in order) A lane's title at its top's left, large, in its tone's colour, and its `detail` at its top's right. `tone` (a number, or a binding giving one): 0 red's (the panel's edge and the title red), 1 blue's, 2 neither (the panel across all the lanes, the title its own blue). A lane whose label has no value is gone, and the panel across them all is drawn: the lobby's PLAYERS, one list down both lanes, its count at the second lane's right |
-| `<column>` | `id` (required), `width` (required), `label`, `kind`, `grow`, `gap`, `align`, `sort`, `do`, `title-width`, `touch`, `when` | One column, from the left: `kind` its cells, `text` (the default), `strong` (white words), `ping` (the ping's bars and its number), `star` (a favorite's star), `dot` (a dot of a team's colour: red's, blue's or no team's, by the source's frame) or `swatch` (a profile color's 16-unit swatch: the 18 colors' by the source's frame, then random's, 18). `width` and `gap` (the room before it, 4) in the menus' units; `grow`, how much wider it is at 16:9; `align` its words at its `right`. Its title (`label`) runs `sort` when chosen, its arrow after the words when `sorted` names it; `title-width` its title's width, if not its words'. `do`: a click on a cell of it runs that, not the table's. `touch`: its place in a touchscreen's row, `x y width move grow` |
+| `<column>` | `id` (required), `width` (required), `label`, `kind`, `grow`, `gap`, `align`, `sort`, `do`, `title-width`, `touch`, `when` | One column, from the left: `kind` its cells, `text` (the default), `strong` (white words), `ping` (the ping's bars and its number), `star` (a favorite's star), `dot` (a dot of a team's colour: red's, blue's or no team's, by the source's frame) `swatch` (a profile color's 16-unit swatch: the 18 colors' by the source's frame, then random's, 18) or `symbol` (a controller layout's symbol: the cell's words, its legend, in a cap of the source's `fill`, round or square by its frame, drawn under them: `menu_screen_tall.inc`'s `tall_symbol_draw`). `width` and `gap` (the room before it, 4) in the menus' units; `grow`, how much wider it is at 16:9; `align` its words at its `right`. Its title (`label`) runs `sort` when chosen, its arrow after the words when `sorted` names it; `title-width` its title's width, if not its words'. `do`: a click on a cell of it runs that, not the table's. `touch`: its place in a touchscreen's row, `x y width move grow` |
 | `<search>` | `value` (required), `label`, `if`, `when` | A search: in a `<column>`, its magnifying glass after the column's title, the field typed into in the title's place and its X; at the screen's level, a field of its own at the top's right (a touchscreen's). A, a click or a tap types into it; each letter typed sets the binding `value` (the list filtered at once); Enter, A again or the focus taken off it keeps the words; B and Esc clear them; the X clears them |
 | `<button>` | (in a `<table>`) | A button under the table's words for none (CLEAR SEARCH), shown as its `if` says, the focus on it as it comes |
 | `<panel>` | `if` | The details beside the table: its lines one after another from its top, and its `<button>`s at its foot. A screen may have up to 4, in one place: the first whose `if` has a value (or that has none) is shown, the others hidden with their lines, buttons and Spartans (the lobby's next game, a player's card, the friends to invite). As another than the first is shown, the focus goes to its first choice or button, and back where it was as the first comes again |
@@ -258,6 +271,7 @@ item uses the next of its `<hint>`s. The bindings are listed in
 | `{coop.listing}`, `{coop.link}`, `{coop.problem}`, `{coop.fix}` | A network co-op game's host's lobby: who can join and see it (`FRIENDS CAN JOIN: 3 friends online see it.`), the invite link (its start), what keeps people from finding it in plain words (`Internet play is off, so only players on your network can join.`) and its fix's words; none for anyone else |
 | `{pause.friendly_fire}` | Network co-op's FRIENDLY FIRE row's words, `FRIENDLY FIRE ON` or `OFF` (this machine's choice); none elsewhere |
 | `{pause.host_controls}`, `{pause.end_game}`, `{pause.chapters}` | (for `if`s) the pause menu's HOST CONTROLS (a network game's host's), END GAME (the host of a game of this machine alone) and CHAPTERS (Basic Training's), as `menu_tags.c` adds them to the map's; the host machine's first local player's alone (split screen's player 1: the screen's own player), an admin's too |
+| `{stick.left}`, `{stick.right}`, `{stick.left.drift}`, `{stick.right.drift}` | Stick Test's: a stick's reading, raw \| after the dead zones (`12,-3 \| 0,0`; `NO CONTROLLER` without one), and its drift at rest (`4%`; none without a controller) |
 | `{profile.title}` | Select Profile's chosen row: its profile's name, or `Create New Player Profile` on the row that makes one |
 | `{profile.name}`, `{profile.controls}`, `{profile.difficulty}`, `{profile.level}` | The chosen profile's name, controls (`Default`, `Inverted`), best difficulty finished (none before a level is) and current level (`The Pillar of Autumn`); none on the row that makes one |
 | `{profile.color}`, `{profile.chosen}` | (for a `<spartan>`'s color and `if`s) the chosen profile's color's number, or `random`; whether a profile (not the row that makes one) is chosen |
@@ -267,6 +281,7 @@ item uses the next of its `<hint>`s. The bindings are listed in
 | `{lobby.red}`, `{lobby.blue}`, `{lobby.red.count}`, `{lobby.blue.count}`, `{lobby.red.tone}`, `{lobby.blue.tone}` | The lanes: RED and BLUE in a team game, each its count (`2 PLAYERS`) and tone (0, 1); in a game without teams PLAYERS alone (blue's none), `3 OF 16` at blue's right (an offline game's `3 PLAYERS`), tone 2 |
 | `{lobby.gametype}`, `{lobby.map}`, `{lobby.limits}`, `{lobby.kind}`, `{lobby.kind.tone}`, `{lobby.tick}`, `{lobby.opence}`, `{lobby.after}` | The next game: its gametype, map (a co-op game's level and difficulty), limits (`50 kills · 10 min`), GOAT H1 or LEGACY and its pill's tone, its tick rate (`120 TICK`), OPENCE CAN JOIN (the host's, while OpenCE's players may join), the game after it (a host's playlist's) |
 | `{lobby.bots}`, `{lobby.skill}`, `{lobby.teams}`, `{lobby.bots.shown}`, `{lobby.bots.locked}`, `{lobby.bots.count.locked}` | The host's bots: BOTS' choice (`ADD 3`), SKILL, TEAMS; (for `if`s and `dim`s) whether the host has them (any game but co-op), whether the gametype is one they do not play, and BOTS' a matchmaking game's too |
+| `{lobby.hijack}`, `{lobby.hijack.shown}` | The host's VEHICLE HIJACKING, `ON` or `OFF`; (for `if`s) whether this machine hosts a GOAT H1 game (co-op too; never a Legacy one) |
 | `{lobby.status}`, `{lobby.start}`, `{lobby.waiting}` | How the game is (the countdown, the invite copied, how another controller joins...); START GAME's words (or `STARTING IN 3`); a player's (`Waiting for the host`) |
 | `{lobby.chat}` | (for `if`s) the lobby has its text chat now: the host's LOBBY TEXT CHAT on, as it told this machine, and `display.text_chat` |
 | `{lobby.host}`, `{lobby.settings}`, `{lobby.controls}`, `{lobby.team.change}`, `{lobby.invite}`, `{lobby.add}` | (for `if`s) START GAME's (the host's), GAME SETTINGS', HOST CONTROLS' (a network game's host's, a dedicated server's admin's), CHANGE TEAM's, the invite link's (INVITE FRIENDS'), ADD PLAYER's |
@@ -335,6 +350,7 @@ sounds and the fades are the game's.
 | `add player done`, `add player back` | Add Player's: those joining, all ready, brought into the game (DONE, a player's START) and back; or let go of (BACK, B) and back |
 | `lobby chat` | A line of the lobby's chat begun: on the keyboard typed (Enter sends it, Esc lets it go); on a controller and a touchscreen with the on-screen keyboard |
 | `lobby bots left`, `lobby bots right`, `lobby skill left`, `lobby skill right`, `lobby teams left`, `lobby teams right` | The host's bots' choices stepped: BOTS to the choice before or after (at its ends no further), SKILL and TEAMS round, written to `config.toml` as the generated lobby's spinners write them |
+| `lobby hijack left`, `lobby hijack right` | The host's VEHICLE HIJACKING turned over, as Host Controls' row does: the rule and the game's record at once (its clients told) and `game.vehicle_hijack` written to `config.toml` |
 | `lobby card` | The row's player's card shown in the panel (theirs again: closed) |
 | `lobby card friend`, `lobby card mute`, `lobby card kick` | The card's ADD FRIEND (a friend request to their code: `network_party_slot_add_friend`), MUTE or UNMUTE (their machine's voice, lines and pings on this machine: `network_voice_mute_machine`), KICK (Host Controls' kick, and the card closed) |
 | `lobby friends` | INVITE FRIENDS: the panel of the friends to invite and the invite link (again: closed) |
@@ -506,9 +522,9 @@ newest lines, each name in its team's colour (no team's blue, the host's
 notices pale gold), and the line being typed. T (or Y: the lobby has one
 channel, everyone, as its voice has: its teams are not yet the game's, and
 anyone may change theirs) begins a line on the keyboard; on a controller LB
-(CHAT) or A on the chat's line opens the on-screen keyboard (the game's own,
-network_chat.c's: D-pad Up moves the lobby's focus here), and on a touchscreen
-a tap on it. The sending, the host's relay, its rate, its refusals (links),
+(CHAT) or A on the chat's line opens the on-screen keyboard over the lobby
+("The on-screen keyboard", below; D-pad Up moves the lobby's focus here), and
+on a touchscreen a tap on it. The sending, the host's relay, its rate, its refusals (links),
 its word filter and its mutes are the game's chat's (port/linux/NETCODE.md,
 "Text chat"); the lobby's lines are kept apart from a game's, and neither
 shows the other's. The host's Host Controls has LOBBY TEXT CHAT and LOBBY
@@ -634,6 +650,93 @@ deletes the chosen one, B goes back. The list's model is the generated screen's 
 actions run the generated screen's functions and open its screens. The
 classic engine keeps its own screen and the original pictures.
 
+## The on-screen keyboard
+
+`screens/keyboard.xml` is the new menus' one keyboard (#1135), for a name (a
+profile's, a gametype's), the menus' fields (GAME NAME, PASSWORD, Settings'
+search) and the chat (a game's, the lobby's), with a controller or a pointer:
+`port/linux/game/keyboard.c` opens it (`keyboard_open`) as a pop-up over the
+screen it is typed for, which waits under it as it was, or over a game's view
+(the chat's, the player's view in split screen), and draws its `<keyboard/>`
+block and reads its input itself; its rules are `keyboard_core.c`'s.
+
+- Its keys are a table (`keyboard_core.c`'s `keyboard_layouts`), each row
+  its keys' kinds, widths and characters: the player's letters
+  (`input.keyboard_layout`, Settings > Profiles: ON-SCREEN KEYBOARD; #1136):
+  QWERTY, AZERTY, QWERTZ, Swedish/Finnish, Norwegian, Danish, Spanish and
+  Portuguese (only layouts whose own letters `ui\large_ui` draws: no Czech,
+  Hungarian or Turkish), each with the same number row
+  (digits plain) and page of signs (every one of ASCII's but `|`). Auto is the
+  system's languages' layout (SDL's preferred locales: a place's, `fr_CA`,
+  before its language's, `fr`), else `game.language`'s, else QWERTY. A
+  layout's own letters with a mark (ñ, ö, å) are filtered as the accents
+  are: where the text does not take one or the font does not draw it, its
+  key shows and types its plain letter (n, o, a). A name's first letter is a
+  capital; shift, twice quickly caps lock.
+- Holding A on a letter (or the pointer's button, or a finger), or a right
+  click, offers its accents (Latin-1's and Latin Extended-A's,
+  `keyboard_accent_table`), only those the text takes (a name: both; a
+  menu's field, a byte a letter: Latin-1's; a chat line: none) and the font
+  draws; left and right (or the pointer) choose, letting go types.
+- X deletes (held, again and again), Y is a space, LB and RB move the cursor,
+  Start (Menu) is done, B cancels (the accents first), the left stick's click
+  is shift; the prompts show the controller's own buttons (CANCEL and DONE,
+  B's and Start's, are the footer's buttons, a click's too: no key repeats
+  them), the help beside them its first form that fits. The computer's
+  keys type into it, Enter done and Esc cancel.
+- It is in the middle of the menus' 640 by 480 (past 4:3 the room either side
+  is margins), with bigger keys where the Steam Deck's controls play; phones
+  keep their system's keyboard, the pop-up showing the text alone.
+- A name is kept as the game's keyboard kept one (`player_name_clean`, and no
+  other saved file's name); a field's and the chat's text as they took it.
+
+Which keyboard a mode has is decided in `keyboard.c` alone (`keyboard_new`):
+the new menus (the menu engine, the PC version's menus) have this one; the
+original-faithful modes (`display.menu_engine = "classic"`, `display.menus =
+"xbox"`) keep the game's own (`source/interface/virtual_keyboard.c`) and the
+chat's (`network_chat.c`). Every caller asks it (`keyboard_name_launch`,
+`keyboard_field_launch`, `keyboard_active`, `keyboard_last_kept`).
+`tools/harness/tests/test_keyboard.py` tests the table, every layout's
+letters, the automatic layout, a layout's letters filtered, the accents, the
+shortcuts, a name, a field and a chat line typed, the fit and each mode's
+keyboard; `debug.menu_open`'s `open keyboard` opens it on a name, over the
+screen (its picture).
+
+## Stick Test
+
+`screens/stick_test.xml` is Advanced Stick Settings' STICK TEST ›, on the new
+engine (`screens/stick_test`, a stand-in of `blocks.xml`, which pauses the
+game as Settings' pages do): STICK TEST in the band, and a `<stick>` for each
+stick side by side, each its label, its circle, its reading
+(`{stick.left}`: side to side, then up and down, in percent of its travel,
+raw | after the dead zones; `NO CONTROLLER` without one), DRIFT AT REST
+(`{stick.left.drift}`: the largest push it held still near its middle since
+the screen opened) and a line of what it shows. B (BACK) goes back to the
+page. The sticks are the controller's alone (never the keyboard's) of the
+player whose profile Settings edits, read each frame the screen is drawn
+(its place's frame, `stick_test_menu.inc`'s `pc_menu_stick_test_frame`), by
+the dead zones and shape Advanced Stick Settings shows, its changes not yet
+saved among them (`settings_value`), through the game's own
+`input_port_fix_stick`. The classic engine has no screen of it: its row
+opens the blank stand-in, which B leaves.
+
+## Controller Layout
+
+`screens/controller_layout.xml` (#1143) is Button Remapping's CONTROLLER LAYOUTS page's EDIT BUTTONS ›, on the new
+engine (its stand-in `screens/controller_layout`, pausing the game as Settings' pages do): the controller of the
+player whose profile Settings edits at the band's right, and its 11 extra buttons in a table (the row source
+`layout.controls`: the back paddles, the touchpad, misc1 to misc6), each its words on the controller, its symbol
+(`kind="symbol"`) and its name. A (NAME) names the chosen button on the on-screen keyboard, describing it first
+(its words its name and legend, round, grey); Y (LEGEND) types its legend, 1 to 3 characters; left and right, and
+the panel's COLOR, step its color, the panel's SHAPE its shape; X (CLEAR) lets it go back to its words. Each change
+is kept at once (`controller_layout_menu.inc`, [controller_remapping.md](controller_remapping.md), "Controller
+layouts"). With no controller connected the rows show their words and nothing can be described
+(`debug.controller_layout_guid` names one, for tests and pictures). The classic engine has no screen of it.
+
+`screens/layout_bindings.xml` (#1144) is the CONTROLLER LAYOUTS page's ITS BINDINGS ›, a pop-up (its stand-in
+`screens/layout_bindings`): how many of the player's buttons the layout's bindings would change
+(`{layout.bindings}`), KEEP MINE (focused; B too) and USE THIS LAYOUT'S (`layout bindings use`, then back).
+
 ## Leaving an editor with changes not saved
 
 The gametype editor (Edit Gametypes' EDIT, a generated screen) takes B, Back
@@ -648,6 +751,45 @@ to the editor, the changes kept (`pc_menu_edit_leave`). Another generated
 editor opts in with the same handler. The editor's Step 1 (its GAME TYPE)
 shows the gametype's own type while its BACK is focused, not the PC version's
 picture of a SAVE CHANGES question, which looked like one BACK asked (#901).
+
+## The benchmark's results
+
+`screens/benchmark.xml` shows the built-in benchmark's results
+(`port/linux/game/benchmark.c`) over the main menu as its match ends, a
+screen opened only by C (its stand-in `screens/benchmark`,
+`menu_functions.c`'s `pc_menu_benchmark_results_open`). Its table's rows are
+the row source `benchmark.results` (each measure and its value), its panel
+the `benchmark.*` bindings (what held the frames back, the pacing, the
+window, the GPU, the processor and the file written); a run that stopped
+has no rows, and the table's words for none (`benchmark.failure`) say why.
+CLOSE (B) goes back to the main menu. The classic menus have no results
+screen: the results are in `benchmarks/` and the log.
+
+## The DLSS add-on
+
+`screens/dlss_addon.xml` (its stand-in `screens/dlss_addon`) is NVIDIA DLSS's add-on (docs/temporal-aa.md, "The
+add-on"), which Frame Rate & Sync's Upscaler row's GET DLSS (on an NVIDIA GPU while it is not installed:
+menu_functions.c's `dlss_addon_segment`) and Mods' NVIDIA DLSS ADD-ON › open. The table is NVIDIA's license, the
+row source `dlss.license` (fetched as the screen opens; left and right page it: `dlss page up`, `dlss page down`);
+the panel says what the add-on is doing (`dlss.heading`, `dlss.status`, NVIDIA's attribution `dlss.credit`), with
+ACCEPT (`dlss accept`, X) while the license is shown and REMOVE (`dlss remove`, Y) while it is installed
+(`dlss.can_accept`, `dlss.can_remove`). B goes back; a download goes on meanwhile. Its words and states are
+port/linux/src/dlss_addon.c's.
+
+## Game Data
+
+`screens/game_data.xml` (its stand-in `screens/game_data`) is Settings' GAME DATA, which Mods' GAME DATA › opens
+(#1216; the main menu's). The table is the sources of the game's maps, the row source `data.sources`: XBOX MAPS,
+CUSTOM EDITION MAPS and MCC CONTENT, each its state (`INSTALLED`, `COPYING 34%`, `12 MAPS`). The panel is the chosen
+row's (`data.heading`, `data.status`, `data.from`, `data.folder`), with OPEN FOLDER (`data open folder`, Y: the
+source's folder on the desktop) and ADD (`data add`, A on a row or the panel; its words `data.add`, none while a copy runs):
+Custom Edition's installer, looked for as the first start looks (`game_data_scan.c`) as the page opens, has its
+maps copied into custom_maps in a thread (`map_import.c`), the progress on the page; once they are there COPY AGAIN
+writes every map again, which repairs a damaged one. The map lists see what was added at once
+(`custom_edition_maps_look_again`, `mcc_maps_rescan`, from `menu_screen_frame`), with no restart. The Xbox maps
+are in use while the game runs, so their COPY AGAIN asks for the maps screen at the next start
+(`map_sources_request`); MCC's LOOK AGAIN finds the packages put in mcc_maps since. Its words and states are
+port/linux/src/game_data_page.c's.
 
 ## The pause menu
 

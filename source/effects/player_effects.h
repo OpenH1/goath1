@@ -43,6 +43,8 @@ void player_effect_add_continuous_effect(
 	real distance);
 void player_effect_update(
 	void);
+void player_effect_tick_begin(
+	void);
 void player_effect_continuous_refresh(
 	long definition_index,
 	real_point3d const *position);

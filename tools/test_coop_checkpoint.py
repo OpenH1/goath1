@@ -223,6 +223,9 @@ static int objects_client_checkpoint_pending[3];
 static long objects_host_told_count=3,objects_host_resting_cursor=2;
 static int objects_host_state_moving[3]={1,1,1};
 static long objects_host_rest_times[3]={99,99,99};
+static int objects_host_rest_known[3]={1,1,1};
+static long objects_host_rest_sent_times[3]={99,99,99};
+static unsigned long objects_host_seen[2][1]={{7},{7}};
 static struct {long checksum,weapons_checksum,time,carried_time,ammunition_time;} objects_host_inventories[3];
 static struct {int count;} objects_host_viewers={2};
 static struct {long time;} objects_host_machines[2]={{99},{88}};
@@ -260,6 +263,7 @@ int main(void){
   assert(!objects_host_inventories[i].checksum && !objects_host_inventories[i].weapons_checksum);
   assert(objects_host_inventories[i].carried_time==NONE && objects_host_inventories[i].ammunition_time==NONE);
   assert(!objects_host_state_moving[i] && objects_host_rest_times[i]==NONE);
+  assert(!objects_host_rest_known[i] && objects_host_rest_sent_times[i]==NONE);
   assert(!objects_host_vehicle_predictions[i].valid && objects_host_vehicle_predictions[i].accepted_vehicle_index==NONE);
   assert(objects_host_vehicle_predictions[i].ground_vehicle_index==NONE && objects_host_vehicle_predictions[i].rest_vehicle_index==NONE);
   assert(objects_client_dead[i].object_index==NONE && objects_client_unsteered_path[i].object_index==NONE);
@@ -268,6 +272,7 @@ int main(void){
   assert(objects_client_item_paths[i].object_index==NONE);
  }
  assert(!host_damage_animation_count && !objects_host_viewers.count && !objects_host_resting_cursor);
+ assert(!objects_host_seen[0][0] && !objects_host_seen[1][0]);
  assert(!objects_client_synchronized && objects_client_ready_time==NONE && objects_client_failed_time==NONE);
  assert(objects_client_ready_interval==CLIENT_READY_INTERVAL_TICKS && objects_client_retry_ticks==CLIENT_RETRY_TICKS);
  assert(!objects_client_ask_again && !objects_client_retried_inventory_count && !objects_client_new_object_count);
@@ -372,6 +377,9 @@ static struct effect_datum *effect_try_and_get(long i){assert(i>=0 && i<6);retur
 #define effect_get effect_try_and_get
 static struct effect_definition *effect_definition_get(long i){assert(i>=0 && i<6);return &definitions[i];}
 static struct effect_location_datum *effect_location_get(long i){assert(i>=0 && i<12 && location_alive[i]);return &location_datums[i];}
+/* (no effect here is on a drawn first-person weapon) */
+static void *effect_first_person_try_and_get(long i){return 0;}
+static void effect_first_person_free(short i){assert(0);}
 static long data_next_index(struct data_array *data,long previous){long i;assert(data==effect_data);for(i=previous+1;i<6;i++)if(alive[i])return i;return NONE;}
 static void datum_delete(struct data_array *data,long i){
  if(data==effect_data){assert(alive[i]);alive[i]=0;deleted++;}

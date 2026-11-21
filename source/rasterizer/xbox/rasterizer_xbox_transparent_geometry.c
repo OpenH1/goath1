@@ -205,6 +205,13 @@ enum
 };
 #endif
 
+/* port: sprites that are light, which display.hdr_highlight_boost gains
+(render_sprite.c: a self-illuminated particle, a glow; #1123) */
+enum
+{
+	_rasterizer_geometry_emitter_bit = NUMBER_OF_RASTERIZER_GEOMETRY_FLAGS + 1,
+};
+
 enum
 {
 	_shader_type_screen = 0,
@@ -1155,6 +1162,11 @@ static int transparent_hdr_kind(
 	{
 		kind |= HALO_HDR_KIND_LIGHT;
 	}
+	/* (sprites that are light: display.hdr_highlight_boost's emitters, the
+	first-person weapon's toward its own ceiling) */
+	if (TEST_FLAG(group->geometry_flags, _rasterizer_geometry_emitter_bit))
+		kind |= TEST_FLAG(group->geometry_flags, _rasterizer_geometry_first_person_bit) ?
+			HALO_HDR_KIND_EMITTER_FIRST_PERSON : HALO_HDR_KIND_EMITTER;
 	return kind;
 }
 
@@ -2066,6 +2078,26 @@ void rasterizer_transparent_geometry_group_draw(
 									combiner_index++;
 								}
 								pixel_shader.combiner_count = combiner_index;
+								/* port: on a flat screen, with display.soft_particles,
+								soft against the scene's depth as the VR mode's eyes
+								draw it (d3d8_device.c, halo_effect_soft): the same
+								groups, not one drawn without depth; soft alone, never
+								thick. The first-person weapon's in its first pass
+								alone, over the weapon's own pixels (the stencil
+								accepts only them), against the weapon's depth, both
+								of its projection, its fade its depth test (2): a
+								flat sprite meets the gun softly, not along the line
+								where its plane cuts it. Its second pass, elsewhere,
+								tests no depth (the world's is of another projection),
+								as the Xbox drew it */
+								{
+									extern void halo_effect_soft(int soft);
+
+									halo_effect_soft(
+										TEST_FLAG(group->geometry_flags, _rasterizer_geometry_no_zbuffer_bit) ? 0 :
+										!TEST_FLAG(group->geometry_flags, _rasterizer_geometry_first_person_bit) ? 1 :
+										!pass ? 2 : 0);
+								}
 #ifdef HALO_VR
 								{
 									/* port: in the VR mode's eyes, soft against the
@@ -3774,6 +3806,12 @@ void rasterizer_transparent_geometry_group_draw(
 
 					rasterizer_set_pixel_shader(&pixel_shader);
 					rasterizer_transparent_geometry_group_draw__internal(group, FALSE);
+					{
+						/* port: (the effect's alone: halo_effect_soft) */
+						extern void halo_effect_soft(int soft);
+
+						halo_effect_soft(0);
+					}
 #ifdef HALO_VR
 					{
 						/* port: (the effect's alone: halo_vr_effect_depth) */

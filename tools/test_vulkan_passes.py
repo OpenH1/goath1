@@ -120,7 +120,8 @@ int main(void)
 
 def test_post_shaders(tmp_path):
     # The anti-aliasing passes' generated file (tools/vulkan_post_shaders.py),
-    # with display.hdr's tone map and encoding, display.gamma's curve and
+    # with display.hdr's tone map, the last pass's encoding (display.gamma's
+    # curve and the dither are in it, hdr_encode, since #1108) and
     # display.panini's projection: SMAA's lookup textures are
     # port/third_party/smaa's, inflated, and each module is valid for Vulkan
     # 1.1 where spirv-val is installed.
@@ -133,8 +134,11 @@ def test_post_shaders(tmp_path):
         assert len(texels) == size
         assert struct.pack(f"<{len(words)}I", *words)[:size] == texels
     modules = sorted(name for name in arrays if name.endswith(("_vert", "_frag")))
-    assert modules == ["clear_frag", "fxaa_frag", "gamma_frag", "hdr_encode_frag", "hdr_tone_map_frag", "hdr_tone_map_ms_frag",
-                       "panini_frag", "post_vert", "rotate_frag", "smaa_blend_frag", "smaa_edges_frag",
+    # (and display.temporal_aa's motion resolve and debug.motion_vectors' view;
+    # the loading screen's sharp frame, its caption and its picture; the MSAA
+    # resolve's mean of the samples' light, #1227)
+    assert modules == ["clear_frag", "fxaa_frag", "hdr_encode_frag", "hdr_tone_map_frag", "hdr_tone_map_ms_frag",
+                       "loading_caption_frag", "loading_frag", "loading_picture_frag", "motion_resolve_frag", "motion_view_frag", "panini_frag", "post_vert", "resolve_light_frag", "rotate_frag", "smaa_blend_frag", "smaa_edges_frag",
                        "smaa_weights_frag"]
     validator = shutil.which("spirv-val")
     if not validator:
@@ -288,6 +292,7 @@ static const struct xgpu_vulkan_image_description *xgpu_vulkan_image_description
 { return &image->description; }
 static void targets_bind(void) { binds++; }
 static void prepass_prepare(void) { }
+static void rt_shadows_prepare(void) { }
 #define XGPU_VULKAN_CLEAR_COLOR 1
 #define XGPU_VULKAN_CLEAR_ALPHA 2
 static int xgpu_vulkan_clear_prepare(int parts) { (void)parts; return 1; }

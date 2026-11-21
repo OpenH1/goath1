@@ -130,6 +130,7 @@ static void pixel_program_convert(const struct xgpu_stream_pixel_program *wire, 
 	program->multiview = wire->multiview;
 	program->source_blend = wire->source_blend;
 	program->ambient_occlusion = wire->ambient_occlusion;
+	program->lightmap_filter = wire->lightmap_filter;
 	program->hdr = wire->hdr;
 }
 
@@ -270,23 +271,25 @@ static int shaders_make(void *context, const struct xgpu_stream_pipeline_define 
 		&model;
 	memset(&options, 0, sizeof(options));
 	memcpy(options.border, variant->border, sizeof(options.border));
+	options.motion = variant->motion != 0;
 	debug_options(&options);
 	program = malloc(sizeof(*program));
 	if (!program)
 		return 0;
 	vertex_program_convert(record, program);
-	snprintf(name, sizeof(name), "vs%08x%08x_%lx_%lx_%u", record->hash[1], record->hash[0], packed, integers,
-		key->lighting);
+	snprintf(name, sizeof(name), "vs%08x%08x_%lx_%lx_%u%s", record->hash[1], record->hash[0], packed, integers,
+		key->lighting, options.motion ? "_motion" : "");
 	*vertex_shader = compile(xgpu_msl_vertex_shader(program, packed, integers, lighting, &options), "xgpu_vertex", name,
 		NULL);
 	free(program);
 	pixel_program_convert(&definition->pixel_program, &pixel);
-	snprintf(name, sizeof(name), "ps_%08x_%02x%02x%02x%02x", bytes_hash(&definition->pixel_program,
-		sizeof(definition->pixel_program)), options.border[0], options.border[1], options.border[2], options.border[3]);
+	snprintf(name, sizeof(name), "ps_%08x_%02x%02x%02x%02x%s", bytes_hash(&definition->pixel_program,
+		sizeof(definition->pixel_program)), options.border[0], options.border[1], options.border[2], options.border[3],
+		options.motion ? "_motion" : "");
 	/* (one the app's library lacks drawn at once by the combiner's function,
 	specialised for it, where it can: its configuration) */
 	have_constants = xgpu_metal_combiner_draws(&pixel) && !options.debug_expression && !options.debug_texture0 &&
-		!options.debug_flat;
+		!options.debug_flat && !options.motion;
 	if (have_constants)
 	{
 		xgpu_metal_combiner_configure(&pixel, variant->border, &combiner);

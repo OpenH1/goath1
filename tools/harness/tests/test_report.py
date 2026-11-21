@@ -17,7 +17,7 @@ NEGATIVE_CONTROLS = {
     # the CRC's polynomial wrong: no zip reader takes the files
     "crc-polynomial": ("crc", "0xEDB88320u ^ (value >> 1)", "0x04C11DB7u ^ (value >> 1)"),
     # the lows from the fastest frames, not the slowest
-    "low-fastest": ("frames", "for (index = count - slowest; index < count; index++)",
+    "low-fastest": ("stall", "for (index = count - slowest; index < count; index++)",
                     "for (index = 0; index < slowest; index++)"),
     # frames of 50 ms counted as no hitch
     "hitch-strict": ("steady", "if (micros[index] >= REPORT_HITCH_MS * 1000)",
@@ -27,10 +27,20 @@ NEGATIVE_CONTROLS = {
     # the game's waits counted as its work: a frame held by vsync read as CPU-bound
     "cpu-waits": ("gpu", "game_total += micros[index] - waited;", "game_total += micros[index];"),
     # any wait taken for the display's: a frame held by the game read as vsync's
-    "paced-any": ("gpu", "if (paced_share >= REPORT_PACED_PERCENT && busiest", "if (busiest"),
+    "paced-any": ("gpu", "if (paced_frames_share >= REPORT_PACED_FRAMES_PERCENT && busiest", "if (busiest"),
     # the pacing taken as the verdict over a part busy all the time
-    "paced-saturated": ("gpu", "paced_share >= REPORT_PACED_PERCENT && busiest < REPORT_BUSY_PERCENT",
-                        "paced_share >= REPORT_PACED_PERCENT"),
+    "paced-saturated": ("gpu", "paced_frames_share >= REPORT_PACED_FRAMES_PERCENT && busiest < REPORT_BUSY_PERCENT",
+                        "paced_frames_share >= REPORT_PACED_FRAMES_PERCENT"),
+    # the pacing's share of the time taken for whether it held the frames: a frame at its cap, with vsync's FIFO
+    # taking turns, read as CPU-bound (a report from a 138 Hz display capped at 135)
+    "paced-time-share": ("gpu", "if (paced_frames_share >= REPORT_PACED_FRAMES_PERCENT && busiest",
+                         "if (paced_share >= 20 && busiest"),
+    # any wait for the pacing, however short, taken for one that held the frame back
+    "paced-trifle": ("gpu", "if (paced && (uint64_t)paced * 100", "if (paced || (uint64_t)paced * 100"),
+    # the stalls counted in the lows: one load takes a 1% low of minutes from 80 fps to 62
+    "lows-stalls": ("stall", "while (kept && sorted[kept - 1] >= REPORT_STALL_MS * 1000)", "while (0)"),
+    # the overlay's and rasterizer_stats 3's GPU time with the frames not measured counted as nothing
+    "recent-unknown": ("recent", "if (work[index].gpu != REPORT_GPU_UNKNOWN)\n\t\t{", "if (1)\n\t\t{"),
     # the GPU's median taken for its 99th percentile
     "gpu-percentile": ("gpu", "sorted[(measured - 1) * 99 / 100]", "sorted[measured / 2]"),
     # frames the GPU's time was not measured on counted in it
@@ -96,6 +106,7 @@ NEGATIVE_CONTROLS = {
 }
 
 FUNCTIONS = ("report_crc32", "report_compare_micros", "report_low_fps", "report_frame_summary", "report_gpu_summary",
+             "report_recent_frames",
              "report_put16", "report_put32", "report_zip_add", "report_zip_end", "report_percent_encode", "report_issue_url",
              "report_file_url", "report_whole_path",
              "report_setting_private", "report_address_length", "report_hex_digit", "report_word_character",
@@ -123,6 +134,7 @@ def generated(fault=None):
                            ("log", "log_size", "log_written", "file"))
     header = read("port/linux/src/report.h")
     code = issues + "\n" + defines + "\n\n" + structure(header, "report_frame_work") + "\n\n" + \
+        structure(read("port/linux/include/perf_times.h"), "perf_times") + "\n\n" + \
         structure(source, "report_zip") + "\n\n" + enum_with(header, "REPORT_WHERE_BUILDS") + "\n\n" + \
         structure(header, "report_where") + "\n\n" + \
         "\n\n".join(function(source, name) for name in FUNCTIONS[:-1]) + "\n\n" + markers(source) + "\n\n" + \
@@ -133,8 +145,8 @@ def generated(fault=None):
     return (("under_test.inc", code + "\n"),)
 
 
-@pytest.mark.parametrize("case", ["crc", "frames", "steady", "gpu", "issue", "scrub", "maps", "crash", "ring", "where",
-                                  "folder"])
+@pytest.mark.parametrize("case", ["crc", "frames", "stall", "steady", "recent", "gpu", "issue", "scrub", "maps", "crash", "ring",
+                                  "where", "folder"])
 def test_case(case):
     status, output = run(build("report", generated()), case)
     assert status == 0, output

@@ -1,8 +1,8 @@
 /*
 SPARTAN_LINK.H
 
-The HUD's Spartan link: the living teammates' views in the HUD's top line
-(spartan_link.c).
+The HUD's Spartan link: the living teammates' views in a row beside the
+motion tracker (spartan_link.c).
 */
 
 #ifndef __SPARTAN_LINK_H
@@ -37,6 +37,11 @@ long spartan_link_posed_unit(void);
 weapon and arms first_person_weapons.c animates in its feeds' slots, a tick
 at a time: their count, at most maximum_count */
 short spartan_link_linked_units(long *unit_indices, short maximum_count);
+
+/* hud_unit.c: where the window's motion tracker was drawn (its picture's
+left and its blips' middle, in the view's units), which the link's row
+goes beside */
+void spartan_link_note_motion_sensor(short local_player_index, short left, short center_x, short center_y);
 
 /* the window's link drawn in its HUD (render.c, after the rest of the HUD) */
 void spartan_link_draw(short local_player_index);

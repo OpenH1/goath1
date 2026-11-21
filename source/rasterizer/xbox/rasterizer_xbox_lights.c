@@ -249,8 +249,18 @@ void rasterizer_sun_glow_draw(
 		&center,
 		&axes))
 	{
-		center_x = (real)floor(center.x + 0.5f);
-		center_y = (real)floor(center.y + 0.5f);
+		/* port: to the screen's pixel, not the Xbox's: the square does not
+		step by the screen's 2 to 4 pixels as the camera turns (the Xbox's
+		at 640x480, 1 a unit: d3d8_device.c) */
+		{
+			float pixels[2];
+
+			halo_screen_scale_axes(pixels);
+			pixels[0] = pixels[0] > 1.0f ? pixels[0] : 1.0f;
+			pixels[1] = pixels[1] > 1.0f ? pixels[1] : 1.0f;
+			center_x = (real)floor(center.x * pixels[0] + 0.5f) / pixels[0];
+			center_y = (real)floor(center.y * pixels[1] + 0.5f) / pixels[1];
+		}
 
 		bounds.x0 = center_x - 32.0f;
 		bounds.y0 = center_y - 32.0f;
@@ -893,6 +903,9 @@ static void rasterizer_sun_glow_copy_source(
 
 	rasterizer_set_target(target, FALSE, FALSE, FALSE, FALSE);
 
+	/* port: the screen at more pixels than the Xbox's averaged into the
+	64x64 copy, each texel all of its pixels, not one of them (d3d8_device.c) */
+	halo_target_averaged(TRUE);
 	IDirect3DDevice8_Begin(global_d3d_device, D3DPT_TRIANGLEFAN);
 	IDirect3DDevice8_SetVertexData2s(global_d3d_device, 4, 0, 0);
 	IDirect3DDevice8_SetVertexData2f(
@@ -919,6 +932,7 @@ static void rasterizer_sun_glow_copy_source(
 		scale - 1.0f + mysterious_horizontal_offset,
 		scale - 1.0f);
 	IDirect3DDevice8_End(global_d3d_device);
+	halo_target_averaged(FALSE); /* port */
 
 	rasterizer_set_target(
 		global_window_parameters.rasterizer_target,

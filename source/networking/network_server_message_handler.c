@@ -484,6 +484,8 @@ struct message_client_map_is_precached_pregame
 
 struct message_client_loaded
 {
+	/* port: the game loaded's number (number_of_games_played) plus one; 0
+	from a build before this one's (and the Xbox game's), which named none */
 	long unused;
 };
 
@@ -2147,6 +2149,34 @@ static boolean network_game_server_handle_message_client_ping(
 	return result;
 }
 
+/* port: a joiner of another network version is refused (discovery is
+advisory; a direct join must prove the same shared recovery agreement before
+ordinary admission), and told why, not dropped in silence (an invite or a
+direct join skips the browser's check): the classic rejection, which every
+build reads, a joiner older than this host told it is too old, one newer too
+new. TRUE if refused (the caller drops it) */
+static boolean network_game_server_refuse_other_version(
+	struct network_game_server_client_machine *server_client_machine,
+	word network_version)
+{
+	struct message_server_machine_rejected rejection;
+	struct network_message *reply;
+
+	if (network_version == HALO_PORT_NETWORK_VERSION)
+		return FALSE;
+	network_event("join requires OpenCE network version %u (client %u)",
+		HALO_PORT_NETWORK_VERSION, network_version);
+	rejection.reason = network_version < HALO_PORT_NETWORK_VERSION ?
+		_rejection_code_version_too_old : _rejection_code_version_too_new;
+	reply = create_network_game_message(_message_server_machine_rejected, &rejection, sizeof(rejection));
+	if (reply && !network_game_server_write(network_game_server_get_client_connection(server_client_machine),
+		reply, GET_MESSAGE_SIZE(reply->header), NULL, 1))
+	{
+		network_event("network_game_server_write() failed while sending a rejection reply");
+	}
+	return TRUE;
+}
+
 static boolean network_game_server_handle_message_client_join_game_request(
 	struct network_game_server *server,
 	struct network_game_server_client_machine *server_client_machine,
@@ -2186,12 +2216,8 @@ static boolean network_game_server_handle_message_client_join_game_request(
 
 			/* port: discovery is advisory; direct joins must prove the same
 			shared recovery agreement before ordinary admission. */
-			if (join_game_request.network_version != HALO_PORT_NETWORK_VERSION)
-			{
-				network_event("join requires OpenCE network version %u (client %u)",
-					HALO_PORT_NETWORK_VERSION, join_game_request.network_version);
+			if (network_game_server_refuse_other_version(server_client_machine, join_game_request.network_version))
 				return FALSE;
-			}
 
 			/* port: its hardware id, as it tells it: hex only (anything else
 			left out), no more than its field; the host logs it, and refuses
@@ -2868,7 +2894,10 @@ static boolean network_game_server_handle_message_client_map_is_precached_pregam
 	word *message,
 	short message_size)
 {
-	if (network_game_server_get_state(server, NULL) == _network_game_server_state_pregame)
+	/* (port: in the postgame, a client of this build's answer to the
+	keep-alive: network_game_server_client_machine_is_precached) */
+	if (network_game_server_get_state(server, NULL) == _network_game_server_state_pregame ||
+		network_game_server_get_state(server, NULL) == _network_game_server_state_postgame)
 	{
 		struct message_client_map_is_precached_pregame map_is_precached;
 		short packet_type = _message_client_map_is_precached_pregame;
@@ -2908,47 +2937,32 @@ static boolean network_game_server_handle_message_client_loaded(
 	word *message,
 	short message_size)
 {
-	boolean result = TRUE;
+	struct message_client_loaded loaded;
+	short packet_type = _message_client_loaded;
+	short packet_version = NETWORK_GAME_MESSAGE_VERSION;
 
-	if (network_game_server_get_state(server, NULL) == _network_game_server_state_pregame)
+	message_size -= sizeof(word);
+	if (!decode_network_game_message(
+		&loaded,
+		message + 1,
+		&message_size,
+		&packet_type,
+		&packet_version,
+		_network_game_packet_class_client_ingame))
 	{
-		struct message_client_loaded loaded;
-		short packet_type = _message_client_loaded;
-		short packet_version = NETWORK_GAME_MESSAGE_VERSION;
+		network_event("server failed to decode a message_client_loaded packet");
+		return FALSE;
+	}
+	/* port: in every server state the machine's state decides
+	(network_game_server_client_machine_loaded): a load at the game's start,
+	in progress, or as the game ended; a second one, one for another game, or
+	one of a machine never told to start is ignored, not a reason to drop the
+	machine. The game it loaded is its number plus one (0: a build before
+	this one's, which names none) */
+	network_game_server_client_machine_loaded(server, client_machine,
+		loaded.unused ? (long)((unsigned long)loaded.unused - 1) : NONE);
 
-		message_size -= sizeof(word);
-		if (decode_network_game_message(
-			&loaded,
-			message + 1,
-			&message_size,
-			&packet_type,
-			&packet_version,
-			_network_game_packet_class_client_ingame))
-		{
-			network_game_server_client_machine_game_loading_complete(server, client_machine);
-		}
-		else
-		{
-			network_event("server failed to decode a message_client_loaded packet");
-			result = FALSE;
-		}
-	}
-	/* a machine that joined the game in progress has loaded it (or it
-	loaded it as the game ended: not a reason to drop it) */
-	else if ((network_game_server_get_state(server, NULL) == _network_game_server_state_ingame &&
-		!network_game_server_client_machine_is_loaded(server, client_machine)) ||
-		network_game_server_get_state(server, NULL) == _network_game_server_state_postgame)
-	{
-		network_game_server_late_joiner_loaded(server, client_machine);
-	}
-	else
-	{
-		network_event(
-			"failed to handle a message_client_loaded message because the server is not in pregame");
-		result = FALSE;
-	}
-
-	return result;
+	return TRUE;
 }
 
 static boolean network_game_server_handle_message_client_add_player_request_ingame(

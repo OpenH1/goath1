@@ -27,6 +27,11 @@ id<MTLLibrary> xgpu_metal_library(void);
 void xgpu_metal_gpu_interval(double start, double end);
 /* the GPU's busy time so far (its intervals' union), in nanoseconds */
 uint64_t xgpu_metal_gpu_busy_nanoseconds(void);
+/* the tag (not 0) of the frame ending next (xgpu_metal_frame_end), and
+the function given its own GPU time under it once its last command buffer
+is done: the busy time since the frame before's was, on a completion's
+thread (host_render_stream_gpu_frame's) */
+void xgpu_metal_gpu_time_tag(uint32_t tag, void (*listener)(uint32_t tag, uint64_t nanoseconds));
 /* the render thread waits for the GPU to finish a frame (xgpu_metal_frame_wait) */
 int xgpu_metal_frame_waiting(void);
 /* a texture's Metal texture (nil for none) */
@@ -45,6 +50,13 @@ committed (the open pass ended first) and waited for, the frame going on
 in another */
 id<MTLCommandBuffer> xgpu_metal_command_buffer(void);
 void xgpu_metal_command_buffer_finish(void);
+/* work of a caller's own outside the passes (display.temporal_aa's
+MetalFX): the open pass ended, the command buffer being recorded (begun
+if there is none), in the frame's order; and a texture of the backend's
+that work reads (written 0) or writes, marked so (the frame's and the
+command buffers' account of it) */
+id<MTLCommandBuffer> xgpu_metal_outside_passes(void);
+void xgpu_metal_texture_encoded(uint32_t texture, int written);
 
 /* ---------- host_metal.m */
 
@@ -79,6 +91,15 @@ tone map and the encoding are given now: the mode, the layer's output (EDR's
 extended linear sRGB, or SDR), paper white, the peak in paper whites and the
 UI's white over paper white (any thread) */
 void host_metal_hdr_state(int active, int mode, int paper_white_nits, int paper_white, int ui_nits);
+/* display.hdr_sdr_curve (XGPU_HDR_SDR_CURVE_*: AUTO is sRGB's here, as
+macOS and iOS show SDR) */
+void host_metal_hdr_sdr_curve(int curve);
+/* display.hdr_peak_nits (#1122): the display's peak in nits, of the
+player's (0: EDR's own headroom), at most EDR's headroom */
+void host_metal_hdr_peak_nits(int nits);
+/* display.hdr_gamut (#1124): the highlights' colours expanded (1) into
+Display P3 */
+void host_metal_hdr_gamut(int expanded);
 /* the display's headroom stood in for (HALO_METAL_EDR_HEADROOM's: the tests,
 the replay) */
 void host_metal_hdr_override(float headroom);

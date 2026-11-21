@@ -37,6 +37,18 @@ void effects_dispose_from_old_map(
 	void);
 void effects_dispose(
 	void);
+/* port: the game state written over as a whole: the first-person slots,
+outside it, put right (game_state.c) */
+void effects_port_game_state_rewritten(
+	void);
+/* port: an effect, its definition, object and first location, read
+(port/linux/game/light_sources.c) */
+long effects_port_next(
+	long effect_index,
+	long *definition_index,
+	long *object_index,
+	boolean *going,
+	real_point3d *position);
 void effect_delete(
 	long effect_index);
 /* port: discard delayed gameplay producers at a client checkpoint boundary. */
@@ -96,6 +108,16 @@ long effect_new_unattached_from_markers(
 	struct effect_vector_field const *impulse_field,
 	boolean can_be_deterministic);
 void effects_update(
+	real dt);
+/* port: the particles' effects (an effect a particle makes as it dies or
+strikes), the frames': made in an array of their own, outside the game
+state, between particles_effects_begin and _end (particles.c), and moved by
+the frames (game_frame) */
+boolean effects_port_particles_begin(
+	void);
+void effects_port_particles_end(
+	boolean began);
+void effects_port_particles_update(
 	real dt);
 void effects_start_on_first_person_weapon(
 	short local_player_index,

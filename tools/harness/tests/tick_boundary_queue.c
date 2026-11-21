@@ -35,6 +35,11 @@ static short sim_substep_next(void) { return next_substep; }
 static short sim_substep_count(void) { return SUBSTEPS; }
 static int game_connection(void) { return connection; }
 static real network_clock_frame_seconds(real seconds) { (void)seconds; return 0.0f; }
+static void network_clock_steps_ran(real seconds) { (void)seconds; }
+/* (a local game: no client's steps stopped at a tick's time, none made slower) */
+static unsigned long long platform_shared_clock_microseconds(void) { return 0; }
+static boolean game_time_client_steps_over(unsigned long long began) { (void)began; return FALSE; }
+static void network_test_step_cost(void) {}
 static boolean halo_fixed_step(void) { return FALSE; }
 static boolean game_time_menu_scene(void) { return FALSE; }
 static boolean game_time_held(void) { return FALSE; }
@@ -43,6 +48,8 @@ static void render_interpolation_frame_begin(void) {}
 static void render_interpolation_frame_end(void) {}
 static void network_test_elevator_frame(void) {}
 static void game_frame(real seconds) { (void)seconds; }
+/* (the demo recorder's copy once the frame's steps are run: none here) */
+static void demo_steps_end(void) {}
 static real game_time_get_speed(void) { return 1.0f; }
 /* (a local game: no MCC host's speed, no distributed client's catch-up toward a
 host update: game_time.c's) */

@@ -40,6 +40,7 @@ bits are the address, which the guest reads.
 */
 
 #include "host_win.h"
+#include "host_log_queue.h"
 #include "halo_guest_syscall.h"
 
 #include <windows.h>
@@ -518,7 +519,7 @@ static void log_bytes(int fd, const char *bytes, size_t size)
 
 /* ---------- reads and writes */
 
-static long write_handle(int fd, const void *buffer, uint32_t size, int64_t offset, int positional)
+static long write_handle_now(int fd, const void *buffer, uint32_t size, int64_t offset, int positional)
 {
 	HANDLE handle = handle_of(fd);
 	OVERLAPPED overlapped;
@@ -561,6 +562,45 @@ static long write_handle(int fd, const void *buffer, uint32_t size, int64_t offs
 	overlapped.Offset = (DWORD)offset;
 	overlapped.OffsetHigh = (DWORD)((uint64_t)offset >> 32);
 	return WriteFile(handle, buffer, size, &written, &overlapped) ? (long)written : windows_error();
+}
+
+/* (the log's queue's) the guest's standard output or error written */
+static void output_write(int fd, const char *bytes, size_t size)
+{
+	while (size)
+	{
+		long done = write_handle_now(fd, bytes, (uint32_t)size, 0, 0);
+
+		if (done <= 0)
+			return;
+		bytes += done;
+		size -= (size_t)done;
+	}
+}
+
+/* the standard output and error (a console, a pipe or a file) by the log's
+queue, the parts of a vector together: their size, or -1 to write them as
+any other descriptor's */
+static long output_queued(int fd, int count, const char *const *bytes, const size_t *sizes)
+{
+	long total = 0;
+	int index;
+
+	if ((fd != 1 && fd != 2) || !valid_handle(handle_of(fd)))
+		return -1;
+	for (index = 0; index < count; index++)
+		total += (long)sizes[index];
+	return host_log_queue_bytes(output_write, fd, count, bytes, sizes) ? total : -1;
+}
+
+static long write_handle(int fd, const void *buffer, uint32_t size, int64_t offset, int positional)
+{
+	const char *bytes = buffer;
+	size_t length = size;
+
+	if (!positional && output_queued(fd, 1, &bytes, &length) >= 0)
+		return (long)size;
+	return write_handle_now(fd, buffer, size, offset, positional);
 }
 
 static long read_handle(int fd, void *buffer, uint32_t size, int64_t offset, int positional)
@@ -611,6 +651,23 @@ static long guest_vector(int fd, uint64_t vector, int count, int64_t offset, int
 		return -GUEST_EINVAL;
 	if (count && !vector)
 		return -GUEST_EFAULT;
+	if (write && !positional && count <= 64)
+	{
+		/* (a write to the standard output or error, whole, by the log's
+		queue) */
+		const char *bytes[64];
+		size_t sizes[64];
+
+		for (index = 0; index < count; index++)
+		{
+			bytes[index] = GUEST(const char *, guest[index].base);
+			sizes[index] = guest[index].length;
+		}
+		total = output_queued(fd, count, bytes, sizes);
+		if (total >= 0)
+			return total;
+		total = 0;
+	}
 	for (index = 0; index < count; index++)
 	{
 		void *base = GUEST(void *, guest[index].base);

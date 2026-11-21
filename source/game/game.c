@@ -197,6 +197,10 @@ struct game_options;
 #include "sim_rate.h" /* port: port/linux/game/sim_rate.c */
 #include "basic_training.h" /* port: port/linux/game/basic_training.c */
 #include "demo.h" /* port: port/linux/game/demo.c */
+#include "speedrun_state.h" /* port: port/linux/game/speedrun_state.c */
+#include "subtitles.h" /* port: port/linux/game/subtitles.c */
+#include "practice.h" /* port: port/linux/game/practice.c */
+#include "network_latency_trace.h" /* port: port/linux/game/network_latency_trace.c */
 
 /* network_game_globals.c's */
 boolean network_game_distributed_client(void);
@@ -273,6 +277,7 @@ PROFILE_SECTION(game_tick_units_section, "game_tick.units")
 PROFILE_SECTION(game_tick_ai_section, "game_tick.ai")
 PROFILE_SECTION(game_tick_actors_drive_section, "game_tick.actors_drive")
 PROFILE_SECTION(game_tick_players_before_section, "game_tick.players_before")
+PROFILE_SECTION(game_tick_demo_foreign_section, "game_tick.demo_foreign")
 PROFILE_SECTION(game_tick_effects_section, "game_tick.effects")
 PROFILE_SECTION(game_tick_antennas_section, "game_tick.antennas")
 PROFILE_SECTION(game_tick_first_person_section, "game_tick.first_person")
@@ -364,6 +369,14 @@ static void game_tick_macro_step(
 	/* port: the cameras as the tick begins, which its fast phase decides
 	material effects by (material_effects.c) */
 	material_effects_tick_begin();
+	/* port: the screen's fade and flash, the camera's impulse and shake,
+	the scripted shake and the damage indicators counted down once a tick,
+	as the tick begins (player_effects.c: the frames counted them) */
+	player_effect_tick_begin();
+	/* port: the HUD's flash times, its crosshairs' flashes and its warning
+	sounds, a frame's step once a tick, as the tick begins (hud.c: the
+	frames drawing the HUD stepped them) */
+	hud_tick_begin();
 
 	/* port: a client of another's game, the host's rules (its own cheats and
 	game speed, set before it joined too, put back) */
@@ -391,9 +404,9 @@ static void game_tick_macro_step(
 	given (port/linux/game/network_substeps.c) */
 	/* port: (what it puts in from the other machines, for the demo:
 	port/linux/game/demo.c) */
-	demo_foreign_begin();
+	profile_scope(game_tick_demo_foreign_section, demo_foreign_begin();)
 	network_substeps_actions_given();
-	demo_foreign_end();
+	profile_scope(game_tick_demo_foreign_section, demo_foreign_end();)
 
 	seconds_per_tick = game_globals->players_are_double_speed
 		? 1.0f / (2 * TICKS_PER_SECOND)
@@ -461,6 +474,16 @@ static void game_tick_after_substeps(
 	profile_scope(game_tick_players_after_section, players_update_after_game();)
 	profile_scope(game_tick_hud_section, hud_update();)
 	profile_scope(game_tick_player_effect_section, player_effect_update();)
+	/* port: the sound classes' fades (sound_class_set_gain, from the scripts
+	and the game's end, in ticks), a tick's step once a tick: their gains are
+	game state (sound_classes.c), and the sound manager stepped them by the
+	frames' clock, so the game state differed between frame rates (#1233).
+	Only the sound manager reads the gains, as it mixes; heard, the fade
+	moves in whole ticks as it did there */
+	sound_classes_update(1);
+	/* port: the letterbox's slide and the chapter titles' time
+	(cinematics.c: they moved with the frames) */
+	cinematic_update();
 	/* port: the wind's step, once a tick (scenario.c: it stepped by the
 	frames' time) */
 	scenario_tick_update();
@@ -487,6 +510,8 @@ boolean game_tick_substep(
 	collision_log_begin_period(0);
 	real_math_reset_precision();
 	profile_enter(game_update_section);
+	/* port: when the step began, for debug.network_latency_trace */
+	NETWORK_LATENCY_TRACE(network_latency_trace_step_begun());
 
 	if (substep_index == 0)
 		game_tick_macro_step();
@@ -721,6 +746,10 @@ boolean game_load(
 	struct game_options *options)
 {
 	halo_loading_begin(); /* port: keep presentation alive while loading */
+	speedrun_state_map_load(); /* port: port/linux/game/speedrun_state.c */
+	/* port: the subtitles' lines read under the loading screen, not as the
+	first line plays (port/linux/game/subtitles.c) */
+	subtitles_map_load();
 #ifdef HALO_PROFILE
 	/* port: the profiling build's recording learns of the map (every map
 	load passes here: main_new_map's and a network game's,
@@ -832,6 +861,9 @@ void game_initialize_for_new_map(
 	hs_initialize_for_new_map();
 	recorded_animations_initialize_for_new_map();
 	cheats_initialize_for_new_map();
+	/* port: a fresh start of the level ends the PRACTICE mark
+	(port/linux/game/practice.c) */
+	practice_new_level();
 	/* port: no hijack under way (port/linux/game/vehicle_hijack.c) */
 	vehicle_hijack_reset();
 
@@ -1158,6 +1190,9 @@ void game_frame(
 
 	collision_log_begin_period(1);
 	particles_update(frame_dt, xbox_frame_dt);
+	/* port: the effects the particles made, the frames' (effects.c's
+	effect_particle_data: OpenH1 #1233) */
+	effects_port_particles_update(frame_dt);
 	contrails_update(frame_dt);
 	particle_systems_update(frame_dt);
 	widgets_update(frame_dt);
