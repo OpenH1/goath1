@@ -444,8 +444,198 @@ jobs:
           retention-days: 3
           if-no-files-found: warn
 
-  linux-x86_64:
+  # The NVIDIA DLSS add-on (docs/temporal-aa.md, "The add-on"), a release
+  # run's alone: the game's packages hold none of NVIDIA's files, and the
+  # game downloads the add-on from its release. Each platform's add-on is
+  # built (configure.py --dlss, ninja dlss_addon: build/dlss-addon/'s
+  # archive, manifest and NVIDIA's license), the dlss-pin job pins them to
+  # the release's tag, build-<N> (the changes job's number, the tag the
+  # release job publishes under), and only then do linux-x86_64 and windows
+  # build the game with that pin; the release job uploads the very files
+  # pinned. (A run that is no release builds none of it: the game jobs keep
+  # the committed pin, which pins nothing.)
+  dlss-addon-linux:
     needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.release == 'true' }}
+    # (linux-x86_64's runner and image: the module starts where the game does)
+    runs-on: ${{ fromJSON(needs.changes.outputs.runner || '"ubuntu-24.04"') }}
+    container:
+      image: ${{ needs.changes.outputs.self_hosted != 'true' && 'ghcr.io/openh1/ci-linux:ubuntu-22.04-x86_64' || '' }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use the machine's caches
+        if: needs.changes.outputs.self_hosted == 'true'
+        run: printf '%s\n' CI_GUEST_LLVM_CACHE=/runner/cache/llvm >> "$GITHUB_ENV"
+
+      - name: Install the toolchain
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          packages="$(cat .github/ci-image/packages.txt .github/ci-image/packages-x86_64.txt)"
+          if ! dpkg -s $packages > /dev/null 2>&1; then
+            apt-get -o Acquire::Retries=5 update
+            apt-get -o Acquire::Retries=5 install -y --no-install-recommends $packages
+          fi
+
+      # (configure.py's downloads: linux-x86_64's caches, restored only, as
+      # that job saves them)
+      - uses: actions/cache/restore@v4
+        with:
+          path: build/linux_x86_64/third_party
+          key: linux-x86_64-third-party-${{ hashFiles('tools/android_build.py', 'tools/ffmpeg_fetch.py', 'port/third_party/ffmpeg/sources.txt', 'tools/vulkan_build.py', 'tools/linux_guest_build.py', 'port/android/patches/**') }}
+      - uses: actions/cache/restore@v4
+        if: needs.changes.outputs.self_hosted != 'true'
+        with:
+          path: .cache/llvm
+          key: guest-llvm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/guest_toolchain.py') }}
+
+      # NVIDIA's DLSS SDK's files, pinned by SHA-256 in tools/vulkan_build.py
+      - uses: actions/cache@v4
+        with:
+          path: build/linux_x86_64/third_party/dlss
+          key: dlss-sdk-linux-${{ hashFiles('tools/vulkan_build.py') }}
+
+      - name: Build the add-on
+        run: |
+          python3 configure.py --release --dlss --guest-llvm-cache "$CI_GUEST_LLVM_CACHE"
+          ninja dlss_addon
+          python3 tools/dlss_addon.py verify build/dlss-addon/openh1-dlss-linux-x86_64-*.json
+          ls -l build/dlss-addon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dlss-addon-build-linux-x86_64
+          path: build/dlss-addon/openh1-dlss-*
+          if-no-files-found: error
+          retention-days: 3
+
+  dlss-addon-windows:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.release == 'true' }}
+    # (the windows job's runner, ninja and settings: the module is built
+    # with the game's clang and lld-link)
+    runs-on: ${{ fromJSON(needs.changes.outputs.windows_runner || '"windows-2025"') }}
+    timeout-minutes: 30
+    env:
+      ANDROID_HOME: ""
+      ANDROID_SDK_ROOT: ""
+      ANDROID_NDK_HOME: ""
+      ANDROID_NDK_ROOT: ""
+      ANDROID_NDK: ""
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install the toolchain
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -MaximumRetryCount 5 -RetryIntervalSec 5 -OutFile ninja.zip https://github.com/ninja-build/ninja/releases/download/v1.12.1/ninja-win.zip
+          if ((Get-FileHash ninja.zip -Algorithm SHA256).Hash -ne "F550FEC705B6D6FF58F2DB3C374C2277A37691678D6ABA463ADCBB129108467A") { throw "ninja.zip: unexpected SHA-256" }
+          Expand-Archive ninja.zip -DestinationPath "$env:RUNNER_TEMP\tools"
+          Remove-Item ninja.zip
+          "$env:RUNNER_TEMP\tools" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
+      - uses: actions/checkout@v4
+
+      - name: Use the machine's caches
+        if: runner.environment == 'self-hosted'
+        run: printf '%s\n' CI_GUEST_LLVM_CACHE='C:\goath1-ci\cache\llvm' >> "$GITHUB_ENV"
+
+      # (configure.py's downloads: the windows job's caches, restored only)
+      - uses: actions/cache/restore@v4
+        with:
+          path: build/windows/third_party
+          key: windows-third-party-${{ hashFiles('tools/windows_build.py', 'tools/android_build.py', 'tools/ffmpeg_fetch.py', 'port/third_party/ffmpeg/sources.txt', 'port/android/patches/**') }}
+      - uses: actions/cache/restore@v4
+        if: runner.environment != 'self-hosted'
+        with:
+          path: .cache/llvm
+          key: guest-llvm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/guest_toolchain.py') }}
+
+      # NVIDIA's DLSS SDK's files, pinned by SHA-256 in tools/vulkan_build.py
+      - uses: actions/cache@v4
+        with:
+          path: build/windows/third_party/dlss
+          key: dlss-sdk-windows-${{ hashFiles('tools/vulkan_build.py') }}
+
+      - name: Build the add-on
+        run: |
+          python configure.py --release --dlss --guest-llvm-cache "$CI_GUEST_LLVM_CACHE"
+          ninja dlss_addon
+          python tools/dlss_addon.py verify build/dlss-addon/openh1-dlss-windows-x64-*.json
+          ls -l build/dlss-addon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dlss-addon-build-windows-x64
+          path: build/dlss-addon/openh1-dlss-*
+          if-no-files-found: error
+          retention-days: 3
+
+  # Both platforms' add-ons checked and pinned to build-<N>
+  # (tools/dlss_addon.py pin: each archive's URL in that release, its size
+  # and SHA-256, and the license's): the artifact dlss-addon-pin is the
+  # port/linux/src/dlss_addon_pin.h linux-x86_64 and windows build the game
+  # with, and dlss-addon the files the release job uploads.
+  dlss-pin:
+    needs: [changes, dlss-addon-linux, dlss-addon-windows]
+    if: >-
+      ${{ !cancelled() && needs.changes.outputs.release == 'true' &&
+      needs['dlss-addon-linux'].result == 'success' && needs['dlss-addon-windows'].result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      NUMBER: ${{ needs.changes.outputs.number }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            tools/dlss_addon.py
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dlss-addon-build-*
+          path: dlss-addon
+          merge-multiple: true
+
+      - name: Pin
+        run: |
+          ls -l dlss-addon
+          manifests=(dlss-addon/openh1-dlss-linux-x86_64-*.json dlss-addon/openh1-dlss-windows-x64-*.json)
+          python3 tools/dlss_addon.py verify "${manifests[@]}"
+          mkdir pin
+          python3 tools/dlss_addon.py pin --tag "build-$NUMBER" --out pin/dlss_addon_pin.h "${manifests[@]}"
+          cat pin/dlss_addon_pin.h
+          # (both platforms pinned, to this release's tag)
+          for platform in LINUX_X86_64 WINDOWS_X64; do
+            grep -q "^#define DLSS_ADDON_URL_$platform \"https://github.com/.*/releases/download/build-$NUMBER/openh1-dlss-" pin/dlss_addon_pin.h ||
+              { echo "::error::$platform is not pinned to build-$NUMBER"; exit 1; }
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dlss-addon-pin
+          path: pin/dlss_addon_pin.h
+          if-no-files-found: error
+          retention-days: 3
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dlss-addon
+          path: dlss-addon/openh1-dlss-*
+          if-no-files-found: error
+          retention-days: 3
+
+  linux-x86_64:
+    # (a release's waits for the DLSS add-on's pin, dlss-pin; another run's
+    # starts at once, dlss-pin skipped)
+    needs: [changes, dlss-pin]
     if: ${{ !cancelled() && needs.changes.outputs.build != 'false' }}
     # The 64-bit x86 build (ninja linux_x86_64: the game as x32 code in a
     # 64-bit host, drawn with Vulkan), made as the 64-bit ARM one is: Ubuntu
@@ -469,6 +659,20 @@ jobs:
       CI_BUILD_NUMBER: ${{ needs.changes.outputs.number }}
     steps:
       - uses: actions/checkout@v4
+
+      # (a release: the DLSS add-on pinned to its tag, dlss-pin's
+      # dlss_addon_pin.h, in place of the committed one, which pins nothing;
+      # without it the release stops here)
+      - uses: actions/download-artifact@v4
+        if: needs.changes.outputs.release == 'true'
+        with:
+          name: dlss-addon-pin
+          path: ${{ runner.temp }}/dlss-addon-pin
+      - name: Pin the DLSS add-on
+        if: needs.changes.outputs.release == 'true'
+        run: |
+          cp "$RUNNER_TEMP/dlss-addon-pin/dlss_addon_pin.h" port/linux/src/dlss_addon_pin.h
+          grep '^#define DLSS_ADDON_\(VERSION\|URL_LINUX_X86_64\|SHA256_LINUX_X86_64\) ' port/linux/src/dlss_addon_pin.h
 
       # (on our machines: their compile cache and the guests' LLVM, kept)
       - name: Use the machine's caches
@@ -907,7 +1111,8 @@ jobs:
           if-no-files-found: warn
 
   windows:
-    needs: changes
+    # (a release's waits for the DLSS add-on's pin, as linux-x86_64's)
+    needs: [changes, dlss-pin]
     if: ${{ !cancelled() && needs.changes.outputs.build != 'false' && needs.changes.outputs.windows != 'false' }}
     # The runner image has LLVM, Python, Git and Visual Studio's x64 libraries
     # and Windows SDK; the guest's compiler is the pinned LLVM configure.py
@@ -946,6 +1151,18 @@ jobs:
           "$env:RUNNER_TEMP\tools" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
 
       - uses: actions/checkout@v4
+
+      # (a release: the DLSS add-on pinned to its tag, as linux-x86_64's)
+      - uses: actions/download-artifact@v4
+        if: needs.changes.outputs.release == 'true'
+        with:
+          name: dlss-addon-pin
+          path: ${{ runner.temp }}/dlss-addon-pin
+      - name: Pin the DLSS add-on
+        if: needs.changes.outputs.release == 'true'
+        run: |
+          cp "$RUNNER_TEMP/dlss-addon-pin/dlss_addon_pin.h" port/linux/src/dlss_addon_pin.h
+          grep '^#define DLSS_ADDON_\(VERSION\|URL_WINDOWS_X64\|SHA256_WINDOWS_X64\) ' port/linux/src/dlss_addon_pin.h
 
       # (on the VM: its compile cache and the guests' LLVM, kept)
       - name: Use the machine's caches
@@ -1393,10 +1610,13 @@ jobs:
     # build that failed still stops the release. (A job no runner took is
     # "cancelled" in the run's page and its API, but "abandoned" in the
     # needs context, a result GitHub's documentation does not list: the
-    # notify job's log showed MACOS: abandoned. Both are taken)
-    needs: [changes, linux-x86_64, tests, linux-arm64, android, windows, macos]
+    # notify job's log showed MACOS: abandoned. Both are taken) The NVIDIA
+    # DLSS add-on's files, which the Linux x86-64 and Windows builds are
+    # pinned to (dlss-pin), are published beside the builds.
+    needs: [changes, dlss-pin, linux-x86_64, tests, linux-arm64, android, windows, macos]
     if: >-
       ${{ !cancelled() && needs.changes.outputs.release == 'true' &&
+      needs['dlss-pin'].result == 'success' &&
       needs['linux-x86_64'].result == 'success' && needs.tests.result == 'success' &&
       needs['linux-arm64'].result == 'success' &&
       needs.android.result == 'success' && needs.windows.result == 'success' &&
@@ -1434,6 +1654,13 @@ jobs:
           pattern: halo-*
           path: artifacts
 
+      # (the DLSS add-on's files as dlss-pin pinned them: the archives, their
+      # manifests and NVIDIA's license, openh1-dlss-*)
+      - uses: actions/download-artifact@v4
+        with:
+          name: dlss-addon
+          path: dlss-addon
+
       # each build under the name players see (tools/release_names.py:
       # OpenH1-Windows.zip, OpenH1-Linux.zip, OpenH1.dmg...): the Linux builds
       # with their executables' modes, which the artifacts lose; the Steam
@@ -1466,6 +1693,9 @@ jobs:
               *) (cd "$build" && zip -qr "$GITHUB_WORKSPACE/release/$published.zip" .) ;;
             esac
           done
+          # (no package holds NVIDIA's files: then the DLSS add-on's, apart)
+          python3 tools/dlss_addon.py check-package release
+          cp dlss-addon/openh1-dlss-* release/
           ls -l release
 
       # the macOS app's appcast (tools/macos_appcast.py), when its disk image
@@ -1575,7 +1805,7 @@ jobs:
             ls -l release
             exit 0
           fi
-          gh release create "$tag" release/*.zip release/*.dmg release/*.apk release/SHA256SUMS $(ls release/appcast.xml release/SHA256SUMS.sig 2> /dev/null) --target "$GITHUB_SHA" --latest \
+          gh release create "$tag" release/*.zip release/*.dmg release/*.apk release/openh1-dlss-*.json release/openh1-dlss-*.txt release/SHA256SUMS $(ls release/appcast.xml release/SHA256SUMS.sig 2> /dev/null) --target "$GITHUB_SHA" --latest \
             --title "Build $NUMBER (${GITHUB_SHA:0:7})" --notes-file notes.md
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
@@ -1633,7 +1863,7 @@ jobs:
     # The check branch protection requires: every job the plan ran passed
     # (a job the plan skipped counts as passed; one that failed, or was
     # cancelled, does not).
-    needs: [changes, linux-x86_64, tests, linux-arm64, android, windows, macos, ios]
+    needs: [changes, dlss-addon-linux, dlss-addon-windows, dlss-pin, linux-x86_64, tests, linux-arm64, android, windows, macos, ios]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
