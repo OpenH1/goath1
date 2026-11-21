@@ -6071,6 +6071,14 @@ static struct
 	struct retained_context context;
 	struct retained_draw *slot, *verifying;
 	BOOL keep;
+	/* the context is kept from draw to draw, each part written only where
+	it changed (retained_context_update): its hash while it does not change
+	(hashed), and the slot it was last found the same as (matched), while
+	no slot has been written since (slot_writes, as then) */
+	BOOL hashed;
+	uint32_t hash;
+	struct retained_draw *matched;
+	unsigned long slot_writes, matched_writes, matched_generation;
 	/* the preparation the backend was last told, at that prepare_draw_count
 	and xgpu_backend_sent_serial */
 	struct retained_draw *told;
@@ -6080,7 +6088,10 @@ static struct
 	unsigned long unkept_at;
 	/* counted (logged every 600 frames with either setting) */
 	unsigned long found, found_told, prepared, not_kept, not_kept_moved, not_kept_target, differed, targets_differed,
-		hash_differed, told_differed;
+		hash_differed, told_differed, context_differed;
+	/* the draws whose vertices the backend had (setup_streams), and those
+	told them */
+	unsigned long vertices_kept, vertices_told, vertices_differed;
 	/* the times each of retained_tokens' moved (as a draw was found, or
 	as it was prepared) */
 	unsigned long moved[sizeof(struct retained_tokens) / sizeof(unsigned long)];
@@ -6216,6 +6227,96 @@ static BOOL retained_context_make(struct retained_context *context, struct verte
 	return TRUE;
 }
 
+/* the same context made over the last draw's (retained.context): each part
+compared, and written only where it differs (its padding stays as it was
+made, zero), *changed set where one did. debug.retained_draws_verify makes
+it whole too (retained_context_make) and says where the two differ */
+#define RETAINED_CONTEXT_SET(field, value) \
+	do \
+	{ \
+		__typeof__(context->field) set_ = (value); \
+		if (memcmp(&context->field, &set_, sizeof(set_))) \
+		{ \
+			context->field = set_; \
+			*changed = TRUE; \
+		} \
+	} while (0)
+
+static BOOL retained_context_update(struct retained_context *context, struct vertex_shader_object *program,
+	BOOL immediate, BOOL *changed)
+{
+	struct retained_context made;
+	int stage, index;
+
+#ifdef HALO_VR
+	return FALSE;
+#endif
+	if (preparation.active || journal_recording || xgpu_manifest_recording())
+		return FALSE;
+	/* (first: it sums the states again, and mends the hash) */
+	if (retained.verify)
+		retained_context_make(&made, program, immediate);
+	RETAINED_CONTEXT_SET(state_hash, state_hash_now());
+	RETAINED_CONTEXT_SET(program, program);
+	RETAINED_CONTEXT_SET(vertex_shader, device.vertex_shader);
+	RETAINED_CONTEXT_SET(program_code, program->program);
+	RETAINED_CONTEXT_SET(program_id, program->id);
+	RETAINED_CONTEXT_SET(packed_mask, immediate ? 0 : device.vertex_shader->packed_mask);
+	RETAINED_CONTEXT_SET(immediate, immediate != 0);
+	RETAINED_CONTEXT_SET(lighting_failed, program->lighting_failed != 0);
+	RETAINED_CONTEXT_SET(split_failed, program->split_failed != 0);
+	for (stage = 0; stage < D3DTSS_MAXSTAGES; stage++)
+	{
+		const D3DBaseTexture *texture = device.textures[stage];
+		const D3DPalette *palette = device.palettes[stage];
+
+		RETAINED_CONTEXT_SET(textures[stage], texture);
+		RETAINED_CONTEXT_SET(texture_words[stage][0], texture ? texture->Data : 0);
+		RETAINED_CONTEXT_SET(texture_words[stage][1], texture ? texture->Format : 0);
+		RETAINED_CONTEXT_SET(texture_words[stage][2], texture ? texture->Size : 0);
+		RETAINED_CONTEXT_SET(palettes[stage], palette);
+		RETAINED_CONTEXT_SET(palette_data[stage], palette ? palette->Data : 0);
+	}
+	RETAINED_CONTEXT_SET(targets[0], device.render_target);
+	RETAINED_CONTEXT_SET(targets[1], device.depth_stencil);
+	for (index = 0; index < 2; index++)
+	{
+		const D3DSurface *target = context->targets[index];
+
+		RETAINED_CONTEXT_SET(target_words[index][0], target ? target->Data : 0);
+		RETAINED_CONTEXT_SET(target_words[index][1], target ? target->Format : 0);
+		RETAINED_CONTEXT_SET(target_words[index][2], target ? target->Size : 0);
+	}
+	RETAINED_CONTEXT_SET(sampled_view, sampled_view);
+	RETAINED_CONTEXT_SET(screen_view, screen_view);
+	if (!words_equal(&context->inputs, &inputs, sizeof(inputs)))
+	{
+		context->inputs = inputs;
+		*changed = TRUE;
+	}
+	RETAINED_CONTEXT_SET(cutout_depth, cutout_depth_drawing != 0);
+	RETAINED_CONTEXT_SET(lights_unreached, lights_unreached_drawing != 0);
+	RETAINED_CONTEXT_SET(model_unreached, dynamic_lights.model_unreached != 0);
+	RETAINED_CONTEXT_SET(per_pixel, per_pixel_lighting() != 0);
+	RETAINED_CONTEXT_SET(lights_active, dynamic_lights_active() != 0);
+	RETAINED_CONTEXT_SET(world_ao, world_ao_key(XGPU_AMBIENT_OCCLUSION_LIGHT_NONE));
+	RETAINED_CONTEXT_SET(hud_meter, xgpu_texture_hud_meter() != 0);
+	RETAINED_CONTEXT_SET(hdr_mode, hdr.mode);
+	RETAINED_CONTEXT_SET(hdr_boost, hdr.boost);
+	RETAINED_CONTEXT_SET(lod_bias, draw_lod_bias());
+	if (retained.verify && memcmp(&made, context, sizeof(made)))
+	{
+		if (retained.context_differed++ < 16)
+			platform_log("GPU: retained draws: the context kept differs from the one made (vertex shader %lu)",
+				program->id);
+		*context = made;
+		*changed = TRUE;
+	}
+	return TRUE;
+}
+
+#undef RETAINED_CONTEXT_SET
+
 /* the draw prepared from a kept preparation: 1 drawn, 0 not drawn, -1 not
 found (prepare_draw prepares it, and keeps it: retained_draw_keep) */
 static int retained_draw_find(struct vertex_shader_object *program, BOOL immediate)
@@ -6224,14 +6325,14 @@ static int retained_draw_find(struct vertex_shader_object *program, BOOL immedia
 	struct retained_draw *draw;
 	struct xgpu_pipeline_key scratch;
 	struct xgpu_dynamic_state dynamic;
-	BOOL has_depth = FALSE, told;
+	BOOL has_depth = FALSE, told, changed = FALSE, same;
 
 	retained.keep = FALSE;
 	retained.verifying = NULL;
 	retained_read_settings();
 	if (!retained.enabled && !retained.verify)
 		return -1;
-	if (!retained_context_make(&retained.context, program, immediate))
+	if (!retained_context_update(&retained.context, program, immediate, &changed))
 	{
 		retained.told = NULL;
 		retained.not_kept++;
@@ -6245,16 +6346,41 @@ static int retained_draw_find(struct vertex_shader_object *program, BOOL immedia
 		retained.generation++;
 		retained.told = NULL;
 	}
-	draw = &retained.draws[retained_context_hash(&retained.context) % RETAINED_DRAWS];
+	if (changed || !retained.hashed)
+	{
+		retained.hash = retained_context_hash(&retained.context);
+		retained.hashed = TRUE;
+		retained.matched = NULL;
+	}
+	draw = &retained.draws[retained.hash % RETAINED_DRAWS];
 	retained.slot = draw;
 	retained.keep = TRUE;
 	retained.unkept_at = xgpu_texture_choices_unkept();
-	if (draw->generation != retained.generation || memcmp(&draw->context, &retained.context, sizeof(retained.context)))
+	/* (the slot's context is compared but where the context is the one it
+	was last found the same as, the slot unwritten since; with
+	debug.retained_draws_verify, compared anyway) */
+	same = retained.matched == draw && retained.matched_writes == retained.slot_writes &&
+		retained.matched_generation == retained.generation;
+	if (!same || retained.verify)
 	{
+		BOOL compared = draw->generation == retained.generation &&
+			!memcmp(&draw->context, &retained.context, sizeof(retained.context));
+
+		if (same && !compared && retained.context_differed++ < 16)
+			platform_log("GPU: retained draws: a slot found without its context compared differs (vertex shader %lu)",
+				program->id);
+		same = compared;
+	}
+	if (!same)
+	{
+		retained.matched = NULL;
 		retained.told = NULL;
 		retained.prepared++;
 		return -1;
 	}
+	retained.matched = draw;
+	retained.matched_writes = retained.slot_writes;
+	retained.matched_generation = retained.generation;
 	if (retained.verify || !retained.enabled)
 	{
 		retained.verifying = draw;
@@ -6389,6 +6515,7 @@ static void retained_draw_keep(const struct xgpu_texture_source *sources, const 
 	}
 	draw->generation = retained.generation;
 	draw->context = retained.context;
+	retained.slot_writes++;
 	memcpy(draw->sources, sources, sizeof(draw->sources));
 	memcpy(draw->texture_scale, texture_scale, sizeof(draw->texture_scale));
 	memcpy(draw->alpha_minimum, stage_alpha_minimum, sizeof(draw->alpha_minimum));
@@ -6423,13 +6550,16 @@ static void retained_draws_frame(void)
 	retained.logged_frame = device.frame;
 	platform_log("GPU: retained draws: %lu found (%lu as the draw before's), %lu prepared, not kept: %lu not "
 		"retainable, %lu as what they were made from moved, %lu sampling a target; %lu differed, "
-		"%lu targets differed, %lu hash differed, %lu told differed; moved: memory %lu, choices %lu, images %lu, "
-		"settings %lu, GPU settings %lu, targets %lu", retained.found, retained.found_told, retained.prepared,
+		"%lu targets differed, %lu hash differed, %lu told differed, %lu contexts differed, %lu vertices differed; "
+		"moved: memory %lu, choices %lu, images %lu, settings %lu, GPU settings %lu, targets %lu; vertices: %lu kept, "
+		"%lu told", retained.found, retained.found_told, retained.prepared,
 		retained.not_kept, retained.not_kept_moved, retained.not_kept_target, retained.differed, retained.targets_differed,
-		retained.hash_differed, retained.told_differed, retained.moved[0],
-		retained.moved[1], retained.moved[2], retained.moved[3], retained.moved[4], retained.moved[5]);
+		retained.hash_differed, retained.told_differed, retained.context_differed, retained.vertices_differed, retained.moved[0],
+		retained.moved[1], retained.moved[2], retained.moved[3], retained.moved[4], retained.moved[5],
+		retained.vertices_kept, retained.vertices_told);
 	retained.found = retained.found_told = retained.prepared = retained.not_kept = 0;
 	retained.not_kept_moved = retained.not_kept_target = 0;
+	retained.vertices_kept = retained.vertices_told = 0;
 	memset(retained.moved, 0, sizeof(retained.moved));
 	retained.targets_differed = 0;
 }
@@ -6899,6 +7029,8 @@ static struct
 	unsigned long rewritten_frame[MIRROR_PAGE_SLOTS];
 	/* the times the page has turned volatile (its period's doublings) */
 	unsigned char volatile_times[MIRROR_PAGE_SLOTS];
+	/* counts the pages' states' changes (setup_streams' kept input) */
+	unsigned long serial;
 } mirror;
 
 /* the mirror's page, the write tracking's (as the device's backend is made
@@ -6951,6 +7083,7 @@ static BOOL mirror_refresh(unsigned long first, unsigned long last)
 			if (mirror.rewrites[page] >= MIRROR_VOLATILE_REWRITES)
 			{
 				mirror.state[page] = _mirror_page_volatile;
+				mirror.serial++;
 				if (mirror.volatile_times[page] < 6)
 					mirror.volatile_times[page]++;
 				volatile_page = TRUE;
@@ -6992,6 +7125,7 @@ static BOOL mirror_refresh(unsigned long first, unsigned long last)
 			mirror.generation[page] = memory_watch_generation(PLATFORM_CONTIGUOUS_BASE + page * MIRROR_PAGE_SIZE,
 				MIRROR_PAGE_SIZE);
 			mirror.state[page] = _mirror_page_present;
+			mirror.serial++;
 			if (journal_recording)
 				journal_page(page);
 		}
@@ -7076,6 +7210,7 @@ static BOOL mirror_range(unsigned long address, unsigned long size, long *segmen
 				(MIRROR_VOLATILE_FRAMES << (mirror.volatile_times[page] ? mirror.volatile_times[page] - 1 : 0)))
 				return FALSE;
 			mirror.state[page] = _mirror_page_absent;
+			mirror.serial++;
 		}
 		if (mirror.state[page] != _mirror_page_present)
 		{
@@ -7169,6 +7304,63 @@ static BOOL stream_has_colors(const struct vertex_shader_object *declaration, un
 	return FALSE;
 }
 
+/* the vertices last told the backend (setup_streams), with what they were
+made from: a draw of the same declaration, the same streams' buffers and
+strides, the same range of vertices and the same attributes' values, in the
+same frame, with no watched memory written (memory_watch_serial: what the
+mirror holds of it is current), no page's state in the mirror changed and
+nothing the backend forgot (xgpu_backend_sent_serial) has the same input:
+the backend has it still and is not told it again (a draw after a submit
+has it sent again by the backend itself). Only an input wholly from the
+mirror is kept (streamed vertices are copied from memory nothing watches).
+With debug.retained_draws off each draw's is told;
+debug.retained_draws_verify makes and tells it anyway, and says where the
+kept one differs */
+static struct
+{
+	BOOL valid;
+	const struct vertex_shader_object *declaration;
+	unsigned long declaration_id, element_count, packed_mask;
+	unsigned long first, count;
+	/* the streams the declaration names (a bit each), their buffers and
+	strides */
+	unsigned long named;
+	DWORD data[16];
+	UINT stride[16];
+	unsigned long memory, mirror, frame, sent;
+	unsigned long mirrored_bytes;
+	float attributes[XGPU_VERTEX_ATTRIBUTE_COUNT][4];
+	/* (debug.retained_draws_verify) the input told */
+	struct xgpu_vertex_input input;
+} streams_told;
+
+static BOOL streams_told_same(const struct vertex_shader_object *declaration, unsigned long first, unsigned long count)
+{
+	unsigned long named = streams_told.named;
+
+	if (!streams_told.valid || streams_told.declaration != declaration || streams_told.first != first ||
+		streams_told.count != count || streams_told.declaration_id != declaration->id ||
+		streams_told.element_count != declaration->element_count ||
+		streams_told.packed_mask != declaration->packed_mask || streams_told.frame != device.frame ||
+		streams_told.memory != memory_watch_serial() || streams_told.mirror != mirror.serial ||
+		streams_told.sent != xgpu_backend_sent_serial())
+	{
+		return FALSE;
+	}
+	while (named)
+	{
+		int stream = __builtin_ctzl(named);
+
+		named &= named - 1;
+		if (device.streams[stream].data != streams_told.data[stream] ||
+			device.streams[stream].stride != streams_told.stride[stream])
+		{
+			return FALSE;
+		}
+	}
+	return words_equal(device.attributes, streams_told.attributes, sizeof(streams_told.attributes));
+}
+
 /* the vertices [first, first + count) of every stream the declaration uses,
 from the mirror where it holds them, else streamed by the backend; the
 attributes' data then starts at vertex 0 of the range */
@@ -7176,9 +7368,24 @@ static void setup_streams(unsigned long first, unsigned long count)
 {
 	struct vertex_shader_object *declaration = device.vertex_shader;
 	struct xgpu_vertex_input input;
-	unsigned long index;
+	unsigned long index, named = 0, mirrored_bytes = 0;
+	BOOL keep, same = FALSE, all_mirrored = TRUE;
 	double traced = preparation_time();
 
+	/* (not in a map's preparation, nor as the manifest is recorded: each
+	draw's input noted) */
+	keep = retained.enabled && !preparation.active && !preparation.duplicate && !xgpu_manifest_recording();
+	if (keep)
+	{
+		same = streams_told_same(declaration, first, count);
+		if (same && !retained.verify)
+		{
+			stats.mirrored_bytes += streams_told.mirrored_bytes;
+			retained.vertices_kept++;
+			preparation_time_add(3, traced);
+			return;
+		}
+	}
 	memset(&input, 0, sizeof(input));
 	input.declaration = declaration->id;
 	input.element_count = declaration->element_count;
@@ -7192,6 +7399,7 @@ static void setup_streams(unsigned long first, unsigned long count)
 		unsigned long bytes = stride ? stride * count : 64;
 		unsigned long base;
 
+		named |= 1UL << stream;
 		if (!device.streams[stream].data || element->format == XGPU_VERTEX_NONE_FORMAT || input.streams[stream].present)
 			continue;
 		base = (unsigned long)PLATFORM_PHYSICAL_TO_VIRTUAL(device.streams[stream].data) + first * stride;
@@ -7203,15 +7411,61 @@ static void setup_streams(unsigned long first, unsigned long count)
 		if ((xgpu_backend_capabilities.bgra_vertex_colors || !stream_has_colors(declaration, stream)) &&
 			mirror_range(base, bytes, &input.streams[stream].segment, &input.streams[stream].offset, NULL))
 		{
+			mirrored_bytes += bytes;
 			continue;
 		}
 		input.streams[stream].segment = -1;
+		all_mirrored = FALSE;
 		stats.streamed_bytes += bytes;
 	}
 	memcpy(input.attributes, device.attributes, sizeof(input.attributes));
+	/* (debug.retained_draws_verify: the input that would not be told again,
+	as it is made) */
+	if (same)
+	{
+		if (memcmp(&input, &streams_told.input, sizeof(input)))
+		{
+			if (retained.vertices_differed++ < 16)
+				platform_log("GPU: retained draws: the vertices kept differ (declaration %lu)", declaration->id);
+		}
+		else
+		{
+			retained.vertices_kept++;
+		}
+	}
 	if (!preparation.duplicate)
 		xgpu_backend_set_vertices(&input);
+	retained.vertices_told += keep;
 	xgpu_manifest_note_vertices(&input);
+	/* what it was made from (after mirror_range, which uploads what was
+	written) */
+	streams_told.valid = keep && all_mirrored;
+	if (streams_told.valid)
+	{
+		streams_told.declaration = declaration;
+		streams_told.declaration_id = declaration->id;
+		streams_told.element_count = declaration->element_count;
+		streams_told.packed_mask = declaration->packed_mask;
+		streams_told.first = first;
+		streams_told.count = count;
+		streams_told.named = named;
+		for (index = 0; index < 16; index++)
+		{
+			if (named & (1UL << index))
+			{
+				streams_told.data[index] = device.streams[index].data;
+				streams_told.stride[index] = device.streams[index].stride;
+			}
+		}
+		streams_told.memory = memory_watch_serial();
+		streams_told.mirror = mirror.serial;
+		streams_told.frame = device.frame;
+		streams_told.sent = xgpu_backend_sent_serial();
+		streams_told.mirrored_bytes = mirrored_bytes;
+		memcpy(streams_told.attributes, device.attributes, sizeof(streams_told.attributes));
+		if (retained.verify)
+			streams_told.input = input;
+	}
 	preparation_time_add(3, traced);
 }
 
