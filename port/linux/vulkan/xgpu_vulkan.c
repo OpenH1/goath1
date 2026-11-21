@@ -10363,37 +10363,46 @@ static void frame_pacing_update(void)
 }
 
 /* the frames ahead of the GPU bounded (xgpu_vulkan_pacing_frames_ahead):
-where the window's presents queue for the display (FIFO), the game starts a
-frame only once the frame before is done on the GPU, whatever the display
-says of them (issue #274: NVIDIA's Windows driver queued five refreshes of
-them); the guest's own bound else (mailbox and immediate replace or tear,
-and the headset paces the VR mode). With a display that says nothing of its
-presents, on gamescope's headless 60 Hz, the press reached the screen in
-57 ms, against 96 ms unbounded (68 ms with one frame more allowed) */
+where the window's presents queue for the display (FIFO) and the display
+says nothing of them (or not yet), the game starts a frame only once the
+frame before is done on the GPU (issue #274: NVIDIA's Windows driver queued
+five refreshes of them); the guest's own bound else (mailbox and immediate
+replace or tear, and the headset paces the VR mode). With a display that
+says nothing of its presents, on gamescope's headless 60 Hz, the press
+reached the screen in 57 ms, against 96 ms unbounded (68 ms with one frame
+more allowed).
+
+Paced or bounded by the display (vk.paced: its present wait answers), at
+most one frame waits for it already (host_render_stream.c's display_wait),
+and the game starts a frame while the frame before is still on the GPU, no
+more than that one. Held for the GPU there too, the game, the render thread
+and the GPU took turns: each frame's time was the sum of theirs, not the
+longest of them, and a frame limit the work fits in by far was not held
+(VRR at 138 Hz, 4K: about 3.5 ms of the game's, 2 of the render thread's
+and 3 of the GPU's held the 135 frames a second VRR allows to about 105) */
 static void frames_ahead_update(int present_window)
 {
-	/* (HALO_VULKAN_FRAMES_AHEAD=1: with FIFO the game starts a frame while
-	the frame before is still on the GPU, and no more than that one. A GPU
-	that takes most of a refresh to draw a frame otherwise idles while the
-	game and the render thread make the next, and the frame's time is the
-	sum of theirs and its own, not the longer of them) */
-	static int fifo_ahead = -1;
+	/* (HALO_VULKAN_FRAMES_AHEAD: 1, with FIFO one frame before still on the
+	GPU, paced by the display or not; 0, none, paced or not; unset, as
+	above) */
+	static int fifo_ahead = -2;
 	int ahead;
 
-	if (fifo_ahead < 0)
+	if (fifo_ahead < -1)
 	{
 		const char *asked = getenv("HALO_VULKAN_FRAMES_AHEAD");
 
-		fifo_ahead = asked && atoi(asked) > 0 ? 1 : 0;
+		fifo_ahead = !asked || !*asked ? -1 : atoi(asked) > 0 ? 1 : 0;
 	}
-	ahead = present_window && vk.swapchain && vk.present_mode == VK_PRESENT_MODE_FIFO_KHR ? fifo_ahead : -1;
+	ahead = present_window && vk.swapchain && vk.present_mode == VK_PRESENT_MODE_FIFO_KHR ?
+		(fifo_ahead >= 0 ? fifo_ahead : vk.paced ? 1 : 0) : -1;
 	if (ahead + 2 == vk.frames_ahead)
 		return;
 	vk.frames_ahead = ahead + 2;
 	xgpu_vulkan_pacing_frames_ahead(ahead);
 	host_logf(HOST_LOG_INFO, "vulkan: the game's frames %s", !ahead ?
 		"start once the frame before is done on the GPU (FIFO)" : ahead > 0 ?
-		"start with at most one frame before still on the GPU (FIFO, HALO_VULKAN_FRAMES_AHEAD)" :
+		"start with at most one frame before still on the GPU (FIFO)" :
 		"ahead of the GPU as the stream allows");
 }
 
