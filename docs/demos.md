@@ -114,7 +114,13 @@ take (`source/math/random_math.c`) and the players' input of each tick
   vehicles' homes, the players' respawn and loading-zone timers and their
   places at the last checkpoint, the scripts' vitality for every player,
   each player's friendly fire and whether they are away, each client's
-  structure BSP, a dedicated server's loading-zone rules), whole with each
+  structure BSP, a dedicated server's loading-zone rules), then the
+  revert's stamp (`game_state_port_demo_state`: the scripts' `game_reverted`
+  compares it with the clock, and a skippable cutscene's start plays it
+  where its save was not reverted to) and whether the map is being saved
+  (`main_port_demo_saving_state`: the scripts' `game_saving`, which the
+  frames clear as they save; a playback's main loop makes no save of its
+  own), whole with each
   snapshot and, as the bytes that changed, wherever it changed outside the
   ticks; the playback puts it back as it was.
 - **The frames' choices a tick takes**: whether a particle waits for a
@@ -448,6 +454,35 @@ the tick:
   moved since the tick began. The cameras are recorded again before such
   an event and before a later sub-step of an open tick (`O`), where the
   frames moved them, and the playback puts back the recording's there.
+
+A co-op host's recording (a30 at 120 Hz, a client, EXTRA ENEMIES) parted
+at its sixth tick, from its start and after a seek:
+
+- **The revert's stamp.** The playback took each whole game state as a
+  saved game, whose loading stamps the revert at its tick; the host's game
+  began with three taken for what its code made outside the ticks (its
+  players spawned, its pickups placed), none a revert. The intro's
+  `cinematic_skip_start` then read `game_reverted` as true and skipped the
+  cutscene the recording played (a Pelican's crew placed at tick 4). The
+  stamp is recorded now (`G`, a later part); a demo recorded before it
+  keeps the stamp over a whole game state whose objects' next identifier
+  went on (the code's), takes a load's, and none at the start or a seek.
+- **The map's save.** The intro's start saves the map and sleeps until
+  `game_saving` is false, which the main loop's frames make it once they
+  have saved: ten ticks on in the recording, one in the playback. Whether
+  it is saving is recorded now (`G`), and the playback's main loop saves
+  nothing; a demo recorded before it saves as its own frames do, and can
+  part there.
+- **A seek after a parting.** A playback that had parted wrote none of
+  the recording's differences after a seek either, and parted again at
+  once. A seek's snapshot puts it back on the recording now.
+- **The main loop's respawn.** A playback's main loop carried out the
+  ticks' ask to respawn as a game of its own machine (the campaign's
+  respawn, no network: an assert in `player_teleport`), and the next tick's
+  whole game state wiped what it made but not its looping sounds, which the
+  sound's update then read (a crash). A playback leaves the respawn and the
+  lost level's revert to the recording now, and a looping sound whose
+  object is gone is deleted.
 
 `tools/test_demo_files.py` checks the files without the game: a demo
 written and read back, a damaged block refused, the retention, and the

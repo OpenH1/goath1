@@ -429,6 +429,18 @@ void game_state_port_restamp_revert_time(
 	game_state_globals.revert_time = game_time_get();
 }
 
+/* port: the revert's stamp, kept outside the game state and read by the
+ticks (the scripts' game_reverted: a skippable cutscene's cinematic_skip_start
+plays it where its save was not reverted to), for a demo
+(port/linux/game/demo.c's G records): a playback has the recording's, not
+what its own loads of the recording's whole game states stamp */
+void *game_state_port_demo_state(
+	long *size)
+{
+	*size = (long)sizeof(game_state_globals.revert_time);
+	return &game_state_globals.revert_time;
+}
+
 void game_state_revert(
 	void)
 {

@@ -2627,6 +2627,16 @@ void *main_port_demo_state(
 	return NULL;
 }
 
+/* port: whether the map is being saved, which the scripts' game_saving
+reads and the frames clear as they save it, for the demos
+(port/linux/game/demo.c's G records): a playback's is the recording's */
+void *main_port_demo_saving_state(
+	long *size)
+{
+	*size = sizeof(main_globals.saving_map);
+	return &main_globals.saving_map;
+}
+
 static void main_load_core_private(
 	void)
 {
@@ -4213,7 +4223,14 @@ void main_loop(
 				main_switch_to_structure_bsp_private();
 			}
 
-			if (main_globals.lost_map)
+			/* port: a demo's playback carries out none of the ticks' asks
+			of the main loop that change the game: the recording's main loop
+			did, and what it did comes with the next tick (the whole game
+			state its respawn made, its revert); a playback's own, outside
+			the ticks, ran as a game of this machine's (the campaign's
+			respawn, with no network) and made objects the recording's next
+			tick wiped (port/linux/game/demo.c) */
+			if (main_globals.lost_map && !demo_playing())
 			{
 				main_lost_map_private();
 			}
@@ -4223,7 +4240,7 @@ void main_loop(
 				main_won_map_private();
 			}
 
-			if (main_globals.respawn)
+			if (main_globals.respawn && !demo_playing())
 			{
 				main_respawn_private();
 			}
@@ -4590,7 +4607,9 @@ void main_loop(
 					profile_scope_exit(main_non_deterministic_update_section)
 				}
 
-				if (main_globals.saving_map)
+				/* port: (a demo's playback has the recording's: its frames
+				made the save, and the scripts' game_saving read when they had) */
+				if (main_globals.saving_map && !demo_playback_saves_recorded())
 				{
 					main_save_map_private();
 				}

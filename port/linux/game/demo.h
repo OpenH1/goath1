@@ -89,6 +89,7 @@ void demo_netcode_end(void);
 saved games, its recording left alone), and the rate its ticks run at (0
 when none is: sim_rate.c) */
 boolean demo_playing(void);
+boolean demo_playback_saves_recorded(void);
 long demo_playback_sim_rate(void);
 /* the rules of the recorded game that this machine's settings would
 otherwise give a game of its own (network_standard.c): TRUE in a demo's

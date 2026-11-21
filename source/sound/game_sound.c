@@ -1046,8 +1046,10 @@ void game_sound_update(
 		{
 			update_potentially_audible_looping_sound(looping_sound_index, NULL);
 		}
-		else if (TEST_FLAG(sound->flags, _game_looping_sound_unattached_bit)
-			&& !object_try_and_get(sound->object_index))
+		/* port: an attached sound's object gone too (its object deleted
+		without it: a demo's playback writes the ticks' objects over, and
+		the looping sounds are the frames') */
+		else if (!object_try_and_get(sound->object_index))
 		{
 			struct looping_sound_definition *definition =
 				looping_sound_definition_get(sound->definition_index);
