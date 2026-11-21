@@ -2257,7 +2257,8 @@ shown twice and the next not at all (judder, while the frame rate counter
 says 60). In step with the display, display.low_latency starts each in time
 for its refresh, for less input lag than the clock's. (Not Windows', not
 measured there in step with its display, nor the Mac's, whose frames
-with vsync off are taken at the display link's refreshes already.) */
+with vsync off are presented as they come, host_metal.m's
+immediate_present.) */
 static int platform_swap_interval(void)
 {
 #if defined(HALO_VULKAN) && !defined(HALO_ANDROID) && !defined(HALO_WINDOWS)

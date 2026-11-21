@@ -37,17 +37,26 @@ screen statistics.
 With display.vsync off (host_metal_vsync, the Mac's default), the game is
 not paced by the display: it draws as many frames as display.max_fps lets
 it (sdl_platform.c's platform_video_swap, twice the display's rate by
-default), and each refresh shows the newest frame queued, the older one
-dropped. The link still presents
-only at the refreshes, so nothing tears, in a window or fullscreen. The
-newest frame is taken just before the link's deadline for the refresh (its
-update's targetTimestamp, TAKE_MARGIN_MS before it), not as the
-link calls: the link calls a refresh before that deadline (on an M2 at
-60 Hz in a window: the deadline 16.6 ms after the call, the frame on
-screen 49.9 ms after it), so the frame shown is a refresh newer. The game
-starts its frames at fixed phases of those takes (host_metal_frame_phase),
-one its budget before each, so that the frame each refresh shows is always
-as old, and the game's time on screen steps evenly.
+default), and each frame is presented as soon as it is queued
+(immediate_present), into the layer's next drawable, the layer out of sync
+with the display (displaySyncEnabled NO) and the link paused: as with
+vsync off elsewhere, a frame's time is its own, not rounded up to the
+refreshes' (at 120 Hz, frames of 17 ms had been shown for 25), and
+fullscreen it may tear; in a window the window server shows the newest
+frame at its next composite, without tearing. The link still draws the
+loading screen and the black before the game's first frame.
+
+HALO_METAL_UNPACED (with vsync on: the replay's measure of the GPU's and
+the render thread's full speed) has the link show the newest frame queued
+at each refresh, the older one dropped: nothing tears. The newest frame is
+taken just before the link's deadline for the refresh (its update's
+targetTimestamp, TAKE_MARGIN_MS before it), not as the link calls: the
+link calls a refresh before that deadline (on an M2 at 60 Hz in a window:
+the deadline 16.6 ms after the call, the frame on screen 49.9 ms after
+it), so the frame shown is a refresh newer. The game starts its frames at
+fixed phases of those takes (host_metal_frame_phase), one its budget
+before each, so that the frame each refresh shows is always as old, and
+the game's time on screen steps evenly.
 
 Until frames come (the null renderer draws none), each refresh clears the
 drawable to black and presents it.
@@ -137,6 +146,8 @@ from: port/ios/README.md).
 #include <mach/thread_policy.h>
 
 static void drawn_size(int *width, int *height);
+/* (vsync off: immediate_present) */
+static void immediate_request(void);
 
 #define PRESENT_IMAGES 2
 #define LOADING_UPLOADS 3
@@ -247,6 +258,14 @@ static struct
 	BOOL unpaced;
 	/* HALO_METAL_UNPACED: unpaced whatever display.vsync says */
 	BOOL unpaced_forced;
+	/* (macOS, display.vsync off: host_metal_vsync) each frame presented as
+	soon as it is queued, not at the link's refreshes (immediate_present):
+	a present asked of the link's thread and not yet run; the link paused
+	while the game's frames come (the link's thread's), and the last time
+	the screen's headroom was read for them */
+	_Atomic int immediate, immediate_pending;
+	BOOL link_paused;
+	double immediate_edr_read;
 	/* battery saver, as the guest asks (host_metal_battery_saver), and as the
 	link's rate was last set for it (the link's thread's) */
 	_Atomic int battery_saver;
@@ -1075,6 +1094,10 @@ uint64_t host_metal_loading(void *context, const struct loading_presentation_fra
 	pthread_mutex_unlock(&presentation.lock);
 	while (discarded-- > 0)
 		host_render_stream_frame_taken();
+	/* (vsync off: the link, paused while the game's frames come, draws the
+	loading screen's pictures) */
+	if (frame->active && !frame->ready && atomic_load(&presentation.immediate))
+		immediate_request();
 	return presentation.refresh_rate > 0.0f ? (uint64_t)(1e9 / presentation.refresh_rate) : 16666667ull;
 }
 
@@ -1157,6 +1180,19 @@ static void present_draw(id<MTLRenderCommandEncoder> encoder, id<CAMetalDrawable
 }
 
 /* ---------- the presentation images */
+
+static void immediate_present(void);
+
+/* (vsync off, macOS) immediate_present asked of the link's thread, once
+until it runs: for a frame queued, or for the link's state again
+(link_state_apply) as the loading screen starts or vsync turns on */
+static void immediate_request(void)
+{
+	if (!presentation.link_run_loop || atomic_exchange(&presentation.immediate_pending, 1))
+		return;
+	CFRunLoopPerformBlock(presentation.link_run_loop, kCFRunLoopDefaultMode, ^{ immediate_present(); });
+	CFRunLoopWakeUp(presentation.link_run_loop);
+}
 
 id<MTLTexture> host_metal_present_exchange(id<MTLTexture> picture)
 {
@@ -1259,6 +1295,9 @@ void host_metal_present_queue(id<MTLTexture> image, uint64_t frame)
 	/* (a frame with nothing to show is taken at once) */
 	if (!queued)
 		host_render_stream_frame_taken();
+	/* (vsync off: presented now, on the link's thread) */
+	else if (atomic_load(&presentation.immediate))
+		immediate_request();
 }
 
 static void image_release(int index)
@@ -1920,135 +1959,22 @@ static BOOL rate_adapt(BOOL shown, double now)
 #endif
 }
 
-@implementation HaloDisplayLinkTarget
-
-- (void)metalDisplayLink:(CAMetalDisplayLink *)link needsUpdate:(CAMetalDisplayLinkUpdate *)update
+/* (the link's thread) a take (take_frame) drawn into a drawable and
+presented: target, the time the link's refresh is shown at (0: presented
+as soon as drawn, vsync off: immediate_present) */
+static void present_taken(id<CAMetalDrawable> drawable, double target, const struct taken *taken)
 {
-	double start = seconds_now();
-
-	if (atomic_load(&presentation.background))
-		return;
-	/* (the window hidden: the drawable would not reach the screen, and the
-	frames are taken by hidden_refresh; the link's times keep its grid) */
-	if (atomic_load(&presentation.hidden))
-	{
-		link_grid(update);
-		presentation.last_tick = 0.0;
-		return;
-	}
-	[self refresh:update];
-	presentation.last_callback_seconds = seconds_now() - start;
-	if (presentation.last_callback_seconds > presentation.callback_most_seconds)
-		presentation.callback_most_seconds = presentation.last_callback_seconds;
-	(void)link;
-}
-
-- (void)refresh:(CAMetalDisplayLinkUpdate *)update
-{
-	CAMetalDisplayLink *link = presentation.link;
-
-	/* (battery saver turned on or off, or the window on a display of
-	another rate: the link's rate, from its next refresh, and its period
-	measured again) */
-	if (atomic_load(&presentation.battery_saver) != presentation.battery_saver_set ||
-		atomic_exchange(&presentation.rate_changed, 0))
-	{
-		presentation.battery_saver_set = atomic_load(&presentation.battery_saver);
-		link.preferredFrameRateRange = link_rate_range(presentation.battery_saver_set);
-		memset(presentation.target_intervals, 0, sizeof(presentation.target_intervals));
-	}
-
 	@autoreleasepool
 	{
-		id<CAMetalDrawable> drawable = update.drawable;
-		uint32_t width = atomic_load(&presentation.pixel_width), height = atomic_load(&presentation.pixel_height);
 		MTLRenderPassDescriptor *pass;
 		id<MTLCommandBuffer> buffer;
 		id<MTLRenderCommandEncoder> encoder;
-		id<MTLTexture> image = nil;
-		id<MTLTexture> loading_image = nil, sampled_image;
-		double now = seconds_now(), target = update.targetPresentationTimestamp, committed;
-		int index = -1;
-		BOOL idle;
-		struct taken taken;
-		struct xgpu_metal_compile_totals compiled = { 0 };
-		uint64_t input = 0, producer_frame = 0;
-		/* (paced) the take's time and the refreshes' period, on the game's
-		clock */
-		uint64_t latch_ns = 0, period_ns = 0;
-		struct loading_presentation_frame loading_frame;
-
-		(void)link;
-		presentation.ticks++;
-		/* (display.hdr: the screen's headroom looked at four times a second,
-		on the main thread, NSScreen's) */
-		if (presentation.edr_ticks++ % 15 == 0)
-			dispatch_async(dispatch_get_main_queue(), ^{ display_hdr_read(); });
-		layer_hdr_choose();
-		if (presentation.last_tick > 0.0 && presentation.refresh_rate > 0.0f &&
-			now - presentation.last_tick > 1.5 / presentation.refresh_rate)
-		{
-			if (atomic_load(&presentation.drawables_pending) >= (int)presentation.layer.maximumDrawableCount - 1)
-				presentation.gaps_starved++;
-			else
-				presentation.gaps_free++;
-			if (presentation.last_gap)
-				presentation.gaps_following++;
-			if (presentation.last_callback_seconds > 1.0 / presentation.refresh_rate)
-				presentation.gaps_after_slow++;
-			if (update.targetPresentationTimestamp - presentation.last_target > 1.5 / presentation.refresh_rate)
-				presentation.gaps_target_skipped++;
-			else
-				presentation.gaps_delivered_late++;
-			presentation.last_gap = YES;
-		}
-		else
-		{
-			presentation.last_gap = NO;
-		}
-		presentation.last_tick = now;
-		link_grid(update);
-		if (presentation.stats_interval > 0.0 && now - presentation.stats_since >= presentation.stats_interval)
-			pacing_log(now);
-		/* the frame is latched now (the link calls about two refreshes before
-		the frame is on screen; one taken later, nearer the link's deadline,
-		misses its refresh): the game starts each frame to be ready by the
-		next latch (frame_pacing.h) */
-		take_time(update.targetTimestamp, now, &latch_ns, &period_ns);
-		/* (a new size is the next drawable's) */
-		if (width && height && (width != presentation.drawable_width || height != presentation.drawable_height))
-		{
-			presentation.layer.drawableSize = CGSizeMake(width, height);
-			presentation.drawable_width = width;
-			presentation.drawable_height = height;
-		}
-		take_frame(&taken, latch_ns, period_ns, NO);
-		index = taken.index;
-		image = taken.image;
-		compiled = taken.compiled;
-		input = taken.input;
-		producer_frame = taken.producer_frame;
-		loading_frame = taken.loading;
-		idle = taken.idle;
-		if (!idle && !loading_frame.active && rate_adapt(image != nil, now))
-		{
-			link.preferredFrameRateRange = link_rate_range(presentation.battery_saver_set);
-			memset(presentation.target_intervals, 0, sizeof(presentation.target_intervals));
-		}
-		if (!image && !idle && !loading_frame.active)
-		{
-			/* (the frame shown stays: nothing new to present) */
-			presentation.skipped++;
-			if (xgpu_metal_frame_waiting())
-				presentation.skipped_gpu++;
-			else if (atomic_load(&presentation.image_waiting))
-				presentation.skipped_image++;
-			else if (host_render_stream_playing())
-				presentation.skipped_playing++;
-			else
-				presentation.skipped_game++;
-			return;
-		}
+		id<MTLTexture> image = taken->image, loading_image = nil, sampled_image;
+		double committed;
+		int index = taken->index;
+		struct xgpu_metal_compile_totals compiled = taken->compiled;
+		uint64_t input = taken->input, producer_frame = taken->producer_frame;
+		struct loading_presentation_frame loading_frame = taken->loading;
 
 		buffer = host_metal_present_buffer(image ? producer_frame : 0);
 		if (loading_frame.active)
@@ -2179,6 +2105,7 @@ static BOOL rate_adapt(BOOL shown, double now)
 				if (queued > atomic_load(&presentation.present_queued_most_ns))
 					atomic_store(&presentation.present_queued_most_ns, queued);
 				atomic_fetch_add(&presentation.present_buffers, 1);
+				if (target > 0.0)
 				{
 					int64_t slack = (int64_t)((target - done.GPUEndTime) * 1e6);
 
@@ -2202,6 +2129,232 @@ static BOOL rate_adapt(BOOL shown, double now)
 			presentation.idle_presented++;
 		}
 		[buffer commit];
+	}
+}
+
+/* (the link's thread) a new size of the window is the next drawable's */
+static void drawable_size_apply(void)
+{
+	uint32_t width = atomic_load(&presentation.pixel_width), height = atomic_load(&presentation.pixel_height);
+
+	if (width && height && (width != presentation.drawable_width || height != presentation.drawable_height))
+	{
+		presentation.layer.drawableSize = CGSizeMake(width, height);
+		presentation.drawable_width = width;
+		presentation.drawable_height = height;
+	}
+}
+
+/* (the link's thread) the link and the layer as the presentation asks.
+Vsync off (presentation.immediate, macOS): the game's frames are presented
+as they come (immediate_present), the layer not waiting for the display's
+refresh (displaySyncEnabled NO: a frame may tear, as with vsync off
+elsewhere), and the link paused, but for the loading screen (loading: its
+pictures are the link's refreshes') and before the game's first frame (the
+window's black). Else the link presents at the display's refreshes, the
+layer in sync with them, as ever */
+static void link_state_apply(BOOL loading)
+{
+	BOOL immediate = atomic_load(&presentation.immediate) != 0;
+	BOOL paused = immediate && !loading && presentation.frames_seen;
+
+#if !TARGET_OS_IPHONE
+	if (presentation.layer.displaySyncEnabled != !immediate)
+		presentation.layer.displaySyncEnabled = !immediate;
+#endif
+	if (!presentation.link || paused == presentation.link_paused)
+		return;
+	presentation.link_paused = paused;
+	/* (the link's first refresh back is no gap: refresh:'s statistics) */
+	presentation.last_tick = 0.0;
+	presentation.link.paused = paused;
+}
+
+/* (the link's thread, as a frame is queued with vsync off:
+host_metal_present_queue) the newest frame queued, those before it
+dropped, drawn into the layer's next drawable and presented at once. The
+game is not paced by the display then (host_metal_frame_phase gives no
+phase): a frame is on screen as soon as it is drawn, whatever the
+refreshes' times, and its time is its own (a frame of 17 ms at 120 Hz is
+not held to the refresh after, 25 ms). While the window is hidden, the
+frames are hidden_refresh's */
+static void immediate_present(void)
+{
+	struct taken taken;
+	BOOL loading;
+	double now = seconds_now();
+	id<CAMetalDrawable> drawable;
+
+	atomic_store(&presentation.immediate_pending, 0);
+	if (!atomic_load(&presentation.immediate) || atomic_load(&presentation.background) ||
+		atomic_load(&presentation.hidden))
+	{
+		link_state_apply(NO);
+		return;
+	}
+	pthread_mutex_lock(&presentation.lock);
+	loading = presentation.loading.active && !(presentation.loading.ready && presentation.queued);
+	pthread_mutex_unlock(&presentation.lock);
+	link_state_apply(loading);
+	if (loading)
+		return;
+	@autoreleasepool
+	{
+		/* (display.hdr: the screen's headroom, four times a second, as the
+		link's refreshes read it) */
+		if (now - presentation.immediate_edr_read >= 0.25)
+		{
+			presentation.immediate_edr_read = now;
+			dispatch_async(dispatch_get_main_queue(), ^{ display_hdr_read(); });
+		}
+		layer_hdr_choose();
+		if (presentation.stats_interval > 0.0 && now - presentation.stats_since >= presentation.stats_interval)
+			pacing_log(now);
+		drawable_size_apply();
+		take_frame(&taken, 0, 0, NO);
+		if (!taken.image)
+			return;
+		presentation.ticks++;
+		drawable = [presentation.layer nextDrawable];
+		if (!drawable)
+		{
+			image_release(taken.index);
+			return;
+		}
+		present_taken(drawable, 0.0, &taken);
+	}
+}
+
+@implementation HaloDisplayLinkTarget
+
+- (void)metalDisplayLink:(CAMetalDisplayLink *)link needsUpdate:(CAMetalDisplayLinkUpdate *)update
+{
+	double start = seconds_now();
+
+	if (atomic_load(&presentation.background))
+		return;
+	/* (the window hidden: the drawable would not reach the screen, and the
+	frames are taken by hidden_refresh; the link's times keep its grid) */
+	if (atomic_load(&presentation.hidden))
+	{
+		link_grid(update);
+		presentation.last_tick = 0.0;
+		return;
+	}
+	[self refresh:update];
+	presentation.last_callback_seconds = seconds_now() - start;
+	if (presentation.last_callback_seconds > presentation.callback_most_seconds)
+		presentation.callback_most_seconds = presentation.last_callback_seconds;
+	(void)link;
+}
+
+- (void)refresh:(CAMetalDisplayLinkUpdate *)update
+{
+	CAMetalDisplayLink *link = presentation.link;
+
+	/* (vsync off: the game's frames are immediate_present's, the link
+	paused, once they come and while no loading screen is up) */
+	if (atomic_load(&presentation.immediate) && presentation.frames_seen)
+	{
+		BOOL loading;
+
+		pthread_mutex_lock(&presentation.lock);
+		loading = presentation.loading.active && !(presentation.loading.ready && presentation.queued);
+		pthread_mutex_unlock(&presentation.lock);
+		if (!loading)
+		{
+			link_state_apply(NO);
+			immediate_request();
+			return;
+		}
+	}
+
+	/* (battery saver turned on or off, or the window on a display of
+	another rate: the link's rate, from its next refresh, and its period
+	measured again) */
+	if (atomic_load(&presentation.battery_saver) != presentation.battery_saver_set ||
+		atomic_exchange(&presentation.rate_changed, 0))
+	{
+		presentation.battery_saver_set = atomic_load(&presentation.battery_saver);
+		link.preferredFrameRateRange = link_rate_range(presentation.battery_saver_set);
+		memset(presentation.target_intervals, 0, sizeof(presentation.target_intervals));
+	}
+
+	@autoreleasepool
+	{
+		id<CAMetalDrawable> drawable = update.drawable;
+		id<MTLTexture> image;
+		double now = seconds_now(), target = update.targetPresentationTimestamp;
+		BOOL idle;
+		struct taken taken;
+		/* (paced) the take's time and the refreshes' period, on the game's
+		clock */
+		uint64_t latch_ns = 0, period_ns = 0;
+		struct loading_presentation_frame loading_frame;
+
+		(void)link;
+		presentation.ticks++;
+		/* (display.hdr: the screen's headroom looked at four times a second,
+		on the main thread, NSScreen's) */
+		if (presentation.edr_ticks++ % 15 == 0)
+			dispatch_async(dispatch_get_main_queue(), ^{ display_hdr_read(); });
+		layer_hdr_choose();
+		if (presentation.last_tick > 0.0 && presentation.refresh_rate > 0.0f &&
+			now - presentation.last_tick > 1.5 / presentation.refresh_rate)
+		{
+			if (atomic_load(&presentation.drawables_pending) >= (int)presentation.layer.maximumDrawableCount - 1)
+				presentation.gaps_starved++;
+			else
+				presentation.gaps_free++;
+			if (presentation.last_gap)
+				presentation.gaps_following++;
+			if (presentation.last_callback_seconds > 1.0 / presentation.refresh_rate)
+				presentation.gaps_after_slow++;
+			if (update.targetPresentationTimestamp - presentation.last_target > 1.5 / presentation.refresh_rate)
+				presentation.gaps_target_skipped++;
+			else
+				presentation.gaps_delivered_late++;
+			presentation.last_gap = YES;
+		}
+		else
+		{
+			presentation.last_gap = NO;
+		}
+		presentation.last_tick = now;
+		link_grid(update);
+		if (presentation.stats_interval > 0.0 && now - presentation.stats_since >= presentation.stats_interval)
+			pacing_log(now);
+		/* the frame is latched now (the link calls about two refreshes before
+		the frame is on screen; one taken later, nearer the link's deadline,
+		misses its refresh): the game starts each frame to be ready by the
+		next latch (frame_pacing.h) */
+		take_time(update.targetTimestamp, now, &latch_ns, &period_ns);
+		drawable_size_apply();
+		take_frame(&taken, latch_ns, period_ns, NO);
+		image = taken.image;
+		loading_frame = taken.loading;
+		idle = taken.idle;
+		if (!idle && !loading_frame.active && rate_adapt(image != nil, now))
+		{
+			link.preferredFrameRateRange = link_rate_range(presentation.battery_saver_set);
+			memset(presentation.target_intervals, 0, sizeof(presentation.target_intervals));
+		}
+		if (!image && !idle && !loading_frame.active)
+		{
+			/* (the frame shown stays: nothing new to present) */
+			presentation.skipped++;
+			if (xgpu_metal_frame_waiting())
+				presentation.skipped_gpu++;
+			else if (atomic_load(&presentation.image_waiting))
+				presentation.skipped_image++;
+			else if (host_render_stream_playing())
+				presentation.skipped_playing++;
+			else
+				presentation.skipped_game++;
+			return;
+		}
+
+		present_taken(drawable, target, &taken);
 	}
 }
 
@@ -2259,6 +2412,9 @@ static void *presentation_thread(void *context)
 		link.preferredFrameLatency = 1.0f;
 		presentation.link = link;
 		[link addToRunLoop:[NSRunLoop currentRunLoop] forMode:NSDefaultRunLoopMode];
+		/* (a port of its own keeps the run loop waiting, not spinning,
+		while the link is paused: link_state_apply) */
+		[[NSRunLoop currentRunLoop] addPort:[NSMachPort port] forMode:NSDefaultRunLoopMode];
 #if !TARGET_OS_IPHONE
 		/* (the hidden window's refreshes: hidden_refresh, from here; the
 		window hidden before the thread was up) */
@@ -2477,8 +2633,9 @@ void host_metal_battery_saver(int on)
 /* (a host import: the guest's sdl_platform.c, as the window opens and as
 display.vsync changes) on, the game is paced by the link's refreshes; off,
 it draws as fast as its own clock lets it (display.max_fps, sdl_platform.c's
-platform_video_swap) and each refresh shows the newest frame, those queued
-before it dropped (as HALO_METAL_UNPACED): no tearing, the least latency */
+platform_video_swap) and (macOS) each frame is presented as it comes,
+unsynced (immediate_present); iOS's refreshes show the newest frame, those
+queued before it dropped (as HALO_METAL_UNPACED) */
 void host_metal_vsync(int on)
 {
 	BOOL unpaced = !on || presentation.unpaced_forced;
@@ -2488,6 +2645,13 @@ void host_metal_vsync(int on)
 	pthread_cond_broadcast(&presentation.freed);
 	pthread_mutex_unlock(&presentation.lock);
 	host_render_stream_display_paced(!unpaced);
+#if !TARGET_OS_IPHONE
+	/* (each frame presented as it comes, the layer out of sync with the
+	display: immediate_present; the link and the layer as before, with
+	vsync on) */
+	atomic_store(&presentation.immediate, !on);
+	immediate_request();
+#endif
 }
 
 /* (host imports: the guest's sdl_platform.c, before each frame with vsync
@@ -2506,7 +2670,8 @@ whose refreshes' periods later or earlier is one too; 0 while the display
 paces the game, or before its first refresh. */
 unsigned long long host_metal_frame_phase(void)
 {
-	if (!presentation.unpaced || !atomic_load(&presentation.take_period_ns))
+	/* (none where each frame is presented as it comes: immediate_present) */
+	if (!presentation.unpaced || atomic_load(&presentation.immediate) || !atomic_load(&presentation.take_period_ns))
 		return 0;
 	return atomic_load(&presentation.take_phase_ns);
 }
