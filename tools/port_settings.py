@@ -722,6 +722,9 @@ VEHICLE_FIELDS_OF_VIEW = FIELDS_OF_VIEW._replace(
 FRAME_RATE_LIMITS = Slider(30, 540, 1, 10, 1000, whole=True,
                            stops=(("AUTO", "0"),) + tuple((str(n), str(n)) for n in (
                                30, 60, 75, 90, 100, 120, 144, 165, 200, 240, 280, 360, 480, 540)) + (("NONE", "-1"),))
+# display.menu_max_fps's: the display's refresh rate (0), common rates, or
+# display.max_fps's alone (-1)
+MENU_FRAME_RATE_LIMITS = [("REFRESH", "0")] + [(str(n), str(n)) for n in (30, 60, 120, 144, 240)] + [("OFF", "-1")]
 # display.gamma's: Halo PC's gamma, past 1 brighter; 1 none (d3d8_device.c's
 # GAMMA_LEAST and GAMMA_MOST)
 GAMMA = Slider(0.5, 2.0, 0.05, 0.5, 2.0)
@@ -1481,6 +1484,12 @@ PAGES = {
              "The most frames drawn a second with VSync off. Auto is twice the display's refresh rate. More feels "
              "smoother and uses more power; None draws as fast as it can.|Click the number (or press A) to type 10 "
              "to 1000.", "desktop"),
+            # (display.menu_max_fps: sdl_platform.c's frame_interval_ns, while
+            # the main menu's map is up; with VSync on too)
+            ("MENU MAX FPS", "display.menu_max_fps", MENU_FRAME_RATE_LIMITS,
+             "The most frames drawn a second in the main menu and the lobby, so the graphics card rests there "
+             "instead of drawing hundreds. Refresh is the display's refresh rate; Off keeps Max FPS. Games are not "
+             "changed.", "desktop"),
             ("LOW LATENCY", "display.low_latency", [("AUTO", "auto"), ("ON", "on"), ("OFF", "off")],
              "With VSync on, starts each frame just in time for the refresh it is shown at, so a press reaches the "
              "screen sooner. Off starts each frame as soon as the one before is waiting. Auto is on.", None),
@@ -2232,8 +2241,8 @@ SETTINGS_SEARCH_WORDS = {
              "look_vertical_sensitivity", "stick_zoom_sensitivity", "gyro_sensitivity",
              "gyro_vertical_sensitivity", "touch_gyro_sensitivity", "touch_gyro_vertical_sensitivity"],
     "dpi": ["mouse_sensitivity"],
-    "fps": ["max_fps", "perf_overlay", "frame_rate_sync"],
-    "framerate": ["frame_rate_sync", "max_fps", "perf_overlay"],
+    "fps": ["max_fps", "menu_max_fps", "perf_overlay", "frame_rate_sync"],
+    "framerate": ["frame_rate_sync", "max_fps", "menu_max_fps", "perf_overlay"],
     "frametime": ["perf_overlay"], "gpu": ["perf_overlay"], "stats": ["perf_overlay"],
     "gsync": ["vrr", "vrr_cap_margin"], "freesync": ["vrr", "vrr_cap_margin"], "vrr": ["vrr"],
     "aa": ["anti_aliasing", "anti_aliasing_android"],

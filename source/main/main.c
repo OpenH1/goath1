@@ -4464,7 +4464,12 @@ void main_loop(
 			{
 				if (!network_game_client_start_frame())
 				{
-					display_error_when_main_menu_loaded(6);
+					/* port: the client's connection to its host gone (the host
+					unheard for its timeout), not this computer's network: words
+					of its own, not the connection-lost error's (one the client
+					queued first, the host's closing or the network down, is
+					kept) */
+					display_error_text_when_main_menu_loaded(L"The connection to the host was lost.");
 					error(_error_silent, "the game host went down");
 					network_game_abort();
 				}

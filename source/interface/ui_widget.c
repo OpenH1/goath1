@@ -5296,6 +5296,37 @@ boolean ui_widgets_port_active_for_everyone(
 	return FALSE;
 }
 
+/* port: the port's own text for the network errors whose stock text (the
+Xbox's ui.map) names the Xbox and its System Link: "The System Link game has
+closed down.", "Network connection lost. Xbox System Link Cable may be
+disconnected or the network is down." and the like, wrong for a computer's
+local network and for internet play alike. NULL for the others, whose stock
+text is kept. (The client that loses its host is told so by main.c's own
+text.) */
+static wchar_t const *ui_widget_port_stock_error_text(
+	short error_code)
+{
+	switch (error_code)
+	{
+	case _error_network_join_game_closed:
+		return L"Unable to join the game because it is closed.";
+	case _error_network_join_game_generic:
+		return L"Unable to join the game.";
+	case _error_network_server_shut_down:
+		return L"The host closed the game.";
+	case _error_network_connected_play_no_network:
+		return L"You can't play network games without first connecting to a network.";
+	case _error_network_connection_lost:
+		return L"The network connection was lost.";
+	case _error_network_failed_to_join_game:
+		return L"Failed to join the game.";
+	case _error_network_trouble_is_brewing:
+		return L"Your connection to the host is experiencing difficulties...";
+	default:
+		return NULL;
+	}
+}
+
 void display_error(
 	short error_code,
 	short local_player_index,
@@ -5339,6 +5370,10 @@ void display_error(
 		{
 			port_text = ui_widget_port_error_pending_text;
 			ui_widget_port_error_pending_text = NULL;
+		}
+		else
+		{
+			port_text = ui_widget_port_stock_error_text(error_code);
 		}
 		if (local_player_index != NONE)
 		{

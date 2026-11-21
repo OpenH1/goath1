@@ -287,6 +287,13 @@ static const struct config_setting config_settings[] =
 		"refresh rate, -1 for no limit (which can hang some Intel graphics). On\n"
 		"Linux, the display's refresh rate or a whole fraction of it (60 at\n"
 		"60 Hz, 30) shows the frames in step with the display, as vsync does." },
+	{ "display.menu_max_fps", _config_integer, "0", "HALO_MENU_MAX_FPS", _environment_value, _platform_desktop,
+		"While the main menu's map is up (the main menu, its menus and the\n"
+		"lobby, over no game), the most frames a second, with vsync on or off:\n"
+		"0 for the display's refresh rate (60 where it is unknown), -1 for\n"
+		"display.max_fps's alone. A cap below the game's keeps the menus from\n"
+		"drawing hundreds of frames a second (a GPU's coil whine, the power).\n"
+		"Not in a game, nor its pause menu, nor the loading screens." },
 	{ "display.stats_log", _config_boolean, "false", "HALO_STATS_LOG", _environment_value, _platform_all,
 		"A line a second in the log with the frame rate, the mode, the map, the\n"
 		"renderer and the size of the 3D view, so a graphics bug's report or two\n"
