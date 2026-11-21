@@ -157,7 +157,7 @@ encounters, BSP 1, the player stood there, the cinematic's hold on the view
 and input let go, then a30's own scripts for that part, as its mission_obj,
 mission_river and mission_rubble wake them */
 static char const stress_cues[] =
-	"0.5 begin (sleep -1 mission_a30) (set cheat_deathless_player true) (switch_bsp 1)|"
+	"0.5 begin (sleep -1 mission_a30) (set cheat_deathless_player true) (set cheat_infinite_ammo true) (switch_bsp 1)|"
 	"1 object_teleport (player0) river_hide_flag|"
 	"1.5 begin (cinematic_stop) (camera_control false) (cinematic_show_letterbox false) "
 		"(player_camera_control true) (player_enable_input true) (show_hud true) "
