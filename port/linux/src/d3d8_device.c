@@ -7296,6 +7296,120 @@ The pixels are the same: past a light's radius the shader adds nothing.
 (The unreached part is drawn first: where two triangles of one material
 lie in one plane, which of them is seen may change.) */
 
+/* the triangles a run's lights are found for at once (lights_reach_part) */
+#define LIGHTS_REACH_RUN 32
+
+/* the triangles of a list (its positions' vertices, stride bytes apart) apart:
+those some light reaches (dynamic_lights.reach) to reached, the rest to
+unreached, each in the list's order. A triangle is reached where the box
+about it is within a light's reach. The lights a triangle may be reached by
+are found once for each run of LIGHTS_REACH_RUN triangles, by the box about
+the run, so that the cost is not the triangles' times the lights'. A light
+that reaches a triangle reaches the run's box about it: each of the box's
+distances from the light is no more than the triangle's, in floats too (a
+rounding keeps the order of what it rounds, floats evaluated as floats), so
+the run's lights hold every light the triangle's own test finds, and that
+test (the same as for all the lights) decides as it would. A run with a
+position that is no number (NaN) keeps all the lights. */
+static void lights_reach_part(const unsigned char *vertices, unsigned long stride, const WORD *index_data,
+	unsigned long count, WORD *reached, unsigned long *reached_count, WORD *unreached, unsigned long *unreached_count)
+{
+	unsigned long index, lit = 0, unlit = 0;
+
+	for (index = 0; index + 3 <= count; )
+	{
+		float boxes[LIGHTS_REACH_RUN][2][3], run[2][3];
+		unsigned char lights[XGPU_DYNAMIC_LIGHTS_MAXIMUM];
+		int triangles, triangle, light, lights_count = 0, axis;
+		BOOL unordered = FALSE;
+
+		for (triangles = 0; triangles < LIGHTS_REACH_RUN && index + (triangles + 1) * 3 <= count; triangles++)
+		{
+			float *low = boxes[triangles][0], *high = boxes[triangles][1];
+			int corner;
+
+			for (corner = 0; corner < 3; corner++)
+			{
+				float point[3];
+
+				memcpy(point, vertices + index_data[index + triangles * 3 + corner] * stride, sizeof(point));
+				for (axis = 0; axis < 3; axis++)
+				{
+					if (!corner || point[axis] < low[axis])
+						low[axis] = point[axis];
+					if (!corner || point[axis] > high[axis])
+						high[axis] = point[axis];
+				}
+			}
+			for (axis = 0; axis < 3; axis++)
+			{
+				if (low[axis] != low[axis] || high[axis] != high[axis])
+					unordered = TRUE;
+				if (!triangles || low[axis] < run[0][axis])
+					run[0][axis] = low[axis];
+				if (!triangles || high[axis] > run[1][axis])
+					run[1][axis] = high[axis];
+			}
+		}
+		for (light = 0; light < dynamic_lights.reach_count; light++)
+		{
+			const float *reach = dynamic_lights.reach[light];
+			float distance = 0.0f;
+
+			for (axis = 0; axis < 3; axis++)
+			{
+				float away = reach[axis] < run[0][axis] ? run[0][axis] - reach[axis] :
+					reach[axis] > run[1][axis] ? reach[axis] - run[1][axis] : 0.0f;
+
+				distance += away * away;
+			}
+			if (unordered || !(distance > reach[3] * reach[3]))
+				lights[lights_count++] = (unsigned char)light;
+		}
+		for (triangle = 0; triangle < triangles; triangle++, index += 3)
+		{
+			const float *low = boxes[triangle][0], *high = boxes[triangle][1];
+			BOOL touched = lights_count > 0;
+
+			for (axis = 0; axis < 3; axis++)
+			{
+				if (high[axis] < dynamic_lights.reach_box[0][axis] || low[axis] > dynamic_lights.reach_box[1][axis])
+					touched = FALSE;
+			}
+			if (touched)
+			{
+				touched = FALSE;
+				for (light = 0; light < lights_count && !touched; light++)
+				{
+					const float *reach = dynamic_lights.reach[lights[light]];
+					float distance = 0.0f;
+
+					for (axis = 0; axis < 3; axis++)
+					{
+						float away = reach[axis] < low[axis] ? low[axis] - reach[axis] :
+							reach[axis] > high[axis] ? reach[axis] - high[axis] : 0.0f;
+
+						distance += away * away;
+					}
+					touched = !(distance > reach[3] * reach[3]);
+				}
+			}
+			if (touched)
+			{
+				memcpy(reached + lit, index_data + index, 3 * sizeof(WORD));
+				lit += 3;
+			}
+			else
+			{
+				memcpy(unreached + unlit, index_data + index, 3 * sizeof(WORD));
+				unlit += 3;
+			}
+		}
+	}
+	*reached_count = lit;
+	*unreached_count = unlit;
+}
+
 /* the triangles of a list apart: FALSE if they cannot be told apart (all
 are drawn lit) */
 static BOOL lights_reach_split(const WORD *index_data, unsigned long count, WORD **reached, unsigned long *reached_count,
@@ -7306,7 +7420,7 @@ static BOOL lights_reach_split(const WORD *index_data, unsigned long count, WORD
 	struct vertex_shader_object *declaration = device.vertex_shader;
 	const struct xgpu_vertex_element *position = NULL;
 	const unsigned char *vertices;
-	unsigned long stride, index, lit = 0, unlit = 0;
+	unsigned long stride, index;
 
 	if (!declaration)
 		return FALSE;
@@ -7334,61 +7448,7 @@ static BOOL lights_reach_split(const WORD *index_data, unsigned long count, WORD
 		device.base_vertex_index * stride + position->offset;
 	*reached = buffer;
 	*unreached = buffer + count;
-	for (index = 0; index + 3 <= count; index += 3)
-	{
-		float low[3], high[3];
-		BOOL touched = TRUE;
-		int corner, axis, light;
-
-		for (corner = 0; corner < 3; corner++)
-		{
-			float point[3];
-
-			memcpy(point, vertices + index_data[index + corner] * stride, sizeof(point));
-			for (axis = 0; axis < 3; axis++)
-			{
-				if (!corner || point[axis] < low[axis])
-					low[axis] = point[axis];
-				if (!corner || point[axis] > high[axis])
-					high[axis] = point[axis];
-			}
-		}
-		for (axis = 0; axis < 3; axis++)
-		{
-			if (high[axis] < dynamic_lights.reach_box[0][axis] || low[axis] > dynamic_lights.reach_box[1][axis])
-				touched = FALSE;
-		}
-		if (touched)
-		{
-			touched = FALSE;
-			for (light = 0; light < dynamic_lights.reach_count && !touched; light++)
-			{
-				const float *reach = dynamic_lights.reach[light];
-				float distance = 0.0f;
-
-				for (axis = 0; axis < 3; axis++)
-				{
-					float away = reach[axis] < low[axis] ? low[axis] - reach[axis] :
-						reach[axis] > high[axis] ? reach[axis] - high[axis] : 0.0f;
-
-					distance += away * away;
-				}
-				touched = !(distance > reach[3] * reach[3]);
-			}
-		}
-		if (touched)
-		{
-			memcpy(*reached + lit, index_data + index, 3 * sizeof(WORD));
-			lit += 3;
-		}
-		else
-		{
-			memcpy(*unreached + unlit, index_data + index, 3 * sizeof(WORD));
-			unlit += 3;
-		}
-	}
-	*reached_count = lit;
-	*unreached_count = unlit;
+	lights_reach_part(vertices, stride, index_data, count, *reached, reached_count, *unreached, unreached_count);
 	return TRUE;
 }
 
