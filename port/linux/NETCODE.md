@@ -1443,7 +1443,8 @@ in an OpenH1 game of several sub-steps a tick (`network_distributed.c`,
   (near it, or aimed at: the players whose forwarded input and live
   controls it is sent), alive and on foot, of an OpenH1 client (whose
   sub-steps the host runs as they come) or the host's own players and bots
-  (`distributed_substep_state_due`): `_distributed_message_substep_states`
+  (in a Royale game not its bots, whose controls hold through the tick:
+  `distributed_player_is_bot`; `distributed_substep_state_due`): `_distributed_message_substep_states`
   (136, unreliable), the sub-step and the count, then each state as the
   tick's are written (35 bytes on foot, 37 with the client's tick), in the
   datagram of the sub-step's live controls where one goes then, else in
@@ -2129,7 +2130,11 @@ new goes between the machines:
   from that input and the host's corrections, as any remote player. A bot
   holds its tick's controls through the tick's sub-steps (an OpenH1 game at
   60 or 120), as a player whose sub-steps changed nothing: the host sends no
-  sub-steps of it, and every OpenH1 machine steps it alike. The host deals a
+  sub-steps of it (in a Royale game nor its states of them: "States at the
+  sub-steps"), and every OpenH1 machine steps it alike. (62 bots and a client on Blood Gulch
+  at 120: the client's 106 to 125 KB/s were 70 to 75 KB/s without the bots'
+  sub-step states, and 271 datagrams a second 101; the bots where the host
+  had them within 0.033 world units on average, 0.058 p95, as before.) The host deals a
   bot's damage itself, as a player of no client.
 - The advertisement's and the listing's players are the people (the game's
   maximum players theirs: with `bots.make_room` off the record's most

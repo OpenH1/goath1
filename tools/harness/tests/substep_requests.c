@@ -62,6 +62,8 @@ static short distributed_client_machines(long *indices, short maximum)
 	return 2;
 }
 static struct player_datum *distributed_player(short player_index) { return &players[player_index]; }
+/* (Royale's bots, left out in its games alone: none here) */
+static boolean distributed_player_is_bot(short player_index) { (void)player_index; return FALSE; }
 static void distributed_state_from_player(short player_index, long time, struct distributed_unit_state *state)
 {
 	(void)time; state->player_index = (byte)player_index;

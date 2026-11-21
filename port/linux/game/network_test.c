@@ -165,6 +165,7 @@ void network_distributed_remote_kind_statistics(short kind, long *corrections, l
 void network_distributed_substep_request_statistics(long *asked, long *corrected, long *missed, long *taken);
 void network_distributed_batch_bytes(long *to_host, long *to_clients, short *clients);
 void network_distributed_batch_datagrams(long *to_host, long *to_clients);
+void network_distributed_type_bytes(long bytes[256]);
 void network_distributed_divergence(long *samples, long *apart, real *mean, real *largest);
 void network_distributed_player_divergence(short player_index, long *samples, long *apart);
 void network_distributed_item_statistics(long *creates, long *deletes, long *failures, long *removed);
@@ -340,6 +341,17 @@ static boolean network_test_variant(
 		snprintf(name, size, "%.*s", (int)length, variant);
 	}
 	return TRUE;
+}
+
+/* whether a test's settings that change the game's simulation work (the
+HALO_ROYALE_* ones, debug.bot_player's and debug.bots_weapon): in a network
+test's run alone (debug.network_test, as HALO_NETWORK_TEST_QUIT works only
+in one), never in a player's game, where one machine's would part it from
+the others' or give its player what the rules do not */
+boolean network_test_hooks(
+	void)
+{
+	return config_string("debug.network_test")[0] != 0;
 }
 
 static void network_test_read_settings(
@@ -767,6 +779,35 @@ static void network_test_log_players(
 				to_host, to_clients, (int)clients, clients ? to_clients / clients : 0L);
 			network_distributed_batch_datagrams(&to_host, &to_clients);
 			platform_log("network test: datagrams to host %ld to clients %ld a second", to_host, to_clients);
+			/* (the host: the message types of those bytes, the largest five) */
+			if (game_connection() == _game_connection_network_server)
+			{
+				long bytes[256];
+				char text[160];
+				short taken[5];
+				short rank;
+
+				network_distributed_type_bytes(bytes);
+				text[0] = 0;
+				for (rank = 0; rank < 5; rank++)
+				{
+					short type, best = NONE;
+
+					for (type = 0; type < 256; type++)
+					{
+						short other;
+
+						for (other = 0; other < rank && taken[other] != type; other++)
+							;
+						if (other == rank && bytes[type] && (best == NONE || bytes[type] > bytes[best]))
+							best = type;
+					}
+					taken[rank] = best;
+					if (best != NONE)
+						snprintf(text + strlen(text), sizeof(text) - strlen(text), " %d:%ld", (int)best, bytes[best]);
+				}
+				platform_log("network test: bytes to clients by message type%s", text);
+			}
 			/* (the host's actors' states of those, and the entries a press or
 			an aim alone sent) */
 			if (game_connection() == _game_connection_network_server)
@@ -3215,6 +3256,16 @@ void network_test_update(
 			{
 				network_test.postgame_seconds = 0.0f;
 				network_game_server_reset_to_pregame(global_network_game_server_get());
+			}
+			/* (HALO_NETWORK_TEST_QUIT=<seconds>: the last game of the list
+			over and its scores shown that long, the test is done, rather
+			than waiting on the scores for debug.exit_after: a long game's
+			run, a Royale match's, ends with it) */
+			else if (getenv("HALO_NETWORK_TEST_QUIT") && atoi(getenv("HALO_NETWORK_TEST_QUIT")) > 0 &&
+				network_test.postgame_seconds >= (real)atoi(getenv("HALO_NETWORK_TEST_QUIT")))
+			{
+				platform_log("network test: the last game is over: quitting (HALO_NETWORK_TEST_QUIT)");
+				exit(0);
 			}
 		}
 	}

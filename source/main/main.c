@@ -1236,6 +1236,14 @@ void main_switch_structure_bsp(
 		console_warning("tried to switch to current structure-bsp %d", structure_bsp_index);
 		return;
 	}
+	/* port: a campaign level played as a multiplayer map stays in its
+	first structure BSP (port/linux/game/royale_map.c) */
+	{
+		extern boolean royale_map_mode(void);
+
+		if (royale_map_mode())
+			return;
+	}
 	main_globals.switch_to_structure_bsp_index = structure_bsp_index;
 	hud_load(TRUE);
 	load_zone_switch_requested(); /* port: its frame started early enough (port/linux/game/load_zone.c) */

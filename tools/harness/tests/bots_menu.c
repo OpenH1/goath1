@@ -140,6 +140,13 @@ struct game_variant_options
 static struct game_variant_options variant_options;
 static struct game_variant_options *game_variant_options_get(void) { return &variant_options; }
 static long game_time_get(void) { return 100; }
+/* no Royale game (royale.c) */
+static boolean royale_active(void) { return FALSE; }
+static boolean royale_game_over(void) { return FALSE; }
+/* the spinner's last items not offered (menu_functions.c: a hidden
+setting's choice) */
+static short hidden_items;
+static short pc_menu_spinner_hidden_items(struct widget_instance *spinner) { (void)spinner; return hidden_items; }
 
 #include "under_test.inc"
 
@@ -190,6 +197,12 @@ static void case_spinner_ends(void)
 	spinner.parameters.list.selected_index = 1;
 	CHECK(!ui_widget_port_spinner_stops(&spinner, TRUE), "ON and OFF do not toggle");
 	spinner.parameters.list.number_of_items = 5;
+	spinner.parameters.list.selected_index = 3;
+	hidden_items = 1;
+	CHECK(ui_widget_port_spinner_stops(&spinner, TRUE), "the last offered steps on to one not offered");
+	spinner.parameters.list.selected_index = 2;
+	CHECK(!ui_widget_port_spinner_stops(&spinner, TRUE), "one before the last offered steps on");
+	hidden_items = 0;
 	spinner.parameters.list.selected_index = 4;
 	spinner.definition_tag_index = 2;
 	CHECK(!ui_widget_port_spinner_stops(&spinner, TRUE), "the Xbox's spinner stops");

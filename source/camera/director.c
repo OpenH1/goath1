@@ -125,6 +125,7 @@ symbols in this file:
 #include "dead_camera.h"
 #include "coop_spectate.h" /* port: port/linux/game/coop_spectate.c */
 #include "dead_spectate.h" /* port: port/linux/game/dead_spectate.c */
+#include "royale_cinema.h" /* port: port/linux/game/royale_cinema.c */
 #include "editor_flying_camera.h"
 #include "first_person_camera.h"
 #include "flying_camera.h"
@@ -818,6 +819,26 @@ static void director_choose_camera_game(
 		corners) */
 		if (key && !network_game_distributed_client())
 			director_rotate_cameras(local_player_index, director_game_camera_modes, 3);
+		/* port: Royale's flyover and victory orbit (port/linux/game/
+		royale_cinema.c), cut to and from */
+		if (!*director_camera_scripted && royale_cinema_camera_wanted(local_player_index))
+		{
+			if (director->camera_proc != (director_camera_update_proc)royale_cinema_camera_update)
+			{
+				royale_cinema_camera_new(director->camera_data, local_player_index);
+				director_set_camera(
+					local_player_index,
+					(director_camera_update_proc)royale_cinema_camera_update,
+					FALSE);
+				observer_obsolete_position(local_player_index);
+			}
+			return;
+		}
+		if (director->camera_proc == (director_camera_update_proc)royale_cinema_camera_update)
+		{
+			director_choose_game_perspective(local_player_index, TRUE);
+			observer_obsolete_position(local_player_index);
+		}
 		if (!*director_camera_scripted)
 		{
 			director_choose_game_perspective(local_player_index, initialize);

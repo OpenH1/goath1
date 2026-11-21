@@ -56,6 +56,7 @@ teammate from behind (coop_spectate.c), as before.
 #include "units/unit_definitions.h"
 
 #include "dead_spectate.h"
+#include "royale.h"
 #include "network_coop.h"
 
 #include <math.h>
@@ -142,6 +143,9 @@ static long dead_spectate_watched[MAXIMUM_LOCAL_PLAYERS] = { NONE, NONE, NONE, N
 static boolean spectate_teammates(
 	void)
 {
+	/* (Royale: always, royale.c) */
+	if (royale_active())
+		return TRUE;
 	return strcmp(config_string("game.spectate_on_death"), "off") != 0;
 }
 
@@ -151,6 +155,9 @@ static boolean spectate_game(
 	void)
 {
 	if (network_coop_active())
+		return TRUE;
+	/* (Royale: the eliminated always watch their squadmate, royale.c) */
+	if (royale_active() && game_connection() != _game_connection_film_playback)
 		return TRUE;
 	if (!spectate_teammates() || game_connection() == _game_connection_film_playback)
 		return FALSE;
@@ -167,6 +174,22 @@ static boolean spectate_teammate(
 
 	if (!player || other == self || player->unit_index == NONE || !object_try_and_get(player->unit_index))
 		return FALSE;
+	/* (Royale: the squadmate; once the squad is out, anyone still in the
+	fight, through their eyes, never the death camera, which sits above
+	whoever it follows and, over a redeploy's fall from the drop height,
+	above the level, where nothing is drawn) */
+	if (royale_active())
+	{
+		enum royale_player_state state = royale_player_state(other);
+
+		if (royale_squadmate_of(self) == other)
+			return TRUE;
+		/* (out: eliminated, or no longer in the match's rules at all, as a
+		player who left the fight or joined after the drop) */
+		return (royale_player_state(self) == ROYALE_PLAYER_ELIMINATED ||
+			royale_player_state(self) == ROYALE_PLAYER_NONE) &&
+			(state == ROYALE_PLAYER_ALIVE || state == ROYALE_PLAYER_DOWNED || state == ROYALE_PLAYER_FALLING);
+	}
 	return !game_engine_running() || player->team_index == player_get(self)->team_index;
 }
 
@@ -350,6 +373,24 @@ long dead_spectate_unit(
 	/* alive: keep `watched`, so the next death starts on the same teammate */
 	if (player->unit_index != NONE || !spectate_game())
 		return NONE;
+	/* (Royale: one in the gulag without a unit watches its fight) */
+	if (royale_active())
+	{
+		long gulag_unit = royale_gulag_spectate_unit(self);
+
+		if (gulag_unit != NONE && object_try_and_get(gulag_unit))
+			return gulag_unit;
+		/* (and one whose squadmate waits in the gulag with no unit: the
+		fight their squadmate waits for) */
+		if (royale_player_state(self) == ROYALE_PLAYER_SPECTATING &&
+			royale_player_state(royale_squadmate_of(self)) == ROYALE_PLAYER_GULAG &&
+			!spectate_teammate(self, royale_squadmate_of(self)))
+		{
+			gulag_unit = royale_gulag_spectate_unit(royale_squadmate_of(self));
+			if (gulag_unit != NONE && object_try_and_get(gulag_unit))
+				return gulag_unit;
+		}
+	}
 	if (!spectate_teammate(self, *watched))
 		*watched = next_teammate(self, NONE);
 	else if (next)
@@ -511,6 +552,9 @@ void dead_spectate_draw(
 
 	if (dead_spectate_eyes_unit(local_player_index) == NONE || watched == NONE)
 		return;
+	/* (Royale: one watching the gulag's fight has the gulag's lines) */
+	if (royale_active() && royale_gulag_spectate_unit(local_player_get_player_index(local_player_index)) != NONE)
+		return;
 	player = player_try_and_get(watched);
 	if (!player)
 		return;
@@ -536,7 +580,9 @@ void dead_spectate_draw(
 		hint = L"\r\nYou come back beside them once it is safe";
 	else
 		hint = L"\r\nYou join them when they're on foot";
-	usnprintf(text, NUMBEROF(text) - 1, L"WATCHING %.12s   %s: NEXT TEAMMATE%s", player->name, button, hint);
+	usnprintf(text, NUMBEROF(text) - 1, L"WATCHING %.12s   %s: NEXT %s%s", player->name, button,
+		royale_active() && royale_squadmate_of(local_player_get_player_index(local_player_index)) != watched ?
+			L"PLAYER" : L"TEAMMATE", hint);
 	text[NUMBEROF(text) - 1] = 0;
 	draw_bottom_text(text);
 }

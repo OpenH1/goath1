@@ -3785,11 +3785,12 @@ SHIELD_EFFECTS_HELP = [
 PLAYLIST_EDIT = "main_menu/settings_select/multiplayer_setup/playlist_edit"
 OPENCE_EDIT = "main_menu/settings_select/multiplayer_setup/opence_options_edit"
 OPENCE_ROWS = [
-    ("oce_mode", "MODE:", ["NONE", "SWAT", "INFECTION", "GUN GAME"], [
+    ("oce_mode", "MODE:", ["NONE", "SWAT", "INFECTION", "GUN GAME", "ROYALE"], [
         "The game type's own rules.",
         "No shields, and a shot to the head kills. Slayer only.",
         "Humans killed join the zombies, who win when\\nno human is left. Team Slayer only.",
-        "Each kill gives the next weapon; a kill with the\\nlast wins. Free for all Slayer only."]),
+        "Each kill gives the next weapon; a kill with the\\nlast wins. Free for all Slayer only.",
+        "Squads of two, no respawns: the last squad alive\\nwins. Free for all Slayer, GOAT H1 games only."]),
     ("oce_hardcore", "HARDCORE:", ["OFF", "ON"], [
         "The motion sensor and aim assist as the game\\ntype has them.",
         "No motion sensor, no aim assist, and a kill\\nrestores the killer's health and shields."]),
@@ -3812,6 +3813,13 @@ OPENCE_ROWS = [
     ("gg_melee", "MELEE DEMOTES:", ["OFF", "ON"], [
         "A melee kill takes nothing from the victim.",
         "A melee kill takes the victim back a weapon."]),
+    ("br_bleed", "BLEED OUT:", ["10 SECONDS", "20 SECONDS", "30 SECONDS", "45 SECONDS", "60 SECONDS"],
+     ["How long a downed player crawls before they are\\nout, unless their squadmate revives them."] * 5),
+    ("br_revive", "REVIVE TIME:", ["1 SECOND", "2 SECONDS", "3 SECONDS", "5 SECONDS"],
+     ["How long a squadmate holds Action beside a\\ndowned player to revive them."] * 4),
+    ("br_gulag", "RECLAIMER:", ["OFF", "ON"], [
+        "A player who dies is out.",
+        "A player who dies fights a 1v1 in the Reclaimer,\\nonce, to come back."]),
 ]
 OPENCE_ITEM = f"{PLAYLIST_EDIT}/playlist_edit_opence_item"
 # the game's name, as players read it (#1031), and the editor's row and
@@ -4908,7 +4916,8 @@ SETUP_NODE_WHEN = {
     # (OPENCE OPTIONS: Infection's rows and Gun Game's, by MODE)
     f"{OPENCE_EDIT}/opence_screen": {
         f"{OPENCE_EDIT}/op_{key}": f"oce_mode={OPENCE_ROWS[0][2].index(mode)}"
-        for key, _, _, _ in OPENCE_ROWS for prefix, mode in (("inf_", "INFECTION"), ("gg_", "GUN GAME"))
+        for key, _, _, _ in OPENCE_ROWS
+        for prefix, mode in (("inf_", "INFECTION"), ("gg_", "GUN GAME"), ("br_", "ROYALE"))
         if key.startswith(prefix)
     },
 }
