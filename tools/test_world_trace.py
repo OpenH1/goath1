@@ -100,7 +100,7 @@ def test_spirv_module_valid(check, tmp_path):
 
 
 # negative controls: each emitter's cascades a texel too short along z (the guard left out of the cascades' layers)
-MSL_FAULT = ('".0 * float(cascade)) / ("', '".0 * float(cascade) - 1.0) / ("')
+MSL_FAULT = ('".0 * float(cascade)) * (1.0 / ("', '".0 * float(cascade) - 1.0) * (1.0 / ("')
 SPIRV_FAULT = ("constant_float(m, (float)(XGPU_WORLD_CASCADE_SPAN * XGPU_WORLD_CASCADES)));",
                "constant_float(m, (float)(XGPU_WORLD_CASCADE_SIDE * XGPU_WORLD_CASCADES)));")
 
