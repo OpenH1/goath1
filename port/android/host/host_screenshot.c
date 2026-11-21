@@ -14,9 +14,18 @@ answer): the name is chosen and the pixels copied at once, and the file is
 written on a thread of its own, as <name>.part, renamed to <name> once
 whole, so that a reader that waits for <name> (report.c's zip) never reads
 half a picture. host_screenshot_finish waits for those being written.
+
+display.hdr's back buffer comes as its half floats
+(host_screenshot_write_halves), tone mapped into BGRA8 on the same thread
+(xgpu_hdr_sdr_pixel, as the backends' read_target with tone_map): its powf
+a pixel took a 4K frame up to a tenth of a second, which the render thread
+had spent on it.
 */
 
 #include "host_render_stream.h"
+/* (the reference's xgpu_hdr_sdr_pixel: the backends' tone_map) */
+#define XGPU_HDR_REFERENCE
+#include "xgpu_hdr.h"
 
 #include <SDL3/SDL.h>
 #include <limits.h>
@@ -34,6 +43,9 @@ of the frame; past them, written on the caller's) */
 struct screenshot_job
 {
 	unsigned char *bgra;
+	/* (display.hdr's half floats, RGBA, malloc'd: made bgra on the
+	thread) */
+	uint16_t *halves;
 	uint32_t width, height;
 	char *path, *part;
 	SDL_Thread *thread;
@@ -63,6 +75,47 @@ static int failed(char *name, uint32_t name_size, const char *reason)
 	return 0;
 }
 
+/* a half float's value (IEEE 754's binary16, as the Vulkan backend's
+half_value: the largest exponent infinity) */
+static float half_value(uint16_t half)
+{
+	int exponent = (half >> 10) & 31;
+	float magnitude = exponent == 0 ? ldexpf((float)(half & 1023), -24) : exponent == 31 ? INFINITY :
+		ldexpf((float)((half & 1023) | 1024), exponent - 25);
+
+	return half & 0x8000 ? -magnitude : magnitude;
+}
+
+/* display.hdr's half floats (RGBA) tone mapped into BGRA8 as an SDR
+display shows them (xgpu_hdr_sdr_pixel); NULL if out of memory */
+static unsigned char *halves_tone_mapped(const uint16_t *halves, uint32_t width, uint32_t height)
+{
+	size_t pixels = (size_t)width * height, pixel;
+	unsigned char *bgra = SDL_malloc(pixels * 4);
+	float *values = SDL_malloc(65536 * sizeof(*values));
+	uint32_t half;
+
+	if (bgra && values)
+	{
+		for (half = 0; half < 65536; half++)
+			values[half] = half_value((uint16_t)half);
+		for (pixel = 0; pixel < pixels; pixel++)
+		{
+			float rgba[4] = { values[halves[pixel * 4]], values[halves[pixel * 4 + 1]], values[halves[pixel * 4 + 2]],
+				values[halves[pixel * 4 + 3]] };
+
+			xgpu_hdr_sdr_pixel(rgba, bgra + pixel * 4);
+		}
+	}
+	else
+	{
+		SDL_free(bgra);
+		bgra = NULL;
+	}
+	SDL_free(values);
+	return bgra;
+}
+
 /* the pixels written as a PNG at path: through part (renamed to path once
 whole) when part is given; 1 if written */
 static int png_write(unsigned char *bgra, uint32_t width, uint32_t height, const char *path, const char *part)
@@ -90,6 +143,18 @@ static int SDLCALL job_run(void *data)
 {
 	struct screenshot_job *job = data;
 
+	if (job->halves)
+	{
+		job->bgra = halves_tone_mapped(job->halves, job->width, job->height);
+		free(job->halves);
+		job->halves = NULL;
+		if (!job->bgra)
+		{
+			SDL_RemovePath(job->part);
+			SDL_Log("screenshot: %s could not be written (out of memory)", job->path);
+			return 0;
+		}
+	}
 	if (!png_write(job->bgra, job->width, job->height, job->path, job->part))
 		SDL_Log("screenshot: %s could not be written", job->path);
 	return 0;
@@ -98,6 +163,7 @@ static int SDLCALL job_run(void *data)
 static void job_free(struct screenshot_job *job)
 {
 	SDL_free(job->bgra);
+	free(job->halves);
 	SDL_free(job->path);
 	SDL_free(job->part);
 	SDL_free(job);
@@ -146,9 +212,10 @@ static void at_exit(void)
 	host_screenshot_finish();
 }
 
-/* the picture handed to a thread of its own; 0 if none can take it (too
-many being written, or no memory or thread), for the caller to write it */
-static int job_start(const unsigned char *bgra, uint32_t width, uint32_t height, const char *path)
+/* the picture (bgra, copied; or *halves, taken when started: *halves
+NULL then) handed to a thread of its own; 0 if none can take it (too many
+being written, or no memory or thread), for the caller to write it */
+static int job_start(const unsigned char *bgra, uint16_t **halves, uint32_t width, uint32_t height, const char *path)
 {
 	SDL_Mutex *lock = writers_lock();
 	struct screenshot_job *job;
@@ -165,15 +232,16 @@ static int job_start(const unsigned char *bgra, uint32_t width, uint32_t height,
 	job = index < SCREENSHOT_WRITERS ? SDL_calloc(1, sizeof(*job)) : NULL;
 	if (job)
 	{
-		job->bgra = SDL_malloc(bytes);
+		job->bgra = *halves ? NULL : SDL_malloc(bytes);
 		job->path = SDL_strdup(path);
 		job->part = SDL_malloc(part_size);
 		job->width = width;
 		job->height = height;
 	}
-	if (job && job->bgra && job->path && job->part)
+	if (job && (*halves || job->bgra) && job->path && job->part)
 	{
-		memcpy(job->bgra, bgra, bytes);
+		if (!*halves)
+			memcpy(job->bgra, bgra, bytes);
 		snprintf(job->part, part_size, "%s.part", path);
 		/* (the .part made now: the name taken, for the next picture of
 		this second, before its file is written) */
@@ -188,6 +256,9 @@ static int job_start(const unsigned char *bgra, uint32_t width, uint32_t height,
 	}
 	if (started)
 	{
+		/* (the thread's from now on) */
+		job->halves = *halves;
+		*halves = NULL;
 		writers.jobs[index] = job;
 		if (!writers.at_exit)
 			writers.at_exit = atexit(at_exit) == 0;
@@ -198,8 +269,10 @@ static int job_start(const unsigned char *bgra, uint32_t width, uint32_t height,
 	return started;
 }
 
-int host_screenshot_write(unsigned char *bgra, uint32_t width, uint32_t height, const char *directory, char *name,
-	uint32_t name_size)
+/* bgra's (copied) or *halves' picture (taken, *halves NULL, when its
+thread writes it; else the caller's to free) */
+static int screenshot_write(unsigned char *bgra, uint16_t **halves, uint32_t width, uint32_t height,
+	const char *directory, char *name, uint32_t name_size)
 {
 	SDL_Time now;
 	SDL_DateTime date;
@@ -237,9 +310,34 @@ int host_screenshot_write(unsigned char *bgra, uint32_t width, uint32_t height, 
 		return failed(name, name_size, "too many in one second");
 	}
 	/* (on a thread of its own, or, if none takes it, here) */
-	written = job_start(bgra, width, height, path) || png_write(bgra, width, height, path, NULL);
+	written = job_start(bgra, halves, width, height, path);
+	if (!written && *halves)
+	{
+		bgra = halves_tone_mapped(*halves, width, height);
+		written = bgra && png_write(bgra, width, height, path, NULL);
+		SDL_free(bgra);
+	}
+	else if (!written)
+		written = png_write(bgra, width, height, path, NULL);
 	SDL_free(path);
 	if (!written)
 		return failed(name, name_size, "the file cannot be written");
 	return 1;
+}
+
+int host_screenshot_write(unsigned char *bgra, uint32_t width, uint32_t height, const char *directory, char *name,
+	uint32_t name_size)
+{
+	uint16_t *halves = NULL;
+
+	return screenshot_write(bgra, &halves, width, height, directory, name, name_size);
+}
+
+int host_screenshot_write_halves(uint16_t *halves, uint32_t width, uint32_t height, const char *directory, char *name,
+	uint32_t name_size)
+{
+	int written = screenshot_write(NULL, &halves, width, height, directory, name, name_size);
+
+	free(halves);
+	return written;
 }

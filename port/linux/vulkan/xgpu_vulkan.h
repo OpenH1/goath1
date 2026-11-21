@@ -389,6 +389,13 @@ xgpu_hdr_sdr_pixel) from the first, after the work recorded so far: waits
 for the GPU (screenshots, tests); 1 on success */
 int xgpu_vulkan_read_pixels(struct xgpu_vulkan_image *image, uint32_t layer, void *pixels, uint32_t bytes_per_row,
 	int tone_map);
+/* an RGBA16F image's layer (display.hdr's back buffer) as it is: its half
+floats, RGBA rows from the first, into *halves (malloc'd, the caller's to
+free), after the work recorded so far: waits for the GPU, but leaves the
+tone mapping to the caller (the screenshot key's, on the PNG's thread:
+host_screenshot.c). 1 on success, 0 if it cannot be read, -1 if the image
+is not RGBA16F */
+int xgpu_vulkan_read_halves(struct xgpu_vulkan_image *image, uint32_t layer, uint16_t **halves);
 
 /* ---------- samplers */
 

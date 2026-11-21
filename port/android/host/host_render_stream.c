@@ -421,8 +421,18 @@ void host_render_stream_set_screenshot_writer(host_render_screenshot_writer writ
 	screenshot_writer = writer;
 }
 
+static host_render_screenshot_halves_writer screenshot_halves_writer;
+
+void host_render_stream_set_screenshot_halves_writer(host_render_screenshot_halves_writer writer)
+{
+	screenshot_halves_writer = writer;
+}
+
 /* XGPU_STREAM_SCREENSHOT: the target read as READ_TARGET reads it, tone
-mapped, into the guest's pixels, and written; 1 if written */
+mapped, into the guest's pixels, and written; 1 if written. display.hdr's
+back buffer is read as it is and tone mapped by the writer, on the PNG's
+thread: tone mapped here, a 4K frame's held the render thread (and the
+game's) up to a tenth of a second */
 static uint32_t screenshot(const struct host_render_backend *backend, void *context,
 	const struct xgpu_stream_screenshot *shot, uint32_t size)
 {
@@ -444,6 +454,26 @@ static uint32_t screenshot(const struct host_render_backend *backend, void *cont
 	read.pixels = shot->pixels;
 	read.size = shot->size;
 	name = host_pointer(shot->name);
+	if (backend->read_target_halves && screenshot_halves_writer)
+	{
+		uint16_t *halves = NULL;
+		int halves_read = backend->read_target_halves(context, shot->target, shot->width, shot->height, &halves);
+
+		if (halves_read > 0)
+		{
+			name[0] = 0;
+			written = screenshot_halves_writer(halves, shot->width, shot->height, shot->directory, name,
+				XGPU_STREAM_SCREENSHOT_NAME) ? 1 : 0;
+			name[XGPU_STREAM_SCREENSHOT_NAME - 1] = 0;
+			return written;
+		}
+		free(halves);
+		if (halves_read == 0)
+		{
+			snprintf(name, XGPU_STREAM_SCREENSHOT_NAME, "the frame cannot be read");
+			return 0;
+		}
+	}
 	if (!backend->read_target(context, &read))
 	{
 		snprintf(name, XGPU_STREAM_SCREENSHOT_NAME, "the frame cannot be read");

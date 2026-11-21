@@ -142,6 +142,13 @@ struct host_render_backend
 	/* pixels: host_pointer(record->pixels), record->size bytes; returns
 	nonzero if written */
 	int (*read_target)(void *context, const struct xgpu_stream_read_target *record);
+	/* the screenshot key's target (width by height) read now as it is, when
+	it is display.hdr's RGBA16F back buffer: its half floats, RGBA rows from
+	the top, into *halves (malloc'd, the caller's to free), for the
+	screenshot's writer to tone map off the render thread. 1 read, 0 it
+	cannot be read, -1 not RGBA16F (read with read_target). NULL: every
+	screenshot is read with read_target */
+	int (*read_target_halves)(void *context, uint32_t target, uint32_t width, uint32_t height, uint16_t **halves);
 
 	void (*set_textures)(void *context, const struct host_render_texture_stage stages[4]);
 
@@ -256,6 +263,14 @@ reason in name. Set by the platform's host with its backend
 typedef int (*host_render_screenshot_writer)(unsigned char *bgra, uint32_t width, uint32_t height, const char *directory,
 	char *name, uint32_t name_size);
 void host_render_stream_set_screenshot_writer(host_render_screenshot_writer writer);
+/* the same of a display.hdr back buffer's half floats (read_target_halves'),
+which it takes (free'd, written or not), tone mapped as read_target's
+tone_map is (xgpu_hdr_sdr_pixel) where the file is written: on the PNG's
+thread. Set by the host with the writer; without one, HDR screenshots are
+read tone mapped on the render thread as before */
+typedef int (*host_render_screenshot_halves_writer)(uint16_t *halves, uint32_t width, uint32_t height,
+	const char *directory, char *name, uint32_t name_size);
+void host_render_stream_set_screenshot_halves_writer(host_render_screenshot_halves_writer writer);
 /* host_screenshot.c's, with SDL: YYYY-MM-DD_HH.MM.SS.png in local time
 (host_screenshot_name: the how manyth of its second, collision, from 0,
 adds _2, _3 and on). The name is answered at once and the file written on
@@ -263,6 +278,8 @@ a thread of its own (as <name>.part, renamed once whole): it appears a
 moment later; host_screenshot_finish waits for every one being written
 (at exit too) */
 int host_screenshot_write(unsigned char *bgra, uint32_t width, uint32_t height, const char *directory, char *name,
+	uint32_t name_size);
+int host_screenshot_write_halves(uint16_t *halves, uint32_t width, uint32_t height, const char *directory, char *name,
 	uint32_t name_size);
 void host_screenshot_finish(void);
 void host_screenshot_name(char *name, uint32_t name_size, int year, int month, int day, int hour, int minute,

@@ -238,7 +238,7 @@ def test_host_screenshot(tmp_path):
     subprocess.run(
         [cc, "-std=gnu11", "-Wall", "-Wextra", "-Werror", "-O1", f"-I{HOST}", f"-I{headers}",
          f"-I{ROOT / 'port' / 'linux' / 'src'}", str(TESTS / "host_screenshot_test.c"), str(HOST / "host_screenshot.c"),
-         str(library), f"-Wl,-rpath,{library.parent}", "-o", str(binary)],
+         str(library), f"-Wl,-rpath,{library.parent}", "-lm", "-o", str(binary)],
         check=True,
     )
     result = subprocess.run([str(binary), str(scratch)], capture_output=True, text=True)

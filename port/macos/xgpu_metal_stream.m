@@ -488,6 +488,31 @@ static int stream_read_target(void *context, const struct xgpu_stream_read_targe
 		host_pointer(record->pixels), width * 4);
 }
 
+/* the screenshot key's display.hdr back buffer as it is (its half
+floats): tone mapped on the PNG's thread (host_screenshot.c), not this one */
+static int stream_read_target_halves(void *context, uint32_t target, uint32_t width, uint32_t height,
+	uint16_t **halves)
+{
+	struct stream_target *entry = target_get(target);
+
+	(void)context;
+	*halves = NULL;
+	if (!entry || entry->description.width != width || entry->description.height != height)
+		return 0;
+	if (entry->description.format != XGPU_METAL_FORMAT_RGBA16F)
+		return -1;
+	*halves = malloc((size_t)width * height * 8);
+	if (!*halves)
+		return 0;
+	if (!xgpu_metal_read_pixels(entry->texture, 0, 0, 0, 0, width, height, *halves, width * 8))
+	{
+		free(*halves);
+		*halves = NULL;
+		return 0;
+	}
+	return 1;
+}
+
 /* display.hdr's shots: the frame's values as they are (an RGBA16F target's
 half floats), beside its PNG: <path>.rgba16f, a header of the magic "RGBA16F\0",
 the width and the height (32 bits each, little-endian), then the rows from
@@ -2403,6 +2428,7 @@ const struct host_render_backend *xgpu_metal_stream_backend(void)
 		backend.clear = stream_clear;
 		backend.clear_target = stream_clear_target;
 		backend.read_target = stream_read_target;
+		backend.read_target_halves = stream_read_target_halves;
 		backend.set_textures = stream_set_textures;
 		backend.set_constants = stream_set_constants;
 		backend.vertex_program = stream_vertex_program;

@@ -136,6 +136,23 @@ void host_render_stream_set_screenshot_writer(host_render_screenshot_writer writ
 	(void)writer;
 }
 
+void host_render_stream_set_screenshot_halves_writer(host_render_screenshot_halves_writer writer)
+{
+	(void)writer;
+}
+
+int host_screenshot_write_halves(uint16_t *halves, uint32_t width, uint32_t height, const char *directory, char *name,
+	uint32_t name_size)
+{
+	(void)width;
+	(void)height;
+	(void)directory;
+	(void)name;
+	(void)name_size;
+	free(halves);
+	return 0;
+}
+
 int host_screenshot_write(unsigned char *bgra, uint32_t width, uint32_t height, const char *directory, char *name,
 	uint32_t name_size)
 {

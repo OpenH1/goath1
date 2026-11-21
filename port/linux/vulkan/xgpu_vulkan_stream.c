@@ -918,6 +918,21 @@ static int stream_read_target(void *context, const struct xgpu_stream_read_targe
 		host_pointer(record->pixels), target->width * 4, record->tone_map != 0);
 }
 
+/* the screenshot key's display.hdr back buffer as it is (its half
+floats): tone mapped on the PNG's thread, not this one */
+static int stream_read_target_halves(void *context, uint32_t number, uint32_t width, uint32_t height,
+	uint16_t **halves)
+{
+	struct stream_target *target = target_get(number);
+
+	(void)context;
+	*halves = NULL;
+	if (!target || target->depth || target->width != width || target->height != height)
+		return 0;
+	target_resolve(target);
+	return xgpu_vulkan_read_halves(target->image, 0, halves);
+}
+
 /* ---------- textures */
 
 /* the axes (bit 0 u, 1 v, 2 w) whose border colour the shader draws: none
@@ -4844,6 +4859,7 @@ const struct host_render_backend *xgpu_vulkan_stream_backend(void)
 		backend.clear = stream_clear;
 		backend.clear_target = stream_clear_target;
 		backend.read_target = stream_read_target;
+		backend.read_target_halves = stream_read_target_halves;
 		backend.set_textures = stream_set_textures;
 		backend.set_constants = stream_set_constants;
 		backend.vertex_program = stream_vertex_program;

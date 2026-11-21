@@ -5212,18 +5212,14 @@ static unsigned char half_byte(const float *values, uint16_t half)
 	return (unsigned char)(value <= 0.0f ? 0 : value >= 1.0f ? 255 : (int)(value * 255.0f + 0.5f));
 }
 
-int xgpu_vulkan_read_pixels(struct xgpu_vulkan_image *image, uint32_t layer, void *pixels, uint32_t bytes_per_row,
-	int tone_map)
+/* a layer's first level copied into the readback buffer (its pixels as
+they are, rows from the first, size bytes), after the work recorded so far:
+waits for the GPU; 1 on success */
+static int readback(struct xgpu_vulkan_image *image, uint32_t layer, VkDeviceSize size)
 {
-	uint32_t width = image->description.width, height = image->description.height, row;
-	/* (display.hdr's half floats, and display.output_depth's 16-bit
-	channels: 8 bytes a pixel, made BGRA8's) */
-	int halves = image->description.format == XGPU_VULKAN_FORMAT_RGBA16F;
-	int deep = image->description.format == XGPU_VULKAN_FORMAT_RGBA16;
-	VkDeviceSize size = (VkDeviceSize)width * height * (halves || deep ? 8 : 4);
+	uint32_t width = image->description.width, height = image->description.height;
 	VkCommandBuffer commands;
 	VkBufferImageCopy copy;
-	const float *values;
 
 	if (image->description.samples > 1 || (image->aspect & VK_IMAGE_ASPECT_DEPTH_BIT))
 		return 0;
@@ -5256,6 +5252,34 @@ int xgpu_vulkan_read_pixels(struct xgpu_vulkan_image *image, uint32_t layer, voi
 	barrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_HOST_BIT,
 		VK_ACCESS_HOST_READ_BIT);
 	xgpu_vulkan_wait(xgpu_vulkan_fence());
+	return 1;
+}
+
+int xgpu_vulkan_read_halves(struct xgpu_vulkan_image *image, uint32_t layer, uint16_t **halves)
+{
+	size_t size = (size_t)image->description.width * image->description.height * 8;
+
+	*halves = NULL;
+	if (image->description.format != XGPU_VULKAN_FORMAT_RGBA16F)
+		return -1;
+	if (!readback(image, layer, (VkDeviceSize)size) || !(*halves = malloc(size)))
+		return 0;
+	memcpy(*halves, vk.readback_mapped, size);
+	return 1;
+}
+
+int xgpu_vulkan_read_pixels(struct xgpu_vulkan_image *image, uint32_t layer, void *pixels, uint32_t bytes_per_row,
+	int tone_map)
+{
+	uint32_t width = image->description.width, height = image->description.height, row;
+	/* (display.hdr's half floats, and display.output_depth's 16-bit
+	channels: 8 bytes a pixel, made BGRA8's) */
+	int halves = image->description.format == XGPU_VULKAN_FORMAT_RGBA16F;
+	int deep = image->description.format == XGPU_VULKAN_FORMAT_RGBA16;
+	const float *values;
+
+	if (!readback(image, layer, (VkDeviceSize)width * height * (halves || deep ? 8 : 4)))
+		return 0;
 	values = halves ? half_values() : NULL;
 	for (row = 0; row < height; row++)
 	{
