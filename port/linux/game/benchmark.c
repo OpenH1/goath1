@@ -137,16 +137,19 @@ from the player's first unit, as the cues') */
 #define STRESS_SECONDS 90.0
 #define STRESS_LOG_SECONDS 5.0
 #define STRESS_MULTIPLIER_MOST 8
-/* the river site's hiding place (a30's cutscene flag river_hide_flag), where
-the player is stood and the campaign bot's route holds its looks: toward
-the middle's dropships, the river's dropship, the rubble site, the middle */
-#define STRESS_SPOT "-535.3 183.2 66.4"
+/* the player is stood at the river site's hiding place (a30's cutscene
+flag river_hide_flag, -535.3 183.2 66.4: under cover, the ground out of
+sight), and the campaign bot walks out of it to the open ground in front,
+where the frame rate fell in play, and holds its looks there: toward the
+middle's dropships, the river's dropship, the rubble site, the middle */
+#define STRESS_SPOT "-532.9 171.1 66.7"
 static char const stress_route[] =
-	"# the stress test's (benchmark.c): looks across BSP 1 from river_hide_flag\n"
-	"hold middle " STRESS_SPOT " -44 -4 12\n"
-	"hold river_dropship " STRESS_SPOT " -142 0 10\n"
+	"# the stress test's (benchmark.c): looks across BSP 1 from the river site\n"
+	"place out " STRESS_SPOT "\n"
+	"hold middle " STRESS_SPOT " -39 -4 12\n"
+	"hold river_dropship " STRESS_SPOT " -150 0 10\n"
 	"hold rubble " STRESS_SPOT " 0 -2 10\n"
-	"hold middle_again " STRESS_SPOT " -44 -4 10\n";
+	"hold middle_again " STRESS_SPOT " -39 -4 10\n";
 /* the timeline (debug.network_test_cues: "<second> <console line>|...", each
 line as the console takes it, without its outer brackets): the
 startup script (mission_a30) put to sleep before it wakes the first part's
