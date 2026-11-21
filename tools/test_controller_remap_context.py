@@ -156,6 +156,9 @@ static long dead_spectate_camera_unit(void const *p){return NONE;}
 static void dead_spectate_camera_update(void){}
 static void coop_spectate_camera(struct dead_camera *p){}
 static void observer_obsolete_position(short local){}
+static int royale_cinema_camera_wanted(short local){return 0;}
+static void royale_cinema_camera_new(void *p,short local){}
+static void royale_cinema_camera_update(void *data,void *controls,void *result){}
 ''' + function(director, 'director_choose_camera_game') + r'''
 int main(void) {
  int cycle;
