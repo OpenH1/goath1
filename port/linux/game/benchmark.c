@@ -106,9 +106,6 @@ int config_command_line_value(char const *name, char *value, unsigned long size)
 /* xgpu_backend.c's: the GPU's name (its header is the host's, not the game's) */
 char const *xgpu_backend_device(void);
 
-/* platform.h's: the data folder (the one with maps/) */
-const char *platform_data_root(void);
-
 /* server_rotation.c's: each multiplayer map in the maps folder (kind
 "xbox") and custom_maps, by its name */
 int server_maps_each(void (*each)(void *context, const char *name, const char *level, const char *kind),
@@ -150,27 +147,28 @@ static char const stress_route[] =
 	"hold river_dropship " STRESS_SPOT " -142 0 10\n"
 	"hold rubble " STRESS_SPOT " 0 -2 10\n"
 	"hold middle_again " STRESS_SPOT " -44 -4 10\n";
-/* the timeline (debug.network_test_cues: "<second> <console line>|..."): the
+/* the timeline (debug.network_test_cues: "<second> <console line>|...", each
+line as the console takes it, without its outer brackets): the
 startup script (mission_a30) put to sleep before it wakes the first part's
 encounters, BSP 1, the player stood there, the cinematic's hold on the view
 and input let go, then a30's own scripts for that part, as its mission_obj,
 mission_river and mission_rubble wake them */
 static char const stress_cues[] =
-	"0.5 (begin (sleep -1 mission_a30) (set cheat_deathless_player true) (switch_bsp 1))|"
-	"1 (object_teleport (player0) river_hide_flag)|"
-	"1.5 (begin (cinematic_stop) (camera_control false) (cinematic_show_letterbox false) "
+	"0.5 begin (sleep -1 mission_a30) (set cheat_deathless_player true) (switch_bsp 1)|"
+	"1 object_teleport (player0) river_hide_flag|"
+	"1.5 begin (cinematic_stop) (camera_control false) (cinematic_show_letterbox false) "
 		"(player_camera_control true) (player_enable_input true) (show_hud true) "
-		"(hud_show_motion_sensor true) (fade_in 0 0 0 0))|"
-	"2 (begin (ai_allegiance player human) (wake mission_river_marine) (wake mission_river_wave_1))|"
-	"4 (wake mission_river_wave_2)|"
-	"8 (wake mission_river_wave_3)|"
-	"12 (begin (wake mission_mid_river_1) (wake mission_mid_cliff_2))|"
-	"20 (begin (ai_place rubble_wave/wave_1_toon) (wake mission_rubble_wave_2))|"
-	"30 (begin (wake mission_mid_rubble_1) (ai_place mid_rubble_2) (wake mission_mid_banshee))|"
-	"40 (wake mission_rubble_wave_3)|"
-	"55 (wake mission_rubble_wave_5)|"
-	"70 (wake mission_mid_cliff_1)|"
-	"85 (wake mission_rubble_wave_4)";
+		"(hud_show_motion_sensor true) (fade_in 0 0 0 0)|"
+	"2 begin (ai_allegiance player human) (wake mission_river_marine) (wake mission_river_wave_1)|"
+	"4 wake mission_river_wave_2|"
+	"8 wake mission_river_wave_3|"
+	"12 begin (wake mission_mid_river_1) (wake mission_mid_cliff_2)|"
+	"20 begin (ai_place rubble_wave/wave_1_toon) (wake mission_rubble_wave_2)|"
+	"30 begin (wake mission_mid_rubble_1) (ai_place mid_rubble_2) (wake mission_mid_banshee)|"
+	"40 wake mission_rubble_wave_3|"
+	"55 wake mission_rubble_wave_5|"
+	"70 wake mission_mid_cliff_1|"
+	"85 wake mission_rubble_wave_4";
 
 char const *benchmark_live_problem(
 	struct benchmark_live const *live,
@@ -329,7 +327,9 @@ static void benchmark_begin_stress(
 	char text[64];
 	FILE *file;
 
-	snprintf(benchmark.route, sizeof(benchmark.route), "%s/stress_test_route.txt", platform_data_root());
+	/* (in the data folder, the game's own folder: the campaign bot reads
+	its route from there) */
+	snprintf(benchmark.route, sizeof(benchmark.route), "stress_test_route.txt");
 	file = fopen(benchmark.route, "w");
 	if (file)
 	{
