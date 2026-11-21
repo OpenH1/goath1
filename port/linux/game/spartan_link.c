@@ -68,13 +68,17 @@ pinger's color and fade, behind-a-wall look from the teammate's eye) where
 the pinged point or object is in their view, sized to the feed and over the
 object as it moves; none where it is off the feed's picture.
 
-The cost: one feed is drawn a frame (render.c's render_frame, before the
-window's view), each kept in its own images between (d3d8_device.c's extra
-views, halo_view_begin) at the size it is drawn on the screen, without the
+The cost: each feed is drawn SPARTAN_LINK_FEED_RATE (30) times a second by
+the real time, in turn, at most one a frame (render.c's render_frame, before
+the window's view; a feed that has no image yet, as one a ping brings up,
+at once), each kept in its own images between (d3d8_device.c's extra views,
+halo_view_begin) at the size it is drawn on the screen, without the
 anti-aliasing pass, multisampling, the world's ambient occlusion, the
-objects' shadows, lens flares or the weather, and its models' levels of
-detail chosen for that size. So the frame pays for about one small view,
-however many feeds there are; with the link hidden, nothing.
+objects' shadows, lens flares, decals, the grass and other detail objects,
+the weather or the particles too small to see in it, and its models' levels
+of detail chosen for its own pixels, coarser than the screen's
+(halo_model_detail_scale). So the frame pays for a small view in some
+frames, however many feeds there are; with the link hidden, nothing.
 
 Only what this machine draws: nothing is sent, the game state is not
 touched (no seed is taken, no effect, sound or HUD message made: the
@@ -238,6 +242,11 @@ up to the most) */
 #define SPARTAN_LINK_PING_FADE_MILLISECONDS 1000
 #define SPARTAN_LINK_PING_HEIGHT 0.16f
 #define SPARTAN_LINK_PING_HEIGHT_MOST 0.3f
+/* how often each feed is drawn, by the real time (its image kept between):
+SPARTAN_LINK_FEED_RATE a second, its period counted in thirds of a
+millisecond (100: a thirtieth of a second) */
+#define SPARTAN_LINK_FEED_RATE 30
+#define SPARTAN_LINK_FEED_PERIOD (3000 / SPARTAN_LINK_FEED_RATE)
 
 /* ---------- structures */
 
@@ -250,6 +259,8 @@ struct spartan_link_feed
 	unsigned long down_at;
 	/* the view's size in the screen's units, as last drawn */
 	unsigned long width, height;
+	/* when it is next drawn (system_milliseconds' thirds: spartan_link_schedule) */
+	unsigned long draw_at;
 	/* since when their health has flashed, their shield down (0: not) */
 	unsigned long health_flash_at;
 	/* the game's tick their shield's and their health's HUD pictures began
@@ -702,8 +713,10 @@ static boolean spartan_link_feed_image(
 		spartan_link.view_players[view] == spartan_link.windows[local_player_index].feeds[feed].player_index;
 }
 
-/* the feed drawn this frame: one a frame of every window's, a feed whose
-image was never drawn first, else the next after the last drawn */
+/* the feed drawn this frame: at most one a frame of every window's, a feed
+whose image was never drawn (or is another's) first, at once, else the next
+after the last drawn whose time has come (SPARTAN_LINK_FEED_RATE a second
+each, by the real time); none while every feed's image is new enough */
 static void spartan_link_schedule(
 	void)
 {
@@ -711,6 +724,7 @@ static void spartan_link_schedule(
 	short feed;
 	short best_local = NONE, best_feed = NONE;
 	long best_distance = LONG_MAX;
+	unsigned long now = system_milliseconds() * 3;
 	long last = spartan_link.last_local_player == NONE ? -1 :
 		spartan_link.last_local_player * SPARTAN_LINK_FEEDS + spartan_link.last_feed;
 
@@ -733,6 +747,8 @@ static void spartan_link_schedule(
 			distance = slot > last ? slot - last : slot - last + MAXIMUM_LOCAL_PLAYERS * SPARTAN_LINK_FEEDS;
 			if (!spartan_link_feed_image(local_player_index, feed))
 				distance -= MAXIMUM_LOCAL_PLAYERS * SPARTAN_LINK_FEEDS;
+			else if ((long)(now - window->feeds[feed].draw_at) < 0)
+				continue;
 			if (distance < best_distance)
 			{
 				best_distance = distance;
@@ -2117,6 +2133,19 @@ boolean spartan_link_feed_begin(
 	camera->window_bounds = camera->viewport_bounds;
 	feed->width = width;
 	feed->height = height;
+	/* (its next draw a period on from this one's due time, so that the rate
+	holds at any frame rate; from now where it had no image or fell a
+	period behind) */
+	{
+		unsigned long now = system_milliseconds() * 3;
+
+		if (!spartan_link_feed_image(local_player_index, spartan_link.last_feed) ||
+			(long)(now - feed->draw_at) >= SPARTAN_LINK_FEED_PERIOD)
+		{
+			feed->draw_at = now;
+		}
+		feed->draw_at += SPARTAN_LINK_FEED_PERIOD;
+	}
 
 	view = SPARTAN_LINK_VIEW(local_player_index, spartan_link.last_feed);
 	spartan_link.views_used |= 1UL << view;
