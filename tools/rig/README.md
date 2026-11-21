@@ -89,6 +89,18 @@ goat-rig run menu --build my-branch --menu 20 --shots at:12
 menu with, so the menu's own scene is drawn and prepared. The summary then says whether only the ui map loaded
 and stayed up. Any renderer or menu change gets one `--menu` run as part of its proof.
 
+**10. Stress test with a co-op partner** (5900X, 4K): the host runs the stress test (a30, `benchmark.c`) and
+waits for the client, which joins as its co-op partner without drawing anything (null renderer, tiny window). The
+host keeps the partner updated over loopback and draws their Spartan link feed.
+```sh
+goat-rig run stress-pair --pair host:my-branch client:my-branch --size 3840x2160 --seconds 230 -- \
+  HALO_STRESS_TEST=uncapped HALO_STRESS_TEST_PARTNER=1 -- \
+  HALO_NETWORK_TEST=join HALO_NULL_RENDERER=1 HALO_WINDOW_SIZE=320x180 HALO_MAX_FPS=60 HALO_SKIP_CINEMATICS=1
+```
+The host's `halo.log` has `the partner brought beside the host`, `stress test:` lines with `2 players` and the feeds
+drawn so far, and the `benchmark:` line with the fps and the game thread's time. Without the partner flag (one
+instance, `HALO_STRESS_TEST=uncapped`) it is the solo stress test.
+
 ## What it does for you
 
 - **build** `<branch|sha|pr/N|local branch>` fetches `~/goat-rig/repo.git` (a bare clone of GitHub's

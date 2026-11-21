@@ -68,6 +68,19 @@ first player), which holds a few looks across the ground (stress_route)
 and then fights where it stands, the same each run. The measure is
 STRESS_SECONDS from STRESS_WARMUP; the enemies alive are logged every
 STRESS_LOG_SECONDS.
+
+With debug.stress_test_partner, another machine is the host's co-op partner
+(a second instance with debug.network_test "join": tools/rig/README.md's
+recipe), so the host pays a real player's costs of a teammate: keeping them
+updated over the network, and their Spartan link feed (the teammate's view,
+a second scene, display.spartan_link_shown) drawn. The game starts
+STRESS_PARTNER_START seconds into the lobby, the timeline once both players
+have units (debug.network_test_cue_players 2), and the host brings the
+partner beside its player (Host Controls' BRING TO ME) from
+STRESS_PARTNER_BRING seconds on, once its input is given back; the partner
+plays nothing. The run fails if the partner has not joined within
+STRESS_PARTNER_WAIT_MS of the game's start, or leaves before the end. The
+feeds drawn are logged with the enemies.
 */
 
 #include "cseries.h"
@@ -81,6 +94,8 @@ STRESS_LOG_SECONDS.
 #include "benchmark.h"
 #include "bots.h"
 #include "menu_table.h"
+#include "network_host_controls.h"
+#include "spartan_link.h"
 
 #include "../src/port_config.h" /* port: port/linux/src/port_config.c */
 #include "../src/report.h" /* port: port/linux/src/report.c */
@@ -137,6 +152,13 @@ from the player's first unit, as the cues') */
 #define STRESS_SECONDS 90.0
 #define STRESS_LOG_SECONDS 5.0
 #define STRESS_MULTIPLIER_MOST 8
+/* the partner's (debug.stress_test_partner): the lobby's seconds before the
+game starts (time for them to join), the real time from the game's start
+they may take to have a unit, and the scenario second from which they are
+brought beside the host (after stress_cues give the input back) */
+#define STRESS_PARTNER_START "20"
+#define STRESS_PARTNER_WAIT_MS 120000UL
+#define STRESS_PARTNER_BRING 2.0
 /* the player is stood at the river site's hiding place (a30's cutscene
 flag river_hide_flag, -535.3 183.2 66.4: under cover, the ground out of
 sight), and the campaign bot walks out of it to the open ground in front,
@@ -268,6 +290,11 @@ static struct
 	double stress_log_second;
 	long enemies_most;
 	char route[256];
+	/* the partner's: wanted, brought beside the host, and the feeds drawn
+	before the measure */
+	int partner;
+	int partner_brought;
+	unsigned long feeds_before;
 	/* the scenario: its map (benchmark_maps'), its bots (and those asked
 	for, where the map takes fewer) and its player, TRUE the bot's */
 	short map;
@@ -342,10 +369,10 @@ static void benchmark_begin_stress(
 	else
 		platform_log("stress test: cannot write %s: the campaign bot fights where it is", benchmark.route);
 	benchmark_set("debug.network_test", "host:" STRESS_LEVEL ":coop");
-	benchmark_set("debug.network_test_start", "3");
+	benchmark_set("debug.network_test_start", benchmark.partner ? STRESS_PARTNER_START : "3");
 	benchmark_set("debug.network_test_players", "1");
 	benchmark_set("debug.network_test_cues", stress_cues);
-	benchmark_set("debug.network_test_cue_players", "1");
+	benchmark_set("debug.network_test_cue_players", benchmark.partner ? "2" : "1");
 	benchmark_set("network.coop_enemies_mode", "multiplier");
 	snprintf(text, sizeof(text), "%ld", benchmark.multiplier);
 	benchmark_set("network.coop_enemies_multiplier", text);
@@ -409,9 +436,11 @@ static void benchmark_begin(
 	benchmark.file[0] = benchmark.verdict[0] = 0;
 	benchmark.stress_log_second = 0.0;
 	benchmark.enemies_most = 0;
+	benchmark.partner_brought = FALSE;
+	benchmark.feeds_before = 0;
 	if (benchmark.stress)
-		platform_log("stress test: begun (%s co-op, enemies %ld times, the campaign bot, pacing %s)", STRESS_LEVEL,
-			benchmark.multiplier, benchmark.pacing);
+		platform_log("stress test: begun (%s co-op, enemies %ld times, the campaign bot, %s, pacing %s)", STRESS_LEVEL,
+			benchmark.multiplier, benchmark.partner ? "waiting for a partner" : "alone", benchmark.pacing);
 	else
 	{
 		platform_log("benchmark: begun (%s, %ld bots, the %s player, pacing %s)", benchmark_maps[benchmark.map].name,
@@ -494,12 +523,13 @@ static void benchmark_about(
 	if (benchmark.stress)
 	{
 		snprintf(text, size,
-			"Scenario: Halo (%s), the second half (BSP 1) from the river site, network co-op hosted alone, "
+			"Scenario: Halo (%s), the second half (BSP 1) from the river site, network co-op hosted %s, "
 			"enemies %ld times (co-op's static multiplier), the campaign bot deathless, seed %s; %.0f seconds "
-			"measured from %.1f s (%ld game ticks, at most %ld enemies alive)\n"
+			"measured from %.1f s (%ld game ticks, at most %ld enemies alive, %lu Spartan link feeds drawn)\n"
 			"Frame pacing: %s\n",
-			STRESS_LEVEL, benchmark.multiplier, BENCHMARK_SEED, STRESS_SECONDS, benchmark.measure_second, ticks,
-			benchmark.enemies_most,
+			STRESS_LEVEL, benchmark.partner ? "with a partner (another machine)" : "alone", benchmark.multiplier,
+			BENCHMARK_SEED, STRESS_SECONDS, benchmark.measure_second, ticks, benchmark.enemies_most,
+			spartan_link_feeds_drawn() - benchmark.feeds_before,
 			!strcmp(benchmark.pacing, "uncapped") ? "uncapped (vsync, variable refresh and the frame cap off)" :
 				"your settings (vsync, variable refresh and the frame cap as set)");
 		(void)kills;
@@ -543,7 +573,8 @@ static void benchmark_finish(
 		snprintf(benchmark.file, sizeof(benchmark.file), "(the results could not be saved)");
 	}
 	if (benchmark.stress)
-		platform_log("stress test: at most %ld enemies alive in the measure", benchmark.enemies_most);
+		platform_log("stress test: at most %ld enemies alive in the measure, %lu Spartan link feeds drawn",
+			benchmark.enemies_most, spartan_link_feeds_drawn() - benchmark.feeds_before);
 	platform_log("benchmark: %lu frames, %.1f fps average, %.1f fps 1%% low, p95 %.2f ms, p99 %.2f ms, GPU %.2f ms, "
 		"game %.2f ms, %s", benchmark.measure.frames, benchmark.measure.average_fps, benchmark.measure.low_1_fps,
 		benchmark.measure.p95_ms, benchmark.measure.p99_ms, benchmark.measure.gpu_ms, benchmark.measure.game_ms,
@@ -591,6 +622,7 @@ void benchmark_request_stress(
 		pacing = config_string("display.benchmark_pacing");
 	snprintf(benchmark.pacing, sizeof(benchmark.pacing), "%s", strcmp(pacing, "settings") ? "uncapped" : "settings");
 	benchmark.multiplier = config_integer("debug.stress_test_multiplier");
+	benchmark.partner = config_boolean("debug.stress_test_partner");
 	if (benchmark.multiplier < 2)
 		benchmark.multiplier = 2;
 	if (benchmark.multiplier > STRESS_MULTIPLIER_MOST)
@@ -738,7 +770,8 @@ void benchmark_frame(
 			scenario = (double)(game_time_get() - cues_start) / TICKS_PER_SECOND;
 			if (scenario >= benchmark.stress_log_second)
 			{
-				platform_log("stress test: %.0f s, %ld enemies alive, %ld actors", scenario, bots, actors);
+				platform_log("stress test: %.0f s, %ld enemies alive, %ld actors, %ld players, %lu feeds drawn",
+					scenario, bots, actors, players, spartan_link_feeds_drawn());
 				benchmark.stress_log_second = scenario + STRESS_LOG_SECONDS;
 			}
 		}
@@ -754,11 +787,41 @@ void benchmark_frame(
 		benchmark_end(problem);
 		return;
 	}
-	/* (the scenario's clock: from the tick its player had a unit) */
+	/* (the scenario's clock: from the tick its player had a unit, and the
+	partner's, debug.stress_test_partner) */
 	cues_start = network_test_cues_start_tick();
 	if (cues_start == NONE)
+	{
+		if (benchmark.stress && benchmark.partner && system_milliseconds() - benchmark.playing_ms > STRESS_PARTNER_WAIT_MS)
+			benchmark_end("the co-op partner did not join (debug.stress_test_partner)");
 		return;
+	}
 	scenario = (double)(game_time_get() - cues_start) / TICKS_PER_SECOND;
+	if (benchmark.stress && benchmark.partner)
+	{
+		if (players < 2)
+		{
+			benchmark_end("the co-op partner left");
+			return;
+		}
+		/* (beside the host, as BRING TO ME does, once its input is back:
+		the first tick it may, the same each run) */
+		if (!benchmark.partner_brought && scenario >= STRESS_PARTNER_BRING)
+		{
+			struct data_iterator iterator;
+			struct player_datum *player;
+
+			data_iterator_new(&iterator, player_data);
+			while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+			{
+				if (player->local_player_index == NONE && network_host_controls_teleport(iterator.datum_index, FALSE))
+				{
+					benchmark.partner_brought = TRUE;
+					platform_log("stress test: tick %ld, the partner brought beside the host", game_time_get());
+				}
+			}
+		}
+	}
 
 	if (benchmark.state == _benchmark_warming || benchmark.state == _benchmark_starting)
 	{
@@ -778,6 +841,7 @@ void benchmark_frame(
 		benchmark.kills_before = kills;
 		benchmark.playing_tick = game_time_get();
 		benchmark.playing_ms = system_milliseconds();
+		benchmark.feeds_before = spartan_link_feeds_drawn();
 		platform_log("benchmark: measuring from %.1f s of the match (%ld players, %ld bots, %ld kills)", scenario,
 			players, bots, kills);
 		return;
@@ -960,7 +1024,8 @@ int benchmark_value(
 		snprintf(value, size, "%s, %ld bots, %.0f seconds", benchmark_maps[benchmark.map].title, benchmark.bots,
 			BENCHMARK_SECONDS);
 	else if (!strcmp(name, "benchmark.player") && benchmark.stress)
-		snprintf(value, size, "the campaign bot, which can't die");
+		snprintf(value, size, "%s", benchmark.partner ? "the campaign bot, which can't die, with a co-op partner" :
+			"the campaign bot, which can't die");
 	else if (!strcmp(name, "benchmark.player"))
 		snprintf(value, size, "%s", benchmark.bot_player ? "a bot, at the bots' Normal skill" :
 			"scripted (as before, not the same each run)");

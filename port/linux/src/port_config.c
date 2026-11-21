@@ -2963,6 +2963,15 @@ static const struct config_setting config_settings[] =
 		"The stress test's enemies: co-op's static multiplier\n"
 		"(network.coop_enemies_multiplier) for its run, 2 to 8 (co-op's most\n"
 		"growth, coop_enemies.c's COOP_ENEMIES_MAXIMUM_GROWTH)." },
+	{ "debug.stress_test_partner", _config_boolean, "false", "HALO_STRESS_TEST_PARTNER", _environment_set_is_true,
+		_platform_all,
+		"The stress test with a co-op partner: another machine joins its game\n"
+		"(debug.network_test \"join\", tools/rig/README.md's recipe), the\n"
+		"game starts 20 seconds into the lobby, its timeline once both players\n"
+		"have units, and the partner is brought beside the host 2 seconds in\n"
+		"(Host Controls' BRING TO ME), so the host pays for keeping them\n"
+		"updated and draws their Spartan link feed. The run fails if they never\n"
+		"join or leave before its end." },
 	{ "debug.frame_log", _config_string, "\"\"", "HALO_FRAME_LOG", _environment_value, _platform_all,
 		"A file to write a line to for each frame presented once the scenario's\n"
 		"simulation has started: its seconds, then microseconds of the frame,\n"
