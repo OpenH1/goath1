@@ -49,6 +49,14 @@ struct demo_writer;
 struct demo_writer *demo_writer_open(char const *path, void const *header, unsigned long header_size);
 void demo_writer_block(struct demo_writer *writer, unsigned long kind, unsigned long first_tick,
 	void const *data, unsigned long size, int droppable);
+/* ... or written in place: room for a block of size bytes of the writer's
+own (NULL if there is none, or a droppable one is dropped; the caller
+waits for room as above), filled, then handed on with its kind, tick and
+the bytes written (no more than reserved: 0 hands nothing on). Every room
+reserved is committed. */
+void *demo_writer_reserve(struct demo_writer *writer, unsigned long size, int droppable);
+void demo_writer_commit(struct demo_writer *writer, void *data, unsigned long kind, unsigned long first_tick,
+	unsigned long size);
 /* the bytes written so far (the blocks packed); and once closed, all */
 unsigned long long demo_writer_bytes(struct demo_writer *writer);
 unsigned long long demo_writer_close(struct demo_writer *writer);

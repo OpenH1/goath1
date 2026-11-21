@@ -487,6 +487,9 @@ static void game_tick_after_substeps(
 	/* port: the wind's step, once a tick (scenario.c: it stepped by the
 	frames' time) */
 	scenario_tick_update();
+	/* port: a co-op host's extra enemies placed (network_coop.c): in the
+	tick, which a demo's playback of the host's ticks runs as they ran */
+	network_coop_tick_end();
 	/* port: and at its end, before the frame draws the lights */
 	game_state_check_data_arrays();
 	lights_port_recover();

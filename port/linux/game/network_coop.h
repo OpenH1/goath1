@@ -162,6 +162,8 @@ void network_coop_reset_recovery(void);
 skipped (reverted) or refused. Either way the vote is over: after a short
 cooldown the cutscene can be voted on again while it is skippable. */
 void network_coop_skip_answered(boolean skipped);
+/* game.c: a tick's end, inside it: the host's extra enemies placed */
+void network_coop_tick_end(void);
 /* the vote count to show, if a skippable cinematic is playing */
 boolean network_coop_skip_vote_status(short *votes, short *voters, boolean *voted);
 
