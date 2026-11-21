@@ -95,10 +95,11 @@ def sdk_version() -> str:
 
 
 def version() -> str:
-    """the DLSS SDK's version and the module's source's: 310.9.16-1a2b3c4d"""
+    """the DLSS SDK's version and the module's source's: 310.9.16-1a2b3c4d (its lines' ends taken as LF, so a
+    Windows checkout's CRLF gives every platform's add-on the same version, as dlss_addon.py pin requires)"""
     source = hashlib.sha256()
     for path in MODULE_SOURCES:
-        source.update(path.read_bytes())
+        source.update(path.read_bytes().replace(b"\r\n", b"\n"))
     return f"{sdk_version()}-{source.hexdigest()[:8]}"
 
 

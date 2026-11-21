@@ -109,3 +109,16 @@ def test_package_check_finds_nvidia_files(tmp_path):
         archive.writestr("nvngx_dlss.dll", b"x")
     found = dlss_addon.check_package(tree)
     assert f"lib/openh1/{RUNTIME}" in found and "bin/openh1_dlss.dll" in found and "inner.zip:nvngx_dlss.dll" in found
+
+
+def test_version_ignores_line_ends(tmp_path, monkeypatch):
+    """a Windows checkout's CRLF sources give the add-on the version a Linux checkout's do (pin needs one version)"""
+    lf, crlf = tmp_path / "lf.c", tmp_path / "crlf.c"
+    lf.write_bytes(b"int a;\nint b;\n")
+    crlf.write_bytes(b"int a;\r\nint b;\r\n")
+    monkeypatch.setattr(dlss_addon, "MODULE_SOURCES", [lf])
+    unix = dlss_addon.version()
+    monkeypatch.setattr(dlss_addon, "MODULE_SOURCES", [crlf])
+    assert dlss_addon.version() == unix
+    crlf.write_bytes(b"int a;\r\nint c;\r\n")
+    assert dlss_addon.version() != unix
