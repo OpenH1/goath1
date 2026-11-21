@@ -411,6 +411,16 @@ alone, as before. A build without them plays a game of one hill and plain
 Capture the Flag with these; a Multi-Hill game's state, longer than it
 takes, it does not take.
 
+Royale (`port/linux/game/royale.c`, hidden behind `game.royale`) takes
+three more reserved bytes of `struct game_variant_options` the same way,
+so the version was not raised either: a downed player's bleed-out and a
+revive's time (seconds), and whether the dead go to the Reclaimer
+(`royale_bleed_out`, `royale_revive`, `royale_gulag`; the struct is still
+0x2C bytes, every earlier field where it was). Earlier builds send them
+empty and ignore them; only a Royale game (its game mode, which they do
+not know) reads them. A build without Royale that joins a Royale host
+plays a broken game, which the hidden setting keeps from players for now.
+
 OpenH1's own games ("OpenH1 60 Tick" and the like, below; Standard games in
 the code) have a protocol version of their own,
 `HALO_PORT_STANDARD_NETWORK_VERSION` (`halo_port_limits.h`), separate from
