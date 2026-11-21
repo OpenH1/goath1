@@ -273,7 +273,7 @@
 		<string text="Smooths jagged edges. FXAA and SMAA cost little; MSAA is sharper and costs more of the graphics card."/>
 		<string text="Smooths jagged edges. FXAA and SMAA cost little; MSAA is sharper and costs more of the graphics card."/>
 		<string text="Keeps floors and walls sharp into the distance, at a small cost. Off looks as the Xbox did: surfaces blur a few steps away."/>
-		<string text="How detailed characters and vehicles stay in the distance. Xbox simplifies them as on a TV; Full keeps their detail for your screen; Highest always draws the most. Auto is Full in VR."/>
+		<string text="How detailed characters and vehicles stay in the distance. Xbox simplifies them as on a TV; Full keeps their detail for your screen; Highest always draws the most. Auto is Full."/>
 		<string text="Draws movement smoothly between the game's 30 updates a second, so that it looks fluid at any frame rate. Off shows each update as it is."/>
 		<string text=""/>
 		<string text="How sharp the shadows of characters, vehicles and weapons are. Xbox is the original's soft, blocky shadow; each step up is crisper, and costs a little more of the graphics card."/>

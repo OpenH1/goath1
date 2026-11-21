@@ -1135,7 +1135,8 @@ static int model_detail_setting(int *eyes)
 #ifdef HALO_VR
 	*eyes = vr_drawing_eyes();
 #endif
-	return model_detail == _model_detail_auto ? (*eyes ? _model_detail_native : _model_detail_stock) : model_detail;
+	/* ("auto": "native", the models measured in the lines they are drawn in, on a display as in the eyes) */
+	return model_detail == _model_detail_auto ? _model_detail_native : model_detail;
 }
 
 /* whether the draws now measure models as "stock" does: each permutation then
@@ -8702,7 +8703,7 @@ static float vr_text_pixel_scale(void)
 	return vr_gl.pass == HALO_VR_PASS_EYES && vr_gl.hud_height > 0 ? (float)vr_gl.hud_height / (float)SCREEN_HEIGHT : 0.0f;
 }
 
-/* whether the draws now are the eyes' 3D view (display.model_detail "auto") */
+/* whether the draws now are the eyes' 3D view (display.model_detail's scale) */
 static int vr_drawing_eyes(void)
 {
 	return vr_gl.pass == HALO_VR_PASS_EYES;

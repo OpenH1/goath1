@@ -1350,7 +1350,7 @@ PAGES = {
             ("MODEL DETAIL", "display.model_detail",
              [("AUTO", "auto"), ("XBOX", "stock"), ("FULL", "native"), ("HIGHEST", "highest")],
              "How detailed characters and vehicles stay in the distance. Xbox simplifies them as on a TV; Full keeps "
-             "their detail for your screen; Highest always draws the most. Auto is Full in VR.", None),
+             "their detail for your screen; Highest always draws the most. Auto is Full.", None),
             ("SMOOTH MOTION", "display.interpolation", ON_OFF,
              "Draws movement smoothly between the game's 30 updates a second, so that it looks fluid at any frame "
              "rate. Off shows each update as it is.", None),

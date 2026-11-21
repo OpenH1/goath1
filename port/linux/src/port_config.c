@@ -4720,7 +4720,7 @@ static const struct
 	{ "display.anisotropic_filtering", "0" },
 	{ "display.shadow_resolution", "128" },
 	{ "display.per_pixel_lighting", "false" },
-	/* ("native" in VR, whose eyes' many lines the Xbox's 480 stand for) */
+	/* ("native": the models measured in the display's lines, not the Xbox's 480) */
 	{ "display.model_detail", "\"auto\"" },
 	{ "display.dynamic_lights", "\"classic\"" },
 	{ "display.ambient_occlusion", "\"off\"" },

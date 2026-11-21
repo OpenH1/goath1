@@ -553,7 +553,7 @@
 			<choice shown="16X" value="16"/>
 		</row>
 		<row key="model_detail" kind="choice" setting="display.model_detail" label="MODEL DETAIL" crumb="VIDEO › ADVANCED GRAPHICS" search="lod" search_choices="xbox full highest">
-			<help>How detailed characters and vehicles stay in the distance. Xbox simplifies them as on a TV; Full keeps their detail for your screen; Highest always draws the most. Auto is Full in VR.</help>
+			<help>How detailed characters and vehicles stay in the distance. Xbox simplifies them as on a TV; Full keeps their detail for your screen; Highest always draws the most. Auto is Full.</help>
 			<choice shown="AUTO" value="auto"/>
 			<choice shown="XBOX" value="stock"/>
 			<choice shown="FULL" value="native"/>
