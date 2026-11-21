@@ -56,6 +56,13 @@ const char *SDL_GetBasePath(void)
 {
 	return folder;
 }
+
+/* (host_metal.m's: the display's refresh fixed here, display.vsync's
+default off) */
+int host_metal_display_adaptive(void)
+{
+	return 0;
+}
 #endif
 
 /* (port_config.c's look for a config.toml it does not read: none here) */

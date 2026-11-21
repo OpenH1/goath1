@@ -14,6 +14,7 @@ unsigned long long host_metal_frame_phase(void);
 unsigned int host_metal_frame_period(void);
 unsigned int host_metal_frame_budget(void);
 void host_metal_sleep_until(unsigned long long when);
+int host_metal_display_adaptive(void);
 /* (port/macos/host_links.c, iOS's too) the links the app was opened with:
 the oldest not taken yet, 1; else 0 */
 int host_app_take_link(char *link, int size);

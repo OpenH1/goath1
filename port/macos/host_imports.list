@@ -9,4 +9,5 @@ host_metal_frame_phase
 host_metal_frame_period
 host_metal_frame_budget
 host_metal_sleep_until
+host_metal_display_adaptive
 host_app_take_link

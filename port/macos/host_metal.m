@@ -2675,6 +2675,33 @@ void host_metal_vsync(int on)
 #endif
 }
 
+/* (a host import: the guest's port_config.c, display.vsync's default)
+whether the main display's refresh is variable (ProMotion, an adaptive
+sync display: its least refresh interval under its most): display.vsync
+is on there by default, the link's rate following the frames
+(link_rate_range). Read once, on the main thread (the guest's) */
+int host_metal_display_adaptive(void)
+{
+#if TARGET_OS_IPHONE
+	return 0;
+#else
+	static int adaptive = -1;
+
+	if (adaptive < 0)
+	{
+		NSScreen *screen = NSScreen.mainScreen ? NSScreen.mainScreen : NSScreen.screens.firstObject;
+
+		adaptive = screen && screen.minimumRefreshInterval > 0.0 &&
+			screen.maximumRefreshInterval > screen.minimumRefreshInterval * 1.25;
+		host_logf(HOST_LOG_INFO, "metal: the display's refresh is %s (%.1f to %.1f Hz): display.vsync %s by default",
+			adaptive ? "variable" : "fixed", screen && screen.maximumRefreshInterval > 0.0 ?
+			1.0 / screen.maximumRefreshInterval : 0.0, screen && screen.minimumRefreshInterval > 0.0 ?
+			1.0 / screen.minimumRefreshInterval : 0.0, adaptive ? "on" : "off");
+	}
+	return adaptive;
+#endif
+}
+
 /* (host imports: the guest's sdl_platform.c, before each frame with vsync
 off) the game starts its frames at fixed phases of the display's
 refreshes, so that the newest frame each refresh takes is always as old:

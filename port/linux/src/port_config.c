@@ -180,10 +180,11 @@ structure_culling_set_camera_radius) */
 #define STRUCTURE_CULLING_DEFAULT "31"
 /* display.vsync: off on the Linux builds, Windows and macOS, whose players
 want the most frames and the least latency (display.max_fps still limits
-them, at twice the display's rate; the Mac shows the newest at each refresh,
+them, at twice the display's rate; the Mac presents each as it comes,
 host_metal_vsync); on the phones, for their batteries. Under gamescope (the
-Steam Deck's Game Mode) on, with display.low_latency's pacing
-(config_default_of) */
+Steam Deck's Game Mode) on, with display.low_latency's pacing; and on a
+Mac whose display's refresh is variable (ProMotion, an adaptive sync
+display), whose rate then follows the frames (config_default_of) */
 #if defined(HALO_WINDOWS) || (defined(HALO_VULKAN) && !defined(HALO_ANDROID)) || \
 	(defined(HALO_MACOS) && !defined(HALO_IOS))
 #define VSYNC_DEFAULT "false"
@@ -258,7 +259,9 @@ static const struct config_setting config_settings[] =
 		"Wait for the display between frames; false draws as fast as possible\n"
 		"(up to display.max_fps). Commented out under gamescope (the Steam Deck's\n"
 		"Game Mode), true: each frame shown at a refresh, started just in time\n"
-		"for it (display.low_latency), the smoothest and least latency there." },
+		"for it (display.low_latency), the smoothest and least latency there.\n"
+		"On a Mac with a ProMotion or adaptive sync display, true: the display's\n"
+		"rate follows the frames." },
 	{ "display.low_latency", _config_string, "\"auto\"", "HALO_LOW_LATENCY", _environment_value, _platform_all,
 		"With vsync on (Vulkan: Linux, the Steam Deck, Windows, Android), start\n"
 		"each frame just in time for the refresh it is shown at, its input read\n"
@@ -3781,10 +3784,23 @@ refresh with the least latency (a press on screen 15 ms later at 60 Hz,
 against 24 off); off, mailbox drew twice the frames and showed half, and a
 limit near the refresh rate by the clock showed some twice and skipped
 others. Set in the file, the player's value wins. */
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+/* (port/macos/host_metal.m) whether the main display's refresh is
+variable: ProMotion, an adaptive sync display */
+int host_metal_display_adaptive(void);
+#endif
+
 static const char *config_default_of(const struct config_setting *setting)
 {
 #if defined(HALO_VULKAN) && !defined(HALO_ANDROID) && !defined(HALO_WINDOWS)
 	if (!strcmp(setting->name, "display.vsync") && config_gamescope())
+		return "true";
+#endif
+	/* (a Mac's variable refresh display, as gamescope: the display link
+	presents each frame as it is ready, the display's rate following the
+	frames, without tearing; host_metal.m) */
+#if defined(HALO_MACOS) && !defined(HALO_IOS)
+	if (!strcmp(setting->name, "display.vsync") && host_metal_display_adaptive())
 		return "true";
 #endif
 	return setting->default_value;
