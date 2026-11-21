@@ -26,7 +26,7 @@ from harness import skip_without_32_bit_abi  # noqa: E402
 
 SOURCE = "port/linux/src/dsound_sdl.c"
 CASES = ["reference", "impulse", "sines", "aliases", "silent-voice", "mono", "linear", "cut", "cuts", "adpcm", "doppler", "doppler-step",
-         "parameter-ramp", "block-size",
+         "parameter-ramp", "block-size", "hrtf-simd",
          "limiter", "record", "night", "obstruction", "room-send", "room-send-images", "quiet-levels", "quiet-levels-3d", "resampler-xbox", "resampler-xbox-images", "channels", "surround", "lfe", "spatial-choice", "hrtf-cues", "hrtf-paths", "hrtf-switch", "stereo-in-world",
          "stereo-spread",
          "dry-2d",
@@ -156,8 +156,9 @@ NEGATIVE_CONTROLS = {
     # silent, a sound behind not mirrored ahead (the HRTF's duller behind), a 2D voice to the center alone skipped
     "surround-split-linear": (("share = 0.5f + (1.0f - fabsf(elevation) / 90.0f) * (fabsf(azimuth) / 90.0f - 1.0f);",
                                "share = fabsf(azimuth) / 180.0f;"), "surround"),
-    "surround-hrtf-front-only": (("output[frame * 6 + 4 + ear] += heard * now.pair[1];",
-                                  "output[frame * 6 + 4 + ear] += 0.0f * now.pair[1];"), "surround"),
+    # (the SSE2 frames' back pair: hrtf_run's own, the scalar loop's only with hrtf_simd 0)
+    "surround-hrtf-front-only": (("_mm_mul_ps(sound, _mm_set1_ps(now.pair[1]))", "_mm_mul_ps(sound, _mm_set1_ps(0.0f))"),
+                                 "surround"),
     "surround-pan-front-only": (("gains[0][4] = left * pair[1];", "gains[0][4] = 0.0f * pair[1];"), "surround"),
     "surround-not-mirrored": (("output_channels == 6 ? fabsf(ahead) : ahead, distance", "ahead, distance"), "surround"),
     "surround-center-skipped": (("!ramp_room && !surround_heard)", "!ramp_room && (!surround_heard || TRUE))"), "surround"),
