@@ -7456,6 +7456,7 @@ void WINAPI D3DDevice_DrawIndexedVertices(D3DPRIMITIVETYPE primitive_type, UINT 
 {
 	WORD *reached, *unreached;
 	unsigned long reached_count, unreached_count;
+	BOOL split = FALSE;
 
 	if (!inputs.lights_environment || !vertex_count || !index_data || dynamic_lights.reach_count < 0 ||
 		!lights_reach_parted())
@@ -7470,9 +7471,13 @@ void WINAPI D3DDevice_DrawIndexedVertices(D3DPRIMITIVETYPE primitive_type, UINT 
 		lights_unreached_drawing = FALSE;
 		return;
 	}
-	if (primitive_type != D3DPT_TRIANGLELIST ||
-		!lights_reach_split(index_data, vertex_count, &reached, &reached_count, &unreached, &unreached_count) ||
-		!unreached_count)
+	if (primitive_type == D3DPT_TRIANGLELIST)
+	{
+		halo_dynamic_lights_split_timed(1);
+		split = lights_reach_split(index_data, vertex_count, &reached, &reached_count, &unreached, &unreached_count);
+		halo_dynamic_lights_split_timed(0);
+	}
+	if (!split || !unreached_count)
 	{
 		draw_indexed_cutout(primitive_type, vertex_count, index_data);
 		return;

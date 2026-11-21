@@ -1258,3 +1258,21 @@ void render_frame(
 }
 
 /* ---------- private code */
+
+/* port: (debug.timings) the renderer's split of the lightmap pass's draws
+(port/linux/src/d3d8_device.c's lights_reach_split), a CPU section of its
+own, so the performance overlay and the demo perf log show its share */
+static struct profile_section lights_reach_split_section = { "lights_reach_split", NONE, TRUE };
+
+void halo_dynamic_lights_split_timed(
+	int entering)
+{
+	if (entering)
+	{
+		profile_enter(lights_reach_split_section)
+	}
+	else
+	{
+		profile_exit(lights_reach_split_section)
+	}
+}

@@ -61,5 +61,9 @@ HALO_DYNAMIC_LIGHTS_WORLD_TEXELS), when it changes; copied */
 void halo_dynamic_lights_world(const unsigned int (*texels)[4], int count);
 void halo_dynamic_lights_environment(int drawing);
 void halo_dynamic_lights_halos_draw(void);
+/* (debug.timings) the renderer's split of the lightmap pass's draws timed
+as a CPU section of its own, lights_reach_split: entering (1) and leaving
+(0) it (source/render/render.c) */
+void halo_dynamic_lights_split_timed(int entering);
 
 #endif
