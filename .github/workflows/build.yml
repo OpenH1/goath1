@@ -453,7 +453,10 @@ jobs:
   # release job publishes under), and only then do linux-x86_64 and windows
   # build the game with that pin; the release job uploads the very files
   # pinned. (A run that is no release builds none of it: the game jobs keep
-  # the committed pin, which pins nothing.)
+  # the committed pin, which pins nothing.) DLSS never holds a release back:
+  # a platform whose add-on fails is left out of the pin, and should no pin
+  # be made the game is built with the committed one and the release
+  # publishes no add-on (the DLSS jobs show failed, the release goes on).
   dlss-addon-linux:
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.release == 'true' }}
@@ -586,7 +589,7 @@ jobs:
     needs: [changes, dlss-addon-linux, dlss-addon-windows]
     if: >-
       ${{ !cancelled() && needs.changes.outputs.release == 'true' &&
-      needs['dlss-addon-linux'].result == 'success' && needs['dlss-addon-windows'].result == 'success' }}
+      (needs['dlss-addon-linux'].result == 'success' || needs['dlss-addon-windows'].result == 'success') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     env:
@@ -607,13 +610,17 @@ jobs:
       - name: Pin
         run: |
           ls -l dlss-addon
+          # (the platforms whose add-on built: one alone is pinned alone)
+          shopt -s nullglob
           manifests=(dlss-addon/openh1-dlss-linux-x86_64-*.json dlss-addon/openh1-dlss-windows-x64-*.json)
+          [ "${#manifests[@]}" -gt 0 ] || { echo "::error::no add-on to pin"; exit 1; }
           python3 tools/dlss_addon.py verify "${manifests[@]}"
           mkdir pin
           python3 tools/dlss_addon.py pin --tag "build-$NUMBER" --out pin/dlss_addon_pin.h "${manifests[@]}"
           cat pin/dlss_addon_pin.h
-          # (both platforms pinned, to this release's tag)
-          for platform in LINUX_X86_64 WINDOWS_X64; do
+          # (each of them pinned, to this release's tag)
+          for manifest in "${manifests[@]}"; do
+            case "$manifest" in *linux-x86_64*) platform=LINUX_X86_64 ;; *) platform=WINDOWS_X64 ;; esac
             grep -q "^#define DLSS_ADDON_URL_$platform \"https://github.com/.*/releases/download/build-$NUMBER/openh1-dlss-" pin/dlss_addon_pin.h ||
               { echo "::error::$platform is not pinned to build-$NUMBER"; exit 1; }
           done
@@ -662,17 +669,19 @@ jobs:
 
       # (a release: the DLSS add-on pinned to its tag, dlss-pin's
       # dlss_addon_pin.h, in place of the committed one, which pins nothing;
-      # without it the release stops here)
+      # without it, the committed one: the game offers no download)
       - uses: actions/download-artifact@v4
-        if: needs.changes.outputs.release == 'true'
+        id: dlss-pin
+        if: needs.changes.outputs.release == 'true' && needs['dlss-pin'].result == 'success'
+        continue-on-error: true
         with:
           name: dlss-addon-pin
           path: ${{ runner.temp }}/dlss-addon-pin
       - name: Pin the DLSS add-on
-        if: needs.changes.outputs.release == 'true'
+        if: steps.dlss-pin.outcome == 'success'
         run: |
           cp "$RUNNER_TEMP/dlss-addon-pin/dlss_addon_pin.h" port/linux/src/dlss_addon_pin.h
-          grep '^#define DLSS_ADDON_\(VERSION\|URL_LINUX_X86_64\|SHA256_LINUX_X86_64\) ' port/linux/src/dlss_addon_pin.h
+          grep '^#define DLSS_ADDON_\(VERSION\|URL_LINUX_X86_64\|SHA256_LINUX_X86_64\) ' port/linux/src/dlss_addon_pin.h || true
 
       # (on our machines: their compile cache and the guests' LLVM, kept)
       - name: Use the machine's caches
@@ -1154,15 +1163,17 @@ jobs:
 
       # (a release: the DLSS add-on pinned to its tag, as linux-x86_64's)
       - uses: actions/download-artifact@v4
-        if: needs.changes.outputs.release == 'true'
+        id: dlss-pin
+        if: needs.changes.outputs.release == 'true' && needs['dlss-pin'].result == 'success'
+        continue-on-error: true
         with:
           name: dlss-addon-pin
           path: ${{ runner.temp }}/dlss-addon-pin
       - name: Pin the DLSS add-on
-        if: needs.changes.outputs.release == 'true'
+        if: steps.dlss-pin.outcome == 'success'
         run: |
           cp "$RUNNER_TEMP/dlss-addon-pin/dlss_addon_pin.h" port/linux/src/dlss_addon_pin.h
-          grep '^#define DLSS_ADDON_\(VERSION\|URL_WINDOWS_X64\|SHA256_WINDOWS_X64\) ' port/linux/src/dlss_addon_pin.h
+          grep '^#define DLSS_ADDON_\(VERSION\|URL_WINDOWS_X64\|SHA256_WINDOWS_X64\) ' port/linux/src/dlss_addon_pin.h || true
 
       # (on the VM: its compile cache and the guests' LLVM, kept)
       - name: Use the machine's caches
@@ -1612,11 +1623,11 @@ jobs:
     # needs context, a result GitHub's documentation does not list: the
     # notify job's log showed MACOS: abandoned. Both are taken) The NVIDIA
     # DLSS add-on's files, which the Linux x86-64 and Windows builds are
-    # pinned to (dlss-pin), are published beside the builds.
+    # pinned to (dlss-pin), are published beside the builds; without a pin,
+    # none, and the release goes on.
     needs: [changes, dlss-pin, linux-x86_64, tests, linux-arm64, android, windows, macos]
     if: >-
       ${{ !cancelled() && needs.changes.outputs.release == 'true' &&
-      needs['dlss-pin'].result == 'success' &&
       needs['linux-x86_64'].result == 'success' && needs.tests.result == 'success' &&
       needs['linux-arm64'].result == 'success' &&
       needs.android.result == 'success' && needs.windows.result == 'success' &&
@@ -1657,6 +1668,8 @@ jobs:
       # (the DLSS add-on's files as dlss-pin pinned them: the archives, their
       # manifests and NVIDIA's license, openh1-dlss-*)
       - uses: actions/download-artifact@v4
+        if: needs['dlss-pin'].result == 'success'
+        continue-on-error: true
         with:
           name: dlss-addon
           path: dlss-addon
@@ -1695,7 +1708,11 @@ jobs:
           done
           # (no package holds NVIDIA's files: then the DLSS add-on's, apart)
           python3 tools/dlss_addon.py check-package release
-          cp dlss-addon/openh1-dlss-* release/
+          if ls dlss-addon/openh1-dlss-* > /dev/null 2>&1; then
+            cp dlss-addon/openh1-dlss-* release/
+          else
+            echo "::warning::no DLSS add-on pinned: this release offers none"
+          fi
           ls -l release
 
       # the macOS app's appcast (tools/macos_appcast.py), when its disk image
@@ -1805,7 +1822,7 @@ jobs:
             ls -l release
             exit 0
           fi
-          gh release create "$tag" release/*.zip release/*.dmg release/*.apk release/openh1-dlss-*.json release/openh1-dlss-*.txt release/SHA256SUMS $(ls release/appcast.xml release/SHA256SUMS.sig 2> /dev/null) --target "$GITHUB_SHA" --latest \
+          gh release create "$tag" release/*.zip release/*.dmg release/*.apk release/SHA256SUMS $(ls release/openh1-dlss-*.json release/openh1-dlss-*.txt release/appcast.xml release/SHA256SUMS.sig 2> /dev/null) --target "$GITHUB_SHA" --latest \
             --title "Build $NUMBER (${GITHUB_SHA:0:7})" --notes-file notes.md
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 

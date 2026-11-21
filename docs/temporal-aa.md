@@ -146,6 +146,8 @@ The game's packages hold none of NVIDIA's files (`tools/dlss_addon.py check-pack
   build-<N>` (the changes job's number, the release's tag) with both manifests; `linux-x86_64` and `windows` wait for
   it and build the game with that pin; the release job checks the packages hold none of NVIDIA's files, then publishes
   each `openh1-dlss-*` file beside them, the very bytes pinned. Other runs build none of it and keep the committed pin.
+  DLSS never holds a release back: a platform whose add-on fails is left out of the pin, and with no pin the game keeps
+  the committed one and the release publishes no add-on.
 
 ## Milestone 4: Metal's motion and `"metalfx"` (macOS, iOS)
 
