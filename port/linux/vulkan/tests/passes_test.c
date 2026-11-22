@@ -934,8 +934,8 @@ static VkRenderingAttachmentInfo post_began[4];
 view) and each pipeline's stencil test */
 static VkRenderingAttachmentInfo post_began_depth[4], post_began_stencil[4];
 static VkPipelineDepthStencilStateCreateInfo post_stencils[4];
-static uint32_t post_begins, post_draws, post_updates, post_masks[4], post_pipelines;
-static VkSampleCountFlagBits post_pipeline_samples[4];
+static uint32_t post_begins, post_draws, post_updates, post_masks[8], post_pipelines;
+static VkSampleCountFlagBits post_pipeline_samples[8];
 static VkDescriptorImageInfo post_sampled[4][4];
 static VkViewport post_viewports[4];
 static VkRect2D post_scissors[4];
@@ -1023,7 +1023,7 @@ static VkResult VKAPI_CALL post_pipeline(VkDevice device, VkPipelineCache cache,
 	/* one triangle from the vertex's index, into BGRA8, nothing culled,
 	depth tested or blended; SMAA's edges and weights with the stencil of
 	their marks */
-	assert(count == 1 && post_pipelines < 4);
+	assert(count == 1 && post_pipelines < 8);
 	assert(!info->pVertexInputState->vertexBindingDescriptionCount &&
 		!info->pVertexInputState->vertexAttributeDescriptionCount);
 	assert(info->pInputAssemblyState->topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
@@ -1283,6 +1283,7 @@ static void post_test(void)
 	post.spare = &spare;
 	moved = &target;
 	assert(xgpu_vulkan_post_anti_alias(1, &target, 0, whole, &moved));
+	fprintf(stderr, "DBG %u %s %x\n", post_pipelines, post_events, post_masks[4]);
 	assert(!strcmp(post_events, "BcDEXBcDEXBcD"));
 	assert(moved == &spare && post.spare == &target);
 	assert(post_sampled[0][0].imageView == target.sampled && post_sampled[2][0].imageView == target.sampled);
