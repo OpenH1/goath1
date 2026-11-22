@@ -66,11 +66,21 @@ static unsigned long page_index(unsigned long address)
 	return (address - PLATFORM_CONTIGUOUS_BASE) / WATCH_PAGE_SIZE;
 }
 
-static void mark_written(unsigned long page)
+/* pages first to first + count - 1 written: a new generation each, and made
+writable in one call (a call is a system call and the other threads'
+address translations flushed, which page by page took milliseconds for a
+load zone's structure, hundreds of pages) */
+static void mark_written(unsigned long first, unsigned long count)
 {
-	page_generation[page] = __sync_add_and_fetch(&current_generation, 1);
-	page_protected[page] = 2;
-	mprotect((void *)(PLATFORM_CONTIGUOUS_BASE + page * WATCH_PAGE_SIZE), WATCH_PAGE_SIZE, PROT_READ | PROT_WRITE);
+	unsigned long page;
+
+	for (page = first; page < first + count; page++)
+	{
+		page_generation[page] = __sync_add_and_fetch(&current_generation, 1);
+		page_protected[page] = 2;
+	}
+	mprotect((void *)(PLATFORM_CONTIGUOUS_BASE + first * WATCH_PAGE_SIZE), count * WATCH_PAGE_SIZE,
+		PROT_READ | PROT_WRITE);
 }
 
 /* errors.c's: debug.txt (a player sends it; the terminal's lines may be
@@ -217,7 +227,7 @@ static void crash_handler(int signal_number, siginfo_t *information, void *conte
 		/* a write to a page the renderer watches: noted, and let through */
 		if (page < WATCH_PAGE_COUNT && page_protected[page] == 1)
 		{
-			mark_written(page);
+			mark_written(page, 1);
 			return;
 		}
 		if (page < WATCH_PAGE_COUNT && page_protected[page] == 2)
@@ -245,8 +255,9 @@ static BOOL crash_handler_installed(int signal_number, struct sigaction *current
 
 /* the handler, for each signal where it is not the one installed (first, or
 a library put its own in since: a GL driver's, a sound library's), chained
-to the one that is; TRUE if SIGSEGV's is this file's */
-static BOOL crash_handlers_install(void)
+to the one that is; only SIGSEGV's unless every one; TRUE if SIGSEGV's is
+this file's */
+static BOOL crash_handlers_install(BOOL every)
 {
 	struct sigaction action, current;
 	int index;
@@ -257,7 +268,7 @@ static BOOL crash_handlers_install(void)
 	in a nested one, comes back here) */
 	action.sa_flags = SA_SIGINFO | SA_NODEFER;
 	sigemptyset(&action.sa_mask);
-	for (index = 0; index < CRASH_SIGNAL_COUNT; index++)
+	for (index = 0; index < (every ? CRASH_SIGNAL_COUNT : 1); index++)
 	{
 		if (crash_handler_installed(crash_signals[index], &current))
 			continue;
@@ -277,7 +288,7 @@ pages' faults, and crash or hang at the first write to a texture: the
 handler goes in again, chained to that one */
 void memory_watch_initialize(void)
 {
-	watch_active = crash_handlers_install();
+	watch_active = crash_handlers_install(TRUE);
 }
 
 /* the handler from the start, for its crash report: the renderer's device
@@ -310,13 +321,17 @@ void memory_watch_protect(unsigned long address, unsigned long size)
 	last = page_index(address + size - 1);
 	if (last >= WATCH_PAGE_COUNT)
 		last = WATCH_PAGE_COUNT - 1;
+	/* (each run of pages not read-only yet in one call, as mark_written) */
 	for (page = first; page <= last; page++)
 	{
-		if (page_protected[page] != 1)
-		{
-			page_protected[page] = 1;
-			mprotect((void *)(PLATFORM_CONTIGUOUS_BASE + page * WATCH_PAGE_SIZE), WATCH_PAGE_SIZE, PROT_READ);
-		}
+		unsigned long run;
+
+		if (page_protected[page] == 1)
+			continue;
+		for (run = page; run <= last && page_protected[run] != 1; run++)
+			page_protected[run] = 1;
+		mprotect((void *)(PLATFORM_CONTIGUOUS_BASE + page * WATCH_PAGE_SIZE), (run - page) * WATCH_PAGE_SIZE, PROT_READ);
+		page = run - 1;
 	}
 }
 
@@ -360,8 +375,14 @@ void memory_watch_prepare_write(void *address, unsigned long size)
 		last = WATCH_PAGE_COUNT - 1;
 	for (page = first; page <= last; page++)
 	{
-		if (page_protected[page] == 1)
-			mark_written(page);
+		unsigned long run;
+
+		if (page_protected[page] != 1)
+			continue;
+		for (run = page; run <= last && page_protected[run] == 1; run++)
+			;
+		mark_written(page, run - page);
+		page = run - 1;
 	}
 }
 
@@ -385,9 +406,18 @@ void memory_watch_forget(void *address, unsigned long size)
 
 /* page protection sees each write at once; once a frame, the handler is
 checked to be the one installed (a library may put its own in at any time:
-a sound device opened, a gamepad's) */
+a sound device opened, a gamepad's). SIGSEGV's every frame, since a watched
+write faulting into another handler would crash; the other signals', for
+the crash report only, every CRASH_CHECK_FRAMES frames (four system calls
+fewer a frame) */
+#define CRASH_CHECK_FRAMES 60
 void memory_watch_begin_frame(void)
 {
-	if (watch_active)
-		crash_handlers_install();
+	static unsigned frames;
+
+	if (!watch_active)
+		return;
+	if (++frames >= CRASH_CHECK_FRAMES)
+		frames = 0;
+	crash_handlers_install(frames == 0);
 }

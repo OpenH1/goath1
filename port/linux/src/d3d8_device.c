@@ -4227,7 +4227,10 @@ fixed point and its DXT5 alphas may make a little less than the least) */
 static struct
 {
 	DWORD data, format, size;
-	unsigned long generation;
+	/* (serial: memory_watch_serial as the generation was last found the
+	same; while it stays, no watched page was written, and the texture's
+	pages are not looked at again) */
+	unsigned long generation, serial;
 	BOOL known;
 	int minimum;
 } alpha_textures[ALPHA_TEXTURES];
@@ -4239,7 +4242,7 @@ static int stage_alpha_minimum[D3DTSS_MAXSTAGES];
 static int texture_alpha_minimum(const D3DBaseTexture *texture, int stage)
 {
 	struct xgpu_texture_description description;
-	unsigned long address, bytes, generation, slot;
+	unsigned long address, bytes, generation, serial, slot;
 
 	xgpu_texture_describe(texture->Format, texture->Size, &description);
 	if (description.cube_map || description.depth > 1)
@@ -4256,11 +4259,20 @@ static int texture_alpha_minimum(const D3DBaseTexture *texture, int stage)
 	/* (the product's high bits: the texels' addresses are multiples of a page) */
 	slot = ((DWORD)((texture->Data ^ texture->Format * 0x85ebca6bu ^ texture->Size * 0xc2b2ae35u) * 0x9e3779b1u) >> 16) %
 		ALPHA_TEXTURES;
-	generation = memory_watch_generation(address, bytes);
+	/* (the serial read before the pages: a write in between moves it again) */
+	serial = memory_watch_serial();
 	if (alpha_textures[slot].known && alpha_textures[slot].data == texture->Data &&
-		alpha_textures[slot].format == texture->Format && alpha_textures[slot].size == texture->Size &&
-		alpha_textures[slot].generation == generation)
-		return alpha_textures[slot].minimum;
+		alpha_textures[slot].format == texture->Format && alpha_textures[slot].size == texture->Size)
+	{
+		if (alpha_textures[slot].serial == serial)
+			return alpha_textures[slot].minimum;
+		generation = memory_watch_generation(address, bytes);
+		if (alpha_textures[slot].generation == generation)
+		{
+			alpha_textures[slot].serial = serial;
+			return alpha_textures[slot].minimum;
+		}
+	}
 	/* (its texels watched from here: a write makes it be read again) */
 	memory_watch_protect(address, bytes);
 	alpha_textures[slot].known = TRUE;
@@ -4268,6 +4280,7 @@ static int texture_alpha_minimum(const D3DBaseTexture *texture, int stage)
 	alpha_textures[slot].format = texture->Format;
 	alpha_textures[slot].size = texture->Size;
 	alpha_textures[slot].generation = memory_watch_generation(address, bytes);
+	alpha_textures[slot].serial = serial;
 	alpha_textures[slot].minimum = xgpu_texture_minimum_alpha(&description, (const unsigned char *)address);
 	return alpha_textures[slot].minimum;
 }
