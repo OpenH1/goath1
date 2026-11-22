@@ -297,7 +297,7 @@ static void report_frame_log_hold(unsigned long index, long long micros)
 			if (frame_log)
 				atexit(report_frame_log_at_exit);
 			if (frame_log)
-				fprintf(frame_log, "# frame log 2: seconds frame gpu render waited cpu (microseconds; gpu the frame's own)\n");
+				fprintf(frame_log, "# frame log 3: seconds frame gpu render waited cpu paced (microseconds; gpu the frame's own; paced the part of waited the frame cap or vsync asked for)\n");
 			else
 				platform_log("debug.frame_log: cannot write %s", path);
 		}
@@ -318,9 +318,9 @@ static void report_frame_log(unsigned long index, long long micros, const struct
 
 	if (!frame_log || seconds < 0.0)
 		return;
-	fprintf(frame_log, "%.6f %lld %ld %lu %lu %lld\n", seconds, micros,
+	fprintf(frame_log, "%.6f %lld %ld %lu %lu %lld %lu\n", seconds, micros,
 		work->gpu == REPORT_GPU_UNKNOWN ? -1L : (long)work->gpu, (unsigned long)work->render,
-		(unsigned long)work->waited, frame_log_held[index % FRAME_GPU_ROWS].cpu);
+		(unsigned long)work->waited, frame_log_held[index % FRAME_GPU_ROWS].cpu, (unsigned long)work->paced);
 	if (frame_log_seconds > 0.0 && seconds >= frame_log_seconds - 1e-9)
 	{
 		fclose(frame_log);
