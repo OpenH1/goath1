@@ -535,7 +535,8 @@ def test_config_mouse_sensitivity_in_cs2_units(config_check_mac):
     assert float(run("get", "input.mouse_vertical_sensitivity")) == pytest.approx(0.5)
     assert run("get", "input.invert_mouse") == "true"
     text = run.config.read_text()
-    assert "Counter-Strike 2's" in text and "0 for the" not in text
+    # (the older vertical comment gone: its own text, as "0 for the" alone is in other settings' comments)
+    assert "Counter-Strike 2's" in text and "0 for the\n# same as input.mouse_sensitivity" not in text
     assert len(re.findall(r"^(# )?mouse_sensitivity = ", text, re.M)) == 1
     assert "\ninvert_mouse = true\n" in text
     run("get", "input.mouse_sensitivity")
