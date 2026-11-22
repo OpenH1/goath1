@@ -9,9 +9,14 @@ tools/metal_post_shaders.py). Each pass draws one triangle covering the
 rectangle (its corners from the vertex's index, with no vertex data) and
 finds its texels from the fragment's position; the target's rows are the
 picture's from the top, as the passes' own textures' are, so no coordinate
-is turned over. The target's pixels are copied first, so that no pass reads
-what it writes, and only colour is written back: the game keeps values of
-its own in destination alpha.
+is turned over. No pass reads what it writes: over all of a target (the
+caller's moved), the last pass draws the view into a texture of the
+target's description, the spare (emptied as its pass begins, none of it
+loaded), which then takes the target's place, the target's texture
+becoming the spare, as the Vulkan backend's do; over part of it, the
+target's pixels are copied first and drawn back into it. FXAA and SMAA's
+blend write each pixel's own alpha (the game keeps values of its own in
+destination alpha).
 
 It draws through the backend's own functions (xgpu_metal.h): each pass is a
 pass of the backend's, which ends the one before it (so that what one draws
@@ -54,6 +59,11 @@ static struct
 	weights, and the stencil marking the edges' pixels (a stencil alone,
 	XGPU_METAL_FORMAT_S8) */
 	uint32_t color, edges, weights, marks;
+	/* the texture a pass over all of a target draws the view into, and its
+	description (the target's), given the target's place (its texture then
+	kept here) */
+	uint32_t spare;
+	struct xgpu_metal_texture_description spare_description;
 	/* SMAA's lookup textures */
 	uint32_t area, search;
 	/* display.hdr's tone map's functions could not be made */
@@ -108,11 +118,11 @@ static uint32_t lookup_texture(const uint32_t *words, uint32_t width, uint32_t h
 
 /* the passes' textures, of the target's size (SMAA's only for SMAA); the
 copy of the target's pixels in its format (display.hdr's half floats) */
-static int textures_fit(int smaa, uint8_t format, uint32_t width, uint32_t height)
+static int textures_fit(int smaa, int copy, uint8_t format, uint32_t width, uint32_t height)
 {
 	const uint8_t usage = XGPU_METAL_USAGE_SAMPLED | XGPU_METAL_USAGE_TARGET;
 
-	if (post.width != width || post.height != height || !post.color || post.color_format != format)
+	if (post.width != width || post.height != height || post.color_format != format)
 	{
 		xgpu_metal_texture_destroy(post.color);
 		xgpu_metal_texture_destroy(post.edges);
@@ -122,31 +132,75 @@ static int textures_fit(int smaa, uint8_t format, uint32_t width, uint32_t heigh
 		post.width = width;
 		post.height = height;
 		post.color_format = format;
-		post.color = texture_make(format, usage, width, height);
 	}
+	if (copy && !post.color)
+		post.color = texture_make(format, usage, width, height);
 	if (smaa && !post.edges)
 	{
 		post.edges = texture_make(XGPU_METAL_FORMAT_BGRA8, usage, width, height);
 		post.weights = texture_make(XGPU_METAL_FORMAT_BGRA8, usage, width, height);
 		post.marks = texture_make(XGPU_METAL_FORMAT_S8, XGPU_METAL_USAGE_TARGET, width, height);
 	}
-	return post.color && (!smaa || (post.edges && post.weights && post.marks));
+	return (!copy || post.color) && (!smaa || (post.edges && post.weights && post.marks));
+}
+
+/* the spare a pass over the rectangle of a target draws the view into:
+where moved is the caller's handle of the target (described by
+description) and the rectangle all of a 2D target of one sample, the spare
+(of the target's description, made again where it is not); else 0, the
+target copied and drawn into */
+static uint32_t spare_for(uint32_t target, const int32_t rectangle[4], uint32_t *moved,
+	const struct xgpu_metal_texture_description *description)
+{
+	if (!moved || *moved != target || !description || description->type != XGPU_METAL_TEXTURE_2D ||
+		description->samples > 1 || description->depth_or_layers > 1 || rectangle[0] || rectangle[1] ||
+		rectangle[2] != (int32_t)description->width || rectangle[3] != (int32_t)description->height)
+		return 0;
+	if (post.spare && memcmp(&post.spare_description, description, sizeof(*description)))
+	{
+		xgpu_metal_texture_destroy(post.spare);
+		post.spare = 0;
+	}
+	if (!post.spare)
+	{
+		post.spare = xgpu_metal_texture_create(description);
+		post.spare_description = *description;
+	}
+	return post.spare;
+}
+
+/* the spare emptied whole as the pass drawing over all of it begins (none
+of it loaded) */
+static void spare_clear(void)
+{
+	static const float transparent[4];
+
+	xgpu_metal_set_targets(post.spare, 0, 0, 0, 0);
+	xgpu_metal_clear(NULL, 0, XGPU_METAL_CLEAR_COLOR | XGPU_METAL_CLEAR_CHANNELS, transparent, 1.0f, 0);
+}
+
+/* the view drawn into the spare: the spare in the caller's handle, the
+target's texture the spare */
+static void spare_take_place(uint32_t *moved)
+{
+	uint32_t view = post.spare;
+
+	post.spare = *moved;
+	*moved = view;
 }
 
 /* ---------- pipelines */
 
-/* a pass's pipeline: into the target its colour alone; into an
-intermediate, all of it; the target's format (display.hdr's half floats) */
+/* a pass's pipeline: every channel (into the target, each pixel's own
+alpha); the target's format (display.hdr's half floats) */
 static void pipeline_describe(int function, uint8_t format, uint32_t samples, struct xgpu_metal_pipeline *pipeline)
 {
 	memset(pipeline, 0, sizeof(*pipeline));
 	pipeline->vertex_shader = post.functions[XGPU_METAL_POST_VERTEX];
 	pipeline->pixel_shader = post.functions[function];
-	pipeline->color_mask = function == XGPU_METAL_POST_FXAA || function == XGPU_METAL_POST_SMAA_BLEND ?
-		XGPU_WRITE_RED | XGPU_WRITE_GREEN | XGPU_WRITE_BLUE :
-		XGPU_WRITE_RED | XGPU_WRITE_GREEN | XGPU_WRITE_BLUE | XGPU_WRITE_ALPHA;
-	/* (display.panini's into the target, all of it: destination alpha moves
-	with its pixels) */
+	pipeline->color_mask = XGPU_WRITE_RED | XGPU_WRITE_GREEN | XGPU_WRITE_BLUE | XGPU_WRITE_ALPHA;
+	/* (display.panini's into the target too: destination alpha moves with
+	its pixels) */
 	pipeline->color_format = function == XGPU_METAL_POST_FXAA || function == XGPU_METAL_POST_SMAA_BLEND ||
 		function == XGPU_METAL_POST_PANINI ? format : XGPU_METAL_FORMAT_BGRA8;
 	/* (display.panini's into a multisampled target's samples, every sample
@@ -307,9 +361,10 @@ static void intermediate_clear(uint32_t texture, int marks)
 }
 
 int xgpu_metal_post_anti_alias(int smaa, uint32_t target, uint8_t format, uint32_t width, uint32_t height,
-	const int32_t corners[4])
+	const int32_t corners[4], uint32_t *moved, const struct xgpu_metal_texture_description *description)
 {
 	int32_t rectangle[4];
+	uint32_t source, into;
 	int index;
 
 	smaa = smaa != 0;
@@ -333,11 +388,19 @@ int xgpu_metal_post_anti_alias(int smaa, uint32_t target, uint8_t format, uint32
 		xgpu_metal_texture_destroy(post.marks);
 		post.edges = post.weights = post.marks = 0;
 	}
-	if (!textures_fit(smaa, format, width, height))
+	into = spare_for(target, rectangle, moved, description);
+	if (!textures_fit(smaa, !into, format, width, height))
 		return 0;
 
-	/* the target's pixels, read while the target is drawn into */
-	xgpu_metal_texture_copy(target, post.color);
+	/* the view drawn from the target into the spare; or the target's
+	pixels copied, read while the target is drawn into */
+	source = target;
+	if (!into)
+	{
+		xgpu_metal_texture_copy(target, post.color);
+		source = post.color;
+		into = target;
+	}
 	if (!smaa)
 	{
 		float bounds[4];
@@ -347,28 +410,35 @@ int xgpu_metal_post_anti_alias(int smaa, uint32_t target, uint8_t format, uint32
 		bounds[1] = ((float)rectangle[1] + 0.5f) / (float)post.height;
 		bounds[2] = ((float)rectangle[2] - 0.5f) / (float)post.width;
 		bounds[3] = ((float)rectangle[3] - 0.5f) / (float)post.height;
-		pass_draw(XGPU_METAL_POST_FXAA, target, format, rectangle, post.color, 0, 0, bounds);
+		if (into == post.spare)
+			spare_clear();
+		pass_draw(XGPU_METAL_POST_FXAA, into, format, rectangle, source, 0, 0, bounds);
 	}
 	else
 	{
 		intermediate_clear(post.edges, 1);
-		pass_draw(XGPU_METAL_POST_SMAA_EDGES, post.edges, XGPU_METAL_FORMAT_BGRA8, rectangle, post.color, 0, 0, NULL);
+		pass_draw(XGPU_METAL_POST_SMAA_EDGES, post.edges, XGPU_METAL_FORMAT_BGRA8, rectangle, source, 0, 0, NULL);
 
 		intermediate_clear(post.weights, 0);
 		pass_draw(XGPU_METAL_POST_SMAA_WEIGHTS, post.weights, XGPU_METAL_FORMAT_BGRA8, rectangle, post.edges, post.area,
 			post.search, NULL);
 
-		pass_draw(XGPU_METAL_POST_SMAA_BLEND, target, format, rectangle, post.color, post.weights, 0, NULL);
+		if (into == post.spare)
+			spare_clear();
+		pass_draw(XGPU_METAL_POST_SMAA_BLEND, into, format, rectangle, source, post.weights, 0, NULL);
 	}
+	if (into == post.spare)
+		spare_take_place(moved);
 	return 1;
 }
 
 /* ---------- display.panini (port/linux/game/panini.c)
 
 The window's 3D view drawn again through the Panini projection, as the
-Vulkan backend draws it (xgpu_vulkan_post.c): the target's pixels copied,
-then each pixel of the rectangle drawn from the copy where the rectilinear
-view saw what the projection puts there, all four channels. A multisampled
+Vulkan backend draws it (xgpu_vulkan_post.c): each pixel of the rectangle
+drawn from the view where the rectilinear view saw what the projection
+puts there, all four channels, over all of a target into the spare, which
+takes its place, else from a copy into the target. A multisampled
 target stays multisampled: its pixels resolved for the copy, and the pass
 drawn into its samples, which the HUD is drawn into after and the frame's
 end resolves (drawn into the resolved pixels alone, the pass would be lost
@@ -398,8 +468,10 @@ int xgpu_metal_post_panini_prepare(uint32_t samples)
 }
 
 int xgpu_metal_post_panini(uint32_t target, uint8_t format, uint32_t width, uint32_t height, uint32_t samples,
-	const int32_t corners[4], const float projection[8])
+	const int32_t corners[4], const float projection[8], uint32_t *moved,
+	const struct xgpu_metal_texture_description *description)
 {
+	uint32_t into, read;
 	int32_t rectangle[4];
 	float bounds[4], window[4];
 	int index;
@@ -415,14 +487,23 @@ int xgpu_metal_post_panini(uint32_t target, uint8_t format, uint32_t width, uint
 	}
 	if (rectangle[2] <= rectangle[0] || rectangle[3] <= rectangle[1])
 		return 1;
-	/* (the copy, FXAA's) */
-	if (!textures_fit(0, format, width, height))
+	/* (the spare, of a target of one sample; else the copy, FXAA's) */
+	into = samples > 1 ? 0 : spare_for(target, rectangle, moved, description);
+	if (!textures_fit(0, !into, format, width, height))
 		return 0;
-	/* (a multisampled target's samples resolved into its texture, which is
-	copied) */
-	if (samples > 1)
-		xgpu_metal_texture_resolve(target);
-	xgpu_metal_texture_copy(target, post.color);
+	read = target;
+	if (into)
+		spare_clear();
+	else
+	{
+		/* (a multisampled target's samples resolved into its texture, which
+		is copied) */
+		if (samples > 1)
+			xgpu_metal_texture_resolve(target);
+		xgpu_metal_texture_copy(target, post.color);
+		read = post.color;
+		into = target;
+	}
 	/* (split screen: no texel of the next window is read) */
 	bounds[0] = ((float)rectangle[0] + 0.5f) / (float)post.width;
 	bounds[1] = ((float)rectangle[1] + 0.5f) / (float)post.height;
@@ -433,8 +514,10 @@ int xgpu_metal_post_panini(uint32_t target, uint8_t format, uint32_t width, uint
 	window[1] = (float)corners[1];
 	window[2] = (float)(corners[2] - corners[0]);
 	window[3] = (float)(corners[3] - corners[1]);
-	pass_draw_with(XGPU_METAL_POST_PANINI, target, format, samples, rectangle, post.color, 0, 0, bounds, window,
+	pass_draw_with(XGPU_METAL_POST_PANINI, into, format, samples, rectangle, read, 0, 0, bounds, window,
 		projection);
+	if (into == post.spare)
+		spare_take_place(moved);
 	return 1;
 }
 

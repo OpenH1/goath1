@@ -2,7 +2,7 @@
 XGPU_VULKAN_POST.H
 
 display.anti_aliasing's passes for the Vulkan backend (xgpu_vulkan_post.c):
-FXAA or SMAA antialias a window's 3D view in place before the HUD and menus
+FXAA or SMAA antialias a window's 3D view before the HUD and menus
 are drawn over it (their GLSL: tools/vulkan_post_shaders.py).
 Supersampling and multisampling are the front end's and the core's. And
 display.hdr's tone map and encoding (port/linux/src/xgpu_hdr.c's shaders).
@@ -27,8 +27,13 @@ int xgpu_vulkan_post_prepare(int smaa, uint8_t format, int preparing);
 
 /* FXAA, or SMAA, over the corners x0, y0 to x1, y1 (pixels from row 0) of a
 layer of a BGRA8 or RGBA16F target, in the stream's order; the targets
-bound before are not bound after. 0 if its pipelines cannot be made */
-int xgpu_vulkan_post_anti_alias(int smaa, struct xgpu_vulkan_image *target, uint32_t layer, const int32_t corners[4]);
+bound before are not bound after. moved (NULL: none) is where the caller
+keeps the target: over all of a target of one layer, the view is drawn
+into an image of the target's description, put there in its place (the
+target's image then the passes' own, which the caller no longer
+destroys). 0 if its pipelines cannot be made */
+int xgpu_vulkan_post_anti_alias(int smaa, struct xgpu_vulkan_image *target, uint32_t layer, const int32_t corners[4],
+	struct xgpu_vulkan_image **moved);
 
 /* display.panini (port/linux/game/panini.c): its pipeline for a target of
 a format (BGRA8, or display.hdr's RGBA16F) and a number of samples, made
@@ -41,10 +46,11 @@ given the pixel's value, so that what is drawn over it after is
 multisampled and resolved with it); projection its d, s, magnification at
 the middle, 0, and the rectilinear view's tangents at the corners' left,
 right, top and bottom. In the stream's order; the targets bound before are
-not bound after. 0 if it was not drawn */
+not bound after. moved as anti-aliasing's, where into is source. 0 if it
+was not drawn */
 int xgpu_vulkan_post_panini_prepare(uint8_t format, uint32_t samples, int preparing);
 int xgpu_vulkan_post_panini(struct xgpu_vulkan_image *source, struct xgpu_vulkan_image *into, uint32_t layer,
-	const int32_t corners[4], const float projection[8]);
+	const int32_t corners[4], const float projection[8], struct xgpu_vulkan_image **moved);
 
 /* display.hdr (docs/hdr.md). The tone map's pipeline for an RGBA16F target
 of a number of samples drawn with a depth attachment (XGPU_VULKAN_FORMAT_

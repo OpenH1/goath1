@@ -933,9 +933,9 @@ static VkRenderingAttachmentInfo post_began[4];
 /* each pass's depth and stencil attachments (SMAA's marks: none, a null
 view) and each pipeline's stencil test */
 static VkRenderingAttachmentInfo post_began_depth[4], post_began_stencil[4];
-static VkPipelineDepthStencilStateCreateInfo post_stencils[4];
-static uint32_t post_begins, post_draws, post_updates, post_masks[4], post_pipelines;
-static VkSampleCountFlagBits post_pipeline_samples[4];
+static VkPipelineDepthStencilStateCreateInfo post_stencils[8];
+static uint32_t post_begins, post_draws, post_updates, post_masks[8], post_pipelines;
+static VkSampleCountFlagBits post_pipeline_samples[8];
 static VkDescriptorImageInfo post_sampled[4][4];
 static VkViewport post_viewports[4];
 static VkRect2D post_scissors[4];
@@ -1023,7 +1023,7 @@ static VkResult VKAPI_CALL post_pipeline(VkDevice device, VkPipelineCache cache,
 	/* one triangle from the vertex's index, into BGRA8, nothing culled,
 	depth tested or blended; SMAA's edges and weights with the stencil of
 	their marks */
-	assert(count == 1 && post_pipelines < 4);
+	assert(count == 1 && post_pipelines < 8);
 	assert(!info->pVertexInputState->vertexBindingDescriptionCount &&
 		!info->pVertexInputState->vertexAttributeDescriptionCount);
 	assert(info->pInputAssemblyState->topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
@@ -1145,10 +1145,10 @@ rectangle, its uniforms the target's size and FXAA's bounds the
 rectangle's outermost texel centres */
 static void post_test(void)
 {
-	static struct xgpu_vulkan_image target, color, edges, weights, area, search, marks;
+	static struct xgpu_vulkan_image target, color, edges, weights, area, search, marks, spare;
 	static const int32_t corners[4] = { 8, 4, 40, 44 };
-	static const int32_t beyond[4] = { -4, 4, 70, 44 }, empty[4] = { 70, 4, 80, 44 };
-	struct xgpu_vulkan_image *images[7];
+	static const int32_t beyond[4] = { -4, 4, 70, 44 }, empty[4] = { 70, 4, 80, 44 }, whole[4] = { 0, 0, 64, 48 };
+	struct xgpu_vulkan_image *images[7], *moved;
 	const struct xgpu_vulkan_post_uniforms *uniforms;
 	uint32_t index;
 
@@ -1179,9 +1179,9 @@ static void post_test(void)
 	post.format = XGPU_VULKAN_FORMAT_BGRA8;
 	post_pipelines = 0;
 
-	assert(xgpu_vulkan_post_anti_alias(1, &target, 0, corners));
+	assert(xgpu_vulkan_post_anti_alias(1, &target, 0, corners, NULL));
 	assert(!strcmp(post_events, "CXBcDEXBcDEXBlD"));
-	assert(post_pipelines == 3 && post_masks[0] == 15 && post_masks[1] == 15 && post_masks[2] == 7);
+	assert(post_pipelines == 3 && post_masks[0] == 15 && post_masks[1] == 15 && post_masks[2] == 15);
 	for (index = 0; index < 3; index++)
 		assert(post_pipeline_samples[index] == VK_SAMPLE_COUNT_1_BIT);
 	assert(post_copied.srcSubresource.baseArrayLayer == 0 && post_copied.dstSubresource.baseArrayLayer == 0);
@@ -1251,9 +1251,9 @@ static void post_test(void)
 	target.attachment_count = 0;
 	target.description.type = XGPU_VULKAN_IMAGE_2D_ARRAY;
 	target.description.depth_or_layers = 2;
-	assert(xgpu_vulkan_post_anti_alias(0, &target, 1, beyond));
+	assert(xgpu_vulkan_post_anti_alias(0, &target, 1, beyond, NULL));
 	assert(!strcmp(post_events, "CXBlD"));
-	assert(post_pipelines == 4 && post_masks[3] == 7);
+	assert(post_pipelines == 4 && post_masks[3] == 15);
 	assert(post_copied.srcSubresource.baseArrayLayer == 1 && post_copied.dstSubresource.baseArrayLayer == 0);
 	assert(post_copied.srcOffset.x == 0 && post_copied.extent.width == 64 && post_copied.extent.height == 40);
 	assert(post_attachments[0] == target.attachments[4] && last_view.subresourceRange.baseArrayLayer == 1);
@@ -1263,11 +1263,48 @@ static void post_test(void)
 	assert(uniforms->bounds[2] == 63.5f / 64.0f && uniforms->bounds[3] == 43.5f / 48.0f);
 	assert(post_viewports[0].x == 0.0f && post_viewports[0].width == 64.0f);
 
+	/* over all of a target of one layer, with the caller's handle: no copy;
+	SMAA's edges from the target itself, the blend from it into the spare,
+	cleared whole as its pass begins (nothing of it loaded), which then
+	takes the target's place, the target's image the spare. FXAA's the same
+	way, back again. Over part of it (a split screen's window), the copy as
+	above */
+	post_reset();
+	free(target.attachments);
+	target.attachments = NULL;
+	target.attachment_count = 0;
+	target.description.type = XGPU_VULKAN_IMAGE_2D;
+	target.description.depth_or_layers = 1;
+	post.edges = &edges;
+	post.weights = &weights;
+	post.marks = &marks;
+	post_image(&spare, 8, XGPU_VULKAN_FORMAT_BGRA8, 64, 48);
+	spare.description = target.description;
+	post.spare = &spare;
+	moved = &target;
+	assert(xgpu_vulkan_post_anti_alias(1, &target, 0, whole, &moved));
+	assert(!strcmp(post_events, "BcDEXBcDEXBcD"));
+	assert(moved == &spare && post.spare == &target);
+	assert(post_sampled[0][0].imageView == target.sampled && post_sampled[2][0].imageView == target.sampled);
+	assert(post_attachments[2] == spare.attachments[0]);
+	assert(post_pipelines == 7 && post_masks[6] == 15);
+	post_reset();
+	post.edges = post.weights = post.marks = NULL;
+	assert(xgpu_vulkan_post_anti_alias(0, &spare, 0, whole, &moved));
+	assert(!strcmp(post_events, "BcD"));
+	assert(moved == &target && post.spare == &spare && post_sampled[0][0].imageView == spare.sampled);
+	assert(post_attachments[0] == target.attachments[0]);
+	post_reset();
+	assert(xgpu_vulkan_post_anti_alias(0, &target, 0, corners, &moved));
+	assert(!strcmp(post_events, "CXBlD") && moved == &target && post.spare == &spare);
+	free(spare.attachments);
+	spare.attachments = NULL;
+
 	/* nothing of an empty rectangle, nor of a multisampled target */
 	post_reset();
-	assert(xgpu_vulkan_post_anti_alias(0, &target, 0, empty) && !post_events[0]);
+	assert(xgpu_vulkan_post_anti_alias(0, &target, 0, empty, NULL) && !post_events[0]);
 	target.description.samples = 4;
-	assert(!xgpu_vulkan_post_anti_alias(0, &target, 0, corners) && !post_events[0]);
+	assert(!xgpu_vulkan_post_anti_alias(0, &target, 0, corners, NULL) && !post_events[0]);
 
 	images[0] = &target;
 	images[1] = &color;
@@ -1294,7 +1331,8 @@ the samples, which the HUD is drawn into after); over a target of one
 sample, into the target; never from samples */
 static void panini_post_test(void)
 {
-	static struct xgpu_vulkan_image target, color, samples;
+	static struct xgpu_vulkan_image target, color, samples, spare;
+	struct xgpu_vulkan_image *moved;
 	static const int32_t corners[4] = { 0, 0, 64, 48 };
 	static const float projection[8] = { 0.5f, 0.0f, 1.0f, 0.0f, -1.0f, 1.0f, 0.75f, -0.75f };
 	uint32_t index;
@@ -1315,7 +1353,7 @@ static void panini_post_test(void)
 	post.format = XGPU_VULKAN_FORMAT_BGRA8;
 	post_pipelines = 0;
 
-	assert(xgpu_vulkan_post_panini(&target, &samples, 0, corners, projection));
+	assert(xgpu_vulkan_post_panini(&target, &samples, 0, corners, projection, NULL));
 	assert(!strcmp(post_events, "CXBlD"));
 	assert(post_copied.extent.width == 64 && post_copied.extent.height == 48);
 	assert(post_pipelines == 1 && post_pipeline_samples[0] == VK_SAMPLE_COUNT_4_BIT && post_masks[0] == 15);
@@ -1323,13 +1361,26 @@ static void panini_post_test(void)
 	assert(post_sampled[0][0].imageView == color.sampled);
 
 	post_reset();
-	assert(xgpu_vulkan_post_panini(&target, &target, 0, corners, projection));
+	assert(xgpu_vulkan_post_panini(&target, &target, 0, corners, projection, NULL));
 	assert(!strcmp(post_events, "CXBlD"));
 	assert(post_pipelines == 2 && post_pipeline_samples[1] == VK_SAMPLE_COUNT_1_BIT);
 	assert(post_attachments[0] == target.attachments[0]);
 
+	/* into the target itself, with the caller's handle: from the target
+	into the spare, cleared as the pass begins, which takes its place */
 	post_reset();
-	assert(!xgpu_vulkan_post_panini(&samples, &samples, 0, corners, projection) && !post_events[0]);
+	post_image(&spare, 4, XGPU_VULKAN_FORMAT_BGRA8, 64, 48);
+	post.spare = &spare;
+	moved = &target;
+	assert(xgpu_vulkan_post_panini(&target, &target, 0, corners, projection, &moved));
+	assert(!strcmp(post_events, "BcD"));
+	assert(moved == &spare && post.spare == &target && post_sampled[0][0].imageView == target.sampled);
+	assert(post_attachments[0] == spare.attachments[0]);
+	free(spare.attachments);
+	spare.attachments = NULL;
+
+	post_reset();
+	assert(!xgpu_vulkan_post_panini(&samples, &samples, 0, corners, projection, NULL) && !post_events[0]);
 
 	free(target.attachments);
 	free(color.attachments);

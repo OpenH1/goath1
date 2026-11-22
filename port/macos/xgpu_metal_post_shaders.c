@@ -219,7 +219,7 @@ static const char fxaa_source[] =
 	"    float pixel_offset = 0.5 - (fast::min(distance_before, distance_after) / (distance_before + distance_after));\n"
 	"    bool varies = (((distance_before < distance_after) ? luma_before : luma_after) < 0.0) != (luma < edge_luma);\n"
 	"    float2 param_13 = position + (across * fast::max(varies ? pixel_offset : 0.0, subpixel));\n"
-	"    out.result = float4(color_at(param_13, color_texture, color_textureSmplr, _27), 1.0);\n"
+	"    out.result = float4(color_at(param_13, color_texture, color_textureSmplr, _27), color_texture.sample(color_textureSmplr, position, level(0.0)).w);\n"
 	"    return out;\n"
 	"}\n"
 	"\n";
@@ -1050,7 +1050,7 @@ static const char smaa_blend_source[] =
 	"    float4 offset = param_1;\n"
 	"    float2 param_2 = texcoord;\n"
 	"    float4 param_3 = offset;\n"
-	"    out.result = SMAANeighborhoodBlendingPS(param_2, param_3, color_texture, color_textureSmplr, weights_texture, weights_textureSmplr, _96);\n"
+	"    out.result = float4(SMAANeighborhoodBlendingPS(param_2, param_3, color_texture, color_textureSmplr, weights_texture, weights_textureSmplr, _96).xyz, color_texture.sample(color_textureSmplr, texcoord, level(0.0)).w);\n"
 	"    return out;\n"
 	"}\n"
 	"\n";
