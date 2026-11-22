@@ -2522,6 +2522,14 @@ static void network_test_elevator_choose(
 	platform_log("network test: elevators %ld, riding %lx", count, network_test.elevator_index);
 }
 
+/* whether this machine switches the structure bsp to the elevator's and
+sends it: the host, or the campaign on this machine alone */
+static boolean network_test_elevator_driver(
+	void)
+{
+	return network_test.mode == _network_test_host || network_test.mode == _network_test_campaign;
+}
+
 /* the elevator's floor straight down from above the point (from well above
 it, through the structure's floors and ceilings: a ray that starts outside
 the structure finds nothing), if it is there */
@@ -2645,7 +2653,7 @@ static void network_test_elevator_update(
 			platform.z += 0.5f;
 			if (scenario_leaf_index_from_point(&platform) == NONE)
 			{
-				if (network_test.mode == _network_test_host && count > 1 && game_time_get() % (3 * TICKS_PER_SECOND) < TICKS_PER_SECOND)
+				if (network_test_elevator_driver() && count > 1 && game_time_get() % (3 * TICKS_PER_SECOND) < TICKS_PER_SECOND)
 				{
 					platform_log("network test: elevator not in structure bsp %d: switching", global_structure_bsp_index_get());
 					main_switch_structure_bsp((short)((global_structure_bsp_index_get() + 1) % count));
@@ -2663,7 +2671,7 @@ static void network_test_elevator_update(
 	device = device_get(network_test.elevator_index);
 	if (device->device.position_velocity != 0.0f)
 		network_test.elevator_stopped = game_time_get();
-	else if (network_test.mode == _network_test_host && game_time_get() - network_test.elevator_stopped >= 2 * TICKS_PER_SECOND)
+	else if (network_test_elevator_driver() && game_time_get() - network_test.elevator_stopped >= 2 * TICKS_PER_SECOND)
 	{
 		real target = device->device.position < 0.5f ? 1.0f : 0.0f;
 
