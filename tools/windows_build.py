@@ -112,8 +112,8 @@ HOST_FLAGS = [
     # data below the stack pointer, where Windows writes an exception's
     # records)
     "-mno-red-zone",
-    # x86-64-v2 (SSE4.2 and POPCNT), as the guest (tools/guest_arch.py)
-    "-march=x86-64-v2",
+    # every x86-64 processor, as the guest
+    "-march=x86-64",
     "-ffp-contract=off",
     "-std=gnu11",
     "-Wall",

@@ -13,9 +13,8 @@
     python tools/ci_build.py ios debug             (on a Mac with Apple silicon and Xcode's iOS SDK)
     python tools/ci_build.py notes                 (the release notes' network versions, below)
 
-Builds are portable (any x86-64-v2 processor, SSE4.2 and POPCNT:
-tools/guest_arch.py; any ARMv8.0 one for linux_arm64 and android), so they
-run on other computers. Debug builds skip link-time and profile-guided
+Builds are portable (any x86-64 processor; any ARMv8.0 one for
+linux_arm64 and android), so they run on other computers. Debug builds skip link-time and profile-guided
 optimisation, which only make the build slower; release builds use both, as
 a local release build does (link-time optimisation for the Windows and
 Android hosts only, build_common.lto_flags; profile-guided optimisation

@@ -279,11 +279,8 @@ def _generate(n: Writer, sln: Any, target: LinuxGuest, config_path: Path, third_
     )
     # (frame pointers: the sampler and the crash report walk the host's
     # frames too, host_arch.c)
-    # (x86-64-v2, as the guest: tools/guest_arch.py)
-    host_march = ["-march=x86-64-v2"] if target.arch is X32 else []
     host_cflags = " ".join([
         "-O2", "-g", "-fno-omit-frame-pointer", "-fPIC", "-Wall", "-Wno-unused-function", *OWN_CODE_ERRORS,
-        *host_march,
         "-D_GNU_SOURCE",
         f"-I{ANDROID_DIR}/include", f"-I{ANDROID_DIR}/host", f"-I{sdl_dir}/include", f"-I{LINUX_DIR}/src",
         f"-I{TOML_DIR}", f"-I{openxr_dir}", f"-I{PORT_DIR}", f"-I{vulkan_headers}", *host_defines,

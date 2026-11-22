@@ -152,13 +152,8 @@ X32 = GuestArch(
         # below 2 GB, image_base)
         "-fno-pic",
         "-fno-pie",
-        # x86-64-v2 (SSSE3, SSE4.1, SSE4.2 and POPCNT beside SSE2): Intel's
-        # processors since Nehalem (2008), AMD's since Bulldozer and Bobcat
-        # (2011), the Steam Deck's (Zen 2), as the portable x86 builds; the
-        # tuning stays generic. It has no FMA, so nothing could be fused even
-        # without -ffp-contract=off, and SSE4.1's rounding instructions are
-        # exact: the results are the same to the bit
-        "-march=x86-64-v2",
+        # every x86-64 processor (SSE2), as the portable x86 builds
+        "-march=x86-64",
         # MSVC's long double, and arm64_32's: a double (x87's 80-bit one
         # would be computed differently, and laid out differently)
         "-mlong-double-64",
