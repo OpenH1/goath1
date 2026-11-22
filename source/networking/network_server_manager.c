@@ -1674,6 +1674,9 @@ struct network_game_server *network_game_server_create(
 		0xE0,
 		!network_game_server_memory_do_not_use_directly_in_use);
 	network_game_server_memory_do_not_use_directly_in_use = TRUE;
+	/* port: a co-op CONTINUE is the next game of the server co-op HOST makes
+	alone (coop_menu.inc asks for it after this): never another's */
+	network_coop_continue_request(FALSE);
 
 	csmemset(server, 0, sizeof(*server));
 
@@ -1760,6 +1763,8 @@ void network_game_server_dispose(
 	/* port: a won co-op round's next level belongs to this server alone */
 	network_game_server_cooperative_next_map[0] = 0;
 	network_game_server_cooperative_next_difficulty = NONE;
+	/* port: and a co-op CONTINUE not yet started (the lobby left) with it */
+	network_coop_continue_request(FALSE);
 
 	switch (server->state)
 	{

@@ -39,6 +39,7 @@ static boolean message_fails, send_fails, machines_fail;
 
 /* These legacy teardown cases have no pending MCC restart. */
 static void mcc_ui_network_server_dispose(struct network_game_server *server) { (void)server; }
+static void network_coop_continue_request(boolean requested) { (void)requested; }
 
 static void note(char event)
 {
