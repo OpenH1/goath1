@@ -1330,6 +1330,21 @@ static void network_test_profiles(
 
 			name[7] = (wchar_t)(L'1' + local_player_index);
 			profile_index = player_profile_new(local_player_index, name);
+			/* (player 1's, made by an earlier test of the same saves: taken as
+			the menus take it, the one used last, else the first, so a test
+			goes on with its files, a co-op host's saved game's) */
+			if (profile_index == NONE && local_player_index == 0)
+			{
+				profile_index = player_ui_get_player1_last_used_profile_index();
+				if (profile_index == NONE)
+				{
+					word count = 1;
+
+					player_profiles_enumerate_available_to_local_player_index(NONE, &count, &profile_index, FALSE);
+					if ((short)count <= 0)
+						profile_index = NONE;
+				}
+			}
 			if (profile_index == NONE || !player_profile_get(profile_index, &profile) ||
 				!player_settings_profile_folder(profile_index, folder, sizeof(folder)))
 			{
