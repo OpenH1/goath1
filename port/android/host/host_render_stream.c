@@ -142,34 +142,6 @@ void host_render_stream_loading_service(void)
 	loading.servicing = 0;
 }
 
-/* (the render thread's, the loading picture up) how long the thread sleeps
-when it has nothing to play: until the next picture is due, not every
-millisecond. Once it is due and the stream keeps it back (the guest waits,
-or there is more to play), it asks every LOADING_HELD_POLL_NS, as a guest
-that stops waiting for the GPU says nothing to this thread; nothing to
-draw (the picture's last drawn, or no backend's), every
-LOADING_IDLE_POLL_NS */
-#define LOADING_DUE_POLL_NS 1000000ull
-#define LOADING_HELD_POLL_NS 4000000ull
-#define LOADING_IDLE_POLL_NS 16000000ull
-static uint64_t loading_wait_ns(void)
-{
-	uint64_t now;
-
-	if (loading.ready || !loading.backend || !loading.backend->loading)
-		return LOADING_IDLE_POLL_NS;
-	now = monotonic_nanoseconds();
-	if (loading.next > now + LOADING_DUE_POLL_NS)
-		return loading.next - now < LOADING_IDLE_POLL_NS * 4 ? loading.next - now : LOADING_IDLE_POLL_NS * 4;
-	if (loading.next <= now && loading_stream_waits() && now - loading.drawn < LOADING_DEFERRED_MOST_NS)
-	{
-		uint64_t deferred = loading.drawn + LOADING_DEFERRED_MOST_NS - now;
-
-		return deferred < LOADING_HELD_POLL_NS ? deferred : LOADING_HELD_POLL_NS;
-	}
-	return LOADING_DUE_POLL_NS;
-}
-
 static void loading_set(const struct host_render_backend *backend, int active)
 {
 	if (active == 2)
@@ -1645,6 +1617,34 @@ static void autorelease_pop(void *pool)
 int host_render_stream_playing(void)
 {
 	return atomic_load(&render_playing);
+}
+
+/* (the render thread's, the loading picture up) how long the thread sleeps
+when it has nothing to play: until the next picture is due, not every
+millisecond. Once it is due and the stream keeps it back (the guest waits,
+or there is more to play), it asks every LOADING_HELD_POLL_NS, as a guest
+that stops waiting for the GPU says nothing to this thread; nothing to
+draw (the picture's last drawn, or no backend's), every
+LOADING_IDLE_POLL_NS */
+#define LOADING_DUE_POLL_NS 1000000ull
+#define LOADING_HELD_POLL_NS 4000000ull
+#define LOADING_IDLE_POLL_NS 16000000ull
+static uint64_t loading_wait_ns(void)
+{
+	uint64_t now;
+
+	if (loading.ready || !loading.backend || !loading.backend->loading)
+		return LOADING_IDLE_POLL_NS;
+	now = monotonic_nanoseconds();
+	if (loading.next > now + LOADING_DUE_POLL_NS)
+		return loading.next - now < LOADING_IDLE_POLL_NS * 4 ? loading.next - now : LOADING_IDLE_POLL_NS * 4;
+	if (loading.next <= now && loading_stream_waits() && now - loading.drawn < LOADING_DEFERRED_MOST_NS)
+	{
+		uint64_t deferred = loading.drawn + LOADING_DEFERRED_MOST_NS - now;
+
+		return deferred < LOADING_HELD_POLL_NS ? deferred : LOADING_HELD_POLL_NS;
+	}
+	return LOADING_DUE_POLL_NS;
 }
 
 static void *render_thread(void *argument)
