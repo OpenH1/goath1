@@ -1379,6 +1379,60 @@ static void actor_update_end(
 	return;
 }
 
+/* port: the tick's timeslices (an actor's perception and path refreshed,
+actor_perception.c and actor_moving.c). The original gives one a tick, to
+the first actor in update order whose service timer passed both 15 (none is
+served more often than every 16 ticks) and the highest timer of those not
+served the tick before. So the one a tick serves 16 actors at that period,
+and more actors wait longer: 20 every 0.7 s, 270 every 9. Past 16 active
+actors the tick gives one for each 16 or part of 16, by the same rule
+repeated: the first ones in update order whose timer passed 15 and the
+budget's highest of those not served the tick before (its Nth highest for N
+timeslices; ai_globals->current_highest_service_timer keeps it for the next
+tick, as it kept the highest). Each actor is then served about every 16
+ticks, as in an original-sized fight. At 16 or fewer it is the original's
+one a tick, exactly. Kept outside the game state: each tick sets them anew
+before the actors update (actors_update). */
+enum
+{
+	ACTOR_TIMESLICE_ACTORS_PER_SLICE = 16,
+	MAXIMUM_ACTOR_TIMESLICES_PER_TICK =
+		(MAXIMUM_ACTORS + ACTOR_TIMESLICE_ACTORS_PER_SLICE - 1)/ACTOR_TIMESLICE_ACTORS_PER_SLICE,
+};
+
+static struct
+{
+	short budget;
+	short given;
+	/* the highest service timers of the actors not served this tick, highest
+	first (the budget's count of them, at most) */
+	short unserved_count;
+	short unserved_highest[MAXIMUM_ACTOR_TIMESLICES_PER_TICK];
+} actor_timeslices = { 1, 0, 0, { 0 } };
+
+static void actor_timeslices_unserved(
+	short service_timer)
+{
+	short index;
+
+	if (actor_timeslices.unserved_count == actor_timeslices.budget)
+	{
+		if (service_timer <= actor_timeslices.unserved_highest[actor_timeslices.budget - 1])
+			return;
+		actor_timeslices.unserved_count--;
+	}
+	for (index = actor_timeslices.unserved_count;
+		index > 0 && actor_timeslices.unserved_highest[index - 1] < service_timer;
+		index--)
+	{
+		actor_timeslices.unserved_highest[index] = actor_timeslices.unserved_highest[index - 1];
+	}
+	actor_timeslices.unserved_highest[index] = service_timer;
+	actor_timeslices.unserved_count++;
+
+	return;
+}
+
 static boolean actor_get_timeslice(
 	long actor_index)
 {
@@ -1401,7 +1455,23 @@ static boolean actor_get_timeslice(
 
 	actor->meta.service_timer += jumping ? 3 : 1;
 
-	if (!ai_globals->time_given_this_frame &&
+	if (actor_timeslices.budget > 1)
+	{
+		if (actor_timeslices.given < actor_timeslices.budget &&
+			actor->meta.service_timer > ai_globals->last_highest_service_timer &&
+			actor->meta.service_timer > 15)
+		{
+			actor->meta.service_timer = 0;
+			actor_timeslices.given++;
+			ai_globals->time_given_this_frame = TRUE;
+			result = TRUE;
+		}
+		else
+		{
+			actor_timeslices_unserved(actor->meta.service_timer);
+		}
+	}
+	else if (!ai_globals->time_given_this_frame &&
 		actor->meta.service_timer > ai_globals->last_highest_service_timer &&
 		actor->meta.service_timer > 15)
 	{
@@ -4249,10 +4319,28 @@ void actors_update(
 {
 	struct actor_iterator iterator;
 	struct actor_datum *actor;
+	long active_actor_count = 0;
 
 	ai_globals->last_highest_service_timer = ai_globals->current_highest_service_timer;
 	ai_globals->current_highest_service_timer = 0;
 	ai_globals->time_given_this_frame = FALSE;
+
+	/* port: the tick's timeslices, one for each 16 actors updating or part
+	of 16 (actor_timeslices) */
+	actor_iterator_new(&iterator, TRUE);
+	while ((actor = actor_iterator_next(&iterator)) != NULL)
+	{
+		if (!actor->meta.erase_next_tick && actor->state.mode > _actor_mode_braindead)
+			active_actor_count++;
+	}
+	actor_timeslices.budget = (short)((active_actor_count + ACTOR_TIMESLICE_ACTORS_PER_SLICE - 1)/
+		ACTOR_TIMESLICE_ACTORS_PER_SLICE);
+	if (actor_timeslices.budget < 1)
+		actor_timeslices.budget = 1;
+	if (actor_timeslices.budget > MAXIMUM_ACTOR_TIMESLICES_PER_TICK)
+		actor_timeslices.budget = MAXIMUM_ACTOR_TIMESLICES_PER_TICK;
+	actor_timeslices.given = 0;
+	actor_timeslices.unserved_count = 0;
 
 	actor_iterator_new(&iterator, TRUE);
 	while ((actor = actor_iterator_next(&iterator)) != NULL)
@@ -4265,6 +4353,14 @@ void actors_update(
 		{
 			actor_update(iterator.index);
 		}
+	}
+
+	if (actor_timeslices.budget > 1)
+	{
+		ai_globals->current_highest_service_timer =
+			actor_timeslices.unserved_count == actor_timeslices.budget ?
+			actor_timeslices.unserved_highest[actor_timeslices.budget - 1] :
+			0;
 	}
 
 	return;
