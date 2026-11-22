@@ -930,12 +930,16 @@ static char post_events[64];
 static VkImageCopy post_copied;
 static VkImageView post_attachments[4];
 static VkRenderingAttachmentInfo post_began[4];
+/* (the pipelines made since post_pipelines was last emptied: each
+post_reset clears vk, its pipelines with it, so every pass after one makes
+its pipeline again) */
+#define POST_PIPELINES_MOST 16
 /* each pass's depth and stencil attachments (SMAA's marks: none, a null
 view) and each pipeline's stencil test */
 static VkRenderingAttachmentInfo post_began_depth[4], post_began_stencil[4];
-static VkPipelineDepthStencilStateCreateInfo post_stencils[8];
-static uint32_t post_begins, post_draws, post_updates, post_masks[8], post_pipelines;
-static VkSampleCountFlagBits post_pipeline_samples[8];
+static VkPipelineDepthStencilStateCreateInfo post_stencils[POST_PIPELINES_MOST];
+static uint32_t post_begins, post_draws, post_updates, post_masks[POST_PIPELINES_MOST], post_pipelines;
+static VkSampleCountFlagBits post_pipeline_samples[POST_PIPELINES_MOST];
 static VkDescriptorImageInfo post_sampled[4][4];
 static VkViewport post_viewports[4];
 static VkRect2D post_scissors[4];
@@ -1023,7 +1027,7 @@ static VkResult VKAPI_CALL post_pipeline(VkDevice device, VkPipelineCache cache,
 	/* one triangle from the vertex's index, into BGRA8, nothing culled,
 	depth tested or blended; SMAA's edges and weights with the stencil of
 	their marks */
-	assert(count == 1 && post_pipelines < 8);
+	assert(count == 1 && post_pipelines < POST_PIPELINES_MOST);
 	assert(!info->pVertexInputState->vertexBindingDescriptionCount &&
 		!info->pVertexInputState->vertexAttributeDescriptionCount);
 	assert(info->pInputAssemblyState->topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
