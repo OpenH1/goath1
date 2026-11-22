@@ -413,9 +413,11 @@ world (eye-independent: the VR mode's eyes share it), holds for each cell a
 XGPU_DYNAMIC_LIGHTS_UNIT); the lights are a uniform block at
 XGPU_DYNAMIC_LIGHTS_BINDING. The cells grow away from the camera: a cell's
 index along each axis is log2(1 + |offset| / XGPU_DYNAMIC_LIGHTS_CELL) times
-that axis's scale, from the middle, so that the grid reaches
-XGPU_DYNAMIC_LIGHTS_REACH world units each way with small cells near the
-camera, where lights are seen large. */
+that axis's scale, from the middle, so that the grid reaches as far each
+way as the frame's farthest light does (at most XGPU_DYNAMIC_LIGHTS_REACH
+world units; its outer cells hold every point past it) with small cells near
+the camera, where lights are seen large. A cell has the lights whose spheres
+meet its box (d3d8_device.c's dynamic_lights_mark). */
 #define XGPU_DYNAMIC_LIGHTS_MAXIMUM 128
 #define XGPU_DYNAMIC_LIGHTS_GRID_X 32
 #define XGPU_DYNAMIC_LIGHTS_GRID_Y 32
