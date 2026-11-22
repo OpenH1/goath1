@@ -59,6 +59,11 @@ def generated(fault=None):
                    "MAXIMUM_PROJECTILE_COLLISIONS_PER_UPDATE"):
         decls += enum_with(code, member) + "\n"
     decls += structure(read("source/items/projectiles.h"), "_projectile_datum") + "\n"
+    # the object limits the projectiles' tables are sized by (objects.h, from halo_port_capacity.h)
+    capacity = read("port/linux/include/halo_port_capacity.h")
+    for limit in ("HALO_PORT_MAXIMUM_OBJECTS_PER_MAP", "HALO_PORT_MAXIMUM_RENDERED_OBJECTS"):
+        decls += re.search(r"^#define " + limit + r" .*$", capacity, re.M).group(0) + "\n"
+    decls += enum_with(read("source/objects/objects.h"), "\tMAXIMUM_OBJECTS_PER_MAP =") + "\n"
     decls += enum_with(units, "_unit_grenade_throw_idle") + "\n" + enum_with(units, "_unit_state_throw_grenade") + "\n"
     decls += enum_with(vr_header, "HALO_VR_THROW_NONE") + "\n" + structure(vr_header, "halo_vr_throw") + "\n"
 
