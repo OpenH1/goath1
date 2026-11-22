@@ -561,12 +561,16 @@ samplers' texture units their bindings (set 1). After changing the GLSL,
 run the tool again (`--check` says whether the file matches), and
 `tools/metal_post_shaders.py`, which makes Metal's from the same GLSL.
 
-The target's rectangle is copied first, so that no pass reads
-what it writes; each pass draws one triangle over the rectangle, in a pass
-of its own (the barrier at its end is what the next samples after); SMAA's
-edges and weights are cleared whole as their passes begin; only colour is
-written back into the target (the game keeps values of its own in its
-alpha). The intermediate images are the target's size; SMAA's lookup
+No pass reads what it writes. Over all of a target (one window), the last
+pass draws the view into a spare image of the target's description, which
+then takes the target's place (the target's image becoming the spare), so
+nothing is copied; over a split screen's window, the rectangle is copied
+first and drawn back into the target. Each pass draws one triangle over the
+rectangle, in a pass of its own (the barrier at its end is what the next
+samples after); SMAA's edges and weights, and the spare, are cleared whole
+as their passes begin; FXAA and SMAA's blend write each pixel's own alpha
+(the game keeps values of its own in it). Panini does the same, and Metal
+does both the same way. The intermediate images are the target's size; SMAA's lookup
 textures are RGBA8 images of its RG8 and R8 (the rest zero). The pipelines
 are made when the setting is chosen, and requested with the map's
 preparation. Android draws SMAA too. The VR mode's eyes have neither pass: the game
