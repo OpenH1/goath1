@@ -142,19 +142,27 @@ int host_app_audio_output_latency(void)
 
 /* ---------- the render scale and the device's temperature */
 
-/* the render scale a device draws at by default: a phone whose screen has
-three pixels to the point draws two of them (2/3 each way, under half the
-pixels), sharp at a phone's distance and inside the 120 Hz frame where all
-of them were not (an iPhone 15 Pro Max: 8 to 10 ms of GPU a frame at 3x,
-so 60 Hz); a 2x phone 0.8, as an Android phone does; an iPad all of its
-own */
-static float render_scale_for_device(void)
+/* the render scale a device draws at by default. Stretched by the display
+(no MetalFX temporal scaler): a phone whose screen has three pixels to the
+point draws two of them (2/3 each way, under half the pixels), sharp at a
+phone's distance and inside the 120 Hz frame where all of them were not (an
+iPhone 15 Pro Max: 8 to 10 ms of GPU a frame at 3x, so 60 Hz); a 2x phone
+0.8, as an Android phone does; an iPad all of its own. Rebuilt by MetalFX's
+temporal scaler (temporal): its 3D view alone at the scale, from frames
+jittered across its pixels, the HUD and menus at the screen's: a 3x phone
+half each way (Apple's "performance" ratio, still 1.5 pixels to the point,
+a quarter of the screen's pixels: 1398x645 of an iPhone 15 Pro Max's
+2796x1290), a 2x phone and an iPad 2/3 (Apple's "quality" ratio, 1.33 to
+the point: an 11-inch iPad Pro's 2420x1668 drawn at 1613x1112), each under
+the stretched default's pixels for the GPU's time that MetalFX takes */
+static float render_scale_for_device(BOOL temporal)
 {
-	__block float scale = 1.0f;
+	__block float scale = temporal ? 2.0f / 3.0f : 1.0f;
 
 	void (^choose)(void) = ^{
 		if ([UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPhone)
-			scale = [UIScreen mainScreen].nativeScale >= 2.5 ? 2.0f / 3.0f : 0.8f;
+			scale = [UIScreen mainScreen].nativeScale >= 2.5 ? (temporal ? 0.5f : 2.0f / 3.0f) :
+				(temporal ? 2.0f / 3.0f : 0.8f);
 	};
 	if ([NSThread isMainThread])
 		choose();
@@ -168,24 +176,31 @@ spatial one alone, 0 neither */
 int xgpu_metal_metalfx_supported(void);
 
 /* whether display.temporal_aa is "metalfx" (HALO_TEMPORAL_AA, else
-config.toml's; off by default) and the GPU has MetalFX: it upscales the
-game's render scale to the screen's pixels (#1228) */
+config.toml's; commented out, "metalfx" where the GPU has MetalFX's
+temporal scaler, as port_config.c's config_default_of says, else off) and
+the GPU has MetalFX: it upscales the game's render scale to the screen's
+pixels (#1228) */
 static BOOL render_scale_upscaled(void)
 {
 	const char *value = getenv("HALO_TEMPORAL_AA");
+	NSString *setting;
 	BOOL upscaled;
 
 	if (value && *value)
 		upscaled = !strcmp(value, "metalfx");
+	else if ((setting = config_path_setting("display.temporal_aa")))
+		upscaled = [setting isEqualToString:@"metalfx"];
 	else
-		upscaled = [config_path_setting("display.temporal_aa") isEqualToString:@"metalfx"];
+		upscaled = xgpu_metal_metalfx_supported() == 1;
 	return upscaled && xgpu_metal_metalfx_supported();
 }
 
 /* display.render_scale (HALO_RENDER_SCALE): the game draws at this fraction
 of the screen's pixels each way, and the display scales the picture up
 (port/android/host/host_sdl.c gives the game the window's pixels times it;
-host_metal.m makes the layer's drawables that size); 0, the device's. Where
+host_metal.m makes the layer's drawables that size); 0, the device's
+(render_scale_for_device: lower where MetalFX's temporal scaler rebuilds
+it). Where
 MetalFX upscales it (render_scale_upscaled) the drawables are the screen's
 size (1 here) and the game draws its 3D view at the render scale
 (HALO_UPSCALE_RENDER_SCALE: d3d8_device.c's render_scale_configured), which
@@ -201,7 +216,7 @@ float host_app_render_scale(void)
 
 		scale = value ? (float)atof(value) : (float)config_number_setting("display.render_scale", RENDER_SCALE_DEFAULT);
 		if (scale == 0.0f)
-			scale = render_scale_for_device();
+			scale = render_scale_for_device(render_scale_upscaled() && xgpu_metal_metalfx_supported() == 1);
 		if (!(scale >= 0.25f && scale <= 1.0f))
 			scale = 1.0f;
 		if (scale < 1.0f && render_scale_upscaled())

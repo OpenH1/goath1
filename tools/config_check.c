@@ -63,6 +63,13 @@ int host_metal_display_adaptive(void)
 {
 	return 0;
 }
+
+/* (host_metal.m's: the GPU has MetalFX's temporal scaler where the test
+sets CONFIG_CHECK_METALFX, display.temporal_aa's default "metalfx") */
+int host_metal_metalfx_temporal(void)
+{
+	return getenv("CONFIG_CHECK_METALFX") != NULL;
+}
 #endif
 
 /* (port_config.c's look for a config.toml it does not read: none here) */

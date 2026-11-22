@@ -1338,6 +1338,14 @@ PAGES = {
              "steadier frame rate. Above 100% draws more, scaled down: smoother, for over twice the work at 150%. "
              "Xbox draws 640x480.",
              "computer"),
+            # (Metal with MetalFX: its own row in the same place, AUTO first,
+            # display.render_scale's 0, the Mac's default: 67% while MetalFX
+            # upscales, else Full; menu_functions.c's render_resolution_text)
+            ("RENDER RESOLUTION", "display.render_resolution", [("AUTO", "0")] + RENDER_RESOLUTIONS,
+             "Auto draws 67% while Apple MetalFX upscales, and Full without it. Full draws at your screen's "
+             "resolution. Below 100% draws fewer pixels, scaled up: a steadier frame rate. Above 100% draws more, "
+             "scaled down. Xbox draws 640x480. The HUD and menus are always sharp.",
+             "computer", "render_resolution_metalfx"),
             ("ANTI-ALIASING", "display.anti_aliasing",
              [("OFF", "off"), ("FXAA", "fxaa"), ("SMAA", "smaa"), ("MSAA 2X", "msaa2x"), ("MSAA 4X", "msaa4x"),
               ("MSAA 8X", "msaa8x")],
@@ -2761,7 +2769,7 @@ def _settings_platform(rows: list, start: int):
 # the rows in the place of the row before them, each platform having one of
 # them at most, or the model's conditions showing one (SETTINGS_ROW_WHEN):
 # Window Size in Resolution's, Android's anti-aliasing in the desktop's
-SETTINGS_SAME_PLACE = {"window_size", "anti_aliasing_android", "temporal_aa_dlss", "temporal_aa_metalfx", "temporal_aa_dlss_get",
+SETTINGS_SAME_PLACE = {"window_size", "render_resolution_metalfx", "anti_aliasing_android", "temporal_aa_dlss", "temporal_aa_metalfx", "temporal_aa_dlss_get",
 "touch_gyro_sensitivity",
                        "touch_gyro_vertical_sensitivity", "touch_gyro_smoothing"}
 # the rows hidden while VR Setup's row is shown (the game in the headset),
@@ -2782,6 +2790,8 @@ SETTINGS_ROW_WHEN = {
     # (Window Size the window's, Resolution fullscreen's and borderless's, in
     # one place; Refresh Rate fullscreen's)
     "resolution": "!mode=windowed", "window_size": "mode=windowed",
+    # (Render Resolution's AUTO where Metal has MetalFX: settings_condition_term's temporal_metalfx)
+    "render_resolution": "!temporal_metalfx", "render_resolution_metalfx": "temporal_metalfx",
     "refresh_rate": "mode=fullscreen+refresh_rates",
     "hud_button_style": "high_res_hud=true",
     # (with vsync on the display paces the frames)

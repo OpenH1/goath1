@@ -1,6 +1,6 @@
 # Temporal AA groundwork: motion and jitter
 
-`display.temporal_aa` picks a temporal technique: `"off"` (the default), `"fsr"`, `"dlss"` or `"metalfx"`. It works at
+`display.temporal_aa` picks a temporal technique: `"off"` (the default; `"metalfx"` on a Mac, iPhone or iPad whose GPU has MetalFX's temporal scaler: Apple silicon, an A14 or later; an Intel Mac's GPU without it, or a device with the spatial scaler alone, stays off), `"fsr"`, `"dlss"` or `"metalfx"`. It works at
 any render scale, the native one included. Milestone 1 (this) makes what every technique reads: each window's
 per-pixel motion and a sub-pixel jitter. No SDK is drawn yet. With `"off"` nothing here runs: the frames, passes and
 uploads are as before.
@@ -73,8 +73,8 @@ renderer has it: Settings > Video > Frame Rate & Sync > Upscaler (`xgpu_backend_
   light too: the accumulation's sharpening build leaves the output to RCAS, which reads this frame's upscaled colour.
   0 dispatches neither (the frame as without it). MetalFX's output goes through the same RCAS, ported to MSL
   (`xgpu_metal_temporal.m`), in place of its copy into the back buffer; 0 is the plain copy. DLSS ignores it.
-- **Phones (#1228).** `display.temporal_aa` `"fsr"` on Android or `"metalfx"` on iOS (off by default; the
-  Upscaler row on both). With it the host draws the screen's pixels (the swapchain or drawable at full size) and gives the game the
+- **Phones (#1228).** `display.temporal_aa` `"fsr"` on Android or `"metalfx"` on iOS (FSR off by default, MetalFX on where the GPU has
+  its temporal scaler; the Upscaler row on both). With it the host draws the screen's pixels (the swapchain or drawable at full size) and gives the game the
   render scale (`HALO_UPSCALE_RENDER_SCALE`): the 3D view is drawn at it and upscaled, with the LOD bias, as on a
   computer. Otherwise the host draws the render scale and the system stretches it, as before. The host chooses at
   the start; a change in the game takes full effect at the next one. An iPhone whose GPU has MetalFX's spatial

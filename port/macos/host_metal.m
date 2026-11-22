@@ -2676,6 +2676,20 @@ void host_metal_vsync(int on)
 #endif
 }
 
+/* (port/macos/xgpu_metal_temporal.m) 1 MetalFX's temporal scaler, 2 its
+spatial one alone, 0 neither */
+int xgpu_metal_metalfx_supported(void);
+
+/* (a host import: the guest's port_config.c, display.temporal_aa's and
+display.render_scale's defaults) whether the GPU has MetalFX's temporal
+scaler (Apple silicon, an iPhone or iPad of an A14 or later): "metalfx" is
+the default there; elsewhere (an Intel Mac's GPU without it, an older
+device, or one with the spatial scaler alone) "off", the picture as before */
+int host_metal_metalfx_temporal(void)
+{
+	return xgpu_metal_metalfx_supported() == 1;
+}
+
 /* (a host import: the guest's port_config.c, display.vsync's default)
 whether the main display's refresh is variable (ProMotion, an adaptive
 sync display: its least refresh interval under its most): display.vsync

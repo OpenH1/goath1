@@ -192,13 +192,17 @@ display), whose rate then follows the frames (config_default_of) */
 #define VSYNC_DEFAULT "true"
 #endif
 /* display.render_scale's: the device's on the phones and tablets
-(port/android/host/host_main.c, port/ios/host_app.m), all the display's
-pixels on a computer */
-#if defined(HALO_ANDROID) || defined(HALO_IOS)
+(port/android/host/host_main.c, port/ios/host_app.m) and the Mac's (lower
+while MetalFX upscales: d3d8_device.c's render_scale_configured), all the
+display's pixels on another computer */
+#if defined(HALO_ANDROID) || defined(HALO_MACOS)
 #define RENDER_SCALE_DEFAULT "0.0"
 #else
 #define RENDER_SCALE_DEFAULT "1.0"
 #endif
+/* display.temporal_aa's: off; "metalfx" on a Mac or an iPhone or iPad
+whose GPU has MetalFX's temporal scaler (config_default_of) */
+#define TEMPORAL_AA_DEFAULT "\"off\""
 /* (in the comment of each setting it chooses) */
 #define GRAPHICS_CHOOSES "\nCommented out, display.graphics chooses it."
 /* in input.mouse_sensitivity's comment: a file with it has the mouse's
@@ -233,14 +237,17 @@ static const struct config_setting config_settings[] =
 		"up." },
 	{ "display.render_scale", _config_real, RENDER_SCALE_DEFAULT, "HALO_RENDER_SCALE", _environment_value,
 		_platform_all,
-		"The fraction of the screen's pixels the game draws, each way (0.25 to\n"
-		"1.0), which the display scales up: 0.67 draws less than half the\n"
-		"pixels, for a cooler phone and a steadier frame rate. 0: the device's:\n"
-		"0.67 on an iPhone of 3x pixels, 0.8 on another iPhone, 1.0 on an iPad;\n"
-		"on Android 0.8, or about 1080 rows where 0.8 would draw more. Read at\n"
-		"start on a phone or tablet. On a computer 1.0 (or 0) draws all the\n"
-		"display's pixels, and the HUD is drawn at the scale too; Vulkan scales\n"
-		"up sharply (whole multiples of the pixels, then smoothed), and it\n"
+		"The fraction of the screen's pixels the game's 3D view draws, each way\n"
+		"(0.25 to 1.0), which is scaled up to the display: 0.67 draws less than\n"
+		"half the pixels, for a steadier frame rate and a cooler phone. 0: the\n"
+		"device's. While Apple MetalFX upscales (display.temporal_aa \"metalfx\"):\n"
+		"0.67 on a Mac, 0.5 on an iPhone of 3x pixels, 0.67 on another iPhone or\n"
+		"an iPad. Without it: 1.0 on a Mac, 0.67 on an iPhone of 3x pixels, 0.8\n"
+		"on another iPhone, 1.0 on an iPad; on Android 0.8, or about 1080 rows\n"
+		"where 0.8 would draw more. Read at start on a phone or tablet. On a\n"
+		"computer 1.0 (or 0, but a Mac's) draws all the display's pixels; the\n"
+		"HUD and menus are drawn at the display's always. Vulkan scales up\n"
+		"sharply (whole multiples of the pixels, then smoothed), and it\n"
 		"multiplies display.supersampling." },
 	{ "display.dynamic_resolution", _config_boolean, "false", "HALO_DYNAMIC_RESOLUTION", _environment_value,
 		_platform_desktop,
@@ -325,7 +332,7 @@ static const struct config_setting config_settings[] =
 		"or \"smaa\" smooth the 3D view once it is drawn (the HUD and menus stay\n"
 		"sharp); \"msaa2x\", \"msaa4x\" or \"msaa8x\" draw with that many samples\n"
 		"a pixel. Each combines with display.supersampling." GRAPHICS_CHOOSES },
-	{ "display.temporal_aa", _config_string, "\"off\"", "HALO_TEMPORAL_AA", _environment_value, _platform_all,
+	{ "display.temporal_aa", _config_string, TEMPORAL_AA_DEFAULT, "HALO_TEMPORAL_AA", _environment_value, _platform_all,
 		"A temporal technique over the 3D view, at any render scale (the native\n"
 		"one too): \"off\"; \"fsr\", AMD FSR 3.1's upscaler (Vulkan: Linux,\n"
 		"Windows, Android), which takes display.anti_aliasing's place and draws\n"
@@ -333,7 +340,8 @@ static const struct config_setting config_settings[] =
 		"render scale 1), the same way, on Vulkan with an NVIDIA GPU where the\n"
 		"game has its DLSS module (else off); \"metalfx\", Apple MetalFX's\n"
 		"temporal scaler, the same way, on Metal (macOS, iOS; else off). Not in\n"
-		"VR (docs/temporal-aa.md)." },
+		"VR (docs/temporal-aa.md). Commented out: \"metalfx\" where the GPU has\n"
+		"MetalFX's temporal scaler (Apple silicon, an A14 or later), else \"off\"." },
 	{ "display.temporal_aa_sharpness", _config_real, "0.8", "HALO_TEMPORAL_AA_SHARPNESS", _environment_value,
 		_platform_all,
 		"How much display.temporal_aa \"fsr\" or \"metalfx\" sharpens its\n"
@@ -3789,6 +3797,10 @@ others. Set in the file, the player's value wins. */
 variable: ProMotion, an adaptive sync display */
 int host_metal_display_adaptive(void);
 #endif
+#ifdef HALO_MACOS
+/* (port/macos/host_metal.m) whether the GPU has MetalFX's temporal scaler */
+int host_metal_metalfx_temporal(void);
+#endif
 
 static const char *config_default_of(const struct config_setting *setting)
 {
@@ -3802,6 +3814,14 @@ static const char *config_default_of(const struct config_setting *setting)
 #if defined(HALO_MACOS) && !defined(HALO_IOS)
 	if (!strcmp(setting->name, "display.vsync") && host_metal_display_adaptive())
 		return "true";
+#endif
+	/* (Apple MetalFX's temporal scaler where the GPU has it: the 3D view
+	drawn at a lower render scale and rebuilt at the display's pixels, the
+	HUD and menus drawn there; an Intel Mac's GPU without it, an older
+	iPhone's, or the spatial scaler alone: off, the picture as before) */
+#ifdef HALO_MACOS
+	if (!strcmp(setting->name, "display.temporal_aa") && host_metal_metalfx_temporal())
+		return "\"metalfx\"";
 #endif
 	return setting->default_value;
 }
@@ -3959,14 +3979,14 @@ static char *config_migrate(const char *text, toml_datum_t table)
 			strncmp(datum.u.s, old + 1, length - 2))
 			continue;
 		snprintf(section, sizeof(section), "%.*s", (int)(dot - name), name);
-		snprintf(line_text, sizeof(line_text), "# %s = %s\n", dot + 1, config_settings[setting].default_value);
+		snprintf(line_text, sizeof(line_text), "# %s = %s\n", dot + 1, config_default_of(&config_settings[setting]));
 		updated = config_set_line(result, section, dot + 1, line_text);
 		if (!updated)
 			continue;
 		free(result);
 		result = updated;
 		platform_log("settings: %s = %s was an older version's default: now this version's, %s", name, old,
-			config_settings[setting].default_value);
+			config_default_of(&config_settings[setting]));
 	}
 	return result;
 }
@@ -6191,9 +6211,10 @@ int config_reload(const char *prefix)
 		memset(&value, 0, sizeof(value));
 		if (setting->type == _config_string)
 		{
-			size_t default_length = strlen(setting->default_value);
+			const char *default_value = config_default_of(setting);
+			size_t default_length = strlen(default_value);
 
-			value.string = default_length >= 2 ? config_copy(setting->default_value + 1, default_length - 2) : strdup("");
+			value.string = default_length >= 2 ? config_copy(default_value + 1, default_length - 2) : strdup("");
 		}
 		else
 		{
