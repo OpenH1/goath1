@@ -392,6 +392,7 @@ void scenario_unload(
 	global_structure_bsp = NULL;
 	global_collision_bsp = NULL;
 	global_bsp3d = NULL;
+	bsp3d_point_table_build(NULL);
 	global_game_globals = NULL;
 
 	return;
@@ -1106,6 +1107,8 @@ boolean scenario_switch_structure_bsp(
 		main_stop_time();
 		collision_log_enable(FALSE);
 
+		/* port: the old bsp's point walk's table let go of (bsp3d.c) */
+		bsp3d_point_table_build(NULL);
 		if (global_structure_bsp_index != NONE)
 		{
 			scenario_call_disconnect_from_structure_bsp_procs();
@@ -1189,6 +1192,8 @@ boolean scenario_switch_structure_bsp(
 				&global_structure_bsp->collision_bsp,
 				0,
 				struct collision_bsp);
+			/* port: its point walk's table (bsp3d.c) */
+			bsp3d_point_table_build(global_bsp3d);
 			scenario_globals->structure_bsp_index = structure_bsp_index;
 			global_structure_bsp_index = structure_bsp_index;
 			/* port: the mods' lightmaps for it taken or left out by its

@@ -78,7 +78,9 @@ objects' shadows, lens flares, decals, the grass and other detail objects,
 the weather or the particles too small to see in it, and its models' levels
 of detail chosen for its own pixels, coarser than the screen's
 (halo_model_detail_scale). So the frame pays for a small view in some
-frames, however many feeds there are; with the link hidden, nothing.
+frames, however many feeds there are; with the link hidden, nothing. A draw
+due in a frame that runs a tick's macro step (the world's update, the
+slowest frames) waits for the next frame, once (spartan_link_frame_judge).
 
 Only what this machine draws: nothing is sent, the game state is not
 touched (no seed is taken, no effect, sound or HUD message made: the
@@ -273,6 +275,25 @@ struct spartan_link_feed
 	/* their aim as the game has it, this frame (spartan_link_feed_aim_update) */
 	boolean aim_shown, aim_enemy;
 	real_point3d aim_target;
+	/* their look as the feed has it (spartan_link_feed_look): the unit it
+	is of, from what to what it glides (forward, up), since when (system
+	milliseconds) and over how long, and when it last cut (a jump, or a new
+	unit) */
+	boolean look_valid;
+	long look_unit;
+	real_vector3d look_from_forward, look_from_up, look_to_forward, look_to_up;
+	unsigned long look_at, look_period, look_cut_at;
+	/* the camera its image was drawn from (spartan_link_feed_warp): whose,
+	through their eyes or not, where, its axes, its vertical angle's
+	tangent and its size, and when */
+	boolean image_valid;
+	boolean image_through_eyes;
+	long image_unit;
+	real_point3d image_position;
+	real_vector3d image_forward, image_up;
+	real image_tangent;
+	unsigned long image_width, image_height;
+	unsigned long image_at;
 };
 
 struct spartan_link_window
@@ -324,6 +345,17 @@ static struct
 	one drawn last, which the next follows round */
 	short due_local_player, due_feed;
 	short last_local_player, last_feed;
+	/* a feed's draw kept off a frame that runs a tick's macro step (the
+	world's whole update, the frame's slowest work) to the next frame
+	(spartan_link_frame_judge): the macro steps run as this frame began
+	(game_macro_steps_run), this frame judged, whether a draw due in it
+	waits, whether the last drawn frame ran a macro step, and whether a
+	draw waited in this frame and in the last drawn one (never twice) */
+	unsigned long frame_macro_steps;
+	boolean frame_judged;
+	boolean frame_defers;
+	boolean last_frame_ticked;
+	boolean deferred, last_deferred;
 	/* the feed being drawn: whose eyes hide whose body, and whose weapon is
 	posed (render_objects.c, first_person_weapons.c) */
 	boolean drawing;
@@ -883,19 +915,109 @@ static real spartan_link_field_of_view(
 	return field_of_view;
 }
 
+/* a feed's look glides over the time between its aim's changes, at most
+this long (milliseconds) and at least the shorter; a change of more than
+the angle (its cosine) is a cut, taken at once */
+#define SPARTAN_LINK_LOOK_LONGEST 40
+#define SPARTAN_LINK_LOOK_SHORTEST 4
+#define SPARTAN_LINK_LOOK_CUT_COSINE 0.7071f
+
+/* (the look between its two ends, t of the way, its up square to it) */
+static void spartan_link_look_between(
+	struct spartan_link_feed const *feed,
+	real t,
+	real_vector3d *forward,
+	real_vector3d *up)
+{
+	real along;
+
+	forward->i = feed->look_from_forward.i + (feed->look_to_forward.i - feed->look_from_forward.i) * t;
+	forward->j = feed->look_from_forward.j + (feed->look_to_forward.j - feed->look_from_forward.j) * t;
+	forward->k = feed->look_from_forward.k + (feed->look_to_forward.k - feed->look_from_forward.k) * t;
+	up->i = feed->look_from_up.i + (feed->look_to_up.i - feed->look_from_up.i) * t;
+	up->j = feed->look_from_up.j + (feed->look_to_up.j - feed->look_from_up.j) * t;
+	up->k = feed->look_from_up.k + (feed->look_to_up.k - feed->look_from_up.k) * t;
+	if (normalize3d(forward) == 0.0f)
+		*forward = feed->look_to_forward;
+	along = up->i * forward->i + up->j * forward->j + up->k * forward->k;
+	up->i -= forward->i * along;
+	up->j -= forward->j * along;
+	up->k -= forward->k * along;
+	if (normalize3d(up) == 0.0f)
+		*up = feed->look_to_up;
+}
+
+/* The feed's look (forward, up), smoothed: a teammate's aim reaches this
+machine once a tick (or a sub-step), so a look taken as it is steps at that
+rate, which the display's rate shows as judder (the feed's image is warped
+to the look of each frame: spartan_link_feed_warp). It glides from where it
+was shown to each new aim over the time the last change took (as the
+bodies are drawn between the ticks, a step behind), and cuts at once to a
+new unit or a large turn. Only this machine's drawing */
+static void spartan_link_feed_look(
+	struct spartan_link_feed *feed,
+	real_vector3d *forward,
+	real_vector3d *up)
+{
+	unsigned long now = system_milliseconds();
+	real t;
+
+	if (!feed->look_valid || feed->look_unit != feed->unit_index)
+	{
+		feed->look_valid = TRUE;
+		feed->look_unit = feed->unit_index;
+		feed->look_from_forward = feed->look_to_forward = *forward;
+		feed->look_from_up = feed->look_to_up = *up;
+		feed->look_at = feed->look_cut_at = now;
+		feed->look_period = SPARTAN_LINK_LOOK_LONGEST;
+		return;
+	}
+	if (forward->i != feed->look_to_forward.i || forward->j != feed->look_to_forward.j ||
+		forward->k != feed->look_to_forward.k || up->i != feed->look_to_up.i || up->j != feed->look_to_up.j ||
+		up->k != feed->look_to_up.k)
+	{
+		unsigned long since = now - feed->look_at;
+		real_vector3d shown_forward, shown_up;
+
+		t = feed->look_period ? (real)since / (real)feed->look_period : 1.0f;
+		spartan_link_look_between(feed, PIN(t, 0.0f, 1.0f), &shown_forward, &shown_up);
+		if (shown_forward.i * forward->i + shown_forward.j * forward->j + shown_forward.k * forward->k <
+			SPARTAN_LINK_LOOK_CUT_COSINE)
+		{
+			feed->look_from_forward = *forward;
+			feed->look_from_up = *up;
+			feed->look_cut_at = now;
+		}
+		else
+		{
+			feed->look_from_forward = shown_forward;
+			feed->look_from_up = shown_up;
+		}
+		feed->look_to_forward = *forward;
+		feed->look_to_up = *up;
+		feed->look_period = PIN(since, SPARTAN_LINK_LOOK_SHORTEST, SPARTAN_LINK_LOOK_LONGEST);
+		feed->look_at = now;
+	}
+	t = feed->look_period ? (real)(now - feed->look_at) / (real)feed->look_period : 1.0f;
+	spartan_link_look_between(feed, PIN(t, 0.0f, 1.0f), forward, up);
+}
+
 /* a feed's camera: the teammate's eye as their body is drawn, along their
-aim; or in a seat whose camera follows the vehicle, from behind. TRUE
-through their eyes, where their aim is the view's middle */
+aim (its look, smoothed: spartan_link_feed_look); or in a seat whose camera
+follows the vehicle, from behind. TRUE through their eyes, where their aim
+is the view's middle */
 static boolean spartan_link_feed_view(
-	long unit_index,
+	struct spartan_link_feed *feed,
 	struct render_camera *camera)
 {
+	long unit_index = feed->unit_index;
 	struct camera_command command;
 	director_perspective perspective;
 	real_point3d eye;
 	boolean through_eyes;
 
 	first_person_camera_fake(unit_index, &command);
+	spartan_link_feed_look(feed, &command.forward, &command.up);
 	render_interpolation_unit_camera_position(unit_index, &eye);
 	through_eyes = !director_desired_perspective(unit_index, &perspective);
 	camera->forward = command.forward;
@@ -1153,7 +1275,7 @@ FALSE for none (no aim to show, or off the feed's picture). Through their
 eyes it is the feed's middle (the feed looks along the aim); from behind
 them, the point the aim stops at, seen through the feed's camera */
 static boolean spartan_link_feed_aim_place(
-	struct spartan_link_feed const *feed,
+	struct spartan_link_feed *feed,
 	real_rectangle2d const *bounds,
 	real margin,
 	real_point2d *place)
@@ -1162,7 +1284,7 @@ static boolean spartan_link_feed_aim_place(
 
 	if (!feed->aim_shown || feed->down_at || !object_try_and_get_and_verify_type(feed->unit_index, _object_mask_unit))
 		return FALSE;
-	if (spartan_link_feed_view(feed->unit_index, &camera))
+	if (spartan_link_feed_view(feed, &camera))
 	{
 		place->x = (bounds->x0 + bounds->x1) * 0.5f;
 		place->y = (bounds->y0 + bounds->y1) * 0.5f;
@@ -1191,6 +1313,41 @@ static struct bitmap_data *spartan_link_white(
 top left), of the white texture or (u, v from 0 to 1 over bounds) the
 feed's image; its corners on the display's pixels' edges (snap), or where
 they fall (a reticle's curves) */
+/* a quad at x, y (snapped to the display's pixels or not), its texture
+coordinates u, v */
+static void spartan_link_quad_mapped(
+	struct bitmap_data *white,
+	real const x[4],
+	real const y[4],
+	real const u[4],
+	real const v[4],
+	pixel32 color,
+	boolean snap)
+{
+	struct rasterizer_dynamic_screen_geometry_parameters parameters;
+	struct dynamic_screen_vertex vertices[4];
+	real pixels = halo_screen_pixel_scale() > 0.0f ? halo_screen_pixel_scale() : 1.0f;
+	short index;
+
+	for (index = 0; index < 4; index++)
+	{
+		/* (on the display's pixels' edges: where the screen's unit 0 falls
+		is the Xbox's pixels' centres, menu_shapes.c) */
+		vertices[index].position.x = (snap ? floorf(x[index] * pixels + 0.5f) / pixels : x[index]) + 0.5f;
+		vertices[index].position.y = (snap ? floorf(y[index] * pixels + 0.5f) / pixels : y[index]) + 0.5f;
+		vertices[index].texture_coordinates.x = u[index];
+		vertices[index].texture_coordinates.y = v[index];
+		vertices[index].color = color;
+	}
+	csmemset(&parameters, 0, sizeof(parameters));
+	parameters.map[0] = white;
+	parameters.map_texture_scale[0].i = parameters.map_texture_scale[0].j = 1.0f;
+	parameters.map_scale[0].i = parameters.map_scale[0].j = 1.0f;
+	rasterizer_globals.current_lock_operation = _rasterizer_lock_cinematics;
+	rasterizer_psuedo_dynamic_screen_quad_draw(&parameters, vertices);
+	rasterizer_globals.current_lock_operation = _rasterizer_lock_none;
+}
+
 static void spartan_link_quad_snapped(
 	struct bitmap_data *white,
 	real const x[4],
@@ -1337,6 +1494,156 @@ static pixel32 spartan_link_tracker_color(
 	return color;
 }
 
+/* The feed's image warped to the teammate's look of this frame: it is drawn
+SPARTAN_LINK_FEED_RATE times a second, which a display of 120 Hz or more
+shows as a picture that turns in steps. Each frame shows it turned by the
+camera's turn since it was drawn (the feed's look, smoothed:
+spartan_link_feed_look): a point of the feed's picture, a direction from
+the camera now, is where that direction fell in the image, on a grid of
+SPARTAN_LINK_WARP_CELLS a side (a turn of a few degrees bends the picture
+less than a grid cell's straight edges show). Only the turn: the camera's
+move since (a tick's walk) is not, which needs the image's depth. What the
+image has none of (the edge turned into view) stretches its edge. None
+(the image as drawn) where the camera cut since: another unit (a respawn),
+a change through their eyes or from behind, a jump of the camera's place
+(a teleport) or of its look, a zoom, or an image a while old */
+#define SPARTAN_LINK_WARP_CELLS 4
+#define SPARTAN_LINK_WARP_JUMP 3.0f
+#define SPARTAN_LINK_WARP_TURN_COSINE 0.866f
+#define SPARTAN_LINK_WARP_OLDEST 250
+
+static boolean spartan_link_feed_warp(
+	struct spartan_link_feed *feed,
+	real_rectangle2d const *bounds,
+	real u[SPARTAN_LINK_WARP_CELLS + 1][SPARTAN_LINK_WARP_CELLS + 1],
+	real v[SPARTAN_LINK_WARP_CELLS + 1][SPARTAN_LINK_WARP_CELLS + 1])
+{
+	struct render_camera camera;
+	real_vector3d right, image_right;
+	real width = bounds->x1 - bounds->x0;
+	real height = bounds->y1 - bounds->y0;
+	real tangent_y, tangent_x, image_tangent_x;
+	real_vector3d moved;
+	short row, column;
+	boolean turned = FALSE;
+
+	if (!feed->image_valid || feed->down_at || feed->image_unit != feed->unit_index ||
+		!object_try_and_get_and_verify_type(feed->unit_index, _object_mask_unit) ||
+		!(width > 0.0f) || !(height > 0.0f) || !feed->image_height || !(feed->image_tangent > 0.0f) ||
+		system_milliseconds() - feed->image_at > SPARTAN_LINK_WARP_OLDEST ||
+		(long)(feed->look_cut_at - feed->image_at) > 0)
+	{
+		return FALSE;
+	}
+	if (spartan_link_feed_view(feed, &camera) != feed->image_through_eyes)
+		return FALSE;
+	tangent_y = (real)tan(camera.vertical_field_of_view * 0.5f);
+	if (!(fabsf(tangent_y - feed->image_tangent) <= feed->image_tangent * 0.02f))
+		return FALSE;
+	moved.i = camera.position.x - feed->image_position.x;
+	moved.j = camera.position.y - feed->image_position.y;
+	moved.k = camera.position.z - feed->image_position.z;
+	if (!(moved.i * moved.i + moved.j * moved.j + moved.k * moved.k <= SPARTAN_LINK_WARP_JUMP * SPARTAN_LINK_WARP_JUMP))
+		return FALSE;
+	if (!(camera.forward.i * feed->image_forward.i + camera.forward.j * feed->image_forward.j +
+		camera.forward.k * feed->image_forward.k >= SPARTAN_LINK_WARP_TURN_COSINE))
+	{
+		return FALSE;
+	}
+	if (camera.forward.i == feed->image_forward.i && camera.forward.j == feed->image_forward.j &&
+		camera.forward.k == feed->image_forward.k && camera.up.i == feed->image_up.i &&
+		camera.up.j == feed->image_up.j && camera.up.k == feed->image_up.k)
+	{
+		return FALSE;
+	}
+	tangent_x = tangent_y * width / height;
+	image_tangent_x = feed->image_tangent * (real)feed->image_width / (real)feed->image_height;
+	/* (each camera's right: forward across up, as spartan_link_aim_place's) */
+	right.i = camera.forward.j * camera.up.k - camera.forward.k * camera.up.j;
+	right.j = camera.forward.k * camera.up.i - camera.forward.i * camera.up.k;
+	right.k = camera.forward.i * camera.up.j - camera.forward.j * camera.up.i;
+	image_right.i = feed->image_forward.j * feed->image_up.k - feed->image_forward.k * feed->image_up.j;
+	image_right.j = feed->image_forward.k * feed->image_up.i - feed->image_forward.i * feed->image_up.k;
+	image_right.k = feed->image_forward.i * feed->image_up.j - feed->image_forward.j * feed->image_up.i;
+	for (row = 0; row <= SPARTAN_LINK_WARP_CELLS; row++)
+	{
+		real screen_y = 1.0f - 2.0f * (real)row / SPARTAN_LINK_WARP_CELLS;
+
+		for (column = 0; column <= SPARTAN_LINK_WARP_CELLS; column++)
+		{
+			real screen_x = 2.0f * (real)column / SPARTAN_LINK_WARP_CELLS - 1.0f;
+			real_vector3d direction;
+			real depth, image_x, image_y;
+
+			direction.i = camera.forward.i + right.i * screen_x * tangent_x + camera.up.i * screen_y * tangent_y;
+			direction.j = camera.forward.j + right.j * screen_x * tangent_x + camera.up.j * screen_y * tangent_y;
+			direction.k = camera.forward.k + right.k * screen_x * tangent_x + camera.up.k * screen_y * tangent_y;
+			depth = direction.i * feed->image_forward.i + direction.j * feed->image_forward.j +
+				direction.k * feed->image_forward.k;
+			if (!(depth > 0.01f))
+				return FALSE;
+			image_x = (direction.i * image_right.i + direction.j * image_right.j + direction.k * image_right.k) /
+				depth / image_tangent_x;
+			image_y = (direction.i * feed->image_up.i + direction.j * feed->image_up.j +
+				direction.k * feed->image_up.k) / depth / feed->image_tangent;
+			u[row][column] = PIN((image_x + 1.0f) * 0.5f, 0.0f, 1.0f);
+			v[row][column] = PIN((1.0f - image_y) * 0.5f, 0.0f, 1.0f);
+			if (fabsf(u[row][column] - (real)column / SPARTAN_LINK_WARP_CELLS) > 0.0005f ||
+				fabsf(v[row][column] - (real)row / SPARTAN_LINK_WARP_CELLS) > 0.0005f)
+			{
+				turned = TRUE;
+			}
+		}
+	}
+	return turned;
+}
+
+/* the feed's image over bounds, warped to this frame's look where it can
+be (spartan_link_feed_warp), else as it was drawn */
+static void spartan_link_feed_image_draw(
+	struct bitmap_data *white,
+	struct spartan_link_feed *feed,
+	real x[4],
+	real y[4],
+	real_rectangle2d const *bounds,
+	pixel32 color)
+{
+	real u[SPARTAN_LINK_WARP_CELLS + 1][SPARTAN_LINK_WARP_CELLS + 1];
+	real v[SPARTAN_LINK_WARP_CELLS + 1][SPARTAN_LINK_WARP_CELLS + 1];
+	real pixels = halo_screen_pixel_scale() > 0.0f ? halo_screen_pixel_scale() : 1.0f;
+	real x0, y0, x1, y1;
+	short row, column;
+
+	if (!spartan_link_feed_warp(feed, bounds, u, v))
+	{
+		spartan_link_quad(white, x, y, color, bounds);
+		return;
+	}
+	/* (the grid between the bounds' edges on the display's pixels, as the
+	quad's corners are put) */
+	x0 = floorf(bounds->x0 * pixels + 0.5f) / pixels;
+	y0 = floorf(bounds->y0 * pixels + 0.5f) / pixels;
+	x1 = floorf(bounds->x1 * pixels + 0.5f) / pixels;
+	y1 = floorf(bounds->y1 * pixels + 0.5f) / pixels;
+	for (row = 0; row < SPARTAN_LINK_WARP_CELLS; row++)
+	{
+		for (column = 0; column < SPARTAN_LINK_WARP_CELLS; column++)
+		{
+			real cell_x[4], cell_y[4], cell_u[4], cell_v[4];
+			real left = x0 + (x1 - x0) * (real)column / SPARTAN_LINK_WARP_CELLS;
+			real right = x0 + (x1 - x0) * (real)(column + 1) / SPARTAN_LINK_WARP_CELLS;
+			real top = y0 + (y1 - y0) * (real)row / SPARTAN_LINK_WARP_CELLS;
+			real bottom = y0 + (y1 - y0) * (real)(row + 1) / SPARTAN_LINK_WARP_CELLS;
+
+			cell_x[0] = left; cell_y[0] = top; cell_u[0] = u[row][column]; cell_v[0] = v[row][column];
+			cell_x[1] = right; cell_y[1] = top; cell_u[1] = u[row][column + 1]; cell_v[1] = v[row][column + 1];
+			cell_x[2] = right; cell_y[2] = bottom; cell_u[2] = u[row + 1][column + 1]; cell_v[2] = v[row + 1][column + 1];
+			cell_x[3] = left; cell_y[3] = bottom; cell_u[3] = u[row + 1][column]; cell_v[3] = v[row + 1][column];
+			spartan_link_quad_mapped(white, cell_x, cell_y, cell_u, cell_v, color, FALSE);
+		}
+	}
+}
+
 /* the frame about a feed: its image in its own colors (or, never drawn,
 dark glass), and an upright edge in the motion tracker's color, line and translucency
 (spartan_link_tracker_color), with a soft glow about it as the tracker's
@@ -1348,7 +1655,7 @@ static void spartan_link_draw_feed(
 	real_rectangle2d const *bounds,
 	real scale)
 {
-	struct spartan_link_feed const *feed = &spartan_link.windows[local_player_index].feeds[index];
+	struct spartan_link_feed *feed = &spartan_link.windows[local_player_index].feeds[index];
 	int view = SPARTAN_LINK_VIEW(local_player_index, index);
 	real pixel = 1.0f / (halo_screen_pixel_scale() > 0.0f ? halo_screen_pixel_scale() : 1.0f);
 	real edge = MAX(pixel, 0.6f * scale);
@@ -1389,7 +1696,7 @@ static void spartan_link_draw_feed(
 	if (spartan_link_feed_image(local_player_index, index))
 	{
 		halo_view_sample(view);
-		spartan_link_quad(white, x, y, feed->down_at ? 0xFF585858UL : 0xFFFFFFFFUL, bounds);
+		spartan_link_feed_image_draw(white, feed, x, y, bounds, feed->down_at ? 0xFF585858UL : 0xFFFFFFFFUL);
 		halo_view_sample(0);
 	}
 	else
@@ -1888,7 +2195,7 @@ behind-a-wall look from their eye), sized to the feed, over its object as
 it moves; none where it is off the feed's picture */
 static void spartan_link_draw_ping(
 	short local_player_index,
-	struct spartan_link_feed const *feed,
+	struct spartan_link_feed *feed,
 	real_rectangle2d const *bounds)
 {
 	struct network_marker_shown ping;
@@ -1902,7 +2209,7 @@ static void spartan_link_draw_ping(
 	{
 		return;
 	}
-	spartan_link_feed_view(feed->unit_index, &camera);
+	spartan_link_feed_view(feed, &camera);
 	render_interpolation_unit_camera_position(feed->unit_index, &eye);
 	/* (as the world's arrow is sized: its least past 15 units, larger
 	nearer, hud_nav_points.c's) */
@@ -1937,6 +2244,10 @@ void spartan_link_update(
 	boolean key;
 	short port;
 
+	/* (the frame's macro steps are the ones run from here, before its
+	clock's update, to its drawing: spartan_link_frame_judge) */
+	spartan_link.frame_macro_steps = game_macro_steps_run();
+	spartan_link.frame_judged = FALSE;
 	spartan_link_read();
 	/* (a new game: every link closed, as each game starts) */
 	if (!spartan_link_playing() || game_time_get() < spartan_link.last_game_time)
@@ -2086,6 +2397,29 @@ unsigned char spartan_link_pad_open(
 /* the feeds drawn (spartan_link_feeds_drawn) */
 static unsigned long spartan_link_feeds_count;
 
+/* once a drawn frame, as its first window draws: whether a feed's draw due
+in it waits for the next frame. A frame that runs a tick's macro step is the
+slowest (the world's whole update), and a feed's draw there is a second view
+on top: it waits a frame, so the frames after the ticks, with no macro step,
+take it. Never two frames running (its image is at most a frame later than
+it was due, and its next due time is counted from this one's: the rate
+holds), and not where the last drawn frame ran a macro step too: a frame
+rate so low that every frame has one draws as it was due */
+static void spartan_link_frame_judge(
+	void)
+{
+	boolean ticked;
+
+	if (spartan_link.frame_judged)
+		return;
+	spartan_link.frame_judged = TRUE;
+	ticked = game_macro_steps_run() != spartan_link.frame_macro_steps;
+	spartan_link.last_deferred = spartan_link.deferred;
+	spartan_link.deferred = FALSE;
+	spartan_link.frame_defers = ticked && !spartan_link.last_frame_ticked && !spartan_link.last_deferred;
+	spartan_link.last_frame_ticked = ticked;
+}
+
 boolean spartan_link_feed_begin(
 	short local_player_index,
 	struct render_camera *camera)
@@ -2099,6 +2433,7 @@ boolean spartan_link_feed_begin(
 	unsigned long width, height;
 	int view;
 
+	spartan_link_frame_judge();
 	if (local_player_index != spartan_link.due_local_player || spartan_link.due_feed == NONE ||
 		!spartan_link_shown(local_player_index))
 	{
@@ -2114,13 +2449,22 @@ boolean spartan_link_feed_begin(
 	teammate = player_try_and_get(feed->player_index);
 	if (!teammate || feed->down_at || !object_try_and_get_and_verify_type(feed->unit_index, _object_mask_unit))
 		return FALSE;
+	/* (one that has its image waits off a macro step's frame; one with none
+	yet is drawn at once: spartan_link_frame_judge) */
+	if (spartan_link.frame_defers && spartan_link_feed_image(local_player_index, spartan_link.due_feed))
+	{
+		spartan_link.deferred = TRUE;
+		spartan_link.due_local_player = NONE;
+		spartan_link.due_feed = NONE;
+		return FALSE;
+	}
 	/* (the next frame's is another's) */
 	spartan_link.last_local_player = spartan_link.due_local_player;
 	spartan_link.last_feed = spartan_link.due_feed;
 	spartan_link.due_local_player = NONE;
 	spartan_link.due_feed = NONE;
 
-	through_eyes = spartan_link_feed_view(feed->unit_index, camera);
+	through_eyes = spartan_link_feed_view(feed, camera);
 	camera->mirrored = FALSE;
 	camera->z_near = rasterizer_globals.near_clip_distance;
 	camera->z_far = render_far_clip_distance(local_player_index);
@@ -2136,6 +2480,18 @@ boolean spartan_link_feed_begin(
 	camera->window_bounds = camera->viewport_bounds;
 	feed->width = width;
 	feed->height = height;
+	/* (the camera its image is of, which the frames until the next warp it
+	from: spartan_link_feed_warp) */
+	feed->image_valid = TRUE;
+	feed->image_through_eyes = through_eyes;
+	feed->image_unit = feed->unit_index;
+	feed->image_position = camera->position;
+	feed->image_forward = camera->forward;
+	feed->image_up = camera->up;
+	feed->image_tangent = (real)tan(camera->vertical_field_of_view * 0.5f);
+	feed->image_width = width;
+	feed->image_height = height;
+	feed->image_at = system_milliseconds();
 	/* (its next draw a period on from this one's due time, so that the rate
 	holds at any frame rate; from now where it had no image or fell a
 	period behind) */
