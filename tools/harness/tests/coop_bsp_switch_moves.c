@@ -158,6 +158,15 @@ static boolean player_teleport_internal(long player_index, long source_unit_inde
 
 static boolean player_place_beside_teammate(long player_index) { (void)player_index; return FALSE; }
 
+/* (no room for a vehicle here: a rider outside the new BSP is taken out and
+moved, as on foot) */
+static boolean players_coop_bring_vehicle(long unit_index, real_point3d const *destination)
+{
+	(void)unit_index;
+	(void)destination;
+	return FALSE;
+}
+
 static boolean players_coop_teleport_stacked(long player_index, long source_unit_index, real_point3d const *position)
 {
 	return player_teleport_internal(player_index, source_unit_index, position);
