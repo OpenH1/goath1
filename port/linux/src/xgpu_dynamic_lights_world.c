@@ -25,7 +25,12 @@ each node, the second (its plane) waiting on the first (the node).
   error of the GPU's test against it), in a box the world's points are in
   (WORLD_REACH); its box holds that polytope. A light whose sphere (a little
   larger, for the walk's point off the surface) meets no box of a cluster
-  whose mask lacks it cannot be taken from any pixel by its walk.
+  whose mask lacks it cannot be taken from any pixel by its walk. Each
+  cluster's boxes are kept in a tree of groups (at most six boxes to a
+  group at the bottom, halved along the longest side of their box above),
+  so that a light tests the boxes near it, not each of the cluster's: a
+  group whose box the light's does not meet holds no box it meets. The
+  light is walked for exactly as when each box was tested.
 
 What a pixel draws is what it drew with the game's BSP walked.
 */
@@ -541,6 +546,102 @@ static void bounds_make(struct xgpu_dynamic_lights_world *world)
 	world->bounded = 1;
 }
 
+/* ---------- the clusters' boxes' groups */
+
+/* (a group of more than this many boxes is halved) */
+#define GROUP_BOXES 6
+
+static void groups_free(struct xgpu_dynamic_lights_world *world)
+{
+	free(world->groups);
+	free(world->root);
+	world->groups = NULL;
+	world->root = NULL;
+	world->group_count = world->group_bytes = 0;
+}
+
+/* (boxes by their middles along an axis) */
+#define BOX_ORDER(axis) \
+	static int box_order_##axis(const void *a, const void *b) \
+	{ \
+		const struct xgpu_dynamic_lights_world_box *x = a, *y = b; \
+		float p = x->lower[axis] + x->upper[axis], q = y->lower[axis] + y->upper[axis]; \
+		\
+		return (p > q) - (p < q); \
+	}
+BOX_ORDER(0)
+BOX_ORDER(1)
+BOX_ORDER(2)
+
+/* the group of boxes[begin] to boxes[end - 1], and its groups after it
+(the boxes put in their order) */
+static uint32_t group_make(struct xgpu_dynamic_lights_world *world, uint32_t begin, uint32_t end)
+{
+	static int (*const order[3])(const void *, const void *) = { box_order_0, box_order_1, box_order_2 };
+	uint32_t made = world->group_count++, index;
+	struct xgpu_dynamic_lights_world_group *group = &world->groups[made];
+	int axis, longest = 0;
+
+	for (axis = 0; axis < 3; axis++)
+	{
+		group->lower[axis] = INFINITY;
+		group->upper[axis] = -INFINITY;
+	}
+	for (index = begin; index < end; index++)
+	{
+		const struct xgpu_dynamic_lights_world_box *box = &world->boxes[index];
+
+		for (axis = 0; axis < 3; axis++)
+		{
+			group->lower[axis] = fminf(group->lower[axis], box->lower[axis]);
+			group->upper[axis] = fmaxf(group->upper[axis], box->upper[axis]);
+		}
+	}
+	group->first = begin;
+	group->count = end - begin;
+	if (end - begin > GROUP_BOXES)
+	{
+		for (axis = 1; axis < 3; axis++)
+		{
+			if (group->upper[axis] - group->lower[axis] > group->upper[longest] - group->lower[longest])
+				longest = axis;
+		}
+		qsort(&world->boxes[begin], end - begin, sizeof(world->boxes[0]), order[longest]);
+		group->count = 0;
+		group_make(world, begin, begin + (end - begin) / 2);
+		group_make(world, begin + (end - begin) / 2, end);
+	}
+	group->past = world->group_count;
+	return made;
+}
+
+int xgpu_dynamic_lights_world_group(struct xgpu_dynamic_lights_world *world)
+{
+	uint32_t boxes, cluster;
+
+	groups_free(world);
+	if (!world->bounded)
+		return 0;
+	boxes = world->first[XGPU_DYNAMIC_LIGHTS_CLUSTERS];
+	/* (fewer groups than two for each box: each at the bottom has one or
+	more, each above two groups) */
+	world->groups = malloc(((size_t)boxes * 2 + 1) * sizeof(*world->groups));
+	world->root = malloc(XGPU_DYNAMIC_LIGHTS_CLUSTERS * sizeof(*world->root));
+	if (!world->groups || !world->root)
+	{
+		groups_free(world);
+		return 0;
+	}
+	for (cluster = 0; cluster < XGPU_DYNAMIC_LIGHTS_CLUSTERS; cluster++)
+	{
+		world->root[cluster] = world->first[cluster] < world->first[cluster + 1] ?
+			group_make(world, world->first[cluster], world->first[cluster + 1]) : XGPU_DYNAMIC_LIGHTS_WORLD_NONE;
+	}
+	world->group_bytes = (uint32_t)(world->group_count * sizeof(*world->groups) +
+		XGPU_DYNAMIC_LIGHTS_CLUSTERS * sizeof(*world->root));
+	return 1;
+}
+
 /* the deepest walk of the GPU's tree, in nodes (each node's children were
 made before it) */
 static uint32_t tree_depth(const uint32_t (*texels)[4], uint32_t nodes)
@@ -575,6 +676,7 @@ int xgpu_dynamic_lights_world_convert(struct xgpu_dynamic_lights_world *world, c
 	int cut = 0;
 
 	world->bounded = 0;
+	groups_free(world);
 	if (!world->texels)
 		world->texels = malloc(XGPU_DYNAMIC_LIGHTS_WORLD_TEXELS * sizeof(*world->texels));
 	if (!world->first)
@@ -658,12 +760,38 @@ int xgpu_dynamic_lights_world_convert(struct xgpu_dynamic_lights_world *world, c
 typedef char walk_texel[XGPU_DYNAMIC_LIGHTS_WORLD_WALK_TEXEL == XGPU_DYNAMIC_LIGHTS_GRID_X * XGPU_DYNAMIC_LIGHTS_GRID_Y *
 	XGPU_DYNAMIC_LIGHTS_GRID_Z + XGPU_DYNAMIC_LIGHTS_WALK ? 1 : -1];
 
-void xgpu_dynamic_lights_world_walked(const struct xgpu_dynamic_lights_world *world, const float (*block)[4],
-	uint32_t count, const void *cells, uint32_t walk[8])
+/* whether the light's sphere (at position, of radius, in the box from
+lower to upper) meets the leaf's box: unless their boxes do not meet, or
+it is wholly past one of the leaf's faces */
+static inline int leaf_meets(const struct xgpu_dynamic_lights_world *world,
+	const struct xgpu_dynamic_lights_world_box *box, const float *position, float radius, const float lower[3],
+	const float upper[3])
+{
+	uint32_t face;
+	int meets = 1;
+
+	if (box->lower[0] > upper[0] || box->upper[0] < lower[0] || box->lower[1] > upper[1] ||
+		box->upper[1] < lower[1] || box->lower[2] > upper[2] || box->upper[2] < lower[2])
+	{
+		return 0;
+	}
+	for (face = 0; face < box->plane_count && meets; face++)
+	{
+		const float *plane = world->planes[box->plane_first + face];
+
+		meets = plane[0] * position[0] + plane[1] * position[1] + plane[2] * position[2] - plane[3] <= radius;
+	}
+	return meets;
+}
+
+/* (xgpu_dynamic_lights_world_walked, with the boxes' groups or without) */
+static void walked(const struct xgpu_dynamic_lights_world *world, const float (*block)[4], uint32_t count,
+	const void *cells, uint32_t walk[8], int grouped)
 {
 	const uint32_t (*cluster_masks)[4] = (const uint32_t (*)[4])cells +
 		XGPU_DYNAMIC_LIGHTS_GRID_X * XGPU_DYNAMIC_LIGHTS_GRID_Y * XGPU_DYNAMIC_LIGHTS_GRID_Z;
 	const float (*position)[4] = block + 3;
+	const struct xgpu_dynamic_lights_world_group *groups = grouped ? world->groups : NULL;
 	uint32_t light, cluster, index;
 
 	memset(walk, 0, 8 * sizeof(walk[0]));
@@ -700,27 +828,30 @@ void xgpu_dynamic_lights_world_walked(const struct xgpu_dynamic_lights_world *wo
 			{
 				continue;
 			}
-			for (index = world->first[cluster]; index < world->first[cluster + 1] && !needed; index++)
+			if (groups)
 			{
-				uint32_t face;
+				/* (a group whose box the light's does not meet holds no box
+				it meets: on past its groups) */
+				uint32_t at = world->root[cluster], past = groups[at].past;
 
-				box = &world->boxes[index];
-				if (box->lower[0] > upper[0] || box->upper[0] < lower[0] || box->lower[1] > upper[1] ||
-					box->upper[1] < lower[1] || box->lower[2] > upper[2] || box->upper[2] < lower[2])
+				while (at < past && !needed)
 				{
-					continue;
-				}
-				/* (the sphere meets the leaf unless it is wholly past one of
-				its faces) */
-				needed = 1;
-				for (face = 0; face < box->plane_count && needed; face++)
-				{
-					const float *plane = world->planes[box->plane_first + face];
+					const struct xgpu_dynamic_lights_world_group *group = &groups[at];
 
-					needed = plane[0] * position[light][0] + plane[1] * position[light][1] +
-						plane[2] * position[light][2] - plane[3] <= radius;
+					if (group->lower[0] > upper[0] || group->upper[0] < lower[0] || group->lower[1] > upper[1] ||
+						group->upper[1] < lower[1] || group->lower[2] > upper[2] || group->upper[2] < lower[2])
+					{
+						at = group->past;
+						continue;
+					}
+					for (index = group->first; index < group->first + group->count && !needed; index++)
+						needed = leaf_meets(world, &world->boxes[index], position[light], radius, lower, upper);
+					at++;
 				}
+				continue;
 			}
+			for (index = world->first[cluster]; index < world->first[cluster + 1] && !needed; index++)
+				needed = leaf_meets(world, &world->boxes[index], position[light], radius, lower, upper);
 		}
 		/* (the structure's pixels pass over a light for the models alone:
 		its walk takes nothing from them) */
@@ -731,4 +862,27 @@ void xgpu_dynamic_lights_world_walked(const struct xgpu_dynamic_lights_world *wo
 				walk[4 + word] |= bit;
 		}
 	}
+}
+
+void xgpu_dynamic_lights_world_walked(const struct xgpu_dynamic_lights_world *world, const float (*block)[4],
+	uint32_t count, const void *cells, uint32_t walk[8])
+{
+	walked(world, block, count, cells, walk, 1);
+}
+
+void xgpu_dynamic_lights_world_walked_scan(const struct xgpu_dynamic_lights_world *world, const float (*block)[4],
+	uint32_t count, const void *cells, uint32_t walk[8])
+{
+	walked(world, block, count, cells, walk, 0);
+}
+
+void xgpu_dynamic_lights_world_free(struct xgpu_dynamic_lights_world *world)
+{
+	groups_free(world);
+	free(world->texels);
+	free(world->boxes);
+	free(world->planes);
+	free(world->first);
+	free(world->box);
+	memset(world, 0, sizeof(*world));
 }

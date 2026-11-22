@@ -33,6 +33,17 @@ struct xgpu_dynamic_lights_world_box
 	uint32_t plane_first, plane_count;
 };
 
+/* a group of a cluster's leaves' boxes, in a tree of them, each cluster's
+in order from its root (xgpu_dynamic_lights_world_walked): the box about
+them all; the leaves' boxes it holds itself (boxes[first] on, count of
+them; none: its two groups follow it); and the index past the last of its
+groups, where the walk goes on when the box is not met */
+struct xgpu_dynamic_lights_world_group
+{
+	float lower[3], upper[3];
+	uint32_t first, count, past;
+};
+
 struct xgpu_dynamic_lights_world
 {
 	/* the GPU's texels and their count (1: none, its header of no nodes) */
@@ -48,6 +59,13 @@ struct xgpu_dynamic_lights_world
 	float (*planes)[4];
 	uint32_t *first;
 	struct xgpu_dynamic_lights_world_box *box;
+	/* each cluster's leaves' boxes in a tree of groups: cluster c's from
+	groups[root[c]] to groups[groups[root[c]].past - 1] (a cluster with no
+	leaves: none); NULL if they could not be made (each cluster's leaves are
+	tested in turn); and the bytes they take */
+	struct xgpu_dynamic_lights_world_group *groups;
+	uint32_t *root;
+	uint32_t group_count, group_bytes;
 };
 
 /* the game's world (count texels: xgpu.h) to the GPU's, into world (its
@@ -60,6 +78,13 @@ times Blood Gulch's 12,000) cannot be made, and its lights reach every
 cluster, as they do in a world the game cannot send. */
 int xgpu_dynamic_lights_world_convert(struct xgpu_dynamic_lights_world *world, const uint32_t (*texels)[4],
 	uint32_t count);
+
+/* the world's clusters' boxes in their groups (made after
+xgpu_dynamic_lights_world_convert, which takes them away: the boxes put in
+their groups' order); FALSE if there are none (the world is not bounded, or
+there was no memory), and each cluster's boxes are tested in turn, as
+before */
+int xgpu_dynamic_lights_world_group(struct xgpu_dynamic_lights_world *world);
 
 /* the cells' texels (four words each, of the cells' texture: xgpu.h) of the
 lights the shaders walk the world for, XGPU_DYNAMIC_LIGHTS_WALK: past the
@@ -79,5 +104,13 @@ walk[4 + (light >> 5)], the structure's, which pass over a light for the
 models alone (1 / radius less than 0) whatever the walk finds. */
 void xgpu_dynamic_lights_world_walked(const struct xgpu_dynamic_lights_world *world, const float (*block)[4],
 	uint32_t count, const void *cells, uint32_t walk[8]);
+
+/* the same, each cluster's leaves tested in turn without their groups:
+for checking them (HALO_LIGHTS_WORLD_VERIFY), whose walk must be the same */
+void xgpu_dynamic_lights_world_walked_scan(const struct xgpu_dynamic_lights_world *world, const float (*block)[4],
+	uint32_t count, const void *cells, uint32_t walk[8]);
+
+/* the world's memory freed (it can be made again) */
+void xgpu_dynamic_lights_world_free(struct xgpu_dynamic_lights_world *world);
 
 #endif

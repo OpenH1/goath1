@@ -13,7 +13,9 @@ world as the hosts make it (port/linux/src/xgpu_dynamic_lights_world.c):
 - a light the frame's walk mask leaves out is in the mask of the cluster of
   every point its sphere's pixels walk from, or of none;
 - the mask leaves out what it should: a light within one box-shaped
-  cluster, and one reaching every cluster its sphere meets.
+  cluster, and one reaching every cluster its sphere meets;
+- the mask is the same, all eight words, whether each cluster's leaves'
+  boxes are tested through their groups or each in turn.
 
   dynamic_lights_world_check [world files...]
 */
@@ -141,6 +143,17 @@ static void walked_both(const struct xgpu_dynamic_lights_world *world, const flo
 	block[0][3] = (float)count;
 	memcpy(block[3], position, count * sizeof(block[0]));
 	xgpu_dynamic_lights_world_walked(world, (const float (*)[4])block, XGPU_DYNAMIC_LIGHTS_MAXIMUM, cells, walk);
+	{
+		uint32_t scanned[8];
+
+		xgpu_dynamic_lights_world_walked_scan(world, (const float (*)[4])block, XGPU_DYNAMIC_LIGHTS_MAXIMUM, cells,
+			scanned);
+		if (memcmp(walk, scanned, sizeof(scanned)))
+		{
+			printf("FAIL: the walk mask through the boxes' groups differs from each box tested in turn\n");
+			failures++;
+		}
+	}
 	for (light = count; light < XGPU_DYNAMIC_LIGHTS_MAXIMUM; light++)
 	{
 		if ((walk[light >> 5] | walk[4 + (light >> 5)]) & (1u << (light & 31)))
@@ -415,7 +428,8 @@ static void check_boxes(void)
 	memcpy(texels[4], x_plane, 16);
 	memcpy(texels[5], y_plane, 16);
 	texels[6][0] = 0; texels[6][1] = 1; texels[6][2] = 2; texels[6][3] = 3;
-	if (!xgpu_dynamic_lights_world_convert(&world, (const uint32_t (*)[4])texels, 7) || !world.bounded)
+	if (!xgpu_dynamic_lights_world_convert(&world, (const uint32_t (*)[4])texels, 7) || !world.bounded ||
+		!xgpu_dynamic_lights_world_group(&world))
 	{
 		printf("FAIL: the boxes' world was not made, or not bounded\n");
 		failures++;
@@ -463,16 +477,19 @@ static void check_world(const char *name, struct world_input *input, uint32_t cl
 		failures++;
 		return;
 	}
+	if (world.bounded && !xgpu_dynamic_lights_world_group(&world))
+	{
+		printf("FAIL: %s: its boxes' groups not made\n", name);
+		failures++;
+	}
 	check_points(name, input, &world, points);
 	if (frames)
 		check_walk_mask(name, input, &world, clusters, frames, &left_out, &lights_seen);
-	printf("%s: %u nodes (depth %u) from %u (%u texels from %u), bounded %d; walk left out %lu of %lu lights\n", name,
-		world.nodes, world.depth, world.game_nodes, world.count, input->count, world.bounded, left_out, lights_seen);
-	free(world.texels);
-	free(world.boxes);
-	free(world.first);
-	free(world.box);
-	free(world.planes);
+	printf("%s: %u nodes (depth %u) from %u (%u texels from %u), bounded %d (%u boxes in %u groups); walk left out "
+		"%lu of %lu lights\n", name, world.nodes, world.depth, world.game_nodes, world.count, input->count,
+		world.bounded, world.bounded ? world.first[XGPU_DYNAMIC_LIGHTS_CLUSTERS] : 0, world.group_count, left_out,
+		lights_seen);
+	xgpu_dynamic_lights_world_free(&world);
 }
 
 static int world_file(const char *path, struct world_input *input)
