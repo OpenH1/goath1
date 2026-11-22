@@ -73,6 +73,12 @@ options' gamma) first, where the setting is not 1.
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <pthread/qos.h>
+#elif !defined(_WIN32)
+#include <sys/resource.h>
+#include <sys/syscall.h>
+#endif
 
 #ifdef __ANDROID__
 /* port/android/host/host_main.c: display.render_scale */
@@ -5793,6 +5799,21 @@ static uint32_t description_hash(const struct xgpu_vulkan_pipeline_description *
 	return (uint32_t)bytes_hash64(description, sizeof(*description));
 }
 
+/* the calling thread (a pipeline compiler) behind the game's and the render
+thread: a pipeline asked for in play draws its stand-in, or nothing, until
+made, so on a few cores the frame comes first; a load or a draw that waits
+for one leaves them the cores. xgpu_astc_cache.c's workers the same */
+static void pipeline_compiler_thread_lower(void)
+{
+#if defined(_WIN32)
+	SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+#elif defined(__APPLE__)
+	pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0);
+#else
+	setpriority(PRIO_PROCESS, (id_t)syscall(SYS_gettid), 10);
+#endif
+}
+
 /* Preparation queues owned native descriptions. Shader modules, the device
 and pipeline layout live until shutdown; no job borrows guest/map memory.
 Only the render owner publishes handles and statistics. A full queue, a
@@ -5820,6 +5841,10 @@ static struct
 	pthread_cond_t changed;
 	int started, stop;
 	uint64_t submitted, claimed, published;
+	/* the jobs the compilers have finished (written under the mutex, read
+	without it), and their count at the render owner's last publish from
+	xgpu_vulkan_pipeline_ready */
+	uint64_t finished, finished_seen;
 	struct
 	{
 		struct xgpu_vulkan_pipeline_description description;
@@ -5836,6 +5861,7 @@ static struct
 static void *pipeline_compile_worker(void *unused)
 {
 	(void)unused;
+	pipeline_compiler_thread_lower();
 	pthread_mutex_lock(&pipeline_compiler.mutex);
 	for (;;)
 	{
@@ -5851,6 +5877,7 @@ static void *pipeline_compile_worker(void *unused)
 			&pipeline_compiler.jobs[index].result, &pipeline_compiler.jobs[index].elapsed);
 		pthread_mutex_lock(&pipeline_compiler.mutex);
 		pipeline_compiler.jobs[index].done = 1;
+		__atomic_store_n(&pipeline_compiler.finished, pipeline_compiler.finished + 1, __ATOMIC_RELEASE);
 		pthread_cond_broadcast(&pipeline_compiler.changed);
 	}
 	pthread_mutex_unlock(&pipeline_compiler.mutex);
@@ -6218,19 +6245,30 @@ static VkPipeline pipeline_build(const struct xgpu_vulkan_pipeline_description *
 static struct pipeline_entry *pipeline_find_apart(const struct xgpu_vulkan_pipeline_description *description,
 	int apart)
 {
-	static struct pipeline_entry *last;
-	uint32_t hash;
+	/* the pipelines last found, as the render owner looks them up: a
+	frame's draws go back and forth between a few (the world's, its
+	decals', the transparents'), each found again by a compare (its first
+	bytes, the shaders, mostly differ), not the description's hash and its
+	bucket's walk. The entries live until shutdown */
+	enum { recent_count = 8 };
+	static struct pipeline_entry *recent[recent_count];
+	static uint32_t recent_next;
+	uint32_t hash, index;
 	struct pipeline_entry **bucket, *entry;
 
-	if (last && !memcmp(&last->description, description, sizeof(*description)))
-		return last;
+	for (index = 0; index < recent_count; index++)
+	{
+		entry = recent[index];
+		if (entry && !memcmp(&entry->description, description, sizeof(*description)))
+			return entry;
+	}
 	hash = description_hash(description);
 	bucket = &vk.pipelines[hash % PIPELINE_BUCKETS];
 	for (entry = *bucket; entry; entry = entry->next)
 	{
 		if (entry->hash == hash && !memcmp(&entry->description, description, sizeof(*description)))
 		{
-			last = entry;
+			recent[recent_next++ % recent_count] = entry;
 			return entry;
 		}
 	}
@@ -6241,7 +6279,7 @@ static struct pipeline_entry *pipeline_find_apart(const struct xgpu_vulkan_pipel
 	entry->description = *description;
 	entry->next = *bucket;
 	*bucket = entry;
-	last = entry;
+	recent[recent_next++ % recent_count] = entry;
 	if (!apart || !pipeline_request_apart(entry))
 		pipeline_request(entry);
 	else
@@ -6282,9 +6320,13 @@ VkPipeline xgpu_vulkan_pipeline_ready(const struct xgpu_vulkan_pipeline_descript
 		return VK_NULL_HANDLE;
 	if (entry->waiting && !pipeline_request_apart(entry))
 		pipeline_request(entry);
-	if (entry->pending)
+	/* (the lock taken only once a compiler has finished one since the last
+	look: a pipeline still compiling is asked for by each of its draws) */
+	if (entry->pending &&
+		__atomic_load_n(&pipeline_compiler.finished, __ATOMIC_ACQUIRE) != pipeline_compiler.finished_seen)
 	{
 		pthread_mutex_lock(&pipeline_compiler.mutex);
+		pipeline_compiler.finished_seen = pipeline_compiler.finished;
 		pipeline_publish_completed();
 		pthread_mutex_unlock(&pipeline_compiler.mutex);
 	}
