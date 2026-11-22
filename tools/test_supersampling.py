@@ -118,6 +118,9 @@ static void choose(void)
 #define VIEW(w, h) ((long)(drawn[0] * temporal.factor + 0.5f) == (w) && (long)(drawn[1] * temporal.factor + 0.5f) == (h))
 int main(void)
 {
+	/* (read only in the supersampled builds' checks: newer clang's
+	-Wunused-but-set-global in the others) */
+	(void)logs;
 	/* unset (1): the display's pixels, whatever the anti-aliasing */
 	assert(DRAWN(2560, 1440) && factor == 1.0f);
 #if SUPERSAMPLED
