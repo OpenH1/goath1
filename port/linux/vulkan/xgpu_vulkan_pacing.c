@@ -25,7 +25,8 @@ gamescope takes the frame for it. Where the display says when it showed
 each frame and how far apart its refreshes are (VK_GOOGLE_display_timing:
 gamescope's layer, Android), those are the frame's time on screen and the
 period; without present wait (Android) the thread asks display timing every
-millisecond, and its time is the latch too. Else the period is the window's
+millisecond from a millisecond before the refresh after the last frame's
+(timing_ask_at), and its time is the latch too. Else the period is the window's
 display mode's; times the refreshes each frame is shown for (battery
 saver's interval). All of it goes to host_render_stream_frame_displayed,
 which counts the frame taken and learns the margin by the frames that
@@ -267,6 +268,33 @@ static int timing_passed(uint64_t id)
 	return 0;
 }
 
+/* (lock held) display timing alone: when the thread next asks for a
+frame's time (0: in a POLL_NS). FIFO shows a frame no sooner than a
+refresh after the last one's time on screen, so the asks begin a POLL_NS
+before then and go on every POLL_NS after it, as before. The last time not
+known, or not near now (another clock): every POLL_NS */
+static uint64_t timing_ask_at(const struct entry *entry, uint64_t now)
+{
+	uint64_t refresh = pacing.refresh ? pacing.refresh : pacing.mode_period, next;
+
+	if (!entry->frame || !pacing.wanted || !pacing.last_shown || refresh <= 2 * POLL_NS)
+		return 0;
+	next = pacing.last_shown + refresh - POLL_NS;
+	return next > now && next - now <= refresh ? next : 0;
+}
+
+/* (unlocked) display timing alone: the sleep before the next ask, never
+longer than WAIT_PART_NS, as present wait's, so that a swapchain made again
+is let go of as soon */
+static uint64_t timing_sleep_ns(uint64_t ask_at)
+{
+	uint64_t now = now_ns();
+
+	if (ask_at <= now + POLL_NS)
+		return POLL_NS;
+	return ask_at - now < WAIT_PART_NS ? ask_at - now : WAIT_PART_NS;
+}
+
 static int float_compare(const void *a, const void *b)
 {
 	float x = *(const float *)a, y = *(const float *)b;
@@ -363,6 +391,7 @@ static void *pacing_thread(void *unused)
 			VkSwapchainKHR swapchain = entry->swapchain;
 			uint64_t id = entry->id;
 			VkResult result = VK_TIMEOUT;
+			uint64_t ask_at = pacing.wait_for_present ? 0 : timing_ask_at(entry, now);
 
 			/* (its work first: the frame's cost) */
 			finish = entry->frame && entry->serial && !entry->finished && pacing.wait_semaphores;
@@ -403,7 +432,7 @@ static void *pacing_thread(void *unused)
 			}
 			else
 			{
-				sleep_ns(POLL_NS);
+				sleep_ns(timing_sleep_ns(ask_at));
 			}
 			now = now_ns();
 			pthread_mutex_lock(&pacing.lock);

@@ -438,6 +438,7 @@ static void host_logf(int level, const char *format, ...)
 {
     (void)level; (void)format;
 }
+static void pipeline_compiler_thread_lower(void) {}
 ''' + code + r'''
 static VkPipeline pipeline_build(const struct xgpu_vulkan_pipeline_description *description,
     VkResult *result, double *elapsed)
