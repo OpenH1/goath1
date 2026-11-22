@@ -30,9 +30,11 @@ def generated(control=None):
     models = read("source/models/models.c")
     raster = read("source/rasterizer/xbox/rasterizer_xbox_transparent_geometry.c")
     types = f"#define TAG_STRING_LENGTH {constant(read('source/tag_files/tag_files.h'), 'TAG_STRING_LENGTH')}\n#define UNSIGNED_SHORT_MAX {constant(read('source/cseries/cseries.h'), 'UNSIGNED_SHORT_MAX')}\n" + transparent_types()
+    types += "\n" + enum_with(models, "RENDER_MODEL_PARTS_FOUND_MAXIMUM")
     for path, names in [
         ("source/models/model_definitions.h", ["model", "model_region", "model_region_permutation"]),
-        ("source/models/models.c", ["model_shader_reference", "model_geometry", "model_geometry_part", "shader_model_definition", "render_sort_filth"]),
+        ("source/models/models.c", ["model_shader_reference", "model_geometry", "model_geometry_part", "shader_model_definition", "render_sort_filth",
+                                     "render_model_part_found", "render_model_parts_found"]),
         ("source/render/render.h", ["render_skinning"]),
         ("source/cache/cache_files.h", ["tag_iterator"]),
     ]:
@@ -45,7 +47,9 @@ def generated(control=None):
     code = read("source/rasterizer/rasterizer_transparent_enclosure.h")
     code += "\n" + function(raster, "rasterizer_transparent_geometry_is_enclosure")
     code += "\n" + function(read("port/linux/game/model_detail.c"), "model_detail_geometry_index")
-    for name in ["model_geometry_fix_transparent_part_links", "models_fix_transparent_part_links", "render_model_parts"]:
+    for name in ["model_geometry_fix_transparent_part_links", "models_fix_transparent_part_links", "render_model_part_decal_draw",
+                 "render_model_part_transparent_submit", "render_model_sort_filth_link", "render_model_parts_walk",
+                 "render_model_parts"]:
         code += "\n" + function(models, name)
     if control:
         fault, _ = CONTROLS[control]
