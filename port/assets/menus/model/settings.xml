@@ -982,6 +982,17 @@
 			<help>How far below the middle the lowered reticle sits, in percent of the screen's height. 10 is about Halo 2's and 3's.</help>
 			<note>Click the number (or press A) to type any from 0 to 30.</note>
 		</row>
+		<row key="headshot_indicator" kind="choice" setting="display.headshot_indicator" label="HEADSHOT INDICATOR" crumb="VIDEO › FIRST PERSON" search="crosshair headshot" enabled="high_res_hud_on">
+			<help>A red dot in the pistol's and the sniper rifle's reticle when the shot would hit the head, as later Halo games show it. Only the stock weapons on the stock maps, with the High-Res HUD on (Interface › HUD).</help>
+			<note>Aiming is not changed: the dot only shows what the shot already does. Only your screen changes. A host may forbid it in its games.</note>
+			<choice shown="ON" value="true"/>
+			<choice shown="OFF" value="false"/>
+		</row>
+		<row key="allow_headshot_indicator" kind="choice" setting="network.allow_headshot_indicator" label="ALLOW HEADSHOT DOT" crumb="VIDEO › FIRST PERSON">
+			<help>In the games you host, whether the players may see their headshot indicator. A Legacy game's players cannot be told.</help>
+			<choice shown="YES" value="true"/>
+			<choice shown="NO" value="false"/>
+		</row>
 		<row key="passenger_third_person" kind="choice" setting="display.passenger_third_person" label="PASSENGER VIEW" crumb="VIDEO › FIRST PERSON" search_choices="behind seat">
 			<help>Riding in a Warthog or a Scorpion in the campaign and co-op: the view from behind the vehicle, or from your seat. Behind, the weapon cannot zoom.</help>
 			<choice shown="BEHIND" value="true"/>

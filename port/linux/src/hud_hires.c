@@ -234,6 +234,29 @@ long hud_hires_override_find(unsigned long address, unsigned long width, unsigne
 	return asset;
 }
 
+long hud_hires_variant_find(unsigned long address, unsigned long width, unsigned long height,
+	unsigned long level0_size, int variant)
+{
+	long asset = hud_hires_override_find(address, width, height, level0_size);
+	long index;
+
+	for (index = 0; asset >= 0 && index < hud_hires_asset_count(); index++)
+	{
+		if (hud_hires_embedded[index].variant == variant &&
+			hud_hires_embedded[index].bitmap == hud_hires_embedded[asset].bitmap &&
+			!strcmp(hud_hires_embedded[index].tag, hud_hires_embedded[asset].tag))
+		{
+			return index;
+		}
+	}
+	return -1;
+}
+
+int hud_hires_asset_variant(long asset)
+{
+	return asset >= 0 && asset < hud_hires_asset_count() ? hud_hires_embedded[asset].variant : 0;
+}
+
 int hud_hires_override_coverage(long asset)
 {
 	return asset >= 0 && asset < hud_hires_asset_count() && hud_hires_embedded[asset].coverage;

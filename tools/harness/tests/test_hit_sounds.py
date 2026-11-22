@@ -2,7 +2,8 @@
 player dealt another player, none for themselves, for no damage, for a bot's or another machine's player, with
 the attacker's own audio.hit_sounds off, or where the host forbids them (network.allow_hit_sounds false, which an OpenH1 game's record
 carries to its OpenH1 clients, read in the lobby; never in an OpenCE machine's copy, nor a Legacy host's record);
-hits closer together than the spacing beep once."""
+hits closer together than the spacing beep once. The headshot indicator's rule of the host's
+(network.allow_headshot_indicator), made the same way, beside it."""
 
 import re
 import sys
@@ -13,7 +14,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from harness import CHECK_FAILED, build, enum_with, function, mutated, read, run  # noqa: E402
 
-CASES = ["local", "not-ours", "setting", "spacing", "host", "records", "client", "custom-edition", "placeholder"]
+CASES = ["local", "not-ours", "setting", "spacing", "host", "records", "client", "custom-edition", "placeholder",
+         "headshot-rule"]
 
 # a fault in the code and the case that must catch it
 NEGATIVE_CONTROLS = {
@@ -58,6 +60,18 @@ NEGATIVE_CONTROLS = {
     # (a Legacy host's record forbids them)
     "legacy-record": (("network_standard_globals.hosting && network_standard_globals.hosting_no_hit_sounds);",
                        "network_standard_globals.hosting_no_hit_sounds);"), "records"),
+    # (the headshot indicator: a client takes its own setting, not its host's word)
+    "headshot-client-own-rule": (("return !TEST_FLAG(game->standard_flags, _network_game_no_headshot_indicator_bit);",
+                                  "return config_boolean(\"network.allow_headshot_indicator\") != 0;"), "headshot-rule"),
+    # (... an OpenCE machine sent its bit)
+    "headshot-opence-sent-the-bit": (("\tSET_FLAG(legacy_game.standard_flags, _network_game_no_headshot_indicator_bit, "
+                                      "FALSE);\n", ""), "headshot-rule"),
+    # (... a Legacy host's record forbids it)
+    "headshot-legacy-record": (("network_standard_globals.hosting && network_standard_globals.hosting_no_headshot_indicator);",
+                                "network_standard_globals.hosting_no_headshot_indicator);"), "headshot-rule"),
+    # (... the host's own rule not stamped)
+    "headshot-not-stamped": (("\t\tnetwork_standard_globals.hosting_no_headshot_indicator =\n"
+                              "\t\t\t!config_boolean(\"network.allow_headshot_indicator\");\n", ""), "headshot-rule"),
 }
 
 
@@ -78,6 +92,7 @@ def generated(fault=None):
         function(standard, "network_standard_game_for_machine"),
         function(standard, "network_standard_stamp_game"),
         function(standard, "network_standard_hit_sounds_allowed"),
+        function(standard, "network_standard_headshot_indicator_allowed"),
         function(sounds, "hit_sounds_make"),
         function(sounds, "hit_sounds_play"),
         function(sounds, "hit_sounds_note_damage"),

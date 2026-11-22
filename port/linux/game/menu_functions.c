@@ -3109,6 +3109,10 @@ static boolean settings_condition_term(struct widget_instance *list, char const 
 	it is on, its row on another page than the anti-aliasing it replaces) */
 	if (!strcmp(name, "temporal_upscale"))
 		return halo_temporal_upscale_drawn() != 0;
+	/* (display.high_res_hud on, its row on another page: the headshot
+	indicator's, which draws its dot in the high-res reticles) */
+	if (!strcmp(name, "high_res_hud_on"))
+		return config_boolean("display.high_res_hud") != 0;
 	/* (... NVIDIA DLSS too: where its module and an NVIDIA GPU are) */
 	if (!strcmp(name, "temporal_dlss"))
 		return halo_temporal_dlss_drawn() != 0;

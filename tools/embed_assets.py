@@ -44,6 +44,9 @@ from typing import Any, List
 ROOT = Path(__file__).resolve().parent.parent
 HUD_ASSETS = Path("port/assets/hud")
 LAYOUT = HUD_ASSETS / "layout.json"
+# the headshot indicator's copies of a texture, by their names' ending, and
+# their variant (hud_hires.h's HUD_HIRES_VARIANT_*)
+VARIANTS = (("__dotless", 1), ("__dot", 2))
 CE_LAYOUT = HUD_ASSETS / "ce_layout.json"
 MCC_LAYOUT = HUD_ASSETS / "mcc_layout.json"
 CE_STOCK = HUD_ASSETS / "ce_stock.json"
@@ -96,6 +99,14 @@ def textures() -> List[tuple]:
                                    (CONTROLLER_ASSETS, CONTROLLER_LIST, True)):
         if (ROOT / listing).is_file():
             result += [(folder, asset, title) for asset in json.loads((ROOT / listing).read_text())["assets"]]
+            # (the copies with the reticle's middle dot taken out or put in,
+            # where tools/hud_assets.py made them, for the headshot indicator:
+            # hud_hires.h, variant)
+            if listing == LAYOUT:
+                result += [(folder, dict(asset, name=f"{asset['name']}{suffix}", variant=variant, sprites=[]), title)
+                           for asset in json.loads((ROOT / listing).read_text())["assets"]
+                           for suffix, variant in VARIANTS
+                           if (ROOT / folder / f"{asset['name']}{suffix}.png").is_file()]
     return result
 
 
@@ -345,12 +356,13 @@ def main() -> None:
         # (a Custom Edition map's stock bitmap it is drawn for too, and that
         # bitmap's first level as the Custom Edition loader leaves it)
         ce = custom_edition.get((asset["tag"], asset["bitmap"]), {})
-        if ce.get("replacement", asset["name"]) != asset["name"]:
+        if ce.get("replacement", asset["name"]) != asset["name"] or asset.get("variant"):
             ce = {}
         table.append(f'\t{{ "{tag}", {asset["bitmap"]}, {width}, {height}, 0x{asset["crc"]:08x}u, {coverage}, '
                      f'{point_threshold}, {int(title)}, 0x{sprites:x}u, '
                      f'{f"cells{index}" if cells else "0"}, {len(cells)}, '
-                     f'{int(bool(ce))}, {int(asset.get("ce_only", False))}, {ce.get("width", 0)}, {ce.get("height", 0)}, '
+                     f'{int(bool(ce))}, {int(asset.get("ce_only", False))}, '
+                     f'{asset.get("variant", 0)}, {ce.get("width", 0)}, {ce.get("height", 0)}, '
                      f'{ce.get("size", 0)}, 0x{ce.get("crc", 0):08x}u, {offset}u, {len(data)} }},')
     lines.append("const struct hud_hires_embedded hud_hires_embedded[] =")
     lines.append("{")

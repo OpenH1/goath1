@@ -1411,6 +1411,7 @@ the setting for one start of the game. It has priority over the file.
 | `display.viewmodel_weapon."<tag path>"` | none | none | A weapon's own offsets, added to the ones above (the sums held at their ranges): a table of `x`, `y`, `z` (centimeters), `pitch`, `yaw` and `roll` (degrees) for the weapon of that tag path, any case, `/` for `\`, so a modded map's weapons have theirs too: `[display.viewmodel_weapon."weapons\\pistol\\pistol"]`. Set in a game from the pause menu's Settings, First Person > Weapon & Body > WEAPON POSITION's THIS WEAPON rows, for the weapon held (RESET THIS WEAPON takes its table out); every local player's weapon takes its own. |
 | `display.lowered_reticle` | `false` | `HALO_LOWERED_RETICLE` | `true`: the reticle is drawn below the middle of the view, as Halo 2's and Halo 3's are, and the view looks that much above the aim, so shots go where the reticle points. On foot and in a seat, first or third person; a scope's zoom brings it back to the middle. Only this machine's view changes; not in the VR mode. First Person's LOWERED RETICLE. Refer to "Field of view". |
 | `display.lowered_reticle_amount` | `10.0` | `HALO_LOWERED_RETICLE_AMOUNT` | With `display.lowered_reticle`, how far below the middle the reticle is, in percent of the view's height, from 0 to 30 (about 9 is Halo 2's, 11 Halo 3's). First Person's RETICLE LOWERED BY is a slider (1 to 25, any of 0 to 30 typed). |
+| `display.headshot_indicator` | `false` | `HALO_HEADSHOT_INDICATOR` | A red dot in the stock pistol's and sniper rifle's reticle when the shot, with the game's autoaim, would hit the head of the aim assist's target (red reticle or not), in place of the sniper rifle's own; only with `display.high_res_hud`. Not on a map's own weapons or reticles. First Person's HEADSHOT INDICATOR. |
 | `display.viewmodel_visible` | `true` | `HALO_VIEWMODEL_VISIBLE` | `true`: the first-person weapon, hands and what is attached to them are drawn. `false`: they are not; firing, animation, sound and lights go on, and other players' models are drawn. |
 | `display.passenger_third_person` | `false` | `HALO_PASSENGER_THIRD_PERSON` | Third-person view for the Warthog's passenger and the Scorpion's four passengers. Uses the gunner's camera on the Warthog and the driver's on the Scorpion, within the passenger's firing arc. Smooth entry and exit; weapon zoom is disabled while riding. The reticle follows the shot's centre ray. Local view only. In the campaign and co-op only: not in multiplayer, where seeing around the vehicle would be an advantage. Never in VR, which stays in first person in every seat. |
 | `display.viewmodel_shield` | `false` | `HALO_VIEWMODEL_SHIELD` | `true`: the energy shield's flare is drawn on the first-person arms too, as on the body, with the unit's own shield shader, kept closer to the arms than to the body. The stock game draws it on the body only. The flare is the shield's hits: it shows as the shield takes damage and fades over the next second or two (the unit's recent shield damage), so a full shield that nothing hits shows none, on the arms as on the body. An overshield stays lit on the arms with `display.overshield_effect` (OVERSHIELD, on the same screen). |
@@ -1625,6 +1626,7 @@ the setting for one start of the game. It has priority over the file.
 | `network.votekick_minutes` | `5` | `HALO_NET_VOTEKICK_MINUTES` | When you host: the minutes that a player must play on the server before the player can start a vote to kick (`0` to `60`). To vote, a player must play for 2 minutes, or for this time if it is less. |
 | `network.votekick_ban_minutes` | `30` | `HALO_NET_VOTEKICK_BAN_MINUTES` | When you host: the minutes that a player who is kicked by a vote cannot join again (`1` to `1440`). |
 | `network.shield_effects` | `overshield` | `HALO_NET_SHIELD_EFFECTS` | Host: the shield effects every player of a network game sees, whatever their own settings, so that none sees what another does not: `stock`, `glow` (`display.shield_glow`), `light_show` (its Light Show intensity), `overshield` (`display.overshield_effect`), `glow_overshield` or `light_show_overshield`; or `players`, not synced: each player sees their own settings' (PLAYERS' OWN). The default, `overshield`, shows every player the overshield effect and no shield glow, the same for all. Sent to each client when it is ready and when it changes (`network_shield_effects.c`); a client draws stock until it has it. An online co-op game is always each player's own, whatever the host chose: the players play together. SHIELD EFFECTS in Server Setup > Player Options writes its choice here. |
+| `network.allow_headshot_indicator` | `true` | `HALO_NET_ALLOW_HEADSHOT_INDICATOR` | Host: whether the players of your games may see their headshot indicator (`display.headshot_indicator`, each player's own; Settings > Video > First Person's ALLOW HEADSHOT DOT). `false` forbids it for your own players and, in an OpenH1 game, its OpenH1 clients: the game record carries it, read in the lobby as hit sounds' rule is (`_network_game_no_headshot_indicator_bit`, `network_standard_headshot_indicator_allowed`, OpenH1 protocol version 37). A Legacy game's clients cannot be told, and may show it. |
 | `network.allow_hit_sounds` | `true` | `HALO_NET_ALLOW_HIT_SOUNDS` | Host: whether the players of your games may hear their hit sounds (`audio.hit_sounds`, each player's own; Settings > Audio > MULTIPLAYER's ALLOW HIT SOUNDS). `false` forbids them for your own players and, in an OpenH1 game, its OpenH1 clients: the game record carries it, read in the lobby as `game.auto_pickup` is (`_network_game_no_hit_sounds_bit`, `network_standard_hit_sounds_allowed`, OpenH1 protocol version 30). A Legacy game's clients cannot be told, and may hear them. |
 | `network.fire_origins` | `true` | `HALO_NET_FIRE_ORIGINS` | Host: whether a client's reported hit that the shooter's camera had no line of sight to may still count from where the client says its player's shots leave, when that is not the camera (distributed message 93: a VR build's weapon hand, which may be past a corner the camera is behind). The hand must be within 0.4 world units of the camera, no more than 0.05 behind the eye along the line to the target, 0.2 to its side and 0.1 above it, with the line from the eye to it clear; the host logs how many hits counted only that way. `false`: from the camera and vehicles' guns only (`network_damage.c`). |
 | `network.predict_hits` | `true` | `HALO_NET_PREDICT_HITS` | Client of an OpenH1 game (not co-op): its own players' hits on other players on foot are shown at once, dealt to its copy of the target with the least damage the weapon's roll gives (the shield's flare and break, blood, the flinch and pain sound, the death and the body's fall), and the host's states of the target are taken less what those hits took until the host's word on them comes. The host still decides: a kill is announced, with the host's killer and score, when its killing blow comes, and a hit whose word has not come a round trip and half a second on is undone (a player shown dead stands again where they fell, with their weapons). `false`: what a hit does is shown when the host's word comes (`network_damage.c`, `port/linux/NETCODE.md`). |
@@ -2885,6 +2887,48 @@ the view's height (10 by default; Halo 2's is about 9, Halo 3's about 11).
 - Off, nothing is drawn or computed differently. On, only this machine's
   view changes: in a network game the aim travels as it always does. The VR
   mode's view is the head's, and its reticle where the controller points.
+
+HEADSHOT INDICATOR (`display.headshot_indicator`, off by default) draws a
+red dot in the middle of the pistol's and the sniper rifle's reticle when
+the shot would hit the target's head, as later Halo games
+show it (`game/headshot_indicator.c`).
+
+- It reads the game's own aim and changes none of it: the shot's ray as the
+  weapon would fire it now (`weapon_get_projectile_ray`, before its error),
+  tested as a projectile's (`collision_test_vector`), must first hit the
+  aim assist's target, on a material its collision model marks
+  as the head, which is what makes a hit a headshot (`damage.c`). Aim
+  assist and the shots are as without it, and a client has all of this
+  already, so it works the same in a network game.
+- The ray is bent by the game's autoaim as the shot would be: fully while the
+  reticle is red (the target within half the weapon's autoaim angle and
+  distance), less toward the edge of that range, and not at all beyond it,
+  where only the magnetism (the stick's slowdown, which bends no shot)
+  reaches. So the dot shows for a head the shot would hit anywhere a target
+  is found, red reticle or not, and never for a shot bent to the body.
+- A network game's host may forbid it (`network.allow_headshot_indicator`
+  false, First Person's ALLOW HEADSHOT DOT), as it may hit sounds:
+  an OpenH1 game's record carries the rule to its OpenH1 clients, read in
+  the lobby (`_network_game_no_headshot_indicator_bit`, OpenH1 protocol
+  version 37). A Legacy host (Halo PC's, OpenCE's) cannot say, so its
+  clients show it if their own setting is on.
+- Only the stock pistol and sniper rifle: the other weapons' damage cannot
+  make headshots, or they spread or explode. A map's own weapons and
+  reticles (a weapon, its shot, its damage, its HUD or its reticles'
+  bitmaps not the stock maps', a Custom Edition map's bitmaps not from the
+  stock resource maps) have none, found by a fingerprint as the map loads.
+- Only with the high-res HUD (`display.high_res_hud`; the row is dimmed
+  without it): the dot is part of the reticle's texture, as the sniper
+  rifle's own is, so it is placed and scaled as the reticle is (lowered, as
+  a passenger, through a zoom, in split screen). The reticle's middle item
+  is drawn from a placeholder for which the texture cache draws a copy of
+  its high-res texture: while the shot would be a headshot, the copy with
+  the dot (`port/assets/hud/hud_reticles__0__dot.png` and
+  `sniper__hud_reticles_scope__0__dot.png`, the same dot on both);
+  otherwise the pistol's own texture and the sniper rifle's copy without
+  its dot (`sniper__hud_reticles_scope__0__dotless.png`). The copies are
+  made by `tools/hud_assets.py`. Off, the reticles are drawn as they are.
+- Each player's setting in split screen is their own.
 
 LEGS (`display.first_person_legs`) draws your own body in first person
 from the belly down, so you see your legs when you look down, walking,
@@ -7803,6 +7847,7 @@ Other changes:
 | `interface/first_person_weapons.c` | The first-person hands are drawn with the unit's shield modifier shader, as its body is (`display.viewmodel_shield`). |
 | `interface/first_person_weapons.c` | The first-person weapon's and hands' node matrices are moved along the view's right, up and forward once they are posed and interpolated (`display.viewmodel_offset_x`, `_y`, `_z`; `game/view_fov.c`), but in the VR mode. |
 | `main/main.c`, `interface/hud_draw.c`, `interface/first_person_weapons.c` | With `display.lowered_reticle`, the view is turned above the observer's aim as the window's camera is set, the weapon's reticle is drawn where the aim lands on the screen, and the first-person weapon is posed at the view turned back to the aim (`game/lowered_reticle.c`). |
+| `interface/hud_weapon.c`, `interface/hud_draw.c`, `cache/cache_files.c` | With `display.headshot_indicator`, the stock pistol's and sniper rifle's reticle draws a dot when the shot would be a headshot, the sniper rifle's own dot left out of its picture; the map's weapons are fingerprinted as its tags load (`game/headshot_indicator.c`). |
 | `interface/first_person_weapons.c` | With the player's own view drawn from the newest step (`display.direct_camera`), the gun's animations are sampled at the frame's time: the state and moving animations between their frame and the next, a state's blend in by its fraction, the sway's springs where their velocity has them (`game/render_interpolation.c`, `render_interpolation_first_person_phase`). |
 | `render/render_objects.c`, `objects/objects.c` | In first person, your own body is drawn from the belly down, and casts its shadow, with the poses `first_person_legs.c` makes (`display.first_person_legs`); the mesh `object_mesh.c` read is forgotten on a new map. |
 | `objects/object_lights.c` | The local player's own flashlight in the first person on foot, where the first-person weapon does not carry it (none in hand, or zoomed), shines along the view drawn, from where the body has it (`game/render_interpolation.c`, `render_interpolation_view_flashlight`): on the head's marker it trailed the view drawn from the newest step and turned with the head's look, so its pool slid and jumped as the player turned. |

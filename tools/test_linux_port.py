@@ -731,6 +731,7 @@ SHIPPED_DEFAULTS = {
     "display.latency_meter": "false",
     "display.lowered_reticle": "false",
     "display.lowered_reticle_amount": "10",
+    "display.headshot_indicator": "false",
     "display.panini": "0",
     "display.panini_vertical": "0",
     "display.draw_distance": "1024",

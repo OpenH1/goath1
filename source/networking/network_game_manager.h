@@ -103,6 +103,11 @@ enum
 	network_standard_spartan_link_allowed); co-op has it whatever this
 	says. Only a Standard host sets it, and its OpenH1 machines alone read it */
 	_network_game_no_spartan_link_bit = 6,
+	/* an OpenH1 game's host forbids its players' headshot indicator
+	(network.allow_headshot_indicator false:
+	network_standard_headshot_indicator_allowed). Only a Standard host sets
+	it, and its OpenH1 machines alone read it */
+	_network_game_no_headshot_indicator_bit = 7,
 };
 
 struct network_game

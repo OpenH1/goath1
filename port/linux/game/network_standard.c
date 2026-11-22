@@ -109,6 +109,10 @@ static struct
 	/* ... and whether it forbids its players' hit sounds (network.allow_hit_sounds
 	false: hit_sounds.c), read so too */
 	boolean hosting_no_hit_sounds;
+	/* ... and whether it forbids its players' headshot indicator
+	(network.allow_headshot_indicator false: headshot_indicator.c), read so
+	too */
+	boolean hosting_no_headshot_indicator;
 	/* ... and whether its team games' players may show their Spartan link
 	(game.spartan_link: spartan_link.c), read so too, and changed in the
 	lobby by its SPARTAN LINK (network_standard_set_spartan_link) */
@@ -234,6 +238,7 @@ void network_standard_server_created(
 	network_standard_globals.hosting_classic_turning = !config_boolean("game.enhanced_animations");
 	network_standard_globals.hosting_vehicle_hijack = config_boolean("game.vehicle_hijack") != 0;
 	network_standard_globals.hosting_no_hit_sounds = !config_boolean("network.allow_hit_sounds");
+	network_standard_globals.hosting_no_headshot_indicator = !config_boolean("network.allow_headshot_indicator");
 	network_standard_globals.hosting_spartan_link = config_boolean("game.spartan_link") != 0;
 	/* (a matchmaking playlist's game: OpenH1's alone, every machine playing
 	by the host's word, Classic's views included) */
@@ -517,6 +522,7 @@ struct network_game const *network_standard_game_for_machine(
 	SET_FLAG(legacy_game.standard_flags, _network_game_no_direct_camera_bit, FALSE);
 	SET_FLAG(legacy_game.standard_flags, _network_game_pro_rules_bit, FALSE);
 	SET_FLAG(legacy_game.standard_flags, _network_game_no_hit_sounds_bit, FALSE);
+	SET_FLAG(legacy_game.standard_flags, _network_game_no_headshot_indicator_bit, FALSE);
 	SET_FLAG(legacy_game.standard_flags, _network_game_vehicle_hijack_bit, FALSE);
 	return &legacy_game;
 }
@@ -747,6 +753,8 @@ void network_standard_stamp_game(
 		network_standard_globals.hosting_classic_turning = !config_boolean("game.enhanced_animations");
 		network_standard_globals.hosting_vehicle_hijack = config_boolean("game.vehicle_hijack") != 0;
 		network_standard_globals.hosting_no_hit_sounds = !config_boolean("network.allow_hit_sounds");
+		network_standard_globals.hosting_no_headshot_indicator =
+			!config_boolean("network.allow_headshot_indicator");
 		network_standard_globals.hosting_spartan_link = config_boolean("game.spartan_link") != 0;
 		/* (the Spartan link's word stamped only here: a change during a
 		game is the next game's) */
@@ -769,6 +777,8 @@ void network_standard_stamp_game(
 			network_standard_globals.hosting && network_standard_globals.hosting_classic_turning);
 		SET_FLAG(game->standard_flags, _network_game_no_hit_sounds_bit,
 			network_standard_globals.hosting && network_standard_globals.hosting_no_hit_sounds);
+		SET_FLAG(game->standard_flags, _network_game_no_headshot_indicator_bit,
+			network_standard_globals.hosting && network_standard_globals.hosting_no_headshot_indicator);
 	}
 }
 
@@ -792,6 +802,31 @@ boolean network_standard_hit_sounds_allowed(
 		if (!network_standard_globals.joined || !game)
 			return TRUE;
 		return !TEST_FLAG(game->standard_flags, _network_game_no_hit_sounds_bit);
+	default:
+		return TRUE;
+	}
+}
+
+boolean network_standard_headshot_indicator_allowed(
+	void)
+{
+	struct network_game *game;
+
+	switch (game_connection())
+	{
+	case _game_connection_network_server:
+		/* (an OpenH1 game's, as read in the lobby; a Legacy game's host
+		reads its own setting, for its own players) */
+		if (network_standard_globals.hosting)
+			return !network_standard_globals.hosting_no_headshot_indicator;
+		return config_boolean("network.allow_headshot_indicator") != 0;
+	case _game_connection_network_client:
+		/* (the host's word, as its record brought it; a Legacy host, which
+		cannot say, has no rule against it, as OpenCE has none) */
+		game = network_game_get_game();
+		if (!network_standard_globals.joined || !game)
+			return TRUE;
+		return !TEST_FLAG(game->standard_flags, _network_game_no_headshot_indicator_bit);
 	default:
 		return TRUE;
 	}

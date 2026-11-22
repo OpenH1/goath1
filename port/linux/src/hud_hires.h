@@ -66,6 +66,11 @@ struct hud_hires_embedded
 	layout is its own (port/assets/hud/custom_edition.json) */
 	int custom_edition;
 	int ce_only;
+	/* a copy of its bitmap's texture (the one of its tag and bitmap) with
+	its reticle's middle dot taken out or put in (HUD_HIRES_VARIANT_*), drawn
+	only for the headshot indicator's placeholder of that bitmap
+	(hud_hires_variant_find), never for the bitmap itself; 0 for the rest */
+	int variant;
 	/* Stock CE first mip after hardware conversion; resource maps may be modified. */
 	unsigned int ce_width, ce_height, ce_size, ce_crc;
 	/* (its PNG's bytes: an offset in the assets' file, embedded_assets.h) */
@@ -105,6 +110,19 @@ texture was drawn for (another language's maps, which have their own text,
 or modified ones) */
 long hud_hires_override_find(unsigned long address, unsigned long width, unsigned long height,
 	unsigned long level0_size);
+/* hud_hires_embedded's variants: a texture without its reticle's middle
+dot, and one with the headshot indicator's dot there */
+enum
+{
+	HUD_HIRES_VARIANT_DOTLESS = 1,
+	HUD_HIRES_VARIANT_DOT = 2
+};
+/* the variant (hud_hires_embedded's) of the texture hud_hires_override_find
+finds for that bitmap, for the headshot indicator's placeholder of the bitmap
+(port/linux/game/headshot_indicator.c), or -1 */
+long hud_hires_variant_find(unsigned long address, unsigned long width, unsigned long height,
+	unsigned long level0_size, int variant);
+int hud_hires_asset_variant(long asset);
 /* its image (decoded and uploaded, mipmapped, on first use; 0 if it
 could not be), and the number of its mip levels */
 unsigned int hud_hires_override_texture(long asset, unsigned long *levels);

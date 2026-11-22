@@ -61,6 +61,7 @@ unsigned long hud_hires_sprites_drawable(long asset, unsigned long address, long
 void hud_hires_register_placeholder(long asset, unsigned long const *texture);
 int hud_hires_asset_custom_edition(long asset);
 int hud_hires_asset_ce_only(long asset);
+int hud_hires_asset_variant(long asset);
 long hud_hires_ce_stock_count_get(void);
 long hud_hires_ce_stock_find(char const *tag, long bitmap);
 char const *hud_hires_ce_stock_tag(long index);
@@ -279,6 +280,10 @@ void hud_hires_tags_loaded(
 			(!hud_hires_asset_custom_edition(asset) || !custom_edition_cache_stock_tag(group_index)))
 			continue;
 		if (!custom_edition_cache_tags_loaded() && hud_hires_asset_ce_only(asset))
+			continue;
+		/* (drawn only for the headshot indicator's copy of the bitmap:
+		headshot_indicator.c) */
+		if (hud_hires_asset_variant(asset))
 			continue;
 
 		if (!bitmap)

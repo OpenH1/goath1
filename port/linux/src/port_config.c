@@ -436,6 +436,15 @@ static const struct config_setting config_settings[] =
 		"With display.lowered_reticle, how far below the middle the reticle\n"
 		"is, in percent of the view's height (0 to 30); 10 is about Halo 2's\n"
 		"and Halo 3's.", _scope_player },
+	{ "display.headshot_indicator", _config_boolean, "false", "HALO_HEADSHOT_INDICATOR", _environment_value,
+		_platform_all,
+		"A red dot in the stock pistol's and sniper rifle's reticle when the\n"
+		"shot, bent by the game's autoaim, would hit the aim assist's target's\n"
+		"head (red reticle or not), as later Halo games draw it,\n"
+		"in place of the sniper rifle's own; only with display.high_res_hud,\n"
+		"whose reticles have it. Not on a map's own weapons or reticles. Only\n"
+		"this machine's view changes. A network game's host may forbid it\n"
+		"(network.allow_headshot_indicator).", _scope_player },
 	{ "display.viewmodel_visible", _config_boolean, "true", "HALO_VIEWMODEL_VISIBLE", _environment_value, _platform_all,
 		"Draw the first-person weapon, hands and what is attached to them.\n"
 		"Off, they are not drawn; firing, animation, sound and lights go on.", _scope_player },
@@ -1266,6 +1275,13 @@ static const struct config_setting config_settings[] =
 		"(audio.hit_sounds, each player's own). false forbids them, for your\n"
 		"players and an OpenH1 game's clients (the game's settings carry it,\n"
 		"read in the lobby); a Legacy game's clients cannot be told." },
+	{ "network.allow_headshot_indicator", _config_boolean, "true", "HALO_NET_ALLOW_HEADSHOT_INDICATOR",
+		_environment_value, _platform_all,
+		"Host: whether the players of your games may see their headshot\n"
+		"indicator (display.headshot_indicator, each player's own). false\n"
+		"forbids it, for your players and an OpenH1 game's clients (the game's\n"
+		"settings carry it, read in the lobby); a Legacy game's clients cannot\n"
+		"be told." },
 	{ "network.predict_hits", _config_boolean, "true", "HALO_NET_PREDICT_HITS", _environment_value, _platform_all,
 		"Client of a GOAT H1 game: show your hits on other players at once\n"
 		"(the shield's flare and break, the flinch, the death), before the\n"
