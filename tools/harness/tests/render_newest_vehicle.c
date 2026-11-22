@@ -136,6 +136,9 @@ static void *object_iterator_next(struct object_iterator *iterator)
 	}
 	return NULL;
 }
+/* (objects.c's walk of the micro lane's slots visits what this walk does) */
+#define object_mover_iterator_new object_iterator_new
+#define object_mover_iterator_next object_iterator_next
 static void matrix4x3_inverse_transform_point(real_matrix4x3 const *m, real_point3d const *p, real_point3d *out)
 {
 	real x = p->x - m->position.x, y = p->y - m->position.y, z = p->z - m->position.z;
