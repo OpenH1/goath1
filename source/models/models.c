@@ -311,6 +311,298 @@ static unsigned long model_port_marker_asked;
 
 /* ---------- private code */
 
+/* port: a part the walk of the solid pass found for the decal or the
+transparent pass, kept in the order walked so that the later passes draw
+the same parts in the same order without walking the model again
+(render_model_parts) */
+struct render_model_part_found
+{
+	struct model_geometry_part *part;
+	struct shader *shader;
+	long shader_tag_index;
+	short permutation_index;
+	short part_index;
+	boolean transparent;
+};
+
+enum
+{
+	/* (a model's decal and transparent parts; more than this and the
+	passes walk the model each, as the game does) */
+	RENDER_MODEL_PARTS_FOUND_MAXIMUM = 256,
+};
+
+struct render_model_parts_found
+{
+	short count;
+	boolean overflow;
+	struct render_model_part_found parts[RENDER_MODEL_PARTS_FOUND_MAXIMUM];
+};
+
+static void render_model_part_decal_draw(
+	struct shader *shader,
+	short permutation_index,
+	struct model_geometry_part *part,
+	long flags)
+{
+	match_assert("c:\\halo\\SOURCE\\models\\models.c", 491, !TEST_FLAG(flags, _render_model_shadow_bit));
+
+	rasterizer_model_draw(
+		shader,
+		permutation_index,
+		&part->triangle_buffer,
+		NONE,
+		part->triangle_buffer.count,
+		&part->vertex_buffer,
+		NONE);
+}
+
+static void render_model_part_transparent_submit(
+	struct model const *model,
+	struct render_skinning const *skinning,
+	struct shader *shader,
+	short permutation_index,
+	struct model_geometry_part *part,
+	short part_index,
+	long flags,
+	struct render_sort_filth *sort_filth,
+	short *sort_filth_count)
+{
+	boolean immediate = TEST_FLAG(flags, _render_model_immediate_bit);
+	real_point3d centroid;
+	/* port: the root's matrix for a node the model
+	doesn't have (a map's index) */
+	short centroid_node_index = VALID_INDEX(part->centroid_primary_node_index, skinning->node_matrix_count) ?
+		part->centroid_primary_node_index :
+		0;
+
+	match_assert("c:\\halo\\SOURCE\\models\\models.c", 442, !TEST_FLAG(flags, _render_model_shadow_bit));
+	match_assert(
+		"c:\\halo\\SOURCE\\models\\models.c",
+		445,
+		part->centroid_primary_node_index>=0 && part->centroid_primary_node_index<model->nodes.count);
+	match_assert(
+		"c:\\halo\\SOURCE\\models\\models.c",
+		446,
+		part->centroid_secondary_node_index>=0 && part->centroid_secondary_node_index<model->nodes.count);
+
+	matrix4x3_transform_point(
+		&skinning->node_matrices[centroid_node_index],
+		&part->centroid,
+		&centroid);
+	rasterizer_model_transparent_geometry_submit(
+		shader,
+		permutation_index,
+		&part->triangle_buffer,
+		NONE,
+		part->triangle_buffer.count,
+		&part->vertex_buffer,
+		NONE,
+		&centroid,
+		/* port: no sort record once all of sort_filth is
+		used (it wrote one past it) */
+		*sort_filth_count<MAXIMUM_PARTS_PER_MODEL_GEOMETRY ? &sort_filth[*sort_filth_count] : NULL);
+
+	if (*sort_filth_count<MAXIMUM_PARTS_PER_MODEL_GEOMETRY &&
+		sort_filth[*sort_filth_count].group_index!=NONE &&
+		!immediate &&
+		/* port: part zero can head a link
+		(models_fix_transparent_part_links); no stock
+		model's part has a previous part of 0 */
+		(part->next_part_index>0 || part->previous_part_index>=0))
+	{
+		sort_filth[*sort_filth_count].part_index = part_index;
+		sort_filth[*sort_filth_count].next_part_index = part->next_part_index;
+		(*sort_filth_count)++;
+	}
+}
+
+static void render_model_sort_filth_link(
+	struct render_sort_filth *sort_filth,
+	short sort_filth_count)
+{
+	short i, j;
+
+	for (i = 0; i<sort_filth_count; i++)
+	{
+		for (j = 0; j<sort_filth_count; j++)
+		{
+			if (sort_filth[i].next_part_index==sort_filth[j].part_index && sort_filth[i].next_part_index>0)
+			{
+				*sort_filth[i].next_group_presorted_index_reference = sort_filth[j].group_index;
+				*sort_filth[j].previous_group_presorted_index_reference = sort_filth[i].group_index;
+				break;
+			}
+		}
+	}
+}
+
+/* port: one pass's walk of the model's parts; the solid pass's, given
+found, also keeps the decal and transparent parts it walks past for the
+later passes (*last_shader_tag_index: the last part's shader walked) */
+static void render_model_parts_walk(
+	struct model const *model,
+	char const *region_permutation_indices,
+	short region_permutation_count,
+	struct render_skinning const *skinning,
+	long object_index,
+	short geometry_detail_level_index,
+	short detail_rules,
+	short forced_shader_permutation_index,
+	long flags,
+	short pass,
+	struct render_model_parts_found *found,
+	long *last_shader_tag_index)
+{
+	struct render_sort_filth sort_filth[MAXIMUM_PARTS_PER_MODEL_GEOMETRY];
+	short sort_filth_count = 0;
+	short region_index;
+	/* port: no more regions than the permutations passed in hold: an
+	object's MAXIMUM_REGIONS_PER_OBJECT, or the default's
+	MAXIMUM_REGIONS_PER_MODEL (a map's count; retail models have 8 at
+	most) */
+	short region_count = (short)MIN(model->regions.count, region_permutation_count);
+
+	for (region_index = 0; region_index<region_count; region_index++)
+	{
+		struct model_region *region = TAG_BLOCK_GET_ELEMENT(&model->regions, region_index, struct model_region);
+		char permutation_index = region_permutation_indices[region_index];
+
+		if (permutation_index!=NONE)
+		{
+			struct model_region_permutation *permutation;
+			short geometry_index;
+
+			/* port: a permutation the region has, and a geometry the model
+			has (a map's indices); a bad one draws nothing */
+			if (!VALID_INDEX(permutation_index, region->permutations.count))
+			{
+				model_data_error(model, "region permutation");
+				continue;
+			}
+			permutation = TAG_BLOCK_GET_ELEMENT(
+				&region->permutations,
+				permutation_index,
+				struct model_region_permutation);
+			/* port: the level display.model_detail chooses for the permutation
+			(port/linux/game/model_detail.c): stock, the model's */
+			geometry_index = model_detail_geometry_index(model, permutation, geometry_detail_level_index, detail_rules);
+			if (geometry_index!=NONE && !VALID_INDEX(geometry_index, model->geometries.count))
+			{
+				model_data_error(model, "geometry");
+				continue;
+			}
+
+			if (!render_model_no_geometry && geometry_index!=NONE)
+			{
+				struct model_geometry *geometry = TAG_BLOCK_GET_ELEMENT(&model->geometries, geometry_index, struct model_geometry);
+				short part_index;
+
+				for (part_index = 0; part_index<geometry->parts.count; part_index++)
+				{
+					struct model_geometry_part *part = TAG_BLOCK_GET_ELEMENT(&geometry->parts, part_index, struct model_geometry_part);
+					struct model_shader_reference *shader_reference;
+					struct shader *shader;
+					short shader_permutation_index;
+
+					/* port: a shader the model has (a map's index); a part
+					without one isn't drawn */
+					if (!VALID_INDEX(part->shader_index, model->shaders.count))
+					{
+						model_data_error(model, "shader");
+						continue;
+					}
+					shader_reference = TAG_BLOCK_GET_ELEMENT(
+						&model->shaders,
+						part->shader_index,
+						struct model_shader_reference);
+					shader = shader_definition_get(shader_reference->shader.index);
+					render_marks_model_shader(shader_reference->shader.index); /* port: debug.render_marks */
+					*last_shader_tag_index = shader_reference->shader.index;
+#ifdef HALO_VR
+					/* port: not the display on the back of a scope raised
+					to the eye in the VR mode (port/linux/game/vr_scope.c) */
+					if (vr_scope_hides_part(object_index, shader_reference->shader.index))
+						continue;
+#endif
+					shader_permutation_index = forced_shader_permutation_index ? forced_shader_permutation_index : shader_reference->permutation_index;
+
+					if (shader_type_is_valid_for_model(shader->base.type) &&
+						!TEST_FLAG(part->flags, _model_geometry_part_stripped_bit))
+					{
+						boolean transparent = shader_type_is_transparent(shader->base.type);
+						boolean decal = !transparent && shader->base.type==_shader_type_model &&
+							TEST_FLAG(((struct shader_model_definition *)shader_get_and_verify_type(shader, _shader_type_model))->flags, _shader_model_alpha_blended_decal_bit);
+
+						if (transparent || decal)
+						{
+							if (found)
+							{
+								/* (kept for the passes after) */
+								if (found->count<RENDER_MODEL_PARTS_FOUND_MAXIMUM)
+								{
+									struct render_model_part_found *entry = &found->parts[found->count++];
+
+									entry->part = part;
+									entry->shader = shader;
+									entry->shader_tag_index = shader_reference->shader.index;
+									entry->permutation_index = shader_permutation_index;
+									entry->part_index = part_index;
+									entry->transparent = transparent;
+								}
+								else
+								{
+									found->overflow = TRUE;
+								}
+							}
+							else if (transparent && pass==_render_model_pass_transparent)
+							{
+								render_model_part_transparent_submit(model, skinning, shader, shader_permutation_index,
+									part, part_index, flags, sort_filth, &sort_filth_count);
+							}
+							else if (decal && pass==_render_model_pass_decal)
+							{
+								render_model_part_decal_draw(shader, shader_permutation_index, part, flags);
+							}
+						}
+						else if (pass==_render_model_pass_solid)
+						{
+							if (TEST_FLAG(flags, _render_model_shadow_bit))
+							{
+								rasterizer_environment_shadow_model_draw(
+									shader,
+									shader_permutation_index,
+									&part->triangle_buffer,
+									&part->vertex_buffer);
+							}
+							else
+							{
+								rasterizer_model_draw(
+									shader,
+									shader_permutation_index,
+									&part->triangle_buffer,
+									NONE,
+									part->triangle_buffer.count,
+									&part->vertex_buffer,
+									NONE);
+								rasterizer_debug_model_vertices(object_index, skinning, part);
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	render_model_sort_filth_link(sort_filth, sort_filth_count);
+}
+
+/* port: the solid pass walks the model's regions, permutations, levels and
+parts once and keeps the decal and transparent parts it passes, which the
+later passes draw in the order the game's own walk of each would (each walk
+looks the same tags up, and draws nothing of the other passes'); a model
+with more than RENDER_MODEL_PARTS_FOUND_MAXIMUM of them is walked again for
+each pass */
 static void render_model_parts(
 	struct model const *model,
 	char const *region_permutation_indices,
@@ -322,203 +614,63 @@ static void render_model_parts(
 	short forced_shader_permutation_index,
 	long flags)
 {
-	boolean immediate = TEST_FLAG(flags, _render_model_immediate_bit);
 	/* port: display.ambient_occlusion "world"'s pre-pass draws the opaque
 	parts alone, the transparent ones queued by the window's own draw
 	(render_world_ao_prepass) */
 	short last_pass = TEST_FLAG(flags, _render_model_shadow_bit) ? _render_model_pass_solid :
 		render_world_ao_prepass ? _render_model_pass_decal : _render_model_pass_transparent;
-	struct render_sort_filth sort_filth[MAXIMUM_PARTS_PER_MODEL_GEOMETRY];
-	real_point3d centroid;
+	struct render_model_parts_found found;
+	long last_shader_tag_index = NONE;
 	short pass;
+	short index;
 
-	for (pass = _render_model_pass_solid; pass<=last_pass; pass++)
+	found.count = 0;
+	found.overflow = FALSE;
+	render_model_parts_walk(model, region_permutation_indices, region_permutation_count, skinning, object_index,
+		geometry_detail_level_index, detail_rules, forced_shader_permutation_index, flags,
+		_render_model_pass_solid, last_pass>_render_model_pass_solid ? &found : NULL, &last_shader_tag_index);
+	if (last_pass==_render_model_pass_solid || found.count==0)
+		return;
+	if (found.overflow)
 	{
-		short sort_filth_count = 0;
-		short region_index;
-		short i, j;
-		/* port: no more regions than the permutations passed in hold: an
-		object's MAXIMUM_REGIONS_PER_OBJECT, or the default's
-		MAXIMUM_REGIONS_PER_MODEL (a map's count; retail models have 8 at
-		most) */
-		short region_count = (short)MIN(model->regions.count, region_permutation_count);
-
-		for (region_index = 0; region_index<region_count; region_index++)
+		for (pass = _render_model_pass_decal; pass<=last_pass; pass++)
 		{
-			struct model_region *region = TAG_BLOCK_GET_ELEMENT(&model->regions, region_index, struct model_region);
-			char permutation_index = region_permutation_indices[region_index];
-
-			if (permutation_index!=NONE)
-			{
-				struct model_region_permutation *permutation;
-				short geometry_index;
-
-				/* port: a permutation the region has, and a geometry the model
-				has (a map's indices); a bad one draws nothing */
-				if (!VALID_INDEX(permutation_index, region->permutations.count))
-				{
-					model_data_error(model, "region permutation");
-					continue;
-				}
-				permutation = TAG_BLOCK_GET_ELEMENT(
-					&region->permutations,
-					permutation_index,
-					struct model_region_permutation);
-				/* port: the level display.model_detail chooses for the permutation
-				(port/linux/game/model_detail.c): stock, the model's */
-				geometry_index = model_detail_geometry_index(model, permutation, geometry_detail_level_index, detail_rules);
-				if (geometry_index!=NONE && !VALID_INDEX(geometry_index, model->geometries.count))
-				{
-					model_data_error(model, "geometry");
-					continue;
-				}
-
-				if (!render_model_no_geometry && geometry_index!=NONE)
-				{
-					struct model_geometry *geometry = TAG_BLOCK_GET_ELEMENT(&model->geometries, geometry_index, struct model_geometry);
-					short part_index;
-
-					for (part_index = 0; part_index<geometry->parts.count; part_index++)
-					{
-						struct model_geometry_part *part = TAG_BLOCK_GET_ELEMENT(&geometry->parts, part_index, struct model_geometry_part);
-						struct model_shader_reference *shader_reference;
-						struct shader *shader;
-
-						/* port: a shader the model has (a map's index); a part
-						without one isn't drawn */
-						if (!VALID_INDEX(part->shader_index, model->shaders.count))
-						{
-							model_data_error(model, "shader");
-							continue;
-						}
-						shader_reference = TAG_BLOCK_GET_ELEMENT(
-							&model->shaders,
-							part->shader_index,
-							struct model_shader_reference);
-						shader = shader_definition_get(shader_reference->shader.index);
-						render_marks_model_shader(shader_reference->shader.index); /* port: debug.render_marks */
-#ifdef HALO_VR
-						/* port: not the display on the back of a scope raised
-						to the eye in the VR mode (port/linux/game/vr_scope.c) */
-						if (vr_scope_hides_part(object_index, shader_reference->shader.index))
-							continue;
-#endif
-
-						if (shader_type_is_valid_for_model(shader->base.type) &&
-							!TEST_FLAG(part->flags, _model_geometry_part_stripped_bit))
-						{
-							if (shader_type_is_transparent(shader->base.type))
-							{
-								if (pass==_render_model_pass_transparent)
-								{
-									/* port: the root's matrix for a node the model
-									doesn't have (a map's index) */
-									short centroid_node_index = VALID_INDEX(part->centroid_primary_node_index, skinning->node_matrix_count) ?
-										part->centroid_primary_node_index :
-										0;
-
-									match_assert("c:\\halo\\SOURCE\\models\\models.c", 442, !TEST_FLAG(flags, _render_model_shadow_bit));
-									match_assert(
-										"c:\\halo\\SOURCE\\models\\models.c",
-										445,
-										part->centroid_primary_node_index>=0 && part->centroid_primary_node_index<model->nodes.count);
-									match_assert(
-										"c:\\halo\\SOURCE\\models\\models.c",
-										446,
-										part->centroid_secondary_node_index>=0 && part->centroid_secondary_node_index<model->nodes.count);
-
-									matrix4x3_transform_point(
-										&skinning->node_matrices[centroid_node_index],
-										&part->centroid,
-										&centroid);
-									rasterizer_model_transparent_geometry_submit(
-										shader,
-										forced_shader_permutation_index ? forced_shader_permutation_index : shader_reference->permutation_index,
-										&part->triangle_buffer,
-										NONE,
-										part->triangle_buffer.count,
-										&part->vertex_buffer,
-										NONE,
-										&centroid,
-										/* port: no sort record once all of sort_filth is
-										used (it wrote one past it) */
-										sort_filth_count<MAXIMUM_PARTS_PER_MODEL_GEOMETRY ? &sort_filth[sort_filth_count] : NULL);
-
-									if (sort_filth_count<MAXIMUM_PARTS_PER_MODEL_GEOMETRY &&
-										sort_filth[sort_filth_count].group_index!=NONE &&
-										!immediate &&
-										/* port: part zero can head a link
-										(models_fix_transparent_part_links); no stock
-										model's part has a previous part of 0 */
-										(part->next_part_index>0 || part->previous_part_index>=0))
-									{
-										sort_filth[sort_filth_count].part_index = part_index;
-										sort_filth[sort_filth_count].next_part_index = part->next_part_index;
-										sort_filth_count++;
-									}
-								}
-							}
-							else if (shader->base.type==_shader_type_model &&
-								TEST_FLAG(((struct shader_model_definition *)shader_get_and_verify_type(shader, _shader_type_model))->flags, _shader_model_alpha_blended_decal_bit))
-							{
-								if (pass==_render_model_pass_decal)
-								{
-									match_assert("c:\\halo\\SOURCE\\models\\models.c", 491, !TEST_FLAG(flags, _render_model_shadow_bit));
-
-									rasterizer_model_draw(
-										shader,
-										forced_shader_permutation_index ? forced_shader_permutation_index : shader_reference->permutation_index,
-										&part->triangle_buffer,
-										NONE,
-										part->triangle_buffer.count,
-										&part->vertex_buffer,
-										NONE);
-								}
-							}
-							else if (pass==_render_model_pass_solid)
-							{
-								if (TEST_FLAG(flags, _render_model_shadow_bit))
-								{
-									rasterizer_environment_shadow_model_draw(
-										shader,
-										forced_shader_permutation_index ? forced_shader_permutation_index : shader_reference->permutation_index,
-										&part->triangle_buffer,
-										&part->vertex_buffer);
-								}
-								else
-								{
-									rasterizer_model_draw(
-										shader,
-										forced_shader_permutation_index ? forced_shader_permutation_index : shader_reference->permutation_index,
-										&part->triangle_buffer,
-										NONE,
-										part->triangle_buffer.count,
-										&part->vertex_buffer,
-										NONE);
-									rasterizer_debug_model_vertices(object_index, skinning, part);
-								}
-							}
-						}
-					}
-				}
-			}
+			render_model_parts_walk(model, region_permutation_indices, region_permutation_count, skinning, object_index,
+				geometry_detail_level_index, detail_rules, forced_shader_permutation_index, flags,
+				pass, NULL, &last_shader_tag_index);
 		}
+		return;
+	}
+	for (index = 0; index<found.count; index++)
+	{
+		struct render_model_part_found *entry = &found.parts[index];
 
-		for (i = 0; i<sort_filth_count; i++)
+		if (!entry->transparent)
 		{
-			for (j = 0; j<sort_filth_count; j++)
-			{
-				if (sort_filth[i].next_part_index==sort_filth[j].part_index && sort_filth[i].next_part_index>0)
-				{
-					*sort_filth[i].next_group_presorted_index_reference = sort_filth[j].group_index;
-					*sort_filth[j].previous_group_presorted_index_reference = sort_filth[i].group_index;
-					break;
-				}
-			}
+			render_marks_model_shader(entry->shader_tag_index); /* port: debug.render_marks */
+			render_model_part_decal_draw(entry->shader, entry->permutation_index, entry->part, flags);
 		}
 	}
+	if (last_pass>=_render_model_pass_transparent)
+	{
+		struct render_sort_filth sort_filth[MAXIMUM_PARTS_PER_MODEL_GEOMETRY];
+		short sort_filth_count = 0;
 
-	return;
+		for (index = 0; index<found.count; index++)
+		{
+			struct render_model_part_found *entry = &found.parts[index];
+
+			if (entry->transparent)
+			{
+				render_marks_model_shader(entry->shader_tag_index); /* port: debug.render_marks */
+				render_model_part_transparent_submit(model, skinning, entry->shader, entry->permutation_index,
+					entry->part, entry->part_index, flags, sort_filth, &sort_filth_count);
+			}
+		}
+		render_model_sort_filth_link(sort_filth, sort_filth_count);
+	}
+	/* (the shader the game's last walk ended on: debug.render_marks's) */
+	render_marks_model_shader(last_shader_tag_index);
 }
 
 /* ---------- public code */

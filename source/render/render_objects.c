@@ -691,8 +691,9 @@ static void render_object_list(
 		(port/linux/game/first_person_legs.c): its body drawn from its belly
 		down, nothing it carries; its shadow the whole body's, placed as the
 		legs are */
+		boolean first_person_camera = object_is_first_person_camera(object_index);
 		boolean legs = !render.camera.mirrored &&
-			object_is_first_person_camera(object_index) && first_person_legs_wanted(object_index);
+			first_person_camera && first_person_legs_wanted(object_index);
 		real_matrix4x3 const *node_matrices = !legs ? object_get_node_matrices(object_index) :
 			data->shadow ? first_person_legs_shadow_node_matrices(object_index, object_get_node_matrices(object_index)) :
 			first_person_legs_node_matrices(object_index, object_get_node_matrices(object_index));
@@ -708,7 +709,7 @@ static void render_object_list(
 		clock while its view draws it (port/linux/game/menu_spartan.c) */
 		if (!legs && !data->shadow)
 			node_matrices = menu_spartan_node_matrices(object_index, node_matrices);
-		if (!object_is_first_person_camera(object_index) || render.camera.mirrored || (legs && node_matrices))
+		if (!first_person_camera || render.camera.mirrored || (legs && node_matrices))
 		{
 			struct render_model_effect model_effect;
 
@@ -1428,14 +1429,14 @@ static void render_object(
 			(!TEST_FLAG(object->object.flags, _object_invisible_bit) ||
 				object->object.first_child_object_index != NONE))
 		{
-			real level_of_detail_pixels;
+			/* port: its size in pixels once, for its lighting and its shadow */
+			real level_of_detail_pixels = object_get_level_of_detail_pixels(data->object_index);
 			real shadow_darkness;
 
 			data->lighting = object_get_cached_render_lighting(
 				data->object_index,
-				object_get_level_of_detail_pixels(data->object_index));
+				level_of_detail_pixels);
 
-			level_of_detail_pixels = object_get_level_of_detail_pixels(data->object_index);
 			shadow_darkness = 1.f - real_rgb_color_brightness(&data->lighting->shadow_color);
 
 			if (level_of_detail_pixels > OBJECT_SHADOW_MINIMUM_PIXELS &&
