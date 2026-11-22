@@ -126,7 +126,9 @@ void bsp3d_point_table_build(
 {
 	long index;
 
-	free(bsp3d_point_table.nodes);
+	/* (cseries.h's free refuses NULL) */
+	if (bsp3d_point_table.nodes)
+		free(bsp3d_point_table.nodes);
 	csmemset(&bsp3d_point_table, 0, sizeof(bsp3d_point_table));
 	if (!bsp || bsp->nodes.count <= 0 || !bsp->nodes.address || !bsp->planes.address ||
 		(bsp->nodes.definition && bsp->nodes.definition->element_size != sizeof(struct bsp3d_node)) ||
