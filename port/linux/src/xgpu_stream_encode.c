@@ -232,6 +232,12 @@ static struct
 	them since the stream opened), which the next change is of */
 	unsigned char *lights_cells;
 	BOOL lights_sent;
+
+	/* the vertex constants as last sent, and which of them the host is
+	known to hold (constants_known, a bit a register): one sent again with
+	the same values is not recorded */
+	float constants_sent[XGPU_STREAM_PREVIOUS_CONSTANTS][4];
+	uint64_t constants_known[(XGPU_STREAM_PREVIOUS_CONSTANTS + 63) / 64];
 } stream;
 
 /* (tests and measurements) the ring's size and frames in flight, before
@@ -513,6 +519,7 @@ static void forget_sent(void)
 	memset(stream.stages_sent, 0, sizeof(stream.stages_sent));
 	stream.vertex_attributes.sent = 0;
 	stream.immediate_attributes.sent = 0;
+	memset(stream.constants_known, 0, sizeof(stream.constants_known));
 }
 
 /* ---------- numbered definitions */
@@ -1656,12 +1663,55 @@ static void stream_finite(float *values, unsigned long count, const char *what, 
 	}
 }
 
+/* the registers first to end (not included) known to the host, or not */
+static void constants_mark(unsigned long first, unsigned long end, BOOL known)
+{
+	for (; first < end; first++)
+	{
+		if (known)
+			stream.constants_known[first >> 6] |= 1ull << (first & 63);
+		else
+			stream.constants_known[first >> 6] &= ~(1ull << (first & 63));
+	}
+}
+
+static BOOL constants_all_known(unsigned long first, unsigned long end)
+{
+	for (; first < end; first++)
+	{
+		if (!(stream.constants_known[first >> 6] & (1ull << (first & 63))))
+			return FALSE;
+	}
+	return TRUE;
+}
+
 void xgpu_backend_set_constants(unsigned long first, const float (*values)[4], unsigned long count)
 {
 	struct xgpu_stream_constants *record_body;
 
 	if (!stream.open || !count)
 		return;
+	if (first < XGPU_STREAM_PREVIOUS_CONSTANTS)
+	{
+		unsigned long end = first + count > XGPU_STREAM_PREVIOUS_CONSTANTS ? XGPU_STREAM_PREVIOUS_CONSTANTS : first + count;
+
+		/* (the host has them all, the same: nothing to send) */
+		if (first + count <= XGPU_STREAM_PREVIOUS_CONSTANTS && constants_all_known(first, end) &&
+			!memcmp(stream.constants_sent[first], values, count * sizeof(stream.constants_sent[0])))
+			return;
+		memcpy(stream.constants_sent[first], values, (end - first) * sizeof(stream.constants_sent[0]));
+		constants_mark(first, end, TRUE);
+	}
+	else if (first < 2 * XGPU_STREAM_PREVIOUS_CONSTANTS)
+	{
+		unsigned long previous = first - XGPU_STREAM_PREVIOUS_CONSTANTS;
+		unsigned long end = previous + count > XGPU_STREAM_PREVIOUS_CONSTANTS ? XGPU_STREAM_PREVIOUS_CONSTANTS : previous + count;
+
+		/* (the previous frame's, set apart: the host copies a register's
+		record into its previous one too, so the next record of these is
+		sent whatever its values) */
+		constants_mark(previous, end, FALSE);
+	}
 	record_body = record(XGPU_STREAM_CONSTANTS, (uint32_t)(sizeof(*record_body) + count * sizeof(record_body->values[0])));
 	record_body->first = (uint32_t)first;
 	record_body->count = (uint32_t)count;
