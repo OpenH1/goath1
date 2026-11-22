@@ -49,7 +49,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from .android_build import TOML_DIR, fetch_third_party, generate_guest_image
-from .build_common import (MINIUPNPC_DIR, OPTIMISATION, OWN_CODE_ERRORS, REPLAY_DIR, compile_launcher,
+from .build_common import (MINIUPNPC_DIR, OPTIMISATION, OWN_CODE_ERRORS, REPLAY_DIR, compile_launcher, lto_flags,
                            configuration_defines, miniupnpc_sources, replay_build_label, updater_defines)
 from .guest_arch import X32
 from .guest_toolchain import LLVM_VERSION, GuestToolchain, guest_toolchain
@@ -277,8 +277,11 @@ def _generate_host(n: Writer, sln: Any, guest: Dict[str, Path]) -> None:
     )
 
     sdl_include = SDL_DIR / "include"
+    # (ThinLTO in a release: build_common.lto_flags; lld-link links the
+    # bitcode, with the guest image's object and the resources, which are not)
+    lto = lto_flags(sln)
     base_cflags = [*HOST_FLAGS, *configuration_defines(sln),
-                   *([] if release else ["-fstack-protector-strong"])]
+                   *([] if release else ["-fstack-protector-strong"]), *lto]
     host_cflags = " ".join([
         *base_cflags,
         # (the POSIX names the shared host files use, over Windows's)
@@ -344,6 +347,7 @@ def _generate_host(n: Writer, sln: Any, guest: Dict[str, Path]) -> None:
         "--target=x86_64-pc-windows-msvc",
         "-fuse-ld=lld",
         "-g",
+        *lto,
         # the guest's memory is reserved below 4 GB at start-up
         # (host_memory_win.c): the executable, its DLLs and their heaps go
         # above it (high-entropy ASLR), and SDL3.dll loads only once the
@@ -413,7 +417,7 @@ def _generate_host(n: Writer, sln: Any, guest: Dict[str, Path]) -> None:
     replay_host = {"host_render_stream.c.o", "host_render_record.c.o", "host_screenshot.c.o", "host_posix_win.c.o"}
     replay_objects += [obj for obj in objects if obj.name in replay_host]
     replay_objects += [obj for obj in objects if obj.parent.name == "vulkan" and obj.name != "host_vulkan.c.o"]
-    replay_ldflags = ["--target=x86_64-pc-windows-msvc", "-fuse-ld=lld", "-g", "-Wl,/DYNAMICBASE",
+    replay_ldflags = ["--target=x86_64-pc-windows-msvc", "-fuse-ld=lld", "-g", *lto, "-Wl,/DYNAMICBASE",
                       "-Wl,/HIGHENTROPYVA", "-Wl,/LARGEADDRESSAWARE", "-Wl,/SUBSYSTEM:CONSOLE"]
     replay = BUILD / "halo_replay.exe"
     n.build(outputs=replay, rule="windows_link", inputs=replay_objects,
