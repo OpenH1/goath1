@@ -933,7 +933,7 @@ static VkRenderingAttachmentInfo post_began[4];
 /* each pass's depth and stencil attachments (SMAA's marks: none, a null
 view) and each pipeline's stencil test */
 static VkRenderingAttachmentInfo post_began_depth[4], post_began_stencil[4];
-static VkPipelineDepthStencilStateCreateInfo post_stencils[4];
+static VkPipelineDepthStencilStateCreateInfo post_stencils[8];
 static uint32_t post_begins, post_draws, post_updates, post_masks[8], post_pipelines;
 static VkSampleCountFlagBits post_pipeline_samples[8];
 static VkDescriptorImageInfo post_sampled[4][4];
@@ -1283,7 +1283,6 @@ static void post_test(void)
 	post.spare = &spare;
 	moved = &target;
 	assert(xgpu_vulkan_post_anti_alias(1, &target, 0, whole, &moved));
-	fprintf(stderr, "DBG %u %s %x\n", post_pipelines, post_events, post_masks[4]);
 	assert(!strcmp(post_events, "BcDEXBcDEXBcD"));
 	assert(moved == &spare && post.spare == &target);
 	assert(post_sampled[0][0].imageView == target.sampled && post_sampled[2][0].imageView == target.sampled);
