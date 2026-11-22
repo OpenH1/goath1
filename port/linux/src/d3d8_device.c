@@ -6133,9 +6133,13 @@ described again.
 Where it is the preparation of the draw before, with nothing prepared
 between and nothing the backend had forgotten, the backend is not told
 again either (what it would have found the same).
-Kept while what else it was made from is the same (retained_tokens): the
-memory the textures are in, their replacements and images, the settings,
-the render targets made. Not kept: a map's preparation (its records and
+Kept while what else it was made from is the same: the memory its own
+textures and palettes are in (the write tracking's generations of their
+pages, looked at again only once a watched page anywhere was written:
+retained_memory_now), and, for every kept draw at once (retained_tokens),
+the textures' replacements and images, the settings, the render targets
+made. The kept draws are found in sets of RETAINED_WAYS (the least
+recently used one of a set made again). Not kept: a map's preparation (its records and
 journal), the render manifest's recording, a draw that samples a render
 target (its pixels written since), the VR mode; a pipeline with the world
 ambient occlusion's light is found once its stand-in is told
@@ -6143,6 +6147,10 @@ ambient occlusion's light is found once its stand-in is told
 prepares each found draw anyway and says where the kept one differs. */
 
 #define RETAINED_DRAWS 1024
+#define RETAINED_WAYS 4
+#define RETAINED_SETS (RETAINED_DRAWS / RETAINED_WAYS)
+/* each stage's generations (its texels', its palette's) */
+#define RETAINED_MEMORY (D3DTSS_MAXSTAGES * 2)
 
 unsigned long memory_watch_serial(void);
 
@@ -6170,6 +6178,13 @@ struct retained_context
 struct retained_draw
 {
 	unsigned long generation;
+	/* retained.clock as it was last found or kept (the least recent of a
+	set is made again) */
+	unsigned long used;
+	/* memory_watch_serial as its memory was last found the same, and the
+	generations of the memory its textures and palettes are in */
+	unsigned long watched_serial;
+	unsigned long memory[RETAINED_MEMORY];
 	struct retained_context context;
 	struct xgpu_texture_source sources[D3DTSS_MAXSTAGES];
 	float texture_scale[4][4];
@@ -6187,7 +6202,7 @@ struct retained_draw
 /* what else the kept preparations were made from */
 struct retained_tokens
 {
-	unsigned long memory, choices, images, settings, gpu_settings, targets;
+	unsigned long choices, images, settings, gpu_settings, targets;
 };
 
 static struct
@@ -6211,9 +6226,14 @@ static struct
 	/* xgpu_texture_choices_unkept as the draw began to be prepared: a draw
 	whose texture's choice is made again each time is not kept */
 	unsigned long unkept_at;
+	/* the draw being prepared's memory (retained_memory_now) and
+	memory_watch_serial as it was found */
+	unsigned long memory[RETAINED_MEMORY];
+	unsigned long memory_serial;
+	unsigned long clock;
 	/* counted (logged every 600 frames with either setting) */
 	unsigned long found, found_told, prepared, not_kept, not_kept_moved, not_kept_target, differed, targets_differed,
-		hash_differed, told_differed;
+		hash_differed, told_differed, memory_moved;
 	/* the times each of retained_tokens' moved (as a draw was found, or
 	as it was prepared) */
 	unsigned long moved[sizeof(struct retained_tokens) / sizeof(unsigned long)];
@@ -6238,7 +6258,6 @@ static void retained_read_settings(void)
 
 static void retained_tokens_now(struct retained_tokens *tokens)
 {
-	tokens->memory = memory_watch_serial();
 	tokens->choices = xgpu_texture_choices_serial();
 	tokens->images = xgpu_images_serial();
 	tokens->settings = config_changes();
@@ -6253,6 +6272,63 @@ static void retained_tokens_moved(const struct retained_tokens *tokens)
 
 	for (index = 0; index < sizeof(*tokens) / sizeof(*now); index++)
 		retained.moved[index] += now[index] != had[index];
+}
+
+/* the generation of [address, address + size) as the write tracking has it,
+0 for memory it does not watch (outside the contiguous window); remembered
+for each range while no watched page is written, so that a texture many
+draws share has its pages looked at once */
+#define RETAINED_RANGES 1024
+
+static unsigned long retained_range_generation(unsigned long address, unsigned long size, unsigned long serial)
+{
+	static struct
+	{
+		unsigned long address, size, serial, generation;
+	} ranges[RETAINED_RANGES];
+	unsigned long slot = ((address >> 12) * 0x9e3779b1UL ^ size) % RETAINED_RANGES;
+
+	if (!size || !platform_is_contiguous((void *)address) ||
+		size > PLATFORM_CONTIGUOUS_SIZE - (address - PLATFORM_CONTIGUOUS_BASE))
+		return 0;
+	if (ranges[slot].address != address || ranges[slot].size != size || ranges[slot].serial != serial)
+	{
+		ranges[slot].address = address;
+		ranges[slot].size = size;
+		ranges[slot].serial = serial;
+		ranges[slot].generation = memory_watch_generation(address, size);
+	}
+	return ranges[slot].generation;
+}
+
+/* the generations of the memory a draw's preparation reads (its context's
+textures' texels, a cube map's six faces, and their palettes), which change
+whenever a watched page of theirs is written */
+static void retained_memory_now(const struct retained_context *context, unsigned long serial,
+	unsigned long memory[RETAINED_MEMORY])
+{
+	int stage;
+
+	for (stage = 0; stage < D3DTSS_MAXSTAGES; stage++)
+	{
+		const D3DBaseTexture *texture = context->textures[stage];
+		const D3DPalette *palette = context->palettes[stage];
+
+		memory[stage] = memory[D3DTSS_MAXSTAGES + stage] = 0;
+		if (texture && texture->Data)
+		{
+			struct xgpu_texture_description description;
+
+			xgpu_texture_describe(texture->Format, texture->Size, &description);
+			memory[stage] = retained_range_generation((unsigned long)PLATFORM_PHYSICAL_TO_VIRTUAL(texture->Data),
+				xgpu_texture_face_size(&description) * (description.cube_map ? 6 : 1), serial);
+		}
+		if (palette && palette->Data)
+		{
+			memory[D3DTSS_MAXSTAGES + stage] = retained_range_generation(
+				(unsigned long)PLATFORM_PHYSICAL_TO_VIRTUAL(palette->Data), 256 * sizeof(D3DCOLOR), serial);
+		}
+	}
 }
 
 /* its slot's: of what tells most draws apart (the states, the program, the
@@ -6354,10 +6430,12 @@ found (prepare_draw prepares it, and keeps it: retained_draw_keep) */
 static int retained_draw_find(struct vertex_shader_object *program, BOOL immediate)
 {
 	struct retained_tokens tokens;
-	struct retained_draw *draw;
+	struct retained_draw *draw, *set, *found = NULL;
 	struct xgpu_pipeline_key scratch;
 	struct xgpu_dynamic_state dynamic;
 	BOOL has_depth = FALSE, told;
+	unsigned long serial;
+	int way;
 
 	retained.keep = FALSE;
 	retained.verifying = NULL;
@@ -6378,16 +6456,60 @@ static int retained_draw_find(struct vertex_shader_object *program, BOOL immedia
 		retained.generation++;
 		retained.told = NULL;
 	}
-	draw = &retained.draws[retained_context_hash(&retained.context) % RETAINED_DRAWS];
+	/* (its set's way with the same context, else the one made again: an
+	empty way, or the least recently used) */
+	set = &retained.draws[(retained_context_hash(&retained.context) % RETAINED_SETS) * RETAINED_WAYS];
+	draw = set;
+	for (way = 0; way < RETAINED_WAYS; way++)
+	{
+		if (set[way].generation != retained.generation)
+		{
+			if (draw->generation == retained.generation)
+				draw = &set[way];
+			continue;
+		}
+		if (!memcmp(&set[way].context, &retained.context, sizeof(retained.context)))
+		{
+			found = &set[way];
+			break;
+		}
+		if (draw->generation == retained.generation && set[way].used < draw->used)
+			draw = &set[way];
+	}
+	serial = memory_watch_serial();
+	retained.memory_serial = serial;
+	retained.clock++;
+	if (found)
+	{
+		draw = found;
+		/* (a watched page written since its memory was last the same: what
+		it reads written, it is made again) */
+		if (draw->watched_serial != serial)
+		{
+			retained_memory_now(&retained.context, serial, retained.memory);
+			if (memcmp(draw->memory, retained.memory, sizeof(retained.memory)))
+			{
+				found = NULL;
+				retained.memory_moved++;
+			}
+			else
+				draw->watched_serial = serial;
+		}
+		else
+			memcpy(retained.memory, draw->memory, sizeof(retained.memory));
+	}
+	else
+		retained_memory_now(&retained.context, serial, retained.memory);
 	retained.slot = draw;
 	retained.keep = TRUE;
 	retained.unkept_at = xgpu_texture_choices_unkept();
-	if (draw->generation != retained.generation || memcmp(&draw->context, &retained.context, sizeof(retained.context)))
+	if (!found)
 	{
 		retained.told = NULL;
 		retained.prepared++;
 		return -1;
 	}
+	draw->used = retained.clock;
 	if (retained.verify || !retained.enabled)
 	{
 		retained.verifying = draw;
@@ -6521,6 +6643,11 @@ static void retained_draw_keep(const struct xgpu_texture_source *sources, const 
 		}
 	}
 	draw->generation = retained.generation;
+	draw->used = retained.clock;
+	/* (its memory as it was found: a write since is noticed when it is
+	found next) */
+	draw->watched_serial = retained.memory_serial;
+	memcpy(draw->memory, retained.memory, sizeof(draw->memory));
 	draw->context = retained.context;
 	memcpy(draw->sources, sources, sizeof(draw->sources));
 	memcpy(draw->texture_scale, texture_scale, sizeof(draw->texture_scale));
@@ -6556,12 +6683,12 @@ static void retained_draws_frame(void)
 	retained.logged_frame = device.frame;
 	platform_log("GPU: retained draws: %lu found (%lu as the draw before's), %lu prepared, not kept: %lu not "
 		"retainable, %lu as what they were made from moved, %lu sampling a target; %lu differed, "
-		"%lu targets differed, %lu hash differed, %lu told differed; moved: memory %lu, choices %lu, images %lu, "
-		"settings %lu, GPU settings %lu, targets %lu", retained.found, retained.found_told, retained.prepared,
-		retained.not_kept, retained.not_kept_moved, retained.not_kept_target, retained.differed, retained.targets_differed,
-		retained.hash_differed, retained.told_differed, retained.moved[0],
-		retained.moved[1], retained.moved[2], retained.moved[3], retained.moved[4], retained.moved[5]);
-	retained.found = retained.found_told = retained.prepared = retained.not_kept = 0;
+		"%lu targets differed, %lu hash differed, %lu told differed; moved: memory %lu (a kept draw's own), "
+		"choices %lu, images %lu, settings %lu, GPU settings %lu, targets %lu", retained.found, retained.found_told,
+		retained.prepared, retained.not_kept, retained.not_kept_moved, retained.not_kept_target, retained.differed,
+		retained.targets_differed, retained.hash_differed, retained.told_differed, retained.memory_moved,
+		retained.moved[0], retained.moved[1], retained.moved[2], retained.moved[3], retained.moved[4]);
+	retained.found = retained.found_told = retained.prepared = retained.not_kept = retained.memory_moved = 0;
 	retained.not_kept_moved = retained.not_kept_target = 0;
 	memset(retained.moved, 0, sizeof(retained.moved));
 	retained.targets_differed = 0;
@@ -7404,6 +7531,38 @@ static WORD *quad_indices(const WORD *indices, unsigned long count, unsigned lon
 	return result;
 }
 
+/* a quad list's triangles where quad q is vertices 4q to 4q + 3 (DrawVertices'
+quads): one buffer of them made once, in the contiguous window, so that the
+mirror holds it (uploaded once) for every such draw of up to
+QUAD_LIST_QUADS quads; NULL if there is no memory for it. Aligned to a
+power of two past its size, it stays in one of the mirror's segments. */
+#define QUAD_LIST_QUADS 0x4000UL
+
+static const WORD *quad_list_indices(void)
+{
+	static WORD *indices;
+	static BOOL made;
+	unsigned long quad;
+
+	if (made)
+		return indices;
+	made = TRUE;
+	indices = platform_contiguous_alloc(QUAD_LIST_QUADS * 6 * sizeof(WORD), 0x40000UL, PLATFORM_ANY_PHYSICAL_ADDRESS,
+		PAGE_READWRITE);
+	if (!indices)
+		return NULL;
+	for (quad = 0; quad < QUAD_LIST_QUADS; quad++)
+	{
+		indices[quad * 6 + 0] = (WORD)(quad * 4);
+		indices[quad * 6 + 1] = (WORD)(quad * 4 + 1);
+		indices[quad * 6 + 2] = (WORD)(quad * 4 + 2);
+		indices[quad * 6 + 3] = (WORD)(quad * 4);
+		indices[quad * 6 + 4] = (WORD)(quad * 4 + 2);
+		indices[quad * 6 + 5] = (WORD)(quad * 4 + 3);
+	}
+	return indices;
+}
+
 void WINAPI D3DDevice_SetStreamSource(UINT stream_number, D3DVertexBuffer *stream_data, UINT stride)
 {
 	if (stream_number >= 16)
@@ -7434,10 +7593,22 @@ void WINAPI D3DDevice_DrawVertices(D3DPRIMITIVETYPE primitive_type, UINT start_v
 	xgpu_manifest_record_draw(0, 0);
 	if (primitive_type == D3DPT_QUADLIST)
 	{
-		unsigned long count;
-		WORD *indices = quad_indices(NULL, vertex_count, &count);
+		const WORD *shared = quad_list_indices();
+		unsigned long count, offset, quads = vertex_count / 4;
+		long segment;
+		WORD *indices;
 
-		xgpu_backend_draw_indices(XGPU_TRIANGLES, indices, count);
+		/* (the streams start at start_vertex: index i is its vertex i) */
+		if (shared && quads && quads <= QUAD_LIST_QUADS && xgpu_backend_capabilities.base_vertex &&
+			mirror_range((unsigned long)shared, quads * 6 * sizeof(WORD), &segment, &offset, NULL))
+		{
+			xgpu_backend_draw_indexed(XGPU_TRIANGLES, shared, quads * 6, 0, segment, offset, FALSE);
+		}
+		else
+		{
+			indices = quad_indices(NULL, vertex_count, &count);
+			xgpu_backend_draw_indices(XGPU_TRIANGLES, indices, count);
+		}
 	}
 	else
 	{

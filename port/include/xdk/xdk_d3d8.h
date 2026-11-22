@@ -357,7 +357,7 @@ the sources' symbol comments):
   to their own functions (the bump environment ones share one);
 - the getters read the state tables;
 - scenes need nothing, and unlocking does nothing;
-- an index buffer's data is ordinary memory at its Data address;
+- an index buffer's data is at its Data address (a virtual one);
 - the Direct3D object is never freed (Release returns 1). */
 
 /* declared in xdk_pdb.h; __forceinline (not D3DINLINE) marks it for the

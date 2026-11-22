@@ -7,7 +7,7 @@ and palettes, plus the few D3DX helpers the game uses.
 
 Resources keep the Xbox memory model: their data lives in the contiguous
 window and their Data field holds its physical address (index buffers,
-which the GPU never reads directly, hold a virtual one). Texel layout
+which the GPU never reads directly, hold the virtual address of theirs). Texel layout
 follows xbox_textures.c, so locks and uploads agree.
 */
 
@@ -122,9 +122,8 @@ ULONG WINAPI D3DResource_Release(D3DResource *resource)
 	/* resources the game built itself (not D3DCOMMON_D3DCREATED) are never freed here */
 	if (!count && (fields[0] & D3DCOMMON_D3DCREATED))
 	{
-		if ((fields[0] & D3DCOMMON_TYPE_MASK) == D3DCOMMON_TYPE_INDEXBUFFER)
-			free((void *)fields[1]);
-		else if (fields[1])
+		/* (an index buffer's Data is the virtual address: the same block) */
+		if (fields[1])
 			platform_contiguous_free(PLATFORM_PHYSICAL_TO_VIRTUAL(fields[1]));
 		d3d8_resource_freed(resource);
 		free(resource);
@@ -396,15 +395,19 @@ HRESULT WINAPI D3DDevice_CreateIndexBuffer(UINT length, DWORD usage, D3DFORMAT f
 	(void)pool;
 	if (!buffer)
 		return E_OUTOFMEMORY;
-	/* index data stays in ordinary memory on the Xbox too; Data is virtual */
-	memory = calloc(1, length ? length : 1);
+	/* in the contiguous window, as the vertex buffers are, so that the
+	mirror holds its indices (uploaded once, while the game leaves them
+	alone: d3d8_device.c's mirror_range); Data stays virtual, as the Xbox's
+	(D3DIndexBuffer_Lock reads it as the address) */
+	memory = allocate_resource_memory(length ? length : 1);
 	if (!memory)
 	{
 		free(buffer);
 		return E_OUTOFMEMORY;
 	}
+	memset(memory, 0, length ? length : 1);
 	buffer->Common = D3DCOMMON_TYPE_INDEXBUFFER | D3DCOMMON_D3DCREATED | 1;
-	buffer->Data = (DWORD)memory;
+	buffer->Data = (DWORD)(unsigned long)memory;
 	*result = buffer;
 	return S_OK;
 }
