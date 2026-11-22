@@ -72,8 +72,9 @@ struct host_render_backend
 	uint64_t (*fence)(void *context);
 	void (*wait)(void *context, uint64_t fence);
 	/* Optional, nonblocking completion query. A backend providing it must
-	wake the render thread with host_render_stream_gpu_completed after
-	publishing completion, without holding locks this query acquires. */
+	wake the render thread with host_render_stream_gpu_completed (or
+	host_render_stream_gpu_passed, with the fence) after publishing
+	completion, without holding locks this query acquires. */
 	int (*fence_ready)(void *context, uint64_t fence);
 
 	void (*initialize)(void *context, struct xgpu_stream_capabilities *capabilities);
@@ -288,6 +289,12 @@ void host_screenshot_name(char *name, uint32_t name_size, int year, int month, i
 /* GPU completion may release ring space even when no more records arrive.
 Called from any thread, after publishing the backend's completed fence. */
 void host_render_stream_gpu_completed(void);
+/* The same, from a backend that says which fence the GPU has passed: the
+frames and bytes of the fences up to it are retired at once, even while the
+render thread is busy (playing a frame, or held by the display), which then
+calls the backend's wait for them only to free what the backend keeps. Any
+thread; fences grow, so an older one than the last said is no news. */
+void host_render_stream_gpu_passed(uint64_t fence);
 
 /* ---------- the guest's imports (guest_host.h) */
 

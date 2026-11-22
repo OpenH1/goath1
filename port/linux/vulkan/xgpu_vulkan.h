@@ -871,11 +871,12 @@ before (the visibility tests' counts of the frames they end are written) */
 void xgpu_vulkan_wait(uint64_t fence);
 /* whether the GPU has done that submission, without waiting; and a
 function called (from a thread of the backend's) after each submission of
-xgpu_vulkan_fence's the GPU has done, from then on: nonzero if it will be
+xgpu_vulkan_fence's the GPU has done, from then on, with the newest it has
+done (0 for a lost device, only a wake): nonzero if it will be
 (the render thread plays the next frame while the GPU draws this one:
 host_render_stream.h's fence_ready) */
 int xgpu_vulkan_fence_ready(uint64_t fence);
-int xgpu_vulkan_completion_notify(void (*completed)(void));
+int xgpu_vulkan_completion_notify(void (*completed)(uint64_t serial));
 
 /* the window's size in pixels changed (any thread): the swapchain is made
 again */

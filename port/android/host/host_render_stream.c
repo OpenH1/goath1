@@ -13,7 +13,12 @@ for a fence; with nothing left to play it waits for the oldest fence and
 releases the ring's bytes up to it, retiring the frames it ends. The game
 so waits only when the ring is full, more than frames_in_flight frames are
 unretired, or a record is synchronous: the GPU draws frame N while this
-thread plays N + 1 and the game writes N + 2.
+thread plays N + 1 and the game writes N + 2. A backend that says which
+fence its GPU has passed (host_render_stream_gpu_passed, Vulkan's) has the
+frames and bytes up to it retired then, from its own thread: a GPU-bound
+game's next frame waits for the GPU, not also for this thread to finish
+the frame it plays. This thread still takes each fence off its queue,
+where the backend frees what it keeps.
 
 A backend that shows the frames on a display paces the game by it
 (frame_pacing.h): the game starts a frame only while at most
@@ -1417,7 +1422,16 @@ static struct
 	in a fence */
 	uint32_t fenced;
 	uint32_t frames_unfenced;
-	uint32_t retired_frames;
+	/* the frames retired: their GPU work done, said by the backend
+	(host_render_stream_gpu_passed) or found by this thread; and those
+	this thread has taken off the queue, which the frames ahead of a
+	display that queues them (frames_ahead) are counted by. Of the queue's
+	fences from its first, those the GPU's word has retired already
+	(fences_passed: this thread still takes them off, its backend's wait
+	freeing the backend's own), and the newest fence it has passed */
+	uint32_t retired_frames, taken_off_frames;
+	uint32_t fences_passed;
+	uint64_t passed;
 	uint64_t frame_started;
 	/* the render thread's time playing records, and the guest's waits for
 	the display's pacing (the ring's render_microseconds and
@@ -1533,6 +1547,49 @@ void host_render_stream_gpu_completed(void)
 	pthread_mutex_unlock(&render.lock);
 }
 
+/* (render.lock held) a fence's frames retired and its bytes released */
+static void fence_account(const struct fence_entry *entry)
+{
+	render.retired_frames += entry->frames;
+	__atomic_store_n(&render.ring->frames_retired, render.retired_frames, __ATOMIC_RELEASE);
+	__atomic_store_n(&render.ring->released, entry->position, __ATOMIC_RELEASE);
+}
+
+/* (render.lock held) the queue's fences the GPU has passed retired, in
+order, from the first not yet: the game may start frames past them and
+write over their bytes while this thread is still busy, playing a frame
+or held by the display. They stay on the queue for fence_retire, on this
+thread, which alone takes fences off it */
+static void fences_passed_retire(void)
+{
+	int retired = 0;
+
+	while (render.fences_passed < render.fence_count)
+	{
+		const struct fence_entry *entry = &render.fences[(render.fence_first + render.fences_passed) % FENCE_QUEUE];
+
+		if (entry->fence > render.passed)
+			break;
+		fence_account(entry);
+		render.fences_passed++;
+		retired = 1;
+	}
+	if (retired)
+		pthread_cond_broadcast(&render.done);
+}
+
+void host_render_stream_gpu_passed(uint64_t fence)
+{
+	pthread_mutex_lock(&render.lock);
+	if (fence > render.passed)
+	{
+		render.passed = fence;
+		fences_passed_retire();
+	}
+	pthread_cond_signal(&render.work);
+	pthread_mutex_unlock(&render.lock);
+}
+
 /* (render.lock held) a fence over what has been played, unless there is
 nothing new */
 static void fence_push(void)
@@ -1555,10 +1612,14 @@ static void fence_push(void)
 	render.fence_count++;
 	render.fenced = render.decoded;
 	render.frames_unfenced = 0;
+	/* (the GPU may have passed it already: said before it was queued) */
+	fences_passed_retire();
 }
 
-/* (render.lock held) waits for the oldest fence; its bytes released, its
-frames retired */
+/* (render.lock held) waits for the oldest fence and takes it off the
+queue; its bytes released, its frames retired, unless the GPU's word has
+retired them already (fences_passed_retire). Only this thread takes
+fences off, so the first is still the one waited for */
 static void fence_retire(void)
 {
 	const struct host_render_backend *backend = render_backend;
@@ -1570,9 +1631,11 @@ static void fence_retire(void)
 	pthread_mutex_lock(&render.lock);
 	render.fence_first = (render.fence_first + 1) % FENCE_QUEUE;
 	render.fence_count--;
-	render.retired_frames += entry.frames;
-	__atomic_store_n(&render.ring->frames_retired, render.retired_frames, __ATOMIC_RELEASE);
-	__atomic_store_n(&render.ring->released, entry.position, __ATOMIC_RELEASE);
+	if (render.fences_passed)
+		render.fences_passed--;
+	else
+		fence_account(&entry);
+	render.taken_off_frames += entry.frames;
 	pthread_cond_broadcast(&render.done);
 }
 
@@ -1580,8 +1643,8 @@ static void fence_retire(void)
 static void stream_failed(void)
 {
 	render.decoded = render.fenced = render.committed;
-	render.fence_count = 0;
-	render.retired_frames = render.ring->frames_submitted;
+	render.fence_count = render.fences_passed = 0;
+	render.retired_frames = render.taken_off_frames = render.ring->frames_submitted;
 	__atomic_store_n(&render.ring->frames_retired, render.retired_frames, __ATOMIC_RELEASE);
 	__atomic_store_n(&render.ring->released, render.committed, __ATOMIC_RELEASE);
 	pthread_cond_broadcast(&render.done);
@@ -1851,9 +1914,10 @@ int host_render_stream_open(uint32_t ring_address)
 	if (!render.decoder)
 		return -1;
 	render.committed = render.decoded = render.fenced = ring->committed;
-	render.fence_first = render.fence_count = 0;
+	render.fence_first = render.fence_count = render.fences_passed = 0;
+	render.passed = 0;
 	render.frames_unfenced = 0;
-	render.retired_frames = ring->frames_retired = ring->frames_submitted;
+	render.retired_frames = render.taken_off_frames = ring->frames_retired = ring->frames_submitted;
 	ring->released = ring->committed;
 	render.frames_taken = ring->frames_submitted;
 	render.played_at_open = render.frames_played;
@@ -2245,7 +2309,11 @@ void host_render_stream_submit(uint32_t flags)
 	pthread_cond_signal(&render.work);
 	while (!ring->error)
 	{
-		if ((flags & XGPU_STREAM_SUBMIT_FRAME) && ring->frames_submitted - render.retired_frames >
+		/* (a display that queues the frames: those this thread has taken
+		off, so that its own wait for the display, an image or a present,
+		holds the game's next frame too) */
+		if ((flags & XGPU_STREAM_SUBMIT_FRAME) && ring->frames_submitted -
+			(render.frames_ahead ? render.taken_off_frames : render.retired_frames) >
 			(render.frames_ahead && render.frames_ahead <= ring->frames_in_flight ? render.frames_ahead - 1 :
 			ring->frames_in_flight))
 			guest_wait(&start);

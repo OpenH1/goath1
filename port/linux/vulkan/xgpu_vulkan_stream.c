@@ -5009,7 +5009,7 @@ const struct host_render_backend *xgpu_vulkan_stream_backend(void)
 		backend.wait = stream_wait;
 		/* (else the render thread waits for each frame's fence:
 		HALO_VULKAN_FENCE_WAIT) */
-		if (stream.capabilities.completion_told && xgpu_vulkan_completion_notify(host_render_stream_gpu_completed))
+		if (stream.capabilities.completion_told && xgpu_vulkan_completion_notify(host_render_stream_gpu_passed))
 			backend.fence_ready = stream_fence_ready;
 		backend.initialize = stream_initialize;
 		backend.target_create = stream_target_create;

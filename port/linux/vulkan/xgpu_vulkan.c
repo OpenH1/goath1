@@ -1971,7 +1971,9 @@ ask whether a fence has passed (xgpu_vulkan_fence_ready) and be told when
 the GPU has done more (xgpu_vulkan_completion_notify): it plays the next
 frame's records while the GPU draws this one. Vulkan has no completion
 callback, so a thread waits on the timeline for whatever is submitted and
-calls the function given after each submission the GPU has passed. */
+calls the function given after each submission the GPU has passed, with
+the serial passed (0 for a lost device: only woken, the render thread's
+own wait reports it). */
 
 static struct
 {
@@ -1981,7 +1983,7 @@ static struct
 	/* the newest serial submitted, and the newest the thread has seen done */
 	uint64_t wanted, seen;
 	int started, stopping;
-	void (*completed)(void);
+	void (*completed)(uint64_t serial);
 } watcher = { .lock = PTHREAD_MUTEX_INITIALIZER, .wake = PTHREAD_COND_INITIALIZER };
 
 static void *watcher_main(void *unused)
@@ -2020,8 +2022,9 @@ static void *watcher_main(void *unused)
 		{
 			if (value > watcher.seen)
 				watcher.seen = value;
+			value = watcher.seen;
 			pthread_mutex_unlock(&watcher.lock);
-			watcher.completed();
+			watcher.completed(value);
 			pthread_mutex_lock(&watcher.lock);
 		}
 		else if (result != VK_TIMEOUT)
@@ -2030,7 +2033,7 @@ static void *watcher_main(void *unused)
 			own wait reports it) */
 			watcher.seen = watcher.wanted;
 			pthread_mutex_unlock(&watcher.lock);
-			watcher.completed();
+			watcher.completed(0);
 			pthread_mutex_lock(&watcher.lock);
 		}
 	}
@@ -2063,7 +2066,7 @@ static void watcher_stop(void)
 	watcher.started = 0;
 }
 
-int xgpu_vulkan_completion_notify(void (*completed)(void))
+int xgpu_vulkan_completion_notify(void (*completed)(uint64_t serial))
 {
 	if (watcher.started || !completed || !vk.device)
 		return watcher.started;
