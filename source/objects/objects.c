@@ -1428,6 +1428,116 @@ boolean object_lane_moves_in_substeps(
 	return sim_substep_count() > 1 && object_get_lane(object_index) == _object_lane_micro;
 }
 
+/* The slots of the object table that may hold one of the micro lane's types
+(OBJECT_MOVER_TYPES), for the fast phase's walks of them: the projectiles'
+every pass of every sub-step (projectiles.c) and the frames' poses of each
+sub-step (render_interpolation.c), which walked every slot up to the table's
+high-water mark. A slot's bit is set when an object of those types is made in
+it (object_new) and the bits are found again from the table once an update
+(object_lane_update_count), and after the game state is written over as a
+whole (objects_port_game_state_rewritten). A bit may stay set for a slot
+freed or made something else since: the walk tests each slot as
+object_iterator_next does, so it visits the same objects, in the same order
+(by slot, one made ahead of the walk visited by it), only skipping the slots
+that cannot hold one */
+#define OBJECT_MOVER_TYPES (_object_mask_biped | _object_mask_vehicle | _object_mask_projectile | _object_mask_item)
+#define OBJECT_MOVER_SLOT_WORDS ((SHORT_MAX + 1 + 63) / 64)
+
+static struct
+{
+	long update; /* object_lane_update_count when found (NONE: to find) */
+	unsigned long long slots[OBJECT_MOVER_SLOT_WORDS];
+} object_movers = { NONE };
+
+static void object_movers_mark(
+	long absolute_index)
+{
+	if (absolute_index >= 0 && absolute_index < OBJECT_MOVER_SLOT_WORDS * 64)
+		object_movers.slots[absolute_index >> 6] |= 1ULL << (absolute_index & 63);
+}
+
+static void object_movers_find(
+	void)
+{
+	struct object_header_datum const *header;
+	long absolute_index;
+
+	if (object_movers.update == object_lane_update_count)
+		return;
+	object_movers.update = object_lane_update_count;
+	csmemset(object_movers.slots, 0, sizeof(object_movers.slots));
+	header = (struct object_header_datum const *)object_header_data->data;
+	for (absolute_index = 0; absolute_index < object_header_data->count; absolute_index++, header++)
+	{
+		if (header->identifier && TEST_FLAG(OBJECT_MOVER_TYPES, header->type))
+			object_movers_mark(absolute_index);
+	}
+}
+
+void objects_port_game_state_rewritten(
+	void)
+{
+	object_movers.update = NONE;
+}
+
+void object_mover_iterator_new(
+	struct object_iterator *iterator,
+	unsigned long type_flags,
+	byte flags)
+{
+	match_assert("c:\\halo\\SOURCE\\objects\\objects.c", __LINE__, (type_flags & ~OBJECT_MOVER_TYPES) == 0);
+	object_iterator_new(iterator, type_flags, flags);
+	object_movers_find();
+}
+
+void *object_mover_iterator_next(
+	struct object_iterator *iterator)
+{
+	long absolute_index = iterator->absolute_index;
+	void *result = NULL;
+
+	match_vassert(
+		"c:\\halo\\SOURCE\\objects\\objects.c",
+		__LINE__,
+		iterator->signature==OBJECT_ITERATOR_SIGNATURE,
+		"uninitialized iterator passed to object_mover_iterator_next()");
+	data_verify(object_header_data);
+
+	/* (the table's high-water mark read at each slot, as object_iterator_next) */
+	while (absolute_index < object_header_data->count)
+	{
+		unsigned long long word = object_movers.slots[absolute_index >> 6] >> (absolute_index & 63);
+		struct object_header_datum *header;
+
+		if (word == 0)
+		{
+			absolute_index = (absolute_index | 63) + 1;
+			continue;
+		}
+		while ((word & 1) == 0)
+		{
+			word >>= 1;
+			absolute_index++;
+		}
+		if (absolute_index >= object_header_data->count)
+			break;
+		header = (struct object_header_datum *)((char *)object_header_data->data +
+			sizeof(struct object_header_datum) * absolute_index);
+		absolute_index++;
+		if (header->identifier &&
+			(iterator->flags & header->flags) == iterator->flags &&
+			TEST_FLAG(iterator->type_flags, header->type))
+		{
+			iterator->index = DATUM_INDEX_NEW(absolute_index - 1, header->identifier);
+			result = header->datum;
+			break;
+		}
+	}
+	iterator->absolute_index = (short)MIN(absolute_index, (long)object_header_data->count);
+
+	return result;
+}
+
 /* What the sub-steps see of the macro lane. An object of the macro lane with
 a collision model, updated in a tick with sub-steps, has its pose of the tick
 before kept as its update begins (its node matrices, its position and its
@@ -4121,6 +4231,9 @@ long object_new(
 			SET_FLAG(object_header->flags, _object_header_automatically_deactivate_bit, TRUE);
 
 			object_header->type = object_definition->object.type;
+			/* port: (the fast phase's walks of the movers: object_mover_iterator_next) */
+			if (TEST_FLAG(OBJECT_MOVER_TYPES, object_header->type))
+				object_movers_mark(DATUM_INDEX_TO_ABSOLUTE_INDEX(object_index));
 			object->definition_index = definition_index;
 			object->object.type = object_definition->object.type;
 			

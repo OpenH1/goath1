@@ -292,6 +292,8 @@ static void game_state_port_rewritten(
 	void)
 {
 	effects_port_game_state_rewritten();
+	/* port: the slots of the objects the sub-steps walk (objects.c) */
+	objects_port_game_state_rewritten();
 	/* port: what the renderer keeps of the decals for drawing them
 	(rasterizer_xbox_decals.c) */
 	rasterizer_decals_port_game_state_rewritten();

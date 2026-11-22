@@ -467,6 +467,13 @@ short object_get_lane(long object_index);
 /* whether it moves in this tick's sub-steps: of the micro lane, and the tick
 has more than one */
 boolean object_lane_moves_in_substeps(long object_index);
+/* object_iterator_new and object_iterator_next of the micro lane's types only
+(bipeds, vehicles, projectiles, items: type_flags of them), for the fast
+phase: the same objects in the same order, without walking every slot */
+void object_mover_iterator_new(struct object_iterator *iterator, unsigned long type_flags, byte flags);
+void *object_mover_iterator_next(struct object_iterator *iterator);
+/* (game_state.c's game_state_port_rewritten: the table written over) */
+void objects_port_game_state_rewritten(void);
 /* where a sub-step sees the object: its position and its bounding sphere's
 centre (either may be NULL), as its nodes (above) */
 void object_get_substep_position(long object_index, real_point3d *position, real_point3d *bounding_sphere_center);

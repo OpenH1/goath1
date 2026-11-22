@@ -299,6 +299,9 @@ static void *object_iterator_next(struct object_iterator *iterator)
 	}
 	return NULL;
 }
+/* (objects.c's walk of the micro lane's slots visits what this walk does) */
+#define object_mover_iterator_new object_iterator_new
+#define object_mover_iterator_next object_iterator_next
 
 /* vectors (real_math.h's) */
 static real dot_product3d(real_vector3d const *a, real_vector3d const *b)

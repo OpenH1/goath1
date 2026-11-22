@@ -1326,9 +1326,9 @@ static void render_interpolation_substep(short substep_index, short substep_coun
 	}
 	interpolation_substep_kept = tick * substep_count + substep_index;
 	/* (the micro lane's types: objects.c's object_lane_micro_candidate) */
-	object_iterator_new(&iterator,
+	object_mover_iterator_new(&iterator,
 		_object_mask_biped | _object_mask_vehicle | _object_mask_projectile | _object_mask_item, 0);
-	while ((object = (struct object_datum *)object_iterator_next(&iterator)) != NULL)
+	while ((object = (struct object_datum *)object_mover_iterator_next(&iterator)) != NULL)
 	{
 		long absolute_index = DATUM_INDEX_TO_ABSOLUTE_INDEX(iterator.index);
 		struct interpolated_substeps *substeps;

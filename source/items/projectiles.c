@@ -903,8 +903,8 @@ static void projectiles_substep(
 		struct object_iterator iterator;
 
 		more = FALSE;
-		object_iterator_new(&iterator, _object_mask_projectile, FLAG(_object_header_active_bit));
-		while (object_iterator_next(&iterator))
+		object_mover_iterator_new(&iterator, _object_mask_projectile, FLAG(_object_header_active_bit));
+		while (object_mover_iterator_next(&iterator))
 		{
 			long projectile_index = iterator.index;
 			struct object_header_datum *header = object_header_get(projectile_index);
