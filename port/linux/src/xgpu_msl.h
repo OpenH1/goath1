@@ -161,6 +161,14 @@ char *xgpu_msl_vertex_shader(const struct xgpu_vertex_program *program, unsigned
 	unsigned long integer_attribute_mask, const struct nv2a_vertex_lighting *lighting,
 	const struct xgpu_msl_options *options);
 
+/* the run of vertex constants, c[first] up to c[end], that
+xgpu_msl_vertex_shader's function reads of the program (with the same
+lighting): every one where an operand is relative. With xgpu_msl_options'
+motion it reads the same run past the 192. The backend uploads that run
+alone. */
+void xgpu_msl_vertex_constants(const struct xgpu_vertex_program *program, const struct nv2a_vertex_lighting *lighting,
+	unsigned int *first, unsigned int *end);
+
 /* the pixel program (xgpu_shader.h) as a Metal fragment function,
 xgpu_fragment. Returns a malloc'd string. */
 char *xgpu_msl_pixel_shader(const struct xgpu_pixel_program *program, const struct xgpu_msl_options *options);

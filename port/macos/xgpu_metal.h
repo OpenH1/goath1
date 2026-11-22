@@ -433,6 +433,10 @@ the same for the same entry, or 0 */
 uint32_t xgpu_metal_shader_create(const char *source, size_t size, const char *entry);
 uint32_t xgpu_metal_pixel_shader_create(const char *source, size_t size, const char *entry,
 	const uint32_t *constants);
+/* the run of vertex constants a vertex function reads, c[first] up to
+c[end] (and the same past the 192 where it writes the motion), which the
+draws upload alone; a function without one reads all 192 */
+void xgpu_metal_shader_constants(uint32_t shader, uint32_t first, uint32_t end);
 
 /* a pipeline made on the backend's queues for the draws to come (a map's,
 while it loads); waits until every pipeline prepared so is made, and
@@ -496,7 +500,8 @@ uint64_t xgpu_metal_frame_end(uint32_t present);
 uint64_t xgpu_metal_frame_completed(void);
 void xgpu_metal_frame_wait(uint64_t fence);
 
-/* copies data into this frame's upload ring */
+/* copies data into this frame's upload ring (NULL: the space left for the
+backend to write) */
 struct xgpu_metal_source xgpu_metal_stream(const void *data, uint32_t size);
 /* a guest range to read in place */
 struct xgpu_metal_source xgpu_metal_guest(uint32_t address, uint32_t size);

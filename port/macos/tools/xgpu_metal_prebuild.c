@@ -93,6 +93,14 @@ uint32_t xgpu_metal_pixel_shader_create(const char *source, size_t size, const c
 	return ++function_count;
 }
 
+/* (the draws' constants' run: the app's alone) */
+void xgpu_metal_shader_constants(uint32_t shader, uint32_t first, uint32_t end)
+{
+	(void)shader;
+	(void)first;
+	(void)end;
+}
+
 static uint32_t functions_written(void)
 {
 	uint32_t index, count = 0;

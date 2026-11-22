@@ -281,6 +281,13 @@ static int shaders_make(void *context, const struct xgpu_stream_pipeline_define 
 		key->lighting, options.motion ? "_motion" : "");
 	*vertex_shader = compile(xgpu_msl_vertex_shader(program, packed, integers, lighting, &options), "xgpu_vertex", name,
 		NULL);
+	if (*vertex_shader)
+	{
+		unsigned int first, end;
+
+		xgpu_msl_vertex_constants(program, lighting, &first, &end);
+		xgpu_metal_shader_constants(*vertex_shader, first, end);
+	}
 	free(program);
 	pixel_program_convert(&definition->pixel_program, &pixel);
 	snprintf(name, sizeof(name), "ps_%08x_%02x%02x%02x%02x%s", bytes_hash(&definition->pixel_program,
