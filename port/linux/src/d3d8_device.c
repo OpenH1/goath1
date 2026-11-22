@@ -5175,6 +5175,65 @@ int halo_dynamic_lights_walked(void)
 		xgpu_backend_capabilities.dynamic_lights;
 }
 
+/* the grid's reach (xgpu.h): along each axis, as far from the camera as
+the frame's farthest light's reach (LIGHT_REACH), so that the grid's cells
+are no larger than they need be for its lights; no less than
+DYNAMIC_LIGHTS_LEAST_REACH (the cells nearest the camera then about a tenth
+of a world unit), no more than XGPU_DYNAMIC_LIGHTS_REACH. Past its reach a
+pixel is in the grid's outer cells, which reach as far as the world
+(dynamic_lights_edges). (A light whose offset or reach is no number is left
+out of it.) */
+#define DYNAMIC_LIGHTS_LEAST_REACH 4.0f
+
+static void dynamic_lights_scales(const struct halo_dynamic_light *lights, int count, const float camera[3],
+	float scales[3])
+{
+	static const int sizes[3] = { XGPU_DYNAMIC_LIGHTS_GRID_X, XGPU_DYNAMIC_LIGHTS_GRID_Y, XGPU_DYNAMIC_LIGHTS_GRID_Z };
+	int axis, index;
+
+	for (axis = 0; axis < 3; axis++)
+	{
+		float reach = DYNAMIC_LIGHTS_LEAST_REACH;
+
+		for (index = 0; index < count; index++)
+		{
+			float far = fabsf(lights[index].position[axis] - camera[axis]) + LIGHT_REACH(lights[index].radius);
+
+			if (lights[index].radius > 0.0f && far > reach)
+				reach = far;
+		}
+		if (!(reach < XGPU_DYNAMIC_LIGHTS_REACH))
+			reach = XGPU_DYNAMIC_LIGHTS_REACH;
+		scales[axis] = (float)(sizes[axis] / 2) / log2f(1.0f + reach / XGPU_DYNAMIC_LIGHTS_CELL);
+	}
+}
+
+/* how much wider than its own a cell is taken to be each way, of a cell:
+more than the error of the shaders' finding of a point's cell in floats
+(the offset from the middle, the log2 and the scale: about 1e-5 of a cell) */
+#define DYNAMIC_LIGHTS_EDGE_MARGIN 0.01
+
+/* a grid's cells along an axis (count of them, at a scale: xgpu.h): cell
+k's lowest and highest offsets from the middle, each a margin wider
+(DYNAMIC_LIGHTS_EDGE_MARGIN), the outer cells' outer edges infinite (the
+shaders put every point past the grid's reach in them). A point the
+shaders put in cell k is within its edges. */
+static void dynamic_lights_edges(float scale, int count, float *lower, float *upper)
+{
+	int cell;
+
+	for (cell = 0; cell < count; cell++)
+	{
+		double low = ((double)cell - DYNAMIC_LIGHTS_EDGE_MARGIN - count / 2) / scale;
+		double high = ((double)cell + 1.0 + DYNAMIC_LIGHTS_EDGE_MARGIN - count / 2) / scale;
+
+		lower[cell] = !cell ? -INFINITY :
+			(float)((low < 0.0 ? -1.0 : 1.0) * XGPU_DYNAMIC_LIGHTS_CELL * (exp2(fabs(low)) - 1.0));
+		upper[cell] = cell == count - 1 ? INFINITY :
+			(float)((high < 0.0 ? -1.0 : 1.0) * XGPU_DYNAMIC_LIGHTS_CELL * (exp2(fabs(high)) - 1.0));
+	}
+}
+
 /* a grid cell's index along an axis for an offset from the middle (xgpu.h) */
 static int dynamic_lights_cell(float offset, float scale, int count)
 {
@@ -5184,6 +5243,58 @@ static int dynamic_lights_cell(float offset, float scale, int count)
 	return index < 0 ? 0 : index >= count ? count - 1 : index;
 }
 
+/* a light's bit (index) in the masks of the cells (xgpu.h) its sphere
+reaches: its reach (LIGHT_REACH: past its radius, where the shaders add
+nothing of it) about its offset from the grid's middle, against each cell's
+box (dynamic_lights_edges' lower and upper, each axis's cells'), rather
+than every cell of the box about the sphere, whose corners it misses. The
+cells looked at are the box's and one more each way (the shaders' rounding
+of a point's cell). Conservative: a point a light adds to is within its
+radius, so in its sphere of reach, and in the box of the cell the shaders
+put it in, so that box meets the sphere and has the light
+(tools/harness/tests/test_dynamic_lights_cells.py). */
+static void dynamic_lights_mark(unsigned int (*mask)[XGPU_DYNAMIC_LIGHTS_GRID_Y][XGPU_DYNAMIC_LIGHTS_GRID_X][4],
+	const float offset[3], float radius, const float scales[3], const float (*lower)[XGPU_DYNAMIC_LIGHTS_GRID_X],
+	const float (*upper)[XGPU_DYNAMIC_LIGHTS_GRID_X], int index)
+{
+	static const int sizes[3] = { XGPU_DYNAMIC_LIGHTS_GRID_X, XGPU_DYNAMIC_LIGHTS_GRID_Y, XGPU_DYNAMIC_LIGHTS_GRID_Z };
+	float away[3][XGPU_DYNAMIC_LIGHTS_GRID_X], reach = LIGHT_REACH(radius), reach_squared = reach * reach;
+	int first[3], last[3], axis, cell, x, y, z;
+	unsigned int bit = 1u << (index & 31);
+
+	for (axis = 0; axis < 3; axis++)
+	{
+		first[axis] = dynamic_lights_cell(offset[axis] - reach, scales[axis], sizes[axis]) - 1;
+		last[axis] = dynamic_lights_cell(offset[axis] + reach, scales[axis], sizes[axis]) + 1;
+		if (first[axis] < 0)
+			first[axis] = 0;
+		if (last[axis] > sizes[axis] - 1)
+			last[axis] = sizes[axis] - 1;
+		for (cell = first[axis]; cell <= last[axis]; cell++)
+		{
+			float low = lower[axis][cell], high = upper[axis][cell];
+			float distance = offset[axis] < low ? low - offset[axis] : offset[axis] > high ? offset[axis] - high : 0.0f;
+
+			away[axis][cell] = distance * distance;
+		}
+	}
+	for (z = first[2]; z <= last[2]; z++)
+		for (y = first[1]; y <= last[1]; y++)
+		{
+			float left = reach_squared - away[2][z] - away[1][y];
+
+			if (left < 0.0f)
+				continue;
+			for (x = first[0]; x <= last[0]; x++)
+			{
+				if (!(away[0][x] > left))
+					mask[z][y][x][index >> 5] |= bit;
+			}
+		}
+}
+
+typedef char dynamic_lights_cells_widest[XGPU_DYNAMIC_LIGHTS_GRID_X >= XGPU_DYNAMIC_LIGHTS_GRID_Y &&
+	XGPU_DYNAMIC_LIGHTS_GRID_X >= XGPU_DYNAMIC_LIGHTS_GRID_Z ? 1 : -1];
 typedef char dynamic_lights_cluster_slice[XGPU_DYNAMIC_LIGHTS_GRID_X * XGPU_DYNAMIC_LIGHTS_GRID_Y >=
 	XGPU_DYNAMIC_LIGHTS_CLUSTERS ? 1 : -1];
 typedef char dynamic_lights_cells_bytes[sizeof(dynamic_lights.mask) == XGPU_DYNAMIC_LIGHTS_CELLS_BYTES ? 1 : -1];
@@ -5214,7 +5325,7 @@ void halo_dynamic_lights_set(const struct halo_dynamic_light *lights, int count,
 {
 	static const int sizes[3] = { XGPU_DYNAMIC_LIGHTS_GRID_X, XGPU_DYNAMIC_LIGHTS_GRID_Y, XGPU_DYNAMIC_LIGHTS_GRID_Z };
 	struct xgpu_dynamic_lights_halos *halos = &dynamic_lights.halos;
-	float scales[3];
+	float scales[3], lower[3][XGPU_DYNAMIC_LIGHTS_GRID_X], upper[3][XGPU_DYNAMIC_LIGHTS_GRID_X];
 	int index, axis;
 
 	inputs.lights_count = 0;
@@ -5232,9 +5343,10 @@ void halo_dynamic_lights_set(const struct halo_dynamic_light *lights, int count,
 		dynamic_lights.failed = TRUE;
 		return;
 	}
+	dynamic_lights_scales(lights, count, camera, scales);
 	for (axis = 0; axis < 3; axis++)
 	{
-		scales[axis] = (float)(sizes[axis] / 2) / log2f(1.0f + XGPU_DYNAMIC_LIGHTS_REACH / XGPU_DYNAMIC_LIGHTS_CELL);
+		dynamic_lights_edges(scales[axis], sizes[axis], lower[axis], upper[axis]);
 		dynamic_lights.data.grid[0][axis] = camera[axis];
 		dynamic_lights.data.grid[1][axis] = scales[axis];
 		halos->camera_right[axis] = right[axis];
@@ -5254,7 +5366,7 @@ void halo_dynamic_lights_set(const struct halo_dynamic_light *lights, int count,
 	for (index = 0; index < count; index++)
 	{
 		const struct halo_dynamic_light *light = &lights[index];
-		int first[3], last[3], x, y, z;
+		float offset[3];
 		float brightness = dynamic_lights.look[0][0];
 
 		if (!(light->radius > 0.0f))
@@ -5288,17 +5400,12 @@ void halo_dynamic_lights_set(const struct halo_dynamic_light *lights, int count,
 			/* (linear: the display's gamma out) */
 			dynamic_lights.data.color[index][axis] = powf(light->color[axis], 2.2f) * brightness;
 			dynamic_lights.data.cone[index][axis] = light->axis[axis];
-			first[axis] = dynamic_lights_cell(light->position[axis] - light->radius - camera[axis], scales[axis],
-				sizes[axis]);
-			last[axis] = dynamic_lights_cell(light->position[axis] + light->radius - camera[axis], scales[axis],
-				sizes[axis]);
+			offset[axis] = light->position[axis] - camera[axis];
 		}
 		dynamic_lights.data.color[index][3] = light->cone_offset;
 		dynamic_lights.data.cone[index][3] = light->cone_scale;
-		for (z = first[2]; z <= last[2]; z++)
-			for (y = first[1]; y <= last[1]; y++)
-				for (x = first[0]; x <= last[0]; x++)
-					dynamic_lights.mask[z][y][x][index >> 5] |= 1u << (index & 31);
+		dynamic_lights_mark(dynamic_lights.mask, offset, light->radius, scales,
+			(const float (*)[XGPU_DYNAMIC_LIGHTS_GRID_X])lower, (const float (*)[XGPU_DYNAMIC_LIGHTS_GRID_X])upper, index);
 		if ((light->flags & HALO_DYNAMIC_LIGHT_HALO) && halos->count < XGPU_DYNAMIC_LIGHTS_MAXIMUM)
 		{
 			float *halo = halos->halos[halos->count * 2];
