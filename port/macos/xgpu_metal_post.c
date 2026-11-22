@@ -471,6 +471,16 @@ int xgpu_metal_post_prepare_hdr(uint8_t depth_format, uint32_t samples)
 	return 1;
 }
 
+int xgpu_metal_post_tone_map_made(uint8_t depth_format, uint32_t samples)
+{
+	struct xgpu_metal_pipeline pipeline;
+
+	if (!xgpu_metal_post_prepare_hdr(depth_format, samples))
+		return 0;
+	tone_map_pipeline(depth_format, samples, &pipeline);
+	return xgpu_metal_pipeline_made(&pipeline);
+}
+
 int xgpu_metal_post_tone_map(uint32_t target, uint32_t width, uint32_t height, uint32_t depth, uint8_t depth_format,
 	uint32_t samples, const int32_t corners[4], const float hdr[4])
 {

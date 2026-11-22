@@ -50,6 +50,9 @@ where they are (programmable blending): hdr the mode and the peak
 (xgpu_hdr.h). Nonzero if it was drawn; the backend's state is the pass's
 afterwards, as anti-aliasing's is. */
 int xgpu_metal_post_prepare_hdr(uint8_t depth_format, uint32_t samples);
+/* whether the tone map's pipeline for that depth attachment and samples is
+made (asked for if it is not) */
+int xgpu_metal_post_tone_map_made(uint8_t depth_format, uint32_t samples);
 int xgpu_metal_post_tone_map(uint32_t target, uint32_t width, uint32_t height, uint32_t depth, uint8_t depth_format,
 	uint32_t samples, const int32_t corners[4], const float hdr[4]);
 

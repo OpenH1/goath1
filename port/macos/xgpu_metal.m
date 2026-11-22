@@ -298,9 +298,11 @@ static struct
 
 	/* display.temporal_aa's motion (xgpu_metal_set_motion_target): its
 	texture (0 none), the colour target whose passes draw into it too, and
-	whether the first of them clears it; whether the open pass has it */
+	whether the first of them clears it; whether the open pass has it, and
+	its format (the pass keeps it past the objects' span, drawn through) */
 	uint32_t motion, motion_color;
 	BOOL motion_clear, encoder_motion;
+	uint8_t encoder_motion_format;
 
 	/* the pass */
 	uint32_t color, color_level, color_layer, depth;
@@ -323,6 +325,7 @@ static struct
 		id<MTLRenderCommandEncoder> encoder;
 		uint32_t color, color_level, color_layer, depth, target_width, target_height;
 		BOOL multisampled, encoder_motion;
+		uint8_t encoder_motion_format;
 		int32_t visibility_pass, profile_current;
 	} parked;
 	uint32_t target_width, target_height;
@@ -1479,6 +1482,7 @@ static void aside_unpark(void)
 	metal.target_height = metal.parked.target_height;
 	metal.multisampled = metal.parked.multisampled;
 	metal.encoder_motion = metal.parked.encoder_motion;
+	metal.encoder_motion_format = metal.parked.encoder_motion_format;
 	metal.visibility_pass = metal.parked.visibility_pass;
 	profile.current = metal.parked.profile_current;
 	metal.parked.encoder = nil;
@@ -3319,6 +3323,7 @@ void xgpu_metal_set_targets(uint32_t color, uint32_t color_level, uint32_t color
 			metal.parked.target_height = metal.target_height;
 			metal.parked.multisampled = metal.multisampled;
 			metal.parked.encoder_motion = metal.encoder_motion;
+			metal.parked.encoder_motion_format = metal.encoder_motion_format;
 			metal.parked.visibility_pass = metal.visibility_pass;
 			metal.parked.profile_current = profile.current;
 			metal.encoder = nil;
@@ -3396,16 +3401,48 @@ int xgpu_metal_motion_bound(void)
 
 void xgpu_metal_set_motion_target(uint32_t motion, uint32_t color)
 {
+	/* (the main command buffer's pass open: its own, or the one parked for
+	an aside pass) */
+	BOOL open = metal.aside ? metal.parked.encoder != nil : metal.encoder != nil;
+	uint32_t open_color = metal.aside ? metal.parked.color : metal.color;
+	BOOL open_motion = metal.aside ? metal.parked.encoder_motion : metal.encoder_motion;
+
 	if (!texture_get(motion))
 		motion = color = 0;
 	if (metal.motion == motion && metal.motion_color == color)
 		return;
-	/* (the pass open ends: the next has the attachment, or has not) */
-	if (metal.encoder || metal.aside)
+	/* (a motion begun: a pass open of its colour, or with a motion of its
+	own, ends, for the next to have it from its start, cleared. A motion
+	ended: the pass that has it goes on, keeping it to its end, its other
+	draws through it, writing none (draw_motion_through), not stored and
+	loaded again in a pass of its own; nor does a pass of another target
+	end, a World AO pre-pass's) */
+	if (motion && open && (open_motion || open_color == color))
 		pass_end();
 	metal.motion = motion;
 	metal.motion_color = color;
 	metal.motion_clear = motion != 0;
+}
+
+/* a draw in a pass that keeps the motion past its span (its pipeline drawn
+through it, writing none): NO where that variant is not made yet, asked
+for, the pass to end and the draw to go in one without the motion */
+static BOOL draw_motion_through(void)
+{
+	struct xgpu_metal_pipeline pipeline = metal.pipeline;
+
+	if (!metal.encoder || metal.aside || !metal.encoder_motion || metal.motion || !(metal.dirty & _dirty_pipeline) ||
+		metal.options.synchronous || !metal.prepared_once)
+		return YES;
+	if (!pipeline.motion_format)
+	{
+		pipeline.motion_format = metal.encoder_motion_format;
+		pipeline.motion_mask = 0;
+	}
+	if (xgpu_metal_pipeline_made(&pipeline))
+		return YES;
+	xgpu_metal_prepare(&pipeline);
+	return NO;
 }
 
 /* the render command encoder for the targets, begun if there is none */
@@ -3483,9 +3520,11 @@ static id<MTLRenderCommandEncoder> encoder(void)
 		attachment.texture = motion->texture;
 		attachment.loadAction = metal.motion_clear ? MTLLoadActionClear : MTLLoadActionLoad;
 		attachment.clearColor = MTLClearColorMake(0.0, 0.0, 0.0, 0.0);
+		/* (the resolve reads it) */
 		attachment.storeAction = MTLStoreActionStore;
 		metal.motion_clear = NO;
 		metal.encoder_motion = YES;
+		metal.encoder_motion_format = motion->description.format;
 		motion->used = motion->main_written = serial;
 	}
 	if (depth)
@@ -3627,7 +3666,7 @@ static id<MTLRenderPipelineState> clear_pipeline(uint32_t parts)
 	/* (the colour's channels written) */
 	key.parts = (uint8_t)(parts & XGPU_METAL_CLEAR_COLOR ? parts & XGPU_METAL_CLEAR_CHANNELS : 0);
 	/* (a pass with display.temporal_aa's motion: drawn through it) */
-	key.motion_format = metal.encoder_motion ? texture_get(metal.motion)->description.format : 0;
+	key.motion_format = metal.encoder_motion ? metal.encoder_motion_format : 0;
 	data = [NSData dataWithBytes:&key length:sizeof(key)];
 	state = metal.clear_pipelines[data];
 	if (state)
@@ -4222,7 +4261,10 @@ static BOOL draw_state_apply(id<MTLRenderCommandEncoder> render)
 		if (!metal.encoder_motion)
 			pipeline.motion_format = pipeline.motion_mask = 0;
 		else if (!pipeline.motion_format)
-			pipeline.motion_format = texture_get(metal.motion)->description.format;
+		{
+			pipeline.motion_format = metal.encoder_motion_format;
+			pipeline.motion_mask = 0;
+		}
 		state = pipeline_state_get(&pipeline);
 
 		if (!state)
@@ -4497,6 +4539,8 @@ void xgpu_metal_draw(uint32_t primitive, uint32_t count, uint32_t first_vertex, 
 	}
 	if (metal.aside && aside_reads_written(indices))
 		aside_close();
+	if (!draw_motion_through())
+		pass_end();
 	if (draw_inspector)
 	{
 		pass_end();

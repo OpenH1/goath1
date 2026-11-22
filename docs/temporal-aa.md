@@ -154,9 +154,12 @@ The game's packages hold none of NVIDIA's files (`tools/dlss_addon.py check-pack
 - **Motion.** As Vulkan's. The MSL emitter writes the objects' motion as the SPIR-V emitter does
   (`xgpu_msl_options.motion`): the vertex program runs again on the previous frame's registers, 192 to 383, which the
   backend keeps past the 192 and binds as one 6 KB buffer from the frame's upload ring (`setVertexBytes` takes 4 KB at
-  most). The pixel shader writes `[[color(1)]]`. The passes into the window's target have the objects' RGBA32F
-  texture as their second attachment, cleared by the first of them (`xgpu_metal_set_motion_target`). Every pipeline
-  drawn in them has it in its description, the writers' mask all channels and the others' none (clears too).
+  most). The pixel shader writes `[[color(1)]]`, packed as RG32Uint: the motion's two halves and the depth's bits plus 1
+  (0, the clear, where none is drawn). The passes into the window's target have the objects' texture as their second
+  attachment, cleared by the first of them (`xgpu_metal_set_motion_target`); the pass open as the objects' span ends
+  keeps it to its own end, its later draws through it, rather than ending there. Every pipeline drawn in them has it
+  in its description, the writers' mask all channels and the others' none (clears too). The resolved motion, which
+  MetalFX reads, is RG16F.
   `xgpu_metal_temporal.m` holds the resolve and `debug.motion_vectors`' view as MSL. Off, nothing changes: the
   emitter's text is the same for every other shader (the 746 of `tools/msl_corpus`), and no pass has the attachment.
 - **MetalFX.** Offered where Metal has `MTLFXTemporalScaler` (`supportsDevice`, macOS 13 and iOS 16 on; the build
@@ -164,7 +167,8 @@ The game's packages hold none of NVIDIA's files (`tools/dlss_addon.py check-pack
   row's place). It takes the colour before its tone map, the reversed depth (`depthReversed`), the motion (a
   fraction of the view, previous less current, scaled by the render's size into its pixels: MetalFX's own sense),
   the jitter, the reset and a fixed exposure of 1. Its output is a texture of the display window's size, blitted into
-  the back buffer, where the tone map, Panini and the HUD follow. Each window has a scaler of its own; a window not
+  the back buffer (or sharpened into it by RCAS), where the tone map, Panini and the HUD follow; with `display.hdr`
+  the tone map is drawn in the pass that writes the output, no depth attached, so the back buffer is written once. Each window has a scaler of its own; a window not
   at its target's corner is copied there first. The iOS simulator's SDK has no MetalFX: none there.
 - **Reactive mask.** FSR's generated one (the colour before and after the transparent draws, tone mapped, its largest
   channel's change, 0.9 past 0.2), drawn into an R8 texture, MetalFX's `reactiveMaskTexture` (macOS 14.4, iOS 17.4).

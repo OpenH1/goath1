@@ -128,7 +128,7 @@ static void pixel(const char *name, const struct xgpu_pixel_program *program)
 				failures++;
 				continue;
 			}
-			if (!has_motion(source) != !expected || (expected && !strstr(source, "output.motion = float4(")))
+			if (!has_motion(source) != !expected || (expected && !strstr(source, "output.motion = uint2(")))
 			{
 				printf("%s%s: the motion %s\n", name, twin ? " twin" : "", expected ? "missing" : "where it is off");
 				failures++;

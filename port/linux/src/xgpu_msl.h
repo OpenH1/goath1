@@ -127,8 +127,9 @@ struct xgpu_msl_options
 	const char *debug_expression;
 	BOOL debug_texture0, debug_flat;
 	/* display.temporal_aa: the draw writes its motion as the second colour
-	attachment ([[color(1)]]: the previous position less the current, as a
-	fraction of the view, x right, y down; its depth; 1), its vertex
+	attachment ([[color(1)]], uint2: the previous position less the current,
+	as a fraction of the view, x right, y down, as two halves; its depth's
+	bits plus 1), its vertex
 	program run again on the previous frame's registers, which the
 	constants' buffer holds after the 192 (384 float4s then), as
 	xgpu_spirv_options' motion */

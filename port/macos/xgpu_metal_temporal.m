@@ -20,6 +20,10 @@ motion, xgpu_vulkan_fsr.c):
   display.temporal_aa_sharpness is above 0 (xgpu_metal_pipeline.m's
   xgpu_temporal_rcas, ported to MSL from the SDK's FsrRcasF as the Vulkan
   FSR runs it: the same constant, before the tone map; 0 the plain copy).
+  With display.hdr the tone map follows in that same pass (a copy drawn
+  there at sharpness 0), reading the pixels in tile memory with no depth
+  attached: the destination written once, tone mapped, the stream's tone
+  map of it then skipped (xgpu_metal_stream.m).
   The exposure is fixed at 1 (a 1x1 R16Float of 1), as FSR's. Each
   window (split screen's four) has a scaler and history of its own, made
   again as its sizes or formats change: off the render thread (a scaler
@@ -58,6 +62,7 @@ each window's first upscale's time on the render thread.
 #include "xgpu_metal.h"
 #include "xgpu_metal_internal.h"
 #include "xgpu_metal_pipeline.h"
+#include "xgpu_metal_post.h"
 #include "xgpu_metal_temporal.h"
 
 #include <math.h>
@@ -75,13 +80,14 @@ enum
 	FUNCTION_REACTIVE,
 	FUNCTION_STRETCH,
 	FUNCTION_RCAS,
+	FUNCTION_COPY,
 	FUNCTIONS
 };
 
 static const char *const function_names[FUNCTIONS] =
 {
 	"xgpu_temporal_vertex", "xgpu_temporal_resolve", "xgpu_temporal_view", "xgpu_temporal_reactive",
-	"xgpu_temporal_stretch", "xgpu_temporal_rcas",
+	"xgpu_temporal_stretch", "xgpu_temporal_rcas", "xgpu_temporal_copy",
 };
 
 #ifdef XGPU_METAL_METALFX
@@ -181,7 +187,7 @@ int xgpu_metal_motion_prepare(uint8_t view_format)
 
 	if (!functions_make())
 		return 0;
-	pipeline_describe(FUNCTION_RESOLVE, XGPU_METAL_FORMAT_RGBA16F, WRITE_ALL, &pipeline);
+	pipeline_describe(FUNCTION_RESOLVE, XGPU_METAL_FORMAT_RG16F, WRITE_ALL, &pipeline);
 	xgpu_metal_prepare(&pipeline);
 	if (view_format)
 	{
@@ -190,8 +196,8 @@ int xgpu_metal_motion_prepare(uint8_t view_format)
 	}
 	if (xgpu_metal_metalfx_supported())
 	{
-		/* (and the stretch and the RCAS pass, into each of the back
-		buffer's formats) */
+		/* (and the stretch, the RCAS pass and the copy, into each of the
+		back buffer's formats) */
 		static const uint8_t formats[] = { XGPU_METAL_FORMAT_BGRA8, XGPU_METAL_FORMAT_RGBA16F, XGPU_METAL_FORMAT_RGBA16 };
 		size_t index;
 
@@ -202,6 +208,8 @@ int xgpu_metal_motion_prepare(uint8_t view_format)
 			pipeline_describe(FUNCTION_STRETCH, formats[index], WRITE_ALL, &pipeline);
 			xgpu_metal_prepare(&pipeline);
 			pipeline_describe(FUNCTION_RCAS, formats[index], WRITE_ALL, &pipeline);
+			xgpu_metal_prepare(&pipeline);
+			pipeline_describe(FUNCTION_COPY, formats[index], WRITE_ALL, &pipeline);
 			xgpu_metal_prepare(&pipeline);
 		}
 	}
@@ -245,7 +253,7 @@ static void pass_draw(int function, uint32_t into, uint8_t format, uint8_t mask,
 void xgpu_metal_motion_resolve(uint32_t into, uint32_t objects, uint32_t depth, const int32_t rectangle[4],
 	const struct xgpu_metal_motion_uniforms *uniforms)
 {
-	pass_draw(FUNCTION_RESOLVE, into, XGPU_METAL_FORMAT_RGBA16F, WRITE_ALL, rectangle, objects, depth, uniforms);
+	pass_draw(FUNCTION_RESOLVE, into, XGPU_METAL_FORMAT_RG16F, WRITE_ALL, rectangle, objects, depth, uniforms);
 }
 
 void xgpu_metal_motion_view(uint32_t into, uint8_t format, uint32_t motion, const int32_t rectangle[4],
@@ -403,7 +411,7 @@ static void scaler_make(struct metalfx_window *entry, struct metalfx_fit fit)
 
 		descriptor.colorTextureFormat = fit.color;
 		descriptor.depthTextureFormat = fit.depth;
-		descriptor.motionTextureFormat = MTLPixelFormatRGBA16Float;
+		descriptor.motionTextureFormat = MTLPixelFormatRG16Float;
 		descriptor.outputTextureFormat = fit.output;
 		descriptor.inputWidth = fit.input_width;
 		descriptor.inputHeight = fit.input_height;
@@ -530,6 +538,8 @@ static id<MTLTexture> input_place(struct metalfx_window *entry, int which, id<MT
 colour alone upscaled into the output, made on the render thread as the
 sizes or formats change (it is quick to make), then placed as the temporal
 scaler's output is (RCAS or the copy); 0 where it cannot be */
+static void output_place(uint32_t output, uint32_t destination, const int32_t rectangle[4], float sharpness, BOOL drawn);
+
 static int upscale_spatial(struct metalfx_window *entry, const struct xgpu_metal_metalfx_frame *frame, id<MTLTexture> color,
 	id<MTLTexture> destination)
 {
@@ -602,7 +612,7 @@ static int upscale_spatial(struct metalfx_window *entry, const struct xgpu_metal
 	entry->spatial.inputContentHeight = fit.input_height;
 	[entry->spatial encodeToCommandBuffer:buffer];
 	xgpu_metal_pass_kind(kind);
-	xgpu_metal_metalfx_place(entry->output, frame->destination, place, frame->sharpness);
+	output_place(entry->output, frame->destination, frame->destination_rectangle, frame->sharpness, frame->tone_map != 0);
 	return 1;
 }
 
@@ -741,14 +751,14 @@ static int upscale(const struct xgpu_metal_metalfx_frame *frame)
 	}
 	xgpu_metal_pass_kind(kind);
 	/* (the output into the destination's window) */
-	xgpu_metal_metalfx_place(entry->output, frame->destination, place, frame->sharpness);
+	output_place(entry->output, frame->destination, frame->destination_rectangle, frame->sharpness, frame->tone_map != 0);
 	return 1;
 }
-#endif
 
-void xgpu_metal_metalfx_place(uint32_t output, uint32_t destination, const int32_t rectangle[4], float sharpness)
+/* drawn: in a pass of the destination's (no depth) even at sharpness 0, for
+the tone map to follow in it */
+static void output_place(uint32_t output, uint32_t destination, const int32_t rectangle[4], float sharpness, BOOL drawn)
 {
-#ifdef XGPU_METAL_METALFX
 	id<MTLTexture> from = xgpu_metal_texture(output), into = xgpu_metal_texture(destination);
 	id<MTLBlitCommandEncoder> blit;
 	uint32_t kind;
@@ -769,6 +779,17 @@ void xgpu_metal_metalfx_place(uint32_t output, uint32_t destination, const int32
 			&uniforms);
 		return;
 	}
+	if (drawn)
+	{
+		struct xgpu_metal_motion_uniforms uniforms;
+
+		memset(&uniforms, 0, sizeof(uniforms));
+		uniforms.window[0] = (float)rectangle[0];
+		uniforms.window[1] = (float)rectangle[1];
+		pass_draw(FUNCTION_COPY, destination, backend_format(into.pixelFormat), WRITE_ALL, rectangle, output, 0,
+			&uniforms);
+		return;
+	}
 	kind = xgpu_metal_pass_kind(XGPU_METAL_PASS_TEMPORAL);
 	xgpu_metal_texture_encoded(output, 0);
 	xgpu_metal_texture_encoded(destination, 1);
@@ -779,6 +800,13 @@ void xgpu_metal_metalfx_place(uint32_t output, uint32_t destination, const int32
 		destinationOrigin:MTLOriginMake((NSUInteger)rectangle[0], (NSUInteger)rectangle[1], 0)];
 	[blit endEncoding];
 	xgpu_metal_pass_kind(kind);
+}
+#endif
+
+void xgpu_metal_metalfx_place(uint32_t output, uint32_t destination, const int32_t rectangle[4], float sharpness)
+{
+#ifdef XGPU_METAL_METALFX
+	output_place(output, destination, rectangle, sharpness, NO);
 #else
 	(void)output;
 	(void)destination;
@@ -796,6 +824,19 @@ int xgpu_metal_metalfx_upscale(const struct xgpu_metal_metalfx_frame *frame)
 	if (!temporal.times_every)
 		temporal.times_every = getenv("HALO_METALFX_TIMES") ? atoi(getenv("HALO_METALFX_TIMES")) : -1;
 	drawn = upscale(frame);
+	/* (display.hdr: the tone map in the pass that drew the output, which
+	it reads in tile memory, no depth attached: the destination written
+	once, tone mapped) */
+	if (drawn && frame->tone_map)
+	{
+		id<MTLTexture> destination = xgpu_metal_texture(frame->destination);
+		uint32_t kind = xgpu_metal_pass_kind(XGPU_METAL_PASS_TONE_MAP);
+
+		if (destination && xgpu_metal_post_tone_map(frame->destination, (uint32_t)destination.width,
+			(uint32_t)destination.height, 0, XGPU_METAL_FORMAT_NONE, 1, frame->destination_rectangle, frame->hdr))
+			drawn |= 2;
+		xgpu_metal_pass_kind(kind);
+	}
 	/* (HALO_METALFX_TIMES: each window's first upscale's time on the render
 	thread) */
 	if (temporal.times_every > 0 && !temporal.first_timed[frame->window & 3])

@@ -53,6 +53,8 @@ static const struct xgpu_metal_format_information formats[XGPU_METAL_FORMAT_COUN
 	[XGPU_METAL_FORMAT_RGBA16] = { MTLPixelFormatRGBA16Unorm, 8, 0, 0, 0, SWIZZLE(Red, Green, Blue, Alpha), 0 },
 	/* (a stencil alone: no depth) */
 	[XGPU_METAL_FORMAT_S8] = { MTLPixelFormatStencil8, 1, 0, 0, 1, SWIZZLE(Red, Green, Blue, Alpha), 0 },
+	[XGPU_METAL_FORMAT_RG16F] = { MTLPixelFormatRG16Float, 4, 0, 0, 0, SWIZZLE(Red, Green, Blue, Alpha), 0 },
+	[XGPU_METAL_FORMAT_RG32UI] = { MTLPixelFormatRG32Uint, 8, 0, 0, 0, SWIZZLE(Red, Green, Blue, Alpha), 0 },
 };
 
 const struct xgpu_metal_format_information *xgpu_metal_format_information(uint32_t format)
@@ -330,15 +332,17 @@ NSString *const xgpu_metal_temporal_source =
 	"\tout.position = float4(float((id & 1) << 2) - 1.0, float((id & 2) << 1) - 1.0, 0.0, 1.0);\n"
 	"\treturn out;\n"
 	"}\n"
-	/* (the window's motion, as MOTION_RESOLVE_SOURCE) */
+	/* (the window's motion, as MOTION_RESOLVE_SOURCE; the objects' as
+	xgpu_msl.c writes it, RG32Uint: the motion's two halves, the depth's
+	bits plus 1, 0 where none was drawn) */
 	"fragment float4 xgpu_temporal_resolve(temporal_out in [[stage_in]], constant motion_uniforms &u [[buffer(17)]],\n"
-	"\ttexture2d<float> objects [[texture(0)]], depth2d<float> depth_texture [[texture(1)]])\n"
+	"\ttexture2d<uint> objects [[texture(0)]], depth2d<float> depth_texture [[texture(1)]])\n"
 	"{\n"
 	"\tuint2 texel = uint2(in.position.xy);\n"
-	"\tfloat4 object = objects.read(texel);\n"
+	"\tuint2 object = objects.read(texel).xy;\n"
 	"\tfloat depth = depth_texture.read(texel);\n"
-	"\tif (object.w > 0.5 && abs(object.z - depth) <= max(1.5e-7, depth * 1.0e-6))\n"
-	"\t\treturn float4(object.xy, 0.0, 1.0);\n"
+	"\tif (object.y != 0u && abs(as_type<float>(object.y - 1u) - depth) <= max(1.5e-7, depth * 1.0e-6))\n"
+	"\t\treturn float4(float2(as_type<half2>(object.x)), 0.0, 1.0);\n"
 	"\tif (u.motion.w == 0.0)\n"
 	"\t\treturn float4(0.0);\n"
 	"\tfloat2 place = (in.position.xy - u.window.xy) / u.window.zw;\n"
@@ -376,6 +380,13 @@ NSString *const xgpu_metal_temporal_source =
 	"{\n"
 	"\tconstexpr sampler linear(coord::pixel, filter::linear, address::clamp_to_edge);\n"
 	"\treturn color.sample(linear, u.metrics.xy + (in.position.xy - u.window.xy) / u.window.zw * u.metrics.zw);\n"
+	"}\n"
+	/* (MetalFX's output copied into the destination's rectangle (window.xy
+	its corner), where the tone map follows in the same pass) */
+	"fragment float4 xgpu_temporal_copy(temporal_out in [[stage_in]], constant motion_uniforms &u [[buffer(17)]],\n"
+	"\ttexture2d<float> color [[texture(0)]])\n"
+	"{\n"
+	"\treturn color.read(uint2(in.position.xy - u.window.xy));\n"
 	"}\n"
 	/* FSR's RCAS (port/third_party/fidelityfx-fsr3/gpu/fsr1/ffx_fsr1.h's
 	FsrRcasF, as ffx_fsr3upscaler_rcas.h builds it: 32-bit, FSR_RCAS_DENOISE,

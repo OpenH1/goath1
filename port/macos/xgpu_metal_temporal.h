@@ -32,9 +32,9 @@ struct xgpu_metal_motion_uniforms
 into a target of view_format, XGPU_METAL_FORMAT_*), made on the backend's
 queues as a map is prepared; 0 (logged once) if they cannot be */
 int xgpu_metal_motion_prepare(uint8_t view_format);
-/* the window's motion (into: RGBA16F, the target's size) over the
-rectangle (x0, y0, x1, y1) from the objects' (RGBA32F: their motion, their
-depth, 1 where drawn) where their depth is still the depth target's, else
+/* the window's motion (into: RG16F, the target's size) over the
+rectangle (x0, y0, x1, y1) from the objects' (RG32Uint: their motion's two
+halves, their depth's bits plus 1, 0 where none was drawn) where their depth is still the depth target's, else
 the camera's from the depth; and debug.motion_vectors' colours of it drawn
 over a target of the format (its colour alone). The backend's state is the
 passes' afterwards: the caller sets its own again */
@@ -62,10 +62,13 @@ target's texture, of its format and size), for this frame's reactive mask */
 void xgpu_metal_metalfx_opaque(int window, uint32_t color);
 
 /* a window's view upscaled (xgpu_stream.h's MOTION _UPSCALE): its colour,
-the depth target, its motion (RGBA16F, xgpu_metal_motion_resolve's) over
+the depth target, its motion (RG16F, xgpu_metal_motion_resolve's) over
 source (the rectangle in their pixels) into destination's rectangle; the
 jitter in the source's pixels (x right, y down); its history begun again
-(reset); display.temporal_aa_sharpness (0 to 1, 0 none) */
+(reset); display.temporal_aa_sharpness (0 to 1, 0 none); tone_map: display.hdr's
+tone map of the destination's rectangle (hdr its uniforms,
+xgpu_metal_post_tone_map's) drawn in the pass that wrote it, no depth
+attached */
 struct xgpu_metal_metalfx_frame
 {
 	uint32_t color, depth, motion, destination;
@@ -73,8 +76,11 @@ struct xgpu_metal_metalfx_frame
 	float jitter[2];
 	int reset, window;
 	float sharpness;
+	int tone_map;
+	float hdr[4];
 };
-/* nonzero if it was drawn; the backend's state is the passes' afterwards */
+/* nonzero if it was drawn (1), and 2 with it where it was tone mapped too;
+the backend's state is the passes' afterwards */
 int xgpu_metal_metalfx_upscale(const struct xgpu_metal_metalfx_frame *frame);
 /* MetalFX's output (a target of the rectangle's size) into the
 destination's rectangle: copied as it is at sharpness 0, else sharpened

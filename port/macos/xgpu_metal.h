@@ -152,6 +152,11 @@ enum
 	/* a stencil alone (Stencil8): SMAA's marks (xgpu_metal_post.c), an
 	attachment only */
 	XGPU_METAL_FORMAT_S8,
+	/* (display.temporal_aa's motion: the window's, resolved, two half
+	floats, MetalFX's; the objects', drawn, two 32-bit unsigned integers:
+	the motion's two halves, the depth's bits plus 1) */
+	XGPU_METAL_FORMAT_RG16F,
+	XGPU_METAL_FORMAT_RG32UI,
 	XGPU_METAL_FORMAT_COUNT
 };
 

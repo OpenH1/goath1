@@ -65,6 +65,9 @@ static const char *pixel_format_name(MTLPixelFormat format)
 	/* (display.ambient_occlusion "world"'s pre-pass's inputs, and its pass's) */
 	case MTLPixelFormatRGBA32Uint: return "RGBA32Uint";
 	case MTLPixelFormatRGBA32Float: return "RGBA32Float";
+	/* (display.temporal_aa's motion variants' second attachment) */
+	case MTLPixelFormatRG32Uint: return "RG32Uint";
+	case MTLPixelFormatRG16Float: return "RG16Float";
 	case MTLPixelFormatDepth32Float_Stencil8: return "Depth32Float_Stencil8";
 	case MTLPixelFormatDepth16Unorm: return "Depth16Unorm";
 	default: return NULL;
@@ -130,7 +133,7 @@ static NSDictionary *color_attachment_entry(MTLRenderPipelineColorAttachmentDesc
 backend's own archives write it (metal-source -flatbuffers=json), the
 attributes and the layouts up to the last used in order, and the colour
 attachments up to the last with a format (display.temporal_aa's motion
-variants: the motion, RGBA32F, the second) */
+variants: the motion, RG32Uint, the second) */
 static NSDictionary *pipeline_entry(MTLRenderPipelineDescriptor *descriptor, NSString *vertex, NSString *fragment)
 {
 	NSMutableDictionary *entry = [NSMutableDictionary dictionary];

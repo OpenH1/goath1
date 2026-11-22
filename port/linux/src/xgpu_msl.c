@@ -2588,7 +2588,9 @@ char *xgpu_msl_pixel_shader(const struct xgpu_pixel_program *program, const stru
 	/* (display.temporal_aa: the motion, the second attachment's, as
 	xgpu_spirv.c's: the previous position less the current, as a fraction
 	of the view, x right and y down, and the pixel's depth, which the
-	resolve finds it still is; xgpu_msl_options' motion) */
+	resolve finds it still is; xgpu_msl_options' motion. RG32Uint: the
+	motion's two halves (the resolve's output is of halves), the depth's
+	bits plus 1, the attachment's clear of 0 where none is drawn) */
 	BOOL motion = options->motion && !world_inputs && !occluder;
 	/* (a model's highlights of the lights in its reflection: xgpu.h
 	XGPU_DYNAMIC_LIGHTS_HIGHLIGHT) */
@@ -2635,7 +2637,7 @@ char *xgpu_msl_pixel_shader(const struct xgpu_pixel_program *program, const stru
 	xgpu_text_append(&text, "};\nstruct xgpu_fragment_out\n{\n\t%s color [[color(0)]];\n",
 		world_inputs || occluder ? "uint4" : "float4");
 	if (motion)
-		xgpu_text_append(&text, "\tfloat4 motion [[color(1)]];\n");
+		xgpu_text_append(&text, "\tuint2 motion [[color(1)]];\n");
 	if (sample_mask)
 		xgpu_text_append(&text, "\tuint sample_mask [[sample_mask]];\n");
 	if (replaces_depth)
@@ -2977,7 +2979,8 @@ char *xgpu_msl_pixel_shader(const struct xgpu_pixel_program *program, const stru
 			"\t\tfloat2 now = in.xMotionCurrent.xy / in.xMotionCurrent.z;\n"
 			"\t\tfloat2 before = in.xMotionPrevious.xy / in.xMotionPrevious.z;\n"
 			"\t\tbool both = in.xMotionCurrent.z > 0.0 && in.xMotionPrevious.z > 0.0;\n"
-			"\t\toutput.motion = float4(both ? (before - now) * float2(0.5, -0.5) : float2(0.0), in.frag_position.z, 1.0);\n"
+			"\t\toutput.motion = uint2(as_type<uint>(half2(both ? (before - now) * float2(0.5, -0.5) : float2(0.0))),\n"
+			"\t\t\tas_type<uint>(in.frag_position.z) + 1u);\n"
 			"\t}\n");
 	xgpu_text_append(&text, "\treturn output;\n}\n");
 	functions_insert(&text, functions_at, functions.buffer);

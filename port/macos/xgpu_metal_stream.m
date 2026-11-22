@@ -182,16 +182,20 @@ static struct
 /* display.temporal_aa's motion (xgpu_stream.h's MOTION): on once a record
 has come (the previous frame's registers kept from then on); a window's
 objects drawing their motion (objects) into the objects' texture (drawn,
-RGBA32F: the motion, the depth, 1 where drawn) beside its target's; each
-pipeline's variant that writes it (its shaders xgpu_msl_options' motion),
-made as first drawn or as a map is prepared (preparing: its objects' draws;
-prepare_variant: the variant made now); the window's motion resolved
-(RGBA16F, the target's size: for the technique); its history begun again
-(reset) */
+RG32Uint: the motion's two halves, the depth's bits plus 1, 0 where none
+was drawn) beside its target's; each pipeline's variant that writes it (its
+shaders xgpu_msl_options' motion), made as first drawn or as a map is
+prepared (preparing: its objects' draws; prepare_variant: the variant made
+now); the window's motion resolved (RG16F, the target's size: for the
+technique); its history begun again (reset); the target (and its
+rectangle) whose 3D view "metalfx" tone mapped as it upscaled it this
+frame, whose tone map is done (0 none) */
 static struct
 {
 	BOOL on, objects, preparing, prepare_variant, reset;
 	uint32_t drawn, motion;
+	uint32_t tone_mapped;
+	int32_t tone_mapped_rectangle[4];
 	struct xgpu_stream_pipeline_define *definitions;
 	struct stream_pipeline *entries;
 } motion;
@@ -1105,7 +1109,7 @@ static BOOL draw_prepare(const struct xgpu_metal_vertex_attribute *attributes, c
 	memcpy(pipeline.strides, strides, sizeof(pipeline.strides));
 	if (motion_drawn)
 	{
-		pipeline.motion_format = XGPU_METAL_FORMAT_RGBA32F;
+		pipeline.motion_format = XGPU_METAL_FORMAT_RG32UI;
 		pipeline.motion_mask = motion_writes ? XGPU_WRITE_RED | XGPU_WRITE_GREEN | XGPU_WRITE_BLUE | XGPU_WRITE_ALPHA : 0;
 	}
 	if (stream.preparing)
@@ -1688,14 +1692,30 @@ static void stream_gamma(void *context, uint32_t gamma)
 	host_metal_gamma(value);
 }
 
+/* the tone map's uniforms (xgpu_metal_post_tone_map's hdr) for this frame */
+static void tone_map_uniforms(float hdr[4])
+{
+	struct xgpu_hdr_frame frame;
+
+	host_metal_hdr_frame(&frame);
+	hdr[0] = (float)frame.mode;
+	hdr[1] = frame.peak;
+	/* (the view's light over the UI's white; the display's full-frame
+	peak, 0 none) */
+	hdr[2] = frame.ui;
+	hdr[3] = frame.full_frame;
+}
+
+static BOOL motion_rectangle(const struct stream_target *target, const int32_t corners[4], int32_t rectangle[4]);
+
 /* a window's 3D view tone mapped, in the pass that drew it, before the HUD
-and the menus are drawn over it */
+and the menus are drawn over it (where "metalfx" upscaled it, already, in
+the pass that wrote the upscale: stream_motion) */
 static void stream_tone_map(void *context, const struct xgpu_stream_tone_map *record)
 {
 	struct stream_target *target = target_get(record->target);
 	struct stream_target *depth = stream.color == record->target ? target_get(stream.depth) : NULL;
 	uint32_t samples = target ? target->description.samples : 0;
-	struct xgpu_hdr_frame frame;
 	float hdr[4];
 	uint32_t kind;
 
@@ -1707,15 +1727,22 @@ static void stream_tone_map(void *context, const struct xgpu_stream_tone_map *re
 	if (stream.preparing)
 	{
 		(void)xgpu_metal_post_prepare_hdr(depth ? depth->description.format : XGPU_METAL_FORMAT_NONE, samples);
+		/* (and the upscale's, no depth) */
+		if (xgpu_metal_metalfx_supported() && samples <= 1)
+			(void)xgpu_metal_post_prepare_hdr(XGPU_METAL_FORMAT_NONE, 1);
 		return;
 	}
-	host_metal_hdr_frame(&frame);
-	hdr[0] = (float)frame.mode;
-	hdr[1] = frame.peak;
-	/* (the view's light over the UI's white; the display's full-frame
-	peak, 0 none) */
-	hdr[2] = frame.ui;
-	hdr[3] = frame.full_frame;
+	if (motion.tone_mapped && motion.tone_mapped == record->target)
+	{
+		int32_t rectangle[4];
+		BOOL same = motion_rectangle(target, record->corners, rectangle) &&
+			!memcmp(rectangle, motion.tone_mapped_rectangle, sizeof(rectangle));
+
+		motion.tone_mapped = 0;
+		if (same)
+			return;
+	}
+	tone_map_uniforms(hdr);
 	target->written++;
 	kind = xgpu_metal_pass_kind(XGPU_METAL_PASS_TONE_MAP);
 	xgpu_metal_post_tone_map(target->texture, target->description.width, target->description.height,
@@ -1886,7 +1913,7 @@ static void stream_motion(void *context, const struct xgpu_stream_motion *record
 		if (!target || target->description.format == XGPU_METAL_FORMAT_D24S8 || target->description.samples > 1 ||
 			target->description.depth_or_layers > 1 || !motion_tables())
 			return;
-		motion.drawn = motion_texture(motion.drawn, XGPU_METAL_FORMAT_RGBA32F, target->description.width,
+		motion.drawn = motion_texture(motion.drawn, XGPU_METAL_FORMAT_RG32UI, target->description.width,
 			target->description.height);
 		if (!motion.drawn || !motion_sized(motion.drawn, target))
 			return;
@@ -1915,7 +1942,7 @@ static void stream_motion(void *context, const struct xgpu_stream_motion *record
 			!depth || depth->description.format != XGPU_METAL_FORMAT_D24S8 || depth->description.samples > 1 ||
 			!motion_sized(motion.drawn, target) || !motion_rectangle(target, record->pass.corners, rectangle))
 			return;
-		motion.motion = motion_texture(motion.motion, XGPU_METAL_FORMAT_RGBA16F, target->description.width,
+		motion.motion = motion_texture(motion.motion, XGPU_METAL_FORMAT_RG16F, target->description.width,
 			target->description.height);
 		if (!motion.motion || !motion_sized(motion.motion, target))
 			return;
@@ -1978,8 +2005,20 @@ static void stream_motion(void *context, const struct xgpu_stream_motion *record
 		frame.reset = pass.reset != 0 || motion.reset;
 		frame.window = (int)pass.window;
 		frame.sharpness = pass.sharpness;
+		/* (display.hdr: the destination RGBA16F, its tone map the next
+		record, over the same rectangle (render.c): drawn here, in the pass
+		that writes the upscale, where its pipeline without depth is made) */
+		motion.tone_mapped = 0;
+		frame.tone_map = destination->description.format == XGPU_METAL_FORMAT_RGBA16F &&
+			xgpu_metal_post_tone_map_made(XGPU_METAL_FORMAT_NONE, 1);
+		if (frame.tone_map)
+			tone_map_uniforms(frame.hdr);
 		destination->written++;
-		(void)xgpu_metal_metalfx_upscale(&frame);
+		if ((xgpu_metal_metalfx_upscale(&frame) & 2) != 0)
+		{
+			motion.tone_mapped = record->pad;
+			memcpy(motion.tone_mapped_rectangle, frame.destination_rectangle, sizeof(motion.tone_mapped_rectangle));
+		}
 		stream_state_restore();
 	}
 }
@@ -2298,6 +2337,8 @@ static void stream_present(void *context, uint32_t back_buffer)
 {
 	(void)context;
 	stream.back_buffer = back_buffer;
+	/* (an upscale's tone map is its frame's alone) */
+	motion.tone_mapped = 0;
 }
 
 static void prepass_prepare(void);
@@ -2335,6 +2376,7 @@ static void stream_frame_end(void *context)
 	xgpu_metal_gpu_time_tag(host_render_stream_frame_playing(), host_render_stream_gpu_frame);
 	xgpu_metal_frame_end(target_texture(stream.back_buffer));
 	stream.back_buffer = 0;
+	motion.tone_mapped = 0;
 	xgpu_metal_textures_frame_end();
 	/* (the GPU's time so far, for the guest: a report's) */
 	host_render_stream_gpu_time(xgpu_metal_gpu_busy_nanoseconds());
