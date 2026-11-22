@@ -504,6 +504,15 @@ first sub-step, what a player feels in their hands moved in smaller steps
 (1 at game.sim_rate 30, 2 at 60, 4 at 120), the objects of the tick having
 moved; the last ends the tick with the rest of its work. At 30 the one
 sub-step is the whole tick, as game_tick was. Whether the tick ended. */
+/* port: (game_macro_steps_run) */
+static unsigned long game_macro_step_count;
+
+unsigned long game_macro_steps_run(
+	void)
+{
+	return game_macro_step_count;
+}
+
 boolean game_tick_substep(
 	short substep_index)
 {
@@ -517,7 +526,10 @@ boolean game_tick_substep(
 	NETWORK_LATENCY_TRACE(network_latency_trace_step_begun());
 
 	if (substep_index == 0)
+	{
+		game_macro_step_count++;
 		game_tick_macro_step();
+	}
 	profile_scope(game_tick_substeps_section, sim_substep_run(substep_index);)
 	tick_ended = sim_substep_next() == 0;
 	if (tick_ended)

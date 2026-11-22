@@ -145,6 +145,10 @@ void remove_quitting_players_from_game(
 /* port: a sub-step of the tick (the first begins it, the last ends it, and
 says so: game.c, port/linux/game/sim_rate.h) */
 boolean game_tick_substep(short substep_index);
+/* port: how many ticks' macro steps (their first sub-steps' own work) this
+machine has run since it started: no game state, for what the frames time
+around them (port/linux/game/spartan_link.c) */
+unsigned long game_macro_steps_run(void);
 void game_options_new(struct game_options *options);
 boolean game_options_verify(struct game_options *options);
 void game_initial_pulse(void);

@@ -78,7 +78,9 @@ objects' shadows, lens flares, decals, the grass and other detail objects,
 the weather or the particles too small to see in it, and its models' levels
 of detail chosen for its own pixels, coarser than the screen's
 (halo_model_detail_scale). So the frame pays for a small view in some
-frames, however many feeds there are; with the link hidden, nothing.
+frames, however many feeds there are; with the link hidden, nothing. A draw
+due in a frame that runs a tick's macro step (the world's update, the
+slowest frames) waits for the next frame, once (spartan_link_frame_judge).
 
 Only what this machine draws: nothing is sent, the game state is not
 touched (no seed is taken, no effect, sound or HUD message made: the
@@ -324,6 +326,17 @@ static struct
 	one drawn last, which the next follows round */
 	short due_local_player, due_feed;
 	short last_local_player, last_feed;
+	/* a feed's draw kept off a frame that runs a tick's macro step (the
+	world's whole update, the frame's slowest work) to the next frame
+	(spartan_link_frame_judge): the macro steps run as this frame began
+	(game_macro_steps_run), this frame judged, whether a draw due in it
+	waits, whether the last drawn frame ran a macro step, and whether a
+	draw waited in this frame and in the last drawn one (never twice) */
+	unsigned long frame_macro_steps;
+	boolean frame_judged;
+	boolean frame_defers;
+	boolean last_frame_ticked;
+	boolean deferred, last_deferred;
 	/* the feed being drawn: whose eyes hide whose body, and whose weapon is
 	posed (render_objects.c, first_person_weapons.c) */
 	boolean drawing;
@@ -1937,6 +1950,10 @@ void spartan_link_update(
 	boolean key;
 	short port;
 
+	/* (the frame's macro steps are the ones run from here, before its
+	clock's update, to its drawing: spartan_link_frame_judge) */
+	spartan_link.frame_macro_steps = game_macro_steps_run();
+	spartan_link.frame_judged = FALSE;
 	spartan_link_read();
 	/* (a new game: every link closed, as each game starts) */
 	if (!spartan_link_playing() || game_time_get() < spartan_link.last_game_time)
@@ -2086,6 +2103,29 @@ unsigned char spartan_link_pad_open(
 /* the feeds drawn (spartan_link_feeds_drawn) */
 static unsigned long spartan_link_feeds_count;
 
+/* once a drawn frame, as its first window draws: whether a feed's draw due
+in it waits for the next frame. A frame that runs a tick's macro step is the
+slowest (the world's whole update), and a feed's draw there is a second view
+on top: it waits a frame, so the frames after the ticks, with no macro step,
+take it. Never two frames running (its image is at most a frame later than
+it was due, and its next due time is counted from this one's: the rate
+holds), and not where the last drawn frame ran a macro step too: a frame
+rate so low that every frame has one draws as it was due */
+static void spartan_link_frame_judge(
+	void)
+{
+	boolean ticked;
+
+	if (spartan_link.frame_judged)
+		return;
+	spartan_link.frame_judged = TRUE;
+	ticked = game_macro_steps_run() != spartan_link.frame_macro_steps;
+	spartan_link.last_deferred = spartan_link.deferred;
+	spartan_link.deferred = FALSE;
+	spartan_link.frame_defers = ticked && !spartan_link.last_frame_ticked && !spartan_link.last_deferred;
+	spartan_link.last_frame_ticked = ticked;
+}
+
 boolean spartan_link_feed_begin(
 	short local_player_index,
 	struct render_camera *camera)
@@ -2099,6 +2139,7 @@ boolean spartan_link_feed_begin(
 	unsigned long width, height;
 	int view;
 
+	spartan_link_frame_judge();
 	if (local_player_index != spartan_link.due_local_player || spartan_link.due_feed == NONE ||
 		!spartan_link_shown(local_player_index))
 	{
@@ -2114,6 +2155,15 @@ boolean spartan_link_feed_begin(
 	teammate = player_try_and_get(feed->player_index);
 	if (!teammate || feed->down_at || !object_try_and_get_and_verify_type(feed->unit_index, _object_mask_unit))
 		return FALSE;
+	/* (one that has its image waits off a macro step's frame; one with none
+	yet is drawn at once: spartan_link_frame_judge) */
+	if (spartan_link.frame_defers && spartan_link_feed_image(local_player_index, spartan_link.due_feed))
+	{
+		spartan_link.deferred = TRUE;
+		spartan_link.due_local_player = NONE;
+		spartan_link.due_feed = NONE;
+		return FALSE;
+	}
 	/* (the next frame's is another's) */
 	spartan_link.last_local_player = spartan_link.due_local_player;
 	spartan_link.last_feed = spartan_link.due_feed;
