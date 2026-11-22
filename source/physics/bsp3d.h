@@ -50,6 +50,8 @@ long bsp3d_test_point(struct bsp3d const *bsp, long node_index, union real_point
 /* port: the current structure bsp's table for bsp3d_test_point's walk, made
 again as a bsp loads (NULL: none, as it is let go of) */
 void bsp3d_point_table_build(struct bsp3d const *bsp);
+/* port: HALO_BSP3D_CELLS's measures, each frame presented (report.c) */
+void bsp3d_cells_frame(long long micros, unsigned long waited);
 
 /* ---------- globals */
 
