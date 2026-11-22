@@ -76,27 +76,35 @@ static inline long network_bits_bytes(
 	return (bits->position + 7) >> 3;
 }
 
-/* the low count bits of value (count at most 32) */
+/* the low count bits of value (count at most 32), up to a byte (the rest
+of the current one) a step: a byte's first bits clear the rest of it */
 static inline void network_bits_put(
 	struct network_bits *bits,
 	unsigned long value,
 	short count)
 {
-	short index;
-
-	for (index = 0; index < count; index++, bits->position++)
+	while (count > 0)
 	{
 		long byte_index = bits->position >> 3;
+		short shift = (short)(bits->position & 7);
+		short step = 8 - shift;
+		unsigned long chunk;
 
 		if (byte_index >= bits->size)
 		{
 			bits->failed = TRUE;
 			return;
 		}
-		if (!(bits->position & 7))
-			bits->data[byte_index] = 0;
-		if ((value >> index) & 1)
-			bits->data[byte_index] |= (byte)(1 << (bits->position & 7));
+		if (step > count)
+			step = count;
+		chunk = value & ((1UL << step) - 1);
+		if (!shift)
+			bits->data[byte_index] = (byte)chunk;
+		else
+			bits->data[byte_index] |= (byte)(chunk << shift);
+		value >>= step;
+		count -= step;
+		bits->position += step;
 	}
 }
 
@@ -105,19 +113,25 @@ static inline unsigned long network_bits_take(
 	short count)
 {
 	unsigned long value = 0;
-	short index;
+	short taken = 0;
 
-	for (index = 0; index < count; index++, bits->position++)
+	while (count > 0)
 	{
 		long byte_index = bits->position >> 3;
+		short shift = (short)(bits->position & 7);
+		short step = 8 - shift;
 
 		if (byte_index >= bits->size)
 		{
 			bits->failed = TRUE;
 			return 0;
 		}
-		if ((bits->read[byte_index] >> (bits->position & 7)) & 1)
-			value |= 1UL << index;
+		if (step > count)
+			step = count;
+		value |= (((unsigned long)bits->read[byte_index] >> shift) & ((1UL << step) - 1)) << taken;
+		taken += step;
+		count -= step;
+		bits->position += step;
 	}
 	return value;
 }
