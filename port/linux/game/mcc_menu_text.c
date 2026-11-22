@@ -77,14 +77,60 @@ static int text_height(wchar_t const *text)
     return MAX(ink.y1,cursor.y1);
 }
 
+/* The wrapped result of a description, per text, font and box: the menus
+ * draw every frame and measuring is the cost, so it is done once per change. */
+enum { WRAP_CACHE_ENTRIES = 8, WRAP_CACHE_TEXT = 1024 };
+struct wrap_entry {
+    boolean valid;
+    long font_in, font_out;
+    int width, height, length;
+    wchar_t text[WRAP_CACHE_TEXT];
+    wchar_t wrapped[512];
+};
+static struct wrap_entry wrap_cache[WRAP_CACHE_ENTRIES];
+static int wrap_cache_next;
+
+static int text_length(wchar_t const *text)
+{
+    int length=0;
+    while (text[length]) length++;
+    return length;
+}
+
+static struct wrap_entry const *cached(wchar_t const *text, long font, int width, int height)
+{
+    int length=text_length(text), i;
+    if (length>=WRAP_CACHE_TEXT) return NULL;
+    for (i=0; i<WRAP_CACHE_ENTRIES; i++) {
+        struct wrap_entry const *entry=&wrap_cache[i];
+        if (entry->valid && entry->font_in==font && entry->width==width && entry->height==height &&
+            entry->length==length && !memcmp(entry->text,text,length*sizeof(wchar_t))) return entry;
+    }
+    return NULL;
+}
+
+static void remember(wchar_t const *text, long font_in, int width, int height, long font_out,
+    wchar_t const wrapped[512])
+{
+    int length=text_length(text);
+    struct wrap_entry *entry=&wrap_cache[wrap_cache_next];
+    if (length>=WRAP_CACHE_TEXT) return;
+    wrap_cache_next=(wrap_cache_next+1)%WRAP_CACHE_ENTRIES;
+    entry->valid=TRUE; entry->font_in=font_in; entry->font_out=font_out;
+    entry->width=width; entry->height=height; entry->length=length;
+    csmemcpy(entry->text,text,length*sizeof(wchar_t));
+    csmemcpy(entry->wrapped,wrapped,512*sizeof(wchar_t));
+}
+
 boolean mcc_menu_text_draw(long tag, short index, wchar_t const *text, long font, short justification,
     real_argb_color const *color, rectangle2d const *bounds, rectangle2d const *parent_clip)
 {
     wchar_t wrapped[512];
     rectangle2d area=*bounds, clip;
     int width=bounds->x1-bounds->x0-2, height=bounds->y1-bounds->y0, used;
-    long small;
+    long small, font_in=font;
     char const *name;
+    struct wrap_entry const *entry;
     if (!field(tag,index)) return FALSE;
     name=tag_get_name(tag);
     /* Xbox cards reserve their lower row for earned badges. Keep the native
@@ -95,25 +141,31 @@ boolean mcc_menu_text_draw(long tag, short index, wchar_t const *text, long font
     }
     clip=area;
     if (width<=0 || height<=0) return TRUE;
-    draw_string_set_draw_mode(font,NONE,0,0,color);
-    used=wrap(text,wrapped,width);
-    small=tag_loaded('font',"ui\\small_ui");
-    if (text_height(wrapped)>height && small!=NONE && small!=font) {
-        font=small; draw_string_set_draw_mode(font,NONE,0,0,color);
+    entry=cached(text,font,width,height);
+    if (entry) {
+        font=entry->font_out; csmemcpy(wrapped,entry->wrapped,sizeof(wrapped));
+    } else {
+        draw_string_set_draw_mode(font,NONE,0,0,color);
         used=wrap(text,wrapped,width);
-    }
-    /* Arbitrarily long authored text cannot fit a fixed panel. Keep complete
-     * visible lines and signal truncation, instead of cutting glyphs in half. */
-    if (text_height(wrapped)>height) {
-        while (used && text_height(wrapped)>height) wrapped[--used]=0;
-        while (used && (wrapped[used-1]==' ' || wrapped[used-1]=='\r')) wrapped[--used]=0;
-        while (used) {
-            int start=used;
-            while (start && wrapped[start-1]!='\r') start--;
-            wrapped[used]='.'; wrapped[used+1]='.'; wrapped[used+2]='.'; wrapped[used+3]=0;
-            if (width_of(wrapped+start)<=width && text_height(wrapped)<=height) break;
-            wrapped[--used]=0;
+        small=tag_loaded('font',"ui\\small_ui");
+        if (text_height(wrapped)>height && small!=NONE && small!=font) {
+            font=small; draw_string_set_draw_mode(font,NONE,0,0,color);
+            used=wrap(text,wrapped,width);
         }
+        /* Arbitrarily long authored text cannot fit a fixed panel. Keep complete
+         * visible lines and signal truncation, instead of cutting glyphs in half. */
+        if (text_height(wrapped)>height) {
+            while (used && text_height(wrapped)>height) wrapped[--used]=0;
+            while (used && (wrapped[used-1]==' ' || wrapped[used-1]=='\r')) wrapped[--used]=0;
+            while (used) {
+                int start=used;
+                while (start && wrapped[start-1]!='\r') start--;
+                wrapped[used]='.'; wrapped[used+1]='.'; wrapped[used+2]='.'; wrapped[used+3]=0;
+                if (width_of(wrapped+start)<=width && text_height(wrapped)<=height) break;
+                wrapped[--used]=0;
+            }
+        }
+        remember(text,font_in,width,height,font,wrapped);
     }
     if (parent_clip) {
         clip.x0=MAX(clip.x0,parent_clip->x0); clip.y0=MAX(clip.y0,parent_clip->y0);

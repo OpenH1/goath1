@@ -37,25 +37,33 @@ NEGATIVE_CONTROLS = {
     "rest-unbounded": (("rest < NETWORK_BITS_UNIT_LEAST ||\n\t\trest >= NETWORK_BITS_UNIT_LEAST + (1 << NETWORK_BITS_UNIT_REST_BITS))",
                         "rest < NETWORK_BITS_UNIT_LEAST)"), "round-trip"),
     # an OpenCE machine sent the packed message
-    "packed-to-opence": (("if (!network_legacy_machine(machine_index) && !config_boolean(",
-                          "if (!config_boolean("), "message"),
+    "packed-to-opence": (("if (!network_legacy_machine(machine_index) && !before)", "if (!before)"), "message"),
+    # a state's bits packed once joined unshifted after bits not on a byte's boundary
+    "joined-unshifted": (("bits->data[byte_index + index] |= (byte)(data[index] << shift);",
+                          "bits->data[byte_index + index] |= data[index];"), "message"),
+    # a state's bits packed once kept past its tick
+    "packed-kept": (("if (host_packed_states.tick_serial[source] != host_packed_states.serial)", "if (!host_packed_states.serial)"),
+                    "message"),
     # bits read past a message's end
     "unbounded-read": (("\t\tif (byte_index >= bits->size)\n\t\t{\n\t\t\tbits->failed = TRUE;\n\t\t\treturn 0;\n\t\t}\n", ""),
                        "short"),
 }
 
 FUNCTIONS = ("network_objects_pack_state", "network_objects_unpack_state", "network_objects_unpack_states",
-             "distributed_host_send_state_message")
+             "distributed_bits_append", "distributed_host_send_state_message")
 
 
 def generated(fault=None):
     source = read(SOURCE)
     bits = read(BITS)
-    code = bits + "\n" + "\n".join(function(source, name) for name in FUNCTIONS)
+    packed = enum_with(source, "HOST_PACKED_STATE_BYTES") + "\n" + re.search(
+        r"^(static struct\n\{\n\tlong serial;.*?\n\} host_packed_states;)", source, re.M | re.S)[1] + "\n"
+    code = bits + "\n" + packed + "\n".join(function(source, name) for name in FUNCTIONS)
     if fault:
         code = mutated(code, *fault)
     config = structure(source, "distributed_object_state") + "\n"
     config += enum_with(source, "_distributed_object_predicted_bit") + "\n"
+    config += "enum { MAXIMUM_TRACKED_OBJECTS = 64, RESTING_STATES_PER_TICK = 4 };\n"
     config += "enum { MAXIMUM_ENTRIES_PER_MESSAGE = %s };\n" % re.search(
         r"MAXIMUM_ENTRIES_PER_MESSAGE = (\d+),", source)[1]
     for name in ("OBJECT_WORLD_BOUND", "OBJECT_PACKED_POSITION_SCALE"):

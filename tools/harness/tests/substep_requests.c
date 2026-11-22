@@ -53,6 +53,7 @@ static int config_boolean(char const *name)
 	CHECK(!strcmp(name, "debug.network_forms_before"), "the setting read: %s", name);
 	return always;
 }
+static inline int halo_network_forms_before(void) { return config_boolean("debug.network_forms_before"); }
 static long network_substeps_forwarded_key(short player_index) { return keys[player_index]; }
 static short distributed_client_machines(long *indices, short maximum)
 {

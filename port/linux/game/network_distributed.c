@@ -173,6 +173,7 @@ int port_mods_list(char *text, unsigned long size);
 void console_warning(const char *format, ...);
 /* port_config.c's */
 int config_boolean(char const *name);
+int halo_network_forms_before(void);
 long config_integer(char const *name);
 
 /* the host: a client's game run faster than its clock (a speed hack, which
@@ -4898,7 +4899,7 @@ static void distributed_client_send_predictions(
 		defaults are left out, and a prediction changed only in them goes
 		held. The suspension and the whole velocity's flag it reads; a unit
 		at rest's velocity goes as none, so a player standing still goes held) */
-		if (state.fine && !config_boolean("debug.network_forms_before"))
+		if (state.fine && !halo_network_forms_before())
 			distributed_prediction_trim(&state);
 		{
 			word size = distributed_unit_state_write(&state, TRUE, entry);
@@ -7893,7 +7894,7 @@ void network_distributed_host_substep_ended(
 	{
 		static struct distributed_unit_state states[MAXIMUM_TRACKED_PLAYERS];
 		boolean made[MAXIMUM_TRACKED_PLAYERS];
-		boolean always = config_boolean("debug.network_forms_before") != 0;
+		boolean always = halo_network_forms_before();
 		byte prefix[2];
 
 		csmemset(made, 0, sizeof(made));
@@ -8406,11 +8407,11 @@ static void distributed_tick_states_begin(
 	long machine_index)
 {
 	distributed_tick_states_legacy = network_legacy_machine(machine_index);
-	distributed_tick_states_unpacked = config_boolean("debug.network_forms_before") != 0;
+	distributed_tick_states_unpacked = halo_network_forms_before();
 	/* (an OpenH1 client's entries joined, as it reads them: not the forms
 	before, nor the unpacked ones, whose entries are not the packed ones) */
 	distributed_tick_states_joined = !distributed_tick_states_legacy && !distributed_tick_states_unpacked &&
-		!config_boolean("debug.network_forms_before");
+		!halo_network_forms_before();
 	distributed_unit_joiner.sender = (short)machine_index;
 	distributed_unit_joiner.count = 0;
 	distributed_packer_begin(&distributed_packer, (short)machine_index, distributed_tick_states_legacy ?
@@ -8499,7 +8500,7 @@ static void distributed_host_send_players(
 		/* (to an OpenH1 client packed, each entry against the one before it
 		in its message: distributed_relayed_action_pack) */
 		{
-			boolean packed = !network_legacy_machine(machine_index) && !config_boolean("debug.network_forms_before");
+			boolean packed = !network_legacy_machine(machine_index) && !halo_network_forms_before();
 			short before = NONE;
 
 			distributed_packer_begin(&distributed_packer, (short)machine_index,
@@ -8848,7 +8849,7 @@ static void distributed_send_statistics(
 	short limit = MIN(MAXIMUM_STATISTICS_PER_MESSAGE, RELIABLE_ENTRIES(struct distributed_player_statistics));
 	long machine_indices[HALO_PORT_MAXIMUM_NETWORK_MACHINES];
 	short machine_count = distributed_client_machines(machine_indices, HALO_PORT_MAXIMUM_NETWORK_MACHINES);
-	boolean before = config_boolean("debug.network_forms_before");
+	boolean before = halo_network_forms_before();
 	long now = game_time_get();
 	/* each player's: changed, refreshed to the OpenCE machines, to the
 	OpenH1 ones, or its change again to the OpenH1 ones */

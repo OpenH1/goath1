@@ -83,6 +83,7 @@ extern real global_gravity;
 long update_queues_distributed_input_key(long absolute_player_index);
 /* port_config.c's */
 int config_boolean(char const *name);
+int halo_network_forms_before(void);
 
 /* units.c's */
 void unit_network_add_weapon(long unit_index, long weapon_index, short slot);
@@ -402,6 +403,19 @@ an object at rest whose state changes goes again as one come to rest */
 static unsigned long objects_host_rest_checksums[MAXIMUM_TRACKED_OBJECTS];
 static boolean objects_host_rest_known[MAXIMUM_TRACKED_OBJECTS];
 static long objects_host_rest_sent_times[MAXIMUM_TRACKED_OBJECTS];
+/* ... and what that checksum's state was made from (distributed_rest_source):
+the same again makes the same state, so it needs neither made nor summed */
+struct distributed_rest_source
+{
+	long object_index;
+	long flags;
+	real_point3d position;
+	real_vector3d forward;
+	real_vector3d up;
+	real_vector3d translational_velocity;
+	real_vector3d angular_velocity;
+};
+static struct distributed_rest_source objects_host_rest_sources[MAXIMUM_TRACKED_OBJECTS];
 /* ... whether each client's players could see each moving object at its
 last tick (the player plan's test: one that comes into their sight goes at
 once) */
@@ -1220,6 +1234,43 @@ word network_objects_unpack_states(
 	return (word)(sizeof(header) + header.count * sizeof(struct distributed_object_state));
 }
 
+/* an object's state's flags */
+static byte distributed_state_flags(
+	long object_index)
+{
+	struct object_datum *object = object_get(object_index);
+	byte flags = 0;
+
+	SET_FLAG(flags, _distributed_object_at_rest_bit, TEST_FLAG(object->object.flags, _object_at_rest_bit));
+	SET_FLAG(flags, _distributed_object_dead_bit, TEST_FLAG(_object_mask_unit, object->object.type) &&
+		TEST_FLAG(object->object.damage_flags, _object_dead_bit));
+	if (TEST_FLAG(_object_mask_unit, object->object.type))
+	{
+		SET_FLAG(flags, _distributed_object_light_sent_bit, TRUE);
+		SET_FLAG(flags, _distributed_object_light_on_bit,
+			TEST_FLAG(unit_get(object_index)->unit.flags, _unit_integrated_light_on_bit));
+	}
+	return flags;
+}
+
+/* what an object's state is made of (distributed_state_from_object): its
+object, its flags and its own position, facing and velocities as they are */
+static void distributed_rest_source_from_object(
+	long object_index,
+	struct distributed_rest_source *source)
+{
+	struct object_datum *object = object_get(object_index);
+
+	csmemset(source, 0, sizeof(*source));
+	source->object_index = object_index;
+	source->flags = distributed_state_flags(object_index);
+	source->position = object->object.position;
+	source->forward = object->object.forward;
+	source->up = object->object.up;
+	source->translational_velocity = object->object.translational_velocity;
+	source->angular_velocity = object->object.angular_velocity;
+}
+
 static void distributed_state_from_object(
 	long object_index,
 	struct distributed_object_state *state)
@@ -1228,15 +1279,7 @@ static void distributed_state_from_object(
 
 	csmemset(state, 0, sizeof(*state));
 	state->object_index = object_index;
-	SET_FLAG(state->flags, _distributed_object_at_rest_bit, TEST_FLAG(object->object.flags, _object_at_rest_bit));
-	SET_FLAG(state->flags, _distributed_object_dead_bit, TEST_FLAG(_object_mask_unit, object->object.type) &&
-		TEST_FLAG(object->object.damage_flags, _object_dead_bit));
-	if (TEST_FLAG(_object_mask_unit, object->object.type))
-	{
-		SET_FLAG(state->flags, _distributed_object_light_sent_bit, TRUE);
-		SET_FLAG(state->flags, _distributed_object_light_on_bit,
-			TEST_FLAG(unit_get(object_index)->unit.flags, _unit_integrated_light_on_bit));
-	}
+	state->flags = distributed_state_flags(object_index);
 	state->position = object->object.position;
 	distributed_vector_pack(&object->object.forward, DISTRIBUTED_UNIT_SCALE, &state->forward);
 	distributed_vector_pack(&object->object.up, DISTRIBUTED_UNIT_SCALE, &state->up);
@@ -1909,23 +1952,45 @@ come to rest: it came to rest this tick (was_moving), or its state differs
 from the one it last went with at rest, no sooner than a repeat's interval
 after that went (a state at rest goes as it is: no send is older than the
 state it tells, and the next carries a change made meanwhile). Its first at
-rest, with none sent (a map's own, as the host told of it), is noted only */
+rest, with none sent (a map's own, as the host told of it), is noted only.
+Where the answer cannot turn on the state (it was noted and went within a
+repeat's interval, or is made of what the noted one was) the state is not
+made; else it is, in state, with its checksum */
 static boolean distributed_host_rest_changed(
 	long absolute_index,
-	struct distributed_object_state const *state,
-	boolean was_moving)
+	long object_index,
+	boolean was_moving,
+	struct distributed_object_state *state,
+	unsigned long *checksum)
 {
-	unsigned long checksum = distributed_checksum(state, sizeof(*state));
+	struct distributed_rest_source source;
+	boolean known = objects_host_rest_known[absolute_index];
+	boolean sent_lately = objects_host_rest_sent_times[absolute_index] != NONE &&
+		game_time_get() - objects_host_rest_sent_times[absolute_index] < REST_STATE_REPEAT_TICKS;
 
-	if (!objects_host_rest_known[absolute_index])
+	if (known && !was_moving && sent_lately)
+		return FALSE;
+	distributed_rest_source_from_object(object_index, &source);
+	if (known && !was_moving &&
+		!memcmp(&source, &objects_host_rest_sources[absolute_index], sizeof(source)))
+	{
+		return FALSE;
+	}
+	distributed_state_from_object(object_index, state);
+	*checksum = distributed_checksum(state, sizeof(*state));
+	if (!known)
 	{
 		objects_host_rest_known[absolute_index] = TRUE;
-		objects_host_rest_checksums[absolute_index] = checksum;
+		objects_host_rest_checksums[absolute_index] = *checksum;
+		csmemcpy(&objects_host_rest_sources[absolute_index], &source, sizeof(source));
 		return was_moving;
 	}
-	return was_moving || (checksum != objects_host_rest_checksums[absolute_index] &&
-		(objects_host_rest_sent_times[absolute_index] == NONE ||
-			game_time_get() - objects_host_rest_sent_times[absolute_index] >= REST_STATE_REPEAT_TICKS));
+	if (*checksum == objects_host_rest_checksums[absolute_index])
+	{
+		/* (made of other values, the same state: those are noted with it) */
+		csmemcpy(&objects_host_rest_sources[absolute_index], &source, sizeof(source));
+	}
+	return was_moving || (*checksum != objects_host_rest_checksums[absolute_index] && !sent_lately);
 }
 
 /* whether a moving object (not a client's own vehicle) goes to a client this
@@ -1951,17 +2016,76 @@ static boolean distributed_host_moving_state_due(
 	return started || came_into_sight || (game_time_get() + absolute_index) % period == 0;
 }
 
+enum
+{
+	/* (one state's bits at most: its object, flags, whole bit and tick, three
+	widths' groups of three of 31 bits, two unit vectors of 2 bits and a group:
+	under 560 bits) */
+	HOST_PACKED_STATE_BYTES = 96,
+};
+
+/* (the host, this tick) each state of the tick's, packed once
+(network_objects_pack_state) as it first goes to a client in its bits:
+the same bits to each client it goes to as it is */
+static struct
+{
+	long serial;
+	long tick_serial[MAXIMUM_TRACKED_OBJECTS + RESTING_STATES_PER_TICK];
+	long bit_counts[MAXIMUM_TRACKED_OBJECTS + RESTING_STATES_PER_TICK];
+	boolean failed[MAXIMUM_TRACKED_OBJECTS + RESTING_STATES_PER_TICK];
+	byte data[MAXIMUM_TRACKED_OBJECTS + RESTING_STATES_PER_TICK][HOST_PACKED_STATE_BYTES];
+} host_packed_states;
+
+/* bits packed elsewhere (bit_count of them, from data's first) after those
+written, as network_bits_put would write them */
+static void distributed_bits_append(
+	struct network_bits *bits,
+	byte const *data,
+	long bit_count)
+{
+	long byte_index = bits->position >> 3;
+	short shift = (short)(bits->position & 7);
+	long byte_count = (bit_count + 7) >> 3;
+	long end_bytes = (bits->position + bit_count + 7) >> 3;
+	long index;
+
+	if (bits->failed)
+		return;
+	if (bits->position + bit_count > bits->size * 8)
+	{
+		bits->failed = TRUE;
+		return;
+	}
+	if (!shift)
+		csmemcpy(bits->data + byte_index, data, byte_count);
+	else
+	{
+		for (index = 0; index < byte_count; index++)
+		{
+			bits->data[byte_index + index] |= (byte)(data[index] << shift);
+			if (byte_index + index + 1 < end_bytes)
+				bits->data[byte_index + index + 1] = (byte)(data[index] >> (8 - shift));
+		}
+	}
+	bits->position += bit_count;
+}
+
 /* (the host) a message of the objects' states to a client: to an OpenH1
 client of an OpenH1 game packed (network_objects_pack_state) where that is
-fewer bytes, unless debug.network_forms_before; else whole */
+fewer bytes, unless debug.network_forms_before (before); else whole. Each
+entry is the tick's state at its index in sources as it is (its bits
+packed once, host_packed_states, of states), or NONE: its own */
 static void distributed_host_send_state_message(
 	long machine_index,
 	struct distributed_object_state_message *message,
-	short count)
+	short count,
+	struct distributed_object_state const *states,
+	long const *sources,
+	boolean before)
 {
 	word whole_size = (word)(sizeof(message->header) + count * sizeof(struct distributed_object_state));
 
-	if (!network_legacy_machine(machine_index) && !config_boolean("debug.network_forms_before"))
+	if (!network_legacy_machine(machine_index) && !before)
 	{
 		static struct
 		{
@@ -1973,7 +2097,29 @@ static void distributed_host_send_state_message(
 
 		network_bits_begin_write(&bits, packed.data, whole_size - sizeof(message->header) - 1);
 		for (index = 0; index < count && !bits.failed; index++)
-			network_objects_pack_state(&bits, &message->states[index]);
+		{
+			long source = sources[index];
+
+			if (source == NONE)
+			{
+				network_objects_pack_state(&bits, &message->states[index]);
+				continue;
+			}
+			if (host_packed_states.tick_serial[source] != host_packed_states.serial)
+			{
+				struct network_bits state_bits;
+
+				network_bits_begin_write(&state_bits, host_packed_states.data[source], HOST_PACKED_STATE_BYTES);
+				network_objects_pack_state(&state_bits, &states[source]);
+				host_packed_states.tick_serial[source] = host_packed_states.serial;
+				host_packed_states.bit_counts[source] = state_bits.position;
+				host_packed_states.failed[source] = state_bits.failed;
+			}
+			if (host_packed_states.failed[source])
+				bits.failed = TRUE;
+			else
+				distributed_bits_append(&bits, host_packed_states.data[source], host_packed_states.bit_counts[source]);
+		}
 		if (!bits.failed)
 		{
 			distributed_send_to_machine(machine_index, &packed, _distributed_message_object_states_packed, count,
@@ -2000,6 +2146,8 @@ static void distributed_host_send_states(
 	static boolean started[MAXIMUM_TRACKED_OBJECTS + RESTING_STATES_PER_TICK];
 	static short clusters[MAXIMUM_TRACKED_OBJECTS + RESTING_STATES_PER_TICK];
 	struct distributed_object_state_message message;
+	long sources[MAXIMUM_ENTRIES_PER_MESSAGE];
+	boolean before = halo_network_forms_before();
 	short limit = MIN(MAXIMUM_ENTRIES_PER_MESSAGE, DATAGRAM_ENTRIES(struct distributed_object_state));
 	short resting = 0;
 	long told_count = objects_host_told_count;
@@ -2022,19 +2170,31 @@ static void distributed_host_send_states(
 			continue;
 		at_rest = TEST_FLAG(object_get(object_index)->object.flags, _object_at_rest_bit);
 		objects_host_state_moving[absolute_index] = !at_rest;
-		distributed_state_from_object(object_index, &states[state_count]);
 		if (at_rest)
 		{
-			if (distributed_host_rest_changed(absolute_index, &states[state_count], was_moving))
+			unsigned long checksum = 0;
+
+			/* (made, and summed, only where it can have changed or goes) */
+			states[state_count].object_index = NONE;
+			if (distributed_host_rest_changed(absolute_index, object_index, was_moving, &states[state_count],
+				&checksum))
+			{
 				objects_host_rest_times[absolute_index] = now;
+			}
 			if (!distributed_host_rest_state_due(absolute_index))
 				continue;
+			if (states[state_count].object_index != object_index)
+			{
+				distributed_state_from_object(object_index, &states[state_count]);
+				checksum = distributed_checksum(&states[state_count], sizeof(states[state_count]));
+			}
 			objects_host_rest_sent_times[absolute_index] = now;
-			objects_host_rest_checksums[absolute_index] = distributed_checksum(&states[state_count],
-				sizeof(states[state_count]));
+			objects_host_rest_checksums[absolute_index] = checksum;
+			distributed_rest_source_from_object(object_index, &objects_host_rest_sources[absolute_index]);
 		}
 		else
 		{
+			distributed_state_from_object(object_index, &states[state_count]);
 			/* (its next rest goes as one: it moved) */
 			objects_host_rest_known[absolute_index] = FALSE;
 		}
@@ -2064,10 +2224,13 @@ static void distributed_host_send_states(
 		objects_host_rest_known[absolute_index] = TRUE;
 		objects_host_rest_checksums[absolute_index] = distributed_checksum(&states[state_count],
 			sizeof(states[state_count]));
+		distributed_rest_source_from_object(object_index, &objects_host_rest_sources[absolute_index]);
 		started[state_count] = FALSE;
 		clusters[state_count] = NONE;
 		kinds[state_count++] = _host_state_to_all;
 	}
+	/* (this tick's states not yet packed) */
+	host_packed_states.serial++;
 	for (machine_number = 0; machine_number < objects_host_viewers.count; machine_number++)
 	{
 		long machine_index = objects_host_viewers.indices[machine_number];
@@ -2078,6 +2241,7 @@ static void distributed_host_send_states(
 		{
 			struct distributed_object_state *state = &message.states[count];
 			short own_vehicle = NONE;
+			long source = index;
 			short vehicle_number;
 
 			for (vehicle_number = 0; vehicle_number < objects_host_viewers.machines[machine_number].vehicle_count;
@@ -2115,16 +2279,18 @@ static void distributed_host_send_states(
 					SET_FLAG(state->flags, _distributed_object_predicted_bit, TRUE);
 					state->time = (short)(word)(objects_host_vehicle_predictions[player_index].accepted_time +
 						game_time_get() - objects_host_vehicle_predictions[player_index].accepted_host_time);
+					source = NONE;
 				}
 			}
+			sources[count] = source;
 			if (++count == limit)
 			{
-				distributed_host_send_state_message(machine_index, &message, count);
+				distributed_host_send_state_message(machine_index, &message, count, states, sources, before);
 				count = 0;
 			}
 		}
 		if (count)
-			distributed_host_send_state_message(machine_index, &message, count);
+			distributed_host_send_state_message(machine_index, &message, count, states, sources, before);
 	}
 }
 
@@ -2246,7 +2412,7 @@ static void distributed_host_send_inventories(
 	/* (to the OpenH1 clients besides its kind's: its weapons' change again,
 	or a refresh of theirs) */
 	static boolean openh1_sends[MAXIMUM_TRACKED_OBJECTS];
-	boolean before = config_boolean("debug.network_forms_before");
+	boolean before = halo_network_forms_before();
 	static real_point3d origins[MAXIMUM_TRACKED_OBJECTS];
 	struct distributed_inventory_message message;
 	short limit = MIN(MAXIMUM_ENTRIES_PER_MESSAGE, DATAGRAM_ENTRIES(struct distributed_inventory));
