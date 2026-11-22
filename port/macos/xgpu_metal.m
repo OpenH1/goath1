@@ -153,6 +153,28 @@ struct depth_stencil_key
 	uint8_t stencil_read_mask, stencil_write_mask;
 };
 
+/* the render thread's lookups of the states made, without the lock and
+without an allocation (open addressed, by a hash of the key): each state
+unretained, as the dictionaries that made it keep it for good (nothing is
+removed from them); a key not found here goes the dictionaries' way, and is
+added once found there */
+struct pipeline_lookup_entry
+{
+	struct xgpu_metal_pipeline_state_key key;
+	uint32_t hash;
+	void *state;
+};
+
+/* (a fixed table: a few dozen depth-stencil states are made; once it is
+three quarters full the rest go the dictionary's way) */
+#define DEPTH_STENCIL_LOOKUP 256
+struct depth_stencil_lookup_entry
+{
+	struct depth_stencil_key key;
+	uint8_t used;
+	void *state;
+};
+
 struct ring_chunk
 {
 	id<MTLBuffer> buffer;
@@ -343,6 +365,10 @@ static struct
 	BOOL have_pipeline;
 	id<MTLRenderPipelineState> pipeline_state;
 	struct xgpu_metal_pipeline_state_key pipeline_state_key;
+	/* the pipelines made, as the render thread looks them up (grown at
+half full: capacity a power of two, 0 none yet) */
+	struct pipeline_lookup_entry *pipeline_lookup;
+	uint32_t pipeline_lookup_capacity, pipeline_lookup_count;
 	struct xgpu_metal_dynamic_state dynamic;
 	uint32_t stage_textures[XGPU_METAL_TEXTURE_STAGE_COUNT];
 	struct xgpu_metal_sampler stage_samplers[XGPU_METAL_TEXTURE_STAGE_COUNT];
@@ -410,6 +436,8 @@ whether it has the previous frame's too: draw_constants_bind */
 	again (each return to a parked pass) sets it without a lookup */
 	struct depth_stencil_key depth_stencil_key;
 	id<MTLDepthStencilState> depth_stencil_state;
+	struct depth_stencil_lookup_entry depth_stencil_lookup[DEPTH_STENCIL_LOOKUP];
+	uint32_t depth_stencil_lookup_count;
 	/* (the render thread's, without the lock) the last regions found, each
 	good while no remapping has been counted since */
 	struct
@@ -3785,6 +3813,100 @@ void xgpu_metal_clear(const int32_t (*rectangles)[4], uint32_t count, uint32_t p
 
 /* ---------- pipelines */
 
+/* the streams a pipeline's attributes read (bit n, stream n) */
+static uint32_t pipeline_streams_read(const struct xgpu_metal_pipeline *pipeline)
+{
+	uint32_t used = 0;
+	int index;
+
+	for (index = 0; index < 16; index++)
+	{
+		if (pipeline->attributes[index].format != XGPU_METAL_ATTRIBUTE_NONE &&
+			pipeline->attributes[index].stream < XGPU_METAL_STREAM_COUNT)
+			used |= 1u << pipeline->attributes[index].stream;
+	}
+	return used;
+}
+
+/* a key's hash for the lookups (FNV-1a over 32-bit words, then mixed) */
+static uint32_t lookup_hash(const void *key, size_t size)
+{
+	const unsigned char *bytes = key;
+	uint32_t hash = 2166136261u, word;
+	size_t at = 0;
+
+	for (; at + 4 <= size; at += 4)
+	{
+		memcpy(&word, bytes + at, 4);
+		hash = (hash ^ word) * 16777619u;
+	}
+	for (; at < size; at++)
+		hash = (hash ^ bytes[at]) * 16777619u;
+	hash ^= hash >> 15;
+	hash *= 0x2c1b3c6du;
+	hash ^= hash >> 12;
+	return hash;
+}
+
+/* a pipeline made, from the render thread's lookup (nil: not in it) */
+static id<MTLRenderPipelineState> pipeline_lookup_find(const struct xgpu_metal_pipeline_state_key *key, uint32_t hash)
+{
+	uint32_t mask = metal.pipeline_lookup_capacity - 1, at;
+	struct pipeline_lookup_entry *entry;
+
+	if (!metal.pipeline_lookup_capacity)
+		return nil;
+	for (at = hash & mask;; at = (at + 1) & mask)
+	{
+		entry = &metal.pipeline_lookup[at];
+		if (!entry->state)
+			return nil;
+		if (entry->hash == hash && !memcmp(&entry->key, key, sizeof(*key)))
+			return (__bridge id<MTLRenderPipelineState>)entry->state;
+	}
+}
+
+static void pipeline_lookup_place(struct pipeline_lookup_entry *entries, uint32_t capacity,
+	const struct pipeline_lookup_entry *entry)
+{
+	uint32_t at;
+
+	for (at = entry->hash & (capacity - 1); entries[at].state; at = (at + 1) & (capacity - 1))
+		;
+	entries[at] = *entry;
+}
+
+/* adds a pipeline found in metal.pipelines (which keeps it) to the lookup;
+grown at half full (if it cannot be, the dictionary keeps being asked) */
+static void pipeline_lookup_add(const struct xgpu_metal_pipeline_state_key *key, uint32_t hash,
+	id<MTLRenderPipelineState> state)
+{
+	struct pipeline_lookup_entry entry;
+
+	if ((metal.pipeline_lookup_count + 1) * 2 > metal.pipeline_lookup_capacity)
+	{
+		uint32_t capacity = metal.pipeline_lookup_capacity ? metal.pipeline_lookup_capacity * 2 : 1024, index;
+		struct pipeline_lookup_entry *entries = calloc(capacity, sizeof(*entries));
+
+		if (!entries)
+			return;
+		for (index = 0; index < metal.pipeline_lookup_capacity; index++)
+		{
+			if (metal.pipeline_lookup[index].state)
+				pipeline_lookup_place(entries, capacity, &metal.pipeline_lookup[index]);
+		}
+		free(metal.pipeline_lookup);
+		metal.pipeline_lookup = entries;
+		metal.pipeline_lookup_capacity = capacity;
+	}
+	memset(&entry, 0, sizeof(entry));
+	entry.key = *key;
+	entry.hash = hash;
+	entry.state = (__bridge void *)state;
+	pipeline_lookup_place(metal.pipeline_lookup, metal.pipeline_lookup_capacity, &entry);
+	metal.pipeline_lookup_count++;
+}
+
 void xgpu_metal_set_pipeline(const struct xgpu_metal_pipeline *pipeline)
 {
 	if (metal.have_pipeline && !memcmp(&metal.pipeline, pipeline, sizeof(*pipeline)))
@@ -3793,9 +3915,30 @@ void xgpu_metal_set_pipeline(const struct xgpu_metal_pipeline *pipeline)
 	previous frame's registers too, in a buffer of its own) */
 	if (!metal.have_pipeline || !metal.pipeline.motion_mask != !pipeline->motion_mask)
 		metal.dirty |= _dirty_vertex_constants;
+	if (!metal.have_pipeline)
+		metal.dirty |= _dirty_depth_stencil | _dirty_raster | _dirty_streams;
+	else
+	{
+		const struct xgpu_metal_pipeline *old = &metal.pipeline;
+
+		/* (only what differs is set again: the encoder keeps the rest) */
+		if (old->depth_format != pipeline->depth_format || old->depth_test != pipeline->depth_test ||
+			old->depth_function != pipeline->depth_function || old->depth_write != pipeline->depth_write ||
+			old->stencil_test != pipeline->stencil_test || old->stencil_function != pipeline->stencil_function ||
+			old->stencil_fail != pipeline->stencil_fail || old->stencil_depth_fail != pipeline->stencil_depth_fail ||
+			old->stencil_pass != pipeline->stencil_pass || old->stencil_read_mask != pipeline->stencil_read_mask ||
+			old->stencil_write_mask != pipeline->stencil_write_mask)
+			metal.dirty |= _dirty_depth_stencil;
+		if (old->cull != pipeline->cull || old->front_counter_clockwise != pipeline->front_counter_clockwise ||
+			old->cull_front != pipeline->cull_front || old->fill != pipeline->fill ||
+			old->depth_bias != pipeline->depth_bias || old->depth_clamp != pipeline->depth_clamp)
+			metal.dirty |= _dirty_raster;
+		if (pipeline_streams_read(old) != pipeline_streams_read(pipeline))
+			metal.dirty |= _dirty_streams;
+	}
 	metal.pipeline = *pipeline;
 	metal.have_pipeline = YES;
-	metal.dirty |= _dirty_pipeline | _dirty_depth_stencil | _dirty_raster | _dirty_streams;
+	metal.dirty |= _dirty_pipeline;
 }
 
 /* work on the making queue once both groups (either NULL) are done */
@@ -3912,6 +4055,7 @@ thread. */
 static id<MTLRenderPipelineState> pipeline_state_get(const struct xgpu_metal_pipeline *pipeline)
 {
 	struct xgpu_metal_pipeline_state_key key;
+	uint32_t hash;
 	NSData *data;
 	id<MTLRenderPipelineState> state;
 	dispatch_group_t made;
@@ -3919,6 +4063,12 @@ static id<MTLRenderPipelineState> pipeline_state_get(const struct xgpu_metal_pip
 	xgpu_metal_pipeline_state_key_make(pipeline, &key);
 	if (state = metal.pipeline_state, state && !memcmp(&key, &metal.pipeline_state_key, sizeof(key)))
 		return state;
+	hash = lookup_hash(&key, sizeof(key));
+	if ((state = pipeline_lookup_find(&key, hash)) != nil)
+	{
+		metal.pipeline_state_key = key;
+		return state;
+	}
 	data = [NSData dataWithBytes:&key length:sizeof(key)];
 	os_unfair_lock_lock(&metal.lock);
 	state = metal.pipelines[data];
@@ -3955,7 +4105,10 @@ static id<MTLRenderPipelineState> pipeline_state_get(const struct xgpu_metal_pip
 		os_unfair_lock_unlock(&metal.lock);
 	}
 	if (state)
+	{
 		metal.pipeline_state_key = key;
+		pipeline_lookup_add(&key, hash, state);
+	}
 	return state;
 }
 
@@ -3976,6 +4129,8 @@ int xgpu_metal_pipeline_known(const struct xgpu_metal_pipeline *pipeline)
 	xgpu_metal_pipeline_state_key_make(pipeline, &key);
 	if (metal.pipeline_state && !memcmp(&key, &metal.pipeline_state_key, sizeof(key)))
 		return 1;
+	if (pipeline_lookup_find(&key, lookup_hash(&key, sizeof(key))))
+		return 1;
 	data = [NSData dataWithBytes:&key length:sizeof(key)];
 	os_unfair_lock_lock(&metal.lock);
 	made = metal.pipelines[data] != nil || metal.pipelines_making[data] != nil;
@@ -3991,6 +4146,8 @@ int xgpu_metal_pipeline_made(const struct xgpu_metal_pipeline *pipeline)
 
 	xgpu_metal_pipeline_state_key_make(pipeline, &key);
 	if (metal.pipeline_state && !memcmp(&key, &metal.pipeline_state_key, sizeof(key)))
+		return 1;
+	if (pipeline_lookup_find(&key, lookup_hash(&key, sizeof(key))))
 		return 1;
 	data = [NSData dataWithBytes:&key length:sizeof(key)];
 	os_unfair_lock_lock(&metal.lock);
@@ -4018,9 +4175,22 @@ double xgpu_metal_prepared(void)
 	return seconds_now() - start;
 }
 
+/* adds a depth-stencil state metal.depth_stencil_states keeps to the
+lookup, at its free slot (while it is under three quarters full) */
+static void depth_stencil_lookup_add(uint32_t at, const struct depth_stencil_key *key, id<MTLDepthStencilState> state)
+{
+	if (!state || metal.depth_stencil_lookup_count >= DEPTH_STENCIL_LOOKUP * 3 / 4)
+		return;
+	metal.depth_stencil_lookup[at].key = *key;
+	metal.depth_stencil_lookup[at].state = (__bridge void *)state;
+	metal.depth_stencil_lookup[at].used = 1;
+	metal.depth_stencil_lookup_count++;
+}
+
 static id<MTLDepthStencilState> depth_stencil_state_get(const struct xgpu_metal_pipeline *pipeline)
 {
 	struct depth_stencil_key key;
+	uint32_t mask, at;
 	NSData *data;
 	id<MTLDepthStencilState> state;
 	MTLDepthStencilDescriptor *descriptor;
@@ -4044,10 +4214,23 @@ static id<MTLDepthStencilState> depth_stencil_state_get(const struct xgpu_metal_
 	}
 	if (metal.depth_stencil_state && !memcmp(&key, &metal.depth_stencil_key, sizeof(key)))
 		return metal.depth_stencil_state;
+	mask = DEPTH_STENCIL_LOOKUP - 1;
+	for (at = lookup_hash(&key, sizeof(key)) & mask; metal.depth_stencil_lookup[at].used; at = (at + 1) & mask)
+	{
+		if (!memcmp(&metal.depth_stencil_lookup[at].key, &key, sizeof(key)))
+		{
+			state = (__bridge id<MTLDepthStencilState>)metal.depth_stencil_lookup[at].state;
+			metal.depth_stencil_key = key;
+			metal.depth_stencil_state = state;
+			return state;
+		}
+	}
+	/* (the free slot the key would take: at) */
 	data = [NSData dataWithBytes:&key length:sizeof(key)];
 	state = metal.depth_stencil_states[data];
 	if (state)
 	{
+		depth_stencil_lookup_add(at, &key, state);
 		metal.depth_stencil_key = key;
 		metal.depth_stencil_state = state;
 		return state;
@@ -4072,6 +4255,7 @@ static id<MTLDepthStencilState> depth_stencil_state_get(const struct xgpu_metal_
 	}
 	state = [metal.device newDepthStencilStateWithDescriptor:descriptor];
 	metal.depth_stencil_states[data] = state;
+	depth_stencil_lookup_add(at, &key, state);
 	statistics_add(&metal.statistics.depth_stencil_states_made, 1);
 	metal.depth_stencil_key = key;
 	metal.depth_stencil_state = state;
