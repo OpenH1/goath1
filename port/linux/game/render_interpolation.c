@@ -3236,10 +3236,12 @@ standing (a start is drawn at once; a strafe's turn passes through it) nor
 one larger than the steps' acceleration could misjudge (a teleport, a respawn, a correction, which glides
 as before); across only, so that a jump, a landing and a fall show at once. */
 static real newest_blend_left(real age);
+static long render_interpolation_newest_step(long vehicle_index);
 
 static void newest_camera_blend(
 	short local_player_index,
 	long unit_index,
+	long step,
 	real_point3d const *position,
 	real_vector3d const *velocity,
 	real since,
@@ -3247,7 +3249,6 @@ static void newest_camera_blend(
 {
 	struct newest_camera_blend *blend = &newest_camera_blends[local_player_index];
 	double frame_time = (double)interpolation_tick + (double)interpolation_fraction;
-	long step = interpolation_tick * interpolation_substep_count + sim_substep_next();
 	real remaining;
 
 	if (!blend->valid || blend->unit_index != unit_index || !(frame_time >= blend->frame_time) ||
@@ -3314,10 +3315,19 @@ static void render_interpolation_newest_camera(
 	long unit_index = player_control_get_unit_index(local_player_index);
 	real_vector3d velocity = object_get(unit_index)->object.translational_velocity;
 	real_vector3d carry;
-	/* (the time since the newest step, in ticks: the clock's, not the
-	fraction's part past its last whole sub-step, which is a sub-step short
-	while a step's time has come and it has not run: OpenH1 #706) */
-	real since = interpolation_step_age;
+	/* (the newest step that moved the unit, and the time since it, in ticks:
+	the clock's, not the fraction's part past its last whole sub-step, which
+	is a sub-step short while a step's time has come and it has not run:
+	OpenH1 #706. A unit of the macro lane at 60 and 120, a rider on a
+	vehicle's deck (vehicle_riding_bipeds.c's biped_riding_holds_lane), moves
+	once a tick, a whole tick's motion in its first sub-step: carried on from
+	the clock's newest sub-step instead, the view went on a sub-step's motion
+	and back to where the unit stood at each sub-step it did not move in, a
+	hitch 30 times a second, as the vehicle's seat counts it:
+	render_interpolation_seat_camera) */
+	long step = render_interpolation_newest_step(unit_index);
+	real since = interpolation_step_age - (real)(step - (interpolation_tick * interpolation_substep_count +
+		sim_substep_next())) / (real)interpolation_substep_count;
 
 	/* (and by the lift it rides: carried by its velocity alone, the view
 	held still between the steps on a moving lift, a step at a time) */
@@ -3337,7 +3347,7 @@ static void render_interpolation_newest_camera(
 		drawn->position.y += velocity.j * since;
 		drawn->position.z += velocity.k * since;
 		/* (from where the view was drawn as the step came) */
-		newest_camera_blend(local_player_index, unit_index, &observer->position, &velocity, since, &left);
+		newest_camera_blend(local_player_index, unit_index, step, &observer->position, &velocity, since, &left);
 		drawn->position.x += left.i;
 		drawn->position.y += left.j;
 		drawn->position.z += left.k;
