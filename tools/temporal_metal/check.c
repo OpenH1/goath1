@@ -13,7 +13,10 @@ docs/temporal-aa.md; tools/test_temporal_metal.py):
                                   ps_<name>_<motion>.metal): the motion's
                                   outputs only in the motion's variants, the
                                   previous frame's registers read there alone,
-                                  and none in a World AO pre-pass twin's
+                                  and none in a World AO pre-pass twin's; and
+                                  every register a vertex function reads in
+                                  the run xgpu_msl_vertex_constants gives,
+                                  which the backend uploads alone
 
 Built by tools/test_temporal_metal.py with the shader decoders and the Metal
 emitter, as tools/msl_corpus is.
@@ -26,6 +29,7 @@ emitter, as tools/msl_corpus is.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 
 void platform_log(const char *format, ...) { (void)format; }
 
@@ -54,6 +58,51 @@ and the previous frame's registers */
 static int has_motion(const char *source)
 {
 	return strstr(source, "xMotionPrevious") || strstr(source, "[[color(1)]]") || strstr(source, "motion_registers");
+}
+
+/* every c[n] the source reads (outside its comments; any other index, a
+relative one, reads all 192) in xgpu_msl_vertex_constants' run */
+static int constants_covered(const char *source, const struct xgpu_vertex_program *program,
+	const struct nv2a_vertex_lighting *lighting)
+{
+	unsigned int first, end;
+	const char *at;
+
+	xgpu_msl_vertex_constants(program, lighting, &first, &end);
+	for (at = source; *at; at++)
+	{
+		char *after;
+		unsigned long number;
+
+		if (at[0] == '/' && at[1] == '*')
+		{
+			at = strstr(at + 2, "*/");
+			if (!at)
+				return 0;
+			at++;
+			continue;
+		}
+		if (at[0] == '/' && at[1] == '/')
+		{
+			while (at[1] && at[1] != '\n')
+				at++;
+			continue;
+		}
+		if (at[0] != 'c' || at[1] != '[' ||
+			(at > source && (isalnum((unsigned char)at[-1]) || at[-1] == '_' || at[-1] == '.')))
+			continue;
+		number = strtoul(at + 2, &after, 10);
+		if (after == at + 2 || *after != ']')
+		{
+			/* (relative: all of them) */
+			if (first != 0 || end != XGPU_VERTEX_CONSTANT_COUNT)
+				return 0;
+			continue;
+		}
+		if (number < first || number >= end)
+			return 0;
+	}
+	return 1;
 }
 
 static void vertex(const char *name, const struct xgpu_vertex_program *program)
@@ -86,6 +135,11 @@ static void vertex(const char *name, const struct xgpu_vertex_program *program)
 				failures++;
 				continue;
 			}
+			if (!constants_covered(source, program, lightings[lighting]))
+			{
+				printf("%s %s: a register read outside the uploaded run\n", name, lighting_names[lighting]);
+				failures++;
+			}
 			if (!has_motion(source) != !motion ||
 				(motion && (!strstr(source, "output.xMotionCurrent") || !strstr(source, "motion_registers + 192"))))
 			{
@@ -97,6 +151,22 @@ static void vertex(const char *name, const struct xgpu_vertex_program *program)
 			free(source);
 			vertex_count++;
 		}
+	}
+	/* (display.ambient_occlusion's split lighting: its registers too) */
+	{
+		struct xgpu_msl_options options;
+		char *source;
+
+		model.split = TRUE;
+		memset(&options, 0, sizeof(options));
+		options.motion = 1;
+		source = xgpu_msl_vertex_shader(program, 0, 0, &model, &options);
+		if (source && !constants_covered(source, program, &model))
+		{
+			printf("%s split: a register read outside the uploaded run\n", name);
+			failures++;
+		}
+		free(source);
 	}
 }
 

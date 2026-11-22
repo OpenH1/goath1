@@ -141,6 +141,9 @@ struct shader_entry
 {
 	id<MTLFunction> function;
 	dispatch_group_t making;
+	/* a vertex function's run of the constants (end 0: all 192),
+	xgpu_metal_shader_constants */
+	uint8_t constants_first, constants_end;
 };
 
 struct depth_stencil_key
@@ -202,7 +205,10 @@ enum
 	_dirty_constant_attributes = 1 << 11,
 	_dirty_dynamic_lights = 1 << 12,
 	_dirty_world_ao = 1 << 13,
-	_dirty_all = (1 << 14) - 1,
+	/* (the constants' and the uniforms' buffers bound again as they are:
+	the encoder has neither, or another bound its own) */
+	_dirty_buffers_bound = 1 << 14,
+	_dirty_all = (1 << 15) - 1,
 };
 
 static struct
@@ -346,6 +352,17 @@ static struct
 	float vertex_constants[2 * XGPU_METAL_VERTEX_CONSTANT_COUNT][4];
 	unsigned char draw_uniforms[4096];
 	uint32_t draw_uniforms_size;
+	/* the registers set since they went to the ring (bit n c[n], or the
+previous frame's c[n]), those the ring's copy has, of the frame, and
+whether it has the previous frame's too: draw_constants_bind */
+	uint64_t constants_changed[3], constants_valid[3];
+	uint64_t constants_frame;
+	BOOL constants_motion;
+	__unsafe_unretained id<MTLBuffer> constants_buffer;
+	NSUInteger constants_offset;
+	/* what the encoder has at the constants' and the uniforms' indices
+	(the ring's buffers, which the frame's slot keeps) */
+	__unsafe_unretained id<MTLBuffer> constants_bound, uniforms_bound;
 	struct xgpu_metal_source streams[XGPU_METAL_STREAM_COUNT];
 	float constant_attributes[16][4];
 	/* the enhanced dynamic lights' block, cells and world */
@@ -2714,7 +2731,8 @@ struct xgpu_metal_source xgpu_metal_stream(const void *data, uint32_t size)
 		slot->chunk = next;
 		position = 0;
 	}
-	memcpy((unsigned char *)slot->chunks[slot->chunk].buffer.contents + position, data, size);
+	if (data)
+		memcpy((unsigned char *)slot->chunks[slot->chunk].buffer.contents + position, data, size);
 	slot->position = position + size;
 	source.kind = XGPU_METAL_SOURCE_RING;
 	source.offset = (slot->chunk << RING_CHUNK_SHIFT) + position;
@@ -2723,6 +2741,16 @@ struct xgpu_metal_source xgpu_metal_stream(const void *data, uint32_t size)
 	metal.statistics.ring_bytes += size;
 	pthread_mutex_unlock(&metal.statistics_lock);
 	return source;
+}
+
+/* size bytes of the frame's ring, written by the caller (NULL where there
+is no room): its buffer and offset */
+static unsigned char *ring_reserve(uint32_t size, id<MTLBuffer> *buffer, NSUInteger *offset)
+{
+	struct xgpu_metal_source source = xgpu_metal_stream(NULL, size);
+
+	*buffer = ring_buffer(source, offset);
+	return *buffer ? (unsigned char *)(*buffer).contents + *offset : NULL;
 }
 
 static id<MTLBuffer> ring_buffer(struct xgpu_metal_source source, NSUInteger *offset)
@@ -4129,7 +4157,22 @@ void xgpu_metal_set_vertex_constants(uint32_t first, uint32_t count, const float
 	if (count > 2 * XGPU_METAL_VERTEX_CONSTANT_COUNT - first)
 		count = 2 * XGPU_METAL_VERTEX_CONSTANT_COUNT - first;
 	memcpy(metal.vertex_constants[first], values, count * 4 * sizeof(float));
+	/* (a run of the 192 or of the previous frame's: the same bits) */
+	for (; count; count--, first++)
+	{
+		uint32_t number = first % XGPU_METAL_VERTEX_CONSTANT_COUNT;
+
+		metal.constants_changed[number >> 6] |= 1ull << (number & 63);
+	}
 	metal.dirty |= _dirty_vertex_constants;
+}
+
+void xgpu_metal_shader_constants(uint32_t shader, uint32_t first, uint32_t end)
+{
+	if (!shader || shader > metal.shader_count || first >= end || end > XGPU_METAL_VERTEX_CONSTANT_COUNT)
+		return;
+	metal.shaders[shader].constants_first = (uint8_t)first;
+	metal.shaders[shader].constants_end = (uint8_t)end;
 }
 
 void xgpu_metal_set_draw_uniforms(const void *data, uint32_t size)
@@ -4203,6 +4246,67 @@ static const MTLPrimitiveType primitive_types[5] = {
 	MTLPrimitiveTypePoint, MTLPrimitiveTypeLine, MTLPrimitiveTypeLineStrip, MTLPrimitiveTypeTriangle,
 	MTLPrimitiveTypeTriangleStrip,
 };
+
+/* the vertex constants the pipeline's vertex function reads, in the frame's
+ring and bound (rebind: the encoder has another buffer there, or none):
+uploaded again only where one of them was set since, or the ring's copy
+lacks one, and then only their run (where it writes the motion, the same
+run of the previous frame's past the 192), as the Vulkan backend's
+constants_update. The space before the run is left as it was: the
+function reads none of it. */
+static BOOL draw_constants_bind(id<MTLRenderCommandEncoder> render, BOOL rebind)
+{
+	const struct shader_entry *shader = metal.pipeline.vertex_shader <= metal.shader_count ?
+		&metal.shaders[metal.pipeline.vertex_shader] : NULL;
+	uint32_t first = shader && shader->constants_end ? shader->constants_first : 0;
+	uint32_t end = shader && shader->constants_end ? shader->constants_end : XGPU_METAL_VERTEX_CONSTANT_COUNT;
+	BOOL motion = metal.pipeline.motion_mask && metal.encoder_motion;
+	uint64_t read[3] = { 0, 0, 0 };
+	uint32_t number;
+	int word;
+	BOOL upload = metal.constants_frame != metal.frame_number || !metal.constants_buffer ||
+		(motion && !metal.constants_motion);
+
+	for (number = first; number < end; number++)
+		read[number >> 6] |= 1ull << (number & 63);
+	for (word = 0; word < 3 && !upload; word++)
+		upload = (read[word] & (metal.constants_changed[word] | ~metal.constants_valid[word])) != 0;
+	if (upload)
+	{
+		/* (where it writes the motion: the 192 and the previous frame's run) */
+		uint32_t registers = motion ? XGPU_METAL_VERTEX_CONSTANT_COUNT + end : end;
+		id<MTLBuffer> buffer = nil;
+		NSUInteger offset = 0;
+		unsigned char *to = ring_reserve(registers * sizeof(metal.vertex_constants[0]), &buffer, &offset);
+
+		if (!to)
+			return NO;
+		memcpy(to + first * sizeof(metal.vertex_constants[0]), metal.vertex_constants[first],
+			(end - first) * sizeof(metal.vertex_constants[0]));
+		if (motion)
+			memcpy(to + (XGPU_METAL_VERTEX_CONSTANT_COUNT + first) * sizeof(metal.vertex_constants[0]),
+				metal.vertex_constants[XGPU_METAL_VERTEX_CONSTANT_COUNT + first],
+				(end - first) * sizeof(metal.vertex_constants[0]));
+		for (word = 0; word < 3; word++)
+		{
+			metal.constants_valid[word] = read[word];
+			metal.constants_changed[word] = 0;
+		}
+		metal.constants_frame = metal.frame_number;
+		metal.constants_motion = motion;
+		metal.constants_buffer = buffer;
+		metal.constants_offset = offset;
+	}
+	else if (!rebind && metal.constants_bound == metal.constants_buffer)
+		return YES;
+	if (!rebind && metal.constants_bound == metal.constants_buffer)
+		[render setVertexBufferOffset:metal.constants_offset atIndex:XGPU_METAL_BUFFER_VERTEX_CONSTANTS];
+	else
+		[render setVertexBuffer:metal.constants_buffer offset:metal.constants_offset
+			atIndex:XGPU_METAL_BUFFER_VERTEX_CONSTANTS];
+	metal.constants_bound = metal.constants_buffer;
+	return YES;
+}
 
 /* sets on the encoder what the draw needs of the state; NO if it cannot
 be drawn */
@@ -4285,28 +4389,34 @@ static BOOL draw_state_apply(id<MTLRenderCommandEncoder> render)
 	if (dirty & _dirty_blend_color)
 		[render setBlendColorRed:metal.dynamic.blend_color[0] green:metal.dynamic.blend_color[1]
 			blue:metal.dynamic.blend_color[2] alpha:metal.dynamic.blend_color[3]];
-	if ((dirty & _dirty_vertex_constants) && metal.pipeline.motion_mask && metal.encoder_motion)
-	{
-		/* (display.temporal_aa: the 192 and the previous frame's, 6 KB,
-		more than setVertexBytes takes: the frame's upload ring) */
-		struct xgpu_metal_source source = xgpu_metal_stream(metal.vertex_constants, sizeof(metal.vertex_constants));
-		NSUInteger offset = 0;
-		id<MTLBuffer> buffer = source_buffer(source, &offset);
-
-		if (!buffer)
-			return NO;
-		[render setVertexBuffer:buffer offset:offset atIndex:XGPU_METAL_BUFFER_VERTEX_CONSTANTS];
-	}
-	else if (dirty & _dirty_vertex_constants)
-		[render setVertexBytes:metal.vertex_constants length:XGPU_METAL_VERTEX_CONSTANT_COUNT * sizeof(metal.vertex_constants[0])
-			atIndex:XGPU_METAL_BUFFER_VERTEX_CONSTANTS];
+	if ((dirty & (_dirty_vertex_constants | _dirty_pipeline | _dirty_buffers_bound)) &&
+		!draw_constants_bind(render, (dirty & _dirty_buffers_bound) != 0))
+		return NO;
 	if (dirty & _dirty_constant_attributes)
 		[render setVertexBytes:metal.constant_attributes length:sizeof(metal.constant_attributes)
 			atIndex:XGPU_METAL_BUFFER_CONSTANT_ATTRIBUTES];
 	if ((dirty & _dirty_draw_uniforms) && metal.draw_uniforms_size)
 	{
-		[render setVertexBytes:metal.draw_uniforms length:metal.draw_uniforms_size atIndex:XGPU_METAL_BUFFER_DRAW_UNIFORMS];
-		[render setFragmentBytes:metal.draw_uniforms length:metal.draw_uniforms_size atIndex:XGPU_METAL_BUFFER_DRAW_UNIFORMS];
+		/* (once, in the ring, the same for both stages; the encoder's
+		buffer moved on where it has the ring's already) */
+		id<MTLBuffer> buffer = nil;
+		NSUInteger offset = 0;
+		unsigned char *to = ring_reserve(metal.draw_uniforms_size, &buffer, &offset);
+
+		if (!to)
+			return NO;
+		memcpy(to, metal.draw_uniforms, metal.draw_uniforms_size);
+		if (!(dirty & _dirty_buffers_bound) && metal.uniforms_bound == buffer)
+		{
+			[render setVertexBufferOffset:offset atIndex:XGPU_METAL_BUFFER_DRAW_UNIFORMS];
+			[render setFragmentBufferOffset:offset atIndex:XGPU_METAL_BUFFER_DRAW_UNIFORMS];
+		}
+		else
+		{
+			[render setVertexBuffer:buffer offset:offset atIndex:XGPU_METAL_BUFFER_DRAW_UNIFORMS];
+			[render setFragmentBuffer:buffer offset:offset atIndex:XGPU_METAL_BUFFER_DRAW_UNIFORMS];
+		}
+		metal.uniforms_bound = buffer;
 	}
 	if (dirty & _dirty_textures)
 	{

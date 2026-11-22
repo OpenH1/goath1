@@ -150,6 +150,9 @@ struct vertex_usage
 	unsigned char mac[XGPU_VERTEX_PROGRAM_MAXIMUM], ilu[XGPU_VERTEX_PROGRAM_MAXIMUM];
 	unsigned long temporaries, inputs;
 	BOOL a0, operands[3], mac_used, ilu_used;
+	/* the constant registers the operands read (bit n c[n]; a relative
+	operand every one): xgpu_msl_vertex_constants */
+	unsigned long long constants[3];
 };
 
 static BOOL temporary_read(const struct vertex_usage *usage, unsigned char temporary)
@@ -164,7 +167,12 @@ static void operand_usage(struct vertex_usage *usage, const struct xgpu_vertex_o
 	else if (operand->file == XGPU_VERTEX_INPUT && operand->index < XGPU_VERTEX_ATTRIBUTE_COUNT)
 		usage->inputs |= 1UL << operand->index;
 	else if (operand->file == XGPU_VERTEX_CONSTANT && relative)
+	{
 		usage->a0 = TRUE;
+		memset(usage->constants, 0xff, sizeof(usage->constants));
+	}
+	else if (operand->file == XGPU_VERTEX_CONSTANT && operand->index < XGPU_VERTEX_CONSTANT_COUNT)
+		usage->constants[operand->index >> 6] |= 1ull << (operand->index & 63);
 }
 
 static void vertex_usage(const struct xgpu_vertex_program *program, const struct nv2a_vertex_lighting *lighting,
@@ -694,6 +702,36 @@ char *xgpu_msl_vertex_shader(const struct xgpu_vertex_program *program, unsigned
 	xgpu_text_append(&text, "\treturn output;\n}\n");
 	functions_insert(&text, functions_at, vertex_functions);
 	return text.buffer;
+}
+
+void xgpu_msl_vertex_constants(const struct xgpu_vertex_program *program, const struct nv2a_vertex_lighting *lighting,
+	unsigned int *first, unsigned int *end)
+{
+	struct vertex_usage usage;
+	unsigned long long read[3];
+	int number;
+
+	vertex_usage(program, lighting, &usage);
+	memcpy(read, usage.constants, sizeof(read));
+	/* what xgpu_msl_vertex_shader reads besides the operands: the screen
+	conversion's c[-38] and c[-37], always; the split lighting's c[-82] to
+	c[-69] */
+	for (number = XGPU_VERTEX_CONSTANT_BIAS - 38; number <= XGPU_VERTEX_CONSTANT_BIAS - 37; number++)
+		read[number >> 6] |= 1ull << (number & 63);
+	if (lighting && lighting->split && lighting->lights != XGPU_ENVIRONMENT_LIGHTING)
+	{
+		for (number = XGPU_VERTEX_CONSTANT_BIAS - 82; number <= XGPU_VERTEX_CONSTANT_BIAS - 69; number++)
+			read[number >> 6] |= 1ull << (number & 63);
+	}
+	*first = *end = 0;
+	for (number = 0; number < XGPU_VERTEX_CONSTANT_COUNT; number++)
+	{
+		if (!(read[number >> 6] & (1ull << (number & 63))))
+			continue;
+		if (*first == *end)
+			*first = (unsigned int)number;
+		*end = (unsigned int)number + 1;
+	}
 }
 
 /* ---------- pixel programs: what a program reads */
