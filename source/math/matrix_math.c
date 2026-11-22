@@ -104,27 +104,6 @@ symbols in this file:
 /* ---------- public code */
 
 void
-matrix4x3_identity(
-	real_matrix4x3 *matrix)
-{
-	matrix->scale = 1.f;
-	matrix->forward.i = 1.f;
-	matrix->forward.j = 0.f;
-	matrix->forward.k = 0.f;
-	matrix->left.i = 0.f;
-	matrix->left.j = 1.f;
-	matrix->left.k = 0.f;
-	matrix->up.i = 0.f;
-	matrix->up.j = 0.f;
-	matrix->up.k = 1.f;
-	matrix->position.x = 0.f;
-	matrix->position.y = 0.f;
-	matrix->position.z = 0.f;
-
-	return;
-}
-
-void
 matrix4x3_transpose(
 	real_matrix4x3 *matrix)
 {
@@ -163,104 +142,6 @@ matrix4x3_scale(
 	matrix->position.x = 0.f;
 	matrix->position.y = 0.f;
 	matrix->position.z = 0.f;
-
-	return;
-}
-
-void matrix4x3_translation(
-	real_matrix4x3 *matrix,
-	real_point3d const *point)
-{
-	matrix->scale = 1.f;
-	matrix->forward.i = 1.f;
-	matrix->forward.j = 0.f;
-	matrix->forward.k = 0.f;
-	matrix->left.i = 0.f;
-	matrix->left.j = 1.f;
-	matrix->left.k = 0.f;
-	matrix->up.i = 0.f;
-	matrix->up.j = 0.f;
-	matrix->up.k = 1.f;
-	matrix->position = *point;
-
-	return;
-}
-
-void matrix4x3_rotation_from_quaternion(
-	real_matrix4x3 *matrix,
-	real_quaternion const *quaternion)
-{
-	real scale =
-		quaternion->v.i * quaternion->v.i +
-		quaternion->v.j * quaternion->v.j +
-		quaternion->v.k * quaternion->v.k +
-		quaternion->w * quaternion->w;
-	real x;
-	real y;
-	real z;
-	real wx;
-	real wy;
-	real wz;
-	real xx;
-	real xy;
-	real xz;
-	real yy;
-	real yz;
-	real zz;
-
-	if (scale != 0.f)
-		scale = 2.f / scale;
-	else
-		scale = 0.f;
-
-	x = scale * quaternion->v.i;
-	y = scale * quaternion->v.j;
-	z = scale * quaternion->v.k;
-	wx = quaternion->w * x;
-	wy = quaternion->w * y;
-	wz = quaternion->w * z;
-	xx = quaternion->v.i * x;
-	xy = quaternion->v.i * y;
-	xz = quaternion->v.i * z;
-	yy = quaternion->v.j * y;
-	yz = quaternion->v.j * z;
-	zz = quaternion->v.k * z;
-
-	matrix->scale = 1.f;
-	matrix->forward.i = 1.f - (yy + zz);
-	matrix->forward.j = xy - wz;
-	matrix->forward.k = xz + wy;
-	matrix->left.i = xy + wz;
-	matrix->left.j = 1.f - (xx + zz);
-	matrix->left.k = yz - wx;
-	matrix->up.i = xz - wy;
-	matrix->up.j = yz + wx;
-	matrix->up.k = 1.f - (xx + yy);
-	matrix->position.x = 0.f;
-	matrix->position.y = 0.f;
-	matrix->position.z = 0.f;
-
-	return;
-}
-
-void matrix4x3_from_point_and_quaternion(
-	real_matrix4x3 *matrix,
-	real_point3d const *point,
-	real_quaternion const *quaternion)
-{
-	matrix4x3_rotation_from_quaternion(matrix, quaternion);
-	matrix->position = *point;
-
-	return;
-}
-
-void matrix4x3_from_orientation(
-	real_matrix4x3 *matrix,
-	real_orientation const *orientation)
-{
-	matrix4x3_rotation_from_quaternion(matrix, &orientation->rotation);
-	matrix->scale = orientation->scale;
-	matrix->position = orientation->translation;
 
 	return;
 }
@@ -637,22 +518,6 @@ void matrix4x3_inverse(
 	return;
 }
 
-void matrix4x3_rotation_from_vectors(
-	real_matrix4x3 *matrix,
-	real_vector3d const *forward,
-	real_vector3d const *up)
-
-{
-	matrix->scale = 1.f;
-	matrix->forward = *forward;
-	cross_product3d(up, forward, &matrix->left);
-
-	matrix->up = *up;
-	set_real_point3d(&matrix->position, 0.f, 0.f, 0.f);
-
-	return;
-}
-
 void matrix4x3_rotation_from_angles(
 	real_matrix4x3 *matrix,
 	real yaw,
@@ -711,32 +576,6 @@ void matrix4x3_rotation_to_angles(
 	return;
 }
 
-void matrix4x3_from_point_and_vectors(
-	real_matrix4x3 *matrix,
-	real_point3d const *point,
-	real_vector3d const *forward,
-	real_vector3d const *up)
-{
-	matrix4x3_rotation_from_vectors(matrix, forward, up);
-	matrix->position = *point;
-	
-	return;
-}
-
-void
-matrix4x3_to_point_and_vectors(
-	real_matrix4x3 const *matrix,
-	real_point3d *point,
-	real_vector3d *forward,
-	real_vector3d *up)
-{
-	*forward = matrix->forward;
-	*up = matrix->up;
-	*point = matrix->position;
-
-	return;
-}
-
 real_vector3d *vector_from_matrices4x3(
 	real_matrix4x3 const *a,
 	real_matrix4x3 const *b,
@@ -759,151 +598,6 @@ real_vector3d *vector_from_matrices4x3(
 	return rotation;
 }
 
-real_point3d *matrix4x3_transform_point(
-	real_matrix4x3 const *matrix,
-	real_point3d const *point,
-	real_point3d *result)
-{
-	real x = point->x;
-	real y = point->y;
-	real z = point->z;
-
-	if (matrix->scale != 1.f)
-	{
-		x *= matrix->scale;
-		y *= matrix->scale;
-		z *= matrix->scale;
-	}
-
-	result->x = matrix->up.i*z + matrix->left.i*y + matrix->forward.i*x + matrix->position.x;
-	result->y = matrix->up.j*z + matrix->left.j*y + matrix->forward.j*x + matrix->position.y;
-	result->z = matrix->up.k*z + matrix->left.k*y + matrix->forward.k*x + matrix->position.z;
-	return result;
-}
-
-real_vector3d *matrix4x3_transform_vector(
-	real_matrix4x3 const *matrix,
-	real_vector3d const *vector,
-	real_vector3d *result)
-{
-	real i = vector->i;
-	real j = vector->j;
-	real k = vector->k;
-
-	if (matrix->scale != 1.f)
-	{
-		i *= matrix->scale;
-		j *= matrix->scale;
-		k *= matrix->scale;
-	}
-
-	result->i = i*matrix->forward.i + j*matrix->left.i + k*matrix->up.i;
-	result->j = i*matrix->forward.j + j*matrix->left.j + k*matrix->up.j;
-	result->k = i*matrix->forward.k + j*matrix->left.k + k*matrix->up.k;
-
-	return result;
-}
-
-real_point3d *matrix4x3_inverse_transform_point(
-	real_matrix4x3 const *matrix,
-	real_point3d const *point,
-	real_point3d *result)
-{
-	if (matrix->scale != 0.f)
-	{
-		real x = point->x - matrix->position.x;
-		real y = point->y - matrix->position.y;
-		real z = point->z - matrix->position.z;
-
-		if (matrix->scale != 1.f)
-		{
-			real scale = 1.f / matrix->scale;
-			x *= scale;
-			y *= scale;
-			z *= scale;
-		}
-
-		result->x = x * matrix->forward.i + y * matrix->forward.j + z * matrix->forward.k;
-		result->y = x * matrix->left.i + y * matrix->left.j + z * matrix->left.k;
-		result->z = x * matrix->up.i + y * matrix->up.j + z * matrix->up.k;
-	}
-	else
-	{
-		result->x = 0.f;
-		result->y = 0.f;
-		result->z = 0.f;
-	}
-
-	return result;
-}
-
-real_vector3d *matrix4x3_transform_normal(
-	real_matrix4x3 const *matrix,
-	real_vector3d const *normal,
-	real_vector3d *result)
-{
-	real i = normal->i;
-	real j = normal->j;
-	real k = normal->k;
-
-	result->i = i*matrix->forward.i + j*matrix->left.i + k*matrix->up.i;
-	result->j = i*matrix->forward.j + j*matrix->left.j + k*matrix->up.j;
-	result->k = i*matrix->forward.k + j*matrix->left.k + k*matrix->up.k;
-	return result;
-}
-
-real_vector3d *
-matrix4x3_inverse_transform_normal(
-	real_matrix4x3 const *matrix,
-	real_vector3d const *normal,
-	real_vector3d *result)
-{
-	real i = normal->i;
-	real j = normal->j;
-	real k = normal->k;
-
-	result->i = i * matrix->forward.i + j * matrix->forward.j + k * matrix->forward.k;
-	result->j = i * matrix->left.i + j * matrix->left.j + k * matrix->left.k;
-	result->k = i * matrix->up.i + j * matrix->up.j + k * matrix->up.k;
-
-	return result;
-}
-
-real_vector3d *matrix4x3_inverse_transform_vector(
-	real_matrix4x3 const *matrix,
-	real_vector3d const *vector,
-	real_vector3d *result)
-{
-	real i = vector->i;
-	real j = vector->j;
-	real k = vector->k;
-
-	if (matrix->scale != 1.f)
-	{
-		real scale = 1.f / matrix->scale;
-		i *= scale;
-		j *= scale;
-		k *= scale;
-	}
-
-	result->i = i * matrix->forward.i + j * matrix->forward.j + k * matrix->forward.k;
-	result->j = i * matrix->left.i + j * matrix->left.j + k * matrix->left.k;
-	result->k = i * matrix->up.i + j * matrix->up.j + k * matrix->up.k;
-
-	return result;
-}
-
-real_plane3d *matrix4x3_transform_plane(
-	real_matrix4x3 const *matrix,
-	real_plane3d const *plane,
-	real_plane3d *result)
-{
-	matrix4x3_transform_normal(matrix, &plane->n, &result->n);
-	result->d = plane->d * matrix->scale + dot_product3d((real_vector3d const *)&matrix->position, &result->n);
-
-	return result;
-}
-
 real_plane3d *matrix4x3_inverse_transform_plane(
 	real_matrix4x3 const *matrix,
 	real_plane3d const *plane,
@@ -924,44 +618,6 @@ real_plane3d *matrix4x3_inverse_transform_plane(
 	matrix4x3_inverse_transform_vector(matrix, &plane->n, &result->n);
 
 	return result;
-}
-
-void matrix4x3_multiply(
-	real_matrix4x3 const *a,
-	real_matrix4x3 const *b,
-	real_matrix4x3 *result)
-{
-	real const *a_elements = a->n[0];
-	real const *b_elements = b->n[0];
-	real *result_elements = result->n[0];
-	real const *a_scale = &a->scale;
-
-	{
-		/* the SSE block below: rows of b combine the rows of a, and the
-		position is scaled by a's scale before a's own is added */
-		real product[12];
-		long row, column;
-
-		for (row = 0; row < 4; row++)
-		{
-			for (column = 0; column < 3; column++)
-			{
-				real value = b_elements[row * 3 + 0] * a_elements[column] +
-					b_elements[row * 3 + 1] * a_elements[3 + column] +
-					b_elements[row * 3 + 2] * a_elements[6 + column];
-
-				if (row == 3)
-					value = value * *a_scale + a_elements[9 + column];
-				product[row * 3 + column] = value;
-			}
-		}
-		for (row = 0; row < 12; row++)
-			result_elements[row] = product[row];
-	}
-
-	result->scale = a->scale * b->scale;
-
-	return;
 }
 
 real

@@ -205,42 +205,6 @@ real_vector3d *rotate_vector_about_axis(
 	return v;
 }
 
-void vectors_interpolate(
-	real_vector3d const *a,
-	real_vector3d const *b,
-	real t,
-	real_vector3d *result)
-{
-	real one_minus_t = 1-t;
-	result->i = one_minus_t*a->i + t*b->i;
-	result->j = one_minus_t*a->j + t*b->j;
-	result->k = one_minus_t*a->k + t*b->k;
-	return;
-}
-
-void points_interpolate(
-	real_point3d const *a,
-	real_point3d const *b,
-	real t,
-	real_point3d *result)
-{
-	real one_minus_t = 1-t;
-	result->x = one_minus_t*a->x + t*b->x;
-	result->y = one_minus_t*a->y + t*b->y;
-	result->z = one_minus_t*a->z + t*b->z;
-	return;
-}
-
-void scalars_interpolate(
-	real a,
-	real b,
-	real t,
-	real *result)
-{
-	*result = (1-t) * a+b * t;
-	return;
-}
-
 void scalars_interpolate_and_clamp_0_to_1(
 	real a,
 	real b,
@@ -295,76 +259,6 @@ void component_vectors_from_direction3d(
 	return;
 }
 
-void quaternions_multiply(
-	real_quaternion const *q0,
-	real_quaternion const *q1,
-	real_quaternion *result)
-{
-	real_quaternion temporary;
-
-	if (q0== result)
-	{
-		temporary = *q0;
-		q0= &temporary;
-	}
-
-	if (q1== result)
-	{
-		temporary = *q1;
-		q1= &temporary;
-	}
-
-	result->v.i =
-					+ q0->v.j*q1->v.k
-					+ q0->v.i*q1->w
-					+ q0->w  *q1->v.i 
-					- q0->v.k*q1->v.j
-					;
-
-	result->v.j =
-					+ q0->w  *q1->v.j 
-					+ q0->v.j*q1->w
-					+ q0->v.k*q1->v.i 
-					- q0->v.i*q1->v.k
-					;
-
-	result->v.k =
-					+ q0->v.k*q1->w 
-					+ q0->v.i*q1->v.j
-					+ q0->w  *q1->v.k 
-					- q0->v.j*q1->v.i
-					;
-
-	result->w =
-					+ q0->w  *q1->w 
-					- q0->v.i*q1->v.i 
-					- q0->v.j*q1->v.j 
-					- q0->v.k*q1->v.k
-					;
-
-	return;
-}
-
-void quaternions_interpolate(
-	real_quaternion const *q0,
-	real_quaternion const *q1,
-	real t,
-	real_quaternion *result)
-{
-	real v = 1.f-t;
-	
-	if (q0->v.i*q1->v.i + q0->v.j*q1->v.j + q0->v.k*q1->v.k + q0->w*q1->w < 0.f)
-	{
-		t = -t;
-	}
-
-	result->v.i = q0->v.i*v + q1->v.i*t;
-	result->v.j = q0->v.j*v + q1->v.j*t;
-	result->v.k = q0->v.k*v + q1->v.k*t;
-	result->w = q0->w*v + q1->w*t;
-	return;
-}
-
 void quaternion_transform_point(
 	real_quaternion const *q,
 	real_point3d const *p,
@@ -403,60 +297,6 @@ void vectors3d_from_euler_angles3d(
 	matrix4x3_rotation_from_angles(&matrix, angles->yaw, angles->pitch, angles->roll);
 	matrix4x3_to_point_and_vectors(&matrix, &dummy, forward, up);
 	return;
-}
-
-boolean fast_vector_intersects_sphere(
-	real_point3d const *point,
-	real_vector3d const *vector,
-	real_point3d const *center,
-	real radius)
-{
-	real_point3d p = {point->x-center->x, point->y-center->y, point->z - center->z};
-	real c = (p.x*p.x) + (p.y*p.y) + (p.z*p.z) - (radius*radius);
-	real_vector3d direction;
-
-	if (c < 0.f)
-	{
-		return TRUE;
-	}
-	else
-	{
-		real b;
-
-		direction = *vector;
-		b = direction.i*p.x + direction.j*p.y + direction.k*p.z;
-		
-		if (b >= 0.f)
-		{
-			return FALSE;
-		}
-		else
-		{
-			real a =
-				direction.i*direction.i +
-				direction.j*direction.j +
-				direction.k*direction.k;
-			real disc = b * b - a * c;
-			
-			if (disc <= 0.f)
-			{
-				return FALSE;
-			}
-			else
-			{
-				real neg_a_minus_b = -a - b;
-
-				if (neg_a_minus_b < 0.f)
-				{
-					return TRUE;
-				}
-				else
-				{
-					return neg_a_minus_b * neg_a_minus_b < disc;
-				}
-			}
-		}
-	}
 }
 
 real fast_vector_intersection_with_sphere(
@@ -2395,22 +2235,6 @@ real_vector3d *refract_vector3d(
 	return refraction;
 }
 
-void quaternion_normalize(
-	real_quaternion *q)
-{
-	real magnitude_squared = q->v.i*q->v.i + q->v.j*q->v.j + q->v.k*q->v.k + q->w*q->w;
-	if (magnitude_squared > 0.f)
-	{
-		real one_over_magnitude = reciprocal_square_root(magnitude_squared);
-		set_real_quaternion(q, one_over_magnitude*q->v.i, one_over_magnitude*q->v.j, one_over_magnitude*q->v.k, one_over_magnitude*q->w);
-	}
-	else
-	{
-		set_real_quaternion(q, 0.f, 0.f, 0.f, 1.f);
-	}
-	return;
-}
-
 void quaternion_from_angle_and_vector(
 	real_quaternion *q,
 	real a,
@@ -2441,33 +2265,6 @@ void quaternion_to_angle_and_vector(
 		*a = _pi * 2.0f - *a;
 	}
 
-	return;
-}
-
-void quaternions_interpolate_and_normalize(
-	real_quaternion const *q0,
-	real_quaternion const *q1,
-	real t,
-	real_quaternion *result)
-{
-	quaternions_interpolate(q0, q1, t, result);
-	quaternion_normalize(result);
-	return;
-}
-
-void orientations_interpolate(
-	real_orientation const *a,
-	real_orientation const *b,
-	real t,
-	real_orientation *result)
-{
-	quaternions_interpolate(&a->rotation, &b->rotation, t, &result->rotation);
-	quaternion_normalize(&result->rotation);
-
-	result->translation.x = a->translation.x*(1.f - t) + b->translation.x*t;
-	result->translation.y = a->translation.y*(1.f - t) + b->translation.y*t;
-	result->translation.z = a->translation.z*(1.f - t) + b->translation.z*t;
-	result->scale = a->scale*(1.f - t) + b->scale*t;
 	return;
 }
 

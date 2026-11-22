@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from harness import CHECK_FAILED, build, constant, function, mutated, read, run, structure
+from harness import CHECK_FAILED, build, constant, function, inline, mutated, read, run, structure
 from harness.render_types import transparent_types
 
 CASES = ["same-side", "opposite-side", "reverse-normal", "unrelated", "multiple-models",
@@ -39,7 +39,7 @@ def generated(control=None):
                        ("source/models/model_definitions.h", "MAXIMUM_NODES_PER_MODEL"),
                        ("source/rasterizer/rasterizer.h", "RASTERIZER_MAXIMUM_TRANSPARENT_GEOMETRY_GROUPS")]:
         types += f"\n#define {name} {constant(read(path), name)}\n"
-    code = function(read("source/math/matrix_math.c"), "matrix4x3_transform_point")
+    code = inline(read("source/math/real_math.h"), "matrix4x3_transform_point")
     for name in ["shader_is_water_decal", "shader_type_is_transparent", "shader_type_is_valid_for_model"]:
         code += "\n" + function(read("source/shaders/shaders.c"), name)
     for name in ["transparent_planar_glass", "transparent_model_world_bounds", "transparent_plane_model_order",

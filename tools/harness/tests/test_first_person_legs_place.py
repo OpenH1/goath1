@@ -52,7 +52,6 @@ def types():
 def generated(fault=None):
     code = read("port/linux/game/first_person_legs.c")
     math = read("source/math/real_math.h")
-    matrices = read("source/math/matrix_math.c")
     defines = "\n".join(line for line in re.findall(r"^#define FIRST_PERSON_LEGS_\w+ .*$", code, re.M))
     limits = re.search(r"^enum\s*\{\s*FIRST_PERSON_LEGS_MAXIMUM_NODES[^}]*\};", code, re.M).group(0)
     statics = "static real_matrix4x3 first_person_legs_matrices[FIRST_PERSON_LEGS_MAXIMUM_NODES];"
@@ -65,7 +64,7 @@ def generated(fault=None):
                "cross_product3d"]
     helpers = "\n".join([re.search(r"^#define _real_epsilon .*$", math, re.M).group(0)] +
                         [inline(math, name) for name in inlines] +
-                        [function(matrices, name) for name in ["matrix4x3_multiply", "matrix4x3_transform_vector"]])
+                        [inline(math, name) for name in ["matrix4x3_multiply", "matrix4x3_transform_vector"]])
     return (("types.inc", types()), ("lower.inc", lower), ("under_test.inc", helpers + "\n" + text))
 
 

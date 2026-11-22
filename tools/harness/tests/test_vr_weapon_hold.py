@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from harness import CHECK_FAILED, build, constant, enum_with, function, mutated, read, run, structure  # noqa: E402
+from harness import CHECK_FAILED, build, constant, enum_with, function, inline, mutated, read, run, structure  # noqa: E402
 
 CASES = ["root", "held", "support_near", "support_far"]
 
@@ -61,7 +61,7 @@ def generated(fault=None):
     for name in ("SUPPORT_STAYS", "SUPPORT_LEAVES"):
         decls += re.search(r"^#define " + name + r" .*$", vr, re.M).group(0) + "\n"
 
-    text = "".join(function(maths, name) + "\n" for name in ("matrix4x3_inverse", "matrix4x3_multiply"))
+    text = function(maths, "matrix4x3_inverse") + "\n" + inline(real_math, "matrix4x3_multiply") + "\n"
     for name in ("vector_dot", "vector_between", "graph_node", "node_descends", "weapon_root_find",
                  "quaternion_from_matrix", "matrix_from_quaternion", "matrix_blend", "weapon_hold", "support_hold"):
         text += function(vr, name) + "\n"

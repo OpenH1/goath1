@@ -18,6 +18,9 @@ REAL_MATH_INLINES = ["square_root", "arctangent", "set_real_point3d", "vector_fr
 MATRIX_FUNCTIONS = ["matrix4x3_inverse", "matrix4x3_multiply", "matrix4x3_rotation_to_quaternion",
                     "matrix4x3_rotation_from_vectors", "matrix4x3_from_point_and_vectors", "matrix4x3_transform_point",
                     "matrix4x3_inverse_transform_point", "vector_from_matrices4x3", "matrix4x3_rotation_from_quaternion"]
+INLINE_MATRIX_FUNCTIONS = {"matrix4x3_multiply", "matrix4x3_rotation_from_vectors", "matrix4x3_from_point_and_vectors",
+                           "matrix4x3_transform_point", "matrix4x3_inverse_transform_point",
+                           "matrix4x3_rotation_from_quaternion"}
 
 
 def engine():
@@ -30,9 +33,11 @@ def engine():
         text += structure(real_math, name) + NL + f"typedef struct {name} {name};" + NL
     text += "".join(inline(real_math, name) + NL for name in REAL_MATH_INLINES)
     text += function(read("source/math/real_math.c"), "quaternion_to_angle_and_vector") + NL
-    text += function(read("source/math/real_math.c"), "quaternion_normalize") + NL
+    text += inline(real_math, "quaternion_normalize") + NL
     # (the 4x3 next-index table: one blob in the original, matrix_math.c)
     text += re.search(r"^static short data_0030790c.*$", matrix_math, re.M).group(0) + NL
     text += "#define matrix4x3_next (data_0030790c)" + NL
-    text += "".join(function(matrix_math, name) + NL for name in MATRIX_FUNCTIONS)
+    # (the small ones are real_math.h's inline functions, the rest matrix_math.c's)
+    text += "".join((inline(real_math, name) if name in INLINE_MATRIX_FUNCTIONS else function(matrix_math, name)) + NL
+                    for name in MATRIX_FUNCTIONS)
     return text

@@ -553,20 +553,14 @@ real_vector4d *perpendicular4d(real_vector4d const *a, real_vector4d *result);
 
 real_vector3d *rotate_vector_about_axis(real_vector3d *v, real_vector3d const *n, real sine, real cosine);
 
-void vectors_interpolate(real_vector3d const *a, real_vector3d const *b, real t, real_vector3d *result);
-void points_interpolate(real_point3d const *a, real_point3d const *b, real t, real_point3d *result);
-void scalars_interpolate(real a, real b, real t, real *result);
 void scalars_interpolate_and_clamp_0_to_1(real a, real b, real t, real *result);
 
 void component_vectors_from_normal3d(real_vector3d const *vector, real_vector3d const *normal, real_vector3d *parallel, real_vector3d *perpendicular);
 void component_vectors_from_direction3d(real_vector3d const *vector, real_vector3d const *direction, real_vector3d *parallel, real_vector3d *perpendicular);
 
-void quaternions_multiply(real_quaternion const *q0, real_quaternion const *q1, real_quaternion *result);
-void quaternions_interpolate(real_quaternion const *q0, real_quaternion const *q1, real t, real_quaternion *result);
 void quaternion_transform_point(real_quaternion const *q, real_point3d const *p, real_point3d *result);
 
 void vectors3d_from_euler_angles3d(real_vector3d *forward, real_vector3d *up, real_euler_angles3d const *angles);
-boolean fast_vector_intersects_sphere(real_point3d const *point, real_vector3d const *vector, real_point3d const *center, real radius);
 real fast_vector_intersection_with_sphere(
 	real_point3d const *point,
 	real_vector3d const *vector,
@@ -723,12 +717,9 @@ void normals_interpolate(real_vector3d const *a, real_vector3d const *b, real t,
 real_vector3d *reflect_vector3d(real_vector3d const *incident, real_vector3d const *normal, real_vector3d *reflection);
 real_vector3d *refract_vector3d(real_vector3d const *incident, real_vector3d const *normal, real coefficient_of_refraction, real_vector3d *refraction);
 
-void quaternion_normalize(real_quaternion *q);
 void quaternion_from_angle_and_vector(real_quaternion *q, real a, real_vector3d const *v);
 void quaternion_to_angle_and_vector(real_quaternion const *q, real *a, real_vector3d *v);
-void quaternions_interpolate_and_normalize(real_quaternion const *q0, real_quaternion const *q1, real t, real_quaternion *result);
 
-void orientations_interpolate(real_orientation const *a, real_orientation const *b, real t, real_orientation *result);
 
 real_euler_angles2d *euler_angles2d_from_vector3d(real_euler_angles2d *angles, real_vector3d const *vector);
 real_vector3d *vector3d_from_angle(real_vector3d *vector, real angle);
@@ -795,35 +786,19 @@ void angular_accelerate_to_position(
 
 /* ---------- prototypes/MATRIX_MATH.C */
 
-void matrix4x3_identity(real_matrix4x3 *matrix);
 void matrix4x3_transpose(real_matrix4x3 *matrix);
 void matrix4x3_inverse(real_matrix4x3 const *matrix, real_matrix4x3 *result);
 void matrix4x3_scale(real_matrix4x3 *matrix, real scale);
-void matrix4x3_translation(real_matrix4x3 *matrix, real_point3d const *point);
 void matrix4x3_rotation_from_axis_and_angle(real_matrix4x3 *matrix, real_vector3d const *axis, real sine, real cosine);
-void matrix4x3_rotation_from_vectors(real_matrix4x3 *matrix, real_vector3d const *forward, real_vector3d const *up);
 void matrix4x3_rotation_from_angles(real_matrix4x3 *matrix, real yaw, real pitch, real roll);
 void matrix4x3_rotation_to_angles(real_matrix4x3 *matrix, real_euler_angles3d *angles);
-void matrix4x3_rotation_from_quaternion(real_matrix4x3 *matrix, real_quaternion const *quaternion);
 void matrix4x3_rotation_to_quaternion(real_matrix4x3 const *matrix, real_quaternion *quaternion);
 void matrix3x3_rotation_to_quaternion(
 	real_matrix3x3 const *matrix,
 	real_quaternion *quaternion);
-void matrix4x3_from_point_and_vectors(real_matrix4x3 *matrix, real_point3d const *point, real_vector3d const *forward, real_vector3d const *up);
-void matrix4x3_from_point_and_quaternion(real_matrix4x3 *matrix, real_point3d const *point, real_quaternion const *quaternion);
-void matrix4x3_from_orientation(real_matrix4x3 *matrix, real_orientation const *orientation);
 void matrix4x3_from_plane(real_matrix4x3 *matrix, real_plane3d const *plane);
-void matrix4x3_to_point_and_vectors(real_matrix4x3 const *matrix, real_point3d *point, real_vector3d *forward, real_vector3d *up);
 real_vector3d *vector_from_matrices4x3(real_matrix4x3 const *a, real_matrix4x3 const *b, real_vector3d *rotation);
-real_point3d *matrix4x3_transform_point(real_matrix4x3 const *matrix, real_point3d const *point, real_point3d *result);
-real_vector3d *matrix4x3_transform_vector(real_matrix4x3 const *matrix, real_vector3d const *vector, real_vector3d *result);
-real_vector3d *matrix4x3_transform_normal(real_matrix4x3 const *matrix, real_vector3d const *normal, real_vector3d *result);
-real_plane3d *matrix4x3_transform_plane(real_matrix4x3 const *matrix, real_plane3d const *plane, real_plane3d *result);
-real_point3d *matrix4x3_inverse_transform_point(real_matrix4x3 const *matrix, real_point3d const *point, real_point3d *result);
-real_vector3d *matrix4x3_inverse_transform_vector(real_matrix4x3 const *matrix, real_vector3d const *vector, real_vector3d *result);
-real_vector3d *matrix4x3_inverse_transform_normal(real_matrix4x3 const *matrix, real_vector3d const *normal, real_vector3d *result);
 real_plane3d *matrix4x3_inverse_transform_plane(real_matrix4x3 const *matrix, real_plane3d const *plane, real_plane3d *result);
-void matrix4x3_multiply(real_matrix4x3 const *a, real_matrix4x3 const *b, real_matrix4x3 *result);
 real_matrix3x3 *matrix3x3_transpose(
 	real_matrix3x3 const *matrix,
 	real_matrix3x3 *result);
@@ -1612,6 +1587,556 @@ __inline real_euler_angles2d *set_real_euler_angles2d(
 	angles->pitch = pitch;
 	angles->yaw = yaw;
 	return angles;
+}
+
+/* port: real_math.c's and matrix_math.c's small functions that the objects, physics, collision and
+render code call most each tick and frame, here so that every unit can inline them (the guests'
+image is not optimised at link time). Each is the original's arithmetic, unchanged: the same
+operations in the same order, built without fused multiply-adds like the rest of the game.
+port/linux/game/msvc_comdat.c gives each one external definition. */
+
+__inline void vectors_interpolate(
+	real_vector3d const *a,
+	real_vector3d const *b,
+	real t,
+	real_vector3d *result)
+{
+	real one_minus_t = 1-t;
+	result->i = one_minus_t*a->i + t*b->i;
+	result->j = one_minus_t*a->j + t*b->j;
+	result->k = one_minus_t*a->k + t*b->k;
+	return;
+}
+
+__inline void points_interpolate(
+	real_point3d const *a,
+	real_point3d const *b,
+	real t,
+	real_point3d *result)
+{
+	real one_minus_t = 1-t;
+	result->x = one_minus_t*a->x + t*b->x;
+	result->y = one_minus_t*a->y + t*b->y;
+	result->z = one_minus_t*a->z + t*b->z;
+	return;
+}
+
+__inline void scalars_interpolate(
+	real a,
+	real b,
+	real t,
+	real *result)
+{
+	*result = (1-t) * a+b * t;
+	return;
+}
+
+__inline void quaternions_multiply(
+	real_quaternion const *q0,
+	real_quaternion const *q1,
+	real_quaternion *result)
+{
+	real_quaternion temporary;
+
+	if (q0== result)
+	{
+		temporary = *q0;
+		q0= &temporary;
+	}
+
+	if (q1== result)
+	{
+		temporary = *q1;
+		q1= &temporary;
+	}
+
+	result->v.i =
+					+ q0->v.j*q1->v.k
+					+ q0->v.i*q1->w
+					+ q0->w  *q1->v.i 
+					- q0->v.k*q1->v.j
+					;
+
+	result->v.j =
+					+ q0->w  *q1->v.j 
+					+ q0->v.j*q1->w
+					+ q0->v.k*q1->v.i 
+					- q0->v.i*q1->v.k
+					;
+
+	result->v.k =
+					+ q0->v.k*q1->w 
+					+ q0->v.i*q1->v.j
+					+ q0->w  *q1->v.k 
+					- q0->v.j*q1->v.i
+					;
+
+	result->w =
+					+ q0->w  *q1->w 
+					- q0->v.i*q1->v.i 
+					- q0->v.j*q1->v.j 
+					- q0->v.k*q1->v.k
+					;
+
+	return;
+}
+
+__inline void quaternions_interpolate(
+	real_quaternion const *q0,
+	real_quaternion const *q1,
+	real t,
+	real_quaternion *result)
+{
+	real v = 1.f-t;
+	
+	if (q0->v.i*q1->v.i + q0->v.j*q1->v.j + q0->v.k*q1->v.k + q0->w*q1->w < 0.f)
+	{
+		t = -t;
+	}
+
+	result->v.i = q0->v.i*v + q1->v.i*t;
+	result->v.j = q0->v.j*v + q1->v.j*t;
+	result->v.k = q0->v.k*v + q1->v.k*t;
+	result->w = q0->w*v + q1->w*t;
+	return;
+}
+
+__inline void quaternion_normalize(
+	real_quaternion *q)
+{
+	real magnitude_squared = q->v.i*q->v.i + q->v.j*q->v.j + q->v.k*q->v.k + q->w*q->w;
+	if (magnitude_squared > 0.f)
+	{
+		real one_over_magnitude = reciprocal_square_root(magnitude_squared);
+		set_real_quaternion(q, one_over_magnitude*q->v.i, one_over_magnitude*q->v.j, one_over_magnitude*q->v.k, one_over_magnitude*q->w);
+	}
+	else
+	{
+		set_real_quaternion(q, 0.f, 0.f, 0.f, 1.f);
+	}
+	return;
+}
+
+__inline void quaternions_interpolate_and_normalize(
+	real_quaternion const *q0,
+	real_quaternion const *q1,
+	real t,
+	real_quaternion *result)
+{
+	quaternions_interpolate(q0, q1, t, result);
+	quaternion_normalize(result);
+	return;
+}
+
+__inline void orientations_interpolate(
+	real_orientation const *a,
+	real_orientation const *b,
+	real t,
+	real_orientation *result)
+{
+	quaternions_interpolate(&a->rotation, &b->rotation, t, &result->rotation);
+	quaternion_normalize(&result->rotation);
+
+	result->translation.x = a->translation.x*(1.f - t) + b->translation.x*t;
+	result->translation.y = a->translation.y*(1.f - t) + b->translation.y*t;
+	result->translation.z = a->translation.z*(1.f - t) + b->translation.z*t;
+	result->scale = a->scale*(1.f - t) + b->scale*t;
+	return;
+}
+
+__inline boolean fast_vector_intersects_sphere(
+	real_point3d const *point,
+	real_vector3d const *vector,
+	real_point3d const *center,
+	real radius)
+{
+	real_point3d p = {point->x-center->x, point->y-center->y, point->z - center->z};
+	real c = (p.x*p.x) + (p.y*p.y) + (p.z*p.z) - (radius*radius);
+	real_vector3d direction;
+
+	if (c < 0.f)
+	{
+		return TRUE;
+	}
+	else
+	{
+		real b;
+
+		direction = *vector;
+		b = direction.i*p.x + direction.j*p.y + direction.k*p.z;
+		
+		if (b >= 0.f)
+		{
+			return FALSE;
+		}
+		else
+		{
+			real a =
+				direction.i*direction.i +
+				direction.j*direction.j +
+				direction.k*direction.k;
+			real disc = b * b - a * c;
+			
+			if (disc <= 0.f)
+			{
+				return FALSE;
+			}
+			else
+			{
+				real neg_a_minus_b = -a - b;
+
+				if (neg_a_minus_b < 0.f)
+				{
+					return TRUE;
+				}
+				else
+				{
+					return neg_a_minus_b * neg_a_minus_b < disc;
+				}
+			}
+		}
+	}
+}
+
+__inline void matrix4x3_identity(
+	real_matrix4x3 *matrix)
+{
+	matrix->scale = 1.f;
+	matrix->forward.i = 1.f;
+	matrix->forward.j = 0.f;
+	matrix->forward.k = 0.f;
+	matrix->left.i = 0.f;
+	matrix->left.j = 1.f;
+	matrix->left.k = 0.f;
+	matrix->up.i = 0.f;
+	matrix->up.j = 0.f;
+	matrix->up.k = 1.f;
+	matrix->position.x = 0.f;
+	matrix->position.y = 0.f;
+	matrix->position.z = 0.f;
+
+	return;
+}
+
+__inline void matrix4x3_translation(
+	real_matrix4x3 *matrix,
+	real_point3d const *point)
+{
+	matrix->scale = 1.f;
+	matrix->forward.i = 1.f;
+	matrix->forward.j = 0.f;
+	matrix->forward.k = 0.f;
+	matrix->left.i = 0.f;
+	matrix->left.j = 1.f;
+	matrix->left.k = 0.f;
+	matrix->up.i = 0.f;
+	matrix->up.j = 0.f;
+	matrix->up.k = 1.f;
+	matrix->position = *point;
+
+	return;
+}
+
+__inline void matrix4x3_rotation_from_quaternion(
+	real_matrix4x3 *matrix,
+	real_quaternion const *quaternion)
+{
+	real scale =
+		quaternion->v.i * quaternion->v.i +
+		quaternion->v.j * quaternion->v.j +
+		quaternion->v.k * quaternion->v.k +
+		quaternion->w * quaternion->w;
+	real x;
+	real y;
+	real z;
+	real wx;
+	real wy;
+	real wz;
+	real xx;
+	real xy;
+	real xz;
+	real yy;
+	real yz;
+	real zz;
+
+	if (scale != 0.f)
+		scale = 2.f / scale;
+	else
+		scale = 0.f;
+
+	x = scale * quaternion->v.i;
+	y = scale * quaternion->v.j;
+	z = scale * quaternion->v.k;
+	wx = quaternion->w * x;
+	wy = quaternion->w * y;
+	wz = quaternion->w * z;
+	xx = quaternion->v.i * x;
+	xy = quaternion->v.i * y;
+	xz = quaternion->v.i * z;
+	yy = quaternion->v.j * y;
+	yz = quaternion->v.j * z;
+	zz = quaternion->v.k * z;
+
+	matrix->scale = 1.f;
+	matrix->forward.i = 1.f - (yy + zz);
+	matrix->forward.j = xy - wz;
+	matrix->forward.k = xz + wy;
+	matrix->left.i = xy + wz;
+	matrix->left.j = 1.f - (xx + zz);
+	matrix->left.k = yz - wx;
+	matrix->up.i = xz - wy;
+	matrix->up.j = yz + wx;
+	matrix->up.k = 1.f - (xx + yy);
+	matrix->position.x = 0.f;
+	matrix->position.y = 0.f;
+	matrix->position.z = 0.f;
+
+	return;
+}
+
+__inline void matrix4x3_from_point_and_quaternion(
+	real_matrix4x3 *matrix,
+	real_point3d const *point,
+	real_quaternion const *quaternion)
+{
+	matrix4x3_rotation_from_quaternion(matrix, quaternion);
+	matrix->position = *point;
+
+	return;
+}
+
+__inline void matrix4x3_from_orientation(
+	real_matrix4x3 *matrix,
+	real_orientation const *orientation)
+{
+	matrix4x3_rotation_from_quaternion(matrix, &orientation->rotation);
+	matrix->scale = orientation->scale;
+	matrix->position = orientation->translation;
+
+	return;
+}
+
+__inline void matrix4x3_rotation_from_vectors(
+	real_matrix4x3 *matrix,
+	real_vector3d const *forward,
+	real_vector3d const *up)
+
+{
+	matrix->scale = 1.f;
+	matrix->forward = *forward;
+	cross_product3d(up, forward, &matrix->left);
+
+	matrix->up = *up;
+	set_real_point3d(&matrix->position, 0.f, 0.f, 0.f);
+
+	return;
+}
+
+__inline void matrix4x3_from_point_and_vectors(
+	real_matrix4x3 *matrix,
+	real_point3d const *point,
+	real_vector3d const *forward,
+	real_vector3d const *up)
+{
+	matrix4x3_rotation_from_vectors(matrix, forward, up);
+	matrix->position = *point;
+	
+	return;
+}
+
+__inline void matrix4x3_to_point_and_vectors(
+	real_matrix4x3 const *matrix,
+	real_point3d *point,
+	real_vector3d *forward,
+	real_vector3d *up)
+{
+	*forward = matrix->forward;
+	*up = matrix->up;
+	*point = matrix->position;
+
+	return;
+}
+
+__inline real_point3d *matrix4x3_transform_point(
+	real_matrix4x3 const *matrix,
+	real_point3d const *point,
+	real_point3d *result)
+{
+	real x = point->x;
+	real y = point->y;
+	real z = point->z;
+
+	if (matrix->scale != 1.f)
+	{
+		x *= matrix->scale;
+		y *= matrix->scale;
+		z *= matrix->scale;
+	}
+
+	result->x = matrix->up.i*z + matrix->left.i*y + matrix->forward.i*x + matrix->position.x;
+	result->y = matrix->up.j*z + matrix->left.j*y + matrix->forward.j*x + matrix->position.y;
+	result->z = matrix->up.k*z + matrix->left.k*y + matrix->forward.k*x + matrix->position.z;
+	return result;
+}
+
+__inline real_vector3d *matrix4x3_transform_vector(
+	real_matrix4x3 const *matrix,
+	real_vector3d const *vector,
+	real_vector3d *result)
+{
+	real i = vector->i;
+	real j = vector->j;
+	real k = vector->k;
+
+	if (matrix->scale != 1.f)
+	{
+		i *= matrix->scale;
+		j *= matrix->scale;
+		k *= matrix->scale;
+	}
+
+	result->i = i*matrix->forward.i + j*matrix->left.i + k*matrix->up.i;
+	result->j = i*matrix->forward.j + j*matrix->left.j + k*matrix->up.j;
+	result->k = i*matrix->forward.k + j*matrix->left.k + k*matrix->up.k;
+
+	return result;
+}
+
+__inline real_vector3d *matrix4x3_transform_normal(
+	real_matrix4x3 const *matrix,
+	real_vector3d const *normal,
+	real_vector3d *result)
+{
+	real i = normal->i;
+	real j = normal->j;
+	real k = normal->k;
+
+	result->i = i*matrix->forward.i + j*matrix->left.i + k*matrix->up.i;
+	result->j = i*matrix->forward.j + j*matrix->left.j + k*matrix->up.j;
+	result->k = i*matrix->forward.k + j*matrix->left.k + k*matrix->up.k;
+	return result;
+}
+
+__inline real_point3d *matrix4x3_inverse_transform_point(
+	real_matrix4x3 const *matrix,
+	real_point3d const *point,
+	real_point3d *result)
+{
+	if (matrix->scale != 0.f)
+	{
+		real x = point->x - matrix->position.x;
+		real y = point->y - matrix->position.y;
+		real z = point->z - matrix->position.z;
+
+		if (matrix->scale != 1.f)
+		{
+			real scale = 1.f / matrix->scale;
+			x *= scale;
+			y *= scale;
+			z *= scale;
+		}
+
+		result->x = x * matrix->forward.i + y * matrix->forward.j + z * matrix->forward.k;
+		result->y = x * matrix->left.i + y * matrix->left.j + z * matrix->left.k;
+		result->z = x * matrix->up.i + y * matrix->up.j + z * matrix->up.k;
+	}
+	else
+	{
+		result->x = 0.f;
+		result->y = 0.f;
+		result->z = 0.f;
+	}
+
+	return result;
+}
+
+__inline real_vector3d *matrix4x3_inverse_transform_vector(
+	real_matrix4x3 const *matrix,
+	real_vector3d const *vector,
+	real_vector3d *result)
+{
+	real i = vector->i;
+	real j = vector->j;
+	real k = vector->k;
+
+	if (matrix->scale != 1.f)
+	{
+		real scale = 1.f / matrix->scale;
+		i *= scale;
+		j *= scale;
+		k *= scale;
+	}
+
+	result->i = i * matrix->forward.i + j * matrix->forward.j + k * matrix->forward.k;
+	result->j = i * matrix->left.i + j * matrix->left.j + k * matrix->left.k;
+	result->k = i * matrix->up.i + j * matrix->up.j + k * matrix->up.k;
+
+	return result;
+}
+
+__inline real_vector3d *matrix4x3_inverse_transform_normal(
+	real_matrix4x3 const *matrix,
+	real_vector3d const *normal,
+	real_vector3d *result)
+{
+	real i = normal->i;
+	real j = normal->j;
+	real k = normal->k;
+
+	result->i = i * matrix->forward.i + j * matrix->forward.j + k * matrix->forward.k;
+	result->j = i * matrix->left.i + j * matrix->left.j + k * matrix->left.k;
+	result->k = i * matrix->up.i + j * matrix->up.j + k * matrix->up.k;
+
+	return result;
+}
+
+__inline real_plane3d *matrix4x3_transform_plane(
+	real_matrix4x3 const *matrix,
+	real_plane3d const *plane,
+	real_plane3d *result)
+{
+	matrix4x3_transform_normal(matrix, &plane->n, &result->n);
+	result->d = plane->d * matrix->scale + dot_product3d((real_vector3d const *)&matrix->position, &result->n);
+
+	return result;
+}
+
+__inline void matrix4x3_multiply(
+	real_matrix4x3 const *a,
+	real_matrix4x3 const *b,
+	real_matrix4x3 *result)
+{
+	real const *a_elements = a->n[0];
+	real const *b_elements = b->n[0];
+	real *result_elements = result->n[0];
+	real const *a_scale = &a->scale;
+
+	{
+		/* the SSE block below: rows of b combine the rows of a, and the
+		position is scaled by a's scale before a's own is added */
+		real product[12];
+		long row, column;
+
+		for (row = 0; row < 4; row++)
+		{
+			for (column = 0; column < 3; column++)
+			{
+				real value = b_elements[row * 3 + 0] * a_elements[column] +
+					b_elements[row * 3 + 1] * a_elements[3 + column] +
+					b_elements[row * 3 + 2] * a_elements[6 + column];
+
+				if (row == 3)
+					value = value * *a_scale + a_elements[9 + column];
+				product[row * 3 + column] = value;
+			}
+		}
+		for (row = 0; row < 12; row++)
+			result_elements[row] = product[row];
+	}
+
+	result->scale = a->scale * b->scale;
+
+	return;
 }
 
 __inline void set_random_seed(

@@ -38,7 +38,7 @@ def under_test(fault=None):
     real_math = read("source/math/real_math.h")
     text = "".join(inline(real_math, helper) + "\n"
                    for helper in ("vector_from_points3d", "magnitude_squared3d", "distance_squared3d", "point_in_sphere"))
-    text += function(read("source/math/real_math.c"), "fast_vector_intersects_sphere") + "\n"
+    text += inline(real_math, "fast_vector_intersects_sphere") + "\n"
     cache = read("port/linux/game/object_bounds_cache.c")
     cache = cache[cache.rindex("#include"):].split("\n", 1)[1]
     text += (mutated(cache, *fault) if fault else cache) + "\n"
