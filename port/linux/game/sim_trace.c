@@ -46,6 +46,13 @@ Lines:
     u <id> <x> <y> <z> <vx> <vy> <vz> <air>        each biped the AI drives (an
                                                    actor's or a swarm's): place,
                                                    velocity, 1 airborne
+    d <id> <x> <y> <z> <vx> <vy> <vz> <air> <rest> <lift> <lz>
+                                                   each dead biped (a body):
+                                                   place, velocity, 1
+                                                   airborne, 1 at rest, the
+                                                   lift it stands on (-1 for
+                                                   none) and its platform's
+                                                   height
     e fire <player> <weapon> <trigger>             a weapon fired
     e new <id> <tag> <x> <y> <z> <vx> <vy> <vz> <owner player>
                                                    a projectile made, where
@@ -131,6 +138,7 @@ must catch it).
 #include "units/bipeds.h"
 #include "items/projectiles.h"
 #include "items/weapons.h"
+#include "devices/device_machines.h"
 #include "tag_files/tag_files.h"
 #include "sim_rate.h"
 
@@ -527,6 +535,34 @@ static void sim_trace_ai_units(
 	}
 }
 
+/* the bodies (dead bipeds), and the lift each stands on */
+static void sim_trace_bodies(
+	void)
+{
+	struct object_iterator iterator;
+	struct biped_datum *biped;
+
+	object_iterator_new(&iterator, _object_mask_biped, 0);
+	while ((biped = (struct biped_datum *)object_iterator_next(&iterator)) != NULL)
+	{
+		real_point3d floor = { { 0.0f, 0.0f, 0.0f } };
+		long lift = biped->biped.elevator_object_index;
+
+		if (!TEST_FLAG(biped->object.damage_flags, _object_dead_bit))
+			continue;
+		if (lift == NONE || !machine_get_elevator_position(lift, &floor))
+			lift = NONE;
+		fprintf(sim_trace.file, "d %lx %.6f %.6f %.6f %.6f %.6f %.6f %d %d %lx %.6f\n", iterator.index,
+			biped->object.position.x, biped->object.position.y, biped->object.position.z,
+			biped->object.translational_velocity.i * SECONDS_PER_VELOCITY_UNIT,
+			biped->object.translational_velocity.j * SECONDS_PER_VELOCITY_UNIT,
+			biped->object.translational_velocity.k * SECONDS_PER_VELOCITY_UNIT,
+			TEST_FLAG(biped->biped.flags, _biped_airborne_bit) ? 1 : 0,
+			TEST_FLAG(biped->object.flags, _object_at_rest_bit) ? 1 : 0,
+			lift == NONE ? -1L : lift, floor.z);
+	}
+}
+
 /* ---------- public code */
 
 void sim_trace_step(
@@ -567,6 +603,7 @@ void sim_trace_step(
 	sim_trace_vehicles();
 	sim_trace_projectiles();
 	sim_trace_ai_units();
+	sim_trace_bodies();
 	if (sim_trace.stop_seconds > 0.0 && seconds >= sim_trace.stop_seconds - 1e-9)
 	{
 		fclose(sim_trace.file);
