@@ -2690,7 +2690,7 @@ void network_test_elevator_frame(
 	struct player_datum *player;
 	long node;
 	real_matrix4x3 const *drawn;
-	char line[512];
+	char line[1024];
 	int length;
 	long local_unit;
 
@@ -2732,6 +2732,28 @@ void network_test_elevator_frame(
 			with debug.null_renderer, which draws none) */
 			if (!config_boolean("debug.null_renderer") && render_interpolation_drawn_view_position(0, &camera))
 				length += snprintf(line + length, sizeof(line) - length, " view %.4f", camera.z);
+		}
+	}
+	/* (and each body on it: a dead biped, drawn and as the tick has it) */
+	{
+		struct object_iterator bodies;
+		struct biped_datum *body;
+
+		object_iterator_new(&bodies, _object_mask_biped, 0);
+		while ((body = (struct biped_datum *)object_iterator_next(&bodies)) != NULL && length < (int)sizeof(line) - 64)
+		{
+			real_matrix4x3 const *nodes;
+
+			if (!TEST_FLAG(body->object.damage_flags, _object_dead_bit) ||
+				body->biped.elevator_object_index != network_test.elevator_index)
+			{
+				continue;
+			}
+			nodes = render_interpolation_object_node_matrices(bodies.index);
+			length += snprintf(line + length, sizeof(line) - length, " | b%lx drawn %.4f tick %.4f",
+				(long)DATUM_INDEX_TO_ABSOLUTE_INDEX(bodies.index),
+				nodes ? nodes[0].position.z : object_get_node_matrix(bodies.index, 0)->position.z,
+				body->object.position.z);
 		}
 	}
 	platform_log("%s", line);
