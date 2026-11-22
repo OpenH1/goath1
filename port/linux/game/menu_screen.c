@@ -501,9 +501,10 @@ static struct screen_action const screen_actions[] =
 	{ "layout bindings use", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_layout },
 	/* (the NVIDIA DLSS add-on's, screens/dlss_addon.xml (port/linux/src/
 	dlss_addon.c): NVIDIA's license accepted and the add-on downloaded, the
-	add-on removed, the license's lines paged) */
+	add-on removed, the game restarted for it, the license's lines paged) */
 	{ "dlss accept", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_dlss },
 	{ "dlss remove", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_dlss },
+	{ "dlss restart", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_dlss },
 	{ "dlss page up", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_dlss },
 	{ "dlss page down", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_dlss },
 	/* (Settings' GAME DATA, screens/game_data.xml (port/linux/src/
@@ -531,8 +532,8 @@ static char const *const screen_action_names[] =
 	"close", "close all", "pause leave", "open host controls", "pause end game", "pause chapters",
 	"pause friendly fire", "pause revert", "pause restart", "pause quit",
 	"layout name", "layout legend", "layout clear", "layout shape left", "layout shape right", "layout color left",
-	"layout color right", "layout bindings use", "dlss accept", "dlss remove", "dlss page up", "dlss page down",
-	"data add", "data open folder",
+	"layout color right", "layout bindings use", "dlss accept", "dlss remove", "dlss restart", "dlss page up",
+	"dlss page down", "data add", "data open folder",
 };
 
 /* a binding's value: the saved game's mission and difficulty (player 1's
