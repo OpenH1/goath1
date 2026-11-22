@@ -71,6 +71,10 @@ struct custom_edition_texels
 static struct custom_edition_texels *custom_edition_texels;
 static unsigned long custom_edition_texel_count;
 static unsigned long custom_edition_texel_capacity;
+/* (texels are told of as they arrive: on the game's thread, or the cache
+files' I/O thread, which reads and rebuilds a Custom Edition map's textures
+as an Xbox map's are read, cache_files_windows.c; the renderer asks) */
+static pthread_mutex_t custom_edition_texels_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /* whether a HUD meter of a Custom Edition map is being drawn (hud_draw.c):
 a sheet that is a meter's and other pictures' too keeps the order it has for
@@ -95,19 +99,33 @@ int xgpu_texture_hud_meter(void)
 /* the order of the texels at address */
 static unsigned char custom_edition_texels_order(unsigned long address)
 {
+	unsigned char order = _custom_edition_channels_xbox;
 	unsigned long index;
 
+	pthread_mutex_lock(&custom_edition_texels_lock);
 	for (index = 0; index < custom_edition_texel_count; index++)
 	{
 		if (custom_edition_texels[index].address == address)
-			return custom_edition_texels[index].channel_order;
+		{
+			order = custom_edition_texels[index].channel_order;
+			break;
+		}
 	}
-	return _custom_edition_channels_xbox;
+	pthread_mutex_unlock(&custom_edition_texels_lock);
+	return order;
 }
+
+static void custom_edition_texels_channels_locked(unsigned long address, unsigned char channel_order);
 
 void halo_custom_edition_texels_channels(const void *texels, unsigned char channel_order)
 {
-	unsigned long address = (unsigned long)texels;
+	pthread_mutex_lock(&custom_edition_texels_lock);
+	custom_edition_texels_channels_locked((unsigned long)texels, channel_order);
+	pthread_mutex_unlock(&custom_edition_texels_lock);
+}
+
+static void custom_edition_texels_channels_locked(unsigned long address, unsigned char channel_order)
+{
 	unsigned long index;
 
 	if (channel_order >= NUMBER_OF_CUSTOM_EDITION_CHANNEL_ORDERS)
@@ -147,10 +165,12 @@ void halo_custom_edition_texels_channels(const void *texels, unsigned char chann
 void halo_custom_edition_texels_forget(void)
 {
 	custom_edition_hud_meter_active = 0;
+	pthread_mutex_lock(&custom_edition_texels_lock);
 	free(custom_edition_texels);
 	custom_edition_texels = NULL;
 	custom_edition_texel_count = 0;
 	custom_edition_texel_capacity = 0;
+	pthread_mutex_unlock(&custom_edition_texels_lock);
 }
 
 unsigned long xgpu_texture_channels(unsigned long address, int stage)

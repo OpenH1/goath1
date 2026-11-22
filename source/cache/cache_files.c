@@ -1660,9 +1660,24 @@ void scenario_structure_bsps_read_ahead(
 			struct scenario_structure_bsp_reference);
 
 		/* (and its culling's buckets built: structure_culling.c; a Custom
-		Edition bsp's vertices are made as it loads) */
-		if (structure_bsp_reference_valid(reference) && structure_bsp_read(reference) &&
-			!custom_edition_cache_tags_loaded())
+		Edition bsp's vertices made and kept for its load first, and its
+		buckets, which point into them, not into the bsp's copy, built here:
+		custom_edition_geometry.c) */
+		if (!structure_bsp_reference_valid(reference) || !structure_bsp_read(reference))
+		{
+			continue;
+		}
+		if (custom_edition_cache_tags_loaded())
+		{
+			struct structure_bsp *structure_bsp =
+				((struct cache_file_structure_bsp_header *)reference->base_address)->base_address;
+
+			if (custom_edition_structure_bsp_prepare(structure_bsp, reference->structure_bsp.index))
+			{
+				structure_culling_structure_bsp_read(structure_bsp, index, 0);
+			}
+		}
+		else
 		{
 			/* (and the mods' lightmaps for it taken or left out by its
 			lightmaps' layout: port/linux/game/mod_bitmaps.c; a Custom Edition
@@ -1703,7 +1718,8 @@ boolean scenario_structure_bsp_load(
 	/* port: a Halo Custom Edition bsp has no Xbox vertex buffers: its
 	materials' vertices, as checked, are compressed and given buffers
 	(port/linux/game/custom_edition_geometry.c) */
-	if (custom_edition_cache_tags_loaded() && !custom_edition_structure_bsp_load(structure_bsp_header->base_address))
+	if (custom_edition_cache_tags_loaded() &&
+		!custom_edition_structure_bsp_load(structure_bsp_header->base_address, reference->structure_bsp.index))
 		return FALSE;
 
 	cache_file_globals.structure_bsp_header = structure_bsp_header;

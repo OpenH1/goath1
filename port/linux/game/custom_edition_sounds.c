@@ -50,9 +50,12 @@ the channels (port/linux/src/dsound_sdl.c decodes it).
 #include "../../third_party/stb_vorbis/stb_vorbis.c"
 
 #include <math.h>
+#include <pthread.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 /* ---------- constants */
 
@@ -288,12 +291,15 @@ struct frames
 	long rate;
 };
 
-/* (none may have been made: the game's free, debug_free, does not take NULL) */
+/* Frames are the C library's memory, not the game's allocator's
+(cseries.h's malloc, which is not the threads'), so that the decoder's
+workers (custom_edition_sounds_decode) and mod_sounds.c's may make and let
+go of them: (malloc), (realloc) and (free) are the library's own. */
 static void frames_free(
 	struct frames *frames)
 {
 	if (frames->samples)
-		free(frames->samples);
+		(free)(frames->samples);
 	frames->samples = NULL;
 }
 
@@ -309,7 +315,7 @@ static short *frames_allocate(
 		return NULL;
 	}
 
-	return malloc((size_t)count * (size_t)channels * sizeof(short));
+	return (malloc)((size_t)count * (size_t)channels * sizeof(short));
 }
 
 /* the Ogg Vorbis stream `data`, at its own channel count and rate; FALSE
@@ -354,7 +360,7 @@ static boolean vorbis_decode(
 			{
 				break;
 			}
-			larger = realloc(frames->samples, (size_t)capacity * 2 * (size_t)info.channels * sizeof(short));
+			larger = (realloc)(frames->samples, (size_t)capacity * 2 * (size_t)info.channels * sizeof(short));
 			if (!larger)
 			{
 				break;
@@ -815,85 +821,6 @@ static boolean frames_kept_native(
 	return TRUE;
 }
 
-/* Makes the permutation `permutation` of `sound` one this build plays, its
-samples in the decoded buffer: 16-bit PCM at its own rate (up to the
-mixer's) where it fits (frames_kept_native), else Xbox ADPCM in the format
-the sound's channels play; FALSE when it cannot be either. */
-static boolean permutation_convert(
-	struct sound_definition const *sound,
-	struct sound_permutation *permutation,
-	long decoded_offset)
-{
-	long channels = sound->encoding == 0 ? 1 : 2;
-	long rate = sound->sample_rate == 0 ? 22050 : 44100;
-	struct frames frames = { 0 };
-	boolean decoded = FALSE;
-	unsigned long encoded_bytes;
-	unsigned long native_bytes;
-	long kept_rate;
-	byte *data;
-	long offset = NONE;
-
-	/* (the loader checked the samples lie in the file; none at all is no sound) */
-	if (permutation->samples.size <= 0 || permutation->samples.size > MAXIMUM_SAMPLES_BYTES ||
-		!(data = malloc(permutation->samples.size)))
-	{
-		return FALSE;
-	}
-	custom_edition_cache_read(NONE, permutation->samples.file_offset, permutation->samples.size, data);
-	decoded = samples_decode(data, permutation->samples.size, permutation->compression, FALSE,
-		channels, rate, &frames);
-	free(data);
-
-	decoded = decoded && frames_channels(&frames, channels);
-	if (decoded && frames_kept_native(&frames, NATIVE_TOTAL_BYTES - custom_edition_sounds_globals.native_bytes, TRUE,
-		&kept_rate, &native_bytes))
-	{
-		/* (only a rate over the mixer's is resampled) */
-		if (frames.rate == kept_rate || frames_resample(&frames, kept_rate))
-		{
-			native_bytes = (unsigned long)frames.count * channels * sizeof(short);
-			offset = decoded_reserve(native_bytes);
-		}
-		if (offset != NONE)
-		{
-			memcpy(custom_edition_sounds_globals.decoded + offset, frames.samples, native_bytes);
-			custom_edition_sounds_globals.decoded_bytes += native_bytes;
-			custom_edition_sounds_globals.native_bytes += native_bytes;
-			permutation->compression = SOUND_COMPRESSION_NONE;
-			permutation->samples.file_offset = decoded_offset + offset;
-			permutation->samples.size = (long)native_bytes;
-			permutation->sample_buffer_size = (unsigned long)kept_rate;
-			frames_free(&frames);
-			return TRUE;
-		}
-		decoded = frames.samples != NULL;
-	}
-	else if (decoded && frames.count > 0)
-	{
-		/* (too long to keep as PCM: said once, custom_edition_sounds_decode) */
-		custom_edition_sounds_globals.adpcm_count++;
-	}
-
-	if (decoded && frames_conform(&frames, channels, playable_rate(sound)))
-	{
-		encoded_bytes = adpcm_encoded_bytes(frames.count, channels);
-		offset = decoded_reserve(encoded_bytes);
-		if (offset != NONE)
-		{
-			adpcm_encode(frames.samples, frames.count, channels, custom_edition_sounds_globals.decoded + offset);
-			custom_edition_sounds_globals.decoded_bytes += encoded_bytes;
-			permutation->compression = SOUND_COMPRESSION_XBOX_ADPCM;
-			permutation->samples.file_offset = decoded_offset + offset;
-			permutation->samples.size = (long)encoded_bytes;
-			permutation->sample_buffer_size = 0;
-		}
-	}
-	frames_free(&frames);
-
-	return offset != NONE;
-}
-
 static int resource_sound_file_read(
 	void *context,
 	uint32_t offset,
@@ -1020,10 +947,12 @@ static short *resource_sound_entry_decode(
 	if (samples_decode(data, data_size, entry_short(permutation + ENTRY_PERMUTATION_COMPRESSION_OFFSET),
 			FALSE, channels, *rate, &frames) &&
 		frames_channels(&frames, 1) &&
-		frames.rate >= SOUND_PERMUTATION_PCM_MINIMUM_RATE && frames.rate <= MAXIMUM_SAMPLE_RATE)
+		frames.rate >= SOUND_PERMUTATION_PCM_MINIMUM_RATE && frames.rate <= MAXIMUM_SAMPLE_RATE &&
+		(samples = malloc((size_t)frames.count * sizeof(short))) != NULL)
 	{
-		samples = frames.samples;
-		frames.samples = NULL;
+		/* (into the game's allocator's memory, which its caller lets go of:
+		the frames are the library's, frames_free) */
+		memcpy(samples, frames.samples, (size_t)frames.count * sizeof(short));
 		*frame_count = frames.count;
 		*rate = frames.rate;
 	}
@@ -1035,6 +964,327 @@ done:
 	free(entry);
 
 	return samples;
+}
+
+/* ---------- the decode, on workers
+
+A map's permutations were decoded one after another on the game's thread
+as it loaded: a campaign map's music and dialogue took seconds of its
+loading. They are now decoded on the cores there are, with the same
+result: what one permutation becomes depends on the others only through
+the room they took before it (the PCM budget, the region's limit), which
+their frame counts and rates decide, not their samples. So a batch of them
+is read on the game's thread (the map's files are its alone), decoded on
+the workers (permutation_job_decode), planned in their order on the game's
+thread, given the rates, formats and offsets the one after another made
+gave them (permutation_job_plan), made into those on the workers
+(permutation_job_finish), each into its own place in the decoded buffer,
+and only then given to their tags. The workers take no memory of the
+game's allocator (frames_free) and say nothing (error is the game's
+thread's); the resampler's table is made before they start. */
+
+/* the most bytes of a batch's permutations read at once (past the first),
+and the most permutations, which bound the memory their frames take */
+#define DECODE_BATCH_BYTES ((long)HALO_PORT_SOUND_CACHE_SIZE)
+#define DECODE_BATCH_JOBS 256
+/* the most threads that decode, the game's among them */
+#define DECODE_MOST_WORKERS 16
+
+struct permutation_job
+{
+	struct sound_permutation *permutation;
+	/* the sound's channels, rate and the rate it is played at (taken before
+	the sound is changed, which is after its permutations) */
+	long channels;
+	long rate;
+	long playable_rate;
+	/* the samples as the map holds them, read on the game's thread */
+	byte *data;
+	long data_bytes;
+	short compression;
+	/* decoded (permutation_job_decode) */
+	struct frames frames;
+	boolean decoded;
+	/* the plan (permutation_job_plan): the rate the frames are resampled to
+	first (0: none), then kept as 16-bit PCM at kept_rate (`native`) or
+	made Xbox ADPCM at the playable rate, `bytes` at `offset` (NONE: no
+	room, or nothing to make) */
+	long first_rate;
+	boolean native;
+	long kept_rate;
+	long offset;
+	unsigned long bytes;
+	/* made (permutation_job_finish) */
+	boolean finished;
+};
+
+struct permutation_jobs
+{
+	struct permutation_job *jobs;
+	long count;
+	/* the next for a thread to take */
+	long next;
+	void (*step)(struct permutation_job *job);
+};
+
+/* `job`, the permutation `permutation` of `sound` to make playable */
+static void permutation_job_new(
+	struct permutation_job *job,
+	struct sound_definition const *sound,
+	struct sound_permutation *permutation)
+{
+	memset(job, 0, sizeof(*job));
+	job->permutation = permutation;
+	job->channels = sound->encoding == 0 ? 1 : 2;
+	job->rate = sound->sample_rate == 0 ? 22050 : 44100;
+	job->playable_rate = playable_rate(sound);
+	job->compression = permutation->compression;
+	job->offset = NONE;
+}
+
+static void permutation_job_decode(
+	struct permutation_job *job)
+{
+	job->decoded = job->data &&
+		samples_decode(job->data, job->data_bytes, job->compression, FALSE, job->channels, job->rate, &job->frames);
+	if (job->data)
+		(free)(job->data);
+	job->data = NULL;
+	job->decoded = job->decoded && frames_channels(&job->frames, job->channels);
+}
+
+/* What the permutation is made: 16-bit PCM at its own rate (up to the
+mixer's) where it fits (frames_kept_native), else Xbox ADPCM in the format
+the sound's channels play; neither (offset NONE) when it cannot be. Worked
+out from the frames' count and rate alone (they are not touched), with the
+room for it taken in the decoded buffer, in the permutations' order. */
+static void permutation_job_plan(
+	struct permutation_job *job)
+{
+	struct frames const *frames = &job->frames;
+	boolean decoded = job->decoded;
+	long count = frames->count;
+	long rate = frames->rate;
+	unsigned long native_bytes;
+	long kept_rate;
+
+	job->first_rate = 0;
+	job->native = FALSE;
+	job->offset = NONE;
+	job->bytes = 0;
+	if (decoded && frames_kept_native(frames, NATIVE_TOTAL_BYTES - custom_edition_sounds_globals.native_bytes, TRUE,
+		&kept_rate, &native_bytes))
+	{
+		/* (only a rate over the mixer's is resampled; to no frames, that fails) */
+		if (rate != kept_rate)
+		{
+			count = resampled_count(count, rate, kept_rate);
+			job->first_rate = kept_rate;
+			rate = kept_rate;
+		}
+		decoded = count > 0;
+		if (decoded)
+		{
+			native_bytes = (unsigned long)count * job->channels * sizeof(short);
+			job->offset = decoded_reserve(native_bytes);
+		}
+		if (job->offset != NONE)
+		{
+			custom_edition_sounds_globals.decoded_bytes += native_bytes;
+			custom_edition_sounds_globals.native_bytes += native_bytes;
+			job->native = TRUE;
+			job->kept_rate = kept_rate;
+			job->bytes = native_bytes;
+			return;
+		}
+	}
+	else if (decoded && frames->count > 0)
+	{
+		/* (too long to keep as PCM: said once, custom_edition_sounds_decode) */
+		custom_edition_sounds_globals.adpcm_count++;
+	}
+
+	/* (frames_conform: the channels are the sound's already) */
+	if (decoded && rate != job->playable_rate)
+	{
+		count = resampled_count(count, rate, job->playable_rate);
+		decoded = count > 0;
+	}
+	if (decoded)
+	{
+		job->bytes = adpcm_encoded_bytes(count, job->channels);
+		job->offset = decoded_reserve(job->bytes);
+		if (job->offset != NONE)
+			custom_edition_sounds_globals.decoded_bytes += job->bytes;
+	}
+}
+
+/* the frames made what the plan says, into their place in the decoded
+buffer (which no plan grows while the workers write it) */
+static void permutation_job_finish(
+	struct permutation_job *job)
+{
+	struct frames *frames = &job->frames;
+	boolean made = job->decoded && job->offset != NONE;
+
+	if (made && job->first_rate && frames->rate != job->first_rate)
+	{
+		made = frames_resample(frames, job->first_rate);
+	}
+	if (made && job->native)
+	{
+		made = (unsigned long)frames->count * job->channels * sizeof(short) == job->bytes;
+		if (made)
+			memcpy(custom_edition_sounds_globals.decoded + job->offset, frames->samples, job->bytes);
+	}
+	else if (made)
+	{
+		made = frames_conform(frames, job->channels, job->playable_rate) &&
+			adpcm_encoded_bytes(frames->count, job->channels) == job->bytes;
+		if (made)
+			adpcm_encode(frames->samples, frames->count, job->channels, custom_edition_sounds_globals.decoded + job->offset);
+	}
+	frames_free(frames);
+	job->finished = made;
+}
+
+static void *permutation_jobs_work(
+	void *context)
+{
+	struct permutation_jobs *jobs = context;
+	long index;
+
+	while ((index = __atomic_fetch_add(&jobs->next, 1, __ATOMIC_RELAXED)) < jobs->count)
+	{
+		jobs->step(&jobs->jobs[index]);
+	}
+
+	return NULL;
+}
+
+/* `step` done to each of the `count` jobs, on the cores there are (the
+game's thread too; alone when no thread can be made), every one of them
+done when it returns */
+static void permutation_jobs_run(
+	struct permutation_job *job_array,
+	long count,
+	void (*step)(struct permutation_job *job))
+{
+	struct permutation_jobs jobs;
+	pthread_t threads[DECODE_MOST_WORKERS];
+	long cores = sysconf(_SC_NPROCESSORS_ONLN);
+	long wanted = MIN(MIN(cores, (long)DECODE_MOST_WORKERS), count) - 1;
+	long started = 0;
+	long index;
+
+	jobs.jobs = job_array;
+	jobs.count = count;
+	jobs.next = 0;
+	jobs.step = step;
+	while (started < wanted && pthread_create(&threads[started], NULL, permutation_jobs_work, &jobs) == 0)
+	{
+		started++;
+	}
+	permutation_jobs_work(&jobs);
+	for (index = 0; index < started; index++)
+	{
+		pthread_join(threads[index], NULL);
+	}
+}
+
+/* Each of the `count` permutations of `jobs` made playable, as they were
+made one after another (one at a time, with a count of 1). */
+static void permutation_jobs_convert(
+	struct permutation_job *jobs,
+	long count,
+	long decoded_offset)
+{
+	long first = 0;
+
+	/* (the resampler's table, which the workers read) */
+	resample_table_make();
+	while (first < count)
+	{
+		long batch_bytes = 0;
+		long end = first;
+		long index;
+
+		/* (read on the game's thread: custom_edition_cache_read) */
+		while (end < count && end - first < DECODE_BATCH_JOBS && batch_bytes < DECODE_BATCH_BYTES)
+		{
+			struct permutation_job *job = &jobs[end];
+			long size = job->permutation->samples.size;
+
+			/* (the loader checked the samples lie in the file; none at all is no sound) */
+			job->data = size > 0 && size <= MAXIMUM_SAMPLES_BYTES ? (malloc)((size_t)size) : NULL;
+			if (job->data)
+			{
+				custom_edition_cache_read(NONE, job->permutation->samples.file_offset, size, job->data);
+				job->data_bytes = size;
+				batch_bytes += size;
+			}
+			end++;
+		}
+		permutation_jobs_run(jobs + first, end - first, permutation_job_decode);
+		for (index = first; index < end; index++)
+		{
+			permutation_job_plan(&jobs[index]);
+		}
+		permutation_jobs_run(jobs + first, end - first, permutation_job_finish);
+		for (index = first; index < end; index++)
+		{
+			struct permutation_job *job = &jobs[index];
+			struct sound_permutation *permutation = job->permutation;
+
+			if (job->finished)
+			{
+				permutation->compression = job->native ? SOUND_COMPRESSION_NONE : SOUND_COMPRESSION_XBOX_ADPCM;
+				permutation->samples.file_offset = decoded_offset + job->offset;
+				permutation->samples.size = (long)job->bytes;
+				permutation->sample_buffer_size = job->native ? (unsigned long)job->kept_rate : 0;
+			}
+		}
+		first = end;
+	}
+}
+
+static int permutation_address_compare(
+	void const *a,
+	void const *b)
+{
+	uintptr_t first = (uintptr_t)*(void *const *)a;
+	uintptr_t second = (uintptr_t)*(void *const *)b;
+
+	return first < second ? -1 : first > second;
+}
+
+/* whether no permutation of the `count` of `jobs` is another's too (a
+protected map's tag blocks can overlap): one that is was converted twice,
+the second time from what the first made, which only the old order gives */
+static boolean permutation_jobs_distinct(
+	struct permutation_job const *jobs,
+	long count)
+{
+	void **addresses = (malloc)((size_t)MAX(count, 1) * sizeof(void *));
+	boolean distinct = addresses != NULL;
+	long index;
+
+	for (index = 0; distinct && index < count; index++)
+	{
+		addresses[index] = jobs[index].permutation;
+	}
+	if (distinct)
+	{
+		qsort(addresses, (size_t)count, sizeof(void *), permutation_address_compare);
+	}
+	for (index = 1; distinct && index < count; index++)
+	{
+		distinct = addresses[index] != addresses[index - 1];
+	}
+	if (addresses)
+		(free)(addresses);
+
+	return distinct;
 }
 
 /* ---------- public code */
@@ -1049,9 +1299,62 @@ boolean custom_edition_sounds_decode(
 	int32_t tag_index = NONE;
 	long converted_count = 0;
 	long failed_count = 0;
+	struct permutation_job *jobs = NULL;
+	long job_count = 0;
+	long job_capacity = 0;
+	long job_index = 0;
+	boolean workers = TRUE;
 
 	custom_edition_sounds_globals.decoded_limit = decoded_limit;
 	custom_edition_sounds_globals.adpcm_count = 0;
+	/* the permutations to convert, in the order they are converted, made on
+	the workers (above); without the memory to list them, or with one listed
+	twice, one after another below, as before */
+	while (workers &&
+		(sound = custom_edition_cache_tag_next(tag_cache, loaded_bytes, SOUND_DEFINITION_TAG, sizeof(*sound), &tag_index)) != NULL)
+	{
+		long range_index;
+
+		for (range_index = 0; workers && range_index < sound->pitch_ranges.count; range_index++)
+		{
+			struct sound_pitch_range *range = custom_edition_cache_block_element(
+				tag_cache, loaded_bytes, &sound->pitch_ranges, range_index, sizeof(*range));
+			long permutation_index;
+
+			for (permutation_index = 0; workers && range && permutation_index < range->permutations.count;
+				permutation_index++)
+			{
+				struct sound_permutation *permutation = custom_edition_cache_block_element(
+					tag_cache, loaded_bytes, &range->permutations, permutation_index, sizeof(*permutation));
+
+				if (!permutation || !permutation_needs_conversion(sound, permutation))
+				{
+					continue;
+				}
+				if (job_count == job_capacity)
+				{
+					long capacity = job_capacity ? job_capacity * 2 : 256;
+					struct permutation_job *grown = (realloc)(jobs, (size_t)capacity * sizeof(*jobs));
+
+					if (!grown)
+					{
+						workers = FALSE;
+						continue;
+					}
+					jobs = grown;
+					job_capacity = capacity;
+				}
+				permutation_job_new(&jobs[job_count++], sound, permutation);
+			}
+		}
+	}
+	workers = workers && permutation_jobs_distinct(jobs, job_count);
+	if (workers)
+	{
+		permutation_jobs_convert(jobs, job_count, decoded_offset);
+	}
+
+	tag_index = NONE;
 	while ((sound = custom_edition_cache_tag_next(tag_cache, loaded_bytes, SOUND_DEFINITION_TAG, sizeof(*sound), &tag_index)) != NULL)
 	{
 		boolean converted = TRUE;
@@ -1068,10 +1371,28 @@ boolean custom_edition_sounds_decode(
 			{
 				struct sound_permutation *permutation = custom_edition_cache_block_element(
 					tag_cache, loaded_bytes, &range->permutations, permutation_index, sizeof(*permutation));
+				boolean made;
 
-				if (!permutation || !permutation_needs_conversion(sound, permutation))
+				if (workers)
+				{
+					/* (made on the workers: the next listed, or none to convert) */
+					if (!permutation || job_index >= job_count || jobs[job_index].permutation != permutation)
+					{
+						continue;
+					}
+					made = jobs[job_index++].finished;
+				}
+				else if (!permutation || !permutation_needs_conversion(sound, permutation))
 				{
 					continue;
+				}
+				else
+				{
+					struct permutation_job job;
+
+					permutation_job_new(&job, sound, permutation);
+					permutation_jobs_convert(&job, 1, decoded_offset);
+					made = job.finished;
 				}
 				any = TRUE;
 				/* (a sound whose permutations are not linked follows none, and
@@ -1079,7 +1400,7 @@ boolean custom_edition_sounds_decode(
 				map's never is: sound_permutation_next_piece) */
 				if (!TEST_FLAG(sound->flags, _sound_definition_linked_permutations_bit))
 					permutation->next_permutation_index = NONE;
-				if (permutation_convert(sound, permutation, decoded_offset))
+				if (made)
 				{
 					converted_count++;
 				}
@@ -1104,6 +1425,8 @@ boolean custom_edition_sounds_decode(
 			failed_count++;
 		}
 	}
+	if (jobs)
+		(free)(jobs);
 	if (converted_count || failed_count)
 	{
 		error(_error_silent, "custom edition: %ld sound permutations converted to %lu bytes (%lu of them 16-bit PCM at their own rates)%s",
@@ -1142,7 +1465,7 @@ byte *custom_edition_sounds_encode(
 		samples_decode(data, data_bytes, compression, big_endian, channels, rate, &frames) &&
 		frames_channels(&frames, channels))
 	{
-		/* (16-bit PCM at its own rate, as a map's: permutation_convert; of
+		/* (16-bit PCM at its own rate, as a map's: permutation_job_plan; of
 		any length within the budget, split into pieces by the caller) */
 		if (frames_kept_native(&frames, native_budget, FALSE, kept_rate, &native_bytes) &&
 			(frames.rate == *kept_rate || frames_resample(&frames, *kept_rate)))

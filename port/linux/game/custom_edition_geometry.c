@@ -75,6 +75,16 @@ each checked alone (cache_file_formats.c), so the file's size does not bound
 what they add up to */
 #define MAXIMUM_GEOMETRY_BYTES 0x8000000
 
+/* The structure BSPs whose compressed vertices are kept once made
+(custom_edition_structure_bsp_prepare, _load), so that a switch back to one
+(a load zone) compresses nothing and its culling's buckets, which point
+into them, are kept too (structure_culling.c): at most this many, in at
+most this many bytes of contiguous memory together (a campaign map's
+several BSPs take a few MB each); those past them are made as they load,
+as before. */
+#define MAXIMUM_KEPT_STRUCTURE_BSPS 32
+#define KEPT_STRUCTURE_BSP_BYTES 0x4000000UL
+
 /* ---------- structures */
 
 /* this build's model geometry and part, as models.c and rasterizer.c each
@@ -176,6 +186,14 @@ struct model_geometry_totals
 	unsigned long geometry_bytes;
 };
 
+/* a structure BSP's compressed vertices, kept (in contiguous memory) */
+struct kept_structure_bsp
+{
+	long tag_index;
+	byte *vertices;
+	unsigned long size;
+};
+
 struct custom_edition_geometry_globals
 {
 	/* the model parts that have buffers, and the compressed vertices and
@@ -193,6 +211,12 @@ struct custom_edition_geometry_globals
 	struct structure_bsp *structure_bsp;
 	byte *structure_bsp_vertices;
 	boolean structure_bsp_vertices_contiguous;
+	/* (those vertices are kept's, not let go of with the BSP) */
+	boolean structure_bsp_vertices_kept;
+
+	struct kept_structure_bsp kept[MAXIMUM_KEPT_STRUCTURE_BSPS];
+	long kept_count;
+	unsigned long kept_bytes;
 };
 
 /* ---------- globals */
@@ -728,9 +752,6 @@ static void structure_bsp_buffers_release(
 void d3d8_geometry_named(const void *base, unsigned long size, const char *name);
 void d3d8_geometry_unnamed(const void *base);
 
-/* Gives `material` compressed vertices at `vertices` and buffers made from
-them. Its uncompressed vertices (cache_file_formats.c checked their size and
-place) stay where they are. */
 /* geometry the renderer draws from: in the Xbox's contiguous memory, as the
 game's own vertex and index buffers are (physical_memory_map.c), which the
 renderer keeps on the GPU (its mirror, d3d8_device.c and the host's backend:
@@ -763,20 +784,23 @@ static void geometry_free(
 		system_free(geometry);
 }
 
-static boolean structure_material_convert(
+/* `material`'s vertices (`vertex_count` and `lightmap_vertex_count` of
+them) compressed at `vertices`, and its compressed vertex data said to be
+there. Its uncompressed vertices (cache_file_formats.c checked their size
+and place) stay where they are. The lightmap vertices follow the
+environment vertices, as object lights and the structure's point queries
+expect of the compressed ones. */
+static void structure_material_compress(
 	struct structure_material *material,
+	long vertex_count,
+	long lightmap_vertex_count,
 	byte *vertices)
 {
-	long vertex_count = material->vertices.count;
-	long lightmap_vertex_count = material->lightmap_vertices.count;
 	long vertex_size = rasterizer_geometry_get_vertex_size(_rasterizer_vertex_type_environment_compressed);
 	long lightmap_vertex_size = rasterizer_geometry_get_vertex_size(_rasterizer_vertex_type_environment_lightmap_compressed);
 	byte *uncompressed_vertices = XBOX_POINTER(byte, material->uncompressed_vertex_data.address);
 	byte *lightmap_vertices = vertices + vertex_count * vertex_size;
-	boolean success = TRUE;
 
-	/* the lightmap vertices follow the environment vertices, as object
-	lights and the structure's point queries expect of the compressed ones */
 	if (vertex_count)
 	{
 		rasterizer_geometry_compress_vertices(
@@ -786,6 +810,36 @@ static boolean structure_material_convert(
 			vertex_count * vertex_size,
 			uncompressed_vertices,
 			vertex_count * rasterizer_geometry_get_vertex_size(_rasterizer_vertex_type_environment_uncompressed));
+	}
+	if (lightmap_vertex_count)
+	{
+		rasterizer_geometry_compress_vertices(
+			_rasterizer_vertex_type_environment_lightmap_uncompressed,
+			lightmap_vertex_count,
+			lightmap_vertices,
+			lightmap_vertex_count * lightmap_vertex_size,
+			uncompressed_vertices + vertex_count * rasterizer_geometry_get_vertex_size(_rasterizer_vertex_type_environment_uncompressed),
+			lightmap_vertex_count * rasterizer_geometry_get_vertex_size(_rasterizer_vertex_type_environment_lightmap_uncompressed));
+	}
+	material->compressed_vertex_data.size = vertex_count * vertex_size + lightmap_vertex_count * lightmap_vertex_size;
+	material->compressed_vertex_data.address = XBOX_ADDRESS(vertices);
+}
+
+/* Gives `material` buffers made from its compressed vertices at `vertices`
+(structure_material_compress made them: now, or when they were kept). */
+static boolean structure_material_buffers(
+	struct structure_material *material,
+	byte *vertices)
+{
+	long vertex_count = material->vertices.count;
+	long lightmap_vertex_count = material->lightmap_vertices.count;
+	long vertex_size = rasterizer_geometry_get_vertex_size(_rasterizer_vertex_type_environment_compressed);
+	long lightmap_vertex_size = rasterizer_geometry_get_vertex_size(_rasterizer_vertex_type_environment_lightmap_compressed);
+	byte *lightmap_vertices = vertices + vertex_count * vertex_size;
+	boolean success = TRUE;
+
+	if (vertex_count)
+	{
 		success = rasterizer_vertex_buffer_new(
 			&material->vertices,
 			_rasterizer_vertex_type_environment_compressed,
@@ -795,13 +849,6 @@ static boolean structure_material_convert(
 	}
 	if (success && lightmap_vertex_count)
 	{
-		rasterizer_geometry_compress_vertices(
-			_rasterizer_vertex_type_environment_lightmap_uncompressed,
-			lightmap_vertex_count,
-			lightmap_vertices,
-			lightmap_vertex_count * lightmap_vertex_size,
-			uncompressed_vertices + vertex_count * rasterizer_geometry_get_vertex_size(_rasterizer_vertex_type_environment_uncompressed),
-			lightmap_vertex_count * rasterizer_geometry_get_vertex_size(_rasterizer_vertex_type_environment_lightmap_uncompressed));
 		success = rasterizer_vertex_buffer_new(
 			&material->lightmap_vertices,
 			_rasterizer_vertex_type_environment_lightmap_compressed,
@@ -813,6 +860,87 @@ static boolean structure_material_convert(
 	material->compressed_vertex_data.address = XBOX_ADDRESS(vertices);
 
 	return success;
+}
+
+/* The bytes of compressed vertices `structure_bsp`'s materials take, in
+*size; FALSE when that is past the most there is room for. */
+static boolean structure_bsp_vertices_size(
+	struct structure_bsp const *structure_bsp,
+	unsigned long *size)
+{
+	long vertex_size = rasterizer_geometry_get_vertex_size(_rasterizer_vertex_type_environment_compressed);
+	long lightmap_vertex_size = rasterizer_geometry_get_vertex_size(_rasterizer_vertex_type_environment_lightmap_compressed);
+	long lightmap_index;
+
+	*size = 0;
+	for (lightmap_index = 0; lightmap_index < structure_bsp->lightmaps.count; lightmap_index++)
+	{
+		struct structure_lightmap *lightmap = TAG_BLOCK_GET_ELEMENT(
+			&structure_bsp->lightmaps,
+			lightmap_index,
+			struct structure_lightmap);
+		long material_index;
+
+		for (material_index = 0; material_index < lightmap->materials.count; material_index++)
+		{
+			struct structure_material *material = TAG_BLOCK_GET_ELEMENT(
+				&lightmap->materials,
+				material_index,
+				struct structure_material);
+
+			if (!geometry_bytes_add(size, (unsigned long)material->vertices.count, (unsigned long)vertex_size, 0) ||
+				!geometry_bytes_add(size, (unsigned long)material->lightmap_vertices.count, (unsigned long)lightmap_vertex_size, 0))
+			{
+				return FALSE;
+			}
+		}
+	}
+
+	return TRUE;
+}
+
+/* the kept vertices of the BSP of tag `tag_index`, of `size` bytes, or
+NULL */
+static struct kept_structure_bsp *kept_structure_bsp_find(
+	long tag_index,
+	unsigned long size)
+{
+	struct custom_edition_geometry_globals *globals = &custom_edition_geometry_globals;
+	long index;
+
+	for (index = 0; index < globals->kept_count; index++)
+	{
+		if (globals->kept[index].tag_index == tag_index && globals->kept[index].size == size)
+		{
+			return &globals->kept[index];
+		}
+	}
+
+	return NULL;
+}
+
+/* `vertices` (of contiguous memory) kept as the BSP of tag `tag_index`'s,
+of `size` bytes, when there is room among those kept: FALSE when not */
+static boolean kept_structure_bsp_add(
+	long tag_index,
+	byte *vertices,
+	unsigned long size)
+{
+	struct custom_edition_geometry_globals *globals = &custom_edition_geometry_globals;
+	struct kept_structure_bsp *kept;
+
+	if (tag_index == NONE || globals->kept_count >= MAXIMUM_KEPT_STRUCTURE_BSPS ||
+		size > KEPT_STRUCTURE_BSP_BYTES - globals->kept_bytes || kept_structure_bsp_find(tag_index, size))
+	{
+		return FALSE;
+	}
+	kept = &globals->kept[globals->kept_count++];
+	kept->tag_index = tag_index;
+	kept->vertices = vertices;
+	kept->size = size;
+	globals->kept_bytes += size;
+
+	return TRUE;
 }
 
 /* ---------- public code */
@@ -963,8 +1091,85 @@ void custom_edition_models_dispose(
 	return;
 }
 
+
+/* `structure_bsp`'s materials' vertices compressed into `vertices`, in its
+materials' order (each told where its are) */
+static void structure_bsp_vertices_compress(
+	struct structure_bsp *structure_bsp,
+	byte *vertices)
+{
+	unsigned long vertices_offset = 0;
+	long lightmap_index;
+
+	for (lightmap_index = 0; lightmap_index < structure_bsp->lightmaps.count; lightmap_index++)
+	{
+		struct structure_lightmap *lightmap = TAG_BLOCK_GET_ELEMENT(
+			&structure_bsp->lightmaps,
+			lightmap_index,
+			struct structure_lightmap);
+		long material_index;
+
+		for (material_index = 0; material_index < lightmap->materials.count; material_index++)
+		{
+			struct structure_material *material = TAG_BLOCK_GET_ELEMENT(
+				&lightmap->materials,
+				material_index,
+				struct structure_material);
+
+			structure_material_compress(material, material->vertices.count, material->lightmap_vertices.count,
+				vertices + vertices_offset);
+			vertices_offset += material->compressed_vertex_data.size;
+		}
+	}
+}
+
+boolean custom_edition_structure_bsp_prepare(
+	struct structure_bsp *structure_bsp,
+	long tag_index)
+{
+	struct custom_edition_geometry_globals *globals = &custom_edition_geometry_globals;
+	struct kept_structure_bsp *kept;
+	unsigned long vertices_size;
+	byte *vertices;
+
+	/* (the BSP read where it loads, as cache_file_formats.c checked it:
+	its own fields, which its load puts back as they were read) */
+	if (globals->structure_bsp || !structure_bsp_vertices_size(structure_bsp, &vertices_size))
+	{
+		return FALSE;
+	}
+	kept = kept_structure_bsp_find(tag_index, vertices_size);
+	if (kept)
+	{
+		/* (made already: its materials told where) */
+		structure_bsp_vertices_compress(structure_bsp, kept->vertices);
+		return TRUE;
+	}
+	if (tag_index == NONE || globals->kept_count >= MAXIMUM_KEPT_STRUCTURE_BSPS ||
+		vertices_size > KEPT_STRUCTURE_BSP_BYTES - globals->kept_bytes)
+	{
+		return FALSE;
+	}
+	/* (contiguous memory only: one that would be drawn from outside it is
+	made as it loads, as before) */
+	vertices = XPhysicalAlloc(vertices_size + 1, (unsigned long)-1, 0, PAGE_READWRITE);
+	if (!vertices)
+	{
+		return FALSE;
+	}
+	structure_bsp_vertices_compress(structure_bsp, vertices);
+	if (!kept_structure_bsp_add(tag_index, vertices, vertices_size))
+	{
+		XPhysicalFree(vertices);
+		return FALSE;
+	}
+
+	return TRUE;
+}
+
 boolean custom_edition_structure_bsp_load(
-	struct structure_bsp *structure_bsp)
+	struct structure_bsp *structure_bsp,
+	long tag_index)
 {
 	struct custom_edition_geometry_globals *globals = &custom_edition_geometry_globals;
 	long vertex_size = rasterizer_geometry_get_vertex_size(_rasterizer_vertex_type_environment_compressed);
@@ -973,6 +1178,7 @@ boolean custom_edition_structure_bsp_load(
 	unsigned long vertices_offset = 0;
 	boolean success = TRUE;
 	boolean too_large = FALSE;
+	struct kept_structure_bsp *kept = NULL;
 	long lightmap_index;
 
 	assert(!globals->structure_bsp);
@@ -1014,6 +1220,7 @@ boolean custom_edition_structure_bsp_load(
 	}
 
 	globals->structure_bsp = structure_bsp;
+	globals->structure_bsp_vertices_kept = FALSE;
 	if (too_large)
 	{
 		error(_error_silent, "custom edition: the structure BSP's materials take more than 0x%X bytes of vertices",
@@ -1021,9 +1228,21 @@ boolean custom_edition_structure_bsp_load(
 		custom_edition_structure_bsp_unload();
 		return FALSE;
 	}
-	/* (in Xbox memory either way: the material points at them by Xbox address) */
-	globals->structure_bsp_vertices = geometry_allocate(vertices_size + 1,
-		&globals->structure_bsp_vertices_contiguous);
+	/* (its vertices made before, as the map loaded or when it last loaded:
+	the same bytes, compressed from the same vertices) */
+	kept = kept_structure_bsp_find(tag_index, vertices_size);
+	if (kept)
+	{
+		globals->structure_bsp_vertices = kept->vertices;
+		globals->structure_bsp_vertices_contiguous = TRUE;
+		globals->structure_bsp_vertices_kept = TRUE;
+	}
+	else
+	{
+		/* (in Xbox memory either way: the material points at them by Xbox address) */
+		globals->structure_bsp_vertices = geometry_allocate(vertices_size + 1,
+			&globals->structure_bsp_vertices_contiguous);
+	}
 	/* (a record names its streams by it, wherever it is: the structure's, one
 	at a time, told apart by their vertices' size, #1169) */
 	{
@@ -1052,8 +1271,22 @@ boolean custom_edition_structure_bsp_load(
 				&lightmap->materials,
 				material_index,
 				struct structure_material);
+			byte *vertices = globals->structure_bsp_vertices + vertices_offset;
 
-			success = structure_material_convert(material, globals->structure_bsp_vertices + vertices_offset);
+			if (kept)
+			{
+				long compressed_bytes = material->vertices.count * vertex_size +
+					material->lightmap_vertices.count * lightmap_vertex_size;
+
+				material->compressed_vertex_data.size = compressed_bytes;
+				material->compressed_vertex_data.address = XBOX_ADDRESS(vertices);
+			}
+			else
+			{
+				structure_material_compress(material, material->vertices.count, material->lightmap_vertices.count,
+					vertices);
+			}
+			success = structure_material_buffers(material, vertices);
 			vertices_offset += material->compressed_vertex_data.size;
 		}
 	}
@@ -1061,9 +1294,16 @@ boolean custom_edition_structure_bsp_load(
 	{
 		error(
 			_error_silent,
-			"custom edition: the structure BSP lit by bitmap tag 0x%08lX has its vertices compressed (0x%lX bytes)",
+			"custom edition: the structure BSP lit by bitmap tag 0x%08lX has its vertices compressed (0x%lX bytes)%s",
 			(unsigned long)structure_bsp->lightmap_group.index,
-			vertices_size);
+			vertices_size,
+			kept ? " (kept from before)" : "");
+		/* (kept for a switch back to it, when there is room) */
+		if (!kept && globals->structure_bsp_vertices_contiguous &&
+			kept_structure_bsp_add(tag_index, globals->structure_bsp_vertices, vertices_size))
+		{
+			globals->structure_bsp_vertices_kept = TRUE;
+		}
 	}
 	else
 	{
@@ -1082,15 +1322,36 @@ void custom_edition_structure_bsp_unload(
 	if (globals->structure_bsp)
 	{
 		structure_bsp_buffers_release(globals->structure_bsp);
-		/* (none when the load failed before they were made) */
+		/* (none when the load failed before they were made; kept ones are
+		let go of with the map, custom_edition_structure_bsps_dispose) */
 		if (globals->structure_bsp_vertices)
 		{
 			d3d8_geometry_unnamed(globals->structure_bsp_vertices);
-			geometry_free(globals->structure_bsp_vertices, globals->structure_bsp_vertices_contiguous);
+			if (!globals->structure_bsp_vertices_kept)
+				geometry_free(globals->structure_bsp_vertices, globals->structure_bsp_vertices_contiguous);
 		}
 		globals->structure_bsp = NULL;
 		globals->structure_bsp_vertices = NULL;
+		globals->structure_bsp_vertices_kept = FALSE;
 	}
+
+	return;
+}
+
+void custom_edition_structure_bsps_dispose(
+	void)
+{
+	struct custom_edition_geometry_globals *globals = &custom_edition_geometry_globals;
+	long index;
+
+	custom_edition_structure_bsp_unload();
+	for (index = 0; index < globals->kept_count; index++)
+	{
+		XPhysicalFree(globals->kept[index].vertices);
+	}
+	csmemset(globals->kept, 0, sizeof(globals->kept));
+	globals->kept_count = 0;
+	globals->kept_bytes = 0;
 
 	return;
 }

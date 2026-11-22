@@ -6,6 +6,7 @@ RASTERIZER_SWIZZLE.C
 
 #include "cseries/cseries.h"
 #include "cseries/errors.h"
+#include "cseries/cseries_windows.h" /* port: system_malloc */
 #include "math/real_math.h"
 #include "math/integer_math.h"
 #include "bitmaps/bitmaps.h"
@@ -66,9 +67,12 @@ static const short face_mapping_inverse_table[NUMBER_OF_FACES_PER_CUBE]=
 	0, 2, 1, 3, 4, 5
 };
 
-static unsigned long rasterizer_swizzle_z_mask;
-static unsigned long rasterizer_swizzle_y_mask;
-static unsigned long rasterizer_swizzle_x_mask;
+/* port: each thread's own: a Custom Edition map's textures are swizzled
+on the cache files' I/O thread as they arrive (cache_files_windows.c), a
+mod's on the game's (port/linux/game/mod_bitmaps.c) */
+static __thread unsigned long rasterizer_swizzle_z_mask;
+static __thread unsigned long rasterizer_swizzle_y_mask;
+static __thread unsigned long rasterizer_swizzle_x_mask;
 
 /* ---------- public code */
 
@@ -436,7 +440,8 @@ void rasterizer_xbox_bitmap_swizzle(
 	{
 		long pixel_data_size = bitmap_mipmap_get_pixel_data_size(bitmap, mipmap_index);
 		byte *pixels = bitmap_mipmap_address(bitmap, mipmap_index);
-		byte *buffer = match_malloc("c:\\halo\\SOURCE\\rasterizer\\rasterizer_swizzle.c", 351, pixel_data_size);
+		/* port: the C library's, not the game allocator's (cseries.h's, which is not the threads'): written over whole */
+		byte *buffer = system_malloc(pixel_data_size);
 		short width = bitmap_mipmap_get_width(bitmap, mipmap_index);
 		short height = bitmap_mipmap_get_height(bitmap, mipmap_index);
 		short depth = bitmap_mipmap_get_depth(bitmap, mipmap_index);
@@ -521,7 +526,7 @@ void rasterizer_xbox_bitmap_swizzle(
 			}
 
 			memcpy(pixels, buffer, pixel_data_size);
-			match_free("c:\\halo\\SOURCE\\rasterizer\\rasterizer_swizzle.c", 440, buffer);
+			system_free(buffer); /* port: (above) */
 			SET_FLAG(bitmap->flags, _bitmap_swizzled_bit, TRUE);
 		}
 		else
@@ -545,7 +550,8 @@ boolean rasterizer_xbox_bitmap_rebuild_hardware_format(
 
 	match_assert("c:\\halo\\SOURCE\\rasterizer\\rasterizer_swizzle.c", 549, bitmap->base_address);
 
-	buffer = match_malloc("c:\\halo\\SOURCE\\rasterizer\\rasterizer_swizzle.c", 552, size);
+	/* port: the C library's (rasterizer_xbox_bitmap_swizzle): written over whole */
+	buffer = system_malloc(size);
 
 	if (buffer)
 	{
@@ -603,7 +609,7 @@ boolean rasterizer_xbox_bitmap_rebuild_hardware_format(
 		match_assert("c:\\halo\\SOURCE\\rasterizer\\rasterizer_swizzle.c", 625, offset==size);
 
 		memcpy(bitmap->base_address, buffer, size);
-		match_free("c:\\halo\\SOURCE\\rasterizer\\rasterizer_swizzle.c", 629, buffer);
+		system_free(buffer); /* port: (above) */
 	}
 	else
 	{
