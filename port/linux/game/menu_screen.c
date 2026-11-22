@@ -575,7 +575,7 @@ static char const *const screen_binding_names[] =
 	"layout.controller", "layout.title", "layout.state", "layout.shape", "layout.color", "layout.about",
 	"layout.set", "layout.unset", "layout.bindings",
 	"dlss.detail", "dlss.heading", "dlss.status", "dlss.credit", "dlss.license.empty", "dlss.can_accept",
-	"dlss.can_remove",
+	"dlss.can_remove", "dlss.can_restart",
 	"data.detail", "data.heading", "data.status", "data.from", "data.folder", "data.opened", "data.add",
 };
 
