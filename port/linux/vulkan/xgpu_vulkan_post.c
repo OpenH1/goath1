@@ -8,13 +8,23 @@ tools/vulkan_post_shaders.py). Each pass draws one triangle covering the
 rectangle (its corners from the vertex's index, with no vertex data) and
 finds its texels from the fragment's coordinates; the target's rows are
 the picture's from the top, as the passes' own images' are, so no
-coordinate is turned over. The target's pixels are copied first, so that no
-pass reads what it writes, and only colour is written back: the game keeps
-values of its own in destination alpha.
+coordinate is turned over. No pass reads what it writes. Over all of a
+target of one layer (xgpu_vulkan_post_anti_alias's moved, the caller's
+handle of the target), the last pass draws the view into an image of the
+target's own description, the spare, which then takes the target's place,
+the target's image becoming the spare: the view drawn from one image into
+the other, never copied. Over part of a target (a split screen's window),
+the target's pixels in the rectangle are copied first and the last pass
+draws them back into the target: drawn whole into another image, the view
+would cost more than the copy of the rectangle. FXAA and SMAA's blend write
+each pixel's own alpha (the game keeps values of its own in destination
+alpha), so the spare holds all of the target's pixels.
 
 Each pass is a pass of the core's (xgpu_vulkan.c) of its own: the barrier
 that ends one makes what it drew visible to the next one's samples, and
-the copy's barrier its pixels to the first. SMAA's edges and weights are
+the copy's barrier its pixels to the first. The spare is cleared whole as
+the last pass begins (a clear of the whole attachment loads none of it),
+then drawn over all of it. SMAA's edges and weights are
 emptied whole before their passes, as the pass begins (a clear of the
 whole attachment loads none of it), so that no edge of another window's
 pass is found: they write only where there is an edge. The intermediate
@@ -41,8 +51,8 @@ The pipelines and SMAA's lookup textures are made as the setting is chosen
 middle of a frame. The lookup textures are RGBA8 images of SMAA's one and
 two channels (the rest zero), sampled as an R8 and an RG8 texture would be.
 FXAA's and SMAA's blend into a target of its own format (display.hdr's
-half floats too); the copy is the target's format, SMAA's edges and
-weights 8 bits.
+half floats too); the copy is the target's format, the spare the target's
+description, SMAA's edges and weights 8 bits.
 
 display.hdr's tone map (xgpu_vulkan_post_tone_map) is no pass of its own:
 a draw in the pass that drew the view, reading each pixel where it is drawn
@@ -91,6 +101,10 @@ static struct
 	weights, and the stencil marking the edges' pixels (a stencil alone,
 	XGPU_VULKAN_FORMAT_S8) */
 	struct xgpu_vulkan_image *color, *edges, *weights, *marks;
+	/* the image a pass over all of a target draws the view into, of the
+	target's description, given the target's place (its image then kept
+	here) */
+	struct xgpu_vulkan_image *spare;
 	/* SMAA's lookup textures */
 	struct xgpu_vulkan_image *area, *search;
 	/* linear and clamped, as FXAA and SMAA sample */
@@ -166,11 +180,12 @@ static void smaa_images_release(void)
 	post.edges = post.weights = post.marks = NULL;
 }
 
-/* the passes' images, of the target's size (SMAA's only for SMAA); color
-is the target's format, so that the copy is exact */
-static int images_fit(int smaa, uint8_t format, uint32_t width, uint32_t height)
+/* the passes' images, of the target's size (SMAA's only for SMAA, the
+copy only where it is made); color is the target's format, so that the copy
+is exact */
+static int images_fit(int smaa, int copy, uint8_t format, uint32_t width, uint32_t height)
 {
-	if (post.width != width || post.height != height || post.format != format || !post.color)
+	if (post.width != width || post.height != height || post.format != format)
 	{
 		xgpu_vulkan_image_destroy(post.color);
 		xgpu_vulkan_image_destroy(post.edges);
@@ -180,8 +195,9 @@ static int images_fit(int smaa, uint8_t format, uint32_t width, uint32_t height)
 		post.width = width;
 		post.height = height;
 		post.format = format;
-		post.color = image_make(format, XGPU_VULKAN_USAGE_SAMPLED | XGPU_VULKAN_USAGE_TARGET, width, height);
 	}
+	if (copy && !post.color)
+		post.color = image_make(format, XGPU_VULKAN_USAGE_SAMPLED | XGPU_VULKAN_USAGE_TARGET, width, height);
 	if (smaa && !post.edges)
 	{
 		post.edges = image_make(XGPU_VULKAN_FORMAT_BGRA8, XGPU_VULKAN_USAGE_SAMPLED | XGPU_VULKAN_USAGE_TARGET,
@@ -190,7 +206,58 @@ static int images_fit(int smaa, uint8_t format, uint32_t width, uint32_t height)
 			width, height);
 		post.marks = image_make(XGPU_VULKAN_FORMAT_S8, XGPU_VULKAN_USAGE_TARGET, width, height);
 	}
-	return post.color && (!smaa || (post.edges && post.weights && post.marks));
+	return (!copy || post.color) && (!smaa || (post.edges && post.weights && post.marks));
+}
+
+/* the spare a pass over the rectangle of a layer of a target draws the
+view into: where moved is the caller's handle of the target and the
+rectangle all of a target of one layer and one sample, the spare (of the
+target's description, made again where it is not); else NULL, the target
+copied and drawn into */
+static struct xgpu_vulkan_image *spare_for(struct xgpu_vulkan_image *target, uint32_t layer,
+	const int32_t rectangle[4], struct xgpu_vulkan_image **moved)
+{
+	const struct xgpu_vulkan_image_description *description = xgpu_vulkan_image_description(target);
+
+	if (!moved || *moved != target || layer || description->depth_or_layers > 1 || description->samples > 1 ||
+		description->type == XGPU_VULKAN_IMAGE_3D || description->type == XGPU_VULKAN_IMAGE_CUBE ||
+		rectangle[0] || rectangle[1] || rectangle[2] != (int32_t)description->width ||
+		rectangle[3] != (int32_t)description->height)
+		return NULL;
+	if (post.spare && memcmp(xgpu_vulkan_image_description(post.spare), description, sizeof(*description)))
+	{
+		xgpu_vulkan_image_destroy(post.spare);
+		post.spare = NULL;
+	}
+	if (!post.spare)
+		post.spare = xgpu_vulkan_image_create(description);
+	return post.spare;
+}
+
+/* the spare emptied whole as the pass drawing over all of it begins (none
+of it loaded) */
+static void spare_clear(void)
+{
+	static const float transparent[4];
+	const struct xgpu_vulkan_image_description *description = xgpu_vulkan_image_description(post.spare);
+	int32_t whole[1][4];
+
+	whole[0][0] = whole[0][1] = 0;
+	whole[0][2] = (int32_t)description->width;
+	whole[0][3] = (int32_t)description->height;
+	xgpu_vulkan_set_targets(post.spare, NULL, 0);
+	xgpu_vulkan_clear((const int32_t (*)[4])whole, 1, XGPU_VULKAN_CLEAR_COLOR | XGPU_VULKAN_CLEAR_CHANNELS, transparent,
+		1.0f, 0);
+}
+
+/* the view drawn into the spare: the spare in the caller's handle, the
+target's image the spare */
+static void spare_take_place(struct xgpu_vulkan_image **moved)
+{
+	struct xgpu_vulkan_image *view = post.spare;
+
+	post.spare = *moved;
+	*moved = view;
 }
 
 /* ---------- pipelines */
@@ -294,9 +361,8 @@ int xgpu_vulkan_post_prepare(int smaa, uint8_t format, int preparing)
 		description->vertex_shader = post.vertex;
 		description->pixel_shader = post.pixel[program];
 		description->primitive_class = XGPU_VULKAN_CLASS_TRIANGLES;
-		/* (into the target its colour alone; into an intermediate, all
-		of it) */
-		description->color_mask = into_target ? 7 : 15;
+		/* (every channel: into the target, each pixel's own alpha) */
+		description->color_mask = 15;
 		description->color_format = into_target ? format : XGPU_VULKAN_FORMAT_BGRA8;
 		description->samples = 1;
 		marks_describe(program, description);
@@ -444,9 +510,12 @@ static void intermediate_clear(struct xgpu_vulkan_image *image, int marks)
 		XGPU_VULKAN_CLEAR_DEPTH | (marks ? XGPU_VULKAN_CLEAR_STENCIL : 0), transparent, 1.0f, 0);
 }
 
-int xgpu_vulkan_post_anti_alias(int smaa, struct xgpu_vulkan_image *target, uint32_t layer, const int32_t corners[4])
+int xgpu_vulkan_post_anti_alias(int smaa, struct xgpu_vulkan_image *target, uint32_t layer, const int32_t corners[4],
+	struct xgpu_vulkan_image **moved)
 {
 	const struct xgpu_vulkan_image_description *description;
+	struct xgpu_vulkan_image *source, *into;
+	uint32_t into_layer;
 	int32_t rectangle[4];
 	int index;
 
@@ -471,11 +540,21 @@ int xgpu_vulkan_post_anti_alias(int smaa, struct xgpu_vulkan_image *target, uint
 	/* (SMAA's images kept only while SMAA is chosen) */
 	if (!smaa && post.edges)
 		smaa_images_release();
-	if (!images_fit(smaa, description->format, description->width, description->height))
+	into = spare_for(target, layer, rectangle, moved);
+	if (!images_fit(smaa, !into, description->format, description->width, description->height))
 		return 0;
 
-	/* the target's pixels, read while the target is drawn into */
-	xgpu_vulkan_image_copy_rectangle(target, layer, post.color, rectangle);
+	/* the view drawn from the target into the spare; or the target's
+	pixels copied, read while the target is drawn into */
+	source = target;
+	into_layer = 0;
+	if (!into)
+	{
+		xgpu_vulkan_image_copy_rectangle(target, layer, post.color, rectangle);
+		source = post.color;
+		into = target;
+		into_layer = layer;
+	}
 	if (!smaa)
 	{
 		float bounds[4];
@@ -485,27 +564,35 @@ int xgpu_vulkan_post_anti_alias(int smaa, struct xgpu_vulkan_image *target, uint
 		bounds[1] = ((float)rectangle[1] + 0.5f) / (float)post.height;
 		bounds[2] = ((float)rectangle[2] - 0.5f) / (float)post.width;
 		bounds[3] = ((float)rectangle[3] - 0.5f) / (float)post.height;
-		pass_draw(XGPU_VULKAN_POST_FXAA, target, layer, rectangle, post.color, NULL, NULL, bounds);
+		if (into == post.spare)
+			spare_clear();
+		pass_draw(XGPU_VULKAN_POST_FXAA, into, into_layer, rectangle, source, NULL, NULL, bounds);
 	}
 	else
 	{
 		intermediate_clear(post.edges, 1);
-		pass_draw(XGPU_VULKAN_POST_SMAA_EDGES, post.edges, 0, rectangle, post.color, NULL, NULL, NULL);
+		pass_draw(XGPU_VULKAN_POST_SMAA_EDGES, post.edges, 0, rectangle, source, NULL, NULL, NULL);
 
 		intermediate_clear(post.weights, 0);
 		pass_draw(XGPU_VULKAN_POST_SMAA_WEIGHTS, post.weights, 0, rectangle, post.edges, post.area, post.search, NULL);
 
-		pass_draw(XGPU_VULKAN_POST_SMAA_BLEND, target, layer, rectangle, post.color, post.weights, NULL, NULL);
+		if (into == post.spare)
+			spare_clear();
+		pass_draw(XGPU_VULKAN_POST_SMAA_BLEND, into, into_layer, rectangle, source, post.weights, NULL, NULL);
 	}
+	if (into == post.spare)
+		spare_take_place(moved);
 	return 1;
 }
 
 /* ---------- display.panini (port/linux/game/panini.c)
 
 The window's 3D view drawn again through the Panini projection, a pass like
-FXAA's: the target's pixels copied, then each pixel of the rectangle drawn
-from the copy where the rectilinear view saw what the projection puts there
-(tools/vulkan_post_shaders.py's PANINI_SOURCE). All four channels: the
+FXAA's: each pixel of the rectangle drawn from the view where the
+rectilinear view saw what the projection puts there
+(tools/vulkan_post_shaders.py's PANINI_SOURCE), over all of a target into
+the spare, which takes the target's place, else from a copy of the
+rectangle into the target. All four channels: the
 game's own values in destination alpha belong to the pixels they are moved
 with. With multisampling the copy is of the resolved pixels and the pass
 draws into the multisampled attachment, which the HUD is drawn into after
@@ -547,8 +634,9 @@ int xgpu_vulkan_post_panini_prepare(uint8_t format, uint32_t samples, int prepar
 }
 
 int xgpu_vulkan_post_panini(struct xgpu_vulkan_image *source, struct xgpu_vulkan_image *into, uint32_t layer,
-	const int32_t corners[4], const float projection[8])
+	const int32_t corners[4], const float projection[8], struct xgpu_vulkan_image **moved)
 {
+	struct xgpu_vulkan_image *spare, *read;
 	const struct xgpu_vulkan_image_description *description, *into_description;
 	int32_t rectangle[4];
 	float bounds[4], window[4];
@@ -574,10 +662,22 @@ int xgpu_vulkan_post_panini(struct xgpu_vulkan_image *source, struct xgpu_vulkan
 	}
 	if (rectangle[2] <= rectangle[0] || rectangle[3] <= rectangle[1])
 		return 1;
-	/* (the copy, FXAA's) */
-	if (!images_fit(0, description->format, description->width, description->height))
+	/* (the spare, where the pass draws into the target itself; else the
+	copy, FXAA's) */
+	spare = into == source ? spare_for(source, layer, rectangle, moved) : NULL;
+	if (!images_fit(0, !spare, description->format, description->width, description->height))
 		return 0;
-	xgpu_vulkan_image_copy_rectangle(source, layer, post.color, rectangle);
+	read = source;
+	if (spare)
+	{
+		into = spare;
+		spare_clear();
+	}
+	else
+	{
+		xgpu_vulkan_image_copy_rectangle(source, layer, post.color, rectangle);
+		read = post.color;
+	}
 	/* (split screen: no texel of the next window is read) */
 	bounds[0] = ((float)rectangle[0] + 0.5f) / (float)post.width;
 	bounds[1] = ((float)rectangle[1] + 0.5f) / (float)post.height;
@@ -588,8 +688,10 @@ int xgpu_vulkan_post_panini(struct xgpu_vulkan_image *source, struct xgpu_vulkan
 	window[1] = (float)corners[1];
 	window[2] = (float)(corners[2] - corners[0]);
 	window[3] = (float)(corners[3] - corners[1]);
-	pass_draw_with(XGPU_VULKAN_POST_PANINI, into, layer, rectangle, post.color, NULL, NULL, bounds, window,
+	pass_draw_with(XGPU_VULKAN_POST_PANINI, into, layer, rectangle, read, NULL, NULL, bounds, window,
 		projection);
+	if (spare)
+		spare_take_place(moved);
 	return 1;
 }
 

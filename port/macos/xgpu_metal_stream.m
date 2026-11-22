@@ -1605,7 +1605,7 @@ static void stream_anti_alias(void *context, const struct xgpu_stream_anti_alias
 	target->written++;
 	kind = xgpu_metal_pass_kind(XGPU_METAL_PASS_ANTI_ALIASING);
 	xgpu_metal_post_anti_alias(record->smaa != 0, target->texture, target->description.format,
-		target->description.width, target->description.height, record->corners);
+		target->description.width, target->description.height, record->corners, &target->texture, &target->description);
 	xgpu_metal_pass_kind(kind);
 	stream_state_restore();
 }
@@ -1635,7 +1635,8 @@ static void stream_panini(void *context, const struct xgpu_stream_panini *record
 	target->written++;
 	kind = xgpu_metal_pass_kind(XGPU_METAL_PASS_PANINI);
 	xgpu_metal_post_panini(target->texture, target->description.format, target->description.width,
-		target->description.height, target->description.samples, record->corners, record->projection);
+		target->description.height, target->description.samples, record->corners, record->projection, &target->texture,
+		&target->description);
 	xgpu_metal_pass_kind(kind);
 	stream_state_restore();
 }

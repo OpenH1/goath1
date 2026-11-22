@@ -3679,6 +3679,22 @@ static void stream_rt_shadows(void *context, const struct xgpu_stream_rt_shadows
 
 /* ---------- anti-aliasing (display.anti_aliasing; xgpu_vulkan_post.c) */
 
+/* where a post pass may put the image it drew a target's view into in the
+target's place (xgpu_vulkan_post_anti_alias's moved): a target's own image,
+not one borrowed */
+static struct xgpu_vulkan_image **target_movable(struct stream_target *target)
+{
+	return target->borrowed ? NULL : &target->image;
+}
+
+/* after a post pass: where the target's image is another than it was, the
+textures looked up again */
+static void target_moved(const struct stream_target *target, const struct xgpu_vulkan_image *was)
+{
+	if (target->image != was)
+		stream.textures_dirty = TEXTURES_ALL;
+}
+
 static void stream_anti_aliasing_prepare(void *context, uint32_t smaa)
 {
 	(void)context;
@@ -3699,6 +3715,7 @@ multisampled would have its pixels resolved over the passes') */
 static void stream_anti_alias(void *context, const struct xgpu_stream_anti_alias *record)
 {
 	struct stream_target *target = target_get(record->target);
+	struct xgpu_vulkan_image *was;
 
 	(void)context;
 	if (!target || target->depth)
@@ -3713,8 +3730,10 @@ static void stream_anti_alias(void *context, const struct xgpu_stream_anti_alias
 		return;
 	target->written++;
 	xgpu_vulkan_pass_owner(record->smaa ? PASS_OWNER_SMAA : PASS_OWNER_FXAA);
-	xgpu_vulkan_post_anti_alias(record->smaa != 0, target->image, 0, record->corners);
+	was = target->image;
+	xgpu_vulkan_post_anti_alias(record->smaa != 0, target->image, 0, record->corners, target_movable(target));
 	xgpu_vulkan_pass_owner(NULL);
+	target_moved(target, was);
 	/* (the stream's targets again, for what follows) */
 	targets_bind();
 }
@@ -3729,7 +3748,7 @@ view) */
 static void stream_panini(void *context, const struct xgpu_stream_panini *record)
 {
 	struct stream_target *target = target_get(record->target);
-	struct xgpu_vulkan_image *into;
+	struct xgpu_vulkan_image *into, *was;
 
 	(void)context;
 	if (!target || target->depth || target->layers > 1)
@@ -3744,10 +3763,12 @@ static void stream_panini(void *context, const struct xgpu_stream_panini *record
 	xgpu_vulkan_pass_owner(PASS_OWNER_PANINI);
 	target_resolve(target);
 	target->written++;
-	if (xgpu_vulkan_post_panini(target->image, into, 0, record->corners, record->projection) &&
+	was = target->image;
+	if (xgpu_vulkan_post_panini(target->image, into, 0, record->corners, record->projection, target_movable(target)) &&
 		into == target->multisampled)
 		target->unresolved = 1;
 	xgpu_vulkan_pass_owner(NULL);
+	target_moved(target, was);
 	/* (the stream's targets again, for what follows) */
 	targets_bind();
 }

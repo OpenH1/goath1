@@ -15,7 +15,9 @@ corners from gl_VertexID, with no vertex data) and finds its texels from
 gl_FragCoord. FXAA is written here, after Timothy Lottes' description: the
 direction of an edge from the luma around a pixel, the edge's ends found by
 stepping along it, and the pixel blended across it by where it lies between
-them, or by how much it stands out from its neighbours. Only the interface
+them, or by how much it stands out from its neighbours. FXAA and SMAA's
+blend write each pixel's own alpha back (the game's value, unchanged), so
+that a pass may draw the view whole into another image. Only the interface
 changes when they are built: the uniforms become a block (set 0, binding 1,
 as the backend's other draws have their uniforms), the samplers take the
 texture units UNITS gives them as their bindings (set 1), the output a
@@ -175,7 +177,8 @@ FXAA_SOURCE = (
     "\tfloat distance_after = horizontal ? end_after.x - position.x : end_after.y - position.y;\n"
     "\tfloat pixel_offset = 0.5 - min(distance_before, distance_after) / (distance_before + distance_after);\n"
     "\tbool varies = ((distance_before < distance_after ? luma_before : luma_after) < 0.0) != (luma < edge_luma);\n"
-    "\tresult = vec4(color_at(position + max(varies ? pixel_offset : 0.0, subpixel) * across), 1.0);\n"
+    "\tresult = vec4(color_at(position + max(varies ? pixel_offset : 0.0, subpixel) * across),\n"
+    "\t\ttextureLod(color_texture, position, 0.0).a);\n"
     "}\n"
 )
 # the main functions of SMAA's passes, after SMAA.hlsl; its vertex functions'
@@ -218,7 +221,8 @@ SMAA_BLEND_SOURCE = (
     "\tvec2 texcoord = gl_FragCoord.xy * metrics.xy;\n"
     "\tvec4 offset;\n"
     "\tSMAANeighborhoodBlendingVS(texcoord, offset);\n"
-    "\tresult = SMAANeighborhoodBlendingPS(texcoord, offset, color_texture, weights_texture);\n"
+    "\tresult = vec4(SMAANeighborhoodBlendingPS(texcoord, offset, color_texture, weights_texture).rgb,\n"
+    "\t\ttextureLod(color_texture, texcoord, 0.0).a);\n"
     "}\n"
 )
 SMAA_MAINS = (SMAA_EDGES_SOURCE, SMAA_WEIGHTS_SOURCE, SMAA_BLEND_SOURCE)
