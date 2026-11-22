@@ -107,11 +107,7 @@ by tag_block_get_element_fast's own path: the walk on it then does the same
 arithmetic on the same values and decides each step (on the plane too) as
 the tag data's walk does. Any other bsp (an object's collision model) walks
 the tag data */
-struct bsp3d_point_node
-{
-	real_plane3d plane;
-	long children[2];
-};
+/* (struct bsp3d_point_node: bsp3d.h) */
 
 /* port: the walk's start by cell (with the table above). The world is cut
 into cells of 1/8 unit, and a cell keeps the deepest node of the walk that
@@ -178,6 +174,9 @@ static struct
 	long node_count;
 	long plane_count;
 	struct bsp3d_point_node *nodes;
+	/* (each node's plane designator, for collision_bsp.c's walks; NULL:
+	none, and they walk the tag data) */
+	long *plane_designators;
 	/* (the cells' words, BSP3D_CELL_SLOTS; NULL: none) */
 	unsigned long long *cells;
 } bsp3d_point_table;
@@ -402,6 +401,8 @@ void bsp3d_point_table_build(
 		free(bsp3d_point_table.nodes);
 	if (bsp3d_point_table.cells)
 		free(bsp3d_point_table.cells);
+	if (bsp3d_point_table.plane_designators)
+		free(bsp3d_point_table.plane_designators);
 	csmemset(&bsp3d_point_table, 0, sizeof(bsp3d_point_table));
 	if (!bsp || bsp->nodes.count <= 0 || !bsp->nodes.address || !bsp->planes.address ||
 		(bsp->nodes.definition && bsp->nodes.definition->element_size != sizeof(struct bsp3d_node)) ||
@@ -427,6 +428,15 @@ void bsp3d_point_table_build(
 		record->plane = ((real_plane3d const *)bsp->planes.address)[node->plane_designator];
 		record->children[0] = node->children[0];
 		record->children[1] = node->children[1];
+	}
+	bsp3d_point_table.plane_designators = malloc((size_t)bsp->nodes.count * sizeof(long));
+	if (bsp3d_point_table.plane_designators)
+	{
+		for (index = 0; index < bsp->nodes.count; index++)
+		{
+			bsp3d_point_table.plane_designators[index] =
+				((struct bsp3d_node const *)bsp->nodes.address)[index].plane_designator;
+		}
 	}
 	/* (the cells' table, empty: none where the nodes are more than its
 	words hold, or it was refused, or HALO_BSP3D_CELLS=off) */
@@ -519,6 +529,23 @@ void bsp3d_cells_frame(
 		}
 		platform_log("bsp3d cells: alternate: with cells %s; without %s", line[0], line[1]);
 	}
+}
+
+struct bsp3d_point_node const *bsp3d_packed_nodes(
+	struct bsp3d const *bsp,
+	long const **plane_designators)
+{
+	if (bsp == bsp3d_point_table.bsp && bsp3d_point_table.nodes && bsp3d_point_table.plane_designators &&
+		bsp->nodes.address == bsp3d_point_table.nodes_address &&
+		bsp->planes.address == bsp3d_point_table.planes_address &&
+		bsp->nodes.count == bsp3d_point_table.node_count &&
+		bsp->planes.count == bsp3d_point_table.plane_count)
+	{
+		*plane_designators = bsp3d_point_table.plane_designators;
+		return bsp3d_point_table.nodes;
+	}
+
+	return NULL;
 }
 
 long bsp3d_test_point(

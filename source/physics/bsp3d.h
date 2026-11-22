@@ -44,12 +44,24 @@ struct bsp3d_node
 typedef char bsp3d_node_size_check[
 	sizeof(struct bsp3d_node) == 0xC ? 1 : -1];
 
+/* port: a node of the current structure bsp's packed table (bsp3d.c): its
+plane beside its two children */
+struct bsp3d_point_node
+{
+	real_plane3d plane;
+	long children[2];
+};
+
 /* ---------- prototypes/BSP3D.C */
 
 long bsp3d_test_point(struct bsp3d const *bsp, long node_index, union real_point3d const *point);
 /* port: the current structure bsp's table for bsp3d_test_point's walk, made
 again as a bsp loads (NULL: none, as it is let go of) */
 void bsp3d_point_table_build(struct bsp3d const *bsp);
+/* port: the current structure bsp's packed nodes when `bsp` is it as the
+table was made (and each node's plane designator, in `plane_designators`),
+else NULL: the walks of collision_bsp.c read them in place of the tag data */
+struct bsp3d_point_node const *bsp3d_packed_nodes(struct bsp3d const *bsp, long const **plane_designators);
 /* port: HALO_BSP3D_CELLS's measures, each frame presented (report.c) */
 void bsp3d_cells_frame(long long micros, unsigned long waited);
 

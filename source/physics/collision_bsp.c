@@ -82,6 +82,12 @@ symbols in this file:
 #include "collision_bsp_definitions.h"
 #include "collision_usage.h"
 #include "collisions.h"
+
+#include <stdio.h> /* port: (HALO_BSP3D_COLLISION's measures) */
+#include <stdlib.h> /* port: (HALO_BSP3D_COLLISION) */
+#include <string.h> /* port: (HALO_BSP3D_COLLISION) */
+
+void platform_log(char const *format, ...); /* port */
 #include "render/render_debug.h"
 #include "scenario/scenario.h"
 #include "tag_files/tag_groups.h"
@@ -185,10 +191,14 @@ struct test_sphere_data
 	/* port: (as in test_pill_data) */
 	long nodes_left;
 	long bsp2d_nodes_left;
+	/* port: the bsp's packed nodes and their planes' designators
+	(collision_bsp_packed_nodes; NULL: the tag data's) */
+	struct bsp3d_point_node const *packed_nodes;
+	long const *packed_plane_designators;
 };
 
 typedef char collision_bsp_test_sphere_context_size_assert[
-	sizeof(struct test_sphere_data) == 0x228 + 8 ? 1 : -1];
+	sizeof(struct test_sphere_data) == 0x228 + 8 + 2 * sizeof(void *) ? 1 : -1];
 typedef char collision_bsp_test_sphere_context_plane_stack_offset_assert[
 	offsetof(struct test_sphere_data, plane_stack) == 0x1C ? 1 : -1];
 typedef char collision_bsp_test_sphere_context_projection_axis_offset_assert[
@@ -230,10 +240,13 @@ struct collision_bsp_test_vector_context
 	long last_plane_index;
 	/* port: (as in collision_bsp_test_pill_new_context) */
 	long nodes_left;
+	/* port: (as in test_sphere_data) */
+	struct bsp3d_point_node const *packed_nodes;
+	long const *packed_plane_designators;
 };
 
 typedef char collision_bsp_test_vector_context_size_assert[
-	sizeof(struct collision_bsp_test_vector_context) == 0x28 + 4 ? 1 : -1];
+	sizeof(struct collision_bsp_test_vector_context) == 0x28 + 4 + 2 * sizeof(void *) ? 1 : -1];
 
 struct collision_bsp_usage_times
 {
@@ -342,6 +355,197 @@ static boolean warned_about_collision_surface_index;
 static boolean warned_about_collision_bsp_nodes;
 static boolean warned_about_collision_bsp2d_nodes;
 static boolean warned_about_collision_leaf;
+
+/* port: the sphere walk (collision_bsp_test_sphere) and the vector walk
+(collision_bsp_test_vector) of the current structure bsp read its packed
+nodes (bsp3d_packed_nodes: each node's plane beside its children, copied
+from the tag data as the bsp loads) in place of a node and then its plane
+elsewhere in the tag data: the same values, the same arithmetic, the same
+order, so the same results. Any other bsp (an object's collision model)
+walks the tag data.
+
+HALO_BSP3D_COLLISION=off walks the tag data; =verify walks both ways and
+compares every result (halo.log's "bsp3d collision:" lines, every 10
+seconds); =alternate takes turns each second and logs each way's time in
+the walks, its frames over 4.17 ms (240 Hz), the game thread's time and
+the frame rate */
+enum
+{
+	_collision_packed_on,
+	_collision_packed_off,
+	_collision_packed_verify,
+	_collision_packed_alternate,
+};
+
+#define COLLISION_PACKED_LOG_SECONDS 10
+#define COLLISION_PACKED_SLOW_MICROS 4170
+
+static struct
+{
+	boolean mode_read;
+	short mode;
+	/* (alternate: the turn's way, its time so far) */
+	boolean turn_off;
+	long long turn_micros;
+	long long log_micros;
+	/* (verify) */
+	unsigned long long spheres_compared;
+	unsigned long long sphere_differences;
+	unsigned long long vectors_compared;
+	unsigned long long vector_differences;
+	/* (alternate, by way: [0] the packed nodes, [1] the tag data) */
+	struct
+	{
+		unsigned long long calls;
+		unsigned long long ticks;
+		unsigned long long frames;
+		unsigned long long slow_frames;
+		unsigned long long slow_game_frames;
+		long long micros;
+		long long game_micros;
+	} way[2];
+	unsigned long long frame_ticks;
+	long long frame_ticks_micros;
+	unsigned long long last_ticks;
+} collision_packed_measure;
+
+static __inline unsigned long long collision_packed_ticks(void)
+{
+#if defined(__x86_64__) || defined(__i386__)
+	return __builtin_ia32_rdtsc();
+#else
+	return 0;
+#endif
+}
+
+static short collision_packed_mode(void)
+{
+	if (!collision_packed_measure.mode_read)
+	{
+		char const *value = getenv("HALO_BSP3D_COLLISION");
+
+		collision_packed_measure.mode = _collision_packed_on;
+		if (value && (!strcmp(value, "off") || !strcmp(value, "0")))
+			collision_packed_measure.mode = _collision_packed_off;
+		else if (value && !strcmp(value, "verify"))
+			collision_packed_measure.mode = _collision_packed_verify;
+		else if (value && !strcmp(value, "alternate"))
+			collision_packed_measure.mode = _collision_packed_alternate;
+		collision_packed_measure.mode_read = TRUE;
+		if (collision_packed_measure.mode != _collision_packed_on)
+			platform_log("bsp3d collision: HALO_BSP3D_COLLISION=%s", value);
+	}
+	return collision_packed_measure.mode;
+}
+
+/* the bsp's packed nodes, where the walks read them (NULL: the tag data's) */
+static struct bsp3d_point_node const *collision_bsp_packed_nodes(
+	struct collision_bsp const *bsp,
+	long const **plane_designators)
+{
+	short mode = collision_packed_mode();
+
+	*plane_designators = NULL;
+	if (mode == _collision_packed_off ||
+		(mode == _collision_packed_alternate && collision_packed_measure.turn_off))
+	{
+		return NULL;
+	}
+
+	return bsp3d_packed_nodes(&bsp->bsp3d, plane_designators);
+}
+
+/* (=alternate: a walk's time on its way) */
+static __inline void collision_packed_count(
+	boolean packed,
+	unsigned long long started)
+{
+	short way = packed ? 0 : 1;
+
+	collision_packed_measure.way[way].ticks += collision_packed_ticks() - started;
+	collision_packed_measure.way[way].calls++;
+}
+
+/* port: HALO_BSP3D_COLLISION=verify's and =alternate's measures, each frame
+presented (report.c): micros, its time, waited, its waits */
+void collision_bsp_packed_frame(
+	long long micros,
+	unsigned long waited)
+{
+	short mode = collision_packed_measure.mode_read ? collision_packed_measure.mode : collision_packed_mode();
+	unsigned long long now;
+	short way;
+
+	if (mode != _collision_packed_verify && mode != _collision_packed_alternate)
+		return;
+	now = collision_packed_ticks();
+	if (micros <= 0)
+	{
+		collision_packed_measure.last_ticks = now;
+		return;
+	}
+	if (collision_packed_measure.last_ticks)
+	{
+		collision_packed_measure.frame_ticks += now - collision_packed_measure.last_ticks;
+		collision_packed_measure.frame_ticks_micros += micros;
+	}
+	collision_packed_measure.last_ticks = now;
+	if (mode == _collision_packed_alternate)
+	{
+		long long game_micros = micros - ((long long)waited < micros ? (long long)waited : micros);
+
+		way = collision_packed_measure.turn_off ? 1 : 0;
+		collision_packed_measure.way[way].frames++;
+		collision_packed_measure.way[way].micros += micros;
+		collision_packed_measure.way[way].game_micros += game_micros;
+		if (micros > COLLISION_PACKED_SLOW_MICROS)
+			collision_packed_measure.way[way].slow_frames++;
+		if (game_micros > COLLISION_PACKED_SLOW_MICROS)
+			collision_packed_measure.way[way].slow_game_frames++;
+		collision_packed_measure.turn_micros += micros;
+		if (collision_packed_measure.turn_micros >= 1000000)
+		{
+			collision_packed_measure.turn_micros = 0;
+			collision_packed_measure.turn_off = !collision_packed_measure.turn_off;
+		}
+	}
+	collision_packed_measure.log_micros += micros;
+	if (collision_packed_measure.log_micros < COLLISION_PACKED_LOG_SECONDS * 1000000LL)
+		return;
+	collision_packed_measure.log_micros = 0;
+	if (mode == _collision_packed_verify)
+	{
+		platform_log("bsp3d collision: verify: %llu spheres compared, %llu differences; %llu vectors compared, %llu differences",
+			collision_packed_measure.spheres_compared, collision_packed_measure.sphere_differences,
+			collision_packed_measure.vectors_compared, collision_packed_measure.vector_differences);
+	}
+	else
+	{
+		double ticks_per_ns = collision_packed_measure.frame_ticks_micros > 0 ?
+			(double)collision_packed_measure.frame_ticks / ((double)collision_packed_measure.frame_ticks_micros * 1000.0) : 0;
+		char line[2][224];
+
+		for (way = 0; way < 2; way++)
+		{
+			double frames = (double)collision_packed_measure.way[way].frames;
+			double ns = ticks_per_ns > 0 ? (double)collision_packed_measure.way[way].ticks / ticks_per_ns : 0;
+
+			snprintf(line[way], sizeof(line[way]),
+				"%llu frames, %.3f%% over 4.17 ms (game thread %.3f%%), %llu walks, %.1f ns a walk, "
+				"%.3f ms a frame in the walks, game thread %.3f ms, %.1f fps",
+				collision_packed_measure.way[way].frames,
+				frames > 0 ? 100.0 * (double)collision_packed_measure.way[way].slow_frames / frames : 0,
+				frames > 0 ? 100.0 * (double)collision_packed_measure.way[way].slow_game_frames / frames : 0,
+				collision_packed_measure.way[way].calls,
+				collision_packed_measure.way[way].calls ? ns / (double)collision_packed_measure.way[way].calls : 0,
+				frames > 0 ? ns / 1e6 / frames : 0,
+				frames > 0 ? (double)collision_packed_measure.way[way].game_micros / 1000.0 / frames : 0,
+				collision_packed_measure.way[way].micros > 0 ?
+					frames * 1e6 / (double)collision_packed_measure.way[way].micros : 0);
+		}
+		platform_log("bsp3d collision: alternate: packed %s; tag data %s", line[0], line[1]);
+	}
+}
 
 /* ---------- public code */
 
@@ -1208,8 +1412,58 @@ boolean collision_bsp_test_sphere(
 	result->surface_count = 0;
 	result->edge_count = 0;
 	result->vertex_count = 0;
+	/* port: (HALO_BSP3D_COLLISION) */
+	context.packed_nodes = collision_bsp_packed_nodes(bsp, &context.packed_plane_designators);
 
-	bsp3d_test_sphere_recursive(&context, 0, 0);
+	if (collision_packed_measure.mode == _collision_packed_on)
+	{
+		bsp3d_test_sphere_recursive(&context, 0, 0);
+	}
+	else if (collision_packed_measure.mode == _collision_packed_verify && context.packed_nodes)
+	{
+		/* port: the packed walk into its own result, then the tag data's
+		(the result), compared */
+		struct collision_bsp_test_sphere_result packed_result;
+		struct test_sphere_data packed_context = context;
+
+		packed_result.leaf_count = 0;
+		packed_result.surface_count = 0;
+		packed_result.edge_count = 0;
+		packed_result.vertex_count = 0;
+		packed_context.result = &packed_result;
+		bsp3d_test_sphere_recursive(&packed_context, 0, 0);
+		context.packed_nodes = NULL;
+		context.packed_plane_designators = NULL;
+		bsp3d_test_sphere_recursive(&context, 0, 0);
+		collision_packed_measure.spheres_compared++;
+		if (packed_context.nodes_left != context.nodes_left ||
+			packed_result.surface_count != result->surface_count ||
+			packed_result.edge_count != result->edge_count ||
+			packed_result.vertex_count != result->vertex_count ||
+			packed_result.leaf_count != result->leaf_count ||
+			memcmp(packed_result.surface_indices, result->surface_indices,
+				(size_t)result->surface_count * sizeof(long)) ||
+			memcmp(packed_result.edge_indices, result->edge_indices,
+				(size_t)result->edge_count * sizeof(long)) ||
+			memcmp(packed_result.vertex_indices, result->vertex_indices,
+				(size_t)result->vertex_count * sizeof(long)) ||
+			memcmp(packed_result.leaf_indices, result->leaf_indices,
+				(size_t)result->leaf_count * sizeof(long)))
+		{
+			collision_packed_measure.sphere_differences++;
+		}
+	}
+	else if (collision_packed_measure.mode == _collision_packed_alternate && bsp == global_collision_bsp)
+	{
+		unsigned long long started = collision_packed_ticks();
+
+		bsp3d_test_sphere_recursive(&context, 0, 0);
+		collision_packed_count(context.packed_nodes != NULL, started);
+	}
+	else
+	{
+		bsp3d_test_sphere_recursive(&context, 0, 0);
+	}
 	collision_log_end_time(
 		collision_function,
 		collision_bsp_usage_times.sphere.QuadPart);
@@ -1251,7 +1505,56 @@ boolean collision_bsp_test_vector(
 	context.nodes_left = bsp->bsp3d.nodes.count;
 
 	t = PIN(maximum_t, 0.f, 1.f);
-	return_value = collision_bsp_test_vector_recursive(&context, 0, 0.f, t, 0);
+	/* port: (HALO_BSP3D_COLLISION) */
+	context.packed_nodes = collision_bsp_packed_nodes(bsp, &context.packed_plane_designators);
+	if (collision_packed_measure.mode == _collision_packed_on)
+	{
+		return_value = collision_bsp_test_vector_recursive(&context, 0, 0.f, t, 0);
+	}
+	else if (collision_packed_measure.mode == _collision_packed_verify && context.packed_nodes)
+	{
+		/* port: (as in collision_bsp_test_sphere: the result as it begins,
+		walked on the packed nodes, then the tag data's, compared) */
+		struct collision_bsp_test_vector_result packed_result = *result;
+		struct collision_bsp_test_vector_context packed_context = context;
+		boolean packed_value;
+
+		packed_context.result = &packed_result;
+		packed_value = collision_bsp_test_vector_recursive(&packed_context, 0, 0.f, t, 0);
+		context.packed_nodes = NULL;
+		context.packed_plane_designators = NULL;
+		return_value = collision_bsp_test_vector_recursive(&context, 0, 0.f, t, 0);
+		collision_packed_measure.vectors_compared++;
+		if (packed_value != return_value ||
+			packed_context.nodes_left != context.nodes_left ||
+			packed_context.last_plane_index != context.last_plane_index ||
+			packed_context.last_leaf_index != context.last_leaf_index ||
+			packed_context.last_contents != context.last_contents ||
+			memcmp(&packed_result.t, &result->t, sizeof(result->t)) ||
+			packed_result.plane != result->plane ||
+			packed_result.surface_index != result->surface_index ||
+			packed_result.plane_designator != result->plane_designator ||
+			packed_result.flags != result->flags ||
+			packed_result.breakable_surface_index != result->breakable_surface_index ||
+			packed_result.material_index != result->material_index ||
+			packed_result.leaf_count != result->leaf_count ||
+			memcmp(packed_result.leaf_indices, result->leaf_indices,
+				(size_t)(result->leaf_count < 256 ? result->leaf_count : 256) * sizeof(long)))
+		{
+			collision_packed_measure.vector_differences++;
+		}
+	}
+	else if (collision_packed_measure.mode == _collision_packed_alternate && bsp == global_collision_bsp)
+	{
+		unsigned long long started = collision_packed_ticks();
+
+		return_value = collision_bsp_test_vector_recursive(&context, 0, 0.f, t, 0);
+		collision_packed_count(context.packed_nodes != NULL, started);
+	}
+	else
+	{
+		return_value = collision_bsp_test_vector_recursive(&context, 0, 0.f, t, 0);
+	}
 	collision_log_end_time(
 		collision_function,
 		collision_bsp_usage_times.vector.QuadPart);
@@ -1994,8 +2297,9 @@ static void bsp3d_test_sphere_recursive(
 {
 	while (!(node_index & LONG_MIN))
 	{
-		struct bsp3d_node const *node;
+		struct bsp3d_node const *node = NULL;
 		real_plane3d const *plane;
+		long const *children;
 		real distance;
 		boolean reaches_second_child;
 		boolean child_index;
@@ -2006,27 +2310,41 @@ static void bsp3d_test_sphere_recursive(
 		{
 			return;
 		}
-		node = TAG_BLOCK_GET_ELEMENT(
-			&data->bsp->bsp3d.nodes,
-			node_index,
-			struct bsp3d_node);
-		plane = TAG_BLOCK_GET_ELEMENT(
-			&data->bsp->bsp3d.planes,
-			node->plane_designator,
-			real_plane3d);
+		/* port: the packed node (the same plane's values, beside its
+		children), or the tag data's */
+		if (data->packed_nodes)
+		{
+			plane = &data->packed_nodes[node_index].plane;
+			children = data->packed_nodes[node_index].children;
+		}
+		else
+		{
+			node = TAG_BLOCK_GET_ELEMENT(
+				&data->bsp->bsp3d.nodes,
+				node_index,
+				struct bsp3d_node);
+			plane = TAG_BLOCK_GET_ELEMENT(
+				&data->bsp->bsp3d.planes,
+				node->plane_designator,
+				real_plane3d);
+			children = node->children;
+		}
 		distance = plane3d_distance_to_point(plane, data->center);
 		reaches_second_child = distance < data->radius;
 		child_index = distance > -data->radius;
 
 		if (child_index && reaches_second_child)
 		{
+			long plane_designator = data->packed_nodes ?
+				data->packed_plane_designators[node_index] : node->plane_designator;
+
 			match_assert(
 				"c:\\halo\\SOURCE\\physics\\collision_bsp.c",
 				0x206,
 				data->stack_depth>=0 && data->stack_depth<MAXIMUM_BSP3D_DEPTH);
 			data->plane_stack[data->stack_depth++] =
-				node->plane_designator | LONG_MIN;
-			bsp3d_test_sphere_recursive(data, node->children[0], depth);
+				plane_designator | LONG_MIN;
+			bsp3d_test_sphere_recursive(data, children[0], depth);
 
 			data->stack_depth--;
 			match_assert(
@@ -2034,14 +2352,14 @@ static void bsp3d_test_sphere_recursive(
 				0x210,
 				data->stack_depth>=0 && data->stack_depth<MAXIMUM_BSP3D_DEPTH);
 			data->plane_stack[data->stack_depth++] =
-				node->plane_designator & LONG_MAX;
-			bsp3d_test_sphere_recursive(data, node->children[1], depth);
+				plane_designator & LONG_MAX;
+			bsp3d_test_sphere_recursive(data, children[1], depth);
 			data->stack_depth--;
 
 			return;
 		}
 
-		node_index = node->children[child_index];
+		node_index = children[child_index];
 	}
 
 	/* port: a leaf (from the map) that is no leaf is not tested
@@ -2132,8 +2450,9 @@ static boolean collision_bsp_test_vector_recursive(
 {
 	if (!(node_index & LONG_MIN))
 	{
-		struct bsp3d_node const *node;
+		struct bsp3d_node const *node = NULL;
 		real_plane3d const *plane;
+		long const *children;
 		real distance;
 		real dot;
 		real distance0;
@@ -2147,14 +2466,24 @@ static boolean collision_bsp_test_vector_recursive(
 		{
 			return FALSE;
 		}
-		node = TAG_BLOCK_GET_ELEMENT(
-			&data->bsp->bsp3d.nodes,
-			node_index,
-			struct bsp3d_node);
-		plane = TAG_BLOCK_GET_ELEMENT(
-			&data->bsp->bsp3d.planes,
-			node->plane_designator,
-			real_plane3d);
+		/* port: (as in bsp3d_test_sphere_recursive) */
+		if (data->packed_nodes)
+		{
+			plane = &data->packed_nodes[node_index].plane;
+			children = data->packed_nodes[node_index].children;
+		}
+		else
+		{
+			node = TAG_BLOCK_GET_ELEMENT(
+				&data->bsp->bsp3d.nodes,
+				node_index,
+				struct bsp3d_node);
+			plane = TAG_BLOCK_GET_ELEMENT(
+				&data->bsp->bsp3d.planes,
+				node->plane_designator,
+				real_plane3d);
+			children = node->children;
+		}
 		distance = plane3d_distance_to_point(plane, data->point);
 		dot = dot_product3d(data->vector, &plane->n);
 		distance0 = dot*t0 + distance;
@@ -2169,7 +2498,7 @@ static boolean collision_bsp_test_vector_recursive(
 
 			if (collision_bsp_test_vector_recursive(
 				data,
-				node->children[!front],
+				children[!front],
 				t0,
 				t,
 				depth + 1))
@@ -2180,10 +2509,11 @@ static boolean collision_bsp_test_vector_recursive(
 			{
 				return FALSE;
 			}
-			data->last_plane_index = node->plane_designator;
+			data->last_plane_index = data->packed_nodes ?
+				data->packed_plane_designators[node_index] : node->plane_designator;
 			if (collision_bsp_test_vector_recursive(
 				data,
-				node->children[front],
+				children[front],
 				t,
 				t1,
 				depth + 1))
@@ -2193,7 +2523,7 @@ static boolean collision_bsp_test_vector_recursive(
 		}
 		else if (collision_bsp_test_vector_recursive(
 			data,
-			node->children[reaches_front],
+			children[reaches_front],
 			t0,
 			t1,
 			depth + 1))

@@ -544,6 +544,7 @@ static void demo_perf_follow(void)
 }
 
 void bsp3d_cells_frame(long long micros, unsigned long waited);
+void collision_bsp_packed_frame(long long micros, unsigned long waited);
 
 /* a frame presented: its row, and the events and summary it brings */
 static void demo_perf_frame(long long micros, const struct report_frame_work *work, long long now)
@@ -647,6 +648,8 @@ void report_frame_presented(void)
 		demo_perf_frame(micros, &demo, now);
 		/* (HALO_BSP3D_CELLS's measures: source/physics/bsp3d.c) */
 		bsp3d_cells_frame(micros, work->waited);
+		/* (HALO_BSP3D_COLLISION's: source/physics/collision_bsp.c) */
+		collision_bsp_packed_frame(micros, work->waited);
 	}
 	else
 		report_frames.start_ns = now;
