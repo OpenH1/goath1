@@ -47,6 +47,9 @@ typedef char bsp3d_node_size_check[
 /* ---------- prototypes/BSP3D.C */
 
 long bsp3d_test_point(struct bsp3d const *bsp, long node_index, union real_point3d const *point);
+/* port: the current structure bsp's table for bsp3d_test_point's walk, made
+again as a bsp loads (NULL: none, as it is let go of) */
+void bsp3d_point_table_build(struct bsp3d const *bsp);
 
 /* ---------- globals */
 

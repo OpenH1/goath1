@@ -33,6 +33,8 @@ symbols in this file:
 #include "bsp3d.h"
 #include "math/geometry.h"
 
+#include <stdlib.h> /* port: (the point walk's table) */
+
 /* ---------- constants */
 
 enum
@@ -92,7 +94,73 @@ long node_count;
 /* port: whether a map's malformed bsp3d was reported (once) */
 static boolean warned_about_bsp3d_nodes;
 
+/* port: the current structure bsp's nodes for bsp3d_test_point's walk, each
+its plane beside its two children, so a step reads one record (24 bytes)
+instead of a node and then its plane elsewhere in the tag data. Made as the
+bsp loads (bsp3d_point_table_build, from scenario_switch_structure_bsp), and
+only where every node's plane is one of the bsp's and both blocks are read
+by tag_block_get_element_fast's own path: the walk on it then does the same
+arithmetic on the same values and decides each step (on the plane too) as
+the tag data's walk does. Any other bsp (an object's collision model) walks
+the tag data */
+struct bsp3d_point_node
+{
+	real_plane3d plane;
+	long children[2];
+};
+
+static struct
+{
+	struct bsp3d const *bsp;
+	void const *nodes_address;
+	void const *planes_address;
+	long node_count;
+	long plane_count;
+	struct bsp3d_point_node *nodes;
+} bsp3d_point_table;
+
 /* ---------- public code */
+
+void bsp3d_point_table_build(
+	struct bsp3d const *bsp)
+{
+	long index;
+
+	free(bsp3d_point_table.nodes);
+	csmemset(&bsp3d_point_table, 0, sizeof(bsp3d_point_table));
+	if (!bsp || bsp->nodes.count <= 0 || !bsp->nodes.address || !bsp->planes.address ||
+		(bsp->nodes.definition && bsp->nodes.definition->element_size != sizeof(struct bsp3d_node)) ||
+		(bsp->planes.definition && bsp->planes.definition->element_size != sizeof(real_plane3d)))
+	{
+		return;
+	}
+	for (index = 0; index < bsp->nodes.count; index++)
+	{
+		long plane_index = ((struct bsp3d_node const *)bsp->nodes.address)[index].plane_designator;
+
+		if (plane_index < 0 || plane_index >= bsp->planes.count)
+			return;
+	}
+	bsp3d_point_table.nodes = malloc((size_t)bsp->nodes.count * sizeof(struct bsp3d_point_node));
+	if (!bsp3d_point_table.nodes)
+		return;
+	for (index = 0; index < bsp->nodes.count; index++)
+	{
+		struct bsp3d_node const *node = (struct bsp3d_node const *)bsp->nodes.address + index;
+		struct bsp3d_point_node *record = bsp3d_point_table.nodes + index;
+
+		record->plane = ((real_plane3d const *)bsp->planes.address)[node->plane_designator];
+		record->children[0] = node->children[0];
+		record->children[1] = node->children[1];
+	}
+	bsp3d_point_table.bsp = bsp;
+	bsp3d_point_table.nodes_address = bsp->nodes.address;
+	bsp3d_point_table.planes_address = bsp->planes.address;
+	bsp3d_point_table.node_count = bsp->nodes.count;
+	bsp3d_point_table.plane_count = bsp->planes.count;
+
+	return;
+}
 
 long bsp3d_test_point(
 	struct bsp3d const *bsp,
@@ -100,6 +168,43 @@ long bsp3d_test_point(
 	union real_point3d const *point)
 {
 	short depth = 0;
+
+	/* port: the current structure bsp's walk, on its table (above) */
+	if (bsp == bsp3d_point_table.bsp && bsp3d_point_table.nodes &&
+		bsp->nodes.address == bsp3d_point_table.nodes_address &&
+		bsp->planes.address == bsp3d_point_table.planes_address &&
+		bsp->nodes.count == bsp3d_point_table.node_count &&
+		bsp->planes.count == bsp3d_point_table.plane_count)
+	{
+		struct bsp3d_point_node const *nodes = bsp3d_point_table.nodes;
+		long node_count = bsp3d_point_table.node_count;
+
+		do
+		{
+			struct bsp3d_point_node const *node;
+
+			if (node_index < 0 ||
+				node_index >= node_count ||
+				depth++ >= MAXIMUM_BSP3D_TRAVERSAL_DEPTH)
+			{
+				if (!warned_about_bsp3d_nodes)
+				{
+					error(_error_silent, "a bsp3d node is not one of the bsp's, or is more than %d deep",
+						MAXIMUM_BSP3D_TRAVERSAL_DEPTH);
+					warned_about_bsp3d_nodes = TRUE;
+				}
+				return NONE;
+			}
+			node = nodes + node_index;
+			node_index = node->children[plane3d_distance_to_point(&node->plane, point) >= 0.f];
+		}
+		while (!(node_index & LONG_MIN));
+
+		if (node_index != NONE)
+			return node_index & LONG_MAX;
+
+		return NONE;
+	}
 
 	do
 	{
