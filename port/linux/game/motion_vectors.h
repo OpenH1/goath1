@@ -64,6 +64,9 @@ void motion_vectors_model_relative(real_matrix4x3 const *nodes, real_matrix4x3 c
 (the object's, where they are the nodes it was named with: kept for the
 next frame) */
 void motion_vectors_model_nodes(real_matrix4x3 const *nodes, short count);
+/* the same, the nodes already packed as the vertex shader's registers
+(three each, as node_registers packs them; NULL: packed here) */
+void motion_vectors_model_nodes_packed(real_matrix4x3 const *nodes, short count, real const (*packed)[3][4]);
 /* rasterizer_set_model_skinning, rasterizer_model_part_skinning: the nodes
 just set as the vertex shader's (c[-36] on, three each), count of them from
 nodes, each the palette's (NULL: in order; past palette_most the last):

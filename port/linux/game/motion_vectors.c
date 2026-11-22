@@ -529,6 +529,11 @@ void motion_vectors_model_relative(real_matrix4x3 const *nodes, real_matrix4x3 c
 
 void motion_vectors_model_nodes(real_matrix4x3 const *nodes, short count)
 {
+	motion_vectors_model_nodes_packed(nodes, count, NULL);
+}
+
+void motion_vectors_model_nodes_packed(real_matrix4x3 const *nodes, short count, real const (*packed)[3][4])
+{
 	struct motion_object *entry;
 	long id = motion_vectors.named_id;
 	short node;
@@ -576,8 +581,12 @@ void motion_vectors_model_nodes(real_matrix4x3 const *nodes, short count)
 	entry->kind = motion_vectors.named_kind;
 	entry->count = count;
 	entry->frame = motion_vectors.frame;
-	for (node = 0; node < count; node++)
-		node_registers(&nodes[node], entry->current[node]);
+	/* (packed already as the draw's registers: those very bytes) */
+	if (packed)
+		memcpy(entry->current, packed, (size_t)count * sizeof(motion_node));
+	else
+		for (node = 0; node < count; node++)
+			node_registers(&nodes[node], entry->current[node]);
 	/* (teleported: its root moved too far to have moved) */
 	if (entry->history)
 	{

@@ -1328,13 +1328,13 @@ void rasterizer_set_model_skinning(
 		}
 	}
 #endif
-	/* port: display.temporal_aa: the object's nodes kept for its motion
-	(port/linux/game/motion_vectors.c) */
-	motion_vectors_model_nodes(skinning->node_matrices, skinning->node_matrix_count);
 	/* port: a model of more nodes than the constants hold is skinned a
 	part's own nodes at a time (rasterizer_model_part_skinning) */
 	if (skinning->node_matrix_count >= RASTERIZER_MAXIMUM_NODES_PER_MODEL)
 	{
+		/* port: display.temporal_aa: the object's nodes kept for its motion
+		(port/linux/game/motion_vectors.c) */
+		motion_vectors_model_nodes(skinning->node_matrices, skinning->node_matrix_count);
 		many_node_matrices = skinning->node_matrices;
 		many_node_matrix_count = skinning->node_matrix_count;
 		return;
@@ -1343,6 +1343,10 @@ void rasterizer_set_model_skinning(
 	many_node_matrix_count = 0;
 	for (node_index = 0; node_index < skinning->node_matrix_count; node_index++)
 		node_matrix_constants(vsh_constants__nodematrices[node_index], &skinning->node_matrices[node_index]);
+	/* port: display.temporal_aa: the object's nodes kept for its motion,
+	copied from the registers just packed (port/linux/game/motion_vectors.c) */
+	motion_vectors_model_nodes_packed(skinning->node_matrices, skinning->node_matrix_count,
+		(real const (*)[3][4])vsh_constants__nodematrices);
 	D3DDevice_SetVertexShaderConstant(
 		-36,
 		vsh_constants__nodematrices,
