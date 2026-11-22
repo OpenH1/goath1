@@ -11368,8 +11368,15 @@ static int device_make(const struct xgpu_vulkan_options *options)
 	elsewhere); "memory of its own" (the kernel's driver's jobs waiting by
 	the block of memory); the render thread told of a frame's completion,
 	xgpu_vulkan_completion_notify. HALO_VULKAN_CLEAR_ALONE,
-	HALO_VULKAN_OWN_MEMORY =0 or =1, HALO_VULKAN_FENCE_WAIT=1 or =0:
-	whatever the GPU) */
+	HALO_VULKAN_OWN_MEMORY =0 or =1: whatever the GPU.
+	The render thread told of the frames' completion on every GPU (unless
+	HALO_VULKAN_FENCE_WAIT=1): where it waited for the oldest frame's fence
+	whenever it had played what was committed, the frames the game committed
+	meanwhile waited with it, and the game, its frames in flight unretired,
+	waited for the render thread to play them after the GPU was done (an
+	RTX 4090 at 4K uncapped, the a30 stress fight: 2.3% of its frames over
+	4.17 ms, the game waiting about 2 ms with the render thread playing the
+	two frames it had been held from) */
 	{
 		const char *alone = getenv("HALO_VULKAN_CLEAR_ALONE"), *bounds = getenv("HALO_VULKAN_DRAW_BOUNDS");
 		const char *narrow = getenv("HALO_VULKAN_NARROW_BARRIERS"), *pass_transfers = getenv("HALO_VULKAN_PASS_TRANSFERS");
@@ -11381,7 +11388,7 @@ static int device_make(const struct xgpu_vulkan_options *options)
 		vk.narrow_barriers = !(narrow && *narrow) || atoi(narrow) != 0;
 		vk.pass_transfers = !(pass_transfers && *pass_transfers) || atoi(pass_transfers) != 0;
 		vk.own_memory = own_memory && *own_memory ? atoi(own_memory) != 0 : v3d;
-		vk.capabilities.completion_told = fence_wait && *fence_wait ? atoi(fence_wait) == 0 : v3d;
+		vk.capabilities.completion_told = !(fence_wait && *fence_wait) || atoi(fence_wait) == 0;
 	}
 	vk.capabilities.scaled_shorts = format_has(VK_FORMAT_R16G16_SSCALED, 1, VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT) &&
 		format_has(VK_FORMAT_R16G16B16_SSCALED, 1, VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT) &&

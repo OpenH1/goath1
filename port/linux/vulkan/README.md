@@ -181,7 +181,7 @@ four multiview views and fragment storage-buffer atomics.
 | `HALO_VULKAN_CUTOUT_PREPASS=1` | An alpha-tested model's depth drawn first, its colour then only where it shows (`d3d8_device.c`, "a cut-out's depth first"). Off unless asked for: a pixel the test cuts away at exactly the depth of the one seen there is drawn too (a fight among pines on a Raspberry Pi 5: up to five pixels in half of its frames) |
 | `HALO_VULKAN_SOFT_PASSES=0`, `=1` | With `HALO_VULKAN_DISCARDS`: a pass's draws kept as a list and recorded into the main command buffer, not into a secondary one (on by default on Broadcom's V3D, whose driver tests no draw of a secondary command buffer early) |
 | `HALO_VULKAN_VISIBILITY=queries`, `=shader` | The lens flares' visibility counted by occlusion queries, or by the pixel shader into a buffer (the default on Broadcom's V3D, whose driver ends each query with a compute job and a cache clean) |
-| `HALO_VULKAN_FENCE_WAIT=1`, `=0` | `1`, the render thread waits for each frame's fence, as before; `0` (the default on Broadcom's V3D), a thread of the backend's tells it of the frame's completion, and it plays the next frame's commands meanwhile |
+| `HALO_VULKAN_FENCE_WAIT=1` | The render thread waits for the oldest frame's fence once it has played what is committed, as before (the frames committed meanwhile wait with it); unset (the default), a thread of the backend's tells it of each frame's completion, and it plays the next frames' commands meanwhile |
 | `HALO_VULKAN_FRAMES_AHEAD=1` or `0` | Under FIFO, a frame started while the one before is still on the GPU (and no more than that one), or only once it is done. Unset: the first while the display paces or bounds the frames (its present wait answers), else the second |
 | `HALO_NO_VSYNC=1` | `display.vsync = false`: presented without waiting for the display (mailbox where the surface has it, else immediate) instead of FIFO |
 | `HALO_VULKAN_FRAME_LOG=<file>` | A line for each frame, paced or not (`xgpu_vulkan_pacing.c`): `frame <input> <queued> <finished> <shown> <refreshes> <paced> <earliest> <present_margin> <returned>`, nanoseconds of `CLOCK_MONOTONIC`: the frame's input read, its present's return, its work done on the GPU, its time on screen (display timing's, else present wait's return), the refreshes since the frame before reached the screen (more than one: a refresh showed a frame again), whether the game was paced, display timing's earliest time and margin, and present wait's return (0: not known). `tools/latency_summary.py --frames` joins it to `debug.latency_log` |
@@ -425,7 +425,8 @@ is on everywhere, with a switch above to turn it off:
 
 What answers the V3D drivers, or a tile-based GPU's costs, is on by default
 on that GPU alone (vendor 0x14e4), and the switches above turn each on or
-off on any GPU:
+off on any GPU (the render thread told when the GPU has done a frame,
+`HALO_VULKAN_FENCE_WAIT`, first made for it, is on by default on every GPU):
 
 - The lens flares' visibility is counted by the pixel shader
   (`HALO_VULKAN_VISIBILITY`): v3dv ends each occlusion query with a compute
@@ -441,8 +442,6 @@ off on any GPU:
   (`HALO_VULKAN_CLEAR_ALONE`): the GPU clears, draws and stores a pass tile
   by tile over its whole area. Elsewhere it would put rectangles' clears in
   place of the pass's one.
-- The render thread is told when the GPU has done a frame
-  (`HALO_VULKAN_FENCE_WAIT`) and plays the next frame's commands meanwhile.
 
 ## The enhanced dynamic lights
 
