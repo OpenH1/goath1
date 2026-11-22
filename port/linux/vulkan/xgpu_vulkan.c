@@ -4802,8 +4802,30 @@ void xgpu_vulkan_image_make_levels(struct xgpu_vulkan_image *image, uint32_t fro
 	image_transfer_done(commands, image, NULL);
 }
 
+static int image_copy(struct xgpu_vulkan_image *source, uint32_t source_level, uint32_t source_layer,
+	struct xgpu_vulkan_image *destination, uint32_t destination_level, uint32_t destination_layer, int depth_alone);
+
 void xgpu_vulkan_image_copy(struct xgpu_vulkan_image *source, uint32_t source_level, uint32_t source_layer,
 	struct xgpu_vulkan_image *destination, uint32_t destination_level, uint32_t destination_layer)
+{
+	(void)image_copy(source, source_level, source_layer, destination, destination_level, destination_layer, 0);
+}
+
+int xgpu_vulkan_image_copy_depth(struct xgpu_vulkan_image *source, struct xgpu_vulkan_image *destination)
+{
+	if (!source || !destination || !(source->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) ||
+		source->aspect != destination->aspect || source->description.format != destination->description.format ||
+		source->description.samples > 1 || destination->description.samples > 1 ||
+		source->description.width != destination->description.width ||
+		source->description.height != destination->description.height)
+	{
+		return 0;
+	}
+	return image_copy(source, 0, 0, destination, 0, 0, 1);
+}
+
+static int image_copy(struct xgpu_vulkan_image *source, uint32_t source_level, uint32_t source_layer,
+	struct xgpu_vulkan_image *destination, uint32_t destination_level, uint32_t destination_layer, int depth_alone)
 {
 	VkCommandBuffer commands;
 	VkImageCopy copy;
@@ -4829,7 +4851,7 @@ void xgpu_vulkan_image_copy(struct xgpu_vulkan_image *source, uint32_t source_le
 	/* (a transient image is an attachment alone: the stream copies no
 	multisampled image) */
 	if (!copy.extent.width || !copy.extent.height || source->transient || destination->transient)
-		return;
+		return 0;
 	source->used = destination->used = vk.serial;
 	image_use(source);
 	image_use(destination);
@@ -4840,8 +4862,11 @@ void xgpu_vulkan_image_copy(struct xgpu_vulkan_image *source, uint32_t source_le
 		vkCmdCopyImage(commands, source->image, VK_IMAGE_LAYOUT_GENERAL, destination->image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
 		copy.srcSubresource.aspectMask = copy.dstSubresource.aspectMask = VK_IMAGE_ASPECT_STENCIL_BIT;
 	}
-	vkCmdCopyImage(commands, source->image, VK_IMAGE_LAYOUT_GENERAL, destination->image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+	/* (the depth alone: the destination's stencil kept) */
+	if (!depth_alone || !(source->aspect & VK_IMAGE_ASPECT_DEPTH_BIT))
+		vkCmdCopyImage(commands, source->image, VK_IMAGE_LAYOUT_GENERAL, destination->image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
 	image_transfer_done(commands, destination, source);
+	return 1;
 }
 
 void xgpu_vulkan_image_copy_rectangle(struct xgpu_vulkan_image *source, uint32_t source_layer,

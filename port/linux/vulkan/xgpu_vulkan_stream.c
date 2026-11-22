@@ -413,6 +413,12 @@ static struct
 	VkShaderModule rays_shader;
 	struct xgpu_vulkan_pipeline_description rays;
 	int rays_drawn;
+	/* the window's depth target the pre-pass began from (its depth copied
+	into the pre-pass's at the BEGIN of a walk played twice), whose depth
+	the pre-pass's is copied back into at the END: prepass_prime_begin (0:
+	none, the pre-pass's depth cleared as before) */
+	uint32_t primed_depth;
+	int primed_logged;
 } prepass;
 
 /* display.temporal_aa's motion (xgpu_stream.h's MOTION): on once a record
@@ -4381,6 +4387,55 @@ static void prepass_pass_draw(struct xgpu_vulkan_image *into, const int32_t rect
 	xgpu_vulkan_draw(&draw);
 }
 
+/* The surfaces' walk from the pre-pass's depth. Where the walk is played
+twice (the BEGIN's and END's replay), its second playing draws the very
+records the pre-pass drew: the same pipelines' vertex programs (their
+positions invariant: xgpu_spirv.c), constants, viewports, depth ranges and
+biases, alpha tests and discards (xgpu_stream_world_ao_twin keeps them).
+So the pre-pass, begun from the window's depth as it was before the walk,
+ends with the depth the walk writes, and the window's depth target is
+given it before the walk is played again: each opaque draw's own depth is
+then there before it draws, its test (the game's are less or equal, or
+equal) passes where it is the nearest and fails where a nearer surface
+hides it, and the GPU's early depth test leaves the hidden pixels
+unshaded. The draws' states are as they were: their writes write what is
+there, and a draw the pre-pass did not draw (blended, or its twin not made
+yet) writes its own. The stencil is never copied: the window's is its own,
+the walk writes its marks again as it did. Where the window's depth is
+multisampled, transient, layered, of another format or size, or the walk
+is not played twice (the game walks the surfaces again, which need not be
+the same draws), the pre-pass's depth is cleared as before and nothing is
+handed on. HALO_WORLD_AO_DEPTH_UNSHARED=1 (for comparing) never hands it
+on. */
+static uint32_t prepass_prime_begin(void)
+{
+	static int unshared = -1;
+	struct stream_target *depth = target_get(stream.depth);
+
+	if (debug_switch("HALO_WORLD_AO_DEPTH_UNSHARED", &unshared) || !depth || !depth->depth || depth->multisampled || depth->layers > 1 || !depth->image ||
+		!prepass.depth || !xgpu_vulkan_image_copy_depth(depth->image, prepass.depth))
+		return 0;
+	return stream.depth;
+}
+
+static void prepass_prime_end(uint32_t replay)
+{
+	struct stream_target *depth = target_get(prepass.primed_depth);
+
+	if (replay && depth && depth->image && depth == target_get(stream.depth) &&
+		xgpu_vulkan_image_copy_depth(prepass.depth, depth->image))
+	{
+		depth->written++;
+		if (!prepass.primed_logged)
+		{
+			prepass.primed_logged = 1;
+			host_logf(HOST_LOG_INFO, "vulkan: display.ambient_occlusion \"world\": the surfaces drawn from the "
+				"pre-pass's depth");
+		}
+	}
+	prepass.primed_depth = 0;
+}
+
 static void stream_world_ao_prepass(void *context, const struct xgpu_stream_world_ao_prepass *record)
 {
 	struct stream_target *target = target_get(record->target);
@@ -4413,12 +4468,15 @@ static void stream_world_ao_prepass(void *context, const struct xgpu_stream_worl
 		prepass.width = target->width;
 		prepass.height = target->height;
 		prepass.active = 1;
+		/* (a walk played twice: the pre-pass begun from the window's depth,
+		its own handed to the surfaces' walk at the END) */
+		prepass.primed_depth = record->replay ? prepass_prime_begin() : 0;
 		xgpu_vulkan_set_target_views(prepass.inputs, prepass.depth, 0, 1);
 		whole[0][0] = whole[0][1] = 0;
 		whole[0][2] = (int32_t)target->width;
 		whole[0][3] = (int32_t)target->height;
 		xgpu_vulkan_clear((const int32_t (*)[4])whole, 1, XGPU_VULKAN_CLEAR_COLOR | XGPU_VULKAN_CLEAR_CHANNELS |
-			XGPU_VULKAN_CLEAR_DEPTH | XGPU_VULKAN_CLEAR_STENCIL, zero, 1.0f, 0);
+			(prepass.primed_depth ? 0 : XGPU_VULKAN_CLEAR_DEPTH) | XGPU_VULKAN_CLEAR_STENCIL, zero, 1.0f, 0);
 		return;
 	}
 	if (record->phase == XGPU_WORLD_AO_PREPASS_END && prepass.active)
@@ -4482,11 +4540,15 @@ static void stream_world_ao_prepass(void *context, const struct xgpu_stream_worl
 				xgpu_vulkan_world_ao_set_pixels(prepass.pixels);
 			}
 		}
+		/* (the surfaces' walk, played next, from the pre-pass's depth) */
+		if (prepass.primed_depth)
+			prepass_prime_end(record->replay);
 		xgpu_vulkan_pass_owner(NULL);
 		targets_bind();
 		return;
 	}
 	/* (_NONE: the surfaces read 1) */
+	prepass.primed_depth = 0;
 	if (prepass.active)
 	{
 		prepass.active = 0;
