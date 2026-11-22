@@ -297,6 +297,8 @@ static int consumed, checkpointed;
 static void xgpu_backend_consume(void) { consumed++; }
 /* (the settings a draw is journaled under alike: none here) */
 static void journal_settings_blind(unsigned long words[3]) { words[0] = words[1] = words[2] = 0; }
+/* (a played record's bitmaps read ahead, kept at a checkpoint: none here) */
+static void journal_prefetch_hold(void) {}
 static void checkpoint(void *const *textures)
 {
     assert(consumed == checkpointed + 1);
