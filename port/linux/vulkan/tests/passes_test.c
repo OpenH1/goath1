@@ -1287,7 +1287,9 @@ static void post_test(void)
 	assert(moved == &spare && post.spare == &target);
 	assert(post_sampled[0][0].imageView == target.sampled && post_sampled[2][0].imageView == target.sampled);
 	assert(post_attachments[2] == spare.attachments[0]);
+	assert(post_pipelines == 7 && post_masks[6] == 15);
 	post_reset();
+	post.edges = post.weights = post.marks = NULL;
 	assert(xgpu_vulkan_post_anti_alias(0, &spare, 0, whole, &moved));
 	assert(!strcmp(post_events, "BcD"));
 	assert(moved == &target && post.spare == &spare && post_sampled[0][0].imageView == spare.sampled);
