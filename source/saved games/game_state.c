@@ -1336,7 +1336,10 @@ static void game_state_coop_saved(
 	if (!size || !game_state_port_file_write(path, homes, size))
 		error(_error_silent, "co-op: the saved game's vehicle homes could not be written");
 	if (game_state_coop_file(path, COOP_SAVED_GAME_NAME))
+	{
 		saved_game_writer_copy(path);
+		error(_error_silent, "co-op: the checkpoint at tick %ld is the host's saved game too", game_time_get());
+	}
 }
 
 /* where the header is in the game state, and so in an image of it */
