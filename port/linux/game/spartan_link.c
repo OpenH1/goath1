@@ -2065,7 +2065,7 @@ static void spartan_link_draw_row(
 	real_rectangle2d const *bounds,
 	real scale)
 {
-	struct spartan_link_feed const *feed = &spartan_link.windows[local_player_index].feeds[index];
+	struct spartan_link_feed *feed = &spartan_link.windows[local_player_index].feeds[index];
 	struct player_datum *teammate = player_try_and_get(feed->player_index);
 	real pixel = 1.0f / (halo_screen_pixel_scale() > 0.0f ? halo_screen_pixel_scale() : 1.0f);
 	real_argb_color text_color;
