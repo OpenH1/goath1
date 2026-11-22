@@ -1408,7 +1408,12 @@ static void model_lighting(struct xgpu_text *text, BOOL point_lights, BOOL dynam
 /* the enhanced dynamic lights (xgpu.h): the block (struct
 xgpu_dynamic_lights_block, 6 KB: a buffer, past setFragmentBytes' 4) and
 the cells (a buffer of four words a cell, which Vulkan's integer 3D
-texture holds, in its order) */
+texture holds, in its order). The divides of each light, and the add's, are
+fast::divide (and the light's direction fast::rsqrt): the library compiles
+with safe maths, where each is an IEEE divide of about 25 instructions, and
+the structure's lightmap pass takes them for each light that reaches each
+pixel (the a30 ground in a fight, most of the screen at 3456x2234 on an M1
+Max: 0.2 ms of the GPU a frame). SPIR-V's OpFDiv is the driver's, as fast */
 static void dynamic_lights_functions(struct xgpu_text *text, struct xgpu_text *functions)
 {
 	xgpu_text_append(text,
@@ -1468,13 +1473,13 @@ static void dynamic_lights_functions(struct xgpu_text *text, struct xgpu_text *f
 		"\t\t\tfloat x2 = distance_squared * position.w * position.w;\n"
 		"\t\t\tif (x2 >= 1.0)\n"
 		"\t\t\t\tcontinue;\n"
-		"\t\t\tfloat3 l = to_light * rsqrt(max(distance_squared, 1.0e-8));\n"
+		"\t\t\tfloat3 l = to_light * fast::rsqrt(max(distance_squared, 1.0e-8));\n"
 		"\t\t\tfloat window = 1.0 - x2 * x2;\n"
 		"\t\t\tfloat core = max(lights.grid[2].y * position.w * position.w, %.4f);\n"
-		"\t\t\tfloat falloff = window * window / (1.0 + distance_squared * core);\n"
+		"\t\t\tfloat falloff = fast::divide(window * window, 1.0 + distance_squared * core);\n"
 		"\t\t\tfloat facing = environment ?\n"
 		"\t\t\t\tmax(dot(n, l), 0.0) * saturate(dot(surface_normal, l) * 4.0 + 0.5) :\n"
-		"\t\t\t\tsaturate((dot(n, l) + lights.grid[2].w) / (1.0 + lights.grid[2].w));\n"
+		"\t\t\t\tsaturate(fast::divide(dot(n, l) + lights.grid[2].w, 1.0 + lights.grid[2].w));\n"
 		"\t\t\tfloat4 cone = lights.cone[light];\n"
 		"\t\t\tfloat4 color = lights.color[light];\n"
 		"\t\t\tfloat spot = saturate(dot(l, -cone.xyz) * cone.w + color.w);\n"
@@ -1495,7 +1500,7 @@ static void dynamic_lights_functions(struct xgpu_text *text, struct xgpu_text *f
 		"\tlight += float3(max(max(light.r, max(light.g, light.b)) - 1.0, 0.0) * lights.grid[2].z);\n"
 		"\tfloat3 had = pow(saturate(base), float3(2.2));\n"
 		"\tfloat3 room = max(1.0 - had, float3(1.0e-3));\n"
-		"\treturn pow(had + room * (1.0 - exp(-light / room)), float3(1.0 / 2.2));\n"
+		"\treturn pow(had + room * (1.0 - exp(-fast::divide(light, room))), float3(1.0 / 2.2));\n"
 		"}\n"
 		/* (display.hdr: the same below white, and what its shoulder squeezes
 		under white rolled off toward the lights' white instead: xgpu_hdr.h's
@@ -1508,7 +1513,7 @@ static void dynamic_lights_functions(struct xgpu_text *text, struct xgpu_text *f
 		"\tfloat3 had = pow(saturate(base), float3(2.2));\n"
 		"\tfloat3 room = max(1.0 - had, float3(1.0e-3));\n"
 		"\tfloat3 past = max(had + light - 1.0, float3(0.0));\n"
-		"\treturn pow(had + room * (1.0 - exp(-light / room)) + " XGPU_HDR_LIGHTS_ROOM " * (1.0 - exp(-past / " XGPU_HDR_LIGHTS_ROOM ")),\n"
+		"\treturn pow(had + room * (1.0 - exp(-fast::divide(light, room))) + " XGPU_HDR_LIGHTS_ROOM " * (1.0 - exp(-fast::divide(past, float3(" XGPU_HDR_LIGHTS_ROOM ")))),\n"
 		"\t\tfloat3(1.0 / 2.2));\n"
 		"}\n",
 		XGPU_DYNAMIC_LIGHTS_GRID_X / 2, XGPU_DYNAMIC_LIGHTS_GRID_Y / 2, XGPU_DYNAMIC_LIGHTS_GRID_Z / 2,
@@ -1580,7 +1585,9 @@ static const char border_function[] =
 	"\treturn float4(1.0, 1.0, 1.0, saturate((distance - 0.5) * pixels + 0.5));\n"
 	"}\n";
 
-/* display.smooth_lightmaps: the lightmap by the cubic B-spline in four
+/* display.smooth_lightmaps: the lightmap by the cubic B-spline (its weights'
+divides fast::divide, as world_ao_upsample's; the divides by the size kept
+IEEE, as a texel's place is seen where the lightmap changes fast) in four
 bilinear lookups (xgpu_spirv.c's lightmap_cubic), each by the gradients of
 uv itself scaled by the LOD bias (Metal samplers have none; a gradient
 twice as long is a level coarser) */
@@ -1591,7 +1598,7 @@ static const char lightmap_cubic_function[] =
 	"\tfloat2 c = uv * size - 0.5, i = floor(c), f = c - i, r = 1.0 - f;\n"
 	"\tfloat2 w0 = r * r * r * (1.0 / 6.0), w1 = (3.0 * f * f * f - 6.0 * f * f + 4.0) * (1.0 / 6.0);\n"
 	"\tfloat2 w3 = f * f * f * (1.0 / 6.0), g0 = w0 + w1, g1 = 1.0 - g0;\n"
-	"\tfloat2 p0 = (i - 0.5 + w1 / g0) / size, p1 = (i + 1.5 + w3 / g1) / size;\n"
+	"\tfloat2 p0 = (i - 0.5 + fast::divide(w1, g0)) / size, p1 = (i + 1.5 + fast::divide(w3, g1)) / size;\n"
 	"\tfloat scale = exp2(lod_bias);\n"
 	"\tgradient2d g = gradient2d(dfdx(uv) * scale, dfdy(uv) * scale);\n"
 	"\treturn g0.y * (g0.x * t.sample(s, float2(p0.x, p0.y), g) + g1.x * t.sample(s, float2(p1.x, p0.y), g)) +\n"
@@ -1970,7 +1977,11 @@ texels (world_ao_shading.c's world_ao_upsample): at a quarter of the
 pixels (the block's parameters[1].w, 2), the four about it by their
 bilinear weights and their closeness (their distances' and normals' to its
 own), or where none is close the closest of the 4x4 about it; at each
-pixel (1), its own */
+pixel (1), its own. Its divides (four taps' two each, the facing's) are
+fast::divide, as SPIR-V's OpFDiv is a driver's: under the library's safe
+maths each was an IEEE divide of about 25 instructions, about 1 ms of the
+GPU a frame on a30's ground at 3456x2234 (M1 Max), the most of any part of
+its lightmap pass; the scale is 1 or 2, whose reciprocal is exact */
 static void world_ao_upsample(struct xgpu_text *text)
 {
 	xgpu_text_append(text,
@@ -1984,8 +1995,8 @@ static void world_ao_upsample(struct xgpu_text *text)
 		"\t\t\tfloat3 n = in.xWorldNormal.xyz * rsqrt(max(dot(in.xWorldNormal.xyz, in.xWorldNormal.xyz), 1.0e-24));\n"
 		"\t\t\tfloat3 ray = in.xWorldPosition - world_ao.grid[0].xyz;\n"
 		"\t\t\tfloat distance = length(ray);\n"
-		"\t\t\tfloat facing = max(abs(dot(n, ray)) / max(distance, 1.0e-12), %.6f);\n"
-		"\t\t\tfloat2 at = in.frag_position.xy / scale - 0.5, base = floor(at), f = at - base;\n"
+		"\t\t\tfloat facing = max(fast::divide(abs(dot(n, ray)), max(distance, 1.0e-12)), %.6f);\n"
+		"\t\t\tfloat2 at = in.frag_position.xy * (1.0 / scale) - 0.5, base = floor(at), f = at - base;\n"
 		"\t\t\tint2 last = int2(world_ao_pixels.get_width(), world_ao_pixels.get_height()) - 1;\n"
 		"\t\t\tfloat sum = 0.0, weights = 0.0;\n"
 		"\t\t\tfor (int j = 0; j < 2; j++)\n"
@@ -2030,12 +2041,12 @@ static void world_ao_closeness(struct xgpu_text *text)
 		"\t\treturn 0.0;\n"
 		"\tfloat z = 1.0 - abs(texel.z) - abs(texel.w), t = max(-z, 0.0);\n"
 		"\tfloat3 texel_n = normalize(float3(texel.zw + select(float2(t), float2(-t), texel.zw >= 0.0), z));\n"
-		"\tfloat relative = abs(texel.y / distance - 1.0) * facing * %.6f;\n"
+		"\tfloat relative = abs(fast::divide(texel.y, distance) - 1.0) * facing * %.6f;\n"
 		"\tfloat along = max(dot(n, texel_n), 0.0);\n"
 		"\talong *= along;\n"
 		"\talong *= along;\n"
 		"\talong *= along;\n"
-		"\treturn along / (1.0 + relative * relative);\n"
+		"\treturn fast::divide(along, 1.0 + relative * relative);\n"
 		"}\n", 1.0 / XGPU_WORLD_AO_UPSAMPLE_DEPTH);
 }
 

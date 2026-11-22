@@ -90,6 +90,11 @@ template <typename X, typename L, typename H> static inline float clamp(X x, L l
 }
 static inline float mix(float a, float b, float t) { return a + (b - a) * t; }
 static inline float rsqrt(float x) { return 1.0f / std::sqrt(x); }
+/* (Metal's fast::divide, a divide less exact than IEEE's: the CPU's own) */
+namespace fast
+{
+static inline float divide(float a, float b) { return a / b; }
+}
 using std::abs;
 using std::acos;
 using std::atan;
