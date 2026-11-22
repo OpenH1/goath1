@@ -1402,6 +1402,8 @@ static void stream_dynamic_lights_world(void *context, const struct xgpu_stream_
 	else if (made->game_nodes)
 		host_logf(HOST_LOG_INFO, "metal: the dynamic lights' world: %u nodes, %u deep (the game's %u, %u deep)",
 			made->nodes, made->depth, made->game_nodes, made->game_depth);
+	/* (its clusters' boxes in groups, which a light's test of them walks) */
+	xgpu_dynamic_lights_world_group(made);
 	if (!made->count)
 		return;
 	xgpu_metal_buffer_write(stream.lights_world, 0, made->texels, made->count * 16, 1);
