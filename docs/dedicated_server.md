@@ -303,10 +303,12 @@ these settings, which `sv_settings` and `GET /api/settings` list:
 `network.coop_friendly_fire`, `network.coop_player_collisions`,
 `network.coop_ally_friendly_fire`, `network.coop_team_wipe`,
 `network.shield_effects`, `network.fire_origins`, `network.vehicle_riding`,
-`network.allow_opence`, `network.pings` and
+`network.allow_opence`, `network.pings`,
 `network.allow_hit_sounds` (whether the players may hear their hit
 sounds, `audio.hit_sounds`: `false` forbids them, an OpenH1 game's
-record telling its OpenH1 clients, from the next lobby). Of them,
+record telling its OpenH1 clients, from the next lobby) and
+`network.allow_headshot_indicator` (whether they may see their headshot
+indicator, `display.headshot_indicator`, the same way). Of them,
 `server.status_file`, `server.auto_update` and `server.log_addresses` need
 the owner role: from the web's admin, `sv_set` of one of them (`POST
 /api/command`) answers `403 forbidden`, and `PUT /api/settings` leaves it

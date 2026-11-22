@@ -46,7 +46,8 @@ labels: sets the sniper's zoom labels (LABELS) in Cyborg Interface Gothic,
     each fitted to the map's (size, place, spacing and weight), into
     port/assets/hud/svg and their cells of layout.json.
 build: draws port/assets/hud/art and svg with layout.json into
-    port/assets/hud/*.png (committed; the builds embed them).
+    port/assets/hud/*.png (committed; the builds embed them), and the
+    reticles with a dot of their own (DOTLESS) again without it.
 check: compares each PNG, reduced to the tag's size, with the map's bitmap
     (only its sprites' cells, for a texture that stands for some sprites)
     and writes side-by-side images into --out.
@@ -122,6 +123,23 @@ REDRAWN = {
     ("sniper__hud_reticles_scope__0", (0, 0, 31, 24)),
     ("sniper__hud_reticles_scope__0", (0, 24, 43, 48)),
 }
+# the reticles with a dot of their own in their middle, each with a copy
+# without it (<name>__dotless.png) that the headshot indicator draws in its
+# place while it draws its own dot (port/linux/game/headshot_indicator.c), by
+# the Xbox cell of that middle sprite: the sniper rifle's
+DOTLESS = {
+    "sniper__hud_reticles_scope__0": (32, 0, 50, 18),
+}
+# the headshot indicator's reticles, each with a copy with its dot
+# (<name>__dot.png), drawn while the shot would be a headshot, by the Xbox cell
+# of the middle sprite: the pistol's, from its texture, and the sniper rifle's,
+# from its copy without its own dot (DOTLESS), so that both dots are the same
+DOTTED = {
+    "hud_reticles__0": ((66, 0, 94, 28), ""),
+    "sniper__hud_reticles_scope__0": ((32, 0, 50, 18), "__dotless"),
+}
+# the dot's diameter in Xbox texels, white like the sniper rifle's own
+DOT_DIAMETER = 1.5
 # how each redraw's texels are written, by its PC bitmap's format (as the
 # Xbox decodes that format: xbox_texture_decode.c, convert_texel): AY8 is its one
 # value in every channel (the HUD blends premultiplied), A8Y8 grey and alpha,
@@ -985,9 +1003,86 @@ def thresholds(arguments) -> None:
             print(f"{path.name}: rebuilt exact segment thresholds; artwork unchanged")
 
 
+def dotless(image: np.ndarray, cell: tuple, scale: int) -> np.ndarray:
+    """A reticle's texture without the dot in its middle sprite's cell (an
+    Xbox one, the texture scale times it): of the shapes there, whatever lies
+    within the largest (its ring), cleared."""
+    from scipy import ndimage
+
+    left, top, right, bottom = (value * scale for value in cell)
+    alpha = image[top:bottom, left:right, 3] > 0
+    shapes, count = ndimage.label(alpha, structure=np.ones((3, 3)))
+    if count < 2:
+        sys.exit(f"the reticle in {cell} has no dot inside its ring")
+    sizes = ndimage.sum(alpha, shapes, range(1, count + 1))
+    ring = shapes == 1 + int(np.argmax(sizes))
+    inside = ndimage.binary_fill_holes(ring) & ~ring
+    result = image.copy()
+    result[top:bottom, left:right][inside] = 0
+    return result
+
+
+def disc(diameter: float, x: float, y: float, height: int, width: int) -> np.ndarray:
+    """The coverage (0..255) of a disc of a diameter around (x, y), in pixels,
+    of each pixel of a height by width image, from 16 by 16 samples a pixel."""
+    samples = 16
+    offsets = (np.arange(samples) + 0.5) / samples
+    rows = (np.arange(height)[:, None] + offsets[None, :]).reshape(-1)
+    columns = (np.arange(width)[:, None] + offsets[None, :]).reshape(-1)
+    inside = (rows[:, None] - y) ** 2 + (columns[None, :] - x) ** 2 <= (diameter / 2) ** 2
+    coverage = inside.reshape(height, samples, width, samples).mean(axis=(1, 3))
+    return np.rint(coverage * 255).astype(np.uint8)
+
+
+def dotted(image: np.ndarray, cell: tuple, scale: int, diameter: float) -> np.ndarray:
+    """A reticle's texture with a white dot of a diameter (in texels) in its
+    middle sprite's cell: at the middle of the largest of the shapes there (its
+    ring), where there must be nothing else."""
+    from scipy import ndimage
+
+    left, top, right, bottom = (value * scale for value in cell)
+    alpha = image[top:bottom, left:right, 3] > 0
+    shapes, count = ndimage.label(alpha, structure=np.ones((3, 3)))
+    if not count:
+        sys.exit(f"the reticle in {cell} is empty")
+    sizes = ndimage.sum(alpha, shapes, range(1, count + 1))
+    rows, columns = np.nonzero(shapes == 1 + int(np.argmax(sizes)))
+    y = (rows.min() + rows.max() + 1) / 2
+    x = (columns.min() + columns.max() + 1) / 2
+    coverage = disc(diameter * scale, x, y, bottom - top, right - left)
+    result = image.copy()
+    sprite = result[top:bottom, left:right]
+    if sprite[..., 3][coverage > 0].any():
+        sys.exit(f"the reticle in {cell} has something where its dot would be")
+    sprite[..., :3][coverage > 0] = 255
+    sprite[..., 3] = np.maximum(sprite[..., 3], coverage)
+    return result
+
+
+def build_dotted(name: str, diameter: float = DOT_DIAMETER) -> None:
+    """<name>__dot.png (DOTTED), from <name>.png or its copy without its dot."""
+    entries = {entry["name"]: entry for entry in json.loads(LAYOUT.read_text())["assets"]}
+    cell, source = DOTTED[name]
+    image = np.asarray(Image.open(ASSETS / f"{name}{source}.png").convert("RGBA"))
+    Image.fromarray(dotted(image, cell, entries[name]["scale"], diameter), "RGBA").save(
+        ASSETS / f"{name}__dot.png", optimize=True)
+    print(f"{name}__dot.png")
+
+
+def build_dotless(name: str) -> None:
+    """<name>__dotless.png, from <name>.png (DOTLESS)."""
+    entry = next(entry for entry in json.loads(LAYOUT.read_text())["assets"] if entry["name"] == name)
+    image = np.asarray(Image.open(ASSETS / f"{name}.png").convert("RGBA"))
+    Image.fromarray(dotless(image, DOTLESS[name], entry["scale"]), "RGBA").save(
+        ASSETS / f"{name}__dotless.png", optimize=True)
+    print(f"{name}__dotless.png")
+
+
 def build(arguments) -> None:
     description = json.loads(LAYOUT.read_text())
     names = {f"{entry['name']}.png" for entry in description["assets"]}
+    names |= {f"{name}__dotless.png" for name in DOTLESS}
+    names |= {f"{name}__dot.png" for name in DOTTED}
     # (and the Custom Edition sheets tools/ce_hud_assets.py makes from these,
     # and the MCC maps' own, mcc_layout.json's)
     for listing in ("ce_layout.json", "mcc_layout.json"):
@@ -1005,6 +1100,12 @@ def build(arguments) -> None:
         image = build_asset(entry, renders)
         Image.fromarray(image, "RGBA").save(ASSETS / f"{entry['name']}.png", optimize=True)
         print(f"{entry['name']}.png: {image.shape[1]}x{image.shape[0]}")
+        if entry["name"] in DOTLESS:
+            build_dotless(entry["name"])
+    # (after them all: a dot is another reticle's)
+    for name in DOTTED:
+        if not arguments.names or name in arguments.names:
+            build_dotted(name)
 
 
 # ---------- checking

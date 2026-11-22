@@ -31,6 +31,8 @@ NEGATIVE_CONTROLS = {
                               ""), "record"),
     "record-keeps-hit-sounds": (("\tSET_FLAG(legacy_game.standard_flags, _network_game_no_hit_sounds_bit, FALSE);\n",
                                  ""), "record"),
+    "record-keeps-headshot-indicator": (("\tSET_FLAG(legacy_game.standard_flags, "
+                                         "_network_game_no_headshot_indicator_bit, FALSE);\n", ""), "record"),
     "openh1-messages-to-opence": (("return type < FIRST_OPENH1_DISTRIBUTED_MESSAGE || "
                                    "!network_standard_machine_is_opence(machine_index);", "return TRUE;"), "messages"),
     "opence-players-unknown": (("opence_players[absolute_index] = TRUE;", ";"), "players"),

@@ -2262,6 +2262,17 @@ A party's leader joins a game first and its members follow it in
   as on its clients (`network_standard_spartan_link_allowed`). Co-op
   ignores it. A machine of protocol 35 would show its feeds anyway, so the
   version is raised.
+- From protocol version 37 the host can forbid its players' headshot
+  indicator (`network.allow_headshot_indicator` false), as it forbids hit
+  sounds: bit 7 of `standard_flags`
+  (`_network_game_no_headshot_indicator_bit`), read in the lobby, so a
+  change during a game is the next game's
+  (`network_standard_headshot_indicator_allowed`, `headshot_indicator.c`).
+  The indicator itself sends nothing: a client draws it from the shot's ray,
+  the target and the map's tags, which it already has. An OpenCE machine's
+  copy of the record leaves the bit clear, and a Legacy game's clients, who
+  hear nothing of the host's, may show it. A machine of protocol 36 would
+  show it anyway, so the version is raised.
 - The listing's stamp says the host holds room (its fifth byte, 1). A
   Legacy host, and an older OpenH1 one (which drops 128 as a kind it does not
   know), hold nothing: the browser says there is no room guarantee and the

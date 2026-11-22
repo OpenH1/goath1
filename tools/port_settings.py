@@ -1648,6 +1648,16 @@ PAGES = {
             ("RETICLE LOWERED BY", "display.lowered_reticle_amount", LOWERED_RETICLE_AMOUNTS,
              "How far below the middle the lowered reticle sits, in percent of the screen's height. 10 is about "
              "Halo 2's and 3's.|Click the number (or press A) to type any from 0 to 30.", None),
+            ("HEADSHOT INDICATOR", "display.headshot_indicator", ON_OFF,
+             "A red dot in the pistol's and the sniper rifle's reticle when the shot would hit the head, as "
+             "later Halo games show it. Only the stock weapons on the stock maps, with the High-Res HUD on (Interface "
+             "› HUD).|Aiming is not changed: the dot only shows what the shot already does. Only your screen "
+             "changes. A host may forbid it in its games.", None),
+            # (the host's rule for its games: network_standard.c's
+            # network_standard_headshot_indicator_allowed, as hit sounds')
+            ("ALLOW HEADSHOT DOT", "network.allow_headshot_indicator", YES_NO,
+             "In the games you host, whether the players may see their headshot indicator. A Legacy game's "
+             "players cannot be told.", None),
             ("PASSENGER VIEW", "display.passenger_third_person", [("BEHIND", "true"), ("SEAT", "false")],
              "Riding in a Warthog or a Scorpion in the campaign and co-op: the view from behind the vehicle, or "
              "from your seat. Behind, the weapon cannot zoom.", None),
@@ -2267,7 +2277,8 @@ SETTINGS_SEARCH_WORDS = {
     "lod": ["model_detail"],
     "interpolation": ["interpolation"],
     "hz": ["refresh_rate", "sim_rate"], "tickrate": ["sim_rate"],
-    "crosshair": ["lowered_reticle", "lowered_reticle_amount"],
+    "crosshair": ["lowered_reticle", "lowered_reticle_amount", "headshot_indicator"],
+    "headshot": ["headshot_indicator"],
     "viewmodel": ["viewmodel_visible", "viewmodel_fov", "weapon_position"],
     "gun": ["viewmodel_visible", "viewmodel_fov", "weapon_position"],
     "aim": ["aim_style", "modern_aim_acceleration_angle", "modern_aim_acceleration_threshold",
@@ -2860,6 +2871,9 @@ SETTINGS_ROW_ENABLED = {
     # (the subtitles: MCC's install found, its pack's; the language while
     # they are on: subtitles.c's subtitles_available)
     "subtitles": "mcc_subtitles", "subtitles_language": "mcc_subtitles+subtitles=true",
+    # (the headshot indicator's dot is in the high-res reticles: Interface's
+    # HIGH-RES HUD, menu_functions.c's high_res_hud_on)
+    "headshot_indicator": "high_res_hud_on",
 }
 
 

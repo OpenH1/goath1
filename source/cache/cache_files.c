@@ -601,6 +601,12 @@ void scenario_tags_unload(
 
 		hud_hires_tags_unloaded();
 	}
+	/* port: (and the headshot indicator its weapons: port/linux/game/headshot_indicator.c) */
+	{
+		extern void headshot_indicator_tags_unloaded(void);
+
+		headshot_indicator_tags_unloaded();
+	}
 	sound_cache_close();
 	texture_cache_close();
 	/* port: the mods' tags go, after the sound and texture caches that held
@@ -1378,6 +1384,13 @@ long scenario_tags_load(
 
 				mods_tags_loaded(stripped_scenario_name);
 			}
+			/* port: the stock weapons the headshot indicator is drawn for, the
+			map's tags as they are played (port/linux/game/headshot_indicator.c) */
+			{
+				extern void headshot_indicator_tags_loaded(void);
+
+				headshot_indicator_tags_loaded();
+			}
 			result = cache_file_globals.tag_header->scenario_tag_index;
 		}
 
@@ -1499,6 +1512,14 @@ long scenario_tags_load(
 				extern void mods_tags_loaded(char const *map_name);
 
 				mods_tags_loaded(stripped_scenario_name);
+			}
+			/* port: the stock weapons the headshot indicator is drawn for, the
+			map's tags as they are played, the mods' too
+			(port/linux/game/headshot_indicator.c) */
+			{
+				extern void headshot_indicator_tags_loaded(void);
+
+				headshot_indicator_tags_loaded();
 			}
 			result = cache_file_globals.tag_header->scenario_tag_index;
 		}

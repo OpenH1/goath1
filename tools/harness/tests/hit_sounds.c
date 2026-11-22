@@ -124,6 +124,7 @@ static boolean hit_sounds_setting = TRUE;
 /* (the second split screen player's own audio.hit_sounds) */
 static boolean hit_sounds_setting_2 = TRUE;
 static boolean allow_setting = TRUE;
+static boolean allow_headshot_setting = TRUE;
 static unsigned long changes = 1;
 /* player_settings.h's: a reader's slots, a local player's own setting */
 #define PLAYER_SETTINGS_SLOTS 5
@@ -139,6 +140,8 @@ static int config_boolean(char const *name)
 {
 	if (!strcmp(name, "network.allow_hit_sounds"))
 		return allow_setting;
+	if (!strcmp(name, "network.allow_headshot_indicator"))
+		return allow_headshot_setting;
 	if (!strcmp(name, "game.auto_pickup") || !strcmp(name, "game.enhanced_animations") ||
 		!strcmp(name, "game.spartan_link"))
 		return TRUE;
@@ -166,6 +169,8 @@ static struct
 	boolean hosting_hold_to_pick_up;
 	boolean hosting_classic_turning;
 	boolean hosting_no_hit_sounds;
+	/* (the headshot indicator's host rule, made as hit sounds' is) */
+	boolean hosting_no_headshot_indicator;
 	boolean hosting_no_direct_camera;
 	boolean hosting_vehicle_hijack;
 	/* (the Spartan link's host rule, stamped with the rest) */
@@ -177,6 +182,7 @@ static short game_connection(void) { return connection; }
 static struct network_game *network_game_get_game(void) { return &record; }
 static long network_standard_server_rate(boolean in_lobby) { return network_standard_globals.hosting ? 60 : 0; }
 static boolean network_standard_hit_sounds_allowed(void);
+static boolean network_standard_headshot_indicator_allowed(void);
 /* (no Pro 2v2 game: test_pro_rules.py's) */
 static boolean network_standard_pro_hosting(void) { return FALSE; }
 
@@ -354,6 +360,47 @@ int main(int argc, char **argv)
 		CHECK(hit(LOCAL, REMOTE, 0.2f, 0.f, 0) == 0, "a beep on a client of a host that forbids them");
 		network_standard_globals.joined = FALSE;
 		CHECK(hit(LOCAL, REMOTE, 0.2f, 0.f, 0) == 1, "no beep in a Legacy game");
+		return 0;
+	}
+	/* the headshot indicator's rule (headshot_indicator.c's), the hit sounds' way: a host's own, read in the
+	lobby; its record's bit for an OpenH1 client, never for an OpenCE machine nor from a Legacy host; a Legacy
+	game's client and a game of this machine's own may */
+	CASE("headshot-rule")
+	{
+		struct network_game const *copy;
+
+		CHECK(network_standard_headshot_indicator_allowed(), "forbidden in a game of this machine's own");
+		connection = _game_connection_network_server;
+		network_standard_globals.hosting = TRUE;
+		network_standard_stamp_game(&record, TRUE);
+		CHECK(network_standard_headshot_indicator_allowed(), "forbidden on a host that allows it");
+		CHECK(!TEST_FLAG(record.standard_flags, _network_game_no_headshot_indicator_bit), "the record forbids it");
+		allow_headshot_setting = FALSE;
+		changes++;
+		network_standard_stamp_game(&record, FALSE);
+		CHECK(network_standard_headshot_indicator_allowed(), "the host's rule changed during the game");
+		network_standard_stamp_game(&record, TRUE);
+		CHECK(TEST_FLAG(record.standard_flags, _network_game_no_headshot_indicator_bit),
+			"the record does not forbid it");
+		CHECK(!TEST_FLAG(record.standard_flags, _network_game_no_hit_sounds_bit), "the hit sounds' bit set");
+		CHECK(!network_standard_headshot_indicator_allowed(), "allowed on a host that forbids it");
+		copy = network_standard_game_for_machine(&record, TRUE);
+		CHECK(!TEST_FLAG(copy->standard_flags, _network_game_no_headshot_indicator_bit),
+			"an OpenCE machine's record forbids it");
+		connection = _game_connection_network_client;
+		network_standard_globals.hosting = FALSE;
+		network_standard_globals.joined = TRUE;
+		allow_headshot_setting = TRUE;
+		CHECK(!network_standard_headshot_indicator_allowed(), "a client of a host that forbids it took its own");
+		SET_FLAG(record.standard_flags, _network_game_no_headshot_indicator_bit, FALSE);
+		allow_headshot_setting = FALSE;
+		CHECK(network_standard_headshot_indicator_allowed(), "a client of a host that allows it took its own");
+		SET_FLAG(record.standard_flags, _network_game_no_headshot_indicator_bit, TRUE);
+		network_standard_globals.joined = FALSE;
+		CHECK(network_standard_headshot_indicator_allowed(), "forbidden in a Legacy game");
+		network_standard_stamp_game(&record, TRUE);
+		CHECK(!TEST_FLAG(record.standard_flags, _network_game_no_headshot_indicator_bit),
+			"a Legacy host's record forbids it");
 		return 0;
 	}
 	fprintf(stderr, "no case %s\n", case_name);

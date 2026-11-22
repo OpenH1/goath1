@@ -82,6 +82,7 @@ symbols in this file:
 #include "custom_edition_hud.h" /* port: CE warning placement and reticle classification */
 #include "view_fov.h" /* port: port/linux/game/view_fov.c (the zoomed reticle's scale) */
 #include "mcc_hud_draw.h" /* port: port/linux/game/mcc_hud_draw.c */
+#include "headshot_indicator.h" /* port: port/linux/game/headshot_indicator.c */
 
 #include <math.h>
 #include <string.h>
@@ -1345,8 +1346,14 @@ static void crosshairs_draw(
 												&placement);
 											hud_draw_bitmap(
 												/* port: drawn from the high-res HUD's texture of its
-												sprite where there is one */
-												sequence ? hud_hires_sprite_bitmap(bitmap, item->sequence_index) : bitmap,
+												sprite where there is one; the stock pistol's and
+												sniper rifle's middle item from the headshot
+												indicator's (headshot_indicator.c) */
+												sequence ?
+													headshot_indicator_item_bitmap(player->local_player_index, weapon_index,
+														definition_indices[definition_index], crosshair_index, item_index,
+														hud_hires_sprite_bitmap(bitmap, item->sequence_index)) :
+													bitmap,
 												&absolute_placement,
 												&placement,
 												sequence ?

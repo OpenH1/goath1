@@ -822,7 +822,7 @@ static char const *const settable_settings[] =
 	"network.public_address", "network.coop_friendly_fire", "network.coop_player_collisions",
 	"network.vehicle_riding", "server.vehicle_riding_override_gametype",
 	"network.coop_ally_friendly_fire", "network.coop_team_wipe", "network.shield_effects", "network.fire_origins",
-	"network.allow_opence", "network.pings", "network.allow_hit_sounds",
+	"network.allow_opence", "network.pings", "network.allow_hit_sounds", "network.allow_headshot_indicator",
 };
 
 /* those of them the owner's console alone changes (the standard input, the

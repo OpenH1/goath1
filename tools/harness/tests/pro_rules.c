@@ -32,6 +32,8 @@ static struct
 	boolean hosting_spartan_link;
 	/* (hit sounds: hit_sounds.c's host rule) */
 	boolean hosting_no_hit_sounds;
+	/* (the headshot indicator's host rule, as hit sounds') */
+	boolean hosting_no_headshot_indicator;
 	boolean mixed;
 	boolean mixed_since;
 	boolean joined;

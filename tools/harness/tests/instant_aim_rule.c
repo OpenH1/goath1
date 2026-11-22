@@ -31,6 +31,8 @@ static struct
 	boolean hosting_vehicle_hijack;
 	/* (hit sounds: hit_sounds.c's host rule) */
 	boolean hosting_no_hit_sounds;
+	/* (the headshot indicator's host rule, as hit sounds') */
+	boolean hosting_no_headshot_indicator;
 	/* (the Spartan link's host rule, stamped with the rest) */
 	boolean hosting_spartan_link;
 	boolean mixed;
