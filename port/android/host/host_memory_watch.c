@@ -459,13 +459,15 @@ uint32_t host_memory_watch_generation(uint32_t address, uint32_t size)
 }
 
 /* memory_watch_prepare_write: unprotects the pages the host itself is about
-to write into. Nothing under hashing: the write shows in the next hash and
-there is no protection to fault on. */
+to write into. Under hashing there is no protection to fault on, but a
+stable page is hashed only every WATCH_HASH_STABLE_FRAMES frames: the
+announce makes its pages hashed again from the next query, so the write
+shows in the next hash instead of up to that many frames late. */
 void host_memory_watch_prepare_write(uint32_t address, uint32_t size)
 {
 	uint64_t start = address, first, last, page;
 
-	if (!watch_active || watch_hashing || !size)
+	if (!watch_active || !size)
 		return;
 	if (start + size <= HALO_GUEST_WINDOW_BASE || start >= (uint64_t)HALO_GUEST_WINDOW_BASE + HALO_GUEST_WINDOW_SIZE)
 		return;
@@ -475,6 +477,11 @@ void host_memory_watch_prepare_write(uint32_t address, uint32_t size)
 	last = watch_page((uint64_t)address + size - 1);
 	if (last >= watch_page_count())
 		last = watch_page_count() - 1;
+	if (watch_hashing)
+	{
+		watch_hash_prepare_write(hashes(), (uint32_t)first, (uint32_t)last);
+		return;
+	}
 	pages_lock();
 	/* (each run of protected pages of one protection let go of in one call,
 	as host_memory_watch_protect protects them) */
