@@ -28,7 +28,7 @@ BUILD = 7
 ASSET = "OpenH1-Linux-ARM64.zip" if platform.machine() in ("aarch64", "arm64") else "OpenH1-Linux.zip"
 ZLIB = ROOT / "port/third_party/zlib"
 POSIX_FUNCTIONS = ["update_executable_path", "update_replace_file", "update_make_executable", "update_delete_file",
-                   "update_make_directory", "update_launch", "update_restart"]
+                   "update_make_directory", "update_launch", "update_prepare_exec", "update_restart"]
 GAMESCOPE = ("GAMESCOPE_WAYLAND_DISPLAY", "XDG_CURRENT_DESKTOP", "SteamDeck", "SteamGamepadUI")
 
 # the new version's bin/openh1: it notes the process it runs in, its parent and its files
