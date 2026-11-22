@@ -42,6 +42,10 @@ void texture_cache_preparation_begin(void);
 (its tag and index) and its texture again, loaded */
 int texture_cache_port_identify(void const *texture, unsigned long *tag_index, unsigned long *bitmap_index);
 void *texture_cache_port_load(unsigned long tag_index, unsigned long bitmap_index);
+/* port: the bitmap's read begun and not waited for (a prepared record's
+read ahead: port/linux/src/d3d8_device.c); the bytes begun, 0 if the cache
+holds it already (touched) or none was begun */
+unsigned long texture_cache_port_prefetch(unsigned long tag_index, unsigned long bitmap_index);
 void texture_cache_return_memory(
 	void);
 void texture_cache_flush(

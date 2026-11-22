@@ -300,9 +300,11 @@ int main(int argc, char **argv)
 		CHECK(!test_vasserts, "an assertion failed");
 	}
 
-	/* the next checkpoint waits for the last one's write before it takes
-	the game state's image: the last one is written whole (the game stopped
-	in the middle of the next write shows what it left) */
+	/* the next checkpoint is taken while the last one's is written (into the
+	other image), and the one after it waits for the last one's write
+	before it takes the game state's image into that one's: the last one
+	is written whole (the game stopped in the middle of the next write
+	shows what it left) */
 	CASE("next-waits")
 	{
 		pid_t child;
@@ -317,6 +319,8 @@ int main(int argc, char **argv)
 			test_state_fill(1);
 			game_state_write_to_file();
 			test_state_fill(2);
+			game_state_write_to_file();
+			test_state_fill(3);
 			game_state_write_to_file();
 			game_state_write_wait();
 			_exit(4);
