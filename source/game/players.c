@@ -2565,6 +2565,11 @@ static long player_spawnable_beside(
 	struct player_datum const *player);
 static boolean player_place_beside_teammate(
 	long player_index);
+static short players_coop_bsp_switch_trigger(
+	long unit_index);
+static boolean players_coop_bring_vehicle(
+	long unit_index,
+	real_point3d const *destination);
 static long players_coop_respawn_unit(
 	void);
 static boolean players_coop_respawn_beside(
@@ -3122,6 +3127,161 @@ static boolean players_coop_teleport_stacked(
 	return result;
 }
 
+/* port: network co-op: the vehicle the unit rides if it is the players' own
+(a player drives it, or no one does), else NONE: on foot, or riding an AI's
+vehicle (Silent Cartographer's Pelican), which goes where its AI takes it */
+static long players_coop_own_vehicle(
+	long unit_index)
+{
+	long vehicle_index = object_get_ultimate_parent(unit_index);
+	long driver_index;
+
+	if (vehicle_index == unit_index || !object_try_and_get_and_verify_type(vehicle_index, _object_mask_vehicle))
+		return NONE;
+	driver_index = unit_get(vehicle_index)->unit.driver_object_index;
+
+	return driver_index == NONE || unit_get(driver_index)->unit.player_index != NONE ? vehicle_index : NONE;
+}
+
+/* port: whether the vehicle has room with its middle at `center`: inside the
+loaded BSP, the level clear of that middle for most of its radius in each
+level direction and above, reached from `from` without a wall between, and
+no biped or other vehicle in its way (its own riders aside) */
+static boolean players_coop_vehicle_fits(
+	long vehicle_index,
+	real_point3d const *from,
+	real_point3d const *center,
+	real radius)
+{
+	static real const directions[][2] =
+	{
+		{ 1.f, 0.f }, { 0.70710677f, 0.70710677f }, { 0.f, 1.f }, { -0.70710677f, 0.70710677f },
+		{ -1.f, 0.f }, { -0.70710677f, -0.70710677f }, { 0.f, -1.f }, { 0.70710677f, -0.70710677f }
+	};
+	unsigned long const flags = FLAG(_collision_test_structure_bit) |
+		FLAG(_collision_test_front_facing_surfaces_bit) | FLAG(_collision_test_ignore_invisible_surfaces_bit);
+	struct collision_result collision;
+	struct location location;
+	real_vector3d way;
+	long object_indices[16];
+	short object_count;
+	short index;
+
+	scenario_location_from_point(&location, center);
+	if (location.cluster_index == NONE)
+		return FALSE;
+	vector_from_points3d(from, center, &way);
+	if (collision_test_vector(flags, from, &way, vehicle_index, &collision))
+		return FALSE;
+	for (index = 0; index < (short)NUMBEROF(directions); index++)
+	{
+		way.i = 0.75f * radius * directions[index][0];
+		way.j = 0.75f * radius * directions[index][1];
+		way.k = 0.f;
+		if (collision_test_vector(flags, center, &way, vehicle_index, &collision))
+			return FALSE;
+	}
+	way.i = 0.f;
+	way.j = 0.f;
+	way.k = radius;
+	if (collision_test_vector(flags, center, &way, vehicle_index, &collision))
+		return FALSE;
+	object_count = objects_in_sphere(0, _object_mask_biped | _object_mask_vehicle, &location, center, 2.f * radius,
+		object_indices, NUMBEROF(object_indices));
+	for (index = 0; index < object_count; index++)
+	{
+		struct object_datum *object = object_get(object_indices[index]);
+		real reach = object->object.type == _object_type_vehicle ?
+			radius + object->object.bounding_sphere_radius : radius + 0.5f;
+
+		if (object_get_ultimate_parent(object_indices[index]) == vehicle_index)
+			continue;
+		if (distance3d(center, &object->object.bounding_sphere_center) < reach)
+			return FALSE;
+	}
+
+	return TRUE;
+}
+
+/* port: network co-op host: a player who must be moved while in their own
+vehicle (players_coop_own_vehicle) is moved in it. Driver, passenger and
+gunner alike: the vehicle goes, with everyone in it, onto the ground at
+`destination` or in rings around it, wherever it has room. Taken out of it
+instead (player_teleport's unit_exit_seat_end), the player would be left on
+foot far from their vehicle, a Scorpion that the level gives only once.
+TRUE if the vehicle is where it must be (also when a rider moved it in
+already this tick); FALSE leaves it where it was, for the caller to move
+the player on foot as before. */
+static boolean players_coop_bring_vehicle(
+	long unit_index,
+	real_point3d const *destination)
+{
+	static real const ring_radius[] = { 0.f, 1.f, 1.75f, 2.5f, 3.25f };
+	static real const ring_direction[][2] =
+	{
+		{ 1.f, 0.f }, { 0.70710677f, 0.70710677f }, { 0.f, 1.f }, { -0.70710677f, 0.70710677f },
+		{ -1.f, 0.f }, { -0.70710677f, -0.70710677f }, { 0.f, -1.f }, { 0.70710677f, -0.70710677f }
+	};
+	long vehicle_index;
+	struct object_datum *vehicle;
+	real_vector3d center_offset;
+	real radius;
+	short radius_index;
+	short direction_index;
+
+	if (!network_coop_active() || game_connection() != _game_connection_network_server || !destination)
+		return FALSE;
+	vehicle_index = players_coop_own_vehicle(unit_index);
+	if (vehicle_index == NONE)
+		return FALSE;
+	vehicle = object_get(vehicle_index);
+	if (vehicle->object.location.cluster_index != NONE && players_coop_bsp_switch_trigger(vehicle_index) == NONE)
+		return TRUE;
+	radius = MAX(vehicle->object.bounding_sphere_radius, 1.f);
+	vector_from_points3d(&vehicle->object.position, &vehicle->object.bounding_sphere_center, &center_offset);
+	for (radius_index = 0; radius_index < (short)NUMBEROF(ring_radius); radius_index++)
+	{
+		for (direction_index = 0; direction_index < (short)NUMBEROF(ring_direction); direction_index++)
+		{
+			unsigned long const ground_flags = FLAG(_collision_test_structure_bit) |
+				FLAG(_collision_test_front_facing_surfaces_bit) | FLAG(_collision_test_ignore_invisible_surfaces_bit);
+			struct collision_result collision;
+			real_point3d probe;
+			real_vector3d down = { 0.f, 0.f, -(2.f * radius + 6.f) };
+			real_point3d center;
+			real_point3d origin;
+			real_point3d original_origin = vehicle->object.position;
+
+			if (radius_index == 0 && direction_index > 0)
+				break;
+			probe.x = destination->x + ring_radius[radius_index] * radius * ring_direction[direction_index][0];
+			probe.y = destination->y + ring_radius[radius_index] * radius * ring_direction[direction_index][1];
+			probe.z = destination->z + radius;
+			if (!collision_test_vector(ground_flags, &probe, &down, vehicle_index, &collision))
+				continue;
+			/* (its middle half its radius over the ground: it settles onto
+			its wheels or treads from there) */
+			center = collision.point;
+			center.z += 0.5f * radius;
+			if (!players_coop_vehicle_fits(vehicle_index, destination, &center, radius))
+				continue;
+			origin.x = center.x - center_offset.i;
+			origin.y = center.y - center_offset.j;
+			origin.z = MAX(center.z - center_offset.k, collision.point.z + 0.1f);
+			object_set_position(vehicle_index, &origin, NULL, NULL);
+			vehicle->object.translational_velocity = *global_zero_vector3d;
+			vehicle->object.angular_velocity = *global_zero_vector3d;
+			/* (not onto a loading zone, which would switch the BSP straight
+			back) */
+			if (vehicle->object.location.cluster_index != NONE && players_coop_bsp_switch_trigger(vehicle_index) == NONE)
+				return TRUE;
+			object_set_position(vehicle_index, &original_origin, NULL, NULL);
+		}
+	}
+
+	return FALSE;
+}
+
 /* Co-op host, each tick: a player stranded for COOP_STRANDED_TICKS is moved
 beside a grounded teammate inside the BSP, else any teammate inside it, else
 to the last checkpoint. Skipped while scripts hold the controls, since
@@ -3155,7 +3315,16 @@ static void players_coop_rescue_stranded(
 		teammate_index = players_coop_unit_where(players_coop_unit_grounded);
 		if (teammate_index == NONE)
 			teammate_index = players_coop_unit_where(players_coop_unit_in_structure);
-		if (teammate_index != NONE)
+		/* (port: in their own vehicle, the vehicle comes too where it has
+		room: they are not left on foot without it) */
+		if (players_coop_own_vehicle(player->unit_index) != NONE &&
+			players_coop_bring_vehicle(player->unit_index, teammate_index != NONE ?
+				&object_get(teammate_index)->object.bounding_sphere_center :
+				players_checkpoint_position(iterator.datum_index)))
+		{
+			rescued = TRUE;
+		}
+		else if (teammate_index != NONE)
 		{
 			rescued = player_teleport(iterator.datum_index, teammate_index,
 				&object_get(teammate_index)->object.bounding_sphere_center);
@@ -3753,8 +3922,11 @@ static void player_teleport_on_bsp_switch(
 			if (biped->object.parent_object_index != NONE)
 			{
 				source_biped = biped_get(source_unit_index);
+				/* port: network co-op: in their own vehicle, it comes along
+				where it has room (players_coop_bring_vehicle) */
 				if (biped->object.parent_object_index !=
-					source_biped->object.parent_object_index)
+					source_biped->object.parent_object_index &&
+					!players_coop_bring_vehicle(unit_index, position))
 				{
 					unit_exit_seat_end(unit_index);
 				}
