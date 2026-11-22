@@ -446,6 +446,18 @@ static unsigned long long cached_map_files_fit_budget(
 /* ---------- globals */
 
 static struct cache_file_runtime_globals cache_file_globals;
+/* port: the requests that are reads of a Halo Custom Edition map's, which
+the I/O thread serves as it does an Xbox map's (cache_file_read): their tag
+and offset in the map's combined space (port/linux/game/custom_edition_cache.c) */
+static struct
+{
+	long tag_index;
+	long offset;
+	boolean custom_edition;
+} cache_request_custom_edition[MAXIMUM_SIMULTANEOUS_CACHE_REQUESTS];
+/* port: how many of them are not yet complete, to the last store
+(cache_file_custom_edition_reads_wait) */
+static long cache_custom_edition_reads_queued;
 /* port: (cache_files_open_cache_files, cache_files_unpack_update) */
 static boolean cached_map_file_adopt(
 	short map_file_index);
@@ -1084,10 +1096,38 @@ short cache_file_read(
 			TRUE : _cache_file_read_failed;
 		return request_index;
 	}
-	/* port: the reads of a Halo Custom Edition map are served in place, at
-	once; the request stays free (port/linux/game/custom_edition_cache.c) */
+	/* port: the reads of a Halo Custom Edition map that do not block (the
+	texture and sound caches' misses as the game plays) are the I/O
+	thread's, as an Xbox map's are: read, and a texture's pixels rebuilt,
+	there (custom_edition_cache_read_on_io_thread), so that the frame that
+	asks does not wait for them. One that blocks, and every one with the
+	frames' time fixed (frames_clock, so that two runs of the same input
+	draw the same), is served in place, at once, its request left free
+	(port/linux/game/custom_edition_cache.c). */
 	if (custom_edition_cache_tags_loaded())
 	{
+		custom_edition_cache_read_failures_say();
+		if (!blocking && !frames_clock(NULL) && cache_file_globals.thread && size >= 0)
+		{
+			cache_request_custom_edition[request_index].tag_index = tag_index;
+			cache_request_custom_edition[request_index].offset = offset;
+			cache_request_custom_edition[request_index].custom_edition = TRUE;
+			*completion_flag_reference = FALSE;
+			memset(&request->overlapped, 0, sizeof(OVERLAPPED));
+			request->overlapped.hEvent = (HANDLE)completion_flag_reference;
+			request->overlapped.Offset = (unsigned long)offset;
+			request->size = size;
+			request->buffer = buffer;
+			request->blocking = FALSE;
+			request->running = FALSE;
+			__atomic_fetch_add(&cache_custom_edition_reads_queued, 1, __ATOMIC_RELAXED);
+			/* (the request's fields before the thread sees it pending) */
+			__atomic_thread_fence(__ATOMIC_RELEASE);
+			request->pending = TRUE;
+			cache_file_windows_thread_wake();
+
+			return request_index;
+		}
 		custom_edition_cache_read(tag_index, offset, size, buffer);
 		*completion_flag_reference = TRUE;
 
@@ -1139,6 +1179,18 @@ short cache_file_read(
 	cache_file_windows_thread_wake();
 
 	return request_index;
+}
+
+/* port: (port/linux/game/custom_edition_cache.h) */
+void cache_file_custom_edition_reads_wait(
+	void)
+{
+	while (__atomic_load_n(&cache_custom_edition_reads_queued, __ATOMIC_ACQUIRE) > 0)
+	{
+		SwitchToThread();
+	}
+
+	return;
 }
 
 short cache_files_precache_map_status(
@@ -1404,6 +1456,28 @@ static void cache_file_windows_thread_proc(
 			if (!best_request)
 			{
 				break;
+			}
+
+			/* port: a read of a Halo Custom Edition map's (cache_file_read),
+			served here, then complete, as the completion routine completes
+			an Xbox map's */
+			request_index = (short)(best_request - cache_file_globals.requests);
+			if (cache_request_custom_edition[request_index].custom_edition)
+			{
+				__atomic_thread_fence(__ATOMIC_ACQUIRE);
+				best_request->running = TRUE;
+				custom_edition_cache_read_on_io_thread(
+					cache_request_custom_edition[request_index].tag_index,
+					cache_request_custom_edition[request_index].offset,
+					best_request->size,
+					best_request->buffer);
+				__atomic_store_n(&cache_request_custom_edition[request_index].custom_edition, FALSE, __ATOMIC_RELAXED);
+				/* (the pixels before the flag that says they are there) */
+				__atomic_store_n((volatile boolean *)best_request->overlapped.hEvent, TRUE, __ATOMIC_RELEASE);
+				best_request->running = FALSE;
+				__atomic_store_n(&best_request->pending, FALSE, __ATOMIC_RELEASE);
+				__atomic_fetch_sub(&cache_custom_edition_reads_queued, 1, __ATOMIC_RELEASE);
+				continue;
 			}
 
 			file = cached_map_file_get_handle(cache_file_globals.open_map_file_index);

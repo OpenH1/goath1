@@ -207,6 +207,21 @@ void custom_edition_cache_read(
 	long offset,
 	long size,
 	void *buffer);
+/* The same read, on the cache files' I/O thread (cache_file_read's of the
+texture and sound caches that do not block), which says nothing: its
+failures are said on the game's thread, by the next read there or
+custom_edition_cache_read_failures_say. */
+void custom_edition_cache_read_on_io_thread(
+	long tag_index,
+	long offset,
+	long size,
+	void *buffer);
+void custom_edition_cache_read_failures_say(
+	void);
+/* (cache_files_windows.c) every read of a Custom Edition map's that the
+I/O thread was given, done */
+void cache_file_custom_edition_reads_wait(
+	void);
 
 /* ---------- prototypes/CUSTOM_EDITION_BITMAPS.C */
 
@@ -397,10 +412,25 @@ void custom_edition_models_dispose(
 /* Called by scenario_structure_bsp_load and scenario_structure_bsp_unload
 for the structure BSPs of a Custom Edition map: gives its materials
 compressed vertices and buffers, or releases them. The load returns FALSE
-after logging why when that fails. */
+after logging why when that fails. A BSP's compressed vertices are kept
+(its tag's `tag_index`) once made, so that a switch back to it gives them
+buffers again without compressing anything. */
 boolean custom_edition_structure_bsp_load(
-	struct structure_bsp *structure_bsp);
+	struct structure_bsp *structure_bsp,
+	long tag_index);
 void custom_edition_structure_bsp_unload(
+	void);
+/* Called by scenario_structure_bsps_read_ahead as each BSP of a Custom
+Edition map is read where it loads, under the loading screen: its
+compressed vertices made and kept for its load (above), the same as it
+makes them, and its materials told where they are (for its culling's
+buckets, which point into them: structure_culling.c). FALSE when they are
+not kept (no room), and are made as it loads, as before. */
+boolean custom_edition_structure_bsp_prepare(
+	struct structure_bsp *structure_bsp,
+	long tag_index);
+/* the kept vertices let go of, with the map */
+void custom_edition_structure_bsps_dispose(
 	void);
 
 #endif

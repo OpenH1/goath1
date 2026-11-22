@@ -14,7 +14,10 @@ structures (types.inc).
 
 #include "harness.h"
 #include <math.h>
+#include <pthread.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <unistd.h>
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
