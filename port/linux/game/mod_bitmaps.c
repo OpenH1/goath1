@@ -1235,7 +1235,7 @@ static boolean map_page_read(
 	cache_file_read(bitmap->tag_index, bitmap->pixels_offset, (long)size, buffer, &read_complete, TRUE);
 	while (!read_complete)
 	{
-		SwitchToThread();
+		cache_file_read_wait();
 	}
 
 	return read_complete == TRUE;

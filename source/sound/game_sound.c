@@ -228,6 +228,17 @@ static void scripted_looping_sound_stop_internal(
 struct game_sound_globals *game_sound_globals;
 struct data_array *game_looping_sound_data;
 unsigned long combined_pas[BIT_VECTOR_SIZE_IN_LONGS(MAXIMUM_CLUSTERS_PER_STRUCTURE)];
+/* port: what combined_pas was last built from (the bsp and each local
+player's camera's cluster). It is rebuilt only when one changes: a walk of
+every cluster per player, every frame, for the same bits. */
+static struct
+{
+	boolean valid;
+	struct structure_bsp *structure_bsp;
+	short structure_bsp_index;
+	long cluster_count;
+	short cluster_indices[MAXIMUM_LOCAL_PLAYERS];
+} combined_pas_cache;
 
 /* port: the speakers' mouths, moved in the ticks (game_sound_port_update_mouths):
 each unit's speech sound, its permutation as the game picked it and the tick
@@ -407,6 +418,8 @@ void game_sound_initialize_for_new_map(
 	/* port: the speakers' (their seed from the game's) */
 	game_sound_mouths_clear();
 	game_sound_speech_seed = get_random_seed() ^ 0x73706565;
+	/* port: a new map's bsp (compute_combined_pas) */
+	combined_pas_cache.valid = FALSE;
 
 	return;
 }
@@ -1343,7 +1356,32 @@ static void compute_combined_pas(
 	void)
 {
 	struct structure_bsp *structure_bsp = global_structure_bsp_get();
+	short structure_bsp_index = global_structure_bsp_index_get();
+	short cluster_indices[MAXIMUM_LOCAL_PLAYERS];
 	short local_player_index;
+
+	for (local_player_index = 0;
+		local_player_index < MAXIMUM_LOCAL_PLAYERS;
+		local_player_index++)
+	{
+		cluster_indices[local_player_index] =
+			local_player_get_player_index(local_player_index) != NONE ?
+				observer_get_camera(local_player_index)->location.cluster_index :
+				NONE;
+	}
+	if (combined_pas_cache.valid &&
+		combined_pas_cache.structure_bsp == structure_bsp &&
+		combined_pas_cache.structure_bsp_index == structure_bsp_index &&
+		combined_pas_cache.cluster_count == (long)structure_bsp->clusters.count &&
+		!memcmp(combined_pas_cache.cluster_indices, cluster_indices, sizeof(cluster_indices)))
+	{
+		return;
+	}
+	combined_pas_cache.valid = TRUE;
+	combined_pas_cache.structure_bsp = structure_bsp;
+	combined_pas_cache.structure_bsp_index = structure_bsp_index;
+	combined_pas_cache.cluster_count = (long)structure_bsp->clusters.count;
+	memcpy(combined_pas_cache.cluster_indices, cluster_indices, sizeof(cluster_indices));
 
 	csmemset(
 		combined_pas,

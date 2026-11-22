@@ -1425,7 +1425,7 @@ void *_texture_cache_bitmap_get_hardware_format(
 					{
 						sound_idle();
 					}
-					SwitchToThread();
+					cache_file_read_wait();
 				}
 			}
 			while (!hardware_format && block);

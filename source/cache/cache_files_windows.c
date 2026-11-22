@@ -301,6 +301,10 @@ struct cache_file_runtime_globals
 	struct cache_file_request *requests;
 };
 
+/* port: signaled at each read's end (cache_file_read_io_completion_routine),
+for cache_file_read_wait */
+static HANDLE cache_file_read_done_event = NULL;
+
 typedef char verify_cache_file_header_size[
 	sizeof(struct cache_file_header) == 0x800 ? 1 : -1];
 typedef char verify_cached_map_file_size[
@@ -1416,6 +1420,8 @@ static void CALLBACK cache_file_read_io_completion_routine(
 			_cache_file_read_failed;
 	finished_request->pending = FALSE;
 	finished_request->running = FALSE;
+	if (cache_file_read_done_event)
+		SetEvent(cache_file_read_done_event);
 
 	return;
 }
@@ -1504,6 +1510,7 @@ static void cache_file_windows_thread_create(
 	void)
 {
 	cache_file_globals.sleep_event = CreateEventA(NULL, FALSE, FALSE, NULL);
+	cache_file_read_done_event = CreateEventA(NULL, FALSE, FALSE, NULL);
 	match_assert(
 		"c:\\halo\\SOURCE\\cache\\cache_files_windows.c",
 		1253,
@@ -1798,6 +1805,20 @@ static void cached_map_issue_async_write(
 		offset,
 		completion_flag,
 		completion_routine);
+
+	return;
+}
+
+void cache_file_read_wait(
+	void)
+{
+	/* (a short wait: a read's end can wake another waiter, and the loops
+	keep the sound going between) */
+	if (!cache_file_read_done_event ||
+		WaitForSingleObject(cache_file_read_done_event, 2) == WAIT_FAILED)
+	{
+		SwitchToThread();
+	}
 
 	return;
 }

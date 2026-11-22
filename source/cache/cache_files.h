@@ -232,6 +232,11 @@ short cache_file_read(
 	void *buffer,
 	boolean *completion_flag_reference,
 	boolean blocking);
+/* port: waits a little for a read of cache_file_read to finish (woken by
+any read's end, at most a few milliseconds), for a loop that waits on a
+read's flag without spinning a core */
+void cache_file_read_wait(
+	void);
 
 unsigned long tag_get_group_tag(long tag_index);
 /* port: whether size bytes at address lie in the tag cache the loaded map's

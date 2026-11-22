@@ -1281,6 +1281,7 @@ static void hud_draw_player_name(
 	struct player_datum const *player = player_get(player_index);
 	long font_index = hud_get_font_index();
 	real_point3d head_position;
+	real_point3d eye_position;
 	real_point3d view_position;
 	real_point2d screen_position;
 	wchar_t name[NUMBEROF(player->name) + 1];
@@ -1297,16 +1298,17 @@ static void hud_draw_player_name(
 	distance = distance3d(&render.camera.position, &head_position);
 	if (!ally && distance >= enemy_range)
 		return;
-	if (!ally &&
-		(unit_get(player->unit_index)->unit.active_camouflage > 0.5f ||
-		!hud_player_name_in_sight(player->unit_index, &head_position)))
-	{
+	if (!ally && unit_get(player->unit_index)->unit.active_camouflage > 0.5f)
 		return;
-	}
+	eye_position = head_position;
 	/* (where the game draws a teammate's triangle) */
 	head_position.z += 0.30000001f;
 	matrix4x3_transform_point(&render.frustum.world_to_view, &head_position, &view_position);
 	if (!render_camera_view_to_screen(&render.camera, &render.frustum, &view_position, &screen_position))
+		return;
+	/* port: the line-of-sight ray only for a name that's on screen (the
+	ray is aimed at the head itself, below the name) */
+	if (!ally && !hud_player_name_in_sight(player->unit_index, &eye_position))
 		return;
 	/* (where the point is, not the nearest whole unit, that the name keeps
 	to the player: hud_draw_mark_begin) */
