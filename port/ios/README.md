@@ -246,7 +246,7 @@ and these of iOS's own:
 
 | Setting | Meaning |
 | --- | --- |
-| `display.render_scale` | The fraction of the screen's pixels the game draws, each way, from 0.25 to 1.0: the game's frames and the presentation's drawables are that size, and the display scales them up. 0.67 draws less than half the pixels. The default, 0, is the device's: 0.67 on an iPhone whose screen has 3 pixels to the point (it keeps the 120 Hz frame there, where all of them took 8 to 10 ms of GPU a frame on an iPhone 15 Pro Max and ran at 60 Hz), 1.0 on an iPad or a 2x iPhone. Read at start (`HALO_RENDER_SCALE`). |
+| `display.render_scale` | The fraction of the screen's pixels the game draws, each way, from 0.25 to 1.0: the game's frames and the presentation's drawables are that size, and the display scales them up. 0.67 draws less than half the pixels. The default, 0, is the device's. While MetalFX's temporal scaler upscales (`display.temporal_aa = "metalfx"`, the default where the GPU has it), only the 3D view is drawn at the scale and the HUD and menus at the screen's pixels: 0.5 on an iPhone of 3 pixels to the point, 0.67 on another iPhone or an iPad. Without it: 0.67 on an iPhone whose screen has 3 pixels to the point (it keeps the 120 Hz frame there, where all of them took 8 to 10 ms of GPU a frame on an iPhone 15 Pro Max and ran at 60 Hz), 0.8 on a 2x iPhone, 1.0 on an iPad. Read at start (`HALO_RENDER_SCALE`). |
 
 The host logs the device's thermal state at the start and as it changes
 (`thermal state: nominal`, `fair`, `serious`, `critical`): a hot phone

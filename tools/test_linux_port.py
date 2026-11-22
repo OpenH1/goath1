@@ -665,6 +665,47 @@ def test_graphics_preset_chooses_the_animations(config_check_mac, monkeypatch):
     assert run("get", "game.enhanced_animations") == "true"
 
 
+METALFX_DEFAULT = ('\tif (!strcmp(setting->name, "display.temporal_aa") && host_metal_metalfx_temporal())\n'
+                   '\t\treturn "\\"metalfx\\"";\n')
+
+
+def metalfx_defaults(tmp_path, monkeypatch, fault=None):
+    """display.temporal_aa's and display.render_scale's defaults on a Mac
+    whose GPU has MetalFX's temporal scaler, one without it, and Linux; and
+    the player's own value kept; the first that differs, or None"""
+    monkeypatch.setenv("CONFIG_CHECK_METALFX", "1")
+    for name in ("HALO_TEMPORAL_AA", "HALO_RENDER_SCALE"):
+        monkeypatch.delenv(name, raising=False)
+    mac = config_check_build(tmp_path / "metalfx", ["-DHALO_MACOS=1", "-DHALO_GUEST=1"], fault)
+    if mac("get", "display.temporal_aa") != "metalfx" or '\n# temporal_aa = "metalfx"\n' not in mac.config.read_text():
+        return "metalfx by default"
+    # (0: d3d8_device.c's 2/3 while MetalFX upscales, else all the pixels)
+    if float(mac("get", "display.render_scale")) != 0.0:
+        return "the render scale's 0"
+    mac("write", "display.temporal_aa", "off")
+    if mac("get", "display.temporal_aa") != "off":
+        return "the player's off kept"
+    monkeypatch.delenv("CONFIG_CHECK_METALFX")
+    older = config_check_build(tmp_path / "older", ["-DHALO_MACOS=1", "-DHALO_GUEST=1"], fault)
+    if older("get", "display.temporal_aa") != "off":
+        return "off without the temporal scaler"
+    linux = config_check_build(tmp_path / "linux", ["-DHALO_VULKAN=1", "-DHALO_GUEST=1"], fault)
+    if linux("get", "display.temporal_aa") != "off" or float(linux("get", "display.render_scale")) != 1.0:
+        return "Linux's as before"
+    return None
+
+
+def test_metalfx_default_on_apple(tmp_path, monkeypatch):
+    """Apple MetalFX by default where the GPU has its temporal scaler, the
+    render scale's default then the lower one; off elsewhere"""
+    assert metalfx_defaults(tmp_path, monkeypatch) is None
+
+
+def test_metalfx_default_on_apple_negative_control(tmp_path, monkeypatch):
+    # (the default left "off" on every Mac)
+    assert metalfx_defaults(tmp_path, monkeypatch, (METALFX_DEFAULT, "")) == "metalfx by default"
+
+
 def test_vsync_default_by_build(tmp_path, monkeypatch, config_check_mac):
     """display.vsync: off on the Linux builds, Windows and the Mac; on under
     gamescope (the Steam Deck's Game Mode) where the player has not set it,

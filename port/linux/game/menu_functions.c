@@ -467,7 +467,10 @@ spinner, a setting named "display.render_resolution" (tools/port_settings.py):
 "original", display.resolution_scaling's Xbox 640x480, or the factor that
 "native" draws at: below 1 display.render_scale's (0.25 to 1), else
 display.supersampling's (1, the screen's pixels, to 2); written as all three
-(render_resolution_write), the other factor 1 */
+(render_resolution_write), the other factor 1. Where Metal has MetalFX
+(its own row, AUTO first: tools/port_settings.py's render_resolution_metalfx)
+"0" too, display.render_scale's 0, the Mac's default: 2/3 while MetalFX
+upscales, else the screen's pixels (d3d8_device.c's render_scale_configured) */
 
 #define RENDER_RESOLUTION_SETTING "display.render_resolution"
 
@@ -485,14 +488,20 @@ static boolean render_resolution_text(char *text, unsigned int size, boolean def
 		snprintf(text, size, "%s", "original");
 		return TRUE;
 	}
-	if (!default_value)
 	{
 		double below;
 
-		if (config_text("display.render_scale", text, size) && text_is_number(text, &below) && below > 0.0 &&
-			below < 1.0)
+		if ((default_value ? config_default("display.render_scale", text, size) :
+			config_text("display.render_scale", text, size)) && text_is_number(text, &below))
 		{
-			return TRUE;
+			if (below > 0.0 && below < 1.0)
+				return TRUE;
+			/* (AUTO, where its row is) */
+			if (below == 0.0 && halo_temporal_metalfx_drawn())
+			{
+				snprintf(text, size, "%s", "0");
+				return TRUE;
+			}
 		}
 	}
 	return default_value ? config_default("display.supersampling", text, size) != 0 :

@@ -299,7 +299,8 @@ technique or, off, stretched into the display's targets (on Vulkan sharply,
 as xgpu_vulkan.c's present_sharp scales: halo_screen_view_end): a steadier
 frame rate on a weak graphics card, a handheld or a 4K display. The HUD and
 menus are drawn at the display's pixels whatever it is. 1 (or 0, unset or
-not a number) draws the display's pixels. It multiplies
+not a number) draws the display's pixels; a Mac's 0 (its default) is
+RENDER_SCALE_METALFX while MetalFX upscales. It multiplies
 display.supersampling's factor (Settings' RENDER
 RESOLUTION sets one or the other: menu_functions.c). Android and iOS draw
 it in their hosts instead (a smaller swapchain or drawable), except where
@@ -309,6 +310,13 @@ frames (halo_screen_commit). display.dynamic_resolution lowers it while the
 GPU cannot keep to the frame rate (render_scale_dynamic: dynamic_resolution.h). */
 
 #define RENDER_SCALE_LEAST 0.25f
+/* display.render_scale's 0 on a Mac (its default) while MetalFX's temporal
+scaler upscales the 3D view: 2/3 each way, Apple's "quality" ratio (1.5
+times the pixels each way, under half of them drawn), which MetalFX rebuilds
+at the display's pixels from the jittered frames before it: at 3456x2234
+the view is drawn at 2304x1489, the HUD and menus at the display's. Without
+MetalFX (off, or a GPU without it) 0 is 1, all the display's pixels */
+#define RENDER_SCALE_METALFX (2.0f / 3.0f)
 
 #ifdef SUPERSAMPLING
 /* display.dynamic_resolution's scale (dynamic_resolution_update), at most
@@ -339,6 +347,24 @@ static float render_scale_configured(void)
 				platform_log("render scale: %g", factor);
 		}
 	}
+#ifdef HALO_MACOS
+	/* (0, the Mac's default: the lower scale while MetalFX upscales, as it
+	comes and goes with display.temporal_aa) */
+	if (setting == 0.0f)
+	{
+		static int metalfx = -1;
+		int upscaled = motion_vectors_technique() == 3 && temporal_upscaling();
+
+		if (upscaled != metalfx)
+		{
+			metalfx = upscaled;
+			if (upscaled)
+				platform_log("render scale: %.2f (the default while MetalFX upscales)", RENDER_SCALE_METALFX);
+		}
+		if (upscaled)
+			return RENDER_SCALE_METALFX;
+	}
+#endif
 	return factor;
 #elif defined(HALO_ANDROID) || defined(HALO_IOS)
 	/* (a phone's host draws the display's pixels where display.temporal_aa
