@@ -151,13 +151,16 @@ static HANDLE game_state_open_persistent_storage(
 
 static struct xbox_game_state_globals_prefix xbox_game_state_globals = { 0 };
 
-/* port: the checkpoint's image, the part of the game state in use
+/* port: the checkpoints' images, the part of the game state in use
 (game_state_image_take), which the writer's thread writes to the file
-(saved_game_writer.c); kept for the next, and the revert's read */
+(saved_game_writer.c): two, taken in turn (last, the one taken last), so
+that a checkpoint is taken while the one before it is still written; kept
+for the next, and the revert's read (the first) */
 static struct
 {
-	void *image;
-	long size;
+	void *images[2];
+	long sizes[2];
+	long last;
 } game_state_file_image = { 0 };
 
 /* ---------- public code */
@@ -301,25 +304,28 @@ boolean game_state_write_wait(
 	return !error;
 }
 
-/* port: room for an image of the size (the checkpoint's, kept), or NULL */
+/* port: room for an image of the size in the buffer (the checkpoint's,
+kept), or NULL; the writer holds it no longer (saved_game_writer_release) */
 static void *game_state_file_image_reserve(
+	long index,
 	long size)
 {
-	if (game_state_file_image.size != size)
+	if (game_state_file_image.sizes[index] != size)
 	{
-		if (game_state_file_image.image)
-			free(game_state_file_image.image);
-		game_state_file_image.image = malloc(size);
-		game_state_file_image.size = game_state_file_image.image ? size : 0;
+		if (game_state_file_image.images[index])
+			free(game_state_file_image.images[index]);
+		game_state_file_image.images[index] = malloc(size);
+		game_state_file_image.sizes[index] = game_state_file_image.images[index] ? size : 0;
 	}
 
-	return game_state_file_image.image;
+	return game_state_file_image.images[index];
 }
 
 boolean game_state_write_to_file(
 	void)
 {
 	boolean result = FALSE;
+	long index;
 	long size;
 	void *image;
 
@@ -334,12 +340,17 @@ boolean game_state_write_to_file(
 
 	/* port: the part of the game state in use copied, and written to the
 	file on the writer's thread (saved_game_writer.c), not here in the
-	middle of a frame; the copy is free once the last write is done */
-	game_state_write_wait();
+	middle of a frame. The copy is taken into the buffer not taken last:
+	the write before this one's may go on from the other. This buffer's
+	own write (two checkpoints before) is waited for, if it is not done:
+	the writes are made in turn, each image whole */
+	index = game_state_file_image.last ^ 1;
+	saved_game_writer_release(game_state_file_image.images[index]);
 	size = game_state_image_size();
-	image = game_state_file_image_reserve(size);
+	image = game_state_file_image_reserve(index, size);
 	if (image)
 	{
+		game_state_file_image.last = index;
 		game_state_image_take(image);
 		saved_game_writer_begin("z:\\savegame.bin", image, size);
 		xbox_game_state_globals.file_valid_for_read = TRUE;
@@ -390,7 +401,7 @@ boolean game_state_read_from_file(
 	{
 		size = GetFileSize(file, NULL);
 		if (size == (unsigned long)game_state_image_size())
-			image = game_state_file_image_reserve(size);
+			image = game_state_file_image_reserve(0, size);
 		else if (size == GAME_STATE_FILE_SIZE)
 			image = malloc(size);
 	}
@@ -409,7 +420,7 @@ boolean game_state_read_from_file(
 			FALSE,
 			csprintf(temporary, "couldn't read saved game file (#%d)", GetLastError()));
 	}
-	if (image && image != game_state_file_image.image)
+	if (image && image != game_state_file_image.images[0])
 		free(image);
 	if (file != INVALID_HANDLE_VALUE)
 		CloseHandle(file);

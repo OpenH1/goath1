@@ -14,11 +14,13 @@
     python tools/ci_build.py notes                 (the release notes' network versions, below)
 
 Builds are portable (any x86-64 processor; any ARMv8.0 one for
-linux_arm64 and android), so they run on other computers. Debug builds skip link-time and profile-guided optimisation,
-which only make the build slower; release builds use both, as a local
-release build does (profile-guided optimisation needs clang 22 or later,
-and is skipped with an older one; the guests' compiler is the pinned LLVM
-22 that configure.py downloads, tools/guest_toolchain.py). A profile build is a debug build with
+linux_arm64 and android), so they run on other computers. Debug builds skip link-time and profile-guided
+optimisation, which only make the build slower; release builds use both, as
+a local release build does (link-time optimisation for the Windows and
+Android hosts only, build_common.lto_flags; profile-guided optimisation
+needs clang 22 or later, and a release build with an older one fails; the
+guests' compiler is the pinned LLVM 22 that configure.py downloads,
+tools/guest_toolchain.py). A profile build is a debug build with
 configure.py --profile, so that the profiling build is built too. CI_COMPILER_LAUNCHER (ccache, say) is
 passed on as --compiler-launcher, CI_GUEST_LLVM_CACHE as --guest-llvm-cache, and CI_GUEST_ASM_CACHE as
 --guest-asm-cache. A release's build gets its number (CI_BUILD_NUMBER, as

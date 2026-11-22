@@ -489,7 +489,31 @@ struct platform_thread
 	BOOL closed;
 	BOOL finished;
 	pthread_t thread;
+	/* SetThreadPriority's: the priority asked for (taken as the thread
+	begins: thread_main), and whether it began */
+	int priority;
+	BOOL started;
 };
+
+/* (the runtime's dispatcher's: world_sdf.c's) */
+long __guest_syscall(long long number, long long a, long long b, long long c, long long d, long long e, long long f);
+
+/* SetThreadPriority's on the host: a priority below normal (the Win32
+THREAD_PRIORITY_BELOW_NORMAL -1, LOWEST -2, IDLE -15) lowers the calling
+thread, as world_sdf.c's bake lowers its own: setpriority(PRIO_PROCESS, 0,
+nice), which the guest's C library has not, as the runtime's dispatcher
+takes it (port/android/include/halo_guest_syscall.h's GUEST_SYS_setpriority,
+140), each host lowering the calling thread (Linux: its nice value; macOS:
+its quality of service; Windows: its priority). Only the thread asked to be
+lowered is: a thread's own priority is the only one the hosts set, so
+another thread's is taken as it begins (thread_main), and one asked of a
+thread already running is passed over. Normal or above changes nothing: an
+unprivileged process cannot raise a nice value again on Linux. */
+static void thread_priority_lower_self(int priority)
+{
+	if (priority < 0)
+		(void)__guest_syscall(140, 0, 0, priority <= -15 ? 19 : priority <= -2 ? 10 : 5, 0, 0, 0);
+}
 
 static void thread_release(struct platform_handle *handle)
 {
@@ -520,6 +544,9 @@ static void *thread_main(void *context)
 	pthread_mutex_lock(&handle->lock);
 	while (thread->suspended)
 		pthread_cond_wait(&handle->condition, &handle->lock);
+	/* (a priority asked for before it began: SetThreadPriority) */
+	thread->started = TRUE;
+	thread_priority_lower_self(thread->priority);
 	pthread_mutex_unlock(&handle->lock);
 
 	exit_code = thread->start(thread->parameter);
@@ -606,10 +633,28 @@ DWORD WINAPI ResumeThread(HANDLE object)
 
 BOOL WINAPI SetThreadPriority(HANDLE object, int priority)
 {
-	/* Linux does not let unprivileged processes raise thread priority;
-	the Xbox scheduling hints are not needed for correctness */
-	(void)priority;
-	return object == GetCurrentThread() || platform_handle_get(object, _platform_handle_thread) != NULL;
+	struct platform_handle *handle;
+	struct platform_thread *thread;
+
+	/* (the calling thread's: lowered at once) */
+	if (object == GetCurrentThread())
+	{
+		thread_priority_lower_self(priority);
+		return TRUE;
+	}
+	handle = platform_handle_get(object, _platform_handle_thread);
+	if (!handle)
+		return FALSE;
+	thread = handle->data;
+	pthread_mutex_lock(&handle->lock);
+	/* (one not begun takes it as it begins: thread_main; a thread of ours
+	asking for its own, by its handle, at once) */
+	if (!thread->started)
+		thread->priority = priority;
+	else if (pthread_equal(thread->thread, pthread_self()))
+		thread_priority_lower_self(priority);
+	pthread_mutex_unlock(&handle->lock);
+	return TRUE;
 }
 
 BOOL WINAPI GetExitCodeThread(HANDLE object, LPDWORD exit_code)

@@ -907,9 +907,10 @@ void structure_culling_dispose(void)
 
 /* the bsp let go of keeps its buckets (not when it is loaded again: they
 are built again); the one loaded takes its own back, if it had them, the
-same bsp where it was: TRUE. (Not a Custom Edition
-map's: its bsps' vertices, which the buckets point into, are made again
-each time one loads: custom_edition_geometry.c) */
+same bsp where it was, its vertices where they were: TRUE. (A Custom
+Edition map's bsps' vertices, which the buckets point into, are kept where
+they were made, custom_edition_geometry.c; one made again elsewhere has its
+buckets built again: structure_culling_vertices_match) */
 static void structure_culling_job_wait(short structure_bsp_index);
 
 /* the kept buckets' materials point at the bsp's vertices where they are
@@ -943,7 +944,7 @@ static boolean structure_culling_switch(struct structure_bsp *structure, short s
 {
 	struct structure_culling_data *kept;
 
-	if (structure_culling.allocation && !custom_edition_cache_tags_loaded() &&
+	if (structure_culling.allocation &&
 		structure_culling.structure_bsp_index != structure_bsp_index &&
 		(unsigned short)structure_culling.structure_bsp_index < STRUCTURE_CULLING_KEPT_BSPS &&
 		!structure_culling_kept[structure_culling.structure_bsp_index].allocation)
@@ -955,7 +956,7 @@ static boolean structure_culling_switch(struct structure_bsp *structure, short s
 		free(structure_culling.allocation);
 	}
 	memset(&structure_culling, 0, sizeof(structure_culling));
-	if (!structure || custom_edition_cache_tags_loaded() ||
+	if (!structure ||
 		(unsigned short)structure_bsp_index >= STRUCTURE_CULLING_KEPT_BSPS)
 	{
 		return FALSE;

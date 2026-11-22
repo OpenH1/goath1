@@ -246,6 +246,19 @@ static void *prepared_load(unsigned long tag_index, unsigned long bitmap_index)
 	return texture_cache_port_load(tag_index, bitmap_index);
 }
 
+static unsigned long prepared_prefetch(unsigned long tag_index, unsigned long bitmap_index)
+{
+	if ((tag_index & 0xffff0000UL) == PREPARED_MODELS_TAG)
+	{
+		long found = menu_models_tag_at((long)(tag_index & 0xffffUL));
+
+		if (found == NONE)
+			return 0;
+		tag_index = (unsigned long)found;
+	}
+	return texture_cache_port_prefetch(tag_index, bitmap_index);
+}
+
 /* the tags a record may name by their indices (prepared_identify): the
 table's, but the menus' models' after them */
 static long prepared_stable_tags(void)
@@ -264,6 +277,7 @@ static struct halo_gpu_journal_bitmaps const prepared_bitmaps =
 	prepared_load,
 	prepared_panini,
 	prepared_keep,
+	prepared_prefetch,
 };
 
 static boolean prepared_enabled(void)

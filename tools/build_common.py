@@ -61,8 +61,27 @@ def compile_launcher(sln: Any) -> str:
     return f"{launcher} " if launcher else ""
 
 
-# The optimisation level of every unit, and of link-time optimisation.
+# The optimisation level of every unit (and the linkers' own default for
+# link-time optimisation, lto_flags).
 OPTIMISATION = "-O2"
+
+
+def lto_flags(sln: Any) -> List[str]:
+    """ThinLTO's flag (configure.py --lto), for both the compiles and the link
+    of a host whose compiler and linker are one LLVM's: the Windows host
+    (clang and lld-link) and the Android host (the NDK's clang and ld.lld).
+    On by default in release builds only; the floating-point flags are the
+    units' own and stay in their bitcode (-ffp-contract=off, no fast-math),
+    so the results do not change. Not the guest images: the pinned ld.lld
+    takes x32 bitcode for 64-bit ELF and refuses to link it, and the
+    arm64_32 guests' objects are assembled from converted Mach-O assembly
+    (tools/android_asm_convert.py). Not the Linux hosts either: they are
+    built and linked by the system's compiler and linker, which may be
+    another LLVM's or none's."""
+    mode = getattr(sln, "port_lto", "auto") or "auto"
+    if mode == "auto":
+        mode = "thin" if getattr(sln, "port_release", False) else "off"
+    return ["-flto=thin"] if mode == "thin" else []
 
 # What no unit of our own code (port/, source/, tools/) may hold, on every
 # platform: a function that can end without its value, a call to a function
@@ -390,8 +409,12 @@ def pgo_profile(sln: Any, others: Sequence[Path], cc: str) -> Optional[Path]:
         return None
     major = clang_major(cc)
     if major is not None and major < PROFILE_LLVM_MAJOR:
-        print(f"{cc} is clang {major}; the profiles in {PGO_DIR} need clang {PROFILE_LLVM_MAJOR}: "
-              "building without profile-guided optimisation", file=sys.stderr)
+        message = f"{cc} is clang {major}; the profiles in {PGO_DIR} need clang {PROFILE_LLVM_MAJOR}"
+        # (a release is never built without the profile by accident: CI's
+        # guests always have the pinned LLVM, tools/guest_toolchain.py)
+        if getattr(sln, "port_release", False):
+            raise RuntimeError(f"{message}: a release build needs it (or --pgo=off to build without)")
+        print(f"{message}: building without profile-guided optimisation", file=sys.stderr)
         return None
     for profile in others:
         if profile.is_file():

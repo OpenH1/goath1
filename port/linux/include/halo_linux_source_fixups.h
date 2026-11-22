@@ -41,6 +41,11 @@ struct halo_gpu_journal_bitmaps
 	/* a bitmap's tag index as the record keeps it (identify's and the
 	cache's loads'), which load takes back; NULL: as it is */
 	unsigned long (*keep)(unsigned long tag_index);
+	/* the bitmap's texture's read begun, not waited for (a record played
+	back reads its bitmaps ahead of the draws that wait for them): the
+	bytes a read was begun for, 0 if it holds it already (kept for the
+	draws now) or none was begun; NULL: none read ahead */
+	unsigned long (*prefetch)(unsigned long tag_index, unsigned long bitmap_index);
 };
 /* recorded from now on (the preparation begun) */
 void halo_gpu_journal_record(struct halo_gpu_journal_bitmaps const *bitmaps);

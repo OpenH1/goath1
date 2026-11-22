@@ -627,6 +627,60 @@ void *texture_cache_port_load(
 		TRUE);
 }
 
+/* port: a prepared record played back names its bitmaps before the draws
+that wait for them: their reads are begun here, not waited for, so that the
+cache files' thread reads them one after another while the draws before
+them are made, and each draw's wait (_texture_cache_bitmap_get_hardware_format)
+finds its read done or under way. The same blocks and bytes as a load that
+waits: only when the read begins differs. */
+unsigned long texture_cache_port_prefetch(
+	unsigned long tag_index,
+	unsigned long bitmap_index)
+{
+	struct bitmap_group *bitmap_group;
+	struct bitmap_data *bitmap;
+
+	/* (an MCC map's textures are served by its own cache, at once) */
+	if (mcc_cache_tags_loaded() || !tag_index_is_group((long)tag_index, BITMAP_GROUP_TAG))
+	{
+		return 0;
+	}
+	bitmap_group = bitmap_group_get((long)tag_index);
+	if ((long)bitmap_index >= bitmap_group->bitmaps.count)
+	{
+		return 0;
+	}
+	bitmap = TAG_BLOCK_GET_ELEMENT(&bitmap_group->bitmaps, (long)bitmap_index, struct bitmap_data);
+	if (!TEST_FLAG(bitmap->flags, _bitmap_cached_bit))
+	{
+		return 0;
+	}
+	/* (a stale index is none, as the wait finds it) */
+	if (bitmap->cache_block_index != NONE)
+	{
+		struct xbox_texture_cache_texture *cached_texture = datum_try_and_get(
+			xbox_texture_cache_globals.textures,
+			bitmap->cache_block_index);
+
+		if (!cached_texture || cached_texture->bitmap != bitmap)
+		{
+			bitmap->cache_block_index = NONE;
+		}
+	}
+	if (bitmap->cache_block_index != NONE)
+	{
+		/* (held: kept for the draws to come) */
+		lruv_block_touch(xbox_texture_cache_globals.cache, bitmap->cache_block_index);
+		return 0;
+	}
+	if (!texture_cache_start_loading_bitmap(bitmap, FALSE))
+	{
+		return 0;
+	}
+
+	return (unsigned long)MAX(rasterizer_xbox_bitmap_get_pixel_data_size(bitmap), bitmap->pixels_size);
+}
+
 void texture_cache_bitmap_delete(
 	struct bitmap_data *bitmap)
 {
@@ -1371,7 +1425,7 @@ void *_texture_cache_bitmap_get_hardware_format(
 					{
 						sound_idle();
 					}
-					SwitchToThread();
+					cache_file_read_wait();
 				}
 			}
 			while (!hardware_format && block);

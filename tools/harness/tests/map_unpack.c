@@ -45,6 +45,12 @@ static void platform_log(const char *format, ...) { (void)format; }
 static void halo_loading_screen_begin(int follow_progress) { (void)follow_progress; }
 static void halo_loading_screen_progress(float progress, const char *caption) { (void)progress; (void)caption; }
 static void halo_loading_screen_end(void) {}
+/* (the workers' priority lowered through the runtime: nothing here) */
+long __guest_syscall(long long number, long long a, long long b, long long c, long long d, long long e, long long f)
+{
+	(void)number; (void)a; (void)b; (void)c; (void)d; (void)e; (void)f;
+	return 0;
+}
 static unsigned long XGetLanguage(void) { return 1; }
 static int posix_make_directory(const char *path) { return mkdir(path, 0755); }
 unsigned long long map_cache_budget(unsigned long long cache_bytes, unsigned long long least)

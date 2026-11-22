@@ -78,7 +78,7 @@ static void xgpu_backend_consume(void) { }
 static void mods_memory_give(unsigned long size) { (void)size; }
 static boolean custom_edition_cache_tags_loaded(void) { return FALSE; }
 static boolean custom_edition_loaded_reordered_bitmaps_find(void) { return FALSE; }
-static void SwitchToThread(void) { }
+static void cache_file_read_wait(void) { }
 
 /* the map's file (its pages' pixels), and the mods' files */
 static byte map_file[1 << 22];

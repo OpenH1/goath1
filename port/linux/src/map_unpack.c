@@ -273,9 +273,21 @@ static int map_unpack_job_run(short slot, struct map_unpack_job *job)
 	return cache_slot_source_matches(slot, job->map_xbox_path, name, checksum, file_length);
 }
 
+/* the runtime's dispatcher (world_sdf.c's sdf_thread_background) */
+long __guest_syscall(long long number, long long a, long long b, long long c, long long d, long long e, long long f);
+
 static void *map_unpack_worker(void *context)
 {
 	(void)context;
+	/* (behind the game's threads: the prefill (map_cache_prefill.c) and the
+	menus' pictures' pass copy maps while a game is played. A load that
+	waits for a copy, map_unpack_take, has the game's thread asleep and the
+	cores free, so the copy keeps its pace there. A niced thread cannot be
+	raised again without the right to, so the workers stay lowered: the
+	calling thread's setpriority(PRIO_PROCESS, 0, 5), host_syscall.c's.
+	Below 10, as macOS's background quality of service, which 10 is there,
+	would hold the copy's reads and writes back too) */
+	__guest_syscall(140, 0, 0, 5, 0, 0, 0);
 	pthread_mutex_lock(&map_unpack.lock);
 	for (;;)
 	{

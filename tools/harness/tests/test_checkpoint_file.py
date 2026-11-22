@@ -1,6 +1,6 @@
 """A checkpoint's file (source/saved games/game_state_xbox.c, written by port/linux/src/saved_game_writer.c): the image
 taken at the checkpoint and written on the writer's thread while the game goes on, a revert's read and the next
-checkpoint waiting for the write, the file always a whole image even if the game stops in the middle of a write, a
+checkpoint taken while the write before goes on (two images in turn, the third waiting for the first's write), the file always a whole image even if the game stops in the middle of a write, a
 failed write leaving the one before it, an older build's file of the whole game state still read (#644)."""
 
 import re
@@ -32,8 +32,8 @@ NEGATIVE_CONTROLS = {
     "wait-does-not-wait": (WRITER, ("\twhile (saved_game_writer.pending)\n\t\tpthread_cond_wait(&saved_game_writer"
                                     ".changed, &saved_game_writer.lock);\n\terror = ",
                                     "\terror = "), "revert-waits"),
-    "next-does-not-wait": (XBOX, ("\tgame_state_write_wait();\n\tsize = game_state_image_size();",
-                                  "\tsize = game_state_image_size();"), "next-waits"),
+    "next-does-not-wait": (XBOX, ("\tsaved_game_writer_release(game_state_file_image.images[index]);\n", ""),
+                           "next-waits"),
     "written-in-place": (WRITER, ('"%s.new", path', '"%s", path'), "stopped"),
     "failure-unreported": (XBOX, ("\treturn !error;\n", "\treturn TRUE;\n"), "failed"),
     "failure-leaves-its-file": (WRITER, ("\tif (error)\n\t\tunlink(temporary);\n", ""), "failed"),

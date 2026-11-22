@@ -1613,6 +1613,7 @@ static void mirror_page_size_set(unsigned long size);
 static void journal_vertex_shader(struct vertex_shader_object *object);
 static void journal_settings_blind(unsigned long words[3]);
 static void journal_vertex_shader_identify(struct vertex_shader_object *object);
+static void journal_prefetch_hold(void);
 
 /* A preparation draw is needed once for each pipeline, vertex layout and
 texture revision. Geometry mirrors are still refreshed for every range:
@@ -1703,6 +1704,8 @@ static void preparation_draw_complete(void)
 		textures[stage] = device.textures[stage];
 	preparation.loaded_bytes = 0;
 	preparation.checkpoint(textures);
+	/* (a played record's bitmaps read ahead, kept for the draws to come) */
+	journal_prefetch_hold();
 }
 
 void halo_gpu_preparation_sky(int sky)
@@ -4227,7 +4230,10 @@ fixed point and its DXT5 alphas may make a little less than the least) */
 static struct
 {
 	DWORD data, format, size;
-	unsigned long generation;
+	/* (serial: memory_watch_serial as the generation was last found the
+	same; while it stays, no watched page was written, and the texture's
+	pages are not looked at again) */
+	unsigned long generation, serial;
 	BOOL known;
 	int minimum;
 } alpha_textures[ALPHA_TEXTURES];
@@ -4239,7 +4245,7 @@ static int stage_alpha_minimum[D3DTSS_MAXSTAGES];
 static int texture_alpha_minimum(const D3DBaseTexture *texture, int stage)
 {
 	struct xgpu_texture_description description;
-	unsigned long address, bytes, generation, slot;
+	unsigned long address, bytes, generation, serial, slot;
 
 	xgpu_texture_describe(texture->Format, texture->Size, &description);
 	if (description.cube_map || description.depth > 1)
@@ -4256,11 +4262,20 @@ static int texture_alpha_minimum(const D3DBaseTexture *texture, int stage)
 	/* (the product's high bits: the texels' addresses are multiples of a page) */
 	slot = ((DWORD)((texture->Data ^ texture->Format * 0x85ebca6bu ^ texture->Size * 0xc2b2ae35u) * 0x9e3779b1u) >> 16) %
 		ALPHA_TEXTURES;
-	generation = memory_watch_generation(address, bytes);
+	/* (the serial read before the pages: a write in between moves it again) */
+	serial = memory_watch_serial();
 	if (alpha_textures[slot].known && alpha_textures[slot].data == texture->Data &&
-		alpha_textures[slot].format == texture->Format && alpha_textures[slot].size == texture->Size &&
-		alpha_textures[slot].generation == generation)
-		return alpha_textures[slot].minimum;
+		alpha_textures[slot].format == texture->Format && alpha_textures[slot].size == texture->Size)
+	{
+		if (alpha_textures[slot].serial == serial)
+			return alpha_textures[slot].minimum;
+		generation = memory_watch_generation(address, bytes);
+		if (alpha_textures[slot].generation == generation)
+		{
+			alpha_textures[slot].serial = serial;
+			return alpha_textures[slot].minimum;
+		}
+	}
 	/* (its texels watched from here: a write makes it be read again) */
 	memory_watch_protect(address, bytes);
 	alpha_textures[slot].known = TRUE;
@@ -4268,6 +4283,7 @@ static int texture_alpha_minimum(const D3DBaseTexture *texture, int stage)
 	alpha_textures[slot].format = texture->Format;
 	alpha_textures[slot].size = texture->Size;
 	alpha_textures[slot].generation = memory_watch_generation(address, bytes);
+	alpha_textures[slot].serial = serial;
 	alpha_textures[slot].minimum = xgpu_texture_minimum_alpha(&description, (const unsigned char *)address);
 	return alpha_textures[slot].minimum;
 }
@@ -10663,8 +10679,144 @@ static int journal_read(const uint32_t *words, unsigned long count, struct journ
 	return 1;
 }
 
+/* A record played back names each bitmap (JOURNAL_TEXTURE) before the draws
+that use it. Each is read ahead: the next ones' reads are begun, not waited
+for (halo_gpu_journal_bitmaps' prefetch), so the cache files' thread reads
+them back to back while the draws before them are made, where a load that
+waits gave it one read at a time. A window of them, of at most
+JOURNAL_PREFETCH_COUNT and half the preparation's batch of bytes (its
+checkpoint's budget), so that what is read ahead and not yet drawn never
+crowds out the draws' own; touched again at each checkpoint
+(journal_prefetch_hold), so none is given up before its draws. The draws
+then wait on each as before: the same blocks and bytes, read earlier. */
+#define JOURNAL_PREFETCH_COUNT 64
+
+static struct
+{
+	const uint32_t *words;
+	unsigned long count, position;
+	/* the bitmaps read ahead and not yet reached, oldest first */
+	struct
+	{
+		uint32_t tag_index, bitmap_index;
+		unsigned long bytes;
+	} ahead[JOURNAL_PREFETCH_COUNT];
+	unsigned long first, held, bytes;
+	BOOL on;
+} journal_prefetch;
+
+/* HALO_PREPARED_PREFETCH=0: each waited for as it is reached, as before */
+static BOOL prefetch_disabled(void)
+{
+	const char *setting = getenv("HALO_PREPARED_PREFETCH");
+
+	return setting && strcmp(setting, "0") == 0;
+}
+
+static void journal_prefetch_begin(const uint32_t *words, unsigned long count)
+{
+	memset(&journal_prefetch, 0, sizeof(journal_prefetch));
+	journal_prefetch.words = words;
+	journal_prefetch.count = count;
+	journal_prefetch.on = journal.bitmaps && journal.bitmaps->prefetch && preparation.active &&
+		preparation.budget != 0 && !prefetch_disabled();
+}
+
+static void journal_prefetch_end(void)
+{
+	memset(&journal_prefetch, 0, sizeof(journal_prefetch));
+}
+
+/* the next bitmap named after position, its words' place, or 0 at the end
+or at a word read would refuse (journal_read's checks, its sizes only) */
+static BOOL journal_prefetch_next(uint32_t *tag_index, uint32_t *bitmap_index)
+{
+	const uint32_t *words = journal_prefetch.words;
+	unsigned long count = journal_prefetch.count;
+
+	while (journal_prefetch.position < count)
+	{
+		uint32_t header = words[journal_prefetch.position++];
+		uint32_t type = header & 0xff, size = header >> 8;
+
+		if (type == JOURNAL_TEXTURE)
+		{
+			if (count - journal_prefetch.position < 2)
+				break;
+			*tag_index = words[journal_prefetch.position];
+			*bitmap_index = words[journal_prefetch.position + 1];
+			journal_prefetch.position += 2;
+			return TRUE;
+		}
+		if (type == JOURNAL_PAGES || (type >= JOURNAL_DRAW && type < JOURNAL_STATES))
+		{
+			if ((count - journal_prefetch.position) / 2 < size)
+				break;
+			journal_prefetch.position += 2 * (unsigned long)size;
+			continue;
+		}
+		break;
+	}
+	journal_prefetch.position = count;
+	return FALSE;
+}
+
+/* the bitmap reached (its draws wait on it now): out of the window, and
+the window filled again past it */
+static void journal_prefetch_reached(void)
+{
+	unsigned long limit = preparation.budget / 2;
+
+	if (!journal_prefetch.on)
+		return;
+	/* (the bitmaps are named in the order they are reached) */
+	if (journal_prefetch.held)
+	{
+		journal_prefetch.bytes -= journal_prefetch.ahead[journal_prefetch.first].bytes;
+		journal_prefetch.first = (journal_prefetch.first + 1) % JOURNAL_PREFETCH_COUNT;
+		journal_prefetch.held--;
+	}
+	else
+	{
+		/* (the one reached is the next named: passed over) */
+		uint32_t tag_index, bitmap_index;
+
+		(void)journal_prefetch_next(&tag_index, &bitmap_index);
+	}
+	while (journal_prefetch.held < JOURNAL_PREFETCH_COUNT && journal_prefetch.bytes < limit)
+	{
+		unsigned long slot;
+		uint32_t tag_index, bitmap_index;
+
+		if (!journal_prefetch_next(&tag_index, &bitmap_index))
+			break;
+		slot = (journal_prefetch.first + journal_prefetch.held) % JOURNAL_PREFETCH_COUNT;
+		journal_prefetch.ahead[slot].tag_index = tag_index;
+		journal_prefetch.ahead[slot].bitmap_index = bitmap_index;
+		journal_prefetch.ahead[slot].bytes = journal.bitmaps->prefetch(tag_index, bitmap_index);
+		journal_prefetch.bytes += journal_prefetch.ahead[slot].bytes;
+		journal_prefetch.held++;
+	}
+}
+
+static void journal_prefetch_hold(void)
+{
+	unsigned long index;
+
+	if (!journal_prefetch.on)
+		return;
+	for (index = 0; index < journal_prefetch.held; index++)
+	{
+		unsigned long slot = (journal_prefetch.first + index) % JOURNAL_PREFETCH_COUNT;
+
+		(void)journal.bitmaps->prefetch(journal_prefetch.ahead[slot].tag_index,
+			journal_prefetch.ahead[slot].bitmap_index);
+	}
+}
+
 static void journal_replay_texture(uint32_t tag_index, uint32_t bitmap_index)
 {
+	journal_prefetch_reached();
 	if (journal.bitmaps && !journal.bitmaps->load(tag_index, bitmap_index))
 		journal.unknown++;
 }
@@ -10742,8 +10894,10 @@ int halo_gpu_journal_replay(const unsigned int *words, unsigned int count, const
 	journal.motion = motion_vectors_technique() != 0 && anti_aliasing() != _anti_aliasing_msaa;
 	journal.motion_objects = FALSE;
 	memset(&journal.last, 0, sizeof(journal.last));
+	journal_prefetch_begin((const uint32_t *)words, count);
 	well_formed = journal_read((const uint32_t *)words, count, &journal.last, PLATFORM_CONTIGUOUS_SIZE,
 		MIRROR_PAGE_SIZE, &reader);
+	journal_prefetch_end();
 	journal_motion_span(FALSE);
 	if (journal.motion)
 		xgpu_backend_motion(XGPU_MOTION_RESOLVE, 0, NULL);

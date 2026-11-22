@@ -32,6 +32,7 @@ where its offset falls in their combined offset space.
 #include "tag_schema.h"
 #include "map_share.h"
 
+#include <pthread.h>
 #include <stdlib.h>
 #include <xtl.h>
 
@@ -1285,9 +1286,13 @@ boolean custom_edition_cache_relies_on(
 void custom_edition_cache_tags_unload(
 	void)
 {
+	/* (no read of the map's still being served on the I/O thread:
+	cache_files_windows.c) */
+	cache_file_custom_edition_reads_wait();
+	custom_edition_cache_read_failures_say();
 	/* the structure BSP goes first, as scenario_structure_bsp_unload would
-	have released it */
-	custom_edition_structure_bsp_unload();
+	have released it, and the BSPs' kept vertices with it */
+	custom_edition_structure_bsps_dispose();
 	custom_edition_sounds_dispose();
 	custom_edition_models_dispose();
 	custom_edition_bitmaps_dispose();
@@ -1306,11 +1311,28 @@ struct resource_map const *custom_edition_cache_bitmap_resources(void)
 		custom_edition_cache_globals.resource_maps[_resource_map_bitmaps] : NULL;
 }
 
-void custom_edition_cache_read(
-	long tag_index,
+/* The reads of a map's files: on the game's thread (the scenario's and
+structure BSPs' loading, the texture and sound caches' blocking reads), and
+on the cache files' I/O thread, which serves the texture and sound caches'
+other reads as it serves an Xbox map's (cache_files_windows.c), so that a
+texture's miss does not stall a frame. The streams' places and the staging
+buffer are the lock's. */
+static pthread_mutex_t custom_edition_read_lock = PTHREAD_MUTEX_INITIALIZER;
+/* the I/O thread's failed reads (it says nothing), said on the game's:
+how many, and the last's size and offset */
+static long custom_edition_read_failures;
+static long custom_edition_read_failed_size;
+static long custom_edition_read_failed_offset;
+
+/* `size` bytes at `offset` of the combined space into `buffer`: FALSE on an
+I/O failure (the loader checked every range the tags give), whose reader
+gets zeros rather than whatever was there; *from_file whether they were the
+files' (not the decoded sounds', custom_edition_sounds_read) */
+static boolean custom_edition_cache_read_bytes(
 	long offset,
 	long size,
-	void *buffer)
+	void *buffer,
+	boolean *from_file)
 {
 	struct custom_edition_cache_globals *globals = &custom_edition_cache_globals;
 	struct custom_edition_file *file;
@@ -1318,6 +1340,7 @@ void custom_edition_cache_read(
 	long read_bytes;
 	boolean read;
 
+	*from_file = FALSE;
 	if ((unsigned long)offset >= COMBINED_SOUNDS_OFFSET)
 	{
 		file = &globals->resource_files[_resource_map_sounds];
@@ -1330,9 +1353,10 @@ void custom_edition_cache_read(
 	}
 	else if ((unsigned long)offset >= COMBINED_DECODED_OFFSET)
 	{
+		/* (made as the map loaded, and not changed until it is unloaded) */
 		if (!custom_edition_sounds_read((long)((unsigned long)offset - COMBINED_DECODED_OFFSET), size, buffer))
 			csmemset(buffer, 0, size);
-		return;
+		return TRUE;
 	}
 	else
 	{
@@ -1340,9 +1364,8 @@ void custom_edition_cache_read(
 		file_offset = (unsigned long)offset;
 	}
 
-	/* the game reads its map from its main thread only (scenario and
-	structure BSP loading, the texture and sound caches), so the streams and
-	the staging buffer need no lock */
+	*from_file = TRUE;
+	pthread_mutex_lock(&custom_edition_read_lock);
 	read = file->stream && size >= 0;
 	for (read_bytes = 0; read && read_bytes < size; read_bytes += READ_STAGING_BYTES)
 	{
@@ -1354,20 +1377,76 @@ void custom_edition_cache_read(
 			csmemcpy((byte *)buffer + read_bytes, globals->read_staging, chunk_bytes);
 		}
 	}
-	if (!read)
+	pthread_mutex_unlock(&custom_edition_read_lock);
+	if (!read && size > 0)
 	{
-		/* the loader checked every range the tags give, so this is an I/O
-		failure: the reader gets zeros rather than whatever was there */
-		error(_error_silent, "custom edition: cannot read 0x%lX bytes at 0x%08lX", (unsigned long)size, (unsigned long)offset);
-		if (size > 0)
-		{
-			csmemset(buffer, 0, size);
-		}
+		csmemset(buffer, 0, size);
 	}
-	else if (tag_index != NONE)
+
+	return read;
+}
+
+void custom_edition_cache_read_failures_say(
+	void)
+{
+	long failures = __atomic_exchange_n(&custom_edition_read_failures, 0, __ATOMIC_ACQUIRE);
+
+	if (failures)
 	{
-		custom_edition_bitmap_pixels_arrived(globals->tag_cache, globals->loaded_bytes, tag_index, offset, buffer);
+		error(_error_silent, "custom edition: cannot read 0x%lX bytes at 0x%08lX%s",
+			(unsigned long)custom_edition_read_failed_size, (unsigned long)custom_edition_read_failed_offset,
+			failures > 1 ? " (and others)" : "");
 	}
 
 	return;
 }
+
+void custom_edition_cache_read(
+	long tag_index,
+	long offset,
+	long size,
+	void *buffer)
+{
+	boolean from_file;
+
+	custom_edition_cache_read_failures_say();
+	if (!custom_edition_cache_read_bytes(offset, size, buffer, &from_file))
+	{
+		error(_error_silent, "custom edition: cannot read 0x%lX bytes at 0x%08lX", (unsigned long)size, (unsigned long)offset);
+	}
+	else if (from_file && tag_index != NONE)
+	{
+		custom_edition_bitmap_pixels_arrived(custom_edition_cache_globals.tag_cache,
+			custom_edition_cache_globals.loaded_bytes, tag_index, offset, buffer);
+	}
+
+	return;
+}
+
+void custom_edition_cache_read_on_io_thread(
+	long tag_index,
+	long offset,
+	long size,
+	void *buffer)
+{
+	boolean from_file;
+
+	if (!custom_edition_cache_read_bytes(offset, size, buffer, &from_file))
+	{
+		custom_edition_read_failed_size = size;
+		custom_edition_read_failed_offset = offset;
+		__atomic_fetch_add(&custom_edition_read_failures, 1, __ATOMIC_RELEASE);
+	}
+	else if (from_file && tag_index != NONE)
+	{
+		/* (its pixels rebuilt here, as on the game's thread: the tags and
+		the bitmaps' channel orders are not changed while the map is loaded,
+		the renderer's list of them is locked, xbox_textures.c, and the
+		swizzle takes no memory of the game's allocator) */
+		custom_edition_bitmap_pixels_arrived(custom_edition_cache_globals.tag_cache,
+			custom_edition_cache_globals.loaded_bytes, tag_index, offset, buffer);
+	}
+
+	return;
+}
+
