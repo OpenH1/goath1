@@ -3224,7 +3224,7 @@ static boolean players_coop_bring_vehicle(
 	};
 	long vehicle_index;
 	struct object_datum *vehicle;
-	real_vector3d center_offset;
+	real center_height;
 	real radius;
 	short radius_index;
 	short direction_index;
@@ -3238,7 +3238,7 @@ static boolean players_coop_bring_vehicle(
 	if (vehicle->object.location.cluster_index != NONE && players_coop_bsp_switch_trigger(vehicle_index) == NONE)
 		return TRUE;
 	radius = MAX(vehicle->object.bounding_sphere_radius, 1.f);
-	vector_from_points3d(&vehicle->object.position, &vehicle->object.bounding_sphere_center, &center_offset);
+	center_height = distance3d(&vehicle->object.position, &vehicle->object.bounding_sphere_center);
 	for (radius_index = 0; radius_index < (short)NUMBEROF(ring_radius); radius_index++)
 	{
 		for (direction_index = 0; direction_index < (short)NUMBEROF(ring_direction); direction_index++)
@@ -3251,6 +3251,9 @@ static boolean players_coop_bring_vehicle(
 			real_point3d center;
 			real_point3d origin;
 			real_point3d original_origin = vehicle->object.position;
+			real_vector3d original_forward = vehicle->object.forward;
+			real_vector3d original_up = vehicle->object.up;
+			real_vector3d forward;
 
 			if (radius_index == 0 && direction_index > 0)
 				break;
@@ -3265,17 +3268,23 @@ static boolean players_coop_bring_vehicle(
 			center.z += 0.5f * radius;
 			if (!players_coop_vehicle_fits(vehicle_index, destination, &center, radius))
 				continue;
-			origin.x = center.x - center_offset.i;
-			origin.y = center.y - center_offset.j;
-			origin.z = MAX(center.z - center_offset.k, collision.point.z + 0.1f);
-			object_set_position(vehicle_index, &origin, NULL, NULL);
+			/* (its origin that far below its middle, as upright: the fall may
+			have turned the offset) */
+			origin = center;
+			origin.z = MAX(center.z - center_height, collision.point.z + 0.1f);
+			/* (upright, facing the way it faced: a fall may have tipped it) */
+			forward = vehicle->object.forward;
+			forward.k = 0.f;
+			if (normalize3d(&forward) == 0.f)
+				forward = *global_forward3d;
+			object_set_position(vehicle_index, &origin, &forward, NULL);
 			vehicle->object.translational_velocity = *global_zero_vector3d;
 			vehicle->object.angular_velocity = *global_zero_vector3d;
 			/* (not onto a loading zone, which would switch the BSP straight
 			back) */
 			if (vehicle->object.location.cluster_index != NONE && players_coop_bsp_switch_trigger(vehicle_index) == NONE)
 				return TRUE;
-			object_set_position(vehicle_index, &original_origin, NULL, NULL);
+			object_set_position(vehicle_index, &original_origin, &original_forward, &original_up);
 		}
 	}
 
