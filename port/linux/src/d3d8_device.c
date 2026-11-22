@@ -3514,6 +3514,11 @@ static struct
 	unsigned char unsummed[RETAINED_STATE_WORDS];
 	/* a simple state's place by its push buffer method's (+ 1, 0 none) */
 	unsigned char simple_by_method[1024];
+	/* 1: read into a draw's uniforms (draw_uniforms_update), and the times
+	one of them changed, or the tables were written whole: while it stays,
+	the uniforms' states are as they were last read */
+	unsigned char uniform[RETAINED_STATE_WORDS];
+	unsigned long uniform_moved;
 } state_hash;
 
 static uint64_t state_word_mix(unsigned long place, DWORD value)
@@ -3560,6 +3565,13 @@ static void state_hash_places(void)
 	}
 	for (index = 0; index < D3DRS_SIMPLE_MAX; index++)
 		state_hash.simple_by_method[(D3DSIMPLERENDERSTATEENCODE[index] >> 2) & 1023] = (unsigned char)(index + 1);
+	/* (the uniforms' states: the unsummed ones, the alpha reference and the
+	stages' LOD bias) */
+	memcpy(state_hash.uniform, state_hash.unsummed, sizeof(state_hash.uniform));
+	state_hash.uniform[D3DRS_ALPHAREF] = 1;
+	for (stage = 0; stage < D3DTSS_MAXSTAGES; stage++)
+		state_hash.uniform[D3DRS_MAX + (unsigned long)stage * D3DTSS_MAX + D3DTSS_MIPMAPLODBIAS] = 1;
+	state_hash.uniform_moved++;
 }
 
 /* the sum as the tables are now */
@@ -3585,6 +3597,7 @@ static uint64_t state_hash_summed(void)
 static void state_hash_forget(void)
 {
 	state_hash.summed = FALSE;
+	state_hash.uniform_moved++;
 }
 
 static uint64_t state_hash_now(void)
@@ -3602,7 +3615,11 @@ static void state_word_set(DWORD *word, unsigned long place, DWORD value)
 	DWORD old = *word;
 
 	*word = value;
-	if (old == value || !state_hash.summed || state_hash.unsummed[place])
+	if (old == value)
+		return;
+	if (!state_hash.places_made || state_hash.uniform[place])
+		state_hash.uniform_moved++;
+	if (!state_hash.summed || state_hash.unsummed[place])
 		return;
 	state_hash.sum += state_word_mix(place, value) - state_word_mix(place, old);
 }
@@ -4963,17 +4980,29 @@ static void pipeline_state_describe(BOOL has_depth, struct xgpu_pipeline_key *ke
 	}
 }
 /* the uniforms of the latest draws, converted from these inputs; the serial
-counts the conversions */
-#define DRAW_UNIFORM_INPUT_COUNT (4 + 4 + 16 + 1 + 16 + 2 + 4 + 1 + 1 + 7 * D3DTSS_MAXSTAGES + 4 + 1)
+counts the conversions. The inputs are the draw's own (its viewport, texture
+scale, screen offset, world object and LOD bias), read for every draw, then
+the render and texture states' (state_hash.uniform), read again only once
+one of them is set (state_hash.uniform_moved): until then they are the ones
+kept, the tables unchanged since */
+#define DRAW_UNIFORM_OWN_COUNT (4 + 4 + 16 + 1 + 4 + 1)
+#define DRAW_UNIFORM_INPUT_COUNT (DRAW_UNIFORM_OWN_COUNT + 1 + 16 + 2 + 4 + 1 + 7 * D3DTSS_MAXSTAGES)
 
 static DWORD draw_uniform_inputs[DRAW_UNIFORM_INPUT_COUNT];
 static struct xgpu_draw_uniforms draw_uniforms;
 static unsigned long draw_uniforms_serial;
+/* state_hash.uniform_moved as the states' inputs were last read */
+static unsigned long draw_uniform_states_read;
+/* debug.retained_draws_verify: the states read anyway, and the times they
+differed from the kept ones while nothing was set (written past the
+setters) */
+static BOOL draw_uniform_states_verify;
+static unsigned long draw_uniform_states_differed;
 
-/* size is a multiple of 4. Every draw compares its uniforms' inputs (about
-300 bytes) with the last's: the loop has no early exit, so that the
-compiler compares several words at once, where the C library's memcmp (the
-Windows build's) compares them one at a time */
+/* size is a multiple of 4. Every draw compares its uniforms' inputs with
+the last's: the loop has no early exit, so that the compiler compares
+several words at once, where the C library's memcmp (the Windows build's)
+compares them one at a time */
 static BOOL words_equal(const void *a, const void *b, unsigned long size)
 {
 	const DWORD *words_a = a;
@@ -4986,6 +5015,39 @@ static BOOL words_equal(const void *a, const void *b, unsigned long size)
 	return difference == 0;
 }
 
+/* the states' part of the uniforms' inputs, from the tables */
+static void draw_uniform_states_read_now(DWORD *inputs)
+{
+	unsigned long count = 0;
+	int stage;
+
+	inputs[count++] = D3D__RenderState[D3DRS_POINTSIZE];
+	for (stage = 0; stage < 8; stage++)
+	{
+		inputs[count++] = D3D__RenderState[D3DRS_PSCONSTANT0_0 + stage];
+		inputs[count++] = D3D__RenderState[D3DRS_PSCONSTANT1_0 + stage];
+	}
+	inputs[count++] = D3D__RenderState[D3DRS_PSFINALCOMBINERCONSTANT0];
+	inputs[count++] = D3D__RenderState[D3DRS_PSFINALCOMBINERCONSTANT1];
+	inputs[count++] = D3D__RenderState[D3DRS_FOGCOLOR];
+	inputs[count++] = D3D__RenderState[D3DRS_FOGSTART];
+	inputs[count++] = D3D__RenderState[D3DRS_FOGEND];
+	inputs[count++] = D3D__RenderState[D3DRS_FOGDENSITY];
+	inputs[count++] = D3D__RenderState[D3DRS_ALPHAREF];
+	for (stage = 0; stage < D3DTSS_MAXSTAGES; stage++)
+	{
+		DWORD *state = D3D__TextureState[stage];
+
+		inputs[count++] = state[D3DTSS_BUMPENVMAT00];
+		inputs[count++] = state[D3DTSS_BUMPENVMAT01];
+		inputs[count++] = state[D3DTSS_BUMPENVMAT10];
+		inputs[count++] = state[D3DTSS_BUMPENVMAT11];
+		inputs[count++] = state[D3DTSS_BUMPENVLSCALE];
+		inputs[count++] = state[D3DTSS_BUMPENVLOFFSET];
+		inputs[count++] = state[D3DTSS_MIPMAPLODBIAS];
+	}
+}
+
 /* the draw's other uniforms, from the state they come from: most draws
 share it with the draw before them, and so share its uniforms */
 static void draw_uniforms_update(const float texture_scale[4][4])
@@ -4996,6 +5058,7 @@ static void draw_uniforms_update(const float texture_scale[4][4])
 	float world_object[4];
 	/* (display.temporal_aa: the upscaler's LOD bias, the shaders' on Metal) */
 	float lod_bias = draw_lod_bias();
+	BOOL same, states_read = FALSE;
 	int stage;
 
 	/* (display.temporal_aa: the window's jitter, its draws' pixels moved by
@@ -5010,19 +5073,6 @@ static void draw_uniforms_update(const float texture_scale[4][4])
 	count += 4;
 	memcpy(&inputs[count], texture_scale, 16 * sizeof(float));
 	count += 16;
-	inputs[count++] = D3D__RenderState[D3DRS_POINTSIZE];
-	for (stage = 0; stage < 8; stage++)
-	{
-		inputs[count++] = D3D__RenderState[D3DRS_PSCONSTANT0_0 + stage];
-		inputs[count++] = D3D__RenderState[D3DRS_PSCONSTANT1_0 + stage];
-	}
-	inputs[count++] = D3D__RenderState[D3DRS_PSFINALCOMBINERCONSTANT0];
-	inputs[count++] = D3D__RenderState[D3DRS_PSFINALCOMBINERCONSTANT1];
-	inputs[count++] = D3D__RenderState[D3DRS_FOGCOLOR];
-	inputs[count++] = D3D__RenderState[D3DRS_FOGSTART];
-	inputs[count++] = D3D__RenderState[D3DRS_FOGEND];
-	inputs[count++] = D3D__RenderState[D3DRS_FOGDENSITY];
-	inputs[count++] = D3D__RenderState[D3DRS_ALPHAREF];
 	inputs[count++] = (DWORD)UI_OFFSET;
 	/* (display.ambient_occlusion "world": the draw's object, its owner
 	slot and reference, its owner among the rays' instances, and whether it
@@ -5033,25 +5083,32 @@ static void draw_uniforms_update(const float texture_scale[4][4])
 	world_object[3] = world_ao.active && world_ao.cards ? 1.0f : 0.0f;
 	memcpy(&inputs[count], world_object, sizeof(world_object));
 	count += 4;
-	for (stage = 0; stage < D3DTSS_MAXSTAGES; stage++)
-	{
-		DWORD *state = D3D__TextureState[stage];
-
-		inputs[count++] = state[D3DTSS_BUMPENVMAT00];
-		inputs[count++] = state[D3DTSS_BUMPENVMAT01];
-		inputs[count++] = state[D3DTSS_BUMPENVMAT10];
-		inputs[count++] = state[D3DTSS_BUMPENVMAT11];
-		inputs[count++] = state[D3DTSS_BUMPENVLSCALE];
-		inputs[count++] = state[D3DTSS_BUMPENVLOFFSET];
-		inputs[count++] = state[D3DTSS_MIPMAPLODBIAS];
-	}
 	memcpy(&inputs[count], &lod_bias, sizeof(lod_bias));
 	count++;
-	if (!draw_uniforms_serial || !words_equal(inputs, draw_uniform_inputs, sizeof(inputs)))
+	same = draw_uniforms_serial && words_equal(inputs, draw_uniform_inputs, DRAW_UNIFORM_OWN_COUNT * sizeof(DWORD));
+	/* (the states': as kept while none is set; read and compared once one is) */
+	if (!draw_uniforms_serial || draw_uniform_states_read != state_hash.uniform_moved || draw_uniform_states_verify)
+	{
+		DWORD *states = &inputs[DRAW_UNIFORM_OWN_COUNT];
+
+		draw_uniform_states_read_now(states);
+		if (!words_equal(states, &draw_uniform_inputs[DRAW_UNIFORM_OWN_COUNT],
+			(DRAW_UNIFORM_INPUT_COUNT - DRAW_UNIFORM_OWN_COUNT) * sizeof(DWORD)))
+		{
+			if (draw_uniforms_serial && draw_uniform_states_read == state_hash.uniform_moved &&
+				draw_uniform_states_differed++ < 8)
+				platform_log("GPU: retained draws: a uniform's state was written past its setters");
+			same = FALSE;
+		}
+		draw_uniform_states_read = state_hash.uniform_moved;
+		states_read = TRUE;
+	}
+	if (!same)
 	{
 		struct xgpu_draw_uniforms *converted = &draw_uniforms;
 
-		memcpy(draw_uniform_inputs, inputs, sizeof(inputs));
+		memcpy(draw_uniform_inputs, inputs, (states_read ? DRAW_UNIFORM_INPUT_COUNT : DRAW_UNIFORM_OWN_COUNT) *
+			sizeof(DWORD));
 		draw_uniforms_serial++;
 		memcpy(converted->viewport_scale, device.viewport_scale, sizeof(converted->viewport_scale));
 		memcpy(converted->viewport_offset, viewport_offset, sizeof(converted->viewport_offset));
@@ -6235,6 +6292,11 @@ static struct
 	struct retained_context context;
 	struct retained_draw *slot, *verifying;
 	BOOL keep;
+	/* the kept draw the latest context found (NULL: none, or a kept draw made
+	again since), in that generation: a draw whose context is the same finds
+	it without looking (retained_draw_find) */
+	struct retained_draw *hit;
+	unsigned long hit_generation;
 	/* the preparation the backend was last told, at that prepare_draw_count
 	and xgpu_backend_sent_serial */
 	struct retained_draw *told;
@@ -6248,8 +6310,8 @@ static struct
 	unsigned long memory_serial;
 	unsigned long clock;
 	/* counted (logged every 600 frames with either setting) */
-	unsigned long found, found_told, prepared, not_kept, not_kept_moved, not_kept_target, differed, targets_differed,
-		hash_differed, told_differed, memory_moved;
+	unsigned long found, found_told, found_same, prepared, not_kept, not_kept_moved, not_kept_target, differed,
+		targets_differed, hash_differed, told_differed, same_differed, memory_moved;
 	/* the times each of retained_tokens' moved (as a draw was found, or
 	as it was prepared) */
 	unsigned long moved[sizeof(struct retained_tokens) / sizeof(unsigned long)];
@@ -6264,6 +6326,7 @@ static void retained_read_settings(void)
 	retained.read_at = config_changes();
 	retained.enabled = config_boolean("debug.retained_draws") != 0;
 	retained.verify = config_boolean("debug.retained_draws_verify") != 0;
+	draw_uniform_states_verify = retained.verify;
 	if ((retained.enabled || retained.verify) && !retained.draws)
 		retained.draws = calloc(RETAINED_DRAWS, sizeof(*retained.draws));
 	if (!retained.draws)
@@ -6366,80 +6429,137 @@ static uint32_t retained_context_hash(const struct retained_context *context)
 	return (uint32_t)(hash ^ (hash >> 29));
 }
 
-/* the draw's context (retained_context); FALSE if its preparation is not
-kept */
+/* (retained_context_make: a field of the context made the draw's, noting
+whether it differs from the draw before's; value read once, before) */
+#define RETAINED_TAKE(field, value) \
+	do \
+	{ \
+		if (context->field != (value)) \
+		{ \
+			context->field = (value); \
+			changed = TRUE; \
+		} \
+	} while (0)
+
+/* the draw's context (retained_context), made from the one before's in
+place (its padding zero from the first): *changed, whether it differs from
+it in any word; FALSE if its preparation is not kept (the context left as
+it was) */
 static BOOL retained_context_make(struct retained_context *context, struct vertex_shader_object *program,
-	BOOL immediate)
+	BOOL immediate, BOOL *changed_out)
 {
 	int stage, index;
+	BOOL changed = FALSE;
+	uint64_t state_hash_value;
+	unsigned long packed_mask;
+	uint32_t flag;
+	int32_t number;
+	float lod_bias;
 
 #ifdef HALO_VR
 	return FALSE;
 #endif
 	if (preparation.active || journal_recording || xgpu_manifest_recording())
 		return FALSE;
-	memset(context, 0, sizeof(*context));
-	context->state_hash = state_hash_now();
+	state_hash_value = state_hash_now();
 	if (retained.verify)
 	{
 		uint64_t summed = state_hash_summed();
 
-		if (summed != context->state_hash)
+		if (summed != state_hash_value)
 		{
 			if (retained.hash_differed++ < 8)
 				platform_log("GPU: retained draws: a state was written past its setters (the states' hash differs)");
-			state_hash.sum = context->state_hash = summed;
+			state_hash.sum = state_hash_value = summed;
 		}
 	}
-	context->program = program;
-	context->vertex_shader = device.vertex_shader;
-	context->program_code = program->program;
-	context->program_id = program->id;
-	context->packed_mask = immediate ? 0 : device.vertex_shader->packed_mask;
-	context->immediate = immediate != 0;
-	context->lighting_failed = program->lighting_failed != 0;
-	context->split_failed = program->split_failed != 0;
+	RETAINED_TAKE(state_hash, state_hash_value);
+	RETAINED_TAKE(program, program);
+	RETAINED_TAKE(vertex_shader, device.vertex_shader);
+	RETAINED_TAKE(program_code, program->program);
+	RETAINED_TAKE(program_id, program->id);
+	packed_mask = immediate ? 0 : device.vertex_shader->packed_mask;
+	RETAINED_TAKE(packed_mask, packed_mask);
+	flag = immediate != 0;
+	RETAINED_TAKE(immediate, flag);
+	flag = program->lighting_failed != 0;
+	RETAINED_TAKE(lighting_failed, flag);
+	flag = program->split_failed != 0;
+	RETAINED_TAKE(split_failed, flag);
 	for (stage = 0; stage < D3DTSS_MAXSTAGES; stage++)
 	{
 		const D3DBaseTexture *texture = device.textures[stage];
 		const D3DPalette *palette = device.palettes[stage];
+		DWORD words[3] = { 0, 0, 0 }, data = palette ? palette->Data : 0;
 
-		context->textures[stage] = texture;
+		RETAINED_TAKE(textures[stage], texture);
 		if (texture)
 		{
-			context->texture_words[stage][0] = texture->Data;
-			context->texture_words[stage][1] = texture->Format;
-			context->texture_words[stage][2] = texture->Size;
+			words[0] = texture->Data;
+			words[1] = texture->Format;
+			words[2] = texture->Size;
 		}
-		context->palettes[stage] = palette;
-		context->palette_data[stage] = palette ? palette->Data : 0;
+		for (index = 0; index < 3; index++)
+			RETAINED_TAKE(texture_words[stage][index], words[index]);
+		RETAINED_TAKE(palettes[stage], palette);
+		RETAINED_TAKE(palette_data[stage], data);
 	}
-	context->targets[0] = device.render_target;
-	context->targets[1] = device.depth_stencil;
+	RETAINED_TAKE(targets[0], device.render_target);
+	RETAINED_TAKE(targets[1], device.depth_stencil);
 	for (index = 0; index < 2; index++)
 	{
-		if (context->targets[index])
+		const D3DSurface *target = context->targets[index];
+		DWORD words[3] = { 0, 0, 0 };
+		int word;
+
+		if (target)
 		{
-			context->target_words[index][0] = context->targets[index]->Data;
-			context->target_words[index][1] = context->targets[index]->Format;
-			context->target_words[index][2] = context->targets[index]->Size;
+			words[0] = target->Data;
+			words[1] = target->Format;
+			words[2] = target->Size;
 		}
+		for (word = 0; word < 3; word++)
+			RETAINED_TAKE(target_words[index][word], words[word]);
 	}
-	context->sampled_view = sampled_view;
-	context->screen_view = screen_view;
-	context->inputs = inputs;
-	context->cutout_depth = cutout_depth_drawing != 0;
-	context->lights_unreached = lights_unreached_drawing != 0;
-	context->model_unreached = dynamic_lights.model_unreached != 0;
-	context->per_pixel = per_pixel_lighting() != 0;
-	context->lights_active = dynamic_lights_active() != 0;
-	context->world_ao = world_ao_key(XGPU_AMBIENT_OCCLUSION_LIGHT_NONE);
-	context->hud_meter = xgpu_texture_hud_meter() != 0;
-	context->hdr_mode = hdr.mode;
-	context->hdr_boost = hdr.boost;
-	context->lod_bias = draw_lod_bias();
+	number = sampled_view;
+	RETAINED_TAKE(sampled_view, number);
+	number = screen_view;
+	RETAINED_TAKE(screen_view, number);
+	if (!words_equal(&context->inputs, &inputs, sizeof(inputs)))
+	{
+		context->inputs = inputs;
+		changed = TRUE;
+	}
+	flag = cutout_depth_drawing != 0;
+	RETAINED_TAKE(cutout_depth, flag);
+	flag = lights_unreached_drawing != 0;
+	RETAINED_TAKE(lights_unreached, flag);
+	flag = dynamic_lights.model_unreached != 0;
+	RETAINED_TAKE(model_unreached, flag);
+	flag = per_pixel_lighting() != 0;
+	RETAINED_TAKE(per_pixel, flag);
+	flag = dynamic_lights_active() != 0;
+	RETAINED_TAKE(lights_active, flag);
+	flag = world_ao_key(XGPU_AMBIENT_OCCLUSION_LIGHT_NONE);
+	RETAINED_TAKE(world_ao, flag);
+	flag = xgpu_texture_hud_meter() != 0;
+	RETAINED_TAKE(hud_meter, flag);
+	number = hdr.mode;
+	RETAINED_TAKE(hdr_mode, number);
+	number = hdr.boost;
+	RETAINED_TAKE(hdr_boost, number);
+	/* (its word, as the kept contexts are compared) */
+	lod_bias = draw_lod_bias();
+	if (memcmp(&context->lod_bias, &lod_bias, sizeof(lod_bias)))
+	{
+		context->lod_bias = lod_bias;
+		changed = TRUE;
+	}
+	*changed_out = changed;
 	return TRUE;
 }
+
+#undef RETAINED_TAKE
 
 /* the draw prepared from a kept preparation: 1 drawn, 0 not drawn, -1 not
 found (prepare_draw prepares it, and keeps it: retained_draw_keep) */
@@ -6449,7 +6569,7 @@ static int retained_draw_find(struct vertex_shader_object *program, BOOL immedia
 	struct retained_draw *draw, *set, *found = NULL;
 	struct xgpu_pipeline_key scratch;
 	struct xgpu_dynamic_state dynamic;
-	BOOL has_depth = FALSE, told;
+	BOOL has_depth = FALSE, told, changed;
 	unsigned long serial;
 	int way;
 
@@ -6458,7 +6578,7 @@ static int retained_draw_find(struct vertex_shader_object *program, BOOL immedia
 	retained_read_settings();
 	if (!retained.enabled && !retained.verify)
 		return -1;
-	if (!retained_context_make(&retained.context, program, immediate))
+	if (!retained_context_make(&retained.context, program, immediate, &changed))
 	{
 		retained.told = NULL;
 		retained.not_kept++;
@@ -6472,25 +6592,42 @@ static int retained_draw_find(struct vertex_shader_object *program, BOOL immedia
 		retained.generation++;
 		retained.told = NULL;
 	}
-	/* (its set's way with the same context, else the one made again: an
-	empty way, or the least recently used) */
-	set = &retained.draws[(retained_context_hash(&retained.context) % RETAINED_SETS) * RETAINED_WAYS];
-	draw = set;
-	for (way = 0; way < RETAINED_WAYS; way++)
+	/* (the context the same as the draw before's, which found a kept draw,
+	in the same generation, no kept draw's made again since: the one it
+	found, which its set's ways would find again. Else, or verifying, they
+	are looked through) */
+	if (!changed && retained.hit && retained.hit_generation == retained.generation && !retained.verify)
 	{
-		if (set[way].generation != retained.generation)
+		found = draw = retained.hit;
+		retained.found_same++;
+	}
+	else
+	{
+		/* (its set's way with the same context, else the one made again: an
+		empty way, or the least recently used) */
+		set = &retained.draws[(retained_context_hash(&retained.context) % RETAINED_SETS) * RETAINED_WAYS];
+		draw = set;
+		for (way = 0; way < RETAINED_WAYS; way++)
 		{
-			if (draw->generation == retained.generation)
+			if (set[way].generation != retained.generation)
+			{
+				if (draw->generation == retained.generation)
+					draw = &set[way];
+				continue;
+			}
+			if (!memcmp(&set[way].context, &retained.context, sizeof(retained.context)))
+			{
+				found = &set[way];
+				break;
+			}
+			if (draw->generation == retained.generation && set[way].used < draw->used)
 				draw = &set[way];
-			continue;
 		}
-		if (!memcmp(&set[way].context, &retained.context, sizeof(retained.context)))
-		{
-			found = &set[way];
-			break;
-		}
-		if (draw->generation == retained.generation && set[way].used < draw->used)
-			draw = &set[way];
+		if (retained.verify && !changed && retained.hit && retained.hit_generation == retained.generation &&
+			found != retained.hit && retained.same_differed++ < 8)
+			platform_log("GPU: retained draws: a draw with the context of the draw before found another kept draw");
+		retained.hit = found;
+		retained.hit_generation = retained.generation;
 	}
 	serial = memory_watch_serial();
 	retained.memory_serial = serial;
@@ -6658,6 +6795,9 @@ static void retained_draw_keep(const struct xgpu_texture_source *sources, const 
 			return;
 		}
 	}
+	/* (made again: the draw before's found one no longer stands for its
+	context) */
+	retained.hit = NULL;
 	draw->generation = retained.generation;
 	draw->used = retained.clock;
 	/* (its memory as it was found: a write since is noticed when it is
@@ -6697,14 +6837,15 @@ static void retained_draws_frame(void)
 	if (device.frame - retained.logged_frame < 600)
 		return;
 	retained.logged_frame = device.frame;
-	platform_log("GPU: retained draws: %lu found (%lu as the draw before's), %lu prepared, not kept: %lu not "
-		"retainable, %lu as what they were made from moved, %lu sampling a target; %lu differed, "
+	platform_log("GPU: retained draws: %lu found (%lu as the draw before's, %lu by its context alone), %lu prepared, "
+		"not kept: %lu not retainable, %lu as what they were made from moved, %lu sampling a target; %lu differed, "
 		"%lu targets differed, %lu hash differed, %lu told differed; moved: memory %lu (a kept draw's own), "
 		"choices %lu, images %lu, settings %lu, GPU settings %lu, targets %lu", retained.found, retained.found_told,
-		retained.prepared, retained.not_kept, retained.not_kept_moved, retained.not_kept_target, retained.differed,
-		retained.targets_differed, retained.hash_differed, retained.told_differed, retained.memory_moved,
+		retained.found_same, retained.prepared, retained.not_kept, retained.not_kept_moved, retained.not_kept_target,
+		retained.differed, retained.targets_differed, retained.hash_differed, retained.told_differed, retained.memory_moved,
 		retained.moved[0], retained.moved[1], retained.moved[2], retained.moved[3], retained.moved[4]);
-	retained.found = retained.found_told = retained.prepared = retained.not_kept = retained.memory_moved = 0;
+	retained.found = retained.found_told = retained.found_same = retained.prepared = retained.not_kept = 0;
+	retained.memory_moved = 0;
 	retained.not_kept_moved = retained.not_kept_target = 0;
 	memset(retained.moved, 0, sizeof(retained.moved));
 	retained.targets_differed = 0;

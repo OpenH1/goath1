@@ -58,7 +58,8 @@ def test_retained_draws_state_hash(tmp_path):
         "D3DRS_POINTSIZE", "D3DRS_BLENDCOLOR", "D3DRS_STENCILREF", "D3DRS_POLYGONOFFSETZSLOPESCALE",
         "D3DRS_POLYGONOFFSETZOFFSET", "D3DRS_SIMPLE_MAX", "D3DRS_MAX", "D3DRS_ALPHABLENDENABLE", "D3DRS_ZFUNC",
         "D3DTSS_BUMPENVMAT00", "D3DTSS_BUMPENVMAT01", "D3DTSS_BUMPENVMAT10", "D3DTSS_BUMPENVMAT11",
-        "D3DTSS_BUMPENVLSCALE", "D3DTSS_BUMPENVLOFFSET", "D3DTSS_MAX", "D3DTSS_MINFILTER"])
+        "D3DTSS_BUMPENVLSCALE", "D3DTSS_BUMPENVLOFFSET", "D3DTSS_MAX", "D3DTSS_MINFILTER", "D3DRS_ALPHAREF",
+        "D3DTSS_MIPMAPLODBIAS"])
     source = tmp_path / "retained_draws.c"
     source.write_text(r"""
 #include <assert.h>
@@ -78,7 +79,7 @@ static DWORD D3D__TextureState[D3DTSS_MAXSTAGES][D3DTSS_MAX];
 int main(void)
 {
     uint64_t kept;
-    unsigned long index;
+    unsigned long index, uniform_moved;
 
     /* a clean draw: kept by the hash of the states as they are */
     render_state_set(D3DRS_ALPHABLENDENABLE, 0);
@@ -94,6 +95,20 @@ int main(void)
     render_state_set(D3DRS_FOGCOLOR, 0x00ff00ff);
     texture_state_set(2, D3DTSS_BUMPENVMAT01, 0x3f800000);
     assert(state_hash_now() == kept);
+    /* ...and the uniforms' states read again (uniform_moved), once one of
+    them is set to another value; a pipeline's state, or the same value, not */
+    uniform_moved = state_hash.uniform_moved;
+    render_state_set(D3DRS_FOGCOLOR, 0x00ff00ff);
+    render_state_set(D3DRS_ALPHABLENDENABLE, 0);
+    assert(state_hash.uniform_moved == uniform_moved);
+    texture_state_set(3, D3DTSS_MIPMAPLODBIAS, 0x3f000000);
+    assert(state_hash.uniform_moved != uniform_moved);
+    uniform_moved = state_hash.uniform_moved;
+    render_state_set(D3DRS_ALPHAREF, 0x40);
+    assert(state_hash.uniform_moved != uniform_moved);
+    texture_state_set(3, D3DTSS_MIPMAPLODBIAS, 0);
+    render_state_set(D3DRS_ALPHAREF, 0);
+    kept = state_hash_now();
     /* a pipeline's state changed after it: not found (prepared again) */
     render_state_set(D3DRS_ALPHABLENDENABLE, 1);
     assert(state_hash_now() != kept);
@@ -125,8 +140,11 @@ int main(void)
     D3D__RenderState[D3DRS_ZFUNC] = 4;
     assert(state_hash_now() == kept);
     assert(state_hash_summed() != kept);
-    /* ...until the tables are marked written whole */
+    /* ...until the tables are marked written whole (the uniforms' states
+    read again too) */
+    uniform_moved = state_hash.uniform_moved;
     state_hash_forget();
+    assert(state_hash.uniform_moved != uniform_moved);
     assert(state_hash_now() == state_hash_summed() && state_hash_now() != kept);
     puts("ok");
     return 0;
