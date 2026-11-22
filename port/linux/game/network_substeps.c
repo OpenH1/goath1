@@ -66,6 +66,7 @@ within a controller's reach.
 long update_queues_distributed_input_key(long absolute_player_index);
 /* port_config.c */
 int config_boolean(char const *name);
+int halo_network_forms_before(void);
 
 /* ---------- constants */
 
@@ -1538,7 +1539,7 @@ void network_substeps_client_send(
 		struct distributed_message_header header;
 		byte data[MAXIMUM_LOCAL_PLAYERS * sizeof(struct distributed_substep_input)];
 	} message;
-	boolean unpacked = config_boolean("debug.network_forms_before") != 0;
+	boolean unpacked = halo_network_forms_before();
 	short count = 0;
 	word used = 0;
 	short local_player_index;
@@ -1945,7 +1946,7 @@ static void network_substeps_substep_end(
 	}
 	if (connection == _game_connection_network_client)
 	{
-		if (count && config_boolean("debug.network_forms_before"))
+		if (count && halo_network_forms_before())
 		{
 			word size = (word)(sizeof(message.header) + count * sizeof(struct distributed_live_control));
 

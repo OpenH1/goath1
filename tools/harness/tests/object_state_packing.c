@@ -31,11 +31,6 @@ static boolean distributed_point_valid(real_point3d const *point, real bound)
 static boolean legacy_machine;
 static boolean unpacked_setting;
 static boolean network_legacy_machine(long machine_index) { (void)machine_index; return legacy_machine; }
-static int config_boolean(char const *name)
-{
-	CHECK(!strcmp(name, "debug.network_forms_before"), "the setting read: %s", name);
-	return unpacked_setting;
-}
 /* what went: its type, count and bytes */
 static byte sent_type;
 static short sent_count;
@@ -199,6 +194,8 @@ int main(int argc, char **argv)
 		word size;
 		short index;
 		short count = 20;
+		long own[MAXIMUM_ENTRIES_PER_MESSAGE];
+		long shared[MAXIMUM_ENTRIES_PER_MESSAGE];
 
 		memset(&message, 0, sizeof(message));
 		for (index = 0; index < count; index++)
@@ -208,9 +205,30 @@ int main(int argc, char **argv)
 			if (index % 3 == 0)
 				SET_FLAG(message.states[index].flags, _distributed_object_at_rest_bit, TRUE);
 		}
-		distributed_host_send_state_message(1, &message, count);
+		for (index = 0; index < count; index++)
+			own[index] = NONE;
+		distributed_host_send_state_message(1, &message, count, message.states, own, unpacked_setting);
 		CHECK(sent_type == _distributed_message_object_states_packed && sent_count == count,
 			"an OpenH1 client's packed (type %u)", sent_type);
+		/* (the tick's states each packed once and their bits joined, among
+		ones packed in the message, off a byte's boundary: the same bytes, twice) */
+		{
+			static byte first[4096];
+			word first_size = sent_size;
+			short pass;
+
+			memcpy(first, sent_bytes, sent_size);
+			host_packed_states.serial++;
+			for (pass = 0; pass < 2; pass++)
+			{
+				for (index = 0; index < count; index++)
+					shared[index] = index % 4 == 1 ? NONE : index;
+				distributed_host_send_state_message(1, &message, count, message.states, shared, unpacked_setting);
+				CHECK(sent_type == _distributed_message_object_states_packed && sent_size == first_size &&
+					!memcmp(sent_bytes + sizeof(message.header), first + sizeof(message.header),
+						sent_size - sizeof(message.header)), "packed once, joined: the same bytes (pass %d)", pass);
+			}
+		}
 		CHECK(sent_size * 3 < 2 * (sizeof(message.header) + count * sizeof(message.states[0])),
 			"under two thirds of the bytes: %u", sent_size);
 		if (!strcmp(name, "short"))
@@ -236,14 +254,14 @@ int main(int argc, char **argv)
 		}
 		/* (an OpenCE machine, and the setting: the whole message as before) */
 		legacy_machine = TRUE;
-		distributed_host_send_state_message(1, &message, count);
+		distributed_host_send_state_message(1, &message, count, message.states, own, unpacked_setting);
 		CHECK(sent_type == _distributed_message_object_states &&
 			sent_size == sizeof(message.header) + count * sizeof(message.states[0]) &&
 			!memcmp(sent_bytes + sizeof(message.header), message.states, count * sizeof(message.states[0])),
 			"an OpenCE machine's whole (type %u)", sent_type);
 		legacy_machine = FALSE;
 		unpacked_setting = TRUE;
-		distributed_host_send_state_message(1, &message, count);
+		distributed_host_send_state_message(1, &message, count, message.states, own, unpacked_setting);
 		CHECK(sent_type == _distributed_message_object_states, "debug.network_forms_before: whole (type %u)",
 			sent_type);
 		return 0;

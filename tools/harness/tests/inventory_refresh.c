@@ -47,6 +47,7 @@ static boolean losing[HALO_PORT_MAXIMUM_NETWORK_MACHINES];
 
 static long game_time_get(void) { return now_time; }
 static int config_boolean(char const *name) { (void)name; return forms_before; }
+static inline int halo_network_forms_before(void) { return config_boolean("debug.network_forms_before"); }
 static boolean network_legacy_machine(long machine_index) { return machine_index == 0; }
 static void object_iterator_new(struct object_iterator *iterator, long mask, long flags)
 {

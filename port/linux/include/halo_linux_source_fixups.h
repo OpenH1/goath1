@@ -164,6 +164,9 @@ void assert_report_counts(unsigned long *failed, unsigned long *warned);
 /* debug.fixed_step: a game of this machine alone runs a tick a frame
 (port/linux/src/port_config.c; game_time.c, main.c) */
 int halo_fixed_step(void);
+/* debug.network_forms_before, read once (port/linux/src/port_config.c;
+network_distributed.c, network_objects.c, network_substeps.c) */
+int halo_network_forms_before(void);
 /* debug.fresh_memory_fill: the byte (0x00, 0xAA) the allocators fill what
 they give out uncleared with, or -1 for the game's own fill
 (port/linux/src/port_config.c; debug_memory.c, xbox_memory.c, xbox_kernel.c) */

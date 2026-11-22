@@ -203,6 +203,7 @@ static boolean distributed_substep_state_due(long machine_index, short player_in
 }
 /* (every player asked for: test_substep_requests.py has the test) */
 static int config_boolean(char const *name) { (void)name; return 0; }
+static inline int halo_network_forms_before(void) { return config_boolean("debug.network_forms_before"); }
 static boolean distributed_substep_states_wanted(boolean always, long machine_index, short player_index)
 {
 	(void)always; (void)machine_index; (void)player_index; return TRUE;

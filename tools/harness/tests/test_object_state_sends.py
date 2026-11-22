@@ -20,11 +20,14 @@ NEGATIVE_CONTROLS = {
                              "\t\t\t\tnow - objects_host_rest_sent_times[absolute_index] < RESTING_REFRESH_TICKS)",
                              "FALSE"), "resting-unchanged"),
     # a change at rest not seen: it waits for the refresh
-    "change-at-rest-ignored": (("return was_moving || (checksum != objects_host_rest_checksums[absolute_index] &&",
+    "change-at-rest-ignored": (("return was_moving || (*checksum != objects_host_rest_checksums[absolute_index] &&",
                                 "return was_moving || (FALSE &&"), "resting-changed"),
+    # a change at rest not seen where what the state is made of was taken for the state's own (its last noted)
+    "rest-source-unchecked": (("!memcmp(&source, &objects_host_rest_sources[absolute_index], sizeof(source))", "TRUE"),
+                              "resting-changed"),
     # a change at rest restarting its sends every tick (an object that keeps changing sent every tick)
-    "change-every-tick": (("game_time_get() - objects_host_rest_sent_times[absolute_index] >= REST_STATE_REPEAT_TICKS",
-                           "TRUE"), "resting-jitter"),
+    "change-every-tick": (("game_time_get() - objects_host_rest_sent_times[absolute_index] < REST_STATE_REPEAT_TICKS;",
+                           "FALSE;"), "resting-jitter"),
     # no sight test: by distance alone, as before
     # the budget's stretch on near objects out of sight too
     "budget-near": (("(period > 2 ? distributed_budget_stretch(machine_index) : 1)",

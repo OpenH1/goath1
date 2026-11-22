@@ -46,6 +46,10 @@ static long objects_host_rest_times[MAXIMUM_TRACKED_OBJECTS];
 static unsigned long objects_host_rest_checksums[MAXIMUM_TRACKED_OBJECTS];
 static boolean objects_host_rest_known[MAXIMUM_TRACKED_OBJECTS];
 static long objects_host_rest_sent_times[MAXIMUM_TRACKED_OBJECTS];
+/* (what the fake state is made of: distributed_state_from_object below) */
+struct distributed_rest_source { long object_index; unsigned long flags; real_point3d position; };
+static struct distributed_rest_source objects_host_rest_sources[MAXIMUM_TRACKED_OBJECTS];
+static struct { long serial; } host_packed_states;
 static unsigned long objects_host_seen[HALO_PORT_MAXIMUM_NETWORK_MACHINES][BIT_VECTOR_SIZE_IN_LONGS(MAXIMUM_TRACKED_OBJECTS)];
 
 /* the fake world */
@@ -73,6 +77,14 @@ static void distributed_state_from_object(long object_index, struct distributed_
 	if (TEST_FLAG(objects[object_index].object.flags, _object_at_rest_bit))
 		state->flags = 2;
 }
+static void distributed_rest_source_from_object(long object_index, struct distributed_rest_source *source)
+{
+	memset(source, 0, sizeof(*source));
+	source->object_index = object_index;
+	source->flags = objects[object_index].object.flags;
+	source->position = objects[object_index].object.position;
+}
+static inline int halo_network_forms_before(void) { return 0; }
 static boolean distributed_machine_sees_cluster(long machine_index, short cluster_index)
 {
 	return cluster_index < 0 || sees[machine_index][cluster_index];
@@ -91,8 +103,9 @@ static void distributed_send_to_machine(long machine_index, void *message, byte 
 }
 /* (a message's encoding, packed or whole, is object_state_packing's) */
 static void distributed_host_send_state_message(long machine_index, struct distributed_object_state_message *message,
-	short count)
+	short count, struct distributed_object_state const *states, long const *sources, boolean before)
 {
+	(void)states; (void)sources; (void)before;
 	distributed_send_to_machine(machine_index, message, _distributed_message_object_states, count,
 		(word)(sizeof(message->header) + count * sizeof(message->states[0])));
 }

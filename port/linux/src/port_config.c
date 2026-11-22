@@ -7128,6 +7128,17 @@ int config_boolean(const char *name)
 	return config_read(name, _config_boolean)->boolean;
 }
 
+/* debug.network_forms_before, read once: the network's senders ask it of
+every message and entry */
+int halo_network_forms_before(void)
+{
+	static int before = -1;
+
+	if (before < 0)
+		before = config_boolean("debug.network_forms_before") != 0;
+	return before;
+}
+
 int halo_fixed_step(void)
 {
 	static int fixed_step = -1;
