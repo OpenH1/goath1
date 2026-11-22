@@ -121,6 +121,8 @@ struct entry
 	/* the first present of a frame; counted by the stream (paced as it was
 	presented) */
 	int frame, counted;
+	/* the frame's number (host_render_stream_frame_playing) */
+	uint32_t number;
 };
 
 static struct
@@ -311,8 +313,11 @@ static void present_done(const struct entry *entry, uint64_t shown, uint64_t per
 	if (!entry->frame)
 		return;
 	if (entry->counted && paced)
+	{
+		host_render_stream_frame_taking(entry->number);
 		host_render_stream_frame_displayed(entry->input, entry->finished > 1 ? entry->finished : 0, entry->returned,
 			shown, period);
+	}
 	if (shown && pacing.last_shown && shown > pacing.last_shown && refresh)
 	{
 		refreshes = (uint32_t)((shown - pacing.last_shown + refresh / 2) / refresh);
@@ -719,6 +724,7 @@ VkResult xgpu_vulkan_pacing_present(PFN_vkQueuePresentKHR queue_present, VkQueue
 		entry->frame = frame;
 		entry->counted = frame && pacing.paced;
 		entry->input = frame ? host_render_stream_frame_input() : 0;
+		entry->number = frame ? host_render_stream_frame_playing() : 0;
 		pthread_cond_broadcast(&pacing.work);
 	}
 	pthread_mutex_unlock(&pacing.lock);
@@ -765,6 +771,7 @@ void xgpu_vulkan_pacing_unshown(void)
 		entry->frame = 1;
 		entry->counted = pacing.paced;
 		entry->input = host_render_stream_frame_input();
+		entry->number = host_render_stream_frame_playing();
 		pthread_cond_broadcast(&pacing.work);
 	}
 	pthread_mutex_unlock(&pacing.lock);

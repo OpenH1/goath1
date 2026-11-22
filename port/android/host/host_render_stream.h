@@ -404,6 +404,15 @@ it paces the game (host_render_stream_display_paced(1)) it counts the
 frames played so far as taken (host_render_stream_frames_taken_reset), and
 the next frame it ends is its to say. */
 void host_render_stream_frames_taken_reset(void);
+/* (before host_render_stream_frame_displayed) the frame it says of is this
+one (host_render_stream_frame_playing's number as the backend ended it):
+the frames before it are all the display has taken, whatever was counted
+before. A count that only went up drifted for good: display_wait counts
+the frames a stalled display has not taken as taken, so that the game goes
+on, and the ones still in a FIFO swapchain's queue then were each a
+refresh more from the input to the screen for the rest of the game (on a
+Steam Deck, 49 ms in place of 10 ms in one launch in two) */
+void host_render_stream_frame_taking(uint32_t frame);
 void host_render_stream_frame_displayed(uint64_t input, uint64_t finished, uint64_t latched, uint64_t shown,
 	uint64_t period);
 /* (any thread) a frame's work done, its GPU's included, at finished: its

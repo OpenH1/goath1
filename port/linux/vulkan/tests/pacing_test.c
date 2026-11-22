@@ -61,6 +61,11 @@ void host_render_stream_frames_taken_reset(void)
 {
 }
 
+void host_render_stream_frame_taking(uint32_t frame)
+{
+	(void)frame;
+}
+
 void host_render_stream_frame_displayed(uint64_t input, uint64_t finished, uint64_t latched, uint64_t shown,
 	uint64_t period)
 {
@@ -80,6 +85,11 @@ void host_render_stream_frame_finished(uint64_t input, uint64_t finished)
 void host_render_stream_pacing_statistics(struct host_render_pacing_statistics *statistics)
 {
 	memset(statistics, 0, sizeof(*statistics));
+}
+
+uint32_t host_render_stream_frame_playing(void)
+{
+	return 0;
 }
 
 uint64_t host_render_stream_frame_input(void)

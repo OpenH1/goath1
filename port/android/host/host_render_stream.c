@@ -2002,6 +2002,13 @@ void host_render_stream_frames_ahead(int frames)
 	pthread_mutex_unlock(&render.lock);
 }
 
+void host_render_stream_frame_taking(uint32_t frame)
+{
+	pthread_mutex_lock(&render.lock);
+	render.frames_taken = frame - 1;
+	pthread_mutex_unlock(&render.lock);
+}
+
 void host_render_stream_frame_taken(void)
 {
 	pthread_mutex_lock(&render.lock);
