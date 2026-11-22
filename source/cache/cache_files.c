@@ -1400,7 +1400,7 @@ long scenario_tags_load(
 				TRUE);
 			while (!read_complete)
 			{
-				SwitchToThread();
+				cache_file_read_wait();
 			}
 
 			halo_load_trace("tags.read.end", scenario_name); /* port: loading measurement */
@@ -1580,7 +1580,7 @@ static boolean structure_bsp_read(
 			TRUE);
 		while (!read_complete)
 		{
-			SwitchToThread();
+			cache_file_read_wait();
 			if (system_milliseconds() - sound_render_time() > 33)
 			{
 				sound_idle();
