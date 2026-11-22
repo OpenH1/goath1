@@ -3341,6 +3341,16 @@ static void players_coop_rescue_stranded(
 
 			rescued = position && player_teleport(iterator.datum_index, NONE, position);
 		}
+		{
+			void platform_log(char const *format, ...);
+			struct object_datum *root = object_get(object_get_ultimate_parent(player->unit_index));
+
+			platform_log("co-op: player %d, outside the BSP, %s %s, at %.2f %.2f %.2f",
+				(int)DATUM_INDEX_TO_ABSOLUTE_INDEX(iterator.datum_index),
+				rescued ? "brought in" : "not brought in (no room)",
+				root != object_get(player->unit_index) ? "in a vehicle" : "on foot",
+				root->object.position.x, root->object.position.y, root->object.position.z);
+		}
 		/* (port: and one that found no spot waits as long again before the
 		next try, rather than being moved about every tick) */
 		*since = rescued ? 0 : game_time_get() + 1;
