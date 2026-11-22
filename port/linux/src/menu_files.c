@@ -1413,7 +1413,9 @@ void halo_menus_art_register_frame(void const *texture, char const *file, long w
 	unsigned long slot = art_slot(data);
 	long index = art_lookup[slot] ? art_lookup[slot] - 1 : art_count;
 	size_t length = strlen(file);
-	int vector = width > 0 && height > 0 && length > 4 && !SDL_strcasecmp(file + length - 4, ".svg");
+	/* (.svg, in any case) */
+	int vector = width > 0 && height > 0 && length > 4 && file[length - 4] == '.' &&
+		(file[length - 3] | 0x20) == 's' && (file[length - 2] | 0x20) == 'v' && (file[length - 1] | 0x20) == 'g';
 
 	if (index == art_count)
 	{

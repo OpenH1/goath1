@@ -58,11 +58,9 @@
 #include "plutovg-ft-raster.h"
 #include "plutovg-ft-math.h"
 
-#include <setjmp.h>
-
-#define pvg_ft_setjmp   setjmp
-#define pvg_ft_longjmp  longjmp
-#define pvg_ft_jmp_buf  jmp_buf
+/* (OpenH1) no setjmp: the game's guests have none. A cell table that
+fills up is noted (overflow), the rest of the outline's cells go to a
+scratch cell, and the band is split as the longjmp had it */
 
 #include <stddef.h>
 
@@ -188,7 +186,8 @@ PVG_FT_END_STMNT
     int  band_size;
     int  band_shoot;
 
-    pvg_ft_jmp_buf  jump_buffer;
+    int             overflow;
+    TCell           scratch;
 
     void*       buffer;
     long        buffer_size;
@@ -291,7 +290,12 @@ PVG_FT_END_STMNT
     }
 
     if ( ras.num_cells >= ras.max_cells )
-      pvg_ft_longjmp( ras.jump_buffer, 1 );
+    {
+      ras.overflow = 1;
+      ras.scratch.x = x;
+      ras.scratch.next = NULL;
+      return &ras.scratch;
+    }
 
     cell        = ras.cells + ras.num_cells++;
     cell->x     = x;
@@ -1632,16 +1636,12 @@ void PVG_FT_Outline_Get_CBox(const PVG_FT_Outline* outline, PVG_FT_BBox* acbox)
   {
     volatile int  error = 0;
 
-    if ( pvg_ft_setjmp( ras.jump_buffer ) == 0 )
-    {
-      error = PVG_FT_Outline_Decompose( &ras.outline, &ras );
-      if ( !ras.invalid )
-        gray_record_cell( RAS_VAR );
-    }
-    else
-    {
+    ras.overflow = 0;
+    error = PVG_FT_Outline_Decompose( &ras.outline, &ras );
+    if ( !ras.invalid )
+      gray_record_cell( RAS_VAR );
+    if ( ras.overflow )
       error = ErrRaster_Memory_Overflow;
-    }
 
     return error;
   }

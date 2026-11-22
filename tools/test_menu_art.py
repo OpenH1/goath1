@@ -25,7 +25,6 @@ static void xgpu_texture_replacements_changed(void) {}
 /* (the vector art's, which these cases do not draw: menu_vector.c, d3d8_device.c, SDL's) */
 typedef unsigned long long Uint64;
 static Uint64 SDL_GetTicksNS(void) { return 0; }
-static int SDL_strcasecmp(const char *a, const char *b) { return strcmp(a, b); }
 float halo_screen_pixel_scale(void) { return 1.0f; }
 static unsigned char *menu_vector_pixels(const void *svg, unsigned long size, long width, long height, float scale,
     const float *slice, unsigned long *pixel_width, unsigned long *pixel_height)
