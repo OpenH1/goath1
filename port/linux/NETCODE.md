@@ -136,6 +136,17 @@ with ideas from VALORANT's netcode articles, keeping the 30 Hz tick:
   threads' wake times along with it. The object, device and name syncs
   bring the clients up to date.
 
+  The host keeps its own co-op saved game: each of its checkpoints is also
+  written to `coopsave.bin` in player 1's profile (the solo `savegame.bin`
+  is never read or written by co-op), with the extra vehicles' homes beside
+  it (`coophomes.bin`). Co-op HOST's Choose Mission offers it as CONTINUE
+  (its mission and difficulty); the game so hosted loads it as the map
+  starts, before the first tick (`network_coop_game_started`), which to a
+  client is a revert: the session roster stays the current one (the partner
+  in the saved game's slot takes their player back, a saved partner who is
+  absent leaves, anyone else spawns beside a teammate as a late joiner),
+  and the loaded state becomes the checkpoint. No network message changes.
+
   The host's EXTRA ENEMIES (`coop_enemies.c`, `network.coop_enemies_mode`)
   give each squad of enemies a level places more of itself: PER PLAYER, a
   percentage of itself for each player past the first, to 8 times its size

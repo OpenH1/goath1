@@ -1229,7 +1229,7 @@ static boolean campaign_missions_choose(struct widget_instance *widget, short co
 	}
 	/* (the saved game's mission goes on with it; but in the tall layout,
 	whose CONTINUE does that, its card is a mission to start, as any other) */
-	if (mission == campaign.saved_level && !menu_engine_looks())
+	if (mission == campaign.saved_level && !menu_engine_looks() && !coop_host_choosing())
 	{
 		campaign_continue(controller);
 		return FALSE;

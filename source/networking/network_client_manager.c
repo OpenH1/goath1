@@ -398,6 +398,7 @@ void network_game_client_reset_settings_staging(void); /* port: discard partial 
 #include "map_share.h" /* port: port/linux/game/map_share.c */
 #include "network_standard.h" /* port: port/linux/game/network_standard.c */
 #include "custom_edition_cache.h" /* port: port/linux/game/custom_edition_cache.c */
+#include "network_coop.h" /* port: port/linux/game/network_coop.c */
 
 /* port: port/linux/src/port_config.c */
 int config_boolean(char const *name);
@@ -1866,6 +1867,9 @@ boolean network_game_client_game_has_started(
 					network_game_client_late_join_clock_pending =
 						game_connection() == _game_connection_network_client;
 					game_initial_pulse();
+					/* port: a co-op host's saved game continued, before its
+					first tick (network_coop.c) */
+					network_coop_game_started();
 				}
 				else
 				{

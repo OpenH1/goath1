@@ -127,6 +127,7 @@ Called from the main loop every frame (main.c).
 #include "game/game_allegiance.h"
 #include "bots.h"
 #include "vehicle_hijack.h"
+#include "network_coop.h"
 
 #include <math.h>
 #include <stdarg.h>
@@ -3460,6 +3461,8 @@ void network_test_update(
 
 					if (!ui_widget_port_cooperative_level_choose(path, _game_difficulty_level_normal))
 						platform_log("network test: %s is not a campaign level, for co-op", path);
+					/* (co-op HOST's CONTINUE: coop_menu.inc) */
+					network_coop_continue_request(config_boolean("debug.network_test_coop_continue") != 0);
 					platform_log("network test: game %d, co-op", network_test.variant_index + 1);
 				}
 				else

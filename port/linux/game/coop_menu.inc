@@ -8,8 +8,14 @@ and SPLIT SCREEN. Included in menu_functions.c after campaign_menu.inc,
 whose Choose Mission and Choose Difficulty HOST uses, and friends_menu.inc,
 whose helpers it uses.
 
-- HOST: Choose Mission and Choose Difficulty as the campaign has them (no
-  saved game offered: campaign_levels_read), then WHO CAN JOIN
+- HOST: Choose Mission and Choose Difficulty as the campaign has them, with
+  the host's own co-op saved game in place of the solo one (CONTINUE, its
+  mission and difficulty: campaign_levels_read; never the solo saved game,
+  which co-op neither reads nor writes: game_state.c's coopsave.bin). Its
+  CONTINUE (coop_host_saved) hosts that mission at that difficulty and goes
+  on from the saved game as it starts (network_coop.c's
+  network_coop_game_started); its RESTART hosts it from its start. Then
+  WHO CAN JOIN
   (screens/coop_who.xml): FRIENDS (its friends see it in their co-op list
   and join; it is not listed for strangers), ANYONE (listed in everyone's
   co-op list and server browser too) or INVITE ONLY (only its invite link
@@ -84,6 +90,9 @@ static struct
 	boolean active;
 	char map[256];
 	short difficulty;
+	/* whether the game hosted goes on from the host's co-op saved game
+	(CONTINUE) */
+	boolean continuing;
 	/* when the game was hosted */
 	unsigned long hosted_time;
 } coop_host;
@@ -156,7 +165,47 @@ static boolean coop_host_begin(boolean begin)
 {
 	coop_host.active = begin;
 	coop_host.map[0] = 0;
+	coop_host.continuing = FALSE;
+	network_coop_continue_request(FALSE);
 	return TRUE;
+}
+
+/* the host's co-op saved game (game_state.c's coopsave.bin): its campaign
+level and difficulty; FALSE if there is none, or it is of no level of the
+campaign's (Choose Mission shows those alone) */
+static boolean coop_host_saved_game(short *level, short *difficulty)
+{
+	char map_name[256];
+
+	if (player_ui_get_active_player_profile_index(0) == NONE ||
+		!game_state_port_coop_saved_game(map_name, difficulty))
+	{
+		return FALSE;
+	}
+	*level = main_get_solo_level_from_name(map_name);
+	*difficulty = (short)PIN(*difficulty, 0, NUMBER_OF_DIFFICULTIES - 1);
+	return *level != NONE;
+}
+
+/* Choose Mission's CONTINUE (continuing) and the RESTART of its question,
+while HOST chooses: the saved game's mission at its difficulty, then WHO
+CAN JOIN; the game hosted goes on from the saved game, or starts the
+mission over (its first checkpoint then takes the saved game's place) */
+static boolean coop_host_saved(struct widget_instance *widget, boolean continuing, boolean *widget_deleted)
+{
+	char map_name[256];
+	short difficulty;
+
+	if (player_ui_get_active_player_profile_index(0) == NONE ||
+		!game_state_port_coop_saved_game(map_name, &difficulty) || main_get_solo_level_from_name(map_name) == NONE)
+	{
+		return campaign_fail();
+	}
+	snprintf(coop_host.map, sizeof(coop_host.map), "%s", map_name);
+	coop_host.difficulty = (short)PIN(difficulty, 0, NUMBER_OF_DIFFICULTIES - 1);
+	coop_host.continuing = continuing;
+	ui_play_audio_feedback_sound(SOUND_FORWARD);
+	return ui_widget_port_open(widget, COOP_WHO_NAME, widget_deleted);
 }
 
 /* Choose Difficulty's PLAY while HOST chooses (in place of "port campaign
@@ -177,6 +226,8 @@ static boolean coop_host_difficulty(struct widget_instance *widget, boolean *wid
 		platform_log("menus: could not keep the campaign's difficulty");
 	snprintf(coop_host.map, sizeof(coop_host.map), "%s", main_get_map_name());
 	coop_host.difficulty = difficulty;
+	/* (a mission chosen: started from its beginning) */
+	coop_host.continuing = FALSE;
 	if (!coop_host.map[0])
 		return campaign_fail();
 	ui_play_audio_feedback_sound(SOUND_FORWARD);
@@ -217,9 +268,12 @@ static boolean coop_host_start(struct widget_instance *widget, struct event_reco
 	multiplayer.game_password[0] = 0;
 	if (!server_start())
 		return campaign_fail();
-	platform_log("menus: co-op hosted: %s on %s, %s can join", coop_host.map,
+	/* (CONTINUE's game goes on from the saved game as it starts) */
+	network_coop_continue_request(coop_host.continuing);
+	platform_log("menus: co-op hosted: %s on %s, %s can join%s", coop_host.map,
 		coop_host.difficulty == 3 ? "legendary" : coop_host.difficulty == 2 ? "heroic" :
-		coop_host.difficulty == 1 ? "normal" : "easy", coop_join_words[who]);
+		coop_host.difficulty == 1 ? "normal" : "easy", coop_join_words[who],
+		coop_host.continuing ? ", continuing its saved game" : "");
 	/* (HOST's choosing goes on: the lobby left comes back to WHO CAN JOIN,
 	and Choose Difficulty's PLAY is still HOST's; co-op's screen ends it) */
 	coop_host.hosted_time = system_milliseconds() | 1;
@@ -748,4 +802,6 @@ comes back to it: HOST's choosing over) */
 void pc_menu_coop_opened(void)
 {
 	coop_host.active = FALSE;
+	coop_host.continuing = FALSE;
+	network_coop_continue_request(FALSE);
 }

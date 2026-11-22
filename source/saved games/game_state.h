@@ -98,6 +98,15 @@ void game_state_check_data_arrays(
 	void);
 void game_state_try_and_load_from_persistent_storage(
 	void);
+/* port: a network co-op host's own saved game (game_state.c): written at
+its checkpoints; its mission and difficulty, for the co-op HOST's CONTINUE
+(FALSE: none); and loaded over the game state as a map starts (FALSE: none
+taken, the map starts from its beginning) */
+boolean game_state_port_coop_saved_game(
+	char *map_name,
+	short *difficulty);
+boolean game_state_port_coop_load(
+	void);
 void game_state_load_core(
 	const char *name);
 void game_state_initialize(
@@ -158,6 +167,23 @@ void game_state_write_to_persistent_storage(
 void game_state_read_from_persistent_storage(
 	void *buffer,
 	long buffer_size);
+/* port: a network co-op host's own saved game (game_state.c): its files in
+player 1's profile, and files read and written whole */
+boolean game_state_port_coop_storage_file(
+	char *path,
+	char const *name);
+void *game_state_port_file_read(
+	char const *path,
+	long *size);
+boolean game_state_port_file_write(
+	char const *path,
+	void const *data,
+	long size);
+boolean game_state_port_file_read_head(
+	char const *path,
+	void *buffer,
+	long size,
+	long *file_size);
 void game_state_create_persistent_storage(
 	const char *path);
 

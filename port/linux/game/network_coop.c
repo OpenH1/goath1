@@ -3517,6 +3517,54 @@ void network_coop_reverted(
 	event_new(_coop_event_reverted);
 }
 
+/* the co-op HOST's CONTINUE, for the next game hosted */
+static boolean coop_continue_requested;
+
+void network_coop_continue_request(
+	boolean requested)
+{
+	coop_continue_requested = requested;
+}
+
+/* The host's saved game loaded as its map starts, before the first tick, so
+the clients' clocks take its time from the first game update and nothing
+of the fresh map's start has reached them. To a client it is a revert, and
+it catches up as after one (or as a late joiner does): through the object,
+device and name syncs and the state resent on its join. As after a revert,
+the session roster is the current one, not the saved game's (after_load's
+network_coop_restore_players): the partner of the same machine slot takes
+their saved player back, a saved partner who is not here leaves (their unit
+deleted), and anyone not in the saved game, or joining later, spawns beside
+a teammate as a late joiner does. The clock goes on from the saved game's
+(a client's clock only goes forward, and jumps to the host's), the queues
+and syncs are restarted (network_coop_reverted), and the loaded state is
+made the checkpoint: a team wipe goes back to it, and the players' places
+at it and the checkpoint's roster are the ones loaded. Anything else the
+host's ticks keep outside the game state starts over as it does at a map's
+start (the extra enemies' settings are the host's now, as are the scaled
+squads the saved game has; the riders and waiting extras a revert also
+forgets), but the extra vehicles' homes, kept with the saved game. */
+void network_coop_game_started(
+	void)
+{
+	boolean requested = coop_continue_requested;
+	long now;
+
+	coop_continue_requested = FALSE;
+	if (!requested || !coop_host())
+		return;
+	now = game_time_get();
+	if (!game_state_port_coop_load())
+	{
+		error(_error_silent, "co-op: no saved game of the host's to continue; the mission starts from its beginning");
+		return;
+	}
+	network_coop_reverted(now);
+	players_note_checkpoint();
+	game_state_save();
+	error(_error_silent, "co-op: continued the host's saved game at tick %ld", game_time_get());
+}
+
 void network_coop_skip_answered(
 	boolean skipped)
 {

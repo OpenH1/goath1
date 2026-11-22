@@ -105,6 +105,7 @@ their handlers open opens.
 #include "text/unicode.h"
 
 #include "halo_menus.h"
+#include "network_coop.h"
 #include "controller_buttons.h"
 #include "controller_remap.h"
 #include "controller_layouts.h"
@@ -1274,8 +1275,10 @@ static boolean campaign_profile(short controller, struct player_profile *profile
 it has played, the one after the last it finished, the first) and finished,
 and its saved game's; in co-op, those either player's has reached and
 finished, and no saved game (a game of one player's does not go on with
-two: game_state.c's game_state_header_valid) */
+two: game_state.c's game_state_header_valid), but for a network co-op
+HOST's own co-op saved game */
 static boolean coop_host_choosing(void);
+static boolean coop_host_saved_game(short *level, short *difficulty);
 
 static void campaign_levels_read(struct player_profile const *profile)
 {
@@ -1304,10 +1307,14 @@ static void campaign_levels_read(struct player_profile const *profile)
 				campaign.levels[level].finished[marker] |= (flags >> (marker + 1)) & 1;
 		}
 	}
-	/* (none either while co-op's HOST chooses its mission: a saved game is
-	the player's own, coop_menu.inc) */
-	if (player_spawn_count >= 2 || coop_host_choosing() ||
-		!ui_widget_port_saved_game(&map_name, &campaign.saved_level, &difficulty))
+	/* (while co-op's HOST chooses its mission, the host's own co-op saved
+	game, never the solo one: coop_menu.inc) */
+	if (coop_host_choosing())
+	{
+		if (player_spawn_count >= 2 || !coop_host_saved_game(&campaign.saved_level, &difficulty))
+			campaign.saved_level = NONE;
+	}
+	else if (player_spawn_count >= 2 || !ui_widget_port_saved_game(&map_name, &campaign.saved_level, &difficulty))
 	{
 		campaign.saved_level = NONE;
 	}
@@ -16378,6 +16385,12 @@ boolean pc_menu_event_function_invoke(
 		the co-op list's screen made and let go of: coop_menu.inc) */
 		if (!strcmp(name, "port campaign play") && coop_host_choosing())
 			return coop_host_difficulty(widget, widget_deleted);
+		/* (and its CONTINUE and RESTART, of its own co-op saved game) */
+		if ((!strcmp(name, "port campaign continue") || !strcmp(name, "port campaign restart")) &&
+			coop_host_choosing())
+		{
+			return coop_host_saved(widget, !strcmp(name, "port campaign continue"), widget_deleted);
+		}
 		if (!strcmp(name, "port coop host begin") || !strcmp(name, "port coop host end"))
 			return coop_host_begin(!strcmp(name, "port coop host begin"));
 		if (!strcmp(name, "port coop join init"))

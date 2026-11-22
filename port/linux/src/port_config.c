@@ -2671,6 +2671,11 @@ static const struct config_setting config_settings[] =
 		"Console lines an automated test's host runs in its first lobby, at their\n"
 		"second of its setup, before debug.network_test_start starts the game:\n"
 		"\"<second> <line>|<second> <line>...\"." },
+	{ "debug.network_test_coop_continue", _config_boolean, "false", "HALO_NETWORK_TEST_COOP_CONTINUE",
+		_environment_set_is_true, _platform_all,
+		"An automated test host's co-op game goes on from the host's own co-op\n"
+		"saved game, as co-op HOST's CONTINUE does (debug.network_test_profiles\n"
+		"gives player 1 the profile it is kept in)." },
 	{ "debug.network_test_cue_players", _config_integer, "1", "HALO_NETWORK_TEST_CUE_PLAYERS", _environment_value,
 		_platform_all,
 		"The players debug.network_test_cues waits for." },

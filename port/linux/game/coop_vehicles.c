@@ -13,6 +13,9 @@ The small home table follows in-memory campaign checkpoints through the
 save/load callbacks, without changing the game's saved allocations or datums.
 A disk/core load without a matching in-memory checkpoint forgets the table;
 it must not manufacture homes or budgets from coop_vehicle_homes in an unknown state.
+A co-op host's own saved game (game_state.c) keeps the saved table in a file
+beside its image, with the tick it was saved at; loaded, it is the saved
+table again, taken only if the image's tick is that one.
 */
 #include "cseries.h"
 #include "game/game.h"
@@ -67,7 +70,7 @@ struct coop_vehicle_home
 	real radius;
 };
 
-static struct
+static struct coop_vehicle_homes_table
 {
 	short count;
 	struct coop_vehicle_home homes[VEHICLE_HOMES];
@@ -340,6 +343,60 @@ void coop_vehicles_before_save(void)
 		saved_tick = game_time_get();
 		saved_valid = TRUE;
 	}
+}
+
+/* the saved table as a co-op host's saved game keeps it in a file: its tick,
+whether there is one, each home's source by its offset from the scenario's
+plus one (0: none; never a pointer in a file), then the table, its sources
+NULL */
+struct coop_saved_homes
+{
+	long tick;
+	long valid;
+	long sources[VEHICLE_HOMES];
+};
+
+long coop_vehicles_saved_homes(void *buffer, long size, void const *base)
+{
+	struct coop_saved_homes *saved = buffer;
+	struct coop_vehicle_home *homes;
+	long needed = (long)(sizeof(*saved) + sizeof(saved_vehicles));
+	short number;
+
+	if (size < needed)
+		return 0;
+	csmemset(saved, 0, sizeof(*saved));
+	saved->tick = saved_tick;
+	saved->valid = saved_valid && vehicles_host();
+	csmemcpy(saved + 1, &saved_vehicles, sizeof(saved_vehicles));
+	homes = ((struct coop_vehicle_homes_table *)(saved + 1))->homes;
+	for (number = 0; number < VEHICLE_HOMES; number++)
+	{
+		if (homes[number].source)
+			saved->sources[number] = (long)((byte const *)homes[number].source - (byte const *)base) + 1;
+		homes[number].source = NULL;
+	}
+	return needed;
+}
+
+void coop_vehicles_saved_homes_load(void const *buffer, long size, void const *base)
+{
+	struct coop_saved_homes const *saved = buffer;
+	short number;
+
+	saved_valid = FALSE;
+	if (!buffer || size != (long)(sizeof(*saved) + sizeof(saved_vehicles)) || !saved->valid)
+		return;
+	csmemcpy(&saved_vehicles, saved + 1, sizeof(saved_vehicles));
+	if (saved_vehicles.count < 0 || saved_vehicles.count > VEHICLE_HOMES)
+		return;
+	for (number = 0; number < VEHICLE_HOMES; number++)
+	{
+		saved_vehicles.homes[number].source = saved->sources[number] ?
+			(struct scenario_object_datum const *)((byte const *)base + saved->sources[number] - 1) : NULL;
+	}
+	saved_tick = saved->tick;
+	saved_valid = TRUE;
 }
 
 void coop_vehicles_after_load(void)

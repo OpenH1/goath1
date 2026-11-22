@@ -12,6 +12,10 @@ one or the one before it, even if the game stops in the middle of a write.
 One write at a time: the next checkpoint, and whatever reads the file (a
 revert), wait for the one before (saved_game_writer_wait). If the thread
 cannot be started, the write is made at once on the caller's.
+
+A network co-op host's checkpoint is also its co-op saved game: the same
+image is written to a second file after the first (saved_game_writer_copy),
+in the same way, and its failure is only logged (the checkpoint stands).
 */
 
 #include "port_config.h"
@@ -46,6 +50,8 @@ static struct
 	int error;
 	int tracing;
 	char path[1024];
+	/* the file the image is also written to, after path (empty: none) */
+	char copy[1024];
 	void const *image;
 	unsigned long size;
 } saved_game_writer = { PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER };
@@ -108,6 +114,13 @@ static int saved_game_write_traced(char const *path, void const *image, unsigned
 	return error;
 }
 
+/* a copy's write (saved_game_writer_copy), logged if it failed */
+static void saved_game_copy_written(char const *path, int error)
+{
+	if (error)
+		load_trace_log("SAVED_GAME_COPY failed error=%d path=%s", error, path);
+}
+
 static void *saved_game_writer_thread(void *unused)
 {
 	(void)unused;
@@ -120,9 +133,21 @@ static void *saved_game_writer_thread(void *unused)
 			pthread_cond_wait(&saved_game_writer.changed, &saved_game_writer.lock);
 		/* (what was handed over stays as it is while the write is pending) */
 		pthread_mutex_unlock(&saved_game_writer.lock);
-		error = saved_game_write_traced(saved_game_writer.path, saved_game_writer.image, saved_game_writer.size,
-			saved_game_writer.tracing);
+		error = saved_game_writer.path[0] ? saved_game_write_traced(saved_game_writer.path, saved_game_writer.image,
+			saved_game_writer.size, saved_game_writer.tracing) : saved_game_writer.error;
 		pthread_mutex_lock(&saved_game_writer.lock);
+		/* (a copy asked for while the image was written: written now) */
+		while (saved_game_writer.copy[0])
+		{
+			char copy[sizeof(saved_game_writer.copy)];
+
+			snprintf(copy, sizeof(copy), "%s", saved_game_writer.copy);
+			saved_game_writer.copy[0] = 0;
+			pthread_mutex_unlock(&saved_game_writer.lock);
+			saved_game_copy_written(copy, saved_game_write_traced(copy, saved_game_writer.image,
+				saved_game_writer.size, saved_game_writer.tracing));
+			pthread_mutex_lock(&saved_game_writer.lock);
+		}
 		saved_game_writer.error = error;
 		saved_game_writer.pending = 0;
 		pthread_cond_broadcast(&saved_game_writer.changed);
@@ -148,6 +173,10 @@ void saved_game_writer_begin(char const *xbox_path, void const *image, unsigned 
 		if (saved_game_writer.thread_state == _saved_game_writer_running)
 			pthread_detach(thread);
 	}
+	/* (kept for a copy: saved_game_writer_copy) */
+	saved_game_writer.image = image;
+	saved_game_writer.size = size;
+	saved_game_writer.tracing = tracing;
 	if (saved_game_writer.thread_state != _saved_game_writer_running)
 	{
 		saved_game_writer.error = saved_game_write_traced(path, image, size, tracing);
@@ -155,12 +184,37 @@ void saved_game_writer_begin(char const *xbox_path, void const *image, unsigned 
 		return;
 	}
 	snprintf(saved_game_writer.path, sizeof(saved_game_writer.path), "%s", path);
-	saved_game_writer.image = image;
-	saved_game_writer.size = size;
-	saved_game_writer.tracing = tracing;
+	saved_game_writer.copy[0] = 0;
 	saved_game_writer.error = 0;
 	saved_game_writer.pending = 1;
 	pthread_cond_broadcast(&saved_game_writer.changed);
+	pthread_mutex_unlock(&saved_game_writer.lock);
+}
+
+void saved_game_writer_copy(char const *xbox_path)
+{
+	char path[sizeof(saved_game_writer.copy)];
+
+	if (!saved_game_writer.image)
+		return;
+	platform_translate_path(xbox_path, path, sizeof(path));
+	pthread_mutex_lock(&saved_game_writer.lock);
+	if (saved_game_writer.thread_state != _saved_game_writer_running)
+	{
+		saved_game_copy_written(path, saved_game_write_traced(path, saved_game_writer.image, saved_game_writer.size,
+			saved_game_writer.tracing));
+		pthread_mutex_unlock(&saved_game_writer.lock);
+		return;
+	}
+	snprintf(saved_game_writer.copy, sizeof(saved_game_writer.copy), "%s", path);
+	/* (the image's own write already over: the copy alone, the last
+	write's result kept) */
+	if (!saved_game_writer.pending)
+	{
+		saved_game_writer.path[0] = 0;
+		saved_game_writer.pending = 1;
+		pthread_cond_broadcast(&saved_game_writer.changed);
+	}
 	pthread_mutex_unlock(&saved_game_writer.lock);
 }
 

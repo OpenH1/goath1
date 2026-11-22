@@ -133,6 +133,7 @@ void object_bounds_cache_invalidate(void);
 /* port: port/linux/game/determinism_log.c */
 void determinism_log_game_state_allocation(char const *name, void const *address, long size);
 #include "demo.h" /* port: port/linux/game/demo.c */
+#include "../../port/linux/src/saved_game_writer.h" /* port: a co-op host's saved game's copy */
 
 /* port: riding taken from the settings after every load (bipeds.c) */
 void bipeds_riding_latch(void);
@@ -171,6 +172,8 @@ static void game_state_allocation_record(
 	long size,
 	boolean gpu);
 static void game_state_set_revert_time(
+	void);
+static void game_state_coop_saved(
 	void);
 
 /* ---------- globals */
@@ -396,7 +399,11 @@ void game_state_save(
 	game_state_globals.saved_game_valid = (game_state_write_to_file()!=FALSE);
 	/* port: never associate new players with an older or failed save. */
 	if (game_state_globals.saved_game_valid)
+	{
 		network_coop_checkpoint_saved();
+		/* port: and a co-op host's checkpoint its own saved game */
+		game_state_coop_saved();
+	}
 	main_start_time();
 	game_state_note_event("checkpoint saved");
 
@@ -1289,6 +1296,147 @@ void game_state_load_core(
 	}
 
 	return;
+}
+
+/* port: a network co-op host's own saved game. Its checkpoints are written
+to the checkpoint's file as any game's, and the same image to coopsave.bin
+in player 1's profile, beside the solo savegame.bin, which co-op never
+writes or reads: a solo game and a co-op one never take each other's place.
+What its ticks keep outside the game state is rebuilt as it loads
+(network_coop.c's network_coop_game_started), but for the extra vehicles'
+home table, kept beside it in coophomes.bin with the tick it was saved at
+(coop_vehicles.c) */
+#define COOP_SAVED_GAME_NAME "coopsave.bin"
+#define COOP_SAVED_HOMES_NAME "coophomes.bin"
+
+/* the file, for this machine's game: FALSE if it is no network co-op host
+with a profile (a client, a dedicated server, a demo's playback) */
+static boolean game_state_coop_file(
+	char *path,
+	char const *name)
+{
+	if (game_connection() != _game_connection_network_server || !network_coop_active() || demo_playing())
+		return FALSE;
+	return game_state_port_coop_storage_file(path, name);
+}
+
+/* a co-op host's checkpoint just written (game_state_save): the extra
+vehicles' table at once, a small file; the image on the checkpoint's writer
+thread after its own file (saved_game_writer_copy) */
+static void game_state_coop_saved(
+	void)
+{
+	static byte homes[64 * 1024];
+	char path[256];
+	long size;
+
+	if (!game_state_coop_file(path, COOP_SAVED_HOMES_NAME))
+		return;
+	size = coop_vehicles_saved_homes(homes, (long)sizeof(homes), global_scenario_get());
+	if (!size || !game_state_port_file_write(path, homes, size))
+		error(_error_silent, "co-op: the saved game's vehicle homes could not be written");
+	if (game_state_coop_file(path, COOP_SAVED_GAME_NAME))
+		saved_game_writer_copy(path);
+}
+
+/* where the header is in the game state, and so in an image of it */
+static long game_state_coop_header_offset(
+	void)
+{
+	return (long)((byte *)game_state_globals.header - (byte *)game_state_globals.base_address);
+}
+
+/* a co-op saved game's header, from its image, its strings ended in it;
+NULL if the file (size) is not an image of this build's size, or what was
+read of it (read) holds no header */
+static struct game_state_header *game_state_coop_header(
+	void *image,
+	long size,
+	long read)
+{
+	long offset = game_state_coop_header_offset();
+	struct game_state_header *header;
+
+	if (!image || (size != game_state_image_size() && size != GAME_STATE_SIZE) || offset < 0 ||
+		read < offset + (long)sizeof(*header))
+	{
+		return NULL;
+	}
+	header = (struct game_state_header *)((byte *)image + offset);
+	header->map_name[NUMBEROF(header->map_name) - 1] = 0;
+	header->build_number[NUMBEROF(header->build_number) - 1] = 0;
+	return header;
+}
+
+boolean game_state_port_coop_saved_game(
+	char *map_name,
+	short *difficulty)
+{
+	long head_size = game_state_coop_header_offset() + (long)sizeof(struct game_state_header);
+	char path[256];
+	long size = 0;
+	void *head;
+	struct game_state_header *header = NULL;
+	boolean found = FALSE;
+
+	map_name[0] = 0;
+	if (!game_state_port_coop_storage_file(path, COOP_SAVED_GAME_NAME))
+		return FALSE;
+	/* (its header alone, read as the screen opens: campaign_levels_read) */
+	head = malloc(head_size);
+	if (head && game_state_port_file_read_head(path, head, head_size, &size))
+		header = game_state_coop_header(head, size, head_size);
+	/* (of this build's layout: another's would be refused as it loads) */
+	if (header && header->allocation_size_checksum == (unsigned long)game_state_globals.allocation_size_checksum)
+	{
+		csstrncpy(map_name, header->map_name, sizeof(header->map_name) - 1);
+		map_name[sizeof(header->map_name) - 1] = 0;
+		*difficulty = header->difficulty;
+		found = map_name[0] != 0;
+	}
+	free(head);
+	return found;
+}
+
+boolean game_state_port_coop_load(
+	void)
+{
+	char path[256];
+	long size = 0, homes_size = 0;
+	void *image, *homes = NULL;
+	struct game_state_header *header;
+	boolean loaded;
+
+	if (!game_state_coop_file(path, COOP_SAVED_GAME_NAME))
+		return FALSE;
+	image = game_state_port_file_read(path, &size);
+	header = game_state_coop_header(image, size, size);
+	if (!header || !game_state_header_valid(header, FALSE))
+	{
+		error(_error_silent, "co-op: the host's saved game is not taken (%s)",
+			image ? "not of this map or build" : "there is none");
+		free(image);
+		return FALSE;
+	}
+	if (header->difficulty != game_difficulty_level_get())
+	{
+		error(_error_silent, "co-op: the host's saved game is not taken: it is of difficulty %d, this game of %d",
+			header->difficulty, game_difficulty_level_get());
+		free(image);
+		return FALSE;
+	}
+	if (game_state_coop_file(path, COOP_SAVED_HOMES_NAME))
+		homes = game_state_port_file_read(path, &homes_size);
+	game_state_note_event("co-op saved game loaded");
+	game_state_call_before_load_procs();
+	/* (the vehicles' homes, which the load's after_load takes if they are
+	of its tick) */
+	coop_vehicles_saved_homes_load(homes, homes_size, global_scenario_get());
+	loaded = game_state_image_accept(image, size);
+	game_state_call_after_load_procs();
+	free(homes);
+	free(image);
+	return loaded;
 }
 
 void game_state_initialize(

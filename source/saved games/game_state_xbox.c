@@ -544,6 +544,83 @@ boolean game_state_persistent_storage_file_expected(
 	return TRUE;
 }
 
+/* port: a network co-op host's own saved game's files (game_state.c), in
+player 1's profile beside its solo savegame.bin, which co-op never touches */
+boolean game_state_port_coop_storage_file(
+	char *path,
+	char const *name)
+{
+	if (!game_state_get_persistent_storage_path(path))
+		return FALSE;
+	strcat(path, name);
+	return TRUE;
+}
+
+/* port: a file read whole (NULL: none, or unread), its size given; the
+caller frees it */
+void *game_state_port_file_read(
+	char const *path,
+	long *size)
+{
+	HANDLE file = CreateFileA(path, GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
+	unsigned long file_size, bytes_read;
+	void *data = NULL;
+
+	*size = 0;
+	if (file == INVALID_HANDLE_VALUE)
+		return NULL;
+	file_size = GetFileSize(file, NULL);
+	if (file_size != INVALID_FILE_SIZE && file_size > 0 && file_size <= GAME_STATE_FILE_SIZE)
+		data = malloc(file_size);
+	if (data && (!ReadFile(file, data, file_size, &bytes_read, NULL) || bytes_read != file_size))
+	{
+		free(data);
+		data = NULL;
+	}
+	CloseHandle(file);
+	if (data)
+		*size = (long)file_size;
+	return data;
+}
+
+/* port: a file's first size bytes read (FALSE: none, or shorter), and its
+whole size */
+boolean game_state_port_file_read_head(
+	char const *path,
+	void *buffer,
+	long size,
+	long *file_size)
+{
+	HANDLE file = CreateFileA(path, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
+	unsigned long bytes_read;
+	boolean read;
+
+	*file_size = 0;
+	if (file == INVALID_HANDLE_VALUE)
+		return FALSE;
+	*file_size = (long)GetFileSize(file, NULL);
+	read = ReadFile(file, buffer, (unsigned long)size, &bytes_read, NULL) && bytes_read == (unsigned long)size;
+	CloseHandle(file);
+	return read;
+}
+
+/* port: a small file written whole, at once */
+boolean game_state_port_file_write(
+	char const *path,
+	void const *data,
+	long size)
+{
+	HANDLE file = CreateFileA(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	unsigned long bytes_written;
+	boolean written;
+
+	if (file == INVALID_HANDLE_VALUE)
+		return FALSE;
+	written = WriteFile(file, data, (unsigned long)size, &bytes_written, NULL) && bytes_written == (unsigned long)size;
+	CloseHandle(file);
+	return written;
+}
+
 static void delete_persistent_storage(
 	void)
 {

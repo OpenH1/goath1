@@ -158,6 +158,13 @@ cinematic, or because the mission failed); now is the game time before the
 revert */
 void network_coop_reverted(long now);
 void network_coop_reset_recovery(void);
+/* the co-op HOST's CONTINUE (coop_menu.inc): the next co-op game this
+machine hosts goes on from its own saved game (game_state.c's
+game_state_port_coop_load), or not */
+void network_coop_continue_request(boolean requested);
+/* network_client_manager.c: this machine's game loaded, before its first
+tick: a co-op host asked to continue loads its saved game */
+void network_coop_game_started(void);
 /* main.c, the co-op host: its answer to a skip (main_skip_cinematic),
 skipped (reverted) or refused. Either way the vote is over: after a short
 cooldown the cutscene can be voted on again while it is skippable. */
