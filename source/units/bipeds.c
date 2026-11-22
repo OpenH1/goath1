@@ -1399,6 +1399,7 @@ boolean biped_fix_position(
 			{
 				real_point3d fixed_position;
 				long cluster_index;
+				long leaf_index;
 				struct collision_result pill_collision;
 				struct collision_result line_collision;
 				struct collision_model_test_pill_result model_pill_collision;
@@ -1433,11 +1434,13 @@ boolean biped_fix_position(
 						maximum_radius_fudge_factor*fudge_vector->k + position.z;
 				}
 
-				cluster_index = scenario_leaf_index_from_point(&fixed_position) == NONE ?
+				/* port: the leaf found once (the original looked it up twice) */
+				leaf_index = scenario_leaf_index_from_point(&fixed_position);
+				cluster_index = leaf_index == NONE ?
 					NONE :
 					TAG_BLOCK_GET_ELEMENT(
 						&global_structure_bsp_get()->leaves,
-						scenario_leaf_index_from_point(&fixed_position) & LONG_MAX,
+						leaf_index & LONG_MAX,
 						struct structure_leaf)->cluster_index;
 				if (cluster_index != NONE &&
 					collision_fix_pill(

@@ -319,6 +319,7 @@ symbols in this file:
 #include "units/vehicle_definitions.h"
 #include "units/vehicles.h"
 #include "networking/network_game_globals.h"
+#include "coop_enemies.h" /* port: port/linux/game/coop_enemies.c */
 
 /* ---------- constants */
 
@@ -1379,6 +1380,59 @@ static void actor_update_end(
 	return;
 }
 
+/* port: the tick's timeslices (an actor's perception and path refreshed,
+actor_perception.c and actor_moving.c). The original gives one a tick, to
+the first actor in update order whose service timer passed both 15 and the
+highest timer of those not served the tick before: each of a level's
+actors is served at its pace for the level's count of them. Where co-op's
+extra enemies multiply the level's (coop_enemies.c, the stress test's
+too), the tick gives that many, rounded up, by the same rule repeated: the
+first ones in update order whose timer passed 15 and the budget's highest
+of those not served the tick before (its Nth highest for N timeslices;
+ai_globals->current_highest_service_timer keeps it for the next tick, as it
+kept the highest), so each actor is served about as often as in the
+original's fight. Without extra enemies it is the original's one a tick,
+exactly. Kept outside the game state: each tick sets them anew before the
+actors update (actors_update). */
+enum
+{
+	/* (co-op's most: its STATIC MULTIPLIER's 32) */
+	MAXIMUM_ACTOR_TIMESLICES_PER_TICK = 32,
+};
+
+static struct
+{
+	short budget;
+	short given;
+	/* the highest service timers of the actors not served this tick, highest
+	first (the budget's count of them, at most) */
+	short unserved_count;
+	short unserved_highest[MAXIMUM_ACTOR_TIMESLICES_PER_TICK];
+} actor_timeslices = { 1, 0, 0, { 0 } };
+
+static void actor_timeslices_unserved(
+	short service_timer)
+{
+	short index;
+
+	if (actor_timeslices.unserved_count == actor_timeslices.budget)
+	{
+		if (service_timer <= actor_timeslices.unserved_highest[actor_timeslices.budget - 1])
+			return;
+		actor_timeslices.unserved_count--;
+	}
+	for (index = actor_timeslices.unserved_count;
+		index > 0 && actor_timeslices.unserved_highest[index - 1] < service_timer;
+		index--)
+	{
+		actor_timeslices.unserved_highest[index] = actor_timeslices.unserved_highest[index - 1];
+	}
+	actor_timeslices.unserved_highest[index] = service_timer;
+	actor_timeslices.unserved_count++;
+
+	return;
+}
+
 static boolean actor_get_timeslice(
 	long actor_index)
 {
@@ -1401,7 +1455,23 @@ static boolean actor_get_timeslice(
 
 	actor->meta.service_timer += jumping ? 3 : 1;
 
-	if (!ai_globals->time_given_this_frame &&
+	if (actor_timeslices.budget > 1)
+	{
+		if (actor_timeslices.given < actor_timeslices.budget &&
+			actor->meta.service_timer > ai_globals->last_highest_service_timer &&
+			actor->meta.service_timer > 15)
+		{
+			actor->meta.service_timer = 0;
+			actor_timeslices.given++;
+			ai_globals->time_given_this_frame = TRUE;
+			result = TRUE;
+		}
+		else
+		{
+			actor_timeslices_unserved(actor->meta.service_timer);
+		}
+	}
+	else if (!ai_globals->time_given_this_frame &&
 		actor->meta.service_timer > ai_globals->last_highest_service_timer &&
 		actor->meta.service_timer > 15)
 	{
@@ -4254,6 +4324,16 @@ void actors_update(
 	ai_globals->current_highest_service_timer = 0;
 	ai_globals->time_given_this_frame = FALSE;
 
+	/* port: the tick's timeslices, as many as co-op's extra enemies multiply
+	the level's (actor_timeslices) */
+	actor_timeslices.budget = coop_enemies_scale();
+	if (actor_timeslices.budget < 1)
+		actor_timeslices.budget = 1;
+	if (actor_timeslices.budget > MAXIMUM_ACTOR_TIMESLICES_PER_TICK)
+		actor_timeslices.budget = MAXIMUM_ACTOR_TIMESLICES_PER_TICK;
+	actor_timeslices.given = 0;
+	actor_timeslices.unserved_count = 0;
+
 	actor_iterator_new(&iterator, TRUE);
 	while ((actor = actor_iterator_next(&iterator)) != NULL)
 	{
@@ -4265,6 +4345,14 @@ void actors_update(
 		{
 			actor_update(iterator.index);
 		}
+	}
+
+	if (actor_timeslices.budget > 1)
+	{
+		ai_globals->current_highest_service_timer =
+			actor_timeslices.unserved_count == actor_timeslices.budget ?
+			actor_timeslices.unserved_highest[actor_timeslices.budget - 1] :
+			0;
 	}
 
 	return;

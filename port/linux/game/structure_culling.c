@@ -781,9 +781,13 @@ short structure_culling_cone_facing(struct structure_culling_cone const *cone, r
 	real bound;
 	real dot;
 
+	if (cone->cutoff <= 0.0f)
+	{
+		return _structure_culling_facing_mixed;
+	}
 	vector_from_points3d(&cone->center, camera, &view);
 	length = square_root(magnitude_squared3d(&view));
-	if (cone->cutoff <= 0.0f || length <= reach)
+	if (length <= reach)
 	{
 		return _structure_culling_facing_mixed;
 	}
@@ -1183,6 +1187,10 @@ boolean structure_culling_traverse(struct structure_bsp *structure)
 		struct structure_culling_cluster const *cluster = &structure_culling.clusters[rendered_cluster->cluster_index];
 		struct render_frustum const *frustum =
 			structures_use_pvs_for_vs || render.cluster_index == NONE ? &render.frustum : &rendered_cluster->frustum;
+		/* (a source box's verdict, kept for the buckets after it split from
+		the same source: the one frustum's throughout the cluster) */
+		real_rectangle3d const *tested_source = NULL;
+		boolean source_visible = TRUE;
 		long b;
 		if (render.environment_surface_count >= MAXIMUM_RENDERED_ENVIRONMENT_SURFACES)
 		{
@@ -1219,7 +1227,12 @@ boolean structure_culling_traverse(struct structure_bsp *structure)
 				break;
 			}
 			/* retain the original fog-clamped test on the source, not its finer buckets */
-			if (bucket->source_bounds && !render_frustum_cube_visible(frustum, bucket->source_bounds, FALSE))
+			if (bucket->source_bounds && bucket->source_bounds != tested_source)
+			{
+				tested_source = bucket->source_bounds;
+				source_visible = render_frustum_cube_visible(frustum, bucket->source_bounds, FALSE) != 0;
+			}
+			if (bucket->source_bounds && !source_visible)
 			{
 				box = 0;
 			}

@@ -1016,6 +1016,23 @@ short coop_enemies_extra_count(
 	return (short)PIN(extra, 0, MAX(room, 0));
 }
 
+short coop_enemies_scale(
+	void)
+{
+	long growth;
+
+	if (!coop_enemies_growing())
+		return 1;
+	if (coop_enemies.mode == _coop_enemies_multiplier)
+		return MAX(coop_enemies.multiplier, 1);
+	/* (as coop_enemies_extra_count grows a squad, in hundredths of it) */
+	growth = (long)coop_enemies.percent * (coop_enemies_player_count() - 1);
+	growth = MIN(growth, 100L * (COOP_ENEMIES_MAXIMUM_GROWTH - 1));
+	if (growth <= 0)
+		return 1;
+	return (short)(1 + (growth + 99) / 100);
+}
+
 boolean coop_enemies_extra_location(
 	long encounter_index,
 	short squad_index,

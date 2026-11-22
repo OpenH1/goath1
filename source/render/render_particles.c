@@ -446,6 +446,14 @@ void render_particles(
 					short part_index;
 					short run_index;
 					short order_index = 0;
+					long run_depth_count =
+						rendered_particle->attached_to_first_person_weapon ? 0 : depth_count;
+					/* port: a run that can only be one part (a lone particle, no
+					depth to cut at, or no room left for cuts) needs neither its
+					particles' depths nor the cut: it is built whole, in order, as
+					render_particles_cut_run would build it */
+					boolean run_whole =
+						particle_count <= 1 || run_depth_count <= 0 || cut_budget <= 0;
 
 					/* port: each of the run's particles where it is drawn, first,
 					and the depth it would sort at alone */
@@ -455,30 +463,47 @@ void render_particles(
 							&rendered_particle[run_index],
 							&render_particles_run_positions[run_index],
 							&render_particles_run_directions[run_index]);
-						if (render_particles_run_valid[run_index])
+						if (!run_whole && render_particles_run_valid[run_index])
 						{
 							render_particles_run_depths[run_index] = rasterizer_dynamic_unlit_geometry_z_sort(
 								(struct shader const *)&definition->shader,
 								&render_particles_run_positions[run_index]);
 						}
 					}
-					/* port: and the run built in parts, cut where the queue's groups
-					sort among its particles (the first-person weapon's runs, which
-					sort after the world, whole) */
-					part_count = render_particles_cut_run(
-						render_particles_run_depths,
-						render_particles_run_valid,
-						particle_count,
-						render_particles_depths,
-						rendered_particle->attached_to_first_person_weapon ? 0 : depth_count,
-						(short)MIN(cut_budget + 1, SHORT_MAX),
-						render_particles_run_keys,
-						render_particles_part_counts,
-						render_particles_run_order,
-						render_particles_part_ends);
-					if (part_count > 1)
+					if (run_whole)
 					{
-						cut_budget -= part_count - 1;
+						short valid_count = 0;
+
+						for (run_index = 0; run_index < particle_count; run_index++)
+						{
+							if (render_particles_run_valid[run_index])
+							{
+								render_particles_run_order[valid_count++] = run_index;
+							}
+						}
+						render_particles_part_ends[0] = valid_count;
+						part_count = valid_count ? 1 : 0;
+					}
+					else
+					{
+						/* port: and the run built in parts, cut where the queue's
+						groups sort among its particles (the first-person weapon's
+						runs, which sort after the world, whole) */
+						part_count = render_particles_cut_run(
+							render_particles_run_depths,
+							render_particles_run_valid,
+							particle_count,
+							render_particles_depths,
+							run_depth_count,
+							(short)MIN(cut_budget + 1, SHORT_MAX),
+							render_particles_run_keys,
+							render_particles_part_counts,
+							render_particles_run_order,
+							render_particles_part_ends);
+						if (part_count > 1)
+						{
+							cut_budget -= part_count - 1;
+						}
 					}
 
 					for (part_index = 0; part_index < part_count; part_index++)

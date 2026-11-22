@@ -176,8 +176,6 @@ enum
 	_actor_fire_target_manual_point,
 
 	_vehicle_ai_weapon_cannot_rotate_bit = 8,
-
-	MAXIMUM_COLLATERAL_DAMAGE_ACTORS = 32,
 };
 
 /* actor_definition.flags2 has no owner enumeration in actor_definitions.h yet;
@@ -301,6 +299,19 @@ static boolean actor_combat_retarget_grenade(
 	real_point3d const *desired_grenade_target);
 
 /* ---------- globals */
+
+/* port: the actors actor_combat_check_collateral_damage counted as threats
+near its test point, so its second pass over the target's encounter counts
+none twice: a check's stamp in each counted actor's slot (by its absolute
+index), with the datum index counted. It counted them in a list of 32, and
+past 32 counted the rest again; these slots hold every actor the map can
+have. Not game state: each check stamps its own (a stamp of 0 is none). */
+static struct
+{
+	unsigned long stamp;
+	long actor_index;
+} collateral_damage_counted[MAXIMUM_ACTORS];
+static unsigned long collateral_damage_stamp;
 
 /* ---------- public code */
 
@@ -851,14 +862,18 @@ boolean actor_combat_check_collateral_damage(
 	struct actor_datum *actor = actor_get(actor_index);
 	boolean result;
 	short threats;
-	short counted_actor_count;
-	long counted_actor_indices[MAXIMUM_COLLATERAL_DAMAGE_ACTORS];
+	unsigned long stamp;
 
 	/* Preserve the original tag validation before iterating combat state. */
 	actor_variant_definition_get(actor->meta.variant_definition_index);
 	result = TRUE;
 	threats = 0;
-	counted_actor_count = 0;
+	if (++collateral_damage_stamp == 0)
+	{
+		memset(collateral_damage_counted, 0, sizeof(collateral_damage_counted));
+		collateral_damage_stamp = 1;
+	}
+	stamp = collateral_damage_stamp;
 
 	{
 		struct prop_iterator prop_iterator;
@@ -888,10 +903,10 @@ boolean actor_combat_check_collateral_damage(
 						}
 						else if (prop->actor_index != NONE)
 						{
-							if (counted_actor_count < NUMBEROF(counted_actor_indices))
-							{
-								counted_actor_indices[counted_actor_count++] = prop->actor_index;
-							}
+							long slot = DATUM_INDEX_TO_ABSOLUTE_INDEX(prop->actor_index) % MAXIMUM_ACTORS;
+
+							collateral_damage_counted[slot].stamp = stamp;
+							collateral_damage_counted[slot].actor_index = prop->actor_index;
 
 							if (prop->swarm)
 							{
@@ -935,17 +950,10 @@ boolean actor_combat_check_collateral_damage(
 					enemy_actor;
 					enemy_actor = encounter_actor_iterator_next(&actor_iterator))
 				{
-					short index;
-					boolean already_counted = FALSE;
-
-					for (index = 0; index < counted_actor_count; index++)
-					{
-						if (counted_actor_indices[index] == actor_iterator.index)
-						{
-							already_counted = TRUE;
-							break;
-						}
-					}
+					long slot = DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_iterator.index) % MAXIMUM_ACTORS;
+					boolean already_counted =
+						collateral_damage_counted[slot].stamp == stamp &&
+						collateral_damage_counted[slot].actor_index == actor_iterator.index;
 
 					if (!already_counted &&
 						actor_combat_distance_squared3d_inline(

@@ -385,12 +385,14 @@ tick's end (its next tick's first sub-step forgets it), outside the game
 state: nothing of it is wanted at a tick's end but for a projectile made at
 a sub-step after the first, whose tick ends in the next one (a game saved
 then has it travel the rest of that tick on its line from the tick's start).
-Hashed by the projectile's index: one that loses its place to another the
-same way. (An empty slot's index, 0, is no projectile's: a datum index has
-its identifier, never 0, in its high bits.) */
+A slot for each object the map can hold, by the projectile's absolute index,
+so no two projectiles in flight share one (a 64-slot hash lost a strike's
+place past 64 in flight); a slot whose index is another datum's (an older
+object of that absolute index) is empty. (An empty slot's index, 0, is no
+projectile's: a datum index has its identifier, never 0, in its high bits.) */
 enum
 {
-	PROJECTILE_SEGMENT_SLOTS = 64
+	PROJECTILE_SEGMENT_SLOTS = MAXIMUM_OBJECTS_PER_MAP
 };
 
 /* port: the sub-step the fast phase's projectiles' slot last ran in (its
@@ -980,7 +982,7 @@ static real projectile_segment_get(
 	long projectile_index,
 	boolean opens_tick)
 {
-	short slot = (short)(DATUM_INDEX_TO_ABSOLUTE_INDEX(projectile_index) % PROJECTILE_SEGMENT_SLOTS);
+	long slot = DATUM_INDEX_TO_ABSOLUTE_INDEX(projectile_index) % PROJECTILE_SEGMENT_SLOTS;
 
 	if (projectile_segments[slot].projectile_index != projectile_index)
 		return 0.0f;
@@ -996,7 +998,7 @@ static void projectile_segment_set(
 	long projectile_index,
 	real segment_start)
 {
-	short slot = (short)(DATUM_INDEX_TO_ABSOLUTE_INDEX(projectile_index) % PROJECTILE_SEGMENT_SLOTS);
+	long slot = DATUM_INDEX_TO_ABSOLUTE_INDEX(projectile_index) % PROJECTILE_SEGMENT_SLOTS;
 
 	projectile_segments[slot].projectile_index = projectile_index;
 	projectile_segments[slot].segment_start = segment_start;
