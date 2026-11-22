@@ -21,7 +21,10 @@ ACCEPT downloads it:
 - the renderer loads the module as it starts (xgpu_vulkan_dlss.c): NGX's
   Vulkan extensions are the instance's and the device's from their making,
   and the backend does not make its device again, so DLSS takes effect
-  after a restart;
+  after a restart, which the screen's RESTART NOW does (dlss_addon_restart:
+  the game started again, its executable with the same arguments and
+  environment, update_relaunch), offered at the menus alone, with no game
+  played and no network game hosted or joined (pc_menu_restart_allowed);
 - REMOVE DLSS ADD-ON deletes it (its folder renamed away first). Where the
   module is loaded and cannot be deleted (Windows), a remove file marks it,
   and the next start deletes it before the renderer loads anything.
@@ -47,6 +50,12 @@ names are asked of it, and still checked against the pin.
 /* the renderer's (d3d8_device.c): an NVIDIA GPU on Vulkan; DLSS drawn */
 int halo_dlss_gpu(void);
 int halo_temporal_dlss_drawn(void);
+/* menu_functions.c's: the game may be restarted now (no game played, no
+network game hosted or joined) */
+int pc_menu_restart_allowed(void);
+/* report.c's: this session ended as an exit ends it (1), or not after all
+(0), before the game starts again */
+void report_session_handover(int leaving);
 
 /* the platform whose add-on this build downloads (tools/dlss_addon.py's
 PLATFORMS), and its pin */
@@ -712,6 +721,36 @@ int dlss_addon_offered(void)
 	return !dlss_installed_version(version, sizeof(version)) || strcmp(version, DLSS_ADDON_VERSION);
 }
 
+int dlss_addon_restart_needed(void)
+{
+	int state = SDL_GetAtomicInt(&dlss_addon.state);
+
+	/* (installed: DLSS at the next start; removed: its files deleted, or
+	DLSS gone, at the next start) */
+	return state == _dlss_installed ||
+		(state == _dlss_removed && (dlss_addon.remove_at_start || halo_temporal_dlss_drawn()));
+}
+
+/* RESTART NOW: the game started again; returns only if it could not be */
+static int dlss_addon_restart(void)
+{
+#ifdef DLSS_ADDON_PLATFORM
+	if (!dlss_addon_restart_needed() || !pc_menu_restart_allowed())
+		return 0;
+	platform_log("dlss: restarting the game for the add-on");
+	/* (this session ended first, as an exit ends it, as updater.c's update
+	does: the game started again finds no session that did not exit, which
+	it would take for a crash) */
+	report_session_handover(1);
+	if (update_relaunch())
+		exit(EXIT_SUCCESS);
+	report_session_handover(0);
+	snprintf(dlss_addon.error, sizeof(dlss_addon.error), "the game could not be restarted");
+	platform_log("dlss: the game could not be restarted: quit and start it again");
+#endif
+	return 0;
+}
+
 const char *dlss_addon_attribution(void)
 {
 	if (!dlss_addon_installed() && !halo_temporal_dlss_drawn())
@@ -779,8 +818,11 @@ int dlss_addon_value(const char *name, char *value, unsigned long size)
 		else if (state == _dlss_installing)
 			snprintf(value, size, "Checking the download and putting it in place.");
 		else if (state == _dlss_installed)
-			snprintf(value, size, "DLSS takes effect after a restart: quit and start the game again, then choose "
-				"NVIDIA DLSS in Upscaler.");
+			snprintf(value, size, "%s", dlss_addon.error[0] ? "The game could not be restarted: quit and start it "
+				"again, then choose NVIDIA DLSS in Upscaler." : pc_menu_restart_allowed() ?
+				"DLSS takes effect after a restart. Restart now, then choose NVIDIA DLSS in Upscaler." :
+				"DLSS takes effect after a restart: leave this game, then restart here, or quit and start the "
+				"game again.");
 		else if (state == _dlss_removed)
 			snprintf(value, size, dlss_addon.remove_at_start ? "Its files are deleted when the game starts again." :
 				"Its files are deleted. DLSS stays until the game is restarted.");
@@ -819,6 +861,11 @@ int dlss_addon_value(const char *name, char *value, unsigned long size)
 	else if (!strcmp(name, "dlss.can_accept"))
 	{
 		if (state == _dlss_license_ready && dlss_addon_offered())
+			snprintf(value, size, "yes");
+	}
+	else if (!strcmp(name, "dlss.can_restart"))
+	{
+		if (dlss_addon_restart_needed() && pc_menu_restart_allowed())
 			snprintf(value, size, "yes");
 	}
 	else if (!strcmp(name, "dlss.can_remove"))
@@ -866,6 +913,8 @@ int dlss_addon_action(const char *name)
 		SDL_SetAtomicInt(&dlss_addon.state, _dlss_removed);
 		return 1;
 	}
+	if (!strcmp(name, "dlss restart"))
+		return dlss_addon_restart();
 	if (!strcmp(name, "dlss page up") || !strcmp(name, "dlss page down"))
 	{
 		dlss_addon.first = (short)(dlss_addon.first + (!strcmp(name, "dlss page up") ? -12 : 12));

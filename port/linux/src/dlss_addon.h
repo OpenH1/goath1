@@ -21,14 +21,19 @@ int dlss_addon_offered(void);
 /* the add-on installed (any version, not being removed) */
 int dlss_addon_installed(void);
 
+/* a restart is what the add-on's install or removal waits for (RESTART
+NOW, "dlss.can_restart", while one may be: pc_menu_restart_allowed) */
+int dlss_addon_restart_needed(void);
+
 /* NVIDIA's attribution, shown while the add-on is installed (the about
 box's, the add-on's screen); NULL while it is not */
 const char *dlss_addon_attribution(void);
 
 /* the screen's: opened (NVIDIA's license fetched, if the download is
 offered), its bindings' values ("dlss.<name>", UTF-8: nonzero if it has one),
-its actions ("dlss accept", "dlss remove", "dlss page up", "dlss page
-down": nonzero if done), and its table's rows, NVIDIA's license's lines */
+its actions ("dlss accept", "dlss remove", "dlss restart", "dlss page up",
+"dlss page down": nonzero if done; "dlss restart" returns only if the game
+could not be started again), and its table's rows, NVIDIA's license's lines */
 void dlss_addon_screen_opened(void);
 int dlss_addon_value(const char *name, char *value, unsigned long size);
 int dlss_addon_action(const char *name);

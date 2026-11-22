@@ -72,4 +72,13 @@ environment and none of its files: what started the game sees it go on
 (Linux; nothing on Windows); returns only if it could not be */
 int update_restart(const char *path);
 
+/* starts this game again, its executable with this process's arguments and
+environment (a setting's change that takes effect at a start: the DLSS
+add-on's RESTART NOW). Linux: in place of this program, in this process,
+as update_restart (its id and its parent kept), and it returns only if it
+could not be (0). Windows: a process of its own, with this one's command
+line and none of its handles, 1 once it is started (the caller then exits,
+as after update_launch). Elsewhere 0 */
+int update_relaunch(void);
+
 #endif

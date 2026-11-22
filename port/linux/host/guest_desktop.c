@@ -84,6 +84,7 @@ int host_update_make_directory(const char *path);
 int host_update_make_executable(const char *path);
 int host_update_launch(const char *path);
 int host_update_restart(const char *path);
+int host_update_relaunch(void);
 /* (the macOS app's updater: updater.c's updater_poll, port/macos/host_app.m) */
 void host_app_playing(int playing);
 /* a dedicated server's signals, which the host owns (port/linux/src/
@@ -1052,5 +1053,10 @@ int update_launch(const char *path)
 int update_restart(const char *path)
 {
 	return host_update_restart(path);
+}
+
+int update_relaunch(void)
+{
+	return host_update_relaunch();
 }
 

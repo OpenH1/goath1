@@ -419,3 +419,30 @@ int update_restart(const char *path)
 	(void)path;
 	return 0;
 }
+
+int update_relaunch(void)
+{
+	wchar_t path[MAX_PATH * 2];
+	wchar_t *command = _wcsdup(GetCommandLineW());
+	STARTUPINFOW startup;
+	PROCESS_INFORMATION process;
+	DWORD length = GetModuleFileNameW(NULL, path, MAX_PATH * 2);
+	BOOL started;
+
+	if (!command || length == 0 || length >= MAX_PATH * 2)
+	{
+		free(command);
+		return 0;
+	}
+	memset(&startup, 0, sizeof(startup));
+	startup.cb = sizeof(startup);
+	/* (this executable with this process's command line, environment and
+	folder; none of its handles: its sockets hold the game's ports) */
+	started = CreateProcessW(path, command, NULL, NULL, FALSE, 0, NULL, NULL, &startup, &process);
+	free(command);
+	if (!started)
+		return 0;
+	CloseHandle(process.hThread);
+	CloseHandle(process.hProcess);
+	return 1;
+}

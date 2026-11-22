@@ -127,6 +127,9 @@ static void platform_log(const char *format, ...)
 
 int halo_dlss_gpu(void) { return 1; }
 int halo_temporal_dlss_drawn(void) { return 0; }
+int pc_menu_restart_allowed(void) { return 1; }
+void report_session_handover(int leaving) { (void)leaving; }
+int update_relaunch(void) { return 0; }
 
 /* updater.c's zip unpacking */
 #define PATH_SEPARATOR "/"
