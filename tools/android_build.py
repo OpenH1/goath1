@@ -34,7 +34,8 @@ from .build_common import (LINUX_PROFILE, MBEDTLS_DIR, MINIUPNPC_DEFINES, MINIUP
                            PLATFORM_SEMANTICS_HEADER, QUIET_OWN_CODE_FLAGS, SEMANTICS_HEADER, STB_VORBIS_SOURCE,
                            XDK_INCLUDE, compile_launcher, configuration_defines, download, game_defines_and_includes,
                            lto_flags, FFMPEG_CALLER, ffmpeg_cflags, game_sources, miniupnpc_sources,
-                           musl_math_sources, opus_cflags, opus_sources,
+                           musl_math_sources, opus_cflags, opus_sources, PLUTOSVG_INCLUDES, plutosvg_cflags,
+                           plutosvg_sources,
                            PROFILE_GENERATE_FLAGS, pgo_generate_defines, pgo_mode, pgo_profile, profile_use_flags, updater_defines,
                            xdk_headers)
 from . import check_host_imports
@@ -593,7 +594,7 @@ def generate_guest_image(n: Writer, sln: Any, config: Dict[str, Any], *, arch: G
             profile_flags, f"-include {prefix_header}", f"-include {platform_semantics_header}",
             f"-I{LINUX_DIR}/src", f"-I{LINUX_DIR}/include", f"-I{PORT_DIR}/guest/runtime",
             f"-I{PORT_DIR}/include", f"-I{TOML_DIR}", f"-I{EXPAT_DIR}", f"-I{KCP_DIR}", f"-I{MONOCYPHER_DIR}",
-            f"-I{ZLIB_DIR}", "-Isource -Isource/cseries",
+            f"-I{ZLIB_DIR}", *PLUTOSVG_INCLUDES, "-Isource -Isource/cseries",
             f"-I{sdl_dir}/include", *libc_includes, f"-idirafter {XDK_INCLUDE}",
         ])
 
@@ -630,6 +631,10 @@ def generate_guest_image(n: Writer, sln: Any, config: Dict[str, Any], *, arch: G
         objects.append(guest_object(EXPAT_DIR / name, third_party_cflags))
     # internet play's reliable streams (port/third_party/kcp; p2p.c)
     objects.append(guest_object(KCP_DIR / "ikcp.c", third_party_cflags))
+    # the menus' vector art (port/third_party/plutovg and plutosvg;
+    # menu_vector.c), with the guest's ABI and C library
+    for name in plutosvg_sources():
+        objects.append(guest_object(name, " ".join([plutosvg_cflags(guest_abi), *libc_includes])))
     # voice chat's codec (port/third_party/opus), with the guest's ABI and C
     # library
     for source in opus_sources():

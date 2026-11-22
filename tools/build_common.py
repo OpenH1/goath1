@@ -254,6 +254,25 @@ OPUS_DIR = Path("port/third_party/opus")
 OPUS_DEFINES = ("-DOPUS_BUILD", "-DVAR_ARRAYS", "-DHAVE_LRINTF", "-DHAVE_LRINT")
 
 
+# the menus' vector art (port/linux/src/menu_vector.c): plutosvg's SVG
+# renderer, with the layers OpenH1 added (port/third_party/plutosvg/README.md),
+# on plutovg's canvas, both plain C, linked in (not a DLL's)
+PLUTOVG_DIR = Path("port/third_party/plutovg")
+PLUTOSVG_DIR = Path("port/third_party/plutosvg")
+PLUTOSVG_DEFINES = ("-DPLUTOVG_BUILD_STATIC", "-DPLUTOSVG_BUILD_STATIC")
+PLUTOSVG_INCLUDES = (f"-I{PLUTOVG_DIR / 'include'}", f"-I{PLUTOSVG_DIR}")
+
+
+def plutosvg_sources() -> List[Path]:
+    """plutovg's and plutosvg's sources"""
+    return [*sorted((PLUTOVG_DIR / "src").glob("*.c")), PLUTOSVG_DIR / "plutosvg.c"]
+
+
+def plutosvg_cflags(abi: str) -> str:
+    """the flags plutovg's and plutosvg's sources build with, on the platform layer's ABI"""
+    return " ".join([abi, "-std=gnu11", "-O2", *PLUTOSVG_DEFINES, *PLUTOSVG_INCLUDES, "-w"])
+
+
 def opus_sources() -> List[Path]:
     """Opus's library sources (port/third_party/opus/sources.txt)"""
     return [OPUS_DIR / line.strip() for line in (OPUS_DIR / "sources.txt").read_text().splitlines() if line.strip()]

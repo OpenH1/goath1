@@ -5,7 +5,7 @@
 	<look name="main_menu/current_profile_name" type="text" box="10 446 350 480">
 		<text font="ui\large_ui" color="#FFCCCCCC"/>
 	</look>
-	<look name="main_menu/halo_logo" box="0 0 640 256" picture="ui\shell\main_menu\halo_logo"/>
+	<look name="main_menu/halo_logo" box="0 0 640 256" picture="main_menu/halo_logo"/>
 	<look name="main_menu/main_menu">
 		<at widget="main_menu/halo_logo" x="0" y="28"/>
 		<at widget="main_menu/main_menu_select_list" x="0" y="0"/>

@@ -419,6 +419,8 @@ void xgpu_texture_cache_begin_frame(void)
 	unsigned long changed = hud_hires_settings_changed();
 	unsigned long index;
 
+	/* (the menus' vector art, drawn again for a display of another size) */
+	menu_art_begin_frame();
 	replacement_frame++;
 	if (!changed && replacement_frame % 600)
 		return;

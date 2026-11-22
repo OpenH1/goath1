@@ -23,10 +23,21 @@ enum {
     TAG_CLIP_PATH, // TODO
     TAG_DEFS,
     TAG_ELLIPSE,
+    TAG_FE_COLOR_MATRIX,
+    TAG_FE_COMPONENT_TRANSFER,
+    TAG_FE_FUNC_A,
+    TAG_FE_FUNC_B,
+    TAG_FE_FUNC_G,
+    TAG_FE_FUNC_R,
+    TAG_FE_GAUSSIAN_BLUR,
+    TAG_FE_MERGE,
+    TAG_FE_MERGE_NODE,
+    TAG_FILTER,
     TAG_G,
     TAG_IMAGE,
     TAG_LINE,
     TAG_LINEAR_GRADIENT,
+    TAG_MASK,
     TAG_PATH,
     TAG_POLYGON,
     TAG_POLYLINE,
@@ -40,6 +51,7 @@ enum {
 
 enum {
     ATTR_UNKNOWN = 0,
+    ATTR_AMPLITUDE,
     ATTR_CLIP_PATH,
     ATTR_CLIP_PATH_UNITS,
     ATTR_CLIP_RULE,
@@ -48,9 +60,12 @@ enum {
     ATTR_CY,
     ATTR_D,
     ATTR_DISPLAY,
+    ATTR_EXPONENT,
     ATTR_FILL,
     ATTR_FILL_OPACITY,
     ATTR_FILL_RULE,
+    ATTR_FILTER,
+    ATTR_FILTER_UNITS,
     ATTR_FX,
     ATTR_FY,
     ATTR_GRADIENT_TRANSFORM,
@@ -58,6 +73,11 @@ enum {
     ATTR_HEIGHT,
     ATTR_HREF,
     ATTR_ID,
+    ATTR_IN,
+    ATTR_INTERCEPT,
+    ATTR_MASK,
+    ATTR_MASK_TYPE,
+    ATTR_MASK_UNITS,
     ATTR_OFFSET,
     ATTR_OPACITY,
     ATTR_POINTS,
@@ -65,7 +85,9 @@ enum {
     ATTR_R,
     ATTR_RX,
     ATTR_RY,
+    ATTR_SLOPE,
     ATTR_SPREAD_METHOD,
+    ATTR_STD_DEVIATION,
     ATTR_STOP_COLOR,
     ATTR_STOP_OPACITY,
     ATTR_STROKE,
@@ -77,7 +99,10 @@ enum {
     ATTR_STROKE_OPACITY,
     ATTR_STROKE_WIDTH,
     ATTR_STYLE,
+    ATTR_TABLE_VALUES,
     ATTR_TRANSFORM,
+    ATTR_TYPE,
+    ATTR_VALUES,
     ATTR_VIEW_BOX,
     ATTR_VISIBILITY,
     ATTR_WIDTH,
@@ -125,10 +150,21 @@ static int elementid(const char* data, size_t length)
         {"clipPath", TAG_CLIP_PATH},
         {"defs", TAG_DEFS},
         {"ellipse", TAG_ELLIPSE},
+        {"feColorMatrix", TAG_FE_COLOR_MATRIX},
+        {"feComponentTransfer", TAG_FE_COMPONENT_TRANSFER},
+        {"feFuncA", TAG_FE_FUNC_A},
+        {"feFuncB", TAG_FE_FUNC_B},
+        {"feFuncG", TAG_FE_FUNC_G},
+        {"feFuncR", TAG_FE_FUNC_R},
+        {"feGaussianBlur", TAG_FE_GAUSSIAN_BLUR},
+        {"feMerge", TAG_FE_MERGE},
+        {"feMergeNode", TAG_FE_MERGE_NODE},
+        {"filter", TAG_FILTER},
         {"g", TAG_G},
         {"image", TAG_IMAGE},
         {"line", TAG_LINE},
         {"linearGradient", TAG_LINEAR_GRADIENT},
+        {"mask", TAG_MASK},
         {"path", TAG_PATH},
         {"polygon", TAG_POLYGON},
         {"polyline", TAG_POLYLINE},
@@ -146,6 +182,7 @@ static int elementid(const char* data, size_t length)
 static int attributeid(const char* data, size_t length)
 {
     static const name_entry_t table[] = {
+        {"amplitude", ATTR_AMPLITUDE},
         {"clip-path", ATTR_CLIP_PATH},
         {"clip-rule", ATTR_CLIP_RULE},
         {"clipPathUnits", ATTR_CLIP_PATH_UNITS},
@@ -154,9 +191,12 @@ static int attributeid(const char* data, size_t length)
         {"cy", ATTR_CY},
         {"d", ATTR_D},
         {"display", ATTR_DISPLAY},
+        {"exponent", ATTR_EXPONENT},
         {"fill", ATTR_FILL},
         {"fill-opacity", ATTR_FILL_OPACITY},
         {"fill-rule", ATTR_FILL_RULE},
+        {"filter", ATTR_FILTER},
+        {"filterUnits", ATTR_FILTER_UNITS},
         {"fx", ATTR_FX},
         {"fy", ATTR_FY},
         {"gradientTransform", ATTR_GRADIENT_TRANSFORM},
@@ -164,6 +204,11 @@ static int attributeid(const char* data, size_t length)
         {"height", ATTR_HEIGHT},
         {"href", ATTR_HREF},
         {"id", ATTR_ID},
+        {"in", ATTR_IN},
+        {"intercept", ATTR_INTERCEPT},
+        {"mask", ATTR_MASK},
+        {"mask-type", ATTR_MASK_TYPE},
+        {"maskUnits", ATTR_MASK_UNITS},
         {"offset", ATTR_OFFSET},
         {"opacity", ATTR_OPACITY},
         {"points", ATTR_POINTS},
@@ -171,7 +216,9 @@ static int attributeid(const char* data, size_t length)
         {"r", ATTR_R},
         {"rx", ATTR_RX},
         {"ry", ATTR_RY},
+        {"slope", ATTR_SLOPE},
         {"spreadMethod", ATTR_SPREAD_METHOD},
+        {"stdDeviation", ATTR_STD_DEVIATION},
         {"stop-color", ATTR_STOP_COLOR},
         {"stop-opacity", ATTR_STOP_OPACITY},
         {"stroke", ATTR_STROKE},
@@ -183,7 +230,10 @@ static int attributeid(const char* data, size_t length)
         {"stroke-opacity", ATTR_STROKE_OPACITY},
         {"stroke-width", ATTR_STROKE_WIDTH},
         {"style", ATTR_STYLE},
+        {"tableValues", ATTR_TABLE_VALUES},
         {"transform", ATTR_TRANSFORM},
+        {"type", ATTR_TYPE},
+        {"values", ATTR_VALUES},
         {"viewBox", ATTR_VIEW_BOX},
         {"visibility", ATTR_VISIBILITY},
         {"width", ATTR_WIDTH},
@@ -209,6 +259,9 @@ static int cssattributeid(const char* data, size_t length)
         {"fill", ATTR_FILL},
         {"fill-opacity", ATTR_FILL_OPACITY},
         {"fill-rule", ATTR_FILL_RULE},
+        {"filter", ATTR_FILTER},
+        {"mask", ATTR_MASK},
+        {"mask-type", ATTR_MASK_TYPE},
         {"opacity", ATTR_OPACITY},
         {"stop-color", ATTR_STOP_COLOR},
         {"stop-opacity", ATTR_STOP_OPACITY},
@@ -1542,6 +1595,9 @@ typedef struct render_state {
 
     plutovg_matrix_t matrix;
     plutovg_rect_t extents;
+    /* (OpenH1) the element drawn on a layer of its own, whose opacity the
+    layer is drawn with (render_layered) */
+    const struct element* layered;
 } render_state_t;
 
 #define INVALID_RECT PLUTOVG_MAKE_RECT(0, 0, -1, -1)
@@ -1558,13 +1614,14 @@ static void render_state_begin(const element_t* element, render_state_t* state, 
     state->opacity = parent->opacity;
     state->matrix = parent->matrix;
     state->extents = INVALID_RECT;
+    state->layered = NULL;
 
     state->view_width = parent->view_width;
     state->view_height = parent->view_height;
 
     if(element->parent && parse_transform(element, ATTR_TRANSFORM, &state->matrix))
         plutovg_matrix_multiply(&state->matrix, &state->matrix, &parent->matrix);
-    if(state->mode == render_mode_painting) {
+    if(state->mode == render_mode_painting && parent->layered != element) {
         if(parse_number(element, ATTR_OPACITY, &state->opacity, true, false)) {
             state->opacity *= parent->opacity;
         }
@@ -1987,6 +2044,19 @@ static void draw_shape(const element_t* element, render_context_t* context, rend
         return;
     }
 
+    /* (OpenH1) a clip path's shapes: their fill opaque, by their clip-rule */
+    if(state->mode == render_mode_clipping) {
+        plutovg_color_t opaque = {0.f, 0.f, 0.f, 1.f};
+        plutovg_fill_rule_t clip_rule = PLUTOVG_FILL_RULE_NON_ZERO;
+        parse_fill_rule(element, ATTR_CLIP_RULE, &clip_rule);
+        plutovg_canvas_set_color(context->canvas, &opaque);
+        plutovg_canvas_set_fill_rule(context->canvas, clip_rule);
+        plutovg_canvas_set_opacity(context->canvas, 1.f);
+        plutovg_canvas_set_matrix(context->canvas, &state->matrix);
+        plutovg_canvas_fill_path(context->canvas, context->document->path);
+        return;
+    }
+
     paint_t fill = {paint_type_color, {color_type_fixed, 0xFF000000}};
     parse_paint(element, ATTR_FILL, &fill);
 
@@ -2167,7 +2237,14 @@ static void render_use(const element_t* element, render_context_t* context, rend
 
     const element_t* parent = ref->parent;
     ref->parent = (element_t*)(element);
-    if(ref->id == TAG_SVG || ref->id == TAG_SYMBOL) {
+    if(ref->id == TAG_SYMBOL) {
+        /* (OpenH1) a symbol's viewport is the use's width and height */
+        length_t w = {100, length_type_percent};
+        length_t h = {100, length_type_percent};
+        parse_length(element, ATTR_WIDTH, &w, false, false);
+        parse_length(element, ATTR_HEIGHT, &h, false, false);
+        render_symbol(ref, context, &new_state, 0.f, 0.f, resolve_length(state, &w, 'x'), resolve_length(state, &h, 'y'));
+    } else if(ref->id == TAG_SVG) {
         render_svg(ref, context, &new_state);
     } else {
         render_element(ref, context, &new_state);
@@ -2531,8 +2608,565 @@ static void render_image(const element_t* element, render_context_t* context, re
     render_state_end(&new_state);
 }
 
+/* ---------- (OpenH1) layers: clip paths, masks, filters and a group's opacity
+
+An element with a clip-path, a mask or a filter, or a group (g, use, an
+inner svg) with an opacity below 1, is drawn on a layer of the canvas's size,
+which is then filtered, clipped and masked (in that order, as SVG has it),
+and drawn on the canvas with the element's opacity. Only the user space
+units these need are read (userSpaceOnUse regions; objectBoundingBox ones
+are taken as unbounded), and the filters' colours are worked in sRGB.
+The filter primitives drawn: feGaussianBlur, feComponentTransfer (its
+feFuncR/G/B/A: identity, table, discrete, linear, gamma), feColorMatrix
+(matrix, saturate, luminanceToAlpha) and feMerge, each from SourceGraphic,
+SourceAlpha or the previous result; any other primitive passes its input
+on. */
+
+typedef struct {
+    uint32_t* pixels;
+    int width;
+    int height;
+} layer_image_t;
+
+static const element_t* resolve_url(const render_context_t* context, const element_t* element, int id, int tag)
+{
+    const string_t* value = find_attribute(element, id, false);
+    if(value == NULL)
+        return NULL;
+    const char* it = value->data;
+    const char* end = it + value->length;
+    string_t name;
+    if(!parse_url_value(&it, end, &name))
+        return NULL;
+    const element_t* target = find_element(context->document, &name);
+    return target && target->id == tag ? target : NULL;
+}
+
+static bool attribute_is(const element_t* element, int id, const char* text)
+{
+    const string_t* value = find_attribute(element, id, false);
+    if(value == NULL)
+        return false;
+    const char* it = value->data;
+    const char* end = it + value->length;
+    skip_ws(&it, end);
+    return skip_string(&it, end, text) && !skip_ws(&it, end);
+}
+
+static int parse_number_list(const element_t* element, int id, float* numbers, int maximum)
+{
+    const string_t* value = find_attribute(element, id, false);
+    if(value == NULL)
+        return 0;
+    const char* it = value->data;
+    const char* end = it + value->length;
+    int count = 0;
+    skip_ws(&it, end);
+    while(it < end && count < maximum) {
+        if(!parse_float(&it, end, &numbers[count]))
+            break;
+        ++count;
+        skip_ws_comma(&it, end);
+    }
+
+    return count;
+}
+
+/* a region's rectangle in user space, mapped to the layer's pixels (false:
+unbounded) */
+static bool layer_region(const element_t* element, int units_id, const plutovg_matrix_t* matrix, int* x0, int* y0, int* x1, int* y1)
+{
+    units_type_t units = units_type_object_bounding_box;
+    parse_units_type(element, units_id, &units);
+    float x, y, w, h;
+    if(units != units_type_user_space_on_use
+        || !parse_number(element, ATTR_X, &x, false, false) || !parse_number(element, ATTR_Y, &y, false, false)
+        || !parse_number(element, ATTR_WIDTH, &w, false, false) || !parse_number(element, ATTR_HEIGHT, &h, false, false)) {
+        return false;
+    }
+
+    plutovg_rect_t rect = {x, y, w, h};
+    plutovg_rect_t mapped;
+    plutovg_matrix_map_rect(matrix, &rect, &mapped);
+    *x0 = (int)floorf(mapped.x);
+    *y0 = (int)floorf(mapped.y);
+    *x1 = (int)ceilf(mapped.x + mapped.w);
+    *y1 = (int)ceilf(mapped.y + mapped.h);
+    return true;
+}
+
+static void layer_cut_outside(layer_image_t* image, int x0, int y0, int x1, int y1)
+{
+    for(int y = 0; y < image->height; y++) {
+        uint32_t* row = image->pixels + (size_t)y * image->width;
+        if(y < y0 || y >= y1) {
+            memset(row, 0, (size_t)image->width * 4);
+            continue;
+        }
+
+        for(int x = 0; x < image->width && x < x0; x++)
+            row[x] = 0;
+        for(int x = x1 < 0 ? 0 : x1; x < image->width; x++) {
+            row[x] = 0;
+        }
+    }
+}
+
+static plutovg_surface_t* layer_surface(const render_context_t* context)
+{
+    const plutovg_surface_t* target = plutovg_canvas_get_surface(context->canvas);
+    return plutovg_surface_create(plutovg_surface_get_width(target), plutovg_surface_get_height(target));
+}
+
+static layer_image_t layer_image(plutovg_surface_t* surface)
+{
+    /* (plutovg's surfaces: rows of 4-byte premultiplied ARGB words, with no padding) */
+    layer_image_t image = {(uint32_t*)plutovg_surface_get_data(surface), plutovg_surface_get_width(surface), plutovg_surface_get_height(surface)};
+    return image;
+}
+
+static uint32_t* image_new(const layer_image_t* like)
+{
+    return calloc((size_t)like->width * like->height, 4);
+}
+
+/* source over destination, the source scaled by opacity (0 to 256) */
+static void blend_over(uint32_t* destination, const uint32_t* source, size_t count, uint32_t opacity)
+{
+    for(size_t index = 0; index < count; index++) {
+        uint32_t s = source[index];
+        if(s == 0)
+            continue;
+        if(opacity != 256) {
+            s = ((((s >> 8) & 0x00FF00FF) * opacity) & 0xFF00FF00) | ((((s & 0x00FF00FF) * opacity) >> 8) & 0x00FF00FF);
+        }
+
+        uint32_t inverse = 255 - (s >> 24);
+        uint32_t d = destination[index];
+        uint32_t a = (s >> 24) + ((d >> 24) * inverse + 127) / 255;
+        uint32_t r = ((s >> 16) & 0xFF) + (((d >> 16) & 0xFF) * inverse + 127) / 255;
+        uint32_t g = ((s >> 8) & 0xFF) + (((d >> 8) & 0xFF) * inverse + 127) / 255;
+        uint32_t b = (s & 0xFF) + ((d & 0xFF) * inverse + 127) / 255;
+        destination[index] = (MIN(a, 255) << 24) | (MIN(r, 255) << 16) | (MIN(g, 255) << 8) | MIN(b, 255);
+    }
+}
+
+/* each pixel scaled by a coverage of 0 to 255 */
+static inline uint32_t pixel_scale(uint32_t pixel, uint32_t coverage)
+{
+    if(coverage == 255)
+        return pixel;
+    uint32_t a = (pixel >> 24) * coverage / 255;
+    uint32_t r = ((pixel >> 16) & 0xFF) * coverage / 255;
+    uint32_t g = ((pixel >> 8) & 0xFF) * coverage / 255;
+    uint32_t b = (pixel & 0xFF) * coverage / 255;
+    return a << 24 | r << 16 | g << 8 | b;
+}
+
+/* ---------- the filters */
+
+/* one box blur of radius r along rows (step 1) or columns (step width), from
+source into destination, transparent beyond the edges */
+static void box_blur(const uint32_t* source, uint32_t* destination, int count, int lines, int step, int line_step, int radius)
+{
+    uint32_t size = (uint32_t)(radius * 2 + 1);
+    uint32_t reciprocal = (1u << 24) / size;
+    for(int line = 0; line < lines; line++) {
+        const uint32_t* in = source + (size_t)line * line_step;
+        uint32_t* out = destination + (size_t)line * line_step;
+        uint32_t sa = 0, sr = 0, sg = 0, sb = 0;
+        for(int index = 0; index < radius && index < count; index++) {
+            uint32_t p = in[(size_t)index * step];
+            sa += p >> 24; sr += (p >> 16) & 0xFF; sg += (p >> 8) & 0xFF; sb += p & 0xFF;
+        }
+
+        for(int index = 0; index < count; index++) {
+            int entering = index + radius;
+            if(entering < count) {
+                uint32_t p = in[(size_t)entering * step];
+                sa += p >> 24; sr += (p >> 16) & 0xFF; sg += (p >> 8) & 0xFF; sb += p & 0xFF;
+            }
+
+            out[(size_t)index * step] = (uint32_t)(((uint64_t)sa * reciprocal) >> 24) << 24
+                | (uint32_t)(((uint64_t)sr * reciprocal) >> 24) << 16
+                | (uint32_t)(((uint64_t)sg * reciprocal) >> 24) << 8
+                | (uint32_t)(((uint64_t)sb * reciprocal) >> 24);
+            int leaving = index - radius;
+            if(leaving >= 0) {
+                uint32_t p = in[(size_t)leaving * step];
+                sa -= p >> 24; sr -= (p >> 16) & 0xFF; sg -= (p >> 8) & 0xFF; sb -= p & 0xFF;
+            }
+        }
+    }
+}
+
+/* the Gaussian blur as SVG approximates it: three box blurs each way, of
+d = floor(s * 3 * sqrt(2 * pi) / 4 + 0.5) */
+static void gaussian_blur(uint32_t* pixels, uint32_t* scratch, int width, int height, float deviation_x, float deviation_y)
+{
+    int dx = (int)floorf(deviation_x * 1.8799712f + 0.5f);
+    int dy = (int)floorf(deviation_y * 1.8799712f + 0.5f);
+    if(dx > 1) {
+        for(int pass = 0; pass < 3; pass++) {
+            int radius = (pass == 2 && dx % 2 == 0) ? dx / 2 : (dx - 1) / 2 + (dx % 2 == 0 && pass == 1);
+            box_blur(pixels, scratch, width, height, 1, width, radius);
+            memcpy(pixels, scratch, (size_t)width * height * 4);
+        }
+    }
+
+    if(dy > 1) {
+        for(int pass = 0; pass < 3; pass++) {
+            int radius = (pass == 2 && dy % 2 == 0) ? dy / 2 : (dy - 1) / 2 + (dy % 2 == 0 && pass == 1);
+            box_blur(pixels, scratch, height, width, width, 1, radius);
+            memcpy(pixels, scratch, (size_t)width * height * 4);
+        }
+    }
+}
+
+/* a transfer function's table of the 256 values of an unpremultiplied
+channel (feFuncR/G/B/A) */
+static void transfer_table(const element_t* function, uint8_t table[256])
+{
+    float values[256];
+    int count = 0;
+    float slope = 1.f, intercept = 0.f, amplitude = 1.f, exponent = 1.f, offset = 0.f;
+    int type = 0;
+    if(attribute_is(function, ATTR_TYPE, "table")) {
+        type = 1;
+    } else if(attribute_is(function, ATTR_TYPE, "discrete")) {
+        type = 2;
+    } else if(attribute_is(function, ATTR_TYPE, "linear")) {
+        type = 3;
+    } else if(attribute_is(function, ATTR_TYPE, "gamma")) {
+        type = 4;
+    }
+
+    if(type == 1 || type == 2)
+        count = parse_number_list(function, ATTR_TABLE_VALUES, values, 256);
+    parse_number(function, ATTR_SLOPE, &slope, false, false);
+    parse_number(function, ATTR_INTERCEPT, &intercept, false, false);
+    parse_number(function, ATTR_AMPLITUDE, &amplitude, false, false);
+    parse_number(function, ATTR_EXPONENT, &exponent, false, false);
+    parse_number(function, ATTR_OFFSET, &offset, false, false);
+    for(int index = 0; index < 256; index++) {
+        float c = index / 255.f, result = c;
+        if(type == 1 && count > 0) {
+            if(count == 1) {
+                result = values[0];
+            } else {
+                float position = c * (count - 1);
+                int k = (int)position;
+                if(k >= count - 1) {
+                    result = values[count - 1];
+                } else {
+                    result = values[k] + (position - k) * (values[k + 1] - values[k]);
+                }
+            }
+        } else if(type == 2 && count > 0) {
+            int k = (int)(c * count);
+            result = values[k >= count ? count - 1 : k];
+        } else if(type == 3) {
+            result = slope * c + intercept;
+        } else if(type == 4) {
+            result = amplitude * powf(c, exponent) + offset;
+        }
+
+        result = CLAMP(result, 0.f, 1.f);
+        table[index] = (uint8_t)(result * 255.f + 0.5f);
+    }
+}
+
+static void component_transfer(const element_t* primitive, uint32_t* pixels, size_t count)
+{
+    uint8_t tables[4][256];
+    for(int channel = 0; channel < 4; channel++) {
+        for(int index = 0; index < 256; index++) {
+            tables[channel][index] = (uint8_t)index;
+        }
+    }
+
+    /* (the tables by channel: 0 alpha, 1 red, 2 green, 3 blue) */
+    for(const element_t* child = primitive->first_child; child; child = child->next_sibling) {
+        if(child->id == TAG_FE_FUNC_A) {
+            transfer_table(child, tables[0]);
+        } else if(child->id == TAG_FE_FUNC_R) {
+            transfer_table(child, tables[1]);
+        } else if(child->id == TAG_FE_FUNC_G) {
+            transfer_table(child, tables[2]);
+        } else if(child->id == TAG_FE_FUNC_B) {
+            transfer_table(child, tables[3]);
+        }
+    }
+
+    for(size_t index = 0; index < count; index++) {
+        uint32_t p = pixels[index];
+        uint32_t a = p >> 24, r = 0, g = 0, b = 0;
+        if(a) {
+            r = MIN(((p >> 16) & 0xFF) * 255 / a, 255);
+            g = MIN(((p >> 8) & 0xFF) * 255 / a, 255);
+            b = MIN((p & 0xFF) * 255 / a, 255);
+        }
+
+        a = tables[0][a];
+        r = tables[1][r] * a / 255;
+        g = tables[2][g] * a / 255;
+        b = tables[3][b] * a / 255;
+        pixels[index] = a << 24 | r << 16 | g << 8 | b;
+    }
+}
+
+static void color_matrix(const element_t* primitive, uint32_t* pixels, size_t count)
+{
+    float m[20] = {1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0};
+    if(attribute_is(primitive, ATTR_TYPE, "saturate")) {
+        float s = 1.f;
+        parse_number_list(primitive, ATTR_VALUES, &s, 1);
+        float saturate[20] = {
+            0.213f + 0.787f * s, 0.715f - 0.715f * s, 0.072f - 0.072f * s, 0, 0,
+            0.213f - 0.213f * s, 0.715f + 0.285f * s, 0.072f - 0.072f * s, 0, 0,
+            0.213f - 0.213f * s, 0.715f - 0.715f * s, 0.072f + 0.928f * s, 0, 0,
+            0, 0, 0, 1, 0
+        };
+        memcpy(m, saturate, sizeof(m));
+    } else if(attribute_is(primitive, ATTR_TYPE, "luminanceToAlpha")) {
+        float luminance[20] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.2125f, 0.7154f, 0.0721f, 0, 0};
+        memcpy(m, luminance, sizeof(m));
+    } else if(!attribute_is(primitive, ATTR_TYPE, "hueRotate")) {
+        float values[20];
+        if(parse_number_list(primitive, ATTR_VALUES, values, 20) == 20) {
+            memcpy(m, values, sizeof(m));
+        }
+    }
+
+    for(size_t index = 0; index < count; index++) {
+        uint32_t p = pixels[index];
+        float a = (p >> 24) / 255.f, r = 0, g = 0, b = 0;
+        if(p >> 24) {
+            r = ((p >> 16) & 0xFF) / 255.f / a;
+            g = ((p >> 8) & 0xFF) / 255.f / a;
+            b = (p & 0xFF) / 255.f / a;
+        }
+
+        float nr = CLAMP(m[0] * r + m[1] * g + m[2] * b + m[3] * a + m[4], 0.f, 1.f);
+        float ng = CLAMP(m[5] * r + m[6] * g + m[7] * b + m[8] * a + m[9], 0.f, 1.f);
+        float nb = CLAMP(m[10] * r + m[11] * g + m[12] * b + m[13] * a + m[14], 0.f, 1.f);
+        float na = CLAMP(m[15] * r + m[16] * g + m[17] * b + m[18] * a + m[19], 0.f, 1.f);
+        uint32_t ia = (uint32_t)(na * 255.f + 0.5f);
+        pixels[index] = ia << 24 | (uint32_t)(nr * na * 255.f + 0.5f) << 16 | (uint32_t)(ng * na * 255.f + 0.5f) << 8 | (uint32_t)(nb * na * 255.f + 0.5f);
+    }
+}
+
+#define MAX_FILTER_RESULTS 64
+
+typedef struct {
+    const layer_image_t* source;
+    uint32_t* source_alpha;
+    uint32_t* previous;
+    uint32_t* results[MAX_FILTER_RESULTS];
+    int result_count;
+} filter_inputs_t;
+
+static const uint32_t* filter_input(filter_inputs_t* inputs, const element_t* primitive)
+{
+    size_t count = (size_t)inputs->source->width * inputs->source->height;
+    if(attribute_is(primitive, ATTR_IN, "SourceAlpha")) {
+        if(inputs->source_alpha == NULL) {
+            inputs->source_alpha = image_new(inputs->source);
+            if(inputs->source_alpha == NULL)
+                return inputs->source->pixels;
+            for(size_t index = 0; index < count; index++) {
+                inputs->source_alpha[index] = inputs->source->pixels[index] & 0xFF000000;
+            }
+        }
+
+        return inputs->source_alpha;
+    }
+
+    if(attribute_is(primitive, ATTR_IN, "SourceGraphic") || inputs->previous == NULL)
+        return inputs->source->pixels;
+    return inputs->previous;
+}
+
+static void apply_filter(const element_t* filter, render_context_t* context, layer_image_t* layer, const plutovg_matrix_t* matrix)
+{
+    size_t count = (size_t)layer->width * layer->height;
+    int x0 = 0, y0 = 0, x1 = layer->width, y1 = layer->height;
+    bool bounded = layer_region(filter, ATTR_FILTER_UNITS, matrix, &x0, &y0, &x1, &y1);
+    float scale_x = sqrtf(matrix->a * matrix->a + matrix->b * matrix->b);
+    float scale_y = sqrtf(matrix->c * matrix->c + matrix->d * matrix->d);
+    filter_inputs_t inputs = {layer, NULL, NULL, {NULL}, 0};
+    uint32_t* scratch = NULL;
+    for(const element_t* primitive = filter->first_child; primitive; primitive = primitive->next_sibling) {
+        if(inputs.result_count == MAX_FILTER_RESULTS)
+            break;
+        uint32_t* output = image_new(layer);
+        if(output == NULL)
+            break;
+        inputs.results[inputs.result_count++] = output;
+        if(primitive->id == TAG_FE_MERGE) {
+            for(const element_t* node = primitive->first_child; node; node = node->next_sibling) {
+                if(node->id == TAG_FE_MERGE_NODE) {
+                    blend_over(output, filter_input(&inputs, node), count, 256);
+                }
+            }
+        } else {
+            memcpy(output, filter_input(&inputs, primitive), count * 4);
+            if(primitive->id == TAG_FE_GAUSSIAN_BLUR) {
+                float deviation[2] = {0.f, 0.f};
+                int numbers = parse_number_list(primitive, ATTR_STD_DEVIATION, deviation, 2);
+                if(numbers == 1)
+                    deviation[1] = deviation[0];
+                if(scratch == NULL)
+                    scratch = image_new(layer);
+                if(scratch && numbers > 0) {
+                    gaussian_blur(output, scratch, layer->width, layer->height, deviation[0] * scale_x, deviation[1] * scale_y);
+                }
+            } else if(primitive->id == TAG_FE_COMPONENT_TRANSFER) {
+                component_transfer(primitive, output, count);
+            } else if(primitive->id == TAG_FE_COLOR_MATRIX) {
+                color_matrix(primitive, output, count);
+            }
+        }
+
+        if(bounded) {
+            layer_image_t image = {output, layer->width, layer->height};
+            layer_cut_outside(&image, x0, y0, x1, y1);
+        }
+
+        inputs.previous = output;
+    }
+
+    if(inputs.previous)
+        memcpy(layer->pixels, inputs.previous, count * 4);
+    for(int index = 0; index < inputs.result_count; index++)
+        free(inputs.results[index]);
+    free(inputs.source_alpha);
+    free(scratch);
+    (void)context;
+}
+
+/* ---------- clip paths and masks */
+
+static void apply_clip(const element_t* clipper, render_context_t* context, render_state_t* state, layer_image_t* layer, const plutovg_matrix_t* matrix)
+{
+    plutovg_surface_t* surface = layer_surface(context);
+    if(surface == NULL)
+        return;
+    plutovg_canvas_t* canvas = plutovg_canvas_create(surface);
+    plutovg_canvas_t* canvas_before = context->canvas;
+    render_state_t clip_state = *state;
+    clip_state.parent = state;
+    clip_state.element = clipper;
+    clip_state.mode = render_mode_clipping;
+    clip_state.opacity = 1.f;
+    clip_state.layered = NULL;
+    clip_state.matrix = *matrix;
+    plutovg_matrix_t local;
+    if(parse_transform(clipper, ATTR_TRANSFORM, &local))
+        plutovg_matrix_multiply(&clip_state.matrix, &local, matrix);
+    context->canvas = canvas;
+    render_children(clipper, context, &clip_state);
+    context->canvas = canvas_before;
+    layer_image_t clip = layer_image(surface);
+    size_t count = (size_t)layer->width * layer->height;
+    for(size_t index = 0; index < count; index++)
+        layer->pixels[index] = pixel_scale(layer->pixels[index], clip.pixels[index] >> 24);
+    plutovg_canvas_destroy(canvas);
+    plutovg_surface_destroy(surface);
+}
+
+static void apply_mask(const element_t* masker, render_context_t* context, render_state_t* state, layer_image_t* layer, const plutovg_matrix_t* matrix)
+{
+    plutovg_surface_t* surface = layer_surface(context);
+    if(surface == NULL)
+        return;
+    plutovg_canvas_t* canvas = plutovg_canvas_create(surface);
+    plutovg_canvas_t* canvas_before = context->canvas;
+    render_state_t mask_state = *state;
+    mask_state.parent = state;
+    mask_state.element = masker;
+    mask_state.mode = render_mode_painting;
+    mask_state.opacity = 1.f;
+    mask_state.layered = NULL;
+    mask_state.matrix = *matrix;
+    context->canvas = canvas;
+    render_children(masker, context, &mask_state);
+    context->canvas = canvas_before;
+    layer_image_t mask = layer_image(surface);
+    int x0, y0, x1, y1;
+    if(layer_region(masker, ATTR_MASK_UNITS, matrix, &x0, &y0, &x1, &y1))
+        layer_cut_outside(&mask, x0, y0, x1, y1);
+    bool alpha = attribute_is(masker, ATTR_MASK_TYPE, "alpha");
+    size_t count = (size_t)layer->width * layer->height;
+    for(size_t index = 0; index < count; index++) {
+        uint32_t m = mask.pixels[index];
+        /* (luminance times alpha, from the premultiplied colour) */
+        uint32_t coverage = alpha ? m >> 24 : (54 * ((m >> 16) & 0xFF) + 183 * ((m >> 8) & 0xFF) + 19 * (m & 0xFF)) >> 8;
+        layer->pixels[index] = pixel_scale(layer->pixels[index], MIN(coverage, 255));
+    }
+
+    plutovg_canvas_destroy(canvas);
+    plutovg_surface_destroy(surface);
+}
+
+/* whether the element was drawn on a layer of its own (else it is drawn as
+it is) */
+static bool render_layered(const element_t* element, render_context_t* context, render_state_t* state)
+{
+    if(state->mode != render_mode_painting || context->canvas == NULL || state->layered == element)
+        return false;
+    if(is_display_none(element))
+        return false;
+    const element_t* clipper = resolve_url(context, element, ATTR_CLIP_PATH, TAG_CLIP_PATH);
+    const element_t* masker = resolve_url(context, element, ATTR_MASK, TAG_MASK);
+    const element_t* filter = resolve_url(context, element, ATTR_FILTER, TAG_FILTER);
+    float opacity = 1.f;
+    parse_number(element, ATTR_OPACITY, &opacity, true, false);
+    bool group = element->id == TAG_G || element->id == TAG_USE || (element->id == TAG_SVG && element->parent);
+    if(clipper == NULL && masker == NULL && filter == NULL && (!group || opacity >= 1.f))
+        return false;
+    if(opacity <= 0.f)
+        return true;
+
+    plutovg_surface_t* surface = layer_surface(context);
+    if(surface == NULL)
+        return true;
+    plutovg_canvas_t* canvas = plutovg_canvas_create(surface);
+    plutovg_canvas_t* canvas_before = context->canvas;
+    render_state_t inner = *state;
+    inner.layered = element;
+    inner.opacity = 1.f;
+    context->canvas = canvas;
+    render_element(element, context, &inner);
+    context->canvas = canvas_before;
+
+    /* (the element's user space: the regions', clip paths' and masks') */
+    plutovg_matrix_t matrix = state->matrix;
+    plutovg_matrix_t local;
+    if(parse_transform(element, ATTR_TRANSFORM, &local))
+        plutovg_matrix_multiply(&matrix, &local, &state->matrix);
+    layer_image_t layer = layer_image(surface);
+    if(filter)
+        apply_filter(filter, context, &layer, &matrix);
+    if(clipper)
+        apply_clip(clipper, context, state, &layer, &matrix);
+    if(masker)
+        apply_mask(masker, context, state, &layer, &matrix);
+
+    layer_image_t target = layer_image(plutovg_canvas_get_surface(context->canvas));
+    float total = CLAMP(opacity * state->opacity, 0.f, 1.f);
+    blend_over(target.pixels, layer.pixels, (size_t)target.width * target.height, (uint32_t)(total * 256.f + 0.5f));
+    plutovg_canvas_destroy(canvas);
+    plutovg_surface_destroy(surface);
+    return true;
+}
+
+static bool render_layered(const element_t* element, render_context_t* context, render_state_t* state);
+
 static void render_element(const element_t* element, render_context_t* context, render_state_t* state)
 {
+    if(render_layered(element, context, state))
+        return;
     switch(element->id) {
     case TAG_SVG:
         render_svg(element, context, state);
@@ -2587,6 +3221,7 @@ bool plutosvg_document_render(const plutosvg_document_t* document, const char* i
 {
     render_state_t state;
     state.parent = NULL;
+    state.layered = NULL;
     state.mode = render_mode_painting;
     state.opacity = 1.f;
     state.extents = INVALID_RECT;
@@ -2654,6 +3289,7 @@ bool plutosvg_document_extents(const plutosvg_document_t* document, const char* 
 {
     render_state_t state;
     state.parent = NULL;
+    state.layered = NULL;
     state.mode = render_mode_bounding;
     state.opacity = 1.f;
     state.extents = INVALID_RECT;

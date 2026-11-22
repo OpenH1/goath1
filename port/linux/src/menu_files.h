@@ -24,5 +24,8 @@ extern const unsigned int menu_files_embedded_count;
 /* the GL texture standing for a menu bitmap's D3D texture (data: its Data),
 decoded from its PNG on first use, and its mip levels; 0 if it is none */
 unsigned int menu_art_texture(unsigned long data, unsigned long *levels);
+/* (each frame's start: xbox_textures.c) the vector art drawn again, ahead,
+when the display's scale has changed */
+void menu_art_begin_frame(void);
 
 #endif

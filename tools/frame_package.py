@@ -67,6 +67,8 @@ LICENSES = {
     "Newtown-LICENSE.txt": "port/assets/fonts/Newtown-LICENSE.txt",
     "msdfgen-LICENSE.txt": "port/third_party/msdfgen/LICENSE.txt",
     "expat-COPYING.txt": "port/third_party/expat/COPYING",
+    "plutovg-LICENSE.txt": "port/third_party/plutovg/LICENSE",
+    "plutovg-FTL.txt": "port/third_party/plutovg/src/FTL.TXT",
     "opus-COPYING.txt": "port/third_party/opus/COPYING",
     "ffmpeg-COPYING.LGPLv2.1.txt": "port/third_party/ffmpeg/COPYING.LGPLv2.1",
     "lucide-LICENSE.txt": "port/assets/icons/lucide/LICENSE",

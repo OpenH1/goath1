@@ -100,6 +100,12 @@ def notices(platform: str) -> List[Tuple[Path, str]]:
         # the menus' XML parser (port/third_party/expat), in every build,
         # whose MIT license asks copies to carry its notice
         (ROOT / "port/third_party/expat/COPYING", "expat-COPYING.txt"),
+        # the menus' vector art's renderer (port/third_party/plutovg and
+        # plutosvg, one MIT notice for both), in every build, and the
+        # FreeType rasterizer plutovg's is from, whose license asks for its
+        # credit
+        (ROOT / "port/third_party/plutovg/LICENSE", "plutovg-LICENSE.txt"),
+        (ROOT / "port/third_party/plutovg/src/FTL.TXT", "plutovg-FTL.txt"),
         # the MCC maps' BC texture decoder (port/third_party/bcdec), in every
         # build, whose MIT license asks copies to carry its notice
         (ROOT / "port/third_party/bcdec/LICENSE", "bcdec-LICENSE.txt"),

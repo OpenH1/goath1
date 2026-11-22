@@ -10,6 +10,7 @@ controller, the keyboard and the mouse, on every port.
 | --- | --- |
 | `ce/*.xml` | The PC version's screens, one file for each folder of its tags, laid out as it has them; `ce/strings.xml` their text, `ce/bitmaps.xml` their pictures |
 | `ce/shell/...png` | The pictures, drawn from the high-res redraws in `svg/` (up to 4x), else empty (no picture shows) |
+| `vector/elements/*.svg` | Vector elements the game draws itself at the size they are shown (a `<frame svg=...>`, `port/linux/src/menu_vector.c`), from the menu vector rebuilds' element library (AGPL-3.0; the redraws' own SVGs, no captures or decoded game data): the title art so far (`ce_menus.py`'s `VECTOR_BITMAPS`) |
 | `NON_HANDDRAWN.md` | The pictures that are not redraws: those drawn from the Xbox's map (the player's own), and the empty frames, to be redrawn |
 | `UNWIRED.md` | The menus' functions that do nothing yet: the lists they fill are empty, and the settings they change do not change |
 | `model/` | The menu engine's model of the generated screens (`docs/menu_engine.md`): `settings.xml`, the settings screens' rows and geometries (`tools/port_settings.py`), `look/`, every widget's look (`tools/menu_look.py`; Settings' in its tall layout), `behaviour/`, every widget's behaviour (`tools/menu_behaviour.py`), and `nodes.xml`, the setup screens' nodes and their rows' conditions (`tools/menu_nodes.py`) |
@@ -29,8 +30,8 @@ more pair in its row there.
 
 To change the menus without building the game, put files in a `menus` folder
 next to `config.toml`. A file with the same path as one here replaces it. On
-the desktop, any other `.xml` file there is added too. A PNG that a `<frame>`
-names is found there first. If any file has a problem, the log names the
+the desktop, any other `.xml` file there is added too. A PNG or SVG that a
+`<frame>` names is found there first. If any file has a problem, the log names the
 file, the line and the problem, and the game uses the Xbox's menus. The
 setting `display.menus = "xbox"` also uses them. `debug.menu_open` starts on
 one screen (by its name, `main_menu/settings_select/...`), for looking at it.

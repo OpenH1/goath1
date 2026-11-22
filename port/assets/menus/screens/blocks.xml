@@ -36,8 +36,9 @@ screen file's, set on each widget as the screen is made. -->
 		<on event="a" run="port screen do"/>
 		<on event="left_mouse" run="port screen do"/>
 	</widget>
-	<!-- Halo's title art, as the main menu has it -->
-	<widget name="screens/title_art" width="640" height="256" bitmap="ui\shell\main_menu\halo_logo"/>
+	<!-- Halo's title art, as the main menu has it (the vector element, drawn at the display's size:
+	ce/bitmaps.xml's main_menu/halo_logo) -->
+	<widget name="screens/title_art" width="640" height="256" bitmap="main_menu/halo_logo"/>
 	<!-- a list: the d-pad, the stick and the wheel step its items -->
 	<widget name="screens/list" type="column_list" width="640" height="480" flags="pass_unhandled_to_focused_child up_down_tabs_items"/>
 	<!-- an item: its label, white while focused (menu_screen.c); A, Start and a click do its action -->

@@ -215,8 +215,16 @@ REPLACE = [None, "controller", "build_number", "pid"]
 XBOX_BITMAPS = {
     "ui\\shell\\bitmaps\\colors_sm", "ui\\shell\\bitmaps\\mp_map_grafix", "ui\\shell\\bitmaps\\sp_levels",
     "ui\\shell\\main_menu\\difficulty_select\\difficulty_options",
-    "ui\\shell\\main_menu\\difficulty_select\\difficulty_options_small", "ui\\shell\\main_menu\\halo_logo",
+    "ui\\shell\\main_menu\\difficulty_select\\difficulty_options_small",
     "ui\\shell\\main_menu\\settings_select\\player_setup\\player_profile_edit\\color_edit\\player_color_marine_large",
+}
+# the PC bitmaps drawn from a contributor's vector element (port/assets/menus/
+# vector: the vector rebuilds' element library, AGPL-3.0), at the size they
+# are shown (port/linux/src/menu_vector.c): each frame's SVG, width and
+# height (in the menus' units), and its slice (the edges kept as it
+# stretches: the element's sizing), or None for one stretched whole
+VECTOR_BITMAPS = {
+    "ui\\shell\\main_menu\\halo_logo": [("vector/elements/halo-logo-3bb24336857b.svg", 640, 256, None)],
 }
 # the frames with no redraw that are drawn from a frame of the Xbox map's
 # bitmap of the same name, whose other frames differ (<frame map=...>):
@@ -423,6 +431,7 @@ class Art:
         self.added_frames = []  # (our bitmap, Xbox bitmap, its frame): port_settings.BITMAP_FRAMES
         self.svgs = []
         self.pngs = []
+        self.vectors = []  # the SVGs of VECTOR_BITMAPS' frames
 
     def title(self, name: str, text: str) -> str:
         """a <bitmap> of a title this port has that the PC version has not:
@@ -519,7 +528,15 @@ class Art:
         return [relative, f"{relative}__0"] if count == 1 else [f"{relative}__{index}"]
 
     def bitmap(self, tag: str) -> str:
-        """a <bitmap> for the bitmap tag, its frames drawn"""
+        """a <bitmap> for the bitmap tag, its frames drawn (or a vector
+        element's SVGs, drawn by the game: VECTOR_BITMAPS)"""
+        if tag in VECTOR_BITMAPS:
+            lines = [f"\t<bitmap{attributes([('name', our_name(tag))])}>"]
+            for svg, width, height, slice_ in VECTOR_BITMAPS[tag]:
+                self.vectors.append(svg)
+                lines.append(f"\t\t<frame{attributes([('svg', svg), ('width', width), ('height', height), ('slice', slice_)])}/>")
+            lines.append("\t</bitmap>")
+            return "\n".join(lines)
         group = self.tags.load(tag, "bitmap")
         data, sequences = group["bitmap data"], group["bitmap group sequence"]
         relative = tag.replace("\\", "/")[3:]
@@ -1033,6 +1050,7 @@ def main() -> None:
     (MENUS / "UNWIRED.md").write_text("\n".join(report))
     files = sorted(path.relative_to(MENUS).as_posix() for path in MENUS.rglob("*.xml"))
     files += sorted(art.pngs)
+    files += sorted(set(art.vectors))
     (MENUS / "menus.json").write_text(json.dumps({
         "comment": "The menus' files the game embeds (tools/ce_menus.py, tools/embed_assets.py).",
         "files": files,

@@ -1631,7 +1631,8 @@ static void *bitmap_build(struct halo_menu_bitmap const *source, long tag_index)
 	{
 		struct halo_menu_frame const *data = &build.menus->frames[source->first_frame + frame];
 		struct bitmap_data *bitmap = &bitmaps[frame];
-		char const *png = data->png;
+		/* (a PNG, or an SVG drawn at the size it is shown: menu_files.c) */
+		char const *png = data->png ? data->png : data->svg;
 		long width = data->width, height = data->height;
 
 		/* (a frame of the map's: a copy of its bitmap, which the texture cache
@@ -1718,7 +1719,9 @@ static void *bitmap_build(struct halo_menu_bitmap const *source, long tag_index)
 		}
 		menu_tags.bitmaps[menu_tags.bitmap_count++] = bitmap;
 		/* (none without a renderer: debug.null_renderer) */
-		if (bitmap->hardware_format)
+		if (bitmap->hardware_format && data->svg && png == data->svg)
+			halo_menus_art_register_frame(bitmap->hardware_format, png, width, height, data->sliced ? data->slice : NULL);
+		else if (bitmap->hardware_format)
 			halo_menus_art_register(bitmap->hardware_format, png);
 	}
 	return group;

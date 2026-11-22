@@ -234,9 +234,14 @@ def test_menus_are_well_formed():
             if element.tag == "bitmap":
                 bitmaps[element.get("name")] = element
                 for frame in element.iter("frame"):
-                    assert (frame.get("png") is None) != (frame.get("map") is None), where
+                    assert sum(frame.get(key) is not None for key in ("png", "svg", "map")) == 1, where
                     if frame.get("map"):
                         assert "\\" in frame.get("map") and int(frame.get("index")) >= 0, where
+                        continue
+                    # (an SVG, drawn at the size it is shown: menu_vector.c)
+                    if frame.get("svg"):
+                        assert frame.get("svg") in listed and (MENUS / frame.get("svg")).is_file(), where
+                        assert int(frame.get("width")) > 0 and int(frame.get("height")) > 0, where
                         continue
                     assert frame.get("png") in listed, where
                     with (MENUS / frame.get("png")).open("rb") as png:
