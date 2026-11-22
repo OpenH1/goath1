@@ -868,6 +868,12 @@ int dlss_addon_value(const char *name, char *value, unsigned long size)
 		if (dlss_addon_restart_needed() && pc_menu_restart_allowed())
 			snprintf(value, size, "yes");
 	}
+	else if (!strcmp(name, "dlss.panel"))
+	{
+		/* (the first panel, but while RESTART NOW's is shown) */
+		if (!dlss_addon_restart_needed() || !pc_menu_restart_allowed())
+			snprintf(value, size, "yes");
+	}
 	else if (!strcmp(name, "dlss.can_remove"))
 	{
 		if (installed && state != _dlss_downloading && state != _dlss_installing)

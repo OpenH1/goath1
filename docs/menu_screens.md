@@ -774,7 +774,8 @@ row source `dlss.license` (fetched as the screen opens; left and right page it: 
 the panel says what the add-on is doing (`dlss.heading`, `dlss.status`, NVIDIA's attribution `dlss.credit`), with
 ACCEPT (`dlss accept`, X) while the license is shown and REMOVE (`dlss remove`, Y) while it is installed
 (`dlss.can_accept`, `dlss.can_remove`). After an install, or a removal that waits for the next start, the panel's
-first button is RESTART NOW (`dlss restart`, A; `dlss.can_restart`), which starts the game again, its executable with
+button is RESTART NOW (`dlss restart`, A: a second panel's, shown in the first's place while `dlss.can_restart`,
+so the focus goes to it), which starts the game again, its executable with
 the same arguments and environment (update.h's `update_relaunch`: on Linux in this process, as the updater's
 restart; on Windows a new process, this one exiting). It is offered only at the menus, with no game played and no
 network game hosted or joined (menu_functions.c's `pc_menu_restart_allowed`); there the status says to leave the
