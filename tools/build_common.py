@@ -259,7 +259,9 @@ OPUS_DEFINES = ("-DOPUS_BUILD", "-DVAR_ARRAYS", "-DHAVE_LRINTF", "-DHAVE_LRINT")
 # on plutovg's canvas, both plain C, linked in (not a DLL's)
 PLUTOVG_DIR = Path("port/third_party/plutovg")
 PLUTOSVG_DIR = Path("port/third_party/plutosvg")
-PLUTOSVG_DEFINES = ("-DPLUTOVG_BUILD_STATIC", "-DPLUTOSVG_BUILD_STATIC")
+# (without plutovg's system font folders' loading, which reads the OS's
+# headers and files; the menus draw no text with it)
+PLUTOSVG_DEFINES = ("-DPLUTOVG_BUILD_STATIC", "-DPLUTOSVG_BUILD_STATIC", "-DPLUTOVG_DISABLE_FONT_FACE_CACHE_LOAD")
 PLUTOSVG_INCLUDES = (f"-I{PLUTOVG_DIR / 'include'}", f"-I{PLUTOSVG_DIR}")
 
 
