@@ -33,7 +33,7 @@ from .guest_toolchain import LLVM_VERSION, guest_toolchain
 from .build_common import (LINUX_PROFILE, MBEDTLS_DIR, MINIUPNPC_DEFINES, MINIUPNPC_DIR, MUSL_MATH_DIR, OWN_CODE_ERRORS,
                            PLATFORM_SEMANTICS_HEADER, QUIET_OWN_CODE_FLAGS, SEMANTICS_HEADER, STB_VORBIS_SOURCE,
                            XDK_INCLUDE, compile_launcher, configuration_defines, download, game_defines_and_includes,
-                           FFMPEG_CALLER, ffmpeg_cflags, game_sources, miniupnpc_sources,
+                           lto_flags, FFMPEG_CALLER, ffmpeg_cflags, game_sources, miniupnpc_sources,
                            musl_math_sources, opus_cflags, opus_sources,
                            PROFILE_GENERATE_FLAGS, pgo_generate_defines, pgo_mode, pgo_profile, profile_use_flags, updater_defines,
                            xdk_headers)
@@ -842,8 +842,11 @@ def generate_android_build(n: Writer, sln: Any) -> None:
         depfile="$out.d",
         deps="gcc",
     )
+    # (ThinLTO in a release, build_common.lto_flags: the NDK's ld.lld links
+    # the bitcode)
+    host_lto = lto_flags(sln)
     host_cflags = " ".join([
-        "-O2", "-g", "-fPIC", "-Wall", "-Wno-unused-function", *OWN_CODE_ERRORS, "-D_GNU_SOURCE",
+        "-O2", "-g", "-fPIC", "-Wall", "-Wno-unused-function", *OWN_CODE_ERRORS, "-D_GNU_SOURCE", *host_lto,
         f"-I{PORT_DIR}/include", f"-I{PORT_DIR}/host", f"-I{SDL_DIR}/include", f"-I{LINUX_DIR}/src",
         f"-I{TOML_DIR}", "-DHALO_VULKAN=1", *(["-DHALO_GUEST_BASE=1"] if base_register else []), *pgo_generate_defines(sln),
     ])
@@ -899,7 +902,8 @@ def generate_android_build(n: Writer, sln: Any) -> None:
     n.rule(
         name="android_host_link",
         # (C++'s library linked in, astc-encoder's: none to ship beside it)
-        command=(f"$android_host_cxx -static-libstdc++ -shared -o $out $in -L{sdl_build} "
+        command=(f"$android_host_cxx -static-libstdc++ -shared {' '.join(host_lto)}{' ' if host_lto else ''}"
+                 f"-o $out $in -L{sdl_build} "
                  + " ".join(f"-l{lib}" for lib in HOST_LIBRARIES)
                  + " -Wl,-z,max-page-size=16384 -Wl,--no-undefined"),
         description="ANDROID HOST LINK $out",

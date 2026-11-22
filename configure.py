@@ -53,6 +53,14 @@ parser.add_argument(
     "a profile (README, \"Optimization profiles\")",
 )
 parser.add_argument(
+    "--lto",
+    default="auto",
+    choices=["auto", "thin", "off"],
+    help="link-time optimisation (ThinLTO) of the hosts whose compiler and linker are one LLVM's (Windows, Android): "
+    "auto (the default) has it in --release builds only; the guest images go without, as the pinned ld.lld "
+    "cannot link x32 bitcode and the arm64_32 guests are assembled from converted Mach-O assembly",
+)
+parser.add_argument(
     "--pgo-profile",
     metavar="PROFDATA",
     type=Path,
@@ -211,6 +219,7 @@ sln = SimpleNamespace(
     port_profile=args.profile,
     port_pgo=args.pgo,
     port_pgo_profile=args.pgo_profile,
+    port_lto=args.lto,
     android_ndk=args.android_ndk,
     guest_llvm=args.guest_llvm,
     guest_llvm_cache=args.guest_llvm_cache,
