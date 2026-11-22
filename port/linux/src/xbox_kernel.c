@@ -17,12 +17,6 @@ threads, asynchronous procedure calls, time, memory and debug output.
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
-#include <sys/resource.h>
-#if defined(__APPLE__)
-#include <pthread/qos.h>
-#elif defined(__linux__)
-#include <sys/syscall.h>
-#endif
 #include <time.h>
 #include <unistd.h>
 
@@ -495,66 +489,30 @@ struct platform_thread
 	BOOL closed;
 	BOOL finished;
 	pthread_t thread;
-	/* SetThreadPriority's: the priority asked for (applied as the thread
-	starts if asked before it), whether it began (and its kernel thread's
-	id, Linux), and whether it was lowered (thread_priority_apply) */
+	/* SetThreadPriority's: the priority asked for (taken as the thread
+	begins: thread_main), and whether it began */
 	int priority;
-	BOOL started, lowered;
-#if defined(__linux__)
-	pid_t tid;
-#endif
+	BOOL started;
 };
 
+/* (the runtime's dispatcher's: world_sdf.c's) */
+long __guest_syscall(long long number, long long a, long long b, long long c, long long d, long long e, long long f);
+
 /* SetThreadPriority's on the host: a priority below normal (the Win32
-THREAD_PRIORITY_BELOW_NORMAL -1, LOWEST -2, IDLE -15) lowers the thread
-(Linux: its nice value, by its kernel thread's id, which an unprivileged
-process may raise; macOS: its quality of service, only its own); normal or
-above puts back only what was lowered here, where the host allows it
-(Linux lets an unprivileged process lower a nice value, never raise it
-back, so there it stays lowered). Nothing is raised above where it began.
-Only a thread asked to be lowered is: the others keep the host's
-scheduling. thread is NULL for the calling thread that is none of ours. */
-static void thread_priority_apply(struct platform_thread *thread, BOOL self, int priority)
+THREAD_PRIORITY_BELOW_NORMAL -1, LOWEST -2, IDLE -15) lowers the calling
+thread, as world_sdf.c's bake lowers its own: setpriority(PRIO_PROCESS, 0,
+nice), which the guest's C library has not, as the runtime's dispatcher
+takes it (port/android/include/halo_guest_syscall.h's GUEST_SYS_setpriority,
+140), each host lowering the calling thread (Linux: its nice value; macOS:
+its quality of service; Windows: its priority). Only the thread asked to be
+lowered is: a thread's own priority is the only one the hosts set, so
+another thread's is taken as it begins (thread_main), and one asked of a
+thread already running is passed over. Normal or above changes nothing: an
+unprivileged process cannot raise a nice value again on Linux. */
+static void thread_priority_lower_self(int priority)
 {
-	BOOL lower = priority < 0;
-#if defined(__linux__)
-	pid_t tid = self ? (pid_t)syscall(SYS_gettid) : thread ? thread->tid : 0;
-	int niceness = priority <= -15 ? 19 : priority <= -2 ? 10 : 5;
-
-	if (!tid)
-		return;
-	if (lower)
-	{
-		int current;
-
-		errno = 0;
-		current = getpriority(PRIO_PROCESS, (id_t)tid);
-		if (errno == 0 && current < niceness && setpriority(PRIO_PROCESS, (id_t)tid, niceness) == 0 && thread)
-			thread->lowered = TRUE;
-	}
-	else if (thread && thread->lowered && setpriority(PRIO_PROCESS, (id_t)tid, 0) == 0)
-	{
-		thread->lowered = FALSE;
-	}
-#elif defined(__APPLE__)
-	/* (only the calling thread's own quality of service can be set) */
-	if (!self)
-		return;
-	if (lower)
-	{
-		if (pthread_set_qos_class_self_np(priority <= -15 ? QOS_CLASS_BACKGROUND : QOS_CLASS_UTILITY, 0) == 0 &&
-			thread)
-			thread->lowered = TRUE;
-	}
-	else if (thread && thread->lowered && pthread_set_qos_class_self_np(QOS_CLASS_DEFAULT, 0) == 0)
-	{
-		thread->lowered = FALSE;
-	}
-#else
-	(void)thread;
-	(void)self;
-	(void)lower;
-#endif
+	if (priority < 0)
+		(void)__guest_syscall(140, 0, 0, priority <= -15 ? 19 : priority <= -2 ? 10 : 5, 0, 0, 0);
 }
 
 static void thread_release(struct platform_handle *handle)
@@ -587,12 +545,8 @@ static void *thread_main(void *context)
 	while (thread->suspended)
 		pthread_cond_wait(&handle->condition, &handle->lock);
 	/* (a priority asked for before it began: SetThreadPriority) */
-#if defined(__linux__)
-	thread->tid = (pid_t)syscall(SYS_gettid);
-#endif
 	thread->started = TRUE;
-	if (thread->priority < 0)
-		thread_priority_apply(thread, TRUE, thread->priority);
+	thread_priority_lower_self(thread->priority);
 	pthread_mutex_unlock(&handle->lock);
 
 	exit_code = thread->start(thread->parameter);
@@ -682,12 +636,10 @@ BOOL WINAPI SetThreadPriority(HANDLE object, int priority)
 	struct platform_handle *handle;
 	struct platform_thread *thread;
 
-	/* (the calling thread's: lowered at once, as thread_priority_apply
-	can; a thread of ours is found by its handle below) */
+	/* (the calling thread's: lowered at once) */
 	if (object == GetCurrentThread())
 	{
-		if (priority < 0)
-			thread_priority_apply(NULL, TRUE, priority);
+		thread_priority_lower_self(priority);
 		return TRUE;
 	}
 	handle = platform_handle_get(object, _platform_handle_thread);
@@ -695,10 +647,12 @@ BOOL WINAPI SetThreadPriority(HANDLE object, int priority)
 		return FALSE;
 	thread = handle->data;
 	pthread_mutex_lock(&handle->lock);
-	thread->priority = priority;
-	/* (one not begun takes it as it begins: thread_main) */
-	if (thread->started && !thread->finished)
-		thread_priority_apply(thread, pthread_equal(thread->thread, pthread_self()) != 0, priority);
+	/* (one not begun takes it as it begins: thread_main; a thread of ours
+	asking for its own, by its handle, at once) */
+	if (!thread->started)
+		thread->priority = priority;
+	else if (pthread_equal(thread->thread, pthread_self()))
+		thread_priority_lower_self(priority);
 	pthread_mutex_unlock(&handle->lock);
 	return TRUE;
 }
