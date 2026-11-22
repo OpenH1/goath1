@@ -896,15 +896,17 @@ int update_launch(const char *path)
 	return child > 0;
 }
 
-int update_restart(const char *path)
+/* (before an exec: none of this process's files in the new program (its
+sockets hold the game's ports; its window's connection closes, and the
+window with it), closed as it starts, not before: the other threads use
+them until then; and no signal blocked, as at a start: the thread's mask is
+kept) */
+static void update_prepare_exec(void)
 {
 	struct rlimit limit;
 	sigset_t signals;
 	int descriptor, maximum = 4096;
 
-	/* none of this process's files in the new program (its sockets hold the
-	game's ports; its window's connection closes, and the window with it),
-	closed as it starts, not before: the other threads use them until then */
 	if (getrlimit(RLIMIT_NOFILE, &limit) == 0 && limit.rlim_cur != RLIM_INFINITY && limit.rlim_cur < 65536)
 		maximum = (int)limit.rlim_cur;
 	for (descriptor = 3; descriptor < maximum; descriptor++)
@@ -914,9 +916,48 @@ int update_restart(const char *path)
 		if (flags >= 0)
 			fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC);
 	}
-	/* (no signal blocked, as at a start: the thread's mask is kept) */
 	sigemptyset(&signals);
 	pthread_sigmask(SIG_SETMASK, &signals, NULL);
+}
+
+int update_restart(const char *path)
+{
+	update_prepare_exec();
 	execl(path, path, (char *)NULL);
+	return 0;
+}
+
+int update_relaunch(void)
+{
+#if defined(__linux__)
+	/* (the arguments as this process was started with them: NUL-separated
+	in /proc/self/cmdline; the environment is kept by execv) */
+	enum { MAXIMUM_ARGUMENTS = 256, MAXIMUM_LENGTH = 65536 };
+	static char command_line[MAXIMUM_LENGTH];
+	static char *arguments[MAXIMUM_ARGUMENTS + 1];
+	size_t length = 0;
+	ssize_t count;
+	int descriptor = open("/proc/self/cmdline", O_RDONLY | O_CLOEXEC), argument_count = 0;
+	size_t at;
+
+	if (descriptor < 0)
+		return 0;
+	while (length < sizeof(command_line) - 1 &&
+		(count = read(descriptor, command_line + length, sizeof(command_line) - 1 - length)) > 0)
+	{
+		length += (size_t)count;
+	}
+	close(descriptor);
+	if (length == 0 || length >= sizeof(command_line) - 1)
+		return 0;
+	command_line[length] = 0;
+	for (at = 0; at < length && argument_count < MAXIMUM_ARGUMENTS; at += strlen(command_line + at) + 1)
+		arguments[argument_count++] = command_line + at;
+	if (at < length)
+		return 0;
+	arguments[argument_count] = NULL;
+	update_prepare_exec();
+	execv("/proc/self/exe", arguments);
+#endif
 	return 0;
 }

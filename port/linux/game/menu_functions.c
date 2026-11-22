@@ -6391,6 +6391,18 @@ int pc_menu_game_playing(void)
 	return game_time_initialized() && game_in_progress() && !main_menu_is_active();
 }
 
+void *global_network_game_client_get(void);
+void *global_network_game_server_get(void);
+
+/* dlss_addon.c's RESTART NOW: the game may be started again now, at the
+menus with no game played (a mission, a multiplayer game, its pause menu)
+and no network game hosted or joined (a lobby, which a restart would end
+for everyone in it) */
+int pc_menu_restart_allowed(void)
+{
+	return !pc_menu_game_playing() && !global_network_game_client_get() && !global_network_game_server_get();
+}
+
 /* "port mods save" (OK): kept, and played at once (port_mods_save keeps
 what it cannot write until the game quits) */
 static boolean mods_save(void)
