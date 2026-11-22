@@ -1211,6 +1211,7 @@ struct query_frame
 	int in_use;
 };
 
+#define PIPELINES_RECENT 8
 struct pipeline_entry
 {
 	struct pipeline_entry *next;
@@ -1359,6 +1360,15 @@ static struct
 	uint64_t pipelines_made, pipelines_saved;
 	char cache_path[1024];
 	struct pipeline_entry *pipelines[PIPELINE_BUCKETS];
+	/* the pipelines last found, as the render owner looks them up
+	(pipeline_find_apart): a frame's draws go back and forth between a few
+	(the world's, its decals', the transparents'), each found again by a
+	compare (its first bytes, the shaders, mostly differ), not the
+	description's hash and its bucket's walk. Here, not static, so that
+	they go with the table when vk is cleared (xgpu_vulkan_initialize_undo):
+	never a pipeline of a device let go of */
+	struct pipeline_entry *pipelines_recent[PIPELINES_RECENT];
+	uint32_t pipelines_recent_next;
 	struct shader_entry *shaders[SHADER_BUCKETS];
 	struct
 	{
@@ -6245,20 +6255,12 @@ static VkPipeline pipeline_build(const struct xgpu_vulkan_pipeline_description *
 static struct pipeline_entry *pipeline_find_apart(const struct xgpu_vulkan_pipeline_description *description,
 	int apart)
 {
-	/* the pipelines last found, as the render owner looks them up: a
-	frame's draws go back and forth between a few (the world's, its
-	decals', the transparents'), each found again by a compare (its first
-	bytes, the shaders, mostly differ), not the description's hash and its
-	bucket's walk. The entries live until shutdown */
-	enum { recent_count = 8 };
-	static struct pipeline_entry *recent[recent_count];
-	static uint32_t recent_next;
 	uint32_t hash, index;
 	struct pipeline_entry **bucket, *entry;
 
-	for (index = 0; index < recent_count; index++)
+	for (index = 0; index < PIPELINES_RECENT; index++)
 	{
-		entry = recent[index];
+		entry = vk.pipelines_recent[index];
 		if (entry && !memcmp(&entry->description, description, sizeof(*description)))
 			return entry;
 	}
@@ -6268,7 +6270,7 @@ static struct pipeline_entry *pipeline_find_apart(const struct xgpu_vulkan_pipel
 	{
 		if (entry->hash == hash && !memcmp(&entry->description, description, sizeof(*description)))
 		{
-			recent[recent_next++ % recent_count] = entry;
+			vk.pipelines_recent[vk.pipelines_recent_next++ % PIPELINES_RECENT] = entry;
 			return entry;
 		}
 	}
@@ -6279,7 +6281,7 @@ static struct pipeline_entry *pipeline_find_apart(const struct xgpu_vulkan_pipel
 	entry->description = *description;
 	entry->next = *bucket;
 	*bucket = entry;
-	recent[recent_next++ % recent_count] = entry;
+	vk.pipelines_recent[vk.pipelines_recent_next++ % PIPELINES_RECENT] = entry;
 	if (!apart || !pipeline_request_apart(entry))
 		pipeline_request(entry);
 	else

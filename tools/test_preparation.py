@@ -403,10 +403,13 @@ typedef uintptr_t VkPipeline;
 typedef int VkResult;
 #define VK_NULL_HANDLE 0
 #define PIPELINE_BUCKETS 8
+#define PIPELINES_RECENT 8
 struct xgpu_vulkan_pipeline_description { uintptr_t value; };
 ''' + entries + r'''
 static struct {
     struct pipeline_entry *pipelines[PIPELINE_BUCKETS];
+    struct pipeline_entry *pipelines_recent[PIPELINES_RECENT];
+    uint32_t pipelines_recent_next;
     uint64_t pipeline_count, pipelines_made;
     struct { unsigned pipelines_made; double pipeline_seconds; } statistics;
 } vk;
