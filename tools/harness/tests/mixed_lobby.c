@@ -56,7 +56,8 @@ struct distributed_message_header
 /* the record's pickup bit (network_game_manager.h) */
 enum { _network_game_hold_to_pick_up_bit = 0, _network_game_classic_turning_bit = 1,
 	_network_game_no_direct_camera_bit = 2, _network_game_pro_rules_bit = 3, _network_game_no_hit_sounds_bit = 4,
-	_network_game_vehicle_hijack_bit = 5, _network_game_no_spartan_link_bit = 6 };
+	_network_game_vehicle_hijack_bit = 5, _network_game_no_spartan_link_bit = 6,
+	_network_game_no_headshot_indicator_bit = 7 };
 #define SET_FLAG(f, b, v) ((v) ? ((f) |= (unsigned)FLAG(b)) : ((f) &= (unsigned)~FLAG(b)))
 
 struct network_game
@@ -413,6 +414,10 @@ int main(int argc, char **argv)
 		CHECK(TEST_FLAG(server.game.standard_flags, _network_game_no_hit_sounds_bit),
 			"the record does not say the host forbids hit sounds");
 		SET_FLAG(legacy.standard_flags, _network_game_no_hit_sounds_bit, FALSE);
+		/* (nor whether it forbids the headshot indicator: network.allow_headshot_indicator, off here) */
+		CHECK(TEST_FLAG(server.game.standard_flags, _network_game_no_headshot_indicator_bit),
+			"the record does not say the host forbids the headshot indicator");
+		SET_FLAG(legacy.standard_flags, _network_game_no_headshot_indicator_bit, FALSE);
 		CHECK(!memcmp(record, &legacy, sizeof(legacy)), "an OpenCE machine's record is not a Legacy host's");
 		CHECK(server.game.standard_rate == 60, "the game's own record changed");
 		return 0;

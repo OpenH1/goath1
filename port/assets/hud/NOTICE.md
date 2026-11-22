@@ -56,3 +56,12 @@ upscaled seat plates of other languages' maps get
 sniper's zoom labels (2x and 10x, in `sniper__hud_reticles_scope__0.png`)
 are set in Cyborg Interface Gothic (`port/assets/fonts`), as the restored
 ones say 2x and 8x (Halo PC's).
+
+`sniper__hud_reticles_scope__0__dotless.png` is that texture with the dot
+in the middle of the sniper's reticle removed (by `tools/hud_assets.py`),
+drawn in its place while the headshot indicator is on.
+
+`hud_reticles__0__dot.png` and `sniper__hud_reticles_scope__0__dot.png` are
+the pistol's texture and that copy with a white dot 1.5 texels across drawn
+in the middle of the reticle's ring (by `tools/hud_assets.py`), the same on
+both, drawn in their place while the headshot indicator shows a headshot.

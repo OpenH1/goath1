@@ -95,3 +95,47 @@ def test_zoom_labels_are_set_in_the_text_font_apart_and_at_one_weight(tmp_path):
     before.write_text('<!-- "10x" in Overpass-900.ttf -->')
     assert label_setting(before) is None
     assert text_gap(ROOT / LABEL_FONT, "2x", -4, 6) < LABEL_GAP
+
+
+def test_dotless_reticles_differ_only_inside_their_ring():
+    import numpy as np
+    from hud_assets import DOTLESS
+
+    layout = {entry["name"]: entry for entry in entries(HUD / "layout.json")}
+    for name, cell in DOTLESS.items():
+        scale = layout[name]["scale"]
+        base = np.asarray(Image.open(HUD / f"{name}.png").convert("RGBA"))
+        copy = np.asarray(Image.open(HUD / f"{name}__dotless.png").convert("RGBA"))
+        assert base.shape == copy.shape, name
+        changed = np.argwhere((base != copy).any(axis=2))
+        assert len(changed), name
+        left, top, right, bottom = (value * scale for value in cell)
+        assert changed[:, 0].min() >= top and changed[:, 0].max() < bottom, name
+        assert changed[:, 1].min() >= left and changed[:, 1].max() < right, name
+        assert not copy[tuple(changed.T)].any(), name
+        assert f"{name}__dotless.png" in (HUD / "NOTICE.md").read_text(), name
+
+
+def test_dotted_reticles_add_the_same_dot_inside_their_ring_only():
+    import numpy as np
+    from hud_assets import DOT_DIAMETER, DOTTED, dotted
+
+    layout = {entry["name"]: entry for entry in entries(HUD / "layout.json")}
+    sizes = set()
+    for name, (cell, source) in DOTTED.items():
+        scale = layout[name]["scale"]
+        base = np.asarray(Image.open(HUD / f"{name}{source}.png").convert("RGBA"))
+        copy = np.asarray(Image.open(HUD / f"{name}__dot.png").convert("RGBA"))
+        assert base.shape == copy.shape, name
+        # as tools/hud_assets.py draws it, from what is committed
+        assert (dotted(base, cell, scale, DOT_DIAMETER) == copy).all(), name
+        changed = np.argwhere((base != copy).any(axis=2))
+        assert len(changed), name
+        left, top, right, bottom = (value * scale for value in cell)
+        assert changed[:, 0].min() >= top and changed[:, 0].max() < bottom, name
+        assert changed[:, 1].min() >= left and changed[:, 1].max() < right, name
+        # white wherever it is drawn, and as many texels across on both
+        assert (copy[tuple(changed.T)][:, :3] == 255).all(), name
+        sizes.add(round(int(copy[tuple(changed.T)][:, 3].astype(int).sum()) / 255 / scale ** 2, 1))
+        assert f"{name}__dot.png" in (HUD / "NOTICE.md").read_text(), name
+    assert len(sizes) == 1, sizes

@@ -53,8 +53,9 @@ static int config_boolean(char const *name)
 	if (!strcmp(name, "game.enhanced_animations") || !strcmp(name, "game.vehicle_hijack") ||
 		!strcmp(name, "game.spartan_link"))
 		return TRUE;
-	/* (network.allow_hit_sounds: the hit sounds' rule, hit_sounds.c's, read so too) */
-	if (!strcmp(name, "network.allow_hit_sounds"))
+	/* (network.allow_hit_sounds and network.allow_headshot_indicator: the hit sounds' and the headshot
+	indicator's rules, read so too) */
+	if (!strcmp(name, "network.allow_hit_sounds") || !strcmp(name, "network.allow_headshot_indicator"))
 		return TRUE;
 	CHECK(!strcmp(name, "game.auto_pickup"), "an unexpected setting %s", name);
 	return auto_pickup_setting;
@@ -72,6 +73,7 @@ static struct
 	/* (the Spartan link's host rule, stamped with the rest) */
 	boolean hosting_spartan_link;
 	boolean hosting_no_hit_sounds;
+	boolean hosting_no_headshot_indicator;
 	/* (2V2 Classic's views: instant_aim_rule.c's) */
 	boolean hosting_no_direct_camera;
 	boolean joined;
