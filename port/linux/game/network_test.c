@@ -254,6 +254,10 @@ static struct
 	long elevator_index;
 	long elevator_stood;
 	long elevator_stopped;
+	/* debug.network_test_deck's: the vehicle the first player was stood on
+	(NONE before) */
+	boolean deck;
+	long deck_vehicle;
 	/* debug.network_test_vehicle_seat's "<vehicle>:<seat>" */
 	char vehicle_name[64];
 	char seat_label[64];
@@ -409,6 +413,8 @@ static void network_test_read_settings(
 	network_test.kill_interval = (real)config_real("debug.network_test_kill");
 	network_test.shoot_interval = (real)config_real("debug.network_test_shoot");
 	network_test.vehicle_time = (real)config_real("debug.network_test_vehicle");
+	network_test.deck = config_boolean("debug.network_test_deck") != 0;
+	network_test.deck_vehicle = NONE;
 	network_test.hitch_seconds = (real)config_real("debug.network_test_hitch");
 	network_test.pickup_time = (real)config_real("debug.network_test_pickup");
 	network_test.camouflage_time = (real)config_real("debug.network_test_camouflage");
@@ -1293,6 +1299,64 @@ static void network_test_vehicle(
 		}
 		platform_log("network test: the last player cannot drive vehicle %lx", nearest_index);
 	}
+}
+
+/* debug.network_test_deck: the first player dropped onto the top of the
+vehicle the last player drives (debug.network_test_vehicle), a second after
+they take its wheel, to ride its deck; each frame from then on logs where the
+first player's view and the vehicle are drawn (network_test_deck_frame) */
+static void network_test_deck_stand(
+	void)
+{
+	long first_unit = player_control_get_unit_index(0);
+	long last_unit = NONE;
+	struct data_iterator iterator;
+	struct player_datum *player;
+	struct object_datum *vehicle;
+	real_point3d stand;
+
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+		last_unit = player->unit_index;
+	if (first_unit == NONE || last_unit == NONE || last_unit == first_unit ||
+		object_get(last_unit)->object.parent_object_index == NONE)
+	{
+		platform_log("network test: deck: the last player drives nothing");
+		return;
+	}
+	network_test.deck_vehicle = object_get_ultimate_parent(last_unit);
+	vehicle = object_get(network_test.deck_vehicle);
+	stand = vehicle->object.bounding_sphere_center;
+	stand.z += 0.5f * vehicle->object.bounding_sphere_radius + 1.0f;
+	object_set_position(first_unit, &stand, NULL, NULL);
+	platform_log("network test: deck: the first player dropped onto vehicle %lx at (%.2f %.2f %.2f)",
+		network_test.deck_vehicle, stand.x, stand.y, stand.z);
+}
+
+/* (each frame) where the first player's view was drawn the frame before,
+and the deck's vehicle's root node as drawn now */
+static void network_test_deck_frame(
+	void)
+{
+	real_matrix4x3 const *nodes;
+	real_point3d camera;
+	long unit_index = player_control_get_unit_index(0);
+	struct biped_datum *biped;
+
+	if (network_test.deck_vehicle == NONE || !game_in_progress() || !object_try_and_get(network_test.deck_vehicle) ||
+		unit_index == NONE || config_boolean("debug.null_renderer") ||
+		!render_interpolation_drawn_view_position(0, &camera))
+	{
+		return;
+	}
+	nodes = render_interpolation_object_node_matrices(network_test.deck_vehicle);
+	if (!nodes)
+		nodes = object_get_node_matrix(network_test.deck_vehicle, 0);
+	biped = (struct biped_datum *)object_try_and_get_and_verify_type(unit_index, _object_mask_biped);
+	platform_log("network test: deck frame %llu tick %ld view %.4f %.4f %.4f vehicle %.4f %.4f %.4f%s",
+		network_test_microseconds(), game_time_get(), camera.x, camera.y, camera.z,
+		nodes[0].position.x, nodes[0].position.y, nodes[0].position.z,
+		biped && biped->biped.riding_object_index == network_test.deck_vehicle ? " riding" : "");
 }
 
 /* debug.network_test_profiles: each local player named plays with a profile
@@ -2694,6 +2758,7 @@ void network_test_elevator_frame(
 	int length;
 	long local_unit;
 
+	network_test_deck_frame();
 	if (network_test.elevator_index == NONE || !game_in_progress() || !object_try_and_get(network_test.elevator_index))
 		return;
 	node = network_test_elevator_node(network_test.elevator_index);
@@ -3186,6 +3251,12 @@ void network_test_update(
 
 			if (game_time_get() >= enter_time && game_time_get() - enter_time < TICKS_PER_SECOND)
 				network_test_vehicle(TRUE);
+			if (network_test.deck && network_test.deck_vehicle == NONE &&
+				game_time_get() >= enter_time + TICKS_PER_SECOND &&
+				game_time_get() - enter_time - TICKS_PER_SECOND < TICKS_PER_SECOND)
+			{
+				network_test_deck_stand();
+			}
 			if (game_time_get() >= enter_time + 15 * TICKS_PER_SECOND &&
 				game_time_get() - enter_time - 15 * TICKS_PER_SECOND < TICKS_PER_SECOND)
 			{

@@ -2559,6 +2559,11 @@ static const struct config_setting config_settings[] =
 	{ "debug.network_test_vehicle", _config_real, "0.0", "HALO_NETWORK_TEST_VEHICLE", _environment_value, _platform_all,
 		"This many seconds into an automated test game the host seats its last\n"
 		"player as a vehicle's driver (and out 15 seconds on); 0 never." },
+	{ "debug.network_test_deck", _config_boolean, "false", "HALO_NETWORK_TEST_DECK", _environment_set_is_true,
+		_platform_all,
+		"With debug.network_test_vehicle: a second after the last player takes the\n"
+		"wheel, the first player is dropped onto the vehicle's top to ride it, and\n"
+		"each frame logs where their view and the vehicle are drawn." },
 	{ "debug.network_test_hijack", _config_string, "\"\"", "HALO_NETWORK_TEST_HIJACK", _environment_value, _platform_all,
 		"\"<seconds>[:watch|:client]\": that many seconds into an automated test\n"
 		"game the host seats an enemy (a bot, else a split screen's second\n"
