@@ -319,6 +319,7 @@ symbols in this file:
 #include "units/vehicle_definitions.h"
 #include "units/vehicles.h"
 #include "networking/network_game_globals.h"
+#include "coop_enemies.h" /* port: port/linux/game/coop_enemies.c */
 
 /* ---------- constants */
 
@@ -1381,23 +1382,22 @@ static void actor_update_end(
 
 /* port: the tick's timeslices (an actor's perception and path refreshed,
 actor_perception.c and actor_moving.c). The original gives one a tick, to
-the first actor in update order whose service timer passed both 15 (none is
-served more often than every 16 ticks) and the highest timer of those not
-served the tick before. So the one a tick serves 16 actors at that period,
-and more actors wait longer: 20 every 0.7 s, 270 every 9. Past 16 active
-actors the tick gives one for each 16 or part of 16, by the same rule
-repeated: the first ones in update order whose timer passed 15 and the
-budget's highest of those not served the tick before (its Nth highest for N
-timeslices; ai_globals->current_highest_service_timer keeps it for the next
-tick, as it kept the highest). Each actor is then served about every 16
-ticks, as in an original-sized fight. At 16 or fewer it is the original's
-one a tick, exactly. Kept outside the game state: each tick sets them anew
-before the actors update (actors_update). */
+the first actor in update order whose service timer passed both 15 and the
+highest timer of those not served the tick before: each of a level's
+actors is served at its pace for the level's count of them. Where co-op's
+extra enemies multiply the level's (coop_enemies.c, the stress test's
+too), the tick gives that many, rounded up, by the same rule repeated: the
+first ones in update order whose timer passed 15 and the budget's highest
+of those not served the tick before (its Nth highest for N timeslices;
+ai_globals->current_highest_service_timer keeps it for the next tick, as it
+kept the highest), so each actor is served about as often as in the
+original's fight. Without extra enemies it is the original's one a tick,
+exactly. Kept outside the game state: each tick sets them anew before the
+actors update (actors_update). */
 enum
 {
-	ACTOR_TIMESLICE_ACTORS_PER_SLICE = 16,
-	MAXIMUM_ACTOR_TIMESLICES_PER_TICK =
-		(MAXIMUM_ACTORS + ACTOR_TIMESLICE_ACTORS_PER_SLICE - 1)/ACTOR_TIMESLICE_ACTORS_PER_SLICE,
+	/* (co-op's most: its STATIC MULTIPLIER's 32) */
+	MAXIMUM_ACTOR_TIMESLICES_PER_TICK = 32,
 };
 
 static struct
@@ -4319,22 +4319,14 @@ void actors_update(
 {
 	struct actor_iterator iterator;
 	struct actor_datum *actor;
-	long active_actor_count = 0;
 
 	ai_globals->last_highest_service_timer = ai_globals->current_highest_service_timer;
 	ai_globals->current_highest_service_timer = 0;
 	ai_globals->time_given_this_frame = FALSE;
 
-	/* port: the tick's timeslices, one for each 16 actors updating or part
-	of 16 (actor_timeslices) */
-	actor_iterator_new(&iterator, TRUE);
-	while ((actor = actor_iterator_next(&iterator)) != NULL)
-	{
-		if (!actor->meta.erase_next_tick && actor->state.mode > _actor_mode_braindead)
-			active_actor_count++;
-	}
-	actor_timeslices.budget = (short)((active_actor_count + ACTOR_TIMESLICE_ACTORS_PER_SLICE - 1)/
-		ACTOR_TIMESLICE_ACTORS_PER_SLICE);
+	/* port: the tick's timeslices, as many as co-op's extra enemies multiply
+	the level's (actor_timeslices) */
+	actor_timeslices.budget = coop_enemies_scale();
 	if (actor_timeslices.budget < 1)
 		actor_timeslices.budget = 1;
 	if (actor_timeslices.budget > MAXIMUM_ACTOR_TIMESLICES_PER_TICK)

@@ -26,6 +26,12 @@ short coop_enemies_extra_count(
 	long encounter_index,
 	short count);
 
+/* actors.c: how many times the level's enemies this game multiplies, as
+extra enemies are placed (rounded up: 200% two, STATIC MULTIPLIER 4 four),
+1 where it places none (the original's game, and a co-op client's), which
+its actors' perception and path timeslices a tick are */
+short coop_enemies_scale(
+	void);
 /* the places tried on the rings around a starting location */
 #define COOP_ENEMIES_SPREAD_SPOTS 90
 
