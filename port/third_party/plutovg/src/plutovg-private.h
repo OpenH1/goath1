@@ -14,6 +14,16 @@ typedef LONG plutovg_ref_count_t;
 #define plutovg_destroy_reference(ob) (ob && InterlockedDecrement(&(ob)->ref_count) == 0)
 #define plutovg_get_reference_count(ob) ((ob) ? InterlockedCompareExchange((LONG*)&(ob)->ref_count, 0, 0) : 0)
 
+#elif defined(__GNUC__) || defined(__clang__)
+
+/* port: compiler builtins, as the ARM guests are built without <stdatomic.h> */
+typedef int plutovg_ref_count_t;
+
+#define plutovg_init_reference(ob) ((ob)->ref_count = 1)
+#define plutovg_increment_reference(ob) (void)(ob && __atomic_add_fetch(&(ob)->ref_count, 1, __ATOMIC_SEQ_CST))
+#define plutovg_destroy_reference(ob) (ob && __atomic_sub_fetch(&(ob)->ref_count, 1, __ATOMIC_SEQ_CST) == 0)
+#define plutovg_get_reference_count(ob) ((ob) ? __atomic_load_n(&(ob)->ref_count, __ATOMIC_SEQ_CST) : 0)
+
 #elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L && !defined(__STDC_NO_ATOMICS__)
 
 #include <stdatomic.h>
