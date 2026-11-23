@@ -110,7 +110,8 @@ def menu_files() -> List[str]:
 # names alone that has filters or this many paths is drawn here, when the
 # game is built, at the size a 2160-line display shows it, by
 # tools/menu_vector_bake.c (menu_vector.c and plutosvg, so it draws as the
-# game does), and embedded as "<svg>.png" in the SVG's place; the game draws
+# game does), and embedded as "<svg>.<its CRC-32>.png" in the SVG's place
+# (a menus folder's own SVG is drawn by the game, as it starts); the game draws
 # that PNG with its mip levels (the host makes them), scaled down. The
 # picture is the build's, never the repository's.
 VECTOR_HEAVY_PATHS = 200
@@ -522,12 +523,13 @@ def main() -> None:
     # the menus' files (menu_files.h)
     lines.append('#include "menu_files.h"')
     lines.append("")
-    # (each heavy SVG as the PNG drawn of it here, named the SVG's with .png after it)
+    # (each heavy SVG as the PNG drawn of it here, named the SVG's, its CRC-32 and .png)
     baked = vector_bakes(Path(sys.argv[1]).resolve().parent / "menu_vector")
     menus, blobs = [], []
     for name in menu_files():
         data = baked[name] if name in baked else (ROOT / MENU_ASSETS / name).read_bytes()
-        name = f"{name}.png" if name in baked else name
+        if name in baked:
+            name = f"{name}.{zlib.crc32((ROOT / MENU_ASSETS / name).read_bytes()) & 0xFFFFFFFF:08x}.png"
         if name.endswith(".png"):
             png_size(data, name)
         menus.append(name)

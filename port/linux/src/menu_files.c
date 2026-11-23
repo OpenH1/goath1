@@ -23,6 +23,7 @@ HUD's are (hud_hires.c).
 #include "hud_hires.h"
 #include "menu_files.h"
 #include "menu_vector.h"
+#include "zlib_prefixed.h"
 #include "embedded_assets.h"
 #include "platform.h"
 #include "port_config.h"
@@ -1302,29 +1303,43 @@ void halo_menus_log(char const *file, long line, char const *message, char const
 	platform_log("menus: %s:%ld: %s%s%s", file ? file : "?", line, message, detail ? " " : "", detail ? detail : "");
 }
 
-/* the PNG a heavy SVG was drawn into when the game was built (named as the
-SVG with .png after it, embedded: tools/embed_assets.py), its name in png,
-unless the menus folder has the SVG or the PNG of its own (art: a frame's
-SVG drawn from it) */
+/* the PNG a heavy SVG was drawn into when the game was built (embedded as
+the SVG's name, its CRC-32 and .png, tools/embed_assets.py), its name in
+png: the one of the menus folder's SVG, if it has one (an SVG of its own,
+of another CRC, has none: the art draws it), else the embedded one */
 static int art_prerendered(const char *svg, char *png, size_t size)
 {
 	char full[1200];
 	unsigned long length = 0;
 	unsigned char *data;
+	size_t svg_length = strlen(svg);
 	long index;
 
-	if ((size_t)snprintf(png, size, "%s.png", svg) >= size)
-		return 0;
-	index = file_find(png);
-	if (index < 0 || files[index].loaded)
-		return 0;
-	index = file_find(svg);
-	if (index >= 0)
-		return !files[index].loaded;
 	snprintf(full, sizeof(full), "%s/%s", folder, svg);
 	data = path_inside_folder(svg) ? file_read(full, &length) : NULL;
-	free(data);
-	return data == NULL;
+	if (data)
+	{
+		unsigned long crc = crc32(0L, (const Bytef *)data, (uInt)length);
+
+		free(data);
+		if ((size_t)snprintf(png, size, "%s.%08lx.png", svg, crc) >= size)
+			return 0;
+		index = file_find(png);
+		return index >= 0 && !files[index].loaded;
+	}
+	for (index = 0; index < file_count; index++)
+	{
+		const char *name = files[index].path;
+		size_t name_length = strlen(name);
+
+		if (!files[index].loaded && name_length == svg_length + 13 && !strncmp(name, svg, svg_length) &&
+			name[svg_length] == '.' && !strcmp(name + name_length - 4, ".png") && name_length < size)
+		{
+			memcpy(png, name, name_length + 1);
+			return 1;
+		}
+	}
+	return 0;
 }
 
 /* ---------- art
@@ -1432,9 +1447,16 @@ static unsigned char *art_pixels(char const *name, int vector, int layers, const
 	unsigned char *pixels;
 	Uint64 start;
 
-	if (!vector)
-		return hud_hires_png_pixels(data[0], size[0], width, height);
 	start = SDL_GetTicksNS();
+	if (!vector)
+	{
+		pixels = hud_hires_png_pixels(data[0], size[0], width, height);
+		/* (a heavy SVG's, drawn when the game was built: art_prerendered) */
+		if (pixels && strstr(name, ".svg."))
+			platform_log("menus: %s (drawn when the game was built) decoded at %lux%lu in %.2f ms", name, *width,
+				*height, (double)(SDL_GetTicksNS() - start) / 1e6);
+		return pixels;
+	}
 	pixels = menu_vector_pixels(layers, (const void *const *)data, size, frame_width, frame_height, scale, slice,
 		width, height);
 	if (pixels)
