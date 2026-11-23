@@ -226,15 +226,11 @@ XBOX_BITMAPS = {
 VECTOR_BITMAPS = {
     "ui\\shell\\main_menu\\halo_logo": [("vector/elements/halo-logo-3bb24336857b.svg", 640, 256, None)],
 }
-# the port's own bitmaps of vector elements (one or two SVGs a frame, the
-# second over the first, each with its element's sizing): the new menu
-# engine's items' frame behind their words, lit while focused by the
-# focus outline over it (port/assets/menus/screens/main.xml's backdrop=,
-# port/linux/game/menu_screen.c's ITEM_BACKDROP_*)
-VECTOR_PORT_BITMAPS = {
-    "main_menu/item_frame": [("vector/elements/button-frame-e024b1232b3c.svg", 256, 34, "12 0 12 0"),
-                             ("vector/elements/button-frame-e024b1232b3c.svg vector/elements/focus-outline-19b8aba1aabe.svg", 256, 34, "12 0 12 0 10 0 10 0")],
-}
+# the port's own bitmaps of vector elements, by name: each frame's SVGs
+# (one, or two separated by a space, the second over the first), width,
+# height and slice (four edges for each SVG, its element's sizing), for the
+# screens whose originals have frames (<item backdrop=...>); none yet
+VECTOR_PORT_BITMAPS = {}
 # the frames with no redraw that are drawn from a frame of the Xbox map's
 # bitmap of the same name, whose other frames differ (<frame map=...>):
 # the same picture, or for the profile settings the Xbox's for the same

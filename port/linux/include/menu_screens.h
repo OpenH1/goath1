@@ -157,7 +157,7 @@ struct menu_screen_block
 	"main_menu/menu_versus"; its label then the words it stands for) */
 	char const *picture;
 	/* (an item's picture behind its words, as the frame of a button: its
-	bitmap's name, "main_menu/item_frame", its second frame while focused) */
+	bitmap's name, its second frame while focused) */
 	char const *backdrop;
 	/* (a button's side of the bar: "left" or "right"; NULL, back's left
 	and the others' right) */
