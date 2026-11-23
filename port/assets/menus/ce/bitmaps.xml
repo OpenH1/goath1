@@ -503,6 +503,10 @@
 		<frame png="ce/port/main_menu/menu_coop__0.png" width="256" height="64"/>
 		<frame png="ce/port/main_menu/menu_coop__1.png" width="256" height="64"/>
 	</bitmap>
+	<bitmap name="main_menu/item_frame">
+		<frame svg="vector/elements/button-frame-e024b1232b3c.svg" width="256" height="34" slice="12 0 12 0"/>
+		<frame svg="vector/elements/button-frame-e024b1232b3c.svg vector/elements/focus-outline-19b8aba1aabe.svg" width="256" height="34" slice="12 0 12 0 10 0 10 0"/>
+	</bitmap>
 	<bitmap name="mods/status">
 		<frame png="ce/port/mods/status__0.png" width="24" height="24"/>
 		<frame png="ce/port/mods/status__1.png" width="24" height="24"/>

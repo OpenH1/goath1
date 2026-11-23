@@ -240,7 +240,7 @@ def test_menus_are_well_formed():
                         continue
                     # (an SVG, drawn at the size it is shown: menu_vector.c)
                     if frame.get("svg"):
-                        assert frame.get("svg") in listed and (MENUS / frame.get("svg")).is_file(), where
+                        assert all(svg in listed and (MENUS / svg).is_file() for svg in frame.get("svg").split()), where
                         assert int(frame.get("width")) > 0 and int(frame.get("height")) > 0, where
                         continue
                     assert frame.get("png") in listed, where

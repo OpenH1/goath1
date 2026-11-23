@@ -140,6 +140,10 @@ foot, and the blocks' widths (blocks.xml's) */
 as a picture: the PC version's items' box (256 by 33) */
 #define ITEM_STEP_PLAIN 36
 #define PICTURE_HEIGHT 33
+/* an item's backdrop (<item backdrop=...>, a button's frame behind its
+words): ITEM_WIDTH wide, this high, this far down the item */
+#define ITEM_BACKDROP_TOP 2
+#define ITEM_BACKDROP_HEIGHT 34
 #define BITMAP_GROUP_TAG 'bitm'
 /* cards (blocks.xml's screens/card: the campaign's mission card, 158 by
 240): their gap, and their row's room, below them too */
@@ -851,6 +855,8 @@ struct screen_open
 	/* (each item's picture's bitmap tag, NONE for its label; a card's, its
 	picture part's) */
 	long pictures[SCREEN_MAXIMUM_ITEMS];
+	/* (whether an item's picture is its backdrop, behind its label) */
+	boolean backdrops[SCREEN_MAXIMUM_ITEMS];
 	long card_pictures[SCREEN_MAXIMUM_ITEMS];
 	char ids[SCREEN_MAXIMUM_ITEMS][SCREEN_ID_LENGTH];
 	char actions[SCREEN_MAXIMUM_ITEMS][SCREEN_ACTION_LENGTH];
@@ -1390,6 +1396,7 @@ static boolean screen_build(struct screen_open *open, struct menu_screen const *
 				open->items[open->item_count] = made;
 				open->hints[open->item_count] = NULL;
 				open->pictures[open->item_count] = NONE;
+				open->backdrops[open->item_count] = FALSE;
 				snprintf(open->ids[open->item_count], SCREEN_ID_LENGTH, "%s", card->id ? card->id : "");
 				snprintf(open->actions[open->item_count], SCREEN_ACTION_LENGTH, "%s", card->action);
 				if (!focus || (focus_id && card->id && !strcmp(card->id, focus_id)))
@@ -1427,9 +1434,13 @@ static boolean screen_build(struct screen_open *open, struct menu_screen const *
 				if (!made)
 					break;
 				menu_screen_text(item->label, screen_value, &values, label, sizeof(label));
-				open->pictures[open->item_count] = item->picture ? screen_picture_tag(item->picture) : NONE;
-				/* (a picture in place of its words, which it stands for) */
-				screen_text_set(made, open->pictures[open->item_count] != NONE ? "" : label);
+				open->pictures[open->item_count] = item->picture ? screen_picture_tag(item->picture) :
+					item->backdrop ? screen_picture_tag(item->backdrop) : NONE;
+				open->backdrops[open->item_count] = !item->picture && open->pictures[open->item_count] != NONE;
+				/* (a picture in place of its words, which it stands for; a
+				backdrop behind them) */
+				screen_text_set(made, open->pictures[open->item_count] != NONE &&
+					!open->backdrops[open->item_count] ? "" : label);
 				open->items[open->item_count] = made;
 				open->hints[open->item_count] = NULL;
 				snprintf(open->ids[open->item_count], SCREEN_ID_LENGTH, "%s", item->id ? item->id : "");
@@ -1484,6 +1495,7 @@ static boolean screen_build(struct screen_open *open, struct menu_screen const *
 				open->items[open->item_count] = made;
 				open->hints[open->item_count] = NULL;
 				open->pictures[open->item_count] = NONE;
+				open->backdrops[open->item_count] = FALSE;
 				snprintf(open->ids[open->item_count], SCREEN_ID_LENGTH, "color%ld", color);
 				snprintf(open->actions[open->item_count], SCREEN_ACTION_LENGTH, "color %ld", color);
 				/* (first, the profile's own color) */
@@ -1723,6 +1735,7 @@ static boolean box_build(struct screen_open *open, struct menu_screen const *scr
 		open->item_blocks[open->item_count] = item;
 		open->hints[open->item_count] = NULL;
 		open->pictures[open->item_count] = NONE;
+		open->backdrops[open->item_count] = FALSE;
 		snprintf(open->ids[open->item_count], SCREEN_ID_LENGTH, "%s", item->id ? item->id : "");
 		snprintf(open->actions[open->item_count], SCREEN_ACTION_LENGTH, "%s", item->action);
 		/* (the item focused last, else the list's focus, else its first) */
@@ -1978,6 +1991,7 @@ static boolean dialog_build(struct screen_open *open, struct menu_screen const *
 		open->item_blocks[open->item_count] = item;
 		open->hints[open->item_count] = NULL;
 		open->pictures[open->item_count] = NONE;
+		open->backdrops[open->item_count] = FALSE;
 		snprintf(open->ids[open->item_count], SCREEN_ID_LENGTH, "%s", item->id ? item->id : "");
 		snprintf(open->actions[open->item_count], SCREEN_ACTION_LENGTH, "%s", item->action);
 		if (!focus || (focus_id && item->id && !strcmp(item->id, focus_id)))
@@ -3066,9 +3080,9 @@ boolean menu_screen_item_picture(struct widget_instance const *widget, long *bit
 			{
 				*bitmap_tag = open->pictures[index];
 				bounds->x0 = 0;
-				bounds->y0 = 0;
+				bounds->y0 = open->backdrops[index] ? ITEM_BACKDROP_TOP : 0;
 				bounds->x1 = ITEM_WIDTH;
-				bounds->y1 = PICTURE_HEIGHT;
+				bounds->y1 = open->backdrops[index] ? ITEM_BACKDROP_TOP + ITEM_BACKDROP_HEIGHT : PICTURE_HEIGHT;
 				return TRUE;
 			}
 		}

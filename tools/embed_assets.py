@@ -106,6 +106,123 @@ def menu_files() -> List[str]:
     return json.loads((ROOT / MENU_LIST).read_text())["files"]
 
 
+# the menus' heavy vector art (port/linux/src/menu_vector.h): an SVG a frame
+# names alone that has filters or this many paths is drawn here, when the
+# game is built, at the size a 2160-line display shows it, by
+# tools/menu_vector_bake.c (menu_vector.c and plutosvg, so it draws as the
+# game does), and embedded as "<svg>.png" in the SVG's place; the game draws
+# that PNG with its mip levels (the host makes them), scaled down. The
+# picture is the build's, never the repository's.
+VECTOR_HEAVY_PATHS = 200
+VECTOR_BAKE_SCALE = 2160 / 480
+VECTOR_BAKE_TOOL = Path("tools/menu_vector_bake.c")
+VECTOR_BAKE_SOURCES = [Path("port/linux/src/menu_vector.c"), *sorted(Path("port/third_party/plutovg/src").glob("*.c")),
+                       Path("port/third_party/plutosvg/plutosvg.c")]
+VECTOR_BAKE_HEADERS = [Path("port/linux/src/menu_vector.h"), Path("port/third_party/plutovg/include/plutovg.h"),
+                       Path("port/third_party/plutosvg/plutosvg.h"),
+                       *sorted(Path("port/third_party/plutovg/src").glob("*.h"))]
+
+
+def vector_heavy(data: bytes) -> bool:
+    """whether an SVG is drawn when the game is built"""
+    return b"<filter" in data or data.count(b"<path") >= VECTOR_HEAVY_PATHS
+
+
+def vector_frames() -> dict:
+    """{svg: (width, height)} of the frames of the menus' files that name an
+    SVG alone"""
+    import xml.etree.ElementTree as ElementTree
+    frames = {}
+    for name in menu_files():
+        if not name.endswith(".xml"):
+            continue
+        for frame in ElementTree.parse(ROOT / MENU_ASSETS / name).getroot().iter("frame"):
+            svg = frame.get("svg")
+            if svg and " " not in svg.strip() and frame.get("slice") is None:
+                frames.setdefault(svg.strip(), (int(frame.get("width")), int(frame.get("height"))))
+    return frames
+
+
+def png_rgba(width: int, height: int, texels: bytes) -> bytes:
+    """an 8-bit RGBA PNG of the texels, each row filtered by its left
+    neighbour (Sub)"""
+    stride = width * 4
+    rows = bytearray()
+    for row in range(height):
+        line = texels[row * stride:(row + 1) * stride]
+        left = b"\0\0\0\0" + line[:-4]
+        rows += b"\1" + bytes((a - b) & 0xFF for a, b in zip(line, left))
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+    return (PNG_SIGNATURE + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)) +
+            chunk(b"IDAT", zlib.compress(bytes(rows), 9)) + chunk(b"IEND", b""))
+
+
+def vector_bake_tool(folder: Path) -> Path:
+    """menu_vector_bake, compiled with the build computer's C compiler ($CC,
+    else cc, clang or gcc) into folder, once for its sources; None if none
+    could"""
+    import hashlib
+    import os
+    import shutil
+    import subprocess
+    digest = hashlib.sha256()
+    for path in [VECTOR_BAKE_TOOL, *VECTOR_BAKE_SOURCES, *VECTOR_BAKE_HEADERS]:
+        digest.update((ROOT / path).read_bytes())
+    tool = folder / f"menu_vector_bake-{digest.hexdigest()[:16]}{'.exe' if os.name == 'nt' else ''}"
+    if tool.is_file():
+        return tool
+    compiler = os.environ.get("CC") or next((found for found in map(shutil.which, ("cc", "clang", "gcc")) if found), None)
+    if not compiler:
+        return None
+    folder.mkdir(parents=True, exist_ok=True)
+    command = [*compiler.split(), "-O2", "-std=gnu11", "-w", "-DPLUTOVG_BUILD_STATIC", "-DPLUTOSVG_BUILD_STATIC",
+               "-DPLUTOVG_DISABLE_FONT_FACE_CACHE_LOAD", f"-I{ROOT / 'port/linux/src'}",
+               f"-I{ROOT / 'port/third_party/plutovg/include'}", f"-I{ROOT / 'port/third_party/plutosvg'}",
+               "-o", str(tool), str(ROOT / VECTOR_BAKE_TOOL), *(str(ROOT / path) for path in VECTOR_BAKE_SOURCES),
+               *([] if os.name == "nt" else ["-lm"])]
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode:
+        print(f"embed_assets: cannot compile {VECTOR_BAKE_TOOL}: {result.stderr.strip()[:2000]}", file=sys.stderr)
+        return None
+    return tool
+
+
+def vector_bakes(folder: Path) -> dict:
+    """{svg: its PNG} of the heavy SVGs, drawn (or kept from the last build,
+    by the SVG's, the size's and the tool's hash) in folder; any not drawn
+    stays an SVG, which the game draws as it starts (and says so here)"""
+    import hashlib
+    import subprocess
+    baked = {}
+    heavy = {svg: size for svg, size in vector_frames().items()
+             if (ROOT / MENU_ASSETS / svg).is_file() and vector_heavy((ROOT / MENU_ASSETS / svg).read_bytes())}
+    tool = vector_bake_tool(folder) if heavy else None
+    for svg, (width, height) in sorted(heavy.items()):
+        if not tool:
+            print(f"embed_assets: {svg} is drawn by the game as it starts (no C compiler to draw it here)",
+                  file=sys.stderr)
+            continue
+        data = (ROOT / MENU_ASSETS / svg).read_bytes()
+        key = hashlib.sha256(data + f"{width} {height} {VECTOR_BAKE_SCALE} {tool.name}".encode()).hexdigest()[:24]
+        png = folder / f"{key}.png"
+        if not png.is_file():
+            raw = folder / f"{key}.rgba"
+            result = subprocess.run([str(tool), str(raw), str(width), str(height), str(VECTOR_BAKE_SCALE),
+                                     str(ROOT / MENU_ASSETS / svg)], capture_output=True, text=True)
+            if result.returncode:
+                print(f"embed_assets: {svg}: {result.stderr.strip()}", file=sys.stderr)
+                continue
+            texels = raw.read_bytes()
+            if texels[:4] != b"OHVR":
+                continue
+            out_width, out_height = struct.unpack("<II", texels[4:12])
+            png.write_bytes(png_rgba(out_width, out_height, texels[12:]))
+            raw.unlink()
+        baked[svg] = png.read_bytes()
+    return baked
+
+
 def picture_poses() -> List[Path]:
     """The pictures' pose files, by name."""
     folder = ROOT / PICTURE_ASSETS
@@ -199,7 +316,8 @@ def hud_asset_inputs() -> List[Path]:
             *([LOADING_PICTURE] if (ROOT / LOADING_PICTURE).is_file() else []),
             *([LOADING_SOURCE] if (ROOT / LOADING_SOURCE).is_file() else []),
             *([MENU_CURSOR] if (ROOT / MENU_CURSOR).is_file() else []),
-            *([PICTURE_MAPS] if (ROOT / PICTURE_MAPS).is_file() else []), *picture_poses()]
+            *([PICTURE_MAPS] if (ROOT / PICTURE_MAPS).is_file() else []), *picture_poses(),
+            *(path for path in [VECTOR_BAKE_TOOL, *VECTOR_BAKE_SOURCES, *VECTOR_BAKE_HEADERS] if (ROOT / path).is_file())]
 
 
 def hud_configure_inputs() -> List[Path]:
@@ -404,18 +522,21 @@ def main() -> None:
     # the menus' files (menu_files.h)
     lines.append('#include "menu_files.h"')
     lines.append("")
-    menus = menu_files()
-    menu_offsets = []
-    for name in menus:
-        data = (ROOT / MENU_ASSETS / name).read_bytes()
+    # (each heavy SVG as the PNG drawn of it here, named the SVG's with .png after it)
+    baked = vector_bakes(Path(sys.argv[1]).resolve().parent / "menu_vector")
+    menus, blobs = [], []
+    for name in menu_files():
+        data = baked[name] if name in baked else (ROOT / MENU_ASSETS / name).read_bytes()
+        name = f"{name}.png" if name in baked else name
         if name.endswith(".png"):
             png_size(data, name)
-        menu_offsets.append(assets.add(data))
+        menus.append(name)
+        blobs.append(data)
+    menu_offsets = [assets.add(data) for data in blobs]
     lines.append("const struct menu_file_embedded menu_files_embedded[] =")
     lines.append("{")
     for index, name in enumerate(menus):
-        size = (ROOT / MENU_ASSETS / name).stat().st_size
-        lines.append(f'\t{{ "{name}", {menu_offsets[index]}u, {size} }},')
+        lines.append(f'\t{{ "{name}", {menu_offsets[index]}u, {len(blobs[index])} }},')
     if not menus:
         lines.append("\t{ 0 },")
     lines.append("};")

@@ -607,6 +607,7 @@ static void read_frame(struct reader *reader, const XML_Char **attributes, long 
 	struct halo_menus *menus = &reader->menus;
 	struct halo_menu_frame frame;
 	const char *slice = NULL;
+	int layers = 1;
 	struct attribute table[] =
 	{
 		{ "png", &frame.png }, { "svg", &frame.svg }, { "slice", &slice }, { "map", &frame.map },
@@ -617,13 +618,29 @@ static void read_frame(struct reader *reader, const XML_Char **attributes, long 
 	memset(&frame, 0, sizeof(frame));
 	frame.index = -1;
 	read_attributes(reader, "frame", attributes, table, sizeof(table) / sizeof(*table));
-	/* (slice="left top right bottom", the SVG's edges in its own units) */
+	/* (svg="a.svg b.svg": its layers, at most MENU_VECTOR_LAYERS) */
+	if (!reader->failed && frame.svg)
+	{
+		const char *name = frame.svg;
+
+		layers = 0;
+		while (*name)
+		{
+			name += strspn(name, " ");
+			if (*name)
+				layers++;
+			name += strcspn(name, " ");
+		}
+		if (layers > MENU_VECTOR_LAYERS || !layers)
+			reader_error(reader, "a <frame>'s svg is one to %d SVGs: %s", MENU_VECTOR_LAYERS, frame.svg);
+	}
+	/* (slice="left top right bottom", each layer's edges in its own units) */
 	if (!reader->failed && slice)
 	{
 		char *end = (char *)slice;
 		int edge;
 
-		for (edge = 0; edge < 4; edge++)
+		for (edge = 0; edge < layers * 4; edge++)
 		{
 			char *next;
 
@@ -633,8 +650,9 @@ static void read_frame(struct reader *reader, const XML_Char **attributes, long 
 			end = next;
 		}
 		end += strspn(end, " \t\r\n");
-		if (edge < 4 || *end)
-			reader_error(reader, "a <frame>'s slice is four lengths, its left, top, right and bottom: %s", slice);
+		if (edge < layers * 4 || *end)
+			reader_error(reader, "a <frame>'s slice is four lengths for each svg, its left, top, right and bottom: %s",
+				slice);
 		frame.sliced = 1;
 	}
 	free((void *)slice);
@@ -1284,6 +1302,31 @@ void halo_menus_log(char const *file, long line, char const *message, char const
 	platform_log("menus: %s:%ld: %s%s%s", file ? file : "?", line, message, detail ? " " : "", detail ? detail : "");
 }
 
+/* the PNG a heavy SVG was drawn into when the game was built (named as the
+SVG with .png after it, embedded: tools/embed_assets.py), its name in png,
+unless the menus folder has the SVG or the PNG of its own (art: a frame's
+SVG drawn from it) */
+static int art_prerendered(const char *svg, char *png, size_t size)
+{
+	char full[1200];
+	unsigned long length = 0;
+	unsigned char *data;
+	long index;
+
+	if ((size_t)snprintf(png, size, "%s.png", svg) >= size)
+		return 0;
+	index = file_find(png);
+	if (index < 0 || files[index].loaded)
+		return 0;
+	index = file_find(svg);
+	if (index >= 0)
+		return !files[index].loaded;
+	snprintf(full, sizeof(full), "%s/%s", folder, svg);
+	data = path_inside_folder(svg) ? file_read(full, &length) : NULL;
+	free(data);
+	return data == NULL;
+}
+
 /* ---------- art
 
 Each bitmap's PNG is decoded on a thread of its own ahead of its first
@@ -1293,12 +1336,14 @@ decoding its art: the game's thread then only makes the image of the
 pixels. A PNG drawn before its decoding is done waits for it; one never
 asked for is decoded as it is drawn.
 
-A frame's SVG (port/assets/menus/vector) is drawn the same way, by
-menu_vector.c, at the size it is shown: its width and height in the menus'
-units times the display's pixels for each of them (halo_screen_pixel_scale,
-d3d8_device.c), kept until the menus are let go, and drawn again when that
-scale changes (menu_art_begin_frame). Each one drawn is logged with its
-size and how long it took. */
+A frame's SVGs (port/assets/menus/vector) are drawn the same way, by
+menu_vector.c, at the size they are shown: its width and height in the
+menus' units times the display's pixels for each of them
+(halo_screen_pixel_scale, d3d8_device.c), kept until the menus are let go,
+and drawn again when that scale changes (menu_art_begin_frame). Each one
+drawn is logged with its size and how long it took. A heavy SVG drawn when
+the game was built (art_prerendered) is decoded from that PNG instead,
+unless the menus folder has its own. */
 
 enum
 {
@@ -1319,21 +1364,22 @@ float halo_screen_pixel_scale(void);
 static struct
 {
 	unsigned long data;
+	/* its PNG, or its SVGs (vector: layers of them, separated by spaces) */
 	char *png;
 	unsigned int texture;
 	unsigned long levels;
 	int failed;
-	/* an SVG's (vector): its frame's size in the menus' units, its edges
+	/* an SVG frame's: its layers, its size in the menus' units, its edges
 	kept (sliced), and the scale its texture was drawn at */
-	int vector, sliced;
+	int vector, layers, sliced;
 	long frame_width, frame_height;
-	float slice[4];
+	float slice[4 * MENU_VECTOR_LAYERS];
 	float scale;
-	/* its decoding ahead (art_lock's): the PNG or SVG, the scale an SVG is
-	drawn at, its pixels once decoded */
+	/* its decoding ahead (art_lock's): the PNG or each SVG, the scale the
+	SVGs are drawn at, its pixels once decoded */
 	int decode_state;
-	const unsigned char *decode_png;
-	unsigned long decode_png_size;
+	const unsigned char *decode_png[MENU_VECTOR_LAYERS];
+	unsigned long decode_png_size[MENU_VECTOR_LAYERS];
 	float decode_scale;
 	unsigned char *pixels;
 	unsigned long width, height;
@@ -1378,22 +1424,56 @@ static int art_scale_changed(float drawn, float scale)
 	return (change < 0.0f ? -change : change) > drawn * ART_RESCALE_CHANGE;
 }
 
-/* an entry's texels: its PNG decoded, or its SVG drawn at scale (logged) */
-static unsigned char *art_pixels(char const *name, const unsigned char *data, unsigned long size, int vector,
-	long frame_width, long frame_height, const float *slice, float scale, unsigned long *width,
-	unsigned long *height)
+/* an entry's texels: its PNG decoded, or its SVGs drawn at scale (logged) */
+static unsigned char *art_pixels(char const *name, int vector, int layers, const unsigned char *const *data,
+	const unsigned long *size, long frame_width, long frame_height, const float *slice, float scale,
+	unsigned long *width, unsigned long *height)
 {
 	unsigned char *pixels;
 	Uint64 start;
 
 	if (!vector)
-		return hud_hires_png_pixels(data, size, width, height);
+		return hud_hires_png_pixels(data[0], size[0], width, height);
 	start = SDL_GetTicksNS();
-	pixels = menu_vector_pixels(data, size, frame_width, frame_height, scale, slice, width, height);
+	pixels = menu_vector_pixels(layers, (const void *const *)data, size, frame_width, frame_height, scale, slice,
+		width, height);
 	if (pixels)
-		platform_log("menus: %s drawn at %lux%lu in %.1f ms", name, *width, *height,
+		platform_log("menus: %s drawn at %lux%lu in %.2f ms", name, *width, *height,
 			(double)(SDL_GetTicksNS() - start) / 1e6);
 	return pixels;
+}
+
+/* (the game's thread) an entry's files' data, each layer's: 0 if one is missing */
+static int art_files(long index, const unsigned char **data, unsigned long *size)
+{
+	char name[1024];
+	const char *at = art[index].png;
+	int layer = 0;
+
+	if (!art[index].vector)
+	{
+		data[0] = file_data(art[index].png, &size[0]);
+		return data[0] != NULL;
+	}
+	while (*at && layer < MENU_VECTOR_LAYERS)
+	{
+		size_t length;
+
+		at += strspn(at, " ");
+		length = strcspn(at, " ");
+		if (!length)
+			break;
+		if (length >= sizeof(name))
+			return 0;
+		memcpy(name, at, length);
+		name[length] = 0;
+		data[layer] = file_data(name, &size[layer]);
+		if (!data[layer])
+			return 0;
+		layer++;
+		at += length;
+	}
+	return layer == art[index].layers;
 }
 
 /* (art_lock held) an entry's decoding ahead let go: waited for if running */
@@ -1412,11 +1492,31 @@ void halo_menus_art_register_frame(void const *texture, char const *file, long w
 	unsigned long data = ((const unsigned long *)texture)[1];
 	unsigned long slot = art_slot(data);
 	long index = art_lookup[slot] ? art_lookup[slot] - 1 : art_count;
-	size_t length = strlen(file);
-	/* (.svg, in any case) */
-	int vector = width > 0 && height > 0 && length > 4 && file[length - 4] == '.' &&
-		(file[length - 3] | 0x20) == 's' && (file[length - 2] | 0x20) == 'v' && (file[length - 1] | 0x20) == 'g';
+	char prerendered[1100];
+	char const *at = file;
+	int layers = 0, vector = width > 0 && height > 0;
 
+	/* (SVGs: each name ends in .svg, in any case) */
+	while (vector && *at)
+	{
+		size_t length;
+
+		at += strspn(at, " ");
+		length = strcspn(at, " ");
+		if (!length)
+			break;
+		vector = length > 4 && at[length - 4] == '.' && (at[length - 3] | 0x20) == 's' &&
+			(at[length - 2] | 0x20) == 'v' && (at[length - 1] | 0x20) == 'g';
+		layers++;
+		at += length;
+	}
+	vector = vector && layers >= 1 && layers <= MENU_VECTOR_LAYERS;
+	/* (a heavy one drawn when the game was built: its PNG) */
+	if (vector && layers == 1 && art_prerendered(file, prerendered, sizeof(prerendered)))
+	{
+		file = prerendered;
+		vector = 0;
+	}
 	if (index == art_count)
 	{
 		if (art_count == MAXIMUM_ART)
@@ -1430,7 +1530,8 @@ void halo_menus_art_register_frame(void const *texture, char const *file, long w
 	}
 	else if (art[index].png && !strcmp(art[index].png, file) && art[index].vector == vector &&
 		(!vector || (art[index].frame_width == width && art[index].frame_height == height &&
-		art[index].sliced == (slice != NULL) && (!slice || !memcmp(art[index].slice, slice, sizeof(art[index].slice))))))
+		art[index].sliced == (slice != NULL) &&
+		(!slice || !memcmp(art[index].slice, slice, sizeof(float) * 4 * layers)))))
 	{
 		return;
 	}
@@ -1451,12 +1552,13 @@ void halo_menus_art_register_frame(void const *texture, char const *file, long w
 	if (vector)
 	{
 		art[index].vector = 1;
+		art[index].layers = layers;
 		art[index].frame_width = width;
 		art[index].frame_height = height;
 		if (slice)
 		{
 			art[index].sliced = 1;
-			memcpy(art[index].slice, slice, sizeof(art[index].slice));
+			memcpy(art[index].slice, slice, sizeof(float) * 4 * layers);
 		}
 		art_vector_count++;
 	}
@@ -1499,32 +1601,32 @@ static void *art_decode_thread(void *unused)
 	for (;;)
 	{
 		long index;
-		const unsigned char *png;
-		unsigned long size, width = 0, height = 0;
+		const unsigned char *png[MENU_VECTOR_LAYERS];
+		unsigned long size[MENU_VECTOR_LAYERS], width = 0, height = 0;
 		unsigned char *pixels;
 		char const *name;
-		int vector;
+		int vector, layers, sliced;
 		long frame_width, frame_height;
-		float slice[4], scale;
-		int sliced;
+		float slice[4 * MENU_VECTOR_LAYERS], scale;
 
 		for (index = 0; index < art_count && art[index].decode_state != _art_decode_queued; index++)
 			;
 		if (index == art_count)
 			break;
 		art[index].decode_state = _art_decode_decoding;
-		png = art[index].decode_png;
-		size = art[index].decode_png_size;
+		memcpy(png, art[index].decode_png, sizeof(png));
+		memcpy(size, art[index].decode_png_size, sizeof(size));
 		/* (the entry stays as it is while it decodes: art_decode_forget) */
 		name = art[index].png;
 		vector = art[index].vector;
+		layers = art[index].layers;
 		frame_width = art[index].frame_width;
 		frame_height = art[index].frame_height;
 		sliced = art[index].sliced;
 		memcpy(slice, art[index].slice, sizeof(slice));
 		scale = art[index].decode_scale;
 		pthread_mutex_unlock(&art_lock);
-		pixels = art_pixels(name, png, size, vector, frame_width, frame_height, sliced ? slice : NULL, scale,
+		pixels = art_pixels(name, vector, layers, png, size, frame_width, frame_height, sliced ? slice : NULL, scale,
 			&width, &height);
 		pthread_mutex_lock(&art_lock);
 		art[index].pixels = pixels;
@@ -1539,20 +1641,19 @@ static void *art_decode_thread(void *unused)
 	return NULL;
 }
 
-/* an entry's PNG or SVG queued for the decoding threads (an SVG's drawn at
+/* an entry's PNG or SVGs queued for the decoding threads (SVGs drawn at
 scale) */
 static void art_queue(long index, float scale)
 {
-	const unsigned char *png;
-	unsigned long size = 0;
+	const unsigned char *png[MENU_VECTOR_LAYERS] = { NULL };
+	unsigned long size[MENU_VECTOR_LAYERS] = { 0 };
 
-	/* (the PNG found here: the files' table is the game thread's) */
-	png = file_data(art[index].png, &size);
-	if (!png)
+	/* (the files found here: the files' table is the game thread's) */
+	if (!art_files(index, png, size))
 		return;
 	pthread_mutex_lock(&art_lock);
-	art[index].decode_png = png;
-	art[index].decode_png_size = size;
+	memcpy(art[index].decode_png, png, sizeof(png));
+	memcpy(art[index].decode_png_size, size, sizeof(size));
 	art[index].decode_scale = scale;
 	art[index].decode_state = _art_decode_queued;
 	if (art_decoders < ART_DECODE_THREADS)
@@ -1650,7 +1751,7 @@ unsigned int menu_art_texture(unsigned long data, unsigned long *levels)
 		}
 		art[index].decode_state = _art_decode_none;
 		pthread_mutex_unlock(&art_lock);
-		/* (an SVG drawn ahead for a scale the display has left since: drawn again) */
+		/* (SVGs drawn ahead for a scale the display has left since: drawn again) */
 		if (decoded && art[index].vector && art_scale_changed(scale, art_scale()))
 		{
 			free(pixels);
@@ -1659,12 +1760,13 @@ unsigned int menu_art_texture(unsigned long data, unsigned long *levels)
 		}
 		if (!decoded)
 		{
-			unsigned long size = 0;
-			const unsigned char *png = file_data(art[index].png, &size);
+			const unsigned char *png[MENU_VECTOR_LAYERS] = { NULL };
+			unsigned long size[MENU_VECTOR_LAYERS] = { 0 };
 
 			scale = art[index].vector ? art_scale() : 0.0f;
-			pixels = png ? art_pixels(art[index].png, png, size, art[index].vector, art[index].frame_width,
-				art[index].frame_height, art[index].sliced ? art[index].slice : NULL, scale, &width, &height) : NULL;
+			pixels = art_files(index, png, size) ? art_pixels(art[index].png, art[index].vector, art[index].layers,
+				png, size, art[index].frame_width, art[index].frame_height,
+				art[index].sliced ? art[index].slice : NULL, scale, &width, &height) : NULL;
 		}
 		art[index].scale = scale;
 		art[index].texture = pixels ? hud_hires_pixels_texture(pixels, width, height, &art[index].levels) : 0;

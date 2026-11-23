@@ -26,12 +26,15 @@ static void xgpu_texture_replacements_changed(void) {}
 typedef unsigned long long Uint64;
 static Uint64 SDL_GetTicksNS(void) { return 0; }
 float halo_screen_pixel_scale(void) { return 1.0f; }
-static unsigned char *menu_vector_pixels(const void *svg, unsigned long size, long width, long height, float scale,
-    const float *slice, unsigned long *pixel_width, unsigned long *pixel_height)
+static unsigned char *menu_vector_pixels(int layers, const void *const *svgs, const unsigned long *sizes, long width,
+    long height, float scale, const float *slices, unsigned long *pixel_width, unsigned long *pixel_height)
 {
-    (void)svg, (void)size, (void)width, (void)height, (void)scale, (void)slice, (void)pixel_width, (void)pixel_height;
+    (void)layers, (void)svgs, (void)sizes, (void)width, (void)height, (void)scale, (void)slices, (void)pixel_width,
+        (void)pixel_height;
     return NULL;
 }
+static int art_prerendered(const char *svg, char *png, size_t size) { (void)svg, (void)png, (void)size; return 0; }
+#define MENU_VECTOR_LAYERS 2
 static const unsigned char *file_data(const char *name, unsigned long *size)
 {
     *size = 1;

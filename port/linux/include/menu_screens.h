@@ -9,7 +9,7 @@ types, for both.
 
 A screen file holds <screen> (name, back), and in it, from the top of the
 screen down: <title-art/>, <header> (title, picture, detail, a <button>),
-<list> (focus) holding <item>s (id, label, hint or <hint>s, do, when),
+<list> (focus) holding <item>s (id, label, hint or <hint>s, do, when, picture, backdrop),
 <cards> holding <card>s, <tabs> (current) holding <tab>s, <table> (source,
 sorted, do, empty, lanes, left, right) holding <lane>s, <column>s (each a <search> in its title) and a
 <button>, <search>, <panel>s (each its if) holding <heading>, <text>, <pills> of <pill>s,
@@ -156,6 +156,9 @@ struct menu_screen_block
 	/* (an item drawn as a picture of the menus' files: its bitmap's name,
 	"main_menu/menu_versus"; its label then the words it stands for) */
 	char const *picture;
+	/* (an item's picture behind its words, as the frame of a button: its
+	bitmap's name, "main_menu/item_frame", its second frame while focused) */
+	char const *backdrop;
 	/* (a button's side of the bar: "left" or "right"; NULL, back's left
 	and the others' right) */
 	char const *side;

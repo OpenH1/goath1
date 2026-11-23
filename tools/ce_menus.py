@@ -226,6 +226,15 @@ XBOX_BITMAPS = {
 VECTOR_BITMAPS = {
     "ui\\shell\\main_menu\\halo_logo": [("vector/elements/halo-logo-3bb24336857b.svg", 640, 256, None)],
 }
+# the port's own bitmaps of vector elements (one or two SVGs a frame, the
+# second over the first, each with its element's sizing): the new menu
+# engine's items' frame behind their words, lit while focused by the
+# focus outline over it (port/assets/menus/screens/main.xml's backdrop=,
+# port/linux/game/menu_screen.c's ITEM_BACKDROP_*)
+VECTOR_PORT_BITMAPS = {
+    "main_menu/item_frame": [("vector/elements/button-frame-e024b1232b3c.svg", 256, 34, "12 0 12 0"),
+                             ("vector/elements/button-frame-e024b1232b3c.svg vector/elements/focus-outline-19b8aba1aabe.svg", 256, 34, "12 0 12 0 10 0 10 0")],
+}
 # the frames with no redraw that are drawn from a frame of the Xbox map's
 # bitmap of the same name, whose other frames differ (<frame map=...>):
 # the same picture, or for the profile settings the Xbox's for the same
@@ -527,16 +536,20 @@ class Art:
     def frame_sources(self, relative: str, index: int, count: int) -> list:
         return [relative, f"{relative}__0"] if count == 1 else [f"{relative}__{index}"]
 
+    def vector_bitmap(self, name: str, frames: list) -> str:
+        """a <bitmap> of vector elements' SVGs, which the game draws"""
+        lines = [f"\t<bitmap{attributes([('name', name)])}>"]
+        for svg, width, height, slice_ in frames:
+            self.vectors += svg.split()
+            lines.append(f"\t\t<frame{attributes([('svg', svg), ('width', width), ('height', height), ('slice', slice_)])}/>")
+        lines.append("\t</bitmap>")
+        return "\n".join(lines)
+
     def bitmap(self, tag: str) -> str:
         """a <bitmap> for the bitmap tag, its frames drawn (or a vector
         element's SVGs, drawn by the game: VECTOR_BITMAPS)"""
         if tag in VECTOR_BITMAPS:
-            lines = [f"\t<bitmap{attributes([('name', our_name(tag))])}>"]
-            for svg, width, height, slice_ in VECTOR_BITMAPS[tag]:
-                self.vectors.append(svg)
-                lines.append(f"\t\t<frame{attributes([('svg', svg), ('width', width), ('height', height), ('slice', slice_)])}/>")
-            lines.append("\t</bitmap>")
-            return "\n".join(lines)
+            return self.vector_bitmap(our_name(tag), VECTOR_BITMAPS[tag])
         group = self.tags.load(tag, "bitmap")
         data, sequences = group["bitmap data"], group["bitmap group sequence"]
         relative = tag.replace("\\", "/")[3:]
@@ -933,6 +946,8 @@ def main() -> None:
     # (the Campaign screen's SOLO and CO-OP: port/assets/menus/screens/campaign.xml; its hyphen menu_item_frames's)
     lines.append(art.port_picture("main_menu/menu_solo", port_settings.menu_item_frames("SOLO", art.redraws)))
     lines.append(art.port_picture("main_menu/menu_coop", port_settings.menu_item_frames("CO-OP", art.redraws)))
+    # (the new engine's items' frames: vector elements)
+    lines += [art.vector_bitmap(name, frames) for name, frames in sorted(VECTOR_PORT_BITMAPS.items())]
     lines.append(art.port_picture("mods/status", port_settings.mod_status_frames(ROOT / "port/assets/icons/lucide")))
     lines.append(art.port_picture("mods/status_small",
                                   port_settings.mod_status_frames(ROOT / "port/assets/icons/lucide", 16)))

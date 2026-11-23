@@ -24,18 +24,19 @@ numbered from here, clear of the Xbox's (0 to 101 and 0 to 40) and the PC's
 (to 189 and 58) */
 #define PC_MENU_FUNCTION_BASE 256
 
-/* a frame: a PNG drawn at width by height, or an SVG drawn at the size it is
-shown (svg: port/assets/menus/vector's, menu_vector.h; with sliced, its
-edges slice[0] to [3] in from its left, top, right and bottom keep their
-size while its middle stretches), or the map's bitmap's frame (map: its
-bitmap group tag, index: the bitmap's number in it), drawn as the map has
-it or, with a width and height, scaled to that size, x and y into the
-widget */
+/* a frame: a PNG drawn at width by height, or SVGs drawn at the size it is
+shown (svg: port/assets/menus/vector's, one or two separated by a space,
+each over the one before, menu_vector.h; with sliced, each one's edges
+slice[0] to [3], then [4] to [7], in from its left, top, right and bottom
+keep their size while its middle stretches), or the map's bitmap's frame
+(map: its bitmap group tag, index: the bitmap's number in it), drawn as the
+map has it or, with a width and height, scaled to that size, x and y into
+the widget */
 struct halo_menu_frame
 {
 	char const *png;
 	char const *svg;
-	float slice[4];
+	float slice[8];
 	int sliced;
 	char const *map;
 	long index;
@@ -353,9 +354,10 @@ void halo_menus_log(char const *file, long line, char const *message, char const
 /* menu art: the D3D texture (as the game's bitmap holds it) a frame's PNG is
 drawn for, until halo_menus_art_forget */
 void halo_menus_art_register(void const *texture, char const *png);
-/* ... or a frame's SVG (its file ends in .svg), drawn for its width by height
-of the menus' units at the display's scale (with slice, its four edges:
-halo_menu_frame) */
+/* ... or a frame's SVGs (file: one or two files ending in .svg, separated
+by a space), drawn for its width by height of the menus' units at the
+display's scale (with slice, four edges for each: halo_menu_frame); a
+heavy one drawn when the game was built is drawn from that picture */
 void halo_menus_art_register_frame(void const *texture, char const *file, long width, long height,
 	float const *slice);
 void halo_menus_art_forget(void);
