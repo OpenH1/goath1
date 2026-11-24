@@ -15,6 +15,7 @@ structures (types.inc).
 #include "harness.h"
 #include <math.h>
 #include <pthread.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -311,41 +312,67 @@ int main(int argc, char **argv)
 	{
 		/* Halo PC's hit sound as sounds.map holds it (sound\sfx\impulse\ting\ting): a mono 22 kHz sound whose
 		pitch modifier at 1 is 0.6 (its zero 0), one pitch range of one permutation of 16-bit samples in
-		sounds.map: its frames as they are, at 22.05 kHz, played at 0.6 */
+		sounds.map: its frames as they are, at 22.05 kHz, played at 0.6, at its gain (Custom Edition's tag's 1,
+		here the permutation's 0.5 times the gain modifier's 0.8 times its gain modifier at 1's 0.5) */
 		struct cache_file_source source = { NULL, resource_read, sizeof(resource_bytes) };
 		long const range = ENTRY_SOUND_BYTES;
 		long const permutation = range + ENTRY_PITCH_RANGE_BYTES;
 		long const entry_bytes = permutation + ENTRY_PERMUTATION_BYTES;
 		long frame_count = 0, rate = 0, frame;
-		real pitch = 0.f;
+		real pitch = 0.f, gain = 0.f;
 		short *samples;
 
+		/* (the entry's header and permutation are the tag's structures, in the Xbox's 32-bit layout) */
+		CHECK(ENTRY_GAIN_MODIFIER_OFFSET == offsetof(struct sound_definition, gain_modifier) &&
+			ENTRY_ZERO_GAIN_MODIFIER_OFFSET == offsetof(struct sound_definition, zero_gain_modifier) &&
+			ENTRY_ONE_GAIN_MODIFIER_OFFSET == offsetof(struct sound_definition, one_gain_modifier) &&
+			ENTRY_PERMUTATION_GAIN_OFFSET == offsetof(struct sound_permutation, gain),
+			"the gains' offsets are not the tag's");
 		memset(resource_bytes, 0, sizeof(resource_bytes));
 		put_short(ENTRY_SAMPLE_RATE_OFFSET, 0);
 		put_real(ENTRY_RANDOM_PITCH_BOUNDS_OFFSET, 1.f);
 		put_real(ENTRY_RANDOM_PITCH_BOUNDS_OFFSET + 4, 1.f);
 		put_real(ENTRY_ZERO_PITCH_MODIFIER_OFFSET, 0.f);
 		put_real(ENTRY_ONE_PITCH_MODIFIER_OFFSET, 0.6f);
+		put_real(ENTRY_GAIN_MODIFIER_OFFSET, 0.8f);
+		put_real(ENTRY_ZERO_GAIN_MODIFIER_OFFSET, 1.f);
+		put_real(ENTRY_ONE_GAIN_MODIFIER_OFFSET, 0.5f);
 		put_short(ENTRY_ENCODING_OFFSET, 0);
 		put_long(ENTRY_PITCH_RANGES_OFFSET, 1);
 		put_long(range + ENTRY_PITCH_RANGE_PERMUTATIONS_OFFSET, 1);
 		put_long(range + ENTRY_PITCH_RANGE_PERMUTATIONS_OFFSET + 4, ENTRY_PITCH_RANGE_BYTES);
+		put_real(permutation + ENTRY_PERMUTATION_GAIN_OFFSET, 0.5f);
 		put_short(permutation + ENTRY_PERMUTATION_COMPRESSION_OFFSET, 0);
 		put_long(permutation + ENTRY_PERMUTATION_SAMPLES_OFFSET + ENTRY_DATA_SIZE_OFFSET, 400 * 2);
 		put_long(permutation + ENTRY_PERMUTATION_SAMPLES_OFFSET + ENTRY_DATA_FLAGS_OFFSET, 1);
 		put_long(permutation + ENTRY_PERMUTATION_SAMPLES_OFFSET + ENTRY_DATA_FILE_OFFSET_OFFSET, 0x1000);
 		for (frame = 0; frame < 400; frame++)
 			put_short(0x1000 + frame * 2, (int16_t)(frame * 50 - 10000));
-		samples = resource_sound_entry_decode(&source, 0, (uint32_t)entry_bytes, &frame_count, &rate, &pitch);
+		samples = resource_sound_entry_decode(&source, 0, (uint32_t)entry_bytes, &frame_count, &rate, &pitch,
+			&gain);
 		CHECK(samples, "the entry was not read");
 		CHECK(frame_count == 400 && rate == 22050, "%ld frames at %ld Hz", frame_count, rate);
 		CHECK(pitch == 0.6f, "it plays at a pitch of %.3f, not 0.6", pitch);
+		CHECK(fabsf(gain - 0.2f) < 1e-6f, "it plays at a gain of %.4f, not 0.5 * 0.8 * 0.5", gain);
 		CHECK(!memcmp(samples, resource_bytes + 0x1000, 400 * 2), "its frames are not sounds.map's");
+		free(samples);
+
+		/* (no gain modifier at 0 or 1: 1, as a map's build fills them in; past 1, 1) */
+		put_real(ENTRY_ZERO_GAIN_MODIFIER_OFFSET, 0.f);
+		put_real(ENTRY_ONE_GAIN_MODIFIER_OFFSET, 0.f);
+		samples = resource_sound_entry_decode(&source, 0, (uint32_t)entry_bytes, &frame_count, &rate, &pitch,
+			&gain);
+		CHECK(samples && fabsf(gain - 0.4f) < 1e-6f, "with no gain modifier at 1 its gain is %.4f, not 0.4", gain);
+		free(samples);
+		put_real(ENTRY_GAIN_MODIFIER_OFFSET, 4.f);
+		samples = resource_sound_entry_decode(&source, 0, (uint32_t)entry_bytes, &frame_count, &rate, &pitch,
+			&gain);
+		CHECK(samples && gain == 1.f, "a gain past 1 is %.4f", gain);
 		free(samples);
 
 		/* (samples in the map file, not sounds.map: not read) */
 		put_long(permutation + ENTRY_PERMUTATION_SAMPLES_OFFSET + ENTRY_DATA_FLAGS_OFFSET, 0);
-		CHECK(!resource_sound_entry_decode(&source, 0, (uint32_t)entry_bytes, &frame_count, &rate, &pitch),
+		CHECK(!resource_sound_entry_decode(&source, 0, (uint32_t)entry_bytes, &frame_count, &rate, &pitch, &gain),
 			"samples outside sounds.map were read from it");
 	}
 	else

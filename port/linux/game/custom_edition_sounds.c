@@ -125,13 +125,17 @@ when the first bit of their flags is set. */
 #define ENTRY_SOUND_BYTES 0xA4
 #define ENTRY_SAMPLE_RATE_OFFSET 0x06
 #define ENTRY_RANDOM_PITCH_BOUNDS_OFFSET 0x14
+#define ENTRY_GAIN_MODIFIER_OFFSET 0x28
+#define ENTRY_ZERO_GAIN_MODIFIER_OFFSET 0x40
 #define ENTRY_ZERO_PITCH_MODIFIER_OFFSET 0x44
+#define ENTRY_ONE_GAIN_MODIFIER_OFFSET 0x58
 #define ENTRY_ONE_PITCH_MODIFIER_OFFSET 0x5C
 #define ENTRY_ENCODING_OFFSET 0x6C
 #define ENTRY_PITCH_RANGES_OFFSET 0x98
 #define ENTRY_PITCH_RANGE_BYTES 0x48
 #define ENTRY_PITCH_RANGE_PERMUTATIONS_OFFSET 0x3C
 #define ENTRY_PERMUTATION_BYTES 0x7C
+#define ENTRY_PERMUTATION_GAIN_OFFSET 0x24
 #define ENTRY_PERMUTATION_COMPRESSION_OFFSET 0x28
 #define ENTRY_PERMUTATION_SAMPLES_OFFSET 0x40
 #define ENTRY_DATA_SIZE_OFFSET 0x00
@@ -882,18 +886,43 @@ static real entry_pitch(
 	return pitch >= 0.25f && pitch <= 4.f ? pitch : 1.f;
 }
 
+/* the gain a sound's header and its permutation give it played at a scale
+of 1, as the sound manager works it out (update_channel_for_impulse_sound:
+the permutation's gain times the gain modifier times the gain modifier at
+1), the gain modifiers at 0 and 1 taken as 1 where the tag gives neither
+(as a map's build fills them in: mod_sounds.c); within 0 to 1, as
+DirectSound's volume is */
+static real entry_gain(
+	byte const *header,
+	byte const *permutation)
+{
+	real zero = entry_real(header + ENTRY_ZERO_GAIN_MODIFIER_OFFSET);
+	real one = entry_real(header + ENTRY_ONE_GAIN_MODIFIER_OFFSET);
+	real gain;
+
+	if (zero == 0.f && one == 0.f)
+	{
+		one = 1.f;
+	}
+	gain = entry_real(permutation + ENTRY_PERMUTATION_GAIN_OFFSET) *
+		entry_real(header + ENTRY_GAIN_MODIFIER_OFFSET) * one;
+
+	return gain > 1.f ? 1.f : gain >= 0.f ? gain : 0.f;
+}
+
 /* The first permutation of the sound sounds.map (`source`) holds in the
 entry of `entry_size` bytes at `entry_offset`, decoded to mono 16-bit
 frames at its own rate: a buffer of the game's allocator of *frame_count
-frames at *rate, played at *pitch; NULL when the entry is not such a
-sound. */
+frames at *rate, played at *pitch and *gain; NULL when the entry is not
+such a sound. */
 static short *resource_sound_entry_decode(
 	struct cache_file_source *source,
 	uint32_t entry_offset,
 	uint32_t entry_size,
 	long *frame_count,
 	long *rate,
-	real *pitch)
+	real *pitch,
+	real *gain)
 {
 	byte *entry;
 	byte const *range;
@@ -933,6 +962,7 @@ static short *resource_sound_entry_decode(
 		goto done;
 	}
 	permutation = range + permutations_address;
+	*gain = entry_gain(entry, permutation);
 	data_field = permutation + ENTRY_PERMUTATION_SAMPLES_OFFSET;
 	data_size = entry_long(data_field + ENTRY_DATA_SIZE_OFFSET);
 	data_offset = entry_long(data_field + ENTRY_DATA_FILE_OFFSET_OFFSET);
@@ -1501,7 +1531,8 @@ short *custom_edition_sounds_resource_sound(
 	char const *name,
 	long *frame_count,
 	long *rate,
-	real *pitch)
+	real *pitch,
+	real *gain)
 {
 	char path[256];
 	FILE *stream;
@@ -1527,7 +1558,7 @@ short *custom_edition_sounds_resource_sound(
 				if (!csstrcasecmp(map.items[item_index].name, name))
 				{
 					samples = resource_sound_entry_decode(&source, map.items[item_index].data_offset,
-						map.items[item_index].size, frame_count, rate, pitch);
+						map.items[item_index].size, frame_count, rate, pitch, gain);
 				}
 			}
 			resource_map_close(&map);

@@ -19,6 +19,10 @@ NEGATIVE_CONTROLS = {
                      "high-tone"),
     # Halo PC's hit sound (#673) at its own rate, not its tag's pitch
     "no-pitch": (("\tpitch = base * one;", "\tpitch = base;"), "resource-entry"),
+    # its gain the gain modifier's alone, not times the permutation's and the modifier at 1
+    "gain-modifier-alone": (("\tgain = entry_real(permutation + ENTRY_PERMUTATION_GAIN_OFFSET) *\n"
+                             "\t\tentry_real(header + ENTRY_GAIN_MODIFIER_OFFSET) * one;",
+                             "\tgain = entry_real(header + ENTRY_GAIN_MODIFIER_OFFSET);"), "resource-entry"),
     # the old resampler (#1110): the nearest source frame, no low pass
     "nearest-frame": (("double weight = resample_weight((at - index) * cutoff);",
                        "double weight = index == (long)at ? 1.0 / cutoff : 0.0;"), "too-long"),

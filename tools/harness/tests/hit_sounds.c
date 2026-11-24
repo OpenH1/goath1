@@ -13,6 +13,7 @@ the record's bit and the module's state (config.inc).
 */
 
 #include "harness.h"
+#include <math.h>
 
 #define SET_FLAG(f, b, v) ((v) ? ((f) |= (unsigned)FLAG(b)) : ((f) &= (unsigned)~FLAG(b)))
 #define csmemcpy memcpy
@@ -77,11 +78,13 @@ static long IDirectSoundBuffer_Play(IDirectSoundBuffer *buffer, unsigned long a,
 static short const hit_sound_pcm[HIT_SOUND_SAMPLES] = { 0, 100, -100, 0 };
 
 /* Custom Edition's sounds.map (custom_edition_sounds.c): Halo PC's hit sound, mono 16-bit at 22.05 kHz, played at
-its tag's pitch of 0.6, when the machine has it */
+its tag's pitch of 0.6 and gain (Custom Edition's 1), when the machine has it */
 static boolean custom_edition_present;
+static real custom_edition_gain = 1.f;
 static int custom_edition_reads;
 static char custom_edition_name[64];
-static short *custom_edition_sounds_resource_sound(char const *name, long *frame_count, long *rate, real *pitch)
+static short *custom_edition_sounds_resource_sound(char const *name, long *frame_count, long *rate, real *pitch,
+	real *gain)
 {
 	short *samples;
 
@@ -94,6 +97,7 @@ static short *custom_edition_sounds_resource_sound(char const *name, long *frame
 	*frame_count = 300;
 	*rate = 22050;
 	*pitch = 0.6f;
+	*gain = custom_edition_gain;
 	return samples;
 }
 
@@ -218,6 +222,31 @@ int main(int argc, char **argv)
 			"the buffer does not hold Halo PC's sound");
 		CHECK(the_buffers[last_played].rate == 13230, "it plays at %lu Hz, not 22050 * 0.6",
 			the_buffers[last_played].rate);
+		/* (at Custom Edition's volume: its tag's 1 times multiplayer_hit_sound_volume's 0.2, -1397 millibels, as
+		Halo PC's and Custom Edition's DirectSound volume, not the beep's) */
+		CHECK(the_buffers[last_played].volume == -1397, "it plays at %ld millibels, not -1397",
+			the_buffers[last_played].volume);
+		return 0;
+	}
+	/* a sounds.map whose tag gives it another gain: that times 0.2 (0.25: 0.05, -2602 millibels) */
+	CASE("custom-edition-gain")
+	{
+		custom_edition_present = TRUE;
+		custom_edition_gain = 0.25f;
+		CHECK(hit(LOCAL, REMOTE, 0.2f, 0.f, 0) == 1, "no sound");
+		CHECK(the_buffers[last_played].volume == -2602, "it plays at %ld millibels, not -2602",
+			the_buffers[last_played].volume);
+		return 0;
+	}
+	/* a gain as DirectSound's volume: 2000 log10 of it, toward zero, within -10000 and 0 */
+	CASE("millibels")
+	{
+		CHECK(hit_sounds_millibels(1.f) == 0 && hit_sounds_millibels(2.f) == 0, "a gain of 1 or more is not 0");
+		CHECK(hit_sounds_millibels(0.2f) == -1397, "0.2 is %ld millibels, not -1397", hit_sounds_millibels(0.2f));
+		CHECK(hit_sounds_millibels(0.5f) == -602, "0.5 is %ld millibels, not -602", hit_sounds_millibels(0.5f));
+		CHECK(hit_sounds_millibels(0.f) == -10000 && hit_sounds_millibels(-1.f) == -10000 &&
+			hit_sounds_millibels(1e-6f) == -10000, "no gain is not DSBVOLUME_MIN");
+		CHECK(hit_sounds_millibels(NAN) == -10000, "no number is not DSBVOLUME_MIN");
 		return 0;
 	}
 	/* without it, the beep made for this build */
@@ -227,6 +256,7 @@ int main(int argc, char **argv)
 		CHECK(custom_edition_reads == 1, "sounds.map looked for %d times", custom_edition_reads);
 		CHECK(the_buffers[last_played].size == sizeof(hit_sound_pcm) && the_buffers[last_played].first == 0 &&
 			the_buffers[last_played].rate == HIT_SOUND_RATE, "the buffer does not hold the beep");
+		CHECK(the_buffers[last_played].volume == HIT_SOUND_VOLUME, "the beep's volume is not HIT_SOUND_VOLUME");
 		return 0;
 	}
 	/* none for a player's own damage, no damage, another machine's or a bot's player, no victim */

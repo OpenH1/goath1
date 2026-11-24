@@ -23,7 +23,10 @@ Elsewhere it is a beep made for this build (hit_sound_pcm.inc, made by
 tools/hit_sound_asset.py), which the Xbox's maps have nothing like. Either
 plays through the game's DirectSound buffers
 (port/linux/src/dsound_sdl.c), dry, in the front pair, under
-audio.effects_volume and audio.volume, at HIT_SOUND_VOLUME. Hits closer
+audio.effects_volume and audio.volume: Halo PC's at the volume Custom
+Edition plays it at, its tag's gain times multiplayer_hit_sound_volume
+(HIT_SOUND_CUSTOM_EDITION_GAIN, 0.2: -1397 millibels, as Halo PC's own tag
+gives it too), the beep at HIT_SOUND_VOLUME. Hits closer
 together than HIT_SOUND_SPACING_MILLISECONDS (a shotgun's pellets, an
 explosion's players) sound once, and each beep has a buffer of its own, so
 that one does not cut the last short. */
@@ -36,6 +39,7 @@ that one does not cut the last short. */
 #include "network_standard.h"
 #include "player_settings.h"
 
+#include <math.h>
 #include <xtl.h>
 
 #include "hit_sound_pcm.inc"
@@ -43,17 +47,22 @@ that one does not cut the last short. */
 /* the platform layer's (port/linux/src/port_config.c) */
 unsigned long system_milliseconds(void);
 /* (custom_edition_sounds.c) */
-short *custom_edition_sounds_resource_sound(char const *name, long *frame_count, long *rate, real *pitch);
+short *custom_edition_sounds_resource_sound(char const *name, long *frame_count, long *rate, real *pitch,
+	real *gain);
 /* (network_test.c: a line of debug.network_test's log) */
 void network_test_note_hit_sound(long attacker_player_index, long victim_player_index);
 
-/* its volume (millibels: about half), and the least time between beeps */
+/* the beep's volume (millibels: about half), and the least time between beeps */
 #define HIT_SOUND_VOLUME (-600)
 #define HIT_SOUND_SPACING_MILLISECONDS 50
 /* (a beep is 65 ms: two at most play at once) */
 #define HIT_SOUND_BUFFERS 3
 /* Halo PC's hit sound, in Custom Edition's sounds.map */
 #define HIT_SOUND_CUSTOM_EDITION_NAME "sound\\sfx\\impulse\\ting\\ting"
+/* the gain Custom Edition plays it at on top of its tag's: the source gain
+it gives it, multiplayer_hit_sound_volume as the game starts (Halo PC's tag
+holds the same 0.2 as its gain modifier, Custom Edition's 1) */
+#define HIT_SOUND_CUSTOM_EDITION_GAIN 0.2f
 
 static struct
 {
@@ -61,6 +70,8 @@ static struct
 	boolean failed;
 	IDirectSoundBuffer *buffers[HIT_SOUND_BUFFERS];
 	short next;
+	/* the volume it plays at (millibels) */
+	long volume;
 	unsigned long played_at;
 	boolean played;
 	/* audio.hit_sounds, each local player's own (player_settings.h's
@@ -68,7 +79,22 @@ static struct
 	boolean read[PLAYER_SETTINGS_SLOTS];
 	unsigned long read_at[PLAYER_SETTINGS_SLOTS];
 	boolean on[PLAYER_SETTINGS_SLOTS];
-} hit_sounds = { FALSE, FALSE, { NULL }, 0, 0, FALSE, { FALSE }, { 0 }, { FALSE } };
+} hit_sounds = { FALSE, FALSE, { NULL }, 0, HIT_SOUND_VOLUME, 0, FALSE, { FALSE }, { 0 }, { FALSE } };
+
+/* a gain as DirectSound's volume, as Halo PC and Custom Edition set it
+(2000 log10 of the gain, toward zero, within DSBVOLUME_MIN and 0) */
+static long hit_sounds_millibels(
+	real gain)
+{
+	double millibels;
+
+	if (!(gain > 0.f))
+		return -10000;
+	millibels = 2000.0 * log10((double)gain);
+	if (millibels < -10000.0)
+		return -10000;
+	return millibels < 0.0 ? (long)millibels : 0;
+}
 
 /* the buffers, made once, with the sound in them: Halo PC's, played at
 its tag's pitch by its rate (as the channels pitch a sound), or the beep */
@@ -81,6 +107,7 @@ static boolean hit_sounds_make(
 	long frame_count = 0;
 	long rate = 0;
 	real pitch = 1.f;
+	real gain = 1.f;
 	short *custom_edition = NULL;
 	void const *samples = hit_sound_pcm;
 	unsigned long bytes = sizeof(hit_sound_pcm);
@@ -88,12 +115,14 @@ static boolean hit_sounds_make(
 
 	if (hit_sounds.made || hit_sounds.failed)
 		return hit_sounds.made;
-	custom_edition = custom_edition_sounds_resource_sound(HIT_SOUND_CUSTOM_EDITION_NAME, &frame_count, &rate, &pitch);
+	custom_edition = custom_edition_sounds_resource_sound(HIT_SOUND_CUSTOM_EDITION_NAME, &frame_count, &rate, &pitch,
+		&gain);
 	if (custom_edition && frame_count > 0)
 	{
 		samples = custom_edition;
 		bytes = (unsigned long)frame_count * sizeof(short);
 		samples_per_second = (unsigned long)(rate * pitch + 0.5f);
+		hit_sounds.volume = hit_sounds_millibels(gain * HIT_SOUND_CUSTOM_EDITION_GAIN);
 	}
 	csmemset(&format, 0, sizeof(format));
 	format.wFormatTag = WAVE_FORMAT_PCM;
@@ -137,7 +166,7 @@ static void hit_sounds_play(
 	buffer = hit_sounds.buffers[hit_sounds.next];
 	hit_sounds.next = (short)((hit_sounds.next + 1) % HIT_SOUND_BUFFERS);
 	/* (the volume set again: audio.effects_volume as it is now) */
-	IDirectSoundBuffer_SetVolume(buffer, HIT_SOUND_VOLUME);
+	IDirectSoundBuffer_SetVolume(buffer, hit_sounds.volume);
 	IDirectSoundBuffer_SetCurrentPosition(buffer, 0);
 	IDirectSoundBuffer_Play(buffer, 0, 0, 0);
 }
