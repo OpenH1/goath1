@@ -33,7 +33,7 @@ from .guest_toolchain import LLVM_VERSION, guest_toolchain
 from .build_common import (LINUX_PROFILE, MBEDTLS_DIR, MINIUPNPC_DEFINES, MINIUPNPC_DIR, MUSL_MATH_DIR, OWN_CODE_ERRORS,
                            PLATFORM_SEMANTICS_HEADER, QUIET_OWN_CODE_FLAGS, SEMANTICS_HEADER, STB_VORBIS_SOURCE,
                            XDK_INCLUDE, compile_launcher, configuration_defines, download, game_defines_and_includes,
-                           lto_flags, FFMPEG_CALLER, ffmpeg_cflags, game_sources, miniupnpc_sources,
+                           lto_flags, celt_cflags, celt_sources, FFMPEG_CALLER, ffmpeg_cflags, game_sources, miniupnpc_sources,
                            musl_math_sources, opus_cflags, opus_sources, PLUTOSVG_INCLUDES, plutosvg_cflags,
                            plutosvg_sources,
                            PROFILE_GENERATE_FLAGS, pgo_generate_defines, pgo_mode, pgo_profile, profile_use_flags, updater_defines,
@@ -639,6 +639,10 @@ def generate_guest_image(n: Writer, sln: Any, config: Dict[str, Any], *, arch: G
     # library
     for source in opus_sources():
         objects.append(guest_object(source, " ".join([opus_cflags(guest_abi), *libc_includes])))
+    # the MCC import's dialogue decoder (port/third_party/celt), with the
+    # guest's ABI and C library
+    for source in celt_sources():
+        objects.append(guest_object(source, " ".join([celt_cflags(guest_abi), *libc_includes])))
     # the Bink movies' decoders (FFmpeg's, fetched: tools/ffmpeg_fetch.py),
     # and the platform layer's file that calls them, with the guest's ABI and
     # C library
