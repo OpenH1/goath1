@@ -168,6 +168,18 @@ static int ends_with_case(const char *text, const char *suffix)
 	return 1;
 }
 
+/* x rounded to the nearest whole number, halves to even (as NumPy's round) */
+static double round_even(double x)
+{
+	double down = floor(x), part = x - down;
+
+	if (part > 0.5)
+		return down + 1;
+	if (part < 0.5)
+		return down;
+	return fmod(down, 2.0) == 0 ? down : down + 1;
+}
+
 static double clampd(double value, double low, double high)
 {
 	return value < low ? low : value > high ? high : value;
@@ -431,8 +443,8 @@ static unsigned int quantize565(const float color[3])
 	float g = color[1] < 0 ? 0 : color[1] > 255 ? 255 : color[1];
 	float b = color[2] < 0 ? 0 : color[2] > 255 ? 255 : color[2];
 
-	return (unsigned int)rintf(r * 31 / 255) << 11 | (unsigned int)rintf(g * 63 / 255) << 5 |
-		(unsigned int)rintf(b * 31 / 255);
+	return (unsigned int)(float)round_even(r * 31 / 255) << 11 | (unsigned int)(float)round_even(g * 63 / 255) << 5 |
+		(unsigned int)(float)round_even(b * 31 / 255);
 }
 
 static const float dxt_weights[4] = { 0.0f, 1.0f, 1.0f / 3.0f, 2.0f / 3.0f };
@@ -599,7 +611,7 @@ static void dxt5_alpha_block(const float rgba[16][4], unsigned char out[8])
 
 	for (k = 0; k < 16; k++)
 	{
-		alpha[k] = rintf(rgba[k][3]);
+		alpha[k] = (float)round_even(rgba[k][3]);
 		alpha[k] = alpha[k] < 0 ? 0 : alpha[k] > 255 ? 255 : alpha[k];
 		if (alpha[k] > a0)
 			a0 = alpha[k];
@@ -2524,7 +2536,7 @@ static void extras_write(struct run *run, const struct mcc_mesh *mcc, const stru
 			{
 				float value = ok[texel] ? image[3 * texel + axis] : (axis == 2 ? 255.0f : 128.0f);
 
-				rgb[3 * texel + axis] = (unsigned char)clampd(rint(value), 0, 255);
+				rgb[3 * texel + axis] = (unsigned char)clampd(round_even(value), 0, 255);
 			}
 		}
 		tag_path(path, sizeof(path), run->options->out_folder, source->name, ".normal.png");
@@ -2569,7 +2581,7 @@ static void extras_write(struct run *run, const struct mcc_mesh *mcc, const stru
 				values[texel] = (float)clampd((values[texel] - low) * scale, 0, 255);
 		dilate(values, ok, width, height, 1, PAD_STEPS);
 		for (texel = 0; texel < texels; texel++)
-			rgb[3 * texel + role_index] = (unsigned char)clampd(rint(ok[texel] ? values[texel] : fallback), 0, 255);
+			rgb[3 * texel + role_index] = (unsigned char)clampd(round_even(ok[texel] ? values[texel] : fallback), 0, 255);
 	}
 	tag_path(path, sizeof(path), run->options->out_folder, source->name, ".orm.png");
 	if (png_write(path, rgb, width, height))
@@ -2838,7 +2850,7 @@ static void bake_multipurpose(struct run *run, const struct mcc_mesh *mcc, const
 			ok_count += ok[texel];
 			fitted[texel] = ok[texel] ? (value - best_fit.values_mean) * best_fit.slope + best_fit.target_mean : 0.0;
 		}
-		radius = lrint(1.5 * (double)width / (double)source->width);
+		radius = (long)round_even(1.5 * (double)width / (double)source->width);
 		radius = radius < 2 ? 2 : radius;
 		blurred = masked_blur(fitted, ok, width, height, radius);
 		if (!blurred)

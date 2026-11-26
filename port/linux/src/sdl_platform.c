@@ -926,33 +926,6 @@ static BOOL data_choose_image(char *path, int size, BOOL installer, BOOL *failed
 	return TRUE;
 }
 
-/* MCC's pak the player picks (Import from MCC's folder picker, when no
-Steam library has MCC: mcc_import.c); 0 if they pick none or no dialog can
-be shown */
-int halo_mcc_choose_pak(char *path, int size)
-{
-	static const SDL_DialogFileFilter filters[] =
-	{
-		{ "MCC's MCC-WindowsNoEditor.pak", "pak" },
-		{ "All files", "*" },
-	};
-	static struct data_image_choice choice;
-
-	memset(&choice, 0, sizeof(choice));
-	SDL_ShowOpenFileDialog(data_image_chosen, &choice, NULL, filters, 2, NULL, false);
-	while (!SDL_GetAtomicInt(&choice.done))
-	{
-		SDL_PumpEvents();
-		SDL_Delay(50);
-	}
-	if (choice.failed)
-		platform_log("mcc import: no file dialog could be shown (%s)", choice.error);
-	if (!choice.path[0])
-		return 0;
-	snprintf(path, (size_t)size, "%s", choice.path);
-	return 1;
-}
-
 /* adds Custom Edition's maps from the installer the player picks, saying
 what became of it */
 static void data_import_custom_edition(const char *destination)
@@ -1125,6 +1098,58 @@ BOOL platform_offer_game_data(const char *destination, const char *missing)
 	}
 }
 #endif
+
+/* MCC's pak the player picks (Import from MCC's picker, when no Steam
+library has MCC: mcc_import.c); 0 if they pick none or no dialog can be
+shown (none on Android) */
+struct mcc_pak_choice
+{
+	SDL_AtomicInt done;
+	char path[1024];
+};
+
+#ifndef HALO_ANDROID
+static void SDLCALL mcc_pak_chosen(void *userdata, const char * const *files, int filter)
+{
+	struct mcc_pak_choice *choice = userdata;
+
+	(void)filter;
+	if (!files)
+		platform_log("mcc import: no file dialog could be shown (%s)", SDL_GetError());
+	else if (files[0])
+		snprintf(choice->path, sizeof(choice->path), "%s", files[0]);
+	SDL_SetAtomicInt(&choice->done, 1);
+}
+#endif
+
+int halo_mcc_choose_pak(char *path, int size)
+{
+#ifdef HALO_ANDROID
+	(void)path;
+	(void)size;
+	return 0;
+#else
+	static const SDL_DialogFileFilter filters[] =
+	{
+		{ "MCC's MCC-WindowsNoEditor.pak", "pak" },
+		{ "All files", "*" },
+	};
+	static struct mcc_pak_choice choice;
+
+	memset(&choice, 0, sizeof(choice));
+	SDL_ShowOpenFileDialog(mcc_pak_chosen, &choice, NULL, filters, 2, NULL, false);
+	/* (the dialog answers through events, and on some systems another thread) */
+	while (!SDL_GetAtomicInt(&choice.done))
+	{
+		SDL_PumpEvents();
+		SDL_Delay(50);
+	}
+	if (!choice.path[0])
+		return 0;
+	snprintf(path, (size_t)size, "%s", choice.path);
+	return 1;
+#endif
+}
 
 int halo_interpolation_enabled(void)
 {

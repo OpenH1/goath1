@@ -503,9 +503,9 @@ static void alpha_block(const unsigned char *block, unsigned char out[16])
 	for (step = 2; step < 8; step++)
 	{
 		if (a0 > a1)
-			palette[step] = (unsigned int)lrint(((8.0 - step) * a0 + (step - 1.0) * a1) / 7.0);
+			palette[step] = (unsigned int)floor(0.5 + ((8.0 - step) * a0 + (step - 1.0) * a1) / 7.0);
 		else if (step < 6)
-			palette[step] = (unsigned int)lrint(((6.0 - step) * a0 + (step - 1.0) * a1) / 5.0);
+			palette[step] = (unsigned int)floor(0.5 + ((6.0 - step) * a0 + (step - 1.0) * a1) / 5.0);
 		else
 			palette[step] = step == 6 ? 0 : 255;
 	}
@@ -540,7 +540,7 @@ static void color_block(const unsigned char *block, int four, unsigned char out[
 	palette[3][3] = four ? 255 : 0;
 	for (index = 0; index < 16; index++)
 		for (channel = 0; channel < 4; channel++)
-			out[index][channel] = (unsigned char)lrint(palette[bits >> (2 * index) & 3][channel]);
+			out[index][channel] = (unsigned char)floor(0.5 + palette[bits >> (2 * index) & 3][channel]);
 }
 
 unsigned char *ue4_texture_rgba(const struct ue4_texture *texture)
