@@ -899,7 +899,7 @@ REMAP_HANDLERS = ['<on event="x" run="port controller clear"/>',
 # hdr_display_show's, the display's peak
 SETTINGS_STATUS_ROWS = {"discord_account", "link_status", "link_unlink",
                         *(f"link_master_{n}" for n in range(1, 5)), "hdr_display",
-                        "viewmodel_weapon_reset", "gyro_found", "gyro_calibrate", "clear_caches",
+                        "viewmodel_weapon_reset", "gyro_found", "gyro_calibrate", "clear_caches", "mcc_import_now", "mcc_import_remove",
                         "layout_controller", "layout_export", "layout_files", "layout_bindings",
                         "remap_player", "remap_group", *(f"pad_{n}" for n in range(1, REMAP_ROWS + 1))}
 # the rows whose labels menu_functions.c writes (a master server's host): the
@@ -2350,6 +2350,8 @@ SETTINGS_SEARCH_WORDS = {
     "colour": ["color", "shield_color", "overshield_layer_color"],
     "gamertag": ["name"], "nickname": ["name"],
     "cache": ["map_cache_megabytes", "clear_caches"], "disk": ["map_cache_megabytes"],
+    "mcc": ["mcc_import", "mcc_import_now", "mcc_import_remove"], "textures": ["mcc_import_now"],
+    "voices": ["mcc_import_now"], "dialogue": ["mcc_import_now"],
     "iso": ["game_data"], "ce": ["game_data"], "installer": ["game_data"], "extract": ["game_data"],
     "repair": ["game_data"],
     "bug": ["report"], "crash": ["report"],

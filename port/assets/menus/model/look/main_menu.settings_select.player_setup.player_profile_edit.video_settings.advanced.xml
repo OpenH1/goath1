@@ -155,16 +155,24 @@
 	<look name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/op_mcc_import_now" box="0 0 344 24" wide="-106 244" past="-143 193" picture="main_menu/settings/row_tall">
 		<text color="#FF2896FF"/>
 		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/mcc_import_now_label" x="0" y="0"/>
+		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/mcc_import_now_value" x="188" y="2"/>
 	</look>
-	<look name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/mcc_import_now_label" type="text" box="0 0 332 24" wide="0 244" past="0 193">
+	<look name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/mcc_import_now_label" type="text" box="0 0 184 24" wide="0 40" past="0 60">
 		<text font="ui\small_ui" color="#FF2896FF" at="10 3" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/labels" index="8" scale="1 1.2"/>
+	</look>
+	<look name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/mcc_import_now_value" type="text" box="0 0 140 16" wide="40 120" past="60 60">
+		<text font="ui\small_ui" color="#FF2896FF" align="center" at="0 1" flags="no_focus_test" scale="1 1.2"/>
 	</look>
 	<look name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/op_mcc_import_remove" box="0 0 344 24" wide="-106 244" past="-143 193" picture="main_menu/settings/row_tall">
 		<text color="#FF2896FF"/>
 		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/mcc_import_remove_label" x="0" y="0"/>
+		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/mcc_import_remove_value" x="188" y="2"/>
 	</look>
-	<look name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/mcc_import_remove_label" type="text" box="0 0 332 24" wide="0 244" past="0 193">
+	<look name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/mcc_import_remove_label" type="text" box="0 0 184 24" wide="0 40" past="0 60">
 		<text font="ui\small_ui" color="#FF2896FF" at="10 3" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/labels" index="9" scale="1 1.2"/>
+	</look>
+	<look name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/mcc_import_remove_value" type="text" box="0 0 140 16" wide="40 120" past="60 60">
+		<text font="ui\small_ui" color="#FF2896FF" align="center" at="0 1" flags="no_focus_test" scale="1 1.2"/>
 	</look>
 	<look name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/op_model_detail" box="0 0 344 24" wide="-106 244" past="-143 193" picture="main_menu/settings/row_tall">
 		<text color="#FF2896FF"/>
