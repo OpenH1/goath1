@@ -42,8 +42,10 @@ port/linux/README.md.
 temporal_metalfx before device: a guest and a host of 23 and 24 would read
 each other's device and temporal_metalfx out of place. 25: each frame's
 own GPU time (xgpu_stream_gpu_frames) after the pipelines' states, which a
-host of 24 would not write and a guest of 24 has no room for */
-#define XGPU_STREAM_VERSION 25
+host of 24 would not write and a guest of 24 has no room for. 26:
+CONTACT_SHADOWS (display.contact_shadows), which a host of 25 would refuse
+as a record it does not know */
+#define XGPU_STREAM_VERSION 26
 #define XGPU_STREAM_LOADING_ART_BYTES (640u * 480u * 4u)
 /* and the picture at its own size after it, where there is one (loading_art.h's LOADING_ART_SOURCE_BYTES) */
 #define XGPU_STREAM_LOADING_ART_SOURCE_BYTES (1600u * 1200u * 4u)
@@ -354,7 +356,8 @@ enum
 	(xgpu_backend_rt_shadows) */
 	XGPU_STREAM_RT_SHADOWS,
 	/* display.contact_shadows: a window's casters' contact shadows, from
-	the depth (xgpu_backend_contact_shadows; RT_SHADOWS' record) */
+	the depth (xgpu_backend_contact_shadows; RT_SHADOWS' record: of no
+	casters, in play, the light taken before the classic receivers) */
 	XGPU_STREAM_CONTACT_SHADOWS,
 	XGPU_STREAM_RECORD_TYPES,
 };
