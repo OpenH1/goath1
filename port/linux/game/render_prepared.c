@@ -65,6 +65,7 @@ loaded) and the walk made.
 #include "cseries/cseries_windows.h"
 #include "network_standard.h"
 #include "menu_models.h"
+#include "mod_materials.h"
 
 #include "../src/xgpu_manifest.h"
 #include "render_enumerate.h"
@@ -333,6 +334,16 @@ static uint64_t prepared_key_models(uint64_t hash)
 	return identity ? xgpu_manifest_hash(&identity, sizeof(identity), hash) : hash;
 }
 
+/* ...and the bitmaps drawn with material maps now (mod_materials_identity:
+none, or which): their models' draws are others, which a record made without
+them (a shipped one) does not hold, so a map with them records its own */
+static uint64_t prepared_key_materials(uint64_t hash)
+{
+	uint32_t identity = (uint32_t)mod_materials_identity();
+
+	return identity ? xgpu_manifest_hash(&identity, sizeof(identity), hash) : hash;
+}
+
 /* the enumeration's label for HALO_RENDER_COVERAGE (xgpu_manifest.h): the
 map, how it is prepared (walked, played back from its record), the
 screen's width and the menus' models' tags in the table (prepared_key_models) */
@@ -401,8 +412,8 @@ static boolean prepared_choose(boolean mirrors)
 	if (!prepared_enabled())
 		return FALSE;
 	/* (the structure the map starts in: a saved game's may be another) */
-	hash = prepared_key_models(prepared_key(prepared_key_settings(scenario), mirrors,
-		global_structure_bsp_index_get()));
+	hash = prepared_key_materials(prepared_key_models(prepared_key(prepared_key_settings(scenario), mirrors,
+		global_structure_bsp_index_get())));
 	prepared.checksum = cache_files_get_checksum();
 	/* (prepared again in play: from its record, whatever structure it is in) */
 	prepared.again = prepared.played.known && prepared.played.checksum == prepared.checksum &&
