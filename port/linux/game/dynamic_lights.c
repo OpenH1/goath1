@@ -66,6 +66,7 @@ structure's 3D BSP, from which a pixel finds its cluster
 #include "physics/bsp3d.h"
 #include "light_sources.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -75,6 +76,7 @@ int config_boolean(const char *name);
 void platform_log(const char *format, ...);
 /* port/linux/src (the computer's clock) */
 unsigned long long platform_shared_clock_microseconds(void);
+void dynamic_lights_clusters(long rasterizer_light_index, short count, short const *clusters);
 /* port/linux/game/door_portals.c */
 short door_portals_clusters_in_sphere(short cluster_index, real_point3d const *position, real radius,
 	short maximum_count, short *clusters);
@@ -97,6 +99,15 @@ static struct
 	that reach it */
 	boolean clusters_noted[MAXIMUM_LIGHTS_PER_WINDOW];
 	unsigned int cluster_masks[HALO_DYNAMIC_LIGHTS_CLUSTERS][4];
+	/* the frame's copies of the game's lights on their other markers
+	(dynamic_lights_copy): whose copy (its rasterizer light), where */
+	struct
+	{
+		long rasterizer_light_index;
+		real_point3d position;
+		real_vector3d axis;
+	} copies[MAXIMUM_LIGHTS_PER_WINDOW];
+	short copy_count;
 	/* the structure whose BSP the renderer has (dynamic_lights_world) */
 	void const *world_nodes;
 	long world_node_count;
@@ -134,6 +145,74 @@ void dynamic_lights_brighten(
 	if (rasterizer_light_index < 0 || rasterizer_light_index >= MAXIMUM_LIGHTS_PER_WINDOW)
 		return;
 	dynamic_lights.brightness[rasterizer_light_index] = scale;
+}
+
+/* what each of count lights is given of one light's color for the count of
+them to be as bright as the one: shared in linear light, as the renderer
+adds them (it takes each color to the power 2.2), not in the game's gamma,
+where three of a third each would be a quarter as bright */
+real dynamic_lights_share(
+	short count)
+{
+	return count > 1 ? powf((real)count, -1.0f / 2.2f) : 1.0f;
+}
+
+/* a rasterizer light just submitted: drawn again at another of its
+markers (a lens-flare-only light's, object_lights.c: its flare is drawn on
+each, a Banshee's two wings, a Ghost's three running lights), with its
+color, reach and flags, the marker's forward its axis; each copy reaches
+the clusters its sphere floods into from where it is */
+void dynamic_lights_copy(
+	long rasterizer_light_index,
+	real_point3d const *position,
+	real_vector3d const *axis)
+{
+	if (rasterizer_light_index < 0 || rasterizer_light_index >= MAXIMUM_LIGHTS_PER_WINDOW ||
+		dynamic_lights.copy_count >= MAXIMUM_LIGHTS_PER_WINDOW)
+	{
+		return;
+	}
+	dynamic_lights.copies[dynamic_lights.copy_count].rasterizer_light_index = rasterizer_light_index;
+	dynamic_lights.copies[dynamic_lights.copy_count].position = *position;
+	dynamic_lights.copies[dynamic_lights.copy_count].axis = *axis;
+	dynamic_lights.copy_count++;
+}
+
+/* the frame's copies (dynamic_lights_copy) after the game's count of
+lights, in the room they leave; the count of all */
+static long dynamic_lights_copies(
+	long count)
+{
+	long game_count = count;
+	short copy_index;
+
+	for (copy_index = 0; copy_index < dynamic_lights.copy_count && count < MAXIMUM_LIGHTS_PER_WINDOW; copy_index++)
+	{
+		struct halo_dynamic_light *out = &dynamic_lights.lights[count];
+		real_point3d const *position = &dynamic_lights.copies[copy_index].position;
+		short clusters[MAXIMUM_CLUSTERS_PER_STRUCTURE];
+		short cluster_count;
+		struct location location;
+
+		if (dynamic_lights.copies[copy_index].rasterizer_light_index >= game_count)
+			continue;
+		scenario_location_from_point(&location, position);
+		if (location.cluster_index == NONE)
+			continue;
+		*out = dynamic_lights.lights[dynamic_lights.copies[copy_index].rasterizer_light_index];
+		out->position[0] = position->x;
+		out->position[1] = position->y;
+		out->position[2] = position->z;
+		out->axis[0] = dynamic_lights.copies[copy_index].axis.i;
+		out->axis[1] = dynamic_lights.copies[copy_index].axis.j;
+		out->axis[2] = dynamic_lights.copies[copy_index].axis.k;
+		cluster_count = door_portals_clusters_in_sphere(location.cluster_index, position, out->radius,
+			MAXIMUM_CLUSTERS_PER_STRUCTURE, clusters);
+		dynamic_lights_clusters(count, MIN(cluster_count, MAXIMUM_CLUSTERS_PER_STRUCTURE), clusters);
+		count++;
+	}
+	dynamic_lights.copy_count = 0;
+	return count;
 }
 
 /* a rasterizer light just submitted: the clusters it reaches (count less
@@ -405,7 +484,7 @@ void dynamic_lights_submit(
 			dynamic_lights.cluster_masks[cluster][light_index >> 5] |= 1u << (light_index & 31);
 	}
 	dynamic_lights_world();
-	total = dynamic_lights_sources(count);
+	total = dynamic_lights_sources(dynamic_lights_copies(count));
 	halo_dynamic_lights_set(dynamic_lights.lights, (int)total, camera, right_axis, up_axis,
 		(unsigned int const (*)[4])dynamic_lights.cluster_masks);
 	memset(dynamic_lights.cluster_masks, 0, sizeof(dynamic_lights.cluster_masks));

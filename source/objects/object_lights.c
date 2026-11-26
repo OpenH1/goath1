@@ -196,6 +196,8 @@ void dynamic_lights_rank(long *lights, short count,
 	void (*describe)(long light, real_point3d *position, real *radius, real *intensity));
 void dynamic_lights_drawn(long light, real_point3d const *position, real radius, real_rgb_color const *color);
 void dynamic_lights_clusters(long rasterizer_light_index, short count, short const *clusters);
+real dynamic_lights_share(short count);
+void dynamic_lights_copy(long rasterizer_light_index, real_point3d const *position, real_vector3d const *axis);
 /* port: port/linux/game/door_portals.c (closed doors shut their portals to
 the lights) */
 void door_portals_update(void);
@@ -1126,8 +1128,13 @@ static boolean light_port_flare_lights(
 /* port: how strong a weapon's glow lights (light_port_flare_lights), one
 rule for every weapon's, as play tests set it: in a local player's hands in
 first person, a small bright light about the hands and the gun (a color of
-LIGHT_PORT_WEAPON_GLOW_HELD in all, reaching 0.3 world units); anywhere
-else, on the ground or in another's hands, a pool about it (0.85 in all,
+LIGHT_PORT_WEAPON_GLOW_HELD in all, reaching 0.3 world units); in another's
+hands (or the local player's seen from outside), a softer light as small,
+which lights the wielder's arms and body in the weapon's color but reaches
+the floor only under a short carrier's (a Grunt's) low hands, and then
+faintly, and no floor or wall past a body's width (0.6 in all, reaching
+0.3: the pool it was lit the floor under an Elite's feet, and through the
+floors and walls near it); on the ground, a pool about it (0.85 in all,
 reaching 0.85). The tag's color, made by the weapon's own function (the
 charge, the heat, the needles loaded), is scaled by what this gives (the
 rasterizer's to 1 at most, the rest the enhanced lights': dynamic_lights.c's
@@ -1135,6 +1142,8 @@ dynamic_lights_brighten); "in all" is over the weapon's copies of that light
 (the plasma pistol's two triggers) */
 #define LIGHT_PORT_WEAPON_GLOW_HELD 2.0f
 #define LIGHT_PORT_WEAPON_GLOW_HELD_RADIUS 0.3f
+#define LIGHT_PORT_WEAPON_GLOW_CARRIED 0.6f
+#define LIGHT_PORT_WEAPON_GLOW_CARRIED_RADIUS 0.3f
 #define LIGHT_PORT_WEAPON_GLOW_WORLD 0.85f
 #define LIGHT_PORT_WEAPON_GLOW_WORLD_RADIUS 0.85f
 
@@ -1157,9 +1166,22 @@ static real light_port_weapon_glow(
 
 		copies += attachment->type.index == light->definition_index;
 	}
-	scale = (held ? LIGHT_PORT_WEAPON_GLOW_HELD : LIGHT_PORT_WEAPON_GLOW_WORLD) / (real)MAX(copies, 1);
-	*radius = held ? LIGHT_PORT_WEAPON_GLOW_HELD_RADIUS : LIGHT_PORT_WEAPON_GLOW_WORLD_RADIUS;
-	return scale;
+	if (held)
+	{
+		scale = LIGHT_PORT_WEAPON_GLOW_HELD;
+		*radius = LIGHT_PORT_WEAPON_GLOW_HELD_RADIUS;
+	}
+	else if (object->object.parent_object_index != NONE)
+	{
+		scale = LIGHT_PORT_WEAPON_GLOW_CARRIED;
+		*radius = LIGHT_PORT_WEAPON_GLOW_CARRIED_RADIUS;
+	}
+	else
+	{
+		scale = LIGHT_PORT_WEAPON_GLOW_WORLD;
+		*radius = LIGHT_PORT_WEAPON_GLOW_WORLD_RADIUS;
+	}
+	return scale / (real)MAX(copies, 1);
 }
 
 /* port: how far a light let go of is through its transition, so many ticks
@@ -1268,6 +1290,10 @@ void lights_preprocess_scene(
 		/* port: a weapon's glow's brightness past the rasterizer's
 		(light_port_weapon_glow) */
 		real weapon_glow_scale = 1.0f;
+		/* port: a lens-flare-only light's other markers, where its flare
+		is drawn too (lit as its flare draws, below) */
+		struct object_marker flare_markers[MAXIMUM_LENS_FLARES_PER_LIGHT];
+		short flare_marker_count = 0;
 
 		render_debug_light(scene_light_handle);
 		object = light->object_index != NONE
@@ -1560,6 +1586,46 @@ void lights_preprocess_scene(
 						light_parameters.color.blue *= scale;
 						weapon_glow_scale /= scale > 0.0f ? scale : 1.0f;
 					}
+					/* port: a lens-flare-only light (projectile_lights) lit as
+					its lens flare draws, one rule for every unit's, item's and
+					projectile's: as bright as its flare is at the light's
+					intensity (rasterizer_lens_flare_port_brightness: an
+					empty Ghost's flares are out, and so is its light, not the
+					white its color fades to as its function goes to 0), and on
+					each marker of the attachment's name its flare is drawn on
+					(a Banshee's two wings, a Ghost's three running lights,
+					a Warthog's lamps), the light's brightness shared over them
+					in linear light (dynamic_lights_share); the first is the
+					game's rasterizer light, the others its copies
+					(dynamic_lights_copy). Not a first-person weapon's (its
+					flares are on the first-person model's markers, the light
+					about the hands), nor one that lights not its own object
+					(the renderer leaves out only the game's own light) */
+					if (projectile_lights && object && light->parent_light_index == NONE)
+					{
+						real flare_scale = rasterizer_lens_flare_port_brightness(definition->lens_flare.index,
+							drawn_intensity);
+
+						if (!TEST_FLAG(light->flags, _point_light_attached_to_first_person_weapon_bit) &&
+							!TEST_FLAG(definition->flags, _light_definition_dont_light_own_object_bit))
+						{
+							flare_marker_count = object_get_marker_by_name(
+								light->object_index,
+								object_get_attachment_marker_name(light->object_index, light->attachment_marker_index),
+								flare_markers,
+								MAXIMUM_LENS_FLARES_PER_LIGHT);
+							if (flare_marker_count > 0)
+							{
+								light_parameters.position = flare_markers[0].matrix.position;
+								light_parameters.forward = flare_markers[0].matrix.forward;
+								light_parameters.up = flare_markers[0].matrix.up;
+							}
+							flare_scale *= dynamic_lights_share(flare_marker_count);
+						}
+						light_parameters.color.red *= flare_scale;
+						light_parameters.color.green *= flare_scale;
+						light_parameters.color.blue *= flare_scale;
+					}
 					/* port: (how it is drawn ranks it next frame:
 					port/linux/game/dynamic_lights.c) */
 					dynamic_lights_drawn(scene_light_handle, &light_parameters.position, light_parameters.radius,
@@ -1619,6 +1685,17 @@ void lights_preprocess_scene(
 						dynamic_lights_note(light->rasterizer_light_index, flags, cone_scale, cone_offset, &light->position);
 						if (weapon_glow_scale != 1.0f)
 							dynamic_lights_brighten(light->rasterizer_light_index, weapon_glow_scale);
+						/* (and its copies on its flare's other markers) */
+						{
+							short marker_index;
+
+							for (marker_index = 1; marker_index < flare_marker_count; marker_index++)
+							{
+								dynamic_lights_copy(light->rasterizer_light_index,
+									&flare_markers[marker_index].matrix.position,
+									&flare_markers[marker_index].matrix.forward);
+							}
+						}
 						/* (and the clusters it reaches: those its sphere as drawn
 						floods into through the portals from where it is drawn, as
 						the game gathers its surfaces, or its own clusters where it
