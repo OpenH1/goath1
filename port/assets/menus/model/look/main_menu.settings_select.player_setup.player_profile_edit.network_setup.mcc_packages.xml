@@ -16,6 +16,10 @@
 		<at widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/op_mcc_collections" x="28" y="122"/>
 		<at widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/section_4" x="28" y="153"/>
 		<at widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/op_mcc_downloads" x="28" y="175"/>
+		<at widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/section_6" x="28" y="206"/>
+		<at widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/op_mcc_import" x="28" y="228"/>
+		<at widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/op_mcc_import_now" x="28" y="253"/>
+		<at widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/op_mcc_import_remove" x="28" y="278"/>
 		<at widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/button_bar" x="0" y="448"/>
 	</look>
 	<look name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/button_bar" role="buttons" type="column_list" box="0 0 640 28" place="foot">
@@ -107,5 +111,52 @@
 	</look>
 	<look name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/mcc_downloads_label" type="text" box="0 0 332 24" wide="0 244" past="0 193">
 		<text font="ui\small_ui" color="#FF2896FF" at="10 3" string_list="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/labels" index="5" scale="1 1.2"/>
+	</look>
+	<look name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/section_6" box="0 0 344 20" wide="-106 244" past="-143 193" picture="main_menu/settings/section_tall">
+		<at widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/section_6_title" x="0" y="0"/>
+	</look>
+	<look name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/section_6_title" type="text" box="0 0 344 20" wide="0 244" past="0 193">
+		<text font="ui\small_ui" color="#FF6F9CD0" at="2 2" string_list="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/labels" index="6" scale="1 1.2"/>
+	</look>
+	<look name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/op_mcc_import" box="0 0 344 24" wide="-106 244" past="-143 193" picture="main_menu/settings/row_tall">
+		<text color="#FF2896FF"/>
+		<at widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/mcc_import_label" x="0" y="0"/>
+		<at widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/mcc_import_spinner" x="188" y="0"/>
+		<at widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/mcc_import_seg0" x="188" y="2"/>
+		<at widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/mcc_import_seg1" x="240" y="2"/>
+	</look>
+	<look name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/mcc_import_label" type="text" box="0 0 184 24" wide="0 40" past="0 60">
+		<text font="ui\small_ui" color="#FF2896FF" at="10 3" string_list="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/labels" index="7" scale="1 1.2"/>
+	</look>
+	<look name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/mcc_import_seg0" type="text" box="0 0 48 20" wide="40 0" past="60 0" place="keep_ends" picture="main_menu/settings/segment_tall">
+		<text font="ui\small_ui" color="#FF2896FF" align="center" at="0 1" flags="no_focus_test" text="ON" scale="1 1.2"/>
+	</look>
+	<look name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/mcc_import_seg1" type="text" box="0 0 48 20" wide="40 0" past="60 0" place="keep_ends" picture="main_menu/settings/segment_tall">
+		<text font="ui\small_ui" color="#FF2896FF" align="center" at="0 1" flags="no_focus_test" text="OFF" scale="1 1.2"/>
+	</look>
+	<look name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/mcc_import_spinner" type="spinner" box="0 1 140 23" wide="40 120" past="60 60" header="bitmaps/arrow_sm_left" header_box="-6 6 0 18" footer="bitmaps/arrow_sm_right" footer_box="140 6 146 18">
+		<text font="ui\small_ui" color="#FF2896FF" align="center" at="0 0" items="ON|OFF" scale="1 1.2"/>
+	</look>
+	<look name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/op_mcc_import_now" box="0 0 344 24" wide="-106 244" past="-143 193" picture="main_menu/settings/row_tall">
+		<text color="#FF2896FF"/>
+		<at widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/mcc_import_now_label" x="0" y="0"/>
+		<at widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/mcc_import_now_value" x="188" y="2"/>
+	</look>
+	<look name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/mcc_import_now_label" type="text" box="0 0 184 24" wide="0 40" past="0 60">
+		<text font="ui\small_ui" color="#FF2896FF" at="10 3" string_list="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/labels" index="8" scale="1 1.2"/>
+	</look>
+	<look name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/mcc_import_now_value" type="text" box="0 0 140 22" wide="40 120" past="60 60">
+		<text font="ui\small_ui" color="#FF2896FF" align="center" at="0 1" flags="no_focus_test" scale="1 1.2"/>
+	</look>
+	<look name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/op_mcc_import_remove" box="0 0 344 24" wide="-106 244" past="-143 193" picture="main_menu/settings/row_tall">
+		<text color="#FF2896FF"/>
+		<at widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/mcc_import_remove_label" x="0" y="0"/>
+		<at widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/mcc_import_remove_value" x="188" y="2"/>
+	</look>
+	<look name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/mcc_import_remove_label" type="text" box="0 0 184 24" wide="0 40" past="0 60">
+		<text font="ui\small_ui" color="#FF2896FF" at="10 3" string_list="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/labels" index="9" scale="1 1.2"/>
+	</look>
+	<look name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_packages/mcc_import_remove_value" type="text" box="0 0 140 22" wide="40 120" past="60 60">
+		<text font="ui\small_ui" color="#FF2896FF" align="center" at="0 1" flags="no_focus_test" scale="1 1.2"/>
 	</look>
 </model>

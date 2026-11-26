@@ -580,18 +580,6 @@
 			<choice shown="ON" value="true"/>
 			<choice shown="OFF" value="false"/>
 		</row>
-		<row key="mcc_import" kind="choice" setting="display.mcc_import" label="MCC IMPORT" crumb="VIDEO › ADVANCED GRAPHICS" search="mcc" when="desktop">
-			<help>Draws and plays what was imported from your MCC install: sharper weapon and vehicle textures and MCC's clearer dialogue. A mod of the same thing wins. Off uses the game's own.</help>
-			<choice shown="ON" value="true"/>
-			<choice shown="OFF" value="false"/>
-		</row>
-		<row key="mcc_import_now" kind="status" label="IMPORT FROM MCC" crumb="VIDEO › ADVANCED GRAPHICS" search="mcc textures voices dialogue" when="desktop" run="port settings mcc import">
-			<help>If you own Halo MCC, builds sharper weapon and vehicle textures and clearer English dialogue from your own install. Nothing is downloaded or shared.</help>
-		</row>
-		<row key="mcc_import_remove" kind="status" label="REMOVE MCC IMPORT" crumb="VIDEO › ADVANCED GRAPHICS" search="mcc" when="desktop" run="port settings mcc import remove">
-			<help>Deletes what was imported from MCC.</help>
-			<note>Select it twice: the first asks, the second deletes.</note>
-		</row>
 		<row key="model_detail" kind="choice" setting="display.model_detail" label="MODEL DETAIL" crumb="VIDEO › ADVANCED GRAPHICS" search="lod" search_choices="xbox full highest">
 			<help>How detailed characters and vehicles stay in the distance. Xbox simplifies them as on a TV; Full keeps their detail for your screen; Highest always draws the most. Auto is Full.</help>
 			<choice shown="AUTO" value="auto"/>
@@ -604,7 +592,7 @@
 			<choice shown="ON" value="true"/>
 			<choice shown="OFF" value="false"/>
 		</row>
-		<section key="section_12" title="LIGHTING"/>
+		<section key="section_9" title="LIGHTING"/>
 		<row key="shadow_resolution" kind="choice" setting="display.shadow_resolution" label="SHADOW QUALITY" crumb="VIDEO › ADVANCED GRAPHICS" search="shadows" search_choices="xbox medium high ultra">
 			<help>How sharp the shadows of characters, vehicles and weapons are. Xbox is the original's soft, blocky shadow; each step up is crisper, and costs a little more of the graphics card.</help>
 			<choice shown="XBOX" value="128"/>
@@ -641,7 +629,7 @@
 			<choice shown="DEFAULT" value="default"/>
 			<choice shown="LIGHT SHOW" value="light_show"/>
 		</row>
-		<section key="section_19" title="GAME"/>
+		<section key="section_16" title="GAME"/>
 		<row key="sim_rate" kind="choice" setting="game.sim_rate" label="TICK RATE" crumb="VIDEO › ADVANCED GRAPHICS" search="hz tickrate" search_choices="original">
 			<help>How often the world updates each second, in games on this device (campaign, split screen, bots). 60 and 120 respond faster and take more of the processor. Online games play at their host's tick rate: a GOAT H1 game's (GOAT H1 60 Tick), a Legacy game's 30.</help>
 			<choice shown="ORIGINAL (30)" value="30"/>
@@ -1904,6 +1892,19 @@
 		<section key="section_4" title="DOWNLOADED"/>
 		<row key="mcc_downloads" kind="link" label="MCC DOWNLOADS ›" crumb="MODS › MCC PACKAGES" open="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_downloads/screen">
 			<help>The MCC maps downloaded from hosts: their space, and removing them. The original packages and saved games are kept.</help>
+		</row>
+		<section key="section_6" title="IMPORT FROM MCC" when="desktop"/>
+		<row key="mcc_import" kind="choice" setting="display.mcc_import" label="MCC IMPORT" crumb="MODS › MCC PACKAGES" search="mcc" when="desktop">
+			<help>Draws and plays what was imported from your MCC install: sharper weapon and vehicle textures and MCC's clearer dialogue. A mod of the same thing wins. Off uses the game's own.</help>
+			<choice shown="ON" value="true"/>
+			<choice shown="OFF" value="false"/>
+		</row>
+		<row key="mcc_import_now" kind="status" label="IMPORT FROM MCC" crumb="MODS › MCC PACKAGES" search="mcc textures voices dialogue" when="desktop" run="port settings mcc import">
+			<help>If you own Halo MCC, builds sharper weapon and vehicle textures and clearer English dialogue from your own install. Nothing is downloaded or shared.</help>
+		</row>
+		<row key="mcc_import_remove" kind="status" label="REMOVE MCC IMPORT" crumb="MODS › MCC PACKAGES" search="mcc" when="desktop" run="port settings mcc import remove">
+			<help>Deletes what was imported from MCC.</help>
+			<note>Select it twice: the first asks, the second deletes.</note>
 		</row>
 		<button key="button_defaults" kind="defaults" run="port settings defaults" help="Puts this page's settings back to their defaults."/>
 		<button key="button_ok" kind="ok" run="port settings keep" help="Saves your changes, on this page and every tab, and applies them."/>
