@@ -1652,7 +1652,7 @@ PAGES = {
              "A red dot in the pistol's and the sniper rifle's reticle when the shot would hit the head, as "
              "later Halo games show it. Only the stock weapons on the stock maps, with the High-Res HUD on (Interface "
              "› HUD).|Aiming is not changed: the dot only shows what the shot already does. Only your screen "
-             "changes. A host may forbid it in its games.", None),
+             "changes. In network games, only where the host allows it.", None),
             # (the host's rule for its games: network_standard.c's
             # network_standard_headshot_indicator_allowed, as hit sounds')
             ("ALLOW HEADSHOT DOT", "network.allow_headshot_indicator", YES_NO,
