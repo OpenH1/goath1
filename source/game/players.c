@@ -4573,19 +4573,8 @@ static void player_examine_nearby_vehicle(
 			(_pi * 0.5f) - player_control->minimum_vehicle_flipping_angle;
 		if (vehicle_get(vehicle_index)->object.up.k > (real)cos(flipping_angle))
 		{
-			/* port: an enemy's seat in reach, taken by holding the action
-			button, whether or not the vehicle moves a little
-			(port/linux/game/vehicle_hijack.c) */
-			short hijack_seat_index = vehicle_hijack_seat_offered(player_index, vehicle_index);
-
-			if (hijack_seat_index != NONE)
-			{
-				player_set_action_result(
-					player_index,
-					_player_action_result_hijack_vehicle,
-					vehicle_index,
-					hijack_seat_index);
-			}
+			/* port: (an enemy's seat in reach: player_examine_nearby_objects,
+			port/linux/game/vehicle_hijack.c) */
 			if (!unit_overcharged(player->unit_index))
 			{
 				unit = unit_get(player->unit_index);
@@ -5038,6 +5027,23 @@ static void player_examine_nearby_objects(
 				case _object_type_control:
 					player_examine_nearby_device(player_index, object_indices[object_number]);
 					break;
+				}
+			}
+			/* port: an enemy's seat in reach (farther out than the body's
+			sphere, a moving vehicle's too), taken by holding the action
+			button; nothing while the rule is off
+			(port/linux/game/vehicle_hijack.c) */
+			{
+				long hijack_vehicle_index;
+				short hijack_seat_index;
+
+				if (vehicle_hijack_nearby_seat(player_index, &hijack_vehicle_index, &hijack_seat_index))
+				{
+					player_set_action_result(
+						player_index,
+						_player_action_result_hijack_vehicle,
+						hijack_vehicle_index,
+						hijack_seat_index);
 				}
 			}
 		}

@@ -271,6 +271,13 @@ static struct
 	boolean hijack_empty;
 	long hijack_vehicle;
 	long hijack_victim;
+	/* ... its rounds (";" between them), the one under way, whether its
+	vehicle drives past the jacker (":moving") and the vehicle's name
+	(":vehicle=<name>", else debug.network_test_vehicle_seat's) */
+	char hijack_rounds[256];
+	short hijack_round;
+	boolean hijack_moving;
+	char hijack_vehicle_name[32];
 	/* debug.network_test_chat's, and the lines said this game */
 	real chat_time;
 	short chat_lines_said;
@@ -357,6 +364,58 @@ boolean network_test_hooks(
 	void)
 {
 	return config_string("debug.network_test")[0] != 0;
+}
+
+/* debug.network_test_hijack's round (";" between them): "<seconds>[:watch|
+:client][:empty][:moving][:vehicle=<name>]", taken up (none: its time 0) */
+static void network_test_hijack_round(
+	short round)
+{
+	char const *text = network_test.hijack_rounds;
+	char segment[128];
+	char const *end;
+	char const *name;
+	short index;
+
+	for (index = 0; index < round && text; index++)
+	{
+		text = strchr(text, ';');
+		if (text)
+			text++;
+	}
+	network_test.hijack_round = round;
+	network_test.hijack_vehicle = NONE;
+	network_test.hijack_victim = NONE;
+	network_test.hijack_time = 0.0f;
+	network_test.hijack_vehicle_name[0] = 0;
+	if (!text || !text[0])
+		return;
+	end = strchr(text, ';');
+	snprintf(segment, sizeof(segment), "%.*s", end ? (int)(end - text) : (int)strlen(text), text);
+	network_test.hijack_time = (real)atof(segment);
+	network_test.hijack_watch = strstr(segment, ":watch") != NULL;
+	network_test.hijack_clients_jack = strstr(segment, ":client") != NULL;
+	network_test.hijack_empty = strstr(segment, ":empty") != NULL;
+	network_test.hijack_moving = strstr(segment, ":moving") != NULL;
+	name = strstr(segment, ":vehicle=");
+	if (name)
+	{
+		name += strlen(":vehicle=");
+		snprintf(network_test.hijack_vehicle_name, sizeof(network_test.hijack_vehicle_name), "%.*s",
+			(int)strcspn(name, ":"), name);
+	}
+	if (round > 0)
+		platform_log("network test: hijack: round %d at %.1f s: %s", round, network_test.hijack_time, segment);
+}
+
+/* ... its vehicle's name: the round's, else debug.network_test_vehicle_seat's,
+else a Ghost */
+static char const *network_test_hijack_vehicle_name(
+	void)
+{
+	if (network_test.hijack_vehicle_name[0])
+		return network_test.hijack_vehicle_name;
+	return network_test.vehicle_name[0] ? network_test.vehicle_name : "ghost";
 }
 
 static void network_test_read_settings(
@@ -457,16 +516,9 @@ static void network_test_read_settings(
 			snprintf(network_test.seat_label, sizeof(network_test.seat_label), "%s", seat);
 		}
 	}
-	{
-		char const *hijack = config_string("debug.network_test_hijack");
-
-		network_test.hijack_time = (real)atof(hijack);
-		network_test.hijack_watch = strstr(hijack, ":watch") != NULL;
-		network_test.hijack_clients_jack = strstr(hijack, ":client") != NULL;
-		network_test.hijack_empty = strstr(hijack, ":empty") != NULL;
-		network_test.hijack_vehicle = NONE;
-		network_test.hijack_victim = NONE;
-	}
+	snprintf(network_test.hijack_rounds, sizeof(network_test.hijack_rounds), "%s",
+		config_string("debug.network_test_hijack"));
+	network_test_hijack_round(0);
 	network_test.score_to_win = (long)config_integer("debug.network_test_score");
 	network_test.maximum_players = (long)config_integer("debug.network_test_most_players");
 	network_test.cue_players = MAX(1, config_integer("debug.network_test_cue_players"));
@@ -1905,7 +1957,7 @@ static long network_test_hijack_vehicle(
 {
 	struct object_iterator vehicles;
 	struct unit_datum *unit = unit_get(unit_index);
-	char const *name = network_test.vehicle_name[0] ? network_test.vehicle_name : "ghost";
+	char const *name = network_test_hijack_vehicle_name();
 	long nearest_index = NONE;
 	real nearest_distance = 0.0f;
 
@@ -2199,8 +2251,10 @@ static void network_test_hijack_stand(
 	}
 	if (place && !watch)
 	{
-		/* (the farthest out, eight tenths to three, where the seat is offered:
-		as far from the vehicle as its reach lets a jacker stand) */
+		/* (the farthest out, a unit and two tenths to three tenths, where the
+		seat is offered: as far from the vehicle as the hijack's reach lets a
+		jacker stand; the stock entry's, where the vehicle's sphere touches
+		the player's, players.c's player_examine_nearby_objects) */
 		real_vector3d out;
 		real distance;
 
@@ -2208,22 +2262,36 @@ static void network_test_hijack_stand(
 		out.k = 0.0f;
 		if (normalize3d(&out) == 0.0f)
 			out = *global_forward3d;
-		for (distance = network_test.hijack_empty ? 0.4f : 0.8f; distance > 0.25f; distance -= 0.1f)
+		for (distance = network_test.hijack_empty ? 0.4f : 1.2f; distance > 0.25f; distance -= 0.1f)
 		{
 			stand.x = entrance.x + distance * out.i;
 			stand.y = entrance.y + distance * out.j;
 			stand.z = entrance.z + 0.02f;
 			object_set_position(player->unit_index, &stand, NULL, NULL);
-			/* (and the vehicle among what the player examines: its sphere
-			touching the player's, players.c's player_examine_nearby_objects) */
-			if ((network_test.hijack_empty || vehicle_hijack_seat_offered(player_index, vehicle_index) != NONE) &&
+			if (network_test.hijack_empty ?
 				distance3d(&object_get(player->unit_index)->object.bounding_sphere_center,
 					&object_get(vehicle_index)->object.bounding_sphere_center) <
 				object_get(player->unit_index)->object.bounding_sphere_radius +
-					object_get(vehicle_index)->object.bounding_sphere_radius - 0.1f)
+					object_get(vehicle_index)->object.bounding_sphere_radius - 0.1f :
+				vehicle_hijack_seat_offered(player_index, vehicle_index) != NONE)
 			{
 				break;
 			}
+		}
+		/* (":moving": two units on along the vehicle's way, which then drives
+		past them at a Ghost's cruise, 4.5 units a second) */
+		if (network_test.hijack_moving)
+		{
+			real_vector3d forward = object_get(vehicle_index)->object.forward;
+
+			forward.k = 0.0f;
+			if (normalize3d(&forward) > 0.0f)
+			{
+				stand.x += 2.0f * forward.i;
+				stand.y += 2.0f * forward.j;
+				object_set_position(player->unit_index, &stand, NULL, NULL);
+			}
+			vehicle_hijack_test_drive(vehicle_index, 0.15f);
 		}
 	}
 	else if (place)
@@ -2302,7 +2370,7 @@ static void network_test_hijack_result(
 
 			if (driver != NONE && unit_get(driver)->unit.player_index != NONE &&
 				strstr(tag_get_name(object_get(vehicles.index)->definition_index),
-					network_test.vehicle_name[0] ? network_test.vehicle_name : "ghost") &&
+					network_test_hijack_vehicle_name()) &&
 				(vehicle_index == NONE || distance < nearest))
 			{
 				vehicle_index = vehicles.index;
@@ -2968,7 +3036,10 @@ void network_test_update(
 		{
 			char name[32];
 
-			snprintf(name, sizeof(name), "hijack%04ld", since);
+			if (network_test.hijack_round > 0)
+				snprintf(name, sizeof(name), "hijack%d_%04ld", network_test.hijack_round, since);
+			else
+				snprintf(name, sizeof(name), "hijack%04ld", since);
 			halo_screenshot_named(name);
 			shot_tick = since;
 		}
@@ -3074,6 +3145,9 @@ void network_test_update(
 			}
 			if (since >= 6 * TICKS_PER_SECOND && since < 7 * TICKS_PER_SECOND)
 				network_test_hijack_result();
+			/* (the next round, if there is one) */
+			if (since >= 7 * TICKS_PER_SECOND && since < 8 * TICKS_PER_SECOND)
+				network_test_hijack_round(network_test.hijack_round + 1);
 			/* (the first player's offer each second until then, and where they
 			are) */
 			if (since >= TICKS_PER_SECOND && since < 6 * TICKS_PER_SECOND && local_player_get_player_index(0) != NONE &&
