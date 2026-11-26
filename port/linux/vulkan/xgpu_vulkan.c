@@ -1285,6 +1285,9 @@ static struct
 	/* a barrier names the vertex stages only after a write they can read
 	(AFTER_IMAGE_STAGES; HALO_VULKAN_NARROW_BARRIERS=0: after every write) */
 	int narrow_barriers;
+	/* MSAA's resolve in light not drawn (resolve_in_light;
+	HALO_VULKAN_RESOLVE_LIGHT=0: the codes averaged, to measure its cost) */
+	int no_resolve_light;
 	/* the transfers a pass waits for (HALO_VULKAN_PASS_TRANSFERS=0: each
 	transfer's own barrier, for every pass after it): the main command
 	buffer's transfers numbered as they are recorded, the greatest number
@@ -7043,7 +7046,7 @@ static int resolve_light_description(const struct xgpu_vulkan_image *multisample
 {
 	const struct xgpu_vulkan_image_description *about = &multisampled->description;
 
-	if (!vk.capabilities.color_read || about->samples <= 1 || (multisampled->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) ||
+	if (vk.no_resolve_light || !vk.capabilities.color_read || about->samples <= 1 || (multisampled->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) ||
 		!(about->usage & XGPU_VULKAN_USAGE_INPUT) || (about->type == XGPU_VULKAN_IMAGE_2D_ARRAY && about->depth_or_layers > 1))
 		return 0;
 	if (!vk.clear_vertex)
@@ -11389,6 +11392,7 @@ static int device_make(const struct xgpu_vulkan_options *options)
 		vk.capabilities.clear_alone = alone && *alone ? atoi(alone) != 0 : v3d;
 		vk.capabilities.draw_bounds = !(bounds && *bounds) || atoi(bounds) != 0;
 		vk.narrow_barriers = !(narrow && *narrow) || atoi(narrow) != 0;
+		vk.no_resolve_light = getenv("HALO_VULKAN_RESOLVE_LIGHT") && !atoi(getenv("HALO_VULKAN_RESOLVE_LIGHT"));
 		vk.pass_transfers = !(pass_transfers && *pass_transfers) || atoi(pass_transfers) != 0;
 		vk.own_memory = own_memory && *own_memory ? atoi(own_memory) != 0 : v3d;
 		vk.capabilities.completion_told = !(fence_wait && *fence_wait) || atoi(fence_wait) == 0;
