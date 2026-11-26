@@ -139,7 +139,7 @@ enum
 /* ---------- state */
 
 /* every stage's texture looked at again (stream.textures_dirty) */
-#define TEXTURES_ALL 15u
+#define TEXTURES_ALL ((1u << XGPU_STREAM_TEXTURE_STAGES) - 1)
 
 /* (debug.pass_times, the performance overlay) the graphics settings whose
 passes are labeled by them (xgpu_vulkan_pass_owner): display.anti_aliasing
@@ -305,17 +305,17 @@ static struct
 	what is bound for them (looked at again where a stage changed, a
 	watched page was written, or a target drawn into is sampled): the
 	stages to look at again (bits; TEXTURES_ALL) */
-	struct host_render_texture_stage stages[4];
-	uint8_t border[4];
+	struct host_render_texture_stage stages[XGPU_STREAM_TEXTURE_STAGES];
+	uint8_t border[XGPU_STREAM_TEXTURE_STAGES];
 	/* each stage's sampler, and the sampler and border axes it was made
 	for (until the frame's end) */
-	struct xgpu_stream_sampler sampler_from[4];
-	uint8_t sampler_axes[4], sampler_valid[4];
-	VkSampler sampler_made[4];
+	struct xgpu_stream_sampler sampler_from[XGPU_STREAM_TEXTURE_STAGES];
+	uint8_t sampler_axes[XGPU_STREAM_TEXTURE_STAGES], sampler_valid[XGPU_STREAM_TEXTURE_STAGES];
+	VkSampler sampler_made[XGPU_STREAM_TEXTURE_STAGES];
 	unsigned int textures_dirty;
 	int feedback_bound;
 	uint32_t textures_serial;
-	struct xgpu_vulkan_texture textures[4];
+	struct xgpu_vulkan_texture textures[XGPU_VULKAN_TEXTURES];
 	/* the copy of a target drawn into that a draw samples: of which
 	target, as of which of its draws */
 	struct xgpu_vulkan_image *feedback;
@@ -833,7 +833,7 @@ static void stream_set_targets(void *context, const struct xgpu_stream_set_targe
 	{
 		int index;
 
-		for (index = 0; index < 4; index++)
+		for (index = 0; index < XGPU_STREAM_TEXTURE_STAGES; index++)
 		{
 			if (stream.stages[index].stage.source != _source_texture)
 				stream.textures_dirty |= 1u << index;
@@ -1006,12 +1006,12 @@ static int stage_palettized(const struct xgpu_stream_texture_stage *stage)
 		((stage->resource_format & D3DFORMAT_FORMAT_MASK) >> D3DFORMAT_FORMAT_SHIFT) == 0x0b;
 }
 
-static void stream_set_textures(void *context, const struct host_render_texture_stage stages[4])
+static void stream_set_textures(void *context, const struct host_render_texture_stage stages[XGPU_STREAM_TEXTURE_STAGES])
 {
 	int index;
 
 	(void)context;
-	for (index = 0; index < 4; index++)
+	for (index = 0; index < XGPU_STREAM_TEXTURE_STAGES; index++)
 	{
 		const struct xgpu_stream_texture_stage *stage = &stages[index].stage;
 
@@ -1175,7 +1175,7 @@ static void textures_bind(void)
 	stream.textures_dirty = 0;
 	stream.textures_serial = serial;
 	stream.feedback_bound = 0;
-	for (index = 0; index < 4; index++)
+	for (index = 0; index < XGPU_STREAM_TEXTURE_STAGES; index++)
 	{
 		const struct host_render_texture_stage *source = &stream.stages[index];
 		const struct xgpu_stream_texture_stage *stage = &source->stage;
@@ -1518,6 +1518,7 @@ static int interlocked(const struct xgpu_stream_pipeline_define *definition)
 		key->stencil_pass != XGPU_STENCIL_KEEP))
 		return 0;
 	pixel_program_convert(&definition->pixel_program, &pixel);
+	pixel.material_maps = xgpu_pixel_program_material_maps(&pixel, definition->key.pixel.texture_modes);
 	return !xgpu_pixel_program_depth_stage(&pixel);
 }
 
@@ -1597,6 +1598,7 @@ static int pipeline_shaders(struct stream_pipeline *entry, const struct xgpu_str
 	}
 	free(program);
 	pixel_program_convert(&definition->pixel_program, &pixel);
+	pixel.material_maps = xgpu_pixel_program_material_maps(&pixel, definition->key.pixel.texture_modes);
 	/* (a VR effect's, where its program leaves the effects' textures free) */
 	entry->effect = entry->effect_tests_depth = 0;
 	if (key->pixel.vr_effect && key->pixel.vr_effect <= XGPU_SPIRV_EFFECT_THICK && xgpu_spirv_effect_possible(&pixel))
@@ -2234,7 +2236,7 @@ that writes none of it: returns 1, the draw's reads_depth; or a multisampled
 target's, resolved), and its bitmap's thickness (the texture cache's, baked
 the first time: xgpu_vulkan_effects.h). Before the draw's uploads: the
 resolve and the bake are ordered among the stream's work. */
-static int effect_textures(struct xgpu_vulkan_texture textures[4])
+static int effect_textures(struct xgpu_vulkan_texture textures[XGPU_VULKAN_TEXTURES])
 {
 	struct stream_target *depth = target_get(stream.depth);
 	struct xgpu_vulkan_sampler_description sampler;
@@ -2382,7 +2384,7 @@ static int draw_pipeline(const struct draw_input *input, int apart)
 {
 	struct xgpu_vulkan_pipeline_description pipeline = stream.pipeline;
 	struct xgpu_vulkan_draw draw;
-	struct xgpu_vulkan_texture effect_draw_textures[4];
+	struct xgpu_vulkan_texture effect_draw_textures[XGPU_VULKAN_TEXTURES];
 	struct xgpu_vulkan_range previous_range;
 	struct stream_pipeline *entry;
 	struct variant variant;

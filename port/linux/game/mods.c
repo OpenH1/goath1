@@ -33,6 +33,7 @@ back until mods_enable true, or until the map changes.
 #include "cache/texture_cache.h"
 #include "main/console.h"
 #include "mods.h"
+#include "mod_materials.h"
 #include "mcc_cache.h"
 
 #include <stdlib.h>
@@ -96,6 +97,7 @@ static void mods_update(
 	mods_globals.bitmap_count = mod_bitmaps_update(remove_all, at_load);
 	mods_globals.sound_count = mod_sounds_update(remove_all, at_load);
 	mods_globals.model_count = mod_models_update(remove_all, at_load);
+	mod_materials_update(remove_all, at_load);
 	/* (the texture cache's size follows the mods' bitmaps: as the map
 	loads, mods_tags_loaded) */
 	if (!at_load)
@@ -329,6 +331,7 @@ static void mods_let_go(
 	xgpu_backend_consume();
 	mod_sounds_tags_unloaded();
 	mod_bitmaps_tags_unloaded();
+	mod_materials_tags_unloaded();
 	mod_models_tags_unloaded(give_back);
 	mod_strings_tags_unloaded();
 	mods_globals.map_loaded = FALSE;

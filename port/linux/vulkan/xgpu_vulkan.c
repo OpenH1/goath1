@@ -1095,9 +1095,9 @@ sets are never found, even by a view made with its handle; samplers are
 never destroyed) */
 struct texture_set_key
 {
-	VkImageView views[4];
-	VkSampler samplers[4];
-	uint64_t numbers[4];
+	VkImageView views[XGPU_VULKAN_TEXTURES];
+	VkSampler samplers[XGPU_VULKAN_TEXTURES];
+	uint64_t numbers[XGPU_VULKAN_TEXTURES];
 };
 
 struct texture_set_entry
@@ -1441,7 +1441,7 @@ static struct
 		VkDeviceSize index_offset;
 	} bound;
 	VkDescriptorSet bound_textures;
-	struct xgpu_vulkan_texture last_textures[4];
+	struct xgpu_vulkan_texture last_textures[XGPU_VULKAN_TEXTURES];
 	VkDescriptorSet last_texture_set;
 	int last_texture_valid;
 	/* the texture sets kept (texture_set), from a pool of their own, never
@@ -4606,7 +4606,7 @@ void xgpu_vulkan_image_destroy(struct xgpu_vulkan_image *image)
 	}
 	if (vk.last_texture_valid)
 	{
-		for (index = 0; index < 4; index++)
+		for (index = 0; index < XGPU_VULKAN_TEXTURES; index++)
 		{
 			if (vk.last_textures[index].image == image)
 				vk.last_texture_valid = 0;
@@ -7151,7 +7151,7 @@ static VkDescriptorPool descriptor_pool_get(void)
 		table, the static scenery's pages, the vehicles' fields' atlas and
 		the occlusion found once a pixel) */
 		sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		sizes[0].descriptorCount = SETS_A_POOL * 5;
+		sizes[0].descriptorCount = SETS_A_POOL * XGPU_VULKAN_TEXTURES;
 		/* (display.hdr's input sets, where draws can read their colour
 		attachment) */
 		sizes[2].type = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
@@ -7380,7 +7380,7 @@ static int texture_set_pool(void)
 	if (!vk.texture_sets)
 		return 0;
 	size.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-	size.descriptorCount = TEXTURE_SETS_KEPT * 4;
+	size.descriptorCount = TEXTURE_SETS_KEPT * XGPU_VULKAN_TEXTURES;
 	memset(&info, 0, sizeof(info));
 	info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
 	info.maxSets = TEXTURE_SETS_KEPT;
@@ -7462,11 +7462,11 @@ static struct texture_set_entry *texture_set_take(const struct texture_set_key *
 /* the descriptor set of the stages' textures: the last draw's, one kept
 with the same views and samplers (the game's draws come back to the same
 few, frame after frame), or one written now */
-static VkDescriptorSet texture_set(const struct xgpu_vulkan_texture textures[4])
+static VkDescriptorSet texture_set(const struct xgpu_vulkan_texture textures[XGPU_VULKAN_TEXTURES])
 {
-	VkDescriptorImageInfo images[4];
-	VkWriteDescriptorSet writes[4];
-	struct xgpu_vulkan_image *sampled[4];
+	VkDescriptorImageInfo images[XGPU_VULKAN_TEXTURES];
+	VkWriteDescriptorSet writes[XGPU_VULKAN_TEXTURES];
+	struct xgpu_vulkan_image *sampled[XGPU_VULKAN_TEXTURES];
 	VkDescriptorSet set = VK_NULL_HANDLE;
 	struct texture_set_key key;
 	struct texture_set_entry *entry;
@@ -7476,7 +7476,7 @@ static VkDescriptorSet texture_set(const struct xgpu_vulkan_texture textures[4])
 	if (vk.last_texture_valid && !memcmp(vk.last_textures, textures, sizeof(vk.last_textures)))
 		return vk.last_texture_set;
 	memset(&key, 0, sizeof(key));
-	for (stage = 0; stage < 4; stage++)
+	for (stage = 0; stage < XGPU_VULKAN_TEXTURES; stage++)
 	{
 		const struct xgpu_vulkan_texture *texture = &textures[stage];
 		struct xgpu_vulkan_image *image = texture->image && texture->image->sampled ? texture->image :
@@ -7499,7 +7499,7 @@ static VkDescriptorSet texture_set(const struct xgpu_vulkan_texture textures[4])
 		key.numbers[stage] = image->number;
 	}
 	/* (its images used by this submission: destroyed after it) */
-	for (stage = 0; stage < 4; stage++)
+	for (stage = 0; stage < XGPU_VULKAN_TEXTURES; stage++)
 		sampled[stage]->used = vk.serial;
 	bucket = (uint32_t)(bytes_hash64(&key, sizeof(key)) % TEXTURE_SET_BUCKETS);
 	entry = texture_set_find(&key, bucket);
@@ -7529,7 +7529,7 @@ static VkDescriptorSet texture_set(const struct xgpu_vulkan_texture textures[4])
 	memset(writes, 0, sizeof(writes));
 	/* One write per binding: PowerVR's Android driver does not reliably
 	advance across bindings when one write contains all four descriptors. */
-	for (stage = 0; stage < 4; stage++)
+	for (stage = 0; stage < XGPU_VULKAN_TEXTURES; stage++)
 	{
 		writes[stage].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 		writes[stage].dstSet = set;
@@ -7538,7 +7538,7 @@ static VkDescriptorSet texture_set(const struct xgpu_vulkan_texture textures[4])
 		writes[stage].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 		writes[stage].pImageInfo = &images[stage];
 	}
-	vkUpdateDescriptorSets(vk.device, 4, writes, 0, NULL);
+	vkUpdateDescriptorSets(vk.device, XGPU_VULKAN_TEXTURES, writes, 0, NULL);
 	memcpy(vk.last_textures, textures, sizeof(vk.last_textures));
 	vk.last_texture_set = set;
 	vk.last_texture_valid = 1;
@@ -11470,14 +11470,14 @@ static int layouts_make(void)
 	if (!check(vkCreateDescriptorSetLayout(vk.device, &info, NULL, &vk.draw_layout), "vkCreateDescriptorSetLayout"))
 		return 0;
 	memset(textures, 0, sizeof(textures));
-	for (index = 0; index < 4; index++)
+	for (index = 0; index < XGPU_VULKAN_TEXTURES; index++)
 	{
 		textures[index].binding = (uint32_t)index;
 		textures[index].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 		textures[index].descriptorCount = 1;
 		textures[index].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 	}
-	info.bindingCount = 4;
+	info.bindingCount = XGPU_VULKAN_TEXTURES;
 	info.pBindings = textures;
 	if (!check(vkCreateDescriptorSetLayout(vk.device, &info, NULL, &vk.texture_layout), "vkCreateDescriptorSetLayout"))
 		return 0;

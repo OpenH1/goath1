@@ -968,7 +968,13 @@ struct xgpu_stream_texture_level
 
 /* the stages whose bits are set in changed follow, in order, each an
 xgpu_stream_texture_stage and its level_count levels; the others are as
-they were */
+they were. Past the four stages, a model's material maps
+(XGPU_STREAM_MATERIAL_STAGE: its normal map, then its occlusion, roughness
+and metalness map; xgpu.h's XGPU_TEXTURE_MODES_MATERIAL), images
+(XGPU_STREAM_SOURCE_IMAGE) or none, which only the draws whose pixel key
+asks for them sample: a backend without them leaves them out */
+#define XGPU_STREAM_MATERIAL_STAGE 4
+#define XGPU_STREAM_TEXTURE_STAGES 6
 struct xgpu_stream_set_textures
 {
 	uint32_t header;

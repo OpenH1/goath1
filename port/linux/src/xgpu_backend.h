@@ -412,6 +412,11 @@ struct xgpu_texture_source
 };
 
 void xgpu_backend_set_textures(const struct xgpu_texture_source stages[4]);
+/* a model's material maps (xgpu.h's XGPU_TEXTURE_MODES_MATERIAL): its
+normal map and its occlusion, roughness and metalness map, images
+(xgpu_images.h: 0 none), sampled so, for the draws whose pixel key asks for
+them; kept until set again */
+void xgpu_backend_set_material(const struct xgpu_sampler *sampler, unsigned int normal_map, unsigned int orm_map);
 /* (the front end's kept draws: d3d8_device.c's retained_draw_find) the
 same, the stages as the backend describes them kept in kept: described
 once in a frame of the textures' replacements (frame:

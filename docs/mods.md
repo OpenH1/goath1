@@ -265,6 +265,50 @@ plays), and `debug.txt` and the console say why.
 - The pixels are read from the file when the texture cache loads them, not
   kept in memory.
 
+### Material maps
+
+A model's surfaces can have a normal map and a roughness map (with
+ambient occlusion and metalness), which Halo's shaders do not have. The
+enhanced graphics (`display.graphics = "enhanced"` on the Vulkan renderer,
+its per-pixel lighting with the enhanced dynamic lights) light them by
+these: the sun, the level's light, the dynamic lights and the reflection
+catch the surface's detail. They are two PNG files beside a bitmap, in
+the mod's `tags` folder, drawn in that bitmap's layout:
+
+```
+mods/
+  hd_materials/
+    mod.toml
+    tags/
+      weapons/assault rifle/bitmaps/assault rifle.normal.png
+      weapons/assault rifle/bitmaps/assault rifle.orm.png
+```
+
+- `<bitmap>.normal.png` is a tangent-space normal map: red, green and blue
+  are the normal's x, y and z (128, 128, 255 is flat), green toward the
+  top of the picture, as Blender, glTF and OpenGL bake them (flip green for
+  a DirectX-style map).
+- `<bitmap>.orm.png` packs ambient occlusion in red, roughness in green
+  (0 smooth, 255 rough) and metalness in blue (0 not a metal), as glTF does.
+- Either can be left out. Each is an 8-bit RGB or RGBA PNG, not
+  interlaced, each side a power of two from 4 to 2048, and need not be the
+  bitmap's size.
+- The bitmap is a model shader's (`shader_model`) base map. Every model
+  part drawn with a shader whose base map it is gets the maps, since they
+  share its layout. The bitmap itself can be the map's or a mod's redraw.
+- The occlusion darkens the level's light about the model and its
+  reflection, not the dynamic lights. Roughness widens the dynamic lights'
+  highlights and blurs the reflection. Metalness tints the reflection by
+  the base map and darkens the diffuse light by up to half.
+- They are read as the map loads, at `mods_reload` and at the Mods menu's
+  OK, and count against the mods' memory (4 bytes a texel).
+  `debug.txt` says how many were read, and why any file was left out.
+- The classic graphics, the Metal renderer, a model lit for each vertex,
+  and every surface without them draw as before.
+
+The game's code is `port/linux/game/mod_materials.c`, and the renderer's
+`material_read` in `port/linux/src/xgpu_spirv.c`.
+
 ### Text
 
 - A list keeps the map's number of strings: a mod's strings past it are

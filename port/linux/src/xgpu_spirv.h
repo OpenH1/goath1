@@ -54,6 +54,10 @@ The conventions (SPIR-V 1.3, Vulkan 1.1):
 #define XGPU_SPIRV_BINDING_DYNAMIC_LIGHT_CELLS 3
 #define XGPU_SPIRV_BINDING_SAMPLES 4
 #define XGPU_SPIRV_SET_TEXTURES 1
+/* (a model's material maps, past the four stages: xgpu.h's
+XGPU_TEXTURE_MODES_NORMAL_MAP, _ORM_MAP; 2D, at texture 0's coordinates) */
+#define XGPU_SPIRV_BINDING_NORMAL_MAP 4
+#define XGPU_SPIRV_BINDING_ORM_MAP 5
 /* display.hdr: the pixel a draw blends over in its shader (its tag's
 XGPU_HDR_SHADER_BLENDS, xgpu_hdr.h), the colour attachment read as input
 attachment 0 at binding 0 (VK_KHR_dynamic_rendering_local_read) */

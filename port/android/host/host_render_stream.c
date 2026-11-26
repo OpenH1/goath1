@@ -207,7 +207,7 @@ and the previous frame's past them, as the backends keep them
 a MOTION has come, but a render scale's stretch's) */
 struct host_render_draw_state
 {
-	struct host_render_texture_stage stages[4];
+	struct host_render_texture_stage stages[XGPU_STREAM_TEXTURE_STAGES];
 	struct host_render_vertex_input input;
 	float immediate_attributes[16][4];
 	struct xgpu_stream_dynamic_state dynamic;
@@ -934,7 +934,7 @@ static int decode_record(struct host_render_decoder *decoder, const unsigned cha
 		const unsigned char *end = start + size;
 		int stage;
 
-		for (stage = 0; stage < 4; stage++)
+		for (stage = 0; stage < XGPU_STREAM_TEXTURE_STAGES; stage++)
 		{
 			struct host_render_texture_stage *to = &decoder->state.stages[stage];
 			uint32_t level_bytes;

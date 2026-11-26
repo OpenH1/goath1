@@ -151,7 +151,9 @@ struct host_render_backend
 	screenshot is read with read_target */
 	int (*read_target_halves)(void *context, uint32_t target, uint32_t width, uint32_t height, uint16_t **halves);
 
-	void (*set_textures)(void *context, const struct host_render_texture_stage stages[4]);
+	/* (the four stages, then the material maps': XGPU_STREAM_TEXTURE_STAGES,
+	which a backend may leave out) */
+	void (*set_textures)(void *context, const struct host_render_texture_stage stages[XGPU_STREAM_TEXTURE_STAGES]);
 
 	void (*set_constants)(void *context, const struct xgpu_stream_constants *record);
 	void (*vertex_program)(void *context, const struct xgpu_stream_vertex_program *record);

@@ -4572,6 +4572,71 @@ static BOOL cutout_stencil_repeatable(void)
 
 static BOOL per_pixel_lighting(void);
 
+/* ---------- a model's material maps (xgpu.h's XGPU_TEXTURE_MODES_MATERIAL)
+
+port/linux/game/mod_materials.c tells them as a shader_model's part is
+drawn, its base map in texture 0: the draws with that texture 0 lit for
+each pixel with the enhanced dynamic lights sample them (pipeline_derived
+keeps the key's bits only there), until it says again. Sent to the backend
+as they change (material_send), past the stages. */
+static struct
+{
+	unsigned int normal, orm;
+	/* texture 0 as it was told them */
+	const D3DBaseTexture *base;
+	/* sent: the images the backend has, and its sampler */
+	BOOL sent;
+	unsigned int sent_normal, sent_orm;
+	struct xgpu_sampler sent_sampler;
+} material;
+
+void halo_model_material_maps(unsigned int normal_map, unsigned int orm_map)
+{
+	material.normal = normal_map;
+	material.orm = orm_map;
+	material.base = normal_map || orm_map ? device.textures[0] : NULL;
+	/* (none: the backend lets go of the images it had, which may be
+	freed: mod_materials.c) */
+	if (!normal_map && !orm_map && material.sent && (material.sent_normal || material.sent_orm))
+	{
+		memset(&material.sent_sampler, 0, sizeof(material.sent_sampler));
+		xgpu_backend_set_material(&material.sent_sampler, 0, 0);
+		material.sent_normal = material.sent_orm = 0;
+	}
+}
+
+/* the material bits of the draw's pixel key (before pipeline_derived): its
+maps, where texture 0 is the one they were told with */
+static DWORD material_modes(void)
+{
+	if (!material.base || device.textures[0] != material.base || !device.textures[0]->Data)
+		return 0;
+	return (material.normal ? XGPU_TEXTURE_MODES_NORMAL_MAP : 0) | (material.orm ? XGPU_TEXTURE_MODES_ORM_MAP : 0);
+}
+
+/* the maps to the backend where they changed: filtered as the base map is
+(texture 0's state), repeated */
+static void material_send(void)
+{
+	struct xgpu_sampler sampler;
+
+	if (!material_modes())
+		return;
+	sampler_describe(0, TRUE, FALSE, FALSE, &sampler);
+	sampler.address[0] = sampler.address[1] = sampler.address[2] = XGPU_ADDRESS_WRAP;
+	sampler.first_level = 0;
+	if (sampler.mip == XGPU_FILTER_NONE)
+		sampler.mip = XGPU_FILTER_LINEAR;
+	if (material.sent && material.sent_normal == material.normal && material.sent_orm == material.orm &&
+		!memcmp(&sampler, &material.sent_sampler, sizeof(sampler)))
+		return;
+	xgpu_backend_set_material(&sampler, material.normal, material.orm);
+	material.sent = TRUE;
+	material.sent_normal = material.normal;
+	material.sent_orm = material.orm;
+	material.sent_sampler = sampler;
+}
+
 /* the texture stage of the draw's alpha, where it is drawn so; -1 */
 static int cutout_stage(void)
 {
@@ -6040,6 +6105,10 @@ static void pipeline_derived(const struct xgpu_draw_derived *derived, struct xgp
 	key->pixel.ambient_occlusion = derived->ambient_occlusion;
 	key->pixel.texture_modes = (key->pixel.texture_modes & ~XGPU_TEXTURE_MODES_LIGHTMAP_CUBIC) |
 		(derived->lightmap_cubic ? XGPU_TEXTURE_MODES_LIGHTMAP_CUBIC : 0);
+	/* (a model's material maps: only lit for each pixel with the enhanced
+	dynamic lights, material_modes) */
+	if (!derived->per_pixel_lighting || derived->dynamic_lights != XGPU_DYNAMIC_LIGHTS_MODEL)
+		key->pixel.texture_modes &= ~XGPU_TEXTURE_MODES_MATERIAL;
 }
 
 /* a draw as no setting changes it (key: before xgpu_draw_derive) to the
@@ -6243,6 +6312,8 @@ struct retained_context
 	int32_t sampled_view, screen_view;
 	struct draw_inputs inputs;
 	uint32_t cutout_depth, lights_unreached, model_unreached, per_pixel, lights_active, world_ao, hud_meter;
+	/* (a model's material maps: material_modes, and their images) */
+	uint32_t material_modes, material_normal, material_orm;
 	int32_t hdr_mode, hdr_boost;
 	/* display.temporal_aa's LOD bias (draw_lod_bias: its samplers') */
 	float lod_bias;
@@ -6544,6 +6615,12 @@ static BOOL retained_context_make(struct retained_context *context, struct verte
 	RETAINED_TAKE(world_ao, flag);
 	flag = xgpu_texture_hud_meter() != 0;
 	RETAINED_TAKE(hud_meter, flag);
+	number = material_modes();
+	RETAINED_TAKE(material_modes, (uint32_t)number);
+	number = number ? material.normal : 0;
+	RETAINED_TAKE(material_normal, (uint32_t)number);
+	number = material_modes() ? material.orm : 0;
+	RETAINED_TAKE(material_orm, (uint32_t)number);
 	number = hdr.mode;
 	RETAINED_TAKE(hdr_mode, number);
 	number = hdr.boost;
@@ -6894,6 +6971,8 @@ static BOOL prepare_draw(BOOL immediate, unsigned long primitive)
 				skip++;
 		}
 	}
+	/* (a model's material maps, where the draw may sample them) */
+	material_send();
 	/* (debug.retained_draws: prepared as an earlier draw was) */
 	{
 		int found = retained_draw_find(program, immediate);
@@ -6971,6 +7050,9 @@ static BOOL prepare_draw(BOOL immediate, unsigned long primitive)
 	pixels, soft, its fade its depth test: soft_effect_key) */
 	if (key.vr_effect == 1 && inputs.soft_group == 2 && xgpu_effect_untested(key.texture_modes, key.sampler_type[0]))
 		pipeline_key.depth_test = 0;
+	/* (a model's material maps: kept by pipeline_derived where they are
+	drawn; not the manifest's, which records the draw as the map has it) */
+	pipeline_key.pixel.texture_modes |= material_modes();
 	/* ...and what the settings make of it as they are now: its targets'
 	samples and format, its alpha test (a sample mask, where the backend
 	has one), its tag (display.hdr: from its blend), and its lighting
