@@ -143,6 +143,7 @@ symbols in this file:
 #include "mcc_ui_teams.h" /* port: port/linux/game/mcc_ui_teams.c */
 #include "server_team_switch.h" /* port: port/linux/game/server_team_switch.c */
 #include "royale.h" /* port: port/linux/game/royale.c */
+#include "vehicle_hijack.h" /* port: port/linux/game/vehicle_hijack.c */
 
 /* network_game_globals.c's */
 boolean network_game_distributed_client(void);
@@ -1473,6 +1474,7 @@ void object_cause_damage(
 	boolean damage_was_modified;
 	boolean parent_takes_body_damage;
 	boolean material_effect_recorded;
+	boolean hatch_blow;
 	short damaged_object_count;
 	real total_damage;
 	struct object_datum *current_object;
@@ -1566,6 +1568,12 @@ void object_cause_damage(
 		total_damage *= game_difficulty_get_value(_game_difficulty_value_enemy_damage);
 		damage_was_modified = TRUE;
 	}
+
+	/* port: a hijacker's blow on the Scorpion's hatch, a share of its
+	driver's whole vitality, and never a blow from behind that kills
+	outright (port/linux/game/vehicle_hijack.c); nothing while hijacking is
+	off */
+	hatch_blow = vehicle_hijack_hatch_blow(object_index, damage, &total_damage);
 
 	damaged_object_count = 0;
 	material_effect_recorded = FALSE;
@@ -1818,6 +1826,7 @@ void object_cause_damage(
 
 				if (damage_definition->side_effect ==
 						_damage_side_effect_lethal_to_the_unsuspecting &&
+					!hatch_blow &&
 					unit_unsuspecting(current_object_index, &damage->epicenter) &&
 					!TEST_FLAG(
 						current_object->object.damage_flags,
