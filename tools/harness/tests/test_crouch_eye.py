@@ -1,7 +1,8 @@
 """The player's own view on foot between the steps (render_interpolation.c's render_interpolation_newest_camera): its
 eye moved on by its crouch's change for the time since the newest step (bipeds.c's biped_eye_rise_ahead), so a frame
 a fraction of a tick after a step draws the eye that fraction of the way to the next tick's, as the crouch changes it
-(biped_physics_prepare's own lines), and never past where it stops."""
+(biped_physics_prepare's own lines), and never past where it stops; in the air, the body lifted (or lowered) with it by
+the pill's change, a tick's crouch_velocity a tick."""
 import sys
 from pathlib import Path
 
@@ -10,10 +11,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from harness import CHECK_FAILED, build, enum_with, function, mutated, read, run  # noqa: E402
 
-CASES = ["crouching", "standing", "reversed", "still"]
+CASES = ["crouching", "standing", "reversed", "still", "airborne_crouching", "airborne_standing"]
 CONTROLS = [
     # the eye moved the other way
-    ("return (biped->biped.crouch - ahead) *", "return (ahead - biped->biped.crouch) *", "crouching"),
+    ("rise = (biped->biped.crouch - ahead) *", "rise = (ahead - biped->biped.crouch) *", "crouching"),
     # on past where the crouch stops
     ("ahead = MIN(biped->biped.crouch + change, 1.f);", "ahead = biped->biped.crouch + change;", "crouching"),
     # down whatever the seat
@@ -21,6 +22,9 @@ CONTROLS = [
     # the whole eye's height, not the crouch's part of it
     ("(definition->biped.standing_camera_height - definition->biped.crouching_camera_height)",
      "definition->biped.standing_camera_height", "crouching"),
+    # in the air, the body's lift left out (#1245)
+    ("if (TEST_FLAG(biped->biped.flags, _biped_airborne_bit))", "if (0)", "airborne_crouching"),
+    ("if (TEST_FLAG(biped->biped.flags, _biped_airborne_bit))", "if (0)", "airborne_standing"),
 ]
 
 
@@ -42,8 +46,9 @@ def generated(fault=None):
     if fault:
         rise = mutated(rise, *fault)
     text = "\n".join([
-        "static void crouch_tick(struct biped_datum *biped, struct biped_definition *definition)\n{\n"
-        "\tstruct { real crouch_velocity; } physics;\n\n" + crouch_block(code) + "\n\t(void)physics;\n}\n",
+        "static real crouch_tick(struct biped_datum *biped, struct biped_definition *definition)\n{\n"
+        "\tstruct { real crouch_velocity; } physics;\n\n\tphysics.crouch_velocity = 0.f;\n" + crouch_block(code) +
+        "\n\treturn physics.crouch_velocity;\n}\n",
         rise,
     ])
     return (("config.inc", config), ("under_test.inc", text))

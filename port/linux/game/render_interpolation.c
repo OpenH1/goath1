@@ -3218,8 +3218,8 @@ were) stands where the newest step left the unit, not where the blend of the
 last two ticks has it a tick behind: the observer (taken after the frame's
 steps, the open tick's sub-steps too) moved on by the unit's own velocity (and
 the lift's carry, render_interpolation_rider_carry) for the time since that
-step, and its eye by its crouch's change
-(bipeds.c's biped_eye_rise_ahead), so that it moves every frame at 30 as at
+step, and its eye by its crouch's change (in the air, the body's lift with
+it: bipeds.c's biped_eye_rise_ahead), so that it moves every frame at 30 as at
 60. The first-person weapon, posed from it, goes with it (render_interpolation_
 first_person). What the netcode glides (correction) is kept. Everything else
 is drawn as before.
