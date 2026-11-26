@@ -1657,7 +1657,7 @@ static const struct config_setting config_settings[] =
 		"many times as large, after co-op's EXTRA ENEMIES grew it (the two\n"
 		"multiply; on Legendary half as many of these extras); \"off\": the\n"
 		"original's. Read as a level begins; a loaded save keeps the size it was\n"
-		"played at. BIGGER BATTLES in Settings > Interface, BATTLE in the co-op\n"
+		"played at. Settings > Interface > Campaign, and BATTLE in the co-op\n"
 		"host's lobby." },
 	{ "game.spartan_link", _config_boolean, "true", "HALO_GAME_SPARTAN_LINK", _environment_value, _platform_all,
 		"Hosting a team game: whether its players may show their Spartan link\n"
