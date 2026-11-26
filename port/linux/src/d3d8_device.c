@@ -136,7 +136,7 @@ static BOOL temporal_upscaling(void)
 display.anti_aliasing, off unless it is set: the Xbox drew without any.
 "fxaa" and "smaa" are passes over each window's 3D view before the HUD and
 menus are drawn over it (halo_screen_anti_alias, xgpu_vulkan_post.c and
-xgpu_metal_post.c); "msaa2x" to "msaa8x" draw the back buffer and its depth
+xgpu_metal_post.c); "msaa2x" and "msaa4x" draw the back buffer and its depth
 buffer with that many samples a pixel (render_target_multisample). Either
 combines with display.supersampling (screen_mode_choose), which draws the
 screen's targets at more pixels than the display has: the pass and the
@@ -184,8 +184,9 @@ static const struct
 	{ "ssaa2x", _anti_aliasing_off, 0, 1.0f },
 #endif
 	{ "msaa2x", _anti_aliasing_msaa, 2, 1.0f },
+	/* (an older version's "msaa8x" is read as "msaa4x": port_config.c's
+	config_renamed_words) */
 	{ "msaa4x", _anti_aliasing_msaa, 4, 1.0f },
-	{ "msaa8x", _anti_aliasing_msaa, 8, 1.0f },
 };
 
 #define NUMBER_OF_ANTI_ALIASING_VALUES ((int)(sizeof(anti_aliasing_values) / sizeof(anti_aliasing_values[0])))

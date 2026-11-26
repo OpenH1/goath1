@@ -750,7 +750,13 @@ DRAW_DISTANCES = Slider(1024, 10000, 1, 1024, 10000, whole=True,
 RENDER_RESOLUTIONS = [("XBOX 640X480", "original")] + \
     [(f"{round(factor * 100)}%", f"{factor:g}") for factor in (0.25, 0.5, 0.75)] + [("FULL", "1")] + \
     [(f"{round(factor * 100)}%", f"{factor:g}") for factor in (1.25, 1.5, 1.75, 2)]
-ANTI_ALIASING_HELP = "Smooths jagged edges. FXAA and SMAA cost little; {} sharper and {} more of the graphics card."
+# (Best: a computer's SMAA, as good as MSAA's samples at a fraction of their
+# cost there, and its Upscaler's better still; MSAA 2x on a phone's tile GPU,
+# and in the headset, whose eyes have no pass over the view: port_config.c's
+# GRAPHICS_ANTI_ALIASING)
+ANTI_ALIASING_HELP = ("Smooths jagged edges. On a computer SMAA looks as good as MSAA for much less of the graphics "
+                      "card, and an Upscaler (Frame Rate & Sync) can look better still. MSAA is best on phones and "
+                      "in VR.")
 # (STRONG & WORSE: its row's spinner's 140 units, STRONG AND WORSE did not fit)
 STREAMER_LEVELS = [("OFF", "off"), ("SEVERE", "severe"), ("STRONG & WORSE", "strong"), ("MILD & WORSE", "mild")]
 # (display.subtitles_language: MCC's eleven, and the game's; short for the
@@ -1352,14 +1358,19 @@ PAGES = {
              "resolution. Below 100% draws fewer pixels, scaled up: a steadier frame rate. Above 100% draws more, "
              "scaled down. Xbox draws 640x480. The HUD and menus are always sharp.",
              "computer", "render_resolution_metalfx"),
+            # (the best choice marked: a computer's SMAA; MSAA 2x on the
+            # phones and in the headset, a row of its own in the same place:
+            # SETTINGS_ROW_WHEN; ANTI_ALIASING_HELP)
             ("ANTI-ALIASING", "display.anti_aliasing",
-             [("OFF", "off"), ("FXAA", "fxaa"), ("SMAA", "smaa"), ("MSAA 2X", "msaa2x"), ("MSAA 4X", "msaa4x"),
-              ("MSAA 8X", "msaa8x")],
-             ANTI_ALIASING_HELP.format("MSAA is", "costs"), "desktop"),
+             [("OFF", "off"), ("FXAA", "fxaa"), ("SMAA (BEST)", "smaa"), ("MSAA 2X", "msaa2x"), ("MSAA 4X", "msaa4x")],
+             ANTI_ALIASING_HELP, "desktop"),
+            ("ANTI-ALIASING", "display.anti_aliasing",
+             [("OFF", "off"), ("FXAA", "fxaa"), ("SMAA", "smaa"), ("MSAA 2X (BEST)", "msaa2x"), ("MSAA 4X", "msaa4x")],
+             ANTI_ALIASING_HELP, "desktop", "anti_aliasing_msaa"),
             # (Android's Vulkan draws SMAA, but no supersampling)
             ("ANTI-ALIASING", "display.anti_aliasing",
-             [("OFF", "off"), ("FXAA", "fxaa"), ("SMAA", "smaa"), ("MSAA 2X", "msaa2x"), ("MSAA 4X", "msaa4x")],
-             ANTI_ALIASING_HELP.format("MSAA is", "costs"), "android", "anti_aliasing_android"),
+             [("OFF", "off"), ("FXAA", "fxaa"), ("SMAA", "smaa"), ("MSAA 2X (BEST)", "msaa2x"), ("MSAA 4X", "msaa4x")],
+             ANTI_ALIASING_HELP, "android", "anti_aliasing_android"),
             ("TEXTURE FILTERING", "display.anisotropic_filtering",
              [("OFF", "0"), ("2X", "2"), ("4X", "4"), ("8X", "8"), ("16X", "16")],
              "Keeps floors and walls sharp into the distance, at a small cost. Off looks as the Xbox did: surfaces "
@@ -2299,7 +2310,7 @@ SETTINGS_SEARCH_WORDS = {
     "framerate": ["frame_rate_sync", "max_fps", "menu_max_fps", "perf_overlay"],
     "frametime": ["perf_overlay"], "gpu": ["perf_overlay"], "stats": ["perf_overlay"],
     "gsync": ["vrr", "vrr_cap_margin"], "freesync": ["vrr", "vrr_cap_margin"], "vrr": ["vrr"],
-    "aa": ["anti_aliasing", "anti_aliasing_android"],
+    "aa": ["anti_aliasing", "anti_aliasing_msaa", "anti_aliasing_android"],
     "shadows": ["shadow_resolution", "shadows"],
     "ao": ["ambient_occlusion"], "ssao": ["ambient_occlusion"],
     "anisotropic": ["anisotropic_filtering"], "af": ["anisotropic_filtering"],
@@ -2809,7 +2820,7 @@ def _settings_platform(rows: list, start: int):
 # the rows in the place of the row before them, each platform having one of
 # them at most, or the model's conditions showing one (SETTINGS_ROW_WHEN):
 # Window Size in Resolution's, Android's anti-aliasing in the desktop's
-SETTINGS_SAME_PLACE = {"window_size", "render_resolution_metalfx", "anti_aliasing_android", "temporal_aa_dlss", "temporal_aa_metalfx", "temporal_aa_dlss_get",
+SETTINGS_SAME_PLACE = {"window_size", "render_resolution_metalfx", "anti_aliasing_msaa", "anti_aliasing_android", "temporal_aa_dlss", "temporal_aa_metalfx", "temporal_aa_dlss_get",
 "touch_gyro_sensitivity",
                        "touch_gyro_vertical_sensitivity", "touch_gyro_smoothing"}
 # the rows hidden while VR Setup's row is shown (the game in the headset),
@@ -2850,6 +2861,9 @@ SETTINGS_ROW_WHEN = {
     # MetalFX, temporal_metalfx; not in the headset)
     "temporal_aa": "temporal_upscale+!temporal_dlss+!dlss_addon_offer+!vr", "temporal_aa_dlss": "temporal_dlss+!vr",
     "temporal_aa_metalfx": "temporal_metalfx+!vr",
+    # (display.anti_aliasing's best choice marked: a computer's SMAA, the
+    # phone's (iOS's) and the headset's MSAA 2x; Android's row its own)
+    "anti_aliasing": "computer+!vr", "anti_aliasing_msaa": "!computer vr",
     # (the DLSS add-on's download offered in the Upscaler row, and the add-on
     # on Mods' page once it is installed: settings_condition_term's
     # dlss_addon_offer and dlss_addon_installed)
@@ -2896,7 +2910,7 @@ SETTINGS_ROW_ENABLED = {
     # (display.temporal_aa's AMD FSR, NVIDIA DLSS or MetalFX antialiases in its place,
     # its row on Frame Rate & Sync: d3d8_device.c's anti_aliasing_read,
     # settings_condition_term's temporal_on)
-    "anti_aliasing": "!temporal_on", "anti_aliasing_android": "!temporal_on",
+    "anti_aliasing": "!temporal_on", "anti_aliasing_msaa": "!temporal_on", "anti_aliasing_android": "!temporal_on",
     # (the subtitles: MCC's install found, its pack's; the language while
     # they are on: subtitles.c's subtitles_available)
     "subtitles": "mcc_subtitles", "subtitles_language": "mcc_subtitles+subtitles=true",
@@ -3764,7 +3778,8 @@ _FOV_PICTURES = (["stills/fov_default.png"] * 4 + ["stills/fov_100.png"] * 5 + [
 SETTINGS_VALUE_PICTURES = {
     "fov": _FOV_PICTURES,
     "viewmodel_fov": None,
-    "anti_aliasing": ["stills/aa_off.png", "stills/aa_smaa.png", "stills/aa_smaa.png"] + ["stills/aa_msaa.png"] * 3,
+    "anti_aliasing": ["stills/aa_off.png", "stills/aa_smaa.png", "stills/aa_smaa.png"] + ["stills/aa_msaa.png"] * 2,
+    "anti_aliasing_msaa": ["stills/aa_off.png", "stills/aa_smaa.png", "stills/aa_smaa.png"] + ["stills/aa_msaa.png"] * 2,
     "anti_aliasing_android": ["stills/aa_off.png", "stills/aa_smaa.png", "stills/aa_smaa.png",
                               "stills/aa_msaa.png", "stills/aa_msaa.png"],
     "render_resolution": ["stills/render_xbox.png", "stills/aa_smaa.png"] + ["stills/aa_msaa.png"] * 4,
