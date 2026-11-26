@@ -12,7 +12,14 @@ of the same kind are. Classic lights draw none of them.
 - Glowing parts of objects with no light there: the multiplayer Ghost's
   cockpit and running lights (the campaign Ghost's lights, which its tag
   lacks, made by the same function), the Wraith's and the Covenant
-  dropship's hover thrusters, a burning lifepod's fire.
+  dropship's hover thrusters, a burning lifepod's fire, the powerups
+  (overshield and active camouflage) and the teleporters' shields where
+  they stand, and the assault rifle's ammo counter in its holder's hands.
+- A flamethrower's fire: one light for each firer's flames, amid them,
+  not one a flame (its flames have none).
+
+(The needler's crystals and the Hunter's arm have their tags' own lights,
+lit as their lens flares are: object_lights.c's light_port_flare_lights.)
 - Effects with no light part: a short flash as one starts (the Wraith
   mortar's and the fuel rods' explosions, the Covenant vehicles' and
   turrets' shots, a shield failing, a needle bursting, lightning), or a
@@ -40,6 +47,8 @@ the game simulates, nothing sent between machines.
 #include "game/game.h"
 #include "tag_files/tag_groups.h"
 #include "units/units.h"
+#include "items/weapons.h"
+#include "items/weapon_definitions.h"
 #include "light_sources.h"
 
 #include <math.h>
@@ -72,10 +81,27 @@ enum
 	_light_source_burn,
 	/* a flash as it starts, fading out over its time */
 	_light_source_flash,
+	/* a light while it lasts, breathing slowly as a powerup's glow does */
+	_light_source_pulse,
+	/* a held weapon's display, lit by its rounds loaded: only the weapon
+	in its holder's hand */
+	_light_source_magazine,
+	/* one light for each firer's projectiles of the row, amid them,
+	flickering as a fire does */
+	_light_source_stream,
+};
+
+/* the firers whose flames light at once (_light_source_stream), and how
+many of one's flames light it fully */
+enum
+{
+	LIGHT_SOURCES_STREAMS = 8,
+	LIGHT_SOURCES_STREAM_FULL = 6,
 };
 
 /* an object's light: on a marker of it (none: its origin), by an outgoing
-function of it (NONE: whole) */
+function of it (NONE: whole), moved from the marker along its forward,
+left and up (world units; from the origin only up the object's up) */
 struct light_source_object
 {
 	unsigned long group;
@@ -85,6 +111,7 @@ struct light_source_object
 	short function_index;
 	real_rgb_color color;
 	real radius;
+	real_vector3d offset;
 };
 
 /* an effect's light: its time a flash's, seconds */
@@ -100,7 +127,12 @@ struct light_source_effect
 /* (colors borrowed: the needler's "needle flare", 0.94 0.44 1; the plasma
 grenade's light, 0.5 1 1; the assault rifle's muzzle flash, 0.96 0.91 0.69;
 a30's beam emitter, 0.45 0.87 0.99; the campaign Ghost's cockpit, 0.65 0 1,
-and running lights, 0 1 1; the frag grenade's explosion, 1 0.81 0.36) */
+and running lights, 0 1 1; the frag grenade's explosion, 1 0.81 0.36; the
+teleporter shield's shader's emitted light, 0.06 0.82 0.02, made full; the
+burning effects' fire, below. Not borrowed: the powerups', as their spheres
+look, the overshield's red and the active camouflage's blue, and the ammo
+counter's, its display's cyan. The counter's place is estimated: on top of
+the rifle, behind its muzzle by about its barrel's length) */
 static struct light_source_object const light_source_objects[] =
 {
 	{ 'proj', "weapons\\needler\\needle", NULL, _light_source_steady, NONE, { 0.80f, 0.37f, 0.85f }, 1.0f },
@@ -117,6 +149,16 @@ static struct light_source_object const light_source_objects[] =
 	{ 'vehi', "vehicles\\lifepod_entry\\lifepod_entry", "burn", _light_source_burn, NONE, { 1.00f, 0.81f, 0.36f }, 4.0f },
 	{ 'scen', "scenery\\vehicles\\lifepod_atmosphere_entry\\lifepod_atmosphere_entry", "burn", _light_source_burn,
 		NONE, { 1.00f, 0.81f, 0.36f }, 4.0f },
+	/* the powerups and the teleporters, a pool about them */
+	{ 'eqip', "powerups\\over shield", NULL, _light_source_pulse, NONE, { 1.00f, 0.25f, 0.30f }, 2.0f },
+	{ 'eqip', "powerups\\active camouflage", NULL, _light_source_pulse, NONE, { 0.30f, 0.50f, 1.00f }, 2.0f },
+	{ 'scen', "scenery\\teleporter_shield\\teleporter", NULL, _light_source_pulse, NONE, { 0.07f, 1.00f, 0.02f },
+		3.0f, { 0.0f, 0.0f, 1.0f } },
+	/* the assault rifle's ammo counter, about the hands */
+	{ 'weap', "weapons\\assault rifle\\assault rifle", "primary trigger", _light_source_magazine, NONE,
+		{ 0.35f, 0.80f, 1.00f }, 0.35f, { -0.16f, 0.00f, 0.04f } },
+	/* a flamethrower's fire, as a fire's */
+	{ 'proj', "weapons\\flamethrower\\flame", NULL, _light_source_stream, NONE, { 1.00f, 0.60f, 0.25f }, 4.0f },
 };
 
 /* (not the emitters' fires, burning_flame's and plasma_flame's, whose
@@ -203,6 +245,16 @@ static struct
 	/* each row of light_source_objects' tag (NONE: the map has none) */
 	long object_definitions[NUMBEROF(light_source_objects)];
 	struct light_source_flash flashes[LIGHT_SOURCES_FLASHES];
+	/* the frame's firers' flames (_light_source_stream): whose, their row,
+	how many, and where all together */
+	struct
+	{
+		long owner_index;
+		short row;
+		short count;
+		real_point3d sum;
+	} streams[LIGHT_SOURCES_STREAMS];
+	short stream_count;
 	struct light_source candidates[LIGHT_SOURCES_MAXIMUM * 4];
 	short candidate_count;
 } light_sources;
@@ -254,6 +306,27 @@ static real light_sources_flicker(
 	real wave = 0.6f * sinf(time * 13.0f + phase) + 0.4f * sinf(time * 31.0f + 2.3f * phase);
 
 	return 0.8f + 0.2f * wave;
+}
+
+/* a powerup's breathing, 0.8 to 1, at each light's own phase */
+static real light_sources_pulse(
+	real time,
+	unsigned long seed)
+{
+	real phase = (real)(seed % 628) * 0.01f;
+
+	return 0.9f + 0.1f * sinf(time * 3.0f + phase);
+}
+
+/* how strong a display lit by its rounds is: dim when empty (an empty
+counter's "00" is lit too), whole when full */
+static real light_sources_magazine_strength(
+	short loaded,
+	short maximum)
+{
+	real fraction = maximum > 0 ? (real)loaded / (real)maximum : 0.0f;
+
+	return 0.35f + 0.65f * PIN(fraction, 0.0f, 1.0f);
 }
 
 /* a light kept as a candidate, scored as dynamic_lights_rank scores the
@@ -396,19 +469,115 @@ static void light_sources_effects(
 	}
 }
 
+/* a firer's flame of a stream row (_light_source_stream), counted with
+its others (none past LIGHT_SOURCES_STREAMS firers) */
+static void light_sources_stream_add(
+	long owner_index,
+	short row,
+	real_point3d const *position)
+{
+	short index;
+
+	for (index = 0; index < light_sources.stream_count; index++)
+	{
+		if (light_sources.streams[index].owner_index == owner_index && light_sources.streams[index].row == row)
+			break;
+	}
+	if (index == light_sources.stream_count)
+	{
+		if (light_sources.stream_count >= LIGHT_SOURCES_STREAMS)
+			return;
+		light_sources.stream_count++;
+		light_sources.streams[index].owner_index = owner_index;
+		light_sources.streams[index].row = row;
+		light_sources.streams[index].count = 0;
+		light_sources.streams[index].sum.x = 0.0f;
+		light_sources.streams[index].sum.y = 0.0f;
+		light_sources.streams[index].sum.z = 0.0f;
+	}
+	light_sources.streams[index].count++;
+	light_sources.streams[index].sum.x += position->x;
+	light_sources.streams[index].sum.y += position->y;
+	light_sources.streams[index].sum.z += position->z;
+}
+
+/* each firer's light: amid its flames, as strong as LIGHT_SOURCES_STREAM_FULL
+of them make it, flickering; the frame's firers then forgotten */
+static void light_sources_streams(
+	real time)
+{
+	short index;
+
+	for (index = 0; index < light_sources.stream_count; index++)
+	{
+		struct light_source_object const *entry = &light_source_objects[light_sources.streams[index].row];
+		real count = (real)light_sources.streams[index].count;
+		real_point3d center;
+
+		center.x = light_sources.streams[index].sum.x / count;
+		center.y = light_sources.streams[index].sum.y / count;
+		center.z = light_sources.streams[index].sum.z / count;
+		light_sources_add(&center, entry->radius, &entry->color,
+			MIN(count / (real)LIGHT_SOURCES_STREAM_FULL, 1.0f) *
+				light_sources_flicker(time, (unsigned long)light_sources.streams[index].owner_index),
+			FALSE);
+	}
+	light_sources.stream_count = 0;
+}
+
+/* a held weapon's display light (_light_source_magazine): the weapon in
+its living, seen holder's hand (none holstered or on the ground), by its
+rounds loaded, faded by its holder's camouflage */
+static real light_sources_held_strength(
+	long weapon_index,
+	struct object_datum const *object)
+{
+	struct weapon_datum *weapon = weapon_try_and_get(weapon_index);
+	struct unit_datum *holder;
+	struct weapon_definition *definition;
+	struct weapon_magazine_definition const *magazine;
+	real strength;
+
+	if (!weapon || object->object.parent_object_index == NONE)
+		return 0.0f;
+	holder = unit_try_and_get(object->object.parent_object_index);
+	if (!holder || TEST_FLAG(holder->object.flags, _object_invisible_bit) ||
+		!TEST_FLAG(holder->object.flags, _object_connected_to_map_bit) || !(holder->object.body_vitality > 0.0f))
+	{
+		return 0.0f;
+	}
+	if (holder->unit.current_weapon_index < 0 || holder->unit.current_weapon_index >= MAXIMUM_WEAPONS_PER_UNIT ||
+		unit_inventory_get_weapon(object->object.parent_object_index, holder->unit.current_weapon_index) !=
+			weapon_index)
+	{
+		return 0.0f;
+	}
+	definition = weapon_definition_get(object->definition_index);
+	if (definition->weapon.magazines.count < 1)
+		return 0.0f;
+	magazine = TAG_BLOCK_GET_ELEMENT(&definition->weapon.magazines, 0, struct weapon_magazine_definition);
+	strength = light_sources_magazine_strength(weapon->weapon.magazines[0].rounds_loaded,
+		magazine->rounds_loaded_maximum);
+	return strength * (1.0f - PIN(holder->unit.active_camouflage, 0.0f, 1.0f));
+}
+
 static void light_sources_objects(
 	real time)
 {
 	struct object_iterator iterator;
 	struct object_datum *object;
 
-	object_iterator_new(&iterator, _object_mask_projectile | _object_mask_vehicle | _object_mask_scenery, 0);
+	object_iterator_new(&iterator, _object_mask_projectile | _object_mask_vehicle | _object_mask_scenery |
+		_object_mask_equipment | _object_mask_weapon, 0);
 	while ((object = object_iterator_next(&iterator)) != NULL)
 	{
+		boolean held = object->object.type == _object_type_weapon && object->object.parent_object_index != NONE;
 		short row;
 
+		/* (a held weapon is connected through its holder:
+		light_sources_held_strength) */
 		if (TEST_FLAG(object->object.flags, _object_invisible_bit) ||
-			!TEST_FLAG(object->object.flags, _object_connected_to_map_bit))
+			(!TEST_FLAG(object->object.flags, _object_connected_to_map_bit) && !held))
 		{
 			continue;
 		}
@@ -427,10 +596,22 @@ static void light_sources_objects(
 				continue;
 			if (TEST_FLAG(_object_mask_unit, object->object.type) && !(object->object.body_vitality > 0.0f))
 				continue;
+			if (entry->kind == _light_source_stream)
+			{
+				render_interpolation_object_origin(iterator.index, &position);
+				light_sources_stream_add(object->object.owner_object_index, row, &position);
+				continue;
+			}
+			if (entry->kind == _light_source_magazine)
+				strength = light_sources_held_strength(iterator.index, object);
+			else if (held)
+				continue;
 			if (entry->function_index != NONE)
 				strength = render_interpolation_object_function_values(iterator.index)[entry->function_index];
 			if (entry->kind == _light_source_burn)
 				strength *= light_sources_flicker(time, (unsigned long)iterator.index + row);
+			if (entry->kind == _light_source_pulse)
+				strength *= light_sources_pulse(time, (unsigned long)iterator.index + row);
 			if (TEST_FLAG(_object_mask_unit, object->object.type) &&
 				unit_get(iterator.index)->unit.active_camouflage > 0.0f)
 			{
@@ -450,12 +631,29 @@ static void light_sources_objects(
 				as one; the Ghost's three running lights all lit) */
 				for (index = 0; index < count; index++)
 				{
-					light_sources_add(&markers[index].matrix.position, entry->radius, &entry->color,
+					real_matrix4x3 const *matrix = &markers[index].matrix;
+
+					position.x = matrix->position.x + entry->offset.i * matrix->forward.i +
+						entry->offset.j * matrix->left.i + entry->offset.k * matrix->up.i;
+					position.y = matrix->position.y + entry->offset.i * matrix->forward.j +
+						entry->offset.j * matrix->left.j + entry->offset.k * matrix->up.j;
+					position.z = matrix->position.z + entry->offset.i * matrix->forward.k +
+						entry->offset.j * matrix->left.k + entry->offset.k * matrix->up.k;
+					/* (a local player's weapon where its first-person
+					weapon is drawn) */
+					if (held)
+						dynamic_lights_first_person(iterator.index, &position);
+					light_sources_add(&position, entry->radius, &entry->color,
 						strength * dynamic_lights_share(count), FALSE);
 				}
 				continue;
 			}
 			render_interpolation_object_origin(iterator.index, &position);
+			/* (up its own up: an origin on the floor is in no cluster,
+			and lights nothing: a teleporter's) */
+			position.x += entry->offset.k * object->object.up.i;
+			position.y += entry->offset.k * object->object.up.j;
+			position.z += entry->offset.k * object->object.up.k;
 			light_sources_add(&position, entry->radius, &entry->color, strength,
 				object->object.type == _object_type_projectile &&
 					object_definition_get(object->definition_index)->object.model.index == NONE);
@@ -494,7 +692,10 @@ short light_sources_gather(
 	if (light_sources.any_effects)
 		light_sources_effects(time);
 	if (light_sources.any_objects)
+	{
 		light_sources_objects(time);
+		light_sources_streams(time);
+	}
 	if (light_sources.candidate_count > 1)
 		qsort(light_sources.candidates, light_sources.candidate_count, sizeof(*light_sources.candidates),
 			light_sources_compare);
