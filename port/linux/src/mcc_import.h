@@ -42,6 +42,10 @@ const char *mcc_import_report(void);
 /* the MCC install's folder found (paths.mcc, else Steam's libraries): 1 and
 its host path, or 0 */
 int mcc_import_install(char *path, unsigned long size);
+/* the folder picker, for an install no Steam library has: the player picks
+MCC's pak (MCC/Content/Paks/MCC-WindowsNoEditor.pak) and its install becomes
+paths.mcc; 0 if none (or not one) was picked */
+int mcc_import_choose(void);
 
 /* Begins the import on a thread of its own from the Xbox maps folder
 maps_folder ("d:\maps\": cache_files_map_directory) and the install; `only`
