@@ -21,6 +21,7 @@ list, over the stock pixels it names.
 
 #include "mcc_import.h"
 #include "mcc_import_bake.h"
+#include "mcc_import_voices.h"
 #include "platform.h"
 #include "port_config.h"
 #include "posix.h"
@@ -36,6 +37,8 @@ list, over the stock pixels it names.
 
 int mkdir(const char *path, unsigned int mode);
 int halo_server_mode(void);
+/* (sdl_platform.c) */
+int halo_mcc_choose_pak(char *path, int size);
 
 #define MAXIMUM_PATH 1100
 #define MAXIMUM_NOTE (256UL * 1024)
@@ -204,6 +207,41 @@ int mcc_import_install(char *path, unsigned long size)
 	return 1;
 }
 
+int mcc_import_choose(void)
+{
+	char pak[MAXIMUM_PATH], install[MAXIMUM_PATH], check[MAXIMUM_PATH];
+	unsigned long long bytes;
+	unsigned long seconds;
+	int part;
+
+	if (!halo_mcc_choose_pak(pak, sizeof(pak)))
+		return 0;
+	snprintf(install, sizeof(install), "%s", pak);
+	/* (the pak's path less MCC/Content/Paks/<pak>) */
+	for (part = 0; part < 4; part++)
+	{
+		char *slash = strrchr(install, '/'), *backslash = strrchr(install, '\\');
+
+		if (backslash > slash)
+			slash = backslash;
+		if (!slash)
+			return 0;
+		*slash = 0;
+	}
+	snprintf(check, sizeof(check), "%s/%s", install, PAK_RELATIVE);
+	if (!file_stamp(check, &bytes, &seconds))
+	{
+		platform_log("mcc import: %s is not MCC's pak in its install (no %s)", pak, check);
+		return 0;
+	}
+	config_write("paths.mcc", install);
+	pthread_mutex_lock(&mcc_import.lock);
+	mcc_import.state_time = 0;
+	pthread_mutex_unlock(&mcc_import.lock);
+	platform_log("mcc import: the install chosen: %s", install);
+	return 1;
+}
+
 /* ---------- the note */
 
 /* (with the lock) the note's bitmaps read again */
@@ -322,6 +360,39 @@ static void thread_log(const char *line)
 	platform_log("mcc import: %s", line);
 }
 
+/* the dialogue imported from every map of the maps folder (host path) */
+static long voices_import(const char *maps, char *report, size_t report_size)
+{
+	void *directory = posix_directory_open(maps);
+	char name[256];
+	char *paths[256];
+	int count = 0, index;
+	long written;
+
+	if (!directory)
+	{
+		snprintf(report, report_size, "no voices: the maps folder cannot be read");
+		return 0;
+	}
+	while (count < 256 && posix_directory_next(directory, name, sizeof(name)))
+	{
+		size_t length = strlen(name);
+
+		if (length < 5 || strcmp(name + length - 4, ".map") || !strcmp(name, "ui.map"))
+			continue;
+		if (!(paths[count] = malloc(MAXIMUM_PATH)))
+			break;
+		snprintf(paths[count], MAXIMUM_PATH, "%s%s", maps, name);
+		count++;
+	}
+	posix_directory_close(directory);
+	written = mcc_import_voices(mcc_import.install, (const char *const *)paths, count, import_folder(), thread_progress,
+		NULL, report, report_size);
+	for (index = 0; index < count; index++)
+		free(paths[index]);
+	return written;
+}
+
 static void *import_thread(void *context)
 {
 	char path[MAXIMUM_PATH], report[512] = "", maps[MAXIMUM_PATH];
@@ -373,6 +444,21 @@ static void *import_thread(void *context)
 		pthread_mutex_unlock(&mcc_import.lock);
 		written = mcc_bake_textures(pak, &options, bake_report, sizeof(bake_report));
 		snprintf(report, sizeof(report), "%s", bake_report);
+	}
+	if (written >= 0 && mcc_import.voices)
+	{
+		char voices_report[256] = "";
+		long voices;
+
+		pthread_mutex_lock(&mcc_import.lock);
+		mcc_import.step = "Voices";
+		mcc_import.progress = 0.0f;
+		pthread_mutex_unlock(&mcc_import.lock);
+		voices = voices_import(maps, voices_report, sizeof(voices_report));
+		size_t length = strlen(report);
+
+		snprintf(report + length, sizeof(report) - length, "; %s", voices_report);
+		written = voices < 0 ? -1 : written + voices;
 	}
 
 finished:

@@ -926,6 +926,33 @@ static BOOL data_choose_image(char *path, int size, BOOL installer, BOOL *failed
 	return TRUE;
 }
 
+/* MCC's pak the player picks (Import from MCC's folder picker, when no
+Steam library has MCC: mcc_import.c); 0 if they pick none or no dialog can
+be shown */
+int halo_mcc_choose_pak(char *path, int size)
+{
+	static const SDL_DialogFileFilter filters[] =
+	{
+		{ "MCC's MCC-WindowsNoEditor.pak", "pak" },
+		{ "All files", "*" },
+	};
+	static struct data_image_choice choice;
+
+	memset(&choice, 0, sizeof(choice));
+	SDL_ShowOpenFileDialog(data_image_chosen, &choice, NULL, filters, 2, NULL, false);
+	while (!SDL_GetAtomicInt(&choice.done))
+	{
+		SDL_PumpEvents();
+		SDL_Delay(50);
+	}
+	if (choice.failed)
+		platform_log("mcc import: no file dialog could be shown (%s)", choice.error);
+	if (!choice.path[0])
+		return 0;
+	snprintf(path, (size_t)size, "%s", choice.path);
+	return 1;
+}
+
 /* adds Custom Edition's maps from the installer the player picks, saying
 what became of it */
 static void data_import_custom_edition(const char *destination)

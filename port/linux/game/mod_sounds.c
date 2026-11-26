@@ -303,6 +303,31 @@ static boolean tag_file_path(
 
 /* the file at `path` in a buffer of the game's allocator, or NULL (no file:
 *missing) */
+/* the file at a host path (the MCC import's), of `size` bytes as it was found */
+static byte *path_read(
+	char const *path,
+	unsigned long size,
+	unsigned long *read_size,
+	char const **reason)
+{
+	byte *data;
+
+	*reason = "it cannot be read or is not the size of a sound tag file";
+	if (size < MOD_TAG_FILE_HEADER_SIZE + SOUND_SIZE || size > MAXIMUM_MOD_TAG_FILE_SIZE ||
+		!(data = malloc(size)))
+	{
+		return NULL;
+	}
+	if (!port_mods_path_read(path, 0, data, size))
+	{
+		free(data);
+		return NULL;
+	}
+	*read_size = size;
+	*reason = NULL;
+	return data;
+}
+
 static byte *file_read(
 	char const *path,
 	unsigned long *size,
@@ -1846,6 +1871,7 @@ long mod_sounds_update(
 		char const *file_path = path;
 		char const *file_owner = "the data root's tags folder";
 		boolean loose = FALSE;
+		boolean imported = FALSE;
 		boolean found = FALSE;
 
 		if (!override)
@@ -1868,6 +1894,14 @@ long mod_sounds_update(
 			if (!found)
 				reason = "it cannot be read";
 		}
+		/* (else the MCC import's, under every mod: mcc_import.h) */
+		if (!found && file_index == NONE && mods_builtins_played() &&
+			mcc_import_tag_file(tag_get_name(tag_index), ".sound", host_path, sizeof(host_path)))
+		{
+			file_path = host_path;
+			file_owner = "the MCC import";
+			found = imported = port_mods_path_stamp(host_path, &file_size, stamp) != 0;
+		}
 		if (found && override->sound && override->sound->source.size == file_size &&
 			override->sound->source.stamp[0] == stamp[0] && override->sound->source.stamp[1] == stamp[1] &&
 			!strcmp(override->sound->source.path, host_path))
@@ -1884,7 +1918,12 @@ long mod_sounds_update(
 			boolean missing = FALSE;
 			struct mod_sound *sound = NULL;
 
-			file = loose ? file_read(path, &read_size, &missing) : mods_tag_file_read(file_index, &read_size, &reason);
+			if (loose)
+				file = file_read(path, &read_size, &missing);
+			else if (imported)
+				file = path_read(host_path, file_size, &read_size, &reason);
+			else
+				file = mods_tag_file_read(file_index, &read_size, &reason);
 			if (!file && loose)
 			{
 				reason = "it cannot be read or is not the size of a sound tag file";

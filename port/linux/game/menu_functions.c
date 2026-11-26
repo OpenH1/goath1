@@ -149,6 +149,7 @@ their handlers open opens.
 #include "../src/report.h"
 #include "benchmark.h" /* port: port/linux/game/benchmark.c */
 #include "../src/game_caches.h" /* port: port/linux/src/game_caches.c */
+#include "../src/mcc_import.h" /* port: port/linux/src/mcc_import.c */
 #include "text_filter.h"
 /* (the party: party_menu.inc) */
 #include "party.h"
@@ -2888,6 +2889,8 @@ static boolean settings_profile_new(struct widget_instance *widget, struct event
 
 static void settings_weapon_reset(struct widget_instance *screen);
 static void clear_caches_press(void);
+static void mcc_import_press(void);
+static void mcc_import_remove_press(void);
 /* Settings' search, the menu engine's (settings_search_menu.inc) */
 static boolean settings_search_open(struct widget_instance *widget, boolean *widget_deleted);
 static void settings_search_edit(struct widget_instance *widget);
@@ -3004,6 +3007,15 @@ static boolean settings_function(char const *name, struct widget_instance *widge
 		halo_gyro_calibrate();
 		gyro_calibrated = FALSE;
 		ui_play_audio_feedback_sound(SOUND_CURSOR);
+	}
+	else if (!strcmp(name, "mcc import"))
+	{
+		/* (IMPORT FROM MCC: at once, not kept for OK: mcc_import.c) */
+		mcc_import_press();
+	}
+	else if (!strcmp(name, "mcc import remove"))
+	{
+		mcc_import_remove_press();
 	}
 	else if (!strcmp(name, "clear caches"))
 	{
@@ -4101,6 +4113,157 @@ static void clear_caches_press(void)
 	ui_play_audio_feedback_sound(SOUND_FORWARD);
 }
 
+/* ---------- Video's IMPORT FROM MCC and REMOVE MCC IMPORT (port/linux/src/mcc_import.c)
+
+IMPORT FROM MCC's value says where the import stands (NOT FOUND, IMPORT,
+IMPORTED, UPDATE, or how far it is), and a press does what it says: picks
+MCC's pak where no Steam library has it, imports, re-imports, or (pressed
+twice while it runs) cancels. REMOVE MCC IMPORT deletes it, pressed twice.
+Neither waits for OK. */
+
+#define MCC_IMPORT_ASK_MILLISECONDS 5000
+
+static struct
+{
+	/* the first press of a press asked twice (0: none): the cancel's and
+	the remove's */
+	unsigned long cancel_asked;
+	unsigned long remove_asked;
+} mcc_import_menu;
+
+static boolean mcc_import_asked(unsigned long asked)
+{
+	return asked && system_milliseconds() - asked < MCC_IMPORT_ASK_MILLISECONDS;
+}
+
+static void mcc_import_show(struct widget_instance *list)
+{
+	char text[ROW_TEXT_LENGTH];
+	float progress = 0.0f;
+	char const *step = "";
+	int state;
+
+	if (!settings_model_row(list, "mcc_import_now"))
+	{
+		mcc_import_menu.cancel_asked = mcc_import_menu.remove_asked = 0;
+		return;
+	}
+	state = mcc_import_state(cache_files_map_directory(), FALSE);
+	if (mcc_import_running(&progress, &step))
+	{
+		if (mcc_import_asked(mcc_import_menu.cancel_asked))
+			snprintf(text, sizeof(text), "SELECT AGAIN");
+		else
+			snprintf(text, sizeof(text), "%s %d%%", !strcmp(step, "Voices") ? "VOICES" : "TEXTURES",
+				(int)(progress * 100.0f));
+	}
+	else
+	{
+		snprintf(text, sizeof(text), "%s", state == _mcc_import_no_install ? "CHOOSE MCC" :
+			state == _mcc_import_none ? "IMPORT" : state == _mcc_import_stale ? "UPDATE" : "IMPORTED");
+	}
+	settings_status_set(list, "mcc_import_now", text);
+	if (settings_model_row(list, "mcc_import_remove"))
+	{
+		snprintf(text, sizeof(text), "%s", mcc_import_asked(mcc_import_menu.remove_asked) ? "SELECT AGAIN" :
+			state == _mcc_import_current || state == _mcc_import_stale ? "REMOVE" : "NONE");
+		settings_status_set(list, "mcc_import_remove", text);
+	}
+}
+
+/* the panel's words for the two rows (the others': FALSE) */
+static boolean mcc_import_panel(struct widget_instance *row, wchar_t const **help)
+{
+	static wchar_t words[SETTINGS_PANEL_TEXT_LENGTH];
+	char text[SETTINGS_PANEL_TEXT_LENGTH];
+	char const *report = mcc_import_report();
+	int state;
+
+	if (settings_row_is(row, "mcc_import_remove"))
+	{
+		if (!mcc_import_asked(mcc_import_menu.remove_asked))
+			return TRUE;
+		snprintf(text, sizeof(text), "Select REMOVE MCC IMPORT again to delete what was imported.");
+	}
+	else if (settings_row_is(row, "mcc_import_now"))
+	{
+		state = mcc_import_state(cache_files_map_directory(), FALSE);
+		if (state == _mcc_import_running)
+			snprintf(text, sizeof(text), "%s", mcc_import_asked(mcc_import_menu.cancel_asked) ?
+				"Select IMPORT FROM MCC again to stop the import." :
+				"Importing from your MCC install. You can keep playing; it takes a few minutes. Select it twice "
+				"to stop.");
+		else if (state == _mcc_import_no_install)
+			snprintf(text, sizeof(text), "No MCC install was found in your Steam libraries. Select it to pick "
+				"MCC's MCC-WindowsNoEditor.pak, in its MCC\\Content\\Paks folder.");
+		else if (state == _mcc_import_stale)
+			snprintf(text, sizeof(text), "MCC or your maps changed since the import. Select it to import again.%s%s",
+				report[0] ? "|Last time: " : "", report);
+		else if (report[0])
+			snprintf(text, sizeof(text), "Last import: %s.", report);
+		else
+			return TRUE;
+	}
+	else
+	{
+		return FALSE;
+	}
+	discord_widen(text, words, SETTINGS_PANEL_TEXT_LENGTH);
+	*help = words;
+	return TRUE;
+}
+
+/* "port settings mcc import" */
+static void mcc_import_press(void)
+{
+	int state = mcc_import_state(cache_files_map_directory(), TRUE);
+
+	if (state == _mcc_import_running)
+	{
+		if (!mcc_import_asked(mcc_import_menu.cancel_asked))
+		{
+			mcc_import_menu.cancel_asked = system_milliseconds() | 1;
+			ui_play_audio_feedback_sound(SOUND_CURSOR);
+			return;
+		}
+		mcc_import_cancel();
+		mcc_import_menu.cancel_asked = 0;
+		ui_play_audio_feedback_sound(SOUND_BACK);
+		return;
+	}
+	if (state == _mcc_import_no_install && !mcc_import_choose())
+	{
+		ui_play_audio_feedback_sound(SOUND_ERROR);
+		return;
+	}
+	if (mcc_import_begin(cache_files_map_directory(), NULL, TRUE))
+		ui_play_audio_feedback_sound(SOUND_FORWARD);
+	else
+		ui_play_audio_feedback_sound(SOUND_ERROR);
+}
+
+/* "port settings mcc import remove": the first press asks */
+static void mcc_import_remove_press(void)
+{
+	int state = mcc_import_state(cache_files_map_directory(), TRUE);
+
+	if (state != _mcc_import_current && state != _mcc_import_stale)
+	{
+		ui_play_audio_feedback_sound(SOUND_ERROR);
+		return;
+	}
+	if (!mcc_import_asked(mcc_import_menu.remove_asked))
+	{
+		mcc_import_menu.remove_asked = system_milliseconds() | 1;
+		ui_play_audio_feedback_sound(SOUND_CURSOR);
+		return;
+	}
+	mcc_import_menu.remove_asked = 0;
+	mcc_import_remove();
+	mcc_import_state(cache_files_map_directory(), TRUE);
+	ui_play_audio_feedback_sound(SOUND_FORWARD);
+}
+
 /* the panel's name, value and words for a row of the page (the others':
 FALSE) */
 static boolean discord_account_panel(struct widget_instance *row, wchar_t *name, wchar_t *value,
@@ -4620,6 +4783,8 @@ static void settings_panel_show(struct widget_instance *list, short tab)
 		about_panel(row, value, &help);
 		/* (Profile's CLEAR CACHES: their size, and what a press does) */
 		clear_caches_panel(row, value, &help);
+		/* (Video's IMPORT FROM MCC: where it stands, what a press does) */
+		mcc_import_panel(row, &help);
 		/* (Button Remapping's: a button being taken, a replacement asked) */
 		if (pad_editor_page(screen_of(list)))
 			pad_editor_panel(row, name, value, &help);
@@ -4980,6 +5145,7 @@ static void settings_page_update(struct widget_instance *list)
 	settings_rows_conditions(list);
 	discord_account_show(list);
 	clear_caches_show(list);
+	mcc_import_show(list);
 	hdr_display_show(list);
 	pad_editor_update(list);
 	controls_page_update(list);
