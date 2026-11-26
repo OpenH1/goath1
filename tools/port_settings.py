@@ -3161,8 +3161,11 @@ def _settings_page(folder: str, page: dict, g: SettingsLayout = SETTINGS_CLASSIC
             extra += _widget(row, row_pairs, handlers + [f'<child widget="{base}/{key}_label"/>'] + value + arrows)
             extra += label_widget
             if status:
+                # (as tall as the row below its place, 2 down: a box shorter
+                # than its text's line, at the tall rows' text scale, draws
+                # nothing of it)
                 extra += _settings_text(f"{base}/{key}_value", [("width", SETTINGS_SPINNER_X + SETTINGS_SPINNER_WIDTH -
-                                                                 value_x), ("height", 16),
+                                                                 value_x), ("height", g.row_height - 2),
                                                                 ("color", SETTINGS_BLUE),
                                                                 ("align", "right" if named_row else "center"),
                                                                 ("text_y", caps_text_y(g.row_height, 2)),
