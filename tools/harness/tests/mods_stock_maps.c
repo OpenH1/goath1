@@ -25,6 +25,13 @@ static void texture_cache_size_for_map(void) { sized++; }
 /* (the maps here are the game's own: an MCC map's tags are its converter's,
 which no mod plays over) */
 static boolean mcc_level_name(char const *name) { (void)name; return FALSE; }
+/* (the built-in HD effects, hd_effects.h: off here, so mods_update alone
+plays the mods' bitmaps) */
+static boolean hd_effects_wanted(void) { return FALSE; }
+static unsigned long hd_effects_changes(void) { return 0; }
+static void hd_effects_build_now(char const *directory) { (void)directory; }
+static char const *cache_files_map_directory(void) { return "maps"; }
+static long mod_bitmaps_update(boolean remove_all, boolean at_load) { (void)remove_all; (void)at_load; return 0; }
 
 #include "globals.inc"
 

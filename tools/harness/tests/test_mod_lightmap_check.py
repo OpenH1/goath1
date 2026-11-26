@@ -56,7 +56,7 @@ def generated(fault=None):
     code += "\n" + "\n".join(function(LOADER, name) for name in [
         "mod_bitmap_free", "override_get", "bitmap_plug", "bitmap_forget", "bitmaps_scale_find",
         "lightmap_layout_differs", "map_page_read", "lightmap_pictures_differ", "layout_file_read", "lightmap_decide",
-        "lightmaps_decide", "mod_bitmaps_structure_bsp_read", "mod_bitmaps_waiting_count"]) + "\n"
+        "lightmaps_decide", "bitmaps_played_count", "mod_bitmaps_structure_bsp_read", "mod_bitmaps_waiting_count"]) + "\n"
     if fault:
         code = mutated(code, *fault)
     return (("structures.inc", structures), ("under_test.inc", code))

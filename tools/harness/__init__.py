@@ -163,7 +163,9 @@ def _compile(test, generated, optimisation, sanitizer=None):
     executable = work / (test + (".exe" if os.name == "nt" else ""))
     abi = ["-ffp-contract=off", f"-fsanitize={sanitizer}", "-g"] if sanitizer else ABI_FLAGS
     command = [os.environ.get("CC", "clang"), *abi, "-std=gnu99", optimisation, "-Wall", "-Werror",
-               "-Wno-unused-function", "-Wno-unused-variable", "-I", str(HARNESS / "include"), "-I", str(work),
+               "-Wno-unused-function", "-Wno-unused-variable",
+               # (clang 23 warns of a stub's global the test sets and never reads, -Wunused-but-set-global)
+               "-Wno-unused-but-set-variable", "-I", str(HARNESS / "include"), "-I", str(work),
                str(HARNESS / "tests" / f"{test}.c"), "-o", str(executable)]
     # MSVC's runtime includes maths; there is no separate m.lib on Windows.
     if os.name == "nt":

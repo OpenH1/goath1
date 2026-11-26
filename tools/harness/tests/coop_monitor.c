@@ -50,6 +50,7 @@ static int random_range(int a,int b){(void)b;return a;}
 static void encounter_update_status(long i){(void)i;}
 static void encounters_test_activation(void){}
 static short coop_enemies_extra_count(long e,short n){(void)e;extra_queries++;return extra*n;}
+static void coop_enemies_extra_placed(long actor_index){(void)actor_index;}
 static short squad_get_actor_type(struct squad_definition *s);
 #include "under_test.inc"
 static short squad_get_actor_type(struct squad_definition *s){return definitions[variants[palette[s->actor_palette_index].index].actor_reference.index].type;}
