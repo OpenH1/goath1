@@ -3645,6 +3645,8 @@ static void stream_rt_shadows(void *context, const struct xgpu_stream_rt_shadows
 	{
 		rt_shadows.preparing = 1;
 		rt_shadows_prepare();
+		/* (and the dynamic lights' shadows' passes: xgpu_vulkan_light_shadows.c) */
+		xgpu_vulkan_light_shadows_prepare(stream.capabilities.ray_queries);
 		return;
 	}
 	if (record->count <= 0)
@@ -4627,6 +4629,7 @@ static void stream_world_ao_prepass(void *context, const struct xgpu_stream_worl
 
 		/* (what the surfaces read: 1, until the pass finds it) */
 		xgpu_vulkan_world_ao_set_pixels(NULL);
+		xgpu_vulkan_light_shadows_end();
 		if (!target || !prepass_shaders() || !prepass_tables())
 			return;
 		/* (debug.pass_times: the pre-pass's draws and its pass, to the END) */
@@ -4710,6 +4713,12 @@ static void stream_world_ao_prepass(void *context, const struct xgpu_stream_worl
 				xgpu_vulkan_world_ao_set_pixels(prepass.pixels);
 			}
 		}
+		/* (display.shadows "ray_traced": the dynamic lights' shadows, from
+		the pre-pass's inputs, for the lights the cells name:
+		xgpu_vulkan_light_shadows.c) */
+		xgpu_vulkan_light_shadows_draw(prepass.inputs, &record->pass, lights_cells ? (const uint32_t (*)[4])(lights_cells +
+			(XGPU_DYNAMIC_LIGHTS_GRID_X * XGPU_DYNAMIC_LIGHTS_GRID_Y * XGPU_DYNAMIC_LIGHTS_GRID_Z +
+			XGPU_DYNAMIC_LIGHTS_SHADOWED) * 16) : NULL);
 		/* (the surfaces' walk, played next, from the pre-pass's depth) */
 		if (prepass.primed_depth)
 			prepass_prime_end(record->replay);
@@ -4719,6 +4728,7 @@ static void stream_world_ao_prepass(void *context, const struct xgpu_stream_worl
 	}
 	/* (_NONE: the surfaces read 1) */
 	prepass.primed_depth = 0;
+	xgpu_vulkan_light_shadows_end();
 	if (prepass.active)
 	{
 		prepass.active = 0;

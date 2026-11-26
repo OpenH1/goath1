@@ -1557,6 +1557,10 @@ static struct
 	xgpu_vulkan_world_ao.c's number */
 	VkDescriptorSetLayout occlusion_layout, empty_layout;
 	VkDescriptorSet occlusion_set;
+	/* display.shadows "ray_traced": the dynamic lights' shadows' mask the
+	occlusion's sets name (NULL: the stand-in, a 1x1 of every light seen:
+	xgpu_vulkan_light_shadows_set) */
+	struct xgpu_vulkan_image *light_shadows, *light_shadows_stand_in;
 	uint64_t occlusion_serial, occlusion_world_number;
 	/* the window's display (any thread, atomic: HDR on, its SDR white's
 	and its headroom's bits, and whether they changed since the render
@@ -7154,8 +7158,8 @@ static VkDescriptorPool descriptor_pool_get(void)
 			return VK_NULL_HANDLE;
 		slot->descriptor_pools = grown;
 		/* (the most a set has: the occlusion's, the field's atlas and
-		table, the static scenery's pages, the vehicles' fields' atlas and
-		the occlusion found once a pixel) */
+		table, the static scenery's pages, the vehicles' fields' atlas,
+		the occlusion found once a pixel and the dynamic lights' shadows) */
 		sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 		sizes[0].descriptorCount = SETS_A_POOL * XGPU_VULKAN_TEXTURES;
 		/* (display.hdr's input sets, where draws can read their colour
@@ -7272,9 +7276,9 @@ occlusion binds it: the last one, where it is of the same field and
 submission, else one written now */
 static VkDescriptorSet occlusion_set(void)
 {
-	VkDescriptorImageInfo field_image, table_image, scenery_image, objects_image, pixels_image;
+	VkDescriptorImageInfo field_image, table_image, scenery_image, objects_image, pixels_image, shadows_image;
 	VkDescriptorBufferInfo block;
-	VkWriteDescriptorSet writes[7];
+	VkWriteDescriptorSet writes[8];
 	VkWriteDescriptorSetAccelerationStructureKHR scene_write;
 	VkAccelerationStructureKHR scene = VK_NULL_HANDLE;
 	struct xgpu_vulkan_image *field = xgpu_vulkan_world_ao_field_image();
@@ -7282,11 +7286,13 @@ static VkDescriptorSet occlusion_set(void)
 	struct xgpu_vulkan_image *scenery = xgpu_vulkan_world_ao_scenery_image();
 	struct xgpu_vulkan_image *objects = xgpu_vulkan_world_ao_objects_image();
 	struct xgpu_vulkan_image *pixels = xgpu_vulkan_world_ao_pixels_image();
+	struct xgpu_vulkan_image *shadows = vk.light_shadows ? vk.light_shadows : vk.light_shadows_stand_in;
 	uint64_t serial = vk.serial;
 	int index;
 
 	if (!field || !field->sampled || !table || !table->sampled || !scenery || !scenery->sampled ||
-		!objects || !objects->sampled || !pixels || !pixels->sampled || !vk.occlusion_layout)
+		!objects || !objects->sampled || !pixels || !pixels->sampled || !shadows || !shadows->sampled ||
+		!vk.occlusion_layout)
 		return VK_NULL_HANDLE;
 	/* (display.ambient_occlusion "world"'s block in this submission's ring) */
 	if (!xgpu_vulkan_world_ao_block(serial, &block))
@@ -7304,6 +7310,7 @@ static VkDescriptorSet occlusion_set(void)
 	scenery->used = vk.serial;
 	objects->used = vk.serial;
 	pixels->used = vk.serial;
+	shadows->used = vk.serial;
 	if (vk.occlusion_set && vk.occlusion_serial == vk.serial && vk.occlusion_world_number == xgpu_vulkan_world_ao_number())
 		return vk.occlusion_set;
 	vk.occlusion_set = set_allocate(vk.occlusion_layout);
@@ -7323,8 +7330,10 @@ static VkDescriptorSet occlusion_set(void)
 	objects_image.imageView = objects->sampled;
 	pixels_image = field_image;
 	pixels_image.imageView = pixels->sampled;
+	shadows_image = field_image;
+	shadows_image.imageView = shadows->sampled;
 	memset(writes, 0, sizeof(writes));
-	for (index = 0; index < 6; index++)
+	for (index = 0; index < 7; index++)
 	{
 		writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 		writes[index].dstSet = vk.occlusion_set;
@@ -7344,21 +7353,56 @@ static VkDescriptorSet occlusion_set(void)
 	writes[4].pImageInfo = &objects_image;
 	writes[5].dstBinding = XGPU_VULKAN_BINDING_WORLD_AO_PIXELS;
 	writes[5].pImageInfo = &pixels_image;
+	writes[6].dstBinding = XGPU_VULKAN_BINDING_LIGHT_SHADOWS;
+	writes[6].pImageInfo = &shadows_image;
 	if (scene)
 	{
 		memset(&scene_write, 0, sizeof(scene_write));
 		scene_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
 		scene_write.accelerationStructureCount = 1;
 		scene_write.pAccelerationStructures = &scene;
-		writes[6].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-		writes[6].pNext = &scene_write;
-		writes[6].dstSet = vk.occlusion_set;
-		writes[6].dstBinding = XGPU_VULKAN_BINDING_WORLD_AO_SCENE;
-		writes[6].descriptorCount = 1;
-		writes[6].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+		writes[7].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		writes[7].pNext = &scene_write;
+		writes[7].dstSet = vk.occlusion_set;
+		writes[7].dstBinding = XGPU_VULKAN_BINDING_WORLD_AO_SCENE;
+		writes[7].descriptorCount = 1;
+		writes[7].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
 	}
-	vkUpdateDescriptorSets(vk.device, scene ? 7 : 6, writes, 0, NULL);
+	vkUpdateDescriptorSets(vk.device, scene ? 8 : 7, writes, 0, NULL);
 	return vk.occlusion_set;
+}
+
+/* display.shadows "ray_traced": the dynamic lights' shadows' mask the
+occlusion's sets name from now on (xgpu_vulkan_light_shadows.c; NULL: the
+stand-in, every light seen whole) */
+void xgpu_vulkan_light_shadows_set(struct xgpu_vulkan_image *image)
+{
+	if (vk.light_shadows == image)
+		return;
+	vk.light_shadows = image;
+	xgpu_vulkan_world_ao_touch();
+}
+
+int xgpu_vulkan_light_shadows_bound(const struct xgpu_vulkan_image *image)
+{
+	return image && vk.light_shadows == image;
+}
+
+static int light_shadows_stand_in_make(void)
+{
+	static const unsigned char seen[4] = { 255, 255, 255, 255 };
+	struct xgpu_vulkan_image_description description;
+
+	memset(&description, 0, sizeof(description));
+	description.type = XGPU_VULKAN_IMAGE_2D;
+	description.format = XGPU_VULKAN_FORMAT_RGBA8;
+	description.usage = XGPU_VULKAN_USAGE_SAMPLED;
+	description.width = description.height = description.depth_or_layers = description.levels = 1;
+	vk.light_shadows_stand_in = xgpu_vulkan_image_create(&description);
+	if (!vk.light_shadows_stand_in)
+		return 0;
+	xgpu_vulkan_image_upload(vk.light_shadows_stand_in, 0, 0, 0, 0, 0, 1, 1, 1, seen, 4, 4);
+	return 1;
 }
 
 /* a kept set with these textures, or NULL */
@@ -11520,7 +11564,7 @@ static int device_make(const struct xgpu_vulkan_options *options)
 
 static int layouts_make(void)
 {
-	VkDescriptorSetLayoutBinding draw[5], textures[7];
+	VkDescriptorSetLayoutBinding draw[5], textures[8];
 	VkDescriptorSetLayoutCreateInfo info;
 	VkPipelineLayoutCreateInfo layout;
 	VkDescriptorSetLayout sets[4];
@@ -11622,17 +11666,20 @@ static int layouts_make(void)
 	textures[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 	textures[5].descriptorCount = 1;
 	textures[5].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-	info.bindingCount = 6;
+	/* (and display.shadows "ray_traced"'s dynamic lights' shadows' mask) */
+	textures[6] = textures[5];
+	textures[6].binding = XGPU_VULKAN_BINDING_LIGHT_SHADOWS;
+	info.bindingCount = 7;
 	/* (and display.ambient_occlusion "ray_traced"'s scene, where the device
 	has ray queries) */
 	if (vk.capabilities.ray_queries)
 	{
-		textures[6].binding = XGPU_VULKAN_BINDING_WORLD_AO_SCENE;
-		textures[6].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-		textures[6].descriptorCount = 1;
-		textures[6].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-		textures[6].pImmutableSamplers = NULL;
-		info.bindingCount = 7;
+		textures[7].binding = XGPU_VULKAN_BINDING_WORLD_AO_SCENE;
+		textures[7].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+		textures[7].descriptorCount = 1;
+		textures[7].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+		textures[7].pImmutableSamplers = NULL;
+		info.bindingCount = 8;
 	}
 	info.pBindings = textures;
 	if (!check(vkCreateDescriptorSetLayout(vk.device, &info, NULL, &vk.occlusion_layout), "vkCreateDescriptorSetLayout"))
@@ -11823,6 +11870,9 @@ static int stand_ins_make(void)
 	}
 	/* (display.ambient_occlusion "world"'s far-outside field) */
 	if (!xgpu_vulkan_world_ao_create())
+		return 0;
+	/* (display.shadows "ray_traced"'s mask of every light seen) */
+	if (!light_shadows_stand_in_make())
 		return 0;
 	(void)sampler;
 	return 1;

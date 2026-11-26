@@ -65,6 +65,8 @@ structure's 3D BSP, from which a pixel finds its cluster
 #include "structures/structure_bsp_definitions.h"
 #include "physics/bsp3d.h"
 #include "light_sources.h"
+#include "rt_shadows.h"
+#include "world_rt.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -92,6 +94,11 @@ static struct
 	real brightness[MAXIMUM_LIGHTS_PER_WINDOW];
 	/* (debug.dynamic_lights_log: where the game placed it, at the tick) */
 	real_point3d tick_position[MAXIMUM_LIGHTS_PER_WINDOW];
+	/* display.shadows "ray_traced": its object's owner among the ray-traced
+	scene's instances (its ultimate parent's: a muzzle flash's the unit
+	holding the weapon; dynamic_lights_owner), which its shadows' rays leave
+	out; 0 none */
+	unsigned long owners[MAXIMUM_LIGHTS_PER_WINDOW];
 	struct halo_dynamic_light lights[MAXIMUM_LIGHTS_PER_WINDOW];
 	unsigned long frame;
 	/* each light whose clusters were noted (dynamic_lights_clusters; one
@@ -134,6 +141,18 @@ void dynamic_lights_note(
 	dynamic_lights.cone_scale[rasterizer_light_index] = cone_scale;
 	dynamic_lights.cone_offset[rasterizer_light_index] = cone_offset;
 	dynamic_lights.tick_position[rasterizer_light_index] = *tick_position;
+}
+
+/* a rasterizer light just submitted: the object it is on (NONE none),
+whose collision meshes do not shadow it (display.shadows "ray_traced") */
+void dynamic_lights_owner(
+	long rasterizer_light_index,
+	long object_index)
+{
+	if (rasterizer_light_index < 0 || rasterizer_light_index >= MAXIMUM_LIGHTS_PER_WINDOW)
+		return;
+	dynamic_lights.owners[rasterizer_light_index] = object_index != NONE && rt_shadows_on() ?
+		world_rt_owner(object_get_ultimate_parent(object_index)) : 0;
 }
 
 /* a rasterizer light just submitted: drawn brighter than the rasterizer's
@@ -200,6 +219,7 @@ static long dynamic_lights_copies(
 		if (location.cluster_index == NONE)
 			continue;
 		*out = dynamic_lights.lights[dynamic_lights.copies[copy_index].rasterizer_light_index];
+		dynamic_lights.owners[count] = dynamic_lights.owners[dynamic_lights.copies[copy_index].rasterizer_light_index];
 		out->position[0] = position->x;
 		out->position[1] = position->y;
 		out->position[2] = position->z;
@@ -378,6 +398,7 @@ static long dynamic_lights_sources(
 		out->cone_scale = 0.0f;
 		out->cone_offset = 1.0f;
 		out->flags = source->halo ? HALO_DYNAMIC_LIGHT_HALO | HALO_DYNAMIC_LIGHT_PROJECTILE : 0;
+		dynamic_lights.owners[count] = 0;
 		dynamic_lights_clusters(count, MIN(cluster_count, MAXIMUM_CLUSTERS_PER_STRUCTURE), clusters);
 		if (!(dynamic_lights.frame % 72) && source_index < 4 && config_boolean("debug.dynamic_lights_log"))
 		{
@@ -400,6 +421,8 @@ static long dynamic_lights_sources(
 	}
 	return count;
 }
+
+static void dynamic_lights_shadowed(long count);
 
 /* the frame's lights (rasterizer_lights, as lights_preprocess_scene
 submitted them) to the renderer */
@@ -485,6 +508,7 @@ void dynamic_lights_submit(
 	}
 	dynamic_lights_world();
 	total = dynamic_lights_sources(dynamic_lights_copies(count));
+	dynamic_lights_shadowed(total);
 	halo_dynamic_lights_set(dynamic_lights.lights, (int)total, camera, right_axis, up_axis,
 		(unsigned int const (*)[4])dynamic_lights.cluster_masks);
 	memset(dynamic_lights.cluster_masks, 0, sizeof(dynamic_lights.cluster_masks));
@@ -496,6 +520,7 @@ void dynamic_lights_submit(
 		dynamic_lights.cone_scale[light_index] = 0.0f;
 		dynamic_lights.cone_offset[light_index] = 1.0f;
 		dynamic_lights.brightness[light_index] = 0.0f;
+		dynamic_lights.owners[light_index] = 0;
 		dynamic_lights.tick_position[light_index] = rasterizer_lights.lights[light_index].position;
 	}
 }
@@ -523,6 +548,24 @@ static struct
 	real radius;
 	real intensity;
 } lights_drawn[MAXIMUM_LIGHTS_PER_MAP];
+
+/* a light's part of the view (dynamic_lights_rank): its intensity times how
+wide its reach looks from the camera, far lower wholly behind the camera's
+plane (forward: the camera's, unit length) */
+static real dynamic_lights_score(real_point3d const *position, real radius, real intensity,
+	real_vector3d const *forward)
+{
+	real_vector3d offset;
+	real distance, score;
+
+	radius = radius > 1.0e-3f ? radius : 1.0e-3f;
+	vector_from_points3d(&render.camera.position, position, &offset);
+	distance = magnitude3d(&offset);
+	score = intensity * radius / (distance > radius ? distance : radius);
+	if (dot_product3d(&offset, forward) < -(radius + RANK_BEHIND_MARGIN))
+		score *= RANK_BEHIND_SCALE;
+	return score;
+}
 
 static int rank_compare(void const *a, void const *b)
 {
@@ -590,8 +633,7 @@ void dynamic_lights_rank(long *lights, short count,
 	for (index = 0; index < count; index++)
 	{
 		real_point3d position;
-		real_vector3d offset;
-		real radius = 0.0f, intensity = 0.0f, distance, score;
+		real radius = 0.0f, intensity = 0.0f;
 		long drawn = DATUM_INDEX_TO_ABSOLUTE_INDEX(lights[index]);
 
 		if (drawn < MAXIMUM_LIGHTS_PER_MAP && lights_drawn[drawn].light == lights[index])
@@ -606,17 +648,96 @@ void dynamic_lights_rank(long *lights, short count,
 			if (!(intensity > 0.0f))
 				intensity = 1.0f;
 		}
-		radius = radius > 1.0e-3f ? radius : 1.0e-3f;
-		vector_from_points3d(&render.camera.position, &position, &offset);
-		distance = magnitude3d(&offset);
-		score = intensity * radius / (distance > radius ? distance : radius);
-		if (dot_product3d(&offset, &forward) < -(radius + RANK_BEHIND_MARGIN))
-			score *= RANK_BEHIND_SCALE;
-		entries[index].score = score;
+		entries[index].score = dynamic_lights_score(&position, radius, intensity, &forward);
 		entries[index].index = index;
 	}
 	qsort(entries, count, sizeof(*entries), rank_compare);
 	for (index = 0; index < count; index++)
 		ranked[index] = lights[entries[index].index];
 	memcpy(lights, ranked, count * sizeof(*lights));
+}
+
+/* ---------- which lights cast shadows (display.shadows "ray_traced")
+
+docs/dynamic-shadows-plan.md, stage 1: of the frame's lights as they go to
+the renderer (the game's, their copies and the port's own), the
+HALO_DYNAMIC_LIGHTS_SHADOWED that matter most to the view, by the same part
+of it dynamic_lights_rank ranks them by, cast shadows: those that light the
+structure (not a spotlight's gel, which the game's own pass draws there),
+lit, and in reach. Each with its disk's radius, the size of what glows (a
+bolt's or a needle's small; an explosion's, a fire's or a muzzle flash's
+larger, by its reach), and its owner, whose collision meshes the rays leave
+out (a muzzle flash's unit). The renderer traces them by ray queries where
+it has them (xgpu.h's XGPU_DYNAMIC_LIGHTS_SHADOWED); none where the setting
+is off (and with HALO_LIGHT_SHADOWS_OFF=1, for measuring). */
+#define SHADOWED_DISK_PROJECTILE 0.05f
+#define SHADOWED_DISK_SCALE 0.05f
+#define SHADOWED_DISK_LEAST 0.1f
+#define SHADOWED_DISK_MOST 0.5f
+
+static void dynamic_lights_shadowed(long count)
+{
+	int indices[HALO_DYNAMIC_LIGHTS_SHADOWED];
+	float disks[HALO_DYNAMIC_LIGHTS_SHADOWED];
+	unsigned long owners[HALO_DYNAMIC_LIGHTS_SHADOWED];
+	real scores[HALO_DYNAMIC_LIGHTS_SHADOWED];
+	real_vector3d forward = render.camera.forward;
+	int chosen = 0, slot;
+	long light_index;
+	/* (HALO_LIGHT_SHADOWS_OFF=1, measuring: none chosen, the rest as it is) */
+	static int off = -1;
+
+	if (off < 0)
+		off = getenv("HALO_LIGHT_SHADOWS_OFF") != NULL;
+	if (off || !rt_shadows_on())
+	{
+		halo_dynamic_lights_shadowed(NULL, NULL, NULL, 0);
+		return;
+	}
+	if (normalize3d(&forward) <= 0.0f)
+		forward.i = forward.j = forward.k = 0.0f;
+	for (light_index = 0; light_index < count; light_index++)
+	{
+		struct halo_dynamic_light const *light = &dynamic_lights.lights[light_index];
+		real intensity = MAX(light->color[0], MAX(light->color[1], light->color[2]));
+		real_point3d position;
+		real score;
+
+		if (!(light->radius > 0.0f) || !(intensity > 0.0f) || (light->flags & HALO_DYNAMIC_LIGHT_MODELS_ONLY))
+			continue;
+		position.x = light->position[0];
+		position.y = light->position[1];
+		position.z = light->position[2];
+		score = dynamic_lights_score(&position, light->radius, intensity, &forward);
+		/* (kept the highest first; the earlier among equals) */
+		for (slot = chosen; slot > 0 && scores[slot - 1] < score; slot--)
+		{
+			if (slot < HALO_DYNAMIC_LIGHTS_SHADOWED)
+			{
+				scores[slot] = scores[slot - 1];
+				indices[slot] = indices[slot - 1];
+			}
+		}
+		if (slot >= HALO_DYNAMIC_LIGHTS_SHADOWED)
+			continue;
+		scores[slot] = score;
+		indices[slot] = (int)light_index;
+		if (chosen < HALO_DYNAMIC_LIGHTS_SHADOWED)
+			chosen++;
+	}
+	for (slot = 0; slot < chosen; slot++)
+	{
+		struct halo_dynamic_light const *light = &dynamic_lights.lights[indices[slot]];
+		real disk = light->radius * SHADOWED_DISK_SCALE;
+
+		disks[slot] = (light->flags & HALO_DYNAMIC_LIGHT_PROJECTILE) ? SHADOWED_DISK_PROJECTILE :
+			disk < SHADOWED_DISK_LEAST ? SHADOWED_DISK_LEAST : disk > SHADOWED_DISK_MOST ? SHADOWED_DISK_MOST : disk;
+		owners[slot] = dynamic_lights.owners[indices[slot]];
+	}
+	if (chosen && !(dynamic_lights.frame % 72) && config_boolean("debug.dynamic_lights_log"))
+	{
+		platform_log("dynamic lights: frame %lu: %d shadowed, the first light %d disk %.2f owner %lu",
+			dynamic_lights.frame, chosen, indices[0], (double)disks[0], owners[0]);
+	}
+	halo_dynamic_lights_shadowed(indices, disks, owners, chosen);
 }

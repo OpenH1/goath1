@@ -616,6 +616,11 @@ void world_ao_window_begin(short local_player_index, short rasterizer_target, fl
 		}
 		else
 			world_ao_scene_update(camera_position, world_ao.cascades);
+		/* (display.shadows "ray_traced": the frame's ray-traced scene before
+		the pre-pass's end, where the dynamic lights' shadows are traced:
+		dynamic_lights.c, xgpu.h's XGPU_DYNAMIC_LIGHTS_SHADOWED) */
+		if (!(mode & WORLD_AO_RAYS) && rt_shadows_on())
+			world_rt_frame(world_ao_scene.frame);
 		if (world_ao_scene.windows_frame != world_ao_scene.frame)
 		{
 			world_ao_scene.last_windows = world_ao_scene.windows;
@@ -730,7 +735,7 @@ void world_ao_object_begin(long object_index)
 		if (baked)
 			reference = WORLD_AO_REFERENCE_NO_FIELD;
 		/* (its own instances, which its pixels' rays leave out) */
-		if (world_ao_mode() & WORLD_AO_RAYS)
+		if ((world_ao_mode() & WORLD_AO_RAYS) || rt_shadows_on())
 			rays_owner = world_rt_owner(object_index);
 	}
 	halo_world_ao_object(owner, reference, rays_owner);

@@ -103,6 +103,10 @@ clamped: xgpu.h's XGPU_WORLD_CASCADE*) */
 acceleration structure, which the occlusion's pass made with ray queries
 reads: xgpu_stream.h's WORLD_AO_MESH, _INSTANCES) */
 #define XGPU_SPIRV_BINDING_WORLD_AO_SCENE 8
+/* (display.shadows "ray_traced": the dynamic lights' shadows' mask, which
+the surfaces found once a pixel read, a channel a light: a 2D image of
+four bytes, read by texel; xgpu.h's XGPU_DYNAMIC_LIGHTS_SHADOWED) */
+#define XGPU_SPIRV_BINDING_LIGHT_SHADOWS 9
 
 /* the locations of what the vertex shader hands the pixel shader */
 enum
@@ -359,6 +363,24 @@ and the casters' count), the casters (2 vec4 each) at the constants', the
 ray-traced scene at the occlusion set's; its colour the light the pixel
 keeps, which the blend multiplies it by */
 BOOL xgpu_spirv_rt_shadows_pass(const struct xgpu_spirv_options *options, struct xgpu_spirv_module *module);
+
+/* display.shadows "ray_traced": the dynamic lights' shadows (xgpu.h's
+XGPU_DYNAMIC_LIGHTS_SHADOWED), passes drawn with world_ao_pass's vertex
+shader after the pre-pass, its uniforms (struct xgpu_world_ao_pass: the
+camera, the corners, the frame) and its inputs at
+XGPU_SPIRV_WORLD_AO_PASS_INPUTS, the enhanced lights' block and cells at the
+draw set's, the occlusion set (its block's camera; the ray-traced scene).
+_TRACE: each pixel's view of each shadowed light's disk, a few rays by ray
+queries (options' ray_queries), a channel a light; _FILTER: the trace's mask
+(at XGPU_SPIRV_WORLD_AO_PASS_HISTORY) averaged over the 3x3 pixels about
+each of the same surface (where no temporal technique accumulates it).
+FALSE if out of memory. */
+enum
+{
+	XGPU_SPIRV_LIGHT_SHADOWS_TRACE,
+	XGPU_SPIRV_LIGHT_SHADOWS_FILTER,
+};
+BOOL xgpu_spirv_light_shadows_pass(int pass, const struct xgpu_spirv_options *options, struct xgpu_spirv_module *module);
 
 /* the enhanced dynamic lights' glows (xgpu_backend.h's
 xgpu_backend_dynamic_lights_halos):

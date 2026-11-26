@@ -5287,6 +5287,11 @@ static struct
 	BOOL world_sent;
 	/* the glows: each one's middle and size, its color (the display's) */
 	struct xgpu_dynamic_lights_halos halos;
+	/* display.shadows "ray_traced": the lights that cast shadows, given for
+	the frame's lights next (halo_dynamic_lights_shadowed: xgpu.h's
+	XGPU_DYNAMIC_LIGHTS_SHADOWED's texels, their words; count 0 none) */
+	unsigned int shadowed[XGPU_LIGHT_SHADOWS_CHANNELS][3];
+	int shadowed_count;
 } dynamic_lights;
 
 /* port/linux/game/network_standard.c's: whether the game played lets the
@@ -5501,6 +5506,62 @@ void halo_dynamic_lights_world(const unsigned int (*texels)[4], int count)
 	dynamic_lights.world_sent = FALSE;
 }
 
+/* display.shadows "ray_traced": the lights that cast shadows
+(port/linux/game/dynamic_lights.c), each by its channel of the mask, for the
+frame's lights given next */
+typedef char dynamic_lights_shadowed_fit[HALO_DYNAMIC_LIGHTS_SHADOWED == XGPU_LIGHT_SHADOWS_CHANNELS &&
+	XGPU_DYNAMIC_LIGHTS_SHADOWED + 3 < XGPU_DYNAMIC_LIGHTS_GRID_X * XGPU_DYNAMIC_LIGHTS_GRID_Y ? 1 : -1];
+
+void halo_dynamic_lights_shadowed(const int *indices, const float *disks, const unsigned long *owners, int count)
+{
+	int channel;
+
+	if (count < 0 || !indices || !disks || !owners)
+		count = 0;
+	if (count > XGPU_LIGHT_SHADOWS_CHANNELS)
+		count = XGPU_LIGHT_SHADOWS_CHANNELS;
+	for (channel = 0; channel < count; channel++)
+	{
+		dynamic_lights.shadowed[channel][0] = indices[channel] >= 0 ? (unsigned int)indices[channel] + 1u : 0u;
+		memcpy(&dynamic_lights.shadowed[channel][1], &disks[channel], sizeof(float));
+		dynamic_lights.shadowed[channel][2] = (unsigned int)owners[channel];
+	}
+	dynamic_lights.shadowed_count = count;
+}
+
+/* ... into the clusters' slice of the cells (xgpu.h), of the count of
+lights given: each channel's light, its disk, its owner, and the rays a
+light and whether a temporal technique accumulates the view; taken (none
+the next frame unless given again) */
+static void dynamic_lights_shadowed_texels(int count)
+{
+	unsigned int (*slice)[4] = (unsigned int (*)[4])dynamic_lights.mask[XGPU_DYNAMIC_LIGHTS_GRID_Z];
+	int channel, shadowed = 0;
+
+	for (channel = 0; channel < dynamic_lights.shadowed_count; channel++)
+	{
+		unsigned int light = dynamic_lights.shadowed[channel][0];
+
+		if (!light || light > (unsigned int)count)
+			continue;
+		slice[XGPU_DYNAMIC_LIGHTS_SHADOWED][shadowed] = light;
+		slice[XGPU_DYNAMIC_LIGHTS_SHADOWED + 1][shadowed] = dynamic_lights.shadowed[channel][1];
+		slice[XGPU_DYNAMIC_LIGHTS_SHADOWED + 2][shadowed] = dynamic_lights.shadowed[channel][2];
+		shadowed++;
+	}
+	/* (a temporal technique's accumulation the denoiser: a ray or two a
+	light, turned each frame; else a few, the same each frame, and the mask
+	filtered: xgpu_vulkan_light_shadows.c) */
+	if (shadowed)
+	{
+		BOOL temporal = temporal_upscaling();
+
+		slice[XGPU_DYNAMIC_LIGHTS_SHADOWED + 3][0] = temporal ? 2u : 3u;
+		slice[XGPU_DYNAMIC_LIGHTS_SHADOWED + 3][1] = temporal ? 1u : 0u;
+	}
+	dynamic_lights.shadowed_count = 0;
+}
+
 /* the frame's lights (the game's dynamic_lights.c): where they are, as the
 objects are drawn; the camera's position and axes (the glows face it); the
 clusters each light reaches (each cluster's mask of them) */
@@ -5542,6 +5603,7 @@ void halo_dynamic_lights_set(const struct halo_dynamic_light *lights, int count,
 	memset(dynamic_lights.mask, 0, sizeof(dynamic_lights.mask));
 	if (cluster_masks)
 		memcpy(dynamic_lights.mask[XGPU_DYNAMIC_LIGHTS_GRID_Z], cluster_masks, XGPU_DYNAMIC_LIGHTS_CLUSTERS * 16);
+	dynamic_lights_shadowed_texels(count);
 	if (dynamic_lights.world && !dynamic_lights.world_sent)
 	{
 		xgpu_backend_dynamic_lights_world((const void *)dynamic_lights.world, dynamic_lights.world_count);
