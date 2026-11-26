@@ -13,12 +13,25 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from harness import CHECK_FAILED, build, enum_with, function, mutated, read, run  # noqa: E402
 
-CASES = ["local", "not-ours", "setting", "spacing", "host", "records", "client", "custom-edition", "placeholder"]
+CASES = ["local", "not-ours", "setting", "spacing", "host", "records", "client", "custom-edition",
+         "custom-edition-gain", "millibels", "placeholder"]
 
 # a fault in the code and the case that must catch it
 NEGATIVE_CONTROLS = {
     # (#673: the beep, though Custom Edition's sound is there)
     "beep-always": (("if (custom_edition && frame_count > 0)", "if (FALSE)"), "custom-edition"),
+    # (Halo PC's sound at the beep's volume, not Custom Edition's: about 8 dB too loud)
+    "beep-volume": (("IDirectSoundBuffer_SetVolume(buffer, hit_sounds.volume);",
+                     "IDirectSoundBuffer_SetVolume(buffer, HIT_SOUND_VOLUME);"), "custom-edition"),
+    # (its tag's gain alone, without multiplayer_hit_sound_volume's 0.2)
+    "no-hit-sound-volume": (("hit_sounds_millibels(gain * HIT_SOUND_CUSTOM_EDITION_GAIN)", "hit_sounds_millibels(gain)"),
+                            "custom-edition"),
+    # (0.2 alone, the tag's gain ignored)
+    "tag-gain-ignored": (("hit_sounds_millibels(gain * HIT_SOUND_CUSTOM_EDITION_GAIN)",
+                          "hit_sounds_millibels(HIT_SOUND_CUSTOM_EDITION_GAIN)"), "custom-edition-gain"),
+    # (rounded, not toward zero as Halo PC's _ftol: -1398)
+    "rounded": (("return millibels < 0.0 ? (long)millibels : 0;", "return millibels < 0.0 ? (long)(millibels - 0.5) : 0;"),
+                "millibels"),
     # (Halo PC's sound at its own rate, not its tag's pitch)
     "no-pitch": (("samples_per_second = (unsigned long)(rate * pitch + 0.5f);", "samples_per_second = rate;"),
                  "custom-edition"),
@@ -63,7 +76,9 @@ NEGATIVE_CONTROLS = {
 
 def module_state(source):
     """hit_sounds.c's #defines and its state (the static struct), as the module has them"""
-    defines = "\n".join(re.findall(r"^#define HIT_SOUND_(?:VOLUME|SPACING_MILLISECONDS|BUFFERS|CUSTOM_EDITION_NAME) .*$", source, re.M))
+    defines = "\n".join(re.findall(
+        r"^#define HIT_SOUND_(?:VOLUME|SPACING_MILLISECONDS|BUFFERS|CUSTOM_EDITION_NAME|CUSTOM_EDITION_GAIN) .*$",
+        source, re.M))
     start = source.index("static struct\n{")
     end = source.index(";", source.index("} hit_sounds =", start)) + 1
     return defines + "\n" + source[start:end] + "\n"
@@ -78,6 +93,7 @@ def generated(fault=None):
         function(standard, "network_standard_game_for_machine"),
         function(standard, "network_standard_stamp_game"),
         function(standard, "network_standard_hit_sounds_allowed"),
+        function(sounds, "hit_sounds_millibels"),
         function(sounds, "hit_sounds_make"),
         function(sounds, "hit_sounds_play"),
         function(sounds, "hit_sounds_note_damage"),
