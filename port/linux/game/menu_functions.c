@@ -4136,57 +4136,74 @@ static boolean mcc_import_asked(unsigned long asked)
 	return asked && system_milliseconds() - asked < MCC_IMPORT_ASK_MILLISECONDS;
 }
 
+/* IMPORT FROM MCC's value: where the import stands, or how far it is */
+static void mcc_import_value(char *text, int size)
+{
+	float progress = 0.0f;
+	char const *step = "";
+	int state = mcc_import_state(cache_files_map_directory(), FALSE);
+
+	if (mcc_import_running(&progress, &step))
+	{
+		if (mcc_import_asked(mcc_import_menu.cancel_asked))
+			snprintf(text, size, "SELECT AGAIN");
+		else
+			snprintf(text, size, "%s %d%%", !strcmp(step, "Voices") ? "VOICES" : "TEXTURES", (int)(progress * 100.0f));
+	}
+	else
+	{
+		snprintf(text, size, "%s", state == _mcc_import_no_install ? "CHOOSE MCC" :
+			state == _mcc_import_none ? "IMPORT" : state == _mcc_import_stale ? "UPDATE" : "IMPORTED");
+	}
+}
+
+/* REMOVE MCC IMPORT's value */
+static void mcc_import_remove_value(char *text, int size)
+{
+	int state = mcc_import_state(cache_files_map_directory(), FALSE);
+
+	snprintf(text, size, "%s", mcc_import_asked(mcc_import_menu.remove_asked) ? "SELECT AGAIN" :
+		state == _mcc_import_current || state == _mcc_import_stale ? "REMOVE" : "NONE");
+}
+
 static void mcc_import_show(struct widget_instance *list)
 {
 	char text[ROW_TEXT_LENGTH];
-	float progress = 0.0f;
-	char const *step = "";
-	int state;
 
 	if (!settings_model_row(list, "mcc_import_now"))
 	{
 		mcc_import_menu.cancel_asked = mcc_import_menu.remove_asked = 0;
 		return;
 	}
-	state = mcc_import_state(cache_files_map_directory(), FALSE);
-	if (mcc_import_running(&progress, &step))
-	{
-		if (mcc_import_asked(mcc_import_menu.cancel_asked))
-			snprintf(text, sizeof(text), "SELECT AGAIN");
-		else
-			snprintf(text, sizeof(text), "%s %d%%", !strcmp(step, "Voices") ? "VOICES" : "TEXTURES",
-				(int)(progress * 100.0f));
-	}
-	else
-	{
-		snprintf(text, sizeof(text), "%s", state == _mcc_import_no_install ? "CHOOSE MCC" :
-			state == _mcc_import_none ? "IMPORT" : state == _mcc_import_stale ? "UPDATE" : "IMPORTED");
-	}
+	mcc_import_value(text, sizeof(text));
 	settings_status_set(list, "mcc_import_now", text);
 	if (settings_model_row(list, "mcc_import_remove"))
 	{
-		snprintf(text, sizeof(text), "%s", mcc_import_asked(mcc_import_menu.remove_asked) ? "SELECT AGAIN" :
-			state == _mcc_import_current || state == _mcc_import_stale ? "REMOVE" : "NONE");
+		mcc_import_remove_value(text, sizeof(text));
 		settings_status_set(list, "mcc_import_remove", text);
 	}
 }
 
-/* the panel's words for the two rows (the others': FALSE) */
-static boolean mcc_import_panel(struct widget_instance *row, wchar_t const **help)
+/* the panel's value and words for the two rows (the others': FALSE) */
+static boolean mcc_import_panel(struct widget_instance *row, wchar_t *value, wchar_t const **help)
 {
 	static wchar_t words[SETTINGS_PANEL_TEXT_LENGTH];
-	char text[SETTINGS_PANEL_TEXT_LENGTH];
+	char text[SETTINGS_PANEL_TEXT_LENGTH], shown[ROW_TEXT_LENGTH];
 	char const *report = mcc_import_report();
 	int state;
 
 	if (settings_row_is(row, "mcc_import_remove"))
 	{
+		mcc_import_remove_value(shown, sizeof(shown));
+		discord_widen(shown, value, ROW_TEXT_LENGTH);
 		if (!mcc_import_asked(mcc_import_menu.remove_asked))
 			return TRUE;
 		snprintf(text, sizeof(text), "Select REMOVE MCC IMPORT again to delete what was imported.");
 	}
 	else if (settings_row_is(row, "mcc_import_now"))
 	{
+		mcc_import_value(shown, sizeof(shown));
+		discord_widen(shown, value, ROW_TEXT_LENGTH);
 		state = mcc_import_state(cache_files_map_directory(), FALSE);
 		if (state == _mcc_import_running)
 			snprintf(text, sizeof(text), "%s", mcc_import_asked(mcc_import_menu.cancel_asked) ?
@@ -4784,7 +4801,7 @@ static void settings_panel_show(struct widget_instance *list, short tab)
 		/* (Profile's CLEAR CACHES: their size, and what a press does) */
 		clear_caches_panel(row, value, &help);
 		/* (Video's IMPORT FROM MCC: where it stands, what a press does) */
-		mcc_import_panel(row, &help);
+		mcc_import_panel(row, value, &help);
 		/* (Button Remapping's: a button being taken, a replacement asked) */
 		if (pad_editor_page(screen_of(list)))
 			pad_editor_panel(row, name, value, &help);
