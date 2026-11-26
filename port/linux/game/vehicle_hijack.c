@@ -88,6 +88,7 @@ let go.
 #include "items/weapon_definitions.h"
 #include "objects/objects.h"
 #include "objects/damage.h"
+#include "objects/damage_effect_definitions.h"
 #include "physics/collisions.h"
 #include "physics/physics.h"
 #include "scenario/scenario.h"
@@ -938,6 +939,45 @@ static void vehicle_hijack_beat(
 	error(_error_log, "hijack: unit %lx beats on the hatch of vehicle %lx: its driver %lx %s (body %.2f, shield %.2f)",
 		sequence->jacker_unit_index, sequence->vehicle_index, sequence->rider_unit_index, rider ? "lives" : "is dead",
 		rider ? rider->object.body_vitality : 0.0f, rider ? rider->object.shield_vitality : 0.0f);
+}
+
+boolean vehicle_hijack_hatch_blow(
+	long object_index,
+	struct damage_data const *damage,
+	real *total_damage)
+{
+	short index;
+
+	if (!network_standard_vehicle_hijack() || object_index == NONE || damage->owner_object_index == NONE)
+		return FALSE;
+	vehicle_hijack_ready();
+	for (index = 0; index < MAXIMUM_VEHICLE_HIJACKS; index++)
+	{
+		struct vehicle_hijack_sequence const *sequence = &vehicle_hijack_globals.sequences[index];
+		struct object_datum *rider;
+		struct damage_effect_definition *definition;
+		real mean;
+
+		if (sequence->jacker_unit_index == NONE || !sequence->boarding ||
+			sequence->rider_unit_index != object_index || sequence->jacker_unit_index != damage->owner_object_index ||
+			damage->definition_index != vehicle_hijack_jolt_definition(sequence->jacker_unit_index))
+		{
+			continue;
+		}
+		/* (the blow's roll, as the melee's own damage gives it, scaled so
+		that its middle is a VEHICLE_HIJACK_HATCH_BLOWS'th of the driver's
+		shield and body together) */
+		rider = object_get(object_index);
+		definition = damage_effect_definition_get(damage->definition_index);
+		mean = 0.5f * (definition->damage.damage_lower_bound + definition->damage.damage_upper_bound);
+		if (mean > 0.0f)
+		{
+			*total_damage *= (rider->object.maximum_body_vitality + rider->object.maximum_shield_vitality) /
+				((real)VEHICLE_HIJACK_HATCH_BLOWS * mean);
+		}
+		return TRUE;
+	}
+	return FALSE;
 }
 
 /* the melee's damage of the jacker's hand (its weapon's, or its unarmed

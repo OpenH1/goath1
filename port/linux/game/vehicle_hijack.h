@@ -11,6 +11,7 @@ it and beat on the hatch until the driver dies, then take it.
 #define VEHICLE_HIJACK_H
 
 struct player_action;
+struct damage_data;
 
 /* ---------- constants */
 
@@ -52,6 +53,9 @@ enum
 	(a melee's length), the ride's end at the longest, the seat looked to
 	this long once its driver dies */
 	VEHICLE_HIJACK_BEAT_TICKS = 12,
+	/* (the blows that kill a driver at full health, as Halo 2's hatch
+	takes about: vehicle_hijack_hatch_blow) */
+	VEHICLE_HIJACK_HATCH_BLOWS = 3,
 	VEHICLE_HIJACK_RIDE_TICKS = 15 * 30,
 	VEHICLE_HIJACK_TAKING_TICKS = 30,
 };
@@ -141,6 +145,14 @@ hijacker beside an enemy gunner, as the host has them: units.c's
 unit_can_enter_seat) */
 boolean vehicle_hijack_enemies_aboard_allowed(void);
 void vehicle_hijack_set_enemies_aboard_allowed(boolean allowed);
+
+/* damage.c's object_cause_damage: whether the damage is a jacker's blow on
+the Scorpion's hatch to its driver (the jacker's melee), and if so its
+total scaled to a VEHICLE_HIJACK_HATCH_BLOWS'th of the driver's shield and
+body (the melee's own roll, its middle that share); such a blow never kills
+outright as a melee from behind does (the melee's lethal to the
+unsuspecting). FALSE for anything else, and while hijacking is off */
+boolean vehicle_hijack_hatch_blow(long object_index, struct damage_data const *damage, real *total_damage);
 
 /* each tick, after its sub-steps (game.c): the sequences played on */
 void vehicle_hijack_tick(void);
