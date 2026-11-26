@@ -363,8 +363,8 @@ int main(int argc, char **argv)
 		return 0;
 	}
 	/* the headshot indicator's rule (headshot_indicator.c's), the hit sounds' way: a host's own, read in the
-	lobby; its record's bit for an OpenH1 client, never for an OpenCE machine nor from a Legacy host; a Legacy
-	game's client and a game of this machine's own may */
+	lobby; its record's bit for an OpenH1 client, never for an OpenCE machine nor from a Legacy host; a game of
+	this machine's own may, a Legacy game's client may not (its host cannot allow it) */
 	CASE("headshot-rule")
 	{
 		struct network_game const *copy;
@@ -397,7 +397,7 @@ int main(int argc, char **argv)
 		CHECK(network_standard_headshot_indicator_allowed(), "a client of a host that allows it took its own");
 		SET_FLAG(record.standard_flags, _network_game_no_headshot_indicator_bit, TRUE);
 		network_standard_globals.joined = FALSE;
-		CHECK(network_standard_headshot_indicator_allowed(), "forbidden in a Legacy game");
+		CHECK(!network_standard_headshot_indicator_allowed(), "allowed in a Legacy game");
 		network_standard_stamp_game(&record, TRUE);
 		CHECK(!TEST_FLAG(record.standard_flags, _network_game_no_headshot_indicator_bit),
 			"a Legacy host's record forbids it");

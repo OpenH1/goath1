@@ -1656,8 +1656,8 @@ PAGES = {
             # (the host's rule for its games: network_standard.c's
             # network_standard_headshot_indicator_allowed, as hit sounds')
             ("ALLOW HEADSHOT DOT", "network.allow_headshot_indicator", YES_NO,
-             "In the games you host, whether the players may see their headshot indicator. A Legacy game's "
-             "players cannot be told.", None),
+             "In the games you host, whether the players may see their headshot indicator. Off unless you turn "
+             "it on. Players in a Legacy game never see it.", None),
             ("PASSENGER VIEW", "display.passenger_third_person", [("BEHIND", "true"), ("SEAT", "false")],
              "Riding in a Warthog or a Scorpion in the campaign and co-op: the view from behind the vehicle, or "
              "from your seat. Behind, the weapon cannot zoom.", None),

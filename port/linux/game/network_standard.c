@@ -822,10 +822,10 @@ boolean network_standard_headshot_indicator_allowed(
 		return config_boolean("network.allow_headshot_indicator") != 0;
 	case _game_connection_network_client:
 		/* (the host's word, as its record brought it; a Legacy host, which
-		cannot say, has no rule against it, as OpenCE has none) */
+		cannot allow it, none: it is off unless the host turns it on) */
 		game = network_game_get_game();
 		if (!network_standard_globals.joined || !game)
-			return TRUE;
+			return FALSE;
 		return !TEST_FLAG(game->standard_flags, _network_game_no_headshot_indicator_bit);
 	default:
 		return TRUE;

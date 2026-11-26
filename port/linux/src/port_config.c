@@ -1283,13 +1283,14 @@ static const struct config_setting config_settings[] =
 		"(audio.hit_sounds, each player's own). false forbids them, for your\n"
 		"players and an OpenH1 game's clients (the game's settings carry it,\n"
 		"read in the lobby); a Legacy game's clients cannot be told." },
-	{ "network.allow_headshot_indicator", _config_boolean, "true", "HALO_NET_ALLOW_HEADSHOT_INDICATOR",
+	{ "network.allow_headshot_indicator", _config_boolean, "false", "HALO_NET_ALLOW_HEADSHOT_INDICATOR",
 		_environment_value, _platform_all,
 		"Host: whether the players of your games may see their headshot\n"
-		"indicator (display.headshot_indicator, each player's own). false\n"
-		"forbids it, for your players and an OpenH1 game's clients (the game's\n"
-		"settings carry it, read in the lobby); a Legacy game's clients cannot\n"
-		"be told." },
+		"indicator (display.headshot_indicator, each player's own). Off unless\n"
+		"the host turns it on, as vehicle hijacking is. true allows it, for\n"
+		"your players and an OpenH1 game's clients (the game's settings carry\n"
+		"it, read in the lobby). A Legacy host cannot say, so its clients\n"
+		"show none." },
 	{ "network.predict_hits", _config_boolean, "true", "HALO_NET_PREDICT_HITS", _environment_value, _platform_all,
 		"Client of a GOAT H1 game: show your hits on other players at once\n"
 		"(the shield's flare and break, the flinch, the death), before the\n"
