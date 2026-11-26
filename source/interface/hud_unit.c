@@ -192,13 +192,18 @@ static void hud_update_unit_local_player(
 
 static struct unit_hud_globals *unit_hud_globals = NULL;
 
-/* port: the warning sounds each player's HUD plays, the ones it played and
-their handles, the sound system's: outside the game state. The handles are
-the slots the sounds playing left free, as the mixer frees them by the
-frames' clock, and the ones played follow them (a sound that could not
-start is not let go of), so in the game state's unit_hud_state they parted
-at other frame rates (OpenH1 #1233); its two fields stay as a new map left
-them (none played, no handles) */
+/* port: the warning sounds each player's HUD plays as impulses, the ones it
+played and their handles, the sound system's: outside the game state. The
+handles are the slots the sounds playing left free, as the mixer frees them
+by the frames' clock, and the ones played follow them (a sound that could
+not start is not let go of), so in the game state's unit_hud_state they
+parted at other frame rates (OpenH1 #1233). A looping warning sound (the
+shield's recharge) is the game state's own (game_looping_sound_data), so its
+handle and played flag stay in unit_hud_state's sound_flags and
+last_sound_handles as the original keeps them: a checkpoint's revert brings
+back the looping sounds and their handles together. Held out here, a revert
+left the HUD with no handle to a recharge sound the checkpoint brought back,
+which then looped for good (OpenH1 #1252) */
 static struct
 {
 	word played_flags;
@@ -346,7 +351,7 @@ void hud_fix_unit_data(
 	old_hud_state = get_hud_state(old_local_player_index);
 	new_hud_state = get_hud_state(new_local_player_index);
 	*new_hud_state = *old_hud_state;
-	/* port: (and its warning sounds, outside the game state: unit_hud_sounds) */
+	/* port: (and its impulse warning sounds, outside the game state: unit_hud_sounds) */
 	unit_hud_sounds[new_local_player_index] = unit_hud_sounds[old_local_player_index];
 
 	return;
@@ -551,6 +556,8 @@ void hud_play_unit_sounds(
 					&hud_definition->warning_sounds,
 					unit_hud_sounds[player->local_player_index].handles,
 					&unit_hud_sounds[player->local_player_index].played_flags,
+					hud_state->last_sound_handles,
+					&hud_state->sound_flags,
 					(short)NUMBEROF(unit_hud_sounds[player->local_player_index].handles));
 			}
 		}

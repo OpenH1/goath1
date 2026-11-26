@@ -145,7 +145,14 @@ void hud_play_sound(
 	struct tag_block const *sounds,
 	long *sound_indices,
 	word *played_flags,
-	short maximum_sound_count); /* port: what sound_indices holds */
+	/* port: the looping sounds' handles and played flags apart from the
+	impulses': a looping sound is the game state's (game_looping_sound_data),
+	so its handle is kept with it and a checkpoint's revert or a saved game
+	brings back both together; an impulse is the sound system's, its handle
+	kept outside the game state (hud_unit.c) */
+	long *looping_sound_indices,
+	word *looping_played_flags,
+	short maximum_sound_count); /* port: what each handle array holds */
 
 /* port: a player's name's colour above their head: an ally's, or an
 enemy's (hud.c) */
