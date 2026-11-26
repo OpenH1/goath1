@@ -5,9 +5,9 @@ The HD effects made from the player's own maps and kept (hd_effects.h):
 which are wanted, the thread that makes them, the map read, the recipe, and
 the tag file written.
 
-A map is read as map_unpack.c reads it to copy it: its 2 KB header, then one
-zlib stream of the rest, inflated as it is read and never held whole. Its
-tags come first (the header says where they are: the end of the map), then,
+A map is read with xbox_map_file.c (inflated as it is read, never held
+whole). Its tags come first (the header says where they are: the end of the
+map), then,
 in a second pass, the stock bitmap's pages, which the tags place earlier.
 The pages' CRC-32 must be the effect's: any other bitmap (a modded map's) is
 not the stock one the recipe was made for, and the next map is tried.
@@ -30,6 +30,7 @@ pages, 5.3 MB each with their mip levels, 11.2 MB in all).
 #include "platform.h"
 #include "port_config.h"
 #include "posix.h"
+#include "xbox_map_file.h"
 #include "memory/zlib/zlib.h"
 
 #include <fcntl.h>
@@ -58,10 +59,8 @@ int halo_server_mode(void);
 #define MAP_HEADER_HEAD 0x68656164UL
 #define MAP_HEADER_FOOT 0x666F6F74UL
 #define MAP_VERSION 5
-#define MAP_TAGS_BASE 0x803A6000UL
-#define MAP_MOST_TAGS_SIZE (64UL << 20)
-#define MAP_READ_SIZE (256UL << 10)
-#define MAP_INFLATE_SIZE (1UL << 20)
+#define MAP_TAGS_BASE XBOX_MAP_TAGS_BASE
+#define MAP_MOST_TAGS_SIZE XBOX_MAP_MOST_TAGS_SIZE
 
 /* the tags' (bitmap_group.h) */
 #define GROUP_BITMAP 0x6269746DUL
@@ -216,100 +215,6 @@ static int write_file(const char *path, const void *data, unsigned long size)
 
 /* ---------- the map read */
 
-/* a range of the map (its offset as inflated, header included) to copy out */
-struct map_range
-{
-	unsigned long offset;
-	unsigned long size;
-	unsigned char *destination;
-};
-
-/* Inflates the map at `path` far enough to copy each of the ranges; 0 if
-it cannot be read or ends first. */
-static int map_ranges_read(const char *path, struct map_range *ranges, int count)
-{
-	unsigned char header[MAP_HEADER_SIZE];
-	unsigned char *in = NULL, *out = NULL;
-	unsigned long end = 0, done = MAP_HEADER_SIZE, length;
-	off_t read_offset = MAP_HEADER_SIZE;
-	z_stream stream;
-	int source, inflating = 0, read = 0, index;
-
-	for (index = 0; index < count; index++)
-		if (ranges[index].offset + ranges[index].size > end)
-			end = ranges[index].offset + ranges[index].size;
-	source = open(path, O_RDONLY | O_CLOEXEC);
-	if (source < 0 || pread(source, header, sizeof(header), 0) != (ssize_t)sizeof(header))
-		goto finished;
-	length = word_le(header + 8);
-	if (end > length)
-		goto finished;
-	/* (the header's part of each range) */
-	for (index = 0; index < count; index++)
-	{
-		struct map_range *range = &ranges[index];
-
-		if (range->offset < MAP_HEADER_SIZE)
-		{
-			unsigned long size = MAP_HEADER_SIZE - range->offset < range->size ? MAP_HEADER_SIZE - range->offset :
-				range->size;
-
-			memcpy(range->destination, header + range->offset, size);
-		}
-	}
-	in = malloc(MAP_READ_SIZE);
-	out = malloc(MAP_INFLATE_SIZE);
-	memset(&stream, 0, sizeof(stream));
-	if (!in || !out || inflateInit(&stream) != Z_OK)
-		goto finished;
-	inflating = 1;
-	while (done < end)
-	{
-		unsigned long produced;
-		int result;
-
-		if (!stream.avail_in)
-		{
-			ssize_t got = pread(source, in, MAP_READ_SIZE, read_offset);
-
-			if (got <= 0)
-				goto finished;
-			read_offset += got;
-			stream.next_in = in;
-			stream.avail_in = (uInt)got;
-		}
-		stream.next_out = out;
-		stream.avail_out = (uInt)MAP_INFLATE_SIZE;
-		result = inflate(&stream, Z_NO_FLUSH);
-		if (result != Z_OK && result != Z_STREAM_END)
-			goto finished;
-		produced = (unsigned long)(stream.next_out - out);
-		for (index = 0; index < count; index++)
-		{
-			struct map_range *range = &ranges[index];
-			unsigned long first = range->offset > done ? range->offset : done;
-			unsigned long last = range->offset + range->size < done + produced ? range->offset + range->size :
-				done + produced;
-
-			if (first < last)
-				memcpy(range->destination + (first - range->offset), out + (first - done), last - first);
-		}
-		done += produced;
-		if (result == Z_STREAM_END)
-			break;
-	}
-	read = done >= end;
-
-finished:
-	if (inflating)
-		inflateEnd(&stream);
-	free(in);
-	free(out);
-	if (source >= 0)
-		close(source);
-	return read;
-}
-
 /* the stock bitmap read out of a map */
 struct effect_source
 {
@@ -353,7 +258,7 @@ static int source_read(const char *path, long effect, struct effect_source *sour
 {
 	const struct hd_effect_embedded *embedded = &hd_effects_embedded[effect];
 	unsigned char header[MAP_HEADER_SIZE];
-	struct map_range ranges[MAXIMUM_PAGES];
+	struct xbox_map_range ranges[MAXIMUM_PAGES];
 	unsigned long tags_offset, instances, count, index, crc = 0;
 	const unsigned char *root = NULL;
 
@@ -382,7 +287,7 @@ static int source_read(const char *path, long effect, struct effect_source *sour
 	ranges[0].offset = tags_offset;
 	ranges[0].size = source->tags_size;
 	ranges[0].destination = source->tags;
-	if (!map_ranges_read(path, ranges, 1))
+	if (!xbox_map_ranges_read(path, ranges, 1))
 		goto refused;
 
 	/* the tag of the effect's name, a bitmap */
@@ -443,7 +348,7 @@ static int source_read(const char *path, long effect, struct effect_source *sour
 		ranges[index].size = size;
 		ranges[index].destination = source->pixels[index];
 	}
-	if (!map_ranges_read(path, ranges, (int)source->page_count))
+	if (!xbox_map_ranges_read(path, ranges, (int)source->page_count))
 		goto refused;
 	for (index = 0; index < (unsigned long)source->page_count; index++)
 		crc = crc32(crc, source->pixels[index], (uInt)source->pixels_size[index]);
