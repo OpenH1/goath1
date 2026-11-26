@@ -47,6 +47,8 @@ void hud_play_sound(
 	struct tag_block const *sounds,
 	long *sound_indices,
 	word *played_flags,
+	long *looping_sound_indices,
+	word *looping_played_flags,
 	short maximum_sound_count)
 {
 	long absolute_sound_index = 0;
@@ -76,6 +78,11 @@ void hud_play_sound(
 		{
 			struct hud_sound_definition const *sound =
 				TAG_BLOCK_GET_ELEMENT(sounds, absolute_sound_index, struct hud_sound_definition);
+			/* port: a looping sound's handle is the game state's (its looping
+			sound is), an impulse's the caller's other one (hud.h) */
+			boolean looping = sound->sound.group_tag == LOOPING_SOUND_DEFINITION_TAG;
+			long *sound_indices_of = looping ? looping_sound_indices : sound_indices;
+			word *played_flags_of = looping ? looping_played_flags : played_flags;
 
 			/* port: a HUD sound with no tag never plays (a Custom Edition map's
 			HUD can have one; it asserted here) */
@@ -88,28 +95,28 @@ void hud_play_sound(
 					break;
 
 				case SOUND_DEFINITION_TAG:
-					if (sound_indices[absolute_sound_index] == NONE ||
-						!TEST_FLAG(*played_flags, absolute_sound_index))
+					if (sound_indices_of[absolute_sound_index] == NONE ||
+						!TEST_FLAG(*played_flags_of, absolute_sound_index))
 					{
-						if (sound_indices[absolute_sound_index] != NONE)
-							sound_stop_impulse(sound_indices[absolute_sound_index]);
-						sound_indices[absolute_sound_index] =
+						if (sound_indices_of[absolute_sound_index] != NONE)
+							sound_stop_impulse(sound_indices_of[absolute_sound_index]);
+						sound_indices_of[absolute_sound_index] =
 							unspatialized_impulse_sound_new(sound->sound.index, sound->scale);
 					}
 					break;
 
 				case LOOPING_SOUND_DEFINITION_TAG:
-					if (sound_indices[absolute_sound_index] == NONE)
-						sound_indices[absolute_sound_index] =
+					if (sound_indices_of[absolute_sound_index] == NONE)
+						sound_indices_of[absolute_sound_index] =
 							unattached_looping_sound_start(sound->sound.index, NONE, sound->scale);
 					break;
 				}
 
-				SET_FLAG(*played_flags, absolute_sound_index, TRUE);
+				SET_FLAG(*played_flags_of, absolute_sound_index, TRUE);
 			}
 			else
 			{
-				if (sound_indices[absolute_sound_index] != NONE)
+				if (sound_indices_of[absolute_sound_index] != NONE)
 				{
 					switch (sound->sound.group_tag)
 					{
@@ -119,12 +126,12 @@ void hud_play_sound(
 					case SOUND_DEFINITION_TAG:
 						break;
 					case LOOPING_SOUND_DEFINITION_TAG:
-						unattached_looping_sound_stop(sound_indices[absolute_sound_index]);
+						unattached_looping_sound_stop(sound_indices_of[absolute_sound_index]);
 						break;
 					}
 
-					sound_indices[absolute_sound_index] = NONE;
-					SET_FLAG(*played_flags, absolute_sound_index, FALSE);
+					sound_indices_of[absolute_sound_index] = NONE;
+					SET_FLAG(*played_flags_of, absolute_sound_index, FALSE);
 				}
 			}
 
