@@ -1,6 +1,6 @@
 """The keys' Walk (controls.walk, input.walk, input.walk_speed): while it is held (or toggled on) the movement keys
-push the player part of the way, as a stick pushed a little does (input_abstraction.c's keyboard_controls_apply); by
-default as fast as stays off the enemies' motion trackers (keyboard_walk.c's keyboard_walk_throttle: the threshold's
+push the player part of the way, as a stick pushed a little does (input_abstraction.c's keyboard_controls_apply);
+at "tracker" as fast as stays off the enemies' motion trackers (keyboard_walk.c's keyboard_walk_throttle: the threshold's
 velocity over the fastest run, a slope's scale and the game type's speed with it), checked through the biped's own
 movement (bipeds.c's biped_player_movement, the speeds biped_physics_prepare works out) and the trackers' own test
 (motion_sensor.c's should_draw_object), in every direction, at each simulation rate's sub-steps; crouched, the slower

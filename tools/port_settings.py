@@ -820,7 +820,7 @@ KEY_BINDINGS = ("controls_setup", "controls_settings_screen")
 # Key Bindings: the keyboard and mouse's actions, in groups (the order of
 # port/linux/game/menu_functions.c's table of them), and its rows for a
 # group's actions (the most a group has), each its action's two bindings
-CONTROL_GROUPS = ["MOVEMENT", "WEAPONS", "ACTIONS", "COMMUNICATION"]
+CONTROL_GROUPS = ["MOVEMENT", "WEAPONS", "ACTIONS", "COMMUNICATION", "VEHICLES"]
 CONTROL_ROWS = 9
 CONTROL_COMMAND_ROWS = {f"command_{n}" for n in range(1, CONTROL_ROWS + 1)}
 # (an action's row: its name, then its two bindings' columns, to the row's end)
@@ -1829,7 +1829,7 @@ PAGES = {
             # keys, are its controls_update's, each frame)
             (SECTION, "KEYBOARD AND MOUSE"),
             ("SHOW", None, [(group, str(index)) for index, group in enumerate(CONTROL_GROUPS)],
-             "Which of the actions to show: movement, weapons, actions or communication.", None, "group"),
+             "Which of the actions to show: movement, weapons, actions, communication or vehicles.", None, "group"),
             (SECTION, "ACTIONS"),
             *[("", None, None, "", None, f"command_{n}") for n in range(1, CONTROL_ROWS + 1)],
             # (the keys' Walk, controls.walk: port/linux/game/keyboard_walk.c;
@@ -1840,8 +1840,8 @@ PAGES = {
              "movement keys move you slowly, as a stick pushed a little does.", None),
             ("WALK SPEED", "input.walk_speed",
              [("TRACKER", "tracker")] + [(f"{percent}%", str(percent)) for percent in range(10, 100, 10)],
-             "How fast you walk. Tracker: as fast as you can and still stay off the enemies' motion trackers. "
-             "Or a part of your full speed.", None),
+             "How fast you walk, as a part of your full speed (50% by default). Tracker: as fast as you can and "
+             "still stay off the enemies' motion trackers.", None),
         ],
     },
     GYRO[0]: {

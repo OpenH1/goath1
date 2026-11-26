@@ -60,7 +60,8 @@ enum halo_keyboard_action
 	HALO_KEYBOARD_PING,
 	/* (walking's: while it is held (or toggled on, input.walk), the movement
 	keys push the player a part of the way, as a stick pushed a little does,
-	slowly enough by default to stay off the enemies' motion trackers:
+	at input.walk_speed, half a run by default (or slowly enough to stay off
+	the enemies' motion trackers):
 	source/input/input_abstraction.c, port/linux/game/keyboard_walk.c) */
 	HALO_KEYBOARD_WALK,
 	/* (the HUD's Spartan link's, which the game itself does not read: the
@@ -74,13 +75,28 @@ enum halo_keyboard_action
 	source/input/input_abstraction.c, source/game/player_control.c) */
 	HALO_KEYBOARD_ZOOM_IN,
 	HALO_KEYBOARD_ZOOM_OUT,
+	/* (a vehicle's second trigger's, Halo PC's right click: in a seat whose
+	weapon has two triggers (the Scorpion's machine gun, the Banshee's fuel
+	rod), its keys fire that trigger, as a controller's left trigger does,
+	and press nothing else they are bound to (Zoom's right click); elsewhere
+	they press only those others. It has no bit of halo_keyboard_actions'
+	own, which are full: halo_keyboard_seat_actions holds it) */
+	HALO_KEYBOARD_VEHICLE_SECONDARY,
 	NUMBER_OF_HALO_KEYBOARD_ACTIONS
 };
+
+/* the actions with a bit of halo_keyboard_actions' (an unsigned long's 32) */
+#define HALO_KEYBOARD_HELD_ACTIONS HALO_KEYBOARD_VEHICLE_SECONDARY
 
 /* the actions the keyboard and mouse hold for the player on the controller
 (a bit for each halo_keyboard_action): theirs is the first's; none while a
 menu or the console is up, or a chat line is typed */
 unsigned long halo_keyboard_actions(short controller_index);
+/* the actions held as a seat whose weapon has a second trigger takes them:
+the keys and buttons bound to Vehicle Secondary (controls.vehicle_secondary)
+hold Throw Grenade (that trigger, source/game/player_control.c) and none of
+the other actions they are bound to; the rest as halo_keyboard_actions */
+unsigned long halo_keyboard_seat_actions(short controller_index);
 /* Current binding label, slot 0/1; zero and empty for unbound or invalid inputs. */
 int halo_keyboard_binding_label(int action, int slot, char *shown, unsigned int size);
 /* whether voice chat's push to talk is held (controls.push_to_talk), in the

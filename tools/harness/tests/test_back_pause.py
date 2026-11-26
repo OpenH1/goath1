@@ -24,6 +24,7 @@ def generated(android=True, fault=False):
     config = "#define HALO_ANDROID 1\n" if android else ""
     config += "\n".join(re.findall(r"^#define XINPUT_GAMEPAD_\w+ [^\n]+", read("port/include/xdk/xdk_xbox.h"), re.M))
     config += "\n" + enum_with(read("port/linux/include/halo_keyboard.h"), "HALO_KEYBOARD_PAUSE") + "\n"
+    config += "#define HALO_KEYBOARD_HELD_ACTIONS HALO_KEYBOARD_VEHICLE_SECONDARY\n"
     config += f"#define MAXIMUM_BINDINGS {constant(inputs, 'MAXIMUM_BINDINGS')}\n"
     names = set(re.findall(r"SDL_SCANCODE_\w+", code)) - {"SDL_SCANCODE_COUNT"}
     names |= {"SDL_SCANCODE_AC_BACK", "SDL_SCANCODE_ESCAPE", "SDL_SCANCODE_TAB"}

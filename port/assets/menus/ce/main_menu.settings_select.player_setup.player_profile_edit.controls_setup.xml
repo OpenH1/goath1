@@ -61,7 +61,7 @@
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/controls_setup/group_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/controls_setup/labels" string_index="1" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/controls_setup/group_spinner" type="spinner" top="1" width="140" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="MOVEMENT|WEAPONS|ACTIONS|COMMUNICATION" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="4 -6 16 0" footer_bounds="4 140 16 146" wide="20 120" source="tools/port_settings.py settings_files/_settings_page">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/controls_setup/group_spinner" type="spinner" top="1" width="140" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="MOVEMENT|WEAPONS|ACTIONS|COMMUNICATION|VEHICLES" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="4 -6 16 0" footer_bounds="4 140 16 146" wide="20 120" source="tools/port_settings.py settings_files/_settings_page">
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/controls_setup/section_2" width="344" height="18" bitmap="main_menu/settings/section" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/controls_setup/section_2_title"/>
@@ -232,7 +232,7 @@
 	<strings name="main_menu/settings_select/player_setup/player_profile_edit/controls_setup/help_strings">
 		<string text=""/>
 		<string text=""/>
-		<string text="Which of the actions to show: movement, weapons, actions or communication."/>
+		<string text="Which of the actions to show: movement, weapons, actions, communication or vehicles."/>
 		<string text=""/>
 		<string text=""/>
 		<string text=""/>
@@ -245,6 +245,6 @@
 		<string text=""/>
 		<string text=""/>
 		<string text="Hold walks while the Walk key is held; Toggle walks from one press to the next. Walking, the movement keys move you slowly, as a stick pushed a little does."/>
-		<string text="How fast you walk. Tracker: as fast as you can and still stay off the enemies' motion trackers. Or a part of your full speed."/>
+		<string text="How fast you walk, as a part of your full speed (50% by default). Tracker: as fast as you can and still stay off the enemies' motion trackers."/>
 	</strings>
 </menus>

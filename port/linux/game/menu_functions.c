@@ -5423,6 +5423,9 @@ static struct
 	wchar_t const *label;
 	short group;
 	boolean essential;
+	/* a seat's control, whose keys are not taken from the others' nor
+	theirs from it (a key taken stays bound to the other kind) */
+	boolean seat;
 } const controls[] =
 {
 	{ "controls.move_forward", L"MOVE FORWARD", 0, TRUE },
@@ -5465,6 +5468,10 @@ static struct
 	and out, beside its cycle, player_control.c) */
 	{ "controls.zoom_in", L"ZOOM IN", 1, FALSE },
 	{ "controls.zoom_out", L"ZOOM OUT", 1, FALSE },
+	/* (VEHICLES': a seat's, which shares its keys with the others: the right
+	click is Zoom's on foot, Vehicle Secondary's in a seat with a second
+	trigger, source/input/input_abstraction.c) */
+	{ "controls.vehicle_secondary", L"SECONDARY FIRE", 4, FALSE, TRUE },
 };
 
 static struct
@@ -5660,7 +5667,8 @@ static void control_refuse(void)
 	ui_play_audio_feedback_sound(SOUND_ERROR);
 }
 
-/* the key or button taken (then bound to no other control), or cleared;
+/* the key or button taken (then bound to no other control of its kind: a
+seat's, or the others'), or cleared;
 not where a game control would be left with no key (its only key taken
 for another control, or cleared) */
 static void control_capture_poll(void)
@@ -5684,7 +5692,8 @@ static void control_capture_poll(void)
 			return;
 		for (other = 0; other < NUMBEROF(controls); other++)
 		{
-			if (other != control && control_left_without_key(other, NONE, name))
+			if (other != control && controls[other].seat == controls[control].seat &&
+				control_left_without_key(other, NONE, name))
 			{
 				control_refuse();
 				return;
@@ -5692,6 +5701,8 @@ static void control_capture_poll(void)
 		}
 		for (other = 0; other < NUMBEROF(controls); other++)
 		{
+			if (controls[other].seat != controls[control].seat)
+				continue;
 			for (other_slot = 0; other_slot < CONTROL_BINDINGS; other_slot++)
 			{
 				if (control_binding_taken_by(controls_screen.bindings[other][other_slot], name))
