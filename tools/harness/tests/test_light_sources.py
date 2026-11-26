@@ -9,7 +9,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from harness import CHECK_FAILED, build, function, inline, mutated, read, run, structure
 
-CASES = ["flare-units-items", "weapon-glow", "room-kept", "flash-fades"]
+CASES = ["flare-units-items", "weapon-glow", "room-kept", "flash-fades", "magazine-strength", "stream-per-firer",
+         "emitter-rows"]
 CONTROLS = {
     # (a machine's flares lit again over its lightmap's light)
     "scenery-lit": (("object->object.type == _object_type_weapon || object->object.type == _object_type_equipment;",
@@ -27,6 +28,11 @@ CONTROLS = {
     "flash-repeats": (("\t\tif (fraction >= 1.0f && flash->seen)\n\t\t\tcontinue;\n", ""), "flash-fades"),
     "flash-restarted": (("\t\t\t\tflash->start = time;\n\t\t\t}\n", "\t\t\t}\n\t\t\tflash->start = time;\n"),
                         "flash-fades"),
+    "magazine-ignored": (("return 0.35f + 0.65f * PIN(fraction, 0.0f, 1.0f);", "return 1.0f;"), "magazine-strength"),
+    # (a light a flame, not a firer: dozens of lights for one flamethrower)
+    "stream-each-flame": (("if (light_sources.streams[index].owner_index == owner_index && "
+                           "light_sources.streams[index].row == row)\n\t\t\tbreak;",
+                           "if (FALSE)\n\t\t\tbreak;"), "stream-per-firer"),
 }
 
 
@@ -50,8 +56,10 @@ def generated(control=None):
         defines, enums, structure(header, "light_source"), structure(sources, "light_source_object"),
         structure(sources, "light_source_effect"), tables, structure(sources, "light_source_flash"), state,
         "static void light_sources_find(void);", "static void light_sources_objects(real time);",
-        function(sources, "light_sources_flicker"), function(sources, "light_sources_add"),
+        function(sources, "light_sources_flicker"), function(sources, "light_sources_pulse"),
+        function(sources, "light_sources_magazine_strength"), function(sources, "light_sources_add"),
         function(sources, "light_sources_effect_position"), function(sources, "light_sources_effects"),
+        function(sources, "light_sources_stream_add"), function(sources, "light_sources_streams"),
         function(sources, "light_sources_compare"), function(sources, "light_sources_gather")])
     if control:
         code = mutated(code, *CONTROLS[control][0])

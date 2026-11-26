@@ -6,7 +6,8 @@ light (source/objects/object_lights.c light_port_flare_lights), how strong a
 weapon's glow is (light_port_weapon_glow), and the port's own lights for what
 has none (port/linux/game/light_sources.c: an effect's flash, kept and faded
 after its effect is gone; only as many as the room the game's lights leave,
-the most visible first). The effects are a made-up list.
+the most visible first; a held display lit by its rounds; one flamethrower
+light a firer; the emitters' rows). The effects are a made-up list.
 */
 
 #include "harness.h"
@@ -14,6 +15,7 @@ the most visible first). The effects are a made-up list.
 
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define PIN(n, floor, ceiling) ((n) < (floor) ? (floor) : MIN((n), (ceiling)))
 #define NUMBEROF(a) (sizeof(a) / sizeof((a)[0]))
 #define square_root(x) sqrtf(x)
 #define _real_epsilon 0.0001f
@@ -230,6 +232,91 @@ int main(int argc, char **argv)
 		test_time = duration * 0.9f;
 		count = light_sources_gather(&sources, 8);
 		CHECK(count == 1 && sources[0].color.red < first * 0.2f, "one flash an effect: %f", sources[0].color.red);
+		return 0;
+	}
+	if (!strcmp(case_name, "magazine-strength"))
+	{
+		real empty = light_sources_magazine_strength(0, 60);
+		real half = light_sources_magazine_strength(30, 60);
+		real full = light_sources_magazine_strength(60, 60);
+
+		CHECK(fabsf(full - 1.0f) < 1e-6f, "a full magazine, the whole: %f", full);
+		CHECK(empty > 0.0f && empty < half && half < full, "fewer rounds, dimmer, but lit: %f %f %f", empty, half,
+			full);
+		CHECK(light_sources_magazine_strength(0, 0) == empty, "no magazine size, as empty");
+		CHECK(light_sources_magazine_strength(90, 60) == full, "no brighter past full");
+		return 0;
+	}
+	if (!strcmp(case_name, "stream-per-firer"))
+	{
+		short row = NONE;
+		short index;
+		real strong, weak;
+
+		for (index = 0; index < (short)NUMBEROF(light_source_objects); index++)
+		{
+			if (light_source_objects[index].kind == _light_source_stream)
+				row = index;
+		}
+		CHECK(row != NONE, "a stream row (the flamethrower's flames)");
+		reset(0);
+		/* (one firer's ten flames along x from 10 to 19, another's two) */
+		for (index = 0; index < 10; index++)
+		{
+			real_point3d flame = { 10.0f + (real)index, 0.0f, 0.0f };
+
+			light_sources_stream_add(7, row, &flame);
+		}
+		for (index = 0; index < 2; index++)
+		{
+			real_point3d flame = { 5.0f, 1.0f, 0.0f };
+
+			light_sources_stream_add(9, row, &flame);
+		}
+		light_sources_streams(0.0f);
+		CHECK(light_sources.candidate_count == 2, "one light a firer: %d", light_sources.candidate_count);
+		CHECK(light_sources.stream_count == 0, "the firers forgotten after the frame: %d", light_sources.stream_count);
+		CHECK(fabsf(light_sources.candidates[0].position.x - 14.5f) < 1e-4f, "amid its flames: %f",
+			light_sources.candidates[0].position.x);
+		strong = light_sources.candidates[0].color.red;
+		weak = light_sources.candidates[1].color.red;
+		CHECK(weak < strong * 0.5f, "two flames light less than ten: %f of %f", weak, strong);
+		return 0;
+	}
+	if (!strcmp(case_name, "emitter-rows"))
+	{
+		static struct { char const *name; short kind; } const wanted[] = {
+			{ "powerups\\over shield", _light_source_pulse },
+			{ "powerups\\active camouflage", _light_source_pulse },
+			{ "scenery\\teleporter_shield\\teleporter", _light_source_pulse },
+			{ "weapons\\assault rifle\\assault rifle", _light_source_magazine },
+			{ "weapons\\flamethrower\\flame", _light_source_stream },
+		};
+		unsigned want, index;
+
+		for (want = 0; want < NUMBEROF(wanted); want++)
+		{
+			boolean found = FALSE;
+
+			for (index = 0; index < NUMBEROF(light_source_objects); index++)
+			{
+				struct light_source_object const *entry = &light_source_objects[index];
+
+				if (strcmp(entry->name, wanted[want].name))
+					continue;
+				found = TRUE;
+				CHECK(entry->kind == wanted[want].kind, "%s's kind: %d", entry->name, entry->kind);
+				CHECK(entry->radius > 0.0f && entry->radius <= 4.0f, "%s's reach: %f", entry->name, entry->radius);
+				CHECK(MAX(entry->color.red, MAX(entry->color.green, entry->color.blue)) > 0.5f, "%s lit",
+					entry->name);
+				/* (a display on the gun lights about the hands, no more) */
+				if (entry->kind == _light_source_magazine)
+				{
+					CHECK(entry->marker && entry->radius < 0.5f, "%s on its gun, small", entry->name);
+				}
+			}
+			CHECK(found, "a row for %s", wanted[want].name);
+		}
 		return 0;
 	}
 	fprintf(stderr, "no case %s\n", case_name);
