@@ -233,7 +233,7 @@ static struct world_ao_instance const *instance_of(unsigned long owner, unsigned
 
 static void frame_case(void)
 {
-	struct world_ao_instance const *structure, *seven, *nine;
+	struct world_ao_instance const *structure, *seven, *nine, *scenery;
 	unsigned long index;
 
 	world_rt_frame(1);
@@ -244,10 +244,14 @@ static void frame_case(void)
 	CHECK(meshes[1].id == 2 && meshes[1].count == 4 && meshes[1].first[3] == 0.0f && meshes[1].first[4] == 1.0f,
 		"definition 7's node, turned: %lu %lu", meshes[1].id, meshes[1].count);
 	CHECK(meshes[2].id == 3 && meshes[2].count == 12, "the box: %lu %lu", meshes[2].id, meshes[2].count);
-	/* the instances: the structure, 7's one node with a mesh, 9's box; not
-	the baked scenery */
-	CHECK(instance_count == 3, "%lu instances", instance_count);
+	/* the instances: the structure, 7's one node with a mesh, 9's box, and
+	the baked scenery's (7's) node as the structure is (owner 0) */
+	CHECK(instance_count == 4, "%lu instances", instance_count);
 	structure = instance_of(0, WORLD_RT_STRUCTURE);
+	CHECK(structure && structure->mesh == 1, "the structure first");
+	scenery = &instances[3];
+	CHECK(scenery->owner == 0 && scenery->kind == WORLD_RT_STRUCTURE && scenery->mesh == 2, "the baked scenery's: %u %u %u",
+		scenery->owner, scenery->kind, scenery->mesh);
 	seven = instance_of(4, WORLD_RT_OBJECT);
 	nine = instance_of(6, WORLD_RT_OBJECT);
 	CHECK(structure && structure->mesh == 1 && structure->transform[0][0] == 1.0f && structure->transform[0][3] == 0.0f,
@@ -262,7 +266,7 @@ static void frame_case(void)
 	world_rt_frame(1);
 	CHECK(instance_handings == 1, "handed twice in a frame");
 	world_rt_frame(2);
-	CHECK(instance_handings == 2 && instance_count == 3 && mesh_count == 3, "the next frame: %lu %d", instance_count,
+	CHECK(instance_handings == 2 && instance_count == 4 && mesh_count == 3, "the next frame: %lu %d", instance_count,
 		mesh_count);
 	CHECK(structure_asked == 2 && definitions_asked == 3, "asked again: %d %d", structure_asked, definitions_asked);
 	/* another BSP: its structure's mesh */

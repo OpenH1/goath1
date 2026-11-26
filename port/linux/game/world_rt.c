@@ -347,18 +347,22 @@ void world_rt_frame(unsigned long frame)
 		if (instance)
 			memcpy(instance->transform, identity, sizeof(identity));
 	}
-	/* (the dynamic objects: not the static scenery the field and its pages
-	hold) */
+	/* (the objects; the static scenery the field and its pages hold, a
+	tree or a rock, as the structure is: owner 0, so it stops a ray and
+	occludes nothing, its occlusion the field's, not counted twice, yet a
+	shadow's ray stops at it. Held weapons and equipment are not here
+	(world_proxies_source_instances: their holder covers them, and they
+	would shade the hands holding them), nor the first-person weapon and
+	hands, drawn in a view of their own, not in the world) */
 	object_count = world_proxies_source_instances(world_rt.objects, WORLD_RT_OBJECTS);
 	for (object_index = 0; object_index < object_count && count < WORLD_RT_INSTANCES; object_index++)
 	{
 		struct world_proxies_source_instance const *object = &world_rt.objects[object_index];
 		struct world_rt_definition const *definition;
-		unsigned long owner = world_rt_owner(object->id);
+		unsigned long owner = object->baked ? 0 : world_rt_owner(object->id);
+		unsigned int kind = object->baked ? WORLD_RT_STRUCTURE : WORLD_RT_OBJECT;
 		short node_count, node_index;
 
-		if (object->baked)
-			continue;
 		definition = world_rt_definition(object->definition);
 		if (!definition || definition->node_count <= 0)
 			continue;
@@ -367,7 +371,7 @@ void world_rt_frame(unsigned long frame)
 			continue;
 		if (definition->boxed)
 		{
-			struct world_ao_instance *instance = world_rt_instance_add(&count, world_rt.box, owner, WORLD_RT_OBJECT);
+			struct world_ao_instance *instance = world_rt_instance_add(&count, world_rt.box, owner, kind);
 
 			if (instance)
 				world_rt_box_transform(&world_rt.frames[0], definition->sphere, instance->transform);
@@ -379,7 +383,7 @@ void world_rt_frame(unsigned long frame)
 
 			if (!definition->meshes[node_index])
 				continue;
-			instance = world_rt_instance_add(&count, definition->meshes[node_index], owner, WORLD_RT_OBJECT);
+			instance = world_rt_instance_add(&count, definition->meshes[node_index], owner, kind);
 			if (instance)
 				world_rt_transform(&world_rt.frames[node_index], instance->transform);
 		}

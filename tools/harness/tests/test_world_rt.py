@@ -1,7 +1,7 @@
 """display.ambient_occlusion "ray_traced"'s scene (port/linux/include/world_rt.h, port/linux/game/world_rt.c,
 docs/world-ao.md "Hardware ray queries"): a mesh's triangles turned to face out, the box, the instances' transforms
 and owners; a fake world's frames: the meshes made once a map as they are first needed, the instances on the objects'
-nodes, the static scenery left out, everything let go of at the map's end."""
+nodes, the static scenery as the structure is, everything let go of at the map's end."""
 import sys
 from pathlib import Path
 
@@ -19,8 +19,12 @@ CONTROLS = [
     ("(unsigned long)(object_index & 0xFFFF) + 1;", "(unsigned long)(object_index & 0xFFFF);", "arithmetic"),
     # the box's centre left at the node's origin
     ("\t\t\tposition += frame->axes[column][row] * sphere[column];\n", "", "arithmetic"),
-    # the static scenery the field and its pages hold traced too (its occlusion twice)
-    ("\t\tif (object->baked)\n\t\t\tcontinue;\n", "", "frame"),
+    # the static scenery the field and its pages hold traced as an object (its occlusion twice)
+    ("unsigned long owner = object->baked ? 0 : world_rt_owner(object->id);",
+     "unsigned long owner = world_rt_owner(object->id);", "frame"),
+    # ... or left out (rays through the trees and rocks)
+    ("\t\tdefinition = world_rt_definition(object->definition);\n",
+     "\t\tif (object->baked)\n\t\t\tcontinue;\n\t\tdefinition = world_rt_definition(object->definition);\n", "frame"),
     # a definition's meshes made again each time it is drawn
     ("\t\tif (entry->definition == definition)\n\t\t\treturn entry;\n", "", "frame"),
     # the structure's mesh not made again for another BSP

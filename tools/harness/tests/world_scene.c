@@ -450,6 +450,17 @@ static void triangles_case(void)
 		triangles.bounds[3] == 11.0f && triangles.bounds[4] == 22.0f && triangles.bounds[5] == 1.5f,
 		"bounds %g %g %g %g %g %g", triangles.bounds[0], triangles.bounds[1], triangles.bounds[2],
 		triangles.bounds[3], triangles.bounds[4], triangles.bounds[5]);
+	/* an invisible surface (player clip, flags bit 1) left out: the square's
+	two triangles alone */
+	fake_surfaces[1].flags = 1 << 1;
+	{
+		struct world_scene_triangles clipped;
+
+		CHECK(world_scene_static_triangles(0, &clipped) && clipped.count == 2 && clipped.materials[1] == 3,
+			"%ld triangles without the invisible surface", clipped.count);
+		world_scene_triangles_free(&clipped);
+	}
+	fake_surfaces[1].flags = 0;
 	/* a copy: the tags changed (or gone) leave it as it was */
 	fake_vertices[0].point.x = 99.0f;
 	CHECK(triangles.positions[0] == 10.0f, "a copy");
