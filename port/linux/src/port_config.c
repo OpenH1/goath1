@@ -470,6 +470,14 @@ static const struct config_setting config_settings[] =
 		"Co-op and team games only (not Pro 2v2, nor a team game whose host\n"
 		"turned it off: game.spartan_link). \"small\", \"medium\" or \"large\"\n"
 		"feeds; \"off\": the key does nothing." },
+	{ "display.spartan_link_position", _config_string, "\"bottom\"", "HALO_SPARTAN_LINK_POSITION", _environment_value,
+		_platform_all,
+		"Where the Spartan link's feeds are (display.spartan_link): \"bottom\",\n"
+		"in a row beside the motion tracker; \"top\", hung from the view's top\n"
+		"edge between the HUD's panels." },
+	{ "display.spartan_link_stats", _config_boolean, "true", "HALO_SPARTAN_LINK_STATS", _environment_value, _platform_all,
+		"The teammate's name, shield and health under each Spartan link feed\n"
+		"(display.spartan_link); false, the feeds alone." },
 	{ "display.spartan_link_shown", _config_boolean, "false", "HALO_SPARTAN_LINK_SHOWN", _environment_value, _platform_all,
 		"Whether the Spartan link is shown (display.spartan_link): the key\n"
 		"turns it on and off and it stays so from game to game, each player\n"
@@ -2559,6 +2567,12 @@ static const struct config_setting config_settings[] =
 	{ "debug.spartan_link_open", _config_boolean, "false", "HALO_SPARTAN_LINK_OPEN", _environment_value, _platform_all,
 		"Open every local player's Spartan link as each game starts, without the\n"
 		"key (its tests: port/linux/game/spartan_link.c)." },
+	{ "debug.spartan_link_feed_rate", _config_integer, "0", "HALO_SPARTAN_LINK_FEED_RATE", _environment_value,
+		_platform_all,
+		"How often each Spartan link feed is drawn: 0 every frame, as the\n"
+		"screen is; else that many times a second, the feeds in turn, one a frame\n"
+		"at most, each image turned to its teammate's look between\n"
+		"(port/linux/game/spartan_link.c)." },
 	{ "debug.spartan_link_log", _config_boolean, "false", "HALO_SPARTAN_LINK_LOG", _environment_value, _platform_all,
 		"Log each Spartan link feed's camera as it is drawn (the tick, the local\n"
 		"player, the teammate, through their eyes, where it looks from and along,\n"
@@ -5164,6 +5178,7 @@ static const struct
 	{ "display.hud_button_style_ps", { "ps_classic", "ps_gems", "ps_dark_gems", "ps_modern", NULL }, NULL },
 	{ "display.hud_button_style_switch", { "switch_classic", "switch_gems", "switch_modern", NULL }, NULL },
 	{ "display.spartan_link", { "small", "medium", "large", "off", NULL }, NULL },
+	{ "display.spartan_link_position", { "bottom", "top", NULL }, NULL },
 	{ "display.menus", { "pc", "xbox", NULL }, NULL },
 	{ "display.menu_engine", { "classic", "new", NULL }, NULL },
 	{ "display.menu_cursor", { "off", "small", "medium", "large", "extra_large", NULL }, "medium" },

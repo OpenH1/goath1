@@ -2026,6 +2026,11 @@ PAGES = {
              [("SMALL", "small"), ("MEDIUM", "medium"), ("LARGE", "large"), ("OFF", "off")],
              "How large the teammates' views are. Off turns the Spartan link off altogether: its key and D-pad "
              "Down do nothing.", None),
+            ("POSITION", "display.spartan_link_position", [("BOTTOM", "bottom"), ("TOP", "top")],
+             "Where the teammates' views are: Bottom in a row beside the motion tracker, Top along the top of the "
+             "screen between the HUD's panels.", None),
+            ("TEAMMATE STATS", "display.spartan_link_stats", ON_OFF,
+             "Shows each teammate's name, shield and health under their view. Off shows the views alone.", None),
         ],
     },
     STREAMING[0]: {

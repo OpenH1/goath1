@@ -295,6 +295,7 @@ static struct
 	int partner;
 	int partner_brought;
 	unsigned long feeds_before;
+	unsigned long long feeds_microseconds_before;
 	/* the scenario: its map (benchmark_maps'), its bots (and those asked
 	for, where the map takes fewer) and its player, TRUE the bot's */
 	short map;
@@ -573,8 +574,16 @@ static void benchmark_finish(
 		snprintf(benchmark.file, sizeof(benchmark.file), "(the results could not be saved)");
 	}
 	if (benchmark.stress)
-		platform_log("stress test: at most %ld enemies alive in the measure, %lu Spartan link feeds drawn",
-			benchmark.enemies_most, spartan_link_feeds_drawn() - benchmark.feeds_before);
+	{
+		unsigned long feeds = spartan_link_feeds_drawn() - benchmark.feeds_before;
+		double feeds_ms = (double)(spartan_link_feeds_microseconds() - benchmark.feeds_microseconds_before) / 1000.0;
+
+		platform_log("stress test: at most %ld enemies alive in the measure, %lu Spartan link feeds drawn "
+			"(%.2f a frame; the game's thread %.3f ms a feed, %.3f ms a frame)", benchmark.enemies_most, feeds,
+			benchmark.measure.frames ? (double)feeds / (double)benchmark.measure.frames : 0.0,
+			feeds ? feeds_ms / (double)feeds : 0.0,
+			benchmark.measure.frames ? feeds_ms / (double)benchmark.measure.frames : 0.0);
+	}
 	platform_log("benchmark: %lu frames, %.1f fps average, %.1f fps 1%% low, p95 %.2f ms, p99 %.2f ms, GPU %.2f ms, "
 		"game %.2f ms, %s", benchmark.measure.frames, benchmark.measure.average_fps, benchmark.measure.low_1_fps,
 		benchmark.measure.p95_ms, benchmark.measure.p99_ms, benchmark.measure.gpu_ms, benchmark.measure.game_ms,
@@ -842,6 +851,7 @@ void benchmark_frame(
 		benchmark.playing_tick = game_time_get();
 		benchmark.playing_ms = system_milliseconds();
 		benchmark.feeds_before = spartan_link_feeds_drawn();
+		benchmark.feeds_microseconds_before = spartan_link_feeds_microseconds();
 		platform_log("benchmark: measuring from %.1f s of the match (%ld players, %ld bots, %ld kills)", scenario,
 			players, bots, kills);
 		return;
