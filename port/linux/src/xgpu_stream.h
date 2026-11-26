@@ -353,6 +353,9 @@ enum
 	/* display.shadows "ray_traced": a window's casters' shadows
 	(xgpu_backend_rt_shadows) */
 	XGPU_STREAM_RT_SHADOWS,
+	/* display.contact_shadows: a window's casters' contact shadows, from
+	the depth (xgpu_backend_contact_shadows; RT_SHADOWS' record) */
+	XGPU_STREAM_CONTACT_SHADOWS,
 	XGPU_STREAM_RECORD_TYPES,
 };
 
@@ -1462,7 +1465,8 @@ struct xgpu_stream_dynamic_lights_halos
 /* xgpu_backend.h's struct xgpu_rt_shadows but its casters, which follow
 (count of them, 32 bytes each: the sphere, the direction's x and y, the
 darkness's and owners' words); color and depth 0 (and count 0) while a map
-is prepared: the pass's pipeline made for its targets */
+is prepared: the pass's pipeline made for its targets; CONTACT_SHADOWS'
+record too */
 #define XGPU_STREAM_RT_SHADOWS_CASTERS 96
 struct xgpu_stream_rt_shadow_caster
 {

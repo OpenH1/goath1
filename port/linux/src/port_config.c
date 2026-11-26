@@ -539,6 +539,11 @@ static const struct config_setting config_settings[] =
 		"edges, with none of the classic shadows' work on the processor; where\n"
 		"the GPU and its Vulkan driver have ray queries (\"classic\" elsewhere,\n"
 		"Metal included). docs/world-ao.md, \"Ray-traced shadows\"." },
+	{ "display.contact_shadows", _config_boolean, "true", "HALO_CONTACT_SHADOWS", _environment_value, _platform_all,
+		"Small, sharp shadows where the objects meet the level (under their\n"
+		"feet, against a wall), found from the depth on the GPU, beside the\n"
+		"classic shadows; not drawn where display.shadows \"ray_traced\" is\n"
+		"(its rays find the same contact). Vulkan; Metal draws none yet." },
 	{ "display.menus", _config_string, "\"pc\"", "HALO_MENUS", _environment_value, _platform_all,
 		"The menus: \"pc\" for the PC version's main menu (port/assets/menus,\n"
 		"and a menus folder here for your own), \"xbox\" for the Xbox's." },
