@@ -1211,26 +1211,50 @@ void biped_get_sight_position(
 
 /* port: the crouch goes on toward the seat the biped is in (all the way down
 crouched, up otherwise) a tick's change a tick, as biped_physics_prepare
-makes it, until it gets there; the eye (biped_get_sight_position's) with it */
+makes it, until it gets there; the eye (biped_get_sight_position's) with it.
+In the air the body moves with it too: biped_physics_prepare's crouch_velocity
+lifts the feet (the origin) by the pill's change of height as it crouches and
+lowers them as it stands, so the head stays put, a move the unit's velocity
+leaves out (biped_physics_move takes it off again). Left out here, a crouch
+jump's view stood still between the steps and jumped by the pill's change
+at each: at 30, frames at 60 stepped 3.5 cm and 0.4 cm by turns (standing
+up, 3.4 cm up and 0.3 cm back), where they now step 2 cm each (#1245) */
 real biped_eye_rise_ahead(
 	long biped_index,
 	real ticks)
 {
 	struct biped_datum *biped = biped_try_and_get(biped_index);
 	struct biped_definition *definition;
+	real velocity;
 	real change;
 	real ahead;
+	real rise;
 
 	if (!biped || !(ticks > 0.f))
 		return 0.f;
 	definition = biped_definition_get(biped->definition_index);
-	change = definition->biped.runtime_crouch_transition_velocity * ticks;
+	velocity = definition->biped.runtime_crouch_transition_velocity;
+	change = velocity * ticks;
 	if (biped->unit.animation.base_seat_index == _unit_base_seat_crouch)
 		ahead = MIN(biped->biped.crouch + change, 1.f);
 	else
 		ahead = MAX(biped->biped.crouch - change, 0.f);
-	return (biped->biped.crouch - ahead) *
+	rise = (biped->biped.crouch - ahead) *
 		(definition->biped.standing_camera_height - definition->biped.crouching_camera_height);
+	/* (the airborne flag the next tick's biped_physics_prepare reads, and its
+	change of crouch, which lifts the body only past a hundredth) */
+	if (TEST_FLAG(biped->biped.flags, _biped_airborne_bit))
+	{
+		real tick_change = biped->unit.animation.base_seat_index == _unit_base_seat_crouch ?
+			MIN(velocity, 1.f - biped->biped.crouch) : MIN(velocity, biped->biped.crouch);
+
+		if (tick_change > 0.01f)
+		{
+			rise += (ahead - biped->biped.crouch) *
+				(definition->biped.collision_height_standing - definition->biped.collision_height_crouching);
+		}
+	}
+	return rise;
 }
 
 void biped_get_autoaim_pill(

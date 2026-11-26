@@ -8,7 +8,9 @@ crouch's change (bipeds.c's biped_eye_rise_ahead). The crouch changes a
 tick's change a tick (biped_physics_prepare's, crouch_tick here: the game's
 own lines), toward the seat the biped is in, so a frame a fraction of a tick
 after a step draws the eye that fraction of the way to the next tick's, and
-never past where the crouch stops.
+never past where the crouch stops. In the air the body (the origin) moves
+too, by the tick's crouch_velocity, so the head drawn (origin and eye) goes
+on the line between the ticks' heads.
 */
 
 #include "harness.h"
@@ -103,13 +105,15 @@ static int frames_follow_the_ticks(int ticks)
 		real from = eye(fake_biped.biped.crouch);
 		real to;
 		real change;
+		real lift;
 		unsigned int i;
 
-		/* (the next tick's crouch, and the frames drawn from this one's) */
-		crouch_tick(&fake_biped, &fake_definition);
+		/* (the next tick's crouch, and the frames drawn from this one's; the
+		origin lifted by the tick's crouch velocity, in the air) */
+		lift = crouch_tick(&fake_biped, &fake_definition);
 		next = fake_biped;
 		fake_biped = now;
-		to = eye(next.biped.crouch);
+		to = eye(next.biped.crouch) + lift;
 		change = fabsf(next.biped.crouch - fake_biped.biped.crouch);
 		for (i = 0; i < sizeof(sinces) / sizeof(sinces[0]); i++)
 		{
@@ -173,6 +177,21 @@ int main(int argc, char **argv)
 		biped_setup(0.5f, _unit_base_seat_crouch);
 		CHECK(biped_eye_rise_ahead(0, 0.f) == 0.f, "no time on: %f", biped_eye_rise_ahead(0, 0.f));
 		CHECK(biped_eye_rise_ahead(NONE, 0.5f) == 0.f, "no biped: %f", biped_eye_rise_ahead(NONE, 0.5f));
+	}
+	else if (!strcmp(name, "airborne_crouching"))
+	{
+		/* (crouched in the air, a crouch jump: the head stays nearly put) */
+		biped_setup(0.f, _unit_base_seat_crouch);
+		fake_biped.biped.flags = FLAG(_biped_airborne_bit);
+		CHECK(frames_follow_the_ticks(12) == 8, "crouched in other than 8 ticks");
+		CHECK(fake_biped.biped.crouch == 1.f, "crouch %f", fake_biped.biped.crouch);
+	}
+	else if (!strcmp(name, "airborne_standing"))
+	{
+		biped_setup(1.f, _unit_base_seat_stand);
+		fake_biped.biped.flags = FLAG(_biped_airborne_bit);
+		CHECK(frames_follow_the_ticks(12) == 8, "stood in other than 8 ticks");
+		CHECK(fake_biped.biped.crouch == 0.f, "crouch %f", fake_biped.biped.crouch);
 	}
 	else
 	{
