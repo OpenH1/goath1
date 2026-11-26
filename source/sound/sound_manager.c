@@ -248,6 +248,7 @@ symbols in this file:
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 /* port: a stereo channel's sound in the world heard from where it is, as a
 3D channel's is (sound_dsound_xbox.c; update_channels) */
@@ -1827,6 +1828,18 @@ static long update_potentially_audible_looping_sound(
 		}
 	}
 
+	if (sound_trace_enabled())
+	{
+		error(
+			_error_silent,
+			"sound trace: %s's track %d %s %s %s",
+			tag_get_name(looping_sound->definition_index),
+			track_index,
+			type == _sound_start_track ? "start" : type == _sound_loop_track ? "loop" : "stop",
+			tag_get_name(definition_index),
+			sound_index != NONE ? "plays" : "not played (out of hearing or not playable)");
+	}
+
 	return sound_index;
 }
 
@@ -2650,6 +2663,24 @@ static void update_channel_for_impulse_sound(
 	return;
 }
 
+/* port: HALO_SOUND_TRACE=1 says in debug.txt each sound as it starts (or
+could not) and each looping sound as the game makes and deletes it: what
+played, for a run whose audio is not heard (the test machines') */
+boolean sound_trace_enabled(
+	void)
+{
+	static int enabled = -1;
+
+	if (enabled < 0)
+	{
+		char const *value = getenv("HALO_SOUND_TRACE");
+
+		enabled = value && *value && *value != '0';
+	}
+
+	return enabled != 0;
+}
+
 void sound_stop_all(
 	void)
 {
@@ -2877,6 +2908,15 @@ long sound_new_impulse(
 				definition->encoding,
 				definition->sample_rate);
 		}
+	}
+
+	if (sound_trace_enabled())
+	{
+		error(
+			_error_silent,
+			"sound trace: %s %s",
+			tag_get_name(definition_index),
+			sound_index != NONE ? "plays" : "not played");
 	}
 
 	/* port: its subtitle (display.subtitles: port/linux/game/subtitles.c), a
