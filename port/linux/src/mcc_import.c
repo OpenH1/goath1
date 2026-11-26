@@ -438,7 +438,7 @@ static void *import_thread(void *context)
 		options.progress = thread_progress;
 		options.note = note;
 		options.note_size = MAXIMUM_NOTE;
-		options.log = thread_log;
+		options.say = thread_log;
 		pthread_mutex_lock(&mcc_import.lock);
 		mcc_import.step = "Textures";
 		pthread_mutex_unlock(&mcc_import.lock);
