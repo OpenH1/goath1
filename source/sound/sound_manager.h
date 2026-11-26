@@ -60,6 +60,9 @@ void sound_render_listeners(
 
 void sound_stop_all(
 	void);
+/* port: HALO_SOUND_TRACE (sound_manager.c) */
+boolean sound_trace_enabled(
+	void);
 void sound_stop_impulse(
 	long sound_index);
 void sound_stop_impulse_by_source_and_definition(

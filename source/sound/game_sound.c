@@ -97,6 +97,7 @@ symbols in this file:
 /* ---------- headers */
 
 #include "cseries.h"
+#include "cseries/errors.h"
 #include "cache/cache_files.h"
 #include "cache/sound_cache.h"
 #include "camera/observer.h"
@@ -540,6 +541,14 @@ long game_looping_sound_new(
 			sound->flags = 0;
 			sound->function_index = function_index;
 			sound->last_audible_frame_index = NONE;
+			if (sound_trace_enabled())
+			{
+				error(
+					_error_silent,
+					"sound trace: looping %s made (%08lx)",
+					tag_get_name(definition_index),
+					(unsigned long)looping_sound_index);
+			}
 			if (object_index != NONE)
 			{
 				sound->node_index = marker.node_index;
@@ -568,6 +577,14 @@ void game_looping_sound_delete(
 		"c:\\halo\\SOURCE\\sound\\game_sound.c",
 		282,
 		definition->runtime_scripting_sound_index==NONE || game_looping_sound_get(definition->runtime_scripting_sound_index));
+	if (sound_trace_enabled())
+	{
+		error(
+			_error_silent,
+			"sound trace: looping %s deleted (%08lx)",
+			tag_get_name(sound->definition_index),
+			(unsigned long)looping_sound_index);
+	}
 	datum_delete(game_looping_sound_data, looping_sound_index);
 
 	return;
