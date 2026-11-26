@@ -277,7 +277,195 @@ int host_sdl_set_relative_mouse(uint32_t window, int enabled)
 	return object ? SDL_SetWindowRelativeMouseMode(object, enabled != 0) : 0;
 }
 
-/* ---------- events */
+/* ---------- events
+
+The guest's SDL_Event has the host's layout up to the first pointer: the
+guest's pointers are 32 bits, so from there its fields lie elsewhere. The
+events with pointers that the host's SDL makes are given to the guest in
+its own layout (guest_event_from_host). A text event's text is kept in the
+guest's event itself, after its fields, and points there: it lasts as long
+as that event, which the guest reads at once (sdl_platform.c's
+SDL_EVENT_TEXT_INPUT). The guest pushes only events with no pointer
+(host_sdl_push_event), which come back as they went. */
+
+/* the guest's layouts of the events with pointers (SDL_events.h's, with
+32-bit pointers) */
+struct guest_text_event
+{
+	Uint32 type;
+	Uint32 reserved;
+	Uint64 timestamp;
+	Uint32 window_id;
+	uint32_t text;
+	Sint32 start; /* (SDL_EVENT_TEXT_EDITING's) */
+	Sint32 length;
+	/* (the text itself, NUL-terminated) */
+	char storage[sizeof(SDL_Event) - 32];
+};
+struct guest_text_candidates_event
+{
+	Uint32 type;
+	Uint32 reserved;
+	Uint64 timestamp;
+	Uint32 window_id;
+	uint32_t candidates;
+	Sint32 num_candidates;
+	Sint32 selected_candidate;
+	bool horizontal;
+};
+struct guest_drop_event
+{
+	Uint32 type;
+	Uint32 reserved;
+	Uint64 timestamp;
+	Uint32 window_id;
+	float x;
+	float y;
+	uint32_t source;
+	uint32_t data;
+};
+struct guest_clipboard_event
+{
+	Uint32 type;
+	Uint32 reserved;
+	Uint64 timestamp;
+	bool owner;
+	Sint32 num_mime_types;
+	uint32_t mime_types;
+};
+_Static_assert(sizeof(struct guest_text_event) == sizeof(SDL_Event), "the guest's text event fills its SDL_Event");
+_Static_assert(offsetof(struct guest_text_event, text) == 20, "the guest's text pointer follows its window");
+
+/* a text event's text longer than the guest's event holds: the rest, given
+as the next events (host_sdl_poll_event) */
+static SDL_Event text_rest_event;
+static char *text_rest;
+static size_t text_rest_at;
+
+/* the bytes of text, at most size - 1 of them, that end at a whole UTF-8
+character */
+static size_t text_part_length(const char *text, size_t size)
+{
+	size_t length = strlen(text);
+
+	if (length < size)
+		return length;
+	length = size - 1;
+	while (length > 0 && ((unsigned char)text[length] & 0xc0) == 0x80)
+		length--;
+	return length;
+}
+
+/* a text event in the guest's layout, with the start of text (a part as
+long as the event holds); the length of the part */
+static size_t guest_text_event_make(void *event, const SDL_Event *host_event, const char *text,
+	Sint32 start, Sint32 length)
+{
+	struct guest_text_event *guest = event;
+	size_t part = text ? text_part_length(text, sizeof(guest->storage)) : 0;
+
+	memset(guest, 0, sizeof(*guest));
+	guest->type = host_event->type;
+	guest->timestamp = host_event->common.timestamp;
+	guest->window_id = host_event->text.windowID;
+	guest->start = start;
+	guest->length = length;
+	memcpy(guest->storage, text ? text : "", part);
+	guest->storage[part] = '\0';
+	guest->text = guest_address(guest->storage);
+	return part;
+}
+
+/* the next part of a text event's text too long for one guest event, as an
+event of its own; 0 when there is none */
+static int text_rest_take(void *event)
+{
+	size_t part;
+
+	if (!text_rest)
+		return 0;
+	part = guest_text_event_make(event, &text_rest_event, text_rest + text_rest_at, 0, 0);
+	text_rest_at += part;
+	if (!text_rest[text_rest_at] || !part)
+	{
+		SDL_free(text_rest);
+		text_rest = NULL;
+	}
+	return 1;
+}
+
+/* the host's event as the guest's (the layouts agree for the events with no
+pointer) */
+static void guest_event_from_host(void *event, const SDL_Event *host_event)
+{
+	switch (host_event->type)
+	{
+	case SDL_EVENT_TEXT_INPUT:
+	{
+		const char *text = host_event->text.text ? host_event->text.text : "";
+		size_t part = guest_text_event_make(event, host_event, text, 0, 0);
+
+		/* (the rest of a long text, an input method's whole phrase, in the
+		next events, its characters whole) */
+		if (text[part] && part)
+		{
+			SDL_free(text_rest);
+			text_rest = SDL_strdup(text + part);
+			text_rest_at = 0;
+			text_rest_event = *host_event;
+		}
+		break;
+	}
+	case SDL_EVENT_TEXT_EDITING:
+		/* (the text being composed, as much as the event holds) */
+		guest_text_event_make(event, host_event, host_event->edit.text, host_event->edit.start,
+			host_event->edit.length);
+		break;
+	case SDL_EVENT_TEXT_EDITING_CANDIDATES:
+	{
+		struct guest_text_candidates_event *guest = event;
+
+		memset(event, 0, sizeof(SDL_Event));
+		guest->type = host_event->type;
+		guest->timestamp = host_event->common.timestamp;
+		guest->window_id = host_event->edit_candidates.windowID;
+		guest->selected_candidate = -1;
+		guest->horizontal = host_event->edit_candidates.horizontal;
+		break;
+	}
+	case SDL_EVENT_DROP_BEGIN:
+	case SDL_EVENT_DROP_FILE:
+	case SDL_EVENT_DROP_TEXT:
+	case SDL_EVENT_DROP_COMPLETE:
+	case SDL_EVENT_DROP_POSITION:
+	{
+		/* (macOS's links come as drops, which the host reads itself:
+		host_links.c) */
+		struct guest_drop_event *guest = event;
+
+		memset(event, 0, sizeof(SDL_Event));
+		guest->type = host_event->type;
+		guest->timestamp = host_event->common.timestamp;
+		guest->window_id = host_event->drop.windowID;
+		guest->x = host_event->drop.x;
+		guest->y = host_event->drop.y;
+		break;
+	}
+	case SDL_EVENT_CLIPBOARD_UPDATE:
+	{
+		struct guest_clipboard_event *guest = event;
+
+		memset(event, 0, sizeof(SDL_Event));
+		guest->type = host_event->type;
+		guest->timestamp = host_event->common.timestamp;
+		guest->owner = host_event->clipboard.owner;
+		break;
+	}
+	default:
+		memcpy(event, host_event, sizeof(*host_event));
+		break;
+	}
+}
 
 int host_sdl_poll_event(void *event)
 {
@@ -295,6 +483,8 @@ int host_sdl_poll_event(void *event)
 #ifdef HOST_RAW_MOUSE
 	host_raw_mouse_cursor();
 #endif
+	if (text_rest_take(event))
+		return 1;
 	if (!SDL_PollEvent(&host_event))
 	{
 #ifdef HOST_RAW_MOUSE
@@ -341,9 +531,7 @@ int host_sdl_poll_event(void *event)
 	if (host_event.type == SDL_EVENT_KEY_DOWN && host_event.key.scancode < SDL_SCANCODE_COUNT)
 		system_key_codes[host_event.key.scancode] = host_event.key.raw;
 #endif
-	/* the layouts agree except for the pointers of text, drop and user
-	events, which the guest does not read */
-	memcpy(event, &host_event, sizeof(host_event));
+	guest_event_from_host(event, &host_event);
 	return 1;
 }
 
