@@ -86,6 +86,7 @@ symbols in this file:
 
 #include "rasterizer/xbox/rasterizer_xbox.h"
 #include "rasterizer/xbox/rasterizer_xbox_pixel_shader.h"
+#include "mods.h" /* port: port/linux/game/mod_bitmaps.c */
 
 /* ---------- constants */
 
@@ -735,7 +736,9 @@ void _rasterizer_detail_objects_draw(
 						struct bitmap_data);
 					range = type_definition->far_fade_distance -
 						type_definition->near_fade_distance;
-					frame_scale = type_definition->size_min;
+					/* port: size_min is per map texel, so a mod's bitmap of
+					another size is drawn at the map's */
+					frame_scale = type_definition->size_min * mod_bitmaps_size_scale(bitmap_data);
 					if (range > 0.0f)
 					{
 						range = 1.0f / range;

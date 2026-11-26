@@ -421,6 +421,7 @@ symbols in this file:
 #include "rasterizer_xbox_vertex_shaders.h"
 #include "mcc_cache.h" /* port: port/linux/game/mcc_cache.c */
 #include "motion_vectors.h" /* port: port/linux/game/motion_vectors.c */
+#include "mods.h" /* port: port/linux/game/mod_bitmaps.c */
 
 /* ---------- constants */
 
@@ -1394,6 +1395,24 @@ void rasterizer_model_part_skinning(
 	return;
 }
 
+/* port: a bitmap's size as the map has it (a mod's of another size at the
+map's: mod_bitmaps_size_scale), for what scales one texture's coordinates by
+another's size (the environment's detail maps' rescaling) */
+static void rasterizer_bitmap_map_dimensions(
+	struct bitmap_data const *bitmap,
+	union point2d *dimensions)
+{
+	real scale = mod_bitmaps_size_scale(bitmap);
+
+	dimensions->x = bitmap->width;
+	dimensions->y = bitmap->height;
+	if (scale != 1.f)
+	{
+		dimensions->x = (short)((real)bitmap->width * scale + 0.5f);
+		dimensions->y = (short)((real)bitmap->height * scale + 0.5f);
+	}
+}
+
 boolean rasterizer_set_texture_non_blocking(
 	short stage,
 	short type,
@@ -1457,8 +1476,7 @@ boolean rasterizer_set_texture_non_blocking(
 	if (bitmap)
 	{
 		rasterizer_set_texture_bitmap_data(stage, bitmap);
-		bitmap_dimensions_non_blocking.x = bitmap->width;
-		bitmap_dimensions_non_blocking.y = bitmap->height;
+		rasterizer_bitmap_map_dimensions(bitmap, &bitmap_dimensions_non_blocking);
 	}
 	else
 	{
@@ -2205,8 +2223,7 @@ union point2d *rasterizer_set_texture(
 			{
 				rasterizer_set_texture_bitmap_data(stage, bitmap);
 				success = TRUE;
-				bitmap_dimensions.x = bitmap->width;
-				bitmap_dimensions.y = bitmap->height;
+				rasterizer_bitmap_map_dimensions(bitmap, &bitmap_dimensions);
 			}
 			else
 			{
@@ -2232,8 +2249,7 @@ union point2d *rasterizer_set_texture(
 		{
 			rasterizer_set_texture_bitmap_data(stage, bitmap);
 			success = TRUE;
-			bitmap_dimensions.x = bitmap->width;
-			bitmap_dimensions.y = bitmap->height;
+			rasterizer_bitmap_map_dimensions(bitmap, &bitmap_dimensions);
 		}
 		else
 		{

@@ -47,6 +47,12 @@ says, whose bitmap's half HUD scale flag halves their size
 map's size lose it, and of any other are left out. Menus draw their bitmaps
 in their widgets' bounds, whatever their size.
 
+What the map sizes by a bitmap's texels (a particle's or sprite's
+scale, runtime_oo_width; a decal's, runtime_maximum_sprite_extent; a
+detail object's size; the environment's detail maps' rescaling) is
+told the map's size of a mod's bitmap (mod_bitmaps_size_scale: the
+HUD's ratio), so it draws at the map's size, sharper.
+
 A bitmap's pixels are read from the file as the texture cache loads them
 (mod_bitmaps_read, xbox_texture_cache.c), into its cache block, and laid out
 as the hardware wants them as a Custom Edition map's are
@@ -1738,6 +1744,38 @@ boolean mod_bitmaps_contain(
 	struct bitmap_data const *bitmap)
 {
 	return bitmap_of(bitmap) != NULL;
+}
+
+real mod_bitmaps_size_scale(
+	struct bitmap_data const *bitmap)
+{
+	struct mod_bitmap const *made = bitmap ? bitmap_of(bitmap) : NULL;
+	struct mod_bitmap_override const *override;
+	long index;
+
+	if (!made)
+	{
+		return 1.f;
+	}
+	/* (its sprites' ratio to the map's, the same for all of them, or with
+	none its pages': what the HUD scales its placements by) */
+	if (made->hud_scale > 0.f)
+	{
+		return made->hud_scale;
+	}
+	/* (sprites at other ratios: this page's own, as the map lays its
+	sprites out on it) */
+	override = override_get(made->tag_index);
+	index = (long)(bitmap - made->bitmaps);
+	if (override && index < override->map_group.bitmaps.count && bitmap->width > 0)
+	{
+		struct bitmap_data const *map_bitmap =
+			TAG_BLOCK_GET_ELEMENT(&override->map_group.bitmaps, index, struct bitmap_data);
+
+		return (real)map_bitmap->width / (real)bitmap->width;
+	}
+
+	return 1.f;
 }
 
 boolean mod_bitmaps_read(
