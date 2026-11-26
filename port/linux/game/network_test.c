@@ -2082,7 +2082,18 @@ static void network_test_hijack_seat(
 	seat_index = vehicle_index != NONE ? network_test_hijack_driver_seat(vehicle_index) : NONE;
 	if (seat_index == NONE)
 	{
-		platform_log("network test: hijack: no vehicle of the kind nobody drives");
+		struct object_iterator vehicles;
+
+		platform_log("network test: hijack: no %s nobody drives; the vehicles:", network_test_hijack_vehicle_name());
+		object_iterator_new(&vehicles, _object_mask_vehicle, 0);
+		while (object_iterator_next(&vehicles))
+		{
+			struct unit_datum *vehicle = unit_get(vehicles.index);
+
+			platform_log("network test: hijack:   vehicle %lx %s, up %.2f, driver %lx%s", vehicles.index,
+				tag_get_name(vehicle->definition_index), vehicle->object.up.k, vehicle->unit.driver_object_index,
+				TEST_FLAG(vehicle->object.damage_flags, _object_dead_bit) ? ", dead" : "");
+		}
 		return;
 	}
 	/* (":empty": nobody, the stock entry's comparison: the vehicle held
