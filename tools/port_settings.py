@@ -1380,18 +1380,6 @@ PAGES = {
             ("HD EFFECTS", "display.hd_effects", ON_OFF,
              "Draws the Assault Rifle's muzzle flash sharper, redrawn from your own maps. Off draws the game's "
              "own.", None),
-            # (port/linux/src/mcc_import.c: built from the player's own MCC
-            # install, at a press; the switch, the import and its removal)
-            ("MCC IMPORT", "display.mcc_import", ON_OFF,
-             "Draws and plays what was imported from your MCC install: sharper weapon and vehicle textures and "
-             "MCC's clearer dialogue. A mod of the same thing wins. Off uses the game's own.", "desktop"),
-            ("IMPORT FROM MCC", None, None,
-             "If you own Halo MCC, builds sharper weapon and vehicle textures and clearer English dialogue from "
-             "your own install. Nothing is downloaded or shared.", "desktop", "mcc_import_now",
-             "port settings mcc import"),
-            ("REMOVE MCC IMPORT", None, None,
-             "Deletes what was imported from MCC.|Select it twice: the first asks, the second deletes.",
-             "desktop", "mcc_import_remove", "port settings mcc import remove"),
             ("MODEL DETAIL", "display.model_detail",
              [("AUTO", "auto"), ("XBOX", "stock"), ("FULL", "native"), ("HIGHEST", "highest")],
              "How detailed characters and vehicles stay in the distance. Xbox simplifies them as on a TV; Full keeps "
@@ -2210,6 +2198,22 @@ PAGES = {
             ("MCC DOWNLOADS ›", None, f"{MCC_DOWNLOADS}/screen",
              "The MCC maps downloaded from hosts: their space, and removing them. The original packages and "
              "saved games are kept.", None),
+            # (port/linux/src/mcc_import.c: built from the player's own MCC
+            # install, at a press, into the data folder; the switch, the import
+            # and its removal. Here, beside the MCC maps, not on Advanced
+            # Graphics or Profiles, which have no room left for them:
+            # test_port_settings.py's test_settings_rows_fit)
+            (SECTION, "IMPORT FROM MCC"),
+            ("MCC IMPORT", "display.mcc_import", ON_OFF,
+             "Draws and plays what was imported from your MCC install: sharper weapon and vehicle textures and "
+             "MCC's clearer dialogue. A mod of the same thing wins. Off uses the game's own.", "desktop"),
+            ("IMPORT FROM MCC", None, None,
+             "If you own Halo MCC, builds sharper weapon and vehicle textures and clearer English dialogue from "
+             "your own install. Nothing is downloaded or shared.", "desktop", "mcc_import_now",
+             "port settings mcc import"),
+            ("REMOVE MCC IMPORT", None, None,
+             "Deletes what was imported from MCC.|Select it twice: the first asks, the second deletes.",
+             "desktop", "mcc_import_remove", "port settings mcc import remove"),
         ],
     },
     DISCORD_ACCOUNT[0]: {

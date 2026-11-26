@@ -4113,7 +4113,7 @@ static void clear_caches_press(void)
 	ui_play_audio_feedback_sound(SOUND_FORWARD);
 }
 
-/* ---------- Video's IMPORT FROM MCC and REMOVE MCC IMPORT (port/linux/src/mcc_import.c)
+/* ---------- MCC Packages' IMPORT FROM MCC and REMOVE MCC IMPORT (port/linux/src/mcc_import.c)
 
 IMPORT FROM MCC's value says where the import stands (NOT FOUND, IMPORT,
 IMPORTED, UPDATE, or how far it is), and a press does what it says: picks
@@ -4800,7 +4800,7 @@ static void settings_panel_show(struct widget_instance *list, short tab)
 		about_panel(row, value, &help);
 		/* (Profile's CLEAR CACHES: their size, and what a press does) */
 		clear_caches_panel(row, value, &help);
-		/* (Video's IMPORT FROM MCC: where it stands, what a press does) */
+		/* (MCC Packages' IMPORT FROM MCC: where it stands, what a press does) */
 		mcc_import_panel(row, value, &help);
 		/* (Button Remapping's: a button being taken, a replacement asked) */
 		if (pad_editor_page(screen_of(list)))
