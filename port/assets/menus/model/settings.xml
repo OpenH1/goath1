@@ -543,21 +543,28 @@
 			<choice shown="175%" value="1.75"/>
 			<choice shown="200%" value="2"/>
 		</row>
-		<row key="anti_aliasing" kind="choice" setting="display.anti_aliasing" label="ANTI-ALIASING" crumb="VIDEO › ADVANCED GRAPHICS" search="aa" search_choices="fxaa smaa msaa" when="desktop" enabled="!temporal_on">
-			<help>Smooths jagged edges. FXAA and SMAA cost little; MSAA is sharper and costs more of the graphics card.</help>
+		<row key="anti_aliasing" kind="choice" setting="display.anti_aliasing" label="ANTI-ALIASING" crumb="VIDEO › ADVANCED GRAPHICS" search="aa" search_choices="fxaa smaa best msaa" when="desktop+computer+!vr" enabled="!temporal_on">
+			<help>Smooths jagged edges. On a computer SMAA looks as good as MSAA for much less of the graphics card, and an Upscaler (Frame Rate &amp; Sync) can look better still. MSAA is best on phones and in VR.</help>
 			<choice shown="OFF" value="off"/>
 			<choice shown="FXAA" value="fxaa"/>
-			<choice shown="SMAA" value="smaa"/>
+			<choice shown="SMAA (BEST)" value="smaa"/>
 			<choice shown="MSAA 2X" value="msaa2x"/>
 			<choice shown="MSAA 4X" value="msaa4x"/>
-			<choice shown="MSAA 8X" value="msaa8x"/>
 		</row>
-		<row key="anti_aliasing_android" kind="choice" setting="display.anti_aliasing" label="ANTI-ALIASING" crumb="VIDEO › ADVANCED GRAPHICS" search="aa" search_choices="fxaa smaa msaa" when="android" enabled="!temporal_on" same_place="true">
-			<help>Smooths jagged edges. FXAA and SMAA cost little; MSAA is sharper and costs more of the graphics card.</help>
+		<row key="anti_aliasing_msaa" kind="choice" setting="display.anti_aliasing" label="ANTI-ALIASING" crumb="VIDEO › ADVANCED GRAPHICS" search="aa" search_choices="fxaa smaa msaa best" when="desktop+!computer desktop+vr" enabled="!temporal_on" same_place="true">
+			<help>Smooths jagged edges. On a computer SMAA looks as good as MSAA for much less of the graphics card, and an Upscaler (Frame Rate &amp; Sync) can look better still. MSAA is best on phones and in VR.</help>
 			<choice shown="OFF" value="off"/>
 			<choice shown="FXAA" value="fxaa"/>
 			<choice shown="SMAA" value="smaa"/>
-			<choice shown="MSAA 2X" value="msaa2x"/>
+			<choice shown="MSAA 2X (BEST)" value="msaa2x"/>
+			<choice shown="MSAA 4X" value="msaa4x"/>
+		</row>
+		<row key="anti_aliasing_android" kind="choice" setting="display.anti_aliasing" label="ANTI-ALIASING" crumb="VIDEO › ADVANCED GRAPHICS" search="aa" search_choices="fxaa smaa msaa best" when="android" enabled="!temporal_on" same_place="true">
+			<help>Smooths jagged edges. On a computer SMAA looks as good as MSAA for much less of the graphics card, and an Upscaler (Frame Rate &amp; Sync) can look better still. MSAA is best on phones and in VR.</help>
+			<choice shown="OFF" value="off"/>
+			<choice shown="FXAA" value="fxaa"/>
+			<choice shown="SMAA" value="smaa"/>
+			<choice shown="MSAA 2X (BEST)" value="msaa2x"/>
 			<choice shown="MSAA 4X" value="msaa4x"/>
 		</row>
 		<row key="anisotropic_filtering" kind="choice" setting="display.anisotropic_filtering" label="TEXTURE FILTERING" crumb="VIDEO › ADVANCED GRAPHICS" search="anisotropic af">
@@ -585,7 +592,7 @@
 			<choice shown="ON" value="true"/>
 			<choice shown="OFF" value="false"/>
 		</row>
-		<section key="section_8" title="LIGHTING"/>
+		<section key="section_9" title="LIGHTING"/>
 		<row key="shadow_resolution" kind="choice" setting="display.shadow_resolution" label="SHADOW QUALITY" crumb="VIDEO › ADVANCED GRAPHICS" search="shadows" search_choices="xbox medium high ultra">
 			<help>How sharp the shadows of characters, vehicles and weapons are. Xbox is the original's soft, blocky shadow; each step up is crisper, and costs a little more of the graphics card.</help>
 			<choice shown="XBOX" value="128"/>
@@ -622,7 +629,7 @@
 			<choice shown="DEFAULT" value="default"/>
 			<choice shown="LIGHT SHOW" value="light_show"/>
 		</row>
-		<section key="section_15" title="GAME"/>
+		<section key="section_16" title="GAME"/>
 		<row key="sim_rate" kind="choice" setting="game.sim_rate" label="TICK RATE" crumb="VIDEO › ADVANCED GRAPHICS" search="hz tickrate" search_choices="original">
 			<help>How often the world updates each second, in games on this device (campaign, split screen, bots). 60 and 120 respond faster and take more of the processor. Online games play at their host's tick rate: a GOAT H1 game's (GOAT H1 60 Tick), a Legacy game's 30.</help>
 			<choice shown="ORIGINAL (30)" value="30"/>
