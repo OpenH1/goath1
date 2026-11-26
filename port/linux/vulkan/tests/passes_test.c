@@ -3903,13 +3903,33 @@ resolve, a draw in the pass that drew the samples (no new rendering, before
 its end) reads them as its input and writes all of them, every channel,
 into its 4 samples of its format, the samples its metrics' x; the targets
 bound before stay bound. The negative control: a device with no local
-reads resolves as before, drawing nothing. */
+reads resolves as before, drawing nothing. Its program writes an edge's
+pixels alone: it discards (OpKill) a pixel whose samples are alike, the
+most of the view, which a draw writing every pixel's samples made the
+most of MSAA 4x's cost on the desktop's GPUs; the negative control, the
+clear's program, which writes every pixel, has none. */
+static int spirv_has_kill(const struct xgpu_vulkan_post_module *module)
+{
+	size_t at = 5;
+
+	while (at < module->count && module->words[at] >> 16)
+	{
+		if ((module->words[at] & 0xffff) == 252 /* OpKill */)
+			return 1;
+		at += module->words[at] >> 16;
+	}
+	return 0;
+}
+
 static void resolve_light_test(void)
 {
 	static struct xgpu_vulkan_image samples, resolved;
 	const float *uniforms;
 	const char *drawn;
 	int reads;
+
+	assert(spirv_has_kill(&xgpu_vulkan_post_programs[XGPU_VULKAN_POST_RESOLVE_LIGHT]));
+	assert(!spirv_has_kill(&xgpu_vulkan_post_clear));
 
 	for (reads = 1; reads >= 0; reads--)
 	{
