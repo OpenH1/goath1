@@ -1,17 +1,17 @@
 {
  "comment": "The stock maps' preparations' records shipped with the game (render_prepared.c), made by tools/prepared_records.py with every setting at its default: run it again whenever tools/harness/tests/test_prepared_shipped.py says the records' form has changed.",
  "prepared_version": 8,
- "journal_form": 917929,
+ "journal_form": 983466,
  "file": "prepared.records",
  "records": [
   {
    "map": "a10",
    "scenario": "levels\\a10\\a10",
    "checksum": "e6ac8e18",
-   "key": "b0ebef567b38c56e",
+   "key": "e86b37803eb51ba4",
    "draws": 537,
-   "words": 173096,
-   "size": 696728,
+   "words": 173416,
+   "size": 698008,
    "structures": [
     0,
     1,
@@ -21,67 +21,67 @@
     7,
     8
    ],
-   "tags": 8163,
+   "tags": 8318,
    "offset": 612,
-   "compressed_size": 97012
+   "compressed_size": 98260
   },
   {
    "map": "a30",
    "scenario": "levels\\a30\\a30",
    "checksum": "5b4c2953",
-   "key": "213bd5d2e7a8d51a",
+   "key": "22bd17cd07f9a4f8",
    "draws": 507,
-   "words": 196363,
-   "size": 789556,
+   "words": 193982,
+   "size": 780032,
    "structures": [
     0,
     1
    ],
-   "tags": 8021,
-   "offset": 97624,
-   "compressed_size": 112357
+   "tags": 8176,
+   "offset": 98872,
+   "compressed_size": 113287
   },
   {
    "map": "a50",
    "scenario": "levels\\a50\\a50",
    "checksum": "2ae9c2ed",
-   "key": "36dd3aaa4e969eae",
+   "key": "c78fdb950c0fa11c",
    "draws": 496,
-   "words": 196061,
-   "size": 788260,
+   "words": 195697,
+   "size": 786804,
    "structures": [
     0,
     1,
     2,
     3
    ],
-   "tags": 8117,
-   "offset": 209981,
-   "compressed_size": 108596
+   "tags": 8272,
+   "offset": 212159,
+   "compressed_size": 109038
   },
   {
    "map": "b30",
    "scenario": "levels\\b30\\b30",
    "checksum": "cb35bb26",
-   "key": "34481870448c29df",
+   "key": "03a739f72eed9235",
    "draws": 965,
-   "words": 266379,
-   "size": 1073284,
+   "words": 268396,
+   "size": 1081352,
    "structures": [
     0
    ],
-   "tags": 8131,
-   "offset": 318577,
-   "compressed_size": 166313
+   "tags": 8286,
+   "offset": 321197,
+   "compressed_size": 168490
   },
   {
    "map": "b40",
    "scenario": "levels\\b40\\b40",
    "checksum": "580cd8d3",
-   "key": "4fe10b3ab971032b",
+   "key": "c72de0f25f248e29",
    "draws": 965,
-   "words": 295454,
-   "size": 1189584,
+   "words": 294135,
+   "size": 1184308,
    "structures": [
     0,
     1,
@@ -92,63 +92,63 @@
     7,
     8
    ],
-   "tags": 8453,
-   "offset": 484890,
-   "compressed_size": 173882
+   "tags": 8608,
+   "offset": 489687,
+   "compressed_size": 173869
   },
   {
    "map": "beavercreek",
    "scenario": "levels\\test\\beavercreek\\beavercreek",
    "checksum": "a831a7bf",
-   "key": "8872be4a1f9503b6",
+   "key": "2245a120cdb1f05c",
    "draws": 480,
-   "words": 155297,
-   "size": 625076,
+   "words": 158683,
+   "size": 638620,
    "structures": [
     0
    ],
-   "tags": 6561,
-   "offset": 658772,
-   "compressed_size": 88417
+   "tags": 6716,
+   "offset": 663556,
+   "compressed_size": 87276
   },
   {
    "map": "bloodgulch",
    "scenario": "levels\\test\\bloodgulch\\bloodgulch",
    "checksum": "035e2da3",
-   "key": "f9183cb02ae01150",
+   "key": "04562b6260a65f16",
    "draws": 487,
-   "words": 160308,
-   "size": 645176,
+   "words": 163344,
+   "size": 657320,
    "structures": [
     0
    ],
-   "tags": 6612,
-   "offset": 747189,
-   "compressed_size": 87331
+   "tags": 6767,
+   "offset": 750832,
+   "compressed_size": 88303
   },
   {
    "map": "boardingaction",
    "scenario": "levels\\test\\boardingaction\\boardingaction",
    "checksum": "a0d614f5",
-   "key": "3f84a8ce8bfa9b9a",
+   "key": "cb1e28280cc27a38",
    "draws": 468,
-   "words": 129372,
-   "size": 521280,
+   "words": 130287,
+   "size": 524940,
    "structures": [
     0
    ],
-   "tags": 6541,
-   "offset": 834520,
-   "compressed_size": 78154
+   "tags": 6696,
+   "offset": 839135,
+   "compressed_size": 78153
   },
   {
    "map": "c10",
    "scenario": "levels\\c10\\c10",
    "checksum": "4a170f76",
-   "key": "5c8d77d99ebbeb7a",
+   "key": "df6c12d19c1306f8",
    "draws": 519,
-   "words": 223107,
-   "size": 896628,
+   "words": 216447,
+   "size": 869988,
    "structures": [
     0,
     1,
@@ -156,36 +156,36 @@
     3,
     5
    ],
-   "tags": 8175,
-   "offset": 912674,
-   "compressed_size": 127334
+   "tags": 8330,
+   "offset": 917288,
+   "compressed_size": 123646
   },
   {
    "map": "c20",
    "scenario": "levels\\c20\\c20",
    "checksum": "d22193c1",
-   "key": "d534522a1d25e96e",
+   "key": "64a0d98848e3832c",
    "draws": 423,
-   "words": 134961,
-   "size": 543276,
+   "words": 133536,
+   "size": 537576,
    "structures": [
     0,
     1,
     2,
     3
    ],
-   "tags": 6666,
-   "offset": 1040008,
-   "compressed_size": 73770
+   "tags": 6821,
+   "offset": 1040934,
+   "compressed_size": 72461
   },
   {
    "map": "c40",
    "scenario": "levels\\c40\\c40",
    "checksum": "61a4799d",
-   "key": "b6c03d62773fec0b",
+   "key": "e706dd7af705f089",
    "draws": 955,
-   "words": 312482,
-   "size": 1257616,
+   "words": 310874,
+   "size": 1251184,
    "structures": [
     0,
     1,
@@ -195,66 +195,66 @@
     5,
     8
    ],
-   "tags": 8014,
-   "offset": 1113778,
-   "compressed_size": 184421
+   "tags": 8169,
+   "offset": 1113395,
+   "compressed_size": 184787
   },
   {
    "map": "carousel",
    "scenario": "levels\\test\\carousel\\carousel",
    "checksum": "b38b62c7",
-   "key": "c4b24d8faed550c2",
+   "key": "7754f080845ad980",
    "draws": 483,
-   "words": 127182,
-   "size": 512640,
+   "words": 125715,
+   "size": 506772,
    "structures": [
     0
    ],
-   "tags": 6522,
-   "offset": 1298199,
-   "compressed_size": 77500
+   "tags": 6677,
+   "offset": 1298182,
+   "compressed_size": 77450
   },
   {
    "map": "chillout",
    "scenario": "levels\\test\\chillout\\chillout",
    "checksum": "086c74ad",
-   "key": "56662b224670788a",
+   "key": "cbed1e8883d84548",
    "draws": 482,
-   "words": 127975,
-   "size": 515804,
+   "words": 125157,
+   "size": 504532,
    "structures": [
     0
    ],
-   "tags": 6508,
-   "offset": 1375699,
-   "compressed_size": 76396
+   "tags": 6663,
+   "offset": 1375632,
+   "compressed_size": 74309
   },
   {
    "map": "d20",
    "scenario": "levels\\d20\\d20",
    "checksum": "3c590eec",
-   "key": "1e663a2141692b22",
+   "key": "7ac42af0c713c880",
    "draws": 514,
-   "words": 202360,
-   "size": 813600,
+   "words": 198220,
+   "size": 797040,
    "structures": [
     0,
     1,
     2,
     4
    ],
-   "tags": 7549,
-   "offset": 1452095,
-   "compressed_size": 112383
+   "tags": 7704,
+   "offset": 1449941,
+   "compressed_size": 112708
   },
   {
    "map": "d40",
    "scenario": "levels\\d40\\d40",
    "checksum": "eb84833e",
-   "key": "f7ccda09d680d65a",
+   "key": "ba3377b649afc7a8",
    "draws": 575,
-   "words": 236812,
-   "size": 951896,
+   "words": 233283,
+   "size": 937780,
    "structures": [
     0,
     1,
@@ -265,159 +265,159 @@
     7,
     8
    ],
-   "tags": 7784,
-   "offset": 1564478,
-   "compressed_size": 130237
+   "tags": 7939,
+   "offset": 1562649,
+   "compressed_size": 127845
   },
   {
    "map": "damnation",
    "scenario": "levels\\test\\damnation\\damnation",
    "checksum": "911cd6ee",
-   "key": "c7502308ebf8ceaa",
+   "key": "12583d8e99fb6d78",
    "draws": 517,
-   "words": 129533,
-   "size": 522316,
+   "words": 129279,
+   "size": 521300,
    "structures": [
     0
    ],
-   "tags": 6564,
-   "offset": 1694715,
-   "compressed_size": 78987
+   "tags": 6719,
+   "offset": 1690494,
+   "compressed_size": 78963
   },
   {
    "map": "hangemhigh",
    "scenario": "levels\\test\\hangemhigh\\hangemhigh",
    "checksum": "8313bd85",
-   "key": "83037ee02a83a856",
+   "key": "1a196bc8da67c95c",
    "draws": 464,
-   "words": 122255,
-   "size": 492780,
+   "words": 122315,
+   "size": 493020,
    "structures": [
     0
    ],
-   "tags": 6487,
-   "offset": 1773702,
-   "compressed_size": 70673
+   "tags": 6642,
+   "offset": 1769457,
+   "compressed_size": 70840
   },
   {
    "map": "longest",
    "scenario": "levels\\test\\longest\\longest",
    "checksum": "df1deaa6",
-   "key": "f00fd3912fd1a3f6",
+   "key": "1d3addf7b4ab2acc",
    "draws": 464,
-   "words": 121263,
-   "size": 488812,
+   "words": 119974,
+   "size": 483656,
    "structures": [
     0
    ],
-   "tags": 6502,
-   "offset": 1844375,
-   "compressed_size": 70568
+   "tags": 6657,
+   "offset": 1840297,
+   "compressed_size": 71066
   },
   {
    "map": "prisoner",
    "scenario": "levels\\test\\prisoner\\prisoner",
    "checksum": "b68da242",
-   "key": "a5743f220ec0055a",
+   "key": "4aeb7388eba7a4e8",
    "draws": 476,
-   "words": 129084,
-   "size": 520192,
+   "words": 126961,
+   "size": 511700,
    "structures": [
     0
    ],
-   "tags": 6491,
-   "offset": 1914943,
-   "compressed_size": 75382
+   "tags": 6646,
+   "offset": 1911363,
+   "compressed_size": 74263
   },
   {
    "map": "putput",
    "scenario": "levels\\test\\putput\\putput",
    "checksum": "b3f87f50",
-   "key": "f4803f9128aa18c2",
+   "key": "67bada50daf9e440",
    "draws": 453,
-   "words": 102076,
-   "size": 411976,
+   "words": 101769,
+   "size": 410748,
    "structures": [
     0
    ],
-   "tags": 6481,
-   "offset": 1990325,
-   "compressed_size": 59352
+   "tags": 6636,
+   "offset": 1985626,
+   "compressed_size": 60077
   },
   {
    "map": "ratrace",
    "scenario": "levels\\test\\ratrace\\ratrace",
    "checksum": "af5f3831",
-   "key": "d19423deba7f6a22",
+   "key": "9aacaecb92911880",
    "draws": 459,
-   "words": 102079,
-   "size": 412036,
+   "words": 102534,
+   "size": 413856,
    "structures": [
     0
    ],
-   "tags": 6516,
-   "offset": 2049677,
-   "compressed_size": 60010
+   "tags": 6671,
+   "offset": 2045703,
+   "compressed_size": 60386
   },
   {
    "map": "sidewinder",
    "scenario": "levels\\test\\sidewinder\\sidewinder",
    "checksum": "4f8e749d",
-   "key": "1381bc05e69c0dfa",
+   "key": "323369fe9b33e648",
    "draws": 485,
-   "words": 133560,
-   "size": 538168,
+   "words": 134284,
+   "size": 541064,
    "structures": [
     0
    ],
-   "tags": 6563,
-   "offset": 2109687,
-   "compressed_size": 82316
+   "tags": 6718,
+   "offset": 2106089,
+   "compressed_size": 82578
   },
   {
    "map": "ui",
    "scenario": "levels\\ui\\ui",
    "checksum": "cdc1a39a",
-   "key": "801d7680bd6696ea",
+   "key": "aee7b1f565239748",
    "draws": 185,
-   "words": 27944,
-   "size": 113304,
+   "words": 27648,
+   "size": 112120,
    "structures": [
     0
    ],
-   "tags": 5787,
-   "offset": 2192003,
-   "compressed_size": 12610
+   "tags": 5942,
+   "offset": 2188667,
+   "compressed_size": 12515
   },
   {
    "map": "ui",
    "scenario": "levels\\ui\\ui",
    "checksum": "cdc1a39a",
-   "key": "a438d943a89f15b2",
+   "key": "ed93a0b3bdd9c58c",
    "draws": 199,
-   "words": 33290,
-   "size": 134800,
+   "words": 29830,
+   "size": 120960,
    "structures": [
     0
    ],
-   "tags": 5787,
-   "offset": 2204613,
-   "compressed_size": 16229
+   "tags": 5942,
+   "offset": 2201182,
+   "compressed_size": 14296
   },
   {
    "map": "wizard",
    "scenario": "levels\\test\\wizard\\wizard",
    "checksum": "2d5a08fc",
-   "key": "635e9d0386749a78",
+   "key": "abccb795f213a736",
    "draws": 466,
-   "words": 152534,
-   "size": 613912,
+   "words": 152683,
+   "size": 614508,
    "structures": [
     0
    ],
-   "tags": 6510,
-   "offset": 2220842,
-   "compressed_size": 83177
+   "tags": 6665,
+   "offset": 2215478,
+   "compressed_size": 84612
   }
  ]
 }
