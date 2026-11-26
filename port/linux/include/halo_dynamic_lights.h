@@ -55,6 +55,14 @@ BSP (xgpu.h's XGPU_DYNAMIC_LIGHTS_MAXIMUM, _CLUSTERS, _WORLD_TEXELS) */
 bit a light (HALO_DYNAMIC_LIGHTS_CLUSTERS of them) */
 void halo_dynamic_lights_set(const struct halo_dynamic_light *lights, int count, const float camera[3],
 	const float right[3], const float up[3], const unsigned int (*cluster_masks)[4]);
+/* display.shadows "ray_traced": the frame's lights that cast shadows (at
+most HALO_DYNAMIC_LIGHTS_SHADOWED: each one's index among those
+halo_dynamic_lights_set is given next, its disk's radius, world units, and
+its owner among the ray-traced scene's instances, world_rt_owner, 0 none),
+given before it (count 0: none) and taken by it (xgpu.h's
+XGPU_DYNAMIC_LIGHTS_SHADOWED) */
+#define HALO_DYNAMIC_LIGHTS_SHADOWED 4
+void halo_dynamic_lights_shadowed(const int *indices, const float *disks, const unsigned long *owners, int count);
 /* the structure's 3D BSP, from which a pixel finds its cluster (xgpu.h's
 world: count texels of four words, count at most
 HALO_DYNAMIC_LIGHTS_WORLD_TEXELS), when it changes; copied */

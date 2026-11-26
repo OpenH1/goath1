@@ -33,7 +33,8 @@ def generated(control=None):
                                                          "magnitude3d", "scale_vector3d", "normalize3d"])
     table = re.search(r"^static struct\n\{\n\tlong light;.*?\} lights_drawn\[MAXIMUM_LIGHTS_PER_MAP\];", source,
                       re.M | re.S).group(0)
-    code = structure(source, "rank_entry") + "\n" + table + "\n" + function(source, "rank_compare") + "\n" + \
+    code = structure(source, "rank_entry") + "\n" + table + "\n" + function(source, "dynamic_lights_score") + "\n" + \
+        function(source, "rank_compare") + "\n" + \
         function(source, "dynamic_lights_drawn") + "\n" + function(source, "dynamic_lights_rank")
     if control:
         code = mutated(code, *CONTROLS[control][0])
