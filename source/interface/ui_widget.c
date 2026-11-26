@@ -5668,6 +5668,14 @@ void display_scenario_help(
 		"c:\\halo\\SOURCE\\interface\\ui_widget.c",
 		2407,
 		string_index>=0);
+	/* port: game.scenario_help, off by default: no help screen, nor its
+	pause (the scripts wait on none: they go on as after it was closed) */
+	{
+		extern int config_boolean(char const *name);
+
+		if (!config_boolean("game.scenario_help"))
+			return;
+	}
 	if (global_scenario_index != NONE)
 	{
 		char const *widget_name;
