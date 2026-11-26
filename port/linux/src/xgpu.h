@@ -193,6 +193,16 @@ are needed (xgpu_spirv.c's, xgpu_msl.c's lightmap_cubic). The bit in the pixel k
 set by xgpu_draw_derive; nv2a_pixel_program_decode gives the program's
 lightmap_filter */
 #define XGPU_TEXTURE_MODES_LIGHTMAP_CUBIC 0x80000000u
+/* a model's material maps (docs/mods.md "Material maps", d3d8_device.c's
+halo_model_material_maps): a model lit for each pixel with the enhanced
+dynamic lights samples a tangent-space normal map (XGPU_TEXTURE_MODES_NORMAL_MAP)
+and an occlusion, roughness and metalness map (XGPU_TEXTURE_MODES_ORM_MAP) at
+texture 0's coordinates, bound past the four stages (xgpu_spirv.h's
+XGPU_SPIRV_BINDING_NORMAL_MAP, _ORM_MAP; xgpu_stream.h's
+XGPU_STREAM_MATERIAL_STAGE). Without either bit the draw is as it was */
+#define XGPU_TEXTURE_MODES_NORMAL_MAP 0x40000000u
+#define XGPU_TEXTURE_MODES_ORM_MAP 0x20000000u
+#define XGPU_TEXTURE_MODES_MATERIAL (XGPU_TEXTURE_MODES_NORMAL_MAP | XGPU_TEXTURE_MODES_ORM_MAP)
 /* (the stages' own bits) */
 #define XGPU_TEXTURE_MODES_STAGES 0x000fffffu
 /* display.soft_particles: a first-person weapon's effect drawn over the

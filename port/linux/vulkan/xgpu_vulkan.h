@@ -621,6 +621,9 @@ struct xgpu_vulkan_texture
 	uint8_t kind;
 	VkSampler sampler;
 };
+/* a draw's textures: the four stages', then a model's material maps
+(xgpu_spirv.h's XGPU_SPIRV_BINDING_NORMAL_MAP, _ORM_MAP; none: stand-ins) */
+#define XGPU_VULKAN_TEXTURES 6
 
 enum
 {
@@ -661,7 +664,7 @@ struct xgpu_vulkan_draw
 	struct xgpu_vulkan_range vertices[XGPU_VULKAN_BINDINGS];
 	struct xgpu_vulkan_range indices;
 	struct xgpu_vulkan_range constants, uniforms;
-	struct xgpu_vulkan_texture textures[4];
+	struct xgpu_vulkan_texture textures[XGPU_VULKAN_TEXTURES];
 	uint32_t count, first_index;
 	int32_t vertex_offset;
 };

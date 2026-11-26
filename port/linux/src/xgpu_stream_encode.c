@@ -199,9 +199,9 @@ static struct
 	struct xgpu_stream_draw_uniforms uniforms;
 	/* the last key's, and its number */
 	struct xgpu_pipeline_key last_key;
-	BOOL stages_sent[4];
-	struct xgpu_stream_texture_stage stages[4];
-	struct xgpu_stream_texture_level levels[4][XGPU_STREAM_MIP_LEVELS];
+	BOOL stages_sent[XGPU_STREAM_TEXTURE_STAGES];
+	struct xgpu_stream_texture_stage stages[XGPU_STREAM_TEXTURE_STAGES];
+	struct xgpu_stream_texture_level levels[XGPU_STREAM_TEXTURE_STAGES][XGPU_STREAM_MIP_LEVELS];
 	/* the values of the inputs no stream feeds (set_vertices'), and of
 	the registers immediate mode's vertices do not write (each the host's
 	own) */
@@ -1530,45 +1530,103 @@ static void texture_stage_describe(const struct xgpu_texture_source *source, int
 	}
 }
 
-/* the stages described sent: those that differ from what the host has */
-static void textures_send(const struct xgpu_stream_texture_stage described[4],
-	const struct xgpu_stream_texture_level levels[4][XGPU_STREAM_MIP_LEVELS])
+/* the stages described sent (count of them, from first: the four stages,
+or the material maps' past them): those that differ from what the host has */
+static void textures_send_stages(const struct xgpu_stream_texture_stage *described,
+	const struct xgpu_stream_texture_level (*levels)[XGPU_STREAM_MIP_LEVELS], int first, int count)
 {
 	struct xgpu_stream_set_textures *record_body;
 	uint32_t changed = 0;
 	uint32_t size = sizeof(*record_body);
 	unsigned char *place;
-	int stage;
+	int index;
 
-	for (stage = 0; stage < 4; stage++)
+	for (index = 0; index < count; index++)
 	{
-		uint32_t level_bytes = described[stage].level_count * sizeof(levels[0][0]);
+		int stage = first + index;
+		uint32_t level_bytes = described[index].level_count * sizeof(levels[0][0]);
 
-		if (stream.stages_sent[stage] && !memcmp(&described[stage], &stream.stages[stage], sizeof(described[stage])) &&
-			!memcmp(levels[stage], stream.levels[stage], level_bytes))
+		if (stream.stages_sent[stage] && !memcmp(&described[index], &stream.stages[stage], sizeof(described[index])) &&
+			!memcmp(levels[index], stream.levels[stage], level_bytes))
 			continue;
 		changed |= 1u << stage;
-		size += sizeof(described[stage]) + level_bytes;
+		size += sizeof(described[index]) + level_bytes;
 	}
 	if (!changed)
 		return;
 	record_body = record(XGPU_STREAM_SET_TEXTURES, size);
 	record_body->changed = changed;
 	place = (unsigned char *)(record_body + 1);
-	for (stage = 0; stage < 4; stage++)
+	for (index = 0; index < count; index++)
 	{
-		uint32_t level_bytes = described[stage].level_count * sizeof(levels[0][0]);
+		int stage = first + index;
+		uint32_t level_bytes = described[index].level_count * sizeof(levels[0][0]);
 
 		if (!(changed & (1u << stage)))
 			continue;
-		memcpy(place, &described[stage], sizeof(described[stage]));
-		place += sizeof(described[stage]);
-		memcpy(place, levels[stage], level_bytes);
+		memcpy(place, &described[index], sizeof(described[index]));
+		place += sizeof(described[index]);
+		memcpy(place, levels[index], level_bytes);
 		place += level_bytes;
-		stream.stages[stage] = described[stage];
-		memcpy(stream.levels[stage], levels[stage], level_bytes);
+		stream.stages[stage] = described[index];
+		memcpy(stream.levels[stage], levels[index], level_bytes);
 		stream.stages_sent[stage] = TRUE;
 	}
+}
+
+static void textures_send(const struct xgpu_stream_texture_stage described[4],
+	const struct xgpu_stream_texture_level levels[4][XGPU_STREAM_MIP_LEVELS])
+{
+	textures_send_stages(described, levels, 0, 4);
+}
+
+/* a model's material maps (xgpu_backend.h): images, or none */
+void xgpu_backend_set_material(const struct xgpu_sampler *sampler, unsigned int normal_map, unsigned int orm_map)
+{
+	struct xgpu_stream_texture_stage described[XGPU_STREAM_TEXTURE_STAGES - XGPU_STREAM_MATERIAL_STAGE];
+	struct xgpu_stream_texture_level levels[XGPU_STREAM_TEXTURE_STAGES - XGPU_STREAM_MATERIAL_STAGE][XGPU_STREAM_MIP_LEVELS];
+	unsigned int images[2];
+	int index;
+
+	if (!stream.open)
+		return;
+	images[0] = normal_map;
+	images[1] = orm_map;
+	memset(described, 0, sizeof(described));
+	memset(levels, 0, sizeof(levels));
+	for (index = 0; index < 2; index++)
+	{
+		struct xgpu_stream_texture_stage *stage = &described[index];
+#ifndef XGPU_STREAM_TEST
+		const struct xgpu_image *image = images[index] ? xgpu_image_get(images[index]) : NULL;
+
+		if (!image)
+			continue;
+		stage->source = XGPU_STREAM_SOURCE_IMAGE;
+		stage->sampler_type = _xgpu_sampler_2d;
+		stage->sampled = 1;
+		stage->resource = images[index];
+		stage->resource_format = (uint32_t)image->format;
+		stage->resource_size = (uint32_t)image->serial;
+		stage->data = STREAM_ADDRESS(image->pixels);
+		stage->width = (uint32_t)image->width;
+		stage->height = (uint32_t)image->height;
+		stage->levels = (uint32_t)image->levels;
+		stage->sampler.minify = sampler->minify;
+		stage->sampler.mip = sampler->mip;
+		stage->sampler.magnify = sampler->magnify;
+		memcpy(stage->sampler.address, sampler->address, sizeof(stage->sampler.address));
+		stage->sampler.lod_bias = sampler->lod_bias;
+		stage->sampler.first_level = (uint32_t)sampler->first_level;
+		stage->sampler.anisotropy = (uint32_t)sampler->anisotropy;
+		stage->sampler.border_color = (uint32_t)sampler->border_color;
+#else
+		(void)stage;
+		(void)sampler;
+#endif
+	}
+	textures_send_stages(described, (const struct xgpu_stream_texture_level (*)[XGPU_STREAM_MIP_LEVELS])levels,
+		XGPU_STREAM_MATERIAL_STAGE, XGPU_STREAM_TEXTURE_STAGES - XGPU_STREAM_MATERIAL_STAGE);
 }
 
 void xgpu_backend_set_textures(const struct xgpu_texture_source stages[4])

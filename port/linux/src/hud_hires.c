@@ -624,14 +624,16 @@ static unsigned char paeth(unsigned char left, unsigned char up, unsigned char u
 }
 
 /* the PNG's texels, RGBA in rows top first, and its size; NULL if it is not
-one that tools/hud_assets.py writes */
+one that tools/hud_assets.py writes (8-bit RGBA) or 8-bit RGB (made opaque:
+a model's material maps, docs/mods.md), not interlaced */
 static unsigned char *png_decode(const unsigned char *data, unsigned long size, unsigned long *png_width,
 	unsigned long *png_height)
 {
 	unsigned long position = 8;
 	unsigned long width = size >= 33 ? big_endian_long(data + 16) : 0;
 	unsigned long height = size >= 33 ? big_endian_long(data + 20) : 0;
-	unsigned long stride = width * 4, filtered_size = height * (stride + 1);
+	unsigned long channels = size >= 33 && data[25] == 2 ? 3 : 4;
+	unsigned long stride = width * channels, filtered_size = height * (stride + 1);
 	unsigned char *compressed = NULL, *filtered = NULL, *pixels = NULL;
 	unsigned long compressed_size = 0, row, column;
 	uLongf inflated_size = filtered_size;
@@ -639,9 +641,9 @@ static unsigned char *png_decode(const unsigned char *data, unsigned long size, 
 
 	if (size < 33 || memcmp(data, "\x89PNG\r\n\x1a\n", 8) || memcmp(data + 12, "IHDR", 4) ||
 		!width || !height || width > 8192 || height > 8192 ||
-		data[24] != 8 || data[25] != 6 || data[28] != 0)
+		data[24] != 8 || (data[25] != 6 && data[25] != 2) || data[28] != 0)
 		return NULL;
-	if (filtered_size + stride * height > MAXIMUM_DECODED_SIZE)
+	if (filtered_size + width * 4 * height > MAXIMUM_DECODED_SIZE)
 	{
 		platform_log("png: %lux%lu is too large to decode (more than %lu MB)", width, height,
 			MAXIMUM_DECODED_SIZE >> 20);
@@ -668,7 +670,7 @@ static unsigned char *png_decode(const unsigned char *data, unsigned long size, 
 		position += 12 + length;
 	}
 	filtered = compressed ? malloc(filtered_size) : NULL;
-	pixels = filtered ? malloc(stride * height) : NULL;
+	pixels = filtered ? malloc(width * 4 * height) : NULL;
 	if (!pixels)
 		goto failed;
 	result = uncompress(filtered, &inflated_size, compressed, compressed_size);
@@ -697,28 +699,44 @@ static unsigned char *png_decode(const unsigned char *data, unsigned long size, 
 			memcpy(out, line, stride);
 			break;
 		case 1:
-			memcpy(out, line, 4);
-			for (column = 4; column < stride; column++)
-				out[column] = (unsigned char)(line[column] + out[column - 4]);
+			memcpy(out, line, channels);
+			for (column = channels; column < stride; column++)
+				out[column] = (unsigned char)(line[column] + out[column - channels]);
 			break;
 		case 2:
 			for (column = 0; column < stride; column++)
 				out[column] = (unsigned char)(line[column] + above[column]);
 			break;
 		case 3:
-			for (column = 0; column < 4; column++)
+			for (column = 0; column < channels; column++)
 				out[column] = (unsigned char)(line[column] + (above ? above[column] : 0) / 2);
-			for (column = 4; column < stride; column++)
+			for (column = channels; column < stride; column++)
 				out[column] = (unsigned char)(line[column] +
-					((unsigned)out[column - 4] + (above ? above[column] : 0)) / 2);
+					((unsigned)out[column - channels] + (above ? above[column] : 0)) / 2);
 			break;
 		default:
 			/* (Paeth of zero, up and zero: up) */
-			for (column = 0; column < 4; column++)
+			for (column = 0; column < channels; column++)
 				out[column] = (unsigned char)(line[column] + above[column]);
-			for (column = 4; column < stride; column++)
-				out[column] = (unsigned char)(line[column] + paeth(out[column - 4], above[column], above[column - 4]));
+			for (column = channels; column < stride; column++)
+				out[column] = (unsigned char)(line[column] + paeth(out[column - channels], above[column],
+					above[column - channels]));
 			break;
+		}
+	}
+	/* (RGB made RGBA in place, from the last texel back) */
+	if (channels == 3)
+	{
+		unsigned long texel = width * height;
+
+		while (texel--)
+		{
+			unsigned char red = pixels[texel * 3], green = pixels[texel * 3 + 1], blue = pixels[texel * 3 + 2];
+
+			pixels[texel * 4] = red;
+			pixels[texel * 4 + 1] = green;
+			pixels[texel * 4 + 2] = blue;
+			pixels[texel * 4 + 3] = 255;
 		}
 	}
 	free(compressed);

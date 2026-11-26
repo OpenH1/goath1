@@ -109,7 +109,7 @@ enum
 	EXECUTION_MODE_DEPTH_GREATER = 14, EXECUTION_MODE_DEPTH_LESS = 15,
 	EXECUTION_MODE_PIXEL_INTERLOCK_ORDERED = 5366, EXECUTION_MODE_SAMPLE_INTERLOCK_ORDERED = 5368,
 	DIM_2D = 1, DIM_3D = 2, DIM_CUBE = 3, DIM_SUBPASS_DATA = 6, IMAGE_FORMAT_RGBA16F = 2,
-	IMAGE_OPERANDS_LOD = 2, IMAGE_OPERANDS_GRAD = 4, IMAGE_OPERANDS_SAMPLE = 0x40,
+	IMAGE_OPERANDS_BIAS = 1, IMAGE_OPERANDS_LOD = 2, IMAGE_OPERANDS_GRAD = 4, IMAGE_OPERANDS_SAMPLE = 0x40,
 	SCOPE_DEVICE = 1, SCOPE_SUBGROUP = 3, GROUP_OPERATION_REDUCE = 0,
 };
 
@@ -2119,6 +2119,12 @@ struct pixel_state
 	unit, the eye, the scene's distance and the fade's span */
 	unsigned int replaced_depth;
 	unsigned int effect_base, effect_column2, effect_eye, effect_to_scene, effect_span;
+	/* a model's material maps (xgpu.h's XGPU_TEXTURE_MODES_MATERIAL;
+	material_read): the maps' variables (0 none), and once read the
+	vertex's normal and the normal map's (unit vec3s), the occlusion,
+	roughness and metalness (floats; 0 where there is no such map) */
+	unsigned int normal_map, orm_map;
+	unsigned int vertex_normal, shaded_normal, material_occlusion, roughness, metalness;
 };
 
 static unsigned int pixel_input(struct module *m, struct pixel_state *state, unsigned int variable_id, unsigned int type)
@@ -2376,6 +2382,88 @@ static unsigned int vec4_parts(struct module *m, unsigned int x, unsigned int y,
 	return construct4(m, x, y, z, w);
 }
 
+/* ---------- a model's material maps (xgpu.h's XGPU_TEXTURE_MODES_MATERIAL)
+
+Read at texture 0's coordinates (the base map's layout, which the maps are
+drawn in: docs/mods.md "Material maps"). The normal map is in tangent
+space, its green toward the picture's top (OpenGL's, glTF's): its frame is
+found from the screen's derivatives of the world position and of the
+coordinates about the vertex's normal (Schueler's cotangent frame), so a
+model needs no tangents, skinned or not. The occlusion multiplies the
+ambient and distant light and the reflection, as the ambient occlusion's
+does; roughness widens the dynamic lights' highlights and blurs the
+reflection (its cube map's levels); metalness tints the reflection by the
+base map and darkens the diffuse light by up to half (the cube maps are not
+the scene's light: a metal's black diffuse would read as unlit). */
+#define MATERIAL_REFLECTION_BLUR 6.0f
+#define MATERIAL_HIGHLIGHT_ROUGH 0.6f
+#define MATERIAL_METAL_DIFFUSE 0.5f
+
+static void material_read(struct module *m, struct pixel_state *state, unsigned int p, unsigned int n)
+{
+	unsigned int xt = pixel_input(m, state, state->in_t[0], m->t_v4), w = extract(m, xt, 3), uv;
+	unsigned int type = type_sampled_image(m, DIM_2D, FALSE, FALSE, TRUE);
+
+	w = op3(m, OP_SELECT, m->t_float, compare(m, OP_F_UNORD_NOT_EQUAL, w, constant_float(m, 0.0f)), w,
+		constant_float(m, 1.0f));
+	uv = fmul(m, 2, fdiv(m, 2, xy(m, xt), splat(m, 2, w)), xy(m, uniform(m, U_TEXTURE_SCALE, 0)));
+	state->vertex_normal = n;
+	if (state->normal_map)
+	{
+		unsigned int texel = op2(m, OP_IMAGE_SAMPLE_IMPLICIT_LOD, m->t_v4, load(m, type, state->normal_map), uv);
+		unsigned int t = fsub(m, 3, fscale(m, 3, xyz(m, texel), constant_float(m, 2.0f)), constant_splat(m, 3, 1.0f));
+		unsigned int dp1 = op1(m, OP_DPDX, m->t_v3, p), dp2 = op1(m, OP_DPDY, m->t_v3, p);
+		unsigned int duv1 = op1(m, OP_DPDX, m->t_v2, uv), duv2 = op1(m, OP_DPDY, m->t_v2, uv);
+		unsigned int dp2perp = ext2(m, GLSL_CROSS, m->t_v3, dp2, n), dp1perp = ext2(m, GLSL_CROSS, m->t_v3, n, dp1);
+		unsigned int tangent, binormal, scale, shaded;
+
+		/* T = dp2perp * duv1.x + dp1perp * duv2.x; B the same of .y (toward v, the rows down);
+		scale = inversesqrt(max(dot(T, T), dot(B, B))) */
+		tangent = fadd(m, 3, fscale(m, 3, dp2perp, extract(m, duv1, 0)), fscale(m, 3, dp1perp, extract(m, duv2, 0)));
+		binormal = fadd(m, 3, fscale(m, 3, dp2perp, extract(m, duv1, 1)), fscale(m, 3, dp1perp, extract(m, duv2, 1)));
+		scale = ext1(m, GLSL_INVERSE_SQRT, m->t_float, fmax_scalar(m, 1, ext2(m, GLSL_F_MAX, m->t_float,
+			fdot(m, tangent, tangent), fdot(m, binormal, binormal)), (float)1.0e-30));
+		/* normalize(T * scale * t.x - B * scale * t.y + n * max(t.z, 0.001)): green up, the top's rows */
+		shaded = fadd(m, 3, fsub(m, 3, fscale(m, 3, tangent, fmul(m, 1, scale, extract(m, t, 0))),
+			fscale(m, 3, binormal, fmul(m, 1, scale, extract(m, t, 1)))),
+			fscale(m, 3, n, fmax_scalar(m, 1, extract(m, t, 2), 0.001f)));
+		state->shaded_normal = ext1(m, GLSL_NORMALIZE, m->t_v3, shaded);
+	}
+	if (state->orm_map)
+	{
+		unsigned int texel = op2(m, OP_IMAGE_SAMPLE_IMPLICIT_LOD, m->t_v4, load(m, type, state->orm_map), uv);
+
+		state->material_occlusion = extract(m, texel, 0);
+		state->roughness = extract(m, texel, 1);
+		state->metalness = extract(m, texel, 2);
+	}
+}
+
+/* the reflection's texel (texture 3's cube map) with the material: its
+direction about the normal map's normal (the eye found again from the
+vertex's reflection about the vertex's normal), blurred by the roughness */
+static unsigned int material_reflection(struct module *m, struct pixel_state *state, unsigned int xt)
+{
+	unsigned int r = xyz(m, xt), operands[4];
+
+	if (state->shaded_normal)
+	{
+		unsigned int nv = state->vertex_normal, ns = state->shaded_normal, v;
+
+		r = ext1(m, GLSL_NORMALIZE, m->t_v3, r);
+		/* v = 2 dot(nv, r) nv - r; r = 2 dot(ns, v) ns - v */
+		v = fsub(m, 3, fscale(m, 3, nv, fmul(m, 1, fdot(m, nv, r), constant_float(m, 2.0f))), r);
+		r = fsub(m, 3, fscale(m, 3, ns, fmul(m, 1, fdot(m, ns, v), constant_float(m, 2.0f))), v);
+	}
+	operands[0] = texture_load(m, state, 3);
+	operands[1] = r;
+	if (!state->roughness)
+		return op(m, OP_IMAGE_SAMPLE_IMPLICIT_LOD, m->t_v4, 2, operands);
+	operands[2] = IMAGE_OPERANDS_BIAS;
+	operands[3] = fmul(m, 1, state->roughness, constant_float(m, MATERIAL_REFLECTION_BLUR));
+	return op(m, OP_IMAGE_SAMPLE_IMPLICIT_LOD, m->t_v4, 4, operands);
+}
+
 static void texture_stage(struct module *m, struct pixel_state *state, int stage)
 {
 	const struct xgpu_pixel_program *program = state->program;
@@ -2439,7 +2527,10 @@ static void texture_stage(struct module *m, struct pixel_state *state, int stage
 		break;
 	}
 	case XGPU_TEXTURE_CUBEMAP:
-		state->t[stage] = sample(m, state, stage, xt);
+		if (stage == 3 && (state->shaded_normal || state->roughness))
+			state->t[stage] = material_reflection(m, state, xt);
+		else
+			state->t[stage] = sample(m, state, stage, xt);
 		break;
 	case XGPU_TEXTURE_PASSTHRU:
 		state->t[stage] = saturate(m, 4, xt);
@@ -4212,9 +4303,13 @@ static unsigned int model_lighting(struct module *m, struct pixel_state *state, 
 	unsigned int normal = xyz(m, world_normal), n, facing, light;
 	int index;
 
-	/* n = xWorldNormal.xyz * (xWorldNormal.w * inversesqrt(max(dot(...), 1.0e-24))) */
-	n = fscale(m, 3, normal, fmul(m, 1, extract(m, world_normal, 3), ext1(m, GLSL_INVERSE_SQRT, m->t_float,
-		fmax_scalar(m, 1, fdot(m, normal, normal), (float)1.0e-24))));
+	/* n = xWorldNormal.xyz * (xWorldNormal.w * inversesqrt(max(dot(...), 1.0e-24))); with a normal map,
+	its normal at the vertex's length (xWorldNormal.w) */
+	if (state->shaded_normal)
+		n = fscale(m, 3, state->shaded_normal, extract(m, world_normal, 3));
+	else
+		n = fscale(m, 3, normal, fmul(m, 1, extract(m, world_normal, 3), ext1(m, GLSL_INVERSE_SQRT, m->t_float,
+			fmax_scalar(m, 1, fdot(m, normal, normal), (float)1.0e-24))));
 	facing = fdot(m, n, fneg(m, 3, xyz(m, uniform(m, U_MODEL_LIGHTS, 7))));
 	/* light = ml[11].xyz + max(max(facing, -facing * ml[0].z), 0.0) * ml[8].xyz + max(dot(n, -ml[9].xyz), 0.0) * ml[10].xyz */
 	light = fadd(m, 3, fadd(m, 3, xyz(m, uniform(m, U_MODEL_LIGHTS, 11)),
@@ -5239,6 +5334,21 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 		decorate1(&m, state.textures[stage], DECORATION_DESCRIPTOR_SET, XGPU_SPIRV_SET_TEXTURES);
 		decorate1(&m, state.textures[stage], DECORATION_BINDING, stage);
 	}
+	/* (a model's material maps: material_read) */
+	if (program->material_maps & XGPU_TEXTURE_MODES_NORMAL_MAP)
+	{
+		state.normal_map = variable(&m, type_sampled_image(&m, DIM_2D, FALSE, FALSE, TRUE), STORAGE_UNIFORM_CONSTANT,
+			"normal_map");
+		decorate1(&m, state.normal_map, DECORATION_DESCRIPTOR_SET, XGPU_SPIRV_SET_TEXTURES);
+		decorate1(&m, state.normal_map, DECORATION_BINDING, XGPU_SPIRV_BINDING_NORMAL_MAP);
+	}
+	if (program->material_maps & XGPU_TEXTURE_MODES_ORM_MAP)
+	{
+		state.orm_map = variable(&m, type_sampled_image(&m, DIM_2D, FALSE, FALSE, TRUE), STORAGE_UNIFORM_CONSTANT,
+			"orm_map");
+		decorate1(&m, state.orm_map, DECORATION_DESCRIPTOR_SET, XGPU_SPIRV_SET_TEXTURES);
+		decorate1(&m, state.orm_map, DECORATION_BINDING, XGPU_SPIRV_BINDING_ORM_MAP);
+	}
 	if (effect)
 		effect_declare(&m, &state);
 	else if (replaces_depth)
@@ -5353,11 +5463,22 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 		unsigned int world_normal = pixel_input(&m, &state, state.in_world_normal, m.t_v4), normal = xyz(&m, world_normal);
 		unsigned int n = fscale(&m, 3, normal, ext1(&m, GLSL_INVERSE_SQRT, m.t_float,
 			fmax_scalar(&m, 1, fdot(&m, normal, normal), (float)1.0e-24)));
-		unsigned int lit = model_lighting(&m, &state, program->per_pixel_lighting == 2, TRUE,
-			occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_MODEL ? state.occlusion : 0);
 		unsigned int p = pixel_input(&m, &state, state.in_world_position, m.t_v3);
-		unsigned int reflection = 0, exponent = 0, sum;
+		unsigned int lit, occlusion = occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_MODEL ? state.occlusion : 0;
+		unsigned int reflection = 0, exponent = 0, sum, shaded = n, added;
 		static const unsigned int rgb[4] = { 4, 5, 6, 3 };
+
+		/* (a model's material maps: its normal, and its occlusion with the
+		ambient occlusion's) */
+		if (program->material_maps && state.in_t[0])
+		{
+			material_read(&m, &state, p, n);
+			if (state.shaded_normal)
+				shaded = state.shaded_normal;
+			if (state.material_occlusion)
+				occlusion = occlusion ? fmul(&m, 1, occlusion, state.material_occlusion) : state.material_occlusion;
+		}
+		lit = model_lighting(&m, &state, program->per_pixel_lighting == 2, TRUE, occlusion);
 
 		if (program->stages[3].mode == XGPU_TEXTURE_CUBEMAP && state.in_t[3])
 		{
@@ -5369,22 +5490,30 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 			unsigned int dx, dy, widened;
 			const float lobe = 2.0f / (XGPU_DYNAMIC_LIGHTS_HIGHLIGHT_EXPONENT + 2.0f);
 
-			/* reflection = 2.0 * dot(n, v) * n - v */
-			reflection = fsub(&m, 3, fscale(&m, 3, n, fmul(&m, 1, fdot(&m, n, v), constant_float(&m, 2.0f))), v);
+			/* reflection = 2.0 * dot(n, v) * n - v (the normal map's n, where it has one) */
+			reflection = fsub(&m, 3, fscale(&m, 3, shaded, fmul(&m, 1, fdot(&m, shaded, v), constant_float(&m, 2.0f))), v);
 			/* widened = lobe + min(dot(dFdx(r), dFdx(r)) + dot(dFdy(r), dFdy(r)), WIDEST);
 			exponent = 2.0 / widened - 2.0; the shine by lobe / widened */
 			dx = op1(&m, OP_DPDX, m.t_v3, reflection);
 			dy = op1(&m, OP_DPDY, m.t_v3, reflection);
 			widened = fadd(&m, 1, constant_float(&m, lobe), ext2(&m, GLSL_F_MIN, m.t_float,
 				fadd(&m, 1, fdot(&m, dx, dx), fdot(&m, dy, dy)), constant_float(&m, XGPU_DYNAMIC_LIGHTS_HIGHLIGHT_WIDEST)));
+			/* (... and by the material's roughness: widened += roughness^2 * ROUGH) */
+			if (state.roughness)
+				widened = fadd(&m, 1, widened, fmul(&m, 1, fmul(&m, 1, state.roughness, state.roughness),
+					constant_float(&m, MATERIAL_HIGHLIGHT_ROUGH)));
 			exponent = fsub(&m, 1, fdiv(&m, 1, constant_float(&m, 2.0f), widened), constant_float(&m, 2.0f));
 			highlight_scale = fdiv(&m, 1, constant_float(&m, lobe * XGPU_DYNAMIC_LIGHTS_HIGHLIGHT), widened);
 			shine_variable = local(&m, &state.locals, m.t_v3);
 			store(&m, shine_variable, constant_splat(&m, 3, 0.0f));
 		}
-		sum = dynamic_light_sum(&m, &state, p, n, n, FALSE, reflection, exponent, shine_variable);
-
-		state.v0 = shuffle(&m, 4, state.v0, dynamic_light_add(&m, &state, lit, sum, FALSE), rgb);
+		sum = dynamic_light_sum(&m, &state, p, shaded, n, FALSE, reflection, exponent, shine_variable);
+		added = dynamic_light_add(&m, &state, lit, sum, FALSE);
+		/* (a metal's diffuse light darkened: material_read) */
+		if (state.metalness)
+			added = fscale(&m, 3, added, fsub(&m, 1, constant_float(&m, 1.0f), fmul(&m, 1, state.metalness,
+				constant_float(&m, MATERIAL_METAL_DIFFUSE))));
+		state.v0 = shuffle(&m, 4, state.v0, added, rgb);
 	}
 	else if (program->per_pixel_lighting)
 	{
@@ -5417,6 +5546,20 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 
 		state.t[3] = shuffle(&m, 4, state.t[3], dynamic_light_add(&m, &state, xyz(&m, state.t[3]),
 			fscale(&m, 3, load(&m, m.t_v3, shine_variable), highlight_scale), FALSE), rgb);
+	}
+	/* (a model's material: its reflection by its occlusion, and a metal's
+	tinted by its base map) */
+	if ((state.material_occlusion || state.metalness) && program->stages[3].mode == XGPU_TEXTURE_CUBEMAP)
+	{
+		static const unsigned int rgb[4] = { 4, 5, 6, 3 };
+		unsigned int reflected = xyz(&m, state.t[3]);
+
+		if (state.metalness)
+			reflected = ext3(&m, GLSL_F_MIX, m.t_v3, reflected, fmul(&m, 3, reflected, xyz(&m, state.t[0])),
+				splat(&m, 3, state.metalness));
+		if (state.material_occlusion)
+			reflected = fscale(&m, 3, reflected, state.material_occlusion);
+		state.t[3] = shuffle(&m, 4, state.t[3], reflected, rgb);
 	}
 	if (effect && replaces_depth && state.replaced_depth)
 		effect_fade_value = effect_zsprite_fade(&m, &state, &zsprite_hidden);

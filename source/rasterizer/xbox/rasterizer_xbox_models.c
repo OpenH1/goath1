@@ -125,6 +125,7 @@ symbols in this file:
 #include "rasterizer/xbox/rasterizer_xbox_models.h"
 #include "view_fov.h" /* port: port/linux/game/view_fov.c */
 #include "world_ao.h" /* port: port/linux/game/world_ao.c */
+#include "mod_materials.h" /* port: port/linux/game/mod_materials.c */
 
 /* ---------- constants */
 
@@ -1888,6 +1889,8 @@ void _rasterizer_model_draw(
 					1,
 					shader_model->model.base_map.index,
 					shader_permutation_index);
+				/* port: its material maps, a mod's (the enhanced graphics') */
+				mod_materials_model_draw(shader_model->model.base_map.index);
 				IDirect3DDevice8_SetTextureStageState(
 					global_d3d_device, 0, D3DTSS_ADDRESSU, D3DTADDRESS_WRAP);
 				IDirect3DDevice8_SetTextureStageState(

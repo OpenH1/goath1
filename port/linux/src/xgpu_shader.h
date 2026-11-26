@@ -350,9 +350,21 @@ struct xgpu_pixel_program
 	/* display.smooth_lightmaps: the lightmap (texture 2, a 2D lookup)
 	sampled by the cubic B-spline (xgpu.h's XGPU_TEXTURE_MODES_LIGHTMAP_CUBIC) */
 	unsigned char lightmap_filter;
+	/* a model's material maps (xgpu.h's XGPU_TEXTURE_MODES_MATERIAL): its
+	bits, kept only where the model is lit for each pixel with the enhanced
+	dynamic lights and texture 0 is a 2D lookup (the maps lie in its layout) */
+	unsigned long material_maps;
 	/* display.hdr's tag (nv2a_pixel_shader_key.hdr: xgpu_hdr.h) */
 	unsigned short hdr;
 };
+
+/* the material maps a decoded program samples (its material_maps), of its
+pixel key's texture modes: not sent apart, the host finds them again from
+the key (xgpu_stream.h's pipeline definition) */
+#define xgpu_pixel_program_material_maps(program, texture_modes) \
+	((program)->per_pixel_lighting && (program)->dynamic_lights == XGPU_DYNAMIC_LIGHTS_MODEL && \
+	(program)->stages[0].mode == XGPU_TEXTURE_PROJECT2D && (program)->stages[0].sampler == _xgpu_sampler_2d ? \
+	(unsigned long)(texture_modes) & XGPU_TEXTURE_MODES_MATERIAL : 0UL)
 
 /* the texture stage that replaces the fragment's depth, DOT_ZW (the game's
 z-sprites: a bullet impact's puff), with the previous stage's dot product
