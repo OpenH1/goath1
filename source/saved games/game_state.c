@@ -101,6 +101,7 @@ symbols in this file:
 #include "console.h"
 #include "game_state.h"
 #include "coop_vehicles.h" /* port: preserve replacement-vehicle homes across reverts */
+#include "coop_enemies.h" /* port: the extra enemies' waits and riders across reverts */
 #include "network_coop.h" /* port: checkpoint roster restoration and host team-wipe policy */
 #include "game.h"
 #include "tag_files.h"
@@ -175,6 +176,12 @@ static void game_state_set_revert_time(
 	void);
 static void game_state_coop_saved(
 	void);
+static void game_state_bigger_battles_saved(
+	void);
+
+/* port: a solo saved game's BIGGER BATTLES file, beside savegame.bin
+(game_state_bigger_battles_saved) */
+#define BIGGER_BATTLES_SAVED_NAME "bigbattles.bin"
 
 /* ---------- globals */
 
@@ -203,6 +210,8 @@ static game_state_before_save_proc before_save_procs[] =
 	dummy,
 	/* port: the host's vehicle home table follows the saved object handles. */
 	coop_vehicles_before_save,
+	/* port: and the extra enemies' waits, riders and actors (coop_enemies.c) */
+	coop_enemies_before_save,
 };
 
 static game_state_before_load_proc before_load_procs[] =
@@ -242,6 +251,8 @@ static game_state_after_load_proc after_load_procs[] =
 	scripted_hud_messages_clear,
 	/* port: restore matching homes or forget an unrelated disk/core load. */
 	coop_vehicles_after_load,
+	/* port: and the extra enemies' (coop_enemies.c) */
+	coop_enemies_after_load,
 	/* port: (vehicle_riding.c: also for a revert in the same structure) */
 	bipeds_riding_latch
 };
@@ -501,6 +512,8 @@ void game_state_save_to_persistent_storage(
 			sizeof(*game_state_globals.header),
 			/* the whole of the native builds' larger game state */
 			GAME_STATE_SIZE);
+		/* port: and BIGGER BATTLES' file beside it */
+		game_state_bigger_battles_saved();
 	}
 
 	return;
@@ -1262,8 +1275,18 @@ void game_state_try_and_load_from_persistent_storage(
 			(error(_error_silent, "the saved game is not taken: it is of difficulty %d, this game of %d",
 				header.difficulty, main_get_difficulty()), FALSE)))
 	{
+		char path[256];
+		long bigger_battles_size = 0;
+		void *bigger_battles = NULL;
+
 		game_state_note_event("saved game loaded");
+		/* port: BIGGER BATTLES' file beside it, which the load's after_load
+		takes (coop_enemies.c: none, the original's size) */
+		if (game_state_port_coop_storage_file(path, BIGGER_BATTLES_SAVED_NAME))
+			bigger_battles = game_state_port_file_read(path, &bigger_battles_size);
 		game_state_call_before_load_procs();
+		coop_enemies_saved_game_load(bigger_battles, bigger_battles_size);
+		free(bigger_battles);
 		game_state_read_from_persistent_storage(
 			game_state_globals.base_address,
 			GAME_STATE_SIZE);
@@ -1310,6 +1333,26 @@ home table, kept beside it in coophomes.bin with the tick it was saved at
 (coop_vehicles.c) */
 #define COOP_SAVED_GAME_NAME "coopsave.bin"
 #define COOP_SAVED_HOMES_NAME "coophomes.bin"
+
+/* port: a solo saved game's BIGGER BATTLES (its choice, and the extra
+enemies' waits and riders outside the game state: coop_enemies.c), beside
+savegame.bin in the profile, written as it is (save and quit) and read as
+it loads; a save with none (written before there was one) plays at the
+original's size. savegame.bin itself is as it was */
+
+static void game_state_bigger_battles_saved(
+	void)
+{
+	static byte saved[64 * 1024];
+	char path[256];
+	long size;
+
+	if (!game_state_port_coop_storage_file(path, BIGGER_BATTLES_SAVED_NAME))
+		return;
+	size = coop_enemies_saved_game(saved, (long)sizeof(saved));
+	if (!size || !game_state_port_file_write(path, saved, size))
+		error(_error_silent, "the saved game's bigger battles could not be written");
+}
 
 /* the file, for this machine's game: FALSE if it is no network co-op host
 with a profile (a client, a dedicated server, a demo's playback) */

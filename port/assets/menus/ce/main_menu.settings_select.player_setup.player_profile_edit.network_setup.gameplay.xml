@@ -17,6 +17,8 @@
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/op_auto_pickup" x="28" y="100"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/op_vehicle_hijack" x="28" y="121"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/op_spartan_link" x="28" y="142"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/section_4" x="28" y="169"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/op_bigger_battles" x="28" y="189"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/button_bar" y="414"/>
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items" source="tools/port_settings.py settings_files/_settings_page">
@@ -92,11 +94,37 @@
 		<on event="created" run="port setting load"/>
 		<on event="a" run="port setting segment"/>
 	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/section_4" width="344" height="18" bitmap="main_menu/settings/section" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/section_4_title"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/section_4_title" type="text" controller="1" width="344" height="18" wide="0 244" string_list="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/labels" string_index="4" color="#FF6F9CD0" text_x="2" text_y="1" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/op_bigger_battles" width="344" height="20" flags="pass_unhandled_to_focused_child" bitmap="main_menu/settings/row" color="#FF2896FF" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/bigger_battles_label"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/bigger_battles_spinner" x="188"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/bigger_battles_seg0" x="188" y="1"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/bigger_battles_seg1" x="240" y="1"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/bigger_battles_seg2" x="292" y="1"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/bigger_battles_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/labels" string_index="5" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/bigger_battles_seg0" type="text" controller="1" width="48" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="OFF" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/bigger_battles_seg1" type="text" controller="1" width="48" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="2X" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/bigger_battles_seg2" type="text" controller="1" width="48" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="3X" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/bigger_battles_spinner" type="spinner" top="1" width="140" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="OFF|2X|3X" setting="campaign.bigger_battles" values="off|2x|3x" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="4 -6 16 0" footer_bounds="4 140 16 146" wide="20 120" source="tools/port_settings.py settings_files/_settings_page">
+		<on event="created" run="port setting load"/>
+		<on event="a" run="port setting segment"/>
+	</widget>
 	<strings name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/labels">
 		<string text="MULTIPLAYER"/>
 		<string text="WEAPON PICKUP"/>
 		<string text="VEHICLE HIJACKING"/>
 		<string text="SPARTAN LINK"/>
+		<string text="CAMPAIGN"/>
+		<string text="BIGGER BATTLES"/>
 	</strings>
 	<strings name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/help_strings">
 		<string text=""/>
@@ -104,5 +132,7 @@
 		<string text="Multiplayer, with a weapon slot empty: Hold picks up a weapon as you hold the action button, as on the Xbox; Walk Over as you walk over it, as in Custom Edition. Online: the host's choice."/>
 		<string text="Hold the action button beside an enemy's Ghost, Warthog or landed Banshee to throw the rider out and take it. Online: the host's choice."/>
 		<string text="Team games you host: players may show their teammates' views beside the motion tracker. Co-op always has it. Online: the host's choice."/>
+		<string text=""/>
+		<string text="Campaign on this computer, solo or split screen: every enemy squad is two or three times as large (on Legendary, half as many extras). Starts with the next level; a saved game keeps its own. Online co-op uses Extra Enemies."/>
 	</strings>
 </menus>

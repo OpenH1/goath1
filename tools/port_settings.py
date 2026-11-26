@@ -2010,6 +2010,13 @@ PAGES = {
             ("SPARTAN LINK", "game.spartan_link", ON_OFF,
              "Team games you host: players may show their teammates' views beside the motion tracker. Co-op "
              "always has it. Online: the host's choice.", None),
+            (SECTION, "CAMPAIGN"),
+            # (port/linux/game/coop_enemies.c: a local campaign's, read as a
+            # level begins; a saved game keeps its own)
+            ("BIGGER BATTLES", "campaign.bigger_battles", [("OFF", "off"), ("2X", "2x"), ("3X", "3x")],
+             "Campaign on this computer, solo or split screen: every enemy squad is two or three times as large "
+             "(on Legendary, half as many extras). Starts with the next level; a saved game keeps its own. "
+             "Online co-op uses Extra Enemies.", None),
         ],
     },
     SPARTAN_LINK[0]: {

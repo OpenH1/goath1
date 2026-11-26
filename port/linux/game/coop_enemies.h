@@ -7,13 +7,35 @@ Network co-op's extra enemies, for its players (coop_enemies.c).
 #ifndef __COOP_ENEMIES_H
 #define __COOP_ENEMIES_H
 
-/* network_coop.c: a game begins (its EXTRA ENEMIES read), or the host's
-game state went back (a cutscene skipped): the dropships' riders kept are
-forgotten */
+/* network_coop.c: a game begins (its EXTRA ENEMIES, or a local campaign's
+BIGGER BATTLES, read) */
 void coop_enemies_new_game(
 	void);
-void coop_enemies_reset(
+/* game_state.c: a checkpoint saved, and a game state loaded: what the
+extra enemies keep outside it (those waiting, the dropships' riders kept,
+which actors are extras) copied, and put back if the load is of the copy's
+tick (else forgotten) */
+void coop_enemies_before_save(
 	void);
+void coop_enemies_after_load(
+	void);
+/* game_state.c: a solo saved game's bigbattles.bin, beside savegame.bin:
+written into `buffer` from the game as it is (its size, 0 if `size` is too
+small), and read before its image loads (NULL: there is none; the loaded
+game then plays at the original's size) */
+long coop_enemies_saved_game(
+	void *buffer,
+	long size);
+void coop_enemies_saved_game_load(
+	void const *buffer,
+	long size);
+/* encounters.c, and this file's riders: an extra enemy's actor placed; and
+whether an actor is one (ai_script.c's ai_command_list_status counts the
+level's own alone) */
+void coop_enemies_extra_placed(
+	long actor_index);
+boolean coop_enemies_actor_is_extra(
+	long actor_index);
 /* the host's extra enemies and choices, by part, for the demos (demo.c's G
 records: network_coop_port_demo_state); NULL past the last */
 void *coop_enemies_port_demo_state(

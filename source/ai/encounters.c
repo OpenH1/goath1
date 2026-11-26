@@ -3199,7 +3199,15 @@ static boolean encounter_place_actor(
 						actor_definition_get(placed_variant->actor_reference.index)->type == _actor_monitor)
 						return FALSE;
 				}
-				placed = actor_place(actor_palette_entry->index, encounter_index, squad_index, starting_location, upgrade_major, initial_variant) != NONE;
+				{
+					long actor_index = actor_place(actor_palette_entry->index, encounter_index, squad_index,
+						starting_location, upgrade_major, initial_variant);
+
+					placed = actor_index != NONE;
+					/* port: an extra enemy's actor known as one (coop_enemies.c) */
+					if (placed && extra_number > 0)
+						coop_enemies_extra_placed(actor_index);
+				}
 			}
 		}
 		else

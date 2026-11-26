@@ -53,9 +53,35 @@ way), they are placed beside those riders, a few ticks apart, and drop and
 fight as they do. A dropship gone first takes them with it.
 
 Only the host runs the AI, so all but the idle animations is the host's.
+
+BIGGER BATTLES (campaign.bigger_battles: off, 2x or 3x) gives a campaign
+of this computer alone (solo or split screen) the same extra enemies, as
+STATIC MULTIPLIER would: each squad of the players' enemies two or three
+times as large. On Legendary, whose squads are already their largest
+(encounters.c's max_count, often twice Normal's), the extras are half as
+many, rounded up: 2x makes Legendary's squads 1.5 times their size, 3x
+twice it, about as large as Heroic's at the same choice, for one player
+rather than co-op's several. A network co-op host keeps EXTRA ENEMIES.
+
+What the extra enemies keep outside the game state (those waiting for
+their ground, a dropship's riders kept, which actors are extras) follows
+the checkpoints: a copy is taken as one is saved and put back as it is
+reverted to (its tick the same), so a revert in the middle of a wait loses
+none. A solo game's saved game (game_state.c's savegame.bin) has it in
+bigbattles.bin beside it, with BIGGER BATTLES' choice: a loaded save plays
+at the size it was played at, whatever Settings now says (one with no file
+of its own, saved before there was one, at the original's). Neither the
+saved game's nor the network's formats change.
+
+The level's scripts count the extras as the squad's own: a gate waiting
+for a squad's deaths waits for theirs too. But a squad's command list's
+state (ai_command_list_status: the scripts' set pieces, an Elite walked to
+a door to wait there) is its own members' alone, so that one extra
+standing elsewhere never holds a script waiting for the squad to arrive.
 */
 
 #include "cseries.h"
+#include "cseries/errors.h"
 #include "ai/actor_definitions.h"
 #include "ai/actor_placement.h"
 #include "ai/actors.h"
@@ -63,6 +89,7 @@ Only the host runs the AI, so all but the idle animations is the host's.
 #include "ai/encounters.h"
 #include "game/game.h"
 #include "game/game_allegiance.h"
+#include "game/game_engine.h"
 #include "game/players.h"
 #include "networking/network_game_globals.h"
 #include "networking/network_game_manager.h"
@@ -213,7 +240,27 @@ static struct
 	short rider_count;
 	struct coop_waiting_extra waiting[MAXIMUM_WAITING_EXTRAS];
 	short waiting_count;
+	/* the extra enemies' actors, by their absolute index (NONE: the
+	level's own, or nobody), their whole datum index, so that one placed
+	in the slot since is no extra */
+	long extra_actor_indices[MAXIMUM_ACTORS];
 } coop_enemies;
+
+/* coop_enemies as the last checkpoint saved it, at its tick (the extra
+enemies' outside the game state put back as it is reverted to), and
+whether a saved game's own was just read (game_state.c), whose BIGGER
+BATTLES the loaded game takes */
+static struct
+{
+	boolean valid;
+	boolean from_saved_game;
+	short saved_game_multiplier;
+	long tick;
+} coop_enemies_saved_header;
+static struct
+{
+	byte bytes[sizeof(coop_enemies)];
+} coop_enemies_saved;
 
 /* a biped, or a place kept free, that an extra enemy is kept clear of */
 struct coop_stander
@@ -258,12 +305,52 @@ static boolean coop_enemies_host(
 	return game_connection() == _game_connection_network_server && network_coop_active();
 }
 
+/* a campaign of this computer alone (solo, split screen), which BIGGER
+BATTLES gives extra enemies: a level, not the main menu's scene nor a
+multiplayer game */
+static boolean coop_enemies_local_campaign(
+	void)
+{
+	return game_connection() == _game_connection_local && global_scenario &&
+		global_scenario->type == _scenario_type_solo && !game_engine_running();
+}
+
 /* whether this game has extra enemies (it is a co-op host's, with some
-chosen) */
+chosen, or a local campaign's with BIGGER BATTLES) */
 static boolean coop_enemies_on(
 	void)
 {
-	return coop_enemies.mode != _coop_enemies_none && coop_enemies_host();
+	return coop_enemies.mode != _coop_enemies_none && (coop_enemies_host() || coop_enemies_local_campaign());
+}
+
+/* BIGGER BATTLES' choice, as times the squads' size: 1 for off */
+static short coop_enemies_bigger_battles(
+	void)
+{
+	char const *choice = config_string("campaign.bigger_battles");
+
+	return !strcmp(choice, "3x") ? 3 : !strcmp(choice, "2x") ? 2 : 1;
+}
+
+/* a local campaign's extra enemies as BIGGER BATTLES' `multiplier` has
+them (1: none) */
+static void coop_enemies_set_bigger_battles(
+	short multiplier)
+{
+	coop_enemies.mode = multiplier > 1 ? _coop_enemies_multiplier : _coop_enemies_none;
+	coop_enemies.multiplier = multiplier > 1 ? multiplier : COOP_ENEMIES_MINIMUM_MULTIPLIER;
+}
+
+/* what is kept of the extra enemies outside the game state forgotten, as
+a game state not saved with it is loaded: none waits, none is kept */
+static void coop_enemies_forget_kept(
+	void)
+{
+	coop_enemies.vehicle_count = 0;
+	coop_enemies.rider_count = 0;
+	coop_enemies.waiting_count = 0;
+	csmemset(coop_enemies.extra_actor_indices, 0xFF, sizeof(coop_enemies.extra_actor_indices));
+	coop_spread.encounter_index = NONE;
 }
 
 /* the players in the game, every machine's: the network game's (a level
@@ -966,6 +1053,12 @@ void coop_enemies_new_game(
 		COOP_ENEMIES_MINIMUM_MULTIPLIER, COOP_ENEMIES_MAXIMUM_MULTIPLIER);
 	coop_enemies.mode = !strcmp(mode, "per_player") ? _coop_enemies_per_player :
 		!strcmp(mode, "multiplier") ? _coop_enemies_multiplier : _coop_enemies_none;
+	/* (a local campaign's are BIGGER BATTLES', as its level begins) */
+	if (coop_enemies_local_campaign())
+		coop_enemies_set_bigger_battles(coop_enemies_bigger_battles());
+	csmemset(coop_enemies.extra_actor_indices, 0xFF, sizeof(coop_enemies.extra_actor_indices));
+	coop_enemies_saved_header.valid = FALSE;
+	coop_enemies_saved_header.from_saved_game = FALSE;
 }
 
 void *coop_enemies_port_demo_state(
@@ -976,16 +1069,126 @@ void *coop_enemies_port_demo_state(
 	{
 	case 0: *size = sizeof(coop_enemies); return &coop_enemies;
 	case 1: *size = sizeof(coop_spread); return &coop_spread;
+	case 2: *size = sizeof(coop_enemies_saved_header); return &coop_enemies_saved_header;
+	case 3: *size = sizeof(coop_enemies_saved); return &coop_enemies_saved;
 	}
 	return NULL;
 }
 
-void coop_enemies_reset(
+void coop_enemies_before_save(
 	void)
 {
-	coop_enemies.vehicle_count = 0;
-	coop_enemies.rider_count = 0;
-	coop_enemies.waiting_count = 0;
+	csmemcpy(coop_enemies_saved.bytes, &coop_enemies, sizeof(coop_enemies));
+	coop_enemies_saved_header.tick = game_time_get();
+	coop_enemies_saved_header.valid = TRUE;
+	coop_enemies_saved_header.from_saved_game = FALSE;
+	if (coop_enemies_on())
+	{
+		error(_error_silent, "extra enemies: checkpoint at tick %ld: %d waiting, %d riders kept",
+			coop_enemies_saved_header.tick, coop_enemies.waiting_count, coop_enemies.rider_count);
+	}
+}
+
+void coop_enemies_after_load(
+	void)
+{
+	if (coop_enemies_saved_header.valid && coop_enemies_saved_header.tick == game_time_get())
+	{
+		short mode = coop_enemies.mode;
+		short percent = coop_enemies.percent;
+		short multiplier = coop_enemies.multiplier;
+
+		csmemcpy(&coop_enemies, coop_enemies_saved.bytes, sizeof(coop_enemies));
+		/* (the game's own choices are the game's, not the copy's; a saved
+		game's BIGGER BATTLES below) */
+		coop_enemies.mode = mode;
+		coop_enemies.percent = percent;
+		coop_enemies.multiplier = multiplier;
+		coop_spread.encounter_index = NONE;
+	}
+	else
+	{
+		coop_enemies_forget_kept();
+	}
+	/* (a solo saved game's BIGGER BATTLES, or the original's for one saved
+	without it) */
+	if (coop_enemies_saved_header.from_saved_game && coop_enemies_local_campaign())
+		coop_enemies_set_bigger_battles(coop_enemies_saved_header.saved_game_multiplier);
+	coop_enemies_saved_header.from_saved_game = FALSE;
+	if (coop_enemies_on())
+	{
+		short extras = 0;
+		short index;
+
+		for (index = 0; index < MAXIMUM_ACTORS; index++)
+			extras += coop_enemies.extra_actor_indices[index] != NONE;
+		error(_error_silent, "extra enemies: game state loaded at tick %ld (%dx): %d waiting, %d riders kept, "
+			"%d extras known", game_time_get(), coop_enemies.multiplier, coop_enemies.waiting_count,
+			coop_enemies.rider_count, extras);
+	}
+}
+
+/* bigbattles.bin's layout: its mark, BIGGER BATTLES' choice and the tick
+saved at, then what is kept outside the game state (taken only from a
+build of the same layout: else its choice alone) */
+#define COOP_ENEMIES_SAVED_GAME_MARK 0x31424248 /* "HBB1" */
+struct coop_enemies_saved_game_header
+{
+	long mark;
+	long multiplier;
+	long tick;
+	long size;
+};
+
+long coop_enemies_saved_game(
+	void *buffer,
+	long size)
+{
+	struct coop_enemies_saved_game_header *header = buffer;
+	long needed = (long)(sizeof(*header) + sizeof(coop_enemies));
+
+	if (size < needed)
+		return 0;
+	header->mark = COOP_ENEMIES_SAVED_GAME_MARK;
+	header->multiplier = coop_enemies_on() && coop_enemies.mode == _coop_enemies_multiplier ?
+		coop_enemies.multiplier : 1;
+	header->tick = game_time_get();
+	header->size = (long)sizeof(coop_enemies);
+	csmemcpy(header + 1, &coop_enemies, sizeof(coop_enemies));
+	return needed;
+}
+
+void coop_enemies_saved_game_load(
+	void const *buffer,
+	long size)
+{
+	struct coop_enemies_saved_game_header const *header = buffer;
+
+	coop_enemies_saved_header.valid = FALSE;
+	coop_enemies_saved_header.from_saved_game = TRUE;
+	coop_enemies_saved_header.saved_game_multiplier = 1;
+	if (!buffer || size < (long)sizeof(*header) || header->mark != COOP_ENEMIES_SAVED_GAME_MARK)
+		return;
+	coop_enemies_saved_header.saved_game_multiplier = (short)PIN(header->multiplier, 1, 3);
+	if (header->size != (long)sizeof(coop_enemies) || size != (long)(sizeof(*header) + sizeof(coop_enemies)))
+		return;
+	csmemcpy(coop_enemies_saved.bytes, header + 1, sizeof(coop_enemies));
+	coop_enemies_saved_header.tick = header->tick;
+	coop_enemies_saved_header.valid = TRUE;
+}
+
+void coop_enemies_extra_placed(
+	long actor_index)
+{
+	if (actor_index != NONE && VALID_INDEX(DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index), MAXIMUM_ACTORS))
+		coop_enemies.extra_actor_indices[DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)] = actor_index;
+}
+
+boolean coop_enemies_actor_is_extra(
+	long actor_index)
+{
+	return actor_index != NONE && VALID_INDEX(DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index), MAXIMUM_ACTORS) &&
+		coop_enemies.extra_actor_indices[DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)] == actor_index;
 }
 
 short coop_enemies_extra_count(
@@ -1002,7 +1205,12 @@ short coop_enemies_extra_count(
 	if (!game_team_is_enemy(_game_team_player, encounter->team_index))
 		return 0;
 	if (coop_enemies.mode == _coop_enemies_multiplier)
+	{
 		extra = (long)count * (coop_enemies.multiplier - 1);
+		/* (BIGGER BATTLES on Legendary: half as many, rounded up) */
+		if (!coop_enemies_host() && game_difficulty_level_get() == _game_difficulty_level_impossible)
+			extra = (extra + 1) / 2;
+	}
 	else
 	{
 		players = coop_enemies_player_count();
@@ -1142,7 +1350,7 @@ void coop_enemies_idle_started(
 	/* (a turn on the spot goes back to the idle it left, a frame apart: not
 	a new start) */
 	if (old_state == _unit_state_idle || old_state == _unit_state_turn_left || old_state == _unit_state_turn_right ||
-		!network_coop_active())
+		(!network_coop_active() && !coop_enemies_growing()))
 	{
 		return;
 	}
@@ -1236,7 +1444,7 @@ void coop_enemies_update(
 	long now = game_time_get();
 	short vehicle_number;
 
-	if (!coop_enemies_host())
+	if (!coop_enemies_host() && !coop_enemies_on())
 		return;
 	if (now % WAITING_EXTRAS_TICKS == 0)
 		coop_enemies_place_waiting();
@@ -1290,7 +1498,8 @@ void coop_enemies_update(
 			location.initial_state = squad_definition->initial_state;
 			location.actor_variant_index = NONE;
 			location.command_list_index = NONE;
-			actor_place(rider.variant_definition_index, rider.encounter_index, rider.squad_index, &location, FALSE, 0);
+			coop_enemies_extra_placed(actor_place(rider.variant_definition_index, rider.encounter_index,
+				rider.squad_index, &location, FALSE, 0));
 			encounter_update_status(rider.encounter_index);
 		}
 		vehicle->next_release_time = now + RIDER_RELEASE_TICKS;

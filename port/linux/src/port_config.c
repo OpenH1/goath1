@@ -1651,6 +1651,13 @@ static const struct config_setting config_settings[] =
 		"player drives a Scorpion or a Banshee on Normal (the levels' scripts'\n"
 		"display_scenario_help). false: not shown, the scripts going on as if\n"
 		"they had been and closed; true: shown, as the Xbox and Halo PC did." },
+	{ "campaign.bigger_battles", _config_string, "\"off\"", "HALO_BIGGER_BATTLES", _environment_value, _platform_all,
+		"A campaign of this computer alone (solo or split screen): \"2x\" or\n"
+		"\"3x\" makes each squad of enemies a level places that many times as\n"
+		"large (on Legendary half as many extras); \"off\": the original's.\n"
+		"Read as a level begins; a loaded save keeps the size it was played\n"
+		"at. Network co-op has its own EXTRA ENEMIES. BIGGER BATTLES in\n"
+		"Settings > Online > Gameplay." },
 	{ "game.spartan_link", _config_boolean, "true", "HALO_GAME_SPARTAN_LINK", _environment_value, _platform_all,
 		"Hosting a team game: whether its players may show their Spartan link\n"
 		"(display.spartan_link); false, nobody's shows in it. Co-op always\n"
@@ -5256,6 +5263,7 @@ static const struct
 	{ "network.shield_effects", { "stock", "glow", "light_show", "overshield", "glow_overshield",
 		"light_show_overshield", "players", NULL }, NULL },
 	{ "network.coop_enemies_mode", { "none", "per_player", "multiplier", NULL }, NULL },
+	{ "campaign.bigger_battles", { "off", "2x", "3x", NULL }, NULL },
 	{ "streamer.slurs", { "off", "severe", "strong", "mild", NULL }, NULL },
 	{ "streamer.swearing", { "off", "severe", "strong", "mild", NULL }, NULL },
 	{ "streamer.insults", { "off", "severe", "strong", "mild", NULL }, NULL },

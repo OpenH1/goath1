@@ -470,6 +470,7 @@ symbols in this file:
 #include "scenario/scenario_definitions.h"
 #include "units/bipeds.h"
 #include "units/units.h"
+#include "coop_enemies.h" /* port: port/linux/game/coop_enemies.c */
 
 /* ---------- constants */
 
@@ -4408,6 +4409,13 @@ short ai_scripting_command_list_status(
 	{
 		struct unit_datum *unit = unit_try_and_get(unit_index);
 
+		/* port: an extra enemy's command list's state is not its squad's:
+		the scripts wait for the level's own (coop_enemies.c) */
+		if (unit && coop_enemies_actor_is_extra(unit->unit.actor_index != NONE ? unit->unit.actor_index :
+			unit->unit.swarm_actor_index))
+		{
+			unit = NULL;
+		}
 		if (unit)
 		{
 			struct actor_datum *actor = NULL;
