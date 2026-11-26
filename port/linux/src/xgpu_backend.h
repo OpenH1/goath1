@@ -868,6 +868,15 @@ struct xgpu_rt_shadows
 
 void xgpu_backend_rt_shadows(xgpu_target color, xgpu_target depth, const struct xgpu_rt_shadows *shadows);
 
+/* display.contact_shadows (port/linux/game/contact_shadows.c;
+docs/dynamic-shadows-plan.md, stage 2): the same casters' short, sharp
+shadows on the level found from the depth alone (a march toward each
+one's light in screen space), for any backend, where display.shadows is
+not "ray_traced"; the first XGPU_CONTACT_SHADOWS_CASTERS of them. A record
+of no casters while a map is prepared makes the pass's pipeline. */
+#define XGPU_CONTACT_SHADOWS_CASTERS 48
+void xgpu_backend_contact_shadows(xgpu_target color, xgpu_target depth, const struct xgpu_rt_shadows *shadows);
+
 /* ---------- the VR mode (HALO_VR; vr.h): the backend's part
 
 The front end keeps the passes (vr.h's HALO_VR_PASS_*) and which views a

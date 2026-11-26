@@ -46,6 +46,7 @@ Conventions carried over from the Xbox:
 #include "halo_linux_source_fixups.h"
 #include "panini_projection.h"
 #include "rt_shadows.h"
+#include "contact_shadows.h"
 #include "world_ao.h"
 #include "world_cascades.h"
 #include "world_proxies.h"
@@ -5795,6 +5796,45 @@ static void rt_shadows_prepare(void)
 
 	if (setting && !strcmp(setting, "ray_traced") && xgpu_backend_capabilities.ray_queries)
 		xgpu_backend_rt_shadows(0, 0, &none);
+	/* (and display.contact_shadows', whatever the shadows: either may be
+	chosen in play) */
+	if (config_boolean("display.contact_shadows"))
+		xgpu_backend_contact_shadows(0, 0, &none);
+}
+
+/* display.contact_shadows (port/linux/game/contact_shadows.c): the window's
+casters, into its 3D view after its lightmap pass, as halo_rt_shadows hands
+them, with any backend */
+void halo_contact_shadows(struct rt_shadow_caster const *casters, int count, float const camera[3])
+{
+	static struct xgpu_rt_shadows shadows;
+	struct xgpu_dynamic_lights_halos const *halos = &dynamic_lights.halos;
+	struct render_target_entry *color, *depth;
+
+	if (!device.gl_ready)
+		return;
+#ifdef HALO_VR
+	vr_frame_resume();
+	/* (the eyes' pass, or the flat screen's) */
+	if (vr_gl.pass != HALO_VR_PASS_NONE)
+		return;
+#endif
+	color = render_target_get(device.render_target);
+	depth = render_target_get(device.depth_stencil);
+	if (!color || !depth || !depth->target.depth || color->target.layers > 1)
+		return;
+	if (count < 0)
+		count = 0;
+	if (count > XGPU_CONTACT_SHADOWS_CASTERS)
+		count = XGPU_CONTACT_SHADOWS_CASTERS;
+	shadows.count = count;
+	memcpy(shadows.casters, casters, (size_t)count * sizeof(shadows.casters[0]));
+	memcpy(shadows.projection, halos->projection, sizeof(shadows.projection));
+	memcpy(shadows.viewport_scale, halos->viewport_scale, sizeof(shadows.viewport_scale));
+	memcpy(shadows.viewport_offset, halos->viewport_offset, sizeof(shadows.viewport_offset));
+	shadows.screen_offset = (float)UI_OFFSET;
+	memcpy(shadows.camera, camera, sizeof(shadows.camera));
+	xgpu_backend_contact_shadows(color->target.number, depth->target.number, &shadows);
 }
 
 /* display.per_pixel_lighting: the model lighting programs' draws are lit for

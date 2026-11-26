@@ -116,6 +116,7 @@ symbols in this file:
 #include "panini.h" /* port: port/linux/game/panini.c */
 #include "world_ao.h" /* port: port/linux/game/world_ao.c */
 #include "rt_shadows.h" /* port: port/linux/game/rt_shadows.c */
+#include "contact_shadows.h" /* port: port/linux/game/contact_shadows.c */
 #include "royale_cinema.h" /* port: port/linux/game/royale_cinema.c */
 
 /* ---------- constants */
@@ -263,9 +264,10 @@ static void render_object(
 	struct object_render_data *data);
 static void process_rendered_objects(
 	struct object_render_data *data);
-/* port: display.shadows "ray_traced" (port/linux/game/rt_shadows.c) */
+/* port: display.shadows "ray_traced" (port/linux/game/rt_shadows.c), and
+display.contact_shadows (contact: port/linux/game/contact_shadows.c) */
 static void render_object_rt_shadows(
-	void);
+	boolean contact);
 
 short structure_visibility_find_objects(
 	long *object_indices,
@@ -501,11 +503,16 @@ void render_object_shadows(
 	or draws: port/linux/game/rt_shadows.c) */
 	if (render_shadows && rt_shadows_on())
 	{
-		render_object_rt_shadows();
+		render_object_rt_shadows(FALSE);
 		rt_shadows_measure(FALSE);
 		profile_exit(render_object_shadows_section);
 		return;
 	}
+
+	/* port: display.contact_shadows: the casters' contact shadows found from
+	the depth, beside the classic shadows (port/linux/game/contact_shadows.c) */
+	if (render_shadows && contact_shadows_on())
+		render_object_rt_shadows(TRUE);
 
 	if (render_shadows)
 	{
@@ -1563,7 +1570,7 @@ the backend's pass with their shadow's direction and colour, which traces
 them through the ray-traced scene (port/linux/game/rt_shadows.c); the
 classic shadows' primary target alone */
 static void render_object_rt_shadows(
-	void)
+	boolean contact)
 {
 	short rendered_object_index;
 
@@ -1572,7 +1579,10 @@ static void render_object_rt_shadows(
 	{
 		return;
 	}
-	rt_shadows_begin();
+	if (contact)
+		contact_shadows_begin();
+	else
+		rt_shadows_begin();
 	for (rendered_object_index = 0;
 		rendered_object_index < render_object_globals.rendered_object_count;
 		rendered_object_index++)
@@ -1612,7 +1622,7 @@ static void render_object_rt_shadows(
 						strength *= 1.f - active_camouflage;
 				}
 				object_get_bounding_sphere(object_index, &center, &radius);
-				rt_shadows_caster(
+				(contact ? contact_shadows_caster : rt_shadows_caster)(
 					object_index,
 					object->object.first_child_object_index,
 					&center.x,
@@ -1624,7 +1634,10 @@ static void render_object_rt_shadows(
 			}
 		}
 	}
-	rt_shadows_window(&render.camera.position.x);
+	if (contact)
+		contact_shadows_window(&render.camera.position.x);
+	else
+		rt_shadows_window(&render.camera.position.x);
 
 	return;
 }
