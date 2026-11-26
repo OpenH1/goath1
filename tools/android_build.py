@@ -33,7 +33,7 @@ from .guest_toolchain import LLVM_VERSION, guest_toolchain
 from .build_common import (LINUX_PROFILE, MBEDTLS_DIR, MINIUPNPC_DEFINES, MINIUPNPC_DIR, MUSL_MATH_DIR, OWN_CODE_ERRORS,
                            PLATFORM_SEMANTICS_HEADER, QUIET_OWN_CODE_FLAGS, SEMANTICS_HEADER, STB_VORBIS_SOURCE,
                            XDK_INCLUDE, compile_launcher, configuration_defines, download, game_defines_and_includes,
-                           lto_flags, celt_cflags, celt_sources, FFMPEG_CALLER, ffmpeg_cflags, game_sources, miniupnpc_sources,
+                           lto_flags, celt_cflags, celt_sources, vorbis_cflags, vorbis_sources, OGG_DIR, FFMPEG_CALLER, ffmpeg_cflags, game_sources, miniupnpc_sources,
                            musl_math_sources, opus_cflags, opus_sources, PLUTOSVG_INCLUDES, plutosvg_cflags,
                            plutosvg_sources,
                            PROFILE_GENERATE_FLAGS, pgo_generate_defines, pgo_mode, pgo_profile, profile_use_flags, updater_defines,
@@ -594,7 +594,7 @@ def generate_guest_image(n: Writer, sln: Any, config: Dict[str, Any], *, arch: G
             profile_flags, f"-include {prefix_header}", f"-include {platform_semantics_header}",
             f"-I{LINUX_DIR}/src", f"-I{LINUX_DIR}/include", f"-I{PORT_DIR}/guest/runtime",
             f"-I{PORT_DIR}/include", f"-I{TOML_DIR}", f"-I{EXPAT_DIR}", f"-I{KCP_DIR}", f"-I{MONOCYPHER_DIR}",
-            f"-I{ZLIB_DIR}", *PLUTOSVG_INCLUDES, "-Isource -Isource/cseries",
+            f"-I{ZLIB_DIR}", f"-I{OGG_DIR / 'include'}", *PLUTOSVG_INCLUDES, "-Isource -Isource/cseries",
             f"-I{sdl_dir}/include", *libc_includes, f"-idirafter {XDK_INCLUDE}",
         ])
 
@@ -643,6 +643,9 @@ def generate_guest_image(n: Writer, sln: Any, config: Dict[str, Any], *, arch: G
     # guest's ABI and C library
     for source in celt_sources():
         objects.append(guest_object(source, " ".join([celt_cflags(guest_abi), *libc_includes])))
+    # and its encoder, Ogg Vorbis (port/third_party/libogg, libvorbis)
+    for source in vorbis_sources():
+        objects.append(guest_object(source, " ".join([vorbis_cflags(guest_abi), *libc_includes])))
     # the Bink movies' decoders (FFmpeg's, fetched: tools/ffmpeg_fetch.py),
     # and the platform layer's file that calls them, with the guest's ABI and
     # C library

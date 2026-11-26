@@ -115,6 +115,9 @@ def notices(platform: str) -> List[Tuple[Path, str]]:
         # the MCC import's dialogue decoder (port/third_party/celt), in
         # every build, whose BSD license asks binaries to carry its notice
         (ROOT / "port/third_party/celt/COPYING", "celt-COPYING.txt"),
+        # and its encoder (port/third_party/libogg, libvorbis)
+        (ROOT / "port/third_party/libogg/COPYING", "libogg-COPYING.txt"),
+        (ROOT / "port/third_party/libvorbis/COPYING", "libvorbis-COPYING.txt"),
         # the Bink movies' decoders (port/third_party/ffmpeg), in every
         # build, whose LGPL asks copies to carry it
         (ROOT / "port/third_party/ffmpeg/COPYING.LGPLv2.1", "ffmpeg-COPYING.LGPLv2.1.txt"),

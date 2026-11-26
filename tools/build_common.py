@@ -307,6 +307,27 @@ def celt_cflags(abi: str) -> str:
                      f"-include {CELT_DIR / 'celt0110_names.h'}", "-w"])
 
 
+# the MCC import's dialogue encoder (port/third_party/libogg and libvorbis;
+# mcc_import_voices.c): libvorbis 1.3.7's encoder and libogg 1.3.5
+OGG_DIR = Path("port/third_party/libogg")
+VORBIS_DIR = Path("port/third_party/libvorbis")
+VORBIS_SOURCES = ("analysis.c", "bitrate.c", "block.c", "codebook.c", "envelope.c", "floor0.c", "floor1.c", "info.c",
+                  "lookup.c", "lpc.c", "lsp.c", "mapping0.c", "mdct.c", "psy.c", "registry.c", "res0.c",
+                  "sharedbook.c", "smallft.c", "synthesis.c", "vorbisenc.c", "window.c")
+
+
+def vorbis_sources() -> List[Path]:
+    """libogg's and libvorbis's library sources (the encoder's)"""
+    return [OGG_DIR / "src" / "bitwise.c", OGG_DIR / "src" / "framing.c",
+            *(VORBIS_DIR / "lib" / name for name in VORBIS_SOURCES)]
+
+
+def vorbis_cflags(abi: str) -> str:
+    """the flags libogg's and libvorbis's sources build with, on the platform layer's ABI"""
+    return " ".join([abi, "-std=gnu11", "-O2", f"-I{OGG_DIR / 'include'}", f"-I{VORBIS_DIR / 'include'}",
+                     f"-I{VORBIS_DIR / 'lib'}", "-w"])
+
+
 # the Xbox's Bink movies' decoders (display.movies, port/linux/src/bink_ffmpeg.c):
 # FFmpeg's plain C, fetched at configure time with its configuration
 # (tools/ffmpeg_fetch.py), its files as port/third_party/ffmpeg/sources.txt
