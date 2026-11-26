@@ -188,6 +188,9 @@ KEPT_ELSEWHERE = {
     'halo_target_averaged': "the sun glow's screen copy sampled with levels made from it: the texture's levels and "
                             "its sampler's filter, bound as it draws, which no pipeline is built from (a stage's "
                             "pipeline inputs are its source, sampler type, addressing and border: xgpu_manifest_stage)",
+    'halo_model_material_maps': "a model's material maps' images and the texture 0 they were told with: the "
+                                "backend's images (stand-ins as a record plays); the key's bits they give are "
+                                "struct draw_inputs' material_modes, taken as each draw is made",
     'd3d8_draw_state_kept': "debug.retained_shadows' hint that a draw's state is the one before's: no draw is "
                             "kept so while a preparation runs or a journal records",
     'd3d8_draw_immediate_packed': "Begin, SetVertexData and End's own: the registers and the immediate draw as "
