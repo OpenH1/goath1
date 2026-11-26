@@ -2125,6 +2125,8 @@ struct pixel_state
 	roughness and metalness (floats; 0 where there is no such map) */
 	unsigned int normal_map, orm_map;
 	unsigned int vertex_normal, shaded_normal, material_occlusion, roughness, metalness;
+	/* (the unit vector from the pixel to the eye, in the world) */
+	unsigned int to_eye;
 };
 
 static unsigned int pixel_input(struct module *m, struct pixel_state *state, unsigned int variable_id, unsigned int type)
@@ -2399,6 +2401,8 @@ the scene's light: a metal's black diffuse would read as unlit). */
 #define MATERIAL_HIGHLIGHT_ROUGH 0.6f
 #define MATERIAL_METAL_DIFFUSE 0.5f
 
+static unsigned int dynamic_light(struct module *m, int member, unsigned int index_id);
+
 static void material_read(struct module *m, struct pixel_state *state, unsigned int p, unsigned int n)
 {
 	unsigned int xt = pixel_input(m, state, state->in_t[0], m->t_v4), w = extract(m, xt, 3), uv;
@@ -2408,10 +2412,19 @@ static void material_read(struct module *m, struct pixel_state *state, unsigned 
 		constant_float(m, 1.0f));
 	uv = fmul(m, 2, fdiv(m, 2, xy(m, xt), splat(m, 2, w)), xy(m, uniform(m, U_TEXTURE_SCALE, 0)));
 	state->vertex_normal = n;
+	{
+		/* (the eye: the dynamic lights' grid's centre, xgpu.h) */
+		unsigned int to_eye = fsub(m, 3, xyz(m, dynamic_light(m, 0, constant_int(m, 0))), p);
+
+		state->to_eye = fscale(m, 3, to_eye, ext1(m, GLSL_INVERSE_SQRT, m->t_float,
+			fmax_scalar(m, 1, fdot(m, to_eye, to_eye), (float)1.0e-12)));
+	}
 	if (state->normal_map)
 	{
 		unsigned int texel = op2(m, OP_IMAGE_SAMPLE_IMPLICIT_LOD, m->t_v4, load(m, type, state->normal_map), uv);
-		unsigned int t = fsub(m, 3, fscale(m, 3, xyz(m, texel), constant_float(m, 2.0f)), constant_splat(m, 3, 1.0f));
+		/* t = (rgb * 255 - 128) / 127: 128 exactly flat (as D3D's signed mapping) */
+		unsigned int t = fdiv(m, 3, fsub(m, 3, fscale(m, 3, xyz(m, texel), constant_float(m, 255.0f)),
+			constant_splat(m, 3, 128.0f)), constant_splat(m, 3, 127.0f));
 		unsigned int dp1 = op1(m, OP_DPDX, m->t_v3, p), dp2 = op1(m, OP_DPDY, m->t_v3, p);
 		unsigned int duv1 = op1(m, OP_DPDX, m->t_v2, uv), duv2 = op1(m, OP_DPDY, m->t_v2, uv);
 		unsigned int dp2perp = ext2(m, GLSL_CROSS, m->t_v3, dp2, n), dp1perp = ext2(m, GLSL_CROSS, m->t_v3, n, dp1);
@@ -2439,21 +2452,22 @@ static void material_read(struct module *m, struct pixel_state *state, unsigned 
 	}
 }
 
-/* the reflection's texel (texture 3's cube map) with the material: its
-direction about the normal map's normal (the eye found again from the
-vertex's reflection about the vertex's normal), blurred by the roughness */
+/* the reflection's texel (texture 3's cube map) with the material: the
+vertex program's direction turned by as much as the eye's reflection in
+the world turns from the vertex's normal to the normal map's (none where
+the map is flat: the direction as it was), blurred by the roughness */
 static unsigned int material_reflection(struct module *m, struct pixel_state *state, unsigned int xt)
 {
 	unsigned int r = xyz(m, xt), operands[4];
 
 	if (state->shaded_normal)
 	{
-		unsigned int nv = state->vertex_normal, ns = state->shaded_normal, v;
+		unsigned int nv = state->vertex_normal, ns = state->shaded_normal, v = state->to_eye, rv, rs;
 
-		r = ext1(m, GLSL_NORMALIZE, m->t_v3, r);
-		/* v = 2 dot(nv, r) nv - r; r = 2 dot(ns, v) ns - v */
-		v = fsub(m, 3, fscale(m, 3, nv, fmul(m, 1, fdot(m, nv, r), constant_float(m, 2.0f))), r);
-		r = fsub(m, 3, fscale(m, 3, ns, fmul(m, 1, fdot(m, ns, v), constant_float(m, 2.0f))), v);
+		/* rv = 2 dot(nv, v) nv - v; rs = 2 dot(ns, v) ns - v; r += length(r) * (rs - rv) */
+		rv = fsub(m, 3, fscale(m, 3, nv, fmul(m, 1, fdot(m, nv, v), constant_float(m, 2.0f))), v);
+		rs = fsub(m, 3, fscale(m, 3, ns, fmul(m, 1, fdot(m, ns, v), constant_float(m, 2.0f))), v);
+		r = fadd(m, 3, r, fscale(m, 3, fsub(m, 3, rs, rv), ext1(m, GLSL_LENGTH, m->t_float, r)));
 	}
 	operands[0] = texture_load(m, state, 3);
 	operands[1] = r;
