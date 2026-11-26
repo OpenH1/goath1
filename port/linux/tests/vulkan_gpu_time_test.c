@@ -1,6 +1,7 @@
 /* GPU timestamps against a fake Vulkan queue: a query pair stays owned
 until its last submission completes, without a GPU wait or an early reset. */
 #include "../vulkan/xgpu_vulkan.c"
+#include "../vulkan/xgpu_vulkan_gpu.c"
 /* (the masked clears' shaders, which the core draws with) */
 #include "../vulkan/xgpu_vulkan_post_shaders.c"
 #include <assert.h>

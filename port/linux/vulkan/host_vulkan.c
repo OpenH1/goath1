@@ -152,6 +152,8 @@ reports them (port/windows/host/host_display_win.c); 0 where it says
 nothing */
 int host_display_luminance(const unsigned char luid[8], void *window, float *black_nits, float *peak_nits,
 	float *full_frame_nits, float primaries[8]);
+/* the LUID of the adapter that drives the window's monitor; 0 if not known */
+int host_display_adapter_luid(void *window, unsigned char luid[8]);
 #endif
 
 /* display.hdr: what the window's display says (SDL's; and, on Windows,
@@ -653,6 +655,21 @@ static const char *debug_folder(uint32_t address, const char *variable, char *fo
 	return folder;
 }
 
+/* display.gpu (#1269): "auto", or a device's index or a part of its name
+(xgpu_vulkan_gpu.h); HALO_GPU, its variable, wins */
+static char gpu_setting[256];
+
+/* (a host import: the guest's sdl_platform.c, before the window is opened;
+the setting is a guest address of a string) */
+void host_vulkan_gpu(uint32_t setting)
+{
+	const char *chosen = getenv("HALO_GPU");
+
+	if (!chosen)
+		chosen = host_pointer(setting);
+	snprintf(gpu_setting, sizeof(gpu_setting), "%s", chosen ? chosen : "");
+}
+
 /* (a host import: the guest's sdl_platform.c, on its main thread; the
 folders are guest addresses of strings; again with the same window when
 display.vsync or battery saver changes, for its swap interval and
@@ -773,6 +790,16 @@ int host_vulkan_window_open(uint32_t window, uint32_t debug, uint32_t shader_fol
 		options.create_device = host_vr_vulkan_create_device;
 		options.device_ready = host_vr_vulkan_bind;
 		vr = 1;
+	}
+#endif
+	options.gpu = gpu_setting[0] ? gpu_setting : getenv("HALO_GPU");
+#ifdef _WIN32
+	{
+		SDL_PropertiesID properties = SDL_GetWindowProperties(object);
+		void *handle = properties ? SDL_GetPointerProperty(properties, SDL_PROP_WINDOW_WIN32_HWND_POINTER, NULL) :
+			NULL;
+
+		options.display_luid_known = host_display_adapter_luid(handle, options.display_luid);
 	}
 #endif
 	options.cache_path = cache_path(path, sizeof(path));

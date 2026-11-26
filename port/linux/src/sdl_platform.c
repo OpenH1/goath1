@@ -1752,6 +1752,9 @@ display's DRM (a CRTC on with VRR_ENABLED), yes or no */
 #ifndef HALO_ANDROID
 int host_vulkan_vrr(void);
 #endif
+/* display.gpu, which GPU the host's device is made on (#1269), told before
+the window is opened */
+void host_vulkan_gpu(const char *setting);
 static BOOL platform_vrr(void);
 
 static unsigned int platform_present_mode_flags(void)
@@ -1999,6 +2002,7 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	opens paced by the display, and the Vulkan host takes them as it opens) */
 	platform_frame_rate_apply();
 #else
+	host_vulkan_gpu(config_string("display.gpu") ? config_string("display.gpu") : "auto");
 	if (!host_vulkan_window_open((unsigned int)(uintptr_t)platform_window,
 		(config_boolean("debug.gpu_stats") ? HOST_VULKAN_DEBUG_STATISTICS : 0) |
 		(config_boolean("debug.gpu_validation") || config_boolean("debug.gl_debug") ? HOST_VULKAN_DEBUG_VALIDATION : 0) |

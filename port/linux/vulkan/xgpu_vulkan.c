@@ -47,6 +47,7 @@ options' gamma) first, where the setting is not 1.
 
 #include "xgpu_vulkan.h"
 #include "xgpu_vulkan_dlss.h"
+#include "xgpu_vulkan_gpu.h"
 #include "xgpu_vulkan_loading.h"
 #include "xgpu_vulkan_pacing.h"
 #include "xgpu_vulkan_post.h"
@@ -1249,6 +1250,8 @@ static struct
 	VkDevice device;
 	VkQueue queue;
 	uint32_t queue_family, timestamp_bits;
+	/* the chosen device's place among those the loader lists (physical_choose) */
+	uint32_t gpu_index, gpu_count;
 	int validation;
 	uint32_t validation_messages;
 
@@ -10625,6 +10628,21 @@ void xgpu_vulkan_capabilities(struct xgpu_vulkan_capabilities *capabilities)
 
 static int load_functions(void)
 {
+	/* AMD's driver for a Ryzen's integrated GPU brings an implicit layer,
+	VK_LAYER_AMD_switchable_graphics (amdvlk's on Linux too), which can take
+	the other vendors' GPUs out of the device list: #1269's RTX 5070, its
+	monitor's, was not listed, and the game drew with the integrated Radeon.
+	The game chooses its device itself (physical_choose), so the layer is
+	turned off before the loader reads its manifest's disable_environment,
+	unless the player has set that variable already. */
+	if (!getenv("DISABLE_LAYER_AMD_SWITCHABLE_GRAPHICS_1"))
+	{
+#ifdef _WIN32
+		SetEnvironmentVariableA("DISABLE_LAYER_AMD_SWITCHABLE_GRAPHICS_1", "1");
+#else
+		setenv("DISABLE_LAYER_AMD_SWITCHABLE_GRAPHICS_1", "1", 0);
+#endif
+	}
 #ifdef _WIN32
 	if (!vk.library)
 		vk.library = LoadLibraryExW(L"vulkan-1.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
@@ -10849,12 +10867,20 @@ static int required_features(const VkPhysicalDeviceFeatures2 *features,
 
 /* a physical device of Vulkan 1.3 with a graphics queue (that can present to
 the surface, with one; VR's runtime's device may have none that can, and
-then draws only the headset's frames) */
+then draws only the headset's frames), chosen by display.gpu and the rule
+of xgpu_vulkan_gpu.h (#1269); every device listed in the log, with which
+was chosen and why */
 static int physical_choose(const struct xgpu_vulkan_options *options)
 {
-	VkPhysicalDevice devices[16];
-	uint32_t count = 0, index, best_score = 0;
-	int chosen = -1, graphics;
+	enum { MOST = 32 };
+	VkPhysicalDevice devices[MOST];
+	VkPhysicalDeviceProperties properties[MOST];
+	struct xgpu_gpu gpus[MOST];
+	uint32_t families_chosen[MOST], timestamp_bits[MOST];
+	const char *skipped[MOST];
+	uint32_t count = 0, index;
+	char why[256];
+	int chosen;
 
 	if (options->choose_physical)
 	{
@@ -10867,25 +10893,55 @@ static int physical_choose(const struct xgpu_vulkan_options *options)
 	{
 		/* Query the count before fetching handles. Some Android drivers
 		leave the supplied count unchanged when the array is larger than
-		the device list, so the loader then dereferences unwritten handles. */
+		the device list, so the loader then dereferences unwritten handles.
+		(VK_INCOMPLETE past MOST: the first MOST.) */
 		if (!check(vkEnumeratePhysicalDevices(vk.instance, &count, NULL), "vkEnumeratePhysicalDevices"))
 			return 0;
-		if (count > sizeof(devices) / sizeof(devices[0]))
-			count = sizeof(devices) / sizeof(devices[0]);
+		if (count > MOST)
+			count = MOST;
 		if (count && !check(vkEnumeratePhysicalDevices(vk.instance, &count, devices), "vkEnumeratePhysicalDevices"))
 			return 0;
 	}
 	for (index = 0; index < count; index++)
 	{
-		VkPhysicalDeviceProperties properties;
+		VkPhysicalDeviceIDProperties id;
+		VkPhysicalDeviceProperties2 properties2;
+		VkPhysicalDeviceMemoryProperties memory;
 		VkQueueFamilyProperties families[16];
-		uint32_t family_count = 16, family, score;
+		uint32_t family_count = 16, family, heap;
+		int graphics = -1;
 
-		vkGetPhysicalDeviceProperties(devices[index], &properties);
-		if (properties.apiVersion < VK_API_VERSION_1_3)
+		memset(&id, 0, sizeof(id));
+		memset(&properties2, 0, sizeof(properties2));
+		id.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES;
+		properties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+		properties2.pNext = &id;
+		vkGetPhysicalDeviceProperties(devices[index], &properties[index]);
+		memset(&gpus[index], 0, sizeof(gpus[index]));
+		gpus[index].name = properties[index].deviceName;
+		gpus[index].type = (int)properties[index].deviceType;
+		skipped[index] = NULL;
+		families_chosen[index] = timestamp_bits[index] = 0;
+		/* (vkGetPhysicalDeviceProperties2 is the device's own 1.1's: not
+		asked of an older one) */
+		if (properties[index].apiVersion >= VK_API_VERSION_1_1)
+		{
+			vkGetPhysicalDeviceProperties2(devices[index], &properties2);
+			gpus[index].drives_display = options->display_luid_known && id.deviceLUIDValid &&
+				!memcmp(id.deviceLUID, options->display_luid, 8);
+		}
+		vkGetPhysicalDeviceMemoryProperties(devices[index], &memory);
+		for (heap = 0; heap < memory.memoryHeapCount; heap++)
+		{
+			if (memory.memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+				gpus[index].local_memory += memory.memoryHeaps[heap].size;
+		}
+		if (properties[index].apiVersion < VK_API_VERSION_1_3)
+		{
+			skipped[index] = "below Vulkan 1.3";
 			continue;
+		}
 		vkGetPhysicalDeviceQueueFamilyProperties(devices[index], &family_count, families);
-		graphics = -1;
 		for (family = 0; family < family_count; family++)
 		{
 			VkBool32 present = VK_TRUE;
@@ -10902,24 +10958,46 @@ static int physical_choose(const struct xgpu_vulkan_options *options)
 			break;
 		}
 		if (graphics < 0)
-			continue;
-		family = (uint32_t)graphics;
-		score = properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? 3 :
-			properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? 2 : 1;
-		if (score > best_score)
 		{
-			best_score = score;
-			chosen = (int)index;
-			vk.queue_family = family;
-			vk.timestamp_bits = families[family].timestampValidBits;
+			skipped[index] = vk.surface ? "no graphics queue that presents to the window" : "no graphics queue";
+			continue;
 		}
+		gpus[index].usable = 1;
+		families_chosen[index] = (uint32_t)graphics;
+		timestamp_bits[index] = families[graphics].timestampValidBits;
 	}
+	if (options->choose_physical)
+	{
+		/* (the headset's runtime's device, which OpenXR requires: VR is
+		being started, host_vulkan.c) */
+		chosen = gpus[0].usable ? 0 : -1;
+		snprintf(why, sizeof(why), "the headset's runtime's device");
+	}
+	else
+		chosen = xgpu_gpu_choose(gpus, (int)count, options->gpu, why, sizeof(why));
+	for (index = 0; index < count; index++)
+	{
+		host_logf(HOST_LOG_INFO, "vulkan: GPU %u of %u: %s (%s, Vulkan %u.%u.%u, %llu MB device-local%s): %s%s",
+			index, count, properties[index].deviceName, xgpu_gpu_type_name(gpus[index].type),
+			VK_API_VERSION_MAJOR(properties[index].apiVersion), VK_API_VERSION_MINOR(properties[index].apiVersion),
+			VK_API_VERSION_PATCH(properties[index].apiVersion),
+			(unsigned long long)(gpus[index].local_memory >> 20),
+			gpus[index].drives_display ? ", drives the window's display" : "",
+			(int)index == chosen ? "chosen, " : skipped[index] ? "not usable, " : "not chosen",
+			(int)index == chosen ? why : skipped[index] ? skipped[index] : "");
+	}
+	if (!count)
+		host_logf(HOST_LOG_INFO, "vulkan: the loader lists no GPU");
 	if (chosen < 0)
 	{
-		host_logf(HOST_LOG_ERROR, "vulkan: no device of Vulkan 1.3 with a graphics queue%s", vk.surface ?
-			" that presents to the window" : "");
+		host_logf(HOST_LOG_ERROR, "vulkan: no device of Vulkan 1.3 with a graphics queue%s (%u listed)",
+			vk.surface ? " that presents to the window" : "", count);
 		return 0;
 	}
+	vk.gpu_index = (uint32_t)chosen;
+	vk.gpu_count = count;
+	vk.queue_family = families_chosen[chosen];
+	vk.timestamp_bits = timestamp_bits[chosen];
 	vk.physical = devices[chosen];
 	vkGetPhysicalDeviceProperties(vk.physical, &vk.properties);
 	vkGetPhysicalDeviceMemoryProperties(vk.physical, &vk.memory_properties);
@@ -11420,8 +11498,10 @@ static int device_make(const struct xgpu_vulkan_options *options)
 			(properties11.subgroupSupportedOperations & VK_SUBGROUP_FEATURE_ARITHMETIC_BIT) &&
 			!getenv("HALO_VULKAN_NO_SUBGROUPS");
 		vk.nvidia = properties12.driverID == VK_DRIVER_ID_NVIDIA_PROPRIETARY;
-		snprintf(vk.capabilities.device, sizeof(vk.capabilities.device), "%s (Vulkan %u.%u.%u, %s%s%s)",
-			vk.properties.deviceName, VK_API_VERSION_MAJOR(vk.properties.apiVersion),
+		/* (the problem report's GPU line: which of the GPUs listed was
+		chosen first, where the driver's long text cannot cut it off) */
+		snprintf(vk.capabilities.device, sizeof(vk.capabilities.device), "%s (GPU %u of %u, Vulkan %u.%u.%u, %s%s%s)",
+			vk.properties.deviceName, vk.gpu_index, vk.gpu_count, VK_API_VERSION_MAJOR(vk.properties.apiVersion),
 			VK_API_VERSION_MINOR(vk.properties.apiVersion), VK_API_VERSION_PATCH(vk.properties.apiVersion),
 			properties12.driverName[0] ? properties12.driverName : "driver", properties12.driverInfo[0] ? " " : "",
 			properties12.driverInfo);

@@ -127,6 +127,12 @@ swapchain takes where the surface has it (0: the swap interval's choice) */
 	/* debug.gpu_stats: display.low_latency's statistics logged too
 	(xgpu_vulkan_pacing.c) */
 	int statistics;
+	/* display.gpu ("auto", NULL: the rule of xgpu_vulkan_gpu.h; or a
+	device's index or a part of its name); and the LUID of the adapter that
+	drives the window's monitor, where it is known (Windows' DXGI) */
+	const char *gpu;
+	int display_luid_known;
+	unsigned char display_luid[8];
 	/* OpenXR owns device selection and augments device creation. NULL for
 	the desktop path. These callbacks run before the render thread starts. */
 	VkResult (*create_instance)(PFN_vkGetInstanceProcAddr, const VkInstanceCreateInfo *,

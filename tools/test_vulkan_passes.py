@@ -378,3 +378,18 @@ int main(void)
     subprocess.run([_native_cc(), "-std=gnu11", "-O1", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function",
                     f"-I{ROOT / 'port/linux/src'}", str(source), "-o", str(binary)], check=True)
     subprocess.run([str(binary)], check=True)
+
+
+def test_gpu_choice(tmp_path):
+    """#1269: a discrete GPU before an integrated one listed first, the
+    monitor's adapter among equals, then memory; display.gpu's index and
+    name, and its fallback to auto (port/linux/vulkan/tests/gpu_choose_test.c,
+    the real xgpu_vulkan_gpu.c; no Vulkan headers needed)."""
+    cc = os.environ.get("CC") or shutil.which("clang") or shutil.which("cc")
+    if not cc:
+        pytest.skip("needs a C compiler")
+    binary = tmp_path / "gpu_choose"
+    subprocess.run([cc, "-std=gnu11", "-O1", "-Wall", "-Wextra", "-Werror",
+                    str(ROOT / "port/linux/vulkan/tests/gpu_choose_test.c"), "-o", str(binary)], check=True)
+    run = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60)
+    assert run.returncode == 0, run.stdout + run.stderr

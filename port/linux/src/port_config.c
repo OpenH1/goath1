@@ -708,6 +708,13 @@ static const struct config_setting config_settings[] =
 		"darker), \"srgb\" (a Mac's), or \"auto\": sRGB on macOS and iOS, 2.2\n"
 		"elsewhere. Only the shadows differ: colors from code 51 up are the\n"
 		"same in both." },
+	{ "display.gpu", _config_string, "\"auto\"", "HALO_GPU", _environment_value, _platform_desktop,
+		"Which GPU the game draws with (Vulkan: Windows, Linux). \"auto\" takes a\n"
+		"discrete GPU before an integrated one, then the one the window's monitor\n"
+		"is plugged into, then the one with the most video memory. Else a number\n"
+		"(0 is the first GPU halo.log lists as \"vulkan: GPU 0 of ...\") or a part\n"
+		"of a GPU's name, such as \"nvidia\" or \"RTX 5070\". The game uses it\n"
+		"the next time it starts. Not in VR, whose headset's software chooses." },
 	{ "display.output_depth", _config_string, "\"auto\"", "HALO_OUTPUT_DEPTH", _environment_value, _platform_all,
 		"The SDR picture's depth: \"10\" draws it in 16 bits a channel and shows it\n"
 		"on a 10-bit display at 10 bits, else at 8 with a fine dither, so fog\n"
