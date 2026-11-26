@@ -64,6 +64,16 @@ map). A bitmap whose pixels are more than a quarter of the texture cache is
 left out: it could not be drawn with what the map draws around it. A bitmap is drawn, not simulated: nothing a network
 game's machines agree on reads one.
 
+The built-in HD effects (display.hd_effects: port/linux/src/hd_effects.h)
+are bitmap tag files too, made once from the player's maps and kept in the
+data folder's hd_effects: each is played over its map's bitmap here as a
+mod's is, under every mod (a mod's file for the same bitmap is drawn
+instead), with mods off too, and only where the map's bitmap's pixels are
+the stock ones it was made from (their CRC-32: a map's own or modded bitmap
+is left as it is). They are not the mods': they are left out of the mods'
+counts, and the texture cache takes the map's size plus their extra bytes,
+not a mods' map's (xbox_texture_cache.c, mod_bitmaps_builtin_extra_bytes).
+
 The map's bitmap tag takes the file's values in place, so everything that
 holds the tag keeps holding it, and its own come back when the file goes.
 When a reload changes any, the texture cache lets go of every texture first;
@@ -89,6 +99,7 @@ a bitmap made is kept until the map goes, as anything may still hold it.
 #include "cache_file_formats.h"
 #include "custom_edition_cache.h"
 #include "mods.h"
+#include "memory/zlib/zlib.h"
 
 #include <stddef.h>
 #include <stdio.h>
@@ -194,10 +205,14 @@ struct mod_bitmap
 	struct mod_bitmap *next;
 	long tag_index;
 	/* the file (its index in the mods' files of the last time they were
-	found), and its path, size and modification time, to tell whether it
-	changed */
+	found; NONE: a built-in HD effect's), and its path, size and
+	modification time, to tell whether it changed */
 	long file;
 	char *path;
+	/* a built-in HD effect (hd_effects.h), not a mod's; and whether its
+	channels are where the Xbox has them (a mod's mod.toml says) */
+	boolean builtin;
+	boolean xbox_channels;
 	unsigned long file_size;
 	unsigned long stamp[2];
 	/* where its processed pixel data is in the file, and how much there is */
@@ -257,6 +272,10 @@ static struct
 	failed was said */
 	boolean orders_found;
 	boolean read_failure_reported;
+	/* the built-in HD effects played, and the bytes their pixels take more
+	than the map's (bitmaps_played_count) */
+	long builtin_count;
+	unsigned long builtin_extra_bytes;
 	/* the map's structure bsps read, each one's lightmap bitmap and the
 	fingerprint of its lightmaps' layout */
 	struct
@@ -591,12 +610,13 @@ static long layout_file_find(
 		layout_file : NONE;
 }
 
-/* The bitmap the tag file `file` makes for the map's bitmap tag
-`tag_index`, whose definition is `map_group`, or NULL with *reason saying
-why not. */
+/* The bitmap the tag file at `path` (the mods' file `file`, or NONE: a
+built-in HD effect's) makes for the map's bitmap tag `tag_index`, whose
+definition is `map_group`, or NULL with *reason saying why not. */
 static struct mod_bitmap *mod_bitmap_new(
 	long tag_index,
 	long file,
+	char const *path,
 	struct bitmap_group const *map_group,
 	char const **reason)
 {
@@ -624,21 +644,23 @@ static struct mod_bitmap *mod_bitmap_new(
 	memset(bitmap, 0, sizeof(*bitmap));
 	bitmap->tag_index = tag_index;
 	bitmap->file = file;
+	bitmap->builtin = file == NONE;
+	bitmap->xbox_channels = file == NONE || port_mods_file_xbox_channels(file);
 	bitmap->layout_file = NONE;
 	group = &bitmap->group;
-	bitmap->path = malloc(strlen(port_mods_file_path(file)) + 1);
+	bitmap->path = malloc(strlen(path) + 1);
 	if (!bitmap->path)
 	{
 		*reason = "out of memory";
 		goto refused;
 	}
-	strcpy(bitmap->path, port_mods_file_path(file));
-	if (!port_mods_file_stamp(file, &bitmap->file_size, bitmap->stamp))
+	strcpy(bitmap->path, path);
+	if (!port_mods_path_stamp(path, &bitmap->file_size, bitmap->stamp))
 	{
 		goto refused;
 	}
 	*reason = "not a bitmap tag file of this version";
-	if (bitmap->file_size < sizeof(head) || !port_mods_file_read(file, 0, head, sizeof(head)) ||
+	if (bitmap->file_size < sizeof(head) || !port_mods_path_read(path, 0, head, sizeof(head)) ||
 		!mods_tag_file_header_valid(head, BITMAP_GROUP_TAG, BITMAP_TAG_VERSION))
 	{
 		goto refused;
@@ -701,7 +723,7 @@ static struct mod_bitmap *mod_bitmap_new(
 		goto refused;
 	}
 	*reason = "it cannot be read";
-	if (!port_mods_file_read(file, cursor, tail, tail_size))
+	if (!port_mods_path_read(path, cursor, tail, tail_size))
 	{
 		goto refused;
 	}
@@ -818,7 +840,13 @@ static struct mod_bitmap *mod_bitmap_new(
 	/* (the HUD draws it at the map's size if what it draws, its sprites or
 	its bitmaps, is all larger by one ratio) */
 	bitmap->hud_scale = hud_scale_find(map_group, bitmap);
-	/* a lightmap waits for its BSP, with its layout file as it is now */
+	/* a lightmap waits for its BSP, with its layout file as it is now (a
+	built-in is none) */
+	*reason = "a built-in HD effect is not a lightmap";
+	if (map_group->usage == _bitmap_usage_light_map && bitmap->builtin)
+	{
+		goto refused;
+	}
 	if (map_group->usage == _bitmap_usage_light_map)
 	{
 		bitmap->lightmap = TRUE;
@@ -983,6 +1011,44 @@ static struct mod_bitmap *bitmap_kept(
 	}
 
 	return NULL;
+}
+
+/* how many of the map's bitmaps the mods' files play (the built-in HD
+effects' counted apart, with their extra bytes) */
+static long bitmaps_played_count(
+	void)
+{
+	long played_count = 0;
+	long index;
+
+	mod_bitmaps_globals.builtin_count = 0;
+	mod_bitmaps_globals.builtin_extra_bytes = 0;
+	for (index = 0; index < mod_bitmaps_globals.override_count; index++)
+	{
+		struct mod_bitmap_override const *override = &mod_bitmaps_globals.overrides[index];
+		long page;
+
+		if (!override->bitmap)
+			continue;
+		if (!override->bitmap->builtin)
+		{
+			played_count++;
+			continue;
+		}
+		mod_bitmaps_globals.builtin_count++;
+		for (page = 0; page < override->bitmap->group.bitmaps.count; page++)
+		{
+			struct bitmap_data *bitmap = &override->bitmap->bitmaps[page];
+			unsigned long made = MAX((unsigned long)rasterizer_xbox_bitmap_get_pixel_data_size(bitmap),
+				(unsigned long)bitmap->pixels_size);
+			unsigned long map = page < override->map_group.bitmaps.count ? (unsigned long)
+				TAG_BLOCK_GET_ELEMENT(&override->map_group.bitmaps, page, struct bitmap_data)->pixels_size : 0;
+
+			mod_bitmaps_globals.builtin_extra_bytes += made > map ? made - map : 0;
+		}
+	}
+
+	return played_count;
 }
 
 /* whether the lightmap made `made`'s layout file, from the mod of its file
@@ -1474,6 +1540,56 @@ static boolean lightmaps_decide(
 
 /* ---------- public code */
 
+/* the built-in HD effect's file for the map's bitmap tag `tag_index`
+(`definition`, the map's own), into `path`, if there is one and the map's
+bitmap is the stock one it was made from: its pages' pixels, read from the
+map, have its CRC-32 */
+static boolean builtin_file_find(
+	long tag_index,
+	struct bitmap_group const *definition,
+	char *path,
+	unsigned long size)
+{
+	unsigned int stock_crc;
+	unsigned long crc = 0;
+	long page;
+
+	if (!hd_effects_bitmap_file(tag_get_name(tag_index), path, size, &stock_crc) ||
+		definition->bitmaps.count < 1 || custom_edition_cache_tags_loaded())
+	{
+		return FALSE;
+	}
+	for (page = 0; page < definition->bitmaps.count; page++)
+	{
+		struct bitmap_data const *bitmap = TAG_BLOCK_GET_ELEMENT(&definition->bitmaps, page, struct bitmap_data);
+		/* (the map's read in whole sectors) */
+		unsigned long room = ((unsigned long)bitmap->pixels_size + 0x1FF) & ~0x1FFUL;
+		byte *bytes;
+		boolean read;
+
+		if (bitmap->pixels_size <= 0 || room > 16UL * 1024 * 1024 || !(bytes = malloc(room)))
+		{
+			return FALSE;
+		}
+		read = map_page_read(bitmap, bytes, room);
+		if (read)
+			crc = crc32(crc, bytes, (uInt)bitmap->pixels_size);
+		free(bytes);
+		if (!read)
+		{
+			return FALSE;
+		}
+	}
+	if (crc != stock_crc)
+	{
+		error(_error_silent, "hd effects: %s is not the stock bitmap (CRC %08lx): drawn as it is",
+			tag_get_name(tag_index), crc);
+		return FALSE;
+	}
+
+	return TRUE;
+}
+
 long mod_bitmaps_update(
 	boolean remove_all,
 	boolean at_load)
@@ -1507,6 +1623,10 @@ long mod_bitmaps_update(
 		struct mod_bitmap *made = NULL;
 		boolean made_now = FALSE;
 		char const *reason = NULL;
+		/* the file played: the mod's, else the built-in HD effect's (none
+		with a mod's; at most one of them in a map) */
+		char builtin_path[1024];
+		char const *path = NULL;
 
 		if (!override || !definition)
 		{
@@ -1514,13 +1634,23 @@ long mod_bitmaps_update(
 		}
 		if (file != NONE)
 		{
+			path = port_mods_file_path(file);
+		}
+		else if (mods_builtins_played() &&
+			builtin_file_find(tag_index, override->bitmap ? &override->map_group : definition, builtin_path,
+				sizeof(builtin_path)))
+		{
+			path = builtin_path;
+		}
+		if (path)
+		{
 			unsigned long size;
 			unsigned long stamp[2];
 
 			/* (one made before from the file as it is: only where it is in the
 			mods' files changes) */
-			if (port_mods_file_stamp(file, &size, stamp))
-				made = bitmap_kept(tag_index, port_mods_file_path(file), size, stamp);
+			if (port_mods_path_stamp(path, &size, stamp))
+				made = bitmap_kept(tag_index, path, size, stamp);
 			/* (a lightmap whose layout file changed is made again) */
 			if (made && made->lightmap && !layout_unchanged(made, file))
 				made = NULL;
@@ -1532,9 +1662,9 @@ long mod_bitmaps_update(
 			if (made && made == override->bitmap)
 				continue;
 		}
-		if (file != NONE && !made)
+		if (path && !made)
 		{
-			made = mod_bitmap_new(tag_index, file, override->bitmap ? &override->map_group : definition, &reason);
+			made = mod_bitmap_new(tag_index, file, path, override->bitmap ? &override->map_group : definition, &reason);
 			if (made && !mods_memory_take(made->kept_bytes))
 			{
 				reason = "the mods' tags already hold too much memory";
@@ -1543,9 +1673,9 @@ long mod_bitmaps_update(
 			}
 			if (!made)
 			{
-				error(_error_silent, "mods: %s left out: %s", port_mods_file_path(file), reason);
-				console_warning("mods: %s.bitmap of %s left out: %s", tag_get_name(tag_index), port_mods_file_mod(file),
-					reason);
+				error(_error_silent, "mods: %s left out: %s", path, reason);
+				console_warning("mods: %s.bitmap of %s left out: %s", tag_get_name(tag_index),
+					file != NONE ? port_mods_file_mod(file) : "the HD effects", reason);
 				refused_count++;
 			}
 			else
@@ -1633,11 +1763,7 @@ long mod_bitmaps_update(
 		loaded_count += taken;
 		refused_count += left_out;
 	}
-	for (tag_index = 0; tag_index < mod_bitmaps_globals.override_count; tag_index++)
-	{
-		if (mod_bitmaps_globals.overrides[tag_index].bitmap)
-			played_count++;
-	}
+	played_count = bitmaps_played_count();
 	/* which of them keep their channels where Halo PC does, found again
 	with them in the map's tags (a Custom Edition map's own bitmaps, all Halo
 	PC's, are found again too: they are drawn by the same table) */
@@ -1652,6 +1778,9 @@ long mod_bitmaps_update(
 		if (scaled_count)
 			error(_error_silent, "mods: %ld HUD placements scaled to draw larger bitmaps at the map's size", scaled_count);
 	}
+	if (mod_bitmaps_globals.builtin_count)
+		error(_error_silent, "hd effects: %ld bitmaps drawn sharper (%lu KB more of the texture cache)",
+			mod_bitmaps_globals.builtin_count, mod_bitmaps_globals.builtin_extra_bytes >> 10);
 	if (!at_load || loaded_count || refused_count)
 	{
 		error(_error_silent, "mods: %ld bitmaps from their files (%ld new), %ld given back, %ld left out",
@@ -1691,11 +1820,8 @@ long mod_bitmaps_structure_bsp_read(
 	{
 		mod_bitmaps_globals.orders_found = custom_edition_loaded_reordered_bitmaps_find();
 	}
-	for (index = 0; index < mod_bitmaps_globals.override_count; index++)
-	{
-		if (mod_bitmaps_globals.overrides[index].bitmap)
-			played_count++;
-	}
+	played_count = bitmaps_played_count();
+	(void)index;
 
 	return played_count;
 }
@@ -1738,6 +1864,12 @@ void mod_bitmaps_tags_unloaded(
 	memset(&mod_bitmaps_globals, 0, sizeof(mod_bitmaps_globals));
 
 	return;
+}
+
+unsigned long mod_bitmaps_builtin_extra_bytes(
+	void)
+{
+	return mod_bitmaps_globals.builtin_extra_bytes;
 }
 
 boolean mod_bitmaps_contain(
@@ -1796,9 +1928,9 @@ boolean mod_bitmaps_read(
 	}
 	/* (a file changed since it was read is read again by mods_reload: until
 	then its bitmaps are black) */
-	if (!port_mods_file_stamp(made->file, &size, stamp) || size != made->file_size ||
+	if (!port_mods_path_stamp(made->path, &size, stamp) || size != made->file_size ||
 		stamp[0] != made->stamp[0] || stamp[1] != made->stamp[1] ||
-		!port_mods_file_read(made->file, made->pixel_data_offset + (unsigned long)bitmap->pixels_offset, buffer,
+		!port_mods_path_read(made->path, made->pixel_data_offset + (unsigned long)bitmap->pixels_offset, buffer,
 			(unsigned long)bitmap->pixels_size))
 	{
 		if (!mod_bitmaps_globals.read_failure_reported)
@@ -1811,7 +1943,7 @@ boolean mod_bitmaps_read(
 	}
 	halo_custom_edition_texels_channels(
 		buffer,
-		!port_mods_file_xbox_channels(made->file) &&
+		!made->xbox_channels &&
 		(mod_bitmaps_globals.orders_found || custom_edition_cache_tags_loaded()) ?
 			(unsigned char)custom_edition_bitmap_channel_order(made->tag_index, (long)(bitmap - made->bitmaps)) :
 			_custom_edition_channels_xbox);

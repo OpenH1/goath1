@@ -1205,6 +1205,11 @@ PAGES = {
              [("CLASSIC", "classic"), ("GEMS", "gems"), ("DARK GEMS", "menu_gems")],
              "The buttons the HUD draws. Classic: plain Xbox buttons. Gems: shaded Xbox buttons. Dark Gems: the "
              "menus' button artwork.", None),
+            # (port/linux/src/hd_effects.c: the stock effects redrawn from the
+            # player's own maps, once)
+            ("HD EFFECTS", "display.hd_effects", ON_OFF,
+             "Draws the Assault Rifle's muzzle flash sharper, redrawn from your own maps. Off draws the game's "
+             "own.", None),
             # (port/linux/game/spartan_link.c: co-op and team games; HIGH-RES
             # TEXT moved to Video's GRAPHICS to make room; its rows a page of
             # their own once it had two)

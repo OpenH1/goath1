@@ -2878,9 +2878,17 @@ void main_menu_pictures_map(
 	return;
 }
 
+/* port: the HD effects made from the player's maps, once, as a step of the
+game's start before the menus' pictures (port/linux/game/hd_effects_startup.c) */
+int hd_effects_startup_preparing(void);
+/* port: the built-in HD effects played again when the setting changes
+(port/linux/game/mods.c) */
+void mods_builtins_update(void);
+
 /* port: the game's start, in order (menu_pictures_startup_next): the intro
-movie (display.movies), if any, played to its end or skipped; then the
-menus' pictures, if any are to be made (menu_pictures_render.c), the pass
+movie (display.movies), if any, played to its end or skipped; then the HD
+effects, if any are to be made (hd_effects_startup.c), under the loading
+screen; then the menus' pictures, if any are to be made (menu_pictures_render.c), the pass
 having the game to itself (the map loader, the copy of a map's file into the
 cache and the texture cache's spare memory, which the movie had held: no
 movie starts meanwhile, bink_playback.c); then the main menu's menus and
@@ -2913,6 +2921,10 @@ static void main_startup_update(
 	next = menu_pictures_startup_next(main_startup_phase, main_globals.main_menu_scenario_loaded,
 		bink_playback_in_progress(), menu_pictures_exclusive());
 	if (next == main_startup_phase)
+		return;
+	/* (the HD effects first, the main menu still held: the intro's phase
+	is left only once they are made) */
+	if (main_startup_phase == _startup_intro && next == _startup_pictures && hd_effects_startup_preparing())
 		return;
 	main_startup_phase = next;
 	/* (the pictures' pass begun; with none to make, straight on) */
@@ -4386,6 +4398,8 @@ void main_loop(
 			theirs (port/linux/game/menu_pictures_render.c) */
 			main_startup_update();
 			menu_pictures_frame(main_globals.main_menu_scenario_loaded);
+			/* port: the built-in HD effects turned on or off (port/linux/game/mods.c) */
+			mods_builtins_update();
 			/* (and what its ticks' scripts asked meanwhile) */
 			if (menu_pictures_preparing())
 				main_menu_pictures_hold();

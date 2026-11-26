@@ -22,7 +22,8 @@ writes OUTPUT.c with each PNG and the bitmap it stands for (its tag, index
 and checksum of its pixels, from port/assets/hud/layout.json,
 port/assets/titles/titles.json and port/assets/buttons/buttons.json), the
 fonts and their tags from port/assets/fonts/fonts.json, the menu files
-listed in port/assets/menus/menus.json, the icon and the picture, as
+listed in port/assets/menus/menus.json, the HD effects' list
+(port/assets/effects/effects.json: numbers only), the icon and the picture, as
 port/linux/src/hud_hires.h, text_hires.h, menu_files.h and sdl_platform.c
 declare them. The builds generate it (hud_assets_build, called by
 tools/android_build.py, which the other guest builds share), so the assets
@@ -77,6 +78,10 @@ PICTURE_MAPS = PICTURE_ASSETS / "maps.json"
 # the bitmaps of ui.map whose frames a pose may draw
 PICTURE_BITMAPS = {"sp_levels": "ui\\shell\\bitmaps\\sp_levels", "mp_map_grafix": "ui\\shell\\bitmaps\\mp_map_grafix"}
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+# the HD effects, numbers only: each stock bitmap the game redraws from the
+# player's maps (port/linux/src/hd_effects.h)
+EFFECT_LIST = Path("port/assets/effects/effects.json")
+EFFECT_RECIPES = {"flash": 1}
 
 
 def font_files() -> List[str]:
@@ -317,6 +322,24 @@ def picture_lines() -> List[str]:
     return lines
 
 
+def effect_lines() -> List[str]:
+    """The HD effects' table (hd_effects.h)."""
+    effects = json.loads((ROOT / EFFECT_LIST).read_text())["effects"] if (ROOT / EFFECT_LIST).is_file() else []
+    lines = ['#include "hd_effects.h"', "", "const struct hd_effect_embedded hd_effects_embedded[] =", "{"]
+    for effect in effects:
+        if effect["recipe"] not in EFFECT_RECIPES:
+            sys.exit(f"{EFFECT_LIST}: {effect['name']}: no recipe {effect['recipe']!r}")
+        lines.append(f'\t{{ {c_string(effect["name"])}, {c_string(effect["tag"])}, {EFFECT_RECIPES[effect["recipe"]]}, '
+                     f'{effect["scale"]}, {effect["smallest"]}, 0x{effect["crc"]:08x}u, '
+                     f'{c_string(" ".join(effect["maps"]))} }},')
+    if not effects:
+        lines.append("\t{ 0 },")
+    lines.append("};")
+    lines.append(f"const unsigned int hd_effects_embedded_count = {len(effects)};")
+    lines.append("")
+    return lines
+
+
 def hud_asset_inputs() -> List[Path]:
     """The files the generated source is made from."""
     inputs = [listing for listing in (LAYOUT, CE_LAYOUT, MCC_LAYOUT, CE_STOCK, CUSTOM_EDITION_HUD, TITLE_LIST, BUTTON_LIST, CONTROLLER_LIST, FONT_LIST, MENU_LIST)
@@ -329,6 +352,7 @@ def hud_asset_inputs() -> List[Path]:
             *([LOADING_SOURCE] if (ROOT / LOADING_SOURCE).is_file() else []),
             *([MENU_CURSOR] if (ROOT / MENU_CURSOR).is_file() else []),
             *([PICTURE_MAPS] if (ROOT / PICTURE_MAPS).is_file() else []), *picture_poses(),
+            *([EFFECT_LIST] if (ROOT / EFFECT_LIST).is_file() else []),
             *(path for path in [VECTOR_BAKE_TOOL, *VECTOR_BAKE_SOURCES, *VECTOR_BAKE_HEADERS] if (ROOT / path).is_file())]
 
 
@@ -584,6 +608,7 @@ def main() -> None:
     lines.append(f"const unsigned long platform_loading_source_size = {len(data)};")
     lines.append("")
     lines.extend(picture_lines())
+    lines.extend(effect_lines())
     # the assets' file, its size and CRC-32 in its header too
     struct.pack_into("<I", assets.data, 8, len(assets.data))
     lines.append('#include "embedded_assets.h"')

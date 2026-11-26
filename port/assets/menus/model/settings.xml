@@ -385,6 +385,11 @@
 			<choice shown="GEMS" value="gems"/>
 			<choice shown="DARK GEMS" value="menu_gems"/>
 		</row>
+		<row key="hd_effects" kind="choice" setting="display.hd_effects" label="HD EFFECTS" crumb="INTERFACE › HUD">
+			<help>Draws the Assault Rifle's muzzle flash sharper, redrawn from your own maps. Off draws the game's own.</help>
+			<choice shown="ON" value="true"/>
+			<choice shown="OFF" value="false"/>
+		</row>
 		<row key="spartan_link" kind="link" label="SPARTAN LINK ›" crumb="INTERFACE › HUD" open="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/spartan_link_screen">
 			<help>Your teammates' views beside the motion tracker in co-op and team games: on or off (B or D-pad Down in a game), and their size.</help>
 		</row>
@@ -394,7 +399,7 @@
 		<row key="campaign" kind="link" label="CAMPAIGN ›" crumb="INTERFACE › HUD" open="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/campaign/campaign_screen">
 			<help>The campaign's battles: every enemy squad two or three times as large.</help>
 		</row>
-		<section key="section_6" title="MULTIPLAYER"/>
+		<section key="section_7" title="MULTIPLAYER"/>
 		<row key="player_names" kind="choice" setting="display.player_names" label="PLAYER NAMES" crumb="INTERFACE › MULTIPLAYER" search_choices="all allies enemies">
 			<help>In multiplayer, whose names are drawn above their heads.</help>
 			<choice shown="ALL" value="all"/>
@@ -426,7 +431,7 @@
 			<choice shown="TEAMMATE'S VIEW" value="teammates"/>
 			<choice shown="DEATH CAMERA" value="off"/>
 		</row>
-		<section key="section_12" title="CHAT"/>
+		<section key="section_13" title="CHAT"/>
 		<row key="text_chat" kind="choice" setting="display.text_chat" label="TEXT CHAT" crumb="INTERFACE › CHAT">
 			<help>Shows the text chat. Hide draws none of its lines, and its keys and D-pad Up open nothing.</help>
 			<choice shown="SHOW" value="true"/>

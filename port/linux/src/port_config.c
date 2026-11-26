@@ -463,6 +463,12 @@ static const struct config_setting config_settings[] =
 		"waypoints, scopes, message icons) from the high-res assets: Aerocatia's\n"
 		"and Jessie's art from Halo PC Restored, 4x the maps' bitmaps;\n"
 		"false draws the maps' own bitmaps." },
+	{ "display.hd_effects", _config_boolean, "true", "HALO_HD_EFFECTS", _environment_value, _platform_all,
+		"Draw stock effects sharper (for now the Assault Rifle's first-person\n"
+		"muzzle flash): redrawn at 4x from your own maps' bitmaps, once, and\n"
+		"kept in the data folder's hd_effects (port/linux/src/hd_effects.h).\n"
+		"A mod's bitmap of the same effect is drawn instead; a map's own or\n"
+		"modded effect is left as it is. false draws the maps' own bitmaps." },
 	{ "display.spartan_link", _config_string, "\"medium\"", "HALO_SPARTAN_LINK", _environment_value, _platform_all,
 		"The Spartan link: live feeds of your living teammates' views beside\n"
 		"the motion tracker, each with their name, shield and distance, shown\n"
