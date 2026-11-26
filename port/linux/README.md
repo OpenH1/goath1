@@ -1418,6 +1418,8 @@ the setting for one start of the game. It has priority over the file.
 | `display.first_person_legs` | `false` | `HALO_FIRST_PERSON_LEGS` | `true`: your own body is drawn in first person from the belly down, with its shadow, so you see your legs when you look down, moving as the body's animation moves them, its feet where they stand; its lower body stays planted as you turn and faces the way you walk, on your screen alone. Refer to "Field of view". |
 | `display.shield_color` | `default` | `HALO_SHIELD_COLOR` | Your energy shield's flare as this machine draws it: `default` (the shield's own) or a multiplayer armor color (`white`, `black`, `red`, `blue`, `gray`, `yellow`, `green`, `pink`, `purple`, `cyan`, `cobalt`, `orange`, `teal`, `sage`, `brown`, `tan`, `maroon`, `salmon`), whatever the armor's, on the body and, with `display.viewmodel_shield`, on the first-person arms. The shield's own shader is drawn with its two colors replaced at their brightness; the flare is added to what is behind it, so `black` is drawn a faint grey. Only this machine sees it. |
 | `display.spartan_link` | `"medium"` | `HALO_SPARTAN_LINK` | The Spartan link: live feeds of your living teammates' views beside the motion tracker (up to four), shown and hidden with `controls.spartan_link` (B; a controller's D-pad Down in the stock layouts); co-op and team games only, not Pro 2V2 nor a team game whose host turned it off (`game.spartan_link`). `"small"`, `"medium"` or `"large"` feeds; `"off"`: the key does nothing. FEED SIZE in Settings > Interface > Spartan Link. Refer to "Spartan link". |
+| `display.spartan_link_position` | `"bottom"` | `HALO_SPARTAN_LINK_POSITION` | Where the Spartan link's feeds are: `"bottom"`, in a row beside the motion tracker; `"top"`, hung from the view's top edge between the HUD's panels. POSITION in Settings > Interface > Spartan Link. |
+| `display.spartan_link_stats` | `true` | `HALO_SPARTAN_LINK_STATS` | The teammate's name, shield and health under each Spartan link feed; false, the feeds alone. TEAMMATE STATS in Settings > Interface > Spartan Link. |
 | `display.spartan_link_shown` | `false` | `HALO_SPARTAN_LINK_SHOWN` | Whether your Spartan link is on: the key turns it on and off and it stays so from game to game (each player profile's own). SPARTAN LINK in Settings > Interface > Spartan Link. |
 | `display.spartan_link_hint` | `false` | `HALO_SPARTAN_LINK_HINT` | Whether the Spartan link's key has been shown to this player profile (once, beside the motion tracker, in its first game that has the link). |
 | `display.high_res_hud` | `true` | `HALO_HIGH_RES_HUD` | `true`: the HUD (meters, counters, panels and their outlines, reticles, waypoints, scopes, the message icons and their pictures of the weapons, the reticle's warnings, the multiplayer icons) is drawn from the high-res assets in `port/assets/hud`, 4x the size of the maps' bitmaps: Aerocatia's and Jessie's art from Halo PC Restored (`port/assets/hud/NOTICE.md`); the motion sensor and the health meter's base, which it has no larger, from redraws at 8x. Another language's text (the message icons' words, the warnings, the seat plates) is upscaled from its maps' own pixels without changing their layout. `false`: the maps' own bitmaps. |
@@ -3533,16 +3535,21 @@ In a free-for-all game, in Pro 2V2 (Classic and Crispy), and in a team game
 whose host turned it off (the lobby's LINK, Host Controls' SPARTAN LINK,
 `game.spartan_link`), the key says so on the HUD and shows nothing.
 Settings > Interface > Spartan Link turns it on or off and sets the feeds'
-size (small, medium, large) or turns the key off (`display.spartan_link`).
+size (small, medium, large) or turns the key off (`display.spartan_link`),
+puts the row at the bottom beside the tracker or at the top of the view
+(`display.spartan_link_position`), and shows or hides the names, shields and
+health under the feeds (`display.spartan_link_stats`).
 
 The feeds are drawn from this computer's copy of the game, as the rest of
 the picture is: nothing is sent, and a far teammate moves as smoothly as the
-host's updates of them do. One feed is drawn a frame, in turn, each kept in
-an image of its own at the size it has on the screen (`port/linux/src/d3d8_device.c`'s
-extra views), without the anti-aliasing pass, multisampling, the world's
-ambient occlusion, the objects' shadows, lens flares or the weather, so the
-frame pays for about one small view whatever the number of feeds; with the
-link hidden, nothing. The weapon and arms move as on the teammate's own
+host's updates of them do. Every feed is drawn every frame, as smoothly as
+the screen, each into an image of its own at the size it has on the screen
+(`port/linux/src/d3d8_device.c`'s extra views), without the anti-aliasing
+pass, multisampling, the world's ambient occlusion, the objects' shadows,
+lens flares, decals, grass or the weather, with coarser model detail: about
+0.2 ms of the game's thread a feed at 4K in the stress test; with the link
+hidden, nothing. `debug.spartan_link_feed_rate` draws them fewer times a
+second instead, in turn. The weapon and arms move as on the teammate's own
 screen: each shot's kick, a melee, a reload, a grenade's throw, a weapon
 put away and readied, a plasma weapon overheating and venting, a charge,
 walking's sway; while they zoom the weapon is hidden, as for them. This

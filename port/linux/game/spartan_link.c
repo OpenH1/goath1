@@ -68,19 +68,21 @@ pinger's color and fade, behind-a-wall look from the teammate's eye) where
 the pinged point or object is in their view, sized to the feed and over the
 object as it moves; none where it is off the feed's picture.
 
-The cost: each feed is drawn SPARTAN_LINK_FEED_RATE (30) times a second by
-the real time, in turn, at most one a frame (render.c's render_frame, before
-the window's view; a feed that has no image yet, as one a ping brings up,
-at once), each kept in its own images between (d3d8_device.c's extra views,
-halo_view_begin) at the size it is drawn on the screen, without the
-anti-aliasing pass, multisampling, the world's ambient occlusion, the
-objects' shadows, lens flares, decals, the grass and other detail objects,
-the weather or the particles too small to see in it, and its models' levels
-of detail chosen for its own pixels, coarser than the screen's
-(halo_model_detail_scale). So the frame pays for a small view in some
-frames, however many feeds there are; with the link hidden, nothing. A draw
-due in a frame that runs a tick's macro step (the world's update, the
-slowest frames) waits for the next frame, once (spartan_link_frame_judge).
+The cost: each feed is drawn every frame, as the screen is (render.c's
+render_frame, before the window's view), into its own images
+(d3d8_device.c's extra views, halo_view_begin) at the size it is drawn on
+the screen, without the anti-aliasing pass, multisampling, the world's
+ambient occlusion, the objects' shadows, lens flares, decals, the grass and
+other detail objects, the weather or the particles too small to see in it,
+and its models' levels of detail chosen for its own pixels, coarser than
+the screen's (halo_model_detail_scale). With the link hidden, nothing. The
+stress test with a partner (benchmark.c, 4K) measured a feed at 0.175 ms of
+the game's thread a frame and no GPU time above the runs' spread.
+debug.spartan_link_feed_rate draws each instead that many times a second,
+in turn, at most one a frame, its image turned to the teammate's look
+between (spartan_link_feed_warp); a draw due in a frame that runs a tick's
+macro step (the world's update, the slowest frames) then waits for the next
+frame, once (spartan_link_frame_judge).
 
 Only what this machine draws: nothing is sent, the game state is not
 touched (no seed is taken, no effect, sound or HUD message made: the
@@ -151,9 +153,11 @@ over the network, in the game record (OpenH1's protocol version 36).
 /* port/linux/src/port_config.c */
 char const *config_string(char const *name);
 int config_boolean(char const *name);
+long config_integer(char const *name);
 unsigned long config_changes(void);
 void platform_log(char const *format, ...);
 unsigned long system_milliseconds(void);
+unsigned long long platform_shared_clock_microseconds(void);
 
 /* port/linux/src/d3d8_device.c: the extra views */
 void halo_view_begin(int view, unsigned long width, unsigned long height);
@@ -223,6 +227,12 @@ of the HUD's units) to this much of the window's width, the bottom right
 left to its timer and input display (display.match_timer, input_display.c) */
 #define SPARTAN_LINK_TRACKER_GAP 8.0f
 #define SPARTAN_LINK_ROOM_RIGHT 0.76f
+/* the row's room at the top (display.spartan_link_position "top"): its top
+from the view's top edge, and the HUD's panels' room at the left and right
+of the window's title-safe frame, in the HUD's units */
+#define SPARTAN_LINK_TOP 11.0f
+#define SPARTAN_LINK_PANEL_LEFT 180.0f
+#define SPARTAN_LINK_PANEL_RIGHT 198.0f
 /* where the motion tracker would be while it is not drawn (its circle's
 middle from the window's left and bottom, and its radius, in the HUD's units
 at its scale): the stock HUD's, as drawn at 16:9 (left 63, middle 104, 403 of
@@ -244,11 +254,6 @@ up to the most) */
 #define SPARTAN_LINK_PING_FADE_MILLISECONDS 1000
 #define SPARTAN_LINK_PING_HEIGHT 0.16f
 #define SPARTAN_LINK_PING_HEIGHT_MOST 0.3f
-/* how often each feed is drawn, by the real time (its image kept between):
-SPARTAN_LINK_FEED_RATE a second, its period counted in thirds of a
-millisecond (100: a thirtieth of a second) */
-#define SPARTAN_LINK_FEED_RATE 30
-#define SPARTAN_LINK_FEED_PERIOD (3000 / SPARTAN_LINK_FEED_RATE)
 
 /* ---------- structures */
 
@@ -294,6 +299,7 @@ struct spartan_link_feed
 	real image_tangent;
 	unsigned long image_width, image_height;
 	unsigned long image_at;
+	unsigned long image_frame;
 };
 
 struct spartan_link_window
@@ -315,6 +321,8 @@ struct spartan_link_window
 	/* the key's hint asked about in this game (once a game: once a profile
 	by display.spartan_link_hint) */
 	boolean hint_checked;
+	/* (every frame: the next of its feeds to draw in this frame) */
+	short next_feed;
 };
 
 /* the motion tracker as the HUD last drew it in a window (hud_unit.c): its
@@ -335,6 +343,13 @@ static struct
 	unsigned long read_at;
 	boolean enabled;
 	real size;
+	/* display.spartan_link_position "top" (else beside the tracker), and
+	display.spartan_link_stats (the name, shield and health under each feed) */
+	boolean top;
+	boolean stats;
+	/* debug.spartan_link_feed_rate: each feed drawn that many times a second
+	in turn (0: every frame) */
+	long feed_rate;
 	boolean log;
 	boolean debug_open;
 	long logged_tick;
@@ -359,6 +374,12 @@ static struct
 	/* the feed being drawn: whose eyes hide whose body, and whose weapon is
 	posed (render_objects.c, first_person_weapons.c) */
 	boolean drawing;
+	/* when the feed being drawn began, and the feeds' time drawing so far
+	(the game's thread: spartan_link_feeds_microseconds) */
+	unsigned long long drawing_began, drawing_microseconds;
+	/* the frames begun (spartan_link_update: a feed's image of this one is
+	its camera's own, not warped) */
+	unsigned long frame_serial;
 	long hidden_unit;
 	long posed_unit;
 	/* the views drawn in this game (to free them as it ends), and whose
@@ -369,7 +390,7 @@ static struct
 	a ping's on a feed) */
 	boolean red_saved;
 	boolean ping_saved;
-} spartan_link = { FALSE, 0, (unsigned long)-1, TRUE, 1.0f, FALSE };
+} spartan_link = { FALSE, 0, (unsigned long)-1, TRUE, 1.0f, FALSE, TRUE, 0, FALSE };
 
 /* ---------- private code */
 
@@ -391,6 +412,9 @@ static void spartan_link_read(
 	size = config_string("display.spartan_link");
 	spartan_link.enabled = strcmp(size, "off") != 0;
 	spartan_link.size = !strcmp(size, "small") ? 0.8f : !strcmp(size, "large") ? 1.2f : 1.0f;
+	spartan_link.top = !strcmp(config_string("display.spartan_link_position"), "top");
+	spartan_link.stats = config_boolean("display.spartan_link_stats") != 0;
+	spartan_link.feed_rate = config_integer("debug.spartan_link_feed_rate");
 	spartan_link.log = config_boolean("debug.spartan_link_log");
 }
 
@@ -745,10 +769,11 @@ static boolean spartan_link_feed_image(
 		spartan_link.view_players[view] == spartan_link.windows[local_player_index].feeds[feed].player_index;
 }
 
-/* the feed drawn this frame: at most one a frame of every window's, a feed
-whose image was never drawn (or is another's) first, at once, else the next
-after the last drawn whose time has come (SPARTAN_LINK_FEED_RATE a second
-each, by the real time); none while every feed's image is new enough */
+/* at a rate (debug.spartan_link_feed_rate a second each, by the real time,
+its period counted in thirds of a millisecond), the feed drawn this frame: at
+most one a frame of every window's, a feed whose image was never drawn (or
+is another's) first, at once, else the next after the last drawn whose time
+has come; none while every feed's image is new enough */
 static void spartan_link_schedule(
 	void)
 {
@@ -851,13 +876,34 @@ static void spartan_link_room(
 	room->y1 = center_y + radius;
 }
 
+/* the room of the window's row at the top (display.spartan_link_position
+"top"), in the view's units: across, between the HUD's panels, which are
+placed in the window's title-safe frame; down, from the view's own top edge
+(SPARTAN_LINK_TOP, up in the panels' line, not under the frame's inset) */
+static void spartan_link_top_room(
+	struct render_camera const *camera,
+	real scale,
+	real *left,
+	real *right,
+	real *top)
+{
+	real frame_x0 = (real)(camera->window_bounds.x0 - camera->viewport_bounds.x0);
+	real width = (real)(camera->window_bounds.x1 - camera->window_bounds.x0);
+
+	*left = frame_x0 + SPARTAN_LINK_PANEL_LEFT * scale;
+	*right = MAX(frame_x0 + width - SPARTAN_LINK_PANEL_RIGHT * scale, *left);
+	*top = SPARTAN_LINK_TOP * scale;
+}
+
 /* the window's feeds' layout: each feed's rectangle in the view's units, from
 its top left (left, top, right, bottom), and the scale of the units the
-design's are in. A row beside the motion tracker, from its right, each feed
-with its name's row under it within the tracker's circle's height (so the
-text chat and the messages above the tracker stay clear), as tall as
-display.spartan_link's size takes of that (large all of it), narrower where
-the window's room is too narrow for them */
+design's are in. Each feed is as tall as display.spartan_link's size takes
+of the motion tracker's circle's height (large all of it), less the row of
+its name and meters under it (display.spartan_link_stats), narrower where
+the room is too narrow for them. At the bottom (display.spartan_link_position):
+a row beside the tracker, from its right, within the tracker's circle's
+height (so the text chat and the messages above the tracker stay clear); at
+the top, centered between the HUD's panels, hung from the view's top edge */
 static short spartan_link_layout(
 	short local_player_index,
 	struct render_camera const *camera,
@@ -866,7 +912,7 @@ static short spartan_link_layout(
 {
 	struct spartan_link_window *window = &spartan_link.windows[local_player_index];
 	real_rectangle2d room;
-	real feed_width, feed_height, total, row, gap;
+	real feed_width, feed_height, total, row, gap, left, top;
 	short count = window->count;
 	short index;
 
@@ -876,24 +922,36 @@ static short spartan_link_layout(
 		return 0;
 	}
 	spartan_link_room(local_player_index, camera, &room, scale);
-	row = SPARTAN_LINK_ROW * *scale;
+	row = spartan_link.stats ? SPARTAN_LINK_ROW * *scale : 0.0f;
 	gap = SPARTAN_LINK_GAP * *scale;
 	/* (medium and large fill the tracker's height, the strip included:
 	the row's top and bottom the tracker's circle's) */
 	feed_height = (room.y1 - room.y0 - row) * MIN(spartan_link.size, 1.0f);
+	if (spartan_link.top)
+		spartan_link_top_room(camera, *scale, &room.x0, &room.x1, &top);
 	feed_width = feed_height * 16.0f / 9.0f;
 	total = feed_width * count + gap * (count - 1);
 	if (total > room.x1 - room.x0)
 	{
 		feed_width = MAX(room.x1 - room.x0 - gap * (count - 1), 0.0f) / count;
 		feed_height = feed_width * 9.0f / 16.0f;
+		total = feed_width * count + gap * (count - 1);
 	}
+	left = spartan_link.top ? room.x0 + (room.x1 - room.x0 - total) * 0.5f : room.x0;
 	for (index = 0; index < count; index++)
 	{
-		rectangles[index].x0 = room.x0 + index * (feed_width + gap);
+		rectangles[index].x0 = left + index * (feed_width + gap);
 		rectangles[index].x1 = rectangles[index].x0 + feed_width;
-		rectangles[index].y1 = room.y1 - row;
-		rectangles[index].y0 = rectangles[index].y1 - feed_height;
+		if (spartan_link.top)
+		{
+			rectangles[index].y0 = top;
+			rectangles[index].y1 = top + feed_height;
+		}
+		else
+		{
+			rectangles[index].y1 = room.y1 - row;
+			rectangles[index].y0 = rectangles[index].y1 - feed_height;
+		}
 	}
 	return count;
 }
@@ -1494,9 +1552,10 @@ static pixel32 spartan_link_tracker_color(
 	return color;
 }
 
-/* The feed's image warped to the teammate's look of this frame: it is drawn
-SPARTAN_LINK_FEED_RATE times a second, which a display of 120 Hz or more
-shows as a picture that turns in steps. Each frame shows it turned by the
+/* The feed's image warped to the teammate's look of this frame, where it
+was drawn in an earlier frame (debug.spartan_link_feed_rate's, a few times a
+second, which a display of 120 Hz or more shows as a picture that turns in
+steps; one drawn this frame is shown as drawn). Each frame shows it turned by the
 camera's turn since it was drawn (the feed's look, smoothed:
 spartan_link_feed_look): a point of the feed's picture, a direction from
 the camera now, is where that direction fell in the image, on a grid of
@@ -1527,7 +1586,8 @@ static boolean spartan_link_feed_warp(
 	short row, column;
 	boolean turned = FALSE;
 
-	if (!feed->image_valid || feed->down_at || feed->image_unit != feed->unit_index ||
+	if (!feed->image_valid || feed->image_frame == spartan_link.frame_serial || feed->down_at ||
+		feed->image_unit != feed->unit_index ||
 		!object_try_and_get_and_verify_type(feed->unit_index, _object_mask_unit) ||
 		!(width > 0.0f) || !(height > 0.0f) || !feed->image_height || !(feed->image_tangent > 0.0f) ||
 		system_milliseconds() - feed->image_at > SPARTAN_LINK_WARP_OLDEST ||
@@ -2248,6 +2308,9 @@ void spartan_link_update(
 	clock's update, to its drawing: spartan_link_frame_judge) */
 	spartan_link.frame_macro_steps = game_macro_steps_run();
 	spartan_link.frame_judged = FALSE;
+	spartan_link.frame_serial++;
+	for (local_player_index = 0; local_player_index < MAXIMUM_LOCAL_PLAYERS; local_player_index++)
+		spartan_link.windows[local_player_index].next_feed = 0;
 	spartan_link_read();
 	/* (a new game: every link closed, as each game starts) */
 	if (!spartan_link_playing() || game_time_get() < spartan_link.last_game_time)
@@ -2350,7 +2413,11 @@ void spartan_link_update(
 				spartan_link_feed_aim_update(&window->feeds[feed]);
 		}
 	}
-	spartan_link_schedule();
+	/* (at a rate, the feed due this frame) */
+	if (spartan_link.feed_rate > 0)
+		spartan_link_schedule();
+	else
+		spartan_link.due_local_player = spartan_link.due_feed = NONE;
 }
 
 void spartan_link_note_motion_sensor(
@@ -2420,57 +2487,71 @@ static void spartan_link_frame_judge(
 	spartan_link.last_frame_ticked = ticked;
 }
 
-boolean spartan_link_feed_begin(
+/* the next feed of this window to draw now, else NONE: at a rate
+(debug.spartan_link_feed_rate), the feed spartan_link_schedule chose, which
+waits off a macro step's frame where it has its image; else each feed every
+frame, in order, once (the window's next_feed) */
+static short spartan_link_feed_next(
+	short local_player_index)
+{
+	struct spartan_link_window *window = &spartan_link.windows[local_player_index];
+	short index;
+
+	if (spartan_link.feed_rate <= 0)
+	{
+		index = window->next_feed < window->count ? window->next_feed : NONE;
+		window->next_feed++;
+		return index;
+	}
+	spartan_link_frame_judge();
+	if (local_player_index != spartan_link.due_local_player || spartan_link.due_feed == NONE)
+		return NONE;
+	index = spartan_link.due_feed;
+	/* (one that has its image waits off a macro step's frame; one with none
+	yet is drawn at once: spartan_link_frame_judge) */
+	if (spartan_link.frame_defers && spartan_link_feed_image(local_player_index, index))
+	{
+		spartan_link.deferred = TRUE;
+		index = NONE;
+	}
+	/* (the next frame's is another's) */
+	else
+	{
+		spartan_link.last_local_player = spartan_link.due_local_player;
+		spartan_link.last_feed = spartan_link.due_feed;
+	}
+	spartan_link.due_local_player = NONE;
+	spartan_link.due_feed = NONE;
+	return index;
+}
+
+/* the camera, the view and the state for drawing this feed of the window,
+and the feed's image's camera kept (spartan_link_feed_warp); FALSE: not to
+be drawn now */
+static boolean spartan_link_feed_prepare(
 	short local_player_index,
+	short index,
+	real_rectangle2d const *rectangle,
 	struct render_camera *camera)
 {
-	struct spartan_link_window *window;
-	struct spartan_link_feed *feed;
-	struct player_datum *teammate;
-	real_rectangle2d rectangles[SPARTAN_LINK_FEEDS];
-	real scale;
+	struct spartan_link_window *window = &spartan_link.windows[local_player_index];
+	struct spartan_link_feed *feed = &window->feeds[index];
 	boolean through_eyes;
 	unsigned long width, height;
 	int view;
 
-	spartan_link_frame_judge();
-	if (local_player_index != spartan_link.due_local_player || spartan_link.due_feed == NONE ||
-		!spartan_link_shown(local_player_index))
+	if (!player_try_and_get(feed->player_index) || feed->down_at ||
+		!object_try_and_get_and_verify_type(feed->unit_index, _object_mask_unit))
 	{
 		return FALSE;
 	}
-	window = &spartan_link.windows[local_player_index];
-	if (spartan_link.due_feed >= window->count ||
-		spartan_link_layout(local_player_index, camera, rectangles, &scale) <= spartan_link.due_feed)
-	{
-		return FALSE;
-	}
-	feed = &window->feeds[spartan_link.due_feed];
-	teammate = player_try_and_get(feed->player_index);
-	if (!teammate || feed->down_at || !object_try_and_get_and_verify_type(feed->unit_index, _object_mask_unit))
-		return FALSE;
-	/* (one that has its image waits off a macro step's frame; one with none
-	yet is drawn at once: spartan_link_frame_judge) */
-	if (spartan_link.frame_defers && spartan_link_feed_image(local_player_index, spartan_link.due_feed))
-	{
-		spartan_link.deferred = TRUE;
-		spartan_link.due_local_player = NONE;
-		spartan_link.due_feed = NONE;
-		return FALSE;
-	}
-	/* (the next frame's is another's) */
-	spartan_link.last_local_player = spartan_link.due_local_player;
-	spartan_link.last_feed = spartan_link.due_feed;
-	spartan_link.due_local_player = NONE;
-	spartan_link.due_feed = NONE;
-
 	through_eyes = spartan_link_feed_view(feed, camera);
 	camera->mirrored = FALSE;
 	camera->z_near = rasterizer_globals.near_clip_distance;
 	camera->z_far = render_far_clip_distance(local_player_index);
 	/* its window: its size on the screen, from the screen's top left */
-	width = (unsigned long)floorf(rectangles[spartan_link.last_feed].x1 - rectangles[spartan_link.last_feed].x0 + 0.5f);
-	height = (unsigned long)floorf(rectangles[spartan_link.last_feed].y1 - rectangles[spartan_link.last_feed].y0 + 0.5f);
+	width = (unsigned long)floorf(rectangle->x1 - rectangle->x0 + 0.5f);
+	height = (unsigned long)floorf(rectangle->y1 - rectangle->y0 + 0.5f);
 	if (width < 8 || height < 8)
 		return FALSE;
 	camera->viewport_bounds.x0 = 0;
@@ -2492,25 +2573,26 @@ boolean spartan_link_feed_begin(
 	feed->image_width = width;
 	feed->image_height = height;
 	feed->image_at = system_milliseconds();
-	/* (its next draw a period on from this one's due time, so that the rate
-	holds at any frame rate; from now where it had no image or fell a
-	period behind) */
+	feed->image_frame = spartan_link.frame_serial;
+	/* (at a rate: its next draw a period on from this one's due time, so
+	that the rate holds at any frame rate; from now where it had no image or
+	fell a period behind) */
+	if (spartan_link.feed_rate > 0)
 	{
 		unsigned long now = system_milliseconds() * 3;
+		long period = 3000 / MIN(spartan_link.feed_rate, 3000);
 
-		if (!spartan_link_feed_image(local_player_index, spartan_link.last_feed) ||
-			(long)(now - feed->draw_at) >= SPARTAN_LINK_FEED_PERIOD)
-		{
+		if (!spartan_link_feed_image(local_player_index, index) || (long)(now - feed->draw_at) >= period)
 			feed->draw_at = now;
-		}
-		feed->draw_at += SPARTAN_LINK_FEED_PERIOD;
+		feed->draw_at += period;
 	}
 
-	view = SPARTAN_LINK_VIEW(local_player_index, spartan_link.last_feed);
+	view = SPARTAN_LINK_VIEW(local_player_index, index);
 	spartan_link_feeds_count++;
 	spartan_link.views_used |= 1UL << view;
 	spartan_link.view_players[view] = feed->player_index;
 	spartan_link.drawing = TRUE;
+	spartan_link.drawing_began = platform_shared_clock_microseconds();
 	spartan_link.hidden_unit = through_eyes ? feed->unit_index : NONE;
 	spartan_link.posed_unit = through_eyes && object_get(feed->unit_index)->object.parent_object_index == NONE ?
 		feed->unit_index : NONE;
@@ -2528,9 +2610,41 @@ boolean spartan_link_feed_begin(
 	return TRUE;
 }
 
+/* (render.c's render_frame calls it until it is FALSE, each TRUE a feed
+drawn into its view, then spartan_link_feed_end) */
+boolean spartan_link_feed_begin(
+	short local_player_index,
+	struct render_camera *camera)
+{
+	real_rectangle2d rectangles[SPARTAN_LINK_FEEDS];
+	struct render_camera window_camera = *camera;
+	real scale;
+	short count;
+	short index;
+
+	if (local_player_index < 0 || local_player_index >= MAXIMUM_LOCAL_PLAYERS ||
+		!spartan_link_shown(local_player_index))
+	{
+		return FALSE;
+	}
+	count = spartan_link_layout(local_player_index, camera, rectangles, &scale);
+	while ((index = spartan_link_feed_next(local_player_index)) != NONE)
+	{
+		if (index >= count)
+			break;
+		*camera = window_camera;
+		if (spartan_link_feed_prepare(local_player_index, index, &rectangles[index], camera))
+			return TRUE;
+	}
+	*camera = window_camera;
+	return FALSE;
+}
+
 void spartan_link_feed_end(
 	void)
 {
+	if (spartan_link.drawing)
+		spartan_link.drawing_microseconds += platform_shared_clock_microseconds() - spartan_link.drawing_began;
 	halo_view_end();
 	lights_port_keep(FALSE);
 	spartan_link.drawing = FALSE;
@@ -2542,6 +2656,12 @@ unsigned long spartan_link_feeds_drawn(
 	void)
 {
 	return spartan_link_feeds_count;
+}
+
+unsigned long long spartan_link_feeds_microseconds(
+	void)
+{
+	return spartan_link.drawing_microseconds;
 }
 
 boolean spartan_link_drawing(
@@ -2632,8 +2752,19 @@ void spartan_link_draw(
 		spartan_link_room(local_player_index, &render.camera, &room, &line_scale);
 		hud_get_text_color(&color);
 		color.alpha = 1.0f;
-		spartan_link_text(window->line, room.x0, (room.y0 + room.y1) * 0.5f - SPARTAN_LINK_ROW * 0.5f * line_scale,
-			room.x1 - room.x0, 0, 0.8f * line_scale, &color);
+		if (spartan_link.top)
+		{
+			real top;
+
+			spartan_link_top_room(&render.camera, line_scale, &room.x0, &room.x1, &top);
+			spartan_link_text(window->line, room.x0, top, room.x1 - room.x0, 2, 0.8f * line_scale, &color);
+		}
+		else
+		{
+			spartan_link_text(window->line, room.x0,
+				(room.y0 + room.y1) * 0.5f - SPARTAN_LINK_ROW * 0.5f * line_scale, room.x1 - room.x0, 0,
+				0.8f * line_scale, &color);
+		}
 	}
 	if (!spartan_link_shown(local_player_index))
 		return;
@@ -2644,7 +2775,8 @@ void spartan_link_draw(
 	for (index = 0; index < count; index++)
 	{
 		spartan_link_draw_feed(white, local_player_index, index, &rectangles[index], scale);
-		spartan_link_draw_row(white, local_player_index, index, &rectangles[index], scale);
+		if (spartan_link.stats)
+			spartan_link_draw_row(white, local_player_index, index, &rectangles[index], scale);
 		/* (the teammate's reticle, on their feed's picture) */
 		if (halo_view_drawn(SPARTAN_LINK_VIEW(local_player_index, index)))
 		{

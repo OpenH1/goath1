@@ -16,6 +16,8 @@
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/section_0" x="28" y="80"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/op_spartan_link_shown" x="28" y="100"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/op_spartan_link" x="28" y="121"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/op_spartan_link_position" x="28" y="142"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/op_spartan_link_stats" x="28" y="163"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/button_bar" y="414"/>
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items" source="tools/port_settings.py settings_files/_settings_page">
@@ -68,15 +70,51 @@
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/spartan_link_spinner" type="spinner" top="1" width="140" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="SMALL|MEDIUM|LARGE|OFF" setting="display.spartan_link" values="small|medium|large|off" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="4 -6 16 0" footer_bounds="4 140 16 146" wide="20 120" source="tools/port_settings.py settings_files/_settings_page">
 		<on event="created" run="port setting load"/>
 	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/op_spartan_link_position" width="344" height="20" flags="pass_unhandled_to_focused_child" bitmap="main_menu/settings/row" color="#FF2896FF" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/spartan_link_position_label"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/spartan_link_position_spinner" x="188"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/spartan_link_position_seg0" x="188" y="1"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/spartan_link_position_seg1" x="267" y="1"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/spartan_link_position_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/labels" string_index="3" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/spartan_link_position_seg0" type="text" controller="1" width="75" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="BOTTOM" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/spartan_link_position_seg1" type="text" controller="1" width="75" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="TOP" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/spartan_link_position_spinner" type="spinner" top="1" width="140" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="BOTTOM|TOP" setting="display.spartan_link_position" values="bottom|top" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="4 -6 16 0" footer_bounds="4 140 16 146" wide="20 120" source="tools/port_settings.py settings_files/_settings_page">
+		<on event="created" run="port setting load"/>
+		<on event="a" run="port setting segment"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/op_spartan_link_stats" width="344" height="20" flags="pass_unhandled_to_focused_child" bitmap="main_menu/settings/row" color="#FF2896FF" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/spartan_link_stats_label"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/spartan_link_stats_spinner" x="188"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/spartan_link_stats_seg0" x="188" y="1"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/spartan_link_stats_seg1" x="240" y="1"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/spartan_link_stats_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/labels" string_index="4" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/spartan_link_stats_seg0" type="text" controller="1" width="48" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="ON" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/spartan_link_stats_seg1" type="text" controller="1" width="48" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="OFF" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/spartan_link_stats_spinner" type="spinner" top="1" width="140" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="ON|OFF" setting="display.spartan_link_stats" values="true|false" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="4 -6 16 0" footer_bounds="4 140 16 146" wide="20 120" source="tools/port_settings.py settings_files/_settings_page">
+		<on event="created" run="port setting load"/>
+		<on event="a" run="port setting segment"/>
+	</widget>
 	<strings name="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/labels">
 		<string text="SPARTAN LINK"/>
 		<string text="SPARTAN LINK"/>
 		<string text="FEED SIZE"/>
+		<string text="POSITION"/>
+		<string text="TEAMMATE STATS"/>
 	</strings>
 	<strings name="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/help_strings">
 		<string text=""/>
 		<string text=""/>
 		<string text="Your living teammates' views beside the motion tracker, with their names, shields and distances, in co-op and team games. In a game the SPARTAN LINK key (B) or D-pad Down turns it on and off, and it stays as you left it."/>
 		<string text="How large the teammates' views are. Off turns the Spartan link off altogether: its key and D-pad Down do nothing."/>
+		<string text="Where the teammates' views are: Bottom in a row beside the motion tracker, Top along the top of the screen between the HUD's panels."/>
+		<string text="Shows each teammate's name, shield and health under their view. Off shows the views alone."/>
 	</strings>
 </menus>

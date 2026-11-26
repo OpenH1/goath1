@@ -1245,22 +1245,22 @@ void render_frame(
 				continue;
 			}
 #endif
-			/* port: the HUD's Spartan link: a teammate's feed, at most one a
-			frame, into its own image before the window's view
-			(port/linux/game/spartan_link.c) */
-			if (screenshot_index == NULL)
+			/* port: the HUD's Spartan link: its teammates' feeds, each into
+			its own image before the window's view (every frame, or at
+			debug.spartan_link_feed_rate one a frame: port/linux/game/
+			spartan_link.c) */
+			while (screenshot_index == NULL)
 			{
 				struct render_window feed_window = *window;
 
-				if (spartan_link_feed_begin(window->local_player_index, &feed_window.render_camera))
-				{
-					feed_window.rasterizer_camera = feed_window.render_camera;
-					feed_window.local_player_index = NONE;
-					render_link_pass = TRUE;
-					render_player_frame(&feed_window, NULL);
-					render_link_pass = FALSE;
-					spartan_link_feed_end();
-				}
+				if (!spartan_link_feed_begin(window->local_player_index, &feed_window.render_camera))
+					break;
+				feed_window.rasterizer_camera = feed_window.render_camera;
+				feed_window.local_player_index = NONE;
+				render_link_pass = TRUE;
+				render_player_frame(&feed_window, NULL);
+				render_link_pass = FALSE;
+				spartan_link_feed_end();
 			}
 			render_player_frame(
 				window,
