@@ -23,6 +23,8 @@ CONTROLS = {
     "flash-gone-with-effect": (("\t\t\tflash->position = position;\n\t\t\tcontinue;",
                                 "\t\t\tflash->position = position;\n\t\t\tlight_sources_add(&position, entry->radius, "
                                 "&entry->color, 1.0f, FALSE);\n\t\t\tcontinue;"), "flash-fades"),
+    # (#1248: an effect lasting past its flash flashed again each time it was over)
+    "flash-repeats": (("\t\tif (fraction >= 1.0f && flash->seen)\n\t\t\tcontinue;\n", ""), "flash-fades"),
     "flash-restarted": (("\t\t\t\tflash->start = time;\n\t\t\t}\n", "\t\t\t}\n\t\t\tflash->start = time;\n"),
                         "flash-fades"),
 }

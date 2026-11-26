@@ -179,13 +179,17 @@ static struct light_source_effect const light_source_effects[] =
 };
 
 /* a flash under way: its effect (which may be gone), its row, when it
-began (seconds of game time drawn) and where */
+began (seconds of game time drawn), where, and whether its effect is there
+this frame (a flash over whose effect lasts on is kept, spent, so that it
+is not taken for a new one: c20's teleportation, which lasts on after the
+level starts, flashed again each second, #1248) */
 struct light_source_flash
 {
 	long effect_index;
 	short row;
 	real start;
 	real_point3d position;
+	boolean seen;
 };
 
 static struct
@@ -312,6 +316,8 @@ static void light_sources_effects(
 	real_point3d position;
 	short index;
 
+	for (index = 0; index < LIGHT_SOURCES_FLASHES; index++)
+		light_sources.flashes[index].seen = FALSE;
 	while ((effect_index = effects_port_next(effect_index, &definition_index, &object_index, &going, &position)) !=
 		NONE)
 	{
@@ -356,6 +362,7 @@ static void light_sources_effects(
 				flash->row = row;
 				flash->start = time;
 			}
+			flash->seen = TRUE;
 			flash->position = position;
 			continue;
 		}
@@ -363,7 +370,9 @@ static void light_sources_effects(
 			light_sources_add(&position, entry->radius, &entry->color,
 				light_sources_flicker(time, (unsigned long)effect_index), FALSE);
 	}
-	/* (the flashes, as long as they last, their effects gone or not) */
+	/* (the flashes, as long as they last, their effects gone or not; one
+	over is kept, lighting nothing, while its effect lasts: an effect
+	flashes once, as it starts) */
 	for (index = 0; index < LIGHT_SOURCES_FLASHES; index++)
 	{
 		struct light_source_flash *flash = &light_sources.flashes[index];
@@ -374,6 +383,8 @@ static void light_sources_effects(
 			continue;
 		entry = &light_source_effects[flash->row];
 		fraction = (time - flash->start) / entry->time;
+		if (fraction >= 1.0f && flash->seen)
+			continue;
 		if (fraction >= 1.0f || fraction < -1.0f)
 		{
 			flash->effect_index = 0;

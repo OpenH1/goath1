@@ -214,6 +214,16 @@ int main(int argc, char **argv)
 		test_time = duration * 1.01f;
 		count = light_sources_gather(&sources, 8);
 		CHECK(count == 0, "over once its time is: %d", count);
+		/* (an effect that lasts past its flash flashes once, not again
+		each time its flash is over: c20's teleportation, #1248) */
+		reset(1);
+		light_sources_gather(&sources, 8);
+		test_time = duration * 1.01f;
+		count = light_sources_gather(&sources, 8);
+		CHECK(count == 0, "over, its effect lasting: %d", count);
+		test_time = duration * 1.5f;
+		count = light_sources_gather(&sources, 8);
+		CHECK(count == 0, "and not flashing again: %d", count);
 		/* (the same effect seen again is the same flash, not a new one) */
 		reset(1);
 		light_sources_gather(&sources, 8);
