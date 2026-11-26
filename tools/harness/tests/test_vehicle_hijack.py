@@ -22,14 +22,15 @@ NEGATIVE_CONTROLS = {
                        "if (!facts->rule || facts->opence ||"), "enemy"),
     # (the rule not asked)
     "rule-ignored": (("if (!facts->rule || facts->opence ||", "if (facts->opence ||"), "rule-off"),
-    # (the Scorpion taken as a Warthog is)
-    "scorpion": (("\tcase _vehicle_hijack_kind_jeep:\n", "\tcase _vehicle_hijack_kind_tank:\n\tcase _vehicle_hijack_kind_jeep:\n"),
-                 "seat"),
+    # (the Scorpion boarded no more)
+    "scorpion": (("\tcase _vehicle_hijack_kind_tank:\n", ""), "seat"),
+    # (a vehicle coming at the jacker boarded)
+    "oncoming": (("(facts->oncoming && facts->speed > VEHICLE_HIJACK_WALK_SPEED)", "FALSE"), "banshee"),
     # (a Warthog's passenger taken)
     "passenger": (("return facts->part == _vehicle_hijack_seat_driver || facts->part == _vehicle_hijack_seat_gunner;",
                    "return TRUE;"), "seat"),
     # (a flying Banshee taken)
-    "flying-banshee": (("facts->ground_clearance <= VEHICLE_HIJACK_FLYER_GROUND_CLEARANCE", "TRUE"), "banshee"),
+    "flying-banshee": (("facts->speed <= VEHICLE_HIJACK_FLYER_HOVER_SPEED", "TRUE"), "banshee"),
     # (a Legacy host plays it)
     "legacy-host": (("return network_standard_globals.hosting && network_standard_globals.hosting_vehicle_hijack;",
                      "return network_standard_globals.hosting_vehicle_hijack;"), "host"),
