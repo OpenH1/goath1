@@ -51,6 +51,8 @@ static struct sound_datum *checked_sound(long index) {
 #define coop_sound_sync_refreshed(...) ((void)0)
 /* subtitles.c's: no subtitles here */
 #define subtitles_sound_started(...) ((void)0)
+/* sound_manager.c's HALO_SOUND_TRACE: off here */
+#define sound_trace_enabled() FALSE
 static int _sound_cache_sound_request(struct sound_permutation *p,int a,int b,int c) {
  (void)p;(void)a;(void)b;(void)c;return TRUE;
 }

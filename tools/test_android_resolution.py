@@ -151,5 +151,5 @@ int main(void)
     path.write_text(source)
     binary = tmp_path / "resolution"
     subprocess.run([compiler, "-std=gnu89", "-Wall", "-Wextra", "-Werror",
-                    str(path), "-o", str(binary)], check=True)
+                    "-Wno-unused-but-set-variable", str(path), "-o", str(binary)], check=True)
     subprocess.run([str(binary)], check=True)

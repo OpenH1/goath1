@@ -79,6 +79,8 @@ static void mods_memory_give(unsigned long size) { (void)size; }
 static boolean custom_edition_cache_tags_loaded(void) { return FALSE; }
 static boolean custom_edition_loaded_reordered_bitmaps_find(void) { return FALSE; }
 static void cache_file_read_wait(void) { }
+/* (only the built-in HD effects' extra bytes need it; there are none here) */
+static long rasterizer_xbox_bitmap_get_pixel_data_size(struct bitmap_data const *bitmap) { return bitmap->pixels_size; }
 
 /* the map's file (its pages' pixels), and the mods' files */
 static byte map_file[1 << 22];
