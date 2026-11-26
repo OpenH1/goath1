@@ -715,14 +715,16 @@ int ue4_mesh_read(const struct ue4_pak *pak, long asset, struct ue4_mesh *mesh, 
 		goto finished;
 	element = i32_le(uexp + at);
 	count = i32_le(uexp + at + 4);
-	if (element != uv_count * (full_uvs ? 8 : 4) || count != vertex_count ||
-		at + 8 + (size_t)element * (size_t)count > uexp_size)
+	/* (the UVs follow as the prototype reads them: every vertex's channels
+	together, whatever the buffer's element size says) */
+	if (element < 0 || count < 0 || at + 8 + (size_t)element * (size_t)count > uexp_size ||
+		(size_t)element * (size_t)count < (size_t)uv_count * (full_uvs ? 8 : 4) * (size_t)vertex_count)
 	{
 		goto finished;
 	}
 	for (index = 0; index < vertex_count; index++)
 	{
-		const unsigned char *uv = uexp + at + 8 + (size_t)element * (size_t)index;
+		const unsigned char *uv = uexp + at + 8 + (size_t)uv_count * (full_uvs ? 8 : 4) * (size_t)index;
 		int axis;
 
 		for (axis = 0; axis < 2; axis++)
