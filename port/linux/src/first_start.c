@@ -53,6 +53,7 @@ Edition's it adds in the game: game_data_page.c).
 #include "game_data_scan.h"
 #include "map_import.h"
 #include "map_sources.h"
+#include "sdl_platform.h"
 
 #include <SDL3/SDL.h>
 #include <pthread.h>
@@ -841,25 +842,6 @@ static void start_copy(const struct game_data_candidate *source, BOOL installer)
 	items_clear();
 }
 
-struct browse_answer
-{
-	SDL_AtomicInt done;
-	BOOL failed;
-	char path[GAME_DATA_PATH_SIZE];
-};
-
-static void SDLCALL browse_chosen(void *userdata, const char * const *files, int filter)
-{
-	struct browse_answer *answer = userdata;
-
-	(void)filter;
-	if (!files)
-		answer->failed = TRUE;
-	else if (files[0])
-		snprintf(answer->path, sizeof(answer->path), "%s", files[0]);
-	SDL_SetAtomicInt(&answer->done, 1);
-}
-
 /* the system's file dialog (the desktop portal's, or zenity's): an extra,
 whose failure is said here and not offered again */
 static void browse(void)
@@ -869,31 +851,12 @@ static void browse(void)
 		{ "Xbox disc images and Custom Edition's installer", "iso;xiso;exe" },
 		{ "All files", "*" },
 	};
-	static struct browse_answer answer;
-#ifdef HALO_MACOS
-	/* (the open panel is a sheet of the window, which shows in its
-	fullscreen Space too) */
-	BOOL fullscreen = FALSE;
-#else
-	BOOL fullscreen = (SDL_GetWindowFlags(chooser.window) & SDL_WINDOW_FULLSCREEN) != 0;
-#endif
 	struct game_data_candidate picked;
-	char error[600];
-	int folder;
+	char error[600], path[GAME_DATA_PATH_SIZE];
+	int folder, shown;
 
-	memset(&answer, 0, sizeof(answer));
-	/* (a dialog cannot show above a fullscreen window) */
-	if (fullscreen)
-		SDL_SetWindowFullscreen(chooser.window, false);
-	SDL_ShowOpenFileDialog(browse_chosen, &answer, chooser.window, filters, 2, chooser.places.downloads, false);
-	while (!SDL_GetAtomicInt(&answer.done))
-	{
-		SDL_PumpEvents();
-		SDL_Delay(50);
-	}
-	if (fullscreen)
-		SDL_SetWindowFullscreen(chooser.window, true);
-	if (answer.failed)
+	shown = platform_file_dialog(chooser.window, filters, 2, chooser.places.downloads, path, sizeof(path));
+	if (shown < 0)
 	{
 		char message[800];
 
@@ -905,12 +868,12 @@ static void browse(void)
 		show_error("No file picker here", message);
 		return;
 	}
-	if (!answer.path[0])
+	if (!shown)
 		return;
-	platform_log("first start: picked %s", answer.path);
+	platform_log("first start: picked %s", path);
 	/* (the Mac's panel takes a maps folder, or the folder holding one, as
 	well as an image) */
-	folder = game_data_picked_folder(answer.path, &picked, error, sizeof(error));
+	folder = game_data_picked_folder(path, &picked, error, sizeof(error));
 	if (folder < 0)
 	{
 		show_error("That folder holds no Xbox maps", error);
@@ -922,8 +885,8 @@ static void browse(void)
 		return;
 	}
 	{
-		const char *slash = strrchr(answer.path, '/');
-		int kind = map_import_kind(answer.path);
+		const char *slash = strrchr(path, '/');
+		int kind = map_import_kind(path);
 
 		if (kind == _map_import_cd_image)
 		{
@@ -932,9 +895,9 @@ static void browse(void)
 		}
 		memset(&picked, 0, sizeof(picked));
 		picked.kind = _game_data_image;
-		snprintf(picked.path, sizeof(picked.path), "%s", answer.path);
-		snprintf(picked.name, sizeof(picked.name), "%s", slash ? slash + 1 : answer.path);
-		snprintf(picked.place, sizeof(picked.place), "%.*s", slash ? (int)(slash - answer.path) : 0, answer.path);
+		snprintf(picked.path, sizeof(picked.path), "%s", path);
+		snprintf(picked.name, sizeof(picked.name), "%s", slash ? slash + 1 : path);
+		snprintf(picked.place, sizeof(picked.place), "%.*s", slash ? (int)(slash - path) : 0, path);
 		/* (anything else is tried as a disc image, which says what is
 		wrong with it) */
 		start_copy(&picked, kind == _map_import_custom_edition_installer);

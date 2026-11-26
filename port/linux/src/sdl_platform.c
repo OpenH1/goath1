@@ -1099,56 +1099,88 @@ BOOL platform_offer_game_data(const char *destination, const char *missing)
 }
 #endif
 
-/* MCC's pak the player picks (Import from MCC's picker, when no Steam
-library has MCC: mcc_import.c); 0 if they pick none or no dialog can be
-shown (none on Android) */
-struct mcc_pak_choice
+/* the system's open-file dialog, shown and waited for (the desktop portal's
+or zenity's; the Mac's open panel, a sheet of the window). A dialog cannot
+show above a fullscreen window: the window leaves fullscreen while it is up
+and comes back after (not the Mac's, whose sheet shows in its fullscreen
+Space). 1 and the file's path if one was picked, 0 if none, -1 if no dialog
+could be shown */
+struct platform_dialog_answer
 {
 	SDL_AtomicInt done;
+	BOOL failed;
 	char path[1024];
 };
 
 #ifndef HALO_ANDROID
-static void SDLCALL mcc_pak_chosen(void *userdata, const char * const *files, int filter)
+static void SDLCALL platform_dialog_chosen(void *userdata, const char * const *files, int filter)
 {
-	struct mcc_pak_choice *choice = userdata;
+	struct platform_dialog_answer *answer = userdata;
 
 	(void)filter;
 	if (!files)
-		platform_log("mcc import: no file dialog could be shown (%s)", SDL_GetError());
+		answer->failed = TRUE;
 	else if (files[0])
-		snprintf(choice->path, sizeof(choice->path), "%s", files[0]);
-	SDL_SetAtomicInt(&choice->done, 1);
+		snprintf(answer->path, sizeof(answer->path), "%s", files[0]);
+	SDL_SetAtomicInt(&answer->done, 1);
 }
 #endif
 
-int halo_mcc_choose_pak(char *path, int size)
+int platform_file_dialog(SDL_Window *window, const SDL_DialogFileFilter *filters, int filter_count,
+	const char *location, char *path, size_t size)
 {
 #ifdef HALO_ANDROID
+	(void)window;
+	(void)filters;
+	(void)filter_count;
+	(void)location;
 	(void)path;
 	(void)size;
-	return 0;
+	return -1;
 #else
+	static struct platform_dialog_answer answer;
+#ifdef HALO_MACOS
+	BOOL fullscreen = FALSE;
+#else
+	BOOL fullscreen = window && (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
+#endif
+
+	memset(&answer, 0, sizeof(answer));
+	if (fullscreen)
+		SDL_SetWindowFullscreen(window, false);
+	SDL_ShowOpenFileDialog(platform_dialog_chosen, &answer, window, filters, filter_count, location, false);
+	/* (the dialog answers through events, and on some systems another thread) */
+	while (!SDL_GetAtomicInt(&answer.done))
+	{
+		SDL_PumpEvents();
+		SDL_Delay(50);
+	}
+	if (fullscreen)
+		SDL_SetWindowFullscreen(window, true);
+	if (answer.failed)
+		return -1;
+	if (!answer.path[0])
+		return 0;
+	snprintf(path, size, "%s", answer.path);
+	return 1;
+#endif
+}
+
+/* MCC's pak the player picks (Import from MCC's picker, when no Steam
+library has MCC: mcc_import.c); 0 if they pick none or no dialog can be
+shown */
+int halo_mcc_choose_pak(char *path, int size)
+{
 	static const SDL_DialogFileFilter filters[] =
 	{
 		{ "MCC's MCC-WindowsNoEditor.pak", "pak" },
 		{ "All files", "*" },
 	};
-	static struct mcc_pak_choice choice;
+	int picked = platform_file_dialog(platform_window, filters, 2, NULL, path, (size_t)size);
 
-	memset(&choice, 0, sizeof(choice));
-	SDL_ShowOpenFileDialog(mcc_pak_chosen, &choice, NULL, filters, 2, NULL, false);
-	/* (the dialog answers through events, and on some systems another thread) */
-	while (!SDL_GetAtomicInt(&choice.done))
-	{
-		SDL_PumpEvents();
-		SDL_Delay(50);
-	}
-	if (!choice.path[0])
-		return 0;
-	snprintf(path, (size_t)size, "%s", choice.path);
-	return 1;
-#endif
+	if (picked < 0)
+		platform_log("mcc import: no file dialog could be shown (%s)", SDL_GetError());
+	return picked > 0;
 }
 
 int halo_interpolation_enabled(void)
