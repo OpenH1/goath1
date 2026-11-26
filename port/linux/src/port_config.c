@@ -1652,12 +1652,13 @@ static const struct config_setting config_settings[] =
 		"display_scenario_help). false: not shown, the scripts going on as if\n"
 		"they had been and closed; true: shown, as the Xbox and Halo PC did." },
 	{ "campaign.bigger_battles", _config_string, "\"off\"", "HALO_BIGGER_BATTLES", _environment_value, _platform_all,
-		"A campaign of this computer alone (solo or split screen): \"2x\" or\n"
-		"\"3x\" makes each squad of enemies a level places that many times as\n"
-		"large (on Legendary half as many extras); \"off\": the original's.\n"
-		"Read as a level begins; a loaded save keeps the size it was played\n"
-		"at. Network co-op has its own EXTRA ENEMIES. BIGGER BATTLES in\n"
-		"Settings > Online > Gameplay." },
+		"The campaign's battles, solo, split screen and co-op this computer\n"
+		"hosts: \"2x\" or \"3x\" makes each squad of enemies a level places that\n"
+		"many times as large, after co-op's EXTRA ENEMIES grew it (the two\n"
+		"multiply; on Legendary half as many of these extras); \"off\": the\n"
+		"original's. Read as a level begins; a loaded save keeps the size it was\n"
+		"played at. BIGGER BATTLES in Settings > Interface, BATTLE in the co-op\n"
+		"host's lobby." },
 	{ "game.spartan_link", _config_boolean, "true", "HALO_GAME_SPARTAN_LINK", _environment_value, _platform_all,
 		"Hosting a team game: whether its players may show their Spartan link\n"
 		"(display.spartan_link); false, nobody's shows in it. Co-op always\n"

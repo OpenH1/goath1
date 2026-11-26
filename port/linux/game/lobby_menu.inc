@@ -29,8 +29,9 @@ TEAMS, bots.skill and bots.teams: each written as it changes, which the
 host's bots follow, dimmed for a gametype the bots do not play, and BOTS
 for a matchmaking game's, its playlist's), a GOAT H1 game's host's
 HIJACK (game.vehicle_hijack, as Host Controls' row has it) and, in a team
-game, SPARTAN LINK (game.spartan_link: the teammates' feeds), how the game
-is, and the host's
+game, SPARTAN LINK (game.spartan_link: the teammates' feeds), in co-op the
+host's BATTLE (campaign.bigger_battles: BIGGER BATTLES, on top of EXTRA
+ENEMIES; coop_enemies.c), how the game is, and the host's
 GAME SETTINGS (Server Setup, in the lobby's place), HOST CONTROLS and START
 GAME, or a player's WAITING FOR THE HOST.
 
@@ -1898,6 +1899,38 @@ static boolean menu_host_spartan_link_toggle(void)
 	return TRUE;
 }
 
+/* the co-op host's BIGGER BATTLES (the lobby's BATTLE), stepped `step`
+round OFF, 2X and 3X: config.toml's campaign.bigger_battles, which the host
+reads as each level begins (coop_enemies.c). The clients need none of it:
+the host alone places the enemies */
+static char const *const lobby_battle_choices[] = { "off", "2x", "3x" };
+
+static short lobby_battle_choice(void)
+{
+	char const *chosen = config_string("campaign.bigger_battles");
+	short index;
+
+	for (index = 0; index < (short)NUMBEROF(lobby_battle_choices); index++)
+	{
+		if (!strcmp(chosen, lobby_battle_choices[index]))
+			return index;
+	}
+	return 0;
+}
+
+static boolean menu_host_bigger_battles_step(short step)
+{
+	short count = (short)NUMBEROF(lobby_battle_choices);
+	short chosen = (short)((lobby_battle_choice() + step + count) % count);
+
+	if (!config_write("campaign.bigger_battles", lobby_battle_choices[chosen]))
+	{
+		platform_log("menus: could not write campaign.bigger_battles to config.toml");
+		return FALSE;
+	}
+	return TRUE;
+}
+
 /* text (UTF-16) as a binding's value, UTF-8: nonzero if it has any */
 static int lobby_screen_words(wchar_t const *text, char *value, unsigned long size)
 {
@@ -2053,6 +2086,12 @@ int pc_menu_lobby_value(char const *name, char *value, unsigned long size)
 		usnprintf(text, NUMBEROF(text) - 1, network_standard_hosting_spartan_link() ? L"ON" : L"OFF");
 	else if (!strcmp(name, "lobby.spartan_link.shown"))
 		yes = controls->start && model->standard && model->teams;
+	/* (the co-op host's BIGGER BATTLES) */
+	else if (!strcmp(name, "lobby.battle"))
+		usnprintf(text, NUMBEROF(text) - 1, lobby_battle_choice() == 2 ? L"3X" :
+			lobby_battle_choice() == 1 ? L"2X" : L"OFF");
+	else if (!strcmp(name, "lobby.battle.shown"))
+		yes = controls->start && model->game && !model->game->variant.game_engine_index;
 	/* (how the game is; START GAME's words, the countdown; a player's
 	waiting) */
 	else if (!strcmp(name, "lobby.status"))
@@ -2130,6 +2169,9 @@ int pc_menu_lobby_action(struct widget_instance *widget, struct event_record *ev
 		return model->controls.start && model->standard && menu_host_vehicle_hijack_toggle();
 	if (!strncmp(name, "lobby spartan link ", 19))
 		return model->controls.start && model->standard && model->teams && menu_host_spartan_link_toggle();
+	if (!strncmp(name, "lobby battle ", 13))
+		return model->controls.start && model->game && !model->game->variant.game_engine_index &&
+			menu_host_bigger_battles_step(step);
 	if (!model->controls.bots || model->controls.bots_locked)
 		return FALSE;
 	if (!strncmp(name, "lobby bots ", 11))

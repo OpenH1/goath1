@@ -54,14 +54,17 @@ fight as they do. A dropship gone first takes them with it.
 
 Only the host runs the AI, so all but the idle animations is the host's.
 
-BIGGER BATTLES (campaign.bigger_battles: off, 2x or 3x) gives a campaign
-of this computer alone (solo or split screen) the same extra enemies, as
-STATIC MULTIPLIER would: each squad of the players' enemies two or three
-times as large. On Legendary, whose squads are already their largest
-(encounters.c's max_count, often twice Normal's), the extras are half as
-many, rounded up: 2x makes Legendary's squads 1.5 times their size, 3x
-twice it, about as large as Heroic's at the same choice, for one player
-rather than co-op's several. A network co-op host keeps EXTRA ENEMIES.
+BIGGER BATTLES (campaign.bigger_battles: off, 2x or 3x; Settings and a
+co-op host's lobby) multiplies the battles' size on top of EXTRA ENEMIES:
+a squad is first grown for the players as EXTRA ENEMIES grows it (none in
+a campaign of this computer alone, solo or split screen, which has no
+EXTRA ENEMIES), then the whole of it is two or three times as large. Two
+co-op players at PER PLAYER 50% and 2x: a squad of 4 is 6, then 12. On
+Legendary, whose squads are already their largest (encounters.c's
+max_count, often twice Normal's), BIGGER BATTLES' share of the extras is
+half, rounded up: 2x makes Legendary's squads 1.5 times what EXTRA ENEMIES
+makes them, 3x twice, about as large as Heroic's at the same choice. Off,
+the game is as it was (a co-op host's EXTRA ENEMIES alone).
 
 What the extra enemies keep outside the game state (those waiting for
 their ground, a dropship's riders kept, which actors are extras) follows
@@ -234,6 +237,9 @@ static struct
 	short mode;
 	short percent;
 	short multiplier;
+	/* BIGGER BATTLES, as the game began with it (or as its saved game
+	was): times the squads' size, 1 for off */
+	short bigger;
 	struct coop_riding_vehicle vehicles[MAXIMUM_RIDING_VEHICLES];
 	short vehicle_count;
 	struct coop_kept_rider riders[MAXIMUM_KEPT_RIDERS];
@@ -320,7 +326,8 @@ chosen, or a local campaign's with BIGGER BATTLES) */
 static boolean coop_enemies_on(
 	void)
 {
-	return coop_enemies.mode != _coop_enemies_none && (coop_enemies_host() || coop_enemies_local_campaign());
+	return (coop_enemies.mode != _coop_enemies_none || coop_enemies.bigger > 1) &&
+		(coop_enemies_host() || coop_enemies_local_campaign());
 }
 
 /* BIGGER BATTLES' choice, as times the squads' size: 1 for off */
@@ -330,15 +337,6 @@ static short coop_enemies_bigger_battles(
 	char const *choice = config_string("campaign.bigger_battles");
 
 	return !strcmp(choice, "3x") ? 3 : !strcmp(choice, "2x") ? 2 : 1;
-}
-
-/* a local campaign's extra enemies as BIGGER BATTLES' `multiplier` has
-them (1: none) */
-static void coop_enemies_set_bigger_battles(
-	short multiplier)
-{
-	coop_enemies.mode = multiplier > 1 ? _coop_enemies_multiplier : _coop_enemies_none;
-	coop_enemies.multiplier = multiplier > 1 ? multiplier : COOP_ENEMIES_MINIMUM_MULTIPLIER;
 }
 
 /* what is kept of the extra enemies outside the game state forgotten, as
@@ -797,7 +795,8 @@ static boolean coop_enemies_growing(
 	void)
 {
 	return coop_enemies_on() &&
-		(coop_enemies.mode == _coop_enemies_multiplier || coop_enemies_player_count() > 1);
+		(coop_enemies.bigger > 1 || coop_enemies.mode == _coop_enemies_multiplier ||
+			coop_enemies_player_count() > 1);
 }
 
 /* how far an extra enemy's facing turns from its starting location's: from
@@ -1053,9 +1052,10 @@ void coop_enemies_new_game(
 		COOP_ENEMIES_MINIMUM_MULTIPLIER, COOP_ENEMIES_MAXIMUM_MULTIPLIER);
 	coop_enemies.mode = !strcmp(mode, "per_player") ? _coop_enemies_per_player :
 		!strcmp(mode, "multiplier") ? _coop_enemies_multiplier : _coop_enemies_none;
-	/* (a local campaign's are BIGGER BATTLES', as its level begins) */
+	/* (a local campaign has no EXTRA ENEMIES: BIGGER BATTLES' alone) */
 	if (coop_enemies_local_campaign())
-		coop_enemies_set_bigger_battles(coop_enemies_bigger_battles());
+		coop_enemies.mode = _coop_enemies_none;
+	coop_enemies.bigger = coop_enemies_bigger_battles();
 	csmemset(coop_enemies.extra_actor_indices, 0xFF, sizeof(coop_enemies.extra_actor_indices));
 	coop_enemies_saved_header.valid = FALSE;
 	coop_enemies_saved_header.from_saved_game = FALSE;
@@ -1097,6 +1097,7 @@ void coop_enemies_after_load(
 		short mode = coop_enemies.mode;
 		short percent = coop_enemies.percent;
 		short multiplier = coop_enemies.multiplier;
+		short bigger = coop_enemies.bigger;
 
 		csmemcpy(&coop_enemies, coop_enemies_saved.bytes, sizeof(coop_enemies));
 		/* (the game's own choices are the game's, not the copy's; a saved
@@ -1104,6 +1105,7 @@ void coop_enemies_after_load(
 		coop_enemies.mode = mode;
 		coop_enemies.percent = percent;
 		coop_enemies.multiplier = multiplier;
+		coop_enemies.bigger = bigger;
 		coop_spread.encounter_index = NONE;
 	}
 	else
@@ -1113,7 +1115,7 @@ void coop_enemies_after_load(
 	/* (a solo saved game's BIGGER BATTLES, or the original's for one saved
 	without it) */
 	if (coop_enemies_saved_header.from_saved_game && coop_enemies_local_campaign())
-		coop_enemies_set_bigger_battles(coop_enemies_saved_header.saved_game_multiplier);
+		coop_enemies.bigger = coop_enemies_saved_header.saved_game_multiplier;
 	coop_enemies_saved_header.from_saved_game = FALSE;
 	if (coop_enemies_on())
 	{
@@ -1123,7 +1125,7 @@ void coop_enemies_after_load(
 		for (index = 0; index < MAXIMUM_ACTORS; index++)
 			extras += coop_enemies.extra_actor_indices[index] != NONE;
 		error(_error_silent, "extra enemies: game state loaded at tick %ld (%dx): %d waiting, %d riders kept, "
-			"%d extras known", game_time_get(), coop_enemies.multiplier, coop_enemies.waiting_count,
+			"%d extras known", game_time_get(), coop_enemies.bigger, coop_enemies.waiting_count,
 			coop_enemies.rider_count, extras);
 	}
 }
@@ -1150,8 +1152,7 @@ long coop_enemies_saved_game(
 	if (size < needed)
 		return 0;
 	header->mark = COOP_ENEMIES_SAVED_GAME_MARK;
-	header->multiplier = coop_enemies_on() && coop_enemies.mode == _coop_enemies_multiplier ?
-		coop_enemies.multiplier : 1;
+	header->multiplier = coop_enemies.bigger;
 	header->tick = game_time_get();
 	header->size = (long)sizeof(coop_enemies);
 	csmemcpy(header + 1, &coop_enemies, sizeof(coop_enemies));
@@ -1191,34 +1192,46 @@ boolean coop_enemies_actor_is_extra(
 		coop_enemies.extra_actor_indices[DATUM_INDEX_TO_ABSOLUTE_INDEX(actor_index)] == actor_index;
 }
 
+/* how many enemies more EXTRA ENEMIES alone gives a squad of `count` */
+static long coop_enemies_coop_extra(
+	short count)
+{
+	long extra;
+	short players;
+
+	switch (coop_enemies.mode)
+	{
+	case _coop_enemies_multiplier:
+		return (long)count * (coop_enemies.multiplier - 1);
+	case _coop_enemies_per_player:
+		players = coop_enemies_player_count();
+		if (players <= 1)
+			return 0;
+		extra = ((long)count * coop_enemies.percent * (players - 1) + 50) / 100;
+		return MIN(extra, (long)count * (COOP_ENEMIES_MAXIMUM_GROWTH - 1));
+	}
+	return 0;
+}
+
 short coop_enemies_extra_count(
 	long encounter_index,
 	short count)
 {
 	struct encounter_datum *encounter;
-	long extra, room;
-	short players;
+	long extra, bigger, room;
 
 	if (count <= 0 || !coop_enemies_on())
 		return 0;
 	encounter = encounter_get(encounter_index);
 	if (!game_team_is_enemy(_game_team_player, encounter->team_index))
 		return 0;
-	if (coop_enemies.mode == _coop_enemies_multiplier)
-	{
-		extra = (long)count * (coop_enemies.multiplier - 1);
-		/* (BIGGER BATTLES on Legendary: half as many, rounded up) */
-		if (!coop_enemies_host() && game_difficulty_level_get() == _game_difficulty_level_impossible)
-			extra = (extra + 1) / 2;
-	}
-	else
-	{
-		players = coop_enemies_player_count();
-		if (players <= 1)
-			return 0;
-		extra = ((long)count * coop_enemies.percent * (players - 1) + 50) / 100;
-		extra = MIN(extra, (long)count * (COOP_ENEMIES_MAXIMUM_GROWTH - 1));
-	}
+	extra = coop_enemies_coop_extra(count);
+	/* (BIGGER BATTLES: the squad EXTRA ENEMIES made, that many times as
+	large; on Legendary half as many of those, rounded up) */
+	bigger = (count + extra) * (coop_enemies.bigger - 1);
+	if (bigger > 0 && game_difficulty_level_get() == _game_difficulty_level_impossible)
+		bigger = (bigger + 1) / 2;
+	extra += bigger;
 	/* (the extra enemies waiting take room too) */
 	room = MAXIMUM_ACTORS - COOP_ENEMIES_LEVEL_ACTORS - actor_data->actual_count - coop_enemies.waiting_count;
 	return (short)PIN(extra, 0, MAX(room, 0));
@@ -1228,17 +1241,23 @@ short coop_enemies_scale(
 	void)
 {
 	long growth;
+	short scale = 1;
 
 	if (!coop_enemies_growing())
 		return 1;
 	if (coop_enemies.mode == _coop_enemies_multiplier)
-		return MAX(coop_enemies.multiplier, 1);
-	/* (as coop_enemies_extra_count grows a squad, in hundredths of it) */
-	growth = (long)coop_enemies.percent * (coop_enemies_player_count() - 1);
-	growth = MIN(growth, 100L * (COOP_ENEMIES_MAXIMUM_GROWTH - 1));
-	if (growth <= 0)
-		return 1;
-	return (short)(1 + (growth + 99) / 100);
+		scale = MAX(coop_enemies.multiplier, 1);
+	else if (coop_enemies.mode == _coop_enemies_per_player)
+	{
+		/* (as coop_enemies_extra_count grows a squad, in hundredths of it) */
+		growth = (long)coop_enemies.percent * (coop_enemies_player_count() - 1);
+		growth = MIN(growth, 100L * (COOP_ENEMIES_MAXIMUM_GROWTH - 1));
+		if (growth > 0)
+			scale = (short)(1 + (growth + 99) / 100);
+	}
+	/* (and BIGGER BATTLES' times on top; no more than the most EXTRA
+	ENEMIES makes, actors.c's timeslices' most) */
+	return (short)MIN((long)scale * MAX(coop_enemies.bigger, 1), (long)COOP_ENEMIES_MAXIMUM_MULTIPLIER);
 }
 
 boolean coop_enemies_extra_location(
