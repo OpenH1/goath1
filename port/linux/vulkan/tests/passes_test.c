@@ -164,7 +164,7 @@ static VkRenderingAttachmentInfo began_color, began_depth, began_stencil;
 static VkClearAttachment cleared[2];
 static VkClearRect cleared_rect;
 static VkImageViewCreateInfo last_view;
-static VkDescriptorImageInfo written_images[4];
+static VkDescriptorImageInfo written_images[XGPU_VULKAN_TEXTURES];
 static VkFormatFeatureFlags depth24_features, depth32_features, stencil8_features;
 static unsigned int capability_errors;
 static unsigned int ended_queries;
@@ -275,7 +275,7 @@ static void VKAPI_CALL fake_update(VkDevice device, uint32_t count, const VkWrit
 	uint32_t index;
 
 	(void)device; (void)copies; (void)copy;
-	assert(count == 4);
+	assert(count == XGPU_VULKAN_TEXTURES);
 	set_updates++;
 	for (index = 0; index < count; index++)
 	{
@@ -830,7 +830,7 @@ the slot's pools is written, kept for nothing. */
 static void texture_sets_test(void)
 {
 	static struct xgpu_vulkan_image first, second;
-	struct xgpu_vulkan_texture a[4], b[4];
+	struct xgpu_vulkan_texture a[XGPU_VULKAN_TEXTURES], b[XGPU_VULKAN_TEXTURES];
 	VkDescriptorPool pools[2] = { (VkDescriptorPool)(uintptr_t)7, (VkDescriptorPool)(uintptr_t)8 };
 	VkDescriptorSet set_a, set_b, set;
 	struct slot *slot;
