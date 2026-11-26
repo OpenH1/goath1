@@ -10,9 +10,17 @@ controller emulation (see sdl_platform.c).
 
 #include <SDL3/SDL_scancode.h>
 #include <SDL3/SDL_audio.h>
+#include <SDL3/SDL_dialog.h>
+#include <SDL3/SDL_video.h>
 #include <stddef.h>
 
 #define PLATFORM_MOUSE_BUTTON_COUNT 8
+
+/* the system's open-file dialog for window, shown and waited for, the
+window out of fullscreen meanwhile (sdl_platform.c): 1 and the file's path
+if one was picked, 0 if none, -1 if no dialog could be shown */
+int platform_file_dialog(SDL_Window *window, const SDL_DialogFileFilter *filters, int filter_count,
+	const char *location, char *path, size_t size);
 
 struct platform_input_state
 {
