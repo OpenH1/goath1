@@ -25,11 +25,17 @@ offset and value against the file and against what the game reads), or
 that does not fit what the map's tags ask of the tag it replaces, is said
 and left out, and the map's tag played. mods_enable false gives every tag
 back until mods_enable true, or until the map changes.
+
+The built-in HD effects (display.hd_effects: port/linux/src/hd_effects.h)
+are bitmap tag files played the same way (mod_bitmaps.c), under the mods,
+with them or without: mods_enable false leaves them, the setting alone turns
+them off (mods_builtins_update, each frame).
 */
 
 /* ---------- headers */
 
 #include "cseries.h"
+#include "cache/cache_files.h"
 #include "cache/texture_cache.h"
 #include "main/console.h"
 #include "mods.h"
@@ -66,6 +72,10 @@ static struct
 {
 	boolean map_loaded;
 	boolean enabled;
+	/* the built-in HD effects played on the map (not the menus' pictures'),
+	and hd_effects_changes when they last were */
+	boolean builtins;
+	unsigned long builtin_changes;
 	boolean loose_sounds_enabled;
 	char map_name[64];
 	unsigned long kept_bytes;
@@ -261,6 +271,34 @@ long mods_bitmap_count(
 	return mods_globals.bitmap_count + mod_bitmaps_waiting_count();
 }
 
+boolean mods_builtins_played(
+	void)
+{
+	return mods_globals.map_loaded && mods_globals.builtins && (hd_effects_changes() & 1);
+}
+
+void mods_builtins_update(
+	void)
+{
+	unsigned long changes;
+
+	if (!mods_globals.map_loaded || !mods_globals.builtins)
+		return;
+	changes = hd_effects_changes();
+	if (changes == mods_globals.builtin_changes)
+		return;
+	/* (turned on in a map whose effects were never made: made now) */
+	if ((changes & 1) && hd_effects_wanted())
+	{
+		hd_effects_build_now(cache_files_map_directory());
+		changes = hd_effects_changes();
+	}
+	mods_globals.builtin_changes = changes;
+	xgpu_backend_consume();
+	mods_globals.bitmap_count = mod_bitmaps_update(!mods_globals.enabled || !port_mods_played(), FALSE);
+	texture_cache_size_for_map();
+}
+
 void mods_structure_bsp_read(
 	short structure_bsp_index,
 	struct structure_bsp const *structure_bsp)
@@ -304,6 +342,12 @@ void mods_tags_loaded(
 	with one would be cached as the map's own; as mods_enable false, until
 	the map changes) */
 	mods_globals.enabled = !menu_pictures_stock_maps();
+	mods_globals.builtins = mods_globals.enabled;
+	/* (the HD effects, made as the game starts, made now if this map came
+	first: a run that starts in a map, hd_effects.h) */
+	if (mods_globals.builtins && hd_effects_wanted())
+		hd_effects_build_now(cache_files_map_directory());
+	mods_globals.builtin_changes = hd_effects_changes();
 	mods_globals.loose_sounds_enabled = mods_globals.enabled && config_boolean("audio.loose_sounds") != 0;
 	csstrncpy(mods_globals.map_name, map_name ? map_name : "", sizeof(mods_globals.map_name) - 1);
 	mods_globals.map_name[sizeof(mods_globals.map_name) - 1] = 0;
@@ -315,6 +359,11 @@ void mods_tags_loaded(
 	if (mods_globals.enabled && (port_mods_played() || mods_globals.loose_sounds_enabled))
 	{
 		mods_update(FALSE, TRUE);
+	}
+	/* (the built-in HD effects, with no mods played) */
+	else if (mods_globals.builtins && (mods_globals.builtin_changes & 1))
+	{
+		mods_globals.bitmap_count = mod_bitmaps_update(TRUE, TRUE);
 	}
 	/* (the map's textures and the mods' bitmaps known, the texture cache
 	takes the map's size: xbox_texture_cache.c) */
@@ -336,6 +385,7 @@ static void mods_let_go(
 	mod_strings_tags_unloaded();
 	mods_globals.map_loaded = FALSE;
 	mods_globals.enabled = FALSE;
+	mods_globals.builtins = FALSE;
 	mods_globals.loose_sounds_enabled = FALSE;
 	mods_globals.map_name[0] = 0;
 	mods_globals.kept_bytes = 0;

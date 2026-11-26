@@ -1,0 +1,14 @@
+{
+  "effects": [
+    {
+      "name": "flash_h_ar_fp",
+      "tag": "effects\\particles\\flash\\bitmaps\\flash h ar fp",
+      "recipe": "flash",
+      "scale": 4,
+      "smallest": 64,
+      "crc": 750334310,
+      "maps": ["putput", "wizard", "carousel", "chillout", "longest", "beavercreek", "hangemhigh", "prisoner",
+               "bloodgulch", "boardingaction", "ratrace", "sidewinder", "damnation", "c20", "d20", "a30", "b30"]
+    }
+  ]
+}

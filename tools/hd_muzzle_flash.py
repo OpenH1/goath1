@@ -21,12 +21,18 @@ scaled back to the map's light (its summed color) so that it reads as the
 same flash. The alpha is each sprite's box again, with soft edges. The mod's
 mipmaps go down to the map's smallest (64 x 64).
 
+The game makes the same redraw itself from the player's maps, built in and
+on by default (display.hd_effects: port/linux/src/hd_effects.c, the same
+math in C; port/assets/effects/effects.json lists it). This script is its
+reference, and makes it as a mod to compare with.
+
 Needs NumPy, SciPy and Pillow.
 """
 
 import argparse
 import struct
 import sys
+import zlib
 from pathlib import Path
 
 import numpy as np
@@ -205,11 +211,21 @@ def tag_file(xbox: hud_assets.XboxMap, pages: list) -> bytes:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--map", type=Path, default=Path("assets/maps/bloodgulch.map"))
-    parser.add_argument("--out", type=Path, required=True, help="the mod's folder (its mod.toml and tags)")
+    parser.add_argument("--out", type=Path, help="the mod's folder (its mod.toml and tags)")
     parser.add_argument("--pngs", type=Path, help="also write each page, the map's and the redraw, as PNGs here")
+    parser.add_argument("--crc", action="store_true",
+                        help="print the CRC-32 of the map's bitmap's pixels (port/assets/effects/effects.json) and stop")
     arguments = parser.parse_args()
 
     xbox = hud_assets.XboxMap(arguments.map)
+    if arguments.crc:
+        crc = 0
+        for bitmap in xbox.bitmap_group(NAME)["bitmaps"]:
+            crc = zlib.crc32(bitmap["pixels"], crc)
+        print(crc)
+        return
+    if not arguments.out:
+        parser.error("--out is needed")
     pages = []
     for index, bitmap in enumerate(xbox.bitmap_group(NAME)["bitmaps"]):
         color, alpha = decode(bitmap)

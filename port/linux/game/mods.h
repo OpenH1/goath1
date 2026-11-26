@@ -54,6 +54,13 @@ char const *port_mods_folder(long index);
 int port_mods_describe(long index, char *text, unsigned long size, char const *map_name);
 int port_mods_report(char *text, unsigned long size, char const *map_name, int most);
 
+/* ---------- prototypes/HD_EFFECTS.C (the platform layer's: hd_effects.h) */
+
+int hd_effects_wanted(void);
+void hd_effects_build_now(const char *maps_folder);
+unsigned long hd_effects_changes(void);
+int hd_effects_bitmap_file(const char *tag, char *path, unsigned long size, unsigned int *stock_crc);
+
 /* ---------- prototypes/MODS.C */
 
 /* the game's (cache_files.c, scenario_tags_load and scenario_tags_unload) */
@@ -104,6 +111,12 @@ char const *mods_map_name(void);
 boolean mods_map_loaded(void);
 /* how many of the map's bitmaps the mods play (xbox_texture_cache.c) */
 long mods_bitmap_count(void);
+/* whether the built-in HD effects are played on the map loaded (not on
+the menus' pictures' maps: mod_bitmaps.c) */
+boolean mods_builtins_played(void);
+/* (main.c, each frame) the built-in HD effects played again when the
+setting changed or they were made */
+void mods_builtins_update(void);
 /* whether the mods are played on the map loaded (not given back by
 mods_enable false, nor left off its menu pictures), and how many of its
 string lists, bitmaps, sounds and models are theirs (a Save Report's:
@@ -129,8 +142,13 @@ boolean mod_sounds_replaced(long tag_index);
 
 /* ---------- prototypes/MOD_BITMAPS.C */
 
+/* (remove_all: none of the mods' files; the built-in HD effects as
+mods_builtins_played says) */
 long mod_bitmaps_update(boolean remove_all, boolean at_load);
 void mod_bitmaps_tags_unloaded(void);
+/* the bytes the built-in HD effects played take more than the map's
+bitmaps they are drawn for (texture_cache_size_for_map) */
+unsigned long mod_bitmaps_builtin_extra_bytes(void);
 /* (texture_cache_start_loading_bitmap) whether a bitmap is a mod's, its
 pixels read at once into buffer and made the hardware's */
 boolean mod_bitmaps_read(struct bitmap_data *bitmap, void *buffer);

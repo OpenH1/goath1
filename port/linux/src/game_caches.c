@@ -12,6 +12,7 @@ before), at the cost of that start's time:
   which the first start unpacks again (map_unpack.c, map_cache_prefill.c);
 - the maps' prepared draws: z:\prepared (render_prepared.c);
 - the menus' pictures: the data folder's menu_pictures (menu_pictures.c);
+- the HD effects: the data folder's hd_effects (hd_effects.c);
 - the world's volumes for the ambient occlusion: the data folder's
   world_sdf (world_sdf.c);
 - the host's: the GPU's pipelines and the ASTC textures (host_caches,
@@ -136,6 +137,8 @@ static unsigned long long game_caches_own(int clear)
 	if (folder[0])
 		total += game_caches_folder(folder, 0, clear);
 	snprintf(folder, sizeof(folder), "%s/menu_pictures", platform_data_root());
+	total += game_caches_folder(folder, 0, clear);
+	snprintf(folder, sizeof(folder), "%s/hd_effects", platform_data_root());
 	total += game_caches_folder(folder, 0, clear);
 	snprintf(folder, sizeof(folder), "%s/world_sdf", platform_data_root());
 	total += game_caches_folder(folder, 0, clear);

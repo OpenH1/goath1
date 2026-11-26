@@ -416,11 +416,21 @@ void texture_cache_size_for_map(
 	void)
 {
 	extern long mods_bitmap_count(void); /* port/linux/game/mods.c */
+	extern unsigned long mod_bitmaps_builtin_extra_bytes(void); /* port/linux/game/mod_bitmaps.c */
 	long page_count = texture_cache_map_page_count(
 		custom_edition_cache_tags_loaded(),
 		mods_bitmap_count() > 0,
 		texture_cache_memory_bytes());
 
+	/* port: and the built-in HD effects' larger textures' bytes (11 MB for
+	the Assault Rifle's flash), not a mods' map's share: the builds whose
+	Xbox maps' cache is the Xbox's grow by that alone */
+	page_count += (long)((mod_bitmaps_builtin_extra_bytes() + XBOX_TEXTURE_CACHE_PAGE_SIZE - 1) /
+		XBOX_TEXTURE_CACHE_PAGE_SIZE);
+	if (page_count > XBOX_TEXTURE_CACHE_PAGE_COUNT)
+	{
+		page_count = XBOX_TEXTURE_CACHE_PAGE_COUNT;
+	}
 	if (page_count == texture_cache_map_pages)
 	{
 		return;

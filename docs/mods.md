@@ -228,6 +228,9 @@ plays), and `debug.txt` and the console say why.
   map's redrawn so (Halo PC's HUD bitmaps lay their sprites out to other
   sizes) is left out. The HUD's digits can be the map's size or twice it.
 - The menus draw a bitmap in their widgets' bounds, whatever its size.
+- The game's own HD effects (`display.hd_effects`: the Assault Rifle's muzzle
+  flash, redrawn from your maps) are drawn the same way, under every mod: a
+  mod's bitmap of the same name is drawn instead of the game's redraw.
 - A lightmap (a structure BSP's bitmap, its usage *light map*) is drawn
   only on the BSP layout it was baked for: each of the BSP's lightmaps
   lays its surfaces' corners out at coordinates in a page, and another
