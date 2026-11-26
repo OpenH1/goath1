@@ -20,11 +20,11 @@ struct bitmap_data;
 #define PLAYER_SETTINGS_SLOT(local_player_index) ((local_player_index) < 0 ? 0 : (local_player_index) & 3)
 static unsigned long change_count = 1;
 static boolean setting[PLAYER_SETTINGS_SLOTS];
-static int setting_reads;
+static int setting_reads __attribute__((unused)); /* (newer clangs warn of a global set and never read) */
 #define config_changes() change_count
 #define config_player_boolean(local_player_index, name) (setting_reads++, setting[local_player_index])
 /* (a network game's host's rule: network_standard.c's) */
-static boolean host_allows = TRUE;
+static boolean host_allows __attribute__((unused)) = TRUE;
 #define network_standard_headshot_indicator_allowed() host_allows
 
 /* the world: one weapon of each definition, one target, its collision model */
@@ -58,7 +58,7 @@ static struct object_datum target_object = { 0 };
 static struct object_definition target_definition = { { { 0 } } };
 #define player_control_get_target_object_index(local_player_index) target_now
 #define player_control_get_unit_index(local_player_index) unit
-static real autoaim_level = 1.0f;
+static real autoaim_level __attribute__((unused)) = 1.0f;
 #define player_control_get_autoaim_level(local_player_index) autoaim_level
 #define object_get(object_index) ((void)(object_index), &target_object)
 #define object_definition_get(definition_index) ((void)(definition_index), &target_definition)
@@ -147,7 +147,7 @@ static void bitmap_delete(struct bitmap_data *bitmap)
 }
 /* hud_hires.c's: the high-res HUD on, its textures' variants (an asset each,
 or none), and the placeholders registered for them */
-static boolean hires_on = TRUE;
+static boolean hires_on __attribute__((unused)) = TRUE;
 #define hud_hires_enabled() hires_on
 static struct bitmap_data map;
 static long variant_assets[3] = { NONE, 10, 20 }; /* none, without the dot, with it */
