@@ -732,6 +732,47 @@ void rasterizer_lights_reset_for_new_map(
 	return;
 }
 
+/* port: how bright a lens flare draws at a light's scale (its reflections'
+brightness between their bounds by the scale, as rasterizer_lens_flares_draw
+has it), of the brightest it draws at any scale: 0 for a flare that is out
+there (an empty Ghost's), 1 for one as bright at every scale (a plasma
+rifle's) or of no known brightness. The enhanced dynamic lights light a
+lens-flare-only light as brightly as its flare draws (object_lights.c) */
+real rasterizer_lens_flare_port_brightness(
+	long lens_flare_index,
+	real light_scale)
+{
+	struct lens_flare_definition *definition;
+	real brightness = 0.0f;
+	real brightest = 0.0f;
+	long reflection_index;
+
+	if (lens_flare_index == NONE)
+		return 1.0f;
+	definition = lens_flare_definition_get(lens_flare_index);
+	light_scale = PIN(light_scale, 0.0f, 1.0f);
+	for (reflection_index = 0; reflection_index < definition->reflections.count; reflection_index++)
+	{
+		struct lens_flare_reflection const *reflection = TAG_BLOCK_GET_ELEMENT(
+			&definition->reflections,
+			reflection_index,
+			struct lens_flare_reflection);
+		real lower = reflection->brightness_lower_bounds;
+		real upper = reflection->brightness_upper_bounds;
+		real drawn = lower + (upper - lower) * light_scale;
+
+		if (drawn > brightness)
+			brightness = drawn;
+		if (lower > brightest)
+			brightest = lower;
+		if (upper > brightest)
+			brightest = upper;
+	}
+	if (!(brightest > 0.0f))
+		return 1.0f;
+	return PIN(brightness / brightest, 0.0f, 1.0f);
+}
+
 void rasterizer_lens_flare_submit(
 	struct rasterizer_lens_flare_submit_parameters const *parameters)
 {

@@ -47,6 +47,10 @@ void rasterizer_lens_flares_port_truncate(
 	long count);
 void rasterizer_lens_flares_port_enumerate(
 	boolean submit);
+/* port: (object_lights.c, the enhanced dynamic lights) */
+real rasterizer_lens_flare_port_brightness(
+	long lens_flare_index,
+	real light_scale);
 void rasterizer_sun_glow_draw(
 	struct rasterizer_lens_flare_submit_parameters const *flare);
 

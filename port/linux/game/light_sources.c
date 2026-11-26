@@ -48,6 +48,7 @@ the game simulates, nothing sent between machines.
 
 /* port/linux/game/dynamic_lights.c */
 boolean dynamic_lights_first_person(long weapon_index, real_point3d *position);
+real dynamic_lights_share(short count);
 
 enum
 {
@@ -428,16 +429,18 @@ static void light_sources_objects(
 				continue;
 			if (entry->marker)
 			{
-				struct object_marker markers[2];
+				struct object_marker markers[MAXIMUM_LENS_FLARES_PER_LIGHT];
 				short count = object_get_marker_by_name(iterator.index, entry->marker, markers, NUMBEROF(markers));
 				short index;
 
-				/* (a light at each, its strength shared: a pair of
-				thrusters as bright as one) */
+				/* (a light at each, as many as a light's flares are drawn
+				on, its strength shared in linear light as the game's
+				lights' over their markers: a pair of thrusters as bright
+				as one; the Ghost's three running lights all lit) */
 				for (index = 0; index < count; index++)
 				{
 					light_sources_add(&markers[index].matrix.position, entry->radius, &entry->color,
-						strength / (real)count, FALSE);
+						strength * dynamic_lights_share(count), FALSE);
 				}
 				continue;
 			}
