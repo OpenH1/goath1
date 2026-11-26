@@ -2094,7 +2094,9 @@ ends, before its resolve, a tile function reads each pixel's samples in
 tile memory, makes each linear, and writes their mean, encoded again, to
 all of them (xgpu_hdr.c's hdr_linear and hdr_encoded, as the Vulkan
 backend's RESOLVE_LIGHT, tools/vulkan_post_shaders.py): the resolve, of
-equal samples, is that mean, and memoryless samples stay so. Where the GPU
+equal samples, is that mean, and memoryless samples stay so. A pixel whose
+samples are alike (inside a surface) is its own mean already: left
+unwritten and unconverted, as the Vulkan backend's. Where the GPU
 has no tile shaders (before Apple's A11; Intel's and AMD's Macs), the
 resolve averages the codes as before. */
 static const char resolve_light_source[] =
@@ -2122,9 +2124,15 @@ static const char resolve_light_source[] =
 	"\tushort2 at [[thread_position_in_threadgroup]])\n"
 	"{\n"
 	"\tushort samples = max(block.get_num_samples(), (ushort)1);\n"
+	"\tfloat4 first = block.read(at, 0, imageblock_data_rate::sample).color;\n"
 	"\tfloat4 sum = float4(0.0);\n"
 	"\txgpu_resolve_pixel pixel;\n"
+	"\tbool edge = false;\n"
 	"\n"
+	"\tfor (ushort index = 1; index < samples; index++)\n"
+	"\t\tedge = edge || any(block.read(at, index, imageblock_data_rate::sample).color != first);\n"
+	"\tif (!edge)\n"
+	"\t\treturn;\n"
 	"\tfor (ushort index = 0; index < samples; index++)\n"
 	"\t{\n"
 	"\t\tfloat4 value = block.read(at, index, imageblock_data_rate::sample).color;\n"

@@ -42,7 +42,9 @@ resolve_in_light): drawn in the pass over a multisampled target, it reads
 each of a pixel's samples (its input attachment, as the tone map's), makes
 them linear (xgpu_hdr.c's hdr_linear) and writes their mean, encoded again,
 to every sample, so that the hardware's resolve after it, of equal
-samples, is the mean of their light, not of their codes.
+samples, is the mean of their light, not of their codes. Only an edge's
+pixels, whose samples differ, are written: one whose samples are alike is
+its own mean already, and is discarded, unwritten and unconverted.
 
 Beside them, CLEAR is the pixel shader of the core's clears of some of a
 target's colour channels (xgpu_vulkan.c, xgpu_vulkan_clear), which
@@ -630,7 +632,9 @@ void main()
 """)
 
 # the samples of a pixel (metrics.x of them) made one: the mean of their
-# light (and of their alpha), encoded again, written to each of them
+# light (and of their alpha), encoded again, written to each of them; a
+# pixel whose samples are all alike (inside a surface, most of the view)
+# is that mean already, and is left as it is, unwritten
 RESOLVE_LIGHT_SOURCE = (
     "layout(input_attachment_index = 0, set = 2, binding = 0) uniform subpassInputMS frame_input;\n"
     "uniform vec4 metrics;\n"
@@ -639,6 +643,12 @@ RESOLVE_LIGHT_SOURCE = (
     "void main()\n"
     "{\n"
     "\tint samples = max(int(metrics.x), 1);\n"
+    "\tvec4 first = subpassLoad(frame_input, 0);\n"
+    "\tbool edge = false;\n"
+    "\tfor (int index = 1; index < samples; index++)\n"
+    "\t\tedge = edge || any(notEqual(subpassLoad(frame_input, index), first));\n"
+    "\tif (!edge)\n"
+    "\t\tdiscard;\n"
     "\tvec4 sum = vec4(0.0);\n"
     "\tfor (int index = 0; index < samples; index++)\n"
     "\t{\n"
