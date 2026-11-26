@@ -188,8 +188,11 @@ plays), and `debug.txt` and the console say why.
 ### Sounds
 
 - The samples can be 16-bit PCM, Xbox ADPCM or Ogg Vorbis, mono or stereo,
-  at 22 or 44 kHz. The game converts them to the Xbox ADPCM that it plays,
-  as it does for Custom Edition maps: mono at 22 kHz, stereo at its own rate.
+  at 22 or 44 kHz. They play as 16-bit PCM at their own rate (up to the
+  mixer's 48 kHz), decoded as each permutation loads; Xbox ADPCM in a format
+  the channels play is played as it is. Only a permutation whose pieces its
+  pitch range has no room for, or of a rate under the PCM's least, is made
+  Xbox ADPCM, and `debug.txt` says so (`mod_sounds.c`).
 - Empty values are filled in as a map's build fills them in: the defaults
   of the sound's class, the playback rates and the bend.
 - A sound must have permutations: a file with an empty pitch range (some
