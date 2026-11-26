@@ -2350,7 +2350,7 @@ static void VKAPI_CALL hdr_update(VkDevice device, uint32_t count, const VkWrite
 		hdr_event('U');
 		return;
 	}
-	assert(count == 4);
+	assert(count == XGPU_VULKAN_TEXTURES);
 	hdr_event('T');
 }
 
