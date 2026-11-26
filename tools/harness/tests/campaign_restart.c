@@ -164,6 +164,11 @@ static void game_state_revert(void)
 {
 }
 
+/* (BIGGER BATTLES' file beside the saved game: not this test's) */
+static void game_state_bigger_battles_saved(void)
+{
+}
+
 /* the game state (at its last checkpoint: game_state_revert) written as the
 profile's saved game */
 static void game_state_write_to_persistent_storage(void *buffer, unsigned long *header_checksum, long header_size,

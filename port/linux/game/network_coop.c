@@ -3510,8 +3510,8 @@ void network_coop_reverted(
 		game_state_port_restamp_revert_time();
 		hs_runtime_port_shift_sleep_times(ticks);
 	}
-	/* (the dropships' riders kept are of the game state reverted from) */
-	coop_enemies_reset();
+	/* (the extra enemies' waits and the dropships' riders kept are the
+	reverted state's: game_state.c's after_load, coop_enemies.c) */
 	network_distributed_reverted();
 	error(_error_silent, "co-op: reverted %ld ticks, clock kept at %ld", ticks, now);
 	event_new(_coop_event_reverted);
@@ -3604,9 +3604,11 @@ looked for each sixth tick, comes a tick sooner) */
 void network_coop_tick_end(
 	void)
 {
+	/* (a local campaign's BIGGER BATTLES' too: coop_enemies.c, nothing
+	without them) */
+	coop_enemies_update();
 	if (!coop_host())
 		return;
-	coop_enemies_update();
 	coop_pickups_update();
 	coop_vehicles_update();
 }
