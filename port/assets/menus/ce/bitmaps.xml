@@ -641,6 +641,12 @@
 		<frame png="ce/port/stills/aa_smaa_framed.png" width="160" height="100"/>
 		<frame png="ce/port/stills/aa_msaa_framed.png" width="160" height="100"/>
 		<frame png="ce/port/stills/aa_msaa_framed.png" width="160" height="100"/>
+	</bitmap>
+	<bitmap name="main_menu/settings/pictures_anti_aliasing_msaa">
+		<frame png="ce/port/stills/aa_off_framed.png" width="160" height="100"/>
+		<frame png="ce/port/stills/aa_smaa_framed.png" width="160" height="100"/>
+		<frame png="ce/port/stills/aa_smaa_framed.png" width="160" height="100"/>
+		<frame png="ce/port/stills/aa_msaa_framed.png" width="160" height="100"/>
 		<frame png="ce/port/stills/aa_msaa_framed.png" width="160" height="100"/>
 	</bitmap>
 	<bitmap name="main_menu/settings/pictures_anti_aliasing_android">
