@@ -136,6 +136,12 @@ pixels read at once into buffer and made the hardware's */
 boolean mod_bitmaps_read(struct bitmap_data *bitmap, void *buffer);
 /* whether a bitmap is a mod's (whose linear rows are padded as they load) */
 boolean mod_bitmaps_contain(struct bitmap_data const *bitmap);
+/* the map's size of what a bitmap draws to its own: 1 for the map's own
+bitmap; for a mod's, its sprites' (or pages') ratio to the map's (0.5 for
+a redraw at twice the size), by which what sizes a sprite, particle, decal
+or detail object from a bitmap's texels multiplies them, so that a
+replacement of any size draws at the map's size */
+real mod_bitmaps_size_scale(struct bitmap_data const *bitmap);
 /* a structure bsp of the map read (as the map loads, or switched to): its
 lightmap layout known, the mods' lightmaps for it are taken or left out.
 How many of the map's bitmaps the mods play then */

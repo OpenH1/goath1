@@ -92,6 +92,7 @@ symbols in this file:
 #include "custom_edition_cache.h" /* port: port/linux/game/custom_edition_cache.c */
 #include "mcc_sprites.h" /* port: port/linux/game/mcc_sprites.c */
 #include "view_fov.h" /* port: port/linux/game/view_fov.c */
+#include "mods.h" /* port: port/linux/game/mod_bitmaps.c */
 #ifdef HALO_VR
 /* port: port/linux/game/vr_render.c's: the VR mode's eye pass */
 boolean vr_render_eye_pass(void);
@@ -839,7 +840,10 @@ static void build_sprite_compute_scale(
 		*scale = -(origin->z / render.frustum.projection_world_to_screen.i);
 	}
 
-	*scale = bitmap->width * *scale;
+	/* port: at the map's size, a mod's bitmap drawn at another (its
+	sprites' bounds are fractions of its own size, and the particle's or
+	system's scale is per map texel: runtime_oo_width) */
+	*scale = (real)bitmap->width * mod_bitmaps_size_scale(bitmap) * *scale;
 	return;
 }
 

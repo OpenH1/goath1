@@ -238,6 +238,7 @@ symbols in this file:
 #include "saved games/game_state.h"
 #include "shaders/shader_definitions.h"
 #include "tag_files/tag_files.h"
+#include "mods.h" /* port: port/linux/game/mod_bitmaps.c */
 
 /* ---------- constants */
 
@@ -802,7 +803,9 @@ static void decal_sprite_get_bounds(
 			* ((real)bitmap->height / (real)bitmap->width);
 	}
 
-	scale = radius / definition->runtime_maximum_sprite_extent;
+	/* port: runtime_maximum_sprite_extent is in the map's texels, so a
+	mod's bitmap of another size is drawn at the map's */
+	scale = radius / definition->runtime_maximum_sprite_extent * mod_bitmaps_size_scale(bitmap);
 	width_scale = (real)bitmap->width * scale;
 	height_scale = (real)bitmap->height * scale * aspect_scale;
 

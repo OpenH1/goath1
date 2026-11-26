@@ -219,6 +219,8 @@ plays), and `debug.txt` and the console say why.
   use it as the map's: it must have at least as many bitmaps, of the same
   types, and as many sequences, each with at least as many sprites. It can
   be larger: a redraw at twice the size is drawn at the map's size, sharper.
+  Particles, sprites, decals and detail objects, which the map sizes by
+  their bitmap's texels, draw it at the map's size too.
 - The HUD draws a bitmap at its own size. So for each HUD element that draws
   a mod's bitmap, the game scales the element by the map's size of what it
   draws (its sprite, or with no sprites its bitmap) to the mod's, when that
