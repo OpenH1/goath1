@@ -140,9 +140,9 @@ int main(int argc, char **argv)
 		CHECK(!allowed(facts), "a Ghost's other seat was hijacked");
 		facts = ghost();
 		facts.kind = _vehicle_hijack_kind_tank;
-		CHECK(!allowed(facts), "the Scorpion's driver was hijacked");
-		facts.part = _vehicle_hijack_seat_gunner;
-		CHECK(!allowed(facts), "the Scorpion's gunner was hijacked");
+		CHECK(allowed(facts), "the Scorpion's driver could not be boarded");
+		facts.part = _vehicle_hijack_seat_passenger;
+		CHECK(!allowed(facts), "a rider on the Scorpion's side was hijacked");
 		facts = ghost();
 		facts.kind = _vehicle_hijack_kind_other;
 		CHECK(!allowed(facts), "a turret was hijacked");
@@ -161,15 +161,26 @@ int main(int argc, char **argv)
 		facts.ground_clearance = VEHICLE_HIJACK_FLYER_GROUND_CLEARANCE;
 		CHECK(allowed(facts), "a Banshee just off the ground could not be hijacked");
 		facts.ground_clearance = 3.0f;
-		CHECK(!allowed(facts), "a flying Banshee was hijacked");
+		CHECK(allowed(facts), "a hovering Banshee in reach could not be hijacked");
+		facts.speed = 0.15f;
+		CHECK(!allowed(facts), "a Banshee flying past high was hijacked");
 		facts.ground_clearance = REAL_MAX;
-		CHECK(!allowed(facts), "a Banshee with no ground below was hijacked");
+		CHECK(!allowed(facts), "a Banshee flying with no ground below was hijacked");
 		facts = ghost();
 		facts.upright = FALSE;
 		CHECK(!allowed(facts), "an overturned Ghost was hijacked");
+		/* moving: passing close at a cruise, from the side or behind; never
+		too fast, nor coming at the jacker */
+		facts = ghost();
+		facts.speed = 0.15f;
+		CHECK(allowed(facts), "a Ghost passing at a cruise could not be hijacked");
+		facts.oncoming = TRUE;
+		CHECK(!allowed(facts), "a Ghost coming at the jacker was hijacked");
+		facts.speed = 0.05f;
+		CHECK(allowed(facts), "a Ghost creeping at the jacker could not be hijacked");
 		facts = ghost();
 		facts.speed = 0.3f;
-		CHECK(!allowed(facts), "a Ghost at speed was hijacked");
+		CHECK(!allowed(facts), "a Ghost flat out was hijacked");
 		return 0;
 	}
 	/* the rule off: nothing */

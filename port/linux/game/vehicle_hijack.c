@@ -9,9 +9,24 @@ units.c's unit_find_nearby_seat) is offered it: the action prompt reads
 "Hold <action> to hijack" (hud.c), and the hold that swaps a weapon
 (player_control.c's minimum_weapon_swap_ticks, so that a tap never does it)
 begins it. The seats: a Ghost's or a Warthog's driver, a Warthog's gunner, a
-Banshee's pilot on or near the ground; never the Scorpion's, a turret's or a
-passenger's. An enemy is another team's (free for all: anyone else's; the
-campaign: the Covenant's, never a marine or another player).
+Banshee's pilot low or hovering, the Scorpion's driver (boarded, below);
+never a turret's or a passenger's, as in Halo 2. The reach is about Halo 2's
+(VEHICLE_HIJACK_REACH, farther out than the game's own entry), from either
+side of a seat entered from a side, and a vehicle moving past is boarded,
+as long as it is not too fast or coming at the jacker (vehicle_hijack.h's
+VEHICLE_HIJACK_MAXIMUM_SPEED, VEHICLE_HIJACK_WALK_SPEED). An enemy is
+another team's (free for all: anyone else's; the campaign: the Covenant's,
+never a marine or another player).
+
+The vault lands where the seat is when it comes down: its landing is kept
+in the vehicle's frame, and the jacker holds on there, moving with it, until
+the throw. The Scorpion's driver is not thrown out: the jacker lands on its
+top over the hatch and rides it, the first blow as they come down and then
+one for each melee pressed (VEHICLE_HIJACK_BEAT_TICKS apart), each the
+melee's real damage to the driver alone (vehicle_hijack_beat: dealt by the
+jacker's own machine, a client's reported to its host); the driver drives
+and fights on meanwhile. Once the driver dies, the jacker takes the seat; a
+jump takes them off.
 
 What follows is the game's own, in about a second (30 ticks a second at any
 rate, VEHICLE_HIJACK_*_TICKS), and nothing new is drawn:
