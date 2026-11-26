@@ -47,14 +47,67 @@ static int adapter_output(IDXGIAdapter1 *adapter, HMONITOR monitor, DXGI_OUTPUT_
 	return 0;
 }
 
-int host_display_luminance(const unsigned char luid[8], void *window, float *black_nits, float *peak_nits,
-	float *full_frame_nits, float primaries[8])
+static IDXGIFactory1 *factory_make(void)
 {
 	typedef HRESULT (WINAPI *create_factory_function)(REFIID, void **);
 	static HMODULE dxgi;
 	static create_factory_function create_factory;
-	DXGI_OUTPUT_DESC1 description;
 	IDXGIFactory1 *factory = NULL;
+
+	if (!dxgi)
+	{
+		dxgi = LoadLibraryW(L"dxgi.dll");
+		if (dxgi)
+			create_factory = (create_factory_function)(void *)GetProcAddress(dxgi, "CreateDXGIFactory1");
+	}
+	if (!create_factory || create_factory(&factory_iid, (void **)&factory) != S_OK)
+		return NULL;
+	return factory;
+}
+
+/* #1269: the LUID of the adapter whose output shows the window's monitor
+(physical_choose prefers the Vulkan device of that LUID among its equals);
+0 if none is found */
+int host_display_adapter_luid(void *window, unsigned char luid[8])
+{
+	IDXGIFactory1 *factory;
+	IDXGIAdapter1 *adapter;
+	HMONITOR monitor;
+	UINT index;
+	int found = 0;
+
+	if (!window || !(monitor = MonitorFromWindow((HWND)window, MONITOR_DEFAULTTONEAREST)) || !(factory = factory_make()))
+		return 0;
+	for (index = 0; !found && IDXGIFactory1_EnumAdapters1(factory, index, &adapter) == S_OK; index++)
+	{
+		IDXGIOutput *output;
+		UINT output_index;
+
+		for (output_index = 0; !found && IDXGIAdapter1_EnumOutputs(adapter, output_index, &output) == S_OK;
+			output_index++)
+		{
+			DXGI_OUTPUT_DESC description;
+			DXGI_ADAPTER_DESC1 adapter_description;
+
+			if (IDXGIOutput_GetDesc(output, &description) == S_OK && description.Monitor == monitor &&
+				IDXGIAdapter1_GetDesc1(adapter, &adapter_description) == S_OK)
+			{
+				memcpy(luid, &adapter_description.AdapterLuid, 8);
+				found = 1;
+			}
+			IDXGIOutput_Release(output);
+		}
+		IDXGIAdapter1_Release(adapter);
+	}
+	IDXGIFactory1_Release(factory);
+	return found;
+}
+
+int host_display_luminance(const unsigned char luid[8], void *window, float *black_nits, float *peak_nits,
+	float *full_frame_nits, float primaries[8])
+{
+	DXGI_OUTPUT_DESC1 description;
+	IDXGIFactory1 *factory;
 	IDXGIAdapter1 *adapter;
 	HMONITOR monitor;
 	UINT index;
@@ -66,15 +119,9 @@ int host_display_luminance(const unsigned char luid[8], void *window, float *bla
 	monitor = MonitorFromWindow((HWND)window, MONITOR_DEFAULTTONEAREST);
 	if (!monitor)
 		return 0;
-	if (!dxgi)
-	{
-		dxgi = LoadLibraryW(L"dxgi.dll");
-		if (dxgi)
-			create_factory = (create_factory_function)(void *)GetProcAddress(dxgi, "CreateDXGIFactory1");
-	}
 	/* (a factory of its own each time: one's outputs keep the descriptions
 	they had when it was made) */
-	if (!create_factory || create_factory(&factory_iid, (void **)&factory) != S_OK || !factory)
+	if (!(factory = factory_make()))
 		return 0;
 	/* (the Vulkan device's adapter first; then any) */
 	for (pass = luid ? 0 : 1; pass < 2 && !found; pass++)
