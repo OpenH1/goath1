@@ -5,7 +5,9 @@ display.contact_shadows (contact_shadows.h): a window's casters, as
 render_objects.c's render_object_rt_shadows finds them, packed as the
 ray-traced shadows' are (rt_shadows_pack) and handed to the backend's pass
 (halo_contact_shadows), which marches toward each one's light from the
-depth.
+depth: the window's light taken before the classic shadows' receivers
+(halo_contact_shadows_light), the pass after them, so that a pixel keeps
+the darker of the two shadows, not their product.
 */
 
 #include "contact_shadows.h"
@@ -23,6 +25,9 @@ static struct
 	struct rt_shadow_caster casters[CONTACT_SHADOWS_CASTERS];
 	float pixels[CONTACT_SHADOWS_CASTERS];
 	int count;
+	/* the window's light was taken, and its camera */
+	int taken;
+	float camera[3];
 } contact_shadows;
 
 int contact_shadows_on(void)
@@ -41,6 +46,7 @@ int contact_shadows_on(void)
 void contact_shadows_begin(void)
 {
 	contact_shadows.count = 0;
+	contact_shadows.taken = 0;
 }
 
 void contact_shadows_caster(long object_index, long child_index, float const center[3], float radius,
@@ -71,5 +77,17 @@ void contact_shadows_caster(long object_index, long child_index, float const cen
 
 void contact_shadows_window(float const camera[3])
 {
-	halo_contact_shadows(contact_shadows.casters, contact_shadows.count, camera);
+	if (contact_shadows.count <= 0)
+		return;
+	memcpy(contact_shadows.camera, camera, sizeof(contact_shadows.camera));
+	contact_shadows.taken = 1;
+	halo_contact_shadows_light();
+}
+
+void contact_shadows_draw(void)
+{
+	if (!contact_shadows.taken)
+		return;
+	contact_shadows.taken = 0;
+	halo_contact_shadows(contact_shadows.casters, contact_shadows.count, contact_shadows.camera);
 }

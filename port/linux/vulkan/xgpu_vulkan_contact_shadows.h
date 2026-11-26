@@ -25,11 +25,19 @@ CONTACT_SHADOWS' CASTERS; xgpu_backend.h's XGPU_CONTACT_SHADOWS_CASTERS) */
 can be, said once in the log) */
 int xgpu_vulkan_contact_shadows_pipeline(uint8_t color_format, uint8_t depth_format, uint8_t samples,
 	struct xgpu_vulkan_pipeline_description *pipeline);
-/* the depth's sampler (by texel) */
+/* the depth's sampler (by texel), and the light's (the view before the
+classic receivers: the pass's second texture) */
 VkSampler xgpu_vulkan_contact_shadows_sampler(void);
 /* the pass's block (XGPU_VULKAN_CONTACT_SHADOWS_BLOCK bytes) of a record,
 drawn with that viewport and depth range; 0 if the view has no inverse */
 int xgpu_vulkan_contact_shadows_block(const struct xgpu_stream_rt_shadows *record,
 	const struct xgpu_vulkan_dynamic_state *dynamic, void *block);
+/* (xgpu_vulkan_stream.c's, the ray-traced shadows' pass's too) the
+framebuffer's (x, y, depth, 1), times w, of a world point as the game's
+programs place it under a record's view, drawn with that viewport and depth
+range (rows), into project (NULL: not wanted), and its inverse into
+unproject; 0 if it has none */
+int xgpu_vulkan_shadows_window(const struct xgpu_stream_rt_shadows *record,
+	const struct xgpu_vulkan_dynamic_state *dynamic, float project[4][4], float unproject[4][4]);
 
 #endif

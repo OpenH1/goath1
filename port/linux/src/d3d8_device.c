@@ -5864,26 +5864,44 @@ static void rt_shadows_prepare(void)
 		xgpu_backend_contact_shadows(0, 0, &none);
 }
 
-/* display.contact_shadows (port/linux/game/contact_shadows.c): the window's
-casters, into its 3D view after its lightmap pass, as halo_rt_shadows hands
-them, with any backend */
+/* display.contact_shadows (port/linux/game/contact_shadows.c): the 3D
+view's targets the pass draws into (FALSE: none, no pass) */
+static BOOL contact_shadows_targets(struct render_target_entry **color, struct render_target_entry **depth)
+{
+	if (!device.gl_ready)
+		return FALSE;
+#ifdef HALO_VR
+	vr_frame_resume();
+	/* (the eyes' pass, or the flat screen's) */
+	if (vr_gl.pass != HALO_VR_PASS_NONE)
+		return FALSE;
+#endif
+	*color = render_target_get(device.render_target);
+	*depth = render_target_get(device.depth_stencil);
+	return *color && *depth && (*depth)->target.depth && (*color)->target.layers <= 1;
+}
+
+/* ... the window's light, before the classic shadows' receivers: a record
+of no casters into the targets (the pass, after them, keeps the lesser of
+what they left and this light times its own shadow) */
+void halo_contact_shadows_light(void)
+{
+	static struct xgpu_rt_shadows none;
+	struct render_target_entry *color, *depth;
+
+	if (contact_shadows_targets(&color, &depth))
+		xgpu_backend_contact_shadows(color->target.number, depth->target.number, &none);
+}
+
+/* ... and the window's casters, after the receivers, as halo_rt_shadows
+hands them, with any backend */
 void halo_contact_shadows(struct rt_shadow_caster const *casters, int count, float const camera[3])
 {
 	static struct xgpu_rt_shadows shadows;
 	struct xgpu_dynamic_lights_halos const *halos = &dynamic_lights.halos;
 	struct render_target_entry *color, *depth;
 
-	if (!device.gl_ready)
-		return;
-#ifdef HALO_VR
-	vr_frame_resume();
-	/* (the eyes' pass, or the flat screen's) */
-	if (vr_gl.pass != HALO_VR_PASS_NONE)
-		return;
-#endif
-	color = render_target_get(device.render_target);
-	depth = render_target_get(device.depth_stencil);
-	if (!color || !depth || !depth->target.depth || color->target.layers > 1)
+	if (!contact_shadows_targets(&color, &depth))
 		return;
 	if (count < 0)
 		count = 0;

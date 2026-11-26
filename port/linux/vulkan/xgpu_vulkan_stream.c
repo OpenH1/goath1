@@ -3589,10 +3589,11 @@ static int rt_shadows_invert(const double a[4][4], double inverse[4][4])
 /* the framebuffer's (x, y, depth, 1), times w, of a world point (rows),
 as the game's programs place it (the glows' vertex shader: the world's
 projection, the screen conversion and the viewport's scale and offset,
-then Vulkan's viewport and depth range, rows from the top); its inverse
-into unproject. 0 if it has none */
-static int rt_shadows_unproject(const struct xgpu_stream_rt_shadows *record, const struct xgpu_vulkan_dynamic_state *dynamic,
-	float unproject[4][4])
+then Vulkan's viewport and depth range, rows from the top) into project
+(NULL: not wanted), its inverse into unproject; the ray-traced and the
+contact shadows' passes' (xgpu_vulkan_contact_shadows.h). 0 if it has none */
+int xgpu_vulkan_shadows_window(const struct xgpu_stream_rt_shadows *record,
+	const struct xgpu_vulkan_dynamic_state *dynamic, float project[4][4], float unproject[4][4])
 {
 	const float (*c)[4] = (const float (*)[4])record->projection;
 	const float offsets[3] = { 0.5f + record->screen_offset, 0.5f, 0.0f };
@@ -3623,7 +3624,11 @@ static int rt_shadows_unproject(const struct xgpu_stream_rt_shadows *record, con
 	for (axis = 0; axis < 4; axis++)
 	{
 		for (column = 0; column < 4; column++)
+		{
 			unproject[axis][column] = (float)inverse[axis][column];
+			if (project)
+				project[axis][column] = (float)window[axis][column];
+		}
 	}
 	return 1;
 }
@@ -3702,7 +3707,7 @@ static void stream_rt_shadows(void *context, const struct xgpu_stream_rt_shadows
 	if (attempt == 3)
 		return;
 	memset(header, 0, UNIFORMS_RANGE);
-	if (!rt_shadows_unproject(record, &dynamic, (float (*)[4])header))
+	if (!xgpu_vulkan_shadows_window(record, &dynamic, NULL, (float (*)[4])header))
 		return;
 	memcpy(header[4], record->camera, sizeof(record->camera));
 	header[4][3] = (float)record->count;
@@ -3736,7 +3741,58 @@ static struct
 {
 	int preparing;
 	int drawn;
+	/* the window's light before the classic receivers (a copy of its
+	target's view, one sample a pixel), of the target taken (0: none),
+	which the pass after them reads */
+	struct xgpu_vulkan_image *light;
+	uint32_t light_target;
 } contact_shadows;
+
+/* the window's light taken into contact_shadows.light: the target's
+viewport copied (resolved first where it is multisampled) */
+static void contact_shadows_light(uint32_t number, struct stream_target *color)
+{
+	const struct xgpu_vulkan_image_description *source = xgpu_vulkan_image_description(color->image);
+	const struct xgpu_vulkan_image_description *description =
+		contact_shadows.light ? xgpu_vulkan_image_description(contact_shadows.light) : NULL;
+	int32_t rectangle[4];
+
+	contact_shadows.light_target = 0;
+	if (!description || description->width != color->width || description->height != color->height ||
+		description->format != source->format)
+	{
+		struct xgpu_vulkan_image_description made;
+
+		xgpu_vulkan_image_destroy(contact_shadows.light);
+		memset(&made, 0, sizeof(made));
+		made.type = XGPU_VULKAN_IMAGE_2D;
+		made.format = source->format;
+		made.usage = XGPU_VULKAN_USAGE_SAMPLED | XGPU_VULKAN_USAGE_COPIED;
+		made.width = color->width;
+		made.height = color->height;
+		made.depth_or_layers = 1;
+		made.levels = 1;
+		contact_shadows.light = xgpu_vulkan_image_create(&made);
+		if (!contact_shadows.light)
+			return;
+	}
+	rectangle[0] = stream.dynamic.viewport[0] > 0 ? stream.dynamic.viewport[0] : 0;
+	rectangle[1] = stream.dynamic.viewport[1] > 0 ? stream.dynamic.viewport[1] : 0;
+	rectangle[2] = stream.dynamic.viewport[0] + stream.dynamic.viewport[2];
+	rectangle[3] = stream.dynamic.viewport[1] + stream.dynamic.viewport[3];
+	if (rectangle[2] > (int32_t)color->width)
+		rectangle[2] = (int32_t)color->width;
+	if (rectangle[3] > (int32_t)color->height)
+		rectangle[3] = (int32_t)color->height;
+	if (rectangle[2] <= rectangle[0] || rectangle[3] <= rectangle[1])
+		return;
+	if (stream.samples && color->multisampled)
+		target_resolve(color);
+	xgpu_vulkan_image_copy_rectangle(color->image, 0, contact_shadows.light, rectangle);
+	contact_shadows.light_target = number;
+	/* (the stream's targets again, for the receivers) */
+	targets_bind();
+}
 
 static int contact_shadows_pipeline(const struct stream_target *color, const struct stream_target *depth, int samples,
 	struct xgpu_vulkan_pipeline_description *pipeline)
@@ -3776,12 +3832,20 @@ static void stream_contact_shadows(void *context, const struct xgpu_stream_rt_sh
 		contact_shadows_prepare();
 		return;
 	}
-	if (record->count <= 0)
-		return;
 	color = target_get(record->color);
 	depth = target_get(record->depth);
 	if (!contact_shadows_pipeline(color, depth, stream.samples, &pipeline))
 		return;
+	/* (no casters: the window's light, before the classic receivers; the
+	casters, after them: the pass, which reads that light) */
+	if (record->count <= 0)
+	{
+		contact_shadows_light(record->color, color);
+		return;
+	}
+	if (contact_shadows.light_target != record->color || !contact_shadows.light)
+		return;
+	contact_shadows.light_target = 0;
 	before = xgpu_vulkan_pipeline_count();
 	memset(&draw, 0, sizeof(draw));
 	draw.pipeline = xgpu_vulkan_pipeline(&pipeline);
@@ -3807,6 +3871,9 @@ static void stream_contact_shadows(void *context, const struct xgpu_stream_rt_sh
 	draw.textures[0].image = depth->image;
 	draw.textures[0].kind = XGPU_VULKAN_IMAGE_2D;
 	draw.textures[0].sampler = xgpu_vulkan_contact_shadows_sampler();
+	draw.textures[1].image = contact_shadows.light;
+	draw.textures[1].kind = XGPU_VULKAN_IMAGE_2D;
+	draw.textures[1].sampler = xgpu_vulkan_contact_shadows_sampler();
 	draw.dynamic = &dynamic;
 	draw.topology = XGPU_VULKAN_TOPOLOGY_TRIANGLES;
 	draw.count = 3;

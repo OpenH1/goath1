@@ -510,7 +510,9 @@ void render_object_shadows(
 	}
 
 	/* port: display.contact_shadows: the casters' contact shadows found from
-	the depth, beside the classic shadows (port/linux/game/contact_shadows.c) */
+	the depth, beside the classic shadows, the darker of the two kept: the
+	light taken here, before the receivers, the pass drawn after them
+	(port/linux/game/contact_shadows.c) */
 	if (render_shadows && contact_shadows_on())
 		render_object_rt_shadows(TRUE);
 
@@ -550,6 +552,8 @@ void render_object_shadows(
 		rasterizer_shadow_atlas_end();
 
 		rasterizer_environment_shadows_end();
+		/* port: (display.contact_shadows, above: after the receivers) */
+		contact_shadows_draw();
 	}
 
 	rt_shadows_measure(FALSE);

@@ -54,9 +54,11 @@ caster whose volume holds it (the ray-traced shadows' casters, a few less),
 marches a short way toward the caster's light (its classic shadow's
 direction, the lightmap's dominant light: the sun outdoors) in screen
 space, a step at a time projected into the depth: a step behind what the
-depth holds, by less than a guessed thickness, is in shadow. The colour it
-writes is multiplied into the pixel (the classic receivers' blend). Its
-uniforms are a block of their own (CONTACT_SHADOWS_UNIFORMS).
+depth holds, by less than a guessed thickness, is in shadow. Drawn after
+the classic receivers, it writes the light taken before them (its second
+texture) times its shadow, and the blend keeps the lesser of that and the
+pixel: the darker of the two shadows, not both. Its uniforms are a block of
+their own (CONTACT_SHADOWS_UNIFORMS).
 
 Beside them, CLEAR is the pixel shader of the core's clears of some of a
 target's colour channels (xgpu_vulkan.c, xgpu_vulkan_clear), which
@@ -693,7 +695,8 @@ void main()
 # fade's start and 1 / its length, 1 / project[3]'s length, the strength;
 # bounds the viewport's pixels (x0, y0, x1, y1). Each caster two vec4s:
 # its bounding sphere, and its direction's x and y, its darkness's bits
-# (red lowest).
+# (red lowest). The light before the classic receivers (set 1, binding 1),
+# by texel, at the pixel's place.
 CONTACT_SHADOWS = """#version 450
 const int STEPS = 12;
 const int CASTERS = 48;
@@ -709,6 +712,7 @@ layout(std140, set = 0, binding = 1) uniform ContactUniforms
 \tvec4 casters[CASTERS * 2];
 };
 layout(set = 1, binding = 0) uniform sampler2D depth_texture;
+layout(set = 1, binding = 1) uniform sampler2D light_texture;
 layout(location = 0) out vec4 result;
 
 float depth_at(vec2 pixel)
@@ -790,7 +794,9 @@ void main()
 \t}
 \tif (all(greaterThanEqual(light, vec3(0.998))))
 \t\tdiscard;
-\tresult = vec4(light, 1.0);
+\t// (the light before the classic receivers, shadowed; the blend's MIN keeps
+\t// the darker of it and what they left)
+\tresult = vec4(texelFetch(light_texture, ivec2(pixel), 0).rgb * light, 1.0);
 }
 """
 # SMAA's lookup textures: their file, size and channels

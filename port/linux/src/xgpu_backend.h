@@ -873,7 +873,12 @@ docs/dynamic-shadows-plan.md, stage 2): the same casters' short, sharp
 shadows on the level found from the depth alone (a march toward each
 one's light in screen space), for any backend, where display.shadows is
 not "ray_traced"; the first XGPU_CONTACT_SHADOWS_CASTERS of them. A record
-of no casters while a map is prepared makes the pass's pipeline. */
+of no casters while a map is prepared makes the pass's pipeline. In play,
+a window's record of no casters comes before the classic shadows'
+receivers: the backend takes the light then (a copy of the view), and the
+record of its casters, after them, writes the lesser of what the receivers
+left and that light times the contact shadow, so a pixel in both shadows
+is darkened by the darker one alone. */
 #define XGPU_CONTACT_SHADOWS_CASTERS 48
 void xgpu_backend_contact_shadows(xgpu_target color, xgpu_target depth, const struct xgpu_rt_shadows *shadows);
 
