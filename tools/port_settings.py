@@ -833,6 +833,9 @@ STREAMING = ("interface_settings/streaming", "streaming_screen")
 # (Interface's SPARTAN LINK: display.spartan_link_shown and display.spartan_link,
 # port/linux/game/spartan_link.c)
 SPARTAN_LINK = ("interface_settings/spartan_link", "spartan_link_screen")
+# (Interface's CAMPAIGN: campaign.bigger_battles, port/linux/game/coop_enemies.c;
+# the campaign's gameplay, a page of its own outside Online)
+CAMPAIGN_PAGE = ("interface_settings/campaign", "campaign_screen")
 # (Online's multiplayer rules, the host's choice in a network game, a page of
 # their own once Online had no room for VEHICLE HIJACKING)
 GAMEPLAY = ("network_setup/gameplay", "gameplay_screen")
@@ -1192,7 +1195,7 @@ PAGES = {
     },
     "interface_settings": {
         "screen": "interface_settings_screen", "tab": "INTERFACE",
-        "about": "The HUD, the players' names, the scoreboard, the chat and the campaign's battles.",
+        "about": "The HUD, the players' names, the scoreboard, the chat and the campaign.",
         "rows": [
             (SECTION, "HUD"),
             ("HIGH-RES HUD", "display.high_res_hud", ON_OFF,
@@ -1214,6 +1217,9 @@ PAGES = {
             ("STREAMING & SPEEDRUN ›", None, _page_screen(*STREAMING),
              "A state file for stream overlays, an on-screen input display, the match timer, and practice keys "
              "for speedrunners.", None),
+            # (the campaign's own gameplay, outside Online: BIGGER BATTLES)
+            ("CAMPAIGN ›", None, _page_screen(*CAMPAIGN_PAGE),
+             "The campaign's battles: every enemy squad two or three times as large.", None),
             (SECTION, "MULTIPLAYER"),
             ("PLAYER NAMES", "display.player_names",
              [("ALL", "all"), ("ALLIES", "allies"), ("ENEMIES", "enemies"), ("NONE", "none")],
@@ -1236,14 +1242,6 @@ PAGES = {
             ("CHAT TEXT", "display.chat_style", [("COLORS", "colors"), ("WHITE", "white")],
              "Colors draws the names in their team's color; White draws it all white, as Custom Edition does.",
              None),
-            # (port/linux/game/coop_enemies.c: the campaign's, solo, split
-            # screen and a co-op game this computer hosts (the lobby's BATTLE
-            # too), read as a level begins; a saved game keeps its own)
-            (SECTION, "CAMPAIGN"),
-            ("BIGGER BATTLES", "campaign.bigger_battles", [("OFF", "off"), ("2X", "2x"), ("3X", "3x")],
-             "Every enemy squad in the campaign is two or three times as large, solo, split screen and co-op you "
-             "host (on top of co-op's Extra Enemies). Legendary gets half as many extras. Starts with the next "
-             "level; a saved game keeps its own.", None),
         ],
     },
     "profile_settings": {
@@ -2018,6 +2016,19 @@ PAGES = {
             ("SPARTAN LINK", "game.spartan_link", ON_OFF,
              "Team games you host: players may show their teammates' views beside the motion tracker. Co-op "
              "always has it. Online: the host's choice.", None),
+        ],
+    },
+    CAMPAIGN_PAGE[0]: {
+        "screen": CAMPAIGN_PAGE[1], "title": "CAMPAIGN",
+        "rows": [
+            # (port/linux/game/coop_enemies.c: solo, split screen and a co-op
+            # game this computer hosts (the lobby's BATTLE too), read as a
+            # level begins; a saved game keeps its own)
+            (SECTION, "BATTLES"),
+            ("BIGGER BATTLES", "campaign.bigger_battles", [("OFF", "off"), ("2X", "2x"), ("3X", "3x")],
+             "Every enemy squad in the campaign is two or three times as large, solo, split screen and co-op you "
+             "host (on top of co-op's Extra Enemies). Legendary gets half as many extras. Starts with the next "
+             "level; a saved game keeps its own.", None),
         ],
     },
     SPARTAN_LINK[0]: {

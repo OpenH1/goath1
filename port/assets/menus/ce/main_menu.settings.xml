@@ -117,7 +117,7 @@
 		<string text="The sound and its devices, 3D audio, the volumes and voice chat."/>
 		<string text="The mouse, the controller and the keys."/>
 		<string text="Internet play, sharing maps and updates."/>
-		<string text="The HUD, the players' names, the scoreboard, the chat and the campaign's battles."/>
+		<string text="The HUD, the players' names, the scoreboard, the chat and the campaign."/>
 		<string text="Your player profiles, your name and color, and the disk space the maps and caches take."/>
 		<string text="Texture, sound, text and model packs from the mods folder."/>
 	</strings>
@@ -165,6 +165,7 @@
 		<string text="ADVANCED STICK SETTINGS"/>
 		<string text="SCREEN LAYOUT"/>
 		<string text="GAMEPLAY"/>
+		<string text="CAMPAIGN"/>
 		<string text="SPARTAN LINK"/>
 		<string text="STREAMING &amp; SPEEDRUN"/>
 		<string text="STREAMER MODE"/>

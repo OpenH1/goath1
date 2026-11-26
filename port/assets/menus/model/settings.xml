@@ -372,7 +372,7 @@
 		<button key="button_cancel" kind="cancel" run="port settings cancel" help="Leaves Settings without keeping any change."/>
 	</screen>
 	<screen name="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/interface_settings_screen" kind="settings" layout="tab" geometry="tall" tab="INTERFACE">
-		<about>The HUD, the players' names, the scoreboard, the chat and the campaign's battles.</about>
+		<about>The HUD, the players' names, the scoreboard, the chat and the campaign.</about>
 		<section key="section_0" title="HUD"/>
 		<row key="high_res_hud" kind="choice" setting="display.high_res_hud" label="HIGH-RES HUD" crumb="INTERFACE › HUD">
 			<help>Draws the HUD from sharp high-resolution redraws. Off draws the game's own pictures.</help>
@@ -391,7 +391,10 @@
 		<row key="streaming_speedrun" kind="link" label="STREAMING &amp; SPEEDRUN ›" crumb="INTERFACE › HUD" open="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/streaming/streaming_screen">
 			<help>A state file for stream overlays, an on-screen input display, the match timer, and practice keys for speedrunners.</help>
 		</row>
-		<section key="section_5" title="MULTIPLAYER"/>
+		<row key="campaign" kind="link" label="CAMPAIGN ›" crumb="INTERFACE › HUD" open="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/campaign/campaign_screen">
+			<help>The campaign's battles: every enemy squad two or three times as large.</help>
+		</row>
+		<section key="section_6" title="MULTIPLAYER"/>
 		<row key="player_names" kind="choice" setting="display.player_names" label="PLAYER NAMES" crumb="INTERFACE › MULTIPLAYER" search_choices="all allies enemies">
 			<help>In multiplayer, whose names are drawn above their heads.</help>
 			<choice shown="ALL" value="all"/>
@@ -423,7 +426,7 @@
 			<choice shown="TEAMMATE'S VIEW" value="teammates"/>
 			<choice shown="DEATH CAMERA" value="off"/>
 		</row>
-		<section key="section_11" title="CHAT"/>
+		<section key="section_12" title="CHAT"/>
 		<row key="text_chat" kind="choice" setting="display.text_chat" label="TEXT CHAT" crumb="INTERFACE › CHAT">
 			<help>Shows the text chat. Hide draws none of its lines, and its keys and D-pad Up open nothing.</help>
 			<choice shown="SHOW" value="true"/>
@@ -433,13 +436,6 @@
 			<help>Colors draws the names in their team's color; White draws it all white, as Custom Edition does.</help>
 			<choice shown="COLORS" value="colors"/>
 			<choice shown="WHITE" value="white"/>
-		</row>
-		<section key="section_14" title="CAMPAIGN"/>
-		<row key="bigger_battles" kind="choice" setting="campaign.bigger_battles" label="BIGGER BATTLES" crumb="INTERFACE › CAMPAIGN">
-			<help>Every enemy squad in the campaign is two or three times as large, solo, split screen and co-op you host (on top of co-op's Extra Enemies). Legendary gets half as many extras. Starts with the next level; a saved game keeps its own.</help>
-			<choice shown="OFF" value="off"/>
-			<choice shown="2X" value="2x"/>
-			<choice shown="3X" value="3x"/>
 		</row>
 		<button key="button_defaults" kind="defaults" run="port settings defaults" help="Puts this tab's settings back to their defaults. Nothing changes until OK."/>
 		<button key="button_ok" kind="ok" run="port settings ok" help="Keeps your changes, on every tab, and applies them."/>
@@ -1637,6 +1633,18 @@
 			<help>Team games you host: players may show their teammates' views beside the motion tracker. Co-op always has it. Online: the host's choice.</help>
 			<choice shown="ON" value="true"/>
 			<choice shown="OFF" value="false"/>
+		</row>
+		<button key="button_defaults" kind="defaults" run="port settings defaults" help="Puts this page's settings back to their defaults."/>
+		<button key="button_ok" kind="ok" run="port settings keep" help="Saves your changes, on this page and every tab, and applies them."/>
+		<button key="button_cancel" kind="cancel" run="port settings page cancel" help="Goes back without these changes."/>
+	</screen>
+	<screen name="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/campaign/campaign_screen" kind="settings" layout="page" geometry="tall" title="CAMPAIGN">
+		<section key="section_0" title="BATTLES"/>
+		<row key="bigger_battles" kind="choice" setting="campaign.bigger_battles" label="BIGGER BATTLES" crumb="INTERFACE › CAMPAIGN">
+			<help>Every enemy squad in the campaign is two or three times as large, solo, split screen and co-op you host (on top of co-op's Extra Enemies). Legendary gets half as many extras. Starts with the next level; a saved game keeps its own.</help>
+			<choice shown="OFF" value="off"/>
+			<choice shown="2X" value="2x"/>
+			<choice shown="3X" value="3x"/>
 		</row>
 		<button key="button_defaults" kind="defaults" run="port settings defaults" help="Puts this page's settings back to their defaults."/>
 		<button key="button_ok" kind="ok" run="port settings keep" help="Saves your changes, on this page and every tab, and applies them."/>
