@@ -286,6 +286,27 @@ def opus_cflags(abi: str) -> str:
                                                             ("include", "celt", "silk", "silk/float")), "-w"])
 
 
+# the MCC import's dialogue decoder (port/third_party/celt;
+# mcc_import_voices.c): CELT 0.11.0 in floating point, its names prefixed
+# (celt0110_names.h) so that they do not meet Opus's CELT
+CELT_DIR = Path("port/third_party/celt")
+CELT_SOURCES = ("bands.c", "celt.c", "cwrs.c", "entcode.c", "entdec.c", "entenc.c", "kiss_fft.c", "laplace.c",
+                "mathops.c", "mdct.c", "modes.c", "pitch.c", "plc.c", "quant_bands.c", "rate.c", "vq.c")
+CELT_DEFINES = ("-DCUSTOM_MODES", "-DCUSTOM_MODES_ONLY", "-DENABLE_POSTFILTER", "-DVAR_ARRAYS", "-DHAVE_LRINTF",
+                "-DHAVE_LRINT")
+
+
+def celt_sources() -> List[Path]:
+    """CELT 0.11.0's library sources (port/third_party/celt)"""
+    return [CELT_DIR / name for name in CELT_SOURCES]
+
+
+def celt_cflags(abi: str) -> str:
+    """the flags CELT 0.11.0's sources build with, on the platform layer's ABI"""
+    return " ".join([abi, "-std=gnu11", "-O2", *CELT_DEFINES, f"-I{CELT_DIR}",
+                     f"-include {CELT_DIR / 'celt0110_names.h'}", "-w"])
+
+
 # the Xbox's Bink movies' decoders (display.movies, port/linux/src/bink_ffmpeg.c):
 # FFmpeg's plain C, fetched at configure time with its configuration
 # (tools/ffmpeg_fetch.py), its files as port/third_party/ffmpeg/sources.txt

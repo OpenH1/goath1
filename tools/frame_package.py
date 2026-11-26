@@ -70,6 +70,7 @@ LICENSES = {
     "plutovg-LICENSE.txt": "port/third_party/plutovg/LICENSE",
     "plutovg-FTL.txt": "port/third_party/plutovg/src/FTL.TXT",
     "opus-COPYING.txt": "port/third_party/opus/COPYING",
+    "celt-COPYING.txt": "port/third_party/celt/COPYING",
     "ffmpeg-COPYING.LGPLv2.1.txt": "port/third_party/ffmpeg/COPYING.LGPLv2.1",
     "lucide-LICENSE.txt": "port/assets/icons/lucide/LICENSE",
 }
