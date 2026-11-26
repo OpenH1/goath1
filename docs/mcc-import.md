@@ -41,7 +41,7 @@ report line at the end.
      metalness, with the classic look as the baseline) for Enhanced graphics' material maps.
 4. **Voices** (`mcc_import_voices.c`): `halo1/sound/pc/sounds_dialogs.fsb` (FSB5, CELT 0.11 at 44.1 kHz) and its
    `lst/sounds_dialogs.lst.bin` (tag path to samples), decoded with the vendored BSD CELT 0.11 decoder
-   (`port/third_party/celt`), written as 16-bit PCM `.sound` tags that keep each Xbox tag's header, pitch ranges,
+   (`port/third_party/celt`), encoded as Ogg Vorbis at q6 (`port/third_party/libvorbis`; about 110 kbps mono) in `.sound` tags that keep each Xbox tag's header, pitch ranges,
    permutation names, gains and mouth data. English dialogue only (1,903 tags). Effects and music are not imported
    (the effects are byte-identical, the music no better).
 5. **Output:** the data folder's `mcc_import/tags/...` (`.bitmap`, `.normal.png`, `.orm.png`, `.sound`), written

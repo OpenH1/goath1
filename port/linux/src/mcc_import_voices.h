@@ -2,8 +2,8 @@
 MCC_IMPORT_VOICES.H
 
 MCC's English dialogue imported as mod-style sound tag files (docs/mcc-import.md, step 4): the player's own
-halo1/sound/pc/sounds_dialogs.fsb (FSB5, CELT 0.11) and lst/sounds_dialogs.lst.bin, decoded and written as 16-bit
-PCM .sound files that keep each of our Xbox tags' header, pitch ranges, permutation names, gains and mouth data.
+halo1/sound/pc/sounds_dialogs.fsb (FSB5, CELT 0.11) and lst/sounds_dialogs.lst.bin, decoded and written as Ogg Vorbis (from 16-bit
+PCM, libvorbis at q6) .sound files that keep each of our Xbox tags' header, pitch ranges, permutation names, gains and mouth data.
 Runs on the import's thread (mcc_import.c); reads only, except under out_folder.
 */
 

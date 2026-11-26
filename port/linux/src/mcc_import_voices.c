@@ -16,7 +16,9 @@ many there are: one for each of our tag's permutations, in the tag's order (its 
 Each tag of the list is taken from the first of the player's Xbox maps that has it (xbox_map_file.h), and written
 as out_folder/tags/<its path>.sound: a Halo PC tag file (big-endian, version 4) as mod_sounds.c reads it, with the
 Xbox tag's values, pitch ranges, permutations (names, gains, links), mouth and subtitle data, and only its samples
-swapped: MCC's, decoded, as 16-bit PCM at 44.1 kHz in the Xbox tag's channels. A permutation too long for a sound
+swapped: MCC's, decoded, in the Xbox tag's channels at 44.1 kHz, encoded as Ogg Vorbis (libvorbis's VBR at quality
+MCC_IMPORT_VORBIS_QUALITY, about 110 kbps mono; port/third_party/libvorbis), each permutation one stream whose
+sample_buffer_size is its 16-bit PCM's bytes, as Halo PC's tool writes one. A permutation too long for a sound
 cache block is left whole: mod_sounds.c splits it into linked pieces as it loads (range_split). Each file is
 written whole or not at all (a .new beside it, renamed over it). One tag's samples are held at a time.
 */
@@ -27,6 +29,7 @@ written whole or not at all (a .new beside it, renamed over it). One tag's sampl
 
 #include "../../third_party/celt/celt0110_names.h"
 #include "../../third_party/celt/celt.h"
+#include "../../third_party/libvorbis/include/vorbis/vorbisenc.h"
 
 #include <fcntl.h>
 #include <stdio.h>
@@ -72,6 +75,10 @@ written whole or not at all (a .new beside it, renamed over it). One tag's sampl
 #define TAG_FILE_MOST_SIZE (64UL << 20)
 #define SOUND_SAMPLE_RATE_44K 1
 #define SOUND_COMPRESSION_NONE 0
+#define SOUND_COMPRESSION_OGG_VORBIS 3
+/* libvorbis's VBR quality (-0.1 to 1: 0.6 is oggenc's -q6) */
+#define MCC_IMPORT_VORBIS_QUALITY 0.6f
+#define MOST_TAG_PERMUTATIONS (MOST_PITCH_RANGES * MOST_PERMUTATIONS)
 
 #define MOST_PATH 1024
 
@@ -334,6 +341,131 @@ static int sample_decode(struct bank *bank, long index, CELTMode *mode, int chan
 	return done == sample->frames;
 }
 
+/* ---------- the Ogg Vorbis encoder */
+
+struct ogg_out
+{
+	unsigned char *data;
+	unsigned long size;
+	unsigned long capacity;
+	int failed;
+};
+
+static void ogg_append(struct ogg_out *out, const unsigned char *bytes, long count)
+{
+	if (out->failed || count <= 0)
+		return;
+	if (out->size + (unsigned long)count > out->capacity)
+	{
+		unsigned long capacity = (out->size + (unsigned long)count) * 2;
+		unsigned char *grown = realloc(out->data, capacity);
+
+		if (!grown)
+		{
+			out->failed = 1;
+			return;
+		}
+		out->data = grown;
+		out->capacity = capacity;
+	}
+	memcpy(out->data + out->size, bytes, (size_t)count);
+	out->size += (unsigned long)count;
+}
+
+static void ogg_pages(struct ogg_out *out, ogg_stream_state *stream, int flush)
+{
+	ogg_page page;
+
+	while (flush ? ogg_stream_flush(stream, &page) : ogg_stream_pageout(stream, &page))
+	{
+		ogg_append(out, page.header, page.header_len);
+		ogg_append(out, page.body, page.body_len);
+	}
+}
+
+/* `frames` of 16-bit PCM in `channels` at 44.1 kHz as one Ogg Vorbis stream (malloc'd, *size bytes); NULL if it
+cannot be encoded */
+static unsigned char *vorbis_encode(const short *pcm, long frames, int channels, long serial, unsigned long *size)
+{
+	vorbis_info info;
+	vorbis_comment comment;
+	vorbis_dsp_state dsp;
+	vorbis_block block;
+	ogg_stream_state stream;
+	ogg_packet header, header_comment, header_code, packet;
+	struct ogg_out out;
+	long done = 0;
+	int started = 0, ended = 0;
+
+	memset(&out, 0, sizeof(out));
+	vorbis_info_init(&info);
+	if (vorbis_encode_init_vbr(&info, channels, FSB_CELT_RATE, MCC_IMPORT_VORBIS_QUALITY) != 0)
+	{
+		vorbis_info_clear(&info);
+		return NULL;
+	}
+	vorbis_comment_init(&comment);
+	vorbis_analysis_init(&dsp, &info);
+	vorbis_block_init(&dsp, &block);
+	ogg_stream_init(&stream, (int)serial);
+	started = 1;
+	vorbis_analysis_headerout(&dsp, &comment, &header, &header_comment, &header_code);
+	ogg_stream_packetin(&stream, &header);
+	ogg_stream_packetin(&stream, &header_comment);
+	ogg_stream_packetin(&stream, &header_code);
+	/* (the headers on pages of their own, as the specification asks) */
+	ogg_pages(&out, &stream, 1);
+	while (!ended && !out.failed)
+	{
+		long count = frames - done < 1024 ? frames - done : 1024, frame;
+
+		if (count > 0)
+		{
+			float **buffer = vorbis_analysis_buffer(&dsp, (int)count);
+			int channel;
+
+			for (frame = 0; frame < count; frame++)
+				for (channel = 0; channel < channels; channel++)
+					buffer[channel][frame] = pcm[(done + frame) * channels + channel] / 32768.f;
+			vorbis_analysis_wrote(&dsp, (int)count);
+			done += count;
+		}
+		else
+		{
+			/* (the end of the stream) */
+			vorbis_analysis_wrote(&dsp, 0);
+		}
+		while (vorbis_analysis_blockout(&dsp, &block) == 1)
+		{
+			vorbis_analysis(&block, NULL);
+			vorbis_bitrate_addblock(&block);
+			while (vorbis_bitrate_flushpacket(&dsp, &packet))
+			{
+				ogg_stream_packetin(&stream, &packet);
+				ogg_pages(&out, &stream, 0);
+			}
+		}
+		if (count <= 0)
+			ended = 1;
+	}
+	ogg_pages(&out, &stream, 1);
+	if (started)
+	{
+		ogg_stream_clear(&stream);
+		vorbis_block_clear(&block);
+		vorbis_dsp_clear(&dsp);
+		vorbis_comment_clear(&comment);
+	}
+	vorbis_info_clear(&info);
+	if (out.failed || !out.size)
+	{
+		free(out.data);
+		return NULL;
+	}
+	*size = out.size;
+	return out.data;
+}
+
 /* ---------- the list */
 
 static void list_free(struct list_tag *tags, long count)
@@ -513,8 +645,10 @@ static const char *tag_write(const unsigned char *tags, unsigned long tags_size,
 {
 	const unsigned char *ranges, *range_permutations[MOST_PITCH_RANGES];
 	const unsigned char *promotion = NULL;
-	unsigned long range_count, promotion_length, permutation_total = 0, size, cursor, range_index;
+	unsigned long range_count, promotion_length, permutation_total = 0, size, cursor, range_index, index;
 	unsigned long sample = entry->first;
+	unsigned char **encoded = NULL;
+	unsigned long *encoded_sizes = NULL;
 	unsigned char *file = NULL;
 	char path[MOST_PATH];
 	int channels = half_le(root + 0x6C) == 0 ? 1 : 2;
@@ -564,9 +698,7 @@ static const char *tag_write(const unsigned char *tags, unsigned long tags_size,
 			}
 			if (frames < 1 || frames > MOST_SAMPLE_FRAMES)
 				return "an MCC sample is empty or too long";
-			size += PERMUTATION_SIZE + (unsigned long)frames * (unsigned long)channels * 2 + mouth + subtitle;
-			if (size > TAG_FILE_MOST_SIZE)
-				return "it is longer than a sound tag file holds";
+			size += PERMUTATION_SIZE + mouth + subtitle;
 		}
 		permutation_total += count;
 	}
@@ -574,8 +706,42 @@ static const char *tag_write(const unsigned char *tags, unsigned long tags_size,
 		return "MCC has more permutations";
 	if (!path_safe(entry->path) || !file_path(out_folder, entry->path, path, sizeof(path)))
 		return "its path cannot be written";
+	/* each permutation's samples decoded and encoded, in the file's order */
+	if (!(encoded = calloc(permutation_total, sizeof(*encoded))) ||
+		!(encoded_sizes = calloc(permutation_total, sizeof(*encoded_sizes))))
+	{
+		reason = "out of memory";
+		goto finished;
+	}
+	for (index = 0; index < permutation_total && !reason; index++)
+	{
+		unsigned long frames = (unsigned long)bank->samples[sample + index].frames;
+		short *pcm = malloc(frames * (unsigned long)channels * sizeof(short));
+
+		if (!pcm)
+			reason = "out of memory";
+		else if (!sample_decode(bank, (long)(sample + index), mode, channels, pcm, data, data_capacity))
+			reason = "an MCC sample cannot be decoded";
+		else if (!(encoded[index] = vorbis_encode(pcm, (long)frames, channels, (long)(sample + index),
+			&encoded_sizes[index])))
+		{
+			reason = "an MCC sample cannot be encoded";
+		}
+		free(pcm);
+		if (!reason)
+		{
+			size += encoded_sizes[index];
+			if (size > TAG_FILE_MOST_SIZE)
+				reason = "it is longer than a sound tag file holds";
+		}
+	}
+	if (reason)
+		goto finished;
 	if (!(file = calloc(1, size)))
-		return "out of memory";
+	{
+		reason = "out of memory";
+		goto finished;
+	}
 
 	/* the header, and the sound's values, the Xbox tag's (little-endian) written big-endian: 16-bit PCM at
 	44.1 kHz, its promotion sound by name, its pointers and counters none */
@@ -592,7 +758,7 @@ static const char *tag_write(const unsigned char *tags, unsigned long tags_size,
 	swap_into(file + cursor + 0x3C, root + 0x3C, 4, 3);
 	swap_into(file + cursor + 0x54, root + 0x54, 4, 3);
 	swap_into(file + cursor + 0x6C, root + 0x6C, 2, 1);
-	put_be16(file + cursor + 0x6E, SOUND_COMPRESSION_NONE);
+	put_be16(file + cursor + 0x6E, SOUND_COMPRESSION_OGG_VORBIS);
 	memcpy(file + cursor + 0x70, "snd!", 4);
 	put_be32(file + cursor + 0x78, promotion_length);
 	put_be32(file + cursor + 0x7C, 0xFFFFFFFFUL);
@@ -618,44 +784,31 @@ static const char *tag_write(const unsigned char *tags, unsigned long tags_size,
 		put_be32(file + cursor + 0x3C, word_le(range + 0x3C));
 		cursor += PITCH_RANGE_SIZE;
 	}
-	/* each range's permutations, then each one's samples (MCC's, decoded), mouth and subtitle data */
-	for (range_index = 0; range_index < range_count && !reason; range_index++)
+	/* each range's permutations, then each one's samples (MCC's, as Ogg Vorbis), mouth and subtitle data */
+	for (range_index = 0, index = 0; range_index < range_count; range_index++)
 	{
-		unsigned long count = word_le(ranges + range_index * PITCH_RANGE_SIZE + 0x3C), index;
+		unsigned long count = word_le(ranges + range_index * PITCH_RANGE_SIZE + 0x3C), within;
 		unsigned long data_at = cursor + count * PERMUTATION_SIZE;
 
-		for (index = 0; index < count && !reason; index++, sample++)
+		for (within = 0; within < count; within++, index++)
 		{
-			const unsigned char *permutation = range_permutations[range_index] + index * PERMUTATION_SIZE;
-			unsigned char *out = file + cursor + index * PERMUTATION_SIZE;
+			const unsigned char *permutation = range_permutations[range_index] + within * PERMUTATION_SIZE;
+			unsigned char *out = file + cursor + within * PERMUTATION_SIZE;
 			unsigned long mouth = word_le(permutation + 0x54), subtitle = word_le(permutation + 0x68);
-			unsigned long frames = (unsigned long)bank->samples[sample].frames;
-			unsigned long bytes = frames * (unsigned long)channels * 2, at;
-			short *pcm = malloc(bytes);
+			unsigned long frames = (unsigned long)bank->samples[sample + index].frames;
 
 			memcpy(out, permutation, 32);
 			out[31] = 0;
 			swap_into(out + 0x20, permutation + 0x20, 4, 2);
-			put_be16(out + 0x28, SOUND_COMPRESSION_NONE);
+			put_be16(out + 0x28, SOUND_COMPRESSION_OGG_VORBIS);
 			swap_into(out + 0x2A, permutation + 0x2A, 2, 1);
-			put_be32(out + 0x40, bytes);
+			/* (sample_buffer_size: its 16-bit PCM's bytes) */
+			put_be32(out + 0x38, frames * (unsigned long)channels * 2);
+			put_be32(out + 0x40, encoded_sizes[index]);
 			put_be32(out + 0x54, mouth);
 			put_be32(out + 0x68, subtitle);
-			if (!pcm)
-			{
-				reason = "out of memory";
-				break;
-			}
-			if (!sample_decode(bank, (long)sample, mode, channels, pcm, data, data_capacity))
-			{
-				reason = "an MCC sample cannot be decoded";
-				free(pcm);
-				break;
-			}
-			for (at = 0; at < frames * (unsigned long)channels; at++)
-				put_be16(file + data_at + at * 2, (unsigned int)(unsigned short)pcm[at]);
-			free(pcm);
-			data_at += bytes;
+			memcpy(file + data_at, encoded[index], encoded_sizes[index]);
+			data_at += encoded_sizes[index];
 			if (mouth)
 				memcpy(file + data_at, xbox_map_tags_at(tags, tags_size, word_le(permutation + 0x60), mouth), mouth);
 			data_at += mouth;
@@ -666,12 +819,19 @@ static const char *tag_write(const unsigned char *tags, unsigned long tags_size,
 		}
 		cursor = data_at;
 	}
-	if (!reason && cursor != size)
+	if (cursor != size)
 		reason = "its file came out the wrong size";
 	if (!reason && !file_write(path, file, size))
 		reason = "its file cannot be written";
 	if (!reason)
 		*written_size = size;
+
+finished:
+	if (encoded)
+		for (index = 0; index < permutation_total; index++)
+			free(encoded[index]);
+	free(encoded);
+	free(encoded_sizes);
 	free(file);
 	return reason;
 }
