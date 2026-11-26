@@ -67,7 +67,7 @@ struct mcc_bake_options
 	char *note;
 	size_t note_size;
 	/* a line per bitmap baked, for the log (as the prototype prints) */
-	void (*log)(const char *line);
+	void (*say)(const char *line);
 };
 
 /* Bakes every fit's bitmaps from the pak; how many files were written (a

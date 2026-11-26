@@ -2096,12 +2096,12 @@ static void run_log(struct run *run, const char *format, ...)
 	char line[1024];
 	va_list arguments;
 
-	if (!run->options->log)
+	if (!run->options->say)
 		return;
 	va_start(arguments, format);
 	vsnprintf(line, sizeof(line), format, arguments);
 	va_end(arguments);
-	run->options->log(line);
+	run->options->say(line);
 }
 
 static int run_progress(struct run *run, float within)
