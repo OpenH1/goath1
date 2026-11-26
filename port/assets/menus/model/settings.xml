@@ -1648,6 +1648,16 @@
 			<choice shown="LARGE" value="large"/>
 			<choice shown="OFF" value="off"/>
 		</row>
+		<row key="spartan_link_position" kind="choice" setting="display.spartan_link_position" label="POSITION" crumb="INTERFACE › SPARTAN LINK" search_choices="bottom top">
+			<help>Where the teammates' views are: Bottom in a row beside the motion tracker, Top along the top of the screen between the HUD's panels.</help>
+			<choice shown="BOTTOM" value="bottom"/>
+			<choice shown="TOP" value="top"/>
+		</row>
+		<row key="spartan_link_stats" kind="choice" setting="display.spartan_link_stats" label="TEAMMATE STATS" crumb="INTERFACE › SPARTAN LINK">
+			<help>Shows each teammate's name, shield and health under their view. Off shows the views alone.</help>
+			<choice shown="ON" value="true"/>
+			<choice shown="OFF" value="false"/>
+		</row>
 		<button key="button_defaults" kind="defaults" run="port settings defaults" help="Puts this page's settings back to their defaults."/>
 		<button key="button_ok" kind="ok" run="port settings keep" help="Saves your changes, on this page and every tab, and applies them."/>
 		<button key="button_cancel" kind="cancel" run="port settings page cancel" help="Goes back without these changes."/>
