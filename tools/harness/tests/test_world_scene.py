@@ -20,6 +20,8 @@ CONTROLS = [
     # fanned from the wrong corner
     ("long const fan[3] = { ring[0], ring[corner], ring[corner + 1] };",
      "long const fan[3] = { ring[corner - 1], ring[corner], ring[corner + 1] };", "triangles"),
+    # an invisible surface (player clip) fanned like a drawn one
+    ("\t\tif (TEST_FLAG(surface->flags, _world_scene_surface_invisible_bit))\n\t\t\tcontinue;\n", "", "triangles"),
     # the surface's material lost
     ("materials[count] = surface->material_index;", "materials[count] = 0;", "triangles"),
     # the bounds' first vertex not taken

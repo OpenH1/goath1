@@ -65,6 +65,14 @@ extern struct data_array *light_data;
 
 /* ---------- the static meshes */
 
+/* a collision surface's flags (bipeds.c's, physics.c's) */
+enum
+{
+	_world_scene_surface_two_sided_bit = 0,
+	/* player clip: walls the players stand against that nothing draws */
+	_world_scene_surface_invisible_bit,
+};
+
 static struct
 {
 	/* the BSPs whose triangles debug.world_scene_dump wrote, a bit each */
@@ -76,7 +84,9 @@ each, materials: one each; NULL for the count alone): each surface's ring
 of edges walked as the game walks it (an edge's right side is the
 surface's when its second surface is), its corners fanned from the first.
 A surface whose ring leaves the BSP's edges or vertices, or doesn't close
-within MAXIMUM_EDGES_PER_COLLISION_SURFACE, is left out. The count */
+within MAXIMUM_EDGES_PER_COLLISION_SURFACE, is left out, and so is an
+invisible one (player clip, which nothing draws: it would cast shadows and
+occlude rays that the drawn world lets through). The count */
 static long world_scene_fan(
 	struct collision_surface const *surfaces, long surface_count,
 	struct collision_edge const *edges, long edge_count,
@@ -92,6 +102,8 @@ static long world_scene_fan(
 		long edge_index = surface->first_edge_index;
 		short corners = 0, corner;
 
+		if (TEST_FLAG(surface->flags, _world_scene_surface_invisible_bit))
+			continue;
 		do
 		{
 			struct collision_edge const *edge;
