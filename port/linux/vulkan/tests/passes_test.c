@@ -951,7 +951,7 @@ static VkRenderingAttachmentInfo post_began_depth[4], post_began_stencil[4];
 static VkPipelineDepthStencilStateCreateInfo post_stencils[POST_PIPELINES_MOST];
 static uint32_t post_begins, post_draws, post_updates, post_masks[POST_PIPELINES_MOST], post_pipelines;
 static VkSampleCountFlagBits post_pipeline_samples[POST_PIPELINES_MOST];
-static VkDescriptorImageInfo post_sampled[4][4];
+static VkDescriptorImageInfo post_sampled[4][XGPU_VULKAN_TEXTURES];
 static VkViewport post_viewports[4];
 static VkRect2D post_scissors[4];
 static uint32_t post_offsets[4][2];
@@ -1068,7 +1068,7 @@ static void VKAPI_CALL post_update(VkDevice device, uint32_t count, const VkWrit
 	uint32_t index;
 
 	(void)device; (void)copies; (void)copy;
-	assert(count == 4 && post_updates < 4);
+	assert(count == XGPU_VULKAN_TEXTURES && post_updates < 4);
 	for (index = 0; index < count; index++)
 		post_sampled[post_updates][index] = *writes[index].pImageInfo;
 	post_updates++;

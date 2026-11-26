@@ -445,6 +445,12 @@ struct draw_inputs
 	draws into the motion too; a record's playback tells the backend so
 	(journal_motion_span), its variants made as a walk makes them */
 	uint32_t motion_objects;
+	/* a model's material maps: the bits of the draw's key
+	(XGPU_TEXTURE_MODES_NORMAL_MAP, _ORM_MAP) its maps, as
+	halo_model_material_maps told them, give where its texture 0 is the one
+	they were told with, taken as each draw is made (material_modes_told);
+	as a record plays, the recorded draw's */
+	uint32_t material_modes;
 	/* the region of its texture each stage samples, as a texture of its own
 	with its border beyond it (d3d8_texture_region: its size and origin, in
 	the texture's coordinates; size 0: the whole texture) */
@@ -1606,6 +1612,8 @@ enum
 	JOURNAL_PAGES,
 };
 static BOOL journal_recording;
+/* a record playing (halo_gpu_journal_replay): the draws' inputs its own */
+static BOOL journal_playing;
 static void journal_draw(unsigned long op, unsigned long primitive, unsigned long start, unsigned long count,
 	unsigned long base_vertex, unsigned long minimum);
 static void journal_operation(unsigned long op, const void *arguments, unsigned long bytes);
@@ -4607,12 +4615,18 @@ void halo_model_material_maps(unsigned int normal_map, unsigned int orm_map)
 }
 
 /* the material bits of the draw's pixel key (before pipeline_derived): its
-maps, where texture 0 is the one they were told with */
-static DWORD material_modes(void)
+maps, where texture 0 is the one they were told with (draw_inputs'
+material_modes, taken from it as each draw is made but a record's) */
+static DWORD material_modes_told(void)
 {
 	if (!material.base || device.textures[0] != material.base || !device.textures[0]->Data)
 		return 0;
 	return (material.normal ? XGPU_TEXTURE_MODES_NORMAL_MAP : 0) | (material.orm ? XGPU_TEXTURE_MODES_ORM_MAP : 0);
+}
+
+static DWORD material_modes(void)
+{
+	return inputs.material_modes;
 }
 
 /* the maps to the backend where they changed: filtered as the base map is
@@ -4621,6 +4635,10 @@ static void material_send(void)
 {
 	struct xgpu_sampler sampler;
 
+	/* (a record's draw: its maps' images are not the record's, which knows
+	only that it had them; stand-ins, as the backend draws none) */
+	unsigned int normal = journal_playing ? 0 : material.normal, orm = journal_playing ? 0 : material.orm;
+
 	if (!material_modes())
 		return;
 	sampler_describe(0, TRUE, FALSE, FALSE, &sampler);
@@ -4628,13 +4646,13 @@ static void material_send(void)
 	sampler.first_level = 0;
 	if (sampler.mip == XGPU_FILTER_NONE)
 		sampler.mip = XGPU_FILTER_LINEAR;
-	if (material.sent && material.sent_normal == material.normal && material.sent_orm == material.orm &&
+	if (material.sent && material.sent_normal == normal && material.sent_orm == orm &&
 		!memcmp(&sampler, &material.sent_sampler, sizeof(sampler)))
 		return;
-	xgpu_backend_set_material(&sampler, material.normal, material.orm);
+	xgpu_backend_set_material(&sampler, normal, orm);
 	material.sent = TRUE;
-	material.sent_normal = material.normal;
-	material.sent_orm = material.orm;
+	material.sent_normal = normal;
+	material.sent_orm = orm;
 	material.sent_sampler = sampler;
 }
 
@@ -6972,7 +6990,10 @@ static BOOL prepare_draw(BOOL immediate, unsigned long primitive)
 				skip++;
 		}
 	}
-	/* (a model's material maps, where the draw may sample them) */
+	/* (a model's material maps, where the draw may sample them: the draw's
+	input, but a record's as it plays) */
+	if (!journal_playing)
+		inputs.material_modes = (uint32_t)material_modes_told();
 	material_send();
 	/* (debug.retained_draws: prepared as an earlier draw was) */
 	{
@@ -10664,8 +10685,9 @@ group, the stages' texture regions and the high-res text's atlas as itself;
 11: a view the screen's size played back at the screen's size now,
 JOURNAL_VIEW_SCREEN; 12: the front end's inputs whole, struct draw_inputs;
 13: a stream's memory by its geometry's name and offset, #1169; 14: the
-objects' span for display.temporal_aa, draw_inputs' motion_objects) */
-#define JOURNAL_FORM 14
+objects' span for display.temporal_aa, draw_inputs' motion_objects; 15: a model's material maps' bits,
+draw_inputs' material_modes) */
+#define JOURNAL_FORM 15
 
 unsigned int halo_gpu_journal_form(void)
 {
@@ -11119,8 +11141,10 @@ int halo_gpu_journal_replay(const unsigned int *words, unsigned int count, const
 	journal.motion_objects = FALSE;
 	memset(&journal.last, 0, sizeof(journal.last));
 	journal_prefetch_begin((const uint32_t *)words, count);
+	journal_playing = TRUE;
 	well_formed = journal_read((const uint32_t *)words, count, &journal.last, PLATFORM_CONTIGUOUS_SIZE,
 		MIRROR_PAGE_SIZE, &reader);
+	journal_playing = FALSE;
 	journal_prefetch_end();
 	journal_motion_span(FALSE);
 	if (journal.motion)
