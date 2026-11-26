@@ -18,6 +18,7 @@
 		<at widget="main_menu/settings/panel_enhanced_caption" x="503" y="187"/>
 		<at widget="main_menu/settings/panel_picture_fov" x="420" y="130"/>
 		<at widget="main_menu/settings/panel_picture_anti_aliasing" x="420" y="130"/>
+		<at widget="main_menu/settings/panel_picture_anti_aliasing_msaa" x="420" y="130"/>
 		<at widget="main_menu/settings/panel_picture_anti_aliasing_android" x="420" y="130"/>
 		<at widget="main_menu/settings/panel_picture_render_resolution" x="420" y="130"/>
 		<at widget="main_menu/settings/panel_picture_high_res_hud" x="420" y="130"/>
@@ -39,6 +40,7 @@
 		<at widget="main_menu/settings/panel_enhanced_caption" x="503" y="159"/>
 		<at widget="main_menu/settings/panel_picture_fov" x="420" y="102"/>
 		<at widget="main_menu/settings/panel_picture_anti_aliasing" x="420" y="102"/>
+		<at widget="main_menu/settings/panel_picture_anti_aliasing_msaa" x="420" y="102"/>
 		<at widget="main_menu/settings/panel_picture_anti_aliasing_android" x="420" y="102"/>
 		<at widget="main_menu/settings/panel_picture_render_resolution" x="420" y="102"/>
 		<at widget="main_menu/settings/panel_picture_high_res_hud" x="420" y="102"/>
@@ -79,6 +81,7 @@
 	</look>
 	<look name="main_menu/settings/panel_picture_fov" box="0 0 160 100" wide="-16 0" past="46 0" picture="main_menu/settings/pictures_fov"/>
 	<look name="main_menu/settings/panel_picture_anti_aliasing" box="0 0 160 100" wide="-16 0" past="46 0" picture="main_menu/settings/pictures_anti_aliasing"/>
+	<look name="main_menu/settings/panel_picture_anti_aliasing_msaa" box="0 0 160 100" wide="-16 0" past="46 0" picture="main_menu/settings/pictures_anti_aliasing_msaa"/>
 	<look name="main_menu/settings/panel_picture_anti_aliasing_android" box="0 0 160 100" wide="-16 0" past="46 0" picture="main_menu/settings/pictures_anti_aliasing_android"/>
 	<look name="main_menu/settings/panel_picture_render_resolution" box="0 0 160 100" wide="-16 0" past="46 0" picture="main_menu/settings/pictures_render_resolution"/>
 	<look name="main_menu/settings/panel_picture_high_res_hud" box="0 0 160 100" wide="-16 0" past="46 0" picture="main_menu/settings/pictures_high_res_hud"/>

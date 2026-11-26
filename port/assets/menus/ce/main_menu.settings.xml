@@ -17,6 +17,7 @@
 		<child widget="main_menu/settings/panel_enhanced_caption" x="503" y="213"/>
 		<child widget="main_menu/settings/panel_picture_fov" x="420" y="156"/>
 		<child widget="main_menu/settings/panel_picture_anti_aliasing" x="420" y="156"/>
+		<child widget="main_menu/settings/panel_picture_anti_aliasing_msaa" x="420" y="156"/>
 		<child widget="main_menu/settings/panel_picture_anti_aliasing_android" x="420" y="156"/>
 		<child widget="main_menu/settings/panel_picture_render_resolution" x="420" y="156"/>
 		<child widget="main_menu/settings/panel_picture_high_res_hud" x="420" y="156"/>
@@ -38,6 +39,7 @@
 		<child widget="main_menu/settings/panel_enhanced_caption" x="503" y="189"/>
 		<child widget="main_menu/settings/panel_picture_fov" x="420" y="132"/>
 		<child widget="main_menu/settings/panel_picture_anti_aliasing" x="420" y="132"/>
+		<child widget="main_menu/settings/panel_picture_anti_aliasing_msaa" x="420" y="132"/>
 		<child widget="main_menu/settings/panel_picture_anti_aliasing_android" x="420" y="132"/>
 		<child widget="main_menu/settings/panel_picture_render_resolution" x="420" y="132"/>
 		<child widget="main_menu/settings/panel_picture_high_res_hud" x="420" y="132"/>
@@ -75,6 +77,8 @@
 	<widget name="main_menu/settings/panel_picture_fov" controller="1" width="160" height="100" bitmap="main_menu/settings/pictures_fov" wide="-16 0" source="tools/port_settings.py settings_files/_settings_shared">
 	</widget>
 	<widget name="main_menu/settings/panel_picture_anti_aliasing" controller="1" width="160" height="100" bitmap="main_menu/settings/pictures_anti_aliasing" wide="-16 0" source="tools/port_settings.py settings_files/_settings_shared">
+	</widget>
+	<widget name="main_menu/settings/panel_picture_anti_aliasing_msaa" controller="1" width="160" height="100" bitmap="main_menu/settings/pictures_anti_aliasing_msaa" wide="-16 0" source="tools/port_settings.py settings_files/_settings_shared">
 	</widget>
 	<widget name="main_menu/settings/panel_picture_anti_aliasing_android" controller="1" width="160" height="100" bitmap="main_menu/settings/pictures_anti_aliasing_android" wide="-16 0" source="tools/port_settings.py settings_files/_settings_shared">
 	</widget>

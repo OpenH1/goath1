@@ -330,8 +330,11 @@ static const struct config_setting config_settings[] =
 		_platform_all,
 		"Smoothing of jagged edges, which the Xbox did not have: \"off\"; \"fxaa\"\n"
 		"or \"smaa\" smooth the 3D view once it is drawn (the HUD and menus stay\n"
-		"sharp); \"msaa2x\", \"msaa4x\" or \"msaa8x\" draw with that many samples\n"
-		"a pixel. Each combines with display.supersampling." GRAPHICS_CHOOSES },
+		"sharp); \"msaa2x\" or \"msaa4x\" draw with that many samples a pixel.\n"
+		"On a computer \"smaa\" looks as good as MSAA for much less of the GPU,\n"
+		"and display.temporal_aa better still; MSAA is best on phones and in VR.\n"
+		"An older version's \"msaa8x\" is read as \"msaa4x\". Each combines with\n"
+		"display.supersampling." GRAPHICS_CHOOSES },
 	{ "display.temporal_aa", _config_string, TEMPORAL_AA_DEFAULT, "HALO_TEMPORAL_AA", _environment_value, _platform_all,
 		"A temporal technique over the 3D view, at any render scale (the native\n"
 		"one too): \"off\"; \"fsr\", AMD FSR 3.1's upscaler (Vulkan: Linux,\n"
@@ -3769,6 +3772,9 @@ static const struct
 	medium one; a file's true or false read as these words too) */
 	{ "input.gyro_smoothing", "true", "medium" },
 	{ "input.gyro_smoothing", "false", "off" },
+	/* (MSAA's 8 samples, gone: twice 4x's work for edges no smoother to
+	see, where SMAA or a temporal technique does better for less) */
+	{ "display.anti_aliasing", "msaa8x", "msaa4x" },
 	{ NULL, NULL, NULL },
 };
 
@@ -5195,7 +5201,7 @@ static const struct
 	{ "display.benchmark_pacing", { "uncapped", "settings", NULL }, NULL },
 	{ "display.benchmark_player", { "bot", "scripted", NULL }, NULL },
 	{ "display.resolution_scaling", { "native", "original", NULL }, NULL },
-	{ "display.anti_aliasing", { "off", "fxaa", "smaa", "ssaa2x", "msaa2x", "msaa4x", "msaa8x", NULL }, NULL },
+	{ "display.anti_aliasing", { "off", "fxaa", "smaa", "ssaa2x", "msaa2x", "msaa4x", NULL }, NULL },
 	{ "display.ambient_occlusion", { "off", "world", "ray_traced", NULL }, "off" },
 	{ "display.temporal_aa", { "off", "fsr", "dlss", "metalfx", NULL }, "off" },
 	{ "display.shadows", { "classic", "ray_traced", NULL }, "classic" },
