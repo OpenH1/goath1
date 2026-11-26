@@ -23,9 +23,10 @@ thickness is guessed: the plan's limits of a screen-space pass.
 */
 
 #include "xgpu_vulkan_contact_shadows.h"
-#include "xgpu_vulkan_post_shaders.h"
 #include "host.h"
-#include "../src/xgpu_stream.h"
+#include "xgpu_backend.h"
+#include "xgpu_stream.h"
+#include "xgpu_vulkan_post_shaders.h"
 
 #include <math.h>
 #include <string.h>
