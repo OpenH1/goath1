@@ -29,7 +29,9 @@ back until mods_enable true, or until the map changes.
 The built-in HD effects (display.hd_effects: port/linux/src/hd_effects.h)
 are bitmap tag files played the same way (mod_bitmaps.c), under the mods,
 with them or without: mods_enable false leaves them, the setting alone turns
-them off (mods_builtins_update, each frame).
+them off (mods_builtins_update, each frame). So is what the player imported
+from MCC (display.mcc_import: port/linux/src/mcc_import.h): its bitmaps,
+their material maps and its sounds, each under a mod's file of the same tag.
 */
 
 /* ---------- headers */
@@ -48,6 +50,7 @@ them off (mods_builtins_update, each frame).
 /* the game's (port) */
 char *tag_get_name(long tag_index);
 int config_boolean(char const *key);
+char *getenv(char const *name);
 
 /* the host consumes queued draws before their textures or models change */
 void xgpu_backend_consume(void);
@@ -73,9 +76,9 @@ static struct
 	boolean map_loaded;
 	boolean enabled;
 	/* the built-in HD effects played on the map (not the menus' pictures'),
-	and hd_effects_changes when they last were */
+	and hd_effects_changes and mcc_import_changes when they last were */
 	boolean builtins;
-	unsigned long builtin_changes;
+	unsigned long builtin_changes[2];
 	boolean loose_sounds_enabled;
 	char map_name[64];
 	unsigned long kept_bytes;
@@ -271,31 +274,58 @@ long mods_bitmap_count(
 	return mods_globals.bitmap_count + mod_bitmaps_waiting_count();
 }
 
+/* the built-ins' changes: the HD effects' and the MCC import's, each with
+whether it is on in its lowest bit */
+static void builtin_changes_now(
+	unsigned long changes[2])
+{
+	changes[0] = hd_effects_changes();
+	changes[1] = mcc_import_changes();
+}
+
+static boolean builtins_on(
+	unsigned long const changes[2])
+{
+	return (changes[0] & 1) || (changes[1] & 1);
+}
+
 boolean mods_builtins_played(
 	void)
 {
-	return mods_globals.map_loaded && mods_globals.builtins && (hd_effects_changes() & 1);
+	unsigned long changes[2];
+
+	builtin_changes_now(changes);
+	return mods_globals.map_loaded && mods_globals.builtins && builtins_on(changes);
 }
 
 void mods_builtins_update(
 	void)
 {
-	unsigned long changes;
+	unsigned long changes[2];
+	boolean remove_all;
 
 	if (!mods_globals.map_loaded || !mods_globals.builtins)
 		return;
-	changes = hd_effects_changes();
-	if (changes == mods_globals.builtin_changes)
+	builtin_changes_now(changes);
+	if (changes[0] == mods_globals.builtin_changes[0] && changes[1] == mods_globals.builtin_changes[1])
 		return;
 	/* (turned on in a map whose effects were never made: made now) */
-	if ((changes & 1) && hd_effects_wanted())
+	if ((changes[0] & 1) && hd_effects_wanted())
 	{
 		hd_effects_build_now(cache_files_map_directory());
-		changes = hd_effects_changes();
+		changes[0] = hd_effects_changes();
 	}
-	mods_globals.builtin_changes = changes;
+	remove_all = !mods_globals.enabled || !port_mods_played();
 	xgpu_backend_consume();
-	mods_globals.bitmap_count = mod_bitmaps_update(!mods_globals.enabled || !port_mods_played(), FALSE);
+	mods_globals.bitmap_count = mod_bitmaps_update(remove_all, FALSE);
+	/* (the import's material maps and sounds follow its switch and files) */
+	if (changes[1] != mods_globals.builtin_changes[1])
+	{
+		mod_materials_update(remove_all, FALSE);
+		mods_globals.sound_count = mod_sounds_update(remove_all, FALSE);
+	}
+	mods_globals.builtin_changes[0] = changes[0];
+	mods_globals.builtin_changes[1] = changes[1];
 	texture_cache_size_for_map();
 }
 
@@ -347,7 +377,23 @@ void mods_tags_loaded(
 	first: a run that starts in a map, hd_effects.h) */
 	if (mods_globals.builtins && hd_effects_wanted())
 		hd_effects_build_now(cache_files_map_directory());
-	mods_globals.builtin_changes = hd_effects_changes();
+	/* (a test run's import from MCC, once, before the map's tags are played:
+	HALO_MCC_IMPORT names the preview meshes, "all" for every one, and
+	HALO_MCC_IMPORT_VOICES=1 imports the dialogue too) */
+	{
+		static boolean imported;
+		char const *only = getenv("HALO_MCC_IMPORT");
+
+		if (mods_globals.builtins && only && *only && !imported)
+		{
+			char const *voices = getenv("HALO_MCC_IMPORT_VOICES");
+
+			imported = TRUE;
+			mcc_import_now(cache_files_map_directory(), strcmp(only, "all") ? only : NULL,
+				voices && *voices == '1');
+		}
+	}
+	builtin_changes_now(mods_globals.builtin_changes);
 	mods_globals.loose_sounds_enabled = mods_globals.enabled && config_boolean("audio.loose_sounds") != 0;
 	csstrncpy(mods_globals.map_name, map_name ? map_name : "", sizeof(mods_globals.map_name) - 1);
 	mods_globals.map_name[sizeof(mods_globals.map_name) - 1] = 0;
@@ -360,10 +406,15 @@ void mods_tags_loaded(
 	{
 		mods_update(FALSE, TRUE);
 	}
-	/* (the built-in HD effects, with no mods played) */
-	else if (mods_globals.builtins && (mods_globals.builtin_changes & 1))
+	/* (the built-ins, with no mods played) */
+	else if (mods_globals.builtins && builtins_on(mods_globals.builtin_changes))
 	{
 		mods_globals.bitmap_count = mod_bitmaps_update(TRUE, TRUE);
+		if (mods_globals.builtin_changes[1] & 1)
+		{
+			mod_materials_update(TRUE, TRUE);
+			mods_globals.sound_count = mod_sounds_update(TRUE, TRUE);
+		}
 	}
 	/* (the map's textures and the mods' bitmaps known, the texture cache
 	takes the map's size: xbox_texture_cache.c) */

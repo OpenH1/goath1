@@ -61,6 +61,13 @@ void hd_effects_build_now(const char *maps_folder);
 unsigned long hd_effects_changes(void);
 int hd_effects_bitmap_file(const char *tag, char *path, unsigned long size, unsigned int *stock_crc);
 
+/* ---------- prototypes/MCC_IMPORT.C (the platform layer's: mcc_import.h) */
+
+void mcc_import_now(const char *maps_folder, const char *only, int voices);
+unsigned long mcc_import_changes(void);
+int mcc_import_bitmap_file(const char *tag, char *path, unsigned long size, unsigned int *stock_crc);
+int mcc_import_tag_file(const char *tag, const char *extension, char *path, unsigned long size);
+
 /* ---------- prototypes/MODS.C */
 
 /* the game's (cache_files.c, scenario_tags_load and scenario_tags_unload) */
@@ -111,8 +118,8 @@ char const *mods_map_name(void);
 boolean mods_map_loaded(void);
 /* how many of the map's bitmaps the mods play (xbox_texture_cache.c) */
 long mods_bitmap_count(void);
-/* whether the built-in HD effects are played on the map loaded (not on
-the menus' pictures' maps: mod_bitmaps.c) */
+/* whether the built-ins (the HD effects, the MCC import) are played on the
+map loaded (not on the menus' pictures' maps: mod_bitmaps.c) */
 boolean mods_builtins_played(void);
 /* (main.c, each frame) the built-in HD effects played again when the
 setting changed or they were made */

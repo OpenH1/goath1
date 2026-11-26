@@ -1540,10 +1540,10 @@ static boolean lightmaps_decide(
 
 /* ---------- public code */
 
-/* the built-in HD effect's file for the map's bitmap tag `tag_index`
-(`definition`, the map's own), into `path`, if there is one and the map's
-bitmap is the stock one it was made from: its pages' pixels, read from the
-map, have its CRC-32 */
+/* the built-in HD effect's or MCC import's file for the map's bitmap tag
+`tag_index` (`definition`, the map's own), into `path`, if there is one and
+the map's bitmap is the stock one it was made from: its pages' pixels, read
+from the map, have its CRC-32 */
 static boolean builtin_file_find(
 	long tag_index,
 	struct bitmap_group const *definition,
@@ -1554,7 +1554,8 @@ static boolean builtin_file_find(
 	unsigned long crc = 0;
 	long page;
 
-	if (!hd_effects_bitmap_file(tag_get_name(tag_index), path, size, &stock_crc) ||
+	if ((!hd_effects_bitmap_file(tag_get_name(tag_index), path, size, &stock_crc) &&
+		!mcc_import_bitmap_file(tag_get_name(tag_index), path, size, &stock_crc)) ||
 		definition->bitmaps.count < 1 || custom_edition_cache_tags_loaded())
 	{
 		return FALSE;
@@ -1582,7 +1583,7 @@ static boolean builtin_file_find(
 	}
 	if (crc != stock_crc)
 	{
-		error(_error_silent, "hd effects: %s is not the stock bitmap (CRC %08lx): drawn as it is",
+		error(_error_silent, "built-ins: %s is not the stock bitmap (CRC %08lx): drawn as it is",
 			tag_get_name(tag_index), crc);
 		return FALSE;
 	}
@@ -1675,7 +1676,7 @@ long mod_bitmaps_update(
 			{
 				error(_error_silent, "mods: %s left out: %s", path, reason);
 				console_warning("mods: %s.bitmap of %s left out: %s", tag_get_name(tag_index),
-					file != NONE ? port_mods_file_mod(file) : "the HD effects", reason);
+					file != NONE ? port_mods_file_mod(file) : "the built-ins", reason);
 				refused_count++;
 			}
 			else

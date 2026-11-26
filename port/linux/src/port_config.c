@@ -472,6 +472,11 @@ static const struct config_setting config_settings[] =
 		"kept in the data folder's hd_effects (port/linux/src/hd_effects.h).\n"
 		"A mod's bitmap of the same effect is drawn instead; a map's own or\n"
 		"modded effect is left as it is. false draws the maps' own bitmaps." },
+	{ "display.mcc_import", _config_boolean, "true", "HALO_MCC_IMPORT_ON", _environment_value, _platform_desktop,
+		"Draw and play what Import from MCC built from your own MCC install\n"
+		"(sharper weapon and vehicle textures, their material maps, MCC's\n"
+		"clearer English dialogue), kept in the data folder's mcc_import. A\n"
+		"mod's file of the same tag wins. false plays the maps' own." },
 	{ "display.spartan_link", _config_string, "\"medium\"", "HALO_SPARTAN_LINK", _environment_value, _platform_all,
 		"The Spartan link: live feeds of your living teammates' views beside\n"
 		"the motion tracker, each with their name, shield and distance, shown\n"
@@ -1904,6 +1909,9 @@ static const struct config_setting config_settings[] =
 		"Workshop items. Empty uses automatic discovery: Windows registry, Linux\n"
 		"Steam/XDG hints, usual folders and their libraries. Windows paths use single\n"
 		"quotes: 'D:\\Steam'." },
+	{ "paths.mcc", _config_string, "\"\"", "HALO_MCC_ROOT", _environment_value, _platform_desktop,
+		"The Halo MCC install's folder (the one holding MCC and halo1) that\n"
+		"Import from MCC reads. Empty finds it in Steam's libraries." },
 	{ "game.mcc_campaigns", _config_boolean, "true", "HALO_MCC_CAMPAIGNS", _environment_value, _platform_all,
 		"Use explicit MCC campaign manifests for mission discovery, ordering and\n"
 		"progression. Reopen the map list after changing this." },
