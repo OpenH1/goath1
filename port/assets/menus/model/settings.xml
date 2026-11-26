@@ -997,7 +997,7 @@
 		</row>
 		<row key="headshot_indicator" kind="choice" setting="display.headshot_indicator" label="HEADSHOT INDICATOR" crumb="VIDEO › FIRST PERSON" search="crosshair headshot" enabled="high_res_hud_on">
 			<help>A red dot in the pistol's and the sniper rifle's reticle when the shot would hit the head, as later Halo games show it. Only the stock weapons on the stock maps, with the High-Res HUD on (Interface › HUD).</help>
-			<note>Aiming is not changed: the dot only shows what the shot already does. Only your screen changes. A host may forbid it in its games.</note>
+			<note>Aiming is not changed: the dot only shows what the shot already does. Only your screen changes. In network games, only where the host allows it.</note>
 			<choice shown="ON" value="true"/>
 			<choice shown="OFF" value="false"/>
 		</row>
