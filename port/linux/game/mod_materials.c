@@ -309,6 +309,34 @@ long mod_materials_update(
 	return map_count;
 }
 
+unsigned long mod_materials_identity(
+	void)
+{
+	unsigned long identity = 0;
+	long index;
+
+	/* (the same whatever the table's order: each bitmap's word mixed, then
+	summed) */
+	for (index = 0; index < MAXIMUM_MATERIALS; index++)
+	{
+		struct mod_material const *material = &mod_materials_globals.materials[index];
+		unsigned long word;
+
+		if (material->tag_index == NONE ||
+			(!material->images[_material_map_normal] && !material->images[_material_map_orm]))
+		{
+			continue;
+		}
+		word = ((unsigned long)material->tag_index & 0xffffUL) << 2 |
+			(material->images[_material_map_normal] ? 1UL : 0UL) | (material->images[_material_map_orm] ? 2UL : 0UL);
+		word = (word ^ (word >> 16)) * 0x45d9f3bUL;
+		word = (word ^ (word >> 16)) * 0x45d9f3bUL;
+		identity += (word ^ (word >> 16)) & 0xffffffffUL;
+	}
+
+	return identity & 0xffffffffUL;
+}
+
 void mod_materials_tags_unloaded(
 	void)
 {
