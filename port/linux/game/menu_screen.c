@@ -453,6 +453,9 @@ static struct screen_action const screen_actions[] =
 	/* (the host's SPARTAN LINK in a team game turned over) */
 	{ "lobby spartan link left", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_lobby },
 	{ "lobby spartan link right", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_lobby },
+	/* (the co-op host's BIGGER BATTLES stepped) */
+	{ "lobby battle left", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_lobby },
+	{ "lobby battle right", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_lobby },
 	/* (the lobby's chat: a line begun, the on-screen keyboard's on a
 	controller or a touchscreen) */
 	{ "lobby chat", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_lobby },
@@ -530,7 +533,8 @@ static char const *const screen_action_names[] =
 	"profile new", "profile delete", "profile color", "lobby row", "lobby start", "lobby team red", "lobby team blue",
 	"lobby team toggle", "lobby invite", "lobby settings", "lobby host", "lobby add player", "lobby bots left",
 	"lobby bots right", "lobby skill left", "lobby skill right", "lobby teams left", "lobby teams right",
-	"lobby hijack left", "lobby hijack right", "lobby spartan link left", "lobby spartan link right", "lobby chat", "lobby card", "lobby card friend", "lobby card mute", "lobby card kick", "lobby friends",
+	"lobby hijack left", "lobby hijack right", "lobby spartan link left", "lobby spartan link right", "lobby battle left", "lobby battle right",
+	"lobby chat", "lobby card", "lobby card friend", "lobby card mute", "lobby card kick", "lobby friends",
 	"lobby friend left", "lobby friend right", "lobby friend invite", "lobby close",
 	"add player done", "add player back",
 	"close", "close all", "pause leave", "open host controls", "pause end game", "pause chapters",
@@ -565,7 +569,8 @@ static char const *const screen_binding_names[] =
 	"lobby.red.count", "lobby.red.tone", "lobby.blue", "lobby.blue.count", "lobby.blue.tone", "lobby.gametype",
 	"lobby.map", "lobby.limits", "lobby.kind", "lobby.kind.tone", "lobby.tick", "lobby.opence", "lobby.after",
 	"lobby.bots", "lobby.bots.shown", "lobby.bots.some", "lobby.bots.locked", "lobby.bots.count.locked", "lobby.skill", "lobby.teams",
-	"lobby.hijack", "lobby.hijack.shown", "lobby.spartan_link", "lobby.spartan_link.shown", "lobby.status", "lobby.start", "lobby.host", "lobby.settings", "lobby.controls", "lobby.waiting",
+	"lobby.hijack", "lobby.hijack.shown", "lobby.spartan_link", "lobby.spartan_link.shown", "lobby.battle", "lobby.battle.shown",
+	"lobby.status", "lobby.start", "lobby.host", "lobby.settings", "lobby.controls", "lobby.waiting",
 	"lobby.team.change", "lobby.invite", "lobby.add", "lobby.chat", "lobby.details", "lobby.card", "lobby.inviting",
 	"lobby.panel.open", "lobby.card.name", "lobby.card.color", "lobby.card.ping", "lobby.card.platform",
 	"lobby.card.party", "lobby.card.note", "lobby.card.facts", "lobby.card.friend",

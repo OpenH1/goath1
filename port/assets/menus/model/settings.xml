@@ -372,7 +372,7 @@
 		<button key="button_cancel" kind="cancel" run="port settings cancel" help="Leaves Settings without keeping any change."/>
 	</screen>
 	<screen name="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/interface_settings_screen" kind="settings" layout="tab" geometry="tall" tab="INTERFACE">
-		<about>The HUD, the players' names, the scoreboard and the chat.</about>
+		<about>The HUD, the players' names, the scoreboard, the chat and the campaign's battles.</about>
 		<section key="section_0" title="HUD"/>
 		<row key="high_res_hud" kind="choice" setting="display.high_res_hud" label="HIGH-RES HUD" crumb="INTERFACE › HUD">
 			<help>Draws the HUD from sharp high-resolution redraws. Off draws the game's own pictures.</help>
@@ -433,6 +433,13 @@
 			<help>Colors draws the names in their team's color; White draws it all white, as Custom Edition does.</help>
 			<choice shown="COLORS" value="colors"/>
 			<choice shown="WHITE" value="white"/>
+		</row>
+		<section key="section_14" title="CAMPAIGN"/>
+		<row key="bigger_battles" kind="choice" setting="campaign.bigger_battles" label="BIGGER BATTLES" crumb="INTERFACE › CAMPAIGN">
+			<help>Every enemy squad in the campaign is two or three times as large, solo, split screen and co-op you host (on top of co-op's Extra Enemies). Legendary gets half as many extras. Starts with the next level; a saved game keeps its own.</help>
+			<choice shown="OFF" value="off"/>
+			<choice shown="2X" value="2x"/>
+			<choice shown="3X" value="3x"/>
 		</row>
 		<button key="button_defaults" kind="defaults" run="port settings defaults" help="Puts this tab's settings back to their defaults. Nothing changes until OK."/>
 		<button key="button_ok" kind="ok" run="port settings ok" help="Keeps your changes, on every tab, and applies them."/>
@@ -1630,13 +1637,6 @@
 			<help>Team games you host: players may show their teammates' views beside the motion tracker. Co-op always has it. Online: the host's choice.</help>
 			<choice shown="ON" value="true"/>
 			<choice shown="OFF" value="false"/>
-		</row>
-		<section key="section_4" title="CAMPAIGN"/>
-		<row key="bigger_battles" kind="choice" setting="campaign.bigger_battles" label="BIGGER BATTLES" crumb="ONLINE › GAMEPLAY">
-			<help>Campaign on this computer, solo or split screen: every enemy squad is two or three times as large (on Legendary, half as many extras). Starts with the next level; a saved game keeps its own. Online co-op uses Extra Enemies.</help>
-			<choice shown="OFF" value="off"/>
-			<choice shown="2X" value="2x"/>
-			<choice shown="3X" value="3x"/>
 		</row>
 		<button key="button_defaults" kind="defaults" run="port settings defaults" help="Puts this page's settings back to their defaults."/>
 		<button key="button_ok" kind="ok" run="port settings keep" help="Saves your changes, on this page and every tab, and applies them."/>

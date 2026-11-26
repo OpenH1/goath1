@@ -1192,7 +1192,7 @@ PAGES = {
     },
     "interface_settings": {
         "screen": "interface_settings_screen", "tab": "INTERFACE",
-        "about": "The HUD, the players' names, the scoreboard and the chat.",
+        "about": "The HUD, the players' names, the scoreboard, the chat and the campaign's battles.",
         "rows": [
             (SECTION, "HUD"),
             ("HIGH-RES HUD", "display.high_res_hud", ON_OFF,
@@ -1236,6 +1236,14 @@ PAGES = {
             ("CHAT TEXT", "display.chat_style", [("COLORS", "colors"), ("WHITE", "white")],
              "Colors draws the names in their team's color; White draws it all white, as Custom Edition does.",
              None),
+            # (port/linux/game/coop_enemies.c: the campaign's, solo, split
+            # screen and a co-op game this computer hosts (the lobby's BATTLE
+            # too), read as a level begins; a saved game keeps its own)
+            (SECTION, "CAMPAIGN"),
+            ("BIGGER BATTLES", "campaign.bigger_battles", [("OFF", "off"), ("2X", "2x"), ("3X", "3x")],
+             "Every enemy squad in the campaign is two or three times as large, solo, split screen and co-op you "
+             "host (on top of co-op's Extra Enemies). Legendary gets half as many extras. Starts with the next "
+             "level; a saved game keeps its own.", None),
         ],
     },
     "profile_settings": {
@@ -2010,13 +2018,6 @@ PAGES = {
             ("SPARTAN LINK", "game.spartan_link", ON_OFF,
              "Team games you host: players may show their teammates' views beside the motion tracker. Co-op "
              "always has it. Online: the host's choice.", None),
-            (SECTION, "CAMPAIGN"),
-            # (port/linux/game/coop_enemies.c: a local campaign's, read as a
-            # level begins; a saved game keeps its own)
-            ("BIGGER BATTLES", "campaign.bigger_battles", [("OFF", "off"), ("2X", "2x"), ("3X", "3x")],
-             "Campaign on this computer, solo or split screen: every enemy squad is two or three times as large "
-             "(on Legendary, half as many extras). Starts with the next level; a saved game keeps its own. "
-             "Online co-op uses Extra Enemies.", None),
         ],
     },
     SPARTAN_LINK[0]: {

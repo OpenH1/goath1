@@ -43,7 +43,8 @@ void *coop_enemies_port_demo_state(
 	long *size);
 
 /* encounters.c: how many enemies more a squad placed with `count` gets
-(none but on a co-op host, for an encounter of the players' enemies) */
+(none but on a co-op host, or in a local campaign with BIGGER BATTLES, for
+an encounter of the players' enemies) */
 short coop_enemies_extra_count(
 	long encounter_index,
 	short count);
