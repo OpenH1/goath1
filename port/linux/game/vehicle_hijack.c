@@ -115,11 +115,13 @@ enum
 	VEHICLE_HIJACK_THROW_WAYS = 7,
 };
 
-/* the leap's height over the straight line to the entrance (world units)
-and its least (a step up) */
-#define VEHICLE_HIJACK_VAULT_HEIGHT 0.25f
-/* ... and over a vehicle in the way (its side, from its front round) */
-#define VEHICLE_HIJACK_VAULT_CLEARING_HEIGHT 0.5f
+/* the leap's height over the straight line to the entrance (world units):
+a hop that reads, as Halo 2's leap does (CE has no boarding animation: the
+biped's own airborne pose is what is seen) */
+#define VEHICLE_HIJACK_VAULT_HEIGHT 0.35f
+/* ... and over a vehicle in the way (its side, from its front round), or
+up onto the Scorpion's top */
+#define VEHICLE_HIJACK_VAULT_CLEARING_HEIGHT 0.6f
 /* a body (its half width and height, tested at that many levels) kept clear
 of the vehicle at the landing, looked for out from the seat's entrance a
 step at a time, so far at most; how far down a floor is looked for (world
@@ -132,20 +134,31 @@ enum { VEHICLE_HIJACK_BODY_LEVELS = 4 };
 #define VEHICLE_HIJACK_FLOOR_PROBE 3.0f
 /* a biped's origin over the floor it stands on, where none is measured */
 #define VEHICLE_HIJACK_STANDING 0.45f
-/* the reach of a seat, as unit_find_nearby_seat's */
-#define VEHICLE_HIJACK_REACH 1.0f
-/* the throw: out and up (world units a tick: 2.1 and 1.05 a second), a
-knock off to the side: with the level's gravity (global_gravity, 0.0036 a
-tick) up about a fifth of a unit, down again some two thirds of a second
-on, about a unit and a half out; and how far past the vehicle's sphere the
-rider stands */
-#define VEHICLE_HIJACK_THROW_OUT 0.07f
-#define VEHICLE_HIJACK_THROW_UP 0.035f
+/* a seat's entrance this far to its side (world units, in the vehicle's
+frame) is a side's, boarded from the other side too */
+#define VEHICLE_HIJACK_SIDE_ENTRANCE 0.2f
+/* the Scorpion's top: looked for down from this far over its driver's
+seat, and a body raised off it at most this far to be clear of it; the
+jacker riding it got off once they are this far from where they ride
+(another machine's, which this one does not hold there) */
+#define VEHICLE_HIJACK_TANK_PROBE 1.5f
+#define VEHICLE_HIJACK_TANK_RAISE 0.6f
+#define VEHICLE_HIJACK_TANK_SLIP 1.0f
+/* ... and the hop off it, the jump: up and out (world units a tick) */
+#define VEHICLE_HIJACK_HOP_UP 0.06f
+#define VEHICLE_HIJACK_HOP_OUT 0.05f
+/* the throw: out and up (world units a tick: 2.4 and 1.35 a second), a
+shove that reads, as Halo 2's: with the level's gravity (global_gravity,
+0.0036 a tick) up about 0.28 of a unit, down again some 0.8 of a second
+on, about two units out; and how far past the vehicle's sphere the rider
+stands */
+#define VEHICLE_HIJACK_THROW_OUT 0.08f
+#define VEHICLE_HIJACK_THROW_UP 0.045f
 #define VEHICLE_HIJACK_THROW_MARGIN 0.15f
 /* a biped's size when its definition has none */
 #define VEHICLE_HIJACK_RIDER_RADIUS 0.3f
-/* the jolt's scale of a melee's hit */
-#define VEHICLE_HIJACK_JOLT_SCALE 0.75f
+/* the jolt's scale of a melee's hit: all of it, a punch */
+#define VEHICLE_HIJACK_JOLT_SCALE 1.0f
 /* how far down a flyer looks for the level */
 #define VEHICLE_HIJACK_GROUND_PROBE 4.0f
 
@@ -168,11 +181,26 @@ struct vehicle_hijack_sequence
 	boolean struck;
 	long start_time;
 	/* the vault (where the jacker is this machine's to move): from where they
-	stood to beside the seat, and its arc's height */
+	stood to beside the seat (in the vehicle's frame, so that the vault
+	lands where the seat is when it comes down, a moving one's too, and the
+	jacker holds on there until the throw), and its arc's height */
 	boolean vaulting;
 	real_point3d vault_start;
 	real_point3d vault_landing;
 	real vault_height;
+	/* (a vault worked out on this machine: the landing known) */
+	boolean landed;
+	/* the Scorpion: boarded, not thrown (the jacker rides its top and
+	beats on the hatch); the last beat, a beat asked for (the melee
+	pressed), the melee and the jump held last tick; the driver dead,
+	since when the seat is looked to */
+	boolean boarding;
+	long last_beat_time;
+	boolean beat_asked;
+	boolean melee_held;
+	boolean jump_held;
+	boolean jumped;
+	long taking_time;
 };
 
 struct vehicle_hijack_thrown
@@ -185,6 +213,8 @@ struct vehicle_hijack_test_hold
 {
 	long vehicle_index;
 	long until;
+	/* (a drive on at this speed, world units a tick: 0 none) */
+	real speed;
 };
 
 /* ---------- globals */
@@ -212,19 +242,27 @@ boolean vehicle_hijack_seat_allowed(
 {
 	if (!facts->rule || facts->opence || !facts->enemy || !facts->rider_alive || !facts->upright)
 		return FALSE;
-	if (facts->speed > VEHICLE_HIJACK_MAXIMUM_SPEED)
+	/* (passing close at speed, as Halo 2's; never one coming at the jacker
+	faster than a walk, which runs them down) */
+	if (facts->speed > VEHICLE_HIJACK_MAXIMUM_SPEED ||
+		(facts->oncoming && facts->speed > VEHICLE_HIJACK_WALK_SPEED))
+	{
 		return FALSE;
+	}
 	switch (facts->kind)
 	{
 	case _vehicle_hijack_kind_jeep:
 		return facts->part == _vehicle_hijack_seat_driver || facts->part == _vehicle_hijack_seat_gunner;
 	case _vehicle_hijack_kind_scout:
+	case _vehicle_hijack_kind_tank:
+		/* (the Scorpion's driver, who aims its gun too: boarded) */
 		return facts->part == _vehicle_hijack_seat_driver;
 	case _vehicle_hijack_kind_flyer:
 		return facts->part == _vehicle_hijack_seat_driver &&
-			facts->ground_clearance <= VEHICLE_HIJACK_FLYER_GROUND_CLEARANCE;
+			(facts->ground_clearance <= VEHICLE_HIJACK_FLYER_GROUND_CLEARANCE ||
+				facts->speed <= VEHICLE_HIJACK_FLYER_HOVER_SPEED);
 	default:
-		/* (the Scorpion, a turret, a boat, a plane) */
+		/* (a turret, a boat, a plane) */
 		return FALSE;
 	}
 }
@@ -401,7 +439,22 @@ static boolean vehicle_hijack_seat_offered_to_unit(
 	facts.kind = vehicle_hijack_vehicle_kind(vehicle_index);
 	facts.part = vehicle_hijack_seat_part(vehicle_index, seat_index);
 	facts.upright = vehicle_hijack_upright(vehicle_index);
-	facts.speed = magnitude3d(&object_get(vehicle_index)->object.translational_velocity);
+	/* (how fast it passes the jacker, and whether it comes at them: they
+	stand ahead of it, within 45 degrees of its way, level) */
+	{
+		struct object_datum *vehicle = object_get(vehicle_index);
+		real_vector3d passing, toward;
+
+		passing.i = vehicle->object.translational_velocity.i - unit->object.translational_velocity.i;
+		passing.j = vehicle->object.translational_velocity.j - unit->object.translational_velocity.j;
+		passing.k = vehicle->object.translational_velocity.k - unit->object.translational_velocity.k;
+		facts.speed = magnitude3d(&passing);
+		vector_from_points3d(&vehicle->object.bounding_sphere_center, &unit->object.bounding_sphere_center, &toward);
+		passing.k = 0.0f;
+		toward.k = 0.0f;
+		facts.oncoming = normalize3d(&passing) > 0.0f && normalize3d(&toward) > 0.0f &&
+			dot_product3d(&passing, &toward) > 0.7071068f;
+	}
 	facts.ground_clearance = facts.kind == _vehicle_hijack_kind_flyer ?
 		vehicle_hijack_ground_clearance(vehicle_index) : 0.0f;
 	return vehicle_hijack_seat_allowed(&facts);
@@ -463,6 +516,51 @@ short vehicle_hijack_seat_offered(
 		}
 	}
 	return best_seat_index;
+}
+
+boolean vehicle_hijack_nearby_seat(
+	long player_index,
+	long *vehicle_index,
+	short *seat_index)
+{
+	struct player_datum *player = player_get(player_index);
+	struct unit_datum *unit;
+	long object_indices[16];
+	short object_count;
+	short index;
+	real best_distance = REAL_MAX;
+
+	*vehicle_index = NONE;
+	*seat_index = NONE;
+	/* (nothing, not even a look about, while the rule is off) */
+	if (!network_standard_vehicle_hijack() || player->unit_index == NONE)
+		return FALSE;
+	unit = vehicle_hijack_living_unit(player->unit_index);
+	if (!unit || unit->object.parent_object_index != NONE)
+		return FALSE;
+	/* (the vehicles whose spheres come within the reach of the jacker's
+	middle) */
+	object_count = objects_in_sphere(0, _object_mask_vehicle, &unit->object.location,
+		&unit->object.bounding_sphere_center, VEHICLE_HIJACK_REACH, object_indices, NUMBEROF(object_indices));
+	for (index = 0; index < object_count; index++)
+	{
+		short seat = vehicle_hijack_seat_offered(player_index, object_indices[index]);
+		real_point3d entrance;
+		real distance;
+
+		if (seat == NONE ||
+			!vehicle_hijack_reach(player->unit_index, object_indices[index], seat, &entrance, &distance))
+		{
+			continue;
+		}
+		if (distance < best_distance)
+		{
+			best_distance = distance;
+			*vehicle_index = object_indices[index];
+			*seat_index = seat;
+		}
+	}
+	return *vehicle_index != NONE;
 }
 
 /* ---------- the sequence */
@@ -536,6 +634,7 @@ raised by a parabola of the arc's height */
 static void vehicle_hijack_vault_point(
 	struct vehicle_hijack_sequence const *sequence,
 	long tick,
+	real_point3d const *landing,
 	real_point3d *point)
 {
 	real u = (real)PIN(tick, 0, VEHICLE_HIJACK_VAULT_TICKS) / (real)VEHICLE_HIJACK_VAULT_TICKS;
@@ -543,37 +642,94 @@ static void vehicle_hijack_vault_point(
 
 	/* (across eased, so the take-off and the landing are soft; up as a
 	thrown body's arc) */
-	point->x = sequence->vault_start.x + (sequence->vault_landing.x - sequence->vault_start.x) * smooth;
-	point->y = sequence->vault_start.y + (sequence->vault_landing.y - sequence->vault_start.y) * smooth;
-	point->z = sequence->vault_start.z + (sequence->vault_landing.z - sequence->vault_start.z) * u +
+	point->x = sequence->vault_start.x + (landing->x - sequence->vault_start.x) * smooth;
+	point->y = sequence->vault_start.y + (landing->y - sequence->vault_start.y) * smooth;
+	point->z = sequence->vault_start.z + (landing->z - sequence->vault_start.z) * u +
 		4.0f * sequence->vault_height * u * (1.0f - u);
+}
+
+/* the landing in the world, where the vehicle is now (its frame's) */
+static void vehicle_hijack_landing(
+	struct vehicle_hijack_sequence const *sequence,
+	real_point3d *landing)
+{
+	real_matrix4x3 matrix;
+
+	object_get_world_matrix(sequence->vehicle_index, &matrix);
+	matrix4x3_transform_point(&matrix, &sequence->vault_landing, landing);
 }
 
 /* the jacker where the vault has them at a tick of it, moving on to the
 next: an airborne biped, its velocity the arc's, so that the steps between
-the ticks draw it along the arc */
+the ticks draw it along the arc; from its end on, held at the landing as
+the vehicle moves, its velocity the vehicle's (hanging on, airborne, where
+it moves faster than a walk) */
 static void vehicle_hijack_vault_place(
 	struct vehicle_hijack_sequence const *sequence,
 	long tick)
 {
 	struct biped_datum *biped = biped_try_and_get(sequence->jacker_unit_index);
-	real_point3d point, next;
+	struct object_datum *vehicle = object_get(sequence->vehicle_index);
+	real_point3d landing, next_landing, point, next;
+	boolean airborne;
 
 	if (!biped)
 		return;
-	vehicle_hijack_vault_point(sequence, tick, &point);
-	vehicle_hijack_vault_point(sequence, tick + 1, &next);
+	/* (where the seat will be the next tick: the vehicle's way on) */
+	vehicle_hijack_landing(sequence, &landing);
+	next_landing.x = landing.x + vehicle->object.translational_velocity.i;
+	next_landing.y = landing.y + vehicle->object.translational_velocity.j;
+	next_landing.z = landing.z + vehicle->object.translational_velocity.k;
+	vehicle_hijack_vault_point(sequence, tick, &landing, &point);
+	vehicle_hijack_vault_point(sequence, tick + 1, &next_landing, &next);
 	if (tick > 0)
 		object_set_position(sequence->jacker_unit_index, &point, NULL, NULL);
 	biped = biped_get(sequence->jacker_unit_index);
 	vector_from_points3d(&point, &next, &biped->object.translational_velocity);
+	airborne = tick < VEHICLE_HIJACK_VAULT_TICKS || (!sequence->boarding &&
+		magnitude3d(&vehicle->object.translational_velocity) > VEHICLE_HIJACK_WALK_SPEED);
 	/* (the level's gravity a tick, which the steps between take off) */
-	if (tick < VEHICLE_HIJACK_VAULT_TICKS)
+	if (airborne)
 		biped->object.translational_velocity.k += 0.5f * global_gravity;
-	SET_FLAG(biped->biped.flags, _biped_airborne_bit, tick < VEHICLE_HIJACK_VAULT_TICKS);
+	SET_FLAG(biped->biped.flags, _biped_airborne_bit, airborne);
 	biped->biped.jump_recovery_timer = 0;
 	biped->biped.support_surface_index = NONE;
 	SET_FLAG(biped->object.flags, _object_at_rest_bit, FALSE);
+}
+
+/* the Scorpion's top over its driver's seat, where a body stands on it: down
+from above the seat onto the vehicle (its model), then up a little at a
+time until the body is clear of it (its physics and its model); FALSE if
+no top is found there */
+static boolean vehicle_hijack_tank_top(
+	struct vehicle_hijack_sequence const *sequence,
+	real_point3d const *seat,
+	real standing,
+	real_point3d *top)
+{
+	struct collision_result collision;
+	real_point3d from = *seat;
+	real_vector3d down = { 0.0f, 0.0f, -2.0f * VEHICLE_HIJACK_TANK_PROBE };
+	real raise;
+
+	from.z += VEHICLE_HIJACK_TANK_PROBE;
+	if (!collision_test_vector(FLAG(_collision_test_objects_bit) | FLAG(_collision_test_objects_vehicles_bit) |
+		FLAG(_collision_test_front_facing_surfaces_bit), &from, &down, sequence->jacker_unit_index, &collision) ||
+		collision.object_index != sequence->vehicle_index)
+	{
+		return FALSE;
+	}
+	for (raise = 0.0f; raise <= VEHICLE_HIJACK_TANK_RAISE; raise += VEHICLE_HIJACK_LANDING_STEP)
+	{
+		*top = collision.point;
+		top->z += standing + raise;
+		if (vehicle_hijack_body_clear(top, collision.point.z + raise, sequence->vehicle_index,
+			sequence->jacker_unit_index))
+		{
+			break;
+		}
+	}
+	return TRUE;
 }
 
 static void vehicle_hijack_launch(
@@ -583,10 +739,13 @@ static void vehicle_hijack_launch(
 	struct object_datum *vehicle = object_get(sequence->vehicle_index);
 	real_point3d entrance, landing, seat;
 	real_vector3d out;
+	real_matrix4x3 matrix;
 	real distance;
 	real standing;
 	real floor;
 	real reach;
+	boolean mirrored = FALSE;
+	boolean on_top = FALSE;
 
 	sequence->vaulting = FALSE;
 	if (!biped || !vehicle_hijack_reach(sequence->jacker_unit_index, sequence->vehicle_index, sequence->seat_index,
@@ -605,12 +764,7 @@ static void vehicle_hijack_launch(
 	{
 		standing = sequence->vault_start.z - floor;
 	}
-	/* the landing: the seat's entrance (where its enter animation begins),
-	moved out along the seat's way in until a body there is clear of the
-	vehicle, on the floor */
-	/* (the way out: from the seat (its marker) to its entrance, the way the
-	enter animation comes in: a Ghost's or a Warthog driver's side, a
-	Warthog gunner's back) */
+	/* (the seat (its marker)) */
 	{
 		struct unit_seat *seat_definition = TAG_BLOCK_GET_ELEMENT(
 			&unit_definition_get(vehicle->definition_index)->unit.seats, sequence->seat_index, struct unit_seat);
@@ -620,52 +774,95 @@ static void vehicle_hijack_launch(
 		if (object_get_marker_by_name(sequence->vehicle_index, seat_definition->marker_name, &marker, 1))
 			seat = marker.matrix.position;
 	}
-	vector_from_points3d(&seat, &entrance, &out);
-	out.k = 0.0f;
-	if (normalize3d(&out) == 0.0f)
+	object_get_world_matrix(sequence->vehicle_index, &matrix);
+	/* (the side the jacker comes from, as Halo 2's: a seat entered from a
+	side (a Ghost's, a Warthog driver's) boarded from the other side too,
+	its entrance mirrored across the seat in the vehicle's frame) */
 	{
-		vector_from_points3d(&vehicle->object.bounding_sphere_center, &entrance, &out);
+		real_point3d seat_local, entrance_local, jacker_local;
+
+		matrix4x3_inverse_transform_point(&matrix, &seat, &seat_local);
+		matrix4x3_inverse_transform_point(&matrix, &entrance, &entrance_local);
+		matrix4x3_inverse_transform_point(&matrix, &biped->object.bounding_sphere_center, &jacker_local);
+		if (fabsf(entrance_local.y - seat_local.y) > VEHICLE_HIJACK_SIDE_ENTRANCE &&
+			(entrance_local.y - seat_local.y) * (jacker_local.y - seat_local.y) < 0.0f)
+		{
+			entrance_local.y = 2.0f * seat_local.y - entrance_local.y;
+			matrix4x3_transform_point(&matrix, &entrance_local, &entrance);
+			mirrored = TRUE;
+		}
+	}
+	/* the Scorpion: its top, over the driver's hatch */
+	if (sequence->boarding)
+		on_top = vehicle_hijack_tank_top(sequence, &seat, standing, &landing);
+	if (!on_top)
+	{
+		/* the landing: the seat's entrance (where its enter animation
+		begins), moved out along the seat's way in until a body there is
+		clear of the vehicle, on the floor */
+		/* (the way out: from the seat (its marker) to its entrance, the way
+		the enter animation comes in: a Ghost's or a Warthog driver's side,
+		a Warthog gunner's back) */
+		vector_from_points3d(&seat, &entrance, &out);
 		out.k = 0.0f;
 		if (normalize3d(&out) == 0.0f)
-			out = *global_forward3d;
+		{
+			vector_from_points3d(&vehicle->object.bounding_sphere_center, &entrance, &out);
+			out.k = 0.0f;
+			if (normalize3d(&out) == 0.0f)
+				out = *global_forward3d;
+		}
+		/* (out along the way in, a step at a time, to where the jacker's
+		body (points about it, from the feet to the head) is clear of the
+		vehicle: its physics, which physics.c keeps a biped out of, and its
+		model) */
+		for (reach = 0.0f; reach <= VEHICLE_HIJACK_LANDING_FARTHEST; reach += VEHICLE_HIJACK_LANDING_STEP)
+		{
+			landing.x = entrance.x + out.i * reach;
+			landing.y = entrance.y + out.j * reach;
+			landing.z = entrance.z;
+			if (vehicle_hijack_floor(&landing, sequence->vehicle_index, &floor) && fabsf(floor - entrance.z) < 2.0f)
+				landing.z = floor + standing;
+			if (vehicle_hijack_body_clear(&landing, floor, sequence->vehicle_index, sequence->jacker_unit_index))
+				break;
+		}
 	}
-	/* (out along the way in, a step at a time, to where the jacker's body
-	(points about it, from the feet to the head) is clear of the vehicle:
-	its physics, which physics.c keeps a biped out of, and its model) */
-	for (reach = 0.0f; reach <= VEHICLE_HIJACK_LANDING_FARTHEST; reach += VEHICLE_HIJACK_LANDING_STEP)
+	else
 	{
-		landing.x = entrance.x + out.i * reach;
-		landing.y = entrance.y + out.j * reach;
-		landing.z = entrance.z;
-		if (vehicle_hijack_floor(&landing, sequence->vehicle_index, &floor) && fabsf(floor - entrance.z) < 2.0f)
-			landing.z = floor + standing;
-		if (vehicle_hijack_body_clear(&landing, floor, sequence->vehicle_index, sequence->jacker_unit_index))
-			break;
+		vector_from_points3d(&seat, &landing, &out);
+		reach = 0.0f;
 	}
-	sequence->vault_landing = landing;
-	/* (low: a quarter unit over the line; where the line at the waist
-	crosses the vehicle (its physics, which a biped is kept out of: from
-	its front round to the side), raised to clear it at the arc's top) */
+	/* (kept in the vehicle's frame: where the seat is as the vault comes
+	down, a moving vehicle's) */
+	matrix4x3_inverse_transform_point(&matrix, &landing, &sequence->vault_landing);
+	/* (low: a hop over the line; where the line at the waist crosses the
+	vehicle (its physics, which a biped is kept out of: from its front round
+	to the side), or the landing is on its top, raised to clear it at the
+	arc's top) */
 	sequence->vault_height = VEHICLE_HIJACK_VAULT_HEIGHT;
 	{
 		struct collision_result collision;
 		real_vector3d across;
 
 		vector_from_points3d(&sequence->vault_start, &landing, &across);
-		if (collision_test_vector(FLAG(_collision_test_objects_bit) | FLAG(_collision_test_objects_vehicles_bit) |
-			FLAG(_collision_test_front_facing_surfaces_bit) | FLAG(_collision_test_back_facing_surfaces_bit) |
-			FLAG(_collision_test_use_vehicle_physics_bit), &sequence->vault_start, &across,
-			sequence->jacker_unit_index, &collision) && collision.object_index == sequence->vehicle_index)
+		if (on_top || (collision_test_vector(FLAG(_collision_test_objects_bit) |
+			FLAG(_collision_test_objects_vehicles_bit) | FLAG(_collision_test_front_facing_surfaces_bit) |
+			FLAG(_collision_test_back_facing_surfaces_bit) | FLAG(_collision_test_use_vehicle_physics_bit),
+			&sequence->vault_start, &across, sequence->jacker_unit_index, &collision) &&
+			collision.object_index == sequence->vehicle_index))
 		{
 			sequence->vault_height = VEHICLE_HIJACK_VAULT_CLEARING_HEIGHT;
 		}
 	}
 	sequence->vaulting = TRUE;
+	sequence->landed = TRUE;
 	vehicle_hijack_vault_place(sequence, 0);
-	error(_error_log, "hijack: vault of unit %lx from %.2f %.2f %.2f to %.2f %.2f %.2f (entrance %.2f %.2f %.2f, "
-		"out %.2f %.2f, the vehicle's side %.2f out, standing %.2f)", sequence->jacker_unit_index, sequence->vault_start.x,
-		sequence->vault_start.y, sequence->vault_start.z, landing.x, landing.y, landing.z, entrance.x, entrance.y,
-		entrance.z, out.i, out.j, reach, standing);
+	error(_error_log, "hijack: vault of unit %lx from %.2f %.2f %.2f to %.2f %.2f %.2f (entrance %.2f %.2f %.2f%s, "
+		"out %.2f %.2f, the vehicle's side %.2f out, standing %.2f; the vehicle at %.3f a tick%s)",
+		sequence->jacker_unit_index, sequence->vault_start.x, sequence->vault_start.y, sequence->vault_start.z,
+		landing.x, landing.y, landing.z, entrance.x, entrance.y, entrance.z, mirrored ? ", the other side" : "",
+		out.i, out.j, reach, standing, magnitude3d(&vehicle->object.translational_velocity),
+		on_top ? ", onto its top" : sequence->boarding ? ", no top found: beside it" : "");
 }
 
 static void vehicle_hijack_strike(
@@ -682,8 +879,54 @@ static void vehicle_hijack_strike(
 	}
 }
 
+static long vehicle_hijack_jolt_definition(long jacker_unit_index);
+static boolean vehicle_hijack_unit_is_local(long unit_index);
+
+/* a beat on the Scorpion's hatch: the blow, and its damage to the driver
+under it, as a running melee's (unit_cause_player_melee_damage's: area
+damage to them alone, from the jacker's middle, all of it), dealt where the
+jacker is this machine's player (a client's reported to its host, which
+deals it: network_damage.c) */
+static void vehicle_hijack_beat(
+	struct vehicle_hijack_sequence *sequence)
+{
+	struct unit_datum *jacker = vehicle_hijack_living_unit(sequence->jacker_unit_index);
+	struct unit_datum *rider = vehicle_hijack_living_unit(sequence->rider_unit_index);
+	long definition_index;
+
+	vehicle_hijack_strike(sequence);
+	sequence->last_beat_time = game_time_get();
+	if (!jacker || !rider || !vehicle_hijack_unit_is_local(sequence->jacker_unit_index))
+		return;
+	definition_index = vehicle_hijack_jolt_definition(sequence->jacker_unit_index);
+	if (definition_index == NONE)
+		return;
+	{
+		struct damage_data damage;
+
+		damage_data_new(&damage, definition_index);
+		SET_FLAG(damage.flags, _damage_area_of_effect_bit, TRUE);
+		damage.location = jacker->object.location;
+		damage.owner_object_index = sequence->jacker_unit_index;
+		damage.owner_team_index = jacker->object.owner_team_index;
+		damage.owner_player_index = jacker->unit.player_index;
+		damage.origin = jacker->object.bounding_sphere_center;
+		damage.epicenter = jacker->object.bounding_sphere_center;
+		vector_from_points3d(&jacker->object.bounding_sphere_center, &rider->object.bounding_sphere_center,
+			&damage.direction);
+		if (normalize3d(&damage.direction) == 0.0f)
+			damage.direction = *global_down3d;
+		damage.scale = 1.0f;
+		object_cause_damage(&damage, sequence->rider_unit_index, NONE, NONE, NONE, NULL);
+	}
+	rider = vehicle_hijack_living_unit(sequence->rider_unit_index);
+	error(_error_log, "hijack: unit %lx beats on the hatch of vehicle %lx: its driver %lx %s (body %.2f, shield %.2f)",
+		sequence->jacker_unit_index, sequence->vehicle_index, sequence->rider_unit_index, rider ? "lives" : "is dead",
+		rider ? rider->object.body_vitality : 0.0f, rider ? rider->object.shield_vitality : 0.0f);
+}
+
 /* the melee's damage of the jacker's hand (its weapon's, or its unarmed
-one), for the thrown player's jolt */
+one), for the thrown player's jolt and the beats on a hatch */
 static long vehicle_hijack_jolt_definition(
 	long jacker_unit_index)
 {
@@ -786,9 +1029,15 @@ static void vehicle_hijack_throw(
 	if (rider->object.parent_object_index != NONE)
 		return;
 
-	/* out of the entrance's side (the jacker's), level */
-	if (!vehicle_hijack_reach(sequence->jacker_unit_index, vehicle_index, sequence->seat_index, &entrance, &distance))
+	/* out of the jacker's side (where they landed, else the entrance's),
+	level */
+	if (sequence->landed)
+		vehicle_hijack_landing(sequence, &entrance);
+	else if (!vehicle_hijack_reach(sequence->jacker_unit_index, vehicle_index, sequence->seat_index, &entrance,
+		&distance))
+	{
 		entrance = object_get(sequence->jacker_unit_index)->object.position;
+	}
 	vector_from_points3d(&vehicle->object.bounding_sphere_center, &entrance, &out);
 	out.k = 0.0f;
 	if (normalize3d(&out) == 0.0f)
@@ -956,14 +1205,24 @@ static void vehicle_hijack_yank(
 	}
 }
 
+/* whether a sequence's rider is still in the seat, alive */
+static boolean vehicle_hijack_rider_seated(
+	struct vehicle_hijack_sequence const *sequence)
+{
+	struct unit_datum *rider = vehicle_hijack_living_unit(sequence->rider_unit_index);
+
+	return rider && rider->object.parent_object_index == sequence->vehicle_index &&
+		rider->unit.parent_seat_index == sequence->seat_index;
+}
+
 /* whether a sequence holds on: its units where it left them (the jacker on
-foot, the rider in the seat), alive, the vehicle upright */
+foot, the rider in the seat, but for the Scorpion's, whose death is the
+end the jacker rides for), alive, the vehicle upright */
 static boolean vehicle_hijack_holds(
 	struct vehicle_hijack_sequence const *sequence,
 	char const **reason)
 {
 	struct unit_datum *jacker = vehicle_hijack_living_unit(sequence->jacker_unit_index);
-	struct unit_datum *rider = vehicle_hijack_living_unit(sequence->rider_unit_index);
 	struct unit_datum *vehicle = vehicle_hijack_living_unit(sequence->vehicle_index);
 
 	*reason = NULL;
@@ -973,11 +1232,8 @@ static boolean vehicle_hijack_holds(
 		*reason = "the vehicle flipped";
 	else if (!jacker || jacker->object.parent_object_index != NONE)
 		*reason = "the jacker died or left";
-	else if (!rider || rider->object.parent_object_index != sequence->vehicle_index ||
-		rider->unit.parent_seat_index != sequence->seat_index)
-	{
+	else if (!sequence->boarding && !vehicle_hijack_rider_seated(sequence))
 		*reason = "the rider died or left";
-	}
 	return *reason == NULL;
 }
 
@@ -989,6 +1245,35 @@ static void vehicle_hijack_end(
 	sequence->rider_unit_index = NONE;
 	sequence->vehicle_index = NONE;
 	sequence->seat_index = NONE;
+	sequence->last_beat_time = NONE;
+	sequence->taking_time = NONE;
+}
+
+/* the jacker off the Scorpion (the jump, the ride's end), where they are
+this machine's to move: a hop up and out, airborne */
+static void vehicle_hijack_hop_off(
+	struct vehicle_hijack_sequence const *sequence)
+{
+	struct biped_datum *biped = biped_try_and_get(sequence->jacker_unit_index);
+	struct object_datum *vehicle = object_try_and_get_and_verify_type(sequence->vehicle_index, _object_mask_vehicle);
+	real_vector3d out;
+
+	if (!biped || !vehicle || biped->object.parent_object_index != NONE ||
+		!vehicle_hijack_unit_is_local(sequence->jacker_unit_index))
+	{
+		return;
+	}
+	vector_from_points3d(&vehicle->object.bounding_sphere_center, &biped->object.bounding_sphere_center, &out);
+	out.k = 0.0f;
+	if (normalize3d(&out) == 0.0f)
+		out = *global_forward3d;
+	biped->object.translational_velocity.i = vehicle->object.translational_velocity.i + out.i * VEHICLE_HIJACK_HOP_OUT;
+	biped->object.translational_velocity.j = vehicle->object.translational_velocity.j + out.j * VEHICLE_HIJACK_HOP_OUT;
+	biped->object.translational_velocity.k = vehicle->object.translational_velocity.k + VEHICLE_HIJACK_HOP_UP;
+	SET_FLAG(biped->biped.flags, _biped_airborne_bit, TRUE);
+	biped->biped.jump_recovery_timer = 0;
+	biped->biped.support_surface_index = NONE;
+	SET_FLAG(biped->object.flags, _object_at_rest_bit, FALSE);
 }
 
 static struct vehicle_hijack_sequence *vehicle_hijack_begin(
@@ -1008,6 +1293,7 @@ static struct vehicle_hijack_sequence *vehicle_hijack_begin(
 	}
 	if (!sequence)
 		return NULL;
+	vehicle_hijack_end(sequence);
 	sequence->jacker_unit_index = jacker_unit_index;
 	sequence->rider_unit_index = rider_unit_index;
 	sequence->vehicle_index = vehicle_index;
@@ -1016,6 +1302,12 @@ static struct vehicle_hijack_sequence *vehicle_hijack_begin(
 	sequence->struck = FALSE;
 	sequence->start_time = game_time_get();
 	sequence->vaulting = FALSE;
+	sequence->landed = FALSE;
+	/* (the Scorpion boarded; the melee and the jump taken as pressed only
+	once let go of first) */
+	sequence->boarding = vehicle_hijack_vehicle_kind(vehicle_index) == _vehicle_hijack_kind_tank;
+	sequence->melee_held = TRUE;
+	sequence->jump_held = TRUE;
 	/* (a test's hold on the vehicle let go: the jacker drives it) */
 	for (index = 0; index < MAXIMUM_TEST_HOLDS; index++)
 	{
@@ -1026,6 +1318,86 @@ static struct vehicle_hijack_sequence *vehicle_hijack_begin(
 	if (authority || vehicle_hijack_unit_is_local(jacker_unit_index))
 		vehicle_hijack_launch(sequence);
 	return sequence;
+}
+
+/* a tick of the Scorpion's boarding: the jacker on its top (held there
+where they are this machine's to move), the beats on the hatch as their
+melee asks (the first as they come down), off it at their jump or the
+ride's end; the driver dead (or gone), the seat taken (the jacker's own
+machine and the host's, as for any hijack's seat) */
+static void vehicle_hijack_ride(
+	struct vehicle_hijack_sequence *sequence,
+	long age)
+{
+	long now = game_time_get();
+	boolean local = vehicle_hijack_unit_is_local(sequence->jacker_unit_index);
+	char const *reason = NULL;
+
+	if (sequence->taking_time == NONE && !vehicle_hijack_rider_seated(sequence))
+	{
+		sequence->taking_time = now;
+		error(_error_log, "hijack: the driver of vehicle %lx is dead or gone: unit %lx takes the seat",
+			sequence->vehicle_index, sequence->jacker_unit_index);
+	}
+	if (sequence->taking_time != NONE)
+	{
+		boolean entered = FALSE;
+
+		/* (once the seat is free: the dead driver's body leaves it) */
+		if ((sequence->authority || local) && unit_get(sequence->vehicle_index)->unit.driver_object_index == NONE &&
+			vehicle_hijack_rider(sequence->vehicle_index, sequence->seat_index) == NONE)
+		{
+			entered = vehicle_hijack_enter(sequence);
+		}
+		if (entered || !(sequence->authority || local) || now - sequence->taking_time >= VEHICLE_HIJACK_TAKING_TICKS)
+		{
+			error(_error_log, "hijack: unit %lx %s seat %d of vehicle %lx", sequence->jacker_unit_index,
+				entered ? "takes" : "did not take", sequence->seat_index, sequence->vehicle_index);
+			vehicle_hijack_end(sequence);
+			return;
+		}
+		/* (on its top meanwhile) */
+		if (sequence->landed && local)
+			vehicle_hijack_vault_place(sequence, MAX(age, VEHICLE_HIJACK_VAULT_TICKS));
+		return;
+	}
+	if (sequence->jumped)
+		reason = "the jacker jumped off";
+	else if (age >= VEHICLE_HIJACK_RIDE_TICKS)
+		reason = "the ride ran out";
+	else if (!local && age > VEHICLE_HIJACK_VAULT_TICKS + VEHICLE_HIJACK_BEAT_TICKS && sequence->landed)
+	{
+		real_point3d landing;
+
+		/* (another machine's jacker, which this one does not hold there:
+		off once they are away from it) */
+		vehicle_hijack_landing(sequence, &landing);
+		if (distance3d(&landing, &object_get(sequence->jacker_unit_index)->object.position) > VEHICLE_HIJACK_TANK_SLIP)
+			reason = "the jacker got off";
+	}
+	if (reason)
+	{
+		error(_error_log, "hijack: unit %lx's ride on vehicle %lx is over: %s", sequence->jacker_unit_index,
+			sequence->vehicle_index, reason);
+		vehicle_hijack_hop_off(sequence);
+		if (sequence->authority)
+			network_hijack_send_cancel(sequence->jacker_unit_index);
+		vehicle_hijack_end(sequence);
+		return;
+	}
+	/* (on the arc, then on its top: the jacker's own machine, and during
+	the vault the host as for any) */
+	if (sequence->landed && (local || age <= VEHICLE_HIJACK_VAULT_TICKS))
+		vehicle_hijack_vault_place(sequence, age);
+	if (age >= VEHICLE_HIJACK_STRIKE_TICKS && !sequence->struck)
+		vehicle_hijack_beat(sequence);
+	else if (sequence->beat_asked && sequence->struck &&
+		(sequence->last_beat_time == NONE || now - sequence->last_beat_time >= VEHICLE_HIJACK_BEAT_TICKS))
+	{
+		/* (a press too soon after the last beat waits for its turn) */
+		vehicle_hijack_beat(sequence);
+		sequence->beat_asked = FALSE;
+	}
 }
 
 /* ---------- public code */
@@ -1125,14 +1497,16 @@ void vehicle_hijack_tick(
 			vehicle_hijack_end(sequence);
 			continue;
 		}
-		/* (the vault's arc, where the jacker is this machine's: on it at each
-		tick's end, landed at its last) */
-		if (sequence->vaulting)
+		if (sequence->boarding)
 		{
-			vehicle_hijack_vault_place(sequence, age);
-			if (age >= VEHICLE_HIJACK_VAULT_TICKS)
-				sequence->vaulting = FALSE;
+			vehicle_hijack_ride(sequence, age);
+			continue;
 		}
+		/* (the vault's arc, where the jacker is this machine's: on it at each
+		tick's end, landed at its last, held there beside the seat, a moving
+		one's, until the throw) */
+		if (sequence->vaulting)
+			vehicle_hijack_vault_place(sequence, age);
 		if (age >= VEHICLE_HIJACK_STRIKE_TICKS && !sequence->struck)
 			vehicle_hijack_strike(sequence);
 		if (age >= VEHICLE_HIJACK_YANK_TICKS)
@@ -1163,6 +1537,28 @@ void vehicle_hijack_tick(
 			now >= vehicle_hijack_globals.test_holds[index].until)
 		{
 			vehicle_hijack_globals.test_holds[index].vehicle_index = NONE;
+		}
+		/* (a test's drive: on along the vehicle's level forward at its
+		speed) */
+		else if (vehicle_hijack_globals.test_holds[index].vehicle_index != NONE &&
+			vehicle_hijack_globals.test_holds[index].speed > 0.0f)
+		{
+			struct object_datum *vehicle = object_try_and_get_and_verify_type(
+				vehicle_hijack_globals.test_holds[index].vehicle_index, _object_mask_vehicle);
+			real_vector3d forward;
+
+			if (vehicle)
+			{
+				forward = vehicle->object.forward;
+				forward.k = 0.0f;
+				if (normalize3d(&forward) > 0.0f)
+				{
+					vehicle->object.translational_velocity.i = forward.i * vehicle_hijack_globals.test_holds[index].speed;
+					vehicle->object.translational_velocity.j = forward.j * vehicle_hijack_globals.test_holds[index].speed;
+					vehicle->object.angular_velocity = *global_zero_vector3d;
+					SET_FLAG(vehicle->object.flags, _object_at_rest_bit, FALSE);
+				}
+			}
 		}
 	}
 }
@@ -1219,6 +1615,25 @@ void vehicle_hijack_filter_action(
 	struct player_datum *player = player_get(player_index);
 	short index;
 
+	vehicle_hijack_ready();
+	/* (riding the Scorpion: the melee pressed beats on the hatch, the jump
+	pressed takes them off) */
+	{
+		struct vehicle_hijack_sequence *sequence = vehicle_hijack_sequence_of_jacker(player->unit_index);
+
+		if (sequence && sequence->boarding)
+		{
+			boolean melee = TEST_FLAG(action->control_flags, _unit_control_use_equipment_bit);
+			boolean jump = TEST_FLAG(action->control_flags, _unit_control_jump_bit);
+
+			if (melee && !sequence->melee_held)
+				sequence->beat_asked = TRUE;
+			if (jump && !sequence->jump_held && game_time_get() - sequence->start_time > VEHICLE_HIJACK_VAULT_TICKS)
+				sequence->jumped = TRUE;
+			sequence->melee_held = melee;
+			sequence->jump_held = jump;
+		}
+	}
 	if (vehicle_hijack_unit_held(player->unit_index))
 	{
 		/* (the facing kept: the view is theirs) */
@@ -1254,8 +1669,10 @@ boolean vehicle_hijack_seat_held(
 	{
 		struct vehicle_hijack_sequence const *sequence = &vehicle_hijack_globals.sequences[index];
 
+		/* (not the Scorpion's driver, who drives on and fights while the
+		jacker beats on the hatch, as Halo 2's) */
 		if (sequence->jacker_unit_index != NONE && sequence->vehicle_index == vehicle_index &&
-			sequence->rider_unit_index == rider_index)
+			sequence->rider_unit_index == rider_index && !sequence->boarding)
 		{
 			return TRUE;
 		}
@@ -1294,7 +1711,22 @@ void vehicle_hijack_test_hold(
 		{
 			vehicle_hijack_globals.test_holds[index].vehicle_index = vehicle_index;
 			vehicle_hijack_globals.test_holds[index].until = game_time_get() + ticks;
+			vehicle_hijack_globals.test_holds[index].speed = 0.0f;
 			return;
 		}
+	}
+}
+
+void vehicle_hijack_test_drive(
+	long vehicle_index,
+	real speed)
+{
+	short index;
+
+	vehicle_hijack_ready();
+	for (index = 0; index < MAXIMUM_TEST_HOLDS; index++)
+	{
+		if (vehicle_hijack_globals.test_holds[index].vehicle_index == vehicle_index && vehicle_index != NONE)
+			vehicle_hijack_globals.test_holds[index].speed = speed;
 	}
 }
