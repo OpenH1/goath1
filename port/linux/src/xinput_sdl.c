@@ -1264,7 +1264,11 @@ static const char *const binding_settings[NUMBER_OF_HALO_KEYBOARD_ACTIONS] =
 	"controls.report", "controls.push_to_talk", "controls.chat", "controls.team_chat", "controls.party_accept",
 	"controls.vote_yes", "controls.vote_no", "controls.clip", "controls.ping", "controls.walk",
 	"controls.spartan_link", "controls.hide_hud", "controls.zoom_in", "controls.zoom_out",
+	"controls.vehicle_secondary",
 };
+
+/* (halo_keyboard_actions' bits: an unsigned long's, 32 on every build) */
+typedef char verify_keyboard_held_actions[HALO_KEYBOARD_HELD_ACTIONS <= 32 ? 1 : -1];
 
 static const struct
 {
@@ -1290,6 +1294,8 @@ static const struct
 static int bindings[NUMBER_OF_HALO_KEYBOARD_ACTIONS][MAXIMUM_BINDINGS];
 static unsigned long bindings_read_at = (unsigned long)-1;
 static unsigned long keyboard_actions_held;
+/* (as a seat with a second trigger takes them: keyboard_bound_seat_actions) */
+static unsigned long keyboard_seat_actions_held;
 
 /* (the C library's case: SDL's string functions are not the Android
 guest's) */
@@ -1458,7 +1464,7 @@ static unsigned long keyboard_bound_actions(const struct platform_input_state *i
 	int action, slot;
 
 	bindings_read();
-	for (action = 0; action < NUMBER_OF_HALO_KEYBOARD_ACTIONS; action++)
+	for (action = 0; action < HALO_KEYBOARD_HELD_ACTIONS; action++)
 	{
 		for (slot = 0; slot < MAXIMUM_BINDINGS; slot++)
 		{
@@ -1472,6 +1478,47 @@ static unsigned long keyboard_bound_actions(const struct platform_input_state *i
 	if (input->keys[SDL_SCANCODE_AC_BACK])
 		held |= 1UL << HALO_KEYBOARD_PAUSE;
 #endif
+	return held;
+}
+
+/* whether an input is one of Vehicle Secondary's */
+static BOOL vehicle_secondary_input(int code)
+{
+	int slot;
+
+	for (slot = 0; slot < MAXIMUM_BINDINGS; slot++)
+	{
+		if (code >= 0 && bindings[HALO_KEYBOARD_VEHICLE_SECONDARY][slot] == code)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+/* the actions held as a seat whose weapon has a second trigger takes them
+(halo_keyboard_seat_actions): Vehicle Secondary's inputs hold Throw Grenade,
+that trigger, and none of the other actions they are bound to (Zoom's right
+click), which their other inputs still hold */
+static unsigned long keyboard_bound_seat_actions(const struct platform_input_state *input)
+{
+	unsigned long held = 0;
+	int action, slot;
+
+	bindings_read();
+	for (action = 0; action < HALO_KEYBOARD_HELD_ACTIONS; action++)
+	{
+		for (slot = 0; slot < MAXIMUM_BINDINGS; slot++)
+		{
+			int code = bindings[action][slot];
+
+			if (!vehicle_secondary_input(code) && input_held(input, code))
+				held |= 1UL << action;
+		}
+	}
+	for (slot = 0; slot < MAXIMUM_BINDINGS; slot++)
+	{
+		if (input_held(input, bindings[HALO_KEYBOARD_VEHICLE_SECONDARY][slot]))
+			held |= 1UL << HALO_KEYBOARD_THROW_GRENADE;
+	}
 	return held;
 }
 
@@ -1510,6 +1557,11 @@ static void keyboard_controls(unsigned long held, XINPUT_GAMEPAD *pad)
 unsigned long halo_keyboard_actions(short controller_index)
 {
 	return controller_index == 0 ? keyboard_actions_held : 0;
+}
+
+unsigned long halo_keyboard_seat_actions(short controller_index)
+{
+	return controller_index == 0 ? keyboard_seat_actions_held : 0;
 }
 
 /* an action's name as config.toml's binding of it is ("move_forward"), for
@@ -2572,8 +2624,10 @@ static void test_script_port_gamepad(int port, XINPUT_GAMEPAD *pad)
 	}
 }
 
-/* the keyboard actions the script holds now (key=), a bit each */
-static unsigned long test_script_keys(void)
+/* the keyboard actions the script holds now (key=), a bit each; in_seat,
+as a seat with a second trigger takes them (key=vehicle_secondary holds
+Throw Grenade there, and nothing elsewhere) */
+static unsigned long test_script_keys(BOOL in_seat)
 {
 	double t = sim_trace_scenario_seconds() + 1e-6;
 	unsigned long held = 0;
@@ -2585,7 +2639,14 @@ static unsigned long test_script_keys(void)
 	{
 		if (test_script[index].key && !test_script[index].port && t >= test_script[index].start &&
 			t < test_script[index].end)
-			held |= 1UL << (test_script[index].key - 1);
+		{
+			int action = test_script[index].key - 1;
+
+			if (action == HALO_KEYBOARD_VEHICLE_SECONDARY)
+				held |= in_seat ? 1UL << HALO_KEYBOARD_THROW_GRENADE : 0;
+			else if (action < HALO_KEYBOARD_HELD_ACTIONS)
+				held |= 1UL << action;
+		}
 	}
 	return held;
 }
@@ -4263,6 +4324,7 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 	{
 		struct platform_input_state input;
 		unsigned long held;
+		unsigned long seat_held;
 		unsigned long scoreboard_keys = 0;
 		int scoreboard_hold;
 		BOOL console_active;
@@ -4276,6 +4338,7 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 		mouse_look_taken = FALSE;
 		pthread_mutex_unlock(&mouse_lock);
 		keyboard_actions_held = 0;
+		keyboard_seat_actions_held = 0;
 		scoreboard_hold = scoreboard_pad_port_hold(0, input.menus);
 		keys_held_over_switch(&input, scoreboard_hold == HALO_SCOREBOARD_PAD_HOLDS);
 		/* (a Discord friend's ask answered first, its keys taken) */
@@ -4305,8 +4368,11 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 					input.keys[SDL_SCANCODE_RETURN] = input.keys[SDL_SCANCODE_KP_ENTER] = 0;
 					held = keyboard_bound_actions(&input);
 				}
-				held |= test_script_keys();
+				seat_held = scoreboard_hold == HALO_SCOREBOARD_PAD_HOLDS ? 0 : keyboard_bound_seat_actions(&input);
+				held |= test_script_keys(FALSE);
+				seat_held |= test_script_keys(TRUE);
 				keyboard_controls(held, &state->Gamepad);
+				keyboard_seat_actions_held = seat_held;
 			}
 		}
 		if (port_gamepad(gamepads, count, 0))

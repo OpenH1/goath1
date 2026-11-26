@@ -1245,10 +1245,11 @@ static const struct config_setting config_settings[] =
 		"does: the same input as a controller's, in every game. Crouched, the\n"
 		"slower of the two. On foot only; controllers and the touch controls\n"
 		"have their sticks.", _scope_keyboard },
-	{ "input.walk_speed", _config_string, "\"tracker\"", "HALO_WALK_SPEED", _environment_value, _platform_all,
-		"How fast the keys walk: \"tracker\", as fast as a player can go and\n"
-		"stay off the enemies' motion trackers (the map's threshold, the\n"
-		"player's speeds); or a percentage of the full speed, 10 to 90.", _scope_keyboard },
+	{ "input.walk_speed", _config_string, "\"50\"", "HALO_WALK_SPEED", _environment_value, _platform_all,
+		"How fast the keys walk: a percentage of the full speed, 10 to 90 (50\n"
+		"by default: half a run, faster than a crouch); or \"tracker\", as fast\n"
+		"as a player can go and stay off the enemies' motion trackers (the\n"
+		"map's threshold, the player's speeds: about 14% of a run).", _scope_keyboard },
 	{ "input.mouse_sensitivity", _config_real, "5.73", "HALO_MOUSE_SENSITIVITY", _environment_value, _platform_desktop,
 		"How far the view turns for the mouse's movement, on " CONFIG_MOUSE_MARK " scale:\n"
 		"0.022 degrees a count of the mouse times this, with no acceleration,\n"
@@ -1504,6 +1505,13 @@ static const struct config_setting config_settings[] =
 	{ "controls.zoom_out", _config_string, "\"\"", "HALO_KEY_ZOOM_OUT", _environment_value, _platform_all,
 		"Zooming the scope out a step, as MCC does, to no zoom at all. \"Wheel\n"
 		"Down\" zooms out with the mouse's wheel. Unbound by default.", _scope_keyboard },
+	{ "controls.vehicle_secondary", _config_string, "\"Mouse Right\"", "HALO_KEY_VEHICLE_SECONDARY",
+		_environment_value, _platform_all,
+		"Firing a vehicle's second weapon (the Scorpion's machine gun, the\n"
+		"Banshee's fuel rod), as Halo PC's right click did, and a controller's\n"
+		"left trigger does. In such a seat these keys do only this; elsewhere\n"
+		"what else they are bound to (Zoom's right click). Throw Grenade fires\n"
+		"it too.", _scope_keyboard },
 	{ "controls.switch_weapon", _config_string, "\"Wheel, 1\"", "HALO_KEY_SWITCH_WEAPON", _environment_value,
 		_platform_all,
 		"Switching weapons.", _scope_keyboard },

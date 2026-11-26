@@ -69,6 +69,9 @@ symbols in this file:
 #include "scenario/scenario.h"
 #include "units/vehicle_definitions.h"
 #include "units/vehicles.h"
+#include "items/weapon_definitions.h" /* port: local_player_seat_has_second_trigger */
+#include "items/weapons.h"
+#include "units/units.h"
 #include "halo_keyboard.h" /* port */
 #include "keyboard_walk.h" /* port: port/linux/game/keyboard_walk.c */
 
@@ -169,6 +172,8 @@ typedef char verify_input_abstraction_runtime_globals_size[
 static void set_default_game_input_preferences(
 	struct game_input_preferences *preferences);
 static boolean local_player_is_piloting_aircraft(
+	short controller_index);
+static boolean local_player_seat_has_second_trigger(
 	short controller_index);
 
 /* ---------- globals */
@@ -509,6 +514,14 @@ static void keyboard_controls_update(
 	unsigned long held = halo_keyboard_actions((short)controller_index);
 	long control_index;
 
+	/* port: in a seat whose weapon has a second trigger (the Scorpion's
+	machine gun, the Banshee's fuel rod), Vehicle Secondary's keys fire it
+	(controls.vehicle_secondary, the right click, as Halo PC's): the
+	grenade's game control, which is that trigger in a seat
+	(player_control.c), as a controller's left trigger; their other actions
+	(Zoom's right click) not pressed */
+	if (local_player_seat_has_second_trigger((short)controller_index))
+		held = halo_keyboard_seat_actions((short)controller_index);
 	for (control_index = 0; control_index < NUMBER_OF_GAME_CONTROLS; control_index++)
 	{
 		if (keyboard_game_controls[control_index] < 0)
@@ -1308,6 +1321,32 @@ static boolean local_player_is_piloting_aircraft(
 	}
 
 	return piloting_aircraft;
+}
+
+/* port: whether the controller's player fires a seat's weapon that has a
+second trigger: the vehicle's gunner (the Scorpion's and the Banshee's
+driver, a turret's gunner), its weapon of two triggers or more. A
+passenger fires their own weapon, whose zoom stays theirs */
+static boolean local_player_seat_has_second_trigger(
+	short controller_index)
+{
+	long player_index = local_player_get_player_index(controller_index);
+	struct player_datum *player = player_index != NONE ? player_try_and_get(player_index) : NULL;
+	struct unit_datum *unit = player ? unit_try_and_get(player->unit_index) : NULL;
+	struct unit_datum *vehicle;
+	struct weapon_datum *weapon;
+
+	if (!unit || unit->object.parent_object_index == NONE || unit->unit.parent_seat_index == NONE)
+		return FALSE;
+	vehicle = unit_try_and_get(unit->object.parent_object_index);
+	if (!vehicle || vehicle->unit.gunner_object_index != player->unit_index ||
+		vehicle->unit.current_weapon_index == NONE)
+	{
+		return FALSE;
+	}
+	weapon = weapon_try_and_get(unit_inventory_get_weapon(unit->object.parent_object_index,
+		vehicle->unit.current_weapon_index));
+	return weapon && weapon_definition_get(weapon->definition_index)->weapon.triggers.count >= 2;
 }
 
 static void set_default_game_input_preferences(
