@@ -21,6 +21,20 @@ An Xbox map read from its file (xbox_map_file.h).
 #define MAP_READ_SIZE (256UL << 10)
 #define MAP_INFLATE_SIZE (1UL << 20)
 
+/* (zlib's allocations with the C library's: the game's zlib's own allocator
+is the game's thread's only, as menu_pictures.c says) */
+static voidpf map_zalloc(voidpf opaque, uInt items, uInt size)
+{
+	(void)opaque;
+	return calloc(items, size);
+}
+
+static void map_zfree(voidpf opaque, voidpf address)
+{
+	(void)opaque;
+	free(address);
+}
+
 static unsigned long word_le(const unsigned char *bytes)
 {
 	return (unsigned long)bytes[0] | (unsigned long)bytes[1] << 8 | (unsigned long)bytes[2] << 16 |
@@ -61,6 +75,8 @@ int xbox_map_ranges_read(const char *path, struct xbox_map_range *ranges, int co
 	in = malloc(MAP_READ_SIZE);
 	out = malloc(MAP_INFLATE_SIZE);
 	memset(&stream, 0, sizeof(stream));
+	stream.zalloc = map_zalloc;
+	stream.zfree = map_zfree;
 	if (!in || !out || inflateInit(&stream) != Z_OK)
 		goto finished;
 	inflating = 1;

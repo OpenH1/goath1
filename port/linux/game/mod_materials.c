@@ -45,6 +45,7 @@ unsigned int hud_hires_pixels_texture(unsigned char *pixels, unsigned long width
 	unsigned long *levels);
 void xgpu_image_delete(unsigned int image);
 void halo_model_material_maps(unsigned int normal_map, unsigned int orm_map);
+char *tag_get_name(long tag_index);
 
 /* ---------- constants */
 
@@ -136,10 +137,11 @@ static boolean side_valid(
 	return side >= MINIMUM_MATERIAL_MAP_SIDE && side <= MAXIMUM_MATERIAL_MAP_SIDE && !(side & (side - 1));
 }
 
-/* a mod's map of the bitmap's (its file), as an image: 0 with *reason
-saying why not */
+/* a mod's map of the bitmap's (its file, or with file NONE the file at
+path: the MCC import's), as an image: 0 with *reason saying why not */
 static unsigned int material_map_read(
 	long file,
+	char const *path,
 	unsigned long *bytes,
 	char const **reason)
 {
@@ -148,7 +150,7 @@ static unsigned int material_map_read(
 	unsigned int image;
 
 	*reason = "it cannot be read";
-	if (!port_mods_file_stamp(file, &size, stamp))
+	if (file != NONE ? !port_mods_file_stamp(file, &size, stamp) : !port_mods_path_stamp(path, &size, stamp))
 		return 0;
 	if (size > MAXIMUM_MATERIAL_FILE_SIZE)
 	{
@@ -158,7 +160,7 @@ static unsigned int material_map_read(
 	data = (unsigned char *)malloc(size ? size : 1);
 	if (!data)
 		return 0;
-	if (!port_mods_file_read(file, 0, data, size))
+	if (file != NONE ? !port_mods_file_read(file, 0, data, size) : !port_mods_path_read(path, 0, data, size))
 	{
 		free(data);
 		return 0;
@@ -241,24 +243,44 @@ long mod_materials_update(
 	/* (read again whole: the renderer is done with the images it has, they
 	are freed after the frames that draw them) */
 	materials_let_go();
-	if (remove_all || !mods_map_loaded())
+	if (!mods_map_loaded())
 		return 0;
 	tag_iterator_new(&iterator, BITMAP_GROUP_TAG);
 	while ((tag_index = tag_iterator_next(&iterator)) != NONE)
 	{
 		long files[NUMBER_OF_MATERIAL_MAPS];
+		/* the MCC import's maps' paths ("" for none): only where no mod has
+		a map of the bitmap's, nor the bitmap itself (a mod's own picture
+		need not have the stock one's layout) */
+		char imported[NUMBER_OF_MATERIAL_MAPS][1024];
 		struct mod_material *material;
 		long map;
+		boolean any = FALSE;
 
 		for (map = 0; map < NUMBER_OF_MATERIAL_MAPS; map++)
-			files[map] = mods_tag_file_find(tag_index, material_extensions[map]);
-		if (files[_material_map_normal] == NONE && files[_material_map_orm] == NONE)
+		{
+			files[map] = remove_all ? NONE : mods_tag_file_find(tag_index, material_extensions[map]);
+			imported[map][0] = 0;
+		}
+		if (files[_material_map_normal] == NONE && files[_material_map_orm] == NONE && mods_builtins_played() &&
+			(remove_all || mods_tag_file_find(tag_index, ".bitmap") == NONE))
+		{
+			for (map = 0; map < NUMBER_OF_MATERIAL_MAPS; map++)
+				if (!mcc_import_tag_file(tag_get_name(tag_index), material_extensions[map], imported[map],
+					sizeof(imported[map])))
+				{
+					imported[map][0] = 0;
+				}
+		}
+		for (map = 0; map < NUMBER_OF_MATERIAL_MAPS; map++)
+			any |= files[map] != NONE || imported[map][0];
+		if (!any)
 			continue;
 		material = material_new(tag_index);
 		if (!material)
 		{
 			error(_error_silent, "mods: material maps of %s left out: more than %d bitmaps have them",
-				port_mods_file_path(files[files[0] != NONE ? 0 : 1]), MAXIMUM_MATERIALS / 2);
+				tag_get_name(tag_index), MAXIMUM_MATERIALS / 2);
 			refused_count++;
 			continue;
 		}
@@ -266,16 +288,17 @@ long mod_materials_update(
 		{
 			char const *reason;
 
-			if (files[map] == NONE)
+			if (files[map] == NONE && !imported[map][0])
 				continue;
-			material->images[map] = material_map_read(files[map], &material->bytes[map], &reason);
+			material->images[map] = material_map_read(files[map], imported[map], &material->bytes[map], &reason);
 			if (material->images[map])
 			{
 				map_count++;
 			}
 			else
 			{
-				error(_error_silent, "mods: %s left out: %s", port_mods_file_path(files[map]), reason);
+				error(_error_silent, "mods: %s left out: %s",
+					files[map] != NONE ? port_mods_file_path(files[map]) : imported[map], reason);
 				refused_count++;
 			}
 		}

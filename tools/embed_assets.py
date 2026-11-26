@@ -82,6 +82,9 @@ PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 # player's maps (port/linux/src/hd_effects.h)
 EFFECT_LIST = Path("port/assets/effects/effects.json")
 EFFECT_RECIPES = {"flash": 1}
+# the MCC import's fits of our models onto MCC's preview meshes, numbers only (port/linux/src/mcc_import_bake.h;
+# tools/mcc_preview_bake.py --fits-out makes it)
+MCC_FIT_LIST = Path("port/assets/mcc_import/mcc_import.json")
 
 
 def font_files() -> List[str]:
@@ -340,6 +343,32 @@ def effect_lines() -> List[str]:
     return lines
 
 
+def mcc_fit_lines() -> List[str]:
+    """The MCC import's fits' table (mcc_import_bake.h): a row per model."""
+    meshes = json.loads((ROOT / MCC_FIT_LIST).read_text())["meshes"] if (ROOT / MCC_FIT_LIST).is_file() else []
+    lines = ['#include "mcc_import_bake.h"', "", "const struct mcc_import_fit mcc_import_fits[] =", "{"]
+    count = 0
+
+    def numbers(values):
+        return ", ".join(repr(float(value)) for value in values)
+
+    for mesh in meshes:
+        for model in mesh["models"]:
+            if len(model["rotation"]) != 9 or len(model["shift"]) != 3:
+                sys.exit(f"{MCC_FIT_LIST}: {mesh['mesh']}: {model['model']}: a rotation of 9 and a shift of 3 numbers")
+            lines.append(f'\t{{ {c_string(mesh["mesh"])}, {c_string(mesh["fallback"])}, {int(mesh["vertices"])}, '
+                         f'{int(mesh["triangles"])}, {c_string(model["model"])}, {c_string(model["map"])}, '
+                         f'{float(model["scale"])!r}, {{ {numbers(model["rotation"])} }}, '
+                         f'{{ {numbers(model["shift"])} }}, {float(model["near"])!r} }},')
+            count += 1
+    if not count:
+        lines.append("\t{ 0 },")
+    lines.append("};")
+    lines.append(f"const unsigned int mcc_import_fit_count = {count};")
+    lines.append("")
+    return lines
+
+
 def hud_asset_inputs() -> List[Path]:
     """The files the generated source is made from."""
     inputs = [listing for listing in (LAYOUT, CE_LAYOUT, MCC_LAYOUT, CE_STOCK, CUSTOM_EDITION_HUD, TITLE_LIST, BUTTON_LIST, CONTROLLER_LIST, FONT_LIST, MENU_LIST)
@@ -353,6 +382,7 @@ def hud_asset_inputs() -> List[Path]:
             *([MENU_CURSOR] if (ROOT / MENU_CURSOR).is_file() else []),
             *([PICTURE_MAPS] if (ROOT / PICTURE_MAPS).is_file() else []), *picture_poses(),
             *([EFFECT_LIST] if (ROOT / EFFECT_LIST).is_file() else []),
+            *([MCC_FIT_LIST] if (ROOT / MCC_FIT_LIST).is_file() else []),
             *(path for path in [VECTOR_BAKE_TOOL, *VECTOR_BAKE_SOURCES, *VECTOR_BAKE_HEADERS] if (ROOT / path).is_file())]
 
 
@@ -609,6 +639,7 @@ def main() -> None:
     lines.append("")
     lines.extend(picture_lines())
     lines.extend(effect_lines())
+    lines.extend(mcc_fit_lines())
     # the assets' file, its size and CRC-32 in its header too
     struct.pack_into("<I", assets.data, 8, len(assets.data))
     lines.append('#include "embedded_assets.h"')
