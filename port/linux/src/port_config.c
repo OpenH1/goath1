@@ -1646,6 +1646,11 @@ static const struct config_setting config_settings[] =
 		"of this computer's reads it as its map begins; in a network game the\n"
 		"host's decides, read in the lobby; a Legacy game, and OpenCE's\n"
 		"players, always walk over (OpenCE's way)." },
+	{ "game.scenario_help", _config_boolean, "false", "HALO_SCENARIO_HELP", _environment_value, _platform_all,
+		"The campaign's help screens, which pause the game the first time a\n"
+		"player drives a Scorpion or a Banshee on Normal (the levels' scripts'\n"
+		"display_scenario_help). false: not shown, the scripts going on as if\n"
+		"they had been and closed; true: shown, as the Xbox and Halo PC did." },
 	{ "game.spartan_link", _config_boolean, "true", "HALO_GAME_SPARTAN_LINK", _environment_value, _platform_all,
 		"Hosting a team game: whether its players may show their Spartan link\n"
 		"(display.spartan_link); false, nobody's shows in it. Co-op always\n"
