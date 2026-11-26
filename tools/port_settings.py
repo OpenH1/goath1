@@ -1205,11 +1205,6 @@ PAGES = {
              [("CLASSIC", "classic"), ("GEMS", "gems"), ("DARK GEMS", "menu_gems")],
              "The buttons the HUD draws. Classic: plain Xbox buttons. Gems: shaded Xbox buttons. Dark Gems: the "
              "menus' button artwork.", None),
-            # (port/linux/src/hd_effects.c: the stock effects redrawn from the
-            # player's own maps, once)
-            ("HD EFFECTS", "display.hd_effects", ON_OFF,
-             "Draws the Assault Rifle's muzzle flash sharper, redrawn from your own maps. Off draws the game's "
-             "own.", None),
             # (port/linux/game/spartan_link.c: co-op and team games; HIGH-RES
             # TEXT moved to Video's GRAPHICS to make room; its rows a page of
             # their own once it had two)
@@ -1369,6 +1364,11 @@ PAGES = {
              [("OFF", "0"), ("2X", "2"), ("4X", "4"), ("8X", "8"), ("16X", "16")],
              "Keeps floors and walls sharp into the distance, at a small cost. Off looks as the Xbox did: surfaces "
              "blur a few steps away.", None),
+            # (port/linux/src/hd_effects.c: the stock effects redrawn from the
+            # player's own maps, once; beside the textures' filtering)
+            ("HD EFFECTS", "display.hd_effects", ON_OFF,
+             "Draws the Assault Rifle's muzzle flash sharper, redrawn from your own maps. Off draws the game's "
+             "own.", None),
             ("MODEL DETAIL", "display.model_detail",
              [("AUTO", "auto"), ("XBOX", "stock"), ("FULL", "native"), ("HIGHEST", "highest")],
              "How detailed characters and vehicles stay in the distance. Xbox simplifies them as on a TV; Full keeps "

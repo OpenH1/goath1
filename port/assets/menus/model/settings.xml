@@ -385,11 +385,6 @@
 			<choice shown="GEMS" value="gems"/>
 			<choice shown="DARK GEMS" value="menu_gems"/>
 		</row>
-		<row key="hd_effects" kind="choice" setting="display.hd_effects" label="HD EFFECTS" crumb="INTERFACE › HUD">
-			<help>Draws the Assault Rifle's muzzle flash sharper, redrawn from your own maps. Off draws the game's own.</help>
-			<choice shown="ON" value="true"/>
-			<choice shown="OFF" value="false"/>
-		</row>
 		<row key="spartan_link" kind="link" label="SPARTAN LINK ›" crumb="INTERFACE › HUD" open="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/spartan_link/spartan_link_screen">
 			<help>Your teammates' views beside the motion tracker in co-op and team games: on or off (B or D-pad Down in a game), and their size.</help>
 		</row>
@@ -399,7 +394,7 @@
 		<row key="campaign" kind="link" label="CAMPAIGN ›" crumb="INTERFACE › HUD" open="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/campaign/campaign_screen">
 			<help>The campaign's battles: every enemy squad two or three times as large.</help>
 		</row>
-		<section key="section_7" title="MULTIPLAYER"/>
+		<section key="section_6" title="MULTIPLAYER"/>
 		<row key="player_names" kind="choice" setting="display.player_names" label="PLAYER NAMES" crumb="INTERFACE › MULTIPLAYER" search_choices="all allies enemies">
 			<help>In multiplayer, whose names are drawn above their heads.</help>
 			<choice shown="ALL" value="all"/>
@@ -431,7 +426,7 @@
 			<choice shown="TEAMMATE'S VIEW" value="teammates"/>
 			<choice shown="DEATH CAMERA" value="off"/>
 		</row>
-		<section key="section_13" title="CHAT"/>
+		<section key="section_12" title="CHAT"/>
 		<row key="text_chat" kind="choice" setting="display.text_chat" label="TEXT CHAT" crumb="INTERFACE › CHAT">
 			<help>Shows the text chat. Hide draws none of its lines, and its keys and D-pad Up open nothing.</help>
 			<choice shown="SHOW" value="true"/>
@@ -573,6 +568,11 @@
 			<choice shown="8X" value="8"/>
 			<choice shown="16X" value="16"/>
 		</row>
+		<row key="hd_effects" kind="choice" setting="display.hd_effects" label="HD EFFECTS" crumb="VIDEO › ADVANCED GRAPHICS">
+			<help>Draws the Assault Rifle's muzzle flash sharper, redrawn from your own maps. Off draws the game's own.</help>
+			<choice shown="ON" value="true"/>
+			<choice shown="OFF" value="false"/>
+		</row>
 		<row key="model_detail" kind="choice" setting="display.model_detail" label="MODEL DETAIL" crumb="VIDEO › ADVANCED GRAPHICS" search="lod" search_choices="xbox full highest">
 			<help>How detailed characters and vehicles stay in the distance. Xbox simplifies them as on a TV; Full keeps their detail for your screen; Highest always draws the most. Auto is Full.</help>
 			<choice shown="AUTO" value="auto"/>
@@ -585,7 +585,7 @@
 			<choice shown="ON" value="true"/>
 			<choice shown="OFF" value="false"/>
 		</row>
-		<section key="section_7" title="LIGHTING"/>
+		<section key="section_8" title="LIGHTING"/>
 		<row key="shadow_resolution" kind="choice" setting="display.shadow_resolution" label="SHADOW QUALITY" crumb="VIDEO › ADVANCED GRAPHICS" search="shadows" search_choices="xbox medium high ultra">
 			<help>How sharp the shadows of characters, vehicles and weapons are. Xbox is the original's soft, blocky shadow; each step up is crisper, and costs a little more of the graphics card.</help>
 			<choice shown="XBOX" value="128"/>
@@ -622,7 +622,7 @@
 			<choice shown="DEFAULT" value="default"/>
 			<choice shown="LIGHT SHOW" value="light_show"/>
 		</row>
-		<section key="section_14" title="GAME"/>
+		<section key="section_15" title="GAME"/>
 		<row key="sim_rate" kind="choice" setting="game.sim_rate" label="TICK RATE" crumb="VIDEO › ADVANCED GRAPHICS" search="hz tickrate" search_choices="original">
 			<help>How often the world updates each second, in games on this device (campaign, split screen, bots). 60 and 120 respond faster and take more of the processor. Online games play at their host's tick rate: a GOAT H1 game's (GOAT H1 60 Tick), a Legacy game's 30.</help>
 			<choice shown="ORIGINAL (30)" value="30"/>
