@@ -19,7 +19,7 @@ NEGATIVE_CONTROLS = {
     "click-always-first": (("x >= widget_screen_x(second)", "x < 0"), "click"),
     "not-wide": ((" + ui_widget_port_wide_offset(widget->definition_tag_index)", ""), "wide"),
     # a game control's only key taken for another control
-    "only-key-taken": (("if (other != control && control_left_without_key(other, NONE, name))", "if (FALSE)"),
+    "only-key-taken": (("\t\t\t\tcontrol_left_without_key(other, NONE, name))", "\t\t\t\tFALSE)"),
                        "keep-a-key"),
     # a game control's only key cleared
     "only-key-cleared": (("\t\tif (control_left_without_key(control, slot, NULL))", "\t\tif (FALSE)"), "keep-a-key"),

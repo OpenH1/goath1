@@ -81,7 +81,7 @@ def test_stream_looks_the_thickness_up_again_once_destroyed(tmp_path):
     if not cc:
         pytest.skip("needs a C compiler")
     text = (ROOT / "port/linux/vulkan/xgpu_vulkan_stream.c").read_text()
-    function = text[text.index("static int effect_textures(struct xgpu_vulkan_texture textures[4])"):
+    function = text[text.index("static int effect_textures(struct xgpu_vulkan_texture textures[XGPU_VULKAN_TEXTURES])"):
                     text.index("/* a draw of the current pipeline, made and drawn")]
     _build_and_run(cc, tmp_path, "effect_textures", r"""
 #include <assert.h>
@@ -90,6 +90,7 @@ def test_stream_looks_the_thickness_up_again_once_destroyed(tmp_path):
 #include "xgpu_stream.h"
 #define XGPU_SPIRV_EFFECT_DEPTH_BINDING 2
 #define XGPU_SPIRV_EFFECT_THICKNESS_BINDING 3
+#define XGPU_VULKAN_TEXTURES 6
 enum { XGPU_VULKAN_IMAGE_2D, XGPU_VULKAN_IMAGE_2D_ARRAY };
 enum { XGPU_VULKAN_FILTER_POINT, XGPU_VULKAN_FILTER_LINEAR };
 enum { XGPU_VULKAN_MIP_NONE };
@@ -111,7 +112,7 @@ static struct
     int samples;
     const struct xgpu_stream_pipeline_define *definition;
     struct host_render_texture_stage stages[4];
-    struct xgpu_vulkan_texture textures[4];
+    struct xgpu_vulkan_texture textures[XGPU_VULKAN_TEXTURES];
     uint32_t textures_serial;
     struct xgpu_vulkan_image *thickness;
     int thickness_known;
@@ -137,7 +138,7 @@ static uint32_t xgpu_vulkan_textures_thickness_epoch(void) { return epoch; }
 """ + function + r"""
 int main(void)
 {
-    struct xgpu_vulkan_texture textures[4];
+    struct xgpu_vulkan_texture textures[XGPU_VULKAN_TEXTURES];
 
     depth_target.image = &depth_image;
     stream.depth = 1;

@@ -242,7 +242,7 @@ def test_only_the_texture_stages_that_changed_are_looked_up_again(tmp_path):
 #include "xgpu_stream.h"
 typedef uint64_t VkSampler;
 #define VK_NULL_HANDLE 0
-#define TEXTURES_ALL 15u
+#define TEXTURES_ALL ((1u << XGPU_STREAM_TEXTURE_STAGES) - 1)
 #define D3DFORMAT_FORMAT_MASK 0x0000ff00u
 #define D3DFORMAT_FORMAT_SHIFT 8
 enum { _source_none, _source_texture, _source_target };
@@ -259,16 +259,16 @@ struct xgpu_vulkan_texture { struct xgpu_vulkan_image *image; VkSampler sampler;
 struct stream_target { struct xgpu_vulkan_image *image; };
 static struct
 {
-    struct host_render_texture_stage stages[4];
-    uint8_t border[4];
+    struct host_render_texture_stage stages[XGPU_STREAM_TEXTURE_STAGES];
+    uint8_t border[XGPU_STREAM_TEXTURE_STAGES];
     unsigned int textures_dirty;
     int feedback_bound, uniforms_dirty;
     uint32_t textures_serial, color, depth, samples, views, base;
     int hud_group, preparing;
-    struct xgpu_vulkan_texture textures[4];
-    struct xgpu_stream_sampler sampler_from[4];
-    uint8_t sampler_axes[4], sampler_valid[4];
-    VkSampler sampler_made[4];
+    struct xgpu_vulkan_texture textures[XGPU_STREAM_TEXTURE_STAGES];
+    struct xgpu_stream_sampler sampler_from[XGPU_STREAM_TEXTURE_STAGES];
+    uint8_t sampler_axes[XGPU_STREAM_TEXTURE_STAGES], sampler_valid[XGPU_STREAM_TEXTURE_STAGES];
+    VkSampler sampler_made[XGPU_STREAM_TEXTURE_STAGES];
 } stream;
 static struct xgpu_vulkan_image images[4];
 static unsigned looked_up[4], samplers, binds;
@@ -297,7 +297,7 @@ static void rt_shadows_prepare(void) { }
 #define XGPU_VULKAN_CLEAR_ALPHA 2
 static int xgpu_vulkan_clear_prepare(int parts) { (void)parts; return 1; }
 """ + set_textures + bind + set_targets + r"""
-static void set(struct host_render_texture_stage stages[4])
+static void set(struct host_render_texture_stage stages[XGPU_STREAM_TEXTURE_STAGES])
 {
     memset(looked_up, 0, sizeof(looked_up));
     stream_set_textures(NULL, stages);
@@ -306,7 +306,8 @@ static void set(struct host_render_texture_stage stages[4])
 
 int main(void)
 {
-    struct host_render_texture_stage stages[4];
+    /* (the four stages, then a model's material maps: none here) */
+    struct host_render_texture_stage stages[XGPU_STREAM_TEXTURE_STAGES];
     int index;
 
     memset(stages, 0, sizeof(stages));
@@ -357,11 +358,12 @@ int main(void)
         memset(&targets, 0, sizeof(targets));
         targets.color = 7;
         stream_set_targets(NULL, &targets);
-        assert(stream.color == 7 && !stream.textures_dirty);
+        /* (the material maps' stages, none here, are looked at again too) */
+        assert(stream.color == 7 && !(stream.textures_dirty & 15u));
         stages[3].stage.source = _source_target;
         set(stages);
         stream_set_targets(NULL, &targets);
-        assert(stream.textures_dirty == 8u);
+        assert((stream.textures_dirty & 15u) == 8u);
         stages[3].stage.source = _source_texture;
         set(stages);
     }
