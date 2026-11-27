@@ -34,6 +34,10 @@ enum
 	/* a unit's flashlight (the game's side only: it always casts a
 	shadow, dynamic_lights_shadowed) */
 	HALO_DYNAMIC_LIGHT_FLASHLIGHT = 8,
+	/* a lit panel (a display: light_sources.c), a Lambertian disk facing
+	along its axis, its radius squared in cone_offset, its color the
+	display's own (xgpu.h's XGPU_DYNAMIC_LIGHTS_PANELS) */
+	HALO_DYNAMIC_LIGHT_PANEL = 16,
 };
 /* the vertex constant (as the game numbers them) a model's draw has the
 rasterizer lights it is not lit by in (rasterizer_set_model_lighting: its
@@ -89,6 +93,9 @@ cache gives it: a cube map, and a volume), made the renderer's cookie and
 falloff (xgpu.h); 1 if it could be (the gel decoded), else 0: the
 flashlight is then lit as the game lights it */
 int halo_dynamic_lights_gel(const void *gel, const void *attenuation);
+/* the game's distance attenuation texture (its header; NULL none), every
+light's falloff on the structure (xgpu.h's XGPU_DYNAMIC_LIGHTS_ATTENUATION) */
+void halo_dynamic_lights_attenuation(const void *attenuation);
 /* the structure's 3D BSP, from which a pixel finds its cluster (xgpu.h's
 world: count texels of four words, count at most
 HALO_DYNAMIC_LIGHTS_WORLD_TEXELS), when it changes; copied */

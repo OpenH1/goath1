@@ -439,11 +439,17 @@ static long dynamic_lights_sources(
 		out->axis[0] = source->facing.i;
 		out->axis[1] = source->facing.j;
 		out->axis[2] = source->facing.k;
-		/* (a display's: by the cosine off its face, none behind it, as a
-		lit panel shines; another's every way) */
-		out->cone_scale = source->facing.i != 0.0f || source->facing.j != 0.0f || source->facing.k != 0.0f ? 1.0f : 0.0f;
-		out->cone_offset = out->cone_scale != 0.0f ? 0.0f : 1.0f;
+		/* (a display's: a panel of the light model, xgpu.h, a disk of its
+		area, its radius squared in cone_offset; another's every way) */
+		out->cone_scale = 0.0f;
+		out->cone_offset = 1.0f;
 		out->flags = source->halo ? HALO_DYNAMIC_LIGHT_HALO | HALO_DYNAMIC_LIGHT_PROJECTILE : 0;
+		if ((source->facing.i != 0.0f || source->facing.j != 0.0f || source->facing.k != 0.0f) && source->area > 0.0f)
+		{
+			out->cone_scale = 1.0f;
+			out->cone_offset = source->area / _pi;
+			out->flags |= HALO_DYNAMIC_LIGHT_PANEL;
+		}
 		dynamic_lights.owners[count] = 0;
 		dynamic_lights.objects[count] = NONE;
 		dynamic_lights.keys[count] = source->key;
@@ -564,6 +570,14 @@ void dynamic_lights_submit(
 	memset(dynamic_lights.keys, 0, sizeof(dynamic_lights.keys));
 	memset(dynamic_lights.baked, 0, sizeof(dynamic_lights.baked));
 	total = dynamic_lights_bounce(dynamic_lights.lights, total); /* (dynamic_lights_bounce.c) */
+	/* (every light's falloff on the structure: the game's distance
+	attenuation, as its gel pass samples it, xgpu.h) */
+	{
+		void const *attenuation = NULL;
+
+		rasterizer_environment_port_gel_textures(NONE, NULL, &attenuation);
+		halo_dynamic_lights_attenuation(attenuation);
+	}
 	halo_dynamic_lights_set(dynamic_lights.lights, (int)total, camera, right_axis, up_axis,
 		(unsigned int const (*)[4])dynamic_lights.cluster_masks);
 	memset(dynamic_lights.cluster_masks, 0, sizeof(dynamic_lights.cluster_masks));
@@ -1068,12 +1082,20 @@ static void dynamic_lights_flashlights(long count)
 	}
 	for (slot = 0; slot < used && !(dynamic_lights.frame % 72) && config_boolean("debug.dynamic_lights_log"); slot++)
 	{
+		real lamp_x = flashlights[slot].lamp[0] - render.camera.position.x;
+		real lamp_y = flashlights[slot].lamp[1] - render.camera.position.y;
+		real lamp_z = flashlights[slot].lamp[2] - render.camera.position.z;
+
 		platform_log("dynamic lights: frame %lu: flashlight %d (light %d) at %.3f %.3f %.3f (camera %.3f %.3f %.3f) "
-			"forward %.2f %.2f %.2f up %.2f %.2f %.2f%s owner %lu", dynamic_lights.frame, slot, flashlights[slot].light,
+			"lamp %.3f from the eye, %.3f along the view, forward %.2f %.2f %.2f up %.2f %.2f %.2f%s owner %lu",
+			dynamic_lights.frame, slot, flashlights[slot].light,
 			(double)dynamic_lights.lights[flashlights[slot].light].position[0],
 			(double)dynamic_lights.lights[flashlights[slot].light].position[1],
 			(double)dynamic_lights.lights[flashlights[slot].light].position[2], (double)render.camera.position.x,
-			(double)render.camera.position.y, (double)render.camera.position.z, (double)flashlights[slot].forward[0],
+			(double)render.camera.position.y, (double)render.camera.position.z,
+			(double)square_root(lamp_x * lamp_x + lamp_y * lamp_y + lamp_z * lamp_z),
+			(double)(lamp_x * render.camera.forward.i + lamp_y * render.camera.forward.j + lamp_z * render.camera.forward.k),
+			(double)flashlights[slot].forward[0],
 			(double)flashlights[slot].forward[1], (double)flashlights[slot].forward[2], (double)flashlights[slot].up[0],
 			(double)flashlights[slot].up[1], (double)flashlights[slot].up[2], flashlights[slot].shadowed ? " shadowed" : "",
 			flashlights[slot].owner);

@@ -535,13 +535,15 @@ clusters' slice:
   (1), the map's bias (world units, float bits);
 - FLASHLIGHT + 2 + 3 * slot, + 1, + 2: the slot's gel frame: its forward
   (the beam), up and left (floats' bits), the gel pass's rows;
-- FLASHLIGHT + 14: the gel's tint, linear (floats' bits);
-- FLASHLIGHT + 15 to + 22: the falloff, linear: 32 floats' bits, from the
-  light to its radius (the game's distance attenuation's);
+- FLASHLIGHT + 14: the gel's tint, gamma (floats' bits);
+- FLASHLIGHT + 15 to + 22 (ATTENUATION): every light's falloff on the
+  structure, gamma: 32 floats' bits, from the light to its radius (the
+  game's distance attenuation's);
 - FLASHLIGHT + 23: where the shadowed slot's shadows are cast from (its
   lamp on the weapon in hand, floats' bits): the map's middle, in the same
   frame, a and b of v = p - lamp;
-- FLASHLIGHT_COOKIE on: the gel's brightness (the game's, gamma), a byte a
+- FLASHLIGHT_COOKIE on: the gel's brightness (the game's, gamma, as the
+  gel pass multiplies it), a byte a
   texel, FLASHLIGHT_COOKIE_SIZE square, rows from -up, columns from -left:
   texel (x, y) is the direction forward + a left + b up, a = u |u| width
   for u from -1 to 1 at the texels' middles (and b of v the same): each
@@ -559,6 +561,30 @@ to what its ray first met (its radius where none). */
 #define XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE (XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 24)
 #define XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE 80
 #define XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_SHADOW_SIZE 512
+/* The light model (port/linux/game/dynamic_lights.c): every enhanced light is a point,
+a spot (the flashlight: its gel, above) or a panel, and each is added as
+the game adds it for the surface it lights, in the display's gamma
+(xgpu_spirv.c's dynamic_light_sum, dynamic_light_add):
+
+- the structure (the game's gel pass): color * gel * T(d / r) *
+  max(dot(n, l), 0) * saturate(8 dot(surface normal, l)), times the
+  shader's material colour, T the game's distance attenuation (its 32
+  values at ATTENUATION, the falloff above: every light's, read from the
+  game's texture as it is, gamma) and the gel 1 for a point;
+- a model and the first-person view (the game's model lighting): color *
+  max(1 - d^2 / r^2, 0) * saturate(dot(n, l)) * the cone;
+- a panel (PANELS: a mask of the lights that are, four words): a small
+  lit display, a Lambertian disk, in linear light: color (linear) *
+  a^2 / (a^2 + d^2) * (1 - d^2 / r^2)^2 * the cosine off its face (the
+  cone's axis) * saturate(dot(n, l)), a^2 in the colour's w.
+
+The sum is added to the light already there as the game's framebuffer
+adds it, (base + sum)^2.2 linear, the panels' added there, under a
+shoulder that leaves all below max(base, ADD_KNEE) (linear) as it is. */
+#define XGPU_DYNAMIC_LIGHTS_ATTENUATION (XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 15)
+#define XGPU_DYNAMIC_LIGHTS_PANELS (XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE + \
+	XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE * XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE / 16)
+#define XGPU_DYNAMIC_LIGHTS_ADD_KNEE 0.7f
 /* the map's bias at the light's radius past its texel's width there, and
 its least (world units) */
 #define XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_BIAS 0.03f

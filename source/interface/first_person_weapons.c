@@ -130,7 +130,6 @@ symbols in this file:
 #include "lowered_reticle.h" /* port: port/linux/game/lowered_reticle.c */
 #include "motion_vectors.h" /* port: port/linux/game/motion_vectors.c */
 /* port: source/objects/object_lights.c (the enhanced flashlight) */
-void lights_port_first_person_lighting(long unit_index, struct render_lighting *lighting);
 #include "shaders/shader_definitions.h" /* port: (the shield's flare on the arms) */
 #include "shaders/shaders.h"
 /* port: port/linux/game/shield_color.c */
@@ -759,9 +758,9 @@ static void first_person_weapon_draw_slot(
 			struct animation_graph *animation_graph= animation_graph_definition_get(
 				weapon_definition->weapon.interface_definition.first_person_animations.index);
 			struct render_lighting *lighting= object_get_cached_render_lighting(unit_index, FLT_MAX);
-			/* port: (not lit by the unit's own flashlight, whose lamp is on
-			the weapon: object_lights.c; kept past the draws, which may be
-			drawn later than here) */
+			/* port: (kept past the draws, which may be drawn later than
+			here; lit by the unit's own flashlight as the game lights it:
+			port/linux/game/dynamic_lights.c) */
 			static struct render_lighting first_person_lighting;
 			/* port: the weapon's and the arms' function values and
 			change colors, and the camouflage, between the last two
@@ -777,7 +776,6 @@ static void first_person_weapon_draw_slot(
 			if (lighting)
 			{
 				first_person_lighting= *lighting;
-				lights_port_first_person_lighting(unit_index, &first_person_lighting);
 				lighting= &first_person_lighting;
 			}
 			model_effect.modifier_shader= NULL;

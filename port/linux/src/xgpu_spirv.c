@@ -4809,27 +4809,47 @@ static void flashlight_begin(struct module *m, struct flashlight_read *read)
 	read->head = flashlight_texel(m, constant_int(m, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 1));
 }
 
-/* a light of the loop (an int), at p (to_light, distance_squared, l and
-position as the loop has them): where it is a flashlight's, its falloff,
-spot and (environment) facing stored in the variables in their place */
+/* every light's falloff on the structure (the game's distance
+attenuation, xgpu.h's XGPU_DYNAMIC_LIGHTS_ATTENUATION) at a distance, of a
+light whose w is 1 / its radius (its sign the models-only's) */
+static unsigned int light_attenuation(struct module *m, unsigned int distance, unsigned int w)
+{
+	unsigned int t, f, index, low, high;
+
+	t = fmul(m, 1, saturate(m, 1, fmul(m, 1, distance, ext1(m, GLSL_F_ABS, m->t_float, w))),
+		constant_float(m, (float)(XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF - 1)));
+	f = ext1(m, GLSL_FLOOR, m->t_float, t);
+	index = ext3(m, GLSL_S_CLAMP, m->t_int, op1(m, OP_CONVERT_F_TO_S, m->t_int, f), constant_int(m, 0),
+		constant_int(m, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF - 1));
+	low = op1(m, OP_BITCAST, m->t_float, op2(m, OP_VECTOR_EXTRACT_DYNAMIC, m->t_uint, flashlight_texel(m, int_add(m,
+		op2(m, OP_SHIFT_RIGHT_ARITHMETIC, m->t_int, index, constant_int(m, 2)), XGPU_DYNAMIC_LIGHTS_ATTENUATION)),
+		op2(m, OP_BITWISE_AND, m->t_int, index, constant_int(m, 3))));
+	index = ext2(m, GLSL_S_MIN, m->t_int, int_add(m, index, 1), constant_int(m, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF - 1));
+	high = op1(m, OP_BITCAST, m->t_float, op2(m, OP_VECTOR_EXTRACT_DYNAMIC, m->t_uint, flashlight_texel(m, int_add(m,
+		op2(m, OP_SHIFT_RIGHT_ARITHMETIC, m->t_int, index, constant_int(m, 2)), XGPU_DYNAMIC_LIGHTS_ATTENUATION)),
+		op2(m, OP_BITWISE_AND, m->t_int, index, constant_int(m, 3))));
+	return flashlight_mix(m, low, high, fsub(m, 1, t, f));
+}
+
+/* a light of the loop (an int), at p (l and position as the loop has
+them): where it is a flashlight's, on the structure its spot (1, a
+point's) by its gel, as the game's gel pass multiplies it, and on every
+surface, for the shadowed slot, by its shadow map; the spot's variable
+changed in place (the falloff's by the checking views alone) */
 static void flashlight_light(struct module *m, const struct flashlight_read *read, unsigned int light, unsigned int p,
-	unsigned int position, unsigned int distance_squared, unsigned int l, unsigned int n, unsigned int surface_normal,
-	BOOL environment, BOOL shadowed, unsigned int falloff_variable, unsigned int spot_variable,
-	unsigned int facing_variable, unsigned int is_variable)
+	unsigned int position, unsigned int l, unsigned int surface_normal, BOOL environment, BOOL shadowed,
+	unsigned int falloff_variable, unsigned int spot_variable)
 {
 	unsigned int number = op1(m, OP_BITCAST, m->t_uint, int_add(m, light, 1)), is[4], any, slot, merge;
-	unsigned int base, forward, up, left, v, z, width, inverse, a, b, inside, x, y, cookie, gel, distance, t, index;
-	unsigned int f, low, high, profile, spot;
+	unsigned int base, forward, up, left, v, z, width, inverse, a, b, inside, x, y, cookie, distance;
 	struct flashlight_bilinear bl;
 	int k;
 
-	(void)p;
 	for (k = 0; k < 4; k++)
 		is[k] = op2(m, OP_I_EQUAL, m->t_bool, uextract(m, read->slots, (unsigned int)k), number);
 	any = op2(m, OP_LOGICAL_OR, m->t_bool, op2(m, OP_LOGICAL_OR, m->t_bool, is[0], is[1]),
 		op2(m, OP_LOGICAL_OR, m->t_bool, is[2], is[3]));
 	selection_begin(m, any, &merge);
-	store(m, is_variable, constant_float(m, 1.0f));
 	slot = op3(m, OP_SELECT, m->t_int, is[0], constant_int(m, 0), op3(m, OP_SELECT, m->t_int, is[1], constant_int(m, 1),
 		op3(m, OP_SELECT, m->t_int, is[2], constant_int(m, 2), constant_int(m, 3))));
 	base = int_add(m, op2(m, OP_I_MUL, m->t_int, slot, constant_int(m, 3)), XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 2);
@@ -4847,66 +4867,45 @@ static void flashlight_light(struct module *m, const struct flashlight_read *rea
 		op2(m, OP_LOGICAL_AND, m->t_bool,
 		compare(m, OP_F_ORD_LESS_THAN, ext1(m, GLSL_F_ABS, m->t_float, a), constant_float(m, 1.0f)),
 		compare(m, OP_F_ORD_LESS_THAN, ext1(m, GLSL_F_ABS, m->t_float, b), constant_float(m, 1.0f))));
-	/* (the cookie, bilinear: texel (x, y) at u = sign(a) sqrt(|a|)'s (2 x + 1) / N - 1, xgpu.h) */
-	x = ext1(m, GLSL_F_SIGN, m->t_float, a);
-	x = fmul(m, 1, x, fsqrt(m, ext1(m, GLSL_F_ABS, m->t_float, a)));
-	y = fmul(m, 1, ext1(m, GLSL_F_SIGN, m->t_float, b), fsqrt(m, ext1(m, GLSL_F_ABS, m->t_float, b)));
-	x = fsub(m, 1, fmul(m, 1, fadd(m, 1, fmul(m, 1, x, constant_float(m, 0.5f)), constant_float(m, 0.5f)),
-		constant_float(m, (float)XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE)), constant_float(m, 0.5f));
-	y = fsub(m, 1, fmul(m, 1, fadd(m, 1, fmul(m, 1, y, constant_float(m, 0.5f)), constant_float(m, 0.5f)),
-		constant_float(m, (float)XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE)), constant_float(m, 0.5f));
-	flashlight_bilinear(m, x, y, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE, &bl);
-	cookie = flashlight_mix(m, flashlight_mix(m, flashlight_cookie_byte(m, bl.x0, bl.y0),
-		flashlight_cookie_byte(m, bl.x1, bl.y0), bl.fx), flashlight_mix(m, flashlight_cookie_byte(m, bl.x0, bl.y1),
-		flashlight_cookie_byte(m, bl.x1, bl.y1), bl.fx), bl.fy);
-	gel = fselect(m, inside, ext2(m, GLSL_POW, m->t_float, fmax_scalar(m, 1, cookie, 0.0f), constant_float(m, 2.2f)),
-		constant_float(m, 0.0f));
-	/* (the falloff: its 32 values from the light to its radius) */
-	distance = fsqrt(m, fmax_scalar(m, 1, distance_squared, 0.0f));
-	t = fmul(m, 1, saturate(m, 1, fmul(m, 1, distance, ext1(m, GLSL_F_ABS, m->t_float, extract(m, position, 3)))),
-		constant_float(m, (float)(XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF - 1)));
-	f = ext1(m, GLSL_FLOOR, m->t_float, t);
-	index = ext3(m, GLSL_S_CLAMP, m->t_int, op1(m, OP_CONVERT_F_TO_S, m->t_int, f), constant_int(m, 0),
-		constant_int(m, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF - 1));
-	low = op1(m, OP_BITCAST, m->t_float, op2(m, OP_VECTOR_EXTRACT_DYNAMIC, m->t_uint, flashlight_texel(m, int_add(m,
-		op2(m, OP_SHIFT_RIGHT_ARITHMETIC, m->t_int, index, constant_int(m, 2)), XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 15)),
-		op2(m, OP_BITWISE_AND, m->t_int, index, constant_int(m, 3))));
-	index = ext2(m, GLSL_S_MIN, m->t_int, int_add(m, index, 1), constant_int(m, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF - 1));
-	high = op1(m, OP_BITCAST, m->t_float, op2(m, OP_VECTOR_EXTRACT_DYNAMIC, m->t_uint, flashlight_texel(m, int_add(m,
-		op2(m, OP_SHIFT_RIGHT_ARITHMETIC, m->t_int, index, constant_int(m, 2)), XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 15)),
-		op2(m, OP_BITWISE_AND, m->t_int, index, constant_int(m, 3))));
-	profile = flashlight_mix(m, low, high, fsub(m, 1, t, f));
-	/* (a model's as the game's model lighting has a point light fall off,
-	1 - d^2 / r^2 in the display's gamma, so its brightness is the game's) */
-	if (!environment)
-		profile = ext2(m, GLSL_POW, m->t_float, fmax_scalar(m, 1, fsub(m, 1, constant_float(m, 1.0f),
-			fmul(m, 1, distance_squared, fmul(m, 1, extract(m, position, 3), extract(m, position, 3)))), 0.0f),
-			constant_float(m, 2.2f));
-	store(m, falloff_variable, profile);
-	spot = gel;
-	/* (the structure's: as the gel pass weighs it, its bump's facing and the
-	surface's horizon in the display's gamma, so its light, added there by
-	the caller, is the pass's) */
 	if (environment)
-		store(m, facing_variable, ext2(m, GLSL_POW, m->t_float, fmul(m, 1, fmax_scalar(m, 1, fdot(m, n, l), 0.0f),
-			saturate(m, 1, fmul(m, 1, fdot(m, surface_normal, l), constant_float(m, 8.0f)))), constant_float(m, 2.2f)));
-	store(m, spot_variable, spot);
+	{
+		/* (the cookie, bilinear: texel (x, y) at u = sign(a) sqrt(|a|)'s (2 x + 1) / N - 1, xgpu.h; as it
+		is, the display's gamma, as the gel pass multiplies it) */
+		x = fmul(m, 1, ext1(m, GLSL_F_SIGN, m->t_float, a), fsqrt(m, ext1(m, GLSL_F_ABS, m->t_float, a)));
+		y = fmul(m, 1, ext1(m, GLSL_F_SIGN, m->t_float, b), fsqrt(m, ext1(m, GLSL_F_ABS, m->t_float, b)));
+		x = fsub(m, 1, fmul(m, 1, fadd(m, 1, fmul(m, 1, x, constant_float(m, 0.5f)), constant_float(m, 0.5f)),
+			constant_float(m, (float)XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE)), constant_float(m, 0.5f));
+		y = fsub(m, 1, fmul(m, 1, fadd(m, 1, fmul(m, 1, y, constant_float(m, 0.5f)), constant_float(m, 0.5f)),
+			constant_float(m, (float)XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE)), constant_float(m, 0.5f));
+		flashlight_bilinear(m, x, y, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE, &bl);
+		cookie = flashlight_mix(m, flashlight_mix(m, flashlight_cookie_byte(m, bl.x0, bl.y0),
+			flashlight_cookie_byte(m, bl.x1, bl.y0), bl.fx), flashlight_mix(m, flashlight_cookie_byte(m, bl.x0, bl.y1),
+			flashlight_cookie_byte(m, bl.x1, bl.y1), bl.fx), bl.fy);
+		store(m, spot_variable, fmul(m, 1, load(m, m->t_float, spot_variable), fselect(m, inside, cookie,
+			constant_float(m, 0.0f))));
+	}
 	/* (the shadowed slot's map: a 3x3 tent, four bilinear comparisons) */
 	if (shadowed)
 	{
 		unsigned int shadow_merge, sampled, image, mx, my, texel_width, bias, receiver, lit, facing_light;
-		unsigned int lamp_v, lamp_z, lamp_inverse;
+		unsigned int lamp_v, lamp_z, lamp_inverse, lamp_inside;
 		const float size = (float)XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_SHADOW_SIZE;
 
-		selection_begin(m, op2(m, OP_LOGICAL_AND, m->t_bool, inside, op2(m, OP_I_EQUAL, m->t_bool,
-			uextract(m, read->head, 0), op1(m, OP_BITCAST, m->t_uint, int_add(m, slot, 1)))), &shadow_merge);
-		/* (the map's from the lamp: its own a, b and distance) */
+		/* (the map's from the lamp: its own a, b and distance; a point
+		behind the lamp, or outside the map, is not shadowed) */
 		lamp_v = fsub(m, 3, p, flashlight_vector(m, constant_int(m, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 23)));
 		lamp_z = fdot(m, lamp_v, forward);
 		lamp_inverse = fdiv(m, 1, constant_float(m, 1.0f), fmul(m, 1, fmax_scalar(m, 1, lamp_z, 1.0e-4f),
 			fmax_scalar(m, 1, width, 1.0e-4f)));
 		a = fmul(m, 1, fdot(m, lamp_v, left), lamp_inverse);
 		b = fmul(m, 1, fdot(m, lamp_v, up), lamp_inverse);
+		lamp_inside = op2(m, OP_LOGICAL_AND, m->t_bool, compare(m, OP_F_ORD_GREATER_THAN, lamp_z, constant_float(m, 1.0e-4f)),
+			op2(m, OP_LOGICAL_AND, m->t_bool,
+			compare(m, OP_F_ORD_LESS_THAN, ext1(m, GLSL_F_ABS, m->t_float, a), constant_float(m, 1.0f)),
+			compare(m, OP_F_ORD_LESS_THAN, ext1(m, GLSL_F_ABS, m->t_float, b), constant_float(m, 1.0f))));
+		selection_begin(m, op2(m, OP_LOGICAL_AND, m->t_bool, op2(m, OP_LOGICAL_AND, m->t_bool, inside, lamp_inside),
+			op2(m, OP_I_EQUAL, m->t_bool, uextract(m, read->head, 0), op1(m, OP_BITCAST, m->t_uint, int_add(m, slot, 1)))),
+			&shadow_merge);
 		distance = flength(m, lamp_v);
 		flashlight_shadow_declare(m);
 		sampled = load(m, type_sampled_image(m, DIM_2D, FALSE, FALSE, TRUE), m->flashlight_shadow);
@@ -4915,7 +4914,8 @@ static void flashlight_light(struct module *m, const struct flashlight_read *rea
 			constant_float(m, size)), constant_float(m, 0.5f));
 		my = fsub(m, 1, fmul(m, 1, fadd(m, 1, fmul(m, 1, b, constant_float(m, 0.5f)), constant_float(m, 0.5f)),
 			constant_float(m, size)), constant_float(m, 0.5f));
-		/* bias = head.w + distance * (2 R / size) * 1.5 / max(dot(surface_normal, l), 0.25) */
+		/* bias = head.w + distance * (2 R / size) * 1.5 / max(|dot(surface_normal, l)|, 0.25): a texel
+		and a half of the map at the receiver along its slope, so the caster does not shadow itself */
 		texel_width = fmul(m, 1, distance, fmul(m, 1, width, constant_float(m, 2.0f * 1.5f / size)));
 		facing_light = fmax_scalar(m, 1, ext1(m, GLSL_F_ABS, m->t_float, fdot(m, surface_normal, l)), 0.25f);
 		bias = fadd(m, 1, op1(m, OP_BITCAST, m->t_float, uextract(m, read->head, 3)), fdiv(m, 1, texel_width,
@@ -4927,14 +4927,15 @@ static void flashlight_light(struct module *m, const struct flashlight_read *rea
 			fadd(m, 1, flashlight_shadow_compare(m, image, fsub(m, 1, mx, constant_float(m, 0.5f)),
 			fadd(m, 1, my, constant_float(m, 0.5f)), receiver), flashlight_shadow_compare(m, image,
 			fadd(m, 1, mx, constant_float(m, 0.5f)), fadd(m, 1, my, constant_float(m, 0.5f)), receiver)));
-		store(m, spot_variable, fmul(m, 1, spot, fmul(m, 1, lit, constant_float(m, 0.25f))));
-		/* (HALO_FLASHLIGHT_SHADOW_VIEW=1, checking: the map's share seen, whole,
-		in place of the gel and falloff; 2: the map's distance over the
-		pixel's, a tenth of a world unit a band) */
+		lit = fmul(m, 1, lit, constant_float(m, 0.25f));
+		store(m, spot_variable, fmul(m, 1, load(m, m->t_float, spot_variable), lit));
+		/* (HALO_FLASHLIGHT_SHADOW_VIEW=1 or 3, checking: the map's share seen,
+		whole, in place of the gel and falloff; 2: the map's distance, a
+		world unit a band) */
 		if (getenv("HALO_FLASHLIGHT_SHADOW_VIEW") && (atoi(getenv("HALO_FLASHLIGHT_SHADOW_VIEW")) == 1 ||
 			atoi(getenv("HALO_FLASHLIGHT_SHADOW_VIEW")) == 3))
 		{
-			store(m, spot_variable, fmul(m, 1, lit, constant_float(m, 0.25f)));
+			store(m, spot_variable, lit);
 			store(m, falloff_variable, constant_float(m, 1.0f));
 		}
 		if (getenv("HALO_FLASHLIGHT_SHADOW_VIEW") && atoi(getenv("HALO_FLASHLIGHT_SHADOW_VIEW")) == 2)
@@ -4956,7 +4957,9 @@ static void flashlight_light(struct module *m, const struct flashlight_read *rea
 }
 
 /* dynamic_light_sum(p, n, surface_normal, environment): the lights of the
-pixel's cell, summed (a model's but those its object's own that do not light
+pixel's cell, each as the light model has it (xgpu.h: as the game adds it
+to the structure or to a model, in its gamma), summed, the panels' linear
+light summed into the linear variable apart (a model's but those its object's own that do not light
 it, its model_lights[XGPU_MODEL_LIGHT_OWN_LIGHTS]); its loops are SPIR-V's structured loops, its values
 kept in the function's variables. With a reflection (a model's, of the eye
 about its normal; 0 none), each light's highlight along it, to the exponent,
@@ -4964,16 +4967,16 @@ summed into the shine variable as well (xgpu.h XGPU_DYNAMIC_LIGHTS_HIGHLIGHT;
 xgpu_msl.c's dynamic_light_sum) */
 static unsigned int dynamic_light_sum(struct module *m, struct pixel_state *state, unsigned int p, unsigned int n,
 	unsigned int surface_normal, BOOL environment, unsigned int reflection, unsigned int exponent,
-	unsigned int shine_variable, unsigned int flash_variable)
+	unsigned int shine_variable, unsigned int linear_variable)
 {
 	unsigned int grid0 = dynamic_light(m, 0, constant_int(m, 0)), grid1 = dynamic_light(m, 0, constant_int(m, 1));
 	unsigned int offset, cell, mask, cell_index, operands[4];
 	unsigned int sum_variable, word_variable, bits_variable;
 	unsigned int outer_header, outer_condition, outer_body, outer_continue, outer_merge;
 	unsigned int inner_header, inner_condition, inner_body, inner_continue, inner_merge;
-	unsigned int word, bits, light, position, to_light, distance_squared, x2, l, window, core, falloff, facing;
-	unsigned int cone, color, spot, grid2, w, own = 0, tint = 0;
-	unsigned int flashlight_falloff, flashlight_spot, flashlight_facing, flashlight_is, lit_light;
+	unsigned int word, bits, light, position, to_light, distance_squared, x2, l, falloff, facing;
+	unsigned int cone, color, spot, w, own = 0, tint = 0, panels, panel, panel_falloff, a2;
+	unsigned int light_falloff, light_spot, lit_light;
 	struct light_shadows_read shadows;
 	struct flashlight_read flashlight;
 
@@ -4993,17 +4996,16 @@ static unsigned int dynamic_light_sum(struct module *m, struct pixel_state *stat
 	a little off its surface: xgpu.h) */
 	mask = dynamic_light_cluster_mask(m, state, mask, fadd(m, 3, p, fscale(m, 3, surface_normal,
 		constant_float(m, XGPU_DYNAMIC_LIGHTS_CLUSTER_OFFSET))), environment);
-	grid2 = dynamic_light(m, 0, constant_int(m, 2));
 	/* (a model's: the lights it is not lit by, xgpu.h) */
 	if (!environment)
 		own = uniform(m, U_MODEL_LIGHTS, XGPU_MODEL_LIGHT_OWN_LIGHTS);
 	light_shadows_begin(m, state, &shadows);
 	flashlight_begin(m, &flashlight);
-	flashlight_falloff = local(m, &state->locals, m->t_float);
-	flashlight_spot = local(m, &state->locals, m->t_float);
-	flashlight_facing = local(m, &state->locals, m->t_float);
-	flashlight_is = local(m, &state->locals, m->t_float);
-	store(m, flash_variable, constant_splat(m, 3, 0.0f));
+	/* (the panels among the lights, a bit each: xgpu.h's XGPU_DYNAMIC_LIGHTS_PANELS) */
+	panels = flashlight_texel(m, constant_int(m, XGPU_DYNAMIC_LIGHTS_PANELS));
+	light_falloff = local(m, &state->locals, m->t_float);
+	light_spot = local(m, &state->locals, m->t_float);
+	store(m, linear_variable, constant_splat(m, 3, 0.0f));
 
 	sum_variable = local(m, &state->locals, m->t_v3);
 	word_variable = local(m, &state->locals, m->t_int);
@@ -5085,53 +5087,64 @@ static unsigned int dynamic_light_sum(struct module *m, struct pixel_state *stat
 		label_at(m, skip);
 	}
 	l = fscale(m, 3, to_light, ext1(m, GLSL_INVERSE_SQRT, m->t_float, fmax_scalar(m, 1, distance_squared, (float)1.0e-8)));
-	window = fsub(m, 1, constant_float(m, 1.0f), fmul(m, 1, x2, x2));
-	core = fmax_scalar(m, 1, fmul(m, 1, fmul(m, 1, extract(m, grid2, 1), w), w),
-		(float)(1.0 / (XGPU_DYNAMIC_LIGHTS_CORE * XGPU_DYNAMIC_LIGHTS_CORE)));
-	falloff = fdiv(m, 1, fmul(m, 1, window, window), fadd(m, 1, constant_float(m, 1.0f), fmul(m, 1, distance_squared, core)));
-	falloff = light_shadows_factor(m, &shadows, light, falloff, &tint);
+	cone = dynamic_light(m, 3, light);
+	color = dynamic_light(m, 2, light);
+	/* (the light model, xgpu.h: as the game adds the light to the surface) */
 	if (environment)
 	{
+		/* the gel pass: T(d / r) * max(dot(n, l), 0) * saturate(8 dot(surface_normal, l)), its gel (1 a point's) */
+		falloff = light_attenuation(m, fsqrt(m, distance_squared), w);
 		facing = fmul(m, 1, fmax_scalar(m, 1, fdot(m, n, l), 0.0f),
-			saturate(m, 1, fadd(m, 1, fmul(m, 1, fdot(m, surface_normal, l), constant_float(m, 4.0f)), constant_float(m, 0.5f))));
+			saturate(m, 1, fmul(m, 1, fdot(m, surface_normal, l), constant_float(m, 8.0f))));
+		spot = constant_float(m, 1.0f);
 	}
 	else
 	{
-		unsigned int wrap = extract(m, grid2, 3);
-
-		facing = saturate(m, 1, fdiv(m, 1, fadd(m, 1, fdot(m, n, l), wrap), fadd(m, 1, constant_float(m, 1.0f), wrap)));
+		/* the model lighting: max(1 - d^2 / r^2, 0) * saturate(dot(n, l)) * saturate(dot(l, -axis) * scale + offset) */
+		falloff = fsub(m, 1, constant_float(m, 1.0f), x2);
+		facing = saturate(m, 1, fdot(m, n, l));
+		spot = saturate(m, 1, fadd(m, 1, fmul(m, 1, fdot(m, l, fneg(m, 3, xyz(m, cone))), extract(m, cone, 3)),
+			extract(m, color, 3)));
 	}
-	cone = dynamic_light(m, 3, light);
-	color = dynamic_light(m, 2, light);
+	/* (a panel: a^2 / (a^2 + d^2) * (1 - d^2 / r^2)^2 by the cosine off its face, linear) */
+	panel = op1(m, OP_CONVERT_U_TO_F, m->t_float, op2(m, OP_BITWISE_AND, m->t_uint, op2(m, OP_SHIFT_RIGHT_LOGICAL, m->t_uint,
+		op2(m, OP_VECTOR_EXTRACT_DYNAMIC, m->t_uint, panels, word), op1(m, OP_BITCAST, m->t_uint,
+		op2(m, OP_BITWISE_AND, m->t_int, light, constant_int(m, 31)))), constant_uint(m, 1)));
+	a2 = fmax_scalar(m, 1, extract(m, color, 3), 1.0e-8f);
+	panel_falloff = fmul(m, 1, fdiv(m, 1, a2, fadd(m, 1, a2, distance_squared)),
+		fmul(m, 1, fsub(m, 1, constant_float(m, 1.0f), x2), fsub(m, 1, constant_float(m, 1.0f), x2)));
+	{
+		unsigned int is_panel = compare(m, OP_F_ORD_GREATER_THAN, panel, constant_float(m, 0.5f));
+
+		falloff = fselect(m, is_panel, panel_falloff, falloff);
+		spot = fselect(m, is_panel, saturate(m, 1, fdot(m, l, fneg(m, 3, xyz(m, cone)))), spot);
+	}
+	falloff = light_shadows_factor(m, &shadows, light, falloff, &tint);
 	/* (HALO_LIGHT_SHADOWS_VIEW: a shadowed light in its tint) */
 	if (tint)
 		color = vec4_of(m, select_n(m, 3, compare(m, OP_F_ORD_GREATER_THAN, extract(m, tint, 3), constant_float(m, 0.5f)),
 			xyz(m, tint), xyz(m, color)), extract(m, color, 3));
-	spot = saturate(m, 1, fadd(m, 1, fmul(m, 1, fdot(m, l, fneg(m, 3, xyz(m, cone))), extract(m, cone, 3)), extract(m, color, 3)));
-	/* (the enhanced flashlight's: its gel, falloff and shadow in their place) */
-	store(m, flashlight_falloff, falloff);
-	store(m, flashlight_spot, spot);
-	store(m, flashlight_facing, facing);
-	store(m, flashlight_is, constant_float(m, 0.0f));
-	flashlight_light(m, &flashlight, light, p, position, distance_squared, l, n, surface_normal, environment, TRUE,
-		flashlight_falloff, flashlight_spot, flashlight_facing, flashlight_is);
-	falloff = load(m, m->t_float, flashlight_falloff);
-	spot = load(m, m->t_float, flashlight_spot);
-	facing = load(m, m->t_float, flashlight_facing);
-	/* (a flashlight's apart: the caller adds it as the gel pass did) */
+	/* (the flashlight's: its gel on the structure, its shadow map everywhere) */
+	store(m, light_falloff, falloff);
+	store(m, light_spot, spot);
+	flashlight_light(m, &flashlight, light, p, position, l, surface_normal, environment, TRUE, light_falloff, light_spot);
+	falloff = load(m, m->t_float, light_falloff);
+	spot = load(m, m->t_float, light_spot);
+	/* (the game's lights in its gamma, summed; the panels' linear apart) */
 	lit_light = fscale(m, 3, xyz(m, color), fmul(m, 1, fmul(m, 1, falloff, facing), spot));
 	store(m, sum_variable, fadd(m, 3, load(m, m->t_v3, sum_variable), fscale(m, 3, lit_light,
-		fsub(m, 1, constant_float(m, 1.0f), load(m, m->t_float, flashlight_is)))));
-	store(m, flash_variable, fadd(m, 3, load(m, m->t_v3, flash_variable), fscale(m, 3, lit_light,
-		load(m, m->t_float, flashlight_is))));
+		fsub(m, 1, constant_float(m, 1.0f), panel))));
+	store(m, linear_variable, fadd(m, 3, load(m, m->t_v3, linear_variable), fscale(m, 3, lit_light, panel)));
 	if (reflection)
 	{
-		/* shine += color.rgb * (falloff * spot * saturate(dot(n, l) * 4.0) * pow(max(dot(reflection, l), 0.0), exponent)) */
+		/* shine += color.rgb^2 * (falloff * spot * saturate(dot(n, l) * 4.0) * pow(max(dot(reflection, l), 0.0), exponent))
+		(linear: the colour's square, about its gamma's) */
 		unsigned int lobe = ext2(m, GLSL_POW, m->t_float, fmax_scalar(m, 1, fdot(m, reflection, l), 0.0f), exponent);
 		unsigned int horizon = saturate(m, 1, fmul(m, 1, fdot(m, n, l), constant_float(m, 4.0f)));
 
 		store(m, shine_variable, fadd(m, 3, load(m, m->t_v3, shine_variable),
-			fscale(m, 3, xyz(m, color), fmul(m, 1, fmul(m, 1, fmul(m, 1, falloff, spot), horizon), lobe))));
+			fscale(m, 3, fmul(m, 3, xyz(m, color), xyz(m, color)), fmul(m, 1, fmul(m, 1, fmul(m, 1, falloff, spot), horizon),
+			lobe))));
 	}
 	branch(m, inner_continue);
 	label_at(m, inner_continue);
@@ -5145,60 +5158,51 @@ static unsigned int dynamic_light_sum(struct module *m, struct pixel_state *stat
 	return load(m, m->t_v3, sum_variable);
 }
 
-/* the enhanced flashlight's light (linear: flashlight_light) as the light
-it adds to a base (saturated, the display's gamma) when added there, as the
-game's gel pass adds it into the frame: (base + flash^(1/2.2))^2.2 - base^2.2,
-so that what it shows below white is the pass's, past white the shoulder's
-(and HDR's) */
-static unsigned int flashlight_gamma_add(struct module *m, unsigned int base, unsigned int flash)
-{
-	unsigned int had = saturate(m, 3, base), gamma = constant_splat(m, 3, 2.2f);
-	unsigned int added = fadd(m, 3, had, ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, flash, 0.0f),
-		constant_splat(m, 3, (float)(1.0 / 2.2))));
-
-	return fmax_scalar(m, 3, fsub(m, 3, ext2(m, GLSL_POW, m->t_v3, added, gamma), ext2(m, GLSL_POW, m->t_v3, had, gamma)),
-		0.0f);
-}
-
-/* dynamic_light_add(base, light): the light added to the base under the
-shoulder, in linear space; the base as it is (saturated) where there is no
-light, as the shoulder gives it, but for its rounding there and back */
+/* dynamic_light_add(base, light, linear): the light model's sum (xgpu.h)
+added to the light already there as the game's framebuffer adds it, the
+base and the sum in its gamma, (base + light)^2.2, and the panels' linear
+light (0 none) added there, under a shoulder that leaves all below
+max(base^2.2, ADD_KNEE) as it is (so a light that leaves the pixel below
+white is the game's own) and rolls the rest off toward white; with
+display.hdr past white too, toward the lights' white (xgpu_hdr.h's
+xgpu_hdr_lights). The base as it is (saturated) where there is no light */
 static unsigned int dynamic_light_add(struct module *m, struct pixel_state *state, unsigned int base,
-	unsigned int light, BOOL hdr)
+	unsigned int light, unsigned int linear, BOOL hdr)
 {
-	unsigned int grid2, brightest, had, room, gamma, lit, added, after, any_light, result_variable;
+	unsigned int had_gamma, had, knee, room, y, soft, gamma, added, after, any_light, result_variable;
 
 	result_variable = local(m, &state->locals, m->t_v3);
 	store(m, result_variable, saturate(m, 3, base));
-	any_light = op1(m, OP_ANY, m->t_bool, op2(m, OP_F_UNORD_NOT_EQUAL, m->t_bv3, light,
-		constant_splat(m, 3, 0.0f)));
+	any_light = op1(m, OP_ANY, m->t_bool, op2(m, OP_F_UNORD_NOT_EQUAL, m->t_bv3, light, constant_splat(m, 3, 0.0f)));
+	if (linear)
+		any_light = op2(m, OP_LOGICAL_OR, m->t_bool, any_light, op1(m, OP_ANY, m->t_bool, op2(m, OP_F_UNORD_NOT_EQUAL,
+			m->t_bv3, linear, constant_splat(m, 3, 0.0f))));
 	added = id_new(m);
 	after = id_new(m);
 	selection_merge(m, after);
 	branch_conditional(m, any_light, added, after);
 	label_at(m, added);
-	grid2 = dynamic_light(m, 0, constant_int(m, 2));
-	brightest = ext2(m, GLSL_F_MAX, m->t_float, extract(m, light, 0), ext2(m, GLSL_F_MAX, m->t_float, extract(m, light, 1),
-		extract(m, light, 2)));
-	light = fadd(m, 3, light, splat(m, 3, fmul(m, 1, fmax_scalar(m, 1, fsub(m, 1, brightest, constant_float(m, 1.0f)), 0.0f),
-		extract(m, grid2, 2))));
-	had = ext2(m, GLSL_POW, m->t_v3, saturate(m, 3, base), constant_splat(m, 3, 2.2f));
-	room = fmax_scalar(m, 3, fsub(m, 3, constant_splat(m, 3, 1.0f), had), (float)1.0e-3);
-	gamma = constant_splat(m, 3, (float)(1.0 / 2.2));
-	lit = fadd(m, 3, had, fmul(m, 3, room, fsub(m, 3, constant_splat(m, 3, 1.0f),
-		ext1(m, GLSL_EXP, m->t_v3, fdiv(m, 3, fneg(m, 3, light), room)))));
-	/* (display.hdr: the same below white, and what its shoulder squeezes
-	under white rolled off toward the lights' white instead: xgpu_hdr.h's
-	xgpu_hdr_lights, xgpu_msl.c's dynamic_light_add_hdr) */
+	gamma = constant_splat(m, 3, 2.2f);
+	had_gamma = saturate(m, 3, base);
+	had = ext2(m, GLSL_POW, m->t_v3, had_gamma, gamma);
+	y = ext2(m, GLSL_POW, m->t_v3, fadd(m, 3, had_gamma, fmax_scalar(m, 3, light, 0.0f)), gamma);
+	if (linear)
+		y = fadd(m, 3, y, fmax_scalar(m, 3, linear, 0.0f));
+	/* soft = y <= k ? y : k + (1 - k) (1 - exp(-(y - k) / (1 - k))), k = max(had, ADD_KNEE) */
+	knee = fmax_scalar(m, 3, had, XGPU_DYNAMIC_LIGHTS_ADD_KNEE);
+	room = fmax_scalar(m, 3, fsub(m, 3, constant_splat(m, 3, 1.0f), knee), (float)1.0e-3);
+	soft = fadd(m, 3, knee, fmul(m, 3, room, fsub(m, 3, constant_splat(m, 3, 1.0f), ext1(m, GLSL_EXP, m->t_v3,
+		fdiv(m, 3, fneg(m, 3, fmax_scalar(m, 3, fsub(m, 3, y, knee), 0.0f)), room)))));
+	soft = select_n(m, 3, op2(m, OP_F_ORD_LESS_THAN_EQUAL, m->t_bv3, y, knee), y, soft);
 	if (hdr)
 	{
-		unsigned int past = fmax_scalar(m, 3, fsub(m, 3, fadd(m, 3, had, light), constant_splat(m, 3, 1.0f)), 0.0f);
+		unsigned int past = fmax_scalar(m, 3, fsub(m, 3, y, constant_splat(m, 3, 1.0f)), 0.0f);
 		unsigned int white_room = constant_splat(m, 3, XGPU_HDR_LIGHTS_WHITE - 1.0f);
 
-		lit = fadd(m, 3, lit, fmul(m, 3, white_room, fsub(m, 3, constant_splat(m, 3, 1.0f),
+		soft = fadd(m, 3, soft, fmul(m, 3, white_room, fsub(m, 3, constant_splat(m, 3, 1.0f),
 			ext1(m, GLSL_EXP, m->t_v3, fdiv(m, 3, fneg(m, 3, past), white_room)))));
 	}
-	store(m, result_variable, ext2(m, GLSL_POW, m->t_v3, lit, gamma));
+	store(m, result_variable, ext2(m, GLSL_POW, m->t_v3, soft, constant_splat(m, 3, (float)(1.0 / 2.2))));
 	branch(m, after);
 	label_at(m, after);
 	return load(m, m->t_v3, result_variable);
@@ -5999,8 +6003,7 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 		}
 		flash_variable = local(&m, &state.locals, m.t_v3);
 		sum = dynamic_light_sum(&m, &state, p, shaded, n, FALSE, reflection, exponent, shine_variable, flash_variable);
-		sum = fadd(&m, 3, sum, flashlight_gamma_add(&m, lit, load(&m, m.t_v3, flash_variable)));
-		added = dynamic_light_add(&m, &state, lit, sum, FALSE);
+		added = dynamic_light_add(&m, &state, lit, sum, load(&m, m.t_v3, flash_variable), FALSE);
 		/* (a metal's diffuse light darkened: material_read) */
 		if (state.metalness)
 			added = fscale(&m, 3, added, fsub(&m, 1, constant_float(&m, 1.0f), fmul(&m, 1, state.metalness,
@@ -6037,7 +6040,7 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 		static const unsigned int rgb[4] = { 4, 5, 6, 3 };
 
 		state.t[3] = shuffle(&m, 4, state.t[3], dynamic_light_add(&m, &state, xyz(&m, state.t[3]),
-			fscale(&m, 3, load(&m, m.t_v3, shine_variable), highlight_scale), FALSE), rgb);
+			constant_splat(&m, 3, 0.0f), fscale(&m, 3, load(&m, m.t_v3, shine_variable), highlight_scale), FALSE), rgb);
 	}
 	/* (a model's material: its reflection by its occlusion, and a metal's
 	tinted by its base map) */
@@ -6128,10 +6131,10 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 		flash_variable = local(&m, &state.locals, m.t_v3);
 		sum = dynamic_light_sum(&m, &state, pixel_input(&m, &state, state.in_world_position, m.t_v3), n, surface_normal, TRUE,
 			0, 0, 0, flash_variable);
-		/* (the flashlight added as the gel pass did, its tint's too) */
-		sum = fadd(&m, 3, fmul(&m, 3, sum, xyz(&m, uniform(&m, U_DYNAMIC_LIGHT_TINT, -1))), flashlight_gamma_add(&m,
-			xyz(&m, result), fmul(&m, 3, load(&m, m.t_v3, flash_variable), xyz(&m, uniform(&m, U_DYNAMIC_LIGHT_TINT, -1)))));
-		lit = dynamic_light_add(&m, &state, xyz(&m, result), sum, (program->hdr & XGPU_HDR_LIGHTS) != 0);
+		/* (by the shader's material colour, as the gel pass multiplies it) */
+		sum = fmul(&m, 3, sum, xyz(&m, uniform(&m, U_DYNAMIC_LIGHT_TINT, -1)));
+		lit = dynamic_light_add(&m, &state, xyz(&m, result), sum, fmul(&m, 3, load(&m, m.t_v3, flash_variable),
+			xyz(&m, uniform(&m, U_DYNAMIC_LIGHT_TINT, -1))), (program->hdr & XGPU_HDR_LIGHTS) != 0);
 		/* (HALO_LIGHT_SHADOWS_VIEW: the lights over the surface darkened,
 		not under the shoulder, so a lit wall shows them too) */
 		if (state.light_shadows && light_shadows_view())

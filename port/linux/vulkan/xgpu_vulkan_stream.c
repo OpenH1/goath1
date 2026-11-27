@@ -1926,12 +1926,12 @@ static int uniforms_update(const struct stream_pipeline *entry)
 		to->world_ao[1] = from->world_ao[1];
 		to->world_ao[2] = from->world_ao[2];
 		to->world_ao[3] = from->world_ao[3];
-		/* (the enhanced dynamic lights' tint, in linear light: worked out
+		/* (the enhanced dynamic lights' tint, gamma, as the gel pass multiplies it: worked out
 		again where the colour changed) */
 		if (!stream.tint_valid || memcmp(stream.tint_from, from->ps_final_c0, sizeof(stream.tint_from)))
 		{
 			for (stage = 0; stage < 3; stage++)
-				stream.tint[stage] = powf(from->ps_final_c0[stage], 2.2f);
+				stream.tint[stage] = from->ps_final_c0[stage];
 			memcpy(stream.tint_from, from->ps_final_c0, sizeof(stream.tint_from));
 			stream.tint_valid = 1;
 		}

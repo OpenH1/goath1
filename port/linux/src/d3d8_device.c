@@ -5303,8 +5303,8 @@ static struct
 	game's do not: port/linux/game/network_standard.c's
 	network_standard_enhanced_lights_allowed) */
 	BOOL allowed;
-	/* the look: [0] the lights' brightness, the core (1 / (1 + core x^2)),
-	the spill past white, the models' wrap; [1] the glow's size (of the
+	/* the look: [0] unused (the light model's lights are the game's: xgpu.h);
+	[1] the glow's size (of the
 	light's radius), brightness, softness against what it meets (world
 	units), its least size (debug.dynamic_lights_look; xgpu_spirv.c) */
 	float look[2][4];
@@ -5343,7 +5343,7 @@ static struct
 	int flashlight_count;
 	unsigned char cookie[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE * XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE];
 	float gel_width, gel_tint[3], falloff[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF];
-	BOOL gel_ready;
+	BOOL gel_ready, attenuation_ready;
 	/* the frame's lights lit through it (their colour its tint, as bright
 	as the game's gel pass has them) */
 	unsigned char flashlight_lit[XGPU_DYNAMIC_LIGHTS_MAXIMUM];
@@ -5361,7 +5361,9 @@ arithmetic's rounding */
 
 static void dynamic_lights_read_settings(void)
 {
-	static const float defaults[2][4] = { { 1.7f, 12.0f, 0.18f, 0.25f }, { 0.22f, 1.2f, 0.12f, 0.035f } };
+	/* ([0] unused since the light model, which adds each light as the game
+	does: xgpu.h) */
+	static const float defaults[2][4] = { { 1.0f, 0.0f, 0.0f, 0.0f }, { 0.22f, 1.2f, 0.12f, 0.035f } };
 	const char *look;
 	BOOL allowed = network_standard_enhanced_lights_allowed() != 0;
 
@@ -5788,6 +5790,50 @@ static float gel_attenuation_at(const DWORD *texels, const struct xgpu_texture_d
 	return sum / 6.0f;
 }
 
+/* the game's distance attenuation (rasterizer_data's, a volume about a
+light, the cube of its radius), which every light's gel pass samples, as
+the light model's falloff on the structure (xgpu.h's
+XGPU_DYNAMIC_LIGHTS_ATTENUATION): along its axes from its middle, as it
+is (the display's gamma, as the pass multiplies it); 1 - x^2 where it
+cannot be read */
+void halo_dynamic_lights_attenuation(const void *attenuation_texture)
+{
+	static const void *made;
+	static DWORD made_data;
+	const DWORD *header = attenuation_texture;
+	struct xgpu_texture_description description;
+	DWORD *attenuation;
+	int index;
+
+	if (dynamic_lights.attenuation_ready && made == attenuation_texture && (!header || made_data == header[1]))
+		return;
+	made = attenuation_texture;
+	made_data = header ? header[1] : 0;
+	attenuation = gel_decode(header, &description, 0);
+	if (attenuation && description.depth < 2)
+	{
+		free(attenuation);
+		attenuation = NULL;
+	}
+	for (index = 0; index < XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF; index++)
+	{
+		float t = (float)index / (XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF - 1), value;
+
+		value = attenuation ? gel_attenuation_at(attenuation, &description, t) : 1.0f - t * t;
+		dynamic_lights.falloff[index] = value < 0.0f ? 0.0f : value > 1.0f ? 1.0f : value;
+	}
+	/* (none past the radius, as the volume's border is black) */
+	dynamic_lights.falloff[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF - 1] = 0.0f;
+	platform_log("dynamic lights: the falloff on the structure %s: %.3f %.3f %.3f %.3f %.3f at 0, 1/4, 1/2, 3/4, 7/8 "
+		"of the radius (gamma)", attenuation ? "the game's distance attenuation" : "1 - x^2 (no attenuation read)",
+		(double)dynamic_lights.falloff[0], (double)dynamic_lights.falloff[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF / 4],
+		(double)dynamic_lights.falloff[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF / 2],
+		(double)dynamic_lights.falloff[3 * XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF / 4],
+		(double)dynamic_lights.falloff[7 * XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF / 8]);
+	free(attenuation);
+	dynamic_lights.attenuation_ready = TRUE;
+}
+
 int halo_dynamic_lights_gel(const void *gel_texture, const void *attenuation_texture)
 {
 	static const void *made_gel, *made_attenuation;
@@ -5795,8 +5841,6 @@ int halo_dynamic_lights_gel(const void *gel_texture, const void *attenuation_tex
 	static int made_result;
 	const DWORD *header = gel_texture;
 	struct gel_faces gel;
-	struct xgpu_texture_description attenuation_description;
-	DWORD *attenuation;
 	float sign = 1.0f, energy[2] = { 0.0f, 0.0f }, width = 0.0f, tint[3] = { 0.0f, 0.0f, 0.0f }, most = 0.0f;
 	int face, index, x, y, side;
 	const int grid = 96;
@@ -5870,33 +5914,13 @@ int halo_dynamic_lights_gel(const void *gel_texture, const void *attenuation_tex
 			most += brightest;
 		}
 	for (index = 0; index < 3; index++)
-		dynamic_lights.gel_tint[index] = most > 0.0f ? powf(tint[index] / most, 2.2f) : 1.0f;
+		dynamic_lights.gel_tint[index] = most > 0.0f ? tint[index] / most : 1.0f;
 	dynamic_lights.gel_width = width;
-	/* (the falloff: the game's attenuation where it can be read, else 1 - x^2 squared) */
-	attenuation = gel_decode(attenuation_texture, &attenuation_description, 0);
-	if (attenuation && attenuation_description.depth < 2)
-	{
-		free(attenuation);
-		attenuation = NULL;
-	}
-	for (index = 0; index < XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF; index++)
-	{
-		float t = (float)index / (XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF - 1), value;
-
-		value = attenuation ? gel_attenuation_at(attenuation, &attenuation_description, t) :
-			(1.0f - t * t) * (1.0f - t * t);
-		dynamic_lights.falloff[index] = powf(value < 0.0f ? 0.0f : value > 1.0f ? 1.0f : value, 2.2f);
-	}
-	platform_log("flashlight: its gel %lux%lu (format %08lx) %s its beam, %.3f wide (%.1f degrees), tint %.2f %.2f %.2f; "
-		"falloff %s: %.3f %.3f %.3f %.3f %.3f at 0, 1/4, 1/2, 3/4, 7/8 (linear)", gel.description.width,
-		gel.description.height, (unsigned long)header[3], sign > 0.0f ? "along" : "against", (double)width,
-		atan((double)width) * 2.0 * 180.0 / 3.14159265, (double)dynamic_lights.gel_tint[0],
-		(double)dynamic_lights.gel_tint[1], (double)dynamic_lights.gel_tint[2],
-		attenuation ? "the game's" : "1 - x^2 squared", (double)dynamic_lights.falloff[0],
-		(double)dynamic_lights.falloff[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF / 4],
-		(double)dynamic_lights.falloff[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF / 2],
-		(double)dynamic_lights.falloff[3 * XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF / 4],
-		(double)dynamic_lights.falloff[7 * XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF / 8]);
+	halo_dynamic_lights_attenuation(attenuation_texture);
+	platform_log("flashlight: its gel %lux%lu (format %08lx) %s its beam, %.3f wide (%.1f degrees), tint %.2f %.2f %.2f",
+		gel.description.width, gel.description.height, (unsigned long)header[3], sign > 0.0f ? "along" : "against",
+		(double)width, atan((double)width) * 2.0 * 180.0 / 3.14159265, (double)dynamic_lights.gel_tint[0],
+		(double)dynamic_lights.gel_tint[1], (double)dynamic_lights.gel_tint[2]);
 	/* (HALO_FLASHLIGHT_GEL_DUMP, checking: the cookie and the gel's faces as
 	pictures in the screenshot folder) */
 	if (getenv("HALO_FLASHLIGHT_GEL_DUMP"))
@@ -5922,7 +5946,6 @@ int halo_dynamic_lights_gel(const void *gel_texture, const void *attenuation_tex
 				FALSE);
 		}
 	}
-	free(attenuation);
 	for (face = 0; face < 6; face++)
 		free(gel.faces[face]);
 	dynamic_lights.gel_ready = TRUE;
@@ -5944,7 +5967,7 @@ void halo_dynamic_lights_flashlights(const struct halo_flashlight *flashlights, 
 lights given; taken (none the next frame unless given again) */
 typedef char dynamic_lights_flashlight_fits[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE +
 	XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE * XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE / 16 <=
-	XGPU_DYNAMIC_LIGHTS_GRID_X * XGPU_DYNAMIC_LIGHTS_GRID_Y && XGPU_DYNAMIC_LIGHTS_FLASHLIGHT == XGPU_DYNAMIC_LIGHTS_SHADOWED + 4 &&
+	XGPU_DYNAMIC_LIGHTS_GRID_X * XGPU_DYNAMIC_LIGHTS_GRID_Y - 1 && XGPU_DYNAMIC_LIGHTS_ATTENUATION == XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 15 && XGPU_DYNAMIC_LIGHTS_FLASHLIGHT == XGPU_DYNAMIC_LIGHTS_SHADOWED + 4 &&
 	HALO_DYNAMIC_LIGHTS_FLASHLIGHTS == XGPU_DYNAMIC_LIGHTS_FLASHLIGHTS &&
 	(XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE * XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE) % 16 == 0 ? 1 : -1];
 
@@ -5955,6 +5978,10 @@ static void dynamic_lights_flashlight_texels(int count)
 	int slot, used = 0;
 
 	memset(dynamic_lights.flashlight_lit, 0, sizeof(dynamic_lights.flashlight_lit));
+	/* (every light's falloff on the structure) */
+	if (!dynamic_lights.attenuation_ready)
+		halo_dynamic_lights_attenuation(NULL);
+	memcpy(slice[XGPU_DYNAMIC_LIGHTS_ATTENUATION], dynamic_lights.falloff, sizeof(dynamic_lights.falloff));
 	if (!dynamic_lights.gel_ready)
 	{
 		dynamic_lights.flashlight_count = 0;
@@ -5987,7 +6014,6 @@ static void dynamic_lights_flashlight_texels(int count)
 	slice[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 1][2] = 1u;
 	memcpy(&slice[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 1][3], &bias, sizeof(float));
 	memcpy(slice[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 14], dynamic_lights.gel_tint, sizeof(dynamic_lights.gel_tint));
-	memcpy(slice[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 15], dynamic_lights.falloff, sizeof(dynamic_lights.falloff));
 	memcpy(slice[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE], dynamic_lights.cookie, sizeof(dynamic_lights.cookie));
 }
 
@@ -6043,11 +6069,11 @@ void halo_dynamic_lights_set(const struct halo_dynamic_light *lights, int count,
 	{
 		const struct halo_dynamic_light *light = &lights[index];
 		float offset[3];
-		/* (the flashlight lit through its gel as the game's gel pass has it:
-		its colour, linear, by the gel's tint, the look's brightness not
-		added) */
+		/* (the light model, xgpu.h: its colour the game's, gamma, as its
+		passes add it; the flashlight's by its gel's tint, as the gel
+		pass's; a panel's linear) */
 		BOOL flashlight = dynamic_lights.flashlight_lit[index] != 0;
-		float brightness = flashlight ? 1.0f : dynamic_lights.look[0][0];
+		BOOL panel = (light->flags & HALO_DYNAMIC_LIGHT_PANEL) != 0;
 
 		if (!(light->radius > 0.0f))
 			continue;
@@ -6077,14 +6103,16 @@ void halo_dynamic_lights_set(const struct halo_dynamic_light *lights, int count,
 			light->radius;
 		for (axis = 0; axis < 3; axis++)
 		{
-			/* (linear: the display's gamma out) */
-			dynamic_lights.data.color[index][axis] = powf(light->color[axis], 2.2f) * brightness *
-				(flashlight ? dynamic_lights.gel_tint[axis] : 1.0f);
+			dynamic_lights.data.color[index][axis] = panel ? powf(light->color[axis], 2.2f) :
+				light->color[axis] * (flashlight ? dynamic_lights.gel_tint[axis] : 1.0f);
 			dynamic_lights.data.cone[index][axis] = light->axis[axis];
 			offset[axis] = light->position[axis] - camera[axis];
 		}
 		dynamic_lights.data.color[index][3] = light->cone_offset;
 		dynamic_lights.data.cone[index][3] = light->cone_scale;
+		if (panel)
+			((unsigned int (*)[4])dynamic_lights.mask[XGPU_DYNAMIC_LIGHTS_GRID_Z])[XGPU_DYNAMIC_LIGHTS_PANELS][index >> 5] |=
+				1u << (index & 31);
 		dynamic_lights_mark(dynamic_lights.mask, offset, light->radius, scales,
 			(const float (*)[XGPU_DYNAMIC_LIGHTS_GRID_X])lower, (const float (*)[XGPU_DYNAMIC_LIGHTS_GRID_X])upper, index);
 		if ((light->flags & HALO_DYNAMIC_LIGHT_HALO) && halos->count < XGPU_DYNAMIC_LIGHTS_MAXIMUM)
