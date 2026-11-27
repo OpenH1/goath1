@@ -25,27 +25,32 @@ layout(location = 0) out uvec4 result;
 const float GAIN = 16.0;
 
 // the light's change about at, where the history comes from (the previous frame's 3x3 strata's gradient samples about
-// it, its own 8 times over: a moving shadow's edge cut where it is): x the relighting, the ratio of the
-// re-shaded samples' sum to the previous ones' (a change alike over the strata: the lamp nearer, a light fading in),
-// which scales the history; y the share to cut from its count, by the gain: what of the change the ratio does not
-// explain (changes of both signs there: a shadow or the beam's edge moving; all of it where there was no light)
+// it, its own 8 times over: a moving shadow's edge cut where it is): x the relighting, the ratio of the re-shaded
+// samples' sum to the previous ones' (a change alike over the strata: the lamp nearer, a light fading in), which
+// scales the history; y the share to cut from its count, by the gain: what of the change the ratio does not explain,
+// each sample against the ratio's prediction (a shadow or the beam's edge moving; all of it where there was no light)
 vec2 changed(vec2 at)
 {
     if ((pass.control.y & GRADIENTS) == 0)
         return vec2(1.0, 0.0);
     ivec2 stratum = ivec2(floor(at)) / 3, top = ivec2(pass.size.zw) - 1;
-    vec4 sums = vec4(0.0);
-    for (int y = -1; y <= 1; y++)
-        for (int x = -1; x <= 1; x++)
-            sums += texelFetch(gradients, clamp(stratum + ivec2(x, y), ivec2(0), top), 0) *
-                (x == 0 && y == 0 ? 8.0 : 1.0);
+    vec4 samples[9];
+    vec3 sums = vec3(0.0);
+    for (int k = 0; k < 9; k++)
+    {
+        samples[k] = texelFetch(gradients, clamp(stratum + ivec2(k % 3 - 1, k / 3 - 1), ivec2(0), top), 0);
+        samples[k].w *= k == 4 ? 8.0 : 1.0;
+        sums += samples[k].w * vec3(samples[k].xy, 1.0);
+    }
     float before = sums.x, now = sums.y, larger = max(before, now);
-    if (sums.w <= 0.0 || larger <= 1.0e-8)
+    if (sums.z <= 0.0 || larger <= 1.0e-8)
         return vec2(1.0, 0.0);
     if (before <= 1.0e-3 * larger)
         return vec2(1.0, 1.0);
-    float unexplained = max(sums.z - abs(now - before), 0.0) / larger;
-    return vec2(now / before, clamp(GAIN * unexplained, 0.0, 1.0));
+    float ratio = now / before, off = 0.0;
+    for (int k = 0; k < 9; k++)
+        off += samples[k].w * abs(samples[k].y - ratio * samples[k].x);
+    return vec2(ratio, clamp(GAIN * off / larger, 0.0, 1.0));
 }
 
 // Catmull-Rom's four weights at t in [0, 1) between the middle two (they sum to 1)
