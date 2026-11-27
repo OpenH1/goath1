@@ -59,6 +59,10 @@ HALO_LT_E1_UNSHADOWED=1 (checking) casts no shadow ray. Render thread alone.
 #define LT_ACCUMULATE_CAP (1 << 20)
 /* the disk's radius (world units: a lamp's lens, about 3 cm) */
 #define LT_DISK_RADIUS 0.01f
+/* the flashlight's linear power over the tag's decoding taken to linear, set once so that the beam's centre on the
+c20 corner's wall at about 3 m shows as bright as the original's gamma add, falling off physically from there
+(~/dev/rt2-calibration.json's flashlight_power_scale and its derivation; the truth renderer uses the same) */
+#define LT_POWER_SCALE 1.298f
 /* the lamp moved this far in a frame (world units): a jump, the count started again */
 #define LT_JUMP 0.25f
 /* where the parameters start in the draw set's uniforms (lt/e1.frag's) */
@@ -235,6 +239,7 @@ static int lt_light(const unsigned char *cells, const struct xgpu_dynamic_lights
 	memcpy(params->left, lt_texel(cells, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 4 + 3 * slot), sizeof(float) * 3);
 	params->forward[3] = LT_DISK_RADIUS;
 	memcpy(params->lamp, lt_texel(cells, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 23), sizeof(float) * 3);
+	params->lamp[3] = LT_POWER_SCALE;
 	params->owners[0] = lt_texel(cells, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 14)[3];
 	for (index = 0; index < XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF / 4; index++)
 		memcpy(&params->falloff[index * 4], lt_texel(cells, XGPU_DYNAMIC_LIGHTS_ATTENUATION + index), 16);
