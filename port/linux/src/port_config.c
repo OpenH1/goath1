@@ -492,6 +492,11 @@ static const struct config_setting config_settings[] =
 	{ "display.spartan_link_stats", _config_boolean, "true", "HALO_SPARTAN_LINK_STATS", _environment_value, _platform_all,
 		"The teammate's name, shield and health under each Spartan link feed\n"
 		"(display.spartan_link); false, the feeds alone." },
+	{ "display.score_popups", _config_boolean, "true", "HALO_SCORE_POPUPS", _environment_value, _platform_all,
+		"Campaign scoring's pop-ups (campaign.scoring): the points of each kill,\n"
+		"grouped (one \"+150 Triple Kill\"), small at the view's right for a\n"
+		"moment (campaign_score_hud.c); false: none, the scoreboard still has the\n"
+		"scores. Each player profile's own.", _scope_player },
 	{ "display.spartan_link_shown", _config_boolean, "false", "HALO_SPARTAN_LINK_SHOWN", _environment_value, _platform_all,
 		"Whether the Spartan link is shown (display.spartan_link): the key\n"
 		"turns it on and off and it stays so from game to game, each player\n"
@@ -2642,6 +2647,11 @@ static const struct config_setting config_settings[] =
 		"screen is; else that many times a second, the feeds in turn, one a frame\n"
 		"at most, each image turned to its teammate's look between\n"
 		"(port/linux/game/spartan_link.c)." },
+	{ "debug.score_fill", _config_boolean, "false", "HALO_SCORE_FILL", _environment_value, _platform_all,
+		"Campaign scoring's screens drawn from made-up numbers, not the game's\n"
+		"score (campaign_score_hud.c): the scoreboard, the pop-ups, the Spartan\n"
+		"link's scores and events and, 40 seconds in, the level's summary, for\n"
+		"pictures of them before a score is kept." },
 	{ "debug.spartan_link_log", _config_boolean, "false", "HALO_SPARTAN_LINK_LOG", _environment_value, _platform_all,
 		"Log each Spartan link feed's camera as it is drawn (the tick, the local\n"
 		"player, the teammate, through their eyes, where it looks from and along,\n"

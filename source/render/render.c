@@ -221,6 +221,8 @@ window's HUD draws the feeds' images */
 boolean spartan_link_feed_begin(short local_player_index, struct render_camera *camera);
 void spartan_link_feed_end(void);
 void spartan_link_draw(short local_player_index);
+/* port/linux/game/campaign_score_hud.c's */
+void campaign_score_hud_draw(short local_player_index);
 static boolean render_link_pass;
 
 /* ---------- public code */
@@ -820,6 +822,10 @@ static void render_window(
 		(port/linux/game/spartan_link.c) */
 		if (rasterizer_target == _render_target_primary)
 			spartan_link_draw(local_player_index);
+		/* port: campaign scoring's pop-ups and level summary
+		(port/linux/game/campaign_score_hud.c) */
+		if (rasterizer_target == _render_target_primary)
+			campaign_score_hud_draw(local_player_index);
 		/* port: and every HUD's (port/linux/game/render_enumerate.c) */
 		render_enumerate_interface();
 		render_enumerate_screen_flashes();

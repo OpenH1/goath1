@@ -2061,6 +2061,17 @@ PAGES = {
              "Every enemy squad in the campaign is two or three times as large, solo, split screen and co-op you "
              "host (on top of co-op's Extra Enemies). Legendary gets half as many extras. Starts with the next "
              "level; a saved game keeps its own.", None),
+            # (port/linux/game/campaign_score.c: solo, split screen and a
+            # co-op game this computer hosts (the lobby's SCORING too); its
+            # pop-ups each player's own: campaign_score_hud.c)
+            (SECTION, "SCORING"),
+            ("SCORING", "campaign.scoring", ON_OFF,
+             "Points for your kills in the campaign, solo, split screen and co-op you host: Tab shows each "
+             "player's score and the team's, and each level ends with a summary and your best. Online: the "
+             "host's choice.", None),
+            ("SCORE POP-UPS", "display.score_popups", ON_OFF,
+             "The small points that come up at the right of the screen as you score, such as "
+             "+150 Triple Kill. Off hides them; Tab still shows the scores.", None),
         ],
     },
     SPARTAN_LINK[0]: {
