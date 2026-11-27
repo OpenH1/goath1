@@ -600,25 +600,48 @@ static int lt_block_kind(const struct xgpu_dynamic_lights_block *block, int inde
 	return block->cone[index][3] > 0.0f ? LT_KIND_SPOT : LT_KIND_POINT;
 }
 
+/* whether a light of the list is one of the port's own lights on a
+projectile (light_sources.c: a needle's, a Wraith mortar shell's, a
+rocket's exhaust, a Sentinel's beam; in flight or stuck in what it hit),
+whose tag has no light: in Halo it is a lens flare and a glow alone, no
+light on the world. The light transport lights what Halo's data emits (the
+truth's lights.json has no such light; the classic game draws none): with
+the pass on, these are flare-only. Measured (~/dev/rt2-calibration.json's
+own_projectile_lights): a needle stuck in the player at b30_fight.hrpl frame
+540 added 1.48 times the enhanced lights' own light over its reach (1.6 to
+1.7 times where k was fitted), the classic game none; the broad pink wash
+and the purple first-person weapon of the b30 clip */
+static int lt_flare_only(const struct xgpu_stream_lt_light *light)
+{
+	unsigned int source = light ? light->id[1] >> 24 : 0u;
+
+	return source >= XGPU_LT_LIGHT_SOURCE_OWN_FIRST && source < XGPU_LT_LIGHT_SOURCE_GAME &&
+		(light->flags & XGPU_LT_LIGHT_PROJECTILE);
+}
+
 void xgpu_vulkan_lt_block_filter(struct xgpu_dynamic_lights_block *block, uint32_t count)
 {
 	const struct xgpu_stream_lt_light *list;
-	int listed, index;
+	int listed, index, drop;
 
-	/* (in any mode: the classic's "off" too) */
-	if (!getenv("HALO_LT_DROP"))
-		return;
-	lt_settings();
-	if (lt.drop_kind == -2)
+	/* (HALO_LT_DROP in any mode: the classic's "off" too; the own
+	projectile lights flare-only with the pass on: lt_flare_only) */
+	drop = getenv("HALO_LT_DROP") != NULL;
+	if (drop)
+	{
+		lt_settings();
+		drop = lt.drop_kind != -2;
+	}
+	if (!drop && !xgpu_vulkan_lt_mode())
 		return;
 	list = xgpu_vulkan_lt_lights(xgpu_vulkan_lt_lights_window(), &listed, NULL);
 	for (index = 0; index < (int)count && index < XGPU_DYNAMIC_LIGHTS_MAXIMUM; index++)
 	{
-		int kind = lt_block_kind(block, index, list, listed);
-		const struct xgpu_stream_lt_light *light = lt.drop_kind == 10 ? lt_record(list, listed, block->position[index]) :
-			NULL;
+		const struct xgpu_stream_lt_light *light = lt_record(list, listed, block->position[index]);
+		int kind = drop ? lt_block_kind(block, index, list, listed) : -1;
 
-		if (lt.drop_kind == 9 || kind == lt.drop_kind || (light && light->id[0] == lt.drop_id))
+		if ((drop && (lt.drop_kind == 9 || kind == lt.drop_kind || (lt.drop_kind == 10 && light &&
+			light->id[0] == lt.drop_id))) || (xgpu_vulkan_lt_mode() && lt_flare_only(light)))
 			block->color[index][0] = block->color[index][1] = block->color[index][2] = 0.0f;
 	}
 }
