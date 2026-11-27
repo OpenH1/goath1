@@ -451,7 +451,7 @@ vec4 specular_main(ivec2 pixel)
     return hits > 0 ? vec4(sum / float(hits), max(distance / float(hits), 1.0e-3)) : vec4(0.0);
 }
 
-// the bounce's samples about pixel on its surface (the 5x5 blocks about its own, Gaussian, 3 pixels; each block's traced pixel within a
+// the bounce's samples about pixel on its surface (the 3x3 blocks about its own, Gaussian, 3 pixels; its noise counted down by the bounce's own history; each block's traced pixel within a
 // few pixels, the same owner, its normal within 25 degrees and its point on this pixel's plane)
 vec3 upsampled(ivec2 pixel, vec3 p, vec3 n, uint owner)
 {
@@ -459,9 +459,9 @@ vec3 upsampled(ivec2 pixel, vec3 p, vec3 n, uint owner)
     int phase = int(pass.indirect[1].y);
     float distance = length(p - pass.camera[0].xyz), weights = 0.0;
     vec3 sum = vec3(0.0);
-    for (int k = 0; k < 25; k++)
+    for (int k = 0; k < 9; k++)
     {
-        ivec2 block = middle + ivec2(k % 5 - 2, k / 5 - 2);
+        ivec2 block = middle + ivec2(k % 3 - 1, k / 3 - 1);
         if (any(lessThan(block, ivec2(0))) || any(greaterThanEqual(block, size)))
             continue;
         vec4 s = texelFetch(reservoirs, block, 0);
