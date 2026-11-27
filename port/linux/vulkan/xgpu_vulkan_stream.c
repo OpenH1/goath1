@@ -4684,10 +4684,14 @@ static void prepass_draw(const struct draw_input *input)
 	twin = *definition;
 	if (!xgpu_stream_world_ao_twin(&twin))
 		return;
-	/* (HALO_LT_E1: a twin with the world's light keeps its dynamic lights,
-	so it shades its bump or normal map's normal for the guides) */
+	/* (HALO_LT_E1: a twin with the world's light is drawn with the dynamic
+	lights' shading, so it shades its bump or normal map's normal for the
+	guides: the structure's as the structure's, the rest as a model's,
+	whether or not lights reach the draw now, so that one twin serves both
+	and the map's preparation makes it) */
 	if (xgpu_vulkan_lt_mode() && (twin.pixel_program.ambient_occlusion & 0x10u))
-		twin.key.pixel.dynamic_lights = twin.pixel_program.dynamic_lights = definition->pixel_program.dynamic_lights;
+		twin.key.pixel.dynamic_lights = twin.pixel_program.dynamic_lights = twin.key.lighting ==
+			XGPU_LIGHTING_ENVIRONMENT ? XGPU_DYNAMIC_LIGHTS_ENVIRONMENT : XGPU_DYNAMIC_LIGHTS_MODEL;
 	entry = &prepass.entries[id];
 	if (memcmp(&twin, &prepass.definitions[id], sizeof(twin)))
 	{
