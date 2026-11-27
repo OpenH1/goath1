@@ -88,6 +88,9 @@ enum
 	LT_VISIBILITY = 1,
 	LT_RESET = 2,
 	LT_COPY = 4,
+	LT_COPY_GEOMETRIC = 8,
+	LT_COPY_SHADED = 16,
+	LT_COPY_PRESENT = 32,
 };
 
 static struct
@@ -99,6 +102,8 @@ static struct
 	/* the means in turn (this frame's, the last), the last frame's inputs,
 	the dump's halves */
 	struct xgpu_vulkan_image *means[2], *previous, *dump;
+	/* the pre-pass's twins' guides (xgpu_vulkan_stream.c; xgpu_spirv.h's C1) */
+	struct xgpu_vulkan_image *guides;
 	int current, previous_valid;
 	/* the light last frame (its lamp), for the count's starts */
 	int had_light;
@@ -107,6 +112,11 @@ static struct
 	unsigned char dumps[LT_DUMPS];
 	int dumps_read;
 } lt = { -1 };
+
+void xgpu_vulkan_lt_guides(struct xgpu_vulkan_image *guides)
+{
+	lt.guides = guides;
+}
 
 int xgpu_vulkan_lt_mode(void)
 {
@@ -330,6 +340,7 @@ static void lt_pass_draw(struct xgpu_vulkan_image *into, const int32_t rectangle
 	draw.textures[0].image = inputs;
 	draw.textures[1].image = history;
 	draw.textures[2].image = previous;
+	draw.textures[3].image = lt.guides ? lt.guides : previous;
 	/* (the draw set's uniforms' range, which the constants' share) */
 	bytes = xgpu_vulkan_upload(192 * 16, 256, &draw.uniforms);
 	if (!bytes)
@@ -355,8 +366,22 @@ static void lt_pass_draw(struct xgpu_vulkan_image *into, const int32_t rectangle
 }
 
 /* HALO_LT_E1_DUMP: the mean as half floats, written as its frame comes */
+static void lt_dump_one(const int32_t rectangle[4], const struct xgpu_world_ao_pass *uniforms, struct lt_params *params,
+	struct xgpu_vulkan_image *mean, struct xgpu_vulkan_image *inputs, int what, const char *suffix);
+
+/* HALO_LT_E1_DUMP: the mean (the irradiance), the geometric and shaded
+normals, the pixels the pre-pass drew */
 static void lt_dump(const int32_t rectangle[4], const struct xgpu_world_ao_pass *uniforms, struct lt_params *params,
-	struct xgpu_vulkan_image *mean)
+	struct xgpu_vulkan_image *mean, struct xgpu_vulkan_image *inputs)
+{
+	lt_dump_one(rectangle, uniforms, params, mean, inputs, 0, "");
+	lt_dump_one(rectangle, uniforms, params, mean, inputs, LT_COPY_GEOMETRIC, "_normal_geometric");
+	lt_dump_one(rectangle, uniforms, params, mean, inputs, LT_COPY_SHADED, "_normal_shaded");
+	lt_dump_one(rectangle, uniforms, params, mean, inputs, LT_COPY_PRESENT, "_present");
+}
+
+static void lt_dump_one(const int32_t rectangle[4], const struct xgpu_world_ao_pass *uniforms, struct lt_params *params,
+	struct xgpu_vulkan_image *mean, struct xgpu_vulkan_image *inputs, int what, const char *suffix)
 {
 	const struct xgpu_vulkan_image_description *size = xgpu_vulkan_image_description(mean);
 	const char *folder = getenv("HALO_LT_E1_DUMP_DIR");
@@ -373,11 +398,11 @@ static void lt_dump(const int32_t rectangle[4], const struct xgpu_world_ao_pass 
 	lt.dump = lt_image(lt.dump, XGPU_VULKAN_FORMAT_RGBA16F, size->width, size->height);
 	if (!lt.dump)
 		return;
-	params->control[3] = LT_COPY;
-	lt_pass_draw(lt.dump, rectangle, uniforms, params, &lt.copy, lt.previous, mean, lt.previous);
+	params->control[3] = LT_COPY | what;
+	lt_pass_draw(lt.dump, rectangle, uniforms, params, &lt.copy, inputs, mean, lt.previous);
 	if (xgpu_vulkan_read_halves(lt.dump, 0, &halves) != 1 || !halves)
 		return;
-	snprintf(path, sizeof(path), "%s/lt_e1_%lu.rgba16f", folder && *folder ? folder : ".", lt.since_start);
+	snprintf(path, sizeof(path), "%s/lt_e1_%lu%s.rgba16f", folder && *folder ? folder : ".", lt.since_start, suffix);
 	file = fopen(path, "wb");
 	if (file)
 	{
@@ -472,8 +497,15 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 	xgpu_vulkan_image_copy(inputs, 0, 0, lt.previous, 0, 0);
 	lt.previous_valid = 1;
 	xgpu_vulkan_pass_owner(NULL);
-	if (lt.since_start < LT_DUMPS && lt.dumps[lt.since_start])
-		lt_dump(rectangle, pass, &params, lt.means[lt.current]);
+	{
+		/* (HALO_LT_E1_DUMP_EVERY: every so many frames too, a held frame's) */
+		static long every = -1;
+
+		if (every < 0)
+			every = getenv("HALO_LT_E1_DUMP_EVERY") ? atol(getenv("HALO_LT_E1_DUMP_EVERY")) : 0;
+		if ((lt.since_start < LT_DUMPS && lt.dumps[lt.since_start]) || (every > 0 && !(lt.since_start % every)))
+			lt_dump(rectangle, pass, &params, lt.means[lt.current], inputs);
+	}
 	xgpu_vulkan_rt_bounce_set(lt.means[lt.current]);
 	if (!lt.said)
 	{

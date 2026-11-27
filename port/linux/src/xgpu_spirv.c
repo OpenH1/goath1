@@ -2188,6 +2188,7 @@ static void rt_bounce_declare(struct module *m, struct pixel_state *state);
 static unsigned int rt_bounce_add(struct module *m, struct pixel_state *state, unsigned int light);
 /* HALO_LT_E1 (port/linux/vulkan/xgpu_vulkan_lt.h, below) */
 static int lt_e1_on(void);
+static unsigned int lt_e1_guides(struct module *m, struct pixel_state *state, unsigned int shaded, BOOL specular);
 static unsigned int lt_e1_add(struct module *m, struct pixel_state *state, unsigned int lit, unsigned int tint,
 	unsigned int p, unsigned int n);
 
@@ -5841,6 +5842,8 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 	keeps it) */
 	BOOL occluder = !world && (program->ambient_occlusion & XGPU_AMBIENT_OCCLUSION_WORLD_INPUTS);
 	unsigned int world_ao_words = 0;
+	/* (HALO_LT_E1: the twin's guides' output, and the shaded normal the dynamic lights use: 0 none) */
+	unsigned int lt_guides_out = 0, lt_shaded_normal = 0;
 	BOOL world_position = (program->per_pixel_lighting && ((program->per_pixel_lighting & 3) == 2 ||
 		program->dynamic_lights == XGPU_DYNAMIC_LIGHTS_MODEL)) || environment || world || program->rt_reflection;
 	BOOL count_samples = program->count_samples && options->count_samples;
@@ -5971,6 +5974,8 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 		state.in_world_tangent = interface_variable(&m, m.t_v3, STORAGE_INPUT, XGPU_SPIRV_LOCATION_WORLD_TANGENT, "xWorldTangent");
 	}
 	color_out = interface_variable(&m, world_inputs || occluder ? m.t_uv4 : m.t_v4, STORAGE_OUTPUT, 0, "fragment_color");
+	if (world_inputs && lt_e1_on())
+		lt_guides_out = interface_variable(&m, m.t_uv4, STORAGE_OUTPUT, XGPU_SPIRV_GUIDES_LOCATION, "lt_guides");
 	/* (display.temporal_aa: the motion, the second attachment's: the
 	previous position less the current, as a fraction of the view, x right
 	and y down, and the pixel's depth, which the resolve finds it still is) */
@@ -6027,6 +6032,8 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 		unsigned int p = pixel_input(&m, &state, state.in_world_position, m.t_v3);
 		unsigned int lit, occlusion = occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_MODEL ? state.occlusion : 0;
 		unsigned int reflection = 0, exponent = 0, sum, shaded = n, added, linear_variable;
+
+		lt_shaded_normal = n;
 		static const unsigned int rgb[4] = { 4, 5, 6, 3 };
 
 		/* (a model's material maps: its normal, and its occlusion with the
@@ -6036,6 +6043,7 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 			material_read(&m, &state, p, n);
 			if (state.shaded_normal)
 				shaded = state.shaded_normal;
+			lt_shaded_normal = shaded;
 			if (state.material_occlusion)
 				occlusion = occlusion ? fmul(&m, 1, occlusion, state.material_occlusion) : state.material_occlusion;
 		}
@@ -6227,6 +6235,7 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 			fscale(&m, 3, pixel_input(&m, &state, state.in_world_tangent, m.t_v3), extract(&m, bump, 0)),
 			fscale(&m, 3, pixel_input(&m, &state, state.in_world_binormal, m.t_v3), extract(&m, bump, 1))),
 			fscale(&m, 3, surface_normal, fmax_scalar(&m, 1, extract(&m, bump, 2), 0.05f))));
+		lt_shaded_normal = n;
 		linear_variable = local(&m, &state.locals, m.t_v3);
 		/* (linear_variable as the models': the linear light past the sum) */
 		sum = dynamic_light_sum(&m, &state, pixel_input(&m, &state, state.in_world_position, m.t_v3), n, surface_normal, TRUE,
@@ -6384,6 +6393,10 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 	if (zsprite_hidden)
 		discard_if(&m, zsprite_hidden);
 	/* (finite: finite4; the pre-pass's twin, its inputs) */
+	/* (HALO_LT_E1: the twin's guides, xgpu_spirv.h's C1) */
+	if (lt_guides_out)
+		store(&m, lt_guides_out, lt_e1_guides(&m, &state, lt_shaded_normal,
+			program->stages[3].mode == XGPU_TEXTURE_CUBEMAP));
 	if (world_inputs)
 		store(&m, color_out, world_ao_words);
 	else if (occluder)
@@ -8789,13 +8802,45 @@ static int lt_e1_on(void)
 	return on;
 }
 
+/* an octahedral normal, packSnorm2x16 (world_ao_inputs' folding) */
+static unsigned int lt_octahedral(struct module *m, unsigned int n)
+{
+	unsigned int absolute, folded, flipped, positive, negative;
+
+	n = ext1(m, GLSL_NORMALIZE, m->t_v3, n);
+	absolute = ext1(m, GLSL_F_ABS, m->t_v3, n);
+	folded = fdiv(m, 2, xy(m, n), splat(m, 2, fmax_scalar(m, 1, fadd(m, 1, fadd(m, 1, extract(m, absolute, 0),
+		extract(m, absolute, 1)), extract(m, absolute, 2)), 1.0e-24f)));
+	positive = op2(m, OP_F_ORD_GREATER_THAN_EQUAL, m->t_bv2, folded, constant_splat(m, 2, 0.0f));
+	flipped = fmul(m, 2, fsub(m, 2, constant_splat(m, 2, 1.0f), ext1(m, GLSL_F_ABS, m->t_v2,
+		op(m, OP_VECTOR_SHUFFLE, m->t_v2, 4, (unsigned int[]){ folded, folded, 1, 0 }))),
+		op3(m, OP_SELECT, m->t_v2, positive, constant_splat(m, 2, 1.0f), constant_splat(m, 2, -1.0f)));
+	negative = compare(m, OP_F_ORD_LESS_THAN, extract(m, n, 2), constant_float(m, 0.0f));
+	return ext1(m, GLSL_PACK_SNORM_2X16, m->t_uint, select_n(m, 2, negative, flipped, folded));
+}
+
+/* a twin's guides (xgpu_spirv.h's C1): the shaded normal (0: the
+interpolated one), the interpolated one, the material word (no id yet; the
+roughness where the draw has one; the specular mask), no motion yet */
+static unsigned int lt_e1_guides(struct module *m, struct pixel_state *state, unsigned int shaded, BOOL specular)
+{
+	unsigned int normal = xyz(m, pixel_input(m, state, state->in_world_normal, m->t_v4)), roughness, material;
+
+	roughness = state->roughness ? op1(m, OP_BITCAST, m->t_uint, op1(m, OP_CONVERT_F_TO_S, m->t_int, ext1(m, GLSL_FLOOR,
+		m->t_float, fadd(m, 1, fmul(m, 1, saturate(m, 1, state->roughness), constant_float(m, 255.0f)), constant_float(m, 0.5f))))) :
+		constant_uint(m, XGPU_SPIRV_GUIDES_ROUGHNESS_NONE);
+	material = op2(m, OP_BITWISE_OR, m->t_uint, op2(m, OP_SHIFT_LEFT_LOGICAL, m->t_uint, roughness,
+		constant_uint(m, XGPU_SPIRV_GUIDES_ROUGHNESS_SHIFT)), constant_uint(m, specular ? 255u <<
+		XGPU_SPIRV_GUIDES_SPECULAR_SHIFT : 0u));
+	return op(m, OP_COMPOSITE_CONSTRUCT, m->t_uv4, 4, (unsigned int[]){ lt_octahedral(m, shaded ? shaded : normal),
+		lt_octahedral(m, normal), material, constant_uint(m, XGPU_SPIRV_GUIDES_MOTION_NONE) });
+}
+
 /* ... the traced flashlight's light (linear, at display.rt_bounce's
-binding: its irradiance but for the receiver's cosine) by the cosine of the
-surface's own shaded normal n (its bump or normal map's, as the game's
-lights have it) toward the lamp, from p, added to lit (the game's lights'
-result, gamma) linearly, by tint (linear; 0: by 1), after the game's own
-lights' shoulder, as GLSL:
-light *= max(dot(n, normalize(texel(FLASHLIGHT + 23).xyz - p)), 0.0);
+binding: its irradiance, its cosine by the shaded normal of the twins'
+guides, lt_e1_guides) added to lit (the game's lights' result, gamma)
+linearly, by tint (linear; 0: by 1), after the game's own lights' shoulder,
+as GLSL:
 pow(pow(max(lit, 0.0), vec3(2.2)) + light * tint, vec3(1.0 / 2.2)); lit as it
 is without the mode or the binding */
 static unsigned int lt_e1_add(struct module *m, struct pixel_state *state, unsigned int lit, unsigned int tint,
@@ -8806,9 +8851,11 @@ static unsigned int lt_e1_add(struct module *m, struct pixel_state *state, unsig
 	if (!lt_e1_on() || !state->rt_bounce || !state->frag_coord)
 		return lit;
 	light = rt_bounce_add(m, state, constant_splat(m, 3, 0.0f));
-	to_lamp = ext1(m, GLSL_NORMALIZE, m->t_v3, fsub(m, 3, flashlight_vector(m,
-		constant_int(m, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 23)), p));
-	light = fscale(m, 3, light, fmax_scalar(m, 1, fdot(m, n, to_lamp), 0.0f));
+	/* (the pass's light has the receiver's cosine, by the guides' shaded
+	normal: lt_e1_guides) */
+	(void)p;
+	(void)n;
+	(void)to_lamp;
 	if (tint)
 		light = fmul(m, 3, light, tint);
 	return ext2(m, GLSL_POW, m->t_v3, fadd(m, 3, ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, lit, 0.0f),
