@@ -1496,7 +1496,7 @@ static void dynamic_lights_functions(struct xgpu_text *text, struct xgpu_text *f
 		"\tuint word = cells[%d + (k >> 4)][(k >> 2) & 3];\n"
 		"\treturn float((word >> uint((k & 3) * 8)) & 255u) * (1.0 / 255.0);\n"
 		"}\n"
-		"static inline void flashlight_light(const device uint4 *cells, int light, float3 p, float4 position,\n"
+		"static inline bool flashlight_light(const device uint4 *cells, int light, float3 p, float4 position,\n"
 		"\tfloat distance_squared, float3 l, float3 n, float3 surface_normal, bool environment,\n"
 		"\tthread float &falloff, thread float &spot, thread float &facing)\n"
 		"{\n"
@@ -1504,7 +1504,7 @@ static void dynamic_lights_functions(struct xgpu_text *text, struct xgpu_text *f
 		"\tuint number = uint(light + 1);\n"
 		"\tint slot = slots.x == number ? 0 : slots.y == number ? 1 : slots.z == number ? 2 : slots.w == number ? 3 : -1;\n"
 		"\tif (slot < 0)\n"
-		"\t\treturn;\n"
+		"\t\treturn false;\n"
 		"\tint base = %d + 3 * slot;\n"
 		"\tfloat3 forward = as_type<float4>(cells[base]).xyz, up = as_type<float4>(cells[base + 1]).xyz;\n"
 		"\tfloat3 left = as_type<float4>(cells[base + 2]).xyz;\n"
@@ -1527,7 +1527,14 @@ static void dynamic_lights_functions(struct xgpu_text *text, struct xgpu_text *f
 		"\tfalloff = mix(low, high, t - floor(t));\n"
 		"\tspot = gel;\n"
 		"\tif (environment)\n"
-		"\t\tfacing = max(dot(n, l), 0.0) * saturate(dot(surface_normal, l) * 8.0);\n"
+		"\t\tfacing = pow(max(dot(n, l), 0.0) * saturate(dot(surface_normal, l) * 8.0), 2.2);\n"
+		"\treturn true;\n"
+		"}\n"
+		/* (its light added to a base as the game's gel pass adds it: xgpu_spirv.c's flashlight_gamma_add) */
+		"static inline float3 flashlight_gamma_add(float3 base, float3 flash)\n"
+		"{\n"
+		"\tfloat3 had = saturate(base);\n"
+		"\treturn max(pow(had + pow(max(flash, float3(0.0)), float3(1.0 / 2.2)), float3(2.2)) - pow(had, float3(2.2)), float3(0.0));\n"
 		"}\n",
 		XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE - 1, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE,
 		XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE - 1, FLASHLIGHT_SLICE + XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE,
@@ -1539,7 +1546,7 @@ static void dynamic_lights_functions(struct xgpu_text *text, struct xgpu_text *f
 	xgpu_text_append(functions,
 		"static inline float3 dynamic_light_sum(constant xgpu_dynamic_lights &lights, const device uint4 *cells,\n"
 		"\tconst device uint4 *world, float3 p, float3 n, float3 surface_normal, bool environment, float4 own,\n"
-		"\tfloat4 reflection, thread float3 &shine)\n"
+		"\tfloat4 reflection, thread float3 &shine, thread float3 &flash)\n"
 		"{\n"
 		"\tfloat3 offset = p - lights.grid[0].xyz;\n"
 		"\tfloat3 cell = sign(offset) * log2(1.0 + abs(offset) * lights.grid[1].w) * lights.grid[1].xyz +\n"
@@ -1574,9 +1581,12 @@ static void dynamic_lights_functions(struct xgpu_text *text, struct xgpu_text *f
 		"\t\t\tfloat4 cone = lights.cone[light];\n"
 		"\t\t\tfloat4 color = lights.color[light];\n"
 		"\t\t\tfloat spot = saturate(dot(l, -cone.xyz) * cone.w + color.w);\n"
-		"\t\t\tflashlight_light(cells, light, p, position, distance_squared, l, n, surface_normal, environment,\n"
-		"\t\t\t\tfalloff, spot, facing);\n"
-		"\t\t\tsum += color.rgb * (falloff * facing * spot);\n"
+		"\t\t\tbool flashlight = flashlight_light(cells, light, p, position, distance_squared, l, n, surface_normal,\n"
+		"\t\t\t\tenvironment, falloff, spot, facing);\n"
+		"\t\t\tif (flashlight)\n"
+		"\t\t\t\tflash += color.rgb * (falloff * facing * spot);\n"
+		"\t\t\telse\n"
+		"\t\t\t\tsum += color.rgb * (falloff * facing * spot);\n"
 		/* (a model's reflection's highlights, xgpu.h
 		XGPU_DYNAMIC_LIGHTS_HIGHLIGHT: reflection.w, the exponent, 0 none) */
 		"\t\t\tif (reflection.w > 0.0)\n"
@@ -2845,9 +2855,10 @@ char *xgpu_msl_pixel_shader(const struct xgpu_pixel_program *program, const stru
 				(double)(lobe * XGPU_DYNAMIC_LIGHTS_HIGHLIGHT));
 		}
 		xgpu_text_append(&text,
-			"\t\tv0.rgb = dynamic_light_add(dynamic_lights, model_lighting(u, in.xWorldNormal%s),\n"
-			"\t\t\tdynamic_light_sum(dynamic_lights, dynamic_light_cells, dynamic_light_world, in.xWorldPosition, n, n, false,\n"
-			"\t\t\t\tu.model_lights[%d], reflection, shine));\n"
+			"\t\tfloat3 base = model_lighting(u, in.xWorldNormal%s), flash = float3(0.0);\n"
+			"\t\tfloat3 sum = dynamic_light_sum(dynamic_lights, dynamic_light_cells, dynamic_light_world, in.xWorldPosition, n, n,\n"
+			"\t\t\tfalse, u.model_lights[%d], reflection, shine, flash);\n"
+			"\t\tv0.rgb = dynamic_light_add(dynamic_lights, base, sum + flashlight_gamma_add(base, flash));\n"
 			"\t}\n", occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_MODEL ? ", occlusion" : "",
 			XGPU_MODEL_LIGHT_OWN_LIGHTS);
 	}
@@ -2962,10 +2973,11 @@ char *xgpu_msl_pixel_shader(const struct xgpu_pixel_program *program, const stru
 			"\t\tfloat3 bump = %s;\n"
 			"\t\tfloat3 n = normalize(in.xWorldTangent * bump.x + in.xWorldBinormal * bump.y + surface_normal * max(bump.z, 0.05));\n"
 			"\t\tfloat3 no_shine = float3(0.0);\n"
+			"\t\tfloat3 flash = float3(0.0);\n"
+			"\t\tfloat3 sum = dynamic_light_sum(dynamic_lights, dynamic_light_cells, dynamic_light_world, in.xWorldPosition, n,\n"
+			"\t\t\tsurface_normal, true, float4(-1.0), float4(0.0), no_shine, flash) * u.dynamic_light_tint.rgb;\n"
 			"\t\tresult.rgb = dynamic_light_add%s(dynamic_lights, result.rgb,\n"
-			"\t\t\tdynamic_light_sum(dynamic_lights, dynamic_light_cells, dynamic_light_world, in.xWorldPosition, n, surface_normal, true,\n"
-			"\t\t\t\tfloat4(-1.0), float4(0.0), no_shine) *\n"
-			"\t\t\tu.dynamic_light_tint.rgb);\n"
+			"\t\t\tsum + flashlight_gamma_add(result.rgb, flash * u.dynamic_light_tint.rgb));\n"
 			"\t}\n",
 			program->stages[0].sampler == _xgpu_sampler_2d ? "dynamic_light_bump * 2.0 - 1.0" : "float3(0.0, 0.0, 1.0)",
 			(program->hdr & XGPU_HDR_LIGHTS) ? "_hdr" : "");

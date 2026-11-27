@@ -4815,7 +4815,7 @@ spot and (environment) facing stored in the variables in their place */
 static void flashlight_light(struct module *m, const struct flashlight_read *read, unsigned int light, unsigned int p,
 	unsigned int position, unsigned int distance_squared, unsigned int l, unsigned int n, unsigned int surface_normal,
 	BOOL environment, BOOL shadowed, unsigned int falloff_variable, unsigned int spot_variable,
-	unsigned int facing_variable)
+	unsigned int facing_variable, unsigned int is_variable)
 {
 	unsigned int number = op1(m, OP_BITCAST, m->t_uint, int_add(m, light, 1)), is[4], any, slot, merge;
 	unsigned int base, forward, up, left, v, z, width, inverse, a, b, inside, x, y, cookie, gel, distance, t, index;
@@ -4829,6 +4829,7 @@ static void flashlight_light(struct module *m, const struct flashlight_read *rea
 	any = op2(m, OP_LOGICAL_OR, m->t_bool, op2(m, OP_LOGICAL_OR, m->t_bool, is[0], is[1]),
 		op2(m, OP_LOGICAL_OR, m->t_bool, is[2], is[3]));
 	selection_begin(m, any, &merge);
+	store(m, is_variable, constant_float(m, 1.0f));
 	slot = op3(m, OP_SELECT, m->t_int, is[0], constant_int(m, 0), op3(m, OP_SELECT, m->t_int, is[1], constant_int(m, 1),
 		op3(m, OP_SELECT, m->t_int, is[2], constant_int(m, 2), constant_int(m, 3))));
 	base = int_add(m, op2(m, OP_I_MUL, m->t_int, slot, constant_int(m, 3)), XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 2);
@@ -4877,9 +4878,12 @@ static void flashlight_light(struct module *m, const struct flashlight_read *rea
 	profile = flashlight_mix(m, low, high, fsub(m, 1, t, f));
 	store(m, falloff_variable, profile);
 	spot = gel;
+	/* (the structure's: as the gel pass weighs it, its bump's facing and the
+	surface's horizon in the display's gamma, so its light, added there by
+	the caller, is the pass's) */
 	if (environment)
-		store(m, facing_variable, fmul(m, 1, fmax_scalar(m, 1, fdot(m, n, l), 0.0f), saturate(m, 1,
-			fmul(m, 1, fdot(m, surface_normal, l), constant_float(m, 8.0f)))));
+		store(m, facing_variable, ext2(m, GLSL_POW, m->t_float, fmul(m, 1, fmax_scalar(m, 1, fdot(m, n, l), 0.0f),
+			saturate(m, 1, fmul(m, 1, fdot(m, surface_normal, l), constant_float(m, 8.0f)))), constant_float(m, 2.2f)));
 	store(m, spot_variable, spot);
 	/* (the shadowed slot's map: a 3x3 tent, four bilinear comparisons) */
 	if (shadowed)
@@ -4923,7 +4927,7 @@ summed into the shine variable as well (xgpu.h XGPU_DYNAMIC_LIGHTS_HIGHLIGHT;
 xgpu_msl.c's dynamic_light_sum) */
 static unsigned int dynamic_light_sum(struct module *m, struct pixel_state *state, unsigned int p, unsigned int n,
 	unsigned int surface_normal, BOOL environment, unsigned int reflection, unsigned int exponent,
-	unsigned int shine_variable)
+	unsigned int shine_variable, unsigned int flash_variable)
 {
 	unsigned int grid0 = dynamic_light(m, 0, constant_int(m, 0)), grid1 = dynamic_light(m, 0, constant_int(m, 1));
 	unsigned int offset, cell, mask, cell_index, operands[4];
@@ -4932,7 +4936,7 @@ static unsigned int dynamic_light_sum(struct module *m, struct pixel_state *stat
 	unsigned int inner_header, inner_condition, inner_body, inner_continue, inner_merge;
 	unsigned int word, bits, light, position, to_light, distance_squared, x2, l, window, core, falloff, facing;
 	unsigned int cone, color, spot, grid2, w, own = 0, tint = 0;
-	unsigned int flashlight_falloff, flashlight_spot, flashlight_facing;
+	unsigned int flashlight_falloff, flashlight_spot, flashlight_facing, flashlight_is, lit_light;
 	struct light_shadows_read shadows;
 	struct flashlight_read flashlight;
 
@@ -4961,6 +4965,8 @@ static unsigned int dynamic_light_sum(struct module *m, struct pixel_state *stat
 	flashlight_falloff = local(m, &state->locals, m->t_float);
 	flashlight_spot = local(m, &state->locals, m->t_float);
 	flashlight_facing = local(m, &state->locals, m->t_float);
+	flashlight_is = local(m, &state->locals, m->t_float);
+	store(m, flash_variable, constant_splat(m, 3, 0.0f));
 
 	sum_variable = local(m, &state->locals, m->t_v3);
 	word_variable = local(m, &state->locals, m->t_int);
@@ -5069,13 +5075,18 @@ static unsigned int dynamic_light_sum(struct module *m, struct pixel_state *stat
 	store(m, flashlight_falloff, falloff);
 	store(m, flashlight_spot, spot);
 	store(m, flashlight_facing, facing);
+	store(m, flashlight_is, constant_float(m, 0.0f));
 	flashlight_light(m, &flashlight, light, p, position, distance_squared, l, n, surface_normal, environment, TRUE,
-		flashlight_falloff, flashlight_spot, flashlight_facing);
+		flashlight_falloff, flashlight_spot, flashlight_facing, flashlight_is);
 	falloff = load(m, m->t_float, flashlight_falloff);
 	spot = load(m, m->t_float, flashlight_spot);
 	facing = load(m, m->t_float, flashlight_facing);
-	store(m, sum_variable, fadd(m, 3, load(m, m->t_v3, sum_variable),
-		fscale(m, 3, xyz(m, color), fmul(m, 1, fmul(m, 1, falloff, facing), spot))));
+	/* (a flashlight's apart: the caller adds it as the gel pass did) */
+	lit_light = fscale(m, 3, xyz(m, color), fmul(m, 1, fmul(m, 1, falloff, facing), spot));
+	store(m, sum_variable, fadd(m, 3, load(m, m->t_v3, sum_variable), fscale(m, 3, lit_light,
+		fsub(m, 1, constant_float(m, 1.0f), load(m, m->t_float, flashlight_is)))));
+	store(m, flash_variable, fadd(m, 3, load(m, m->t_v3, flash_variable), fscale(m, 3, lit_light,
+		load(m, m->t_float, flashlight_is))));
 	if (reflection)
 	{
 		/* shine += color.rgb * (falloff * spot * saturate(dot(n, l) * 4.0) * pow(max(dot(reflection, l), 0.0), exponent)) */
@@ -5095,6 +5106,21 @@ static unsigned int dynamic_light_sum(struct module *m, struct pixel_state *stat
 	branch(m, outer_header);
 	label_at(m, outer_merge);
 	return load(m, m->t_v3, sum_variable);
+}
+
+/* the enhanced flashlight's light (linear: flashlight_light) as the light
+it adds to a base (saturated, the display's gamma) when added there, as the
+game's gel pass adds it into the frame: (base + flash^(1/2.2))^2.2 - base^2.2,
+so that what it shows below white is the pass's, past white the shoulder's
+(and HDR's) */
+static unsigned int flashlight_gamma_add(struct module *m, unsigned int base, unsigned int flash)
+{
+	unsigned int had = saturate(m, 3, base), gamma = constant_splat(m, 3, 2.2f);
+	unsigned int added = fadd(m, 3, had, ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, flash, 0.0f),
+		constant_splat(m, 3, (float)(1.0 / 2.2))));
+
+	return fmax_scalar(m, 3, fsub(m, 3, ext2(m, GLSL_POW, m->t_v3, added, gamma), ext2(m, GLSL_POW, m->t_v3, had, gamma)),
+		0.0f);
 }
 
 /* dynamic_light_add(base, light): the light added to the base under the
@@ -5892,7 +5918,7 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 			fmax_scalar(&m, 1, fdot(&m, normal, normal), (float)1.0e-24)));
 		unsigned int p = pixel_input(&m, &state, state.in_world_position, m.t_v3);
 		unsigned int lit, occlusion = occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_MODEL ? state.occlusion : 0;
-		unsigned int reflection = 0, exponent = 0, sum, shaded = n, added;
+		unsigned int reflection = 0, exponent = 0, sum, shaded = n, added, flash_variable;
 		static const unsigned int rgb[4] = { 4, 5, 6, 3 };
 
 		/* (a model's material maps: its normal, and its occlusion with the
@@ -5934,7 +5960,9 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 			shine_variable = local(&m, &state.locals, m.t_v3);
 			store(&m, shine_variable, constant_splat(&m, 3, 0.0f));
 		}
-		sum = dynamic_light_sum(&m, &state, p, shaded, n, FALSE, reflection, exponent, shine_variable);
+		flash_variable = local(&m, &state.locals, m.t_v3);
+		sum = dynamic_light_sum(&m, &state, p, shaded, n, FALSE, reflection, exponent, shine_variable, flash_variable);
+		sum = fadd(&m, 3, sum, flashlight_gamma_add(&m, lit, load(&m, m.t_v3, flash_variable)));
 		added = dynamic_light_add(&m, &state, lit, sum, FALSE);
 		/* (a metal's diffuse light darkened: material_read) */
 		if (state.metalness)
@@ -6049,7 +6077,7 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 	{
 		/* the lightmap pass's light, before the textures multiply it */
 		unsigned int surface_normal = ext1(&m, GLSL_NORMALIZE, m.t_v3, xyz(&m, pixel_input(&m, &state, state.in_world_normal, m.t_v4)));
-		unsigned int bump, n, sum, lit;
+		unsigned int bump, n, sum, lit, flash_variable;
 		static const unsigned int rgb[4] = { 4, 5, 6, 3 };
 
 		if (program->stages[0].sampler == _xgpu_sampler_2d)
@@ -6060,10 +6088,13 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 			fscale(&m, 3, pixel_input(&m, &state, state.in_world_tangent, m.t_v3), extract(&m, bump, 0)),
 			fscale(&m, 3, pixel_input(&m, &state, state.in_world_binormal, m.t_v3), extract(&m, bump, 1))),
 			fscale(&m, 3, surface_normal, fmax_scalar(&m, 1, extract(&m, bump, 2), 0.05f))));
+		flash_variable = local(&m, &state.locals, m.t_v3);
 		sum = dynamic_light_sum(&m, &state, pixel_input(&m, &state, state.in_world_position, m.t_v3), n, surface_normal, TRUE,
-			0, 0, 0);
-		lit = dynamic_light_add(&m, &state, xyz(&m, result), fmul(&m, 3, sum,
-			xyz(&m, uniform(&m, U_DYNAMIC_LIGHT_TINT, -1))), (program->hdr & XGPU_HDR_LIGHTS) != 0);
+			0, 0, 0, flash_variable);
+		/* (the flashlight added as the gel pass did, its tint's too) */
+		sum = fadd(&m, 3, fmul(&m, 3, sum, xyz(&m, uniform(&m, U_DYNAMIC_LIGHT_TINT, -1))), flashlight_gamma_add(&m,
+			xyz(&m, result), fmul(&m, 3, load(&m, m.t_v3, flash_variable), xyz(&m, uniform(&m, U_DYNAMIC_LIGHT_TINT, -1)))));
+		lit = dynamic_light_add(&m, &state, xyz(&m, result), sum, (program->hdr & XGPU_HDR_LIGHTS) != 0);
 		/* (HALO_LIGHT_SHADOWS_VIEW: the lights over the surface darkened,
 		not under the shoulder, so a lit wall shows them too) */
 		if (state.light_shadows && light_shadows_view())
