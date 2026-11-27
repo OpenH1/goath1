@@ -4,7 +4,8 @@ instances' transforms; and a frame of a fake world's objects: the meshes
 made once a map as they are first needed (the structure's, a definition's
 nodes', the box for one with none), each frame's instances of them on the
 objects' nodes, the static scenery left out, all let go of at the map's
-end. */
+end; and with debug.rt_render_geometry, the structure's render mesh in its
+collision mesh's place from the frame after (its opaque triangles alone). */
 
 #include "harness.h"
 #include "world_ao.h"
@@ -16,6 +17,19 @@ end. */
 void platform_log(const char *format, ...)
 {
 	(void)format;
+}
+
+/* debug.rt_render_geometry */
+static int render_on;
+
+int config_boolean(const char *name)
+{
+	return !strcmp(name, "debug.rt_render_geometry") && render_on;
+}
+
+unsigned long long platform_shared_clock_microseconds(void)
+{
+	return 0;
 }
 
 /* ---------- the fake world
@@ -43,6 +57,27 @@ long world_rt_source_structure(short index, float *triangles, long maximum)
 	if (triangles)
 		memcpy(triangles, floor, sizeof(float) * 9 * (maximum < 2 ? maximum : 2));
 	return 2;
+}
+
+/* (the render triangles: 3 opaque, 2 alpha-tested, 1 transparent; and
+the kinds asked for with room, the triangles themselves) */
+static int render_asked, render_filled[3];
+
+long world_rt_source_structure_render(short index, int surfaces, float *triangles, long maximum)
+{
+	static const float wall[3][9] = { { 0, 0, 0, 0, 0, 1, 0, 1, 1 }, { 0, 0, 0, 0, 1, 1, 0, 1, 0 },
+		{ 5, 0, 0, 5, 0, 1, 5, 1, 1 } };
+	long count = surfaces == WORLD_RT_SURFACES_OPAQUE ? 3 : surfaces == WORLD_RT_SURFACES_ALPHA_TESTED ? 2 : 1;
+
+	CHECK(index == bsp_index, "another BSP's render triangles: %d", index);
+	CHECK(surfaces >= 0 && surfaces <= 2, "surfaces %d", surfaces);
+	render_asked++;
+	if (triangles)
+	{
+		render_filled[surfaces]++;
+		memcpy(triangles, wall, sizeof(float) * 9 * (maximum < count ? maximum : count));
+	}
+	return count;
 }
 
 short world_rt_source_definition(long definition, float sphere[4], int *item)
@@ -279,6 +314,44 @@ static void frame_case(void)
 	CHECK(releases == 1, "%d releases", releases);
 	world_rt_frame(4);
 	CHECK(mesh_count == 7 && meshes[4].id == 1, "made again: %d %lu", mesh_count, meshes[4].id);
+	/* (debug.rt_render_geometry off: the render triangles never read) */
+	CHECK(render_asked == 0, "the render triangles read %d times", render_asked);
+}
+
+static void render_case(void)
+{
+	render_on = 1;
+	/* the first frame: the collision mesh alone, as without the switch (a
+	load waits for nothing more) */
+	world_rt_frame(1);
+	CHECK(mesh_count == 3 && render_asked == 0, "the first frame: %d meshes, %d asked", mesh_count, render_asked);
+	CHECK(instance_of(0, WORLD_RT_STRUCTURE)->mesh == 1, "the collision mesh first");
+	/* the next: the opaque render triangles, in the collision mesh's place */
+	world_rt_frame(2);
+	CHECK(mesh_count == 4 && meshes[3].id == 4 && meshes[3].count == 3 && meshes[3].first[2] == 0.0f &&
+		meshes[3].first[5] == 1.0f, "the render mesh: %d %lu %lu", mesh_count, meshes[3].id, meshes[3].count);
+	CHECK(render_filled[WORLD_RT_SURFACES_OPAQUE] == 1 && !render_filled[WORLD_RT_SURFACES_ALPHA_TESTED] &&
+		!render_filled[WORLD_RT_SURFACES_TRANSPARENT], "filled: %d %d %d", render_filled[0], render_filled[1],
+		render_filled[2]);
+	CHECK(instance_count == 4 && instance_of(0, WORLD_RT_STRUCTURE)->mesh == 4, "the structure's instance: %u",
+		instance_of(0, WORLD_RT_STRUCTURE)->mesh);
+	/* made once */
+	world_rt_frame(3);
+	CHECK(mesh_count == 4 && render_filled[WORLD_RT_SURFACES_OPAQUE] == 1 &&
+		instance_of(0, WORLD_RT_STRUCTURE)->mesh == 4, "made again: %d", mesh_count);
+	/* another BSP: its collision mesh, then its render mesh */
+	bsp_index = 1;
+	world_rt_frame(4);
+	CHECK(mesh_count == 5 && instance_of(0, WORLD_RT_STRUCTURE)->mesh == 5, "another BSP's collision mesh");
+	world_rt_frame(5);
+	CHECK(mesh_count == 6 && meshes[5].count == 3 && instance_of(0, WORLD_RT_STRUCTURE)->mesh == 6,
+		"another BSP's render mesh");
+	/* the map's end: the collision mesh first again */
+	world_rt_map_unloaded();
+	world_rt_frame(6);
+	CHECK(mesh_count == 9 && instance_of(0, WORLD_RT_STRUCTURE)->mesh == 1, "after the map's end: %d", mesh_count);
+	world_rt_frame(7);
+	CHECK(mesh_count == 10 && instance_of(0, WORLD_RT_STRUCTURE)->mesh == 4, "its render mesh again");
 }
 
 int main(int argc, char **argv)
@@ -289,6 +362,8 @@ int main(int argc, char **argv)
 		arithmetic_case();
 	else if (!strcmp(name, "frame"))
 		frame_case();
+	else if (!strcmp(name, "render"))
+		render_case();
 	else
 		return 2;
 	return 0;

@@ -11420,6 +11420,7 @@ static int device_make(const struct xgpu_vulkan_options *options)
 		device.get_device_proc_addr = vkGetDeviceProcAddr;
 		device.memory = vk.memory_properties;
 		device.scratch_alignment = structure_properties.minAccelerationStructureScratchOffsetAlignment;
+		device.timestamp_period = vk.capabilities.gpu_timestamps ? vk.properties.limits.timestampPeriod : 0.0f;
 		vk.capabilities.ray_queries = xgpu_vulkan_rt_create(&device);
 	}
 

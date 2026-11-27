@@ -785,6 +785,8 @@ struct xgpu_vulkan_rt_device
 	PFN_vkGetDeviceProcAddr get_device_proc_addr;
 	VkPhysicalDeviceMemoryProperties memory;
 	uint32_t scratch_alignment;
+	/* a timestamp's nanoseconds on the queue (0: no timestamps there) */
+	float timestamp_period;
 };
 int xgpu_vulkan_rt_create(const struct xgpu_vulkan_rt_device *device);
 void xgpu_vulkan_rt_destroy(void);

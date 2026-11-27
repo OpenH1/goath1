@@ -3453,6 +3453,11 @@ static const struct config_setting config_settings[] =
 	{ "debug.world_scene_log", _config_boolean, "false", "HALO_WORLD_SCENE_LOG", _environment_value, _platform_all,
 		"With display.ambient_occlusion \"world\", log the world scene's counts\n"
 		"(the level's triangles, the objects drawn, the lights) now and then." },
+	{ "debug.rt_render_geometry", _config_boolean, "false", "HALO_RT_RENDER_GEOMETRY", _environment_value, _platform_all,
+		"With display.ambient_occlusion or display.shadows \"ray_traced\", the\n"
+		"level traced as it is drawn (its opaque render triangles), not as its\n"
+		"collision geometry, from the frame after the level's first; for\n"
+		"checking (docs/rt-plan/1-geometry.md)." },
 	{ "debug.world_scene_dump", _config_boolean, "false", "HALO_WORLD_SCENE_DUMP", _environment_value, _platform_all,
 		"With display.ambient_occlusion \"world\", write each level BSP's\n"
 		"collision triangles to the data folder as it loads, to look at in a\n"

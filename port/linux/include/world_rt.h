@@ -43,6 +43,15 @@ enum
 	/* an instance's kind (xgpu_stream.h's XGPU_WORLD_AO_INSTANCE_*) */
 	WORLD_RT_STRUCTURE = 1,
 	WORLD_RT_OBJECT = 2,
+	/* the structure's render surfaces by their shader
+	(world_rt_source_structure_render): opaque (shader_environment), traced
+	with debug.rt_render_geometry; alpha-tested (shader_environment's flag:
+	grates, fences, foliage cards), left out until their rays test the base
+	map's alpha (docs/rt-plan/1-geometry.md, stage 3); and transparent (water,
+	glass and the other transparent shaders), left out */
+	WORLD_RT_SURFACES_OPAQUE = 0,
+	WORLD_RT_SURFACES_ALPHA_TESTED = 1,
+	WORLD_RT_SURFACES_TRANSPARENT = 2,
 };
 
 /* the half side of an item's box with no collision geometry, a share of
@@ -87,6 +96,10 @@ short world_rt_source_bsp(void);
 /* its collision geometry's triangles, world space (nine floats each, into
 triangles: NULL for the count alone, at most maximum): how many (0 none) */
 long world_rt_source_structure(short bsp_index, float *triangles, long maximum);
+/* its render triangles of one kind of surface (WORLD_RT_SURFACES_*), world
+space, as above: its lightmaps' materials' surfaces (no invisible clip:
+nothing draws it, so the render geometry has none) */
+long world_rt_source_structure_render(short bsp_index, int surfaces, float *triangles, long maximum);
 /* a definition's nodes (at most WORLD_RT_NODES), its bounding sphere in
 its model's space (centre, radius) and whether it is an item (a weapon,
 equipment or garbage); 0 if it has none */
