@@ -743,9 +743,14 @@ static void dynamic_lights_shadowed(long count)
 
 		if (view < 0)
 			view = getenv("HALO_LIGHT_SHADOWS_VIEW") && strcmp(getenv("HALO_LIGHT_SHADOWS_VIEW"), "0") ? 1 : 0;
-		if (view && now - said >= 1000000)
+		int projectiles = 0;
+
+		for (light_index = 0; view && light_index < count; light_index++)
+			projectiles += (dynamic_lights.lights[light_index].flags & HALO_DYNAMIC_LIGHT_PROJECTILE) != 0;
+		/* (each frame a projectile's light is among them) */
+		if (view && (now - said >= 1000000 || projectiles))
 		{
-			char line[768];
+			char line[1536];
 			int at = snprintf(line, sizeof(line), "light shadows: frame %lu: %d of %ld lights shadowed",
 				dynamic_lights.frame, chosen, count);
 
@@ -759,6 +764,26 @@ static void dynamic_lights_shadowed(long count)
 					(light->flags & HALO_DYNAMIC_LIGHT_PROJECTILE) ? " (projectile)" : "", (double)light->position[0],
 					(double)light->position[1], (double)light->position[2], (double)light->radius,
 					(double)scores[slot], (double)disks[slot], owners[slot]);
+			}
+			/* (and the projectiles' lights not chosen) */
+			for (light_index = 0; light_index < count && at > 0 && at < (int)sizeof(line); light_index++)
+			{
+				struct halo_dynamic_light const *light = &dynamic_lights.lights[light_index];
+				real_point3d position;
+
+				if (!(light->flags & HALO_DYNAMIC_LIGHT_PROJECTILE))
+					continue;
+				for (slot = 0; slot < chosen && indices[slot] != (int)light_index; slot++)
+					;
+				if (slot < chosen)
+					continue;
+				position.x = light->position[0];
+				position.y = light->position[1];
+				position.z = light->position[2];
+				at += snprintf(line + at, sizeof(line) - (size_t)at, "; not light %ld (projectile) at %.2f %.2f %.2f "
+					"radius %.2f score %.3f", light_index, (double)position.x, (double)position.y, (double)position.z,
+					(double)light->radius, (double)dynamic_lights_score(&position, light->radius,
+					MAX(light->color[0], MAX(light->color[1], light->color[2])), &forward));
 			}
 			platform_log("%s", line);
 		}
