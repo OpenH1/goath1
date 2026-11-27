@@ -1066,6 +1066,20 @@ int main(int argc, char **argv)
 		menu_screen_free(&screen);
 		refused(TABLE("<column id=\"a\" width=\"10\" kind=\"symbols\"/>"), "swatch or symbol");
 	}
+	else if (!strcmp(name, "goat_settings"))
+	{
+		struct menu_screen_block const *table;
+
+		/* (GOAT Settings: its six tabs, its table of the tab's rows (goat.rows)
+		whose A, left and right are the goat actions, its two columns) */
+		CHECK(read_text(goat_settings_xml, &screen, problem), "GOAT Settings' file is refused: %s", problem);
+		table = &screen.blocks[kind_first(&screen, MENU_SCREEN_TABLE)];
+		CHECK(!strcmp(table->source, "goat.rows") && !strcmp(table->action, "goat row") &&
+			!strcmp(table->left_action, "goat left") && !strcmp(table->right_action, "goat right"), "its table");
+		CHECK(kind_total(&screen, MENU_SCREEN_TAB, -2) == 6, "its tabs");
+		CHECK(kind_total(&screen, MENU_SCREEN_COLUMN, -2) == 2, "its columns");
+		menu_screen_free(&screen);
+	}
 	else if (!strcmp(name, "keyboard"))
 	{
 		/* (the on-screen keyboard's screen: its one <keyboard>, no attribute;

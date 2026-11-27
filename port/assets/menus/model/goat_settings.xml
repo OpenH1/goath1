@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The GOAT Settings screen's tabs (display.goat_menus; docs/menu_screens.md, "GOAT Settings"; tools/port_settings.py's GOAT_TABS): Settings' own rows by their pages' screens and keys -->
+<model>
+	<screen name="goat/display" kind="goat" tab="DISPLAY">
+		<section key="section_0" title="DISPLAY"/>
+		<row key="mode" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/video_settings_screen"/>
+		<row key="resolution" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/video_settings_screen"/>
+		<row key="window_size" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/video_settings_screen"/>
+		<row key="refresh_rate" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/video_settings_screen"/>
+		<row key="fov" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/video_settings_screen"/>
+		<row key="orientation" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/video_settings_screen"/>
+		<row key="movies" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/video_settings_screen"/>
+		<row key="hdr_display" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/brightness/brightness_screen"/>
+		<section key="section_1" title="PICTURE"/>
+		<row key="gamma" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/brightness/brightness_screen"/>
+		<row key="output_depth" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/brightness/brightness_screen"/>
+		<row key="soft_particles" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/brightness/brightness_screen"/>
+		<row key="picture_position" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/screen_layout/screen_layout_screen"/>
+		<row key="picture_shape" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/screen_layout/screen_layout_screen"/>
+		<section key="section_2" title="HDR"/>
+		<row key="hdr" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/brightness/brightness_screen"/>
+		<row key="hdr_mode" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/brightness/brightness_screen"/>
+		<row key="hdr_paper_white_nits" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/brightness/brightness_screen"/>
+		<row key="hdr_ui_nits" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/brightness/brightness_screen"/>
+		<row key="hdr_sdr_curve" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/brightness/brightness_screen"/>
+		<row key="hdr_peak_nits" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/brightness/brightness_screen"/>
+		<row key="hdr_gamut" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/brightness/brightness_screen"/>
+		<row key="hdr_highlight_boost" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/brightness/brightness_screen"/>
+		<section key="section_3" title="PORTRAIT"/>
+		<row key="frame_style" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/screen_layout/screen_layout_screen"/>
+	</screen>
+	<screen name="goat/graphics" kind="goat" tab="GRAPHICS">
+		<section key="section_0" title="GRAPHICS"/>
+		<row key="graphics" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/video_settings_screen"/>
+		<row key="high_res_text" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/video_settings_screen"/>
+		<row key="battery_saver" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/video_settings_screen"/>
+		<section key="section_1" title="LIGHTING"/>
+		<row key="shadow_resolution" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/advanced_graphics_screen"/>
+		<row key="contact_shadows" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/advanced_graphics_screen"/>
+		<row key="per_pixel_lighting" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/advanced_graphics_screen"/>
+		<row key="dynamic_lights" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/advanced_graphics_screen"/>
+		<row key="ambient_occlusion" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/advanced_graphics_screen"/>
+		<row key="shield_glow" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/advanced_graphics_screen"/>
+		<row key="shield_glow_intensity" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/advanced_graphics_screen"/>
+		<section key="section_2" title="UPSCALING"/>
+		<row key="temporal_aa" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/frame_rate_screen"/>
+		<row key="temporal_aa_dlss" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/frame_rate_screen"/>
+		<row key="temporal_aa_metalfx" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/frame_rate_screen"/>
+		<row key="temporal_aa_dlss_get" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/frame_rate_screen"/>
+		<row key="temporal_aa_sharpness" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/frame_rate_screen"/>
+		<row key="dynamic_resolution" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/frame_rate_screen"/>
+		<section key="section_3" title="RAY TRACING"/>
+		<row key="shadows" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/frame_rate_screen"/>
+	</screen>
+	<screen name="goat/audio" kind="goat" tab="AUDIO">
+		<section key="section_0" title="SOUND"/>
+		<row key="output_device" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/audio_settings_screen"/>
+		<row key="spatial" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/audio_settings_screen"/>
+		<row key="reverb" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/audio_settings_screen"/>
+		<row key="enabled" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/audio_settings_screen"/>
+		<row key="voice_chat_settings" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/audio_settings_screen"/>
+		<section key="section_1" title="VOLUME"/>
+		<row key="volume" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/audio_settings_screen"/>
+		<row key="music_volume" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/audio_settings_screen"/>
+		<row key="dialogue_volume" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/audio_settings_screen"/>
+		<row key="effects_volume" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/audio_settings_screen"/>
+		<row key="background_volume" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/audio_settings_screen"/>
+		<row key="listening_mode" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/audio_settings_screen"/>
+		<section key="section_2" title="SUBTITLES"/>
+		<row key="subtitles" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/advanced_audio_screen"/>
+		<row key="subtitles_language" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/advanced_audio_screen"/>
+		<section key="section_3" title="ADVANCED AUDIO"/>
+		<row key="stereo_spread" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/advanced_audio_screen"/>
+		<row key="resampler" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/audio_settings/advanced_audio/advanced_audio_screen"/>
+	</screen>
+	<screen name="goat/controls" kind="goat" tab="CONTROLS">
+		<section key="section_0" title="MOUSE AND KEYBOARD"/>
+		<row key="mouse_sensitivity" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/mouse_settings/mouse_settings_screen"/>
+		<row key="mouse_vertical_sensitivity" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/mouse_settings/mouse_settings_screen"/>
+		<row key="zoom_sensitivity" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/mouse_settings/mouse_settings_screen"/>
+		<row key="invert_mouse" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/mouse_settings/mouse_settings_screen"/>
+		<row key="mouse_aim_assist" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/mouse_settings/mouse_settings_screen"/>
+		<row key="direct_camera" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/mouse_settings/mouse_settings_screen"/>
+		<row key="menu_cursor" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/mouse_settings/mouse_settings_screen"/>
+		<row key="key_bindings" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/mouse_settings/mouse_settings_screen"/>
+		<row key="button_prompts" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/mouse_settings/mouse_settings_screen"/>
+		<section key="section_1" title="CONTROLLER"/>
+		<row key="vr_setup" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/mouse_settings/mouse_settings_screen"/>
+		<row key="crouch" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/mouse_settings/mouse_settings_screen"/>
+		<row key="crouch_walk" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/mouse_settings/mouse_settings_screen"/>
+		<row key="touch_crouch" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/mouse_settings/mouse_settings_screen"/>
+		<section key="section_2" title="LOOK"/>
+		<row key="look_sensitivity" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gamepad_setup_screen"/>
+		<row key="look_vertical_sensitivity" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gamepad_setup_screen"/>
+		<row key="invert_look" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gamepad_setup_screen"/>
+		<row key="gyro_flick_stick" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gamepad_setup_screen"/>
+		<row key="flight_inversion" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gamepad_setup_screen"/>
+		<row key="autocenter" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gamepad_setup_screen"/>
+		<section key="section_3" title="LAYOUT &amp; FEEDBACK"/>
+		<row key="button_preset" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gamepad_setup_screen"/>
+		<row key="joystick_preset" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gamepad_setup_screen"/>
+		<row key="button_remapping" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gamepad_setup_screen"/>
+		<row key="stick_settings" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gamepad_setup_screen"/>
+		<row key="vibration" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gamepad_setup_screen"/>
+		<row key="rumble_strength" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gamepad_setup_screen"/>
+		<row key="ingame_help" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gamepad_setup_screen"/>
+		<section key="section_4" title="PROFILE"/>
+		<row key="create_profile" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/gamepad_setup/gamepad_setup_screen"/>
+	</screen>
+	<screen name="goat/gameplay" kind="goat" tab="GAMEPLAY">
+		<section key="section_0" title="VIEW"/>
+		<row key="vehicle_fov" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/first_person/first_person_screen"/>
+		<row key="scale_scoped_fov" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/first_person/first_person_screen"/>
+		<row key="panini" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/first_person/first_person_screen"/>
+		<row key="panini_vertical" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/first_person/first_person_screen"/>
+		<row key="draw_distance" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/first_person/first_person_screen"/>
+		<row key="lowered_reticle" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/first_person/first_person_screen"/>
+		<row key="lowered_reticle_amount" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/first_person/first_person_screen"/>
+		<row key="headshot_indicator" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/first_person/first_person_screen"/>
+		<row key="allow_headshot_indicator" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/first_person/first_person_screen"/>
+		<row key="passenger_third_person" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/first_person/first_person_screen"/>
+		<row key="weapon_body" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/first_person/first_person_screen"/>
+		<section key="section_1" title="HUD"/>
+		<row key="high_res_hud" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/interface_settings_screen"/>
+		<row key="hud_button_style" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/interface_settings_screen"/>
+		<row key="spartan_link" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/interface_settings_screen"/>
+		<section key="section_2" title="MULTIPLAYER"/>
+		<row key="player_names" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/interface_settings_screen"/>
+		<row key="player_name_scale" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/interface_settings_screen"/>
+		<row key="scoreboard_team_layout" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/interface_settings_screen"/>
+		<row key="scoreboard_background" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/interface_settings_screen"/>
+		<section key="section_3" title="CHAT"/>
+		<row key="text_chat" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/interface_settings_screen"/>
+		<row key="chat_style" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/interface_settings_screen"/>
+		<section key="section_4" title="BATTLES"/>
+		<row key="bigger_battles" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/campaign/campaign_screen"/>
+	</screen>
+	<screen name="goat/system" kind="goat" tab="SYSTEM">
+		<section key="section_0" title="PLAYER"/>
+		<row key="name" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/profile_settings/profile_settings_screen"/>
+		<row key="color" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/profile_settings/profile_settings_screen"/>
+		<row key="create_profile" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/profile_settings/profile_settings_screen"/>
+		<row key="profiles" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/profile_settings/profile_settings_screen"/>
+		<row key="keyboard_layout" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/profile_settings/profile_settings_screen"/>
+		<section key="section_1" title="STORAGE"/>
+		<row key="map_cache_megabytes" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/profile_settings/profile_settings_screen"/>
+		<row key="clear_caches" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/profile_settings/profile_settings_screen"/>
+		<section key="section_2" title="HELP"/>
+		<row key="report" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/profile_settings/profile_settings_screen"/>
+		<section key="section_3" title="ABOUT"/>
+		<row key="about" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/profile_settings/profile_settings_screen"/>
+		<section key="section_4" title="MODS"/>
+		<row key="mods" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/mods_settings/mods_settings_screen"/>
+		<row key="mods_folder" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/mods_settings/mods_settings_screen"/>
+		<section key="section_5" title="GAME MAPS"/>
+		<row key="game_data" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/mods_settings/mods_settings_screen"/>
+		<section key="section_6" title="MASTER CHIEF COLLECTION"/>
+		<row key="mcc_packages" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/mods_settings/mods_settings_screen"/>
+		<section key="section_7" title="ADD-ONS"/>
+		<row key="dlss_addon" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/mods_settings/mods_settings_screen"/>
+		<section key="section_8" title="STREAMING"/>
+		<row key="state_file" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/streaming/streaming_screen"/>
+		<row key="input_display" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/streaming/streaming_screen"/>
+		<section key="section_9" title="SPEEDRUN"/>
+		<row key="match_timer" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/streaming/streaming_screen"/>
+		<row key="practice_keys" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/streaming/streaming_screen"/>
+		<row key="network_setup" kind="link" label="ONLINE" open="main_menu/settings_select/player_setup/player_profile_edit/network_setup/network_settings_screen"/>
+	</screen>
+</model>

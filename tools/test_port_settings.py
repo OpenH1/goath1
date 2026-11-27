@@ -584,3 +584,25 @@ def test_output_depth_row_negative_control():
     assert _output_depth_row_problems(PAGES, FUNCTIONS, MODEL, lit) == ["not dimmed while HDR draws"]
     assert _output_depth_row_problems(PAGES, FUNCTIONS, MODEL.replace('enabled="!hdr_drawn"', "")) == [
         "the model's row lacks its conditions"]
+
+
+def test_goat_tabs():
+    """GOAT Settings' tabs (display.goat_menus, GOAT_TABS): each tab's rows a
+    row of Settings' model by its page's screen and key, none twice, every tab
+    with rows; the file written is the one committed"""
+    import xml.etree.ElementTree as ElementTree
+    files = port_settings.model_files()
+    settings = ElementTree.fromstring("\n".join(files[port_settings.MODEL_FILE]))
+    keys = {(screen.get("name"), row.get("key")) for screen in settings.iter("screen") for row in screen.iter("row")}
+    goat = ElementTree.fromstring("\n".join(files[port_settings.GOAT_MODEL_FILE]))
+    tabs = list(goat.iter("screen"))
+    assert [tab.get("tab") for tab in tabs] == [tab for tab, _, _ in port_settings.GOAT_TABS]
+    names = {screen.get("name") for screen in settings.iter("screen")}
+    for tab in tabs:
+        assert tab.get("kind") == "goat" and tab.find("section") is not None
+        refs = [(row.get("open"), row.get("key")) for row in tab.iter("row") if row.get("kind") == "ref"]
+        assert refs and len(refs) == len(set(refs)), tab.get("tab")
+        assert all(ref in keys for ref in refs), [ref for ref in refs if ref not in keys]
+        assert all(row.get("open") in names for row in tab.iter("row")), tab.get("tab")
+    committed = Path(__file__).resolve().parent.parent / "port/assets/menus" / port_settings.GOAT_MODEL_FILE
+    assert committed.read_text().splitlines() == files[port_settings.GOAT_MODEL_FILE][:-1]

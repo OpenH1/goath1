@@ -556,6 +556,10 @@ static const struct config_setting config_settings[] =
 		"What runs the PC menus' generated screens: \"classic\" the game's\n"
 		"widgets, built from the menus' files; \"new\" the port's menu engine,\n"
 		"from the menus' model (docs/menu_engine.md), drawn the same way." },
+	{ "display.goat_menus", _config_boolean, "false", "HALO_GOAT_MENUS", _environment_value, _platform_all,
+		"Settings in the GOAT layout (with display.menu_engine \"new\"): one\n"
+		"screen of tabs, each its rows of Settings' pages, changed in place and\n"
+		"kept with APPLY. Off: Settings' own tabs and pages." },
 	{ "display.menu_language", _config_string, "\"maps\"", "HALO_MENU_LANGUAGE", _environment_value, _platform_all,
 		"The PC menus' language: \"maps\" for the language of the Custom Edition\n"
 		"whose loc.map is in custom_maps (as that edition shows them; English\n"
