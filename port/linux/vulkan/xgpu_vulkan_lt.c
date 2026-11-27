@@ -166,7 +166,7 @@ static struct
 	turn, the light after the suns' share (what the surfaces read); each
 	row's light's id this frame and the last (0 none), the rows' count */
 	struct xgpu_vulkan_image *table, *reservoirs[2], *final, *sun[2];
-	int sun_current, sun_valid;
+	int sun_current, sun_valid, handled;
 	float texels[LT_TABLE_ROWS][LT_TABLE_TEXELS][4];
 	uint32_t ids[2][LT_TABLE_ROWS][2];
 	int rows[2], ids_current, reservoir_current, reservoirs_valid;
@@ -718,6 +718,11 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 		}
 	}
 	lt.rows[now] = rows;
+	/* (the lights the pass lights: with no more than the 2 heroes, no
+	reservoirs are drawn) */
+	lt.handled = 0;
+	for (row = 0; row < rows; row++)
+		lt.handled += lt.texels[row][4][3] >= 0.0f;
 	if (!lt.table)
 	{
 		memset(&description, 0, sizeof(description));
@@ -738,7 +743,7 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 	params->lights[0] = lt.table ? rows : 0;
 	params->lights[1] = lt.table ? suns : 0;
 	params->lights[2] = (lt.only >= 2 ? 0 : LT_LIGHTS_FLASHLIGHT) | (lt.heroes_on ? LT_LIGHTS_HEROES : 0) |
-		(lt.restir_on ? LT_LIGHTS_RESTIR : 0);
+		(lt.restir_on && (lt.handled > 2 || !lt.heroes_on) ? LT_LIGHTS_RESTIR : 0);
 }
 
 /* the view's shadowed flashlight's index in the block (-1 none) */
@@ -992,7 +997,7 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 	xgpu_vulkan_pass_owner(LT_OWNER);
 	/* (W2's reservoirs: RIS and the temporal reuse, from the last frame's,
 	which the main draw then reuses spatially) */
-	if ((params.lights[2] & LT_LIGHTS_RESTIR) && params.lights[0] > 0)
+	if ((params.lights[2] & LT_LIGHTS_RESTIR) && lt.handled > 2)
 	{
 		struct lt_params reservoir_params = params;
 		struct xgpu_vulkan_image *before;
