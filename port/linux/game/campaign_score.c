@@ -36,6 +36,7 @@ kills, solo and co-op.
 #include "objects/damage.h"
 #include "objects/objects.h"
 #include "scenario/scenario.h"
+#include "scenario/scenario_definitions.h"
 #include "tag_files/tag_files.h"
 #include "units/units.h"
 #include "campaign_score.h"
