@@ -52,6 +52,8 @@
 #define ROUGH_STRUCTURE 0.08
 #define ROUGH_OBJECT 0.2
 #define CACHE_CAP 256.0
+// the roughness up to which a reflection is its mirror ray alone
+#define MIRROR_ROUGHNESS 0.1
 
 // (the bindings as the modes use them)
 #define cache_image history_image
@@ -346,7 +348,10 @@ vec4 specular_main(ivec2 pixel)
     uint byte = (material >> 16) & 255u;
     float roughness = byte == 255u ? (owner == 0u ? ROUGH_STRUCTURE : ROUGH_OBJECT) : float(byte) / 255.0;
     vec3 v = normalize(pass.camera[0].xyz - p), normal = dot(shaded, v) > 0.0 ? shaded : n;
-    vec3 l = reflect(-v, ggx_visible_normal(v, normal, max(roughness * roughness, 1.0e-3), stratified(pixel, 9.0)));
+    // (a surface this smooth, Halo's own without a roughness map among them: its mirror ray, the same each frame,
+    // no noise; its texture's level prefilters the hit)
+    vec3 l = roughness <= MIRROR_ROUGHNESS ? reflect(-v, normal) :
+        reflect(-v, ggx_visible_normal(v, normal, max(roughness * roughness, 1.0e-3), stratified(pixel, 9.0)));
     if (dot(l, n) <= 0.0)
         l = reflect(-v, normal);
     if (dot(l, n) <= 0.0)
@@ -365,7 +370,7 @@ vec4 specular_main(ivec2 pixel)
     return vec4(radiance * fade, max(hit.t, 1.0e-3));
 }
 
-// the bounce's samples about pixel on its surface (the 3x3 blocks about its own; each block's traced pixel within a
+// the bounce's samples about pixel on its surface (the 5x5 blocks about its own, Gaussian, 3 pixels; each block's traced pixel within a
 // few pixels, the same owner, its normal within 25 degrees and its point on this pixel's plane)
 vec3 upsampled(ivec2 pixel, vec3 p, vec3 n, uint owner)
 {
@@ -373,9 +378,9 @@ vec3 upsampled(ivec2 pixel, vec3 p, vec3 n, uint owner)
     int phase = int(pass.indirect[1].y);
     float distance = length(p - pass.camera[0].xyz), weights = 0.0;
     vec3 sum = vec3(0.0);
-    for (int k = 0; k < 9; k++)
+    for (int k = 0; k < 25; k++)
     {
-        ivec2 block = middle + ivec2(k % 3 - 1, k / 3 - 1);
+        ivec2 block = middle + ivec2(k % 5 - 2, k / 5 - 2);
         if (any(lessThan(block, ivec2(0))) || any(greaterThanEqual(block, size)))
             continue;
         vec4 s = texelFetch(reservoirs, block, 0);
@@ -389,7 +394,7 @@ vec3 upsampled(ivec2 pixel, vec3 p, vec3 n, uint owner)
             abs(dot(q - p, n)) > 0.02 * distance)
             continue;
         vec2 off = vec2(at - pixel);
-        float w = exp(-dot(off, off) * 0.125);
+        float w = exp(-dot(off, off) * (1.0 / 18.0));
         sum += w * s.rgb;
         weights += w;
     }

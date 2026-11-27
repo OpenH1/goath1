@@ -2192,6 +2192,7 @@ static unsigned int lt_e1_guides(struct module *m, struct pixel_state *state, un
 static unsigned int lt_e1_add(struct module *m, struct pixel_state *state, unsigned int lit, unsigned int tint,
 	unsigned int p, unsigned int n);
 static unsigned int lt_reflection_texel(struct module *m, struct pixel_state *state, unsigned int cube);
+static BOOL lt_reflection_traced(const struct pixel_state *state);
 
 static unsigned int pixel_input(struct module *m, struct pixel_state *state, unsigned int variable_id, unsigned int type)
 {
@@ -2615,7 +2616,7 @@ static void texture_stage(struct module *m, struct pixel_state *state, int stage
 		same vector) */
 		if (stage == 3 && state->rt_reflection && !lt_e1_on())
 			state->t[stage] = rt_reflection_texel(m, state, xyz(m, xt), state->t[stage]);
-		else if (stage == 3 && state->rt_reflection) /* (HALO_LT_E1: the pass's own) */
+		else if (stage == 3 && lt_reflection_traced(state)) /* (HALO_LT_E1: the pass's own) */
 			state->t[stage] = lt_reflection_texel(m, state, state->t[stage]);
 		break;
 	case XGPU_TEXTURE_PASSTHRU:
@@ -2724,7 +2725,7 @@ static void texture_stage(struct module *m, struct pixel_state *state, int stage
 		bump map's reflection) */
 		if (stage == 3 && state->rt_reflection && !lt_e1_on())
 			state->t[stage] = rt_reflection_texel(m, state, r, state->t[stage]);
-		else if (stage == 3 && state->rt_reflection) /* (HALO_LT_E1: the pass's own) */
+		else if (stage == 3 && lt_reflection_traced(state)) /* (HALO_LT_E1: the pass's own) */
 			state->t[stage] = lt_reflection_texel(m, state, state->t[stage]);
 		break;
 	}
@@ -8888,6 +8889,16 @@ static unsigned int lt_e1_add(struct module *m, struct pixel_state *state, unsig
 	}
 	return ext2(m, GLSL_POW, m->t_v3, fadd(m, 3, base, fmax_scalar(m, 3, light, 0.0f)), constant_splat(m, 3,
 		1.0f / 2.2f));
+}
+
+/* whether a reflection's texel is HALO_LT_E1's pass's: the structure's and
+the models' (the pre-pass's surfaces, whose guides the pass traced from);
+the level's glass and water are not in the pre-pass (their pixels' guides
+are the surfaces behind them): their cube maps, as the game drew them */
+static BOOL lt_reflection_traced(const struct pixel_state *state)
+{
+	return state->rt_reflection && (state->program->rt_reflection == XGPU_RT_REFLECTION_STRUCTURE ||
+		state->program->rt_reflection == XGPU_RT_REFLECTION_MODEL);
 }
 
 /* HALO_LT_E1's reflections (~/dev/rt2-realtime-design.md section 1.4;
