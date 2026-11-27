@@ -336,8 +336,9 @@ static real light_sources_magazine_strength(
 }
 
 /* a light kept as a candidate, scored as dynamic_lights_rank scores the
-game's: its brightest channel times its reach's part of the view */
-static void light_sources_add(
+game's: its brightest channel times its reach's part of the view (NULL:
+none kept) */
+static struct light_source *light_sources_add(
 	real_point3d const *position,
 	real radius,
 	real_rgb_color const *color,
@@ -350,16 +351,16 @@ static void light_sources_add(
 	real distance, intensity;
 
 	if (!(strength > 0.0f) || !(radius > 0.0f))
-		return;
+		return NULL;
 	vector_from_points3d(&render.camera.position, position, &offset);
 	distance = magnitude3d(&offset);
 	if (distance - radius > LIGHT_SOURCES_RANGE)
-		return;
+		return NULL;
 	intensity = strength * MAX(color->red, MAX(color->green, color->blue));
 	if (!(intensity > 0.0f))
-		return;
+		return NULL;
 	if (light_sources.candidate_count >= (short)NUMBEROF(light_sources.candidates))
-		return;
+		return NULL;
 	source = &light_sources.candidates[light_sources.candidate_count++];
 	source->position = *position;
 	source->radius = radius;
@@ -368,9 +369,11 @@ static void light_sources_add(
 	source->color.blue = color->blue * strength;
 	source->halo = halo;
 	source->key = key;
+	source->baked = FALSE;
 	source->score = intensity * radius / (distance > radius ? distance : radius);
 	if (dot_product3d(&offset, &render.camera.forward) < -(radius + 0.1f))
 		source->score *= 1.0f / 64.0f;
+	return source;
 }
 
 /* where an effect's light is drawn: on its object as drawn, and on a local
@@ -663,10 +666,17 @@ static void light_sources_objects(
 			position.x += entry->offset.k * object->object.up.i;
 			position.y += entry->offset.k * object->object.up.j;
 			position.z += entry->offset.k * object->object.up.k;
-			light_sources_add(&position, entry->radius, &entry->color, strength,
-				object->object.type == _object_type_projectile &&
-					object_definition_get(object->definition_index)->object.model.index == NONE,
-				LIGHT_SOURCES_KEY(2, iterator.index, row, 0));
+			{
+				struct light_source *source = light_sources_add(&position, entry->radius, &entry->color, strength,
+					object->object.type == _object_type_projectile &&
+						object_definition_get(object->definition_index)->object.model.index == NONE,
+					LIGHT_SOURCES_KEY(2, iterator.index, row, 0));
+
+				/* (a powerup's or a teleporter's glow, standing where the
+				lightmap lights it) */
+				if (source && entry->kind == _light_source_pulse)
+					source->baked = TRUE;
+			}
 		}
 	}
 }
