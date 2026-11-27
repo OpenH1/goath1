@@ -698,6 +698,8 @@ static void dynamic_lights_test(void)
 	vk.slot->early = (VkCommandBuffer)(uintptr_t)2;
 	vk.early_recording = 1;
 	vk.ring_mapped = ring;
+	/* (a buffer made as buffer_create makes one: CPU-written, in the host's memory) */
+	block.host = BUFFER_HOST;
 	block.size = sizeof(data);
 	block.buffer = (VkBuffer)(uintptr_t)3;
 	cells.description.type = XGPU_VULKAN_IMAGE_3D;
@@ -4204,6 +4206,7 @@ static void aside_test(void)
 		vkGetSemaphoreCounterValue = aside_counter;
 		aside_hold = 1;
 		memset(&buffer, 0, sizeof(buffer));
+		buffer.host = BUFFER_HOST;
 		buffer.size = 256;
 		buffer.buffer = first = (VkBuffer)(uintptr_t)600;
 		buffer.mapped = aside_memory[3];
@@ -4285,6 +4288,7 @@ static void aside_test(void)
 		vkCmdDraw = plain_draw;
 		aside_buffers_made = aside_buffer_copies = aside_cells_copies = 0;
 		memset(&block, 0, sizeof(block));
+		block.host = BUFFER_HOST;
 		block.size = sizeof(data);
 		block.buffer = bound;
 		block.mapped = aside_memory[3];
