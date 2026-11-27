@@ -1549,7 +1549,7 @@ struct xgpu_stream_rt_bounce
 /* LT_LIGHTS: a window's light list for the light-transport pass
 (~/dev/rt2-realtime-design.md's contract C4; port/linux/game/lt_lights.c,
 whose lt_lights.h has the game's copy of the light, the same: change both):
-count lights (0 to XGPU_STREAM_LT_LIGHTS_MAXIMUM, 128 bytes each) inline at
+count lights (0 to XGPU_STREAM_LT_LIGHTS_MAXIMUM, 144 bytes each) inline at
 lights (none: 0), the window (0 to 3) and the game's count of lists sent */
 #define XGPU_STREAM_LT_LIGHTS_MAXIMUM 1024
 enum
@@ -2003,7 +2003,7 @@ XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_dynamic_lights_halos, 192);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_rt_shadow_caster, 32);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_rt_shadows, 160);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_rt_bounce, 16 + 48 * XGPU_STREAM_RT_BOUNCE_LIGHTS);
-XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_lt_light, 128);
+XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_lt_light, 144);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_lt_lights, 20);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_dynamic_lights_world, 12);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_vr_info, 108);

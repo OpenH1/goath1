@@ -74,7 +74,7 @@ enum
 	XGPU_LT_LIGHT_SOURCE_FRAME = 7,     /* low word: the light's place this frame (UNSTABLE_ID) */
 };
 
-/* 128 bytes. Positions in world units; directions unit length. */
+/* 144 bytes. Positions in world units; directions unit length. */
 struct xgpu_stream_lt_light
 {
 	/* stable from frame to frame: id[0] low, id[1] high (source << 24) */
@@ -112,7 +112,7 @@ struct xgpu_stream_lt_light
 	float color[3], gel_width;
 };
 
-typedef char lt_light_size_assert[sizeof(struct xgpu_stream_lt_light) == 128 ? 1 : -1];
+typedef char lt_light_size_assert[sizeof(struct xgpu_stream_lt_light) == 144 ? 1 : -1];
 
 #endif
 
