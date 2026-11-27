@@ -12,7 +12,7 @@ SOURCE = 'port/linux/game/render_enumerate.c'
 def generated(fault=None):
     source = read(SOURCE)
     table = re.search(r"^static struct\n\{\n\tshort count;.*?^\} object_effects;", source, re.M | re.S).group(0)
-    code = '\n'.join(function(source, name) for name in ('unlit_effects_drawn', 'object_effect_drawn',
+    code = '\n'.join(function(source, name) for name in ('stand_in_source', 'unlit_effects_drawn', 'object_effect_drawn',
                                                          'camouflage_draw', 'object_effects_draw', 'first_person_model_draw',
                                                          'first_person_models_draw'))
     if fault == 'value':

@@ -771,6 +771,7 @@ void world_ao_lightmap_begin(void const *lightmap_bitmap)
 	halo_world_ao_object(WORLD_AO_OWNER_NONE, (float)layer, 0);
 }
 
+/* (the span world_ao_first_person leaves now) */
 static int world_ao_span_now(void)
 {
 	return !world_ao.first_person ? world_ao.span : world_ao.span == WORLD_AO_SPAN_FOUND ?
@@ -781,7 +782,8 @@ void world_ao_first_person(int drawing)
 {
 	/* (the window's own span again after it) */
 	world_ao.first_person = drawing;
-	halo_world_ao_span(world_ao_span_now());
+	halo_world_ao_span(!drawing ? world_ao.span : world_ao.span == WORLD_AO_SPAN_FOUND ?
+		WORLD_AO_SPAN_FOUND_FIRST_PERSON : WORLD_AO_SPAN_FIRST_PERSON);
 	if (!world_ao.window)
 		return;
 	halo_world_ao_object(drawing ? WORLD_AO_OWNER_UNLIT : WORLD_AO_OWNER_NONE, 1.0f, 0);
