@@ -61,6 +61,41 @@ ids from `dynamic_lights_rank`.
 6. **High end (large).** ReSTIR GI plus DLSS Ray Reconstruction, and the Metal port once Metal has ray tracing
    (`docs/dynamic-shadows-plan.md`, stage 5).
 
+## Stage 3 prototype (branch rt/gi-1, `display.rt_bounce`, off by default)
+
+What is built (`port/linux/vulkan/xgpu_vulkan_gi.c`, `xgpu_spirv.c`'s `xgpu_spirv_rt_bounce_pass`):
+
+- **Sources.** The game hands each window's bounce lights to the backend (the stream's `RT_BOUNCE`):
+  `dynamic_lights_bounce.c` picks up to 8, the strongest to the view, the flashlight included (its structure light is
+  the game's own gel pass, but it bounces all the same). Where the GPU runs, no CPU bounce lights are placed.
+- **Trace.** After the pre-pass (which `display.ambient_occlusion` "world" or "ray_traced" provides), one pixel in each
+  4x4 square, a different one each frame, casts one cosine-weighted ray (4 world units, back faces culled, the pixel's
+  own object skipped). At the hit: the normal from the hit table's vertex normals, and the base map from the material
+  record and the bindless textures (set 4) at a coarse level, `pow 2.2`, at most 0.9. The hit is lit by the dynamic
+  lights alone, never its lightmap, so nothing static is counted twice. One light is picked by its share of the
+  unshadowed sum and gets one shadow ray through the structure (the first step of resampled importance sampling:
+  unbiased, one shadow ray for any number of lights). The sample is `albedo * light`.
+- **Cache.** A world-space grid of 64x64x32 cells of 0.125 world units (8x8x4 world units) around the camera, kept in
+  place in the world (toroidal addressing: cells entering the grid start empty, nothing is copied), 6 faces a cell
+  (RGBA16F, 384x2048, two in turn per window). Each face averages the frame's samples that lie in its cell, weighted by
+  `max(dot(n, face), 0)^2`. Its history is kept at 0.9 a 60th of a second (at most 64 samples), so a light's fade shows
+  within about a sixth of a second. Unseen cells fade at 0.98. It is the denoiser: a world-space mean over many pixels
+  and frames, so no screen-space filter is needed.
+- **Gather and hook.** Each pixel reads its 8 cells (trilinear) and the 3 faces it faces, into a window-sized texture.
+  The surfaces found once a pixel add it to the dynamic lights' sum (one call each in the structure's and the models'
+  lighting; it moves into the light model's linear term when that lands). Energy: the cache holds the mean radiance
+  over the cosine hemisphere, which in the enhanced lights' units is the irradiance over pi, so the receiver's texture
+  multiplies it exactly as it does a direct light.
+
+Why not SHaRC itself: its design (a spatial hash of cells keyed by position, normal and level, accumulated and resolved)
+is what this follows, but its code is under the NVIDIA RTX SDKs license (as NRD), HLSL, and needs atomics in storage
+buffers; this backend writes SPIR-V by hand and its passes write images, so the cache is a direct-mapped toroidal grid
+with a resolve that gathers each cell's samples from the screen. ReSTIR-style light sampling (RTXDI's ideas) is what
+makes many lights affordable here: the pick by share already gives one shadow ray per sample for any light count;
+reservoir reuse across pixels and frames would let all 128 lights bounce at the same cost.
+
+Results: RESULTS_HERE
+
 ## Denoising
 
 The indirect term gets its own temporal pass and an a-trous filter on demodulated irradiance before it is composed. FSR,

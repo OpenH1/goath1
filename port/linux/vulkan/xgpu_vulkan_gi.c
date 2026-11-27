@@ -362,6 +362,22 @@ void xgpu_vulkan_rt_bounce_draw(struct xgpu_vulkan_image *inputs, const struct x
 		memcpy(out[2], light->axis, 3 * sizeof(float));
 		out[2][3] = light->cone_scale;
 	}
+	/* (HALO_RT_BOUNCE_LOG, checking: the lights every 60th window drawn) */
+	{
+		static int logging = -1;
+		static unsigned long drawn;
+
+		if (logging < 0)
+			logging = getenv("HALO_RT_BOUNCE_LOG") != NULL;
+		if (logging && drawn++ % 60 == 0)
+			host_logf(HOST_LOG_INFO, "vulkan: display.rt_bounce: %d lights, the first at %.2f %.2f %.2f reach %.2f color "
+				"%.3f %.3f %.3f; the grid from %.0f %.0f %.0f", count, (double)block[XGPU_RT_BOUNCE_BLOCK_LIGHTS][0],
+				(double)block[XGPU_RT_BOUNCE_BLOCK_LIGHTS][1], (double)block[XGPU_RT_BOUNCE_BLOCK_LIGHTS][2],
+				(double)block[XGPU_RT_BOUNCE_BLOCK_LIGHTS][3], (double)block[XGPU_RT_BOUNCE_BLOCK_LIGHTS + 1][0],
+				(double)block[XGPU_RT_BOUNCE_BLOCK_LIGHTS + 1][1], (double)block[XGPU_RT_BOUNCE_BLOCK_LIGHTS + 1][2],
+				(double)block[XGPU_RT_BOUNCE_BLOCK_ORIGIN][0], (double)block[XGPU_RT_BOUNCE_BLOCK_ORIGIN][1],
+				(double)block[XGPU_RT_BOUNCE_BLOCK_ORIGIN][2]);
+	}
 	xgpu_vulkan_pass_owner(RT_BOUNCE_OWNER);
 	rt_bounce_pass_draw(rt_bounce.samples, tiles, pass, (const float (*)[4])block, XGPU_SPIRV_RT_BOUNCE_TRACE, inputs,
 		NULL, NULL);
@@ -373,7 +389,7 @@ void xgpu_vulkan_rt_bounce_draw(struct xgpu_vulkan_image *inputs, const struct x
 	window->current = next;
 	window->valid = 1;
 	rt_bounce_pass_draw(rt_bounce.gathered, rectangle, pass, (const float (*)[4])block, XGPU_SPIRV_RT_BOUNCE_GATHER, inputs,
-		window->cache[next], NULL);
+		window->cache[next], rt_bounce.samples);
 	xgpu_vulkan_pass_owner(NULL);
 	xgpu_vulkan_rt_bounce_set(rt_bounce.gathered);
 	if (!rt_bounce.drawn_said)

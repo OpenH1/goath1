@@ -7474,6 +7474,19 @@ struct rt_bounce_state
 	unsigned int samples;
 };
 
+static int rt_bounce_view(void)
+{
+	static int view = -1;
+
+	if (view < 0)
+	{
+		const char *given = getenv("HALO_RT_BOUNCE_VIEW");
+
+		view = given ? atoi(given) : 0;
+	}
+	return view;
+}
+
 static unsigned int rt_bounce_vector(struct module *m, struct rt_bounce_state *state, int index)
 {
 	return rt_shadows_vector(m, state->block, constant_int(m, index));
@@ -7927,6 +7940,16 @@ static void rt_bounce_gather_main(struct module *m, struct words *locals, struct
 	}
 	value = fscale(m, 3, value, fdiv(m, 1, extract(m, rt_bounce_vector(m, state, XGPU_RT_BOUNCE_BLOCK_SIZES), 3),
 		fmax_scalar(m, 1, total, 0.5f)));
+	/* (HALO_RT_BOUNCE_VIEW, checking: 1 magenta where the surfaces read it,
+	2 the trace's samples, 3 the cache's weight in green over its light) */
+	if (rt_bounce_view() == 1)
+		value = constant_vector(m, 3, (const float[]){ 1.0f, 0.0f, 1.0f });
+	else if (rt_bounce_view() == 2)
+		value = fscale(m, 3, xyz(m, light_shadows_fetch(m, state->samples, op2(m, OP_SHIFT_RIGHT_ARITHMETIC, m->t_iv2, pixel,
+			rt_bounce_iv2(m, constant_int(m, 2), constant_int(m, 2))))), constant_float(m, 10.0f));
+	else if (rt_bounce_view() == 3)
+		value = fadd(m, 3, value, construct(m, 3, (unsigned int[]){ constant_float(m, 0.0f),
+			saturate(m, 1, fmul(m, 1, total, constant_float(m, 0.5f))), constant_float(m, 0.0f) }));
 	store(m, out, vec4_of(m, value, constant_float(m, 1.0f)));
 	selection_end(m, merge);
 }
@@ -7946,7 +7969,7 @@ BOOL xgpu_spirv_rt_bounce_pass(int which, const struct xgpu_spirv_options *optio
 	world_ao_declare(&m);
 	world_ao_pass_declare(&m, &state.pass, which == XGPU_SPIRV_RT_BOUNCE_TRACE);
 	state.block = rt_shadows_block(&m, XGPU_RT_BOUNCE_BLOCK, XGPU_SPIRV_BINDING_CONSTANTS, "rt_bounce_block");
-	if (which == XGPU_SPIRV_RT_BOUNCE_RESOLVE)
+	if (which == XGPU_SPIRV_RT_BOUNCE_RESOLVE || which == XGPU_SPIRV_RT_BOUNCE_GATHER)
 	{
 		state.samples = variable(&m, type_sampled_image(&m, DIM_2D, FALSE, FALSE, TRUE), STORAGE_UNIFORM_CONSTANT,
 			"rt_bounce_samples");
