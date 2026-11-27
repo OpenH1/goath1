@@ -51,7 +51,8 @@ grenade bursting at that wall; a30's beach in daylight. Variants keep the rest o
   only shading noise may differ; 5% is under what anyone sees side by side. The pattern's correlation >= 0.85: the
   beam's hot disk and ring must be where Classic's are (a missing ring drops it well below). Under 0.002 of linear
   light Classic adds nothing there, and Enhanced must not either.
-- HUD exact and Classic identity exact: neither is touched by any light, so any byte that differs is a bug. The
+- HUD exact and Classic identity exact: neither is touched by any light, so any byte that differs is a bug. (The
+  HUD's translucent meters may differ by one 8-bit code, the rounding of the view blended behind them.) The
   daylight frame may differ in 0.1% of its bytes (8-bit rounding of the same light), no more.
 - A pixel is shadowed when 40% darker than shadows-off: a real shadow takes most of a light; noise and soft edges
   stay under that. At least 150 such pixels on each side of the crease (a person's shadow at 3 m covers far more);

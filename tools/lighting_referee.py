@@ -69,17 +69,17 @@ SCENES = {
 
 # the variants. The rest of the look is Classic's in each (display.graphics "classic"), so that only the lights
 # differ: Classic; Enhanced lights with no shadows; Enhanced with ray-traced shadows (world ambient occlusion, which
-# builds the ray-traced scene, display.shadows "ray_traced"); that in HDR with its half floats kept
+# display.shadows "ray_traced"); that in HDR with its half floats kept. (Not world ambient occlusion: with it some
+# frames of c20 lose the structure, the clear colour in its place: a bug of its own, which "frame whole" catches)
 CLASSIC = ["HALO_GRAPHICS=classic", "HALO_DYNAMIC_LIGHTS=classic", "HALO_SHADOWS=classic"]
 ENHANCED = ["HALO_GRAPHICS=classic", "HALO_DYNAMIC_LIGHTS=enhanced", "HALO_SHADOWS=classic"]
-TRACED = ["HALO_GRAPHICS=classic", "HALO_DYNAMIC_LIGHTS=enhanced", "HALO_SHADOWS=ray_traced",
-          "HALO_AMBIENT_OCCLUSION=world"]
+TRACED = ["HALO_GRAPHICS=classic", "HALO_DYNAMIC_LIGHTS=enhanced", "HALO_SHADOWS=ray_traced"]
 # (the reference for the shadows: the same build with its lights' shadows off, the knobs every branch keeps:
 # HALO_LIGHT_SHADOWS_OFF for the dynamic lights, HALO_FLASHLIGHT_SHADOWS_OFF for a flashlight's own)
 UNTRACED = TRACED + ["HALO_LIGHT_SHADOWS_OFF=1", "HALO_FLASHLIGHT_SHADOWS_OFF=1"]
 HDR = TRACED + ["HALO_HDR=on", "HALO_SCREENSHOT_HALVES=1"]
 # the timing runs: the whole Enhanced look, ray-traced shadows, the flashlight on, each pass timed
-TIMED = ["HALO_GRAPHICS=enhanced", "HALO_SHADOWS=ray_traced", "HALO_AMBIENT_OCCLUSION=world", "HALO_PASS_TIMES=1"]
+TIMED = ["HALO_GRAPHICS=enhanced", "HALO_SHADOWS=ray_traced", "HALO_PASS_TIMES=1"]
 # the features landing on the ray-traced work, each a setting turned on (--feature NAME=VAR=VALUE adds or changes
 # one): off, the pictures must equal the baseline's; on, no NaN or blown-out pixel, no flicker, within its cost
 FEATURES = {
@@ -131,7 +131,8 @@ BLAST = {"wall left": (400, 100, 800, 450), "wall above": (850, 40, 1200, 250), 
 PARITY_RATIO = 1.05        # an Enhanced light's mean added light over Classic's, either way, per region
 PARITY_SHAPE = 0.85        # the correlation of the added light's pattern (a beam's hot disk and ring) with Classic's
 PARITY_FLOOR = 0.002       # added light (linear) under this in Classic is no light to compare
-HUD_SAME = 1.0             # the HUD's own pixels identical to Classic's
+HUD_SAME = 1.0             # the HUD's own pixels identical to Classic's, to a code (the view behind a translucent
+HUD_CODES = 1              # meter rounds to 8 bits after the blend)
 DAYLIGHT_DIFFERENT = 0.001  # bytes of the daylight control that may differ by more than 2 codes
 SHADOW_DARKER = 0.4        # shadowed: the traced picture's light this much under the untraced one's
 SHADOW_LEAST = 150         # shadowed pixels a side of the crease needs (1920x1080)
@@ -500,7 +501,7 @@ def check_parity(table, runs):
                         total += a is not None or b is not None
                         continue
                     total += 1
-                    same += a == b
+                    same += max(abs(p - q) for p, q in zip(a, b)) <= HUD_CODES
         share = same / total if total else 0.0
         table.add("parity", "HUD identical", share, f">= {HUD_SAME} of its pixels", share >= HUD_SAME)
     c = pictures(runs, "blast", "classic", (0, 1))
@@ -518,6 +519,26 @@ def check_parity(table, runs):
         different = sum(abs(a - b) > 2 for a, b in zip(c[0].rgb, e[0].rgb)) / len(c[0].rgb)
         table.add("parity", "daylight unchanged", different, f"<= {DAYLIGHT_DIFFERENT} differ",
                   different <= DAYLIGHT_DIFFERENT)
+
+
+def check_whole(table, runs):
+    """every picture whole: no frame mostly one colour (the clear colour where the structure was not drawn)"""
+    broken = []
+    for run in runs:
+        if not run.folder:
+            continue
+        for path in sorted((run.folder / "game" / "shots").glob("at*.png")):
+            try:
+                rgb = Picture(path).rgb
+            except (OSError, ValueError):
+                continue
+            counts = {}
+            for at in range(0, len(rgb), 3 * 97):
+                key = rgb[at:at + 3]
+                counts[key] = counts.get(key, 0) + 1
+            if max(counts.values()) > 0.4 * sum(counts.values()):
+                broken.append(f"{run.scene}-{run.variant} {path.stem}")
+    table.add("runs", "frames whole", len(broken), "= 0 mostly one colour", not broken, ", ".join(broken[:4]))
 
 
 def hud_pixels(picture, box):
@@ -863,6 +884,7 @@ def main():
                                            run.summary):
             table.add("runs", run.label, "trouble", "exit 0", False,
                       run.summary.splitlines()[0] if run.summary else "no summary")
+    check_whole(table, runs)
     if "parity" in only:
         check_parity(table, keyed)
     if "shadow" in only:
