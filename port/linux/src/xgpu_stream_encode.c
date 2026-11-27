@@ -2921,6 +2921,23 @@ void xgpu_backend_rt_bounce(const struct xgpu_rt_bounce *bounce)
 	stream_finite(&record_body->lights[0].position[0], (unsigned long)count * 12, "bounced light value", 0);
 }
 
+void xgpu_backend_lt_lights(const void *lights, int count, int window, unsigned int frame)
+{
+	struct xgpu_stream_lt_lights *record_body;
+	unsigned char *place;
+	uint32_t bytes;
+
+	if (!stream.open || count < 0 || count > XGPU_STREAM_LT_LIGHTS_MAXIMUM)
+		return;
+	bytes = (uint32_t)count * (uint32_t)sizeof(struct xgpu_stream_lt_light);
+	record_body = record_data(XGPU_STREAM_LT_LIGHTS, sizeof(*record_body), bytes ? carried_one(bytes) : 0, &place);
+	record_body->count = (uint32_t)count;
+	record_body->window = window;
+	record_body->frame = frame;
+	/* (its floats made finite by the game: lt_lights.c) */
+	record_body->lights = bytes ? carry_one(&place, lights, bytes) : 0;
+}
+
 /* ---------- the VR mode */
 
 BOOL xgpu_backend_vr_supported(void)

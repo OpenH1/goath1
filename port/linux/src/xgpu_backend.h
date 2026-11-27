@@ -933,6 +933,12 @@ struct xgpu_rt_bounce
 };
 void xgpu_backend_rt_bounce(const struct xgpu_rt_bounce *bounce);
 
+/* ---------- the light-transport pass's light list (port/linux/game/lt_lights.c;
+~/dev/rt2-realtime-design.md, contract C4): a window's (0 to 3) count
+lights, xgpu_stream.h's struct xgpu_stream_lt_light each (at most
+XGPU_STREAM_LT_LIGHTS_MAXIMUM), and the game's count of lists sent; copied */
+void xgpu_backend_lt_lights(const void *lights, int count, int window, unsigned int frame);
+
 /* display.contact_shadows (port/linux/game/contact_shadows.c;
 docs/dynamic-shadows-plan.md, stage 2): the same casters' short, sharp
 shadows on the level found from the depth alone (a march toward each

@@ -52,6 +52,7 @@ its swapchain.
 #include "xgpu.h"
 #include "xgpu_backend.h"
 #include "xgpu_dynamic_lights_world.h"
+#include "xgpu_vulkan_lt_lights.h"
 #include "xgpu_hdr.h"
 #include "xgpu_shader.h"
 #include "xgpu_spirv.h"
@@ -5398,6 +5399,7 @@ const struct host_render_backend *xgpu_vulkan_stream_backend(void)
 		backend.motion = stream_motion;
 		backend.rt_shadows = stream_rt_shadows;
 		backend.rt_bounce = stream_rt_bounce;
+		backend.lt_lights = xgpu_vulkan_lt_lights_receive;
 		backend.contact_shadows = stream_contact_shadows;
 		/* ... "ray_traced"'s scene (xgpu_vulkan_rt.c), where the device has
 		ray queries */
