@@ -5,7 +5,8 @@ rider, its turret's gun), blended between the ticks in its frame and placed wher
 view from its seat, in the first person or following it, hangs on it at the unit's camera position: taken back to
 where the tick left that point (a frame slower than a sub-step has the next tick's first in the observer), and moved
 with it onto the vehicle's path. At 30, and for a vehicle of the macro lane, the frames are the line between the
-ticks' snapshots, as they were."""
+ticks' snapshots, as they were; the view in a seat of one, which moves the whole tick in its first sub-step, is
+snapshotted where the tick left the vehicle, not a tick ahead."""
 
 import sys
 from pathlib import Path
@@ -17,8 +18,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from harness import CHECK_FAILED, build, run  # noqa: E402
 from test_render_substeps import generated  # noqa: E402
 
-CASES = ["classic", "substeps", "substeps_60", "following", "camera_slow", "following_slow", "macro", "respawn",
-         "respawn_following"]
+CASES = ["classic", "substeps", "substeps_60", "following", "camera_slow", "following_slow", "macro", "macro_slow",
+         "macro_following_slow", "respawn", "respawn_following"]
 
 # a fault in the code, and the case that must catch it
 NEGATIVE_CONTROLS = {
@@ -49,6 +50,13 @@ NEGATIVE_CONTROLS = {
     # ... and following
     "following-view-unshifted": (("\t\t\trender_interpolation_camera_at_tick_in_vehicle(camera, &camera->latest);",
                                   "\t\t\t;"), "following_slow"),
+    # the view in the seat of a vehicle of the macro lane snapshotted with the next tick's first sub-step in it, a tick
+    # ahead of the vehicle drawn (a frame slower than a sub-step: b30's Pelican)
+    "macro-seat-view-unshifted": (("			render_interpolation_camera_at_tick_in_seat(camera, &camera->latest);",
+                                   "			;"), "macro_slow"),
+    # ... and following
+    "macro-following-view-unshifted": (("			render_interpolation_camera_at_tick_in_seat(camera, &camera->latest);",
+                                        "			;"), "macro_following_slow"),
     # a respawn into the seat blended from the dead camera (nearer and turned less than a cut's)
     "respawn-glides": (("\t\tcamera->has_previous = camera->valid && camera->unit_index == unit_index;",
                         "\t\tcamera->has_previous = camera->valid;"), "respawn"),
