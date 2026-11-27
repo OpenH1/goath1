@@ -198,6 +198,8 @@ KEPT_ELSEWHERE = {
                                     "surfaces read the mask, a stand-in where none is traced, whatever it holds)",
     'halo_dynamic_lights_flashlights': "the enhanced flashlight's slots: texels of the lights' cells (the backend's "
                                        "data, sent each frame), which no pipeline is built from",
+    'halo_dynamic_lights_attenuation': "the light model's falloff on the structure: texels of the lights' cells (the "
+                                       "backend's data, sent each frame), which no pipeline is built from",
     'halo_dynamic_lights_gel': "the enhanced flashlight's gel and falloff, made once a map: texels of the lights' "
                                "cells, which no pipeline is built from",
     'd3d8_draw_immediate_packed': "Begin, SetVertexData and End's own: the registers and the immediate draw as "
