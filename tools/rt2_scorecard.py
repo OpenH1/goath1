@@ -414,9 +414,12 @@ def kernels_compiled(folder):
     """port/linux/vulkan/lt's kernels compiled here (tools/vulkan_lt_shaders.py's list and compiler) into
     folder/<source>.spv"""
     import vulkan_lt_shaders
-    for _, source in vulkan_lt_shaders.KERNELS:
-        (folder / f"{source}.spv").write_bytes(vulkan_lt_shaders.spirv(vulkan_lt_shaders.FOLDER / source))
-    return [source for _, source in vulkan_lt_shaders.KERNELS]
+    names = []
+    for _, source, defines in vulkan_lt_shaders.KERNELS:
+        name = vulkan_lt_shaders.kernel_name(source, defines)
+        (folder / f"{name}.spv").write_bytes(vulkan_lt_shaders.spirv(vulkan_lt_shaders.FOLDER / source, defines))
+        names.append(name)
+    return names
 
 
 def shader(args):
@@ -437,7 +440,7 @@ def shader(args):
     version = 0
 
     def changed_at():
-        return max((vulkan_lt_shaders.FOLDER / s).stat().st_mtime for _, s in vulkan_lt_shaders.KERNELS)
+        return max(path.stat().st_mtime for path in vulkan_lt_shaders.FOLDER.glob("*.*") if path.suffix != ".inc")
 
     try:
         service = Service(host, replay, f"{RECORDINGS}/{recording}", env, "shared")

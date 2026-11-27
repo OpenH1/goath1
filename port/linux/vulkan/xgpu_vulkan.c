@@ -12826,7 +12826,9 @@ static int layouts_make(void)
 		textures[index].binding = (uint32_t)index;
 		textures[index].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 		textures[index].descriptorCount = 1;
-		textures[index].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+		/* (and the vertex stage's: the light transport's radiance cache's
+		scatter reads its samples there, xgpu_vulkan_lt_indirect.c) */
+		textures[index].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 	}
 	info.bindingCount = XGPU_VULKAN_TEXTURES;
 	info.pBindings = textures;

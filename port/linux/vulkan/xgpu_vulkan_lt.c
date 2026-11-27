@@ -44,9 +44,11 @@ HALO_LT_E1_UNSHADOWED=1 (checking) casts no shadow ray. Render thread alone.
 #include "xgpu_vulkan.h"
 #include "xgpu_vulkan_denoise.h"
 #include "xgpu_vulkan_lt.h"
+#include "xgpu_vulkan_lt_indirect.h"
 #include "xgpu_vulkan_lt_lights.h"
 
 #include <math.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -304,6 +306,11 @@ VkShaderModule xgpu_vulkan_lt_kernel(const char *source)
 		{ "denoise_temporal.frag", lt_denoise_temporal_spirv, sizeof(lt_denoise_temporal_spirv) / sizeof(uint32_t) },
 		{ "denoise_atrous.frag", lt_denoise_atrous_spirv, sizeof(lt_denoise_atrous_spirv) / sizeof(uint32_t) },
 		{ "denoise_guide.frag", lt_denoise_guide_spirv, sizeof(lt_denoise_guide_spirv) / sizeof(uint32_t) },
+		/* (the indirect light and reflections: xgpu_vulkan_lt_indirect.c) */
+		{ "e1_indirect.frag", lt_indirect_spirv, sizeof(lt_indirect_spirv) / sizeof(uint32_t) },
+		{ "indirect_cache.vert", lt_indirect_cache_vertex_spirv,
+			sizeof(lt_indirect_cache_vertex_spirv) / sizeof(uint32_t) },
+		{ "indirect_cache.frag", lt_indirect_cache_spirv, sizeof(lt_indirect_cache_spirv) / sizeof(uint32_t) },
 	};
 	size_t index;
 
@@ -652,6 +659,9 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 			lt_set(t[5], (float)light->owner, (float)light->gel_slot, light->gel_width, 0.0f);
 			lt.ids[now][row][0] = light->id[0];
 			lt.ids[now][row][1] = light->id[1] | 1u << 23;
+			/* (its stable id, 20 bits of it: the radiance cache's light-id
+			hash, lt/indirect.glsl) */
+			t[7][0] = (float)((light->id[0] ^ light->id[1] * 0x9e3779b9u) & 0xFFFFFu);
 		}
 		else
 		{
@@ -680,6 +690,8 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 					kind == LT_KIND_SPOT ? -block->color[row][3] / scale + 1.0f / scale : -1.0f);
 			}
 			lt_set(t[4], block->color[row][0], block->color[row][1], block->color[row][2], 0.0f);
+			/* (no id: its row's, for the cache's light-id hash) */
+			t[7][0] = (float)(0x80000u | (unsigned)row);
 			if (lt.kind_scale[kind] >= 0.0f)
 				for (index = 0; index < 3; index++)
 					t[4][index] *= lt.kind_scale[kind];
@@ -922,7 +934,8 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 	const unsigned char *cells, const struct xgpu_dynamic_lights_block *block)
 {
 	const struct xgpu_vulkan_image_description *size;
-	struct xgpu_vulkan_image *history, *denoised = NULL, *reservoirs = NULL, *light_image;
+	struct xgpu_vulkan_image *history, *denoised = NULL, *reservoirs = NULL, *light_image, *diffuse;
+	struct xgpu_vulkan_lt_indirect_frame indirect_frame;
 	struct lt_params params;
 	int32_t rectangle[4];
 	int axis, light, start;
@@ -1024,6 +1037,27 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 		lt.reservoirs_valid = 0;
 	lt_pass_draw(lt.means[lt.current], rectangle, pass, &params, &lt.pass, inputs, history, lt.previous, lt.guides,
 		reservoirs);
+	/* (the dynamic lights' indirect light and reflections,
+	xgpu_vulkan_lt_indirect.c: the direct light and the bounce one diffuse
+	signal from here) */
+	memset(&indirect_frame, 0, sizeof(indirect_frame));
+	indirect_frame.inputs = inputs;
+	indirect_frame.previous_inputs = lt.previous;
+	indirect_frame.guides = lt.guides;
+	indirect_frame.table = lt.table;
+	indirect_frame.direct = lt.means[lt.current];
+	indirect_frame.pass = pass;
+	indirect_frame.params = &params;
+	indirect_frame.params_size = sizeof(params);
+	indirect_frame.control_offset = offsetof(struct lt_params, control);
+	indirect_frame.rectangle = rectangle;
+	indirect_frame.mode = lt.mode;
+	indirect_frame.cap = params.control[0];
+	indirect_frame.start = start;
+	indirect_frame.previous_valid = lt.previous_valid;
+	diffuse = xgpu_vulkan_lt_indirect_draw(&indirect_frame);
+	if (!diffuse)
+		diffuse = lt.means[lt.current];
 	if (lt.mode == XGPU_VULKAN_LT_DENOISE)
 	{
 		/* (the denoiser: this frame's sample and the last's, this frame's
@@ -1037,16 +1071,21 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 		/* (no spatial reuse in the re-shade: the last frame's reservoirs
 		are not kept; RIS alone, its seed the last frame's) */
 		lt.reshade_params.lights[2] &= ~LT_LIGHTS_REUSE;
-		denoised = xgpu_vulkan_denoise_draw(lt.means[lt.current], had ? history : NULL, inputs,
-			had ? lt.previous : NULL, lt.guides, pass, rectangle);
+		/* (its gradients the direct light's alone: the re-shade's, against
+		the last frame's direct sample) */
+		denoised = xgpu_vulkan_denoise_draw(diffuse, had ? history : NULL, inputs, had ? lt.previous : NULL, lt.guides,
+			pass, rectangle);
 		xgpu_vulkan_pass_owner(LT_OWNER);
 	}
 	/* (W2: the suns' share a dynamic object shadows, its own history kept
 	(the denoiser and the light's history keep the light alone, which is
 	never less than 0); then the light the surfaces read: the light, and
 	the share's luminance in alpha, which they take off the lightmap's) */
-	light_image = denoised ? denoised : lt.means[lt.current];
-	lt.final = lt_image(lt.final, XGPU_VULKAN_FORMAT_RGBA32F, size->width, size->height);
+	light_image = denoised ? denoised : diffuse;
+	/* (with the indirect light, twice as wide: the right half the
+	reflections', xgpu_vulkan_lt_indirect_final) */
+	lt.final = lt_image(lt.final, XGPU_VULKAN_FORMAT_RGBA32F, size->width * (xgpu_vulkan_lt_indirect_on() ? 2 : 1),
+		size->height);
 	if (lt.final)
 	{
 		struct lt_params sun_params = params;
@@ -1076,6 +1115,8 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 		lt_pass_draw(lt.final, rectangle, pass, &sun_params, &lt.pass, inputs, light_image, lt.previous, lt.guides,
 			share);
 		light_image = lt.final;
+		if (xgpu_vulkan_lt_indirect_on())
+			xgpu_vulkan_lt_indirect_final(&indirect_frame, lt.final);
 	}
 	/* (this frame's inputs kept for the next's reprojection) */
 	xgpu_vulkan_image_copy(inputs, 0, 0, lt.previous, 0, 0);
@@ -1089,7 +1130,8 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 			every = getenv("HALO_LT_E1_DUMP_EVERY") ? atol(getenv("HALO_LT_E1_DUMP_EVERY")) : 0;
 		if ((lt.since_start < LT_DUMPS && lt.dumps[lt.since_start]) || (every > 0 && !(lt.since_start % every)))
 		{
-			lt_dump(rectangle, pass, &params, denoised ? denoised : lt.means[lt.current], inputs);
+			lt_dump(rectangle, pass, &params, denoised ? denoised : diffuse, inputs);
+			xgpu_vulkan_lt_indirect_dump(&indirect_frame, lt.since_start);
 			/* (HALO_LT_E1_DUMP_FINAL: and the light the surfaces read, the
 			suns' share in alpha) */
 			if (getenv("HALO_LT_E1_DUMP_FINAL"))
