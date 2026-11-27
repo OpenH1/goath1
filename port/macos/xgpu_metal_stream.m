@@ -1344,6 +1344,11 @@ static void dynamic_lights_cells(const struct xgpu_stream_dynamic_lights_block *
 	{
 		if (size)
 			memcpy(stream.lights_cells + offset, cells, size);
+		/* (the world's boxes and groups, once their thread has made them:
+		until then every light is walked) */
+		if (xgpu_dynamic_lights_world_take(&stream.lights_world_made) && stream.lights_world_made.bounded)
+			host_logf(HOST_LOG_INFO, "metal: the dynamic lights' world: its boxes in %u groups (made on a thread of "
+				"their own)", stream.lights_world_made.group_count);
 		xgpu_dynamic_lights_world_walked(&stream.lights_world_made, (const float (*)[4])record_block, count,
 			stream.lights_cells, (uint32_t *)(stream.lights_cells + XGPU_DYNAMIC_LIGHTS_WORLD_WALK_TEXEL * 16));
 		cells = stream.lights_cells;
@@ -1396,14 +1401,15 @@ static void stream_dynamic_lights_world(void *context, const struct xgpu_stream_
 		stream.lights_world = xgpu_metal_buffer_create(XGPU_METAL_STREAM_DYNAMIC_LIGHT_WORLD_TEXELS * 16);
 	if (!stream.lights_world)
 		return;
-	if (!xgpu_dynamic_lights_world_convert(made, (const uint32_t (*)[4])texels, record->count))
+	/* (its clusters' boxes, in groups that a light's test of them walks,
+	made on a thread of their own: a large world's held the frame for 80 ms
+	as a structure was switched to; dynamic_lights_cells takes them) */
+	if (!xgpu_dynamic_lights_world_convert_later(made, (const uint32_t (*)[4])texels, record->count))
 		host_logf(HOST_LOG_WARN, "metal: the dynamic lights' world (%u texels) could not be made: its lights reach "
 			"every cluster", record->count);
 	else if (made->game_nodes)
 		host_logf(HOST_LOG_INFO, "metal: the dynamic lights' world: %u nodes, %u deep (the game's %u, %u deep)",
 			made->nodes, made->depth, made->game_nodes, made->game_depth);
-	/* (its clusters' boxes in groups, which a light's test of them walks) */
-	xgpu_dynamic_lights_world_group(made);
 	if (!made->count)
 		return;
 	xgpu_metal_buffer_write(stream.lights_world, 0, made->texels, made->count * 16, 1);

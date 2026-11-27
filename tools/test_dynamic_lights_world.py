@@ -38,9 +38,9 @@ def check(tmp_path_factory):
             if line.startswith(("#define D3DFORMAT_", "#define D3DSIZE_", "#define D3DTEXTURE_"))]
     (build / "xdk_enums.h").write_text("/* ---------- enumerations" + enums + "\n".join(d3d8) + "\n")
     executable = build / "check"
-    subprocess.run([CC, "-std=c99", "-O2", "-Wall", "-Wextra", "-Werror", f"-I{build}", "-o", str(executable),
-                    str(build / "xgpu_dynamic_lights_world.c"), str(ROOT / "tools/dynamic_lights_world_check.c"),
-                    "-lm"], check=True)
+    subprocess.run([CC, "-std=c99", "-O2", "-Wall", "-Wextra", "-Werror", f"-I{build}", "-pthread", "-o",
+                    str(executable), str(build / "xgpu_dynamic_lights_world.c"),
+                    str(ROOT / "tools/dynamic_lights_world_check.c"), "-lm"], check=True)
     return executable
 
 

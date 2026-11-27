@@ -2971,6 +2971,21 @@ the world is walked for (made each frame) */
 static struct xgpu_dynamic_lights_world lights_world;
 static unsigned char *lights_cells;
 
+/* when the world last came (seconds of the monotonic clock) */
+static double lights_world_given;
+
+/* the world's boxes and groups, once their thread has made them
+(stream_dynamic_lights_world's convert_later): until then every light is
+walked */
+static void lights_world_take(void)
+{
+	if (xgpu_dynamic_lights_world_take(&lights_world) && lights_world.bounded)
+		host_logf(HOST_LOG_INFO, "vulkan: the dynamic lights' world: %u boxes in %u groups (%u bytes), taken %.3f ms "
+			"after it came (made on a thread of their own)", lights_world.first[XGPU_DYNAMIC_LIGHTS_CLUSTERS],
+			lights_world.group_count, lights_world.group_bytes,
+			(host_load_trace_clock(CLOCK_MONOTONIC) - lights_world_given) * 1000.0);
+}
+
 /* HALO_LIGHTS_WORLD_VERIFY: each frame's walk mask found again by testing
 each cluster's boxes in turn (without their groups), and a difference
 logged; the updates compared and the differences, logged now and then (-1
@@ -3056,6 +3071,7 @@ static void dynamic_lights_cells(const struct xgpu_stream_dynamic_lights_block *
 				end = high;
 		}
 	}
+	lights_world_take();
 	xgpu_dynamic_lights_world_walked(&lights_world, (const float (*)[4])block, count, lights_cells, walk);
 	if (host_load_trace_switch("HALO_LIGHTS_WORLD_VERIFY", &lights_verify))
 	{
@@ -3106,7 +3122,6 @@ static void stream_dynamic_lights_change(void *context, const struct xgpu_stream
 static void stream_dynamic_lights_world(void *context, const struct xgpu_stream_dynamic_lights_world *record)
 {
 	const void *texels = host_pointer(record->texels);
-	double started, grouped;
 
 	(void)context;
 	if (!texels || !record->count || record->count > XGPU_STREAM_DYNAMIC_LIGHTS_WORLD_TEXELS)
@@ -3114,21 +3129,16 @@ static void stream_dynamic_lights_world(void *context, const struct xgpu_stream_
 	if (host_load_trace_switch("HALO_LIGHTS_WORLD_VERIFY", &lights_verify))
 		host_logf(HOST_LOG_INFO, "vulkan: lights world verify: %llu updates compared, %llu differ (a new world)",
 			lights_verified, lights_verify_differences);
-	if (!xgpu_dynamic_lights_world_convert(&lights_world, (const uint32_t (*)[4])texels, record->count))
+	/* (its clusters' boxes, in groups that a light's test of them walks,
+	made on a thread of their own: a large world's held the frame for 80 ms
+	as a structure was switched to; lights_world_take) */
+	lights_world_given = host_load_trace_clock(CLOCK_MONOTONIC);
+	if (!xgpu_dynamic_lights_world_convert_later(&lights_world, (const uint32_t (*)[4])texels, record->count))
 		host_logf(HOST_LOG_WARN, "vulkan: the dynamic lights' world (%u texels) could not be made: its lights reach "
 			"every cluster", record->count);
 	else if (lights_world.game_nodes)
 		host_logf(HOST_LOG_INFO, "vulkan: the dynamic lights' world: %u nodes, %u deep (the game's %u, %u deep)",
 			lights_world.nodes, lights_world.depth, lights_world.game_nodes, lights_world.game_depth);
-	/* (its clusters' boxes in groups, which a light's test of them walks) */
-	started = host_load_trace_clock(CLOCK_MONOTONIC);
-	if (xgpu_dynamic_lights_world_group(&lights_world))
-	{
-		grouped = host_load_trace_clock(CLOCK_MONOTONIC);
-		host_logf(HOST_LOG_INFO, "vulkan: the dynamic lights' world: %u boxes in %u groups (%u bytes), in %.3f ms",
-			lights_world.first[XGPU_DYNAMIC_LIGHTS_CLUSTERS], lights_world.group_count, lights_world.group_bytes,
-			(grouped - started) * 1000.0);
-	}
 	if (lights_world.count)
 		xgpu_vulkan_dynamic_lights_world(lights_world.texels, lights_world.count);
 }
