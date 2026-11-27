@@ -719,6 +719,12 @@ static boolean markers_draw_icon(
 	*drawn_height = height_pixels * scale;
 	center.x = bottom->x;
 	center.y = bottom->y - *drawn_height * 0.5f;
+	/* (a dark copy under it first, a little down and right, so that it reads
+over a bright or busy wall) */
+	byte_alpha = (byte)PIN((long)(255.0f * alpha * 0.7f + 0.5f), 0, 255);
+	hud_draw_mark_begin(center.x + 1.5f, center.y + 1.5f, &corner);
+	hud_draw_bitmap_direct(bitmap, _hud_anchor_center, &corner, clip, scale, 0.0f, (pixel32)byte_alpha << 24, FALSE);
+	hud_draw_mark_end();
 	byte_alpha = (byte)PIN((long)(255.0f * alpha + 0.5f), 0, 255);
 	hud_draw_mark_begin(center.x, center.y, &corner);
 	hud_draw_bitmap_direct(bitmap, _hud_anchor_center, &corner, clip, scale, 0.0f,
