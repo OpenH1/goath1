@@ -98,6 +98,11 @@ void SetRenderStateSmart(
 	unsigned long value);
 void rasterizer_set_stencil_mode(
 	long stencil_mode);
+/* port: (rasterizer_xbox.c, rasterizer_xbox_shadows.c: a ping's outline) */
+void rasterizer_stencil_mode_restore(
+	short stencil_mode);
+short rasterizer_get_stencil_mode(
+	void);
 boolean rasterizer_set_texture_bitmap_data(
 	short stage,
 	struct bitmap_data const *bitmap);

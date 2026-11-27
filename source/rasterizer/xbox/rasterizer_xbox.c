@@ -2724,6 +2724,16 @@ short rasterizer_get_stencil_mode(
 	return rasterizer_state_cache.stencil_mode;
 }
 
+/* port: a stencil mode set again after its states were set directly (a
+ping's outline: rasterizer_xbox_shadows.c) */
+void rasterizer_stencil_mode_restore(
+	short stencil_mode)
+{
+	rasterizer_state_cache.stencil_mode = NONE;
+	rasterizer_set_stencil_mode(stencil_mode == NONE ? RASTERIZER_STENCIL_MODE_NONE : stencil_mode);
+	return;
+}
+
 void rasterizer_set_stencil_mode(
 	long stencil_mode)
 {
