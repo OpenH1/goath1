@@ -62,6 +62,7 @@ touched.
 /* port_config.c's */
 int config_boolean(char const *name);
 unsigned long system_milliseconds(void);
+void platform_log(char const *format, ...);
 
 /* ---------- constants */
 
@@ -559,6 +560,10 @@ static void score_draw_popup(
 		current = waiting;
 		score_hud.shown_at[current] = now ? now : 1;
 		waiting_count--;
+		/* (the log: each pop-up as it shows, and how long it waited) */
+		platform_log("campaign score: pop-up of %ld points for player %d shown after %lu ms, %d waiting",
+			score_hud.groups[current].points, (int)player, now - score_hud.groups[current].last_at,
+			(int)waiting_count);
 	}
 	group = &score_hud.groups[current];
 	if (waiting_count > 0)
