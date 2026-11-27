@@ -8916,11 +8916,11 @@ static unsigned int lt_reflection_texel(struct module *m, struct pixel_state *st
 	sampled = load(m, type_sampled_image(m, DIM_2D, FALSE, FALSE, TRUE), state->rt_bounce);
 	image = op(m, OP_IMAGE, type_sampled_image(m, DIM_2D, FALSE, FALSE, FALSE), 1, &sampled);
 	size = image_size(m, image, m->t_iv2);
-	half = op2(m, OP_SHIFT_RIGHT_ARITHMETIC, m->t_int, extract(m, size, 0), constant_int(m, 1));
+	half = op2(m, OP_SHIFT_RIGHT_ARITHMETIC, m->t_int, op2(m, OP_COMPOSITE_EXTRACT, m->t_int, size, 0), constant_int(m, 1));
 	pixel = op1(m, OP_CONVERT_F_TO_S, m->t_iv2, xy(m, load(m, m->t_v4, state->frag_coord)));
-	x = op2(m, OP_I_ADD, m->t_int, ext3(m, GLSL_S_CLAMP, m->t_int, extract(m, pixel, 0), constant_int(m, 0),
+	x = op2(m, OP_I_ADD, m->t_int, ext3(m, GLSL_S_CLAMP, m->t_int, op2(m, OP_COMPOSITE_EXTRACT, m->t_int, pixel, 0), constant_int(m, 0),
 		ext2(m, GLSL_S_MAX, m->t_int, int_add(m, half, -1), constant_int(m, 0))), half);
-	y = ext2(m, GLSL_S_MIN, m->t_int, extract(m, pixel, 1), int_add(m, extract(m, size, 1), -1));
+	y = ext2(m, GLSL_S_MIN, m->t_int, op2(m, OP_COMPOSITE_EXTRACT, m->t_int, pixel, 1), int_add(m, op2(m, OP_COMPOSITE_EXTRACT, m->t_int, size, 1), -1));
 	at = rt_bounce_iv2(m, x, y);
 	operands[0] = image;
 	operands[1] = at;
@@ -8934,11 +8934,6 @@ static unsigned int lt_reflection_texel(struct module *m, struct pixel_state *st
 	if (rt_reflections_view() == 1)
 		rgb = construct(m, 3, (unsigned int[]){ fsub(m, 1, constant_float(m, 1.0f), extract(m, s, 3)), extract(m, s, 3),
 			constant_float(m, 0.0f) });
-	/* (=2: the binding's width / 4000 in blue, checking) */
-	if (rt_reflections_view() == 2)
-		rgb = construct(m, 3, (unsigned int[]){ extract(m, s, 3), fmul(m, 1, op1(m, OP_CONVERT_S_TO_F, m->t_float,
-			extract(m, pixel, 0)), constant_float(m, 1.0f / 4000.0f)), fmul(m, 1, op1(m, OP_CONVERT_S_TO_F, m->t_float,
-			extract(m, size, 0)), constant_float(m, 1.0f / 4000.0f)) });
 	return vec4_of(m, rgb, extract(m, cube, 3));
 }
 
