@@ -32,8 +32,9 @@ OPENH1_DLSS.C
 display.temporal_aa "dlss"'s module (xgpu_vulkan_dlss.h): the game's calls
 into NVIDIA's NGX (the DLSS SDK's libnvsdk_ngx.a / nvsdk_ngx_s.lib, linked
 into this module alone), which loads the driver's NGX core and the DLSS
-runtime (libnvidia-ngx-dlss.so.<version> / nvngx_dlss.dll) staged beside this
-module. configure.py --dlss builds it (tools/vulkan_build.py's
+runtimes staged beside this module: Super Resolution's
+(libnvidia-ngx-dlss.so.<version> / nvngx_dlss.dll) and Ray Reconstruction's
+(libnvidia-ngx-dlssd.so.<version> / nvngx_dlssd.dll). configure.py --dlss builds it (tools/vulkan_build.py's
 dlss_module), from the SDK fetched at configure time; the repository holds
 none of NVIDIA's files.
 
@@ -44,6 +45,12 @@ none of NVIDIA's files.
   the render scale's (render scale 1: DLAA); the motion at the render's
   resolution, not jittered; the depth reversed; display.hdr's linear light
   marked HDR, exposure 1 (no exposure texture, no auto exposure).
+- DLSS Ray Reconstruction (NGX's DLSS-D, ABI 2): the ray-traced passes'
+  denoiser and upscaler in one, a feature a window as Super Resolution's,
+  its mode chosen the same way; the colour always linear light, the depth
+  the device's (reversed), the roughness packed in the normals' w. Its
+  runtime's version is read from NGX's own log of the feature's loading
+  (no call gives it), else "unknown".
 */
 
 #define OPENH1_DLSS_MODULE 1
@@ -52,6 +59,7 @@ none of NVIDIA's files.
 
 #include "nvsdk_ngx.h"
 #include "nvsdk_ngx_vk.h"
+#include "nvsdk_ngx_defs_dlssd.h"
 
 #include "../xgpu_vulkan_dlss.h"
 
@@ -75,8 +83,10 @@ none of NVIDIA's files.
 
 static struct
 {
-	int ready;
+	int ready, rr_ready;
 	VkDevice device;
+	/* Ray Reconstruction's runtime's version, from NGX's log */
+	char rr_version[64];
 	NVSDK_NGX_Parameter *parameters;
 	void (*log)(int warning, const char *line);
 	/* the module's folder (where the DLSS runtime is), and NGX's data
@@ -107,12 +117,28 @@ static void NVSDK_CONV ngx_log(const char *message, NVSDK_NGX_Logging_Level leve
 	char line[512];
 
 	(void)level;
-	(void)source;
 	if (!length)
 		return;
 	/* (its own line end left off) */
 	snprintf(line, sizeof(line), "%.*s", (int)(message[length - 1] == '\n' ? length - 1 : length), message);
-	say(0, "NGX: %s", line);
+	/* (Ray Reconstruction's runtime's version, as NGX logs its loading:
+	"... version : 310.9.16 ...", kept from the first such line) */
+	if (!module.rr_version[0] && (source == NVSDK_NGX_Feature_RayReconstruction || strstr(line, "dlssd")))
+	{
+		const char *found = strstr(line, "ersion");
+
+		while (found && *found && !(*found >= '0' && *found <= '9'))
+			found++;
+		if (found && *found)
+		{
+			size_t digits = strspn(found, "0123456789.");
+
+			if (digits > 0 && digits < sizeof(module.rr_version))
+				snprintf(module.rr_version, sizeof(module.rr_version), "%.*s", (int)digits, found);
+		}
+	}
+	if (getenv("HALO_DLSS_LOG"))
+		say(0, "NGX: %s", line);
 }
 
 /* (the game's paths are UTF-8) */
@@ -178,8 +204,9 @@ static void common_make(const char *data_folder)
 	module.common.PathListInfo.Path = module.paths;
 	module.common.PathListInfo.Length = 1;
 	module.common.LoggingInfo.LoggingCallback = ngx_log;
-	module.common.LoggingInfo.MinimumLoggingLevel = getenv("HALO_DLSS_LOG") ? NVSDK_NGX_LOGGING_LEVEL_ON :
-		NVSDK_NGX_LOGGING_LEVEL_OFF;
+	/* (always on, to read Ray Reconstruction's version from it: its lines
+	said only with HALO_DLSS_LOG) */
+	module.common.LoggingInfo.MinimumLoggingLevel = NVSDK_NGX_LOGGING_LEVEL_ON;
 	module.common.LoggingInfo.DisableOtherLoggingSinks = getenv("HALO_DLSS_LOG") == NULL;
 }
 
@@ -283,17 +310,34 @@ static int initialize(VkInstance instance, VkPhysicalDevice physical, VkDevice d
 		return 0;
 	}
 	module.ready = 1;
+	/* (Ray Reconstruction: where its runtime is found and the GPU has it) */
+	available = needs_driver = 0;
+	NVSDK_NGX_Parameter_GetI(module.parameters, NVSDK_NGX_Parameter_SuperSamplingDenoising_NeedsUpdatedDriver,
+		&needs_driver);
+	result = NVSDK_NGX_Parameter_GetI(module.parameters, NVSDK_NGX_Parameter_SuperSamplingDenoising_Available,
+		&available);
+	module.rr_ready = NVSDK_NGX_SUCCEED(result) && available;
+	if (!module.rr_ready)
+	{
+		int code = 0;
+
+		NVSDK_NGX_Parameter_GetI(module.parameters, NVSDK_NGX_Parameter_SuperSamplingDenoising_FeatureInitResult,
+			&code);
+		say(0, "DLSS Ray Reconstruction not available (0x%08x%s)", (unsigned)code,
+			needs_driver ? ", a newer driver needed" : "");
+	}
 	return 1;
 }
 
 /* the quality mode whose range of render sizes holds the render size (the
 optimal size nearest it); by the ratio where NGX gives no ranges */
-static NVSDK_NGX_PerfQuality_Value mode_choose(const struct openh1_dlss_create *create)
+static NVSDK_NGX_PerfQuality_Value mode_choose(const uint32_t render_size[2], const uint32_t output_size[2],
+	const char *optimal_settings)
 {
 	static const NVSDK_NGX_PerfQuality_Value modes[] = {
 		NVSDK_NGX_PerfQuality_Value_DLAA, NVSDK_NGX_PerfQuality_Value_MaxQuality, NVSDK_NGX_PerfQuality_Value_Balanced,
 		NVSDK_NGX_PerfQuality_Value_MaxPerf, NVSDK_NGX_PerfQuality_Value_UltraPerformance };
-	float ratio = (float)create->render[0] / (float)create->output[0];
+	float ratio = (float)render_size[0] / (float)output_size[0];
 	NVSDK_NGX_PerfQuality_Value chosen = ratio >= 0.99f ? NVSDK_NGX_PerfQuality_Value_DLAA :
 		ratio >= 0.62f ? NVSDK_NGX_PerfQuality_Value_MaxQuality : ratio >= 0.54f ? NVSDK_NGX_PerfQuality_Value_Balanced :
 		ratio >= 0.42f ? NVSDK_NGX_PerfQuality_Value_MaxPerf : NVSDK_NGX_PerfQuality_Value_UltraPerformance;
@@ -301,15 +345,15 @@ static NVSDK_NGX_PerfQuality_Value mode_choose(const struct openh1_dlss_create *
 	unsigned int best = 0xffffffffu;
 	size_t index;
 
-	NVSDK_NGX_Parameter_GetVoidPointer(module.parameters, NVSDK_NGX_Parameter_DLSSOptimalSettingsCallback, &callback);
+	NVSDK_NGX_Parameter_GetVoidPointer(module.parameters, optimal_settings, &callback);
 	if (!callback)
 		return chosen;
 	for (index = 0; index < sizeof(modes) / sizeof(modes[0]); index++)
 	{
 		unsigned int optimal[2] = { 0, 0 }, low[2], high[2], distance;
 
-		NVSDK_NGX_Parameter_SetUI(module.parameters, NVSDK_NGX_Parameter_Width, create->output[0]);
-		NVSDK_NGX_Parameter_SetUI(module.parameters, NVSDK_NGX_Parameter_Height, create->output[1]);
+		NVSDK_NGX_Parameter_SetUI(module.parameters, NVSDK_NGX_Parameter_Width, output_size[0]);
+		NVSDK_NGX_Parameter_SetUI(module.parameters, NVSDK_NGX_Parameter_Height, output_size[1]);
 		NVSDK_NGX_Parameter_SetI(module.parameters, NVSDK_NGX_Parameter_PerfQualityValue, (int)modes[index]);
 		NVSDK_NGX_Parameter_SetI(module.parameters, NVSDK_NGX_Parameter_RTXValue, 0);
 		if (NVSDK_NGX_FAILED(((PFN_NVSDK_NGX_DLSS_GetOptimalSettingsCallback)callback)(module.parameters)))
@@ -324,10 +368,10 @@ static NVSDK_NGX_PerfQuality_Value mode_choose(const struct openh1_dlss_create *
 		NVSDK_NGX_Parameter_GetUI(module.parameters, NVSDK_NGX_Parameter_DLSS_Get_Dynamic_Max_Render_Height, &high[1]);
 		NVSDK_NGX_Parameter_GetUI(module.parameters, NVSDK_NGX_Parameter_DLSS_Get_Dynamic_Min_Render_Width, &low[0]);
 		NVSDK_NGX_Parameter_GetUI(module.parameters, NVSDK_NGX_Parameter_DLSS_Get_Dynamic_Min_Render_Height, &low[1]);
-		if (create->render[0] < low[0] || create->render[0] > high[0] || create->render[1] < low[1] ||
-			create->render[1] > high[1])
+		if (render_size[0] < low[0] || render_size[0] > high[0] || render_size[1] < low[1] ||
+			render_size[1] > high[1])
 			continue;
-		distance = optimal[0] > create->render[0] ? optimal[0] - create->render[0] : create->render[0] - optimal[0];
+		distance = optimal[0] > render_size[0] ? optimal[0] - render_size[0] : render_size[0] - optimal[0];
 		if (distance < best)
 		{
 			best = distance;
@@ -354,7 +398,7 @@ static void *feature_create(VkCommandBuffer commands, const struct openh1_dlss_c
 		return NULL;
 	if (create->hdr)
 		flags |= NVSDK_NGX_DLSS_Feature_Flags_IsHDR;
-	mode = mode_choose(create);
+	mode = mode_choose(create->render, create->output, NVSDK_NGX_Parameter_DLSSOptimalSettingsCallback);
 	for (index = 0; index < sizeof(presets) / sizeof(presets[0]); index++)
 		NVSDK_NGX_Parameter_SetUI(module.parameters, presets[index], (unsigned int)create->preset);
 	NVSDK_NGX_Parameter_SetUI(module.parameters, NVSDK_NGX_Parameter_CreationNodeMask, 1);
@@ -445,6 +489,147 @@ static int feature_evaluate(VkCommandBuffer commands, void *feature, const struc
 	return 1;
 }
 
+/* ---------- Ray Reconstruction */
+
+static int rr_available(char *version, uint32_t capacity)
+{
+	if (version && capacity)
+		snprintf(version, capacity, "%s", module.rr_version[0] ? module.rr_version : "unknown");
+	return module.ready && module.rr_ready;
+}
+
+static void *rr_create(VkCommandBuffer commands, const struct openh1_dlss_rr_create *create)
+{
+	static const char *const presets[] = {
+		NVSDK_NGX_Parameter_RayReconstruction_Hint_Render_Preset_DLAA,
+		NVSDK_NGX_Parameter_RayReconstruction_Hint_Render_Preset_Quality,
+		NVSDK_NGX_Parameter_RayReconstruction_Hint_Render_Preset_Balanced,
+		NVSDK_NGX_Parameter_RayReconstruction_Hint_Render_Preset_Performance,
+		NVSDK_NGX_Parameter_RayReconstruction_Hint_Render_Preset_UltraPerformance,
+		NVSDK_NGX_Parameter_RayReconstruction_Hint_Render_Preset_UltraQuality };
+	NVSDK_NGX_Handle *handle = NULL;
+	NVSDK_NGX_PerfQuality_Value mode;
+	NVSDK_NGX_Result result;
+	int flags = NVSDK_NGX_DLSS_Feature_Flags_MVLowRes | NVSDK_NGX_DLSS_Feature_Flags_DepthInverted |
+		NVSDK_NGX_DLSS_Feature_Flags_IsHDR;
+	size_t index;
+
+	if (!module.ready || !module.rr_ready || !create->render[0] || !create->render[1] || !create->output[0] ||
+		!create->output[1])
+		return NULL;
+	mode = mode_choose(create->render, create->output, NVSDK_NGX_Parameter_DLSSDOptimalSettingsCallback);
+	for (index = 0; index < sizeof(presets) / sizeof(presets[0]); index++)
+		NVSDK_NGX_Parameter_SetUI(module.parameters, presets[index], (unsigned int)create->preset);
+	NVSDK_NGX_Parameter_SetUI(module.parameters, NVSDK_NGX_Parameter_CreationNodeMask, 1);
+	NVSDK_NGX_Parameter_SetUI(module.parameters, NVSDK_NGX_Parameter_VisibilityNodeMask, 1);
+	NVSDK_NGX_Parameter_SetUI(module.parameters, NVSDK_NGX_Parameter_Width, create->render[0]);
+	NVSDK_NGX_Parameter_SetUI(module.parameters, NVSDK_NGX_Parameter_Height, create->render[1]);
+	NVSDK_NGX_Parameter_SetUI(module.parameters, NVSDK_NGX_Parameter_OutWidth, create->output[0]);
+	NVSDK_NGX_Parameter_SetUI(module.parameters, NVSDK_NGX_Parameter_OutHeight, create->output[1]);
+	NVSDK_NGX_Parameter_SetI(module.parameters, NVSDK_NGX_Parameter_PerfQualityValue, (int)mode);
+	NVSDK_NGX_Parameter_SetI(module.parameters, NVSDK_NGX_Parameter_DLSS_Feature_Create_Flags, flags);
+	NVSDK_NGX_Parameter_SetI(module.parameters, NVSDK_NGX_Parameter_DLSS_Enable_Output_Subrects, 0);
+	NVSDK_NGX_Parameter_SetI(module.parameters, NVSDK_NGX_Parameter_DLSS_Denoise_Mode,
+		NVSDK_NGX_DLSS_Denoise_Mode_DLUnified);
+	NVSDK_NGX_Parameter_SetUI(module.parameters, NVSDK_NGX_Parameter_DLSS_Roughness_Mode,
+		NVSDK_NGX_DLSS_Roughness_Mode_Packed);
+	NVSDK_NGX_Parameter_SetUI(module.parameters, NVSDK_NGX_Parameter_Use_HW_Depth, NVSDK_NGX_DLSS_Depth_Type_HW);
+	result = NVSDK_NGX_VULKAN_CreateFeature1(module.device, commands, NVSDK_NGX_Feature_RayReconstruction,
+		module.parameters, &handle);
+	/* (the denoise mode off again for Super Resolution's next feature: the
+	parameters are shared) */
+	NVSDK_NGX_Parameter_SetI(module.parameters, NVSDK_NGX_Parameter_DLSS_Denoise_Mode,
+		NVSDK_NGX_DLSS_Denoise_Mode_Off);
+	if (NVSDK_NGX_FAILED(result) || !handle)
+	{
+		say(1, "a Ray Reconstruction feature not made, %ux%u to %ux%u, mode %d (0x%08x)", create->render[0],
+			create->render[1], create->output[0], create->output[1], (int)mode, (unsigned)result);
+		return NULL;
+	}
+	say(0, "a Ray Reconstruction feature made, %ux%u to %ux%u, mode %d, runtime %s", create->render[0],
+		create->render[1], create->output[0], create->output[1], (int)mode,
+		module.rr_version[0] ? module.rr_version : "of an unknown version");
+	return handle;
+}
+
+static int rr_evaluate(VkCommandBuffer commands, void *feature, const struct openh1_dlss_rr_frame *frame)
+{
+	NVSDK_NGX_Parameter *parameters = module.parameters;
+	NVSDK_NGX_Resource_VK color, diffuse_albedo, specular_albedo, normals, depth, motion, hit_distance, output;
+	NVSDK_NGX_Result result;
+	const uint32_t *corner = frame->corner;
+
+	if (!module.ready || !module.rr_ready || !feature)
+		return 0;
+	color = resource(&frame->color, 0);
+	diffuse_albedo = resource(&frame->diffuse_albedo, 0);
+	specular_albedo = resource(&frame->specular_albedo, 0);
+	normals = resource(&frame->normal_roughness, 0);
+	depth = resource(&frame->depth, 0);
+	motion = resource(&frame->motion, 0);
+	hit_distance = resource(&frame->specular_hit_distance, 0);
+	output = resource(&frame->output, 1);
+	NVSDK_NGX_Parameter_SetVoidPointer(parameters, NVSDK_NGX_Parameter_Color, &color);
+	NVSDK_NGX_Parameter_SetVoidPointer(parameters, NVSDK_NGX_Parameter_Output, &output);
+	NVSDK_NGX_Parameter_SetVoidPointer(parameters, NVSDK_NGX_Parameter_Depth, &depth);
+	NVSDK_NGX_Parameter_SetVoidPointer(parameters, NVSDK_NGX_Parameter_MotionVectors, &motion);
+	NVSDK_NGX_Parameter_SetVoidPointer(parameters, NVSDK_NGX_Parameter_DiffuseAlbedo, &diffuse_albedo);
+	NVSDK_NGX_Parameter_SetVoidPointer(parameters, NVSDK_NGX_Parameter_SpecularAlbedo, &specular_albedo);
+	NVSDK_NGX_Parameter_SetVoidPointer(parameters, NVSDK_NGX_Parameter_GBuffer_Normals, &normals);
+	NVSDK_NGX_Parameter_SetVoidPointer(parameters, NVSDK_NGX_Parameter_GBuffer_Roughness, NULL);
+	NVSDK_NGX_Parameter_SetVoidPointer(parameters, NVSDK_NGX_Parameter_DLSSD_SpecularHitDistance,
+		frame->specular_hit_distance.view ? &hit_distance : NULL);
+	NVSDK_NGX_Parameter_SetVoidPointer(parameters, NVSDK_NGX_Parameter_TransparencyMask, NULL);
+	NVSDK_NGX_Parameter_SetVoidPointer(parameters, NVSDK_NGX_Parameter_ExposureTexture, NULL);
+	NVSDK_NGX_Parameter_SetVoidPointer(parameters, NVSDK_NGX_Parameter_DLSS_Input_Bias_Current_Color_Mask, NULL);
+	NVSDK_NGX_Parameter_SetVoidPointer(parameters, NVSDK_NGX_Parameter_DLSS_WORLD_TO_VIEW_MATRIX,
+		(void *)frame->world_to_view);
+	NVSDK_NGX_Parameter_SetVoidPointer(parameters, NVSDK_NGX_Parameter_DLSS_VIEW_TO_CLIP_MATRIX,
+		(void *)frame->view_to_clip);
+	NVSDK_NGX_Parameter_SetF(parameters, NVSDK_NGX_Parameter_Jitter_Offset_X, frame->jitter[0]);
+	NVSDK_NGX_Parameter_SetF(parameters, NVSDK_NGX_Parameter_Jitter_Offset_Y, frame->jitter[1]);
+	NVSDK_NGX_Parameter_SetI(parameters, NVSDK_NGX_Parameter_Reset, frame->reset ? 1 : 0);
+	NVSDK_NGX_Parameter_SetF(parameters, NVSDK_NGX_Parameter_MV_Scale_X, frame->motion_scale[0]);
+	NVSDK_NGX_Parameter_SetF(parameters, NVSDK_NGX_Parameter_MV_Scale_Y, frame->motion_scale[1]);
+	NVSDK_NGX_Parameter_SetUI(parameters, NVSDK_NGX_Parameter_DLSS_Input_Color_Subrect_Base_X, corner[0]);
+	NVSDK_NGX_Parameter_SetUI(parameters, NVSDK_NGX_Parameter_DLSS_Input_Color_Subrect_Base_Y, corner[1]);
+	NVSDK_NGX_Parameter_SetUI(parameters, NVSDK_NGX_Parameter_DLSS_Input_Depth_Subrect_Base_X, corner[0]);
+	NVSDK_NGX_Parameter_SetUI(parameters, NVSDK_NGX_Parameter_DLSS_Input_Depth_Subrect_Base_Y, corner[1]);
+	NVSDK_NGX_Parameter_SetUI(parameters, NVSDK_NGX_Parameter_DLSS_Input_MV_SubrectBase_X, corner[0]);
+	NVSDK_NGX_Parameter_SetUI(parameters, NVSDK_NGX_Parameter_DLSS_Input_MV_SubrectBase_Y, corner[1]);
+	NVSDK_NGX_Parameter_SetUI(parameters, NVSDK_NGX_Parameter_DLSS_Input_DiffuseAlbedo_Subrect_Base_X, corner[0]);
+	NVSDK_NGX_Parameter_SetUI(parameters, NVSDK_NGX_Parameter_DLSS_Input_DiffuseAlbedo_Subrect_Base_Y, corner[1]);
+	NVSDK_NGX_Parameter_SetUI(parameters, NVSDK_NGX_Parameter_DLSS_Input_SpecularAlbedo_Subrect_Base_X, corner[0]);
+	NVSDK_NGX_Parameter_SetUI(parameters, NVSDK_NGX_Parameter_DLSS_Input_SpecularAlbedo_Subrect_Base_Y, corner[1]);
+	NVSDK_NGX_Parameter_SetUI(parameters, NVSDK_NGX_Parameter_DLSS_Input_Normals_Subrect_Base_X, corner[0]);
+	NVSDK_NGX_Parameter_SetUI(parameters, NVSDK_NGX_Parameter_DLSS_Input_Normals_Subrect_Base_Y, corner[1]);
+	NVSDK_NGX_Parameter_SetUI(parameters, NVSDK_NGX_Parameter_DLSSD_SpecularHitDistance_Subrect_Base_X, corner[0]);
+	NVSDK_NGX_Parameter_SetUI(parameters, NVSDK_NGX_Parameter_DLSSD_SpecularHitDistance_Subrect_Base_Y, corner[1]);
+	NVSDK_NGX_Parameter_SetUI(parameters, NVSDK_NGX_Parameter_DLSS_Output_Subrect_Base_X, 0);
+	NVSDK_NGX_Parameter_SetUI(parameters, NVSDK_NGX_Parameter_DLSS_Output_Subrect_Base_Y, 0);
+	NVSDK_NGX_Parameter_SetUI(parameters, NVSDK_NGX_Parameter_DLSS_Render_Subrect_Dimensions_Width, frame->render[0]);
+	NVSDK_NGX_Parameter_SetUI(parameters, NVSDK_NGX_Parameter_DLSS_Render_Subrect_Dimensions_Height, frame->render[1]);
+	NVSDK_NGX_Parameter_SetF(parameters, NVSDK_NGX_Parameter_DLSS_Pre_Exposure, 1.0f);
+	NVSDK_NGX_Parameter_SetF(parameters, NVSDK_NGX_Parameter_DLSS_Exposure_Scale, 1.0f);
+	NVSDK_NGX_Parameter_SetI(parameters, NVSDK_NGX_Parameter_DLSS_Indicator_Invert_X_Axis, 0);
+	NVSDK_NGX_Parameter_SetI(parameters, NVSDK_NGX_Parameter_DLSS_Indicator_Invert_Y_Axis, 0);
+	result = NVSDK_NGX_VULKAN_EvaluateFeature_C(commands, (NVSDK_NGX_Handle *)feature, parameters, NULL);
+	/* (the guides not left for Super Resolution's next frame: the
+	parameters are shared, and these point at this call's locals) */
+	NVSDK_NGX_Parameter_SetVoidPointer(parameters, NVSDK_NGX_Parameter_DiffuseAlbedo, NULL);
+	NVSDK_NGX_Parameter_SetVoidPointer(parameters, NVSDK_NGX_Parameter_SpecularAlbedo, NULL);
+	NVSDK_NGX_Parameter_SetVoidPointer(parameters, NVSDK_NGX_Parameter_GBuffer_Normals, NULL);
+	NVSDK_NGX_Parameter_SetVoidPointer(parameters, NVSDK_NGX_Parameter_DLSSD_SpecularHitDistance, NULL);
+	NVSDK_NGX_Parameter_SetVoidPointer(parameters, NVSDK_NGX_Parameter_DLSS_WORLD_TO_VIEW_MATRIX, NULL);
+	NVSDK_NGX_Parameter_SetVoidPointer(parameters, NVSDK_NGX_Parameter_DLSS_VIEW_TO_CLIP_MATRIX, NULL);
+	if (NVSDK_NGX_FAILED(result))
+	{
+		say(1, "a Ray Reconstruction frame not recorded (0x%08x)", (unsigned)result);
+		return 0;
+	}
+	return 1;
+}
+
 static void feature_release(void *feature)
 {
 	if (feature)
@@ -459,6 +644,7 @@ static void shutdown_device(VkDevice device)
 		NVSDK_NGX_VULKAN_Shutdown1(device);
 	module.parameters = NULL;
 	module.ready = 0;
+	module.rr_ready = 0;
 	module.device = VK_NULL_HANDLE;
 }
 
@@ -466,7 +652,7 @@ EXPORT const struct openh1_dlss *openh1_dlss(void)
 {
 	static const struct openh1_dlss calls = {
 		OPENH1_DLSS_ABI, instance_extensions, device_extensions, initialize, feature_create, feature_evaluate,
-		feature_release, shutdown_device };
+		feature_release, shutdown_device, rr_available, rr_create, rr_evaluate };
 
 	return &calls;
 }
