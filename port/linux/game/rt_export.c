@@ -168,8 +168,12 @@ struct rt_export_environment_vertex
 typedef char verify_rt_export_model_part[sizeof(struct rt_export_model_part) == 0x68 ? 1 : -1];
 typedef char verify_rt_export_environment_vertex[sizeof(struct rt_export_environment_vertex) == 32 ? 1 : -1];
 
-/* a mesh as written: each vertex x y z, nx ny nz, u v, u2 v2; each face its
-corners, material and lightmap page */
+/* a mesh as written: each vertex x y z, nx ny nz, u v, u2 v2, then its
+tangent tx ty tz and binormal bx by bz (the vertex's own, which the surface
+shader's bump normal is built on: xgpu_spirv.c's tangent * bump.x + binormal
+* bump.y + normal * max(bump.z, 0.05)); each face its corners, material and
+lightmap page */
+#define RT_EXPORT_VERTEX_FLOATS 16
 struct rt_export_mesh
 {
 	float *vertices;
@@ -246,19 +250,19 @@ static char const *tag_name_of(long tag_index)
 
 /* ---------- private code: meshes */
 
-static int mesh_vertex(struct rt_export_mesh *mesh, float const values[10])
+static int mesh_vertex(struct rt_export_mesh *mesh, float const values[RT_EXPORT_VERTEX_FLOATS])
 {
 	if (mesh->vertex_count >= mesh->vertex_room)
 	{
 		long room = mesh->vertex_room ? mesh->vertex_room * 2 : 4096;
-		float *grown = realloc(mesh->vertices, (size_t)room * 10 * sizeof(float));
+		float *grown = realloc(mesh->vertices, (size_t)room * RT_EXPORT_VERTEX_FLOATS * sizeof(float));
 
 		if (!grown)
 			return FALSE;
 		mesh->vertices = grown;
 		mesh->vertex_room = room;
 	}
-	memcpy(mesh->vertices + mesh->vertex_count * 10, values, 10 * sizeof(float));
+	memcpy(mesh->vertices + mesh->vertex_count * RT_EXPORT_VERTEX_FLOATS, values, RT_EXPORT_VERTEX_FLOATS * sizeof(float));
 	mesh->vertex_count++;
 	return TRUE;
 }
@@ -306,11 +310,12 @@ static int mesh_write(struct rt_export_mesh const *mesh, char const *path, int l
 	fprintf(file, "ply\nformat binary_little_endian 1.0\ncomment GOAT H1 rt_export\n"
 		"element vertex %ld\nproperty float x\nproperty float y\nproperty float z\n"
 		"property float nx\nproperty float ny\nproperty float nz\nproperty float u\nproperty float v\n"
-		"property float u2\nproperty float v2\nelement face %ld\nproperty list uchar int vertex_indices\n"
+		"property float u2\nproperty float v2\nproperty float tx\nproperty float ty\nproperty float tz\n"
+		"property float bx\nproperty float by\nproperty float bz\nelement face %ld\nproperty list uchar int vertex_indices\n"
 		"property int material\n%send_header\n", mesh->vertex_count, mesh->face_count,
 		lightmap ? "property int lightmap\n" : "");
 	if (mesh->vertex_count)
-		fwrite(mesh->vertices, sizeof(float) * 10, (size_t)mesh->vertex_count, file);
+		fwrite(mesh->vertices, sizeof(float) * RT_EXPORT_VERTEX_FLOATS, (size_t)mesh->vertex_count, file);
 	for (index = 0; index < mesh->face_count; index++)
 	{
 		unsigned char three = 3;
@@ -435,7 +440,9 @@ static long model_part_append(struct rt_export_mesh *mesh, struct model const *m
 	scale[1] = model->base_map_scale.j != 0.0f ? model->base_map_scale.j : 1.0f;
 	for (index = 0; index < vertex_buffer->count; index++)
 	{
-		float position[3], normal[3], uv[2], out[10], a[3], b[3], na[3], nb[3], length;
+		float position[3], normal[3], tangent[3], binormal[3], uv[2], out[RT_EXPORT_VERTEX_FLOATS], a[3], b[3], na[3], nb[3],
+			length;
+		int frame;
 		long node0, node1;
 		real weight;
 		int axis;
@@ -446,6 +453,8 @@ static long model_part_append(struct rt_export_mesh *mesh, struct model const *m
 
 			memcpy(position, &in->position, sizeof(position));
 			unpacked(in->normal, normal);
+			unpacked(in->tangent, tangent);
+			unpacked(in->binormal, binormal);
 			uv[0] = (float)in->texcoord.x / 32767.0f * scale[0];
 			uv[1] = (float)in->texcoord.y / 32767.0f * scale[1];
 			node0 = in->nodes[0] / 3;
@@ -458,6 +467,8 @@ static long model_part_append(struct rt_export_mesh *mesh, struct model const *m
 
 			memcpy(position, &in->position, sizeof(position));
 			memcpy(normal, &in->normal, sizeof(normal));
+			memcpy(tangent, &in->tangent, sizeof(tangent));
+			memcpy(binormal, &in->binormal, sizeof(binormal));
 			uv[0] = in->texcoord.x;
 			uv[1] = in->texcoord.y;
 			node0 = in->nodes[0];
@@ -495,6 +506,20 @@ static long model_part_append(struct rt_export_mesh *mesh, struct model const *m
 		out[6] = valid_real(uv[0]) ? uv[0] : 0.0f;
 		out[7] = valid_real(uv[1]) ? uv[1] : 0.0f;
 		out[8] = out[9] = 0.0f;
+		/* (the tangent and binormal skinned as the normal is) */
+		for (frame = 0; frame < 2; frame++)
+		{
+			float const *in_vector = frame ? binormal : tangent;
+			float *out_vector = out + 10 + 3 * frame;
+
+			apply(skin[node0], in_vector, na, FALSE);
+			apply(skin[node1], in_vector, nb, FALSE);
+			for (axis = 0; axis < 3; axis++)
+				out_vector[axis] = weight * na[axis] + (1.0f - weight) * nb[axis];
+			length = sqrtf(out_vector[0] * out_vector[0] + out_vector[1] * out_vector[1] + out_vector[2] * out_vector[2]);
+			for (axis = 0; axis < 3 && length > 0.0f; axis++)
+				out_vector[axis] /= length;
+		}
 		if (!mesh_vertex(mesh, out))
 			break;
 	}
@@ -631,10 +656,12 @@ static long structure_append(struct rt_export_mesh *mesh, long *bsp_surfaces, lo
 			for (vertex_index = 0; vertex_index < vertex_count; vertex_index++)
 			{
 				struct rt_export_environment_vertex const *in = (void const *)(vertices + vertex_index * vertex_size);
-				float out[10];
+				float out[RT_EXPORT_VERTEX_FLOATS];
 
 				memcpy(out, &in->position, 3 * sizeof(float));
 				unpacked(in->normal, out + 3);
+				unpacked(in->tangent, out + 10);
+				unpacked(in->binormal, out + 13);
 				out[6] = in->texcoord.x;
 				out[7] = in->texcoord.y;
 				out[8] = out[9] = 0.0f;
