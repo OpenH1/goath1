@@ -25,6 +25,10 @@ this file: xgpu_vulkan_rt_create).
   the submission's draws, which the main commands' first barrier orders
   after them; they never end a pass.
 - Until a scene is built, the draws' occlusion set names an empty one.
+- A build with a mesh of RT_LOGGED_TRIANGLES or more (the level's) is
+  logged: its meshes, triangles, structures' and scratch's bytes, the
+  meshes' storage so far, and its GPU time where the queue has timestamps
+  (read a few frames later, never waited for).
 
 Render thread alone, as the core.
 */
@@ -48,6 +52,8 @@ enum
 };
 
 #define RT_CHUNK_BYTES ((VkDeviceSize)16 << 20)
+/* a build logged has a mesh of so many triangles */
+#define RT_LOGGED_TRIANGLES 2048u
 /* an acceleration structure's offset in its buffer (the specification's) */
 #define RT_STRUCTURE_ALIGNMENT 256u
 
@@ -113,6 +119,20 @@ static struct
 	PFN_vkBindBufferMemory bind;
 	PFN_vkMapMemory map;
 	PFN_vkCmdPipelineBarrier barrier;
+	PFN_vkCreateQueryPool create_queries;
+	PFN_vkDestroyQueryPool destroy_queries;
+	PFN_vkCmdResetQueryPool reset_queries;
+	PFN_vkCmdWriteTimestamp timestamp;
+	PFN_vkGetQueryPoolResults query_results;
+	/* (a logged build's) its GPU time's two timestamps (VK_NULL_HANDLE: not
+	timed), whether they are yet to be read (once the GPU is done with its
+	submission), and a timestamp's nanoseconds; the meshes' structures'
+	bytes so far */
+	VkQueryPool times;
+	int timed;
+	uint64_t timed_serial;
+	float timestamp_period;
+	VkDeviceSize structure_bytes;
 	/* the meshes (by id) and those not yet built */
 	struct rt_mesh *meshes[XGPU_STREAM_WORLD_AO_MESHES];
 	uint32_t pending;
@@ -311,6 +331,22 @@ static void rt_meshes_release(void)
 	rt.chunk_count = 0;
 	rt.chunk_used = 0;
 	rt.pending = 0;
+	rt.structure_bytes = 0;
+}
+
+/* (a logged build) its GPU time, once the GPU has written it */
+static void rt_build_time_read(void)
+{
+	uint64_t stamps[2];
+
+	if (!rt.timed || xgpu_vulkan_completed() < rt.timed_serial || rt.query_results(rt.device, rt.times, 0, 2, sizeof(stamps), stamps, sizeof(stamps[0]),
+		VK_QUERY_RESULT_64_BIT) != VK_SUCCESS)
+	{
+		return;
+	}
+	rt.timed = 0;
+	host_logf(HOST_LOG_INFO, "vulkan: the ray-traced scene's meshes built in %.3f ms of GPU time",
+		(double)(stamps[1] - stamps[0]) * (double)rt.timestamp_period * 1.0e-6);
 }
 
 void xgpu_vulkan_rt_mesh(uint32_t id, uint32_t count, const float *triangles)
@@ -355,9 +391,10 @@ static void rt_meshes_build(VkCommandBuffer commands)
 	VkAccelerationStructureBuildRangeInfoKHR *ranges;
 	const VkAccelerationStructureBuildRangeInfoKHR **range_pointers;
 	struct rt_buffer vertices, scratch;
-	VkDeviceSize vertex_bytes = 0, scratch_bytes = 0, *scratch_offsets;
-	uint32_t id, count = 0, index;
+	VkDeviceSize vertex_bytes = 0, scratch_bytes = 0, *scratch_offsets, built_bytes = 0, largest_bytes = 0;
+	uint32_t id, count = 0, index, triangles = 0, largest = 0;
 	VkMemoryBarrier barrier;
+	int logged;
 
 	if (!rt.pending)
 		return;
@@ -426,6 +463,13 @@ static void rt_meshes_build(VkCommandBuffer commands)
 		address.accelerationStructure = mesh->structure;
 		mesh->address = rt.structure_address(rt.device, &address);
 		info->dstAccelerationStructure = mesh->structure;
+		built_bytes += sizes.accelerationStructureSize;
+		triangles += mesh->count;
+		if (mesh->count > largest)
+		{
+			largest = mesh->count;
+			largest_bytes = sizes.accelerationStructureSize;
+		}
 		scratch_offsets[count] = scratch_bytes;
 		scratch_bytes += (sizes.buildScratchSize + rt.scratch_alignment - 1) & ~(VkDeviceSize)(rt.scratch_alignment - 1);
 		ranges[count].primitiveCount = mesh->count;
@@ -456,7 +500,28 @@ static void rt_meshes_build(VkCommandBuffer commands)
 
 		infos[index].scratchData.deviceAddress = at + scratch_offsets[index];
 	}
+	logged = largest >= RT_LOGGED_TRIANGLES;
+	if (logged && rt.times && !rt.timed)
+	{
+		rt.reset_queries(commands, rt.times, 0, 2);
+		rt.timestamp(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, rt.times, 0);
+	}
 	rt.build(commands, count, infos, range_pointers);
+	rt.structure_bytes += built_bytes;
+	if (logged)
+	{
+		if (rt.times && !rt.timed)
+		{
+			rt.timestamp(commands, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, rt.times, 1);
+			rt.timed = 1;
+			rt.timed_serial = xgpu_vulkan_serial();
+		}
+		host_logf(HOST_LOG_INFO, "vulkan: the ray-traced scene's meshes built: %u, %u triangles, %.2f MB of structures "
+			"(the largest %u triangles, %.2f MB, %.1f B a triangle), %.2f MB of scratch; %.2f MB of meshes so far",
+			count, triangles, (double)built_bytes / 1048576.0, largest, (double)largest_bytes / 1048576.0,
+			(double)largest_bytes / (double)largest, (double)scratch_bytes / 1048576.0,
+			(double)rt.structure_bytes / 1048576.0);
+	}
 	/* (the meshes built before the scene that names them) */
 	memset(&barrier, 0, sizeof(barrier));
 	barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
@@ -668,6 +733,7 @@ int xgpu_vulkan_rt_build(void)
 
 	if (!rt.ready)
 		return 0;
+	rt_build_time_read();
 	if (!rt.given_new)
 		return rt.current >= 0;
 	rt_garbage_collect();
@@ -759,10 +825,29 @@ int xgpu_vulkan_rt_create(const struct xgpu_vulkan_rt_device *device)
 	LOAD(vkBindBufferMemory, bind)
 	LOAD(vkMapMemory, map)
 	LOAD(vkCmdPipelineBarrier, barrier)
+	LOAD(vkCreateQueryPool, create_queries)
+	LOAD(vkDestroyQueryPool, destroy_queries)
+	LOAD(vkCmdResetQueryPool, reset_queries)
+	LOAD(vkCmdWriteTimestamp, timestamp)
+	LOAD(vkGetQueryPoolResults, query_results)
 #undef LOAD
 	rt.ready = rt.create && rt.destroy && rt.sizes && rt.build && rt.structure_address && rt.buffer_address &&
 		rt.create_buffer && rt.destroy_buffer && rt.requirements && rt.allocate && rt.free_memory && rt.bind && rt.map &&
 		rt.barrier;
+	/* (the builds' GPU time, where the queue has timestamps) */
+	rt.timestamp_period = device->timestamp_period;
+	if (rt.ready && rt.timestamp_period > 0.0f && rt.create_queries && rt.destroy_queries && rt.reset_queries &&
+		rt.timestamp && rt.query_results)
+	{
+		VkQueryPoolCreateInfo create;
+
+		memset(&create, 0, sizeof(create));
+		create.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+		create.queryType = VK_QUERY_TYPE_TIMESTAMP;
+		create.queryCount = 2;
+		if (rt.create_queries(rt.device, &create, NULL, &rt.times) != VK_SUCCESS)
+			rt.times = VK_NULL_HANDLE;
+	}
 	return rt.ready;
 }
 
@@ -793,6 +878,8 @@ void xgpu_vulkan_rt_destroy(void)
 			rt.destroy(rt.device, item->structure, NULL);
 		rt_buffer_free(&item->buffer);
 	}
+	if (rt.times)
+		rt.destroy_queries(rt.device, rt.times, NULL);
 	free(rt.garbage);
 	free(rt.given);
 	memset(&rt, 0, sizeof(rt));

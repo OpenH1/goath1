@@ -1,7 +1,8 @@
 """display.ambient_occlusion "ray_traced"'s scene (port/linux/include/world_rt.h, port/linux/game/world_rt.c,
 docs/world-ao.md "Hardware ray queries"): a mesh's triangles turned to face out, the box, the instances' transforms
 and owners; a fake world's frames: the meshes made once a map as they are first needed, the instances on the objects'
-nodes, the static scenery as the structure is, everything let go of at the map's end."""
+nodes, the static scenery as the structure is, everything let go of at the map's end; debug.rt_render_geometry's render mesh
+in the collision mesh's place from the frame after, its opaque triangles alone."""
 import sys
 from pathlib import Path
 
@@ -10,7 +11,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from harness import CHECK_FAILED, build, mutated, read, run  # noqa: E402
 
-CASES = ["arithmetic", "frame"]
+CASES = ["arithmetic", "frame", "render"]
 GAME = "port/linux/game/world_rt.c"
 CONTROLS = [
     # a mesh wound inward kept so (the backend's front faces then the inside)
@@ -35,6 +36,17 @@ CONTROLS = [
     ("\tif (world_rt.framed && world_rt.frame == frame)\n\t\treturn;", "", "frame"),
     # the meshes kept past the map's end
     ("\tif (world_rt.sent)\n\t\thalo_world_ao_mesh(0, 0, NULL);", "", "frame"),
+    # debug.rt_render_geometry's render mesh made with the switch off
+    ("config_boolean(\"debug.rt_render_geometry\") != 0", "1", "frame"),
+    # ... or in the same frame as the collision mesh (a load waits for it)
+    ("\tworld_rt.collision_count = count;\n",
+     "\tworld_rt.collision_count = count;\n\tif (world_rt.render_due)\n\t\tworld_rt_structure_render();\n", "render"),
+    # ... or with the alpha-tested surfaces in it (rays stopped by a grate's holes)
+    ("WORLD_RT_SURFACES_OPAQUE, world_rt.triangles, count)", "WORLD_RT_SURFACES_ALPHA_TESTED, world_rt.triangles, count)",
+     "render"),
+    # ... or not made again for another BSP
+    ("\tworld_rt.render_due = config_boolean(", "\tif (world_rt.next_mesh == 1)\n\t\tworld_rt.render_due = config_boolean(",
+     "render"),
 ]
 
 
