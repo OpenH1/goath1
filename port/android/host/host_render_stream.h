@@ -131,6 +131,9 @@ struct host_render_backend
 	/* display.contact_shadows (xgpu_stream.h's CONTACT_SHADOWS: RT_SHADOWS'
 	record, checked the same); none: no contact shadows */
 	void (*contact_shadows)(void *context, const struct xgpu_stream_rt_shadows *record);
+	/* display.rt_bounce (xgpu_stream.h's RT_BOUNCE: its count checked);
+	none: no bounce */
+	void (*rt_bounce)(void *context, const struct xgpu_stream_rt_bounce *record);
 	void (*world_ao_cascades)(void *context, const struct xgpu_stream_world_ao_cascades *record);
 	/* display.ambient_occlusion "ray_traced" (xgpu_stream.h's WORLD_AO_MESH,
 	_INSTANCES: the decoder has checked their sizes, not the instances'

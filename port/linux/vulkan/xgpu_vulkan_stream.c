@@ -3706,6 +3706,15 @@ int xgpu_vulkan_shadows_window(const struct xgpu_stream_rt_shadows *record,
 	return 1;
 }
 
+/* display.rt_bounce: a window's lights that bounce (xgpu_vulkan_gi.c) */
+static void stream_rt_bounce(void *context, const struct xgpu_stream_rt_bounce *record)
+{
+	(void)context;
+	if (stream.preparing || !stream.capabilities.ray_queries)
+		return;
+	xgpu_vulkan_rt_bounce_lights(record);
+}
+
 static void stream_rt_shadows(void *context, const struct xgpu_stream_rt_shadows *record)
 {
 	struct stream_target *color, *depth;
@@ -4780,6 +4789,7 @@ static void stream_world_ao_prepass(void *context, const struct xgpu_stream_worl
 		/* (what the surfaces read: 1, until the pass finds it) */
 		xgpu_vulkan_world_ao_set_pixels(NULL);
 		xgpu_vulkan_light_shadows_end();
+		xgpu_vulkan_rt_bounce_end();
 		if (!target || !prepass_shaders() || !prepass_tables())
 			return;
 		/* (debug.pass_times: the pre-pass's draws and its pass, to the END) */
@@ -4869,6 +4879,9 @@ static void stream_world_ao_prepass(void *context, const struct xgpu_stream_worl
 		xgpu_vulkan_light_shadows_draw(prepass.inputs, &record->pass, lights_cells ? (const uint32_t (*)[4])(lights_cells +
 			(XGPU_DYNAMIC_LIGHTS_GRID_X * XGPU_DYNAMIC_LIGHTS_GRID_Y * XGPU_DYNAMIC_LIGHTS_GRID_Z +
 			XGPU_DYNAMIC_LIGHTS_SHADOWED) * 16) : NULL);
+		/* (display.rt_bounce: the dynamic lights' bounced light, from the
+		pre-pass's inputs: xgpu_vulkan_gi.c) */
+		xgpu_vulkan_rt_bounce_draw(prepass.inputs, &record->pass);
 		/* (the surfaces' walk, played next, from the pre-pass's depth) */
 		if (prepass.primed_depth)
 			prepass_prime_end(record->replay);
@@ -4879,6 +4892,7 @@ static void stream_world_ao_prepass(void *context, const struct xgpu_stream_worl
 	/* (_NONE: the surfaces read 1) */
 	prepass.primed_depth = 0;
 	xgpu_vulkan_light_shadows_end();
+	xgpu_vulkan_rt_bounce_end();
 	if (prepass.active)
 	{
 		prepass.active = 0;
@@ -5360,6 +5374,7 @@ const struct host_render_backend *xgpu_vulkan_stream_backend(void)
 		/* display.temporal_aa's motion */
 		backend.motion = stream_motion;
 		backend.rt_shadows = stream_rt_shadows;
+		backend.rt_bounce = stream_rt_bounce;
 		backend.contact_shadows = stream_contact_shadows;
 		/* ... "ray_traced"'s scene (xgpu_vulkan_rt.c), where the device has
 		ray queries */

@@ -1835,6 +1835,13 @@ static const struct config_setting config_settings[] =
 		"through the level on the CPU, so it works on any graphics card. The\n"
 		"level's own light already has its bounce baked in. Only the drawing\n"
 		"changes." },
+	{ "display.rt_bounce", _config_boolean, "false", "HALO_RT_BOUNCE", _environment_value, _platform_all,
+		"With display.dynamic_lights \"enhanced\" and display.ambient_occlusion\n"
+		"\"world\" or \"ray_traced\", on a graphics card that ray traces\n"
+		"(Vulkan): the bounced light of plasma bolts, explosions, muzzle\n"
+		"flashes and the flashlight traced on the GPU off the real walls and\n"
+		"objects, in their colors, in place of display.dynamic_light_bounce's\n"
+		"few lights. Only the drawing changes." },
 	{ "display.ambient_occlusion", _config_string, GRAPHICS_AMBIENT_OCCLUSION, "HALO_AMBIENT_OCCLUSION",
 		_environment_value, _platform_all,
 		"Ambient occlusion, which the Xbox did not have: the ambient light of\n"
