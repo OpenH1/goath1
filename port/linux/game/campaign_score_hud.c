@@ -132,6 +132,9 @@ static struct
 	summaries' */
 	short popup_pictures;
 	boolean summary_pictured;
+	/* since when a cutscene has held the pop-ups (0: none), whose time
+	showing is then given back */
+	unsigned long held_at;
 	/* debug.score_fill's state, and the last period it made groups of */
 	struct campaign_score_state fill;
 	long fill_period;
@@ -563,10 +566,31 @@ static void score_draw_popup(
 	wchar_t text[48];
 	wchar_t points[16];
 
-	if (player == NONE || !config_player_boolean(local_player_index, "display.score_popups") ||
-		score_cutscene())
-	{
+	if (player == NONE || !config_player_boolean(local_player_index, "display.score_popups"))
 		return;
+	/* (a cutscene holds them: the one showing, its time stopped, goes on
+	after it) */
+	if (score_cutscene())
+	{
+		if (!score_hud.held_at)
+			score_hud.held_at = now ? now : 1;
+		return;
+	}
+	if (score_hud.held_at)
+	{
+		unsigned long held = now - score_hud.held_at;
+
+		for (index = 0; index < SCORE_GROUPS; index++)
+		{
+			/* (only those showing as it began) */
+			if (score_hud.shown_at[index] > 1 && score_hud.groups[index].last_at &&
+				score_hud.held_at - MAX(score_hud.shown_at[index], score_hud.groups[index].last_at) <
+					SCORE_POPUP_MILLISECONDS + SCORE_POPUP_FADE_MILLISECONDS)
+			{
+				score_hud.shown_at[index] = MAX(score_hud.shown_at[index], score_hud.groups[index].last_at) + held;
+			}
+		}
+		score_hud.held_at = 0;
 	}
 	for (index = 0; index < SCORE_GROUPS; index++)
 	{
