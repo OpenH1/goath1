@@ -951,7 +951,12 @@ resource_format its pixels' kind (XGPU_IMAGE_*: RGBA, 4 bytes each),
 resource_size a serial that
 changes with its pixels (no two images have the same), data its first
 level's pixels, width by height, rows from the first; the host makes its
-levels (levels of them) from the first. */
+levels (levels of them) from the first. A stage's source on the wire:
+none, an Xbox texture, a render target (xgpu_backend.h's XGPU_SOURCE_*, the
+same values: xgpu_stream_encode.c checks them) or an image */
+#define XGPU_STREAM_SOURCE_NONE 0
+#define XGPU_STREAM_SOURCE_TEXTURE 1
+#define XGPU_STREAM_SOURCE_TARGET 2
 #define XGPU_STREAM_SOURCE_IMAGE 3
 
 struct xgpu_stream_texture_stage
