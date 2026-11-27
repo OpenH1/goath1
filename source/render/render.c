@@ -221,6 +221,8 @@ window's HUD draws the feeds' images */
 boolean spartan_link_feed_begin(short local_player_index, struct render_camera *camera);
 void spartan_link_feed_end(void);
 void spartan_link_draw(short local_player_index);
+/* port: port/linux/game/network_markers.c */
+void network_markers_render_outlines(short local_player_index);
 static boolean render_link_pass;
 
 /* ---------- public code */
@@ -780,6 +782,10 @@ static void render_window(
 		else
 #endif
 		{
+		/* port: the pinged units' and vehicles' outlines, over the view's
+		world (port/linux/game/network_markers.c) */
+		if (rasterizer_target == _render_target_primary && !rasterizer_camera->mirrored)
+			network_markers_render_outlines(local_player_index);
 		/* port: (port/linux/game/render_enumerate.c) */
 		render_enumerate_lens_flares();
 		rasterizer_lens_flares_draw();

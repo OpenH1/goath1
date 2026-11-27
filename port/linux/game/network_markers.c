@@ -18,6 +18,17 @@ hits), followed as it moves and drawn over it; else the point the aim hits
 (the level, scenery), within MARKER_RANGE. A weapon in a unit's hands marks
 the unit.
 
+What it is drawn as, beside the arrow (network_markers_shape, chosen on
+each machine from the pinged object: nothing of it is sent): a weapon or
+equipment its pickup prompt's icon (markers_object_icon) in the pinger's
+colour over the arrow, under the name; a unit or vehicle its outline in the
+pinger's colour (network_markers_render_outlines, before the HUD: the nearest
+MARKER_OUTLINES_DRAWN of a view), through walls, except an enemy player's
+(on foot or riding) in a game against players, which shows only where it is
+seen. An enemy unit or vehicle (markers_object_enemy) has a small red arrow
+over the name and a red inner edge to its outline (orange for a reddish
+pinger's: markers_enemy_color).
+
 Who sees it: in the campaign (co-op, split screen) every player; in a
 multiplayer game with teams, the player's team; in a game without teams,
 nobody (pings are not sent), nor in a game of one player alone on this
@@ -51,7 +62,8 @@ clock, not the game's ticks, and the recorded and replayed game is the same
 without them. The pure parts (network_markers_point_valid,
 network_markers_same_spot, markers_object_drawn_point) are
 tools/harness/tests/test_markers.py's; the name over the arrow
-(markers_draw_name) is test_hud_marks.py's.
+(markers_draw_name) and the shape (network_markers_shape) are
+test_hud_marks.py's.
 */
 
 #include "cseries.h"
@@ -90,6 +102,17 @@ tools/harness/tests/test_markers.py's; the name over the arrow
 #include "network_chat.h"
 #include "network_voice.h"
 #include "network_markers.h"
+#include "bitmaps/bitmap_group.h"
+#include "bitmaps/bitmaps.h"
+#include "cache/texture_cache.h"
+#include "interface/hud_definitions.h"
+#include "interface/weapon_hud_interface_definition.h"
+#include "items/equipment_definitions.h"
+#include "items/weapon_definitions.h"
+#include "game/game_allegiance.h"
+#include "bitmaps/bitmap_color_conversion.h"
+#include "draw_bounds.h"
+#include "mcc_cache.h"
 
 /* the platform layer's */
 unsigned long system_milliseconds(void);
@@ -109,6 +132,19 @@ boolean hud_render_nav_point_colored(short local_player_index, real_point3d cons
 	short *drawn_type);
 short hud_get_nav_point_render_type(short local_player_index, real_point3d const *head, real_point3d const *position,
 	long reference_object_index);
+boolean hud_render_nav_point_arrow(short nav_index, short waypoint_type, real_point2d const *center, real height,
+	real_rgb_color const *color, real alpha);
+/* hud_messaging.c's, hud_hires_tags.c's, hud_weapon.c's: the pickup prompt's
+icons (the HUD globals' message icons), a sprite's high-res stand-in, and a
+grenade type's icon */
+struct bitmap_data const *hud_hires_sprite_bitmap(struct bitmap_data const *bitmap, short sequence_index);
+struct icon_hud_element_definition const *hud_grenade_messaging_icon(short grenade_type);
+/* render_objects.c's and rasterizer_xbox_shadows.c's: an object's outline */
+void render_object_outline(long object_index);
+boolean rasterizer_ping_outline_begin(void);
+void rasterizer_ping_outline_pass(boolean mask, real offset_x, real offset_y, pixel32 color, boolean depth_tested);
+void rasterizer_ping_outline_clear(void);
+void rasterizer_ping_outline_end(void);
 
 /* ---------- constants */
 
@@ -140,6 +176,19 @@ enum
 		FLAG(_collision_test_objects_vehicles_bit) | FLAG(_collision_test_objects_weapons_bit) |
 		FLAG(_collision_test_objects_equipment_bit) | FLAG(_collision_test_objects_scenery_bit) |
 		FLAG(_collision_test_objects_machines_bit),
+};
+
+/* what a ping of an object is drawn as, with its arrow, distance and name
+(network_markers_shape) */
+enum
+{
+	/* the arrow alone */
+	_marker_shape_arrow,
+	/* and a weapon's or equipment's icon (the pickup prompt's) */
+	_marker_shape_icon,
+	/* and the outline of a unit or vehicle */
+	_marker_shape_outline,
+	NUMBER_OF_MARKER_SHAPES
 };
 
 /* the message's kinds */
@@ -182,6 +231,24 @@ bounding sphere's radius, which a vehicle's is well above its roof) */
 #define MARKER_HEAD_HEIGHT 0.1f
 #define MARKER_OBJECT_HEIGHT 0.1f
 #define MARKER_OBJECT_RADIUS_PART 0.5f
+/* a pinged item's icon (the pickup prompt's): its height and widest, parts
+of its arrow's height, over the arrow by a gap (the HUD's units) */
+#define MARKER_ICON_HEIGHT_PART 0.55f
+#define MARKER_ICON_WIDEST_PART 2.6f
+#define MARKER_ICON_GAP 2.0f
+/* an enemy's cue: a small red arrow over the name, this part of the arrow's
+height, and a red inner edge of its outline (this part of the outline's
+width) */
+#define MARKER_ENEMY_CUE_PART 0.45f
+#define MARKER_ENEMY_EDGE_PART 0.4f
+/* an outline's width (the view's -1..1 units, of its height: about 4 of a
+1080-line display's pixels, whatever the object's size or distance, so a
+small or far one reads), its soft glow's (this many times as wide, this
+part as opaque), and the most a view draws (the nearest) */
+#define MARKER_OUTLINE_WIDTH 0.0075f
+#define MARKER_GLOW_WIDTH_PART 2.0f
+#define MARKER_GLOW_ALPHA_PART 0.35f
+#define MARKER_OUTLINES_DRAWN 8
 
 /* ---------- structures */
 
@@ -473,6 +540,197 @@ static void markers_draw_name(
 	rasterizer_draw_unicode_string(&bounds, NULL, NULL, 0, name);
 	rasterizer_text_set_scale(1.0f, 0.0f, 0.0f);
 	hud_draw_mark_end();
+}
+
+/* what a ping of an object of a type is drawn as (beside its arrow,
+distance and name): a weapon or equipment its icon, if it has one; a unit
+or a vehicle its outline, through walls (through_walls), except one with an
+enemy player in it in a game against other players (versus_players), which
+is drawn only where the viewer sees it (no outline through a wall, which
+would show where they hide); else the arrow alone */
+short network_markers_shape(
+	short object_type,
+	boolean has_icon,
+	boolean versus_players,
+	boolean enemy_player,
+	boolean *through_walls)
+{
+	*through_walls = FALSE;
+	switch (object_type)
+	{
+	case _object_type_weapon:
+	case _object_type_equipment:
+		return has_icon ? _marker_shape_icon : _marker_shape_arrow;
+	case _object_type_biped:
+	case _object_type_vehicle:
+		*through_walls = !(versus_players && enemy_player);
+		return _marker_shape_outline;
+	default:
+		return _marker_shape_arrow;
+	}
+}
+
+/* a weapon's or equipment's icon in the HUD's messages, as its pickup
+prompt draws it (hud.c: a weapon's HUD interface's messaging icon; a
+grenade's, its grenade HUD interface's): NULL for none */
+static struct icon_hud_element_definition const *markers_object_icon(
+	long object_index)
+{
+	struct object_datum *object = object_try_and_get(object_index);
+
+	if (!object || !hud_globals || hud_globals->messaging.messaging_icons.index == NONE)
+		return NULL;
+	if (object_try_and_get_and_verify_type(object_index, FLAG(_object_type_weapon)))
+	{
+		long hud_index = weapon_definition_get(object->definition_index)->weapon.interface_definition.hud_interface.index;
+		struct icon_hud_element_definition const *icon;
+
+		if (hud_index == NONE)
+			return NULL;
+		icon = &((struct weapon_hud_interface_definition *)tag_get('wphi', hud_index))->messaging_icon;
+		return icon->sequence_index != NONE ? icon : NULL;
+	}
+	if (object_try_and_get_and_verify_type(object_index, FLAG(_object_type_equipment)))
+	{
+		struct equipment_definition *definition = equipment_definition_get(object->definition_index);
+
+		if (definition->equipment.powerup_type != _equipment_powerup_none &&
+			definition->equipment.powerup_type != _equipment_powerup_grenade)
+		{
+			return NULL;
+		}
+		return hud_grenade_messaging_icon(definition->equipment.grenade_type);
+	}
+	return NULL;
+}
+
+/* a unit's team as the viewer reads it: a vehicle's its gunner's, else its
+driver's (as the motion sensor has it), none for an empty one */
+static short markers_unit_team(
+	long unit_index)
+{
+	struct unit_datum *unit = unit_try_and_get(unit_index);
+
+	if (!unit)
+		return NONE;
+	if (object_try_and_get_and_verify_type(unit_index, FLAG(_object_type_vehicle)))
+	{
+		long seat_index = unit->unit.gunner_object_index != NONE ? unit->unit.gunner_object_index :
+			unit->unit.driver_object_index;
+		struct unit_datum *seat = seat_index != NONE ? unit_try_and_get(seat_index) : NULL;
+
+		return seat ? seat->object.owner_team_index : NONE;
+	}
+	return unit->object.owner_team_index;
+}
+
+/* whether a unit (or a vehicle, by who is in it) is the viewer's enemy, and
+whether it is, or has in it, a player who is (enemy_player) */
+static boolean markers_object_enemy(
+	struct player_datum const *viewer,
+	long object_index,
+	boolean *enemy_player)
+{
+	struct object_datum *viewer_unit = viewer ? object_try_and_get(viewer->unit_index) : NULL;
+	short viewer_team = viewer_unit ? viewer_unit->object.owner_team_index : NONE;
+	short team = markers_unit_team(object_index);
+	struct object_datum *object = object_try_and_get(object_index);
+	boolean enemy = team != NONE && viewer_team != NONE && game_team_is_enemy(viewer_team, team);
+	long rider_index;
+	short count;
+
+	*enemy_player = FALSE;
+	if (!object || !viewer_unit)
+		return FALSE;
+	if (enemy && player_index_from_unit_index(object_index) != NONE)
+		*enemy_player = TRUE;
+	/* (the players riding it) */
+	rider_index = object->object.first_child_object_index;
+	for (count = 0; rider_index != NONE && count < 64 && !*enemy_player; count++)
+	{
+		struct object_datum *rider = object_try_and_get(rider_index);
+
+		if (!rider)
+			break;
+		if (object_try_and_get_and_verify_type(rider_index, _object_mask_unit) &&
+			player_index_from_unit_index(rider_index) != NONE &&
+			game_team_is_enemy(viewer_team, rider->object.owner_team_index))
+		{
+			*enemy_player = TRUE;
+		}
+		rider_index = rider->object.next_object_index;
+	}
+	return enemy;
+}
+
+/* an enemy's cue's colour: red, or orange for a pinger whose own colour is
+reddish (a red team's), so that it still reads apart from theirs */
+static void markers_enemy_color(
+	real_rgb_color const *pinger_color,
+	real_rgb_color *color)
+{
+	if (pinger_color->red > 0.5f && pinger_color->green < 0.45f && pinger_color->blue < 0.45f)
+	{
+		color->red = 1.0f;
+		color->green = 0.62f;
+		color->blue = 0.05f;
+	}
+	else
+	{
+		color->red = 0.92f;
+		color->green = 0.12f;
+		color->blue = 0.10f;
+	}
+}
+
+/* a pinged item's icon (as the pickup prompt draws it, from the HUD's
+message icons: the high-res HUD's stand-in for it, or an MCC map's own),
+in the pinger's colour (the icon's white tinted: its alpha the outline),
+the middle of its bottom edge at bottom, at most height tall and widest
+wide; how tall it was drawn */
+static boolean markers_draw_icon(
+	struct icon_hud_element_definition const *icon,
+	real_rgb_color const *color,
+	real alpha,
+	real_point2d const *bottom,
+	real height,
+	real widest,
+	real *drawn_height)
+{
+	real_point2d center;
+	long bitmap_group_index = hud_globals->messaging.messaging_icons.index;
+	struct bitmap_data const *bitmap = NULL;
+	real_rectangle2d const *clip = NULL;
+	long frame_index = icon->frame_rate ? game_time_get() / icon->frame_rate : 0;
+	real width_pixels, height_pixels, scale;
+	point2d corner;
+	byte byte_alpha;
+
+	hud_retrieve_bitmap_and_bounding_rect(bitmap_group_index, icon->sequence_index, frame_index, &bitmap, &clip);
+	if (!bitmap || !_texture_cache_bitmap_get_hardware_format((struct bitmap_data *)bitmap, FALSE, TRUE))
+		return FALSE;
+	if (!mcc_cache_tags_loaded())
+		bitmap = hud_hires_sprite_bitmap(bitmap, icon->sequence_index);
+	width_pixels = bitmap->width * (clip ? clip->x1 - clip->x0 : 1.0f);
+	height_pixels = bitmap->height * (clip ? clip->y1 - clip->y0 : 1.0f);
+	if (!(width_pixels > 0.0f) || !(height_pixels > 0.0f))
+		return FALSE;
+	scale = MIN(height / height_pixels, widest / width_pixels);
+	*drawn_height = height_pixels * scale;
+	center.x = bottom->x;
+	center.y = bottom->y - *drawn_height * 0.5f;
+	/* (a dark copy under it first, a little down and right, so that it reads
+over a bright or busy wall) */
+	byte_alpha = (byte)PIN((long)(255.0f * alpha * 0.7f + 0.5f), 0, 255);
+	hud_draw_mark_begin(center.x + 1.5f, center.y + 1.5f, &corner);
+	hud_draw_bitmap_direct(bitmap, _hud_anchor_center, &corner, clip, scale, 0.0f, (pixel32)byte_alpha << 24, FALSE);
+	hud_draw_mark_end();
+	byte_alpha = (byte)PIN((long)(255.0f * alpha + 0.5f), 0, 255);
+	hud_draw_mark_begin(center.x, center.y, &corner);
+	hud_draw_bitmap_direct(bitmap, _hud_anchor_center, &corner, clip, scale, 0.0f,
+		((pixel32)byte_alpha << 24) | real_rgb_color_to_pixel32(color), FALSE);
+	hud_draw_mark_end();
+	return TRUE;
 }
 
 /* this map's arrow and sound, looked up once a game */
@@ -1098,18 +1356,211 @@ void network_markers_render(
 		{
 			continue;
 		}
-		/* (the player's name over the arrow, on the screen) */
-		if (font_index != NONE && drawn_type != 1 /* off the screen */)
+		if (drawn_type != 1 /* off the screen */)
 		{
-			wchar_t name[NUMBEROF(pinger->name) + 1];
-			short index;
+			/* (over the arrow, bottom up: a pinged item's icon, the player's
+			name, and an enemy's cue) */
+			real top = drawn.y - half_height;
+			struct icon_hud_element_definition const *icon = NULL;
+			boolean enemy = FALSE;
 
-			for (index = 0; index < (short)NUMBEROF(pinger->name); index++)
-				name[index] = pinger->name[index];
-			name[NUMBEROF(pinger->name)] = 0;
-			markers_draw_name(font_index, name, &color, alpha, &drawn, half_height);
+			if (reference_index != NONE)
+			{
+				struct object_datum *object = object_get(reference_index);
+				boolean through_walls;
+				boolean enemy_player;
+
+				icon = markers_object_icon(reference_index);
+				if (network_markers_shape(object->object.type, icon != NULL, FALSE, FALSE, &through_walls) !=
+					_marker_shape_icon)
+				{
+					icon = NULL;
+				}
+				if (object_try_and_get_and_verify_type(reference_index, _object_mask_unit))
+					enemy = markers_object_enemy(viewer, reference_index, &enemy_player);
+			}
+			if (icon)
+			{
+				real height = half_height * 2.0f * MARKER_ICON_HEIGHT_PART;
+				real drawn_height;
+				real_point2d center;
+
+				center.x = drawn.x;
+				center.y = top - MARKER_ICON_GAP;
+				if (markers_draw_icon(icon, &color, alpha, &center, height,
+					half_height * 2.0f * MARKER_ICON_WIDEST_PART, &drawn_height))
+				{
+					top -= MARKER_ICON_GAP + drawn_height;
+				}
+			}
+			/* (the player's name over the arrow, on the screen) */
+			if (font_index != NONE)
+			{
+				wchar_t name[NUMBEROF(pinger->name) + 1];
+				struct font_header *font = font_definition_get(font_index);
+				short index;
+
+				for (index = 0; index < (short)NUMBEROF(pinger->name); index++)
+					name[index] = pinger->name[index];
+				name[NUMBEROF(pinger->name)] = 0;
+				markers_draw_name(font_index, name, &color, alpha, &drawn, drawn.y - top);
+				top -= 2.0f + font->ascending_height * 0.75f;
+			}
+			/* (an enemy's: a small red arrow over it all, the pinger's colour
+			still the ping's) */
+			if (enemy)
+			{
+				real_rgb_color enemy_red;
+				real_point2d center;
+				real height = half_height * 2.0f * MARKER_ENEMY_CUE_PART;
+
+				markers_enemy_color(&color, &enemy_red);
+				center.x = drawn.x;
+				center.y = top - 1.0f - height * 0.5f;
+				hud_render_nav_point_arrow(markers_globals.nav_index, 0 /* on the screen */, &center, height,
+					&enemy_red, alpha);
+			}
 		}
 	}
+}
+
+/* a view's pinged units' and vehicles' outlines (render.c's render_window,
+over its world, before its HUD): the nearest MARKER_OUTLINES_DRAWN of those
+its player is shown, not the one they are in, each in its pinger's colour
+(an enemy's with a red inner edge), drawn through walls or where seen as
+network_markers_shape says. Nothing is drawn, and nothing costs, without
+such a ping */
+void network_markers_render_outlines(
+	short local_player_index)
+{
+	struct
+	{
+		long object_index;
+		real distance;
+		real_rgb_color color;
+		real alpha;
+		boolean enemy;
+		boolean through_walls;
+	} outlines[MARKER_OUTLINES_DRAWN];
+	unsigned long now = system_milliseconds();
+	long viewer_index;
+	struct player_datum *viewer;
+	long viewer_root;
+	real_point3d head;
+	short count = 0;
+	short player_index;
+	short index;
+	real aspect;
+
+	if (!markers_globals.in_game || local_player_index == NONE || cinematic_in_progress())
+		return;
+	viewer_index = local_player_get_player_index(local_player_index);
+	viewer = viewer_index != NONE ? player_get(viewer_index) : NULL;
+	if (!viewer || viewer->unit_index == NONE)
+		return;
+	viewer_root = markers_root_object(viewer->unit_index);
+	unit_get_head_position(viewer->unit_index, &head);
+	for (player_index = 0; player_index < MAXIMUM_MARKER_PLAYERS; player_index++)
+	{
+		struct marker *marker = &markers_globals.markers[player_index];
+		struct player_datum *pinger;
+		struct object_datum *object;
+		unsigned long age;
+		boolean through_walls;
+		boolean enemy_player;
+		boolean enemy;
+		real distance;
+		short slot;
+
+		if (!marker->active || marker->kind != _marker_kind_object)
+			continue;
+		age = now - marker->shown_at;
+		pinger = distributed_player(player_index);
+		if (age >= MARKER_SHOWN_MILLISECONDS + MARKER_FADE_MILLISECONDS || !pinger || pinger->quit_out_of_game ||
+			!markers_shown_to(pinger, viewer))
+		{
+			continue;
+		}
+		object = (struct object_datum *)object_try_and_get_and_verify_type(marker->object_index, _object_mask_unit);
+		if (!object || marker->object_index == viewer->unit_index || marker->object_index == viewer_root)
+			continue;
+		enemy = markers_object_enemy(viewer, marker->object_index, &enemy_player);
+		if (network_markers_shape(object->object.type, FALSE, game_engine_running(), enemy_player, &through_walls) !=
+			_marker_shape_outline)
+		{
+			continue;
+		}
+		distance = distance3d(&head, &object->object.bounding_sphere_center);
+		/* (the nearest kept: the farthest of a full list given up) */
+		slot = count;
+		if (count == MARKER_OUTLINES_DRAWN)
+		{
+			short farthest = 0;
+
+			for (index = 1; index < count; index++)
+			{
+				if (outlines[index].distance > outlines[farthest].distance)
+					farthest = index;
+			}
+			if (outlines[farthest].distance <= distance)
+				continue;
+			slot = farthest;
+		}
+		else
+		{
+			count++;
+		}
+		outlines[slot].object_index = marker->object_index;
+		outlines[slot].distance = distance;
+		markers_player_color(DATUM_INDEX_NEW(player_index, pinger->identifier), &outlines[slot].color);
+		outlines[slot].alpha = markers_alpha(age);
+		outlines[slot].enemy = enemy;
+		outlines[slot].through_walls = through_walls;
+	}
+	if (count == 0 || !rasterizer_ping_outline_begin())
+		return;
+	aspect = (real)(render.camera.viewport_bounds.y1 - render.camera.viewport_bounds.y0) /
+		(real)MAX(1, render.camera.viewport_bounds.x1 - render.camera.viewport_bounds.x0);
+	for (index = 0; index < count; index++)
+	{
+		static real const directions[8][2] =
+		{
+			{ 1.0f, 0.0f }, { -1.0f, 0.0f }, { 0.0f, 1.0f }, { 0.0f, -1.0f },
+			{ 0.7071f, 0.7071f }, { -0.7071f, 0.7071f }, { 0.7071f, -0.7071f }, { -0.7071f, -0.7071f },
+		};
+		real_rgb_color enemy_red;
+		struct object_datum *object = object_get(outlines[index].object_index);
+		byte alpha = (byte)PIN((long)(255.0f * outlines[index].alpha + 0.5f), 0, 255);
+		short ring;
+
+		/* (scissored to the object and its outline's pixels about it) */
+		draw_bounds_cube(&object->object.bounding_sphere_center,
+			object->object.bounding_sphere_radius * 1.5f + outlines[index].distance * 0.03f + 0.1f);
+		markers_enemy_color(&outlines[index].color, &enemy_red);
+		rasterizer_ping_outline_pass(TRUE, 0.0f, 0.0f, 0, FALSE);
+		render_object_outline(outlines[index].object_index);
+		/* (an enemy's edge, the outline, its glow: the first drawn of them
+		keeps a pixel) */
+		for (ring = outlines[index].enemy ? 0 : 1; ring < 3; ring++)
+		{
+			real width = ring == 0 ? MARKER_OUTLINE_WIDTH * MARKER_ENEMY_EDGE_PART :
+				ring == 1 ? MARKER_OUTLINE_WIDTH : MARKER_OUTLINE_WIDTH * MARKER_GLOW_WIDTH_PART;
+			byte ring_alpha = ring == 2 ? (byte)(alpha * MARKER_GLOW_ALPHA_PART) : alpha;
+			pixel32 color = ((pixel32)ring_alpha << 24) |
+				real_rgb_color_to_pixel32(ring == 0 ? &enemy_red : &outlines[index].color);
+			short direction;
+
+			for (direction = 0; direction < 8; direction++)
+			{
+				rasterizer_ping_outline_pass(FALSE, directions[direction][0] * width * aspect,
+					directions[direction][1] * width, color, !outlines[index].through_walls);
+				render_object_outline(outlines[index].object_index);
+			}
+		}
+		rasterizer_ping_outline_clear();
+	}
+	draw_bounds_none();
+	rasterizer_ping_outline_end();
 }
 
 boolean network_markers_ping_shown(

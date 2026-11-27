@@ -13,6 +13,9 @@ clients, the pings faded out */
 void network_markers_update(void);
 /* a view's pings (hud_nav_points.c's hud_render_nav_points) */
 void network_markers_render(short local_player_index);
+/* ... and its pinged units' and vehicles' outlines, over its world
+(render.c's render_window) */
+void network_markers_render_outlines(short local_player_index);
 /* whether the controller of the port pings with its stock layout's D-pad
 Right now (xinput_sdl.c then keeps that direction from the game) */
 unsigned char network_markers_pad_open(short port);
@@ -59,5 +62,10 @@ last (the same object, or a point near the last) */
 boolean network_markers_point_valid(real x, real y, real z);
 boolean network_markers_same_spot(long object_index, real const *point, long last_object_index,
 	real const *last_point);
+/* ... and what a ping of an object of a type is drawn as beside its arrow
+(network_markers.c's _marker_shape_*: the arrow alone, a weapon's or
+equipment's icon, a unit's or vehicle's outline, and whether through walls) */
+short network_markers_shape(short object_type, boolean has_icon, boolean versus_players, boolean enemy_player,
+	boolean *through_walls);
 
 #endif
