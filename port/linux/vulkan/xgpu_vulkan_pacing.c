@@ -91,6 +91,9 @@ the margin and the input to screen time.
 #include <string.h>
 #include <time.h>
 
+/* (xgpu_vulkan.c's name for VRR's level, the stream's) */
+typedef char pacing_variable_matches[XGPU_VULKAN_PACING_VARIABLE == HOST_RENDER_DISPLAY_VARIABLE ? 1 : -1];
+
 /* presents in order, waited for */
 #define QUEUE 64
 /* the longest a present is waited for before it is taken as shown: less
