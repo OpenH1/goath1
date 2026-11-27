@@ -29,7 +29,7 @@ CONTROLS = [
     # a definition's meshes made again each time it is drawn
     ("\t\tif (entry->definition == definition)\n\t\t\treturn entry;\n", "", "frame"),
     # the structure's mesh not made again for another BSP
-    ("\tif (bsp_index == world_rt.bsp_index)\n\t\treturn;", "\tif (world_rt.structure)\n\t\treturn;", "frame"),
+    ("\tif (bsp_index == world_rt.bsp_index)\n\t{", "\tif (world_rt.structure)\n\t{", "frame"),
     # a box for anything with no collision geometry (an emitter's, the sky's ring's sphere)
     ("\tif (!any && item && entry->node_count > 0", "\tif (!any && entry->node_count > 0", "frame"),
     # the instances handed again in the same frame
