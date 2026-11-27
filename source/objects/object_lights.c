@@ -497,7 +497,7 @@ static boolean light_port_lights_structure(
 	struct point_light_definition const *definition);
 /* port: (the enhanced flashlight's middle, as bright as its gel's there:
 light_port_lights_structure) */
-#define LIGHT_PORT_GEL_CENTER 1.25f
+#define LIGHT_PORT_GEL_CENTER 1.5f
 static void light_port_drawn_center(
 	struct light_datum const *light,
 	real_point3d *center);
