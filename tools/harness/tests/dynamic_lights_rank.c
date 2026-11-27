@@ -174,7 +174,7 @@ static int shadow_case(char const *case_name)
 		for (i = 0; i < 5; i++)
 			frame_light(2.0f, (real)i, 10.0f, 40 + i, 0);
 		pick(0.0f, indices);
-		frame_light(0.5f, 0.0f, 2.0f, 0, HALO_DYNAMIC_LIGHT_FLASHLIGHT);
+		frame_light(0.5f, 0.0f, 2.0f, 0, HALO_DYNAMIC_LIGHT_FLASHLIGHT | HALO_DYNAMIC_LIGHT_MODELS_ONLY);
 		chosen = pick(1.0f, indices);
 		CHECK(chosen == HALO_DYNAMIC_LIGHTS_SHADOWED && indices[0] == 5, "the flashlight first: %d, %d", chosen,
 			indices[0]);

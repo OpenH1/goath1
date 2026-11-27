@@ -137,8 +137,6 @@ copy of one on another marker, or one of the port's own (light_sources.c's
 key, which has its kind in its top byte, 1 to 3) */
 #define DYNAMIC_LIGHTS_KEY_GAME (4ull << 56)
 #define DYNAMIC_LIGHTS_KEY_COPY (5ull << 56)
-/* how much farther the enhanced flashlight reaches than its radius */
-#define DYNAMIC_LIGHTS_FLASHLIGHT_REACH 1.5f
 
 typedef char dynamic_lights_clusters_fit[HALO_DYNAMIC_LIGHTS_CLUSTERS >= MAXIMUM_CLUSTERS_PER_STRUCTURE ? 1 : -1];
 typedef char dynamic_lights_lights_fit[HALO_DYNAMIC_LIGHTS_MAXIMUM >= MAXIMUM_LIGHTS_PER_WINDOW ? 1 : -1];
@@ -503,11 +501,6 @@ void dynamic_lights_submit(
 		out->cone_scale = dynamic_lights.cone_scale[light_index];
 		out->cone_offset = dynamic_lights.cone_offset[light_index];
 		out->flags = dynamic_lights.flags[light_index];
-		/* (the flashlight's gel lights out to its radius nearly as brightly
-		as at its middle, where the enhanced lights' falloff has faded to
-		nothing: it reaches as far again by half) */
-		if (out->flags & HALO_DYNAMIC_LIGHT_FLASHLIGHT)
-			out->radius *= DYNAMIC_LIGHTS_FLASHLIGHT_REACH;
 		if (logged < 4 && (out->flags & HALO_DYNAMIC_LIGHT_PROJECTILE) && config_boolean("debug.dynamic_lights_log"))
 		{
 			logged++;
@@ -714,14 +707,16 @@ the renderer (the game's, their copies and the port's own), at most
 HALO_DYNAMIC_LIGHTS_SHADOWED cast shadows, those whose shadows show:
 
 - a flashlight that is on, always (the first slot: a unit's own light, its
-  cone on what it points at);
+  cone on what it points at; the models it lights take its shadow, the
+  structure its gel's light from the game's own pass, which does not read
+  the shadows yet);
 - else a light that reaches SHADOWED_LEAST_RADIUS or more and has lasted
   SHADOWED_LEAST_AGE (an explosion, a fire, a lamp, a large charged shot,
   the port's own larger lights). A plasma bolt, a needle or a muzzle flash
   reaches 1.5 to 2 world units for a few frames: its shadow is a speck on
   a surface it barely lights, gone before it is seen, and takes a slot;
-- not a light that lights only the models (a lamp's gel, which the game's
-  own pass draws on the structure), nor a glow of the port's own standing
+- not another light that lights only the models (a lamp's gel, which the
+  game's own pass draws on the structure), nor a glow of the port's own standing
   in for what the lightmap lights (a powerup's, a teleporter's: Prisoner's
   overshield took a slot and drew a speckled shadow at the feet), nor a
   light out of reach or dark;
@@ -785,9 +780,10 @@ static int dynamic_lights_shadow_pick(struct halo_dynamic_light const *lights, u
 		real_point3d position;
 		real score, since = now;
 
-		if (!(light->radius > 0.0f) || !(intensity > 0.0f) || (light->flags & HALO_DYNAMIC_LIGHT_MODELS_ONLY))
+		if (!(light->radius > 0.0f) || !(intensity > 0.0f))
 			continue;
-		if (!flashlight && (light->radius < SHADOWED_LEAST_RADIUS || baked[light_index]))
+		if (!flashlight && (light->radius < SHADOWED_LEAST_RADIUS || baked[light_index] ||
+			(light->flags & HALO_DYNAMIC_LIGHT_MODELS_ONLY)))
 			continue;
 		/* (how long it has lasted: since it first qualified) */
 		if (key)

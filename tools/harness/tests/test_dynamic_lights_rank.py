@@ -27,7 +27,7 @@ CONTROLS = {
     "drawn-any-handle": (("lights_drawn[drawn].light == lights[index]", "TRUE"), "drawn-reused-slot"),
     "shadow-any-reach": (("light->radius < SHADOWED_LEAST_RADIUS ||", "FALSE ||"), "shadow-small-skipped"),
     "shadow-no-age": (("now - since < SHADOWED_LEAST_AGE", "FALSE"), "shadow-lasting"),
-    "shadow-baked-shadowed": (("|| baked[light_index]))", "))"), "shadow-models-baked-skipped"),
+    "shadow-baked-shadowed": (("baked[light_index] ||", "FALSE ||"), "shadow-models-baked-skipped"),
     "shadow-flashlight-alike": (("score += SHADOWED_FLASHLIGHT_SCORE;", "score += 0.0f;"), "shadow-flashlight-first"),
     "shadow-no-keep": (("score *= SHADOWED_KEEP;", "score *= 1.0f;"), "shadow-kept"),
     "shadow-keep-forever": (("score *= SHADOWED_KEEP;", "score *= 100.0f;"), "shadow-kept"),
