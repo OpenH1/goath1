@@ -9,9 +9,13 @@
 #   venv                cmake (SDL's build), when the machine has none
 #   maps                the machine's Halo maps (~/halo-x86-maps/maps)
 #   locks/gpu.lock      the GPU lock: one game that draws at a time (older scripts link their lock to it)
+#   xwin/sysroot        with --windows (omarchy, for bosgame): the MSVC toolchain and Windows SDK that
+#                       `goat-rig build --windows` cross-compiles against, splatted by xwin 0.10.0 (its SHA-256
+#                       checked; it accepts Microsoft's license for the download, as a Visual Studio install does)
 # Run it again after changing tools/rig: it only copies the kit then.
 set -euo pipefail
-host=${1:?usage: tools/rig/install.sh <omarchy|5900x|user@host>}
+host=${1:?usage: tools/rig/install.sh <omarchy|5900x|user@host> [--windows]}
+windows=${2:-no}
 case $host in
   omarchy|5900x) target=$(awk -v n="$host" '$1 == n { print $2 }' ~/.config/goat-rig/hosts 2>/dev/null); target=${target:-$host.fabric} ;;
   *) target=$host ;;
@@ -22,10 +26,14 @@ root=$(cd "$(dirname "$0")/../.." && pwd)
 ccache_version=4.14.2
 ccache_sha256=b20ff6415151226ac5a10dfd6839700c694bd67d1871c8fddb266d366ff25bfb
 
+# xwin 0.10.0's static Linux build (GitHub release) and its published SHA-256
+xwin_version=0.10.0
+xwin_sha256=d870eb4b2f390878af6da1ccd3cf321d22fcb72720984853b4be732ae597fc88
+
 # (to bash on its input: the 5900X's login shell is fish)
-ssh "$target" bash -s -- "$ccache_version" "$ccache_sha256" <<'REMOTE'
+ssh "$target" bash -s -- "$ccache_version" "$ccache_sha256" "$windows" "$xwin_version" "$xwin_sha256" <<'REMOTE'
 set -euo pipefail
-version=$1; sha=$2
+version=$1; sha=$2; windows=$3; xwin_version=$4; xwin_sha=$5
 rig=$HOME/goat-rig
 mkdir -p "$rig"/{bin,kit/tools/rig,builds,runs,locks,ccache,tmp}
 
@@ -70,6 +78,24 @@ fi
 # maps, the GPU lock shared with the older scripts
 [ -e "$rig/maps" ] || ln -s "$HOME/halo-x86-maps/maps" "$rig/maps"
 [ -e "$rig/locks/gpu.lock" ] || touch "$rig/locks/gpu.lock"
+
+# the Windows cross build's MSVC toolchain and SDK (configure.py --windows-cross wants versioned Include and Lib
+# folders: --use-winsysroot-style; and Lib/<version>/<um|ucrt>/x64, where xwin names them x86_64: linked)
+if [ "$windows" = --windows ] && [ ! -d "$rig/xwin/sysroot/VC" ]; then
+  name=xwin-$xwin_version-x86_64-unknown-linux-musl
+  mkdir -p "$rig/xwin" && rm -rf "$rig/tmp/xwin" && mkdir -p "$rig/tmp/xwin"
+  curl -fsSL -o "$rig/tmp/xwin/$name.tar.gz" \
+    "https://github.com/Jake-Shadle/xwin/releases/download/$xwin_version/$name.tar.gz"
+  echo "$xwin_sha  $rig/tmp/xwin/$name.tar.gz" | sha256sum -c --quiet
+  tar -C "$rig/tmp/xwin" -xzf "$rig/tmp/xwin/$name.tar.gz"
+  install -m 755 "$rig/tmp/xwin/$name/xwin" "$rig/xwin/xwin"
+  "$rig/xwin/xwin" --accept-license --arch x86_64 --cache-dir "$rig/tmp/xwin/cache" splat \
+    --use-winsysroot-style --output "$rig/xwin/sysroot"
+  for lib in "$rig"/xwin/sysroot/VC/Tools/MSVC/*/lib "$rig"/xwin/sysroot/Windows\ Kits/10/Lib/*/{um,ucrt}; do
+    ln -sfn x86_64 "$lib/x64"
+  done
+  rm -rf "$rig/tmp/xwin"
+fi
 REMOTE
 
 # the kit itself
