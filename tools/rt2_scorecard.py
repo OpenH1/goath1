@@ -82,7 +82,7 @@ SCENES = [
     # (made from local/rt2-fixes with HALO_LT_E1=denoise and HALO_LT_LIGHTS=1, b30's campaign at a fixed frame time:
     # the progress clip's two moments, the light list and motion recorded)
     ("b30sun", "b30_sun.hrpl", 650, "b30's beach in the sun: the Pelican, a Warthog, an Elite, the player (sun shadows)"),
-    ("b30fight", "b30_fight.hrpl", 690, "b30's beach firefight: plasma bolts, needles, a grenade by a Warthog"),
+    ("b30fight", "b30_fight.hrpl", 600, "b30's beach firefight: plasma bolts, needles, a grenade by a Warthog"),
 ]
 # the visual checks (each found escaped once, by the progress clip of f7223c72e): on omarchy, shared, the pictures
 # of the presented frame (sRGB decoded): (name, recording, frame, what)
