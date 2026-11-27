@@ -20,7 +20,8 @@ change is kept as the pages keep theirs (settings_pending), the header saying
 how many. A page opened from here has the changes kept as it opened, and
 coming back puts back those it did not write. Y (APPLY) writes them, as a
 page's OK does, the profile edited still; B lets go of them and leaves
-Settings, as Settings' Cancel does. */
+Settings, as Settings' Cancel does. An APPLY that changes the display asks
+KEEP or REVERT over it (goat_keep_revert.inc). */
 
 /* (menu_tags.c's: a screen opened from a widget, and the history's last
 gone back to) */
@@ -483,6 +484,8 @@ struct menu_table_source const pc_menu_goat_source =
 	goat_update, goat_heading, goat_cell, goat_opened,
 };
 
+#include "goat_keep_revert.inc"
+
 /* ---- the goat.* bindings and the goat actions */
 
 /* a binding's value, UTF-8 ("goat.<name>": nonzero if it has one): the
@@ -493,6 +496,8 @@ int pc_menu_goat_value(char const *name, char *value, unsigned long size)
 	struct goat_row const *listed = goat_row_at(goat.chosen);
 
 	value[0] = 0;
+	if (!strncmp(name, "goat.keep_", 10))
+		return goat_keep_value(name, value, size);
 	if (!strcmp(name, "goat.tab"))
 		snprintf(value, size, "%s", goat_tab_ids[PIN(goat.tab, 0, GOAT_TAB_COUNT - 1)]);
 	else if (!strcmp(name, "goat.title"))
@@ -533,6 +538,8 @@ int pc_menu_goat_action(struct widget_instance *widget, struct event_record *eve
 	short index;
 
 	*deleted = FALSE;
+	if (!strcmp(name, "goat keep") || !strcmp(name, "goat keep revert"))
+		return goat_keep_action(widget, event, name, deleted);
 	if (!strncmp(name, "goat tab ", 9))
 	{
 		for (index = 0; index < GOAT_TAB_COUNT; index++)
@@ -561,8 +568,13 @@ int pc_menu_goat_action(struct widget_instance *widget, struct event_record *eve
 	{
 		if (!settings_pending.count)
 			return FALSE;
+		/* (a display change: its old values kept and the question asked over
+		this screen, KEEP or REVERT) */
+		goat_keep_take();
 		settings_pending_write(FALSE);
 		ui_play_audio_feedback_sound(SOUND_FORWARD);
+		if (goat_keep.count)
+			goat_keep_open(widget, event, deleted);
 		return TRUE;
 	}
 	listed = goat_row_at(row != NONE ? row : goat.chosen);

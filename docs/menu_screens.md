@@ -119,7 +119,7 @@ at every aspect ratio (in the menus' middle 640) and on a phone.
 
 | Element | Attributes | Meaning |
 | --- | --- | --- |
-| `<dialog>` | `title` (required), `text` | The box: its title and its words (wrapped to the box, bindings filled). A screen with one has nothing else but its `<list>` |
+| `<dialog>` | `title` (required), `text` | The box: its title and its words (wrapped to the box, bindings filled, and filled again each frame, its size as it opened; its choices' labels too). A screen with one has nothing else but its `<list>` |
 | `<list>` | `focus` | (in a `<dialog>`) Its choices: 1 to 4 `<item>`s, `focus` the one focused as it opens (each opening asks anew) |
 
 `screens/quit.xml` (in place of the PC version's Quit question) and
@@ -757,6 +757,13 @@ row neither choice nor slider), the changes kept on the way. Changes wait in Set
 in the band (`{goat.pending}`): Y (APPLY, `goat apply`) writes them to the profile, B (`goat cancel`) goes back
 and lets go of them. The panel shows the chosen row's label and help (`{goat.title}`, `{goat.help}`). The code
 is `menu_functions.c`'s `goat_settings.inc`.
+
+An APPLY that changes the display (its mode, monitor, resolution, window size, refresh rate, orientation, HDR or
+render resolution) then asks over the screen, `screens/goat_keep.xml`: KEEP (`goat keep`) or REVERT (`goat keep
+revert`, focused; B too), its label counting down from 20 seconds (`{goat.keep_revert}`, `{goat.keep_text}`). At 0
+REVERT is taken. REVERT writes those settings back as they were before the APPLY; the other changes stay. A or B
+in the first half second after it shows does nothing, so a press meant for APPLY is not taken as an answer. The
+code is `goat_keep_revert.inc`.
 
 ## Leaving an editor with changes not saved
 

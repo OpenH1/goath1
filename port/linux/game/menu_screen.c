@@ -115,6 +115,9 @@ int pc_menu_goat_value(char const *name, char *value, unsigned long size);
 int pc_menu_goat_action(struct widget_instance *widget, struct event_record *event, char const *name, short row,
 	int *deleted);
 int pc_menu_goat_takes(void);
+/* (its KEEP or REVERT after a display change: the countdown run each frame
+the question is drawn) */
+void pc_menu_goat_keep_frame(struct widget_instance *screen);
 
 /* ---------- constants */
 
@@ -532,6 +535,9 @@ static struct screen_action const screen_actions[] =
 	{ "goat right", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_goat },
 	{ "goat apply", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_goat },
 	{ "goat cancel", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_goat },
+	/* (its KEEP or REVERT after a display change, screens/goat_keep.xml) */
+	{ "goat keep", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_goat },
+	{ "goat keep revert", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_goat },
 	/* (the NVIDIA DLSS add-on's, screens/dlss_addon.xml (port/linux/src/
 	dlss_addon.c): NVIDIA's license accepted and the add-on downloaded, the
 	add-on removed, the game restarted for it, the license's lines paged) */
@@ -571,6 +577,7 @@ static char const *const screen_action_names[] =
 	"dlss page down", "data add", "data open folder",
 	"goat tab display", "goat tab graphics", "goat tab audio", "goat tab controls", "goat tab gameplay",
 	"goat tab system", "goat row", "goat left", "goat right", "goat apply", "goat cancel",
+	"goat keep", "goat keep revert",
 };
 
 /* a binding's value: the saved game's mission and difficulty (player 1's
@@ -617,6 +624,7 @@ static char const *const screen_binding_names[] =
 	"dlss.can_remove", "dlss.can_restart", "dlss.panel",
 	"data.detail", "data.heading", "data.status", "data.from", "data.folder", "data.opened", "data.add",
 	"goat.tab", "goat.title", "goat.help", "goat.changed", "goat.pending", "goat.empty",
+	"goat.keep_text", "goat.keep_revert",
 };
 
 /* the row sources a table may name (menu_table.h), and their names */
@@ -858,6 +866,9 @@ static struct screen_place const screen_places[] =
 	{ "goat_settings",
 		"main_menu\\settings_select\\player_setup\\player_profile_edit\\video_settings\\video_settings_screen",
 		NULL, pc_menu_goat_takes },
+	/* (its KEEP or REVERT, a pop-up over it after an APPLY that changes the
+	display: its countdown run each frame it is drawn, goat_keep_revert.inc) */
+	{ "goat_keep", "screens\\goat_keep", pc_menu_goat_keep_frame, NULL },
 	/* (the on-screen keyboard, a pop-up: keyboard.c opens it, reads its
 	input each frame it is drawn and takes every event of its own) */
 	{ "keyboard", "screens\\keyboard", keyboard_frame, NULL, NULL, keyboard_event, keyboard_screen_closed },
@@ -1878,6 +1889,41 @@ static void box_frame(struct screen_open *open)
 	}
 }
 
+/* each frame: a <dialog>'s words and its choices' labels with bindings
+read again (GOAT Settings' KEEP or REVERT counting down), its size as it
+was made */
+static void dialog_frame(struct screen_open *open)
+{
+	struct menu_screen const *screen = menu_screens_find(open->place->screen);
+	struct screen_values values;
+	char label[MENU_SCREEN_MAXIMUM_TEXT];
+	long index;
+
+	if (!screen)
+		return;
+	screen_values_clear(&values, open);
+	for (index = 0; index < screen->block_count; index++)
+	{
+		struct menu_screen_block const *dialog = &screen->blocks[index];
+
+		if (dialog->kind == MENU_SCREEN_DIALOG && dialog->text && strchr(dialog->text, '{') &&
+			menu_screen_text(dialog->text, screen_value, &values, label, sizeof(label)) && label[0])
+		{
+			screen_text_set(open->dialog_text, label);
+		}
+	}
+	for (index = 0; index < open->item_count; index++)
+	{
+		struct menu_screen_block const *item = open->item_blocks[index];
+
+		if (item && item->label && strchr(item->label, '{') &&
+			menu_screen_text(item->label, screen_value, &values, label, sizeof(label)))
+		{
+			screen_text_set(open->items[index], label);
+		}
+	}
+}
+
 /* a box's middle drawn as much wider as its legend's growth, and its rows
 with the game map's frame of them (BOX_ROW_PICTURE: the menus have it on
 the maps the pause menu is played on, not ui.map, which their files are
@@ -2525,6 +2571,9 @@ void menu_screen_frame(struct widget_instance *widget)
 	/* (a box's: its rows' labels, its legend's room) */
 	if (open->box)
 		box_frame(open);
+	/* (a dialog's: its words and choices' labels) */
+	if (open->dialog_text)
+		dialog_frame(open);
 	/* (the tall layout's: its blocks each frame) */
 	if (tall_of(open))
 	{
