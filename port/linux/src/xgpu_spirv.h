@@ -489,8 +489,16 @@ XGPU_SPIRV_GUIDES_LOCATION), a pixel each:
 - z: the material id (low 16 bits; 0 not known yet), the roughness (bits
   16-23, 0 to 255; 255 where the draw has none) and the specular mask (bits
   24-31: 255 where the draw has a reflection stage, else 0);
-- w: the motion (packHalf2x16, pixels from where the point was the frame
-  before); 0 for now (XGPU_SPIRV_GUIDES_MOTION_NONE: not yet written).
+- w: the motion, packHalf2x16: where the point is less where it was the
+  frame before, as a fraction of the window (its corners' width and height),
+  x right and y down; the jitter left out (both positions the vertex
+  program's with this frame's, xgpu_spirv.c's motion_screen). The frame
+  before's from the previous frame's registers (192 to 383: its camera, a
+  skinned or moving object's nodes; xgpu_stream.h's MOTION, phase NONE
+  where only these are kept). XGPU_SPIRV_GUIDES_MOTION_NONE (0): none (a
+  point behind either eye, or a twin without motion: the camera's
+  reprojection stands for it); a point that did not move has
+  XGPU_SPIRV_GUIDES_MOTION_STILL (both halves -0) so that it is never 0.
 A pixel the pre-pass drew no twin at has none (its inputs say so: their
 PRESENT bit). */
 #define XGPU_SPIRV_GUIDES_LOCATION 1
@@ -499,6 +507,7 @@ PRESENT bit). */
 #define XGPU_SPIRV_GUIDES_SPECULAR_SHIFT 24
 #define XGPU_SPIRV_GUIDES_ROUGHNESS_NONE 255u
 #define XGPU_SPIRV_GUIDES_MOTION_NONE 0u
+#define XGPU_SPIRV_GUIDES_MOTION_STILL 0x80008000u
 #define XGPU_SPIRV_RT_BOUNCE_SAMPLES 3
 #define XGPU_RT_BOUNCE_GRID_X 64
 #define XGPU_RT_BOUNCE_GRID_Y 64

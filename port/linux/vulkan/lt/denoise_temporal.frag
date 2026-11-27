@@ -70,6 +70,18 @@ void main()
     vec3 sample_rgb = max(texelFetch(raw, pixel, 0).rgb, vec3(0.0));
     vec3 n = unfold(unpackSnorm2x16(words.x));
     vec3 p = world_point(pixel, uintBitsToFloat(words.z));
+    // (checking: the guides' motion less the cameras' reprojection, pixels; z 1 where the guides carry motion, 2
+    // where not)
+    if ((pass.control.y & MOTION_VIEW) != 0)
+    {
+        uint motion = texelFetch(guides, pixel, 0).w;
+        vec2 camera;
+        bool seen = reproject_camera(p, camera);
+        vec3 off = motion == MOTION_NONE || !seen ? vec3(0.0, 0.0, 2.0) :
+            vec3(reproject_motion(pixel, motion) - camera, 1.0);
+        result = uvec4(floatBitsToUint(off.x), floatBitsToUint(off.y), floatBitsToUint(off.z), packHalf2x16(vec2(1.0, 0.0)));
+        return;
+    }
     vec3 mean = vec3(0.0);
     float count = 0.0, moment = 0.0, cap = float(pass.control.x);
     vec2 at;

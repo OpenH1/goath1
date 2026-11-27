@@ -204,6 +204,11 @@ static int lt_lights_wanted(void)
 	return lt.wanted;
 }
 
+boolean lt_lights_sent(void)
+{
+	return lt_lights_wanted() != 0;
+}
+
 static float lt_linear(float value)
 {
 	return value > 0.0f ? powf(value, 2.2f) : 0.0f;

@@ -12,6 +12,8 @@
 #define CAMERA_ONLY 8
 // (checking, the negative control: an exponential average from the start, the history's count held at the cap)
 #define EMA 16
+// (checking: the temporal stage writes the guides' motion less the cameras' reprojection, in pixels)
+#define MOTION_VIEW 32
 
 // the draw set's uniforms: struct xgpu_world_ao_pass, then (at 1024) xgpu_vulkan_denoise.c's struct denoise_params
 layout(set = 0, binding = 1, std140) uniform Pass
@@ -78,25 +80,35 @@ bool project(vec3 p, out vec2 at)
     return all(greaterThanEqual(at, vec2(pass.corners.xy))) && all(lessThan(at, vec2(pass.corners.zw)));
 }
 
-// where p was in the frame before, in its pixels (continuous: a pixel's middle at +0.5), from the cameras (E1's own
-// reprojection, lt/e1.frag), or the guides' motion where they carry it; false off its view
+// where p was in the frame before, in its pixels (continuous: a pixel's middle at +0.5): the guides' motion where they
+// carry it (a moving object's, a skinned character's, the camera's), else the cameras' (E1's own reprojection,
+// lt/e1.frag); false off its view
+bool reproject_camera(vec3 p, out vec2 at)
+{
+    vec3 w = p - pass.previous[0].xyz, pf = pass.previous[1].xyz, pr = pass.previous[2].xyz;
+    vec3 pu = pass.previous[3].xyz;
+    float along = dot(w, pf) / dot(pf, pf);
+    at = vec2(-1.0);
+    if (along <= 0.0)
+        return false;
+    vec2 was = vec2(dot(w, pr) / dot(pr, pr), dot(w, pu) / dot(pu, pu)) / along;
+    at = vec2(pass.previous_corners.xy) + (was + 1.0) * 0.5 * vec2(pass.previous_corners.zw - pass.previous_corners.xy);
+    return true;
+}
+
+// (C1's motion: where the point is less where it was the frame before, a fraction of the window, x right and y
+// down; the jitter left out, as the cameras' reprojection leaves it out)
+vec2 reproject_motion(ivec2 pixel, uint motion)
+{
+    return vec2(pixel) + 0.5 - unpackHalf2x16(motion) * vec2(pass.corners.zw - pass.corners.xy);
+}
+
 bool reproject(vec3 p, ivec2 pixel, uint motion, out vec2 at)
 {
     if (motion != MOTION_NONE && (pass.control.y & CAMERA_ONLY) == 0)
-    {
-        // (C1's motion: pixels from where the point was the frame before)
-        at = vec2(pixel) + 0.5 - unpackHalf2x16(motion);
-    }
-    else
-    {
-        vec3 w = p - pass.previous[0].xyz, pf = pass.previous[1].xyz, pr = pass.previous[2].xyz;
-        vec3 pu = pass.previous[3].xyz;
-        float along = dot(w, pf) / dot(pf, pf);
-        if (along <= 0.0)
-            return false;
-        vec2 was = vec2(dot(w, pr) / dot(pr, pr), dot(w, pu) / dot(pu, pu)) / along;
-        at = vec2(pass.previous_corners.xy) + (was + 1.0) * 0.5 * vec2(pass.previous_corners.zw - pass.previous_corners.xy);
-    }
+        at = reproject_motion(pixel, motion);
+    else if (!reproject_camera(p, at))
+        return false;
     return all(greaterThanEqual(at, vec2(pass.previous_corners.xy))) &&
         all(lessThan(at, vec2(pass.previous_corners.zw)));
 }
