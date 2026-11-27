@@ -191,8 +191,16 @@ static struct
 	int png_frames;
 	long material_tags[_rt_export_materials];
 	long material_count;
-	/* the first window's camera as drawn (main.c's) */
+	/* the first window's camera as drawn (main.c's), and a copy of it as
+	the scene's frame drew it, with that frame's tick, map and label */
 	struct render_camera const *camera;
+	struct render_camera scene_camera;
+	long scene_tick;
+	char map[64], label[128];
+	/* the saved frame's name (empty: not known yet) and its size (0 not
+	read yet) */
+	char png_name[128];
+	long png_width, png_height;
 } rt_export;
 
 /* ---------- private code: files */
@@ -973,14 +981,12 @@ static int object_under(long object_index, long unit_index)
 
 static void camera_write(char const *folder, char const *map, char const *label, long tick)
 {
-	struct render_camera const *camera = rt_export.camera;
+	struct render_camera const *camera = &rt_export.scene_camera;
 	real_rectangle2d bounds;
 	float viewport_width, viewport_height, half_width, half_height, tangent_v, tangent_h;
 	char path[600];
 	FILE *file;
 
-	if (!camera)
-		return;
 	/* (the projection's tangents as render_camera_build_frustum makes them
 	of the frustum's bounds) */
 	render_camera_build_frustum_bounds(camera, &bounds);
@@ -1004,7 +1010,10 @@ static void camera_write(char const *folder, char const *map, char const *label,
 		camera->forward.k, camera->up.i, camera->up.j, camera->up.k);
 	fprintf(file, " \"fov_h_deg\":%.5f,\"fov_v_deg\":%.5f,\"width\":%d,\"height\":%d,\n",
 		2.0 * atan(tangent_h) * 180.0 / 3.14159265358979, 2.0 * atan(tangent_v) * 180.0 / 3.14159265358979,
-		(int)viewport_width, (int)viewport_height);
+		rt_export.png_width ? (int)rt_export.png_width : (int)viewport_width,
+		rt_export.png_height ? (int)rt_export.png_height : (int)viewport_height);
+	fprintf(file, " \"viewport_logical\":[%d,%d],\"size_from\":\"%s\",\n", (int)viewport_width, (int)viewport_height,
+		rt_export.png_width ? "original.png" : "the window's logical viewport (original.png not read yet)");
 	fprintf(file, " \"vertical_field_of_view_rad\":%.6f,\"frustum_bounds\":[%.6f,%.6f,%.6f,%.6f],\"z_near\":%.5f,\"z_far\":%.3f,\n",
 		camera->vertical_field_of_view, bounds.x0, bounds.x1, bounds.y0, bounds.y1, camera->z_near, camera->z_far);
 	fprintf(file, " \"exposure_note\":\"the classic renderer: lit in its combiners at 8 bits a channel and written "
@@ -1039,7 +1048,12 @@ static void scene_write(void)
 	snprintf(path, sizeof(path), "%s/geometry/lightmaps", rt_export.folder);
 	folder_make(path);
 	rt_export.material_count = 0;
-	camera_write(rt_export.folder, map, label, game_time_get());
+	snprintf(rt_export.map, sizeof(rt_export.map), "%s", map);
+	snprintf(rt_export.label, sizeof(rt_export.label), "%s", label);
+	rt_export.scene_tick = game_time_get();
+	if (rt_export.camera)
+		rt_export.scene_camera = *rt_export.camera;
+	camera_write(rt_export.folder, map, label, rt_export.scene_tick);
 
 	/* the structure */
 	memset(&mesh, 0, sizeof(mesh));
@@ -1198,22 +1212,38 @@ static void scene_write(void)
 		rt_lights_materials_write(rt_export.folder);
 }
 
-/* the frame saved renamed original.png, once its name is known */
+/* the frame saved renamed original.png, once its name is known and it is
+on the disk (the backend may still be writing it), and camera.json written
+again with its size: TRUE when done */
 static int original_named(void)
 {
-	char name[128], from[700], to[700];
+	char from[700], to[700];
+	FILE *file;
+	byte header[24];
 
-	if (!halo_screenshot_png_taken(name, sizeof(name)))
-		return FALSE;
-	if (name[0])
+	if (!rt_export.png_name[0])
 	{
-		snprintf(from, sizeof(from), "%s/%s", rt_export.folder, name);
-		snprintf(to, sizeof(to), "%s/original.png", rt_export.folder);
-		if (rename(from, to) != 0)
-			platform_log("rt export: the frame %s not renamed", from);
+		if (!halo_screenshot_png_taken(rt_export.png_name, sizeof(rt_export.png_name)))
+			return FALSE;
+		if (!rt_export.png_name[0])
+		{
+			platform_log("rt export: the frame was not saved");
+			return TRUE;
+		}
 	}
-	else
-		platform_log("rt export: the frame was not saved");
+	snprintf(from, sizeof(from), "%s/%s", rt_export.folder, rt_export.png_name);
+	snprintf(to, sizeof(to), "%s/original.png", rt_export.folder);
+	if (rename(from, to) != 0)
+		return FALSE;
+	file = fopen(to, "rb");
+	if (file && fread(header, 1, sizeof(header), file) == sizeof(header) && memcmp(header + 12, "IHDR", 4) == 0)
+	{
+		rt_export.png_width = ((long)header[16] << 24) | ((long)header[17] << 16) | ((long)header[18] << 8) | header[19];
+		rt_export.png_height = ((long)header[20] << 24) | ((long)header[21] << 16) | ((long)header[22] << 8) | header[23];
+		camera_write(rt_export.folder, rt_export.map, rt_export.label, rt_export.scene_tick);
+	}
+	if (file)
+		fclose(file);
 	return TRUE;
 }
 
@@ -1248,14 +1278,21 @@ void rt_export_frame(int main_menu_loaded, void const *first_window_camera)
 		rt_export.phase = 1;
 		break;
 	case 1:
+		rt_export.png_name[0] = 0;
+		rt_export.png_width = rt_export.png_height = 0;
 		scene_write();
 		rt_export.phase = 2;
 		rt_export.png_frames = 0;
 		/* (and its name, most likely known already) */
 		__attribute__((fallthrough));
 	case 2:
-		if (original_named() || ++rt_export.png_frames > _rt_export_png_frames)
+		if (original_named())
 			rt_export.phase = 3;
+		else if (++rt_export.png_frames > _rt_export_png_frames)
+		{
+			platform_log("rt export: the frame %s not renamed original.png", rt_export.png_name);
+			rt_export.phase = 3;
+		}
 		break;
 	}
 }
