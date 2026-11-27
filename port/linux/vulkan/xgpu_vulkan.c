@@ -8324,7 +8324,11 @@ static void draw_body(const struct xgpu_vulkan_draw *draw)
 	}
 	/* (the lights written after this are written after it: in order) */
 	if (draw->dynamic_lights)
-		vk.lights_block->used = vk.lights_cells->used = vk.flashlight_shadow->used = vk.serial;
+	{
+		vk.lights_block->used = vk.lights_cells->used = vk.serial;
+		if (vk.flashlight_shadow)
+			vk.flashlight_shadow->used = vk.serial;
+	}
 	sets[0] = vk.draw_set;
 	offsets[0] = (uint32_t)draw->constants.offset;
 	offsets[1] = (uint32_t)draw->uniforms.offset;

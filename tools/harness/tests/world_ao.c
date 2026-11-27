@@ -89,6 +89,12 @@ int rt_shadows_on(void)
 	return shadows_on;
 }
 
+/* (the enhanced flashlight's shadow, dynamic_lights.c's: tested apart) */
+int dynamic_lights_flashlight_shadows_on(void)
+{
+	return 0;
+}
+
 /* the parts (their stubs' behaviour: the real ones are tested apart) */
 void world_scene_map_loaded(void) { scene_loads++; }
 void world_scene_map_unloaded(void) {}

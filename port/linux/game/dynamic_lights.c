@@ -719,13 +719,9 @@ docs/dynamic-shadows-plan.md, stage 1: of the frame's lights as they go to
 the renderer (the game's, their copies and the port's own), at most
 HALO_DYNAMIC_LIGHTS_SHADOWED cast shadows, those whose shadows show:
 
-- a flashlight that is on, always (the first slot: a unit's own light, its
-  cone on what it points at), once the structure's light from it, its
-  gel's in the game's own pass, reads the shadows; until then it lights
-  only the models here, and casts none (its trace, out to its reach on
-  every pixel, cost 2 ms a frame at 1080p on a Radeon 8060S for a shadow
-  seen on the models alone);
-- else a light that reaches SHADOWED_LEAST_RADIUS or more and has lasted
+- not a flashlight: it casts its own, by its own map, on every surface
+  (dynamic_lights_flashlights, below);
+- a light that reaches SHADOWED_LEAST_RADIUS or more and has lasted
   SHADOWED_LEAST_AGE (an explosion, a fire, a lamp, a large charged shot,
   the port's own larger lights). A plasma bolt, a needle or a muzzle flash
   reaches 1.5 to 2 world units for a few frames: its shadow is a speck on
@@ -741,23 +737,20 @@ HALO_DYNAMIC_LIGHTS_SHADOWED cast shadows, those whose shadows show:
   alike).
 
 None qualifying, none is chosen and the renderer draws no pass. Each with
-its disk's radius, the size of what glows (a projectile's small, a
-flashlight's a point at the weapon; an explosion's or a fire's larger, by
-its reach), and its owner, whose collision meshes the rays leave out (a
-flashlight's unit). The renderer traces them by ray queries where it has
+its disk's radius, the size of what glows (a projectile's small; an
+explosion's or a fire's larger, by its reach), and its owner, whose
+collision meshes the rays leave out. The renderer traces them by ray queries where it has
 them (xgpu.h's XGPU_DYNAMIC_LIGHTS_SHADOWED); none where the setting is off
 (and with HALO_LIGHT_SHADOWS_OFF=1, for measuring). */
 #define SHADOWED_DISK_PROJECTILE 0.05f
-#define SHADOWED_DISK_FLASHLIGHT 0.03f
 #define SHADOWED_DISK_SCALE 0.05f
 #define SHADOWED_DISK_LEAST 0.1f
 #define SHADOWED_DISK_MOST 0.5f
 /* (world units; seconds of game time; how much more a light chosen last
-frame counts; a flashlight's score past any other's) */
+frame counts) */
 #define SHADOWED_LEAST_RADIUS 3.0f
 #define SHADOWED_LEAST_AGE 0.1f
 #define SHADOWED_KEEP 1.5f
-#define SHADOWED_FLASHLIGHT_SCORE 1000.0f
 
 /* the lights that qualified last frame, by key, and since when (seconds);
 those chosen */
@@ -790,7 +783,6 @@ static int dynamic_lights_shadow_pick(struct halo_dynamic_light const *lights, u
 	{
 		struct halo_dynamic_light const *light = &lights[light_index];
 		real intensity = MAX(light->color[0], MAX(light->color[1], light->color[2]));
-		boolean flashlight = (light->flags & HALO_DYNAMIC_LIGHT_FLASHLIGHT) != 0;
 		unsigned long long key = keys[light_index];
 		real_point3d position;
 		real score, since = now;
@@ -798,7 +790,7 @@ static int dynamic_lights_shadow_pick(struct halo_dynamic_light const *lights, u
 		if (!(light->radius > 0.0f) || !(intensity > 0.0f) ||
 			(light->flags & (HALO_DYNAMIC_LIGHT_MODELS_ONLY | HALO_DYNAMIC_LIGHT_FLASHLIGHT)))
 			continue;
-		if (!flashlight && (light->radius < SHADOWED_LEAST_RADIUS || baked[light_index]))
+		if (light->radius < SHADOWED_LEAST_RADIUS || baked[light_index])
 			continue;
 		/* (how long it has lasted: since it first qualified) */
 		if (key)
@@ -817,7 +809,7 @@ static int dynamic_lights_shadow_pick(struct halo_dynamic_light const *lights, u
 				shadowed_history.seen[next][shadowed_history.seen_count[next]++].since = since;
 			}
 		}
-		if (!flashlight && now - since < SHADOWED_LEAST_AGE)
+		if (now - since < SHADOWED_LEAST_AGE)
 			continue;
 		position.x = light->position[0];
 		position.y = light->position[1];
@@ -831,8 +823,6 @@ static int dynamic_lights_shadow_pick(struct halo_dynamic_light const *lights, u
 				break;
 			}
 		}
-		if (flashlight)
-			score += SHADOWED_FLASHLIGHT_SCORE;
 		/* (kept the highest first; the earlier among equals) */
 		for (slot = chosen; slot > 0 && scores[slot - 1] < score; slot--)
 		{
@@ -884,8 +874,7 @@ static void dynamic_lights_shadowed(long count)
 		struct halo_dynamic_light const *light = &dynamic_lights.lights[indices[slot]];
 		real disk = light->radius * SHADOWED_DISK_SCALE;
 
-		disks[slot] = (light->flags & HALO_DYNAMIC_LIGHT_FLASHLIGHT) ? SHADOWED_DISK_FLASHLIGHT :
-			(light->flags & HALO_DYNAMIC_LIGHT_PROJECTILE) ? SHADOWED_DISK_PROJECTILE :
+		disks[slot] = (light->flags & HALO_DYNAMIC_LIGHT_PROJECTILE) ? SHADOWED_DISK_PROJECTILE :
 			disk < SHADOWED_DISK_LEAST ? SHADOWED_DISK_LEAST : disk > SHADOWED_DISK_MOST ? SHADOWED_DISK_MOST : disk;
 		owners[slot] = dynamic_lights.owners[indices[slot]];
 	}
