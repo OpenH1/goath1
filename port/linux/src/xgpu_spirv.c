@@ -7947,6 +7947,9 @@ static void rt_bounce_gather_main(struct module *m, struct words *locals, struct
 	else if (rt_bounce_view() == 2)
 		value = fscale(m, 3, xyz(m, light_shadows_fetch(m, state->samples, op2(m, OP_SHIFT_RIGHT_ARITHMETIC, m->t_iv2, pixel,
 			rt_bounce_iv2(m, constant_int(m, 2), constant_int(m, 2))))), constant_float(m, 10.0f));
+	else if (rt_bounce_view() == 4)
+		value = construct(m, 3, (unsigned int[]){ constant_float(m, 0.0f), saturate(m, 1, fmul(m, 1, extract(m,
+			light_shadows_fetch(m, state->pass.history, pixel), 3), constant_float(m, 0.1f))), constant_float(m, 0.0f) });
 	else if (rt_bounce_view() == 3)
 		value = fadd(m, 3, value, construct(m, 3, (unsigned int[]){ constant_float(m, 0.0f),
 			saturate(m, 1, fmul(m, 1, total, constant_float(m, 0.5f))), constant_float(m, 0.0f) }));
