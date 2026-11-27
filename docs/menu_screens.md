@@ -758,10 +758,12 @@ in the band (`{goat.pending}`): Y (APPLY, `goat apply`) writes them to the profi
 and lets go of them. The panel shows the chosen row's label and help (`{goat.title}`, `{goat.help}`). The code
 is `menu_functions.c`'s `goat_settings.inc`.
 
-An APPLY that changes the display (its mode, monitor, resolution, window size, refresh rate, orientation, HDR or
-render resolution) then asks over the screen, `screens/goat_keep.xml`: KEEP (`goat keep`) or REVERT (`goat keep
-revert`, focused; B too), its label counting down from 20 seconds (`{goat.keep_revert}`, `{goat.keep_text}`). At 0
-REVERT is taken. REVERT writes those settings back as they were before the APPLY; the other changes stay. A or B
+An APPLY that changes the display (its mode, resolution, window size, refresh rate, orientation, HDR or render
+resolution) sets those settings for this run alone and then asks over the screen, `screens/goat_keep.xml`: KEEP
+(`goat keep`) or REVERT (`goat keep revert`, focused; B too), its label counting down from 20 seconds
+(`{goat.keep_revert}`, `{goat.keep_text}`). At 0 REVERT is taken. KEEP writes them into config.toml; REVERT sets
+them back as they were before the APPLY, and the file never had the new values (nor does it if the game closes
+first); the other changes are written on APPLY as ever. A or B
 in the first half second after it shows does nothing, so a press meant for APPLY is not taken as an answer. The
 code is `goat_keep_revert.inc`.
 
