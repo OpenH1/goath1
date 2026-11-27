@@ -70,6 +70,9 @@ level ("world" is the strong preset); the reference's weight */
 #define WORLD_AO_FLOOR 0.2f
 #define WORLD_AO_STRENGTH_OBJECTS 1.0f
 #define WORLD_AO_STRENGTH_LEVEL 0.8f
+/* the lightmap's indirect light (linear) the occlusion takes outdoors
+(port/linux/src/xgpu.h's XGPU_AMBIENT_OCCLUSION_INDIRECT) */
+#define WORLD_AO_INDIRECT 0.19f
 #define WORLD_AO_REFERENCE_WEIGHT 1.0f
 /* a model draw's reference for a static scenery placement's own draws:
 the field holds its own geometry, so its taps are taken from the pixel's

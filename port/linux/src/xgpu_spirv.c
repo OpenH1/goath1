@@ -6177,7 +6177,10 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 		static const unsigned int rgb[4] = { 4, 5, 6, 3 };
 		unsigned int light = ext2(&m, GLSL_POW, m.t_v3, fmax_scalar(&m, 3, xyz(&m, result), 0.0f),
 			constant_splat(&m, 3, 2.2f));
-		unsigned int indirect = ext2(&m, GLSL_F_MIN, m.t_v3, light, constant_splat(&m, 3, XGPU_AMBIENT_OCCLUSION_INDIRECT));
+		/* (the level outdoors, the block's grid[0].w; 0 an interior's: all of it) */
+		unsigned int level = extract(&m, world_ao_vector(&m, 3, constant_int(&m, 0)), 3);
+		unsigned int indirect = op3(&m, OP_SELECT, m.t_v3, op2(&m, OP_F_ORD_GREATER_THAN, m.t_bv3, splat(&m, 3, level),
+			constant_splat(&m, 3, 0.0f)), ext2(&m, GLSL_F_MIN, m.t_v3, light, splat(&m, 3, level)), light);
 
 		light = fsub(&m, 3, light, fscale(&m, 3, indirect, fsub(&m, 1, constant_float(&m, 1.0f), state.occlusion)));
 		result = shuffle(&m, 4, result, ext2(&m, GLSL_POW, m.t_v3, fmax_scalar(&m, 3, light, 0.0f),
