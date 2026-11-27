@@ -119,7 +119,7 @@ at every aspect ratio (in the menus' middle 640) and on a phone.
 
 | Element | Attributes | Meaning |
 | --- | --- | --- |
-| `<dialog>` | `title` (required), `text` | The box: its title and its words (wrapped to the box, bindings filled). A screen with one has nothing else but its `<list>` |
+| `<dialog>` | `title` (required), `text` | The box: its title and its words (wrapped to the box, bindings filled, and filled again each frame, its size as it opened; its choices' labels too). A screen with one has nothing else but its `<list>` |
 | `<list>` | `focus` | (in a `<dialog>`) Its choices: 1 to 4 `<item>`s, `focus` the one focused as it opens (each opening asks anew) |
 
 `screens/quit.xml` (in place of the PC version's Quit question) and
@@ -740,6 +740,32 @@ layouts"). With no controller connected the rows show their words and nothing ca
 `screens/layout_bindings.xml` (#1144) is the CONTROLLER LAYOUTS page's ITS BINDINGS ›, a pop-up (its stand-in
 `screens/layout_bindings`): how many of the player's buttons the layout's bindings would change
 (`{layout.bindings}`), KEEP MINE (focused; B too) and USE THIS LAYOUT'S (`layout bindings use`, then back).
+
+## GOAT Settings
+
+`screens/goat_settings.xml` takes the place of Settings' first tab (`video_settings_screen`) while
+`display.goat_menus` is on (with `display.menu_engine` "new"; off, Settings keeps its own tabs and pages). It is
+one screen of six tabs (DISPLAY, GRAPHICS, AUDIO, CONTROLS, GAMEPLAY, SYSTEM), each the rows of some of
+Settings' pages under their sections' headings (the row source `goat.rows`). The tabs are the model's `goat/*`
+screens (`model/goat_settings.xml`, written by `tools/port_settings.py`'s `GOAT_TABS`): each row is a `ref` to a
+row of `model/settings.xml`, so its label, help, choices, slider and conditions are that page's own, and a row
+its page hides (`when`) is not shown. A dimmed row (`enabled`) is shown grey and takes no change. The network
+pages are not among them; SYSTEM's ONLINE opens Settings' own network tab.
+
+Left and right step a choice or a slider; A steps a choice (a toggle flips) or opens a row's page (a link, or a
+row neither choice nor slider), the changes kept on the way. Changes wait in Settings' pending list, their count
+in the band (`{goat.pending}`): Y (APPLY, `goat apply`) writes them to the profile, B (`goat cancel`) goes back
+and lets go of them. The panel shows the chosen row's label and help (`{goat.title}`, `{goat.help}`). The code
+is `menu_functions.c`'s `goat_settings.inc`.
+
+An APPLY that changes the display (its mode, resolution, window size, refresh rate, orientation, HDR or render
+resolution) sets those settings for this run alone and then asks over the screen, `screens/goat_keep.xml`: KEEP
+(`goat keep`) or REVERT (`goat keep revert`, focused; B too), its label counting down from 20 seconds
+(`{goat.keep_revert}`, `{goat.keep_text}`). At 0 REVERT is taken. KEEP writes them into config.toml; REVERT sets
+them back as they were before the APPLY, and the file never had the new values (nor does it if the game closes
+first); the other changes are written on APPLY as ever. A or B
+in the first half second after it shows does nothing, so a press meant for APPLY is not taken as an answer. The
+code is `goat_keep_revert.inc`.
 
 ## Leaving an editor with changes not saved
 

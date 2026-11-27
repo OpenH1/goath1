@@ -12,9 +12,12 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from harness import CHECK_FAILED, build, mutated, read, run  # noqa: E402
 
-CASES = ["arithmetic", "frame", "render", "model", "skin"]
+CASES = ["arithmetic", "frame", "render", "model", "skin", "permutation"]
 GAME = "port/linux/game/world_rt.c"
 CONTROLS = [
+    # every node's collision mesh its first permutation's, whatever the object has (a dead Jackal's shield, #1311)
+    ("\t\t\tint permutation = node_index < permutation_count ? world_rt.permutations[node_index] : 0;\n",
+     "\t\t\tint permutation = 0;\n", "permutation"),
     # a mesh wound inward kept so (the backend's front faces then the inside)
     ("\tif (volume < -(double)least)\n", "\tif (volume > (double)least)\n", "arithmetic"),
     # an owner that is the datum index itself (object 0's the structure's 0)

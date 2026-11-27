@@ -21,14 +21,15 @@ def generated(fault=None):
     if fault=='recycled':code=mutated(code,'list->flags = 0; /* port: a recycled slot has no previous provenance */',';')
     if fault=='rollback':gather=mutated(gather,'object_set_position(unit_index, &original, NULL, NULL);',';')
     if fault=='stack':gather=mutated(gather,'attempt != 0','FALSE')
+    if fault=='ai-only':gate=mutated(gate,'if (inside && waiting && hs_runtime_waiting_call_is_a_gate())','if (inside && waiting)')
     return (('list_header.inc','#define _object_list_players_bit '+str(constant(lists,'_object_list_players_bit'))+'\n'+structure(read('source/hs/object_lists.h'),'object_list_header_datum')),('lists.inc',code),('players.inc',players),('gather.inc',gather),('volume.inc',function(read('source/hs/hs_library_external.c'),'hs_trigger_volume_test_objects')),('gate.inc',gate))
 
-@pytest.mark.parametrize('case',['one-player','crowds','refused','outside','bsp-result','empty','allocation','lifetime','contexts','mixed','no-arrival','bsp-anchor'])
+@pytest.mark.parametrize('case',['one-player','crowds','refused','outside','bsp-result','empty','allocation','lifetime','contexts','mixed','no-arrival','bsp-anchor','ai-only'])
 def test_gate(case):
     status,output=run(build('coop_gate',generated()),case)
     assert status==0,output
 
-@pytest.mark.parametrize('fault,case',[('unverified','refused'),('empty','empty'),('recycled','lifetime'),('rollback','outside'),('stack','crowds')])
+@pytest.mark.parametrize('fault,case',[('unverified','refused'),('empty','empty'),('recycled','lifetime'),('rollback','outside'),('stack','crowds'),('ai-only','ai-only')])
 def test_negative(fault,case):
     status,output=run(build('coop_gate',generated(fault)),case)
     assert status==CHECK_FAILED,output

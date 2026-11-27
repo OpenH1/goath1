@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- KEEP or REVERT, a pop-up over GOAT Settings (docs/menu_screens.md, "GOAT Settings"): APPLY opens it when it
+has changed the display (its mode, resolution, window size, refresh rate, orientation, HDR or render resolution),
+the change shown under it but not yet saved. REVERT is focused and its label counts down; at 0, or on REVERT or
+B, those settings go back to what they were; KEEP saves them. A or B in its first half second does nothing. The
+countdown and the actions are menu_functions.c's goat_settings.inc (goat.keep_*, "goat keep", "goat keep revert"). -->
+<screen name="goat_keep" back="goat keep revert">
+	<dialog title="KEEP THIS DISPLAY?" text="{goat.keep_text}">
+		<list focus="revert">
+			<item id="keep" label="KEEP" do="goat keep"/>
+			<item id="revert" label="{goat.keep_revert}" do="goat keep revert"/>
+		</list>
+	</dialog>
+</screen>
