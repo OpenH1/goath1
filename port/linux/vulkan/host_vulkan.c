@@ -155,14 +155,15 @@ int host_display_luminance(const unsigned char luid[8], void *window, float *bla
 /* the LUID of the adapter that drives the window's monitor; 0 if not known */
 int host_display_adapter_luid(void *window, unsigned char luid[8]);
 /* each adapter DXGI lists, told to each; the count */
-int host_display_adapters(void (*each)(void *context, const char *name, unsigned vendor,
+int host_display_adapters(void (*each)(void *context, const char *name, unsigned vendor, unsigned device,
 	unsigned long long dedicated_memory, const unsigned char luid[8], int software), void *context);
 
 /* (#1283: DXGI's adapters, which the backend logs beside Vulkan's devices) */
 static struct xgpu_vulkan_adapter display_adapters[16];
 static int display_adapter_count;
 
-static void display_adapter_add(void *context, const char *name, unsigned vendor, unsigned long long dedicated_memory,
+static void display_adapter_add(void *context, const char *name, unsigned vendor, unsigned device,
+	unsigned long long dedicated_memory,
 	const unsigned char luid[8], int software)
 {
 	struct xgpu_vulkan_adapter *adapter;
@@ -173,6 +174,7 @@ static void display_adapter_add(void *context, const char *name, unsigned vendor
 	adapter = &display_adapters[display_adapter_count++];
 	snprintf(adapter->name, sizeof(adapter->name), "%s", name);
 	adapter->vendor = vendor;
+	adapter->device = device;
 	adapter->dedicated_memory = dedicated_memory;
 	memcpy(adapter->luid, luid, 8);
 	adapter->software = software;
