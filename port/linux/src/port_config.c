@@ -1818,6 +1818,15 @@ static const struct config_setting config_settings[] =
 		"of the walls and models, through the walls' bump maps, gliding with\n"
 		"the bolt between ticks, brighter in its core and fading softly, with\n"
 		"a glow about each plasma bolt, and lighting your own weapon and hands." GRAPHICS_CHOOSES },
+	{ "display.dynamic_light_bounce", _config_boolean, "false", "HALO_DYNAMIC_LIGHT_BOUNCE", _environment_value,
+		_platform_all,
+		"With display.dynamic_lights \"enhanced\": the strongest plasma bolts,\n"
+		"explosions, muzzle flashes and rockets light the walls near them, and\n"
+		"those walls send a little of that light on in their own color (a\n"
+		"blue bolt's spill on a red wall turns purple). Found with a few rays\n"
+		"through the level on the CPU, so it works on any graphics card. The\n"
+		"level's own light already has its bounce baked in. Only the drawing\n"
+		"changes." },
 	{ "display.ambient_occlusion", _config_string, GRAPHICS_AMBIENT_OCCLUSION, "HALO_AMBIENT_OCCLUSION",
 		_environment_value, _platform_all,
 		"Ambient occlusion, which the Xbox did not have: the ambient light of\n"

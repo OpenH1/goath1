@@ -3,7 +3,8 @@ XGPU_COVERAGE.H
 
 The share of a texture's texels an alpha test draws, for code that cannot
 include xgpu.h (the game's: world_sdf.c, whose objects' occlusion fields
-take an alpha-tested leaf's card as blocking that share of what crosses it).
+take an alpha-tested leaf's card as blocking that share of what crosses it),
+and a texture's average color (dynamic_lights_bounce.c).
 Plain types only. Defined in xbox_texture_decode.c.
 */
 
@@ -17,5 +18,11 @@ that cannot be read (a cube map, a volume, a format not known, no memory):
 taken as drawn whole */
 float xgpu_texture_alpha_coverage(unsigned int format_word, unsigned int size_word, const unsigned char *texels,
 	unsigned int reference, unsigned long largest);
+/* the mean of a 2D texture's texels' colors in linear light (each channel
+taken to the power 2.2: red, green, blue, 0 to 1), at its first level no
+larger than largest each way (port/linux/game/dynamic_lights_bounce.c: a
+shader's base map); 0 for one that cannot be read */
+int xgpu_texture_average_color(unsigned int format_word, unsigned int size_word, const unsigned char *texels,
+	unsigned long largest, float linear[3]);
 
 #endif
