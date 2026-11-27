@@ -15,7 +15,9 @@ static float color[4 * TEXELS], ours[4 * TEXELS], before[4 * TEXELS], normal[4 *
 static unsigned char island[TEXELS], visor[TEXELS], rgb[3 * TEXELS];
 
 /* MCC's paint: lighter and greyer than ours, a hole in its alpha (the
-visor, painted white) at 20..23 x 20..23, another outside the islands */
+visor, painted white) at 20..23 x 20..23 on an island, one across an
+island's edge at 38..43 x 30..33 (a mirrored visor's seam), and one far off
+the islands at 56..59 x 2..5 */
 static void scene(void)
 {
 	long x, y;
@@ -24,9 +26,10 @@ static void scene(void)
 		for (x = 0; x < SIDE; x++)
 		{
 			long at = y * SIDE + x;
-			int hole = (x >= 20 && x < 24 && y >= 20 && y < 24) || (x >= 56 && x < 60 && y >= 2 && y < 6);
+			int hole = (x >= 20 && x < 24 && y >= 20 && y < 24) || (x >= 38 && x < 44 && y >= 30 && y < 34) ||
+				(x >= 56 && x < 60 && y >= 2 && y < 6);
 
-			island[at] = y < 48 && x < 52;
+			island[at] = y < 48 && x < 40;
 			color[4 * at] = hole ? 255.0f : 150.0f + (float)((x * 7 + y * 3) % 40);
 			color[4 * at + 1] = hole ? 255.0f : 160.0f + (float)((x * 5 + y * 11) % 30);
 			color[4 * at + 2] = hole ? 255.0f : 170.0f + (float)((x * 3 + y * 5) % 20);
@@ -142,9 +145,10 @@ static void color_match(void)
 	}
 }
 
-/* our texels kept on the visor (the alpha's hole on an island, and its
-edge), flat normals and the classic look there; MCC's elsewhere, its own
-hole off the islands too, and the visor left out of the match */
+/* our texels kept on the visor (the alpha's hole on an island and its
+edge, and beside an island: the seam), flat normals and the classic look
+there; MCC's elsewhere, its own hole far off the islands too, and the visor
+left out of the match */
 static void visor_rule(void)
 {
 	long count, x, y;
@@ -152,7 +156,8 @@ static void visor_rule(void)
 
 	scene();
 	count = layout_visor(color, island, SIDE, SIDE, visor);
-	CHECK(count == 6 * 6 - 4, "the visor's %ld texels, not the hole's 16 and its edge's 16", count);
+	CHECK(count == (6 * 6 - 4) + (8 * 6 - 4), "the visor's %ld texels, not the two holes' with their edges' (76)", count);
+	CHECK(visor[31 * SIDE + 43] && visor[31 * SIDE + 44], "the seam's hole beside the island is visor");
 	CHECK(!visor[3 * SIDE + 57], "MCC's hole off the islands is no visor");
 	CHECK(layout_color(color, ours, island, visor, TEXELS), "matched");
 	for (y = 19; y <= 24; y++)

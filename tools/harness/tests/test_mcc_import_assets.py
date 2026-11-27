@@ -89,7 +89,7 @@ def test_embedded_table_has_a_row_per_layout():
 # ---------- the bake's layout code, compiled (tests/mcc_import_layout.c)
 
 BAKE = "port/linux/src/mcc_import_bake.c"
-LAYOUT_FUNCTIONS = ("round_even", "clampd", "unit3", "compare_floats", "percentile", "bilinear_wrap", "layout_asset",
+LAYOUT_FUNCTIONS = ("round_even", "clampd", "unit3", "compare_floats", "percentile", "bilinear_wrap", "layout_asset", "mask_grow",
                     "layout_resample", "layout_visor", "layout_color", "layout_normal", "layout_orm")
 
 
@@ -101,7 +101,7 @@ def code():
 def execute(source, case):
     bake = read(BAKE)
     defines = "\n".join(re.search(r"^#define " + name + r" .*$", bake, re.M).group(0)
-                         for name in ("CUSTOMIZATION_ROOT", "MAXIMUM_PATH", "VISOR_ALPHA", "VISOR_GROWTH"))
+                         for name in ("CUSTOMIZATION_ROOT", "MAXIMUM_PATH", "PAD_STEPS", "VISOR_ALPHA", "VISOR_GROWTH"))
     pak = read("port/linux/src/ue4_pak.c")
     pak_code = "\n".join((structure(pak, "pak_entry"), structure(pak, "ue4_pak"),
                           "static " + function(pak, "ue4_pak_find_asset")))
@@ -133,7 +133,7 @@ def test_layout_negative_control(fault, case):
                          'snprintf(root, sizeof(root), "%sSharedTextures/H1/%.0s", CUSTOMIZATION_ROOT, layout->root);')
     elif fault == "visor":
         # (no visor: MCC's white painted over ours)
-        source = mutated(source, "visor[texel] = visor[texel] && island[texel];", "visor[texel] = 0;")
+        source = mutated(source, "visor[texel] = visor[texel] && near[texel];", "visor[texel] = 0;")
     else:
         # (DirectX's green kept)
         source = mutated(source, "n[1] = -(normal[4 * texel + 1] / 127.5 - 1);", "n[1] = normal[4 * texel + 1] / 127.5 - 1;")

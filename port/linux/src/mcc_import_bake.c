@@ -3140,42 +3140,59 @@ static int layout_islands(const struct piece *pieces, int count, long width, lon
 	return 1;
 }
 
-/* the visor: MCC's color's alpha hole (MCC paints it white, where ours has
-the visor's own texels), grown over its edge, on our islands only; how many
-texels, or -1 if out of memory */
-static long layout_visor(const float *color, const unsigned char *island, long width, long height, unsigned char *visor)
+/* a mask grown `steps` texels (to its 4 neighbors each step, not wrapped);
+work is as large */
+static void mask_grow(unsigned char *mask, unsigned char *work, long width, long height, long steps)
 {
-	size_t texels = (size_t)width * (size_t)height, texel;
-	unsigned char *grown = malloc(texels);
-	long steps = (long)round_even(VISOR_GROWTH * (double)width / 2048.0), step, x, y, count = 0;
+	long step, x, y;
 
-	if (!grown)
-		return -1;
-	steps = steps < 1 ? 1 : steps;
-	for (texel = 0; texel < texels; texel++)
-		visor[texel] = color[4 * texel + 3] < VISOR_ALPHA;
 	for (step = 0; step < steps; step++)
 	{
-		memcpy(grown, visor, texels);
+		memcpy(work, mask, (size_t)width * (size_t)height);
 		for (y = 0; y < height; y++)
 			for (x = 0; x < width; x++)
 			{
 				size_t at = (size_t)y * (size_t)width + (size_t)x;
 
-				if (!visor[at] && ((y > 0 && visor[at - (size_t)width]) || (y + 1 < height && visor[at + (size_t)width]) ||
-					(x > 0 && visor[at - 1]) || (x + 1 < width && visor[at + 1])))
+				if (!mask[at] && ((y > 0 && mask[at - (size_t)width]) || (y + 1 < height && mask[at + (size_t)width]) ||
+					(x > 0 && mask[at - 1]) || (x + 1 < width && mask[at + 1])))
 				{
-					grown[at] = 1;
+					work[at] = 1;
 				}
 			}
-		memcpy(visor, grown, texels);
+		memcpy(mask, work, (size_t)width * (size_t)height);
+	}
+}
+
+/* the visor: MCC's color's alpha hole (MCC paints it white, where ours has
+the visor's own texels), grown over its edge, where our model draws or
+within the padding's reach of it (a texel beside an island is read there by
+the filtering and the mips: a mirrored visor's seam); how many texels, or -1
+if out of memory */
+static long layout_visor(const float *color, const unsigned char *island, long width, long height, unsigned char *visor)
+{
+	size_t texels = (size_t)width * (size_t)height, texel;
+	unsigned char *near = malloc(texels), *work = malloc(texels);
+	long steps = (long)round_even(VISOR_GROWTH * (double)width / 2048.0), count = 0;
+
+	if (!near || !work)
+	{
+		free(near);
+		free(work);
+		return -1;
 	}
 	for (texel = 0; texel < texels; texel++)
+		visor[texel] = color[4 * texel + 3] < VISOR_ALPHA;
+	mask_grow(visor, work, width, height, steps < 1 ? 1 : steps);
+	memcpy(near, island, texels);
+	mask_grow(near, work, width, height, PAD_STEPS);
+	for (texel = 0; texel < texels; texel++)
 	{
-		visor[texel] = visor[texel] && island[texel];
+		visor[texel] = visor[texel] && near[texel];
 		count += visor[texel];
 	}
-	free(grown);
+	free(near);
+	free(work);
 	return count;
 }
 
