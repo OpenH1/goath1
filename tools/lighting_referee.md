@@ -40,6 +40,9 @@ grenade bursting at that wall; a30's beach in daylight. Variants keep the rest o
   Flood's lit front, the floor before it and the first-person weapon shadowed, and how much of the shadow changes
   when the Flood is placed a step aside. The crease, contact and moving rows report n/a until a light off the
   view's axis is staged: the flashlight's lamp is beside the eye, so the Flood hides its own shadow on the wall.
+  (Bolts and muzzle flashes never get a shadow slot, #1287. A posed camera, `debug_camera_set`, keeps the flashlight
+  with the player and does show the Flood's shadow on the wall from the side, but too small in c20's corridor so far;
+  a second co-op player's flashlight is the next staging to try.)
 - *hdr*: the HDR frame's half floats (`debug.screenshot_halves`, the view not tone mapped): the AR counter's
   brightest pixel, and the frame's.
 - *runs*: every run exited cleanly, and every picture is whole: no frame mostly one colour, and with world AO (the
