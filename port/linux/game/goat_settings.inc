@@ -558,6 +558,9 @@ int pc_menu_goat_action(struct widget_instance *widget, struct event_record *eve
 	}
 	if (!strcmp(name, "goat cancel"))
 	{
+		/* (the B posted as KEEP or REVERT ran out, its pop-up closed already) */
+		if (goat_keep_stray_back())
+			return TRUE;
 		settings_pending_clear();
 		player_ui_end_editing_profile();
 		menu_tags_back(widget, event, &widget_deleted);
@@ -568,9 +571,11 @@ int pc_menu_goat_action(struct widget_instance *widget, struct event_record *eve
 	{
 		if (!settings_pending.count)
 			return FALSE;
-		/* (a display change: its old values kept and the question asked over
-		this screen, KEEP or REVERT) */
-		goat_keep_take();
+		/* (a display change: set for this run alone, config.toml's written
+		only on KEEP, and the question asked over this screen, KEEP or
+		REVERT; the other changes written as ever) */
+		if (goat_keep_take())
+			goat_keep_hold();
 		settings_pending_write(FALSE);
 		ui_play_audio_feedback_sound(SOUND_FORWARD);
 		if (goat_keep.count)

@@ -174,6 +174,7 @@ char const *pc_menu_game_data_input_name(long function_index);
 void event_manager_post_button(short controller_index, short button_index);
 int config_text(char const *name, char *text, unsigned int size);
 int config_write(char const *name, char const *value);
+int config_set_for_run(char const *name, char const *value);
 int config_boolean(char const *name);
 long config_integer(char const *name);
 int config_default(char const *name, char *text, unsigned int size);
@@ -466,6 +467,89 @@ static boolean profile_setting_boolean(short field)
 	return field != 0 && field != 4 && field != 5;
 }
 
+/* ---------- config.toml's writes held back (GOAT Settings' KEEP or REVERT,
+goat_keep_revert.inc): while held, setting_write sets its settings for this
+run alone (config_set_for_run) and keeps each one's value from before and
+the new one, so a display change shows but the file keeps the old values
+until KEEP writes them (settings_held_keep); REVERT sets the old ones back,
+again for this run alone (settings_held_revert). The game closing first
+leaves the file as it was. */
+
+#define SETTINGS_HELD_COUNT 16
+
+static struct
+{
+	boolean holding;
+	short count;
+	struct
+	{
+		char name[48];
+		char before[80];
+		char after[80];
+	} entries[SETTINGS_HELD_COUNT];
+} settings_held;
+
+/* setting_write's config.toml write of one setting: held back while
+settings_held.holding */
+static int setting_config_write(char const *name, char const *value)
+{
+	short index;
+
+	if (!settings_held.holding)
+		return config_write(name, value);
+	for (index = 0; index < settings_held.count; index++)
+	{
+		if (!strcmp(settings_held.entries[index].name, name))
+			break;
+	}
+	if (index == settings_held.count)
+	{
+		if (index == SETTINGS_HELD_COUNT || strlen(name) >= sizeof(settings_held.entries[0].name) ||
+			!config_text(name, settings_held.entries[index].before, sizeof(settings_held.entries[0].before)))
+		{
+			return 0;
+		}
+		snprintf(settings_held.entries[index].name, sizeof(settings_held.entries[0].name), "%s", name);
+	}
+	if (strlen(value) >= sizeof(settings_held.entries[0].after) || !config_set_for_run(name, value))
+		return 0;
+	snprintf(settings_held.entries[index].after, sizeof(settings_held.entries[0].after), "%s", value);
+	if (index == settings_held.count)
+		settings_held.count++;
+	return 1;
+}
+
+/* the held settings written into config.toml at their new values */
+static void settings_held_keep(void)
+{
+	short index;
+
+	for (index = 0; index < settings_held.count; index++)
+	{
+		if (!config_write(settings_held.entries[index].name, settings_held.entries[index].after))
+			platform_log("menus: could not save %s", settings_held.entries[index].name);
+	}
+	settings_held.count = 0;
+}
+
+/* the held settings back at their old values, config.toml left as it is */
+static void settings_held_revert(void)
+{
+	short index;
+
+	for (index = (short)(settings_held.count - 1); index >= 0; index--)
+	{
+		if (config_set_for_run(settings_held.entries[index].name, settings_held.entries[index].before))
+		{
+			platform_log("menus: %s = %s (reverted)", settings_held.entries[index].name,
+				settings_held.entries[index].before);
+		}
+		else
+			platform_log("menus: could not set %s back", settings_held.entries[index].name);
+	}
+	settings_held.count = 0;
+}
+
 /* ---------- Advanced Graphics' RENDER RESOLUTION row: three settings as one
 spinner, a setting named "display.render_resolution" (tools/port_settings.py):
 "original", display.resolution_scaling's Xbox 640x480, or the factor that
@@ -522,7 +606,7 @@ static boolean render_resolution_write(char const *value)
 
 	config_text("display.resolution_scaling", scaling, sizeof(scaling));
 	if (strcmp(scaling, original ? "original" : "native") &&
-		!config_write("display.resolution_scaling", original ? "original" : "native"))
+		!setting_config_write("display.resolution_scaling", original ? "original" : "native"))
 	{
 		return FALSE;
 	}
@@ -534,14 +618,14 @@ static boolean render_resolution_write(char const *value)
 	supersampling's, the render scale 1) */
 	config_text("display.render_scale", factor, sizeof(factor));
 	if (!(text_is_number(factor, &current) && current == (number < 1.0 ? number : 1.0)) &&
-		!config_write("display.render_scale", number < 1.0 ? value : "1.0"))
+		!setting_config_write("display.render_scale", number < 1.0 ? value : "1.0"))
 	{
 		return FALSE;
 	}
 	config_text("display.supersampling", factor, sizeof(factor));
 	if (text_is_number(factor, &current) && current == (number < 1.0 ? 1.0 : number))
 		return TRUE;
-	return config_write("display.supersampling", number < 1.0 ? "1.0" : value) != 0;
+	return setting_config_write("display.supersampling", number < 1.0 ? "1.0" : value) != 0;
 }
 
 /* ---------- First Person's THIS WEAPON rows (Weapon Position's): the
@@ -743,7 +827,7 @@ static boolean setting_write(char const *name, char const *value)
 	if (!strcmp(name, RENDER_RESOLUTION_SETTING))
 		return render_resolution_write(value);
 	if (strncmp(name, "profile.", 8))
-		return config_write(name, value);
+		return setting_config_write(name, value);
 	for (index = 0; index < NUMBEROF(profile_settings); index++)
 	{
 		struct player_profile *profile = player_ui_get_edit_player_profile();
