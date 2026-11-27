@@ -101,6 +101,10 @@ matrices' words, and the frames its GPU time is logged over */
 #define RT_SKINNED_IDLE 300u
 #define RT_SKIN_RESTS (4u << 20)
 #define RT_SKIN_OUTS (4u << 20)
+/* (the rest and output buffers start at so many words, and double as they
+must, up to RT_SKIN_RESTS and _OUTS: a map's few characters need a few
+hundred thousand) */
+#define RT_SKIN_FIRST_WORDS (1u << 18)
 #define RT_SKIN_FRAME_WORDS (XGPU_WORLD_RT_POSES * 4u + (1u << 19))
 #define RT_SKIN_LOGGED 600u
 /* the scene's memory is logged every so many frames (rt_memory_log) */
@@ -289,7 +293,7 @@ static struct
 	struct rt_buffer skin_frames[RT_SKIN_FRAMES];
 	uint64_t skin_frame_used[RT_SKIN_FRAMES];
 	struct rt_buffer rests, outs, skin_scratch;
-	uint32_t rests_used, outs_used;
+	uint32_t rests_used, outs_used, outs_wanted;
 	struct rt_slot { uint32_t at, count; } free_outs[RT_SKINNED];
 	uint32_t free_out_count;
 	struct xgpu_world_rt_pose *poses;
@@ -541,7 +545,7 @@ static void rt_meshes_release(void)
 		rt_garbage_add(&rt.outs, VK_NULL_HANDLE);
 	memset(&rt.rests, 0, sizeof(rt.rests));
 	memset(&rt.outs, 0, sizeof(rt.outs));
-	rt.rests_used = rt.outs_used = 0;
+	rt.rests_used = rt.outs_used = rt.outs_wanted = 0;
 	rt.pose_count = 0;
 	/* (a new hit table: the GPU may still read the old) */
 	if (rt.hit_buffer.buffer)
@@ -1108,17 +1112,47 @@ static int rt_hit_sets_make(void)
 
 /* ---------- the skinning */
 
+/* the words a skin buffer of so many used needs room for more, doubled
+from RT_SKIN_FIRST_WORDS (0: past most) */
+static uint32_t rt_skin_words(uint32_t used, uint32_t more, uint32_t most)
+{
+	uint64_t words = RT_SKIN_FIRST_WORDS;
+
+	while (words < (uint64_t)used + more)
+		words *= 2u;
+	return words > most ? 0 : (uint32_t)words;
+}
+
+/* the rest buffer made, or made larger, with room for more words (its
+words copied: it is host-visible; the old let go of once the GPU is done
+with it). FALSE: no room */
+static int rt_rests_room(uint32_t more)
+{
+	uint32_t words = rt_skin_words(rt.rests_used, more, RT_SKIN_RESTS);
+	struct rt_buffer grown;
+
+	if (!words)
+		return 0;
+	if (rt.rests.buffer && (VkDeviceSize)words * 4u <= rt.rests.size)
+		return 1;
+	if (!rt_buffer_make((VkDeviceSize)words * 4u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, 1, &grown))
+		return 0;
+	if (rt.rests.buffer)
+	{
+		memcpy(grown.mapped, rt.rests.mapped, (size_t)rt.rests_used * 4u);
+		rt_garbage_add(&rt.rests, VK_NULL_HANDLE);
+	}
+	rt.rests = grown;
+	return 1;
+}
+
 /* a skinned mesh's rest vertices (position, nodes, weight) into the rest
 buffer and its corners into a buffer of their own (FALSE: no room) */
 static int rt_skinned_mesh_keep(struct rt_mesh *mesh, const float *positions, const uint32_t *skin)
 {
 	uint32_t index, *words;
 
-	if (!rt.rests.buffer && !rt_buffer_make((VkDeviceSize)RT_SKIN_RESTS * 4u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, 1,
-		&rt.rests))
-		return 0;
-	if ((uint64_t)rt.rests_used + (uint64_t)mesh->vertex_count * 5u > RT_SKIN_RESTS ||
-		!rt_buffer_make((VkDeviceSize)mesh->count * 12u, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, 1,
+	if (!rt_rests_room(mesh->vertex_count * 5u) || !rt_buffer_make((VkDeviceSize)mesh->count * 12u, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, 1,
 			&mesh->corners))
 	{
 		host_logf(HOST_LOG_WARN, "vulkan: the ray-traced scene's skinned meshes have no room: one left out");
@@ -1309,13 +1343,17 @@ static struct rt_skinned *rt_skinned_of(uint32_t owner, uint32_t mesh_id, const 
 		object->out_at = rt.free_outs[slot].at;
 		rt.free_outs[slot] = rt.free_outs[--rt.free_out_count];
 	}
-	else if ((uint64_t)rt.outs_used + (uint64_t)mesh->vertex_count * 3u <= RT_SKIN_OUTS)
+	else if ((uint64_t)rt.outs_used + (uint64_t)mesh->vertex_count * 3u <= rt.outs.size / 4u)
 	{
 		object->out_at = rt.outs_used;
 		rt.outs_used += mesh->vertex_count * 3u;
 	}
 	else
 	{
+		/* (the output made larger at the next frame's skinning: this one
+		traced from then) */
+		if (rt.outs_used + mesh->vertex_count * 3u > rt.outs_wanted)
+			rt.outs_wanted = rt.outs_used + mesh->vertex_count * 3u;
 		free(object);
 		return NULL;
 	}
@@ -1417,9 +1455,26 @@ static void rt_skin(VkCommandBuffer commands)
 	}
 	if (!rt.pose_count || !rt_skin_pipeline_make())
 		return;
-	if (!rt.outs.buffer && !rt_buffer_make((VkDeviceSize)RT_SKIN_OUTS * 4u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-		VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, 0, &rt.outs))
-		return;
+	/* (the output made, or made larger for the objects that found no room:
+	nothing of the old is copied, as an object's positions are read only by
+	the refit that follows its skinning in the same frame; the old let go of
+	once the GPU is done with it) */
+	if (!rt.outs.buffer || (VkDeviceSize)rt.outs_wanted * 4u > rt.outs.size)
+	{
+		uint32_t words = rt_skin_words(rt.outs_wanted, 0, RT_SKIN_OUTS);
+		struct rt_buffer grown;
+
+		if (words && rt_buffer_make((VkDeviceSize)words * 4u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+			VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, 0, &grown))
+		{
+			if (rt.outs.buffer)
+				rt_garbage_add(&rt.outs, VK_NULL_HANDLE);
+			rt.outs = grown;
+		}
+		rt.outs_wanted = 0;
+		if (!rt.outs.buffer)
+			return;
+	}
 	/* (a frame's jobs and matrices no work not yet done reads; the oldest
 	waited for where none is) */
 	for (frame_slot = 0; frame_slot < RT_SKIN_FRAMES; frame_slot++)
