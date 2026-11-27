@@ -962,8 +962,8 @@ PAGES = {
             # SETTINGS_ROW_ENABLED)
             (f"GPU {RESTART}", "display.gpu", [("AUTO", "auto")],
              "The graphics card that draws the game, from the next start. Auto prefers a discrete card. Lists "
-             "the cards Vulkan sees: if one is missing, reinstall its driver or set Windows' Graphics to High "
-             "performance.|Dimmed in VR and on a Mac.", "computer"),
+             "the cards Vulkan sees: if a card is missing, do a clean reinstall of its driver.|Not on Mac or in "
+             "VR.", "computer"),
             ("FRAME RATE & SYNC ›", None, _page_screen(*FRAME_RATE),
              "VSync, variable refresh (G-SYNC, FreeSync), the most frames a second and low latency.", None),
             ("FIELD OF VIEW", "display.fov", FIELDS_OF_VIEW,
@@ -2477,7 +2477,8 @@ def settings_crumbs() -> dict:
     return crumbs
 
 
-# the settings whose rows have the wider spinner (a device's name)
+# the settings whose rows have the wider spinner (a device's name; a GPU's
+# short: menu_tags.c's pc_menu_gpu_short_name)
 WIDE_SETTINGS = {"audio.output_device", "audio.input_device", "display.gpu", "streamer.slurs", "streamer.swearing",
                  "streamer.insults"}
 

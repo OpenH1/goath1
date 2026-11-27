@@ -1441,6 +1441,54 @@ static long split(char const *text, char const **pieces)
 	return count;
 }
 
+/* a GPU's name as Graphics Card's row shows it, short enough for its
+spinner, in capitals: without its maker's name (AMD, NVIDIA, Intel), the
+marks ((TM), (R)), the word GRAPHICS and the driver's words in parentheses
+after it ("AMD Radeon 8060S Graphics (RADV STRIX_HALO)": RADEON 8060S); the
+whole name where nothing is left. Its length */
+long pc_menu_gpu_short_name(char const *name, char *shown, size_t size)
+{
+	static char const *const dropped[] = { "AMD", "NVIDIA", "INTEL", "GRAPHICS", "(TM)", "(R)" };
+	char upper[96];
+	char *word, *mark;
+	long length = 0, at;
+	size_t index;
+
+	if (!size)
+		return 0;
+	for (at = 0; name[at] && at < (long)sizeof(upper) - 1; at++)
+		upper[at] = name[at] >= 'a' && name[at] <= 'z' ? (char)(name[at] - 'a' + 'A') : name[at];
+	upper[at] = 0;
+	/* (the marks inside words: "RADEON(TM)", "IRIS(R)") */
+	for (index = 4; index < sizeof(dropped) / sizeof(dropped[0]); index++)
+	{
+		while ((mark = strstr(upper, dropped[index])) != NULL)
+			memmove(mark, mark + strlen(dropped[index]), strlen(mark + strlen(dropped[index])) + 1);
+	}
+	/* (the driver's words: a parenthesis after the name) */
+	if ((mark = strchr(upper, '(')) != NULL && mark > upper)
+		*mark = 0;
+	shown[0] = 0;
+	for (word = strtok(upper, " "); word; word = strtok(NULL, " "))
+	{
+		for (index = 0; index < 4 && strcmp(word, dropped[index]); index++)
+			;
+		if (index < 4)
+			continue;
+		length += snprintf(shown + length, size - (size_t)length, "%s%s", length ? " " : "", word);
+		if (length >= (long)size - 1)
+			break;
+	}
+	if (!length)
+	{
+		for (at = 0; name[at] && at < (long)size - 1; at++)
+			shown[at] = name[at] >= 'a' && name[at] <= 'z' ? (char)(name[at] - 'a' + 'A') : name[at];
+		shown[at] = 0;
+		length = at;
+	}
+	return length < (long)size ? length : (long)size - 1;
+}
+
 /* a spinner's strings, or its values (count of them in pieces), with those
 the platform adds: Video Setup's
 sizes are the display's (sdl_platform.c), shown "1920 x 1080" and set
@@ -1502,8 +1550,10 @@ static long spinner_expand(char const *setting, boolean values, char const **pie
 				snprintf(shown, sizeof(shown), "%s", value);
 			else
 			{
-				for (at = 0; name[at] && at < 63; at++)
-					shown[at] = name[at] >= 'a' && name[at] <= 'z' ? (char)(name[at] - 'a' + 'A') : name[at];
+				at = pc_menu_gpu_short_name(name, shown, sizeof(shown));
+				/* (two identical cards: each its index) */
+				if (value[0] >= '0' && value[0] <= '9')
+					at += snprintf(shown + at, sizeof(shown) - (size_t)at, " #%s", value);
 				snprintf(shown + at, sizeof(shown) - (size_t)at, "%s", chosen ? " (IN USE)" : "");
 			}
 			piece = allocate((long)strlen(shown) + 1);
