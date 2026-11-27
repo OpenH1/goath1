@@ -67,7 +67,7 @@ void dynamic_lights_clusters(long rasterizer_light_index, short count, short con
 /* port/linux/game/world_ao.c, port/linux/src/xgpu_stream_encode.c */
 int world_ao_mode(void);
 int halo_world_ao_ray_queries(void);
-void xgpu_backend_rt_bounce(struct rt_bounce const *bounce);
+void xgpu_backend_rt_bounce(struct xgpu_rt_bounce const *bounce);
 /* port/linux/game/door_portals.c */
 short door_portals_clusters_in_sphere(short cluster_index, real_point3d const *position, real radius,
 	short maximum_count, short *clusters);
@@ -494,7 +494,7 @@ static boolean dynamic_lights_bounce_gpu(
 {
 	static unsigned long long last[BOUNCE_WINDOWS];
 	static boolean said;
-	struct rt_bounce bounce;
+	struct xgpu_rt_bounce bounce;
 	short chosen[BOUNCE_SOURCES], chosen_count, index, channel;
 	unsigned long long now;
 
@@ -515,10 +515,10 @@ static boolean dynamic_lights_bounce_gpu(
 	last[window] = now;
 	chosen_count = game_in_progress() && global_structure_bsp_get() ?
 		dynamic_lights_bounce_choose(lights, count, &render.camera.position, chosen) : 0;
-	for (index = 0; index < chosen_count && index < RT_BOUNCE_LIGHTS; index++)
+	for (index = 0; index < chosen_count && index < XGPU_RT_BOUNCE_LIGHTS; index++)
 	{
 		struct halo_dynamic_light const *light = &lights[chosen[index]];
-		struct rt_bounce_light *out = &bounce.lights[bounce.count++];
+		struct xgpu_rt_bounce_light *out = &bounce.lights[bounce.count++];
 
 		memcpy(out->position, light->position, sizeof(out->position));
 		out->radius = light->radius;

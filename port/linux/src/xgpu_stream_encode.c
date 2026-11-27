@@ -2864,10 +2864,10 @@ void xgpu_backend_contact_shadows(xgpu_target color, xgpu_target depth, const st
 	rt_shadows_record(XGPU_STREAM_CONTACT_SHADOWS, XGPU_CONTACT_SHADOWS_CASTERS, color, depth, shadows);
 }
 
-_Static_assert(sizeof(struct rt_bounce_light) == sizeof(struct xgpu_stream_rt_bounce_light) &&
+_Static_assert(sizeof(struct xgpu_rt_bounce_light) == sizeof(struct xgpu_stream_rt_bounce_light) &&
 	XGPU_RT_BOUNCE_LIGHTS == XGPU_STREAM_RT_BOUNCE_LIGHTS, "a bounced light (xgpu_stream.h)");
 
-void xgpu_backend_rt_bounce(const struct rt_bounce *bounce)
+void xgpu_backend_rt_bounce(const struct xgpu_rt_bounce *bounce)
 {
 	struct xgpu_stream_rt_bounce *record_body;
 	int count = bounce->count < 0 ? 0 : bounce->count > XGPU_RT_BOUNCE_LIGHTS ? XGPU_RT_BOUNCE_LIGHTS : bounce->count;
