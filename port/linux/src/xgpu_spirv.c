@@ -8930,6 +8930,10 @@ static unsigned int lt_reflection_texel(struct module *m, struct pixel_state *st
 	linear = ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, xyz(m, cube), 0.0f), constant_splat(m, 3, 2.2f));
 	rgb = fadd(m, 3, xyz(m, s), fscale(m, 3, linear, fsub(m, 1, constant_float(m, 1.0f), extract(m, s, 3))));
 	rgb = ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, rgb, 0.0f), constant_splat(m, 3, 1.0f / 2.2f));
+	/* (HALO_RT_REFLECTIONS_VIEW=1: green by the hits' share, red the rest) */
+	if (rt_reflections_view() == 1)
+		rgb = construct(m, 3, (unsigned int[]){ fsub(m, 1, constant_float(m, 1.0f), extract(m, s, 3)), extract(m, s, 3),
+			constant_float(m, 0.0f) });
 	return vec4_of(m, rgb, extract(m, cube, 3));
 }
 
