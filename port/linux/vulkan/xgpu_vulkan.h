@@ -801,13 +801,22 @@ void xgpu_vulkan_rt_mesh_release(uint32_t id);
 struct xgpu_world_rt_mesh: size bytes at data, checked whole), and the
 textures' slots its materials name */
 struct xgpu_world_rt_texture;
-void xgpu_vulkan_rt_mesh_indexed(uint32_t id, const void *data, uint32_t size);
+void xgpu_vulkan_rt_mesh_indexed(uint32_t id, const void *data, uint32_t size, int skinned);
+/* ... and the frame's poses of skinned objects (xgpu_stream.h's struct
+xgpu_world_rt_pose), which its instances name */
+struct xgpu_world_rt_pose;
+void xgpu_vulkan_rt_poses(const struct xgpu_world_rt_pose *poses, uint32_t count);
 void xgpu_vulkan_rt_textures(const struct xgpu_world_rt_texture *textures, uint32_t count);
 /* the hit set (XGPU_VULKAN_SET_RT_HITS): its layout, which the pipelines'
 layout holds where the device has ray queries, and the set the draws that
 trace bind beside the occlusion's (its hit table and textures as they are
 now), read by the work recorded now */
 VkDescriptorSetLayout xgpu_vulkan_rt_hit_layout(void);
+/* (xgpu_vulkan_stream.c's, for xgpu_vulkan_rt.c) the skinning's compute
+shader (xgpu_spirv.h's xgpu_spirv_rt_skin: its words, which the caller
+frees; 0 none), of XGPU_VULKAN_RT_SKIN_GROUP invocations a group */
+#define XGPU_VULKAN_RT_SKIN_GROUP 64u
+int xgpu_vulkan_rt_skin_shader(uint32_t **words, uint32_t *count);
 VkDescriptorSet xgpu_vulkan_rt_hit_set(void);
 void xgpu_vulkan_rt_instances(const struct xgpu_world_ao_instance *instances, uint32_t count);
 int xgpu_vulkan_rt_build(void);

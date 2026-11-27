@@ -377,6 +377,30 @@ ray-traced scene at the occlusion set's; its colour the light the pixel
 keeps, which the blend multiplies it by */
 BOOL xgpu_spirv_rt_shadows_pass(const struct xgpu_spirv_options *options, struct xgpu_spirv_module *module);
 
+/* the ray-traced scene's instances' masks (xgpu_stream.h's
+XGPU_WORLD_AO_INSTANCE_*): the structure, objects, the first-person weapon
+(drawn in a view of its own: no world ray meets it), and the local
+player's own body in first person (which casts shadows, and nothing else
+sees); the rays' masks: the occlusion's (the structure and objects), the
+shadows' (and the player's body) */
+#define XGPU_SPIRV_RT_MASK_AO 0x03u
+#define XGPU_SPIRV_RT_MASK_SHADOWS 0x0Bu
+
+/* the ray-traced scene's skinning (xgpu_vulkan_rt.c): a compute shader of
+XGPU_SPIRV_RT_SKIN_GROUP invocations a group, one a vertex (x) of a job
+(y), its set 0 three storage buffers of words: the skinned meshes' rest
+vertices (five words each: position, nodes, weight), the frame's jobs
+(four words each: the mesh's first rest word, its vertices, its matrices'
+first word in the same buffer, the first word its positions go to) and
+matrices (twelve words a node, at most XGPU_SPIRV_RT_SKIN_NODES), and the
+skinned positions (three words a vertex) */
+#define XGPU_SPIRV_RT_SKIN_GROUP 64u
+#define XGPU_SPIRV_RT_SKIN_NODES 64u
+#define XGPU_SPIRV_RT_SKIN_RESTS 0
+#define XGPU_SPIRV_RT_SKIN_FRAME 1
+#define XGPU_SPIRV_RT_SKIN_OUT 2
+BOOL xgpu_spirv_rt_skin(struct xgpu_spirv_module *module);
+
 /* display.shadows "ray_traced": the dynamic lights' shadows (xgpu.h's
 XGPU_DYNAMIC_LIGHTS_SHADOWED), passes drawn with world_ao_pass's vertex
 shader after the pre-pass, its uniforms (struct xgpu_world_ao_pass: the

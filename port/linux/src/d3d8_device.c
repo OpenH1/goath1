@@ -868,6 +868,21 @@ void halo_world_rt_mesh(unsigned long id, void const *data, unsigned long size)
 		xgpu_backend_world_ao_mesh_indexed(id, data, size);
 }
 
+void halo_world_rt_skinned_mesh(unsigned long id, void const *data, unsigned long size)
+{
+	if (xgpu_backend_capabilities.ray_queries)
+		xgpu_backend_world_rt_skinned_mesh(id, data, size);
+}
+
+_Static_assert(sizeof(struct world_rt_pose) == sizeof(struct xgpu_world_rt_pose) && WORLD_RT_POSES == XGPU_WORLD_RT_POSES &&
+	WORLD_RT_NODES == XGPU_WORLD_RT_POSE_NODES, "the ray-traced scene's poses");
+
+void halo_world_rt_poses(struct world_rt_pose const *poses, unsigned long count)
+{
+	if (xgpu_backend_capabilities.ray_queries)
+		xgpu_backend_world_rt_poses((struct xgpu_world_rt_pose const *)poses, count);
+}
+
 void halo_world_rt_textures(struct world_rt_texture const *textures, unsigned long count)
 {
 	if (xgpu_backend_capabilities.ray_queries)

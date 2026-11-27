@@ -87,8 +87,11 @@ struct world_rt_definition
 	long definition; /* its tag index; -1 an empty entry */
 	short node_count;
 	short boxed;
-	/* (debug.rt_render_geometry) its meshes are its model's as drawn */
-	short drawn;
+	/* (debug.rt_render_geometry) its meshes are its model's as drawn; or
+	skinned, its one skinned mesh (meshes[0]) posed by its nodes' default
+	inverses (heap, node_count of them) */
+	short drawn, skinned;
+	float (*inverses)[3][4];
 	float sphere[4];
 	unsigned short meshes[WORLD_RT_NODES];
 };
@@ -128,11 +131,18 @@ static struct
 	/* (on the heap, made once: the guest's image holds no more) */
 	struct world_rt_definition *definitions;
 	struct world_ao_instance *instances;
+	struct world_rt_pose *poses;
 	struct world_proxies_source_instance *objects;
 	struct world_proxies_frame frames[WORLD_RT_NODES];
 	float *triangles;
 	long triangle_capacity;
 	int full_logged;
+	/* debug.rt_render_geometry, this frame */
+	int render_geometry;
+	/* (measuring: HALO_WORLD_AO_COUNTS) whether the first-person body's
+	pose moved, frames posed and moved, the last pose's first transforms */
+	long player_posed, player_moved;
+	float player_last[4][3][4];
 	/* (measuring: HALO_WORLD_AO_COUNTS) */
 	int counts_wanted;
 	long count_frames, count_instances, count_triangles;
@@ -247,6 +257,63 @@ unsigned long world_rt_octahedral(float const vector[3])
 		packed[k] = (long)floorf(value * 32767.0f + 0.5f);
 	}
 	return ((unsigned long)packed[0] & 0xFFFFUL) | (((unsigned long)packed[1] & 0xFFFFUL) << 16);
+}
+
+int world_rt_inverse(float const in[3][4], float out[3][4])
+{
+	float determinant = in[0][0] * (in[1][1] * in[2][2] - in[1][2] * in[2][1]) -
+		in[0][1] * (in[1][0] * in[2][2] - in[1][2] * in[2][0]) + in[0][2] * (in[1][0] * in[2][1] - in[1][1] * in[2][0]);
+	float scale;
+	int row, column;
+
+	if (!(fabsf(determinant) > 1.0e-12f))
+		return 0;
+	scale = 1.0f / determinant;
+	out[0][0] = (in[1][1] * in[2][2] - in[1][2] * in[2][1]) * scale;
+	out[0][1] = (in[0][2] * in[2][1] - in[0][1] * in[2][2]) * scale;
+	out[0][2] = (in[0][1] * in[1][2] - in[0][2] * in[1][1]) * scale;
+	out[1][0] = (in[1][2] * in[2][0] - in[1][0] * in[2][2]) * scale;
+	out[1][1] = (in[0][0] * in[2][2] - in[0][2] * in[2][0]) * scale;
+	out[1][2] = (in[0][2] * in[1][0] - in[0][0] * in[1][2]) * scale;
+	out[2][0] = (in[1][0] * in[2][1] - in[1][1] * in[2][0]) * scale;
+	out[2][1] = (in[0][1] * in[2][0] - in[0][0] * in[2][1]) * scale;
+	out[2][2] = (in[0][0] * in[1][1] - in[0][1] * in[1][0]) * scale;
+	for (row = 0; row < 3; row++)
+	{
+		out[row][3] = 0.0f;
+		for (column = 0; column < 3; column++)
+			out[row][3] -= out[row][column] * in[column][3];
+	}
+	return 1;
+}
+
+void world_rt_compose(float const a[3][4], float const b[3][4], float out[3][4])
+{
+	float result[3][4];
+	int row, column;
+
+	for (row = 0; row < 3; row++)
+	{
+		for (column = 0; column < 4; column++)
+		{
+			result[row][column] = a[row][0] * b[0][column] + a[row][1] * b[1][column] + a[row][2] * b[2][column] +
+				(column == 3 ? a[row][3] : 0.0f);
+		}
+	}
+	memcpy(out, result, sizeof(result));
+}
+
+int world_rt_blended(struct world_rt_source_vertex const *vertices, long count)
+{
+	long index;
+
+	for (index = 0; index < count; index++)
+	{
+		if (vertices[index].nodes[0] != vertices[index].nodes[1] && vertices[index].weight > 0.02f &&
+			vertices[index].weight < 0.98f)
+			return 1;
+	}
+	return 0;
 }
 
 void world_rt_box_transform(struct world_proxies_frame const *frame, float const sphere[4], float transform[3][4])
@@ -693,6 +760,52 @@ void world_rt_face_out(struct world_rt_source_vertex const *vertices, unsigned l
 	}
 }
 
+/* (debug.rt_render_geometry) a skinned definition's mesh: its model's
+whole, in its model's space, turned to face as its normals do, with each
+vertex's nodes and weight after it (halo_world_rt_skinned_mesh); its nodes'
+default inverses kept to pose its objects. Its triangles (0 none) */
+static long world_rt_definition_skinned(struct world_rt_source_mesh *mesh, float (*inverses)[3][4],
+	struct world_rt_definition *entry)
+{
+	unsigned long size, id, skin_size = (unsigned long)mesh->vertex_count * 8;
+	unsigned char *grown;
+	long index;
+
+	for (index = 0; index < mesh->triangle_count; index++)
+		world_rt_face_out(mesh->vertices, mesh->triangles[index]);
+	size = world_rt_blob(mesh);
+	if (!size)
+		return 0;
+	if (size + skin_size > world_rt.blob_capacity)
+	{
+		grown = realloc(world_rt.blob, size + skin_size);
+		if (!grown)
+			return 0;
+		world_rt.blob = grown;
+		world_rt.blob_capacity = size + skin_size;
+	}
+	for (index = 0; index < mesh->vertex_count; index++)
+	{
+		struct world_rt_source_vertex const *vertex = &mesh->vertices[index];
+		unsigned int nodes = (unsigned int)(vertex->nodes[0] < entry->node_count ? vertex->nodes[0] : 0) |
+			(unsigned int)(vertex->nodes[1] < entry->node_count ? vertex->nodes[1] : 0) << 8;
+
+		memcpy(world_rt.blob + size + index * 8, &nodes, 4);
+		memcpy(world_rt.blob + size + index * 8 + 4, &vertex->weight, 4);
+	}
+	entry->inverses = malloc(sizeof(*entry->inverses) * (size_t)entry->node_count);
+	id = entry->inverses ? world_rt_id_take() : 0;
+	if (!id)
+		return 0;
+	memcpy(entry->inverses, inverses, sizeof(*entry->inverses) * (size_t)entry->node_count);
+	halo_world_rt_skinned_mesh(id, world_rt.blob, size + skin_size);
+	world_rt.count_triangles += mesh->triangle_count;
+	entry->meshes[0] = (unsigned short)id;
+	entry->skinned = 1;
+	entry->drawn = 1;
+	return mesh->triangle_count;
+}
+
 /* (debug.rt_render_geometry) a definition's model's render mesh as drawn,
 split by node: each triangle on its corners' major node (two corners', else
 the first's; a joint's blended corners held so), its vertices in that
@@ -726,6 +839,13 @@ static long world_rt_definition_render(long definition, struct world_rt_definiti
 		goto done;
 	free(part.materials);
 	part.materials = mesh.materials;
+	/* (a model whose joints blend two nodes: one skinned mesh, posed and
+	refit for each object) */
+	if (world_rt_blended(mesh.vertices, mesh.vertex_count))
+	{
+		made = world_rt_definition_skinned(&mesh, inverses, entry);
+		goto done;
+	}
 	for (triangle = 0; triangle < mesh.triangle_count; triangle++)
 	{
 		int node = world_rt_triangle_node(&mesh.vertices[mesh.triangles[triangle][0]],
@@ -881,9 +1001,54 @@ static struct world_ao_instance *world_rt_instance_add(long *count, unsigned lon
 	return instance;
 }
 
+/* (measuring) the first-person body's pose: logged every 600 frames, how
+often its nodes moved (they are the game's own, posed whether drawn or not) */
+static void world_rt_player_posed(struct world_rt_pose const *pose)
+{
+	unsigned int nodes = pose->node_count < 4 ? pose->node_count : 4;
+
+	if (world_rt.counts_wanted <= 0)
+		return;
+	world_rt.player_posed++;
+	if (memcmp(world_rt.player_last, pose->transforms, nodes * sizeof(pose->transforms[0])))
+		world_rt.player_moved++;
+	memcpy(world_rt.player_last, pose->transforms, nodes * sizeof(pose->transforms[0]));
+	if (world_rt.player_posed >= 600)
+	{
+		platform_log("world ao: the ray-traced scene's first-person body: posed %ld frames, its nodes moved in %ld",
+			world_rt.player_posed, world_rt.player_moved);
+		world_rt.player_posed = world_rt.player_moved = 0;
+	}
+}
+
+/* a skinned object's pose: each node's skinning transform (its frame as
+drawn after its default inverse: the model's space into the world, as the
+game's skinned vertex programs take its node matrices) into its first
+node's space (first, the instance's transform) */
+static void world_rt_pose(struct world_rt_definition const *definition, unsigned long owner, unsigned long key,
+	float const first[3][4], struct world_rt_pose *pose)
+{
+	float inverse[3][4], node[3][4];
+	short node_index;
+
+	memset(pose, 0, 16);
+	pose->mesh = definition->meshes[0];
+	pose->owner = (unsigned int)owner;
+	pose->node_count = (unsigned int)definition->node_count;
+	pose->key = (unsigned int)key;
+	if (!world_rt_inverse(first, inverse))
+		memset(inverse, 0, sizeof(inverse));
+	for (node_index = 0; node_index < definition->node_count; node_index++)
+	{
+		world_rt_transform(&world_rt.frames[node_index], node);
+		world_rt_compose(node, definition->inverses[node_index], node);
+		world_rt_compose(inverse, node, pose->transforms[node_index]);
+	}
+}
+
 void world_rt_frame(unsigned long frame)
 {
-	long object_count, object_index, count = 0;
+	long object_count, object_index, count = 0, pose_count = 0;
 
 	if (world_rt.framed && world_rt.frame == frame)
 		return;
@@ -891,11 +1056,14 @@ void world_rt_frame(unsigned long frame)
 	world_rt.frame = frame;
 	if (!world_rt.counts_wanted)
 		world_rt.counts_wanted = getenv("HALO_WORLD_AO_COUNTS") ? 1 : -1;
+	world_rt.render_geometry = config_boolean("debug.rt_render_geometry") != 0;
 	if (!world_rt.instances)
 		world_rt.instances = malloc(sizeof(*world_rt.instances) * WORLD_RT_INSTANCES);
+	if (!world_rt.poses)
+		world_rt.poses = malloc(sizeof(*world_rt.poses) * WORLD_RT_POSES);
 	if (!world_rt.objects)
 		world_rt.objects = malloc(sizeof(*world_rt.objects) * WORLD_RT_OBJECTS);
-	if (!world_rt.instances || !world_rt.objects)
+	if (!world_rt.instances || !world_rt.objects || !world_rt.poses)
 		return;
 	world_rt_structure();
 	world_rt_textures_frame();
@@ -921,7 +1089,10 @@ void world_rt_frame(unsigned long frame)
 		struct world_proxies_source_instance const *object = &world_rt.objects[object_index];
 		struct world_rt_definition const *definition;
 		unsigned long owner = object->baked ? 0 : world_rt_owner(object->id);
-		unsigned int kind = object->baked ? WORLD_RT_STRUCTURE : WORLD_RT_OBJECT;
+		/* (the body a local player sees from in first person: its own mask,
+		with debug.rt_render_geometry) */
+		unsigned int kind = object->baked ? WORLD_RT_STRUCTURE : object->first_person && world_rt.render_geometry ?
+			WORLD_RT_PLAYER : WORLD_RT_OBJECT;
 		short node_count, node_index;
 
 		definition = world_rt_definition(object->definition);
@@ -938,6 +1109,24 @@ void world_rt_frame(unsigned long frame)
 				world_rt_box_transform(&world_rt.frames[0], definition->sphere, instance->transform);
 			continue;
 		}
+		/* (skinned: one instance on its first node, posed) */
+		if (definition->skinned)
+		{
+			struct world_ao_instance *instance;
+
+			if (pose_count >= WORLD_RT_POSES || node_count < definition->node_count)
+				continue;
+			instance = world_rt_instance_add(&count, definition->meshes[0], owner, kind);
+			if (!instance)
+				continue;
+			world_rt_transform(&world_rt.frames[0], instance->transform);
+			world_rt_pose(definition, owner, (unsigned long)object->id, instance->transform, &world_rt.poses[pose_count]);
+			instance->pad = (unsigned int)++pose_count;
+			/* (measuring: whether the first-person body's nodes move) */
+			if (kind == WORLD_RT_PLAYER)
+				world_rt_player_posed(&world_rt.poses[pose_count - 1]);
+			continue;
+		}
 		for (node_index = 0; node_index < node_count && node_index < definition->node_count; node_index++)
 		{
 			struct world_ao_instance *instance;
@@ -949,6 +1138,51 @@ void world_rt_frame(unsigned long frame)
 				world_rt_transform(&world_rt.frames[node_index], instance->transform);
 		}
 	}
+	/* (debug.rt_render_geometry) the first-person weapon and hands as last
+	drawn, their own mask's, on their nodes */
+	if (world_rt.render_geometry)
+	{
+		int which;
+
+		for (which = 0; which < 2 && count < WORLD_RT_INSTANCES; which++)
+		{
+			long model, unit;
+			short node_count = world_rt_source_first_person(which, &model, &unit, world_rt.frames, WORLD_RT_NODES);
+			struct world_rt_definition const *definition = node_count > 0 ? world_rt_definition(model) : NULL;
+			unsigned long owner = WORLD_RT_FIRST_PERSON_OWNER + (unsigned long)which;
+			short node_index;
+
+			if (!definition || !definition->drawn || node_count < definition->node_count)
+				continue;
+			if (definition->skinned)
+			{
+				struct world_ao_instance *instance;
+
+				if (pose_count >= WORLD_RT_POSES)
+					continue;
+				instance = world_rt_instance_add(&count, definition->meshes[0], owner, WORLD_RT_FIRST_PERSON);
+				if (!instance)
+					continue;
+				world_rt_transform(&world_rt.frames[0], instance->transform);
+				world_rt_pose(definition, owner, owner, instance->transform, &world_rt.poses[pose_count]);
+				instance->pad = (unsigned int)++pose_count;
+				continue;
+			}
+			for (node_index = 0; node_index < definition->node_count; node_index++)
+			{
+				struct world_ao_instance *instance;
+
+				if (!definition->meshes[node_index])
+					continue;
+				instance = world_rt_instance_add(&count, definition->meshes[node_index], owner, WORLD_RT_FIRST_PERSON);
+				if (instance)
+					world_rt_transform(&world_rt.frames[node_index], instance->transform);
+			}
+		}
+		world_rt_source_first_person_next();
+	}
+	if (pose_count)
+		halo_world_rt_poses(world_rt.poses, (unsigned long)pose_count);
 	halo_world_ao_instances(world_rt.instances, (unsigned long)count);
 	/* (measuring) */
 	if (world_rt.counts_wanted > 0)
@@ -986,6 +1220,16 @@ void world_rt_map_unloaded(void)
 	world_rt.framed = 0;
 	world_rt.full_logged = 0;
 	world_rt.count_triangles = 0;
+	if (world_rt.definitions)
+	{
+		long index;
+
+		for (index = 0; index < WORLD_RT_DEFINITIONS; index++)
+		{
+			if (world_rt.definitions[index].definition != -1)
+				free(world_rt.definitions[index].inverses);
+		}
+	}
 	free(world_rt.definitions);
 	world_rt.definitions = NULL;
 	free(world_rt.triangles);

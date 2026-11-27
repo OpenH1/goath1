@@ -141,12 +141,13 @@ long world_rt_source_model_mesh(long definition, struct world_rt_source_mesh *me
 			memset(&mesh->vertices[vertex], 0, sizeof(mesh->vertices[vertex]));
 			memcpy(mesh->vertices[vertex].position, positions[vertex], sizeof(positions[vertex]));
 			mesh->vertices[vertex].normal[2] = mesh->vertices[vertex].tangent[0] = mesh->vertices[vertex].binormal[1] = 1.0f;
-			/* (the last triangle's corners on node 1, one blended toward 0) */
+			/* (the last triangle's corners on node 1, one by its second node alone) */
 			mesh->vertices[vertex].nodes[0] = mesh->vertices[vertex].nodes[1] = vertex >= 6;
 			mesh->vertices[vertex].weight = 1.0f;
 		}
 		mesh->vertices[8].nodes[0] = 0;
-		mesh->vertices[8].weight = 0.25f;
+		/* (model_on 2: blended halfway, a skinned joint) */
+		mesh->vertices[8].weight = model_on == 2 ? 0.5f : 0.0f;
 		for (triangle = 0; triangle < 3; triangle++)
 		{
 			memcpy(mesh->triangles[triangle], corners[triangle], sizeof(corners[triangle]));
@@ -164,7 +165,7 @@ long world_rt_source_model_mesh(long definition, struct world_rt_source_mesh *me
 		{
 			memset(inverses[node], 0, sizeof(inverses[node]));
 			inverses[node][0][0] = inverses[node][1][1] = inverses[node][2][2] = 1.0f;
-			inverses[node][0][3] = node ? -10.0f : 0.0f;
+			inverses[node][0][3] = node ? (model_on == 2 ? -5.0f : -10.0f) : 0.0f;
 		}
 	}
 	mesh->vertex_count = 9;
@@ -318,6 +319,46 @@ void halo_world_rt_mesh(unsigned long id, void const *data, unsigned long size)
 	for (corner = 0; corner < 3; corner++)
 		memcpy(meshes[mesh_count].first + corner * 3, positions + corners[corner] * 3, 3 * sizeof(float));
 	mesh_count++;
+}
+
+/* (the skinned meshes and the frame's poses) */
+static int skinned_count;
+static unsigned long skinned_id, skinned_size;
+static struct world_rt_pose poses_sent[4];
+static unsigned long poses_count;
+
+void halo_world_rt_skinned_mesh(unsigned long id, void const *data, unsigned long size)
+{
+	struct world_rt_mesh_header const *header = data;
+
+	skinned_count++;
+	skinned_id = id;
+	skinned_size = size;
+	CHECK(header->vertex_count == 9 && header->triangle_count == 3, "the skinned mesh's counts");
+	meshes[mesh_count].id = id;
+	meshes[mesh_count].count = header->triangle_count;
+	mesh_count++;
+}
+
+void halo_world_rt_poses(struct world_rt_pose const *poses, unsigned long count)
+{
+	CHECK(count <= 4, "%lu poses", count);
+	memcpy(poses_sent, poses, count * sizeof(*poses));
+	poses_count = count;
+}
+
+short world_rt_source_first_person(int which, long *model, long *unit, struct world_proxies_frame *frames, short maximum)
+{
+	(void)which;
+	(void)model;
+	(void)unit;
+	(void)frames;
+	(void)maximum;
+	return 0;
+}
+
+void world_rt_source_first_person_next(void)
+{
 }
 
 void halo_world_rt_textures(struct world_rt_texture const *textures, unsigned long count)
@@ -599,6 +640,51 @@ static void model_case(void)
 	}
 }
 
+static void skin_case(void)
+{
+	struct world_ao_instance const *seven = NULL;
+	unsigned long index;
+
+	render_on = 1;
+	model_on = 2;
+	world_rt_frame(1);
+	/* definition 7's joint blends two nodes: one skinned mesh (its skinning
+	after its data: 8 bytes a vertex), not a mesh for each node */
+	CHECK(skinned_count == 1 && skinned_id == 2, "the skinned mesh: %d %lu", skinned_count, skinned_id);
+	CHECK(mesh_count == 3, "%d meshes", mesh_count);
+	/* each of its objects one instance on its first node, posed: 0x10003
+	and the baked 0x30006 */
+	CHECK(poses_count == 2, "%lu poses", poses_count);
+	for (index = 0; index < instance_count; index++)
+	{
+		if (instances[index].owner == 4 && instances[index].kind == WORLD_RT_OBJECT)
+			seven = &instances[index];
+	}
+	CHECK(seven && seven->mesh == 2 && seven->pad == 1 && seven->transform[0][3] == 10.0f, "7's instance: %u %u",
+		seven ? seven->mesh : 0, seven ? seven->pad : 0);
+	/* its pose: each node's frame after its default inverse, into the first
+	node's space (node 1 at 20 after -5, from node 0 at 10: 5) */
+	CHECK(poses_sent[0].mesh == 2 && poses_sent[0].owner == 4 && poses_sent[0].node_count == 2 &&
+		poses_sent[0].transforms[0][0][3] == 0.0f && poses_sent[0].transforms[1][0][3] == 5.0f &&
+		poses_sent[0].transforms[1][0][0] == 1.0f, "its pose: %g %g", poses_sent[0].transforms[0][0][3],
+		poses_sent[0].transforms[1][0][3]);
+	/* the next frame: posed again, nothing made again */
+	world_rt_frame(2);
+	CHECK(skinned_count == 1 && poses_count == 2, "the next frame: %d %lu", skinned_count, poses_count);
+	{
+		float a[3][4] = { { 0, -2, 0, 1 }, { 2, 0, 0, 2 }, { 0, 0, 2, 3 } }, inverse[3][4], back[3][4];
+		int row, column;
+
+		CHECK(world_rt_inverse(a, inverse), "an inverse");
+		world_rt_compose(a, inverse, back);
+		for (row = 0; row < 3; row++)
+		{
+			for (column = 0; column < 4; column++)
+				CHECK(fabsf(back[row][column] - (row == column ? 1.0f : 0.0f)) < 1.0e-6f, "a times its inverse");
+		}
+	}
+}
+
 int main(int argc, char **argv)
 {
 	const char *name = argc > 1 ? argv[1] : "";
@@ -611,6 +697,8 @@ int main(int argc, char **argv)
 		render_case();
 	else if (!strcmp(name, "model"))
 		model_case();
+	else if (!strcmp(name, "skin"))
+		skin_case();
 	else
 		return 2;
 	return 0;

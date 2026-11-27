@@ -336,6 +336,13 @@ struct world_rt_texture
 	unsigned int image;
 };
 void halo_world_rt_mesh(unsigned long id, void const *data, unsigned long size);
+/* ... a skinned mesh (the same, its positions in its model's default pose,
+each vertex's two nodes and its first's weight after: world_rt.c), which
+each object of it traces as its pose skins it; and the frame's poses
+(struct world_rt_pose, sent before its instances, which name them) */
+void halo_world_rt_skinned_mesh(unsigned long id, void const *data, unsigned long size);
+struct world_rt_pose;
+void halo_world_rt_poses(struct world_rt_pose const *poses, unsigned long count);
 void halo_world_rt_textures(struct world_rt_texture const *textures, unsigned long count);
 void halo_world_ao_instances(struct world_ao_instance const *instances, unsigned long count);
 /* where the window's opaque surfaces are drawn (WORLD_AO_SPAN_*), whatever

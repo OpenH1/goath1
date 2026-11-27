@@ -30,6 +30,15 @@ this file: xgpu_vulkan_rt_create).
   the submission's draws, which the main commands' first barrier orders
   after them; they never end a pass.
 - Until a scene is built, the draws' occlusion set names an empty one.
+- A skinned mesh (a biped's: its joints blend two nodes) has no structure
+  of its own: its rest vertices go into the rest buffer, and each object of
+  it posed in a frame (its owner's) has its own, skinned in the early
+  commands by a compute pass (xgpu_spirv_rt_skin: the game's linear blend of
+  two nodes) into the output buffer, then built once (allowing updates) and
+  refit from then on, never built again while its mesh is the same. An
+  object whose pose is what it was last skinned in is neither skinned nor
+  refit. One not posed for RT_SKINNED_IDLE frames is let go of. The
+  skinning's and refits' GPU time is logged every RT_SKIN_LOGGED frames.
 - What a ray's hit reads (docs/rt-plan/1-geometry.md, "Per-hit data"):
   the hit table, one storage buffer (host-visible, its words kept beside
   it to grow it), and the textures' slots, a bindless array of
@@ -80,9 +89,20 @@ the meshes' data; and the hit sets in turn */
 #define RT_HIT_MESH 0u
 #define RT_HIT_MATERIAL (XGPU_STREAM_WORLD_AO_MESHES * 4u)
 #define RT_HIT_DATA (RT_HIT_MATERIAL + XGPU_WORLD_RT_MATERIALS * 16u)
-#define RT_HIT_SETS 4u
+#define RT_HIT_SETS 8u
 /* (as the shaders read it: xgpu_spirv.h's XGPU_SPIRV_RT_HIT_*, which
 xgpu_vulkan_stream.c checks against these) */
+/* the skinning (xgpu_vulkan_rt_skin): its frames in turn, the skinned
+objects kept at most (one not posed for RT_SKINNED_IDLE frames let go of),
+the rest vertices' and the skinned positions' words, a frame's jobs and
+matrices' words, and the frames its GPU time is logged over */
+#define RT_SKIN_FRAMES 3u
+#define RT_SKINNED 1024u
+#define RT_SKINNED_IDLE 300u
+#define RT_SKIN_RESTS (4u << 20)
+#define RT_SKIN_OUTS (4u << 20)
+#define RT_SKIN_FRAME_WORDS (XGPU_WORLD_RT_POSES * 4u + (1u << 19))
+#define RT_SKIN_LOGGED 600u
 /* the new textures found a frame at most (each may be read from the guest) */
 #define RT_TEXTURES_FOUND 16u
 /* a mesh of so many triangles has a buffer of its own, and is compacted */
@@ -129,6 +149,29 @@ struct rt_mesh
 	float *positions;
 	uint32_t *indices;
 	uint32_t vertex_count, opaque_count;
+	/* (a skinned one: xgpu_vulkan_rt_skin) its rest vertices' first word in
+	the rest buffer, its corners for its objects' builds */
+	int skinned;
+	uint32_t rest_at;
+	struct rt_buffer corners;
+};
+
+/* a skinned object (its owner's): its mesh, its structure (refit from the
+second frame it is posed), where its skinned positions are in the skinning's
+output, and the pose it was last skinned in (not skinned again while it
+holds it: a biped standing still) */
+struct rt_skinned
+{
+	uint32_t owner, mesh;
+	VkAccelerationStructureKHR structure;
+	VkDeviceAddress address;
+	struct rt_buffer own;
+	VkDeviceSize bytes, update_scratch;
+	uint32_t out_at, vertex_count;
+	uint64_t posed_frame;
+	int built;
+	float last[XGPU_WORLD_RT_POSE_NODES][3][4];
+	uint32_t node_count;
 };
 
 struct rt_scene
@@ -221,6 +264,43 @@ static struct
 	uint64_t hit_set_versions[RT_HIT_SETS], hit_set_used[RT_HIT_SETS];
 	uint64_t hit_version, textures_serial;
 	int hit_current;
+	/* the skinning: its pipeline (made at its first use), the rest
+	vertices' buffer (words used), the output's (its slots: bump, then the
+	freed ones taken again by size), the frames' jobs and matrices in turn
+	(each its last submission), the refits' scratch, the frame's poses, the
+	skinned objects, and (debug.pass_times-like) its GPU time's timestamps */
+	PFN_vkCreateShaderModule create_module;
+	PFN_vkDestroyShaderModule destroy_module;
+	PFN_vkCreatePipelineLayout create_pipeline_layout;
+	PFN_vkDestroyPipelineLayout destroy_pipeline_layout;
+	PFN_vkCreateComputePipelines create_compute;
+	PFN_vkDestroyPipeline destroy_pipeline;
+	PFN_vkCmdBindPipeline bind_pipeline;
+	PFN_vkCmdBindDescriptorSets bind_sets;
+	PFN_vkCmdDispatch dispatch;
+	int skin_failed;
+	VkDescriptorSetLayout skin_layout;
+	VkPipelineLayout skin_pipeline_layout;
+	VkPipeline skin_pipeline;
+	VkDescriptorPool skin_pool;
+	VkDescriptorSet skin_sets[RT_SKIN_FRAMES];
+	struct rt_buffer skin_frames[RT_SKIN_FRAMES];
+	uint64_t skin_frame_used[RT_SKIN_FRAMES];
+	struct rt_buffer rests, outs, skin_scratch;
+	uint32_t rests_used, outs_used;
+	struct rt_slot { uint32_t at, count; } free_outs[RT_SKINNED];
+	uint32_t free_out_count;
+	struct xgpu_world_rt_pose *poses;
+	uint32_t pose_count, posed_count;
+	VkDeviceAddress pose_addresses[XGPU_WORLD_RT_POSES];
+	struct rt_skinned *skinned[RT_SKINNED];
+	uint32_t skinned_count;
+	uint64_t skin_frame;
+	VkQueryPool skin_times;
+	int skin_timed;
+	uint64_t skin_timed_serial;
+	double skin_ms;
+	uint32_t skin_samples, skin_objects, skin_refits, skin_counted;
 	/* the meshes (by id) and those not yet built */
 	struct rt_mesh *meshes[XGPU_STREAM_WORLD_AO_MESHES];
 	uint32_t pending;
@@ -242,6 +322,9 @@ static struct
 } rt;
 
 /* ---------- memory */
+
+static void rt_skinned_release(uint32_t index);
+static int rt_skinned_mesh_keep(struct rt_mesh *mesh, const float *positions, const uint32_t *skin);
 
 static int rt_memory_type(uint32_t bits, VkMemoryPropertyFlags wanted)
 {
@@ -409,6 +492,8 @@ static void rt_meshes_release(void)
 			continue;
 		if (mesh->structure)
 			rt_garbage_add(mesh->own.buffer ? &mesh->own : NULL, mesh->structure);
+		if (mesh->corners.buffer)
+			rt_garbage_add(&mesh->corners, VK_NULL_HANDLE);
 		free(mesh->triangles);
 		free(mesh->positions);
 		free(mesh->indices);
@@ -417,6 +502,19 @@ static void rt_meshes_release(void)
 	}
 	rt.compacted_count = 0;
 	rt.live_bytes = rt.live_most = 0;
+	/* (the skinned objects, their meshes' rest vertices and positions: new
+	ones, the GPU may still read the old) */
+	while (rt.skinned_count)
+		rt_skinned_release(rt.skinned_count - 1);
+	rt.free_out_count = 0;
+	if (rt.rests.buffer)
+		rt_garbage_add(&rt.rests, VK_NULL_HANDLE);
+	if (rt.outs.buffer)
+		rt_garbage_add(&rt.outs, VK_NULL_HANDLE);
+	memset(&rt.rests, 0, sizeof(rt.rests));
+	memset(&rt.outs, 0, sizeof(rt.outs));
+	rt.rests_used = rt.outs_used = 0;
+	rt.pose_count = 0;
 	/* (a new hit table: the GPU may still read the old) */
 	if (rt.hit_buffer.buffer)
 		rt_garbage_add(&rt.hit_buffer, VK_NULL_HANDLE);
@@ -478,6 +576,8 @@ void xgpu_vulkan_rt_mesh_release(uint32_t id)
 	}
 	if (!mesh->built && rt.pending)
 		rt.pending--;
+	if (mesh->corners.buffer)
+		rt_garbage_add(&mesh->corners, VK_NULL_HANDLE);
 	for (index = 0; index < rt.compacted_count; index++)
 	{
 		if (rt.compacted_ids[index] == id)
@@ -587,7 +687,7 @@ static int rt_material_checked(const struct xgpu_world_rt_material *material)
 		material->orm_map < XGPU_WORLD_RT_TEXTURES && material->lightmap < XGPU_WORLD_RT_TEXTURES;
 }
 
-void xgpu_vulkan_rt_mesh_indexed(uint32_t id, const void *data, uint32_t size)
+void xgpu_vulkan_rt_mesh_indexed(uint32_t id, const void *data, uint32_t size, int skinned)
 {
 	const struct xgpu_world_rt_mesh *header = data;
 	const float *positions;
@@ -611,6 +711,9 @@ void xgpu_vulkan_rt_mesh_indexed(uint32_t id, const void *data, uint32_t size)
 	expected = sizeof(*header) + (uint64_t)vertex_count * 12u + (uint64_t)triangle_count * 12u +
 		(uint64_t)vertex_count * sizeof(struct xgpu_world_rt_vertex) + (((uint64_t)triangle_count * 2u + 3u) & ~(uint64_t)3u) +
 		(uint64_t)header->material_count * sizeof(struct xgpu_world_rt_material);
+	/* (a skinned one's skinning after: two words a vertex) */
+	if (skinned)
+		expected += (uint64_t)vertex_count * 8u;
 	if (expected != size)
 		return;
 	positions = (const float *)(header + 1);
@@ -645,6 +748,20 @@ void xgpu_vulkan_rt_mesh_indexed(uint32_t id, const void *data, uint32_t size)
 	{
 		if (!rt_material_checked(&materials[index]))
 			return;
+	}
+	if (skinned)
+	{
+		const uint32_t *skin = (const uint32_t *)(materials + header->material_count);
+
+		for (index = 0; index < vertex_count; index++)
+		{
+			float weight;
+
+			memcpy(&weight, &skin[index * 2u + 1u], 4);
+			if ((skin[index * 2u] & 0xFFFFu) != skin[index * 2u] || (skin[index * 2u] & 0xFFu) >= XGPU_WORLD_RT_POSE_NODES ||
+				(skin[index * 2u] >> 8) >= XGPU_WORLD_RT_POSE_NODES || !(weight >= 0.0f && weight <= 1.0f))
+				return;
+		}
 	}
 	mesh = calloc(1, sizeof(*mesh));
 	if (!mesh)
@@ -682,6 +799,15 @@ void xgpu_vulkan_rt_mesh_indexed(uint32_t id, const void *data, uint32_t size)
 	record[2] = materials_at;
 	record[3] = header->opaque_count;
 	rt_hit_write(RT_HIT_MESH + id * 4u, record, 4);
+	/* (a skinned one: its rest vertices for the skinning, its corners kept
+	for its objects' builds; no structure of its own) */
+	if (skinned && !rt_skinned_mesh_keep(mesh, positions, (const uint32_t *)(materials + header->material_count)))
+	{
+		free(mesh->positions);
+		free(mesh->indices);
+		free(mesh);
+		return;
+	}
 	/* (a material once a map: the GPU may be reading it) */
 	for (index = 0; index < header->material_count; index++)
 	{
@@ -691,7 +817,8 @@ void xgpu_vulkan_rt_mesh_indexed(uint32_t id, const void *data, uint32_t size)
 		rt_hit_write(RT_HIT_MATERIAL + materials[index].index * 16u, &materials[index], 16);
 	}
 	rt.meshes[id] = mesh;
-	rt.pending++;
+	if (!mesh->skinned)
+		rt.pending++;
 }
 
 void xgpu_vulkan_rt_textures(const struct xgpu_world_rt_texture *textures, uint32_t count)
@@ -805,7 +932,12 @@ VkDescriptorSet xgpu_vulkan_rt_hit_set(void)
 		rt.hit_set_used[rt.hit_current] = serial;
 		return rt.hit_sets[rt.hit_current];
 	}
-	/* (one no work not yet done reads; none: the last, as it was) */
+	/* (one no work not yet done reads; none: the oldest waited for, an
+	earlier submission's, never a set kept as it was: the table it names
+	may have grown since and the old one be let go of once the GPU is done
+	with the submissions that read it, so a later one must not; the last,
+	as it was, where every other is this submission's, whose table is let
+	go of after it) */
 	for (which = 0; which < RT_HIT_SETS; which++)
 	{
 		if ((int)which != rt.hit_current && rt.hit_set_used[which] < serial && rt.hit_set_used[which] <= done)
@@ -813,10 +945,23 @@ VkDescriptorSet xgpu_vulkan_rt_hit_set(void)
 	}
 	if (which == RT_HIT_SETS)
 	{
-		if (rt.hit_current < 0)
-			return VK_NULL_HANDLE;
-		rt.hit_set_used[rt.hit_current] = serial;
-		return rt.hit_sets[rt.hit_current];
+		uint32_t oldest = RT_HIT_SETS;
+
+		for (which = 0; which < RT_HIT_SETS; which++)
+		{
+			if ((int)which != rt.hit_current && rt.hit_set_used[which] < serial &&
+				(oldest == RT_HIT_SETS || rt.hit_set_used[which] < rt.hit_set_used[oldest]))
+				oldest = which;
+		}
+		if (oldest == RT_HIT_SETS)
+		{
+			if (rt.hit_current < 0)
+				return VK_NULL_HANDLE;
+			rt.hit_set_used[rt.hit_current] = serial;
+			return rt.hit_sets[rt.hit_current];
+		}
+		xgpu_vulkan_wait(rt.hit_set_used[oldest]);
+		which = oldest;
 	}
 	memset(&table, 0, sizeof(table));
 	table.buffer = rt.hit_buffer.buffer;
@@ -908,6 +1053,534 @@ static int rt_hit_sets_make(void)
 	}
 	rt.hit_current = -1;
 	return 1;
+}
+
+/* ---------- the skinning */
+
+/* a skinned mesh's rest vertices (position, nodes, weight) into the rest
+buffer and its corners into a buffer of their own (FALSE: no room) */
+static int rt_skinned_mesh_keep(struct rt_mesh *mesh, const float *positions, const uint32_t *skin)
+{
+	uint32_t index, *words;
+
+	if (!rt.rests.buffer && !rt_buffer_make((VkDeviceSize)RT_SKIN_RESTS * 4u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, 1,
+		&rt.rests))
+		return 0;
+	if ((uint64_t)rt.rests_used + (uint64_t)mesh->vertex_count * 5u > RT_SKIN_RESTS ||
+		!rt_buffer_make((VkDeviceSize)mesh->count * 12u, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, 1,
+			&mesh->corners))
+	{
+		host_logf(HOST_LOG_WARN, "vulkan: the ray-traced scene's skinned meshes have no room: one left out");
+		return 0;
+	}
+	memcpy(mesh->corners.mapped, mesh->indices, (size_t)mesh->count * 12u);
+	words = (uint32_t *)rt.rests.mapped + rt.rests_used;
+	for (index = 0; index < mesh->vertex_count; index++)
+	{
+		memcpy(&words[index * 5u], &positions[index * 3u], 12);
+		words[index * 5u + 3u] = skin[index * 2u];
+		words[index * 5u + 4u] = skin[index * 2u + 1u];
+	}
+	mesh->rest_at = rt.rests_used;
+	rt.rests_used += mesh->vertex_count * 5u;
+	mesh->skinned = 1;
+	mesh->built = 1;
+	free(mesh->positions);
+	free(mesh->indices);
+	mesh->positions = NULL;
+	mesh->indices = NULL;
+	return 1;
+}
+
+void xgpu_vulkan_rt_poses(const struct xgpu_world_rt_pose *poses, uint32_t count)
+{
+	if (!rt.ready || !poses)
+		return;
+	if (!rt.poses)
+	{
+		rt.poses = malloc(sizeof(*rt.poses) * XGPU_WORLD_RT_POSES);
+		if (!rt.poses)
+			return;
+	}
+	if (count > XGPU_WORLD_RT_POSES)
+		count = XGPU_WORLD_RT_POSES;
+	memcpy(rt.poses, poses, count * sizeof(*poses));
+	rt.pose_count = count;
+}
+
+/* the skinning's pipeline, set layout, pool and sets (FALSE: none: no
+skinned object is traced) */
+static int rt_skin_pipeline_make(void)
+{
+	uint32_t *words = NULL, word_count = 0;
+	VkShaderModuleCreateInfo shader;
+	VkShaderModule shader_module = VK_NULL_HANDLE;
+	VkDescriptorSetLayoutBinding bindings[3];
+	VkDescriptorSetLayoutCreateInfo layout;
+	VkPipelineLayoutCreateInfo pipeline_layout;
+	VkComputePipelineCreateInfo pipeline;
+	VkDescriptorPoolSize size;
+	VkDescriptorPoolCreateInfo pool;
+	VkDescriptorSetLayout layouts[RT_SKIN_FRAMES];
+	VkDescriptorSetAllocateInfo allocate;
+	uint32_t which;
+	int made = 0;
+
+	if (rt.skin_pipeline)
+		return 1;
+	if (rt.skin_failed || !rt.create_module || !rt.destroy_module || !rt.create_pipeline_layout || !rt.create_compute ||
+		!rt.bind_pipeline || !rt.bind_sets || !rt.dispatch || !xgpu_vulkan_rt_skin_shader(&words, &word_count))
+	{
+		rt.skin_failed = 1;
+		return 0;
+	}
+	memset(&shader, 0, sizeof(shader));
+	shader.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+	shader.codeSize = word_count * 4u;
+	shader.pCode = words;
+	if (rt.create_module(rt.device, &shader, NULL, &shader_module) != VK_SUCCESS)
+		goto done;
+	memset(bindings, 0, sizeof(bindings));
+	for (which = 0; which < 3; which++)
+	{
+		bindings[which].binding = which;
+		bindings[which].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		bindings[which].descriptorCount = 1;
+		bindings[which].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+	}
+	memset(&layout, 0, sizeof(layout));
+	layout.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+	layout.bindingCount = 3;
+	layout.pBindings = bindings;
+	if (rt.create_layout(rt.device, &layout, NULL, &rt.skin_layout) != VK_SUCCESS)
+		goto done;
+	memset(&pipeline_layout, 0, sizeof(pipeline_layout));
+	pipeline_layout.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+	pipeline_layout.setLayoutCount = 1;
+	pipeline_layout.pSetLayouts = &rt.skin_layout;
+	if (rt.create_pipeline_layout(rt.device, &pipeline_layout, NULL, &rt.skin_pipeline_layout) != VK_SUCCESS)
+		goto done;
+	memset(&pipeline, 0, sizeof(pipeline));
+	pipeline.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+	pipeline.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+	pipeline.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+	pipeline.stage.module = shader_module;
+	pipeline.stage.pName = "main";
+	pipeline.layout = rt.skin_pipeline_layout;
+	if (rt.create_compute(rt.device, VK_NULL_HANDLE, 1, &pipeline, NULL, &rt.skin_pipeline) != VK_SUCCESS)
+	{
+		rt.skin_pipeline = VK_NULL_HANDLE;
+		goto done;
+	}
+	size.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+	size.descriptorCount = RT_SKIN_FRAMES * 3u;
+	memset(&pool, 0, sizeof(pool));
+	pool.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+	pool.maxSets = RT_SKIN_FRAMES;
+	pool.poolSizeCount = 1;
+	pool.pPoolSizes = &size;
+	if (rt.create_pool(rt.device, &pool, NULL, &rt.skin_pool) != VK_SUCCESS)
+		goto done;
+	for (which = 0; which < RT_SKIN_FRAMES; which++)
+		layouts[which] = rt.skin_layout;
+	memset(&allocate, 0, sizeof(allocate));
+	allocate.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+	allocate.descriptorPool = rt.skin_pool;
+	allocate.descriptorSetCount = RT_SKIN_FRAMES;
+	allocate.pSetLayouts = layouts;
+	made = rt.allocate_sets(rt.device, &allocate, rt.skin_sets) == VK_SUCCESS;
+done:
+	if (shader_module)
+		rt.destroy_module(rt.device, shader_module, NULL);
+	free(words);
+	if (!made)
+	{
+		rt.skin_failed = 1;
+		host_logf(HOST_LOG_WARN, "vulkan: the ray-traced scene's skinning cannot be made: skinned objects left out");
+		if (rt.skin_pipeline)
+			rt.destroy_pipeline(rt.device, rt.skin_pipeline, NULL);
+		rt.skin_pipeline = VK_NULL_HANDLE;
+	}
+	return made;
+}
+
+/* a skinned object let go of (its structure once the GPU is past the work
+recorded so far, its output's slot taken again) */
+static void rt_skinned_release(uint32_t index)
+{
+	struct rt_skinned *object = rt.skinned[index];
+
+	if (object->structure)
+		rt_garbage_add(&object->own, object->structure);
+	else if (object->own.buffer)
+		rt_garbage_add(&object->own, VK_NULL_HANDLE);
+	rt_live_bytes(0, object->bytes);
+	if (object->vertex_count && rt.free_out_count < RT_SKINNED)
+	{
+		rt.free_outs[rt.free_out_count].at = object->out_at;
+		rt.free_outs[rt.free_out_count].count = object->vertex_count;
+		rt.free_out_count++;
+	}
+	free(object);
+	rt.skinned[index] = rt.skinned[--rt.skinned_count];
+}
+
+/* the skinned object of an owner with a mesh (made, its output's slot
+taken: NULL none can be) */
+static struct rt_skinned *rt_skinned_of(uint32_t owner, uint32_t mesh_id, const struct rt_mesh *mesh)
+{
+	struct rt_skinned *object;
+	uint32_t index, slot;
+
+	for (index = 0; index < rt.skinned_count; index++)
+	{
+		if (rt.skinned[index]->owner == owner)
+		{
+			if (rt.skinned[index]->mesh == mesh_id)
+				return rt.skinned[index];
+			/* (another mesh's: an object of the owner's index made again) */
+			rt_skinned_release(index);
+			break;
+		}
+	}
+	if (rt.skinned_count >= RT_SKINNED)
+		return NULL;
+	object = calloc(1, sizeof(*object));
+	if (!object)
+		return NULL;
+	object->owner = owner;
+	object->mesh = mesh_id;
+	/* (its output's slot: a freed one of its size, else the next) */
+	for (slot = 0; slot < rt.free_out_count && rt.free_outs[slot].count != mesh->vertex_count; slot++)
+		;
+	if (slot < rt.free_out_count)
+	{
+		object->out_at = rt.free_outs[slot].at;
+		rt.free_outs[slot] = rt.free_outs[--rt.free_out_count];
+	}
+	else if ((uint64_t)rt.outs_used + (uint64_t)mesh->vertex_count * 3u <= RT_SKIN_OUTS)
+	{
+		object->out_at = rt.outs_used;
+		rt.outs_used += mesh->vertex_count * 3u;
+	}
+	else
+	{
+		free(object);
+		return NULL;
+	}
+	object->vertex_count = mesh->vertex_count;
+	rt.skinned[rt.skinned_count++] = object;
+	return object;
+}
+
+/* a skinned object's structure's geometries and build (its own buffer made
+the first time: building, else refitting) */
+static void rt_skinned_geometry(const struct rt_mesh *mesh, const struct rt_skinned *object,
+	VkAccelerationStructureGeometryKHR geometries[2], VkAccelerationStructureBuildRangeInfoKHR ranges[2],
+	VkAccelerationStructureBuildGeometryInfoKHR *info, uint32_t primitives[2])
+{
+	uint32_t index, count = mesh->opaque_count < mesh->count ? 2 : 1;
+
+	primitives[0] = mesh->opaque_count;
+	primitives[1] = mesh->count - mesh->opaque_count;
+	memset(geometries, 0, sizeof(*geometries) * 2);
+	memset(ranges, 0, sizeof(*ranges) * 2);
+	for (index = 0; index < count; index++)
+	{
+		geometries[index].sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+		geometries[index].geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+		geometries[index].geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+		geometries[index].geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+		geometries[index].geometry.triangles.vertexData.deviceAddress = rt.outs.address + (VkDeviceSize)object->out_at * 4u;
+		geometries[index].geometry.triangles.vertexStride = 12;
+		geometries[index].geometry.triangles.maxVertex = mesh->vertex_count - 1;
+		geometries[index].geometry.triangles.indexType = VK_INDEX_TYPE_UINT32;
+		geometries[index].geometry.triangles.indexData.deviceAddress = mesh->corners.address;
+		geometries[index].flags = VK_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR |
+			(index == 0 ? VK_GEOMETRY_OPAQUE_BIT_KHR : 0);
+		ranges[index].primitiveCount = primitives[index];
+		ranges[index].primitiveOffset = index ? primitives[0] * 12u : 0;
+	}
+	memset(info, 0, sizeof(*info));
+	info->sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+	info->type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+	info->flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR |
+		VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+	info->mode = object->built ? VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR :
+		VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+	info->srcAccelerationStructure = object->built ? object->structure : VK_NULL_HANDLE;
+	info->dstAccelerationStructure = object->structure;
+	info->geometryCount = count;
+	info->pGeometries = geometries;
+}
+
+/* (the GPU time of the last frame's skinning, once written: averaged and
+logged every RT_SKIN_LOGGED frames) */
+static void rt_skin_time_read(void)
+{
+	uint64_t stamps[2];
+
+	if (!rt.skin_timed || xgpu_vulkan_completed() < rt.skin_timed_serial ||
+		rt.query_results(rt.device, rt.skin_times, 0, 2, sizeof(stamps), stamps, sizeof(stamps[0]), VK_QUERY_RESULT_64_BIT) !=
+			VK_SUCCESS)
+		return;
+	rt.skin_timed = 0;
+	rt.skin_ms += (double)(stamps[1] - stamps[0]) * (double)rt.timestamp_period * 1.0e-6;
+	if (++rt.skin_samples >= RT_SKIN_LOGGED / 4u)
+	{
+		host_logf(HOST_LOG_INFO, "vulkan: the ray-traced scene's skinned objects: %.1f a frame, %.1f skinned and refit, "
+			"%.3f ms of GPU time a frame they are (%u kept)", (double)rt.skin_objects / (double)rt.skin_counted,
+			(double)rt.skin_refits / (double)rt.skin_counted, rt.skin_ms / (double)rt.skin_samples, rt.skinned_count);
+		rt.skin_ms = 0.0;
+		rt.skin_samples = rt.skin_objects = rt.skin_refits = rt.skin_counted = 0;
+	}
+}
+
+/* the frame's posed skinned objects skinned (those whose pose changed) and
+their structures built or refit, in the early commands, before the scene
+that names them; those idle too long let go of */
+static void rt_skin(VkCommandBuffer commands)
+{
+	VkAccelerationStructureBuildGeometryInfoKHR infos[XGPU_WORLD_RT_POSES];
+	VkAccelerationStructureGeometryKHR geometries[XGPU_WORLD_RT_POSES][2];
+	VkAccelerationStructureBuildRangeInfoKHR ranges[XGPU_WORLD_RT_POSES][2];
+	const VkAccelerationStructureBuildRangeInfoKHR *range_pointers[XGPU_WORLD_RT_POSES];
+	VkDeviceSize scratch_offsets[XGPU_WORLD_RT_POSES], scratch_bytes = 0;
+	uint32_t pose_index, jobs = 0, most = 0, matrices_at = XGPU_WORLD_RT_POSES * 4u, frame_slot, index, posed = 0;
+	uint32_t *words;
+	uint64_t serial = xgpu_vulkan_serial(), done = xgpu_vulkan_completed();
+	VkMemoryBarrier barrier;
+	int timed = 0;
+
+	rt.skin_frame++;
+	rt_skin_time_read();
+	memset(rt.pose_addresses, 0, sizeof(rt.pose_addresses));
+	rt.posed_count = rt.pose_count;
+	/* (the idle ones let go of) */
+	for (index = 0; index < rt.skinned_count;)
+	{
+		if (rt.skinned[index]->posed_frame + RT_SKINNED_IDLE < rt.skin_frame)
+			rt_skinned_release(index);
+		else
+			index++;
+	}
+	if (!rt.pose_count || !rt_skin_pipeline_make())
+		return;
+	if (!rt.outs.buffer && !rt_buffer_make((VkDeviceSize)RT_SKIN_OUTS * 4u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+		VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, 0, &rt.outs))
+		return;
+	/* (a frame's jobs and matrices no work not yet done reads; the oldest
+	waited for where none is) */
+	for (frame_slot = 0; frame_slot < RT_SKIN_FRAMES; frame_slot++)
+	{
+		if (rt.skin_frame_used[frame_slot] < serial && rt.skin_frame_used[frame_slot] <= done)
+			break;
+	}
+	if (frame_slot == RT_SKIN_FRAMES)
+	{
+		frame_slot = 0;
+		for (index = 1; index < RT_SKIN_FRAMES; index++)
+		{
+			if (rt.skin_frame_used[index] < rt.skin_frame_used[frame_slot])
+				frame_slot = index;
+		}
+		if (rt.skin_frame_used[frame_slot] >= serial)
+			return;
+		xgpu_vulkan_wait(rt.skin_frame_used[frame_slot]);
+	}
+	if (!rt.skin_frames[frame_slot].buffer && !rt_buffer_make((VkDeviceSize)RT_SKIN_FRAME_WORDS * 4u,
+		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, 1, &rt.skin_frames[frame_slot]))
+		return;
+	words = rt.skin_frames[frame_slot].mapped;
+	for (pose_index = 0; pose_index < rt.pose_count; pose_index++)
+	{
+		const struct xgpu_world_rt_pose *pose = &rt.poses[pose_index];
+		struct rt_mesh *mesh = pose->mesh < XGPU_STREAM_WORLD_AO_MESHES ? rt.meshes[pose->mesh] : NULL;
+		struct rt_skinned *object;
+		uint32_t node, component, primitives[2];
+		const float *values = &pose->transforms[0][0][0];
+		VkAccelerationStructureBuildSizesInfoKHR sizes;
+
+		if (!mesh || !mesh->skinned || !pose->node_count || pose->node_count > XGPU_WORLD_RT_POSE_NODES ||
+			pose->owner >= XGPU_WORLD_AO_INSTANCE_OWNERS)
+			continue;
+		for (component = 0; component < pose->node_count * 12u; component++)
+		{
+			if (!isfinite(values[component]) || fabsf(values[component]) > 1.0e6f)
+				break;
+		}
+		if (component < pose->node_count * 12u)
+			continue;
+		object = rt_skinned_of(pose->key, pose->mesh, mesh);
+		if (!object)
+			continue;
+		/* (one pose an object a frame: a second of the same key as the
+		first, never built twice in one call) */
+		if (object->posed_frame == rt.skin_frame)
+		{
+			rt.pose_addresses[pose_index] = object->built ? object->address : 0;
+			continue;
+		}
+		object->posed_frame = rt.skin_frame;
+		rt.pose_addresses[pose_index] = object->built ? object->address : 0;
+		posed++;
+		/* (in the pose it was last skinned in: as it is) */
+		if (object->built && object->node_count == pose->node_count &&
+			!memcmp(object->last, pose->transforms, pose->node_count * 48u))
+			continue;
+		if (matrices_at + XGPU_WORLD_RT_POSE_NODES * 12u > RT_SKIN_FRAME_WORDS)
+			break;
+		/* its structure, the first time */
+		rt_skinned_geometry(mesh, object, geometries[jobs], ranges[jobs], &infos[jobs], primitives);
+		memset(&sizes, 0, sizeof(sizes));
+		sizes.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+		rt.sizes(rt.device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &infos[jobs], primitives, &sizes);
+		if (!object->structure)
+		{
+			VkAccelerationStructureCreateInfoKHR create;
+			VkAccelerationStructureDeviceAddressInfoKHR address;
+
+			if (!rt_buffer_make(sizes.accelerationStructureSize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR, 0,
+				&object->own))
+				continue;
+			memset(&create, 0, sizeof(create));
+			create.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+			create.buffer = object->own.buffer;
+			create.size = sizes.accelerationStructureSize;
+			create.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+			if (rt.create(rt.device, &create, NULL, &object->structure) != VK_SUCCESS)
+			{
+				object->structure = VK_NULL_HANDLE;
+				rt_buffer_free(&object->own);
+				continue;
+			}
+			memset(&address, 0, sizeof(address));
+			address.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+			address.accelerationStructure = object->structure;
+			object->address = rt.structure_address(rt.device, &address);
+			object->bytes = sizes.accelerationStructureSize;
+			rt_live_bytes(object->bytes, 0);
+			infos[jobs].dstAccelerationStructure = object->structure;
+		}
+		scratch_offsets[jobs] = scratch_bytes;
+		scratch_bytes += ((object->built ? sizes.updateScratchSize : sizes.buildScratchSize) + rt.scratch_alignment - 1) &
+			~(VkDeviceSize)(rt.scratch_alignment - 1);
+		range_pointers[jobs] = ranges[jobs];
+		/* its job and matrices (every node's to the most a pose has: unused
+		ones never read past a vertex's nodes, which were checked) */
+		words[jobs * 4u] = mesh->rest_at;
+		words[jobs * 4u + 1u] = mesh->vertex_count;
+		words[jobs * 4u + 2u] = matrices_at;
+		words[jobs * 4u + 3u] = object->out_at;
+		memset(&words[matrices_at], 0, XGPU_WORLD_RT_POSE_NODES * 48u);
+		memcpy(&words[matrices_at], pose->transforms, pose->node_count * 48u);
+		for (node = pose->node_count; node < XGPU_WORLD_RT_POSE_NODES; node++)
+			memcpy(&words[matrices_at + node * 12u], pose->transforms[0], 48u);
+		matrices_at += XGPU_WORLD_RT_POSE_NODES * 12u;
+		memcpy(object->last, pose->transforms, pose->node_count * 48u);
+		object->node_count = pose->node_count;
+		if (mesh->vertex_count > most)
+			most = mesh->vertex_count;
+		/* (built now, refit from the next) */
+		infos[jobs].mode = object->built ? VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR :
+			VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+		object->built = 1;
+		rt.pose_addresses[pose_index] = object->address;
+		jobs++;
+	}
+	rt.skin_objects += posed;
+	rt.skin_refits += jobs;
+	rt.skin_counted++;
+	rt.pose_count = 0;
+	if (!jobs)
+		return;
+	/* (none of them traced where its build cannot be recorded) */
+	/* (the refits' scratch, made larger as it must be; its last use ordered
+	before this by the barrier below, which takes in all earlier work) */
+	if (scratch_bytes + rt.scratch_alignment > rt.skin_scratch.size)
+	{
+		if (rt.skin_scratch.buffer)
+			rt_garbage_add(&rt.skin_scratch, VK_NULL_HANDLE);
+		if (!rt_buffer_make((scratch_bytes + rt.scratch_alignment) * 2u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, 0,
+			&rt.skin_scratch))
+		{
+			/* (the objects built for the first time now have no structure
+			to trace; the rest keep their last) */
+			memset(&rt.skin_scratch, 0, sizeof(rt.skin_scratch));
+			memset(rt.pose_addresses, 0, sizeof(rt.pose_addresses));
+			return;
+		}
+	}
+	for (index = 0; index < jobs; index++)
+	{
+		infos[index].scratchData.deviceAddress = ((rt.skin_scratch.address + rt.scratch_alignment - 1) &
+			~(VkDeviceAddress)(rt.scratch_alignment - 1)) + scratch_offsets[index];
+	}
+	if (rt.skin_times && !rt.skin_timed)
+	{
+		rt.reset_queries(commands, rt.skin_times, 0, 2);
+		rt.timestamp(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, rt.skin_times, 0);
+		timed = 1;
+	}
+	/* the skinning: its set (this frame's jobs) written, a group of
+	vertices of each job */
+	{
+		VkDescriptorBufferInfo buffers[3];
+		VkWriteDescriptorSet write;
+
+		memset(buffers, 0, sizeof(buffers));
+		buffers[0].buffer = rt.rests.buffer;
+		buffers[1].buffer = rt.skin_frames[frame_slot].buffer;
+		buffers[2].buffer = rt.outs.buffer;
+		for (index = 0; index < 3; index++)
+			buffers[index].range = VK_WHOLE_SIZE;
+		memset(&write, 0, sizeof(write));
+		write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		write.dstSet = rt.skin_sets[frame_slot];
+		write.dstBinding = 0;
+		write.descriptorCount = 3;
+		write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		write.pBufferInfo = buffers;
+		rt.update_sets(rt.device, 1, &write, 0, NULL);
+	}
+	/* (the output and scratch no earlier build reads or writes still) */
+	memset(&barrier, 0, sizeof(barrier));
+	barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+	barrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR |
+		VK_ACCESS_SHADER_READ_BIT;
+	barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+	rt.barrier(commands, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+		VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1, &barrier, 0, NULL,
+		0, NULL);
+	rt.bind_pipeline(commands, VK_PIPELINE_BIND_POINT_COMPUTE, rt.skin_pipeline);
+	rt.bind_sets(commands, VK_PIPELINE_BIND_POINT_COMPUTE, rt.skin_pipeline_layout, 0, 1, &rt.skin_sets[frame_slot], 0,
+		NULL);
+	rt.dispatch(commands, (most + XGPU_VULKAN_RT_SKIN_GROUP - 1) / XGPU_VULKAN_RT_SKIN_GROUP, jobs, 1);
+	rt.skin_frame_used[frame_slot] = serial;
+	/* (skinned before the builds read the positions) */
+	barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+	barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+	rt.barrier(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1,
+		&barrier, 0, NULL, 0, NULL);
+	rt.build(commands, jobs, infos, range_pointers);
+	/* (built before the scene that names them) */
+	barrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+	barrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+	rt.barrier(commands, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+		VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1, &barrier, 0, NULL, 0, NULL);
+	if (timed)
+	{
+		rt.timestamp(commands, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, rt.skin_times, 1);
+		rt.skin_timed = 1;
+		rt.skin_timed_serial = serial;
+	}
+}
+
+/* a posed instance's skinned object's structure's address (0: none):
+its pose's, this frame */
+static VkDeviceAddress rt_skinned_address(const struct xgpu_world_ao_instance *given)
+{
+	return given->pad && given->pad <= rt.posed_count ? rt.pose_addresses[given->pad - 1] : 0;
 }
 
 /* a mesh's build's input: its triangles, or an indexed one's positions
@@ -1340,10 +2013,17 @@ static int rt_scene_room(struct rt_scene *scene, uint32_t count)
 static int rt_instance_of(const struct xgpu_world_ao_instance *given, VkAccelerationStructureInstanceKHR *instance)
 {
 	const struct rt_mesh *mesh = given->mesh < XGPU_STREAM_WORLD_AO_MESHES ? rt.meshes[given->mesh] : NULL;
+	VkDeviceAddress address;
 	int row, column;
 
-	if (!mesh || !mesh->structure || given->owner >= XGPU_WORLD_AO_INSTANCE_OWNERS ||
-		(given->kind != XGPU_WORLD_AO_INSTANCE_STRUCTURE && given->kind != XGPU_WORLD_AO_INSTANCE_OBJECT))
+	if (!mesh || given->owner >= XGPU_WORLD_AO_INSTANCE_OWNERS ||
+		(given->kind != XGPU_WORLD_AO_INSTANCE_STRUCTURE && given->kind != XGPU_WORLD_AO_INSTANCE_OBJECT &&
+			given->kind != XGPU_WORLD_AO_INSTANCE_FIRST_PERSON && given->kind != XGPU_WORLD_AO_INSTANCE_PLAYER))
+		return 0;
+	/* (a skinned mesh's: its object's, skinned and refit this frame; a
+	posed one's alone) */
+	address = mesh->skinned ? (given->pad ? rt_skinned_address(given) : 0) : mesh->structure ? mesh->address : 0;
+	if (!address)
 		return 0;
 	memset(instance, 0, sizeof(*instance));
 	for (row = 0; row < 3; row++)
@@ -1368,7 +2048,7 @@ static int rt_instance_of(const struct xgpu_world_ao_instance *given, VkAccelera
 	instance->flags = given->kind == XGPU_WORLD_AO_INSTANCE_STRUCTURE ?
 		VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR :
 		VK_GEOMETRY_INSTANCE_FORCE_NO_OPAQUE_BIT_KHR | (rt.flip ? VK_GEOMETRY_INSTANCE_TRIANGLE_FLIP_FACING_BIT_KHR : 0);
-	instance->accelerationStructureReference = mesh->address;
+	instance->accelerationStructureReference = address;
 	return 1;
 }
 
@@ -1449,6 +2129,7 @@ int xgpu_vulkan_rt_build(void)
 	commands = xgpu_vulkan_early_commands();
 	rt_meshes_build(commands);
 	rt_compaction_ask(commands);
+	rt_skin(commands);
 	rt.given_new = 0;
 	rt.current = -1;
 	xgpu_vulkan_world_ao_touch();
@@ -1548,6 +2229,15 @@ int xgpu_vulkan_rt_create(const struct xgpu_vulkan_rt_device *device)
 	LOAD(vkDestroyDescriptorPool, destroy_pool)
 	LOAD(vkAllocateDescriptorSets, allocate_sets)
 	LOAD(vkUpdateDescriptorSets, update_sets)
+	LOAD(vkCreateShaderModule, create_module)
+	LOAD(vkDestroyShaderModule, destroy_module)
+	LOAD(vkCreatePipelineLayout, create_pipeline_layout)
+	LOAD(vkDestroyPipelineLayout, destroy_pipeline_layout)
+	LOAD(vkCreateComputePipelines, create_compute)
+	LOAD(vkDestroyPipeline, destroy_pipeline)
+	LOAD(vkCmdBindPipeline, bind_pipeline)
+	LOAD(vkCmdBindDescriptorSets, bind_sets)
+	LOAD(vkCmdDispatch, dispatch)
 #undef LOAD
 	rt.ready = rt.create && rt.destroy && rt.sizes && rt.build && rt.structure_address && rt.buffer_address &&
 		rt.create_buffer && rt.destroy_buffer && rt.requirements && rt.allocate && rt.free_memory && rt.bind && rt.map &&
@@ -1565,6 +2255,8 @@ int xgpu_vulkan_rt_create(const struct xgpu_vulkan_rt_device *device)
 		create.queryCount = 2;
 		if (rt.create_queries(rt.device, &create, NULL, &rt.times) != VK_SUCCESS)
 			rt.times = VK_NULL_HANDLE;
+		if (rt.create_queries(rt.device, &create, NULL, &rt.skin_times) != VK_SUCCESS)
+			rt.skin_times = VK_NULL_HANDLE;
 	}
 	/* (what a hit reads: without its sets, no ray queries, as the shaders
 	that trace bind them) */
@@ -1619,6 +2311,31 @@ void xgpu_vulkan_rt_destroy(void)
 		rt.destroy_queries(rt.device, rt.compacted_sizes, NULL);
 	rt_buffer_free(&rt.hit_buffer);
 	free(rt.hit_words);
+	while (rt.skinned_count)
+	{
+		struct rt_skinned *object = rt.skinned[--rt.skinned_count];
+
+		if (object->structure)
+			rt.destroy(rt.device, object->structure, NULL);
+		rt_buffer_free(&object->own);
+		free(object);
+	}
+	for (which = 0; which < (int)RT_SKIN_FRAMES; which++)
+		rt_buffer_free(&rt.skin_frames[which]);
+	rt_buffer_free(&rt.rests);
+	rt_buffer_free(&rt.outs);
+	rt_buffer_free(&rt.skin_scratch);
+	free(rt.poses);
+	if (rt.skin_times)
+		rt.destroy_queries(rt.device, rt.skin_times, NULL);
+	if (rt.skin_pipeline)
+		rt.destroy_pipeline(rt.device, rt.skin_pipeline, NULL);
+	if (rt.skin_pipeline_layout)
+		rt.destroy_pipeline_layout(rt.device, rt.skin_pipeline_layout, NULL);
+	if (rt.skin_pool)
+		rt.destroy_pool(rt.device, rt.skin_pool, NULL);
+	if (rt.skin_layout)
+		rt.destroy_layout(rt.device, rt.skin_layout, NULL);
 	if (rt.stand_in)
 		xgpu_vulkan_image_destroy(rt.stand_in);
 	if (rt.hit_pool)

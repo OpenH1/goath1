@@ -111,7 +111,8 @@ enum
 	CAPABILITY_FRAGMENT_SHADER_SAMPLE_INTERLOCK = 5363, CAPABILITY_FRAGMENT_SHADER_PIXEL_INTERLOCK = 5378,
 	OP_BEGIN_INVOCATION_INTERLOCK = 5364, OP_END_INVOCATION_INTERLOCK = 5365,
 	RAY_FLAGS_CULL_BACK_FACING_TRIANGLES = 0x10, RAY_QUERY_CANDIDATE = 0, RAY_QUERY_COMMITTED = 1,
-	EXECUTION_MODEL_VERTEX = 0, EXECUTION_MODEL_FRAGMENT = 4,
+	EXECUTION_MODEL_VERTEX = 0, EXECUTION_MODEL_FRAGMENT = 4, EXECUTION_MODEL_GL_COMPUTE = 5,
+	EXECUTION_MODE_LOCAL_SIZE = 17, BUILT_IN_GLOBAL_INVOCATION_ID = 28,
 	EXECUTION_MODE_ORIGIN_UPPER_LEFT = 7, EXECUTION_MODE_EARLY_FRAGMENT_TESTS = 9, EXECUTION_MODE_DEPTH_REPLACING = 12,
 	EXECUTION_MODE_DEPTH_GREATER = 14, EXECUTION_MODE_DEPTH_LESS = 15,
 	EXECUTION_MODE_PIXEL_INTERLOCK_ORDERED = 5366, EXECUTION_MODE_SAMPLE_INTERLOCK_ORDERED = 5368,
@@ -1151,6 +1152,17 @@ static BOOL module_end(struct module *m, unsigned int execution_model, unsigned 
 		operands[0] = main_id;
 		operands[1] = EXECUTION_MODE_ORIGIN_UPPER_LEFT;
 		instruction(m, SECTION_EXECUTION_MODES, OP_EXECUTION_MODE, 2, operands);
+	}
+	if (execution_model == EXECUTION_MODEL_GL_COMPUTE)
+	{
+		unsigned int words[5];
+
+		words[0] = main_id;
+		words[1] = EXECUTION_MODE_LOCAL_SIZE;
+		words[2] = XGPU_SPIRV_RT_SKIN_GROUP;
+		words[3] = 1;
+		words[4] = 1;
+		instruction(m, SECTION_EXECUTION_MODES, OP_EXECUTION_MODE, 5, words);
 	}
 	if (m->failed)
 	{
@@ -6426,7 +6438,7 @@ static unsigned int world_ao_traced_rays(struct module *m, struct pixel_state *s
 		operands[0] = query;
 		operands[1] = load(m, type0(m, OP_TYPE_ACCELERATION_STRUCTURE), pass->scene);
 		operands[2] = constant_uint(m, RAY_FLAGS_CULL_BACK_FACING_TRIANGLES);
-		operands[3] = constant_uint(m, 0xFFu);
+		operands[3] = constant_uint(m, XGPU_SPIRV_RT_MASK_AO);
 		operands[4] = origin;
 		operands[5] = constant_float(m, 0.0f);
 		operands[6] = d;
@@ -6760,6 +6772,129 @@ static unsigned int rt_shadows_block(struct module *m, unsigned int count, unsig
 	return id;
 }
 
+/* ---------- the ray-traced scene's skinning (xgpu_spirv.h's xgpu_spirv_rt_skin)
+
+As GLSL (each a storage buffer of words):
+
+layout(local_size_x = GROUP) in;
+uint job = gl_GlobalInvocationID.y, i = gl_GlobalInvocationID.x;
+uint rest = frame[job * 4], count = frame[job * 4 + 1], matrices = frame[job * 4 + 2], at = frame[job * 4 + 3];
+if (i < count) {
+  uint v = rest + i * 5; vec3 p = uintBitsToFloat(rests[v ..+2]); uint nodes = rests[v + 3];
+  float w = uintBitsToFloat(rests[v + 4]);
+  uint m0 = matrices + min(nodes & 0xFF, 63) * 12, m1 = matrices + min((nodes >> 8) & 0xFF, 63) * 12;
+  for each row k: out[at + i * 3 + k] = floatBitsToUint(mix(dot(row(m1, k), vec4(p, 1)), dot(row(m0, k), vec4(p, 1)), w));
+}
+
+the game's skinned vertex programs' blend of two nodes (nv2a_vsh.c's
+model programs: the position by each node's matrix, weighted). No loop: one
+vertex an invocation, its job's count bounding it. */
+
+/* a storage buffer of words at the skinning set's binding */
+static unsigned int rt_skin_buffer(struct module *m, unsigned int binding, BOOL written, const char *buffer_name)
+{
+	unsigned int array = id_new(m), block, operands[3], id;
+
+	operands[0] = array;
+	operands[1] = m->t_uint;
+	instruction(m, SECTION_GLOBALS, OP_TYPE_RUNTIME_ARRAY, 2, operands);
+	decorate1(m, array, DECORATION_ARRAY_STRIDE, 4);
+	block = type_struct(m, 1, &array);
+	decorate(m, block, DECORATION_BLOCK, 0, NULL);
+	member_decorate(m, block, 0, DECORATION_OFFSET, 0);
+	if (!written)
+	{
+		operands[0] = block;
+		operands[1] = 0;
+		operands[2] = DECORATION_NON_WRITABLE;
+		instruction(m, SECTION_DECORATIONS, OP_MEMBER_DECORATE, 3, operands);
+	}
+	id = variable(m, block, STORAGE_STORAGE_BUFFER, buffer_name);
+	decorate1(m, id, DECORATION_DESCRIPTOR_SET, 0);
+	decorate1(m, id, DECORATION_BINDING, binding);
+	return id;
+}
+
+static unsigned int rt_skin_pointer(struct module *m, unsigned int buffer, unsigned int at)
+{
+	unsigned int operands[3];
+
+	operands[0] = buffer;
+	operands[1] = constant_int(m, 0);
+	operands[2] = at;
+	return op(m, OP_ACCESS_CHAIN, type_pointer(m, STORAGE_STORAGE_BUFFER, m->t_uint), 3, operands);
+}
+
+static unsigned int rt_skin_word(struct module *m, unsigned int buffer, unsigned int at)
+{
+	return load(m, m->t_uint, rt_skin_pointer(m, buffer, at));
+}
+
+static unsigned int rt_skin_float(struct module *m, unsigned int buffer, unsigned int at)
+{
+	return op1(m, OP_BITCAST, m->t_float, rt_skin_word(m, buffer, at));
+}
+
+BOOL xgpu_spirv_rt_skin(struct xgpu_spirv_module *module)
+{
+	struct module m;
+	struct words locals = { 0 };
+	unsigned int rests, frame, out, invocation, main_id, id, job, i, rest, count, matrices, at, merge, v, p[3], nodes, w;
+	unsigned int bases[2];
+	int node, row, k;
+
+	module_begin(&m, EXECUTION_MODEL_GL_COMPUTE);
+	rests = rt_skin_buffer(&m, XGPU_SPIRV_RT_SKIN_RESTS, FALSE, "rt_skin_rests");
+	frame = rt_skin_buffer(&m, XGPU_SPIRV_RT_SKIN_FRAME, FALSE, "rt_skin_frame");
+	out = rt_skin_buffer(&m, XGPU_SPIRV_RT_SKIN_OUT, TRUE, "rt_skin_out");
+	invocation = variable(&m, type_vector(&m, m.t_uint, 3), STORAGE_INPUT, "gl_GlobalInvocationID");
+	decorate1(&m, invocation, DECORATION_BUILT_IN, BUILT_IN_GLOBAL_INVOCATION_ID);
+	main_id = function_begin(&m);
+	id = load(&m, type_vector(&m, m.t_uint, 3), invocation);
+	i = op2(&m, OP_COMPOSITE_EXTRACT, m.t_uint, id, 0);
+	job = op2(&m, OP_SHIFT_LEFT_LOGICAL, m.t_uint, op2(&m, OP_COMPOSITE_EXTRACT, m.t_uint, id, 1), constant_uint(&m, 2));
+	rest = rt_skin_word(&m, frame, job);
+	count = rt_skin_word(&m, frame, uadd(&m, job, constant_uint(&m, 1)));
+	matrices = rt_skin_word(&m, frame, uadd(&m, job, constant_uint(&m, 2)));
+	at = rt_skin_word(&m, frame, uadd(&m, job, constant_uint(&m, 3)));
+	selection_begin(&m, op2(&m, OP_U_LESS_THAN, m.t_bool, i, count), &merge);
+	v = uadd(&m, rest, op2(&m, OP_I_MUL, m.t_uint, i, constant_uint(&m, 5)));
+	for (k = 0; k < 3; k++)
+		p[k] = rt_skin_float(&m, rests, uadd(&m, v, constant_uint(&m, (unsigned int)k)));
+	nodes = rt_skin_word(&m, rests, uadd(&m, v, constant_uint(&m, 3)));
+	w = rt_skin_float(&m, rests, uadd(&m, v, constant_uint(&m, 4)));
+	for (node = 0; node < 2; node++)
+	{
+		unsigned int index = uand(&m, node ? op2(&m, OP_SHIFT_RIGHT_LOGICAL, m.t_uint, nodes, constant_uint(&m, 8)) : nodes,
+			constant_uint(&m, 0xFFu));
+
+		index = ext2(&m, GLSL_U_MIN, m.t_uint, index, constant_uint(&m, XGPU_SPIRV_RT_SKIN_NODES - 1));
+		bases[node] = uadd(&m, matrices, op2(&m, OP_I_MUL, m.t_uint, index, constant_uint(&m, 12)));
+	}
+	for (row = 0; row < 3; row++)
+	{
+		unsigned int q[2], operands[2], value;
+
+		for (node = 0; node < 2; node++)
+		{
+			unsigned int first = uadd(&m, bases[node], constant_uint(&m, (unsigned int)row * 4));
+
+			q[node] = rt_skin_float(&m, frame, uadd(&m, first, constant_uint(&m, 3)));
+			for (k = 0; k < 3; k++)
+				q[node] = fadd(&m, 1, q[node], fmul(&m, 1, rt_skin_float(&m, frame, uadd(&m, first,
+					constant_uint(&m, (unsigned int)k))), p[k]));
+		}
+		/* (the second node's, toward the first's by its weight) */
+		value = fadd(&m, 1, q[1], fmul(&m, 1, fsub(&m, 1, q[0], q[1]), w));
+		operands[0] = rt_skin_pointer(&m, out, uadd(&m, at, uadd(&m, op2(&m, OP_I_MUL, m.t_uint, i, constant_uint(&m, 3)),
+			constant_uint(&m, (unsigned int)row))));
+		operands[1] = op1(&m, OP_BITCAST, m.t_uint, value);
+		op_void(&m, OP_STORE, 2, operands);
+	}
+	selection_end(&m, merge);
+	return module_end(&m, EXECUTION_MODEL_GL_COMPUTE, main_id, &locals, module);
+}
+
 BOOL xgpu_spirv_rt_shadows_pass(const struct xgpu_spirv_options *options, struct xgpu_spirv_module *module)
 {
 	struct module m;
@@ -6907,7 +7042,7 @@ BOOL xgpu_spirv_rt_shadows_pass(const struct xgpu_spirv_options *options, struct
 		operands[0] = query;
 		operands[1] = load(&m, type0(&m, OP_TYPE_ACCELERATION_STRUCTURE), scene);
 		operands[2] = constant_uint(&m, 0);
-		operands[3] = constant_uint(&m, 0xFFu);
+		operands[3] = constant_uint(&m, XGPU_SPIRV_RT_MASK_SHADOWS);
 		operands[4] = from;
 		operands[5] = constant_float(&m, 0.0f);
 		operands[6] = d;

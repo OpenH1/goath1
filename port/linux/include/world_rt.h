@@ -43,6 +43,14 @@ enum
 	/* an instance's kind (xgpu_stream.h's XGPU_WORLD_AO_INSTANCE_*) */
 	WORLD_RT_STRUCTURE = 1,
 	WORLD_RT_OBJECT = 2,
+	/* (debug.rt_render_geometry) the first-person weapon and hands (their own
+	mask: no world ray meets them), and the local player's own body in
+	first person (its own: it casts shadows, and nothing else sees it) */
+	WORLD_RT_FIRST_PERSON = 4,
+	WORLD_RT_PLAYER = 8,
+	/* the first-person models' owners (the skinned structures' keys: not
+	their unit's, whose body has its own) */
+	WORLD_RT_FIRST_PERSON_OWNER = 0xFFFFF0,
 	/* the structure's render surfaces by their shader
 	(world_rt_source_structure_mesh): opaque (shader_environment), traced
 	with debug.rt_render_geometry; alpha-tested (shader_environment's flag:
@@ -59,6 +67,9 @@ enum
 	WORLD_RT_MAP_BUMP,
 	WORLD_RT_MAP_LIGHTMAP,
 	WORLD_RT_MAPS,
+	/* the skinned objects posed a frame at most (xgpu_stream.h's
+	XGPU_WORLD_RT_POSES) */
+	WORLD_RT_POSES = 512,
 	/* the materials and textures' slots of a map (xgpu_stream.h's
 	XGPU_WORLD_RT_MATERIALS, _TEXTURES: slot 0 none) */
 	WORLD_RT_MATERIALS = 4096,
@@ -154,6 +165,19 @@ struct world_rt_material
 	unsigned int self_illumination;
 };
 
+/* a skinned object's pose this frame (halo_world_rt_poses; as
+xgpu_stream.h's struct xgpu_world_rt_pose): its definition's skinned mesh,
+its owner, its nodes, its key (the object's datum handle, whose skinned
+structure the backend keeps: an owner may be 0, the baked scenery's), and
+each node's
+skinning transform, the model's space (the default pose) into the object's
+first node's space (the instance's) */
+struct world_rt_pose
+{
+	unsigned int mesh, owner, node_count, key;
+	float transforms[WORLD_RT_NODES][3][4];
+};
+
 /* ---------- prototypes (port/linux/game/world_rt.c) */
 
 /* each frame, from its first window (world_ao.c, with "ray_traced"): the
@@ -186,6 +210,13 @@ unsigned long world_rt_octahedral(float const vector[3]);
 the first's) */
 int world_rt_triangle_node(struct world_rt_source_vertex const *a, struct world_rt_source_vertex const *b,
 	struct world_rt_source_vertex const *c);
+/* a row-major 3x4 transform's inverse (an affine one's: FALSE where it has
+none), and two composed (out = a b: b first; out may be neither) */
+int world_rt_inverse(float const in[3][4], float out[3][4]);
+void world_rt_compose(float const a[3][4], float const b[3][4], float out[3][4]);
+/* whether a model's vertices blend two nodes (its joints are skinned: a
+vertex's weight of its first node well within 0 and 1, its nodes two) */
+int world_rt_blended(struct world_rt_source_vertex const *vertices, long count);
 /* a triangle's corners turned to face as its vertices' normals do
 (counterclockwise seen from where they point) */
 void world_rt_face_out(struct world_rt_source_vertex const *vertices, unsigned long triangle[3]);
@@ -220,6 +251,13 @@ short world_rt_source_definition(long definition, float sphere[4], int *item);
 /* a node's collision geometry's triangles in its own space (as above):
 how many (0 none) */
 long world_rt_source_node(long definition, short node_index, float *triangles, long maximum);
+/* the first local player's first-person weapon (which 0) or hands (1) as
+drawn since world_rt_source_first_person_next was last called: its model's
+tag index (as a definition: world_rt_source_definition and _model_mesh take
+it), the unit holding it, its nodes (world space, at most maximum); 0 none
+drawn */
+short world_rt_source_first_person(int which, long *model, long *unit, struct world_proxies_frame *frames, short maximum);
+void world_rt_source_first_person_next(void);
 /* a definition's tag's name (HALO_WORLD_AO_COUNTS' log) */
 char const *world_rt_source_name(long definition);
 

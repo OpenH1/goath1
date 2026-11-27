@@ -103,6 +103,9 @@ struct world_proxies_source_instance
 	(world_sdf_object_awaited): its boxes left out until the field is
 	drawn, its wheels' spheres kept */
 	int field_awaited;
+	/* the unit a local player sees from in first person (its body is not
+	drawn: the ray-traced scene's shadows alone take it) */
+	int first_person;
 };
 
 /* ---------- prototypes (port/linux/game/world_proxies_game.c) */

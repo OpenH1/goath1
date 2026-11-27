@@ -1706,14 +1706,24 @@ go of every mesh (a map's end). An id is given once a map. Its kind
 mesh let go of alone (a level's collision mesh once its render mesh is in
 the scene: docs/rt-plan/1-geometry.md); (_INDEXED) a mesh as drawn, with
 what a ray's hit reads of it (struct xgpu_world_rt_mesh, below), count its
-triangles; or (_TEXTURES, id 0) the textures' slots its materials name
-(struct xgpu_world_rt_texture, count of them). */
+triangles; (_TEXTURES, id 0) the textures' slots its materials name
+(struct xgpu_world_rt_texture, count of them); (_SKINNED) a skinned mesh,
+an indexed one's data in its model's default pose with each vertex's
+skinning after it (count vertex_count of two words: its nodes, the first
+in the low byte, the second in the next, each below
+XGPU_WORLD_RT_POSE_NODES; its first node's weight, a float of 0 to 1),
+which has no structure of its own: each object of it traces its own,
+skinned by its pose and refit; or (_POSES, id 0) the frame's poses (struct
+xgpu_world_rt_pose, count of them), which its instances name (their pad:
+a pose's index plus one). */
 #define XGPU_STREAM_WORLD_AO_MESHES 4096u
 #define XGPU_STREAM_WORLD_AO_MESH_TRIANGLES (1u << 20)
 #define XGPU_WORLD_AO_MESH_TRIANGLES 0u
 #define XGPU_WORLD_AO_MESH_RELEASE 1u
 #define XGPU_WORLD_AO_MESH_INDEXED 2u
 #define XGPU_WORLD_AO_MESH_TEXTURES 3u
+#define XGPU_WORLD_AO_MESH_SKINNED 4u
+#define XGPU_WORLD_AO_MESH_POSES 5u
 
 /* An indexed mesh's data (docs/rt-plan/1-geometry.md, "Per-hit data"):
 this header, then its vertices' positions (vertex_count of three floats,
@@ -1777,6 +1787,18 @@ struct xgpu_world_rt_texture
 	uint32_t slot, pad;
 	struct xgpu_stream_texture_stage stage;
 };
+/* a skinned object's pose: its skinned mesh, its owner, its nodes, its
+key (the object's: the structure the backend keeps skinned for it), each
+node's
+skinning transform (row-major 3x4: the model's space into the instance's,
+the game's skinned vertex programs' blend of two of them) */
+#define XGPU_WORLD_RT_POSES 512u
+#define XGPU_WORLD_RT_POSE_NODES 64u
+struct xgpu_world_rt_pose
+{
+	uint32_t mesh, owner, node_count, key;
+	float transforms[XGPU_WORLD_RT_POSE_NODES][3][4];
+};
 struct xgpu_stream_world_ao_mesh
 {
 	uint32_t header;
@@ -1798,6 +1820,12 @@ the structure's facing either way, an object's front faces alone) */
 #define XGPU_STREAM_WORLD_AO_INSTANCES_MAXIMUM 4096u
 #define XGPU_WORLD_AO_INSTANCE_STRUCTURE 1u
 #define XGPU_WORLD_AO_INSTANCE_OBJECT 2u
+/* (with debug.rt_render_geometry) the first-person weapon and hands, drawn
+in a view of their own (no ray from the world's pixels meets them: their
+own mask bit, which the passes' rays leave out), and the local player's
+own body in first person, which casts shadows and nothing else sees */
+#define XGPU_WORLD_AO_INSTANCE_FIRST_PERSON 4u
+#define XGPU_WORLD_AO_INSTANCE_PLAYER 8u
 #define XGPU_WORLD_AO_INSTANCE_OWNERS (1u << 24)
 struct xgpu_world_ao_instance
 {
@@ -1834,6 +1862,7 @@ XGPU_STREAM_ASSERT_SIZE(struct xgpu_world_rt_mesh, 32);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_world_rt_vertex, 24);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_world_rt_material, 64);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_world_rt_texture, 80);
+XGPU_STREAM_ASSERT_SIZE(struct xgpu_world_rt_pose, 16 + 64 * 48);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_world_ao_instance, 64);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_world_ao_instances, 16);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_pipeline_stand_in, 12);
