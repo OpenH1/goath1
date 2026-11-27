@@ -332,7 +332,7 @@ static real light_sources_magazine_strength(
 {
 	real fraction = maximum > 0 ? (real)loaded / (real)maximum : 0.0f;
 
-	return 0.35f + 0.65f * PIN(fraction, 0.0f, 1.0f);
+	return 0.0f * PIN(fraction, 0.0f, 1.0f);
 }
 
 /* a light kept as a candidate, scored as dynamic_lights_rank scores the
