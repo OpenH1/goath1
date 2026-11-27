@@ -2237,6 +2237,19 @@ static void settings_each_definition(struct widget_instance *widget,
 
 static void settings_search_each(boolean (*visit)(struct widget_instance *spinner,
 	struct pc_menu_setting *setting));
+static boolean settings_condition(struct widget_instance *list, char const *condition);
+static boolean settings_condition_runs(char const *condition);
+
+/* whether a row of the model is hidden on the page by its when, as
+settings_rows_conditions shows it: a setting's other rows in the same place
+(Anti-Aliasing's MSAA row on a computer, the Upscaler's DLSS rows without
+DLSS, Render Resolution's MetalFX row) are not the page's, so that their
+value, the setting's as loaded, never takes back the change made in the
+row shown (#1290) */
+static boolean settings_row_hidden(struct widget_instance *widget, struct halo_menu_model_row const *row)
+{
+	return row && row->when && settings_condition_runs(row->when) && !settings_condition(widget, row->when);
+}
 
 static void settings_each(struct widget_instance *widget, boolean (*visit)(struct widget_instance *spinner,
 	struct pc_menu_setting *setting))
@@ -2262,6 +2275,8 @@ static void settings_each(struct widget_instance *widget, boolean (*visit)(struc
 		if (!setting)
 			continue;
 		rows = TRUE;
+		if (settings_row_hidden(widget, row))
+			continue;
 		settings_widget_name(name, sizeof(name), "", row->key, "_spinner");
 		spinner = named(widget, name, 0);
 		if (spinner && spinner->type == 2 && !spinner_item(spinner))
