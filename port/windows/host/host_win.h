@@ -129,20 +129,6 @@ of main), and the variable taken out of the environment, so that no
 process this one starts (the self-updater's) takes itself for one */
 int host_launched(void);
 
-/* ---------- Windows' graphics preference (host_display_win.c) */
-
-/* the variable of the copy the game starts once it has set Windows'
-graphics preference for itself to high performance (#1283) */
-#define HOST_GPU_RESTARTED_VARIABLE L"HALO_WINDOWS_GPU_RESTARTED"
-/* whether this process is that copy (or the launcher's copy of it): read
-at the first call, which the top of main makes (halo.log is added to) */
-int host_gpu_restarted(void);
-/* after the Vulkan device is chosen: missing is the NVIDIA or AMD card
-DXGI lists that Vulkan does not ("" none); window the game's (HWND). Sets
-the preference and starts the game again where the player has none, and
-then does not return; says what the last start's did, in that copy */
-void host_gpu_preference_check(const char *missing, void *window);
-
 /* ---------- the process (host_main_win.c) */
 
 /* the executable's path, UTF-8 with forward slashes (the guest's

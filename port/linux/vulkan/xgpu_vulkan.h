@@ -1022,12 +1022,6 @@ void xgpu_vulkan_pass_times_follow(int frames);
 void xgpu_vulkan_window_gamut(float target);
 /* the device's LUID (Windows' adapter's), 0 where it has none */
 int xgpu_vulkan_device_luid(unsigned char luid[8]);
-/* #1283: the NVIDIA or AMD card Windows' DXGI lists that the loader did not
-("" if none: every card is listed, or not Windows) */
-const char *xgpu_vulkan_adapter_missing(void);
-/* the loader's environment as the player had it, without the layer filters
-the game adds (for a process the game starts: its loader's are its own) */
-void xgpu_vulkan_loader_environment_restore(void);
 /* display.gamma (the stream's record, render thread): the setting, 1 for
 none, from the next present on; an SDR frame is curved by one over it
 (present), an HDR swapchain's never */

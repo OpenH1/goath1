@@ -8815,11 +8815,6 @@ void xgpu_vulkan_window_gamut(float target)
 	__atomic_store_n(&vk.window_gamut, bits, __ATOMIC_RELEASE);
 }
 
-const char *xgpu_vulkan_adapter_missing(void)
-{
-	return vk.adapter_missing;
-}
-
 int xgpu_vulkan_device_luid(unsigned char luid[8])
 {
 	VkPhysicalDeviceIDProperties id;
@@ -10830,12 +10825,6 @@ static void loader_environment_set(int filters)
 		environment_clear("VK_LOADER_LAYERS_DISABLE");
 }
 
-void xgpu_vulkan_loader_environment_restore(void)
-{
-	if (loader_environment.known)
-		loader_environment_set(0);
-}
-
 static int load_functions(void)
 {
 	char value[1024];
@@ -11137,6 +11126,27 @@ static void layers_log(VkPhysicalDevice device)
 		disable ? disable : "");
 }
 
+/* whether the loader has any layer of a vendor's (its name's prefix:
+VK_LAYER_NV_, VK_LAYER_AMD_), as the player's environment leaves it: the
+vendor's driver registers its layers with its Vulkan part, so none means
+that registration is not there (#1293: an RTX 5070 DXGI listed, and the
+loader had no NVIDIA layer, nor device) */
+static int vendor_layer_present(const char *prefix)
+{
+	VkLayerProperties layers[64];
+	uint32_t count = 64, index;
+	size_t length = strlen(prefix);
+	int present = 0;
+
+	loader_environment_set(0);
+	if (vkEnumerateInstanceLayerProperties(&count, layers) < 0)
+		count = 0;
+	loader_environment_set(loader_environment.filters);
+	for (index = 0; index < count && !present; index++)
+		present = !strncmp(layers[index].layerName, prefix, length);
+	return present;
+}
+
 /* #1283: the adapters Windows' DXGI lists, in one line, and a warning for an
 NVIDIA or AMD one the loader does not list (the same card by the LUID, or by
 its PCI vendor and device IDs): Windows has its driver, but not that driver's Vulkan
@@ -11180,8 +11190,14 @@ static void adapters_log(const struct xgpu_vulkan_options *options, const VkPhys
 				(properties[device].vendorID == adapter->vendor && properties[device].deviceID == adapter->device);
 		if (listed)
 			continue;
-		host_logf(HOST_LOG_WARN, "vulkan: %s is visible to Windows but not to Vulkan, which usually means its driver's "
-			"Vulkan part is missing or broken: reinstalling that driver usually fixes it", adapter->name);
+		if (!vendor_layer_present(adapter->vendor == 0x10de ? "VK_LAYER_NV_" : "VK_LAYER_AMD_"))
+			host_logf(HOST_LOG_WARN, "vulkan: %s is visible to Windows but not to Vulkan, and Vulkan has no %s layer "
+				"at all: the driver's Vulkan registration was not found. A clean reinstall of the %s driver is the "
+				"fix", adapter->name, adapter->vendor == 0x10de ? "NVIDIA" : "AMD",
+				adapter->vendor == 0x10de ? "NVIDIA" : "AMD");
+		else
+			host_logf(HOST_LOG_WARN, "vulkan: %s is visible to Windows but not to Vulkan, which usually means its "
+				"driver's Vulkan part is missing or broken: reinstalling that driver usually fixes it", adapter->name);
 		if (!vk.adapter_missing[0])
 			snprintf(vk.adapter_missing, sizeof(vk.adapter_missing), "%s", adapter->name);
 	}

@@ -9,20 +9,13 @@ The output is the one whose monitor the window is on, found on the adapter
 whose LUID is the Vulkan device's, else on any adapter (a laptop's display
 on its integrated GPU while another draws). dxgi.dll is loaded as it is
 asked, so that nothing links it.
-
-#1283: Windows' graphics preference for the game, which can keep a card
-out of Vulkan's list (host_gpu_preference_check).
 */
 
 #define COBJMACROS
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <dxgi1_6.h>
-#include <stdlib.h>
 #include <string.h>
-
-#include "host_win.h"
-#include "host_log_queue.h"
 
 /* (their own, so that dxguid.lib is not needed) */
 static const GUID factory_iid = { 0x770aae78, 0xf26f, 0x4dba, { 0xa8, 0x29, 0x25, 0x3c, 0x83, 0xd1, 0xb3, 0x87 } };
@@ -194,145 +187,4 @@ int host_display_luminance(const unsigned char luid[8], void *window, float *bla
 		primaries[7] = description.WhitePoint[1];
 	}
 	return 1;
-}
-
-/* ---------- Windows' graphics preference (#1283)
-
-Windows keeps a GPU preference for each program, by its executable's full
-path: HKCU\Software\Microsoft\DirectX\UserGpuPreferences, the value named
-by the path, "GpuPreference=2;" for high performance, as Settings > System
-> Display > Graphics writes it (no administrator's rights). Its "power
-saving" GPU, a Ryzen's integrated Radeon, is what the vendors' layers and
-drivers can then give a Vulkan program alone, which the game's layer
-filters (xgpu_vulkan.c's load_functions) do not reach: #1283's RTX 5070 was
-not listed with AMD's layer off.
-
-So, where DXGI lists an NVIDIA or AMD card that Vulkan does not, and the
-player has no value of their own for halo.exe, the game sets high
-performance and starts itself again, once: the copy has
-HOST_GPU_RESTARTED_VARIABLE, and says whether the card is then listed. The
-value is the player's from then on (Settings shows it), and never
-overwritten: a later start with the card still missing finds it and does
-not start again. The path is this process's, the one that makes the Vulkan
-instance (a copy the launcher started is the same halo.exe, host_main_win.c).
-The copy is this one's command line and environment, its loader's variables
-the player's (host_vulkan.c); this process hides its window, waits for the
-copy and ends with its exit code, as the launcher does. */
-
-#define GPU_PREFERENCES_KEY L"Software\\Microsoft\\DirectX\\UserGpuPreferences"
-
-int host_gpu_restarted(void)
-{
-	static int known, restarted;
-
-	if (!known)
-	{
-		known = 1;
-		restarted = GetEnvironmentVariableW(HOST_GPU_RESTARTED_VARIABLE, NULL, 0) > 0;
-	}
-	return restarted;
-}
-
-void host_gpu_preference_check(const char *missing, void *window)
-{
-	wchar_t path[MAX_PATH], value[256];
-	wchar_t *command;
-	DWORD length, size, type, code = 1;
-	HKEY key;
-	LONG status;
-	int has_value = 0;
-	STARTUPINFOW startup;
-	PROCESS_INFORMATION process;
-
-	/* (not for anything this process starts later: the self-updater's) */
-	SetEnvironmentVariableW(HOST_GPU_RESTARTED_VARIABLE, NULL);
-	if (host_gpu_restarted())
-	{
-		if (missing[0])
-			host_logf(HOST_LOG_WARN, "vulkan: the last start set Windows' graphics preference for the game to high "
-				"performance and started it again, and %s is still not in Vulkan's list: Windows' preference "
-				"did not hide it (#1283)", missing);
-		else
-			host_logf(HOST_LOG_INFO, "vulkan: every card Windows lists is in Vulkan's list now: Windows' graphics "
-				"preference for the game (power saving, or Windows' choice) had hidden one; the last start set it to "
-				"high performance (#1283)");
-		return;
-	}
-	if (!missing[0])
-		return;
-	length = GetModuleFileNameW(NULL, path, MAX_PATH);
-	if (!length || length >= MAX_PATH)
-		return;
-	/* (the long path, as Settings' file picker gives it) */
-	{
-		wchar_t long_path[MAX_PATH];
-		DWORD long_length = GetLongPathNameW(path, long_path, MAX_PATH);
-
-		if (long_length && long_length < MAX_PATH)
-			wcscpy(path, long_path);
-	}
-	if (RegOpenKeyExW(HKEY_CURRENT_USER, GPU_PREFERENCES_KEY, 0, KEY_QUERY_VALUE, &key) == ERROR_SUCCESS)
-	{
-		size = sizeof(value) - sizeof(wchar_t);
-		status = RegQueryValueExW(key, path, NULL, &type, (BYTE *)value, &size);
-		/* (any value of the player's, of any type or length, is theirs) */
-		has_value = status == ERROR_SUCCESS || status == ERROR_MORE_DATA;
-		if (status == ERROR_SUCCESS && type == REG_SZ)
-			value[size / sizeof(wchar_t)] = 0;
-		else
-			wcscpy(value, L"(not text)");
-		RegCloseKey(key);
-	}
-	if (has_value)
-	{
-		char *text = host_utf8_from_wide(value);
-
-		host_logf(HOST_LOG_WARN, "vulkan: Windows' graphics preference for the game is the player's own (%s): left "
-			"as it is. If %s should draw, Settings > System > Display > Graphics sets the game to high "
-			"performance (#1283)", text ? text : "?", missing);
-		free(text);
-		return;
-	}
-	status = RegCreateKeyExW(HKEY_CURRENT_USER, GPU_PREFERENCES_KEY, 0, NULL, 0, KEY_SET_VALUE, NULL, &key, NULL);
-	if (status == ERROR_SUCCESS)
-	{
-		static const wchar_t high[] = L"GpuPreference=2;";
-
-		status = RegSetValueExW(key, path, 0, REG_SZ, (const BYTE *)high, sizeof(high));
-		RegCloseKey(key);
-	}
-	if (status != ERROR_SUCCESS)
-	{
-		host_logf(HOST_LOG_WARN, "vulkan: cannot set Windows' graphics preference for the game (error %ld)",
-			(long)status);
-		return;
-	}
-	host_logf(HOST_LOG_WARN, "set Windows' graphics preference for this game to High performance (no earlier "
-		"choice), restarting once: %s is not in Vulkan's list (GpuPreference=2, as Settings > System > Display > "
-		"Graphics writes it; #1283)", missing);
-	/* (this process's lines in halo.log before the copy's) */
-	host_log_queue_flush(1000);
-	memset(&startup, 0, sizeof(startup));
-	startup.cb = sizeof(startup);
-	command = _wcsdup(GetCommandLineW());
-	SetEnvironmentVariableW(HOST_GPU_RESTARTED_VARIABLE, L"1");
-	if (!command || !CreateProcessW(path, command, NULL, NULL, FALSE, 0, NULL, NULL, &startup, &process))
-	{
-		SetEnvironmentVariableW(HOST_GPU_RESTARTED_VARIABLE, NULL);
-		host_logf(HOST_LOG_WARN, "vulkan: cannot start the game again (error %lu): it goes on with the GPU it has; "
-			"the next start uses the preference", (unsigned long)GetLastError());
-		free(command);
-		return;
-	}
-	SetEnvironmentVariableW(HOST_GPU_RESTARTED_VARIABLE, NULL);
-	free(command);
-	if (window)
-		ShowWindow((HWND)window, SW_HIDE);
-	CloseHandle(process.hThread);
-	WaitForSingleObject(process.hProcess, INFINITE);
-	GetExitCodeProcess(process.hProcess, &code);
-	CloseHandle(process.hProcess);
-	/* (nothing of this process's to keep: its drivers' DLLs are not
-	unloaded, which a process with a device can hang in) */
-	TerminateProcess(GetCurrentProcess(), code);
 }
