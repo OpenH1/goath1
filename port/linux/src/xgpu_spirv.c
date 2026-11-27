@@ -7039,7 +7039,7 @@ static unsigned int light_shadows_fetch(struct module *m, unsigned int variable_
 it (a float), ray queries through the scene */
 static unsigned int light_shadows_rays(struct module *m, struct words *locals, struct world_ao_pass_state *pass,
 	unsigned int query, unsigned int from, unsigned int center, unsigned int l, unsigned int disk, unsigned int rays,
-	unsigned int noise, unsigned int owner, unsigned int light_owner)
+	unsigned int noise, unsigned int owner, unsigned int light_owner, unsigned int normal)
 {
 	unsigned int lit_variable = local(m, locals, m->t_float);
 	unsigned int nx = extract(m, l, 0), ny = extract(m, l, 1), nz = extract(m, l, 2), sign, fa, fb, x, y, shortened;
@@ -7078,6 +7078,14 @@ static unsigned int light_shadows_rays(struct module *m, struct words *locals, s
 		operands[5] = constant_float(m, 0.0f);
 		operands[6] = fdiv(m, 3, d, splat(m, 3, far));
 		operands[7] = fmax_scalar(m, 1, fsub(m, 1, far, shortened), 0.0f);
+		/* (HALO_LIGHT_SHADOWS_VIEW=4, checking the scene: each ray straight
+		back into the surface, which must stop it) */
+		if (light_shadows_view() == 4)
+		{
+			operands[4] = fadd(m, 3, from, fscale(m, 3, normal, constant_float(m, 0.5f)));
+			operands[6] = fneg(m, 3, normal);
+			operands[7] = constant_float(m, 1.0f);
+		}
 		op_void(m, OP_RAY_QUERY_INITIALIZE, 8, operands);
 		branch(m, header);
 		label_at(m, header);
@@ -7153,7 +7161,7 @@ static void light_shadows_trace_main(struct module *m, struct words *locals, str
 		selection_begin(m, reach, &reach_merge);
 		share = light_shadows_rays(m, locals, pass, query, from, xyz(m, light),
 			fscale(m, 3, to, ext1(m, GLSL_INVERSE_SQRT, m->t_float, fmax_scalar(m, 1, d2, 1.0e-8f))),
-			extract(m, disks, channel), rays, noise, owner, uextract(m, owners, (unsigned int)channel));
+			extract(m, disks, channel), rays, noise, owner, uextract(m, owners, (unsigned int)channel), n);
 		/* (HALO_LIGHT_SHADOWS_VIEW=2, checking: a pixel the light reaches half
 		seen, whatever its rays found) */
 		if (light_shadows_view() == 2)
