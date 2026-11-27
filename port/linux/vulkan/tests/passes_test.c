@@ -50,6 +50,21 @@ void host_render_stream_display_paced(int paced)
 	(void)paced;
 }
 
+/* the texture cache (xgpu_vulkan_textures.c), which the ray-traced
+scene's textures' slots look their images up in: none here (the slots
+stand in) */
+struct xgpu_vulkan_image *xgpu_vulkan_textures_get(const struct xgpu_stream_texture_stage *stage)
+{
+	(void)stage;
+	return NULL;
+}
+
+struct xgpu_vulkan_image *xgpu_vulkan_textures_header(uint32_t header)
+{
+	(void)header;
+	return NULL;
+}
+
 /* display.temporal_aa "fsr" (xgpu_vulkan_fsr.c): not made over the fake
 device */
 int xgpu_vulkan_fsr_create(const struct xgpu_vulkan_fsr_device *device)
