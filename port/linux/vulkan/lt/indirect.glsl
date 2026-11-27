@@ -359,8 +359,9 @@ float reflection_seen(ivec2 pixel, vec3 p, float c)
     float distance = length(d), tolerance = 0.02 * distance + 0.02;
     d /= max(distance, 1.0e-6);
     rayQueryEXT q;
-    rayQueryInitializeEXT(q, scene, 0u, MASK_REFLECTIONS, eye, max(distance - tolerance, 0.0), d,
-        distance + tolerance);
+    // (from the segment's start, not from the eye with a least distance: RADV's traversal does not cull by it)
+    float start = max(distance - tolerance, 0.0);
+    rayQueryInitializeEXT(q, scene, 0u, MASK_REFLECTIONS, eye + d * start, 0.0, d, distance + tolerance - start);
     while (rayQueryProceedEXT(q))
         if (alpha_passes(q))
             rayQueryConfirmIntersectionEXT(q);
