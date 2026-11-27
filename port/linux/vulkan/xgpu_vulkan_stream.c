@@ -1996,7 +1996,7 @@ static struct xgpu_vulkan_buffer *segment_buffer(int32_t segment)
 	if (segment < 0 || segment >= MIRROR_SEGMENT_MAXIMUM)
 		return NULL;
 	if (!stream.segments[segment])
-		stream.segments[segment] = xgpu_vulkan_buffer_create(MIRROR_SEGMENT_SIZE);
+		stream.segments[segment] = xgpu_vulkan_buffer_create_mirror(MIRROR_SEGMENT_SIZE);
 	return stream.segments[segment];
 }
 

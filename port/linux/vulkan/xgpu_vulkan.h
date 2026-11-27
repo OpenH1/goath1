@@ -139,6 +139,14 @@ swapchain takes where the surface has it (0: the swap interval's choice) */
 	/* debug.gpu_stats: display.low_latency's statistics logged too
 	(xgpu_vulkan_pacing.c) */
 	int statistics;
+	/* debug.vulkan_push_textures: each draw's textures pushed into the
+	command buffer (VK_KHR_push_descriptor, where the device has it) rather
+	than kept as descriptor sets */
+	int push_textures;
+	/* debug.vulkan_bar_uploads: the stream's ring and the mirror's segments
+	in the device's own memory the CPU can write (a heap larger than 256 MB,
+	a discrete GPU's resizable BAR) */
+	int bar_uploads;
 	/* display.gpu ("auto", NULL: the rule of xgpu_vulkan_gpu.h; or a
 	device's index or a part of its name); and the LUID of the adapter that
 	drives the window's monitor, where it is known (Windows' DXGI) */
@@ -573,6 +581,7 @@ void *xgpu_vulkan_upload(uint32_t size, uint32_t alignment, struct xgpu_vulkan_r
 if it cannot be made */
 struct xgpu_vulkan_buffer;
 struct xgpu_vulkan_buffer *xgpu_vulkan_buffer_create(uint32_t size);
+struct xgpu_vulkan_buffer *xgpu_vulkan_buffer_create_mirror(uint32_t size);
 /* its handle, for a draw recorded now (which then reads it) */
 VkBuffer xgpu_vulkan_buffer_handle(struct xgpu_vulkan_buffer *buffer);
 /* its bytes, as the CPU last wrote them */
