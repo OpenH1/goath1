@@ -97,6 +97,8 @@ static struct
 	struct xgpu_vulkan_image *caches[2], *dump;
 	int current, cache_current, cache_valid;
 	unsigned long frames;
+	/* this frame's bounce's phase, and whether it was drawn (the fold's) */
+	int phase, bounced;
 	/* this frame's reflections' radiance (their samples, their count); the
 	light the surfaces read (HALO_LT_SPECULAR_DUMP=final's) */
 	struct xgpu_vulkan_image *specular_light, *final;
@@ -281,6 +283,7 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 	int reset, accumulate, counted, axis, index;
 
 	indirect.specular_light = NULL;
+	indirect.bounced = 0;
 	if (!xgpu_vulkan_lt_indirect_on() || !frame->inputs || !frame->direct || !frame->table || !frame->guides ||
 		!indirect_shaders())
 		return NULL;
@@ -292,7 +295,8 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 	half_width = (width + 1) / 2;
 	half_height = (height + 1) / 2;
 	accumulate = frame->mode == XGPU_VULKAN_LT_E2 || frame->mode == XGPU_VULKAN_LT_ACCUMULATE;
-	counted = accumulate || frame->mode == XGPU_VULKAN_LT_DENOISE;
+	/* (folded: the denoiser counts the bounce in its one temporal stage) */
+	counted = accumulate || (frame->mode == XGPU_VULKAN_LT_DENOISE && !frame->fold);
 	/* (the total's format follows the mode: E2's and accumulate's means in
 	full floats) */
 	if (indirect.total && (xgpu_vulkan_image_description(indirect.total)->format != (accumulate ?
@@ -307,8 +311,9 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 		indirect.cache_valid = 0;
 	}
 	indirect.bounce = indirect_image(indirect.bounce, XGPU_VULKAN_FORMAT_RGBA32F, half_width, half_height);
-	indirect.total = indirect_image(indirect.total, accumulate ? XGPU_VULKAN_FORMAT_RGBA32F : XGPU_VULKAN_FORMAT_RGBA16F,
-		width, height);
+	if (!frame->fold)
+		indirect.total = indirect_image(indirect.total, accumulate ? XGPU_VULKAN_FORMAT_RGBA32F :
+			XGPU_VULKAN_FORMAT_RGBA16F, width, height);
 	for (index = 0; index < 2; index++)
 	{
 		indirect.caches[index] = indirect_image(indirect.caches[index], XGPU_VULKAN_FORMAT_RGBA32F,
@@ -327,7 +332,7 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 	}
 	if (indirect.reflections)
 		indirect.specular_raw = indirect_image(indirect.specular_raw, XGPU_VULKAN_FORMAT_RGBA16F, width, height);
-	if (!indirect.bounce || !indirect.total || !indirect.caches[0] || !indirect.caches[1] || (counted && (!indirect.histories[0] || !indirect.histories[1])) ||
+	if (!indirect.bounce || (!frame->fold && !indirect.total) || !indirect.caches[0] || !indirect.caches[1] || (counted && (!indirect.histories[0] || !indirect.histories[1])) ||
 		(indirect.reflections && (!indirect.specular_raw || !indirect.coverage[0] || !indirect.coverage[1] ||
 		(accumulate && (!indirect.specular_histories[0] || !indirect.specular_histories[1])))))
 		return NULL;
@@ -338,6 +343,7 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 		half[axis + 2] = (frame->rectangle[axis + 2] + 1) / 2;
 	}
 	indirect_parameters(frame, parameters);
+	indirect.phase = (int)(indirect.frames & 3);
 	xgpu_vulkan_pass_owner("LIGHT TRANSPORT");
 	/* 1, 2: the bounce and the reflections' rays (the last frame's cache) */
 	{
@@ -346,6 +352,7 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 
 		indirect_pass(indirect.bounce, half, frame, INDIRECT_BOUNCE | (reset ? INDIRECT_RESET : 0), frame->cap, textures,
 			&indirect.wide, parameters);
+		indirect.bounced = 1;
 		/* (the reflections: the direct light this frame for the guess of
 		what they would show, reflection_seen) */
 		textures[5] = frame->direct;
@@ -369,7 +376,9 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 	summed with the direct light (its mean, or the sample the denoiser takes),
 	or (raw) added to the direct sample as it is */
 	before = counted ? indirect.histories[indirect.current] : NULL;
-	if (counted)
+	if (frame->fold)
+		;
+	else if (counted)
 	{
 		struct xgpu_vulkan_image *now = indirect.histories[indirect.current ^ 1];
 		struct xgpu_vulkan_image *textures[6] = { frame->inputs, frame->direct, frame->previous_inputs, frame->guides,
@@ -422,7 +431,14 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 		host_logf(HOST_LOG_INFO, "vulkan: light transport: the dynamic lights' bounce (half resolution, the radiance "
 			"cache %s) and reflections %s", indirect.cache ? "on" : "off", indirect.reflections ? "on" : "off");
 	}
-	return indirect.total;
+	return frame->fold ? frame->direct : indirect.total;
+}
+
+struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_bounce(int *phase, int *only)
+{
+	*phase = indirect.phase;
+	*only = indirect.only;
+	return indirect.bounced ? indirect.bounce : NULL;
 }
 
 void xgpu_vulkan_lt_indirect_final(const struct xgpu_vulkan_lt_indirect_frame *frame, struct xgpu_vulkan_image *final)

@@ -306,6 +306,7 @@ VkShaderModule xgpu_vulkan_lt_kernel(const char *source)
 		{ "denoise_temporal.frag", lt_denoise_temporal_spirv, sizeof(lt_denoise_temporal_spirv) / sizeof(uint32_t) },
 		{ "denoise_atrous.frag", lt_denoise_atrous_spirv, sizeof(lt_denoise_atrous_spirv) / sizeof(uint32_t) },
 		{ "denoise_guide.frag", lt_denoise_guide_spirv, sizeof(lt_denoise_guide_spirv) / sizeof(uint32_t) },
+		{ "denoise_guide_fold.frag", lt_denoise_guide_fold_spirv, sizeof(lt_denoise_guide_fold_spirv) / sizeof(uint32_t) },
 		/* (the indirect light and reflections: xgpu_vulkan_lt_indirect.c) */
 		{ "e1_indirect.frag", lt_indirect_spirv, sizeof(lt_indirect_spirv) / sizeof(uint32_t) },
 	};
@@ -1054,6 +1055,8 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 	indirect_frame.cap = params.control[0];
 	indirect_frame.start = start;
 	indirect_frame.previous_valid = lt.previous_valid;
+	/* (ours the denoiser: the bounce counted in its one temporal stage) */
+	indirect_frame.fold = lt.mode == XGPU_VULKAN_LT_DENOISE && !xgpu_vulkan_dlss_lt_selected();
 	diffuse = xgpu_vulkan_lt_indirect_draw(&indirect_frame);
 	if (!diffuse)
 		diffuse = lt.means[lt.current];
@@ -1083,10 +1086,16 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 				!had || pass->history[0] == 0.0f);
 		}
 		else
+		{
 			/* (its gradients the direct light's alone: the re-shade's,
-			against the last frame's direct sample) */
+			against the last frame's direct sample; the bounce folded in by
+			its guide pass) */
+			struct xgpu_vulkan_denoise_bounce bounce;
+
+			bounce.image = xgpu_vulkan_lt_indirect_bounce(&bounce.phase, &bounce.only);
 			denoised = xgpu_vulkan_denoise_draw(diffuse, had ? history : NULL, inputs, had ? lt.previous : NULL,
-				lt.guides, pass, rectangle);
+				lt.guides, pass, rectangle, bounce.image ? &bounce : NULL);
+		}
 		xgpu_vulkan_pass_owner(LT_OWNER);
 	}
 	/* (W2: the light the surfaces read: the light less the suns' whole

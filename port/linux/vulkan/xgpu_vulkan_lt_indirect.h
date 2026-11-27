@@ -39,6 +39,11 @@ struct xgpu_vulkan_lt_indirect_frame
 	/* XGPU_VULKAN_LT_* (xgpu_vulkan_lt.h); the count's cap; the count
 	started again; the last frame's inputs had */
 	int mode, cap, start, previous_valid;
+	/* the bounce folded into the denoiser's one temporal stage (ours runs:
+	"denoise" without RR): no history, upsampling or sum of its own here,
+	the draw's diffuse signal the direct light's alone; the denoiser takes
+	the bounce from xgpu_vulkan_lt_indirect_bounce */
+	int fold;
 };
 
 /* whether the indirect light and the reflections are drawn (the settings,
@@ -49,6 +54,10 @@ int xgpu_vulkan_lt_indirect_on(void);
 denoiser (or, accumulated, the surfaces) then takes (the direct and the
 indirect, one signal), or NULL where there is none (the direct as it is) */
 struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_lt_indirect_frame *frame);
+/* this frame's bounce (half resolution: lt/indirect.glsl's BOUNCE), the
+phase its blocks were traced at, whether the direct light is to be left out
+(HALO_LT_INDIRECT=only); NULL where none was drawn */
+struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_bounce(int *phase, int *only);
 /* the reflections' denoising (HALO_LT_E1=denoise, after the diffuse's) and
 their part of the light the surfaces read: final's right half */
 void xgpu_vulkan_lt_indirect_final(const struct xgpu_vulkan_lt_indirect_frame *frame, struct xgpu_vulkan_image *final);

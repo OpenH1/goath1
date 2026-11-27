@@ -31,6 +31,7 @@ KERNELS = [("lt_e1_vertex_spirv", "e1.vert", []), ("lt_e1_spirv", "e1.frag", [])
            ("lt_denoise_gradient_spirv", "denoise_gradient.frag", []),
            ("lt_denoise_temporal_spirv", "denoise_temporal.frag", []),
            ("lt_denoise_atrous_spirv", "denoise_atrous.frag", []), ("lt_denoise_guide_spirv", "denoise_guide.frag", []),
+           ("lt_denoise_guide_fold_spirv", "denoise_guide.frag", ["FOLD"]),
            ("lt_indirect_spirv", "e1.frag", ["LT_INDIRECT"])]
 
 
@@ -39,6 +40,8 @@ def kernel_name(source: str, defines=()) -> str:
     with its define (e1.frag's LT_INDIRECT: e1_indirect.frag)"""
     if "LT_INDIRECT" in defines:
         return source.replace(".frag", "_indirect.frag")
+    if "FOLD" in defines:
+        return source.replace(".frag", "_fold.frag")
     return source
 
 

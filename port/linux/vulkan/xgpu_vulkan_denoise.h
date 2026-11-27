@@ -19,9 +19,20 @@ the last frame's (NULL where there is none), the pre-pass's inputs (this
 frame's, the last's) and guides (xgpu_spirv.h's C1), its uniforms and the
 rectangle drawn: the denoised irradiance (RGBA16F, rgb; a the estimate's
 standard deviation), or NULL where it cannot be had yet (the raw then bound) */
+/* the dynamic lights' bounce folded into the diffuse channel's one temporal
+stage (xgpu_vulkan_lt_indirect.c's, HALO_LT_E1=denoise): its half-resolution
+samples (lt/indirect.glsl's BOUNCE: a texel a 2x2 block), the phase its
+blocks were traced at this frame, whether the direct light is left out
+(HALO_LT_INDIRECT=only, checking) */
+struct xgpu_vulkan_denoise_bounce
+{
+	struct xgpu_vulkan_image *image;
+	int phase, only;
+};
 struct xgpu_vulkan_image *xgpu_vulkan_denoise_draw(struct xgpu_vulkan_image *raw,
 	struct xgpu_vulkan_image *previous_raw, struct xgpu_vulkan_image *inputs, struct xgpu_vulkan_image *previous_inputs,
-	struct xgpu_vulkan_image *guides, const struct xgpu_world_ao_pass *pass, const int32_t rectangle[4]);
+	struct xgpu_vulkan_image *guides, const struct xgpu_world_ao_pass *pass, const int32_t rectangle[4],
+	const struct xgpu_vulkan_denoise_bounce *bounce);
 
 /* the specular channel (the light transport's reflections,
 xgpu_vulkan_lt_indirect.c): this frame's noisy specular radiance (RGBA,

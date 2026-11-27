@@ -39,6 +39,8 @@ layout(set = 0, binding = 1, std140) uniform Pass
     // x the previous frame's number (its history.y: its gradient pixels' and seed's), y the luminance's edge-stop
     // (sigma, in standard deviations), z the depth's (a share of the distance), w the shaded normal's (1 - cos)
     vec4 tuning;
+    // (the guide's FOLD, lt/denoise_guide.frag) x, y the bounce's size (blocks), z its phase this frame, w its flags
+    vec4 bounce;
 } pass;
 
 const float COS_25 = 0.906;

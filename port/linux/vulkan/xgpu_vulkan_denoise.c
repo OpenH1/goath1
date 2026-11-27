@@ -82,6 +82,14 @@ struct denoise_params
 	float size[4];
 	int32_t control[4];
 	float tuning[4];
+	/* (the guide's fold: the bounce's size in blocks, its phase, its
+	flags: DENOISE_BOUNCE_*) */
+	float bounce[4];
+};
+enum
+{
+	DENOISE_BOUNCE_ON = 1,
+	DENOISE_BOUNCE_ONLY = 2,
 };
 enum
 {
@@ -106,6 +114,10 @@ re-shade, the gradients, the last frame's guides */
 struct denoise_channel
 {
 	struct xgpu_vulkan_image *histories[2], *filter_guides[2], *filtered[2], *result, *reshaded, *gradients;
+	/* (the diffuse's, with the bounce folded in: this frame's one diffuse
+	sample, the direct light's and the bounce's, which the temporal stage
+	counts) */
+	struct xgpu_vulkan_image *combined;
 	struct xgpu_vulkan_image *previous_guides;
 	int current, previous_valid;
 	struct xgpu_world_ao_pass previous_pass;
@@ -117,9 +129,9 @@ static struct
 {
 	int made, failed, said;
 	unsigned generation;
-	VkShaderModule vertex, gradient, temporal, guide, atrous;
+	VkShaderModule vertex, gradient, temporal, guide, guide_fold, atrous;
 	VkSampler sampler;
-	struct xgpu_vulkan_pipeline_description gradient_pass, temporal_pass, guide_pass, atrous_pass;
+	struct xgpu_vulkan_pipeline_description gradient_pass, temporal_pass, guide_pass, guide_fold_pass, atrous_pass;
 	/* the diffuse channel, the specular */
 	struct denoise_channel channels[2];
 	/* checking (HALO_LT_DENOISE_*) */
@@ -170,6 +182,7 @@ static int denoise_shaders(void)
 	denoise.gradient = denoise_kernel("denoise_gradient.frag");
 	denoise.temporal = denoise_kernel("denoise_temporal.frag");
 	denoise.guide = denoise_kernel("denoise_guide.frag");
+	denoise.guide_fold = denoise_kernel("denoise_guide_fold.frag");
 	denoise.atrous = denoise_kernel("denoise_atrous.frag");
 	if (!denoise.sampler)
 	{
@@ -180,7 +193,7 @@ static int denoise_shaders(void)
 		sampler.anisotropy = 1;
 		denoise.sampler = xgpu_vulkan_sampler(&sampler);
 	}
-	if (!denoise.vertex || !denoise.gradient || !denoise.temporal || !denoise.guide || !denoise.atrous || !denoise.sampler)
+	if (!denoise.vertex || !denoise.gradient || !denoise.temporal || !denoise.guide || !denoise.guide_fold || !denoise.atrous || !denoise.sampler)
 	{
 		host_logf(HOST_LOG_WARN, "vulkan: denoise: its passes cannot be made");
 		denoise.failed = 1;
@@ -199,6 +212,11 @@ static int denoise_shaders(void)
 	denoise.guide_pass = denoise.temporal_pass;
 	denoise.guide_pass.pixel_shader = denoise.guide;
 	denoise.guide_pass.color_format = XGPU_VULKAN_FORMAT_RG32_UINT;
+	/* (the fold: the one diffuse sample its second output) */
+	denoise.guide_fold_pass = denoise.guide_pass;
+	denoise.guide_fold_pass.pixel_shader = denoise.guide_fold;
+	denoise.guide_fold_pass.motion_format = XGPU_VULKAN_FORMAT_RGBA16F;
+	denoise.guide_fold_pass.motion_mask = 15;
 	/* (the a-trous passes in half floats: rgb and the standard deviation) */
 	denoise.atrous_pass = denoise.gradient_pass;
 	denoise.atrous_pass.pixel_shader = denoise.atrous;
@@ -206,6 +224,7 @@ static int denoise_shaders(void)
 	(void)xgpu_vulkan_pipeline_prepare(&denoise.gradient_pass);
 	(void)xgpu_vulkan_pipeline_prepare(&denoise.temporal_pass);
 	(void)xgpu_vulkan_pipeline_prepare(&denoise.guide_pass);
+	(void)xgpu_vulkan_pipeline_prepare(&denoise.guide_fold_pass);
 	(void)xgpu_vulkan_pipeline_prepare(&denoise.atrous_pass);
 	denoise.made = 1;
 	return 1;
@@ -340,7 +359,7 @@ the gradients, flagged DENOISE_SPECULAR) */
 static struct xgpu_vulkan_image *denoise_channel_draw(struct denoise_channel *channel, int specular,
 	struct xgpu_vulkan_image *raw, struct xgpu_vulkan_image *previous_raw, struct xgpu_vulkan_image *inputs,
 	struct xgpu_vulkan_image *previous_inputs, struct xgpu_vulkan_image *guides, const struct xgpu_world_ao_pass *pass,
-	const int32_t rectangle[4])
+	const int32_t rectangle[4], const struct xgpu_vulkan_denoise_bounce *bounce)
 {
 	const struct xgpu_vulkan_image_description *size;
 	struct xgpu_world_ao_pass uniforms;
@@ -353,7 +372,8 @@ static struct xgpu_vulkan_image *denoise_channel_draw(struct denoise_channel *ch
 	if (!raw || !inputs || !guides || !pass || !denoise_shaders())
 		return NULL;
 	if (!xgpu_vulkan_pipeline_ready(&denoise.gradient_pass) || !xgpu_vulkan_pipeline_ready(&denoise.temporal_pass) ||
-		!xgpu_vulkan_pipeline_ready(&denoise.guide_pass) || !xgpu_vulkan_pipeline_ready(&denoise.atrous_pass))
+		!xgpu_vulkan_pipeline_ready(&denoise.guide_pass) || !xgpu_vulkan_pipeline_ready(&denoise.atrous_pass) ||
+		(bounce && bounce->image && !xgpu_vulkan_pipeline_ready(&denoise.guide_fold_pass)))
 		return NULL;
 	size = xgpu_vulkan_image_description(inputs);
 	width = size->width;
@@ -372,6 +392,12 @@ static struct xgpu_vulkan_image *denoise_channel_draw(struct denoise_channel *ch
 			height);
 	}
 	channel->result = denoise_image(channel->result, XGPU_VULKAN_FORMAT_RGBA16F, width, height);
+	if (bounce && bounce->image)
+	{
+		channel->combined = denoise_image(channel->combined, XGPU_VULKAN_FORMAT_RGBA16F, width, height);
+		if (!channel->combined)
+			return NULL;
+	}
 	channel->reshaded = denoise_image(channel->reshaded, XGPU_VULKAN_FORMAT_RGBA32F, gradient_width, gradient_height);
 	channel->gradients = denoise_image(channel->gradients, XGPU_VULKAN_FORMAT_RGBA32F, gradient_width, gradient_height);
 	/* (the specular's: no re-shade, none kept) */
@@ -410,6 +436,23 @@ static struct xgpu_vulkan_image *denoise_channel_draw(struct denoise_channel *ch
 	{
 		guide = denoise.channels[0].filter_guides[denoise.channels[0].current];
 		previous_guide = denoise.channels[0].filter_guides[denoise.channels[0].current ^ 1];
+	}
+	else if (bounce && bounce->image)
+	{
+		/* (the fold: the bounce upsampled and added to the direct light's
+		sample, the guide's second output, which the temporal stage then
+		counts as the one diffuse sample) */
+		const struct xgpu_vulkan_image_description *blocks = xgpu_vulkan_image_description(bounce->image);
+		struct xgpu_vulkan_image *textures[4] = { inputs, guides, raw, bounce->image };
+
+		params.bounce[0] = (float)blocks->width;
+		params.bounce[1] = (float)blocks->height;
+		params.bounce[2] = (float)bounce->phase;
+		params.bounce[3] = (float)(DENOISE_BOUNCE_ON | (bounce->only ? DENOISE_BOUNCE_ONLY : 0));
+		xgpu_vulkan_set_motion_target(channel->combined, guide);
+		denoise_pass(guide, rectangle, &uniforms, &params, &denoise.guide_fold_pass, textures, 4);
+		xgpu_vulkan_set_motion_target(NULL, NULL);
+		raw = channel->combined;
 	}
 	else
 	{
@@ -483,15 +526,16 @@ static struct xgpu_vulkan_image *denoise_channel_draw(struct denoise_channel *ch
 
 struct xgpu_vulkan_image *xgpu_vulkan_denoise_draw(struct xgpu_vulkan_image *raw,
 	struct xgpu_vulkan_image *previous_raw, struct xgpu_vulkan_image *inputs, struct xgpu_vulkan_image *previous_inputs,
-	struct xgpu_vulkan_image *guides, const struct xgpu_world_ao_pass *pass, const int32_t rectangle[4])
+	struct xgpu_vulkan_image *guides, const struct xgpu_world_ao_pass *pass, const int32_t rectangle[4],
+	const struct xgpu_vulkan_denoise_bounce *bounce)
 {
 	return denoise_channel_draw(&denoise.channels[0], 0, raw, previous_raw, inputs, previous_inputs, guides, pass,
-		rectangle);
+		rectangle, bounce);
 }
 
 struct xgpu_vulkan_image *xgpu_vulkan_denoise_specular_draw(struct xgpu_vulkan_image *raw,
 	struct xgpu_vulkan_image *inputs, struct xgpu_vulkan_image *guides, const struct xgpu_world_ao_pass *pass,
 	const int32_t rectangle[4])
 {
-	return denoise_channel_draw(&denoise.channels[1], 1, raw, NULL, inputs, NULL, guides, pass, rectangle);
+	return denoise_channel_draw(&denoise.channels[1], 1, raw, NULL, inputs, NULL, guides, pass, rectangle, NULL);
 }
