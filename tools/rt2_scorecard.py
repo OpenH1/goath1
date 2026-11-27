@@ -77,7 +77,7 @@ SCENES = [
     ("a10", "a10_lights.hrpl", 906, "a10's cryo deck, a still camera on the reflective floor"),
     ("b30", "b30_lights.hrpl", 180, "b30's Pelican passing the beach rock (b30_exterior's view)"),
     ("combat", "combat_lights.hrpl", 494, "b30's beach in combat: plasma lights"),
-    ("c20walk", "c20_walk_lights.hrpl", 606, "c20's corridor walked toward a Flood, the flashlight on (motion)"),
+    ("c20walk", "c20_walk_motion.hrpl", 605, "c20's corridor walked toward a Flood, the flashlight on (motion)"),
 ]
 STABILITY_HOST = "omarchy"
 TRUTH_HOST = "5900x"
