@@ -51,6 +51,7 @@ Nothing is changed in the game: it is read only, on the game's thread.
 #include "tag_files/tag_groups.h"
 #include "memory/zlib/zlib.h"
 #include "interface/first_person_weapons.h"
+#include "math/periodic_functions.h"
 #include "rt_lights_materials.h"
 
 #include <xtl.h>
@@ -1012,6 +1013,29 @@ static void rtlm_material_environment(FILE *file, struct rtlm_shader_environment
 	rtlm_rgb(file, &self->plasma_on_color);
 	fprintf(file, ",\"plasma_off\":");
 	rtlm_rgb(file, &self->plasma_off_color);
+	/* (as the lightmap pass draws it this frame: each color between off and on by its function at the game
+	time, rasterizer_xbox_environment.c:862-898; the combiners add map.r x primary + map.g x secondary and the
+	plasma's to the lightmap before the texture pass multiplies) */
+	if (self->primary_animation_period != 0.0f && self->secondary_animation_period != 0.0f &&
+		self->plasma_animation_period != 0.0f)
+	{
+		real now = global_frame_parameters.game_time_sec;
+		real p = periodic_function_evaluate(self->primary_animation_function,
+			(now + self->primary_animation_phase) / self->primary_animation_period);
+		real q = periodic_function_evaluate(self->secondary_animation_function,
+			(now + self->secondary_animation_phase) / self->secondary_animation_period);
+		real r = periodic_function_evaluate(self->plasma_animation_function,
+			(now + self->plasma_animation_phase) / self->plasma_animation_period);
+
+		fprintf(file, ",\"now\":{\"game_time\":%.6g,\"primary\":[%.6g,%.6g,%.6g],\"secondary\":[%.6g,%.6g,%.6g],"
+			"\"plasma_value\":%.6g}", now,
+			self->primary_off_color.red * (1 - p) + self->primary_on_color.red * p,
+			self->primary_off_color.green * (1 - p) + self->primary_on_color.green * p,
+			self->primary_off_color.blue * (1 - p) + self->primary_on_color.blue * p,
+			self->secondary_off_color.red * (1 - q) + self->secondary_on_color.red * q,
+			self->secondary_off_color.green * (1 - q) + self->secondary_on_color.green * q,
+			self->secondary_off_color.blue * (1 - q) + self->secondary_on_color.blue * q, r);
+	}
 	fprintf(file, ",\"from\":\"shader_environment self-illumination: the map's red, green and blue channels mask the "
 		"primary, secondary and plasma colors, each between off and on by its animation; drawn at run time only (the "
 		"lightmap tool's emission is the radiosity block above, not this)\"}");

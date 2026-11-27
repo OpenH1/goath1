@@ -127,6 +127,10 @@ symbols in this file:
 #include "world_ao.h" /* port: port/linux/game/world_ao.c */
 #include "mod_materials.h" /* port: port/linux/game/mod_materials.c */
 
+/* (GOAT H1: rt_export.c's, when it is linked) */
+extern void rt_export_note_self_illumination(long unique_identifier, void const *shader,
+	real_rgb_color const *color) __attribute__((weak));
+
 /* ---------- constants */
 
 enum
@@ -2042,6 +2046,12 @@ void _rasterizer_model_draw(
 					self_illumination_color.green *= external_color->green;
 					self_illumination_color.blue *= external_color->blue;
 				}
+
+				/* (GOAT H1: the truth export's record of the self-illumination
+				color as drawn, per object and shader: rt_export.c) */
+				if (rt_export_note_self_illumination)
+					rt_export_note_self_illumination(local_parameters->unique_identifier, shader,
+						&self_illumination_color);
 
 				if (shader_model->model.change_color_source>0 &&
 					shader_model->model.change_color_source<
