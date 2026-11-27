@@ -29,6 +29,9 @@ enum
 	XGPU_VULKAN_LT_RAW,
 	XGPU_VULKAN_LT_E2,
 	XGPU_VULKAN_LT_ACCUMULATE,
+	/* "denoise": RAW's 1 spp through the denoiser (xgpu_vulkan_denoise.c, W3),
+	whose result the surfaces read */
+	XGPU_VULKAN_LT_DENOISE,
 };
 
 /* the mode (HALO_LT_E1, read once) */
@@ -43,6 +46,15 @@ surfaces read display.rt_bounce's; nonzero where the mode is on (the bounce
 then not drawn) */
 int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_world_ao_pass *pass,
 	const unsigned char *cells, const struct xgpu_dynamic_lights_block *block);
+/* HALO_LT_E1=denoise, for the denoiser's A-SVGF gradients: the pass drawn
+into into (RGBA32F, a texel a 3x3 stratum of the previous frame) with this
+frame's light but the previous frame's uniforms, inputs and guides (its
+surfaces and its seed), each texel at its stratum's gradient pixel
+(lt/gradient_pixel.glsl) */
+void xgpu_vulkan_lt_reshade(struct xgpu_vulkan_image *into, const struct xgpu_world_ao_pass *previous_pass,
+	struct xgpu_vulkan_image *previous_inputs, struct xgpu_vulkan_image *previous_guides);
+/* (xgpu_vulkan_lt_kernel and _kernels_generation, for the denoiser: in
+xgpu_vulkan_denoise.h, which has Vulkan's types) */
 /* debug: the kernels read again, at the pass's next draw, from folder's
 <source>.spv files (NULL: HALO_LT_SHADER_DIR's, or the last given), the
 built-in ones where a file is not there (the replay's "reload") */

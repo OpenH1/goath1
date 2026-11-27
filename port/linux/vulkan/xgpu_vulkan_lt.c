@@ -42,6 +42,7 @@ HALO_LT_E1_UNSHADOWED=1 (checking) casts no shadow ray. Render thread alone.
 #include "xgpu_spirv.h"
 #include "xgpu_stream.h"
 #include "xgpu_vulkan.h"
+#include "xgpu_vulkan_denoise.h"
 #include "xgpu_vulkan_lt.h"
 
 #include <math.h>
@@ -91,6 +92,8 @@ enum
 	LT_COPY_GEOMETRIC = 8,
 	LT_COPY_SHADED = 16,
 	LT_COPY_PRESENT = 32,
+	/* (lt/e1.frag's; 64 is the copies' position on rt2/guides) */
+	LT_GRADIENT = 128,
 };
 
 static struct
@@ -111,6 +114,8 @@ static struct
 	unsigned long since_start;
 	unsigned char dumps[LT_DUMPS];
 	int dumps_read;
+	/* (HALO_LT_E1=denoise: this frame's light, for the denoiser's re-shade) */
+	struct lt_params reshade_params;
 } lt = { -1 };
 
 void xgpu_vulkan_lt_guides(struct xgpu_vulkan_image *guides)
@@ -127,10 +132,11 @@ int xgpu_vulkan_lt_mode(void)
 		lt.mode = XGPU_VULKAN_LT_OFF;
 		if (given && *given && strcmp(given, "off") && strcmp(given, "0") && strcmp(given, "false"))
 			lt.mode = !strcmp(given, "raw") ? XGPU_VULKAN_LT_RAW : !strcmp(given, "accumulate") ?
-				XGPU_VULKAN_LT_ACCUMULATE : XGPU_VULKAN_LT_E2;
+				XGPU_VULKAN_LT_ACCUMULATE : !strcmp(given, "denoise") ? XGPU_VULKAN_LT_DENOISE : XGPU_VULKAN_LT_E2;
 		if (lt.mode)
 			host_logf(HOST_LOG_INFO, "vulkan: light transport E1: \"%s\" (the flashlight's direct light traced, %s)",
-				given, lt.mode == XGPU_VULKAN_LT_RAW ? "1 spp, no history" : lt.mode == XGPU_VULKAN_LT_E2 ?
+				given, lt.mode == XGPU_VULKAN_LT_RAW ? "1 spp, no history" : lt.mode == XGPU_VULKAN_LT_DENOISE ?
+				"1 spp, through the denoiser (xgpu_vulkan_denoise.c)" : lt.mode == XGPU_VULKAN_LT_E2 ?
 				"1 spp, counted up to 64 frames" : "counted up to 2^20 frames");
 	}
 	return lt.mode;
@@ -216,13 +222,46 @@ static VkShaderModule lt_shader(const char *source, const uint32_t *words, size_
 	return module;
 }
 
+/* the made kernels' generation: a reload's next */
+static unsigned lt_generation = 1;
+
+unsigned xgpu_vulkan_lt_kernels_generation(void)
+{
+	return lt_generation;
+}
+
+VkShaderModule xgpu_vulkan_lt_kernel(const char *source)
+{
+	static const struct
+	{
+		const char *source;
+		const uint32_t *words;
+		size_t count;
+	} kernels[] = {
+		{ "e1.vert", lt_e1_vertex_spirv, sizeof(lt_e1_vertex_spirv) / sizeof(uint32_t) },
+		{ "denoise_gradient.frag", lt_denoise_gradient_spirv, sizeof(lt_denoise_gradient_spirv) / sizeof(uint32_t) },
+		{ "denoise_temporal.frag", lt_denoise_temporal_spirv, sizeof(lt_denoise_temporal_spirv) / sizeof(uint32_t) },
+		{ "denoise_atrous.frag", lt_denoise_atrous_spirv, sizeof(lt_denoise_atrous_spirv) / sizeof(uint32_t) },
+		{ "denoise_guide.frag", lt_denoise_guide_spirv, sizeof(lt_denoise_guide_spirv) / sizeof(uint32_t) },
+	};
+	size_t index;
+
+	for (index = 0; index < sizeof(kernels) / sizeof(kernels[0]); index++)
+		if (!strcmp(kernels[index].source, source))
+			return lt_shader(source, kernels[index].words, kernels[index].count);
+	return VK_NULL_HANDLE;
+}
+
 static int lt_shaders(void)
 {
 	struct xgpu_vulkan_sampler_description sampler;
 	int reloaded = __atomic_exchange_n(&lt_reload_asked, 0, __ATOMIC_ACQ_REL);
 
 	if (reloaded)
+	{
 		lt.made = lt.failed = lt.prepared = lt.previous_valid = 0;
+		lt_generation++;
+	}
 	if (lt.made)
 		return 1;
 	if (lt.failed)
@@ -321,7 +360,7 @@ the hits' sets */
 static void lt_pass_draw(struct xgpu_vulkan_image *into, const int32_t rectangle[4],
 	const struct xgpu_world_ao_pass *uniforms, const struct lt_params *params,
 	const struct xgpu_vulkan_pipeline_description *pass, struct xgpu_vulkan_image *inputs,
-	struct xgpu_vulkan_image *history, struct xgpu_vulkan_image *previous)
+	struct xgpu_vulkan_image *history, struct xgpu_vulkan_image *previous, struct xgpu_vulkan_image *guides)
 {
 	struct xgpu_vulkan_dynamic_state dynamic;
 	struct xgpu_vulkan_draw draw;
@@ -340,7 +379,7 @@ static void lt_pass_draw(struct xgpu_vulkan_image *into, const int32_t rectangle
 	draw.textures[0].image = inputs;
 	draw.textures[1].image = history;
 	draw.textures[2].image = previous;
-	draw.textures[3].image = lt.guides ? lt.guides : previous;
+	draw.textures[3].image = guides ? guides : previous;
 	/* (the draw set's uniforms' range, which the constants' share) */
 	bytes = xgpu_vulkan_upload(192 * 16, 256, &draw.uniforms);
 	if (!bytes)
@@ -399,7 +438,7 @@ static void lt_dump_one(const int32_t rectangle[4], const struct xgpu_world_ao_p
 	if (!lt.dump)
 		return;
 	params->control[3] = LT_COPY | what;
-	lt_pass_draw(lt.dump, rectangle, uniforms, params, &lt.copy, inputs, mean, lt.previous);
+	lt_pass_draw(lt.dump, rectangle, uniforms, params, &lt.copy, inputs, mean, lt.previous, lt.guides);
 	if (xgpu_vulkan_read_halves(lt.dump, 0, &halves) != 1 || !halves)
 		return;
 	snprintf(path, sizeof(path), "%s/lt_e1_%lu%s.rgba16f", folder && *folder ? folder : ".", lt.since_start, suffix);
@@ -418,11 +457,39 @@ static void lt_dump_one(const int32_t rectangle[4], const struct xgpu_world_ao_p
 	free(halves);
 }
 
+void xgpu_vulkan_lt_reshade(struct xgpu_vulkan_image *into, const struct xgpu_world_ao_pass *previous_pass,
+	struct xgpu_vulkan_image *previous_inputs, struct xgpu_vulkan_image *previous_guides)
+{
+	const struct xgpu_vulkan_image_description *size;
+	int32_t rectangle[4];
+	int axis;
+
+	if (!into || !previous_pass || !previous_inputs || !lt.made || !xgpu_vulkan_pipeline_ready(&lt.pass))
+		return;
+	size = xgpu_vulkan_image_description(previous_inputs);
+	for (axis = 0; axis < 2; axis++)
+	{
+		int32_t extent = (int32_t)(axis ? size->height : size->width);
+		int32_t low = previous_pass->corners[axis] < 0 ? 0 : previous_pass->corners[axis] > extent ? extent :
+			previous_pass->corners[axis];
+		int32_t high = previous_pass->corners[axis + 2] < low ? low : previous_pass->corners[axis + 2] > extent ?
+			extent : previous_pass->corners[axis + 2];
+
+		/* (a texel a 3x3 stratum) */
+		rectangle[axis] = low / 3;
+		rectangle[axis + 2] = (high + 2) / 3;
+	}
+	if (rectangle[2] <= rectangle[0] || rectangle[3] <= rectangle[1])
+		return;
+	lt_pass_draw(into, rectangle, previous_pass, &lt.reshade_params, &lt.pass, previous_inputs, lt.means[lt.current],
+		previous_inputs, previous_guides);
+}
+
 int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_world_ao_pass *pass,
 	const unsigned char *cells, const struct xgpu_dynamic_lights_block *block)
 {
 	const struct xgpu_vulkan_image_description *size;
-	struct xgpu_vulkan_image *history;
+	struct xgpu_vulkan_image *history, *denoised = NULL;
 	struct lt_params params;
 	int32_t rectangle[4];
 	int axis, light, start;
@@ -436,6 +503,9 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 	if (!lt.prepared)
 	{
 		(void)xgpu_vulkan_pipeline_prepare(&lt.pass);
+		/* (the denoiser's made with it, so that both are there together) */
+		if (lt.mode == XGPU_VULKAN_LT_DENOISE)
+			xgpu_vulkan_denoise_prepare();
 		lt.prepared = 1;
 	}
 	if (!lt.dumps_read)
@@ -483,8 +553,8 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 
 		if (unshadowed < 0)
 			unshadowed = getenv("HALO_LT_E1_UNSHADOWED") && strcmp(getenv("HALO_LT_E1_UNSHADOWED"), "0");
-		params.control[0] = lt.mode == XGPU_VULKAN_LT_RAW ? 1 : lt.mode == XGPU_VULKAN_LT_E2 ? LT_E2_CAP :
-			LT_ACCUMULATE_CAP;
+		params.control[0] = lt.mode == XGPU_VULKAN_LT_RAW || lt.mode == XGPU_VULKAN_LT_DENOISE ? 1 :
+			lt.mode == XGPU_VULKAN_LT_E2 ? LT_E2_CAP : LT_ACCUMULATE_CAP;
 		params.control[1] = light;
 		params.control[2] = XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE;
 		params.control[3] = (unshadowed ? 0 : LT_VISIBILITY) | (start ? LT_RESET : 0);
@@ -492,7 +562,21 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 	history = lt.means[lt.current];
 	lt.current ^= 1;
 	xgpu_vulkan_pass_owner(LT_OWNER);
-	lt_pass_draw(lt.means[lt.current], rectangle, pass, &params, &lt.pass, inputs, history, lt.previous);
+	lt_pass_draw(lt.means[lt.current], rectangle, pass, &params, &lt.pass, inputs, history, lt.previous, lt.guides);
+	if (lt.mode == XGPU_VULKAN_LT_DENOISE)
+	{
+		/* (the denoiser: this frame's sample and the last's, this frame's
+		inputs and the last's (before they are copied over), this frame's
+		light kept for its re-shade) */
+		int had = lt.previous_valid;
+
+		lt.reshade_params = params;
+		lt.reshade_params.control[3] &= ~LT_RESET;
+		lt.reshade_params.control[3] |= LT_GRADIENT;
+		denoised = xgpu_vulkan_denoise_draw(lt.means[lt.current], had ? history : NULL, inputs,
+			had ? lt.previous : NULL, lt.guides, pass, rectangle);
+		xgpu_vulkan_pass_owner(LT_OWNER);
+	}
 	/* (this frame's inputs kept for the next's reprojection) */
 	xgpu_vulkan_image_copy(inputs, 0, 0, lt.previous, 0, 0);
 	lt.previous_valid = 1;
@@ -504,9 +588,9 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 		if (every < 0)
 			every = getenv("HALO_LT_E1_DUMP_EVERY") ? atol(getenv("HALO_LT_E1_DUMP_EVERY")) : 0;
 		if ((lt.since_start < LT_DUMPS && lt.dumps[lt.since_start]) || (every > 0 && !(lt.since_start % every)))
-			lt_dump(rectangle, pass, &params, lt.means[lt.current], inputs);
+			lt_dump(rectangle, pass, &params, denoised ? denoised : lt.means[lt.current], inputs);
 	}
-	xgpu_vulkan_rt_bounce_set(lt.means[lt.current]);
+	xgpu_vulkan_rt_bounce_set(denoised ? denoised : lt.means[lt.current]);
 	if (!lt.said)
 	{
 		lt.said = 1;
