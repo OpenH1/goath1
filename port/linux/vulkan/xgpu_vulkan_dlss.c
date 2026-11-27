@@ -31,6 +31,22 @@ the executable, which alone holds NVIDIA's NGX library.
   HALO_DLSS_RR_SMOKE=1 (with display.temporal_aa "dlss") runs it once on a
   synthetic noisy frame and logs whether it was made, recorded and wrote a
   finite picture.
+- The light-transport pass's denoiser on RTX (xgpu_vulkan_dlss_lt_denoise,
+  HALO_LT_E1=denoise with HALO_LT_DENOISER=rr; ~/dev/rt2-realtime-design.md
+  section 2): Ray Reconstruction in the pass's one temporal stage's place,
+  ours (xgpu_vulkan_denoise.c) then not run at all. A compute pass
+  (tools/vulkan_dlss_shaders.py's LT_GATHER) makes its inputs from the pass's
+  1-spp irradiance (demodulated: the albedos given are 1 and 0, so that what
+  it denoises is the light alone, which the surfaces then take times their
+  own albedo, C3), the pre-pass's inputs and the guides (C1: the shaded
+  normal, the roughness, the motion where they carry it, else the cameras'
+  reprojection); its depth and matrices are the pass's camera's own. It runs
+  at the pass's size (its output the render's: the surfaces read the light
+  at their texels; the picture's upscaling stays the temporal technique's),
+  before any transparent is drawn (none is in its inputs: its bias mask has
+  nothing to flag). The result, an RGBA16F image of the pass's size, is what
+  the pass's sun share and the surfaces read. "DENOISE (DLSS RR)" in
+  debug.pass_times.
 
 Render thread alone, as the core.
 */
@@ -84,6 +100,22 @@ struct dlss_context
 	struct dlss_output output_image;
 };
 
+/* the light-transport pass's Ray Reconstruction (xgpu_vulkan_dlss_lt_denoise):
+its feature, the render's size (the pass's rectangle) and the images' (the
+pass's inputs'), its inputs as the gather writes them, the albedos (1, 0),
+its output, and the result the pass is given (the inputs' size); the
+submission that made the feature (its frames only once it is done: NGX's),
+and whether its first frame is still to come */
+struct dlss_lt_context
+{
+	void *feature;
+	uint64_t made_serial;
+	int fresh;
+	uint32_t render[2], size[2];
+	struct dlss_output color, normal_roughness, depth, motion, diffuse_albedo, specular_albedo, output_image;
+	struct xgpu_vulkan_image *result;
+};
+
 static struct
 {
 	const struct openh1_dlss *calls;
@@ -100,6 +132,13 @@ static struct
 	VkDescriptorSetLayout set_layout;
 	VkPipelineLayout pipeline_layout;
 	VkPipeline compose;
+	/* the light-transport pass's: its gather's set layout, pipeline layout
+	and pipeline; its context; HALO_LT_DENOISER read (-1 not yet) */
+	VkDescriptorSetLayout lt_set_layout;
+	VkPipelineLayout lt_pipeline_layout;
+	VkPipeline lt_gather;
+	struct dlss_lt_context lt;
+	int lt_selected, lt_failed_said, lt_said;
 	struct
 	{
 		VkDescriptorPool pool;
@@ -137,6 +176,8 @@ static struct
 
 static void rr_setup(void);
 static void rr_teardown(void);
+static void lt_setup(void);
+static void lt_release(void);
 static void smoke_resources_free(void);
 
 /* ---------- the module */
@@ -706,6 +747,7 @@ static void rr_setup(void)
 	}
 	dlss.rr_ready = 1;
 	host_logf(HOST_LOG_INFO, "vulkan: DLSS Ray Reconstruction: available, its runtime %s", dlss.rr_version);
+	lt_setup();
 	return;
 failed:
 	host_logf(HOST_LOG_WARN, "vulkan: DLSS Ray Reconstruction: its composition pass could not be made");
@@ -725,6 +767,16 @@ static void rr_teardown(void)
 
 	for (index = 0; index <= XGPU_VULKAN_FSR_WINDOWS; index++)
 		rr_context_release(&dlss.rr_contexts[index]);
+	lt_release();
+	if (dlss.lt_gather)
+		dlss.vkDestroyPipeline(dlss.device, dlss.lt_gather, NULL);
+	if (dlss.lt_pipeline_layout)
+		dlss.vkDestroyPipelineLayout(dlss.device, dlss.lt_pipeline_layout, NULL);
+	if (dlss.lt_set_layout)
+		dlss.vkDestroyDescriptorSetLayout(dlss.device, dlss.lt_set_layout, NULL);
+	dlss.lt_gather = VK_NULL_HANDLE;
+	dlss.lt_pipeline_layout = VK_NULL_HANDLE;
+	dlss.lt_set_layout = VK_NULL_HANDLE;
 	smoke_resources_free();
 	for (index = 0; index < RR_POOLS; index++)
 	{
@@ -749,7 +801,7 @@ static void rr_teardown(void)
 
 /* a set for the submission being recorded (its pool reset once the GPU is
 done with the submission it last served) */
-static VkDescriptorSet rr_set(void)
+static VkDescriptorSet rr_set(VkDescriptorSetLayout layout)
 {
 	uint64_t serial = xgpu_vulkan_serial(), completed = xgpu_vulkan_completed();
 	VkDescriptorSetAllocateInfo allocate;
@@ -770,7 +822,7 @@ static VkDescriptorSet rr_set(void)
 			sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 			sizes[0].descriptorCount = RR_POOL_SETS * 4;
 			sizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-			sizes[1].descriptorCount = RR_POOL_SETS * 2;
+			sizes[1].descriptorCount = RR_POOL_SETS * 4;
 			memset(&info, 0, sizeof(info));
 			info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
 			info.maxSets = RR_POOL_SETS;
@@ -795,7 +847,7 @@ static VkDescriptorSet rr_set(void)
 	allocate.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
 	allocate.descriptorPool = dlss.pools[found].pool;
 	allocate.descriptorSetCount = 1;
-	allocate.pSetLayouts = &dlss.set_layout;
+	allocate.pSetLayouts = &layout;
 	if (dlss.vkAllocateDescriptorSets(dlss.device, &allocate, &set) != VK_SUCCESS)
 		return VK_NULL_HANDLE;
 	return set;
@@ -873,7 +925,7 @@ static int rr_record(VkCommandBuffer commands, struct dlss_rr_context *context, 
 	if (in->create_only)
 		return 1;
 	/* (the one noisy colour and the hit distance, at the inputs' texels) */
-	if (!(set = rr_set()))
+	if (!(set = rr_set(dlss.set_layout)))
 		return 0;
 	memset(images, 0, sizeof(images));
 	memset(writes, 0, sizeof(writes));
@@ -1029,6 +1081,392 @@ int xgpu_vulkan_dlss_reconstruct(int window, const struct xgpu_vulkan_dlss_rr_fr
 	xgpu_vulkan_outside_end(commands);
 	xgpu_vulkan_pass_owner(NULL);
 	return ok;
+}
+
+/* ---------- the light-transport pass's denoiser (HALO_LT_DENOISER=rr) */
+
+/* the gather's push constants (tools/vulkan_dlss_shaders.py's LT_GATHER) */
+struct lt_gather_push
+{
+	float camera[4][4], previous[4][4];
+	int32_t corners[4], previous_corners[4];
+	float control[4];
+};
+_Static_assert(sizeof(struct lt_gather_push) == 176, "LT_GATHER's push constants");
+/* the depth's near plane (world units: about 3 mm), of the matrices given */
+#define LT_NEAR 0.001f
+#define LT_GATHER_BINDINGS 7
+
+/* (its pipeline, once Ray Reconstruction is there; without it the pass
+keeps ours) */
+static void lt_setup(void)
+{
+	VkDescriptorSetLayoutBinding bindings[LT_GATHER_BINDINGS];
+	VkDescriptorSetLayoutCreateInfo set_info;
+	VkPushConstantRange push;
+	VkPipelineLayoutCreateInfo layout_info;
+	VkShaderModuleCreateInfo module_info;
+	VkComputePipelineCreateInfo info;
+	VkShaderModule shader = VK_NULL_HANDLE;
+	VkResult result;
+	uint32_t index;
+
+	memset(bindings, 0, sizeof(bindings));
+	for (index = 0; index < LT_GATHER_BINDINGS; index++)
+	{
+		bindings[index].binding = index;
+		bindings[index].descriptorType = index < 3 ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER :
+			VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+		bindings[index].descriptorCount = 1;
+		bindings[index].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+		bindings[index].pImmutableSamplers = index < 3 ? &dlss.point : NULL;
+	}
+	memset(&set_info, 0, sizeof(set_info));
+	set_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+	set_info.bindingCount = LT_GATHER_BINDINGS;
+	set_info.pBindings = bindings;
+	if (dlss.vkCreateDescriptorSetLayout(dlss.device, &set_info, NULL, &dlss.lt_set_layout) != VK_SUCCESS)
+	{
+		dlss.lt_set_layout = VK_NULL_HANDLE;
+		goto failed;
+	}
+	push.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+	push.offset = 0;
+	push.size = sizeof(struct lt_gather_push);
+	memset(&layout_info, 0, sizeof(layout_info));
+	layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+	layout_info.setLayoutCount = 1;
+	layout_info.pSetLayouts = &dlss.lt_set_layout;
+	layout_info.pushConstantRangeCount = 1;
+	layout_info.pPushConstantRanges = &push;
+	if (dlss.vkCreatePipelineLayout(dlss.device, &layout_info, NULL, &dlss.lt_pipeline_layout) != VK_SUCCESS)
+	{
+		dlss.lt_pipeline_layout = VK_NULL_HANDLE;
+		goto failed;
+	}
+	memset(&module_info, 0, sizeof(module_info));
+	module_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+	module_info.codeSize = sizeof(dlss_lt_gather_spirv);
+	module_info.pCode = dlss_lt_gather_spirv;
+	if (dlss.vkCreateShaderModule(dlss.device, &module_info, NULL, &shader) != VK_SUCCESS)
+		goto failed;
+	memset(&info, 0, sizeof(info));
+	info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+	info.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+	info.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+	info.stage.module = shader;
+	info.stage.pName = "main";
+	info.layout = dlss.lt_pipeline_layout;
+	result = dlss.vkCreateComputePipelines(dlss.device, VK_NULL_HANDLE, 1, &info, NULL, &dlss.lt_gather);
+	dlss.vkDestroyShaderModule(dlss.device, shader, NULL);
+	if (result == VK_SUCCESS)
+		return;
+	dlss.lt_gather = VK_NULL_HANDLE;
+failed:
+	host_logf(HOST_LOG_WARN, "vulkan: DLSS Ray Reconstruction: the light-transport pass's gather could not be made");
+}
+
+/* (the context's feature and images let go of, once the work that used
+them is done; its result kept for the pass's sets to let go of first) */
+static void lt_release(void)
+{
+	struct dlss_lt_context *context = &dlss.lt;
+	struct xgpu_vulkan_image *result = context->result;
+
+	garbage_add(context->feature, &context->color, &context->normal_roughness, &context->depth);
+	garbage_add(NULL, &context->motion, &context->diffuse_albedo, &context->specular_albedo);
+	garbage_add(NULL, &context->output_image, NULL, NULL);
+	memset(context, 0, sizeof(*context));
+	context->result = result;
+}
+
+int xgpu_vulkan_dlss_lt_selected(void)
+{
+	if (!dlss.lt_selected)
+	{
+		const char *given = getenv("HALO_LT_DENOISER");
+
+		dlss.lt_selected = -1;
+		if (given && !strcmp(given, "rr"))
+		{
+			if (dlss.ready && dlss.rr_ready && dlss.lt_gather)
+				dlss.lt_selected = 1;
+			host_logf(dlss.lt_selected > 0 ? HOST_LOG_INFO : HOST_LOG_WARN,
+				"vulkan: light transport: HALO_LT_DENOISER=rr: %s", dlss.lt_selected > 0 ?
+				"DLSS Ray Reconstruction denoises the pass (our denoiser not run)" :
+				"DLSS Ray Reconstruction is not available here: our denoiser");
+		}
+	}
+	return dlss.lt_selected > 0;
+}
+
+/* (a camera's basis: right, down, forward, unit, and the screen's half
+extents over the forward's length) */
+static void lt_basis(const float camera[4][4], float axes[3][3], float half[2])
+{
+	float length[3];
+	int axis, k;
+
+	for (axis = 0; axis < 3; axis++)
+	{
+		const float *v = camera[axis == 2 ? 1 : axis == 0 ? 2 : 3];
+
+		length[axis] = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+		for (k = 0; k < 3; k++)
+			axes[axis][k] = length[axis] > 0.0f ? v[k] / length[axis] : 0.0f;
+	}
+	half[0] = length[2] > 0.0f ? length[0] / length[2] : 1.0f;
+	half[1] = length[2] > 0.0f ? length[1] / length[2] : 1.0f;
+}
+
+struct xgpu_vulkan_image *xgpu_vulkan_dlss_lt_denoise(struct xgpu_vulkan_image *light,
+	struct xgpu_vulkan_image *inputs, struct xgpu_vulkan_image *guides, const struct xgpu_vulkan_dlss_lt_cameras *pass,
+	const int32_t rectangle[4], int reset)
+{
+	struct dlss_lt_context *context = &dlss.lt;
+	const struct xgpu_vulkan_image_description *size;
+	struct xgpu_vulkan_image *read[3], *written[1];
+	VkDescriptorImageInfo images[LT_GATHER_BINDINGS];
+	VkWriteDescriptorSet writes[LT_GATHER_BINDINGS];
+	struct openh1_dlss_rr_frame frame;
+	struct lt_gather_push push;
+	VkCommandBuffer commands;
+	VkDescriptorSet set = VK_NULL_HANDLE;
+	float axes[3][3], half[2], world_to_view[16], view_to_clip[16];
+	uint32_t render[2], index;
+	int32_t whole[4];
+	int ok = 1, remake;
+
+	if (!xgpu_vulkan_dlss_lt_selected() || !light || !inputs || !pass)
+		return NULL;
+	size = xgpu_vulkan_image_description(inputs);
+	if (rectangle[2] - rectangle[0] < 8 || rectangle[3] - rectangle[1] < 8 || rectangle[0] < 0 || rectangle[1] < 0 ||
+		rectangle[2] > (int32_t)size->width || rectangle[3] > (int32_t)size->height ||
+		xgpu_vulkan_image_description(light)->width != size->width ||
+		xgpu_vulkan_image_description(light)->height != size->height ||
+		(guides && (xgpu_vulkan_image_description(guides)->width != size->width ||
+		xgpu_vulkan_image_description(guides)->height != size->height)))
+		return NULL;
+	render[0] = (uint32_t)(rectangle[2] - rectangle[0]);
+	render[1] = (uint32_t)(rectangle[3] - rectangle[1]);
+	garbage_collect(0);
+	remake = !context->feature || context->render[0] != render[0] || context->render[1] != render[1] ||
+		context->size[0] != size->width || context->size[1] != size->height;
+	/* (a feature just made: its submission not done yet, the light as it is) */
+	if (!remake && xgpu_vulkan_completed() < context->made_serial)
+		return NULL;
+	/* (the result the pass is given, the inputs' size: made again with them,
+	never while the pass's sets still name it) */
+	if (!context->result || xgpu_vulkan_image_description(context->result)->width != size->width ||
+		xgpu_vulkan_image_description(context->result)->height != size->height)
+	{
+		struct xgpu_vulkan_image_description description;
+
+		if (context->result && xgpu_vulkan_rt_bounce_bound(context->result))
+			xgpu_vulkan_rt_bounce_set(NULL);
+		xgpu_vulkan_image_destroy(context->result);
+		memset(&description, 0, sizeof(description));
+		description.type = XGPU_VULKAN_IMAGE_2D;
+		description.format = XGPU_VULKAN_FORMAT_RGBA16F;
+		description.usage = XGPU_VULKAN_USAGE_SAMPLED | XGPU_VULKAN_USAGE_TARGET;
+		description.width = size->width;
+		description.height = size->height;
+		description.depth_or_layers = 1;
+		description.levels = 1;
+		context->result = xgpu_vulkan_image_create(&description);
+		if (!context->result)
+			return NULL;
+	}
+	read[0] = light;
+	read[1] = inputs;
+	read[2] = guides ? guides : inputs;
+	written[0] = context->result;
+	xgpu_vulkan_pass_owner("DENOISE (DLSS RR)");
+	commands = xgpu_vulkan_outside_begin(read, 3, written, 1);
+	/* (the feature and its images, made again for new sizes; its frames
+	from the next whose submission is after this one's) */
+	if (remake)
+	{
+		struct openh1_dlss_rr_create create;
+		VkClearColorValue value;
+		VkImageSubresourceRange range;
+
+		lt_release();
+		memset(&create, 0, sizeof(create));
+		memcpy(create.render, render, sizeof(render));
+		memcpy(create.output, render, sizeof(render));
+		ok = image_make(commands, &context->color, size->width, size->height, VK_FORMAT_R16G16B16A16_SFLOAT) &&
+			image_make(commands, &context->normal_roughness, size->width, size->height,
+				VK_FORMAT_R16G16B16A16_SFLOAT) &&
+			image_make(commands, &context->depth, size->width, size->height, VK_FORMAT_R32_SFLOAT) &&
+			image_make(commands, &context->motion, size->width, size->height, VK_FORMAT_R16G16_SFLOAT) &&
+			image_make(commands, &context->diffuse_albedo, size->width, size->height, VK_FORMAT_R8G8B8A8_UNORM) &&
+			image_make(commands, &context->specular_albedo, size->width, size->height, VK_FORMAT_R8G8B8A8_UNORM) &&
+			image_make(commands, &context->output_image, render[0], render[1], VK_FORMAT_R16G16B16A16_SFLOAT) &&
+			(context->feature = dlss.calls->rr_create(commands, &create)) != NULL;
+		if (ok)
+		{
+			/* (the albedos: the light alone is denoised, diffuse, white) */
+			memset(&range, 0, sizeof(range));
+			range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			range.levelCount = 1;
+			range.layerCount = 1;
+			value.float32[0] = value.float32[1] = value.float32[2] = value.float32[3] = 1.0f;
+			dlss.vkCmdClearColorImage(commands, context->diffuse_albedo.image, VK_IMAGE_LAYOUT_GENERAL, &value, 1,
+				&range);
+			value.float32[0] = value.float32[1] = value.float32[2] = value.float32[3] = 0.0f;
+			dlss.vkCmdClearColorImage(commands, context->specular_albedo.image, VK_IMAGE_LAYOUT_GENERAL, &value, 1,
+				&range);
+			memcpy(context->render, render, sizeof(render));
+			context->size[0] = size->width;
+			context->size[1] = size->height;
+			context->made_serial = xgpu_vulkan_serial();
+			context->fresh = 1;
+			ok = 0;
+		}
+		else
+		{
+			/* (not tried again: our denoiser from the next frame) */
+			lt_release();
+			host_logf(HOST_LOG_WARN, "vulkan: DLSS Ray Reconstruction: the light-transport pass's feature cannot be "
+				"made (%ux%u): our denoiser", render[0], render[1]);
+			dlss.lt_selected = -1;
+		}
+	}
+	if (ok && !(set = rr_set(dlss.lt_set_layout)))
+		ok = 0;
+	if (ok)
+	{
+		/* 1: the gather */
+		memset(images, 0, sizeof(images));
+		memset(writes, 0, sizeof(writes));
+		images[0].imageView = xgpu_vulkan_image_view(light);
+		images[1].imageView = xgpu_vulkan_image_view(inputs);
+		images[2].imageView = xgpu_vulkan_image_view(guides ? guides : inputs);
+		images[3].imageView = context->color.view;
+		images[4].imageView = context->normal_roughness.view;
+		images[5].imageView = context->depth.view;
+		images[6].imageView = context->motion.view;
+		for (index = 0; index < LT_GATHER_BINDINGS; index++)
+		{
+			images[index].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+			writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			writes[index].dstSet = set;
+			writes[index].dstBinding = index;
+			writes[index].descriptorCount = 1;
+			writes[index].descriptorType = index < 3 ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER :
+				VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+			writes[index].pImageInfo = &images[index];
+		}
+		dlss.vkUpdateDescriptorSets(dlss.device, LT_GATHER_BINDINGS, writes, 0, NULL);
+		memset(&push, 0, sizeof(push));
+		memcpy(push.camera, pass->camera, sizeof(push.camera));
+		memcpy(push.previous, pass->previous, sizeof(push.previous));
+		memcpy(push.corners, rectangle, sizeof(push.corners));
+		memcpy(push.previous_corners, pass->previous_corners, sizeof(push.previous_corners));
+		push.control[0] = LT_NEAR;
+		push.control[1] = guides ? 1.0f : 0.0f;
+		push.control[2] = getenv("HALO_LT_DENOISE_CAMERA") && strcmp(getenv("HALO_LT_DENOISE_CAMERA"), "0") ? 1.0f :
+			0.0f;
+		/* (the feature's last frame done reading the gathered images) */
+		rr_barrier(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+			VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+			VK_ACCESS_SHADER_WRITE_BIT);
+		dlss.vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_COMPUTE, dlss.lt_gather);
+		dlss.vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_COMPUTE, dlss.lt_pipeline_layout, 0, 1, &set, 0,
+			NULL);
+		dlss.vkCmdPushConstants(commands, dlss.lt_pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push),
+			&push);
+		dlss.vkCmdDispatch(commands, (render[0] + 7) / 8, (render[1] + 7) / 8, 1);
+		rr_barrier(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+			VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_MEMORY_READ_BIT);
+		/* 2: the camera's matrices (NGX's: column-major, the translation in
+		12 to 14): view x right, y down, z forward; the clip reversed with
+		an infinite far plane (depth = near / z, the gather's) */
+		lt_basis(pass->camera, axes, half);
+		memset(world_to_view, 0, sizeof(world_to_view));
+		for (index = 0; index < 3; index++)
+		{
+			world_to_view[0 * 4 + index] = axes[index][0];
+			world_to_view[1 * 4 + index] = axes[index][1];
+			world_to_view[2 * 4 + index] = axes[index][2];
+			world_to_view[12 + index] = -(axes[index][0] * pass->camera[0][0] + axes[index][1] * pass->camera[0][1] +
+				axes[index][2] * pass->camera[0][2]);
+		}
+		world_to_view[15] = 1.0f;
+		memset(view_to_clip, 0, sizeof(view_to_clip));
+		view_to_clip[0] = 1.0f / half[0];
+		view_to_clip[5] = 1.0f / half[1];
+		view_to_clip[11] = 1.0f;
+		view_to_clip[14] = LT_NEAR;
+		/* 3: the feature's frame, its output into the result at the pass's
+		rectangle */
+		memset(&frame, 0, sizeof(frame));
+		frame.color.image = context->color.image;
+		frame.color.view = context->color.view;
+		frame.color.format = context->color.format;
+		frame.color.width = size->width;
+		frame.color.height = size->height;
+		frame.color.aspect = VK_IMAGE_ASPECT_COLOR_BIT;
+		frame.normal_roughness = frame.depth = frame.motion = frame.diffuse_albedo = frame.specular_albedo =
+			frame.color;
+		frame.normal_roughness.image = context->normal_roughness.image;
+		frame.normal_roughness.view = context->normal_roughness.view;
+		frame.normal_roughness.format = context->normal_roughness.format;
+		frame.depth.image = context->depth.image;
+		frame.depth.view = context->depth.view;
+		frame.depth.format = context->depth.format;
+		frame.motion.image = context->motion.image;
+		frame.motion.view = context->motion.view;
+		frame.motion.format = context->motion.format;
+		frame.diffuse_albedo.image = context->diffuse_albedo.image;
+		frame.diffuse_albedo.view = context->diffuse_albedo.view;
+		frame.diffuse_albedo.format = context->diffuse_albedo.format;
+		frame.specular_albedo.image = context->specular_albedo.image;
+		frame.specular_albedo.view = context->specular_albedo.view;
+		frame.specular_albedo.format = context->specular_albedo.format;
+		/* (no specular yet: no hit distance) */
+		frame.output.image = context->output_image.image;
+		frame.output.view = context->output_image.view;
+		frame.output.format = context->output_image.format;
+		frame.output.width = render[0];
+		frame.output.height = render[1];
+		frame.output.aspect = VK_IMAGE_ASPECT_COLOR_BIT;
+		frame.corner[0] = (uint32_t)rectangle[0];
+		frame.corner[1] = (uint32_t)rectangle[1];
+		memcpy(frame.render, render, sizeof(render));
+		/* (the motion in the render's pixels already) */
+		frame.motion_scale[0] = frame.motion_scale[1] = 1.0f;
+		memcpy(frame.world_to_view, world_to_view, sizeof(world_to_view));
+		memcpy(frame.view_to_clip, view_to_clip, sizeof(view_to_clip));
+		frame.reset = reset || context->fresh;
+		ok = dlss.calls->rr_evaluate(commands, context->feature, &frame);
+		context->fresh = 0;
+		if (ok)
+		{
+			rr_barrier(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_MEMORY_WRITE_BIT,
+				VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+			whole[0] = whole[1] = 0;
+			whole[2] = (int32_t)render[0];
+			whole[3] = (int32_t)render[1];
+			blit(commands, context->output_image.image, whole, xgpu_vulkan_image_handle(context->result), rectangle,
+				VK_FILTER_NEAREST);
+		}
+		else if (!dlss.lt_failed_said)
+		{
+			host_logf(HOST_LOG_WARN, "vulkan: DLSS Ray Reconstruction: a light-transport frame cannot be recorded");
+			dlss.lt_failed_said = 1;
+		}
+	}
+	xgpu_vulkan_outside_end(commands);
+	xgpu_vulkan_pass_owner(NULL);
+	if (ok && !dlss.lt_said)
+	{
+		host_logf(HOST_LOG_INFO, "vulkan: DLSS Ray Reconstruction: the light-transport pass's light denoised "
+			"(%ux%u, runtime %s)", render[0], render[1], dlss.rr_version);
+		dlss.lt_said = 1;
+	}
+	return ok ? context->result : NULL;
 }
 
 /* ---------- HALO_DLSS_RR_SMOKE: Ray Reconstruction on a synthetic noisy
