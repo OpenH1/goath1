@@ -1878,6 +1878,18 @@ tracing) read the rest */
 #define XGPU_WORLD_RT_MATERIAL_ALPHA_TESTED 1u
 #define XGPU_WORLD_RT_MATERIAL_TWO_SIDED 2u
 #define XGPU_WORLD_RT_MATERIAL_TRANSPARENT 4u
+/* (the light transport's reflections, lt/indirect.glsl: how much a
+surface reflects, from its shader, in the flags' high bits: its specular
+mask the bump map's alpha (an environment's "bump map is specular mask"), or
+the multipurpose map's (a model's), else the base map's; and its reflection's
+strength head-on and at grazing view (luminance x 128, 0 to 255: the
+specular brightness x its tint x the reflection's brightness, an
+environment's; a model's brightness x tint)) */
+#define XGPU_WORLD_RT_MATERIAL_MASK_BUMP 0x100u
+#define XGPU_WORLD_RT_MATERIAL_MASK_MULTIPURPOSE 0x200u
+#define XGPU_WORLD_RT_MATERIAL_REFLECTION_PERPENDICULAR_SHIFT 16
+#define XGPU_WORLD_RT_MATERIAL_REFLECTION_PARALLEL_SHIFT 24
+#define XGPU_WORLD_RT_MATERIAL_REFLECTION_SCALE 128.0f
 struct xgpu_world_rt_material
 {
 	uint32_t index, kind, flags;

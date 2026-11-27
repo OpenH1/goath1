@@ -70,6 +70,10 @@ Render thread alone.
 CELLS^2 by CELLS x 8 octants x CASCADES) */
 #define INDIRECT_CACHE_WIDTH (32 * 32)
 #define INDIRECT_CACHE_HEIGHT (32 * 8 * 6)
+/* the least reflection a pixel must show for its ray (lt/indirect.glsl's
+reflection_seen: linear light, about 1/255 of the display's white at its
+darkest code; HALO_LT_REFLECTION_THRESHOLD another, checking) */
+#define INDIRECT_REFLECTION_THRESHOLD 0.004f
 /* the hits' share's history (frames); the bounce's own ahead of the
 denoiser ("denoise": its noise counted down before it joins the direct
 light's sample, which the denoiser's gradients then follow) */
@@ -257,6 +261,14 @@ static void indirect_parameters(const struct xgpu_vulkan_lt_indirect_frame *fram
 	parameters[1][0] = (float)size->width;
 	parameters[1][1] = (float)(indirect.frames & 3);
 	parameters[1][3] = (float)INDIRECT_COVERAGE_CAP;
+	{
+		static float threshold = -1.0f;
+
+		if (threshold < 0.0f)
+			threshold = getenv("HALO_LT_REFLECTION_THRESHOLD") ? (float)atof(getenv("HALO_LT_REFLECTION_THRESHOLD")) :
+				INDIRECT_REFLECTION_THRESHOLD;
+		parameters[2][2] = threshold;
+	}
 }
 
 struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_lt_indirect_frame *frame)
@@ -334,6 +346,9 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 
 		indirect_pass(indirect.bounce, half, frame, INDIRECT_BOUNCE | (reset ? INDIRECT_RESET : 0), frame->cap, textures,
 			&indirect.wide, parameters);
+		/* (the reflections: the direct light this frame for the guess of
+		what they would show, reflection_seen) */
+		textures[5] = frame->direct;
 		if (indirect.reflections)
 			indirect_pass(indirect.specular_raw, frame->rectangle, frame, INDIRECT_SPECULAR_RAY, frame->cap, textures,
 				&indirect.half, parameters);
@@ -468,6 +483,17 @@ void xgpu_vulkan_lt_indirect_dump(const struct xgpu_vulkan_lt_indirect_frame *fr
 
 	if (!getenv("HALO_LT_SPECULAR_DUMP") || !indirect.specular_light || !frame->inputs)
 		return;
+	/* ("raw": the reflections' rays as traced: a less than 0 where none was) */
+	if (!strcmp(getenv("HALO_LT_SPECULAR_DUMP"), "raw"))
+	{
+		struct xgpu_vulkan_image *raw = indirect.specular_raw;
+
+		size = xgpu_vulkan_image_description(raw);
+		if (xgpu_vulkan_read_halves(raw, 0, &halves) != 1 || !halves)
+			return;
+		snprintf(path, sizeof(path), "%s/lt_spec_raw_%lu.rgba16f", folder && *folder ? folder : ".", since);
+		goto write;
+	}
 	size = xgpu_vulkan_image_description(frame->inputs);
 	indirect.dump = indirect_image(indirect.dump, XGPU_VULKAN_FORMAT_RGBA16F, size->width, size->height);
 	if (!indirect.dump)
@@ -490,6 +516,7 @@ void xgpu_vulkan_lt_indirect_dump(const struct xgpu_vulkan_lt_indirect_frame *fr
 	if (xgpu_vulkan_read_halves(indirect.dump, 0, &halves) != 1 || !halves)
 		return;
 	snprintf(path, sizeof(path), "%s/lt_spec_%lu.rgba16f", folder && *folder ? folder : ".", since);
+write:
 	file = fopen(path, "wb");
 	if (file)
 	{

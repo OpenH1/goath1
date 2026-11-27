@@ -52,6 +52,9 @@
 #define ROUGH_STRUCTURE 0.08
 #define ROUGH_OBJECT 0.2
 #define CACHE_CAP 256.0
+// the record's flags (xgpu_stream.h's XGPU_WORLD_RT_MATERIAL_MASK_*)
+#define MASK_BUMP 0x100u
+#define MASK_MULTIPURPOSE 0x200u
 // the bounce's rays where its history starts again
 #define BOUNCE_FIRST 4
 // the roughness up to which a reflection is its mirror ray alone
@@ -343,6 +346,60 @@ vec4 bounce_main(ivec2 block)
     return vec4(e, 1.0 + float(light_hash(p, n)) + 1024.0 * float(which));
 }
 
+// how much of the reflection a pixel shows (its own surface's: the eye's ray to its point, the material record there):
+// the shader's strength head-on to grazing (the record's flags, Schlick's fresnel at this view's cosine c) times its
+// specular mask (the base, bump or multipurpose map's alpha); and the light it would reflect, guessed from the light
+// there: Halo's lightmap's (linear) and the pass's direct light this frame (the reservoirs' binding), as on a
+// half-bright surface. 0 where the eye's ray finds another surface
+float reflection_seen(ivec2 pixel, vec3 p, float c)
+{
+    vec3 eye = pass.camera[0].xyz, d = p - eye;
+    float distance = length(d);
+    d /= max(distance, 1.0e-6);
+    rayQueryEXT q;
+    rayQueryInitializeEXT(q, scene, 0u, MASK_REFLECTIONS, eye, 0.0, d, distance * 1.02 + 0.02);
+    while (rayQueryProceedEXT(q))
+        if (alpha_passes(q))
+            rayQueryConfirmIntersectionEXT(q);
+    if (rayQueryGetIntersectionTypeEXT(q, true) == gl_RayQueryCommittedIntersectionNoneEXT ||
+        abs(rayQueryGetIntersectionTEXT(q, true) - distance) > 0.02 * distance + 0.02)
+        return 0.0;
+    uint mesh = uint(rayQueryGetIntersectionInstanceShaderBindingTableRecordOffsetEXT(q, true)) & (HIT_MESHES - 1u);
+    uint record = mesh << 2, attributes = table.words[record + 1u];
+    if (attributes == 0u)
+        return 0.0;
+    uint primitive = uint(rayQueryGetIntersectionPrimitiveIndexEXT(q, true)) +
+        (rayQueryGetIntersectionGeometryIndexEXT(q, true) == 1 ? table.words[record + 3u] : 0u);
+    uint corners = table.words[record] + primitive * 3u;
+    uint material_word = table.words[table.words[record + 2u] + (primitive >> 1)];
+    uint at = HIT_MATERIALS + (((material_word >> ((primitive & 1u) << 4)) & 0xFFFFu) << 4);
+    uint flags = table.words[at + 2u];
+    float perpendicular = float((flags >> 16) & 255u) / 128.0, parallel = float(flags >> 24) / 128.0;
+    if (max(perpendicular, parallel) <= 0.0)
+        return 0.0;
+    vec2 b = rayQueryGetIntersectionBarycentricsEXT(q, true);
+    vec3 w = vec3(1.0 - b.x - b.y, b.x, b.y);
+    vec2 st = vec2(0.0), lst = vec2(0.0);
+    for (int corner = 0; corner < 3; corner++)
+    {
+        uint first = attributes + table.words[corners + uint(corner)] * 6u;
+        st += w[corner] * vec2(uintBitsToFloat(table.words[first]), uintBitsToFloat(table.words[first + 1u]));
+        lst += w[corner] * unpackSnorm2x16(table.words[first + 4u]);
+    }
+    uint kind = table.words[at + 1u];
+    vec2 scale = kind == KIND_MODEL ? vec2(uintBitsToFloat(table.words[at + 5u]), uintBitsToFloat(table.words[at + 6u])) :
+        vec2(1.0);
+    uint mask_map = (flags & MASK_BUMP) != 0u ? table.words[at + 11u] : (flags & MASK_MULTIPURPOSE) != 0u ?
+        table.words[at + 10u] : table.words[at + 7u];
+    float mask = mask_map != 0u ?
+        textureLod(hit_textures[nonuniformEXT(min(mask_map, HIT_TEXTURES - 1u))], st * scale, ALBEDO_LEVEL).a : 1.0;
+    float f = pow(clamp(1.0 - c, 0.0, 1.0), 5.0);
+    uint page = table.words[at + 14u];
+    float light = page != 0u ? luminance_of(pow(hit_texel(page, lst, 0.0), vec3(2.2))) : pow(OBJECT_LIGHT, 2.2);
+    light += 0.5 * max(luminance_of(texelFetch(reservoirs, pixel, 0).rgb), 0.0);
+    return mix(perpendicular, parallel, f) * mask * light;
+}
+
 vec4 specular_main(ivec2 pixel)
 {
     vec3 p, n, shaded;
@@ -355,6 +412,9 @@ vec4 specular_main(ivec2 pixel)
     uint byte = (material >> 16) & 255u;
     float roughness = byte == 255u ? (owner == 0u ? ROUGH_STRUCTURE : ROUGH_OBJECT) : float(byte) / 255.0;
     vec3 v = normalize(pass.camera[0].xyz - p), normal = dot(shaded, v) > 0.0 ? shaded : n;
+    // (only where the reflection can be seen: elsewhere the cube map, as the game drew it)
+    if (reflection_seen(pixel, p, max(dot(normal, v), 0.0)) < pass.indirect[2].z)
+        return vec4(0.0, 0.0, 0.0, -1.0);
     // (a surface this smooth, Halo's own without a roughness map among them: its mirror ray, the same each frame,
     // no noise; its texture's level prefilters the hit)
     vec3 l = roughness <= MIRROR_ROUGHNESS ? reflect(-v, normal) :
