@@ -300,10 +300,26 @@ def play(run, work, seconds=150, reuse=False):
     return run
 
 
-def has_capture(build):
-    """whether a build has debug.screenshot_at (the referee's pictures need it): a ref this checkout can see"""
+def mirror_ref(build, machine):
+    """a local/ ref of a machine's mirror (goat-rig's repo.git) fetched here as refs/lref/<name>"""
+    target = f"refs/lref/{slug(build)}"
+    fetched = subprocess.run(["git", "-C", str(ROOT), "fetch", "-q", "-f", f"{ssh_target(machine)}:goat-rig/repo.git",
+                              f"+refs/heads/{build}:{target}"], capture_output=True)
+    if fetched.returncode == 0:
+        return target
+    # (else one fetched before, from any machine)
+    known = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "-q", "--verify", target], capture_output=True)
+    return target if known.returncode == 0 else None
+
+
+def has_capture(build, machine="omarchy"):
+    """whether a build has debug.screenshot_at (the referee's pictures need it): a ref of origin, of this checkout,
+    or (local/<name>) of the machine's mirror"""
     subprocess.run(["git", "-C", str(ROOT), "fetch", "-q", "origin"], capture_output=True)
-    for ref in (f"origin/{build}", build):
+    refs = [f"origin/{build}", build]
+    if build.startswith("local/"):
+        refs = [mirror_ref(build, machine) or build]
+    for ref in refs:
         shown = subprocess.run(["git", "-C", str(ROOT), "show", f"{ref}:port/linux/src/port_config.c"],
                                capture_output=True, text=True)
         if shown.returncode == 0:
@@ -326,6 +342,8 @@ def graft(build, machines):
     subprocess.run(["git", "-C", str(ROOT), "worktree", "remove", "--force", str(tree)], capture_output=True)
     base = f"origin/{build}" if subprocess.run(["git", "-C", str(ROOT), "rev-parse", "-q", "--verify",
                                                 f"origin/{build}"], capture_output=True).returncode == 0 else build
+    if build.startswith("local/"):
+        base = f"refs/lref/{slug(build)}"
     steps = [["git", "-C", str(ROOT), "worktree", "add", "-q", "--detach", str(tree), base],
              ["git", "-C", str(tree), "-c", "user.name=referee", "-c", "user.email=referee@localhost",
               "cherry-pick", "-x", *commits]]
@@ -341,6 +359,16 @@ def graft(build, machines):
                            capture_output=True)
     subprocess.run(["git", "-C", str(ROOT), "worktree", "remove", "--force", str(tree)], capture_output=True)
     return name
+
+
+def build_on(machine, ref):
+    """goat-rig build, tried again a few times: the machines' mirror is fetched by every helper at once"""
+    for attempt in range(4):
+        result = rig("build", ref, machine=machine)
+        if result.returncode == 0 or "fetch" not in result.stdout + result.stderr:
+            return result
+        time.sleep(20 * (attempt + 1))
+    return result
 
 
 def scene_settings(scene, variant_settings, extra):
@@ -791,7 +819,7 @@ def main():
     if not args.no_build:
         for which in ("build", "baseline"):
             ref = build if which == "build" else baseline
-            if ref.startswith("local/") or has_capture(ref):
+            if ref.startswith("local/lref/") or has_capture(ref, args.machine):
                 continue
             grafted = graft(ref, machines)
             if not grafted:
@@ -801,8 +829,7 @@ def main():
             build, baseline = (grafted, baseline) if which == "build" else (build, grafted)
         builds = sorted({(m, b) for m in machines for b in (build, baseline) if m == args.machine or b == build})
         with concurrent.futures.ThreadPoolExecutor(len(builds)) as pool:
-            for (machine, ref), result in zip(builds, pool.map(lambda mb: rig("build", mb[1], machine=mb[0]),
-                                                              builds)):
+            for (machine, ref), result in zip(builds, pool.map(lambda mb: build_on(*mb), builds)):
                 if result.returncode != 0:
                     print(f"referee: {ref} did not build on {machine}:\n{result.stdout[-2000:]}{result.stderr[-2000:]}")
                     sys.exit(2)
