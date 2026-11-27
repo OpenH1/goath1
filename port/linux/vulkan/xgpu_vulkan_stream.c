@@ -3534,14 +3534,11 @@ static int rt_shadows_pipeline(const struct stream_target *color, const struct s
 	pipeline->blend_destination = XGPU_BLEND_SOURCE_COLOR;
 	pipeline->blend_operation = XGPU_BLEND_ADD;
 	pipeline->color_mask = 7;
-	/* (the level's pixels alone: those its lightmap pass marked, the
-	front end's XGPU_STENCIL_LEVEL_BIT, and not the first-person weapon's
-	first bit. The objects' models, drawn before the level, have no mark:
-	they are no receivers, as with the classic shadows) */
+	/* (not the first-person weapon's pixels: they have the stencil's first bit) */
 	pipeline->stencil_test = 1;
 	pipeline->stencil_function = XGPU_COMPARE_EQUAL;
 	pipeline->stencil_fail = pipeline->stencil_depth_fail = pipeline->stencil_pass = XGPU_STENCIL_KEEP;
-	pipeline->stencil_read_mask = XGPU_STENCIL_LEVEL_BIT | 1;
+	pipeline->stencil_read_mask = 1;
 	pipeline->stencil_write_mask = 0;
 	pipeline->color_format = xgpu_vulkan_image_description(color->image)->format;
 	pipeline->depth_format = xgpu_vulkan_image_description(depth->image)->format;
@@ -3712,7 +3709,7 @@ static void stream_rt_shadows(void *context, const struct xgpu_stream_rt_shadows
 	}
 	dynamic = stream.dynamic;
 	memset(dynamic.scissor, 0, sizeof(dynamic.scissor));
-	dynamic.stencil_reference = XGPU_STENCIL_LEVEL_BIT;
+	dynamic.stencil_reference = 0;
 	multisampled = stream.samples && color->multisampled && depth->multisampled;
 	/* (the depth the level was drawn with, in its texture: resolved where it
 	is drawn with samples, its first's) */

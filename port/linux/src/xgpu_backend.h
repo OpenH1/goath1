@@ -534,13 +534,6 @@ enum
 	XGPU_STENCIL_DECREMENT_CLAMP, XGPU_STENCIL_INVERT, XGPU_STENCIL_INCREMENT_WRAP, XGPU_STENCIL_DECREMENT_WRAP,
 };
 
-/* the stencil's bit the level's lightmap pass marks where display.shadows is
-"ray_traced" (d3d8_device.c's pipeline_state_describe), which the
-ray-traced shadows' pass tests: the objects' models, drawn before the
-level, are not its receivers. The game's own bits: 1 the first-person
-weapon's, 2 the alpha-tested decals', 0x80 the ping outline's */
-#define XGPU_STENCIL_LEVEL_BIT 0x40
-
 enum
 {
 	XGPU_FILL_SOLID, XGPU_FILL_LINES, XGPU_FILL_POINTS,
@@ -883,6 +876,9 @@ camera's distance (the depth's precision) */
 #define XGPU_RT_SHADOWS_SPREAD 0.06f
 #define XGPU_RT_SHADOWS_BIAS 0.02f
 #define XGPU_RT_SHADOWS_BIAS_FAR 0.002f
+/* how squarely a surface faces a caster's light (the cosine) for its whole
+shadow: less, a share of it; facing away, none */
+#define XGPU_RT_SHADOWS_FACING 0.25f
 struct xgpu_rt_shadow_caster
 {
 	float sphere[4];
