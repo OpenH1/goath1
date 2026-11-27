@@ -11,8 +11,9 @@ LT_LIGHTS). Render-only and read only: nothing the simulation reads.
 Each record (the reading of the lights follows rt_lights_materials.c's, the
 truth export's lights.json, so the two agree at a tick):
 - id: dynamic_lights.c's key, stable from frame to frame: a game light's is
-  its light datum's handle (index and salt), a copy's its handle and copy
-  number, an own light's light_sources.c's key; a sun's its sky and index.
+  its light datum's handle (index and salt), a copy's its handle and its
+  number among that light's copies, an own light's light_sources.c's key; a
+  sun's its sky and index.
 - kind: a spot where the tag has a cone (runtime falloff cosine not -1) or an
   own light has one, a panel (light_sources.c's displays), a sun; else a point.
 - position, forward and up as drawn (rasterizer_lights.lights[]); a gel's
@@ -346,6 +347,21 @@ static int lt_build(struct halo_dynamic_light const *lights, unsigned long long 
 		}
 		out->id[0] = (unsigned int)(key & 0xffffffffull);
 		out->id[1] = (unsigned int)(key >> 32);
+		/* (a copy numbered among its own light's copies, in their markers'
+		order: dynamic_lights.c's key numbers it among all the frame's copies,
+		which shift as other lights' copies come and go) */
+		if (source == XGPU_LT_LIGHT_SOURCE_COPY)
+		{
+			int other;
+			unsigned int number = 1;
+
+			for (other = 0; other < written; other++)
+			{
+				if (lt.lights[other].id[0] == out->id[0] && (lt.lights[other].id[1] >> 24) == XGPU_LT_LIGHT_SOURCE_COPY)
+					number++;
+			}
+			out->id[1] = ((unsigned int)XGPU_LT_LIGHT_SOURCE_COPY << 24) | number;
+		}
 		out->flags |= (unsigned int)light->flags & 0x1fu;
 		if (baked[index])
 			out->flags |= XGPU_LT_LIGHT_BAKED;
