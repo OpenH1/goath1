@@ -446,11 +446,11 @@ def plan(build, baseline, machine, timing, only, mutate, features, overrides=(),
         if "identity" in only:
             for scene in ("corridor", "blast", "daylight"):
                 runs.append(Run(scene, "baseline", baseline, scene_settings(scene, CLASSIC, list(overrides)), machine,
-                                label=f"lref-{slug(baseline)}-base-{scene}"))
+                                label=f"lref-{tag}-base-{slug(baseline)}-{scene}"))
     if features and feature_baseline:
         runs.append(Run("corridor", "baseline-traced", feature_baseline,
                         scene_settings("corridor", TRACED, list(overrides)), machine,
-                        label=f"lref-{slug(feature_baseline)}-base-traced"))
+                        label=f"lref-{tag}-base-{slug(feature_baseline)}-traced"))
     timed = []
     if "cost" in only:
         corridor = STAGE + [f"HALO_NETWORK_TEST_CUES=5 ai_erase_all|9 {FLOOD}", "HALO_TEST_INPUT=script:12.5-13 flashlight",
@@ -904,6 +904,8 @@ def main():
                         "no comparison without it")
     parser.add_argument("--feature-cost", action="store_true", help="time each feature on too (three runs each)")
     parser.add_argument("--reuse", action="store_true", help="the runs already fetched into --work kept, not run again")
+    parser.add_argument("--no-game-state", action="store_true", help="identity: the Classic frames only, not "
+                        "identity.py's game state")
     parser.add_argument("--no-build", action="store_true", help="the builds as the machines have them")
     args = parser.parse_args()
     only = {c.strip() for c in args.only.split(",") if c.strip()}
@@ -957,7 +959,7 @@ def main():
     with concurrent.futures.ThreadPoolExecutor(len(by_machine) + 2) as pool, \
             concurrent.futures.ThreadPoolExecutor(6) as pictures_pool:
         future_identity = pool.submit(run_identity, build, baseline, args.machine) \
-            if "identity" in only and baseline != build else None
+            if "identity" in only and baseline != build and not args.no_game_state else None
         future_timed = [pool.submit(lambda group: [play(r, work, reuse=args.reuse) for r in group], group)
                         for machine, group in by_machine.items() if machine != args.machine]
         list(pictures_pool.map(lambda r: play(r, work, reuse=args.reuse), runs))
