@@ -4623,7 +4623,7 @@ static int light_shadows_view(void)
 	{
 		const char *view = getenv("HALO_LIGHT_SHADOWS_VIEW");
 
-		on = view && *view && strcmp(view, "0") ? 1 : 0;
+		on = view && *view && strcmp(view, "0") ? (atoi(view) > 1 ? atoi(view) : 1) : 0;
 	}
 	return on;
 }
@@ -7091,7 +7091,8 @@ static unsigned int light_shadows_rays(struct module *m, struct words *locals, s
 		label_at(m, body);
 		candidate = op2(m, OP_RAY_QUERY_GET_INTERSECTION_INSTANCE_CUSTOM_INDEX, m->t_int, query,
 			constant_int(m, RAY_QUERY_CANDIDATE));
-		selection_begin(m, rt_candidate_commits(m, locals, query, op2(m, OP_I_EQUAL, m->t_bool, candidate, constant_int(m, 0)), op2(m, OP_LOGICAL_AND, m->t_bool, op2(m, OP_I_NOT_EQUAL, m->t_bool, candidate, owner),
+		/* (HALO_LIGHT_SHADOWS_VIEW=3, checking: no owner left out) */
+		selection_begin(m, rt_candidate_commits(m, locals, query, op2(m, OP_I_EQUAL, m->t_bool, candidate, constant_int(m, 0)), light_shadows_view() == 3 ? constant_bool(m, TRUE) : op2(m, OP_LOGICAL_AND, m->t_bool, op2(m, OP_I_NOT_EQUAL, m->t_bool, candidate, owner),
 			op2(m, OP_I_NOT_EQUAL, m->t_bool, op1(m, OP_BITCAST, m->t_uint, candidate), light_owner))), &mine_merge);
 		op_void(m, OP_RAY_QUERY_CONFIRM_INTERSECTION, 1, &query);
 		selection_end(m, mine_merge);
@@ -7137,6 +7138,10 @@ static void light_shadows_trace_main(struct module *m, struct words *locals, str
 		m->t_float, fadd(m, 1, fmul(m, 1, constant_float(m, 0.06711056f), px), fmul(m, 1, constant_float(m, 0.00583715f),
 		py)))), fmul(m, 1, constant_float(m, 0.618034f), frame)));
 	from = fadd(m, 3, p, fscale(m, 3, n, constant_float(m, XGPU_LIGHT_SHADOWS_BIAS)));
+	/* (HALO_LIGHT_SHADOWS_VIEW=2, checking: a pixel the pre-pass found, half
+	seen where no light reaches it) */
+	if (light_shadows_view() == 2)
+		store(m, seen_variable, constant_splat(m, 4, 0.5f));
 	for (channel = 0; channel < XGPU_LIGHT_SHADOWS_CHANNELS; channel++)
 	{
 		unsigned int number = uextract(m, shadowed, (unsigned int)channel), light_merge, reach_merge;
