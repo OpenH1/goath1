@@ -67,5 +67,11 @@ boolean network_markers_same_spot(long object_index, real const *point, long las
 equipment's icon, a unit's or vehicle's outline, and whether through walls) */
 short network_markers_shape(short object_type, boolean has_icon, boolean versus_players, boolean enemy_player,
 	boolean *through_walls);
+/* ... whether the aim reaches an object, the line's hit that far, and how
+near its line (network_markers.c's MARKER_PICK_*); and what the host makes
+of a ping (_marker_kind_*: its last taken away, an item another's ping is
+on claimed, else as sent) */
+boolean network_markers_pick(real along, real across, real radius, real hit_distance, real *nearness);
+byte network_markers_decided_kind(byte kind, boolean same_as_last, boolean item, boolean pinged_by_another);
 
 #endif

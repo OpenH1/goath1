@@ -248,11 +248,14 @@ static struct
 	boolean place;
 	real_point3d place_position;
 	real place_yaw, place_pitch, place_time;
-	/* ... or ("object:<name>[:<distance>]"): that far from the nearest
-	object lying about whose tag's name has it (one with a unit riding it
-	first), facing it, from a side the level leaves a line from */
+	/* ... or ("object:<name>[:<distance>[:<degrees>]]"): that far from the
+	nearest object lying about whose tag's name has it (one with a unit
+	riding it first), facing it, from a side the level leaves a line from
+	(the player's, turned that many degrees about it first: two machines'
+	players at one object from two sides) */
 	char place_object[64];
 	real place_distance;
+	real place_turn;
 	/* ... and the object, the player's aim kept on it (from where they
 	settle) until this tick */
 	long place_target;
@@ -505,6 +508,7 @@ static void network_test_read_settings(
 		network_test.place = sscanf(place, "%f %f %f %f %f", &x, &y, &z, &yaw, &pitch) == 5;
 		network_test.place_object[0] = 0;
 		network_test.place_distance = 4.0f;
+		network_test.place_turn = 0.0f;
 		network_test.place_target = NONE;
 		if (!strncmp(place, "object:", 7))
 		{
@@ -513,7 +517,13 @@ static void network_test_read_settings(
 
 			snprintf(network_test.place_object, sizeof(network_test.place_object), "%.*s", (int)length, name);
 			if (name[length] == ':')
+			{
+				char const *turn = strchr(name + length + 1, ':');
+
 				network_test.place_distance = (real)atof(name + length + 1);
+				if (turn && (!at || turn < at))
+					network_test.place_turn = (real)atof(turn + 1);
+			}
 			network_test.place = network_test.place_object[0] != 0;
 			x = y = z = yaw = pitch = 0.0f;
 		}
@@ -2683,6 +2693,14 @@ static boolean network_test_place(
 		{
 			away.i = 1.0f;
 			away.j = 0.0f;
+		}
+		if (network_test.place_turn != 0.0f)
+		{
+			real angle = DEGREES_TO_RADIANS(network_test.place_turn);
+			real i = away.i * (real)cos(angle) - away.j * (real)sin(angle);
+
+			away.j = away.i * (real)sin(angle) + away.j * (real)cos(angle);
+			away.i = i;
 		}
 		/* (the first of 16 ways round it, from the player's side, from which
 		the level leaves a line to its middle) */
