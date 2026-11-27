@@ -46,7 +46,8 @@ player (xinput_sdl.c), as with the console */
 boolean network_chat_typing(void);
 /* the line for a report's note (F8: port/linux/src/report.c), in any game:
 opened (FALSE if there is no player to type it), and closed unfinished.
-Enter or Escape gives it to report_note_done. */
+Enter or Escape gives it to report_note_done. Its text is its own, up to 500
+characters, wrapped as it is typed (a chat line's 63 are the network's). */
 boolean network_chat_report_note_begin(void);
 void network_chat_report_note_cancel(void);
 /* Physical controller owning the on-screen keyboard, or NONE. */

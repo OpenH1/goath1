@@ -2721,6 +2721,29 @@ static void report_finish_poll(void)
 		report_finish_done();
 }
 
+/* report.md's text, the issue's body: what happened (the player's note,
+whole, or where it goes; a crash's own words) over the summary (text, NULL
+none) of report name; malloc'd, NULL out of memory */
+static char *report_issue_text(const char *name, const char *note, const char *text, int crash)
+{
+	size_t size = (text ? strlen(text) : 0) + (note ? strlen(note) : 0) + strlen(name) + 512;
+	char *issue = malloc(size);
+
+	if (!issue)
+		return NULL;
+	if (crash)
+		snprintf(issue, size, "**What happened:** GOAT H1 closed unexpectedly.\n\n(Say what you were doing when it "
+			"closed, if you remember. Then drag %s.zip, from the reports folder that opened, into this box.)\n\n%s",
+			name, text ? text : "");
+	else if (note && note[0])
+		snprintf(issue, size, "**What happened:** %s\n\n(Drag %s.zip, from the reports folder that opened, into this "
+			"box.)\n\n%s", note, name, text ? text : "");
+	else
+		snprintf(issue, size, "**What happened:** \n\n(Say what you saw and what you expected. Then drag %s.zip, "
+			"from the reports folder that opened, into this box.)\n\n%s", name, text ? text : "");
+	return issue;
+}
+
 /* the zip begun on its thread (report_job), its issue opened or held for
 the menus once it is written (report_finish_done): the note typed, NULL for
 none. wait: written before this returns (the game quitting); a report still
@@ -2730,7 +2753,7 @@ static void report_finish(const char *note, int wait)
 	const char *name = report_capture.name;
 	struct tm local;
 	time_t now = time(NULL);
-	size_t size, issue_size;
+	size_t size;
 	char *issue;
 	long long started = report_now_ns();
 
@@ -2764,24 +2787,7 @@ static void report_finish(const char *note, int wait)
 	report_job.time = (unsigned short)(local.tm_hour << 11 | local.tm_min << 5 | local.tm_sec / 2);
 	report_job.date = (unsigned short)((local.tm_year - 80) << 9 | (local.tm_mon + 1) << 5 | local.tm_mday);
 	report_job.noted = note && note[0];
-	/* (report.md: what happened, the player's note or where it goes, over
-	the summary) */
-	issue_size = (report_capture.text ? strlen(report_capture.text) : 0) + (note ? strlen(note) : 0) + 512;
-	issue = malloc(issue_size);
-	if (issue)
-	{
-		if (report_capture.crash)
-			snprintf(issue, issue_size, "**What happened:** GOAT H1 closed unexpectedly.\n\n(Say what you were doing "
-				"when it closed, if you remember. Then drag %s.zip, from the reports folder that opened, into this "
-				"box.)\n\n%s", name, report_capture.text ? report_capture.text : "");
-		else if (note && note[0])
-			snprintf(issue, issue_size, "**What happened:** %s\n\n(Drag %s.zip, from the reports folder that "
-				"opened, into this box.)\n\n%s", note, name, report_capture.text ? report_capture.text : "");
-		else
-			snprintf(issue, issue_size, "**What happened:** \n\n(Say what you saw and what you expected. Then drag "
-				"%s.zip, from the reports folder that opened, into this box.)\n\n%s", name,
-				report_capture.text ? report_capture.text : "");
-	}
+	issue = report_issue_text(name, note, report_capture.text, report_capture.crash);
 	report_job.issue = issue;
 	free(report_capture.text);
 	report_capture.text = NULL;

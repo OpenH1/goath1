@@ -14,7 +14,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from harness import CHECK_FAILED, build, constant, enum_with, function, mutated, read, run, structure  # noqa: E402
 from harness import skip_without_32_bit_abi  # noqa: E402
 
-CASES = ["text-printable", "text-control-characters", "text-pipe", "text-bounds", "text-empty", "append", "rate-burst",
+CASES = ["text-printable", "text-control-characters", "text-pipe", "text-bounds", "text-empty", "append", "note-long",
+         "rate-burst",
          "rate-refill", "rate-wrap", "hears", "hears-vehicle", "flags", "alpha", "command-mute", "command-unmute",
          "command-not", "command-usage", "name-match", "name-bounds", "mute-time", "mute-wrap", "mute-again",
          "mute-full", "link-found", "link-written-out", "link-spaced", "link-word-domains", "link-not", "refused", "filter", "keyboard-character",
@@ -39,6 +40,9 @@ NEGATIVE_CONTROLS = {
     "no-length-limit": (("&& length < CHAT_TEXT_SIZE - 1; index++", "; index++"), "chat_text_clean", "text-bounds"),
     "trailing-spaces-kept": (("while (length > 0 && destination[length - 1] == ' ')", "while (0)"),
                              "chat_text_clean", "text-printable"),
+    # the line's bound for every text typed: a report's note cut at a chat line's 63 characters
+    "note-line-bound": (("length < size - 1; typed++)", "length < CHAT_TEXT_SIZE - 1; typed++)"), "chat_text_append",
+                        "note-long"),
     "append-unchecked": (("if (*typed >= ' ' && *typed <= '~' && *typed != '|')", "if (*typed && *typed != '|')"),
                          "chat_text_append", "append"),
     "pipe-typed": (("if (*typed >= ' ' && *typed <= '~' && *typed != '|')", "if (*typed >= ' ' && *typed <= '~')"),
@@ -131,7 +135,7 @@ NEGATIVE_CONTROLS = {
 def generated(fault=None, faulty_function=None):
     source = read("port/linux/game/network_chat.c")
     config = ""
-    for name in ("CHAT_TEXT_SIZE", "CHAT_BURST", "CHAT_REFILL_MILLISECONDS", "CHAT_LINE_MILLISECONDS",
+    for name in ("CHAT_TEXT_SIZE", "CHAT_NOTE_SIZE", "CHAT_BURST", "CHAT_REFILL_MILLISECONDS", "CHAT_LINE_MILLISECONDS",
                  "CHAT_FADE_MILLISECONDS", "CHAT_NAME_SIZE", "CHAT_MUTE_DEFAULT_MINUTES", "CHAT_MUTE_MAXIMUM_MINUTES",
                  "CHAT_MILLISECONDS_PER_MINUTE", "CHAT_KEYBOARD_COLUMNS", "CHAT_KEYBOARD_ROWS",
                  "CHAT_KEYBOARD_WIDE_COLUMNS", "CHAT_CHANNELS_TEXT_SIZE"):
