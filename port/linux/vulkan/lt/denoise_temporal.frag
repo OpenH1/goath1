@@ -82,6 +82,8 @@ void main()
     // (anti-lag: the count cut by the share that changed)
     count *= 1.0 - changed(pixel);
     count = min(count + 1.0, float(pass.control.x));
+    if ((pass.control.y & EMA) != 0)
+        count = float(pass.control.x);
     mean += (sample_rgb - mean) / count;
     float l = luminance(sample_rgb);
     moment += (l * l - moment) / count;

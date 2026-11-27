@@ -10,6 +10,8 @@
 #define GRADIENTS 2
 #define FIRST 4
 #define CAMERA_ONLY 8
+// (checking, the negative control: an exponential average from the start, the history's count held at the cap)
+#define EMA 16
 
 // the draw set's uniforms: struct xgpu_world_ao_pass, then (at 1024) xgpu_vulkan_denoise.c's struct denoise_params
 layout(set = 0, binding = 1, std140) uniform Pass
