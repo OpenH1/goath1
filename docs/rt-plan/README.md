@@ -7,7 +7,7 @@ Four parallel studies, one section each. This page gives the order and what each
 | [1. Geometry](1-geometry.md) | The real visible shapes in the ray-traced scene (BSP render mesh, render models, skinned characters, cutouts like grates and foliage), with UVs, normals and a material per triangle. Today's RT shadows and AO hit the real shapes. | Nothing; it's the foundation. |
 | [2. Reflections](2-reflections.md) | Traced reflections in place of the fixed cube maps, through Halo's own reflection masks, so the original look still decides what shines. | 1 (hit UVs, lightmap, base texture). |
 | [3. Bounced light](3-gi.md) | Colored bounce from dynamic lights (plasma, explosions) on top of the baked lightmaps, and better lighting on characters and vehicles. | Its step 1 needs nothing; the GPU cache needs 1. |
-| [4. Path tracing and Metal](4-path-tracing.md) | An optional "Ultra" path-traced mode for RTX 40/50 and RX 9000 class cards, with denoising (DLSS Ray Reconstruction / NRD); Metal ray tracing on M3 and later. | 1–3, and material records. |
+| [4. Path tracing](4-path-tracing.md) | An optional "Ultra" mode for RTX 30 and later and RX 7000 and later: what you see lit by traced light with real shadows, its bounce ended at the original lightmaps (fitted to them, so each level keeps its look), our own ReSTIR DI, DLSS Ray Reconstruction on RTX and our denoiser elsewhere. Metal later. | 1–3, the light model, the referee. |
 
 ## Order
 
