@@ -230,7 +230,7 @@ static struct
 
 /* whether a model shader's alpha test can cut nothing: its base map's
 first bitmap's every texel over the cutoff (0x7F, rasterizer_xbox_models.c's
-ALPHAREF) at its level of 64 a side or less (cheap on the game thread), as world_sdf.c measures a
+ALPHAREF) at its level of 256 a side or less, as world_sdf.c measures a
 leaf's card. Most of the game's model shaders are alpha-tested by default
 (no "not alpha-tested" flag) over maps with no alpha, whose rays need no
 alpha fetch. Read once a map; one that cannot be read keeps its test */
@@ -259,8 +259,8 @@ static boolean base_map_opaque(long bitmap_tag)
 		{
 			unsigned char const *texels = (unsigned char const *)bitmap->base_address;
 
-			opaque = xgpu_texture_alpha_coverage((unsigned int)header[3], (unsigned int)header[4], texels, 0x7F, 64) >=
-				1.0f && xgpu_texture_alpha_coverage((unsigned int)header[3], (unsigned int)header[4], texels, 0xFF, 64) <
+			opaque = xgpu_texture_alpha_coverage((unsigned int)header[3], (unsigned int)header[4], texels, 0x7F, 256) >=
+				1.0f && xgpu_texture_alpha_coverage((unsigned int)header[3], (unsigned int)header[4], texels, 0xFF, 256) <
 				1.0f;
 		}
 	}
