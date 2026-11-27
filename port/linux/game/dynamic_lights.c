@@ -467,6 +467,7 @@ static long dynamic_lights_sources(
 }
 
 static void dynamic_lights_shadowed(long count);
+long dynamic_lights_bounce(struct halo_dynamic_light *lights, long count);
 
 /* the frame's lights (rasterizer_lights, as lights_preprocess_scene
 submitted them) to the renderer */
@@ -566,6 +567,7 @@ void dynamic_lights_submit(
 	dynamic_lights_shadowed(total);
 	memset(dynamic_lights.keys, 0, sizeof(dynamic_lights.keys));
 	memset(dynamic_lights.baked, 0, sizeof(dynamic_lights.baked));
+	total = dynamic_lights_bounce(dynamic_lights.lights, total); /* (dynamic_lights_bounce.c) */
 	halo_dynamic_lights_set(dynamic_lights.lights, (int)total, camera, right_axis, up_axis,
 		(unsigned int const (*)[4])dynamic_lights.cluster_masks);
 	memset(dynamic_lights.cluster_masks, 0, sizeof(dynamic_lights.cluster_masks));

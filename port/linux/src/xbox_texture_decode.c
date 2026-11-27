@@ -12,6 +12,7 @@ xbox_textures.c for what an Xbox texture is.
 #include "xgpu.h"
 #include "xgpu_coverage.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -684,6 +685,58 @@ float xgpu_texture_alpha_coverage(unsigned int format_word, unsigned int size_wo
 		drawn += ((decoded[texel] >> 24) & 0xFFu) > reference;
 	free(decoded);
 	return (float)drawn / (float)(width * height);
+}
+
+/* ---------- a texture's average color (xgpu_coverage.h) */
+
+int xgpu_texture_average_color(unsigned int format_word, unsigned int size_word, const unsigned char *texels,
+	unsigned long largest, float linear[3])
+{
+	struct xgpu_texture_description description;
+	unsigned long level = 0, width, height, texel;
+	double sums[3] = { 0.0, 0.0, 0.0 };
+	float table[256];
+	const unsigned char *source;
+	DWORD *decoded;
+	int channel;
+
+	xgpu_texture_describe((DWORD)format_word, (DWORD)size_word, &description);
+	if (!texels || description.cube_map || description.depth > 1 || !description.width || !description.height ||
+		format_information(description.format).kind == _texel_unknown)
+	{
+		return 0;
+	}
+	while (level + 1 < description.levels && (xgpu_texture_level_dimension(description.width, level) > largest ||
+		xgpu_texture_level_dimension(description.height, level) > largest))
+	{
+		level++;
+	}
+	width = xgpu_texture_level_dimension(description.width, level);
+	height = xgpu_texture_level_dimension(description.height, level);
+	source = texels + xgpu_texture_level_offset(&description, level);
+	decoded = malloc(width * height * sizeof(*decoded));
+	if (!decoded)
+		return 0;
+	if (description.compressed)
+		xgpu_texture_decode_dxt(&description, level, source, decoded);
+	else if (!xgpu_texture_decode_level(&description, level, source, NULL, decoded))
+	{
+		free(decoded);
+		return 0;
+	}
+	for (texel = 0; texel < 256; texel++)
+		table[texel] = powf((float)texel / 255.0f, 2.2f);
+	/* (ARGB words: blue the lowest byte) */
+	for (texel = 0; texel < width * height; texel++)
+	{
+		sums[0] += table[(decoded[texel] >> 16) & 0xFFu];
+		sums[1] += table[(decoded[texel] >> 8) & 0xFFu];
+		sums[2] += table[decoded[texel] & 0xFFu];
+	}
+	free(decoded);
+	for (channel = 0; channel < 3; channel++)
+		linear[channel] = (float)(sums[channel] / (double)(width * height));
+	return 1;
 }
 
 /* ---------- levels that keep an alpha test's coverage (xgpu.h) */
