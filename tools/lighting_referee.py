@@ -62,12 +62,13 @@ SCENES = {
         "HALO_TEST_INPUT=script:12.5 throw",
         "HALO_SCREENSHOT_AT=12,14.2,quit"],
     # a10's cryo deck, a static camera on its reflective floor (the reflections' scene: the corridor has nothing
-    # that reflects); the co-op skip voted, the camera posed every 4 s (moments 0 and 1, a tenth of a second apart)
+    # that reflects); the co-op skip voted, the camera posed every 4 s (moments 1 and 2, a tenth of a second apart, as the
+# corridor's: the features' rows read those two)
     "cryo": ["HALO_NETWORK_TEST=local:levels\\a10\\a10:coop", "HALO_TEST_INPUT=script:1 jump; 2 jump; 3 jump",
              "HALO_SKIP_CINEMATICS=1", f"HALO_FRAME_TIME={FRAME_TIME}",
              "HALO_NETWORK_TEST_CUES=" + "|".join(f'{t} debug_camera_set "-55.4 0.8 0.62 0 -12 0 70"'
                                                   for t in range(2, 23, 4)),
-             "HALO_SCREENSHOT_AT=22,22.1,quit"],
+             "HALO_SCREENSHOT_AT=21.9,22,22.1,quit"],
     # Blood Gulch in daylight, one machine's game: no dynamic light in sight, so Enhanced must change nothing
     "daylight": ["HALO_NETWORK_TEST=log", "@data/init.txt=map_name levels\\test\\bloodgulch\\bloodgulch",
                  f"HALO_FRAME_TIME={FRAME_TIME}", "HALO_NETWORK_TEST_CUES=1 ai_erase_all",
