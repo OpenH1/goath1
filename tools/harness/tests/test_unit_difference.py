@@ -153,3 +153,21 @@ def test_negative_control(control):
     fault, case = NEGATIVE_CONTROLS[control]
     status, output = run(build("unit_difference", generated(fault)), case)
     assert status == CHECK_FAILED, output
+
+
+# the bytes of an unchanged player's packed difference (the extremes case checks it): a dead player's, or one standing
+# still, every tick it is sent
+LEAST_PACKED_ENTRY = 3
+
+
+def test_messages_of_the_least_entries_taken():
+    """network_distributed_handle_message drops a message shorter than its count of the least entry: the least it
+    takes of a tick state's entry is no more than an unchanged player's packed difference, or a message of a dead
+    player and one standing still is lost, and every difference after it is written against a state the client has
+    not (the gulag redeploy fault, a respawn never seen)"""
+    source = read(SOURCE)
+    least = re.search(r"case _distributed_message_unit_state_differences: entry_size = ([^;]+);", source)[1]
+    values = {name: int(value) for name, value in re.findall(r"\b([A-Z_]+_MINIMUM_SIZE) = (\d+)",
+                                                             source + read(LEGACY_HEADER))}
+    taken = eval(least, {"__builtins__": {}}, values)
+    assert taken <= LEAST_PACKED_ENTRY, f"the least entry taken is {least} = {taken} bytes"
