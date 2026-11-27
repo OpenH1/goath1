@@ -1916,12 +1916,12 @@
 		</row>
 		<section key="section_6" title="IMPORT FROM MCC" when="desktop"/>
 		<row key="mcc_import" kind="choice" setting="display.mcc_import" label="MCC IMPORT" crumb="MODS › MCC PACKAGES" search="mcc" when="desktop">
-			<help>Draws and plays what was imported from your MCC install: sharper weapon and vehicle textures and MCC's clearer dialogue. A mod of the same thing wins. Off uses the game's own.</help>
+			<help>Draws and plays what was imported from your MCC install: sharper weapon, vehicle and Spartan textures and MCC's clearer dialogue. A mod of the same thing wins. Off uses the game's own.</help>
 			<choice shown="ON" value="true"/>
 			<choice shown="OFF" value="false"/>
 		</row>
 		<row key="mcc_import_now" kind="status" label="IMPORT FROM MCC" crumb="MODS › MCC PACKAGES" search="mcc textures voices dialogue" when="desktop" run="port settings mcc import">
-			<help>If you own Halo MCC, builds sharper weapon and vehicle textures and clearer English dialogue from your own install. Nothing is downloaded or shared.</help>
+			<help>If you own Halo MCC, builds sharper weapon, vehicle and Spartan textures and clearer English dialogue from your own install. Nothing is downloaded or shared.</help>
 		</row>
 		<row key="mcc_import_remove" kind="status" label="REMOVE MCC IMPORT" crumb="MODS › MCC PACKAGES" search="mcc" when="desktop" run="port settings mcc import remove">
 			<help>Deletes what was imported from MCC.</help>
