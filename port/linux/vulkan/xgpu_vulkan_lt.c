@@ -71,6 +71,9 @@ c20 corner's wall at about 3 m shows as bright as the original's gamma add, fall
 /* the other kinds' (~/dev/rt2-calibration.json's dynamic_power_scales): a
 point light's on an object (a muzzle flash), on none (an explosion) */
 #define LT_OBJECT_POWER_SCALE 0.845f
+/* a projectile's light (a plasma bolt's, a needle's: lt_lights.c flags them),
+measured apart (dynamic_power_scales.point_projectile) */
+#define LT_PROJECTILE_POWER_SCALE 0.41f
 #define LT_EFFECT_POWER_SCALE 7.85f
 /* the lamp moved this far in a frame (world units): a jump, the count started again */
 #define LT_JUMP 0.25f
@@ -177,6 +180,7 @@ static struct
 	float texels[LT_TABLE_ROWS][LT_TABLE_TEXELS][4];
 	uint32_t ids[2][LT_TABLE_ROWS][2];
 	int rows[2], ids_current, reservoir_current, reservoirs_valid;
+	/* (the stream's frame, the pre-pass's history[1]: HALO_LT_TABLE_LOG's) */
 	unsigned long ids_frame;
 	/* the settings (read once): HALO_LT_ONLY, _HEROES, _RESTIR, _SUN,
 	_KIND_SCALE, _DROP */
@@ -547,6 +551,8 @@ static float lt_kind_k(const struct xgpu_stream_lt_light *light)
 
 	if ((light->flags & XGPU_LT_LIGHT_FLASHLIGHT) || light->kind != XGPU_LT_LIGHT_POINT)
 		return LT_POWER_SCALE;
+	if (light->flags & XGPU_LT_LIGHT_PROJECTILE)
+		return LT_PROJECTILE_POWER_SCALE;
 	/* (one of the port's own lights on an object or a firer's flames
 	(light_sources.c's key kinds 2 and 3): on an object, though a record
 	made before lt_lights.c named its object has none) */
@@ -764,7 +770,6 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 					(double)lt.texels[row][0][0], (double)lt.texels[row][0][1], (double)lt.texels[row][0][2],
 					(double)lt.texels[row][0][3], lt.texels[row][1][3] > 0.0f ? 1.0 / (double)lt.texels[row][1][3] : 0.0,
 					(double)lt.texels[row][4][0], (double)lt.texels[row][4][1], (double)lt.texels[row][4][2]);
-		lt.ids_frame++;
 	}
 	/* (the lights the pass lights: with no more than the 2 heroes, no
 	reservoirs are drawn) */
@@ -1029,6 +1034,7 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 	memset(&params, 0, sizeof(params));
 	light = lt_light(cells, block, &params);
 	/* (W2: every other light, from the light table) */
+	lt.ids_frame = (unsigned long)pass->history[1];
 	lt_table(cells, block, light ? lt_flashlight_index(cells, block) : -1, &params);
 	/* (the count started again as the light comes, goes or jumps, or the
 	last frame's inputs are not had, or the pre-pass has no history: a cut,

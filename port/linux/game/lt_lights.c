@@ -104,6 +104,9 @@ a point light on an object (a muzzle flash, a bolt), a point light on none
 panel not measured (none staged): the flashlight's. The backend's light
 transport applies the same rule (xgpu_vulkan_lt.c's lt_kind_k). */
 #define LT_LIGHTS_OBJECT_POWER_SCALE 0.845f
+/* a projectile's (a plasma bolt's, a needle's): measured apart, the same
+way (~/dev/rt2-calibration.json's dynamic_power_scales.point_projectile) */
+#define LT_LIGHTS_PROJECTILE_POWER_SCALE 0.41f
 #define LT_LIGHTS_EFFECT_POWER_SCALE 7.85f
 #define LT_LIGHTS_SUN_POWER_SCALE 0.488f
 /* the emitters' radii (world units): E1's flashlight disk, then
@@ -324,6 +327,8 @@ static float lt_power_scale(struct xgpu_stream_lt_light const *light)
 {
 	if ((light->flags & XGPU_LT_LIGHT_FLASHLIGHT) || light->kind != XGPU_LT_LIGHT_POINT)
 		return LT_LIGHTS_POWER_SCALE;
+	if (light->flags & XGPU_LT_LIGHT_PROJECTILE)
+		return LT_LIGHTS_PROJECTILE_POWER_SCALE;
 	return light->object != 0xffffffffu ? LT_LIGHTS_OBJECT_POWER_SCALE : LT_LIGHTS_EFFECT_POWER_SCALE;
 }
 
@@ -396,7 +401,16 @@ static int lt_build(struct halo_dynamic_light const *lights, unsigned long long 
 		key; it is a light on an object (a bolt's, a thruster's glow), whose k
 		is a point's on an object, not an explosion's: lt_power_scale) */
 		if ((source == 2 || source == 3) && out->object == 0xffffffffu)
+		{
+			struct object_datum const *carrier;
+
 			out->object = (unsigned int)(key & 0xffffffffull);
+			/* (a projectile's own light, a needle's: a projectile's light, as
+			the game's own projectiles' are flagged) */
+			carrier = (struct object_datum const *)object_try_and_get((long)out->object);
+			if (carrier && carrier->object.type == _object_type_projectile)
+				out->flags |= XGPU_LT_LIGHT_PROJECTILE;
+		}
 		out->owner = (unsigned int)owners[index];
 		out->gel_slot = -1;
 		out->gel_tag = -1;
