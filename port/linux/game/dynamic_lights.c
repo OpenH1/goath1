@@ -799,7 +799,7 @@ static int dynamic_lights_shadow_pick(struct halo_dynamic_light const *lights, u
 				shadowed_history.seen[next][shadowed_history.seen_count[next]++].since = since;
 			}
 		}
-		if (!flashlight && (!key || now - since < SHADOWED_LEAST_AGE))
+		if (!flashlight && now - since < SHADOWED_LEAST_AGE)
 			continue;
 		position.x = light->position[0];
 		position.y = light->position[1];

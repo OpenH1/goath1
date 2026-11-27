@@ -194,7 +194,7 @@ static int shadow_case(char const *case_name)
 		frame_new();
 		for (i = 0; i < HALO_DYNAMIC_LIGHTS_SHADOWED; i++)
 			frame_light(10.0f, (real)i, 4.0f, 50 + i, 0);
-		frame_light(10.0f, 9.0f, 4.0f, 59, 0);
+		frame_light(10.0f, 0.5f, 4.0f, 59, 0);
 		frame_lights[4].color[0] = frame_lights[4].color[1] = frame_lights[4].color[2] = 0.5f;
 		pick(0.0f, indices);
 		chosen = pick(1.0f, indices);
