@@ -9,7 +9,8 @@ compare(scene_folder, realtime_exr, out_dir=None, part="direct_flashlight") -> d
                DARK_TILE (1%) of the 99th-percentile tile mean (the dark floor: tiles the light barely
                reaches carry no meaningful ratio).
   rel_mse      the mean over kept pixels of (rt - truth)^2 / (truth^2 + eps), luminance, with
-               eps = (REL_EPS x the kept pixels' mean truth)^2, REL_EPS = 0.01.
+               eps = (REL_EPS x the lit kept pixels' mean truth)^2, REL_EPS = 0.01 (lit: over 1% of the
+               99.9th percentile).
   signed_png   per-pixel signed relative error, mid-grey 0, lighter = the real-time render brighter,
                darker = dimmer, full scale at +-50%; left-out pixels hatched (reads in black and white).
   mask_png     white = kept.
@@ -100,7 +101,10 @@ def compare(scene_folder, realtime_exr, out_dir=None, part="direct_flashlight", 
             "p95_abs": float(np.percentile(np.abs(t), 95)) if t.size else None,
             "global": float(yr[keep].sum() / max(yt[keep].sum(), 1e-30) - 1), "tiles": int(tiles.sum()),
             "dark_floor": float(floor)}
-    eps = (REL_EPS * yt[keep].mean()) ** 2 if keep.any() else 1e-12
+    # (eps from the lit pixels' mean: a light that reaches a few percent of the picture would otherwise get
+    # an eps near zero and a relMSE of its dark pixels' noise)
+    lit = keep & (yt > 0.01 * (np.percentile(yt[keep], 99.9) if keep.any() else 0))
+    eps = (REL_EPS * yt[lit].mean()) ** 2 if lit.any() else 1e-12
     rel_mse = float(np.mean((yr[keep] - yt[keep]) ** 2 / (yt[keep] ** 2 + eps))) if keep.any() else None
     r = {"part": part, "quantity": quantity, "truth": str(tpath), "realtime": str(realtime_exr), "tile16_bias": bias,
          "rel_mse": rel_mse, "rel_eps": eps, "kept_pixels": int(keep.sum()), "notes": notes}

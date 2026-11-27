@@ -8,6 +8,9 @@ radiance, so an unoccluded white floor shows radiance ambient. A sun's `irradian
 """
 
 import math
+import os
+
+_BUMP_SIGN = tuple(float(c) for c in os.environ.get("RT_TRUTH_BUMP_SIGN", "1,1").split(","))
 
 import drjit as dr
 import mitsuba as mi
@@ -33,6 +36,17 @@ def light_frame(direction, up=None):
     x = _normalize(_cross(z, up))
     y = _cross(x, z)
     return x, y, z
+
+
+def _opq(v):
+    """A constant as an opaque value (a kernel parameter, not a literal)."""
+    return dr.opaque(mi.Float, float(v))
+
+
+def _opq_list(values):
+    a = mi.Float(values)
+    dr.make_opaque(a)
+    return a
 
 
 def _vec(props, name, default=None):
@@ -362,10 +376,10 @@ class HaloAlbedo(mi.Texture):
         g = lambda k: props[k] if props.has_property(k) else None
         self.base, self.detail, self.secondary = g("base"), g("detail"), g("secondary")
         self.secondary_alpha, self.micro = g("secondary_alpha"), g("micro")
-        self.base_scale = [props.get("base_scale_u", 1.0), props.get("base_scale_v", 1.0)]
-        self.detail_scale = [props.get("detail_scale_u", 1.0), props.get("detail_scale_v", 1.0)]
-        self.secondary_scale = props.get("secondary_scale", 1.0)
-        self.micro_scale = props.get("micro_scale", 1.0)
+        self.base_scale = [_opq(props.get("base_scale_u", 1.0)), _opq(props.get("base_scale_v", 1.0))]
+        self.detail_scale = [_opq(props.get("detail_scale_u", 1.0)), _opq(props.get("detail_scale_v", 1.0))]
+        self.secondary_scale = _opq(props.get("secondary_scale", 1.0))
+        self.micro_scale = _opq(props.get("micro_scale", 1.0))
         self.detail_mode = props.get("detail_mode", "double_biased_multiply")
         self.micro_mode = props.get("micro_mode", "double_biased_multiply")
         self.gamma = props.get("gamma", 1.0)
@@ -427,13 +441,56 @@ class HaloBump(mi.BSDF):
         mi.BSDF.__init__(self, props)
         self.nested = props["bsdf"]
         self.bump = props["bump"]
+        # The bump map's mip levels (box-filtered), chosen by the pixel's footprint as a GPU's trilinear
+        # sampling does, so the truth's bump detail compares like for like with the real-time render.
+        # All levels side by side in one texture (bump_mips), level k at x offset bump_mip_x<k>: two lookups
+        # a sample, whatever the level count (a texture per level made the kernels huge).
+        self.mips = props["bump_mips"] if props.has_property("bump_mips") else None
+        self.n_levels = props.get("bump_levels", 0)
+        pad = lambda v: v + [v[-1] if v else 0.0] * (16 - len(v))
+        self.mip_x = _opq_list(pad([props.get("bump_mip_x%d" % k, 0.0) for k in range(self.n_levels)]))
+        self.mip_w = _opq_list(pad([props.get("bump_mip_w%d" % k, 1.0) for k in range(self.n_levels)]))
+        self.mip_h = _opq_list(pad([props.get("bump_mip_h%d" % k, 1.0) for k in range(self.n_levels)]))
+        self.top = _opq(max(self.n_levels - 1, 0))
+        # (constants as opaque values: every material's code is then the same and the kernel compiles one
+        # function for them all; Python numbers would be literals, a function per material)
+        self.size = [_opq(props.get("bump_width", 1.0)), _opq(props.get("bump_height", 1.0))]
+        self.scale = [_opq(props.get("bump_scale_u", 1.0)), _opq(props.get("bump_scale_v", 1.0))]
+        self.pixel_angle = props.get("pixel_angle", 0.0)
+        self.pixel_angle_o = _opq(self.pixel_angle)
         self.m_flags = self.nested.flags()
         self.m_components = [self.nested.flags(i) for i in range(self.nested.component_count())]
+
+    def _texel(self, si, active):
+        if self.mips is None or self.pixel_angle <= 0:
+            return self.bump.eval(si, active)
+        # The footprint of a camera ray's pixel at the hit (a ray cone), in texels of level 0 along the
+        # texture's more stretched axis (the GPU's isotropic choice).
+        foot = si.t * self.pixel_angle_o / dr.maximum(dr.abs(mi.Frame3f.cos_theta(si.wi)), 0.05)
+        tu = foot * self.scale[0] * self.size[0] / dr.maximum(dr.norm(si.dp_du), 1e-8)
+        tv = foot * self.scale[1] * self.size[1] / dr.maximum(dr.norm(si.dp_dv), 1e-8)
+        lod = dr.clip(dr.log2(dr.maximum(dr.maximum(tu, tv), 1.0)), 0.0, self.top)
+        l0 = mi.UInt32(dr.floor(lod))
+        l1 = mi.UInt32(dr.minimum(dr.floor(lod) + 1.0, self.top))
+        t = lod - mi.Float(l0)
+        xs, ws, hs = self.mip_x, self.mip_w, self.mip_h
+        u = si.uv.x * self.scale[0]
+        v = si.uv.y * self.scale[1]
+        fu, fv = u - dr.floor(u), v - dr.floor(v)
+
+        def at(level):
+            si2 = mi.SurfaceInteraction3f(si)
+            si2.uv = mi.Point2f(dr.gather(mi.Float, xs, level) + fu * dr.gather(mi.Float, ws, level),
+                                fv * dr.gather(mi.Float, hs, level))
+            return self.mips.eval(si2, active)
+        return at(l0) * (1.0 - t) + at(l1) * t
 
     def _perturbed(self, si, active):
         T = si.shape.eval_attribute_3("vertex_halo_tangent", si, active)
         B = si.shape.eval_attribute_3("vertex_halo_binormal", si, active)
-        b = self.bump.eval(si, active) * 2.0 - 1.0
+        b = self._texel(si, active) * 2.0 - 1.0
+        if _BUMP_SIGN != (1.0, 1.0):  # (an experiment's sign flip, RT_TRUTH_BUMP_SIGN="sx,sy")
+            b = mi.Color3f(b.x * _BUMP_SIGN[0], b.y * _BUMP_SIGN[1], b.z)
         N = si.sh_frame.n
         n = dr.normalize(T * b.x + B * b.y + N * dr.maximum(b.z, 0.05))
         n = dr.select(dr.isfinite(n.x) & (dr.squared_norm(T) > 0), n, N)
@@ -482,6 +539,41 @@ class HaloBump(mi.BSDF):
         return "HaloBump[%s]" % self.nested
 
 
+class HaloLightmapRadiance(mi.Texture):
+    """A lightmapped surface's static radiance: its albedo (at its UV) x its lightmap page's texel (at its
+    lightmap UV, the mesh attribute vertex_halo_uv2) decoded ^gamma."""
+
+    def __init__(self, props):
+        mi.Texture.__init__(self, props)
+        self.albedo = props["albedo"]
+        self.lightmap = props["lightmap"]
+        self.gamma = props.get("gamma", 2.2)
+
+    def eval(self, si, active=True):
+        u3 = si.shape.eval_attribute_3("vertex_halo_uv2", si, active)
+        si2 = mi.SurfaceInteraction3f(si)
+        si2.uv = mi.Point2f(u3.x, u3.y)
+        lm = dr.maximum(self.lightmap.eval(si2, active), 0.0)
+        if self.gamma != 1.0:
+            lm = dr.power(lm, self.gamma)
+        return self.albedo.eval(si, active) * lm
+
+    def eval_1(self, si, active=True):
+        return mi.luminance(self.eval(si, active))
+
+    def mean(self):
+        return 0.1
+
+    def is_spatially_varying(self):
+        return True
+
+    def traverse(self, cb):
+        pass
+
+    def to_string(self):
+        return "HaloLightmapRadiance"
+
+
 _registered = False
 
 
@@ -493,4 +585,5 @@ def register():
     mi.register_emitter("halo_sky", lambda p: HaloSky(p))
     mi.register_texture("halo_albedo", lambda p: HaloAlbedo(p))
     mi.register_bsdf("halo_bump", lambda p: HaloBump(p))
+    mi.register_texture("halo_lightmap_radiance", lambda p: HaloLightmapRadiance(p))
     _registered = True

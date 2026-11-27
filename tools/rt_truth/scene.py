@@ -160,11 +160,20 @@ def luminance(img):
 
 # ---------------------------------------------------------------- scene
 
+# Shared by every Scene of a process (a render builds several: its groups, white, flat): images, the
+# geometry as read, and mip chains.
+_IMAGES = {}
+_GEOMETRY = {}
+_MIPS = {}
+_BITMAPS = {}
+
 class Scene:
     """One scene folder, loaded; `notes` collects every placeholder and every choice made from free text."""
 
-    def __init__(self, folder, flashlight_scale=None, white=False, bump=True, flashlight_emitter=None):
+    def __init__(self, folder, flashlight_scale=None, white=False, bump=True, flashlight_emitter=None,
+                 static_mode="lightmap"):
         halo_plugins.register()
+        self.static_mode = static_mode
         self.flashlight_emitter = flashlight_emitter
         self.bump = bump
         self.flashlight_scale = flashlight_scale
@@ -207,14 +216,18 @@ class Scene:
         if p is None:
             return None
         key = str(p)
-        if key not in self._tex_cache:
-            self._tex_cache[key] = read_image(p)
-        return self._tex_cache[key]
+        if key not in _IMAGES:
+            _IMAGES[key] = read_image(p)
+        return _IMAGES[key]
 
     @staticmethod
     def bitmap(arr, wrap="repeat"):
-        return mi.load_dict({"type": "bitmap", "bitmap": mi.Bitmap(np.ascontiguousarray(arr, np.float32)),
-                             "raw": True, "filter_type": "bilinear", "wrap_mode": wrap})
+        # (one Mitsuba texture per array view: views of the shared images keep their address)
+        key = (arr.__array_interface__["data"][0], arr.shape, arr.strides, wrap)
+        if key not in _BITMAPS:
+            _BITMAPS[key] = (arr, mi.load_dict({"type": "bitmap", "bitmap": mi.Bitmap(np.ascontiguousarray(arr, np.float32)),
+                                                "raw": True, "filter_type": "bilinear", "wrap_mode": wrap}))
+        return _BITMAPS[key][1]
 
     # ---- materials
 
@@ -287,6 +300,9 @@ class Scene:
             if mtype == "model" and m.get("detail_mask"):
                 self.note_once("model detail masks are not applied (the detail covers the whole map)")
 
+        if not hasattr(self, "albedos"):
+            self.albedos, self.cutouts = {}, {}
+        self.albedos[idx] = albedo
         spec = m.get("specular") or {}
         tint = spec.get("tint") or [0, 0, 0]
         bright = float(spec.get("brightness", spec.get("perpendicular_brightness", 1.0)) or 0.0)
@@ -321,7 +337,27 @@ class Scene:
             if self.has_tangents():
                 # The game's own: n = normalize(T b.x + B b.y + N max(b.z, 0.05)), b = texel x 2 - 1, with the
                 # vertex's tangent and binormal (xgpu_spirv.c:5811-5821).
-                bsdf = {"type": "halo_bump", "bump": nm, "bsdf": bsdf}
+                bsdf = {"type": "halo_bump", "bump": nm, "bsdf": bsdf, "bump_width": float(bump.shape[1]),
+                        "bump_height": float(bump.shape[0]), "bump_scale_u": su, "bump_scale_v": sv,
+                        "pixel_angle": self.pixel_angle()}
+                mkey = m["bump_map"]
+                if mkey not in _MIPS:
+                    levels = self.mips(bump[:, :, :3])
+                    H0, W0 = levels[0].shape[:2]
+                    Wt = sum(l.shape[1] for l in levels)
+                    atlas = np.zeros((H0, Wt, 3), np.float32)
+                    x, info = 0, []
+                    for l in levels:
+                        atlas[:l.shape[0], x:x + l.shape[1]] = l
+                        info.append((x / Wt, l.shape[1] / Wt, l.shape[0] / H0))
+                        x += l.shape[1]
+                    _MIPS[mkey] = (mi.load_dict({"type": "bitmap", "bitmap": mi.Bitmap(atlas), "raw": True,
+                                                 "filter_type": "bilinear", "wrap_mode": "clamp"}), info)
+                tex_m, info = _MIPS[mkey]
+                bsdf["bump_mips"] = tex_m
+                bsdf["bump_levels"] = len(info)
+                for k, (x0, w, h) in enumerate(info):
+                    bsdf["bump_mip_x%d" % k], bsdf["bump_mip_w%d" % k], bsdf["bump_mip_h%d" % k] = x0, w, h
                 summary["bump"] = "the game's frame, scale %g x %g" % (su, sv)
             else:
                 bsdf = {"type": "normalmap", "normalmap": nm, "bsdf": bsdf}
@@ -336,9 +372,24 @@ class Scene:
         if m.get("two_sided") and bsdf["type"] != "null":
             bsdf = {"type": "twosided", "bsdf": bsdf}
         if m.get("alpha_test") and base is not None and bsdf["type"] != "null":
-            cut = (base[:, :, 3] >= 0.5).astype(np.float32)[:, :, None]  # Halo's alpha test at 50%
-            bsdf = {"type": "mask", "opacity": self.bitmap(cut), "bsdf": bsdf}
-            summary["cutout"] = "alpha test at 0.5 of the base map's alpha"
+            # The game's alpha test: alpha > 0x7F (ALPHAREF 0x7F, rasterizer_xbox_environment.c:1100). An
+            # environment shader tests its bump map's alpha at the bump scale (rasterizer_xbox_environment.c:
+            # 763-768 with the bump map on stage 0; world_rt_game.c material_describe reads it the same),
+            # unless the bump map is its specular mask; a model or transparent shader its base map's.
+            bump_img = self.image(m["bump_map"]) if m.get("bump_map") else None
+            if mtype == "environment" and bump_img is not None and not m.get("bump_map_is_specular_mask"):
+                su, sv = (m.get("bump_scale_runtime") or [m.get("bump_scale") or 1.0] * 2)
+                cut = (bump_img[:, :, 3] > 127.0 / 255.0).astype(np.float32)[:, :, None]
+                tex = mi.load_dict({"type": "bitmap", "bitmap": mi.Bitmap(np.ascontiguousarray(cut)), "raw": True,
+                                    "filter_type": "nearest", "wrap_mode": "repeat",
+                                    "to_uv": mi.ScalarTransform4f().scale([float(su or 1), float(sv or 1), 1.0])})
+                summary["cutout"] = "alpha test: the bump map's alpha > 0x7F"
+            else:
+                cut = (base[:, :, 3] > 127.0 / 255.0).astype(np.float32)[:, :, None]
+                tex = self.bitmap(cut)
+                summary["cutout"] = "alpha test: the base map's alpha > 0x7F"
+            self.cutouts[idx] = tex
+            bsdf = {"type": "mask", "opacity": tex, "bsdf": bsdf}
         bsdf_obj = mi.load_dict(bsdf)
 
         em = m.get("emission") or {}
@@ -351,6 +402,26 @@ class Scene:
             emitter = {"type": "area", "radiance": {"type": "rgb", "value": L}}
             summary["emission"] = "area emitter, radiance %s (radiosity units)" % [round(x, 4) for x in L]
         return bsdf_obj, emitter, summary
+
+    def pixel_angle(self):
+        """The angle one pixel spans at the image centre (the ray cone's spread)."""
+        c = self.camera
+        return 2.0 * math.tan(math.radians(float(c["fov_h_deg"])) / 2.0) / float(c["width"])
+
+    @staticmethod
+    def mips(img):
+        """Box-filtered mip levels down to 1 texel (as the GPU's mip chain), level 0 first."""
+        out = [np.ascontiguousarray(img, np.float32)]
+        while max(out[-1].shape[:2]) > 1:
+            a = out[-1]
+            h, w = max(a.shape[0] // 2, 1), max(a.shape[1] // 2, 1)
+            a = a[:h * 2 if a.shape[0] > 1 else 1, :w * 2 if a.shape[1] > 1 else 1]
+            if a.shape[0] > 1:
+                a = 0.5 * (a[0::2] + a[1::2])
+            if a.shape[1] > 1:
+                a = 0.5 * (a[:, 0::2] + a[:, 1::2])
+            out.append(np.ascontiguousarray(a, np.float32))
+        return out
 
     def has_tangents(self):
         self.load_geometry()
@@ -391,14 +462,33 @@ class Scene:
     #   dynamic     every other light of lights.json, and the glowing surfaces of other objects
     GROUPS = ("ambient", "sun", "emitters", "flashlight", "dynamic")
     STATIC_GROUPS = ("ambient", "sun", "emitters")
+    # static_mode "lightmap" (the default): the static light IS Halo's lightmap. Each lightmapped BSP surface
+    # emits radiance albedo x lightmap, the page's texel at its lightmap UV decoded ^2.2 (the game's frame
+    # is albedo x lightmap in gamma space, so its light is albedo_lin x lightmap^2.2; a white surface shows
+    # the lightmap's value, i.e. value = irradiance / pi in the game's light units, the realtime's own),
+    # and reflects none of it (the bake already holds its bounces); objects are lit by that light, bounce it
+    # and show it in reflections. No exposure: the lightmap is in the frame's units. "fit" keeps the
+    # emitter reconstruction (sky, sun, radiosity emitters fitted to the lightmap).
+    LIGHTMAP_GROUPS = ("lightmap", "flashlight", "dynamic")
+
+    @property
+    def groups(self):
+        return self.LIGHTMAP_GROUPS if self.static_mode == "lightmap" else self.GROUPS
+
+    @property
+    def static_groups(self):
+        return ("lightmap",) if self.static_mode == "lightmap" else self.STATIC_GROUPS
 
     def lights_of(self, group):
         ls = (self.lights or {}).get("lights") or []
         if group == "flashlight":
-            return [L for L in ls if L.get("source") == "flashlight"]
-        if group == "dynamic":
-            return [L for L in ls if L.get("source") != "flashlight"]
-        return []
+            out = [L for L in ls if L.get("source") == "flashlight"]
+        elif group == "dynamic":
+            out = [L for L in ls if L.get("source") != "flashlight"]
+        else:
+            return []
+        k = getattr(self, "light_filter", None)
+        return out if k is None else out[k:k + 1]
 
     # Objects whose glow the lightmap tool bakes (Halo's object types: scenery 6, machine 7, control 8,
     # light fixture 9): their emitters are static light; other objects' (units, weapons, items) dynamic.
@@ -414,6 +504,9 @@ class Scene:
         return self._obj_types
 
     def emitter_group(self, fpath):
+        if self.static_mode == "lightmap" and (fpath.parent.name != "objects" or
+                                               self.object_types().get(fpath.resolve()) in self.BAKED_OBJECT_TYPES):
+            return "baked"  # the lightmap holds their glow: they emit in no group
         if fpath.parent.name != "objects":
             return "emitters"
         return "emitters" if self.object_types().get(fpath.resolve()) in self.BAKED_OBJECT_TYPES else "dynamic"
@@ -429,6 +522,9 @@ class Scene:
         return False
 
     def group_has_light(self, group):
+        if group == "lightmap":
+            self.load_geometry()
+            return any((g[6] >= 0).any() for f, g in self.geometry.items() if f.parent.name != "objects")
         if group in ("flashlight", "dynamic") and self.lights_of(group):
             return True
         if group in ("dynamic", "emitters"):
@@ -441,6 +537,10 @@ class Scene:
         return False
 
     def load_geometry(self):
+        if getattr(self, "geometry", None) is None and str(self.folder) in _GEOMETRY:
+            self.geometry, self.bounds, self.n_tris, self.flipped = _GEOMETRY[str(self.folder)]
+            if self.flipped:
+                self.note_once("%d of %d triangles wound against their normals: rewound" % (self.flipped, self.n_tris))
         if getattr(self, "geometry", None) is None:
             self.geometry = {}
             for fpath in self.geometry_files():
@@ -466,6 +566,7 @@ class Scene:
             self.n_tris = sum(len(g[3]) for g in self.geometry.values())
             if getattr(self, "flipped", 0):
                 self.note_once("%d of %d triangles wound against their normals: rewound" % (self.flipped, self.n_tris))
+            _GEOMETRY[str(self.folder)] = (self.geometry, self.bounds, self.n_tris, getattr(self, "flipped", 0))
 
     def material(self, mid):
         if not hasattr(self, "_mat_cache"):
@@ -481,7 +582,12 @@ class Scene:
         shapes = {}
         summaries = {}
         self.mesh_faces = {}
-        fp_files = self.first_person_files() if group == "flashlight" else set()
+        # The flashlight and lights on the first-person weapon (a muzzle flash) sit inside it: the weapon and
+        # hands are left out of their renders.
+        fp_files = self.first_person_files() if group == "flashlight" or (
+            group == "dynamic" and any(L.get("attached_to_first_person_weapon") for L in self.lights_of(group))) else set()
+        if group == "dynamic":
+            fp_files = set(fp_files) | self.light_owners()
         for fpath, (pos, nrm, uv, tris, mats, *_) in self.geometry.items():
             is_object = fpath.parent.name == "objects"
             if fpath.resolve() in fp_files:
@@ -490,6 +596,9 @@ class Scene:
                 # lamp, unlit by it; their pixels are zeroed in its parts).
                 continue
             emit = group is None or group == self.emitter_group(fpath)
+            if group == "lightmap" and not is_object:
+                self._lightmap_meshes(fpath, shapes, summaries)
+                continue
             for mid in np.unique(mats):
                 sel = tris[mats == mid]
                 used, inv = np.unique(sel.ravel(), return_inverse=True)
@@ -514,13 +623,102 @@ class Scene:
         radius = float(np.linalg.norm(hi - lo) / 2)
         d = {"type": "scene", "sensor": self.sensor()}
         d.update(shapes)
-        if group in (None, "ambient", "sun"):
+        if group in (None, "ambient", "sun") and self.static_mode == "fit" or group is None and self.static_mode == "fit":
             d["sky"] = self.sky_dict(center, radius, ambient=group != "sun", suns=group != "ambient")
         lights = (self.lights or {}).get("lights") or [] if group is None else self.lights_of(group)
         for i, ld in enumerate(self.light_dicts(lights)):
             d["light_%d" % i] = ld
         self.material_summaries = summaries
         return d
+
+    def lightmap_atlas(self):
+        """The BSP's lightmap pages packed in one texture (a grid of equal cells, each page in its cell's
+        corner, the last cell black for faces without a page), and each page's (x0, y0, sx, sy) in atlas
+        UV: one emitter texture for every material instead of one per page (a kernel per instance)."""
+        if hasattr(self, "_atlas"):
+            return self._atlas
+        self.load_geometry()
+        pages = sorted({int(p) for f, g in self.geometry.items() if f.parent.name != "objects" for p in np.unique(g[6]) if p >= 0})
+        imgs = {p: self.image("geometry/lightmaps/%d.png" % p) for p in pages}
+        imgs = {p: im[:, :, :3] for p, im in imgs.items() if im is not None}
+        cell = max([max(im.shape[:2]) for im in imgs.values()] + [1])
+        n = len(imgs) + 1
+        cols = int(math.ceil(math.sqrt(n)))
+        rows = int(math.ceil(n / cols))
+        atlas = np.zeros((rows * cell, cols * cell, 3), np.float32)
+        where = {}
+        for k, (p, im) in enumerate(sorted(imgs.items())):
+            r, c = divmod(k, cols)
+            h, w = im.shape[:2]
+            atlas[r * cell:r * cell + h, c * cell:c * cell + w] = im
+            where[p] = (c * cell / atlas.shape[1], r * cell / atlas.shape[0], w / atlas.shape[1], h / atlas.shape[0],
+                        0.5 / atlas.shape[1], 0.5 / atlas.shape[0])
+        r, c = divmod(len(imgs), cols)
+        black = ((c * cell + cell / 2) / atlas.shape[1], (r * cell + cell / 2) / atlas.shape[0])
+        tex = mi.load_dict({"type": "bitmap", "bitmap": mi.Bitmap(atlas), "raw": True,
+                            "filter_type": "bilinear", "wrap_mode": "clamp"})
+        self._atlas = (tex, where, black)
+        return self._atlas
+
+    def _lightmap_meshes(self, fpath, shapes, summaries):
+        """The BSP for the lightmap group: a mesh per material, emitting albedo x lightmap (its pages in one
+        atlas) and reflecting nothing (cutouts kept)."""
+        pos, nrm, uv, tris, mats, uv2, lmap, tb = self.geometry[fpath]
+        tex, where, black_uv = self.lightmap_atlas()
+        black = mi.load_dict({"type": "diffuse", "reflectance": {"type": "rgb", "value": [0.0, 0.0, 0.0]}})
+        for mid in np.unique(mats):
+            bsdf, emitter, summ = self.material(int(mid))
+            summaries[int(mid)] = summ
+            if summ.get("surface", "").startswith("transparent"):
+                continue  # the game draws them apart from the lightmap (their glow is in the bake)
+            surf = black
+            if int(mid) in getattr(self, "cutouts", {}):
+                surf = mi.load_dict({"type": "mask", "opacity": self.cutouts[int(mid)], "bsdf": black})
+            fsel = np.nonzero(mats == mid)[0]
+            # Corners keyed by (vertex, page): a vertex shared by faces of two pages becomes two.
+            corner_v = tris[fsel].ravel()
+            corner_p = np.repeat(lmap[fsel], 3)
+            key = corner_v.astype(np.int64) * 4096 + (corner_p + 1)
+            ukeys, inv = np.unique(key, return_inverse=True)
+            vv, pp = ukeys // 4096, ukeys % 4096 - 1
+            a2 = np.zeros((len(vv), 2), np.float32)
+            for p in np.unique(pp):
+                m = pp == p
+                if p in where:
+                    x0, y0, sx, sy, ex, ey = where[p]
+                    a2[m, 0] = x0 + np.clip(uv2[vv[m], 0], 0, 1) * sx
+                    a2[m, 1] = y0 + np.clip(uv2[vv[m], 1], 0, 1) * sy
+                else:
+                    a2[m] = black_uv
+            n = nrm[vv] if nrm is not None else None
+            if n is not None and (not np.all(np.isfinite(n)) or np.any(np.linalg.norm(n, axis=1) < 0.5)):
+                n = None
+            em = mi.load_dict({"type": "area", "radiance": {
+                "type": "halo_lightmap_radiance", "albedo": self.albedos[int(mid)], "lightmap": tex, "gamma": 2.2}})
+            name = "%s_m%d" % (fpath.stem, mid)
+            self.mesh_faces[name] = (fpath, fsel)
+            shapes[name] = self.make_mesh(name, pos[vv], n, uv[vv], inv.reshape(-1, 3), surf, em,
+                                          tb[vv] if tb is not None else None, a2)
+
+    def light_owners(self):
+        """The objects carrying a dynamic light (C4 leaves a light's owner out of its rays): a weapon within
+        0.1 wu of the light (the muzzle flash's own weapon; lights.json names no instance)."""
+        self.load_geometry()
+        types = self.object_types()
+        out = set()
+        for L in self.lights_of("dynamic"):
+            p = np.array(L.get("emitter_position") or L["position"], float)
+            best = None
+            for fpath, g in self.geometry.items():
+                if fpath.parent.name != "objects" or types.get(fpath.resolve()) != 2:
+                    continue
+                dmin = float(np.linalg.norm(g[0] - p, axis=1).min())
+                if dmin < 0.1 and (best is None or dmin < best[0]):
+                    best = (dmin, fpath.resolve())
+            if best:
+                out.add(best[1])
+                self.note_once("a dynamic light's owner left out of its render: %s" % best[1].name)
+        return out
 
     def first_person_files(self):
         """The object files of the first-person weapon and hands (objects.json's `first_person`)."""
@@ -617,7 +815,7 @@ class Scene:
                 "lightmap": lm.reshape(H, W, 3), "lightmap_flipped": lm_flip.reshape(H, W, 3)}
 
     @staticmethod
-    def make_mesh(name, pos, nrm, uv, tris, bsdf, emitter, tb=None):
+    def make_mesh(name, pos, nrm, uv, tris, bsdf, emitter, tb=None, uv2=None):
         props = mi.Properties()
         props["bsdf"] = bsdf
         if emitter is not None:
@@ -635,6 +833,9 @@ class Scene:
         tb = np.zeros((len(pos), 6), np.float32) if tb is None else tb
         mesh.add_attribute("vertex_halo_tangent", 3, mi.Float(np.ascontiguousarray(tb[:, :3]).ravel()))
         mesh.add_attribute("vertex_halo_binormal", 3, mi.Float(np.ascontiguousarray(tb[:, 3:]).ravel()))
+        if uv2 is not None:  # the lightmap UV, as a 3-vector (u, v, 0) for eval_attribute_3
+            u3 = np.concatenate([uv2, np.zeros((len(uv2), 1), np.float32)], 1)
+            mesh.add_attribute("vertex_halo_uv2", 3, mi.Float(np.ascontiguousarray(u3, np.float32).ravel()))
         return mesh
 
     def sensor(self):
@@ -718,6 +919,14 @@ class Scene:
                 dm = "window_radius"
                 power *= self.flashlight_scale
                 why = "physical 1/d^2 x (1 - (d/r)^4)^2 window at the tag's radius, power x k = %g (calibration)" % self.flashlight_scale
+            dyn_k = getattr(self, "dynamic_scale", None)
+            if L.get("source") != "flashlight" and dyn_k is not None:
+                # The physical model for the other lights (C4's): power x k, 1/d^2 x (1 - (d/r)^4)^2 from the
+                # record's emitter, a point (no emitter cosine; its sphere only matters within its radius) or a
+                # spot's cone ramp; color decoded ^2.2 as the game's.
+                dm = "window_radius"
+                power *= dyn_k
+                why = "physical 1/d^2 x (1 - (d/r)^4)^2, power x k = %g" % dyn_k
             d = {"type": "halo_light", "kind": L.get("kind", "point"),
                  "position": list(L["position"]), "direction": list(L.get("direction") or [0, 0, -1]),
                  "intensity": [c * power * POINT_INTENSITY_PER_POWER for c in color],
@@ -758,6 +967,8 @@ class Scene:
                                    "(rasterizer_xbox_environment.c:1244-1255; the beam on the gel's +x face); the cone is left off where a gel shapes the light")
                 else:
                     d["gel"] = self.bitmap(g[:, :, :3], wrap="clamp")
+            if L.get("source") != "flashlight" and dyn_k is not None and L.get("emitter_position"):
+                d["position"] = [float(c) for c in L["emitter_position"]]
             if L.get("source") == "flashlight" and self.flashlight_scale is not None:
                 # rt2-calibration.json's model: a 1 cm disk at the lamp facing forward (cos at the emitter;
                 # a point here: the disk changes 1/d^2 by under 1e-5 past 0.1 wu), the gel its angular

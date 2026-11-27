@@ -125,20 +125,20 @@ def best_fit(samples, keep, static_means, log):
 
 def render_scene(folder, out=None, spp_pass=8, target=0.01, max_spp=65536, max_minutes=60.0,
                  min_passes=4, gpu_lock=os.path.expanduser("~/goat-rig/locks/gpu.lock"),
-                 log=print, flashlight_scale=None, flashlight_emitter=None):
+                 log=print, flashlight_scale=None, flashlight_emitter=None, static_mode="lightmap"):
     folder = Path(folder)
     out = Path(out) if out else folder / "truth"
     from . import VARIANT as variant
-    sc = Scene(folder, flashlight_scale, flashlight_emitter=flashlight_emitter)
+    sc = Scene(folder, flashlight_scale, flashlight_emitter=flashlight_emitter, static_mode=static_mode)
     t0 = time.time()
-    groups = [g for g in Scene.GROUPS if sc.group_has_light(g)]
-    statics = [g for g in groups if g in Scene.STATIC_GROUPS]
+    groups = [g for g in sc.groups if sc.group_has_light(g)]
+    statics = [g for g in groups if g in sc.static_groups]
     log("%s: %d triangles, groups %s" % (folder.name, sc.n_tris, groups))
     scenes = {g: mi.load_dict(sc.build(g)) for g in groups}
     samples = sc.lightmap_samples(scenes[groups[-1]])
     # The same light on white Lambertian surfaces (same normal maps and cutouts): its direct part is the
     # demodulated irradiance the real-time comparison uses.
-    wsc = Scene(folder, flashlight_scale, white=True, flashlight_emitter=flashlight_emitter)
+    wsc = Scene(folder, flashlight_scale, white=True, flashlight_emitter=flashlight_emitter, static_mode=static_mode)
     whites = {g: mi.load_dict(wsc.build(g)) for g in groups}
     acc_w = {g: np.zeros((len(samples["valid"]), len(samples["valid"][0]), 3)) for g in groups}
     grey = [m["index"] for m in sc.material_summaries.values() if "placeholder" in m.get("albedo", "")]
@@ -155,7 +155,7 @@ def render_scene(folder, out=None, spp_pass=8, target=0.01, max_spp=65536, max_m
     keep = display.rect_mask((H, W), sc.camera.get("mask_rects"))
     fp = sc.first_person_mask(scenes[[g for g in groups if g != "flashlight"][0]] if len(groups) > 1 or groups[0] != "flashlight" else mi.load_dict(sc.build("ambient")))
     keep &= ~fp
-    use_fit = bool(statics) and samples["valid"].any()
+    use_fit = sc.static_mode == "fit" and bool(statics) and samples["valid"].any()
     log("fit and comparison on %.1f%% of the pixels (first-person %.1f%%), lightmapped BSP %.1f%%" % (
         100 * keep.mean(), 100 * fp.mean(), 100 * (samples["valid"] & keep).mean()))
     original = None
@@ -167,6 +167,20 @@ def render_scene(folder, out=None, spp_pass=8, target=0.01, max_spp=65536, max_m
             original = np.asarray(Image.fromarray(original).resize((W, H), Image.BILINEAR))
     log("scene built in %.1f s" % (time.time() - t0))
     scales = {g: 1.0 for g in groups}
+    # Resume: the sums of earlier chunks of this render (same groups, size and samples a pass), so a long
+    # render can run in pieces and give the GPU back between them.
+    state_path = out / "_state.npz"
+    if state_path.exists():
+        st = np.load(state_path, allow_pickle=True)
+        if list(st["groups"]) == groups and int(st["spp_pass"]) == spp_pass and st["s1_" + groups[0]].shape == (H, W):
+            n = int(st["n"])
+            for g in groups:
+                for k in acc[g]:
+                    acc[g][k] = st["acc_%s_%s" % (g, k)]
+                acc_w[g] = st["accw_" + g]
+                s1[g], s2[g] = st["s1_" + g], st["s2_" + g]
+            log("resumed at pass %d (%d spp)" % (n, n * spp_pass))
+    n0 = n
     t_render = time.time()
     with GpuLock(gpu_lock, log):
         while True:
@@ -183,7 +197,7 @@ def render_scene(folder, out=None, spp_pass=8, target=0.01, max_spp=65536, max_m
                 s2[g] += y * y
             n += 1
             el = (time.time() - t_render) / 60.0
-            if n >= min_passes and (n == min_passes or n % 8 == 0 or n * spp_pass >= max_spp):
+            if n >= min_passes and (n == min_passes or n % 8 == 0 or n * spp_pass >= max_spp or el >= max_minutes):
                 if use_fit:
                     (k, *_), _, _ = best_fit(samples, keep, [acc[g]["full"] / n for g in statics], lambda *a: None)
                     scales.update(zip(statics, k))
@@ -198,6 +212,14 @@ def render_scene(folder, out=None, spp_pass=8, target=0.01, max_spp=65536, max_m
                     stats["converged"] = bool(done)
                     break
     spp = n * spp_pass
+    out.mkdir(parents=True, exist_ok=True)
+    save = {"groups": np.array(groups), "spp_pass": spp_pass, "n": n}
+    for g in groups:
+        for k in acc[g]:
+            save["acc_%s_%s" % (g, k)] = acc[g][k].astype(np.float32)
+        save["accw_" + g] = acc_w[g].astype(np.float32)
+        save["s1_" + g], save["s2_" + g] = s1[g], s2[g]
+    np.savez(state_path, **save)
     mean = {g: {k: v / n for k, v in acc[g].items()} for g in groups}
     out.mkdir(parents=True, exist_ok=True)
     fit_lines = []
@@ -211,7 +233,9 @@ def render_scene(folder, out=None, spp_pass=8, target=0.01, max_spp=65536, max_m
         write_exr(out / "static_fit_residual.exr", np.where(m, y_img - fit_img, 0.0)[..., None].repeat(3, -1))
         residual_png(y_img, fit_img, m, out / "static_fit_residual.png")
     else:
-        fit_lines = ["static fit: none (no lightmapped BSP pixels or no static light); static scales 1"]
+        fit_lines = (["static light: Halo's lightmap (albedo x lightmap^2.2 emitted by the BSP), scale 1"]
+                     if sc.static_mode == "lightmap" else
+                     ["static fit: none (no lightmapped BSP pixels or no static light); static scales 1"])
     if "flashlight" in mean:
         for k in mean["flashlight"]:
             mean["flashlight"][k] = np.where(fp[..., None], 0.0, mean["flashlight"][k])
@@ -316,25 +340,37 @@ def compare(original, mood, path, placeholders):
     f = _font(int(bar * 0.6))
     d.text((12, bar * 0.18), "original (game)" if original is not None else "no original.png", fill=(255, 255, 255), font=f)
     label = "truth (path traced)"
-    if placeholders:
-        label += "  PLACEHOLDER LIGHTS/MATERIALS"
+    if any("lights.json" in p for p in placeholders):
+        label += "  PLACEHOLDER LIGHTS"
+    grey = [p for p in placeholders if "without a base map" in p]
+    if grey:
+        label += "  (%s)" % grey[0].split(":")[0]
     d.text((W + 12, bar * 0.18), label, fill=(255, 255, 255), font=f)
     canvas.save(path)
 
 
-def render_flashlight_direct(folder, out=None, flashlight_scale=None, flashlight_emitter=None, spp_pass=8, target=0.002, max_spp=4096,
-                             max_minutes=30.0, gpu_lock=os.path.expanduser("~/goat-rig/locks/gpu.lock"), log=print):
-    """Only truth_parts/direct_flashlight.exr: the flashlight's one-bounce light, converged (for comparing
-    the real-time flashlight before the whole truth)."""
+def render_flashlight_direct(folder, out=None, flashlight_scale=None, flashlight_emitter=None, centers=False, spp_pass=8, target=0.002, max_spp=4096,
+                             max_minutes=30.0, gpu_lock=os.path.expanduser("~/goat-rig/locks/gpu.lock"), log=print,
+                             group="flashlight", light_index=None, light_scale=None):
+    """Only a group's one-bounce light (truth_parts/direct_<name>.exr and its irradiance), converged:
+    the flashlight, or the other dynamic lights (all, or the one at light_index), for comparing the
+    real-time lights before the whole truth. light_scale: those lights in the physical model (rt2-
+    calibration.json's: power x k, 1/d^2 x (1-(d/r)^4)^2) with k = light_scale."""
     folder = Path(folder)
     out = Path(out) if out else folder / "truth"
-    sc = Scene(folder, flashlight_scale, flashlight_emitter=flashlight_emitter)
-    if not sc.lights_of("flashlight"):
-        raise SystemExit("%s: no flashlight in lights.json" % folder)
-    scene = mi.load_dict(sc.build("flashlight"))
-    white = mi.load_dict(Scene(folder, flashlight_scale, white=True, flashlight_emitter=flashlight_emitter).build("flashlight"))
-    flat = mi.load_dict(Scene(folder, flashlight_scale, white=True, bump=False,
-                              flashlight_emitter=flashlight_emitter).build("flashlight"))
+    name = group if light_index is None else "%s_%d" % (group, light_index)
+
+    def make(**kw):
+        s_ = Scene(folder, flashlight_scale, flashlight_emitter=flashlight_emitter, **kw)
+        s_.light_filter = light_index
+        s_.dynamic_scale = light_scale
+        return s_
+    sc = make()
+    if not sc.lights_of(group):
+        raise SystemExit("%s: no %s light in lights.json" % (folder, group))
+    scene = mi.load_dict(sc.build(group))
+    white = mi.load_dict(make(white=True).build(group))
+    flat = mi.load_dict(make(white=True, bump=False).build(group))
     acc_f = 0.0
     H, W = int(sc.camera["height"]), int(sc.camera["width"])
     acc_w = np.zeros((H, W, 3))
@@ -349,8 +385,8 @@ def render_flashlight_direct(folder, out=None, flashlight_scale=None, flashlight
             wait_for_no_player(log)
             img = render_pass(scene, spp_pass, n, parts=True)["direct"].astype(np.float64)
             acc += img
-            acc_w += render_pass(white, spp_pass, n, parts=True)["direct"]
-            acc_f = acc_f + render_pass(flat, spp_pass, n, parts=True, max_depth=2)["direct"]
+            acc_w += render_pass(white, spp_pass, n, parts=True, centers=centers)["direct"]
+            acc_f = acc_f + render_pass(flat, spp_pass, n, parts=True, max_depth=2, centers=centers)["direct"]
             y = img @ display.LUMA.astype(np.float64)
             s1 += y
             s2 += y * y
@@ -364,14 +400,14 @@ def render_flashlight_direct(folder, out=None, flashlight_scale=None, flashlight
                 if done or n * spp_pass >= max_spp or el >= max_minutes:
                     stats["converged"] = bool(done)
                     break
-    write_exr(out / "truth_parts" / "direct_flashlight.exr", np.where(fp[..., None], 0.0, acc / n))
-    write_exr(out / "truth_parts" / "irradiance_direct_flashlight.exr", np.where(fp[..., None], 0.0, acc_w / n))
+    write_exr(out / "truth_parts" / ("direct_%s.exr" % name), np.where(fp[..., None], 0.0, acc / n))
+    write_exr(out / "truth_parts" / ("irradiance_direct_%s.exr" % name), np.where(fp[..., None], 0.0, acc_w / n))
     # The same with the geometric (interpolated vertex) normal, no normal maps.
-    write_exr(out / "truth_parts" / "irradiance_direct_flashlight_geometric.exr", np.where(fp[..., None], 0.0, acc_f / n))
+    write_exr(out / "truth_parts" / ("irradiance_direct_%s_geometric.exr" % name), np.where(fp[..., None], 0.0, acc_f / n))
     save_mask(out, display.rect_mask((H, W), sc.camera.get("mask_rects")) & ~fp)
-    lines = ["direct_flashlight: spp %d, %.1f min, noise median %.3f%% 95th %.3f%% (floor %g), converged %s" % (
+    lines = ["direct_" + name + ": spp %d, %.1f min, noise median %.3f%% 95th %.3f%% (floor %g), converged %s" % (
         n * spp_pass, (time.time() - t0) / 60, 100 * stats["median_rel"], 100 * stats["p95_rel"], DISPLAY_FLOOR,
         stats.get("converged")),
         "flashlight: %s" % json.dumps(list(sc.light_summaries.values()))] + ["assumption: %s" % x for x in sc.notes]
-    (out / "direct_flashlight.txt").write_text("\n".join(lines) + "\n")
+    (out / ("direct_%s.txt" % name)).write_text("\n".join(lines) + "\n")
     log("\n".join(lines))
