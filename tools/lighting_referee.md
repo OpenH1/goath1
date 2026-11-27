@@ -38,8 +38,11 @@ grenade bursting at that wall; a30's beach in daylight. Variants keep the rest o
   checks the two pictures' overall level agrees). Rows: shadowed pixels on the wall and on the floor beside the
   Flood, the angle between the two parts (it bends at the crease), the distance to the feet, the shares of the
   Flood's lit front, the floor before it and the first-person weapon shadowed, and how much of the shadow changes
-  when the Flood is placed a step aside. The crease, contact and moving rows report n/a until a light off the
-  view's axis is staged: the flashlight's lamp is beside the eye, so the Flood hides its own shadow on the wall.
+  when the light moves. The crease rows use a light off the view's axis: a second local player (split screen,
+  `debug.network_test_place`'s second pose) beside the Flood, its flashlight aimed across it at the slanted wall,
+  seen from the first player's view; "moves" steps that player half a unit. The floor and bend rows report n/a for
+  now: that beam lights too little floor behind the Flood for more than a thin contact line. (Bolts and muzzle
+  flashes never get a shadow slot, #1287.)
 - *hdr*: the HDR frame's half floats (`debug.screenshot_halves`, the view not tone mapped): the AR counter's
   brightest pixel, and the frame's.
 - *runs*: every run exited cleanly, and every picture is whole: no frame mostly one colour, and with world AO (the
@@ -52,7 +55,9 @@ grenade bursting at that wall; a30's beach in daylight. Variants keep the rest o
   the setting changed nothing in this build. `--feature-cost` times each one on. Reflections are checked in their own scene, a10's cryo deck (a static
   camera on its reflective floor), and timed there against the same scene off.
 - *cost*: `debug.pass_times` on the whole Enhanced look with ray-traced shadows and the flashlight on, 1920x1080,
-  each machine alone on its GPU, three runs, the median of the last summaries.
+  each machine alone on its GPU, three runs, the median of the last summaries. Three runs whose frames differ by more
+  than x1.25 are no measurement (omarchy's GPU has shown x1.9 between runs, everything scaled alike): those rows read
+  n/a, "run again".
 - *identity*: the Classic pictures of every scene byte-identical to the baseline's (master), and
   `tools/scorecard/identity.py` (game state tick by tick) against the baseline's game.
 
@@ -78,6 +83,6 @@ grenade bursting at that wall; a30's beach in daylight. Variants keep the rest o
   frame 12, LIGHT SHADOWS 1.5, AO 1.5, a feature +2; 5900X (RTX 4090, a 240 Hz target: 4.2 ms) 3, 0.4, 0.4, +0.5;
   bosgame (RTX 3090, Windows, `--timing ...,bosgame`) 5, 0.8, 0.8, +1. Other passes are reported.
 
-**Negative controls** (`--mutate`): `lights-brighter` (parity), `shadows-everywhere` (shadow), `hdr-boost` (hdr),
+**Negative controls** (`--mutate`): `lights-brighter` (parity), `shadows-everywhere` (shadow), `hdr-boost` (hdr), `shadows-gone` (shadow: the lights' shadows off in the traced runs),
 `classic-changed` (identity), `heavy` (cost). Each must fail its check; run them after changing a threshold.
 Regions and thresholds are constants at the top of the script; regions are pixels of the 1920x1080 picture.
