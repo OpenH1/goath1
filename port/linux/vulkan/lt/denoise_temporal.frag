@@ -25,6 +25,8 @@ layout(location = 0) out uvec4 result;
 const float GAIN = 16.0;
 // the bounce's own history's cap (xgpu_vulkan_lt_indirect.c's INDIRECT_BOUNCE_CAP): a count under it has started again
 const float BOUNCE_CAP = 32.0;
+// two half floats' rounding, relative (2 x 2^-11)
+const float SAME = 1.0e-3;
 
 // the light's change about at, where the history comes from (the previous frame's 3x3 strata's gradient samples about
 // it, its own 8 times over: a moving shadow's edge cut where it is): relight, each channel's ratio of the re-shaded
@@ -58,11 +60,19 @@ float changed(vec2 at, out vec3 relight)
         return 0.0;
     if (before <= 1.0e-3 * larger)
         return 1.0;
+    // (the samples are half floats: a change within their rounding (SAME, relative) is none, so a light that stayed
+    // never relights the history or cuts its count by the rounding's noise, which would walk a held picture's mean)
     float ratio = now / before, off = 0.0;
+    if (abs(now - before) <= SAME * larger)
+        ratio = 1.0;
     for (int c = 0; c < 3; c++)
-        relight[c] = before_sum[c] > 1.0e-3 * before ? now_sum[c] / before_sum[c] : ratio;
+        relight[c] = before_sum[c] <= 1.0e-3 * before ? ratio :
+            abs(now_sum[c] - before_sum[c]) <= SAME * max(now_sum[c], before_sum[c]) ? 1.0 : now_sum[c] / before_sum[c];
     for (int k = 0; k < 9; k++)
-        off += weight[k] * abs(luminance(now_rgb[k]) - luminance(relight * before_rgb[k]));
+    {
+        float a = luminance(now_rgb[k]), b = luminance(relight * before_rgb[k]);
+        off += abs(a - b) <= SAME * max(a, b) ? 0.0 : weight[k] * abs(a - b);
+    }
     return clamp(GAIN * off / larger, 0.0, 1.0);
 }
 
