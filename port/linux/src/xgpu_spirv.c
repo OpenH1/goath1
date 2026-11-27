@@ -4876,6 +4876,12 @@ static void flashlight_light(struct module *m, const struct flashlight_read *rea
 		op2(m, OP_SHIFT_RIGHT_ARITHMETIC, m->t_int, index, constant_int(m, 2)), XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 15)),
 		op2(m, OP_BITWISE_AND, m->t_int, index, constant_int(m, 3))));
 	profile = flashlight_mix(m, low, high, fsub(m, 1, t, f));
+	/* (a model's as the game's model lighting has a point light fall off,
+	1 - d^2 / r^2 in the display's gamma, so its brightness is the game's) */
+	if (!environment)
+		profile = ext2(m, GLSL_POW, m->t_float, fmax_scalar(m, 1, fsub(m, 1, constant_float(m, 1.0f),
+			fmul(m, 1, distance_squared, fmul(m, 1, extract(m, position, 3), extract(m, position, 3)))), 0.0f),
+			constant_float(m, 2.2f));
 	store(m, falloff_variable, profile);
 	spot = gel;
 	/* (the structure's: as the gel pass weighs it, its bump's facing and the
