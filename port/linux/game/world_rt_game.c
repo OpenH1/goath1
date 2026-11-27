@@ -283,6 +283,73 @@ static boolean shader_cutout(struct shader const *shader, struct world_rt_source
 	return TRUE;
 }
 
+/* ---------- its reflection (the light transport's: where a reflection
+ray is worth its cost, lt/indirect.glsl): shader_environment's specular and
+reflection blocks (rt_lights_materials.c's rtlm_environment_specular,
+_reflection: the specular brightness at 0x290, its tint head-on and at
+grazing view at 0x2A8, 0x2B4; the reflection's brightness head-on and at
+grazing view at 0x2F4, 0x2F8), shader_model's (its brightness and tint
+head-on and at grazing view at 0x144 to 0x160) */
+#define WORLD_RT_ENVIRONMENT_SPECULAR_BRIGHTNESS 0x290
+#define WORLD_RT_ENVIRONMENT_SPECULAR_PERPENDICULAR 0x2A8
+#define WORLD_RT_ENVIRONMENT_SPECULAR_PARALLEL 0x2B4
+#define WORLD_RT_ENVIRONMENT_REFLECTION_PERPENDICULAR 0x2F4
+#define WORLD_RT_ENVIRONMENT_REFLECTION_PARALLEL 0x2F8
+#define WORLD_RT_MODEL_REFLECTION_PERPENDICULAR 0x144
+#define WORLD_RT_MODEL_REFLECTION_PARALLEL 0x154
+
+static float shader_real(void const *shader, int offset)
+{
+	float value;
+
+	memcpy(&value, (char const *)shader + offset, sizeof(value));
+	return value == value ? value : 0.0f;
+}
+
+static float shader_luminance(void const *shader, int offset)
+{
+	return 0.2126f * shader_real(shader, offset) + 0.7152f * shader_real(shader, offset + 4) +
+		0.0722f * shader_real(shader, offset + 8);
+}
+
+/* a strength as the flags carry it (x 128, 0 to 255) */
+static unsigned long reflection_byte(float strength)
+{
+	float scaled = strength * 128.0f + 0.5f;
+
+	return scaled <= 0.0f ? 0ul : scaled >= 255.0f ? 255ul : (unsigned long)scaled;
+}
+
+static void material_reflection(struct shader const *shader, struct world_rt_source_material *material)
+{
+	float perpendicular, parallel;
+
+	if (shader->base.type == _world_rt_shader_type_environment)
+	{
+		float brightness = shader_real(shader, WORLD_RT_ENVIRONMENT_SPECULAR_BRIGHTNESS);
+
+		perpendicular = brightness * shader_luminance(shader, WORLD_RT_ENVIRONMENT_SPECULAR_PERPENDICULAR) *
+			shader_real(shader, WORLD_RT_ENVIRONMENT_REFLECTION_PERPENDICULAR);
+		parallel = brightness * shader_luminance(shader, WORLD_RT_ENVIRONMENT_SPECULAR_PARALLEL) *
+			shader_real(shader, WORLD_RT_ENVIRONMENT_REFLECTION_PARALLEL);
+		if (TEST_FLAG(((struct world_rt_shader_environment const *)shader)->flags,
+			_world_rt_shader_environment_bump_map_is_specular_mask_bit))
+			material->flags |= WORLD_RT_MATERIAL_MASK_BUMP;
+	}
+	else if (shader->base.type == _world_rt_shader_type_model)
+	{
+		perpendicular = shader_real(shader, WORLD_RT_MODEL_REFLECTION_PERPENDICULAR) *
+			shader_luminance(shader, WORLD_RT_MODEL_REFLECTION_PERPENDICULAR + 4);
+		parallel = shader_real(shader, WORLD_RT_MODEL_REFLECTION_PARALLEL) *
+			shader_luminance(shader, WORLD_RT_MODEL_REFLECTION_PARALLEL + 4);
+		material->flags |= WORLD_RT_MATERIAL_MASK_MULTIPURPOSE;
+	}
+	else
+		return;
+	material->flags |= reflection_byte(perpendicular) << WORLD_RT_MATERIAL_REFLECTION_PERPENDICULAR_SHIFT |
+		reflection_byte(parallel) << WORLD_RT_MATERIAL_REFLECTION_PARALLEL_SHIFT;
+}
+
 /* a shader as a render mesh's material: its type and flags, its maps, and
 what its alpha test tests (rasterizer_xbox_environment.c: an alpha-tested
 environment's bump map's alpha; rasterizer_xbox_models.c: a model's base
@@ -345,6 +412,7 @@ static void material_describe(long shader_index, struct world_rt_source_material
 	/* (a transparent one drawn as a cutout: its first map's alpha tested) */
 	else if (!shader_cutout(shader, material))
 		material->flags |= WORLD_RT_MATERIAL_TRANSPARENT;
+	material_reflection(shader, material);
 	/* (the mods' material maps of its base map: docs/mods.md) */
 	if (material->maps[WORLD_RT_MAP_BASE].bitmap != NONE)
 		mod_materials_maps(material->maps[WORLD_RT_MAP_BASE].bitmap, &material->normal_image, &material->orm_image);

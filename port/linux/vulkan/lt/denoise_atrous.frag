@@ -45,6 +45,10 @@ void main()
         return;
     vec4 centre = fetch(pixel);
     float count = unpackHalf2x16(texelFetch(history, pixel, 0).w).x;
+    // (the specular channel: nothing where the pixel has none, and its neighbours without one left out)
+    bool specular = (pass.control.y & SPECULAR) != 0;
+    if (specular && count <= 0.0)
+        return;
     // (step 0, checking: the temporal stage's mean alone; a pixel under 4 frames filtered by the first two passes
     // alone, steps 1 and 2: its noise is guessed from its neighbours, and a guess wrong at an edge stays small)
     if (pass.control.z == 0 || (pass.control.z > 2 && count < 4.0))
@@ -70,7 +74,8 @@ void main()
         {
             ivec2 q = pixel + ivec2(x, y);
             uvec2 other = texelFetch(filter_guide, q, 0).xy;
-            if (!inside(q) || (other.y >> 16) != (g.y >> 16) || (other.y & 0xFFFFu) == 0u)
+            if (!inside(q) || (other.y >> 16) != (g.y >> 16) || (other.y & 0xFFFFu) == 0u ||
+                (specular && unpackHalf2x16(texelFetch(history, q, 0).w).x <= 0.0))
                 continue;
             float w = (x == 0 ? 0.5 : 0.25) * (y == 0 ? 0.5 : 0.25);
             vec4 c = fetch(q);
@@ -106,7 +111,8 @@ void main()
             if (!inside(q))
                 continue;
             uvec2 other = texelFetch(filter_guide, q, 0).xy;
-            if ((other.y & 0xFFFFu) == 0u || (other.y >> 16) != (g.y >> 16))
+            if ((other.y & 0xFFFFu) == 0u || (other.y >> 16) != (g.y >> 16) ||
+                (specular && unpackHalf2x16(texelFetch(history, q, 0).w).x <= 0.0))
                 continue;
             vec4 c = fetch(q);
             if (young && unpackHalf2x16(texelFetch(history, q, 0).w).x < 4.0)

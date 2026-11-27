@@ -37,6 +37,8 @@ thread alone, as the core.
 #include "xgpu_spirv.h"
 #include "xgpu_stream.h"
 #include "xgpu_vulkan.h"
+#include "xgpu_vulkan_lt.h"
+#include "xgpu_vulkan_lt_indirect.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -405,5 +407,11 @@ void xgpu_vulkan_rt_bounce_draw(struct xgpu_vulkan_image *inputs, const struct x
 
 void xgpu_vulkan_rt_bounce_end(void)
 {
+	/* (HALO_LT_E1: the light transport's light kept bound past the window's
+	end, until its next draw (xgpu_vulkan_lt_draw unbinds it first): the
+	structure's reflection passes, drawn after the window, read its right
+	half, xgpu_vulkan_lt_indirect.c) */
+	if (xgpu_vulkan_lt_mode() && xgpu_vulkan_lt_indirect_on())
+		return;
 	xgpu_vulkan_rt_bounce_set(NULL);
 }

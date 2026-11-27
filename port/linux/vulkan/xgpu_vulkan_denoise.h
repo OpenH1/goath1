@@ -23,6 +23,16 @@ struct xgpu_vulkan_image *xgpu_vulkan_denoise_draw(struct xgpu_vulkan_image *raw
 	struct xgpu_vulkan_image *previous_raw, struct xgpu_vulkan_image *inputs, struct xgpu_vulkan_image *previous_inputs,
 	struct xgpu_vulkan_image *guides, const struct xgpu_world_ao_pass *pass, const int32_t rectangle[4]);
 
+/* the specular channel (the light transport's reflections,
+xgpu_vulkan_lt_indirect.c): this frame's noisy specular radiance (RGBA,
+rgb; a the hit's distance, 0 a miss, less than 0 a pixel without specular)
+through the same stages, its own history (reprojected from the
+reflection's virtual point, the count 16 to 32 frames by roughness), no
+gradients; the denoised radiance (RGBA16F), or NULL */
+struct xgpu_vulkan_image *xgpu_vulkan_denoise_specular_draw(struct xgpu_vulkan_image *raw,
+	struct xgpu_vulkan_image *inputs, struct xgpu_vulkan_image *guides, const struct xgpu_world_ao_pass *pass,
+	const int32_t rectangle[4]);
+
 /* its passes' pipelines asked for (made apart from the draws), with the
 light transport's own */
 void xgpu_vulkan_denoise_prepare(void);

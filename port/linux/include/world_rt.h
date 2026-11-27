@@ -78,6 +78,12 @@ enum
 	WORLD_RT_MATERIAL_ALPHA_TESTED = 1,
 	WORLD_RT_MATERIAL_TWO_SIDED = 2,
 	WORLD_RT_MATERIAL_TRANSPARENT = 4,
+	/* (its reflection: xgpu_stream.h's XGPU_WORLD_RT_MATERIAL_MASK_*,
+	_REFLECTION_*) */
+	WORLD_RT_MATERIAL_MASK_BUMP = 0x100,
+	WORLD_RT_MATERIAL_MASK_MULTIPURPOSE = 0x200,
+	WORLD_RT_MATERIAL_REFLECTION_PERPENDICULAR_SHIFT = 16,
+	WORLD_RT_MATERIAL_REFLECTION_PARALLEL_SHIFT = 24,
 	/* the scene as drawn's memory (world_rt.c's budget): a triangle's
 	bytes, estimated (its share of a bottom-level structure, about 160
 	before compaction on RADV, with its corners, material and vertices'

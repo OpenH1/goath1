@@ -2193,6 +2193,8 @@ static unsigned int lt_e1_guides(struct module *m, struct pixel_state *state, un
 static unsigned int lt_guides_motion(struct module *m, unsigned int current_in, unsigned int previous_in);
 static unsigned int lt_e1_add(struct module *m, struct pixel_state *state, unsigned int lit, unsigned int tint,
 	unsigned int p, unsigned int n);
+static unsigned int lt_reflection_texel(struct module *m, struct pixel_state *state, unsigned int cube);
+static BOOL lt_reflection_traced(const struct pixel_state *state);
 
 static unsigned int pixel_input(struct module *m, struct pixel_state *state, unsigned int variable_id, unsigned int type)
 {
@@ -2614,8 +2616,10 @@ static void texture_stage(struct module *m, struct pixel_state *state, int stage
 			state->t[stage] = sample(m, state, stage, xt);
 		/* (display.rt_reflections: the reflection's texel traced along the
 		same vector) */
-		if (stage == 3 && state->rt_reflection && !lt_e1_on()) /* (HALO_LT_E1: none) */
+		if (stage == 3 && state->rt_reflection && !lt_e1_on())
 			state->t[stage] = rt_reflection_texel(m, state, xyz(m, xt), state->t[stage]);
+		else if (stage == 3 && lt_reflection_traced(state)) /* (HALO_LT_E1: the pass's own) */
+			state->t[stage] = lt_reflection_texel(m, state, state->t[stage]);
 		break;
 	case XGPU_TEXTURE_PASSTHRU:
 		state->t[stage] = saturate(m, 4, xt);
@@ -2721,8 +2725,10 @@ static void texture_stage(struct module *m, struct pixel_state *state, int stage
 		state->t[stage] = sample(m, state, stage, vec4_of(m, r, one));
 		/* (display.rt_reflections: the reflection's texel traced along the
 		bump map's reflection) */
-		if (stage == 3 && state->rt_reflection && !lt_e1_on()) /* (HALO_LT_E1: none) */
+		if (stage == 3 && state->rt_reflection && !lt_e1_on())
 			state->t[stage] = rt_reflection_texel(m, state, r, state->t[stage]);
+		else if (stage == 3 && lt_reflection_traced(state)) /* (HALO_LT_E1: the pass's own) */
+			state->t[stage] = lt_reflection_texel(m, state, state->t[stage]);
 		break;
 	}
 	case XGPU_TEXTURE_DOT_STR_3D:
@@ -8934,6 +8940,63 @@ static unsigned int lt_e1_add(struct module *m, struct pixel_state *state, unsig
 	/* (less than 0 where the suns' share a dynamic object shadows is more
 	than the lightmap's light: kept at 0) */
 	return ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, base, 0.0f), constant_splat(m, 3, 1.0f / 2.2f));
+}
+
+/* whether a reflection's texel is HALO_LT_E1's pass's: the structure's
+(the pre-pass's surfaces, whose guides the pass traced from). The level's
+glass and water are not in the pre-pass, nor every model yet (characters:
+their pixels' guides can be the surfaces behind them): their cube maps, as
+the game drew them */
+static BOOL lt_reflection_traced(const struct pixel_state *state)
+{
+	return state->rt_reflection && state->program->rt_reflection == XGPU_RT_REFLECTION_STRUCTURE;
+}
+
+/* HALO_LT_E1's reflections (~/dev/rt2-realtime-design.md section 1.4;
+port/linux/vulkan/xgpu_vulkan_lt_indirect.c): the reflection's texel
+(texture 3's cube map lookup, whose colour the game's combiners then mask,
+tint and fresnel as they did) from the pass's traced and denoised specular,
+the right half of display.rt_bounce's binding: its radiance s.rgb (linear,
+the hits' share of the lobe's) and the hits' share s.a; where the rays left
+the scene (the sky, past their reach), the cube map, as GLSL:
+ivec2 size = textureSize(rt_bounce, 0); int half = size.x >> 1;
+ivec2 at = ivec2(clamp(int(gl_FragCoord.x), 0, max(half - 1, 0)) + half, min(int(gl_FragCoord.y), size.y - 1));
+vec4 s = texelFetch(rt_bounce, at, 0);
+texel = vec4(pow(max(s.rgb + (1.0 - s.a) * pow(max(cube.rgb, 0.0), vec3(2.2)), 0.0), vec3(1.0 / 2.2)), cube.a);
+(the binding's stand-in, 1x1 of nothing: the cube map) */
+static unsigned int lt_reflection_texel(struct module *m, struct pixel_state *state, unsigned int cube)
+{
+	unsigned int sampled, image, size, half, pixel, x, y, at, s, operands[4], linear, rgb;
+
+	if (!state->rt_bounce)
+		rt_bounce_declare(m, state);
+	if (!state->frag_coord)
+	{
+		state->frag_coord = variable(m, m->t_v4, STORAGE_INPUT, "gl_FragCoord");
+		decorate1(m, state->frag_coord, DECORATION_BUILT_IN, BUILT_IN_FRAG_COORD);
+	}
+	sampled = load(m, type_sampled_image(m, DIM_2D, FALSE, FALSE, TRUE), state->rt_bounce);
+	image = op(m, OP_IMAGE, type_sampled_image(m, DIM_2D, FALSE, FALSE, FALSE), 1, &sampled);
+	size = image_size(m, image, m->t_iv2);
+	half = op2(m, OP_SHIFT_RIGHT_ARITHMETIC, m->t_int, op2(m, OP_COMPOSITE_EXTRACT, m->t_int, size, 0), constant_int(m, 1));
+	pixel = op1(m, OP_CONVERT_F_TO_S, m->t_iv2, xy(m, load(m, m->t_v4, state->frag_coord)));
+	x = op2(m, OP_I_ADD, m->t_int, ext3(m, GLSL_S_CLAMP, m->t_int, op2(m, OP_COMPOSITE_EXTRACT, m->t_int, pixel, 0), constant_int(m, 0),
+		ext2(m, GLSL_S_MAX, m->t_int, int_add(m, half, -1), constant_int(m, 0))), half);
+	y = ext2(m, GLSL_S_MIN, m->t_int, op2(m, OP_COMPOSITE_EXTRACT, m->t_int, pixel, 1), int_add(m, op2(m, OP_COMPOSITE_EXTRACT, m->t_int, size, 1), -1));
+	at = rt_bounce_iv2(m, x, y);
+	operands[0] = image;
+	operands[1] = at;
+	operands[2] = IMAGE_OPERANDS_LOD;
+	operands[3] = constant_int(m, 0);
+	s = op(m, OP_IMAGE_FETCH, m->t_v4, 4, operands);
+	linear = ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, xyz(m, cube), 0.0f), constant_splat(m, 3, 2.2f));
+	rgb = fadd(m, 3, xyz(m, s), fscale(m, 3, linear, fsub(m, 1, constant_float(m, 1.0f), extract(m, s, 3))));
+	rgb = ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, rgb, 0.0f), constant_splat(m, 3, 1.0f / 2.2f));
+	/* (HALO_RT_REFLECTIONS_VIEW=1: green by the hits' share, red the rest) */
+	if (rt_reflections_view() == 1)
+		rgb = construct(m, 3, (unsigned int[]){ fsub(m, 1, constant_float(m, 1.0f), extract(m, s, 3)), extract(m, s, 3),
+			constant_float(m, 0.0f) });
+	return vec4_of(m, rgb, extract(m, cube, 3));
 }
 
 /* ---------- the enhanced dynamic lights' glows (xgpu_spirv.h) */

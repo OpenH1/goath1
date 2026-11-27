@@ -67,7 +67,8 @@ void main()
     result = uvec4(0u);
     if ((words.y & INPUT_PRESENT) == 0u)
         return;
-    vec3 sample_rgb = max(texelFetch(raw, pixel, 0).rgb, vec3(0.0));
+    vec4 raw_texel = texelFetch(raw, pixel, 0);
+    vec3 sample_rgb = max(raw_texel.rgb, vec3(0.0));
     vec3 n = unfold(unpackSnorm2x16(words.x));
     vec3 p = world_point(pixel, uintBitsToFloat(words.z));
     // (checking: the guides' motion less the cameras' reprojection, pixels; z 1 where the guides carry motion, 2
@@ -87,8 +88,22 @@ void main()
     vec3 mean = vec3(0.0);
     float count = 0.0, moment = 0.0, cap = float(pass.control.x);
     vec2 at;
+    // (the specular channel: nothing where the pixel has no specular; the history from where the reflection's virtual
+    // point (behind the mirror by the hit's distance) was, by the cameras; the cap from 16 frames (smooth) to 32
+    // (rough: its noise is wider), the guides' roughness, or 0.1 where they have none)
+    bool specular = (pass.control.y & SPECULAR) != 0;
+    vec3 reprojected = p;
+    if (specular)
+    {
+        if (raw_texel.a < 0.0)
+            return;
+        uint byte = (texelFetch(guides, pixel, 0).z >> 16) & 255u;
+        cap = mix(16.0, 32.0, clamp((byte == 255u ? 0.1 : float(byte) / 255.0) * 2.0, 0.0, 1.0));
+        if (raw_texel.a > 0.0)
+            reprojected = p + normalize(p - pass.camera[0].xyz) * raw_texel.a;
+    }
     if ((pass.control.y & HISTORY) != 0 && pass.history.x != 0.0 &&
-        reproject(p, pixel, texelFetch(guides, pixel, 0).w, at))
+        reproject(reprojected, pixel, specular ? MOTION_NONE : texelFetch(guides, pixel, 0).w, at))
     {
         // (in motion, the history resampled each frame: its cap from 64 frames still down to 8 at a pixel's move a
         // frame, so that the resampling's blur stays a few frames' and the surfaces' detail stays sharp)
@@ -105,10 +120,13 @@ void main()
             float w = ((k & 1) != 0 ? t.x : 1.0 - t.x) * ((k >> 1) != 0 ? t.y : 1.0 - t.y);
             if (w <= 0.0 || any(lessThan(q, pass.previous_corners.xy)) ||
                 any(greaterThanEqual(q, pass.previous_corners.zw)) ||
-                !same_surface(texelFetch(previous_guide, q, 0).xy, p, n, words.w))
+                !(specular ? same_plane(texelFetch(previous_guide, q, 0).xy, q, p, n, words.w) :
+                same_surface(texelFetch(previous_guide, q, 0).xy, p, n, words.w)))
                 continue;
             uvec4 h = texelFetch(history, q, 0);
             vec2 cv = unpackHalf2x16(h.w);
+            if (specular && cv.x <= 0.0)
+                continue;
             vec3 m = vec3(uintBitsToFloat(h.x), uintBitsToFloat(h.y), uintBitsToFloat(h.z));
             float l = luminance(m);
             rgb += w * m;
@@ -135,7 +153,9 @@ void main()
                 {
                     ivec2 q = base + ivec2(i - 1, j - 1);
                     if (any(lessThan(q, pass.previous_corners.xy)) || any(greaterThanEqual(q, pass.previous_corners.zw)) ||
-                        !same_surface(texelFetch(previous_guide, q, 0).xy, p, n, words.w))
+                        !(specular ? same_plane(texelFetch(previous_guide, q, 0).xy, q, p, n, words.w) &&
+                        unpackHalf2x16(texelFetch(history, q, 0).w).x > 0.0 :
+                        same_surface(texelFetch(previous_guide, q, 0).xy, p, n, words.w)))
                     {
                         whole = false;
                         break;

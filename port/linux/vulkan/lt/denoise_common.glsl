@@ -14,6 +14,10 @@
 #define CAMERA_ONLY 8
 // (checking, the negative control: an exponential average from the start, the history's count held at the cap)
 #define EMA 16
+// (the specular channel, xgpu_vulkan_denoise_specular_draw: the raw's a its hit distance, less than 0 where the pixel
+// has no specular; its history reprojected from the reflection's virtual point, the count capped by roughness; the
+// a-trous passes stopped at pixels without one)
+#define SPECULAR 32
 // (checking: the temporal stage writes the guides' motion less the cameras' reprojection, in pixels; with
 // MOTION_RAW too the motion itself)
 #define MOTION_VIEW 128
@@ -130,5 +134,16 @@ bool same_surface(uvec2 before, vec3 p, vec3 n, uint owner)
     float was_distance = unpackHalf2x16(before.y).x, now_distance = length(p - pass.previous[0].xyz);
     return (before.y & 0xFFFFu) != 0u && (before.y >> 16) == (owner & 0xFFFFu) &&
         abs(was_distance - now_distance) <= DEPTH_SHARE * now_distance &&
+        dot(unfold(unpackSnorm4x8(before.x).zw), n) >= COS_25;
+}
+
+// (SPECULAR) whether the previous frame's pixel q (its filter guide) is on this pixel's surface: drawn, the same owner,
+// its point on this one's plane within 3% of the distance, the normal within 25 degrees (the virtual point's pixel
+// is another of the same surface, at another distance)
+bool same_plane(uvec2 before, ivec2 q, vec3 p, vec3 n, uint owner)
+{
+    vec3 was = previous_point(q, unpackHalf2x16(before.y).x);
+    return (before.y & 0xFFFFu) != 0u && (before.y >> 16) == (owner & 0xFFFFu) &&
+        abs(dot(was - p, n)) <= DEPTH_SHARE * length(p - pass.previous[0].xyz) &&
         dot(unfold(unpackSnorm4x8(before.x).zw), n) >= COS_25;
 }

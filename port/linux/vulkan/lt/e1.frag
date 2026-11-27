@@ -99,6 +99,11 @@ layout(set = 0, binding = 1, std140) uniform Pass
     vec4 grid[2];
     // x the block's lights in the table, y the suns, z LIGHTS_*, w COPY_REACH's row
     ivec4 lights;
+#ifdef LT_INDIRECT
+    // (the indirect light's and reflections' kernel, lt/indirect.glsl: xgpu_vulkan_lt_indirect.c's struct
+    // lt_indirect_params)
+    layout(offset = 1536) vec4 indirect[4];
+#endif
 } pass;
 
 layout(set = 0, binding = 3) uniform usampler3D cells;
@@ -625,6 +630,10 @@ uint seed(ivec2 pixel, uint salt)
     return h;
 }
 
+// (LT_INDIRECT: the indirect light's and reflections' kernel instead, its own main: lt/indirect.glsl)
+#ifdef LT_INDIRECT
+#include "indirect.glsl"
+#else
 void main()
 {
     ivec2 pixel = ivec2(gl_FragCoord.xy);
@@ -756,3 +765,4 @@ void main()
     mean += (lit - mean) / count;
     result = vec4(mean, count);
 }
+#endif

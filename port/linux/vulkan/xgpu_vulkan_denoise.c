@@ -90,8 +90,27 @@ enum
 	DENOISE_FIRST = 4,
 	DENOISE_CAMERA_ONLY = 8,
 	DENOISE_EMA = 16,
+	DENOISE_SPECULAR = 32,
 	DENOISE_MOTION_VIEW = 128,
 	DENOISE_MOTION_RAW = 256,
+};
+/* the specular channel's cap where the guides have no roughness (its
+temporal stage's own runs from 16 to 32 by it: lt/denoise_temporal.frag) */
+#define DENOISE_SPECULAR_CAP 32
+#define DENOISE_SPECULAR_PASSES 2
+
+/* a channel's images and history (the diffuse's; the specular's,
+xgpu_vulkan_denoise_specular_draw): the histories and filter guides in
+turn (this frame's, the last), the a-trous passes' in turn, the result, the
+re-shade, the gradients, the last frame's guides */
+struct denoise_channel
+{
+	struct xgpu_vulkan_image *histories[2], *filter_guides[2], *filtered[2], *result, *reshaded, *gradients;
+	struct xgpu_vulkan_image *previous_guides;
+	int current, previous_valid;
+	struct xgpu_world_ao_pass previous_pass;
+	/* HALO_LT_DENOISE_DUMP's: the draws counted */
+	unsigned long draws;
 };
 
 static struct
@@ -101,17 +120,11 @@ static struct
 	VkShaderModule vertex, gradient, temporal, guide, atrous;
 	VkSampler sampler;
 	struct xgpu_vulkan_pipeline_description gradient_pass, temporal_pass, guide_pass, atrous_pass;
-	/* the histories and filter guides in turn (this frame's, the last), the
-	a-trous passes' in turn, the result, the re-shade, the gradients, the last
-	frame's guides */
-	struct xgpu_vulkan_image *histories[2], *filter_guides[2], *filtered[2], *result, *reshaded, *gradients;
-	struct xgpu_vulkan_image *previous_guides;
-	int current, previous_valid;
-	struct xgpu_world_ao_pass previous_pass;
+	/* the diffuse channel, the specular */
+	struct denoise_channel channels[2];
 	/* checking (HALO_LT_DENOISE_*) */
 	int camera_only, no_gradients, spatial, ema, motion_view;
-	/* HALO_LT_DENOISE_DUMP's: the draws counted, those dumped */
-	unsigned long draws;
+	/* HALO_LT_DENOISE_DUMP's: those dumped */
 	const char *dumps;
 } denoise = { .spatial = -1 };
 
@@ -132,7 +145,7 @@ static int denoise_shaders(void)
 	if (denoise.generation != generation)
 	{
 		/* (a reload: the kernels made again, the history started again) */
-		denoise.made = denoise.failed = denoise.previous_valid = 0;
+		denoise.made = denoise.failed = denoise.channels[0].previous_valid = denoise.channels[1].previous_valid = 0;
 		denoise.generation = generation;
 	}
 	if (denoise.made)
@@ -247,7 +260,7 @@ static int denoise_dumped(unsigned long draw)
 	return 0;
 }
 
-static void denoise_dump(struct xgpu_vulkan_image *image, unsigned long draw)
+static void denoise_dump(struct xgpu_vulkan_image *image, unsigned long draw, const char *what)
 {
 	const struct xgpu_vulkan_image_description *size = xgpu_vulkan_image_description(image);
 	const char *folder = getenv("HALO_LT_DENOISE_DUMP_DIR");
@@ -258,7 +271,7 @@ static void denoise_dump(struct xgpu_vulkan_image *image, unsigned long draw)
 
 	if (xgpu_vulkan_read_halves(image, 0, &halves) != 1 || !halves)
 		return;
-	snprintf(path, sizeof(path), "%s/denoise_%lu.rgba16f", folder && *folder ? folder : ".", draw);
+	snprintf(path, sizeof(path), "%s/denoise%s_%lu.rgba16f", folder && *folder ? folder : ".", what, draw);
 	file = fopen(path, "wb");
 	if (file)
 	{
@@ -322,9 +335,12 @@ void xgpu_vulkan_denoise_prepare(void)
 	(void)denoise_shaders();
 }
 
-struct xgpu_vulkan_image *xgpu_vulkan_denoise_draw(struct xgpu_vulkan_image *raw,
-	struct xgpu_vulkan_image *previous_raw, struct xgpu_vulkan_image *inputs, struct xgpu_vulkan_image *previous_inputs,
-	struct xgpu_vulkan_image *guides, const struct xgpu_world_ao_pass *pass, const int32_t rectangle[4])
+/* a channel's frame (xgpu_vulkan_denoise_draw's; the specular's without
+the gradients, flagged DENOISE_SPECULAR) */
+static struct xgpu_vulkan_image *denoise_channel_draw(struct denoise_channel *channel, int specular,
+	struct xgpu_vulkan_image *raw, struct xgpu_vulkan_image *previous_raw, struct xgpu_vulkan_image *inputs,
+	struct xgpu_vulkan_image *previous_inputs, struct xgpu_vulkan_image *guides, const struct xgpu_world_ao_pass *pass,
+	const int32_t rectangle[4])
 {
 	const struct xgpu_vulkan_image_description *size;
 	struct xgpu_world_ao_pass uniforms;
@@ -344,46 +360,58 @@ struct xgpu_vulkan_image *xgpu_vulkan_denoise_draw(struct xgpu_vulkan_image *raw
 	height = size->height;
 	gradient_width = (width + 2) / 3;
 	gradient_height = (height + 2) / 3;
-	if (!denoise.previous_guides || xgpu_vulkan_image_description(denoise.previous_guides)->width != width ||
-		xgpu_vulkan_image_description(denoise.previous_guides)->height != height)
-		denoise.previous_valid = 0;
+	if (!channel->result || xgpu_vulkan_image_description(channel->result)->width != width ||
+		xgpu_vulkan_image_description(channel->result)->height != height)
+		channel->previous_valid = 0;
 	for (index = 0; index < 2; index++)
 	{
-		denoise.histories[index] = denoise_image(denoise.histories[index], XGPU_VULKAN_FORMAT_RGBA32_UINT, width,
+		channel->histories[index] = denoise_image(channel->histories[index], XGPU_VULKAN_FORMAT_RGBA32_UINT, width,
 			height);
-		denoise.filtered[index] = denoise_image(denoise.filtered[index], XGPU_VULKAN_FORMAT_RGBA16F, width, height);
-		denoise.filter_guides[index] = denoise_image(denoise.filter_guides[index], XGPU_VULKAN_FORMAT_RG32_UINT, width,
+		channel->filtered[index] = denoise_image(channel->filtered[index], XGPU_VULKAN_FORMAT_RGBA16F, width, height);
+		channel->filter_guides[index] = denoise_image(channel->filter_guides[index], XGPU_VULKAN_FORMAT_RG32_UINT, width,
 			height);
 	}
-	denoise.result = denoise_image(denoise.result, XGPU_VULKAN_FORMAT_RGBA16F, width, height);
-	denoise.reshaded = denoise_image(denoise.reshaded, XGPU_VULKAN_FORMAT_RGBA32F, gradient_width, gradient_height);
-	denoise.gradients = denoise_image(denoise.gradients, XGPU_VULKAN_FORMAT_RGBA32F, gradient_width, gradient_height);
-	denoise.previous_guides = denoise_image(denoise.previous_guides, XGPU_VULKAN_FORMAT_RGBA32_UINT, width, height);
-	if (!denoise.histories[0] || !denoise.histories[1] || !denoise.filtered[0] || !denoise.filtered[1] ||
-		!denoise.filter_guides[0] || !denoise.filter_guides[1] || !denoise.result || !denoise.reshaded ||
-		!denoise.gradients || !denoise.previous_guides)
+	channel->result = denoise_image(channel->result, XGPU_VULKAN_FORMAT_RGBA16F, width, height);
+	channel->reshaded = denoise_image(channel->reshaded, XGPU_VULKAN_FORMAT_RGBA32F, gradient_width, gradient_height);
+	channel->gradients = denoise_image(channel->gradients, XGPU_VULKAN_FORMAT_RGBA32F, gradient_width, gradient_height);
+	/* (the specular's: no re-shade, none kept) */
+	channel->previous_guides = denoise_image(channel->previous_guides, XGPU_VULKAN_FORMAT_RGBA32_UINT,
+		specular ? 1 : width, specular ? 1 : height);
+	if (!channel->histories[0] || !channel->histories[1] || !channel->filtered[0] || !channel->filtered[1] ||
+		!channel->filter_guides[0] || !channel->filter_guides[1] || !channel->result || !channel->reshaded ||
+		!channel->gradients || !channel->previous_guides)
 		return NULL;
-	history_valid = denoise.previous_valid && pass->history[0] != 0.0f;
+	history_valid = channel->previous_valid && pass->history[0] != 0.0f;
 	uniforms = *pass;
 	memset(&params, 0, sizeof(params));
 	params.size[0] = (float)width;
 	params.size[1] = (float)height;
 	params.size[2] = (float)gradient_width;
 	params.size[3] = (float)gradient_height;
-	params.control[0] = DENOISE_CAP;
+	params.control[0] = specular ? DENOISE_SPECULAR_CAP : DENOISE_CAP;
 	params.control[1] = (history_valid ? DENOISE_HISTORY : 0) | (denoise.camera_only ? DENOISE_CAMERA_ONLY : 0) |
-		(denoise.ema ? DENOISE_EMA : 0) | (denoise.motion_view ? DENOISE_MOTION_VIEW : 0) |
-		(denoise.motion_view == 2 ? DENOISE_MOTION_RAW : 0);
-	params.tuning[0] = denoise.previous_pass.history[1];
+		(denoise.ema ? DENOISE_EMA : 0) | (specular ? DENOISE_SPECULAR : 0) |
+		(denoise.motion_view ? DENOISE_MOTION_VIEW : 0) | (denoise.motion_view == 2 ? DENOISE_MOTION_RAW : 0);
+	params.tuning[0] = channel->previous_pass.history[1];
 	params.tuning[1] = DENOISE_SIGMA_LUMINANCE;
 	params.tuning[2] = DENOISE_SIGMA_DEPTH;
 	params.tuning[3] = DENOISE_SIGMA_NORMAL;
 	xgpu_vulkan_pass_owner(DENOISE_OWNER);
 	/* 1: each pixel's guides in one texel (this frame's; the last frame's
 	kept, in turn, for the history's tests) */
-	previous_guide = denoise.filter_guides[denoise.current];
-	denoise.current ^= 1;
-	guide = denoise.filter_guides[denoise.current];
+	previous_guide = channel->filter_guides[channel->current];
+	channel->current ^= 1;
+	guide = channel->filter_guides[channel->current];
+	/* (the specular's: the diffuse channel's, drawn this frame from the
+	same pixels, where it has them) */
+	if (specular && denoise.channels[0].result && denoise.channels[0].previous_valid &&
+		xgpu_vulkan_image_description(denoise.channels[0].result)->width == width &&
+		xgpu_vulkan_image_description(denoise.channels[0].result)->height == height)
+	{
+		guide = denoise.channels[0].filter_guides[denoise.channels[0].current];
+		previous_guide = denoise.channels[0].filter_guides[denoise.channels[0].current ^ 1];
+	}
+	else
 	{
 		struct xgpu_vulkan_image *textures[2] = { inputs, guides };
 
@@ -393,33 +421,35 @@ struct xgpu_vulkan_image *xgpu_vulkan_denoise_draw(struct xgpu_vulkan_image *raw
 	frame's light, against its own samples) */
 	if (history_valid && previous_raw && previous_inputs && !denoise.no_gradients)
 	{
-		struct xgpu_vulkan_image *textures[4] = { guide, previous_guide, denoise.reshaded, previous_raw };
+		struct xgpu_vulkan_image *textures[4] = { guide, previous_guide, channel->reshaded, previous_raw };
 
-		xgpu_vulkan_lt_reshade(denoise.reshaded, &denoise.previous_pass, previous_inputs, denoise.previous_guides);
+		xgpu_vulkan_lt_reshade(channel->reshaded, &channel->previous_pass, previous_inputs, channel->previous_guides);
 		gradient_rectangle[0] = 0;
 		gradient_rectangle[1] = 0;
 		gradient_rectangle[2] = (int32_t)gradient_width;
 		gradient_rectangle[3] = (int32_t)gradient_height;
-		denoise_pass(denoise.gradients, gradient_rectangle, &uniforms, &params, &denoise.gradient_pass, textures, 4);
+		denoise_pass(channel->gradients, gradient_rectangle, &uniforms, &params, &denoise.gradient_pass, textures, 4);
 		params.control[1] |= DENOISE_GRADIENTS;
 	}
 	/* 3: the temporal stage */
-	history = denoise.histories[denoise.current ^ 1];
+	history = channel->histories[channel->current ^ 1];
 	{
-		struct xgpu_vulkan_image *textures[6] = { raw, inputs, guides, previous_guide, history, denoise.gradients };
+		struct xgpu_vulkan_image *textures[6] = { raw, inputs, guides, previous_guide, history, channel->gradients };
 
-		denoise_pass(denoise.histories[denoise.current], rectangle, &uniforms, &params, &denoise.temporal_pass,
+		denoise_pass(channel->histories[channel->current], rectangle, &uniforms, &params, &denoise.temporal_pass,
 			textures, 6);
 	}
 	/* 4: the spatial stage (the first pass from the history; the stage left
 	out, checking: one pass of step 0, the mean alone) */
-	passes = denoise.spatial ? DENOISE_PASSES : 1;
+	/* (the specular's two, steps 1 and 2: its lobes are narrow, its count
+	high where it is sharp) */
+	passes = denoise.spatial ? (specular ? DENOISE_SPECULAR_PASSES : DENOISE_PASSES) : 1;
 	for (index = 0; index < passes; index++)
 	{
 		int last = index == passes - 1;
-		struct xgpu_vulkan_image *textures[3] = { index ? output : denoise.filtered[1],
-			denoise.histories[denoise.current], guide };
-		struct xgpu_vulkan_image *into = last ? denoise.result : denoise.filtered[index & 1];
+		struct xgpu_vulkan_image *textures[3] = { index ? output : channel->filtered[1],
+			channel->histories[channel->current], guide };
+		struct xgpu_vulkan_image *into = last ? channel->result : channel->filtered[index & 1];
 
 		params.control[1] = (params.control[1] & ~DENOISE_FIRST) | (index ? 0 : DENOISE_FIRST);
 		params.control[2] = denoise.spatial ? 1 << index : 0;
@@ -428,20 +458,20 @@ struct xgpu_vulkan_image *xgpu_vulkan_denoise_draw(struct xgpu_vulkan_image *raw
 	}
 	/* 5: this frame's guides kept for the next's re-shade (its inputs and
 	sample are the light transport's own, kept there) */
-	if (!denoise.no_gradients)
-		xgpu_vulkan_image_copy(guides, 0, 0, denoise.previous_guides, 0, 0);
-	denoise.previous_pass = *pass;
-	denoise.previous_valid = 1;
+	if (!denoise.no_gradients && !specular)
+		xgpu_vulkan_image_copy(guides, 0, 0, channel->previous_guides, 0, 0);
+	channel->previous_pass = *pass;
+	channel->previous_valid = 1;
 	xgpu_vulkan_pass_owner(NULL);
-	denoise.draws++;
+	channel->draws++;
 	if (denoise.dumps && *denoise.dumps)
 	{
-		host_logf(HOST_LOG_WARN, "vulkan: denoise: draw %lu, frame %.0f, history %d", denoise.draws, pass->history[1],
+		host_logf(HOST_LOG_WARN, "vulkan: denoise: draw %lu, frame %.0f, history %d", channel->draws, pass->history[1],
 			history_valid);
-		if (denoise_dumped(denoise.draws))
-			denoise_dump(output, denoise.draws);
+		if (denoise_dumped(channel->draws))
+			denoise_dump(output, channel->draws, specular ? "_specular" : "");
 	}
-	if (!denoise.said)
+	if (!specular && !denoise.said)
 	{
 		denoise.said = 1;
 		host_logf(HOST_LOG_INFO, "vulkan: denoise: the light transport's irradiance denoised (%ux%u: count up to %d, "
@@ -449,4 +479,19 @@ struct xgpu_vulkan_image *xgpu_vulkan_denoise_draw(struct xgpu_vulkan_image *raw
 			denoise.spatial ? DENOISE_PASSES : 0);
 	}
 	return output;
+}
+
+struct xgpu_vulkan_image *xgpu_vulkan_denoise_draw(struct xgpu_vulkan_image *raw,
+	struct xgpu_vulkan_image *previous_raw, struct xgpu_vulkan_image *inputs, struct xgpu_vulkan_image *previous_inputs,
+	struct xgpu_vulkan_image *guides, const struct xgpu_world_ao_pass *pass, const int32_t rectangle[4])
+{
+	return denoise_channel_draw(&denoise.channels[0], 0, raw, previous_raw, inputs, previous_inputs, guides, pass,
+		rectangle);
+}
+
+struct xgpu_vulkan_image *xgpu_vulkan_denoise_specular_draw(struct xgpu_vulkan_image *raw,
+	struct xgpu_vulkan_image *inputs, struct xgpu_vulkan_image *guides, const struct xgpu_world_ao_pass *pass,
+	const int32_t rectangle[4])
+{
+	return denoise_channel_draw(&denoise.channels[1], 1, raw, NULL, inputs, NULL, guides, pass, rectangle);
 }
