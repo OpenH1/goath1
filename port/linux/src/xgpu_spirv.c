@@ -4586,7 +4586,7 @@ static unsigned int light_shadows_texel(struct module *m, int n)
 (shadowed 0: none read, no light shadowed) */
 struct light_shadows_read
 {
-	unsigned int shadowed, seen;
+	unsigned int shadowed, seen, stand_in;
 };
 
 static void light_shadows_begin(struct module *m, struct pixel_state *state, struct light_shadows_read *read)
@@ -4608,6 +4608,8 @@ static void light_shadows_begin(struct module *m, struct pixel_state *state, str
 	operands[2] = IMAGE_OPERANDS_LOD;
 	operands[3] = constant_int(m, 0);
 	read->seen = op(m, OP_IMAGE_FETCH, m->t_v4, 4, operands);
+	/* (the view: whether it is the stand-in, 1x1) */
+	read->stand_in = op2(m, OP_I_EQUAL, m->t_bool, op2(m, OP_COMPOSITE_EXTRACT, m->t_int, size, 0), constant_int(m, 0));
 }
 
 /* (HALO_LIGHT_SHADOWS_VIEW=1, checking: each shadowed light drawn in its
@@ -4654,6 +4656,8 @@ static unsigned int light_shadows_factor(struct module *m, const struct light_sh
 	}
 	if (!light_shadows_view())
 		return fmul(m, 1, falloff, shadow);
+	/* (the stand-in read: magenta) */
+	color = select_n(m, 3, read->stand_in, constant_vector(m, 3, (const float[]){ 2.0f, 0.0f, 2.0f }), color);
 	/* tint * seen + red * (1 - seen), where a channel is the light's */
 	*tint = vec4_of(m, fadd(m, 3, fscale(m, 3, color, shadow), fscale(m, 3, constant_vector(m, 3,
 		(const float[]){ 3.0f, 0.0f, 0.0f }), fsub(m, 1, constant_float(m, 1.0f), shadow))),
