@@ -31,6 +31,9 @@ enum
 	HALO_DYNAMIC_LIGHT_HALO = 2,
 	/* a projectile's (debug.dynamic_lights_log) */
 	HALO_DYNAMIC_LIGHT_PROJECTILE = 4,
+	/* a unit's flashlight (the game's side only: it always casts a
+	shadow, dynamic_lights_shadowed) */
+	HALO_DYNAMIC_LIGHT_FLASHLIGHT = 8,
 };
 /* the vertex constant (as the game numbers them) a model's draw has the
 rasterizer lights it is not lit by in (rasterizer_set_model_lighting: its

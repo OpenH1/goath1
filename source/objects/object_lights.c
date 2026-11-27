@@ -193,6 +193,7 @@ boolean dynamic_lights_first_person(long weapon_index, real_point3d *position);
 void dynamic_lights_submit(void);
 void dynamic_lights_brighten(long rasterizer_light_index, real scale);
 void dynamic_lights_owner(long rasterizer_light_index, long object_index);
+void dynamic_lights_identify(long rasterizer_light_index, long light_handle);
 void dynamic_lights_rank(long *lights, short count,
 	void (*describe)(long light, real_point3d *position, real *radius, real *intensity));
 void dynamic_lights_drawn(long light, real_point3d const *position, real radius, real_rgb_color const *color);
@@ -1674,6 +1675,8 @@ void lights_preprocess_scene(
 						}
 						if (!light_port_lights_structure(definition))
 							flags |= HALO_DYNAMIC_LIGHT_MODELS_ONLY;
+						if (TEST_FLAG(definition->flags, _light_definition_is_first_person_flashlight_bit))
+							flags |= HALO_DYNAMIC_LIGHT_FLASHLIGHT;
 						/* (a plasma bolt's: a projectile with no model; a
 						needle's or a grenade's own body would hide its glow's
 						middle) */
@@ -1685,6 +1688,7 @@ void lights_preprocess_scene(
 						}
 						dynamic_lights_note(light->rasterizer_light_index, flags, cone_scale, cone_offset, &light->position);
 						dynamic_lights_owner(light->rasterizer_light_index, light->object_index);
+						dynamic_lights_identify(light->rasterizer_light_index, scene_light_handle);
 						if (weapon_glow_scale != 1.0f)
 							dynamic_lights_brighten(light->rasterizer_light_index, weapon_glow_scale);
 						/* (and its copies on its flare's other markers) */
@@ -2369,12 +2373,17 @@ static void light_port_drawn_center(
 
 /* port: whether the enhanced dynamic lights light the structure with this
 light (display.dynamic_lights, port/linux/game/dynamic_lights.c): all but a
-spotlight's (a flashlight's, a lamp's) and one with a gel (a headlight's, the
-Pillar of Autumn's turning alarm lights', whose cube map lights the room only
-where it points as their marker turns), whose shape the game's own pass draws */
+spotlight's (a lamp's) and one with a gel (a headlight's, the Pillar of
+Autumn's turning alarm lights', whose cube map lights the room only where it
+points as their marker turns), whose shape the game's own pass draws. The
+flashlight is theirs, as a cone (its falloff and cutoff angles, its color;
+its gel is a soft disk), so that it casts the ray-traced shadows
+(dynamic_lights_shadowed): the game's pass leaves it out */
 static boolean light_port_lights_structure(
 	struct point_light_definition const *definition)
 {
+	if (TEST_FLAG(definition->flags, _light_definition_is_first_person_flashlight_bit))
+		return TRUE;
 	return definition->cutoff_angle >= _pi / 2
 		&& definition->gel_map.index == NONE
 		&& definition->gel_secondary_map.index == NONE;

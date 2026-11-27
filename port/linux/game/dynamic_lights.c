@@ -64,6 +64,7 @@ structure's 3D BSP, from which a pixel finds its cluster
 #include "structures/structures.h"
 #include "structures/structure_bsp_definitions.h"
 #include "physics/bsp3d.h"
+#include "tag_files/tag_groups.h"
 #include "light_sources.h"
 #include "rt_shadows.h"
 #include "world_rt.h"
@@ -100,6 +101,11 @@ static struct
 	holding the weapon; dynamic_lights_owner), which its shadows' rays leave
 	out; 0 none */
 	unsigned long owners[MAXIMUM_LIGHTS_PER_WINDOW];
+	/* what it is from frame to frame (DYNAMIC_LIGHTS_KEY_*: its light's
+	handle, a copy's, an own light's; 0 not known), and the object it is
+	on (NONE none) */
+	unsigned long long keys[MAXIMUM_LIGHTS_PER_WINDOW];
+	long objects[MAXIMUM_LIGHTS_PER_WINDOW];
 	struct halo_dynamic_light lights[MAXIMUM_LIGHTS_PER_WINDOW];
 	unsigned long frame;
 	/* each light whose clusters were noted (dynamic_lights_clusters; one
@@ -123,6 +129,12 @@ static struct
 	long world_leaf_count;
 } dynamic_lights;
 
+/* a light's key (dynamic_lights.keys): the game's (its light's handle), a
+copy of one on another marker, or one of the port's own (light_sources.c's
+key, which has its kind in its top byte, 1 to 3) */
+#define DYNAMIC_LIGHTS_KEY_GAME (4ull << 56)
+#define DYNAMIC_LIGHTS_KEY_COPY (5ull << 56)
+
 typedef char dynamic_lights_clusters_fit[HALO_DYNAMIC_LIGHTS_CLUSTERS >= MAXIMUM_CLUSTERS_PER_STRUCTURE ? 1 : -1];
 typedef char dynamic_lights_lights_fit[HALO_DYNAMIC_LIGHTS_MAXIMUM >= MAXIMUM_LIGHTS_PER_WINDOW ? 1 : -1];
 
@@ -142,6 +154,7 @@ void dynamic_lights_note(
 	dynamic_lights.cone_scale[rasterizer_light_index] = cone_scale;
 	dynamic_lights.cone_offset[rasterizer_light_index] = cone_offset;
 	dynamic_lights.tick_position[rasterizer_light_index] = *tick_position;
+	dynamic_lights.objects[rasterizer_light_index] = NONE;
 }
 
 /* a rasterizer light just submitted: the object it is on (NONE none),
@@ -152,8 +165,24 @@ void dynamic_lights_owner(
 {
 	if (rasterizer_light_index < 0 || rasterizer_light_index >= MAXIMUM_LIGHTS_PER_WINDOW)
 		return;
+	/* (an object freed before its light: no owner, none climbed to) */
+	if (object_index != NONE && !object_try_and_get(object_index))
+		object_index = NONE;
 	dynamic_lights.owners[rasterizer_light_index] = object_index != NONE && rt_shadows_on() ?
 		world_rt_owner(object_get_ultimate_parent(object_index)) : 0;
+	dynamic_lights.objects[rasterizer_light_index] = object_index;
+}
+
+/* a rasterizer light just submitted: the game's light it is (its handle),
+which dynamic_lights_shadowed knows it by from frame to frame */
+void dynamic_lights_identify(
+	long rasterizer_light_index,
+	long light_handle)
+{
+	if (rasterizer_light_index < 0 || rasterizer_light_index >= MAXIMUM_LIGHTS_PER_WINDOW)
+		return;
+	dynamic_lights.keys[rasterizer_light_index] = DYNAMIC_LIGHTS_KEY_GAME |
+		((unsigned long long)(unsigned long)light_handle & 0xffffffffull);
 }
 
 /* a rasterizer light just submitted: drawn brighter than the rasterizer's
@@ -221,6 +250,10 @@ static long dynamic_lights_copies(
 			continue;
 		*out = dynamic_lights.lights[dynamic_lights.copies[copy_index].rasterizer_light_index];
 		dynamic_lights.owners[count] = dynamic_lights.owners[dynamic_lights.copies[copy_index].rasterizer_light_index];
+		dynamic_lights.objects[count] = dynamic_lights.objects[dynamic_lights.copies[copy_index].rasterizer_light_index];
+		dynamic_lights.keys[count] = dynamic_lights.keys[dynamic_lights.copies[copy_index].rasterizer_light_index] ?
+			DYNAMIC_LIGHTS_KEY_COPY | ((unsigned long long)(copy_index + 1) << 32) |
+			(dynamic_lights.keys[dynamic_lights.copies[copy_index].rasterizer_light_index] & 0xffffffffull) : 0;
 		out->position[0] = position->x;
 		out->position[1] = position->y;
 		out->position[2] = position->z;
@@ -400,6 +433,8 @@ static long dynamic_lights_sources(
 		out->cone_offset = 1.0f;
 		out->flags = source->halo ? HALO_DYNAMIC_LIGHT_HALO | HALO_DYNAMIC_LIGHT_PROJECTILE : 0;
 		dynamic_lights.owners[count] = 0;
+		dynamic_lights.objects[count] = NONE;
+		dynamic_lights.keys[count] = source->key;
 		dynamic_lights_clusters(count, MIN(cluster_count, MAXIMUM_CLUSTERS_PER_STRUCTURE), clusters);
 		if (!(dynamic_lights.frame % 72) && source_index < 4 && config_boolean("debug.dynamic_lights_log"))
 		{
@@ -510,6 +545,7 @@ void dynamic_lights_submit(
 	dynamic_lights_world();
 	total = dynamic_lights_sources(dynamic_lights_copies(count));
 	dynamic_lights_shadowed(total);
+	memset(dynamic_lights.keys, 0, sizeof(dynamic_lights.keys));
 	halo_dynamic_lights_set(dynamic_lights.lights, (int)total, camera, right_axis, up_axis,
 		(unsigned int const (*)[4])dynamic_lights.cluster_masks);
 	memset(dynamic_lights.cluster_masks, 0, sizeof(dynamic_lights.cluster_masks));
@@ -522,6 +558,7 @@ void dynamic_lights_submit(
 		dynamic_lights.cone_offset[light_index] = 1.0f;
 		dynamic_lights.brightness[light_index] = 0.0f;
 		dynamic_lights.owners[light_index] = 0;
+		dynamic_lights.objects[light_index] = NONE;
 		dynamic_lights.tick_position[light_index] = rasterizer_lights.lights[light_index].position;
 	}
 }
@@ -661,55 +698,117 @@ void dynamic_lights_rank(long *lights, short count,
 /* ---------- which lights cast shadows (display.shadows "ray_traced")
 
 docs/dynamic-shadows-plan.md, stage 1: of the frame's lights as they go to
-the renderer (the game's, their copies and the port's own), the
-HALO_DYNAMIC_LIGHTS_SHADOWED that matter most to the view, by the same part
-of it dynamic_lights_rank ranks them by, cast shadows: those that light the
-structure (not a spotlight's gel, which the game's own pass draws there),
-lit, and in reach. Each with its disk's radius, the size of what glows (a
-bolt's or a needle's small; an explosion's, a fire's or a muzzle flash's
-larger, by its reach), and its owner, whose collision meshes the rays leave
-out (a muzzle flash's unit). The renderer traces them by ray queries where
-it has them (xgpu.h's XGPU_DYNAMIC_LIGHTS_SHADOWED); none where the setting
-is off (and with HALO_LIGHT_SHADOWS_OFF=1, for measuring). */
+the renderer (the game's, their copies and the port's own), at most
+HALO_DYNAMIC_LIGHTS_SHADOWED cast shadows, those whose shadows show:
+
+- a flashlight that is on, always (the first slot: a unit's own light, its
+  cone on what it points at);
+- else a light that reaches SHADOWED_LEAST_RADIUS or more and has lasted
+  SHADOWED_LEAST_AGE (an explosion, a fire, a lamp, a large charged shot,
+  the port's own larger lights). A plasma bolt, a needle or a muzzle flash
+  reaches 1.5 to 2 world units for a few frames: its shadow is a speck on
+  a surface it barely lights, gone before it is seen, and takes a slot;
+- not a light that lights only the models (a lamp's gel, which the game's
+  own pass draws on the structure), nor one on scenery that has not moved
+  (a level's fixture lamp: the lightmap has its light, and its shadow is
+  the lightmap's), nor a light out of reach or dark;
+- by the same part of the view dynamic_lights_rank ranks the lights by, a
+  light chosen last frame counted SHADOWED_KEEP times as much (a light
+  keeps its shadow until another clearly passes it: no flicker between two
+  alike).
+
+None qualifying, none is chosen and the renderer draws no pass. Each with
+its disk's radius, the size of what glows (a projectile's small, a
+flashlight's a point at the weapon; an explosion's or a fire's larger, by
+its reach), and its owner, whose collision meshes the rays leave out (a
+flashlight's unit). The renderer traces them by ray queries where it has
+them (xgpu.h's XGPU_DYNAMIC_LIGHTS_SHADOWED); none where the setting is off
+(and with HALO_LIGHT_SHADOWS_OFF=1, for measuring). */
 #define SHADOWED_DISK_PROJECTILE 0.05f
+#define SHADOWED_DISK_FLASHLIGHT 0.03f
 #define SHADOWED_DISK_SCALE 0.05f
 #define SHADOWED_DISK_LEAST 0.1f
 #define SHADOWED_DISK_MOST 0.5f
+/* (world units; seconds of game time; how much more a light chosen last
+frame counts; a flashlight's score past any other's) */
+#define SHADOWED_LEAST_RADIUS 3.0f
+#define SHADOWED_LEAST_AGE 0.1f
+#define SHADOWED_KEEP 1.5f
+#define SHADOWED_FLASHLIGHT_SCORE 1000.0f
 
-static void dynamic_lights_shadowed(long count)
+/* the lights that qualified last frame, by key, and since when (seconds);
+those chosen */
+static struct
 {
-	int indices[HALO_DYNAMIC_LIGHTS_SHADOWED];
-	float disks[HALO_DYNAMIC_LIGHTS_SHADOWED];
-	unsigned long owners[HALO_DYNAMIC_LIGHTS_SHADOWED];
-	real scores[HALO_DYNAMIC_LIGHTS_SHADOWED];
-	real_vector3d forward = render.camera.forward;
-	int chosen = 0, slot;
-	long light_index;
-	/* (HALO_LIGHT_SHADOWS_OFF=1, measuring: none chosen, the rest as it is) */
-	static int off = -1;
-
-	if (off < 0)
-		off = getenv("HALO_LIGHT_SHADOWS_OFF") != NULL;
-	if (off || !rt_shadows_on())
+	struct
 	{
-		halo_dynamic_lights_shadowed(NULL, NULL, NULL, 0);
-		return;
-	}
-	if (normalize3d(&forward) <= 0.0f)
-		forward.i = forward.j = forward.k = 0.0f;
+		unsigned long long key;
+		real since;
+	} seen[2][MAXIMUM_LIGHTS_PER_WINDOW];
+	int seen_count[2];
+	int current;
+	unsigned long long chosen[HALO_DYNAMIC_LIGHTS_SHADOWED];
+	int chosen_count;
+} shadowed_history;
+
+/* the lights of count (each one's key, 0 not known; static: on a still
+fixture, the lightmap's) to shadow at now (seconds), into indices with
+their scores, most first; how many (at most HALO_DYNAMIC_LIGHTS_SHADOWED).
+It keeps what it chose and how long each has lasted for the next frame */
+static int dynamic_lights_shadow_pick(struct halo_dynamic_light const *lights, unsigned long long const *keys,
+	boolean const *still, long count, real now, real_vector3d const *forward, int *indices, real *scores)
+{
+	int last = shadowed_history.current, next = !last;
+	int chosen = 0, slot, seen;
+	long light_index;
+
+	shadowed_history.seen_count[next] = 0;
 	for (light_index = 0; light_index < count; light_index++)
 	{
-		struct halo_dynamic_light const *light = &dynamic_lights.lights[light_index];
+		struct halo_dynamic_light const *light = &lights[light_index];
 		real intensity = MAX(light->color[0], MAX(light->color[1], light->color[2]));
+		boolean flashlight = (light->flags & HALO_DYNAMIC_LIGHT_FLASHLIGHT) != 0;
+		unsigned long long key = keys[light_index];
 		real_point3d position;
-		real score;
+		real score, since = now;
 
 		if (!(light->radius > 0.0f) || !(intensity > 0.0f) || (light->flags & HALO_DYNAMIC_LIGHT_MODELS_ONLY))
+			continue;
+		if (!flashlight && (light->radius < SHADOWED_LEAST_RADIUS || still[light_index]))
+			continue;
+		/* (how long it has lasted: since it first qualified) */
+		if (key)
+		{
+			for (seen = 0; seen < shadowed_history.seen_count[last]; seen++)
+			{
+				if (shadowed_history.seen[last][seen].key == key)
+				{
+					since = MIN(shadowed_history.seen[last][seen].since, now);
+					break;
+				}
+			}
+			if (shadowed_history.seen_count[next] < MAXIMUM_LIGHTS_PER_WINDOW)
+			{
+				shadowed_history.seen[next][shadowed_history.seen_count[next]].key = key;
+				shadowed_history.seen[next][shadowed_history.seen_count[next]++].since = since;
+			}
+		}
+		if (!flashlight && (!key || now - since < SHADOWED_LEAST_AGE))
 			continue;
 		position.x = light->position[0];
 		position.y = light->position[1];
 		position.z = light->position[2];
-		score = dynamic_lights_score(&position, light->radius, intensity, &forward);
+		score = dynamic_lights_score(&position, light->radius, intensity, forward);
+		for (slot = 0; key && slot < shadowed_history.chosen_count; slot++)
+		{
+			if (shadowed_history.chosen[slot] == key)
+			{
+				score *= SHADOWED_KEEP;
+				break;
+			}
+		}
+		if (flashlight)
+			score += SHADOWED_FLASHLIGHT_SCORE;
 		/* (kept the highest first; the earlier among equals) */
 		for (slot = chosen; slot > 0 && scores[slot - 1] < score; slot--)
 		{
@@ -726,64 +825,107 @@ static void dynamic_lights_shadowed(long count)
 		if (chosen < HALO_DYNAMIC_LIGHTS_SHADOWED)
 			chosen++;
 	}
+	shadowed_history.current = next;
+	shadowed_history.chosen_count = chosen;
+	for (slot = 0; slot < chosen; slot++)
+		shadowed_history.chosen[slot] = keys[indices[slot]];
+	return chosen;
+}
+
+/* whether a light is a level's fixture's (its object scenery, or a light
+fixture or a machine, that has not moved: the lightmap was made with it
+lit) */
+static boolean dynamic_lights_still(long object_index)
+{
+	struct object_datum *object;
+
+	if (object_index == NONE || !(object = object_try_and_get(object_index)))
+		return FALSE;
+	return FALSE;
+}
+
+static void dynamic_lights_shadowed(long count)
+{
+	int indices[HALO_DYNAMIC_LIGHTS_SHADOWED];
+	float disks[HALO_DYNAMIC_LIGHTS_SHADOWED];
+	unsigned long owners[HALO_DYNAMIC_LIGHTS_SHADOWED];
+	real scores[HALO_DYNAMIC_LIGHTS_SHADOWED];
+	boolean still[MAXIMUM_LIGHTS_PER_WINDOW];
+	real_vector3d forward = render.camera.forward;
+	int chosen = 0, slot;
+	long light_index;
+	/* (HALO_LIGHT_SHADOWS_OFF=1, measuring: none chosen, the rest as it is) */
+	static int off = -1;
+
+	if (off < 0)
+		off = getenv("HALO_LIGHT_SHADOWS_OFF") != NULL;
+	if (off || !rt_shadows_on())
+	{
+		halo_dynamic_lights_shadowed(NULL, NULL, NULL, 0);
+		return;
+	}
+	if (normalize3d(&forward) <= 0.0f)
+		forward.i = forward.j = forward.k = 0.0f;
+	for (light_index = 0; light_index < count; light_index++)
+		still[light_index] = dynamic_lights_still(dynamic_lights.objects[light_index]);
+	chosen = dynamic_lights_shadow_pick(dynamic_lights.lights, dynamic_lights.keys, still, count,
+		render_interpolation_game_time_sec(game_time_get()), &forward, indices, scores);
 	for (slot = 0; slot < chosen; slot++)
 	{
 		struct halo_dynamic_light const *light = &dynamic_lights.lights[indices[slot]];
 		real disk = light->radius * SHADOWED_DISK_SCALE;
 
-		disks[slot] = (light->flags & HALO_DYNAMIC_LIGHT_PROJECTILE) ? SHADOWED_DISK_PROJECTILE :
+		disks[slot] = (light->flags & HALO_DYNAMIC_LIGHT_FLASHLIGHT) ? SHADOWED_DISK_FLASHLIGHT :
+			(light->flags & HALO_DYNAMIC_LIGHT_PROJECTILE) ? SHADOWED_DISK_PROJECTILE :
 			disk < SHADOWED_DISK_LEAST ? SHADOWED_DISK_LEAST : disk > SHADOWED_DISK_MOST ? SHADOWED_DISK_MOST : disk;
 		owners[slot] = dynamic_lights.owners[indices[slot]];
 	}
-	/* (HALO_LIGHT_SHADOWS_VIEW, checking: the chosen, once a second) */
+	/* (HALO_LIGHT_SHADOWS_VIEW, checking: the chosen and the rest, once a
+	second, and each frame the chosen change) */
 	{
 		static int view = -1;
-		static unsigned long long said;
+		static unsigned long long said, said_keys[HALO_DYNAMIC_LIGHTS_SHADOWED];
+		static int said_count;
 		unsigned long long now = platform_shared_clock_microseconds();
+		boolean changed = chosen != said_count;
 
 		if (view < 0)
 			view = getenv("HALO_LIGHT_SHADOWS_VIEW") && strcmp(getenv("HALO_LIGHT_SHADOWS_VIEW"), "0") ? 1 : 0;
-		int projectiles = 0;
-
-		for (light_index = 0; view && light_index < count; light_index++)
-			projectiles += (dynamic_lights.lights[light_index].flags & HALO_DYNAMIC_LIGHT_PROJECTILE) != 0;
-		/* (each frame a projectile's light is among them) */
-		if (view && (now - said >= 1000000 || projectiles))
+		for (slot = 0; view && !changed && slot < chosen; slot++)
+			changed = said_keys[slot] != dynamic_lights.keys[indices[slot]];
+		if (view && (now - said >= 1000000 || changed))
 		{
-			char line[1536];
+			char line[4096];
 			int at = snprintf(line, sizeof(line), "light shadows: frame %lu: %d of %ld lights shadowed",
 				dynamic_lights.frame, chosen, count);
 
 			said = now;
-			for (slot = 0; slot < chosen && at > 0 && at < (int)sizeof(line); slot++)
-			{
-				struct halo_dynamic_light const *light = &dynamic_lights.lights[indices[slot]];
-
-				at += snprintf(line + at, sizeof(line) - (size_t)at, "; [%d] light %d%s at %.2f %.2f %.2f radius %.2f "
-					"score %.3f disk %.2f owner %lu", slot, indices[slot],
-					(light->flags & HALO_DYNAMIC_LIGHT_PROJECTILE) ? " (projectile)" : "", (double)light->position[0],
-					(double)light->position[1], (double)light->position[2], (double)light->radius,
-					(double)scores[slot], (double)disks[slot], owners[slot]);
-			}
-			/* (and the projectiles' lights not chosen) */
+			said_count = chosen;
+			for (slot = 0; slot < chosen; slot++)
+				said_keys[slot] = dynamic_lights.keys[indices[slot]];
 			for (light_index = 0; light_index < count && at > 0 && at < (int)sizeof(line); light_index++)
 			{
 				struct halo_dynamic_light const *light = &dynamic_lights.lights[light_index];
-				real_point3d position;
+				struct object_datum *object = dynamic_lights.objects[light_index] != NONE ?
+					object_try_and_get(dynamic_lights.objects[light_index]) : NULL;
+				char const *name = object ? tag_get_name(object->definition_index) : NULL;
+				char const *slash = name ? strrchr(name, '\\') : NULL;
 
-				if (!(light->flags & HALO_DYNAMIC_LIGHT_PROJECTILE))
-					continue;
 				for (slot = 0; slot < chosen && indices[slot] != (int)light_index; slot++)
 					;
-				if (slot < chosen)
-					continue;
-				position.x = light->position[0];
-				position.y = light->position[1];
-				position.z = light->position[2];
-				at += snprintf(line + at, sizeof(line) - (size_t)at, "; not light %ld (projectile) at %.2f %.2f %.2f "
-					"radius %.2f score %.3f", light_index, (double)position.x, (double)position.y, (double)position.z,
-					(double)light->radius, (double)dynamic_lights_score(&position, light->radius,
-					MAX(light->color[0], MAX(light->color[1], light->color[2])), &forward));
+				at += snprintf(line + at, sizeof(line) - (size_t)at, "; %s%ld%s%s%s at %.2f %.2f %.2f r %.2f "
+					"key %llx%s%s", slot < chosen ? "[" : "", light_index, slot < chosen ? "]" : "",
+					(light->flags & HALO_DYNAMIC_LIGHT_FLASHLIGHT) ? " flashlight" :
+					(light->flags & HALO_DYNAMIC_LIGHT_PROJECTILE) ? " projectile" : "",
+					(light->flags & HALO_DYNAMIC_LIGHT_MODELS_ONLY) ? " models" : "",
+					(double)light->position[0], (double)light->position[1], (double)light->position[2],
+					(double)light->radius, dynamic_lights.keys[light_index], name ? " on " : "",
+					name ? (slash ? slash + 1 : name) : "");
+				if (slot < chosen && at > 0 && at < (int)sizeof(line))
+					at += snprintf(line + at, sizeof(line) - (size_t)at, " score %.3f disk %.2f owner %lu",
+						(double)scores[slot], (double)disks[slot], owners[slot]);
+				if (object && at > 0 && at < (int)sizeof(line))
+					at += snprintf(line + at, sizeof(line) - (size_t)at, " type %d", (int)object->object.type);
 			}
 			platform_log("%s", line);
 		}
