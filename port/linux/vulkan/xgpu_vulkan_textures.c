@@ -50,8 +50,8 @@ with it, made again with its texels. A texture with a thickness is not let
 go while the guest keeps its texels. The bakes are made on the effects'
 workers, never on the render thread: until one has come back, the effect
 is drawn with none (the stand-in's: no height and no radius, the fade of a
-soft effect at its least, as with display.soft_particles off but within a
-few centimetres of the walls), and the preparation waits behind the
+soft effect at its least, as with display.soft_particles off but within
+6 cm of the walls), and the preparation waits behind the
 loading screen for those it asked for (xgpu_vulkan_textures_thickness_settle).
 */
 
