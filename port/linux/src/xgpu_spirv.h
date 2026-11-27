@@ -492,6 +492,13 @@ at most (none sends on all it gets) or where it has none */
 #define XGPU_RT_BOUNCE_ALBEDO_LEVEL 4.0f
 #define XGPU_RT_BOUNCE_ALBEDO_MOST 0.9f
 #define XGPU_RT_BOUNCE_ALBEDO_NONE 0.35f
+/* the bounce's strength (HALO_RT_BOUNCE_STRENGTH for looking): 2, the gain
+the level's own bake fits over one bounce off the same albedo indoors (a10's
+2.0, docs/rt-plan/4-path-tracing.md's static fit; Blood Gulch 3.2 and b30
+4.0 with their sky), so that a dynamic light bounces as much as the bake's
+lights do: several bounces (1 / (1 - albedo), 1.4 to 2 for the levels'
+0.3 to 0.5) and the detail maps this albedo leaves out */
+#define XGPU_RT_BOUNCE_STRENGTH 2.0f
 /* the passes' block (vec4s): the grid's first cell (its coordinates) and
 the cell's size; the last frame's first cell and 1 where its cache is
 this one's; the frame's number, the history's share kept, its most, and

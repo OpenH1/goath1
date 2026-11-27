@@ -145,7 +145,7 @@ static int rt_bounce_shaders(void)
 		const char *strength = getenv("HALO_RT_BOUNCE_STRENGTH");
 		const char *cell = getenv("HALO_RT_BOUNCE_CELL");
 
-		rt_bounce.strength = strength ? (float)atof(strength) : 1.0f;
+		rt_bounce.strength = strength ? (float)atof(strength) : XGPU_RT_BOUNCE_STRENGTH;
 		rt_bounce.cell = cell && atof(cell) > 0.01 ? (float)atof(cell) : XGPU_RT_BOUNCE_CELL;
 	}
 	rt_bounce.made = 1;
