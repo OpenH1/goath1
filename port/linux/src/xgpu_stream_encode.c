@@ -75,6 +75,10 @@ interface's addresses (DWORD, unsigned long); and at one of the stream's
 (32 bits: the same in the guest, from the test's window's base in its
 test) */
 #define STREAM_ADDRESS(pointer) ((uint32_t)(uintptr_t)(pointer))
+
+/* (a stage's source as the host reads it: xgpu_stream.h) */
+_Static_assert(XGPU_STREAM_SOURCE_NONE == XGPU_SOURCE_NONE && XGPU_STREAM_SOURCE_TEXTURE == XGPU_SOURCE_TEXTURE &&
+	XGPU_STREAM_SOURCE_TARGET == XGPU_SOURCE_TARGET, "a stage's source on the wire");
 #define INTERFACE_POINTER(address) ((const void *)(uintptr_t)(address))
 #ifdef XGPU_STREAM_TEST
 extern uintptr_t host_guest_base;

@@ -53,7 +53,6 @@ this file: xgpu_vulkan_rt_create).
 Render thread alone, as the core.
 */
 
-#include "xgpu_backend.h"
 #include "xgpu_spirv.h"
 #include "xgpu_stream.h"
 #include "xgpu_vulkan.h"
@@ -755,7 +754,7 @@ static void rt_textures_find(void)
 		struct xgpu_vulkan_image *image = NULL;
 		VkImageView view;
 
-		if (stage->source == XGPU_SOURCE_NONE)
+		if (stage->source == XGPU_STREAM_SOURCE_NONE)
 			continue;
 		if (!rt.texture_views[slot])
 		{
@@ -763,7 +762,7 @@ static void rt_textures_find(void)
 				continue;
 			found++;
 		}
-		if (stage->source == XGPU_SOURCE_TEXTURE)
+		if (stage->source == XGPU_STREAM_SOURCE_TEXTURE)
 			image = xgpu_vulkan_textures_header(stage->resource);
 		else if (stage->source == XGPU_STREAM_SOURCE_IMAGE)
 			image = xgpu_vulkan_textures_get(stage);
