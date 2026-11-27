@@ -399,6 +399,71 @@ class HaloAlbedo(mi.Texture):
         return "HaloAlbedo[%s, %s]" % (self.detail_mode, self.micro_mode)
 
 
+class HaloBump(mi.BSDF):
+    """A bump-mapped surface as the game shades it: the normal n = normalize(T b.x + B b.y + N max(b.z,
+    0.05)), b = the bump map's texel x 2 - 1, T and B the vertex's own tangent and binormal (interpolated,
+    as the game's are), N the interpolated normal (xgpu_spirv.c:5811-5821, xgpu_msl.c:2917). The nested
+    BSDF is evaluated in the frame of n, as Mitsuba's normalmap does."""
+
+    def __init__(self, props):
+        mi.BSDF.__init__(self, props)
+        self.nested = props["bsdf"]
+        self.bump = props["bump"]
+        self.m_flags = self.nested.flags()
+        self.m_components = [self.nested.flags(i) for i in range(self.nested.component_count())]
+
+    def _perturbed(self, si, active):
+        T = si.shape.eval_attribute_3("vertex_halo_tangent", si, active)
+        B = si.shape.eval_attribute_3("vertex_halo_binormal", si, active)
+        b = self.bump.eval(si, active) * 2.0 - 1.0
+        N = si.sh_frame.n
+        n = dr.normalize(T * b.x + B * b.y + N * dr.maximum(b.z, 0.05))
+        n = dr.select(dr.isfinite(n.x) & (dr.squared_norm(T) > 0), n, N)
+        psi = mi.SurfaceInteraction3f(si)
+        psi.sh_frame = mi.Frame3f(n)
+        psi.wi = psi.to_local(si.to_world(si.wi))
+        return psi
+
+    def sample(self, ctx, si, sample1, sample2, active=True):
+        psi = self._perturbed(si, active)
+        bs, w = self.nested.sample(ctx, psi, sample1, sample2, active)
+        wo = psi.to_world(bs.wo)
+        bs.wo = si.to_local(wo)
+        ok = active & (dr.dot(si.n, wo) * mi.Frame3f.cos_theta(bs.wo) > 0)
+        return bs, dr.select(ok, w, 0.0)
+
+    def eval(self, ctx, si, wo, active=True):
+        psi = self._perturbed(si, active)
+        w = si.to_world(wo)
+        ok = active & (dr.dot(si.n, w) * mi.Frame3f.cos_theta(wo) > 0)
+        return dr.select(ok, self.nested.eval(ctx, psi, psi.to_local(w), ok), 0.0)
+
+    def pdf(self, ctx, si, wo, active=True):
+        psi = self._perturbed(si, active)
+        w = si.to_world(wo)
+        ok = active & (dr.dot(si.n, w) * mi.Frame3f.cos_theta(wo) > 0)
+        return dr.select(ok, self.nested.pdf(ctx, psi, psi.to_local(w), ok), 0.0)
+
+    def eval_pdf(self, ctx, si, wo, active=True):
+        psi = self._perturbed(si, active)
+        w = si.to_world(wo)
+        ok = active & (dr.dot(si.n, w) * mi.Frame3f.cos_theta(wo) > 0)
+        v, p = self.nested.eval_pdf(ctx, psi, psi.to_local(w), ok)
+        return dr.select(ok, v, 0.0), dr.select(ok, p, 0.0)
+
+    def eval_diffuse_reflectance(self, si, active=True):
+        return self.nested.eval_diffuse_reflectance(si, active)
+
+    def eval_null_transmission(self, si, active=True):
+        return self.nested.eval_null_transmission(si, active)
+
+    def traverse(self, cb):
+        pass
+
+    def to_string(self):
+        return "HaloBump[%s]" % self.nested
+
+
 _registered = False
 
 
@@ -409,4 +474,5 @@ def register():
     mi.register_emitter("halo_light", lambda p: HaloLight(p))
     mi.register_emitter("halo_sky", lambda p: HaloSky(p))
     mi.register_texture("halo_albedo", lambda p: HaloAlbedo(p))
+    mi.register_bsdf("halo_bump", lambda p: HaloBump(p))
     _registered = True

@@ -107,7 +107,9 @@ def read_ply(path):
     nrm = np.stack([v["nx"], v["ny"], v["nz"]], 1).astype(np.float32) if "nx" in v.dtype.names else None
     uv = np.stack([v["u"], v["v"]], 1).astype(np.float32) if "u" in v.dtype.names else np.zeros((len(pos), 2), np.float32)
     uv2 = np.stack([v["u2"], v["v2"]], 1).astype(np.float32) if "u2" in v.dtype.names else np.zeros((len(pos), 2), np.float32)
-    return pos, nrm, uv, tris, mats, uv2, lmap
+    tb = (np.stack([v[k] for k in ("tx", "ty", "tz", "bx", "by", "bz")], 1).astype(np.float32)
+          if "tx" in v.dtype.names else None)
+    return pos, nrm, uv, tris, mats, uv2, lmap, tb
 
 
 def write_ply(path, pos, nrm, uv, tris, mats, uv2=None):
@@ -308,15 +310,22 @@ class Scene:
 
         bump = self.image(m["bump_map"]) if self.bump and m.get("bump_map") and not mtype.startswith("transparent") else None
         if bump is not None:
-            # Halo's bump maps are stored as tangent-space normal maps (RGB around 0.5, 0.5, 1), tiled
-            # bump_scale times over the base UVs; Mitsuba's frame (dp/du, dp/dv, n) is taken as theirs.
-            bs = float(m.get("bump_scale") or 1.0)
+            # Halo's bump maps are tangent-space normal maps; the texture transform over the base UV is the
+            # shader's runtime bump scale (rasterizer_xbox_environment.c:807-808), else the tag's.
+            su, sv = (m.get("bump_scale_runtime") or [m.get("bump_scale") or 1.0] * 2)
+            su, sv = float(su or 1.0), float(sv or 1.0)
             nm = mi.load_dict({"type": "bitmap", "bitmap": mi.Bitmap(np.ascontiguousarray(bump[:, :, :3], np.float32)),
                                "raw": True, "filter_type": "bilinear", "wrap_mode": "repeat",
-                               "to_uv": mi.ScalarTransform4f().scale([bs, bs, 1.0])})
-            bsdf = {"type": "normalmap", "normalmap": nm, "bsdf": bsdf}
-            summary["bump"] = "normal map x%g" % bs
-            self.note_once("bump maps as tangent-space normal maps in Mitsuba's (dp/du, dp/dv) frame (green sign unverified)")
+                               "to_uv": mi.ScalarTransform4f().scale([su, sv, 1.0])})
+            if self.has_tangents():
+                # The game's own: n = normalize(T b.x + B b.y + N max(b.z, 0.05)), b = texel x 2 - 1, with the
+                # vertex's tangent and binormal (xgpu_spirv.c:5811-5821).
+                bsdf = {"type": "halo_bump", "bump": nm, "bsdf": bsdf}
+                summary["bump"] = "the game's frame, scale %g x %g" % (su, sv)
+            else:
+                bsdf = {"type": "normalmap", "normalmap": nm, "bsdf": bsdf}
+                summary["bump"] = "Mitsuba's frame (no exported tangents), scale %g x %g" % (su, sv)
+                self.note_once("bump maps in Mitsuba's (dp/du, dp/dv) frame: the export has no tangents")
         transparent = mtype.startswith("transparent")
         if transparent and not m.get("alpha_test"):
             # Glass, decals, light cards and effects carry no surface to bounce light off in the truth;
@@ -341,6 +350,10 @@ class Scene:
             emitter = {"type": "area", "radiance": {"type": "rgb", "value": L}}
             summary["emission"] = "area emitter, radiance %s (radiosity units)" % [round(x, 4) for x in L]
         return bsdf_obj, emitter, summary
+
+    def has_tangents(self):
+        self.load_geometry()
+        return all(g[7] is not None for g in self.geometry.values())
 
     def note_once(self, text):
         if text not in self.notes:
@@ -490,8 +503,10 @@ class Scene:
                     n = None  # unusable normals: Mitsuba falls back to flat face normals
                 name = "%s_m%d" % (fpath.stem if not is_object else "obj_" + fpath.stem, mid)
                 self.mesh_faces[name] = (fpath, np.nonzero(mats == mid)[0])
+                tb = self.geometry[fpath][7]
                 shapes[name] = self.make_mesh(name, pos[used], n, uv[used], inv.reshape(-1, 3), bsdf,
-                                              mi.load_dict(emitter) if (emitter and emit) else None)
+                                              mi.load_dict(emitter) if (emitter and emit) else None,
+                                              tb[used] if tb is not None else None)
         self.meshes = shapes
         lo, hi = self.bounds
         center = (lo + hi) / 2
@@ -572,7 +587,7 @@ class Scene:
             sel = valid & (ptr == key)
             if not sel.any():
                 continue
-            pos, nrm, uv, tris, mats, uv2v, lmap = self.geometry[fpath]
+            pos, nrm, uv, tris, mats, uv2v, lmap = self.geometry[fpath][:7]
             f = faces[prim[sel]]
             a, b, c = pos[tris[f, 0]], pos[tris[f, 1]], pos[tris[f, 2]]
             v0, v1, v2 = b - a, c - a, p[sel] - a
@@ -601,7 +616,7 @@ class Scene:
                 "lightmap": lm.reshape(H, W, 3), "lightmap_flipped": lm_flip.reshape(H, W, 3)}
 
     @staticmethod
-    def make_mesh(name, pos, nrm, uv, tris, bsdf, emitter):
+    def make_mesh(name, pos, nrm, uv, tris, bsdf, emitter, tb=None):
         props = mi.Properties()
         props["bsdf"] = bsdf
         if emitter is not None:
@@ -615,6 +630,10 @@ class Scene:
             p["vertex_normals"] = mi.Float(np.ascontiguousarray(nrm, np.float32).ravel())
         p["vertex_texcoords"] = mi.Float(np.ascontiguousarray(uv, np.float32).ravel())
         p.update()
+        # The game's per-vertex tangent and binormal (always present, so halo_bump can read them).
+        tb = np.zeros((len(pos), 6), np.float32) if tb is None else tb
+        mesh.add_attribute("vertex_halo_tangent", 3, mi.Float(np.ascontiguousarray(tb[:, :3]).ravel()))
+        mesh.add_attribute("vertex_halo_binormal", 3, mi.Float(np.ascontiguousarray(tb[:, 3:]).ravel()))
         return mesh
 
     def sensor(self):

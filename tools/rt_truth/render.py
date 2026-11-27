@@ -35,7 +35,8 @@ def wait_for_no_player(log):
 
 
 class GpuLock:
-    """The rig's GPU lock (flock), held for the render so timing runs never share the GPU with it."""
+    """The rig's GPU lock, taken shared (as `goat-rig run --shared`): a truth render is no timing
+    measurement, so it runs beside picture runs and only waits out an exclusive (timing) holder."""
 
     def __init__(self, path, log):
         self.path, self.log, self.f = path, log, None
@@ -44,10 +45,10 @@ class GpuLock:
         if self.path and os.path.exists(os.path.dirname(self.path)):
             self.f = open(self.path, "a")
             try:
-                fcntl.flock(self.f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(self.f, fcntl.LOCK_SH | fcntl.LOCK_NB)
             except BlockingIOError:
                 self.log("waiting for the GPU lock %s" % self.path)
-                fcntl.flock(self.f, fcntl.LOCK_EX)
+                fcntl.flock(self.f, fcntl.LOCK_SH)
         return self
 
     def __exit__(self, *a):
