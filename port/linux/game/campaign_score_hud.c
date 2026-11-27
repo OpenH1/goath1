@@ -138,28 +138,6 @@ static struct player_datum *score_player_at(
 	return NULL;
 }
 
-/* an enemy's name for a kill's words */
-static wchar_t const *score_class_name(
-	long victim_class)
-{
-	switch (victim_class)
-	{
-	case _campaign_score_class_grunt: return L"Grunt";
-	case _campaign_score_class_jackal: return L"Jackal";
-	case _campaign_score_class_elite: return L"Elite";
-	case _campaign_score_class_elite_major: return L"Elite Major";
-	case _campaign_score_class_elite_special: return L"Elite Officer";
-	case _campaign_score_class_hunter: return L"Hunter";
-	case _campaign_score_class_flood_infection: return L"Infection Form";
-	case _campaign_score_class_flood_combat: return L"Flood";
-	case _campaign_score_class_flood_carrier: return L"Carrier Form";
-	case _campaign_score_class_sentinel: return L"Sentinel";
-	case _campaign_score_class_vehicle_light:
-	case _campaign_score_class_vehicle_heavy: return L"Vehicle";
-	default: return L"Kill";
-	}
-}
-
 /* an event's words and how notable it is (the group shows its most
 notable's); 0 for one not shown (a death) */
 static short score_event_words(
@@ -173,8 +151,18 @@ static short score_event_words(
 	switch (event->kind)
 	{
 	case _campaign_score_event_kill:
-		usnprintf(text, size, L"%s", score_class_name(event->victim_class));
+	{
+		/* (the core's name of the enemy, "Elite Major") */
+		char const *name = campaign_score_class_name(event->victim_class);
+		short index;
+
+		for (index = 0; name && name[index] && index < size - 1; index++)
+			text[index] = (wchar_t)(unsigned char)name[index];
+		text[index] = 0;
+		if (!text[0])
+			usnprintf(text, size, L"Kill");
 		return 1;
+	}
 	case _campaign_score_event_grenade:
 		usnprintf(text, size, L"Grenade Kill");
 		return 3;
@@ -600,7 +588,7 @@ static void score_draw_summary(
 		if (ranked[index] == self_slot)
 			slots[shown++] = ranked[index];
 	}
-	panel_width = MIN(width - 32.0f * unit, 440.0f * unit);
+	panel_width = MIN(width - 32.0f * unit, 540.0f * unit);
 	left = x0 + (width - panel_width) * 0.5f;
 	right = left + panel_width;
 	top = y0 + height * 0.18f;
@@ -646,10 +634,10 @@ static void score_draw_summary(
 	/* (the players' table: name, score, kills, headshots, deaths, best
 	streak) */
 	columns[4] = right;
-	columns[3] = right - 70.0f * unit;
-	columns[2] = right - 130.0f * unit;
-	columns[1] = right - 205.0f * unit;
-	columns[0] = right - 255.0f * unit;
+	columns[3] = right - 100.0f * unit;
+	columns[2] = right - 170.0f * unit;
+	columns[1] = right - 260.0f * unit;
+	columns[0] = right - 320.0f * unit;
 	score_color(&color, 0.0f, 0.55f * alpha);
 	score_text(L"PLAYER", left, y, 0, 0.55f * unit, &color);
 	score_text(L"SCORE", columns[0], y, 1, 0.55f * unit, &color);
