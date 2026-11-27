@@ -355,6 +355,18 @@ static boolean light_sources_display(
 	return entry->facing.i != 0.0f || entry->facing.j != 0.0f || entry->facing.k != 0.0f;
 }
 
+/* HALO_PANEL_LIGHTS_OFF=1 (the lighting referee's daylight control): the lit
+displays' lights left out */
+static boolean light_sources_panels_off(
+	void)
+{
+	static int off = -1;
+
+	if (off < 0)
+		off = getenv("HALO_PANEL_LIGHTS_OFF") && strcmp(getenv("HALO_PANEL_LIGHTS_OFF"), "0") ? 1 : 0;
+	return off != 0;
+}
+
 /* a light kept as a candidate, scored as dynamic_lights_rank scores the
 game's: its brightest channel times its reach's part of the view (NULL:
 none kept) */
@@ -636,6 +648,11 @@ static void light_sources_objects(
 				light_sources_stream_add(object->object.owner_object_index, row, &position);
 				continue;
 			}
+			/* (HALO_PANEL_LIGHTS_OFF=1, measuring: no lit display, the
+			light model's panels, which the game has none of; every other
+			light as it is) */
+			if (light_sources_display(entry) && light_sources_panels_off())
+				continue;
 			if (entry->kind == _light_source_magazine)
 				strength = light_sources_held_strength(iterator.index, object);
 			else if (held)
