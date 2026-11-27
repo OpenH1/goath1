@@ -68,7 +68,7 @@ static IDXGIFactory1 *factory_make(void)
 /* #1283: each adapter DXGI lists, told to each (its description in UTF-8,
 vendor ID, dedicated video memory, LUID, and whether it is a software one,
 like the Basic Render Driver); the count told */
-int host_display_adapters(void (*each)(void *context, const char *name, unsigned vendor,
+int host_display_adapters(void (*each)(void *context, const char *name, unsigned vendor, unsigned device,
 	unsigned long long dedicated_memory, const unsigned char luid[8], int software), void *context)
 {
 	IDXGIFactory1 *factory = factory_make();
@@ -87,7 +87,7 @@ int host_display_adapters(void (*each)(void *context, const char *name, unsigned
 		{
 			if (!WideCharToMultiByte(CP_UTF8, 0, description.Description, -1, name, (int)sizeof(name), NULL, NULL))
 				strcpy(name, "an adapter");
-			each(context, name, description.VendorId, (unsigned long long)description.DedicatedVideoMemory,
+			each(context, name, description.VendorId, description.DeviceId, (unsigned long long)description.DedicatedVideoMemory,
 				(const unsigned char *)&description.AdapterLuid, (description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0);
 			count++;
 		}

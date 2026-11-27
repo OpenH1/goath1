@@ -11044,8 +11044,8 @@ static void layers_log(VkPhysicalDevice device)
 }
 
 /* #1283: the adapters Windows' DXGI lists, in one line, and a warning for an
-NVIDIA or AMD one the loader does not list (by the LUID, else the vendor and
-name of a device, or the vendor of one without a LUID): Windows has its driver, but not that driver's Vulkan
+NVIDIA or AMD one the loader does not list (the same card by the LUID, or by
+its PCI vendor and device IDs): Windows has its driver, but not that driver's Vulkan
 part, or a broken one */
 static void adapters_log(const struct xgpu_vulkan_options *options, const VkPhysicalDeviceProperties *properties,
 	unsigned char (*luids)[8], const int *luid_valid, uint32_t count)
@@ -11077,14 +11077,13 @@ static void adapters_log(const struct xgpu_vulkan_options *options, const VkPhys
 
 		if (adapter->software || (adapter->vendor != 0x10de && adapter->vendor != 0x1002))
 			continue;
-		/* by the LUID; else a device of its vendor and name. #1290's RX 6600
-		was listed twice by DXGI, one of the two by a LUID the loader's device
-		does not have (another of the card's adapters, as each output or a
-		capture tool's can be): the same card, its Vulkan part there */
+		/* the same card: by the LUID, else by its PCI vendor and device IDs,
+		which DXGI and Vulkan both give. #1290's RX 6600 was listed twice by
+		DXGI, once by a LUID the loader's device does not have (a second
+		adapter object for the same card), and was told missing */
 		for (device = 0; device < count && !listed; device++)
 			listed = (luid_valid[device] && !memcmp(luids[device], adapter->luid, 8)) ||
-				(properties[device].vendorID == adapter->vendor &&
-					(!luid_valid[device] || !strcmp(properties[device].deviceName, adapter->name)));
+				(properties[device].vendorID == adapter->vendor && properties[device].deviceID == adapter->device);
 		if (listed)
 			continue;
 		host_logf(HOST_LOG_WARN, "vulkan: %s is visible to Windows but not to Vulkan, which usually means its driver's "

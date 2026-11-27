@@ -95,6 +95,8 @@ struct xgpu_vulkan_adapter
 {
 	char name[128];
 	unsigned vendor;
+	/* the PCI device ID (DXGI's DeviceId, Vulkan's deviceID) */
+	unsigned device;
 	unsigned long long dedicated_memory;
 	unsigned char luid[8];
 	int software;
