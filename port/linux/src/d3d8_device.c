@@ -701,6 +701,10 @@ too and the difference none), and its objects drawing their motion */
 static struct
 {
 	BOOL on, objects;
+	/* (the light-transport pass's alone: the frame before's registers kept
+	for the pre-pass's twins' motion, xgpu_stream.h's MOTION phase NONE; no
+	jitter, no objects' motion drawn, nothing resolved) */
+	BOOL previous_only;
 	float jitter[2];
 	/* the upscaler's texture LOD bias, added to the game's for the
 	textures with mip levels that the window's 3D view samples (0 none:
@@ -9354,11 +9358,15 @@ void halo_screen_view_end(int drawn, short x0, short y0, short x1, short y1)
 	destination->last_rendered = device.frame + 1;
 }
 
+/* (motion_vectors.h's: the previous frame's registers alone) */
+#define HALO_MOTION_PREVIOUS 2
+
 int halo_motion_window(int on, float jitter_x, float jitter_y)
 {
 	struct render_target_entry *target;
 
 	motion.on = FALSE;
+	motion.previous_only = FALSE;
 	motion.jitter[0] = motion.jitter[1] = 0.0f;
 	motion.lod_bias = 0.0f;
 	/* (the window's 3D view at its own scale from halo_screen_view_begin,
@@ -9371,6 +9379,14 @@ int halo_motion_window(int on, float jitter_x, float jitter_y)
 		return FALSE;
 	}
 	motion.on = TRUE;
+	/* (HALO_MOTION_PREVIOUS: the previous frame's registers alone, kept by
+	the backend from here on) */
+	if (on == HALO_MOTION_PREVIOUS)
+	{
+		motion.previous_only = TRUE;
+		xgpu_backend_motion(XGPU_MOTION_NONE, target->target.number, NULL);
+		return TRUE;
+	}
 	motion.lod_bias = temporal_lod_bias();
 	/* (MetalFX's spatial scaler, where the GPU has no temporal one: an
 	iOS's temporal_metalfx 2; one frame alone, not jittered) */
@@ -9413,7 +9429,7 @@ void halo_motion_objects(int begin)
 	/* (the span, whatever the setting: the draws' input, journaled) */
 	inputs.motion_objects = begin && device.render_target == &device.back_buffer &&
 		device.depth_stencil == &device.depth_buffer;
-	if (!motion.on || (begin ? motion.objects : !motion.objects))
+	if (!motion.on || motion.previous_only || (begin ? motion.objects : !motion.objects))
 		return;
 	motion.objects = FALSE;
 	if (begin && (device.render_target != &device.back_buffer || device.depth_stencil != &device.depth_buffer ||
@@ -9501,7 +9517,8 @@ void halo_motion_resolve(short x0, short y0, short x1, short y1, float const rep
 	int index;
 
 	halo_motion_objects(FALSE);
-	if (!motion.on || !(target = render_target_get(&device.back_buffer)) || !(width > 0.0f) || !(height > 0.0f))
+	if (!motion.on || motion.previous_only || !(target = render_target_get(&device.back_buffer)) || !(width > 0.0f) ||
+		!(height > 0.0f))
 		return;
 	memset(&pass, 0, sizeof(pass));
 	view_corners(target, x0, y0, x1, y1, corners);

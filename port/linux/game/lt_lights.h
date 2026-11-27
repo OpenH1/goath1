@@ -133,4 +133,9 @@ scenery, its middle in the sky's sun (no structure toward it). Render-only:
 a collision test, nothing changed */
 boolean lt_lights_sun_shadow(long object_index);
 
+/* whether the list is sent (HALO_LT_LIGHTS, or the light-transport pass on:
+HALO_LT_E1): the frame before's registers are then kept for the pre-pass's
+twins' motion too (motion_vectors.c) */
+boolean lt_lights_sent(void);
+
 #endif

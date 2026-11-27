@@ -4,8 +4,10 @@
 // stratified shadow ray each (the hero lights); the rest by ReSTIR DI (8 RIS candidates, temporal reuse keyed by the
 // light, M at most 20, one spatial pass of 4 neighbours, one visibility ray; RESERVOIR draws the reservoirs, the
 // main draw reuses them spatially); accumulated by count (1/n) where the reprojected history is the same surface.
-// SUN (a draw of its own after the history and the denoiser): the suns' direct share, where a dynamic object blocks
-// the sun and the structure does not, taken off the light (never added: the lightmap holds the sun). Linear light (irradiance, the enhanced lights' units),
+// The suns (W2): on the structure, the light is less the suns' direct share where a dynamic object blocks the sun and
+// the structure does not (never more: the lightmap holds the sun). As the light's history and the denoiser keep a
+// light of 0 or more, the light carries the suns' whole direct share less that (cmax - share, 0 or more) and FINAL,
+// after them, takes the whole share off (cmax, found exactly: no rays), so one temporal stage averages the shadow. Linear light (irradiance, the enhanced lights' units),
 // which the surfaces add after the game's own lights (xgpu_spirv.c's lt_e1_add). Compiled offline by
 // tools/vulkan_lt_shaders.py into xgpu_vulkan_lt_shaders.inc; drawn by xgpu_vulkan_lt.c as the light-shadow passes
 // are (one triangle over the window, the backend's sets as the surfaces have them).
@@ -42,15 +44,13 @@
 // W2: the suns' share subtracted from history_image's light (the draw after the denoiser); the reservoirs drawn (RIS
 // and the temporal reuse) in place of the light; COPY with the reach (d / range) of the light table's row
 // lights.w, for the calibration's band
-#define SUN 256
 #define RESERVOIR 512
 #define COPY_REACH 1024
-// the light the surfaces read: history_image's light (rgb) and, in alpha, the luminance of the suns' share a dynamic
-// object shadows (SUN's mean, at reservoirs' binding), which the surfaces take off the lightmap's light
+// the light the surfaces read: history_image's light less the suns' whole direct share (cmax): less than 0 where a
+// dynamic object shadows the sun
 #define FINAL 2048
-// SUN's count's cap (frames): the share's history (a moving shadow lags no more)
-#define SUN_CAP 12.0
-// SUN's rays a sun where it has no history
+// the suns' rays a sun where the pixel has no history (a reset, a cut, a disocclusion), so that the first frame's
+// shadow is as good as the later ones' average
 #define SUN_FIRST 12
 // how far a dynamic object's sun shadow is cast (world units: about 75 m)
 #define SUN_REACH 25.0
@@ -559,10 +559,23 @@ void reservoir_merge(inout Reservoir r, vec4 other, int row, vec3 p, vec3 shaded
     r.m += m;
 }
 
-// the suns' direct share at p where a dynamic object blocks the sun and the structure does not (the lightmap's own
-// shadows already dark): sun_power_scale x power x cos by the shaded normal, one ray a sun toward a point of its disk
-// (the objects' ray no longer than SUN_REACH: a dynamic object's shadow from farther is not drawn)
-vec3 sun_share(vec3 p, vec3 n, vec3 shaded, ivec2 pixel, int rays)
+// the suns' whole direct share at p (cmax: sun_power_scale x power x cos, the lightmap's, by the geometric normal as
+// the lightmap has no bump), and the part of it a dynamic object blocks where the structure does not (the
+// lightmap's own shadows already dark): rays a sun toward points of its disk (the objects' ray no longer than
+// SUN_REACH: a dynamic object's shadow from farther is not drawn)
+vec3 sun_cmax(vec3 n)
+{
+    vec3 cmax = vec3(0.0);
+    for (int s = 0; s < pass.lights.y; s++)
+    {
+        vec4 t1 = row_texel(SUN_ROW + s, 1), t4 = row_texel(SUN_ROW + s, 4);
+        if (t4.w >= 0.0)
+            cmax += t4.rgb * max(dot(n, t1.xyz), 0.0);
+    }
+    return cmax;
+}
+
+vec3 sun_share(vec3 p, vec3 n, ivec2 pixel, int rays)
 {
     vec3 share = vec3(0.0);
     vec3 origin = p + n * (0.004 + 0.0005 * length(p - pass.camera[0].xyz));
@@ -571,8 +584,8 @@ vec3 sun_share(vec3 p, vec3 n, vec3 shaded, ivec2 pixel, int rays)
         int row = SUN_ROW + s;
         vec4 t1 = row_texel(row, 1), t4 = row_texel(row, 4), t5 = row_texel(row, 5);
         vec3 f = t1.xyz;
-        float cosine = dot(shaded, f);
-        if (cosine <= 0.0 || dot(n, f) <= 0.0 || t4.w < 0.0)
+        float cosine = dot(n, f);
+        if (cosine <= 0.0 || t4.w < 0.0)
             continue;
         float blocked = 0.0;
         for (int k = 0; k < rays; k++)
@@ -650,37 +663,14 @@ void main()
         }
         result = (pass.control.w & COPY_GEOMETRIC) != 0 ? vec4(present ? n : vec3(0.0), 1.0) :
             (pass.control.w & COPY_SHADED) != 0 ? vec4(present ? shaded : vec3(0.0), 1.0) :
-            (pass.control.w & COPY_PRESENT) != 0 ? vec4(present ? 1.0 : 0.0) : mean;
-        return;
-    }
-    // (the suns' share a dynamic object shadows: the structure's pixels alone, which the lightmap lights; its mean
-    // by count, up to SUN_CAP frames, where the last frame's is the same surface)
-    if ((pass.control.w & SUN) != 0)
-    {
-        result = vec4(0.0);
-        if (!present || receiver != 0 || pass.lights.y <= 0)
-            return;
-        vec3 mean = vec3(0.0);
-        float count = 0.0;
-        ivec2 q;
-        if ((pass.control.w & RESET) == 0 && reproject(p, n, words.w, q))
-        {
-            vec4 old = texelFetch(history_image, q, 0);
-            mean = old.rgb;
-            count = old.a;
-        }
-        // (one ray a sun a frame, the frames' stratified points over its disk, which the count averages; SUN_FIRST
-        // where there is no history yet (a reset, a cut, a disocclusion), so the first frame's share is as good)
-        vec3 share = sun_share(p, n, shaded, pixel, count < 1.0 ? SUN_FIRST : 1);
-        count = min(count + 1.0, SUN_CAP);
-        mean += (share - mean) / count;
-        result = vec4(mean, count);
+            (pass.control.w & COPY_PRESENT) != 0 ? vec4(present ? 1.0 : 0.0) :
+            vec4(mean.rgb - (present && receiver == 0 ? sun_cmax(n) : vec3(0.0)), mean.a);
         return;
     }
     if ((pass.control.w & FINAL) != 0)
     {
-        result = vec4(texelFetch(history_image, pixel, 0).rgb, pass.lights.y > 0 ?
-            max(luminance_of(texelFetch(reservoirs, pixel, 0).rgb), 0.0) : 0.0);
+        result = vec4(texelFetch(history_image, pixel, 0).rgb - (present && receiver == 0 ? sun_cmax(n) : vec3(0.0)),
+            0.0);
         return;
     }
     // (the reservoirs: RIS over the cell's lights but the heroes, merged with the last frame's at the same point)
@@ -754,10 +744,17 @@ void main()
                 lit += light_sample(r.row, p, n, shaded, stratified(pixel, 3.0), receiver, shadow) * weight;
         }
     }
+    // (the suns on the structure, which the lightmap lights: their whole share less what a dynamic object blocks,
+    // FINAL taking the whole off; SUN_FIRST rays where the pixel has no history)
+    ivec2 q;
+    if (receiver == 0 && pass.lights.y > 0)
+    {
+        bool fresh = (pass.control.w & (RESET | GRADIENT)) == RESET || !reproject(p, n, words.w, q);
+        lit += sun_cmax(n) - sun_share(p, n, pixel, fresh ? SUN_FIRST : 1);
+    }
     // (the history at the same point where it is the same surface; else none, a disocclusion)
     vec3 mean = vec3(0.0);
     float count = 0.0;
-    ivec2 q;
     if (pass.control.x > 1 && (pass.control.w & RESET) == 0 && reproject(p, n, words.w, q))
     {
         vec4 old = texelFetch(history_image, q, 0);

@@ -50,6 +50,7 @@ Nothing is changed in the game: it is read only, on the game's thread.
 #include "shaders/shader_texture_animation.h"
 #include "tag_files/tag_groups.h"
 #include "memory/zlib/zlib.h"
+#include "interface/first_person_weapons.h"
 #include "rt_lights_materials.h"
 
 #include <xtl.h>
@@ -990,9 +991,13 @@ static void rtlm_material_environment(FILE *file, struct rtlm_shader_environment
 		"\"dynamic_mirror\":%s}", shader->reflection.lightmap_brightness_scale,
 		shader->reflection.view_perpendicular_brightness, shader->reflection.view_parallel_brightness,
 		TEST_FLAG(shader->reflection.flags, 0) ? "true" : "false");
-	fprintf(file, ",\"alpha_test\":%s,\"two_sided\":false,\"two_sided_from\":\"shader_environment has no two-sided "
+	/* (the alpha test: alpha > 0x7F of the bump map at its scale, or of the base map where the bump map is
+	the specular mask, flag bit 1: rasterizer_xbox_environment.c, world_rt_game.c's material_describe) */
+	fprintf(file, ",\"alpha_test\":%s,\"bump_map_is_specular_mask\":%s,\"alpha_test_map\":\"%s\","
+		"\"two_sided\":false,\"two_sided_from\":\"shader_environment has no two-sided "
 		"flag; every environment pass culls (D3DCULL_CCW, rasterizer_xbox_environment.c)\"",
-		TEST_FLAG(shader->flags, 0) ? "true" : "false");
+		TEST_FLAG(shader->flags, 0) ? "true" : "false", TEST_FLAG(shader->flags, 1) ? "true" : "false",
+		TEST_FLAG(shader->flags, 1) ? "base_map" : "bump_map");
 	fprintf(file, ",\"self_illumination\":{");
 	rtlm_map(file, "map", self->map.index, TRUE, FALSE);
 	fprintf(file, ",\"map_scale\":%.6g,\"primary_on\":", self->map_scale);
@@ -1609,7 +1614,8 @@ static void rtlm_lights_write(char const *path)
 			real_point3d position;
 			real_vector3d forward, up;
 			real_rgb_color color;
-			real radius;
+			real radius, emitter_radius;
+			real_point3d emitter;
 
 			if (!definition)
 				continue;
@@ -1647,15 +1653,33 @@ static void rtlm_lights_write(char const *path)
 			color = drawn ? drawn->color : light->color;
 			radius = drawn ? drawn->radius : light->radius;
 			gel = rtlm_texture(definition->gel_map.index, 0, TRUE);
+			/* (the emitter: where light leaves, as the light list's record has it
+			(lt_lights.c): a first-person flashlight at its lamp on the weapon in
+			hand (first_person_weapon_flashlight_lamp), every other light at its
+			position; the disk's radius as lt_lights.c:100-104 and 441-448 size it,
+			a projectile's and a panel's apart) */
+			emitter = position;
+			emitter_radius = radius * 0.05f;
+			emitter_radius = emitter_radius < 0.1f ? 0.1f : emitter_radius > 0.5f ? 0.5f : emitter_radius;
+			if (!strcmp(source, "flashlight"))
+			{
+				real_point3d lamp;
+
+				emitter_radius = 0.01f;
+				if (light->object_index != NONE && first_person_weapon_flashlight_lamp(light->object_index, &lamp))
+					emitter = lamp;
+			}
 			fprintf(file, "%s{\"tag\":", written ? ",\n" : "");
 			rtlm_string(file, rtlm_tag_name(light->definition_index));
 			fprintf(file, ",\"kind\":\"%s\",\"position\":[%.6g,%.6g,%.6g],\"direction\":[%.6g,%.6g,%.6g],"
 				"\"up\":[%.6g,%.6g,%.6g],\"as_drawn\":%s,\"datum_position\":[%.6g,%.6g,%.6g],"
-				"\"datum_direction\":[%.6g,%.6g,%.6g],\"color\":",
+				"\"datum_direction\":[%.6g,%.6g,%.6g],",
 				definition->runtime_cosine_falloff_angle != -1.0f ? "spot" : "point",
 				position.x, position.y, position.z, forward.i, forward.j, forward.k, up.i, up.j, up.k,
 				drawn ? "true" : "false", light->position.x, light->position.y, light->position.z,
 				light->forward.i, light->forward.j, light->forward.k);
+			fprintf(file, "\"emitter_position\":[%.6g,%.6g,%.6g],\"emitter_radius\":%.6g,\"color\":",
+				emitter.x, emitter.y, emitter.z, emitter_radius);
 			rtlm_rgb(file, &color);
 			fprintf(file, ",\"power\":1,\"radius\":%.6g,\"falloff\":\"distance_attenuation (this file) at d / radius, "
 				"times N.L, times the gel; none past radius\"", radius);

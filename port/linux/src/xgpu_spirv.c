@@ -54,7 +54,7 @@ enum
 	OP_I_EQUAL = 170, OP_I_NOT_EQUAL = 171, OP_S_LESS_THAN = 177,
 	OP_F_ORD_EQUAL = 180, OP_F_UNORD_NOT_EQUAL = 183, OP_F_ORD_LESS_THAN = 184, OP_F_ORD_GREATER_THAN = 186,
 	OP_F_ORD_LESS_THAN_EQUAL = 188, OP_F_ORD_GREATER_THAN_EQUAL = 190,
-	OP_SHIFT_RIGHT_ARITHMETIC = 195, OP_SHIFT_LEFT_LOGICAL = 196, OP_BITWISE_OR = 197, OP_BITWISE_AND = 199,
+	OP_SHIFT_RIGHT_ARITHMETIC = 195, OP_SHIFT_LEFT_LOGICAL = 196, OP_BITWISE_OR = 197, OP_BITWISE_XOR = 198, OP_BITWISE_AND = 199,
 	OP_CONVERT_U_TO_F = 112,
 	OP_ANY = 154, OP_U_GREATER_THAN_EQUAL = 174, OP_U_LESS_THAN = 176, OP_SHIFT_RIGHT_LOGICAL = 194,
 	OP_GROUP_NON_UNIFORM_BITWISE_OR = 359,
@@ -2188,7 +2188,9 @@ static void rt_bounce_declare(struct module *m, struct pixel_state *state);
 static unsigned int rt_bounce_add(struct module *m, struct pixel_state *state, unsigned int light);
 /* HALO_LT_E1 (port/linux/vulkan/xgpu_vulkan_lt.h, below) */
 static int lt_e1_on(void);
-static unsigned int lt_e1_guides(struct module *m, struct pixel_state *state, unsigned int shaded, BOOL specular);
+static unsigned int lt_e1_guides(struct module *m, struct pixel_state *state, unsigned int shaded, BOOL specular,
+	unsigned int motion);
+static unsigned int lt_guides_motion(struct module *m, unsigned int current_in, unsigned int previous_in);
 static unsigned int lt_e1_add(struct module *m, struct pixel_state *state, unsigned int lit, unsigned int tint,
 	unsigned int p, unsigned int n);
 static unsigned int lt_reflection_texel(struct module *m, struct pixel_state *state, unsigned int cube);
@@ -5847,6 +5849,8 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 	unsigned int world_ao_words = 0;
 	/* (HALO_LT_E1: the twin's guides' output, and the shaded normal the dynamic lights use: 0 none) */
 	unsigned int lt_guides_out = 0, lt_shaded_normal = 0;
+	/* (its motion's positions, this frame's and the frame before's: 0 none) */
+	unsigned int lt_motion_current = 0, lt_motion_previous = 0;
 	BOOL world_position = (program->per_pixel_lighting && ((program->per_pixel_lighting & 3) == 2 ||
 		program->dynamic_lights == XGPU_DYNAMIC_LIGHTS_MODEL)) || environment || world || program->rt_reflection;
 	BOOL count_samples = program->count_samples && options->count_samples;
@@ -5979,6 +5983,14 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 	color_out = interface_variable(&m, world_inputs || occluder ? m.t_uv4 : m.t_v4, STORAGE_OUTPUT, 0, "fragment_color");
 	if (world_inputs && lt_e1_on())
 		lt_guides_out = interface_variable(&m, m.t_uv4, STORAGE_OUTPUT, XGPU_SPIRV_GUIDES_LOCATION, "lt_guides");
+	/* (and the twin's motion, where its vertex shader hands it on: xgpu_spirv.h's C1) */
+	if (lt_guides_out && options->motion && !program->multiview)
+	{
+		lt_motion_current = interface_variable(&m, m.t_v3, STORAGE_INPUT, XGPU_SPIRV_LOCATION_MOTION_CURRENT,
+			"xMotionCurrent");
+		lt_motion_previous = interface_variable(&m, m.t_v3, STORAGE_INPUT, XGPU_SPIRV_LOCATION_MOTION_PREVIOUS,
+			"xMotionPrevious");
+	}
 	/* (display.temporal_aa: the motion, the second attachment's: the
 	previous position less the current, as a fraction of the view, x right
 	and y down, and the pixel's depth, which the resolve finds it still is) */
@@ -6399,7 +6411,8 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 	/* (HALO_LT_E1: the twin's guides, xgpu_spirv.h's C1) */
 	if (lt_guides_out)
 		store(&m, lt_guides_out, lt_e1_guides(&m, &state, lt_shaded_normal,
-			program->stages[3].mode == XGPU_TEXTURE_CUBEMAP));
+			program->stages[3].mode == XGPU_TEXTURE_CUBEMAP, lt_motion_current ?
+			lt_guides_motion(&m, lt_motion_current, lt_motion_previous) : constant_uint(&m, XGPU_SPIRV_GUIDES_MOTION_NONE)));
 	if (world_inputs)
 		store(&m, color_out, world_ao_words);
 	else if (occluder)
@@ -8796,10 +8809,15 @@ static unsigned int rt_bounce_add(struct module *m, struct pixel_state *state, u
 	return fadd(m, 3, light, xyz(m, rt_bounce_texel(m, state)));
 }
 
-/* the least of the lightmap's light a dynamic object's sun shadow leaves
-(lt_e1_add: the sky's, the bounce's; the lightmap's sun share is an
-estimate) */
-#define LT_SUN_FLOOR 0.25f
+/* HALO_LT_SUN_CLAMP_VIEW (lt_e1_add), read once */
+static int lt_sun_clamp_view(void)
+{
+	static int on = -1;
+
+	if (on < 0)
+		on = getenv("HALO_LT_SUN_CLAMP_VIEW") && atoi(getenv("HALO_LT_SUN_CLAMP_VIEW")) == 1;
+	return on;
+}
 
 /* HALO_LT_E1 (port/linux/vulkan/xgpu_vulkan_lt.h: E1 and E2 of the one
 light-transport pass): set and not "off", "0" or "false", read once */
@@ -8833,10 +8851,38 @@ static unsigned int lt_octahedral(struct module *m, unsigned int n)
 	return ext1(m, GLSL_PACK_SNORM_2X16, m->t_uint, select_n(m, 2, negative, flipped, folded));
 }
 
+/* a twin's motion (xgpu_spirv.h's C1): its positions as motion_screen has
+them, this frame's and the frame before's, the one less the other as a
+fraction of the window, x right and y down, in fixed point; NONE where
+either is behind the eye or it moved more than the range */
+static unsigned int lt_guides_motion(struct module *m, unsigned int current_in, unsigned int previous_in)
+{
+	static const float half_down[2] = { 0.5f / XGPU_SPIRV_GUIDES_MOTION_RANGE, -0.5f / XGPU_SPIRV_GUIDES_MOTION_RANGE };
+	unsigned int current = load(m, m->t_v3, current_in), previous = load(m, m->t_v3, previous_in);
+	unsigned int current_w = extract(m, current, 2), previous_w = extract(m, previous, 2);
+	unsigned int now = fdiv(m, 2, xy(m, current), splat(m, 2, current_w));
+	unsigned int before = fdiv(m, 2, xy(m, previous), splat(m, 2, previous_w));
+	unsigned int moved, packed, kept, largest;
+
+	moved = fmul(m, 2, fsub(m, 2, now, before), constant_vector(m, 2, half_down));
+	packed = op2(m, OP_BITWISE_XOR, m->t_uint, ext1(m, GLSL_PACK_SNORM_2X16, m->t_uint, moved),
+		constant_uint(m, XGPU_SPIRV_GUIDES_MOTION_FLIP));
+	moved = ext1(m, GLSL_F_ABS, m->t_v2, moved);
+	largest = ext2(m, GLSL_F_MAX, m->t_float, extract(m, moved, 0), extract(m, moved, 1));
+	/* (both in front of the eyes, within the range: not NaN) */
+	kept = op2(m, OP_LOGICAL_AND, m->t_bool, op2(m, OP_LOGICAL_AND, m->t_bool,
+		compare(m, OP_F_ORD_GREATER_THAN, current_w, constant_float(m, 0.0f)),
+		compare(m, OP_F_ORD_GREATER_THAN, previous_w, constant_float(m, 0.0f))),
+		compare(m, OP_F_ORD_LESS_THAN_EQUAL, largest, constant_float(m, 1.0f)));
+	return op3(m, OP_SELECT, m->t_uint, kept, packed, constant_uint(m, XGPU_SPIRV_GUIDES_MOTION_NONE));
+}
+
 /* a twin's guides (xgpu_spirv.h's C1): the shaded normal (0: the
 interpolated one), the interpolated one, the material word (no id yet; the
-roughness where the draw has one; the specular mask), no motion yet */
-static unsigned int lt_e1_guides(struct module *m, struct pixel_state *state, unsigned int shaded, BOOL specular)
+roughness where the draw has one; the specular mask), the motion
+(lt_guides_motion, or NONE) */
+static unsigned int lt_e1_guides(struct module *m, struct pixel_state *state, unsigned int shaded, BOOL specular,
+	unsigned int motion)
 {
 	unsigned int normal = xyz(m, pixel_input(m, state, state->in_world_normal, m->t_v4)), roughness, material;
 
@@ -8847,16 +8893,16 @@ static unsigned int lt_e1_guides(struct module *m, struct pixel_state *state, un
 		constant_uint(m, XGPU_SPIRV_GUIDES_ROUGHNESS_SHIFT)), constant_uint(m, specular ? 255u <<
 		XGPU_SPIRV_GUIDES_SPECULAR_SHIFT : 0u));
 	return op(m, OP_COMPOSITE_CONSTRUCT, m->t_uv4, 4, (unsigned int[]){ lt_octahedral(m, shaded ? shaded : normal),
-		lt_octahedral(m, normal), material, constant_uint(m, XGPU_SPIRV_GUIDES_MOTION_NONE) });
+		lt_octahedral(m, normal), material, motion });
 }
 
 /* ... the traced lights' light (linear, at display.rt_bounce's binding:
 their irradiance, its cosine by the shaded normal of the twins' guides,
 lt_e1_guides) added to lit (the game's lights' result, gamma) linearly, by
 tint (linear; 0: by 1, a model's), after the game's own lights' shoulder;
-the structure's (tint given) lit first darkened by the suns' share in the
-texel's alpha, as GLSL:
-pow(pow(max(lit, 0.0), vec3(2.2)) * sun + max(light, 0.0) * tint, vec3(1.0 / 2.2)); lit as it
+the light less than 0 on the structure where a dynamic object shadows the
+sun (the suns' share taken off: lt/e1.frag), as GLSL:
+pow(max(pow(max(lit, 0.0), vec3(2.2)) + light * tint, 0.0), vec3(1.0 / 2.2)); lit as it
 is without the mode or the binding */
 static unsigned int lt_e1_add(struct module *m, struct pixel_state *state, unsigned int lit, unsigned int tint,
 	unsigned int p, unsigned int n)
@@ -8872,23 +8918,28 @@ static unsigned int lt_e1_add(struct module *m, struct pixel_state *state, unsig
 	(void)p;
 	(void)n;
 	(void)to_lamp;
+	/* (a model's (no tint) never less than 0: the suns' share is the
+	structure's, whose pixel a model the pre-pass did not draw reads) */
 	if (tint)
 		light = fmul(m, 3, light, tint);
-	base = ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, lit, 0.0f), constant_splat(m, 3, 2.2f));
-	/* (W2, the structure's (tint given): the suns' share a dynamic object
-	shadows, its luminance in the texel's alpha, taken off the lightmap's
-	light, its hue kept, at most LT_SUN_FLOOR of it left: base *= clamp(1 -
-	texel.a / max(luminance(base), 1e-6), LT_SUN_FLOOR, 1)) */
-	if (tint)
+	else
+		light = fmax_scalar(m, 3, light, 0.0f);
+	(void)texel;
+	base = fadd(m, 3, ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, lit, 0.0f), constant_splat(m, 3, 2.2f)), light);
+	/* (HALO_LT_SUN_CLAMP_VIEW=1, checking: magenta where the sum is less
+	than 0 in a channel, the suns' share taken off more than the lightmap's
+	light has) */
+	if (lt_sun_clamp_view())
 	{
-		unsigned int luminance = fdot(m, base, constant_vector(m, 3, (const float[]){ 0.2126f, 0.7152f, 0.0722f }));
+		unsigned int below = op1(m, OP_ANY, m->t_bool, op2(m, OP_F_ORD_LESS_THAN, m->t_bv3, base,
+			constant_splat(m, 3, 0.0f)));
 
-		base = fscale(m, 3, base, ext3(m, GLSL_F_CLAMP, m->t_float, fsub(m, 1, constant_float(m, 1.0f), fdiv(m, 1,
-			extract(m, texel, 3), fmax_scalar(m, 1, luminance, 1.0e-6f))), constant_float(m, LT_SUN_FLOOR),
-			constant_float(m, 1.0f)));
+		return select_n(m, 3, below, constant_vector(m, 3, (const float[]){ 1.0f, 0.0f, 1.0f }),
+			ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, base, 0.0f), constant_splat(m, 3, 1.0f / 2.2f)));
 	}
-	return ext2(m, GLSL_POW, m->t_v3, fadd(m, 3, base, fmax_scalar(m, 3, light, 0.0f)), constant_splat(m, 3,
-		1.0f / 2.2f));
+	/* (less than 0 where the suns' share a dynamic object shadows is more
+	than the lightmap's light: kept at 0) */
+	return ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, base, 0.0f), constant_splat(m, 3, 1.0f / 2.2f));
 }
 
 /* whether a reflection's texel is HALO_LT_E1's pass's: the structure's and

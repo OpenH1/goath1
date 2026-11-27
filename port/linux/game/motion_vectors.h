@@ -91,7 +91,12 @@ void motion_vectors_jitter(unsigned long frame, real *x, real *y);
 /* ---------- the front end's (port/linux/src/d3d8_device.c) */
 
 /* the window's draws jittered by so many of the target's pixels (0 0
-none), and whether its motion can be drawn (the back buffer, one sample) */
+none), and whether its motion can be drawn (the back buffer, one sample);
+on HALO_MOTION_PREVIOUS (the light-transport pass without a technique):
+the previous frame's registers alone, kept for the pre-pass's twins'
+motion (xgpu_stream.h's MOTION phase NONE), no jitter, no objects' motion
+drawn and none resolved */
+#define HALO_MOTION_PREVIOUS 2
 int halo_motion_window(int on, float jitter_x, float jitter_y);
 /* the previous frame's registers beside c[reg] .. c[reg + count) */
 /* the frames of the jitter's sequence before it repeats: the upscaler's

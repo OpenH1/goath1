@@ -11,3 +11,11 @@ try:
 except Exception:
     VARIANT = "llvm_ad_rgb"
     mi.set_variant(VARIANT)
+
+# Evaluated (wavefront) loops and calls: a kernel per plugin instance, each small and cached, instead of one
+# megakernel holding every material's code (whose compile takes over ten minutes on a 160-shader map).
+# RT_TRUTH_MEGAKERNEL=1 keeps the symbolic megakernel.
+import drjit as _dr
+if os.environ.get("RT_TRUTH_MEGAKERNEL") != "1":
+    _dr.set_flag(_dr.JitFlag.SymbolicLoops, False)
+    _dr.set_flag(_dr.JitFlag.SymbolicCalls, False)

@@ -15,7 +15,8 @@ sample (HALO_LT_E1=denoise, xgpu_vulkan_lt.c):
    a real change);
 3. the temporal stage (lt/denoise_temporal.frag): the history where it is the
    same surface (owner, distance within 3%, normal within 25 degrees;
-   reprojected by the cameras, or the guides' motion once they carry it), its
+   reprojected by the guides' motion, each pixel's own, where the twins write
+   it, else by the cameras), its
    count cut by the share of the light that changed, the sample added by count
    (1/n, n up to 64: never an exponential average, never clamped to the
    neighbourhood);
@@ -31,7 +32,10 @@ by the cameras even where the guides carry motion (checking);
 HALO_LT_DENOISE_NO_GRADIENTS=1 leaves the anti-lag out,
 HALO_LT_DENOISE_SPATIAL=0 the spatial stage, and HALO_LT_DENOISE_EMA=1 makes
 the history an exponential average (1/64) from the start (checking: the
-negative controls).
+negative controls). HALO_LT_DENOISE_MOTION_VIEW=1 (checking) makes the
+result each pixel's guides' motion less the cameras' reprojection (rg, in
+pixels; b 1 where the guides carry motion, 2 where not, 0 nothing drawn),
+the spatial stage left out; =2 the guides' motion itself (pixels) and, in b, the pixel's distance negated.
 HALO_LT_DENOISE_DUMP ("1-5,30,120": the denoiser's draws counted from its
 first) writes the result at those draws into HALO_LT_DENOISE_DUMP_DIR (the
 current folder by default) as denoise_<draw>.rgba16f, E1's dumps' form (a
@@ -68,7 +72,8 @@ depth's (a share of the distance off the pixel's plane), the shaded normal's
 #define DENOISE_PARAMS_OFFSET 1024
 
 _Static_assert(sizeof(struct xgpu_world_ao_pass) <= DENOISE_PARAMS_OFFSET, "the pass's uniforms before the parameters");
-_Static_assert(XGPU_WORLD_AO_INPUT_PRESENT == 0x400u && XGPU_SPIRV_GUIDES_MOTION_NONE == 0u,
+_Static_assert(XGPU_WORLD_AO_INPUT_PRESENT == 0x400u && XGPU_SPIRV_GUIDES_MOTION_NONE == 0u &&
+	XGPU_SPIRV_GUIDES_MOTION_FLIP == 0x80008000u && XGPU_SPIRV_GUIDES_MOTION_RANGE == 0.25f,
 	"lt/denoise_common.glsl's constants");
 
 /* lt/denoise_common.glsl's, std140 */
@@ -86,6 +91,8 @@ enum
 	DENOISE_CAMERA_ONLY = 8,
 	DENOISE_EMA = 16,
 	DENOISE_SPECULAR = 32,
+	DENOISE_MOTION_VIEW = 128,
+	DENOISE_MOTION_RAW = 256,
 };
 /* the specular channel's cap where the guides have no roughness (its
 temporal stage's own runs from 16 to 32 by it: lt/denoise_temporal.frag) */
@@ -116,7 +123,7 @@ static struct
 	/* the diffuse channel, the specular */
 	struct denoise_channel channels[2];
 	/* checking (HALO_LT_DENOISE_*) */
-	int camera_only, no_gradients, spatial, ema;
+	int camera_only, no_gradients, spatial, ema, motion_view;
 	/* HALO_LT_DENOISE_DUMP's: those dumped */
 	const char *dumps;
 } denoise = { .spatial = -1 };
@@ -155,6 +162,9 @@ static int denoise_shaders(void)
 			strcmp(getenv("HALO_LT_DENOISE_NO_GRADIENTS"), "0");
 		denoise.dumps = getenv("HALO_LT_DENOISE_DUMP");
 		denoise.ema = getenv("HALO_LT_DENOISE_EMA") && strcmp(getenv("HALO_LT_DENOISE_EMA"), "0");
+		denoise.motion_view = getenv("HALO_LT_DENOISE_MOTION_VIEW") ? atoi(getenv("HALO_LT_DENOISE_MOTION_VIEW")) : 0;
+		if (denoise.motion_view)
+			denoise.spatial = 0;
 	}
 	denoise.vertex = denoise_kernel("e1.vert");
 	denoise.gradient = denoise_kernel("denoise_gradient.frag");
@@ -380,7 +390,8 @@ static struct xgpu_vulkan_image *denoise_channel_draw(struct denoise_channel *ch
 	params.size[3] = (float)gradient_height;
 	params.control[0] = specular ? DENOISE_SPECULAR_CAP : DENOISE_CAP;
 	params.control[1] = (history_valid ? DENOISE_HISTORY : 0) | (denoise.camera_only ? DENOISE_CAMERA_ONLY : 0) |
-		(denoise.ema ? DENOISE_EMA : 0) | (specular ? DENOISE_SPECULAR : 0);
+		(denoise.ema ? DENOISE_EMA : 0) | (specular ? DENOISE_SPECULAR : 0) |
+		(denoise.motion_view ? DENOISE_MOTION_VIEW : 0) | (denoise.motion_view == 2 ? DENOISE_MOTION_RAW : 0);
 	params.tuning[0] = channel->previous_pass.history[1];
 	params.tuning[1] = DENOISE_SIGMA_LUMINANCE;
 	params.tuning[2] = DENOISE_SIGMA_DEPTH;
