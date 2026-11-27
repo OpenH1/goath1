@@ -8,6 +8,9 @@ radiance, so an unoccluded white floor shows radiance ambient. A sun's `irradian
 """
 
 import math
+import os
+
+_BUMP_SIGN = tuple(float(c) for c in os.environ.get("RT_TRUTH_BUMP_SIGN", "1,1").split(","))
 
 import drjit as dr
 import mitsuba as mi
@@ -459,6 +462,8 @@ class HaloBump(mi.BSDF):
         T = si.shape.eval_attribute_3("vertex_halo_tangent", si, active)
         B = si.shape.eval_attribute_3("vertex_halo_binormal", si, active)
         b = self._texel(si, active) * 2.0 - 1.0
+        if _BUMP_SIGN != (1.0, 1.0):  # (an experiment's sign flip, RT_TRUTH_BUMP_SIGN="sx,sy")
+            b = mi.Color3f(b.x * _BUMP_SIGN[0], b.y * _BUMP_SIGN[1], b.z)
         N = si.sh_frame.n
         n = dr.normalize(T * b.x + B * b.y + N * dr.maximum(b.z, 0.05))
         n = dr.select(dr.isfinite(n.x) & (dr.squared_norm(T) > 0), n, N)
