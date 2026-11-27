@@ -24,6 +24,10 @@ struct light_source
 	real score;
 	unsigned long long key;
 	boolean baked;
+	/* a lit display's (a flat panel, light_sources.c): the way its face
+	looks, along which it shines as a panel does (by the cosine off it); 0
+	0 0 a light that shines every way */
+	real_vector3d facing;
 };
 
 void light_sources_new_map(void);
