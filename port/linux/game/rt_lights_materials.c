@@ -59,6 +59,11 @@ Nothing is changed in the game: it is read only, on the game's thread.
 #include <stdlib.h>
 #include <string.h>
 
+/* (the C library's own fopen: the scene folder is a whole host path, as
+mkdir takes it, not an Xbox path for port/linux/include/stdio.h to
+translate into the data root) */
+#undef fopen
+
 /* (cache_files.c) */
 boolean tag_index_is_group(long tag_index, long group_tag);
 void platform_log(const char *format, ...);
