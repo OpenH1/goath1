@@ -462,7 +462,7 @@ enum
 #define XGPU_RT_BOUNCE_GRID_Z 32
 #define XGPU_RT_BOUNCE_CACHE_WIDTH (XGPU_RT_BOUNCE_GRID_X * 6)
 #define XGPU_RT_BOUNCE_CACHE_HEIGHT (XGPU_RT_BOUNCE_GRID_Y * XGPU_RT_BOUNCE_GRID_Z)
-#define XGPU_RT_BOUNCE_CELL 0.125f
+#define XGPU_RT_BOUNCE_CELL 0.25f
 #define XGPU_RT_BOUNCE_TILE 4
 /* a bounce ray's reach and its start off the surface (world units); the
 base map's level a hit reads (its average, more or less), and its color
