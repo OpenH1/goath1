@@ -242,6 +242,7 @@ VkShaderModule xgpu_vulkan_lt_kernel(const char *source)
 		{ "denoise_gradient.frag", lt_denoise_gradient_spirv, sizeof(lt_denoise_gradient_spirv) / sizeof(uint32_t) },
 		{ "denoise_temporal.frag", lt_denoise_temporal_spirv, sizeof(lt_denoise_temporal_spirv) / sizeof(uint32_t) },
 		{ "denoise_atrous.frag", lt_denoise_atrous_spirv, sizeof(lt_denoise_atrous_spirv) / sizeof(uint32_t) },
+		{ "denoise_guide.frag", lt_denoise_guide_spirv, sizeof(lt_denoise_guide_spirv) / sizeof(uint32_t) },
 	};
 	size_t index;
 

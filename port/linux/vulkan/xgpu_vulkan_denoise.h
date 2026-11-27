@@ -16,8 +16,8 @@ display.rt_bounce's binding). Render thread alone.
 
 /* this frame's noisy irradiance (raw: RGBA32F, rgb the 1-spp sample), the
 pre-pass's inputs and guides (xgpu_spirv.h's C1), its uniforms and the
-rectangle drawn: the denoised irradiance (RGBA32F, rgb; a the estimate's
-variance), or NULL where it cannot be had yet (the raw then bound) */
+rectangle drawn: the denoised irradiance (RGBA16F, rgb; a the estimate's
+standard deviation), or NULL where it cannot be had yet (the raw then bound) */
 struct xgpu_vulkan_image *xgpu_vulkan_denoise_draw(struct xgpu_vulkan_image *raw, struct xgpu_vulkan_image *inputs,
 	struct xgpu_vulkan_image *guides, const struct xgpu_world_ao_pass *pass, const int32_t rectangle[4]);
 

@@ -3,8 +3,9 @@
 // owner, a pixel not drawn, the depth off this pixel's plane, the shaded and geometric normals' turn, and a luminance
 // difference beyond its estimate's deviation (prefiltered 3x3; under 4 frames a spatial guess, and steps 1 and 2
 // alone). The weights are normalized, so a flat region's mean is kept. The first pass reads the temporal stage's mean
-// (its variance: the samples' over the count); each passes on (rgb, the estimate's variance, propagated as the sum of
-// w^2 var over the weights' squared).
+// (its deviation: the samples' over the root of the count); each passes on (rgb, the estimate's standard deviation,
+// propagated as the root of the sum of w^2 var over the weights' sum), in half floats. Each pixel's guides are read
+// from the filter guide (lt/denoise_guide.frag): one texel.
 #version 460
 #extension GL_GOOGLE_include_directive : require
 
@@ -12,8 +13,7 @@
 
 layout(set = 1, binding = 0) uniform sampler2D source;
 layout(set = 1, binding = 1) uniform usampler2D history;
-layout(set = 1, binding = 2) uniform usampler2D inputs;
-layout(set = 1, binding = 3) uniform usampler2D guides;
+layout(set = 1, binding = 2) uniform usampler2D filter_guide;
 
 layout(location = 0) out vec4 result;
 
@@ -21,20 +21,15 @@ layout(location = 0) out vec4 result;
 vec4 fetch(ivec2 q)
 {
     if ((pass.control.y & FIRST) == 0)
-        return texelFetch(source, q, 0);
+    {
+        vec4 c = texelFetch(source, q, 0);
+        return vec4(c.rgb, c.a * c.a);
+    }
     uvec4 h = texelFetch(history, q, 0);
     vec3 m = vec3(uintBitsToFloat(h.x), uintBitsToFloat(h.y), uintBitsToFloat(h.z));
     vec2 cv = unpackHalf2x16(h.w);
     float l = luminance(m);
     return vec4(m, cv.y * l * l / max(cv.x, 1.0));
-}
-
-// a pixel's shaded normal (the guides'; its geometric one where they have none)
-vec3 shaded_normal(ivec2 q, uvec4 words)
-{
-    vec3 n = unfold(unpackSnorm2x16(words.x));
-    vec3 s = unfold(unpackSnorm2x16(texelFetch(guides, q, 0).x));
-    return dot(s, s) < 0.5 || dot(s, n) < 0.0 ? n : s;
 }
 
 bool inside(ivec2 q)
@@ -45,9 +40,9 @@ bool inside(ivec2 q)
 void main()
 {
     ivec2 pixel = ivec2(gl_FragCoord.xy);
-    uvec4 words = texelFetch(inputs, pixel, 0);
+    uvec4 g = texelFetch(filter_guide, pixel, 0);
     result = vec4(0.0);
-    if ((words.y & INPUT_PRESENT) == 0u)
+    if (g.z == 0u)
         return;
     vec4 centre = fetch(pixel);
     float count = unpackHalf2x16(texelFetch(history, pixel, 0).w).x;
@@ -55,12 +50,11 @@ void main()
     // alone, steps 1 and 2: its noise is guessed from its neighbours, and a guess wrong at an edge stays small)
     if (pass.control.z == 0 || (pass.control.z > 2 && count < 4.0))
     {
-        result = centre;
+        result = vec4(centre.rgb, sqrt(max(centre.a, 0.0)));
         return;
     }
-    vec3 n = unfold(unpackSnorm2x16(words.x));
-    vec3 shaded = shaded_normal(pixel, words);
-    float distance = uintBitsToFloat(words.z);
+    vec3 shaded = unfold(unpackSnorm2x16(g.x)), n = unfold(unpackSnorm2x16(g.y));
+    float distance = uintBitsToFloat(g.z);
     vec3 p = world_point(pixel, distance);
     float lp = luminance(centre.rgb);
     // (the variance prefiltered 3x3, Gaussian, over the same surface; in the first pass, under 4 frames, where the
@@ -75,15 +69,15 @@ void main()
         for (int x = -1; x <= 1; x++)
         {
             ivec2 q = pixel + ivec2(x, y);
-            uvec4 other = texelFetch(inputs, q, 0);
-            if (!inside(q) || other.w != words.w || (other.y & INPUT_PRESENT) == 0u)
+            uvec4 other = texelFetch(filter_guide, q, 0);
+            if (!inside(q) || other.w != g.w || other.z == 0u)
                 continue;
             float w = (x == 0 ? 0.5 : 0.25) * (y == 0 ? 0.5 : 0.25);
             vec4 c = fetch(q);
             v += w * c.a;
             vw += w;
-            if (young && dot(shaded_normal(q, other), shaded) >= 0.9994 &&
-                dot(unfold(unpackSnorm2x16(other.x)), n) >= 0.99)
+            if (young && dot(unfold(unpackSnorm2x16(other.x)), shaded) >= 0.9994 &&
+                dot(unfold(unpackSnorm2x16(other.y)), n) >= 0.99)
             {
                 float l = luminance(c.rgb);
                 for (int k = 0; k < 4; k++)
@@ -104,14 +98,15 @@ void main()
     float weights = 0.0, variance = 0.0;
     int step = max(pass.control.z, 1);
     float sigma_l = pass.tuning.y * deviation + 1.0e-3 * lp + 1.0e-7;
+    float sigma_z = pass.tuning.z * distance + 1.0e-4;
     for (int y = -2; y <= 2; y++)
         for (int x = -2; x <= 2; x++)
         {
             ivec2 q = pixel + ivec2(x, y) * step;
             if (!inside(q))
                 continue;
-            uvec4 other = texelFetch(inputs, q, 0);
-            if ((other.y & INPUT_PRESENT) == 0u || other.w != words.w)
+            uvec4 other = texelFetch(filter_guide, q, 0);
+            if (other.z == 0u || other.w != g.w)
                 continue;
             vec4 c = fetch(q);
             if (young && unpackHalf2x16(texelFetch(history, q, 0).w).x < 4.0)
@@ -120,16 +115,16 @@ void main()
             if (x != 0 || y != 0)
             {
                 vec3 pq = world_point(q, uintBitsToFloat(other.z));
-                // (the shaded normal's turn, strictly: the bump map's detail is in the light, and kept)
-                w *= exp(-(1.0 - dot(shaded, shaded_normal(q, other))) / pass.tuning.w);
-                // (and the geometric one's, more loosely: which side faces the light)
-                w *= exp(-(1.0 - dot(n, unfold(unpackSnorm2x16(other.x)))) / (10.0 * pass.tuning.w));
-                w *= exp(-abs(dot(n, pq - p)) / (pass.tuning.z * distance + 1.0e-4));
-                w *= exp(-abs(luminance(c.rgb) - lp) / sigma_l);
+                // (the shaded normal's turn, strictly: the bump map's detail is in the light, and kept; the geometric
+                // one's more loosely: which side faces the light; the depth off this pixel's plane; the luminance)
+                float e = (1.0 - dot(shaded, unfold(unpackSnorm2x16(other.x)))) / pass.tuning.w +
+                    (1.0 - dot(n, unfold(unpackSnorm2x16(other.y)))) / (10.0 * pass.tuning.w) +
+                    abs(dot(n, pq - p)) / sigma_z + abs(luminance(c.rgb) - lp) / sigma_l;
+                w *= exp(-e);
             }
             sum += w * c.rgb;
             variance += w * w * c.a;
             weights += w;
         }
-    result = vec4(sum / weights, variance / (weights * weights));
+    result = vec4(sum / weights, sqrt(variance) / weights);
 }
