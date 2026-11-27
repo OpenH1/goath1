@@ -177,6 +177,7 @@ static struct
 	float texels[LT_TABLE_ROWS][LT_TABLE_TEXELS][4];
 	uint32_t ids[2][LT_TABLE_ROWS][2];
 	int rows[2], ids_current, reservoir_current, reservoirs_valid;
+	unsigned long ids_frame;
 	/* the settings (read once): HALO_LT_ONLY, _HEROES, _RESTIR, _SUN,
 	_KIND_SCALE, _DROP */
 	int settings_read, only, heroes_on, restir_on, sun_on, reuse_on, only_ids;
@@ -748,6 +749,23 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 		}
 	}
 	lt.rows[now] = rows;
+	/* (HALO_LT_TABLE_LOG=1, checking: each frame's lights as the pass has
+	them, for a light's id to drop or measure) */
+	{
+		static int table_log = -1;
+
+		if (table_log < 0)
+			table_log = getenv("HALO_LT_TABLE_LOG") && strcmp(getenv("HALO_LT_TABLE_LOG"), "0");
+		for (row = 0; table_log && row < rows; row++)
+			if (lt.texels[row][4][3] >= 0.0f)
+				host_logf(HOST_LOG_WARN, "vulkan: light transport: table frame %.0f row %d id %08x %08x kind %.0f at "
+					"%.2f %.2f %.2f emitter %.3f range %.2f power %.4f %.4f %.4f", (double)lt.ids_frame, row,
+					lt.ids[now][row][0], lt.ids[now][row][1], (double)lt.texels[row][4][3],
+					(double)lt.texels[row][0][0], (double)lt.texels[row][0][1], (double)lt.texels[row][0][2],
+					(double)lt.texels[row][0][3], lt.texels[row][1][3] > 0.0f ? 1.0 / (double)lt.texels[row][1][3] : 0.0,
+					(double)lt.texels[row][4][0], (double)lt.texels[row][4][1], (double)lt.texels[row][4][2]);
+		lt.ids_frame++;
+	}
 	/* (the lights the pass lights: with no more than the 2 heroes, no
 	reservoirs are drawn) */
 	lt.handled = 0;
