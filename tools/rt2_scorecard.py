@@ -79,7 +79,27 @@ SCENES = [
     ("b30", "b30_refl.hrpl", 282, "b30's Pelican passing the beach rock (b30_exterior's view)"),
     ("combat", "combat_refl.hrpl", 593, "b30's beach in combat: plasma lights"),
     ("c20walk", "c20_walk_refl.hrpl", 595, "c20's corridor walked toward a Flood, the flashlight on (motion)"),
+    # (made from local/rt2-fixes with HALO_LT_E1=denoise and HALO_LT_LIGHTS=1, b30's campaign at a fixed frame time:
+    # the progress clip's two moments, the light list and motion recorded)
+    ("b30sun", "b30_sun.hrpl", 650, "b30's beach in the sun: the Pelican, a Warthog, an Elite, the player (sun shadows)"),
+    ("b30fight", "b30_fight.hrpl", 690, "b30's beach firefight: plasma bolts, needles, a grenade by a Warthog"),
 ]
+# the visual checks (each found escaped once, by the progress clip of f7223c72e): on omarchy, shared, the pictures
+# of the presented frame (sRGB decoded): (name, recording, frame, what)
+# - sun shadow: the share of the frame the pass's sun shadows darken by 15% or more (the pass against itself with
+#   HALO_LT_SUN=0), at least SHADOW_LEAST: the dynamic objects' shadows on the sunlit beach are there;
+# - sun clamp: of those pixels, the share where the suns' share taken off is more than the lightmap has in a
+#   channel (HALO_LT_SUN_CLAMP_VIEW=1's magenta), at most CLAMP_MOST: the subtraction tints nothing;
+# - afterglow: AFTER frames after a light is gone (its last frame, its id), the largest 32x32 tile change of the
+#   picture against the same frames played without that light (HALO_LT_DROP=id:), at most AFTERGLOW_MOST; and
+#   while it was there the same at least AFTERGLOW_SEEN (the check sees the light at all)
+VISUAL_SUN = ("b30sun", "b30_sun.hrpl", 650)
+VISUAL_AFTERGLOW = ("b30fight", "b30_fight.hrpl", 660, 702, "ea94000c", "the grenade's explosion")
+AFTER = 8
+SHADOW_LEAST = 0.005
+CLAMP_MOST = 0.01
+AFTERGLOW_MOST = 0.02
+AFTERGLOW_SEEN = 0.05
 STABILITY_HOST = "omarchy"
 TRUTH_HOST = "5900x"
 COST_HOSTS = {"5900x": "RTX 4090", "omarchy": "Radeon 8060S"}
@@ -248,6 +268,81 @@ def stability_rows(rows, name, m):
           f"median {m['first_vs_120']['median_relative']:.2%}")
 
 
+def pictures(env, recording, frames, hold=None):
+    """the presented pictures (linear luminance and the sRGB bytes, numpy) of frames played in order, or of a frame
+    held so many plays (its last)"""
+    service = Service(STABILITY_HOST, replay_path_for_visual[0], f"{RECORDINGS}/{recording}", env, "shared")
+    try:
+        if hold:
+            reply = service.ask({"cmd": "hold", "n": frames[0], "frames": hold, "shots": [hold], "inline": True,
+                                 "compress": True, "reset": True})
+            datas = {frames[0]: base64.b64decode(reply["shots"][-1]["png_base64"])}
+        else:
+            datas = {}
+            for n in frames:
+                datas[n] = base64.b64decode(service.ask({"cmd": "frame", "n": n, "inline": True,
+                                                         "compress": True})["png_base64"])
+    finally:
+        service.close()
+    result = {}
+    for n, data in datas.items():
+        w, h, lum = rt2_stability.png_luminance(data)
+        result[n] = (np.asarray(lum, dtype=np.float64).reshape(h, w), rt2_stability.png_rgb_numpy(data))
+    return result
+
+
+replay_path_for_visual = [None]
+
+
+def tile_largest(a, b):
+    """the largest 32x32 tile mean's change from b to a, relative to b's (tiles darker than 0.002 left out)"""
+    h, w = a.shape
+    th, tw = h // 32, w // 32
+    ta = a[:th * 32, :tw * 32].reshape(th, 32, tw, 32).mean(axis=(1, 3))
+    tb = b[:th * 32, :tw * 32].reshape(th, 32, tw, 32).mean(axis=(1, 3))
+    keep = np.maximum(ta, tb) > 0.002
+    return float((np.abs(ta - tb)[keep] / np.maximum(tb[keep], 1e-6)).max()) if keep.any() else 0.0
+
+
+def visual(replay, env, out):
+    """the visual checks (VISUAL_*): [(check, scene, value, target, at least?, said)]"""
+    replay_path_for_visual[0] = replay
+    found = []
+    name, recording, frame = VISUAL_SUN
+    lit = pictures(env, recording, [frame], hold=30)[frame]
+    off = pictures(env + ["HALO_LT_SUN=0"], recording, [frame], hold=30)[frame]
+    clamp = pictures(env + ["HALO_LT_SUN_CLAMP_VIEW=1"], recording, [frame], hold=30)[frame]
+    shadowed = lit[0] < 0.85 * off[0]
+    rgb = clamp[1]
+    magenta = (rgb[..., 0] > 250) & (rgb[..., 1] < 5) & (rgb[..., 2] > 250)
+    share = float(shadowed.mean())
+    clamped = float((magenta & shadowed).sum() / max(shadowed.sum(), 1))
+    found.append(("sun shadow share", name, share, SHADOW_LEAST, True, f"{int(shadowed.sum())} px darkened 15%+"))
+    found.append(("sun clamp share", name, clamped, CLAMP_MOST, False, f"{int(magenta.sum())} px clamped "
+                  f"({magenta.mean():.3%} of the frame)"))
+    folder = out / name
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "shadowed.npy").write_bytes(np.packbits(shadowed).tobytes())
+    name, recording, start, last, light, what = VISUAL_AFTERGLOW
+    frames = list(range(start, last + AFTER + 1))
+    with_light = pictures(env, recording, frames)
+    without = pictures(env + [f"HALO_LT_DROP=id:{light}"], recording, frames)
+    seen = tile_largest(with_light[last][0], without[last][0])
+    after = tile_largest(with_light[last + AFTER][0], without[last + AFTER][0])
+    found.append((f"afterglow {AFTER} frames", name, after, AFTERGLOW_MOST, False,
+                  f"{what} ({light}): {seen:.1%} while there (at least {AFTERGLOW_SEEN:.0%})"))
+    if seen < AFTERGLOW_SEEN:
+        found.append(("afterglow seen", name, seen, AFTERGLOW_SEEN, True, "the light is not seen: the check sees nothing"))
+    return found
+
+
+def visual_rows(rows, found):
+    for kind, scene, value, limit, least, said in found:
+        verdict = "PASS" if value is not None and (value >= limit if least else value <= limit) else "FAIL"
+        rows.append({"check": kind, "scene": scene, "value": value, "target": limit, "verdict": verdict,
+                     "said": said, "least": least})
+
+
 def truth(out, mutate, run_id, part):
     """the truth comparisons on the 5900X: [(scene, result dict or None, what was said)]"""
     work = f"{RECORDINGS}/out/{run_id}"
@@ -345,8 +440,9 @@ def table(rows):
     width = max(len(r["check"]) for r in rows)
     lines = [f"{'check':<{width}}  {'scene':<10} {'value':>8} {'target':>8}  verdict  notes"]
     for r in rows:
+        bound = "≥" if r.get("least") else "≤"
         lines.append(f"{r['check']:<{width}}  {r['scene']:<10} {shown(r['value'], r['check']):>8} "
-                     f"{'≤' + shown(r['target'], r['check']) if r['target'] is not None else '':>8}  "
+                     f"{bound + shown(r['target'], r['check']) if r['target'] is not None else '':>8}  "
                      f"{r['verdict']:<7}  {r['said'] or ''}")
     return "\n".join(lines)
 
@@ -356,7 +452,7 @@ def scorecard(args):
     env = DEFAULT_ENV + args.env
     if args.mutate == "raw":
         env = [e for e in env if not e.startswith("HALO_LT_E1=")] + ["HALO_LT_E1=raw"]
-    hosts = sorted({STABILITY_HOST, TRUTH_HOST, *COST_HOSTS})
+    hosts = sorted({STABILITY_HOST, *([] if args.no_truth else [TRUTH_HOST]), *([] if args.no_cost else COST_HOSTS)})
     if args.build:
         say(f"building {args.build} (linux_replay) on {', '.join(hosts)}")
         build(args.build, hosts, args.push)
@@ -372,7 +468,8 @@ def scorecard(args):
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
         held = {s[0]: pool.submit(stability, s, replays[STABILITY_HOST], env, out, args.mutate)
                 for s in SCENES if not args.scenes or s[0] in args.scenes}
-        compared = pool.submit(truth, out, args.mutate, run_id, args.truth_part)
+        compared = pool.submit(truth, out, args.mutate, run_id, args.truth_part) if not args.no_truth else None
+        seen = pool.submit(visual, replays[STABILITY_HOST], env, out) if not args.no_visual else None
         costs = {}
         if not args.no_cost:
             # (the 5900X's at once; omarchy's once its pictures are taken: it needs the GPU alone)
@@ -386,10 +483,17 @@ def scorecard(args):
                 note(rows, "stability", name, str(error)[:160], "ERROR")
                 errors.append(error)
         try:
-            truth_rows(rows, compared.result())
+            if compared:
+                truth_rows(rows, compared.result())
         except Exception as error:
             note(rows, "truth error", "-", str(error)[:160], "ERROR")
             errors.append(error)
+        if seen:
+            try:
+                visual_rows(rows, seen.result())
+            except Exception as error:
+                note(rows, "visual", "-", str(error)[:160], "ERROR")
+                errors.append(error)
         for host, future in costs.items():
             try:
                 cost_rows(rows, host, future.result())
@@ -493,11 +597,14 @@ def main():
     parser.add_argument("--replay-5900x", help="a replay binary on the 5900X instead (its path there)")
     parser.add_argument("--env", action="append", default=[], help="VAR=value for the replays (again for more)")
     parser.add_argument("--mutate", choices=["noise", "bias", "raw"], help="a negative control: must fail")
-    parser.add_argument("--scenes", nargs="*", help="only these held scenes (c20 a10 b30 combat c20walk)")
+    parser.add_argument("--scenes", nargs="*", help="only these held scenes (c20 a10 b30 combat c20walk b30sun "
+                        "b30fight)")
     # (E1's realtime irradiance has the geometric normal's cosine until the pre-pass carries the bump normal)
     parser.add_argument("--truth-part", default="direct_flashlight_geometric",
                         help="the truth's part compared (rt_truth compare --part)")
     parser.add_argument("--no-cost", action="store_true", help="no cost runs")
+    parser.add_argument("--no-visual", action="store_true", help="no visual checks (sun shadow, clamp, afterglow)")
+    parser.add_argument("--no-truth", action="store_true", help="no truth comparisons")
     parser.add_argument("--out", type=Path, default=ROOT / "build" / "rt2_scorecard", help="the pictures' folder")
     # shader
     parser.add_argument("--scene", default="c20", help="shader: the held scene")
