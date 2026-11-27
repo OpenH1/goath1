@@ -13,13 +13,14 @@ its modes there), drawn after the direct light (xgpu_vulkan_lt.c) each frame:
    bounce);
 2. the reflections, at the guides' specular pixels: one GGX ray, its hit
    Halo's lightmap x albedo plus the same dynamic light, its distance kept;
-3. the radiance cache (our own world-space hash grid, lt/indirect_cache.glsl):
-   a quarter of the bounce's samples a frame scattered as points into its
-   slots' sums (additive, cleared each frame: the samples' irradiance and
-   count; their cells' checks and light-id hashes), then resolved into the
-   cache by count (1/n up to 256, never an exponential average), a slot
+3. the radiance cache (our own world-space grid about the eye: cascades by
+   distance, cells by place and normal octant, lt/indirect_cache.glsl): each
+   slot gathers the bounce's samples of its cell where the cell is seen and
+   merges them by count (1/n up to 256, never an exponential average), a slot
    started again where its cell or its lights changed; the hits read the last
-   frame's (the bounce's later bounces, a frame each);
+   frame's (the bounce's later bounces, a frame each). A gather alone: the
+   backend's draws scatter nothing (no storage writes, no vertex-stage
+   textures), so its pipeline layout is the game's own;
 4. the bounce upsampled on each pixel's surface and added to the direct
    light's sample: the one diffuse signal the denoiser then takes ("denoise",
    its gradients still the direct light's alone: their previous samples are
@@ -65,9 +66,10 @@ Render thread alone.
 #define INDIRECT_CACHE_ON 4194304
 /* where its parameters are in the uniforms (lt/e1.frag's indirect[4]) */
 #define INDIRECT_PARAMS_OFFSET 1536
-/* the cache's slots (a texel each, RGBA32F: 8 MB) */
-#define INDIRECT_CACHE_WIDTH 1024
-#define INDIRECT_CACHE_HEIGHT 512
+/* the cache's slots (a texel each, RGBA32F: 24 MB; lt/indirect_cache.glsl's
+CELLS^2 by CELLS x 8 octants x CASCADES) */
+#define INDIRECT_CACHE_WIDTH (32 * 32)
+#define INDIRECT_CACHE_HEIGHT (32 * 8 * 6)
 /* the hits' share's history (frames) */
 #define INDIRECT_COVERAGE_CAP 16
 
@@ -77,15 +79,15 @@ static struct
 {
 	int settings_read, indirect, reflections, cache, only, made, failed, said;
 	unsigned generation;
-	VkShaderModule vertex, fragment, scatter_vertex, scatter_fragment;
+	VkShaderModule vertex, fragment;
 	VkSampler sampler;
-	struct xgpu_vulkan_pipeline_description wide, half, scatter;
+	struct xgpu_vulkan_pipeline_description wide, half;
 	/* the bounce (half resolution), the diffuse signal (the direct and the
 	indirect), the indirect's histories (E2, accumulate), the reflections'
 	samples, their hits' shares' histories, their radiance's (E2,
-	accumulate); the cache in turn and the frame's sums; the dump's */
+	accumulate); the cache in turn; the dump's */
 	struct xgpu_vulkan_image *bounce, *total, *histories[2], *specular_raw, *coverage[2], *specular_histories[2];
-	struct xgpu_vulkan_image *caches[2], *sums, *checks, *dump;
+	struct xgpu_vulkan_image *caches[2], *dump;
 	int current, cache_current, cache_valid;
 	unsigned long frames;
 	/* this frame's reflections' radiance (their samples, their count) */
@@ -134,8 +136,6 @@ static int indirect_shaders(void)
 		return 0;
 	indirect.vertex = xgpu_vulkan_lt_kernel("e1.vert");
 	indirect.fragment = xgpu_vulkan_lt_kernel("e1_indirect.frag");
-	indirect.scatter_vertex = xgpu_vulkan_lt_kernel("indirect_cache.vert");
-	indirect.scatter_fragment = xgpu_vulkan_lt_kernel("indirect_cache.frag");
 	if (!indirect.sampler)
 	{
 		memset(&sampler, 0, sizeof(sampler));
@@ -145,8 +145,7 @@ static int indirect_shaders(void)
 		sampler.anisotropy = 1;
 		indirect.sampler = xgpu_vulkan_sampler(&sampler);
 	}
-	if (!indirect.vertex || !indirect.fragment || !indirect.scatter_vertex || !indirect.scatter_fragment ||
-		!indirect.sampler)
+	if (!indirect.vertex || !indirect.fragment || !indirect.sampler)
 	{
 		host_logf(HOST_LOG_WARN, "vulkan: light transport: the indirect light's passes cannot be made");
 		indirect.failed = 1;
@@ -161,18 +160,8 @@ static int indirect_shaders(void)
 	indirect.wide.samples = 1;
 	indirect.half = indirect.wide;
 	indirect.half.color_format = XGPU_VULKAN_FORMAT_RGBA16F;
-	/* (the scatter: points, added: blend one, one) */
-	indirect.scatter = indirect.wide;
-	indirect.scatter.vertex_shader = indirect.scatter_vertex;
-	indirect.scatter.pixel_shader = indirect.scatter_fragment;
-	indirect.scatter.primitive_class = XGPU_VULKAN_CLASS_POINTS;
-	indirect.scatter.blend = 1;
-	indirect.scatter.blend_source = 1;
-	indirect.scatter.blend_destination = 1;
-	indirect.scatter.blend_operation = 0;
 	(void)xgpu_vulkan_pipeline_prepare(&indirect.wide);
 	(void)xgpu_vulkan_pipeline_prepare(&indirect.half);
-	(void)xgpu_vulkan_pipeline_prepare(&indirect.scatter);
 	indirect.made = 1;
 	return 1;
 }
@@ -202,11 +191,10 @@ static struct xgpu_vulkan_image *indirect_image(struct xgpu_vulkan_image *image,
 
 /* one of the kernel's draws over rectangle of into: its mode's flags (the
 direct light's shadow setting kept), the count's cap, its six textures (a
-NULL slot the light table's), the indirect's parameters; count points with
-the scatter's pipeline, else a triangle */
+NULL slot the light table's), the indirect's parameters */
 static void indirect_pass(struct xgpu_vulkan_image *into, const int32_t rectangle[4],
 	const struct xgpu_vulkan_lt_indirect_frame *frame, int flags, int cap, struct xgpu_vulkan_image *const textures[6],
-	const struct xgpu_vulkan_pipeline_description *pipeline, const float parameters[4][4], uint32_t points)
+	const struct xgpu_vulkan_pipeline_description *pipeline, const float parameters[4][4])
 {
 	struct xgpu_vulkan_dynamic_state dynamic;
 	struct xgpu_vulkan_draw draw;
@@ -244,8 +232,8 @@ static void indirect_pass(struct xgpu_vulkan_image *into, const int32_t rectangl
 	dynamic.viewport[3] = dynamic.scissor[3] = rectangle[3] - rectangle[1];
 	dynamic.depth_range[1] = 1.0f;
 	draw.dynamic = &dynamic;
-	draw.topology = points ? XGPU_VULKAN_TOPOLOGY_POINTS : XGPU_VULKAN_TOPOLOGY_TRIANGLES;
-	draw.count = points ? points : 3;
+	draw.topology = XGPU_VULKAN_TOPOLOGY_TRIANGLES;
+	draw.count = 3;
 	draw.ambient_occlusion = 1;
 	draw.dynamic_lights = 1;
 	draw.kind[0] = INDIRECT_KIND;
@@ -256,7 +244,6 @@ static void indirect_pass(struct xgpu_vulkan_image *into, const int32_t rectangl
 static void indirect_parameters(const struct xgpu_vulkan_lt_indirect_frame *frame, float parameters[4][4])
 {
 	const struct xgpu_vulkan_image_description *size = xgpu_vulkan_image_description(frame->inputs);
-	unsigned long quarter = indirect.frames + (indirect.frames >> 2);
 
 	memset(parameters, 0, sizeof(float) * 16);
 	parameters[0][0] = (float)((size->width + 1) / 2);
@@ -266,7 +253,6 @@ static void indirect_parameters(const struct xgpu_vulkan_lt_indirect_frame *fram
 	parameters[1][0] = (float)size->width;
 	parameters[1][1] = (float)(indirect.frames & 3);
 	parameters[1][3] = (float)INDIRECT_COVERAGE_CAP;
-	parameters[2][0] = (float)(quarter & 3);
 }
 
 struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_lt_indirect_frame *frame)
@@ -282,8 +268,7 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 	if (!xgpu_vulkan_lt_indirect_on() || !frame->inputs || !frame->direct || !frame->table || !frame->guides ||
 		!indirect_shaders())
 		return NULL;
-	if (!xgpu_vulkan_pipeline_ready(&indirect.wide) || !xgpu_vulkan_pipeline_ready(&indirect.half) ||
-		!xgpu_vulkan_pipeline_ready(&indirect.scatter))
+	if (!xgpu_vulkan_pipeline_ready(&indirect.wide) || !xgpu_vulkan_pipeline_ready(&indirect.half))
 		return NULL;
 	size = xgpu_vulkan_image_description(frame->inputs);
 	width = size->width;
@@ -325,12 +310,7 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 	}
 	if (indirect.reflections)
 		indirect.specular_raw = indirect_image(indirect.specular_raw, XGPU_VULKAN_FORMAT_RGBA16F, width, height);
-	indirect.sums = indirect_image(indirect.sums, XGPU_VULKAN_FORMAT_RGBA32F, INDIRECT_CACHE_WIDTH,
-		INDIRECT_CACHE_HEIGHT);
-	indirect.checks = indirect_image(indirect.checks, XGPU_VULKAN_FORMAT_RGBA32F, INDIRECT_CACHE_WIDTH,
-		INDIRECT_CACHE_HEIGHT);
-	if (!indirect.bounce || !indirect.total || !indirect.caches[0] || !indirect.caches[1] || !indirect.sums ||
-		!indirect.checks || (accumulate && (!indirect.histories[0] || !indirect.histories[1])) ||
+	if (!indirect.bounce || !indirect.total || !indirect.caches[0] || !indirect.caches[1] || (accumulate && (!indirect.histories[0] || !indirect.histories[1])) ||
 		(indirect.reflections && (!indirect.specular_raw || !indirect.coverage[0] || !indirect.coverage[1] ||
 		(accumulate && (!indirect.specular_histories[0] || !indirect.specular_histories[1])))))
 		return NULL;
@@ -347,35 +327,19 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 		struct xgpu_vulkan_image *textures[6] = { frame->inputs, indirect.caches[indirect.cache_current],
 			frame->previous_inputs, frame->guides, frame->table, NULL };
 
-		indirect_pass(indirect.bounce, half, frame, INDIRECT_BOUNCE, frame->cap, textures, &indirect.wide, parameters, 0);
+		indirect_pass(indirect.bounce, half, frame, INDIRECT_BOUNCE, frame->cap, textures, &indirect.wide, parameters);
 		if (indirect.reflections)
 			indirect_pass(indirect.specular_raw, frame->rectangle, frame, INDIRECT_SPECULAR_RAY, frame->cap, textures,
-				&indirect.half, parameters, 0);
+				&indirect.half, parameters);
 	}
 	if (indirect.cache)
 	{
-		/* 3: the cache: the frame's sums cleared, a quarter of the samples
-		scattered (their light, then their checks), resolved into the other
-		cache */
-		static const float none[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-		struct xgpu_vulkan_image *textures[6] = { frame->inputs, indirect.bounce, NULL, NULL, NULL, NULL };
-		struct xgpu_vulkan_image *resolve[6] = { frame->inputs, indirect.caches[indirect.cache_current], NULL, NULL,
-			indirect.checks, indirect.sums };
-		uint32_t points = ((half_width + 1) / 2) * ((half_height + 1) / 2);
-		int32_t rectangle[1][4] = { { 0, 0, INDIRECT_CACHE_WIDTH, INDIRECT_CACHE_HEIGHT } };
+		/* 3: the cache: each slot's cell's samples gathered, into the other */
+		struct xgpu_vulkan_image *resolve[6] = { frame->inputs, indirect.caches[indirect.cache_current], NULL,
+			frame->guides, NULL, indirect.bounce };
 
-		xgpu_vulkan_set_target_views(indirect.sums, NULL, 0, 1);
-		xgpu_vulkan_clear((const int32_t (*)[4])rectangle, 1, XGPU_VULKAN_CLEAR_COLOR | XGPU_VULKAN_CLEAR_CHANNELS, none,
-			1.0f, 0);
-		parameters[2][1] = 0.0f;
-		indirect_pass(indirect.sums, whole, frame, 0, frame->cap, textures, &indirect.scatter, parameters, points);
-		xgpu_vulkan_set_target_views(indirect.checks, NULL, 0, 1);
-		xgpu_vulkan_clear((const int32_t (*)[4])rectangle, 1, XGPU_VULKAN_CLEAR_COLOR | XGPU_VULKAN_CLEAR_CHANNELS, none,
-			1.0f, 0);
-		parameters[2][1] = 1.0f;
-		indirect_pass(indirect.checks, whole, frame, 0, frame->cap, textures, &indirect.scatter, parameters, points);
 		indirect_pass(indirect.caches[indirect.cache_current ^ 1], whole, frame, INDIRECT_CACHE_RESOLVE |
-			(indirect.cache_valid ? 0 : INDIRECT_RESET), frame->cap, resolve, &indirect.wide, parameters, 0);
+			(indirect.cache_valid ? 0 : INDIRECT_RESET), frame->cap, resolve, &indirect.wide, parameters);
 		indirect.cache_current ^= 1;
 		indirect.cache_valid = 1;
 	}
@@ -390,9 +354,9 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 		struct xgpu_vulkan_image *sum[6] = { frame->inputs, frame->direct, NULL, NULL, NULL, now };
 
 		indirect_pass(now, frame->rectangle, frame, INDIRECT_COMBINE | INDIRECT_ACCUMULATE |
-			(reset ? INDIRECT_RESET : 0), frame->cap, textures, &indirect.wide, parameters, 0);
+			(reset ? INDIRECT_RESET : 0), frame->cap, textures, &indirect.wide, parameters);
 		indirect_pass(indirect.total, frame->rectangle, frame, INDIRECT_SUM | (indirect.only ? INDIRECT_ONLY : 0),
-			frame->cap, sum, &indirect.wide, parameters, 0);
+			frame->cap, sum, &indirect.wide, parameters);
 	}
 	else
 	{
@@ -400,7 +364,7 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 			NULL, indirect.bounce };
 
 		indirect_pass(indirect.total, frame->rectangle, frame, INDIRECT_COMBINE | (indirect.only ? INDIRECT_ONLY : 0),
-			frame->cap, textures, &indirect.half, parameters, 0);
+			frame->cap, textures, &indirect.half, parameters);
 	}
 	/* 5: the reflections' hits' share counted; their radiance counted (E2,
 	accumulate) or as sampled (raw; "denoise": the denoiser's, after the
@@ -411,7 +375,7 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 			frame->previous_inputs, frame->guides, NULL, indirect.specular_raw };
 
 		indirect_pass(indirect.coverage[indirect.current ^ 1], frame->rectangle, frame, INDIRECT_SPEC_HISTORY |
-			INDIRECT_COVERAGE | (reset ? INDIRECT_RESET : 0), frame->cap, textures, &indirect.half, parameters, 0);
+			INDIRECT_COVERAGE | (reset ? INDIRECT_RESET : 0), frame->cap, textures, &indirect.half, parameters);
 		indirect.specular_light = indirect.specular_raw;
 		if (accumulate)
 		{
@@ -421,7 +385,7 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 			counted[1][3] = (float)frame->cap;
 			textures[1] = indirect.specular_histories[indirect.current];
 			indirect_pass(indirect.specular_histories[indirect.current ^ 1], frame->rectangle, frame,
-				INDIRECT_SPEC_HISTORY | (reset ? INDIRECT_RESET : 0), frame->cap, textures, &indirect.wide, counted, 0);
+				INDIRECT_SPEC_HISTORY | (reset ? INDIRECT_RESET : 0), frame->cap, textures, &indirect.wide, counted);
 			indirect.specular_light = indirect.specular_histories[indirect.current ^ 1];
 		}
 	}
@@ -466,7 +430,7 @@ void xgpu_vulkan_lt_indirect_final(const struct xgpu_vulkan_lt_indirect_frame *f
 			indirect.coverage[indirect.current] };
 
 		indirect.specular_light = light;
-		indirect_pass(final, right, frame, INDIRECT_SPEC_FINAL, frame->cap, textures, &indirect.wide, parameters, 0);
+		indirect_pass(final, right, frame, INDIRECT_SPEC_FINAL, frame->cap, textures, &indirect.wide, parameters);
 	}
 	else
 	{
@@ -505,7 +469,7 @@ void xgpu_vulkan_lt_indirect_dump(const struct xgpu_vulkan_lt_indirect_frame *fr
 	textures[1] = indirect.specular_light;
 	textures[5] = indirect.coverage[indirect.current];
 	indirect_pass(indirect.dump, frame->rectangle, frame, INDIRECT_SPEC_FINAL, frame->cap, textures, &indirect.half,
-		parameters, 0);
+		parameters);
 	if (xgpu_vulkan_read_halves(indirect.dump, 0, &halves) != 1 || !halves)
 		return;
 	snprintf(path, sizeof(path), "%s/lt_spec_%lu.rgba16f", folder && *folder ? folder : ".", since);

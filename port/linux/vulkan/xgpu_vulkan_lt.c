@@ -308,9 +308,6 @@ VkShaderModule xgpu_vulkan_lt_kernel(const char *source)
 		{ "denoise_guide.frag", lt_denoise_guide_spirv, sizeof(lt_denoise_guide_spirv) / sizeof(uint32_t) },
 		/* (the indirect light and reflections: xgpu_vulkan_lt_indirect.c) */
 		{ "e1_indirect.frag", lt_indirect_spirv, sizeof(lt_indirect_spirv) / sizeof(uint32_t) },
-		{ "indirect_cache.vert", lt_indirect_cache_vertex_spirv,
-			sizeof(lt_indirect_cache_vertex_spirv) / sizeof(uint32_t) },
-		{ "indirect_cache.frag", lt_indirect_cache_spirv, sizeof(lt_indirect_cache_spirv) / sizeof(uint32_t) },
 	};
 	size_t index;
 

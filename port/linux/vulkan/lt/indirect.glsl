@@ -16,9 +16,10 @@
 //   to the direct light's 1-spp sample (the denoiser's input: one diffuse signal) or, ACCUMULATE, counted in their
 //   own history (E2, accumulate). SUM: the direct mean and the indirect's.
 // SPEC_HISTORY: the specular's count-based history (the hits' share, COVERAGE, or the radiance), reprojected.
-// CACHE_RESOLVE (over the cache's slots): the frame's scattered samples (their sum and count; their checks' and
-//   light hashes' sums, lt/indirect_cache.vert) merged into each slot by count (1/n up to 256: never an exponential
-//   average); a slot starts again when its cell or its light-id hash changes, and keeps its mean where no sample came.
+// CACHE_RESOLVE (over the cache's slots, lt/indirect_cache.glsl): each slot's cell's bounce samples this frame,
+//   gathered where the cell is seen (16 taps over its footprint, each kept where its traced pixel is in that cell),
+//   merged by count (1/n up to 256: never an exponential average); a slot starts again when its cell or its
+//   light-id hash changes, and keeps its mean where no sample came (off the view, hidden).
 // SPEC_FINAL: the light the surfaces read's right half (xgpu_spirv.c's lt_reflection_texel): the specular
 //   radiance and the hits' share.
 
@@ -260,12 +261,28 @@ vec3 cache_lookup(vec3 p, vec3 n)
 {
     if ((pass.control.w & CACHE_ON) == 0)
         return vec3(0.0);
-    uvec2 key = cache_key(p, n);
-    vec4 c = texelFetch(cache_image, cache_texel(key.x), 0);
-    uint packed = uint(max(c.a, 0.0)), count = packed & 511u;
-    if (count == 0u || ((packed >> 9) & 15u) != key.y || (packed >> 13) != light_hash(p, n))
+    int k = cascade_of(p);
+    if (k < 0)
         return vec3(0.0);
-    return max(c.rgb, vec3(0.0));
+    ivec3 c = ivec3(floor(p / cascade_size(k)));
+    vec4 slot = texelFetch(cache_image, slot_texel(c, octant_of(n), k), 0);
+    uint packed = uint(max(slot.a, 0.0)), count = packed & 511u;
+    if (count == 0u || ((packed >> 9) & 15u) != cell_check(c, k) || (packed >> 13) != light_hash(p, n))
+        return vec3(0.0);
+    return max(slot.rgb, vec3(0.0));
+}
+
+// where p is in this frame's pixels (continuous); false off its view
+bool project_now(vec3 p, out vec2 at, out float along)
+{
+    vec3 w = p - pass.camera[0].xyz, f = pass.camera[1].xyz, r = pass.camera[2].xyz, u = pass.camera[3].xyz;
+    along = dot(w, f) / dot(f, f);
+    at = vec2(0.0);
+    if (along <= 0.0)
+        return false;
+    vec2 screen = vec2(dot(w, r) / dot(r, r), dot(w, u) / dot(u, u)) / along;
+    at = vec2(pass.corners.xy) + (screen + 1.0) * 0.5 * vec2(pass.corners.zw - pass.corners.xy);
+    return all(greaterThanEqual(at, vec2(pass.corners.xy))) && all(lessThan(at, vec2(pass.corners.zw)));
 }
 
 // a pixel's surface: present, its point, geometric and shaded normals, owner
@@ -410,27 +427,64 @@ void main()
     if ((flags & CACHE_RESOLVE) != 0)
     {
         // (the slot's mean and packed count, check, light hash: count + 512 (check + 16 hash))
-        vec4 before = texelFetch(cache_image, pixel, 0), sums = texelFetch(reservoirs, pixel, 0);
-        vec4 checks = texelFetch(light_table, pixel, 0);
+        vec4 before = texelFetch(cache_image, pixel, 0);
         result = (flags & RESET) != 0 ? vec4(0.0) : before;
-        float samples = sums.a;
-        if (samples < 0.5 || (flags & RESET) != 0)
+        if ((flags & RESET) != 0)
             return;
-        float check = checks.x / samples, light = checks.z / samples;
-        // (the frame's samples all of one cell (their checks' variance nothing) and one light hash)
-        if (abs(checks.y / samples - check * check) > 0.01 || abs(light - round(light)) > 0.01 ||
-            abs(check - round(check)) > 0.01)
+        // (the slot's cell: its cascade, octant and wrapped index; the window's cell there about the eye)
+        int k = pixel.y / (CELLS * 8);
+        uint octant = uint((pixel.y / CELLS) % 8);
+        ivec3 wrapped = ivec3(pixel.x % CELLS, pixel.x / CELLS, pixel.y % CELLS);
+        float size = cascade_size(k);
+        ivec3 origin = ivec3(floor(pass.camera[0].xyz / size)) - CELLS / 2;
+        ivec3 c = origin + ((wrapped - origin) & (CELLS - 1));
+        vec3 centre = (vec3(c) + 0.5) * size;
+        vec2 at;
+        float along;
+        if (!project_now(centre, at, along))
             return;
-        uint packed = uint(max(before.a, 0.0)), count = packed & 511u, k = uint(round(check)), l = uint(round(light));
+        // (the cell's half width in pixels; 4x4 taps over it, each a bounce block's sample taken where its traced
+        // pixel's point is of this cell (its cascade, place and octant) and of the first taken's lights)
+        float reach = clamp(0.5 * size / (length(pass.camera[2].xyz) * along) * 0.5 *
+            float(pass.corners.z - pass.corners.x), 1.0, 64.0);
+        ivec2 blocks = ivec2(pass.indirect[0].xy);
+        int phase = int(pass.indirect[1].y);
+        vec3 sum = vec3(0.0);
+        float samples = 0.0;
+        uint light = 0xFFFFFFFFu;
+        for (int t = 0; t < 16; t++)
+        {
+            vec2 q = at + (vec2(float(t & 3), float(t >> 2)) - 1.5) / 1.5 * reach;
+            ivec2 block = ivec2(floor(q * 0.5));
+            if (any(lessThan(block, ivec2(0))) || any(greaterThanEqual(block, blocks)))
+                continue;
+            vec4 s = texelFetch(reservoirs, block, 0);
+            if (s.a < 0.5)
+                continue;
+            float code = s.a - 1.0;
+            int which = int(floor(code / 1024.0));
+            uint l = uint(code - 1024.0 * float(which));
+            vec3 sp, sn, ss;
+            uint other;
+            if (!surface_at(block * 2 + block_pixel(phase + which), sp, sn, ss, other) || cascade_of(sp) != k ||
+                octant_of(sn) != octant || ivec3(floor(sp / size)) != c || (light != 0xFFFFFFFFu && l != light))
+                continue;
+            light = l;
+            sum += s.rgb;
+            samples += 1.0;
+        }
+        if (samples < 0.5)
+            return;
+        uint packed = uint(max(before.a, 0.0)), count = packed & 511u, check = cell_check(c, k);
         vec3 mean = before.rgb;
-        if (count == 0u || ((packed >> 9) & 15u) != k || (packed >> 13) != l)
+        if (count == 0u || ((packed >> 9) & 15u) != check || (packed >> 13) != light)
         {
             count = 0u;
             mean = vec3(0.0);
         }
         float total = min(float(count) + samples, CACHE_CAP), kept = max(total - samples, 0.0);
-        mean = (mean * kept + sums.rgb * (total - kept) / samples) / total;
-        result = vec4(mean, float(uint(total) + 512u * (k + 16u * l)));
+        mean = (mean * kept + sum * (total - kept) / samples) / total;
+        result = vec4(mean, float(uint(total) + 512u * (check + 16u * light)));
         return;
     }
     vec3 p, n, shaded;

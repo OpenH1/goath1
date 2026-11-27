@@ -11,7 +11,7 @@ W3, the denoiser (xgpu_vulkan_denoise.c): lt/denoise_gradient.frag, denoise_temp
 denoise_atrous.frag,
 with lt/denoise_common.glsl and lt/gradient_pixel.glsl included.
 The indirect light and reflections (xgpu_vulkan_lt_indirect.c): lt/e1.frag again with LT_INDIRECT (its lights' functions,
-lt/indirect.glsl's main), and the radiance cache's scatter, lt/indirect_cache.vert and .frag.
+lt/indirect.glsl's main, lt/indirect_cache.glsl's cells).
 """
 
 from __future__ import annotations
@@ -31,9 +31,7 @@ KERNELS = [("lt_e1_vertex_spirv", "e1.vert", []), ("lt_e1_spirv", "e1.frag", [])
            ("lt_denoise_gradient_spirv", "denoise_gradient.frag", []),
            ("lt_denoise_temporal_spirv", "denoise_temporal.frag", []),
            ("lt_denoise_atrous_spirv", "denoise_atrous.frag", []), ("lt_denoise_guide_spirv", "denoise_guide.frag", []),
-           ("lt_indirect_spirv", "e1.frag", ["LT_INDIRECT"]),
-           ("lt_indirect_cache_vertex_spirv", "indirect_cache.vert", []),
-           ("lt_indirect_cache_spirv", "indirect_cache.frag", [])]
+           ("lt_indirect_spirv", "e1.frag", ["LT_INDIRECT"])]
 
 
 def kernel_name(source: str, defines=()) -> str:
