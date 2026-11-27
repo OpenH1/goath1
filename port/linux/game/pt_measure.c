@@ -142,6 +142,9 @@ struct pt_sun
 
 struct pt_sample
 {
+	/* (saturated: a channel of its texel 250 or more of 255, the bake's
+	clipped light, which the fits leave out) */
+	int saturated;
 	float lightmap[3];
 	float sun_seen;
 	float d[PT_COLUMNS][3];
@@ -707,9 +710,11 @@ static int level_read(void)
 			pt.triangles = malloc(sizeof(*pt.triangles) * (size_t)(room + 1));
 			pt.materials = malloc(sizeof(*pt.materials) * (size_t)(material_room + 1));
 			page_room = structure_bsp->lightmaps.count + 1;
-			pt.pages = calloc((size_t)page_room, sizeof(*pt.pages));
+			/* (the game's malloc and free are its own: no calloc) */
+			pt.pages = malloc(sizeof(*pt.pages) * (size_t)page_room);
 			if (!pt.triangles || !pt.materials || !pt.pages)
 				return FALSE;
+			memset(pt.pages, 0, sizeof(*pt.pages) * (size_t)page_room);
 		}
 	}
 	return pt.triangle_count > 0;
@@ -840,7 +845,9 @@ static int prepare(void)
 	}
 	if (!receivers || !pt.node_count)
 		return FALSE;
-	pt.samples = calloc((size_t)pt.samples_wanted, sizeof(*pt.samples));
+	pt.samples = malloc(sizeof(*pt.samples) * (size_t)pt.samples_wanted);
+	if (pt.samples)
+		memset(pt.samples, 0, sizeof(*pt.samples) * (size_t)pt.samples_wanted);
 	return pt.samples != NULL;
 }
 
@@ -895,6 +902,7 @@ static void sample_trace(struct pt_sample *sample)
 	tri = &pt.triangles[pt.receiver_triangles[low]];
 	point_on(tri, x, &u, &v);
 	lightmap_at(tri, u, v, sample->lightmap);
+	sample->saturated = fmaxf(sample->lightmap[0], fmaxf(sample->lightmap[1], sample->lightmap[2])) >= pt.decode[250];
 	for (k = 0; k < 3; k++)
 		origin[k] = x[k] + tri->n[k] * PT_OFFSET;
 	/* (the dome and the bounce) */
@@ -1057,7 +1065,11 @@ static void fit(const struct pt_model *model, float *ratios)
 	int i, j, k, sweep, n = model->groups;
 	char line[1024];
 	int used;
+	float *split[2];
+	long split_count[2] = { 0, 0 };
 
+	split[0] = malloc(sizeof(float) * (size_t)(pt.samples_done + 1));
+	split[1] = malloc(sizeof(float) * (size_t)(pt.samples_done + 1));
 	memset(ata, 0, sizeof(ata));
 	memset(atb, 0, sizeof(atb));
 	for (s = 0; s < pt.samples_done; s++)
@@ -1065,9 +1077,11 @@ static void fit(const struct pt_model *model, float *ratios)
 		const struct pt_sample *sample = &pt.samples[s];
 		double weight = 1.0;
 
+		if (sample->saturated)
+			continue;
 		if (model->relative)
 		{
-			double l = luminance(sample->lightmap) + 0.01;
+			double l = luminance(sample->lightmap) + 0.02;
 
 			weight = 1.0 / (l * l);
 		}
@@ -1100,14 +1114,27 @@ static void fit(const struct pt_model *model, float *ratios)
 				x[i] = 0.0;
 		}
 	}
-	for (s = 0; s < pt.samples_done; s++)
-		mean += luminance(pt.samples[s].lightmap);
-	mean /= pt.samples_done ? pt.samples_done : 1;
+	{
+		long kept = 0;
+
+		for (s = 0; s < pt.samples_done; s++)
+		{
+			if (!pt.samples[s].saturated)
+			{
+				mean += luminance(pt.samples[s].lightmap);
+				kept++;
+			}
+		}
+		mean /= kept ? kept : 1;
+	}
 	for (s = 0; s < pt.samples_done; s++)
 	{
 		const struct pt_sample *sample = &pt.samples[s];
 		float traced[3] = { 0.0f, 0.0f, 0.0f }, l = luminance(sample->lightmap), tl;
 		int column;
+
+		if (sample->saturated)
+			continue;
 
 		grouped(model, sample, g);
 		for (i = 0; i < n; i++)
@@ -1135,7 +1162,28 @@ static void fit(const struct pt_model *model, float *ratios)
 			continue;
 		}
 		ratios[count++] = l / tl;
+		/* (in full sun, and in its shadow: the bake's contrast against the
+		trace's) */
+		if (split[0] && split[1] && pt.sun_count)
+		{
+			if (sample->sun_seen >= 0.99f && luminance(sample->d[2]) > 0.0f)
+				split[0][split_count[0]++] = l / tl;
+			else if (sample->sun_seen <= 0.01f)
+				split[1][split_count[1]++] = l / tl;
+		}
 	}
+	if (split[0] && split[1] && split_count[0] && split_count[1])
+	{
+		qsort(split[0], (size_t)split_count[0], sizeof(float), compare_floats);
+		qsort(split[1], (size_t)split_count[1], sizeof(float), compare_floats);
+		platform_log("pt fit: model %s (%s): R in full sun median %.2f (p25 %.2f p75 %.2f, %ld), in its shadow median "
+			"%.2f (p25 %.2f p75 %.2f, %ld)", model->name, model->relative ? "relative" : "energy",
+			percentile(split[0], split_count[0], 0.5f), percentile(split[0], split_count[0], 0.25f),
+			percentile(split[0], split_count[0], 0.75f), split_count[0], percentile(split[1], split_count[1], 0.5f),
+			percentile(split[1], split_count[1], 0.25f), percentile(split[1], split_count[1], 0.75f), split_count[1]);
+	}
+	free(split[0]);
+	free(split[1]);
 	qsort(ratios, (size_t)count, sizeof(float), compare_floats);
 	for (s = 0; s < count; s++)
 	{
@@ -1247,7 +1295,14 @@ static void report(void)
 	struct pt_model model;
 	int column, relative;
 
-	platform_log("pt fit: BSP %d: %ld samples, %.0f rays", (int)pt.bsp, pt.samples_done, pt.rays);
+	{
+		long s, saturated = 0;
+
+		for (s = 0; s < pt.samples_done; s++)
+			saturated += pt.samples[s].saturated;
+		platform_log("pt fit: BSP %d: %ld samples (%ld saturated, %.1f%%: left out of the fits), %.0f rays", (int)pt.bsp,
+			pt.samples_done, saturated, 100.0 * saturated / (pt.samples_done ? pt.samples_done : 1), pt.rays);
+	}
 	mood();
 	if (!ratios)
 		return;
