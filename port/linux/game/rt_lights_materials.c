@@ -958,8 +958,8 @@ static void rtlm_material_environment(FILE *file, struct rtlm_shader_environment
 		"stays exact (x^2.2 y^2.2 = (xy)^2.2), so 2 x base x detail becomes 2^2.2 (4.595) x base x detail; an add "
 		"does not, decode after combining. material_color is the diffuse lights' tint (_rasterizer_environment_"
 		"diffuse_light_draw), not the albedo\"",
-		type == 1 || type == 2 ? "lerp(secondary, primary, base.a)" : "lerp(primary, secondary, secondary.a)... "
-			"exactly (1 - secondary.a) x secondary + secondary.a x primary (combiner 0, rgb 0x3A0A1A09)",
+		type == 1 || type == 2 ? "(1 - base.a) x secondary + base.a x primary (0x380A1809)" : "(1 - secondary.a) x secondary + secondary.a x "
+			"primary (combiner 0's rgb inputs 0x3A0A1A09)",
 		function == 0 ? "2 x base x detail" : function == 1 ? "base x detail" : "base + 2 x detail - 1",
 		micro == 0 ? "2 x color x micro" : micro == 1 ? "color x micro" : "color + 2 x micro - 1");
 	fprintf(file, ",\"specular\":{\"mask\":\"%s\",\"tint\":",
@@ -1542,7 +1542,7 @@ static void rtlm_lights_write(char const *path)
 	struct scenario *scenario = global_scenario_get();
 	struct structure_bsp *bsp = global_structure_bsp_get();
 	FILE *file = fopen(path, "w");
-	long cluster_counts[32], index, written = 0, lens_flare_only = 0;
+	long cluster_counts[32], index, written = 0, lens_flare_only = 0, dark = 0;
 	short sky_index, main_sky = 0;
 
 	if (!file)
@@ -1598,6 +1598,14 @@ static void rtlm_lights_write(char const *path)
 				lens_flare_only++;
 				continue;
 			}
+			/* (a dynamic light at no intensity this tick: a muzzle flash
+			between shots) */
+			if (!(light->radius > 0.0f) || !(light->color.red > 0.0f || light->color.green > 0.0f ||
+				light->color.blue > 0.0f))
+			{
+				dark++;
+				continue;
+			}
 			if (light->parent_light_index != NONE)
 				source = "effect";
 			else if (object && object->object.type == _object_type_light_fixture)
@@ -1633,7 +1641,9 @@ static void rtlm_lights_write(char const *path)
 			written++;
 		}
 	}
-	fprintf(file, "],\n\"lens_flare_only_lights\":%ld,\n\"light_tags\":[", lens_flare_only);
+	fprintf(file, "],\n\"lens_flare_only_lights\":%ld,\"dark_lights\":%ld,\"lights_from\":\"light datums "
+		"(object_lights.c's light_data) at this tick; left out: lens flares only (no dynamic flag: they light "
+		"nothing) and dynamic lights at no color or radius this tick\",\n\"light_tags\":[", lens_flare_only, dark);
 	if (global_tag_instances)
 	{
 		long count = 0;
@@ -1706,15 +1716,17 @@ void rt_lights_materials_write(const char *scene_folder)
 
 void rt_lights_materials_debug_frame(void)
 {
-	static int done = FALSE;
+	static int done = FALSE, written = 0;
 	static long tick = -1;
+	static struct structure_bsp *last_bsp = NULL;
 	char const *root;
 	struct structure_bsp *bsp;
 	char folder[1024], path[1200];
 	char const *map, *name;
 	FILE *file;
-	long lightmap_index, count = 0;
+	long lightmap_index, count = 0, bsp_index = 0;
 	long seen[RTLM_MATERIALS];
+	struct scenario *scenario;
 
 	if (done)
 		return;
@@ -1728,11 +1740,17 @@ void rt_lights_materials_debug_frame(void)
 		tick = getenv("HALO_RT2_LIGHTS_TEST_TICK") ? atol(getenv("HALO_RT2_LIGHTS_TEST_TICK")) : RTLM_DEFAULT_TICK;
 	bsp = global_structure_bsp_get();
 	map = cache_file_loaded_map_name();
-	if (!bsp || !map || !global_scenario_get() || game_time_get() < tick || strstr(map, "ui"))
+	scenario = global_scenario_get();
+	if (!bsp || !map || !scenario || game_time_get() < tick || strstr(map, "ui") || bsp == last_bsp)
 		return;
-	done = TRUE;
+	/* (once a BSP the map shows, after the tick: a level's first BSP may be
+	its intro's) */
+	last_bsp = bsp;
+	if (++written >= 4)
+		done = TRUE;
+	bsp_index = global_structure_bsp_index_get();
 	name = strrchr(map, '\\') ? strrchr(map, '\\') + 1 : map;
-	snprintf(folder, sizeof(folder), "%s/%s_lights_test", root, name);
+	snprintf(folder, sizeof(folder), "%s/%s_bsp%ld_lights_test", root, name, bsp_index);
 	rtlm_mkdirs(folder);
 	snprintf(path, sizeof(path), "%s/materials.json", folder);
 	if (!(file = fopen(path, "w")))
