@@ -1,5 +1,5 @@
 """Campaign scoring's rules (campaign_score.c): the points table, a victim's class from its tags' names, a kill's
-bonuses (headshot, melee, grenade), multi-kills within their window (and the most a step gives), streaks that a death
+bonuses (headshot, melee, an assassination's in the melee's place, grenade), a driver's assist, multi-kills within their window (and the most a step gives), streaks that a death
 ends, infection forms that count toward neither, and deductions that never take a score below 0."""
 import sys
 from pathlib import Path
@@ -13,8 +13,8 @@ SOURCE = "port/linux/game/campaign_score.c"
 HEADER = "port/linux/game/campaign_score.h"
 FUNCTIONS = ("campaign_score_name_has", "campaign_score_class_from_names", "campaign_score_scaled",
              "campaign_score_note_event", "campaign_score_player_kill", "campaign_score_player_deduct",
-             "campaign_score_player_death")
-CASES = ["table", "names", "bonuses", "multi", "multi-window", "multi-cap", "streak", "swarm", "deduct"]
+             "campaign_score_player_death", "campaign_score_driver_assist_points")
+CASES = ["table", "names", "bonuses", "assassination", "driver-assist", "multi", "multi-window", "multi-cap", "streak", "swarm", "deduct"]
 
 # a fault in the code under test and the case that must catch it
 NEGATIVE_CONTROLS = {
@@ -37,6 +37,15 @@ NEGATIVE_CONTROLS = {
     # any blow to the head a headshot (a grenade's)
     "head-any": (("if (head && (category == _campaign_score_damage_bullet ||", "if (head || (category == 255 ||"),
                  "bonuses"),
+    # an assassination given the melee's bonus
+    "assassination-melee": (("unsuspecting ? campaign_score_bonuses.assassination :", "FALSE ? 0 :"), "assassination"),
+    # an assassination's bonus without its melee (any instant kill of the unsuspecting)
+    "assassination-any": (("\telse if (category == _campaign_score_damage_melee)\n",
+                           "\telse if (category == _campaign_score_damage_melee || unsuspecting)\n"), "assassination"),
+    # the assist's share rounded down: an elite major's 37
+    "assist-round": (("driver_assist_percent + 50) / 100", "driver_assist_percent) / 100"), "driver-assist"),
+    # the assist's share after the multiplier is left out
+    "assist-multiplier": (("return campaign_score_scaled(share, multiplier);", "return share;"), "driver-assist"),
     # the swarm's forms counted toward streaks
     "swarm-streak": (("if (class_points->counts_toward_streaks)", "if (TRUE)"), "swarm"),
 }

@@ -139,6 +139,19 @@ int main(int argc, char **argv)
 			read.players[0].kills, read.players[0].deaths);
 		return 0;
 	}
+	CASE("new-kinds")
+	{
+		/* an assassination and a driver's assist: their kinds' numbers on the
+		wire (after the flawless bonus's 14), read back */
+		contents.events[0].kind = _campaign_score_event_assassination;
+		contents.events[1].kind = _campaign_score_event_driver_assist;
+		length = network_campaign_score_pack(buffer, sizeof(buffer), &contents);
+		CHECK(buffer[12 + 2 * 56 + 1] == 15 && buffer[12 + 2 * 56 + 12 + 1] == 16, "the kinds' bytes: %u, %u",
+			buffer[12 + 2 * 56 + 1], buffer[12 + 2 * 56 + 12 + 1]);
+		CHECK(network_campaign_score_unpack(buffer, length, &read), "read back");
+		expect_same(&read, &contents);
+		return 0;
+	}
 	CASE("full")
 	{
 		short index;

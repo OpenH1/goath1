@@ -15,8 +15,16 @@ static long event_count;
 static long kill(struct campaign_score_player *player, struct campaign_score_timing *timing, long tick,
 	short victim_class, short category, boolean head, real multiplier)
 {
-	return campaign_score_player_kill(player, timing, 0, tick, victim_class, category, head, multiplier, events,
-		&event_count);
+	return campaign_score_player_kill(player, timing, 0, tick, victim_class, category, head, FALSE, multiplier,
+		events, &event_count);
+}
+
+/* ... a blow lethal to the unsuspecting that killed outright */
+static long kill_unsuspecting(struct campaign_score_player *player, struct campaign_score_timing *timing, long tick,
+	short victim_class, short category, real multiplier)
+{
+	return campaign_score_player_kill(player, timing, 0, tick, victim_class, category, FALSE, TRUE, multiplier,
+		events, &event_count);
 }
 
 static long count_kind(short kind)
@@ -114,6 +122,42 @@ int main(int argc, char **argv)
 		timing.multi_count = 0;
 		CHECK(kill(&player, &timing, 2000, _campaign_score_class_jackal, _campaign_score_damage_melee, FALSE, 2.0f) ==
 			60 && player.melee_kills == 1, "a melee on heroic: (20 + 10) times 2");
+		return 0;
+	}
+	CASE("assassination")
+	{
+		CHECK(kill_unsuspecting(&player, &timing, 0, _campaign_score_class_elite, _campaign_score_damage_melee, 1.0f) ==
+			75 && count_kind(_campaign_score_event_assassination) == 1 && count_kind(_campaign_score_event_melee) == 0,
+			"an elite assassinated: 50 and 25, no melee's bonus besides");
+		CHECK(player.melee_kills == 1, "a melee kill all the same");
+		CHECK(campaign_score_bonuses.assassination > campaign_score_bonuses.melee, "more than a melee's");
+		event_count = 0;
+		timing.multi_count = 0;
+		CHECK(kill_unsuspecting(&player, &timing, 1000, _campaign_score_class_grunt, _campaign_score_damage_melee,
+			3.0f) == 105, "a grunt on legendary: (10 + 25) times 3");
+		event_count = 0;
+		timing.multi_count = 0;
+		CHECK(kill(&player, &timing, 2000, _campaign_score_class_grunt, _campaign_score_damage_melee, FALSE, 1.0f) == 20 &&
+			count_kind(_campaign_score_event_assassination) == 0 && count_kind(_campaign_score_event_melee) == 1,
+			"a melee from the front: the melee's 10");
+		event_count = 0;
+		timing.multi_count = 0;
+		CHECK(kill_unsuspecting(&player, &timing, 3000, _campaign_score_class_grunt, _campaign_score_damage_bullet,
+			1.0f) == 10 && count_kind(_campaign_score_event_assassination) == 0, "no melee's blow: none");
+		return 0;
+	}
+	CASE("driver-assist")
+	{
+		CHECK(campaign_score_driver_assist_points(_campaign_score_class_elite, 1.0f) == 25, "an elite: half of 50");
+		CHECK(campaign_score_driver_assist_points(_campaign_score_class_elite_major, 1.0f) == 38,
+			"an elite major: 37.5 to the nearest");
+		CHECK(campaign_score_driver_assist_points(_campaign_score_class_grunt, 3.0f) == 15,
+			"a grunt on legendary: 5 times 3");
+		CHECK(campaign_score_driver_assist_points(_campaign_score_class_vehicle_heavy, 1.5f) == 150,
+			"a wraith on normal: 100 times 1.5");
+		CHECK(campaign_score_driver_assist_points(_campaign_score_class_flood_infection, 1.0f) == 1,
+			"an infection form: 1");
+		CHECK(campaign_score_driver_assist_points(99, 1.0f) == 5, "a class out of range: any enemy's");
 		return 0;
 	}
 	CASE("multi")

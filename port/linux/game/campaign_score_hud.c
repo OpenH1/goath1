@@ -229,6 +229,12 @@ static short score_event_words(
 	case _campaign_score_event_splatter:
 		usnprintf(text, size, L"Splatter");
 		return 5;
+	case _campaign_score_event_assassination:
+		usnprintf(text, size, L"Assassination");
+		return 6;
+	case _campaign_score_event_driver_assist:
+		usnprintf(text, size, L"Driver Assist");
+		return 3;
 	case _campaign_score_event_stick:
 		usnprintf(text, size, L"Stuck");
 		return 5;
@@ -348,6 +354,7 @@ static void score_fill_update(
 	{
 		{ 150, 9, L"Triple Kill" }, { 75, 5, L"Headshot" }, { 250, 8, L"Killing Spree" },
 		{ 60, 1, L"Elite Major" }, { 120, 5, L"Stuck" }, { 90, 4, L"Melee Kill" },
+		{ 113, 6, L"Assassination" }, { 38, 3, L"Driver Assist" },
 	};
 	struct campaign_score_state *fill = &score_hud.fill;
 	struct data_iterator iterator;

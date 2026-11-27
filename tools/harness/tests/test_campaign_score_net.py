@@ -1,6 +1,6 @@
 """Campaign scoring's network message (network_campaign_score.c, _distributed_message_campaign_score): a message
 packed and read back whole, its bytes as the wire has them (a format older builds must keep reading), the largest
-message, counts kept to a word, and what a client refuses (another format, a wrong size, too many records, a player or
+message, counts kept to a word, the assassination's and driver assist's kinds, and what a client refuses (another format, a wrong size, too many records, a player or
 an event kind out of range)."""
 import re
 import sys
@@ -17,7 +17,7 @@ SOURCE = "port/linux/game/network_campaign_score.c"
 HEADER = "port/linux/game/network_campaign_score.h"
 SCORE_HEADER = "port/linux/game/campaign_score.h"
 FUNCTIONS = ("network_campaign_score_word", "network_campaign_score_pack", "network_campaign_score_unpack")
-CASES = ["round-trip", "layout", "refused", "clamped", "full"]
+CASES = ["round-trip", "layout", "refused", "clamped", "new-kinds", "full"]
 
 # a fault in the code under test and the case that must catch it
 NEGATIVE_CONTROLS = {
@@ -34,6 +34,9 @@ NEGATIVE_CONTROLS = {
     "slot": (("if (!VALID_INDEX(record.slot, CAMPAIGN_SCORE_MAX_PLAYERS))\n\t\t\treturn FALSE;", ""), "refused"),
     # an event of no kind taken
     "kind": (("||\n\t\t\trecord.kind >= NUMBER_OF_CAMPAIGN_SCORE_EVENT_KINDS", ""), "refused"),
+    # the kinds an older build knew alone (to the flawless bonus): the new ones refused
+    "old-kinds": (("record.kind >= NUMBER_OF_CAMPAIGN_SCORE_EVENT_KINDS", "record.kind > _campaign_score_event_flawless"),
+                  "new-kinds"),
     # the multiplier in tenths
     "multiplier": (("message->difficulty_multiplier * 100.0f + 0.5f", "message->difficulty_multiplier * 10.0f + 0.5f"),
                    "layout"),

@@ -21,6 +21,11 @@ kills, solo and co-op.
 - The points are one table (campaign_score_points and
   campaign_score_bonuses), times the difficulty's multiplier; a death or a
   betrayal takes a few points back, never below 0.
+- A melee that kills an unaware enemy outright from behind (damage.c's blow
+  lethal to the unsuspecting) is an assassination, its bonus in place of the
+  melee's. A kill by a gunner or passenger of a vehicle a player drives (a
+  player or an ally's AI) gives the driver an assist: half the kill's points
+  (the table's, to the nearest), times the multiplier.
 - Personal bests: campaign_scores.txt in the config folder, a line each of
   the level, the difficulty, the players and the team's best score.
 */
@@ -139,6 +144,8 @@ static struct
 {
 	short headshot;
 	short melee;
+	/* a melee from behind that killed an unaware enemy outright */
+	short assassination;
 	short grenade;
 	short splatter;
 	short stick;
@@ -159,14 +166,18 @@ static struct
 	short death;
 	short betrayal_ally;
 	short betrayal_player;
+	/* a kill by a gunner or passenger of the vehicle a player drives: the
+	driver's, this percent of the kill's points (the table's), to the nearest */
+	short driver_assist_percent;
 } const campaign_score_bonuses =
 {
-	15, 10, 5, 10, 15,
+	15, 10, 25, 5, 10, 15,
 	{ 25, 50, 100, 150, 200 },
 	50, 4,
 	25, 50, 50,
 	1000, 500,
 	25, 50, 100,
+	50,
 };
 
 /* each difficulty's multiplier: easy, normal, heroic, legendary */
@@ -374,9 +385,9 @@ static void campaign_score_note_event(
 }
 
 /* a player's kill of an enemy of a class at a tick, by damage of a category
-(head: the blow struck the head): the player's tallies, and the events it
-makes (at most CAMPAIGN_SCORE_EVENTS_PER_KILL) added to events; the points
-it gave */
+(head: the blow struck the head; unsuspecting: it killed outright as lethal
+to the unsuspecting): the player's tallies, and the events it makes (at most
+CAMPAIGN_SCORE_EVENTS_PER_KILL) added to events; the points it gave */
 static long campaign_score_player_kill(
 	struct campaign_score_player *player,
 	struct campaign_score_timing *timing,
@@ -385,6 +396,7 @@ static long campaign_score_player_kill(
 	short victim_class,
 	short category,
 	boolean head,
+	boolean unsuspecting,
 	real multiplier,
 	struct campaign_score_event *events,
 	long *event_count)
@@ -406,7 +418,8 @@ static long campaign_score_player_kill(
 		points, tick, victim_class);
 	total += points;
 
-	/* (one bonus for the way of it: the head, a melee, a grenade, a splatter) */
+	/* (one bonus for the way of it: the head, a melee (an assassination's
+	from behind), a grenade, a splatter) */
 	if (head && (category == _campaign_score_damage_bullet || category == _campaign_score_damage_sniper ||
 		category == _campaign_score_damage_plasma || category == _campaign_score_damage_needle ||
 		category == _campaign_score_damage_shotgun || category == _campaign_score_damage_mounted_weapon))
@@ -420,8 +433,10 @@ static long campaign_score_player_kill(
 	else if (category == _campaign_score_damage_melee)
 	{
 		player->melee_kills++;
-		points = campaign_score_scaled(campaign_score_bonuses.melee, multiplier);
-		campaign_score_note_event(events, event_count, player_slot, _campaign_score_event_melee, points, tick,
+		points = campaign_score_scaled(unsuspecting ? campaign_score_bonuses.assassination :
+			campaign_score_bonuses.melee, multiplier);
+		campaign_score_note_event(events, event_count, player_slot,
+			unsuspecting ? _campaign_score_event_assassination : _campaign_score_event_melee, points, tick,
 			victim_class);
 		total += points;
 	}
@@ -482,6 +497,20 @@ static long campaign_score_player_kill(
 
 	player->score += total;
 	return total;
+}
+
+/* a driver's assist: the share of a kill of a class by a gunner or passenger
+of their vehicle, times the multiplier */
+static long campaign_score_driver_assist_points(
+	short victim_class,
+	real multiplier)
+{
+	long share;
+
+	if (!VALID_INDEX(victim_class, NUMBER_OF_CAMPAIGN_SCORE_CLASSES))
+		victim_class = _campaign_score_class_other;
+	share = (campaign_score_points[victim_class].points * campaign_score_bonuses.driver_assist_percent + 50) / 100;
+	return campaign_score_scaled(share, multiplier);
 }
 
 /* points taken from a player (a death, a betrayal), never below 0: what was
@@ -706,6 +735,44 @@ static short campaign_score_unit_class(
 	}
 	return campaign_score_class_from_names(tag_get_name(unit->definition_index), variant_name,
 		unit->object.type == _object_type_vehicle);
+}
+
+/* the player driving the vehicle whose gunner or passenger dealt a killing
+blow (a player or an ally's AI; the vehicle's own weapon, its gunner's),
+whose enemy the victim is: their slot, NONE for none (the driver's own
+blow, a splatter or their vehicle's weapon, is theirs) */
+static short campaign_score_assisting_driver(
+	struct damage_data const *damage,
+	struct unit_datum const *victim)
+{
+	struct unit_datum *shooter;
+	struct unit_datum *vehicle;
+	struct unit_datum *driver;
+
+	if (damage->owner_object_index == NONE || !(shooter = unit_try_and_get(damage->owner_object_index)))
+		return NONE;
+	if (shooter->object.type == _object_type_vehicle)
+	{
+		vehicle = shooter;
+		if (vehicle->unit.gunner_object_index == NONE || !(shooter = unit_try_and_get(vehicle->unit.gunner_object_index)))
+			return NONE;
+	}
+	else
+	{
+		if (shooter->object.parent_object_index == NONE)
+			return NONE;
+		vehicle = unit_try_and_get(shooter->object.parent_object_index);
+	}
+	if (!vehicle || vehicle->object.type != _object_type_vehicle || vehicle->unit.driver_object_index == NONE)
+		return NONE;
+	driver = unit_try_and_get(vehicle->unit.driver_object_index);
+	if (!driver || driver == shooter || driver->unit.player_index == NONE ||
+		driver->unit.player_index == damage->owner_player_index ||
+		!game_team_is_enemy(victim->object.owner_team_index, driver->object.owner_team_index))
+	{
+		return NONE;
+	}
+	return campaign_score_slot(driver->unit.player_index);
 }
 
 /* ---------- private code: personal bests */
@@ -1179,11 +1246,13 @@ void campaign_score_unit_killed(
 	long unit_index,
 	struct damage_data const *damage,
 	short damage_category,
-	boolean head)
+	boolean head,
+	boolean unsuspecting)
 {
 	struct unit_datum *unit;
 	short victim_slot;
 	short killer_slot;
+	short driver_slot;
 	short victim_class;
 
 	if (!campaign_score.keeping || campaign_score.level_over || !damage)
@@ -1211,7 +1280,9 @@ void campaign_score_unit_killed(
 		campaign_score_team_total();
 		return;
 	}
-	if (killer_slot == NONE)
+	/* (the player driving the killer's vehicle, a player's or an AI's kill) */
+	driver_slot = campaign_score_assisting_driver(damage, unit);
+	if (killer_slot == NONE && driver_slot == NONE)
 		return;
 	/* (an empty vehicle is no kill) */
 	if (unit->object.type == _object_type_vehicle && unit->unit.driver_object_index == NONE &&
@@ -1219,14 +1290,18 @@ void campaign_score_unit_killed(
 	{
 		return;
 	}
-	/* an ally's: a betrayal */
+	/* an ally's: a player's betrayal (no assist) */
 	if (damage->owner_team_index != NONE &&
 		!game_team_is_enemy(unit->object.owner_team_index, damage->owner_team_index))
 	{
-		campaign_score_betrayal(killer_slot, _campaign_score_class_marine);
-		campaign_score_team_total();
+		if (killer_slot != NONE)
+		{
+			campaign_score_betrayal(killer_slot, _campaign_score_class_marine);
+			campaign_score_team_total();
+		}
 		return;
 	}
+	if (killer_slot != NONE)
 	{
 		struct campaign_score_event events[CAMPAIGN_SCORE_EVENTS_PER_KILL];
 		long event_count = 0;
@@ -1240,9 +1315,23 @@ void campaign_score_unit_killed(
 		}
 		campaign_score_player_kill(&campaign_score.state.players[killer_slot],
 			&campaign_score.timings[killer_slot], killer_slot, game_time_get(), victim_class, damage_category, head,
-			campaign_score.state.difficulty_multiplier, events, &event_count);
+			unsuspecting, campaign_score.state.difficulty_multiplier, events, &event_count);
 		campaign_score_add_events(events, event_count);
 		campaign_score.dirty[killer_slot] = TRUE;
+	}
+	/* the driver's assist (the kill's alone: no streak or multi-kill) */
+	if (driver_slot != NONE && driver_slot != killer_slot)
+	{
+		struct campaign_score_event event;
+
+		event.player = driver_slot;
+		event.kind = _campaign_score_event_driver_assist;
+		event.points = campaign_score_driver_assist_points(victim_class, campaign_score.state.difficulty_multiplier);
+		event.tick = game_time_get();
+		event.victim_class = victim_class;
+		campaign_score.state.players[driver_slot].score += event.points;
+		campaign_score_add_events(&event, 1);
+		campaign_score.dirty[driver_slot] = TRUE;
 	}
 	campaign_score_team_total();
 }

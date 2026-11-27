@@ -105,7 +105,7 @@ takes it for a newer version and does not join. Raise it with any change to
 what a Standard game's machines send each other, and with every raise of
 HALO_PORT_NETWORK_VERSION: HALO_PORT_STANDARD_BASE_VERSION is the network
 version it was last raised for, and the build fails until they agree. */
-#define HALO_PORT_STANDARD_NETWORK_VERSION 38
+#define HALO_PORT_STANDARD_NETWORK_VERSION 39
 /* (1: the rate agreed; 2: the players' sub-steps sent, network_substeps.c;
 3: OpenCE players in the game, network_standard.c's mixed games; 4: a
 player moved to the other team by the host, network_host_controls.c; 5:
@@ -204,7 +204,9 @@ the host forbids its players' headshot indicator in the game record
 network_standard_headshot_indicator_allowed); 38: the co-op host's campaign
 score to each OpenH1 client (distributed message campaign_score,
 network_campaign_score.c): the players' tallies that changed and the events
-since, reliably, at most each 8 ticks.
+since, reliably, at most each 8 ticks; 39: a co-op host's campaign score
+carries two more kinds of event, an assassination (15) and a driver's assist
+(16), which an older client refuses (network_campaign_score.c).
 Legacy games, and what an OpenCE machine sees, are unchanged) */
 #define HALO_PORT_STANDARD_BASE_VERSION 44
 #define HALO_PORT_STANDARD_VERSION_BIT 0x8000
