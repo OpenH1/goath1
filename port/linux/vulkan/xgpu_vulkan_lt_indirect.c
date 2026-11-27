@@ -74,7 +74,7 @@ CELLS^2 by CELLS x 8 octants x CASCADES) */
 denoiser ("denoise": its noise counted down before it joins the direct
 light's sample, which the denoiser's gradients then follow) */
 #define INDIRECT_COVERAGE_CAP 16
-#define INDIRECT_BOUNCE_CAP 16
+#define INDIRECT_BOUNCE_CAP 32
 
 _Static_assert(INDIRECT_PARAMS_OFFSET + 64 <= 192 * 16, "the parameters within the uniforms");
 
@@ -332,7 +332,8 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 		struct xgpu_vulkan_image *textures[6] = { frame->inputs, indirect.caches[indirect.cache_current],
 			frame->previous_inputs, frame->guides, frame->table, NULL };
 
-		indirect_pass(indirect.bounce, half, frame, INDIRECT_BOUNCE, frame->cap, textures, &indirect.wide, parameters);
+		indirect_pass(indirect.bounce, half, frame, INDIRECT_BOUNCE | (reset ? INDIRECT_RESET : 0), frame->cap, textures,
+			&indirect.wide, parameters);
 		if (indirect.reflections)
 			indirect_pass(indirect.specular_raw, frame->rectangle, frame, INDIRECT_SPECULAR_RAY, frame->cap, textures,
 				&indirect.half, parameters);

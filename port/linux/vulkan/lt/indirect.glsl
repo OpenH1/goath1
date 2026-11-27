@@ -52,6 +52,8 @@
 #define ROUGH_STRUCTURE 0.08
 #define ROUGH_OBJECT 0.2
 #define CACHE_CAP 256.0
+// the bounce's rays where its history starts again
+#define BOUNCE_FIRST 4
 // the roughness up to which a reflection is its mirror ray alone
 #define MIRROR_ROUGHNESS 0.1
 
@@ -320,17 +322,22 @@ vec4 bounce_main(ivec2 block)
     if (!found)
         return vec4(0.0);
     which--;
-    vec3 d = cosine_direction(shaded, stratified(pixel, 5.0)), e = vec3(0.0);
-    if (dot(d, n) > 0.0)
+    // (BOUNCE_FIRST rays where the history starts again, so its first frame is as good as a few: the suns' share's
+    // rule, lt/e1.frag)
+    int rays = (pass.control.w & RESET) != 0 ? BOUNCE_FIRST : 1;
+    vec3 e = vec3(0.0), origin = p + n * (0.004 + 0.0005 * length(p - pass.camera[0].xyz));
+    uint h = seed(pixel, 11u);
+    for (int k = 0; k < rays; k++)
     {
-        vec3 origin = p + n * (0.004 + 0.0005 * length(p - pass.camera[0].xyz));
+        vec3 d = cosine_direction(shaded, stratified(pixel, 5.0 + 17.0 * float(k)));
+        if (dot(d, n) <= 0.0)
+            continue;
         Hit hit = trace(origin, d, BOUNCE_REACH, int(owner), false);
         if (hit.attributes)
-        {
-            uint h = seed(pixel, 11u);
-            e = hit.albedo * (direct_one(hit.p, hit.n, hit.owner, pixel, 6.0, h) + cache_lookup(hit.p, hit.n));
-        }
+            e += hit.albedo * (direct_one(hit.p, hit.n, hit.owner, pixel, 6.0 + 17.0 * float(k), h) +
+                cache_lookup(hit.p, hit.n));
     }
+    e /= float(rays);
     if (any(isnan(e)) || any(isinf(e)))
         e = vec3(0.0);
     return vec4(e, 1.0 + float(light_hash(p, n)) + 1024.0 * float(which));
