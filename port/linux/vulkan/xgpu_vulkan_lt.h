@@ -59,8 +59,8 @@ xgpu_vulkan_denoise.h, which has Vulkan's types) */
 <source>.spv files (NULL: HALO_LT_SHADER_DIR's, or the last given), the
 built-in ones where a file is not there (the replay's "reload") */
 void xgpu_vulkan_lt_shaders_reload(const char *folder);
-/* debug (HALO_LT_DROP=point|spot|panel|flashlight|all, the per-kind
-calibration's "off"): the frame's block of lights (count of them) as it
+/* debug (HALO_LT_DROP=point|spot|panel|flashlight|all|id:<hex>, the
+per-kind calibration's "off", in any mode): the frame's block of lights (count of them) as it
 goes to the GPU, those of the kind given their colour 0; otherwise
 nothing */
 void xgpu_vulkan_lt_block_filter(struct xgpu_dynamic_lights_block *block, uint32_t count);

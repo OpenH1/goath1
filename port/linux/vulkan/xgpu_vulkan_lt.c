@@ -172,6 +172,7 @@ static struct
 	uint32_t only_id[LT_ONLY_IDS];
 	float kind_scale[4];
 	int drop_kind;
+	uint32_t drop_id;
 } lt = { -1 };
 
 void xgpu_vulkan_lt_guides(struct xgpu_vulkan_image *guides)
@@ -478,6 +479,12 @@ static void lt_settings(void)
 	}
 	given = getenv("HALO_LT_DROP");
 	lt.drop_kind = !given || !*given ? -2 : !strcmp(given, "all") ? 9 : !strcmp(given, "flashlight") ? 8 : -2;
+	/* (id:<hex>: that light alone, by its id's low word) */
+	if (given && !strncmp(given, "id:", 3))
+	{
+		lt.drop_kind = 10;
+		lt.drop_id = (uint32_t)strtoul(given + 3, NULL, 16);
+	}
 	for (kind = 0; kind < 3; kind++)
 		if (given && !strcmp(given, lt_kind_names[kind]))
 			lt.drop_kind = kind;
@@ -545,7 +552,8 @@ void xgpu_vulkan_lt_block_filter(struct xgpu_dynamic_lights_block *block, uint32
 	const struct xgpu_stream_lt_light *list;
 	int listed, index;
 
-	if (!xgpu_vulkan_lt_mode())
+	/* (in any mode: the classic's "off" too) */
+	if (!getenv("HALO_LT_DROP"))
 		return;
 	lt_settings();
 	if (lt.drop_kind == -2)
@@ -554,8 +562,10 @@ void xgpu_vulkan_lt_block_filter(struct xgpu_dynamic_lights_block *block, uint32
 	for (index = 0; index < (int)count && index < XGPU_DYNAMIC_LIGHTS_MAXIMUM; index++)
 	{
 		int kind = lt_block_kind(block, index, list, listed);
+		const struct xgpu_stream_lt_light *light = lt.drop_kind == 10 ? lt_record(list, listed, block->position[index]) :
+			NULL;
 
-		if (lt.drop_kind == 9 || kind == lt.drop_kind)
+		if (lt.drop_kind == 9 || kind == lt.drop_kind || (light && light->id[0] == lt.drop_id))
 			block->color[index][0] = block->color[index][1] = block->color[index][2] = 0.0f;
 	}
 }
@@ -801,12 +811,19 @@ static void lt_dump(const int32_t rectangle[4], const struct xgpu_world_ao_pass 
 	lt_dump_one(rectangle, uniforms, params, mean, inputs, LT_COPY_GEOMETRIC, "_normal_geometric");
 	lt_dump_one(rectangle, uniforms, params, mean, inputs, LT_COPY_SHADED, "_normal_shaded");
 	lt_dump_one(rectangle, uniforms, params, mean, inputs, LT_COPY_PRESENT, "_present");
-	/* (HALO_LT_E1_DUMP_REACH=<row>: each pixel's distance to that row's
+	/* (HALO_LT_E1_DUMP_REACH=<hex id>: each pixel's distance to that
 	light over its range, whether it faces it, its owner: the per-kind
 	calibration's band) */
 	if (getenv("HALO_LT_E1_DUMP_REACH"))
 	{
-		params->lights[3] = atoi(getenv("HALO_LT_E1_DUMP_REACH"));
+		/* (the row whose light's id's low word is the hex given) */
+		uint32_t id = (uint32_t)strtoul(getenv("HALO_LT_E1_DUMP_REACH"), NULL, 16);
+		int row;
+
+		params->lights[3] = 0;
+		for (row = 0; row < LT_TABLE_ROWS; row++)
+			if (lt.ids[lt.ids_current][row][1] && lt.ids[lt.ids_current][row][0] == id)
+				params->lights[3] = row;
 		lt_dump_one(rectangle, uniforms, params, mean, inputs, LT_COPY_REACH, "_reach");
 	}
 }
