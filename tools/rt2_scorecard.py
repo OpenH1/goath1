@@ -71,11 +71,13 @@ RIG = ROOT / "tools" / "rig" / "goat-rig"
 RECORDINGS = "rt2-scorecard"  # (under the remote $HOME)
 # the held scenes: name, recording, frame held, what it is
 SCENES = [
-    ("c20", "c20.hrpl", 700, "c20's Flood corner, the flashlight"),
-    ("a10", "a10.hrpl", 900, "a10's cryo deck, a still camera on the reflective floor"),
-    ("b30", "b30.hrpl", 180, "b30's beach rock (b30_exterior's view)"),
-    ("combat", "combat.hrpl", 480, "b30's beach in combat: plasma lights"),
-    ("c20walk", "c20_walk.hrpl", 600, "c20's corridor walked toward a Flood, the flashlight on (motion)"),
+# (the *_lights recordings carry the light list, HALO_LT_LIGHTS=1, made from local/rt2-main: the same ticks and
+# cameras as the first ones, c20 598, b30 898, combat 1369)
+    ("c20", "c20_lights.hrpl", 702, "c20's Flood corner, the flashlight"),
+    ("a10", "a10_lights.hrpl", 906, "a10's cryo deck, a still camera on the reflective floor"),
+    ("b30", "b30_lights.hrpl", 180, "b30's Pelican passing the beach rock (b30_exterior's view)"),
+    ("combat", "combat_lights.hrpl", 494, "b30's beach in combat: plasma lights"),
+    ("c20walk", "c20_walk_lights.hrpl", 606, "c20's corridor walked toward a Flood, the flashlight on (motion)"),
 ]
 STABILITY_HOST = "omarchy"
 TRUTH_HOST = "5900x"
@@ -245,7 +247,7 @@ def stability_rows(rows, name, m):
           f"median {m['first_vs_120']['median_relative']:.2%}")
 
 
-def truth(out, mutate, run_id):
+def truth(out, mutate, run_id, part):
     """the truth comparisons on the 5900X: [(scene, result dict or None, what was said)]"""
     work = f"{RECORDINGS}/out/{run_id}"
     listing = subprocess.run(ssh(TRUTH_HOST, f'for d in ~/{TRUTH_SCENES}/*/; do [ -d "$d/truth" ] && '
@@ -271,7 +273,7 @@ def truth(out, mutate, run_id):
                          f"{exr} ~/{work}/{name}/irradiance.exr")
             lines.append(f"[ -f {scene}/realtime/mask.png ] && cp {scene}/realtime/mask.png ~/{work}/{name}/ || true")
             exr = f"~/{work}/{name}/irradiance.exr"
-        lines.append(f"~/{TRUTH_PYTHON} -m rt_truth compare {scene} {exr} --part direct_flashlight "
+        lines.append(f"~/{TRUTH_PYTHON} -m rt_truth compare {scene} {exr} --part {part} "
                      f"--quantity irradiance --out ~/{work}/{name}/compare --json")
         result = subprocess.run(ssh(TRUTH_HOST, "\n".join(lines)), capture_output=True, text=True)
         if result.returncode:
@@ -369,7 +371,7 @@ def scorecard(args):
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
         held = {s[0]: pool.submit(stability, s, replays[STABILITY_HOST], env, out, args.mutate)
                 for s in SCENES if not args.scenes or s[0] in args.scenes}
-        compared = pool.submit(truth, out, args.mutate, run_id)
+        compared = pool.submit(truth, out, args.mutate, run_id, args.truth_part)
         costs = {}
         if not args.no_cost:
             # (the 5900X's at once; omarchy's once its pictures are taken: it needs the GPU alone)
@@ -488,6 +490,9 @@ def main():
     parser.add_argument("--env", action="append", default=[], help="VAR=value for the replays (again for more)")
     parser.add_argument("--mutate", choices=["noise", "bias", "raw"], help="a negative control: must fail")
     parser.add_argument("--scenes", nargs="*", help="only these held scenes (c20 a10 b30 combat c20walk)")
+    # (E1's realtime irradiance has the geometric normal's cosine until the pre-pass carries the bump normal)
+    parser.add_argument("--truth-part", default="direct_flashlight_geometric",
+                        help="the truth's part compared (rt_truth compare --part)")
     parser.add_argument("--no-cost", action="store_true", help="no cost runs")
     parser.add_argument("--out", type=Path, default=ROOT / "build" / "rt2_scorecard", help="the pictures' folder")
     # shader
