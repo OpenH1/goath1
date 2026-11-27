@@ -19,22 +19,34 @@ render waits; it holds the rig's GPU lock while it renders.
   `indirect` (the rest), which sum to `truth`; `static` (what Halo's lightmaps hold: sky, sun and baked
   glow, every dynamic light off); `direct_flashlight`; and `irradiance_direct*.exr`, the same light on
   white Lambertian surfaces with the same normal maps and cutouts: the demodulated irradiance the
-  real-time comparison uses (`irradiance_direct_flashlight_geometric.exr` without normal maps).
-- `static_fit_residual.png/.exr`: the lightmap less the fitted static light (white: light the truth lacks).
+  real-time comparison uses (`irradiance_direct_flashlight_geometric.exr` without normal maps). Bump maps
+  shade in the game's frame (the exported vertex tangent and binormal, `n = normalize(T b.x + B b.y + N
+  max(b.z, 0.05))`), their mip level chosen by the pixel's footprint as a GPU samples it.
+- `static_fit_residual.png/.exr` (`--static fit`): the lightmap less the fitted static light.
+- Renders save their sums (`_state.npz`) and resume from them, so they can run in short chunks.
 - `mask.png`: the pixels comparisons count (not the HUD's `mask_rects`, not the first-person weapon/hands).
 - `samples.txt`, `info.json`: samples, time, noise left, the fit's scales and R^2, every placeholder and
   every assumption.
 
-## Light groups and units
-Lights render in groups and are summed (light adds linearly): `ambient` (the sky dome), `sun` (the sky's
-lights), `emitters` (glowing BSP surfaces and those of scenery and devices), `flashlight`, `dynamic` (other
-lights and other objects' glow). The lightmap tool's units are unknown (its source is not in the tree), so
-each static group gets one scale, fitted by non-negative least squares of its light against albedo x
-lightmap at the lit BSP pixels (`render.fit_static`); R^2 says how much of the lightmap it explains. Dynamic
-lights are in the game's own units: color and the attenuation table decoded ^2.2. The flashlight follows
-`~/dev/rt2-calibration.json` when `--flashlight-scale k` is given: a forward-facing disk (cos at the emitter),
-1/d^2 x (1 - (d/r)^4)^2, the gel as its profile. A light's intensity is pi x the game's value, so a
-surface (BRDF albedo / pi) shows albedo x value x cos / d^2: the game's added light.
+## Static light, light groups and units
+The static light is Halo's lightmap (`--static lightmap`, the default): each lightmapped BSP surface emits
+radiance albedo x lightmap, the page's texel at the surface's lightmap UV decoded ^2.2 (the game's frame is
+albedo x lightmap in gamma space, so its light is albedo_lin x lightmap^2.2: a white surface shows the
+lightmap's value, which is irradiance / pi in the game's light units), and reflects none of it (the bake
+holds its own bounces). Objects are lit by that light, bounce it and show it in reflections. The pages are
+packed in one atlas texture. `--static fit` instead rebuilds the static light from the sky, the sky's lights
+and the radiosity emitters, each fitted to the lightmap with one scale (R^2 reported): b30 0.566, and a10's
+lightmap has no source in the tags, which is why the lightmap is the truth's static light.
+
+Groups render separately and add (light adds linearly): `lightmap` (or, fitting, `ambient`, `sun`,
+`emitters`), `flashlight`, `dynamic` (every other light, and unbaked objects' glow). Dynamic lights are in the
+game's own units (color and attenuation table decoded ^2.2) unless a physical model is asked for:
+- `--flashlight-scale k` (rt2-calibration.json): a forward-facing disk at lights.json's `emitter_position`
+  (the lamp), cos at the emitter, 1/d^2 x (1 - (d/r)^4)^2, the gel (projected from the drawn light) as profile;
+- `--dynamic-scale k`: the other lights the same way from their emitter, a point (no emitter cosine) or a
+  spot's cone ramp. A light's intensity is pi x the game's value, so a surface shows albedo x value x cos / d^2.
+`--flashlight-direct-only` / `--dynamic-direct-only [--light i]` render only that group's direct light (and
+its irradiance), for comparing a real-time light before the whole truth.
 
 ## The path tracer
 `integrator.py` is Mitsuba's unidirectional path tracer (next event estimation, MIS, Russian roulette)

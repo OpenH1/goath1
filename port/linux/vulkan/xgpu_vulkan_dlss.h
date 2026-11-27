@@ -193,6 +193,33 @@ int xgpu_vulkan_dlss_rr_available(void);
 /* the window's ray-traced frame denoised and upscaled into its
 destination; 0 if it could not be (nothing written: the denoiser's turn) */
 int xgpu_vulkan_dlss_reconstruct(int window, const struct xgpu_vulkan_dlss_rr_frame *frame);
+
+/* ---------- the light-transport pass's denoiser on RTX (xgpu_vulkan_lt.c;
+~/dev/rt2-realtime-design.md section 2) */
+
+/* the pass's cameras (xgpu_stream.h's struct xgpu_world_ao_pass's camera,
+previous and previous_corners: position, forward, right, up; this frame's
+and the last's, and the last's corners) */
+struct xgpu_vulkan_dlss_lt_cameras
+{
+	float camera[4][4], previous[4][4];
+	int32_t previous_corners[4];
+};
+
+/* 1 where HALO_LT_DENOISER=rr asks for Ray Reconstruction and it is
+available: the pass's light then goes to xgpu_vulkan_dlss_lt_denoise and
+never to our denoiser (one temporal stage) */
+int xgpu_vulkan_dlss_lt_selected(void);
+/* the pass's 1-spp light (RGBA32F, its rgb the demodulated diffuse
+irradiance) denoised by Ray Reconstruction at the pass's rectangle, from
+the pre-pass's inputs and guides (xgpu_spirv.h's C1; NULL none) and the
+pass's cameras; reset: the history begun again. The result (RGBA16F, the
+inputs' size; its rgb the irradiance) is the context's, kept until the next
+call; NULL where there is none this frame (the feature's first submission
+not done yet, or it failed) */
+struct xgpu_vulkan_image *xgpu_vulkan_dlss_lt_denoise(struct xgpu_vulkan_image *light,
+	struct xgpu_vulkan_image *inputs, struct xgpu_vulkan_image *guides, const struct xgpu_vulkan_dlss_lt_cameras *pass,
+	const int32_t rectangle[4], int reset);
 #endif
 
 #endif

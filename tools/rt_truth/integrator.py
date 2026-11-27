@@ -133,20 +133,44 @@ def trace(scene, sampler, ray, rr_depth=5, max_depth=1024):
     return state[-3], state[-2], state[-1]
 
 
-def render_pass(scene, spp, seed, parts=False, max_depth=1024):
+MAX_LANES = 1 << 22  # samples a launch: evaluated (wavefront) loops keep each lane's state in memory
+
+
+def render_pass(scene, spp, seed, parts=False, max_depth=1024, centers=False):
     """One pass of `spp` samples per pixel (uniform over the pixel: a box filter): the full light as
-    an H x W x 3 array, or with parts=True a dict of emission, direct and indirect (which sum to it)."""
+    an H x W x 3 array, or with parts=True a dict of emission, direct and indirect (which sum to it).
+    Launched in chunks of at most MAX_LANES samples."""
     import numpy as np
     sensor = scene.sensors()[0]
     W, H = (int(v) for v in sensor.film().size())
+    step = max(1, MAX_LANES // (W * H))
+    out = {k: np.zeros((H, W, 3)) for k in ("emission", "direct", "indirect")}
+    done = 0
+    while done < spp:
+        k = min(step, spp - done)
+        part = _render_chunk(scene, sensor, W, H, k, seed * 4096 + done, max_depth, centers)
+        for name in out:
+            out[name] += part[name] * k
+        done += k
+    for name in out:
+        out[name] /= spp
+    if parts:
+        return out
+    return out["emission"] + out["direct"] + out["indirect"]
+
+
+def _render_chunk(scene, sensor, W, H, spp, seed, max_depth, centers):
+    import numpy as np
     n = W * H * spp
     sampler = mi.load_dict({"type": "independent"})
     # An opaque seed: one compiled kernel serves every pass (a literal would recompile each one).
     sampler.seed(dr.opaque(mi.UInt32, seed), n)
     idx = dr.arange(mi.UInt32, n)
     pix = idx // spp
-    x = mi.Float(pix % W) + sampler.next_1d()
-    y = mi.Float(pix // W) + sampler.next_1d()
+    # centers: each sample at its pixel's centre (as a rasterizer shades it) rather than over its area
+    jx, jy = sampler.next_1d(), sampler.next_1d()
+    x = mi.Float(pix % W) + (0.5 if centers else jx)
+    y = mi.Float(pix // W) + (0.5 if centers else jy)
     ray, w = sensor.sample_ray(0.0, 0.5, mi.Point2f(x / W, y / H), mi.Point2f(0.5, 0.5))
     Le, Ld, Li = trace(scene, sampler, ray, max_depth=max_depth)
     out = {}
@@ -159,6 +183,4 @@ def render_pass(scene, spp, seed, parts=False, max_depth=1024):
             chans.append(acc)
         dr.eval(chans)
         out[name] = np.stack([np.asarray(c) for c in chans], -1).reshape(H, W, 3) / spp
-    if parts:
-        return out
-    return out["emission"] + out["direct"] + out["indirect"]
+    return out

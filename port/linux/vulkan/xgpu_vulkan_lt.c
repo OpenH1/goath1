@@ -43,6 +43,7 @@ HALO_LT_E1_UNSHADOWED=1 (checking) casts no shadow ray. Render thread alone.
 #include "xgpu_stream.h"
 #include "xgpu_vulkan.h"
 #include "xgpu_vulkan_denoise.h"
+#include "xgpu_vulkan_dlss.h"
 #include "xgpu_vulkan_lt.h"
 #include "xgpu_vulkan_lt_lights.h"
 
@@ -105,7 +106,6 @@ enum
 	LT_GRADIENT = 128,
 	/* (W2's draws: the suns' share off the light; the reservoirs; the
 	copy's reach of a row) */
-	LT_SUN = 256,
 	LT_RESERVOIR = 512,
 	LT_COPY_REACH = 1024,
 	LT_FINAL = 2048,
@@ -165,8 +165,8 @@ static struct
 	/* W2: the light table (its image, its texels), the reservoirs in
 	turn, the light after the suns' share (what the surfaces read); each
 	row's light's id this frame and the last (0 none), the rows' count */
-	struct xgpu_vulkan_image *table, *reservoirs[2], *final, *sun[2];
-	int sun_current, sun_valid, handled;
+	struct xgpu_vulkan_image *table, *reservoirs[2], *final;
+	int handled;
 	float texels[LT_TABLE_ROWS][LT_TABLE_TEXELS][4];
 	uint32_t ids[2][LT_TABLE_ROWS][2];
 	int rows[2], ids_current, reservoir_current, reservoirs_valid;
@@ -744,7 +744,9 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 	memcpy(params->grid[0], block->grid[0], sizeof(params->grid[0]));
 	memcpy(params->grid[1], block->grid[1], sizeof(params->grid[1]));
 	params->lights[0] = lt.table ? rows : 0;
-	params->lights[1] = lt.table ? suns : 0;
+	/* (none with HALO_LT_ONLY: a light's or the flashlight's alone, for
+	their checks) */
+	params->lights[1] = lt.table && !lt.only ? suns : 0;
 	params->lights[2] = (lt.only >= 2 ? 0 : LT_LIGHTS_FLASHLIGHT) | (lt.heroes_on ? LT_LIGHTS_HEROES : 0) |
 		(lt.restir_on && (lt.handled > 2 || !lt.heroes_on) ? LT_LIGHTS_RESTIR : 0);
 }
@@ -1037,44 +1039,36 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 		/* (no spatial reuse in the re-shade: the last frame's reservoirs
 		are not kept; RIS alone, its seed the last frame's) */
 		lt.reshade_params.lights[2] &= ~LT_LIGHTS_REUSE;
-		denoised = xgpu_vulkan_denoise_draw(lt.means[lt.current], had ? history : NULL, inputs,
-			had ? lt.previous : NULL, lt.guides, pass, rectangle);
+		/* (HALO_LT_DENOISER=rr on RTX: DLSS Ray Reconstruction instead,
+		xgpu_vulkan_dlss.c; ours then not run at all) */
+		if (xgpu_vulkan_dlss_lt_selected())
+		{
+			struct xgpu_vulkan_dlss_lt_cameras cameras;
+
+			memcpy(cameras.camera, pass->camera, sizeof(cameras.camera));
+			memcpy(cameras.previous, pass->previous, sizeof(cameras.previous));
+			memcpy(cameras.previous_corners, pass->previous_corners, sizeof(cameras.previous_corners));
+			denoised = xgpu_vulkan_dlss_lt_denoise(lt.means[lt.current], inputs, lt.guides, &cameras, rectangle,
+				!had || pass->history[0] == 0.0f);
+		}
+		else
+			denoised = xgpu_vulkan_denoise_draw(lt.means[lt.current], had ? history : NULL, inputs,
+				had ? lt.previous : NULL, lt.guides, pass, rectangle);
 		xgpu_vulkan_pass_owner(LT_OWNER);
 	}
-	/* (W2: the suns' share a dynamic object shadows, its own history kept
-	(the denoiser and the light's history keep the light alone, which is
-	never less than 0); then the light the surfaces read: the light, and
-	the share's luminance in alpha, which they take off the lightmap's) */
+	/* (W2: the light the surfaces read: the light less the suns' whole
+	direct share on the structure, which the light carries (lt/e1.frag's
+	cmax): less than 0 where a dynamic object shadows the sun; the light's
+	history and the denoiser the one temporal stage of both) */
 	light_image = denoised ? denoised : lt.means[lt.current];
 	lt.final = lt_image(lt.final, XGPU_VULKAN_FORMAT_RGBA32F, size->width, size->height);
 	if (lt.final)
 	{
-		struct lt_params sun_params = params;
-		struct xgpu_vulkan_image *share = NULL;
+		struct lt_params final_params = params;
 
-		if (params.lights[1] > 0)
-		{
-			lt.sun[0] = lt_image(lt.sun[0], XGPU_VULKAN_FORMAT_RGBA32F, size->width, size->height);
-			lt.sun[1] = lt_image(lt.sun[1], XGPU_VULKAN_FORMAT_RGBA32F, size->width, size->height);
-			if (lt.sun[0] && lt.sun[1])
-			{
-				struct xgpu_vulkan_image *before = lt.sun[lt.sun_current];
-
-				lt.sun_current ^= 1;
-				share = lt.sun[lt.sun_current];
-				sun_params.control[3] = LT_SUN | (start || !lt.sun_valid || !lt.previous_valid ? LT_RESET : 0);
-				lt_pass_draw(share, rectangle, pass, &sun_params, &lt.pass, inputs, before, lt.previous, lt.guides,
-					NULL);
-				lt.sun_valid = 1;
-			}
-		}
-		else
-			lt.sun_valid = 0;
-		if (!share)
-			sun_params.lights[1] = 0;
-		sun_params.control[3] = LT_FINAL;
-		lt_pass_draw(lt.final, rectangle, pass, &sun_params, &lt.pass, inputs, light_image, lt.previous, lt.guides,
-			share);
+		final_params.control[3] = LT_FINAL;
+		lt_pass_draw(lt.final, rectangle, pass, &final_params, &lt.pass, inputs, light_image, lt.previous, lt.guides,
+			NULL);
 		light_image = lt.final;
 	}
 	/* (this frame's inputs kept for the next's reprojection) */
