@@ -177,10 +177,7 @@ vec3 flashlight(vec3 p, vec3 n, ivec2 pixel, int receiver)
     float a = dot(v, s) / (z * width), b = dot(v, u) / (z * width);
     if (abs(a) >= 1.0 || abs(b) >= 1.0)
         return vec3(0.0);
-    float x = length(v) * abs(pass.light.w);
-    if (x >= 1.0)
-        return vec3(0.0);
-    float gel = cookie(a, b) * falloff_at(x);
+    float gel = cookie(a, b);
     if (gel <= 0.0)
         return vec3(0.0);
     // (the disk's point for this pixel and frame)
@@ -193,8 +190,11 @@ vec3 flashlight(vec3 p, vec3 n, ivec2 pixel, int receiver)
     vec3 to = emitter - p;
     float d = length(to);
     vec3 l = to / max(d, 1.0e-6);
-    float facing = dot(n, l);
-    if (facing <= 0.0)
+    float facing = dot(n, l), emitting = dot(normalize(f), -l);
+    // (the range window: (1 - (d / r)^4)^2, smooth, 0 only at the tag's radius)
+    float x = d * abs(pass.light.w), window = clamp(1.0 - x * x * x * x, 0.0, 1.0);
+    window *= window;
+    if (facing <= 0.0 || emitting <= 0.0 || window <= 0.0)
         return vec3(0.0);
     float seen = 1.0;
     if ((pass.control.w & VISIBILITY) != 0)
@@ -203,7 +203,10 @@ vec3 flashlight(vec3 p, vec3 n, ivec2 pixel, int receiver)
         vec3 origin = p + n * (0.004 + 0.0005 * length(p - pass.camera[0].xyz));
         seen = visible(origin, normalize(emitter - origin), max(length(emitter - origin) - 0.01, 0.0), receiver);
     }
-    return pow(max(pass.color.rgb * gel, vec3(0.0)), vec3(2.2)) * (pass.lamp.w * facing * seen);
+    // (a disk emitter's irradiance: its intensity (the gel's angular profile, linear, by the power's scale) by
+    // the cosines at the receiver and the emitter over the distance squared, in the range window)
+    return pow(max(pass.color.rgb * gel, vec3(0.0)), vec3(2.2)) *
+        (pass.lamp.w * facing * emitting * window * seen / max(d * d, 1.0e-4));
 }
 
 void main()
