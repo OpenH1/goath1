@@ -9795,6 +9795,16 @@ def _page_row_key(entry) -> str:
         re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_")
 
 
+def _goat_page_title(folder: str) -> str:
+    """a page's title, as the link to it is labelled ("ADVANCED GRAPHICS", its " ›" dropped)"""
+    screen = f"{PE}/{folder}/{PAGES[folder]['screen']}"
+    for page in PAGES.values():
+        for entry in page["rows"]:
+            if entry[0] != SECTION and entry[1] is None and entry[2] == screen:
+                return entry[0].replace("›", "").strip()
+    return folder.rsplit("/", 1)[-1].replace("_", " ").upper()
+
+
 def goat_tab_rows(sections: list) -> list:
     """a GOAT tab's sections, each its title and its rows' (screen, key) in the order their pages have them (a
     title two pages share one section)"""
@@ -9803,7 +9813,10 @@ def goat_tab_rows(sections: list) -> list:
     out = {}
     for folder, wanted in sections:
         screen = f"{PE}/{folder}/{PAGES[folder]['screen']}"
-        rows, seen = None, set()
+        # (a page gathered whole: its rows before its first heading go under one named for the page, as the link to
+        # it is labelled, so that none is left off)
+        rows = out.setdefault(_goat_page_title(folder), []) if wanted is None else None
+        seen = set()
         for entry in PAGES[folder]["rows"]:
             if entry[0] == SECTION:
                 rows = out.setdefault(entry[1], []) if wanted in (None, entry[1]) else None

@@ -586,6 +586,31 @@ def test_output_depth_row_negative_control():
         "the model's row lacks its conditions"]
 
 
+def test_goat_tabs_keep_every_row():
+    """every row of a page a GOAT tab gathers is on that tab, those before the
+    page's first heading included (under one named for the page); only a link
+    to a page whose rows are on a tab is left out"""
+    pe = port_settings.PE
+    gathered = {f"{pe}/{folder}/{port_settings.PAGES[folder]['screen']}"
+                for _, sections, _ in port_settings.GOAT_TABS for folder, _ in sections}
+    for tab, sections, _ in port_settings.GOAT_TABS:
+        listed = {ref for _, rows in port_settings.goat_tab_rows(sections) for ref in rows}
+        for folder, wanted in sections:
+            page = port_settings.PAGES[folder]
+            screen = f"{pe}/{folder}/{page['screen']}"
+            heading = None
+            for entry in page["rows"]:
+                if entry[0] == port_settings.SECTION:
+                    heading = entry[1]
+                    continue
+                if wanted is not None and heading != wanted:
+                    continue
+                if entry[1] is None and isinstance(entry[2], str) and entry[2] in gathered:
+                    continue
+                key = port_settings._page_row_key(entry)
+                assert (screen, key) in listed, f"{tab}: {folder}'s {entry[0]} is on no tab"
+
+
 def test_goat_tabs():
     """GOAT Settings' tabs (display.goat_menus, GOAT_TABS): each tab's rows a
     row of Settings' model by its page's screen and key, none twice, every tab

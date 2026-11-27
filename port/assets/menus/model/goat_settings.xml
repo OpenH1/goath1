@@ -34,7 +34,18 @@
 		<row key="graphics" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/video_settings_screen"/>
 		<row key="high_res_text" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/video_settings_screen"/>
 		<row key="battery_saver" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/video_settings_screen"/>
-		<section key="section_1" title="LIGHTING"/>
+		<section key="section_1" title="ADVANCED GRAPHICS"/>
+		<row key="render_resolution" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/advanced_graphics_screen"/>
+		<row key="render_resolution_metalfx" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/advanced_graphics_screen"/>
+		<row key="anti_aliasing" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/advanced_graphics_screen"/>
+		<row key="anti_aliasing_msaa" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/advanced_graphics_screen"/>
+		<row key="anti_aliasing_android" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/advanced_graphics_screen"/>
+		<row key="gpu" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/advanced_graphics_screen"/>
+		<row key="anisotropic_filtering" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/advanced_graphics_screen"/>
+		<row key="hd_effects" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/advanced_graphics_screen"/>
+		<row key="model_detail" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/advanced_graphics_screen"/>
+		<row key="interpolation" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/advanced_graphics_screen"/>
+		<section key="section_2" title="LIGHTING"/>
 		<row key="shadow_resolution" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/advanced_graphics_screen"/>
 		<row key="contact_shadows" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/advanced_graphics_screen"/>
 		<row key="per_pixel_lighting" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/advanced_graphics_screen"/>
@@ -42,14 +53,22 @@
 		<row key="ambient_occlusion" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/advanced_graphics_screen"/>
 		<row key="shield_glow" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/advanced_graphics_screen"/>
 		<row key="shield_glow_intensity" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/advanced_graphics_screen"/>
-		<section key="section_2" title="UPSCALING"/>
+		<section key="section_3" title="FRAME RATE &amp; SYNC"/>
+		<row key="vsync" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/frame_rate_screen"/>
+		<row key="vrr" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/frame_rate_screen"/>
+		<row key="vrr_cap_margin" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/frame_rate_screen"/>
+		<row key="max_fps" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/frame_rate_screen"/>
+		<row key="menu_max_fps" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/frame_rate_screen"/>
+		<row key="low_latency" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/frame_rate_screen"/>
+		<row key="performance_tools" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/frame_rate_screen"/>
+		<section key="section_4" title="UPSCALING"/>
 		<row key="temporal_aa" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/frame_rate_screen"/>
 		<row key="temporal_aa_dlss" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/frame_rate_screen"/>
 		<row key="temporal_aa_metalfx" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/frame_rate_screen"/>
 		<row key="temporal_aa_dlss_get" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/frame_rate_screen"/>
 		<row key="temporal_aa_sharpness" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/frame_rate_screen"/>
 		<row key="dynamic_resolution" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/frame_rate_screen"/>
-		<section key="section_3" title="RAY TRACING"/>
+		<section key="section_5" title="RAY TRACING"/>
 		<row key="shadows" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/frame_rate_screen"/>
 	</screen>
 	<screen name="goat/audio" kind="goat" tab="AUDIO">
@@ -134,6 +153,9 @@
 		<row key="chat_style" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/interface_settings_screen"/>
 		<section key="section_4" title="BATTLES"/>
 		<row key="bigger_battles" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/campaign/campaign_screen"/>
+		<section key="section_5" title="SCORING"/>
+		<row key="scoring" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/campaign/campaign_screen"/>
+		<row key="score_popups" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/interface_settings/campaign/campaign_screen"/>
 	</screen>
 	<screen name="goat/system" kind="goat" tab="SYSTEM">
 		<section key="section_0" title="PLAYER"/>
