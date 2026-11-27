@@ -9358,6 +9358,9 @@ void halo_screen_view_end(int drawn, short x0, short y0, short x1, short y1)
 	destination->last_rendered = device.frame + 1;
 }
 
+/* (motion_vectors.h's: the previous frame's registers alone) */
+#define HALO_MOTION_PREVIOUS 2
+
 int halo_motion_window(int on, float jitter_x, float jitter_y)
 {
 	struct render_target_entry *target;
