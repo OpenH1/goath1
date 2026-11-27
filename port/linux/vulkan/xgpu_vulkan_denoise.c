@@ -35,7 +35,7 @@ the history an exponential average (1/64) from the start (checking: the
 negative controls). HALO_LT_DENOISE_MOTION_VIEW=1 (checking) makes the
 result each pixel's guides' motion less the cameras' reprojection (rg, in
 pixels; b 1 where the guides carry motion, 2 where not, 0 nothing drawn),
-the spatial stage left out.
+the spatial stage left out; =2 the guides' motion itself (pixels).
 HALO_LT_DENOISE_DUMP ("1-5,30,120": the denoiser's draws counted from its
 first) writes the result at those draws into HALO_LT_DENOISE_DUMP_DIR (the
 current folder by default) as denoise_<draw>.rgba16f, E1's dumps' form (a
@@ -72,7 +72,8 @@ depth's (a share of the distance off the pixel's plane), the shaded normal's
 #define DENOISE_PARAMS_OFFSET 1024
 
 _Static_assert(sizeof(struct xgpu_world_ao_pass) <= DENOISE_PARAMS_OFFSET, "the pass's uniforms before the parameters");
-_Static_assert(XGPU_WORLD_AO_INPUT_PRESENT == 0x400u && XGPU_SPIRV_GUIDES_MOTION_NONE == 0u,
+_Static_assert(XGPU_WORLD_AO_INPUT_PRESENT == 0x400u && XGPU_SPIRV_GUIDES_MOTION_NONE == 0u &&
+	XGPU_SPIRV_GUIDES_MOTION_FLIP == 0x80008000u && XGPU_SPIRV_GUIDES_MOTION_RANGE == 0.25f,
 	"lt/denoise_common.glsl's constants");
 
 /* lt/denoise_common.glsl's, std140 */
@@ -90,6 +91,7 @@ enum
 	DENOISE_CAMERA_ONLY = 8,
 	DENOISE_EMA = 16,
 	DENOISE_MOTION_VIEW = 32,
+	DENOISE_MOTION_RAW = 64,
 };
 
 static struct
@@ -147,7 +149,7 @@ static int denoise_shaders(void)
 			strcmp(getenv("HALO_LT_DENOISE_NO_GRADIENTS"), "0");
 		denoise.dumps = getenv("HALO_LT_DENOISE_DUMP");
 		denoise.ema = getenv("HALO_LT_DENOISE_EMA") && strcmp(getenv("HALO_LT_DENOISE_EMA"), "0");
-		denoise.motion_view = getenv("HALO_LT_DENOISE_MOTION_VIEW") && strcmp(getenv("HALO_LT_DENOISE_MOTION_VIEW"), "0");
+		denoise.motion_view = getenv("HALO_LT_DENOISE_MOTION_VIEW") ? atoi(getenv("HALO_LT_DENOISE_MOTION_VIEW")) : 0;
 		if (denoise.motion_view)
 			denoise.spatial = 0;
 	}
@@ -370,7 +372,8 @@ struct xgpu_vulkan_image *xgpu_vulkan_denoise_draw(struct xgpu_vulkan_image *raw
 	params.size[3] = (float)gradient_height;
 	params.control[0] = DENOISE_CAP;
 	params.control[1] = (history_valid ? DENOISE_HISTORY : 0) | (denoise.camera_only ? DENOISE_CAMERA_ONLY : 0) |
-		(denoise.ema ? DENOISE_EMA : 0) | (denoise.motion_view ? DENOISE_MOTION_VIEW : 0);
+		(denoise.ema ? DENOISE_EMA : 0) | (denoise.motion_view ? DENOISE_MOTION_VIEW : 0) |
+		(denoise.motion_view == 2 ? DENOISE_MOTION_RAW : 0);
 	params.tuning[0] = denoise.previous_pass.history[1];
 	params.tuning[1] = DENOISE_SIGMA_LUMINANCE;
 	params.tuning[2] = DENOISE_SIGMA_DEPTH;

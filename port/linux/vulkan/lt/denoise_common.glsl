@@ -4,6 +4,8 @@
 // (xgpu.h, xgpu_spirv.h)
 #define INPUT_PRESENT 0x400u
 #define MOTION_NONE 0u
+#define MOTION_FLIP 0x80008000u
+#define MOTION_RANGE 0.25
 
 // control.y's flags (xgpu_vulkan_denoise.c's)
 #define HISTORY 1
@@ -12,8 +14,10 @@
 #define CAMERA_ONLY 8
 // (checking, the negative control: an exponential average from the start, the history's count held at the cap)
 #define EMA 16
-// (checking: the temporal stage writes the guides' motion less the cameras' reprojection, in pixels)
+// (checking: the temporal stage writes the guides' motion less the cameras' reprojection, in pixels; with
+// MOTION_RAW too the motion itself)
 #define MOTION_VIEW 32
+#define MOTION_RAW 64
 
 // the draw set's uniforms: struct xgpu_world_ao_pass, then (at 1024) xgpu_vulkan_denoise.c's struct denoise_params
 layout(set = 0, binding = 1, std140) uniform Pass
@@ -97,10 +101,15 @@ bool reproject_camera(vec3 p, out vec2 at)
 }
 
 // (C1's motion: where the point is less where it was the frame before, a fraction of the window, x right and y
-// down; the jitter left out, as the cameras' reprojection leaves it out)
+// down, in fixed point; the jitter left out, as the cameras' reprojection leaves it out)
+vec2 motion_fraction(uint motion)
+{
+    return unpackSnorm2x16(motion ^ MOTION_FLIP) * MOTION_RANGE;
+}
+
 vec2 reproject_motion(ivec2 pixel, uint motion)
 {
-    return vec2(pixel) + 0.5 - unpackHalf2x16(motion) * vec2(pass.corners.zw - pass.corners.xy);
+    return vec2(pixel) + 0.5 - motion_fraction(motion) * vec2(pass.corners.zw - pass.corners.xy);
 }
 
 bool reproject(vec3 p, ivec2 pixel, uint motion, out vec2 at)

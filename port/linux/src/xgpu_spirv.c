@@ -54,7 +54,7 @@ enum
 	OP_I_EQUAL = 170, OP_I_NOT_EQUAL = 171, OP_S_LESS_THAN = 177,
 	OP_F_ORD_EQUAL = 180, OP_F_UNORD_NOT_EQUAL = 183, OP_F_ORD_LESS_THAN = 184, OP_F_ORD_GREATER_THAN = 186,
 	OP_F_ORD_LESS_THAN_EQUAL = 188, OP_F_ORD_GREATER_THAN_EQUAL = 190,
-	OP_SHIFT_RIGHT_ARITHMETIC = 195, OP_SHIFT_LEFT_LOGICAL = 196, OP_BITWISE_OR = 197, OP_BITWISE_AND = 199,
+	OP_SHIFT_RIGHT_ARITHMETIC = 195, OP_SHIFT_LEFT_LOGICAL = 196, OP_BITWISE_OR = 197, OP_BITWISE_XOR = 198, OP_BITWISE_AND = 199,
 	OP_CONVERT_U_TO_F = 112,
 	OP_ANY = 154, OP_U_GREATER_THAN_EQUAL = 174, OP_U_LESS_THAN = 176, OP_SHIFT_RIGHT_LOGICAL = 194,
 	OP_GROUP_NON_UNIFORM_BITWISE_OR = 359,
@@ -8842,25 +8842,28 @@ static unsigned int lt_octahedral(struct module *m, unsigned int n)
 
 /* a twin's motion (xgpu_spirv.h's C1): its positions as motion_screen has
 them, this frame's and the frame before's, the one less the other as a
-fraction of the window, x right and y down, packHalf2x16; NONE where either
-is behind the eye, STILL where it did not move */
+fraction of the window, x right and y down, in fixed point; NONE where
+either is behind the eye or it moved more than the range */
 static unsigned int lt_guides_motion(struct module *m, unsigned int current_in, unsigned int previous_in)
 {
-	static const float half_down[2] = { 0.5f, -0.5f };
+	static const float half_down[2] = { 0.5f / XGPU_SPIRV_GUIDES_MOTION_RANGE, -0.5f / XGPU_SPIRV_GUIDES_MOTION_RANGE };
 	unsigned int current = load(m, m->t_v3, current_in), previous = load(m, m->t_v3, previous_in);
 	unsigned int current_w = extract(m, current, 2), previous_w = extract(m, previous, 2);
 	unsigned int now = fdiv(m, 2, xy(m, current), splat(m, 2, current_w));
 	unsigned int before = fdiv(m, 2, xy(m, previous), splat(m, 2, previous_w));
-	unsigned int moved, packed, both;
+	unsigned int moved, packed, kept, largest;
 
 	moved = fmul(m, 2, fsub(m, 2, now, before), constant_vector(m, 2, half_down));
-	packed = ext1(m, GLSL_PACK_HALF_2X16, m->t_uint, moved);
-	packed = op3(m, OP_SELECT, m->t_uint, compare(m, OP_I_EQUAL, packed, constant_uint(m, 0u)),
-		constant_uint(m, XGPU_SPIRV_GUIDES_MOTION_STILL), packed);
-	both = op2(m, OP_LOGICAL_AND, m->t_bool,
+	packed = op2(m, OP_BITWISE_XOR, m->t_uint, ext1(m, GLSL_PACK_SNORM_2X16, m->t_uint, moved),
+		constant_uint(m, XGPU_SPIRV_GUIDES_MOTION_FLIP));
+	moved = ext1(m, GLSL_F_ABS, m->t_v2, moved);
+	largest = ext2(m, GLSL_F_MAX, m->t_float, extract(m, moved, 0), extract(m, moved, 1));
+	/* (both in front of the eyes, within the range: not NaN) */
+	kept = op2(m, OP_LOGICAL_AND, m->t_bool, op2(m, OP_LOGICAL_AND, m->t_bool,
 		compare(m, OP_F_ORD_GREATER_THAN, current_w, constant_float(m, 0.0f)),
-		compare(m, OP_F_ORD_GREATER_THAN, previous_w, constant_float(m, 0.0f)));
-	return op3(m, OP_SELECT, m->t_uint, both, packed, constant_uint(m, XGPU_SPIRV_GUIDES_MOTION_NONE));
+		compare(m, OP_F_ORD_GREATER_THAN, previous_w, constant_float(m, 0.0f))),
+		compare(m, OP_F_ORD_LESS_THAN_EQUAL, largest, constant_float(m, 1.0f)));
+	return op3(m, OP_SELECT, m->t_uint, kept, packed, constant_uint(m, XGPU_SPIRV_GUIDES_MOTION_NONE));
 }
 
 /* a twin's guides (xgpu_spirv.h's C1): the shaded normal (0: the
