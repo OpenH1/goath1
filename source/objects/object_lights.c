@@ -495,6 +495,9 @@ static void light_get_bounding_sphere(
 	real *radius);
 static boolean light_port_lights_structure(
 	struct point_light_definition const *definition);
+/* port: (the enhanced flashlight's middle, as bright as its gel's there:
+light_port_lights_structure) */
+#define LIGHT_PORT_GEL_CENTER 1.25f
 static void light_port_drawn_center(
 	struct light_datum const *light,
 	real_point3d *center);
@@ -1675,8 +1678,19 @@ void lights_preprocess_scene(
 						}
 						if (!light_port_lights_structure(definition))
 							flags |= HALO_DYNAMIC_LIGHT_MODELS_ONLY;
+						/* (the flashlight, lit as its gel lights the structure in
+						the game's pass: brightest along its axis, fading to its
+						cutoff, not flat out to its falloff angle; LIGHT_PORT_GEL_CENTER
+						its middle's brightness over the light's color) */
 						if (TEST_FLAG(definition->flags, _light_definition_is_first_person_flashlight_bit))
+						{
 							flags |= HALO_DYNAMIC_LIGHT_FLASHLIGHT;
+							if (definition->runtime_cosine_cutoff_angle < 1.0f)
+							{
+								cone_scale = 1.0f / (1.0f - definition->runtime_cosine_cutoff_angle);
+								cone_offset = -(cone_scale * definition->runtime_cosine_cutoff_angle);
+							}
+						}
 						/* (a plasma bolt's: a projectile with no model; a
 						needle's or a grenade's own body would hide its glow's
 						middle) */
@@ -1691,6 +1705,8 @@ void lights_preprocess_scene(
 						dynamic_lights_identify(light->rasterizer_light_index, scene_light_handle);
 						if (weapon_glow_scale != 1.0f)
 							dynamic_lights_brighten(light->rasterizer_light_index, weapon_glow_scale);
+						if (flags & HALO_DYNAMIC_LIGHT_FLASHLIGHT)
+							dynamic_lights_brighten(light->rasterizer_light_index, LIGHT_PORT_GEL_CENTER);
 						/* (and its copies on its flare's other markers) */
 						{
 							short marker_index;
