@@ -1835,8 +1835,8 @@ enum
 /* port: campaign scoring's columns after the score (campaign_score_hud.c):
 kills, headshots, deaths and best streak, their widths, and how many the
 scoreboard drawn has (as many as its view has room for; none but there) */
-static short const scoreboard_stat_widths[] = { 62, 104, 72, 110 };
-static wchar_t const *const scoreboard_stat_names[] = { L"Kills", L"Headshots", L"Deaths", L"Best streak" };
+static short const scoreboard_stat_widths[] = { 64, 118, 86, 122 };
+static wchar_t const *const scoreboard_stat_names[] = { L"KILLS", L"HEADSHOTS", L"DEATHS", L"BEST STREAK" };
 static short scoreboard_stat_count = 0;
 
 /* network_distributed.c's */
@@ -2771,6 +2771,9 @@ static void game_engine_rasterize_scoreboard(
 	boolean campaign = !game_engine;
 	/* port: campaign scoring's (campaign_score_hud.c): solo too */
 	boolean scored = campaign && campaign_score_hud_active();
+	/* (its header's height over the table's first row, in the view's
+	units) */
+	real header_height = 0.0f;
 	boolean ping_shown = scoreboard_ping_shown(network);
 	short name_width = scoreboard_name_width((short)(bounds.x1 - bounds.x0));
 	short column_width = scoreboard_column_width(ping_shown, name_width);
@@ -2987,8 +2990,17 @@ static void game_engine_rasterize_scoreboard(
 	{
 		real height = (2 + shown_rows) * line_height * SCOREBOARD_SCALE;
 
-		top = (short)(bounds.y0 + ((bounds.y1 - bounds.y0) - height) / 2);
-		top = MAX(top, (short)(SCOREBOARD_MINIMUM_TOP_ROWS * line_height));
+		/* port: campaign scoring's header over the table (the level
+		summary's: campaign_score_hud.c), in the title's row and above it */
+		header_height = 0.0f;
+		if (scored)
+		{
+			header_height = campaign_score_hud_board_header((short)local_player_index, 0.0f, 1.0f, 0.0f, alpha, FALSE);
+			header_height = MAX(header_height - line_height * SCOREBOARD_SCALE, 0.0f);
+			height += header_height;
+		}
+		top = (short)(bounds.y0 + ((bounds.y1 - bounds.y0) - height) / 2 + header_height);
+		top = MAX(top, (short)(SCOREBOARD_MINIMUM_TOP_ROWS * line_height + header_height));
 		/* (the panel behind it, half a row beyond its text, fading with it) */
 		{
 			pixel32 background = scoreboard_background_color();
@@ -3004,7 +3016,7 @@ static void game_engine_rasterize_scoreboard(
 				panel.x0 = (short)(block_left - padding);
 				/* (the ping, nearly as wide as its column, given room) */
 				panel.x1 = (short)(block_left + scaled_width + padding + (ping_shown ? 8.0f * SCOREBOARD_SCALE : 0.0f));
-				panel.y0 = (short)(top - padding);
+				panel.y0 = (short)(top - header_height - padding);
 				panel.y1 = (short)(top + height + padding);
 				draw_quad(&panel, ((pixel32)panel_alpha << 24) | (background & 0x00FFFFFF));
 			}
@@ -3103,24 +3115,19 @@ static void game_engine_rasterize_scoreboard(
 		game_engine_generate_title_string(title_string, player_index);
 	color.alpha = alpha;
 	color.red = color.green = color.blue = 0.7f;
-	scoreboard_draw_row(title_string, FALSE, &color, 0, top, left, FALSE);
-	/* port: campaign scoring's team total, at the title's right (a game of
-	more than one player) */
-	if (scored && ranked_count > 1)
+	/* port: campaign scoring's header in the title's place: the title and
+	difficulty, the total large, the best to beat (campaign_score_hud.c, as
+	the level's summary has them), across the block as it is drawn */
+	if (scored)
 	{
-		wchar_t number[16];
-		real_argb_color total_color;
+		real block_left = bounds.x0 + (left - bounds.x0) * SCOREBOARD_SCALE;
 
-		campaign_score_hud_number(campaign_score_hud_state()->team_score, number, NUMBEROF(number));
-		usnprintf(row_string, NUMBEROF(row_string), L"Team  %s", number);
-		row_string[NUMBEROF(row_string) - 1] = 0;
-		total_color = *hud_get_text_color(&text_color);
-		total_color.alpha = alpha;
-		total_color.red = MIN(total_color.red + 0.4f, 1.0f);
-		total_color.green = MIN(total_color.green + 0.4f, 1.0f);
-		total_color.blue = MIN(total_color.blue + 0.4f, 1.0f);
-		scoreboard_draw_row_right(row_string, &total_color, 0, top, (short)(left + block_width));
+		campaign_score_hud_board_header((short)local_player_index, block_left,
+			block_left + block_width * SCOREBOARD_SCALE, top - header_height, alpha, TRUE);
+		rasterizer_text_set_scale(SCOREBOARD_SCALE, (real)bounds.x0, (real)top);
 	}
+	else
+		scoreboard_draw_row(title_string, FALSE, &color, 0, top, left, FALSE);
 
 	string_list_index = tag_loaded('ustr', "ui\\multiplayer_game_text");
 	column_name = string_list_index != NONE && !campaign ? unicode_string_list_get_string(string_list_index, 0x43) : L"";
@@ -3138,7 +3145,8 @@ static void game_engine_rasterize_scoreboard(
 	{
 		short stat;
 
-		usnprintf(row_string, NUMBEROF(row_string), L"\t\t%s\tScore", score_name);
+		/* (in capitals, as the level's summary has them) */
+		usnprintf(row_string, NUMBEROF(row_string), L"\t\tPLAYER\tSCORE");
 		for (stat = 0; stat < scoreboard_stat_count; stat++)
 		{
 			long length = ustrlen(row_string);
@@ -3149,7 +3157,7 @@ static void game_engine_rasterize_scoreboard(
 		{
 			long length = ustrlen(row_string);
 
-			usnprintf(row_string + length, NUMBEROF(row_string) - length, L"\tPing");
+			usnprintf(row_string + length, NUMBEROF(row_string) - length, L"\tPING");
 		}
 		row_string[NUMBEROF(row_string) - 1] = 0;
 	}
@@ -3273,8 +3281,13 @@ static void game_engine_rasterize_scoreboard(
 				values[3] = scores->best_streak;
 			}
 			campaign_score_hud_number(scores ? scores->score : 0, number, NUMBEROF(number));
+			wchar_t name[NUMBEROF(player->name) + 1];
+
+			/* (a player with no profile has no name) */
+			ustrncpy(name, player->name[0] ? player->name : L"Player", NUMBEROF(name) - 1);
+			name[NUMBEROF(name) - 1] = 0;
 			usnprintf(row_string, NUMBEROF(row_string), L"\t%ld\t%s\t%s", (long)(entry->place & 0x7FFFFFFF) + 1,
-				player->name, number);
+				name, number);
 			for (stat = 0; stat < scoreboard_stat_count; stat++)
 			{
 				long length = ustrlen(row_string);

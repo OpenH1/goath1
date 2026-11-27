@@ -37,6 +37,12 @@ milliseconds, at most maximum: their count */
 short campaign_score_hud_recent(long player_index, unsigned long milliseconds,
 	struct campaign_score_hud_group *groups, short maximum);
 
+/* the scoreboard's header (game_engine.c), the summary's: the title and
+difficulty, the total large, the best to beat; from top between left and
+right, in the view's units, drawn if draw; its height returned */
+real campaign_score_hud_board_header(short local_player_index, real left, real right, real top, real alpha,
+	boolean draw);
+
 /* render.c, after the Spartan link: the window's pop-ups and the level's
 summary */
 void campaign_score_hud_draw(short local_player_index);

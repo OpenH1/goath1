@@ -52,6 +52,10 @@ touched.
 #include <stdio.h>
 #include <string.h>
 
+/* campaign_score.c's, once it has it: the saved best of this level, its
+difficulty and its player count; FALSE for none (weak: absent, no BEST) */
+boolean campaign_score_personal_best(long *score) __attribute__((weak));
+
 /* port_config.c's */
 int config_boolean(char const *name);
 unsigned long system_milliseconds(void);
@@ -541,6 +545,80 @@ static short score_ranked(
 	return count;
 }
 
+/* the header the summary and the scoreboard share, from y between left
+and right: the title and the difficulty, the total (the team's in co-op,
+else the player's) large, and NEW PERSONAL BEST (a badge: a frame and its
+words, not a color alone) or the best to beat ("BEST 4,120", best >= 0);
+drawn if draw, and where it ends returned */
+static real score_draw_header(
+	struct campaign_score_state const *state,
+	short self_slot,
+	boolean coop,
+	wchar_t const *title,
+	boolean new_best,
+	long best,
+	real left,
+	real right,
+	real y,
+	real unit,
+	real alpha,
+	boolean draw)
+{
+	real line = score_line_height() * 0.7f * unit;
+	real_argb_color color;
+	wchar_t text[64];
+	wchar_t number[16];
+
+	if (draw)
+	{
+		score_color(&color, 0.0f, 0.75f * alpha);
+		score_text(title, left, y, 0, 0.7f * unit, &color);
+		if (state->difficulty_multiplier > 0.0f)
+		{
+			usnprintf(text, NUMBEROF(text), L"DIFFICULTY x%.1f", state->difficulty_multiplier);
+			score_text(text, right, y, 1, 0.6f * unit, &color);
+		}
+	}
+	y += line * 1.1f;
+	if (draw)
+	{
+		campaign_score_hud_number(coop ? state->team_score :
+			self_slot != NONE && self_slot < CAMPAIGN_SCORE_MAX_PLAYERS ? state->players[self_slot].score :
+				state->team_score, number, NUMBEROF(number));
+		score_color(&color, 0.5f, alpha);
+		score_text(coop ? L"TEAM SCORE" : L"SCORE", left, y + line * 0.55f, 0, 0.8f * unit, &color);
+		score_text(number, right, y, 1, 1.4f * unit, &color);
+	}
+	y += line * 2.3f;
+	if (new_best)
+	{
+		real best_width = score_text_width(L"NEW PERSONAL BEST") * 0.75f * unit + 16.0f * unit;
+
+		if (draw)
+		{
+			score_panel(left, y - 2.0f * unit, left + best_width, y + line + 1.0f * unit, 0xFFE8C15AUL, alpha);
+			color.red = 0.08f;
+			color.green = 0.06f;
+			color.blue = 0.02f;
+			color.alpha = alpha;
+			score_text(L"NEW PERSONAL BEST", left + 8.0f * unit, y, 0, 0.75f * unit, &color);
+		}
+		y += line * 1.1f + 4.0f * unit;
+	}
+	else if (best >= 0)
+	{
+		if (draw)
+		{
+			campaign_score_hud_number(best, number, NUMBEROF(number));
+			usnprintf(text, NUMBEROF(text), L"BEST %s", number);
+			score_color(&color, 0.0f, 0.75f * alpha);
+			score_text(text, left, y, 0, 0.65f * unit, &color);
+		}
+		y += line * 1.1f;
+	}
+	return y;
+}
+
 /* the level's summary in the window, as it is shown */
 static void score_draw_summary(
 	short local_player_index)
@@ -558,7 +636,6 @@ static void score_draw_summary(
 	real_argb_color color;
 	real x0, y0, width, height, unit, alpha, line, left, right, top, y, panel_width;
 	real columns[5];
-	wchar_t text[64];
 	wchar_t number[16];
 	boolean coop;
 
@@ -600,37 +677,8 @@ static void score_draw_summary(
 	}
 	left += 14.0f * unit;
 	right -= 14.0f * unit;
-	y = top + 8.0f * unit;
-	score_color(&color, 0.0f, 0.75f * alpha);
-	score_text(L"LEVEL COMPLETE", left, y, 0, 0.7f * unit, &color);
-	if (state->difficulty_multiplier > 0.0f)
-	{
-		usnprintf(text, NUMBEROF(text), L"DIFFICULTY x%.1f", state->difficulty_multiplier);
-		score_text(text, right, y, 1, 0.6f * unit, &color);
-	}
-	y += line * 1.1f;
-	/* (the total: the team's in co-op, else the player's) */
-	campaign_score_hud_number(coop ? state->team_score :
-		self_slot != NONE && self_slot < CAMPAIGN_SCORE_MAX_PLAYERS ? state->players[self_slot].score : state->team_score,
-		number, NUMBEROF(number));
-	score_color(&color, 0.5f, alpha);
-	score_text(coop ? L"TEAM SCORE" : L"SCORE", left, y + line * 0.55f, 0, 0.8f * unit, &color);
-	score_text(number, right, y, 1, 1.4f * unit, &color);
-	y += line * 2.3f;
-	if (score_hud.summary_best)
-	{
-		/* (a star's words and a frame, not a color alone: the printer's
-		and the eye's) */
-		real best_width = score_text_width(L"NEW PERSONAL BEST") * 0.75f * unit + 16.0f * unit;
-
-		score_panel(left, y - 2.0f * unit, left + best_width, y + line + 1.0f * unit, 0xFFE8C15AUL, alpha);
-		color.red = 0.08f;
-		color.green = 0.06f;
-		color.blue = 0.02f;
-		color.alpha = alpha;
-		score_text(L"NEW PERSONAL BEST", left + 8.0f * unit, y, 0, 0.75f * unit, &color);
-		y += line * 1.1f + 4.0f * unit;
-	}
+	y = score_draw_header(state, self_slot, coop, L"LEVEL COMPLETE", score_hud.summary_best, NONE, left, right,
+		top + 8.0f * unit, unit, alpha, TRUE);
 	/* (the players' table: name, score, kills, headshots, deaths, best
 	streak) */
 	columns[4] = right;
@@ -653,14 +701,16 @@ static void score_draw_summary(
 		struct player_datum *player = score_player_at(slots[index], NULL);
 		wchar_t name[16];
 
-		if (player)
+		/* (a player without a name, one with no profile: PLAYER and their
+		number) */
+		if (player && player->name[0])
 		{
 			ustrncpy(name, player->name, NUMBEROF(player->name));
 			name[NUMBEROF(player->name)] = 0;
 		}
 		else
 		{
-			usnprintf(name, NUMBEROF(name), L"PLAYER %d", (int)slots[index] + 1);
+			usnprintf(name, NUMBEROF(name), L"Player %d", (int)slots[index] + 1);
 		}
 		if (slots[index] == self_slot && coop)
 			score_panel(left - 4.0f * unit, y - 1.0f * unit, right + 4.0f * unit, y + line, 0xB00E2A63UL, alpha);
@@ -785,6 +835,31 @@ short campaign_score_hud_recent(
 			groups[count++] = *group;
 	}
 	return count;
+}
+
+real campaign_score_hud_board_header(
+	short local_player_index,
+	real left,
+	real right,
+	real top,
+	real alpha,
+	boolean draw)
+{
+	struct campaign_score_state const *state = campaign_score_hud_state();
+	long self = local_player_get_player_index(local_player_index);
+	short self_slot = self != NONE ? (short)DATUM_INDEX_TO_ABSOLUTE_INDEX(self) : NONE;
+	short ranked[CAMPAIGN_SCORE_MAX_PLAYERS];
+	short count = score_ranked(state, ranked, NUMBEROF(ranked));
+	real x0, y0, width, height;
+	long best = NONE;
+
+	score_view(&x0, &y0, &width, &height);
+	if (score_fill())
+		best = 4120;
+	else if (campaign_score_personal_best && !campaign_score_personal_best(&best))
+		best = NONE;
+	return score_draw_header(state, self_slot, count > 1, count > 1 ? L"CO-OP" : L"CAMPAIGN", FALSE, best, left,
+		right, top, height / 480.0f, alpha, draw) - top;
 }
 
 void campaign_score_hud_draw(
