@@ -1676,7 +1676,8 @@ static float hdr_ceiling(int ceiling)
 {
 	return ceiling == XGPU_HDR_CEILING_WEAPON ? XGPU_HDR_CEILING_WEAPON_VALUE :
 		ceiling == XGPU_HDR_CEILING_HUD ? XGPU_HDR_CEILING_HUD_VALUE :
-		ceiling == XGPU_HDR_CEILING_LIGHT ? XGPU_HDR_CEILING_LIGHT_VALUE : XGPU_HDR_CEILING_PAPER_WHITE_VALUE;
+		ceiling == XGPU_HDR_CEILING_LIGHT ? XGPU_HDR_CEILING_LIGHT_VALUE :
+		ceiling == XGPU_HDR_CEILING_NUMERIC ? XGPU_HDR_CEILING_NUMERIC_VALUE : XGPU_HDR_CEILING_PAPER_WHITE_VALUE;
 }
 
 /* the colour written for a tagged draw, from its source (source: the
@@ -1733,7 +1734,15 @@ static void hdr_output(struct xgpu_text *text, unsigned short hdr)
 		xgpu_text_append(text,
 			"\t\tfloat3 added = max(v.rgb - d.rgb, float3(0.0));\n"
 			"\t\tfloat added_most = max(added.r, max(added.g, added.b)), most = max(v.r, max(v.g, v.b));\n"
-			"\t\tif (added_most > 0.0)\n"
+			"\t\tif (added_most > 0.0)\n");
+	/* (its reach: its ceiling's share of the pixel, or for the weapon's
+	numbers what is left under the ceiling) */
+	if (XGPU_HDR_GLOW(hdr) && XGPU_HDR_EXPAND_TO_CEILING(ceiling))
+		xgpu_text_append(text,
+			"\t\t\tv.rgb += added * min((%.6f - most) * smoothstep(%.6f, %.6f, most) / added_most, %.6f);\n",
+			hdr_ceiling(ceiling), XGPU_HDR_EXPAND_LIGHT_KNEE, XGPU_HDR_EXPAND_NUMERIC_FULL, XGPU_HDR_EXPAND_MOST);
+	else if (XGPU_HDR_GLOW(hdr))
+		xgpu_text_append(text,
 			"\t\t\tv.rgb += added * min(%.6f * smoothstep(%.6f, 1.0, most) * most / added_most, %.6f);\n",
 			hdr_ceiling(ceiling) - 1.0f,
 			ceiling == XGPU_HDR_CEILING_LIGHT ? XGPU_HDR_EXPAND_LIGHT_KNEE : XGPU_HDR_EXPAND_KNEE, XGPU_HDR_EXPAND_MOST);

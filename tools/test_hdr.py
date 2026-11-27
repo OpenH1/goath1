@@ -93,11 +93,14 @@ int main(void)
 	CHECK(classify(1, XGPU_BLEND_SOURCE_ALPHA, XGPU_BLEND_ONE_MINUS_SOURCE_ALPHA, ADD, RGB, -1, 1, 0, F) == 0,
 		"the menus' alpha blend is untagged");
 	tag = classify(1, XGPU_BLEND_ONE, XGPU_BLEND_ONE, ADD, RGB, 2, 0, HALO_HDR_KIND_FIRST_PERSON | HALO_HDR_KIND_NUMERIC, F);
-	CHECK(XGPU_HDR_GLOW(tag) && XGPU_HDR_CEILING_OF(tag) == XGPU_HDR_CEILING_WEAPON,
-		"the assault rifle's ammunition counter glows to the weapon's ceiling: %04x", tag);
+	CHECK(XGPU_HDR_GLOW(tag) && XGPU_HDR_CEILING_OF(tag) == XGPU_HDR_CEILING_NUMERIC,
+		"the assault rifle's ammunition counter glows to the numbers' ceiling: %04x", tag);
 	tag = classify(1, XGPU_BLEND_SOURCE_ALPHA, XGPU_BLEND_ONE_MINUS_SOURCE_ALPHA, ADD, RGB, 22, 0,
 		HALO_HDR_KIND_FIRST_PERSON | HALO_HDR_KIND_NUMERIC, F);
-	CHECK(XGPU_HDR_GLOW(tag) && XGPU_HDR_CEILING_OF(tag) == XGPU_HDR_CEILING_WEAPON, "... whatever its blend");
+	CHECK(XGPU_HDR_GLOW(tag) && XGPU_HDR_CEILING_OF(tag) == XGPU_HDR_CEILING_NUMERIC, "... whatever its blend");
+	tag = classify(1, XGPU_BLEND_ONE, XGPU_BLEND_ONE, ADD, RGB, 22, 0, HALO_HDR_KIND_FIRST_PERSON | HALO_HDR_KIND_METER, F);
+	CHECK(XGPU_HDR_GLOW(tag) && XGPU_HDR_CEILING_OF(tag) == XGPU_HDR_CEILING_WEAPON,
+		"a first-person meter keeps the weapon's ceiling: %04x", tag);
 	CHECK(classify(1, XGPU_BLEND_SOURCE_ALPHA, XGPU_BLEND_ONE_MINUS_SOURCE_ALPHA, ADD, RGB, 22, 0,
 		HALO_HDR_KIND_FIRST_PERSON, F) == 0, "a first-person part's alpha blend is no glow");
 	tag = classify(1, XGPU_BLEND_ONE, XGPU_BLEND_ONE_MINUS_SOURCE_ALPHA, ADD, RGB, 27, 1, HALO_HDR_KIND_HUD_GLOW, F);
@@ -123,7 +126,9 @@ int main(void)
 		XGPU_HDR_CEILING_PAPER_WHITE, "nor anything over the tone mapped view");
 	CHECK(classify(1, XGPU_BLEND_ONE, XGPU_BLEND_ONE, ADD, 0, 22, 0, HALO_HDR_KIND_LIGHT, F) == 0,
 		"nor a draw writing no colour");
-	CHECK(XGPU_HDR_CEILING_LIGHT_VALUE > XGPU_HDR_CEILING_WEAPON_VALUE && XGPU_HDR_CEILING(XGPU_HDR_CEILING_LIGHT) <
+	CHECK(XGPU_HDR_CEILING_LIGHT_VALUE > XGPU_HDR_CEILING_NUMERIC_VALUE &&
+		XGPU_HDR_CEILING_NUMERIC_VALUE > XGPU_HDR_SELF_ILLUMINATION_VALUE &&
+		XGPU_HDR_CEILING_LIGHT_VALUE > XGPU_HDR_CEILING_WEAPON_VALUE && XGPU_HDR_CEILING(XGPU_HDR_CEILING_NUMERIC) <
 		XGPU_HDR_ALPHA_LIMIT && !(XGPU_HDR_CEILING(7) & (XGPU_HDR_BLEND(15, 15, 7) | XGPU_HDR_ALPHA_LIMIT |
 		XGPU_HDR_LIGHTS)), "the ceilings' field is its own bits");
 	tag = classify(1, XGPU_BLEND_ONE, XGPU_BLEND_ONE, XGPU_BLEND_REVERSE_SUBTRACT, RGB, 22, 0, 0, F);
@@ -846,11 +851,16 @@ int main(void)
 	CHECK(xgpu_hdr_paper_white_nits(0, 0, 203.0f) == 203.0f, "no percent: the system's white");
 	{
 		/* a glow brightened toward its ceiling by its own light, at most to it */
-		float had[3] = { 0.1f, 0.2f, 0.3f }, rgb[3] = { 0.6f, 0.95f, 1.0f };
+		float had[3] = { 0.1f, 0.2f, 0.3f }, rgb[3] = { 0.6f, 0.95f, 1.0f }, weapon[3] = { 0.6f, 0.95f, 1.0f };
 
-		xgpu_hdr_expand(rgb, had, XGPU_HDR_CEILING_WEAPON);
-		CHECK(rgb[2] > 1.0f, "the counter's digits past paper white: %.3f", rgb[2]);
+		xgpu_hdr_expand(rgb, had, XGPU_HDR_CEILING_NUMERIC);
+		xgpu_hdr_expand(weapon, had, XGPU_HDR_CEILING_WEAPON);
+		CHECK(rgb[2] > weapon[2] && rgb[2] > 1.0f && rgb[2] <= XGPU_HDR_CEILING_NUMERIC_VALUE + 1.0e-5f,
+			"the counter's digits past paper white, past the weapon's other glows: %.3f (%.2f times), theirs %.3f",
+			rgb[2], xgpu_hdr_linear(rgb[2]), weapon[2]);
 		CHECK(rgb[0] - 0.6f < rgb[2] - 1.0f, "by its own light (its colour)");
+		CHECK(xgpu_hdr_linear(rgb[2]) > 2.2f, "a lit screen, near its ceiling: %.2f times", xgpu_hdr_linear(rgb[2]));
+		CHECK(rgb[0] / rgb[2] < 0.7f && rgb[1] <= rgb[2], "its cyan kept: %.3f %.3f %.3f", rgb[0], rgb[1], rgb[2]);
 	}
 	{
 		/* a teleporter's field: its bright swirls past paper white, toward

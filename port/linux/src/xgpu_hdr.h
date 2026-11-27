@@ -232,7 +232,9 @@ nothing bounds it) */
 white; then the glows': the first-person weapon's, 1.75 times paper
 white's light; the HUD's, 1.5 times; the light of the world's, 3 times
 (a teleporter's field fills much of the screen: well past the surfaces,
-short of an explosion's core) */
+short of an explosion's core); the first-person weapon's numbers (its
+ammunition counter), 2.5 times: a lit screen on the metal, past
+self-illumination's 2 times, short of the lights' 3 */
 enum
 {
 	XGPU_HDR_CEILING_NONE,
@@ -240,11 +242,13 @@ enum
 	XGPU_HDR_CEILING_WEAPON,
 	XGPU_HDR_CEILING_HUD,
 	XGPU_HDR_CEILING_LIGHT,
+	XGPU_HDR_CEILING_NUMERIC,
 };
 #define XGPU_HDR_CEILING_PAPER_WHITE_VALUE 1.0f
 #define XGPU_HDR_CEILING_WEAPON_VALUE 1.277043f
 #define XGPU_HDR_CEILING_HUD_VALUE 1.194177f
 #define XGPU_HDR_CEILING_LIGHT_VALUE 1.612451f
+#define XGPU_HDR_CEILING_NUMERIC_VALUE 1.490471f
 
 /* a glow's expansion: from this brightest channel of the blended pixel
 (the frame's values) up, smoothly to the ceiling at 1; the light of the
@@ -252,6 +256,13 @@ world's from lower (a teleporter's field, a bolt's volume are drawn
 dimmer than the weapon's displays) */
 #define XGPU_HDR_EXPAND_KNEE 0.6f
 #define XGPU_HDR_EXPAND_LIGHT_KNEE 0.4f
+/* the first-person weapon's numbers (XGPU_HDR_CEILING_NUMERIC) are a lit
+screen: brightened from the light's knee all the way to their ceiling (by
+what is left under it), wholly from this brightest channel up (the
+counter's digits are drawn short of white, about 0.85), rather than by
+their ceiling's share of themselves as the other glows */
+#define XGPU_HDR_EXPAND_TO_CEILING(ceiling) ((ceiling) == XGPU_HDR_CEILING_NUMERIC)
+#define XGPU_HDR_EXPAND_NUMERIC_FULL 0.8f
 /* ... the light the draw added at most this many times more */
 #define XGPU_HDR_EXPAND_MOST 2.0f
 
@@ -432,12 +443,14 @@ static inline float xgpu_hdr_ceiling_value(int ceiling)
 {
 	return ceiling == XGPU_HDR_CEILING_WEAPON ? XGPU_HDR_CEILING_WEAPON_VALUE :
 		ceiling == XGPU_HDR_CEILING_HUD ? XGPU_HDR_CEILING_HUD_VALUE :
-		ceiling == XGPU_HDR_CEILING_LIGHT ? XGPU_HDR_CEILING_LIGHT_VALUE : XGPU_HDR_CEILING_PAPER_WHITE_VALUE;
+		ceiling == XGPU_HDR_CEILING_LIGHT ? XGPU_HDR_CEILING_LIGHT_VALUE :
+		ceiling == XGPU_HDR_CEILING_NUMERIC ? XGPU_HDR_CEILING_NUMERIC_VALUE : XGPU_HDR_CEILING_PAPER_WHITE_VALUE;
 }
 
 static inline float xgpu_hdr_expand_knee(int ceiling)
 {
-	return ceiling == XGPU_HDR_CEILING_LIGHT ? XGPU_HDR_EXPAND_LIGHT_KNEE : XGPU_HDR_EXPAND_KNEE;
+	return ceiling == XGPU_HDR_CEILING_LIGHT || ceiling == XGPU_HDR_CEILING_NUMERIC ? XGPU_HDR_EXPAND_LIGHT_KNEE :
+		XGPU_HDR_EXPAND_KNEE;
 }
 
 static inline float xgpu_hdr_smoothstep(float edge0, float edge1, float x)
@@ -449,10 +462,11 @@ static inline float xgpu_hdr_smoothstep(float edge0, float edge1, float x)
 }
 
 /* a pixel (rgb) brightened toward a ceiling (its value): its brightest
-channel by up to (ceiling - 1) times itself, where it is bright (from the
-knee), by more of the light added to what the pixel had (had), at most
-XGPU_HDR_EXPAND_MOST times more */
-static inline void xgpu_hdr_expand_toward(float rgb[3], const float had[3], float ceiling, float knee)
+channel by up to (ceiling - 1) times itself (to_ceiling: up to the ceiling
+less itself), where it is bright (from the knee), by more of the light
+added to what the pixel had (had), at most XGPU_HDR_EXPAND_MOST times more */
+static inline void xgpu_hdr_expand_reaching(float rgb[3], const float had[3], float ceiling, float knee,
+	int to_ceiling)
 {
 	float added[3], most = fmaxf(rgb[0], fmaxf(rgb[1], rgb[2])), added_most, more;
 	int channel;
@@ -462,16 +476,24 @@ static inline void xgpu_hdr_expand_toward(float rgb[3], const float had[3], floa
 	added_most = fmaxf(added[0], fmaxf(added[1], added[2]));
 	if (added_most <= 0.0f)
 		return;
-	more = fminf((ceiling - 1.0f) * xgpu_hdr_smoothstep(knee, 1.0f, most) * most / added_most, XGPU_HDR_EXPAND_MOST);
+	more = fminf(to_ceiling ? (ceiling - most) * xgpu_hdr_smoothstep(knee, XGPU_HDR_EXPAND_NUMERIC_FULL, most) /
+		added_most :
+		(ceiling - 1.0f) * xgpu_hdr_smoothstep(knee, 1.0f, most) * most / added_most, XGPU_HDR_EXPAND_MOST);
 	for (channel = 0; channel < 3; channel++)
 		rgb[channel] += added[channel] * more;
+}
+
+static inline void xgpu_hdr_expand_toward(float rgb[3], const float had[3], float ceiling, float knee)
+{
+	xgpu_hdr_expand_reaching(rgb, had, ceiling, knee, 0);
 }
 
 /* a glow's blended pixel (rgb) brightened toward its ceiling, by more of
 the light the draw added to what the pixel had (had) */
 static inline void xgpu_hdr_expand(float rgb[3], const float had[3], int ceiling)
 {
-	xgpu_hdr_expand_toward(rgb, had, xgpu_hdr_ceiling_value(ceiling), xgpu_hdr_expand_knee(ceiling));
+	xgpu_hdr_expand_reaching(rgb, had, xgpu_hdr_ceiling_value(ceiling), xgpu_hdr_expand_knee(ceiling),
+		XGPU_HDR_EXPAND_TO_CEILING(ceiling));
 }
 
 /* a self-illuminated surface's pixel (rgb, as its combiners leave it, in
