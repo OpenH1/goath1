@@ -87,6 +87,30 @@ map's end), and a BSP switch back (a10's start goes 0, 7, 0) makes both again: a
 
 Clip walls: the render geometry has none (nothing draws them), so they are out by construction.
 
+## Measured in stages 2 and 3 (2026-11-26)
+
+On branch `rt/geometry-2`, still behind `debug.rt_render_geometry`.
+
+- **Memory and BSP switches.** Each BSP's mesh is kept by index (switching back builds nothing), the collision BLAS
+  is let go of once the render mesh is in, and a mesh of 1,024 or more triangles has its own buffer and is compacted
+  (to 0.68 to 0.70 of its size on RADV, about 0.45 on the 4090). a10's 0, 7, 0 start peaks at 6.94 MB and ends at
+  5.9 MB of meshes (it was 27.9 MB).
+- **Per-hit data.** Indexed meshes (`WORLD_AO_MESH` kind `_INDEXED`: positions, corners, 24 B a vertex, a material
+  per triangle, the map's 64 B material records with the #1267 normal and ORM maps) go into one hit table. Textures
+  sit in a 512-slot bindless array, set 4 (`xgpu_vulkan_rt.c`). An instance names its mesh by its SBT offset. a10
+  BSP 0: 40,934 triangles, 67,305 vertices, 178 materials, 2.9 MB sent, read in 2.75 ms.
+- **Cutouts.** Alpha-tested surfaces are each mesh's geometry 1, which is non-opaque. All three candidate loops take
+  a geometry-1 candidate only where its alpha map, sampled at level 1, passes the cutoff
+  (`xgpu_spirv.c`'s `rt_candidate_commits`). The environment's map is its bump map, a model's is its base map.
+  a10: 504 alpha-tested triangles, a30: 582. On a10 the validation layer reports nothing and every module passes
+  spirv-val.
+- **Objects.** Each model's render mesh, at the second most detailed LOD, is split by node and instanced as the
+  collision meshes were. b30: about 1,700 instances a frame, 195 meshes, 85k triangles.
+- **GPU time**, Blood Gulch, 5 bots: 2.34 ms a frame on and off (AO 0.97 ms) on the 8060S; 0.76 ms on the 4090,
+  with no hang in 30 s.
+- **Not done yet:** skinned refit (joints stay on their major node), the first-person weapon's instance and mask bit,
+  and TLAS refit.
+
 ## Memory and build time (estimates before stage 1)
 
 Render BSPs are roughly 1.5 to 3 times their collision triangle count (cutouts, detail, decorations). Compacted BLAS
