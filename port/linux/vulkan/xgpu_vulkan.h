@@ -740,6 +740,23 @@ the surfaces found once a pixel read: a 2D image of four bytes, a channel a
 light, read by texel, a 1x1 of every light seen where none is traced;
 xgpu.h's XGPU_DYNAMIC_LIGHTS_SHADOWED) */
 #define XGPU_VULKAN_BINDING_LIGHT_SHADOWS 9
+/* (and display.rt_bounce's bounced light, which the surfaces found once a
+pixel add: a 2D image of four halves, read by texel, a 1x1 of none where
+none is traced; xgpu_spirv.h's XGPU_SPIRV_BINDING_RT_BOUNCE) */
+#define XGPU_VULKAN_BINDING_RT_BOUNCE 10
+/* the bounced light the occlusion's sets name from now on (NULL: the
+stand-in), and whether they name this one */
+void xgpu_vulkan_rt_bounce_set(struct xgpu_vulkan_image *image);
+int xgpu_vulkan_rt_bounce_bound(const struct xgpu_vulkan_image *image);
+/* display.rt_bounce's passes (xgpu_vulkan_gi.c): the window's lights (the
+stream's RT_BOUNCE), the passes drawn after the pre-pass (its inputs and
+its pass's uniforms; where the device has ray queries) and the stand-in
+named again as the next pre-pass begins */
+struct xgpu_stream_rt_bounce;
+struct xgpu_world_ao_pass;
+void xgpu_vulkan_rt_bounce_lights(const struct xgpu_stream_rt_bounce *record);
+void xgpu_vulkan_rt_bounce_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_world_ao_pass *pass);
+void xgpu_vulkan_rt_bounce_end(void);
 struct xgpu_world_ao_pass;
 /* the mask the occlusion's sets name from now on (NULL: the stand-in), and
 whether they name this one */

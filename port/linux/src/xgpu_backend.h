@@ -30,6 +30,7 @@ renderer" in port/linux/README.md.
 #define __HALO_LINUX_XGPU_BACKEND_H
 
 #include "xgpu.h"
+#include "rt_bounce.h"
 
 /* (xgpu_stream.h) */
 struct xgpu_world_ao_block;
@@ -893,6 +894,22 @@ struct xgpu_rt_shadows
 };
 
 void xgpu_backend_rt_shadows(xgpu_target color, xgpu_target depth, const struct xgpu_rt_shadows *shadows);
+
+/* ---------- display.rt_bounce (port/linux/game/dynamic_lights_bounce.c;
+docs/rt-plan/3-gi.md, stage 3): bounced light from the dynamic lights by
+the GPU's ray queries
+
+A window's lights that bounce (the strongest few to the view: the CPU
+bounce's choice), given before its pre-pass ends: each one's position, reach
+(world units), linear color (times the strength) and cone (the enhanced
+lights': its axis, scale and offset; omni 0, 0 and 1); the window (0 to 3)
+and the seconds since its last (the cache's fading). The backend traces a
+few pixels' bounce through the ray-traced scene into a world-space cache
+around the camera and lights the surfaces found once a pixel by it
+(xgpu_vulkan_gi.c). Where the backend has ray queries and the pre-pass
+alone; a count of 0 lets the cache fade. */
+#define XGPU_RT_BOUNCE_LIGHTS RT_BOUNCE_LIGHTS
+void xgpu_backend_rt_bounce(const struct rt_bounce *bounce);
 
 /* display.contact_shadows (port/linux/game/contact_shadows.c;
 docs/dynamic-shadows-plan.md, stage 2): the same casters' short, sharp

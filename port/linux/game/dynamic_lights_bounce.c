@@ -28,6 +28,12 @@ what the frame finds (BOUNCE_EASE seconds of game time) and fade where a ray
 loses its wall; a steady light's bounce settles and stays, and it fades with
 its light. A light no longer among the chosen takes its bounce with it.
 Only the drawing changes: nothing simulated, nothing sent between machines.
+
+display.rt_bounce (docs/rt-plan/3-gi.md, stage 3) takes its place where the
+backend has ray queries and display.ambient_occlusion's pre-pass runs: the
+same choice of lights is handed to the GPU (xgpu_backend_rt_bounce), which
+traces their bounce off the real surfaces into a world-space cache
+(port/linux/vulkan/xgpu_vulkan_gi.c), and no bounce lights are placed.
 */
 
 #include "cseries.h"
@@ -43,6 +49,7 @@ Only the drawing changes: nothing simulated, nothing sent between machines.
 #include "cache/texture_cache.h"
 #include "shaders/shader_definitions.h"
 #include "../src/xgpu_coverage.h"
+#include "rt_bounce.h"
 
 #include <xtl.h>
 
@@ -57,6 +64,10 @@ void platform_log(const char *format, ...);
 unsigned long long platform_shared_clock_microseconds(void);
 /* port/linux/game/dynamic_lights.c */
 void dynamic_lights_clusters(long rasterizer_light_index, short count, short const *clusters);
+/* port/linux/game/world_ao.c, port/linux/src/xgpu_stream_encode.c */
+int world_ao_mode(void);
+int halo_world_ao_ray_queries(void);
+void xgpu_backend_rt_bounce(struct rt_bounce const *bounce);
 /* port/linux/game/door_portals.c */
 short door_portals_clusters_in_sphere(short cluster_index, real_point3d const *position, real radius,
 	short maximum_count, short *clusters);
@@ -471,6 +482,56 @@ static void dynamic_lights_bounce_cast(
 		facing, albedo, target);
 }
 
+/* ---------- display.rt_bounce: the GPU's bounce */
+
+/* the GPU bounces the window's lights (the setting on, ray queries, the
+pre-pass): the chosen lights handed over, TRUE; else FALSE, and the CPU's
+bounce (if on) places its lights */
+static boolean dynamic_lights_bounce_gpu(
+	struct halo_dynamic_light const *lights,
+	long count,
+	short window)
+{
+	static unsigned long long last[BOUNCE_WINDOWS];
+	static boolean said;
+	struct rt_bounce bounce;
+	short chosen[BOUNCE_SOURCES], chosen_count, index, channel;
+	unsigned long long now;
+
+	if (!config_boolean("display.rt_bounce") || !halo_dynamic_lights_enhanced() || !halo_world_ao_ray_queries() ||
+		!world_ao_mode())
+	{
+		return FALSE;
+	}
+	if (!said)
+	{
+		platform_log("dynamic lights: display.rt_bounce: bounced light traced on the GPU");
+		said = TRUE;
+	}
+	memset(&bounce, 0, sizeof(bounce));
+	now = platform_shared_clock_microseconds();
+	bounce.window = window;
+	bounce.seconds = last[window] && now > last[window] ? (real)((double)(now - last[window]) * 1.0e-6) : 0.0f;
+	last[window] = now;
+	chosen_count = game_in_progress() && global_structure_bsp_get() ?
+		dynamic_lights_bounce_choose(lights, count, &render.camera.position, chosen) : 0;
+	for (index = 0; index < chosen_count && index < RT_BOUNCE_LIGHTS; index++)
+	{
+		struct halo_dynamic_light const *light = &lights[chosen[index]];
+		struct rt_bounce_light *out = &bounce.lights[bounce.count++];
+
+		memcpy(out->position, light->position, sizeof(out->position));
+		out->radius = light->radius;
+		for (channel = 0; channel < 3; channel++)
+			out->color[channel] = powf(MAX(light->color[channel], 0.0f), 2.2f);
+		memcpy(out->axis, light->axis, sizeof(out->axis));
+		out->cone_scale = light->cone_scale;
+		out->cone_offset = light->cone_offset;
+	}
+	xgpu_backend_rt_bounce(&bounce);
+	return TRUE;
+}
+
 /* dynamic_lights.c's dynamic_lights_submit: the frame's bounce lights after
 its count of lights (as they go to the renderer), in the room they leave;
 the count of all */
@@ -489,10 +550,15 @@ long dynamic_lights_bounce(
 	long room, made = 0;
 	real time, ease;
 
-	if (!config_boolean("display.dynamic_light_bounce") || !halo_dynamic_lights_enhanced())
-		return count;
 	if (window < 0 || window >= BOUNCE_WINDOWS)
 		window = 0;
+	if (dynamic_lights_bounce_gpu(lights, count, window))
+	{
+		memset(&bounce.windows[window], 0, sizeof(bounce.windows[window]));
+		return count;
+	}
+	if (!config_boolean("display.dynamic_light_bounce") || !halo_dynamic_lights_enhanced())
+		return count;
 	structure = global_structure_bsp_get();
 	room = MIN((long)BOUNCE_MAXIMUM, (long)MAXIMUM_LIGHTS_PER_WINDOW - count);
 	if (!structure || room <= 0 || !game_in_progress())

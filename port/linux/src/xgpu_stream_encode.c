@@ -2864,6 +2864,25 @@ void xgpu_backend_contact_shadows(xgpu_target color, xgpu_target depth, const st
 	rt_shadows_record(XGPU_STREAM_CONTACT_SHADOWS, XGPU_CONTACT_SHADOWS_CASTERS, color, depth, shadows);
 }
 
+_Static_assert(sizeof(struct rt_bounce_light) == sizeof(struct xgpu_stream_rt_bounce_light) &&
+	XGPU_RT_BOUNCE_LIGHTS == XGPU_STREAM_RT_BOUNCE_LIGHTS, "a bounced light (xgpu_stream.h)");
+
+void xgpu_backend_rt_bounce(const struct rt_bounce *bounce)
+{
+	struct xgpu_stream_rt_bounce *record_body;
+	int count = bounce->count < 0 ? 0 : bounce->count > XGPU_RT_BOUNCE_LIGHTS ? XGPU_RT_BOUNCE_LIGHTS : bounce->count;
+
+	if (!stream.open)
+		return;
+	record_body = record(XGPU_STREAM_RT_BOUNCE, sizeof(*record_body));
+	record_body->count = count;
+	record_body->window = bounce->window;
+	record_body->seconds = bounce->seconds;
+	memset(record_body->lights, 0, sizeof(record_body->lights));
+	memcpy(record_body->lights, bounce->lights, (size_t)count * sizeof(record_body->lights[0]));
+	stream_finite(&record_body->lights[0].position[0], (unsigned long)count * 12, "bounced light value", 0);
+}
+
 /* ---------- the VR mode */
 
 BOOL xgpu_backend_vr_supported(void)

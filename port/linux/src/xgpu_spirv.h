@@ -120,6 +120,9 @@ reads: xgpu_stream.h's WORLD_AO_MESH, _INSTANCES) */
 the surfaces found once a pixel read, a channel a light: a 2D image of
 four bytes, read by texel; xgpu.h's XGPU_DYNAMIC_LIGHTS_SHADOWED) */
 #define XGPU_SPIRV_BINDING_LIGHT_SHADOWS 9
+/* (display.rt_bounce: the bounced light the surfaces found once a pixel
+add, a 2D image of RGBA16F read by texel, a 1x1 of none where it is not
+traced: XGPU_SPIRV_BINDING_RT_BOUNCE, xgpu_spirv_rt_bounce_pass) */
 
 /* the locations of what the vertex shader hands the pixel shader */
 enum
@@ -418,6 +421,79 @@ enum
 	XGPU_SPIRV_LIGHT_SHADOWS_FILTER,
 };
 BOOL xgpu_spirv_light_shadows_pass(int pass, const struct xgpu_spirv_options *options, struct xgpu_spirv_module *module);
+
+/* display.rt_bounce (docs/rt-plan/3-gi.md, stage 3;
+port/linux/vulkan/xgpu_vulkan_gi.c): the dynamic lights' bounced light,
+passes drawn with world_ao_pass's vertex shader after the pre-pass, its
+uniforms (struct xgpu_world_ao_pass) and its inputs at
+XGPU_SPIRV_WORLD_AO_PASS_INPUTS, the passes' block (XGPU_RT_BOUNCE_BLOCK
+vec4s, below) at the draw set's constants, the occlusion set (its block's
+camera; the ray-traced scene) and the hit set. The cache: a grid of
+XGPU_RT_BOUNCE_GRID_* cells of XGPU_RT_BOUNCE_BLOCK_ORIGIN's w world units
+about the camera, its cells kept where they are in the world (each at its
+cell's coordinates modulo the grid's), six faces a cell (+x, -x, +y, -y,
++z, -z), laid out as a 2D image of RGBA16F, a cell's face at (x + GRID_X
+face, y + GRID_Y z): the light a surface facing that way there receives of
+the bounce (its mean radiance over the cosine-weighted hemisphere, the
+enhanced lights' units), and the weight of its history.
+_TRACE: one pixel of each XGPU_RT_BOUNCE_TILE square (a different one
+each frame) casts one cosine-weighted ray through the ray-traced scene
+(options' ray_queries); the surface it meets, lit by one of the block's
+lights (chosen by its share, its shadow ray through the structure) times
+its base map's color, is the sample (its alpha 1 where the pixel is
+drawn); into an image a texel a square. _RESOLVE: each cell's face, the
+samples about where its middle is seen that lie in it, weighted by how
+squarely they face its way, blended into its history (at
+XGPU_SPIRV_WORLD_AO_PASS_HISTORY; the samples at XGPU_SPIRV_RT_BOUNCE_SAMPLES),
+into the new cache. _GATHER: each pixel's light from the cache, its eight
+cells' faces it faces, into an image of the window's size, which the
+surfaces found once a pixel add to the dynamic lights' (the occlusion set's
+XGPU_SPIRV_BINDING_RT_BOUNCE). FALSE if out of memory. */
+enum
+{
+	XGPU_SPIRV_RT_BOUNCE_TRACE,
+	XGPU_SPIRV_RT_BOUNCE_RESOLVE,
+	XGPU_SPIRV_RT_BOUNCE_GATHER,
+};
+#define XGPU_SPIRV_BINDING_RT_BOUNCE 10
+#define XGPU_SPIRV_RT_BOUNCE_SAMPLES 3
+#define XGPU_RT_BOUNCE_GRID_X 64
+#define XGPU_RT_BOUNCE_GRID_Y 64
+#define XGPU_RT_BOUNCE_GRID_Z 32
+#define XGPU_RT_BOUNCE_CACHE_WIDTH (XGPU_RT_BOUNCE_GRID_X * 6)
+#define XGPU_RT_BOUNCE_CACHE_HEIGHT (XGPU_RT_BOUNCE_GRID_Y * XGPU_RT_BOUNCE_GRID_Z)
+#define XGPU_RT_BOUNCE_CELL 0.125f
+#define XGPU_RT_BOUNCE_TILE 4
+/* a bounce ray's reach and its start off the surface (world units); the
+base map's level a hit reads (its average, more or less), and its color
+at most (none sends on all it gets) or where it has none */
+#define XGPU_RT_BOUNCE_REACH 4.0f
+#define XGPU_RT_BOUNCE_BIAS 0.02f
+#define XGPU_RT_BOUNCE_ALBEDO_LEVEL 4.0f
+#define XGPU_RT_BOUNCE_ALBEDO_MOST 0.9f
+#define XGPU_RT_BOUNCE_ALBEDO_NONE 0.35f
+/* the passes' block (vec4s): the grid's first cell (its coordinates) and
+the cell's size; the last frame's first cell and 1 where its cache is
+this one's; the frame's number, the history's share kept, its most, and
+a cell's fading where nothing is seen of it; the rows that take a point's
+offset from the eye to (s, s x, s y) of the screen (the inverse of the
+camera's [1], [2], [3] as columns); the eye and the lights' count; the
+samples' square, the samples' image's width and height, the strength;
+then each light's three: position and reach, linear color and cone
+offset, axis and cone scale */
+enum
+{
+	XGPU_RT_BOUNCE_BLOCK_ORIGIN,
+	XGPU_RT_BOUNCE_BLOCK_PREVIOUS,
+	XGPU_RT_BOUNCE_BLOCK_TIMES,
+	XGPU_RT_BOUNCE_BLOCK_UNPROJECT,
+	XGPU_RT_BOUNCE_BLOCK_EYE = XGPU_RT_BOUNCE_BLOCK_UNPROJECT + 3,
+	XGPU_RT_BOUNCE_BLOCK_SIZES,
+	XGPU_RT_BOUNCE_BLOCK_LIGHTS,
+	XGPU_RT_BOUNCE_BLOCK = XGPU_RT_BOUNCE_BLOCK_LIGHTS + 3 * 8,
+};
+#define XGPU_RT_BOUNCE_BLOCK_LIGHTS_MOST 8
+BOOL xgpu_spirv_rt_bounce_pass(int pass, const struct xgpu_spirv_options *options, struct xgpu_spirv_module *module);
 
 /* the enhanced dynamic lights' glows (xgpu_backend.h's
 xgpu_backend_dynamic_lights_halos):

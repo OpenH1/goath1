@@ -363,6 +363,9 @@ enum
 	/* the devices the backend can draw with (synchronous:
 	xgpu_stream_gpus; xgpu_backend_gpus) */
 	XGPU_STREAM_GPUS,
+	/* display.rt_bounce: a window's lights that bounce
+	(xgpu_backend_rt_bounce) */
+	XGPU_STREAM_RT_BOUNCE,
 	XGPU_STREAM_RECORD_TYPES,
 };
 
@@ -1511,6 +1514,26 @@ struct xgpu_stream_rt_shadows
 	struct xgpu_stream_rt_shadow_caster casters[];
 };
 
+/* xgpu_backend.h's struct xgpu_rt_bounce (its lights, count of them
+used, 48 bytes each) */
+#define XGPU_STREAM_RT_BOUNCE_LIGHTS 8
+struct xgpu_stream_rt_bounce_light
+{
+	float position[3];
+	float radius;
+	float color[3];
+	float cone_offset;
+	float axis[3];
+	float cone_scale;
+};
+struct xgpu_stream_rt_bounce
+{
+	uint32_t header;
+	int32_t count, window;
+	float seconds;
+	struct xgpu_stream_rt_bounce_light lights[XGPU_STREAM_RT_BOUNCE_LIGHTS];
+};
+
 /* ---------- the VR mode
 
 The backend composes each frame (the eyes' images, the HUD's and its
@@ -1908,6 +1931,7 @@ XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_dynamic_lights_block, 6192);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_dynamic_lights_halos, 192);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_rt_shadow_caster, 32);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_rt_shadows, 160);
+XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_rt_bounce, 16 + 48 * XGPU_STREAM_RT_BOUNCE_LIGHTS);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_dynamic_lights_world, 12);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_vr_info, 108);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_vr_eyes, 36 + 4 * 52);
