@@ -550,7 +550,7 @@ static void settings_search_each(boolean (*visit)(struct widget_instance *spinne
 		struct widget_instance *spinner;
 		char name[80];
 
-		if (!setting)
+		if (!setting || settings_row_hidden(screen_of(row), model_row))
 			continue;
 		settings_widget_name(name, sizeof(name), "", model_row->key, "_spinner");
 		spinner = named(row, name, 0);
