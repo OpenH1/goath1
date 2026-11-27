@@ -172,7 +172,7 @@ static struct
 	int rows[2], ids_current, reservoir_current, reservoirs_valid;
 	/* the settings (read once): HALO_LT_ONLY, _HEROES, _RESTIR, _SUN,
 	_KIND_SCALE, _DROP */
-	int settings_read, only, heroes_on, restir_on, sun_on, only_ids;
+	int settings_read, only, heroes_on, restir_on, sun_on, reuse_on, only_ids;
 	uint32_t only_id[LT_ONLY_IDS];
 	float kind_scale[4];
 	int drop_kind;
@@ -459,6 +459,9 @@ static void lt_settings(void)
 	lt.heroes_on = !getenv("HALO_LT_HEROES") || strcmp(getenv("HALO_LT_HEROES"), "0");
 	lt.restir_on = !getenv("HALO_LT_RESTIR") || strcmp(getenv("HALO_LT_RESTIR"), "0");
 	lt.sun_on = !getenv("HALO_LT_SUN") || strcmp(getenv("HALO_LT_SUN"), "0");
+	/* (HALO_LT_REUSE=0: RIS alone each frame, no reservoirs kept: unbiased,
+	the reuse's check) */
+	lt.reuse_on = !getenv("HALO_LT_REUSE") || strcmp(getenv("HALO_LT_REUSE"), "0");
 	for (kind = 0; kind < 4; kind++)
 		lt.kind_scale[kind] = -1.0f;
 	/* (the suns' k: the lightmap's direct share's, ~/dev/rt2-calibration.json's
@@ -997,7 +1000,7 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 	xgpu_vulkan_pass_owner(LT_OWNER);
 	/* (W2's reservoirs: RIS and the temporal reuse, from the last frame's,
 	which the main draw then reuses spatially) */
-	if ((params.lights[2] & LT_LIGHTS_RESTIR) && lt.handled > 2)
+	if ((params.lights[2] & LT_LIGHTS_RESTIR) && lt.handled > 2 && lt.reuse_on)
 	{
 		struct lt_params reservoir_params = params;
 		struct xgpu_vulkan_image *before;
