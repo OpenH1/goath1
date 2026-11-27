@@ -1841,6 +1841,8 @@ then draws as it would theirs */
 HDR tag makes a pipeline of their own): a self-illuminated particle's, a
 glow's (render_particles.c, glow.c) */
 static boolean effect_sprite_emitter = FALSE;
+/* the bitmaps of an effect's bitmap group drawn, at most (a multiple of 32) */
+#define EFFECT_BITMAPS_MOST 1024
 
 static void effect_sprite(long bitmap_group_index, struct shader_effect_definition const *shader)
 {
@@ -1880,16 +1882,28 @@ static void effect_sprite(long bitmap_group_index, struct shader_effect_definiti
 	build_sprite(&data, _build_sprite_normal, sequence_index, 0, &origin, &render.camera.forward, 0.0f, 0.001f, &color,
 		1.0f, 0);
 	build_sprites_end(&data);
-#ifdef HALO_VR
-	/* the VR mode's eyes draw large sprites thick (render_sprite.c): their
-	pipeline too, and each of the bitmaps' thickness, which the renderer
-	bakes as it first draws one (each sprite of a bitmap not yet drawn) */
-	if (vr_render_eye_pass() && !TEST_FLAG(flags, _build_sprites_first_person_bit))
+	/* every other bitmap its sprites draw, once each: the renderer bakes
+	each one's thickness (the fade of display.soft_particles, the VR mode's
+	bulge) as it first draws it, so the walk draws them all, on every
+	screen (the record is every setting's): a bitmap first drawn in play
+	would be drawn without one until its bake came back. The VR mode's eyes
+	draw large sprites thick (render_sprite.c): their pipeline too */
 	{
-		short bitmap_count = (short)MIN(bitmap_group->bitmaps.count, 64);
-		unsigned long drawn[2] = { 0, 0 };
+		short bitmap_count = (short)MIN(bitmap_group->bitmaps.count, EFFECT_BITMAPS_MOST);
+		unsigned long drawn[EFFECT_BITMAPS_MOST / 32];
+		short first_bitmap = TAG_BLOCK_GET_ELEMENT(&TAG_BLOCK_GET_ELEMENT(&bitmap_group->sequences, sequence_index,
+			struct bitmap_group_sequence)->sprites, 0, struct bitmap_group_sprite)->bitmap_index;
+		boolean thick = FALSE;
 
-		render_sprite_vr_thick_force(TRUE);
+#ifdef HALO_VR
+		thick = vr_render_eye_pass() && !TEST_FLAG(flags, _build_sprites_first_person_bit);
+		if (thick)
+			render_sprite_vr_thick_force(TRUE);
+#endif
+		memset(drawn, 0, sizeof(drawn));
+		/* (the first sprite's, drawn above; thick, it is drawn again) */
+		if (!thick && first_bitmap >= 0 && first_bitmap < bitmap_count)
+			drawn[first_bitmap >> 5] |= 1ul << (first_bitmap & 31);
 		for (sequence_index = 0; sequence_index < bitmap_group->sequences.count; sequence_index++)
 		{
 			struct bitmap_group_sequence *sequence = TAG_BLOCK_GET_ELEMENT(&bitmap_group->sequences, sequence_index,
@@ -1913,9 +1927,13 @@ static void effect_sprite(long bitmap_group_index, struct shader_effect_definiti
 				build_sprites_end(&data);
 			}
 		}
-		render_sprite_vr_thick_force(FALSE);
-	}
+#ifdef HALO_VR
+		if (thick)
+			render_sprite_vr_thick_force(FALSE);
+#else
+		(void)thick;
 #endif
+	}
 }
 
 /* Light volumes use the widget sprite shader with depth testing, unlike

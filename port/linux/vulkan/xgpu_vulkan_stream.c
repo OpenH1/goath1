@@ -203,6 +203,10 @@ struct variant
 frame (after the load: never in it) */
 #define WORLD_WAITING_MOST 1024
 #define WORLD_MADE_A_FRAME 2
+/* the longest a map's preparation waits for the effects' thicknesses its
+draws asked for (a slow machine's many large bitmaps: the rest come back
+in play, between frames) */
+#define THICKNESS_SETTLE_SECONDS 3.0
 
 struct stream_pipeline
 {
@@ -2304,8 +2308,8 @@ static void pipeline_description_trace(const struct xgpu_vulkan_pipeline_descrip
 scene's depth, the views' layers of the depth target drawn into (in a pass
 that writes none of it: returns 1, the draw's reads_depth; or a multisampled
 target's, resolved), and its bitmap's thickness (the texture cache's, baked
-the first time: xgpu_vulkan_effects.h). Before the draw's uploads: the
-resolve and the bake are ordered among the stream's work. */
+on the effects' workers: xgpu_vulkan_effects.h, none until it is back).
+Before the draw's uploads: the resolve is ordered among the stream's work. */
 static int effect_textures(struct xgpu_vulkan_texture textures[XGPU_VULKAN_TEXTURES])
 {
 	struct stream_target *depth = target_get(stream.depth);
@@ -2599,8 +2603,9 @@ static int draw_pipeline(const struct draw_input *input, int apart)
 		the enumeration does not make either resource more ready. */
 		traced = preparation_start();
 		textures_bind();
-		/* (a VR effect's bitmap's thickness baked now, as the map is
-		prepared, not as it is first drawn in play) */
+		/* (an effect's bitmap's thickness asked for now, as the map is
+		prepared, not as it is first drawn in play: stream_prepared waits
+		for it) */
 		if (entry->effect)
 			(void)xgpu_vulkan_textures_thickness(&stream.stages[0].stage);
 		preparation_end(0, traced);
@@ -5104,7 +5109,7 @@ static void stream_frame_end(void *context)
 				"%u attachment loads, %u attachment clears, %u texture sets written, %u reused, %u pipelines made "
 				"(%.1f ms), %u uploads ordered, %u early, %llu ring bytes; %u stores discarded (%u at frames' ends), "
 				"%u resolves in passes, %u skipped, %u in light; %u passes continued, %u put aside, %u buffers renamed; "
-				"textures %u made, %u remade, %u images, %u effects' thicknesses baked (%.1f ms); "
+				"textures %u made, %u remade, %u images, %u effects' thicknesses baked (%.1f ms apart, %.1f ms making them); "
 				"GPU %.3f ms a frame, %.3f ms between frames",
 				statistics.frames, statistics.submissions, statistics.passes, statistics.draws, statistics.clears,
 				statistics.clears_as_draws, statistics.attachment_loads, statistics.attachment_clears,
@@ -5115,6 +5120,7 @@ static void stream_frame_end(void *context)
 				statistics.frame_end_discards, statistics.resolves_in_pass, statistics.resolves_skipped,
 				statistics.resolves_in_light, statistics.passes_continued, statistics.passes_aside, statistics.buffers_renamed, textures.made, textures.remade,
 				textures.images, textures.thickness, textures.thickness_seconds * 1000.0,
+				textures.thickness_landing_seconds * 1000.0,
 				statistics.gpu_frames ? statistics.gpu_milliseconds / statistics.gpu_frames : 0.0,
 				statistics.frames_timed ? statistics.frame_seconds * 1000.0 / statistics.frames_timed : 0.0);
 		}
@@ -5230,6 +5236,18 @@ static uint32_t stream_prepared(void *context)
 
 	(void)context;
 	xgpu_vulkan_preparation_service(NULL);
+	/* the effects' thicknesses its draws asked for (baked meanwhile, beside
+	the pipelines), made before play: none of its first frames draws an
+	effect without one. Not past THICKNESS_SETTLE_SECONDS: those still on
+	their way come back in play, between frames */
+	{
+		double waited = host_load_trace_clock(CLOCK_MONOTONIC);
+		uint32_t made = xgpu_vulkan_textures_thickness_settle(THICKNESS_SETTLE_SECONDS);
+
+		if (made)
+			host_logf(HOST_LOG_INFO, "vulkan: map preparation's effects' thicknesses: %u made, %.0f ms waited for",
+				made, (host_load_trace_clock(CLOCK_MONOTONIC) - waited) * 1000.0);
+	}
 	finished = host_load_trace_clock(CLOCK_MONOTONIC);
 	if (stream.trace_preparing)
 	{

@@ -31,12 +31,15 @@ WORLD = r"""
 #define BUCKET_COUNT 16
 %(config)s
 struct image { int destroyed; };
+/* (a thickness's bake on the effects' workers: none here) */
+struct xgpu_vulkan_thickness_job { void *owner; };
 struct entry
 {
     struct entry *next;
     /* (the Vulkan cache's image, the Metal cache's texture) */
     struct image *image, *texture, *thickness;
     uint32_t address, size, generation, watched_serial, thickness_generation, thickness_failed;
+    struct xgpu_vulkan_thickness_job *thickness_job;
     uint64_t last_used;
     /* (the ASTC encoder's job a texture waits for: none here) */
     void *astc_job;
@@ -68,6 +71,9 @@ static void image_destroy(struct image *image) { image->destroyed = 1; }
 caches look at each frame and let go with a texture: port/linux/astc) */
 static void xgpu_astc_cancel(void *job) { (void)job; }
 static void astc_finished(void) {}
+/* (the thicknesses' bakes come back, which the Vulkan cache makes each frame) */
+#define THICKNESS_LANDED_BYTES 0
+static void thickness_collect(uint64_t bytes) { (void)bytes; }
 static void resident_log(void) {}
 static void texture_release(struct entry *entry)
 {
