@@ -158,6 +158,8 @@ symbols in this file:
 #include "game/game.h"
 #include "game/game_engine.h"
 #include "interface/first_person_weapons.h"
+#include "items/weapon_definitions.h"
+#include "items/weapon_export_function_mode.h"
 #include "math/periodic_functions.h"
 #include "memory/data.h"
 #include "objects/light_definitions.h"
@@ -1128,6 +1130,47 @@ static boolean light_port_flare_lights(
 		object->object.type == _object_type_weapon || object->object.type == _object_type_equipment;
 }
 
+/* port: how much of a weapon's glow its rounds leave (light_port_weapon_glow):
+the share of its magazine loaded, where the light's function is scaled by
+the weapon's ammunition (the needler's "needle glow" by the needles
+loaded), else 1. Its flare is as bright at every scale, and its color at
+the function's 0 is its lower bound, not black: an empty needler glowed as
+a full one, with no needles drawn (#1309) */
+static real light_port_weapon_glow_rounds(
+	struct light_datum const *light,
+	struct object_datum const *object)
+{
+	struct object_definition *definition = object_definition_get(object->definition_index);
+	struct weapon_definition const *weapon_definition = (struct weapon_definition const *)definition;
+	struct object_function_definition const *function;
+	short scales[2];
+	short scale_index;
+	real share = 1.0f;
+
+	if (!VALID_INDEX(light->function_index, NUMBER_OF_OUTGOING_OBJECT_FUNCTIONS) ||
+		light->function_index >= definition->object.functions.count)
+	{
+		return 1.0f;
+	}
+	function = TAG_BLOCK_GET_ELEMENT(&definition->object.functions, light->function_index,
+		struct object_function_definition);
+	scales[0] = function->scale_function_by_function_index;
+	scales[1] = function->scale_result_by_function_index;
+	for (scale_index = 0; scale_index < NUMBEROF(scales); scale_index++)
+	{
+		/* (1 to 4: the weapon's A to D in, as objects.c reads them) */
+		short incoming = (short)(scales[scale_index] - 1);
+		short mode;
+
+		if (incoming < 0 || incoming >= NUMBER_OF_INCOMING_OBJECT_FUNCTIONS)
+			continue;
+		mode = weapon_definition->weapon.function_modes[incoming];
+		if (mode == _weapon_function_primary_ammunition || mode == _weapon_function_secondary_ammunition)
+			share *= PIN(object->object.incoming_function_values[incoming], 0.0f, 1.0f);
+	}
+	return share;
+}
+
 /* port: how strong a weapon's glow lights (light_port_flare_lights), one
 rule for every weapon's, as play tests set it: in a local player's hands in
 first person, a small bright light about the hands and the gun (a color of
@@ -1138,8 +1181,10 @@ the floor only under a short carrier's (a Grunt's) low hands, and then
 faintly, and no floor or wall past a body's width (0.6 in all, reaching
 0.3: the pool it was lit the floor under an Elite's feet, and through the
 floors and walls near it); on the ground, a pool about it (0.85 in all,
-reaching 0.85). The tag's color, made by the weapon's own function (the
-charge, the heat, the needles loaded), is scaled by what this gives (the
+reaching 0.85); times the share of its rounds loaded where its function
+is scaled by them (light_port_weapon_glow_rounds: an empty needler's is
+out). The tag's color, made by the weapon's own function (the charge, the
+heat, the needles loaded), is scaled by what this gives (the
 rasterizer's to 1 at most, the rest the enhanced lights': dynamic_lights.c's
 dynamic_lights_brighten); "in all" is over the weapon's copies of that light
 (the plasma pistol's two triggers) */
@@ -1184,7 +1229,7 @@ static real light_port_weapon_glow(
 		scale = LIGHT_PORT_WEAPON_GLOW_WORLD;
 		*radius = LIGHT_PORT_WEAPON_GLOW_WORLD_RADIUS;
 	}
-	return scale / (real)MAX(copies, 1);
+	return scale * light_port_weapon_glow_rounds(light, object) / (real)MAX(copies, 1);
 }
 
 /* port: how far a light let go of is through its transition, so many ticks

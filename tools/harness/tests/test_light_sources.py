@@ -10,8 +10,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from harness import CHECK_FAILED, build, function, inline, mutated, read, run, structure
 
 CASES = ["flare-units-items", "weapon-glow", "room-kept", "flash-fades", "magazine-strength", "stream-per-firer",
-         "emitter-rows"]
+         "emitter-rows", "weapon-glow-rounds"]
 CONTROLS = {
+    # an empty needler's glow as bright as a full one's (#1309)
+    "rounds-ignored": (("\t\t\tshare *= PIN(object->object.incoming_function_values[incoming], 0.0f, 1.0f);",
+                        "\t\t\tshare *= 1.0f;"), "weapon-glow-rounds"),
     # (a machine's flares lit again over its lightmap's light)
     "scenery-lit": (("object->object.type == _object_type_weapon || object->object.type == _object_type_equipment;",
                      "object->object.type == _object_type_weapon || object->object.type == _object_type_equipment ||\n"
@@ -52,7 +55,8 @@ def generated(control=None):
     state = re.search(r"^static struct\n\{\n\t/\* whether the map's rows.*?^\} light_sources;", sources,
                       re.M | re.S).group(0)
     code = "\n".join([
-        glow, function(lights, "light_port_flare_lights"), function(lights, "light_port_weapon_glow"),
+        glow, function(lights, "light_port_flare_lights"), function(lights, "light_port_weapon_glow_rounds"),
+        function(lights, "light_port_weapon_glow"),
         defines, enums, structure(header, "light_source"), structure(sources, "light_source_object"),
         structure(sources, "light_source_effect"), tables, structure(sources, "light_source_flash"), state,
         "static void light_sources_find(void);", "static void light_sources_objects(real time);",

@@ -39,17 +39,32 @@ enum
 	_object_type_sound_scenery,
 	NUMBER_OF_OBJECT_TYPES,
 	MAXIMUM_NUMBER_OF_ATTACHMENTS_PER_OBJECT = 8,
+	NUMBER_OF_INCOMING_OBJECT_FUNCTIONS = 4,
+	NUMBER_OF_OUTGOING_OBJECT_FUNCTIONS = 4,
+	/* (weapon_export_function_mode.h's) */
+	_weapon_function_primary_ammunition = 2,
+	_weapon_function_secondary_ammunition = 3,
+	_weapon_function_illumination = 12,
 };
+#define VALID_INDEX(index, count) ((index) >= 0 && (index) < (count))
 struct tag_reference { unsigned long group_tag; char const *name; long name_length; long index; };
 struct tag_block { long count; void *address; void const *definition; };
 #define TAG_BLOCK_GET_ELEMENT(block, index, type) (&((type *)(block)->address)[index])
 struct object_attachment_definition { struct tag_reference type; };
-struct object_definition { struct { struct tag_block attachments; } object; };
-struct object_datum { long definition_index; struct { short type; long parent_object_index; } object; };
-struct light_datum { long definition_index; };
-static struct object_definition test_definition;
+struct object_function_definition { short scale_function_by_function_index, scale_result_by_function_index; };
+struct object_definition_part { struct tag_block attachments; struct tag_block functions; };
+struct object_definition { struct object_definition_part object; };
+struct weapon_definition { struct object_definition_part object; struct { short function_modes[4]; } weapon; };
+struct object_datum
+{
+	long definition_index;
+	struct { short type; long parent_object_index; real incoming_function_values[NUMBER_OF_INCOMING_OBJECT_FUNCTIONS]; } object;
+};
+struct light_datum { long definition_index; short function_index; };
+static struct weapon_definition test_definition;
 static struct object_attachment_definition test_attachments[4];
-#define object_definition_get(index) (&test_definition)
+static struct object_function_definition test_functions[2];
+#define object_definition_get(index) ((struct object_definition *)&test_definition)
 
 /* (light_sources.c's) */
 static struct { struct { real_point3d position; real_vector3d forward; } camera; } render;
@@ -168,6 +183,37 @@ int main(int argc, char **argv)
 		light.definition_index = 34;
 		scale = light_port_weapon_glow(&light, &object, FALSE, &radius);
 		CHECK(fabsf(scale - LIGHT_PORT_WEAPON_GLOW_WORLD) < 1e-6f, "one copy: the whole: %f", scale);
+		return 0;
+	}
+	/* an empty needler's glow out (#1309): its light's function ("needle
+	glow") is scaled by its needles (B in, its primary ammunition), so is its
+	glow; a light whose function is not (the plasma pistol's charge) as before */
+	if (!strcmp(case_name, "weapon-glow-rounds"))
+	{
+		struct object_datum object = { 7, { _object_type_weapon, NONE, { 0.0f, 1.0f, 0.0f, 0.0f } } };
+		struct light_datum light = { 33, 1 };
+		real radius, full, scale;
+
+		test_attachments[0].type.index = 33;
+		test_definition.object.attachments.count = 1;
+		test_definition.object.attachments.address = test_attachments;
+		test_functions[1].scale_function_by_function_index = 2;
+		test_definition.object.functions.count = 2;
+		test_definition.object.functions.address = test_functions;
+		test_definition.weapon.function_modes[0] = _weapon_function_illumination;
+		test_definition.weapon.function_modes[1] = _weapon_function_primary_ammunition;
+		full = light_port_weapon_glow(&light, &object, FALSE, &radius);
+		CHECK(fabsf(full - LIGHT_PORT_WEAPON_GLOW_WORLD) < 1e-6f, "full: as before: %f", full);
+		object.object.incoming_function_values[1] = 0.5f;
+		scale = light_port_weapon_glow(&light, &object, TRUE, &radius);
+		CHECK(fabsf(scale - LIGHT_PORT_WEAPON_GLOW_HELD * 0.5f) < 1e-6f, "half its needles: half: %f", scale);
+		object.object.incoming_function_values[1] = 0.0f;
+		scale = light_port_weapon_glow(&light, &object, FALSE, &radius);
+		CHECK(scale == 0.0f, "empty: out: %f", scale);
+		/* (scaled by its illumination, A in, not its rounds: as bright) */
+		test_functions[1].scale_function_by_function_index = 1;
+		scale = light_port_weapon_glow(&light, &object, FALSE, &radius);
+		CHECK(fabsf(scale - LIGHT_PORT_WEAPON_GLOW_WORLD) < 1e-6f, "not by its rounds: as before: %f", scale);
 		return 0;
 	}
 	if (!strcmp(case_name, "room-kept"))
