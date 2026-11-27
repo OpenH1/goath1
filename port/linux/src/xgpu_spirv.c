@@ -4913,6 +4913,14 @@ static void flashlight_light(struct module *m, const struct flashlight_read *rea
 			fadd(m, 1, my, constant_float(m, 0.5f)), receiver), flashlight_shadow_compare(m, image,
 			fadd(m, 1, mx, constant_float(m, 0.5f)), fadd(m, 1, my, constant_float(m, 0.5f)), receiver)));
 		store(m, spot_variable, fmul(m, 1, spot, fmul(m, 1, lit, constant_float(m, 0.25f))));
+		/* (HALO_FLASHLIGHT_SHADOW_VIEW=1, checking: the map's share seen, whole,
+		in place of the gel and falloff; 2: the map's distance over the
+		pixel's, a tenth of a world unit a band) */
+		if (getenv("HALO_FLASHLIGHT_SHADOW_VIEW") && atoi(getenv("HALO_FLASHLIGHT_SHADOW_VIEW")) == 1)
+		{
+			store(m, spot_variable, fmul(m, 1, lit, constant_float(m, 0.25f)));
+			store(m, falloff_variable, constant_float(m, 1.0f));
+		}
 		selection_end(m, shadow_merge);
 	}
 	selection_end(m, merge);
