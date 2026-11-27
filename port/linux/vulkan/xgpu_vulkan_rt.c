@@ -53,7 +53,6 @@ this file: xgpu_vulkan_rt_create).
 Render thread alone, as the core.
 */
 
-#include "xgpu_spirv.h"
 #include "xgpu_stream.h"
 #include "xgpu_vulkan.h"
 #include "xgpu_vulkan_textures.h"
@@ -82,8 +81,8 @@ the meshes' data; and the hit sets in turn */
 #define RT_HIT_MATERIAL (XGPU_STREAM_WORLD_AO_MESHES * 4u)
 #define RT_HIT_DATA (RT_HIT_MATERIAL + XGPU_WORLD_RT_MATERIALS * 16u)
 #define RT_HIT_SETS 4u
-_Static_assert(RT_HIT_MATERIAL == XGPU_SPIRV_RT_HIT_MATERIALS && XGPU_STREAM_WORLD_AO_MESHES == XGPU_SPIRV_RT_HIT_MESHES &&
-	XGPU_WORLD_RT_TEXTURES == XGPU_SPIRV_RT_HIT_TEXTURES, "the hit table as the shaders read it");
+/* (as the shaders read it: xgpu_spirv.h's XGPU_SPIRV_RT_HIT_*, which
+xgpu_vulkan_stream.c checks against these) */
 /* the new textures found a frame at most (each may be read from the guest) */
 #define RT_TEXTURES_FOUND 16u
 /* a mesh of so many triangles has a buffer of its own, and is compacted */

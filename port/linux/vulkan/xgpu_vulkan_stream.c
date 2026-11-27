@@ -87,6 +87,11 @@ _Static_assert(XGPU_SPIRV_SET_OCCLUSION == XGPU_VULKAN_SET_OCCLUSION &&
 _Static_assert(XGPU_SPIRV_SET_RT_HITS == XGPU_VULKAN_SET_RT_HITS &&
 	XGPU_SPIRV_BINDING_RT_HIT_TABLE == XGPU_VULKAN_BINDING_RT_HIT_TABLE &&
 	XGPU_SPIRV_BINDING_RT_HIT_TEXTURES == XGPU_VULKAN_BINDING_RT_HIT_TEXTURES, "the ray-traced scene's hit set");
+/* (and its hit table as xgpu_vulkan_rt.c lays it out: the meshes' records,
+four words each, then the materials') */
+_Static_assert(XGPU_SPIRV_RT_HIT_MATERIALS == XGPU_STREAM_WORLD_AO_MESHES * 4u &&
+	XGPU_STREAM_WORLD_AO_MESHES == XGPU_SPIRV_RT_HIT_MESHES && XGPU_WORLD_RT_TEXTURES == XGPU_SPIRV_RT_HIT_TEXTURES,
+	"the hit table as the shaders read it");
 
 /* the mirror's segments: 4 MB of the contiguous window each */
 #define MIRROR_SEGMENT_SIZE 0x400000u
