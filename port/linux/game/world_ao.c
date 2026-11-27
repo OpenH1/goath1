@@ -58,6 +58,8 @@ static struct
 	/* the window's span (WORLD_AO_SPAN_OPEN, _FOUND, or _NONE outside one),
 	whatever the setting: the first-person weapon's drawn in it */
 	int span;
+	/* (the first-person weapon drawn now: world_ao_first_person) */
+	int first_person;
 	struct world_proxy proxies[WORLD_PROXY_MAXIMUM_PER_WINDOW];
 	long owners[WORLD_PROXY_MAXIMUM_PER_WINDOW];
 	/* (the dynamic objects' first, dynamic_count of them; the static
@@ -769,12 +771,25 @@ void world_ao_lightmap_begin(void const *lightmap_bitmap)
 	halo_world_ao_object(WORLD_AO_OWNER_NONE, (float)layer, 0);
 }
 
+static int world_ao_span_now(void)
+{
+	return !world_ao.first_person ? world_ao.span : world_ao.span == WORLD_AO_SPAN_FOUND ?
+		WORLD_AO_SPAN_FOUND_FIRST_PERSON : WORLD_AO_SPAN_FIRST_PERSON;
+}
+
 void world_ao_first_person(int drawing)
 {
 	/* (the window's own span again after it) */
-	halo_world_ao_span(!drawing ? world_ao.span : world_ao.span == WORLD_AO_SPAN_FOUND ?
-		WORLD_AO_SPAN_FOUND_FIRST_PERSON : WORLD_AO_SPAN_FIRST_PERSON);
+	world_ao.first_person = drawing;
+	halo_world_ao_span(world_ao_span_now());
 	if (!world_ao.window)
 		return;
 	halo_world_ao_object(drawing ? WORLD_AO_OWNER_UNLIT : WORLD_AO_OWNER_NONE, 1.0f, 0);
+}
+
+void world_ao_transparents(int drawing)
+{
+	/* (outside the span while they draw, as render_window draws them after
+	world_ao_window_end; the span as it was after) */
+	halo_world_ao_span(drawing ? WORLD_AO_SPAN_NONE : world_ao_span_now());
 }
