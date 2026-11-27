@@ -1,10 +1,10 @@
 // W3's spatial stage (xgpu_vulkan_denoise.c): one pass of a variance-guided a-trous filter (SVGF, Schied 2017), the
 // 5x5 B3 kernel at a step of control.z pixels (1, 2, 4, 8 over the passes), its weights stopped at edges: another
-// owner, a pixel not drawn, the depth off this pixel's plane, the shaded normal's turn, and a luminance difference
-// beyond its estimate's deviation (prefiltered 3x3; under 4 frames, a spatial guess, and steps 1 and 2 alone). The weights
-// are normalized, so a
-// flat region's mean is kept. The first pass reads the temporal stage's mean (its variance: the samples' over the
-// count); each passes on (rgb, the estimate's variance, propagated as the sum of w^2 var over the weights' squared).
+// owner, a pixel not drawn, the depth off this pixel's plane, the shaded and geometric normals' turn, and a luminance
+// difference beyond its estimate's deviation (prefiltered 3x3; under 4 frames a spatial guess, and steps 1 and 2
+// alone). The weights are normalized, so a flat region's mean is kept. The first pass reads the temporal stage's mean
+// (its variance: the samples' over the count); each passes on (rgb, the estimate's variance, propagated as the sum of
+// w^2 var over the weights' squared).
 #version 460
 #extension GL_GOOGLE_include_directive : require
 
