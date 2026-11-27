@@ -87,7 +87,8 @@ vec4 fetch_specular(ivec2 q, bool first, out float count)
     return vec4(b.rgb, b.a * b.a);
 }
 
-void main()
+// the pair's filter, with or without the specular's texels (wave_specular: a constant at each call)
+void pair(const bool wave_specular)
 {
     ivec2 pixel = ivec2(gl_FragCoord.xy);
     uvec2 g = texelFetch(filter_guide, pixel, 0).xy;
@@ -96,12 +97,10 @@ void main()
     if ((g.y & 0xFFFFu) == 0u)
         return;
     bool first = (pass.control.y & FIRST) != 0;
-    float dcount, scount;
-    vec4 dcentre = fetch_diffuse(pixel, first, dcount), scentre = fetch_specular(pixel, first, scount);
+    float dcount, scount = 0.0;
+    vec4 dcentre = fetch_diffuse(pixel, first, dcount);
+    vec4 scentre = wave_specular ? fetch_specular(pixel, first, scount) : vec4(0.0);
     bool has_specular = scount > 0.0;
-    // (the specular's texels read for the whole wave where any of its pixels has specular, else not at all: a branch
-    // the wave takes as one)
-    bool wave_specular = subgroupAny(has_specular);
     vec4 normals = unpackSnorm4x8(g.x);
     vec3 shaded = unfold(normals.xy), n = unfold(normals.zw);
     float distance = unpackHalf2x16(g.y).x;
@@ -181,6 +180,21 @@ void main()
     diffuse_out = vec4(dsum / dweights, sqrt(dvariance) / dweights);
     if (has_specular)
         specular_out = vec4(ssum / sweights, sqrt(svariance) / sweights);
+}
+void main()
+{
+    // (the specular's texels read for the whole wave where any of its pixels has specular, else not at all: two
+    // straight versions, the wave taking one)
+    ivec2 pixel = ivec2(gl_FragCoord.xy);
+    float count = 0.0;
+    if ((pass.control.y & FIRST) != 0)
+        count = unpackHalf2x16(texelFetch(specular_history, pixel, 0).w).x;
+    else
+        count = texelFetch(specular_source, pixel, 0).a < 0.0 ? 0.0 : 1.0;
+    if (subgroupAny(count > 0.0 && (texelFetch(filter_guide, pixel, 0).y & 0xFFFFu) != 0u))
+        pair(true);
+    else
+        pair(false);
 }
 #else
 // the suns' whole direct share at the normal n (lt/e1.frag's sun_cmax, from the uniforms)
