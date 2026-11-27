@@ -218,7 +218,7 @@ static int denoise_shaders(void)
 	denoise.gradient_pass.pixel_shader = denoise.gradient;
 	denoise.gradient_pass.primitive_class = XGPU_VULKAN_CLASS_TRIANGLES;
 	denoise.gradient_pass.color_mask = 15;
-	denoise.gradient_pass.color_format = XGPU_VULKAN_FORMAT_RGBA32F;
+	denoise.gradient_pass.color_format = XGPU_VULKAN_FORMAT_RGBA32_UINT;
 	denoise.gradient_pass.samples = 1;
 	denoise.temporal_pass = denoise.gradient_pass;
 	denoise.temporal_pass.pixel_shader = denoise.temporal;
@@ -423,7 +423,7 @@ static struct xgpu_vulkan_image *denoise_channel_draw(struct denoise_channel *ch
 			return NULL;
 	}
 	channel->reshaded = denoise_image(channel->reshaded, XGPU_VULKAN_FORMAT_RGBA32F, gradient_width, gradient_height);
-	channel->gradients = denoise_image(channel->gradients, XGPU_VULKAN_FORMAT_RGBA32F, gradient_width, gradient_height);
+	channel->gradients = denoise_image(channel->gradients, XGPU_VULKAN_FORMAT_RGBA32_UINT, gradient_width, gradient_height);
 	/* (the specular's: no re-shade, none kept) */
 	channel->previous_guides = denoise_image(channel->previous_guides, XGPU_VULKAN_FORMAT_RGBA32_UINT,
 		specular ? 1 : width, specular ? 1 : height);

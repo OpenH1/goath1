@@ -16,41 +16,54 @@ layout(set = 1, binding = 1) uniform usampler2D inputs;
 layout(set = 1, binding = 2) uniform usampler2D guides;
 layout(set = 1, binding = 3) uniform usampler2D previous_guide;
 layout(set = 1, binding = 4) uniform usampler2D history;
-layout(set = 1, binding = 5) uniform sampler2D gradients;
+layout(set = 1, binding = 5) uniform usampler2D gradients;
 
 layout(location = 0) out uvec4 result;
 
 // the gradient's gain: the share of the history cut for a change the relighting does not explain, 16 times over
 // (A-SVGF's history weight goes up with the normalized gradient)
 const float GAIN = 16.0;
+// the bounce's own history's cap (xgpu_vulkan_lt_indirect.c's INDIRECT_BOUNCE_CAP): a count under it has started again
+const float BOUNCE_CAP = 32.0;
 
 // the light's change about at, where the history comes from (the previous frame's 3x3 strata's gradient samples about
-// it, its own 8 times over: a moving shadow's edge cut where it is): x the relighting, the ratio of the re-shaded
-// samples' sum to the previous ones' (a change alike over the strata: the lamp nearer, a light fading in), which
-// scales the history; y the share to cut from its count, by the gain: what of the change the ratio does not explain,
+// it, its own 8 times over: a moving shadow's edge cut where it is): relight, each channel's ratio of the re-shaded
+// samples' sum to the previous ones' (a change alike over the strata: the lamp nearer, a light fading in, a coloured
+// light gone, whose hue leaves with it; a channel with no light before takes the luminance's ratio), which scales the
+// history; the result the share to cut from its count, by the gain: what of the change the ratio does not explain,
 // each sample against the ratio's prediction (a shadow or the beam's edge moving; all of it where there was no light)
-vec2 changed(vec2 at)
+float changed(vec2 at, out vec3 relight)
 {
+    relight = vec3(1.0);
     if ((pass.control.y & GRADIENTS) == 0)
-        return vec2(1.0, 0.0);
+        return 0.0;
     ivec2 stratum = ivec2(floor(at)) / 3, top = ivec2(pass.size.zw) - 1;
-    vec4 samples[9];
-    vec3 sums = vec3(0.0);
+    vec3 before_rgb[9], now_rgb[9];
+    float weight[9];
+    vec3 before_sum = vec3(0.0), now_sum = vec3(0.0);
+    float weights = 0.0;
     for (int k = 0; k < 9; k++)
     {
-        samples[k] = texelFetch(gradients, clamp(stratum + ivec2(k % 3 - 1, k / 3 - 1), ivec2(0), top), 0);
-        samples[k].w *= k == 4 ? 8.0 : 1.0;
-        sums += samples[k].w * vec3(samples[k].xy, 1.0);
+        uvec4 g = texelFetch(gradients, clamp(stratum + ivec2(k % 3 - 1, k / 3 - 1), ivec2(0), top), 0);
+        vec2 x = unpackHalf2x16(g.x), y = unpackHalf2x16(g.y), z = unpackHalf2x16(g.z);
+        before_rgb[k] = vec3(x, y.x);
+        now_rgb[k] = vec3(y.y, z);
+        weight[k] = float(g.w) * (k == 4 ? 8.0 : 1.0);
+        before_sum += weight[k] * before_rgb[k];
+        now_sum += weight[k] * now_rgb[k];
+        weights += weight[k];
     }
-    float before = sums.x, now = sums.y, larger = max(before, now);
-    if (sums.z <= 0.0 || larger <= 1.0e-8)
-        return vec2(1.0, 0.0);
+    float before = luminance(before_sum), now = luminance(now_sum), larger = max(before, now);
+    if (weights <= 0.0 || larger <= 1.0e-8)
+        return 0.0;
     if (before <= 1.0e-3 * larger)
-        return vec2(1.0, 1.0);
+        return 1.0;
     float ratio = now / before, off = 0.0;
+    for (int c = 0; c < 3; c++)
+        relight[c] = before_sum[c] > 1.0e-3 * before ? now_sum[c] / before_sum[c] : ratio;
     for (int k = 0; k < 9; k++)
-        off += samples[k].w * abs(samples[k].y - ratio * samples[k].x);
-    return vec2(ratio, clamp(GAIN * off / larger, 0.0, 1.0));
+        off += weight[k] * abs(luminance(now_rgb[k]) - luminance(relight * before_rgb[k]));
+    return clamp(GAIN * off / larger, 0.0, 1.0);
 }
 
 // Catmull-Rom's four weights at t in [0, 1) between the middle two (they sum to 1)
@@ -168,14 +181,16 @@ void main()
         }
     }
     // (anti-lag: the history relit by the change's ratio, its count cut by the share the ratio does not explain)
-    vec2 change = count > 0.0 ? changed(at) : vec2(1.0, 0.0);
-    mean *= change.x;
-    moment *= change.x * change.x;
-    count *= 1.0 - change.y;
+    vec3 relight = vec3(1.0);
+    float cut = count > 0.0 ? changed(at, relight) : 0.0;
+    float relit = luminance(mean) > 1.0e-12 ? luminance(mean * relight) / luminance(mean) : luminance(relight);
+    mean *= relight;
+    moment *= relit * relit;
+    count *= 1.0 - cut;
     // (where the gradients say the light changed, which pixels it changed at: the sample beyond 3 deviations of the
     // relit history's samples (and 2% of its mean) cuts that pixel's count too, more the further it is. Never where
     // the light stayed: there a rare sample of a noisy pixel keeps its history, so a still view never shimmers)
-    if (count > 0.0 && (abs(change.x - 1.0) > 1.0e-3 || change.y > 0.0))
+    if (count > 0.0 && (any(greaterThan(abs(relight - 1.0), vec3(1.0e-3))) || cut > 0.0))
     {
         float lm = luminance(mean), ls = luminance(sample_rgb);
         float spread = sqrt(max(moment - lm * lm, 0.0)) + 0.02 * lm + 1.0e-7;
@@ -183,6 +198,10 @@ void main()
         if (z > 3.0)
             count *= (3.0 / z) * (3.0 / z);
     }
+    // (the bounce folded in (lt/denoise_guide.frag's FOLD): no more history than the bounce's own has counted since
+    // the lights about the pixel last changed, so a light that went takes its bounce out within a few frames)
+    if (!specular && (int(pass.bounce.w) & 1) != 0 && raw_texel.a >= 0.0 && raw_texel.a < BOUNCE_CAP)
+        count = min(count, raw_texel.a);
     count = min(count + 1.0, cap);
     if ((pass.control.y & EMA) != 0)
         count = cap;

@@ -60,6 +60,9 @@ enum
 	/* the most objects of a frame read (world_scene.h's
 	WORLD_SCENE_MAXIMUM_INSTANCES) */
 	WORLD_RT_OBJECTS = 2048,
+	/* the objects the last frame's scene held with their own meshes, by
+	their datum's absolute index (world_rt_object_traced) */
+	WORLD_RT_TRACED = 8192,
 	/* the BSPs whose meshes are kept by index (a scenario's most:
 	scenario_definitions.h's MAXIMUM_STRUCTURE_BSPS_PER_SCENARIO) */
 	WORLD_RT_BSPS = 32,
@@ -162,6 +165,10 @@ static struct
 	pose moved, frames posed and moved, the last pose's first transforms */
 	long player_posed, player_moved;
 	float player_last[4][3][4];
+	/* the objects the last frame's scene held with meshes of their own
+	(as drawn or their collision meshes, not an item's box), by their
+	datum's absolute index: its id and that frame (world_rt_object_traced) */
+	unsigned long traced_id[WORLD_RT_TRACED], traced_frame[WORLD_RT_TRACED];
 	/* (measuring: HALO_WORLD_AO_COUNTS) */
 	int counts_wanted;
 	long count_frames, count_instances, count_triangles;
@@ -1178,6 +1185,21 @@ void world_rt_frame(unsigned long frame)
 		node_count = world_proxies_source_nodes(object->id, world_rt.frames, WORLD_RT_NODES);
 		if (node_count <= 0)
 			continue;
+		/* (its sun shadow the light-transport pass's: lt_lights.c's
+		lt_lights_sun_shadow; not a box's, which has no shape of it) */
+		if (!definition->boxed && kind != WORLD_RT_STRUCTURE)
+		{
+			unsigned long slot = (unsigned long)object->id & 0xffffu;
+			int meshes = definition->skinned;
+
+			for (node_index = 0; node_index < definition->node_count && !meshes; node_index++)
+				meshes = definition->meshes[node_index] || definition->collision[node_index];
+			if (meshes && slot < WORLD_RT_TRACED)
+			{
+				world_rt.traced_id[slot] = (unsigned long)object->id;
+				world_rt.traced_frame[slot] = frame;
+			}
+		}
 		if (definition->boxed)
 		{
 			struct world_ao_instance *instance = world_rt_instance_add(&count, world_rt.box, owner, kind);
@@ -1294,6 +1316,14 @@ void world_rt_frame(unsigned long frame)
 			world_rt.count_frames = world_rt.count_instances = 0;
 		}
 	}
+}
+
+int world_rt_object_traced(long object_index)
+{
+	unsigned long slot = (unsigned long)object_index & 0xffffu;
+
+	return world_rt.framed && object_index != -1 && slot < WORLD_RT_TRACED &&
+		world_rt.traced_id[slot] == (unsigned long)object_index && world_rt.traced_frame[slot] == world_rt.frame;
 }
 
 void world_rt_map_unloaded(void)

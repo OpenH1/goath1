@@ -529,6 +529,14 @@ void main()
                 vec4 old = texelFetch(reservoirs, q / 2, 0);
                 count = floor(old.a / 8192.0);
                 mean = old.rgb;
+                // (the lights about the surface changed (one came or went: its light-id hash, the cache's rule):
+                // the history starts again, so a light that is gone leaves no bounce behind it)
+                float was = old.a - 8192.0 * count - 1.0, now = result.a - 1.0;
+                if (count > 0.0 && mod(was, 1024.0) != mod(now, 1024.0))
+                {
+                    count = 0.0;
+                    mean = vec3(0.0);
+                }
             }
             count = min(count + 1.0, max(pass.indirect[3].x, 1.0));
             mean += (result.rgb - mean) / count;

@@ -464,12 +464,14 @@ class Scene:
     # The static groups are what Halo's lightmaps hold, in the lightmap tool's unknown units, each fitted to
     # the lightmap with its own scale; the dynamic groups are in the game's own (linearized) units.
     #   ambient     the sky's ambient dome
-    #   sun         the sky's lights (suns and broad sky lights)
+    #   sun         the sky's narrow lights (the suns: under FILL_DEGREES across)
+    #   fill        its broad ones (a 50 degree sky "light" is a wide fill, not a sun), fitted with their own scale
     #   emitters    the BSP's glowing surfaces (shader radiosity), and those of scenery and devices
     #   flashlight  the lights whose source is "flashlight"
     #   dynamic     every other light of lights.json, and the glowing surfaces of other objects
-    GROUPS = ("ambient", "sun", "emitters", "flashlight", "dynamic")
-    STATIC_GROUPS = ("ambient", "sun", "emitters")
+    GROUPS = ("ambient", "sun", "fill", "emitters", "flashlight", "dynamic")
+    STATIC_GROUPS = ("ambient", "sun", "fill", "emitters")
+    FILL_DEGREES = 10.0
     # static_mode "lightmap" (the default): the static light IS Halo's lightmap. Each lightmapped BSP surface
     # emits radiance albedo x lightmap, the page's texel at its lightmap UV decoded ^2.2 (the game's frame
     # is albedo x lightmap in gamma space, so its light is albedo_lin x lightmap^2.2; a white surface shows
@@ -631,8 +633,8 @@ class Scene:
         sky = self.sky_dict(np.zeros(3), 1.0)
         if group == "ambient":
             return max(sky["ambient"]) > 0
-        if group == "sun":
-            return "sun0_to_sun" in sky
+        if group in ("sun", "fill"):
+            return "sun0_to_sun" in self.sky_dict(np.zeros(3), 1.0, suns="narrow" if group == "sun" else "wide")
         return False
 
     def load_geometry(self):
@@ -762,8 +764,9 @@ class Scene:
         radius = float(np.linalg.norm(hi - lo) / 2)
         d = {"type": "scene", "sensor": self.sensor()}
         d.update(shapes)
-        if group in (None, "ambient", "sun") and self.static_mode == "fit" or group is None and self.static_mode == "fit":
-            d["sky"] = self.sky_dict(center, radius, ambient=group != "sun", suns=group != "ambient")
+        if group in (None, "ambient", "sun", "fill") and self.static_mode == "fit":
+            d["sky"] = self.sky_dict(center, radius, ambient=group in (None, "ambient"),
+                                     suns={None: "all", "ambient": "none", "sun": "narrow", "fill": "wide"}[group])
         lights = (self.lights or {}).get("lights") or [] if group is None else self.lights_of(group)
         for i, ld in enumerate(self.light_dicts(lights)):
             d["light_%d" % i] = ld
@@ -1022,7 +1025,9 @@ class Scene:
                          "rfilter": {"type": "box"}, "pixel_format": "rgb"},
                 "sampler": {"type": "independent"}}
 
-    def sky_dict(self, center, radius, ambient=True, suns=True):
+    def sky_dict(self, center, radius, ambient=True, suns="all"):
+        """the sky as an emitter: its ambient dome and its lights (suns: "all", "none", "narrow" those under
+        FILL_DEGREES across, "wide" the others)"""
         sky = (self.lights or {}).get("sky") or {}
         if self.lights is None:
             amb = [1.0, 1.0, 1.0]
@@ -1034,7 +1039,12 @@ class Scene:
         if not ambient:
             amb = [0.0, 0.0, 0.0]
         d = {"type": "halo_sky", "ambient": amb, "center": center.tolist(), "scene_radius": radius}
-        for i, s in enumerate((sky.get("sun") or []) if suns else []):
+        chosen = []
+        for s in (sky.get("sun") or []):
+            wide = float(s.get("angular_diameter_deg") or 0.53) >= self.FILL_DEGREES
+            if suns == "all" or (suns == "narrow" and not wide) or (suns == "wide" and wide):
+                chosen.append(s)
+        for i, s in enumerate(chosen):
             # The format's sun direction points from the scene toward the sun unless it says otherwise.
             dirn = np.array(s["direction"], float)
             if str(s.get("direction_is", "to_sun")).lower() in ("from_sun", "travel", "light_travel"):

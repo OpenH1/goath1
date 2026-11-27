@@ -128,9 +128,14 @@ LT_SUN_ROW */
 #define LT_SUNS 8
 #define LT_TABLE_ROWS (LT_SUN_ROW + LT_SUNS)
 #define LT_ONLY_IDS 8
-/* the suns' direct share of the lightmap: ~/dev/rt2-calibration.json's
-sun_power_scale (the truth helper's fit on b30) */
+/* the suns' direct share of the lightmap, a k for a sun (a narrow sky
+light) and one for a fill (a wide one, LT_FILL_DIAMETER across or more:
+b30's 50 degree sky light): ~/dev/rt2-calibration.json's sun_power_scale and
+fill_power_scale (the static fit of the truth renderer on b30, sun and fill
+fitted apart) */
 #define LT_SUN_POWER_SCALE 0.488f
+#define LT_FILL_POWER_SCALE 0.488f
+#define LT_FILL_DIAMETER 0.17453293f
 enum
 {
 	LT_KIND_SKIP = -1,
@@ -176,7 +181,7 @@ static struct
 	_KIND_SCALE, _DROP */
 	int settings_read, only, heroes_on, restir_on, sun_on, reuse_on, only_ids;
 	uint32_t only_id[LT_ONLY_IDS];
-	float kind_scale[4];
+	float kind_scale[5];
 	int drop_kind;
 	uint32_t drop_id;
 } lt = { -1 };
@@ -435,8 +440,8 @@ owner. Its row in the light table is its index in the block, so the cells'
 masks name it; the view's shadowed flashlight keeps E1's own path (its row
 skipped). The suns are the list's directional lights. */
 
-/* HALO_LT_KIND_SCALE's kinds */
-static const char *const lt_kind_names[4] = { "point", "spot", "panel", "sun" };
+/* HALO_LT_KIND_SCALE's kinds (a sun's "sun", a wide sky light's "fill") */
+static const char *const lt_kind_names[5] = { "point", "spot", "panel", "sun", "fill" };
 
 static void lt_settings(void)
 {
@@ -471,15 +476,16 @@ static void lt_settings(void)
 	/* (HALO_LT_REUSE=0: RIS alone each frame, no reservoirs kept: unbiased,
 	the reuse's check) */
 	lt.reuse_on = !getenv("HALO_LT_REUSE") || strcmp(getenv("HALO_LT_REUSE"), "0");
-	for (kind = 0; kind < 4; kind++)
+	for (kind = 0; kind < 5; kind++)
 		lt.kind_scale[kind] = -1.0f;
 	/* (the suns' k: the lightmap's direct share's, ~/dev/rt2-calibration.json's
-	sun_power_scale, whatever k the record was given) */
+	sun_power_scale and fill_power_scale, whatever k the record was given) */
 	lt.kind_scale[3] = LT_SUN_POWER_SCALE;
+	lt.kind_scale[4] = LT_FILL_POWER_SCALE;
 	given = getenv("HALO_LT_KIND_SCALE");
 	while (given && *given)
 	{
-		for (kind = 0; kind < 4; kind++)
+		for (kind = 0; kind < 5; kind++)
 		{
 			size_t length = strlen(lt_kind_names[kind]);
 
@@ -506,8 +512,9 @@ static void lt_settings(void)
 			lt.drop_kind = kind;
 	if (lt.only || !lt.heroes_on || !lt.restir_on || !lt.sun_on || getenv("HALO_LT_KIND_SCALE") || lt.drop_kind != -2)
 		host_logf(HOST_LOG_WARN, "vulkan: light transport: only %d, heroes %d, ReSTIR %d, sun %d, kind scales %g %g %g "
-			"%g, drop %d (checking)", lt.only, lt.heroes_on, lt.restir_on, lt.sun_on, (double)lt.kind_scale[0],
-			(double)lt.kind_scale[1], (double)lt.kind_scale[2], (double)lt.kind_scale[3], lt.drop_kind);
+			"%g %g, drop %d (checking)", lt.only, lt.heroes_on, lt.restir_on, lt.sun_on, (double)lt.kind_scale[0],
+			(double)lt.kind_scale[1], (double)lt.kind_scale[2], (double)lt.kind_scale[3], (double)lt.kind_scale[4],
+			lt.drop_kind);
 }
 
 /* the list's record of the block's light at position (its 1 / radius in
@@ -711,7 +718,7 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 		lt_set(t[1], light->forward[0], light->forward[1], light->forward[2], 0.0f);
 		lt_set(t[2], light->up[0], light->up[1], light->up[2], -1.0f);
 		lt_set(t[3], light->left[0], light->left[1], light->left[2], -1.0f);
-		lt_power(light, 3, t[4]);
+		lt_power(light, light->angular_diameter >= LT_FILL_DIAMETER ? 4 : 3, t[4]);
 		t[4][3] = (float)LT_KIND_DIRECTIONAL;
 		lt_set(t[5], 0.0f, -1.0f, 0.0f, light->angular_diameter);
 		suns++;

@@ -52,8 +52,9 @@
 // the suns' rays a sun where the pixel has no history (a reset, a cut, a disocclusion), so that the first frame's
 // shadow is as good as the later ones' average
 #define SUN_FIRST 12
-// how far a dynamic object's sun shadow is cast (world units: about 75 m)
-#define SUN_REACH 25.0
+// how far the suns' rays go (world units): past any BSP (a Halo BSP is well under 1 km across), so a dynamic object
+// at any height between a surface and the sun shadows it (a Pelican high overhead)
+#define SUN_REACH 4096.0
 // lights.z's
 #define LIGHTS_FLASHLIGHT 1
 #define LIGHTS_HEROES 2
@@ -565,8 +566,7 @@ void reservoir_merge(inout Reservoir r, vec4 other, int row, vec3 p, vec3 shaded
 
 // the suns' whole direct share at p (cmax: sun_power_scale x power x cos, the lightmap's, by the geometric normal as
 // the lightmap has no bump), and the part of it a dynamic object blocks where the structure does not (the
-// lightmap's own shadows already dark): rays a sun toward points of its disk (the objects' ray no longer than
-// SUN_REACH: a dynamic object's shadow from farther is not drawn)
+// lightmap's own shadows already dark): rays a sun toward points of its disk, as far as the sun (SUN_REACH)
 vec3 sun_cmax(vec3 n)
 {
     vec3 cmax = vec3(0.0);
@@ -579,6 +579,12 @@ vec3 sun_cmax(vec3 n)
     return cmax;
 }
 
+// each sun's blocked share: a sun is a disk of light of its angular diameter (a 0.2 degree sun, or b30's 50 degree
+// sky light, a wide fill), sampled evenly over its solid angle (a stratified point of the unit disk taken to the
+// cone: cos = 1 - r^2 (1 - cos(half))), each ray's light its own cosine at the receiver, so a wide light is partly
+// blocked by an object that covers part of it; the share no more than the sun's cmax (its whole share). The mean of
+// cos over the cone is cos(axis) (1 + cos(half)) / 2, which the estimate divides out (its exact irradiance:
+// power x cos(axis) for a cone above the horizon)
 vec3 sun_share(vec3 p, vec3 n, ivec2 pixel, int rays)
 {
     vec3 share = vec3(0.0);
@@ -587,20 +593,23 @@ vec3 sun_share(vec3 p, vec3 n, ivec2 pixel, int rays)
     {
         int row = SUN_ROW + s;
         vec4 t1 = row_texel(row, 1), t4 = row_texel(row, 4), t5 = row_texel(row, 5);
-        vec3 f = t1.xyz;
+        vec3 f = t1.xyz, up = row_texel(row, 2).xyz, left = row_texel(row, 3).xyz;
         float cosine = dot(n, f);
         if (cosine <= 0.0 || t4.w < 0.0)
             continue;
-        float blocked = 0.0;
+        float half_cos = cos(0.5 * t5.w), blocked = 0.0;
         for (int k = 0; k < rays; k++)
         {
-            vec2 disk = concentric(stratified(pixel, 17.0 + float(s) * 16.0 + float(k))) * tan(0.5 * t5.w);
-            vec3 d = normalize(f + row_texel(row, 3).xyz * disk.x + row_texel(row, 2).xyz * disk.y);
-            if (visible_by(origin, d, SUN_REACH, -1, 0xffffffffu, RT_MASK_DYNAMIC) < 1.0 &&
-                visible_by(origin, d, 2048.0, -1, 0xffffffffu, RT_MASK_STRUCTURE) > 0.0)
-                blocked += 1.0;
+            vec2 disk = concentric(stratified(pixel, 17.0 + float(s) * 16.0 + float(k)));
+            float r2 = dot(disk, disk), c = 1.0 - r2 * (1.0 - half_cos), sine = sqrt(max(1.0 - c * c, 0.0));
+            vec2 around = r2 > 0.0 ? disk * inversesqrt(r2) : vec2(0.0);
+            vec3 d = normalize(f * c + (left * around.x + up * around.y) * sine);
+            float lit = dot(n, d);
+            if (lit > 0.0 && visible_by(origin, d, SUN_REACH, -1, 0xffffffffu, RT_MASK_DYNAMIC) < 1.0 &&
+                visible_by(origin, d, SUN_REACH, -1, 0xffffffffu, RT_MASK_STRUCTURE) > 0.0)
+                blocked += lit;
         }
-        share += t4.rgb * cosine * (blocked / float(rays));
+        share += t4.rgb * min(blocked / (float(rays) * 0.5 * (1.0 + half_cos)), cosine);
     }
     return share;
 }

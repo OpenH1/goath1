@@ -75,6 +75,7 @@ against the truth export's lights.json at the same tick.
 #include "physics/collisions.h"
 #include "halo_dynamic_lights.h"
 #include "lt_lights.h"
+#include "world_rt.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -587,10 +588,13 @@ boolean lt_lights_sun_shadow(long object_index)
 	}
 	if (!pass_sun || object_index == NONE)
 		return FALSE;
-	/* (scenery: baked into the ray-traced scene as the structure is, its
-	shadow not the pass's) */
+	/* (only an object the ray-traced scene holds with a shape of its own,
+	which the pass's sun rays meet at any height (lt/e1.frag's sun_share):
+	not scenery baked as the structure is, not an item's box, not what the
+	scene leaves out (a held weapon, a projectile); the others keep the
+	game's shadow) */
 	object = object_get(object_index);
-	if (!object || object->object.type == _object_type_scenery)
+	if (!object || object->object.type == _object_type_scenery || !world_rt_object_traced(object_index))
 		return FALSE;
 	/* (the sky's sun: its narrowest light) */
 	scenario = global_scenario_get();

@@ -268,8 +268,9 @@ class HaloSky(mi.Emitter):
             # Disc radiance L with irradiance E on a plane facing the sun: E = L * pi * sin^2(half).
             L = [c / (math.pi * math.sin(half) ** 2) for c in irr]
             x, y, z = light_frame(to_sun)
-            self.suns.append(dict(z=mi.Vector3f(z), x=mi.Vector3f(x), y=mi.Vector3f(y),
-                                  cos_half=math.cos(half), L=L))
+            # (plain floats, made into vectors where used: a vector made here is a variable that, once
+            # evaluated at one wavefront's size, does not mix with another's on the CPU (LLVM) variant)
+            self.suns.append(dict(z=tuple(z), x=tuple(x), y=tuple(y), cos_half=math.cos(half), L=L))
             i += 1
         has_amb = max(self.ambient) > 0
         self.p_sun = (0.5 if has_amb else 1.0) if self.suns else 0.0
@@ -278,7 +279,7 @@ class HaloSky(mi.Emitter):
     def _eval_dir(self, w):
         v = mi.Spectrum(self.ambient)
         for s in self.suns:
-            v += dr.select(dr.dot(w, s["z"]) >= s["cos_half"], mi.Spectrum(s["L"]), 0.0)
+            v += dr.select(dr.dot(w, mi.Vector3f(*s["z"])) >= s["cos_half"], mi.Spectrum(s["L"]), 0.0)
         return v
 
     def _pdf_dir(self, w):
@@ -286,7 +287,7 @@ class HaloSky(mi.Emitter):
         n = len(self.suns)
         for s in self.suns:
             cone = 1.0 / (2.0 * math.pi * (1.0 - s["cos_half"]))
-            pdf += dr.select(dr.dot(w, s["z"]) >= s["cos_half"], self.p_sun / n * cone, 0.0)
+            pdf += dr.select(dr.dot(w, mi.Vector3f(*s["z"])) >= s["cos_half"], self.p_sun / n * cone, 0.0)
         return pdf
 
     def eval(self, si, active=True):
@@ -308,7 +309,7 @@ class HaloSky(mi.Emitter):
                 sel = pick_sun & (ux >= lo) & (ux < hi)
                 uk = mi.Point2f((ux - lo) * n, u.y)
                 local = mi.warp.square_to_uniform_cone(uk, s["cos_half"])
-                ws = s["x"] * local.x + s["y"] * local.y + s["z"] * local.z
+                ws = mi.Vector3f(*s["x"]) * local.x + mi.Vector3f(*s["y"]) * local.y + mi.Vector3f(*s["z"]) * local.z
                 w = dr.select(sel, ws, w)
         pdf = self._pdf_dir(w)
         dist = 2.0 * (self.radius + dr.norm(it.p - mi.Point3f(self.center)))

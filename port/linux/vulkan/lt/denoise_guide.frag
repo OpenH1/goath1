@@ -32,7 +32,8 @@ ivec2 block_pixel(int phase)
 }
 
 // one block's sample, weighted, where its traced pixel is on this pixel's surface
-void tap(ivec2 block, ivec2 pixel, vec3 p, vec3 n, uint owner, float distance, inout vec3 sum, inout float weights)
+void tap(ivec2 block, ivec2 pixel, vec3 p, vec3 n, uint owner, float distance, inout vec3 sum, inout float weights,
+    inout float fewest)
 {
     if (any(lessThan(block, ivec2(0))) || any(greaterThanEqual(block, ivec2(pass.bounce.xy))))
         return;
@@ -40,7 +41,7 @@ void tap(ivec2 block, ivec2 pixel, vec3 p, vec3 n, uint owner, float distance, i
     if (s.a < 0.5)
         return;
     // (the history's alpha: the sample's code + 8192 x its count)
-    float code = s.a - 8192.0 * floor(s.a / 8192.0);
+    float count = floor(s.a / 8192.0), code = s.a - 8192.0 * count;
     int which = int(floor((code - 1.0) / 1024.0));
     ivec2 at = block * 2 + block_pixel(int(pass.bounce.z) + which);
     uvec4 words = texelFetch(inputs, at, 0);
@@ -52,6 +53,7 @@ void tap(ivec2 block, ivec2 pixel, vec3 p, vec3 n, uint owner, float distance, i
     float w = exp(-dot(off, off) * (1.0 / 18.0));
     sum += w * s.rgb;
     weights += w;
+    fewest = min(fewest, count);
 }
 #endif
 
@@ -74,12 +76,15 @@ void main()
 #ifdef FOLD
     vec4 light = texelFetch(direct, pixel, 0);
     vec3 p = world_point(pixel, uintBitsToFloat(words.z)), sum = vec3(0.0);
-    float distance = length(p - pass.camera[0].xyz), weights = 0.0;
+    float distance = length(p - pass.camera[0].xyz), weights = 0.0, fewest = 1.0e9;
     ivec2 middle = pixel / 2;
     for (int k = 0; k < 25; k++)
-        tap(middle + ivec2(k % 5 - 2, k / 5 - 2), pixel, p, n, words.w, distance, sum, weights);
+        tap(middle + ivec2(k % 5 - 2, k / 5 - 2), pixel, p, n, words.w, distance, sum, weights, fewest);
     vec3 e = weights > 0.0 ? sum / weights : vec3(0.0);
     // (bounce.w's 2, HALO_LT_INDIRECT=only, checking: the bounce alone)
-    combined = vec4((int(pass.bounce.w) & 2) != 0 ? e : light.rgb + e, light.a);
+    // (a: the fewest frames the bounce's taps have counted (their history started again where the lights about them
+    // changed, lt/indirect.glsl): the temporal stage keeps no more history than that, so a bounce from a light that is
+    // gone leaves with it; -1 where no tap was taken)
+    combined = vec4((int(pass.bounce.w) & 2) != 0 ? e : light.rgb + e, weights > 0.0 ? fewest : -1.0);
 #endif
 }

@@ -200,6 +200,10 @@ once a frame */
 void world_rt_frame(unsigned long frame);
 /* the map unloaded (or the setting turned off): every mesh let go of */
 void world_rt_map_unloaded(void);
+/* whether the last frame's scene held the object (a datum handle) with
+meshes of its own (not the structure's, not an item's box): a ray meets its
+shape, so the light-transport pass's sun shadow is cast by it */
+int world_rt_object_traced(long object_index);
 
 /* an object's owner among the instances (its datum index plus one; 0 none,
 -1 an object index), which a pixel of its own leaves out */
