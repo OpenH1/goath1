@@ -3148,7 +3148,11 @@ static void dynamic_lights_cells(const struct xgpu_stream_dynamic_lights_block *
 		if (WALK_END > end)
 			end = WALK_END;
 	}
-	xgpu_vulkan_dynamic_lights_upload(block, sizeof(*block), lights_cells, first < end ? first : 0, first < end ? end : 0);
+	/* (HALO_LT_DROP, the light transport's calibration: lights of a kind
+	left out of both the game's lights and the pass's, its "off") */
+	xgpu_vulkan_lt_block_filter(&lights_block, count);
+	xgpu_vulkan_dynamic_lights_upload(&lights_block, sizeof(lights_block), lights_cells, first < end ? first : 0,
+		first < end ? end : 0);
 }
 
 /* the enhanced flashlight's shadow map, as the frame's lights name a

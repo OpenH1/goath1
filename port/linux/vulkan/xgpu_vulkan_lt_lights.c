@@ -21,7 +21,7 @@ static struct
 	struct xgpu_stream_lt_light lights[4][XGPU_STREAM_LT_LIGHTS_MAXIMUM];
 	int counts[4];
 	uint32_t frames[4];
-	int received;
+	int received, last_window;
 	int log_read;
 	FILE *log;
 } lt_lights;
@@ -38,6 +38,7 @@ void xgpu_vulkan_lt_lights_receive(void *context, const struct xgpu_stream_lt_li
 		lights ? record->count * sizeof(struct xgpu_stream_lt_light) : 0);
 	lt_lights.counts[window] = (int)record->count;
 	lt_lights.frames[window] = record->frame;
+	lt_lights.last_window = window;
 	if (!lt_lights.received++)
 		host_logf(HOST_LOG_INFO, "vulkan: light list received (%u lights, window %d)", record->count, window);
 	if (!lt_lights.log_read)
@@ -79,4 +80,9 @@ const struct xgpu_stream_lt_light *xgpu_vulkan_lt_lights(int window, int *count,
 	if (frame)
 		*frame = lt_lights.frames[window];
 	return lt_lights.lights[window];
+}
+
+int xgpu_vulkan_lt_lights_window(void)
+{
+	return lt_lights.received ? lt_lights.last_window : -1;
 }

@@ -91,10 +91,10 @@ void xgpu_backend_lt_lights(const void *lights, int count, int window, unsigned 
 /* (object_lights.c) */
 extern struct data_array *light_data;
 
-/* k: the flashlight's, measured (~/dev/rt2-calibration.json); the suns'
-not yet */
+/* k: the flashlight's, measured (~/dev/rt2-calibration.json); the suns' the
+truth helper's fit of the lightmap's direct share (sun_power_scale) */
 #define LT_LIGHTS_POWER_SCALE 1.009f
-#define LT_LIGHTS_SUN_POWER_SCALE 1.0f
+#define LT_LIGHTS_SUN_POWER_SCALE 0.488f
 /* the emitters' radii (world units): E1's flashlight disk, then
 dynamic_lights.c's shadow disks' (SHADOWED_DISK_*) */
 #define LT_LIGHTS_FLASHLIGHT_DISK 0.01f

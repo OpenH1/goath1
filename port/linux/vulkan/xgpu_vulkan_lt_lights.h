@@ -18,5 +18,8 @@ void xgpu_vulkan_lt_lights_receive(void *context, const struct xgpu_stream_lt_li
 /* a window's (0 to 3) last list: its lights (count of them; NULL none) and
 the game's count of lists sent when it was */
 const struct xgpu_stream_lt_light *xgpu_vulkan_lt_lights(int window, int *count, uint32_t *frame);
+/* the window whose list came last (-1: none yet): the one the pre-pass
+after it draws */
+int xgpu_vulkan_lt_lights_window(void);
 
 #endif

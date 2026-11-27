@@ -5091,17 +5091,14 @@ static unsigned int dynamic_light_sum(struct module *m, struct pixel_state *stat
 	store(m, bits_variable, op2(m, OP_BITWISE_AND, m->t_uint, bits, op2(m, OP_I_SUB, m->t_uint, bits, constant_uint(m, 1))));
 	position = dynamic_light(m, 1, light);
 	w = extract(m, position, 3);
-	/* (HALO_LT_E1: the view's shadowed flashlight is the traced pass's, added
-	after the sum, lt_e1_add: if (head.x != 0 && slots[clamp(head.x - 1, 0, 3)]
-	== light + 1) continue;) */
+	/* (HALO_LT_E1: every light that lights the structure (position.w > 0;
+	not a models-only light, whose structure the game's own gel pass lights)
+	is the traced pass's, added after the sum, lt_e1_add: if (position.w >
+	0.0) continue;) */
 	if (lt_e1_on() && state->rt_bounce)
 	{
-		unsigned int skip = id_new(m), head_x = uextract(m, flashlight.head, 0), condition;
+		unsigned int skip = id_new(m), condition = compare(m, OP_F_ORD_GREATER_THAN, w, constant_float(m, 0.0f));
 
-		condition = op2(m, OP_LOGICAL_AND, m->t_bool, op2(m, OP_I_NOT_EQUAL, m->t_bool, head_x, constant_uint(m, 0)),
-			op2(m, OP_I_EQUAL, m->t_bool, op2(m, OP_VECTOR_EXTRACT_DYNAMIC, m->t_uint, flashlight.slots,
-			ext3(m, GLSL_S_CLAMP, m->t_int, int_add(m, op1(m, OP_BITCAST, m->t_int, head_x), -1), constant_int(m, 0),
-			constant_int(m, XGPU_DYNAMIC_LIGHTS_FLASHLIGHTS - 1))), op1(m, OP_BITCAST, m->t_uint, int_add(m, light, 1))));
 		selection_merge(m, skip);
 		branch_conditional(m, condition, inner_continue, skip);
 		label_at(m, skip);
@@ -8836,12 +8833,12 @@ static unsigned int lt_e1_guides(struct module *m, struct pixel_state *state, un
 		lt_octahedral(m, normal), material, constant_uint(m, XGPU_SPIRV_GUIDES_MOTION_NONE) });
 }
 
-/* ... the traced flashlight's light (linear, at display.rt_bounce's
-binding: its irradiance, its cosine by the shaded normal of the twins'
-guides, lt_e1_guides) added to lit (the game's lights' result, gamma)
-linearly, by tint (linear; 0: by 1), after the game's own lights' shoulder,
-as GLSL:
-pow(pow(max(lit, 0.0), vec3(2.2)) + light * tint, vec3(1.0 / 2.2)); lit as it
+/* ... the traced lights' light (linear, at display.rt_bounce's binding:
+their irradiance, its cosine by the shaded normal of the twins' guides,
+lt_e1_guides; less the suns' share a dynamic object shadows) added to lit
+(the game's lights' result, gamma) linearly, by tint (linear; 0: by 1),
+after the game's own lights' shoulder, as GLSL:
+pow(max(pow(max(lit, 0.0), vec3(2.2)) + light * tint, 0.0), vec3(1.0 / 2.2)); lit as it
 is without the mode or the binding */
 static unsigned int lt_e1_add(struct module *m, struct pixel_state *state, unsigned int lit, unsigned int tint,
 	unsigned int p, unsigned int n)
@@ -8858,8 +8855,10 @@ static unsigned int lt_e1_add(struct module *m, struct pixel_state *state, unsig
 	(void)to_lamp;
 	if (tint)
 		light = fmul(m, 3, light, tint);
-	return ext2(m, GLSL_POW, m->t_v3, fadd(m, 3, ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, lit, 0.0f),
-		constant_splat(m, 3, 2.2f)), fmax_scalar(m, 3, light, 0.0f)), constant_splat(m, 3, 1.0f / 2.2f));
+	/* (W2: the light may be less than 0, the suns' direct share taken off
+	where a dynamic object blocks the sun: the sum kept at 0 or more) */
+	return ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, fadd(m, 3, ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, lit,
+		0.0f), constant_splat(m, 3, 2.2f)), light), 0.0f), constant_splat(m, 3, 1.0f / 2.2f));
 }
 
 /* ---------- the enhanced dynamic lights' glows (xgpu_spirv.h) */
