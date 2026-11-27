@@ -289,6 +289,9 @@ device has ray queries, whatever display.shadows and
 display.ambient_occlusion are. Its pipeline is made the first time (one
 of a fixed target, no map's draws'); until it is, nothing is drawn and
 the map holds what it last held (as far as it goes, at first). */
+_Static_assert(XGPU_VULKAN_BINDING_FLASHLIGHT_SHADOW == XGPU_SPIRV_BINDING_FLASHLIGHT_SHADOW &&
+	XGPU_VULKAN_FLASHLIGHT_SHADOW_SIZE == XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_SHADOW_SIZE, "the flashlight's shadow map");
+
 #define FLASHLIGHT_OWNER "FLASHLIGHT SHADOW"
 #define FLASHLIGHT_KIND 0xfb
 

@@ -11814,7 +11814,7 @@ static int layouts_make(void)
 	draw[4].descriptorCount = 1;
 	draw[4].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 	/* (the enhanced flashlight's shadow map: xgpu.h's XGPU_DYNAMIC_LIGHTS_FLASHLIGHT) */
-	draw[5].binding = XGPU_SPIRV_BINDING_FLASHLIGHT_SHADOW;
+	draw[5].binding = XGPU_VULKAN_BINDING_FLASHLIGHT_SHADOW;
 	draw[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 	draw[5].descriptorCount = 1;
 	draw[5].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -11930,7 +11930,7 @@ every texel as far as a half float goes (nothing shadowed until drawn); 1 by
 static int flashlight_shadow_make(void)
 {
 	struct xgpu_vulkan_image_description description;
-	uint32_t size = vk.capabilities.ray_queries ? XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_SHADOW_SIZE : 1, index;
+	uint32_t size = vk.capabilities.ray_queries ? XGPU_VULKAN_FLASHLIGHT_SHADOW_SIZE : 1, index;
 	uint16_t *far;
 
 	memset(&description, 0, sizeof(description));
@@ -12048,7 +12048,7 @@ static int draw_set_make(void)
 	writes[3].pImageInfo = &cells;
 	writes[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 	writes[4].pBufferInfo = &buffers[3];
-	writes[5].dstBinding = XGPU_SPIRV_BINDING_FLASHLIGHT_SHADOW;
+	writes[5].dstBinding = XGPU_VULKAN_BINDING_FLASHLIGHT_SHADOW;
 	writes[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 	writes[5].pImageInfo = &flashlight;
 	vkUpdateDescriptorSets(vk.device, 6, writes, 0, NULL);

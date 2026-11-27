@@ -734,6 +734,10 @@ the surfaces found once a pixel read: a 2D image of four bytes, a channel a
 light, read by texel, a 1x1 of every light seen where none is traced;
 xgpu.h's XGPU_DYNAMIC_LIGHTS_SHADOWED) */
 #define XGPU_VULKAN_BINDING_LIGHT_SHADOWS 9
+/* the enhanced flashlight's shadow map in the draw set, and its size (xgpu_spirv.h's
+XGPU_SPIRV_BINDING_FLASHLIGHT_SHADOW, xgpu.h's XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_SHADOW_SIZE) */
+#define XGPU_VULKAN_BINDING_FLASHLIGHT_SHADOW 5
+#define XGPU_VULKAN_FLASHLIGHT_SHADOW_SIZE 512
 struct xgpu_world_ao_pass;
 /* the mask the occlusion's sets name from now on (NULL: the stand-in), and
 whether they name this one */
