@@ -89,7 +89,7 @@ enum
 	LT_RESET = 2,
 	LT_COPY = 4,
 	LT_COPY_GEOMETRIC = 8,
-	LT_COPY_SHADED = 16,
+	LT_COPY_IRRADIANCE = 16,
 	LT_COPY_PRESENT = 32,
 };
 
@@ -302,14 +302,15 @@ static void lt_pass_draw(struct xgpu_vulkan_image *into, const int32_t rectangle
 static void lt_dump_one(const int32_t rectangle[4], const struct xgpu_world_ao_pass *uniforms, struct lt_params *params,
 	struct xgpu_vulkan_image *mean, struct xgpu_vulkan_image *inputs, int what, const char *suffix);
 
-/* HALO_LT_E1_DUMP: the mean, and the pass's inputs (the geometric and shaded
-normals, the pixels the pre-pass drew) */
+/* HALO_LT_E1_DUMP: the mean (the arriving light, but for the receiver's
+cosine), the geometric normal, the mean by that normal's cosine toward the
+lamp, the pixels the pre-pass drew */
 static void lt_dump(const int32_t rectangle[4], const struct xgpu_world_ao_pass *uniforms, struct lt_params *params,
 	struct xgpu_vulkan_image *mean, struct xgpu_vulkan_image *inputs)
 {
 	lt_dump_one(rectangle, uniforms, params, mean, inputs, 0, "");
 	lt_dump_one(rectangle, uniforms, params, mean, inputs, LT_COPY_GEOMETRIC, "_normal_geometric");
-	lt_dump_one(rectangle, uniforms, params, mean, inputs, LT_COPY_SHADED, "_normal_shaded");
+	lt_dump_one(rectangle, uniforms, params, mean, inputs, LT_COPY_IRRADIANCE, "_irradiance_geometric");
 	lt_dump_one(rectangle, uniforms, params, mean, inputs, LT_COPY_PRESENT, "_present");
 }
 
