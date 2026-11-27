@@ -125,11 +125,13 @@ def best_fit(samples, keep, static_means, log):
 
 def render_scene(folder, out=None, spp_pass=8, target=0.01, max_spp=65536, max_minutes=60.0,
                  min_passes=4, gpu_lock=os.path.expanduser("~/goat-rig/locks/gpu.lock"),
-                 log=print, flashlight_scale=None, flashlight_emitter=None, static_mode="lightmap"):
+                 log=print, flashlight_scale=None, flashlight_emitter=None, static_mode="lightmap",
+                 object_static="physical"):
     folder = Path(folder)
     out = Path(out) if out else folder / "truth"
     from . import VARIANT as variant
-    sc = Scene(folder, flashlight_scale, flashlight_emitter=flashlight_emitter, static_mode=static_mode)
+    sc = Scene(folder, flashlight_scale, flashlight_emitter=flashlight_emitter, static_mode=static_mode,
+               object_static=object_static)
     t0 = time.time()
     groups = [g for g in sc.groups if sc.group_has_light(g)]
     statics = [g for g in groups if g in sc.static_groups]
@@ -138,7 +140,8 @@ def render_scene(folder, out=None, spp_pass=8, target=0.01, max_spp=65536, max_m
     samples = sc.lightmap_samples(scenes[groups[-1]])
     # The same light on white Lambertian surfaces (same normal maps and cutouts): its direct part is the
     # demodulated irradiance the real-time comparison uses.
-    wsc = Scene(folder, flashlight_scale, white=True, flashlight_emitter=flashlight_emitter, static_mode=static_mode)
+    wsc = Scene(folder, flashlight_scale, white=True, flashlight_emitter=flashlight_emitter, static_mode=static_mode,
+                object_static=object_static)
     whites = {g: mi.load_dict(wsc.build(g)) for g in groups}
     acc_w = {g: np.zeros((len(samples["valid"]), len(samples["valid"][0]), 3)) for g in groups}
     grey = [m["index"] for m in sc.material_summaries.values() if "placeholder" in m.get("albedo", "")]
