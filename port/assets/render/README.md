@@ -133,6 +133,19 @@ a game for a few cores, and checks the recordings:
 python tools/render_enumerate_sweep.py --data <the folder of maps/> --seconds 90 --jobs 8
 ```
 
+`tools/prepared_coverage.py` plays them on a test machine with the shared
+kit (`tools/rig/README.md`) in each window context of
+`render_enumerate.c`'s list: one player (`solo`), split screen of 2 to 4
+(`split2` to `split4`: a campaign level in split-screen co-op, a
+multiplayer map in team slayer), and a host and client pair whose Spartan
+links draw each other's feeds (`link`). It reports the misses per map,
+context and instance, with the backend's own count from its log:
+
+```sh
+python3 tools/prepared_coverage.py --rig omarchy --build <branch> --context split2 --context split4 \
+    --context link --maps b30,c40,a10,d40,bloodgulch
+```
+
 Every stock map's play, the menu's included, has none. The loading screen's draws
 (`render_frame_pregame`), made before the next map is loaded, are no map's:
 with multisampling its progress bar is the manifest's alone.

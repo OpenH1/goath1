@@ -22,8 +22,10 @@ Each map is walked as it loads (HALO_SHIPPED_RECORDS=0: the walk of this build i
 --shipped played from the build's shipped records, as a player's first load is. The lines also count the Spartan
 link feeds drawn (debug.spartan_link_log) and name each map's preparation. Draws are compared as a backend compiles
 them, or whole with --exact (fields the Vulkan key does not hold then differ: tools/render_manifest.py). The run
-folders (~/goat-rig/runs/pcov-*) are removed after the report unless --keep. It exits 1 on any miss or a run
-that did not play.
+folders (~/goat-rig/runs/pcov-*) are removed after the report unless --keep. It exits 1 on a pipeline the backend
+missed (its log's count, which the Vulkan backend keys as it compiles) or a run that did not play; with --strict on
+the recording's misses too, which also count context fields a backend may not compile apart (the HDR tag's
+category, a stage's texture sampled from a texture or a target).
 """
 import argparse
 import concurrent.futures
@@ -109,7 +111,7 @@ def report(name, context, label, status, output, image, arguments):
         # preparation made, or one marked before, recorded in another context: xgpu_manifest_record_draw)
         recording.misses = [miss for miss in recording.misses if miss[1]]
         missed = len(recording.misses)
-        failed = failed or missed > 0 or vulkan > 0 or unmade > 0 or recording.enumerations == 0
+        failed = failed or vulkan > 0 or unmade > 0 or recording.enumerations == 0 or (arguments.strict and missed > 0)
         lines.append(f"{name} {context} {instance.name}: {missed} missed of {len(recording.enumerated)} draws "
                      f"prepared ({recording.enumerations} preparations, {how}); vulkan {vulkan} missed, "
                      f"{unmade} not made; {feeds} link feeds drawn")
@@ -164,6 +166,7 @@ def main():
     parser.add_argument("--jobs", type=int, default=3, help="runs at once (goat-rig's --shared GPU slots)")
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--shipped", action="store_true", help="the shipped records played, not the walk")
+    parser.add_argument("--strict", action="store_true", help="the recording's misses fail the run too")
     parser.add_argument("--exact", action="store_true", help="whole draws compared, not as a backend compiles them")
     parser.add_argument("--depth", type=int, default=4, help="the functions named per miss")
     parser.add_argument("--keep", action="store_true", help="the run folders kept")
@@ -193,8 +196,8 @@ def main():
             lines, problem = report(name, context, label, status, output, image, arguments)
             print("\n".join(lines), flush=True)
             failed = failed or problem
-    print("prepared coverage: " + ("FAIL (misses or runs that did not play)" if failed else
-                                   f"0 misses in {len(jobs)} runs"))
+    print("prepared coverage: " + ("FAIL (pipelines the backend missed, or runs that did not play)" if failed else
+                                   f"no pipeline missed in {len(jobs)} runs"))
     return 1 if failed else 0
 
 
