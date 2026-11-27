@@ -808,6 +808,8 @@ struct rr_inputs
 	int32_t source[4];
 	uint32_t output[2];
 	int demodulated, reset;
+	/* (the context made, nothing recorded: the smoke test's first frame) */
+	int create_only;
 	float jitter[2];
 	const float *world_to_view, *view_to_clip;
 };
@@ -868,6 +870,8 @@ static int rr_record(VkCommandBuffer commands, struct dlss_rr_context *context, 
 		context->inputs[0] = in->diffuse.width;
 		context->inputs[1] = in->diffuse.height;
 	}
+	if (in->create_only)
+		return 1;
 	/* (the one noisy colour and the hit distance, at the inputs' texels) */
 	if (!(set = rr_set()))
 		return 0;
@@ -1038,8 +1042,11 @@ finite and not black */
 
 static struct
 {
+	/* 0 to begin, 3 the feature made (its submission awaited), 1 the
+	frames recorded (their submission awaited), 2 done */
 	int state;
 	uint64_t serial;
+	struct rr_inputs in;
 	struct dlss_output images[SMOKE_IMAGES];
 	VkBuffer buffers[2];
 	VkDeviceMemory memories[2];
@@ -1130,7 +1137,9 @@ static void smoke_view(struct openh1_dlss_image *made, const struct dlss_output 
 	made->aspect = VK_IMAGE_ASPECT_COLOR_BIT;
 }
 
-static void smoke_record(void)
+/* the images, the noise and the feature (the first frame), then, once
+that submission is done, the four frames and the output's copy */
+static void smoke_record(int frames)
 {
 	/* the diffuse, the specular (noise), the albedos, the normals with
 	roughness, the depth (R32F: read as a texture, as the device's depth
@@ -1152,6 +1161,8 @@ static void smoke_record(void)
 
 	smoke.state = 2;
 	commands = xgpu_vulkan_outside_begin(NULL, 0, NULL, 0);
+	if (frames)
+		goto record;
 	for (index = 0; index < SMOKE_IMAGES && ok; index++)
 		ok = image_make(commands, &smoke.images[index], SMOKE_RENDER_WIDTH, SMOKE_RENDER_HEIGHT,
 			index == 5 ? VK_FORMAT_R32_SFLOAT : VK_FORMAT_R16G16B16A16_SFLOAT);
@@ -1211,6 +1222,18 @@ static void smoke_record(void)
 	in.demodulated = 1;
 	in.world_to_view = identity;
 	in.view_to_clip = projection;
+	in.create_only = 1;
+	ok = rr_record(commands, context, &in);
+	in.create_only = 0;
+	smoke.in = in;
+	smoke.serial = xgpu_vulkan_serial();
+	smoke.state = ok ? 3 : 2;
+	if (!ok)
+		host_logf(HOST_LOG_WARN, "vulkan: DLSS Ray Reconstruction smoke test: no feature made");
+	xgpu_vulkan_outside_end(commands);
+	return;
+record:
+	in = smoke.in;
 	for (frame = 0; frame < 4 && ok; frame++)
 	{
 		in.reset = frame == 0;
@@ -1220,8 +1243,12 @@ static void smoke_record(void)
 	}
 	if (ok)
 	{
+		memset(&copy, 0, sizeof(copy));
+		copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		copy.imageSubresource.layerCount = 1;
 		copy.imageExtent.width = 1280;
 		copy.imageExtent.height = 720;
+		copy.imageExtent.depth = 1;
 		dlss.vkCmdCopyImageToBuffer(commands, context->output_image.image, VK_IMAGE_LAYOUT_GENERAL, smoke.buffers[1],
 			1, &copy);
 		smoke.serial = xgpu_vulkan_serial();
@@ -1264,7 +1291,14 @@ static void rr_smoke(void)
 			smoke.state = 2;
 			return;
 		}
-		smoke_record();
+		smoke_record(0);
+		if (smoke.state == 2)
+			smoke_free();
+		return;
+	}
+	if (smoke.state == 3 && xgpu_vulkan_completed() >= smoke.serial)
+	{
+		smoke_record(1);
 		if (smoke.state == 2)
 			smoke_free();
 		return;
