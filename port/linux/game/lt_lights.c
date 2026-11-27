@@ -391,6 +391,12 @@ static int lt_build(struct halo_dynamic_light const *lights, unsigned long long 
 		if (baked[index])
 			out->flags |= XGPU_LT_LIGHT_BAKED;
 		out->object = objects[index] != NONE ? (unsigned int)objects[index] : 0xffffffffu;
+		/* (one of the port's own lights (light_sources.c) on an object, its
+		key's kind 2, or a firer's flames, 3: that object's, its handle in the
+		key; it is a light on an object (a bolt's, a thruster's glow), whose k
+		is a point's on an object, not an explosion's: lt_power_scale) */
+		if ((source == 2 || source == 3) && out->object == 0xffffffffu)
+			out->object = (unsigned int)(key & 0xffffffffull);
 		out->owner = (unsigned int)owners[index];
 		out->gel_slot = -1;
 		out->gel_tag = -1;

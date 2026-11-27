@@ -542,9 +542,15 @@ static const struct xgpu_stream_lt_light *lt_record(const struct xgpu_stream_lt_
 muzzle flash, a bolt) or on none (an explosion), the rest the flashlight's */
 static float lt_kind_k(const struct xgpu_stream_lt_light *light)
 {
+	unsigned int source = light->id[1] >> 24;
+
 	if ((light->flags & XGPU_LT_LIGHT_FLASHLIGHT) || light->kind != XGPU_LT_LIGHT_POINT)
 		return LT_POWER_SCALE;
-	return light->object != 0xffffffffu ? LT_OBJECT_POWER_SCALE : LT_EFFECT_POWER_SCALE;
+	/* (one of the port's own lights on an object or a firer's flames
+	(light_sources.c's key kinds 2 and 3): on an object, though a record
+	made before lt_lights.c named its object has none) */
+	return light->object != 0xffffffffu || source == 2 || source == 3 ? LT_OBJECT_POWER_SCALE :
+		LT_EFFECT_POWER_SCALE;
 }
 
 /* a record's power as the pass uses it: its kind's k (a recording made
