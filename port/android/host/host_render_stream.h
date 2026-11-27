@@ -287,14 +287,21 @@ typedef int (*host_render_screenshot_halves_writer)(uint16_t *halves, uint32_t w
 	const char *directory, char *name, uint32_t name_size);
 void host_render_stream_set_screenshot_halves_writer(host_render_screenshot_halves_writer writer);
 /* a frame read back without the render thread waiting for it
-(read_target_later's): its pixels, BGRA8 rows from the top or (halves)
-display.hdr's RGBA half floats, waited for by wait on the thread that writes
+(read_target_later's): its pixels, rows from the top of format's
+(HOST_RENDER_LATER_*: BGRA8, display.hdr's RGBA half floats, or
+display.output_depth's RGBA 16-bit channels), waited for by wait on the thread that writes
 the picture (NULL if they never come: the device lost, the renderer shut
 down; never on the render thread, whose work it waits for), and let go of
 by release, once, waited for or not */
+enum
+{
+	HOST_RENDER_LATER_BGRA8,
+	HOST_RENDER_LATER_HALVES,
+	HOST_RENDER_LATER_DEEP,
+};
 struct host_render_later_pixels
 {
-	int halves;
+	int format;
 	const void *(*wait)(struct host_render_later_pixels *pixels);
 	void (*release)(struct host_render_later_pixels *pixels);
 };

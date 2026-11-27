@@ -439,15 +439,15 @@ int xgpu_vulkan_read_halves(struct xgpu_vulkan_image *image, uint32_t layer, uin
 buffer of its own without waiting for the GPU (a screenshot's, a Save
 Report's: a 4K display.hdr frame read back and copied held the render
 thread, and the game, about 50 ms): NULL where it cannot be (a format other
-than BGRA8 or RGBA16F, both buffers in use, no memory), for the caller to
-read it as before. *halves: whether its pixels are RGBA16F's half floats
-(else BGRA8). xgpu_vulkan_readback_wait, on any thread but the render
+than BGRA8, RGBA16F or RGBA16, both buffers in use, no memory), for the
+caller to read it as before. *format: its pixels' (XGPU_VULKAN_FORMAT_*:
+one of those three). xgpu_vulkan_readback_wait, on any thread but the render
 thread's (whose submission it waits for), waits for the GPU to have copied
 it and gives its rows from the first, NULL if they never come (the device
 lost, the renderer shut down); xgpu_vulkan_readback_release, on any thread,
 lets go of it, once, waited for or not */
 struct xgpu_vulkan_readback;
-struct xgpu_vulkan_readback *xgpu_vulkan_readback_begin(struct xgpu_vulkan_image *image, uint32_t layer, int *halves);
+struct xgpu_vulkan_readback *xgpu_vulkan_readback_begin(struct xgpu_vulkan_image *image, uint32_t layer, int *format);
 const void *xgpu_vulkan_readback_wait(struct xgpu_vulkan_readback *readback);
 void xgpu_vulkan_readback_release(struct xgpu_vulkan_readback *readback);
 

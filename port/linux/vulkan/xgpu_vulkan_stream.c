@@ -965,7 +965,8 @@ static int stream_read_target_halves(void *context, uint32_t number, uint32_t wi
 }
 
 /* the screenshot key's target read back without a wait
-(xgpu_vulkan_readback_begin), BGRA8 or display.hdr's half floats */
+(xgpu_vulkan_readback_begin): BGRA8, display.hdr's half floats or
+display.output_depth's 16-bit channels */
 struct later_pixels
 {
 	struct host_render_later_pixels pixels;
@@ -988,6 +989,7 @@ static struct host_render_later_pixels *stream_read_target_later(void *context, 
 {
 	struct stream_target *target = target_get(number);
 	struct later_pixels *later;
+	int format;
 
 	(void)context;
 	if (!target || target->depth || target->width != width || target->height != height ||
@@ -996,12 +998,14 @@ static struct host_render_later_pixels *stream_read_target_later(void *context, 
 		return NULL;
 	}
 	target_resolve(target);
-	later->readback = xgpu_vulkan_readback_begin(target->image, 0, &later->pixels.halves);
+	later->readback = xgpu_vulkan_readback_begin(target->image, 0, &format);
 	if (!later->readback)
 	{
 		free(later);
 		return NULL;
 	}
+	later->pixels.format = format == XGPU_VULKAN_FORMAT_RGBA16F ? HOST_RENDER_LATER_HALVES :
+		format == XGPU_VULKAN_FORMAT_RGBA16 ? HOST_RENDER_LATER_DEEP : HOST_RENDER_LATER_BGRA8;
 	later->pixels.wait = later_pixels_wait;
 	later->pixels.release = later_pixels_release;
 	return &later->pixels;

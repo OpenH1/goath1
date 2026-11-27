@@ -5544,7 +5544,7 @@ static struct
 	int stopping;
 } readbacks = { .lock = PTHREAD_MUTEX_INITIALIZER, .released = PTHREAD_COND_INITIALIZER };
 
-struct xgpu_vulkan_readback *xgpu_vulkan_readback_begin(struct xgpu_vulkan_image *image, uint32_t layer, int *halves)
+struct xgpu_vulkan_readback *xgpu_vulkan_readback_begin(struct xgpu_vulkan_image *image, uint32_t layer, int *format)
 {
 	struct xgpu_vulkan_readback *readback = NULL;
 	VkCommandBuffer commands;
@@ -5554,12 +5554,14 @@ struct xgpu_vulkan_readback *xgpu_vulkan_readback_begin(struct xgpu_vulkan_image
 	uint32_t index;
 
 	if (!image || image->description.samples > 1 || (image->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) ||
-		(image->description.format != XGPU_VULKAN_FORMAT_RGBA16F && image->description.format != XGPU_VULKAN_FORMAT_BGRA8))
+		(image->description.format != XGPU_VULKAN_FORMAT_RGBA16F && image->description.format != XGPU_VULKAN_FORMAT_RGBA16 &&
+		image->description.format != XGPU_VULKAN_FORMAT_BGRA8))
 	{
 		return NULL;
 	}
-	*halves = image->description.format == XGPU_VULKAN_FORMAT_RGBA16F;
-	size = (VkDeviceSize)image->description.width * image->description.height * (*halves ? 8 : 4);
+	*format = image->description.format;
+	size = (VkDeviceSize)image->description.width * image->description.height *
+		(image->description.format == XGPU_VULKAN_FORMAT_BGRA8 ? 4 : 8);
 	done = completed_serial();
 	pthread_mutex_lock(&readbacks.lock);
 	for (index = 0; index < LATER_READBACKS && !readbacks.stopping && !readback; index++)

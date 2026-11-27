@@ -147,18 +147,36 @@ static int png_write(unsigned char *bgra, uint32_t width, uint32_t height, const
 }
 
 /* the frame read back for a job (job->later): waited for, made BGRA8 (a
-copy, whose alpha png_write sets), and let go of; NULL if it never came or
-there is no memory */
+copy, whose alpha png_write sets; display.hdr's tone mapped, as
+read_target's tone_map; display.output_depth's 16-bit channels rounded to
+8, as the Vulkan backend's read_pixels), and let go of; NULL if it never
+came or there is no memory */
 static unsigned char *later_bgra(struct screenshot_job *job)
 {
 	const void *pixels = job->later->wait(job->later);
-	size_t bytes = (size_t)job->width * job->height * 4;
+	size_t count = (size_t)job->width * job->height, pixel;
 	unsigned char *bgra = NULL;
 
-	if (pixels && job->later->halves)
+	if (pixels && job->later->format == HOST_RENDER_LATER_HALVES)
 		bgra = halves_tone_mapped(pixels, job->width, job->height);
-	else if (pixels && (bgra = SDL_malloc(bytes)) != NULL)
-		memcpy(bgra, pixels, bytes);
+	else if (pixels && (bgra = SDL_malloc(count * 4)) != NULL)
+	{
+		if (job->later->format == HOST_RENDER_LATER_DEEP)
+		{
+			const uint16_t *from = pixels;
+
+			/* (RGBA as BGRA) */
+			for (pixel = 0; pixel < count; pixel++)
+			{
+				bgra[pixel * 4] = (unsigned char)((from[pixel * 4 + 2] * 255u + 32767u) / 65535u);
+				bgra[pixel * 4 + 1] = (unsigned char)((from[pixel * 4 + 1] * 255u + 32767u) / 65535u);
+				bgra[pixel * 4 + 2] = (unsigned char)((from[pixel * 4] * 255u + 32767u) / 65535u);
+				bgra[pixel * 4 + 3] = (unsigned char)((from[pixel * 4 + 3] * 255u + 32767u) / 65535u);
+			}
+		}
+		else
+			memcpy(bgra, pixels, count * 4);
+	}
 	job->later->release(job->later);
 	job->later = NULL;
 	return bgra;
