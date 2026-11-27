@@ -45,8 +45,9 @@ own GPU time (xgpu_stream_gpu_frames) after the pipelines' states, which a
 host of 24 would not write and a guest of 24 has no room for. 26:
 CONTACT_SHADOWS (display.contact_shadows), which a host of 25 would refuse
 as a record it does not know. 27: GPUS (display.gpu's devices, Settings'
-GRAPHICS CARD), which a host of 26 would refuse so */
-#define XGPU_STREAM_VERSION 27
+GRAPHICS CARD), which a host of 26 would refuse so. 28: LT_LIGHTS (the
+light-transport pass's light list), which a host of 27 would refuse so */
+#define XGPU_STREAM_VERSION 28
 #define XGPU_STREAM_LOADING_ART_BYTES (640u * 480u * 4u)
 /* and the picture at its own size after it, where there is one (loading_art.h's LOADING_ART_SOURCE_BYTES) */
 #define XGPU_STREAM_LOADING_ART_SOURCE_BYTES (1600u * 1200u * 4u)
@@ -366,6 +367,9 @@ enum
 	/* display.rt_bounce: a window's lights that bounce
 	(xgpu_backend_rt_bounce) */
 	XGPU_STREAM_RT_BOUNCE,
+	/* the light-transport pass's light list: every dynamic light as drawn
+	and the suns (port/linux/game/lt_lights.c; xgpu_backend_lt_lights) */
+	XGPU_STREAM_LT_LIGHTS,
 	XGPU_STREAM_RECORD_TYPES,
 };
 
@@ -1542,6 +1546,65 @@ struct xgpu_stream_rt_bounce
 	struct xgpu_stream_rt_bounce_light lights[XGPU_STREAM_RT_BOUNCE_LIGHTS];
 };
 
+/* LT_LIGHTS: a window's light list for the light-transport pass
+(~/dev/rt2-realtime-design.md's contract C4; port/linux/game/lt_lights.c,
+whose lt_lights.h has the game's copy of the light, the same: change both):
+count lights (0 to XGPU_STREAM_LT_LIGHTS_MAXIMUM, 144 bytes each) inline at
+lights (none: 0), the window (0 to 3) and the game's count of lists sent */
+#define XGPU_STREAM_LT_LIGHTS_MAXIMUM 1024
+enum
+{
+	XGPU_LT_LIGHT_POINT,
+	XGPU_LT_LIGHT_SPOT,
+	XGPU_LT_LIGHT_PANEL,
+	XGPU_LT_LIGHT_DIRECTIONAL,
+};
+enum
+{
+	XGPU_LT_LIGHT_MODELS_ONLY = 1 << 0,
+	XGPU_LT_LIGHT_HALO = 1 << 1,
+	XGPU_LT_LIGHT_PROJECTILE = 1 << 2,
+	XGPU_LT_LIGHT_FLASHLIGHT = 1 << 3,
+	XGPU_LT_LIGHT_PANEL_FLAG = 1 << 4,
+	XGPU_LT_LIGHT_GEL = 1 << 8,
+	XGPU_LT_LIGHT_BAKED = 1 << 9,
+	XGPU_LT_LIGHT_FIRST_PERSON = 1 << 10,
+	XGPU_LT_LIGHT_LIGHTMAP_DIRECT = 1 << 11,
+	XGPU_LT_LIGHT_NO_SPECULAR = 1 << 12,
+	XGPU_LT_LIGHT_NOT_OWN_OBJECT = 1 << 13,
+	XGPU_LT_LIGHT_UNSTABLE_ID = 1 << 14,
+};
+enum
+{
+	XGPU_LT_LIGHT_SOURCE_OWN_FIRST = 1,
+	XGPU_LT_LIGHT_SOURCE_GAME = 4,
+	XGPU_LT_LIGHT_SOURCE_COPY = 5,
+	XGPU_LT_LIGHT_SOURCE_SUN = 6,
+	XGPU_LT_LIGHT_SOURCE_FRAME = 7,
+};
+/* (each member as lt_lights.h describes it) */
+struct xgpu_stream_lt_light
+{
+	uint32_t id[2];
+	uint32_t kind, flags;
+	uint32_t object, owner;
+	int32_t gel_slot, gel_tag;
+	float position[3], emitter_radius;
+	float forward[3], range;
+	float up[3], cone_inner;
+	float left[3], cone_outer;
+	float emitter[3], power_scale;
+	float power[3], angular_diameter;
+	float color[3], gel_width;
+};
+struct xgpu_stream_lt_lights
+{
+	uint32_t header;
+	uint32_t count, lights;
+	int32_t window;
+	uint32_t frame;
+};
+
 /* ---------- the VR mode
 
 The backend composes each frame (the eyes' images, the HUD's and its
@@ -1940,6 +2003,8 @@ XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_dynamic_lights_halos, 192);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_rt_shadow_caster, 32);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_rt_shadows, 160);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_rt_bounce, 16 + 48 * XGPU_STREAM_RT_BOUNCE_LIGHTS);
+XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_lt_light, 144);
+XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_lt_lights, 20);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_dynamic_lights_world, 12);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_vr_info, 108);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_vr_eyes, 36 + 4 * 52);

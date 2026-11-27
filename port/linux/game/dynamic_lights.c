@@ -70,6 +70,7 @@ structure's 3D BSP, from which a pixel finds its cluster
 #include "world_rt.h"
 #include "world_ao.h"
 #include "rasterizer/rasterizer_environment.h"
+#include "lt_lights.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -567,6 +568,9 @@ void dynamic_lights_submit(
 	total = dynamic_lights_sources(dynamic_lights_copies(count));
 	dynamic_lights_shadowed(total);
 	dynamic_lights_flashlights(count);
+	/* (the light-transport pass's list: every light as drawn, by its key, lt_lights.c) */
+	lt_lights_frame(dynamic_lights.lights, dynamic_lights.keys, dynamic_lights.objects, dynamic_lights.owners,
+		dynamic_lights.baked, count, total);
 	memset(dynamic_lights.keys, 0, sizeof(dynamic_lights.keys));
 	memset(dynamic_lights.baked, 0, sizeof(dynamic_lights.baked));
 	total = dynamic_lights_bounce(dynamic_lights.lights, total); /* (dynamic_lights_bounce.c) */

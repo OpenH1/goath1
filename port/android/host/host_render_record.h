@@ -44,8 +44,9 @@ host_render_stream_gpu_frames); a recording of 4 plays as it did.
 6: the stream's 26, whose records are 25's and CONTACT_SHADOWS; a recording
 of 5 (none of them) plays as it did. 7: the stream's 27, whose records are
 26's and GPUS (synchronous: a recording's answer is the replay's own
-backend's); a recording of 6 plays as it did */
-#define HOST_RENDER_RECORD_VERSION 7
+backend's); a recording of 6 plays as it did. 8: the stream's 28, whose records are 27's and
+LT_LIGHTS; a recording of 7 (none of them) plays as it did */
+#define HOST_RENDER_RECORD_VERSION 8
 
 /* the file: this header, then blocks, each a block header and its bytes:
 together, the events, each an event header and its bytes (an event may

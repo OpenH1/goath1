@@ -416,6 +416,14 @@ static void record_memory(const unsigned char *start, uint32_t type, uint32_t si
 			outside(world->texels, world->count * 16);
 		break;
 	}
+	case XGPU_STREAM_LT_LIGHTS:
+	{
+		const struct xgpu_stream_lt_lights *list = (const void *)start;
+
+		if (list->count && list->count <= XGPU_STREAM_LT_LIGHTS_MAXIMUM)
+			outside(list->lights, list->count * (uint32_t)sizeof(struct xgpu_stream_lt_light));
+		break;
+	}
 	case XGPU_STREAM_VR_INITIALIZE:
 		outside(((const struct xgpu_stream_reply_record *)start)->reply, sizeof(struct xgpu_stream_vr_info));
 		break;
