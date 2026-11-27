@@ -1,8 +1,7 @@
 // W3's spatial stage (xgpu_vulkan_denoise.c): one pass of a variance-guided a-trous filter (SVGF, Schied 2017), the
-// 5x5 B3 kernel at a step of control.z pixels (1, 2, 4, 8 over the passes), its weights stopped at edges: another
-// owner, a pixel not drawn, the depth off this pixel's plane, the shaded and geometric normals' turn, and a luminance
-// difference beyond its estimate's deviation (prefiltered 3x3; under 4 frames a spatial guess, and steps 1 and 2
-// alone). The weights are normalized, so a flat region's mean is kept. The first pass reads the temporal stage's mean
+// 5x5 B3 kernel at a step of control.z pixels (1, 2, 4 over the passes), its weights stopped at edges: another
+// owner, a pixel not drawn, the depth off this pixel's plane, the shaded normal's turn, and a luminance difference
+// beyond its estimate's deviation (prefiltered 3x3; under 4 frames a spatial guess, and steps 1 and 2 alone). The weights are normalized, so a flat region's mean is kept. The first pass reads the temporal stage's mean
 // (its deviation: the samples' over the root of the count); each passes on (rgb, the estimate's standard deviation,
 // propagated as the root of the sum of w^2 var over the weights' sum), in half floats. Each pixel's guides are read
 // from the filter guide (lt/denoise_guide.frag): one 8-byte texel.
@@ -117,11 +116,10 @@ void main()
             {
                 vec3 pq = world_point(q, unpackHalf2x16(other.y).x);
                 vec4 on = unpackSnorm4x8(other.x);
-                // (the shaded normal's turn, strictly: the bump map's detail is in the light, and kept; the geometric
-                // one's more loosely: which side faces the light; the depth off this pixel's plane; the luminance)
-                float e = (1.0 - dot(shaded, unfold(on.xy))) / pass.tuning.w +
-                    (1.0 - dot(n, unfold(on.zw))) / (10.0 * pass.tuning.w) +
-                    abs(dot(n, pq - p)) / sigma_z + abs(luminance(c.rgb) - lp) / sigma_l;
+                // (the shaded normal's turn, strictly: the bump map's detail is in the light, and kept; the depth off
+                // this pixel's plane; the luminance)
+                float e = (1.0 - dot(shaded, unfold(on.xy))) / pass.tuning.w + abs(dot(n, pq - p)) / sigma_z +
+                    abs(luminance(c.rgb) - lp) / sigma_l;
                 w *= exp(-e);
             }
             sum += w * c.rgb;

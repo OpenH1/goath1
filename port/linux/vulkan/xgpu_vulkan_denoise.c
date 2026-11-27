@@ -19,9 +19,9 @@ sample (HALO_LT_E1=denoise, xgpu_vulkan_lt.c):
    (1/n, n up to 64: never an exponential average, never clamped to the
    neighbourhood);
 4. the spatial stage: each pixel's guides in one texel (lt/denoise_guide.frag),
-   then 4 passes of the variance-guided a-trous filter (lt/denoise_atrous.frag,
-   steps 1, 2, 4, 8; half floats), its weights normalized, stopped at owners,
-   depth, normals and luminance;
+   then 3 passes of the variance-guided a-trous filter (lt/denoise_atrous.frag,
+   steps 1, 2, 4; half floats), its weights normalized, stopped at owners,
+   depth, the shaded normal and luminance;
 5. this frame's inputs, guides and sample kept for the next.
 
 The last pass's image is the denoised irradiance the surfaces read (C3). Its
@@ -55,8 +55,8 @@ Render thread alone.
 #define DENOISE_KIND 0xfb
 /* the diffuse history's cap (frames) */
 #define DENOISE_CAP 64
-/* the a-trous passes (steps 1, 2, 4, 8) */
-#define DENOISE_PASSES 4
+/* the a-trous passes (steps 1, 2, 4) */
+#define DENOISE_PASSES 3
 /* the luminance's edge-stop (standard deviations of the estimate), the
 depth's (a share of the distance off the pixel's plane), the shaded normal's
 (1 - cos: about 2 degrees halves a weight, 5 leave 2%) */
