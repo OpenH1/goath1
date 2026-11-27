@@ -11,7 +11,7 @@
 #include "gradient_pixel.glsl"
 
 layout(set = 1, binding = 0) uniform usampler2D inputs;
-layout(set = 1, binding = 1) uniform usampler2D previous_inputs;
+layout(set = 1, binding = 1) uniform usampler2D previous_guide;
 layout(set = 1, binding = 2) uniform sampler2D reshaded;
 layout(set = 1, binding = 3) uniform sampler2D previous_raw;
 layout(set = 1, binding = 4) uniform usampler2D guides;
@@ -36,7 +36,7 @@ void main()
         if (!reproject(p, pixel, texelFetch(guides, pixel, 0).w, at))
             continue;
         ivec2 q = ivec2(floor(at));
-        if (!lt_gradient_pixel(q, pass.tuning.x) || !same_surface(texelFetch(previous_inputs, q, 0), p, n, words.w))
+        if (!lt_gradient_pixel(q, pass.tuning.x) || !same_surface(texelFetch(previous_guide, q, 0).xy, p, n, words.w))
             continue;
         vec4 now = texelFetch(reshaded, q, 0);
         if (now.a <= 0.0)

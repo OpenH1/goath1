@@ -14,7 +14,7 @@
 layout(set = 1, binding = 0) uniform sampler2D raw;
 layout(set = 1, binding = 1) uniform usampler2D inputs;
 layout(set = 1, binding = 2) uniform usampler2D guides;
-layout(set = 1, binding = 3) uniform usampler2D previous_inputs;
+layout(set = 1, binding = 3) uniform usampler2D previous_guide;
 layout(set = 1, binding = 4) uniform usampler2D history;
 layout(set = 1, binding = 5) uniform sampler2D gradients;
 
@@ -86,7 +86,7 @@ void main()
             float w = ((k & 1) != 0 ? t.x : 1.0 - t.x) * ((k >> 1) != 0 ? t.y : 1.0 - t.y);
             if (w <= 0.0 || any(lessThan(q, pass.previous_corners.xy)) ||
                 any(greaterThanEqual(q, pass.previous_corners.zw)) ||
-                !same_surface(texelFetch(previous_inputs, q, 0), p, n, words.w))
+                !same_surface(texelFetch(previous_guide, q, 0).xy, p, n, words.w))
                 continue;
             uvec4 h = texelFetch(history, q, 0);
             vec2 cv = unpackHalf2x16(h.w);
@@ -116,7 +116,7 @@ void main()
                 {
                     ivec2 q = base + ivec2(i - 1, j - 1);
                     if (any(lessThan(q, pass.previous_corners.xy)) || any(greaterThanEqual(q, pass.previous_corners.zw)) ||
-                        !same_surface(texelFetch(previous_inputs, q, 0), p, n, words.w))
+                        !same_surface(texelFetch(previous_guide, q, 0).xy, p, n, words.w))
                     {
                         whole = false;
                         break;

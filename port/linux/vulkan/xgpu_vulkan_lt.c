@@ -562,18 +562,24 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 	lt.current ^= 1;
 	xgpu_vulkan_pass_owner(LT_OWNER);
 	lt_pass_draw(lt.means[lt.current], rectangle, pass, &params, &lt.pass, inputs, history, lt.previous, lt.guides);
+	if (lt.mode == XGPU_VULKAN_LT_DENOISE)
+	{
+		/* (the denoiser: this frame's sample and the last's, this frame's
+		inputs and the last's (before they are copied over), this frame's
+		light kept for its re-shade) */
+		int had = lt.previous_valid;
+
+		lt.reshade_params = params;
+		lt.reshade_params.control[3] &= ~LT_RESET;
+		lt.reshade_params.control[3] |= LT_GRADIENT;
+		denoised = xgpu_vulkan_denoise_draw(lt.means[lt.current], had ? history : NULL, inputs,
+			had ? lt.previous : NULL, lt.guides, pass, rectangle);
+		xgpu_vulkan_pass_owner(LT_OWNER);
+	}
 	/* (this frame's inputs kept for the next's reprojection) */
 	xgpu_vulkan_image_copy(inputs, 0, 0, lt.previous, 0, 0);
 	lt.previous_valid = 1;
 	xgpu_vulkan_pass_owner(NULL);
-	if (lt.mode == XGPU_VULKAN_LT_DENOISE)
-	{
-		/* (the denoiser's: this frame's light kept for its re-shade) */
-		lt.reshade_params = params;
-		lt.reshade_params.control[3] &= ~LT_RESET;
-		lt.reshade_params.control[3] |= LT_GRADIENT;
-		denoised = xgpu_vulkan_denoise_draw(lt.means[lt.current], inputs, lt.guides, pass, rectangle);
-	}
 	{
 		/* (HALO_LT_E1_DUMP_EVERY: every so many frames too, a held frame's) */
 		static long every = -1;

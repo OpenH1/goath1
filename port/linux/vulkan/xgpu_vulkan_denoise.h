@@ -14,11 +14,13 @@ display.rt_bounce's binding). Render thread alone.
 #include "xgpu_stream.h"
 #include "xgpu_vulkan.h"
 
-/* this frame's noisy irradiance (raw: RGBA32F, rgb the 1-spp sample), the
-pre-pass's inputs and guides (xgpu_spirv.h's C1), its uniforms and the
+/* this frame's noisy irradiance (raw: RGBA32F, rgb the 1-spp sample) and
+the last frame's (NULL where there is none), the pre-pass's inputs (this
+frame's, the last's) and guides (xgpu_spirv.h's C1), its uniforms and the
 rectangle drawn: the denoised irradiance (RGBA16F, rgb; a the estimate's
 standard deviation), or NULL where it cannot be had yet (the raw then bound) */
-struct xgpu_vulkan_image *xgpu_vulkan_denoise_draw(struct xgpu_vulkan_image *raw, struct xgpu_vulkan_image *inputs,
+struct xgpu_vulkan_image *xgpu_vulkan_denoise_draw(struct xgpu_vulkan_image *raw,
+	struct xgpu_vulkan_image *previous_raw, struct xgpu_vulkan_image *inputs, struct xgpu_vulkan_image *previous_inputs,
 	struct xgpu_vulkan_image *guides, const struct xgpu_world_ao_pass *pass, const int32_t rectangle[4]);
 
 /* its passes' pipelines asked for (made apart from the draws), with the

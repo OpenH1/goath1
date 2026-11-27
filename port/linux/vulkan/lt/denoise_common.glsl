@@ -80,13 +80,13 @@ bool reproject(vec3 p, ivec2 pixel, uint motion, out vec2 at)
         all(lessThan(at, vec2(pass.previous_corners.zw)));
 }
 
-// whether the previous frame's pixel q (its inputs: before) is the same surface as this one's (p, its geometric
-// normal n, owner): present, the same owner, the distance from the previous camera within 3%, the normal within 25
-// degrees
-bool same_surface(uvec4 before, vec3 p, vec3 n, uint owner)
+// whether the previous frame's pixel q (its filter guide: before, lt/denoise_guide.frag) is the same surface as this
+// one's (p, its geometric normal n, owner): drawn, the same owner, the distance from the previous camera within 3%,
+// the normal within 25 degrees
+bool same_surface(uvec2 before, vec3 p, vec3 n, uint owner)
 {
-    float was_distance = uintBitsToFloat(before.z), now_distance = length(p - pass.previous[0].xyz);
-    return (before.y & INPUT_PRESENT) != 0u && before.w == owner &&
+    float was_distance = unpackHalf2x16(before.y).x, now_distance = length(p - pass.previous[0].xyz);
+    return (before.y & 0xFFFFu) != 0u && (before.y >> 16) == (owner & 0xFFFFu) &&
         abs(was_distance - now_distance) <= DEPTH_SHARE * now_distance &&
-        dot(unfold(unpackSnorm2x16(before.x)), n) >= COS_25;
+        dot(unfold(unpackSnorm4x8(before.x).zw), n) >= COS_25;
 }
