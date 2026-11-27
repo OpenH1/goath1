@@ -3787,7 +3787,9 @@ static void timing_mark(VkCommandBuffer main, const struct segment *segment, int
 	else
 	{
 		image = segment->color.image ? segment->color.image : segment->depth.image;
-		snprintf(timing.passes[timing.pass_count].label, TIMING_LABEL, "%s%ux%u%s%s%s", aside ? "aside " : "pass ",
+		/* (a setting's pass named by its owner first, where the passes' owners are kept: HALO_PASS_TIMES) */
+		snprintf(timing.passes[timing.pass_count].label, TIMING_LABEL, "%s%s%s%ux%u%s%s%s",
+			segment->owner ? segment->owner : "", segment->owner ? " " : "", aside ? "aside " : "pass ",
 			segment->area.extent.width, segment->area.extent.height, segment->color.image ? " colour" : "",
 			segment->depth.image ? " depth" : "", image && image->description.samples > 1 ? " msaa" : "");
 		timing.passes[timing.pass_count].width = segment->area.extent.width;

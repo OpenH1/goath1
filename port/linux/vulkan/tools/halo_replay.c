@@ -12,7 +12,9 @@ functions (tools/windows_build.py), as build/windows/halo_replay.exe.
 
 The pipeline cache is <file>.vkpipelines (HALO_VULKAN_PIPELINE_CACHE names
 another file, or none: empty); HALO_VULKAN_VALIDATION=1 turns on the
-validation layers.
+validation layers. HALO_LT_SHADER_DIR (debug) reads the light-transport
+pass's kernels from that folder's SPIR-V (tools/rt2_scorecard.py shader),
+again at each "reload" request.
 */
 
 #include "host.h"
@@ -20,6 +22,7 @@ validation layers.
 #include "host_render_replay.h"
 #include "host_render_stream.h"
 #include "xgpu_vulkan.h"
+#include "xgpu_vulkan_lt.h"
 #include "xgpu_vulkan_stream.h"
 
 #include <stdio.h>
@@ -143,6 +146,9 @@ static const struct host_render_replay_platform vulkan_platform =
 	.call_kinds = XGPU_VULKAN_CALL_KINDS,
 	.call_kind_names = xgpu_vulkan_call_kind_names,
 	.calls_watch = vulkan_calls_watch,
+	/* (debug: the light-transport pass's kernels from HALO_LT_SHADER_DIR's
+	SPIR-V, read again on "reload") */
+	.shaders_reload = xgpu_vulkan_lt_shaders_reload,
 };
 
 int main(int argc, char *argv[])

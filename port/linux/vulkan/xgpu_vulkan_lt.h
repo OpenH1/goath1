@@ -40,5 +40,9 @@ surfaces read display.rt_bounce's; nonzero where the mode is on (the bounce
 then not drawn) */
 int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_world_ao_pass *pass,
 	const unsigned char *cells, const struct xgpu_dynamic_lights_block *block);
+/* debug: the kernels read again, at the pass's next draw, from folder's
+<source>.spv files (NULL: HALO_LT_SHADER_DIR's, or the last given), the
+built-in ones where a file is not there (the replay's "reload") */
+void xgpu_vulkan_lt_shaders_reload(const char *folder);
 
 #endif

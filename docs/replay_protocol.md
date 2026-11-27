@@ -39,7 +39,8 @@ unchanged (version 2 added `cost` and `info`'s `protocols`, `capabilities`
 and `cost_methods`; version 3 added `hold` and the `hold` and `linear`
 capabilities; nothing earlier changed). `cost`'s `"cpu"` and `info`'s
 `call_kinds` were added to version 2 later: a service has them if its
-`capabilities` has `"cpu_cost"`. The version is raised when a
+`capabilities` has `"cpu_cost"`, and `reload` to version 3 later: a service
+has it if its `capabilities` has `"reload"`. The version is raised when a
 request or a reply changes so that a client of the old version would misread
 it; added fields do not raise it, and a client ignores fields it does not
 know. A service without `"protocol"` speaks version 1, and one without
@@ -185,6 +186,28 @@ technique's reset): frame 1 against 120 is then convergence from nothing.
   would say `"scene"`).
 
 A frame asked for after a hold is played from the start again, exactly.
+
+### reload
+
+A debug request, for trying a kernel's change on a held frame without
+building the game again or recording it again:
+
+```json
+{"cmd": "reload", "dir": "/abs/spv-b"}
+{"ok": true, "dir": "/abs/spv-b"}
+```
+
+From the next frame played, the backend's own kernels are read again from
+the folder's SPIR-V files, `<source>.spv` (Vulkan's light-transport pass:
+`e1.vert.spv`, `e1.frag.spv`, from `port/linux/vulkan/lt/`), the built-in
+ones where a file is not there; that pass's history begins again. Without
+`"dir"`, the folder already read (or `HALO_LT_SHADER_DIR`, which also turns
+the files on from the start) is read again. A change is seen with a `hold`
+after it (`"reset": true`, and a shot after the first, which is the frame
+as recorded). Flipping between two versions is a reload of each folder: a
+kernel already made is not compiled again. `tools/rt2_scorecard.py shader`
+compiles the GLSL, copies it and asks for this. Only where `capabilities`
+has `"reload"`.
 
 ### cost
 
