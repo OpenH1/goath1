@@ -273,7 +273,6 @@ boolean motion_vectors_window_begin(short local_player_index, boolean eligible, 
 {
 	struct motion_window *slot;
 	real jitter_x = 0.0f, jitter_y = 0.0f;
-
 	int technique = motion_vectors_technique();
 
 	motion_vectors.active = FALSE;
