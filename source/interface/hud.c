@@ -1705,6 +1705,25 @@ static void hud_draw_match_timer(
 	return;
 }
 
+/* port: the state line (hud_show_action_response's: an action's prompt, the
+game engine's state message, such as the multiplayer start's score hint) goes
+with the HUD: set each frame it is shown, and cleared while it is hidden (the
+scripts' show_hud, the player's Hide HUD). The original set it only while
+show_hud was on and hud_messaging_update draws it either way, so the last line
+set stayed on screen, unchanged, until the HUD came back ("Hold BACK for
+score" for good after a show_hud 0 in a game's first 15 seconds). A cinematic,
+the letterbox's too, draws no messages (hud_messaging_update) */
+static void hud_update_state_line(
+	long player_index)
+{
+	if (hud_shown())
+		hud_show_action_response(player_index);
+	else
+		hud_enable_custom_state_message(render.local_player_index, FALSE);
+
+	return;
+}
+
 void hud_draw_screen(
 	void)
 {
@@ -1779,6 +1798,8 @@ void hud_draw_screen(
 			motion_sensor_tick();
 		}
 
+		/* port: the state line with the HUD (hud_update_state_line) */
+		hud_update_state_line(player_index);
 		if (hud_shown())
 		{
 			if (perspective != _director_perspective_neutral &&
@@ -1794,7 +1815,6 @@ void hud_draw_screen(
 #ifdef HALO_VR
 				halo_vr_hud_group(HALO_VR_HUD_GROUP_CENTRE);
 #endif
-				hud_show_action_response(player_index);
 				/* port: (the warning sounds, once a tick: hud_tick_begin) */
 #ifdef HALO_VR
 				halo_vr_hud_group(HALO_VR_HUD_BY_ANCHOR);
@@ -1810,10 +1830,6 @@ void hud_draw_screen(
 #endif
 				render_marks_hud(NONE, "damage indicators"); /* port: debug.render_marks */
 				hud_render_damage_indicators(render.local_player_index);
-			}
-			else
-			{
-				hud_show_action_response(player_index);
 			}
 		}
 		/* port: (the warning sounds, once a tick, hud_tick_begin: the frames
