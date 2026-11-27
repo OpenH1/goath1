@@ -33,6 +33,9 @@ enum
 
 /* the mode (HALO_LT_E1, read once) */
 int xgpu_vulkan_lt_mode(void);
+/* the pre-pass's twins' guides (xgpu_spirv.h's C1), which the pass reads
+for the shaded normal */
+void xgpu_vulkan_lt_guides(struct xgpu_vulkan_image *guides);
 /* at the pre-pass's end (xgpu_vulkan_stream.c): the pass drawn from its
 inputs (the window's target's size), its uniforms and the frame's lights
 (the cells as the GPU has them, the block), its light bound where the

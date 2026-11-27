@@ -420,7 +420,7 @@ static struct
 {
 	int active, failed, twins;
 	uint32_t width, height, twins_made;
-	struct xgpu_vulkan_image *inputs, *depth, *pixels;
+	struct xgpu_vulkan_image *inputs, *depth, *pixels, *guides;
 	/* the previous pass's occlusion (the history the next reprojects:
 	the two in turn), and the cascades' linear sampler */
 	struct xgpu_vulkan_image *history;
@@ -2548,8 +2548,15 @@ static int draw_pipeline(const struct draw_input *input, int apart)
 		pipeline.view_mask = 0;
 		pipeline.depth_format = XGPU_VULKAN_FORMAT_D24S8;
 	}
+	/* (HALO_LT_E1: a twin's guides, its second attachment, xgpu_spirv.h's
+	C1; an occluder's attachment unwritten) */
+	if (prepass.drawing && xgpu_vulkan_lt_mode() && prepass.guides)
+	{
+		pipeline.motion_format = XGPU_VULKAN_FORMAT_RGBA32_UINT;
+		pipeline.motion_mask = (stream.definition->pixel_program.ambient_occlusion & 0x10u) ? 15 : 0;
+	}
 	/* (display.temporal_aa: the motion's attachment, written or not) */
-	if (motion_drawn)
+	else if (motion_drawn)
 	{
 		pipeline.motion_format = XGPU_VULKAN_FORMAT_RGBA32F;
 		pipeline.motion_mask = motion_writes ? 15 : 0;
@@ -4652,6 +4659,10 @@ static void prepass_draw(const struct draw_input *input)
 	twin = *definition;
 	if (!xgpu_stream_world_ao_twin(&twin))
 		return;
+	/* (HALO_LT_E1: a twin with the world's light keeps its dynamic lights,
+	so it shades its bump or normal map's normal for the guides) */
+	if (xgpu_vulkan_lt_mode() && (twin.pixel_program.ambient_occlusion & 0x10u))
+		twin.key.pixel.dynamic_lights = twin.pixel_program.dynamic_lights = definition->pixel_program.dynamic_lights;
 	entry = &prepass.entries[id];
 	if (memcmp(&twin, &prepass.definitions[id], sizeof(twin)))
 	{
@@ -4817,6 +4828,14 @@ static void stream_world_ao_prepass(void *context, const struct xgpu_stream_worl
 		xgpu_vulkan_pass_owner(PASS_OWNER_AO);
 		prepass.inputs = prepass_image(prepass.inputs, XGPU_VULKAN_FORMAT_RGBA32_UINT, target->width, target->height);
 		prepass.depth = prepass_image(prepass.depth, XGPU_VULKAN_FORMAT_D24S8, target->width, target->height);
+		/* (HALO_LT_E1: the twins' guides beside their inputs, the second
+		colour attachment: xgpu_spirv.h's C1) */
+		if (xgpu_vulkan_lt_mode())
+		{
+			prepass.guides = prepass_image(prepass.guides, XGPU_VULKAN_FORMAT_RGBA32_UINT, target->width,
+				target->height);
+			xgpu_vulkan_lt_guides(prepass.guides);
+		}
 		if (!prepass.inputs || !prepass.depth)
 			return;
 		prepass.width = target->width;
@@ -4825,6 +4844,8 @@ static void stream_world_ao_prepass(void *context, const struct xgpu_stream_worl
 		/* (a walk played twice: the pre-pass begun from the window's depth,
 		its own handed to the surfaces' walk at the END) */
 		prepass.primed_depth = record->replay ? prepass_prime_begin() : 0;
+		if (xgpu_vulkan_lt_mode() && prepass.guides)
+			xgpu_vulkan_set_motion_target(prepass.guides, prepass.inputs);
 		xgpu_vulkan_set_target_views(prepass.inputs, prepass.depth, 0, 1);
 		whole[0][0] = whole[0][1] = 0;
 		whole[0][2] = (int32_t)target->width;
@@ -4835,6 +4856,9 @@ static void stream_world_ao_prepass(void *context, const struct xgpu_stream_worl
 	}
 	if (record->phase == XGPU_WORLD_AO_PREPASS_END && prepass.active)
 	{
+		/* (HALO_LT_E1: the guides' attachment let go of) */
+		if (xgpu_vulkan_lt_mode())
+			xgpu_vulkan_set_motion_target(NULL, NULL);
 		const int32_t *corners = record->pass.corners;
 		/* (found at a quarter of the pixels: each 2x2 block's) */
 		int32_t scale = record->pass.camera[3][3] >= 2.0f ? 2 : 1;

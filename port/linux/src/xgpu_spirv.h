@@ -476,6 +476,29 @@ enum
 	XGPU_SPIRV_RT_BOUNCE_GATHER,
 };
 #define XGPU_SPIRV_BINDING_RT_BOUNCE 10
+
+/* The light-transport pass's guides (contract C1, ~/dev/rt2-realtime-design.md
+section 1.1), with HALO_LT_E1 alone: the pre-pass's twins keep their
+pipelines' dynamic lights (so they shade their bump or normal map's normal
+as the surfaces do) and write, beside their inputs, a second RGBA32Uint
+target (the pass's second colour attachment, location
+XGPU_SPIRV_GUIDES_LOCATION), a pixel each:
+- x: the shaded normal (the bump map's on the structure, the normal map's on
+  a model with one, else the interpolated one), octahedral, packSnorm2x16;
+- y: the geometric (interpolated vertex) normal, the same;
+- z: the material id (low 16 bits; 0 not known yet), the roughness (bits
+  16-23, 0 to 255; 255 where the draw has none) and the specular mask (bits
+  24-31: 255 where the draw has a reflection stage, else 0);
+- w: the motion (packHalf2x16, pixels from where the point was the frame
+  before); 0 for now (XGPU_SPIRV_GUIDES_MOTION_NONE: not yet written).
+A pixel the pre-pass drew no twin at has none (its inputs say so: their
+PRESENT bit). */
+#define XGPU_SPIRV_GUIDES_LOCATION 1
+#define XGPU_SPIRV_GUIDES_MATERIAL_MASK 0xFFFFu
+#define XGPU_SPIRV_GUIDES_ROUGHNESS_SHIFT 16
+#define XGPU_SPIRV_GUIDES_SPECULAR_SHIFT 24
+#define XGPU_SPIRV_GUIDES_ROUGHNESS_NONE 255u
+#define XGPU_SPIRV_GUIDES_MOTION_NONE 0u
 #define XGPU_SPIRV_RT_BOUNCE_SAMPLES 3
 #define XGPU_RT_BOUNCE_GRID_X 64
 #define XGPU_RT_BOUNCE_GRID_Y 64
