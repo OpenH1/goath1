@@ -19,6 +19,8 @@ GPU time (timestamps about the dispatch alone) and the rays it cast
 (counted on the GPU) are read once the GPU is past it, never waited for,
 and every PT_MEASURE_LOGGED frames of a kind logged: rays a second (all
 rays over all time; and the median frame's), the pixels, the time a frame.
+The pass is dispatched twice and the second timed alone (a timestamp before
+the first may be written while the passes before it still run).
 A measuring run has the GPU alone (goat-rig run without --shared).
 
 Render thread alone, as the core.
@@ -332,10 +334,12 @@ static void pt_measure_read(uint32_t slot)
 		sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) != VK_SUCCESS || stamps[1] <= stamps[0] || !counts[0])
 		return;
 	seconds = (double)(stamps[1] - stamps[0]) * pt_measure.timestamp_period * 1e-9;
+	/* (the second dispatch's rays: half those counted, both the same
+	pixels' and rays a pixel) */
 	if (pt_measure.frames[mode] < PT_MEASURE_LOGGED)
 	{
-		pt_measure.rates[mode][pt_measure.frames[mode]++] = (float)(counts[0] / seconds);
-		pt_measure.rays[mode] += counts[0];
+		pt_measure.rates[mode][pt_measure.frames[mode]++] = (float)(counts[0] * 0.5 / seconds);
+		pt_measure.rays[mode] += counts[0] * 0.5;
 		pt_measure.seconds[mode] += seconds;
 		pt_measure.pixels[mode] = pt_measure.slot_pixels[slot];
 	}
@@ -346,11 +350,12 @@ static void pt_measure_read(uint32_t slot)
 		{
 			qsort(pt_measure.rates[mode], PT_MEASURE_LOGGED, sizeof(float), pt_measure_compare);
 			host_logf(HOST_LOG_INFO, "vulkan: pt measure %u: %s rays: %.0f Mrays/s (median frame %.0f, p10 %.0f, "
-				"p90 %.0f), %u px x %u rays a frame, %.3f ms a frame", pt_measure.logged, pt_measure_mode_names[mode],
+				"p90 %.0f), %u px x %u rays a frame, %.0f rays traced a frame, %.3f ms a frame", pt_measure.logged, pt_measure_mode_names[mode],
 				pt_measure.rays[mode] / pt_measure.seconds[mode] * 1e-6,
 				pt_measure.rates[mode][PT_MEASURE_LOGGED / 2] * 1e-6, pt_measure.rates[mode][PT_MEASURE_LOGGED / 10] * 1e-6,
 				pt_measure.rates[mode][PT_MEASURE_LOGGED * 9 / 10] * 1e-6, pt_measure.pixels[mode],
-				pt_measure.rays_per_pixel, pt_measure.seconds[mode] * 1e3 / PT_MEASURE_LOGGED);
+				pt_measure.rays_per_pixel, pt_measure.rays[mode] / PT_MEASURE_LOGGED,
+				pt_measure.seconds[mode] * 1e3 / PT_MEASURE_LOGGED);
 			pt_measure.frames[mode] = 0;
 			pt_measure.rays[mode] = pt_measure.seconds[mode] = 0.0;
 		}
@@ -446,10 +451,16 @@ void xgpu_vulkan_pt_measure_draw(struct xgpu_vulkan_image *inputs, const struct 
 	read[0] = inputs;
 	xgpu_vulkan_pass_owner("PT MEASURE");
 	commands = xgpu_vulkan_outside_begin(read, 1, NULL, 0);
+	/* (twice, the second timed: a timestamp after the first dispatch is
+	after it, where one before it may be written while the passes before
+	still run, which measured them too) */
 	pt_measure.reset_queries(commands, pt_measure.times, slot * 2u, 2);
-	pt_measure.timestamp(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, pt_measure.times, slot * 2u);
 	pt_measure.bind_pipeline(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pt_measure.pipeline);
 	pt_measure.bind_sets(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pt_measure.layout, 0, 1, &pt_measure.sets[slot], 0, NULL);
+	pt_measure.push(commands, pt_measure.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
+	pt_measure.dispatch(commands, (width + 7u) / 8u, (height + 7u) / 8u, 1);
+	pt_measure.timestamp(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, pt_measure.times, slot * 2u);
+	push.parameters[0] = pt_measure.frame + 0x10000u;
 	pt_measure.push(commands, pt_measure.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
 	pt_measure.dispatch(commands, (width + 7u) / 8u, (height + 7u) / 8u, 1);
 	pt_measure.timestamp(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, pt_measure.times, slot * 2u + 1u);
