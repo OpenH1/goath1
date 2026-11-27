@@ -387,20 +387,20 @@ static void world_rt_render_mode(void)
 	}
 }
 
-/* whether triangles more as drawn fit the budget (skinned: this frame's
-posed objects'); past it logged once a map */
+/* whether triangles more as drawn fit the budget: the meshes kept (the
+level's and definitions', made once) first, a skinned object posed this
+frame in what they leave; past it logged once a map */
 static int world_rt_render_fits(long triangles, int skinned)
 {
 	unsigned long long wanted = (unsigned long long)(triangles > 0 ? triangles : 0) * WORLD_RT_TRIANGLE_BYTES;
 
-	if (!world_rt.budgeted || world_rt.render_bytes + world_rt.skinned_bytes + wanted <= world_rt.budget)
+	if (!world_rt.budgeted || world_rt.render_bytes + (skinned ? world_rt.skinned_bytes : 0) + wanted <= world_rt.budget)
 		return 1;
 	if (!world_rt.past_logged)
 		platform_log("world ao: the ray-traced scene as drawn is past this GPU's budget (%.0f MB; %.1f MB held, %.1f MB "
 			"posed, %ld triangles more): the rest traced as collision geometry", (double)(world_rt.budget >> 20),
 			(double)world_rt.render_bytes / 1048576.0, (double)world_rt.skinned_bytes / 1048576.0, triangles);
 	world_rt.past_logged = 1;
-	(void)skinned;
 	return 0;
 }
 

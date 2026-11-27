@@ -375,12 +375,13 @@ static boolean definition_is_model(long definition)
 	return tag_index_is_group(definition, MODELS_GROUP_TAG) || tag_index_is_group(definition, 'mod2');
 }
 
-/* a definition's collision model (NULL none) */
+/* a definition's collision model (NULL none: a model itself, the
+first-person weapon's or hands', has none) */
 static struct collision_model const *definition_collision_model(long definition)
 {
 	struct object_definition const *object_definition;
 
-	if (definition == NONE)
+	if (definition == NONE || definition_is_model(definition))
 		return NULL;
 	object_definition = object_definition_get(definition);
 	if (!object_definition || object_definition->object.collision_model.index == NONE)
