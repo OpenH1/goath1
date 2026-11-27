@@ -252,6 +252,8 @@ def render_scene(folder, out=None, spp_pass=8, target=0.01, max_spp=65536, max_m
     write_exr(parts / "indirect.exr", indirect)
     write_exr(parts / "emission.exr", emission)
     write_exr(parts / "static.exr", static)
+    for g in groups:  # each light group's whole light, to see what one source adds
+        write_exr(parts / ("group_%s.exr" % g), w[g] * mean[g]["full"])
     write_exr(parts / "direct_flashlight.exr",
               mean["flashlight"]["d2"] - mean["flashlight"]["d1"] if "flashlight" in mean else zero)
     irr = {g: acc_w[g] / n for g in groups}

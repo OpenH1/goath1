@@ -469,7 +469,7 @@ class Scene:
     # and reflects none of it (the bake already holds its bounces); objects are lit by that light, bounce it
     # and show it in reflections. No exposure: the lightmap is in the frame's units. "fit" keeps the
     # emitter reconstruction (sky, sun, radiosity emitters fitted to the lightmap).
-    LIGHTMAP_GROUPS = ("lightmap", "flashlight", "dynamic")
+    LIGHTMAP_GROUPS = ("lightmap", "glow", "flashlight", "dynamic")
 
     @property
     def groups(self):
@@ -478,6 +478,18 @@ class Scene:
     @property
     def static_groups(self):
         return ("lightmap",) if self.static_mode == "lightmap" else self.STATIC_GROUPS
+
+    # glow: the objects' self-illumination as drawn at the tick (objects.json's self_illumination; the
+    # environment shaders' is in the lightmap group, folded into the lightmap as the game's pass does)
+    def object_glow(self):
+        out = {}
+        p = self.folder / "geometry" / "objects.json"
+        if p.exists():
+            for o in json.loads(p.read_text()):
+                for e in o.get("self_illumination") or []:
+                    if e.get("material", -1) >= 0 and max(e["color"]) > 0:
+                        out.setdefault((self.folder / "geometry" / o["file"]).resolve(), {})[int(e["material"])] = e["color"]
+        return out
 
     def lights_of(self, group):
         ls = (self.lights or {}).get("lights") or []
@@ -522,6 +534,8 @@ class Scene:
         return False
 
     def group_has_light(self, group):
+        if group == "glow":
+            return bool(self.object_glow())
         if group == "lightmap":
             self.load_geometry()
             return any((g[6] >= 0).any() for f, g in self.geometry.items() if f.parent.name != "objects")
@@ -584,6 +598,7 @@ class Scene:
         self.mesh_faces = {}
         # The flashlight and lights on the first-person weapon (a muzzle flash) sit inside it: the weapon and
         # hands are left out of their renders.
+        glow = self.object_glow() if group == "glow" else {}
         fp_files = self.first_person_files() if group == "flashlight" or (
             group == "dynamic" and any(L.get("attached_to_first_person_weapon") for L in self.lights_of(group))) else set()
         if group == "dynamic":
@@ -614,8 +629,15 @@ class Scene:
                 name = "%s_m%d" % (fpath.stem if not is_object else "obj_" + fpath.stem, mid)
                 self.mesh_faces[name] = (fpath, np.nonzero(mats == mid)[0])
                 tb = self.geometry[fpath][7]
-                shapes[name] = self.make_mesh(name, pos[used], n, uv[used], inv.reshape(-1, 3), bsdf,
-                                              mi.load_dict(emitter) if (emitter and emit) else None,
+                em_obj = mi.load_dict(emitter) if (emitter and emit) else None
+                if group == "glow" and is_object:
+                    color = glow.get(fpath.resolve(), {}).get(int(mid))
+                    mask = self.multipurpose(int(mid)) if color else None
+                    if mask is not None:
+                        em_obj = mi.load_dict({"type": "area", "radiance": {
+                            "type": "halo_self_illum", "albedo": self.albedos[int(mid)], "mask": mask,
+                            "color": [float(c) for c in color]}})
+                shapes[name] = self.make_mesh(name, pos[used], n, uv[used], inv.reshape(-1, 3), bsdf, em_obj,
                                               tb[used] if tb is not None else None)
         self.meshes = shapes
         lo, hi = self.bounds
@@ -693,12 +715,30 @@ class Scene:
             n = nrm[vv] if nrm is not None else None
             if n is not None and (not np.all(np.isfinite(n)) or np.any(np.linalg.norm(n, axis=1) < 0.5)):
                 n = None
-            em = mi.load_dict({"type": "area", "radiance": {
-                "type": "halo_lightmap_radiance", "albedo": self.albedos[int(mid)], "lightmap": tex, "gamma": 2.2}})
+            rad = {"type": "halo_lightmap_radiance", "albedo": self.albedos[int(mid)], "lightmap": tex, "gamma": 2.2}
+            m = self.materials[int(mid)] if int(mid) < len(self.materials) else {}
+            sim = m.get("self_illumination") if isinstance(m.get("self_illumination"), dict) else {}
+            now = sim.get("now")
+            si_img = self.image(sim["map"]) if sim.get("map") else None
+            if now and si_img is not None:
+                pv = float(now.get("plasma_value", 0.0))
+                plasma = [a * pv + b * (1 - pv) for a, b in zip(sim.get("plasma_on", [0, 0, 0]), sim.get("plasma_off", [0, 0, 0]))]
+                rad.update(si_map=self.bitmap(si_img[:, :, :3]), si_scale=float(sim.get("map_scale") or 1.0),
+                           si_primary=now["primary"], si_secondary=now["secondary"], si_plasma=plasma)
+                self.note_once("environment self-illumination added to the lightmap at the tick (plasma as on/off by "
+                               "its value, its noise left out)")
+            em = mi.load_dict({"type": "area", "radiance": rad})
             name = "%s_m%d" % (fpath.stem, mid)
             self.mesh_faces[name] = (fpath, fsel)
             shapes[name] = self.make_mesh(name, pos[vv], n, uv[vv], inv.reshape(-1, 3), surf, em,
                                           tb[vv] if tb is not None else None, a2)
+
+    def multipurpose(self, idx):
+        m = self.materials[idx] if 0 <= idx < len(self.materials) else {}
+        img = self.image(m["multipurpose_map"]) if m.get("multipurpose_map") else None
+        if img is None:
+            return None
+        return self.bitmap(img[:, :, :3])
 
     def light_owners(self):
         """The objects carrying a dynamic light (C4 leaves a light's owner out of its rays): a weapon within
