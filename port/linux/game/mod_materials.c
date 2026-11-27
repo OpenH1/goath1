@@ -345,6 +345,20 @@ void mod_materials_tags_unloaded(
 	return;
 }
 
+void mod_materials_maps(
+	long base_map_tag_index,
+	unsigned int *normal_map,
+	unsigned int *orm_map)
+{
+	struct mod_material const *material = mod_materials_globals.count && base_map_tag_index != NONE ?
+		material_find(base_map_tag_index) : NULL;
+
+	*normal_map = material ? material->images[_material_map_normal] : 0;
+	*orm_map = material ? material->images[_material_map_orm] : 0;
+
+	return;
+}
+
 void mod_materials_model_draw(
 	long base_map_tag_index)
 {

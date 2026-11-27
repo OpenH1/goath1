@@ -866,10 +866,16 @@ static int decode_record(struct host_render_decoder *decoder, const unsigned cha
 		const struct xgpu_stream_world_ao_mesh *mesh = (const void *)start;
 
 		if (mesh->id >= XGPU_STREAM_WORLD_AO_MESHES || mesh->count > XGPU_STREAM_WORLD_AO_MESH_TRIANGLES ||
-			(!mesh->id && (mesh->count || mesh->kind != XGPU_WORLD_AO_MESH_TRIANGLES)) ||
+			(!mesh->id && mesh->kind != XGPU_WORLD_AO_MESH_TEXTURES &&
+				(mesh->count || mesh->kind != XGPU_WORLD_AO_MESH_TRIANGLES)) ||
+			(mesh->id && mesh->kind == XGPU_WORLD_AO_MESH_TEXTURES) ||
 			(mesh->kind == XGPU_WORLD_AO_MESH_TRIANGLES && (uint64_t)mesh->count * 36u != mesh->size) ||
 			(mesh->kind == XGPU_WORLD_AO_MESH_RELEASE && (mesh->count || mesh->size)) ||
-			mesh->kind > XGPU_WORLD_AO_MESH_RELEASE ||
+			(mesh->kind == XGPU_WORLD_AO_MESH_TEXTURES &&
+				(mesh->count > XGPU_WORLD_RT_TEXTURES || (uint64_t)mesh->count * sizeof(struct xgpu_world_rt_texture) !=
+					mesh->size)) ||
+			(mesh->kind == XGPU_WORLD_AO_MESH_INDEXED && mesh->size < sizeof(struct xgpu_world_rt_mesh)) ||
+			mesh->kind > XGPU_WORLD_AO_MESH_TEXTURES ||
 			(mesh->size && !data_inside(decoder, start, size, mesh->data, mesh->size)))
 			return XGPU_STREAM_ERROR_BOUNDS;
 		CALL(world_ao_mesh, mesh);

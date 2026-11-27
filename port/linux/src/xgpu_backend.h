@@ -258,6 +258,18 @@ struct xgpu_world_ao_instance;
 void xgpu_backend_world_ao_mesh(unsigned long id, unsigned long count, const float *triangles);
 /* ... one mesh let go of alone (its id not given again this map) */
 void xgpu_backend_world_ao_mesh_release(unsigned long id);
+/* ... an indexed mesh, with what a ray's hit reads of it (xgpu_stream.h's
+struct xgpu_world_rt_mesh and what follows it, size bytes), and texture
+slots for its materials: each an Xbox texture's header (NULL none) or an
+image (xgpu_images.h: 0 none; neither empties the slot) */
+struct xgpu_backend_rt_texture
+{
+	unsigned long slot;
+	const void *header;
+	unsigned int image;
+};
+void xgpu_backend_world_ao_mesh_indexed(unsigned long id, const void *data, unsigned long size);
+void xgpu_backend_world_rt_textures(const struct xgpu_backend_rt_texture *textures, unsigned long count);
 void xgpu_backend_world_ao_instances(const struct xgpu_world_ao_instance *instances, unsigned long count);
 BOOL xgpu_backend_display_hdr(float *headroom);
 BOOL xgpu_backend_display_white(float *nits);

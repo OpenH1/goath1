@@ -325,6 +325,18 @@ struct world_ao_instance
 void halo_world_ao_mesh(unsigned long id, unsigned long count, float const *triangles);
 /* ... one mesh let go of alone (its id not given again this map) */
 void halo_world_ao_mesh_release(unsigned long id);
+/* ... a mesh as drawn, with what a ray's hit reads of it (xgpu_stream.h's
+struct xgpu_world_rt_mesh and what follows it, size bytes: world_rt.h's
+struct world_rt_mesh_header), and texture slots for its materials (as
+xgpu_backend.h's struct xgpu_backend_rt_texture) */
+struct world_rt_texture
+{
+	unsigned long slot;
+	void const *header;
+	unsigned int image;
+};
+void halo_world_rt_mesh(unsigned long id, void const *data, unsigned long size);
+void halo_world_rt_textures(struct world_rt_texture const *textures, unsigned long count);
 void halo_world_ao_instances(struct world_ao_instance const *instances, unsigned long count);
 /* where the window's opaque surfaces are drawn (WORLD_AO_SPAN_*), whatever
 the setting and while a map's pipelines are prepared: the draws that take

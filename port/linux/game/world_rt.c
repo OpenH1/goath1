@@ -16,15 +16,22 @@ are let go of when the map unloads. HALO_WORLD_AO_COUNTS logs, every 600
 frames, the instances a frame and the meshes made.
 
 With debug.rt_render_geometry (docs/rt-plan/1-geometry.md) the structure is
-traced as drawn: its opaque render triangles, made the frame after its
-collision mesh, which stands in for it until then (so that a load waits for
-no more than it did) and is let go of as the render mesh takes its place.
+traced as drawn: its render mesh, made the frame after its collision mesh,
+which stands in for it until then (so that a load waits for no more than it
+did) and is let go of as the render mesh takes its place. That mesh is
+indexed, its opaque triangles then its alpha-tested ones (whose rays test
+their alpha maps), with what a ray's hit reads (halo_world_rt_mesh): each
+vertex's coordinates, normal and tangent, each triangle's material, and the
+map's materials, each sent once, whose maps are named by the map's
+textures' slots (each found again every frame: its texture's header, sent
+as it changes, halo_world_rt_textures).
 */
 
 #include "world_ao.h"
 #include "world_proxies_source.h"
 #include "world_rt.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -53,6 +60,25 @@ enum
 #define WORLD_RT_ORIENT_LEAST 1.0e-6f
 
 /* ---------- structures */
+
+/* a material of the map: its shader, its lightmap page, the scale its
+alpha map is sampled at (a model's) */
+struct world_rt_material_key
+{
+	long shader;
+	struct world_rt_source_map lightmap;
+	float alpha_scale[2];
+};
+
+/* a texture's slot: its map (bitmap NONE: an image's), and the header the
+renderer was last given (NULL none) */
+struct world_rt_slot
+{
+	struct world_rt_source_map map;
+	unsigned int image;
+	void const *header;
+	int sent;
+};
 
 /* a definition's meshes: one for each node with collision geometry (0
 none), or the box where none has */
@@ -85,6 +111,15 @@ static struct
 	{
 		unsigned long collision, render;
 	} bsps[WORLD_RT_BSPS];
+	/* (as drawn) the map's materials (their keys; how many) and textures'
+	slots (from 1: each its map or image, and the header last sent), the
+	mesh being sent (its data), and the textures' slots to send */
+	struct world_rt_material_key *materials;
+	long material_count;
+	struct world_rt_slot *slots;
+	long slot_count;
+	unsigned char *blob;
+	unsigned long blob_capacity;
 	/* the frame the instances were last handed for */
 	unsigned long frame;
 	int framed;
@@ -184,6 +219,34 @@ void world_rt_transform(struct world_proxies_frame const *frame, float transform
 	}
 }
 
+unsigned long world_rt_octahedral(float const vector[3])
+{
+	float length = fabsf(vector[0]) + fabsf(vector[1]) + fabsf(vector[2]), x, y;
+	long packed[2];
+	int k;
+
+	if (!(length > 0.0f))
+		return 0;
+	x = vector[0] / length;
+	y = vector[1] / length;
+	/* (the lower half folded over the diagonals) */
+	if (vector[2] < 0.0f)
+	{
+		float folded_x = (1.0f - fabsf(y)) * (x >= 0.0f ? 1.0f : -1.0f);
+
+		y = (1.0f - fabsf(x)) * (y >= 0.0f ? 1.0f : -1.0f);
+		x = folded_x;
+	}
+	for (k = 0; k < 2; k++)
+	{
+		float value = k ? y : x;
+
+		value = value < -1.0f ? -1.0f : value > 1.0f ? 1.0f : value;
+		packed[k] = (long)floorf(value * 32767.0f + 0.5f);
+	}
+	return ((unsigned long)packed[0] & 0xFFFFUL) | (((unsigned long)packed[1] & 0xFFFFUL) << 16);
+}
+
 void world_rt_box_transform(struct world_proxies_frame const *frame, float const sphere[4], float transform[3][4])
 {
 	float half = sphere[3] * WORLD_RT_BOX_SHARE;
@@ -217,6 +280,21 @@ static int world_rt_room(long count)
 	world_rt.triangles = grown;
 	world_rt.triangle_capacity = count;
 	return 1;
+}
+
+/* a new mesh's id (0: the ids are spent) */
+static unsigned long world_rt_id_take(void)
+{
+	if (world_rt.next_mesh > WORLD_RT_MESHES)
+	{
+		if (!world_rt.full_logged)
+			platform_log("world ao: the ray-traced scene has its %d meshes: the objects drawn later have none",
+				WORLD_RT_MESHES);
+		world_rt.full_logged = 1;
+		return 0;
+	}
+	world_rt.sent = 1;
+	return world_rt.next_mesh++;
 }
 
 /* a mesh of count triangles (world_rt.triangles) sent under a new id (0:
@@ -290,35 +368,261 @@ static void world_rt_structure(void)
 	platform_log("world ao: the ray-traced scene's structure, BSP %d: %ld triangles", (int)bsp_index, count);
 }
 
+/* ---------- the meshes as drawn */
+
+/* a map's or an image's texture slot (0: none, or none is left) */
+static unsigned int world_rt_slot(struct world_rt_source_map const *map, unsigned int image)
+{
+	long index;
+
+	if ((!map || map->bitmap == -1) && !image)
+		return 0;
+	if (!world_rt.slots)
+	{
+		world_rt.slots = calloc(WORLD_RT_TEXTURES, sizeof(*world_rt.slots));
+		if (!world_rt.slots)
+			return 0;
+		world_rt.slot_count = 1;
+	}
+	for (index = 1; index < world_rt.slot_count; index++)
+	{
+		struct world_rt_slot const *slot = &world_rt.slots[index];
+
+		if (image ? slot->image == image : slot->map.bitmap == map->bitmap && slot->map.index == map->index)
+			return (unsigned int)index;
+	}
+	if (world_rt.slot_count >= WORLD_RT_TEXTURES)
+		return 0;
+	memset(&world_rt.slots[index], 0, sizeof(world_rt.slots[index]));
+	world_rt.slots[index].map.bitmap = -1;
+	if (image)
+		world_rt.slots[index].image = image;
+	else
+		world_rt.slots[index].map = *map;
+	world_rt.slot_count++;
+	return (unsigned int)index;
+}
+
+/* the textures' slots whose headers changed (or were never sent) sent, each
+frame: a map's texture as the renderer has it now (loaded once asked for:
+world_rt_source_texture), an image's once */
+static void world_rt_textures_frame(void)
+{
+	struct world_rt_texture changed[WORLD_RT_TEXTURES];
+	unsigned long count = 0;
+	long index;
+
+	for (index = 1; world_rt.slots && index < world_rt.slot_count; index++)
+	{
+		struct world_rt_slot *slot = &world_rt.slots[index];
+		void const *header = slot->image ? NULL : world_rt_source_texture(&slot->map);
+
+		if (slot->sent && header == slot->header)
+			continue;
+		slot->sent = 1;
+		slot->header = header;
+		changed[count].slot = (unsigned long)index;
+		changed[count].header = header;
+		changed[count].image = slot->image;
+		count++;
+	}
+	if (count)
+		halo_world_rt_textures(changed, count);
+}
+
+/* a mesh's material's index among the map's (made the first time: its
+record into *made, *new set; -1 none is left) */
+static long world_rt_material(struct world_rt_source_material const *source, struct world_rt_source_map const *lightmap,
+	struct world_rt_material *made, int *new_one)
+{
+	struct world_rt_material_key key;
+	long index;
+
+	*new_one = 0;
+	memset(&key, 0, sizeof(key));
+	key.shader = source->shader;
+	key.lightmap = *lightmap;
+	key.alpha_scale[0] = source->alpha_scale[0];
+	key.alpha_scale[1] = source->alpha_scale[1];
+	if (!world_rt.materials)
+	{
+		world_rt.materials = malloc(sizeof(*world_rt.materials) * WORLD_RT_MATERIALS);
+		if (!world_rt.materials)
+			return -1;
+	}
+	for (index = 0; index < world_rt.material_count; index++)
+	{
+		if (!memcmp(&world_rt.materials[index], &key, sizeof(key)))
+			return index;
+	}
+	if (world_rt.material_count >= WORLD_RT_MATERIALS)
+		return -1;
+	world_rt.materials[index] = key;
+	world_rt.material_count++;
+	memset(made, 0, sizeof(*made));
+	made->index = (unsigned int)index;
+	made->kind = (unsigned int)source->kind;
+	made->flags = (unsigned int)source->flags;
+	made->alpha_cutoff = source->alpha_cutoff;
+	made->alpha_map = source->alpha_map >= 0 && source->alpha_map < WORLD_RT_MAPS ?
+		world_rt_slot(&source->maps[source->alpha_map], 0) : 0;
+	made->alpha_scale[0] = source->alpha_scale[0];
+	made->alpha_scale[1] = source->alpha_scale[1];
+	made->base_map = world_rt_slot(&source->maps[WORLD_RT_MAP_BASE], 0);
+	made->detail_map = world_rt_slot(&source->maps[WORLD_RT_MAP_DETAIL], 0);
+	made->detail_scale = source->detail_scale;
+	made->multipurpose_map = world_rt_slot(&source->maps[WORLD_RT_MAP_MULTIPURPOSE], 0);
+	made->bump_map = world_rt_slot(&source->maps[WORLD_RT_MAP_BUMP], 0);
+	made->normal_map = world_rt_slot(NULL, source->normal_image);
+	made->orm_map = world_rt_slot(NULL, source->orm_image);
+	made->lightmap = world_rt_slot(lightmap, 0);
+	*new_one = 1;
+	return index;
+}
+
+/* a mesh as drawn laid out as the renderer takes it (world_rt.blob), its
+materials the map's; its size (0: none, no room) */
+static unsigned long world_rt_blob(struct world_rt_source_mesh const *mesh)
+{
+	unsigned long size, corners_at, vertices_at, materials_at, made_at;
+	struct world_rt_mesh_header *header;
+	unsigned short *triangle_materials;
+	struct world_rt_material *made;
+	long *indices = NULL, index;
+	long count = 0;
+
+	if (mesh->vertex_count <= 0 || mesh->triangle_count <= 0)
+		return 0;
+	corners_at = sizeof(*header) + (unsigned long)mesh->vertex_count * 12;
+	vertices_at = corners_at + (unsigned long)mesh->triangle_count * 12;
+	materials_at = vertices_at + (unsigned long)mesh->vertex_count * sizeof(struct world_rt_vertex);
+	made_at = materials_at + (((unsigned long)mesh->triangle_count * 2 + 3) & ~3UL);
+	size = made_at + (unsigned long)mesh->material_count * sizeof(struct world_rt_material);
+	if (size > world_rt.blob_capacity)
+	{
+		unsigned char *grown = realloc(world_rt.blob, size);
+
+		if (!grown)
+			return 0;
+		world_rt.blob = grown;
+		world_rt.blob_capacity = size;
+	}
+	indices = malloc(sizeof(*indices) * (size_t)(mesh->material_count > 0 ? mesh->material_count : 1));
+	if (!indices)
+		return 0;
+	memset(world_rt.blob, 0, size);
+	header = (struct world_rt_mesh_header *)world_rt.blob;
+	triangle_materials = (unsigned short *)(world_rt.blob + materials_at);
+	made = (struct world_rt_material *)(world_rt.blob + made_at);
+	/* its materials the map's, those new to it carried */
+	for (index = 0; index < mesh->material_count; index++)
+	{
+		struct world_rt_source_map const *lightmap = &mesh->materials[index].maps[WORLD_RT_MAP_LIGHTMAP];
+		int new_one;
+
+		indices[index] = world_rt_material(&mesh->materials[index], lightmap, &made[count], &new_one);
+		count += new_one;
+	}
+	for (index = 0; index < mesh->vertex_count; index++)
+	{
+		struct world_rt_source_vertex const *in = &mesh->vertices[index];
+		struct world_rt_vertex *out = (struct world_rt_vertex *)(world_rt.blob + vertices_at) + index;
+		float cross[3];
+
+		memcpy(world_rt.blob + sizeof(*header) + index * 12, in->position, 12);
+		out->uv[0] = in->uv[0];
+		out->uv[1] = in->uv[1];
+		out->normal = (unsigned int)world_rt_octahedral(in->normal);
+		out->tangent = (unsigned int)world_rt_octahedral(in->tangent);
+		out->lightmap_uv = ((unsigned int)(unsigned short)in->lightmap_uv[0]) |
+			((unsigned int)(unsigned short)in->lightmap_uv[1] << 16);
+		cross[0] = in->normal[1] * in->tangent[2] - in->normal[2] * in->tangent[1];
+		cross[1] = in->normal[2] * in->tangent[0] - in->normal[0] * in->tangent[2];
+		cross[2] = in->normal[0] * in->tangent[1] - in->normal[1] * in->tangent[0];
+		out->flags = cross[0] * in->binormal[0] + cross[1] * in->binormal[1] + cross[2] * in->binormal[2] < 0.0f ? 1u : 0u;
+	}
+	for (index = 0; index < mesh->triangle_count; index++)
+	{
+		unsigned int corners[3];
+		long material = mesh->triangle_materials[index] < mesh->material_count ?
+			indices[mesh->triangle_materials[index]] : -1;
+		int corner;
+
+		for (corner = 0; corner < 3; corner++)
+			corners[corner] = (unsigned int)mesh->triangles[index][corner];
+		memcpy(world_rt.blob + corners_at + index * 12, corners, 12);
+		/* (none left: the map's first, which the cutoff then tests) */
+		triangle_materials[index] = (unsigned short)(material >= 0 ? material : 0);
+	}
+	free(indices);
+	header->vertex_count = (unsigned int)mesh->vertex_count;
+	header->triangle_count = (unsigned int)mesh->triangle_count;
+	header->opaque_count = (unsigned int)mesh->opaque_count;
+	header->material_count = (unsigned int)count;
+	/* (the new materials alone: the size less the rest) */
+	return made_at + (unsigned long)count * sizeof(struct world_rt_material);
+}
+
+/* a source mesh's arrays for its counts (FALSE: no room); and let go of */
+static int world_rt_source_mesh_make(struct world_rt_source_mesh *mesh)
+{
+	mesh->vertices = malloc(sizeof(*mesh->vertices) * (size_t)mesh->vertex_count);
+	mesh->triangles = malloc(sizeof(*mesh->triangles) * (size_t)mesh->triangle_count);
+	mesh->triangle_materials = malloc(sizeof(*mesh->triangle_materials) * (size_t)mesh->triangle_count);
+	mesh->materials = malloc(sizeof(*mesh->materials) * (size_t)(mesh->material_count > 0 ? mesh->material_count : 1));
+	return mesh->vertices && mesh->triangles && mesh->triangle_materials && mesh->materials;
+}
+
+static void world_rt_source_mesh_free(struct world_rt_source_mesh *mesh)
+{
+	free(mesh->vertices);
+	free(mesh->triangles);
+	free(mesh->triangle_materials);
+	free(mesh->materials);
+	memset(mesh, 0, sizeof(*mesh));
+}
+
 /* (debug.rt_render_geometry) the structure's render mesh in its collision
-mesh's place, the frame after that was made: its opaque triangles, the
-alpha-tested and transparent ones counted and left out */
+mesh's place, the frame after that was made: its opaque triangles, then its
+alpha-tested ones; the transparent ones counted and left out */
 static void world_rt_structure_render(void)
 {
 	short bsp_index = world_rt.bsp_index;
-	long count, alpha_tested, transparent;
-	unsigned long mesh;
+	struct world_rt_source_mesh mesh;
+	long count, expected;
+	unsigned long id, size;
 	unsigned long long started = platform_shared_clock_microseconds();
 
 	world_rt.render_due = 0;
-	count = world_rt_source_structure_render(bsp_index, WORLD_RT_SURFACES_OPAQUE, NULL, 0);
-	alpha_tested = world_rt_source_structure_render(bsp_index, WORLD_RT_SURFACES_ALPHA_TESTED, NULL, 0);
-	transparent = world_rt_source_structure_render(bsp_index, WORLD_RT_SURFACES_TRANSPARENT, NULL, 0);
-	if (count <= 0 || count > WORLD_RT_MESH_TRIANGLES || !world_rt_room(count))
+	memset(&mesh, 0, sizeof(mesh));
+	expected = world_rt_source_structure_mesh(bsp_index, &mesh);
+	if (expected <= 0 || expected > WORLD_RT_MESH_TRIANGLES || !world_rt_source_mesh_make(&mesh))
+	{
+		world_rt_source_mesh_free(&mesh);
 		return;
-	count = world_rt_source_structure_render(bsp_index, WORLD_RT_SURFACES_OPAQUE, world_rt.triangles, count);
-	mesh = world_rt_mesh_send(count);
-	if (!mesh)
+	}
+	count = world_rt_source_structure_mesh(bsp_index, &mesh);
+	size = count == expected ? world_rt_blob(&mesh) : 0;
+	id = size ? world_rt_id_take() : 0;
+	if (!id)
+	{
+		world_rt_source_mesh_free(&mesh);
 		return;
+	}
+	halo_world_rt_mesh(id, world_rt.blob, size);
+	world_rt.count_triangles += count;
 	/* (in its collision mesh's place, which is let go of) */
-	world_rt.structure = world_rt.bsps[bsp_index].render = mesh;
+	world_rt.structure = world_rt.bsps[bsp_index].render = id;
 	if (world_rt.bsps[bsp_index].collision)
 		halo_world_ao_mesh_release(world_rt.bsps[bsp_index].collision);
 	world_rt.bsps[bsp_index].collision = 0;
 	platform_log("world ao: the ray-traced scene's structure, BSP %d, as drawn (debug.rt_render_geometry): %ld "
-		"triangles (collision %ld), %ld alpha-tested and %ld transparent left out; read in %.2f ms", (int)bsp_index,
-		count, world_rt.collision_count, alpha_tested, transparent,
+		"triangles (collision %ld), %ld of them alpha-tested, %ld transparent left out; %ld vertices, %ld materials "
+		"(%ld of the map's), %ld textures; %.0f KB, read in %.2f ms", (int)bsp_index, count, world_rt.collision_count,
+		count - mesh.opaque_count, mesh.left_out, mesh.vertex_count, mesh.material_count, world_rt.material_count,
+		world_rt.slot_count > 0 ? world_rt.slot_count - 1 : 0, (double)size / 1024.0,
 		(double)(platform_shared_clock_microseconds() - started) / 1000.0);
+	world_rt_source_mesh_free(&mesh);
 }
 
 /* a definition's meshes, made as it is first drawn (NULL: none can be
@@ -418,6 +722,7 @@ void world_rt_frame(unsigned long frame)
 	if (!world_rt.instances || !world_rt.objects)
 		return;
 	world_rt_structure();
+	world_rt_textures_frame();
 	if (world_rt.structure)
 	{
 		static const float identity[3][4] = { { 1.0f, 0.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f, 0.0f },
@@ -493,6 +798,15 @@ void world_rt_map_unloaded(void)
 	world_rt.bsp_index = -1;
 	world_rt.render_due = 0;
 	memset(world_rt.bsps, 0, sizeof(world_rt.bsps));
+	free(world_rt.materials);
+	world_rt.materials = NULL;
+	world_rt.material_count = 0;
+	free(world_rt.slots);
+	world_rt.slots = NULL;
+	world_rt.slot_count = 0;
+	free(world_rt.blob);
+	world_rt.blob = NULL;
+	world_rt.blob_capacity = 0;
 	world_rt.framed = 0;
 	world_rt.full_logged = 0;
 	world_rt.count_triangles = 0;

@@ -44,14 +44,29 @@ enum
 	WORLD_RT_STRUCTURE = 1,
 	WORLD_RT_OBJECT = 2,
 	/* the structure's render surfaces by their shader
-	(world_rt_source_structure_render): opaque (shader_environment), traced
+	(world_rt_source_structure_mesh): opaque (shader_environment), traced
 	with debug.rt_render_geometry; alpha-tested (shader_environment's flag:
-	grates, fences, foliage cards), left out until their rays test the base
-	map's alpha (docs/rt-plan/1-geometry.md, stage 3); and transparent (water,
-	glass and the other transparent shaders), left out */
+	grates, fences, foliage cards), traced as a second geometry whose rays
+	test the alpha map's alpha (docs/rt-plan/1-geometry.md, stage 3); and
+	transparent (water, glass and the other transparent shaders), left out */
 	WORLD_RT_SURFACES_OPAQUE = 0,
 	WORLD_RT_SURFACES_ALPHA_TESTED = 1,
 	WORLD_RT_SURFACES_TRANSPARENT = 2,
+	/* a material's maps (struct world_rt_source_material's maps) */
+	WORLD_RT_MAP_BASE = 0,
+	WORLD_RT_MAP_DETAIL,
+	WORLD_RT_MAP_MULTIPURPOSE,
+	WORLD_RT_MAP_BUMP,
+	WORLD_RT_MAP_LIGHTMAP,
+	WORLD_RT_MAPS,
+	/* the materials and textures' slots of a map (xgpu_stream.h's
+	XGPU_WORLD_RT_MATERIALS, _TEXTURES: slot 0 none) */
+	WORLD_RT_MATERIALS = 4096,
+	WORLD_RT_TEXTURES = 512,
+	/* a material's flags (xgpu_stream.h's XGPU_WORLD_RT_MATERIAL_*) */
+	WORLD_RT_MATERIAL_ALPHA_TESTED = 1,
+	WORLD_RT_MATERIAL_TWO_SIDED = 2,
+	WORLD_RT_MATERIAL_TRANSPARENT = 4,
 };
 
 /* the half side of an item's box with no collision geometry, a share of
@@ -61,6 +76,83 @@ item's bounding radius (world units). Anything else with none has no mesh:
 an emitter's, a wire's or the sky's ring's sphere is not its shape */
 #define WORLD_RT_BOX_SHARE 0.6f
 #define WORLD_RT_BOX_LARGEST 1.0f
+
+/* ---------- structures */
+
+/* a render mesh's vertex as the game has it (world_rt_source_*_mesh): its
+position (the mesh's space), normal, tangent and binormal, its base map's
+coordinates, its lightmap's (the level's, two shorts of 1/32767), and its
+nodes and the first's weight (a model's) */
+struct world_rt_source_vertex
+{
+	float position[3], normal[3], tangent[3], binormal[3], uv[2];
+	short lightmap_uv[2];
+	short nodes[2];
+	float weight;
+};
+
+/* a map of a material: a bitmap's tag index and its bitmap (NONE none) */
+struct world_rt_source_map
+{
+	long bitmap;
+	short index;
+};
+
+/* a render mesh's material as the game has it: its shader (its tag index)
+and type, its flags (xgpu_stream.h's XGPU_WORLD_RT_MATERIAL_*), its alpha
+test's cutoff, which of its maps that tests (WORLD_RT_MAP_*: -1 none) at
+what scale of the coordinates, its detail map's scale, its maps, its mods'
+material maps (xgpu_images.h: 0 none) */
+struct world_rt_source_material
+{
+	long shader;
+	unsigned long kind, flags;
+	float alpha_cutoff;
+	int alpha_map;
+	float alpha_scale[2], detail_scale;
+	struct world_rt_source_map maps[WORLD_RT_MAPS];
+	unsigned int normal_image, orm_image;
+};
+
+/* a render mesh as the game has it: its counts (the first opaque_count
+triangles opaque, the rest alpha-tested; left_out the transparent ones not
+in it), and where the arrays are given (room for the counts a call without
+them gave) its vertices, triangles' corners and materials (of its own
+materials, below) */
+struct world_rt_source_mesh
+{
+	long vertex_count, triangle_count, opaque_count, material_count, left_out;
+	struct world_rt_source_vertex *vertices;
+	unsigned long (*triangles)[3];
+	unsigned short *triangle_materials;
+	struct world_rt_source_material *materials;
+};
+
+/* a mesh as drawn as the renderer takes it (halo_world_rt_mesh; as
+xgpu_stream.h's struct xgpu_world_rt_mesh, _vertex, _material, laid out
+alike): the header, then the positions, corners, vertices, triangles'
+materials (two bytes each, padded to four) and the materials named first */
+struct world_rt_mesh_header
+{
+	unsigned int vertex_count, triangle_count, opaque_count, material_count;
+	unsigned int pad[4];
+};
+struct world_rt_vertex
+{
+	float uv[2];
+	unsigned int normal, tangent, lightmap_uv, flags;
+};
+struct world_rt_material
+{
+	unsigned int index, kind, flags;
+	float alpha_cutoff;
+	unsigned int alpha_map;
+	float alpha_scale[2];
+	unsigned int base_map, detail_map;
+	float detail_scale;
+	unsigned int multipurpose_map, bump_map, normal_map, orm_map, lightmap;
+	unsigned int self_illumination;
+};
 
 /* ---------- prototypes (port/linux/game/world_rt.c) */
 
@@ -88,6 +180,8 @@ void world_rt_transform(struct world_proxies_frame const *frame, float transform
 /* ... and the box's about a bounding sphere in that node's space (centre,
 radius): its axes the frame's times radius * WORLD_RT_BOX_SHARE */
 void world_rt_box_transform(struct world_proxies_frame const *frame, float const sphere[4], float transform[3][4]);
+/* a unit vector as two snorm16s of its octahedral map (x low) */
+unsigned long world_rt_octahedral(float const vector[3]);
 
 /* ---------- what the scene reads of the game (port/linux/game/world_rt_game.c) */
 
@@ -96,10 +190,14 @@ short world_rt_source_bsp(void);
 /* its collision geometry's triangles, world space (nine floats each, into
 triangles: NULL for the count alone, at most maximum): how many (0 none) */
 long world_rt_source_structure(short bsp_index, float *triangles, long maximum);
-/* its render triangles of one kind of surface (WORLD_RT_SURFACES_*), world
-space, as above: its lightmaps' materials' surfaces (no invisible clip:
-nothing draws it, so the render geometry has none) */
-long world_rt_source_structure_render(short bsp_index, int surfaces, float *triangles, long maximum);
+/* its render mesh, world space: its lightmaps' materials' surfaces (no
+invisible clip: nothing draws it, so the render geometry has none), the
+opaque ones first, then the alpha-tested; each of its materials its own.
+Its counts, then (arrays given) its data; its triangles (0 none) */
+long world_rt_source_structure_mesh(short bsp_index, struct world_rt_source_mesh *mesh);
+/* a map's texture as the renderer has it now (its header: NULL while it is
+not loaded, which this asks for) */
+void const *world_rt_source_texture(struct world_rt_source_map const *map);
 /* a definition's nodes (at most WORLD_RT_NODES), its bounding sphere in
 its model's space (centre, radius) and whether it is an item (a weapon,
 equipment or garbage); 0 if it has none */

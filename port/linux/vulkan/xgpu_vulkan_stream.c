@@ -84,6 +84,9 @@ _Static_assert(XGPU_SPIRV_SET_OCCLUSION == XGPU_VULKAN_SET_OCCLUSION &&
 	XGPU_SPIRV_BINDING_WORLD_AO_SCENERY == XGPU_VULKAN_BINDING_WORLD_AO_SCENERY &&
 	XGPU_SPIRV_BINDING_WORLD_AO_OBJECTS == XGPU_VULKAN_BINDING_WORLD_AO_OBJECTS,
 	"display.ambient_occlusion \"world\"'s bindings");
+_Static_assert(XGPU_SPIRV_SET_RT_HITS == XGPU_VULKAN_SET_RT_HITS &&
+	XGPU_SPIRV_BINDING_RT_HIT_TABLE == XGPU_VULKAN_BINDING_RT_HIT_TABLE &&
+	XGPU_SPIRV_BINDING_RT_HIT_TEXTURES == XGPU_VULKAN_BINDING_RT_HIT_TEXTURES, "the ray-traced scene's hit set");
 
 /* the mirror's segments: 4 MB of the contiguous window each */
 #define MIRROR_SEGMENT_SIZE 0x400000u
@@ -4028,6 +4031,10 @@ static void stream_world_ao_mesh(void *context, const struct xgpu_stream_world_a
 	(void)context;
 	if (record->kind == XGPU_WORLD_AO_MESH_RELEASE)
 		xgpu_vulkan_rt_mesh_release(record->id);
+	else if (record->kind == XGPU_WORLD_AO_MESH_INDEXED)
+		xgpu_vulkan_rt_mesh_indexed(record->id, record->size ? host_pointer(record->data) : NULL, record->size);
+	else if (record->kind == XGPU_WORLD_AO_MESH_TEXTURES)
+		xgpu_vulkan_rt_textures(record->size ? host_pointer(record->data) : NULL, record->count);
 	else
 		xgpu_vulkan_rt_mesh(record->id, record->count, record->size ? host_pointer(record->data) : NULL);
 }

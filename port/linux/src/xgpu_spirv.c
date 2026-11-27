@@ -65,6 +65,9 @@ enum
 	OP_TYPE_RAY_QUERY = 4472, OP_RAY_QUERY_INITIALIZE = 4473, OP_RAY_QUERY_CONFIRM_INTERSECTION = 4476,
 	OP_RAY_QUERY_PROCEED = 4477, OP_RAY_QUERY_GET_INTERSECTION_TYPE = 4479, OP_TYPE_ACCELERATION_STRUCTURE = 5341,
 	OP_RAY_QUERY_GET_INTERSECTION_T = 6018, OP_RAY_QUERY_GET_INTERSECTION_INSTANCE_CUSTOM_INDEX = 6019,
+	OP_RAY_QUERY_GET_INTERSECTION_INSTANCE_SHADER_BINDING_TABLE_RECORD_OFFSET = 6021,
+	OP_RAY_QUERY_GET_INTERSECTION_GEOMETRY_INDEX = 6022, OP_RAY_QUERY_GET_INTERSECTION_PRIMITIVE_INDEX = 6023,
+	OP_RAY_QUERY_GET_INTERSECTION_BARYCENTRICS = 6024,
 };
 
 /* GLSL.std.450's instructions */
@@ -101,6 +104,10 @@ enum
 	CAPABILITY_SHADER = 1, CAPABILITY_STORAGE_IMAGE_MULTISAMPLE = 27, CAPABILITY_SAMPLE_RATE_SHADING = 35, CAPABILITY_INPUT_ATTACHMENT = 40,
 	CAPABILITY_IMAGE_QUERY = 50, CAPABILITY_GROUP_NON_UNIFORM = 61, CAPABILITY_GROUP_NON_UNIFORM_ARITHMETIC = 63,
 	CAPABILITY_MULTIVIEW = 4439, CAPABILITY_RAY_QUERY = 4472,
+	/* SPV_EXT_descriptor_indexing's (the ray-traced scene's textures' slots,
+	sampled per pixel) */
+	CAPABILITY_SHADER_NON_UNIFORM = 5301, CAPABILITY_SAMPLED_IMAGE_ARRAY_NON_UNIFORM_INDEXING = 5307,
+	DECORATION_NON_UNIFORM = 5300,
 	CAPABILITY_FRAGMENT_SHADER_SAMPLE_INTERLOCK = 5363, CAPABILITY_FRAGMENT_SHADER_PIXEL_INTERLOCK = 5378,
 	OP_BEGIN_INVOCATION_INTERLOCK = 5364, OP_END_INVOCATION_INTERLOCK = 5365,
 	RAY_FLAGS_CULL_BACK_FACING_TRIANGLES = 0x10, RAY_QUERY_CANDIDATE = 0, RAY_QUERY_COMMITTED = 1,
@@ -153,8 +160,11 @@ struct module
 bitwise or (GroupNonUniformArithmetic) */
 	BOOL image_query, group_non_uniform;
 	/* the GPU's ray queries are traced (the RayQueryKHR capability,
-	SPV_KHR_ray_query) */
+	SPV_KHR_ray_query); and their hits' set read (its table and textures'
+	variables, 0 until declared: the textures indexed per pixel,
+	SPV_EXT_descriptor_indexing) */
 	BOOL ray_query;
+	unsigned int rt_hit_table, rt_hit_textures;
 
 	unsigned int glsl;
 	unsigned int t_void, t_bool, t_int, t_uint, t_float;
@@ -1120,6 +1130,14 @@ static BOOL module_end(struct module *m, unsigned int execution_model, unsigned 
 		operands[0] = CAPABILITY_RAY_QUERY;
 		instruction(m, SECTION_CAPABILITIES, OP_CAPABILITY, 1, operands);
 		instruction_string(m, SECTION_EXTENSIONS, OP_EXTENSION, 0, NULL, "SPV_KHR_ray_query", 0, NULL);
+	}
+	if (m->rt_hit_textures)
+	{
+		operands[0] = CAPABILITY_SHADER_NON_UNIFORM;
+		instruction(m, SECTION_CAPABILITIES, OP_CAPABILITY, 1, operands);
+		operands[0] = CAPABILITY_SAMPLED_IMAGE_ARRAY_NON_UNIFORM_INDEXING;
+		instruction(m, SECTION_CAPABILITIES, OP_CAPABILITY, 1, operands);
+		instruction_string(m, SECTION_EXTENSIONS, OP_EXTENSION, 0, NULL, "SPV_EXT_descriptor_indexing", 0, NULL);
 	}
 	{
 		unsigned int words[68];
@@ -6095,6 +6113,154 @@ static unsigned int world_ao_pass_inside(struct module *m, unsigned int pixel, u
 		op2(m, OP_S_LESS_THAN, m->t_bool, op2(m, OP_COMPOSITE_EXTRACT, m->t_int, pixel, 1), op2(m, OP_COMPOSITE_EXTRACT, m->t_int, corners, 1)))));
 }
 
+/* ---------- the ray-traced scene's alpha-tested candidates
+(docs/rt-plan/1-geometry.md, stage 3; xgpu_vulkan_rt.c's hit table)
+
+A ray query's candidate in an instance's alpha-tested geometry (geometry
+1: a grate, a fence, a foliage card) is taken only where its material's
+alpha map passes the cutoff at the hit: the instance's mesh (its shader
+binding table offset), the mesh's record, the triangle's corners and their
+texture coordinates, its material's record, its alpha map sampled at a
+fixed level (no derivatives in the loop), as GLSL:
+
+bool passes = true;
+if (rayQueryGetIntersectionGeometryIndexEXT(q, false) == 1) {
+  uint mesh = rayQueryGetIntersectionInstanceShaderBindingTableRecordOffsetEXT(q, false) & 0xFFF;
+  uint prim = rayQueryGetIntersectionPrimitiveIndexEXT(q, false) + table[mesh * 4 + 3];
+  uint corners = table[mesh * 4] + prim * 3, attributes = table[mesh * 4 + 1];
+  uint material = (table[table[mesh * 4 + 2] + prim / 2] >> (prim % 2 * 16)) & 0xFFFF, at = MATERIALS + material * 16;
+  vec2 uv[3] = each corner's uintBitsToFloat(table[attributes + corner * 6 ..+1]);
+  vec2 b = rayQueryGetIntersectionBarycentricsEXT(q, false);
+  vec2 st = (uv[0] + (uv[1] - uv[0]) * b.x + (uv[2] - uv[0]) * b.y) * uintBitsToFloat(table[at + 5 ..+6]);
+  passes = textureLod(textures[nonuniformEXT(min(table[at + 4], TEXTURES - 1))], st, LOD).a > uintBitsToFloat(table[at + 3]);
+}
+commits = (condition || structure) && passes;
+
+Each word read is in range: the backend checked the meshes and materials
+as they came. No loop of its own: it is a candidate loop's body. */
+
+/* the hit set's variables, declared once in a module */
+static void rt_hits_declare(struct module *m)
+{
+	unsigned int array, block, operands[3], image;
+
+	if (m->rt_hit_table)
+		return;
+	/* (a runtime array of its own: its stride decorated once) */
+	array = id_new(m);
+	operands[0] = array;
+	operands[1] = m->t_uint;
+	instruction(m, SECTION_GLOBALS, OP_TYPE_RUNTIME_ARRAY, 2, operands);
+	decorate1(m, array, DECORATION_ARRAY_STRIDE, 4);
+	block = type_struct(m, 1, &array);
+	decorate(m, block, DECORATION_BLOCK, 0, NULL);
+	member_decorate(m, block, 0, DECORATION_OFFSET, 0);
+	operands[0] = block;
+	operands[1] = 0;
+	operands[2] = DECORATION_NON_WRITABLE;
+	instruction(m, SECTION_DECORATIONS, OP_MEMBER_DECORATE, 3, operands);
+	name(m, block, "rt_hit_table_block");
+	m->rt_hit_table = variable(m, block, STORAGE_STORAGE_BUFFER, "rt_hit_table");
+	decorate1(m, m->rt_hit_table, DECORATION_DESCRIPTOR_SET, XGPU_SPIRV_SET_RT_HITS);
+	decorate1(m, m->rt_hit_table, DECORATION_BINDING, XGPU_SPIRV_BINDING_RT_HIT_TABLE);
+	image = type_sampled_image(m, DIM_2D, FALSE, FALSE, TRUE);
+	m->rt_hit_textures = variable(m, type2(m, OP_TYPE_ARRAY, image, constant_uint(m, XGPU_SPIRV_RT_HIT_TEXTURES)),
+		STORAGE_UNIFORM_CONSTANT, "rt_hit_textures");
+	decorate1(m, m->rt_hit_textures, DECORATION_DESCRIPTOR_SET, XGPU_SPIRV_SET_RT_HITS);
+	decorate1(m, m->rt_hit_textures, DECORATION_BINDING, XGPU_SPIRV_BINDING_RT_HIT_TEXTURES);
+}
+
+/* the hit table's word at (a uint) */
+static unsigned int rt_hit_word(struct module *m, unsigned int at)
+{
+	unsigned int operands[3];
+
+	operands[0] = m->rt_hit_table;
+	operands[1] = constant_int(m, 0);
+	operands[2] = at;
+	return load(m, m->t_uint, op(m, OP_ACCESS_CHAIN, type_pointer(m, STORAGE_STORAGE_BUFFER, m->t_uint), 3, operands));
+}
+
+static unsigned int rt_hit_float(struct module *m, unsigned int at)
+{
+	return op1(m, OP_BITCAST, m->t_float, rt_hit_word(m, at));
+}
+
+static unsigned int uadd(struct module *m, unsigned int a, unsigned int b)
+{
+	return op2(m, OP_I_ADD, m->t_uint, a, b);
+}
+
+/* whether a ray query's candidate is taken: condition (the caller's: not
+the pixel's own, or the caster's) or the structure's (structure: its
+custom index 0, which no owner skips), where its alpha map passes; the
+candidate loop's body */
+static unsigned int rt_candidate_commits(struct module *m, struct words *locals, unsigned int query,
+	unsigned int structure, unsigned int condition)
+{
+	unsigned int candidate = constant_int(m, RAY_QUERY_CANDIDATE), passes = local(m, locals, m->t_float), merge;
+	unsigned int mesh, record, primitive, corners, attributes, material_word, material, at, uv[3], b, st, slot;
+	unsigned int operands[4], pointer, sampled, texel;
+	int corner;
+
+	rt_hits_declare(m);
+	store(m, passes, constant_float(m, 1.0f));
+	selection_begin(m, op2(m, OP_I_EQUAL, m->t_bool, op2(m, OP_RAY_QUERY_GET_INTERSECTION_GEOMETRY_INDEX, m->t_uint, query,
+		candidate), constant_uint(m, 1)), &merge);
+	mesh = uand(m, op2(m, OP_RAY_QUERY_GET_INTERSECTION_INSTANCE_SHADER_BINDING_TABLE_RECORD_OFFSET, m->t_uint, query,
+		candidate), constant_uint(m, XGPU_SPIRV_RT_HIT_MESHES - 1));
+	record = op2(m, OP_SHIFT_LEFT_LOGICAL, m->t_uint, mesh, constant_uint(m, 2));
+	primitive = uadd(m, op2(m, OP_RAY_QUERY_GET_INTERSECTION_PRIMITIVE_INDEX, m->t_uint, query, candidate),
+		rt_hit_word(m, uadd(m, record, constant_uint(m, 3))));
+	corners = uadd(m, rt_hit_word(m, record), op2(m, OP_I_MUL, m->t_uint, primitive, constant_uint(m, 3)));
+	attributes = rt_hit_word(m, uadd(m, record, constant_uint(m, 1)));
+	material_word = rt_hit_word(m, uadd(m, rt_hit_word(m, uadd(m, record, constant_uint(m, 2))),
+		op2(m, OP_SHIFT_RIGHT_LOGICAL, m->t_uint, primitive, constant_uint(m, 1))));
+	material = uand(m, op2(m, OP_SHIFT_RIGHT_LOGICAL, m->t_uint, material_word, op2(m, OP_SHIFT_LEFT_LOGICAL, m->t_uint,
+		uand(m, primitive, constant_uint(m, 1)), constant_uint(m, 4))), constant_uint(m, 0xFFFFu));
+	at = uadd(m, constant_uint(m, XGPU_SPIRV_RT_HIT_MATERIALS), op2(m, OP_SHIFT_LEFT_LOGICAL, m->t_uint, material,
+		constant_uint(m, 4)));
+	for (corner = 0; corner < 3; corner++)
+	{
+		unsigned int vertex = rt_hit_word(m, uadd(m, corners, constant_uint(m, (unsigned int)corner)));
+		unsigned int first = uadd(m, attributes, op2(m, OP_I_MUL, m->t_uint, vertex, constant_uint(m, 6))), xy[2];
+
+		xy[0] = rt_hit_float(m, first);
+		xy[1] = rt_hit_float(m, uadd(m, first, constant_uint(m, 1)));
+		uv[corner] = construct(m, 2, xy);
+	}
+	b = op2(m, OP_RAY_QUERY_GET_INTERSECTION_BARYCENTRICS, m->t_v2, query, candidate);
+	st = fadd(m, 2, fadd(m, 2, uv[0], fscale(m, 2, fsub(m, 2, uv[1], uv[0]), extract(m, b, 0))),
+		fscale(m, 2, fsub(m, 2, uv[2], uv[0]), extract(m, b, 1)));
+	{
+		unsigned int scale[2];
+
+		scale[0] = rt_hit_float(m, uadd(m, at, constant_uint(m, 5)));
+		scale[1] = rt_hit_float(m, uadd(m, at, constant_uint(m, 6)));
+		st = fmul(m, 2, st, construct(m, 2, scale));
+	}
+	slot = ext2(m, GLSL_U_MIN, m->t_uint, rt_hit_word(m, uadd(m, at, constant_uint(m, 4))),
+		constant_uint(m, XGPU_SPIRV_RT_HIT_TEXTURES - 1));
+	decorate(m, slot, DECORATION_NON_UNIFORM, 0, NULL);
+	operands[0] = m->rt_hit_textures;
+	operands[1] = slot;
+	pointer = op(m, OP_ACCESS_CHAIN, type_pointer(m, STORAGE_UNIFORM_CONSTANT, type_sampled_image(m, DIM_2D, FALSE, FALSE,
+		TRUE)), 2, operands);
+	decorate(m, pointer, DECORATION_NON_UNIFORM, 0, NULL);
+	sampled = load(m, type_sampled_image(m, DIM_2D, FALSE, FALSE, TRUE), pointer);
+	decorate(m, sampled, DECORATION_NON_UNIFORM, 0, NULL);
+	operands[0] = sampled;
+	operands[1] = st;
+	operands[2] = IMAGE_OPERANDS_LOD;
+	operands[3] = constant_float(m, XGPU_SPIRV_RT_HIT_LEVEL);
+	texel = op(m, OP_IMAGE_SAMPLE_EXPLICIT_LOD, m->t_v4, 4, operands);
+	store(m, passes, fselect(m, compare(m, OP_F_ORD_GREATER_THAN, extract(m, texel, 3), rt_hit_float(m, uadd(m, at,
+		constant_uint(m, 3)))), constant_float(m, 1.0f), constant_float(m, 0.0f)));
+	selection_end(m, merge);
+	return op2(m, OP_LOGICAL_AND, m->t_bool, op2(m, OP_LOGICAL_OR, m->t_bool, condition, structure),
+		compare(m, OP_F_ORD_GREATER_THAN, load(m, m->t_float, passes), constant_float(m, 0.5f)));
+}
+
 /* the occlusion at a point from a pixel's inputs (words): its static term
 (a model's field relative to its reference; the lightmap pass's page's
 texel, from the pre-pass) times the shapes of its cell (the dynamic
@@ -6230,7 +6396,8 @@ static unsigned int world_ao_traced_rays(struct module *m, struct pixel_state *s
 		label_at(m, body);
 		index = op2(m, OP_RAY_QUERY_GET_INTERSECTION_INSTANCE_CUSTOM_INDEX, m->t_int, query,
 			constant_int(m, RAY_QUERY_CANDIDATE));
-		selection_begin(m, op2(m, OP_I_NOT_EQUAL, m->t_bool, index, owner), &mine_merge);
+		selection_begin(m, rt_candidate_commits(m, &state->locals, query, op2(m, OP_I_EQUAL, m->t_bool, index,
+			constant_int(m, 0)), op2(m, OP_I_NOT_EQUAL, m->t_bool, index, owner)), &mine_merge);
 		op_void(m, OP_RAY_QUERY_CONFIRM_INTERSECTION, 1, &query);
 		selection_end(m, mine_merge);
 		branch(m, next);
@@ -6711,7 +6878,8 @@ BOOL xgpu_spirv_rt_shadows_pass(const struct xgpu_spirv_options *options, struct
 		mine = op2(&m, OP_LOGICAL_OR, m.t_bool, op2(&m, OP_I_EQUAL, m.t_bool, candidate, owner0),
 			op2(&m, OP_LOGICAL_AND, m.t_bool, op2(&m, OP_I_NOT_EQUAL, m.t_bool, owner1, constant_uint(&m, 0)),
 			op2(&m, OP_I_EQUAL, m.t_bool, candidate, owner1)));
-		selection_begin(&m, mine, &mine_merge);
+		selection_begin(&m, rt_candidate_commits(&m, &locals, query, op2(&m, OP_I_EQUAL, m.t_bool, candidate,
+			constant_uint(&m, 0)), mine), &mine_merge);
 		op_void(&m, OP_RAY_QUERY_CONFIRM_INTERSECTION, 1, &query);
 		selection_end(&m, mine_merge);
 		branch(&m, ray_next);
@@ -6876,8 +7044,8 @@ static unsigned int light_shadows_rays(struct module *m, struct words *locals, s
 		label_at(m, body);
 		candidate = op2(m, OP_RAY_QUERY_GET_INTERSECTION_INSTANCE_CUSTOM_INDEX, m->t_int, query,
 			constant_int(m, RAY_QUERY_CANDIDATE));
-		selection_begin(m, op2(m, OP_LOGICAL_AND, m->t_bool, op2(m, OP_I_NOT_EQUAL, m->t_bool, candidate, owner),
-			op2(m, OP_I_NOT_EQUAL, m->t_bool, op1(m, OP_BITCAST, m->t_uint, candidate), light_owner)), &mine_merge);
+		selection_begin(m, rt_candidate_commits(m, locals, query, op2(m, OP_I_EQUAL, m->t_bool, candidate, constant_int(m, 0)), op2(m, OP_LOGICAL_AND, m->t_bool, op2(m, OP_I_NOT_EQUAL, m->t_bool, candidate, owner),
+			op2(m, OP_I_NOT_EQUAL, m->t_bool, op1(m, OP_BITCAST, m->t_uint, candidate), light_owner))), &mine_merge);
 		op_void(m, OP_RAY_QUERY_CONFIRM_INTERSECTION, 1, &query);
 		selection_end(m, mine_merge);
 		branch(m, next);

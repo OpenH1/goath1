@@ -2,7 +2,8 @@
 docs/world-ao.md "Hardware ray queries"): a mesh's triangles turned to face out, the box, the instances' transforms
 and owners; a fake world's frames: the meshes made once a map as they are first needed, the instances on the objects'
 nodes, the static scenery as the structure is, everything let go of at the map's end; debug.rt_render_geometry's render mesh
-in the collision mesh's place from the frame after, its opaque triangles alone."""
+in the collision mesh's place from the frame after (its opaque triangles, then its alpha-tested ones, with their
+materials and textures' slots), the collision mesh let go of then; each BSP's meshes kept by index."""
 import sys
 from pathlib import Path
 
@@ -41,9 +42,15 @@ CONTROLS = [
     # ... or in the same frame as the collision mesh (a load waits for it)
     ("\tworld_rt.collision_count = count;\n",
      "\tworld_rt.collision_count = count;\n\tif (world_rt.render_due)\n\t\tworld_rt_structure_render();\n", "render"),
-    # ... or with the alpha-tested surfaces in it (rays stopped by a grate's holes)
-    ("WORLD_RT_SURFACES_OPAQUE, world_rt.triangles, count)", "WORLD_RT_SURFACES_ALPHA_TESTED, world_rt.triangles, count)",
-     "render"),
+    # ... or its materials carried again by another BSP's mesh (the renderer has them)
+    ("\t\tif (!memcmp(&world_rt.materials[index], &key, sizeof(key)))", "\t\tif (0)", "render"),
+    # ... or its textures sent every frame, or not again as one loads
+    ("\t\tif (slot->sent && header == slot->header)", "\t\tif (slot->sent)", "render"),
+    ("\t\tif (slot->sent && header == slot->header)", "\t\tif (header == slot->header)", "render"),
+    # ... or the alpha-tested material's alpha map not its slot
+    ("\t\tworld_rt_slot(&source->maps[source->alpha_map], 0) : 0;", "\t\t0 : 0;", "render"),
+    # the octahedral map's lower half not folded
+    ("\tif (vector[2] < 0.0f)\n", "\tif (0)\n", "arithmetic"),
     # ... or not made again for another BSP
     ("\t\tworld_rt.render_due = 1;", "\t\tworld_rt.render_due = world_rt.next_mesh <= 2;", "render"),
     # ... or its collision mesh kept beside it

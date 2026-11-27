@@ -693,6 +693,11 @@ the input attachment is binding 0) */
 #define XGPU_VULKAN_BINDING_STORE 1
 
 #define XGPU_VULKAN_SET_OCCLUSION 3
+/* (where the device has ray queries) what their hits read: the hit table
+(a storage buffer) and the textures' slots (xgpu_vulkan_rt.c) */
+#define XGPU_VULKAN_SET_RT_HITS 4
+#define XGPU_VULKAN_BINDING_RT_HIT_TABLE 0
+#define XGPU_VULKAN_BINDING_RT_HIT_TEXTURES 1
 #define XGPU_VULKAN_BINDING_WORLD_SDF 1
 #define XGPU_VULKAN_BINDING_WORLD_AO 2
 #define XGPU_VULKAN_BINDING_WORLD_SDF_TABLE 3
@@ -777,6 +782,18 @@ void xgpu_vulkan_rt_mesh(uint32_t id, uint32_t count, const float *triangles);
 /* ... one mesh let go of alone (its structure once the GPU is past the work
 recorded so far) */
 void xgpu_vulkan_rt_mesh_release(uint32_t id);
+/* ... an indexed mesh, with what a ray's hit reads of it (xgpu_stream.h's
+struct xgpu_world_rt_mesh: size bytes at data, checked whole), and the
+textures' slots its materials name */
+struct xgpu_world_rt_texture;
+void xgpu_vulkan_rt_mesh_indexed(uint32_t id, const void *data, uint32_t size);
+void xgpu_vulkan_rt_textures(const struct xgpu_world_rt_texture *textures, uint32_t count);
+/* the hit set (XGPU_VULKAN_SET_RT_HITS): its layout, which the pipelines'
+layout holds where the device has ray queries, and the set the draws that
+trace bind beside the occlusion's (its hit table and textures as they are
+now), read by the work recorded now */
+VkDescriptorSetLayout xgpu_vulkan_rt_hit_layout(void);
+VkDescriptorSet xgpu_vulkan_rt_hit_set(void);
 void xgpu_vulkan_rt_instances(const struct xgpu_world_ao_instance *instances, uint32_t count);
 int xgpu_vulkan_rt_build(void);
 VkAccelerationStructureKHR xgpu_vulkan_rt_scene(void);

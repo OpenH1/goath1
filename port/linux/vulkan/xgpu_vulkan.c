@@ -1439,8 +1439,9 @@ static struct
 		VkPrimitiveTopology topology;
 		VkDescriptorSet sets[2];
 		uint32_t offsets[2];
-		/* (display.hdr's input set; display.ambient_occlusion "world"'s set) */
-		VkDescriptorSet input, occlusion;
+		/* (display.hdr's input set; display.ambient_occlusion "world"'s set;
+		the ray-traced scene's hit set) */
+		VkDescriptorSet input, occlusion, hits;
 		VkBuffer vertices[XGPU_VULKAN_BINDINGS];
 		VkDeviceSize vertex_offsets[XGPU_VULKAN_BINDINGS];
 		VkBuffer indices;
@@ -8291,6 +8292,20 @@ static void draw_body(const struct xgpu_vulkan_draw *draw)
 				XGPU_VULKAN_SET_OCCLUSION, 1, &occlusion, 0, NULL);
 			vk.bound.occlusion = occlusion;
 		}
+		/* (and, with ray queries, what their hits read: xgpu_vulkan_rt.c) */
+		if (vk.capabilities.ray_queries)
+		{
+			VkDescriptorSet hits = xgpu_vulkan_rt_hit_set();
+
+			if (!hits)
+				return;
+			if (vk.bound.hits != hits)
+			{
+				vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, vk.pipeline_layout,
+					XGPU_VULKAN_SET_RT_HITS, 1, &hits, 0, NULL);
+				vk.bound.hits = hits;
+			}
+		}
 	}
 	/* (the lights written after this are written after it: in order) */
 	if (draw->dynamic_lights)
@@ -11113,6 +11128,7 @@ static int device_make(const struct xgpu_vulkan_options *options)
 	VkPhysicalDeviceAccelerationStructureFeaturesKHR available_structures, structures;
 	VkPhysicalDeviceRayQueryFeaturesKHR available_queries, queries;
 	VkPhysicalDeviceBufferDeviceAddressFeatures addresses;
+	VkPhysicalDeviceDescriptorIndexingFeatures indexing;
 	void **chain;
 
 	memset(&available, 0, sizeof(available));
@@ -11340,8 +11356,9 @@ static int device_make(const struct xgpu_vulkan_options *options)
 		vk.display_timing = 1;
 	}
 	vk.capabilities.ray_queries = 0;
+	/* (and the hit set's textures indexed per pixel: xgpu_vulkan_rt.c) */
 	if (ray_queries && available_structures.accelerationStructure && available_queries.rayQuery &&
-		available12.bufferDeviceAddress)
+		available12.bufferDeviceAddress && available12.shaderSampledImageArrayNonUniformIndexing)
 	{
 		memset(&structures, 0, sizeof(structures));
 		structures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
@@ -11352,10 +11369,14 @@ static int device_make(const struct xgpu_vulkan_options *options)
 		memset(&addresses, 0, sizeof(addresses));
 		addresses.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
 		addresses.bufferDeviceAddress = VK_TRUE;
+		memset(&indexing, 0, sizeof(indexing));
+		indexing.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES;
+		indexing.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
 		structures.pNext = &queries;
 		queries.pNext = &addresses;
+		addresses.pNext = &indexing;
 		*chain = &structures;
-		chain = &addresses.pNext;
+		chain = &indexing.pNext;
 		extensions[extension_count++] = VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME;
 		extensions[extension_count++] = VK_KHR_RAY_QUERY_EXTENSION_NAME;
 		extensions[extension_count++] = VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME;
@@ -11568,7 +11589,7 @@ static int layouts_make(void)
 	VkDescriptorSetLayoutBinding draw[5], textures[8];
 	VkDescriptorSetLayoutCreateInfo info;
 	VkPipelineLayoutCreateInfo layout;
-	VkDescriptorSetLayout sets[4];
+	VkDescriptorSetLayout sets[5];
 	int index;
 
 	memset(draw, 0, sizeof(draw));
@@ -11690,6 +11711,13 @@ static int layouts_make(void)
 		return 0;
 	sets[XGPU_VULKAN_SET_OCCLUSION] = vk.occlusion_layout;
 	layout.setLayoutCount = 4;
+	/* (and what a ray's hit reads, where the device has ray queries:
+	XGPU_VULKAN_SET_RT_HITS, xgpu_vulkan_rt.c) */
+	if (vk.capabilities.ray_queries && xgpu_vulkan_rt_hit_layout())
+	{
+		sets[XGPU_VULKAN_SET_RT_HITS] = xgpu_vulkan_rt_hit_layout();
+		layout.setLayoutCount = 5;
+	}
 	return check(vkCreatePipelineLayout(vk.device, &layout, NULL, &vk.pipeline_layout), "vkCreatePipelineLayout");
 }
 

@@ -1697,13 +1697,81 @@ its id (1 to XGPU_STREAM_WORLD_AO_MESHES - 1) and count triangles, nine
 floats each (each corner's x, y, z in the mesh's own space, the front faces
 counterclockwise seen from outside), at data (size: count * 36); id 0 lets
 go of every mesh (a map's end). An id is given once a map. Its kind
-(XGPU_WORLD_AO_MESH_*): those triangles, or (_RELEASE, no data) that id's
+(XGPU_WORLD_AO_MESH_*): those triangles; (_RELEASE, no data) that id's
 mesh let go of alone (a level's collision mesh once its render mesh is in
-the scene: docs/rt-plan/1-geometry.md) */
+the scene: docs/rt-plan/1-geometry.md); (_INDEXED) a mesh as drawn, with
+what a ray's hit reads of it (struct xgpu_world_rt_mesh, below), count its
+triangles; or (_TEXTURES, id 0) the textures' slots its materials name
+(struct xgpu_world_rt_texture, count of them). */
 #define XGPU_STREAM_WORLD_AO_MESHES 4096u
 #define XGPU_STREAM_WORLD_AO_MESH_TRIANGLES (1u << 20)
 #define XGPU_WORLD_AO_MESH_TRIANGLES 0u
 #define XGPU_WORLD_AO_MESH_RELEASE 1u
+#define XGPU_WORLD_AO_MESH_INDEXED 2u
+#define XGPU_WORLD_AO_MESH_TEXTURES 3u
+
+/* An indexed mesh's data (docs/rt-plan/1-geometry.md, "Per-hit data"):
+this header, then its vertices' positions (vertex_count of three floats,
+the mesh's own space), its triangles' corners (triangle_count of three
+uint32_t, each below vertex_count, the front faces counterclockwise seen
+from outside), its vertices' attributes (struct xgpu_world_rt_vertex),
+each triangle's material (a uint16_t of the map's, below
+XGPU_WORLD_RT_MATERIALS; padded to four bytes) and the materials it is the
+first to name (material_count of struct xgpu_world_rt_material). Its first
+opaque_count triangles are opaque (the structure's geometry 0, which stops
+a ray at once); the rest alpha-tested (geometry 1: a ray's candidate
+there is taken only where the material's alpha map passes its cutoff) */
+#define XGPU_WORLD_RT_VERTICES (1u << 20)
+#define XGPU_WORLD_RT_MATERIALS 4096u
+#define XGPU_WORLD_RT_TEXTURES 512u
+struct xgpu_world_rt_mesh
+{
+	uint32_t vertex_count, triangle_count, opaque_count, material_count;
+	uint32_t pad[4];
+};
+/* a vertex's attributes (24 bytes): its texture coordinates (the base
+map's, unscaled), its normal and tangent (octahedral, two snorm16: x low),
+its lightmap coordinates (the level's: two snorm16, as its compressed
+lightmap vertex has them; 0 a model's) and flags (XGPU_WORLD_RT_VERTEX_*) */
+#define XGPU_WORLD_RT_VERTEX_BITANGENT_NEGATIVE 1u
+struct xgpu_world_rt_vertex
+{
+	float uv[2];
+	uint32_t normal, tangent, lightmap_uv, flags;
+};
+/* a material (64 bytes, sixteen words, read so by the shaders: the hit
+table's records, xgpu_vulkan_rt.c): its index among the map's, its
+shader's type (shaders.c's _shader_type_*) and flags
+(XGPU_WORLD_RT_MATERIAL_*), the cutoff its alpha map's alpha must pass,
+that map's texture slot and the scale of the coordinates it is sampled at;
+then its maps' slots (0 none): base, detail (with its scale),
+multipurpose, bump, the mods' material maps (normal; occlusion, roughness
+and metalness: docs/mods.md "Material maps"), the lightmap page; and its
+self-illumination colour (RGBA8, R low). Later stages (reflections, path
+tracing) read the rest */
+#define XGPU_WORLD_RT_MATERIAL_ALPHA_TESTED 1u
+#define XGPU_WORLD_RT_MATERIAL_TWO_SIDED 2u
+#define XGPU_WORLD_RT_MATERIAL_TRANSPARENT 4u
+struct xgpu_world_rt_material
+{
+	uint32_t index, kind, flags;
+	float alpha_cutoff;
+	uint32_t alpha_map;
+	float alpha_scale[2];
+	uint32_t base_map, detail_map;
+	float detail_scale;
+	uint32_t multipurpose_map, bump_map, normal_map, orm_map, lightmap;
+	uint32_t self_illumination;
+};
+/* a texture's slot (1 to XGPU_WORLD_RT_TEXTURES - 1) and what it is: an
+Xbox texture (stage's source XGPU_SOURCE_TEXTURE, its header's guest
+address) or an image (XGPU_STREAM_SOURCE_IMAGE), as a draw's stage
+describes it; source XGPU_SOURCE_NONE empties the slot */
+struct xgpu_world_rt_texture
+{
+	uint32_t slot, pad;
+	struct xgpu_stream_texture_stage stage;
+};
 struct xgpu_stream_world_ao_mesh
 {
 	uint32_t header;
@@ -1757,6 +1825,10 @@ XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_world_ao_cascades, 40);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_motion, 16 + 16 + 64 + 16 + 16);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_temporal_pass, sizeof(struct xgpu_motion_pass));
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_world_ao_mesh, 32);
+XGPU_STREAM_ASSERT_SIZE(struct xgpu_world_rt_mesh, 32);
+XGPU_STREAM_ASSERT_SIZE(struct xgpu_world_rt_vertex, 24);
+XGPU_STREAM_ASSERT_SIZE(struct xgpu_world_rt_material, 64);
+XGPU_STREAM_ASSERT_SIZE(struct xgpu_world_rt_texture, 80);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_world_ao_instance, 64);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_world_ao_instances, 16);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_pipeline_stand_in, 12);
