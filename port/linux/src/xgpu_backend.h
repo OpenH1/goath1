@@ -121,6 +121,13 @@ extern struct xgpu_backend_capabilities xgpu_backend_capabilities;
 /* the GPU, its API and driver, as the backend's host names them ("" if
 unknown: a report's, port/linux/src/report.c) */
 const char *xgpu_backend_device(void);
+/* the devices the backend can draw with (display.gpu, Settings' GRAPHICS
+CARD), found as it started: how many (0 where it chooses none: Metal, the
+null renderer, VR's headset's), and the index'th's display.gpu value and
+name (the backend's host's, until the game starts again): 1 the one it
+draws with, 0 another, -1 no such device */
+int xgpu_backend_gpu_count(void);
+int xgpu_backend_gpus(int index, const char **value, const char **name);
 /* a report's times (report_frame_presented), running counts of
 microseconds modulo 2^32: the GPU's on the frames, as the backend's host
 measures it; the renderer's thread's, playing the frames' records; the

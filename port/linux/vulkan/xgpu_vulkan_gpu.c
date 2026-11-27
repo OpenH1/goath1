@@ -79,6 +79,16 @@ static int name_has(const char *name, const char *text)
 	return 0;
 }
 
+/* whether a name is text, in any case */
+static int name_is(const char *name, const char *text)
+{
+	if (!name)
+		return 0;
+	for (; *name && tolower((unsigned char)*name) == tolower((unsigned char)*text); name++, text++)
+		;
+	return !*name && !*text;
+}
+
 /* the best usable device whose name has text (NULL: any), else -1; the
 runner-up in second */
 static int best(const struct xgpu_gpu *gpus, int count, const char *text, int *second)
@@ -141,6 +151,17 @@ int xgpu_gpu_choose(const struct xgpu_gpu *gpus, int count, const char *setting,
 		}
 		else
 		{
+			/* (a whole name first, as Settings' GRAPHICS CARD stores it:
+			"... RTX 5070" not taken for a better "... RTX 5070 Ti") */
+			for (chosen = 0; chosen < count; chosen++)
+			{
+				if (gpus[chosen].usable && name_is(gpus[chosen].name, setting))
+				{
+					if (why)
+						snprintf(why, why_size, "display.gpu \"%s\"", setting);
+					return chosen;
+				}
+			}
 			chosen = best(gpus, count, setting, &second);
 			if (chosen >= 0)
 			{
@@ -161,4 +182,24 @@ int xgpu_gpu_choose(const struct xgpu_gpu *gpus, int count, const char *setting,
 				reason(&gpus[chosen], second >= 0 ? &gpus[second] : NULL, because, sizeof(because)));
 	}
 	return chosen;
+}
+
+void xgpu_gpu_setting(const struct xgpu_gpu *gpus, int count, int index, char *text, size_t size)
+{
+	int other;
+
+	if (!size)
+		return;
+	text[0] = 0;
+	if (index < 0 || index >= count)
+		return;
+	for (other = 0; other < count; other++)
+	{
+		if (other != index && gpus[index].name && name_is(gpus[other].name, gpus[index].name))
+		{
+			snprintf(text, size, "%d", index);
+			return;
+		}
+	}
+	snprintf(text, size, "%s", gpus[index].name ? gpus[index].name : "");
 }

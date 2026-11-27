@@ -57,6 +57,9 @@ the game simulates, nothing sent between machines.
 
 /* port/linux/game/dynamic_lights.c */
 boolean dynamic_lights_first_person(long weapon_index, real_point3d *position);
+/* source/interface/first_person_weapons.c */
+short first_person_weapon_get_marker_by_name_render(long weapon_index, char const *name, struct object_marker *markers,
+	short maximum_marker_count);
 real dynamic_lights_share(short count);
 
 enum
@@ -118,7 +121,17 @@ struct light_source_object
 	real_rgb_color color;
 	real radius;
 	real_vector3d offset;
+	/* a lit display's: the way its face looks, along the marker's
+	forward, left and up (0 0 0: a lamp, which shines every way); its
+	strength light_sources_display_strength's */
+	real_vector3d facing;
 };
+
+/* the renderer's falloff of a light of radius r, which the enhanced
+dynamic lights add in linear light (xgpu_spirv.c's dynamic_light_sum, the
+look's default brightness in d3d8_device.c's dynamic_lights_read_settings):
+its color^2.2 times BRIGHTNESS times (1 - (d/r)^4)^2 / (1 + 12 (d/r)^2) */
+#define LIGHT_SOURCES_RENDER_BRIGHTNESS 1.7f
 
 /* an effect's light: its time a flash's, seconds */
 struct light_source_effect
@@ -160,9 +173,13 @@ static struct light_source_object const light_source_objects[] =
 	{ 'eqip', "powerups\\active camouflage", NULL, _light_source_pulse, NONE, { 0.30f, 0.50f, 1.00f }, 2.0f },
 	{ 'scen', "scenery\\teleporter_shield\\teleporter", NULL, _light_source_pulse, NONE, { 0.07f, 1.00f, 0.02f },
 		3.0f, { 0.0f, 0.0f, 1.0f } },
-	/* the assault rifle's ammo counter, about the hands */
+	/* the assault rifle's ammo counter: a display about 0.009 by 0.019
+	world units (3 by 6 cm), facing back along the gun toward the eye, its
+	light at its foot (where it meets the gun's top, which it lights); it
+	reaches 0.05, its soft core (0.05 / sqrt(12)) about the display's size
+	(light_sources_display_strength) */
 	{ 'weap', "weapons\\assault rifle\\assault rifle", "primary trigger", _light_source_magazine, NONE,
-		{ 0.35f, 0.80f, 1.00f }, 0.35f, { -0.16f, 0.00f, 0.04f } },
+		{ 0.35f, 0.80f, 1.00f }, 0.05f, { -0.16f, 0.00f, 0.03f }, { -1.00f, 0.00f, 0.00f } },
 	/* a flamethrower's fire, as a fire's */
 	{ 'proj', "weapons\\flamethrower\\flame", NULL, _light_source_stream, NONE, { 1.00f, 0.60f, 0.25f }, 4.0f },
 };
@@ -335,6 +352,28 @@ static real light_sources_magazine_strength(
 	return 0.35f + 0.65f * PIN(fraction, 0.0f, 1.0f);
 }
 
+/* whether a row is a lit display's (its face's way given) */
+static boolean light_sources_display(
+	struct light_source_object const *entry)
+{
+	return entry->facing.i != 0.0f || entry->facing.j != 0.0f || entry->facing.k != 0.0f;
+}
+
+/* a lit display's strength, a scale of its color (the display's own, as
+drawn): a surface at a lit panel's face sees the panel's own brightness (a
+Lambertian emitter of radiance L lights what touches it by pi L, which
+reflects albedo times L), so the light's peak, at its middle, is the
+display's color: its color^2.2 times BRIGHTNESS there is the color^2.2.
+Not a lamp's: the assault rifle's counter drawn as a lamp of 0.35 world
+units that shines every way lit all the gun cyan, the barrel 2.7 times as
+bright as the corridor's light left it. As its color, in gamma (the game's
+lights' 0 to 1, which the renderer takes to the power 2.2) */
+static real light_sources_display_strength(
+	void)
+{
+	return powf(1.0f / LIGHT_SOURCES_RENDER_BRIGHTNESS, 1.0f / 2.2f);
+}
+
 /* a light kept as a candidate, scored as dynamic_lights_rank scores the
 game's: its brightest channel times its reach's part of the view (NULL:
 none kept) */
@@ -370,6 +409,7 @@ static struct light_source *light_sources_add(
 	source->halo = halo;
 	source->key = key;
 	source->baked = FALSE;
+	source->facing.i = source->facing.j = source->facing.k = 0.0f;
 	source->score = intensity * radius / (distance > radius ? distance : radius);
 	if (dot_product3d(&offset, &render.camera.forward) < -(radius + 0.1f))
 		source->score *= 1.0f / 64.0f;
@@ -618,6 +658,8 @@ static void light_sources_objects(
 				strength = light_sources_held_strength(iterator.index, object);
 			else if (held)
 				continue;
+			if (light_sources_display(entry))
+				strength *= light_sources_display_strength();
 			if (entry->function_index != NONE)
 				strength = render_interpolation_object_function_values(iterator.index)[entry->function_index];
 			if (entry->kind == _light_source_burn)
@@ -634,8 +676,20 @@ static void light_sources_objects(
 			if (entry->marker)
 			{
 				struct object_marker markers[MAXIMUM_LENS_FLARES_PER_LIGHT];
-				short count = object_get_marker_by_name(iterator.index, entry->marker, markers, NUMBEROF(markers));
-				short index;
+				short index, count = 0;
+				boolean first_person = FALSE;
+
+				/* (a local player's weapon on its first-person weapon's
+				marker, as that is drawn and turned: the held weapon's
+				turns as the body aims, not as the view holds the gun) */
+				if (held)
+				{
+					count = first_person_weapon_get_marker_by_name_render(iterator.index, entry->marker, markers,
+						NUMBEROF(markers));
+					first_person = count > 0;
+				}
+				if (!first_person)
+					count = object_get_marker_by_name(iterator.index, entry->marker, markers, NUMBEROF(markers));
 
 				/* (a light at each, as many as a light's flares are drawn
 				on, its strength shared in linear light as the game's
@@ -644,6 +698,7 @@ static void light_sources_objects(
 				for (index = 0; index < count; index++)
 				{
 					real_matrix4x3 const *matrix = &markers[index].matrix;
+					struct light_source *source;
 
 					position.x = matrix->position.x + entry->offset.i * matrix->forward.i +
 						entry->offset.j * matrix->left.i + entry->offset.k * matrix->up.i;
@@ -652,11 +707,31 @@ static void light_sources_objects(
 					position.z = matrix->position.z + entry->offset.i * matrix->forward.k +
 						entry->offset.j * matrix->left.k + entry->offset.k * matrix->up.k;
 					/* (a local player's weapon where its first-person
-					weapon is drawn) */
-					if (held)
+					weapon is drawn, its marker not found there) */
+					if (held && !first_person)
 						dynamic_lights_first_person(iterator.index, &position);
-					light_sources_add(&position, entry->radius, &entry->color,
+					source = light_sources_add(&position, entry->radius, &entry->color,
 						strength * dynamic_lights_share(count), FALSE, LIGHT_SOURCES_KEY(2, iterator.index, row, index));
+					/* (a display's face, as its marker turns) */
+					if (source && light_sources_display(entry))
+					{
+						real_vector3d facing;
+						real length;
+
+						facing.i = entry->facing.i * matrix->forward.i + entry->facing.j * matrix->left.i +
+							entry->facing.k * matrix->up.i;
+						facing.j = entry->facing.i * matrix->forward.j + entry->facing.j * matrix->left.j +
+							entry->facing.k * matrix->up.j;
+						facing.k = entry->facing.i * matrix->forward.k + entry->facing.j * matrix->left.k +
+							entry->facing.k * matrix->up.k;
+						length = square_root(facing.i * facing.i + facing.j * facing.j + facing.k * facing.k);
+						if (length > _real_epsilon)
+						{
+							source->facing.i = facing.i / length;
+							source->facing.j = facing.j / length;
+							source->facing.k = facing.k / length;
+						}
+					}
 				}
 				continue;
 			}

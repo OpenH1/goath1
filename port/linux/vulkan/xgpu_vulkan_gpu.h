@@ -39,7 +39,13 @@ its frames over), then the one that drives the window's display, then the
 one with the most device-local memory, then the first listed. A number is
 an index into the list; other text the best usable device whose name has
 it (any case: "nvidia", "RTX 5070"); a setting no usable device answers to
-falls back to auto. why is told the reason, for the log. */
+falls back to auto; a whole name is taken before the best of those that
+have it. why is told the reason, for the log. */
 int xgpu_gpu_choose(const struct xgpu_gpu *gpus, int count, const char *setting, char *why, size_t why_size);
+
+/* display.gpu's value that chooses gpus[index] (Settings' GRAPHICS CARD):
+its name, which survives the list's reordering; its index where another
+device has the same name (two identical cards); "" for no such device */
+void xgpu_gpu_setting(const struct xgpu_gpu *gpus, int count, int index, char *text, size_t size);
 
 #endif

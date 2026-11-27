@@ -44,8 +44,9 @@ each other's device and temporal_metalfx out of place. 25: each frame's
 own GPU time (xgpu_stream_gpu_frames) after the pipelines' states, which a
 host of 24 would not write and a guest of 24 has no room for. 26:
 CONTACT_SHADOWS (display.contact_shadows), which a host of 25 would refuse
-as a record it does not know */
-#define XGPU_STREAM_VERSION 26
+as a record it does not know. 27: GPUS (display.gpu's devices, Settings'
+GRAPHICS CARD), which a host of 26 would refuse so */
+#define XGPU_STREAM_VERSION 27
 #define XGPU_STREAM_LOADING_ART_BYTES (640u * 480u * 4u)
 /* and the picture at its own size after it, where there is one (loading_art.h's LOADING_ART_SOURCE_BYTES) */
 #define XGPU_STREAM_LOADING_ART_SOURCE_BYTES (1600u * 1200u * 4u)
@@ -359,6 +360,9 @@ enum
 	the depth (xgpu_backend_contact_shadows; RT_SHADOWS' record: of no
 	casters, in play, the light taken before the classic receivers) */
 	XGPU_STREAM_CONTACT_SHADOWS,
+	/* the devices the backend can draw with (synchronous:
+	xgpu_stream_gpus; xgpu_backend_gpus) */
+	XGPU_STREAM_GPUS,
 	XGPU_STREAM_RECORD_TYPES,
 };
 
@@ -508,6 +512,19 @@ struct xgpu_stream_capabilities
 	/* the GPU, its API and driver, in a few words (a report's:
 	port/linux/src/report.c), NUL terminated */
 	char device[96];
+};
+
+/* GPUS' answer: the usable devices the backend found as it started, in
+the order it lists them (a backend that chooses none: count 0), the one it
+draws with (-1 none), and for each display.gpu's value that chooses it
+(xgpu_vulkan_gpu.h's xgpu_gpu_setting) and its name, NUL terminated */
+#define XGPU_STREAM_GPUS_MOST 8
+#define XGPU_STREAM_GPU_NAME 64
+struct xgpu_stream_gpus
+{
+	int32_t count, chosen;
+	char values[XGPU_STREAM_GPUS_MOST][XGPU_STREAM_GPU_NAME];
+	char names[XGPU_STREAM_GPUS_MOST][XGPU_STREAM_GPU_NAME];
 };
 
 struct xgpu_stream_reply_record
@@ -1847,6 +1864,7 @@ XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_ring, 120);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_gpu_frames, 128);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_frame_end, 12);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_capabilities, 128);
+XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_gpus, 8 + 2 * XGPU_STREAM_GPUS_MOST * XGPU_STREAM_GPU_NAME);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_hdr, 24);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_tone_map, 24);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_panini, 56);

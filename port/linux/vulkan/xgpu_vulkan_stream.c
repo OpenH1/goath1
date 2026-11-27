@@ -5142,6 +5142,13 @@ static void stream_initialize(void *context, struct xgpu_stream_capabilities *ca
 	snprintf(capabilities->device, sizeof(capabilities->device), "%s", stream.capabilities.device);
 }
 
+/* GPUS: the devices display.gpu could choose (xgpu_vulkan.c's physical_choose) */
+static void stream_gpus(void *context, struct xgpu_stream_gpus *gpus)
+{
+	(void)context;
+	xgpu_vulkan_gpus(gpus);
+}
+
 static void stream_prepare(void *context)
 {
 	const char *detail = getenv("HALO_LOAD_TRACE_DETAIL");
@@ -5234,6 +5241,7 @@ const struct host_render_backend *xgpu_vulkan_stream_backend(void)
 		if (stream.capabilities.completion_told && xgpu_vulkan_completion_notify(host_render_stream_gpu_passed))
 			backend.fence_ready = stream_fence_ready;
 		backend.initialize = stream_initialize;
+		backend.gpus = stream_gpus;
 		backend.target_create = stream_target_create;
 		backend.target_delete = stream_target_delete;
 		backend.target_multisample = stream_target_multisample;

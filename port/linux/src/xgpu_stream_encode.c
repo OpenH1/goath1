@@ -191,7 +191,11 @@ static struct
 		struct xgpu_stream_capabilities capabilities;
 		uint32_t value;
 		struct xgpu_stream_vr_info vr_info;
+		struct xgpu_stream_gpus gpus;
 	} *replies;
+	/* the devices the backend can draw with, asked once it is made
+	(xgpu_backend_gpus) */
+	struct xgpu_stream_gpus gpus;
 
 	/* what the host last had (category: XGPU_STREAM_CATEGORY's value + 1,
 	0 none sent) */
@@ -699,11 +703,48 @@ void xgpu_backend_initialize(void)
 	xgpu_backend_capabilities.temporal_metalfx = stream.capabilities.temporal_metalfx;
 	xgpu_backend_capabilities.dlss_gpu = stream.capabilities.dlss_gpu;
 	stream.capabilities.device[sizeof(stream.capabilities.device) - 1] = 0;
+
+	/* (the devices, which stay as they are until the game starts again:
+	display.gpu chooses at the start) */
+	{
+		struct xgpu_stream_reply_record *gpus = record(XGPU_STREAM_GPUS, sizeof(*gpus));
+		int32_t index;
+
+		gpus->reply = STREAM_ADDRESS(&stream.replies->gpus);
+		memset(&stream.replies->gpus, 0, sizeof(stream.replies->gpus));
+		synchronous();
+		stream.gpus = stream.replies->gpus;
+		if (stream.gpus.count < 0 || stream.gpus.count > XGPU_STREAM_GPUS_MOST)
+			stream.gpus.count = 0;
+		if (stream.gpus.chosen >= stream.gpus.count)
+			stream.gpus.chosen = -1;
+		for (index = 0; index < stream.gpus.count; index++)
+		{
+			stream.gpus.values[index][XGPU_STREAM_GPU_NAME - 1] = 0;
+			stream.gpus.names[index][XGPU_STREAM_GPU_NAME - 1] = 0;
+		}
+	}
 }
 
 const char *xgpu_backend_device(void)
 {
 	return stream.open ? stream.capabilities.device : "";
+}
+
+int xgpu_backend_gpus(int index, const char **value, const char **name)
+{
+	if (!stream.open || index < 0 || index >= stream.gpus.count)
+		return -1;
+	if (value)
+		*value = stream.gpus.values[index];
+	if (name)
+		*name = stream.gpus.names[index];
+	return index == stream.gpus.chosen;
+}
+
+int xgpu_backend_gpu_count(void)
+{
+	return stream.open ? stream.gpus.count : 0;
 }
 
 int xgpu_backend_frame_times(struct xgpu_backend_frame_times *times)
