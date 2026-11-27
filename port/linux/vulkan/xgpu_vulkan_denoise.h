@@ -21,6 +21,10 @@ variance), or NULL where it cannot be had yet (the raw then bound) */
 struct xgpu_vulkan_image *xgpu_vulkan_denoise_draw(struct xgpu_vulkan_image *raw, struct xgpu_vulkan_image *inputs,
 	struct xgpu_vulkan_image *guides, const struct xgpu_world_ao_pass *pass, const int32_t rectangle[4]);
 
+/* its passes' pipelines asked for (made apart from the draws), with the
+light transport's own */
+void xgpu_vulkan_denoise_prepare(void);
+
 /* (xgpu_vulkan_lt.c's, for the denoiser) a light-transport kernel by its
 source's name (lt/<source>: the built-in SPIR-V, or HALO_LT_SHADER_DIR's or
 a reload's), none where it is not one; the generation goes up at each reload

@@ -231,6 +231,11 @@ static void denoise_pass(struct xgpu_vulkan_image *into, const int32_t rectangle
 	xgpu_vulkan_draw(&draw);
 }
 
+void xgpu_vulkan_denoise_prepare(void)
+{
+	(void)denoise_shaders();
+}
+
 struct xgpu_vulkan_image *xgpu_vulkan_denoise_draw(struct xgpu_vulkan_image *raw, struct xgpu_vulkan_image *inputs,
 	struct xgpu_vulkan_image *guides, const struct xgpu_world_ao_pass *pass, const int32_t rectangle[4])
 {

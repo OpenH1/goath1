@@ -501,6 +501,9 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 	if (!lt.prepared)
 	{
 		(void)xgpu_vulkan_pipeline_prepare(&lt.pass);
+		/* (the denoiser's made with it, so that both are there together) */
+		if (lt.mode == XGPU_VULKAN_LT_DENOISE)
+			xgpu_vulkan_denoise_prepare();
 		lt.prepared = 1;
 	}
 	if (!lt.dumps_read)
