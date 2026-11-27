@@ -1514,7 +1514,7 @@ static void dynamic_lights_functions(struct xgpu_text *text, struct xgpu_text *f
 		"\tfloat gel = 0.0;\n"
 		"\tif (z > 1.0e-4 && abs(a) < 1.0 && abs(b) < 1.0)\n"
 		"\t{\n"
-		"\t\tfloat x = (a * 0.5 + 0.5) * %d.0 - 0.5, y = (b * 0.5 + 0.5) * %d.0 - 0.5;\n"
+		"\t\tfloat x = (sign(a) * sqrt(abs(a)) * 0.5 + 0.5) * %d.0 - 0.5, y = (sign(b) * sqrt(abs(b)) * 0.5 + 0.5) * %d.0 - 0.5;\n"
 		"\t\tfloat fx = x - floor(x), fy = y - floor(y);\n"
 		"\t\tint ix = int(floor(x)), iy = int(floor(y));\n"
 		"\t\tfloat c = mix(mix(flashlight_cookie(cells, ix, iy), flashlight_cookie(cells, ix + 1, iy), fx),\n"

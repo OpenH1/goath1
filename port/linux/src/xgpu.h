@@ -540,8 +540,10 @@ clusters' slice:
   light to its radius (the game's distance attenuation's);
 - FLASHLIGHT_COOKIE on: the gel's brightness (the game's, gamma), a byte a
   texel, FLASHLIGHT_COOKIE_SIZE square, rows from -up, columns from -left:
-  texel (x, y) is the direction forward + a left + b up, a and b from
-  -width to width at the texels' middles.
+  texel (x, y) is the direction forward + a left + b up, a = u |u| width
+  for u from -1 to 1 at the texels' middles (and b of v the same): each
+  axis warped, so the texels are closer at the middle, where the gel's hot
+  disk and ring are.
 
 A pixel at p: v = p - light, a = dot(v, left) / dot(v, forward), b the
 same with up; the map (its own image, the draw set's binding

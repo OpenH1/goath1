@@ -5854,8 +5854,11 @@ int halo_dynamic_lights_gel(const void *gel_texture, const void *attenuation_tex
 	for (y = 0; y < XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE; y++)
 		for (x = 0; x < XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE; x++)
 		{
-			float a = (((float)x + 0.5f) / XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE * 2.0f - 1.0f) * width;
-			float b = (((float)y + 0.5f) / XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE * 2.0f - 1.0f) * width;
+			/* (each axis warped, its square: the texels closer at the middle,
+			where the hot disk and its ring are; xgpu.h) */
+			float u = ((float)x + 0.5f) / XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE * 2.0f - 1.0f;
+			float v = ((float)y + 0.5f) / XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE * 2.0f - 1.0f;
+			float a = u * fabsf(u) * width, b = v * fabsf(v) * width;
 			float rgb[3], brightest;
 
 			gel_at(&gel, sign, a, b, rgb);

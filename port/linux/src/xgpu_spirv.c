@@ -4846,10 +4846,13 @@ static void flashlight_light(struct module *m, const struct flashlight_read *rea
 		op2(m, OP_LOGICAL_AND, m->t_bool,
 		compare(m, OP_F_ORD_LESS_THAN, ext1(m, GLSL_F_ABS, m->t_float, a), constant_float(m, 1.0f)),
 		compare(m, OP_F_ORD_LESS_THAN, ext1(m, GLSL_F_ABS, m->t_float, b), constant_float(m, 1.0f))));
-	/* (the cookie, bilinear: texel (x, y) at a and b's (2 x + 1) / N - 1) */
-	x = fsub(m, 1, fmul(m, 1, fadd(m, 1, fmul(m, 1, a, constant_float(m, 0.5f)), constant_float(m, 0.5f)),
+	/* (the cookie, bilinear: texel (x, y) at u = sign(a) sqrt(|a|)'s (2 x + 1) / N - 1, xgpu.h) */
+	x = ext1(m, GLSL_F_SIGN, m->t_float, a);
+	x = fmul(m, 1, x, fsqrt(m, ext1(m, GLSL_F_ABS, m->t_float, a)));
+	y = fmul(m, 1, ext1(m, GLSL_F_SIGN, m->t_float, b), fsqrt(m, ext1(m, GLSL_F_ABS, m->t_float, b)));
+	x = fsub(m, 1, fmul(m, 1, fadd(m, 1, fmul(m, 1, x, constant_float(m, 0.5f)), constant_float(m, 0.5f)),
 		constant_float(m, (float)XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE)), constant_float(m, 0.5f));
-	y = fsub(m, 1, fmul(m, 1, fadd(m, 1, fmul(m, 1, b, constant_float(m, 0.5f)), constant_float(m, 0.5f)),
+	y = fsub(m, 1, fmul(m, 1, fadd(m, 1, fmul(m, 1, y, constant_float(m, 0.5f)), constant_float(m, 0.5f)),
 		constant_float(m, (float)XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE)), constant_float(m, 0.5f));
 	flashlight_bilinear(m, x, y, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE, &bl);
 	cookie = flashlight_mix(m, flashlight_mix(m, flashlight_cookie_byte(m, bl.x0, bl.y0),
