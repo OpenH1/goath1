@@ -4688,10 +4688,9 @@ static void prepass_twin_log(uint32_t id, const struct xgpu_stream_pipeline_defi
 		return;
 	said[id] = 1;
 	host_logf(HOST_LOG_WARN, "vulkan: twin: pipeline %u: %s (occlusion %02x, lighting %u, depth test %u write %u "
-		"function %u, blend %u source %u, colour mask %x, alpha test %u)", id, !twin ? "none" : (twin & 0x10u) ?
+		"function %u, blend %u source %u, colour mask %x)", id, !twin ? "none" : (twin & 0x10u) ?
 		"inputs" : "occluder", definition->pixel_program.ambient_occlusion, key->lighting, key->depth_test,
-		key->depth_write, key->depth_function, key->blend, key->pixel.source_blend, key->color_mask,
-		key->alpha_test);
+		key->depth_write, key->depth_function, key->blend, key->pixel.source_blend, key->color_mask);
 }
 
 /* a draw of the pre-pass: its pipeline's twin's (xgpu_stream_world_ao_twin:
