@@ -551,7 +551,11 @@ static float lt_kind_k(const struct xgpu_stream_lt_light *light)
 
 	if ((light->flags & XGPU_LT_LIGHT_FLASHLIGHT) || light->kind != XGPU_LT_LIGHT_POINT)
 		return LT_POWER_SCALE;
-	if (light->flags & XGPU_LT_LIGHT_PROJECTILE)
+	/* (a projectile's; and one of the port's own effect flashes
+(light_sources.c's key kind 1: a needle bursting, a shot's flash), lights
+of a projectile's reach (1 to 1.5 world units), not an explosion's (10),
+whose k is for its reach: the projectile's) */
+	if ((light->flags & XGPU_LT_LIGHT_PROJECTILE) || source == 1)
 		return LT_PROJECTILE_POWER_SCALE;
 	/* (one of the port's own lights on an object or a firer's flames
 	(light_sources.c's key kinds 2 and 3): on an object, though a record

@@ -327,7 +327,9 @@ static float lt_power_scale(struct xgpu_stream_lt_light const *light)
 {
 	if ((light->flags & XGPU_LT_LIGHT_FLASHLIGHT) || light->kind != XGPU_LT_LIGHT_POINT)
 		return LT_LIGHTS_POWER_SCALE;
-	if (light->flags & XGPU_LT_LIGHT_PROJECTILE)
+	/* (and one of the port's own effect flashes, light_sources.c's key
+kind 1: a projectile's reach, not an explosion's) */
+	if ((light->flags & XGPU_LT_LIGHT_PROJECTILE) || (light->id[1] >> 24) == 1)
 		return LT_LIGHTS_PROJECTILE_POWER_SCALE;
 	return light->object != 0xffffffffu ? LT_LIGHTS_OBJECT_POWER_SCALE : LT_LIGHTS_EFFECT_POWER_SCALE;
 }
