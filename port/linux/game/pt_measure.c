@@ -16,8 +16,8 @@ occluders and receivers, any with radiosity power (transparent ones too) an
 emitter; each lightmap page copied (linear: a pure 2.2 decode, the plan's),
 each receiver's base map's mean albedo; the scenario's skies' lights
 (sky_definitions.h's struct sky_light) and the first sky's outdoor ambient
-radiosity (the dome). A BVH over the occluders. Then samples, by area, on
-the receivers that have a lightmap (not emitters'), a share each window;
+radiosity (the dome). A BVH over the occluders. Then samples, one per
+lightmap texel alike (by each triangle's texels), on the receivers that have a lightmap (not emitters'), a share each window;
 at each, its lightmap texel L and each source group's traced contribution:
 - each sky light: color x power x n.l x the share of rays inside its disk
   that escape;
@@ -824,7 +824,13 @@ static int prepare(void)
 				pt.emitters[pt.emitter_count++] = index;
 			if (m->receiver)
 			{
-				total += t->area;
+				/* (by its lightmap texels, each texel alike: its lightmap
+				coordinates' area times its page's texels) */
+				float du1 = t->lightmap[1][0] - t->lightmap[0][0], dv1 = t->lightmap[1][1] - t->lightmap[0][1];
+				float du2 = t->lightmap[2][0] - t->lightmap[0][0], dv2 = t->lightmap[2][1] - t->lightmap[0][1];
+
+				total += 0.5f * fabsf(du1 * dv2 - du2 * dv1) * (float)pt.pages[m->page].width *
+					(float)pt.pages[m->page].height;
 				pt.receiver_triangles[receivers] = index;
 				pt.receiver_cdf[receivers++] = total;
 			}
@@ -834,7 +840,7 @@ static int prepare(void)
 		if (occluders)
 			build_node(0, occluders);
 		platform_log("pt fit: BSP %d: %ld triangles (%ld occluders, %ld BVH nodes), %ld materials, %d lightmap pages, "
-			"%ld receivers (area %.0f), %ld emitter triangles of %d shaders, %d sky lights", (int)pt.bsp,
+			"%ld receivers (%.0f lightmap texels), %ld emitter triangles of %d shaders, %d sky lights", (int)pt.bsp,
 			pt.triangle_count, occluders, pt.node_count, pt.material_count, pt.page_count, receivers, total,
 			pt.emitter_count, pt.columns - 2 - pt.sun_count, pt.sun_count);
 	}
