@@ -1124,6 +1124,26 @@ static void screen_text_set(struct widget_instance *widget, char const *utf8)
 	widget->parameters.text_box.text = buffer;
 }
 
+/* a text box's words set only if they differ from those it has (made
+again each frame: dialog_frame) */
+static void screen_text_change(struct widget_instance *widget, char const *utf8)
+{
+	unsigned short text[MENU_SCREEN_MAXIMUM_TEXT];
+	long length = halo_menus_utf16(utf8, text, NUMBEROF(text)), index;
+	wchar_t const *now = widget->parameters.text_box.text;
+
+	if (now && length > 0)
+	{
+		/* (the text's terminator included: a shorter one's differs first) */
+		for (index = 0; index < length && (unsigned short)now[index] == text[index]; index++)
+		{
+		}
+		if (index == length)
+			return;
+	}
+	screen_text_set(widget, utf8);
+}
+
 /* a text box's words, from the game's own (a string list's) */
 static void screen_text_set_wide(struct widget_instance *widget, wchar_t const *words)
 {
@@ -1891,7 +1911,7 @@ static void box_frame(struct screen_open *open)
 
 /* each frame: a <dialog>'s words and its choices' labels with bindings
 read again (GOAT Settings' KEEP or REVERT counting down), its size as it
-was made */
+was made; set only as they change */
 static void dialog_frame(struct screen_open *open)
 {
 	struct menu_screen const *screen = menu_screens_find(open->place->screen);
@@ -1909,7 +1929,7 @@ static void dialog_frame(struct screen_open *open)
 		if (dialog->kind == MENU_SCREEN_DIALOG && dialog->text && strchr(dialog->text, '{') &&
 			menu_screen_text(dialog->text, screen_value, &values, label, sizeof(label)) && label[0])
 		{
-			screen_text_set(open->dialog_text, label);
+			screen_text_change(open->dialog_text, label);
 		}
 	}
 	for (index = 0; index < open->item_count; index++)
@@ -1919,7 +1939,7 @@ static void dialog_frame(struct screen_open *open)
 		if (item && item->label && strchr(item->label, '{') &&
 			menu_screen_text(item->label, screen_value, &values, label, sizeof(label)))
 		{
-			screen_text_set(open->items[index], label);
+			screen_text_change(open->items[index], label);
 		}
 	}
 }
