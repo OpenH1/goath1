@@ -230,10 +230,6 @@ void world_rt_face_out(struct world_rt_source_vertex const *vertices, unsigned l
 
 /* ---------- what the scene reads of the game (port/linux/game/world_rt_game.c) */
 
-/* what was read of the map forgotten, as it unloads (the model shaders' base
-maps found opaque: world_rt_game.c) */
-void world_rt_source_forget(void);
-
 /* the loaded structure BSP's index (-1 none) */
 short world_rt_source_bsp(void);
 /* its collision geometry's triangles, world space (nine floats each, into
