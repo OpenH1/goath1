@@ -7576,7 +7576,7 @@ static void rt_bounce_hit(struct module *m, unsigned int query, unsigned int d, 
 {
 	unsigned int committed = constant_int(m, RAY_QUERY_COMMITTED);
 	unsigned int mesh, record, primitive, corners, attributes, material_word, material, at, uv[3], normals[3], b, bx, by, st;
-	unsigned int alpha_tested, slot, operands[4], pointer, sampled, texel, nobj, matrix, columns[3], nw, albedo;
+	unsigned int alpha_tested, slot, operands[4], pointer, sampled, texel, nobj, matrix, columns[3], nw, albedo, has_data;
 	int corner;
 
 	rt_hits_declare(m);
@@ -7586,8 +7586,13 @@ static void rt_bounce_hit(struct module *m, unsigned int query, unsigned int d, 
 	/* (an alpha-tested triangle's index past the opaque ones: geometry 1) */
 	alpha_tested = op2(m, OP_I_EQUAL, m->t_bool, op2(m, OP_RAY_QUERY_GET_INTERSECTION_GEOMETRY_INDEX, m->t_uint, query,
 		committed), constant_uint(m, 1));
-	primitive = uadd(m, op2(m, OP_RAY_QUERY_GET_INTERSECTION_PRIMITIVE_INDEX, m->t_uint, query, committed),
-		op3(m, OP_SELECT, m->t_uint, alpha_tested, rt_hit_word(m, uadd(m, record, constant_uint(m, 3))), constant_uint(m, 0)));
+	/* (a mesh of triangles alone, a collision mesh's: its record all 0, no
+	data; read as mesh 0's first words, in range, and taken as a grey wall
+	facing the ray) */
+	has_data = unot_zero(m, rt_hit_word(m, record));
+	primitive = op3(m, OP_SELECT, m->t_uint, has_data, uadd(m, op2(m, OP_RAY_QUERY_GET_INTERSECTION_PRIMITIVE_INDEX,
+		m->t_uint, query, committed), op3(m, OP_SELECT, m->t_uint, alpha_tested, rt_hit_word(m, uadd(m, record,
+		constant_uint(m, 3))), constant_uint(m, 0))), constant_uint(m, 0));
 	corners = uadd(m, rt_hit_word(m, record), op2(m, OP_I_MUL, m->t_uint, primitive, constant_uint(m, 3)));
 	attributes = rt_hit_word(m, uadd(m, record, constant_uint(m, 1)));
 	material_word = rt_hit_word(m, uadd(m, rt_hit_word(m, uadd(m, record, constant_uint(m, 2))),
@@ -7641,8 +7646,8 @@ static void rt_bounce_hit(struct module *m, unsigned int query, unsigned int d, 
 		constant_splat(m, 3, 2.2f)), constant_splat(m, 3, XGPU_RT_BOUNCE_ALBEDO_MOST));
 	albedo = select_n(m, 3, op2(m, OP_I_EQUAL, m->t_bool, slot, constant_uint(m, 0)),
 		constant_splat(m, 3, XGPU_RT_BOUNCE_ALBEDO_NONE), albedo);
-	*normal_out = nw;
-	*albedo_out = albedo;
+	*normal_out = select_n(m, 3, has_data, nw, fneg(m, 3, d));
+	*albedo_out = select_n(m, 3, has_data, albedo, constant_splat(m, 3, XGPU_RT_BOUNCE_ALBEDO_NONE));
 }
 
 /* what a light gives a point h facing nh (a vec3: its color by its
