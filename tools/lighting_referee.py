@@ -69,11 +69,13 @@ SCENES = {
 
 # the variants. The rest of the look is Classic's in each (display.graphics "classic"), so that only the lights
 # differ: Classic; Enhanced lights with no shadows; Enhanced with ray-traced shadows (world ambient occlusion, which
-# display.shadows "ray_traced"); that in HDR with its half floats kept. (Not world ambient occlusion: with it some
-# frames of c20 lose the structure, the clear colour in its place: a bug of its own, which "frame whole" catches)
+# display.shadows "ray_traced", with world ambient occlusion as Enhanced draws it); that in HDR with its half floats
+# kept. (World AO once dropped the structure's draws until a ray-traced scene existed, the clear colour in their
+# place: "world AO: structure drawn" guards it)
 CLASSIC = ["HALO_GRAPHICS=classic", "HALO_DYNAMIC_LIGHTS=classic", "HALO_SHADOWS=classic"]
 ENHANCED = ["HALO_GRAPHICS=classic", "HALO_DYNAMIC_LIGHTS=enhanced", "HALO_SHADOWS=classic"]
-TRACED = ["HALO_GRAPHICS=classic", "HALO_DYNAMIC_LIGHTS=enhanced", "HALO_SHADOWS=ray_traced"]
+TRACED = ["HALO_GRAPHICS=classic", "HALO_DYNAMIC_LIGHTS=enhanced", "HALO_SHADOWS=ray_traced",
+          "HALO_AMBIENT_OCCLUSION=world"]
 # (the reference for the shadows: the same build with its lights' shadows off, the knobs every branch keeps:
 # HALO_LIGHT_SHADOWS_OFF for the dynamic lights, HALO_FLASHLIGHT_SHADOWS_OFF for a flashlight's own)
 UNTRACED = TRACED + ["HALO_LIGHT_SHADOWS_OFF=1", "HALO_FLASHLIGHT_SHADOWS_OFF=1"]
@@ -133,6 +135,7 @@ PARITY_SHAPE = 0.85        # the correlation of the added light's pattern (a bea
 PARITY_FLOOR = 0.002       # added light (linear) under this in Classic is no light to compare
 HUD_SAME = 1.0             # the HUD's own pixels identical to Classic's, to a code (the view behind a translucent
 HUD_CODES = 1              # meter rounds to 8 bits after the blend)
+WORLD_AO_CLEAR = 0.2       # the commonest colour's share of a frame with world AO (the structure missing: 0.87)
 DAYLIGHT_DIFFERENT = 0.001  # bytes of the daylight control that may differ by more than 2 codes
 SHADOW_DARKER = 0.4        # shadowed: the traced picture's light this much under the untraced one's
 SHADOW_LEAST = 150         # shadowed pixels a side of the crease needs (1920x1080)
@@ -423,10 +426,11 @@ def plan(build, baseline, machine, timing, only, mutate, features, overrides=(),
     if baseline != build:
         if "identity" in only:
             for scene in ("corridor", "blast", "daylight"):
-                runs.append(Run(scene, "baseline", baseline, scene_settings(scene, CLASSIC, []), machine,
+                runs.append(Run(scene, "baseline", baseline, scene_settings(scene, CLASSIC, list(overrides)), machine,
                                 label=f"lref-{slug(baseline)}-base-{scene}"))
         if features:
-            runs.append(Run("corridor", "baseline-traced", baseline, scene_settings("corridor", TRACED, []), machine,
+            runs.append(Run("corridor", "baseline-traced", baseline, scene_settings("corridor", TRACED, list(overrides)),
+                            machine,
                             label=f"lref-{slug(baseline)}-base-traced"))
     timed = []
     if "cost" in only:
@@ -533,9 +537,20 @@ def check_parity(table, runs):
                   different <= DAYLIGHT_DIFFERENT)
 
 
+def clear_share(rgb):
+    """the share of a picture's pixels of its commonest colour (the clear colour where nothing was drawn)"""
+    counts = {}
+    for at in range(0, len(rgb), 3 * 97):
+        key = rgb[at:at + 3]
+        counts[key] = counts.get(key, 0) + 1
+    return max(counts.values()) / sum(counts.values())
+
+
 def check_whole(table, runs):
-    """every picture whole: no frame mostly one colour (the clear colour where the structure was not drawn)"""
-    broken = []
+    """every picture whole: no frame mostly one colour (the clear colour where the structure was not drawn); with
+    world AO (the traced variants), at most WORLD_AO_CLEAR of any picture (void frames read 0.87, whole ones
+    0.03 to 0.07)"""
+    broken, worst = [], 0.0
     for run in runs:
         if not run.folder:
             continue
@@ -544,13 +559,16 @@ def check_whole(table, runs):
                 rgb = Picture(path).rgb
             except (OSError, ValueError):
                 continue
-            counts = {}
-            for at in range(0, len(rgb), 3 * 97):
-                key = rgb[at:at + 3]
-                counts[key] = counts.get(key, 0) + 1
-            if max(counts.values()) > 0.4 * sum(counts.values()):
-                broken.append(f"{run.scene}-{run.variant} {path.stem}")
+            share = clear_share(rgb)
+            world_ao = "HALO_AMBIENT_OCCLUSION=world" in run.settings
+            if world_ao:
+                worst = max(worst, share)
+            if share > (WORLD_AO_CLEAR if world_ao else 0.4):
+                broken.append(f"{run.scene}-{run.variant} {path.stem} {share:.2f}")
     table.add("runs", "frames whole", len(broken), "= 0 mostly one colour", not broken, ", ".join(broken[:4]))
+    if any("HALO_AMBIENT_OCCLUSION=world" in run.settings for run in runs):
+        table.add("runs", "world AO: structure drawn", worst, f"< {WORLD_AO_CLEAR} clear colour, every frame",
+                  worst < WORLD_AO_CLEAR)
 
 
 def hud_pixels(picture, box):
@@ -833,7 +851,7 @@ def main():
                         help="a feature and the setting that turns it on (default: " +
                         ", ".join(f"{k}={v}" for k, v in FEATURES.items()) + ")")
     parser.add_argument("--set", action="append", default=[], metavar="VAR=VALUE",
-                        help="a setting for every run of the build (not the baseline's): HALO_RT_RENDER_GEOMETRY=1")
+                        help="a setting for every run (the baseline's too): HALO_RT_RENDER_GEOMETRY=true")
     parser.add_argument("--mutate", choices=sorted(MUTATIONS), help="a negative control: break one subject")
     parser.add_argument("--work", type=Path, default=ROOT / "build" / "lighting_referee",
                         help="where the pictures and the table are kept")
