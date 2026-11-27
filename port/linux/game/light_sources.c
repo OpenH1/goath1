@@ -169,13 +169,9 @@ static struct light_source_object const light_source_objects[] =
 	{ 'eqip', "powerups\\active camouflage", NULL, _light_source_pulse, NONE, { 0.30f, 0.50f, 1.00f }, 2.0f },
 	{ 'scen', "scenery\\teleporter_shield\\teleporter", NULL, _light_source_pulse, NONE, { 0.07f, 1.00f, 0.02f },
 		3.0f, { 0.0f, 0.0f, 1.0f } },
-	/* the assault rifle's ammo counter: a display about 0.009 by 0.019
-	world units (3 by 6 cm), facing back along the gun toward the eye, its
-	light at its foot (where it meets the gun's top, which it lights), a
-	panel: its light a^2 / (a^2 + d^2) of its own at d (a disk's of its
-	area, a = 0.0074), a hundredth by 0.08 */
-	{ 'weap', "weapons\\assault rifle\\assault rifle", "primary trigger", _light_source_magazine, NONE,
-		{ 0.35f, 0.80f, 1.00f }, 0.08f, { -0.16f, 0.00f, 0.03f }, { -1.00f, 0.00f, 0.00f }, 0.009f * 0.019f },
+	/* (not the assault rifle's ammo counter: its display, a panel of the
+	light model, lit its own weapon, which the game's draws never are, so a
+	daylight frame with no other light in view was not the game's picture) */
 	/* a flamethrower's fire, as a fire's */
 	{ 'proj', "weapons\\flamethrower\\flame", NULL, _light_source_stream, NONE, { 1.00f, 0.60f, 0.25f }, 4.0f },
 };

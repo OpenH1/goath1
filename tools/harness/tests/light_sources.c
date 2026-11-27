@@ -289,7 +289,6 @@ int main(int argc, char **argv)
 			{ "powerups\\over shield", _light_source_pulse },
 			{ "powerups\\active camouflage", _light_source_pulse },
 			{ "scenery\\teleporter_shield\\teleporter", _light_source_pulse },
-			{ "weapons\\assault rifle\\assault rifle", _light_source_magazine },
 			{ "weapons\\flamethrower\\flame", _light_source_stream },
 		};
 		unsigned want, index;
@@ -317,6 +316,11 @@ int main(int argc, char **argv)
 			}
 			CHECK(found, "a row for %s", wanted[want].name);
 		}
+		/* (no light on the assault rifle's counter: it lit its own weapon,
+		which the game's draws never are) */
+		for (index = 0; index < NUMBEROF(light_source_objects); index++)
+			CHECK(strcmp(light_source_objects[index].name, "weapons\\assault rifle\\assault rifle"),
+				"a row for the assault rifle's counter");
 		return 0;
 	}
 	fprintf(stderr, "no case %s\n", case_name);
