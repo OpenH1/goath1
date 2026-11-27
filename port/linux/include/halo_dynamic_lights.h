@@ -66,6 +66,27 @@ given before it (count 0: none) and taken by it (xgpu.h's
 XGPU_DYNAMIC_LIGHTS_SHADOWED) */
 #define HALO_DYNAMIC_LIGHTS_SHADOWED 4
 void halo_dynamic_lights_shadowed(const int *indices, const float *disks, const unsigned long *owners, int count);
+/* the enhanced flashlight (xgpu.h's XGPU_DYNAMIC_LIGHTS_FLASHLIGHT): the
+frame's flashlights, given before halo_dynamic_lights_set and taken by it,
+each its light's index among those it is given, its gel's frame as the
+game's gel pass has it (its beam, up and left: rasterizer_xbox_environment.c),
+and whether its shadow map is traced (one at most), with its owner among the
+ray-traced scene's instances (world_rt_owner, which its rays leave out) */
+#define HALO_DYNAMIC_LIGHTS_FLASHLIGHTS 4
+struct halo_flashlight
+{
+	int light;
+	float forward[3], up[3], left[3];
+	int shadowed;
+	unsigned long owner;
+};
+void halo_dynamic_lights_flashlights(const struct halo_flashlight *flashlights, int count);
+/* the gel the flashlights are lit through, and the game's distance
+attenuation (each a texture's header, D3DBaseTexture's, as the texture
+cache gives it: a cube map, and a volume), made the renderer's cookie and
+falloff (xgpu.h); 1 if it could be (the gel decoded), else 0: the
+flashlight is then lit as the game lights it */
+int halo_dynamic_lights_gel(const void *gel, const void *attenuation);
 /* the structure's 3D BSP, from which a pixel finds its cluster (xgpu.h's
 world: count texels of four words, count at most
 HALO_DYNAMIC_LIGHTS_WORLD_TEXELS), when it changes; copied */

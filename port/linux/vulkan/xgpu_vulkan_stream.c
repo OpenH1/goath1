@@ -3083,6 +3083,17 @@ static void dynamic_lights_cells(const struct xgpu_stream_dynamic_lights_block *
 	xgpu_vulkan_dynamic_lights_upload(block, sizeof(*block), lights_cells, first < end ? first : 0, first < end ? end : 0);
 }
 
+/* the enhanced flashlight's shadow map, as the frame's lights name a
+shadowed slot (xgpu_vulkan_light_shadows.c), the stream's targets bound
+again after it; not while a map is prepared */
+static void dynamic_lights_flashlight(void)
+{
+	if (stream.preparing || !stream.capabilities.ray_queries || !lights_cells)
+		return;
+	if (xgpu_vulkan_flashlight_draw(lights_cells))
+		targets_bind();
+}
+
 static void stream_dynamic_lights_upload(void *context, const struct xgpu_stream_dynamic_lights_upload *record)
 {
 	const void *cells = host_pointer(record->cells);
@@ -3091,6 +3102,7 @@ static void stream_dynamic_lights_upload(void *context, const struct xgpu_stream
 	if (!cells || record->size != DYNAMIC_LIGHTS_CELLS_SIZE)
 		return;
 	dynamic_lights_cells(&record->block, record->count, 0, DYNAMIC_LIGHTS_CELLS_SIZE, cells);
+	dynamic_lights_flashlight();
 }
 
 static void stream_dynamic_lights_change(void *context, const struct xgpu_stream_dynamic_lights_change *record)
@@ -3101,6 +3113,7 @@ static void stream_dynamic_lights_change(void *context, const struct xgpu_stream
 	if (record->size && !cells)
 		return;
 	dynamic_lights_cells(&record->block, record->count, record->offset, record->size, cells);
+	dynamic_lights_flashlight();
 }
 
 static void stream_dynamic_lights_world(void *context, const struct xgpu_stream_dynamic_lights_world *record)

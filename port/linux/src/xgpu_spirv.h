@@ -53,6 +53,8 @@ The conventions (SPIR-V 1.3, Vulkan 1.1):
 #define XGPU_SPIRV_BINDING_DYNAMIC_LIGHTS 2
 #define XGPU_SPIRV_BINDING_DYNAMIC_LIGHT_CELLS 3
 #define XGPU_SPIRV_BINDING_SAMPLES 4
+/* (the enhanced flashlight's shadow map: xgpu.h's XGPU_DYNAMIC_LIGHTS_FLASHLIGHT) */
+#define XGPU_SPIRV_BINDING_FLASHLIGHT_SHADOW 5
 #define XGPU_SPIRV_SET_TEXTURES 1
 /* (a model's material maps, past the four stages: xgpu.h's
 XGPU_TEXTURE_MODES_NORMAL_MAP, _ORM_MAP; 2D, at texture 0's coordinates) */
@@ -410,12 +412,18 @@ draw set's, the occlusion set (its block's camera; the ray-traced scene).
 _TRACE: each pixel's view of each shadowed light's disk, a few rays by ray
 queries (options' ray_queries), a channel a light; _FILTER: the trace's mask
 (at XGPU_SPIRV_WORLD_AO_PASS_HISTORY) averaged over the 3x3 pixels about
-each of the same surface (where no temporal technique accumulates it).
+each of the same surface (where no temporal technique accumulates it);
+_FLASHLIGHT: the enhanced flashlight's shadow map (xgpu.h's
+XGPU_DYNAMIC_LIGHTS_FLASHLIGHT), a ray a texel from the light along the
+texel's direction in its gel's frame, its red the distance to what the ray
+met (the light's radius where none), the light's owner and the
+first-person models and the local player's own body left out.
 FALSE if out of memory. */
 enum
 {
 	XGPU_SPIRV_LIGHT_SHADOWS_TRACE,
 	XGPU_SPIRV_LIGHT_SHADOWS_FILTER,
+	XGPU_SPIRV_LIGHT_SHADOWS_FLASHLIGHT,
 };
 BOOL xgpu_spirv_light_shadows_pass(int pass, const struct xgpu_spirv_options *options, struct xgpu_spirv_module *module);
 

@@ -330,7 +330,10 @@ static short dynamic_lights_bounce_choose(
 		real intensity = MAX(light->color[0], MAX(light->color[1], light->color[2]));
 		real dx, dy, dz, distance, score;
 
-		if ((light->flags & HALO_DYNAMIC_LIGHT_MODELS_ONLY) || !(light->radius >= BOUNCE_LEAST_RADIUS) ||
+		/* (not the flashlight's: a narrow beam through its gel, which a
+		bounce about its light would spill all round) */
+		if ((light->flags & (HALO_DYNAMIC_LIGHT_MODELS_ONLY | HALO_DYNAMIC_LIGHT_FLASHLIGHT)) ||
+			!(light->radius >= BOUNCE_LEAST_RADIUS) ||
 			!(intensity >= BOUNCE_LEAST_INTENSITY))
 		{
 			continue;

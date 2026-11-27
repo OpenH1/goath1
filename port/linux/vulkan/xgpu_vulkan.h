@@ -750,6 +750,13 @@ void xgpu_vulkan_light_shadows_prepare(int ray_queries);
 void xgpu_vulkan_light_shadows_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_world_ao_pass *pass,
 	const uint32_t (*shadowed)[4]);
 void xgpu_vulkan_light_shadows_end(void);
+/* the enhanced flashlight's shadow map (xgpu.h's XGPU_DYNAMIC_LIGHTS_FLASHLIGHT):
+its image, which the draw set names (xgpu_vulkan.c), and its pass, drawn as
+the frame's lights come with a shadowed slot (cells: the cells as the GPU
+has them, xgpu_vulkan_stream.c), its pipeline made the first time; 1 if
+it drew */
+struct xgpu_vulkan_image *xgpu_vulkan_flashlight_shadow_image(void);
+int xgpu_vulkan_flashlight_draw(const unsigned char *cells);
 struct xgpu_world_ao_block;
 /* the stand-ins and the sampler made (the core's start): 0 if they cannot be */
 int xgpu_vulkan_world_ao_create(void);

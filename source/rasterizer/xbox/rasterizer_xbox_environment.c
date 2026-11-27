@@ -168,6 +168,8 @@ symbols in this file:
 #include "rasterizer_xbox_draw_primitives.h"
 #include "rasterizer_xbox_internal.h"
 #include "draw_bounds.h" /* port: port/linux/game/draw_bounds.c */
+#include "bitmaps/bitmap_group_internal.h" /* port: rasterizer_environment_port_gel */
+#include "cache/texture_cache.h"
 
 /* ---------- constants */
 
@@ -1273,6 +1275,69 @@ void _rasterizer_environment_diffuse_light_begin(
 		draw_bounds_cube(&light->position, light->radius * DIFFUSE_LIGHT_BORDER_REACH);
 	}
 	return;
+}
+
+/* port: the enhanced flashlight (port/linux/game/dynamic_lights.c): a
+rasterizer light's gel frame as _rasterizer_environment_diffuse_light_begin
+gives its pass (its beam, up and left, turned by the gel's functions), and,
+where asked, its gel's and the game's distance attenuation's textures (the
+texture cache's headers, loaded now); FALSE where it has no gel */
+boolean rasterizer_environment_port_gel(
+	long light_index,
+	real_vector3d *forward,
+	real_vector3d *up,
+	real_vector3d *left,
+	void const **gel,
+	void const **attenuation)
+{
+	struct rasterizer_light_submit_parameters *light;
+	struct point_light_gel_parameters const *parameters;
+	real_matrix4x3 gel_rotation;
+	real yaw, pitch, roll;
+
+	if (light_index < 0 || light_index >= rasterizer_lights.light_count)
+		return FALSE;
+	light = &rasterizer_lights.lights[light_index];
+	if (!light->definition || light->definition->gel.map.index == NONE)
+		return FALSE;
+	parameters = &light->definition->gel;
+	yaw = parameters->yaw_period > 0.0f ? periodic_function_evaluate(parameters->yaw_function,
+		global_frame_parameters.game_time_sec / parameters->yaw_period) * (2.0f * _pi) : 0.0f;
+	pitch = parameters->pitch_period > 0.0f ? periodic_function_evaluate(parameters->pitch_function,
+		global_frame_parameters.game_time_sec / parameters->pitch_period) * (2.0f * _pi) : 0.0f;
+	roll = parameters->roll_period > 0.0f ? periodic_function_evaluate(parameters->roll_function,
+		global_frame_parameters.game_time_sec / parameters->roll_period) * (2.0f * _pi) : 0.0f;
+	matrix4x3_rotation_from_angles(&gel_rotation, yaw, pitch, roll);
+	matrix4x3_transform_normal(&gel_rotation, &light->forward, forward);
+	matrix4x3_transform_normal(&gel_rotation, &light->up, up);
+	cross_product3d(forward, up, left);
+	normalize3d(left);
+	if (gel || attenuation)
+		rasterizer_environment_port_gel_textures(parameters->map.index, gel, attenuation);
+	return TRUE;
+}
+
+/* port: ... a gel's texture (its bitmap group, its first) and the distance
+attenuation's, loaded now (NULL: none) */
+void rasterizer_environment_port_gel_textures(
+	long gel_bitmap_group_index,
+	void const **gel,
+	void const **attenuation)
+{
+	if (gel)
+	{
+		struct bitmap_data *bitmap = gel_bitmap_group_index != NONE ?
+			bitmap_group_try_and_get_bitmap(gel_bitmap_group_index, 0) : NULL;
+
+		*gel = bitmap ? _texture_cache_bitmap_get_hardware_format(bitmap, TRUE, TRUE) : NULL;
+	}
+	if (attenuation)
+	{
+		struct bitmap_data *bitmap = global_rasterizer_data && global_rasterizer_data->distance_attenuation.index != NONE ?
+			bitmap_group_try_and_get_bitmap(global_rasterizer_data->distance_attenuation.index, 0) : NULL;
+
+		*attenuation = bitmap ? _texture_cache_bitmap_get_hardware_format(bitmap, TRUE, TRUE) : NULL;
+	}
 }
 
 void _rasterizer_environment_diffuse_light_draw(

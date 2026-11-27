@@ -5335,6 +5335,18 @@ static struct
 	XGPU_DYNAMIC_LIGHTS_SHADOWED's texels, their words; count 0 none) */
 	unsigned int shadowed[XGPU_LIGHT_SHADOWS_CHANNELS][3];
 	int shadowed_count;
+	/* the enhanced flashlight (xgpu.h's XGPU_DYNAMIC_LIGHTS_FLASHLIGHT): the
+	frame's flashlights given next (halo_dynamic_lights_flashlights), and the
+	gel they are lit through (halo_dynamic_lights_gel: its cookie, its half
+	width, its tint and the falloff, linear; ready once made) */
+	struct halo_flashlight flashlights[XGPU_DYNAMIC_LIGHTS_FLASHLIGHTS];
+	int flashlight_count;
+	unsigned char cookie[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE * XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE];
+	float gel_width, gel_tint[3], falloff[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF];
+	BOOL gel_ready;
+	/* the frame's lights lit through it (their colour its tint, as bright
+	as the game's gel pass has them) */
+	unsigned char flashlight_lit[XGPU_DYNAMIC_LIGHTS_MAXIMUM];
 } dynamic_lights;
 
 /* port/linux/game/network_standard.c's: whether the game played lets the
@@ -5605,6 +5617,349 @@ static void dynamic_lights_shadowed_texels(int count)
 	dynamic_lights.shadowed_count = 0;
 }
 
+/* ---------- the enhanced flashlight (xgpu.h's XGPU_DYNAMIC_LIGHTS_FLASHLIGHT)
+
+Its gel, as the game's gel pass samples it: a cube map, at the direction
+the pass's vertex program gives it from the gel's rows (rasterizer_xbox_
+environment.c: the beam, left and up, each times the offset from the
+light), which is (1, a, b) for (a, b) = (left, up) over the beam, or its
+opposite (the program's sign, found here: the way the gel's light is). The
+cookie is the gel's brightest channel at those directions over the square
+its light reaches, its tint the colour it averages to; the falloff the
+game's distance attenuation (a volume about the light, the cube of its
+radius) along its axes from its middle, linear. */
+
+struct gel_faces
+{
+	struct xgpu_texture_description description;
+	DWORD *faces[6];
+};
+
+/* a channel of an ARGB word, 0 to 1 */
+static float gel_channel(DWORD texel, int shift)
+{
+	return (float)((texel >> shift) & 255u) * (1.0f / 255.0f);
+}
+
+/* the cube's colour at a direction (D3D's faces: +x, -x, +y, -y, +z, -z),
+bilinear on its face */
+static void gel_sample(const struct gel_faces *gel, const float d[3], float rgb[3])
+{
+	float ax = fabsf(d[0]), ay = fabsf(d[1]), az = fabsf(d[2]), sc, tc, ma, u, v, fu, fv;
+	unsigned long width = gel->description.width, height = gel->description.height;
+	int face, x0, y0, x1, y1, channel;
+	const DWORD *texels;
+
+	if (ax >= ay && ax >= az)
+	{
+		face = d[0] >= 0.0f ? 0 : 1;
+		sc = d[0] >= 0.0f ? -d[2] : d[2];
+		tc = -d[1];
+		ma = ax;
+	}
+	else if (ay >= az)
+	{
+		face = d[1] >= 0.0f ? 2 : 3;
+		sc = d[0];
+		tc = d[1] >= 0.0f ? d[2] : -d[2];
+		ma = ay;
+	}
+	else
+	{
+		face = d[2] >= 0.0f ? 4 : 5;
+		sc = d[2] >= 0.0f ? d[0] : -d[0];
+		tc = -d[1];
+		ma = az;
+	}
+	texels = gel->faces[face];
+	if (!texels || !(ma > 0.0f))
+	{
+		rgb[0] = rgb[1] = rgb[2] = 0.0f;
+		return;
+	}
+	u = (sc / ma * 0.5f + 0.5f) * (float)width - 0.5f;
+	v = (tc / ma * 0.5f + 0.5f) * (float)height - 0.5f;
+	fu = u - floorf(u);
+	fv = v - floorf(v);
+	x0 = (int)floorf(u);
+	y0 = (int)floorf(v);
+	x1 = x0 + 1;
+	y1 = y0 + 1;
+	x0 = x0 < 0 ? 0 : x0 >= (int)width ? (int)width - 1 : x0;
+	x1 = x1 < 0 ? 0 : x1 >= (int)width ? (int)width - 1 : x1;
+	y0 = y0 < 0 ? 0 : y0 >= (int)height ? (int)height - 1 : y0;
+	y1 = y1 < 0 ? 0 : y1 >= (int)height ? (int)height - 1 : y1;
+	for (channel = 0; channel < 3; channel++)
+	{
+		int shift = 16 - 8 * channel;
+		float top = gel_channel(texels[y0 * width + x0], shift) * (1.0f - fu) + gel_channel(texels[y0 * width + x1], shift) * fu;
+		float bottom = gel_channel(texels[y1 * width + x0], shift) * (1.0f - fu) +
+			gel_channel(texels[y1 * width + x1], shift) * fu;
+
+		rgb[channel] = top * (1.0f - fv) + bottom * fv;
+	}
+}
+
+/* the gel's colour at (a, b) along sign's beam */
+static void gel_at(const struct gel_faces *gel, float sign, float a, float b, float rgb[3])
+{
+	float d[3];
+
+	d[0] = sign;
+	d[1] = sign * a;
+	d[2] = sign * b;
+	gel_sample(gel, d, rgb);
+}
+
+/* a texture's level 0 (all of a cube's faces, or a volume's slices) as
+ARGB words, decoded from its header's texels; NULL where it cannot be */
+static DWORD *gel_decode(const DWORD *header, struct xgpu_texture_description *description, int face)
+{
+	const unsigned char *texels;
+	unsigned long count;
+	DWORD *pixels;
+
+	if (!header || !header[1] || header[1] == XGPU_MCC_TEXTURE_DATA)
+		return NULL;
+	xgpu_texture_describe(header[3], header[4], description);
+	if (!description->width || !description->height || description->width > 2048 || description->height > 2048)
+		return NULL;
+	count = description->width * description->height * (description->depth > 1 ? description->depth : 1);
+	texels = (const unsigned char *)PLATFORM_PHYSICAL_TO_VIRTUAL(header[1]) +
+		(unsigned long)face * xgpu_texture_face_size(description);
+	pixels = malloc(count * sizeof(*pixels));
+	if (!pixels)
+		return NULL;
+	if (description->compressed)
+		xgpu_texture_decode_dxt(description, 0, texels, pixels);
+	else if (!xgpu_texture_decode_level(description, 0, texels, NULL, pixels))
+	{
+		free(pixels);
+		return NULL;
+	}
+	return pixels;
+}
+
+/* the falloff: the volume's brightest channel at t (0 its middle, 1 its
+side) along each of its six axes, averaged, trilinear */
+static float gel_attenuation_at(const DWORD *texels, const struct xgpu_texture_description *description, float t)
+{
+	static const int axes[6][3] = { { 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 } };
+	long size[3] = { (long)description->width, (long)description->height, (long)description->depth };
+	float sum = 0.0f;
+	int axis;
+
+	for (axis = 0; axis < 6; axis++)
+	{
+		float at[3], f[3], value = 0.0f;
+		long base[3];
+		int k, corner;
+
+		for (k = 0; k < 3; k++)
+		{
+			at[k] = (0.5f + 0.5f * t * (float)axes[axis][k]) * (float)size[k] - 0.5f;
+			base[k] = (long)floorf(at[k]);
+			f[k] = at[k] - floorf(at[k]);
+		}
+		for (corner = 0; corner < 8; corner++)
+		{
+			float weight = 1.0f;
+			long index[3];
+			DWORD texel;
+
+			for (k = 0; k < 3; k++)
+			{
+				int high = (corner >> k) & 1;
+
+				index[k] = base[k] + high;
+				weight *= high ? f[k] : 1.0f - f[k];
+			}
+			/* (the border's black past the volume) */
+			if (index[0] < 0 || index[1] < 0 || index[2] < 0 || index[0] >= size[0] || index[1] >= size[1] ||
+				index[2] >= size[2])
+				continue;
+			texel = texels[(index[2] * size[1] + index[1]) * size[0] + index[0]];
+			value += weight * MAX(gel_channel(texel, 16), MAX(gel_channel(texel, 8), gel_channel(texel, 0)));
+		}
+		sum += value;
+	}
+	return sum / 6.0f;
+}
+
+int halo_dynamic_lights_gel(const void *gel_texture, const void *attenuation_texture)
+{
+	static const void *made_gel, *made_attenuation;
+	static DWORD made_data;
+	static int made_result;
+	const DWORD *header = gel_texture;
+	struct gel_faces gel;
+	struct xgpu_texture_description attenuation_description;
+	DWORD *attenuation;
+	float sign = 1.0f, energy[2] = { 0.0f, 0.0f }, width = 0.0f, tint[3] = { 0.0f, 0.0f, 0.0f }, most = 0.0f;
+	int face, index, x, y, side;
+	const int grid = 96;
+
+	if (!header)
+		return 0;
+	if (made_gel == gel_texture && made_attenuation == attenuation_texture && made_data == header[1])
+		return made_result;
+	made_gel = gel_texture;
+	made_attenuation = attenuation_texture;
+	made_data = header[1];
+	made_result = 0;
+	dynamic_lights.gel_ready = FALSE;
+	memset(&gel, 0, sizeof(gel));
+	for (face = 0; face < 6; face++)
+	{
+		gel.faces[face] = gel_decode(header, &gel.description, face);
+		if (!gel.faces[face] || !gel.description.cube_map)
+			break;
+	}
+	if (face < 6)
+	{
+		platform_log("flashlight: its gel (format %08lx) could not be read: lit as the game lights it",
+			(unsigned long)header[3]);
+		for (face = 0; face < 6; face++)
+			free(gel.faces[face]);
+		return 0;
+	}
+	/* (the program's sign: the way the gel's light is, within 45 degrees
+	of the beam) */
+	for (side = 0; side < 2; side++)
+		for (y = 0; y < grid; y++)
+			for (x = 0; x < grid; x++)
+			{
+				float rgb[3];
+
+				gel_at(&gel, side ? -1.0f : 1.0f, ((float)x + 0.5f) / grid * 2.0f - 1.0f, ((float)y + 0.5f) / grid * 2.0f - 1.0f,
+					rgb);
+				energy[side] += MAX(rgb[0], MAX(rgb[1], rgb[2]));
+			}
+	sign = energy[1] > energy[0] ? -1.0f : 1.0f;
+	/* (the square its light reaches, out to 56 degrees; a texel's margin) */
+	for (y = 0; y < grid; y++)
+		for (x = 0; x < grid; x++)
+		{
+			float a = (((float)x + 0.5f) / grid * 2.0f - 1.0f) * 1.5f, b = (((float)y + 0.5f) / grid * 2.0f - 1.0f) * 1.5f;
+			float rgb[3];
+
+			gel_at(&gel, sign, a, b, rgb);
+			if (MAX(rgb[0], MAX(rgb[1], rgb[2])) > 2.0f / 255.0f)
+				width = MAX(width, MAX(fabsf(a), fabsf(b)));
+		}
+	width = width + 1.5f * 3.0f / grid;
+	width = width < 0.05f ? 0.05f : width > 1.5f ? 1.5f : width;
+	for (y = 0; y < XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE; y++)
+		for (x = 0; x < XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE; x++)
+		{
+			float a = (((float)x + 0.5f) / XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE * 2.0f - 1.0f) * width;
+			float b = (((float)y + 0.5f) / XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE * 2.0f - 1.0f) * width;
+			float rgb[3], brightest;
+
+			gel_at(&gel, sign, a, b, rgb);
+			brightest = MAX(rgb[0], MAX(rgb[1], rgb[2]));
+			dynamic_lights.cookie[y * XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE + x] =
+				(unsigned char)(brightest * 255.0f + 0.5f);
+			for (index = 0; index < 3; index++)
+				tint[index] += rgb[index];
+			most += brightest;
+		}
+	for (index = 0; index < 3; index++)
+		dynamic_lights.gel_tint[index] = most > 0.0f ? powf(tint[index] / most, 2.2f) : 1.0f;
+	dynamic_lights.gel_width = width;
+	/* (the falloff: the game's attenuation where it can be read, else 1 - x^2 squared) */
+	attenuation = gel_decode(attenuation_texture, &attenuation_description, 0);
+	if (attenuation && attenuation_description.depth < 2)
+	{
+		free(attenuation);
+		attenuation = NULL;
+	}
+	for (index = 0; index < XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF; index++)
+	{
+		float t = (float)index / (XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF - 1), value;
+
+		value = attenuation ? gel_attenuation_at(attenuation, &attenuation_description, t) :
+			(1.0f - t * t) * (1.0f - t * t);
+		dynamic_lights.falloff[index] = powf(value < 0.0f ? 0.0f : value > 1.0f ? 1.0f : value, 2.2f);
+	}
+	platform_log("flashlight: its gel %lux%lu (format %08lx) %s its beam, %.3f wide (%.1f degrees), tint %.2f %.2f %.2f; "
+		"falloff %s: %.3f %.3f %.3f %.3f %.3f at 0, 1/4, 1/2, 3/4, 7/8 (linear)", gel.description.width,
+		gel.description.height, (unsigned long)header[3], sign > 0.0f ? "along" : "against", (double)width,
+		atan((double)width) * 2.0 * 180.0 / 3.14159265, (double)dynamic_lights.gel_tint[0],
+		(double)dynamic_lights.gel_tint[1], (double)dynamic_lights.gel_tint[2],
+		attenuation ? "the game's" : "1 - x^2 squared", (double)dynamic_lights.falloff[0],
+		(double)dynamic_lights.falloff[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF / 4],
+		(double)dynamic_lights.falloff[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF / 2],
+		(double)dynamic_lights.falloff[3 * XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF / 4],
+		(double)dynamic_lights.falloff[7 * XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF / 8]);
+	free(attenuation);
+	for (face = 0; face < 6; face++)
+		free(gel.faces[face]);
+	dynamic_lights.gel_ready = TRUE;
+	made_result = 1;
+	return 1;
+}
+
+void halo_dynamic_lights_flashlights(const struct halo_flashlight *flashlights, int count)
+{
+	if (count < 0 || !flashlights)
+		count = 0;
+	if (count > XGPU_DYNAMIC_LIGHTS_FLASHLIGHTS)
+		count = XGPU_DYNAMIC_LIGHTS_FLASHLIGHTS;
+	memcpy(dynamic_lights.flashlights, flashlights, (size_t)count * sizeof(*flashlights));
+	dynamic_lights.flashlight_count = count;
+}
+
+/* ... into the clusters' slice of the cells (xgpu.h), of the count of
+lights given; taken (none the next frame unless given again) */
+typedef char dynamic_lights_flashlight_fits[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE +
+	XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE * XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE / 16 <=
+	XGPU_DYNAMIC_LIGHTS_GRID_X * XGPU_DYNAMIC_LIGHTS_GRID_Y && XGPU_DYNAMIC_LIGHTS_FLASHLIGHT == XGPU_DYNAMIC_LIGHTS_SHADOWED + 4 &&
+	HALO_DYNAMIC_LIGHTS_FLASHLIGHTS == XGPU_DYNAMIC_LIGHTS_FLASHLIGHTS &&
+	(XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE * XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE) % 16 == 0 ? 1 : -1];
+
+static void dynamic_lights_flashlight_texels(int count)
+{
+	unsigned int (*slice)[4] = (unsigned int (*)[4])dynamic_lights.mask[XGPU_DYNAMIC_LIGHTS_GRID_Z];
+	float bias = XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_BIAS;
+	int slot, used = 0;
+
+	memset(dynamic_lights.flashlight_lit, 0, sizeof(dynamic_lights.flashlight_lit));
+	if (!dynamic_lights.gel_ready)
+	{
+		dynamic_lights.flashlight_count = 0;
+		return;
+	}
+	for (slot = 0; slot < dynamic_lights.flashlight_count; slot++)
+	{
+		const struct halo_flashlight *flashlight = &dynamic_lights.flashlights[slot];
+		int base = XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 2 + 3 * used;
+
+		if (flashlight->light < 0 || flashlight->light >= count)
+			continue;
+		slice[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT][used] = (unsigned int)flashlight->light + 1u;
+		dynamic_lights.flashlight_lit[flashlight->light] = 1;
+		memcpy(slice[base], flashlight->forward, sizeof(flashlight->forward));
+		memcpy(slice[base + 1], flashlight->up, sizeof(flashlight->up));
+		memcpy(slice[base + 2], flashlight->left, sizeof(flashlight->left));
+		if (flashlight->shadowed && xgpu_backend_capabilities.ray_queries && !slice[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 1][0])
+		{
+			slice[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 1][0] = (unsigned int)used + 1u;
+			slice[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 14][3] = (unsigned int)flashlight->owner;
+		}
+		used++;
+	}
+	dynamic_lights.flashlight_count = 0;
+	if (!used)
+		return;
+	memcpy(&slice[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 1][1], &dynamic_lights.gel_width, sizeof(float));
+	slice[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 1][2] = 1u;
+	memcpy(&slice[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 1][3], &bias, sizeof(float));
+	memcpy(slice[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 14], dynamic_lights.gel_tint, sizeof(dynamic_lights.gel_tint));
+	memcpy(slice[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 15], dynamic_lights.falloff, sizeof(dynamic_lights.falloff));
+	memcpy(slice[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE], dynamic_lights.cookie, sizeof(dynamic_lights.cookie));
+}
+
 /* the frame's lights (the game's dynamic_lights.c): where they are, as the
 objects are drawn; the camera's position and axes (the glows face it); the
 clusters each light reaches (each cluster's mask of them) */
@@ -5647,6 +6002,7 @@ void halo_dynamic_lights_set(const struct halo_dynamic_light *lights, int count,
 	if (cluster_masks)
 		memcpy(dynamic_lights.mask[XGPU_DYNAMIC_LIGHTS_GRID_Z], cluster_masks, XGPU_DYNAMIC_LIGHTS_CLUSTERS * 16);
 	dynamic_lights_shadowed_texels(count);
+	dynamic_lights_flashlight_texels(count);
 	if (dynamic_lights.world && !dynamic_lights.world_sent)
 	{
 		xgpu_backend_dynamic_lights_world((const void *)dynamic_lights.world, dynamic_lights.world_count);
@@ -5656,7 +6012,11 @@ void halo_dynamic_lights_set(const struct halo_dynamic_light *lights, int count,
 	{
 		const struct halo_dynamic_light *light = &lights[index];
 		float offset[3];
-		float brightness = dynamic_lights.look[0][0];
+		/* (the flashlight lit through its gel as the game's gel pass has it:
+		its colour, linear, by the gel's tint, the look's brightness not
+		added) */
+		BOOL flashlight = dynamic_lights.flashlight_lit[index] != 0;
+		float brightness = flashlight ? 1.0f : dynamic_lights.look[0][0];
 
 		if (!(light->radius > 0.0f))
 			continue;
@@ -5687,7 +6047,8 @@ void halo_dynamic_lights_set(const struct halo_dynamic_light *lights, int count,
 		for (axis = 0; axis < 3; axis++)
 		{
 			/* (linear: the display's gamma out) */
-			dynamic_lights.data.color[index][axis] = powf(light->color[axis], 2.2f) * brightness;
+			dynamic_lights.data.color[index][axis] = powf(light->color[axis], 2.2f) * brightness *
+				(flashlight ? dynamic_lights.gel_tint[axis] : 1.0f);
 			dynamic_lights.data.cone[index][axis] = light->axis[axis];
 			offset[axis] = light->position[axis] - camera[axis];
 		}

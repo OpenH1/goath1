@@ -68,6 +68,8 @@ structure's 3D BSP, from which a pixel finds its cluster
 #include "light_sources.h"
 #include "rt_shadows.h"
 #include "world_rt.h"
+#include "world_ao.h"
+#include "rasterizer/rasterizer_environment.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -137,10 +139,8 @@ copy of one on another marker, or one of the port's own (light_sources.c's
 key, which has its kind in its top byte, 1 to 3) */
 #define DYNAMIC_LIGHTS_KEY_GAME (4ull << 56)
 #define DYNAMIC_LIGHTS_KEY_COPY (5ull << 56)
-/* the flashlight on the models: how much farther it reaches than its
-radius, and how much brighter (its color, the game's 0 to 1) */
-#define DYNAMIC_LIGHTS_FLASHLIGHT_REACH 2.0f
-#define DYNAMIC_LIGHTS_FLASHLIGHT_BRIGHTNESS 1.8f
+
+int dynamic_lights_flashlight_shadows_on(void);
 
 typedef char dynamic_lights_clusters_fit[HALO_DYNAMIC_LIGHTS_CLUSTERS >= MAXIMUM_CLUSTERS_PER_STRUCTURE ? 1 : -1];
 typedef char dynamic_lights_lights_fit[HALO_DYNAMIC_LIGHTS_MAXIMUM >= MAXIMUM_LIGHTS_PER_WINDOW ? 1 : -1];
@@ -175,7 +175,8 @@ void dynamic_lights_owner(
 	/* (an object freed before its light: no owner, none climbed to) */
 	if (object_index != NONE && !object_try_and_get(object_index))
 		object_index = NONE;
-	dynamic_lights.owners[rasterizer_light_index] = object_index != NONE && rt_shadows_on() ?
+	dynamic_lights.owners[rasterizer_light_index] = object_index != NONE &&
+		(rt_shadows_on() || dynamic_lights_flashlight_shadows_on()) ?
 		world_rt_owner(object_get_ultimate_parent(object_index)) : 0;
 	dynamic_lights.objects[rasterizer_light_index] = object_index;
 }
@@ -467,6 +468,7 @@ static long dynamic_lights_sources(
 }
 
 static void dynamic_lights_shadowed(long count);
+static void dynamic_lights_flashlights(long count);
 long dynamic_lights_bounce(struct halo_dynamic_light *lights, long count);
 
 /* the frame's lights (rasterizer_lights, as lights_preprocess_scene
@@ -506,17 +508,6 @@ void dynamic_lights_submit(
 		out->cone_scale = dynamic_lights.cone_scale[light_index];
 		out->cone_offset = dynamic_lights.cone_offset[light_index];
 		out->flags = dynamic_lights.flags[light_index];
-		/* (the flashlight on the models it lights, as bright as the game's
-		model lighting has it: the enhanced lights' falloff fades out
-		toward the radius, where the game's spotlight is near its full
-		strength; its gel lights the structure in the game's own pass) */
-		if ((out->flags & HALO_DYNAMIC_LIGHT_FLASHLIGHT) && (out->flags & HALO_DYNAMIC_LIGHT_MODELS_ONLY))
-		{
-			out->radius *= DYNAMIC_LIGHTS_FLASHLIGHT_REACH;
-			out->color[0] *= DYNAMIC_LIGHTS_FLASHLIGHT_BRIGHTNESS;
-			out->color[1] *= DYNAMIC_LIGHTS_FLASHLIGHT_BRIGHTNESS;
-			out->color[2] *= DYNAMIC_LIGHTS_FLASHLIGHT_BRIGHTNESS;
-		}
 		if (logged < 4 && (out->flags & HALO_DYNAMIC_LIGHT_PROJECTILE) && config_boolean("debug.dynamic_lights_log"))
 		{
 			logged++;
@@ -565,6 +556,7 @@ void dynamic_lights_submit(
 	dynamic_lights_world();
 	total = dynamic_lights_sources(dynamic_lights_copies(count));
 	dynamic_lights_shadowed(total);
+	dynamic_lights_flashlights(count);
 	memset(dynamic_lights.keys, 0, sizeof(dynamic_lights.keys));
 	memset(dynamic_lights.baked, 0, sizeof(dynamic_lights.baked));
 	total = dynamic_lights_bounce(dynamic_lights.lights, total); /* (dynamic_lights_bounce.c) */
@@ -799,7 +791,8 @@ static int dynamic_lights_shadow_pick(struct halo_dynamic_light const *lights, u
 		real_point3d position;
 		real score, since = now;
 
-		if (!(light->radius > 0.0f) || !(intensity > 0.0f) || (light->flags & HALO_DYNAMIC_LIGHT_MODELS_ONLY))
+		if (!(light->radius > 0.0f) || !(intensity > 0.0f) ||
+			(light->flags & (HALO_DYNAMIC_LIGHT_MODELS_ONLY | HALO_DYNAMIC_LIGHT_FLASHLIGHT)))
 			continue;
 		if (!flashlight && (light->radius < SHADOWED_LEAST_RADIUS || baked[light_index]))
 			continue;
@@ -948,4 +941,127 @@ static void dynamic_lights_shadowed(long count)
 			dynamic_lights.frame, chosen, indices[0], (double)disks[0], owners[0]);
 	}
 	halo_dynamic_lights_shadowed(indices, disks, owners, chosen);
+}
+
+/* ---------- the enhanced flashlight (xgpu.h's XGPU_DYNAMIC_LIGHTS_FLASHLIGHT)
+
+A unit's flashlight lights the structure, the models and the first-person
+view in the renderer's one loop of the lights, through its own gel as the
+game's gel pass projects it (rasterizer_environment_port_gel: its beam, up
+and left as the pass has them, its functions turned), with the game's own
+distance falloff, and the flashlight of the view, the one nearest its
+camera, casts its shadow: one shadow map in the gel's frame, a ray a texel
+from the light through the ray-traced scene where the GPU has ray queries,
+its wearer, its own first-person weapon and hands, and its own body left
+out. Its light is at the first-person weapon's flashlight marker, behind
+it (first_person_weapon_center_flashlight), as the game puts it: below and
+to the side of the eye, so its shadows show beside what casts them. With
+HALO_FLASHLIGHT_SHADOWS_OFF=1 (measuring) it casts none. */
+
+/* (frames: a flashlight seen this recently keeps the ray-traced scene
+made each frame, world_ao.c) */
+#define FLASHLIGHT_SCENE_KEEP 60
+
+static struct
+{
+	unsigned long seen_frame;
+	boolean seen;
+	long gel_index;
+	unsigned long gel_frame;
+	boolean gel_result;
+} flashlight;
+
+/* object_lights.c's light_port_lights_structure: the flashlight's gel (a
+bitmap group) could be made the renderer's, so the enhanced lights light
+the structure with it (the game's gel pass leaves it out) */
+boolean dynamic_lights_flashlight_gel(long gel_bitmap_group_index)
+{
+	void const *gel = NULL, *attenuation = NULL;
+
+	if (gel_bitmap_group_index == NONE)
+		return FALSE;
+	if (flashlight.gel_index == gel_bitmap_group_index && flashlight.gel_frame == dynamic_lights.frame &&
+		flashlight.gel_frame)
+		return flashlight.gel_result;
+	rasterizer_environment_port_gel_textures(gel_bitmap_group_index, &gel, &attenuation);
+	flashlight.gel_index = gel_bitmap_group_index;
+	flashlight.gel_frame = dynamic_lights.frame;
+	flashlight.gel_result = gel && halo_dynamic_lights_gel(gel, attenuation);
+	return flashlight.gel_result;
+}
+
+/* whether the flashlight casts its shadow: enhanced, with ray queries, a
+flashlight seen lately; world_ao.c makes the ray-traced scene each frame
+then */
+int dynamic_lights_flashlight_shadows_on(void)
+{
+	static int off = -1;
+
+	if (off < 0)
+		off = getenv("HALO_FLASHLIGHT_SHADOWS_OFF") && strcmp(getenv("HALO_FLASHLIGHT_SHADOWS_OFF"), "0") ? 1 : 0;
+	return !off && flashlight.seen && dynamic_lights.frame - flashlight.seen_frame <= FLASHLIGHT_SCENE_KEEP &&
+		halo_dynamic_lights_enhanced() && halo_world_ao_ray_queries();
+}
+
+static void dynamic_lights_flashlights(long count)
+{
+	struct halo_flashlight flashlights[HALO_DYNAMIC_LIGHTS_FLASHLIGHTS];
+	real nearest = 0.0f;
+	int used = 0, slot, shadowed = -1;
+	long light_index;
+
+	for (light_index = 0; light_index < count && used < HALO_DYNAMIC_LIGHTS_FLASHLIGHTS; light_index++)
+	{
+		struct halo_dynamic_light const *light = &dynamic_lights.lights[light_index];
+		struct halo_flashlight *out = &flashlights[used];
+		real_vector3d forward, up, left;
+		real dx, dy, dz, distance;
+
+		if (!(light->flags & HALO_DYNAMIC_LIGHT_FLASHLIGHT) || (light->flags & HALO_DYNAMIC_LIGHT_MODELS_ONLY) ||
+			!rasterizer_environment_port_gel(light_index, &forward, &up, &left, NULL, NULL))
+			continue;
+		out->light = (int)light_index;
+		out->forward[0] = forward.i;
+		out->forward[1] = forward.j;
+		out->forward[2] = forward.k;
+		out->up[0] = up.i;
+		out->up[1] = up.j;
+		out->up[2] = up.k;
+		out->left[0] = left.i;
+		out->left[1] = left.j;
+		out->left[2] = left.k;
+		out->shadowed = 0;
+		out->owner = dynamic_lights.owners[light_index];
+		dx = light->position[0] - render.camera.position.x;
+		dy = light->position[1] - render.camera.position.y;
+		dz = light->position[2] - render.camera.position.z;
+		distance = dx * dx + dy * dy + dz * dz;
+		if (shadowed < 0 || distance < nearest)
+		{
+			shadowed = used;
+			nearest = distance;
+		}
+		used++;
+	}
+	if (used)
+	{
+		flashlight.seen = TRUE;
+		flashlight.seen_frame = dynamic_lights.frame;
+	}
+	/* (the view's own casts its shadow, the frame's ray-traced scene made
+	for it first) */
+	if (shadowed >= 0 && dynamic_lights_flashlight_shadows_on() && world_ao_rt_scene_ready())
+	{
+		world_ao_rt_frame();
+		flashlights[shadowed].shadowed = 1;
+	}
+	for (slot = 0; slot < used && !(dynamic_lights.frame % 72) && config_boolean("debug.dynamic_lights_log"); slot++)
+	{
+		platform_log("dynamic lights: frame %lu: flashlight %d (light %d) forward %.2f %.2f %.2f up %.2f %.2f %.2f%s "
+			"owner %lu", dynamic_lights.frame, slot, flashlights[slot].light, (double)flashlights[slot].forward[0],
+			(double)flashlights[slot].forward[1], (double)flashlights[slot].forward[2], (double)flashlights[slot].up[0],
+			(double)flashlights[slot].up[1], (double)flashlights[slot].up[2], flashlights[slot].shadowed ? " shadowed" : "",
+			flashlights[slot].owner);
+	}
+	halo_dynamic_lights_flashlights(flashlights, used);
 }

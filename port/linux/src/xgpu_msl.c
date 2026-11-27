@@ -1452,6 +1452,9 @@ with safe maths, where each is an IEEE divide of about 25 instructions, and
 the structure's lightmap pass takes them for each light that reaches each
 pixel (the a30 ground in a fight, most of the screen at 3456x2234 on an M1
 Max: 0.2 ms of the GPU a frame). SPIR-V's OpFDiv is the driver's, as fast */
+/* (the clusters' slice's first texel among the cells) */
+#define FLASHLIGHT_SLICE (XGPU_DYNAMIC_LIGHTS_GRID_X * XGPU_DYNAMIC_LIGHTS_GRID_Y * XGPU_DYNAMIC_LIGHTS_GRID_Z)
+
 static void dynamic_lights_functions(struct xgpu_text *text, struct xgpu_text *functions)
 {
 	xgpu_text_append(text,
@@ -1483,6 +1486,56 @@ static void dynamic_lights_functions(struct xgpu_text *text, struct xgpu_text *f
 		"}\n", XGPU_DYNAMIC_LIGHTS_WORLD_DEPTH, (XGPU_DYNAMIC_LIGHTS_WORLD_TEXELS - 3) / 2,
 		XGPU_DYNAMIC_LIGHTS_GRID_X * XGPU_DYNAMIC_LIGHTS_GRID_Y * XGPU_DYNAMIC_LIGHTS_GRID_Z,
 		XGPU_DYNAMIC_LIGHTS_CLUSTERS - 1);
+	/* (the enhanced flashlight, xgpu.h's XGPU_DYNAMIC_LIGHTS_FLASHLIGHT: its
+	gel and falloff in place of its cone and the lights' falloff, as
+	xgpu_spirv.c's flashlight_light; no shadow map here) */
+	xgpu_text_append(functions,
+		"static inline float flashlight_cookie(const device uint4 *cells, int x, int y)\n"
+		"{\n"
+		"\tint k = clamp(y, 0, %d) * %d + clamp(x, 0, %d);\n"
+		"\tuint word = cells[%d + (k >> 4)][(k >> 2) & 3];\n"
+		"\treturn float((word >> uint((k & 3) * 8)) & 255u) * (1.0 / 255.0);\n"
+		"}\n"
+		"static inline void flashlight_light(const device uint4 *cells, int light, float3 p, float4 position,\n"
+		"\tfloat distance_squared, float3 l, float3 n, float3 surface_normal, bool environment,\n"
+		"\tthread float &falloff, thread float &spot, thread float &facing)\n"
+		"{\n"
+		"\tuint4 slots = cells[%d];\n"
+		"\tuint number = uint(light + 1);\n"
+		"\tint slot = slots.x == number ? 0 : slots.y == number ? 1 : slots.z == number ? 2 : slots.w == number ? 3 : -1;\n"
+		"\tif (slot < 0)\n"
+		"\t\treturn;\n"
+		"\tint base = %d + 3 * slot;\n"
+		"\tfloat3 forward = as_type<float4>(cells[base]).xyz, up = as_type<float4>(cells[base + 1]).xyz;\n"
+		"\tfloat3 left = as_type<float4>(cells[base + 2]).xyz;\n"
+		"\tfloat3 v = p - position.xyz;\n"
+		"\tfloat z = dot(v, forward), width = max(as_type<float>(cells[%d].y), 1.0e-4);\n"
+		"\tfloat a = dot(v, left) / (max(z, 1.0e-4) * width), b = dot(v, up) / (max(z, 1.0e-4) * width);\n"
+		"\tfloat gel = 0.0;\n"
+		"\tif (z > 1.0e-4 && abs(a) < 1.0 && abs(b) < 1.0)\n"
+		"\t{\n"
+		"\t\tfloat x = (a * 0.5 + 0.5) * %d.0 - 0.5, y = (b * 0.5 + 0.5) * %d.0 - 0.5;\n"
+		"\t\tfloat fx = x - floor(x), fy = y - floor(y);\n"
+		"\t\tint ix = int(floor(x)), iy = int(floor(y));\n"
+		"\t\tfloat c = mix(mix(flashlight_cookie(cells, ix, iy), flashlight_cookie(cells, ix + 1, iy), fx),\n"
+		"\t\t\tmix(flashlight_cookie(cells, ix, iy + 1), flashlight_cookie(cells, ix + 1, iy + 1), fx), fy);\n"
+		"\t\tgel = pow(max(c, 0.0), 2.2);\n"
+		"\t}\n"
+		"\tfloat t = saturate(sqrt(max(distance_squared, 0.0)) * abs(position.w)) * %d.0;\n"
+		"\tint i0 = clamp(int(floor(t)), 0, %d), i1 = min(i0 + 1, %d);\n"
+		"\tfloat low = as_type<float>(cells[%d + (i0 >> 2)][i0 & 3]), high = as_type<float>(cells[%d + (i1 >> 2)][i1 & 3]);\n"
+		"\tfalloff = mix(low, high, t - floor(t));\n"
+		"\tspot = gel;\n"
+		"\tif (environment)\n"
+		"\t\tfacing = max(dot(n, l), 0.0) * saturate(dot(surface_normal, l) * 8.0);\n"
+		"}\n",
+		XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE - 1, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE,
+		XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE - 1, FLASHLIGHT_SLICE + XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE,
+		FLASHLIGHT_SLICE + XGPU_DYNAMIC_LIGHTS_FLASHLIGHT, FLASHLIGHT_SLICE + XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 2,
+		FLASHLIGHT_SLICE + XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 1, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE,
+		XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF - 1,
+		XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF - 1, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF - 1,
+		FLASHLIGHT_SLICE + XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 15, FLASHLIGHT_SLICE + XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 15);
 	xgpu_text_append(functions,
 		"static inline float3 dynamic_light_sum(constant xgpu_dynamic_lights &lights, const device uint4 *cells,\n"
 		"\tconst device uint4 *world, float3 p, float3 n, float3 surface_normal, bool environment, float4 own,\n"
@@ -1521,6 +1574,8 @@ static void dynamic_lights_functions(struct xgpu_text *text, struct xgpu_text *f
 		"\t\t\tfloat4 cone = lights.cone[light];\n"
 		"\t\t\tfloat4 color = lights.color[light];\n"
 		"\t\t\tfloat spot = saturate(dot(l, -cone.xyz) * cone.w + color.w);\n"
+		"\t\t\tflashlight_light(cells, light, p, position, distance_squared, l, n, surface_normal, environment,\n"
+		"\t\t\t\tfalloff, spot, facing);\n"
 		"\t\t\tsum += color.rgb * (falloff * facing * spot);\n"
 		/* (a model's reflection's highlights, xgpu.h
 		XGPU_DYNAMIC_LIGHTS_HIGHLIGHT: reflection.w, the exponent, 0 none) */
