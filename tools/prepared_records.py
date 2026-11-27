@@ -191,15 +191,21 @@ def collect(runs: list, out: Path) -> dict:
     """the runs' records ((run, the scenario whose records are taken from it, None: every one)) compressed into out,
     and their manifest"""
     run = runs[0][0]
-    text = (run / "stdout.txt").read_text(errors="replace")
     lines = [(other, line) for other, scenario in runs
              for line in RECORDED.findall((other / "stdout.txt").read_text(errors="replace"))
              if scenario is None or line[4] == scenario]
-    if len(lines) < STOCK_MAP_COUNT:
-        debug = (run / "debug.txt").read_text(errors="replace") if (run / "debug.txt").is_file() else ""
-        failed = [line for line in debug.splitlines() if "EXCEPTION" in line] + \
-            [line for line in text.splitlines() if "is not recorded" in line or "could not be recorded" in line]
-        sys.exit(f"{len(lines)} of {STOCK_MAP_COUNT} maps recorded (see {run / 'stdout.txt'})" +
+    # (a map's line again for each later structure's walk: its scenarios counted, not its lines; a pass that halts
+    # leaves the maps after it unrecorded, so its halt is named)
+    scenarios = {line[4] for _, line in lines}
+    if len(scenarios) < STOCK_MAP_COUNT:
+        failed = []
+        for other, _ in runs:
+            debug = (other / "debug.txt").read_text(errors="replace") if (other / "debug.txt").is_file() else ""
+            failed += [line.strip() for line in debug.splitlines() if "EXCEPTION" in line] + \
+                [line for line in (other / "stdout.txt").read_text(errors="replace").splitlines()
+                 if "is not recorded" in line or "could not be recorded" in line]
+        last = lines[-1][1][4] if lines else "none"
+        sys.exit(f"{len(scenarios)} of {STOCK_MAP_COUNT} maps recorded, the last {last} (see {run / 'stdout.txt'})" +
                  (f": {failed[0]}" if failed else ""))
     forms = {(int(version), int(form)) for _, (*_, version, form, _) in lines}
     if len(forms) != 1:

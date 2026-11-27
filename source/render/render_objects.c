@@ -1102,6 +1102,13 @@ static boolean render_object_shadow_begin(
 	shadow_color.green = shadow_color.green * shadow_intensity + (1.f - shadow_intensity);
 	shadow_color.blue = shadow_color.blue * shadow_intensity + (1.f - shadow_intensity);
 
+	/* port: the shadow volume's radius as the rasterizer gives it, the
+	object's own, also where it sets nothing up (a mirror's window, not the
+	primary target): its receivers are walked all the same
+	(render_object_shadow_end), and the value left from the frame before, or
+	the stack's, could be no radius at all (c40's mirror: structures.c's
+	radius>=0 assert) */
+	data->shadow_bounding_radius = radius;
 	return rasterizer_environment_shadow_begin(
 		data->object_index,
 		&data->shadow_matrix,
