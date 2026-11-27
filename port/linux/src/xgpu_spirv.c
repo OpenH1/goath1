@@ -6439,6 +6439,7 @@ static unsigned int rt_reflection_texel(struct module *m, struct pixel_state *st
 	unsigned int operands[8], kind, hit_merge, attributes_merge, mine_merge, value, structure;
 	unsigned int t, mesh, record, attributes, geometry, primitive, corners, material_word, material, at;
 	unsigned int uv[3], lightmap_uv[3], b, st, lst, shader_kind, scale[2], base_scale, color, detail, light, fade;
+	unsigned int ray_length;
 	int corner;
 
 	if (!m->rt_reflection_scene)
@@ -6451,6 +6452,11 @@ static unsigned int rt_reflection_texel(struct module *m, struct pixel_state *st
 	}
 	rt_hits_declare(m);
 	store(m, texel, cube);
+	/* (water: a ray below the horizon keeps the cube map, its length 0) */
+	ray_length = constant_float(m, RT_REFLECTION_DISTANCE);
+	if (state->program->rt_reflection == XGPU_RT_REFLECTION_WATER)
+		ray_length = fselect(m, compare(m, OP_F_ORD_GREATER_THAN, extract(m, d, 2), constant_float(m, 0.0f)), ray_length,
+			constant_float(m, 0.0f));
 	operands[0] = query;
 	operands[1] = load(m, type0(m, OP_TYPE_ACCELERATION_STRUCTURE), m->rt_reflection_scene);
 	operands[2] = constant_uint(m, 0);
@@ -6458,7 +6464,7 @@ static unsigned int rt_reflection_texel(struct module *m, struct pixel_state *st
 	operands[4] = fadd(m, 3, p, fscale(m, 3, d, constant_float(m, RT_REFLECTION_START)));
 	operands[5] = constant_float(m, 0.0f);
 	operands[6] = d;
-	operands[7] = constant_float(m, RT_REFLECTION_DISTANCE);
+	operands[7] = ray_length;
 	op_void(m, OP_RAY_QUERY_INITIALIZE, 8, operands);
 	branch(m, header);
 	label_at(m, header);

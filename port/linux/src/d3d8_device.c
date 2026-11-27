@@ -584,7 +584,7 @@ static int rt_reflections_wanted(void)
 
 void halo_rt_reflection(int reflection)
 {
-	inputs.rt_reflection = reflection > 0 && reflection <= HALO_RT_REFLECTION_MIRROR && rt_reflections_wanted() ?
+	inputs.rt_reflection = reflection > 0 && reflection <= HALO_RT_REFLECTION_WATER && rt_reflections_wanted() ?
 		(uint32_t)reflection : 0;
 }
 
