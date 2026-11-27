@@ -52,10 +52,6 @@ touched.
 #include <stdio.h>
 #include <string.h>
 
-/* campaign_score.c's, once it has it: the saved best of this level, its
-difficulty and its player count; FALSE for none (weak: absent, no BEST) */
-boolean campaign_score_personal_best(long *score) __attribute__((weak));
-
 /* port_config.c's */
 int config_boolean(char const *name);
 unsigned long system_milliseconds(void);
@@ -188,6 +184,12 @@ static short score_event_words(
 	case _campaign_score_event_wave_clear:
 		usnprintf(text, size, L"Wave Cleared");
 		return 7;
+	case _campaign_score_event_encounter_cleared:
+		usnprintf(text, size, L"Encounter Cleared");
+		return 7;
+	case _campaign_score_event_flawless:
+		usnprintf(text, size, L"Flawless");
+		return 8;
 	case _campaign_score_event_streak:
 		if (count >= 20)
 			usnprintf(text, size, L"Rampage");
@@ -856,7 +858,7 @@ real campaign_score_hud_board_header(
 	score_view(&x0, &y0, &width, &height);
 	if (score_fill())
 		best = 4120;
-	else if (campaign_score_personal_best && !campaign_score_personal_best(&best))
+	else if (!campaign_score_personal_best(&best))
 		best = NONE;
 	return score_draw_header(state, self_slot, count > 1, count > 1 ? L"CO-OP" : L"CAMPAIGN", FALSE, best, left,
 		right, top, height / 480.0f, alpha, draw) - top;
