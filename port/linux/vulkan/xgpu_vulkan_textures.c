@@ -42,11 +42,17 @@ xgpu_vulkan_textures_astc_folder), and made again as ASTC once it has them
 decoded. The Metal backend's (port/macos/xgpu_metal_textures.c) does the
 same.
 
-The VR mode's effects draw an effect's bitmap with its thickness
-(xgpu_vulkan_effects.h), baked from its first level the first time an
-effect is drawn with it (as the map is prepared: its enumeration draws
-every effect's bitmaps) and kept with it, made again with its texels. A
-texture with a thickness is not let go while the guest keeps its texels.
+The VR mode's effects, and a flat screen's soft ones (display.soft_particles),
+draw an effect's bitmap with its thickness (xgpu_vulkan_effects.h), baked
+from its first level the first time an effect is drawn with it (as the map
+is prepared: its enumeration draws every bitmap of every effect) and kept
+with it, made again with its texels. A texture with a thickness is not let
+go while the guest keeps its texels. The bakes are made on the effects'
+workers, never on the render thread: until one has come back, the effect
+is drawn with none (the stand-in's: no height and no radius, the fade of a
+soft effect at its least, as with display.soft_particles off but within a
+few centimetres of the walls), and the preparation waits behind the
+loading screen for those it asked for (xgpu_vulkan_textures_thickness_settle).
 */
 
 #include "xgpu.h"
@@ -88,6 +94,9 @@ a few) */
 /* the ASTC blocks encoded, kept in the cache folder to this many bytes (all
 the stock maps' are some 60 MB) */
 #define ASTC_CACHE_BYTES (256u << 20)
+/* the effects' thickness images made a frame, at most (bytes: a few small
+ones, or one of the largest) */
+#define THICKNESS_LANDED_BYTES (4u << 20)
 
 enum
 {
@@ -119,6 +128,8 @@ struct entry
 	generation it failed at) */
 	struct xgpu_vulkan_image *thickness;
 	uint32_t thickness_generation, thickness_failed;
+	/* the bake on its way (its owner this entry), NULL none */
+	struct xgpu_vulkan_thickness_job *thickness_job;
 };
 
 static struct
@@ -139,9 +150,9 @@ static struct
 	const char *dump_folder;
 	unsigned long dumped;
 	/* counts the thickness images destroyed (made again, their texture let
-	go of or read with another palette): an image looked up before is still
-	the one to draw with while it is the same
-	(xgpu_vulkan_textures_thickness_epoch) */
+	go of or read with another palette) and made (a bake come back): an
+	image looked up before, or none, is still the one to draw with while it
+	is the same (xgpu_vulkan_textures_thickness_epoch) */
 	uint32_t thickness_epoch;
 	/* ASTC: to be used (-1 not decided yet), the cache's folder; the DXT
 	blocks of the largest texture so far, its ASTC blocks and which are to
@@ -153,7 +164,8 @@ static struct
 	uint32_t astc_waiting;
 } cache = { .astc = -1 };
 
-/* the entry's thickness destroyed, and not to be taken as failed */
+/* the entry's thickness destroyed, its bake on the way let go of (it comes
+back to no one), and not to be taken as failed */
 static void thickness_forget(struct entry *entry)
 {
 	if (entry->thickness)
@@ -161,6 +173,11 @@ static void thickness_forget(struct entry *entry)
 		xgpu_vulkan_image_destroy(entry->thickness);
 		entry->thickness = NULL;
 		cache.thickness_epoch++;
+	}
+	if (entry->thickness_job)
+	{
+		entry->thickness_job->owner = NULL;
+		entry->thickness_job = NULL;
 	}
 	entry->thickness_generation = entry->thickness_failed = 0;
 }
@@ -760,54 +777,133 @@ static double seconds(void)
 	return (double)now.tv_sec + (double)now.tv_nsec * 1.0e-9;
 }
 
-/* the entry's thickness, baked from its first level's texels (as they are
-now: the entry made current first) */
-static struct xgpu_vulkan_image *thickness_bake(struct entry *entry, const D3DCOLOR *palette)
+/* what a bake is made from: the first level's texels as the guest had them
+when it was asked for, and the palette (a copy each: the worker reads
+nothing of the guest's) */
+struct thickness_input
+{
+	struct xgpu_texture_description description;
+	int has_palette;
+	D3DCOLOR palette[256];
+	unsigned char texels[];
+};
+
+/* (on a worker) */
+static int thickness_decode(const struct xgpu_vulkan_thickness_job *job, uint32_t *texels)
+{
+	const struct thickness_input *input = job->input;
+
+	if (input->description.compressed)
+	{
+		xgpu_texture_decode_dxt(&input->description, 0, input->texels, (DWORD *)texels);
+		return 1;
+	}
+	return xgpu_texture_decode_level(&input->description, 0, input->texels, input->has_palette ? input->palette : NULL,
+		(DWORD *)texels) != 0;
+}
+
+/* the entry's thickness asked of the workers, from its first level's texels
+(as they are now: the entry made current first); taken as failed at this
+generation where it cannot be (a cube, a volume, too large, out of memory) */
+static void thickness_request(struct entry *entry, const D3DCOLOR *palette)
 {
 	const struct xgpu_texture_description *description = &entry->description;
-	struct xgpu_vulkan_image_description made;
 	uint32_t width = (uint32_t)description->width, height = (uint32_t)description->height;
 	const unsigned char *source = host_pointer(entry->address);
-	DWORD *texels;
-	uint8_t *thickness;
-	double started = seconds();
-	int baked;
+	unsigned long offset = xgpu_texture_level_offset(description, 0), bytes = xgpu_texture_level_size(description, 0);
+	struct xgpu_vulkan_thickness_job *job;
+	struct thickness_input *input;
+	static int unqueued_said;
 
 	thickness_forget(entry);
 	entry->thickness_failed = entry->generation;
-	if (description->cube_map || description->depth > 1 || !source || width > XGPU_VULKAN_THICKNESS_LARGEST ||
-		height > XGPU_VULKAN_THICKNESS_LARGEST || !(texels = converted_get((size_t)width * height)))
-		return NULL;
-	if (description->compressed)
-		xgpu_texture_decode_dxt(description, 0, source, texels);
-	else if (!xgpu_texture_decode_level(description, 0, source, palette, texels))
-		return NULL;
-	thickness = malloc((size_t)width * height * 4);
-	if (!thickness)
-		return NULL;
-	baked = xgpu_vulkan_thickness_bake((const uint32_t *)texels, width, height, thickness);
-	if (baked)
+	if (description->cube_map || description->depth > 1 || !source || !width || !height ||
+		width > XGPU_VULKAN_THICKNESS_LARGEST || height > XGPU_VULKAN_THICKNESS_LARGEST || !bytes ||
+		(uint64_t)offset + bytes > entry->size)
+		return;
+	job = calloc(1, sizeof(*job));
+	input = malloc(sizeof(*input) + bytes);
+	if (!job || !input)
 	{
-		memset(&made, 0, sizeof(made));
-		made.type = XGPU_VULKAN_IMAGE_2D;
-		made.format = XGPU_VULKAN_FORMAT_RGBA8;
-		made.usage = XGPU_VULKAN_USAGE_SAMPLED;
-		made.width = width;
-		made.height = height;
-		made.depth_or_layers = 1;
-		made.levels = 1;
-		entry->thickness = xgpu_vulkan_image_create(&made);
-		if (entry->thickness)
-		{
-			xgpu_vulkan_image_upload(entry->thickness, 0, 0, 0, 0, 0, width, height, 1, thickness, width * 4, 0);
-			entry->thickness_generation = entry->generation;
-			entry->thickness_failed = 0;
-			cache.statistics.thickness++;
-			cache.statistics.thickness_seconds += seconds() - started;
-		}
+		free(job);
+		free(input);
+		return;
 	}
-	free(thickness);
-	return entry->thickness;
+	input->description = *description;
+	input->has_palette = palette != NULL;
+	if (palette)
+		memcpy(input->palette, palette, sizeof(input->palette));
+	memcpy(input->texels, source + offset, bytes);
+	job->width = width;
+	job->height = height;
+	job->decode = thickness_decode;
+	job->input = input;
+	job->owner = entry;
+	job->generation = entry->generation;
+	if (!xgpu_vulkan_thickness_submit(job))
+	{
+		if (!unqueued_said)
+			host_logf(HOST_LOG_WARN, "vulkan: the effects' thickness workers could not be started: "
+				"effects drawn without their thickness");
+		unqueued_said = 1;
+		xgpu_vulkan_thickness_free(job);
+		return;
+	}
+	entry->thickness_job = job;
+	entry->thickness_failed = 0;
+}
+
+/* a bake come back (on the render thread): its image made, where its entry
+still wants it (not let go of, its texels those it was baked from) */
+static void thickness_land(struct xgpu_vulkan_thickness_job *job)
+{
+	struct entry *entry = job->owner;
+	struct xgpu_vulkan_image_description made;
+	double started = seconds();
+
+	cache.statistics.thickness_seconds += job->seconds;
+	if (!entry)
+		return;
+	entry->thickness_job = NULL;
+	if (job->generation != entry->generation)
+		return;
+	entry->thickness_failed = job->generation;
+	if (!job->thickness)
+		return;
+	memset(&made, 0, sizeof(made));
+	made.type = XGPU_VULKAN_IMAGE_2D;
+	made.format = XGPU_VULKAN_FORMAT_RGBA8;
+	made.usage = XGPU_VULKAN_USAGE_SAMPLED;
+	made.width = job->width;
+	made.height = job->height;
+	made.depth_or_layers = 1;
+	made.levels = 1;
+	entry->thickness = xgpu_vulkan_image_create(&made);
+	if (!entry->thickness)
+		return;
+	xgpu_vulkan_image_upload(entry->thickness, 0, 0, 0, 0, 0, job->width, job->height, 1, job->thickness,
+		job->width * 4, 0);
+	entry->thickness_generation = job->generation;
+	entry->thickness_failed = 0;
+	/* (the streams that found none look again) */
+	cache.thickness_epoch++;
+	cache.statistics.thickness++;
+	cache.statistics.thickness_landing_seconds += seconds() - started;
+}
+
+/* the bakes come back landed, as many as come to bytes of their images at
+most (at least one; 0: all of them) */
+static void thickness_collect(uint64_t bytes)
+{
+	struct xgpu_vulkan_thickness_job *job;
+	uint64_t landed = 0;
+
+	while ((!bytes || landed < bytes) && (job = xgpu_vulkan_thickness_finished()) != NULL)
+	{
+		landed += (uint64_t)job->width * job->height * 4;
+		thickness_land(job);
+		xgpu_vulkan_thickness_free(job);
+	}
 }
 
 struct xgpu_vulkan_image *xgpu_vulkan_textures_thickness(const struct xgpu_stream_texture_stage *stage)
@@ -825,7 +921,20 @@ struct xgpu_vulkan_image *xgpu_vulkan_textures_thickness(const struct xgpu_strea
 		return entry->thickness;
 	if (entry->thickness_failed && entry->thickness_failed == entry->generation)
 		return NULL;
-	return thickness_bake(entry, palette);
+	/* (on its way: none until it comes back, the epoch moving on then) */
+	if (entry->thickness_job && entry->thickness_job->generation == entry->generation)
+		return NULL;
+	thickness_request(entry, palette);
+	return NULL;
+}
+
+uint32_t xgpu_vulkan_textures_thickness_settle(double seconds_most)
+{
+	uint32_t before = cache.statistics.thickness;
+
+	xgpu_vulkan_thickness_wait(seconds_most);
+	thickness_collect(0);
+	return cache.statistics.thickness - before;
 }
 
 uint32_t xgpu_vulkan_textures_thickness_epoch(void)
@@ -949,6 +1058,8 @@ void xgpu_vulkan_textures_frame_end(void)
 
 	cache.frame++;
 	astc_finished();
+	/* (the bakes come back, a few images' worth a frame) */
+	thickness_collect(THICKNESS_LANDED_BYTES);
 	if (now < cache.next_sweep)
 		return;
 	cache.next_sweep = now + SWEEP_SECONDS;
