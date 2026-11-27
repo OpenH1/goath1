@@ -16,7 +16,10 @@ CASES = ["counts", "unbound", "no-value", "plain"]
 
 NEGATIVE_CONTROLS = {
     # the words never filled again (master before this change)
-    "words-not-refilled": (("screen_text_set(open->dialog_text, label);", ";"), "counts"),
+    "words-not-refilled": (("screen_text_change(open->dialog_text, label);", ";"), "counts"),
+    # the labels set every frame, changed or not
+    "set-every-frame": (
+        ("screen_text_change(open->items[index], label);", "screen_text_set(open->items[index], label);"), "counts"),
     # every label set again, bound or not
     "every-label": (("item && item->label && strchr(item->label, '{') &&", "item && item->label &&"), "unbound"),
     # a binding with no value empties the words
