@@ -191,6 +191,7 @@ void dynamic_lights_note(long rasterizer_light_index, long flags, real cone_scal
 	real_point3d const *tick_position);
 boolean dynamic_lights_first_person(long weapon_index, real_point3d *position);
 void dynamic_lights_submit(void);
+void rt_lights_materials_debug_frame(void); /* port: port/linux/game/rt_lights_materials.c */
 void dynamic_lights_brighten(long rasterizer_light_index, real scale);
 void dynamic_lights_owner(long rasterizer_light_index, long object_index);
 void dynamic_lights_identify(long rasterizer_light_index, long light_handle);
@@ -1839,6 +1840,8 @@ void lights_preprocess_scene(
 	/* port: the frame's lights to the renderer (display.dynamic_lights) */
 	if (halo_dynamic_lights_enhanced())
 		dynamic_lights_submit();
+	/* port: the rt2 truth scene's lights test (HALO_RT2_LIGHTS_TEST) */
+	rt_lights_materials_debug_frame();
 	profile_exit(lights_section);
 
 	return;
