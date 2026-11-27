@@ -154,6 +154,29 @@ int host_display_luminance(const unsigned char luid[8], void *window, float *bla
 	float *full_frame_nits, float primaries[8]);
 /* the LUID of the adapter that drives the window's monitor; 0 if not known */
 int host_display_adapter_luid(void *window, unsigned char luid[8]);
+/* each adapter DXGI lists, told to each; the count */
+int host_display_adapters(void (*each)(void *context, const char *name, unsigned vendor,
+	unsigned long long dedicated_memory, const unsigned char luid[8], int software), void *context);
+
+/* (#1283: DXGI's adapters, which the backend logs beside Vulkan's devices) */
+static struct xgpu_vulkan_adapter display_adapters[16];
+static int display_adapter_count;
+
+static void display_adapter_add(void *context, const char *name, unsigned vendor, unsigned long long dedicated_memory,
+	const unsigned char luid[8], int software)
+{
+	struct xgpu_vulkan_adapter *adapter;
+
+	(void)context;
+	if (display_adapter_count >= (int)(sizeof(display_adapters) / sizeof(display_adapters[0])))
+		return;
+	adapter = &display_adapters[display_adapter_count++];
+	snprintf(adapter->name, sizeof(adapter->name), "%s", name);
+	adapter->vendor = vendor;
+	adapter->dedicated_memory = dedicated_memory;
+	memcpy(adapter->luid, luid, 8);
+	adapter->software = software;
+}
 #endif
 
 /* display.hdr: what the window's display says (SDL's; and, on Windows,
@@ -800,6 +823,10 @@ int host_vulkan_window_open(uint32_t window, uint32_t debug, uint32_t shader_fol
 			NULL;
 
 		options.display_luid_known = host_display_adapter_luid(handle, options.display_luid);
+		display_adapter_count = 0;
+		host_display_adapters(display_adapter_add, NULL);
+		options.adapters = display_adapters;
+		options.adapter_count = display_adapter_count;
 	}
 #endif
 	options.cache_path = cache_path(path, sizeof(path));

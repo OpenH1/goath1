@@ -65,6 +65,38 @@ static IDXGIFactory1 *factory_make(void)
 	return factory;
 }
 
+/* #1283: each adapter DXGI lists, told to each (its description in UTF-8,
+vendor ID, dedicated video memory, LUID, and whether it is a software one,
+like the Basic Render Driver); the count told */
+int host_display_adapters(void (*each)(void *context, const char *name, unsigned vendor,
+	unsigned long long dedicated_memory, const unsigned char luid[8], int software), void *context)
+{
+	IDXGIFactory1 *factory = factory_make();
+	IDXGIAdapter1 *adapter;
+	UINT index;
+	int count = 0;
+
+	if (!factory)
+		return 0;
+	for (index = 0; IDXGIFactory1_EnumAdapters1(factory, index, &adapter) == S_OK; index++)
+	{
+		DXGI_ADAPTER_DESC1 description;
+		char name[128];
+
+		if (IDXGIAdapter1_GetDesc1(adapter, &description) == S_OK)
+		{
+			if (!WideCharToMultiByte(CP_UTF8, 0, description.Description, -1, name, (int)sizeof(name), NULL, NULL))
+				strcpy(name, "an adapter");
+			each(context, name, description.VendorId, (unsigned long long)description.DedicatedVideoMemory,
+				(const unsigned char *)&description.AdapterLuid, (description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0);
+			count++;
+		}
+		IDXGIAdapter1_Release(adapter);
+	}
+	IDXGIFactory1_Release(factory);
+	return count;
+}
+
 /* #1269: the LUID of the adapter whose output shows the window's monitor
 (physical_choose prefers the Vulkan device of that LUID among its equals);
 0 if none is found */
