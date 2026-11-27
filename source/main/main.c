@@ -708,7 +708,7 @@ typedef char screenshot_and_framerate_globals_size_assert[
 
 void network_test_update(boolean main_menu_loaded, real seconds);
 /* port: debug.rt_export's moment written (port/linux/game/rt_export.c) */
-void rt_export_frame(int main_menu_loaded);
+void rt_export_frame(int main_menu_loaded, void const *first_window_camera);
 /* port: the host's control connection to its bots (port/linux/src/bot_control.c) */
 void bot_control_frame(void);
 #include "demo.h" /* port: port/linux/game/demo.c */
@@ -4429,7 +4429,7 @@ void main_loop(
 			/* automated system link tests (port/linux/game/network_test.c) */
 			network_test_update(main_globals.main_menu_scenario_loaded, main_globals.seconds_elapsed);
 			/* port: debug.rt_export, a moment as a scene folder (port/linux/game/rt_export.c) */
-			rt_export_frame(main_globals.main_menu_scenario_loaded);
+			rt_export_frame(main_globals.main_menu_scenario_loaded, &global_screenshot_count.windows[0].rasterizer_camera);
 			/* port: a demo asked for played, and the end of one
 			(port/linux/game/demo.c) */
 			demo_frame(main_globals.main_menu_scenario_loaded, main_globals.seconds_elapsed);

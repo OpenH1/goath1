@@ -5,7 +5,7 @@ debug.rt_export ("<second> <folder>", HALO_RT_EXPORT): one moment of the
 game written to a scene folder in the rt2 truth scene format (local only:
 ~/dev/rt2-scene-format.md), for a slow, exact path-traced render of it:
 
-	camera.json            the frame's camera (render.camera, as drawn)
+	camera.json            the first window's camera as drawn (main.c's)
 	geometry/bsp.ply       the loaded structure BSP's render triangles: its
 	                       lightmaps' materials' surfaces over their
 	                       compressed vertices, every shader's (opaque,
@@ -85,6 +85,8 @@ long network_test_cues_start_tick(void);
 /* (d3d8_device.c) the next frame presented saved as a PNG in a folder, and
 the name it took */
 void halo_screenshot_png(const char *directory);
+/* (render_cameras.c) */
+void render_camera_build_frustum_bounds(struct render_camera const *camera, real_rectangle2d *frustum_bounds);
 int halo_screenshot_png_taken(char *name, unsigned long size);
 /* (the lights-and-materials helper's, where it is built in) */
 extern void rt_lights_materials_write(const char *scene_folder) __attribute__((weak));
@@ -189,6 +191,8 @@ static struct
 	int png_frames;
 	long material_tags[_rt_export_materials];
 	long material_count;
+	/* the first window's camera as drawn (main.c's) */
+	struct render_camera const *camera;
 } rt_export;
 
 /* ---------- private code: files */
@@ -969,20 +973,24 @@ static int object_under(long object_index, long unit_index)
 
 static void camera_write(char const *folder, char const *map, char const *label, long tick)
 {
-	struct render_camera const *camera = &render.camera;
-	struct render_frustum const *frustum = &render.frustum;
-	float viewport_width = (float)(camera->viewport_bounds.x1 - camera->viewport_bounds.x0);
-	float viewport_height = (float)(camera->viewport_bounds.y1 - camera->viewport_bounds.y0);
-	float half_width = (frustum->frustum_bounds.x1 - frustum->frustum_bounds.x0) * 0.5f;
-	float half_height = (frustum->frustum_bounds.y1 - frustum->frustum_bounds.y0) * 0.5f;
-	/* (the projection's tangents as render_camera_build_frustum makes
-	them) */
-	float tangent_v = tanf(camera->vertical_field_of_view * 0.5f) * half_height;
-	float tangent_h = viewport_height > 0.0f ? tanf(camera->vertical_field_of_view * 0.5f) * half_width / viewport_height *
-		viewport_width : 0.0f;
+	struct render_camera const *camera = rt_export.camera;
+	real_rectangle2d bounds;
+	float viewport_width, viewport_height, half_width, half_height, tangent_v, tangent_h;
 	char path[600];
 	FILE *file;
 
+	if (!camera)
+		return;
+	/* (the projection's tangents as render_camera_build_frustum makes them
+	of the frustum's bounds) */
+	render_camera_build_frustum_bounds(camera, &bounds);
+	viewport_width = (float)(camera->viewport_bounds.x1 - camera->viewport_bounds.x0);
+	viewport_height = (float)(camera->viewport_bounds.y1 - camera->viewport_bounds.y0);
+	half_width = (bounds.x1 - bounds.x0) * 0.5f;
+	half_height = (bounds.y1 - bounds.y0) * 0.5f;
+	tangent_v = tanf(camera->vertical_field_of_view * 0.5f) * half_height;
+	tangent_h = viewport_height > 0.0f ? tanf(camera->vertical_field_of_view * 0.5f) * half_width / viewport_height *
+		viewport_width : 0.0f;
 	snprintf(path, sizeof(path), "%s/camera.json", folder);
 	file = fopen(path, "w");
 	if (!file)
@@ -998,8 +1006,7 @@ static void camera_write(char const *folder, char const *map, char const *label,
 		2.0 * atan(tangent_h) * 180.0 / 3.14159265358979, 2.0 * atan(tangent_v) * 180.0 / 3.14159265358979,
 		(int)viewport_width, (int)viewport_height);
 	fprintf(file, " \"vertical_field_of_view_rad\":%.6f,\"frustum_bounds\":[%.6f,%.6f,%.6f,%.6f],\"z_near\":%.5f,\"z_far\":%.3f,\n",
-		camera->vertical_field_of_view, frustum->frustum_bounds.x0, frustum->frustum_bounds.x1,
-		frustum->frustum_bounds.y0, frustum->frustum_bounds.y1, camera->z_near, camera->z_far);
+		camera->vertical_field_of_view, bounds.x0, bounds.x1, bounds.y0, bounds.y1, camera->z_near, camera->z_far);
 	fprintf(file, " \"exposure_note\":\"the classic renderer: lit in its combiners at 8 bits a channel and written "
 		"as it is (no tone map, no sRGB encode); the display's gamma (display.gamma / the brightness setting) "
 		"applied after. original.png includes the HUD unless the run hid it; the sky is drawn but not exported. "
@@ -1212,13 +1219,14 @@ static int original_named(void)
 
 /* ---------- public code */
 
-void rt_export_frame(int main_menu_loaded)
+void rt_export_frame(int main_menu_loaded, void const *first_window_camera)
 {
 	char const *setting = config_string("debug.rt_export");
 	long start;
 
 	if (!setting || !setting[0])
 		return;
+	rt_export.camera = first_window_camera;
 	if (strcmp(setting, rt_export.setting) != 0)
 	{
 		snprintf(rt_export.setting, sizeof(rt_export.setting), "%s", setting);
