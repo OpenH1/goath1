@@ -3,7 +3,10 @@ DYNAMIC_LIGHTS_RANK.C
 
 The scene's lights put in the order of what they show first, past the
 rasterizer's 128 (port/linux/game/dynamic_lights.c dynamic_lights_rank); the
-lights are made-up handles, described by a table.
+lights are made-up handles, described by a table. And of the frame's lights,
+those that cast ray-traced shadows (dynamic_lights_shadow_pick): a flashlight
+first, then lights of reach that have lasted, a light kept until another
+clearly passes it.
 */
 
 #include "harness.h"
@@ -13,6 +16,7 @@ lights are made-up handles, described by a table.
 #define MAXIMUM_RENDERED_LIGHTS 512
 #define MAXIMUM_LIGHTS_PER_MAP 4096
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
 typedef struct { real red, green, blue; } real_rgb_color;
 #define _real_epsilon 0.0001f
 #define square_root(x) sqrtf(x)
@@ -60,6 +64,166 @@ static short position_of(long const *lights, short count, long light)
 	return -1;
 }
 
+/* ---------- the shadows' lights */
+
+static struct halo_dynamic_light frame_lights[MAXIMUM_LIGHTS_PER_WINDOW];
+static unsigned long long frame_keys[MAXIMUM_LIGHTS_PER_WINDOW];
+static boolean frame_baked[MAXIMUM_LIGHTS_PER_WINDOW];
+static long frame_count;
+
+/* a light at x ahead of the camera (along +x), of that radius, white,
+known by key, with those flags */
+static void frame_light(real x, real y, real radius, unsigned long long key, long flags)
+{
+	struct halo_dynamic_light *light = &frame_lights[frame_count];
+
+	memset(light, 0, sizeof(*light));
+	light->position[0] = x;
+	light->position[1] = y;
+	light->radius = radius;
+	light->color[0] = light->color[1] = light->color[2] = 1.0f;
+	light->cone_offset = 1.0f;
+	light->flags = flags;
+	frame_keys[frame_count] = key;
+	frame_baked[frame_count] = FALSE;
+	frame_count++;
+}
+
+static int pick(real now, int *indices)
+{
+	real scores[HALO_DYNAMIC_LIGHTS_SHADOWED];
+	real_vector3d forward = { 1.0f, 0.0f, 0.0f };
+
+	return dynamic_lights_shadow_pick(frame_lights, frame_keys, frame_baked, frame_count, now, &forward, indices, scores);
+}
+
+static void frame_new(void)
+{
+	memset(&render, 0, sizeof(render));
+	render.camera.forward.i = 1.0f;
+	frame_count = 0;
+}
+
+static int shadow_case(char const *case_name)
+{
+	int indices[HALO_DYNAMIC_LIGHTS_SHADOWED];
+	int chosen;
+	real now;
+
+	memset(&shadowed_history, 0, sizeof(shadowed_history));
+	if (!strcmp(case_name, "shadow-small-skipped"))
+	{
+		/* a plasma bolt (2 world units) and a muzzle flash, near, lasting:
+		none */
+		for (now = 0.0f; now < 1.0f; now += 1.0f / 60.0f)
+		{
+			frame_new();
+			frame_light(3.0f, 0.0f, 2.0f, 11, HALO_DYNAMIC_LIGHT_PROJECTILE | HALO_DYNAMIC_LIGHT_HALO);
+			frame_light(1.0f, 0.0f, 1.5f, 12, 0);
+			chosen = pick(now, indices);
+			CHECK(chosen == 0, "a small light casts no shadow: %d chosen at %.2f", chosen, (double)now);
+		}
+		return 0;
+	}
+	if (!strcmp(case_name, "shadow-lasting"))
+	{
+		/* an explosion (10 world units): none its first frames, then it */
+		frame_new();
+		frame_light(5.0f, 0.0f, 10.0f, 21, 0);
+		CHECK(pick(0.0f, indices) == 0, "a light just made casts none yet");
+		CHECK(pick(SHADOWED_LEAST_AGE * 0.5f, indices) == 0, "nor a moment on");
+		chosen = pick(SHADOWED_LEAST_AGE * 1.5f, indices);
+		CHECK(chosen == 1 && indices[0] == 0, "a light that has lasted casts one: %d", chosen);
+		/* gone a frame: anew */
+		frame_new();
+		frame_light(5.0f, 0.0f, 1.0f, 99, 0);
+		pick(SHADOWED_LEAST_AGE * 2.0f, indices);
+		frame_new();
+		frame_light(5.0f, 0.0f, 10.0f, 21, 0);
+		CHECK(pick(SHADOWED_LEAST_AGE * 2.5f, indices) == 0, "a light gone and back is new again");
+		return 0;
+	}
+	if (!strcmp(case_name, "shadow-unknown-skipped"))
+	{
+		frame_new();
+		frame_light(5.0f, 0.0f, 10.0f, 0, 0);
+		for (now = 0.0f; now < 1.0f; now += 0.1f)
+			CHECK(pick(now, indices) == 0, "a light not known from frame to frame never lasts");
+		return 0;
+	}
+	if (!strcmp(case_name, "shadow-models-baked-skipped"))
+	{
+		frame_new();
+		frame_light(5.0f, 0.0f, 10.0f, 31, HALO_DYNAMIC_LIGHT_MODELS_ONLY);
+		frame_light(5.0f, 1.0f, 10.0f, 32, 0);
+		frame_baked[1] = TRUE;
+		frame_light(5.0f, 2.0f, 10.0f, 33, 0);
+		pick(0.0f, indices);
+		chosen = pick(1.0f, indices);
+		CHECK(chosen == 1 && indices[0] == 2, "a models' only light and a baked glow cast none: %d, %d", chosen,
+			chosen ? indices[0] : -1);
+		return 0;
+	}
+	if (!strcmp(case_name, "shadow-flashlight-first"))
+	{
+		/* five near explosions, lasting, and a flashlight (small, just on,
+		not known): the flashlight first */
+		short i;
+
+		frame_new();
+		for (i = 0; i < 5; i++)
+			frame_light(2.0f, (real)i, 10.0f, 40 + i, 0);
+		pick(0.0f, indices);
+		frame_light(0.5f, 0.0f, 2.0f, 0, HALO_DYNAMIC_LIGHT_FLASHLIGHT);
+		chosen = pick(1.0f, indices);
+		CHECK(chosen == HALO_DYNAMIC_LIGHTS_SHADOWED && indices[0] == 5, "the flashlight first: %d, %d", chosen,
+			indices[0]);
+		/* far and dim: still first */
+		frame_lights[5].position[0] = 60.0f;
+		frame_lights[5].color[0] = frame_lights[5].color[1] = frame_lights[5].color[2] = 0.05f;
+		chosen = pick(1.1f, indices);
+		CHECK(indices[0] == 5, "a far flashlight first too: %d", indices[0]);
+		return 0;
+	}
+	if (!strcmp(case_name, "shadow-kept"))
+	{
+		/* HALO_DYNAMIC_LIGHTS_SHADOWED lights chosen; a new one a little
+		brighter does not take a slot, a much brighter one does */
+		short i;
+
+		frame_new();
+		for (i = 0; i < HALO_DYNAMIC_LIGHTS_SHADOWED; i++)
+			frame_light(10.0f, (real)i, 4.0f, 50 + i, 0);
+		frame_light(10.0f, 9.0f, 4.0f, 59, 0);
+		frame_lights[4].color[0] = frame_lights[4].color[1] = frame_lights[4].color[2] = 0.5f;
+		pick(0.0f, indices);
+		chosen = pick(1.0f, indices);
+		CHECK(chosen == HALO_DYNAMIC_LIGHTS_SHADOWED, "all four: %d", chosen);
+		for (i = 0; i < chosen; i++)
+			CHECK(indices[i] != 4, "the dim one not chosen");
+		frame_lights[4].color[0] = frame_lights[4].color[1] = frame_lights[4].color[2] = 1.2f;
+		chosen = pick(1.1f, indices);
+		for (i = 0; i < chosen; i++)
+			CHECK(indices[i] != 4, "a little brighter is not enough to take a chosen light's slot");
+		frame_lights[4].color[0] = frame_lights[4].color[1] = frame_lights[4].color[2] = 3.0f;
+		chosen = pick(1.2f, indices);
+		CHECK(indices[0] == 4, "a light clearly brighter takes a slot: first %d", indices[0]);
+		return 0;
+	}
+	if (!strcmp(case_name, "shadow-none"))
+	{
+		frame_new();
+		CHECK(pick(0.0f, indices) == 0, "no lights, none chosen");
+		frame_light(5.0f, 0.0f, 10.0f, 61, 0);
+		frame_lights[0].color[0] = frame_lights[0].color[1] = frame_lights[0].color[2] = 0.0f;
+		pick(0.0f, indices);
+		CHECK(pick(1.0f, indices) == 0, "a dark light casts none");
+		return 0;
+	}
+	CHECK(FALSE, "unknown case %s", case_name);
+	return 1;
+}
+
 int main(int argc, char **argv)
 {
 	static long lights[MAXIMUM_RENDERED_LIGHTS + 1];
@@ -68,6 +232,8 @@ int main(int argc, char **argv)
 
 	CHECK(argc == 2, "one named case");
 	case_name = argv[1];
+	if (!strncmp(case_name, "shadow-", 7))
+		return shadow_case(case_name);
 	if (!strcmp(case_name, "untouched-below"))
 	{
 		fill(lights, MAXIMUM_LIGHTS_PER_WINDOW);
