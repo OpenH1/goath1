@@ -606,9 +606,11 @@ int main(int argc, char **argv)
 		} const cases[] =
 		{
 			{ _object_type_weapon, TRUE, FALSE, FALSE, _marker_shape_icon, FALSE },
-			{ _object_type_weapon, FALSE, FALSE, FALSE, _marker_shape_arrow, FALSE },
+			/* an item with no pickup icon (a health pack, a powerup): its outline, through walls, in either game */
+			{ _object_type_weapon, FALSE, FALSE, FALSE, _marker_shape_outline, TRUE },
 			{ _object_type_equipment, TRUE, TRUE, FALSE, _marker_shape_icon, FALSE },
-			{ _object_type_equipment, FALSE, TRUE, FALSE, _marker_shape_arrow, FALSE },
+			{ _object_type_equipment, FALSE, TRUE, FALSE, _marker_shape_outline, TRUE },
+			{ _object_type_equipment, FALSE, FALSE, FALSE, _marker_shape_outline, TRUE },
 			/* the campaign: the AI's soldiers and vehicles through walls */
 			{ _object_type_biped, FALSE, FALSE, FALSE, _marker_shape_outline, TRUE },
 			{ _object_type_vehicle, FALSE, FALSE, FALSE, _marker_shape_outline, TRUE },
@@ -632,6 +634,28 @@ int main(int argc, char **argv)
 				"case %d (type %d): shape %d through walls %d, not %d and %d", index, cases[index].type, shape,
 				through_walls, cases[index].shape, cases[index].through_walls);
 		}
+		return 0;
+	}
+
+	CASE("ping_claim_label")
+	{
+		/* (a claim's words: by a name of the whole 11 letters, no end; one
+		shorter; the claimer's own; and a short buffer, not overrun) */
+		wchar_t const full[12] = { 'A', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'X' };
+		wchar_t const joiny[12] = L"Joiny";
+		wchar_t label[40];
+		wchar_t small[20];
+
+		markers_claim_label(joiny, 11, label, 40);
+		CHECK(!wcscmp(label, L"Claimed by Joiny"), "the label %ls", label);
+		markers_claim_label(full, 11, label, 40);
+		CHECK(!wcscmp(label, L"Claimed by Abcdefghijk"), "the label of a whole name %ls", label);
+		markers_claim_label(NULL, 11, label, 40);
+		CHECK(!wcscmp(label, L"Claimed"), "the claimer's own label %ls", label);
+		small[11] = 0x7777;
+		markers_claim_label(joiny, 11, small, 11);
+		CHECK(small[11] == 0x7777 && small[10] == 0 && !wcsncmp(small, L"Claimed by", 10),
+			"a short buffer overrun or unended (%ls)", small);
 		return 0;
 	}
 

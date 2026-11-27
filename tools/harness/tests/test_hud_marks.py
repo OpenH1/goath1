@@ -1,8 +1,8 @@
 """The HUD's marks over the world drawn where their points project through the frame's view: a waypoint and the
 distance under it (a scenario's flag or object, a game engine goal, Basic Training's spots: hud_nav_points.c), a
 teammate's triangle and a player's name (hud.c), a ping's name over its arrow and what a ping of an object is drawn as
-(network_markers.c: an item's pickup icon, else the arrow alone; a unit's or vehicle's outline, an enemy player's never
-through walls in a game against players) and the passenger's reticle (passenger_camera.c). The game places
+(network_markers.c: an item's pickup icon, else its outline, as a health pack's; a unit's or vehicle's outline, an
+enemy player's never through walls in a game against players; a claimed item's "Claimed by <name>") and the passenger's reticle (passenger_camera.c). The game places
 them in whole units of its 480-line screen, three to four of a 1080p or a laptop's display's pixels: a mark stepped a
 unit at a time, short of its point by up to a unit, while the world under it moved smoothly, so it jittered against
 the world as the view turned or moved. They are placed where the point projects, the part past the whole units drawn
@@ -19,7 +19,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from harness import CHECK_FAILED, build, enum_with, function, mutated, read, run, structure  # noqa: E402
 
-CASES = ["waypoint", "distance", "triangle", "name", "ping_name", "passenger_reticle", "ping_shape"]
+CASES = ["waypoint", "distance", "triangle", "name", "ping_name", "passenger_reticle", "ping_shape", "ping_claim_label"]
 CONTROLS = {
     # the waypoint at the whole unit short of its point (as it was)
     "waypoint_whole": (("\thud_draw_mark_begin(screen_position.x, screen_position.y, &corner);\n",
@@ -49,8 +49,16 @@ CONTROLS = {
     "ping_enemy_player_xray": (("*through_walls = !(versus_players && enemy_player);", "*through_walls = TRUE;"),
                                "ping_shape"),
     # a pinged item with no pickup icon drawn with one (none to draw: no icon nor the fallback's arrow alone)
-    "ping_icon_no_fallback": (("return has_icon ? _marker_shape_icon : _marker_shape_arrow;",
-                               "return _marker_shape_icon;"), "ping_shape"),
+    "ping_icon_no_fallback": (("\t\tif (has_icon)\n\t\t\treturn _marker_shape_icon;\n",
+                               "\t\treturn _marker_shape_icon;\n"), "ping_shape"),
+    # (as it was) a pinged health pack or powerup (no pickup icon) drawn as the arrow alone
+    "ping_item_arrow_alone": (("\t\t*through_walls = TRUE;\n\t\treturn _marker_shape_outline;",
+                               "\t\treturn _marker_shape_arrow;"), "ping_shape"),
+    # a claim's words without the claimer's name
+    "ping_claim_nameless": (("\tif (claimer)\n", "\tif (0)\n"), "ping_claim_label"),
+    # a claimer's name not bounded by the buffer
+    "ping_claim_overrun": (("claimer[index] && length < maximum - 1; index++)", "claimer[index]; index++)"),
+                           "ping_claim_label"),
     # the passenger's reticle at the whole unit short of the shot (as it was)
     "reticle_whole": (("rest->i = (x - point->x) * reticle_scale;", "rest->i = 0.0f;"), "passenger_reticle"),
 }
@@ -102,6 +110,7 @@ def generated(fault=None):
     text += function(nav, "hud_render_nav_point_colored") + "\n"
     text += function(read("port/linux/game/network_markers.c"), "markers_draw_name") + "\n"
     text += function(read("port/linux/game/network_markers.c"), "network_markers_shape") + "\n"
+    text += function(read("port/linux/game/network_markers.c"), "markers_claim_label") + "\n"
     text += function(passenger, "passenger_camera_reticle_offset") + "\n"
     if fault:
         text = mutated(text, *fault)

@@ -2098,7 +2098,9 @@ name, seen through walls (the arrow's occluded look), for 8 seconds and then
 faded. A ping of a unit, a vehicle, a weapon or equipment follows it; else
 it marks the point the aim hits. A player has one ping: a new one takes the
 last's place, and the same thing or a point within about 5 meters of the
-last takes it away (`port/linux/game/network_markers.c`). Pings are played
+last takes it away (`port/linux/game/network_markers.c`). A ping of a weapon
+or equipment another player's ping is on claims it ("I'm taking it"): the
+ping is drawn once, in the claimer's color, with "Claimed by <name>". Pings are played
 in co-op and in games with teams (split screen's too, but never one player's
 alone on a computer), never in a game without teams, and are nothing of the simulation's: each machine
 keeps them by its own clock, so a recorded game replays the same without
@@ -2124,6 +2126,13 @@ decides:
   sends the ping or its clearing (`_distributed_message_marker_down`, 140,
   reliably) to each OpenH1 client machine with a player who sees it (the
   pinger's team; everyone in co-op), as it shows it itself.
+  A ping of an item another player's ping or claim the pinger sees is on
+  goes down as a claim (kind 4, `_marker_kind_claim`, the same message and
+  size, `network_markers_decided_kind`): each machine draws the claimed ping
+  once, its icon or outline in the claimer's color, "Claimed by <name>" over
+  the pinger's name, and shows it its whole time again from the claim. A
+  machine of an earlier build takes no kind past 3 and leaves a claim
+  undrawn; a client never sends one (the host takes a point or an object).
 - A client takes the host's word only over the host's connection's stream,
   in an OpenH1 game under way, of a player it has and a point inside the
   world (an object it does not have is shown at the point), and plays the
