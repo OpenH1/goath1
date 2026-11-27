@@ -29,7 +29,8 @@ truth export's lights.json, so the two agree at a tick):
   projectile 0.05, others 5% of the reach, 0.1 to 0.5).
 - power: the color as the enhanced lights draw it (the rasterizer's, times
   the port's brightening past 1), taken to linear (^2.2), times k
-  (LT_LIGHTS_POWER_SCALE: ~/dev/rt2-calibration.json's flashlight_power_scale,
+  (lt_power_scale: ~/dev/rt2-calibration.json's flashlight_power_scale and
+  dynamic_power_scales, a k a kind; LT_LIGHTS_POWER_SCALE the flashlight's,
   measured for the flashlight alone; the others' k to be measured each once,
   the same way: see the report and lt_lights_power_scale). The gel is the
   angular profile alone (pow(color * gel, 2.2) = pow(color, 2.2) x
@@ -94,6 +95,14 @@ extern struct data_array *light_data;
 /* k: the flashlight's, measured (~/dev/rt2-calibration.json); the suns' the
 truth helper's fit of the lightmap's direct share (sun_power_scale) */
 #define LT_LIGHTS_POWER_SCALE 1.009f
+/* the other kinds' k, each measured once the flashlight's way
+(~/dev/rt2-calibration.json's dynamic_power_scales and their derivation):
+a point light on an object (a muzzle flash, a bolt), a point light on none
+(an effect's: an explosion); a spot that is no flashlight (a lamp) and a
+panel not measured (none staged): the flashlight's. The backend's light
+transport applies the same rule (xgpu_vulkan_lt.c's lt_kind_k). */
+#define LT_LIGHTS_OBJECT_POWER_SCALE 0.845f
+#define LT_LIGHTS_EFFECT_POWER_SCALE 7.85f
 #define LT_LIGHTS_SUN_POWER_SCALE 0.488f
 /* the emitters' radii (world units): E1's flashlight disk, then
 dynamic_lights.c's shadow disks' (SHADOWED_DISK_*) */
@@ -302,6 +311,15 @@ static int lt_suns(int count)
 	return count;
 }
 
+/* a light's k by its kind: the flashlight's, a point's on an object or on
+none, the rest the flashlight's */
+static float lt_power_scale(struct xgpu_stream_lt_light const *light)
+{
+	if ((light->flags & XGPU_LT_LIGHT_FLASHLIGHT) || light->kind != XGPU_LT_LIGHT_POINT)
+		return LT_LIGHTS_POWER_SCALE;
+	return light->object != 0xffffffffu ? LT_LIGHTS_OBJECT_POWER_SCALE : LT_LIGHTS_EFFECT_POWER_SCALE;
+}
+
 /* the rasterizer light a copy (key) is of: its index, or NONE */
 static long lt_copy_parent(unsigned long long const *keys, long game_count, unsigned long long key)
 {
@@ -378,9 +396,6 @@ static int lt_build(struct halo_dynamic_light const *lights, unsigned long long 
 			lt_copy3(out->up, 0.0f, 0.0f, 1.0f);
 		out->range = light->radius;
 		lt_copy3(out->color, light->color[0], light->color[1], light->color[2]);
-		out->power_scale = LT_LIGHTS_POWER_SCALE;
-		for (channel = 0; channel < 3; channel++)
-			out->power[channel] = lt_linear(light->color[channel]) * LT_LIGHTS_POWER_SCALE;
 		out->cone_inner = out->cone_outer = -1.0f;
 		out->kind = XGPU_LT_LIGHT_POINT;
 		if (definition)
@@ -447,6 +462,11 @@ static int lt_build(struct halo_dynamic_light const *lights, unsigned long long 
 		else if (light->flags & HALO_DYNAMIC_LIGHT_PROJECTILE)
 			disk = LT_LIGHTS_PROJECTILE_DISK;
 		out->emitter_radius = disk;
+		/* (the power: its kind's k, once its kind, flags and object are
+		known) */
+		out->power_scale = lt_power_scale(out);
+		for (channel = 0; channel < 3; channel++)
+			out->power[channel] = lt_linear(light->color[channel]) * out->power_scale;
 		written++;
 	}
 	return lt_suns(written);

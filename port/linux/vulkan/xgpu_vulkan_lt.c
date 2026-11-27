@@ -65,6 +65,10 @@ HALO_LT_E1_UNSHADOWED=1 (checking) casts no shadow ray. Render thread alone.
 c20 corner's wall at about 3 m shows as bright as the original's gamma add, falling off physically from there
 (~/dev/rt2-calibration.json's flashlight_power_scale and its derivation, with the physical falloff of lt/e1.frag; the truth renderer uses the same) */
 #define LT_POWER_SCALE 1.009f
+/* the other kinds' (~/dev/rt2-calibration.json's dynamic_power_scales): a
+point light's on an object (a muzzle flash), on none (an explosion) */
+#define LT_OBJECT_POWER_SCALE 0.845f
+#define LT_EFFECT_POWER_SCALE 7.85f
 /* the lamp moved this far in a frame (world units): a jump, the count started again */
 #define LT_JUMP 0.25f
 /* where the parameters start in the draw set's uniforms (lt/e1.frag's) */
@@ -514,13 +518,25 @@ static const struct xgpu_stream_lt_light *lt_record(const struct xgpu_stream_lt_
 	return NULL;
 }
 
-/* a record's power as the pass uses it: HALO_LT_KIND_SCALE's k in place of
-the record's where given */
+/* a light's k by its kind (lt_lights.c's lt_power_scale, the same rule:
+~/dev/rt2-calibration.json): the flashlight's, a point's on an object (a
+muzzle flash, a bolt) or on none (an explosion), the rest the flashlight's */
+static float lt_kind_k(const struct xgpu_stream_lt_light *light)
+{
+	if ((light->flags & XGPU_LT_LIGHT_FLASHLIGHT) || light->kind != XGPU_LT_LIGHT_POINT)
+		return LT_POWER_SCALE;
+	return light->object != 0xffffffffu ? LT_OBJECT_POWER_SCALE : LT_EFFECT_POWER_SCALE;
+}
+
+/* a record's power as the pass uses it: its kind's k (a recording made
+before the kinds were measured carries the flashlight's), or
+HALO_LT_KIND_SCALE's where given */
 static void lt_power(const struct xgpu_stream_lt_light *light, int kind, float power[3])
 {
 	int channel;
-	float scale = lt.kind_scale[kind] >= 0.0f && light->power_scale > 0.0f ?
-		lt.kind_scale[kind] / light->power_scale : 1.0f;
+	/* (a sun's: its kind's scale, the lightmap's direct share's) */
+	float k = lt.kind_scale[kind] >= 0.0f ? lt.kind_scale[kind] : lt_kind_k(light);
+	float scale = light->power_scale > 0.0f ? k / light->power_scale : 1.0f;
 
 	for (channel = 0; channel < 3; channel++)
 		power[channel] = light->power[channel] * scale;
