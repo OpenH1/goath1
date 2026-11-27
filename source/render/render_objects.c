@@ -117,6 +117,7 @@ symbols in this file:
 #include "world_ao.h" /* port: port/linux/game/world_ao.c */
 #include "rt_shadows.h" /* port: port/linux/game/rt_shadows.c */
 #include "contact_shadows.h" /* port: port/linux/game/contact_shadows.c */
+#include "lt_lights.h" /* port: port/linux/game/lt_lights.c */
 #include "royale_cinema.h" /* port: port/linux/game/royale_cinema.c */
 
 /* ---------- constants */
@@ -1048,6 +1049,11 @@ static boolean render_object_shadow_begin(
 	union real_rgb_color shadow_color;
 	struct object_datum *object;
 	real shadow_intensity = level_of_detail;
+
+	/* port: the light-transport pass's sun shadow drawn for it in place of
+	this one (port/linux/game/lt_lights.c) */
+	if (lt_lights_sun_shadow(data->object_index))
+		return FALSE;
 
 	object_get_bounding_sphere(data->object_index, &center, &radius);
 

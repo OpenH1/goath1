@@ -72,6 +72,7 @@ against the truth export's lights.json at the same tick.
 #include "tag_files/tag_groups.h"
 #include "tag_files/tag_files.h"
 
+#include "physics/collisions.h"
 #include "halo_dynamic_lights.h"
 #include "lt_lights.h"
 
@@ -554,4 +555,60 @@ void lt_lights_frame(struct halo_dynamic_light const *lights, unsigned long long
 	lt.frame++;
 	xgpu_backend_lt_lights(lt.lights, written, window, lt.frame);
 	lt_dump(written, window);
+}
+
+/* ---------- the objects' sun shadows */
+
+boolean lt_lights_sun_shadow(long object_index)
+{
+	static int pass_sun = -1;
+	struct scenario *scenario;
+	struct object_datum const *object;
+	struct tag_block const *block;
+	char const *sky;
+	struct lt_sky_light const *sun = NULL;
+	real_vector3d toward, along;
+	real_point3d center;
+	real radius;
+	long index;
+	collision_result collision;
+
+	if (pass_sun < 0)
+	{
+		char const *pass = getenv("HALO_LT_E1"), *given = getenv("HALO_LT_SUN");
+
+		pass_sun = pass && *pass && strcmp(pass, "off") && strcmp(pass, "0") && strcmp(pass, "false") &&
+			!(given && !strcmp(given, "0"));
+	}
+	if (!pass_sun || object_index == NONE)
+		return FALSE;
+	/* (scenery: baked into the ray-traced scene as the structure is, its
+	shadow not the pass's) */
+	object = object_get(object_index);
+	if (!object || object->object.type == _object_type_scenery)
+		return FALSE;
+	/* (the sky's sun: its narrowest light) */
+	scenario = global_scenario_get();
+	if (!scenario || scenario->sky_references.count <= 0)
+		return FALSE;
+	sky = (char const *)scenario_get_sky(lt_sky_index());
+	if (!sky)
+		return FALSE;
+	block = (struct tag_block const *)(sky + LT_SKY_LIGHTS_OFFSET);
+	for (index = 0; block->address && index < block->count; index++)
+	{
+		struct lt_sky_light const *light = (struct lt_sky_light const *)block->address + index;
+
+		if (light->power > 0.0f && (!sun || light->diameter < sun->diameter))
+			sun = light;
+	}
+	if (!sun)
+		return FALSE;
+	/* (the object's middle in the sun, the structure between them none) */
+	vector3d_from_euler_angles2d(&toward, &sun->direction);
+	object_get_bounding_sphere(object_index, &center, &radius);
+	along = toward;
+	scale_vector3d(&along, 1024.0f, &along);
+	return !collision_test_vector(FLAG(_collision_test_structure_bit) | FLAG(_collision_test_front_facing_surfaces_bit),
+		&center, &along, NONE, &collision);
 }

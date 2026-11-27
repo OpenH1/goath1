@@ -126,4 +126,11 @@ struct halo_dynamic_light;
 void lt_lights_frame(struct halo_dynamic_light const *lights, unsigned long long const *keys, long const *objects,
 	unsigned long const *owners, unsigned char const *baked, long game_count, long count);
 
+/* whether the light-transport pass draws an object's sun shadow, so that
+the game's own (render_objects.c's projected shadow) is not drawn too: the
+pass on with its suns (HALO_LT_E1, HALO_LT_SUN not 0), the object not
+scenery, its middle in the sky's sun (no structure toward it). Render-only:
+a collision test, nothing changed */
+boolean lt_lights_sun_shadow(long object_index);
+
 #endif
