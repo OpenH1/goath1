@@ -41,9 +41,9 @@ LAUNCHER = RIG / "bin" / "rig-ccache"
 OPENCE = RIG / "opence-359"
 MCC = RIG / "mcc-maps" / "mcc_maps"
 MAPS = RIG / "maps"
-# the machine owner's own game (installed in ~/Applications/OpenH1): never start one while it runs, stop ours if it
+# the machine owner's own game (any install in ~/Applications/OpenH1*: OpenH1, OpenH1-Beta, OpenH1-RT): never start one while it runs, stop ours if it
 # starts
-OWNER_GAME = f"^{HOME}/Applications/OpenH1/bin/openh1"
+OWNER_GAME = f"^{HOME}/Applications/OpenH1[^/ ]*/bin/openh1"
 
 
 def hosts():
