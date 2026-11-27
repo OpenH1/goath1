@@ -13,6 +13,8 @@ object's node matrices, read inside the frame's render_interpolation pose
 
 #include "cseries.h"
 #include "math/real_math.h"
+#include "camera/director.h"
+#include "game/players.h"
 #include "models/model_definitions.h"
 #include "objects/objects.h"
 #include "objects/object_definitions.h"
@@ -290,6 +292,22 @@ int world_proxies_source_definition(long definition, struct world_proxies_source
 	return TRUE;
 }
 
+/* the unit a local player sees from in first person (director.c's
+perspective and followed unit) */
+static int object_first_person(long object_index)
+{
+	short local_player_index;
+
+	for (local_player_index = 0; local_player_index < MAXIMUM_LOCAL_PLAYERS; local_player_index++)
+	{
+		if (local_player_get_player_index(local_player_index) != NONE &&
+			director_get_followed_unit(local_player_index) == object_index &&
+			director_get_perspective(local_player_index) == _director_perspective_first_person)
+			return TRUE;
+	}
+	return FALSE;
+}
+
 long world_proxies_source_instances(struct world_proxies_source_instance *instances, long maximum)
 {
 	/* workstream A's scene: the frame's objects as drawn */
@@ -309,6 +327,7 @@ long world_proxies_source_instances(struct world_proxies_source_instance *instan
 		instances[count].definition = scene[index].definition;
 		instances[count].baked = object_baked(scene[index].id, scene[index].definition);
 		instances[count].field_awaited = world_sdf_object_awaited(scene[index].definition);
+		instances[count].first_person = object_first_person(scene[index].id);
 		count++;
 	}
 	return count;

@@ -65,6 +65,15 @@ struct xgpu_vulkan_image *xgpu_vulkan_textures_header(uint32_t header)
 	return NULL;
 }
 
+/* the ray-traced scene's skinning's shader (xgpu_vulkan_stream.c): none
+here, no skinned object traced */
+int xgpu_vulkan_rt_skin_shader(uint32_t **words, uint32_t *count)
+{
+	(void)words;
+	(void)count;
+	return 0;
+}
+
 /* display.temporal_aa "fsr" (xgpu_vulkan_fsr.c): not made over the fake
 device */
 int xgpu_vulkan_fsr_create(const struct xgpu_vulkan_fsr_device *device)

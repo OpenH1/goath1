@@ -108,8 +108,22 @@ On branch `rt/geometry-2`, still behind `debug.rt_render_geometry`.
   collision meshes were. b30: about 1,700 instances a frame, 195 meshes, 85k triangles.
 - **GPU time**, Blood Gulch, 5 bots: 2.34 ms a frame on and off (AO 0.97 ms) on the 8060S; 0.76 ms on the 4090,
   with no hang in 30 s.
-- **Not done yet:** skinned refit (joints stay on their major node), the first-person weapon's instance and mask bit,
-  and TLAS refit.
+- **Not done yet:** TLAS refit.
+
+## Measured in stage 5 (2026-11-26)
+
+- **Skinned refit.** A model whose vertices blend two nodes becomes one skinned mesh (rest pose, nodes and weights).
+  Each object of it has its own BLAS (`ALLOW_UPDATE`), which a compute pass skins into (`xgpu_spirv_rt_skin`, the
+  game's two-node linear blend) and which is then refit. It is never rebuilt, and an unchanged pose is skipped.
+  GPU time for skinning plus refits: Blood Gulch with 5 bots, 7 objects, 0.045 ms on the 8060S and 0.085 ms on the
+  4090; b30 with Marines, about 185 objects (about 62 refit a frame), 0.07 ms.
+- **Masks.** Instance kinds: structure 1, object 2, first-person weapon and hands 4, the local player's own body in
+  first person 8. The AO rays use 0x03 and the object-shadow rays 0x0B. The light-shadow rays (`light_shadows_rays`,
+  still 0xFF) should use 0x0B.
+- **First-person weapon and hands** go in as drawn (world-space nodes from `first_person_weapons.c`), one frame
+  late.
+- **The player's own body** is the game's third-person biped, posed by its own node matrices whatever
+  `display.first_person_legs` says. In first person those nodes kept moving (b30: 519 to 600 of every 600 frames).
 
 ## Memory and build time (estimates before stage 1)
 

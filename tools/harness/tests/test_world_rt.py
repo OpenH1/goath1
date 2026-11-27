@@ -12,7 +12,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from harness import CHECK_FAILED, build, mutated, read, run  # noqa: E402
 
-CASES = ["arithmetic", "frame", "render", "model"]
+CASES = ["arithmetic", "frame", "render", "model", "skin"]
 GAME = "port/linux/game/world_rt.c"
 CONTROLS = [
     # a mesh wound inward kept so (the backend's front faces then the inside)
@@ -55,6 +55,14 @@ CONTROLS = [
     # its collision meshes made beside them
     ("\tfor (node_index = 0; node_index < entry->node_count && !any; node_index++)",
      "\tfor (node_index = 0; node_index < entry->node_count; node_index++)", "model"),
+    # a skinned model split by node (its joints torn), or its pose without its nodes' default inverses, or not
+    # into its first node's space, or its instance not naming its pose (the backend refits nothing)
+    ("\tif (world_rt_blended(mesh.vertices, mesh.vertex_count))", "\tif (0)", "skin"),
+    ("\t\tworld_rt_compose(node, definition->inverses[node_index], node);\n", "", "skin"),
+    ("\t\tworld_rt_compose(inverse, node, pose->transforms[node_index]);",
+     "\t\tmemcpy(pose->transforms[node_index], node, sizeof(node));", "skin"),
+    ("\t\t\tinstance->pad = (unsigned int)++pose_count;\n\t\t\t/* (measuring",
+     "\t\t\t++pose_count;\n\t\t\t/* (measuring", "skin"),
     # the octahedral map's lower half not folded
     ("\tif (vector[2] < 0.0f)\n", "\tif (0)\n", "arithmetic"),
     # ... or not made again for another BSP

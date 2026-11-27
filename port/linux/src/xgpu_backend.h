@@ -269,6 +269,11 @@ struct xgpu_backend_rt_texture
 	unsigned int image;
 };
 void xgpu_backend_world_ao_mesh_indexed(unsigned long id, const void *data, unsigned long size);
+/* ... a skinned mesh (the same, its vertices' skinning after it), and the
+frame's poses (xgpu_stream.h's struct xgpu_world_rt_pose) */
+struct xgpu_world_rt_pose;
+void xgpu_backend_world_rt_skinned_mesh(unsigned long id, const void *data, unsigned long size);
+void xgpu_backend_world_rt_poses(const struct xgpu_world_rt_pose *poses, unsigned long count);
 void xgpu_backend_world_rt_textures(const struct xgpu_backend_rt_texture *textures, unsigned long count);
 void xgpu_backend_world_ao_instances(const struct xgpu_world_ao_instance *instances, unsigned long count);
 BOOL xgpu_backend_display_hdr(float *headroom);

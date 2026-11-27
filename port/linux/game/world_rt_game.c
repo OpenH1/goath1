@@ -21,6 +21,7 @@ nodes. Read only; render-only.
 #include "models/model_definitions.h"
 #include "objects/object_definitions.h"
 #include "objects/object_types.h"
+#include "game/players.h"
 #include "physics/collision_bsp_definitions.h"
 #include "physics/collision_model_definitions.h"
 #include "rasterizer/rasterizer_geometry.h"
@@ -34,6 +35,7 @@ nodes. Read only; render-only.
 #include "bitmaps/bitmap_group_lookup.h"
 #include "cache/texture_cache.h"
 
+#include "world_proxies_source.h"
 #include "world_rt.h"
 #include "world_scene.h"
 
@@ -266,6 +268,13 @@ static int material_surfaces(struct structure_material const *material)
 		return WORLD_RT_SURFACES_TRANSPARENT;
 	return TEST_FLAG(((struct world_rt_shader_environment const *)shader)->flags,
 		_world_rt_shader_environment_alpha_tested_bit) ? WORLD_RT_SURFACES_ALPHA_TESTED : WORLD_RT_SURFACES_OPAQUE;
+}
+
+/* a tag that is a model (not an object's definition: the first-person
+weapon's and hands', world_rt_source_first_person) */
+static boolean definition_is_model(long definition)
+{
+	return tag_index_is_group(definition, MODELS_GROUP_TAG) || tag_index_is_group(definition, 'mod2');
 }
 
 /* a definition's collision model (NULL none) */
@@ -618,10 +627,16 @@ long world_rt_source_model_mesh(long definition, struct world_rt_source_mesh *me
 	mesh->vertex_count = mesh->triangle_count = mesh->opaque_count = mesh->material_count = mesh->left_out = 0;
 	if (definition == NONE)
 		return 0;
-	object_definition = object_definition_get(definition);
-	if (!object_definition || object_definition->object.model.index == NONE)
-		return 0;
-	model = model_definition_get(object_definition->object.model.index);
+	/* (a model itself: the first-person weapon's and hands') */
+	if (definition_is_model(definition))
+		model = model_definition_get(definition);
+	else
+	{
+		object_definition = object_definition_get(definition);
+		if (!object_definition || object_definition->object.model.index == NONE)
+			return 0;
+		model = model_definition_get(object_definition->object.model.index);
+	}
 	if (!model || !model->nodes.address || model->nodes.count <= 0 || !model->regions.address ||
 		!model->geometries.address || model->geometries.count <= 0)
 		return 0;
@@ -726,6 +741,11 @@ short world_rt_source_definition(long definition, float sphere[4], int *item)
 	*item = FALSE;
 	if (definition == NONE)
 		return 0;
+	if (definition_is_model(definition))
+	{
+		model = model_definition_get(definition);
+		return model && model->nodes.address ? (short)MIN(model->nodes.count, WORLD_RT_NODES) : 0;
+	}
 	object_definition = object_definition_get(definition);
 	if (!object_definition || object_definition->object.model.index == NONE)
 		return 0;
@@ -739,6 +759,71 @@ short world_rt_source_definition(long definition, float sphere[4], int *item)
 	*item = object_definition->object.type == _object_type_weapon || object_definition->object.type == _object_type_equipment ||
 		object_definition->object.type == _object_type_garbage;
 	return (short)MIN(model->nodes.count, WORLD_RT_NODES);
+}
+
+/* the first-person weapon's and hands' models as last drawn: each local
+player's, its models and their nodes (world space), the unit holding them,
+the frame drawn in */
+static struct
+{
+	long model;
+	long unit;
+	unsigned long frame;
+	short node_count;
+	struct world_proxies_frame frames[WORLD_RT_NODES];
+} first_person_drawn[MAXIMUM_LOCAL_PLAYERS][2];
+static unsigned long first_person_frame;
+
+void world_rt_source_first_person_drawn(short local_player_index, int which, long model_index, long unit_index,
+	real_matrix4x3 const *nodes)
+{
+	struct model const *model;
+	short node_index;
+
+	if (local_player_index < 0 || local_player_index >= MAXIMUM_LOCAL_PLAYERS || which < 0 || which > 1 ||
+		model_index == NONE || !nodes)
+		return;
+	model = model_definition_get(model_index);
+	if (!model || !model->nodes.address)
+		return;
+	first_person_drawn[local_player_index][which].model = model_index;
+	first_person_drawn[local_player_index][which].unit = unit_index;
+	first_person_drawn[local_player_index][which].frame = first_person_frame;
+	first_person_drawn[local_player_index][which].node_count = (short)MIN(model->nodes.count, WORLD_RT_NODES);
+	for (node_index = 0; node_index < first_person_drawn[local_player_index][which].node_count; node_index++)
+	{
+		struct world_proxies_frame *frame = &first_person_drawn[local_player_index][which].frames[node_index];
+		real_matrix4x3 const *matrix = &nodes[node_index];
+		int axis;
+
+		for (axis = 0; axis < 3; axis++)
+		{
+			frame->axes[0][axis] = matrix->scale * (&matrix->forward.i)[axis];
+			frame->axes[1][axis] = matrix->scale * (&matrix->left.i)[axis];
+			frame->axes[2][axis] = matrix->scale * (&matrix->up.i)[axis];
+			frame->position[axis] = (&matrix->position.x)[axis];
+		}
+	}
+}
+
+short world_rt_source_first_person(int which, long *model, long *unit, struct world_proxies_frame *frames, short maximum)
+{
+	short count;
+
+	/* (the first local player's, drawn since world_rt_source_first_person_next) */
+	if (which < 0 || which > 1 || first_person_drawn[0][which].frame != first_person_frame ||
+		!first_person_drawn[0][which].node_count)
+		return 0;
+	count = MIN(first_person_drawn[0][which].node_count, maximum);
+	*model = first_person_drawn[0][which].model;
+	*unit = first_person_drawn[0][which].unit;
+	memcpy(frames, first_person_drawn[0][which].frames, sizeof(*frames) * (size_t)count);
+	return count;
+}
+
+void world_rt_source_first_person_next(void)
+{
+	first_person_frame++;
 }
 
 long world_rt_source_node(long definition, short node_index, float *triangles, long maximum)

@@ -455,6 +455,10 @@ boolean pal_tags_first_person_advance(short local_player_index, long graph_index
 	short frame_index);
 real pal_tags_first_person_fraction(short local_player_index, long graph_index, short animation_index,
 	short frame_index);
+/* port: (port/linux/game/world_rt_game.c) the first-person weapon's and
+hands' models as drawn, for the ray-traced scene */
+void world_rt_source_first_person_drawn(short local_player_index, int which, long model_index, long unit_index,
+	struct real_matrix4x3 const *nodes);
 #ifdef HALO_VR
 /* port/linux/game/vr_grenade.c's */
 boolean vr_grenade_throw_advance(long unit_index, short *frame_index, short key_frame_index, boolean first_person);
@@ -810,6 +814,8 @@ static void first_person_weapon_draw_slot(
 				(port/linux/game/motion_vectors.c) */
 				motion_vectors_object(first_person_weapon->weapon_index, (short)(local_player_index + 1),
 					model_node_matrices);
+				/* port: (the ray-traced scene's first-person weapon: world_rt_game.c) */
+				world_rt_source_first_person_drawn(local_player_index, 0, weapon_definition->weapon.interface_definition.first_person_model.index, unit_index, model_node_matrices);
 				render_model(
 					weapon_definition->weapon.interface_definition.first_person_model.index,
 					0.0f,
@@ -879,6 +885,8 @@ static void first_person_weapon_draw_slot(
 				/* port: (and the arms': motion_vectors.c) */
 				motion_vectors_object(first_person_weapon->weapon_index, (short)(local_player_index + 5),
 					model_node_matrices);
+				/* port: (and hands) */
+				world_rt_source_first_person_drawn(local_player_index, 1, first_person_interface->hands.index, unit_index, model_node_matrices);
 				render_model(
 					first_person_interface->hands.index,
 					0.0f,

@@ -1219,7 +1219,39 @@ void xgpu_backend_world_ao_mesh(unsigned long id, unsigned long count, const flo
 	record_body->pad[0] = record_body->pad[1] = 0;
 }
 
+static void world_rt_mesh_kind(unsigned long id, const void *data, unsigned long size, uint32_t kind);
+
 void xgpu_backend_world_ao_mesh_indexed(unsigned long id, const void *data, unsigned long size)
+{
+	world_rt_mesh_kind(id, data, size, XGPU_WORLD_AO_MESH_INDEXED);
+}
+
+void xgpu_backend_world_rt_skinned_mesh(unsigned long id, const void *data, unsigned long size)
+{
+	world_rt_mesh_kind(id, data, size, XGPU_WORLD_AO_MESH_SKINNED);
+}
+
+void xgpu_backend_world_rt_poses(const struct xgpu_world_rt_pose *poses, unsigned long count)
+{
+	struct xgpu_stream_world_ao_mesh *record_body;
+	unsigned char *place;
+	uint32_t size;
+
+	if (!stream.open || !poses || !count)
+		return;
+	if (count > XGPU_WORLD_RT_POSES)
+		count = XGPU_WORLD_RT_POSES;
+	size = (uint32_t)(count * sizeof(*poses));
+	record_body = record_data(XGPU_STREAM_WORLD_AO_MESH, sizeof(*record_body), carried_one(size), &place);
+	record_body->id = 0;
+	record_body->count = (uint32_t)count;
+	record_body->size = size;
+	record_body->data = carry_one(&place, poses, size);
+	record_body->kind = XGPU_WORLD_AO_MESH_POSES;
+	record_body->pad[0] = record_body->pad[1] = 0;
+}
+
+static void world_rt_mesh_kind(unsigned long id, const void *data, unsigned long size, uint32_t kind)
 {
 	const struct xgpu_world_rt_mesh *mesh = data;
 	struct xgpu_stream_world_ao_mesh *record_body;
@@ -1233,7 +1265,7 @@ void xgpu_backend_world_ao_mesh_indexed(unsigned long id, const void *data, unsi
 	record_body->count = mesh->triangle_count;
 	record_body->size = (uint32_t)size;
 	record_body->data = carry_one(&place, data, (uint32_t)size);
-	record_body->kind = XGPU_WORLD_AO_MESH_INDEXED;
+	record_body->kind = kind;
 	record_body->pad[0] = record_body->pad[1] = 0;
 }
 

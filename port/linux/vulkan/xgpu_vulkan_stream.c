@@ -92,6 +92,18 @@ four words each, then the materials') */
 _Static_assert(XGPU_SPIRV_RT_HIT_MATERIALS == XGPU_STREAM_WORLD_AO_MESHES * 4u &&
 	XGPU_STREAM_WORLD_AO_MESHES == XGPU_SPIRV_RT_HIT_MESHES && XGPU_WORLD_RT_TEXTURES == XGPU_SPIRV_RT_HIT_TEXTURES,
 	"the hit table as the shaders read it");
+_Static_assert(XGPU_SPIRV_RT_SKIN_GROUP == XGPU_VULKAN_RT_SKIN_GROUP, "the skinning's groups");
+
+int xgpu_vulkan_rt_skin_shader(uint32_t **words, uint32_t *count)
+{
+	struct xgpu_spirv_module module;
+
+	if (!xgpu_spirv_rt_skin(&module))
+		return 0;
+	*words = (uint32_t *)module.words;
+	*count = (uint32_t)module.count;
+	return 1;
+}
 
 /* the mirror's segments: 4 MB of the contiguous window each */
 #define MIRROR_SEGMENT_SIZE 0x400000u
@@ -4036,8 +4048,11 @@ static void stream_world_ao_mesh(void *context, const struct xgpu_stream_world_a
 	(void)context;
 	if (record->kind == XGPU_WORLD_AO_MESH_RELEASE)
 		xgpu_vulkan_rt_mesh_release(record->id);
-	else if (record->kind == XGPU_WORLD_AO_MESH_INDEXED)
-		xgpu_vulkan_rt_mesh_indexed(record->id, record->size ? host_pointer(record->data) : NULL, record->size);
+	else if (record->kind == XGPU_WORLD_AO_MESH_INDEXED || record->kind == XGPU_WORLD_AO_MESH_SKINNED)
+		xgpu_vulkan_rt_mesh_indexed(record->id, record->size ? host_pointer(record->data) : NULL, record->size,
+			record->kind == XGPU_WORLD_AO_MESH_SKINNED);
+	else if (record->kind == XGPU_WORLD_AO_MESH_POSES)
+		xgpu_vulkan_rt_poses(record->size ? host_pointer(record->data) : NULL, record->count);
 	else if (record->kind == XGPU_WORLD_AO_MESH_TEXTURES)
 		xgpu_vulkan_rt_textures(record->size ? host_pointer(record->data) : NULL, record->count);
 	else
