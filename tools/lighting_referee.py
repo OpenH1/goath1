@@ -443,7 +443,7 @@ def plan(build, baseline, machine, timing, only, mutate, features, overrides=(),
         wanted |= {("corridor", "hdr")}
     if "identity" in only:
         wanted |= {("corridor", "classic"), ("blast", "classic"), ("daylight", "classic")}
-    if features:
+    if features and "features" in only:
         wanted |= {("corridor", "traced")}
         for name in features:
             scene = FEATURE_SCENES.get(name, "corridor")
@@ -909,6 +909,7 @@ def main():
     parser.add_argument("--mutate", choices=sorted(MUTATIONS), help="a negative control: break one subject")
     parser.add_argument("--work", type=Path, default=ROOT / "build" / "lighting_referee",
                         help="where the pictures and the table are kept")
+    parser.add_argument("--features", help="only these features (comma-separated names)")
     parser.add_argument("--feature-baseline", help="the build the features off must equal (the state before them); "
                         "no comparison without it")
     parser.add_argument("--feature-cost", action="store_true", help="time each feature on too (three runs each)")
@@ -922,7 +923,9 @@ def main():
     for item in args.feature:
         name, _, setting = item.partition("=")
         features[name] = setting
-    if "features" not in only:
+    if args.features:
+        features = {k: v for k, v in features.items() if k in args.features.split(",")}
+    if "features" not in only and "cost" not in only:
         features = {}
     timing = [m for m in args.timing.split(",") if m] if "cost" in only else []
     started = time.monotonic()
@@ -999,7 +1002,7 @@ def main():
         check_shadow(table, keyed)
     if "hdr" in only:
         check_hdr(table, keyed)
-    if features:
+    if features and "features" in only:
         check_features(table, keyed, features, feature_baseline)
     if "cost" in only:
         check_cost(table, timed)
