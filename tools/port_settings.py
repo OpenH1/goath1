@@ -996,7 +996,7 @@ PAGES = {
              "white and the HUD are, and the display's peak.", None, "brightness_settings"),
             ("ADVANCED GRAPHICS ›", None, _page_screen(*ADVANCED),
              "Render resolution, anti-aliasing, texture filtering, model detail, shadows, the lighting and the "
-             "shields' glow, smooth motion and the tick rate.", None),
+             "shields' glow, and smooth motion.", None),
         ],
     },
     "audio_settings": {
@@ -1179,8 +1179,8 @@ PAGES = {
             ("STREAMER MODE ›", None, _page_screen(*STREAMER),
              "Hides offensive words in names and text from other players, maps and mods, as stars.", None),
             ("GAMEPLAY ›", None, _page_screen(*GAMEPLAY),
-             "Multiplayer's rules: how weapons are picked up, and vehicle hijacking. Online: the host's choice.",
-             None),
+             "The game's rules: how weapons are picked up, vehicle hijacking, the view while dead, the tick rate "
+             "and the animations.", None),
             # (port/linux/game/map_share.c: this machine's part in another's
             # game)
             (SECTION, "MAP SHARING"),
@@ -1237,10 +1237,6 @@ PAGES = {
              "A team game's scoreboard: a column for each team, or every player in order of score.", None),
             ("SCOREBOARD PANEL", "display.scoreboard_background", ON_OFF,
              "Draws a dark panel behind the scoreboard, for clearer text.", None),
-            # (port/linux/game/dead_spectate.c: co-op and team games)
-            ("WHILE DEAD", "game.spectate_on_death", [("TEAMMATE'S VIEW", "teammates"), ("DEATH CAMERA", "off")],
-             "While you wait to respawn in co-op or a team game: watch a living teammate through their eyes "
-             "(A or Jump for the next), or the game's death camera.", None),
             # (the text chat's: port/linux/game/network_chat.c)
             (SECTION, "CHAT"),
             ("TEXT CHAT", "display.text_chat", [("SHOW", "true"), ("HIDE", "false")],
@@ -1393,6 +1389,12 @@ PAGES = {
              [("XBOX", "128"), ("MEDIUM", "256"), ("HIGH", "512"), ("ULTRA", "1024")],
              "How sharp the shadows of characters, vehicles and weapons are. Xbox is the original's soft, blocky "
              "shadow; each step up is crisper, and costs a little more of the graphics card.", None),
+            # (display.contact_shadows: where the renderer draws it, Vulkan's,
+            # not in the headset: SETTINGS_ROW_WHEN, settings_condition_term's
+            # contact_drawn)
+            ("CONTACT SHADOWS", "display.contact_shadows", ON_OFF,
+             "Adds fine shadows where characters and vehicles touch the ground and walls. Does nothing where "
+             "Ray Traced Shadows are on, which already trace them.", "desktop android"),
             ("SMOOTH LIGHTING", "display.per_pixel_lighting", ON_OFF,
              "Lights characters and weapons smoothly, without the flat facets of the Xbox's lighting, at a small "
              "cost.", None),
@@ -1411,20 +1413,6 @@ PAGES = {
             ("GLOW INTENSITY", "display.shield_glow_intensity", [("DEFAULT", "default"), ("LIGHT SHOW", "light_show")],
              "Light Show: the shields' glow reaches three times as far, and is brighter. Online: the host's choice."
              "|Default in Pro 2v2 games, for everyone.", None),
-            (SECTION, "GAME"),
-            # (locked at ORIGINAL (30) in a game that plays at 30 whatever it
-            # says, a network game of other machines, a film's playback:
-            # menu_functions.c's sim_rate_row_show)
-            ("TICK RATE", "game.sim_rate", [("ORIGINAL (30)", "30"), ("60", "60"), ("120", "120")],
-             "How often the world updates each second, in games on this device (campaign, split screen, bots). "
-             "60 and 120 respond faster and take more of the processor. Online games play at their host's tick "
-             "rate: a GOAT H1 game's (GOAT H1 60 Tick), a Legacy game's 30.", None),
-            # (game.enhanced_animations: the preset's, Classic's off, as the
-            # Xbox played; a network game's turning is its host's:
-            # network_standard_turns_with_aim)
-            ("ANIMATIONS", "game.enhanced_animations", [("CLASSIC", "false"), ("ENHANCED", "true")],
-             "Enhanced: you turn with your aim in a jump and a grenade throw, and your legs keep moving as you "
-             "throw. Classic moves as the Xbox did, so the AI plays as it did. Online: the host's choice.", None),
         ],
     },
     BRIGHTNESS_PAGE[0]: {
@@ -2032,6 +2020,27 @@ PAGES = {
             ("SPARTAN LINK", "game.spartan_link", ON_OFF,
              "Team games you host: players may show their teammates' views beside the motion tracker. Co-op "
              "always has it. Online: the host's choice.", None),
+            # (port/linux/game/dead_spectate.c: co-op and team games; Interface's
+            # until its page had no room)
+            ("WHILE DEAD", "game.spectate_on_death", [("TEAMMATE'S VIEW", "teammates"), ("DEATH CAMERA", "off")],
+             "While you wait to respawn in co-op or a team game: watch a living teammate through their eyes "
+             "(A or Jump for the next), or the game's death camera.", None),
+            # (Advanced Graphics' until its page had no room for CONTACT
+            # SHADOWS: the game's own rules, on this computer and as a host)
+            (SECTION, "GAME"),
+            # (locked at ORIGINAL (30) in a game that plays at 30 whatever it
+            # says, a network game of other machines, a film's playback:
+            # menu_functions.c's sim_rate_row_show)
+            ("TICK RATE", "game.sim_rate", [("ORIGINAL (30)", "30"), ("60", "60"), ("120", "120")],
+             "How often the world updates each second, in games on this device (campaign, split screen, bots). "
+             "60 and 120 respond faster and take more of the processor. Online games play at their host's tick "
+             "rate: a GOAT H1 game's (GOAT H1 60 Tick), a Legacy game's 30.", None),
+            # (game.enhanced_animations: the preset's, Classic's off, as the
+            # Xbox played; a network game's turning is its host's:
+            # network_standard_turns_with_aim)
+            ("ANIMATIONS", "game.enhanced_animations", [("CLASSIC", "false"), ("ENHANCED", "true")],
+             "Enhanced: you turn with your aim in a jump and a grenade throw, and your legs keep moving as you "
+             "throw. Classic moves as the Xbox did, so the AI plays as it did. Online: the host's choice.", None),
         ],
     },
     CAMPAIGN_PAGE[0]: {
@@ -2327,7 +2336,7 @@ SETTINGS_SEARCH_WORDS = {
     "frametime": ["perf_overlay"], "gpu": ["perf_overlay"], "stats": ["perf_overlay"],
     "gsync": ["vrr", "vrr_cap_margin"], "freesync": ["vrr", "vrr_cap_margin"], "vrr": ["vrr"],
     "aa": ["anti_aliasing", "anti_aliasing_msaa", "anti_aliasing_android"],
-    "shadows": ["shadow_resolution", "shadows"],
+    "shadows": ["shadow_resolution", "shadows", "contact_shadows"],
     "ao": ["ambient_occlusion"], "ssao": ["ambient_occlusion"],
     "anisotropic": ["anisotropic_filtering"], "af": ["anisotropic_filtering"],
     "lod": ["model_detail"],
@@ -2890,6 +2899,8 @@ SETTINGS_ROW_WHEN = {
     "temporal_aa_sharpness": "temporal_upscale+!vr temporal_metalfx+!vr",
     # (the renderer has ray queries: settings_condition_term's ray_queries)
     "shadows": "ray_queries",
+    # (the renderer draws display.contact_shadows: settings_condition_term's contact_drawn)
+    "contact_shadows": "contact_drawn+!vr",
     # (the Mac's display paces its frames already)
     "low_latency": "!vrr_system",
     # (in a game: not those that would drop it or are the main menu's, nor

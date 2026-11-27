@@ -5968,6 +5968,17 @@ int halo_soft_effects_drawn(void)
 	return xgpu_backend_capabilities.soft_effects != 0;
 }
 
+/* (display.contact_shadows: the Vulkan backend's pass; Metal draws none
+yet) */
+int halo_contact_shadows_drawn(void)
+{
+#ifdef HALO_METAL
+	return 0;
+#else
+	return xgpu_backend_capabilities.largest_target != 0;
+#endif
+}
+
 int halo_temporal_upscale_drawn(void)
 {
 	return xgpu_backend_capabilities.temporal_upscale != 0;

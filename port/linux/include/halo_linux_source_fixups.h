@@ -429,6 +429,8 @@ screen (rasterizer_xbox_transparent_geometry.c; 0 after it), and whether the
 renderer draws it so (Settings' SOFT PARTICLES row shown) */
 void halo_effect_soft(int soft);
 int halo_soft_effects_drawn(void);
+/* the renderer draws display.contact_shadows (d3d8_device.c: Vulkan's) */
+int halo_contact_shadows_drawn(void);
 /* display.temporal_aa "fsr": the renderer upscales with AMD FSR (port/linux/src/d3d8_device.c) */
 int halo_temporal_upscale_drawn(void);
 /* display.temporal_aa "dlss": the renderer upscales with NVIDIA DLSS (its

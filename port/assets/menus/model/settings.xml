@@ -90,7 +90,7 @@
 			<help>How bright the picture is: its gamma, soft particles, and on an HDR display, HDR's look, how bright white and the HUD are, and the display's peak.</help>
 		</row>
 		<row key="advanced_graphics" kind="link" label="ADVANCED GRAPHICS ›" crumb="VIDEO › GRAPHICS" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/advanced_graphics_screen">
-			<help>Render resolution, anti-aliasing, texture filtering, model detail, shadows, the lighting and the shields' glow, smooth motion and the tick rate.</help>
+			<help>Render resolution, anti-aliasing, texture filtering, model detail, shadows, the lighting and the shields' glow, and smooth motion.</help>
 		</row>
 		<button key="button_defaults" kind="defaults" run="port settings defaults" help="Puts this tab's settings back to their defaults. Nothing changes until OK."/>
 		<button key="button_ok" kind="ok" run="port settings ok" help="Keeps your changes, on every tab, and applies them."/>
@@ -336,7 +336,7 @@
 			<help>Hides offensive words in names and text from other players, maps and mods, as stars.</help>
 		</row>
 		<row key="gameplay" kind="link" label="GAMEPLAY ›" crumb="ONLINE › INTERNET" open="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/gameplay_screen">
-			<help>Multiplayer's rules: how weapons are picked up, and vehicle hijacking. Online: the host's choice.</help>
+			<help>The game's rules: how weapons are picked up, vehicle hijacking, the view while dead, the tick rate and the animations.</help>
 		</row>
 		<section key="section_8" title="MAP SHARING" when="desktop android"/>
 		<row key="map_download" kind="choice" setting="network.map_download" label="DOWNLOAD MAPS" crumb="ONLINE › MAP SHARING" when="desktop android">
@@ -421,12 +421,7 @@
 			<choice shown="ON" value="true"/>
 			<choice shown="OFF" value="false"/>
 		</row>
-		<row key="spectate_on_death" kind="choice" setting="game.spectate_on_death" label="WHILE DEAD" crumb="INTERFACE › MULTIPLAYER" search_choices="teammate view death camera">
-			<help>While you wait to respawn in co-op or a team game: watch a living teammate through their eyes (A or Jump for the next), or the game's death camera.</help>
-			<choice shown="TEAMMATE'S VIEW" value="teammates"/>
-			<choice shown="DEATH CAMERA" value="off"/>
-		</row>
-		<section key="section_12" title="CHAT"/>
+		<section key="section_11" title="CHAT"/>
 		<row key="text_chat" kind="choice" setting="display.text_chat" label="TEXT CHAT" crumb="INTERFACE › CHAT">
 			<help>Shows the text chat. Hide draws none of its lines, and its keys and D-pad Up open nothing.</help>
 			<choice shown="SHOW" value="true"/>
@@ -600,6 +595,11 @@
 			<choice shown="HIGH" value="512"/>
 			<choice shown="ULTRA" value="1024"/>
 		</row>
+		<row key="contact_shadows" kind="choice" setting="display.contact_shadows" label="CONTACT SHADOWS" crumb="VIDEO › ADVANCED GRAPHICS" search="shadows" when="desktop+contact_drawn+!vr android+contact_drawn+!vr">
+			<help>Adds fine shadows where characters and vehicles touch the ground and walls. Does nothing where Ray Traced Shadows are on, which already trace them.</help>
+			<choice shown="ON" value="true"/>
+			<choice shown="OFF" value="false"/>
+		</row>
 		<row key="per_pixel_lighting" kind="choice" setting="display.per_pixel_lighting" label="SMOOTH LIGHTING" crumb="VIDEO › ADVANCED GRAPHICS">
 			<help>Lights characters and weapons smoothly, without the flat facets of the Xbox's lighting, at a small cost.</help>
 			<choice shown="ON" value="true"/>
@@ -628,18 +628,6 @@
 			<note>Default in Pro 2v2 games, for everyone.</note>
 			<choice shown="DEFAULT" value="default"/>
 			<choice shown="LIGHT SHOW" value="light_show"/>
-		</row>
-		<section key="section_16" title="GAME"/>
-		<row key="sim_rate" kind="choice" setting="game.sim_rate" label="TICK RATE" crumb="VIDEO › ADVANCED GRAPHICS" search="hz tickrate" search_choices="original">
-			<help>How often the world updates each second, in games on this device (campaign, split screen, bots). 60 and 120 respond faster and take more of the processor. Online games play at their host's tick rate: a GOAT H1 game's (GOAT H1 60 Tick), a Legacy game's 30.</help>
-			<choice shown="ORIGINAL (30)" value="30"/>
-			<choice shown="60" value="60"/>
-			<choice shown="120" value="120"/>
-		</row>
-		<row key="enhanced_animations" kind="choice" setting="game.enhanced_animations" label="ANIMATIONS" crumb="VIDEO › ADVANCED GRAPHICS">
-			<help>Enhanced: you turn with your aim in a jump and a grenade throw, and your legs keep moving as you throw. Classic moves as the Xbox did, so the AI plays as it did. Online: the host's choice.</help>
-			<choice shown="CLASSIC" value="false"/>
-			<choice shown="ENHANCED" value="true"/>
 		</row>
 		<button key="button_defaults" kind="defaults" run="port settings defaults" help="Puts this page's settings back to their defaults."/>
 		<button key="button_ok" kind="ok" run="port settings keep" help="Saves your changes, on this page and every tab, and applies them."/>
@@ -1645,6 +1633,23 @@
 			<help>Team games you host: players may show their teammates' views beside the motion tracker. Co-op always has it. Online: the host's choice.</help>
 			<choice shown="ON" value="true"/>
 			<choice shown="OFF" value="false"/>
+		</row>
+		<row key="spectate_on_death" kind="choice" setting="game.spectate_on_death" label="WHILE DEAD" crumb="ONLINE › GAMEPLAY" search_choices="teammate view death camera">
+			<help>While you wait to respawn in co-op or a team game: watch a living teammate through their eyes (A or Jump for the next), or the game's death camera.</help>
+			<choice shown="TEAMMATE'S VIEW" value="teammates"/>
+			<choice shown="DEATH CAMERA" value="off"/>
+		</row>
+		<section key="section_5" title="GAME"/>
+		<row key="sim_rate" kind="choice" setting="game.sim_rate" label="TICK RATE" crumb="ONLINE › GAMEPLAY" search="hz tickrate" search_choices="original">
+			<help>How often the world updates each second, in games on this device (campaign, split screen, bots). 60 and 120 respond faster and take more of the processor. Online games play at their host's tick rate: a GOAT H1 game's (GOAT H1 60 Tick), a Legacy game's 30.</help>
+			<choice shown="ORIGINAL (30)" value="30"/>
+			<choice shown="60" value="60"/>
+			<choice shown="120" value="120"/>
+		</row>
+		<row key="enhanced_animations" kind="choice" setting="game.enhanced_animations" label="ANIMATIONS" crumb="ONLINE › GAMEPLAY">
+			<help>Enhanced: you turn with your aim in a jump and a grenade throw, and your legs keep moving as you throw. Classic moves as the Xbox did, so the AI plays as it did. Online: the host's choice.</help>
+			<choice shown="CLASSIC" value="false"/>
+			<choice shown="ENHANCED" value="true"/>
 		</row>
 		<button key="button_defaults" kind="defaults" run="port settings defaults" help="Puts this page's settings back to their defaults."/>
 		<button key="button_ok" kind="ok" run="port settings keep" help="Saves your changes, on this page and every tab, and applies them."/>
