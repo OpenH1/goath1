@@ -465,6 +465,9 @@ debug.gpu_validation (or debug.gl_debug) */
 fifo_relaxed (0: the swap interval's choice) */
 #define PRESENT_MODE_SHIFT 5
 #define PRESENT_MODE_MASK 7u
+/* and debug.vulkan_push_textures, debug.vulkan_bar_uploads */
+#define PUSH_TEXTURES 256
+#define BAR_UPLOADS 512
 
 /* ---------- whether the system says VRR is active (host_vulkan_vrr) */
 
@@ -834,6 +837,8 @@ int host_vulkan_window_open(uint32_t window, uint32_t debug, uint32_t shader_fol
 	options.cache_path = cache_path(path, sizeof(path));
 	options.validation = (debug & DEBUG_VALIDATION) != 0;
 	options.statistics = (debug & DEBUG_STATISTICS) != 0;
+	options.push_textures = (debug & PUSH_TEXTURES) != 0;
+	options.bar_uploads = (debug & BAR_UPLOADS) != 0;
 	if (!xgpu_vulkan_initialize(&options))
 	{
 #ifdef HALO_VR
