@@ -88,10 +88,12 @@ struct rt_mesh
 	float *triangles;
 	int built;
 	/* (RT_OWN_TRIANGLES or more) its own buffer; its structure's bytes; its
-	compacted size's query (its index plus one: asked, not yet read) */
+	compacted size's query (its index plus one: asked, not yet read), and
+	whether it was asked */
 	struct rt_buffer own;
 	VkDeviceSize bytes;
 	uint32_t compacting;
+	int compaction_asked;
 };
 
 struct rt_scene
@@ -461,7 +463,6 @@ static void rt_meshes_build(VkCommandBuffer commands)
 	uint32_t id, count = 0, index, triangles = 0, largest = 0;
 	VkMemoryBarrier barrier;
 	int logged, own;
-	uint32_t compacting = 0, compacting_ids[RT_COMPACTED];
 
 	if (!rt.pending)
 		return;
@@ -538,9 +539,6 @@ static void rt_meshes_build(VkCommandBuffer commands)
 		}
 		mesh->bytes = sizes.accelerationStructureSize;
 		rt_live_bytes(mesh->bytes, 0);
-		/* (its compacted size asked after the build, where none is asked) */
-		if (own && rt.compacted_sizes && compacting < RT_COMPACTED && !rt.compacted_count)
-			compacting_ids[compacting++] = id;
 		memset(&address, 0, sizeof(address));
 		address.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
 		address.accelerationStructure = mesh->structure;
@@ -614,23 +612,6 @@ static void rt_meshes_build(VkCommandBuffer commands)
 	barrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
 	rt.barrier(commands, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
 		VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1, &barrier, 0, NULL, 0, NULL);
-	/* (the large ones' compacted sizes asked, read a few frames later) */
-	if (compacting)
-	{
-		VkAccelerationStructureKHR structures[RT_COMPACTED];
-
-		for (index = 0; index < compacting; index++)
-		{
-			structures[index] = rt.meshes[compacting_ids[index]]->structure;
-			rt.meshes[compacting_ids[index]]->compacting = index + 1;
-			rt.compacted_ids[index] = compacting_ids[index];
-		}
-		rt.reset_queries(commands, rt.compacted_sizes, 0, compacting);
-		rt.properties(commands, compacting, structures, VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR,
-			rt.compacted_sizes, 0);
-		rt.compacted_count = compacting;
-		rt.compacted_serial = xgpu_vulkan_serial();
-	}
 done:
 	/* (every mesh tried: their triangles let go of) */
 	for (id = 1; id < XGPU_STREAM_WORLD_AO_MESHES; id++)
@@ -651,6 +632,36 @@ done:
 	free(ranges);
 	free(range_pointers);
 	free(scratch_offsets);
+}
+
+/* the large meshes built (their builds' barrier recorded) and not yet
+compacted: their compacted sizes asked, where none are being, read a few
+frames later */
+static void rt_compaction_ask(VkCommandBuffer commands)
+{
+	VkAccelerationStructureKHR structures[RT_COMPACTED];
+	uint32_t id, count = 0;
+
+	if (!rt.compacted_sizes || rt.compacted_count)
+		return;
+	for (id = 1; id < XGPU_STREAM_WORLD_AO_MESHES && count < RT_COMPACTED; id++)
+	{
+		struct rt_mesh *mesh = rt.meshes[id];
+
+		if (!mesh || !mesh->built || !mesh->structure || !mesh->own.buffer || mesh->compaction_asked)
+			continue;
+		mesh->compaction_asked = 1;
+		mesh->compacting = count + 1;
+		structures[count] = mesh->structure;
+		rt.compacted_ids[count++] = id;
+	}
+	if (!count)
+		return;
+	rt.reset_queries(commands, rt.compacted_sizes, 0, count);
+	rt.properties(commands, count, structures, VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR,
+		rt.compacted_sizes, 0);
+	rt.compacted_count = count;
+	rt.compacted_serial = xgpu_vulkan_serial();
 }
 
 /* the large meshes whose compacted sizes the GPU has written, copied into
@@ -921,6 +932,7 @@ int xgpu_vulkan_rt_build(void)
 	rt_garbage_collect();
 	commands = xgpu_vulkan_early_commands();
 	rt_meshes_build(commands);
+	rt_compaction_ask(commands);
 	rt.given_new = 0;
 	rt.current = -1;
 	xgpu_vulkan_world_ao_touch();
