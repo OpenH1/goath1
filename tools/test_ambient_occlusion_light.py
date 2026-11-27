@@ -92,6 +92,15 @@ def test_model_lit_by_the_dynamic_lights(shaders):
     assert "occlusion" not in summed
 
 
+def test_model_lit_by_the_dynamic_lights_over_the_vertex_light(shaders):
+    # the enhanced lights without display.per_pixel_lighting: the ambient and distant lights the vertex's, as the
+    # game's program gives them (xgpu.h's XGPU_PER_PIXEL_VERTEX_AMBIENT), so a model no light reaches is the game's
+    source = body(shaders["model_dynamic_vertex", 1])
+    assert "float3 base = saturate(in.xLightAmbient * occlusion)" in source
+    assert "model_lighting(" not in source
+    assert "v0.rgb = dynamic_light_add(" in source
+
+
 def test_model_lit_for_each_vertex(shaders):
     source = body(shaders["vertex", 1])
     assert "v0.rgb = saturate(in.xLightAmbient * occlusion + in.xLightPoint);" in source
@@ -115,7 +124,7 @@ def test_lightmap_pass(shaders):
 def test_spirv_modules_valid(check, tmp_path):
     subprocess.run([str(check), "spirv", str(tmp_path)], check=True)
     modules = sorted(tmp_path.glob("*.spv"))
-    assert len(modules) == 11
+    assert len(modules) == 13
     if not VALIDATOR:
         pytest.skip("no spirv-val")
     for module in modules:

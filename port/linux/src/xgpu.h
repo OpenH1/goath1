@@ -452,6 +452,13 @@ world units; its outer cells hold every point past it) with small cells near
 the camera, where lights are seen large. A cell has the lights whose spheres
 meet its box (d3d8_device.c's dynamic_lights_mark). */
 #define XGPU_DYNAMIC_LIGHTS_MAXIMUM 128
+/* a model lit by the enhanced dynamic lights where display.per_pixel_lighting
+is off: its pixel key's per_pixel_lighting (the program's lights, 1 or 2)
+with this bit, its ambient and distant lights the vertex's, as the game's
+program lights them (XGPU_LIGHTING_MODEL_SPLIT's xLightAmbient), the lights
+added for each pixel over them, so a model no light reaches is drawn as the
+game draws it (xgpu_manifest.c's xgpu_draw_derive) */
+#define XGPU_PER_PIXEL_VERTEX_AMBIENT 4
 #define XGPU_DYNAMIC_LIGHTS_GRID_X 32
 #define XGPU_DYNAMIC_LIGHTS_GRID_Y 32
 #define XGPU_DYNAMIC_LIGHTS_GRID_Z 16
