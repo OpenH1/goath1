@@ -774,6 +774,9 @@ the occlusion set names (the latest built, else an empty one; VK_NULL_HANDLE
 without ray queries), read by the work recorded now */
 struct xgpu_world_ao_instance;
 void xgpu_vulkan_rt_mesh(uint32_t id, uint32_t count, const float *triangles);
+/* ... one mesh let go of alone (its structure once the GPU is past the work
+recorded so far) */
+void xgpu_vulkan_rt_mesh_release(uint32_t id);
 void xgpu_vulkan_rt_instances(const struct xgpu_world_ao_instance *instances, uint32_t count);
 int xgpu_vulkan_rt_build(void);
 VkAccelerationStructureKHR xgpu_vulkan_rt_scene(void);

@@ -1696,15 +1696,21 @@ WORLD_AO_MESH: a mesh (a bottom-level acceleration structure, built once):
 its id (1 to XGPU_STREAM_WORLD_AO_MESHES - 1) and count triangles, nine
 floats each (each corner's x, y, z in the mesh's own space, the front faces
 counterclockwise seen from outside), at data (size: count * 36); id 0 lets
-go of every mesh (a map's end). An id is given once a map */
+go of every mesh (a map's end). An id is given once a map. Its kind
+(XGPU_WORLD_AO_MESH_*): those triangles, or (_RELEASE, no data) that id's
+mesh let go of alone (a level's collision mesh once its render mesh is in
+the scene: docs/rt-plan/1-geometry.md) */
 #define XGPU_STREAM_WORLD_AO_MESHES 4096u
 #define XGPU_STREAM_WORLD_AO_MESH_TRIANGLES (1u << 20)
+#define XGPU_WORLD_AO_MESH_TRIANGLES 0u
+#define XGPU_WORLD_AO_MESH_RELEASE 1u
 struct xgpu_stream_world_ao_mesh
 {
 	uint32_t header;
 	uint32_t id, count;
 	uint32_t data, size;
-	uint32_t pad[3];
+	uint32_t kind;
+	uint32_t pad[2];
 };
 
 /* WORLD_AO_INSTANCES: the frame's instances of the meshes (a top-level

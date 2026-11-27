@@ -9,15 +9,16 @@ port/linux/src/d3d8_device.c). The game is read through world_rt_source_*
 (world_rt_game.c) and the proxies' instances and nodes
 (world_proxies_source.h), as drawn: render_interpolation.c's pose.
 
-A mesh is made once a map: the structure's when its BSP is first drawn
-(again for another BSP), a definition's nodes' when it is first drawn, the
-box once. They are let go of when the map unloads. HALO_WORLD_AO_COUNTS logs,
-every 600 frames, the instances a frame and the meshes made.
+A mesh is made once a map: each BSP's when it is first drawn (kept by its
+index, so that a switch back to one makes nothing again: a10's start goes
+0, 7, 0), a definition's nodes' when it is first drawn, the box once. They
+are let go of when the map unloads. HALO_WORLD_AO_COUNTS logs, every 600
+frames, the instances a frame and the meshes made.
 
-With debug.rt_render_geometry (docs/rt-plan/1-geometry.md, stage 1) the
-structure is traced as drawn: its opaque render triangles, made the frame
-after its collision mesh, which stands in for it until then (so that a load
-waits for no more than it did) and is kept, unused, until the map's end.
+With debug.rt_render_geometry (docs/rt-plan/1-geometry.md) the structure is
+traced as drawn: its opaque render triangles, made the frame after its
+collision mesh, which stands in for it until then (so that a load waits for
+no more than it did) and is let go of as the render mesh takes its place.
 */
 
 #include "world_ao.h"
@@ -43,6 +44,9 @@ enum
 	/* the most objects of a frame read (world_scene.h's
 	WORLD_SCENE_MAXIMUM_INSTANCES) */
 	WORLD_RT_OBJECTS = 2048,
+	/* the BSPs whose meshes are kept by index (a scenario's most:
+	scenario_definitions.h's MAXIMUM_STRUCTURE_BSPS_PER_SCENARIO) */
+	WORLD_RT_BSPS = 32,
 };
 
 /* the least volume a mesh is turned by: a closed node's is far more */
@@ -69,13 +73,18 @@ static struct
 	loaded */
 	unsigned long next_mesh;
 	int sent;
-	/* the structure's mesh (0 none) and its BSP (-1 none), the box's; and
+	/* the structure's mesh traced (0 none) and its BSP (-1 none), the box's;
 	(debug.rt_render_geometry) whether its render mesh is to be made, the
-	collision mesh's triangles */
+	collision mesh's triangles; and each BSP's meshes made, by its index
+	(its collision mesh let go of once its render mesh is made) */
 	unsigned long structure, box;
 	short bsp_index;
 	int render_due;
 	long collision_count;
+	struct
+	{
+		unsigned long collision, render;
+	} bsps[WORLD_RT_BSPS];
 	/* the frame the instances were last handed for */
 	unsigned long frame;
 	int framed;
@@ -235,7 +244,8 @@ static unsigned long world_rt_mesh_send(long count)
 
 static void world_rt_structure_render(void);
 
-/* the structure's mesh, made again for another BSP */
+/* the structure's mesh: another BSP's as it is first drawn, its own kept
+since where it has been drawn before */
 static void world_rt_structure(void)
 {
 	short bsp_index = world_rt_source_bsp();
@@ -250,17 +260,30 @@ static void world_rt_structure(void)
 	world_rt.bsp_index = bsp_index;
 	world_rt.structure = 0;
 	world_rt.collision_count = 0;
-	if (bsp_index < 0)
+	world_rt.render_due = 0;
+	if (bsp_index < 0 || bsp_index >= WORLD_RT_BSPS)
+		return;
+	/* (its render mesh, made before) */
+	if (config_boolean("debug.rt_render_geometry"))
 	{
-		world_rt.render_due = 0;
+		if (world_rt.bsps[bsp_index].render)
+		{
+			world_rt.structure = world_rt.bsps[bsp_index].render;
+			return;
+		}
+		world_rt.render_due = 1;
+	}
+	/* (its collision mesh, made before) */
+	if (world_rt.bsps[bsp_index].collision)
+	{
+		world_rt.structure = world_rt.bsps[bsp_index].collision;
 		return;
 	}
-	world_rt.render_due = config_boolean("debug.rt_render_geometry") != 0;
 	count = world_rt_source_structure(bsp_index, NULL, 0);
 	if (count > WORLD_RT_MESH_TRIANGLES || !world_rt_room(count))
 		return;
 	count = world_rt_source_structure(bsp_index, world_rt.triangles, count);
-	world_rt.structure = world_rt_mesh_send(count);
+	world_rt.structure = world_rt.bsps[bsp_index].collision = world_rt_mesh_send(count);
 	world_rt.collision_count = count;
 	platform_log("world ao: the ray-traced scene's structure, BSP %d: %ld triangles", (int)bsp_index, count);
 }
@@ -283,8 +306,13 @@ static void world_rt_structure_render(void)
 		return;
 	count = world_rt_source_structure_render(bsp_index, WORLD_RT_SURFACES_OPAQUE, world_rt.triangles, count);
 	mesh = world_rt_mesh_send(count);
-	if (mesh)
-		world_rt.structure = mesh;
+	if (!mesh)
+		return;
+	/* (in its collision mesh's place, which is let go of) */
+	world_rt.structure = world_rt.bsps[bsp_index].render = mesh;
+	if (world_rt.bsps[bsp_index].collision)
+		halo_world_ao_mesh_release(world_rt.bsps[bsp_index].collision);
+	world_rt.bsps[bsp_index].collision = 0;
 	platform_log("world ao: the ray-traced scene's structure, BSP %d, as drawn (debug.rt_render_geometry): %ld "
 		"triangles (collision %ld), %ld alpha-tested and %ld transparent left out; read in %.2f ms", (int)bsp_index,
 		count, world_rt.collision_count, alpha_tested, transparent,
@@ -462,6 +490,7 @@ void world_rt_map_unloaded(void)
 	world_rt.structure = world_rt.box = 0;
 	world_rt.bsp_index = -1;
 	world_rt.render_due = 0;
+	memset(world_rt.bsps, 0, sizeof(world_rt.bsps));
 	world_rt.framed = 0;
 	world_rt.full_logged = 0;
 	world_rt.count_triangles = 0;

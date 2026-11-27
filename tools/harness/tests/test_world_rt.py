@@ -37,7 +37,7 @@ CONTROLS = [
     # the meshes kept past the map's end
     ("\tif (world_rt.sent)\n\t\thalo_world_ao_mesh(0, 0, NULL);", "", "frame"),
     # debug.rt_render_geometry's render mesh made with the switch off
-    ("config_boolean(\"debug.rt_render_geometry\") != 0", "1", "frame"),
+    ("if (config_boolean(\"debug.rt_render_geometry\"))", "if (1)", "frame"),
     # ... or in the same frame as the collision mesh (a load waits for it)
     ("\tworld_rt.collision_count = count;\n",
      "\tworld_rt.collision_count = count;\n\tif (world_rt.render_due)\n\t\tworld_rt_structure_render();\n", "render"),
@@ -45,8 +45,12 @@ CONTROLS = [
     ("WORLD_RT_SURFACES_OPAQUE, world_rt.triangles, count)", "WORLD_RT_SURFACES_ALPHA_TESTED, world_rt.triangles, count)",
      "render"),
     # ... or not made again for another BSP
-    ("\tworld_rt.render_due = config_boolean(", "\tif (world_rt.next_mesh == 1)\n\t\tworld_rt.render_due = config_boolean(",
-     "render"),
+    ("\t\tworld_rt.render_due = 1;", "\t\tworld_rt.render_due = world_rt.next_mesh <= 2;", "render"),
+    # ... or its collision mesh kept beside it
+    ("\t\thalo_world_ao_mesh_release(world_rt.bsps[bsp_index].collision);", "", "render"),
+    # a BSP switched back to made again (a10's start: 0, 7, 0)
+    ("\tif (world_rt.bsps[bsp_index].collision)\n\t{", "\tif (0)\n\t{", "frame"),
+    ("\t\tif (world_rt.bsps[bsp_index].render)\n", "\t\tif (0)\n", "render"),
 ]
 
 

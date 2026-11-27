@@ -852,6 +852,12 @@ void halo_world_ao_mesh(unsigned long id, unsigned long count, float const *tria
 		xgpu_backend_world_ao_mesh(id, count, triangles);
 }
 
+void halo_world_ao_mesh_release(unsigned long id)
+{
+	if (xgpu_backend_capabilities.ray_queries)
+		xgpu_backend_world_ao_mesh_release(id);
+}
+
 void halo_world_ao_instances(struct world_ao_instance const *instances, unsigned long count)
 {
 	if (xgpu_backend_capabilities.ray_queries)

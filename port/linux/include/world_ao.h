@@ -323,6 +323,8 @@ struct world_ao_instance
 	unsigned int mesh, owner, kind, pad;
 };
 void halo_world_ao_mesh(unsigned long id, unsigned long count, float const *triangles);
+/* ... one mesh let go of alone (its id not given again this map) */
+void halo_world_ao_mesh_release(unsigned long id);
 void halo_world_ao_instances(struct world_ao_instance const *instances, unsigned long count);
 /* where the window's opaque surfaces are drawn (WORLD_AO_SPAN_*), whatever
 the setting and while a map's pipelines are prepared: the draws that take
