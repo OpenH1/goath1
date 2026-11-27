@@ -2712,6 +2712,34 @@ static void lights_port_own_light(
 	}
 }
 
+/* port: the enhanced flashlight (port/linux/game/dynamic_lights.c): the
+first-person weapon and arms not lit by their unit's own flashlight, whose
+lamp is on the weapon itself (its light is put behind it, to light the
+view from where the gun is: first_person_weapon_center_flashlight); a copy
+of the unit's lighting with it among its own lights, in lighting */
+void lights_port_first_person_lighting(
+	long unit_index,
+	struct render_lighting *lighting)
+{
+	short light_index;
+
+	if (!halo_dynamic_lights_enhanced())
+		return;
+	for (light_index = 0; light_index < lights_globals.scene_point_light_count; light_index++)
+	{
+		struct light_datum *light = light_get(lights_globals.scene_point_lights[light_index]);
+
+		if (light->object_index == unit_index && light->rasterizer_light_index != NONE &&
+			TEST_FLAG(light_definition_get(light->definition_index)->flags,
+				_light_definition_is_first_person_flashlight_bit))
+		{
+			lights_port_own_lighting = lighting;
+			lights_port_own_light(light->rasterizer_light_index);
+			lights_port_own_lighting = NULL;
+		}
+	}
+}
+
 /* a light of a cluster, for find_point_lights_for_object_in_cluster: as
 the Xbox's loop does each, marking it (so its other clusters pass it over) */
 static void find_point_light_for_object(
