@@ -171,7 +171,7 @@ class Scene:
     """One scene folder, loaded; `notes` collects every placeholder and every choice made from free text."""
 
     def __init__(self, folder, flashlight_scale=None, white=False, bump=True, flashlight_emitter=None,
-                 static_mode="lightmap", object_static="physical"):
+                 static_mode="lightmap", object_static="halo"):
         halo_plugins.register()
         # object_static "halo": objects take their static light as the game's model lighting does, from the
         # lightmap beneath them (object_lights.c lights_prepare_for_object_static's ambient share), instead of
@@ -489,6 +489,22 @@ class Scene:
 
     # glow: the objects' self-illumination as drawn at the tick (objects.json's self_illumination; the
     # environment shaders' is in the lightmap group, folded into the lightmap as the game's pass does)
+    def object_static_lighting(self):
+        """Each object's static light as the game computed it at the tick (objects.json static_lighting:
+        lights_prepare_for_object_static's ambient and two distant lights)."""
+        out = {}
+        p = self.folder / "geometry" / "objects.json"
+        if p.exists():
+            for o in json.loads(p.read_text()):
+                if o.get("static_lighting"):
+                    out[(self.folder / "geometry" / o["file"]).resolve()] = o["static_lighting"]
+        if not out:
+            self.note_once("objects.json has no static_lighting (an older export): objects get only the walls' light")
+        else:
+            self.note_once("objects lit by the game's model lighting (lights_prepare_for_object_static) for "
+                           "their static light; dynamic and traced light added on top")
+        return out
+
     def object_lightmap_samples(self):
         """Each object's static light as the game's model lighting takes it: the lightmap (stored value) at
         the BSP point straight below its centre (lights_prepare_for_object_static samples the lightmap
@@ -531,9 +547,7 @@ class Scene:
                 for e in o.get("self_illumination") or []:
                     cc = e.get("change_color")
                     mm = self.materials[int(e["material"])] if 0 <= e.get("material", -1) < len(self.materials) else {}
-                    # (only shaders without a multipurpose map: with one, which channel masks the change
-                    # color is unverified, and reading its alpha tinted whole doors)
-                    if cc and e.get("material", -1) >= 0 and min(cc) < 1.0 and not mm.get("multipurpose_map"):
+                    if cc and e.get("material", -1) >= 0 and min(cc) < 1.0:
                         out.setdefault((self.folder / "geometry" / o["file"]).resolve(), {})[int(e["material"])] = cc
         self._change = out
         return out
@@ -543,7 +557,7 @@ class Scene:
         img = self.image(m["multipurpose_map"]) if m.get("multipurpose_map") else None
         props = {"type": "halo_change_color", "albedo": self.albedos[mid], "change": [float(c) for c in cc]}
         if img is not None:
-            props["mask"] = self.bitmap(img[:, :, 3:4])
+            props["mask"] = self.bitmap(img[:, :, 2:3])  # blue: the change-color mask
         return mi.load_dict(props)
 
     def object_glow(self):
@@ -687,7 +701,7 @@ class Scene:
                 continue
             obj_lm = None
             if group == "lightmap" and is_object and self.object_static == "halo":
-                obj_lm = self.object_lightmap_samples().get(fpath.resolve())
+                obj_lm = self.object_static_lighting().get(fpath.resolve())
             for mid in np.unique(mats):
                 sel = tris[mats == mid]
                 used, inv = np.unique(sel.ravel(), return_inverse=True)
@@ -734,9 +748,12 @@ class Scene:
                     if int(mid) in getattr(self, "cutouts", {}):
                         black = {"type": "mask", "opacity": self.cutouts[int(mid)], "bsdf": black}
                     bsdf = mi.load_dict(black)
-                    em_obj = mi.load_dict({"type": "area", "radiance": {
-                        "type": "halo_self_illum", "albedo": albedo_here if albedo_here is not None else
-                        self.albedos[int(mid)], "color": [float(c) for c in obj_lm]}})
+                    rad = {"type": "halo_model_light", "albedo": albedo_here if albedo_here is not None else
+                           self.albedos[int(mid)], "ambient": [float(c) for c in obj_lm["ambient"]]}
+                    for k, dl in enumerate((obj_lm.get("distant") or [])[:2]):
+                        rad["color%d" % k] = [float(c) for c in dl["color"]]
+                        rad["direction%d" % k] = [float(c) for c in dl["direction"]]
+                    em_obj = mi.load_dict({"type": "area", "radiance": rad})
                 shapes[name] = self.make_mesh(name, pos[used], n, uv[used], inv.reshape(-1, 3), bsdf, em_obj,
                                               tb[used] if tb is not None else None)
         self.meshes = shapes

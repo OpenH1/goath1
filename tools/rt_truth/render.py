@@ -126,7 +126,7 @@ def best_fit(samples, keep, static_means, log):
 def render_scene(folder, out=None, spp_pass=8, target=0.01, max_spp=65536, max_minutes=60.0,
                  min_passes=4, gpu_lock=os.path.expanduser("~/goat-rig/locks/gpu.lock"),
                  log=print, flashlight_scale=None, flashlight_emitter=None, static_mode="lightmap",
-                 object_static="physical"):
+                 object_static="halo"):
     folder = Path(folder)
     out = Path(out) if out else folder / "truth"
     from . import VARIANT as variant

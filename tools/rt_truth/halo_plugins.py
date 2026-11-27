@@ -623,8 +623,10 @@ class HaloSelfIllum(mi.Texture):
 
 
 class HaloChangeColor(mi.Texture):
-    """A model's albedo with its change color as drawn: base x lerp(1, change color, multipurpose.a)
-    (rasterizer_xbox_models.c's combiner stage 2), in gamma space, made linear (^2.2 of a .lin base is the
+    """A model's albedo with its change color as drawn: base x lerp(1, change color, mask), the mask the
+    multipurpose map's blue as exported (the Xbox layout: red specular, green self-illumination, blue change
+    color; the combiner reads it as T2.a, rasterizer_xbox_models.c stage 2, so the bitmap's channels are
+    ordered differently in memory; the exported alpha is 1 everywhere), in gamma space, made linear (^2.2 of a .lin base is the
     base itself, so the change color is decoded ^2.2 and multiplied in)."""
 
     def __init__(self, props):
@@ -634,7 +636,7 @@ class HaloChangeColor(mi.Texture):
         self.change = mi.Color3f(*[_opq(c) for c in _vec(props, "change", [1, 1, 1])])
 
     def eval(self, si, active=True):
-        a = mi.Float(1.0) if self.mask is None else self.mask.eval_1(si, active)  # multipurpose alpha
+        a = mi.Float(1.0) if self.mask is None else self.mask.eval_1(si, active)  # the change-color mask
         mix = (1.0 - a) + a * self.change
         return self.albedo.eval(si, active) * dr.power(dr.clip(mix, 0.0, 1.0), 2.2)
 
@@ -654,6 +656,46 @@ class HaloChangeColor(mi.Texture):
         return "HaloChangeColor"
 
 
+class HaloModelLight(mi.Texture):
+    """An object's static light as the game's model lighting draws it: albedo x (ambient + sum over the
+    two distant lights of color x max(0, N . -direction))^2.2, the lighting in gamma space as the model
+    pass adds it (object_lights.c lights_prepare_for_object_static, build_distant_lights), N the vertex
+    normal."""
+
+    def __init__(self, props):
+        mi.Texture.__init__(self, props)
+        self.albedo = props["albedo"]
+        self.ambient = mi.Color3f(*[_opq(c) for c in _vec(props, "ambient", [0, 0, 0])])
+        self.lights = []
+        for k in range(2):
+            c = _vec(props, "color%d" % k)
+            if c is not None:
+                d = _vec(props, "direction%d" % k)
+                self.lights.append((mi.Color3f(*[_opq(x) for x in c]), mi.Vector3f(*[_opq(-x) for x in d])))
+
+    def eval(self, si, active=True):
+        n = si.sh_frame.n
+        light = mi.Color3f(self.ambient)
+        for c, to_light in self.lights:
+            light += c * dr.maximum(dr.dot(n, to_light), 0.0)
+        return self.albedo.eval(si, active) * dr.power(dr.clip(light, 0.0, 1.0), 2.2)
+
+    def eval_1(self, si, active=True):
+        return mi.luminance(self.eval(si, active))
+
+    def mean(self):
+        return 0.1
+
+    def is_spatially_varying(self):
+        return True
+
+    def traverse(self, cb):
+        pass
+
+    def to_string(self):
+        return "HaloModelLight"
+
+
 _registered = False
 
 
@@ -668,4 +710,5 @@ def register():
     mi.register_texture("halo_lightmap_radiance", lambda p: HaloLightmapRadiance(p))
     mi.register_texture("halo_self_illum", lambda p: HaloSelfIllum(p))
     mi.register_texture("halo_change_color", lambda p: HaloChangeColor(p))
+    mi.register_texture("halo_model_light", lambda p: HaloModelLight(p))
     _registered = True
