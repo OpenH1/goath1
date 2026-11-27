@@ -6168,13 +6168,20 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 				fadd(&m, 3, added, self_illumination), XGPU_HDR_BOOST_OF(program->hdr),
 				XGPU_HDR_SELF_ILLUMINATION_VALUE));
 	}
-	/* (display.ambient_occlusion: a lightmap pass's light, by the
-	occlusion, before the enhanced dynamic lights add theirs) */
+	/* (display.ambient_occlusion: a lightmap pass's light, its indirect
+	share by the occlusion, before the enhanced dynamic lights add theirs:
+	linear, light - (1 - occlusion) * min(light, INDIRECT); xgpu.h's
+	XGPU_AMBIENT_OCCLUSION_INDIRECT) */
 	if (occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_LIGHTMAP)
 	{
 		static const unsigned int rgb[4] = { 4, 5, 6, 3 };
+		unsigned int light = ext2(&m, GLSL_POW, m.t_v3, fmax_scalar(&m, 3, xyz(&m, result), 0.0f),
+			constant_splat(&m, 3, 2.2f));
+		unsigned int indirect = ext2(&m, GLSL_F_MIN, m.t_v3, light, constant_splat(&m, 3, XGPU_AMBIENT_OCCLUSION_INDIRECT));
 
-		result = shuffle(&m, 4, result, fscale(&m, 3, xyz(&m, result), state.occlusion), rgb);
+		light = fsub(&m, 3, light, fscale(&m, 3, indirect, fsub(&m, 1, constant_float(&m, 1.0f), state.occlusion)));
+		result = shuffle(&m, 4, result, ext2(&m, GLSL_POW, m.t_v3, fmax_scalar(&m, 3, light, 0.0f),
+			constant_splat(&m, 3, (float)(1.0 / 2.2))), rgb);
 	}
 
 	if (environment)

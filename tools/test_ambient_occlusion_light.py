@@ -115,10 +115,11 @@ def test_model_lit_for_each_vertex(shaders):
 def test_lightmap_pass(shaders):
     for name in ("lightmap", "lightmap_dynamic"):
         source = body(shaders[name, 1])
-        assert source.count("result.rgb *= occlusion;") == 1, name
+        # (its indirect share alone, xgpu.h's XGPU_AMBIENT_OCCLUSION_INDIRECT: never the sun's direct light)
+        assert source.count("light -= min(light, float3(") == 1, name
         if name == "lightmap_dynamic":
             # the lightmap's light by the occlusion before the lights add theirs
-            assert source.index("result.rgb *= occlusion;") < source.index("dynamic_light_add")
+            assert source.index("light -= min(light, float3(") < source.index("dynamic_light_add")
 
 
 def test_spirv_modules_valid(check, tmp_path):

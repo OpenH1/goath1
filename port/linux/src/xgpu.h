@@ -360,6 +360,16 @@ pixels: world_ao.h's WORLD_AO_UPSAMPLE_*) */
 #define XGPU_WORLD_AO_REFERENCE_LEAST 0.25f
 #define XGPU_WORLD_AO_REACH_FADE 0.25f
 #define XGPU_WORLD_AO_FLOOR 0.2f
+/* the lightmap's indirect light, linear, which the ambient occlusion takes
+from a lightmap pass's light (XGPU_AMBIENT_OCCLUSION_LIGHT_LIGHTMAP): the
+bake mixes the sun's direct light with the sky's and the bounce's, and the
+occlusion is of the indirect light alone. A texel's indirect share is taken
+as at most this, the level the outdoor bakes' shade sits at (b30 and Blood
+Gulch, docs/rt-plan/4-path-tracing.md "Measured": 3 to 5% linear, 18 to 26
+times under the sun): light = light - (1 - occlusion) * min(light, this).
+A shaded or interior texel (a10's median 1.3%) is darkened whole; a sunlit
+one by at most this share */
+#define XGPU_AMBIENT_OCCLUSION_INDIRECT 0.045f
 /* the field's (world_sdf.h's WORLD_SDF_*: d3d8_device.c checks they agree) */
 #define XGPU_WORLD_SDF_BRICK 8
 #define XGPU_WORLD_SDF_BRICK_SPAN 9

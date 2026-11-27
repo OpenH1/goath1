@@ -2987,7 +2987,12 @@ char *xgpu_msl_pixel_shader(const struct xgpu_pixel_program *program, const stru
 	/* (display.ambient_occlusion: a lightmap pass's light, by the
 	occlusion, before the enhanced dynamic lights add theirs) */
 	if (occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_LIGHTMAP)
-		xgpu_text_append(&text, "\tresult.rgb *= occlusion;\n");
+		/* (its indirect share alone: xgpu.h's XGPU_AMBIENT_OCCLUSION_INDIRECT, xgpu_spirv.c's) */
+		xgpu_text_append(&text, "\t{\n"
+			"\t\tfloat3 light = pow(max(result.rgb, float3(0.0)), float3(2.2));\n"
+			"\t\tlight -= min(light, float3(%.9g)) * (1.0 - occlusion);\n"
+			"\t\tresult.rgb = pow(max(light, float3(0.0)), float3(1.0 / 2.2));\n"
+			"\t}\n", (double)XGPU_AMBIENT_OCCLUSION_INDIRECT);
 
 	if (environment)
 	{
