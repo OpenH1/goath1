@@ -153,16 +153,72 @@ static void lt_dumps_read(void)
 	}
 }
 
+/* ---------- debug: the kernels from files (HALO_LT_SHADER_DIR; the replay's
+"reload", docs/replay_protocol.md). Off unless the folder is given: a
+kernel's SPIR-V is read from <folder>/<source>.spv (tools/vulkan_lt_shaders.py
+--spv <folder>) where that file is there, else the built-in words; a reload
+(any thread, between frames) makes the pass again from them at its next
+draw, its count started again. */
+
+static char lt_shader_folder[1024];
+static int lt_shader_folder_read, lt_reload_asked;
+
+void xgpu_vulkan_lt_shaders_reload(const char *folder)
+{
+	if (folder)
+	{
+		snprintf(lt_shader_folder, sizeof(lt_shader_folder), "%s", folder);
+		lt_shader_folder_read = 1;
+	}
+	__atomic_store_n(&lt_reload_asked, 1, __ATOMIC_RELEASE);
+}
+
+static VkShaderModule lt_shader(const char *source, const uint32_t *words, size_t count)
+{
+	VkShaderModule module;
+	uint32_t *read = NULL;
+	char path[1100];
+	FILE *file;
+	long size;
+
+	if (!lt_shader_folder_read)
+	{
+		const char *given = getenv("HALO_LT_SHADER_DIR");
+
+		snprintf(lt_shader_folder, sizeof(lt_shader_folder), "%s", given ? given : "");
+		lt_shader_folder_read = 1;
+	}
+	snprintf(path, sizeof(path), "%s/%s.spv", lt_shader_folder, source);
+	file = *lt_shader_folder ? fopen(path, "rb") : NULL;
+	if (file && !fseek(file, 0, SEEK_END) && (size = ftell(file)) >= 20 && !(size & 3) && !fseek(file, 0, SEEK_SET) &&
+		(read = malloc((size_t)size)) && fread(read, 1, (size_t)size, file) == (size_t)size && read[0] == 0x07230203u)
+	{
+		words = read;
+		count = (size_t)size / 4;
+		host_logf(HOST_LOG_WARN, "vulkan: light transport: %s from %s (%zu words)", source, path, count);
+	}
+	else if (*lt_shader_folder)
+		host_logf(HOST_LOG_WARN, "vulkan: light transport: %s built in (no SPIR-V at %s)", source, path);
+	if (file)
+		fclose(file);
+	module = xgpu_vulkan_shader(words, count);
+	free(read);
+	return module;
+}
+
 static int lt_shaders(void)
 {
 	struct xgpu_vulkan_sampler_description sampler;
+	int reloaded = __atomic_exchange_n(&lt_reload_asked, 0, __ATOMIC_ACQ_REL);
 
+	if (reloaded)
+		lt.made = lt.failed = lt.prepared = lt.previous_valid = 0;
 	if (lt.made)
 		return 1;
 	if (lt.failed)
 		return 0;
-	lt.vertex = xgpu_vulkan_shader(lt_e1_vertex_spirv, sizeof(lt_e1_vertex_spirv) / sizeof(uint32_t));
-	lt.fragment = xgpu_vulkan_shader(lt_e1_spirv, sizeof(lt_e1_spirv) / sizeof(uint32_t));
+	lt.vertex = lt_shader("e1.vert", lt_e1_vertex_spirv, sizeof(lt_e1_vertex_spirv) / sizeof(uint32_t));
+	lt.fragment = lt_shader("e1.frag", lt_e1_spirv, sizeof(lt_e1_spirv) / sizeof(uint32_t));
 	memset(&sampler, 0, sizeof(sampler));
 	sampler.minify = sampler.magnify = XGPU_VULKAN_FILTER_POINT;
 	sampler.mip = XGPU_VULKAN_MIP_NONE;
@@ -185,6 +241,9 @@ static int lt_shaders(void)
 	lt.copy = lt.pass;
 	lt.copy.color_format = XGPU_VULKAN_FORMAT_RGBA16F;
 	lt.made = 1;
+	/* (a reload's pipeline made now, so the next play draws with it) */
+	if (reloaded)
+		(void)xgpu_vulkan_pipeline(&lt.pass);
 	return 1;
 }
 

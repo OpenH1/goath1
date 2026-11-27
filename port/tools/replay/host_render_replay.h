@@ -44,6 +44,9 @@ each on standard output (the log on standard error):
 		"cpu":true: the CPU's time too)
 	{"cmd":"hold","n":N,"frames":F,"shots":[1,30,120],"dir":"<folder>",
 		"linear":true}  (or "inline":true, "reset":true, "image":"qoi")
+	{"cmd":"reload","dir":"<folder>"}  (debug: the backend's kernels
+		from the folder's SPIR-V files from the next play; "dir" left
+		out, the folder already read again)
 
 cost: frame N's GPU time, the frame's and its passes' (the backend's
 timestamps at their boundaries) and its draws' (the frame played again with
@@ -199,6 +202,11 @@ struct host_render_replay_platform
 	uint32_t call_kinds;
 	const char *const *call_kind_names;
 	void (*calls_watch)(uint64_t *ticks, uint64_t *counts);
+	/* Debug (NULL: none): the backend's own kernels read again from a
+	folder's files before the next frame it plays (the service's "reload":
+	Vulkan's light-transport pass, HALO_LT_SHADER_DIR); folder NULL: the
+	one it reads from already */
+	void (*shaders_reload)(const char *folder);
 };
 
 int host_render_replay_main(int argc, char *argv[], const struct host_render_replay_platform *platform);

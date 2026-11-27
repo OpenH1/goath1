@@ -3190,6 +3190,8 @@ static void serve_info(struct text *text)
 		TEXT(text, ",\"ids\",\"pick\"");
 	if (platform->cost_begin && platform->cost_end)
 		TEXT(text, ",\"cost\",\"cpu_cost\"");
+	if (platform->shaders_reload)
+		TEXT(text, ",\"reload\"");
 	TEXT(text, "]");
 	/* (the kinds of the driver's calls cost's "cpu" counts, if any) */
 	if (platform->calls_watch && platform->call_kinds && platform->call_kinds <= CPU_KINDS_MOST)
@@ -3579,6 +3581,26 @@ static void serve_hold(struct text *text, const struct request *request)
 	}
 	text_printf(text, "],\"width\":%u,\"height\":%u,\"ms\":%.1f}", kept.width, kept.height,
 		(seconds_now() - started) * 1000.0);
+}
+
+/* {"cmd":"reload","dir":"<folder>"}: the backend's kernels read again from the folder's files (the one it read
+from already, without "dir") as the next play begins; that play's history begins again */
+static void serve_reload(struct text *text, const struct request *request)
+{
+	const char *directory = request_string(request, "dir");
+
+	if (!platform->shaders_reload)
+	{
+		reply_error(text, "this backend reads no kernels from files");
+		return;
+	}
+	platform->shaders_reload(directory);
+	TEXT(text, "{\"ok\":true,\"dir\":");
+	if (directory)
+		text_string(text, directory);
+	else
+		TEXT(text, "null");
+	TEXT(text, "}");
 }
 
 static void serve_draws(struct text *text, const struct request *request)
@@ -4610,6 +4632,8 @@ static int serve(void)
 			serve_cost(&reply, request);
 		else if (!strcmp(command, "hold"))
 			serve_hold(&reply, request);
+		else if (!strcmp(command, "reload"))
+			serve_reload(&reply, request);
 		else if (!strcmp(command, "quit"))
 			break;
 		else
