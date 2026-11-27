@@ -25,7 +25,7 @@
 			<choice shown="AUTO" value="0"/>
 		</row>
 		<row key="gpu" kind="choice" setting="display.gpu" label="GPU (RESTART)" crumb="VIDEO › DISPLAY" search="gpu nvidia radeon vulkan card graphics" when="computer" enabled="gpu_choice+!vr">
-			<help>The graphics card that draws the game, from the next start. Auto prefers a discrete card. Lists the cards Vulkan sees: if a card is missing, do a clean reinstall of its driver.</help>
+			<help>The graphics card that draws the game, from the next start. Auto prefers a separate graphics card over built-in graphics.</help>
 			<note>Not on Mac or in VR.</note>
 			<choice shown="AUTO" value="auto"/>
 		</row>
