@@ -3,6 +3,7 @@ game, apart from the game's own package, which holds none of NVIDIA's files.
 
     python3 tools/dlss_addon.py pack --platform linux-x86_64 --module build/linux_x86_64/libopenh1_dlss.so \\
         --runtime build/linux_x86_64/libnvidia-ngx-dlss.so.310.9.16 \\
+        --runtime build/linux_x86_64/libnvidia-ngx-dlssd.so.310.9.16 \\
         --license build/linux_x86_64/NVIDIA-DLSS-LICENSE.txt --out build/dlss-addon
     python3 tools/dlss_addon.py pin --tag build-1400 build/dlss-addon/openh1-dlss-*.json
     python3 tools/dlss_addon.py check-package dist/halo-linux-x86_64-release
@@ -10,8 +11,9 @@ game, apart from the game's own package, which holds none of NVIDIA's files.
 pack writes, into --out, for one platform (linux-x86_64, windows-x64):
 
 - openh1-dlss-<platform>-<version>.zip: the module (libopenh1_dlss.so, openh1_dlss.dll: port/linux/vulkan/dlss/
-  openh1_dlss.c, MIT licensed, its license OPENH1-DLSS-LICENSE.txt), NVIDIA's DLSS runtime and NVIDIA's license
-  (NVIDIA-DLSS-LICENSE.txt), each stored at the archive's top, its date fixed, in name order: the same inputs make
+  openh1_dlss.c, MIT licensed, its license OPENH1-DLSS-LICENSE.txt), NVIDIA's DLSS runtimes (Super Resolution's,
+  the first --runtime, which the game requires; Ray Reconstruction's, libnvidia-ngx-dlssd / nvngx_dlssd, optional)
+  and NVIDIA's license (NVIDIA-DLSS-LICENSE.txt), each stored at the archive's top, its date fixed, in name order: the same inputs make
   the same bytes;
 - openh1-dlss-<platform>-<version>.json: its manifest (the version, platform, file, size and SHA-256, and each
   file's);
@@ -35,7 +37,7 @@ import stat
 import sys
 import zipfile
 from pathlib import Path
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Optional
 
 ROOT = Path(__file__).resolve().parent.parent
 MODULE_SOURCES = [ROOT / "port/linux/vulkan/dlss/openh1_dlss.c", ROOT / "port/linux/vulkan/xgpu_vulkan_dlss.h"]
@@ -43,8 +45,10 @@ PIN = ROOT / "port/linux/src/dlss_addon_pin.h"
 REPOSITORY = "OpenH1/goath1"
 URL = "https://github.com/{repository}/releases/download/{tag}/{file}"
 PLATFORMS = {
-    "linux-x86_64": {"module": "libopenh1_dlss.so", "runtime": "libnvidia-ngx-dlss.so.", "macro": "LINUX_X86_64"},
-    "windows-x64": {"module": "openh1_dlss.dll", "runtime": "nvngx_dlss.dll", "macro": "WINDOWS_X64"},
+    "linux-x86_64": {"module": "libopenh1_dlss.so", "runtime": "libnvidia-ngx-dlss.so.",
+                     "rr_runtime": "libnvidia-ngx-dlssd.so.", "macro": "LINUX_X86_64"},
+    "windows-x64": {"module": "openh1_dlss.dll", "runtime": "nvngx_dlss.dll", "rr_runtime": "nvngx_dlssd.dll",
+                    "macro": "WINDOWS_X64"},
 }
 NVIDIA_LICENSE = "NVIDIA-DLSS-LICENSE.txt"
 MODULE_LICENSE = "OPENH1-DLSS-LICENSE.txt"
@@ -125,17 +129,22 @@ def write_archive(output: Path, files: Dict[str, bytes]) -> None:
 
 
 def pack(platform: str, module: Path, runtime: Path, license_path: Path, out: Path,
-         addon_version: str = "") -> Path:
-    """the add-on's archive, manifest and license in out; the manifest's path"""
+         addon_version: str = "", rr_runtime: Optional[Path] = None) -> Path:
+    """the add-on's archive, manifest and license in out (with Ray Reconstruction's runtime too, if given); the
+    manifest's path"""
     names = PLATFORMS[platform]
     if module.name != names["module"]:
         raise ValueError(f"{platform}'s module is {names['module']}, not {module.name}")
-    if not runtime.name.startswith(names["runtime"]):
+    if not runtime.name.startswith(names["runtime"]) or runtime.name.startswith(names["rr_runtime"]):
         raise ValueError(f"{platform}'s DLSS runtime is {names['runtime']}..., not {runtime.name}")
+    if rr_runtime and not rr_runtime.name.startswith(names["rr_runtime"]):
+        raise ValueError(f"{platform}'s Ray Reconstruction runtime is {names['rr_runtime']}..., not {rr_runtime.name}")
     addon_version = addon_version or version()
     license_text = license_path.read_bytes()
     files = {module.name: module.read_bytes(), runtime.name: runtime.read_bytes(), NVIDIA_LICENSE: license_text,
              MODULE_LICENSE: MODULE_LICENSE_TEXT.encode()}
+    if rr_runtime:
+        files[rr_runtime.name] = rr_runtime.read_bytes()
     out.mkdir(parents=True, exist_ok=True)
     archive = out / archive_name(platform, addon_version)
     temporary = archive.with_name(archive.name + ".tmp")
@@ -146,6 +155,7 @@ def pack(platform: str, module: Path, runtime: Path, license_path: Path, out: Pa
     manifest = {
         "name": "openh1-dlss", "version": addon_version, "platform": platform, "file": archive.name,
         "size": len(data), "sha256": sha256(data), "module": module.name, "runtime": runtime.name,
+        "rr_runtime": rr_runtime.name if rr_runtime else "",
         "license": {"file": license_name(addon_version), "size": len(license_text), "sha256": sha256(license_text)},
         "files": [{"name": name, "size": len(files[name]), "sha256": sha256(files[name])} for name in sorted(files)],
     }
@@ -239,7 +249,8 @@ def main() -> int:
     pack_command = commands.add_parser("pack", help="the add-on's archive, manifest and license for a platform")
     pack_command.add_argument("--platform", choices=sorted(PLATFORMS), required=True)
     pack_command.add_argument("--module", type=Path, required=True)
-    pack_command.add_argument("--runtime", type=Path, required=True)
+    pack_command.add_argument("--runtime", type=Path, action="append", required=True,
+                              help="Super Resolution's runtime, then (optional) Ray Reconstruction's")
     pack_command.add_argument("--license", type=Path, required=True)
     pack_command.add_argument("--out", type=Path, required=True)
     pack_command.add_argument("--stamp", type=Path, help="a file written once it is done (ninja's output)")
@@ -255,7 +266,10 @@ def main() -> int:
     commands.add_parser("version", help="the add-on's version")
     args = parser.parse_args()
     if args.command == "pack":
-        manifest = pack(args.platform, args.module, args.runtime, args.license, args.out)
+        if len(args.runtime) > 2:
+            parser.error("--runtime: Super Resolution's and Ray Reconstruction's, at most")
+        manifest = pack(args.platform, args.module, args.runtime[0], args.license, args.out,
+                        rr_runtime=args.runtime[1] if len(args.runtime) > 1 else None)
         if args.stamp:
             args.stamp.write_text(f"{manifest.name}\n", encoding="utf-8")
     elif args.command == "verify":

@@ -107,6 +107,14 @@ no jitter (`motion_vectors_technique`).
 - **License.** The NVIDIA RTX SDKs license: the runtime may be shipped inside an application, the SDK must not be
   made subject to an open-source license, NVIDIA's attribution is required (splash, credits) and NVIDIA is to be
   told before a commercial release. The repository holds none of the SDK.
+- **Ray Reconstruction.** The module's second feature (its ABI 2; an ABI 1 module still gives Super Resolution): NGX's
+  DLSS-D, the ray-traced passes' denoiser and upscaler on RTX (docs/rt-plan/4-path-tracing.md, "Denoising"). The SDK's
+  310.9.16 has its runtime, `libnvidia-ngx-dlssd.so.310.9.16` / `nvngx_dlssd.dll`, staged and packed beside Super
+  Resolution's. `xgpu_vulkan_dlss_reconstruct` takes the shared denoiser's inputs (diffuse and specular radiance,
+  the specular's alpha its hit distance; the albedos; normals with roughness in w; depth; motion; jitter; the camera's
+  matrices; reset); a compute pass (`tools/vulkan_dlss_shaders.py`) makes the one noisy colour and the hit distance
+  RR reads. `HALO_DLSS_RR_SMOKE=1` (with `"dlss"`) runs it once on a synthetic noisy frame and logs the result and
+  the runtime's version (read from NGX's log of its loading).
 
 ### The add-on
 
@@ -114,8 +122,8 @@ The game's packages hold none of NVIDIA's files (`tools/dlss_addon.py check-pack
 `ci_build.py`'s Windows staging). DLSS is an add-on the player downloads from inside the game:
 
 - **Package.** `configure.py --dlss` then `ninja dlss_addon` writes `build/dlss-addon/`:
-  `openh1-dlss-<platform>-<version>.zip` (linux-x86_64: `libopenh1_dlss.so`, `libnvidia-ngx-dlss.so.310.9.16`;
-  windows-x64: `openh1_dlss.dll`, `nvngx_dlss.dll`; and `NVIDIA-DLSS-LICENSE.txt`, `OPENH1-DLSS-LICENSE.txt`), its
+  `openh1-dlss-<platform>-<version>.zip` (linux-x86_64: `libopenh1_dlss.so`, `libnvidia-ngx-dlss.so.310.9.16`,
+  `libnvidia-ngx-dlssd.so.310.9.16`; windows-x64: `openh1_dlss.dll`, `nvngx_dlss.dll`, `nvngx_dlssd.dll`; and `NVIDIA-DLSS-LICENSE.txt`, `OPENH1-DLSS-LICENSE.txt`), its
   manifest (`.json`: version, platform, size, SHA-256, each file's) and `openh1-dlss-license-<version>.txt`. The
   version is the SDK's and the module's source's (`310.9.16-<8 hex>`). The same inputs make the same bytes.
   `openh1_dlss.c` is MIT licensed (its header; the interface it includes, `xgpu_vulkan_dlss.h`, may be used so too):
