@@ -193,6 +193,9 @@ KEPT_ELSEWHERE = {
                                 "struct draw_inputs' material_modes, taken as each draw is made",
     'd3d8_draw_state_kept': "debug.retained_shadows' hint that a draw's state is the one before's: no draw is "
                             "kept so while a preparation runs or a journal records",
+    'halo_dynamic_lights_shadowed': "display.shadows \"ray_traced\"'s shadowed lights: texels of the lights' cells "
+                                    "(the backend's data, sent each frame), which no pipeline is built from (the "
+                                    "surfaces read the mask, a stand-in where none is traced, whatever it holds)",
     'd3d8_draw_immediate_packed': "Begin, SetVertexData and End's own: the registers and the immediate draw as "
                                   "they leave them, journaled as the immediate draw (JOURNAL_DRAW_IMMEDIATE)",
 }

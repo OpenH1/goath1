@@ -293,6 +293,7 @@ static const struct xgpu_vulkan_image_description *xgpu_vulkan_image_description
 static void targets_bind(void) { binds++; }
 static void prepass_prepare(void) { }
 static void rt_shadows_prepare(void) { }
+static void contact_shadows_prepare(void) { }
 #define XGPU_VULKAN_CLEAR_COLOR 1
 #define XGPU_VULKAN_CLEAR_ALPHA 2
 static int xgpu_vulkan_clear_prepare(int parts) { (void)parts; return 1; }
