@@ -17,7 +17,8 @@ the aim passes near (within MARKER_PICK_TANGENT of the line, a small item's
 reach as one of MARKER_PICK_SMALLEST_RADIUS, before what it hits or lying
 just past it: network_markers_pick), followed as it moves and drawn over it;
 else the point the aim hits (the level, scenery), within MARKER_RANGE. A
-weapon in a unit's hands marks the unit.
+weapon in a unit's hands marks the unit; a dead biped's body is passed (to
+the weapon lying on it: markers_object_pingable).
 
 Claims: a ping of a weapon or equipment another player's ping (or claim) is
 on, which the pinger sees, is a claim of it ("I'm taking it": the host's
@@ -1167,6 +1168,19 @@ static void markers_host_update_config(
 
 /* ---------- aiming */
 
+/* whether an object is one a ping is on: a unit, vehicle, weapon or
+equipment, not a dead biped's body (the aim passes it, to the weapon lying
+on it, or the point) */
+static boolean markers_object_pingable(
+	long object_index)
+{
+	struct object_datum *object = (struct object_datum *)object_try_and_get_and_verify_type(object_index,
+		MARKER_OBJECT_MASK);
+
+	return object && !(object->object.type == _object_type_biped &&
+		TEST_FLAG(object->object.damage_flags, _object_dead_bit));
+}
+
 /* the object a hit object stands for: a held weapon's unit */
 static long markers_object_marked(
 	long object_index)
@@ -1178,7 +1192,7 @@ static long markers_object_marked(
 	{
 		object_index = object->object.parent_object_index;
 	}
-	return object_try_and_get_and_verify_type(object_index, MARKER_OBJECT_MASK) ? object_index : NONE;
+	return markers_object_pingable(object_index) ? object_index : NONE;
 }
 
 /* the outermost object an object is in (a rider's vehicle) */
@@ -1267,7 +1281,7 @@ static boolean markers_aim_from(
 			real nearness;
 
 			if (iterator.index == unit_index || markers_root_object(iterator.index) == root_index ||
-				object->object.parent_object_index != NONE)
+				object->object.parent_object_index != NONE || !markers_object_pingable(iterator.index))
 			{
 				continue;
 			}
