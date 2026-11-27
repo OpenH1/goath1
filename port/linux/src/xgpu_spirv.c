@@ -8790,10 +8790,15 @@ static unsigned int rt_bounce_add(struct module *m, struct pixel_state *state, u
 	return fadd(m, 3, light, xyz(m, rt_bounce_texel(m, state)));
 }
 
-/* the least of the lightmap's light a dynamic object's sun shadow leaves
-(lt_e1_add: the sky's, the bounce's; the lightmap's sun share is an
-estimate) */
-#define LT_SUN_FLOOR 0.25f
+/* HALO_LT_SUN_CLAMP_VIEW (lt_e1_add), read once */
+static int lt_sun_clamp_view(void)
+{
+	static int on = -1;
+
+	if (on < 0)
+		on = getenv("HALO_LT_SUN_CLAMP_VIEW") && atoi(getenv("HALO_LT_SUN_CLAMP_VIEW")) == 1;
+	return on;
+}
 
 /* HALO_LT_E1 (port/linux/vulkan/xgpu_vulkan_lt.h: E1 and E2 of the one
 light-transport pass): set and not "off", "0" or "false", read once */
@@ -8848,9 +8853,9 @@ static unsigned int lt_e1_guides(struct module *m, struct pixel_state *state, un
 their irradiance, its cosine by the shaded normal of the twins' guides,
 lt_e1_guides) added to lit (the game's lights' result, gamma) linearly, by
 tint (linear; 0: by 1, a model's), after the game's own lights' shoulder;
-the structure's (tint given) lit first darkened by the suns' share in the
-texel's alpha, as GLSL:
-pow(pow(max(lit, 0.0), vec3(2.2)) * sun + max(light, 0.0) * tint, vec3(1.0 / 2.2)); lit as it
+the light less than 0 on the structure where a dynamic object shadows the
+sun (the suns' share taken off: lt/e1.frag), as GLSL:
+pow(max(pow(max(lit, 0.0), vec3(2.2)) + light * tint, 0.0), vec3(1.0 / 2.2)); lit as it
 is without the mode or the binding */
 static unsigned int lt_e1_add(struct module *m, struct pixel_state *state, unsigned int lit, unsigned int tint,
 	unsigned int p, unsigned int n)
@@ -8866,23 +8871,28 @@ static unsigned int lt_e1_add(struct module *m, struct pixel_state *state, unsig
 	(void)p;
 	(void)n;
 	(void)to_lamp;
+	/* (a model's (no tint) never less than 0: the suns' share is the
+	structure's, whose pixel a model the pre-pass did not draw reads) */
 	if (tint)
 		light = fmul(m, 3, light, tint);
-	base = ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, lit, 0.0f), constant_splat(m, 3, 2.2f));
-	/* (W2, the structure's (tint given): the suns' share a dynamic object
-	shadows, its luminance in the texel's alpha, taken off the lightmap's
-	light, its hue kept, at most LT_SUN_FLOOR of it left: base *= clamp(1 -
-	texel.a / max(luminance(base), 1e-6), LT_SUN_FLOOR, 1)) */
-	if (tint)
+	else
+		light = fmax_scalar(m, 3, light, 0.0f);
+	(void)texel;
+	base = fadd(m, 3, ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, lit, 0.0f), constant_splat(m, 3, 2.2f)), light);
+	/* (HALO_LT_SUN_CLAMP_VIEW=1, checking: magenta where the sum is less
+	than 0 in a channel, the suns' share taken off more than the lightmap's
+	light has) */
+	if (lt_sun_clamp_view())
 	{
-		unsigned int luminance = fdot(m, base, constant_vector(m, 3, (const float[]){ 0.2126f, 0.7152f, 0.0722f }));
+		unsigned int below = op1(m, OP_ANY, m->t_bool, op2(m, OP_F_ORD_LESS_THAN, m->t_bv3, base,
+			constant_splat(m, 3, 0.0f)));
 
-		base = fscale(m, 3, base, ext3(m, GLSL_F_CLAMP, m->t_float, fsub(m, 1, constant_float(m, 1.0f), fdiv(m, 1,
-			extract(m, texel, 3), fmax_scalar(m, 1, luminance, 1.0e-6f))), constant_float(m, LT_SUN_FLOOR),
-			constant_float(m, 1.0f)));
+		return select_n(m, 3, below, constant_vector(m, 3, (const float[]){ 1.0f, 0.0f, 1.0f }),
+			ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, base, 0.0f), constant_splat(m, 3, 1.0f / 2.2f)));
 	}
-	return ext2(m, GLSL_POW, m->t_v3, fadd(m, 3, base, fmax_scalar(m, 3, light, 0.0f)), constant_splat(m, 3,
-		1.0f / 2.2f));
+	/* (less than 0 where the suns' share a dynamic object shadows is more
+	than the lightmap's light: kept at 0) */
+	return ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, base, 0.0f), constant_splat(m, 3, 1.0f / 2.2f));
 }
 
 /* ---------- the enhanced dynamic lights' glows (xgpu_spirv.h) */
