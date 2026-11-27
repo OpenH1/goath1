@@ -199,7 +199,8 @@ void dynamic_lights_rank(long *lights, short count,
 void dynamic_lights_drawn(long light, real_point3d const *position, real radius, real_rgb_color const *color);
 void dynamic_lights_clusters(long rasterizer_light_index, short count, short const *clusters);
 real dynamic_lights_share(short count);
-void dynamic_lights_copy(long rasterizer_light_index, real_point3d const *position, real_vector3d const *axis);
+void dynamic_lights_copy(long rasterizer_light_index, short number, real_point3d const *position,
+	real_vector3d const *axis);
 /* port: port/linux/game/door_portals.c (closed doors shut their portals to
 the lights) */
 void door_portals_update(void);
@@ -1700,7 +1701,7 @@ void lights_preprocess_scene(
 
 							for (marker_index = 1; marker_index < flare_marker_count; marker_index++)
 							{
-								dynamic_lights_copy(light->rasterizer_light_index,
+								dynamic_lights_copy(light->rasterizer_light_index, marker_index,
 									&flare_markers[marker_index].matrix.position,
 									&flare_markers[marker_index].matrix.forward);
 							}

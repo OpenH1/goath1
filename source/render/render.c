@@ -148,6 +148,10 @@ static void render_window(
 static void render_player_frame(
 	struct render_window *window,
 	const point2d *screenshot_combined_index);
+static void render_frame_player_viewed( /* port */
+	struct render_camera *camera,
+	struct render_frustum *frustum,
+	boolean *viewed);
 
 void render_sky(
 	void);
@@ -1208,6 +1212,11 @@ void render_frame(
 	short window_index;
 	struct render_window *window;
 	point2d screenshot_combined_index;
+	/* port: the first player window's view, as its window left it
+	(below) */
+	struct render_camera player_camera;
+	struct render_frustum player_frustum;
+	boolean player_viewed = FALSE;
 
 	render.frame_index++;
 	render.time_delta_since_tick_sec = time_delta_since_tick_sec;
@@ -1254,6 +1263,7 @@ void render_frame(
 			if (halo_vr_frame_active())
 			{
 				render_vr_player_frame(window);
+				render_frame_player_viewed(&player_camera, &player_frustum, &player_viewed);
 				continue;
 			}
 #endif
@@ -1277,6 +1287,7 @@ void render_frame(
 			render_player_frame(
 				window,
 				screenshot_index != NULL ? &screenshot_combined_index : NULL);
+			render_frame_player_viewed(&player_camera, &player_frustum, &player_viewed);
 			continue;
 		}
 		else
@@ -1296,8 +1307,31 @@ void render_frame(
 	rasterizer_windows_end();
 	rasterizer_frame_end();
 	projectile_muzzle_views(FALSE);
+	/* port: between frames, render.camera and render.frustum are the first
+	player window's view, not the last window's drawn (the frame's console
+	window after the players', at the origin, or a teammate's Spartan link
+	feed): what reads them outside a window then reads the player's view */
+	if (player_viewed)
+	{
+		render.camera = player_camera;
+		render.frustum = player_frustum;
+	}
 
 	return;
+}
+
+/* port: (render_frame) a player window drawn: its view, as its window left
+render.camera and render.frustum, kept where it is the frame's first */
+static void render_frame_player_viewed(
+	struct render_camera *camera,
+	struct render_frustum *frustum,
+	boolean *viewed)
+{
+	if (*viewed)
+		return;
+	*camera = render.camera;
+	*frustum = render.frustum;
+	*viewed = TRUE;
 }
 
 /* ---------- private code */
