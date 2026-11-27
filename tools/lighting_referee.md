@@ -55,7 +55,9 @@ grenade bursting at that wall; a30's beach in daylight. Variants keep the rest o
   the setting changed nothing in this build. `--feature-cost` times each one on. Reflections are checked in their own scene, a10's cryo deck (a static
   camera on its reflective floor), and timed there against the same scene off.
 - *cost*: `debug.pass_times` on the whole Enhanced look with ray-traced shadows and the flashlight on, 1920x1080,
-  each machine alone on its GPU, three runs, the median of the last summaries.
+  each machine alone on its GPU, three runs, the median of the last summaries. Three runs whose frames differ by more
+  than x1.25 are no measurement (omarchy's GPU has shown x1.9 between runs, everything scaled alike): those rows read
+  n/a, "run again".
 - *identity*: the Classic pictures of every scene byte-identical to the baseline's (master), and
   `tools/scorecard/identity.py` (game state tick by tick) against the baseline's game.
 

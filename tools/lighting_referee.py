@@ -167,6 +167,9 @@ HDR_COUNTER = (1.05, 2.6)  # the counter's brightest pixel, times paper white (l
 HDR_EMITTER = 3.05         # the frame's brightest pixel: at most the light of the world's ceiling, 3
 BLOWN = 0.001              # a feature on: at most this share of the pixels past HDR_EMITTER
 FLICKER = (1.5, 0.0005)    # a feature on: frame-to-frame change at most this times the feature off's, plus this
+# three runs of one configuration whose frames differ by more than this are not a measurement (the GPU's clock, or
+# work beside it: omarchy's 8060S has shown x1.9 between runs)
+TIMING_SPREAD = 1.25
 # the GPU's milliseconds a frame at 1920x1080 (median of three), the whole frame and the passes named, per machine;
 # "+feature": what turning a feature on adds to the frame
 BUDGETS = {
@@ -835,7 +838,7 @@ def check_cost(table, timed):
             if path and path.exists():
                 log += path.read_text(errors="replace")
         results.setdefault((run.machine, run.variant), []).append(pass_groups(log))
-    medians = {}
+    medians, spreads = {}, {}
     for (machine, variant), found in sorted(results.items()):
         found = [r for r in found if r]
         if not found:
@@ -843,10 +846,16 @@ def check_cost(table, timed):
             continue
         medians[(machine, variant)] = {name: statistics.median(r.get(name, 0.0) for r in found)
                                        for name in set().union(*found)}
+        frames = [r.get("frame", 0.0) for r in found]
+        spreads[(machine, variant)] = max(frames) / min(frames) if min(frames) > 0 else float("inf")
     for (machine, variant), median in sorted(medians.items()):
         budget = BUDGETS.get(machine, {})
         if variant == "timed":
             names = sorted(set(median) - {"frame"}, key=lambda n: -median[n])
+            if spreads[(machine, variant)] > TIMING_SPREAD:
+                table.add("cost", f"{machine} timings agree", spreads[(machine, variant)], f"<= x{TIMING_SPREAD}", None,
+                          "the runs disagree (the GPU's clock, or work beside it): its rows are n/a; run again")
+                continue
             for name in ["frame"] + names:
                 if name in budget:
                     table.add("cost", f"{machine} {name}", median[name], f"<= {budget[name]} ms",
@@ -861,6 +870,11 @@ def check_cost(table, timed):
                 continue
             more = median["frame"] - medians[base]["frame"]
             limit = budget.get("+feature", float("inf"))
+            spread = max(spreads[(machine, variant)], spreads[base])
+            if spread > TIMING_SPREAD:
+                table.add("cost", f"{machine} {variant[6:]} adds", more, f"<= {limit} ms", None,
+                          f"the runs disagree (x{spread:.2f}): run again")
+                continue
             table.add("cost", f"{machine} {variant[6:]} adds", more, f"<= {limit} ms", more <= limit)
 
 
