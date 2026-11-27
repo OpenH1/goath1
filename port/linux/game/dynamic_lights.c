@@ -137,6 +137,10 @@ copy of one on another marker, or one of the port's own (light_sources.c's
 key, which has its kind in its top byte, 1 to 3) */
 #define DYNAMIC_LIGHTS_KEY_GAME (4ull << 56)
 #define DYNAMIC_LIGHTS_KEY_COPY (5ull << 56)
+/* the flashlight on the models: how much farther it reaches than its
+radius, and how much brighter (its color, the game's 0 to 1) */
+#define DYNAMIC_LIGHTS_FLASHLIGHT_REACH 2.0f
+#define DYNAMIC_LIGHTS_FLASHLIGHT_BRIGHTNESS 1.8f
 
 typedef char dynamic_lights_clusters_fit[HALO_DYNAMIC_LIGHTS_CLUSTERS >= MAXIMUM_CLUSTERS_PER_STRUCTURE ? 1 : -1];
 typedef char dynamic_lights_lights_fit[HALO_DYNAMIC_LIGHTS_MAXIMUM >= MAXIMUM_LIGHTS_PER_WINDOW ? 1 : -1];
@@ -501,6 +505,17 @@ void dynamic_lights_submit(
 		out->cone_scale = dynamic_lights.cone_scale[light_index];
 		out->cone_offset = dynamic_lights.cone_offset[light_index];
 		out->flags = dynamic_lights.flags[light_index];
+		/* (the flashlight on the models it lights, as bright as the game's
+		model lighting has it: the enhanced lights' falloff fades out
+		toward the radius, where the game's spotlight is near its full
+		strength; its gel lights the structure in the game's own pass) */
+		if ((out->flags & HALO_DYNAMIC_LIGHT_FLASHLIGHT) && (out->flags & HALO_DYNAMIC_LIGHT_MODELS_ONLY))
+		{
+			out->radius *= DYNAMIC_LIGHTS_FLASHLIGHT_REACH;
+			out->color[0] *= DYNAMIC_LIGHTS_FLASHLIGHT_BRIGHTNESS;
+			out->color[1] *= DYNAMIC_LIGHTS_FLASHLIGHT_BRIGHTNESS;
+			out->color[2] *= DYNAMIC_LIGHTS_FLASHLIGHT_BRIGHTNESS;
+		}
 		if (logged < 4 && (out->flags & HALO_DYNAMIC_LIGHT_PROJECTILE) && config_boolean("debug.dynamic_lights_log"))
 		{
 			logged++;
