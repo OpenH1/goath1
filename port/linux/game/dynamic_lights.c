@@ -722,16 +722,18 @@ the renderer (the game's, their copies and the port's own), at most
 HALO_DYNAMIC_LIGHTS_SHADOWED cast shadows, those whose shadows show:
 
 - a flashlight that is on, always (the first slot: a unit's own light, its
-  cone on what it points at; the models it lights take its shadow, the
-  structure its gel's light from the game's own pass, which does not read
-  the shadows yet);
+  cone on what it points at), once the structure's light from it, its
+  gel's in the game's own pass, reads the shadows; until then it lights
+  only the models here, and casts none (its trace, out to its reach on
+  every pixel, cost 2 ms a frame at 1080p on a Radeon 8060S for a shadow
+  seen on the models alone);
 - else a light that reaches SHADOWED_LEAST_RADIUS or more and has lasted
   SHADOWED_LEAST_AGE (an explosion, a fire, a lamp, a large charged shot,
   the port's own larger lights). A plasma bolt, a needle or a muzzle flash
   reaches 1.5 to 2 world units for a few frames: its shadow is a speck on
   a surface it barely lights, gone before it is seen, and takes a slot;
-- not another light that lights only the models (a lamp's gel, which the
-  game's own pass draws on the structure), nor a glow of the port's own standing
+- not a light that lights only the models (a lamp's gel, which the game's
+  own pass draws on the structure), nor a glow of the port's own standing
   in for what the lightmap lights (a powerup's, a teleporter's: Prisoner's
   overshield took a slot and drew a speckled shadow at the feet), nor a
   light out of reach or dark;
@@ -795,10 +797,9 @@ static int dynamic_lights_shadow_pick(struct halo_dynamic_light const *lights, u
 		real_point3d position;
 		real score, since = now;
 
-		if (!(light->radius > 0.0f) || !(intensity > 0.0f))
+		if (!(light->radius > 0.0f) || !(intensity > 0.0f) || (light->flags & HALO_DYNAMIC_LIGHT_MODELS_ONLY))
 			continue;
-		if (!flashlight && (light->radius < SHADOWED_LEAST_RADIUS || baked[light_index] ||
-			(light->flags & HALO_DYNAMIC_LIGHT_MODELS_ONLY)))
+		if (!flashlight && (light->radius < SHADOWED_LEAST_RADIUS || baked[light_index]))
 			continue;
 		/* (how long it has lasted: since it first qualified) */
 		if (key)
