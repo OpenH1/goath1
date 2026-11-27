@@ -50,6 +50,8 @@
 #define FINAL 2048
 // SUN's count's cap (frames): the share's history (a moving shadow lags no more)
 #define SUN_CAP 12.0
+// SUN's rays a sun where it has no history
+#define SUN_FIRST 12
 // how far a dynamic object's sun shadow is cast (world units: about 75 m)
 #define SUN_REACH 25.0
 // lights.z's
@@ -555,7 +557,7 @@ void reservoir_merge(inout Reservoir r, vec4 other, int row, vec3 p, vec3 shaded
 // the suns' direct share at p where a dynamic object blocks the sun and the structure does not (the lightmap's own
 // shadows already dark): sun_power_scale x power x cos by the shaded normal, one ray a sun toward a point of its disk
 // (the objects' ray no longer than SUN_REACH: a dynamic object's shadow from farther is not drawn)
-vec3 sun_share(vec3 p, vec3 n, vec3 shaded, ivec2 pixel)
+vec3 sun_share(vec3 p, vec3 n, vec3 shaded, ivec2 pixel, int rays)
 {
     vec3 share = vec3(0.0);
     vec3 origin = p + n * (0.004 + 0.0005 * length(p - pass.camera[0].xyz));
@@ -567,12 +569,10 @@ vec3 sun_share(vec3 p, vec3 n, vec3 shaded, ivec2 pixel)
         float cosine = dot(shaded, f);
         if (cosine <= 0.0 || dot(n, f) <= 0.0 || t4.w < 0.0)
             continue;
-        // (one ray a sun, the frames' stratified points over its disk; the history's count averages them)
-        const int rays = 1;
         float blocked = 0.0;
         for (int k = 0; k < rays; k++)
         {
-            vec2 disk = concentric(stratified(pixel, 17.0 + float(s) * 4.0 + float(k))) * tan(0.5 * t5.w);
+            vec2 disk = concentric(stratified(pixel, 17.0 + float(s) * 16.0 + float(k))) * tan(0.5 * t5.w);
             vec3 d = normalize(f + row_texel(row, 3).xyz * disk.x + row_texel(row, 2).xyz * disk.y);
             if (visible_by(origin, d, SUN_REACH, -1, 0xffffffffu, RT_MASK_DYNAMIC) < 1.0 &&
                 visible_by(origin, d, 2048.0, -1, 0xffffffffu, RT_MASK_STRUCTURE) > 0.0)
@@ -651,7 +651,7 @@ void main()
         result = vec4(0.0);
         if (!present || receiver != 0 || pass.lights.y <= 0)
             return;
-        vec3 share = sun_share(p, n, shaded, pixel), mean = vec3(0.0);
+        vec3 mean = vec3(0.0);
         float count = 0.0;
         ivec2 q;
         if ((pass.control.w & RESET) == 0 && reproject(p, n, words.w, q))
@@ -660,6 +660,9 @@ void main()
             mean = old.rgb;
             count = old.a;
         }
+        // (one ray a sun a frame, the frames' stratified points over its disk, which the count averages; SUN_FIRST
+        // where there is no history yet (a reset, a cut, a disocclusion), so the first frame's share is as good)
+        vec3 share = sun_share(p, n, shaded, pixel, count < 1.0 ? SUN_FIRST : 1);
         count = min(count + 1.0, SUN_CAP);
         mean += (share - mean) / count;
         result = vec4(mean, count);
