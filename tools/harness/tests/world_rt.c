@@ -119,6 +119,61 @@ long world_rt_source_structure_mesh(short index, struct world_rt_source_mesh *me
 	return 3;
 }
 
+/* (definition 7's model, with model_on: two triangles on node 0 (the
+second wound against its normals), one on node 1, whose default inverse
+moves it 10 back along x; every other definition none) */
+static int model_on, model_asked;
+
+long world_rt_source_model_mesh(long definition, struct world_rt_source_mesh *mesh, float (*inverses)[3][4])
+{
+	static const float positions[9][3] = { { 0, 0, 0 }, { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 }, { 1, 0, 1 }, { 0, 1, 1 },
+		{ 10, 0, 0 }, { 11, 0, 0 }, { 10, 1, 0 } };
+	static const unsigned long corners[3][3] = { { 0, 1, 2 }, { 3, 5, 4 }, { 6, 7, 8 } };
+	int vertex, triangle, node;
+
+	if (!model_on || definition != 7)
+		return 0;
+	model_asked++;
+	if (mesh->vertices)
+	{
+		for (vertex = 0; vertex < 9; vertex++)
+		{
+			memset(&mesh->vertices[vertex], 0, sizeof(mesh->vertices[vertex]));
+			memcpy(mesh->vertices[vertex].position, positions[vertex], sizeof(positions[vertex]));
+			mesh->vertices[vertex].normal[2] = mesh->vertices[vertex].tangent[0] = mesh->vertices[vertex].binormal[1] = 1.0f;
+			/* (the last triangle's corners on node 1, one blended toward 0) */
+			mesh->vertices[vertex].nodes[0] = mesh->vertices[vertex].nodes[1] = vertex >= 6;
+			mesh->vertices[vertex].weight = 1.0f;
+		}
+		mesh->vertices[8].nodes[0] = 0;
+		mesh->vertices[8].weight = 0.25f;
+		for (triangle = 0; triangle < 3; triangle++)
+		{
+			memcpy(mesh->triangles[triangle], corners[triangle], sizeof(corners[triangle]));
+			mesh->triangle_materials[triangle] = 0;
+		}
+		memset(&mesh->materials[0], 0, sizeof(mesh->materials[0]));
+		for (vertex = 0; vertex < WORLD_RT_MAPS; vertex++)
+			mesh->materials[0].maps[vertex].bitmap = -1;
+		mesh->materials[0].shader = 400;
+		mesh->materials[0].alpha_map = -1;
+	}
+	if (inverses)
+	{
+		for (node = 0; node < 2; node++)
+		{
+			memset(inverses[node], 0, sizeof(inverses[node]));
+			inverses[node][0][0] = inverses[node][1][1] = inverses[node][2][2] = 1.0f;
+			inverses[node][0][3] = node ? -10.0f : 0.0f;
+		}
+	}
+	mesh->vertex_count = 9;
+	mesh->triangle_count = 3;
+	mesh->opaque_count = 3;
+	mesh->material_count = 1;
+	return 3;
+}
+
 /* (bitmap 200 loaded, 201 once bump_loaded) */
 static int bump_loaded;
 static const unsigned long base_header[5], bump_header[5];
@@ -253,9 +308,11 @@ void halo_world_rt_mesh(unsigned long id, void const *data, unsigned long size)
 	drawn = *header;
 	memcpy(drawn_materials, materials, sizeof(drawn_materials));
 	memcpy(carried, made, header->material_count * sizeof(*made));
-	/* (the tangent's sign: the last vertex's binormal turned) */
-	CHECK(vertices[0].flags == 0 && vertices[6].flags == 1 && vertices[3].uv[0] == 3.0f && vertices[0].normal == 32767,
-		"the vertices: %u %u", vertices[0].flags, vertices[6].flags);
+	/* (the structure's: the tangent's sign, the last vertex's binormal
+	turned) */
+	if (header->vertex_count == 7)
+		CHECK(vertices[0].flags == 0 && vertices[6].flags == 1 && vertices[3].uv[0] == 3.0f && vertices[0].normal == 32767,
+			"the vertices: %u %u", vertices[0].flags, vertices[6].flags);
 	meshes[mesh_count].id = id;
 	meshes[mesh_count].count = header->triangle_count;
 	for (corner = 0; corner < 3; corner++)
@@ -506,6 +563,42 @@ static void render_case(void)
 	CHECK(textures_count == 3, "its textures again: %lu", textures_count);
 }
 
+static void model_case(void)
+{
+	struct world_ao_instance const *seven;
+
+	render_on = model_on = 1;
+	world_rt_frame(1);
+	/* definition 7's model's meshes: node 0's two triangles (the second
+	turned to face as its normals do), node 1's one in its own space; no
+	collision mesh for it; the other definitions as before */
+	CHECK(model_asked == 2, "the model read %d times", model_asked);
+	CHECK(mesh_count == 4 && meshes[1].id == 2 && meshes[1].count == 2 && meshes[2].id == 3 && meshes[2].count == 1,
+		"the model's meshes: %d (%lu %lu) (%lu %lu)", mesh_count, meshes[1].id, meshes[1].count, meshes[2].id,
+		meshes[2].count);
+	CHECK(meshes[2].first[0] == 0.0f && meshes[2].first[3] == 1.0f, "node 1's in its own space: %g %g", meshes[2].first[0],
+		meshes[2].first[3]);
+	CHECK(meshes[3].count == 12, "9's box: %lu", meshes[3].count);
+	seven = instance_of(4, WORLD_RT_OBJECT);
+	CHECK(seven && seven->mesh == 2 && seven->transform[0][3] == 10.0f, "7's node 0");
+	CHECK(instance_count == 6, "%lu instances", instance_count);
+	{
+		struct world_rt_source_vertex vertices[3];
+		unsigned long triangle[3] = { 0, 1, 2 };
+
+		memset(vertices, 0, sizeof(vertices));
+		vertices[1].position[0] = vertices[2].position[1] = 1.0f;
+		vertices[0].normal[2] = vertices[1].normal[2] = vertices[2].normal[2] = -1.0f;
+		world_rt_face_out(vertices, triangle);
+		CHECK(triangle[0] == 0 && triangle[1] == 2 && triangle[2] == 1, "turned to face down");
+		vertices[0].weight = vertices[1].weight = vertices[2].weight = 1.0f;
+		vertices[1].nodes[0] = vertices[2].nodes[0] = 3;
+		CHECK(world_rt_triangle_node(&vertices[0], &vertices[1], &vertices[2]) == 3, "two corners' node");
+		vertices[2].nodes[0] = 4;
+		CHECK(world_rt_triangle_node(&vertices[0], &vertices[1], &vertices[2]) == 0, "else the first's");
+	}
+}
+
 int main(int argc, char **argv)
 {
 	const char *name = argc > 1 ? argv[1] : "";
@@ -516,6 +609,8 @@ int main(int argc, char **argv)
 		frame_case();
 	else if (!strcmp(name, "render"))
 		render_case();
+	else if (!strcmp(name, "model"))
+		model_case();
 	else
 		return 2;
 	return 0;

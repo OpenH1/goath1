@@ -182,6 +182,13 @@ radius): its axes the frame's times radius * WORLD_RT_BOX_SHARE */
 void world_rt_box_transform(struct world_proxies_frame const *frame, float const sphere[4], float transform[3][4]);
 /* a unit vector as two snorm16s of its octahedral map (x low) */
 unsigned long world_rt_octahedral(float const vector[3]);
+/* a model triangle's node: its corners' major nodes' (two corners', else
+the first's) */
+int world_rt_triangle_node(struct world_rt_source_vertex const *a, struct world_rt_source_vertex const *b,
+	struct world_rt_source_vertex const *c);
+/* a triangle's corners turned to face as its vertices' normals do
+(counterclockwise seen from where they point) */
+void world_rt_face_out(struct world_rt_source_vertex const *vertices, unsigned long triangle[3]);
 
 /* ---------- what the scene reads of the game (port/linux/game/world_rt_game.c) */
 
@@ -195,6 +202,14 @@ invisible clip: nothing draws it, so the render geometry has none), the
 opaque ones first, then the alpha-tested; each of its materials its own.
 Its counts, then (arrays given) its data; its triangles (0 none) */
 long world_rt_source_structure_mesh(short bsp_index, struct world_rt_source_mesh *mesh);
+/* a definition's model's render mesh, its model's space (its default pose),
+each vertex with its nodes: its regions' first permutations at one level of
+detail (the second most detailed), the opaque parts first, then the
+alpha-tested ones, the transparent ones counted (left_out). Its counts, then
+(arrays given) its data; with inverses (room for WORLD_RT_NODES), each
+node's default inverse, the model's space into the node's (a row-major
+3x4); its triangles (0 none) */
+long world_rt_source_model_mesh(long definition, struct world_rt_source_mesh *mesh, float (*inverses)[3][4]);
 /* a map's texture as the renderer has it now (its header: NULL while it is
 not loaded, which this asks for) */
 void const *world_rt_source_texture(struct world_rt_source_map const *map);
