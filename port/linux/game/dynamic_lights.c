@@ -137,6 +137,8 @@ copy of one on another marker, or one of the port's own (light_sources.c's
 key, which has its kind in its top byte, 1 to 3) */
 #define DYNAMIC_LIGHTS_KEY_GAME (4ull << 56)
 #define DYNAMIC_LIGHTS_KEY_COPY (5ull << 56)
+/* how much farther the enhanced flashlight reaches than its radius */
+#define DYNAMIC_LIGHTS_FLASHLIGHT_REACH 1.5f
 
 typedef char dynamic_lights_clusters_fit[HALO_DYNAMIC_LIGHTS_CLUSTERS >= MAXIMUM_CLUSTERS_PER_STRUCTURE ? 1 : -1];
 typedef char dynamic_lights_lights_fit[HALO_DYNAMIC_LIGHTS_MAXIMUM >= MAXIMUM_LIGHTS_PER_WINDOW ? 1 : -1];
@@ -501,6 +503,11 @@ void dynamic_lights_submit(
 		out->cone_scale = dynamic_lights.cone_scale[light_index];
 		out->cone_offset = dynamic_lights.cone_offset[light_index];
 		out->flags = dynamic_lights.flags[light_index];
+		/* (the flashlight's gel lights out to its radius nearly as brightly
+		as at its middle, where the enhanced lights' falloff has faded to
+		nothing: it reaches as far again by half) */
+		if (out->flags & HALO_DYNAMIC_LIGHT_FLASHLIGHT)
+			out->radius *= DYNAMIC_LIGHTS_FLASHLIGHT_REACH;
 		if (logged < 4 && (out->flags & HALO_DYNAMIC_LIGHT_PROJECTILE) && config_boolean("debug.dynamic_lights_log"))
 		{
 			logged++;
