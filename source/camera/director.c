@@ -467,8 +467,13 @@ static void director_set_camera(
 	sound_listener_motion_reset(local_player_index); /* port: camera selection is not listener motion */
 	director->debug_input_scale = 1.f;
 	director->debug_controls = FALSE;
-	if (interpolate)
-		director->camera_change_pause = 1.f;
+	/* port: a camera chosen without easing starts at once. The pause left
+	over from an eased change before it (a player's camera chosen as the map
+	starts) would otherwise stretch the new camera's first command
+	(director_update): a cutscene's opening cut, made in the same few ticks,
+	became a slide from the player's eyes, through the walls, to its first
+	shot (a30's). */
+	director->camera_change_pause = interpolate ? 1.f : 0.f;
 
 	return;
 }
