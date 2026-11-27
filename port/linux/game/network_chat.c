@@ -144,8 +144,14 @@ void platform_log(char const *format, ...);
 
 enum
 {
-	/* a line's text, with its end */
+	/* a line's text, with its end (what the network carries) */
 	CHAT_TEXT_SIZE = 64,
+	/* a report's note, with its end: what happened, in a few sentences (it
+	goes into the report, never to the network) */
+	CHAT_NOTE_SIZE = 501,
+	/* the rows a report's note is shown in while it is typed: its end's,
+	the rest scrolled off above */
+	CHAT_NOTE_ROWS = 3,
 	/* a player's name, with its end */
 	CHAT_NAME_SIZE = 12,
 	/* network.chat_channels's words, with its end: a channel's for each
@@ -391,6 +397,8 @@ static struct
 	boolean lobby;
 	short lobby_slot;
 	char text[CHAT_TEXT_SIZE];
+	/* (a report's note: its own, longer than a line) */
+	char note[CHAT_NOTE_SIZE];
 } chat_input;
 
 /* the keyboard's chat actions held last frame (a press starts a line) */
@@ -506,15 +514,17 @@ static short chat_text_clean(
 	return length;
 }
 
-/* the typed text (or pasted) added to a line, as far as it holds: printable
-ASCII but "|" only (chat_text_clean), the rest left out */
+/* the typed text (or pasted) added to a line (size: its buffer's,
+CHAT_TEXT_SIZE, or a report's note's, CHAT_NOTE_SIZE), as far as it holds:
+printable ASCII but "|" only (chat_text_clean), the rest left out */
 static void chat_text_append(
 	char *text,
-	char const *typed)
+	char const *typed,
+	short size)
 {
 	short length = (short)csstrlen(text);
 
-	for (; *typed && length < CHAT_TEXT_SIZE - 1; typed++)
+	for (; *typed && length < size - 1; typed++)
 	{
 		if (*typed >= ' ' && *typed <= '~' && *typed != '|')
 			text[length++] = *typed;
@@ -2714,7 +2724,7 @@ static void chat_keyboard_press(
 		typed[0] = chat_keyboard_character(chat_keyboard.symbols ? chat_keyboard_symbols : chat_keyboard_letters,
 			chat_keyboard.row, chat_keyboard.column, chat_keyboard.shift);
 		typed[1] = 0;
-		chat_text_append(chat_input.text, typed);
+		chat_text_append(chat_input.text, typed, CHAT_TEXT_SIZE);
 		return;
 	}
 	switch (chat_keyboard.column / CHAT_KEYBOARD_WIDE_COLUMNS)
@@ -2726,7 +2736,7 @@ static void chat_keyboard_press(
 		chat_keyboard.symbols = !chat_keyboard.symbols;
 		break;
 	case _chat_key_space:
-		chat_text_append(chat_input.text, " ");
+		chat_text_append(chat_input.text, " ", CHAT_TEXT_SIZE);
 		break;
 	case _chat_key_delete:
 		chat_input_delete();
@@ -2839,10 +2849,10 @@ void network_chat_report_note_cancel(
 		chat_input_end();
 }
 
-/* the note's keys, as the chat line's: Enter finishes the report with it,
-Escape without one; left (the game over, the map left, a menu opened or a
-cinematic begun over it), with what was typed. Each frame, before the
-chat's own (which needs a network game) */
+/* the note's keys, as the chat line's, into its own text: Enter finishes
+the report with it, Escape without one; left (the game over, the map left,
+a menu opened or a cinematic begun over it), with what was typed. Each
+frame, before the chat's own (which needs a network game) */
 static void chat_report_update(
 	void)
 {
@@ -2851,7 +2861,7 @@ static void chat_report_update(
 	if (!report_game_playing() || chat_hidden())
 	{
 		chat_input_end();
-		report_note_done(chat_input.text);
+		report_note_done(chat_input.note);
 		return;
 	}
 	if (console_is_active())
@@ -2867,10 +2877,11 @@ static void chat_report_update(
 		case _key_return:
 		case _keypad_enter:
 			chat_input_end();
-			report_note_done(chat_input.text);
+			report_note_done(chat_input.note);
 			break;
 		case _key_backspace:
-			chat_input_delete();
+			if (chat_input.note[0])
+				chat_input.note[csstrlen(chat_input.note) - 1] = 0;
 			break;
 		case _key_backquote:
 		case _key_tab:
@@ -2878,10 +2889,10 @@ static void chat_report_update(
 		default:
 			if (TEST_FLAG(key.modifier_flags, CHAT_KEY_MODIFIER_CONTROL_BIT))
 			{
-				char clipboard[CHAT_TEXT_SIZE];
+				char clipboard[CHAT_NOTE_SIZE];
 
 				if (key.key_code == _key_v && platform_clipboard_get(clipboard, sizeof(clipboard)))
-					chat_text_append(chat_input.text, clipboard);
+					chat_text_append(chat_input.note, clipboard, CHAT_NOTE_SIZE);
 			}
 			else if (key.ascii_code >= ' ' && key.ascii_code <= '~')
 			{
@@ -2889,7 +2900,7 @@ static void chat_report_update(
 
 				typed[0] = key.ascii_code;
 				typed[1] = 0;
-				chat_text_append(chat_input.text, typed);
+				chat_text_append(chat_input.note, typed, CHAT_NOTE_SIZE);
 			}
 			break;
 		}
@@ -3156,7 +3167,7 @@ void network_chat_update(
 				char clipboard[CHAT_TEXT_SIZE];
 
 				if (key.key_code == _key_v && platform_clipboard_get(clipboard, sizeof(clipboard)))
-					chat_text_append(chat_input.text, clipboard);
+					chat_text_append(chat_input.text, clipboard, CHAT_TEXT_SIZE);
 			}
 			else if (key.ascii_code >= ' ' && key.ascii_code <= '~')
 			{
@@ -3164,7 +3175,7 @@ void network_chat_update(
 
 				typed[0] = key.ascii_code;
 				typed[1] = 0;
-				chat_text_append(chat_input.text, typed);
+				chat_text_append(chat_input.text, typed, CHAT_TEXT_SIZE);
 			}
 			break;
 		}
@@ -3322,13 +3333,14 @@ static void chat_draw_shadow(
 }
 
 /* the width of a string's first count characters (NONE: all of it) as the
-draw mode's font draws them, measured from bounds' left */
+draw mode's font draws them, measured from bounds' left (a report's note's
+whole too) */
 static short chat_string_width(
 	rectangle2d const *bounds,
 	wchar_t const *string,
 	short count)
 {
-	wchar_t part[2 * CHAT_TEXT_SIZE];
+	wchar_t part[CHAT_NOTE_SIZE + 2];
 	rectangle2d text_bounds;
 	rectangle2d cursor_bounds;
 	short index;
@@ -3433,6 +3445,63 @@ static void chat_line_layout(
 	}
 }
 
+/* a report's note being typed (its prompt, and its text with the caret)
+laid out as a line is, in as many rows as it takes, of which the last
+CHAT_NOTE_ROWS (at most rows) are kept: the end, where the caret is, always
+shown, what came before scrolled off above */
+static void chat_note_layout(
+	short left,
+	short right,
+	short line_height,
+	wchar_t const *prompt,
+	wchar_t const *text,
+	short rows,
+	struct chat_layout *layout)
+{
+	rectangle2d measure;
+	short start = 0;
+	short width;
+
+	measure.x0 = 0;
+	measure.y0 = 0;
+	measure.x1 = SHORT_MAX;
+	measure.y1 = SHORT_MAX;
+	rows = (short)MAX(1, MIN(rows, MIN(CHAT_NOTE_ROWS, CHAT_LINE_ROWS)));
+	layout->text_left = (short)(left + chat_string_width(&measure, prompt, NONE) + line_height / 4);
+	width = (short)(right - layout->text_left);
+	layout->rows = 0;
+	while (text[start])
+	{
+		short skip = 0;
+		short length = width > line_height ? chat_wrap_row(&measure, text, start, width, &skip) : (short)NONE;
+		short row;
+
+		if (length == NONE)
+			for (length = 0; text[start + length]; length++)
+				;
+		/* (the oldest kept let go of) */
+		if (layout->rows == rows)
+		{
+			for (row = 1; row < rows; row++)
+			{
+				layout->starts[row - 1] = layout->starts[row];
+				layout->lengths[row - 1] = layout->lengths[row];
+			}
+			layout->rows--;
+		}
+		layout->starts[layout->rows] = start;
+		layout->lengths[layout->rows] = length;
+		layout->rows++;
+		start = (short)(start + length + skip);
+	}
+	if (!layout->rows)
+	{
+		layout->starts[0] = 0;
+		layout->lengths[0] = 0;
+		layout->rows = 1;
+	}
+}
+
 /* a row of a line: the name (row 0's, or none) in its colour, then that
 row's text in its own, over their shadows; bounds' top and bottom the row's */
 static void chat_draw_row(
@@ -3486,7 +3555,7 @@ static void chat_draw_layout(
 
 	for (row = 0; row < layout->rows; row++)
 	{
-		wchar_t part[CHAT_TEXT_SIZE + 2];
+		wchar_t part[CHAT_NOTE_SIZE + 2];
 		rectangle2d bounds;
 		short index;
 
@@ -3742,13 +3811,37 @@ void network_chat_draw(
 	right = (short)(left + (right - left) / scale);
 	anchor = edge;
 	rasterizer_text_set_scale(scale, (real)left, (real)anchor);
-	if (typing)
+	if (typing && chat_input.report)
+	{
+		real_argb_color color;
+		struct chat_layout layout;
+		wchar_t text[CHAT_NOTE_SIZE + 2];
+		wchar_t const *prompt = L"What happened?";
+		short length = chat_line_text(chat_input.note, text, CHAT_NOTE_SIZE);
+		short height;
+
+		text[length] = (now / CHAT_CARET_MILLISECONDS) % 2 == 0 ? '_' : ' ';
+		text[length + 1] = 0;
+		chat_color(_chat_color_blue, 1.0f, &color);
+		chat_text_color(1.0f, &text_color);
+		draw_string_set_draw_mode(font_index, NONE, 0 /* left */, 0, &color);
+		/* (what the player types is measured and drawn as it is: text_filter.c) */
+		text_filter_suspend();
+		/* (wrapped, its end's rows: a note is longer than a line) */
+		chat_note_layout(left, right, line_height, prompt, text, rows, &layout);
+		height = (short)(layout.rows * line_height);
+		chat_draw_layout(font_index, &layout, left, right, touch ? edge : (short)(edge - height), line_height,
+			prompt, &color, text, &text_color, 1.0f);
+		text_filter_resume();
+		edge = (short)(edge + (touch ? height : -height));
+		rows = (short)(rows - layout.rows);
+	}
+	else if (typing)
 	{
 		real_argb_color color;
 		struct chat_layout layout;
 		wchar_t text[CHAT_TEXT_SIZE + 2];
-		wchar_t const *prompt = chat_input.report ? L"What happened?" :
-			chat_input.channel == _chat_channel_team ? L"Say to team:" :
+		wchar_t const *prompt = chat_input.channel == _chat_channel_team ? L"Say to team:" :
 			chat_input.channel == _chat_channel_vehicle ? L"Say to vehicle:" : L"Say:";
 		short length;
 		short start = 0;

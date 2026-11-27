@@ -5512,6 +5512,176 @@ int xgpu_vulkan_read_pixels(struct xgpu_vulkan_image *image, uint32_t layer, voi
 	return 1;
 }
 
+/* ---------- readbacks without a wait (xgpu_vulkan_readback_begin)
+
+The copy is recorded after the frame's work so far and submitted with it,
+not waited for; the thread that writes the picture waits for it on the
+timeline, as the timeline's watcher does, and reads the buffer where the
+GPU left it. A
+buffer let go of is used again once the GPU is past its copy, kept at the
+largest size asked for. */
+
+#define LATER_READBACKS 2
+
+struct xgpu_vulkan_readback
+{
+	VkBuffer buffer;
+	struct allocation memory;
+	unsigned char *mapped;
+	VkDeviceSize size;
+	/* the submission that copies into it (the render thread's) */
+	uint64_t serial;
+	/* handed out and not yet let go of (with the lock) */
+	int held;
+};
+
+static struct
+{
+	pthread_mutex_t lock;
+	pthread_cond_t released;
+	struct xgpu_vulkan_readback buffers[LATER_READBACKS];
+	/* (the renderer shutting down: none handed out) */
+	int stopping;
+} readbacks = { .lock = PTHREAD_MUTEX_INITIALIZER, .released = PTHREAD_COND_INITIALIZER };
+
+struct xgpu_vulkan_readback *xgpu_vulkan_readback_begin(struct xgpu_vulkan_image *image, uint32_t layer, int *format)
+{
+	struct xgpu_vulkan_readback *readback = NULL;
+	VkCommandBuffer commands;
+	VkBufferImageCopy copy;
+	VkDeviceSize size;
+	uint64_t done;
+	uint32_t index;
+
+	if (!image || image->description.samples > 1 || (image->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) ||
+		(image->description.format != XGPU_VULKAN_FORMAT_RGBA16F && image->description.format != XGPU_VULKAN_FORMAT_RGBA16 &&
+		image->description.format != XGPU_VULKAN_FORMAT_BGRA8))
+	{
+		return NULL;
+	}
+	*format = image->description.format;
+	size = (VkDeviceSize)image->description.width * image->description.height *
+		(image->description.format == XGPU_VULKAN_FORMAT_BGRA8 ? 4 : 8);
+	done = completed_serial();
+	pthread_mutex_lock(&readbacks.lock);
+	for (index = 0; index < LATER_READBACKS && !readbacks.stopping && !readback; index++)
+	{
+		if (!readbacks.buffers[index].held && readbacks.buffers[index].serial <= done)
+			readback = &readbacks.buffers[index];
+	}
+	if (readback)
+		readback->held = 1;
+	pthread_mutex_unlock(&readbacks.lock);
+	if (!readback)
+		return NULL;
+	if (size > readback->size)
+	{
+		if (readback->buffer)
+		{
+			vkDestroyBuffer(vk.device, readback->buffer, NULL);
+			memory_release(&readback->memory);
+			readback->buffer = VK_NULL_HANDLE;
+			readback->size = 0;
+		}
+		if (!buffer_make(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, BUFFER_READBACK, &readback->buffer, &readback->memory,
+			(void **)&readback->mapped))
+		{
+			readback->buffer = VK_NULL_HANDLE;
+			xgpu_vulkan_readback_release(readback);
+			return NULL;
+		}
+		readback->size = size;
+	}
+	commands = main_commands();
+	image_use(image);
+	memset(&copy, 0, sizeof(copy));
+	copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	copy.imageSubresource.baseArrayLayer = layer;
+	copy.imageSubresource.layerCount = 1;
+	copy.imageExtent.width = image->description.width;
+	copy.imageExtent.height = image->description.height;
+	copy.imageExtent.depth = 1;
+	vkCmdCopyImageToBuffer(commands, image->image, VK_IMAGE_LAYOUT_GENERAL, readback->buffer, 1, &copy);
+	/* (what draws or copies into the image again in this submission comes
+	after the copy, which no wait for the GPU now ends) */
+	image_read_done(commands, image);
+	barrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+		VK_ACCESS_HOST_READ_BIT);
+	/* (submitted now, not waited for, as read_pixels submits it: the copy
+	is on its way whatever the render thread does next, quitting too, so
+	that its waiter, which the game's exit waits for, never waits on work
+	not submitted) */
+	readback->serial = xgpu_vulkan_fence();
+	return readback;
+}
+
+const void *xgpu_vulkan_readback_wait(struct xgpu_vulkan_readback *readback)
+{
+	VkSemaphoreWaitInfo info;
+	uint64_t serial = readback->serial;
+
+	memset(&info, 0, sizeof(info));
+	info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO;
+	info.semaphoreCount = 1;
+	info.pSemaphores = &vk.timeline;
+	info.pValues = &serial;
+	for (;;)
+	{
+		/* (waits that end by themselves, not through the calls' watch, which
+		counts the render thread's: the timeline's watcher's) */
+		VkResult result = (calls_installed ? vkWaitSemaphores_unwatched : vkWaitSemaphores)(vk.device, &info,
+			50000000ULL);
+		int stopping;
+
+		if (result == VK_SUCCESS)
+			return readback->mapped;
+		if (result != VK_TIMEOUT)
+			return NULL;
+		/* (shutting down, the GPU idle: a copy not done by now never is) */
+		pthread_mutex_lock(&readbacks.lock);
+		stopping = readbacks.stopping;
+		pthread_mutex_unlock(&readbacks.lock);
+		if (stopping)
+			return NULL;
+	}
+}
+
+void xgpu_vulkan_readback_release(struct xgpu_vulkan_readback *readback)
+{
+	if (!readback)
+		return;
+	pthread_mutex_lock(&readbacks.lock);
+	readback->held = 0;
+	pthread_cond_broadcast(&readbacks.released);
+	pthread_mutex_unlock(&readbacks.lock);
+}
+
+/* (the device idle) every buffer handed out let go of, and freed */
+static void readbacks_stop(void)
+{
+	uint32_t index;
+
+	pthread_mutex_lock(&readbacks.lock);
+	readbacks.stopping = 1;
+	for (index = 0; index < LATER_READBACKS; index++)
+	{
+		while (readbacks.buffers[index].held)
+			pthread_cond_wait(&readbacks.released, &readbacks.lock);
+	}
+	pthread_mutex_unlock(&readbacks.lock);
+	for (index = 0; index < LATER_READBACKS; index++)
+	{
+		struct xgpu_vulkan_readback *readback = &readbacks.buffers[index];
+
+		if (readback->buffer)
+		{
+			vkDestroyBuffer(vk.device, readback->buffer, NULL);
+			memory_release(&readback->memory);
+		}
+		memset(readback, 0, sizeof(*readback));
+	}
+}
+
 /* ---------- buffers */
 
 #define BUFFER_USAGE (VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | \
@@ -13674,6 +13844,8 @@ void xgpu_vulkan_shutdown(void)
 	if (vk.recording)
 		xgpu_vulkan_fence();
 	vkDeviceWaitIdle(vk.device);
+	/* (the pictures' threads done with what they read back) */
+	readbacks_stop();
 	xgpu_vulkan_pacing_stop();
 	xgpu_vulkan_pipeline_cache_save();
 	if (vk.validation)

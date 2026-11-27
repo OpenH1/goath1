@@ -304,6 +304,37 @@ int main(int argc, char **argv)
 		CHECK(!strcmp(text, "GPU time: not measured\n"), "no GPU time");
 		return 0;
 	}
+	/* a report's note (the chat's 63 characters were too few: "...they
+	should clai") whole in report.md, over the summary, and the scrubbed body
+	the issue opens with */
+	if (!strcmp(test, "note"))
+	{
+		static char note[501];
+		char *issue, *scrubbed;
+		size_t size;
+		unsigned long index;
+
+		for (index = 0; index < 500; index++)
+			note[index] = index % 10 == 9 ? ' ' : (char)('a' + index % 26);
+		note[499] = '.';
+		issue = report_issue_text("2026-11-27_18.00.00", note, "## System\n\n- Build: a local build\n", 0);
+		CHECK(issue, "made");
+		printf("%s\n", issue);
+		CHECK(!strncmp(issue, "**What happened:** ", 19) && !strncmp(issue + 19, note, 500) && issue[519] == '\n',
+			"the whole note first");
+		CHECK(strstr(issue, "(Drag 2026-11-27_18.00.00.zip, from the reports folder"), "where the zip goes");
+		CHECK(strstr(issue, "## System\n\n- Build: a local build\n"), "the summary after it");
+		scrubbed = report_scrub(issue, strlen(issue), "/home/keyes", &size);
+		CHECK(scrubbed && strstr(scrubbed, note), "the whole note in the scrubbed body too");
+		free(scrubbed);
+		free(issue);
+		/* (none: where the note goes) */
+		issue = report_issue_text("r", "", NULL, 0);
+		CHECK(issue && strstr(issue, "(Say what you saw and what you expected. Then drag r.zip"), "no note");
+		free(issue);
+		return 0;
+	}
+
 	if (!strcmp(test, "issue"))
 	{
 		static char url[300], body[400];

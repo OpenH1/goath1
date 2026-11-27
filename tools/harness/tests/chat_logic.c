@@ -63,7 +63,7 @@ int main(int argc, char **argv)
 
 		CHECK(clean(text, "gg|", 64) == 3 && !strcmp(text, "gg?"), "'%s'", text);
 		CHECK(clean(text, "a|nb", 64) == 4 && !strcmp(text, "a?nb"), "'%s'", text);
-		chat_text_append(line, "|b|");
+		chat_text_append(line, "|b|", CHAT_TEXT_SIZE);
 		CHECK(!strcmp(line, "ab"), "'%s'", line);
 	}
 
@@ -91,12 +91,36 @@ int main(int argc, char **argv)
 	{
 		char line[CHAT_TEXT_SIZE] = "hi";
 
-		chat_text_append(line, " there\n\x01!");
+		chat_text_append(line, " there\n\x01!", CHAT_TEXT_SIZE);
 		CHECK(!strcmp(line, "hi there!"), "'%s'", line);
 		memset(source, 'w', 200);
 		source[200] = 0;
-		chat_text_append(line, source);
+		chat_text_append(line, source, CHAT_TEXT_SIZE);
 		CHECK(strlen(line) == CHAT_TEXT_SIZE - 1, "length %d", (int)strlen(line));
+	}
+
+	/* a report's note typed a key at a time: its own CHAT_NOTE_SIZE - 1
+	characters, a real description (a chat line's 63 cut one off: "...they
+	should clai"), while a chat line keeps the network's */
+	CASE("note-long")
+	{
+		static char note[CHAT_NOTE_SIZE];
+		char line[CHAT_TEXT_SIZE] = "";
+		char typed[2] = { 0, 0 };
+		int index;
+
+		CHECK(CHAT_NOTE_SIZE - 1 >= 500, "room for %d characters", CHAT_NOTE_SIZE - 1);
+		for (index = 0; index < CHAT_NOTE_SIZE + 20; index++)
+		{
+			typed[0] = index % 7 == 6 ? ' ' : (char)('a' + index % 26);
+			chat_text_append(note, typed, CHAT_NOTE_SIZE);
+			chat_text_append(line, typed, CHAT_TEXT_SIZE);
+		}
+		CHECK(strlen(note) == CHAT_NOTE_SIZE - 1, "note length %d", (int)strlen(note));
+		CHECK(note[CHAT_NOTE_SIZE - 2] == (char)('a' + (CHAT_NOTE_SIZE - 2) % 26) || note[CHAT_NOTE_SIZE - 2] == ' ',
+			"its last character the one typed");
+		CHECK(strlen(line) == CHAT_TEXT_SIZE - 1 && !strncmp(line, note, CHAT_TEXT_SIZE - 1), "a chat line's %d",
+			(int)strlen(line));
 	}
 
 	/* CHAT_BURST lines at once, then one a period */

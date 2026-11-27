@@ -101,6 +101,8 @@ NEGATIVE_CONTROLS = {
     "folder-relative": ("folder", "if (path[0] == '/' || path[0] == '\\\\' ||", "if (1 || path[0] == '\\\\' ||"),
     # a folder after the current one without a separator between them
     "folder-separator": ("folder", '"/" : "", path);', '"" : "", path);'),
+    # the note's length left out of report.md's room: a long note cut short
+    "note-cut": ("note", "+ (note ? strlen(note) : 0) +", "+"),
     # a folder's path in settings.txt (the account's name)
     "private-paths": ("scrub", '!strncmp(name, "paths.", 6) ||', "0 ||"),
 }
@@ -111,7 +113,7 @@ FUNCTIONS = ("report_crc32", "report_compare_micros", "report_low_fps", "report_
              "report_file_url", "report_whole_path",
              "report_setting_private", "report_address_length", "report_hex_digit", "report_word_character",
              "report_address6_length", "report_whole_lines", "report_session_value", "report_crash_line",
-             "report_crash_summary", "report_map_counted", "report_where_text", "report_scrub")
+             "report_crash_summary", "report_map_counted", "report_where_text", "report_issue_text", "report_scrub")
 # the host's record of a crash, written from its signal handler (port/android/host/host_common.c)
 HOST_FUNCTIONS = ("crash_record_is_open", "crash_record_write", "host_crash_record_line", "host_crash_record_end")
 
@@ -145,8 +147,8 @@ def generated(fault=None):
     return (("under_test.inc", code + "\n"),)
 
 
-@pytest.mark.parametrize("case", ["crc", "frames", "stall", "steady", "recent", "gpu", "issue", "scrub", "maps", "crash", "ring",
-                                  "where", "folder"])
+@pytest.mark.parametrize("case", ["crc", "frames", "stall", "steady", "recent", "gpu", "issue", "note", "scrub", "maps",
+                                  "crash", "ring", "where", "folder"])
 def test_case(case):
     status, output = run(build("report", generated()), case)
     assert status == 0, output

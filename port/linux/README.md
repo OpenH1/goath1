@@ -416,7 +416,8 @@ GitHub account is needed). In a game nothing opens over it: F8 takes the
 screenshot and the frame times at once, and opens a line where the chat's
 is, "What happened?", for a note: type it and press Enter, or Escape to
 skip it (while it is open, the keys type, as the chat's line does). The
-note heads the issue. A line still open when the game ends, the map is
+note, up to 500 characters (a chat line's 63 are only the chat's), wraps
+onto a few rows as it is typed, its end shown, and heads the issue. A line still open when the game ends, the map is
 left, a menu opens or a cinematic begins is finished with what was typed.
 REPORT A PROBLEM chosen from the pause menu asks for no note (nor does a
 report asked for behind a menu): it is saved at once. The report is then
