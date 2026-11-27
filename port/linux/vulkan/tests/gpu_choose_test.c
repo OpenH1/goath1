@@ -5,7 +5,9 @@ The GPU the game draws with (xgpu_vulkan_gpu.c, #1269) over made-up device
 lists: a desktop's RTX beside a Ryzen's integrated Radeon listed first, a
 laptop whose display is its integrated GPU's, two discrete GPUs of which
 one drives the monitor, memory between equals, a device that cannot be
-used, and display.gpu's index, name and fallbacks.
+used, and display.gpu's index, name and fallbacks; and the value
+Settings' GRAPHICS CARD stores for each device (a name, an index for two
+identical cards).
 */
 
 #include "../xgpu_vulkan_gpu.c"
@@ -78,6 +80,40 @@ int main(void)
 	assert(choose(unusable, 2, "1", "is no usable device; auto: the only usable") == 0);
 	assert(choose(unusable, 2, "gtx", "names no usable device") == 0);
 	assert(choose(desktop, 2, "intel", "names no usable device; auto: discrete") == 1);
+
+	/* a whole name before a better device that has it; Settings' value for
+	each device, its name, but two identical cards' indices */
+	{
+		struct xgpu_gpu named[] = {
+			{ "NVIDIA GeForce RTX 5070", XGPU_GPU_DISCRETE, 1, 0, 12 * GB },
+			{ "NVIDIA GeForce RTX 5070 Ti", XGPU_GPU_DISCRETE, 1, 1, 16 * GB },
+		};
+		struct xgpu_gpu twins[] = {
+			{ "AMD Radeon RX 6600", XGPU_GPU_DISCRETE, 1, 0, 8 * GB },
+			{ "AMD Radeon RX 6600", XGPU_GPU_DISCRETE, 1, 1, 8 * GB },
+			{ "AMD Radeon(TM) Graphics", XGPU_GPU_INTEGRATED, 1, 0, 512ull << 20 },
+		};
+		char value[64];
+		int index;
+
+		assert(choose(named, 2, "rtx 5070", NULL) == 1);
+		assert(choose(named, 2, "nvidia geforce rtx 5070", NULL) == 0);
+		for (index = 0; index < 2; index++)
+		{
+			xgpu_gpu_setting(named, 2, index, value, sizeof(value));
+			assert(!strcmp(value, named[index].name));
+			assert(choose(named, 2, value, NULL) == index);
+		}
+		for (index = 0; index < 3; index++)
+		{
+			xgpu_gpu_setting(twins, 3, index, value, sizeof(value));
+			printf("twins %d: %s\n", index, value);
+			assert(!strcmp(value, index == 0 ? "0" : index == 1 ? "1" : "AMD Radeon(TM) Graphics"));
+			assert(choose(twins, 3, value, NULL) == index);
+		}
+		xgpu_gpu_setting(twins, 3, 3, value, sizeof(value));
+		assert(!value[0]);
+	}
 	puts("gpu choice: ok");
 	return 0;
 }

@@ -263,6 +263,9 @@ struct pc_menu_setting
 
 struct pc_menu_setting *pc_menu_setting_get(long definition_index);
 long pc_menu_setting_values(char const *setting, char const **values, long count);
+/* (display.gpu's devices, the renderer's: xgpu_backend.h) */
+int xgpu_backend_gpu_count(void);
+int xgpu_backend_gpus(int index, const char **value, const char **name);
 /* sdl_platform.c's: whether fullscreen can set the display's refresh rate */
 int platform_refresh_rates_settable(void);
 /* the menus' pointer, their latest click on an item and the latest place
@@ -3178,6 +3181,16 @@ static boolean settings_condition_term(struct widget_instance *list, char const 
 			(halo_temporal_dlss_drawn() && !strcmp(technique, "dlss")) ||
 			(halo_temporal_metalfx_drawn() && !strcmp(technique, "metalfx"));
 	}
+	/* (display.gpu: the renderer found devices to choose among, Vulkan's;
+	not the Mac's, whose one choice the system makes) */
+	if (!strcmp(name, "gpu_choice"))
+	{
+#if defined(__APPLE__) || defined(HALO_METAL)
+		return FALSE;
+#else
+		return xgpu_backend_gpu_count() > 0;
+#endif
+	}
 	/* (the renderer has ray queries: display.shadows "ray_traced") */
 	if (!strcmp(name, "ray_queries"))
 		return halo_world_ao_ray_queries() != 0;
@@ -4686,6 +4699,34 @@ static short settings_panel_wrap(struct settings_panel_wrapping *wrapping, struc
 	return wrapping->lines;
 }
 
+/* Graphics Card's device, which its row shows short (menu_tags.c's
+pc_menu_gpu_short_name), by its whole name in the panel, in capitals */
+static void settings_gpu_full_name(struct widget_instance *spinner, wchar_t *value)
+{
+	struct pc_menu_setting *setting = settings_setting_of(spinner);
+	short selected = spinner->parameters.list.selected_index;
+	char const *device_value, *name;
+	char text[SETTINGS_PANEL_VALUE_LENGTH];
+	int index, chosen;
+
+	if (!setting || strcmp(setting->setting, "display.gpu") || selected < 0 || selected >= setting->value_count)
+		return;
+	for (index = 0; (chosen = xgpu_backend_gpus(index, &device_value, &name)) >= 0; index++)
+	{
+		long at;
+
+		if (strcmp(device_value, setting->values[selected]))
+			continue;
+		for (at = 0; name[at] && at < (long)sizeof(text) - 12; at++)
+			text[at] = name[at] >= 'a' && name[at] <= 'z' ? (char)(name[at] - 'a' + 'A') : name[at];
+		snprintf(text + at, sizeof(text) - (size_t)at, "%s", chosen ? " (IN USE)" : "");
+		for (at = 0; text[at]; at++)
+			value[at] = (wchar_t)(unsigned char)text[at];
+		value[at] = 0;
+		return;
+	}
+}
+
 static void settings_panel_show(struct widget_instance *list, short tab)
 {
 	struct widget_instance *panel = list->parameters.list.extended_description;
@@ -4775,6 +4816,7 @@ static void settings_panel_show(struct widget_instance *list, short tab)
 		{
 			settings_wide_copy(value, settings_widget_text(spinner, spinner->parameters.list.selected_index),
 				SETTINGS_PANEL_VALUE_LENGTH);
+			settings_gpu_full_name(spinner, value);
 		}
 		else if (settings_slider_of(row))
 		{

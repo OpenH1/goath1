@@ -329,6 +329,7 @@ static const uint32_t record_minimum[XGPU_STREAM_RECORD_TYPES] =
 	[XGPU_STREAM_DYNAMIC_LIGHTS_WORLD] = sizeof(struct xgpu_stream_dynamic_lights_world),
 	[XGPU_STREAM_VR_SUPPORTED] = sizeof(struct xgpu_stream_reply_record),
 	[XGPU_STREAM_PREPARED] = sizeof(struct xgpu_stream_reply_record),
+	[XGPU_STREAM_GPUS] = sizeof(struct xgpu_stream_reply_record),
 	[XGPU_STREAM_PREPARE] = sizeof(struct xgpu_stream_record),
 	[XGPU_STREAM_VR_INITIALIZE] = sizeof(struct xgpu_stream_reply_record),
 	[XGPU_STREAM_VR_EYES] = sizeof(struct xgpu_stream_vr_eyes),
@@ -1256,6 +1257,19 @@ static int decode_record(struct host_render_decoder *decoder, const unsigned cha
 		host_load_trace("prepare.end", "wait_ms=%u", milliseconds);
 
 		answer(((const struct xgpu_stream_reply_record *)start)->reply, &milliseconds, sizeof(milliseconds));
+		break;
+	}
+	case XGPU_STREAM_GPUS:
+	{
+		struct xgpu_stream_gpus gpus;
+
+		memset(&gpus, 0, sizeof(gpus));
+		gpus.chosen = -1;
+		if (backend->gpus)
+			backend->gpus(context, &gpus);
+		if (gpus.count < 0 || gpus.count > XGPU_STREAM_GPUS_MOST)
+			gpus.count = 0;
+		answer(((const struct xgpu_stream_reply_record *)start)->reply, &gpus, sizeof(gpus));
 		break;
 	}
 	case XGPU_STREAM_VR_SUPPORTED:

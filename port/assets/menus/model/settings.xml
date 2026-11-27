@@ -562,6 +562,11 @@
 			<choice shown="MSAA 2X (BEST)" value="msaa2x"/>
 			<choice shown="MSAA 4X" value="msaa4x"/>
 		</row>
+		<row key="gpu" kind="choice" setting="display.gpu" label="GPU (RESTART)" crumb="VIDEO › ADVANCED GRAPHICS" search="gpu nvidia radeon vulkan card graphics" when="computer" enabled="gpu_choice+!vr">
+			<help>The graphics card that draws the game, from the next start. Auto prefers a separate graphics card over built-in graphics.</help>
+			<note>Not on Mac or in VR.</note>
+			<choice shown="AUTO" value="auto"/>
+		</row>
 		<row key="anisotropic_filtering" kind="choice" setting="display.anisotropic_filtering" label="TEXTURE FILTERING" crumb="VIDEO › ADVANCED GRAPHICS" search="anisotropic af">
 			<help>Keeps floors and walls sharp into the distance, at a small cost. Off looks as the Xbox did: surfaces blur a few steps away.</help>
 			<choice shown="OFF" value="0"/>
@@ -587,7 +592,7 @@
 			<choice shown="ON" value="true"/>
 			<choice shown="OFF" value="false"/>
 		</row>
-		<section key="section_9" title="LIGHTING"/>
+		<section key="section_10" title="LIGHTING"/>
 		<row key="shadow_resolution" kind="choice" setting="display.shadow_resolution" label="SHADOW QUALITY" crumb="VIDEO › ADVANCED GRAPHICS" search="shadows" search_choices="xbox medium high ultra">
 			<help>How sharp the shadows of characters, vehicles and weapons are. Xbox is the original's soft, blocky shadow; each step up is crisper, and costs a little more of the graphics card.</help>
 			<choice shown="XBOX" value="128"/>

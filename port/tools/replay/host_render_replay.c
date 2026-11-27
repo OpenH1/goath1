@@ -1536,7 +1536,7 @@ static void skip_write(uint32_t position, uint32_t size)
 static int synchronous(uint32_t type)
 {
 	return type == XGPU_STREAM_INITIALIZE || type == XGPU_STREAM_READ_TARGET || type == XGPU_STREAM_VR_SUPPORTED ||
-		type == XGPU_STREAM_VR_INITIALIZE;
+		type == XGPU_STREAM_VR_INITIALIZE || type == XGPU_STREAM_GPUS;
 }
 
 /* everything written played (the render thread is waiting for more) */
@@ -3516,7 +3516,7 @@ static const char *const record_type_names[XGPU_STREAM_RECORD_TYPES] =
 	[XGPU_STREAM_HDR_PEAK_NITS] = "hdr_peak_nits",
 	[XGPU_STREAM_HDR_GAMUT] = "hdr_gamut",
 	[XGPU_STREAM_PASS_TIMES] = "pass_times", [XGPU_STREAM_MOTION] = "motion", [XGPU_STREAM_RT_SHADOWS] = "rt_shadows",
-	[XGPU_STREAM_CONTACT_SHADOWS] = "contact_shadows",
+	[XGPU_STREAM_CONTACT_SHADOWS] = "contact_shadows", [XGPU_STREAM_GPUS] = "gpus",
 	[XGPU_STREAM_WORLD_AO_WINDOW] = "world_ao_window", [XGPU_STREAM_WORLD_AO_FIELD] = "world_ao_field",
 	[XGPU_STREAM_PIPELINE_STAND_IN] = "pipeline_stand_in", [XGPU_STREAM_CATEGORY] = "category",
 	[XGPU_STREAM_DYNAMIC_LIGHTS_WORLD] = "dynamic_lights_world", [XGPU_STREAM_WORLD_AO_PREPASS] = "world_ao_prepass",

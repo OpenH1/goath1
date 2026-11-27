@@ -278,6 +278,10 @@ struct xgpu_vulkan_capabilities
 	char device[96];
 };
 void xgpu_vulkan_capabilities(struct xgpu_vulkan_capabilities *capabilities);
+/* the usable devices the game could draw with, found as the device was made
+(display.gpu, Settings' GRAPHICS CARD: the stream's GPUS answer; none in VR) */
+struct xgpu_stream_gpus;
+void xgpu_vulkan_gpus(struct xgpu_stream_gpus *gpus);
 
 /* ---------- images
 
