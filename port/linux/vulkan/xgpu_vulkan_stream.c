@@ -59,6 +59,7 @@ its swapchain.
 #include "xgpu_vulkan_contact_shadows.h"
 #include "xgpu_vulkan_effects.h"
 #include "xgpu_vulkan_loading.h"
+#include "xgpu_vulkan_lt.h"
 #include "xgpu_vulkan_post.h"
 #include "xgpu_vulkan_post_shaders.h"
 #include "xgpu_vulkan_fsr.h"
@@ -3026,6 +3027,8 @@ cells as the GPU has them: the stream's changes applied, with the lights
 the world is walked for (made each frame) */
 static struct xgpu_dynamic_lights_world lights_world;
 static unsigned char *lights_cells;
+/* (and the frame's block, for HALO_LT_E1's pass: xgpu_vulkan_lt.c) */
+static struct xgpu_dynamic_lights_block lights_block;
 
 /* HALO_LIGHTS_WORLD_VERIFY: each frame's walk mask found again by testing
 each cluster's boxes in turn (without their groups), and a difference
@@ -3085,6 +3088,7 @@ static void dynamic_lights_cells(const struct xgpu_stream_dynamic_lights_block *
 	uint32_t first = DYNAMIC_LIGHTS_CELLS_SIZE, end = 0, part;
 	uint32_t walk[8];
 
+	memcpy(&lights_block, block, sizeof(lights_block));
 	if (!lights_cells)
 		lights_cells = calloc(1, DYNAMIC_LIGHTS_CELLS_SIZE);
 	if (!lights_cells)
@@ -4896,8 +4900,10 @@ static void stream_world_ao_prepass(void *context, const struct xgpu_stream_worl
 			(XGPU_DYNAMIC_LIGHTS_GRID_X * XGPU_DYNAMIC_LIGHTS_GRID_Y * XGPU_DYNAMIC_LIGHTS_GRID_Z +
 			XGPU_DYNAMIC_LIGHTS_SHADOWED) * 16) : NULL);
 		/* (display.rt_bounce: the dynamic lights' bounced light, from the
-		pre-pass's inputs: xgpu_vulkan_gi.c) */
-		xgpu_vulkan_rt_bounce_draw(prepass.inputs, &record->pass);
+		pre-pass's inputs: xgpu_vulkan_gi.c; HALO_LT_E1, the flashlight's
+		traced direct light in its place: xgpu_vulkan_lt.c) */
+		if (!xgpu_vulkan_lt_draw(prepass.inputs, &record->pass, lights_cells, &lights_block))
+			xgpu_vulkan_rt_bounce_draw(prepass.inputs, &record->pass);
 		/* (the surfaces' walk, played next, from the pre-pass's depth) */
 		if (prepass.primed_depth)
 			prepass_prime_end(record->replay);
