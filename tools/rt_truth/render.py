@@ -125,11 +125,11 @@ def best_fit(samples, keep, static_means, log):
 
 def render_scene(folder, out=None, spp_pass=8, target=0.01, max_spp=65536, max_minutes=60.0,
                  min_passes=4, gpu_lock=os.path.expanduser("~/goat-rig/locks/gpu.lock"),
-                 log=print, flashlight_scale=None):
+                 log=print, flashlight_scale=None, flashlight_emitter=None):
     folder = Path(folder)
     out = Path(out) if out else folder / "truth"
     from . import VARIANT as variant
-    sc = Scene(folder, flashlight_scale)
+    sc = Scene(folder, flashlight_scale, flashlight_emitter=flashlight_emitter)
     t0 = time.time()
     groups = [g for g in Scene.GROUPS if sc.group_has_light(g)]
     statics = [g for g in groups if g in Scene.STATIC_GROUPS]
@@ -138,7 +138,7 @@ def render_scene(folder, out=None, spp_pass=8, target=0.01, max_spp=65536, max_m
     samples = sc.lightmap_samples(scenes[groups[-1]])
     # The same light on white Lambertian surfaces (same normal maps and cutouts): its direct part is the
     # demodulated irradiance the real-time comparison uses.
-    wsc = Scene(folder, flashlight_scale, white=True)
+    wsc = Scene(folder, flashlight_scale, white=True, flashlight_emitter=flashlight_emitter)
     whites = {g: mi.load_dict(wsc.build(g)) for g in groups}
     acc_w = {g: np.zeros((len(samples["valid"]), len(samples["valid"][0]), 3)) for g in groups}
     grey = [m["index"] for m in sc.material_summaries.values() if "placeholder" in m.get("albedo", "")]
@@ -322,18 +322,19 @@ def compare(original, mood, path, placeholders):
     canvas.save(path)
 
 
-def render_flashlight_direct(folder, out=None, flashlight_scale=None, spp_pass=8, target=0.002, max_spp=4096,
+def render_flashlight_direct(folder, out=None, flashlight_scale=None, flashlight_emitter=None, spp_pass=8, target=0.002, max_spp=4096,
                              max_minutes=30.0, gpu_lock=os.path.expanduser("~/goat-rig/locks/gpu.lock"), log=print):
     """Only truth_parts/direct_flashlight.exr: the flashlight's one-bounce light, converged (for comparing
     the real-time flashlight before the whole truth)."""
     folder = Path(folder)
     out = Path(out) if out else folder / "truth"
-    sc = Scene(folder, flashlight_scale)
+    sc = Scene(folder, flashlight_scale, flashlight_emitter=flashlight_emitter)
     if not sc.lights_of("flashlight"):
         raise SystemExit("%s: no flashlight in lights.json" % folder)
     scene = mi.load_dict(sc.build("flashlight"))
-    white = mi.load_dict(Scene(folder, flashlight_scale, white=True).build("flashlight"))
-    flat = mi.load_dict(Scene(folder, flashlight_scale, white=True, bump=False).build("flashlight"))
+    white = mi.load_dict(Scene(folder, flashlight_scale, white=True, flashlight_emitter=flashlight_emitter).build("flashlight"))
+    flat = mi.load_dict(Scene(folder, flashlight_scale, white=True, bump=False,
+                              flashlight_emitter=flashlight_emitter).build("flashlight"))
     acc_f = 0.0
     H, W = int(sc.camera["height"]), int(sc.camera["width"])
     acc_w = np.zeros((H, W, 3))

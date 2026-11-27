@@ -66,6 +66,8 @@ class HaloLight(mi.Emitter):
     def __init__(self, props):
         mi.Emitter.__init__(self, props)
         self.position = _vec(props, "position")
+        # Where the gel and cone are projected from (the game's drawn light); light leaves `position`.
+        self.gel_origin = _vec(props, "gel_origin", self.position)
         self.intensity = _vec(props, "intensity")
         self.kind = props.get("kind", "point")
         self.distance_mode = props.get("distance_mode", "inverse_square")
@@ -173,6 +175,10 @@ class HaloLight(mi.Emitter):
             return inv * dr.square(dr.clip(1.0 - q * q, 0.0, 1.0))
         return inv
 
+    def _profile_dir(self, p_recv):
+        g = mi.Point3f(self.gel_origin)
+        return dr.normalize(p_recv - g)
+
     def sample_direction(self, it, sample, active=True):
         p = mi.Point3f(self.position)
         d = p - it.p
@@ -188,13 +194,25 @@ class HaloLight(mi.Emitter):
         ds.d = d / dist
         ds.dist = dist
         ds.emitter = mi.EmitterPtr(self)
-        value = self.radiant_intensity(-ds.d, active) * self.distance_factor(dist2)
+        value = self.intensity_toward(it.p, -ds.d, active) * self.distance_factor(dist2)
         return ds, dr.select(active, value, 0.0)
+
+    def intensity_toward(self, p_recv, w_from_emitter, active):
+        """The angular profile (cone, gel) looked up from the gel origin; the emitter's own cosine
+        (angular mode "cos") from the emitter."""
+        if self.gel_origin == self.position:
+            return self.radiant_intensity(w_from_emitter, active)
+        f = self.radiant_intensity(self._profile_dir(p_recv), active)
+        if self.angular_mode == "cos":
+            lz_g = dr.dot(self._profile_dir(p_recv), self.ez)
+            lz_e = dr.dot(w_from_emitter, self.ez)
+            f = f * dr.select(lz_g > 0, dr.maximum(lz_e, 0.0) / lz_g, 0.0)
+        return f
 
     def eval_direction(self, it, ds, active=True):
         d = mi.Point3f(self.position) - it.p
         dist2 = dr.squared_norm(d)
-        return self.radiant_intensity(-d / dr.sqrt(dist2), active) * self.distance_factor(dist2)
+        return self.intensity_toward(it.p, -d / dr.sqrt(dist2), active) * self.distance_factor(dist2)
 
     def pdf_direction(self, it, ds, active=True):
         return mi.Float(0.0)

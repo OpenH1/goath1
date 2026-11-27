@@ -163,8 +163,9 @@ def luminance(img):
 class Scene:
     """One scene folder, loaded; `notes` collects every placeholder and every choice made from free text."""
 
-    def __init__(self, folder, flashlight_scale=None, white=False, bump=True):
+    def __init__(self, folder, flashlight_scale=None, white=False, bump=True, flashlight_emitter=None):
         halo_plugins.register()
+        self.flashlight_emitter = flashlight_emitter
         self.bump = bump
         self.flashlight_scale = flashlight_scale
         # white: every surface a white Lambertian (albedo 1, no specular) with the same normal maps and
@@ -762,6 +763,14 @@ class Scene:
                 # a point here: the disk changes 1/d^2 by under 1e-5 past 0.1 wu), the gel its angular
                 # profile, no cone.
                 d["angular_mode"] = "cos"
+                emit = L.get("emitter_position") or self.flashlight_emitter
+                if emit:
+                    # The light leaves the lamp on the weapon; the gel stays projected from the drawn light
+                    # (the game's projection point, 0.5 wu behind the eye), as the real-time pass does.
+                    d["gel_origin"] = list(d["position"])
+                    d["position"] = [float(c) for c in emit]
+                    self.note_once("flashlight emitter at the lamp %s, gel projected from the drawn light %s" % (
+                        d["position"], d["gel_origin"]))
             out.append(d)
             self.light_summaries[str(L.get("tag")) + str(L["position"])] = {
                 "tag": L.get("tag"), "source": L.get("source"), "kind": d["kind"], "distance": dm,
