@@ -263,6 +263,8 @@ struct pc_menu_setting
 
 struct pc_menu_setting *pc_menu_setting_get(long definition_index);
 long pc_menu_setting_values(char const *setting, char const **values, long count);
+/* (display.gpu's devices, the renderer's: xgpu_backend.h) */
+int xgpu_backend_gpu_count(void);
 /* sdl_platform.c's: whether fullscreen can set the display's refresh rate */
 int platform_refresh_rates_settable(void);
 /* the menus' pointer, their latest click on an item and the latest place
@@ -3177,6 +3179,16 @@ static boolean settings_condition_term(struct widget_instance *list, char const 
 		return (halo_temporal_upscale_drawn() && !strcmp(technique, "fsr")) ||
 			(halo_temporal_dlss_drawn() && !strcmp(technique, "dlss")) ||
 			(halo_temporal_metalfx_drawn() && !strcmp(technique, "metalfx"));
+	}
+	/* (display.gpu: the renderer found devices to choose among, Vulkan's;
+	not the Mac's, whose one choice the system makes) */
+	if (!strcmp(name, "gpu_choice"))
+	{
+#if defined(__APPLE__) || defined(HALO_METAL)
+		return FALSE;
+#else
+		return xgpu_backend_gpu_count() > 0;
+#endif
 	}
 	/* (the renderer has ray queries: display.shadows "ray_traced") */
 	if (!strcmp(name, "ray_queries"))

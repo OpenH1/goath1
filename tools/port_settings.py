@@ -526,7 +526,7 @@ SETTINGS_WIDE_SPINNER = 120
 SEGMENTED_MOST = 3
 SEGMENT_PAD, SEGMENT_LEAST, SEGMENT_GAP, SEGMENT_HEIGHT = 8, 48, 4, 18
 SEGMENT_NOT = {"display.vrr", "display.resolution", "display.window_size", "display.refresh_rate",
-               "audio.output_device", "audio.input_device", "display.benchmark_map"}
+               "audio.output_device", "audio.input_device", "display.benchmark_map", "display.gpu"}
 
 # ---------- the tall layout (the menu engine's: docs/menu_engine.md, "Deliberate differences")
 #
@@ -956,6 +956,15 @@ PAGES = {
             ("REFRESH RATE", "display.refresh_rate", [("AUTO", "0")],
              "How many times a second the display shows a picture while the game is fullscreen. Auto keeps the "
              "display's own. VSync and Max FPS's Auto follow it.", "computer"),
+            # (display.gpu: port/linux/game/menu_tags.c adds the devices the
+            # renderer found as it started, each set by its name, or its index
+            # beside an identical card; dimmed where the game has no choice:
+            # SETTINGS_ROW_ENABLED)
+            (f"GRAPHICS CARD {RESTART}", "display.gpu", [("AUTO", "auto")],
+             "The card that draws the game, from the next start. Auto takes a discrete card before an integrated "
+             "one, then the one your monitor is plugged into. Only cards Vulkan sees are listed: for a missing "
+             "one, reinstall its driver or set Windows' Graphics setting to High performance.|In VR the "
+             "headset's software chooses; a Mac has one choice.", "computer"),
             ("FRAME RATE & SYNC ›", None, _page_screen(*FRAME_RATE),
              "VSync, variable refresh (G-SYNC, FreeSync), the most frames a second and low latency.", None),
             ("FIELD OF VIEW", "display.fov", FIELDS_OF_VIEW,
@@ -2333,7 +2342,8 @@ SETTINGS_SEARCH_WORDS = {
     "dpi": ["mouse_sensitivity"],
     "fps": ["max_fps", "menu_max_fps", "perf_overlay", "frame_rate_sync"],
     "framerate": ["frame_rate_sync", "max_fps", "menu_max_fps", "perf_overlay"],
-    "frametime": ["perf_overlay"], "gpu": ["perf_overlay"], "stats": ["perf_overlay"],
+    "frametime": ["perf_overlay"], "gpu": ["perf_overlay", "gpu"], "stats": ["perf_overlay"],
+    "nvidia": ["gpu"], "radeon": ["gpu"], "vulkan": ["gpu"],
     "gsync": ["vrr", "vrr_cap_margin"], "freesync": ["vrr", "vrr_cap_margin"], "vrr": ["vrr"],
     "aa": ["anti_aliasing", "anti_aliasing_msaa", "anti_aliasing_android"],
     "shadows": ["shadow_resolution", "shadows", "contact_shadows"],
@@ -2469,7 +2479,7 @@ def settings_crumbs() -> dict:
 
 
 # the settings whose rows have the wider spinner (a device's name)
-WIDE_SETTINGS = {"audio.output_device", "audio.input_device", "streamer.slurs", "streamer.swearing",
+WIDE_SETTINGS = {"audio.output_device", "audio.input_device", "display.gpu", "streamer.slurs", "streamer.swearing",
                  "streamer.insults"}
 
 # Teamplay Options' rows of the port's (_teamplay_options_extras): the
@@ -2943,6 +2953,10 @@ SETTINGS_ROW_ENABLED = {
     # (the subtitles: MCC's install found, its pack's; the language while
     # they are on: subtitles.c's subtitles_available)
     "subtitles": "mcc_subtitles", "subtitles_language": "mcc_subtitles+subtitles=true",
+    # (display.gpu: the renderer found devices to choose from, Vulkan's
+    # outside VR, whose headset's runtime gives its own; not the Mac's:
+    # settings_condition_term's gpu_choice)
+    "gpu": "gpu_choice+!vr",
     # (the headshot indicator's dot is in the high-res reticles: Interface's
     # HIGH-RES HUD, menu_functions.c's high_res_hud_on)
     "headshot_indicator": "high_res_hud_on",

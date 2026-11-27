@@ -74,6 +74,9 @@ int platform_display_refresh_rates(long *rates, int maximum);
 int platform_window_sizes(long *widths, long *heights, int maximum);
 /* (sdl_platform.c's PLATFORM_AUDIO_DEVICE_NAME_SIZE) */
 int platform_audio_devices(int recording, char (*names)[128], int maximum);
+/* (display.gpu's devices, the renderer's: xgpu_backend.h) */
+int xgpu_backend_gpu_count(void);
+int xgpu_backend_gpus(int index, const char **value, const char **name);
 /* (sdl_platform.h's PLATFORM_VRR_*) */
 int platform_vrr_detected(void);
 
@@ -1446,7 +1449,8 @@ window sizes that fit it in place of Window Size's own; its refresh rates
 after Refresh Rate's own (AUTO); Audio Setup's
 devices SDL finds, after their SYSTEM DEFAULT, each set by its name and
 shown by it (in capitals, as the menus' words are, and cut short); and the
-benchmark's maps in the maps folder, after BLOOD GULCH */
+benchmark's maps in the maps folder, after BLOOD GULCH; and Graphics
+Card's devices, after AUTO */
 static long spinner_expand(char const *setting, boolean values, char const **pieces, long count)
 {
 	long widths[MAXIMUM_STRINGS], heights[MAXIMUM_STRINGS];
@@ -1475,6 +1479,41 @@ static long spinner_expand(char const *setting, boolean values, char const **pie
 	maps folder after its own, Blood Gulch, benchmark.c's) */
 	if (setting && !strcmp(setting, "display.benchmark_map"))
 		return benchmark_map_choices(values, pieces, count, MAXIMUM_STRINGS);
+
+	/* (Video's Graphics Card: the devices the renderer found as it started,
+	after AUTO, each set by display.gpu's value that chooses it, its name
+	(or its index beside an identical card), and shown by its name in
+	capitals, the one it draws with marked IN USE) */
+	if (setting && !strcmp(setting, "display.gpu"))
+	{
+		long most = xgpu_backend_gpu_count();
+
+		for (index = 0; index < most && count < MAXIMUM_STRINGS; index++)
+		{
+			char const *value, *name;
+			char shown[96];
+			char *piece;
+			int chosen = xgpu_backend_gpus((int)index, &value, &name);
+			long at;
+
+			if (chosen < 0)
+				break;
+			if (values)
+				snprintf(shown, sizeof(shown), "%s", value);
+			else
+			{
+				for (at = 0; name[at] && at < 63; at++)
+					shown[at] = name[at] >= 'a' && name[at] <= 'z' ? (char)(name[at] - 'a' + 'A') : name[at];
+				snprintf(shown + at, sizeof(shown) - (size_t)at, "%s", chosen ? " (IN USE)" : "");
+			}
+			piece = allocate((long)strlen(shown) + 1);
+			if (!piece)
+				break;
+			strcpy(piece, shown);
+			pieces[count++] = piece;
+		}
+		return count;
+	}
 
 	if (setting && (!strcmp(setting, "audio.output_device") ||
 		!strcmp(setting, "audio.input_device")))

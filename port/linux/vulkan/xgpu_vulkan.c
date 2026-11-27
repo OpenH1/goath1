@@ -1257,6 +1257,9 @@ static struct
 	/* an NVIDIA or AMD adapter Windows lists that Vulkan does not (#1283;
 	physical_choose's; "" none) */
 	char adapter_missing[64];
+	/* the usable devices physical_choose found (none in VR, whose runtime
+	gives its own), for Settings' GRAPHICS CARD: xgpu_vulkan_gpus */
+	struct xgpu_stream_gpus gpus;
 	int validation;
 	uint32_t validation_messages;
 
@@ -11240,6 +11243,22 @@ static int physical_choose(const struct xgpu_vulkan_options *options)
 			vk.surface ? " that presents to the window" : "", count);
 		return 0;
 	}
+	/* (the usable devices, in the loader's order, each with display.gpu's
+	value that chooses it: its name, or its index beside a twin) */
+	memset(&vk.gpus, 0, sizeof(vk.gpus));
+	vk.gpus.chosen = -1;
+	for (index = 0; index < count && !options->choose_physical; index++)
+	{
+		int32_t at = vk.gpus.count;
+
+		if (!gpus[index].usable || at >= XGPU_STREAM_GPUS_MOST)
+			continue;
+		xgpu_gpu_setting(gpus, (int)count, (int)index, vk.gpus.values[at], sizeof(vk.gpus.values[at]));
+		snprintf(vk.gpus.names[at], sizeof(vk.gpus.names[at]), "%s", properties[index].deviceName);
+		if ((int)index == chosen)
+			vk.gpus.chosen = at;
+		vk.gpus.count++;
+	}
 	vk.gpu_index = (uint32_t)chosen;
 	vk.gpu_count = count;
 	vk.queue_family = families_chosen[chosen];
@@ -11249,6 +11268,11 @@ static int physical_choose(const struct xgpu_vulkan_options *options)
 	vkGetPhysicalDeviceMemoryProperties(vk.physical, &vk.memory_properties);
 	vk.capabilities.gpu_timestamps = vk.timestamp_bits > 0 && vk.properties.limits.timestampPeriod > 0.0f;
 	return 1;
+}
+
+void xgpu_vulkan_gpus(struct xgpu_stream_gpus *gpus)
+{
+	*gpus = vk.gpus;
 }
 
 static int device_make(const struct xgpu_vulkan_options *options)
