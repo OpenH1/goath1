@@ -393,6 +393,13 @@ struct interpolated_camera
 	long anchor_tick;
 	long anchor_vehicle_index;
 	real_point3d anchor;
+	/* in a seat of any vehicle: its root node as the tick (seat_tick) left
+	it, and the unit's camera position in that frame (render_interpolation_
+	camera_anchors); seat_vehicle_index NONE in none */
+	long seat_tick;
+	long seat_vehicle_index;
+	real_matrix4x3 seat_frame;
+	real_point3d seat_anchor;
 	/* a view that moves in the frames' time (render_interpolation_camera_
 	timed): when each snapshot was taken (ticks, as interpolation_tick
 	counts them, and the fraction of the frame that took it), and the
@@ -4794,8 +4801,7 @@ static void render_interpolation_camera_anchors(void)
 		real_point3d anchor;
 
 		camera->anchor_vehicle_index = NONE;
-		if (!interpolated_substeps || !interpolated_objects)
-			continue;
+		camera->seat_vehicle_index = NONE;
 		unit_index = player_control_get_unit_index(local_player_index);
 		if (unit_index == NONE || !object_try_and_get_and_verify_type(unit_index, _object_mask_unit) ||
 			object_get(unit_index)->object.parent_object_index == NONE)
@@ -4803,6 +4809,22 @@ static void render_interpolation_camera_anchors(void)
 			continue;
 		}
 		vehicle_index = object_get_ultimate_parent(unit_index);
+		{
+			real_matrix4x3 const *root = (real_matrix4x3 const *)object_header_block_get(
+				vehicle_index, &object_get(vehicle_index)->object.node_matrices);
+			real_point3d seat_point;
+
+			if (basis_is_rotation(root))
+			{
+				unit_get_camera_position(unit_index, &seat_point);
+				point_in_frame(root, &seat_point, &camera->seat_anchor);
+				camera->seat_frame = *root;
+				camera->seat_tick = interpolation_tick;
+				camera->seat_vehicle_index = vehicle_index;
+			}
+		}
+		if (!interpolated_substeps || !interpolated_objects)
+			continue;
 		absolute_index = DATUM_INDEX_TO_ABSOLUTE_INDEX(vehicle_index);
 		if (absolute_index >= MAXIMUM_INTERPOLATED_OBJECTS)
 			continue;
@@ -4891,6 +4913,75 @@ static void render_interpolation_camera_at_tick_in_vehicle(
 	latest->position.z -= since.k;
 }
 
+/* The view of a local player in a seat of a vehicle that the micro lane's
+correction above does not take (a vehicle of the macro lane: a dropship
+flown by the AI or its script, a Warthog the AI drives; or any vehicle in
+a cinematic), in the first person or following it: the vehicle, when its
+root node was kept at the tick drawn (render_interpolation_camera_anchors);
+NONE for any other view, or at 30. The vehicle of the macro lane moves a
+whole tick at once, in the next tick's first sub-step: a frame slower than
+a sub-step, the first after the tick, may run it before it takes the
+view's snapshot, which was then a tick ahead of the vehicle drawn, and the
+next tick's was not, so that a frame rate below the sub-steps' (a frame
+slower than 17 ms at 60, 8 ms at 120) shook the view from the Pelican's
+seat in b30's flight in, ahead and back by up to a tick's motion */
+static long render_interpolation_camera_seat_vehicle(short local_player_index, long substep_vehicle_index)
+{
+	struct interpolated_camera *camera = &interpolated_cameras[local_player_index];
+	short perspective;
+	long unit_index;
+
+	if (interpolation_substep_count <= 1 || substep_vehicle_index != NONE ||
+		camera->seat_vehicle_index == NONE || camera->seat_tick != interpolation_tick)
+	{
+		return NONE;
+	}
+	perspective = director_get_perspective(local_player_index);
+	if (perspective != _director_perspective_first_person && perspective != _director_perspective_third_person)
+		return NONE;
+	unit_index = player_control_get_unit_index(local_player_index);
+	if (unit_index == NONE || !object_try_and_get_and_verify_type(unit_index, _object_mask_unit) ||
+		object_get(unit_index)->object.parent_object_index == NONE ||
+		object_get_ultimate_parent(unit_index) != camera->seat_vehicle_index)
+	{
+		return NONE;
+	}
+	return camera->seat_vehicle_index;
+}
+
+/* the observer (latest) as of the tick's end, where the vehicle its seat is
+in was then: taken back by how far the unit's camera position (what the
+first-person view stands at, and what the following one swings about) has
+moved with the vehicle since the tick left it. Only moved, not turned:
+where it looks, and which way the following view swings, are the player's
+aim, the world's */
+static void render_interpolation_camera_at_tick_in_seat(
+	struct interpolated_camera const *camera,
+	struct observer_result *latest)
+{
+	long vehicle_index = camera->seat_vehicle_index;
+	real_matrix4x3 const *now;
+	real_point3d at_tick, at_now;
+	real_vector3d since;
+
+	/* (as it is now, in the game: object_get_node_matrices gives the drawn
+	pose while a frame is drawn) */
+	now = (real_matrix4x3 const *)object_header_block_get(vehicle_index, &object_get(vehicle_index)->object.node_matrices);
+	if (!basis_is_rotation(now))
+		return;
+	point_from_frame(&camera->seat_frame, &camera->seat_anchor, &at_tick);
+	point_from_frame(now, &camera->seat_anchor, &at_now);
+	since.i = at_now.x - at_tick.x;
+	since.j = at_now.y - at_tick.y;
+	since.k = at_now.z - at_tick.z;
+	/* (so written that a difference not a number is none) */
+	if (!(since.i * since.i + since.j * since.j + since.k * since.k <= CAMERA_CUT_DISTANCE * CAMERA_CUT_DISTANCE))
+		return;
+	latest->position.x -= since.i;
+	latest->position.y -= since.j;
+	latest->position.z -= since.k;
+}
+
 /* (the frames) how far the view hanging on a vehicle of the micro lane is
 moved from where its snapshots' blend has it: its anchor as the vehicle's
 drawn frame places it (render_interpolation_substep_frame), from where the
@@ -4927,6 +5018,7 @@ static struct observer_result const *render_interpolation_blended_camera(
 	real t = interpolation_fraction;
 	long substep_unit_index;
 	long substep_vehicle_index;
+	long seat_vehicle_index;
 	real_vector3d offset;
 	/* (the frame's moment, in ticks as interpolation_tick counts them) */
 	double now = (double)interpolation_tick + (double)interpolation_fraction;
@@ -4940,6 +5032,7 @@ static struct observer_result const *render_interpolation_blended_camera(
 	timed = render_interpolation_camera_timed(local_player_index);
 	substep_unit_index = render_interpolation_camera_substep_unit(local_player_index);
 	substep_vehicle_index = render_interpolation_camera_substep_vehicle(local_player_index);
+	seat_vehicle_index = render_interpolation_camera_seat_vehicle(local_player_index, substep_vehicle_index);
 	/* A scripted camera that moves with an object (a cinematic's camera
 	point relative to a lifepod or dropship, or a unit's eyes in one) is
 	placed by the object as it stands after the last tick. Blended from its
@@ -5022,6 +5115,8 @@ static struct observer_result const *render_interpolation_blended_camera(
 			render_interpolation_camera_at_tick(substep_unit_index, &camera->latest);
 		if (substep_vehicle_index != NONE)
 			render_interpolation_camera_at_tick_in_vehicle(camera, &camera->latest);
+		if (seat_vehicle_index != NONE)
+			render_interpolation_camera_at_tick_in_seat(camera, &camera->latest);
 		/* Several ticks since the last snapshot (a long frame): the objects
 		are drawn between the last two ticks, so the camera's previous is
 		where it was a tick ago, as nearly as a steady move from the last
