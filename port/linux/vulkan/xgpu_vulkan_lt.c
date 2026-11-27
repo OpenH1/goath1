@@ -120,6 +120,10 @@ LT_SUN_ROW */
 #define LT_SUN_ROW XGPU_DYNAMIC_LIGHTS_MAXIMUM
 #define LT_SUNS 8
 #define LT_TABLE_ROWS (LT_SUN_ROW + LT_SUNS)
+#define LT_ONLY_IDS 8
+/* the suns' direct share of the lightmap: ~/dev/rt2-calibration.json's
+sun_power_scale (the truth helper's fit on b30) */
+#define LT_SUN_POWER_SCALE 0.488f
 enum
 {
 	LT_KIND_SKIP = -1,
@@ -162,7 +166,8 @@ static struct
 	int rows[2], ids_current, reservoir_current, reservoirs_valid;
 	/* the settings (read once): HALO_LT_ONLY, _HEROES, _RESTIR, _SUN,
 	_KIND_SCALE, _DROP */
-	int settings_read, only, heroes_on, restir_on, sun_on;
+	int settings_read, only, heroes_on, restir_on, sun_on, only_ids;
+	uint32_t only_id[LT_ONLY_IDS];
 	float kind_scale[4];
 	int drop_kind;
 } lt = { -1 };
@@ -427,11 +432,31 @@ static void lt_settings(void)
 	lt.settings_read = 1;
 	given = getenv("HALO_LT_ONLY");
 	lt.only = given && !strcmp(given, "flashlight") ? 1 : given && !strcmp(given, "others") ? 2 : 0;
+	/* (ids:<hex>,<hex>: those lights alone, by their id's low word, the
+	flashlight's E1 path left out; the truth's per-light parts) */
+	if (given && !strncmp(given, "ids:", 4))
+	{
+		const char *at = given + 4;
+
+		lt.only = 3;
+		while (*at && lt.only_ids < LT_ONLY_IDS)
+		{
+			char *end;
+
+			lt.only_id[lt.only_ids++] = (uint32_t)strtoul(at, &end, 16);
+			at = *end == ',' ? end + 1 : end;
+			if (end == at && *at != ',')
+				break;
+		}
+	}
 	lt.heroes_on = !getenv("HALO_LT_HEROES") || strcmp(getenv("HALO_LT_HEROES"), "0");
 	lt.restir_on = !getenv("HALO_LT_RESTIR") || strcmp(getenv("HALO_LT_RESTIR"), "0");
 	lt.sun_on = !getenv("HALO_LT_SUN") || strcmp(getenv("HALO_LT_SUN"), "0");
 	for (kind = 0; kind < 4; kind++)
 		lt.kind_scale[kind] = -1.0f;
+	/* (the suns' k: the lightmap's direct share's, ~/dev/rt2-calibration.json's
+	sun_power_scale, whatever k the record was given) */
+	lt.kind_scale[3] = LT_SUN_POWER_SCALE;
 	given = getenv("HALO_LT_KIND_SCALE");
 	while (given && *given)
 	{
@@ -572,6 +597,15 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 			block->color[row][2] > 0.0f))
 			continue;
 		light = lt_record(list, listed, position);
+		if (lt.only == 3)
+		{
+			int kept = 0;
+
+			for (index = 0; light && index < lt.only_ids; index++)
+				kept |= light->id[0] == lt.only_id[index];
+			if (!kept)
+				continue;
+		}
 		if (light)
 		{
 			if (light->flags & XGPU_LT_LIGHT_MODELS_ONLY)
@@ -622,7 +656,7 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 		}
 		t[4][3] = (float)kind;
 	}
-	for (index = 0; index < listed && suns < LT_SUNS && lt.sun_on; index++)
+	for (index = 0; index < listed && suns < LT_SUNS && lt.sun_on && lt.only != 3; index++)
 	{
 		const struct xgpu_stream_lt_light *light = &list[index];
 		float (*t)[4] = lt.texels[LT_SUN_ROW + suns];
@@ -675,7 +709,7 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 	memcpy(params->grid[1], block->grid[1], sizeof(params->grid[1]));
 	params->lights[0] = lt.table ? rows : 0;
 	params->lights[1] = lt.table ? suns : 0;
-	params->lights[2] = (lt.only == 2 ? 0 : LT_LIGHTS_FLASHLIGHT) | (lt.heroes_on ? LT_LIGHTS_HEROES : 0) |
+	params->lights[2] = (lt.only >= 2 ? 0 : LT_LIGHTS_FLASHLIGHT) | (lt.heroes_on ? LT_LIGHTS_HEROES : 0) |
 		(lt.restir_on ? LT_LIGHTS_RESTIR : 0);
 }
 
