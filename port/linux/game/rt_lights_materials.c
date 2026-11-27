@@ -991,9 +991,13 @@ static void rtlm_material_environment(FILE *file, struct rtlm_shader_environment
 		"\"dynamic_mirror\":%s}", shader->reflection.lightmap_brightness_scale,
 		shader->reflection.view_perpendicular_brightness, shader->reflection.view_parallel_brightness,
 		TEST_FLAG(shader->reflection.flags, 0) ? "true" : "false");
-	fprintf(file, ",\"alpha_test\":%s,\"two_sided\":false,\"two_sided_from\":\"shader_environment has no two-sided "
+	/* (the alpha test: alpha > 0x7F of the bump map at its scale, or of the base map where the bump map is
+	the specular mask, flag bit 1: rasterizer_xbox_environment.c, world_rt_game.c's material_describe) */
+	fprintf(file, ",\"alpha_test\":%s,\"bump_map_is_specular_mask\":%s,\"alpha_test_map\":\"%s\","
+		"\"two_sided\":false,\"two_sided_from\":\"shader_environment has no two-sided "
 		"flag; every environment pass culls (D3DCULL_CCW, rasterizer_xbox_environment.c)\"",
-		TEST_FLAG(shader->flags, 0) ? "true" : "false");
+		TEST_FLAG(shader->flags, 0) ? "true" : "false", TEST_FLAG(shader->flags, 1) ? "true" : "false",
+		TEST_FLAG(shader->flags, 1) ? "base_map" : "bump_map");
 	fprintf(file, ",\"self_illumination\":{");
 	rtlm_map(file, "map", self->map.index, TRUE, FALSE);
 	fprintf(file, ",\"map_scale\":%.6g,\"primary_on\":", self->map_scale);
