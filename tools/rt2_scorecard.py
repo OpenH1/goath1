@@ -438,7 +438,8 @@ def shader(args):
 
     try:
         service = Service(host, replay, f"{RECORDINGS}/{recording}", env, "shared")
-        home = subprocess.run(["ssh", target(host), "echo $HOME"], capture_output=True, text=True).stdout.strip()
+        home = subprocess.run(["ssh", target(host), f"mkdir -p ~/{remote} && echo $HOME"], capture_output=True,
+                              text=True).stdout.strip()
         if "reload" not in service.ask({"cmd": "info"}).get("capabilities", []):
             raise SystemExit("rt2_scorecard shader: this replay has no reload")
         seen = None
