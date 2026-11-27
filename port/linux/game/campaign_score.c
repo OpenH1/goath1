@@ -921,6 +921,12 @@ void campaign_score_checkpoint_saved(
 {
 	if (!campaign_score.keeping)
 		return;
+	if (campaign_score.checkpoint.team_score != campaign_score.state.team_score)
+	{
+		error(_error_log, "campaign score: a checkpoint at %ld (player 1: %ld, %ld kills, %ld headshots)",
+			campaign_score.state.team_score, campaign_score.state.players[0].score,
+			campaign_score.state.players[0].kills, campaign_score.state.players[0].headshots);
+	}
 	campaign_score.checkpoint = campaign_score.state;
 	csmemset(campaign_score.deaths_since_checkpoint, 0, sizeof(campaign_score.deaths_since_checkpoint));
 	csmemset(campaign_score.betrayals_since_checkpoint, 0, sizeof(campaign_score.betrayals_since_checkpoint));

@@ -2067,6 +2067,24 @@ game (its numbers pending: `port/linux/net_changes/vehicle-hijack.txt`):
   is. `network_objects_set_seat` puts a unit in a seat beside an enemy
   (the jacker beside a Warthog's enemy gunner) as the host has it.
 
+### Campaign scores
+
+Campaign scoring (`port/linux/game/campaign_score.c`, `campaign.scoring`, on
+by default) only watches the game: the host keeps the score and nothing of
+the simulation changes. A co-op host sends it to its OpenH1 clients
+(`_distributed_message_campaign_score`, reliably, `network_campaign_score.c`;
+its numbers pending: `port/linux/net_changes/campaign-score.txt`): at most
+each 8 ticks, a header (a format byte, the option and the level's end as
+flags, the player count, the difficulty's multiplier in hundredths, the
+team's score) with the tallies of the players that changed (56 bytes each)
+and the events since (12 bytes each), at most 16 players and 32 events a
+message, more messages in order for more. Every player goes to a client
+that has had none of this map's, after a checkpoint's revert, and every 10
+seconds. A client takes it only from the host's stream in an OpenH1 game
+under way; one whose host sends none (a Legacy game, an OpenCE host) shows
+no score, and an OpenCE client is sent none. Split-screen players share the
+host's state.
+
 ### Pings
 
 A player pings what they aim at (`controls.ping`, the middle mouse button;
