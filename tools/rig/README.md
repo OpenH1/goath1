@@ -118,7 +118,7 @@ instance, `HALO_STRESS_TEST=uncapped`) it is the solo stress test.
   has its own address, 127.0.0.200, .201 and so on (never 127.0.0.1, which the game takes as this computer only),
   and all share port 25150. The broadcast is 127.255.255.255 plus the peers. Map share and seed caps are lifted
   (20480 KB/s), and the random seed is fixed. A run that draws holds the machine's GPU lock
-  (`~/goat-rig/locks/gpu.lock`; older scripts link their lock to it). It never starts while the machine owner's
+  (`~/goat-rig/locks/gpu.lock`; older scripts link their lock to it). A run for pictures, not timings, takes `--shared`: up to 3 such runs draw at once, holding the lock shared, while a measuring run (without it) still has the GPU alone. It never starts while the machine owner's
   own game (`~/Applications/OpenH1/bin/openh1`) runs, and stops if that game starts. Afterwards it keeps `halo.log`, `debug.txt`, the pictures (as PNG),
   `video.mp4` and `summary.txt` (exit codes, failed asserts, peak RSS) and deletes the rest unless you pass
   `--keep`. The summary (printed too) also gives the known failure signs from each game's log: `FAIL menus: not
