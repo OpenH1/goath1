@@ -35,7 +35,7 @@ the history an exponential average (1/64) from the start (checking: the
 negative controls). HALO_LT_DENOISE_MOTION_VIEW=1 (checking) makes the
 result each pixel's guides' motion less the cameras' reprojection (rg, in
 pixels; b 1 where the guides carry motion, 2 where not, 0 nothing drawn),
-the spatial stage left out; =2 the guides' motion itself (pixels).
+the spatial stage left out; =2 the guides' motion itself (pixels) and, in b, the pixel's distance negated.
 HALO_LT_DENOISE_DUMP ("1-5,30,120": the denoiser's draws counted from its
 first) writes the result at those draws into HALO_LT_DENOISE_DUMP_DIR (the
 current folder by default) as denoise_<draw>.rgba16f, E1's dumps' form (a
@@ -90,8 +90,8 @@ enum
 	DENOISE_FIRST = 4,
 	DENOISE_CAMERA_ONLY = 8,
 	DENOISE_EMA = 16,
-	DENOISE_MOTION_VIEW = 32,
-	DENOISE_MOTION_RAW = 64,
+	DENOISE_MOTION_VIEW = 128,
+	DENOISE_MOTION_RAW = 256,
 };
 
 static struct

@@ -16,8 +16,8 @@
 #define EMA 16
 // (checking: the temporal stage writes the guides' motion less the cameras' reprojection, in pixels; with
 // MOTION_RAW too the motion itself)
-#define MOTION_VIEW 32
-#define MOTION_RAW 64
+#define MOTION_VIEW 128
+#define MOTION_RAW 256
 
 // the draw set's uniforms: struct xgpu_world_ao_pass, then (at 1024) xgpu_vulkan_denoise.c's struct denoise_params
 layout(set = 0, binding = 1, std140) uniform Pass
