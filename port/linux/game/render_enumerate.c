@@ -235,7 +235,14 @@ Not contexts of their own: split screen's windows (their viewports alone;
 render.c draws no mirror then), and the Spartan link's feeds
 (spartan_link.c: render_link_pass), which draw a part of the primary
 window's draws (no decals, detail objects, shadows or ambient occlusion)
-into the same target. A new context is a row here and the pass (or the
+into the same target, and the feeds' images on the HUD, whose pipelines
+the interface's screen quads are (tools/prepared_coverage.py's split2 to
+split4 and link contexts: no pipeline missed on the campaign's levels,
+the walk's or the shipped records'). Not reached yet: a walk in a
+multiplayer split screen of 3 or 4 players draws fewer of the HUD's,
+lens flares' and environment shadows' states than a walk of 1 or 2 does
+(3 pipelines made in play on bloodgulch; its shipped record, walked
+alone, has them). A new context is a row here and the pass (or the
 call) that draws in it. */
 
 /* each fog's parts are drawn once, and with display.dynamic_lights
