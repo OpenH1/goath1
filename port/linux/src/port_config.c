@@ -492,6 +492,11 @@ static const struct config_setting config_settings[] =
 	{ "display.spartan_link_stats", _config_boolean, "true", "HALO_SPARTAN_LINK_STATS", _environment_value, _platform_all,
 		"The teammate's name, shield and health under each Spartan link feed\n"
 		"(display.spartan_link); false, the feeds alone." },
+	{ "display.score_popups", _config_boolean, "true", "HALO_SCORE_POPUPS", _environment_value, _platform_all,
+		"Campaign scoring's pop-ups (campaign.scoring): the points of each kill,\n"
+		"grouped (one \"+150 Triple Kill\"), small at the view's right for a\n"
+		"moment (campaign_score_hud.c); false: none, the scoreboard still has the\n"
+		"scores. Each player profile's own.", _scope_player },
 	{ "display.spartan_link_shown", _config_boolean, "false", "HALO_SPARTAN_LINK_SHOWN", _environment_value, _platform_all,
 		"Whether the Spartan link is shown (display.spartan_link): the key\n"
 		"turns it on and off and it stays so from game to game, each player\n"
@@ -1685,6 +1690,14 @@ static const struct config_setting config_settings[] =
 		"original's. Read as a level begins; a loaded save keeps the size it was\n"
 		"played at. Settings > Interface > Campaign, and BATTLE in the co-op\n"
 		"host's lobby." },
+	{ "campaign.scoring", _config_boolean, "true", "HALO_CAMPAIGN_SCORING", _environment_value, _platform_all,
+		"Campaign scoring, solo, split screen and co-op this computer hosts:\n"
+		"points for each kill (more for tougher enemies, headshots, melee,\n"
+		"sticks, multi-kills and streaks), times the difficulty, and a bonus\n"
+		"as a level ends, with personal bests per level, difficulty and\n"
+		"player count (campaign_scores.txt). false: no score is kept. Read as\n"
+		"a level begins; a co-op host sends its word to the players. The\n"
+		"score never changes the game." },
 	{ "game.spartan_link", _config_boolean, "true", "HALO_GAME_SPARTAN_LINK", _environment_value, _platform_all,
 		"Hosting a team game: whether its players may show their Spartan link\n"
 		"(display.spartan_link); false, nobody's shows in it. Co-op always\n"
@@ -2634,6 +2647,17 @@ static const struct config_setting config_settings[] =
 		"screen is; else that many times a second, the feeds in turn, one a frame\n"
 		"at most, each image turned to its teammate's look between\n"
 		"(port/linux/game/spartan_link.c)." },
+	{ "debug.score_pictures", _config_boolean, "false", "HALO_SCORE_PICTURES", _environment_value, _platform_all,
+		"Campaign scoring's pictures (campaign_score_hud.c): the first pop-ups\n"
+		"saved as they show (score_popup_<n>, each logged with its wait) and the\n"
+		"level's summary a second\n"
+		"after it shows (score_summary, or score_summary_compact), to the\n"
+		"screenshot folder, for proofs of them." },
+	{ "debug.score_fill", _config_boolean, "false", "HALO_SCORE_FILL", _environment_value, _platform_all,
+		"Campaign scoring's screens drawn from made-up numbers, not the game's\n"
+		"score (campaign_score_hud.c): the scoreboard, the pop-ups, the Spartan\n"
+		"link's scores and events and, 40 seconds in, the level's summary, for\n"
+		"pictures of them before a score is kept." },
 	{ "debug.spartan_link_log", _config_boolean, "false", "HALO_SPARTAN_LINK_LOG", _environment_value, _platform_all,
 		"Log each Spartan link feed's camera as it is drawn (the tick, the local\n"
 		"player, the teammate, through their eyes, where it looks from and along,\n"

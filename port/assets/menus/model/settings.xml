@@ -1668,6 +1668,17 @@
 			<choice shown="2X" value="2x"/>
 			<choice shown="3X" value="3x"/>
 		</row>
+		<section key="section_2" title="SCORING"/>
+		<row key="scoring" kind="choice" setting="campaign.scoring" label="SCORING" crumb="INTERFACE › CAMPAIGN">
+			<help>Points for your kills in the campaign, solo, split screen and co-op you host: Tab shows each player's score and the team's, and each level ends with a summary and your best. Online: the host's choice.</help>
+			<choice shown="ON" value="true"/>
+			<choice shown="OFF" value="false"/>
+		</row>
+		<row key="score_popups" kind="choice" setting="display.score_popups" label="SCORE POP-UPS" crumb="INTERFACE › CAMPAIGN">
+			<help>The small points that come up at the right of the screen as you score, such as +150 Triple Kill. Off hides them; Tab still shows the scores.</help>
+			<choice shown="ON" value="true"/>
+			<choice shown="OFF" value="false"/>
+		</row>
 		<button key="button_defaults" kind="defaults" run="port settings defaults" help="Puts this page's settings back to their defaults."/>
 		<button key="button_ok" kind="ok" run="port settings keep" help="Saves your changes, on this page and every tab, and applies them."/>
 		<button key="button_cancel" kind="cancel" run="port settings page cancel" help="Goes back without these changes."/>

@@ -31,7 +31,8 @@ for a matchmaking game's, its playlist's), a GOAT H1 game's host's
 HIJACK (game.vehicle_hijack, as Host Controls' row has it) and, in a team
 game, SPARTAN LINK (game.spartan_link: the teammates' feeds), in co-op the
 host's BATTLE (campaign.bigger_battles: BIGGER BATTLES, on top of EXTRA
-ENEMIES; coop_enemies.c), how the game is, and the host's
+ENEMIES; coop_enemies.c) and SCORE (campaign.scoring: campaign_score.c),
+how the game is, and the host's
 GAME SETTINGS (Server Setup, in the lobby's place), HOST CONTROLS and START
 GAME, or a player's WAITING FOR THE HOST.
 
@@ -1931,6 +1932,19 @@ static boolean menu_host_bigger_battles_step(short step)
 	return TRUE;
 }
 
+/* the host's SCORING (the lobby's SCORE, ON or OFF): config.toml's
+campaign.scoring, which the host reads as each level begins and sends its
+score from (campaign_score.c); solo and split screen read it too */
+static boolean menu_host_scoring_toggle(void)
+{
+	if (!config_write("campaign.scoring", config_boolean("campaign.scoring") ? "false" : "true"))
+	{
+		platform_log("menus: could not write campaign.scoring to config.toml");
+		return FALSE;
+	}
+	return TRUE;
+}
+
 /* text (UTF-16) as a binding's value, UTF-8: nonzero if it has any */
 static int lobby_screen_words(wchar_t const *text, char *value, unsigned long size)
 {
@@ -2092,6 +2106,11 @@ int pc_menu_lobby_value(char const *name, char *value, unsigned long size)
 			lobby_battle_choice() == 1 ? L"2X" : L"OFF");
 	else if (!strcmp(name, "lobby.battle.shown"))
 		yes = controls->start && model->game && !model->game->variant.game_engine_index;
+	/* (the co-op host's SCORING) */
+	else if (!strcmp(name, "lobby.scoring"))
+		usnprintf(text, NUMBEROF(text) - 1, config_boolean("campaign.scoring") ? L"ON" : L"OFF");
+	else if (!strcmp(name, "lobby.scoring.shown"))
+		yes = controls->start && model->game && !model->game->variant.game_engine_index;
 	/* (how the game is; START GAME's words, the countdown; a player's
 	waiting) */
 	else if (!strcmp(name, "lobby.status"))
@@ -2172,6 +2191,9 @@ int pc_menu_lobby_action(struct widget_instance *widget, struct event_record *ev
 	if (!strncmp(name, "lobby battle ", 13))
 		return model->controls.start && model->game && !model->game->variant.game_engine_index &&
 			menu_host_bigger_battles_step(step);
+	if (!strncmp(name, "lobby scoring ", 14))
+		return model->controls.start && model->game && !model->game->variant.game_engine_index &&
+			menu_host_scoring_toggle();
 	if (!model->controls.bots || model->controls.bots_locked)
 		return FALSE;
 	if (!strncmp(name, "lobby bots ", 11))
