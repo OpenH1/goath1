@@ -4589,6 +4589,8 @@ struct light_shadows_read
 	unsigned int shadowed, seen, stand_in;
 };
 
+static int light_shadows_view(void);
+
 static void light_shadows_begin(struct module *m, struct pixel_state *state, struct light_shadows_read *read)
 {
 	unsigned int sampled, image, frag, size, at, operands[4];
@@ -4609,7 +4611,8 @@ static void light_shadows_begin(struct module *m, struct pixel_state *state, str
 	operands[3] = constant_int(m, 0);
 	read->seen = op(m, OP_IMAGE_FETCH, m->t_v4, 4, operands);
 	/* (the view: whether it is the stand-in, 1x1) */
-	read->stand_in = op2(m, OP_I_EQUAL, m->t_bool, op2(m, OP_COMPOSITE_EXTRACT, m->t_int, size, 0), constant_int(m, 0));
+	if (light_shadows_view())
+		read->stand_in = op2(m, OP_I_EQUAL, m->t_bool, op2(m, OP_COMPOSITE_EXTRACT, m->t_int, size, 0), constant_int(m, 0));
 }
 
 /* (HALO_LIGHT_SHADOWS_VIEW=1, checking: each shadowed light drawn in its
