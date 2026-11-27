@@ -161,8 +161,9 @@ def luminance(img):
 class Scene:
     """One scene folder, loaded; `notes` collects every placeholder and every choice made from free text."""
 
-    def __init__(self, folder, flashlight_scale=None, white=False):
+    def __init__(self, folder, flashlight_scale=None, white=False, bump=True):
         halo_plugins.register()
+        self.bump = bump
         self.flashlight_scale = flashlight_scale
         # white: every surface a white Lambertian (albedo 1, no specular) with the same normal maps and
         # cutouts, so a render's direct light is the demodulated irradiance (as the radiance a white
@@ -305,7 +306,7 @@ class Scene:
         else:
             bsdf = {"type": "diffuse", "reflectance": albedo}
 
-        bump = self.image(m["bump_map"]) if m.get("bump_map") and not mtype.startswith("transparent") else None
+        bump = self.image(m["bump_map"]) if self.bump and m.get("bump_map") and not mtype.startswith("transparent") else None
         if bump is not None:
             # Halo's bump maps are stored as tangent-space normal maps (RGB around 0.5, 0.5, 1), tiled
             # bump_scale times over the base UVs; Mitsuba's frame (dp/du, dp/dv, n) is taken as theirs.

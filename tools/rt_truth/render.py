@@ -332,6 +332,8 @@ def render_flashlight_direct(folder, out=None, flashlight_scale=None, spp_pass=8
         raise SystemExit("%s: no flashlight in lights.json" % folder)
     scene = mi.load_dict(sc.build("flashlight"))
     white = mi.load_dict(Scene(folder, flashlight_scale, white=True).build("flashlight"))
+    flat = mi.load_dict(Scene(folder, flashlight_scale, white=True, bump=False).build("flashlight"))
+    acc_f = 0.0
     H, W = int(sc.camera["height"]), int(sc.camera["width"])
     acc_w = np.zeros((H, W, 3))
     full_scene = mi.load_dict(sc.build("ambient"))
@@ -346,6 +348,7 @@ def render_flashlight_direct(folder, out=None, flashlight_scale=None, spp_pass=8
             img = render_pass(scene, spp_pass, n, parts=True)["direct"].astype(np.float64)
             acc += img
             acc_w += render_pass(white, spp_pass, n, parts=True)["direct"]
+            acc_f = acc_f + render_pass(flat, spp_pass, n, parts=True, max_depth=2)["direct"]
             y = img @ display.LUMA.astype(np.float64)
             s1 += y
             s2 += y * y
@@ -361,6 +364,8 @@ def render_flashlight_direct(folder, out=None, flashlight_scale=None, spp_pass=8
                     break
     write_exr(out / "truth_parts" / "direct_flashlight.exr", np.where(fp[..., None], 0.0, acc / n))
     write_exr(out / "truth_parts" / "irradiance_direct_flashlight.exr", np.where(fp[..., None], 0.0, acc_w / n))
+    # The same with the geometric (interpolated vertex) normal, no normal maps.
+    write_exr(out / "truth_parts" / "irradiance_direct_flashlight_geometric.exr", np.where(fp[..., None], 0.0, acc_f / n))
     save_mask(out, display.rect_mask((H, W), sc.camera.get("mask_rects")) & ~fp)
     lines = ["direct_flashlight: spp %d, %.1f min, noise median %.3f%% 95th %.3f%% (floor %g), converged %s" % (
         n * spp_pass, (time.time() - t0) / 60, 100 * stats["median_rel"], 100 * stats["p95_rel"], DISPLAY_FLOOR,

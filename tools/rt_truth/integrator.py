@@ -141,7 +141,8 @@ def render_pass(scene, spp, seed, parts=False, max_depth=1024):
     W, H = (int(v) for v in sensor.film().size())
     n = W * H * spp
     sampler = mi.load_dict({"type": "independent"})
-    sampler.seed(seed, n)
+    # An opaque seed: one compiled kernel serves every pass (a literal would recompile each one).
+    sampler.seed(dr.opaque(mi.UInt32, seed), n)
     idx = dr.arange(mi.UInt32, n)
     pix = idx // spp
     x = mi.Float(pix % W) + sampler.next_1d()
