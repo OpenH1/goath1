@@ -960,11 +960,11 @@ PAGES = {
             # renderer found as it started, each set by its name, or its index
             # beside an identical card; dimmed where the game has no choice:
             # SETTINGS_ROW_ENABLED)
-            (f"GRAPHICS CARD {RESTART}", "display.gpu", [("AUTO", "auto")],
-             "The card that draws the game, from the next start. Auto takes a discrete card before an integrated "
-             "one, then the one your monitor is plugged into. Only cards Vulkan sees are listed: for a missing "
-             "one, reinstall its driver or set Windows' Graphics setting to High performance.|In VR the "
-             "headset's software chooses; a Mac has one choice.", "computer"),
+            (f"GPU {RESTART}", "display.gpu", [("AUTO", "auto")],
+             "The graphics card that draws the game, from the next start. Auto takes a discrete card first, then "
+             "the one your monitor uses. A card Vulkan cannot see is not listed: reinstall its driver, or set "
+             "Windows' Graphics setting to High performance.|Dimmed in VR, where the headset chooses, and on a "
+             "Mac.", "computer"),
             ("FRAME RATE & SYNC ›", None, _page_screen(*FRAME_RATE),
              "VSync, variable refresh (G-SYNC, FreeSync), the most frames a second and low latency.", None),
             ("FIELD OF VIEW", "display.fov", FIELDS_OF_VIEW,
@@ -2343,7 +2343,7 @@ SETTINGS_SEARCH_WORDS = {
     "fps": ["max_fps", "menu_max_fps", "perf_overlay", "frame_rate_sync"],
     "framerate": ["frame_rate_sync", "max_fps", "menu_max_fps", "perf_overlay"],
     "frametime": ["perf_overlay"], "gpu": ["perf_overlay", "gpu"], "stats": ["perf_overlay"],
-    "nvidia": ["gpu"], "radeon": ["gpu"], "vulkan": ["gpu"],
+    "nvidia": ["gpu"], "radeon": ["gpu"], "vulkan": ["gpu"], "card": ["gpu"], "graphics": ["gpu"],
     "gsync": ["vrr", "vrr_cap_margin"], "freesync": ["vrr", "vrr_cap_margin"], "vrr": ["vrr"],
     "aa": ["anti_aliasing", "anti_aliasing_msaa", "anti_aliasing_android"],
     "shadows": ["shadow_resolution", "shadows", "contact_shadows"],

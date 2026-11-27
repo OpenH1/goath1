@@ -24,9 +24,9 @@
 			<help>How many times a second the display shows a picture while the game is fullscreen. Auto keeps the display's own. VSync and Max FPS's Auto follow it.</help>
 			<choice shown="AUTO" value="0"/>
 		</row>
-		<row key="gpu" kind="choice" setting="display.gpu" label="GRAPHICS CARD (RESTART)" crumb="VIDEO › DISPLAY" search="gpu nvidia radeon vulkan" when="computer" enabled="gpu_choice+!vr">
-			<help>The card that draws the game, from the next start. Auto takes a discrete card before an integrated one, then the one your monitor is plugged into. Only cards Vulkan sees are listed: for a missing one, reinstall its driver or set Windows' Graphics setting to High performance.</help>
-			<note>In VR the headset's software chooses; a Mac has one choice.</note>
+		<row key="gpu" kind="choice" setting="display.gpu" label="GPU (RESTART)" crumb="VIDEO › DISPLAY" search="gpu nvidia radeon vulkan card graphics" when="computer" enabled="gpu_choice+!vr">
+			<help>The graphics card that draws the game, from the next start. Auto takes a discrete card first, then the one your monitor uses. A card Vulkan cannot see is not listed: reinstall its driver, or set Windows' Graphics setting to High performance.</help>
+			<note>Dimmed in VR, where the headset chooses, and on a Mac.</note>
 			<choice shown="AUTO" value="auto"/>
 		</row>
 		<row key="frame_rate_sync" kind="link" label="FRAME RATE &amp; SYNC ›" crumb="VIDEO › DISPLAY" search="fps framerate" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/frame_rate_screen">
