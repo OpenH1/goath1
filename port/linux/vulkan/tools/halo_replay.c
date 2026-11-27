@@ -63,6 +63,9 @@ static int vulkan_initialize(int window, int width, int height)
 		return 0;
 	xgpu_vulkan_window_resized((uint32_t)width, (uint32_t)height);
 	backend = *xgpu_vulkan_stream_backend();
+	/* (a world pipeline waited for, not its stand-in drawn: the frames
+	played from the start have no map preparation's pipelines) */
+	xgpu_vulkan_stream_wait_world(1);
 	host_render_stream_set_backend(&backend);
 	host_render_record_set_shooter(xgpu_vulkan_stream_shot);
 	return 1;

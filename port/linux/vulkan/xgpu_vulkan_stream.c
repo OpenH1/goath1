@@ -391,7 +391,7 @@ static struct
 	uint32_t pipeline_misses;
 	/* (HALO_LT_E1: a world pipeline's or a twin's draw made and waited for
 	now, not drawn apart: draw_input, prepass_draw) */
-	int world_now;
+	int world_now, wait_world;
 	/* display.ambient_occlusion "world": each pipeline's definition as last
 	bound, and its stand-in (0 none: PIPELINE_STAND_IN), which draws until
 	its own is made (prepared only where its own cannot be); the pipelines whose
@@ -2874,12 +2874,14 @@ static void draw_input(const struct draw_input *input)
 	{
 		return;
 	}
-	/* (HALO_LT_E1: the world's made now and waited for, not its stand-in
-	drawn: a stand-in has the game's own lights, not the light-transport
-	pass's, so the frames after a pipeline is first drawn (a map's first
-	frames, a cut, a replay's first frame) would show the classic lights or
-	none of the pass's; its stand-in only where it cannot be made) */
-	else if (xgpu_vulkan_lt_mode() && stream.pipelines[id].state != XGPU_STREAM_PIPELINE_FAILED)
+	/* (the replay, HALO_LT_E1: the world's made now and waited for, not its
+	stand-in drawn: a stand-in has the game's own lights, not the
+	light-transport pass's, and a replay played from the start has no map
+	preparation's pipelines, so its first frames would show the classic
+	lights; deterministic for its checks. The game draws the stand-in, a
+	frame or two, never waiting: its map's preparation makes this mode's
+	pipelines (render_prepared.c's derivation counts the mode)) */
+	else if (stream.wait_world && xgpu_vulkan_lt_mode() && stream.pipelines[id].state != XGPU_STREAM_PIPELINE_FAILED)
 	{
 		stream.world_now = 1;
 		draw_pipeline(input, 0);
@@ -4696,11 +4698,12 @@ static void prepass_draw(const struct draw_input *input)
 	variant.integer_attributes = twin.key.immediate ? 0 : input->integers;
 	if (entry->state != XGPU_STREAM_PIPELINE_MADE || memcmp(&entry->variant, &variant, sizeof(variant)))
 	{
-		/* (HALO_LT_E1: every twin made as it is first drawn, its pipeline
-		waited for: a pixel without its inputs has none of the pass's
-		light) */
+		/* (the replay, HALO_LT_E1: every twin made as it is first drawn,
+		its pipeline waited for: a pixel without its inputs has none of the
+		pass's light) */
 		if (entry->state == XGPU_STREAM_PIPELINE_FAILED ||
-			(!stream.preparing && prepass.twins_made >= WORLD_AO_TWINS_A_FRAME && !xgpu_vulkan_lt_mode()))
+			(!stream.preparing && prepass.twins_made >= WORLD_AO_TWINS_A_FRAME &&
+			!(stream.wait_world && xgpu_vulkan_lt_mode())))
 			return;
 		/* (not made as the map was prepared: a miss, as a pipeline's; none
 		limited while it is) */
@@ -4719,7 +4722,7 @@ static void prepass_draw(const struct draw_input *input)
 	/* (an occluder's: strictly nearer) */
 	stream.pipeline.depth_function = twin.key.depth_function;
 	prepass.drawing = entry;
-	stream.world_now = xgpu_vulkan_lt_mode() && !stream.preparing;
+	stream.world_now = stream.wait_world && xgpu_vulkan_lt_mode() && !stream.preparing;
 	(void)draw_pipeline(input, 1);
 	stream.world_now = 0;
 	prepass.drawing = NULL;
@@ -5369,6 +5372,11 @@ static uint32_t stream_prepared(void *context)
 	if (xgpu_vulkan_pipeline_count() != stream.prepare_pipelines)
 		xgpu_vulkan_pipeline_cache_save();
 	return started >= 0.0 && finished >= started ? (uint32_t)((finished - started) * 1000.0) : 0;
+}
+
+void xgpu_vulkan_stream_wait_world(int wait)
+{
+	stream.wait_world = wait;
 }
 
 void xgpu_vulkan_stream_debug(int statistics, const char *shader_folder)
