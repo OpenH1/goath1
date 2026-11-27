@@ -5796,6 +5796,10 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 			0, 0, 0);
 		lit = dynamic_light_add(&m, &state, xyz(&m, result), fmul(&m, 3, sum,
 			xyz(&m, uniform(&m, U_DYNAMIC_LIGHT_TINT, -1))), (program->hdr & XGPU_HDR_LIGHTS) != 0);
+		/* (HALO_LIGHT_SHADOWS_VIEW: the lights over the surface darkened,
+		not under the shoulder, so a lit wall shows them too) */
+		if (state.light_shadows && light_shadows_view())
+			lit = fadd(&m, 3, fscale(&m, 3, saturate(&m, 3, xyz(&m, result)), constant_float(&m, 0.25f)), sum);
 		result = shuffle(&m, 4, result, lit, rgb);
 	}
 	if (program->coverage_alpha)
