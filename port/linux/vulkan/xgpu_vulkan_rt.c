@@ -103,6 +103,8 @@ matrices' words, and the frames its GPU time is logged over */
 #define RT_SKIN_OUTS (4u << 20)
 #define RT_SKIN_FRAME_WORDS (XGPU_WORLD_RT_POSES * 4u + (1u << 19))
 #define RT_SKIN_LOGGED 600u
+/* the scene's memory is logged every so many frames (rt_memory_log) */
+#define RT_MEMORY_LOGGED 1800u
 /* the new textures found a frame at most (each may be read from the guest) */
 #define RT_TEXTURES_FOUND 16u
 /* a mesh of so many triangles has a buffer of its own, and is compacted */
@@ -319,6 +321,7 @@ static struct
 	struct rt_garbage *garbage;
 	uint32_t garbage_count, garbage_capacity;
 	int failed_said;
+	uint32_t memory_frames;
 } rt;
 
 /* ---------- memory */
@@ -480,9 +483,34 @@ static int rt_storage_take(VkDeviceSize size, VkBuffer *buffer, VkDeviceSize *of
 	return 1;
 }
 
+/* the scene's memory logged (when: "now", or "at the map's end, let go
+of"): its meshes' structures (the bottom levels: the most this map, and
+now), the scenes' (the top levels and their instances), the hit table's
+and the skinning's buffers */
+static void rt_memory_log(const char *when)
+{
+	VkDeviceSize scenes = 0, chunks = 0;
+	int which;
+	uint32_t index;
+
+	for (which = 0; which < RT_SCENES; which++)
+		scenes += rt.scenes[which].storage.size + rt.scenes[which].instances.size;
+	for (index = 0; index < rt.chunk_count; index++)
+		chunks += rt.chunks[index].size;
+	host_logf(HOST_LOG_INFO, "vulkan: the ray-traced scene's memory %s: bottom levels at most %.2f MB (%.2f MB now, "
+		"%.2f MB of storage), top levels %.2f MB, hit table %.2f MB (%.2f MB used), skinning %.2f MB", when,
+		(double)rt.live_most / 1048576.0, (double)rt.live_bytes / 1048576.0, (double)chunks / 1048576.0,
+		(double)scenes / 1048576.0, (double)rt.hit_buffer.size / 1048576.0, (double)rt.hit_used * 4.0 / 1048576.0,
+		(double)(rt.rests.size + rt.outs.size + rt.skin_scratch.size) / 1048576.0);
+}
+
 static void rt_meshes_release(void)
 {
 	uint32_t id;
+
+	/* (a map's: logged once, as it is let go of) */
+	if (rt.live_most || rt.hit_used)
+		rt_memory_log("at the map's end, let go of");
 
 	for (id = 0; id < XGPU_STREAM_WORLD_AO_MESHES; id++)
 	{
@@ -2119,6 +2147,12 @@ int xgpu_vulkan_rt_build(void)
 
 	if (!rt.ready)
 		return 0;
+	/* (its memory, every RT_MEMORY_LOGGED frames it has meshes) */
+	if (rt.live_bytes && ++rt.memory_frames >= RT_MEMORY_LOGGED)
+	{
+		rt.memory_frames = 0;
+		rt_memory_log("now");
+	}
 	rt_build_time_read();
 	rt_textures_find();
 	if (rt.compacted_count && xgpu_vulkan_completed() >= rt.compacted_serial)

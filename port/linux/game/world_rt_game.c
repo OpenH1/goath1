@@ -6,7 +6,7 @@ the game (world_rt.h's world_rt_source_*): the loaded structure BSP's
 collision geometry, as world_scene.c fans it, and a definition's nodes'
 collision geometry (the first permutation's BSP of each collision node, the
 model's node of the same index, as the collision tests take them:
-collision_models.c) and its bounding sphere. With debug.rt_render_geometry,
+collision_models.c) and its bounding sphere. As drawn (debug.rt_render_geometry, by default),
 the render meshes too (docs/rt-plan/1-geometry.md): the structure's, its
 lightmaps' materials' surfaces over their compressed environment vertices,
 sorted by the material's shader into opaque, alpha-tested and transparent

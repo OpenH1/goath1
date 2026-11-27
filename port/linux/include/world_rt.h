@@ -43,7 +43,7 @@ enum
 	/* an instance's kind (xgpu_stream.h's XGPU_WORLD_AO_INSTANCE_*) */
 	WORLD_RT_STRUCTURE = 1,
 	WORLD_RT_OBJECT = 2,
-	/* (debug.rt_render_geometry) the first-person weapon and hands (their own
+	/* (as drawn) the first-person weapon and hands (their own
 	mask: no world ray meets them), and the local player's own body in
 	first person (its own: it casts shadows, and nothing else sees it) */
 	WORLD_RT_FIRST_PERSON = 4,
@@ -53,8 +53,8 @@ enum
 	WORLD_RT_FIRST_PERSON_OWNER = 0xFFFFF0,
 	/* the structure's render surfaces by their shader
 	(world_rt_source_structure_mesh): opaque (shader_environment), traced
-	with debug.rt_render_geometry; alpha-tested (shader_environment's flag:
-	grates, fences, foliage cards), traced as a second geometry whose rays
+	as drawn; alpha-tested (shader_environment's flag: grates, fences,
+	foliage cards; and the transparent shaders drawn as cutouts), traced as a second geometry whose rays
 	test the alpha map's alpha (docs/rt-plan/1-geometry.md, stage 3); and
 	transparent (water, glass and the other transparent shaders), left out */
 	WORLD_RT_SURFACES_OPAQUE = 0,
