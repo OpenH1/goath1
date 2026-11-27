@@ -5069,6 +5069,35 @@ static void pipeline_state_describe(BOOL has_depth, struct xgpu_pipeline_key *ke
 		key->stencil_write_mask = rs[D3DRS_STENCILWRITEMASK];
 		dynamic->stencil_reference = rs[D3DRS_STENCILREF];
 	}
+	/* display.shadows "ray_traced": the level's lightmap pass marks its
+	pixels (XGPU_STENCIL_LEVEL_BIT), the receivers of the pass after it. The
+	objects' models are drawn before the level, and that pass over the
+	whole view would otherwise darken them too, each by its own shadow (a
+	Pelican or a marine seen from its shaded side went near black). A test
+	the pass has already is kept, where it does not read the bit: only its
+	writes gain it */
+	if (has_depth && inputs.lights_environment && key->depth_write && rt_shadows_on())
+	{
+		if (!key->stencil_test)
+		{
+			key->stencil_test = 1;
+			key->stencil_function = XGPU_COMPARE_ALWAYS;
+			key->stencil_read_mask = 0;
+			key->stencil_fail = key->stencil_depth_fail = XGPU_STENCIL_KEEP;
+			key->stencil_pass = XGPU_STENCIL_REPLACE;
+			key->stencil_write_mask = XGPU_STENCIL_LEVEL_BIT;
+			dynamic->stencil_reference = XGPU_STENCIL_LEVEL_BIT;
+		}
+		else if (!(key->stencil_read_mask & XGPU_STENCIL_LEVEL_BIT) &&
+			(key->stencil_pass == XGPU_STENCIL_KEEP || key->stencil_pass == XGPU_STENCIL_REPLACE))
+		{
+			if (key->stencil_pass == XGPU_STENCIL_KEEP)
+				key->stencil_write_mask = 0;
+			key->stencil_pass = XGPU_STENCIL_REPLACE;
+			key->stencil_write_mask |= XGPU_STENCIL_LEVEL_BIT;
+			dynamic->stencil_reference |= XGPU_STENCIL_LEVEL_BIT;
+		}
+	}
 	key->blend = rs[D3DRS_ALPHABLENDENABLE] != 0;
 	if (key->blend)
 	{

@@ -967,7 +967,15 @@ static struct world_rt_definition *world_rt_definition(long definition)
 		triangles += entry->meshes[node_index] ? count : 0;
 	}
 	any = triangles > 0;
-	/* (none: an item's box about its bounding sphere, on its first node) */
+	/* (none: an item's model's render mesh as drawn, a grenade's say: the
+	box about its bounding sphere, far larger than a grenade, cast a square
+	shadow about each one lying on the ground) */
+	if (!any && item && entry->node_count > 0 && !config_boolean("debug.rt_render_geometry"))
+	{
+		triangles = world_rt_definition_render(definition, entry);
+		any = triangles > 0;
+	}
+	/* (still none: its box about its bounding sphere, on its first node) */
 	if (!any && item && entry->node_count > 0 && entry->sphere[3] > 0.0f && entry->sphere[3] <= WORLD_RT_BOX_LARGEST)
 	{
 		if (!world_rt.box && world_rt_room(12))
