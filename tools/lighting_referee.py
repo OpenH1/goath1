@@ -39,45 +39,58 @@ WIDTH, HEIGHT = 1920, 1080
 # ---------- the scenes
 
 # c20's dark corridor: the player placed facing a Flood combat form that stands a step in front of the far wall, at
-# its crease with the floor; the flashlight off, then on; then a fixed camera beside the player (debug_camera_load,
-# the data folder's camera.txt), and the player turned so that the flashlight's beam moves
+# its crease with the floor. Moments: 0 the flashlight off, 1 on, 2 three frames later (stability). The "moved"
+# corridor has the Flood a step to the side. (A fixed camera beside the player, debug_camera_load, does not serve:
+# the first-person flashlight goes with the camera.)
 C20 = "HALO_NETWORK_TEST=campaign:levels\\c20\\c20"
 STAGE = [C20, "HALO_NETWORK_TEST_START=2", "HALO_SKIP_CINEMATICS=1", f"HALO_FRAME_TIME={FRAME_TIME}",
          "HALO_NETWORK_TEST_PLACE=-26.65 15.71 -4.6 -70 -8@8"]
 FLOOD = 'debug_object_place "characters\\floodcombat_human\\floodcombat_human -25.42 12.33 -4.5 110"'
-SIDE_CAMERA = "-28.06 15.2 -3.9\\n0.676 -0.735 -0.026\\n0 0 1\\n1.2"
+FLOOD_MOVED = FLOOD.replace("-25.42 12.33", "-25.02 12.48")
+SHORT_AT = "HALO_SCREENSHOT_AT=12,14.5,14.6,quit"
 SCENES = {
-    # (moments: 0 flashlight off, 1 on, 2 the side camera, 3 the side camera with the beam moved)
     "corridor": STAGE + [
-        f"HALO_NETWORK_TEST_CUES=5 ai_erase_all|5.1 render_shadows 0|9 {FLOOD}|15.5 debug_camera_load",
-        "HALO_TEST_INPUT=script:12.5-13 flashlight; 17 aim=-64,-8",
-        "HALO_SCREENSHOT_AT=12,14.5,16.5,18.5,quit", f"@data/camera.txt={SIDE_CAMERA}"],
-    # the same corridor, no Flood: a frag grenade thrown at the far wall's foot (moment 0 before it, 1 as it bursts)
+        f"HALO_NETWORK_TEST_CUES=5 ai_erase_all|5.1 render_shadows 0|9 {FLOOD}",
+        "HALO_TEST_INPUT=script:12.5-13 flashlight", SHORT_AT],
+    "moved": STAGE + [
+        f"HALO_NETWORK_TEST_CUES=5 ai_erase_all|5.1 render_shadows 0|9 {FLOOD_MOVED}",
+        "HALO_TEST_INPUT=script:12.5-13 flashlight", SHORT_AT],
+    # the same corridor, no Flood: a frag grenade thrown at the far wall (moment 0 before it, 1 as it bursts,
+    # 14.2 s: found once by a burst of moments)
     "blast": STAGE + [
         "HALO_NETWORK_TEST_CUES=5 ai_erase_all|5.1 render_shadows 0",
         "HALO_TEST_INPUT=script:12.5 throw",
-        "HALO_SCREENSHOT_AT=12,BLAST,quit"],
+        "HALO_SCREENSHOT_AT=12,14.2,quit"],
     # a30's beach in daylight: no dynamic light in sight, so Enhanced must change nothing
     "daylight": ["HALO_NETWORK_TEST=campaign:levels\\a30\\a30", "HALO_NETWORK_TEST_START=2", "HALO_SKIP_CINEMATICS=1",
                  f"HALO_FRAME_TIME={FRAME_TIME}", "HALO_NETWORK_TEST_CUES=3 ai_erase_all",
                  "HALO_SCREENSHOT_AT=8,quit"],
 }
-# the second the frag grenade's burst is brightest (found once: tools/lighting_referee.md)
-BLAST_SECOND = "13,13.4,13.8,14.2,14.6,15,15.4,15.8,16.2,16.6,17"
 
-# the variants: Classic; Enhanced lights with every light's shadow off; the same with ray-traced shadows. The rest
-# of the look is Classic's in each (display.graphics "classic"), so that only the lights differ
+# the variants. The rest of the look is Classic's in each (display.graphics "classic"), so that only the lights
+# differ: Classic; Enhanced lights with no shadows; Enhanced with ray-traced shadows (world ambient occlusion, which
+# builds the ray-traced scene, display.shadows "ray_traced"); that in HDR with its half floats kept
 CLASSIC = ["HALO_GRAPHICS=classic", "HALO_DYNAMIC_LIGHTS=classic", "HALO_SHADOWS=classic"]
 ENHANCED = ["HALO_GRAPHICS=classic", "HALO_DYNAMIC_LIGHTS=enhanced", "HALO_SHADOWS=classic"]
-TRACED = ["HALO_GRAPHICS=classic", "HALO_DYNAMIC_LIGHTS=enhanced", "HALO_SHADOWS=ray_traced"]
-HDR = ENHANCED + ["HALO_HDR=on", "HALO_SCREENSHOT_HALVES=1"]
+TRACED = ["HALO_GRAPHICS=classic", "HALO_DYNAMIC_LIGHTS=enhanced", "HALO_SHADOWS=ray_traced",
+          "HALO_AMBIENT_OCCLUSION=world"]
+# (the reference for the shadows: the same build with its lights' shadows off, the knobs every branch keeps:
+# HALO_LIGHT_SHADOWS_OFF for the dynamic lights, HALO_FLASHLIGHT_SHADOWS_OFF for a flashlight's own)
+UNTRACED = TRACED + ["HALO_LIGHT_SHADOWS_OFF=1", "HALO_FLASHLIGHT_SHADOWS_OFF=1"]
+HDR = TRACED + ["HALO_HDR=on", "HALO_SCREENSHOT_HALVES=1"]
 # the timing runs: the whole Enhanced look, ray-traced shadows, the flashlight on, each pass timed
-TIMED = ["HALO_GRAPHICS=enhanced", "HALO_SHADOWS=ray_traced", "HALO_PASS_TIMES=1"]
+TIMED = ["HALO_GRAPHICS=enhanced", "HALO_SHADOWS=ray_traced", "HALO_AMBIENT_OCCLUSION=world", "HALO_PASS_TIMES=1"]
+# the features landing on the ray-traced work, each a setting turned on (--feature NAME=VAR=VALUE adds or changes
+# one): off, the pictures must equal the baseline's; on, no NaN or blown-out pixel, no flicker, within its cost
+FEATURES = {
+    "bounce": "HALO_DYNAMIC_LIGHT_BOUNCE=true",
+    "reflections": "HALO_REFLECTIONS=ray_traced",
+}
 
 # the negative controls: settings that break one check's subject on purpose (--mutate), each of which must fail
 MUTATIONS = {
     # the Enhanced lights twice as bright (debug.dynamic_lights_look's first number, 1.7)
-    "lights-brighter": {"variants": ("enhanced", "traced", "hdr"), "settings": ["HALO_DYNAMIC_LIGHTS_LOOK=3.4"]},
+    "lights-brighter": {"variants": ("enhanced",), "settings": ["HALO_DYNAMIC_LIGHTS_LOOK=3.4"]},
     # every ray-traced light shadow's ray sent back into its own surface: everything the lights reach shadowed
     "shadows-everywhere": {"variants": ("traced",), "settings": ["HALO_LIGHT_SHADOWS_VIEW=4"]},
     # the HDR frame's glows pushed past their ceilings (display.hdr_highlight_boost at its most)
@@ -90,26 +103,28 @@ MUTATIONS = {
 
 # ---------- regions (pixels of the 1920x1080 picture: x0, y0, x1, y1)
 
-# the player's view of the corridor (moments 0 and 1)
+# the player's view of the corridor (moments 0 to 2)
 PLAYER = {
     "wall pool": (700, 200, 1100, 470),
     "floor": (450, 640, 1050, 900),
     "character": (900, 420, 1010, 590),
     "weapon barrel": (1100, 640, 1500, 900),
     "weapon counter": (1250, 620, 1390, 790),
+    "view": (0, 0, 1920, 1080),
 }
-# the HUD's own pixels (the meters, the motion tracker, the reticle), compared where the HUD covers the view
+# the HUD's own pixels (the meters, the motion tracker), compared where the HUD covers the view
 HUD = [(140, 80, 420, 190), (1480, 80, 1780, 180), (130, 800, 340, 1010)]
-# the side camera (moments 2 and 3): the crease of the far wall and the floor as a line, the Flood's feet, and the
-# area about the Flood that its shadow falls in
-SIDE = {
-    "crease": ((1040, 660), (1920, 1000)),
-    "feet": (960, 700),
-    "around": (760, 420, 1400, 980),
-    "caster": (900, 540, 1030, 710),
+# the player's view about the Flood: the crease of the far wall and the floor as a line, its feet, the area its
+# shadow falls in, and the Flood itself (as placed, and as moved)
+NEAR = {
+    "crease": ((600, 532), (1030, 532)),
+    "feet": (965, 580),
+    "around": (760, 360, 1200, 660),
+    "caster": (905, 415, 1010, 590),
+    "caster moved": (1005, 415, 1110, 590),
 }
-# the blast's light, away from the burst's own sprites
-BLAST = {"wall left": (300, 150, 700, 450), "wall right": (1300, 150, 1800, 450), "floor near": (400, 800, 1500, 1000)}
+# the blast's light on the walls about it, away from the burst's own sprites
+BLAST = {"wall left": (400, 100, 800, 450), "wall above": (850, 40, 1200, 250), "wall right": (1150, 350, 1900, 650)}
 
 # ---------- thresholds
 
@@ -117,21 +132,29 @@ PARITY_RATIO = 1.25        # an Enhanced light's mean added light over Classic's
 PARITY_SHAPE = 0.85        # the correlation of the added light's pattern (a beam's hot disk and ring) with Classic's
 PARITY_FLOOR = 0.002       # added light (linear) under this in Classic is no light to compare
 HUD_SAME = 0.995           # the HUD's own pixels within 2 codes of Classic's
-DAYLIGHT_DIFFERENT = 0.001  # pixels of the daylight control that may differ by more than 2 codes
-SHADOW_DARKER = 0.25       # a pixel is shadowed where the traced light is this much under the untraced
-SHADOW_LEAST = 400         # shadowed pixels a side of the crease needs (1920x1080)
+DAYLIGHT_DIFFERENT = 0.001  # bytes of the daylight control that may differ by more than 2 codes
+SHADOW_DARKER = 0.4        # shadowed: the traced picture's light this much under the untraced one's
+SHADOW_LEAST = 150         # shadowed pixels a side of the crease needs (1920x1080)
+SHADOW_SAME = 1.15         # the untraced reference's light, the frame's median, within this of the traced
 SHADOW_BEND = 12.0         # degrees: the shadow's direction on the wall and on the floor differ by at least this
 SHADOW_CONTACT = 40        # pixels: the shadow comes this close to the caster's feet
 SHADOW_SELF = 0.05         # at most this share of the caster's lit front shadowed (acne, self-shadowing)
 SHADOW_FRONT = 0.01        # at most this share of the floor in front of the caster shadowed
+SHADOW_GUN = 0.01          # at most this share of the first-person weapon shadowed (its own lamp is on it)
 SHADOW_MOVED = 0.2         # the shadow changes this share of its pixels when the beam moves
 HDR_COUNTER = (1.05, 2.6)  # the counter's brightest pixel, times paper white (linear): past white, under the lights'
-HDR_EMITTER = (1.0, 3.05)  # a light fixture's brightest pixel: at most the light of the world's ceiling, 3
-# the GPU's milliseconds a frame at 1920x1080 (median of three), the whole frame and the passes named, per machine
+HDR_EMITTER = 3.05         # the frame's brightest pixel: at most the light of the world's ceiling, 3
+BLOWN = 0.001              # a feature on: at most this share of the pixels past HDR_EMITTER
+FLICKER = (1.5, 0.0005)    # a feature on: frame-to-frame change at most this times the feature off's, plus this
+# the GPU's milliseconds a frame at 1920x1080 (median of three), the whole frame and the passes named, per machine;
+# "+feature": what turning a feature on adds to the frame
 BUDGETS = {
-    "omarchy": {"frame": 12.0, "LIGHT SHADOWS": 1.5, "AO": 1.5},
-    "5900x": {"frame": 3.0, "LIGHT SHADOWS": 0.4, "AO": 0.4},
+    "omarchy": {"frame": 12.0, "LIGHT SHADOWS": 1.5, "AO": 1.5, "+feature": 2.0},
+    "5900x": {"frame": 3.0, "LIGHT SHADOWS": 0.4, "AO": 0.4, "+feature": 0.5},
+    "bosgame": {"frame": 5.0, "LIGHT SHADOWS": 0.8, "AO": 0.8, "+feature": 1.0},
 }
+# the machines' goat-rig, where one is not this tree's (the Windows machine's kit lives in its own worktree)
+RIGS = {"bosgame": Path.home() / "dev/goat-wt-bosgame-rig/tools/rig/goat-rig"}
 
 # ---------- pictures
 
@@ -231,9 +254,14 @@ def slug(text):
     return re.sub(r"[^A-Za-z0-9]+", "-", text).strip("-").lower()[:40]
 
 
-def rig(*arguments, machine=None, capture=True):
-    command = [str(RIG)] + ([f"@{machine}"] if machine else []) + [str(a) for a in arguments]
-    return subprocess.run(command, capture_output=capture, text=True)
+def rig_of(machine):
+    path = RIGS.get(machine)
+    return path if path and path.exists() else RIG
+
+
+def rig(*arguments, machine=None):
+    command = [str(rig_of(machine))] + ([f"@{machine}"] if machine else []) + [str(a) for a in arguments]
+    return subprocess.run(command, capture_output=True, text=True)
 
 
 def ssh_target(machine):
@@ -253,62 +281,118 @@ def play(run, work, seconds=150):
     run.summary = (result.stdout + result.stderr).strip()
     run.folder = work / run.label
     shutil.rmtree(run.folder, ignore_errors=True)
-    include = ["--include=*/", "--include=*.png", "--include=*.txt", "--include=*.log", "--include=*.json"]
-    if run.halves:
-        include.append("--include=*.rgba16f")
-    subprocess.run(["rsync", "-a", "--prune-empty-dirs", *include, "--exclude=*",
-                    f"{ssh_target(run.machine)}:goat-rig/runs/{run.label}/", f"{run.folder}/"], capture_output=True)
-    # (only this run's own folder)
-    subprocess.run(["ssh", ssh_target(run.machine), f"rm -rf ~/goat-rig/runs/{run.label}"], capture_output=True)
+    if run.machine in ("omarchy", "5900x"):
+        include = ["--include=*/", "--include=*.png", "--include=*.txt", "--include=*.log", "--include=*.json"]
+        if run.halves:
+            include.append("--include=*.rgba16f")
+        subprocess.run(["rsync", "-a", "--prune-empty-dirs", *include, "--exclude=*",
+                        f"{ssh_target(run.machine)}:goat-rig/runs/{run.label}/", f"{run.folder}/"],
+                       capture_output=True)
+        # (only this run's own folder)
+        subprocess.run(["ssh", ssh_target(run.machine), f"rm -rf ~/goat-rig/runs/{run.label}"], capture_output=True)
+    else:
+        rig("fetch", f"{run.machine}:{run.label}", run.folder)
     return run
 
 
+def has_capture(build):
+    """whether a build has debug.screenshot_at (the referee's pictures need it): a ref this checkout can see"""
+    subprocess.run(["git", "-C", str(ROOT), "fetch", "-q", "origin"], capture_output=True)
+    for ref in (f"origin/{build}", build):
+        shown = subprocess.run(["git", "-C", str(ROOT), "show", f"{ref}:port/linux/src/port_config.c"],
+                               capture_output=True, text=True)
+        if shown.returncode == 0:
+            return "debug.screenshot_at" in shown.stdout
+    return True
+
+
+def graft(build, machines):
+    """a build without the referee's captures: the capture commits (tools/lighting-referee's commits to port/)
+    picked onto it in a scratch worktree, pushed to each machine's mirror as local/lref/<build>; that name"""
+    commits = subprocess.run(["git", "-C", str(ROOT), "log", "--reverse", "--format=%H",
+                              "origin/master..origin/tools/lighting-referee", "--", "port"],
+                             capture_output=True, text=True).stdout.split()
+    if not commits:
+        commits = subprocess.run(["git", "-C", str(ROOT), "log", "--reverse", "--format=%H", "-i",
+                                  "--grep=debug.screenshot_", "--", "port/linux/src/d3d8_device.c"],
+                                 capture_output=True, text=True).stdout.split()
+    name = f"local/lref/{slug(build)}"
+    tree = Path("/tmp") / f"lref-graft-{slug(build)}"
+    subprocess.run(["git", "-C", str(ROOT), "worktree", "remove", "--force", str(tree)], capture_output=True)
+    base = f"origin/{build}" if subprocess.run(["git", "-C", str(ROOT), "rev-parse", "-q", "--verify",
+                                                f"origin/{build}"], capture_output=True).returncode == 0 else build
+    steps = [["git", "-C", str(ROOT), "worktree", "add", "-q", "--detach", str(tree), base],
+             ["git", "-C", str(tree), "-c", "user.name=referee", "-c", "user.email=referee@localhost",
+              "cherry-pick", "-x", *commits]]
+    for step in steps:
+        if subprocess.run(step, capture_output=True).returncode != 0:
+            subprocess.run(["git", "-C", str(tree), "cherry-pick", "--abort"], capture_output=True)
+            subprocess.run(["git", "-C", str(ROOT), "worktree", "remove", "--force", str(tree)], capture_output=True)
+            return None
+    for machine in machines:
+        if machine in ("omarchy", "5900x"):
+            subprocess.run(["git", "-C", str(tree), "push", "-q", "-f",
+                            f"{ssh_target(machine)}:goat-rig/repo.git", f"HEAD:refs/heads/{name}"],
+                           capture_output=True)
+    subprocess.run(["git", "-C", str(ROOT), "worktree", "remove", "--force", str(tree)], capture_output=True)
+    return name
+
+
 def scene_settings(scene, variant_settings, extra):
-    settings = []
-    for item in SCENES[scene]:
-        if item.startswith("HALO_SCREENSHOT_AT="):
-            item = item.replace("BLAST", BLAST_SECOND)
-        settings.append(item)
+    settings = list(SCENES[scene])
+    # (a variant's own moments in place of the scene's)
+    if any(item.startswith("HALO_SCREENSHOT_AT=") for item in variant_settings):
+        settings = [item for item in settings if not item.startswith("HALO_SCREENSHOT_AT=")]
     return settings + variant_settings + extra
 
 
-def plan(build, baseline, machine, timing, only, mutate):
-    """the runs: each check's scenes and variants, the baseline's Classic pictures (the identity check), the timing
-    runs"""
+def plan(build, baseline, machine, timing, only, mutate, features):
+    """the runs: each check's scenes and variants, the baseline's pictures (identity), the timing runs"""
     tag = slug(build) + (f"-{mutate}" if mutate else "")
     mutation = MUTATIONS.get(mutate, {"variants": (), "settings": []})
 
     def extra(variant):
         return list(mutation["settings"]) if variant in mutation["variants"] else []
 
-    variants = {"classic": CLASSIC, "enhanced": ENHANCED, "traced": TRACED, "hdr": HDR}
+    variants = {"classic": CLASSIC, "enhanced": ENHANCED, "traced": TRACED, "untraced": UNTRACED, "hdr": HDR}
+    for name, setting in features.items():
+        variants[f"{name}-on"] = HDR + [setting]
     wanted = set()
     if "parity" in only:
         wanted |= {("corridor", "classic"), ("corridor", "enhanced"), ("blast", "classic"), ("blast", "enhanced"),
                    ("daylight", "classic"), ("daylight", "enhanced")}
     if "shadow" in only:
-        wanted |= {("corridor", "enhanced"), ("corridor", "traced")}
-    if "hdr" in only:
+        wanted |= {("corridor", "untraced"), ("corridor", "traced"), ("moved", "untraced"), ("moved", "traced")}
+    if "hdr" in only or features:
         wanted |= {("corridor", "hdr")}
     if "identity" in only:
         wanted |= {("corridor", "classic"), ("blast", "classic"), ("daylight", "classic")}
+    if features:
+        wanted |= {("corridor", "traced")}
+        wanted |= {("corridor", f"{name}-on") for name in features}
     runs = []
     for scene, variant in sorted(wanted):
         runs.append(Run(scene, variant, build, scene_settings(scene, variants[variant], extra(variant)), machine,
-                        label=f"lref-{tag}-{scene}-{variant}", halves=variant == "hdr"))
-    if "identity" in only and baseline != build:
-        for scene in ("corridor", "blast", "daylight"):
-            runs.append(Run(scene, "baseline", baseline, scene_settings(scene, CLASSIC, []), machine,
-                            label=f"lref-{slug(baseline)}-base-{scene}"))
+                        label=f"lref-{tag}-{scene}-{variant}", halves=variant == "hdr" or variant.endswith("-on")))
+    if baseline != build:
+        if "identity" in only:
+            for scene in ("corridor", "blast", "daylight"):
+                runs.append(Run(scene, "baseline", baseline, scene_settings(scene, CLASSIC, []), machine,
+                                label=f"lref-{slug(baseline)}-base-{scene}"))
+        if features:
+            runs.append(Run("corridor", "baseline-traced", baseline, scene_settings("corridor", TRACED, []), machine,
+                            label=f"lref-{slug(baseline)}-base-traced"))
     timed = []
     if "cost" in only:
+        configurations = [("timed", [])] + [(f"timed-{name}", [setting]) for name, setting in features.items()]
         for host in timing:
-            for repeat in range(3):
-                settings = STAGE + [f"HALO_NETWORK_TEST_CUES=5 ai_erase_all|9 {FLOOD}",
-                                    "HALO_TEST_INPUT=script:12.5-13 flashlight",
-                                    "HALO_SCREENSHOT_AT=22,quit"] + TIMED + extra("timed")
-                timed.append(Run("corridor", "timed", build, settings, host, shared=False,
-                                 label=f"lref-{tag}-timed-{repeat}"))
+            for variant, more in configurations:
+                for repeat in range(3):
+                    settings = STAGE + [f"HALO_NETWORK_TEST_CUES=5 ai_erase_all|9 {FLOOD}",
+                                        "HALO_TEST_INPUT=script:12.5-13 flashlight",
+                                        "HALO_SCREENSHOT_AT=16,quit"] + TIMED + more + extra("timed")
+                    timed.append(Run("corridor", variant, build, settings, host, shared=False,
+                                     label=f"lref-{tag}-{variant}-{repeat}"))
     return runs, timed
 
 
@@ -325,18 +409,18 @@ class Table:
 
     def text(self):
         width = max([len(f"{r['check']}: {r['item']}") for r in self.rows] + [20])
-        lines = [f"{'check':<{width}}  {'value':>12}  {'limit':<22} result"]
+        lines = [f"{'check':<{width}}  {'value':>12}  {'limit':<26} result"]
         for r in self.rows:
             value = r["value"] if isinstance(r["value"], str) else f"{r['value']:.3f}"
             result = "PASS" if r["passed"] else ("n/a" if r["passed"] is None else "FAIL")
-            lines.append(f"{r['check'] + ': ' + r['item']:<{width}}  {value:>12}  {r['limit']:<22} {result}"
+            lines.append(f"{r['check'] + ': ' + r['item']:<{width}}  {value:>12}  {r['limit']:<26} {result}"
                          + (f"  ({r['note']})" if r["note"] else ""))
         return "\n".join(lines)
 
 
 def pictures(runs, scene, variant, moments):
     run = runs.get((scene, variant))
-    if not run:
+    if not run or not run.folder:
         return None
     try:
         return [Picture(run.shot(m)) for m in moments]
@@ -372,13 +456,14 @@ def check_parity(table, runs):
         mc = statistics.fmean(v for _, _, v in c[0].luminance(box, 2))
         me = statistics.fmean(v for _, _, v in e[0].luminance(box, 2))
         ratio = me / mc if mc > 0 else float("inf")
-        table.add("parity", "weapon unlit (flashlight off)", ratio, f"x{1 / PARITY_RATIO:.2f}..x{PARITY_RATIO:.2f}",
+        table.add("parity", "weapon, flashlight off", ratio, f"x{1 / PARITY_RATIO:.2f}..x{PARITY_RATIO:.2f}",
                   1 / PARITY_RATIO <= ratio <= PARITY_RATIO)
         same = total = 0
         for moment in (0, 1):
             for box in HUD:
                 for a, b in zip(hud_pixels(c[moment], box), hud_pixels(e[moment], box)):
-                    if a is None:
+                    if a is None or b is None:
+                        total += a is not None or b is not None
                         continue
                     total += 1
                     same += max(abs(p - q) for p, q in zip(a, b)) <= 2
@@ -397,12 +482,12 @@ def check_parity(table, runs):
         table.add("parity", "daylight", "missing", "pictures", False, "a run made no pictures")
     else:
         different = sum(abs(a - b) > 2 for a, b in zip(c[0].rgb, e[0].rgb)) / len(c[0].rgb)
-        table.add("parity", "daylight unchanged", different, f"<= {DAYLIGHT_DIFFERENT} differ", different <=
-                  DAYLIGHT_DIFFERENT)
+        table.add("parity", "daylight unchanged", different, f"<= {DAYLIGHT_DIFFERENT} differ",
+                  different <= DAYLIGHT_DIFFERENT)
 
 
 def hud_pixels(picture, box):
-    """the HUD's own pixels of a box: bright, saturated ones (its blue meters and white text), else None"""
+    """the HUD's own pixels of a box: bright ones (its blue meters and white text), else None"""
     x0, y0, x1, y1 = box
     out = []
     for y in range(y0, y1):
@@ -413,18 +498,17 @@ def hud_pixels(picture, box):
     return out
 
 
-def shadow_mask(lit, traced, box, step=2):
-    """the pixels the traced shadows darken: (x, y) where the traced picture's light is SHADOW_DARKER under the
-    untraced one's, of the pixels lit at all"""
-    mask = set()
-    lit_count = 0
-    for (x, y, a), (_, _, b) in zip(lit.luminance(box, step), traced.luminance(box, step)):
+def shadow_mask(untraced, traced, box, step=2):
+    """the pixels the traced shadows darken: where the traced picture's light is SHADOW_DARKER under the same
+    build's with its shadows off; and the count of pixels lit at all"""
+    mask, lit = set(), 0
+    for (x, y, a), (_, _, b) in zip(untraced.luminance(box, step), traced.luminance(box, step)):
         if a < 0.004:
             continue
-        lit_count += 1
+        lit += 1
         if b < a * (1 - SHADOW_DARKER):
             mask.add((x, y))
-    return mask, lit_count
+    return mask, lit
 
 
 def direction(points):
@@ -445,42 +529,64 @@ def side_of(line, point):
 
 
 def check_shadow(table, runs):
-    e = pictures(runs, "corridor", "enhanced", (1, 2, 3))
-    t = pictures(runs, "corridor", "traced", (1, 2, 3))
-    if not e or not t:
+    u = pictures(runs, "corridor", "untraced", (1,))
+    t = pictures(runs, "corridor", "traced", (1,))
+    um = pictures(runs, "moved", "untraced", (1,))
+    tm = pictures(runs, "moved", "traced", (1,))
+    if not u or not t:
         table.add("shadow", "corridor", "missing", "pictures", False, "a run made no pictures")
         return
-    # the side camera: the shadow on the wall and on the floor, bending at the crease, touching the feet
-    mask, lit = shadow_mask(e[1], t[1], SIDE["around"])
-    caster = SIDE["caster"]
+    # (the reference: shadows off must change nothing but the shadows)
+    ratios = sorted(b / a for (_, _, a), (_, _, b) in zip(u[0].luminance(PLAYER["view"], 8),
+                                                          t[0].luminance(PLAYER["view"], 8)) if a > 0.004)
+    level = ratios[len(ratios) // 2] if ratios else 0.0
+    table.add("shadow", "shadows-off reference sound", level, f"x{1 / SHADOW_SAME:.2f}..x{SHADOW_SAME:.2f}",
+              1 / SHADOW_SAME <= level <= SHADOW_SAME, "HALO_LIGHT_SHADOWS_OFF / HALO_FLASHLIGHT_SHADOWS_OFF")
+    # about the caster: the shadow on the wall and on the floor, bending at the crease, touching the feet
+    mask, _ = shadow_mask(u[0], t[0], NEAR["around"])
+    caster = NEAR["caster"]
     outside = {p for p in mask if not (caster[0] <= p[0] < caster[2] and caster[1] <= p[1] < caster[3])}
-    wall = [p for p in outside if side_of(SIDE["crease"], p) < 0]
-    floor = [p for p in outside if side_of(SIDE["crease"], p) >= 0]
+    wall = [p for p in outside if side_of(NEAR["crease"], p) < 0]
+    floor = [p for p in outside if side_of(NEAR["crease"], p) >= 0]
     # (counted in full-size pixels: the mask is of every second pixel each way)
-    table.add("shadow", "on the wall (side)", len(wall) * 4, f">= {SHADOW_LEAST} px", len(wall) * 4 >= SHADOW_LEAST)
-    table.add("shadow", "on the floor (side)", len(floor) * 4, f">= {SHADOW_LEAST} px",
-              len(floor) * 4 >= SHADOW_LEAST)
+    table.add("shadow", "on the wall", len(wall) * 4, f">= {SHADOW_LEAST} px", len(wall) * 4 >= SHADOW_LEAST)
+    table.add("shadow", "on the floor", len(floor) * 4, f">= {SHADOW_LEAST} px", len(floor) * 4 >= SHADOW_LEAST)
     a, b = direction(wall), direction(floor)
     bend = abs(a - b) if a is not None and b is not None else 0.0
     bend = min(bend, 180 - bend)
     table.add("shadow", "bends at the crease", bend, f">= {SHADOW_BEND} deg", bend >= SHADOW_BEND)
-    feet = SIDE["feet"]
+    feet = NEAR["feet"]
     near = min((math.hypot(p[0] - feet[0], p[1] - feet[1]) for p in outside), default=float("inf"))
     table.add("shadow", "touches the feet", near, f"<= {SHADOW_CONTACT} px", near <= SHADOW_CONTACT)
-    # the player's view: the light from beside the eye, so what is seen is what is lit; the caster's front and the
-    # floor before it must stay lit
-    front, lit_front = shadow_mask(e[0], t[0], PLAYER["character"])
-    share = len(front) / lit_front if lit_front else 1.0
-    table.add("shadow", "caster's lit front kept", share, f"<= {SHADOW_SELF} shadowed", share <= SHADOW_SELF)
-    before, lit_before = shadow_mask(e[0], t[0], PLAYER["floor"])
-    share = len(before) / lit_before if lit_before else 1.0
-    table.add("shadow", "nothing before the caster", share, f"<= {SHADOW_FRONT} shadowed", share <= SHADOW_FRONT)
-    # the beam moved (the player turned): the shadow moves with it
-    moved, _ = shadow_mask(e[2], t[2], SIDE["around"])
-    union = mask | moved
-    changed = len(mask ^ moved) / len(union) if union else 0.0
-    table.add("shadow", "moves with the light", changed, f">= {SHADOW_MOVED} of it changed", changed >= SHADOW_MOVED
-              and len(moved) * 4 >= SHADOW_LEAST)
+    # the light from beside the eye, so what is seen is lit: the caster's front, the floor before it and the
+    # first-person weapon (whose lamp it is) stay lit
+    for box, limit, item in ((NEAR["caster"], SHADOW_SELF, "caster's lit front kept"),
+                             (PLAYER["floor"], SHADOW_FRONT, "nothing before the caster"),
+                             (PLAYER["weapon barrel"], SHADOW_GUN, "first-person weapon unshadowed")):
+        shaded, lit = shadow_mask(u[0], t[0], box)
+        share = len(shaded) / lit if lit else 0.0
+        table.add("shadow", item, share, f"<= {limit} shadowed", share <= limit)
+    # the caster moved a step: its shadow moves with it
+    if not um or not tm:
+        table.add("shadow", "moves with the caster", "missing", "pictures", False)
+        return
+    moved, _ = shadow_mask(um[0], tm[0], NEAR["around"])
+    caster = NEAR["caster moved"]
+    moved = {p for p in moved if not (caster[0] <= p[0] < caster[2] and caster[1] <= p[1] < caster[3])}
+    union = outside | moved
+    changed = len(outside ^ moved) / len(union) if union else 0.0
+    table.add("shadow", "moves with the caster", changed, f">= {SHADOW_MOVED} changed",
+              changed >= SHADOW_MOVED and len(moved) * 4 >= SHADOW_LEAST)
+
+
+def halves_luminance(values, width, height, step=4):
+    out = []
+    for y in range(0, height, step):
+        for x in range(0, width, step):
+            at = (y * width + x) * 4
+            out.append(0.2126 * linear(values[at]) + 0.7152 * linear(values[at + 1]) +
+                       0.0722 * linear(values[at + 2]))
+    return out
 
 
 def box_peak(width, values, box):
@@ -495,7 +601,7 @@ def box_peak(width, values, box):
 
 def check_hdr(table, runs):
     run = runs.get(("corridor", "hdr"))
-    path = run.shot(1, "rgba16f") if run else None
+    path = run.shot(1, "rgba16f") if run and run.folder else None
     if not path or not path.exists():
         table.add("hdr", "counter", "missing", "half floats", False,
                   "no debug.screenshot_halves frame: a build without it, or no HDR frame")
@@ -505,23 +611,72 @@ def check_hdr(table, runs):
     low, high = HDR_COUNTER
     table.add("hdr", "AR counter peak", peak, f"{low}..{high} x paper white", low <= peak <= high)
     peak = box_peak(width, values, (0, 0, width, height))
-    low, high = HDR_EMITTER
-    table.add("hdr", "brightest in the frame", peak, f"<= {high} x paper white", peak <= high)
+    table.add("hdr", "brightest in the frame", peak, f"<= {HDR_EMITTER} x paper white", peak <= HDR_EMITTER)
+
+
+def flicker(run):
+    """the mean change of light between two frames of a still view (moments 1 and 2, a tenth of a second apart)"""
+    a = read_halves(run.shot(1, "rgba16f"))
+    b = read_halves(run.shot(2, "rgba16f"))
+    la, lb = halves_luminance(a[2], a[0], a[1]), halves_luminance(b[2], b[0], b[1])
+    return statistics.fmean(abs(x - y) for x, y in zip(la, lb))
+
+
+def check_features(table, runs, features, baseline):
+    off = runs.get(("corridor", "hdr"))
+    for name in features:
+        on = runs.get(("corridor", f"{name}-on"))
+        try:
+            width, height, values = read_halves(on.shot(1, "rgba16f"))
+        except (OSError, ValueError, AttributeError):
+            table.add(name, "on", "missing", "half floats", False, "no HDR frame with the feature on")
+            continue
+        bad = sum(1 for v in values if v != v or v in (float("inf"), float("-inf")))
+        table.add(name, "on: NaN or infinite values", bad, "= 0", bad == 0)
+        ceiling = HDR_EMITTER
+        blown = sum(1 for at in range(0, len(values), 4)
+                    if max(linear(values[at]), linear(values[at + 1]), linear(values[at + 2])) > ceiling) / \
+            (width * height)
+        table.add(name, "on: blown-out pixels", blown, f"<= {BLOWN} past x{ceiling}", blown <= BLOWN)
+        try:
+            same = Path(on.shot(1)).read_bytes() == Path(off.shot(1)).read_bytes()
+            mine, theirs = flicker(on), flicker(off)
+        except (OSError, ValueError, AttributeError):
+            table.add(name, "on: stable", "missing", "frames", False)
+            continue
+        if same:
+            table.add(name, "on: changes the picture", "no", "a change", None,
+                      f"{features[name]} draws nothing in this build")
+        limit = mine <= theirs * FLICKER[0] + FLICKER[1]
+        table.add(name, "on: frame-to-frame change", mine, f"<= {FLICKER[0]}x off's {theirs:.4f} + {FLICKER[1]}",
+                  limit)
+    mine = runs.get(("corridor", "traced"))
+    theirs = runs.get(("corridor", "baseline-traced"))
+    if mine and theirs and mine is not theirs:
+        same = all(_digest(mine, m) == _digest(theirs, m) and _digest(mine, m) for m in range(3))
+        table.add("features", "off: same as baseline", "same" if same else "differ", f"= {baseline}", same)
+
+
+def _digest(run, moment):
+    try:
+        return Picture(run.shot(moment)).digest()
+    except (OSError, ValueError):
+        return None
 
 
 PASS_GROUPS = re.compile(r"vulkan: pass groups: draws [0-9.]+(.*)")
 
 
 def pass_groups(log):
-    """the last ten summaries' milliseconds a frame by owner (the flashlight on, the scene still)"""
+    """the last summaries' milliseconds a frame by owner (the flashlight on, the scene still)"""
     sums = []
     for match in PASS_GROUPS.finditer(log):
         groups = {}
-        for name, value in re.findall(r",? ([A-Z][A-Z ]*?) ([0-9.]+) ms", match.group(1)):
+        for name, value in re.findall(r"([A-Z][A-Z ]*[A-Z]) ([0-9.]+) ms", match.group(1)):
             groups[name.strip()] = float(value)
         if groups:
             sums.append(groups)
-    sums = sums[-10:]
+    sums = sums[-3:]
     if not sums:
         return {}
     names = set().union(*sums)
@@ -531,43 +686,46 @@ def pass_groups(log):
 
 
 def check_cost(table, timed):
-    by_machine = {}
+    results = {}
     for run in timed:
         log = ""
         for name in ("halo.log", "debug.txt"):
             path = run.folder / "game" / name if run.folder else None
             if path and path.exists():
                 log += path.read_text(errors="replace")
-        by_machine.setdefault(run.machine, []).append(pass_groups(log))
-    for machine, results in sorted(by_machine.items()):
-        results = [r for r in results if r]
-        budget = BUDGETS.get(machine, {})
-        if not results:
-            table.add("cost", f"{machine}", "missing", "pass times", False, "no debug.pass_times lines")
+        results.setdefault((run.machine, run.variant), []).append(pass_groups(log))
+    medians = {}
+    for (machine, variant), found in sorted(results.items()):
+        found = [r for r in found if r]
+        if not found:
+            table.add("cost", f"{machine} {variant}", "missing", "pass times", False, "no debug.pass_times lines")
             continue
-        names = sorted(set().union(*results) - {"frame"}, key=lambda n: -statistics.median(r.get(n, 0) for r in
-                                                                                             results))
-        for name in ["frame"] + names:
-            value = statistics.median(r.get(name, 0.0) for r in results)
-            if name in budget:
-                table.add("cost", f"{machine} {name}", value, f"<= {budget[name]} ms", value <= budget[name])
-            elif value >= 0.05:
-                table.add("cost", f"{machine} {name}", value, "(reported)", None)
+        medians[(machine, variant)] = {name: statistics.median(r.get(name, 0.0) for r in found)
+                                       for name in set().union(*found)}
+    for (machine, variant), median in sorted(medians.items()):
+        budget = BUDGETS.get(machine, {})
+        if variant == "timed":
+            names = sorted(set(median) - {"frame"}, key=lambda n: -median[n])
+            for name in ["frame"] + names:
+                if name in budget:
+                    table.add("cost", f"{machine} {name}", median[name], f"<= {budget[name]} ms",
+                              median[name] <= budget[name])
+                elif median[name] >= 0.05:
+                    table.add("cost", f"{machine} {name}", median[name], "(reported)", None)
+        elif (machine, "timed") in medians:
+            more = median["frame"] - medians[(machine, "timed")]["frame"]
+            limit = budget.get("+feature", float("inf"))
+            table.add("cost", f"{machine} {variant[6:]} adds", more, f"<= {limit} ms", more <= limit)
 
 
 def check_identity(table, runs, build, baseline, identity):
     for scene in ("corridor", "blast", "daylight"):
         mine = runs.get((scene, "classic"))
         theirs = runs.get((scene, "baseline")) if baseline != build else mine
-        if not mine or not theirs:
+        if not mine or not theirs or not mine.folder:
             continue
         moments = sorted(int(p.stem[2:]) for p in (mine.folder / "game" / "shots").glob("at*.png"))
-        same = bool(moments)
-        for m in moments:
-            try:
-                same = same and Picture(mine.shot(m)).digest() == Picture(theirs.shot(m)).digest()
-            except (OSError, ValueError):
-                same = False
+        same = bool(moments) and all(_digest(mine, m) and _digest(mine, m) == _digest(theirs, m) for m in moments)
         table.add("identity", f"Classic frames: {scene}", "same" if same else "differ", f"= {baseline}", same)
     if identity is not None:
         table.add("identity", "game state (identity.py)", "same" if identity == 0 else f"exit {identity}",
@@ -594,23 +752,44 @@ def main():
     parser.add_argument("build", help="the branch, sha or local/<name> goat-rig builds")
     parser.add_argument("--baseline", default="master", help="the build Classic must equal (default master)")
     parser.add_argument("--machine", default="omarchy", help="the machine the pictures are taken on")
-    parser.add_argument("--timing", default="omarchy,5900x", help="the machines timed (comma-separated; '' none)")
-    parser.add_argument("--only", default="parity,shadow,hdr,cost,identity", help="the checks run")
+    parser.add_argument("--timing", default="omarchy,5900x",
+                        help="the machines timed (comma-separated; bosgame too where its kit is; '' none)")
+    parser.add_argument("--only", default="parity,shadow,hdr,cost,identity,features", help="the checks run")
+    parser.add_argument("--feature", action="append", default=[], metavar="NAME=VAR=VALUE",
+                        help="a feature and the setting that turns it on (default: " +
+                        ", ".join(f"{k}={v}" for k, v in FEATURES.items()) + ")")
     parser.add_argument("--mutate", choices=sorted(MUTATIONS), help="a negative control: break one subject")
     parser.add_argument("--work", type=Path, default=ROOT / "build" / "lighting_referee",
                         help="where the pictures and the table are kept")
     parser.add_argument("--no-build", action="store_true", help="the builds as the machines have them")
     args = parser.parse_args()
     only = {c.strip() for c in args.only.split(",") if c.strip()}
+    features = dict(FEATURES)
+    for item in args.feature:
+        name, _, setting = item.partition("=")
+        features[name] = setting
+    if "features" not in only:
+        features = {}
     timing = [m for m in args.timing.split(",") if m] if "cost" in only else []
     started = time.monotonic()
     work = args.work / (slug(args.build) + (f"-{args.mutate}" if args.mutate else ""))
     work.mkdir(parents=True, exist_ok=True)
-
     machines = sorted({args.machine, *timing})
+
+    # (a build without the captures gets them picked onto it; the baseline too)
+    build, baseline = args.build, args.baseline
     if not args.no_build:
-        builds = [(m, b) for m in machines for b in {args.build, args.baseline}
-                  if m == args.machine or b == args.build]
+        for which in ("build", "baseline"):
+            ref = build if which == "build" else baseline
+            if ref.startswith("local/") or has_capture(ref):
+                continue
+            grafted = graft(ref, machines)
+            if not grafted:
+                print(f"referee: {ref} has no debug.screenshot_at and the capture commits do not pick onto it")
+                sys.exit(2)
+            print(f"referee: {ref} lacks the captures: built as {grafted}", flush=True)
+            build, baseline = (grafted, baseline) if which == "build" else (build, grafted)
+        builds = sorted({(m, b) for m in machines for b in (build, baseline) if m == args.machine or b == build})
         with concurrent.futures.ThreadPoolExecutor(len(builds)) as pool:
             for (machine, ref), result in zip(builds, pool.map(lambda mb: rig("build", mb[1], machine=mb[0]),
                                                               builds)):
@@ -619,47 +798,57 @@ def main():
                     sys.exit(2)
         print(f"referee: built in {time.monotonic() - started:.0f} s", flush=True)
 
-    runs, timed = plan(args.build, args.baseline, args.machine, timing, only, args.mutate)
-    identity = None
-    with concurrent.futures.ThreadPoolExecutor(len(runs) + 1) as pool:
-        future_identity = pool.submit(run_identity, args.build, args.baseline, args.machine) \
-            if "identity" in only and args.baseline != args.build else None
-        done = list(pool.map(lambda r: play(r, work), runs))
-        identity = future_identity.result() if future_identity else None
-    print(f"referee: {len(done)} picture runs in {time.monotonic() - started:.0f} s", flush=True)
-    # (the timing runs: the GPU alone, each machine's in turn, the machines at once)
+    runs, timed = plan(build, baseline, args.machine, timing, only, args.mutate, features)
+    # (the timing runs wait for the GPU alone, each machine's in turn; the picture runs share it, three at once)
     by_machine = {}
     for run in timed:
         by_machine.setdefault(run.machine, []).append(run)
-    with concurrent.futures.ThreadPoolExecutor(max(1, len(by_machine))) as pool:
-        list(pool.map(lambda group: [play(r, work) for r in group], by_machine.values()))
+    with concurrent.futures.ThreadPoolExecutor(len(runs) + len(by_machine) + 1) as pool:
+        future_identity = pool.submit(run_identity, build, baseline, args.machine) \
+            if "identity" in only and baseline != build else None
+        future_timed = [pool.submit(lambda group: [play(r, work) for r in group], group)
+                        for machine, group in by_machine.items() if machine != args.machine]
+        list(pool.map(lambda r: play(r, work), runs))
+        print(f"referee: {len(runs)} picture runs in {time.monotonic() - started:.0f} s", flush=True)
+        for run in by_machine.get(args.machine, []):
+            play(run, work)
+        for future in future_timed:
+            future.result()
+        identity = future_identity.result() if future_identity else None
     if timed:
         print(f"referee: {len(timed)} timing runs in {time.monotonic() - started:.0f} s", flush=True)
 
     keyed = {(r.scene, r.variant): r for r in runs}
     table = Table()
     for run in runs + timed:
-        if "exit 0" not in run.summary or "failed asserts" in run.summary and "no failed asserts" not in run.summary:
-            table.add("runs", run.label, "trouble", "exit 0", False, run.summary.splitlines()[0] if run.summary
-                      else "no summary")
+        if "exit 0" not in run.summary or ("failed asserts" in run.summary and "no failed asserts" not in
+                                           run.summary):
+            table.add("runs", run.label, "trouble", "exit 0", False,
+                      run.summary.splitlines()[0] if run.summary else "no summary")
     if "parity" in only:
         check_parity(table, keyed)
     if "shadow" in only:
         check_shadow(table, keyed)
     if "hdr" in only:
         check_hdr(table, keyed)
+    if features:
+        check_features(table, keyed, features, baseline)
     if "cost" in only:
         check_cost(table, timed)
     if "identity" in only:
-        check_identity(table, keyed, args.build, args.baseline, identity)
+        check_identity(table, keyed, build, baseline, identity)
     text = table.text()
     failed = sum(r["passed"] is False for r in table.rows)
-    footer = (f"referee: {args.build}{' (mutation ' + args.mutate + ')' if args.mutate else ''}: "
+    verdict = "FAIL" if failed else "PASS"
+    footer = (f"referee: {args.build}{' (mutation ' + args.mutate + ')' if args.mutate else ''}: {verdict}, "
               f"{sum(r['passed'] is True for r in table.rows)} passed, {failed} failed, in "
               f"{time.monotonic() - started:.0f} s; pictures in {work}")
     print(text + "\n" + footer)
     (work / "table.txt").write_text(text + "\n" + footer + "\n")
-    (work / "table.json").write_text(json.dumps(table.rows, indent=1))
+    (work / "summary.json").write_text(json.dumps(
+        {"build": args.build, "built_as": build, "baseline": baseline, "mutation": args.mutate, "verdict": verdict,
+         "passed": sum(r["passed"] is True for r in table.rows), "failed": failed,
+         "seconds": round(time.monotonic() - started), "rows": table.rows}, indent=1))
     sys.exit(1 if failed else 0)
 
 
