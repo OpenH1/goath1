@@ -528,6 +528,9 @@ static struct
 	DWORD palette[256];
 } rtlm;
 
+/* a note written at the top of lights.json (NULL none: the debug trigger's) */
+static char const *rtlm_note = NULL;
+
 /* ---------- small helpers */
 
 static void rtlm_mkdirs(char const *path)
@@ -1565,7 +1568,14 @@ static void rtlm_lights_write(char const *path)
 	}
 	fprintf(file, "{\"map\":");
 	rtlm_string(file, cache_file_loaded_map_name() ? cache_file_loaded_map_name() : "");
-	fprintf(file, ",\"tick\":%ld,\n\"sky\":", game_time_get());
+	fprintf(file, ",\"tick\":%ld,\n", game_time_get());
+	if (rtlm_note)
+	{
+		fprintf(file, "\"note\":");
+		rtlm_string(file, rtlm_note);
+		fprintf(file, ",\n");
+	}
+	fprintf(file, "\"sky\":");
 	if (scenario && scenario->sky_references.count > 0)
 		rtlm_sky(file, main_sky, cluster_counts[main_sky]);
 	else
@@ -1632,7 +1642,8 @@ static void rtlm_lights_write(char const *path)
 			fprintf(file, ",\"gel_frame\":\"the cube map sampled along (P - light) in the frame of -forward, -left, -up "
 				"(left = forward x up), after turning forward and up by the gel's yaw/pitch/roll functions at the game "
 				"time (rasterizer_xbox_environment.c's _rasterizer_environment_diffuse_light_begin)\",\"source\":\"%s\","
-				"\"object\":", source);
+				"\"attached_to_first_person_weapon\":%s,\"object\":", source,
+				TEST_FLAG(light->flags, 3) ? "true" : "false");
 			rtlm_string(file, object ? rtlm_tag_name(object->definition_index) : "");
 			fprintf(file, ",\"from\":\"light datum at this tick (object_lights.c): position, forward, up as the lights' "
 				"preprocessing placed them; color (0..1) the tag's color bounds by the object's function or the "
@@ -1787,4 +1798,30 @@ void rt_lights_materials_debug_frame(void)
 	fclose(file);
 	platform_log("rt2 lights: debug trigger at tick %ld: %s, %ld BSP shaders", game_time_get(), folder, count);
 	rt_lights_materials_write(folder);
+	/* (and existing scenes of this map, HALO_RT2_LIGHTS_SCENES=<folder>;...:
+	their materials from the tags, their lights from this run's tick, not
+	the scene's, said so in lights.json) */
+	if (getenv("HALO_RT2_LIGHTS_SCENES") && written == 1)
+	{
+		char scenes[4096], *scene, *next;
+
+		snprintf(scenes, sizeof(scenes), "%s", getenv("HALO_RT2_LIGHTS_SCENES"));
+		for (scene = scenes; scene && *scene; scene = next)
+		{
+			char const *base;
+
+			next = strchr(scene, ';');
+			if (next)
+				*next++ = 0;
+			base = strrchr(scene, '/') ? strrchr(scene, '/') + 1 : scene;
+			if (strncmp(base, name, strlen(name)) || base[strlen(name)] != '_')
+				continue;
+			rtlm_note = "materials, textures, the skies, the light tags (the flashlight's gel, cone and radius among "
+				"them), the distance attenuation and the radiosity summary hold for this scene; the lights[] and "
+				"their positions are NOT this scene's tick but the lights test's (its tick above): the scene's own "
+				"come from the engine export calling rt_lights_materials_write at its tick";
+			rt_lights_materials_write(scene);
+			rtlm_note = NULL;
+		}
+	}
 }
