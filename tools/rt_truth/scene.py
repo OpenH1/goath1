@@ -572,6 +572,8 @@ class Scene:
         # hands are left out of their renders.
         fp_files = self.first_person_files() if group == "flashlight" or (
             group == "dynamic" and any(L.get("attached_to_first_person_weapon") for L in self.lights_of(group))) else set()
+        if group == "dynamic":
+            fp_files = set(fp_files) | self.light_owners()
         for fpath, (pos, nrm, uv, tris, mats, *_) in self.geometry.items():
             is_object = fpath.parent.name == "objects"
             if fpath.resolve() in fp_files:
@@ -683,6 +685,26 @@ class Scene:
             self.mesh_faces[name] = (fpath, fsel)
             shapes[name] = self.make_mesh(name, pos[vv], n, uv[vv], inv.reshape(-1, 3), surf, em,
                                           tb[vv] if tb is not None else None, a2)
+
+    def light_owners(self):
+        """The objects carrying a dynamic light (C4 leaves a light's owner out of its rays): a weapon within
+        0.1 wu of the light (the muzzle flash's own weapon; lights.json names no instance)."""
+        self.load_geometry()
+        types = self.object_types()
+        out = set()
+        for L in self.lights_of("dynamic"):
+            p = np.array(L.get("emitter_position") or L["position"], float)
+            best = None
+            for fpath, g in self.geometry.items():
+                if fpath.parent.name != "objects" or types.get(fpath.resolve()) != 2:
+                    continue
+                dmin = float(np.linalg.norm(g[0] - p, axis=1).min())
+                if dmin < 0.1 and (best is None or dmin < best[0]):
+                    best = (dmin, fpath.resolve())
+            if best:
+                out.add(best[1])
+                self.note_once("a dynamic light's owner left out of its render: %s" % best[1].name)
+        return out
 
     def first_person_files(self):
         """The object files of the first-person weapon and hands (objects.json's `first_person`)."""
