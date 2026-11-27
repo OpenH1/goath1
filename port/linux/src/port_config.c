@@ -2644,6 +2644,9 @@ static const struct config_setting config_settings[] =
 		"Log each local player's camera each tick, with whether it is dead and\n"
 		"whom it watches (game.spectate_on_death's tests:\n"
 		"port/linux/game/dead_spectate.c)." },
+	{ "debug.rt_export", _config_string, "\"\"", "HALO_RT_EXPORT", _environment_value, _platform_all,
+		"\"<second> <folder>\": at that second of the cues' clock, the moment written\n"
+		"to the folder as a ray-traced truth scene (port/linux/game/rt_export.c); empty none." },
 	{ "debug.spectate_shots", _config_string, "\"\"", "HALO_SPECTATE_SHOTS", _environment_value, _platform_all,
 		"Ticks (\"<tick>,<tick>...\") whose first frame is saved as\n"
 		"debug.screenshot_directory's tick<tick>.bmp; empty none." },
