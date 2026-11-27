@@ -9767,6 +9767,88 @@ def _model_search() -> list:
                                      ("geometry", SETTINGS_TALL.name), ("title", "SEARCH")], inner, 1)
 
 
+# ---------- the GOAT Settings screen's tabs (display.goat_menus; screens/goat_settings.xml, menu_functions.c's
+# goat_settings.inc): each tab Settings' own rows, gathered from its pages' sections (a page's folder in PAGES, its
+# section's title or None for all of them), each row by its page's screen and its key, its label, help, choices and
+# conditions the page's own (its row in model/settings.xml). A row that opens a page whose rows the tab lists is
+# left out; a link of a tab's own (its words and the screen it opens) follows them. Written to
+# port/assets/menus/model/goat_settings.xml
+GOAT_MODEL_FILE = "model/goat_settings.xml"
+GOAT_TABS = [
+    ("DISPLAY", [("video_settings", "DISPLAY"), ("video_settings/brightness", None),
+                 ("video_settings/screen_layout", None)], []),
+    ("GRAPHICS", [("video_settings", "GRAPHICS"), ("video_settings/advanced", None),
+                  ("video_settings/frame_rate", None)], []),
+    ("AUDIO", [("audio_settings", None), ("audio_settings/advanced_audio", None)], []),
+    ("CONTROLS", [("mouse_settings", None), ("gamepad_setup", None)], []),
+    ("GAMEPLAY", [("video_settings/first_person", None), ("interface_settings", None),
+                  ("interface_settings/campaign", None)], []),
+    ("SYSTEM", [("profile_settings", None), ("mods_settings", None), ("interface_settings/streaming", None)],
+     [("ONLINE", "network_setup")]),
+]
+
+
+def _page_row_key(entry) -> str:
+    """a PAGES row's key, as _model_page names it"""
+    label, setting, _choices, _help, _platform, *named = entry
+    return named[0] if named else setting.split(".", 1)[1] if setting else \
+        re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_")
+
+
+def _goat_page_title(folder: str) -> str:
+    """a page's title, as the link to it is labelled ("ADVANCED GRAPHICS", its " ›" dropped)"""
+    screen = f"{PE}/{folder}/{PAGES[folder]['screen']}"
+    for page in PAGES.values():
+        for entry in page["rows"]:
+            if entry[0] != SECTION and entry[1] is None and entry[2] == screen:
+                return entry[0].replace("›", "").strip()
+    return folder.rsplit("/", 1)[-1].replace("_", " ").upper()
+
+
+def goat_tab_rows(sections: list) -> list:
+    """a GOAT tab's sections, each its title and its rows' (screen, key) in the order their pages have them (a
+    title two pages share one section)"""
+    screens = {f"{PE}/{folder}/{PAGES[folder]['screen']}" for _, tab_sections, _ in GOAT_TABS
+               for folder, _ in tab_sections}
+    out = {}
+    for folder, wanted in sections:
+        screen = f"{PE}/{folder}/{PAGES[folder]['screen']}"
+        # (a page gathered whole: its rows before its first heading go under one named for the page, as the link to
+        # it is labelled, so that none is left off)
+        rows = out.setdefault(_goat_page_title(folder), []) if wanted is None else None
+        seen = set()
+        for entry in PAGES[folder]["rows"]:
+            if entry[0] == SECTION:
+                rows = out.setdefault(entry[1], []) if wanted in (None, entry[1]) else None
+                continue
+            key = _page_row_key(entry)
+            opens = entry[2] if isinstance(entry[2], str) else None
+            if rows is None or key in seen or (opens and opens in screens):
+                continue
+            seen.add(key)
+            rows.append((screen, key))
+    return [(title, rows) for title, rows in out.items() if rows]
+
+
+def _model_goat() -> list:
+    lines = ['<?xml version="1.0" encoding="UTF-8"?>',
+             "<!-- The GOAT Settings screen's tabs (display.goat_menus; docs/menu_screens.md, \"GOAT Settings\"; "
+             "tools/port_settings.py's GOAT_TABS): Settings' own rows by their pages' screens and keys -->",
+             "<model>"]
+    for tab, sections, links in GOAT_TABS:
+        inner = []
+        for index, (title, rows) in enumerate(goat_tab_rows(sections)):
+            inner += _model_element("section", [("key", f"section_{index}"), ("title", title)])
+            inner += [f"\t\t<row{attributes([('key', key), ('kind', 'ref'), ('open', screen)])}/>"
+                      for screen, key in rows]
+        for label, folder in links:
+            inner += _model_element("row", [("key", folder.rsplit("/", 1)[-1]), ("kind", "link"), ("label", label),
+                                            ("open", f"{PE}/{folder}/{PAGES[folder]['screen']}")])
+        lines += _model_element("screen", [("name", f"goat/{tab.lower()}"), ("kind", "goat"), ("tab", tab)],
+                                inner, 1)
+    return lines + ["</model>", ""]
+
+
 def model_files() -> dict:
     """the model's files, by their paths in port/assets/menus"""
     geometry = [("row_x", SETTINGS_ROW_X), ("row_width", SETTINGS_ROW_WIDTH), ("row_height", SETTINGS_ROW_HEIGHT),
@@ -9796,7 +9878,7 @@ def model_files() -> dict:
     for folder, spec in SCREENS.items():
         lines += _model_option_screen(folder, spec)
     lines += _model_search()
-    return {MODEL_FILE: lines + ["</model>", ""]}
+    return {MODEL_FILE: lines + ["</model>", ""], GOAT_MODEL_FILE: _model_goat()}
 
 
 def _solo_new_profile() -> list:

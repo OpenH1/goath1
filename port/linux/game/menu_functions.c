@@ -16630,6 +16630,8 @@ boolean pc_menu_campaign_saved(char *level, char *difficulty, long size)
 /* ---------- Settings' search, the menu engine's */
 
 #include "settings_search_menu.inc"
+/* (GOAT Settings, display.goat_menus: screens/goat_settings.xml) */
+#include "goat_settings.inc"
 
 /* ---------- public code */
 

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- GOAT Settings (docs/menu_screens.md, "GOAT Settings"), in place of Settings' first tab
+(video_settings_screen) while display.goat_menus is on. The tall layout: SETTINGS in the band, the changes
+waiting at its right; the tabs (DISPLAY to SYSTEM, the model's goat/* screens: model/goat_settings.xml, from
+tools/port_settings.py's GOAT_TABS); the tab's rows in the table at the left, under their sections' headings,
+each its label and its value (a choice's word, a slider's number, › for a row that opens a page), dimmed
+where its page dims it; and in the panel the chosen row's label and help. Left and right step a choice or a
+slider, A steps a choice (a toggle flips) or opens the row's page, the changes kept as they are on that
+page; Y (APPLY) writes the changes, B goes back and lets go of them. The rows and what each key does are
+menu_functions.c's goat_settings.inc (the row source goat.rows, the goat.* bindings, the goat actions). -->
+<screen name="goat_settings" background="tall">
+	<header title="SETTINGS" detail="{goat.pending}"/>
+	<tabs current="goat.tab">
+		<tab id="display" label="DISPLAY" do="goat tab display"/>
+		<tab id="graphics" label="GRAPHICS" do="goat tab graphics"/>
+		<tab id="audio" label="AUDIO" do="goat tab audio"/>
+		<tab id="controls" label="CONTROLS" do="goat tab controls"/>
+		<tab id="gameplay" label="GAMEPLAY" do="goat tab gameplay"/>
+		<tab id="system" label="SYSTEM" do="goat tab system"/>
+	</tabs>
+	<table source="goat.rows" do="goat row" left="goat left" right="goat right" empty="{goat.empty}">
+		<column id="label" label="SETTING" kind="strong" width="236" grow="70" title-width="96" touch="12 7 220 0 70"/>
+		<column id="value" label="VALUE" width="150" grow="74" align="right" touch="236 7 150 70 74"/>
+	</table>
+	<panel>
+		<heading text="{goat.title}" lines="2"/>
+		<text text="{goat.help}" lines="8" touch-lines="4"/>
+	</panel>
+	<buttons>
+		<button key="back" label="BACK" do="goat cancel"/>
+		<button key="y" label="APPLY" side="right" if="goat.changed" do="goat apply"/>
+		<button key="accept" label="SELECT" side="right"/>
+	</buttons>
+</screen>

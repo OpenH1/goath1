@@ -108,6 +108,13 @@ buttons, their words, and its actions, the row given) */
 extern struct menu_table_source const pc_menu_layout_source;
 int pc_menu_layout_value(char const *name, char *value, unsigned long size);
 int pc_menu_layout_action(char const *name, short row);
+/* (menu_functions.c's goat_settings.inc: GOAT Settings' rows, their words,
+its actions (the row given), and whether it takes Settings' place) */
+extern struct menu_table_source const pc_menu_goat_source;
+int pc_menu_goat_value(char const *name, char *value, unsigned long size);
+int pc_menu_goat_action(struct widget_instance *widget, struct event_record *event, char const *name, short row,
+	int *deleted);
+int pc_menu_goat_takes(void);
 
 /* ---------- constants */
 
@@ -321,6 +328,8 @@ static boolean screen_call_dlss(struct widget_instance *widget, struct event_rec
 	boolean *deleted);
 static boolean screen_call_game_data(struct widget_instance *widget, struct event_record *event, char const *name,
 	boolean *deleted);
+static boolean screen_call_goat(struct widget_instance *widget, struct event_record *event, char const *name,
+	boolean *deleted);
 /* the row of the table an action is run for (0 up, on the table), NONE for
 none (a key's, a button's) */
 static short screen_action_row = NONE;
@@ -509,6 +518,20 @@ static struct screen_action const screen_actions[] =
 	/* (the question of a layout's bindings, screens/layout_bindings.xml:
 	USE THIS LAYOUT'S, and back) */
 	{ "layout bindings use", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_layout },
+	/* (GOAT Settings', screens/goat_settings.xml (menu_functions.c's
+	goat_settings.inc): a tab chosen, a row stepped or opened, the changes
+	written or let go of) */
+	{ "goat tab display", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_goat },
+	{ "goat tab graphics", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_goat },
+	{ "goat tab audio", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_goat },
+	{ "goat tab controls", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_goat },
+	{ "goat tab gameplay", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_goat },
+	{ "goat tab system", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_goat },
+	{ "goat row", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_goat },
+	{ "goat left", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_goat },
+	{ "goat right", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_goat },
+	{ "goat apply", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_goat },
+	{ "goat cancel", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_goat },
 	/* (the NVIDIA DLSS add-on's, screens/dlss_addon.xml (port/linux/src/
 	dlss_addon.c): NVIDIA's license accepted and the add-on downloaded, the
 	add-on removed, the game restarted for it, the license's lines paged) */
@@ -546,6 +569,8 @@ static char const *const screen_action_names[] =
 	"layout name", "layout legend", "layout clear", "layout shape left", "layout shape right", "layout color left",
 	"layout color right", "layout bindings use", "dlss accept", "dlss remove", "dlss restart", "dlss page up",
 	"dlss page down", "data add", "data open folder",
+	"goat tab display", "goat tab graphics", "goat tab audio", "goat tab controls", "goat tab gameplay",
+	"goat tab system", "goat row", "goat left", "goat right", "goat apply", "goat cancel",
 };
 
 /* a binding's value: the saved game's mission and difficulty (player 1's
@@ -591,6 +616,7 @@ static char const *const screen_binding_names[] =
 	"dlss.detail", "dlss.heading", "dlss.status", "dlss.credit", "dlss.license.empty", "dlss.can_accept",
 	"dlss.can_remove", "dlss.can_restart", "dlss.panel",
 	"data.detail", "data.heading", "data.status", "data.from", "data.folder", "data.opened", "data.add",
+	"goat.tab", "goat.title", "goat.help", "goat.changed", "goat.pending", "goat.empty",
 };
 
 /* the row sources a table may name (menu_table.h), and their names */
@@ -605,6 +631,7 @@ static struct menu_table_source const *const screen_sources[] =
 	&pc_menu_layout_source,
 	&dlss_addon_license_source,
 	&game_data_page_source,
+	&pc_menu_goat_source,
 };
 
 static char const *const screen_source_names[] =
@@ -618,6 +645,7 @@ static char const *const screen_source_names[] =
 	"layout.controls",
 	"dlss.license",
 	"data.sources",
+	"goat.rows",
 };
 
 /* the chats a <chat> may name (menu_table.h), and their names */
@@ -671,6 +699,9 @@ static int screen_value(void *context, char const *name, char *value, unsigned l
 	/* (Settings' GAME DATA's: port/linux/src/game_data_page.c) */
 	if (!strncmp(name, "data.", 5))
 		return game_data_page_value(name, value, size);
+	/* (GOAT Settings': goat_settings.inc) */
+	if (!strncmp(name, "goat.", 5))
+		return pc_menu_goat_value(name, value, size);
 	/* (Stick Test's: the sticks' readings and drift, stick_test_menu.inc) */
 	if (!strncmp(name, "stick.", 6))
 		return pc_menu_stick_value(name, value, size);
@@ -822,6 +853,11 @@ static struct screen_place const screen_places[] =
 	the maps, their copies: game_data_page.c; the maps the lists have, told
 	each frame) */
 	{ "game_data", "screens\\game_data", screen_game_data_frame, NULL },
+	/* (GOAT Settings, in place of Settings' first tab while
+	display.goat_menus is on: goat_settings.inc) */
+	{ "goat_settings",
+		"main_menu\\settings_select\\player_setup\\player_profile_edit\\video_settings\\video_settings_screen",
+		NULL, pc_menu_goat_takes },
 	/* (the on-screen keyboard, a pop-up: keyboard.c opens it, reads its
 	input each frame it is drawn and takes every event of its own) */
 	{ "keyboard", "screens\\keyboard", keyboard_frame, NULL, NULL, keyboard_event, keyboard_screen_closed },
@@ -2652,6 +2688,18 @@ static boolean screen_call_color(struct widget_instance *widget, struct event_re
 	}
 	menu_tags_back(widget, event, deleted);
 	return TRUE;
+}
+
+/* GOAT Settings' actions (menu_functions.c's goat_settings.inc), the row
+given */
+static boolean screen_call_goat(struct widget_instance *widget, struct event_record *event, char const *name,
+	boolean *deleted)
+{
+	int goat_deleted = FALSE;
+	boolean result = pc_menu_goat_action(widget, event, name, screen_action_row, &goat_deleted) != 0;
+
+	*deleted = goat_deleted != 0;
+	return result;
 }
 
 /* Controller Layout's actions (menu_functions.c's controller_layout_menu.inc),
