@@ -1107,6 +1107,32 @@ boolean first_person_weapon_center_flashlight(
 	return centered;
 }
 
+/* port: the enhanced flashlight's shadows (port/linux/game/dynamic_lights.c)
+cast from its lamp on the weapon in hand, where its barrel is (its primary
+trigger marker, else its flashlight marker): the game shines it from the
+view's own axis, from which no shadow is ever seen beside what casts it;
+FALSE where the unit's first-person weapon is not drawn */
+boolean first_person_weapon_flashlight_lamp(
+	long unit_index,
+	real_point3d *position)
+{
+	short local_player_index= first_person_weapon_index_from_unit_index(unit_index);
+	struct object_marker marker;
+	struct first_person_weapon *first_person_weapon;
+
+	if (local_player_index==NONE)
+		return FALSE;
+	first_person_weapon= first_person_weapon_get(local_player_index);
+	if (!first_person_weapon->visible ||
+		(first_person_weapon_get_marker_by_name(first_person_weapon->weapon_index, "primary trigger", &marker, 1)<1 &&
+		first_person_weapon_get_marker_by_name(first_person_weapon->weapon_index, "flashlight", &marker, 1)<1))
+	{
+		return FALSE;
+	}
+	*position= marker.matrix.position;
+	return TRUE;
+}
+
 boolean first_person_weapon_adjust_light(
 	long weapon_index,
 	char const *marker_name,

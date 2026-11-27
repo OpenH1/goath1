@@ -538,6 +538,9 @@ clusters' slice:
 - FLASHLIGHT + 14: the gel's tint, linear (floats' bits);
 - FLASHLIGHT + 15 to + 22: the falloff, linear: 32 floats' bits, from the
   light to its radius (the game's distance attenuation's);
+- FLASHLIGHT + 23: where the shadowed slot's shadows are cast from (its
+  lamp on the weapon in hand, floats' bits): the map's middle, in the same
+  frame, a and b of v = p - lamp;
 - FLASHLIGHT_COOKIE on: the gel's brightness (the game's, gamma), a byte a
   texel, FLASHLIGHT_COOKIE_SIZE square, rows from -up, columns from -left:
   texel (x, y) is the direction forward + a left + b up, a = u |u| width
@@ -546,7 +549,7 @@ clusters' slice:
   disk and ring are.
 
 A pixel at p: v = p - light, a = dot(v, left) / dot(v, forward), b the
-same with up; the map (its own image, the draw set's binding
+same with up, for the cookie; the map, from the lamp, (its own image, the draw set's binding
 XGPU_SPIRV_BINDING_FLASHLIGHT_SHADOW, FLASHLIGHT_SHADOW_SIZE square, in
 the same a, b as the cookie) holds, in red, the distance from the light
 to what its ray first met (its radius where none). */

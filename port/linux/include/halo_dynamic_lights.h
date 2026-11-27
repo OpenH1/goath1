@@ -71,7 +71,8 @@ frame's flashlights, given before halo_dynamic_lights_set and taken by it,
 each its light's index among those it is given, its gel's frame as the
 game's gel pass has it (its beam, up and left: rasterizer_xbox_environment.c),
 and whether its shadow map is traced (one at most), with its owner among the
-ray-traced scene's instances (world_rt_owner, which its rays leave out) */
+ray-traced scene's instances (world_rt_owner, which its rays leave out) and
+where its shadows are cast from (its lamp on the weapon in hand) */
 #define HALO_DYNAMIC_LIGHTS_FLASHLIGHTS 4
 struct halo_flashlight
 {
@@ -79,6 +80,7 @@ struct halo_flashlight
 	float forward[3], up[3], left[3];
 	int shadowed;
 	unsigned long owner;
+	float lamp[3];
 };
 void halo_dynamic_lights_flashlights(const struct halo_flashlight *flashlights, int count);
 /* the gel the flashlights are lit through, and the game's distance

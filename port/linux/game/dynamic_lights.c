@@ -953,9 +953,12 @@ distance falloff, and the flashlight of the view, the one nearest its
 camera, casts its shadow: one shadow map in the gel's frame, a ray a texel
 from the light through the ray-traced scene where the GPU has ray queries,
 its wearer, its own first-person weapon and hands, and its own body left
-out. Its light is at the first-person weapon's flashlight marker, behind
-it (first_person_weapon_center_flashlight), as the game puts it: below and
-to the side of the eye, so its shadows show beside what casts them. With
+out. The game puts its light on the view's own axis, behind the eye
+(first_person_weapon_center_flashlight): its gel is projected from there,
+as the game's pass projects it, but a shadow cast from there is always
+hidden behind what casts it, so its shadows are cast from its lamp on the
+weapon in hand, at its barrel (first_person_weapon_flashlight_lamp), below
+and beside the eye, where a shadow shows beside what casts it. With
 HALO_FLASHLIGHT_SHADOWS_OFF=1 (measuring) it casts none. */
 
 /* (frames: a flashlight seen this recently keeps the ray-traced scene
@@ -1032,6 +1035,21 @@ static void dynamic_lights_flashlights(long count)
 		out->left[2] = left.k;
 		out->shadowed = 0;
 		out->owner = dynamic_lights.owners[light_index];
+		out->lamp[0] = light->position[0];
+		out->lamp[1] = light->position[1];
+		out->lamp[2] = light->position[2];
+		/* (its shadows from its lamp on the weapon in hand) */
+		{
+			real_point3d lamp;
+
+			if (dynamic_lights.objects[light_index] != NONE &&
+				first_person_weapon_flashlight_lamp(dynamic_lights.objects[light_index], &lamp))
+			{
+				out->lamp[0] = lamp.x;
+				out->lamp[1] = lamp.y;
+				out->lamp[2] = lamp.z;
+			}
+		}
 		dx = light->position[0] - render.camera.position.x;
 		dy = light->position[1] - render.camera.position.y;
 		dz = light->position[2] - render.camera.position.z;

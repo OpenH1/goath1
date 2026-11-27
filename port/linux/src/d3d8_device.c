@@ -5976,6 +5976,7 @@ static void dynamic_lights_flashlight_texels(int count)
 		{
 			slice[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 1][0] = (unsigned int)used + 1u;
 			slice[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 14][3] = (unsigned int)flashlight->owner;
+			memcpy(slice[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 23], flashlight->lamp, sizeof(flashlight->lamp));
 		}
 		used++;
 	}

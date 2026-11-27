@@ -4696,7 +4696,7 @@ if (any(slots == uvec4(light + 1))) {
   spot = z > 0 && all(lessThan(abs(ab), vec2(1))) ? pow(cookie(ab * 0.5 + 0.5), 2.2) : 0;
   falloff = profile(length(v) * abs(light.w));   (32 values, linear between)
   environment: facing = max(dot(n, l), 0) * saturate(dot(surface_normal, l) * 8)   (the gel pass's horizon)
-  if (head.x == slot + 1)
+  if (head.x == slot + 1)   (the map's from the lamp: ab and v of p - lamp)
     spot *= the map's 3x3 tent of comparisons at ab: lit where the map's distance >= length(v) - bias,
       bias = uintBitsToFloat(head.w) + length(v) * (2 R / SIZE) * 1.5 / max(dot(surface_normal, l), 0.25)
 } */
@@ -4889,10 +4889,19 @@ static void flashlight_light(struct module *m, const struct flashlight_read *rea
 	if (shadowed)
 	{
 		unsigned int shadow_merge, sampled, image, mx, my, texel_width, bias, receiver, lit, facing_light;
+		unsigned int lamp_v, lamp_z, lamp_inverse;
 		const float size = (float)XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_SHADOW_SIZE;
 
 		selection_begin(m, op2(m, OP_LOGICAL_AND, m->t_bool, inside, op2(m, OP_I_EQUAL, m->t_bool,
 			uextract(m, read->head, 0), op1(m, OP_BITCAST, m->t_uint, int_add(m, slot, 1)))), &shadow_merge);
+		/* (the map's from the lamp: its own a, b and distance) */
+		lamp_v = fsub(m, 3, p, flashlight_vector(m, constant_int(m, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 23)));
+		lamp_z = fdot(m, lamp_v, forward);
+		lamp_inverse = fdiv(m, 1, constant_float(m, 1.0f), fmul(m, 1, fmax_scalar(m, 1, lamp_z, 1.0e-4f),
+			fmax_scalar(m, 1, width, 1.0e-4f)));
+		a = fmul(m, 1, fdot(m, lamp_v, left), lamp_inverse);
+		b = fmul(m, 1, fdot(m, lamp_v, up), lamp_inverse);
+		distance = flength(m, lamp_v);
 		flashlight_shadow_declare(m);
 		sampled = load(m, type_sampled_image(m, DIM_2D, FALSE, FALSE, TRUE), m->flashlight_shadow);
 		image = op(m, OP_IMAGE, type_sampled_image(m, DIM_2D, FALSE, FALSE, FALSE), 1, &sampled);
@@ -7686,8 +7695,8 @@ XGPU_SPIRV_LIGHT_SHADOWS_FLASHLIGHT), as GLSL:
 uvec4 head = texel(FLASHLIGHT + 1); int slot = int(head.x) - 1; float R = uintBitsToFloat(head.y);
 vec4 light = lights.position[texel(FLASHLIGHT)[slot] - 1]; float reach = 1.0 / abs(light.w);
 vec2 ab = (gl_FragCoord.xy / SIZE * 2.0 - 1.0) * R;
-vec3 d = normalize(forward + left * ab.x + up * ab.y);
-rayQueryInitializeEXT(q, scene, 0, MASK_AO, light.xyz, 0.02, d, reach);   (no first-person models, no own body)
+vec3 d = normalize(forward + left * ab.x + up * ab.y), lamp = texel(FLASHLIGHT + 23).xyz;
+rayQueryInitializeEXT(q, scene, 0, MASK_AO, lamp, 0.02, d, reach + length(lamp - light.xyz));   (no first-person models, no own body)
 while (rayQueryProceedEXT(q)) if (index(candidate) != owner) commit where its alpha passes;
 out = vec4(committed(q) ? t : reach, 0, 0, 1); */
 static void flashlight_map_main(struct module *m, struct words *locals, struct world_ao_pass_state *pass,
@@ -7696,7 +7705,7 @@ static void flashlight_map_main(struct module *m, struct words *locals, struct w
 	unsigned int frag = load(m, m->t_v4, pass->frag_coord), head, slot, width, number, light, position, reach;
 	unsigned int base, forward, up, left, a, b, d, query = local(m, locals, type0(m, OP_TYPE_RAY_QUERY));
 	unsigned int owner, operands[8], header, condition, body, next, merge, candidate, mine_merge, kind, t, distance;
-	unsigned int result_variable = local(m, locals, m->t_v4), slots, valid, valid_merge;
+	unsigned int result_variable = local(m, locals, m->t_v4), slots, valid, valid_merge, lamp;
 	const float size = (float)XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_SHADOW_SIZE;
 
 	store(m, result_variable, constant_vector(m, 4, (const float[]){ 1.0e4f, 0.0f, 0.0f, 1.0f }));
@@ -7727,7 +7736,10 @@ static void flashlight_map_main(struct module *m, struct words *locals, struct w
 	operands[1] = load(m, type0(m, OP_TYPE_ACCELERATION_STRUCTURE), pass->scene);
 	operands[2] = constant_uint(m, 0);
 	operands[3] = constant_uint(m, XGPU_SPIRV_RT_MASK_AO);
-	operands[4] = xyz(m, position);
+	/* (from the lamp, as far as the light's reach past it) */
+	lamp = flashlight_vector(m, constant_int(m, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 23));
+	reach = fadd(m, 1, reach, flength(m, fsub(m, 3, lamp, xyz(m, position))));
+	operands[4] = lamp;
 	operands[5] = constant_float(m, 0.02f);
 	operands[6] = d;
 	operands[7] = reach;
