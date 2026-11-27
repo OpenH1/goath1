@@ -4921,6 +4921,19 @@ static void flashlight_light(struct module *m, const struct flashlight_read *rea
 			store(m, spot_variable, fmul(m, 1, lit, constant_float(m, 0.25f)));
 			store(m, falloff_variable, constant_float(m, 1.0f));
 		}
+		if (getenv("HALO_FLASHLIGHT_SHADOW_VIEW") && atoi(getenv("HALO_FLASHLIGHT_SHADOW_VIEW")) == 2)
+		{
+			unsigned int operands[4];
+
+			operands[0] = image;
+			operands[1] = op(m, OP_COMPOSITE_CONSTRUCT, m->t_iv2, 2, (unsigned int[]){
+				op1(m, OP_CONVERT_F_TO_S, m->t_int, fadd(m, 1, mx, constant_float(m, 0.5f))),
+				op1(m, OP_CONVERT_F_TO_S, m->t_int, fadd(m, 1, my, constant_float(m, 0.5f))) });
+			operands[2] = IMAGE_OPERANDS_LOD;
+			operands[3] = constant_int(m, 0);
+			store(m, spot_variable, ext1(m, GLSL_FRACT, m->t_float, extract(m, op(m, OP_IMAGE_FETCH, m->t_v4, 4, operands), 0)));
+			store(m, falloff_variable, constant_float(m, 1.0f));
+		}
 		selection_end(m, shadow_merge);
 	}
 	selection_end(m, merge);
