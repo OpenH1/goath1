@@ -469,10 +469,14 @@ vec3 upsampled(ivec2 pixel, vec3 p, vec3 n, uint owner)
             continue;
         int which = int(floor((s.a - 1.0) / 1024.0));
         ivec2 at = block * 2 + block_pixel(phase + which);
-        vec3 q, m, ms;
-        uint other;
-        if (!surface_at(at, q, m, ms, other) || other != owner || dot(m, n) < 0.906 ||
-            abs(dot(q - p, n)) > 0.02 * distance)
+        // (its inputs alone: the guides' shaded normal is not tested)
+        uvec4 words = texelFetch(inputs, at, 0);
+        if ((words.y & INPUT_PRESENT) == 0u || words.w != owner || dot(unfold(unpackSnorm2x16(words.x)), n) < 0.906)
+            continue;
+        vec2 screen = (vec2(at) + 0.5 - vec2(pass.corners.xy)) * 2.0 / vec2(pass.corners.zw - pass.corners.xy) - 1.0;
+        vec3 q = pass.camera[0].xyz + normalize(pass.camera[1].xyz + pass.camera[2].xyz * screen.x +
+            pass.camera[3].xyz * screen.y) * uintBitsToFloat(words.z);
+        if (abs(dot(q - p, n)) > 0.02 * distance)
             continue;
         vec2 off = vec2(at - pixel);
         float w = exp(-dot(off, off) * (1.0 / 18.0));
