@@ -203,6 +203,29 @@ XGPU_STREAM_MATERIAL_STAGE). Without either bit the draw is as it was */
 #define XGPU_TEXTURE_MODES_NORMAL_MAP 0x40000000u
 #define XGPU_TEXTURE_MODES_ORM_MAP 0x20000000u
 #define XGPU_TEXTURE_MODES_MATERIAL (XGPU_TEXTURE_MODES_NORMAL_MAP | XGPU_TEXTURE_MODES_ORM_MAP)
+/* display.rt_reflections (docs/rt-plan/2-reflections.md, d3d8_device.c's
+halo_rt_reflection): a draw whose texture 3 is the game's reflection cube
+map (a CUBEMAP or DOT_REFLECT_SPECULAR lookup) has its texel traced through
+the ray-traced scene instead, the cube map where the ray leaves it; the
+class (XGPU_RT_REFLECTION_*) in these bits: the structure's reflection pass,
+the level's glass and its water (their vertices in the world: the vertex
+shader hands the position on as it is), or a model (lit for each pixel: its
+lighting's world position). Without the bits the draw is as it was */
+#define XGPU_TEXTURE_MODES_RT_REFLECTION 0x1c000000u
+#define XGPU_TEXTURE_MODES_RT_REFLECTION_SHIFT 26
+#define XGPU_RT_REFLECTION_NONE 0u
+#define XGPU_RT_REFLECTION_STRUCTURE 1u
+#define XGPU_RT_REFLECTION_MODEL 2u
+#define XGPU_RT_REFLECTION_MIRROR 3u
+/* (water: level, so a ray its waves turn below the horizon would meet the
+water itself, and keeps the cube map's lower half, as the game drew it) */
+#define XGPU_RT_REFLECTION_WATER 4u
+#define XGPU_RT_REFLECTION_OF(texture_modes) \
+	(((unsigned long)(texture_modes) & XGPU_TEXTURE_MODES_RT_REFLECTION) >> XGPU_TEXTURE_MODES_RT_REFLECTION_SHIFT)
+/* (its class's vertices are in the world) */
+#define XGPU_RT_REFLECTION_WORLD_VERTICES(reflection) \
+	((reflection) == XGPU_RT_REFLECTION_STRUCTURE || (reflection) == XGPU_RT_REFLECTION_MIRROR || \
+	(reflection) == XGPU_RT_REFLECTION_WATER)
 /* (the stages' own bits) */
 #define XGPU_TEXTURE_MODES_STAGES 0x000fffffu
 /* display.soft_particles: a first-person weapon's effect drawn over the

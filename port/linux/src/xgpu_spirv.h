@@ -263,6 +263,12 @@ struct xgpu_spirv_options
 	program run again on the previous frame's registers, which the
 	constants' block holds after the 192 (384 vec4s then); not with views */
 	BOOL motion;
+	/* display.rt_reflections: the vertex shader hands its position (input
+	0, the level's vertices being in the world) on as the world position
+	(XGPU_SPIRV_LOCATION_WORLD_POSITION), where its lighting does not
+	(xgpu_spirv_vertex_world_position), for a pixel shader that traces its
+	reflection (xgpu_shader.h's rt_reflection) */
+	BOOL world_position_input;
 };
 
 /* ---------- the VR mode's effects
@@ -348,6 +354,9 @@ BOOL xgpu_spirv_vertex_shader(const struct xgpu_vertex_program *program, unsigne
 lighting reads: the pipeline's vertex layout has these alone */
 unsigned long xgpu_spirv_vertex_inputs(const struct xgpu_vertex_program *program,
 	const struct nv2a_vertex_lighting *lighting);
+/* the vertex shader of that lighting hands the pixel its world position
+(XGPU_SPIRV_LOCATION_WORLD_POSITION) */
+BOOL xgpu_spirv_vertex_world_position(const struct nv2a_vertex_lighting *lighting);
 
 /* the pixel program (xgpu_shader.h) as a fragment shader, entry point
 "main". FALSE if out of memory. */
@@ -387,6 +396,9 @@ sees); the rays' masks: the occlusion's (the structure and objects), the
 shadows' (and the player's body) */
 #define XGPU_SPIRV_RT_MASK_AO 0x03u
 #define XGPU_SPIRV_RT_MASK_SHADOWS 0x0Bu
+/* (display.rt_reflections' rays: the structure, objects and the player's
+own body, who sees themself in a polished floor) */
+#define XGPU_SPIRV_RT_MASK_REFLECTIONS 0x0Bu
 
 /* the ray-traced scene's skinning (xgpu_vulkan_rt.c): a compute shader of
 XGPU_SPIRV_RT_SKIN_GROUP invocations a group, one a vertex (x) of a job

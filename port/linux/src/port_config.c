@@ -544,6 +544,14 @@ static const struct config_setting config_settings[] =
 		"feet, against a wall), found from the depth on the GPU, beside the\n"
 		"classic shadows; not drawn where display.shadows \"ray_traced\" is\n"
 		"(its rays find the same contact). Vulkan; Metal draws none yet." },
+	{ "display.rt_reflections", _config_boolean, "false", "HALO_RT_REFLECTIONS", _environment_value, _platform_all,
+		"Reflections traced by the GPU's ray queries through the level and\n"
+		"the objects, in place of the shiny surfaces' fixed cube maps (the\n"
+		"polished floors, glass, water, the Covenant's metals), through the\n"
+		"game's own reflection masks, at the same strength and tint; the cube\n"
+		"map where a ray leaves the scene. Mirror-like only for now. Vulkan\n"
+		"where the device has ray queries (the cube maps elsewhere); best with\n"
+		"debug.rt_render_geometry. docs/rt-plan/2-reflections.md." },
 	{ "display.menus", _config_string, "\"pc\"", "HALO_MENUS", _environment_value, _platform_all,
 		"The menus: \"pc\" for the PC version's main menu (port/assets/menus,\n"
 		"and a menus folder here for your own), \"xbox\" for the Xbox's." },

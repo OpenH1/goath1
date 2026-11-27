@@ -23,6 +23,7 @@ other value (and the Classic preset's "off") draws exactly as before.
 
 #include "rt_shadows.h"
 #include "world_ao.h"
+#include "rt_reflections.h"
 #include "world_cascades.h"
 #include "world_proxies.h"
 #include "world_rt.h"
@@ -112,12 +113,15 @@ static int world_ao_scene_found;
 /* (port/linux/game/dynamic_lights.c: the enhanced flashlight's shadow,
 traced through the same scene) */
 int dynamic_lights_flashlight_shadows_on(void);
+/* (display.rt_reflections: rt_reflections.c) */
+int rt_reflections_on(void);
 
 /* whether the frame's ray-traced scene is made where this setting is not:
-for display.shadows "ray_traced", or the enhanced flashlight's shadow */
+for display.shadows "ray_traced", the enhanced flashlight's shadow, or
+display.rt_reflections */
 static int world_ao_rt_wanted(void)
 {
-	return rt_shadows_on() || dynamic_lights_flashlight_shadows_on();
+	return rt_shadows_on() || dynamic_lights_flashlight_shadows_on() || rt_reflections_on();
 }
 
 /* the frame's objects were found for it (world_ao_frame_begin), so
@@ -636,7 +640,7 @@ void world_ao_window_begin(short local_player_index, short rasterizer_target, fl
 		/* (display.shadows "ray_traced": the frame's ray-traced scene before
 		the pre-pass's end, where the dynamic lights' shadows are traced:
 		dynamic_lights.c, xgpu.h's XGPU_DYNAMIC_LIGHTS_SHADOWED) */
-		if (!(mode & WORLD_AO_RAYS) && rt_shadows_on())
+		if (!(mode & WORLD_AO_RAYS) && rt_scene_wanted())
 			world_rt_frame(world_ao_scene.frame);
 		if (world_ao_scene.windows_frame != world_ao_scene.frame)
 		{

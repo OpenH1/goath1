@@ -399,6 +399,20 @@ enum
 };
 void halo_timing_category(int category);
 void halo_hdr_draw_kind(int kind);
+/* display.rt_reflections (port/linux/src/d3d8_device.c, xgpu.h's
+XGPU_RT_REFLECTION_*): the draws from now on, where their texture 3 is the
+reflection's cube map, trace it: HALO_RT_REFLECTION_STRUCTURE (the level's
+reflection pass), _MODEL (a model's shader), _MIRROR (the level's glass),
+_WATER (the level's water), or _NONE (as drawn). Nothing changes with the setting off */
+enum
+{
+	HALO_RT_REFLECTION_NONE = 0,
+	HALO_RT_REFLECTION_STRUCTURE = 1,
+	HALO_RT_REFLECTION_MODEL = 2,
+	HALO_RT_REFLECTION_MIRROR = 3,
+	HALO_RT_REFLECTION_WATER = 4,
+};
+void halo_rt_reflection(int reflection);
 /* the game's small targets sized for the Xbox's 640x480 screen, at the
 display's detail (port/linux/src/d3d8_device.c): the scale of one `side`
 units across (the display's pixels for each of the 480 lines; 1 at

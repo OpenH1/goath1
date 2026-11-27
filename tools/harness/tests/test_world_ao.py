@@ -70,7 +70,7 @@ def generated(fault=None):
     if fault:
         game = mutated(game, *fault)
     headers = [(name, read(f"port/linux/include/{name}"))
-               for name in ("rt_shadows.h", "world_ao.h", "world_cascades.h", "world_proxies.h", "world_rt.h", "world_scene.h",
+               for name in ("rt_reflections.h", "rt_shadows.h", "world_ao.h", "world_cascades.h", "world_proxies.h", "world_rt.h", "world_scene.h",
                             "world_sdf.h")]
     return tuple(headers) + (("under_test.inc", game),)
 

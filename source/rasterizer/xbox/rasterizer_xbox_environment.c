@@ -3137,6 +3137,9 @@ void _rasterizer_environment_reflection_draw(
 				0);
 			rasterizer_set_pixel_shader(&pixel_shader);
 
+			/* port: display.rt_reflections: the cube map's texel (texture 3)
+			traced instead (port/linux/src/d3d8_device.c) */
+			halo_rt_reflection(HALO_RT_REFLECTION_STRUCTURE);
 			rasterizer_draw_dynamic_triangles_static_vertices2(
 				dynamic_triangle_buffer_index,
 				first_triangle_index,
@@ -3145,6 +3148,7 @@ void _rasterizer_environment_reflection_draw(
 				vertex_buffer +
 					(rasterizer_globals.lightmap_mode != _rasterizer_lightmap_mode_normal &&
 					reflection_type == _shader_environment_reflection_type_bumped_radiosity));
+			halo_rt_reflection(HALO_RT_REFLECTION_NONE); /* port: (drawn) */
 			if (rasterizer_debug_options.statistics_mode == _rasterizer_statistics_mode_enabled)
 			{
 				rasterizer_frame_statistics.reflection_dynamic_draw_count++;
