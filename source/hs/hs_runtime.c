@@ -978,6 +978,167 @@ boolean hs_runtime_waiting_on_call(
 	return !TEST_FLAG(caller->flags, _hs_syntax_node_script_bit) && caller->function_index == _hs_function_sleep_until;
 }
 
+/* port: what a co-op gate's wait starts (hs_runtime_waiting_call_is_a_gate).
+A step that leaves the players where they are and free to go where they
+could: directing the AI, sounds and dialogue, saves, prints, the HUD and its
+navigation points, the scripts' own variables, timed sleeps, and the tests
+and arithmetic those use. Anything else (a door, an elevator, a teleport, a
+vehicle load, a cinematic, a script woken) may leave behind whoever is not
+there. */
+enum
+{
+	_hs_gate_scan_go_on = 0,
+	_hs_gate_scan_waits,
+	_hs_gate_scan_gate
+};
+
+#define HS_GATE_SCAN_NODES 1024
+#define HS_GATE_SCAN_DEPTH 32
+
+static boolean hs_gate_scan_function_leaves_players_be(
+	short function_index)
+{
+	static char const *const prefixes[] =
+	{
+		"ai_", "sound_", "game_save", "print", "hud_", "show_hud_help_text", "activate_", "deactivate_",
+		"player_effect_", "game_difficulty_get", "volume_test_", "list_", "unit_get_", "objects_can_see_",
+		"players", "player0", "player1", "garbage_collect_now"
+	};
+	struct hs_function_definition *function;
+	short index;
+
+	switch (function_index)
+	{
+	case _hs_function_begin:
+	case _hs_function_begin_random:
+	case _hs_function_if:
+	case _hs_function_cond:
+	case _hs_function_set:
+	case _hs_function_and:
+	case _hs_function_or:
+	case _hs_function_plus:
+	case _hs_function_minus:
+	case _hs_function_times:
+	case _hs_function_divide:
+	case _hs_function_min:
+	case _hs_function_max:
+	case _hs_function_equal:
+	case _hs_function_not_equal:
+	case _hs_function_gt:
+	case _hs_function_lt:
+	case _hs_function_gte:
+	case _hs_function_lte:
+	case _hs_function_sleep:
+	case _hs_function_inspect:
+		return TRUE;
+	case _hs_function_wake:
+		return FALSE;
+	}
+	function = mcc_script_function(function_index);
+	if (!function && (word)function_index < hs_function_table_count)
+		function = hs_function_get(function_index);
+	if (!function || !function->name)
+		return FALSE;
+	for (index = 0; index < NUMBEROF(prefixes); index++)
+	{
+		if (!csstrncmp(function->name, prefixes[index], csstrlen(prefixes[index])))
+			return TRUE;
+	}
+
+	return FALSE;
+}
+
+static short hs_gate_scan_expression(long expression_index, short depth, short *budget);
+
+/* the statements from `expression_index` on, until one waits or opens a gate */
+static short hs_gate_scan_statements(
+	long expression_index,
+	short depth,
+	short *budget)
+{
+	while (expression_index != NONE)
+	{
+		short result = hs_gate_scan_expression(expression_index, depth, budget);
+
+		if (result != _hs_gate_scan_go_on)
+			return result;
+		expression_index = hs_syntax_get(expression_index)->next_node_index;
+	}
+
+	return _hs_gate_scan_go_on;
+}
+
+static short hs_gate_scan_expression(
+	long expression_index,
+	short depth,
+	short *budget)
+{
+	struct hs_syntax_node *node;
+
+	if (--*budget < 0 || depth > HS_GATE_SCAN_DEPTH)
+		return _hs_gate_scan_gate;
+	node = hs_syntax_get(expression_index);
+	if (TEST_FLAG(node->flags, _hs_syntax_node_primitive_bit))
+		return _hs_gate_scan_go_on;
+	/* a static script called: what it does, as if written here */
+	if (TEST_FLAG(node->flags, _hs_syntax_node_script_bit))
+	{
+		struct scenario *scenario = global_scenario_get();
+
+		if (node->script_index < 0 || node->script_index >= scenario->hs_scripts.count)
+			return _hs_gate_scan_gate;
+		return hs_gate_scan_expression(
+			TAG_BLOCK_GET_ELEMENT(&scenario->hs_scripts, node->script_index, struct hs_script)->root_expression_index,
+			depth + 1,
+			budget);
+	}
+	if (node->function_index == _hs_function_sleep_until)
+		return _hs_gate_scan_waits;
+	if (!hs_gate_scan_function_leaves_players_be(node->function_index))
+		return _hs_gate_scan_gate;
+	/* its arguments, past its name */
+	return hs_gate_scan_statements(hs_syntax_get(node->data)->next_node_index, depth + 1, budget);
+}
+
+boolean hs_runtime_waiting_call_is_a_gate(
+	void)
+{
+	struct hs_thread_datum *thread;
+	struct hs_stack_frame *wait;
+	struct hs_stack_frame *block;
+	struct hs_syntax_node *block_node;
+	short budget = HS_GATE_SCAN_NODES;
+	short result;
+
+	if (!hs_runtime_waiting_on_call())
+		return TRUE;
+	thread = hs_thread_get(hs_runtime_globals.executing_thread_index);
+	wait = thread->stack->previous;
+	block = wait->previous;
+	/* (a sleep_until outside a begin, whose next steps are not those after it) */
+	if (!block)
+		return TRUE;
+	block_node = hs_syntax_get(block->expression_index);
+	if (TEST_FLAG(block_node->flags, _hs_syntax_node_script_bit) || block_node->function_index != _hs_function_begin)
+		return TRUE;
+	result = hs_gate_scan_statements(hs_syntax_get(wait->expression_index)->next_node_index, 0, &budget);
+	if (result != _hs_gate_scan_go_on)
+		return result == _hs_gate_scan_gate;
+	/* The block ended. Nested (in an if, a loop, a static script called),
+	what follows it is not known here. A whole script's: a continuous one
+	begins again, to its first wait; any other ends. */
+	if (block->previous || thread->type != _hs_thread_type_script || thread->script_index == NONE)
+		return TRUE;
+	if (TAG_BLOCK_GET_ELEMENT(&global_scenario_get()->hs_scripts, thread->script_index, struct hs_script)->script_type ==
+		_hs_script_continuous)
+	{
+		result = hs_gate_scan_statements(hs_syntax_get(block_node->data)->next_node_index, 0, &budget);
+		return result == _hs_gate_scan_gate;
+	}
+
+	return FALSE;
+}
+
 /* port: a global initializer is not a console command, even when it calls
 a static script. The owning thread, not its current stack frame, decides. */
 boolean hs_runtime_port_executing_console_command(

@@ -10,9 +10,13 @@ fires for whoever walks into it, and what it starts is sent to the clients
 (network_coop.c). Three habits of the scripts don't carry over:
 
 - Waiting for every player at once (volume_test_objects_all on the
-  players): the Maw's run to the Pillar of Autumn's bridge, a30's Pelican
-  pickups. Split-screen players stand together; network players don't, so
-  the wait would never end. In co-op one player arriving is enough.
+  players): a10's tunnel door, d40's elevator, a30's waits for the players
+  to fall back. Split-screen players stand together; network players
+  don't, so the wait would never end. In co-op one player arriving is
+  enough. Where the wait is a gate that may leave the rest behind (the
+  door, the elevator: hs_runtime_waiting_call_is_a_gate), the rest are
+  brought to that player first; a wait that only directs the AI (a30's,
+  which send the Marines back) moves no one.
 - Waiting until it's safe (game_safe_to_save) before a cutscene: the
   game's test fails while any enemy sees any player. In co-op one player
   out of danger is enough.

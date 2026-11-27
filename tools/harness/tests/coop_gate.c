@@ -45,6 +45,8 @@ static boolean player_teleport(long p,long anchor,real_point3d const *point){
  return TRUE;
 }
 static boolean hs_runtime_waiting_on_call(void){return waiting;}
+static int is_gate=TRUE;
+static boolean hs_runtime_waiting_call_is_a_gate(void){return is_gate;}
 #include "players.inc"
 #include "gather.inc"
 /* The original volume implementation is compiled too, including ALL of an
@@ -56,7 +58,7 @@ empty list; provenance must preserve that behavior for AI lists. */
 #define error(...) ((void)0)
 #include "volume.inc"
 #include "gate.inc"
-static void reset(int count){int i;memset(used,0,sizeof(used));memset(headers,0,sizeof(headers));memset(objects,0,sizeof(objects));references=0;fail_allocate=0;host=waiting=TRUE;ignore_players=teleports=rollbacks=failures=bad_place=crowded=side_effects=0;player_count=count;for(i=0;i<count;i++){people[i].unit_index=i;objects[i].position.x=i?1:15;}}
+static void reset(int count){int i;memset(used,0,sizeof(used));memset(headers,0,sizeof(headers));memset(objects,0,sizeof(objects));references=0;fail_allocate=0;host=waiting=TRUE;ignore_players=teleports=rollbacks=failures=bad_place=crowded=side_effects=0;is_gate=TRUE;player_count=count;for(i=0;i<count;i++){people[i].unit_index=i;objects[i].position.x=i?1:15;}}
 static boolean gate(long list){boolean r=hs_trigger_volume_test_objects_all(107,list);CHECK(!ignore_players,"collision override leaked");return r;}
 static int all_inside(void){int i;for(i=0;i<player_count;i++)if(people[i].unit_index!=NONE&&!scenario_trigger_volume_test_object(107,people[i].unit_index))return FALSE;return TRUE;}
 int main(int argc,char **argv){char const *name=argc>1?argv[1]:"";long list;int n;
@@ -93,6 +95,11 @@ int main(int argc,char **argv){char const *name=argc>1?argv[1]:"";long list;int 
  }else if(!strcmp(name,"bsp-anchor")){
   reset(3);objects[0].position.y=100;list=hs_players();CHECK(!gate(list)&&!teleports,"used a loading-zone anchor");
   objects[1].position.x=15;CHECK(gate(list)&&all_inside(),"did not choose a safe second anchor");
+ }else if(!strcmp(name,"ai-only")){
+  /* a30's waits for the players to fall back only send the Marines back:
+  one player inside passes, and no one is moved */
+  reset(2);list=hs_players();is_gate=FALSE;CHECK(gate(list),"one player inside did not pass");
+  CHECK(!teleports&&objects[1].position.x==1,"a wait that only directs the AI moved a player");
  }else return 2;
  return 0;
 }

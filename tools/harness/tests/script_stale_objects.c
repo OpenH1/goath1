@@ -98,6 +98,7 @@ static struct { struct { struct hs_script elements[1]; } hs_scripts; } fake_scen
 #define hs_global_reconcile_read(designator) ((void)0)
 #define hs_thread_format(thread_index) ""
 #define hs_runtime_waiting_on_call() FALSE
+#define hs_runtime_waiting_call_is_a_gate() TRUE
 #define coop_scripts_empty_player_list(list) FALSE
 #define coop_scripts_any_player_will_do(list) FALSE
 #define coop_scripts_gather_in_volume(volume, list) ((void)0)
