@@ -954,7 +954,11 @@ static void rtlm_material_environment(FILE *file, struct rtlm_shader_environment
 		diffuse->micro_detail_map_scale, environment_types[type], rtlm_detail_functions[function],
 		rtlm_detail_functions[micro], TEST_FLAG(diffuse->flags, 0) ? "true" : "false");
 	rtlm_map(file, "bump_map", diffuse->bump_map.index, FALSE, TRUE);
-	fprintf(file, ",\"bump_scale\":%.6g,\"material_color\":", diffuse->bump_map_scale);
+	/* (bump_scale_runtime: the bump map's texture transform as the lightmap and
+	diffuse light passes set it, its u and v scales over the base UV:
+	rasterizer_xbox_environment.c:807-808, from the tag's runtime field) */
+	fprintf(file, ",\"bump_scale\":%.6g,\"bump_scale_runtime\":[%.6g,%.6g],\"material_color\":",
+		diffuse->bump_map_scale, diffuse->runtime_bump_map_scale.i, diffuse->runtime_bump_map_scale.j);
 	rtlm_rgb(file, &diffuse->material_color);
 	fprintf(file, ",\"albedo_note\":\"rasterizer_xbox_environment.c's texture pass (_rasterizer_environment_diffuse_"
 		"texture_draw), in gamma space: detail = %s; then color = %s; then color = %s (micro detail); the "

@@ -13,29 +13,39 @@ picks Mitsuba's variant (`cuda_ad_rgb`, else `llvm_ad_rgb`). While a player's ga
 render waits; it holds the rig's GPU lock while it renders.
 
 ## Output
-- `truth.exr`: the light, exposed (below). `mood.png`: the game's SDR picture of it. `compare.png`: the
-  original on the left, the truth on the right.
-- `truth_parts/`: `emission` (glowing surfaces and sky seen directly), `direct` (one bounce), `indirect` (the
-  rest), which sum to `truth`; `static` (what Halo's lightmaps hold: the sky, sun and the BSP's glowing
-  surfaces, every dynamic light off, all bounces); `direct_flashlight` (the flashlight's one bounce alone).
-- `samples.txt`, `info.json`: samples, time, the noise left, the exposure, every placeholder and every
-  choice made from free text in the JSON.
+- `truth.exr`: the light, in the game's units (1.0 = paper white). `mood.png`: the game's SDR picture of it.
+  `compare.png`: the original on the left, the truth on the right.
+- `truth_parts/`: `emission` (what the camera sees of glowing surfaces and the sky), `direct` (one bounce),
+  `indirect` (the rest), which sum to `truth`; `static` (what Halo's lightmaps hold: sky, sun and baked
+  glow, every dynamic light off); `direct_flashlight`; and `irradiance_direct*.exr`, the same light on
+  white Lambertian surfaces with the same normal maps and cutouts: the demodulated irradiance the
+  real-time comparison uses (`irradiance_direct_flashlight_geometric.exr` without normal maps).
+- `static_fit_residual.png/.exr`: the lightmap less the fitted static light (white: light the truth lacks).
+- `mask.png`: the pixels comparisons count (not the HUD's `mask_rects`, not the first-person weapon/hands).
+- `samples.txt`, `info.json`: samples, time, noise left, the fit's scales and R^2, every placeholder and
+  every assumption.
 
-The lights are rendered in groups (static, flashlight, other dynamic lights and objects' glow) and summed;
-light adds linearly, so the sum is the whole scene's. Parts by depth use the same seeds, so `indirect`
-(full minus two-vertex paths) carries no extra noise.
+## Light groups and units
+Lights render in groups and are summed (light adds linearly): `ambient` (the sky dome), `sun` (the sky's
+lights), `emitters` (glowing BSP surfaces and those of scenery and devices), `flashlight`, `dynamic` (other
+lights and other objects' glow). The lightmap tool's units are unknown (its source is not in the tree), so
+each static group gets one scale, fitted by non-negative least squares of its light against albedo x
+lightmap at the lit BSP pixels (`render.fit_static`); R^2 says how much of the lightmap it explains. Dynamic
+lights are in the game's own units: color and the attenuation table decoded ^2.2. The flashlight follows
+`~/dev/rt2-calibration.json` when `--flashlight-scale k` is given: a forward-facing disk (cos at the emitter),
+1/d^2 x (1 - (d/r)^4)^2, the gel as its profile. A light's intensity is pi x the game's value, so a
+surface (BRDF albedo / pi) shows albedo x value x cos / d^2: the game's added light.
 
-## Units
-Distances stay in world units. Every Halo source is converted so that a white Lambertian surface (BRDF
-1/pi) shows radiance `power * color` where Halo's own lighting adds `power * color` to it:
-- point and spot lights: intensity `pi * power * color`, radiance at a surface `albedo * power * color *
-  cos / d^2` times the angular falloff and the gel (`scene.py`, `POINT_INTENSITY_PER_POWER`);
-- the sun: irradiance `pi * power * color` facing it, a disc of its angular diameter;
-- the sky's ambient: a constant radiance `power * color`; glowing surfaces: radiance `power * color`.
+## The path tracer
+`integrator.py` is Mitsuba's unidirectional path tracer (next event estimation, MIS, Russian roulette)
+written out with symbolic loops so that shadow rays pass alpha cutouts (Mitsuba's `path` stops them there,
+which gave 10^4 fireflies from the sun behind foliage). It splits each path's light into emission, direct and
+indirect as it goes. It matches Mitsuba's `path` on the synthetic box (mean 0.020348 both) and passes the
+analytic check below.
 
-The one calibration of mood is a single global exposure per scene (`display.match_exposure`): the truth's SDR
-picture shows, on average, the same light as `original.png` (mean luminance of both pictures made linear).
-It is applied to `truth.exr` and every part, and recorded. Nothing local is calibrated.
+## Comparing a real-time render
+`python -m rt_truth compare <scene> <exr> [--part direct_flashlight] [--quantity irradiance] [--out DIR]`:
+16x16 tile bias, relMSE and a signed error map; definitions in `compare.py`.
 
 ## The display
 `mood.png` is the game's SDR picture exactly (`display.py`): the frame's value is sRGB's encoding of the

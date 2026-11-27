@@ -15,6 +15,7 @@ import drjit as dr
 
 from . import display
 from .scene import Scene, read_image
+from .integrator import render_pass
 
 # A player's game on the machine: the render waits while one runs (the GPU is theirs then).
 PLAYER_GAME = r"^/home/[^/]+/Applications/OpenH1/bin/openh1"
@@ -34,7 +35,8 @@ def wait_for_no_player(log):
 
 
 class GpuLock:
-    """The rig's GPU lock (flock), held for the render so timing runs never share the GPU with it."""
+    """The rig's GPU lock, taken shared (as `goat-rig run --shared`): a truth render is no timing
+    measurement, so it runs beside picture runs and only waits out an exclusive (timing) holder."""
 
     def __init__(self, path, log):
         self.path, self.log, self.f = path, log, None
@@ -43,10 +45,10 @@ class GpuLock:
         if self.path and os.path.exists(os.path.dirname(self.path)):
             self.f = open(self.path, "a")
             try:
-                fcntl.flock(self.f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(self.f, fcntl.LOCK_SH | fcntl.LOCK_NB)
             except BlockingIOError:
                 self.log("waiting for the GPU lock %s" % self.path)
-                fcntl.flock(self.f, fcntl.LOCK_EX)
+                fcntl.flock(self.f, fcntl.LOCK_SH)
         return self
 
     def __exit__(self, *a):
@@ -78,104 +80,176 @@ def noise_stats(s1, s2, n, floor):
             "p99_rel": float(np.percentile(rel, 99)), "rel_floor": floor}
 
 
-def render_scene(folder, out=None, spp_pass=16, target=0.01, max_spp=65536, max_minutes=60.0,
+def fit_static(samples, keep, static_means, gamma, flip):
+    """The static groups' scales: least squares (non-negative) of the game's static light at each lit BSP
+    pixel, albedo x lightmap (the lightmap decoded by `gamma`), against each group's truth radiance.
+    Returns (scales, R^2, target image, fitted image, mask)."""
+    lm = samples["lightmap_flipped" if flip else "lightmap"]
+    lm = np.maximum(lm, 0.0) ** gamma
+    alb = samples["albedo"]
+    m = samples["valid"] & keep & (alb @ display.LUMA > 0.02)
+    y_img = (alb * lm) @ display.LUMA
+    X_img = [g @ display.LUMA for g in static_means]
+    y = y_img[m]
+    X = np.stack([x[m] for x in X_img], 1)
+    active = list(range(X.shape[1]))
+    k = np.zeros(X.shape[1])
+    while active:  # non-negative least squares by dropping negative terms
+        sol, *_ = np.linalg.lstsq(X[:, active], y, rcond=None)
+        if (sol >= 0).all():
+            k[active] = sol
+            break
+        active = [a for a, v in zip(active, sol) if v > 0]
+    fit = X @ k
+    ss = ((y - y.mean()) ** 2).sum()
+    r2 = 1 - ((y - fit) ** 2).sum() / ss if ss > 0 else float("nan")
+    fit_img = sum(kk * x for kk, x in zip(k, X_img))
+    return k, float(r2), y_img, fit_img, m
+
+
+def best_fit(samples, keep, static_means, log):
+    """The fit with the lightmap pages as stored (linear, the format says), v as stored; two other readings
+    are logged beside it."""
+    best = None
+    # The pages as stored with v as stored are the reading (albedo x lightmap at each pixel reproduces the
+    # original's look, checked on a10_interior); the others are logged for comparison only.
+    for gamma, flip in ((1.0, False), (2.2, False), (1.0, True)):
+        if True:
+            r = fit_static(samples, keep, static_means, gamma, flip)
+            log("  lightmap fit, pages ^%g, v %s: scales %s, R^2 %.3f" % (
+                gamma, "flipped" if flip else "as stored", np.round(r[0], 5).tolist(), r[1]))
+            if best is None:
+                best = (r, gamma, flip)
+    return best
+
+
+def render_scene(folder, out=None, spp_pass=8, target=0.01, max_spp=65536, max_minutes=60.0,
                  min_passes=4, gpu_lock=os.path.expanduser("~/goat-rig/locks/gpu.lock"),
-                 log=print):
+                 log=print, flashlight_scale=None, flashlight_emitter=None):
     folder = Path(folder)
     out = Path(out) if out else folder / "truth"
     from . import VARIANT as variant
-    sc = Scene(folder)
+    sc = Scene(folder, flashlight_scale, flashlight_emitter=flashlight_emitter)
     t0 = time.time()
-    groups = [g for g in Scene.GROUPS if sc.group_has_light(g)] or ["static"]
+    groups = [g for g in Scene.GROUPS if sc.group_has_light(g)]
+    statics = [g for g in groups if g in Scene.STATIC_GROUPS]
     log("%s: %d triangles, groups %s" % (folder.name, sc.n_tris, groups))
     scenes = {g: mi.load_dict(sc.build(g)) for g in groups}
+    samples = sc.lightmap_samples(scenes[groups[-1]])
+    # The same light on white Lambertian surfaces (same normal maps and cutouts): its direct part is the
+    # demodulated irradiance the real-time comparison uses.
+    wsc = Scene(folder, flashlight_scale, white=True, flashlight_emitter=flashlight_emitter)
+    whites = {g: mi.load_dict(wsc.build(g)) for g in groups}
+    acc_w = {g: np.zeros((len(samples["valid"]), len(samples["valid"][0]), 3)) for g in groups}
     grey = [m["index"] for m in sc.material_summaries.values() if "placeholder" in m.get("albedo", "")]
     if grey:
         sc.placeholders.append("%d of %d materials without a base map: grey 0.5 albedo" % (
             len(grey), len(sc.material_summaries)))
-    integ = {d: mi.load_dict({"type": "path", "max_depth": d, "rr_depth": 5}) for d in (1, 2, -1)}
     H, W = int(sc.camera["height"]), int(sc.camera["width"])
     acc = {g: {k: np.zeros((H, W, 3)) for k in ("full", "d2", "d1")} for g in groups}
-    s1 = np.zeros((H, W))
-    s2 = np.zeros((H, W))
+    s1 = {g: np.zeros((H, W)) for g in groups}
+    s2 = {g: np.zeros((H, W)) for g in groups}
     n = 0
     stats = {}
+    # The world only: without the HUD's text (mask_rects) and the first-person weapon and hands.
+    keep = display.rect_mask((H, W), sc.camera.get("mask_rects"))
+    fp = sc.first_person_mask(scenes[[g for g in groups if g != "flashlight"][0]] if len(groups) > 1 or groups[0] != "flashlight" else mi.load_dict(sc.build("ambient")))
+    keep &= ~fp
+    use_fit = bool(statics) and samples["valid"].any()
+    log("fit and comparison on %.1f%% of the pixels (first-person %.1f%%), lightmapped BSP %.1f%%" % (
+        100 * keep.mean(), 100 * fp.mean(), 100 * (samples["valid"] & keep).mean()))
+    original = None
     orig_path = folder / "original.png"
-    original, keep = None, None
     if orig_path.exists():
         original = (read_image(orig_path)[:, :, :3] * 255.0 + 0.5).astype(np.uint8)
         if original.shape[:2] != (H, W):
             from PIL import Image
             original = np.asarray(Image.fromarray(original).resize((W, H), Image.BILINEAR))
-        keep = display.rect_mask((H, W), sc.camera.get("mask_rects"))
     log("scene built in %.1f s" % (time.time() - t0))
+    scales = {g: 1.0 for g in groups}
     t_render = time.time()
     with GpuLock(gpu_lock, log):
         while True:
             wait_for_no_player(log)
-            total = np.zeros((H, W, 3))
             for g in groups:
-                imgs = {}
-                for key, depth in (("full", -1), ("d2", 2), ("d1", 1)):
-                    img = mi.render(scenes[g], integrator=integ[depth], spp=spp_pass, seed=n)
-                    imgs[key] = np.asarray(img, np.float64)
-                for k in imgs:
-                    acc[g][k] += imgs[k]
-                total += imgs["full"]
-            y = total @ display.LUMA.astype(np.float64)
-            s1 += y
-            s2 += y * y
+                p = {k: v.astype(np.float64) for k, v in render_pass(scenes[g], spp_pass, n, parts=True).items()}
+                imgs = {"d1": p["emission"], "d2": p["emission"] + p["direct"]}
+                imgs["full"] = imgs["d2"] + p["indirect"]
+                for key, img in imgs.items():
+                    acc[g][key] += img
+                acc_w[g] += render_pass(whites[g], spp_pass, n, parts=True, max_depth=2)["direct"]
+                y = imgs["full"] @ display.LUMA.astype(np.float64)
+                s1[g] += y
+                s2[g] += y * y
             n += 1
             el = (time.time() - t_render) / 60.0
             if n >= min_passes and (n == min_passes or n % 8 == 0 or n * spp_pass >= max_spp):
-                # The floor follows the exposure the picture will have (or 5% of the mean light without an
-                # original).
-                if original is not None:
-                    mean_now = sum(acc[g]["full"] for g in groups) / n
-                    k_now, _ = display.match_exposure(mean_now, original, keep, iters=40)
-                    floor = DISPLAY_FLOOR / k_now
-                else:
-                    floor = 0.05 * (s1 / n).mean()
-                stats = noise_stats(s1, s2, n, floor)
+                if use_fit:
+                    (k, *_), _, _ = best_fit(samples, keep, [acc[g]["full"] / n for g in statics], lambda *a: None)
+                    scales.update(zip(statics, k))
+                # Noise of the whole picture: the groups are independent renders, so variances add.
+                mean = sum(scales[g] * s1[g] / n for g in groups)
+                var = sum(scales[g] ** 2 * np.maximum(s2[g] / n - (s1[g] / n) ** 2, 0) for g in groups)
+                stats = noise_stats(mean * n, (var + mean * mean) * n, n, DISPLAY_FLOOR)
                 done = stats["median_rel"] <= target and stats["p95_rel"] <= 3 * target
-                if True:
-                    log("pass %d (%d spp): median noise %.3f%%, 95th %.3f%%, %.1f min" % (
-                        n, n * spp_pass, 100 * stats["median_rel"], 100 * stats["p95_rel"], el))
+                log("pass %d (%d spp): median noise %.3f%%, 95th %.3f%%, %.1f min" % (
+                    n, n * spp_pass, 100 * stats["median_rel"], 100 * stats["p95_rel"], el))
                 if done or n * spp_pass >= max_spp or el >= max_minutes:
                     stats["converged"] = bool(done)
                     break
     spp = n * spp_pass
     mean = {g: {k: v / n for k, v in acc[g].items()} for g in groups}
-    full = sum(mean[g]["full"] for g in groups)
-    emission = sum(mean[g]["d1"] for g in groups)
-    direct = sum(mean[g]["d2"] - mean[g]["d1"] for g in groups)
-    indirect = sum(mean[g]["full"] - mean[g]["d2"] for g in groups)
-
-    # The one global exposure: the truth's picture as bright on average as the original's.
-    if original is not None:
-        k, target_light = display.match_exposure(full, original, keep)
-    else:
-        k, target_light = 1.0, None
     out.mkdir(parents=True, exist_ok=True)
-    write_exr(out / "truth.exr", k * full)
-    parts = out / "truth_parts"
-    write_exr(parts / "direct.exr", k * direct)
-    write_exr(parts / "indirect.exr", k * indirect)
-    write_exr(parts / "emission.exr", k * emission)
+    fit_lines = []
+    if use_fit:
+        log("static fit against the lightmap:")
+        (k, r2, y_img, fit_img, m), gamma, flip = best_fit(samples, keep, [mean[g]["full"] for g in statics], log)
+        scales.update(zip(statics, k))
+        fit_lines = ["static fit (least squares against albedo x lightmap, %d lit BSP pixels; pages ^%g, v %s): R^2 %.3f" % (
+            int(m.sum()), gamma, "flipped" if flip else "as stored", r2)] + [
+            "  scale %s %.6g" % (g, scales[g]) for g in statics]
+        write_exr(out / "static_fit_residual.exr", np.where(m, y_img - fit_img, 0.0)[..., None].repeat(3, -1))
+        residual_png(y_img, fit_img, m, out / "static_fit_residual.png")
+    else:
+        fit_lines = ["static fit: none (no lightmapped BSP pixels or no static light); static scales 1"]
+    if "flashlight" in mean:
+        for k in mean["flashlight"]:
+            mean["flashlight"][k] = np.where(fp[..., None], 0.0, mean["flashlight"][k])
+    w = {g: scales[g] for g in groups}
+    full = sum(w[g] * mean[g]["full"] for g in groups)
+    emission = sum(w[g] * mean[g]["d1"] for g in groups)
+    direct = sum(w[g] * (mean[g]["d2"] - mean[g]["d1"]) for g in groups)
+    indirect = sum(w[g] * (mean[g]["full"] - mean[g]["d2"]) for g in groups)
     zero = np.zeros((H, W, 3))
-    write_exr(parts / "static.exr", k * mean["static"]["full"] if "static" in mean else zero)
+    static = sum((w[g] * mean[g]["full"] for g in statics), zero)
+    write_exr(out / "truth.exr", full)
+    parts = out / "truth_parts"
+    write_exr(parts / "direct.exr", direct)
+    write_exr(parts / "indirect.exr", indirect)
+    write_exr(parts / "emission.exr", emission)
+    write_exr(parts / "static.exr", static)
     write_exr(parts / "direct_flashlight.exr",
-              k * (mean["flashlight"]["d2"] - mean["flashlight"]["d1"]) if "flashlight" in mean else zero)
-    mood = display.sdr_pixels(k * full)
+              mean["flashlight"]["d2"] - mean["flashlight"]["d1"] if "flashlight" in mean else zero)
+    irr = {g: acc_w[g] / n for g in groups}
+    if "flashlight" in irr:
+        irr["flashlight"] = np.where(fp[..., None], 0.0, irr["flashlight"])
+    write_exr(parts / "irradiance_direct.exr", sum(w[g] * irr[g] for g in groups))
+    write_exr(parts / "irradiance_direct_static.exr", sum((w[g] * irr[g] for g in statics), zero))
+    write_exr(parts / "irradiance_direct_flashlight.exr", irr.get("flashlight", zero))
+    save_mask(out, keep)
+    mood = display.sdr_pixels(full)
     from PIL import Image
     Image.fromarray(mood).save(out / "mood.png")
-    compare(original, mood, out / "compare.png", k, sc.placeholders)
+    ratio = None
+    if original is not None:
+        ratio = float(display.picture_light(mood)[keep].mean() / max(display.picture_light(original)[keep].mean(), 1e-12))
+    compare(original, mood, out / "compare.png", sc.placeholders)
 
     minutes = (time.time() - t_render) / 60.0
     info = {
         "scene": folder.name, "variant": variant, "spp": spp, "passes": n, "spp_per_pass": spp_pass,
         "render_minutes": round(minutes, 2), "noise": stats, "noise_target_median": target,
-        "exposure": k, "original_mean_light": target_light,
+        "scales": scales, "truth_over_original_mean_light": ratio,
         "groups": groups, "placeholders": sc.placeholders, "notes": sc.notes,
         "materials": sc.material_summaries, "lights": getattr(sc, "light_summaries", {}),
     }
@@ -187,12 +261,37 @@ def render_scene(folder, out=None, spp_pass=16, target=0.01, max_spp=65536, max_
         "  median %.3f%%  95th %.3f%%  99th %.3f%%  converged %s (target median %.2f%%, 95th %.2f%%)" % (
             100 * stats.get("median_rel", float("nan")), 100 * stats.get("p95_rel", float("nan")),
             100 * stats.get("p99_rel", float("nan")), stats.get("converged"), 100 * target, 300 * target),
-        "exposure %.6g (applied to truth.exr and its parts; 1 without original.png)" % k,
         "groups %s" % " ".join(groups),
-    ] + ["PLACEHOLDER: %s" % p for p in sc.placeholders] + ["note: %s" % x for x in sc.notes]
+    ] + fit_lines + [
+        "dynamic lights in the game's own units (color and attenuation decoded ^2.2), scale 1" + (
+            "; the flashlight physical (1/d^2) with power x %g" % flashlight_scale if flashlight_scale is not None else ""),
+        "truth / original mean light (world pixels): %s" % (("%.3f" % ratio) if ratio else "n/a"),
+    ] + ["PLACEHOLDER: %s" % p for p in sc.placeholders] + ["assumption: %s" % x for x in sc.notes]
     (out / "samples.txt").write_text("\n".join(lines) + "\n")
     log("\n".join(lines))
     return info
+
+
+def save_mask(out, keep):
+    """truth/mask.png: white where a comparison counts (not the HUD's mask_rects, not the first-person
+    weapon and hands); compare.py reads it."""
+    from PIL import Image
+    out.mkdir(parents=True, exist_ok=True)
+    Image.fromarray((keep * 255).astype(np.uint8)).save(out / "mask.png")
+
+
+def residual_png(y_img, fit_img, m, path):
+    """The fit's residual: grey where the lightmap and the fit agree, white where the lightmap is brighter
+    (light the truth lacks: a missing emitter), black where it is darker; outside the fit, mid-blue-free
+    flat grey with a hatch so it reads in black and white too."""
+    from PIL import Image
+    r = np.where(m, y_img - fit_img, 0.0)
+    scale = np.percentile(np.abs(r[m]), 98) + 1e-9 if m.any() else 1.0
+    v = np.clip(0.5 + 0.5 * r / scale, 0, 1)
+    img = (v * 255).astype(np.uint8)
+    hatch = ((np.add.outer(np.arange(m.shape[0]), np.arange(m.shape[1])) // 4) % 2).astype(bool)
+    img = np.where(m, img, np.where(hatch, 100, 150)).astype(np.uint8)
+    Image.fromarray(img).save(path)
 
 
 def _font(size):
@@ -204,7 +303,7 @@ def _font(size):
     return ImageFont.load_default(size=size)
 
 
-def compare(original, mood, path, k, placeholders):
+def compare(original, mood, path, placeholders):
     """The original on the left and the truth on the right, labeled."""
     from PIL import Image, ImageDraw
     H, W = mood.shape[:2]
@@ -216,8 +315,63 @@ def compare(original, mood, path, k, placeholders):
     d = ImageDraw.Draw(canvas)
     f = _font(int(bar * 0.6))
     d.text((12, bar * 0.18), "original (game)" if original is not None else "no original.png", fill=(255, 255, 255), font=f)
-    label = "truth (path traced, exposure %.3g)" % k
+    label = "truth (path traced)"
     if placeholders:
         label += "  PLACEHOLDER LIGHTS/MATERIALS"
     d.text((W + 12, bar * 0.18), label, fill=(255, 255, 255), font=f)
     canvas.save(path)
+
+
+def render_flashlight_direct(folder, out=None, flashlight_scale=None, flashlight_emitter=None, spp_pass=8, target=0.002, max_spp=4096,
+                             max_minutes=30.0, gpu_lock=os.path.expanduser("~/goat-rig/locks/gpu.lock"), log=print):
+    """Only truth_parts/direct_flashlight.exr: the flashlight's one-bounce light, converged (for comparing
+    the real-time flashlight before the whole truth)."""
+    folder = Path(folder)
+    out = Path(out) if out else folder / "truth"
+    sc = Scene(folder, flashlight_scale, flashlight_emitter=flashlight_emitter)
+    if not sc.lights_of("flashlight"):
+        raise SystemExit("%s: no flashlight in lights.json" % folder)
+    scene = mi.load_dict(sc.build("flashlight"))
+    white = mi.load_dict(Scene(folder, flashlight_scale, white=True, flashlight_emitter=flashlight_emitter).build("flashlight"))
+    flat = mi.load_dict(Scene(folder, flashlight_scale, white=True, bump=False,
+                              flashlight_emitter=flashlight_emitter).build("flashlight"))
+    acc_f = 0.0
+    H, W = int(sc.camera["height"]), int(sc.camera["width"])
+    acc_w = np.zeros((H, W, 3))
+    full_scene = mi.load_dict(sc.build("ambient"))
+    fp = sc.first_person_mask(full_scene)
+    del full_scene
+    s1, s2, acc, n = np.zeros((H, W)), np.zeros((H, W)), np.zeros((H, W, 3)), 0
+    t0 = time.time()
+    stats = {}
+    with GpuLock(gpu_lock, log):
+        while True:
+            wait_for_no_player(log)
+            img = render_pass(scene, spp_pass, n, parts=True)["direct"].astype(np.float64)
+            acc += img
+            acc_w += render_pass(white, spp_pass, n, parts=True)["direct"]
+            acc_f = acc_f + render_pass(flat, spp_pass, n, parts=True, max_depth=2)["direct"]
+            y = img @ display.LUMA.astype(np.float64)
+            s1 += y
+            s2 += y * y
+            n += 1
+            el = (time.time() - t0) / 60.0
+            if n >= 4 and (n % 8 == 0 or n * spp_pass >= max_spp):
+                stats = noise_stats(s1, s2, n, DISPLAY_FLOOR)
+                done = stats["median_rel"] <= target and stats["p95_rel"] <= 3 * target
+                log("pass %d (%d spp): median noise %.3f%%, 95th %.3f%%, %.1f min" % (
+                    n, n * spp_pass, 100 * stats["median_rel"], 100 * stats["p95_rel"], el))
+                if done or n * spp_pass >= max_spp or el >= max_minutes:
+                    stats["converged"] = bool(done)
+                    break
+    write_exr(out / "truth_parts" / "direct_flashlight.exr", np.where(fp[..., None], 0.0, acc / n))
+    write_exr(out / "truth_parts" / "irradiance_direct_flashlight.exr", np.where(fp[..., None], 0.0, acc_w / n))
+    # The same with the geometric (interpolated vertex) normal, no normal maps.
+    write_exr(out / "truth_parts" / "irradiance_direct_flashlight_geometric.exr", np.where(fp[..., None], 0.0, acc_f / n))
+    save_mask(out, display.rect_mask((H, W), sc.camera.get("mask_rects")) & ~fp)
+    lines = ["direct_flashlight: spp %d, %.1f min, noise median %.3f%% 95th %.3f%% (floor %g), converged %s" % (
+        n * spp_pass, (time.time() - t0) / 60, 100 * stats["median_rel"], 100 * stats["p95_rel"], DISPLAY_FLOOR,
+        stats.get("converged")),
+        "flashlight: %s" % json.dumps(list(sc.light_summaries.values()))] + ["assumption: %s" % x for x in sc.notes]
+    (out / "direct_flashlight.txt").write_text("\n".join(lines) + "\n")
+    log("\n".join(lines))
