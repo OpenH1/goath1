@@ -520,6 +520,74 @@ radius, and at least the least: the light's own glow, a bolt's body) */
 #define XGPU_LIGHT_SHADOWS_BIAS 0.04f
 #define XGPU_LIGHT_SHADOWS_SHORT 1.5f
 #define XGPU_LIGHT_SHADOWS_SHORT_LEAST 0.1f
+
+/* The enhanced flashlight (port/linux/game/dynamic_lights.c,
+d3d8_device.c's halo_dynamic_lights_flashlights): a unit's flashlight lights
+the structure, the models and the first-person view in the one loop of the
+lights (xgpu_spirv.c's, xgpu_msl.c's dynamic_light_sum), through its own
+gel as the game's gel pass projects it, its own distance falloff, and one
+shadow map in the gel's frame. Past the shadowed lights' texels, in the
+clusters' slice:
+
+- FLASHLIGHT: four words, each slot's light (its index plus one; 0 none);
+- FLASHLIGHT + 1: the shadowed slot plus one (0: no map this frame), the
+  gel's half width in the projection (tan, float bits), the cookie there
+  (1), the map's bias (world units, float bits);
+- FLASHLIGHT + 2 + 3 * slot, + 1, + 2: the slot's gel frame: its forward
+  (the beam), up and left (floats' bits), the gel pass's rows;
+- FLASHLIGHT + 14: the gel's tint, gamma (floats' bits);
+- FLASHLIGHT + 15 to + 22 (ATTENUATION): every light's falloff on the
+  structure, gamma: 32 floats' bits, from the light to its radius (the
+  game's distance attenuation's);
+- FLASHLIGHT + 23: where the shadowed slot's shadows are cast from (its
+  lamp on the weapon in hand, floats' bits): the map's middle, in the same
+  frame, a and b of v = p - lamp;
+- FLASHLIGHT_COOKIE on: the gel's brightness (the game's, gamma, as the
+  gel pass multiplies it), a byte a
+  texel, FLASHLIGHT_COOKIE_SIZE square, rows from -up, columns from -left:
+  texel (x, y) is the direction forward + a left + b up, a = u |u| width
+  for u from -1 to 1 at the texels' middles (and b of v the same): each
+  axis warped, so the texels are closer at the middle, where the gel's hot
+  disk and ring are.
+
+A pixel at p: v = p - light, a = dot(v, left) / dot(v, forward), b the
+same with up, for the cookie; the map, from the lamp, (its own image, the draw set's binding
+XGPU_SPIRV_BINDING_FLASHLIGHT_SHADOW, FLASHLIGHT_SHADOW_SIZE square, in
+the same a, b as the cookie) holds, in red, the distance from the light
+to what its ray first met (its radius where none). */
+#define XGPU_DYNAMIC_LIGHTS_FLASHLIGHT (XGPU_DYNAMIC_LIGHTS_SHADOWED + 4)
+#define XGPU_DYNAMIC_LIGHTS_FLASHLIGHTS 4
+#define XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF 32
+#define XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE (XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 24)
+#define XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE 80
+#define XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_SHADOW_SIZE 512
+/* The light model (port/linux/game/dynamic_lights.c): every enhanced light is a point,
+a spot (the flashlight: its gel, above) or a panel, and each is added as
+the game adds it for the surface it lights, in the display's gamma
+(xgpu_spirv.c's dynamic_light_sum, dynamic_light_add):
+
+- the structure (the game's gel pass): color * gel * T(d / r) *
+  max(dot(n, l), 0) * saturate(8 dot(surface normal, l)), times the
+  shader's material colour, T the game's distance attenuation (its 32
+  values at ATTENUATION, the falloff above: every light's, read from the
+  game's texture as it is, gamma) and the gel 1 for a point;
+- a model and the first-person view (the game's model lighting): color *
+  max(1 - d^2 / r^2, 0) * saturate(dot(n, l)) * the cone;
+- a panel (PANELS: a mask of the lights that are, four words): a small
+  lit display, a Lambertian disk, in linear light: color (linear) *
+  a^2 / (a^2 + d^2) * (1 - d^2 / r^2)^2 * the cosine off its face (the
+  cone's axis) * saturate(dot(n, l)), a^2 in the colour's w.
+
+The sum is added to the light already there as the game's framebuffer
+adds it, (base + sum)^2.2 linear, the panels' added there, under a
+shoulder that leaves all below max(base, ADD_KNEE) (linear) as it is. */
+#define XGPU_DYNAMIC_LIGHTS_ATTENUATION (XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 15)
+#define XGPU_DYNAMIC_LIGHTS_PANELS (XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE + \
+	XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE * XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE / 16)
+#define XGPU_DYNAMIC_LIGHTS_ADD_KNEE 0.7f
+/* the map's bias at the light's radius past its texel's width there, and
+its least (world units) */
+#define XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_BIAS 0.03f
 enum
 {
 	XGPU_DYNAMIC_LIGHTS_ENVIRONMENT = 1,

@@ -80,11 +80,16 @@ def test_model_lit_for_each_pixel(shaders):
 
 def test_model_lit_by_the_dynamic_lights(shaders):
     source = body(shaders["model_dynamic", 1])
+    base = source[source.index("float3 base = model_lighting("):]
+    base = base[:base.index(";")]
     added = source[source.index("v0.rgb = dynamic_light_add("):]
     added = added[:added.index(";")]
-    # the occlusion in the base's lighting alone, the lights' sum added after
-    assert "model_lighting(u, in.xWorldNormal, occlusion)" in added
-    assert "occlusion" not in added[added.index("dynamic_light_sum("):]
+    summed = source[source.index("float3 sum = dynamic_light_sum("):]
+    summed = summed[:summed.index(";")]
+    # the occlusion in the base's lighting alone, the lights' sum (and the panels' linear light) added after
+    assert "model_lighting(u, in.xWorldNormal, occlusion)" in base
+    assert "v0.rgb = dynamic_light_add(dynamic_lights, base, sum, linear_light)" == added
+    assert "occlusion" not in summed
 
 
 def test_model_lit_for_each_vertex(shaders):

@@ -145,6 +145,9 @@ void world_ao_cards(int cards);
 frame), for display.shadows "ray_traced" (rt_shadows.c) whatever this
 setting */
 void world_ao_rt_frame(void);
+/* the frame's objects were found for the ray-traced scene, which
+world_ao_rt_frame can then make (port/linux/game/dynamic_lights.c) */
+int world_ao_rt_scene_ready(void);
 /* the structure's lightmap pass draws with this page of its lightmaps
 next (rasterizer_environment_lightmap_begin; NULL none): its static
 scenery's layer, or the static scenery's shapes walked where it has none */

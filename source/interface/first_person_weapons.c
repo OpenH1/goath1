@@ -129,6 +129,7 @@ symbols in this file:
 #include "view_fov.h" /* port: port/linux/game/view_fov.c */
 #include "lowered_reticle.h" /* port: port/linux/game/lowered_reticle.c */
 #include "motion_vectors.h" /* port: port/linux/game/motion_vectors.c */
+/* port: source/objects/object_lights.c (the enhanced flashlight) */
 #include "shaders/shader_definitions.h" /* port: (the shield's flare on the arms) */
 #include "shaders/shaders.h"
 /* port: port/linux/game/shield_color.c */
@@ -757,6 +758,10 @@ static void first_person_weapon_draw_slot(
 			struct animation_graph *animation_graph= animation_graph_definition_get(
 				weapon_definition->weapon.interface_definition.first_person_animations.index);
 			struct render_lighting *lighting= object_get_cached_render_lighting(unit_index, FLT_MAX);
+			/* port: (kept past the draws, which may be drawn later than
+			here; lit by the unit's own flashlight as the game lights it:
+			port/linux/game/dynamic_lights.c) */
+			static struct render_lighting first_person_lighting;
 			/* port: the weapon's and the arms' function values and
 			change colors, and the camouflage, between the last two
 			ticks', as the world's objects are drawn
@@ -768,6 +773,11 @@ static void first_person_weapon_draw_slot(
 			real camouflage_super_amount;
 			real active_camouflage= render_interpolation_unit_camouflage(unit_index, &camouflage_super_amount);
 
+			if (lighting)
+			{
+				first_person_lighting= *lighting;
+				lighting= &first_person_lighting;
+			}
 			model_effect.modifier_shader= NULL;
 			if (TEST_FLAG(unit->unit.flags, _unit_active_camouflaged_bit) ||
 				active_camouflage>0.0f)
@@ -1094,6 +1104,32 @@ boolean first_person_weapon_center_flashlight(
 	}
 
 	return centered;
+}
+
+/* port: the enhanced flashlight's shadows (port/linux/game/dynamic_lights.c)
+cast from its lamp on the weapon in hand, where its barrel is (its primary
+trigger marker, else its flashlight marker): the game shines it from the
+view's own axis, from which no shadow is ever seen beside what casts it;
+FALSE where the unit's first-person weapon is not drawn */
+boolean first_person_weapon_flashlight_lamp(
+	long unit_index,
+	real_point3d *position)
+{
+	short local_player_index= first_person_weapon_index_from_unit_index(unit_index);
+	struct object_marker marker;
+	struct first_person_weapon *first_person_weapon;
+
+	if (local_player_index==NONE)
+		return FALSE;
+	first_person_weapon= first_person_weapon_get(local_player_index);
+	if (!first_person_weapon->visible ||
+		(first_person_weapon_get_marker_by_name(first_person_weapon->weapon_index, "primary trigger", &marker, 1)<1 &&
+		first_person_weapon_get_marker_by_name(first_person_weapon->weapon_index, "flashlight", &marker, 1)<1))
+	{
+		return FALSE;
+	}
+	*position= marker.matrix.position;
+	return TRUE;
 }
 
 boolean first_person_weapon_adjust_light(

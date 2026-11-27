@@ -1926,12 +1926,12 @@ static int uniforms_update(const struct stream_pipeline *entry)
 		to->world_ao[1] = from->world_ao[1];
 		to->world_ao[2] = from->world_ao[2];
 		to->world_ao[3] = from->world_ao[3];
-		/* (the enhanced dynamic lights' tint, in linear light: worked out
+		/* (the enhanced dynamic lights' tint, gamma, as the gel pass multiplies it: worked out
 		again where the colour changed) */
 		if (!stream.tint_valid || memcmp(stream.tint_from, from->ps_final_c0, sizeof(stream.tint_from)))
 		{
 			for (stage = 0; stage < 3; stage++)
-				stream.tint[stage] = powf(from->ps_final_c0[stage], 2.2f);
+				stream.tint[stage] = from->ps_final_c0[stage];
 			memcpy(stream.tint_from, from->ps_final_c0, sizeof(stream.tint_from));
 			stream.tint_valid = 1;
 		}
@@ -3083,6 +3083,17 @@ static void dynamic_lights_cells(const struct xgpu_stream_dynamic_lights_block *
 	xgpu_vulkan_dynamic_lights_upload(block, sizeof(*block), lights_cells, first < end ? first : 0, first < end ? end : 0);
 }
 
+/* the enhanced flashlight's shadow map, as the frame's lights name a
+shadowed slot (xgpu_vulkan_light_shadows.c), the stream's targets bound
+again after it; not while a map is prepared */
+static void dynamic_lights_flashlight(void)
+{
+	if (stream.preparing || !stream.capabilities.ray_queries || !lights_cells)
+		return;
+	if (xgpu_vulkan_flashlight_draw(lights_cells))
+		targets_bind();
+}
+
 static void stream_dynamic_lights_upload(void *context, const struct xgpu_stream_dynamic_lights_upload *record)
 {
 	const void *cells = host_pointer(record->cells);
@@ -3091,6 +3102,7 @@ static void stream_dynamic_lights_upload(void *context, const struct xgpu_stream
 	if (!cells || record->size != DYNAMIC_LIGHTS_CELLS_SIZE)
 		return;
 	dynamic_lights_cells(&record->block, record->count, 0, DYNAMIC_LIGHTS_CELLS_SIZE, cells);
+	dynamic_lights_flashlight();
 }
 
 static void stream_dynamic_lights_change(void *context, const struct xgpu_stream_dynamic_lights_change *record)
@@ -3101,6 +3113,7 @@ static void stream_dynamic_lights_change(void *context, const struct xgpu_stream
 	if (record->size && !cells)
 		return;
 	dynamic_lights_cells(&record->block, record->count, record->offset, record->size, cells);
+	dynamic_lights_flashlight();
 }
 
 static void stream_dynamic_lights_world(void *context, const struct xgpu_stream_dynamic_lights_world *record)

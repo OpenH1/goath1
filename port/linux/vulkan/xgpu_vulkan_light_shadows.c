@@ -50,9 +50,10 @@ pass not yet made is not drawn. Render thread alone, as the core.
 static struct
 {
 	int made, failed, drawn_said;
-	VkShaderModule vertex, trace, filter;
+	VkShaderModule vertex, trace, filter, flashlight;
 	VkSampler sampler;
-	struct xgpu_vulkan_pipeline_description trace_pass, filter_pass;
+	struct xgpu_vulkan_pipeline_description trace_pass, filter_pass, flashlight_pass;
+	int flashlight_prepared, flashlight_said;
 	/* the trace's mask and the filter's */
 	struct xgpu_vulkan_image *traced, *filtered;
 } light_shadows;
@@ -92,6 +93,8 @@ static int light_shadows_shaders(int ray_queries)
 		light_shadows.trace = light_shadows_shader(XGPU_SPIRV_LIGHT_SHADOWS_TRACE, FALSE, TRUE);
 	if (!light_shadows.filter)
 		light_shadows.filter = light_shadows_shader(XGPU_SPIRV_LIGHT_SHADOWS_FILTER, FALSE, FALSE);
+	if (!light_shadows.flashlight)
+		light_shadows.flashlight = light_shadows_shader(XGPU_SPIRV_LIGHT_SHADOWS_FLASHLIGHT, FALSE, TRUE);
 	if (!light_shadows.sampler)
 	{
 		memset(&sampler, 0, sizeof(sampler));
@@ -101,7 +104,8 @@ static int light_shadows_shaders(int ray_queries)
 		sampler.anisotropy = 1;
 		light_shadows.sampler = xgpu_vulkan_sampler(&sampler);
 	}
-	if (!light_shadows.vertex || !light_shadows.trace || !light_shadows.filter || !light_shadows.sampler)
+	if (!light_shadows.vertex || !light_shadows.trace || !light_shadows.filter || !light_shadows.flashlight ||
+		!light_shadows.sampler)
 	{
 		host_logf(HOST_LOG_WARN, "vulkan: display.shadows \"ray_traced\": the dynamic lights' shadows' passes cannot "
 			"be made: their lights unshadowed");
@@ -117,6 +121,10 @@ static int light_shadows_shaders(int ray_queries)
 	light_shadows.trace_pass.samples = 1;
 	light_shadows.filter_pass = light_shadows.trace_pass;
 	light_shadows.filter_pass.pixel_shader = light_shadows.filter;
+	light_shadows.flashlight_pass = light_shadows.trace_pass;
+	light_shadows.flashlight_pass.pixel_shader = light_shadows.flashlight;
+	light_shadows.flashlight_pass.color_mask = 1;
+	light_shadows.flashlight_pass.color_format = XGPU_VULKAN_FORMAT_RGBA16F;
 	light_shadows.made = 1;
 	return 1;
 }
@@ -127,6 +135,8 @@ void xgpu_vulkan_light_shadows_prepare(int ray_queries)
 		return;
 	(void)xgpu_vulkan_pipeline_prepare(&light_shadows.trace_pass);
 	(void)xgpu_vulkan_pipeline_prepare(&light_shadows.filter_pass);
+	(void)xgpu_vulkan_pipeline_prepare(&light_shadows.flashlight_pass);
+	light_shadows.flashlight_prepared = 1;
 }
 
 /* a mask of the window's target's size */
@@ -155,9 +165,9 @@ static struct xgpu_vulkan_image *light_shadows_image(struct xgpu_vulkan_image *i
 /* a pass's triangle over the window's rectangle of a mask: the pre-pass's
 inputs, the trace's mask for the filter (at the history's binding), the
 pass's uniforms; the lights' block and cells, the occlusion's set */
-static void light_shadows_pass_draw(struct xgpu_vulkan_image *into, const int32_t rectangle[4],
+static void light_shadows_pass_draw_kind(struct xgpu_vulkan_image *into, const int32_t rectangle[4],
 	const struct xgpu_world_ao_pass *uniforms, const struct xgpu_vulkan_pipeline_description *pass,
-	struct xgpu_vulkan_image *inputs, struct xgpu_vulkan_image *traced)
+	struct xgpu_vulkan_image *inputs, struct xgpu_vulkan_image *traced, int kind)
 {
 	struct xgpu_vulkan_dynamic_state dynamic;
 	struct xgpu_vulkan_draw draw;
@@ -195,9 +205,16 @@ static void light_shadows_pass_draw(struct xgpu_vulkan_image *into, const int32_
 	draw.count = 3;
 	draw.ambient_occlusion = 1;
 	draw.dynamic_lights = 1;
-	draw.kind[0] = LIGHT_SHADOWS_KIND;
+	draw.kind[0] = (uint8_t)kind;
 	xgpu_vulkan_set_target_views(into, NULL, 0, 1);
 	xgpu_vulkan_draw(&draw);
+}
+
+static void light_shadows_pass_draw(struct xgpu_vulkan_image *into, const int32_t rectangle[4],
+	const struct xgpu_world_ao_pass *uniforms, const struct xgpu_vulkan_pipeline_description *pass,
+	struct xgpu_vulkan_image *inputs, struct xgpu_vulkan_image *traced)
+{
+	light_shadows_pass_draw_kind(into, rectangle, uniforms, pass, inputs, traced, LIGHT_SHADOWS_KIND);
 }
 
 void xgpu_vulkan_light_shadows_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_world_ao_pass *pass,
@@ -260,4 +277,57 @@ void xgpu_vulkan_light_shadows_draw(struct xgpu_vulkan_image *inputs, const stru
 void xgpu_vulkan_light_shadows_end(void)
 {
 	xgpu_vulkan_light_shadows_set(NULL);
+}
+
+/* ---------- the enhanced flashlight's shadow map (xgpu.h's
+XGPU_DYNAMIC_LIGHTS_FLASHLIGHT; xgpu_spirv.c's flashlight_map_main)
+
+A ray a texel from the shadowed slot's light into the ray-traced scene,
+drawn as its frame's lights come (before any surface reads them: the
+lights are given before the window's structure is drawn), wherever the
+device has ray queries, whatever display.shadows and
+display.ambient_occlusion are. Its pipeline is made the first time (one
+of a fixed target, no map's draws'); until it is, nothing is drawn and
+the map holds what it last held (as far as it goes, at first). */
+_Static_assert(XGPU_VULKAN_BINDING_FLASHLIGHT_SHADOW == XGPU_SPIRV_BINDING_FLASHLIGHT_SHADOW &&
+	XGPU_VULKAN_FLASHLIGHT_SHADOW_SIZE == XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_SHADOW_SIZE, "the flashlight's shadow map");
+
+#define FLASHLIGHT_OWNER "FLASHLIGHT SHADOW"
+#define FLASHLIGHT_KIND 0xfb
+
+int xgpu_vulkan_flashlight_draw(const unsigned char *cells)
+{
+	enum
+	{
+		HEAD = ((XGPU_DYNAMIC_LIGHTS_GRID_X * XGPU_DYNAMIC_LIGHTS_GRID_Y * XGPU_DYNAMIC_LIGHTS_GRID_Z) +
+			XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 1) * 16,
+	};
+	static const struct xgpu_world_ao_pass none;
+	struct xgpu_vulkan_image *map = xgpu_vulkan_flashlight_shadow_image();
+	const int32_t rectangle[4] = { 0, 0, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_SHADOW_SIZE,
+		XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_SHADOW_SIZE };
+	uint32_t slot;
+
+	if (!cells || !map || xgpu_vulkan_image_description(map)->width != XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_SHADOW_SIZE)
+		return 0;
+	memcpy(&slot, cells + HEAD, sizeof(slot));
+	if (!slot || slot > XGPU_DYNAMIC_LIGHTS_FLASHLIGHTS || !light_shadows_shaders(1))
+		return 0;
+	if (!light_shadows.flashlight_prepared)
+	{
+		(void)xgpu_vulkan_pipeline_prepare(&light_shadows.flashlight_pass);
+		light_shadows.flashlight_prepared = 1;
+	}
+	if (!xgpu_vulkan_pipeline_ready(&light_shadows.flashlight_pass) || !xgpu_vulkan_rt_build())
+		return 0;
+	xgpu_vulkan_pass_owner(FLASHLIGHT_OWNER);
+	light_shadows_pass_draw_kind(map, rectangle, &none, &light_shadows.flashlight_pass, NULL, NULL, FLASHLIGHT_KIND);
+	xgpu_vulkan_pass_owner(NULL);
+	if (!light_shadows.flashlight_said)
+	{
+		light_shadows.flashlight_said = 1;
+		host_logf(HOST_LOG_INFO, "vulkan: the enhanced flashlight's shadow map traced (%dx%d)",
+			XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_SHADOW_SIZE, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_SHADOW_SIZE);
+	}
+	return 1;
 }

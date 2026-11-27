@@ -109,12 +109,27 @@ frame's objects, which the ray-traced scene is made of, alone; found at the
 next frame where the setting came on in play) */
 static int world_ao_scene_found;
 
+/* (port/linux/game/dynamic_lights.c: the enhanced flashlight's shadow,
+traced through the same scene) */
+int dynamic_lights_flashlight_shadows_on(void);
+
+/* whether the frame's ray-traced scene is made where this setting is not:
+for display.shadows "ray_traced", or the enhanced flashlight's shadow */
+static int world_ao_rt_wanted(void)
+{
+	return rt_shadows_on() || dynamic_lights_flashlight_shadows_on();
+}
+
+/* the frame's objects were found for it (world_ao_frame_begin), so
+world_ao_rt_frame can make it */
+static unsigned long world_ao_rt_begun_frame;
+
 void world_ao_map_loaded(void)
 {
 	world_ao_scene_found = 0;
 	if (!world_ao_mode())
 	{
-		if (rt_shadows_on())
+		if (world_ao_rt_wanted())
 		{
 			world_scene_map_loaded();
 			world_ao_scene_found = 1;
@@ -130,7 +145,7 @@ void world_ao_bsp_switched(short bsp_index)
 {
 	if (!world_ao_mode())
 	{
-		if (rt_shadows_on())
+		if (world_ao_rt_wanted())
 			world_scene_bsp_switched(bsp_index);
 		return;
 	}
@@ -321,16 +336,18 @@ void world_ao_frame_begin(void)
 	{
 		/* (display.shadows "ray_traced": the frame's objects, for the
 		ray-traced scene) */
-		if (rt_shadows_on())
+		if (world_ao_rt_wanted())
 		{
 			if (!world_ao_scene_found)
 				world_scene_map_loaded();
 			world_ao_scene_found = 1;
 			world_scene_frame_begin();
+			world_ao_rt_begun_frame = world_ao_scene.frame;
 		}
 		return;
 	}
 	world_scene_frame_begin();
+	world_ao_rt_begun_frame = world_ao_scene.frame;
 	/* (not with debug.world_ao_test's made-up field, which the level's
 	would overwrite in the backend's one texture) */
 	test = config_string("debug.world_ao_test");
@@ -735,7 +752,7 @@ void world_ao_object_begin(long object_index)
 		if (baked)
 			reference = WORLD_AO_REFERENCE_NO_FIELD;
 		/* (its own instances, which its pixels' rays leave out) */
-		if ((world_ao_mode() & WORLD_AO_RAYS) || rt_shadows_on())
+		if ((world_ao_mode() & WORLD_AO_RAYS) || world_ao_rt_wanted())
 			rays_owner = world_rt_owner(object_index);
 	}
 	halo_world_ao_object(owner, reference, rays_owner);
@@ -744,6 +761,11 @@ void world_ao_object_begin(long object_index)
 void world_ao_rt_frame(void)
 {
 	world_rt_frame(world_ao_scene.frame);
+}
+
+int world_ao_rt_scene_ready(void)
+{
+	return world_ao_scene_found && world_ao_rt_begun_frame == world_ao_scene.frame;
 }
 
 void world_ao_cards(int cards)

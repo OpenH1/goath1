@@ -1572,6 +1572,8 @@ static struct
 	occlusion's sets name (NULL: the stand-in, a 1x1 of every light seen:
 	xgpu_vulkan_light_shadows_set) */
 	struct xgpu_vulkan_image *light_shadows, *light_shadows_stand_in;
+	/* the enhanced flashlight's shadow map (flashlight_shadow_make) */
+	struct xgpu_vulkan_image *flashlight_shadow;
 	uint64_t occlusion_serial, occlusion_world_number;
 	/* the window's display (any thread, atomic: HDR on, its SDR white's
 	and its headroom's bits, and whether they changed since the render
@@ -8160,7 +8162,10 @@ static void draw_body(const struct xgpu_vulkan_draw *draw)
 		/* (and the enhanced dynamic lights' cells, which the draws' set
 		names: no upload of them put aside before this pass) */
 		if (draw->dynamic_lights)
+		{
 			image_use(vk.lights_cells);
+			image_use(vk.flashlight_shadow);
+		}
 		/* (and display.ambient_occlusion "world"'s) */
 		if (draw->ambient_occlusion)
 		{
@@ -8319,7 +8324,11 @@ static void draw_body(const struct xgpu_vulkan_draw *draw)
 	}
 	/* (the lights written after this are written after it: in order) */
 	if (draw->dynamic_lights)
+	{
 		vk.lights_block->used = vk.lights_cells->used = vk.serial;
+		if (vk.flashlight_shadow)
+			vk.flashlight_shadow->used = vk.serial;
+	}
 	sets[0] = vk.draw_set;
 	offsets[0] = (uint32_t)draw->constants.offset;
 	offsets[1] = (uint32_t)draw->uniforms.offset;
@@ -12704,7 +12713,7 @@ static int device_make(const struct xgpu_vulkan_options *options)
 
 static int layouts_make(void)
 {
-	VkDescriptorSetLayoutBinding draw[5], textures[8];
+	VkDescriptorSetLayoutBinding draw[6], textures[8];
 	VkDescriptorSetLayoutCreateInfo info;
 	VkPipelineLayoutCreateInfo layout;
 	VkDescriptorSetLayout sets[5];
@@ -12734,9 +12743,14 @@ static int layouts_make(void)
 	draw[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 	draw[4].descriptorCount = 1;
 	draw[4].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+	/* (the enhanced flashlight's shadow map: xgpu.h's XGPU_DYNAMIC_LIGHTS_FLASHLIGHT) */
+	draw[5].binding = XGPU_VULKAN_BINDING_FLASHLIGHT_SHADOW;
+	draw[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+	draw[5].descriptorCount = 1;
+	draw[5].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 	memset(&info, 0, sizeof(info));
 	info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-	info.bindingCount = 5;
+	info.bindingCount = 6;
 	info.pBindings = draw;
 	if (!check(vkCreateDescriptorSetLayout(vk.device, &info, NULL, &vk.draw_layout), "vkCreateDescriptorSetLayout"))
 		return 0;
@@ -12839,6 +12853,36 @@ static int layouts_make(void)
 	return check(vkCreatePipelineLayout(vk.device, &layout, NULL, &vk.pipeline_layout), "vkCreatePipelineLayout");
 }
 
+/* the enhanced flashlight's shadow map (xgpu.h's XGPU_DYNAMIC_LIGHTS_FLASHLIGHT,
+xgpu_vulkan_light_shadows.c draws it), which the draw set names: made once,
+every texel as far as a half float goes (nothing shadowed until drawn); 1 by
+1 without ray queries, where it is never drawn nor read */
+static int flashlight_shadow_make(void)
+{
+	struct xgpu_vulkan_image_description description;
+	uint32_t size = vk.capabilities.ray_queries ? XGPU_VULKAN_FLASHLIGHT_SHADOW_SIZE : 1, index;
+	uint16_t *far;
+
+	memset(&description, 0, sizeof(description));
+	description.type = XGPU_VULKAN_IMAGE_2D;
+	description.format = XGPU_VULKAN_FORMAT_RGBA16F;
+	description.usage = XGPU_VULKAN_USAGE_SAMPLED | (vk.capabilities.ray_queries ? XGPU_VULKAN_USAGE_TARGET : 0);
+	description.width = description.height = size;
+	description.depth_or_layers = description.levels = 1;
+	vk.flashlight_shadow = xgpu_vulkan_image_create(&description);
+	far = malloc((size_t)size * size * 8);
+	if (!vk.flashlight_shadow || !far)
+	{
+		free(far);
+		return 0;
+	}
+	for (index = 0; index < size * size * 4; index++)
+		far[index] = 0x7bffu;
+	xgpu_vulkan_image_upload(vk.flashlight_shadow, 0, 0, 0, 0, 0, size, size, 1, far, size * 8, size * size * 8);
+	free(far);
+	return 1;
+}
+
 /* the draw set: the ring's ranges (dynamic offsets) of the constants and
 uniforms, the lights' block and cells, the visibility counters */
 static int draw_set_make(void)
@@ -12847,8 +12891,8 @@ static int draw_set_make(void)
 	VkDescriptorPoolCreateInfo pool;
 	VkDescriptorSetAllocateInfo allocate;
 	VkDescriptorBufferInfo buffers[4];
-	VkDescriptorImageInfo cells;
-	VkWriteDescriptorSet writes[5];
+	VkDescriptorImageInfo cells, flashlight;
+	VkWriteDescriptorSet writes[6];
 	struct xgpu_vulkan_image_description description;
 	int index;
 
@@ -12857,7 +12901,7 @@ static int draw_set_make(void)
 	sizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 	sizes[1].descriptorCount = 1;
 	sizes[2].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-	sizes[2].descriptorCount = 1;
+	sizes[2].descriptorCount = 2;
 	sizes[3].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 	sizes[3].descriptorCount = 1;
 	memset(&pool, 0, sizeof(pool));
@@ -12887,7 +12931,7 @@ static int draw_set_make(void)
 	description.levels = 1;
 	vk.lights_cells = xgpu_vulkan_image_create(&description);
 	vk.lights_cells_uploaded = 0;
-	if (!vk.lights_block || !vk.samples || !vk.lights_cells)
+	if (!vk.lights_block || !vk.samples || !vk.lights_cells || !flashlight_shadow_make())
 		return 0;
 	/* (no world yet: its header's node count 0) */
 	{
@@ -12914,8 +12958,11 @@ static int draw_set_make(void)
 	cells.sampler = vk.stand_in_sampler;
 	cells.imageView = vk.lights_cells->sampled;
 	cells.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+	flashlight.sampler = vk.stand_in_sampler;
+	flashlight.imageView = vk.flashlight_shadow->sampled;
+	flashlight.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 	memset(writes, 0, sizeof(writes));
-	for (index = 0; index < 5; index++)
+	for (index = 0; index < 6; index++)
 	{
 		writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 		writes[index].dstSet = vk.draw_set;
@@ -12931,8 +12978,16 @@ static int draw_set_make(void)
 	writes[3].pImageInfo = &cells;
 	writes[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 	writes[4].pBufferInfo = &buffers[3];
-	vkUpdateDescriptorSets(vk.device, 5, writes, 0, NULL);
+	writes[5].dstBinding = XGPU_VULKAN_BINDING_FLASHLIGHT_SHADOW;
+	writes[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+	writes[5].pImageInfo = &flashlight;
+	vkUpdateDescriptorSets(vk.device, 6, writes, 0, NULL);
 	return 1;
+}
+
+struct xgpu_vulkan_image *xgpu_vulkan_flashlight_shadow_image(void)
+{
+	return vk.flashlight_shadow;
 }
 
 void xgpu_vulkan_dynamic_lights_upload(const void *block, uint32_t size, const void *cells, uint32_t first,
