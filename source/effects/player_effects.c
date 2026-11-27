@@ -916,7 +916,18 @@ void player_effect_get_screen_flash(
 		real fade_elapsed = (real)(game_time_get() - player_effect_globals->screen_fade.start_time) -
 			render_interpolation_ticks_behind();
 
-		if (player_effect_globals->screen_fade.ticks != NONE &&
+		/* port: a co-op client before the host's first presentation
+		(network_coop_presentation_pending) */
+		if (network_coop_presentation_pending())
+		{
+			screen_flash->type = _render_screen_flash_type_lighten;
+			screen_flash->color.rgb.red = 0.0f;
+			screen_flash->color.rgb.green = 0.0f;
+			screen_flash->color.rgb.blue = 0.0f;
+			screen_flash->color.alpha = 1.0f;
+			screen_flash->intensity = 1.0f;
+		}
+		else if (player_effect_globals->screen_fade.ticks != NONE &&
 			(player_effect_globals->screen_fade.fading_out ||
 				fade_elapsed <= player_effect_globals->screen_fade.ticks))
 		{
