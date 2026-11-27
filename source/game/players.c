@@ -1804,6 +1804,31 @@ static void player_pseudo_kill(
 	return;
 }
 
+/* port: whether a network co-op client's local view takes in every
+player's clusters, as the host's game sees them: while a cinematic plays
+(the client looks through the host's camera), or while a local player has no
+unit (waiting to join the host, or dead and watching another player). Its own
+player's cluster is then not where it looks, and the effects there were made
+invisible and never drew (a30's opening: the lifepods' retro rockets). */
+static boolean players_local_pvs_every_player(
+	void)
+{
+	struct data_iterator iterator;
+	struct player_datum *player;
+
+	if (game_connection() != _game_connection_network_client || !network_coop_active())
+		return FALSE;
+	if (cinematic_in_progress())
+		return TRUE;
+	data_iterator_new(&iterator, player_data);
+	while ((player = data_iterator_next(&iterator)) != NULL)
+	{
+		if (player->local_player_index != NONE && player->unit_index == NONE)
+			return TRUE;
+	}
+	return FALSE;
+}
+
 /* Matching status is tracked in the Players object log; this is the ordinary
    combined-PVS calculation used by the game loop. */
 /* Residual instruction scheduling is recorded in the matching log. */
@@ -1825,6 +1850,9 @@ static void players_compute_combined_pvs(
 	csmemset(combined_pvs, 0, 0x40);
 	if (!game_in_editor())
 	{
+		/* port: (players_local_pvs_every_player) */
+		if (local_player_only && players_local_pvs_every_player())
+			local_player_only = FALSE;
 		activating_cluster_index = objects_get_activating_cluster_index();
 		data_iterator_new(&iterator, player_data);
 		while (player = data_iterator_next(&iterator))
