@@ -307,9 +307,9 @@ void host_gpu_preference_check(const char *missing, void *window)
 			(long)status);
 		return;
 	}
-	host_logf(HOST_LOG_WARN, "vulkan: %s is not in Vulkan's list: Windows' graphics preference for the game set to "
-		"high performance (GpuPreference=2, as Settings > System > Display > Graphics would), and the game started "
-		"again to use it (#1283)", missing);
+	host_logf(HOST_LOG_WARN, "set Windows' graphics preference for this game to High performance (no earlier "
+		"choice), restarting once: %s is not in Vulkan's list (GpuPreference=2, as Settings > System > Display > "
+		"Graphics writes it; #1283)", missing);
 	/* (this process's lines in halo.log before the copy's) */
 	host_log_queue_flush(1000);
 	memset(&startup, 0, sizeof(startup));

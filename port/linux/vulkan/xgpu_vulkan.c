@@ -11247,6 +11247,28 @@ static int probe_lists(const uint32_t (*ids)[2], int count, const struct xgpu_vu
 	return 0;
 }
 
+/* whether a layer the game turns off is one the loader has, as the player's
+environment leaves it (its layers' manifests read, no instance made) */
+static int filtered_layer_present(void)
+{
+	VkLayerProperties layers[64];
+	uint32_t count = 64, index;
+	size_t filter;
+	int present = 0;
+
+	loader_environment_set(0);
+	if (vkEnumerateInstanceLayerProperties(&count, layers) < 0)
+		count = 0;
+	loader_environment_set(loader_environment.filters);
+	for (index = 0; index < count && !present; index++)
+	{
+		for (filter = 0; filter < sizeof(layer_filters) / sizeof(layer_filters[0]); filter++)
+			present |= (loader_environment.filters & layer_filters[filter].bit) &&
+				text_has_folded(layers[index].layerName, layer_filters[filter].part);
+	}
+	return present;
+}
+
 /* #1283: on a computer with more than one GPU, for each NVIDIA or AMD card
 DXGI lists that Vulkan lists too, which of the game's layer filters made it
 visible: the loader asked again (a bare instance, at the start alone) with
@@ -11265,6 +11287,10 @@ static void layer_filters_explain(const struct xgpu_vulkan_options *options,
 		hardware += !options->adapters[index].software;
 	if (!loader_environment.filters || hardware < 2)
 		return;
+	/* (the extra instances cost the start's time: only where a card is
+	missing, or one of the layers the game turns off is there to turn off) */
+	if (!vk.adapter_missing[0] && !filtered_layer_present())
+		return;
 	for (index = 0; index < options->adapter_count; index++)
 	{
 		const struct xgpu_vulkan_adapter *adapter = &options->adapters[index];
@@ -11279,12 +11305,17 @@ static void layer_filters_explain(const struct xgpu_vulkan_options *options,
 		for (other = 0; other < index && listed; other++)
 			listed = !(options->adapters[other].vendor == adapter->vendor &&
 				options->adapters[other].device == adapter->device);
-		if (!listed)
-			continue;
 		if (none_count == -2)
 			none_count = probe_devices(0, none, MOST);
 		if (none_count < 0)
 			return;
+		if (!listed)
+		{
+			if (!probe_lists((const uint32_t (*)[2])none, none_count, adapter))
+				host_logf(HOST_LOG_INFO, "vulkan: %s is not in Vulkan's list with or without the game's layer "
+					"filters", adapter->name);
+			continue;
+		}
 		if (probe_lists((const uint32_t (*)[2])none, none_count, adapter))
 		{
 			host_logf(HOST_LOG_INFO, "vulkan: %s is in Vulkan's list without the game's layer filters too",
