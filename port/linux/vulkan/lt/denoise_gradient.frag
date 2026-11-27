@@ -2,7 +2,8 @@
 // stratum's pixels found again in the frame before (the same surface there); where that is one of its gradient pixels
 // (lt/gradient_pixel.glsl, by its frame's number), the light's change there is the re-shade's (the previous frame's
 // surface and seed, this frame's light and scene: xgpu_vulkan_lt_reshade) less the previous frame's own 1-spp sample:
-// the same sample, so nothing but the real change. Out: (sum |change|, sum max of the two, samples) in luminance.
+// the same sample, so nothing but the real change. Out, in luminance: (sum of the previous samples, sum of the
+// re-shaded ones, sum of |change|, samples).
 #version 460
 #extension GL_GOOGLE_include_directive : require
 
@@ -20,7 +21,7 @@ layout(location = 0) out vec4 result;
 void main()
 {
     ivec2 stratum = ivec2(gl_FragCoord.xy);
-    vec3 sums = vec3(0.0);
+    vec4 sums = vec4(0.0);
     for (int k = 0; k < 9; k++)
     {
         ivec2 pixel = stratum * 3 + ivec2(k % 3, k / 3);
@@ -41,7 +42,7 @@ void main()
         if (now.a <= 0.0)
             continue;
         float a = luminance(max(now.rgb, vec3(0.0))), b = luminance(max(texelFetch(previous_raw, q, 0).rgb, vec3(0.0)));
-        sums += vec3(abs(a - b), max(a, b), 1.0);
+        sums += vec4(b, a, abs(a - b), 1.0);
     }
-    result = vec4(sums, 0.0);
+    result = sums;
 }
