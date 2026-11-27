@@ -440,6 +440,12 @@ static real score_text_width(
 
 	if (font_index == NONE || !text[0])
 		return 0.0f;
+	/* (in the HUD's font: what the last text drew in is not this) */
+	{
+		real_argb_color white = { 1.0f, 1.0f, 1.0f, 1.0f };
+
+		draw_string_set_draw_mode(font_index, NONE, 0, 0, &white);
+	}
 	bounds.x0 = 0;
 	bounds.y0 = 0;
 	bounds.x1 = 4000;
@@ -477,8 +483,8 @@ static void score_text(
 
 	if (font_index == NONE || !text[0] || color->alpha <= 0.0f)
 		return;
-	draw_string_set_draw_mode(font_index, NONE, 0, 0, color);
 	width = score_text_width(text) * text_scale;
+	draw_string_set_draw_mode(font_index, NONE, 0, 0, color);
 	left = justification == 1 ? x - width : justification == 2 ? x - width * 0.5f : x;
 	bounds.x0 = (short)floorf(left);
 	bounds.y0 = (short)floorf(y);
