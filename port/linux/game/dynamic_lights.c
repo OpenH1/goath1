@@ -435,9 +435,13 @@ static long dynamic_lights_sources(
 		out->color[0] = source->color.red;
 		out->color[1] = source->color.green;
 		out->color[2] = source->color.blue;
-		out->axis[0] = out->axis[1] = out->axis[2] = 0.0f;
-		out->cone_scale = 0.0f;
-		out->cone_offset = 1.0f;
+		out->axis[0] = source->facing.i;
+		out->axis[1] = source->facing.j;
+		out->axis[2] = source->facing.k;
+		/* (a display's: by the cosine off its face, none behind it, as a
+		lit panel shines; another's every way) */
+		out->cone_scale = source->facing.i != 0.0f || source->facing.j != 0.0f || source->facing.k != 0.0f ? 1.0f : 0.0f;
+		out->cone_offset = out->cone_scale != 0.0f ? 0.0f : 1.0f;
 		out->flags = source->halo ? HALO_DYNAMIC_LIGHT_HALO | HALO_DYNAMIC_LIGHT_PROJECTILE : 0;
 		dynamic_lights.owners[count] = 0;
 		dynamic_lights.objects[count] = NONE;
