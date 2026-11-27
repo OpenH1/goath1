@@ -342,11 +342,22 @@ class Scene:
                         "pixel_angle": self.pixel_angle()}
                 mkey = m["bump_map"]
                 if mkey not in _MIPS:
-                    _MIPS[mkey] = self.mips(bump[:, :, :3])
-                for k, lvl in enumerate(_MIPS[mkey]):
-                    bsdf["bump_mip%d" % k] = mi.load_dict({
-                        "type": "bitmap", "bitmap": mi.Bitmap(lvl), "raw": True, "filter_type": "bilinear",
-                        "wrap_mode": "repeat", "to_uv": mi.ScalarTransform4f().scale([su, sv, 1.0])})
+                    levels = self.mips(bump[:, :, :3])
+                    H0, W0 = levels[0].shape[:2]
+                    Wt = sum(l.shape[1] for l in levels)
+                    atlas = np.zeros((H0, Wt, 3), np.float32)
+                    x, info = 0, []
+                    for l in levels:
+                        atlas[:l.shape[0], x:x + l.shape[1]] = l
+                        info.append((x / Wt, l.shape[1] / Wt, l.shape[0] / H0))
+                        x += l.shape[1]
+                    _MIPS[mkey] = (mi.load_dict({"type": "bitmap", "bitmap": mi.Bitmap(atlas), "raw": True,
+                                                 "filter_type": "bilinear", "wrap_mode": "clamp"}), info)
+                tex_m, info = _MIPS[mkey]
+                bsdf["bump_mips"] = tex_m
+                bsdf["bump_levels"] = len(info)
+                for k, (x0, w, h) in enumerate(info):
+                    bsdf["bump_mip_x%d" % k], bsdf["bump_mip_w%d" % k], bsdf["bump_mip_h%d" % k] = x0, w, h
                 summary["bump"] = "the game's frame, scale %g x %g" % (su, sv)
             else:
                 bsdf = {"type": "normalmap", "normalmap": nm, "bsdf": bsdf}
