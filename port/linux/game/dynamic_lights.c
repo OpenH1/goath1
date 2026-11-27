@@ -117,10 +117,12 @@ static struct
 	boolean clusters_noted[MAXIMUM_LIGHTS_PER_WINDOW];
 	unsigned int cluster_masks[HALO_DYNAMIC_LIGHTS_CLUSTERS][4];
 	/* the frame's copies of the game's lights on their other markers
-	(dynamic_lights_copy): whose copy (its rasterizer light), where */
+	(dynamic_lights_copy): whose copy (its rasterizer light), which of its
+	light's copies (its marker's number), where */
 	struct
 	{
 		long rasterizer_light_index;
+		short number;
 		real_point3d position;
 		real_vector3d axis;
 	} copies[MAXIMUM_LIGHTS_PER_WINDOW];
@@ -133,10 +135,14 @@ static struct
 } dynamic_lights;
 
 /* a light's key (dynamic_lights.keys): the game's (its light's handle), a
-copy of one on another marker, or one of the port's own (light_sources.c's
-key, which has its kind in its top byte, 1 to 3) */
+copy of one on another marker (its light's handle and the copy's number
+among that light's own copies, from 1: DYNAMIC_LIGHTS_COPY_KEY), or one of
+the port's own (light_sources.c's key, which has its kind in its top byte,
+1 to 3) */
 #define DYNAMIC_LIGHTS_KEY_GAME (4ull << 56)
 #define DYNAMIC_LIGHTS_KEY_COPY (5ull << 56)
+#define DYNAMIC_LIGHTS_COPY_KEY(light_key, number) \
+	(DYNAMIC_LIGHTS_KEY_COPY | ((unsigned long long)(unsigned short)(number) << 32) | ((light_key) & 0xffffffffull))
 /* the flashlight on the models: how much farther it reaches than its
 radius, and how much brighter (its color, the game's 0 to 1) */
 #define DYNAMIC_LIGHTS_FLASHLIGHT_REACH 2.0f
@@ -216,10 +222,14 @@ real dynamic_lights_share(
 /* a rasterizer light just submitted: drawn again at another of its
 markers (a lens-flare-only light's, object_lights.c: its flare is drawn on
 each, a Banshee's two wings, a Ghost's three running lights), with its
-color, reach and flags, the marker's forward its axis; each copy reaches
-the clusters its sphere floods into from where it is */
+color, reach and flags, the marker's forward its axis; number its
+marker's among the light's markers (from 1: the light itself is on the
+first), which keys it from frame to frame whatever other lights' copies
+come and go; each copy reaches the clusters its sphere floods into from
+where it is */
 void dynamic_lights_copy(
 	long rasterizer_light_index,
+	short number,
 	real_point3d const *position,
 	real_vector3d const *axis)
 {
@@ -229,6 +239,7 @@ void dynamic_lights_copy(
 		return;
 	}
 	dynamic_lights.copies[dynamic_lights.copy_count].rasterizer_light_index = rasterizer_light_index;
+	dynamic_lights.copies[dynamic_lights.copy_count].number = number;
 	dynamic_lights.copies[dynamic_lights.copy_count].position = *position;
 	dynamic_lights.copies[dynamic_lights.copy_count].axis = *axis;
 	dynamic_lights.copy_count++;
@@ -258,9 +269,12 @@ static long dynamic_lights_copies(
 		*out = dynamic_lights.lights[dynamic_lights.copies[copy_index].rasterizer_light_index];
 		dynamic_lights.owners[count] = dynamic_lights.owners[dynamic_lights.copies[copy_index].rasterizer_light_index];
 		dynamic_lights.objects[count] = dynamic_lights.objects[dynamic_lights.copies[copy_index].rasterizer_light_index];
+		/* (its light's key and its own number among that light's copies,
+		not among the frame's: another light's copies coming or going leave
+		it as it was) */
 		dynamic_lights.keys[count] = dynamic_lights.keys[dynamic_lights.copies[copy_index].rasterizer_light_index] ?
-			DYNAMIC_LIGHTS_KEY_COPY | ((unsigned long long)(copy_index + 1) << 32) |
-			(dynamic_lights.keys[dynamic_lights.copies[copy_index].rasterizer_light_index] & 0xffffffffull) : 0;
+			DYNAMIC_LIGHTS_COPY_KEY(dynamic_lights.keys[dynamic_lights.copies[copy_index].rasterizer_light_index],
+			dynamic_lights.copies[copy_index].number) : 0;
 		out->position[0] = position->x;
 		out->position[1] = position->y;
 		out->position[2] = position->z;
