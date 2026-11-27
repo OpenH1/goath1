@@ -1257,6 +1257,11 @@ static struct
 	/* an NVIDIA or AMD adapter Windows lists that Vulkan does not (#1283;
 	physical_choose's; "" none) */
 	char adapter_missing[64];
+	/* why, in a few words (adapter_missing_explain's) */
+	char adapter_missing_why[32];
+	/* the usable devices physical_choose found (none in VR, whose runtime
+	gives its own), for Settings' GRAPHICS CARD: xgpu_vulkan_gpus */
+	struct xgpu_stream_gpus gpus;
 	int validation;
 	uint32_t validation_messages;
 
@@ -10723,6 +10728,15 @@ static void environment_write(const char *name, const char *value)
 #endif
 }
 
+static void environment_clear(const char *name)
+{
+#ifdef _WIN32
+	SetEnvironmentVariableA(name, NULL);
+#else
+	unsetenv(name);
+#endif
+}
+
 /* (the loader's layer filters' globs are not case-sensitive) */
 static int text_has_folded(const char *text, const char *part)
 {
@@ -10739,32 +10753,106 @@ static int text_has_folded(const char *text, const char *part)
 	return 0;
 }
 
-static int load_functions(void)
-{
-	char value[1024], appended[1100];
+/* The implicit layers that can take GPUs out of the loader's device list,
+which the game turns off, as the loader looks for layers, so that every GPU
+is listed and the game chooses its device itself (physical_choose):
 
-	/* AMD's driver for a Ryzen's integrated GPU brings an implicit layer,
-	VK_LAYER_AMD_switchable_graphics_64 (and _32; amdvlk's on Linux too),
-	which can take the other vendors' GPUs out of the device list: #1269's
-	RTX 5070, its monitor's, was not listed, and the game drew with the
-	integrated Radeon. The game chooses its device itself (physical_choose),
-	so the layer is turned off before the loader looks for layers: by its
-	manifest's disable_environment, and (#1283, where the GPU was still not
-	listed) by the loader's own filter too, VK_LOADER_LAYERS_DISABLE (loaders
-	of 1.3.234 on), its glob added to any the player's value has. A player
-	who has set the layer's variable already keeps the layer as that says. */
-	if (!environment_read("DISABLE_LAYER_AMD_SWITCHABLE_GRAPHICS_1", value, sizeof(value)))
+AMD's, VK_LAYER_AMD_switchable_graphics_64 (and _32; amdvlk's on Linux
+too), which a Ryzen's integrated GPU's driver brings: #1269's RTX 5070, its
+monitor's, was not listed, and the game drew with the integrated Radeon.
+
+NVIDIA's, VK_LAYER_NV_optimus (nv-vk64.json on Windows), which sorts and
+can filter the devices by the GPU Windows and NVIDIA's profile give the
+program (#1283, where the 5070 was still not listed with AMD's off).
+Windows only: Linux's is on only for PRIME's render offload, which the
+player asks for (prime-run), and is left as it is. A laptop's dGPU is then
+listed with its iGPU, and the game's rule takes the discrete one, which
+NVIDIA's driver presents through the iGPU's display (a device that cannot
+present to the window is not usable: the iGPU then). A player who sets
+__VK_LAYER_NV_optimus keeps the layer as that says.
+
+Each by its manifest's disable_environment and by the loader's own filter,
+VK_LOADER_LAYERS_DISABLE (loaders of 1.3.234 on), its glob added to any the
+player's value has. A player who has set the layer's variable already keeps
+the layer as that says. */
+enum { LAYER_FILTER_AMD = 1, LAYER_FILTER_NV = 2 };
+
+static const struct layer_filter
+{
+	int bit;
+	const char *variable, *glob, *part, *name;
+} layer_filters[] =
+{
+	{ LAYER_FILTER_AMD, "DISABLE_LAYER_AMD_SWITCHABLE_GRAPHICS_1", "VK_LAYER_AMD_switchable_graphics*",
+		"switchable_graphics", "AMD's VK_LAYER_AMD_switchable_graphics" },
+	{ LAYER_FILTER_NV, "DISABLE_LAYER_NV_OPTIMUS_1", "VK_LAYER_NV_optimus", "nv_optimus",
+		"NVIDIA's VK_LAYER_NV_optimus" },
+};
+
+/* the loader's environment as the player had it (read once: the game's own
+values are not the player's after), and the filters the game adds */
+static struct
+{
+	int known;
+	int filters;
+	int disable_set;
+	char disable[1024];
+} loader_environment;
+
+/* the loader's environment: the player's, with the game's filters of
+filters (LAYER_FILTER_*, of loader_environment.filters) */
+static void loader_environment_set(int filters)
+{
+	char value[1300];
+	size_t index;
+
+	snprintf(value, sizeof(value), "%s", loader_environment.disable_set ? loader_environment.disable : "");
+	for (index = 0; index < sizeof(layer_filters) / sizeof(layer_filters[0]); index++)
 	{
-		environment_write("DISABLE_LAYER_AMD_SWITCHABLE_GRAPHICS_1", "1");
-		if (!environment_read("VK_LOADER_LAYERS_DISABLE", value, sizeof(value)) || !value[0])
-			environment_write("VK_LOADER_LAYERS_DISABLE", "VK_LAYER_AMD_switchable_graphics*");
-		else if (!text_has_folded(value, "switchable_graphics") && !text_has_folded(value, "~implicit~") &&
+		const struct layer_filter *filter = &layer_filters[index];
+
+		if (!(loader_environment.filters & filter->bit))
+			continue;
+		if (!(filters & filter->bit))
+		{
+			environment_clear(filter->variable);
+			continue;
+		}
+		environment_write(filter->variable, "1");
+		if (!value[0])
+			snprintf(value, sizeof(value), "%s", filter->glob);
+		else if (!text_has_folded(value, filter->part) && !text_has_folded(value, "~implicit~") &&
 			!text_has_folded(value, "~all~"))
 		{
-			snprintf(appended, sizeof(appended), "%s,VK_LAYER_AMD_switchable_graphics*", value);
-			environment_write("VK_LOADER_LAYERS_DISABLE", appended);
+			size_t length = strlen(value);
+
+			snprintf(value + length, sizeof(value) - length, ",%s", filter->glob);
 		}
 	}
+	if (value[0] || loader_environment.disable_set)
+		environment_write("VK_LOADER_LAYERS_DISABLE", value);
+	else
+		environment_clear("VK_LOADER_LAYERS_DISABLE");
+}
+
+static int load_functions(void)
+{
+	char value[1024];
+
+	if (!loader_environment.known)
+	{
+		loader_environment.known = 1;
+		loader_environment.disable_set = environment_read("VK_LOADER_LAYERS_DISABLE", loader_environment.disable,
+			sizeof(loader_environment.disable)) != NULL;
+		if (!environment_read("DISABLE_LAYER_AMD_SWITCHABLE_GRAPHICS_1", value, sizeof(value)))
+			loader_environment.filters |= LAYER_FILTER_AMD;
+#ifdef _WIN32
+		if (!environment_read("DISABLE_LAYER_NV_OPTIMUS_1", value, sizeof(value)) &&
+			!environment_read("__VK_LAYER_NV_optimus", value, sizeof(value)))
+			loader_environment.filters |= LAYER_FILTER_NV;
+#endif
+	}
+	loader_environment_set(loader_environment.filters);
 #ifdef _WIN32
 	if (!vk.library)
 		vk.library = LoadLibraryExW(L"vulkan-1.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
@@ -11048,10 +11136,660 @@ static void layers_log(VkPhysicalDevice device)
 		disable ? disable : "");
 }
 
-/* #1283: the adapters Windows' DXGI lists, in one line, and a warning for an
-NVIDIA or AMD one the loader does not list (by the LUID, else the vendor of a
-device that has none): Windows has its driver, but not that driver's Vulkan
-part, or a broken one */
+/* whether the loader has any layer of a vendor's (its name's prefix:
+VK_LAYER_NV_, VK_LAYER_AMD_), as the player's environment leaves it: one
+fact in a missing card's log (#1293), not its cause */
+static int vendor_layer_present(const char *prefix)
+{
+	VkLayerProperties layers[64];
+	uint32_t count = 64, index;
+	size_t length = strlen(prefix);
+	int present = 0;
+
+	loader_environment_set(0);
+	if (vkEnumerateInstanceLayerProperties(&count, layers) < 0)
+		count = 0;
+	loader_environment_set(loader_environment.filters);
+	for (index = 0; index < count && !present; index++)
+		present = !strncmp(layers[index].layerName, prefix, length);
+	return present;
+}
+
+/* #1293: what the loader itself says of the drivers (ICDs) it searches for,
+finds, tries and skips, asked only where a card is missing: a small instance
+of its own with a VK_EXT_debug_utils messenger chained into its create info
+(the loader implements the extension and hands such a messenger all of its
+messages while it makes the instance, whatever VK_LOADER_DEBUG says, which
+filters only its standard error: Vulkan-Loader's log.c), and a messenger
+while it lists the devices (Windows' loader asks each driver then for the
+devices of each of DXGI's adapters). The lines about drivers, each once, the
+first LOADER_LINES (a warning or error in an informational line's place
+where they are full) */
+enum { LOADER_LINES = 16, LOADER_LINE = 320 };
+
+struct loader_lines
+{
+	char line[LOADER_LINES][LOADER_LINE];
+	int serious[LOADER_LINES];
+	int count, dropped, asked;
+};
+
+static int loader_line_relevant(const char *message)
+{
+	static const char *const parts[] = { "icd", "driver", "manifest", "registry", "dxgi", "library", ".dll", ".so",
+		"shared object" };
+	size_t index;
+
+	/* (the layer call stack's indented lines, and the layers' own) */
+	if (!message[0] || isspace((unsigned char)message[0]) ||
+		(text_has_folded(message, "layer") && !text_has_folded(message, "icd")))
+		return 0;
+	for (index = 0; index < sizeof(parts) / sizeof(parts[0]); index++)
+	{
+		if (text_has_folded(message, parts[index]))
+			return 1;
+	}
+	return 0;
+}
+
+static VKAPI_ATTR VkBool32 VKAPI_CALL loader_message(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+	VkDebugUtilsMessageTypeFlagsEXT types, const VkDebugUtilsMessengerCallbackDataEXT *data, void *context)
+{
+	struct loader_lines *lines = context;
+	int serious = severity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, index, place = -1;
+
+	(void)types;
+	if (!data || !data->pMessage || !loader_line_relevant(data->pMessage))
+		return VK_FALSE;
+	for (index = 0; index < lines->count; index++)
+	{
+		if (!strncmp(lines->line[index], data->pMessage, LOADER_LINE - 1))
+			return VK_FALSE;
+	}
+	if (lines->count < LOADER_LINES)
+		place = lines->count++;
+	else
+	{
+		for (index = 0; index < LOADER_LINES && serious && place < 0; index++)
+		{
+			if (!lines->serious[index])
+				place = index;
+		}
+		lines->dropped++;
+	}
+	if (place >= 0)
+	{
+		snprintf(lines->line[place], LOADER_LINE, "%s", data->pMessage);
+		lines->serious[place] = serious;
+	}
+	return VK_FALSE;
+}
+
+static void loader_ask(struct loader_lines *lines)
+{
+	VkApplicationInfo application;
+	VkInstanceCreateInfo info;
+	VkDebugUtilsMessengerCreateInfoEXT messenger;
+	VkInstance instance = VK_NULL_HANDLE;
+	VkDebugUtilsMessengerEXT listening = VK_NULL_HANDLE;
+	const char *extension = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
+	PFN_vkCreateDebugUtilsMessengerEXT create_messenger;
+	PFN_vkDestroyDebugUtilsMessengerEXT destroy_messenger;
+	PFN_vkEnumeratePhysicalDevices enumerate;
+	PFN_vkDestroyInstance destroy;
+	uint32_t count = 0;
+	VkResult result;
+
+	if (lines->asked)
+		return;
+	memset(lines, 0, sizeof(*lines));
+	lines->asked = 1;
+	memset(&messenger, 0, sizeof(messenger));
+	messenger.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+	messenger.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT |
+		VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+	messenger.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+		VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+	messenger.pfnUserCallback = loader_message;
+	messenger.pUserData = lines;
+	memset(&application, 0, sizeof(application));
+	application.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+	application.apiVersion = VK_API_VERSION_1_1;
+	memset(&info, 0, sizeof(info));
+	info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+	info.pNext = &messenger;
+	info.pApplicationInfo = &application;
+	if (has_instance_extension(extension))
+	{
+		info.enabledExtensionCount = 1;
+		info.ppEnabledExtensionNames = &extension;
+	}
+	result = vkCreateInstance(&info, NULL, &instance);
+	if (result != VK_SUCCESS)
+	{
+		host_logf(HOST_LOG_INFO, "vulkan: the loader's probe instance: %s (%d)", result_name(result), (int)result);
+		return;
+	}
+	create_messenger = (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
+	destroy_messenger = (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance,
+		"vkDestroyDebugUtilsMessengerEXT");
+	enumerate = (PFN_vkEnumeratePhysicalDevices)vkGetInstanceProcAddr(instance, "vkEnumeratePhysicalDevices");
+	destroy = (PFN_vkDestroyInstance)vkGetInstanceProcAddr(instance, "vkDestroyInstance");
+	if (info.enabledExtensionCount && create_messenger && destroy_messenger &&
+		create_messenger(instance, &messenger, NULL, &listening) != VK_SUCCESS)
+		listening = VK_NULL_HANDLE;
+	if (enumerate)
+		enumerate(instance, &count, NULL);
+	if (listening)
+		destroy_messenger(instance, listening, NULL);
+	if (destroy)
+		destroy(instance, NULL);
+}
+
+/* (a path's file name: after its last slash) */
+static const char *path_file(const char *path)
+{
+	const char *name = path;
+
+	for (; *path; path++)
+	{
+		if (*path == '/' || *path == '\\')
+			name = path + 1;
+	}
+	return name;
+}
+
+/* the loader's line that says it failed with a driver of the card's: one
+naming the manifest's or the library's file (NULL: none, or neither known,
+since another vendor's driver's failures are not this card's) */
+static const char *loader_failure(const struct loader_lines *lines, const char *manifest, const char *library)
+{
+	static const char *const failures[] = { "fail", "error", "skip", "ignor", "wrong", "doesn't support", "could not",
+		"unable", "invalid", "not found" };
+	const char *names[2];
+	int index, name;
+	size_t failure;
+
+	names[0] = manifest && manifest[0] ? path_file(manifest) : "";
+	names[1] = library && library[0] ? path_file(library) : "";
+	for (index = 0; index < lines->count; index++)
+	{
+		int named = 0, failed = 0;
+
+		for (name = 0; name < 2; name++)
+			named |= names[name][0] && text_has_folded(lines->line[index], names[name]);
+		for (failure = 0; failure < sizeof(failures) / sizeof(failures[0]) && named; failure++)
+			failed |= text_has_folded(lines->line[index], failures[failure]);
+		if (failed)
+			return lines->line[index];
+	}
+	return NULL;
+}
+
+/* (the loader's lines that name the manifest's or library's file, " | "
+between them; "none" where none do) */
+static void loader_naming(const struct loader_lines *lines, const char *manifest, const char *library, char *text,
+	size_t size)
+{
+	const char *names[2];
+	size_t length = 0;
+	int index, name;
+
+	names[0] = manifest && manifest[0] ? path_file(manifest) : "";
+	names[1] = library && library[0] ? path_file(library) : "";
+	text[0] = 0;
+	for (index = 0; index < lines->count; index++)
+	{
+		int named = 0;
+
+		for (name = 0; name < 2; name++)
+			named |= names[name][0] && text_has_folded(lines->line[index], names[name]);
+		if (named && length + 4 < size)
+			length += (size_t)snprintf(text + length, size - length, "%s%s", length ? " | " : "", lines->line[index]);
+		if (length >= size)
+			length = size - 1;
+	}
+	if (!text[0])
+		snprintf(text, size, "none of its lines names the driver's manifest or library");
+}
+
+#ifdef _WIN32
+/* #1293: the card's Vulkan registration, read where the loader reads it:
+the display adapter's key, by D3DKMTQueryAdapterInfo (KMTQAITYPE_QUERYREGISTRY,
+the adapter key's VulkanDriverName, the paths translated) of the adapter
+DXGI gives the LUID of (Vulkan-Loader's loader_windows.c,
+windows_read_manifest_from_d3d_adapters); where that cannot be asked, the
+display class's driver key of the card (by MatchingDeviceId, else
+DriverDesc). The structures are D3DKMT's (d3dkmthk.h), given here as the
+loader gives them, since not every SDK's header has them */
+struct kmt_open_luid
+{
+	LUID luid;
+	UINT adapter;
+};
+
+struct kmt_close
+{
+	UINT adapter;
+};
+
+struct kmt_query
+{
+	UINT adapter;
+	int type;
+	void *data;
+	UINT size;
+};
+
+struct kmt_registry
+{
+	int query_type;
+	UINT flags;
+	WCHAR value_name[MAX_PATH];
+	ULONG value_type, physical_adapter_index, output_value_size;
+	int status;
+	union
+	{
+		DWORD dword;
+		UINT64 qword;
+		WCHAR string[1];
+		BYTE binary[1];
+	} output;
+};
+
+typedef LONG (APIENTRY *kmt_function)(void *);
+
+enum
+{
+	KMT_QUERY_REGISTRY = 48, KMT_REGISTRY_ADAPTER_KEY = 1, KMT_REGISTRY_TRANSLATE_PATH = 1,
+	KMT_REGISTRY_SUCCESS = 0, KMT_REGISTRY_BUFFER_OVERFLOW = 1,
+	REGISTRY_TEXT = 2048, REGISTRY_PATH = 520
+};
+
+static void wide_to_utf8(const WCHAR *wide, char *text, size_t size)
+{
+	if (!WideCharToMultiByte(CP_UTF8, 0, wide, -1, text, (int)size, NULL, NULL))
+		text[0] = 0;
+	text[size - 1] = 0;
+}
+
+static int file_present(const WCHAR *path)
+{
+	DWORD attributes = GetFileAttributesW(path);
+
+	return attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+/* the adapter's VulkanDriverName as the loader reads it: 1 read into text
+(REG_MULTI_SZ: the paths one after another; "" where it is longer than
+the room), 0 the adapter has none, -1 not asked (no D3DKMT, or no adapter
+of that LUID) */
+static int registration_by_luid(const unsigned char luid[8], WCHAR *text, size_t count)
+{
+	static const ULONG types[] = { REG_MULTI_SZ, REG_SZ };
+	static const WCHAR name[] = L"VulkanDriverName";
+	HMODULE gdi = GetModuleHandleW(L"gdi32.dll");
+	kmt_function open, query, close;
+	struct kmt_open_luid adapter;
+	struct kmt_close closing;
+	struct kmt_query asking;
+	struct kmt_registry *info;
+	size_t size = sizeof(*info) + count * sizeof(WCHAR), type;
+	int found = 0;
+
+	if (!gdi)
+		gdi = LoadLibraryExW(L"gdi32.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
+	if (!gdi)
+		return -1;
+	open = (kmt_function)(void *)GetProcAddress(gdi, "D3DKMTOpenAdapterFromLuid");
+	query = (kmt_function)(void *)GetProcAddress(gdi, "D3DKMTQueryAdapterInfo");
+	close = (kmt_function)(void *)GetProcAddress(gdi, "D3DKMTCloseAdapter");
+	if (!open || !query || !close)
+		return -1;
+	memset(&adapter, 0, sizeof(adapter));
+	memcpy(&adapter.luid, luid, 8);
+	if (open(&adapter) != 0)
+		return -1;
+	info = calloc(1, size);
+	for (type = 0; info && type < sizeof(types) / sizeof(types[0]) && !found; type++)
+	{
+		memset(info, 0, sizeof(*info));
+		info->query_type = KMT_REGISTRY_ADAPTER_KEY;
+		info->flags = KMT_REGISTRY_TRANSLATE_PATH;
+		memcpy(info->value_name, name, sizeof(name));
+		info->value_type = types[type];
+		asking.adapter = adapter.adapter;
+		asking.type = KMT_QUERY_REGISTRY;
+		asking.data = info;
+		asking.size = (UINT)size;
+		if (query(&asking) != 0)
+			continue;
+		if (info->status == KMT_REGISTRY_SUCCESS)
+		{
+			size_t chars = info->output_value_size / sizeof(WCHAR);
+
+			if (chars > count - 2)
+				chars = count - 2;
+			memcpy(text, info->output.string, chars * sizeof(WCHAR));
+			text[chars] = text[chars + 1] = 0;
+			found = 1;
+		}
+		else if (info->status == KMT_REGISTRY_BUFFER_OVERFLOW)
+		{
+			text[0] = text[1] = 0;
+			found = 1;
+		}
+	}
+	free(info);
+	closing.adapter = adapter.adapter;
+	close(&closing);
+	return found;
+}
+
+/* the same value of the display class's driver key of the card: 1, 0 or
+-1 as registration_by_luid's; where names the key */
+static int registration_by_class(const struct xgpu_vulkan_adapter *adapter, WCHAR *text, size_t count, char *where,
+	size_t where_size)
+{
+	HKEY class_key;
+	WCHAR name[64], value[512];
+	char wanted[32], narrow[512];
+	DWORD index, length, type, bytes;
+	int result = -1;
+
+	if (RegOpenKeyExW(HKEY_LOCAL_MACHINE,
+		L"SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}", 0, KEY_READ,
+		&class_key) != ERROR_SUCCESS)
+		return -1;
+	snprintf(wanted, sizeof(wanted), "ven_%04x&dev_%04x", adapter->vendor, adapter->device);
+	for (index = 0; result < 0; index++)
+	{
+		HKEY key;
+		LSTATUS status;
+		int match = 0;
+
+		length = sizeof(name) / sizeof(name[0]);
+		if (RegEnumKeyExW(class_key, index, name, &length, NULL, NULL, NULL, NULL) != ERROR_SUCCESS)
+			break;
+		if (RegOpenKeyExW(class_key, name, 0, KEY_READ, &key) != ERROR_SUCCESS)
+			continue;
+		bytes = sizeof(value) - sizeof(WCHAR);
+		if (RegQueryValueExW(key, L"MatchingDeviceId", NULL, &type, (BYTE *)value, &bytes) == ERROR_SUCCESS &&
+			type == REG_SZ)
+		{
+			value[bytes / sizeof(WCHAR)] = 0;
+			wide_to_utf8(value, narrow, sizeof(narrow));
+			match = text_has_folded(narrow, wanted);
+		}
+		bytes = sizeof(value) - sizeof(WCHAR);
+		if (!match && RegQueryValueExW(key, L"DriverDesc", NULL, &type, (BYTE *)value, &bytes) == ERROR_SUCCESS &&
+			type == REG_SZ)
+		{
+			value[bytes / sizeof(WCHAR)] = 0;
+			wide_to_utf8(value, narrow, sizeof(narrow));
+			match = !strcmp(narrow, adapter->name);
+		}
+		if (match)
+		{
+			bytes = (DWORD)((count - 2) * sizeof(WCHAR));
+			status = RegQueryValueExW(key, L"VulkanDriverName", NULL, &type, (BYTE *)text, &bytes);
+			if (status == ERROR_SUCCESS && (type == REG_SZ || type == REG_MULTI_SZ))
+			{
+				text[bytes / sizeof(WCHAR)] = text[bytes / sizeof(WCHAR) + 1] = 0;
+				result = 1;
+			}
+			else if (status == ERROR_MORE_DATA)
+			{
+				text[0] = text[1] = 0;
+				result = 1;
+			}
+			else
+				result = 0;
+			wide_to_utf8(name, narrow, sizeof(narrow));
+			snprintf(where, where_size, "the display class's driver key %s", narrow);
+		}
+		RegCloseKey(key);
+	}
+	RegCloseKey(class_key);
+	return result;
+}
+
+/* the "library_path" of a driver's JSON manifest, its escapes undone; 0 if
+it has none */
+static int manifest_library(const char *json, char *text, size_t size)
+{
+	const char *at = strstr(json, "\"library_path\"");
+	size_t length = 0;
+
+	if (!at)
+		return 0;
+	at += strlen("\"library_path\"");
+	while (isspace((unsigned char)*at))
+		at++;
+	if (*at++ != ':')
+		return 0;
+	while (isspace((unsigned char)*at))
+		at++;
+	if (*at++ != '"')
+		return 0;
+	for (; *at && *at != '"' && length + 1 < size; at++)
+	{
+		if (*at == '\\' && at[1])
+			at++;
+		text[length++] = *at;
+	}
+	text[length] = 0;
+	return length > 0;
+}
+
+struct registration
+{
+	/* -1 not read, 0 no VulkanDriverName, 1 one */
+	int state;
+	char where[96];
+	/* the first manifest the value names ("" none known), whether it is there */
+	char manifest[REGISTRY_PATH];
+	int manifest_present;
+	/* its library_path as written ("" none), the path the loader opens,
+	whether that is there (-1 not known: a bare name, which Windows'
+	search finds) */
+	char library[REGISTRY_PATH], library_path[REGISTRY_PATH];
+	int library_present;
+};
+
+static void registration_read(const struct xgpu_vulkan_options *options, const struct xgpu_vulkan_adapter *adapter,
+	struct registration *found)
+{
+	WCHAR text[REGISTRY_TEXT], path[REGISTRY_TEXT], full[REGISTRY_TEXT];
+	int index;
+
+	memset(found, 0, sizeof(*found));
+	found->state = -1;
+	found->library_present = -1;
+	/* (each of DXGI's adapters of the card, by its LUID: #1293's was
+	listed twice) */
+	for (index = 0; index < options->adapter_count && found->state < 1; index++)
+	{
+		const struct xgpu_vulkan_adapter *same = &options->adapters[index];
+		int state;
+
+		if (same->vendor != adapter->vendor || same->device != adapter->device)
+			continue;
+		state = registration_by_luid(same->luid, text, REGISTRY_TEXT);
+		if (state > found->state)
+		{
+			found->state = state;
+			snprintf(found->where, sizeof(found->where), "the display adapter's key, by D3DKMT");
+		}
+	}
+	if (found->state < 0)
+		found->state = registration_by_class(adapter, text, REGISTRY_TEXT, found->where, sizeof(found->where));
+	if (found->state < 1 || !text[0])
+		return;
+	wide_to_utf8(text, found->manifest, sizeof(found->manifest));
+	found->manifest_present = file_present(text);
+	if (found->manifest_present)
+	{
+		HANDLE file = CreateFileW(text, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+		char json[16384];
+		DWORD read = 0;
+
+		if (file != INVALID_HANDLE_VALUE)
+		{
+			if (!ReadFile(file, json, sizeof(json) - 1, &read, NULL))
+				read = 0;
+			CloseHandle(file);
+		}
+		json[read] = 0;
+		manifest_library(json, found->library, sizeof(found->library));
+	}
+	if (!found->library[0] ||
+		!MultiByteToWideChar(CP_UTF8, 0, found->library, -1, path, REGISTRY_TEXT))
+		return;
+	/* (a full path; one relative to the manifest's folder; a bare name,
+	which LoadLibrary searches for: told where System32 has it) */
+	if ((path[0] && path[1] == L':') || path[0] == L'\\' || path[0] == L'/')
+		wcscpy(full, path);
+	else if (wcschr(path, L'\\') || wcschr(path, L'/'))
+	{
+		WCHAR *slash = NULL, *at;
+
+		wcscpy(full, text);
+		for (at = full; *at; at++)
+		{
+			if (*at == L'\\' || *at == L'/')
+				slash = at;
+		}
+		if (slash && (size_t)(slash + 1 - full) + wcslen(path) + 1 < REGISTRY_TEXT)
+			wcscpy(slash + 1, path);
+		else
+			wcscpy(full, path);
+	}
+	else
+	{
+		UINT length = GetSystemDirectoryW(full, REGISTRY_TEXT);
+
+		if (!length || length + wcslen(path) + 2 >= REGISTRY_TEXT)
+			return;
+		full[length] = L'\\';
+		wcscpy(full + length + 1, path);
+		wide_to_utf8(full, found->library_path, sizeof(found->library_path));
+		found->library_present = file_present(full) ? 1 : -1;
+		return;
+	}
+	if (GetFullPathNameW(full, REGISTRY_TEXT, path, NULL))
+		wcscpy(full, path);
+	wide_to_utf8(full, found->library_path, sizeof(found->library_path));
+	found->library_present = file_present(full);
+}
+#endif
+
+/* #1293: why a card DXGI lists is not in the loader's list, from evidence:
+the card's registration (Windows: its manifest and library, there or not)
+and the loader's own lines; the warning says what was found, then what
+follows from it. vk.adapter_missing_why: that in a few words, for the
+problem report's GPU line */
+static void adapter_missing_explain(const struct xgpu_vulkan_options *options, const struct xgpu_vulkan_adapter *adapter)
+{
+	static struct loader_lines lines;
+	const char *vendor = adapter->vendor == 0x10de ? "NVIDIA" : "AMD", *why = "not in Vulkan";
+	int index;
+
+	loader_ask(&lines);
+	for (index = 0; index < lines.count && !lines.dropped; index++)
+		host_logf(HOST_LOG_INFO, "vulkan: the loader: %s", lines.line[index]);
+	for (index = 0; index < lines.count && lines.dropped; index++)
+		host_logf(HOST_LOG_INFO, "vulkan: the loader: %s%s", lines.line[index],
+			index == lines.count - 1 ? " (and more lines of it, not kept)" : "");
+	/* (one fact among the rest: a vendor's driver registers its layers with
+	its Vulkan part) */
+	if (!vendor_layer_present(adapter->vendor == 0x10de ? "VK_LAYER_NV_" : "VK_LAYER_AMD_"))
+		host_logf(HOST_LOG_INFO, "vulkan: the loader has no %s layer either", vendor);
+#ifdef _WIN32
+	{
+		struct registration found;
+		const char *failure;
+		char naming[600];
+
+		registration_read(options, adapter, &found);
+		if (found.state < 0)
+			host_logf(HOST_LOG_INFO, "vulkan: %s's Vulkan registration: not readable (neither by D3DKMT nor in the "
+				"display class's keys)", adapter->name);
+		else if (!found.state)
+			host_logf(HOST_LOG_INFO, "vulkan: %s's Vulkan registration (%s): no VulkanDriverName", adapter->name,
+				found.where);
+		else
+			host_logf(HOST_LOG_INFO, "vulkan: %s's Vulkan registration (%s): VulkanDriverName %s%s; library_path "
+				"%s%s%s%s", adapter->name, found.where, found.manifest[0] ? found.manifest : "(too long to read)",
+				!found.manifest[0] ? "" : found.manifest_present ? " (there)" : " (missing)",
+				found.library[0] ? found.library : found.manifest_present ? "none" : "not known",
+				found.library_path[0] && strcmp(found.library_path, found.library) ? ", opened as " : "",
+				found.library_path[0] && strcmp(found.library_path, found.library) ? found.library_path : "",
+				!found.library[0] ? "" : found.library_present > 0 ? " (there)" : found.library_present < 0 ?
+				" (not in System32: Windows' search finds it, or not)" : " (missing)");
+		failure = loader_failure(&lines, found.manifest, found.library);
+		if (found.state == 0)
+		{
+			host_logf(HOST_LOG_WARN, "vulkan: %s is visible to Windows but not to Vulkan: %s's Vulkan driver isn't "
+				"registered for this card (%s has no VulkanDriverName). A clean reinstall of the %s driver is the fix",
+				adapter->name, vendor, found.where, vendor);
+			why = "Vulkan driver not registered";
+		}
+		else if (found.state > 0 && found.manifest[0] && !found.manifest_present)
+		{
+			host_logf(HOST_LOG_WARN, "vulkan: %s is visible to Windows but not to Vulkan: %s's Vulkan driver is "
+				"registered at %s, but that file is missing. A clean reinstall of the %s driver is the fix",
+				adapter->name, vendor, found.manifest, vendor);
+			why = "Vulkan manifest missing";
+		}
+		else if (found.state > 0 && found.manifest_present && !found.library[0])
+		{
+			host_logf(HOST_LOG_WARN, "vulkan: %s is visible to Windows but not to Vulkan: %s's Vulkan driver is "
+				"registered at %s, but that manifest names no library_path. A clean reinstall of the %s driver is "
+				"the fix", adapter->name, vendor, found.manifest, vendor);
+			why = "Vulkan manifest broken";
+		}
+		else if (found.state > 0 && found.library[0] && found.library_present == 0)
+		{
+			host_logf(HOST_LOG_WARN, "vulkan: %s is visible to Windows but not to Vulkan: %s's Vulkan driver is "
+				"registered at %s, which names %s, but that file is missing. A clean reinstall of the %s driver is "
+				"the fix", adapter->name, vendor, found.manifest, found.library_path, vendor);
+			why = "Vulkan driver DLL missing";
+		}
+		else if (failure)
+		{
+			host_logf(HOST_LOG_WARN, "vulkan: %s is visible to Windows but not to Vulkan: the loader tried %s and it "
+				"failed: %s. A clean reinstall of the %s driver is the fix", adapter->name,
+				found.library_path[0] ? found.library_path : found.manifest, failure, vendor);
+			why = "Vulkan driver failed to load";
+		}
+		else if (found.state > 0)
+		{
+			loader_naming(&lines, found.manifest, found.library, naming, sizeof(naming));
+			host_logf(HOST_LOG_WARN, "vulkan: %s is visible to Windows but not to Vulkan: %s's Vulkan driver is "
+				"registered and present (%s), but the loader didn't report the card: %s", adapter->name, vendor,
+				found.library_path[0] ? found.library_path : found.manifest, naming);
+			why = "Vulkan driver not reporting it";
+		}
+		else
+			host_logf(HOST_LOG_WARN, "vulkan: %s is visible to Windows but not to Vulkan, and its Vulkan registration "
+				"could not be read; the loader's own lines are above", adapter->name);
+	}
+#else
+	(void)options;
+	host_logf(HOST_LOG_WARN, "vulkan: %s is visible to the system but not to Vulkan; the loader's own lines about its "
+		"drivers are above", adapter->name);
+#endif
+	if (!vk.adapter_missing[0])
+	{
+		snprintf(vk.adapter_missing, sizeof(vk.adapter_missing), "%s", adapter->name);
+		snprintf(vk.adapter_missing_why, sizeof(vk.adapter_missing_why), "%s", why);
+	}
+}
+
+/* #1283: the adapters Windows' DXGI lists, in one line, and for an NVIDIA
+or AMD one the loader does not list (the same card by the LUID, or by its
+PCI vendor and device IDs), why: adapter_missing_explain */
 static void adapters_log(const struct xgpu_vulkan_options *options, const VkPhysicalDeviceProperties *properties,
 	unsigned char (*luids)[8], const int *luid_valid, uint32_t count)
 {
@@ -11061,6 +11799,7 @@ static void adapters_log(const struct xgpu_vulkan_options *options, const VkPhys
 	int index;
 
 	vk.adapter_missing[0] = 0;
+	vk.adapter_missing_why[0] = 0;
 	if (!options->adapter_count)
 		return;
 	text[0] = 0;
@@ -11078,21 +11817,184 @@ static void adapters_log(const struct xgpu_vulkan_options *options, const VkPhys
 	for (index = 0; index < options->adapter_count; index++)
 	{
 		const struct xgpu_vulkan_adapter *adapter = &options->adapters[index];
-		int listed = 0;
+		int listed = 0, other;
+
+		if (adapter->software || (adapter->vendor != 0x10de && adapter->vendor != 0x1002))
+			continue;
+		/* the same card: by the LUID, else by its PCI vendor and device IDs,
+		which DXGI and Vulkan both give. #1290's RX 6600 was listed twice by
+		DXGI, once by a LUID the loader's device does not have (a second
+		adapter object for the same card), and was told missing */
+		for (device = 0; device < count && !listed; device++)
+			listed = (luid_valid[device] && !memcmp(luids[device], adapter->luid, 8)) ||
+				(properties[device].vendorID == adapter->vendor && properties[device].deviceID == adapter->device);
+		/* (the same card twice in DXGI's list, #1293's: told once) */
+		for (other = 0; other < index && !listed; other++)
+			listed = options->adapters[other].vendor == adapter->vendor &&
+				options->adapters[other].device == adapter->device;
+		if (!listed)
+			adapter_missing_explain(options, adapter);
+	}
+}
+
+#ifdef _WIN32
+/* the PCI vendor and device IDs of the devices a bare instance lists with
+the game's layer filters of filters alone (LAYER_FILTER_*); their count, -1
+if there is no instance */
+static int probe_devices(int filters, uint32_t (*ids)[2], uint32_t most)
+{
+	VkApplicationInfo application;
+	VkInstanceCreateInfo info;
+	VkInstance instance = VK_NULL_HANDLE;
+	VkPhysicalDevice devices[16];
+	uint32_t count = most < 16 ? most : 16, index;
+	PFN_vkEnumeratePhysicalDevices enumerate;
+	PFN_vkGetPhysicalDeviceProperties describe;
+	PFN_vkDestroyInstance destroy;
+	VkResult result;
+
+	memset(&application, 0, sizeof(application));
+	application.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+	application.apiVersion = VK_API_VERSION_1_1;
+	memset(&info, 0, sizeof(info));
+	info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+	info.pApplicationInfo = &application;
+	loader_environment_set(filters);
+	result = vkCreateInstance(&info, NULL, &instance);
+	if (result != VK_SUCCESS)
+	{
+		loader_environment_set(loader_environment.filters);
+		return -1;
+	}
+	enumerate = (PFN_vkEnumeratePhysicalDevices)vkGetInstanceProcAddr(instance, "vkEnumeratePhysicalDevices");
+	describe = (PFN_vkGetPhysicalDeviceProperties)vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceProperties");
+	destroy = (PFN_vkDestroyInstance)vkGetInstanceProcAddr(instance, "vkDestroyInstance");
+	if (!enumerate || !describe || enumerate(instance, &count, devices) < 0)
+		count = 0;
+	for (index = 0; index < count; index++)
+	{
+		VkPhysicalDeviceProperties properties;
+
+		describe(devices[index], &properties);
+		ids[index][0] = properties.vendorID;
+		ids[index][1] = properties.deviceID;
+	}
+	if (destroy)
+		destroy(instance, NULL);
+	loader_environment_set(loader_environment.filters);
+	return (int)count;
+}
+
+static int probe_lists(const uint32_t (*ids)[2], int count, const struct xgpu_vulkan_adapter *adapter)
+{
+	int index;
+
+	for (index = 0; index < count; index++)
+	{
+		if (ids[index][0] == adapter->vendor && ids[index][1] == adapter->device)
+			return 1;
+	}
+	return 0;
+}
+
+/* whether a layer the game turns off is one the loader has, as the player's
+environment leaves it (its layers' manifests read, no instance made) */
+static int filtered_layer_present(void)
+{
+	VkLayerProperties layers[64];
+	uint32_t count = 64, index;
+	size_t filter;
+	int present = 0;
+
+	loader_environment_set(0);
+	if (vkEnumerateInstanceLayerProperties(&count, layers) < 0)
+		count = 0;
+	loader_environment_set(loader_environment.filters);
+	for (index = 0; index < count && !present; index++)
+	{
+		for (filter = 0; filter < sizeof(layer_filters) / sizeof(layer_filters[0]); filter++)
+			present |= (loader_environment.filters & layer_filters[filter].bit) &&
+				text_has_folded(layers[index].layerName, layer_filters[filter].part);
+	}
+	return present;
+}
+
+/* #1283: on a computer with more than one GPU, for each NVIDIA or AMD card
+DXGI lists that Vulkan lists too, which of the game's layer filters made it
+visible: the loader asked again (a bare instance, at the start alone) with
+none of them, and then with each alone. A report's log then says which layer
+hid it rather than that it is listed */
+static void layer_filters_explain(const struct xgpu_vulkan_options *options,
+	const VkPhysicalDeviceProperties *properties, uint32_t count)
+{
+	enum { MOST = 16 };
+	uint32_t none[MOST][2], alone[2][MOST][2];
+	int none_count = -2, alone_count[2] = { -2, -2 }, hardware = 0, index;
+	uint32_t device;
+	size_t filter;
+
+	for (index = 0; index < options->adapter_count; index++)
+		hardware += !options->adapters[index].software;
+	if (!loader_environment.filters || hardware < 2)
+		return;
+	/* (the extra instances cost the start's time: only where a card is
+	missing, or one of the layers the game turns off is there to turn off) */
+	if (!vk.adapter_missing[0] && !filtered_layer_present())
+		return;
+	for (index = 0; index < options->adapter_count; index++)
+	{
+		const struct xgpu_vulkan_adapter *adapter = &options->adapters[index];
+		char which[160];
+		int listed = 0, other;
 
 		if (adapter->software || (adapter->vendor != 0x10de && adapter->vendor != 0x1002))
 			continue;
 		for (device = 0; device < count && !listed; device++)
-			listed = luid_valid[device] ? !memcmp(luids[device], adapter->luid, 8) :
-				properties[device].vendorID == adapter->vendor;
-		if (listed)
+			listed = properties[device].vendorID == adapter->vendor && properties[device].deviceID == adapter->device;
+		/* (the same card twice in DXGI's list: told once) */
+		for (other = 0; other < index && listed; other++)
+			listed = !(options->adapters[other].vendor == adapter->vendor &&
+				options->adapters[other].device == adapter->device);
+		if (none_count == -2)
+			none_count = probe_devices(0, none, MOST);
+		if (none_count < 0)
+			return;
+		if (!listed)
+		{
+			if (!probe_lists((const uint32_t (*)[2])none, none_count, adapter))
+				host_logf(HOST_LOG_INFO, "vulkan: %s is not in Vulkan's list with or without the game's layer "
+					"filters", adapter->name);
 			continue;
-		host_logf(HOST_LOG_WARN, "vulkan: %s is visible to Windows but not to Vulkan, which usually means its driver's "
-			"Vulkan part is missing or broken: reinstalling that driver usually fixes it", adapter->name);
-		if (!vk.adapter_missing[0])
-			snprintf(vk.adapter_missing, sizeof(vk.adapter_missing), "%s", adapter->name);
+		}
+		if (probe_lists((const uint32_t (*)[2])none, none_count, adapter))
+		{
+			host_logf(HOST_LOG_INFO, "vulkan: %s is in Vulkan's list without the game's layer filters too",
+				adapter->name);
+			continue;
+		}
+		/* (each filter alone: the one that lists the card is the layer that
+		hid it; neither alone, both together) */
+		which[0] = 0;
+		for (filter = 0; filter < sizeof(layer_filters) / sizeof(layer_filters[0]); filter++)
+		{
+			if (!(loader_environment.filters & layer_filters[filter].bit))
+				continue;
+			if (alone_count[filter] == -2)
+				alone_count[filter] = probe_devices(layer_filters[filter].bit, alone[filter], MOST);
+			if (alone_count[filter] >= 0 &&
+				probe_lists((const uint32_t (*)[2])alone[filter], alone_count[filter], adapter))
+			{
+				size_t length = strlen(which);
+
+				snprintf(which + length, sizeof(which) - length, "%s%s", length ? " and " : "",
+					layer_filters[filter].name);
+			}
+		}
+		host_logf(HOST_LOG_INFO, "vulkan: %s is in Vulkan's list because the game turned off %s; without that "
+			"it is hidden (#1283)", adapter->name, which[0] ? which : "the layers it filters, both together");
 	}
 }
+#endif
 
 /* a physical device of Vulkan 1.3 with a graphics queue (that can present to
 the surface, with one; VR's runtime's device may have none that can, and
@@ -11235,11 +12137,31 @@ static int physical_choose(const struct xgpu_vulkan_options *options)
 		host_logf(HOST_LOG_INFO, "vulkan: the loader lists no GPU");
 	layers_log(count ? devices[0] : VK_NULL_HANDLE);
 	adapters_log(options, properties, luids, luid_valid, count);
+#ifdef _WIN32
+	if (!options->choose_physical)
+		layer_filters_explain(options, properties, count);
+#endif
 	if (chosen < 0)
 	{
 		host_logf(HOST_LOG_ERROR, "vulkan: no device of Vulkan 1.3 with a graphics queue%s (%u listed)",
 			vk.surface ? " that presents to the window" : "", count);
 		return 0;
+	}
+	/* (the usable devices, in the loader's order, each with display.gpu's
+	value that chooses it: its name, or its index beside a twin) */
+	memset(&vk.gpus, 0, sizeof(vk.gpus));
+	vk.gpus.chosen = -1;
+	for (index = 0; index < count && !options->choose_physical; index++)
+	{
+		int32_t at = vk.gpus.count;
+
+		if (!gpus[index].usable || at >= XGPU_STREAM_GPUS_MOST)
+			continue;
+		xgpu_gpu_setting(gpus, (int)count, (int)index, vk.gpus.values[at], sizeof(vk.gpus.values[at]));
+		snprintf(vk.gpus.names[at], sizeof(vk.gpus.names[at]), "%s", properties[index].deviceName);
+		if ((int)index == chosen)
+			vk.gpus.chosen = at;
+		vk.gpus.count++;
 	}
 	vk.gpu_index = (uint32_t)chosen;
 	vk.gpu_count = count;
@@ -11250,6 +12172,11 @@ static int physical_choose(const struct xgpu_vulkan_options *options)
 	vkGetPhysicalDeviceMemoryProperties(vk.physical, &vk.memory_properties);
 	vk.capabilities.gpu_timestamps = vk.timestamp_bits > 0 && vk.properties.limits.timestampPeriod > 0.0f;
 	return 1;
+}
+
+void xgpu_vulkan_gpus(struct xgpu_stream_gpus *gpus)
+{
+	*gpus = vk.gpus;
 }
 
 static int device_make(const struct xgpu_vulkan_options *options)
@@ -11755,13 +12682,12 @@ static int device_make(const struct xgpu_vulkan_options *options)
 		/* (the problem report's GPU line: which of the GPUs listed was
 		chosen first, where the driver's long text cannot cut it off) */
 		if (vk.adapter_missing[0])
-			/* (#1283: the GPU Windows has that Vulkan does not list, before
-			the driver's text, which the line's room would cut it off by) */
-			snprintf(vk.capabilities.device, sizeof(vk.capabilities.device),
-				"%s (GPU %u of %u, Vulkan %u.%u.%u; not in Vulkan: %s)", vk.properties.deviceName, vk.gpu_index,
-				vk.gpu_count, VK_API_VERSION_MAJOR(vk.properties.apiVersion),
-				VK_API_VERSION_MINOR(vk.properties.apiVersion), VK_API_VERSION_PATCH(vk.properties.apiVersion),
-				vk.adapter_missing);
+			/* (#1283, #1293: the GPU Windows has that Vulkan does not list,
+			and why, in place of the driver's text and Vulkan's version,
+			which the line's room would cut them off by; the why before
+			the name, which the room may cut instead) */
+			snprintf(vk.capabilities.device, sizeof(vk.capabilities.device), "%s (GPU %u of %u); %s: %s",
+				vk.properties.deviceName, vk.gpu_index, vk.gpu_count, vk.adapter_missing_why, vk.adapter_missing);
 		else
 			snprintf(vk.capabilities.device, sizeof(vk.capabilities.device), "%s (GPU %u of %u, Vulkan %u.%u.%u, %s%s%s)",
 				vk.properties.deviceName, vk.gpu_index, vk.gpu_count, VK_API_VERSION_MAJOR(vk.properties.apiVersion),

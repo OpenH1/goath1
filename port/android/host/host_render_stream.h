@@ -78,6 +78,8 @@ struct host_render_backend
 	int (*fence_ready)(void *context, uint64_t fence);
 
 	void (*initialize)(void *context, struct xgpu_stream_capabilities *capabilities);
+	/* optional: the devices it can draw with (GPUS; none without it) */
+	void (*gpus)(void *context, struct xgpu_stream_gpus *gpus);
 	void (*invalidate)(void *context);
 	void (*flush)(void *context);
 	void (*anti_aliasing_prepare)(void *context, uint32_t smaa);

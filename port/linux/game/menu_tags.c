@@ -74,6 +74,9 @@ int platform_display_refresh_rates(long *rates, int maximum);
 int platform_window_sizes(long *widths, long *heights, int maximum);
 /* (sdl_platform.c's PLATFORM_AUDIO_DEVICE_NAME_SIZE) */
 int platform_audio_devices(int recording, char (*names)[128], int maximum);
+/* (display.gpu's devices, the renderer's: xgpu_backend.h) */
+int xgpu_backend_gpu_count(void);
+int xgpu_backend_gpus(int index, const char **value, const char **name);
 /* (sdl_platform.h's PLATFORM_VRR_*) */
 int platform_vrr_detected(void);
 
@@ -1438,6 +1441,54 @@ static long split(char const *text, char const **pieces)
 	return count;
 }
 
+/* a GPU's name as Graphics Card's row shows it, short enough for its
+spinner, in capitals: without its maker's name (AMD, NVIDIA, Intel), the
+marks ((TM), (R)), the word GRAPHICS and the driver's words in parentheses
+after it ("AMD Radeon 8060S Graphics (RADV STRIX_HALO)": RADEON 8060S); the
+whole name where nothing is left. Its length */
+long pc_menu_gpu_short_name(char const *name, char *shown, size_t size)
+{
+	static char const *const dropped[] = { "AMD", "NVIDIA", "INTEL", "GRAPHICS", "(TM)", "(R)" };
+	char upper[96];
+	char *word, *mark;
+	long length = 0, at;
+	size_t index;
+
+	if (!size)
+		return 0;
+	for (at = 0; name[at] && at < (long)sizeof(upper) - 1; at++)
+		upper[at] = name[at] >= 'a' && name[at] <= 'z' ? (char)(name[at] - 'a' + 'A') : name[at];
+	upper[at] = 0;
+	/* (the marks inside words: "RADEON(TM)", "IRIS(R)") */
+	for (index = 4; index < sizeof(dropped) / sizeof(dropped[0]); index++)
+	{
+		while ((mark = strstr(upper, dropped[index])) != NULL)
+			memmove(mark, mark + strlen(dropped[index]), strlen(mark + strlen(dropped[index])) + 1);
+	}
+	/* (the driver's words: a parenthesis after the name) */
+	if ((mark = strchr(upper, '(')) != NULL && mark > upper)
+		*mark = 0;
+	shown[0] = 0;
+	for (word = strtok(upper, " "); word; word = strtok(NULL, " "))
+	{
+		for (index = 0; index < 4 && strcmp(word, dropped[index]); index++)
+			;
+		if (index < 4)
+			continue;
+		length += snprintf(shown + length, size - (size_t)length, "%s%s", length ? " " : "", word);
+		if (length >= (long)size - 1)
+			break;
+	}
+	if (!length)
+	{
+		for (at = 0; name[at] && at < (long)size - 1; at++)
+			shown[at] = name[at] >= 'a' && name[at] <= 'z' ? (char)(name[at] - 'a' + 'A') : name[at];
+		shown[at] = 0;
+		length = at;
+	}
+	return length < (long)size ? length : (long)size - 1;
+}
+
 /* a spinner's strings, or its values (count of them in pieces), with those
 the platform adds: Video Setup's
 sizes are the display's (sdl_platform.c), shown "1920 x 1080" and set
@@ -1446,7 +1497,8 @@ window sizes that fit it in place of Window Size's own; its refresh rates
 after Refresh Rate's own (AUTO); Audio Setup's
 devices SDL finds, after their SYSTEM DEFAULT, each set by its name and
 shown by it (in capitals, as the menus' words are, and cut short); and the
-benchmark's maps in the maps folder, after BLOOD GULCH */
+benchmark's maps in the maps folder, after BLOOD GULCH; and Graphics
+Card's devices, after AUTO */
 static long spinner_expand(char const *setting, boolean values, char const **pieces, long count)
 {
 	long widths[MAXIMUM_STRINGS], heights[MAXIMUM_STRINGS];
@@ -1475,6 +1527,43 @@ static long spinner_expand(char const *setting, boolean values, char const **pie
 	maps folder after its own, Blood Gulch, benchmark.c's) */
 	if (setting && !strcmp(setting, "display.benchmark_map"))
 		return benchmark_map_choices(values, pieces, count, MAXIMUM_STRINGS);
+
+	/* (Video's Graphics Card: the devices the renderer found as it started,
+	after AUTO, each set by display.gpu's value that chooses it, its name
+	(or its index beside an identical card), and shown by its name in
+	capitals, the one it draws with marked IN USE) */
+	if (setting && !strcmp(setting, "display.gpu"))
+	{
+		long most = xgpu_backend_gpu_count();
+
+		for (index = 0; index < most && count < MAXIMUM_STRINGS; index++)
+		{
+			char const *value, *name;
+			char shown[96];
+			char *piece;
+			int chosen = xgpu_backend_gpus((int)index, &value, &name);
+			long at;
+
+			if (chosen < 0)
+				break;
+			if (values)
+				snprintf(shown, sizeof(shown), "%s", value);
+			else
+			{
+				at = pc_menu_gpu_short_name(name, shown, sizeof(shown));
+				/* (two identical cards: each its index) */
+				if (value[0] >= '0' && value[0] <= '9')
+					at += snprintf(shown + at, sizeof(shown) - (size_t)at, " #%s", value);
+				snprintf(shown + at, sizeof(shown) - (size_t)at, "%s", chosen ? " (IN USE)" : "");
+			}
+			piece = allocate((long)strlen(shown) + 1);
+			if (!piece)
+				break;
+			strcpy(piece, shown);
+			pieces[count++] = piece;
+		}
+		return count;
+	}
 
 	if (setting && (!strcmp(setting, "audio.output_device") ||
 		!strcmp(setting, "audio.input_device")))

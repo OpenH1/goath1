@@ -526,7 +526,7 @@ SETTINGS_WIDE_SPINNER = 120
 SEGMENTED_MOST = 3
 SEGMENT_PAD, SEGMENT_LEAST, SEGMENT_GAP, SEGMENT_HEIGHT = 8, 48, 4, 18
 SEGMENT_NOT = {"display.vrr", "display.resolution", "display.window_size", "display.refresh_rate",
-               "audio.output_device", "audio.input_device", "display.benchmark_map"}
+               "audio.output_device", "audio.input_device", "display.benchmark_map", "display.gpu"}
 
 # ---------- the tall layout (the menu engine's: docs/menu_engine.md, "Deliberate differences")
 #
@@ -1367,6 +1367,13 @@ PAGES = {
             ("ANTI-ALIASING", "display.anti_aliasing",
              [("OFF", "off"), ("FXAA", "fxaa"), ("SMAA", "smaa"), ("MSAA 2X (BEST)", "msaa2x"), ("MSAA 4X", "msaa4x")],
              ANTI_ALIASING_HELP, "android", "anti_aliasing_android"),
+            # (display.gpu: port/linux/game/menu_tags.c adds the devices the
+            # renderer found as it started, each set by its name, or its index
+            # beside an identical card; dimmed where the game has no choice:
+            # SETTINGS_ROW_ENABLED)
+            (f"GPU {RESTART}", "display.gpu", [("AUTO", "auto")],
+             "The graphics card that draws the game, from the next start. Auto prefers a separate graphics card "
+             "over built-in graphics.|Not on Mac or in VR.", "computer"),
             ("TEXTURE FILTERING", "display.anisotropic_filtering",
              [("OFF", "0"), ("2X", "2"), ("4X", "4"), ("8X", "8"), ("16X", "16")],
              "Keeps floors and walls sharp into the distance, at a small cost. Off looks as the Xbox did: surfaces "
@@ -2333,7 +2340,8 @@ SETTINGS_SEARCH_WORDS = {
     "dpi": ["mouse_sensitivity"],
     "fps": ["max_fps", "menu_max_fps", "perf_overlay", "frame_rate_sync"],
     "framerate": ["frame_rate_sync", "max_fps", "menu_max_fps", "perf_overlay"],
-    "frametime": ["perf_overlay"], "gpu": ["perf_overlay"], "stats": ["perf_overlay"],
+    "frametime": ["perf_overlay"], "gpu": ["perf_overlay", "gpu"], "stats": ["perf_overlay"],
+    "nvidia": ["gpu"], "radeon": ["gpu"], "vulkan": ["gpu"], "card": ["gpu"], "graphics": ["gpu"],
     "gsync": ["vrr", "vrr_cap_margin"], "freesync": ["vrr", "vrr_cap_margin"], "vrr": ["vrr"],
     "aa": ["anti_aliasing", "anti_aliasing_msaa", "anti_aliasing_android"],
     "shadows": ["shadow_resolution", "shadows", "contact_shadows"],
@@ -2468,8 +2476,9 @@ def settings_crumbs() -> dict:
     return crumbs
 
 
-# the settings whose rows have the wider spinner (a device's name)
-WIDE_SETTINGS = {"audio.output_device", "audio.input_device", "streamer.slurs", "streamer.swearing",
+# the settings whose rows have the wider spinner (a device's name; a GPU's
+# short: menu_tags.c's pc_menu_gpu_short_name)
+WIDE_SETTINGS = {"audio.output_device", "audio.input_device", "display.gpu", "streamer.slurs", "streamer.swearing",
                  "streamer.insults"}
 
 # Teamplay Options' rows of the port's (_teamplay_options_extras): the
@@ -2943,6 +2952,10 @@ SETTINGS_ROW_ENABLED = {
     # (the subtitles: MCC's install found, its pack's; the language while
     # they are on: subtitles.c's subtitles_available)
     "subtitles": "mcc_subtitles", "subtitles_language": "mcc_subtitles+subtitles=true",
+    # (display.gpu: the renderer found devices to choose from, Vulkan's
+    # outside VR, whose headset's runtime gives its own; not the Mac's:
+    # settings_condition_term's gpu_choice)
+    "gpu": "gpu_choice+!vr",
     # (the headshot indicator's dot is in the high-res reticles: Interface's
     # HIGH-RES HUD, menu_functions.c's high_res_hud_on)
     "headshot_indicator": "high_res_hud_on",
