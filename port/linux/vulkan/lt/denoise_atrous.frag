@@ -9,6 +9,9 @@
 // filtered together and the last pass into the light the surfaces read.
 #version 460
 #extension GL_GOOGLE_include_directive : require
+#if defined(PAIR)
+#extension GL_KHR_shader_subgroup_vote : require
+#endif
 
 #include "denoise_common.glsl"
 
