@@ -173,8 +173,11 @@ unsigned short xgpu_hdr_classify(const struct xgpu_hdr_draw *draw)
 
 	if (draw->kind & HALO_HDR_KIND_HUD_GLOW)
 		glow = XGPU_HDR_CEILING_HUD;
-	else if ((draw->kind & HALO_HDR_KIND_FIRST_PERSON) &&
-		((draw->kind & (HALO_HDR_KIND_NUMERIC | HALO_HDR_KIND_METER)) || additive))
+	/* (the weapon's numbers, its ammunition counter: a lit screen, past
+	its other glows) */
+	else if ((draw->kind & HALO_HDR_KIND_FIRST_PERSON) && (draw->kind & HALO_HDR_KIND_NUMERIC))
+		glow = XGPU_HDR_CEILING_NUMERIC;
+	else if ((draw->kind & HALO_HDR_KIND_FIRST_PERSON) && ((draw->kind & HALO_HDR_KIND_METER) || additive))
 		glow = XGPU_HDR_CEILING_WEAPON;
 	else if ((draw->kind & HALO_HDR_KIND_LIGHT) && additive && !draw->interface)
 		glow = XGPU_HDR_CEILING_LIGHT;

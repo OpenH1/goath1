@@ -20,9 +20,10 @@ highlights it cannot show.
   sRGB's gamut.
 - **Punchy**: the whole scene lifted, its bright parts more, each colour
   keeping its hue, and the highlights pushed further toward the peak.
-- **Glows**: the first-person weapon's displays (the assault rifle's
-  ammunition counter), meters and additive glows reach up to 1.75 times
-  paper white; the HUD's deliberate glows (a meter's flash, the motion
+- **Glows**: the first-person weapon's numbers (the assault rifle's
+  ammunition counter) glow like a lit screen up to 2.5 times paper white,
+  its hue kept; its other displays, meters and additive glows reach up to
+  1.75 times; the HUD's deliberate glows (a meter's flash, the motion
   tracker) up to 1.5 times. The rest of the HUD and the menus stay at
   paper white.
 - **The light of the world**: the surfaces that are light, which the game
@@ -148,7 +149,8 @@ The front end tags each draw into the HDR back buffer
 | A surface's look | double multiply decals and transparents; in Faithful the structure's specular lightmaps, reflections and mirrors, water's and glass's reflections; the fog screens | ceiling at paper white |
 | Over the tone mapped view | the HUD's bitmaps and meters, screen flashes, screen effects that add light, menus | ceiling at paper white |
 | The screen effects' passes | a scope's warp and mask, night vision: the view copied through the effect's target and back | unclamped: the view's light past white kept |
-| The first-person weapon's glows | the ammunition counter (whatever its blend), meters, additive display parts | expanded, ceiling 1.75 times paper white |
+| The first-person weapon's numbers | the ammunition counter (whatever its blend) | expanded, ceiling 2.5 times paper white |
+| The first-person weapon's glows | meters, additive display parts | expanded, ceiling 1.75 times paper white |
 | The HUD's glows | a meter flashing, the motion tracker | expanded, ceiling 1.5 times paper white |
 | The light of the world (additive) | teleporters' fields, light fixtures, Covenant lights, energy shields, plasma bolts' and needles' volumes | expanded from lower, ceiling 3 times paper white |
 | Self-illumination (a model's pass, a structure's lightmap pass) | door control panels, computer screens and displays, the Pillar of Autumn's bridge screens, Forerunner glyphs and panel lights | its self-illumination expanded from lower, ceiling 2 times paper white; the rest of the pass as the SDR frame has it |
@@ -187,10 +189,14 @@ straight edges.
 from 0.6 up; the light of the world's from 0.4, which the game draws
 dimmer) by more of the light the draw added (its own colour: what was
 under it is not brightened), up to its ceiling, which keeps its hue
-(`xgpu_hdr_expand`). The counter's digits, cyan, reach about 1.5 times paper
-white in their blue (MaxRGB). A teleporter's field keeps its dim body as
-the SDR picture has it and its bright swirls pass white; a light fixture's
-panel, near white in SDR, reaches the ceiling. The ceilings are one field
+(`xgpu_hdr_expand`). The weapon's numbers are a lit screen: brightened from
+0.4 by what is left under their ceiling, wholly from 0.8 up
+(`XGPU_HDR_EXPAND_TO_CEILING`), so the counter's digits, cyan and drawn
+short of white, reach 2.5 times paper white in their blue (MaxRGB), their
+hue kept; Faithful's tone map shows them at about 1.9 times on a 1000-nit
+display. A teleporter's field keeps its dim body as the SDR picture has
+it and its bright swirls pass white; a light fixture's panel, near white
+in SDR, reaches the ceiling. The ceilings are one field
 of the tag (`XGPU_HDR_CEILING_OF`); a glow is a ceiling past paper white's
 (`XGPU_HDR_GLOW`).
 
