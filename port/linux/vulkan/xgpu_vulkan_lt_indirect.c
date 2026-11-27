@@ -90,8 +90,9 @@ static struct
 	struct xgpu_vulkan_image *caches[2], *dump;
 	int current, cache_current, cache_valid;
 	unsigned long frames;
-	/* this frame's reflections' radiance (their samples, their count) */
-	struct xgpu_vulkan_image *specular_light;
+	/* this frame's reflections' radiance (their samples, their count); the
+	light the surfaces read (HALO_LT_SPECULAR_DUMP=final's) */
+	struct xgpu_vulkan_image *specular_light, *final;
 } indirect;
 
 static void indirect_settings(void)
@@ -407,6 +408,7 @@ void xgpu_vulkan_lt_indirect_final(const struct xgpu_vulkan_lt_indirect_frame *f
 	float parameters[4][4];
 	int32_t right[4];
 
+	indirect.final = final;
 	if (!final || !indirect.made || !frame->inputs)
 		return;
 	indirect_parameters(frame, parameters);
@@ -468,6 +470,13 @@ void xgpu_vulkan_lt_indirect_dump(const struct xgpu_vulkan_lt_indirect_frame *fr
 	textures[0] = frame->inputs;
 	textures[1] = indirect.specular_light;
 	textures[5] = indirect.coverage[indirect.current];
+	/* ("final": the right half of the light the surfaces read, its rgb, its
+	red again in alpha) */
+	if (!strcmp(getenv("HALO_LT_SPECULAR_DUMP"), "final") && indirect.final)
+	{
+		parameters[1][0] = -(float)size->width;
+		textures[1] = textures[5] = indirect.final;
+	}
 	indirect_pass(indirect.dump, frame->rectangle, frame, INDIRECT_SPEC_FINAL, frame->cap, textures, &indirect.half,
 		parameters);
 	if (xgpu_vulkan_read_halves(indirect.dump, 0, &halves) != 1 || !halves)
