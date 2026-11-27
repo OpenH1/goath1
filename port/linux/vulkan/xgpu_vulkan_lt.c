@@ -928,8 +928,9 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 	/* (W2: every other light, from the light table) */
 	lt_table(cells, block, light ? lt_flashlight_index(cells, block) : -1, &params);
 	/* (the count started again as the light comes, goes or jumps, or the
-	last frame's inputs are not had) */
-	start = light != lt.had_light || !lt.previous_valid;
+	last frame's inputs are not had, or the pre-pass has no history: a cut,
+	a replay's hold begun again) */
+	start = light != lt.had_light || !lt.previous_valid || pass->history[0] == 0.0f;
 	if (light && lt.had_light)
 	{
 		float dx = params.lamp[0] - lt.last_lamp[0], dy = params.lamp[1] - lt.last_lamp[1];
