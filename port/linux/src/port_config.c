@@ -2649,7 +2649,8 @@ static const struct config_setting config_settings[] =
 		"(port/linux/game/spartan_link.c)." },
 	{ "debug.score_pictures", _config_boolean, "false", "HALO_SCORE_PICTURES", _environment_value, _platform_all,
 		"Campaign scoring's pictures (campaign_score_hud.c): the first pop-ups\n"
-		"saved as they show (score_popup_<n>) and the level's summary a second\n"
+		"saved as they show (score_popup_<n>, each logged with its wait) and the\n"
+		"level's summary a second\n"
 		"after it shows (score_summary, or score_summary_compact), to the\n"
 		"screenshot folder, for proofs of them." },
 	{ "debug.score_fill", _config_boolean, "false", "HALO_SCORE_FILL", _environment_value, _platform_all,
