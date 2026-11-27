@@ -141,4 +141,8 @@ code differs, and identity and the scorecard pass.
 3. **Cost:** on the 8060S, trace only water, glass and Covenant metal by default, and leave the structure's
    bumped floors on the cube (1.15 of the 1.2 ms is the full-screen structure pass). Skip pixels whose
    destination-alpha mask is 0 (read it as an input attachment) and save their rays.
-4. Glass on objects (vehicle windows), the first-person weapon's own reflections, and dynamic mirrors.
+4. **Map preparation:** the tag is kept beside the draw's inputs, not in `struct draw_inputs`, so the shipped
+   prepared records keep their form. A record's draw traces nothing, and the traced pipelines are made at their
+   first draw (a hitch once a map with the setting on). Move it into `draw_inputs` the next time the records are
+   made again (`tools/prepared_records.py`).
+5. Glass on objects (vehicle windows), the first-person weapon's own reflections, and dynamic mirrors.
