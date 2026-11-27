@@ -41,6 +41,9 @@ layout(set = 0, binding = 1, std140) uniform Pass
     vec4 tuning;
     // (the guide's FOLD, lt/denoise_guide.frag) x, y the bounce's size (blocks), z its phase this frame, w its flags
     vec4 bounce;
+    // (lt/denoise_pair.glsl's FINAL) x the suns, then each sun's forward and power (lt/e1.frag's light table rows)
+    ivec4 suns;
+    vec4 sun[16];
 } pass;
 
 const float COS_25 = 0.906;

@@ -85,7 +85,13 @@ struct denoise_params
 	/* (the guide's fold: the bounce's size in blocks, its phase, its
 	flags: DENOISE_BOUNCE_*) */
 	float bounce[4];
+	/* (the final pass: the suns, each one's forward and power) */
+	int32_t suns[4];
+	float sun[16][4];
 };
+/* the final pass's control.w (lt/denoise_pair.glsl's RIGHT): the right
+half's draw */
+#define DENOISE_RIGHT 1
 enum
 {
 	DENOISE_BOUNCE_ON = 1,
@@ -129,9 +135,12 @@ static struct
 {
 	int made, failed, said;
 	unsigned generation;
-	VkShaderModule vertex, gradient, temporal, guide, guide_fold, atrous;
+	VkShaderModule vertex, gradient, temporal, guide, guide_fold, atrous, atrous_pair, atrous_final;
 	VkSampler sampler;
 	struct xgpu_vulkan_pipeline_description gradient_pass, temporal_pass, guide_pass, guide_fold_pass, atrous_pass;
+	/* the spatial stage's shared passes (lt/denoise_pair.glsl): the two
+	channels at once, and the last into the light the surfaces read */
+	struct xgpu_vulkan_pipeline_description atrous_pair_pass, atrous_final_pass;
 	/* the diffuse channel, the specular */
 	struct denoise_channel channels[2];
 	/* checking (HALO_LT_DENOISE_*) */
@@ -186,6 +195,8 @@ static int denoise_shaders(void)
 	denoise.guide = denoise_kernel("denoise_guide.frag");
 	denoise.guide_fold = denoise_kernel("denoise_guide_fold.frag");
 	denoise.atrous = denoise_kernel("denoise_atrous.frag");
+	denoise.atrous_pair = denoise_kernel("denoise_atrous_pair.frag");
+	denoise.atrous_final = denoise_kernel("denoise_atrous_final.frag");
 	if (!denoise.sampler)
 	{
 		memset(&sampler, 0, sizeof(sampler));
@@ -195,7 +206,8 @@ static int denoise_shaders(void)
 		sampler.anisotropy = 1;
 		denoise.sampler = xgpu_vulkan_sampler(&sampler);
 	}
-	if (!denoise.vertex || !denoise.gradient || !denoise.temporal || !denoise.guide || !denoise.guide_fold || !denoise.atrous || !denoise.sampler)
+	if (!denoise.vertex || !denoise.gradient || !denoise.temporal || !denoise.guide || !denoise.guide_fold || !denoise.atrous || !denoise.atrous_pair ||
+		!denoise.atrous_final || !denoise.sampler)
 	{
 		host_logf(HOST_LOG_WARN, "vulkan: denoise: its passes cannot be made");
 		denoise.failed = 1;
@@ -223,11 +235,21 @@ static int denoise_shaders(void)
 	denoise.atrous_pass = denoise.gradient_pass;
 	denoise.atrous_pass.pixel_shader = denoise.atrous;
 	denoise.atrous_pass.color_format = XGPU_VULKAN_FORMAT_RGBA16F;
+	denoise.atrous_pair_pass = denoise.atrous_pass;
+	denoise.atrous_pair_pass.pixel_shader = denoise.atrous_pair;
+	denoise.atrous_pair_pass.motion_format = XGPU_VULKAN_FORMAT_RGBA16F;
+	denoise.atrous_pair_pass.motion_mask = 15;
+	/* (the light the surfaces read: xgpu_vulkan_lt.c's lt.final) */
+	denoise.atrous_final_pass = denoise.atrous_pass;
+	denoise.atrous_final_pass.pixel_shader = denoise.atrous_final;
+	denoise.atrous_final_pass.color_format = XGPU_VULKAN_FORMAT_RGBA32F;
 	(void)xgpu_vulkan_pipeline_prepare(&denoise.gradient_pass);
 	(void)xgpu_vulkan_pipeline_prepare(&denoise.temporal_pass);
 	(void)xgpu_vulkan_pipeline_prepare(&denoise.guide_pass);
 	(void)xgpu_vulkan_pipeline_prepare(&denoise.guide_fold_pass);
 	(void)xgpu_vulkan_pipeline_prepare(&denoise.atrous_pass);
+	(void)xgpu_vulkan_pipeline_prepare(&denoise.atrous_pair_pass);
+	(void)xgpu_vulkan_pipeline_prepare(&denoise.atrous_final_pass);
 	denoise.made = 1;
 	return 1;
 }
@@ -361,7 +383,7 @@ the gradients, flagged DENOISE_SPECULAR) */
 static struct xgpu_vulkan_image *denoise_channel_draw(struct denoise_channel *channel, int specular,
 	struct xgpu_vulkan_image *raw, struct xgpu_vulkan_image *previous_raw, struct xgpu_vulkan_image *inputs,
 	struct xgpu_vulkan_image *previous_inputs, struct xgpu_vulkan_image *guides, const struct xgpu_world_ao_pass *pass,
-	const int32_t rectangle[4], const struct xgpu_vulkan_denoise_bounce *bounce)
+	const int32_t rectangle[4], const struct xgpu_vulkan_denoise_bounce *bounce, int defer)
 {
 	const struct xgpu_vulkan_image_description *size;
 	struct xgpu_world_ao_pass uniforms;
@@ -489,6 +511,13 @@ static struct xgpu_vulkan_image *denoise_channel_draw(struct denoise_channel *ch
 	/* (the specular's two, steps 1 and 2: its lobes are narrow, its count
 	high where it is sharp) */
 	passes = denoise.spatial ? (specular ? DENOISE_SPECULAR_PASSES : DENOISE_PASSES) : 1;
+	/* (deferred: the shared passes after both channels' temporal stages,
+	denoise_shared) */
+	if (defer)
+	{
+		passes = 0;
+		output = channel->histories[channel->current];
+	}
 	for (index = 0; index < passes; index++)
 	{
 		int last = index == passes - 1;
@@ -509,7 +538,7 @@ static struct xgpu_vulkan_image *denoise_channel_draw(struct denoise_channel *ch
 	channel->previous_valid = 1;
 	xgpu_vulkan_pass_owner(NULL);
 	channel->draws++;
-	if (denoise.dumps && *denoise.dumps)
+	if (denoise.dumps && *denoise.dumps && !defer)
 	{
 		host_logf(HOST_LOG_WARN, "vulkan: denoise: draw %lu, frame %.0f, history %d", channel->draws, pass->history[1],
 			history_valid);
@@ -532,12 +561,133 @@ struct xgpu_vulkan_image *xgpu_vulkan_denoise_draw(struct xgpu_vulkan_image *raw
 	const struct xgpu_vulkan_denoise_bounce *bounce)
 {
 	return denoise_channel_draw(&denoise.channels[0], 0, raw, previous_raw, inputs, previous_inputs, guides, pass,
-		rectangle, bounce);
+		rectangle, bounce, 0);
+}
+
+/* the spatial stage of both channels at once and the light the surfaces
+read (xgpu_vulkan_denoise_frame's), after their temporal stages: the pairs'
+passes (steps 1 and 2), then the diffuse's last (step 4) into final's left
+half, the sun's share off, and the specular's into its right; the diffuse's
+denoised irradiance (its step 4 again, into its result) where a dump wants
+it */
+static struct xgpu_vulkan_image *denoise_shared(struct xgpu_vulkan_denoise_final *out,
+	const struct xgpu_world_ao_pass *pass, const int32_t rectangle[4], struct xgpu_vulkan_image *inputs, int specular)
+{
+	struct denoise_channel *d = &denoise.channels[0], *s = &denoise.channels[1];
+	struct xgpu_vulkan_image *guide = d->filter_guides[d->current];
+	struct xgpu_vulkan_image *dh = d->histories[d->current], *sh = specular ? s->histories[s->current] : NULL;
+	const struct xgpu_vulkan_image_description *size = xgpu_vulkan_image_description(inputs);
+	struct xgpu_world_ao_pass uniforms = *pass;
+	struct denoise_params params;
+	int index, dumped = denoise.dumps && *denoise.dumps && denoise_dumped(d->draws);
+
+	memset(&params, 0, sizeof(params));
+	params.size[0] = (float)size->width;
+	params.size[1] = (float)size->height;
+	params.tuning[1] = DENOISE_SIGMA_LUMINANCE;
+	params.tuning[2] = DENOISE_SIGMA_DEPTH;
+	params.tuning[3] = DENOISE_SIGMA_NORMAL;
+	xgpu_vulkan_pass_owner(DENOISE_OWNER);
+	/* the pairs (or the diffuse alone): steps 1 and 2 */
+	for (index = 0; index < 2; index++)
+	{
+		params.control[1] = index ? 0 : DENOISE_FIRST;
+		params.control[2] = 1 << index;
+		if (specular)
+		{
+			struct xgpu_vulkan_image *textures[5] = { d->filtered[index ^ 1], dh, guide, s->filtered[index ^ 1], sh };
+
+			xgpu_vulkan_set_motion_target(s->filtered[index], d->filtered[index]);
+			denoise_pass(d->filtered[index], rectangle, &uniforms, &params, &denoise.atrous_pair_pass, textures, 5);
+			xgpu_vulkan_set_motion_target(NULL, NULL);
+		}
+		else
+		{
+			struct xgpu_vulkan_image *textures[3] = { d->filtered[index ^ 1], dh, guide };
+
+			denoise_pass(d->filtered[index], rectangle, &uniforms, &params, &denoise.atrous_pass, textures, 3);
+		}
+	}
+	/* the last: the diffuse's step 4 into final's left half; the
+	specular's into its right (none: cleared, the cube maps kept) */
+	params.control[1] = 0;
+	params.control[2] = 4;
+	params.suns[0] = out->suns;
+	memcpy(params.sun, out->sun, sizeof(params.sun));
+	{
+		struct xgpu_vulkan_image *textures[6] = { d->filtered[1], dh, guide, inputs,
+			specular ? s->filtered[1] : d->filtered[1], specular && out->coverage ? out->coverage : d->filtered[1] };
+
+		denoise_pass(out->final, rectangle, &uniforms, &params, &denoise.atrous_final_pass, textures, 6);
+		if (out->wide)
+		{
+			int32_t right[4] = { rectangle[0] + (int32_t)size->width, rectangle[1],
+				rectangle[2] + (int32_t)size->width, rectangle[3] };
+
+			if (specular)
+			{
+				params.control[3] = DENOISE_RIGHT;
+				denoise_pass(out->final, right, &uniforms, &params, &denoise.atrous_final_pass, textures, 6);
+			}
+			else
+			{
+				static const float none[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+				int32_t clear[1][4] = { { right[0], right[1], right[2] - right[0], right[3] - right[1] } };
+
+				xgpu_vulkan_set_target_views(out->final, NULL, 0, 1);
+				xgpu_vulkan_clear((const int32_t (*)[4])clear, 1, XGPU_VULKAN_CLEAR_COLOR |
+					XGPU_VULKAN_CLEAR_CHANNELS, none, 1.0f, 0);
+			}
+		}
+	}
+	out->drawn = 1;
+	out->specular_denoised = specular ? s->filtered[1] : NULL;
+	/* (a dump's: the diffuse's step 4 into its result, as the single
+	channel's passes have it) */
+	if (out->result || dumped)
+	{
+		struct xgpu_vulkan_image *textures[3] = { d->filtered[1], dh, guide };
+
+		params.control[3] = 0;
+		denoise_pass(d->result, rectangle, &uniforms, &params, &denoise.atrous_pass, textures, 3);
+	}
+	xgpu_vulkan_pass_owner(NULL);
+	if (dumped)
+	{
+		denoise_dump(d->result, d->draws, "");
+		if (specular)
+			denoise_dump(s->filtered[1], d->draws, "_specular");
+	}
+	return out->result || dumped ? d->result : NULL;
+}
+
+struct xgpu_vulkan_image *xgpu_vulkan_denoise_frame(struct xgpu_vulkan_image *raw,
+	struct xgpu_vulkan_image *previous_raw, struct xgpu_vulkan_image *inputs, struct xgpu_vulkan_image *previous_inputs,
+	struct xgpu_vulkan_image *guides, const struct xgpu_world_ao_pass *pass, const int32_t rectangle[4],
+	const struct xgpu_vulkan_denoise_bounce *bounce, struct xgpu_vulkan_denoise_final *out)
+{
+	int specular;
+
+	out->drawn = 0;
+	out->specular_denoised = NULL;
+	if (!denoise_shaders())
+		return NULL;
+	/* (the checking modes, or a pipeline not made yet: the channels' own
+	passes, the caller's final passes) */
+	if (!out->final || !denoise.spatial || denoise.motion_view ||
+		!xgpu_vulkan_pipeline_ready(&denoise.atrous_pair_pass) || !xgpu_vulkan_pipeline_ready(&denoise.atrous_final_pass))
+		return xgpu_vulkan_denoise_draw(raw, previous_raw, inputs, previous_inputs, guides, pass, rectangle, bounce);
+	if (!denoise_channel_draw(&denoise.channels[0], 0, raw, previous_raw, inputs, previous_inputs, guides, pass,
+		rectangle, bounce, 1))
+		return NULL;
+	specular = out->specular && denoise_channel_draw(&denoise.channels[1], 1, out->specular, NULL, inputs, NULL, guides,
+		pass, rectangle, NULL, 1);
+	return denoise_shared(out, pass, rectangle, inputs, specular);
 }
 
 struct xgpu_vulkan_image *xgpu_vulkan_denoise_specular_draw(struct xgpu_vulkan_image *raw,
 	struct xgpu_vulkan_image *inputs, struct xgpu_vulkan_image *guides, const struct xgpu_world_ao_pass *pass,
 	const int32_t rectangle[4])
 {
-	return denoise_channel_draw(&denoise.channels[1], 1, raw, NULL, inputs, NULL, guides, pass, rectangle, NULL);
+	return denoise_channel_draw(&denoise.channels[1], 1, raw, NULL, inputs, NULL, guides, pass, rectangle, NULL, 0);
 }

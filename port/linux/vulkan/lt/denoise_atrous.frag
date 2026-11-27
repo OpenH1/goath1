@@ -5,17 +5,22 @@
 // (its deviation: the samples' over the root of the count); each passes on (rgb, the estimate's standard deviation,
 // propagated as the root of the sum of w^2 var over the weights' sum), in half floats. Each pixel's guides are read
 // from the filter guide (lt/denoise_guide.frag): one 8-byte texel.
+// PAIR (denoise_atrous_pair.frag) and FINAL (denoise_atrous_final.frag): lt/denoise_pair.glsl, the two channels
+// filtered together and the last pass into the light the surfaces read.
 #version 460
 #extension GL_GOOGLE_include_directive : require
 
 #include "denoise_common.glsl"
 
+#if !defined(PAIR) && !defined(FINAL)
 layout(set = 1, binding = 0) uniform sampler2D source;
 layout(set = 1, binding = 1) uniform usampler2D history;
 layout(set = 1, binding = 2) uniform usampler2D filter_guide;
 
 layout(location = 0) out vec4 result;
+#endif
 
+#if !defined(PAIR) && !defined(FINAL)
 // a pixel's (rgb, the estimate's variance)
 vec4 fetch(ivec2 q)
 {
@@ -36,7 +41,7 @@ bool inside(ivec2 q)
     return all(greaterThanEqual(q, pass.corners.xy)) && all(lessThan(q, pass.corners.zw));
 }
 
-void main()
+void single_main()
 {
     ivec2 pixel = ivec2(gl_FragCoord.xy);
     uvec2 g = texelFetch(filter_guide, pixel, 0).xy;
@@ -134,3 +139,11 @@ void main()
         }
     result = vec4(sum / weights, sqrt(variance) / weights);
 }
+
+void main()
+{
+    single_main();
+}
+#else
+#include "denoise_pair.glsl"
+#endif

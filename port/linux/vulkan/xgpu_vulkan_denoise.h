@@ -34,6 +34,35 @@ struct xgpu_vulkan_image *xgpu_vulkan_denoise_draw(struct xgpu_vulkan_image *raw
 	struct xgpu_vulkan_image *guides, const struct xgpu_world_ao_pass *pass, const int32_t rectangle[4],
 	const struct xgpu_vulkan_denoise_bounce *bounce);
 
+/* the light the surfaces read, drawn by the denoiser (xgpu_vulkan_denoise_
+frame): its image (RGBA32F; with wide, twice as wide: the right half the
+reflections'), the suns (their count, each one's forward and power) whose
+whole direct share comes off the structure's light, the reflections' noisy
+radiance and hits' share (NULL: none, the right half cleared), whether the
+diffuse's denoised irradiance is wanted too (a dump); out: whether it was
+drawn (else the caller's own final passes) and the reflections' denoised
+radiance */
+struct xgpu_vulkan_denoise_final
+{
+	struct xgpu_vulkan_image *final;
+	int wide, suns;
+	float sun[16][4];
+	struct xgpu_vulkan_image *specular, *coverage;
+	int result;
+	int drawn;
+	struct xgpu_vulkan_image *specular_denoised;
+};
+/* both channels (the diffuse's as xgpu_vulkan_denoise_draw's, the
+specular's from out's) through their temporal stages, then the spatial
+stage's passes shared and the light the surfaces read drawn into out's
+final; the diffuse's denoised irradiance where out wants it (else NULL). In
+the checking modes, or before its passes are made, the diffuse's alone, as
+xgpu_vulkan_denoise_draw (out's drawn 0) */
+struct xgpu_vulkan_image *xgpu_vulkan_denoise_frame(struct xgpu_vulkan_image *raw,
+	struct xgpu_vulkan_image *previous_raw, struct xgpu_vulkan_image *inputs, struct xgpu_vulkan_image *previous_inputs,
+	struct xgpu_vulkan_image *guides, const struct xgpu_world_ao_pass *pass, const int32_t rectangle[4],
+	const struct xgpu_vulkan_denoise_bounce *bounce, struct xgpu_vulkan_denoise_final *out);
+
 /* the specular channel (the light transport's reflections,
 xgpu_vulkan_lt_indirect.c): this frame's noisy specular radiance (RGBA,
 rgb; a the hit's distance, 0 a miss, less than 0 a pixel without specular)

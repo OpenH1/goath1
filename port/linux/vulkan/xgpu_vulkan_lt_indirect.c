@@ -480,6 +480,20 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 	return frame->fold ? frame->direct : indirect.total;
 }
 
+struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_specular(struct xgpu_vulkan_image **coverage)
+{
+	/* (this frame's hits' share: the history drawn last, in turn) */
+	*coverage = indirect.coverage[indirect.current];
+	return indirect.reflections && indirect.specular_light ? indirect.specular_raw : NULL;
+}
+
+void xgpu_vulkan_lt_indirect_finished(struct xgpu_vulkan_image *final, struct xgpu_vulkan_image *specular)
+{
+	indirect.final = final;
+	if (specular)
+		indirect.specular_light = specular;
+}
+
 struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_bounce(int *phase, int *only)
 {
 	*phase = indirect.phase;

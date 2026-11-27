@@ -58,6 +58,14 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 phase its blocks were traced at, whether the direct light is to be left out
 (HALO_LT_INDIRECT=only); NULL where none was drawn */
 struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_bounce(int *phase, int *only);
+/* this frame's reflections' noisy radiance (their rays: rgb, a the hit's
+distance, less than 0 none) and their hits' share (counted), for the
+denoiser; NULL where they are not drawn */
+struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_specular(struct xgpu_vulkan_image **coverage);
+/* the light the surfaces read drawn by the denoiser instead of
+xgpu_vulkan_lt_indirect_final, and its reflections' denoised radiance (for
+HALO_LT_SPECULAR_DUMP) */
+void xgpu_vulkan_lt_indirect_finished(struct xgpu_vulkan_image *final, struct xgpu_vulkan_image *specular);
 /* the reflections' denoising (HALO_LT_E1=denoise, after the diffuse's) and
 their part of the light the surfaces read: final's right half */
 void xgpu_vulkan_lt_indirect_final(const struct xgpu_vulkan_lt_indirect_frame *frame, struct xgpu_vulkan_image *final);

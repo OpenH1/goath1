@@ -305,6 +305,10 @@ VkShaderModule xgpu_vulkan_lt_kernel(const char *source)
 		{ "denoise_gradient.frag", lt_denoise_gradient_spirv, sizeof(lt_denoise_gradient_spirv) / sizeof(uint32_t) },
 		{ "denoise_temporal.frag", lt_denoise_temporal_spirv, sizeof(lt_denoise_temporal_spirv) / sizeof(uint32_t) },
 		{ "denoise_atrous.frag", lt_denoise_atrous_spirv, sizeof(lt_denoise_atrous_spirv) / sizeof(uint32_t) },
+		{ "denoise_atrous_pair.frag", lt_denoise_atrous_pair_spirv,
+			sizeof(lt_denoise_atrous_pair_spirv) / sizeof(uint32_t) },
+		{ "denoise_atrous_final.frag", lt_denoise_atrous_final_spirv,
+			sizeof(lt_denoise_atrous_final_spirv) / sizeof(uint32_t) },
 		{ "denoise_guide.frag", lt_denoise_guide_spirv, sizeof(lt_denoise_guide_spirv) / sizeof(uint32_t) },
 		{ "denoise_guide_fold.frag", lt_denoise_guide_fold_spirv, sizeof(lt_denoise_guide_fold_spirv) / sizeof(uint32_t) },
 		/* (the indirect light and reflections: xgpu_vulkan_lt_indirect.c) */
@@ -902,6 +906,17 @@ static void lt_dump_one(const int32_t rectangle[4], const struct xgpu_world_ao_p
 	free(halves);
 }
 
+/* whether this frame's light is dumped (HALO_LT_E1_DUMP's frames,
+HALO_LT_E1_DUMP_EVERY: every so many frames too, a held frame's) */
+static int lt_dumping(void)
+{
+	static long every = -1;
+
+	if (every < 0)
+		every = getenv("HALO_LT_E1_DUMP_EVERY") ? atol(getenv("HALO_LT_E1_DUMP_EVERY")) : 0;
+	return (lt.since_start < LT_DUMPS && lt.dumps[lt.since_start]) || (every > 0 && !(lt.since_start % every));
+}
+
 void xgpu_vulkan_lt_reshade(struct xgpu_vulkan_image *into, const struct xgpu_world_ao_pass *previous_pass,
 	struct xgpu_vulkan_image *previous_inputs, struct xgpu_vulkan_image *previous_guides)
 {
@@ -936,6 +951,7 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 	const struct xgpu_vulkan_image_description *size;
 	struct xgpu_vulkan_image *history, *denoised = NULL, *reservoirs = NULL, *light_image, *diffuse;
 	struct xgpu_vulkan_lt_indirect_frame indirect_frame;
+	struct xgpu_vulkan_denoise_final shared;
 	struct lt_params params;
 	int32_t rectangle[4];
 	int axis, light, start;
@@ -1060,6 +1076,11 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 	diffuse = xgpu_vulkan_lt_indirect_draw(&indirect_frame);
 	if (!diffuse)
 		diffuse = lt.means[lt.current];
+	/* (with the indirect light, twice as wide: the right half the
+	reflections', xgpu_vulkan_lt_indirect_final) */
+	lt.final = lt_image(lt.final, XGPU_VULKAN_FORMAT_RGBA32F, size->width * (xgpu_vulkan_lt_indirect_on() ? 2 : 1),
+		size->height);
+	memset(&shared, 0, sizeof(shared));
 	if (lt.mode == XGPU_VULKAN_LT_DENOISE)
 	{
 		/* (the denoiser: this frame's sample and the last's, this frame's
@@ -1090,11 +1111,25 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 			/* (its gradients the direct light's alone: the re-shade's,
 			against the last frame's direct sample; the bounce folded in by
 			its guide pass) */
+			/* (ours draws the light the surfaces read itself: its last
+			pass the suns' share off, the reflections' half beside it) */
 			struct xgpu_vulkan_denoise_bounce bounce;
+			int sun;
 
 			bounce.image = xgpu_vulkan_lt_indirect_bounce(&bounce.phase, &bounce.only);
-			denoised = xgpu_vulkan_denoise_draw(diffuse, had ? history : NULL, inputs, had ? lt.previous : NULL,
-				lt.guides, pass, rectangle, bounce.image ? &bounce : NULL);
+			shared.final = lt.final;
+			shared.wide = xgpu_vulkan_lt_indirect_on();
+			for (sun = 0; sun < params.lights[1] && sun < LT_SUNS; sun++)
+				if (lt.texels[LT_SUN_ROW + sun][4][3] >= 0.0f)
+				{
+					memcpy(shared.sun[2 * shared.suns], lt.texels[LT_SUN_ROW + sun][1], sizeof(shared.sun[0]));
+					memcpy(shared.sun[2 * shared.suns + 1], lt.texels[LT_SUN_ROW + sun][4], sizeof(shared.sun[0]));
+					shared.suns++;
+				}
+			shared.specular = xgpu_vulkan_lt_indirect_specular(&shared.coverage);
+			shared.result = lt_dumping();
+			denoised = xgpu_vulkan_denoise_frame(diffuse, had ? history : NULL, inputs, had ? lt.previous : NULL,
+				lt.guides, pass, rectangle, bounce.image ? &bounce : NULL, &shared);
 		}
 		xgpu_vulkan_pass_owner(LT_OWNER);
 	}
@@ -1103,11 +1138,12 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 	cmax): less than 0 where a dynamic object shadows the sun; the light's
 	history and the denoiser the one temporal stage of both) */
 	light_image = denoised ? denoised : diffuse;
-	/* (with the indirect light, twice as wide: the right half the
-	reflections', xgpu_vulkan_lt_indirect_final) */
-	lt.final = lt_image(lt.final, XGPU_VULKAN_FORMAT_RGBA32F, size->width * (xgpu_vulkan_lt_indirect_on() ? 2 : 1),
-		size->height);
-	if (lt.final)
+	if (lt.final && shared.drawn)
+	{
+		light_image = lt.final;
+		xgpu_vulkan_lt_indirect_finished(lt.final, shared.specular_denoised);
+	}
+	else if (lt.final)
 	{
 		struct lt_params final_params = params;
 
@@ -1123,12 +1159,7 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 	lt.previous_valid = 1;
 	xgpu_vulkan_pass_owner(NULL);
 	{
-		/* (HALO_LT_E1_DUMP_EVERY: every so many frames too, a held frame's) */
-		static long every = -1;
-
-		if (every < 0)
-			every = getenv("HALO_LT_E1_DUMP_EVERY") ? atol(getenv("HALO_LT_E1_DUMP_EVERY")) : 0;
-		if ((lt.since_start < LT_DUMPS && lt.dumps[lt.since_start]) || (every > 0 && !(lt.since_start % every)))
+		if (lt_dumping())
 		{
 			lt_dump(rectangle, pass, &params, denoised ? denoised : diffuse, inputs);
 			xgpu_vulkan_lt_indirect_dump(&indirect_frame, lt.since_start);
