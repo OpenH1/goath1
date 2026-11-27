@@ -71,10 +71,12 @@ RIG = ROOT / "tools" / "rig" / "goat-rig"
 RECORDINGS = "rt2-scorecard"  # (under the remote $HOME)
 # the held scenes: name, recording, frame held, what it is
 SCENES = [
-    ("c20", "c20.hrpl", 700, "c20's Flood corner, the flashlight"),
+# (the *_lights recordings carry the light list, HALO_LT_LIGHTS=1, made from local/rt2-main: the same ticks and
+# cameras as the first ones, c20 598, b30 898, combat 1369)
+    ("c20", "c20_lights.hrpl", 702, "c20's Flood corner, the flashlight"),
     ("a10", "a10.hrpl", 900, "a10's cryo deck, a still camera on the reflective floor"),
-    ("b30", "b30.hrpl", 180, "b30's beach rock (b30_exterior's view)"),
-    ("combat", "combat.hrpl", 480, "b30's beach in combat: plasma lights"),
+    ("b30", "b30_lights.hrpl", 180, "b30's Pelican passing the beach rock (b30_exterior's view)"),
+    ("combat", "combat_lights.hrpl", 494, "b30's beach in combat: plasma lights"),
 ]
 STABILITY_HOST = "omarchy"
 TRUTH_HOST = "5900x"
