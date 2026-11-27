@@ -12,5 +12,11 @@
   "matches": "rt2_scorecard combat.hrpl frame 480 (tick 1369 drawn, export written before tick 1370; camera position/forward/up equal the recording's marks to 6 digits)",
   "command": "tools/rig/goat-rig @5900x run rt2x-b30combat --build <ref> --shared --size 1920x1080 --seconds 120 -- 'HALO_NETWORK_TEST=campaign:levels\\b30\\b30' HALO_NETWORK_TEST_START=2 HALO_SKIP_CINEMATICS=1 HALO_GRAPHICS=classic HALO_DYNAMIC_LIGHTS=classic HALO_SHADOWS=classic HALO_NET_BROADCAST=127.255.255.255 HALO_FRAME_TIME=0.0333333333 'HALO_TEST_INPUT=script:34-43 move=0,1' 'HALO_RT_EXPORT=45.6 /home/<user>/goat-rig/rt2-scenes/b30_combat' HALO_SCREENSHOT_AT=47,quit",
   "then": "rt2_mask.py b30_combat, then add mask rect [336,892,648,936] (the B: SPARTAN LINK prompt; HUD is on, as in the recording)"
+ },
+ "a10_interior": {
+  "tick": 666,
+  "build": "local/rt2-export-tangents (self-illumination and change colors as drawn)",
+  "command": "tools/rig/goat-rig @5900x run rt2x-a10 --build <ref> --shared --size 1920x1080 --seconds 50 -- 'HALO_NETWORK_TEST=local:levels\\a10\\a10:coop' 'HALO_TEST_INPUT=script:1 jump; 2 jump; 3 jump' HALO_SKIP_CINEMATICS=1 HALO_GRAPHICS=classic HALO_DYNAMIC_LIGHTS=classic HALO_SHADOWS=classic HALO_NET_BROADCAST=127.255.255.255 HALO_FRAME_TIME=0.0333333333 'HALO_NETWORK_TEST_CUES=2 debug_camera_set \"-55.4 0.8 0.62 0 -12 0 70\"|6 debug_camera_set \"-55.4 0.8 0.62 0 -12 0 70\"|10 debug_camera_set \"-55.4 0.8 0.62 0 -12 0 70\"|14 debug_camera_set \"-55.4 0.8 0.62 0 -12 0 70\"|18 debug_camera_set \"-55.4 0.8 0.62 0 -12 0 70\"|18.5 show_hud 0' 'HALO_RT_EXPORT=22.13 /home/<user>/goat-rig/rt2-scenes/a10_interior_new'",
+  "then": "HALO_RT_EXPORT 22.13 gives tick 666 (21.9 gives 659); move a10_interior_new into place, the previous kept as a10_interior_prev"
  }
 }

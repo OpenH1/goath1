@@ -125,11 +125,13 @@ def best_fit(samples, keep, static_means, log):
 
 def render_scene(folder, out=None, spp_pass=8, target=0.01, max_spp=65536, max_minutes=60.0,
                  min_passes=4, gpu_lock=os.path.expanduser("~/goat-rig/locks/gpu.lock"),
-                 log=print, flashlight_scale=None, flashlight_emitter=None, static_mode="lightmap"):
+                 log=print, flashlight_scale=None, flashlight_emitter=None, static_mode="lightmap",
+                 object_static="halo"):
     folder = Path(folder)
     out = Path(out) if out else folder / "truth"
     from . import VARIANT as variant
-    sc = Scene(folder, flashlight_scale, flashlight_emitter=flashlight_emitter, static_mode=static_mode)
+    sc = Scene(folder, flashlight_scale, flashlight_emitter=flashlight_emitter, static_mode=static_mode,
+               object_static=object_static)
     t0 = time.time()
     groups = [g for g in sc.groups if sc.group_has_light(g)]
     statics = [g for g in groups if g in sc.static_groups]
@@ -138,7 +140,8 @@ def render_scene(folder, out=None, spp_pass=8, target=0.01, max_spp=65536, max_m
     samples = sc.lightmap_samples(scenes[groups[-1]])
     # The same light on white Lambertian surfaces (same normal maps and cutouts): its direct part is the
     # demodulated irradiance the real-time comparison uses.
-    wsc = Scene(folder, flashlight_scale, white=True, flashlight_emitter=flashlight_emitter, static_mode=static_mode)
+    wsc = Scene(folder, flashlight_scale, white=True, flashlight_emitter=flashlight_emitter, static_mode=static_mode,
+                object_static=object_static)
     whites = {g: mi.load_dict(wsc.build(g)) for g in groups}
     acc_w = {g: np.zeros((len(samples["valid"]), len(samples["valid"][0]), 3)) for g in groups}
     grey = [m["index"] for m in sc.material_summaries.values() if "placeholder" in m.get("albedo", "")]
@@ -252,6 +255,8 @@ def render_scene(folder, out=None, spp_pass=8, target=0.01, max_spp=65536, max_m
     write_exr(parts / "indirect.exr", indirect)
     write_exr(parts / "emission.exr", emission)
     write_exr(parts / "static.exr", static)
+    for g in groups:  # each light group's whole light, to see what one source adds
+        write_exr(parts / ("group_%s.exr" % g), w[g] * mean[g]["full"])
     write_exr(parts / "direct_flashlight.exr",
               mean["flashlight"]["d2"] - mean["flashlight"]["d1"] if "flashlight" in mean else zero)
     irr = {g: acc_w[g] / n for g in groups}
@@ -378,13 +383,17 @@ def render_flashlight_direct(folder, out=None, flashlight_scale=None, flashlight
     fp = sc.first_person_mask(full_scene)
     del full_scene
     s1, s2, acc, n = np.zeros((H, W)), np.zeros((H, W)), np.zeros((H, W, 3)), 0
+    acc_i = {}
     t0 = time.time()
     stats = {}
     with GpuLock(gpu_lock, log):
         while True:
             wait_for_no_player(log)
-            img = render_pass(scene, spp_pass, n, parts=True)["direct"].astype(np.float64)
+            pp = render_pass(scene, spp_pass, n, parts=True)
+            img = pp["direct"].astype(np.float64)
             acc += img
+            for k in ("indirect", "indirect1", "indirect_demod", "indirect1_demod"):
+                acc_i[k] = acc_i.get(k, 0.0) + pp[k]
             acc_w += render_pass(white, spp_pass, n, parts=True, centers=centers)["direct"]
             acc_f = acc_f + render_pass(flat, spp_pass, n, parts=True, max_depth=2, centers=centers)["direct"]
             y = img @ display.LUMA.astype(np.float64)
@@ -404,6 +413,11 @@ def render_flashlight_direct(folder, out=None, flashlight_scale=None, flashlight
     write_exr(out / "truth_parts" / ("irradiance_direct_%s.exr" % name), np.where(fp[..., None], 0.0, acc_w / n))
     # The same with the geometric (interpolated vertex) normal, no normal maps.
     write_exr(out / "truth_parts" / ("irradiance_direct_%s_geometric.exr" % name), np.where(fp[..., None], 0.0, acc_f / n))
+    # The light after one or more bounces (all bounces, Russian roulette from the fifth), and after exactly
+    # one; the irradiance_ ones divided by the first hit's diffuse albedo (the light arriving there).
+    for k, fname in (("indirect", "indirect_%s"), ("indirect1", "indirect1_%s"),
+                     ("indirect_demod", "irradiance_indirect_%s"), ("indirect1_demod", "irradiance_indirect1_%s")):
+        write_exr(out / "truth_parts" / ((fname % name) + ".exr"), np.where(fp[..., None], 0.0, acc_i[k] / n))
     save_mask(out, display.rect_mask((H, W), sc.camera.get("mask_rects")) & ~fp)
     lines = ["direct_" + name + ": spp %d, %.1f min, noise median %.3f%% 95th %.3f%% (floor %g), converged %s" % (
         n * spp_pass, (time.time() - t0) / 60, 100 * stats["median_rel"], 100 * stats["p95_rel"], DISPLAY_FLOOR,

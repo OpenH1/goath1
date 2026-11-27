@@ -17,6 +17,9 @@ def main():
     r.add_argument("--flashlight-scale", type=float, help="the flashlight's power scale k: physical 1/d^2 falloff")
     r.add_argument("--static", default="lightmap", choices=("lightmap", "fit"),
                    help="static light from Halo's lightmap (default) or fitted emitters (sky, sun, radiosity)")
+    r.add_argument("--object-static", default="halo", choices=("physical", "halo"),
+                   help="objects' static light: the game's model lighting (halo, the default: the owner's "
+                   "baseline) or only the light the lightmapped walls re-emit (physical)")
     r.add_argument("--centers", action="store_true", help="irradiance at pixel centres (as a rasterizer shades), "
                    "not averaged over each pixel")
     r.add_argument("--dynamic-direct-only", action="store_true", help="only the other dynamic lights' direct part")
@@ -43,7 +46,7 @@ def main():
         if a.flashlight_direct_only:
             return render_flashlight_direct(a.scene, a.out, a.flashlight_scale, centers=a.centers)
         render_scene(a.scene, a.out, a.spp_pass, a.target, a.max_spp, a.max_minutes, flashlight_scale=a.flashlight_scale,
-                     static_mode=a.static)
+                     static_mode=a.static, object_static=a.object_static)
     elif a.cmd == "compare":
         import json
         from .compare import compare

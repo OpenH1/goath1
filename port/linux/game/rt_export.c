@@ -48,6 +48,7 @@ layouts, node indices and strip winding), all of each mesh kept here.
 #include "game/players.h"
 #include "models/model_definitions.h"
 #include "objects/objects.h"
+#include "objects/object_lights_rendering.h"
 #include "objects/object_definitions.h"
 #include "objects/object_types.h"
 #include "rasterizer/rasterizer_geometry.h"
@@ -326,6 +327,44 @@ static int mesh_write(struct rt_export_mesh const *mesh, char const *path, int l
 	return fclose(file) == 0;
 }
 
+/* the self-illumination colors the model pass drew (rasterizer_xbox_models.c's, after its function and
+its external color), per object and shader, the last frame's: the truth's model self-illumination */
+#define RT_EXPORT_SELF_ILLUMINATIONS 2048
+static struct
+{
+	long object;
+	void const *shader;
+	real_rgb_color color, change_color;
+} rt_export_self_illuminations[RT_EXPORT_SELF_ILLUMINATIONS];
+static long rt_export_self_illumination_count;
+
+void rt_export_note_self_illumination(long unique_identifier, void const *shader, real_rgb_color const *color,
+	real_rgb_color const *change_color)
+{
+	long index;
+
+	if (rt_export.phase == 0 || rt_export.phase == 3)
+		return;
+	for (index = 0; index < rt_export_self_illumination_count; index++)
+	{
+		if (rt_export_self_illuminations[index].object == unique_identifier &&
+			rt_export_self_illuminations[index].shader == shader)
+		{
+			rt_export_self_illuminations[index].color = *color;
+			rt_export_self_illuminations[index].change_color = *change_color;
+			return;
+		}
+	}
+	if (rt_export_self_illumination_count < RT_EXPORT_SELF_ILLUMINATIONS)
+	{
+		rt_export_self_illuminations[rt_export_self_illumination_count].object = unique_identifier;
+		rt_export_self_illuminations[rt_export_self_illumination_count].shader = shader;
+		rt_export_self_illuminations[rt_export_self_illumination_count].color = *color;
+		rt_export_self_illuminations[rt_export_self_illumination_count].change_color = *change_color;
+		rt_export_self_illumination_count++;
+	}
+}
+
 /* a shader's index among the materials (named once each) */
 static long material_index(long shader_tag)
 {
@@ -341,6 +380,59 @@ static long material_index(long shader_tag)
 	rt_export.material_tags[rt_export.material_count] = shader_tag;
 	return rt_export.material_count++;
 }
+
+/* an object's static light as the game's model lighting computes it at this tick
+(object_lights.c's lights_prepare_for_object_static: the lightmap sampled beneath the object's centre and
+four points around it, averaged; its ambient color and two distant lights, the first along the lightmap's
+incident direction, the second up from the surface below; the model pass lights a vertex by ambient +
+sum of color x max(0, N . -direction), gamma space) */
+static void static_lighting_write(FILE *list, long object_index)
+{
+	struct render_lighting lighting;
+	short light;
+
+	memset(&lighting, 0, sizeof(lighting));
+	lights_prepare_for_object_static(object_index, &lighting);
+	fprintf(list, ",\"static_lighting\":{\"ambient\":[%.6g,%.6g,%.6g],\"distant\":[",
+		lighting.ambient_color.red, lighting.ambient_color.green, lighting.ambient_color.blue);
+	for (light = 0; light < lighting.distant_light_count && light < MAXIMUM_RENDERED_DISTANT_LIGHTS; light++)
+		fprintf(list, "%s{\"color\":[%.6g,%.6g,%.6g],\"direction\":[%.6g,%.6g,%.6g]}", light ? "," : "",
+			lighting.distant_lights[light].color.red, lighting.distant_lights[light].color.green,
+			lighting.distant_lights[light].color.blue, lighting.distant_lights[light].direction.i,
+			lighting.distant_lights[light].direction.j, lighting.distant_lights[light].direction.k);
+	fprintf(list, "]}");
+}
+
+/* an object's self-illumination and change color as drawn: [{"material", "color", "change_color"}] (gamma
+space; rasterizer_xbox_models.c's combiners: light + multipurpose.g x color, then the base map x lerp(1,
+change color, multipurpose.a); a shader without a multipurpose map reads 1 there) */
+static void self_illumination_write(FILE *list, long object_index)
+{
+	long index, written = 0;
+
+	for (index = 0; index < rt_export_self_illumination_count; index++)
+	{
+		long material;
+
+		if (rt_export_self_illuminations[index].object != object_index)
+			continue;
+		for (material = 0; material < rt_export.material_count; material++)
+		{
+			if ((void const *)shader_definition_get(rt_export.material_tags[material]) ==
+				rt_export_self_illuminations[index].shader)
+				break;
+		}
+		fprintf(list, "%s{\"material\":%ld,\"color\":[%.6g,%.6g,%.6g],\"change_color\":[%.6g,%.6g,%.6g]}",
+			written ? "," : ",\"self_illumination\":[", material < rt_export.material_count ? material : -1L,
+			rt_export_self_illuminations[index].color.red, rt_export_self_illuminations[index].color.green,
+			rt_export_self_illuminations[index].color.blue, rt_export_self_illuminations[index].change_color.red,
+			rt_export_self_illuminations[index].change_color.green, rt_export_self_illuminations[index].change_color.blue);
+		written++;
+	}
+	if (written)
+		fprintf(list, "]");
+}
+
 
 static void unpacked(unsigned long compressed, float out[3])
 {
@@ -1136,8 +1228,11 @@ static void scene_write(void)
 				json_string(list, tag_name_of(object->definition_index));
 				fprintf(list, ",\"model\":");
 				json_string(list, tag_name_of(definition->object.model.index));
-				fprintf(list, ",\"type\":%d,\"id\":%ld,\"parent\":%ld,\"vertices\":%ld,\"triangles\":%ld}",
+				fprintf(list, ",\"type\":%d,\"id\":%ld,\"parent\":%ld,\"vertices\":%ld,\"triangles\":%ld",
 					object->object.type, object_index, object->object.parent_object_index, mesh.vertex_count, triangles);
+				self_illumination_write(list, object_index);
+				static_lighting_write(list, object_index);
+				fprintf(list, "}");
 			}
 			object_count++;
 			object_triangles += triangles;
