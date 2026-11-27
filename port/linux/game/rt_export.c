@@ -71,6 +71,12 @@ layouts, node indices and strip winding), all of each mesh kept here.
 #include <string.h>
 #include <xtl.h>
 
+/* (the scene folder is a path on this machine, not one of the data root's:
+ the host's own fopen and rename, not the game's, which take a path as an
+ Xbox one: port/linux/include/stdio.h) */
+#undef fopen
+#undef rename
+
 int mkdir(const char *path, unsigned int mode);
 void platform_log(const char *format, ...);
 char const *config_string(char const *name);
@@ -897,7 +903,10 @@ static long lightmaps_write(char const *folder, long pages)
 	long page, written = 0;
 
 	if (group == NONE || !tag_index_is_group(group, BITMAP_GROUP_TAG))
+	{
+		platform_log("rt export: the BSP's lightmap bitmap %08lx not read (pages %ld)", (unsigned long)group, pages);
 		return 0;
+	}
 	for (page = 0; page < pages; page++)
 	{
 		struct bitmap_data *bitmap = bitmap_group_try_and_get_bitmap(group, (short)page);
