@@ -553,13 +553,17 @@ Reservoir ris(vec3 p, vec3 shaded, uvec4 mask, int h0, int h1, int others, inout
     return r;
 }
 
-// the reservoir's light at p from a neighbour's (or the last frame's) reservoir: merged into r
-void reservoir_merge(inout Reservoir r, vec4 other, int row, vec3 p, vec3 shaded, int h0, int h1, inout uint h)
+// the reservoir's light at p from a neighbour's (or the last frame's) reservoir, its count at most most: merged into r.
+// The count is capped here, before its weight joins the sum, never after: W = w_sum / (M target) holds only when M is
+// the count the sum was built with (a cap after the merge left W too large by the count it cut, frame after frame:
+// a held light grew without end)
+void reservoir_merge(inout Reservoir r, vec4 other, int row, vec3 p, vec3 shaded, int h0, int h1, float most,
+    inout uint h)
 {
-    if (row < 0 || row >= pass.lights.x || row == h0 || row == h1 || other.z <= 0.0)
+    float m = min(other.z, most);
+    if (row < 0 || row >= pass.lights.x || row == h0 || row == h1 || m <= 0.0)
         return;
     float target = light_estimate(row, p, shaded);
-    float m = min(other.z, M_CAP);
     reservoir_update(r, row, target * other.y * m, target, random(h));
     r.m += m;
 }
@@ -704,9 +708,9 @@ void main()
         {
             vec4 before = texelFetch(reservoirs, q, 0);
             int now = before.x >= 0.0 ? int(row_texel(int(before.x), 6).y) : -1;
-            reservoir_merge(r, before, now, p, shaded, h0, h1, h);
+            // (the history's count at most what leaves this frame's with M_CAP in all)
+            reservoir_merge(r, before, now, p, shaded, h0, h1, max(M_CAP - r.m, 0.0), h);
         }
-        r.m = min(r.m, M_CAP);
         result = r.row >= 0 ? vec4(float(r.row), reservoir_weight(r), r.m, r.target) : vec4(-1.0, 0.0, 0.0, 0.0);
         return;
     }
@@ -734,7 +738,7 @@ void main()
                 // (the spatial pass: this pixel's reservoir and 4 neighbours' within 16 pixels on a like surface)
                 r = Reservoir(-1, 0.0, 0.0, 0.0);
                 vec4 own = texelFetch(reservoirs, pixel, 0);
-                reservoir_merge(r, own, int(own.x), p, shaded, h0, h1, h);
+                reservoir_merge(r, own, int(own.x), p, shaded, h0, h1, M_CAP, h);
                 float distance = uintBitsToFloat(words.z);
                 for (int k = 0; k < 4; k++)
                 {
@@ -747,7 +751,7 @@ void main()
                         dot(unfold(unpackSnorm2x16(there.x)), n) < 0.9)
                         continue;
                     vec4 other = texelFetch(reservoirs, at, 0);
-                    reservoir_merge(r, other, int(other.x), p, shaded, h0, h1, h);
+                    reservoir_merge(r, other, int(other.x), p, shaded, h0, h1, M_CAP, h);
                 }
             }
             else
