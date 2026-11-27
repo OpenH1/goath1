@@ -49,7 +49,9 @@
 // object shadows (SUN's mean, at reservoirs' binding), which the surfaces take off the lightmap's light
 #define FINAL 2048
 // SUN's count's cap (frames): the share's history (a moving shadow lags no more)
-#define SUN_CAP 8.0
+#define SUN_CAP 12.0
+// how far a dynamic object's sun shadow is cast (world units: about 75 m)
+#define SUN_REACH 25.0
 // lights.z's
 #define LIGHTS_FLASHLIGHT 1
 #define LIGHTS_HEROES 2
@@ -552,7 +554,7 @@ void reservoir_merge(inout Reservoir r, vec4 other, int row, vec3 p, vec3 shaded
 
 // the suns' direct share at p where a dynamic object blocks the sun and the structure does not (the lightmap's own
 // shadows already dark): sun_power_scale x power x cos by the shaded normal, one ray a sun toward a point of its disk
-// (four for a wide one, a sky light past 5 degrees)
+// (the objects' ray no longer than SUN_REACH: a dynamic object's shadow from farther is not drawn)
 vec3 sun_share(vec3 p, vec3 n, vec3 shaded, ivec2 pixel)
 {
     vec3 share = vec3(0.0);
@@ -565,13 +567,14 @@ vec3 sun_share(vec3 p, vec3 n, vec3 shaded, ivec2 pixel)
         float cosine = dot(shaded, f);
         if (cosine <= 0.0 || dot(n, f) <= 0.0 || t4.w < 0.0)
             continue;
-        int rays = t5.w > 0.0873 ? 4 : 1;
+        // (one ray a sun, the frames' stratified points over its disk; the history's count averages them)
+        const int rays = 1;
         float blocked = 0.0;
         for (int k = 0; k < rays; k++)
         {
             vec2 disk = concentric(stratified(pixel, 17.0 + float(s) * 4.0 + float(k))) * tan(0.5 * t5.w);
             vec3 d = normalize(f + row_texel(row, 3).xyz * disk.x + row_texel(row, 2).xyz * disk.y);
-            if (visible_by(origin, d, 2048.0, -1, 0xffffffffu, RT_MASK_DYNAMIC) < 1.0 &&
+            if (visible_by(origin, d, SUN_REACH, -1, 0xffffffffu, RT_MASK_DYNAMIC) < 1.0 &&
                 visible_by(origin, d, 2048.0, -1, 0xffffffffu, RT_MASK_STRUCTURE) > 0.0)
                 blocked += 1.0;
         }
