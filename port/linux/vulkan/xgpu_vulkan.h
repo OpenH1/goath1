@@ -403,8 +403,8 @@ of the same format (as much as both have), in the stream's order */
 void xgpu_vulkan_image_copy(struct xgpu_vulkan_image *source, uint32_t source_level, uint32_t source_layer,
 	struct xgpu_vulkan_image *destination, uint32_t destination_level, uint32_t destination_layer);
 /* copies the depth of one single-sampled depth image into another of the
-same format and size, the destination's stencil kept, in the stream's
-order; 0 where it cannot (nothing copied) */
+same format, size and layers (each layer), the destination's stencil kept,
+in the stream's order; 0 where it cannot */
 int xgpu_vulkan_image_copy_depth(struct xgpu_vulkan_image *source, struct xgpu_vulkan_image *destination);
 /* copies a rectangle (x0, y0, x1, y1) of a colour image's layer into the
 same place of another's first layer, of the same format, in the stream's

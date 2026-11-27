@@ -121,12 +121,19 @@ static struct
     uint32_t thickness_serial, thickness_epoch;
 } stream;
 static struct stream_target depth_target = { 1, NULL, NULL };
-static struct xgpu_vulkan_image images[2], depth_image;
+static struct xgpu_vulkan_image images[2], depth_image, depth_copy;
+static int copies, copy_fails;
 static struct xgpu_vulkan_image *cached = &images[0];
 static unsigned lookups;
 static uint32_t epoch;
 static struct stream_target *target_get(uint32_t number) { return number ? &depth_target : NULL; }
 static void target_resolve(struct stream_target *target) { (void)target; }
+static struct xgpu_vulkan_image *target_depth_sampled(struct stream_target *target)
+{
+    (void)target;
+    copies++;
+    return copy_fails ? NULL : &depth_copy;
+}
 static VkSampler xgpu_vulkan_sampler(const struct xgpu_vulkan_sampler_description *description)
 { return 1 + description->minify; }
 static struct xgpu_vulkan_image *xgpu_vulkan_textures_thickness(const struct xgpu_stream_texture_stage *stage)
@@ -146,9 +153,15 @@ int main(void)
     stream.textures_serial = 7;
     stream.stages[0].stage.source = 1;
     stream.stages[0].stage.resource = 0x1000;
-    assert(effect_textures(textures) == 1);
+    /* the depth sampled is its copy, never the attachment drawn against
+    (#1247): no pass of its own; where no copy can be made, the attachment
+    in a pass that writes none of it */
+    assert(effect_textures(textures) == 0 && copies == 1);
     assert(lookups == 1 && textures[XGPU_SPIRV_EFFECT_THICKNESS_BINDING].image == &images[0]);
-    assert(textures[XGPU_SPIRV_EFFECT_DEPTH_BINDING].image == &depth_image);
+    assert(textures[XGPU_SPIRV_EFFECT_DEPTH_BINDING].image == &depth_copy);
+    copy_fails = 1;
+    assert(effect_textures(textures) == 1 && textures[XGPU_SPIRV_EFFECT_DEPTH_BINDING].image == &depth_image);
+    copy_fails = 0;
     /* the same stage, serial and epoch: kept */
     effect_textures(textures);
     assert(lookups == 1 && textures[XGPU_SPIRV_EFFECT_THICKNESS_BINDING].image == &images[0]);
@@ -170,9 +183,9 @@ int main(void)
 
         flat.key.views = XGPU_MULTIVIEW_NONE;
         stream.definition = &flat;
-        assert(effect_textures(textures) == 1);
+        assert(effect_textures(textures) == 0);
         assert(textures[XGPU_SPIRV_EFFECT_DEPTH_BINDING].kind == XGPU_VULKAN_IMAGE_2D);
-        assert(textures[XGPU_SPIRV_EFFECT_DEPTH_BINDING].image == &depth_image);
+        assert(textures[XGPU_SPIRV_EFFECT_DEPTH_BINDING].image == &depth_copy);
         flat.key.views = 1;
         effect_textures(textures);
         assert(textures[XGPU_SPIRV_EFFECT_DEPTH_BINDING].kind == XGPU_VULKAN_IMAGE_2D_ARRAY);
@@ -389,3 +402,112 @@ def test_thickness_lookup_negative_controls(tmp_path, name, original, broken):
     assert text.count(original) == 1, name
     run = _lookup_run(cc, tmp_path, name, _lookup_source(text.replace(original, broken)))
     assert run.returncode != 0, f"{name}: the lookup's test passed with the code broken"
+
+
+DEPTH_SAMPLED_TEST = r"""
+#include <assert.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+struct xgpu_vulkan_image_description { uint32_t width, height, depth_or_layers; };
+struct xgpu_vulkan_image { struct xgpu_vulkan_image_description description; int destroyed; };
+struct stream_target
+{
+    struct xgpu_vulkan_image *image;
+    uint32_t width, height, layers;
+    int depth;
+    struct xgpu_vulkan_image *depth_copy, *depth_copied_from;
+    uint32_t depth_writes, depth_copied;
+};
+static struct { int preparing; uint32_t depth_copies; } stream;
+static struct xgpu_vulkan_image made[8];
+static int made_count, copies;
+static const struct xgpu_vulkan_image_description *xgpu_vulkan_image_description(const struct xgpu_vulkan_image *image)
+{ return &image->description; }
+static void xgpu_vulkan_image_destroy(struct xgpu_vulkan_image *image) { if (image) image->destroyed = 1; }
+static struct xgpu_vulkan_image *target_image_make(const struct stream_target *target, int samples)
+{
+    struct xgpu_vulkan_image *image = &made[made_count++];
+
+    (void)samples;
+    image->description.width = target->width;
+    image->description.height = target->height;
+    image->description.depth_or_layers = target->layers > 1 ? target->layers : 1;
+    return image;
+}
+static int xgpu_vulkan_image_copy_depth(struct xgpu_vulkan_image *source, struct xgpu_vulkan_image *destination)
+{
+    (void)source; (void)destination;
+    copies++;
+    return 1;
+}
+""" + "%s" + r"""
+int main(void)
+{
+    struct xgpu_vulkan_image attachment = { { 64, 32, 1 }, 0 }, other = { { 64, 32, 1 }, 0 };
+    struct stream_target target;
+    struct xgpu_vulkan_image *first;
+
+    memset(&target, 0, sizeof(target));
+    target.image = &attachment;
+    target.width = 64;
+    target.height = 32;
+    target.layers = 1;
+    target.depth = 1;
+    /* made and copied once; sampled again with no write between: the same
+    copy, not copied again */
+    first = target_depth_sampled(&target);
+    assert(first && first != &attachment && copies == 1);
+    assert(target_depth_sampled(&target) == first && copies == 1);
+    /* the depth written (a draw, a clear): copied again before it is sampled */
+    target.depth_writes++;
+    assert(target_depth_sampled(&target) == first && copies == 2);
+    assert(target_depth_sampled(&target) == first && copies == 2);
+    /* another image given the target (borrowed): copied from it */
+    target.image = &other;
+    assert(target_depth_sampled(&target) == first && copies == 3);
+    /* the target's size changed: a new copy of the new size */
+    target.width = 128;
+    assert(target_depth_sampled(&target) != first && first->destroyed && copies == 4);
+    /* preparation copies nothing */
+    target.depth_writes++;
+    stream.preparing = 1;
+    assert(target_depth_sampled(&target) && copies == 4);
+    /* not a depth target: none */
+    target.depth = 0;
+    assert(!target_depth_sampled(&target));
+    return 0;
+}
+"""
+
+
+def _depth_sampled_source(text):
+    start = text.index("static struct xgpu_vulkan_image *target_depth_sampled(struct stream_target *target)\n{")
+    end = text.index("\n}\n", start) + 3
+    return DEPTH_SAMPLED_TEST % text[start:end]
+
+
+@pytest.mark.parametrize("name, original, broken", [
+    (None, None, None),
+    # (the copy made once, never again after the depth is written: stale)
+    ("stale", " || target->depth_copied != target->depth_writes", ""),
+])
+def test_depth_sampled_is_a_copy_made_again_when_written(tmp_path, name, original, broken):
+    # The draws that sample the depth target they are drawn against (soft
+    # effects, glows, the shadows' passes) sample a copy of it, never the
+    # attachment itself (#1247), copied again only once the depth has been
+    # written since; the negative control must fail.
+    cc = compiler()
+    if not cc:
+        pytest.skip("needs a C compiler")
+    text = (ROOT / "port/linux/vulkan/xgpu_vulkan_stream.c").read_text()
+    if name:
+        assert text.count(original) == 1
+        text = text.replace(original, broken)
+    source = tmp_path / "depth_sampled.c"
+    source.write_text(_depth_sampled_source(text))
+    binary = tmp_path / "depth_sampled"
+    subprocess.run([cc, "-std=gnu11", "-O1", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function", str(source),
+                    "-o", str(binary)], check=True)
+    run = subprocess.run([str(binary)], capture_output=True, text=True)
+    assert (run.returncode == 0) == (name is None), (name, run.stdout + run.stderr)
