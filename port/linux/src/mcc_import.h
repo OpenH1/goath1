@@ -1,8 +1,8 @@
 /*
 MCC_IMPORT.H
 
-Import from MCC (docs/mcc-import.md, issue #1257): sharper weapon and
-vehicle textures, their material maps, and MCC's clearer English dialogue,
+Import from MCC (docs/mcc-import.md, issue #1257): sharper weapon,
+vehicle and Spartan textures, their material maps, and MCC's clearer English dialogue,
 built on the player's machine from their own Halo MCC install and kept in
 the data folder's mcc_import. Nothing of MCC's is shipped: the repository
 has only numbers (port/assets/mcc_import/mcc_import.json).
@@ -49,8 +49,8 @@ int mcc_import_choose(void);
 
 /* Begins the import on a thread of its own from the Xbox maps folder
 maps_folder ("d:\maps\": cache_files_map_directory) and the install; `only`
-limits it to the preview meshes whose names have one of its words (NULL:
-all) and `voices` says whether the dialogue is imported too. 0 if it
+limits it to the preview meshes (and layouts' models and folders) whose
+names have one of its words (NULL: all) and `voices` says whether the dialogue is imported too. 0 if it
 cannot begin (no install, or one running). */
 int mcc_import_begin(const char *maps_folder, const char *only, int voices);
 /* whether it is running, how far (0 to 1) and at what ("Textures",
@@ -72,6 +72,6 @@ int mcc_import_bitmap_file(const char *tag, char *path, unsigned long size, unsi
 int mcc_import_tag_file(const char *tag, const char *extension, char *path, unsigned long size);
 
 /* the importer's version, in the note: a change makes the import stale */
-#define MCC_IMPORT_VERSION 1
+#define MCC_IMPORT_VERSION 2
 
 #endif

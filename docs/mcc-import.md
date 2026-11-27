@@ -39,6 +39,13 @@ report line at the end.
    - Multipurpose (Xbox channel order): our masks kept, MCC's matching map's fine detail added; change color ours.
    - `.normal.png` (MCC's normal map turned into our tangent space) and `.orm.png` (occlusion, roughness,
      metalness, with the classic look as the baseline) for Enhanced graphics' material maps.
+   - **Layouts** (`"layouts"` in the JSON): bitmaps whose UV layout MCC's own textures already have, so no mesh
+     and no fit. The Spartan (`characters\cyborg\cyborg`) is one: MCC's `SK_H1_Spartan` is our model, so its
+     `Characters/H1/Spartans/Textures/T_cyborg_01_*` (2048²) map texel for texel onto `characters\cyborg\bitmaps\cyborg`
+     at 4x. The diffuse's channels are matched to ours over our model's islands; our texels are kept on the visor
+     (the color's alpha hole, which MCC paints white); our multipurpose map (with the change color) is kept; the
+     DirectX normal map's green is flipped; the `.orm.png` takes the occlusion, the color's alpha as roughness and
+     the metalness on the same classic baseline. MCC has no first-person arms, so the hands stay ours.
 4. **Voices** (`mcc_import_voices.c`): `halo1/sound/pc/sounds_dialogs.fsb` (FSB5, CELT 0.11 at 44.1 kHz) and its
    `lst/sounds_dialogs.lst.bin` (tag path to samples), decoded with the vendored BSD CELT 0.11 decoder
    (`port/third_party/celt`), encoded as Ogg Vorbis at q6 (`port/third_party/libvorbis`; about 110 kbps mono) in `.sound` tags that keep each Xbox tag's header, pitch ranges,

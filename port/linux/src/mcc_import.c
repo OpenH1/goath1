@@ -294,7 +294,7 @@ static void source_line(char *line, size_t size, const char *what, const char *p
 		snprintf(line, size, "source %s gone\n", what);
 }
 
-/* the sources' lines now: the pak, the dialogue bank and each map a fit names */
+/* the sources' lines now: the pak, the dialogue bank and each map a fit or layout names */
 static void sources_text(char *text, size_t size, const char *install, const char *maps_folder_host, int voices)
 {
 	char path[MAXIMUM_PATH], line[MAXIMUM_PATH + 64];
@@ -310,18 +310,24 @@ static void sources_text(char *text, size_t size, const char *install, const cha
 		source_line(line, sizeof(line), "voices", path);
 		strncat(text, line, size - strlen(text) - 1);
 	}
-	for (fit = 0; fit < mcc_import_fit_count; fit++)
+	/* (the fits' maps, then the layouts' maps, each once) */
+	for (fit = 0; fit < mcc_import_fit_count + mcc_import_layout_count; fit++)
 	{
+		const char *map = fit < mcc_import_fit_count ? mcc_import_fits[fit].map :
+			mcc_import_layouts[fit - mcc_import_fit_count].map;
 		unsigned int before;
 		char what[96];
 
-		for (before = 0; before < fit && strcmp(mcc_import_fits[before].map, mcc_import_fits[fit].map); before++)
-		{
-		}
+		for (before = 0; before < fit; before++)
+			if (!strcmp(map, before < mcc_import_fit_count ? mcc_import_fits[before].map :
+				mcc_import_layouts[before - mcc_import_fit_count].map))
+			{
+				break;
+			}
 		if (before < fit)
 			continue;
-		snprintf(path, sizeof(path), "%s%s.map", maps_folder_host, mcc_import_fits[fit].map);
-		snprintf(what, sizeof(what), "map:%s", mcc_import_fits[fit].map);
+		snprintf(path, sizeof(path), "%s%s.map", maps_folder_host, map);
+		snprintf(what, sizeof(what), "map:%s", map);
 		source_line(line, sizeof(line), what, path);
 		strncat(text, line, size - strlen(text) - 1);
 	}

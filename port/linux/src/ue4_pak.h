@@ -29,8 +29,8 @@ unsigned long ue4_pak_index_crc(const struct ue4_pak *pak);
 const char *ue4_pak_name(const struct ue4_pak *pak, long entry);
 /* the entry of that full name, or -1 */
 long ue4_pak_find(const struct ue4_pak *pak, const char *name);
-/* the one entry under `root` named <name>.uasset (any folder below it), or
--1 if none or more than one */
+/* the one entry under `root` named <name>.uasset (in it or any folder
+below it), or -1 if none or more than one */
 long ue4_pak_find_asset(const struct ue4_pak *pak, const char *root, const char *name);
 /* an entry's bytes (malloc'd, *size of them); NULL if it cannot be read */
 unsigned char *ue4_pak_read(const struct ue4_pak *pak, long entry, size_t *size);

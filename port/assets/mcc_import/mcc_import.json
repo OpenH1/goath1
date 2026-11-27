@@ -641,5 +641,17 @@
     }
    ]
   }
+ ],
+ "layouts": [
+  {
+   "model": "characters\\cyborg\\cyborg",
+   "map": "bloodgulch",
+   "bitmap": "characters\\cyborg\\bitmaps\\cyborg",
+   "root": "Characters/H1/Spartans/Textures/",
+   "color": "T_cyborg_01_Base_Color",
+   "normal": "T_cyborg_01_Normal_DirectX",
+   "metallic": "T_cyborg_01_Metallic",
+   "occlusion": "T_cyborg_01_Mixed_AO"
+  }
  ]
 }
