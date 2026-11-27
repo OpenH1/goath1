@@ -599,11 +599,11 @@ class HaloSelfIllum(mi.Texture):
     def __init__(self, props):
         mi.Texture.__init__(self, props)
         self.albedo = props["albedo"]
-        self.mask = props["mask"]
+        self.mask = props["mask"] if props.has_property("mask") else None
         self.color = mi.Color3f(*[_opq(c) for c in _vec(props, "color", [0, 0, 0])])
 
     def eval(self, si, active=True):
-        m = self.mask.eval(si, active).y
+        m = mi.Float(1.0) if self.mask is None else self.mask.eval(si, active).y
         return self.albedo.eval(si, active) * dr.power(dr.clip(self.color * m, 0.0, 1.0), 2.2)
 
     def eval_1(self, si, active=True):
@@ -622,6 +622,38 @@ class HaloSelfIllum(mi.Texture):
         return "HaloSelfIllum"
 
 
+class HaloChangeColor(mi.Texture):
+    """A model's albedo with its change color as drawn: base x lerp(1, change color, multipurpose.a)
+    (rasterizer_xbox_models.c's combiner stage 2), in gamma space, made linear (^2.2 of a .lin base is the
+    base itself, so the change color is decoded ^2.2 and multiplied in)."""
+
+    def __init__(self, props):
+        mi.Texture.__init__(self, props)
+        self.albedo = props["albedo"]
+        self.mask = props["mask"] if props.has_property("mask") else None
+        self.change = mi.Color3f(*[_opq(c) for c in _vec(props, "change", [1, 1, 1])])
+
+    def eval(self, si, active=True):
+        a = mi.Float(1.0) if self.mask is None else self.mask.eval_1(si, active)  # multipurpose alpha
+        mix = (1.0 - a) + a * self.change
+        return self.albedo.eval(si, active) * dr.power(dr.clip(mix, 0.0, 1.0), 2.2)
+
+    def eval_1(self, si, active=True):
+        return mi.luminance(self.eval(si, active))
+
+    def mean(self):
+        return 0.3
+
+    def is_spatially_varying(self):
+        return True
+
+    def traverse(self, cb):
+        pass
+
+    def to_string(self):
+        return "HaloChangeColor"
+
+
 _registered = False
 
 
@@ -635,4 +667,5 @@ def register():
     mi.register_bsdf("halo_bump", lambda p: HaloBump(p))
     mi.register_texture("halo_lightmap_radiance", lambda p: HaloLightmapRadiance(p))
     mi.register_texture("halo_self_illum", lambda p: HaloSelfIllum(p))
+    mi.register_texture("halo_change_color", lambda p: HaloChangeColor(p))
     _registered = True

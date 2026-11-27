@@ -78,6 +78,10 @@ def trace(scene, sampler, ray, rr_depth=5, max_depth=1024):
     """(emission, direct, indirect): the light of paths of 1, 2 and more vertices, in one pass."""
     ctx = mi.BSDFContext()
     Le_, Ld_, Li_ = mi.Spectrum(0.0), mi.Spectrum(0.0), mi.Spectrum(0.0)
+    # (demodulated parts: the light leaving the first hit divided by its diffuse albedo, so the light
+    # arriving there; and the one-bounce indirect light, paths of exactly 3 vertices)
+    I1_, Dd_, Id_, I1d_ = mi.Spectrum(0.0), mi.Spectrum(0.0), mi.Spectrum(0.0), mi.Spectrum(0.0)
+    inv_a0 = mi.Spectrum(0.0)
     beta = mi.Spectrum(1.0)
     active = mi.Bool(True)
     prev_si = dr.zeros(mi.SurfaceInteraction3f)
@@ -85,24 +89,31 @@ def trace(scene, sampler, ray, rr_depth=5, max_depth=1024):
     prev_delta = mi.Bool(True)
     depth = mi.UInt32(0)
 
-    def add(depth_of_path, value, Le_, Ld_, Li_, mask):
+    def add(depth_of_path, value, acc, inv_a0, mask):
+        Le_, Ld_, Li_, I1_, Dd_, Id_, I1d_ = acc
         Le_ = dr.select(mask & (depth_of_path == 1), Le_ + value, Le_)
         Ld_ = dr.select(mask & (depth_of_path == 2), Ld_ + value, Ld_)
         Li_ = dr.select(mask & (depth_of_path > 2), Li_ + value, Li_)
-        return Le_, Ld_, Li_
+        I1_ = dr.select(mask & (depth_of_path == 3), I1_ + value, I1_)
+        Dd_ = dr.select(mask & (depth_of_path == 2), Dd_ + value * inv_a0, Dd_)
+        Id_ = dr.select(mask & (depth_of_path > 2), Id_ + value * inv_a0, Id_)
+        I1d_ = dr.select(mask & (depth_of_path == 3), I1d_ + value * inv_a0, I1d_)
+        return Le_, Ld_, Li_, I1_, Dd_, Id_, I1d_
 
-    def cond(sampler, ray, beta, active, prev_si, prev_pdf, prev_delta, depth, Le_, Ld_, Li_):
+    def cond(sampler, ray, beta, active, prev_si, prev_pdf, prev_delta, depth, acc, inv_a0):
         return active
 
-    def body(sampler, ray, beta, active, prev_si, prev_pdf, prev_delta, depth, Le_, Ld_, Li_):
+    def body(sampler, ray, beta, active, prev_si, prev_pdf, prev_delta, depth, acc, inv_a0):
         si, beta = intersect_through(scene, sampler, ray, beta, active)
         # Light from an emitter hit here (or the sky when missed): a path of depth + 1 vertices.
         ds = mi.DirectionSample3f(scene, si=si, ref=prev_si)
         em_pdf = scene.pdf_emitter_direction(prev_si, ds, active & ~prev_delta)
         Le = beta * _mis(prev_pdf, em_pdf) * ds.emitter.eval(si, active)
-        Le_, Ld_, Li_ = add(depth + 1, Le, Le_, Ld_, Li_, active)
+        acc = add(depth + 1, Le, acc, inv_a0, active)
         active &= si.is_valid() & (depth + 1 < max_depth)
         bsdf = si.bsdf(ray)
+        a0 = bsdf.eval_diffuse_reflectance(si, active & (depth == 0))
+        inv_a0 = dr.select(active & (depth == 0), dr.select(a0 > 1e-3, dr.rcp(a0), 0.0), inv_a0)
         # Next event: a light sample, its shadow ray through cutouts: a path of depth + 2 vertices.
         active_em = active & mi.has_flag(bsdf.flags(), mi.BSDFFlags.Smooth)
         ds_em, em_w = scene.sample_emitter_direction(si, sampler.next_2d(active), False, active_em)
@@ -111,7 +122,7 @@ def trace(scene, sampler, ray, rr_depth=5, max_depth=1024):
         wo = si.to_local(ds_em.d)
         bsdf_val, bsdf_pdf = bsdf.eval_pdf(ctx, si, wo, active_em)
         mis_em = dr.select(ds_em.delta, 1.0, _mis(ds_em.pdf, bsdf_pdf))
-        Le_, Ld_, Li_ = add(depth + 2, beta * mis_em * bsdf_val * em_w * T, Le_, Ld_, Li_, active_em)
+        acc = add(depth + 2, beta * mis_em * bsdf_val * em_w * T, acc, inv_a0, active_em)
         # The next direction from the BSDF.
         bs, bw = bsdf.sample(ctx, si, sampler.next_1d(active), sampler.next_2d(active), active)
         beta = dr.select(active, beta * bw, beta)
@@ -126,13 +137,16 @@ def trace(scene, sampler, ray, rr_depth=5, max_depth=1024):
         survive = sampler.next_1d(rr) < q
         beta = dr.select(rr, dr.select(survive, beta / dr.maximum(q, 1e-8), 0.0), beta)
         active &= ~rr | survive
-        return sampler, ray, beta, active, prev_si, prev_pdf, prev_delta, depth, Le_, Ld_, Li_
+        return sampler, ray, beta, active, prev_si, prev_pdf, prev_delta, depth, acc, inv_a0
 
-    state = dr.while_loop((sampler, ray, beta, active, prev_si, prev_pdf, prev_delta, depth, Le_, Ld_, Li_),
-                          cond, body)
-    return state[-3], state[-2], state[-1]
+    state = dr.while_loop((sampler, ray, beta, active, prev_si, prev_pdf, prev_delta, depth,
+                           (Le_, Ld_, Li_, I1_, Dd_, Id_, I1d_), inv_a0), cond, body)
+    return state[-2]
 
 
+# emission, direct, indirect sum to the light; indirect1 is the one-bounce share of indirect; *_demod are
+# direct, indirect and indirect1 divided by the first hit's diffuse albedo (the light arriving there)
+PARTS = ("emission", "direct", "indirect", "indirect1", "direct_demod", "indirect_demod", "indirect1_demod")
 MAX_LANES = 1 << 22  # samples a launch: evaluated (wavefront) loops keep each lane's state in memory
 
 
@@ -144,7 +158,7 @@ def render_pass(scene, spp, seed, parts=False, max_depth=1024, centers=False):
     sensor = scene.sensors()[0]
     W, H = (int(v) for v in sensor.film().size())
     step = max(1, MAX_LANES // (W * H))
-    out = {k: np.zeros((H, W, 3)) for k in ("emission", "direct", "indirect")}
+    out = {k: np.zeros((H, W, 3)) for k in PARTS}
     done = 0
     while done < spp:
         k = min(step, spp - done)
@@ -172,9 +186,9 @@ def _render_chunk(scene, sensor, W, H, spp, seed, max_depth, centers):
     x = mi.Float(pix % W) + (0.5 if centers else jx)
     y = mi.Float(pix // W) + (0.5 if centers else jy)
     ray, w = sensor.sample_ray(0.0, 0.5, mi.Point2f(x / W, y / H), mi.Point2f(0.5, 0.5))
-    Le, Ld, Li = trace(scene, sampler, ray, max_depth=max_depth)
+    parts = trace(scene, sampler, ray, max_depth=max_depth)
     out = {}
-    for name, L in (("emission", Le), ("direct", Ld), ("indirect", Li)):
+    for name, L in zip(PARTS, parts):
         L = L * w
         chans = []
         for c in (L.x, L.y, L.z):

@@ -260,6 +260,10 @@ class Scene:
         if self.white:
             albedo = mi.load_dict({"type": "rgb", "value": [1.0, 1.0, 1.0]})
             summary["albedo"] = "white (irradiance render)"
+        elif base is None and mtype == "model":
+            # a model shader without a base map samples no texture: the combiners read white there
+            albedo = mi.load_dict({"type": "rgb", "value": [1.0, 1.0, 1.0]})
+            summary["albedo"] = "white (a model shader without a base map)"
         elif base is None:
             albedo = mi.load_dict({"type": "rgb", "value": [0.5, 0.5, 0.5]})
             summary["albedo"] = "placeholder 0.5 grey (no base map%s)" % (
@@ -481,6 +485,29 @@ class Scene:
 
     # glow: the objects' self-illumination as drawn at the tick (objects.json's self_illumination; the
     # environment shaders' is in the lightmap group, folded into the lightmap as the game's pass does)
+    def object_change_colors(self):
+        """Each object's drawn change color per material (objects.json), where it is not white."""
+        if hasattr(self, "_change"):
+            return self._change
+        out = {}
+        p = self.folder / "geometry" / "objects.json"
+        if p.exists():
+            for o in json.loads(p.read_text()):
+                for e in o.get("self_illumination") or []:
+                    cc = e.get("change_color")
+                    if cc and e.get("material", -1) >= 0 and min(cc) < 1.0:
+                        out.setdefault((self.folder / "geometry" / o["file"]).resolve(), {})[int(e["material"])] = cc
+        self._change = out
+        return out
+
+    def change_albedo(self, mid, cc):
+        m = self.materials[mid] if 0 <= mid < len(self.materials) else {}
+        img = self.image(m["multipurpose_map"]) if m.get("multipurpose_map") else None
+        props = {"type": "halo_change_color", "albedo": self.albedos[mid], "change": [float(c) for c in cc]}
+        if img is not None:
+            props["mask"] = self.bitmap(img[:, :, 3:4])
+        return mi.load_dict(props)
+
     def object_glow(self):
         out = {}
         self.load_geometry()
@@ -636,18 +663,29 @@ class Scene:
                 self.mesh_faces[name] = (fpath, np.nonzero(mats == mid)[0])
                 tb = self.geometry[fpath][7]
                 em_obj = mi.load_dict(emitter) if (emitter and emit) else None
+                cc = self.object_change_colors().get(fpath.resolve(), {}).get(int(mid)) if is_object else None
+                albedo_here = self.albedos.get(int(mid))
+                if cc and albedo_here is not None and not self.white:
+                    # the object's change color (a device's state color) on its albedo, as drawn
+                    albedo_here = self.change_albedo(int(mid), cc)
+                    bsdf = mi.load_dict({"type": "diffuse", "reflectance": albedo_here})
+                    self.note_once("objects' change colors applied (their meshes diffuse only)")
                 if group == "glow" and is_object:
                     color = glow.get(fpath.resolve(), {}).get(int(mid))
                     mask = self.multipurpose(int(mid)) if color else None
+                    has_mp = bool((self.materials[int(mid)] if int(mid) < len(self.materials) else {}).get("multipurpose_map"))
                     env_si = self.env_self_illum(int(mid))
+                    if env_si is not None and self.white:
+                        env_si = None
                     if env_si is not None:
                         # an object drawn with an environment shader (a console's screens): its self-
                         # illumination at the tick, as the lightmap pass adds it, on no lightmap
                         em_obj = mi.load_dict({"type": "area", "radiance": dict(env_si, albedo=self.albedos[int(mid)])})
-                    elif mask is not None:
-                        em_obj = mi.load_dict({"type": "area", "radiance": {
-                            "type": "halo_self_illum", "albedo": self.albedos[int(mid)], "mask": mask,
-                            "color": [float(c) for c in color]}})
+                    elif color and max(color) > 0 and (mask is not None or not has_mp):
+                        rad = {"type": "halo_self_illum", "albedo": albedo_here, "color": [float(c) for c in color]}
+                        if mask is not None:
+                            rad["mask"] = mask
+                        em_obj = mi.load_dict({"type": "area", "radiance": rad})
                 shapes[name] = self.make_mesh(name, pos[used], n, uv[used], inv.reshape(-1, 3), bsdf, em_obj,
                                               tb[used] if tb is not None else None)
         self.meshes = shapes
