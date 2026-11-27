@@ -741,6 +741,7 @@ void platform_frame_step_hook(unsigned long long (*due)(unsigned long long now, 
 int platform_frame_woken_for_step(void);
 void platform_frame_wait(void);
 unsigned long long SDL_GetTicksNS(void);
+void platform_delay_nanoseconds(unsigned long long nanoseconds);
 unsigned long long frame_step_wake(unsigned long long now, unsigned long long frame_due, long long left,
 	unsigned long long cost);
 /* port: port/linux/src/port_config.c */
@@ -3021,6 +3022,47 @@ static real main_frame_time_fixed(
 	return seconds;
 }
 
+/* port: debug.frame_time in a network game (footage of a co-op host or
+client): the frames' fixed times must not run ahead of the computer's
+clock, which the other machines' clocks keep. A frame drawn in less than
+its fixed time ran the game faster than real time (twice as fast for a
+720p client on a fast computer): its clock ran ahead of the host's, so it
+played the host's cutscene camera a tick and held it the next, predicted
+the vehicles the host moves ahead and was pulled back, and the view shook,
+out of a moving lifepod's hull. Each frame waits until the computer's clock
+reaches the frames' time; one that falls behind (more than a quarter of a
+second) is taken as the new start, as nothing can make that time up */
+static void main_frame_time_fixed_pace(
+	real frame_seconds)
+{
+	static unsigned long long start_ns;
+	static double frames_seconds;
+	unsigned long long now = SDL_GetTicksNS();
+	double behind;
+
+	if (main_globals.connection == _game_connection_local)
+	{
+		start_ns = 0;
+		return;
+	}
+	if (!start_ns)
+	{
+		start_ns = now;
+		frames_seconds = 0.0;
+	}
+	frames_seconds += frame_seconds;
+	behind = (double)(now - start_ns) / 1e9 - frames_seconds;
+	if (behind > 0.25)
+	{
+		start_ns = now;
+		frames_seconds = 0.0;
+	}
+	else if (behind < 0.0)
+	{
+		platform_delay_nanoseconds((unsigned long long)(-behind * 1e9));
+	}
+}
+
 /* The native ports draw a frame whenever the display can show one, paced
 by vsync, and frames fall between the 30 Hz ticks
 (port/linux/game/render_interpolation.c): no vertical blank throttle, and
@@ -3059,6 +3101,7 @@ static void main_update_time_unthrottled(
 	if (main_frame_time_fixed() > 0.0f)
 	{
 		seconds_elapsed = main_frame_time_fixed();
+		main_frame_time_fixed_pace(seconds_elapsed);
 	}
 	else if (main_globals.movie)
 	{
@@ -3315,6 +3358,7 @@ static void main_update_time(
 	if (main_frame_time_fixed() > 0.0f)
 	{
 		seconds_elapsed = main_frame_time_fixed();
+		main_frame_time_fixed_pace(seconds_elapsed);
 	}
 	else if (main_globals.movie)
 	{
