@@ -52,6 +52,7 @@ touched.
 #include "text/draw_string.h"
 #include "text/font_group.h"
 #include "text/unicode.h"
+#include "tag_files/tag_files.h"
 
 #include "campaign_score_hud.h"
 #include "player_settings.h"
@@ -123,8 +124,8 @@ static struct
 	frame drawn */
 	boolean summary_pending;
 	boolean summary_compact;
-	long summary_scenario;
-	long drawn_scenario;
+	char summary_level[64];
+	char drawn_level[64];
 	/* when each group's pop-up began to show (0: waiting) */
 	unsigned long shown_at[SCORE_GROUPS];
 	/* debug.score_pictures: the pop-ups' pictures saved, and the
@@ -150,6 +151,22 @@ static boolean score_campaign(
 {
 	return game_time_initialized() && game_in_progress() && global_scenario &&
 		global_scenario->type == _scenario_type_solo && !game_engine_running();
+}
+
+/* a cutscene plays: the game's, or its letterbox showing (a level's
+scripted opening with the HUD in part) */
+static boolean score_cutscene(
+	void)
+{
+	return cinematic_in_progress() || (cinematic_globals &&
+		(cinematic_globals->show_letterbox || cinematic_globals->letterbox_amount > 0.0f));
+}
+
+/* the level being played's name ("" for none) */
+static char const *score_level(
+	void)
+{
+	return global_scenario_index != NONE ? tag_get_name(global_scenario_index) : "";
 }
 
 /* the player datum of an absolute index, else NULL */
@@ -541,7 +558,7 @@ static void score_draw_popup(
 	wchar_t points[16];
 
 	if (player == NONE || !config_player_boolean(local_player_index, "display.score_popups") ||
-		cinematic_in_progress())
+		score_cutscene())
 	{
 		return;
 	}
@@ -616,7 +633,8 @@ static void score_draw_popup(
 	score_color(&color, 0.35f, 0.9f * alpha);
 	score_text(text, x, y, 0, 0.47f * unit, &color);
 	entry = campaign_score_hud_player(self);
-	if (entry)
+	/* (the player's total under it, but not under the last level's) */
+	if (entry && score_hud.ticks[current] <= game_time_get())
 	{
 		campaign_score_hud_number(entry->score, points, NUMBEROF(points));
 		score_color(&color, 0.0f, 0.55f * alpha);
@@ -747,7 +765,7 @@ static void score_draw_summary(
 	unsigned long duration = score_hud.summary_compact ? SCORE_SUMMARY_COMPACT_MILLISECONDS :
 		SCORE_SUMMARY_MILLISECONDS;
 
-	if (!score_hud.summary_shown || cinematic_in_progress())
+	if (!score_hud.summary_shown || score_cutscene())
 		return;
 	age = now - score_hud.summary_at;
 	if (age >= duration)
@@ -890,7 +908,7 @@ static void score_summary_update(
 {
 	boolean best = FALSE;
 	boolean changed = FALSE;
-	long scenario = global_scenario_index;
+	char const *level = score_level();
 
 	if (score_fill())
 	{
@@ -916,27 +934,27 @@ static void score_summary_update(
 		score_hud.summary_best = best;
 		score_hud.summary_pending = TRUE;
 		score_hud.summary_shown = FALSE;
-		score_hud.summary_scenario = score_hud.drawn_scenario;
+		csstrncpy(score_hud.summary_level, score_hud.drawn_level, sizeof(score_hud.summary_level) - 1);
 	}
 	/* (shown once no cutscene plays: in full on the level it ended in,
 	else small in a corner, the next level being played) */
-	if (score_hud.summary_pending && !cinematic_in_progress())
+	if (score_hud.summary_pending && !score_cutscene())
 	{
 		score_hud.summary_pending = FALSE;
 		score_hud.summary_shown = TRUE;
 		score_hud.summary_pictured = FALSE;
 		score_hud.summary_at = system_milliseconds();
-		score_hud.summary_compact = scenario != score_hud.summary_scenario;
+		score_hud.summary_compact = strcmp(level, score_hud.summary_level) != 0;
 	}
 	/* (the next level begun while it shows in full: small, for its own
 	time) */
-	if (score_hud.summary_shown && !score_hud.summary_compact && scenario != score_hud.summary_scenario)
+	if (score_hud.summary_shown && !score_hud.summary_compact && strcmp(level, score_hud.summary_level) != 0)
 	{
 		score_hud.summary_compact = TRUE;
 		score_hud.summary_pictured = FALSE;
 		score_hud.summary_at = system_milliseconds();
 	}
-	score_hud.drawn_scenario = scenario;
+	csstrncpy(score_hud.drawn_level, level, sizeof(score_hud.drawn_level) - 1);
 }
 
 /* ---------- public code */
