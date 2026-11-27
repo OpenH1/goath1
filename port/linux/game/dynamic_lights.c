@@ -1057,8 +1057,12 @@ static void dynamic_lights_flashlights(long count)
 	}
 	for (slot = 0; slot < used && !(dynamic_lights.frame % 72) && config_boolean("debug.dynamic_lights_log"); slot++)
 	{
-		platform_log("dynamic lights: frame %lu: flashlight %d (light %d) forward %.2f %.2f %.2f up %.2f %.2f %.2f%s "
-			"owner %lu", dynamic_lights.frame, slot, flashlights[slot].light, (double)flashlights[slot].forward[0],
+		platform_log("dynamic lights: frame %lu: flashlight %d (light %d) at %.3f %.3f %.3f (camera %.3f %.3f %.3f) "
+			"forward %.2f %.2f %.2f up %.2f %.2f %.2f%s owner %lu", dynamic_lights.frame, slot, flashlights[slot].light,
+			(double)dynamic_lights.lights[flashlights[slot].light].position[0],
+			(double)dynamic_lights.lights[flashlights[slot].light].position[1],
+			(double)dynamic_lights.lights[flashlights[slot].light].position[2], (double)render.camera.position.x,
+			(double)render.camera.position.y, (double)render.camera.position.z, (double)flashlights[slot].forward[0],
 			(double)flashlights[slot].forward[1], (double)flashlights[slot].forward[2], (double)flashlights[slot].up[0],
 			(double)flashlights[slot].up[1], (double)flashlights[slot].up[2], flashlights[slot].shadowed ? " shadowed" : "",
 			flashlights[slot].owner);
