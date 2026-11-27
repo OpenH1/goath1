@@ -74,7 +74,7 @@ static struct
 	struct xgpu_stream_rt_bounce lights;
 	int have_lights;
 	struct rt_bounce_window windows[RT_BOUNCE_WINDOWS];
-	float strength;
+	float strength, cell;
 } rt_bounce;
 
 static VkShaderModule rt_bounce_shader(int which, BOOL vertex)
@@ -143,8 +143,10 @@ static int rt_bounce_shaders(void)
 	}
 	{
 		const char *strength = getenv("HALO_RT_BOUNCE_STRENGTH");
+		const char *cell = getenv("HALO_RT_BOUNCE_CELL");
 
 		rt_bounce.strength = strength ? (float)atof(strength) : 1.0f;
+		rt_bounce.cell = cell && atof(cell) > 0.01 ? (float)atof(cell) : XGPU_RT_BOUNCE_CELL;
 	}
 	rt_bounce.made = 1;
 	return 1;
@@ -327,14 +329,14 @@ void xgpu_vulkan_rt_bounce_draw(struct xgpu_vulkan_image *inputs, const struct x
 	memset(block, 0, sizeof(block));
 	for (axis = 0; axis < 3; axis++)
 	{
-		float origin = floorf(pass->camera[0][axis] / XGPU_RT_BOUNCE_CELL) - floorf(dims[axis] * 0.5f);
+		float origin = floorf(pass->camera[0][axis] / rt_bounce.cell) - floorf(dims[axis] * 0.5f);
 
 		block[XGPU_RT_BOUNCE_BLOCK_ORIGIN][axis] = origin;
 		block[XGPU_RT_BOUNCE_BLOCK_PREVIOUS][axis] = window->origin[axis];
 		window->origin[axis] = origin;
 		block[XGPU_RT_BOUNCE_BLOCK_EYE][axis] = pass->camera[0][axis];
 	}
-	block[XGPU_RT_BOUNCE_BLOCK_ORIGIN][3] = XGPU_RT_BOUNCE_CELL;
+	block[XGPU_RT_BOUNCE_BLOCK_ORIGIN][3] = rt_bounce.cell;
 	block[XGPU_RT_BOUNCE_BLOCK_PREVIOUS][3] = window->valid ? 1.0f : 0.0f;
 	seconds = rt_bounce.lights.seconds > 0.0f && rt_bounce.lights.seconds < 0.25f ? rt_bounce.lights.seconds : 1.0f / 60.0f;
 	steps = seconds * 60.0f;
@@ -397,7 +399,7 @@ void xgpu_vulkan_rt_bounce_draw(struct xgpu_vulkan_image *inputs, const struct x
 		rt_bounce.drawn_said = 1;
 		host_logf(HOST_LOG_INFO, "vulkan: display.rt_bounce: the bounced light traced (%ux%u samples, a cache of "
 			"%dx%dx%d cells of %.3f world units)", tiles_wide, tiles_high, XGPU_RT_BOUNCE_GRID_X, XGPU_RT_BOUNCE_GRID_Y,
-			XGPU_RT_BOUNCE_GRID_Z, (double)XGPU_RT_BOUNCE_CELL);
+			XGPU_RT_BOUNCE_GRID_Z, (double)rt_bounce.cell);
 	}
 }
 
