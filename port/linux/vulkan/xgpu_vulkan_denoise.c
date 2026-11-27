@@ -90,6 +90,7 @@ enum
 /* the specular channel's cap where the guides have no roughness (its
 temporal stage's own runs from 16 to 32 by it: lt/denoise_temporal.frag) */
 #define DENOISE_SPECULAR_CAP 32
+#define DENOISE_SPECULAR_PASSES 2
 
 /* a channel's images and history (the diffuse's; the specular's,
 xgpu_vulkan_denoise_specular_draw): the histories and filter guides in
@@ -390,6 +391,16 @@ static struct xgpu_vulkan_image *denoise_channel_draw(struct denoise_channel *ch
 	previous_guide = channel->filter_guides[channel->current];
 	channel->current ^= 1;
 	guide = channel->filter_guides[channel->current];
+	/* (the specular's: the diffuse channel's, drawn this frame from the
+	same pixels, where it has them) */
+	if (specular && denoise.channels[0].result && denoise.channels[0].previous_valid &&
+		xgpu_vulkan_image_description(denoise.channels[0].result)->width == width &&
+		xgpu_vulkan_image_description(denoise.channels[0].result)->height == height)
+	{
+		guide = denoise.channels[0].filter_guides[denoise.channels[0].current];
+		previous_guide = denoise.channels[0].filter_guides[denoise.channels[0].current ^ 1];
+	}
+	else
 	{
 		struct xgpu_vulkan_image *textures[2] = { inputs, guides };
 
@@ -419,7 +430,9 @@ static struct xgpu_vulkan_image *denoise_channel_draw(struct denoise_channel *ch
 	}
 	/* 4: the spatial stage (the first pass from the history; the stage left
 	out, checking: one pass of step 0, the mean alone) */
-	passes = denoise.spatial ? DENOISE_PASSES : 1;
+	/* (the specular's two, steps 1 and 2: its lobes are narrow, its count
+	high where it is sharp) */
+	passes = denoise.spatial ? (specular ? DENOISE_SPECULAR_PASSES : DENOISE_PASSES) : 1;
 	for (index = 0; index < passes; index++)
 	{
 		int last = index == passes - 1;
