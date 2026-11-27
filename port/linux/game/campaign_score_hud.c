@@ -392,6 +392,8 @@ static void score_poll(
 
 			if (rank > 0)
 				score_group_add(events[index].player, events[index].points, rank, text, system_milliseconds());
+			platform_log("campaign score: event %d of %ld points for player %d polled (tmp)", (int)events[index].kind,
+				events[index].points, (int)events[index].player);
 		}
 		if (count < (long)NUMBEROF(events))
 			break;
@@ -527,6 +529,14 @@ static void score_draw_popup(
 	if (player == NONE || !config_player_boolean(local_player_index, "display.score_popups") ||
 		cinematic_in_progress())
 	{
+		static unsigned long logged_at;
+
+		if (player != NONE && now - logged_at > 1000)
+		{
+			logged_at = now;
+			platform_log("campaign score: pop-ups held (tmp): cinematic %d, setting %d", (int)cinematic_in_progress(),
+				config_player_boolean(local_player_index, "display.score_popups"));
+		}
 		return;
 	}
 	for (index = 0; index < SCORE_GROUPS; index++)
