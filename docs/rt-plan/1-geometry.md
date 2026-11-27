@@ -65,7 +65,29 @@ primitive:
   self-illumination color. Textures are named by a slot in one bindless array (`VK_EXT_descriptor_indexing`).
 - Collision material ids stay as today for gameplay-like uses (footsteps don't need them).
 
-## Memory and build time (estimates, to measure in stage 1)
+## Measured in stage 1 (2026-11-26)
+
+`debug.rt_render_geometry` on omarchy (Radeon 8060S, RADV), the logs' `as drawn` and `meshes built` lines. The
+level's render triangles are almost exactly its collision count: Halo's BSP render and collision meshes come from
+the same source, so the "1.5 to 3 times" guess below was wrong. The BLAS is 158.7 B a triangle uncompacted (non-indexed,
+`PREFER_FAST_TRACE`, no compaction yet), the same on every map, about 0.78 times the scratch.
+
+| Map (BSP) | Collision tris | Render tris, opaque | Alpha-tested (stage 3) | Transparent | BLAS | GPU build | CPU read |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Blood Gulch | 5,468 | 5,371 | 0 | 132 | 0.81 MB | 0.41 ms | 0.07 ms |
+| a10 (BSP 0) | 41,238 | 40,430 | 504 | 12 | 6.12 MB | 0.71 ms (1.52 ms with 16 object meshes) | 0.45 ms |
+| a10 (BSP 7) | 7,922 | 7,788 | 24 | 378 | 1.18 MB | 0.56 ms | 0.07 ms |
+| b30 (BSP 0) | 32,960 | 32,806 | 48 | 2,251 | 4.96 MB | 0.85 ms (with 16 object meshes) | 0.37 ms |
+
+The GPU time is the whole batch built that frame (timestamps around `vkCmdBuildAccelerationStructuresKHR`); the CPU
+read is the game thread's walk of the materials. The render mesh comes the frame after the collision one, so no
+load waits for it. With the switch, the level costs twice its BLAS (the collision mesh is kept, unused, until the
+map's end), and a BSP switch back (a10's start goes 0, 7, 0) makes both again: a10 reached 27.9 MB of meshes in
+60 s. Keeping each BSP's meshes by index, or letting a mesh go alone, belongs in stage 2's new stream record.
+
+Clip walls: the render geometry has none (nothing draws them), so they are out by construction.
+
+## Memory and build time (estimates before stage 1)
 
 Render BSPs are roughly 1.5 to 3 times their collision triangle count (cutouts, detail, decorations). Compacted BLAS
 size is about 60 to 150 B a triangle depending on the vendor, plus about 24 B a vertex of attributes.

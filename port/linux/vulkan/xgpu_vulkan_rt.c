@@ -339,8 +339,9 @@ static void rt_build_time_read(void)
 {
 	uint64_t stamps[2];
 
-	if (!rt.timed || xgpu_vulkan_completed() < rt.timed_serial || rt.query_results(rt.device, rt.times, 0, 2, sizeof(stamps), stamps, sizeof(stamps[0]),
-		VK_QUERY_RESULT_64_BIT) != VK_SUCCESS)
+	if (!rt.timed || xgpu_vulkan_completed() < rt.timed_serial ||
+		rt.query_results(rt.device, rt.times, 0, 2, sizeof(stamps), stamps, sizeof(stamps[0]), VK_QUERY_RESULT_64_BIT) !=
+			VK_SUCCESS)
 	{
 		return;
 	}
