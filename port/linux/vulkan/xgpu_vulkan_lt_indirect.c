@@ -350,8 +350,8 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 		what they would show, reflection_seen) */
 		textures[5] = frame->direct;
 		if (indirect.reflections)
-			indirect_pass(indirect.specular_raw, frame->rectangle, frame, INDIRECT_SPECULAR_RAY, frame->cap, textures,
-				&indirect.half, parameters);
+			indirect_pass(indirect.specular_raw, frame->rectangle, frame, INDIRECT_SPECULAR_RAY |
+				(reset ? INDIRECT_RESET : 0), frame->cap, textures, &indirect.half, parameters);
 	}
 	if (indirect.cache)
 	{

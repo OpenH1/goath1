@@ -417,24 +417,35 @@ vec4 specular_main(ivec2 pixel)
         return vec4(0.0, 0.0, 0.0, -1.0);
     // (a surface this smooth, Halo's own without a roughness map among them: its mirror ray, the same each frame,
     // no noise; its texture's level prefilters the hit)
-    vec3 l = roughness <= MIRROR_ROUGHNESS ? reflect(-v, normal) :
-        reflect(-v, ggx_visible_normal(v, normal, max(roughness * roughness, 1.0e-3), stratified(pixel, 9.0)));
-    if (dot(l, n) <= 0.0)
-        l = reflect(-v, normal);
-    if (dot(l, n) <= 0.0)
-        l = reflect(-v, n);
-    vec3 origin = p + n * (0.004 + 0.0005 * length(p - pass.camera[0].xyz));
-    // (every owner's: a surface sees itself, the player too)
-    Hit hit = trace(origin, l, SPECULAR_REACH, -1, true);
-    if (!hit.attributes)
-        return vec4(0.0);
+    // (BOUNCE_FIRST rays where the history starts again, the bounce's rule: a sampled lobe's first frame as good as
+    // a few)
+    bool mirror = roughness <= MIRROR_ROUGHNESS;
+    int rays = !mirror && (pass.control.w & RESET) != 0 ? BOUNCE_FIRST : 1, hits = 0;
+    vec3 origin = p + n * (0.004 + 0.0005 * length(p - pass.camera[0].xyz)), sum = vec3(0.0);
+    float distance = 0.0;
     uint h = seed(pixel, 13u);
-    vec3 radiance = pow(hit.surface, vec3(2.2)) +
-        hit.albedo * (direct_one(hit.p, hit.n, hit.owner, pixel, 10.0, h) + cache_lookup(hit.p, hit.n));
-    if (any(isnan(radiance)) || any(isinf(radiance)))
-        radiance = vec3(0.0);
-    float fade = 1.0 - smoothstep(SPECULAR_REACH * SPECULAR_FADE, SPECULAR_REACH, hit.t);
-    return vec4(radiance * fade, max(hit.t, 1.0e-3));
+    for (int k = 0; k < rays; k++)
+    {
+        vec3 l = mirror ? reflect(-v, normal) : reflect(-v, ggx_visible_normal(v, normal,
+            max(roughness * roughness, 1.0e-3), stratified(pixel, 9.0 + 17.0 * float(k))));
+        if (dot(l, n) <= 0.0)
+            l = reflect(-v, normal);
+        if (dot(l, n) <= 0.0)
+            l = reflect(-v, n);
+        // (every owner's: a surface sees itself, the player too)
+        Hit hit = trace(origin, l, SPECULAR_REACH, -1, true);
+        if (!hit.attributes)
+            continue;
+        vec3 radiance = pow(hit.surface, vec3(2.2)) + hit.albedo * (direct_one(hit.p, hit.n, hit.owner, pixel,
+            10.0 + 17.0 * float(k), h) + cache_lookup(hit.p, hit.n));
+        if (any(isnan(radiance)) || any(isinf(radiance)))
+            radiance = vec3(0.0);
+        sum += radiance * (1.0 - smoothstep(SPECULAR_REACH * SPECULAR_FADE, SPECULAR_REACH, hit.t));
+        distance += hit.t;
+        hits++;
+    }
+    // (the hits' distance their mean: a miss's a 0 where none met the scene)
+    return hits > 0 ? vec4(sum / float(rays), max(distance / float(hits), 1.0e-3)) : vec4(0.0);
 }
 
 // the bounce's samples about pixel on its surface (the 5x5 blocks about its own, Gaussian, 3 pixels; each block's traced pixel within a
