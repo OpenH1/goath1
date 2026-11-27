@@ -7947,6 +7947,27 @@ static void rt_bounce_gather_main(struct module *m, struct words *locals, struct
 	else if (rt_bounce_view() == 2)
 		value = fscale(m, 3, xyz(m, light_shadows_fetch(m, state->samples, op2(m, OP_SHIFT_RIGHT_ARITHMETIC, m->t_iv2, pixel,
 			rt_bounce_iv2(m, constant_int(m, 2), constant_int(m, 2))))), constant_float(m, 10.0f));
+	else if (rt_bounce_view() == 5)
+	{
+		/* (where the pixel's own cell's middle is seen, against the pixel: red x, green y, a 200th of a pixel) */
+		unsigned int center = fscale(m, 3, fadd(m, 3, ext1(m, GLSL_FLOOR, m->t_v3, fscale(m, 3, p, fdiv(m, 1,
+			constant_float(m, 1.0f), cell))), constant_splat(m, 3, 0.5f)), cell);
+		unsigned int offset = fsub(m, 3, center, xyz(m, rt_bounce_vector(m, state, XGPU_RT_BOUNCE_BLOCK_EYE)));
+		unsigned int a = fdot(m, xyz(m, rt_bounce_vector(m, state, XGPU_RT_BOUNCE_BLOCK_UNPROJECT)), offset);
+		unsigned int b = fdot(m, xyz(m, rt_bounce_vector(m, state, XGPU_RT_BOUNCE_BLOCK_UNPROJECT + 1)), offset);
+		unsigned int c = fdot(m, xyz(m, rt_bounce_vector(m, state, XGPU_RT_BOUNCE_BLOCK_UNPROJECT + 2)), offset);
+		unsigned int corners = world_ao_pass_vector(m, &state->pass, WORLD_AO_PASS_CORNERS, 0), low, size, screen;
+
+		low = op1(m, OP_CONVERT_S_TO_F, m->t_v2, op(m, OP_VECTOR_SHUFFLE, m->t_iv2, 4, (unsigned int[]){ corners, corners, 0, 1 }));
+		size = fsub(m, 2, op1(m, OP_CONVERT_S_TO_F, m->t_v2, op(m, OP_VECTOR_SHUFFLE, m->t_iv2, 4,
+			(unsigned int[]){ corners, corners, 2, 3 })), low);
+		screen = construct(m, 2, (unsigned int[]){ fdiv(m, 1, b, a), fdiv(m, 1, c, a) });
+		screen = fadd(m, 2, low, fmul(m, 2, fscale(m, 2, fadd(m, 2, screen, constant_splat(m, 2, 1.0f)),
+			constant_float(m, 0.5f)), size));
+		screen = ext1(m, GLSL_F_ABS, m->t_v2, fsub(m, 2, screen, op1(m, OP_CONVERT_S_TO_F, m->t_v2, pixel)));
+		value = construct(m, 3, (unsigned int[]){ fmul(m, 1, extract(m, screen, 0), constant_float(m, 0.005f)),
+			fmul(m, 1, extract(m, screen, 1), constant_float(m, 0.005f)), constant_float(m, 0.0f) });
+	}
 	else if (rt_bounce_view() == 4)
 		value = construct(m, 3, (unsigned int[]){ constant_float(m, 0.0f), saturate(m, 1, fmul(m, 1, extract(m,
 			light_shadows_fetch(m, state->pass.history, pixel), 3), constant_float(m, 0.1f))), constant_float(m, 0.0f) });
