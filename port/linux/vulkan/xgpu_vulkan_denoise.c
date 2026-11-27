@@ -346,7 +346,7 @@ struct xgpu_vulkan_image *xgpu_vulkan_denoise_draw(struct xgpu_vulkan_image *raw
 			height);
 	}
 	denoise.result = denoise_image(denoise.result, XGPU_VULKAN_FORMAT_RGBA16F, width, height);
-	denoise.reshaded = denoise_image(denoise.reshaded, XGPU_VULKAN_FORMAT_RGBA32F, width, height);
+	denoise.reshaded = denoise_image(denoise.reshaded, XGPU_VULKAN_FORMAT_RGBA32F, gradient_width, gradient_height);
 	denoise.gradients = denoise_image(denoise.gradients, XGPU_VULKAN_FORMAT_RGBA32F, gradient_width, gradient_height);
 	denoise.previous_guides = denoise_image(denoise.previous_guides, XGPU_VULKAN_FORMAT_RGBA32_UINT, width, height);
 	if (!denoise.histories[0] || !denoise.histories[1] || !denoise.filtered[0] || !denoise.filtered[1] ||

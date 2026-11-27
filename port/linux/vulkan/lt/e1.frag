@@ -32,7 +32,7 @@
 #define COPY_SHADED 16
 #define COPY_PRESENT 32
 // the denoiser's re-shade (xgpu_vulkan_lt_reshade: the previous frame's uniforms, inputs and guides, this frame's
-// light): only its gradient pixels shaded, the rest 0
+// light): drawn a texel a 3x3 stratum, each its stratum's gradient pixel shaded
 #define GRADIENT 128
 
 // the draw set's uniforms: struct xgpu_world_ao_pass, then (at 1024) xgpu_vulkan_lt.c's struct lt_params
@@ -227,11 +227,8 @@ vec3 flashlight(vec3 p, vec3 n, vec3 shaded, ivec2 pixel, int receiver)
 void main()
 {
     ivec2 pixel = ivec2(gl_FragCoord.xy);
-    if ((pass.control.w & GRADIENT) != 0 && !lt_gradient_pixel(pixel, pass.history.y))
-    {
-        result = vec4(0.0);
-        return;
-    }
+    if ((pass.control.w & GRADIENT) != 0)
+        pixel = lt_gradient_pixel_in(pixel, pass.history.y);
     uvec4 words = texelFetch(inputs, pixel, 0);
     vec3 n = unfold(unpackSnorm2x16(words.x));
     vec3 shaded = unfold(unpackSnorm2x16(texelFetch(guides, pixel, 0).x));

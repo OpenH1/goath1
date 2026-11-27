@@ -475,8 +475,9 @@ void xgpu_vulkan_lt_reshade(struct xgpu_vulkan_image *into, const struct xgpu_wo
 		int32_t high = previous_pass->corners[axis + 2] < low ? low : previous_pass->corners[axis + 2] > extent ?
 			extent : previous_pass->corners[axis + 2];
 
-		rectangle[axis] = low;
-		rectangle[axis + 2] = high;
+		/* (a texel a 3x3 stratum) */
+		rectangle[axis] = low / 3;
+		rectangle[axis + 2] = (high + 2) / 3;
 	}
 	if (rectangle[2] <= rectangle[0] || rectangle[3] <= rectangle[1])
 		return;

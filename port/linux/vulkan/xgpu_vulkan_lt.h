@@ -47,9 +47,10 @@ then not drawn) */
 int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_world_ao_pass *pass,
 	const unsigned char *cells, const struct xgpu_dynamic_lights_block *block);
 /* HALO_LT_E1=denoise, for the denoiser's A-SVGF gradients: the pass drawn
-into into (RGBA32F) with this frame's light but the previous frame's
-uniforms, inputs and guides (its surfaces and its seed), only at the
-gradient pixels (lt/gradient_pixel.glsl), the rest 0 */
+into into (RGBA32F, a texel a 3x3 stratum of the previous frame) with this
+frame's light but the previous frame's uniforms, inputs and guides (its
+surfaces and its seed), each texel at its stratum's gradient pixel
+(lt/gradient_pixel.glsl) */
 void xgpu_vulkan_lt_reshade(struct xgpu_vulkan_image *into, const struct xgpu_world_ao_pass *previous_pass,
 	struct xgpu_vulkan_image *previous_inputs, struct xgpu_vulkan_image *previous_guides);
 /* (xgpu_vulkan_lt_kernel and _kernels_generation, for the denoiser: in

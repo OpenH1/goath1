@@ -21,13 +21,11 @@ void main()
 {
     ivec2 stratum = ivec2(gl_FragCoord.xy);
     result = vec4(0.0);
-    ivec2 q = ivec2(-1);
-    for (int k = 0; k < 9 && q.x < 0; k++)
-        if (lt_gradient_pixel(stratum * 3 + ivec2(k % 3, k / 3), pass.tuning.x))
-            q = stratum * 3 + ivec2(k % 3, k / 3);
-    if (q.x < 0 || any(lessThan(q, pass.previous_corners.xy)) || any(greaterThanEqual(q, pass.previous_corners.zw)))
+    ivec2 q = lt_gradient_pixel_in(stratum, pass.tuning.x);
+    if (any(lessThan(q, pass.previous_corners.xy)) || any(greaterThanEqual(q, pass.previous_corners.zw)))
         return;
-    vec4 now = texelFetch(reshaded, q, 0);
+    // (the re-shade: a texel a stratum)
+    vec4 now = texelFetch(reshaded, stratum, 0);
     uvec2 before = texelFetch(previous_guide, q, 0).xy;
     if (now.a <= 0.0 || (before.y & 0xFFFFu) == 0u)
         return;
