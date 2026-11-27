@@ -512,6 +512,41 @@ class HaloBump(mi.BSDF):
         return "HaloBump[%s]" % self.nested
 
 
+class HaloLightmapRadiance(mi.Texture):
+    """A lightmapped surface's static radiance: its albedo (at its UV) x its lightmap page's texel (at its
+    lightmap UV, the mesh attribute vertex_halo_uv2) decoded ^gamma."""
+
+    def __init__(self, props):
+        mi.Texture.__init__(self, props)
+        self.albedo = props["albedo"]
+        self.lightmap = props["lightmap"]
+        self.gamma = props.get("gamma", 2.2)
+
+    def eval(self, si, active=True):
+        u3 = si.shape.eval_attribute_3("vertex_halo_uv2", si, active)
+        si2 = mi.SurfaceInteraction3f(si)
+        si2.uv = mi.Point2f(u3.x, u3.y)
+        lm = dr.maximum(self.lightmap.eval(si2, active), 0.0)
+        if self.gamma != 1.0:
+            lm = dr.power(lm, self.gamma)
+        return self.albedo.eval(si, active) * lm
+
+    def eval_1(self, si, active=True):
+        return mi.luminance(self.eval(si, active))
+
+    def mean(self):
+        return 0.1
+
+    def is_spatially_varying(self):
+        return True
+
+    def traverse(self, cb):
+        pass
+
+    def to_string(self):
+        return "HaloLightmapRadiance"
+
+
 _registered = False
 
 
@@ -523,4 +558,5 @@ def register():
     mi.register_emitter("halo_sky", lambda p: HaloSky(p))
     mi.register_texture("halo_albedo", lambda p: HaloAlbedo(p))
     mi.register_bsdf("halo_bump", lambda p: HaloBump(p))
+    mi.register_texture("halo_lightmap_radiance", lambda p: HaloLightmapRadiance(p))
     _registered = True
