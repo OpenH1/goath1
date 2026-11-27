@@ -35,6 +35,10 @@ unsigned long halo_world_rt_budget(void)
 	return 64;
 }
 
+void world_rt_source_forget(void)
+{
+}
+
 unsigned long long platform_shared_clock_microseconds(void)
 {
 	return 0;

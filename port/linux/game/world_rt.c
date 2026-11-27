@@ -1298,6 +1298,7 @@ void world_rt_frame(unsigned long frame)
 
 void world_rt_map_unloaded(void)
 {
+	world_rt_source_forget();
 	if (world_rt.sent)
 		halo_world_ao_mesh(0, 0, NULL);
 	world_rt.sent = 0;

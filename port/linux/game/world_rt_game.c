@@ -35,6 +35,7 @@ nodes. Read only; render-only.
 #include "bitmaps/bitmap_group_lookup.h"
 #include "cache/texture_cache.h"
 
+#include "../src/xgpu_coverage.h"
 #include "world_proxies_source.h"
 #include "world_rt.h"
 #include "world_scene.h"
@@ -45,6 +46,8 @@ nodes. Read only; render-only.
 
 /* (cache_files.c) */
 boolean tag_index_is_group(long tag_index, long group_tag);
+/* (texture_cache.c) a bitmap's texture loaded, as a draw loads it */
+void *texture_cache_port_load(unsigned long tag_index, unsigned long bitmap_index);
 /* (mod_materials.c) a bitmap's mods' material maps (0 none) */
 void mod_materials_maps(long base_map_tag_index, unsigned int *normal_map, unsigned int *orm_map);
 
@@ -216,6 +219,67 @@ enum
 
 /* ---------- private code */
 
+/* the base maps found opaque or not (an alpha-tested model shader's), by
+their tags: a map's, once */
+static struct
+{
+	long tags[256];
+	signed char opaque[256];
+	int count;
+} world_rt_base_maps;
+
+/* whether a model shader's alpha test can cut nothing: its base map's
+first bitmap's every texel over the cutoff (0x7F, rasterizer_xbox_models.c's
+ALPHAREF) at its level of 256 a side or less, as world_sdf.c measures a
+leaf's card. Most of the game's model shaders are alpha-tested by default
+(no "not alpha-tested" flag) over maps with no alpha, whose rays need no
+alpha fetch. Read once a map; one that cannot be read keeps its test */
+static boolean base_map_opaque(long bitmap_tag)
+{
+	struct bitmap_group *group;
+	struct bitmap_data const *bitmap;
+	DWORD const *header;
+	int index, opaque = FALSE;
+
+	if (bitmap_tag == NONE)
+		return FALSE;
+	for (index = 0; index < world_rt_base_maps.count; index++)
+	{
+		if (world_rt_base_maps.tags[index] == bitmap_tag)
+			return world_rt_base_maps.opaque[index];
+	}
+	group = tag_index_is_group(bitmap_tag, BITMAP_GROUP_TAG) ? bitmap_group_get(bitmap_tag) : NULL;
+	if (group && group->bitmaps.address && group->bitmaps.count > 0)
+	{
+		header = texture_cache_port_load((unsigned long)bitmap_tag, 0);
+		bitmap = TAG_BLOCK_GET_ELEMENT(&group->bitmaps, 0, struct bitmap_data);
+		/* (every texel over the cutoff; and read: one it cannot read is
+		covered whole at any reference, while no texel is over 0xFF) */
+		if (header && bitmap->base_address && bitmap->type == _world_rt_bitmap_type_2d)
+		{
+			unsigned char const *texels = (unsigned char const *)bitmap->base_address;
+
+			opaque = xgpu_texture_alpha_coverage((unsigned int)header[3], (unsigned int)header[4], texels, 0x7F, 256) >=
+				1.0f && xgpu_texture_alpha_coverage((unsigned int)header[3], (unsigned int)header[4], texels, 0xFF, 256) <
+				1.0f;
+		}
+	}
+	if (world_rt_base_maps.count < (int)(sizeof(world_rt_base_maps.tags) / sizeof(world_rt_base_maps.tags[0])))
+	{
+		world_rt_base_maps.tags[world_rt_base_maps.count] = bitmap_tag;
+		world_rt_base_maps.opaque[world_rt_base_maps.count++] = (signed char)opaque;
+	}
+	return opaque;
+}
+
+/* a model shader alpha-tested as drawn, and by the rays (its test can cut
+something) */
+static boolean model_alpha_tested(struct world_rt_shader_model const *model)
+{
+	return !TEST_FLAG(model->flags, _world_rt_shader_model_not_alpha_tested_bit) &&
+		!base_map_opaque(model->base_map.index);
+}
+
 /* a compressed normal (rasterizer_geometry.c's) as three floats */
 static void unpacked(unsigned long compressed, float out[3])
 {
@@ -336,7 +400,7 @@ static void material_describe(long shader_index, struct world_rt_source_material
 		material->alpha_scale[1] = model->map_v_scale != 0.0f ? model->map_v_scale : 1.0f;
 		if (TEST_FLAG(model->flags, _world_rt_shader_model_two_sided_bit))
 			material->flags |= WORLD_RT_MATERIAL_TWO_SIDED;
-		if (!TEST_FLAG(model->flags, _world_rt_shader_model_not_alpha_tested_bit))
+		if (model_alpha_tested(model))
 		{
 			material->flags |= WORLD_RT_MATERIAL_ALPHA_TESTED;
 			material->alpha_map = WORLD_RT_MAP_BASE;
@@ -578,8 +642,8 @@ static int model_part_add(struct world_rt_source_mesh *mesh, struct model const 
 	else if (shader_type_is_transparent(shader->base.type) || shader->base.type != _world_rt_shader_type_model)
 		kind = WORLD_RT_SURFACES_TRANSPARENT;
 	else
-		kind = TEST_FLAG(((struct world_rt_shader_model const *)shader)->flags, _world_rt_shader_model_not_alpha_tested_bit) ?
-			WORLD_RT_SURFACES_OPAQUE : WORLD_RT_SURFACES_ALPHA_TESTED;
+		kind = model_alpha_tested((struct world_rt_shader_model const *)shader) ? WORLD_RT_SURFACES_ALPHA_TESTED :
+			WORLD_RT_SURFACES_OPAQUE;
 	if (kind != surfaces)
 		return TRUE;
 	if (!vertex_buffer->hardware_format || vertex_buffer->count <= 0 || !triangle_buffer->hardware_format ||
@@ -819,6 +883,11 @@ long world_rt_source_model_mesh(long definition, struct world_rt_source_mesh *me
 		(void)before;
 	}
 	return mesh->triangle_count;
+}
+
+void world_rt_source_forget(void)
+{
+	world_rt_base_maps.count = 0;
 }
 
 void const *world_rt_source_texture(struct world_rt_source_map const *map)
