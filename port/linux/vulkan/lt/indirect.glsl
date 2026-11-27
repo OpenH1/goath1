@@ -36,6 +36,8 @@
 #define INDIRECT_ONLY 1048576
 #define COVERAGE 2097152
 #define CACHE_ON 4194304
+// (with BOUNCE: its history too, the second output)
+#define BOUNCE_HISTORY 8388608
 
 // the shader types (shaders.c's; xgpu_spirv.c's RT_REFLECTION_KIND_*)
 #define KIND_ENVIRONMENT 3u
@@ -322,14 +324,13 @@ bool point_at(ivec2 pixel, out vec3 p, out vec3 n)
         all(lessThan(pixel, pass.corners.zw));
 }
 
-vec4 bounce_main(ivec2 block)
+vec4 bounce_main(ivec2 block, out vec3 p, out vec3 n, out uint owner, out bool found)
 {
     int phase = int(pass.indirect[1].y);
-    vec3 p, n, shaded;
-    uint owner;
+    vec3 shaded;
     int which = 0;
     ivec2 pixel = ivec2(0);
-    bool found = false;
+    found = false;
     for (; which < 4 && !found; which++)
     {
         pixel = block * 2 + block_pixel(phase + which);
@@ -508,7 +509,31 @@ void main()
     int flags = pass.control.w;
     if ((flags & BOUNCE) != 0)
     {
-        result = bounce_main(pixel);
+        vec3 p, n;
+        uint owner;
+        bool found;
+        result = bounce_main(pixel, p, n, owner, found);
+        // (the bounce's history at half resolution, ahead of the denoiser's temporal stage: its block's samples counted
+        // (1/n up to indirect[3].x frames) where the block's surface was the frame before (the traced pixel's point
+        // reprojected, the previous inputs' surface there: lt/e1.frag's reproject); rgb the mean, a the sample's code
+        // (1 + its light-id hash + 1024 x the block's pixel) + 8192 x the count. The denoiser's guide pass upsamples
+        // it; the cache keeps reading the samples themselves)
+        bounce_history = vec4(0.0);
+        if ((flags & BOUNCE_HISTORY) != 0 && found)
+        {
+            vec3 mean = vec3(0.0);
+            float count = 0.0;
+            ivec2 q;
+            if ((flags & RESET) == 0 && reproject(p, n, owner, q))
+            {
+                vec4 old = texelFetch(reservoirs, q / 2, 0);
+                count = floor(old.a / 8192.0);
+                mean = old.rgb;
+            }
+            count = min(count + 1.0, max(pass.indirect[3].x, 1.0));
+            mean += (result.rgb - mean) / count;
+            bounce_history = vec4(mean, result.a + 8192.0 * count);
+        }
         return;
     }
     if ((flags & SPECULAR_RAY) != 0)

@@ -123,6 +123,10 @@ layout(set = 4, binding = 0, std430) readonly buffer HitTable
 layout(set = 4, binding = 1) uniform sampler2D hit_textures[HIT_TEXTURES];
 
 layout(location = 0) out vec4 result;
+#ifdef LT_INDIRECT
+// (BOUNCE with BOUNCE_HISTORY: the bounce's half-resolution history, its second output; lt/indirect.glsl)
+layout(location = 1) out vec4 bounce_history;
+#endif
 
 vec3 unfold(vec2 e)
 {

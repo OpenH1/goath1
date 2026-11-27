@@ -3,9 +3,9 @@
 // octahedral, packSnorm4x8 (about half a degree); y the distance as a half float (0 where the pre-pass drew nothing)
 // and the owner's low 16 bits above it.
 // FOLD (built again as denoise_guide_fold.frag): the one diffuse signal too, the second output: the direct light's
-// 1-spp sample plus the dynamic lights' bounce (half resolution, lt/indirect.glsl's BOUNCE: a texel a 2x2 block, its
-// traced pixel this frame's phase's) upsampled on the pixel's surface, so that the denoiser's one temporal stage
-// counts both (~/dev/rt2-realtime-design.md section 1.5): the 5x5 blocks about the pixel's own, each kept where its
+// 1-spp sample plus the dynamic lights' bounce (half resolution, lt/indirect.glsl's BOUNCE_HISTORY: a texel a 2x2
+// block, the mean of its samples over the last frames; its traced pixel this frame's phase's) upsampled on the
+// pixel's surface, so that the denoiser's temporal stage counts both (~/dev/rt2-realtime-design.md section 1.5): the 5x5 blocks about the pixel's own, each kept where its
 // traced pixel is of the same owner, its normal within 25 degrees and its point on this pixel's plane, Gaussian by
 // the pixel distance (3 pixels).
 #version 460
@@ -39,7 +39,9 @@ void tap(ivec2 block, ivec2 pixel, vec3 p, vec3 n, uint owner, float distance, i
     vec4 s = texelFetch(bounce, block, 0);
     if (s.a < 0.5)
         return;
-    int which = int(floor((s.a - 1.0) / 1024.0));
+    // (the history's alpha: the sample's code + 8192 x its count)
+    float code = s.a - 8192.0 * floor(s.a / 8192.0);
+    int which = int(floor((code - 1.0) / 1024.0));
     ivec2 at = block * 2 + block_pixel(int(pass.bounce.z) + which);
     uvec4 words = texelFetch(inputs, at, 0);
     if ((words.y & INPUT_PRESENT) == 0u || words.w != owner || dot(unfold(unpackSnorm2x16(words.x)), n) < COS_25)
