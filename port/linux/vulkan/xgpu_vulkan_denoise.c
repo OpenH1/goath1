@@ -57,10 +57,11 @@ Render thread alone.
 /* the a-trous passes (steps 1, 2, 4, 8) */
 #define DENOISE_PASSES 4
 /* the luminance's edge-stop (standard deviations of the estimate), the
-depth's (a share of the distance off the pixel's plane), the normal's power */
+depth's (a share of the distance off the pixel's plane), the shaded normal's
+(1 - cos: about 2 degrees halves a weight, 5 leave 2%) */
 #define DENOISE_SIGMA_LUMINANCE 4.0f
 #define DENOISE_SIGMA_DEPTH 0.01f
-#define DENOISE_NORMAL_POWER 128.0f
+#define DENOISE_SIGMA_NORMAL 0.001f
 /* where the parameters start in the draw set's uniforms (lt/denoise_common.glsl's) */
 #define DENOISE_PARAMS_OFFSET 1024
 
@@ -360,7 +361,7 @@ struct xgpu_vulkan_image *xgpu_vulkan_denoise_draw(struct xgpu_vulkan_image *raw
 	params.tuning[0] = denoise.previous_pass.history[1];
 	params.tuning[1] = DENOISE_SIGMA_LUMINANCE;
 	params.tuning[2] = DENOISE_SIGMA_DEPTH;
-	params.tuning[3] = DENOISE_NORMAL_POWER;
+	params.tuning[3] = DENOISE_SIGMA_NORMAL;
 	xgpu_vulkan_pass_owner(DENOISE_OWNER);
 	/* 1, 2: the gradients (the previous frame's surfaces re-shaded by this
 	frame's light) */

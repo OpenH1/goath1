@@ -28,6 +28,14 @@ vec4 fetch(ivec2 q)
     return vec4(m, cv.y * l * l / max(cv.x, 1.0));
 }
 
+// a pixel's shaded normal (the guides'; its geometric one where they have none)
+vec3 shaded_normal(ivec2 q, uvec4 words)
+{
+    vec3 n = unfold(unpackSnorm2x16(words.x));
+    vec3 s = unfold(unpackSnorm2x16(texelFetch(guides, q, 0).x));
+    return dot(s, s) < 0.5 || dot(s, n) < 0.0 ? n : s;
+}
+
 bool inside(ivec2 q)
 {
     return all(greaterThanEqual(q, pass.corners.xy)) && all(lessThan(q, pass.corners.zw));
@@ -49,17 +57,18 @@ void main()
     }
     float count = unpackHalf2x16(texelFetch(history, pixel, 0).w).x;
     vec3 n = unfold(unpackSnorm2x16(words.x));
-    vec3 shaded = unfold(unpackSnorm2x16(texelFetch(guides, pixel, 0).x));
-    if (dot(shaded, shaded) < 0.5 || dot(shaded, n) < 0.0)
-        shaded = n;
+    vec3 shaded = shaded_normal(pixel, words);
     float distance = uintBitsToFloat(words.z);
     vec3 p = world_point(pixel, distance);
     float lp = luminance(centre.rgb);
     // (the variance prefiltered 3x3, Gaussian, over the same surface; in the first pass, under 4 frames, where the
-    // count has too few samples for its own, the luminance's spatial variance there instead, SVGF's: it then stands
-    // for each young pixel's in the propagation)
+    // count has too few samples for its own, a robust spatial one instead: the 3x3's median absolute deviation (as a
+    // standard deviation, x1.4826), which a real edge in the light does not raise as the plain variance would; it then
+    // stands for each young pixel's in the propagation)
     bool young = (pass.control.y & FIRST) != 0 && count < 4.0;
-    float v = 0.0, vw = 0.0, m1 = 0.0, m2 = 0.0;
+    float v = 0.0, vw = 0.0;
+    float ls[9];
+    int found = 0;
     for (int y = -1; y <= 1; y++)
         for (int x = -1; x <= 1; x++)
         {
@@ -67,16 +76,41 @@ void main()
             uvec4 other = texelFetch(inputs, q, 0);
             if (!inside(q) || other.w != words.w || (other.y & INPUT_PRESENT) == 0u)
                 continue;
+            // (the robust estimate over the pixels of nearly the same shaded normal alone: a bump map's detail in
+            // the light is not noise)
+            if (young && dot(shaded_normal(q, other), shaded) < 0.9994)
+                continue;
             float w = (x == 0 ? 0.5 : 0.25) * (y == 0 ? 0.5 : 0.25);
             vec4 c = fetch(q);
-            float l = luminance(c.rgb);
             v += w * c.a;
-            m1 += w * l;
-            m2 += w * l * l;
             vw += w;
+            ls[found++] = luminance(c.rgb);
         }
     vw = max(vw, 1.0e-6);
-    float spatial = max(m2 / vw - (m1 / vw) * (m1 / vw), 0.0);
+    float spatial = 0.0;
+    if (young)
+    {
+        // (the median, then the median of the distances from it: an insertion sort of at most 9)
+        for (int i = 1; i < found; i++)
+            for (int j = i; j > 0 && ls[j - 1] > ls[j]; j--)
+            {
+                float t = ls[j];
+                ls[j] = ls[j - 1];
+                ls[j - 1] = t;
+            }
+        float median = ls[found / 2];
+        for (int i = 0; i < found; i++)
+            ls[i] = abs(ls[i] - median);
+        for (int i = 1; i < found; i++)
+            for (int j = i; j > 0 && ls[j - 1] > ls[j]; j--)
+            {
+                float t = ls[j];
+                ls[j] = ls[j - 1];
+                ls[j - 1] = t;
+            }
+        float deviation = 1.4826 * ls[found / 2];
+        spatial = deviation * deviation;
+    }
     float deviation = sqrt(young ? spatial : max(v / vw, 0.0));
     const float kernel[3] = float[3](0.375, 0.25, 0.0625);
     vec3 sum = vec3(0.0);
@@ -98,12 +132,9 @@ void main()
             float w = kernel[abs(x)] * kernel[abs(y)];
             if (x != 0 || y != 0)
             {
-                vec3 ns = unfold(unpackSnorm2x16(texelFetch(guides, q, 0).x));
-                vec3 nq = unfold(unpackSnorm2x16(other.x));
-                if (dot(ns, ns) < 0.5 || dot(ns, nq) < 0.0)
-                    ns = nq;
                 vec3 pq = world_point(q, uintBitsToFloat(other.z));
-                w *= pow(max(dot(shaded, ns), 0.0), pass.tuning.w);
+                // (the shaded normal's turn, strictly: the bump map's detail is in the light, and kept)
+                w *= exp(-(1.0 - dot(shaded, shaded_normal(q, other))) / pass.tuning.w);
                 w *= exp(-abs(dot(n, pq - p)) / (pass.tuning.z * distance + 1.0e-4));
                 w *= exp(-abs(luminance(c.rgb) - lp) / sigma_l);
             }

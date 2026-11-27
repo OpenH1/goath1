@@ -27,7 +27,7 @@ layout(set = 0, binding = 1, std140) uniform Pass
     // x the count's cap, y the flags, z the a-trous step (pixels)
     ivec4 control;
     // x the previous frame's number (its history.y: its gradient pixels' and seed's), y the luminance's edge-stop
-    // (sigma, in standard deviations), z the depth's (a share of the distance), w the normal's power
+    // (sigma, in standard deviations), z the depth's (a share of the distance), w the shaded normal's (1 - cos)
     vec4 tuning;
 } pass;
 
