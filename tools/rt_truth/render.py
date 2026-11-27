@@ -340,8 +340,11 @@ def compare(original, mood, path, placeholders):
     f = _font(int(bar * 0.6))
     d.text((12, bar * 0.18), "original (game)" if original is not None else "no original.png", fill=(255, 255, 255), font=f)
     label = "truth (path traced)"
-    if placeholders:
-        label += "  PLACEHOLDER LIGHTS/MATERIALS"
+    if any("lights.json" in p for p in placeholders):
+        label += "  PLACEHOLDER LIGHTS"
+    grey = [p for p in placeholders if "without a base map" in p]
+    if grey:
+        label += "  (%s)" % grey[0].split(":")[0]
     d.text((W + 12, bar * 0.18), label, fill=(255, 255, 255), font=f)
     canvas.save(path)
 

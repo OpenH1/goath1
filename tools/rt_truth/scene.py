@@ -372,10 +372,24 @@ class Scene:
         if m.get("two_sided") and bsdf["type"] != "null":
             bsdf = {"type": "twosided", "bsdf": bsdf}
         if m.get("alpha_test") and base is not None and bsdf["type"] != "null":
-            cut = (base[:, :, 3] >= 0.5).astype(np.float32)[:, :, None]  # Halo's alpha test at 50%
-            self.cutouts[idx] = self.bitmap(cut)
-            bsdf = {"type": "mask", "opacity": self.cutouts[idx], "bsdf": bsdf}
-            summary["cutout"] = "alpha test at 0.5 of the base map's alpha"
+            # The game's alpha test: alpha > 0x7F (ALPHAREF 0x7F, rasterizer_xbox_environment.c:1100). An
+            # environment shader tests its bump map's alpha at the bump scale (rasterizer_xbox_environment.c:
+            # 763-768 with the bump map on stage 0; world_rt_game.c material_describe reads it the same),
+            # unless the bump map is its specular mask; a model or transparent shader its base map's.
+            bump_img = self.image(m["bump_map"]) if m.get("bump_map") else None
+            if mtype == "environment" and bump_img is not None and not m.get("bump_map_is_specular_mask"):
+                su, sv = (m.get("bump_scale_runtime") or [m.get("bump_scale") or 1.0] * 2)
+                cut = (bump_img[:, :, 3] > 127.0 / 255.0).astype(np.float32)[:, :, None]
+                tex = mi.load_dict({"type": "bitmap", "bitmap": mi.Bitmap(np.ascontiguousarray(cut)), "raw": True,
+                                    "filter_type": "nearest", "wrap_mode": "repeat",
+                                    "to_uv": mi.ScalarTransform4f().scale([float(su or 1), float(sv or 1), 1.0])})
+                summary["cutout"] = "alpha test: the bump map's alpha > 0x7F"
+            else:
+                cut = (base[:, :, 3] > 127.0 / 255.0).astype(np.float32)[:, :, None]
+                tex = self.bitmap(cut)
+                summary["cutout"] = "alpha test: the base map's alpha > 0x7F"
+            self.cutouts[idx] = tex
+            bsdf = {"type": "mask", "opacity": tex, "bsdf": bsdf}
         bsdf_obj = mi.load_dict(bsdf)
 
         em = m.get("emission") or {}
