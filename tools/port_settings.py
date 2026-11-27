@@ -961,10 +961,9 @@ PAGES = {
             # beside an identical card; dimmed where the game has no choice:
             # SETTINGS_ROW_ENABLED)
             (f"GPU {RESTART}", "display.gpu", [("AUTO", "auto")],
-             "The graphics card that draws the game, from the next start. Auto takes a discrete card first, then "
-             "the one your monitor uses. A card Vulkan cannot see is not listed: reinstall its driver, or set "
-             "Windows' Graphics setting to High performance.|Dimmed in VR, where the headset chooses, and on a "
-             "Mac.", "computer"),
+             "The graphics card that draws the game, from the next start. Auto prefers a discrete card. Lists "
+             "the cards Vulkan sees: if one is missing, reinstall its driver or set Windows' Graphics to High "
+             "performance.|Dimmed in VR and on a Mac.", "computer"),
             ("FRAME RATE & SYNC ›", None, _page_screen(*FRAME_RATE),
              "VSync, variable refresh (G-SYNC, FreeSync), the most frames a second and low latency.", None),
             ("FIELD OF VIEW", "display.fov", FIELDS_OF_VIEW,

@@ -25,8 +25,8 @@
 			<choice shown="AUTO" value="0"/>
 		</row>
 		<row key="gpu" kind="choice" setting="display.gpu" label="GPU (RESTART)" crumb="VIDEO › DISPLAY" search="gpu nvidia radeon vulkan card graphics" when="computer" enabled="gpu_choice+!vr">
-			<help>The graphics card that draws the game, from the next start. Auto takes a discrete card first, then the one your monitor uses. A card Vulkan cannot see is not listed: reinstall its driver, or set Windows' Graphics setting to High performance.</help>
-			<note>Dimmed in VR, where the headset chooses, and on a Mac.</note>
+			<help>The graphics card that draws the game, from the next start. Auto prefers a discrete card. Lists the cards Vulkan sees: if one is missing, reinstall its driver or set Windows' Graphics to High performance.</help>
+			<note>Dimmed in VR and on a Mac.</note>
 			<choice shown="AUTO" value="auto"/>
 		</row>
 		<row key="frame_rate_sync" kind="link" label="FRAME RATE &amp; SYNC ›" crumb="VIDEO › DISPLAY" search="fps framerate" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/frame_rate_screen">
