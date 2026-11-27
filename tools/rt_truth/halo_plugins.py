@@ -38,6 +38,11 @@ def light_frame(direction, up=None):
     return x, y, z
 
 
+def _opq(v):
+    """A constant as an opaque value (a kernel parameter, not a literal)."""
+    return dr.opaque(mi.Float, float(v))
+
+
 def _vec(props, name, default=None):
     if not props.has_property(name):
         return default
@@ -365,10 +370,10 @@ class HaloAlbedo(mi.Texture):
         g = lambda k: props[k] if props.has_property(k) else None
         self.base, self.detail, self.secondary = g("base"), g("detail"), g("secondary")
         self.secondary_alpha, self.micro = g("secondary_alpha"), g("micro")
-        self.base_scale = [props.get("base_scale_u", 1.0), props.get("base_scale_v", 1.0)]
-        self.detail_scale = [props.get("detail_scale_u", 1.0), props.get("detail_scale_v", 1.0)]
-        self.secondary_scale = props.get("secondary_scale", 1.0)
-        self.micro_scale = props.get("micro_scale", 1.0)
+        self.base_scale = [_opq(props.get("base_scale_u", 1.0)), _opq(props.get("base_scale_v", 1.0))]
+        self.detail_scale = [_opq(props.get("detail_scale_u", 1.0)), _opq(props.get("detail_scale_v", 1.0))]
+        self.secondary_scale = _opq(props.get("secondary_scale", 1.0))
+        self.micro_scale = _opq(props.get("micro_scale", 1.0))
         self.detail_mode = props.get("detail_mode", "double_biased_multiply")
         self.micro_mode = props.get("micro_mode", "double_biased_multiply")
         self.gamma = props.get("gamma", 1.0)
@@ -436,12 +441,17 @@ class HaloBump(mi.BSDF):
         # a sample, whatever the level count (a texture per level made the kernels huge).
         self.mips = props["bump_mips"] if props.has_property("bump_mips") else None
         self.n_levels = props.get("bump_levels", 0)
-        self.mip_x = [props.get("bump_mip_x%d" % k, 0.0) for k in range(self.n_levels)]
-        self.mip_w = [props.get("bump_mip_w%d" % k, 1.0) for k in range(self.n_levels)]
-        self.mip_h = [props.get("bump_mip_h%d" % k, 1.0) for k in range(self.n_levels)]
-        self.size = [props.get("bump_width", 1.0), props.get("bump_height", 1.0)]
-        self.scale = [props.get("bump_scale_u", 1.0), props.get("bump_scale_v", 1.0)]
+        pad = lambda v: v + [v[-1] if v else 0.0] * (16 - len(v))
+        self.mip_x = dr.opaque(mi.Float, pad([props.get("bump_mip_x%d" % k, 0.0) for k in range(self.n_levels)]))
+        self.mip_w = dr.opaque(mi.Float, pad([props.get("bump_mip_w%d" % k, 1.0) for k in range(self.n_levels)]))
+        self.mip_h = dr.opaque(mi.Float, pad([props.get("bump_mip_h%d" % k, 1.0) for k in range(self.n_levels)]))
+        self.top = _opq(max(self.n_levels - 1, 0))
+        # (constants as opaque values: every material's code is then the same and the kernel compiles one
+        # function for them all; Python numbers would be literals, a function per material)
+        self.size = [_opq(props.get("bump_width", 1.0)), _opq(props.get("bump_height", 1.0))]
+        self.scale = [_opq(props.get("bump_scale_u", 1.0)), _opq(props.get("bump_scale_v", 1.0))]
         self.pixel_angle = props.get("pixel_angle", 0.0)
+        self.pixel_angle_o = _opq(self.pixel_angle)
         self.m_flags = self.nested.flags()
         self.m_components = [self.nested.flags(i) for i in range(self.nested.component_count())]
 
@@ -450,14 +460,14 @@ class HaloBump(mi.BSDF):
             return self.bump.eval(si, active)
         # The footprint of a camera ray's pixel at the hit (a ray cone), in texels of level 0 along the
         # texture's more stretched axis (the GPU's isotropic choice).
-        foot = si.t * self.pixel_angle / dr.maximum(dr.abs(mi.Frame3f.cos_theta(si.wi)), 0.05)
+        foot = si.t * self.pixel_angle_o / dr.maximum(dr.abs(mi.Frame3f.cos_theta(si.wi)), 0.05)
         tu = foot * self.scale[0] * self.size[0] / dr.maximum(dr.norm(si.dp_du), 1e-8)
         tv = foot * self.scale[1] * self.size[1] / dr.maximum(dr.norm(si.dp_dv), 1e-8)
-        lod = dr.clip(dr.log2(dr.maximum(dr.maximum(tu, tv), 1.0)), 0.0, self.n_levels - 1.0)
+        lod = dr.clip(dr.log2(dr.maximum(dr.maximum(tu, tv), 1.0)), 0.0, self.top)
         l0 = mi.UInt32(dr.floor(lod))
-        l1 = dr.minimum(l0 + 1, self.n_levels - 1)
+        l1 = mi.UInt32(dr.minimum(dr.floor(lod) + 1.0, self.top))
         t = lod - mi.Float(l0)
-        xs, ws, hs = mi.Float(self.mip_x), mi.Float(self.mip_w), mi.Float(self.mip_h)
+        xs, ws, hs = self.mip_x, self.mip_w, self.mip_h
         u = si.uv.x * self.scale[0]
         v = si.uv.y * self.scale[1]
         fu, fv = u - dr.floor(u), v - dr.floor(v)
