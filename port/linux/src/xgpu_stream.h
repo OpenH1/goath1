@@ -511,7 +511,11 @@ struct xgpu_stream_capabilities
 	/* the GPU an NVIDIA one where the DLSS add-on could run
 	(xgpu_backend_capabilities' dlss_gpu; a pad byte before, 0 from an
 	older host: the size and the version are as they were) */
-	uint8_t dlss_gpu, pad[2];
+	uint8_t dlss_gpu;
+	/* the ray-traced scene's render geometry's budget for this GPU, in 8 MB
+	(xgpu_backend_capabilities' rt_budget; a pad byte before, 0 from an
+	older host: the game's default then) */
+	uint8_t rt_budget, pad;
 	/* the GPU, its API and driver, in a few words (a report's:
 	port/linux/src/report.c), NUL terminated */
 	char device[96];

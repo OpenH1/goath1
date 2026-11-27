@@ -43,7 +43,7 @@ enum
 	/* an instance's kind (xgpu_stream.h's XGPU_WORLD_AO_INSTANCE_*) */
 	WORLD_RT_STRUCTURE = 1,
 	WORLD_RT_OBJECT = 2,
-	/* (debug.rt_render_geometry) the first-person weapon and hands (their own
+	/* (as drawn) the first-person weapon and hands (their own
 	mask: no world ray meets them), and the local player's own body in
 	first person (its own: it casts shadows, and nothing else sees it) */
 	WORLD_RT_FIRST_PERSON = 4,
@@ -53,8 +53,8 @@ enum
 	WORLD_RT_FIRST_PERSON_OWNER = 0xFFFFF0,
 	/* the structure's render surfaces by their shader
 	(world_rt_source_structure_mesh): opaque (shader_environment), traced
-	with debug.rt_render_geometry; alpha-tested (shader_environment's flag:
-	grates, fences, foliage cards), traced as a second geometry whose rays
+	as drawn; alpha-tested (shader_environment's flag: grates, fences,
+	foliage cards; and the transparent shaders drawn as cutouts), traced as a second geometry whose rays
 	test the alpha map's alpha (docs/rt-plan/1-geometry.md, stage 3); and
 	transparent (water, glass and the other transparent shaders), left out */
 	WORLD_RT_SURFACES_OPAQUE = 0,
@@ -78,6 +78,13 @@ enum
 	WORLD_RT_MATERIAL_ALPHA_TESTED = 1,
 	WORLD_RT_MATERIAL_TWO_SIDED = 2,
 	WORLD_RT_MATERIAL_TRANSPARENT = 4,
+	/* the scene as drawn's memory (world_rt.c's budget): a triangle's
+	bytes, estimated (its share of a bottom-level structure, about 160
+	before compaction on RADV, with its corners, material and vertices'
+	attributes in the hit table), and the budget where the backend gives
+	none (MB) */
+	WORLD_RT_TRIANGLE_BYTES = 200,
+	WORLD_RT_BUDGET_DEFAULT = 128,
 };
 
 /* the half side of an item's box with no collision geometry, a share of

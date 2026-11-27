@@ -125,6 +125,44 @@ On branch `rt/geometry-2`, still behind `debug.rt_render_geometry`.
 - **The player's own body** is the game's third-person biped, posed by its own node matrices whatever
   `display.first_person_legs` says. In first person those nodes kept moving (b30: 519 to 600 of every 600 frames).
 
+## The default (2026-11-27)
+
+`debug.rt_render_geometry` is now `"auto"` (the default), `"on"` or `"off"` (an older `true`/`false` reads as on/off).
+Wherever ray queries are available, the rays hit the render geometry. Collision meshes are only the fallback: until a
+render mesh is made (the frame after its collision one), and past the GPU class's budget, which the backend sets from
+the device type and device-local memory (discrete: 512 MB at 12 GB or more, 256 MB at 6 GB, else 128 MB; integrated:
+256 MB at 8 GB, 128 MB at 2 GB, else 64 MB, the Steam Deck class). The game estimates 200 B a triangle for the
+kept meshes (level, definitions), then for the skinned objects posed in a frame. Past the budget, the rest becomes
+collision (a skinned definition's collision meshes are made then), logged once a map. `"on"` ignores the budget.
+`HALO_RT_GEOMETRY_BUDGET_MB` overrides it for checking (b30 at 8 MB: one skinned object as drawn, the rest
+collision, validation clean). Transparent generic and chicago shaders drawn as cutouts (alpha-tested,
+alpha-blended, not decals) are alpha-tested geometry on their first map. The backend logs its memory every 1800
+frames and once more as a map's end lets it go.
+
+Checked with the validation layer (0 messages, no device loss): Blood Gulch, a10 (BSPs 0, 7, 0), b30, MCC
+mp_plains, a co-op client (ui, a10, ui), and b30 past an 8 MB budget.
+
+Measured: median of 3 runs, 1920x1080, AO and shadows `ray_traced`, enhanced lights, `debug.pass_times`. Frame = the
+GPU's whole frame, AO = the AO pass (where the shadow rays are traced too). Memory = peak bottom levels / top
+levels / hit table used (the table's buffer is 4 MB either way). The render path adds the skinning's fixed buffers
+(about 32 MB, 43 MB at b30), which are not in the budget.
+
+| GPU, map | Frame on / off (ms) | AO on / off (ms) | Memory on (MB) | Memory off (MB) |
+| --- | --- | --- | --- | --- |
+| 8060S, Blood Gulch 5 bots | 2.21 / 1.65 | 1.11 / 0.62 | 2.75 / 0.17 / 1.00 | 1.02 / 0.17 / 0.31 |
+| 8060S, a10 | 3.82 / 3.37 | 1.92 / 1.79 | 14.5 / 1.33 / 3.04 | 6.94 / 2.67 / 0.31 |
+| 8060S, b30 Marines | 6.40 / 5.73 | 1.53 / 1.46 | 21.0 / 1.33 / 2.79 | 5.34 / 2.67 / 0.31 |
+| 8060S, MCC mp_plains 5 bots | 2.48 / 3.00 | 1.04 / 1.22 | 13.5 / 0.67 / 3.86 | 8.13 / 0.67 / 0.31 |
+| 4090, Blood Gulch 5 bots | 0.74 / 0.76 | 0.31 / 0.32 | 1.13 / 0.10 / 1.00 | 0.48 / 0.20 / 0.31 |
+| 4090, a10 | 1.01 / 1.03 | 0.40 / 0.39 | 5.78 / 0.79 / 3.42 | 2.80 / 1.88 / 0.31 |
+| 4090, b30 Marines | 1.92 / 1.85 | 0.43 / 0.41 | 8.85 / 0.94 / 2.79 | 2.05 / 1.57 / 0.31 |
+| 3090 (Windows), Blood Gulch 5 bots | 2.41 / 2.40 | 0.95 / 1.05 | 2.1 / 0.12 / 1.00 | 0.48 / 0.24 / 0.31 |
+
+On NVIDIA it costs nothing measurable. On the 8060S it costs 0.4 to 0.7 ms a frame, most of it in the AO pass at
+Blood Gulch. A likely cause, to check next: every `shader_model` without "not alpha-tested" is alpha-tested geometry
+(the game's own rule), so most objects go through the candidate loop's texture fetch even where their base map has
+no alpha. The Steam Deck was not measured.
+
 ## Memory and build time (estimates before stage 1)
 
 Render BSPs are roughly 1.5 to 3 times their collision triangle count (cutouts, detail, decorations). Compacted BLAS

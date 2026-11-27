@@ -273,6 +273,9 @@ struct xgpu_vulkan_capabilities
 	/* ... and the GPU an NVIDIA one where DLSS's add-on could run (Linux,
 	Windows): the game offers the add-on's download there (dlss_addon.c) */
 	int dlss_gpu;
+	/* the ray-traced scene's render geometry's budget (MB) by the GPU's
+	class: its type and device-local memory (0 without ray queries) */
+	int rt_budget;
 	/* the device, its Vulkan version and driver, in a few words (a
 	report's: port/linux/src/report.c) */
 	char device[96];
