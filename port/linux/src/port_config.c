@@ -544,7 +544,7 @@ static const struct config_setting config_settings[] =
 		"feet, against a wall), found from the depth on the GPU, beside the\n"
 		"classic shadows; not drawn where display.shadows \"ray_traced\" is\n"
 		"(its rays find the same contact). Vulkan; Metal draws none yet." },
-	{ "display.rt_reflections", _config_boolean, "false", "HALO_RT_REFLECTIONS", _environment_value, _platform_all,
+	{ "display.rt_reflections", _config_boolean, "true", "HALO_RT_REFLECTIONS", _environment_value, _platform_all,
 		"Reflections traced by the GPU's ray queries through the level and\n"
 		"the objects, in place of the shiny surfaces' fixed cube maps (the\n"
 		"polished floors, glass, water, the Covenant's metals), through the\n"
