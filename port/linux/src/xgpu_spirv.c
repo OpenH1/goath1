@@ -8767,12 +8767,11 @@ static void rt_bounce_declare(struct module *m, struct pixel_state *state)
 
 /* ... added to light (linear, the enhanced lights' units), as GLSL:
 light + texelFetch(rt_bounce, min(ivec2(gl_FragCoord.xy), textureSize(rt_bounce, 0) - 1), 0).rgb */
-static unsigned int rt_bounce_add(struct module *m, struct pixel_state *state, unsigned int light)
+/* display.rt_bounce's binding's texel at the pixel (a vec4) */
+static unsigned int rt_bounce_texel(struct module *m, struct pixel_state *state)
 {
 	unsigned int sampled, image, last, at, operands[4];
 
-	if (!state->rt_bounce || !state->frag_coord)
-		return light;
 	sampled = load(m, type_sampled_image(m, DIM_2D, FALSE, FALSE, TRUE), state->rt_bounce);
 	image = op(m, OP_IMAGE, type_sampled_image(m, DIM_2D, FALSE, FALSE, FALSE), 1, &sampled);
 	last = op2(m, OP_I_SUB, m->t_iv2, image_size(m, image, m->t_iv2), rt_bounce_iv2(m, constant_int(m, 1), constant_int(m, 1)));
@@ -8781,8 +8780,20 @@ static unsigned int rt_bounce_add(struct module *m, struct pixel_state *state, u
 	operands[1] = at;
 	operands[2] = IMAGE_OPERANDS_LOD;
 	operands[3] = constant_int(m, 0);
-	return fadd(m, 3, light, xyz(m, op(m, OP_IMAGE_FETCH, m->t_v4, 4, operands)));
+	return op(m, OP_IMAGE_FETCH, m->t_v4, 4, operands);
 }
+
+static unsigned int rt_bounce_add(struct module *m, struct pixel_state *state, unsigned int light)
+{
+	if (!state->rt_bounce || !state->frag_coord)
+		return light;
+	return fadd(m, 3, light, xyz(m, rt_bounce_texel(m, state)));
+}
+
+/* the least of the lightmap's light a dynamic object's sun shadow leaves
+(lt_e1_add: the sky's, the bounce's; the lightmap's sun share is an
+estimate) */
+#define LT_SUN_FLOOR 0.25f
 
 /* HALO_LT_E1 (port/linux/vulkan/xgpu_vulkan_lt.h: E1 and E2 of the one
 light-transport pass): set and not "off", "0" or "false", read once */
@@ -8835,19 +8846,21 @@ static unsigned int lt_e1_guides(struct module *m, struct pixel_state *state, un
 
 /* ... the traced lights' light (linear, at display.rt_bounce's binding:
 their irradiance, its cosine by the shaded normal of the twins' guides,
-lt_e1_guides; less the suns' share a dynamic object shadows) added to lit
-(the game's lights' result, gamma) linearly, by tint (linear; 0: by 1),
-after the game's own lights' shoulder, as GLSL:
-pow(max(pow(max(lit, 0.0), vec3(2.2)) + light * tint, 0.0), vec3(1.0 / 2.2)); lit as it
+lt_e1_guides) added to lit (the game's lights' result, gamma) linearly, by
+tint (linear; 0: by 1, a model's), after the game's own lights' shoulder;
+the structure's (tint given) lit first darkened by the suns' share in the
+texel's alpha, as GLSL:
+pow(pow(max(lit, 0.0), vec3(2.2)) * sun + max(light, 0.0) * tint, vec3(1.0 / 2.2)); lit as it
 is without the mode or the binding */
 static unsigned int lt_e1_add(struct module *m, struct pixel_state *state, unsigned int lit, unsigned int tint,
 	unsigned int p, unsigned int n)
 {
-	unsigned int light, to_lamp;
+	unsigned int light, to_lamp, texel, base;
 
 	if (!lt_e1_on() || !state->rt_bounce || !state->frag_coord)
 		return lit;
-	light = rt_bounce_add(m, state, constant_splat(m, 3, 0.0f));
+	texel = rt_bounce_texel(m, state);
+	light = xyz(m, texel);
 	/* (the pass's light has the receiver's cosine, by the guides' shaded
 	normal: lt_e1_guides) */
 	(void)p;
@@ -8855,10 +8868,21 @@ static unsigned int lt_e1_add(struct module *m, struct pixel_state *state, unsig
 	(void)to_lamp;
 	if (tint)
 		light = fmul(m, 3, light, tint);
-	/* (W2: the light may be less than 0, the suns' direct share taken off
-	where a dynamic object blocks the sun: the sum kept at 0 or more) */
-	return ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, fadd(m, 3, ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, lit,
-		0.0f), constant_splat(m, 3, 2.2f)), light), 0.0f), constant_splat(m, 3, 1.0f / 2.2f));
+	base = ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, lit, 0.0f), constant_splat(m, 3, 2.2f));
+	/* (W2, the structure's (tint given): the suns' share a dynamic object
+	shadows, its luminance in the texel's alpha, taken off the lightmap's
+	light, its hue kept, at most LT_SUN_FLOOR of it left: base *= clamp(1 -
+	texel.a / max(luminance(base), 1e-6), LT_SUN_FLOOR, 1)) */
+	if (tint)
+	{
+		unsigned int luminance = fdot(m, base, constant_vector(m, 3, (const float[]){ 0.2126f, 0.7152f, 0.0722f }));
+
+		base = fscale(m, 3, base, ext3(m, GLSL_F_CLAMP, m->t_float, fsub(m, 1, constant_float(m, 1.0f), fdiv(m, 1,
+			extract(m, texel, 3), fmax_scalar(m, 1, luminance, 1.0e-6f))), constant_float(m, LT_SUN_FLOOR),
+			constant_float(m, 1.0f)));
+	}
+	return ext2(m, GLSL_POW, m->t_v3, fadd(m, 3, base, fmax_scalar(m, 3, light, 0.0f)), constant_splat(m, 3,
+		1.0f / 2.2f));
 }
 
 /* ---------- the enhanced dynamic lights' glows (xgpu_spirv.h) */

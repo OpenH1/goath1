@@ -104,6 +104,7 @@ enum
 	LT_SUN = 256,
 	LT_RESERVOIR = 512,
 	LT_COPY_REACH = 1024,
+	LT_FINAL = 2048,
 };
 /* lights[2]'s (lt/e1.frag's LIGHTS_*) */
 enum
@@ -160,7 +161,8 @@ static struct
 	/* W2: the light table (its image, its texels), the reservoirs in
 	turn, the light after the suns' share (what the surfaces read); each
 	row's light's id this frame and the last (0 none), the rows' count */
-	struct xgpu_vulkan_image *table, *reservoirs[2], *final;
+	struct xgpu_vulkan_image *table, *reservoirs[2], *final, *sun[2];
+	int sun_current, sun_valid;
 	float texels[LT_TABLE_ROWS][LT_TABLE_TEXELS][4];
 	uint32_t ids[2][LT_TABLE_ROWS][2];
 	int rows[2], ids_current, reservoir_current, reservoirs_valid;
@@ -998,6 +1000,42 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 			had ? lt.previous : NULL, lt.guides, pass, rectangle);
 		xgpu_vulkan_pass_owner(LT_OWNER);
 	}
+	/* (W2: the suns' share a dynamic object shadows, its own history kept
+	(the denoiser and the light's history keep the light alone, which is
+	never less than 0); then the light the surfaces read: the light, and
+	the share's luminance in alpha, which they take off the lightmap's) */
+	light_image = denoised ? denoised : lt.means[lt.current];
+	lt.final = lt_image(lt.final, XGPU_VULKAN_FORMAT_RGBA32F, size->width, size->height);
+	if (lt.final)
+	{
+		struct lt_params sun_params = params;
+		struct xgpu_vulkan_image *share = NULL;
+
+		if (params.lights[1] > 0)
+		{
+			lt.sun[0] = lt_image(lt.sun[0], XGPU_VULKAN_FORMAT_RGBA32F, size->width, size->height);
+			lt.sun[1] = lt_image(lt.sun[1], XGPU_VULKAN_FORMAT_RGBA32F, size->width, size->height);
+			if (lt.sun[0] && lt.sun[1])
+			{
+				struct xgpu_vulkan_image *before = lt.sun[lt.sun_current];
+
+				lt.sun_current ^= 1;
+				share = lt.sun[lt.sun_current];
+				sun_params.control[3] = LT_SUN | (start || !lt.sun_valid || !lt.previous_valid ? LT_RESET : 0);
+				lt_pass_draw(share, rectangle, pass, &sun_params, &lt.pass, inputs, before, lt.previous, lt.guides,
+					NULL);
+				lt.sun_valid = 1;
+			}
+		}
+		else
+			lt.sun_valid = 0;
+		if (!share)
+			sun_params.lights[1] = 0;
+		sun_params.control[3] = LT_FINAL;
+		lt_pass_draw(lt.final, rectangle, pass, &sun_params, &lt.pass, inputs, light_image, lt.previous, lt.guides,
+			share);
+		light_image = lt.final;
+	}
 	/* (this frame's inputs kept for the next's reprojection) */
 	xgpu_vulkan_image_copy(inputs, 0, 0, lt.previous, 0, 0);
 	lt.previous_valid = 1;
@@ -1010,25 +1048,6 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 			every = getenv("HALO_LT_E1_DUMP_EVERY") ? atol(getenv("HALO_LT_E1_DUMP_EVERY")) : 0;
 		if ((lt.since_start < LT_DUMPS && lt.dumps[lt.since_start]) || (every > 0 && !(lt.since_start % every)))
 			lt_dump(rectangle, pass, &params, denoised ? denoised : lt.means[lt.current], inputs);
-	}
-	light_image = denoised ? denoised : lt.means[lt.current];
-	/* (W2: the suns' direct share off the light where a dynamic object
-	blocks the sun, after the history and the denoiser, which keep the
-	light alone) */
-	if (params.lights[1] > 0)
-	{
-		struct lt_params sun_params = params;
-
-		lt.final = lt_image(lt.final, XGPU_VULKAN_FORMAT_RGBA32F, size->width, size->height);
-		if (lt.final)
-		{
-			xgpu_vulkan_pass_owner(LT_OWNER);
-			sun_params.control[3] = LT_SUN;
-			lt_pass_draw(lt.final, rectangle, pass, &sun_params, &lt.pass, inputs, light_image, lt.previous, lt.guides,
-				NULL);
-			xgpu_vulkan_pass_owner(NULL);
-			light_image = lt.final;
-		}
 	}
 	xgpu_vulkan_rt_bounce_set(light_image);
 	if (!lt.said)
