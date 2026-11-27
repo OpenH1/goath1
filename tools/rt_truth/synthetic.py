@@ -157,8 +157,8 @@ def check(folder):
     sc = Scene(folder)
     scene = mi.load_dict(sc.build("flashlight"))
     W, H = sc.camera["width"], sc.camera["height"]
-    img = np.asarray(mi.render(scene, integrator=mi.load_dict({"type": "path", "max_depth": 2}), spp=256),
-                     np.float64).mean(-1)
+    from .integrator import render_pass
+    img = sum(render_pass(scene, 64, i, parts=True)["direct"] for i in range(4)).astype(np.float64).mean(-1) / 4
     sensor = scene.sensors()[0]
     gel = sc.image("textures/synthetic_gel.png")
 

@@ -48,11 +48,16 @@ def _vec(props, name, default=None):
 #   window_radius          1/d^2 * clamp(1 - (d/radius)^4, 0, 1)^2, a smooth end at `radius`
 #   halo_radius            the tag's falloff curve, clamp(1 - d/radius, 0, 1)^exponent, with no 1/d^2
 #   none                   no distance falloff
+#   table                  the game's distance attenuation table at d / radius (no 1/d^2), 0 past radius
 # Angular modes (`angular_mode`, spot lights only), between the inner and outer half-angles:
 #   linear_angle  linear in the angle;  linear_cos  linear in cos;  smoothstep_cos  smoothstep in cos
 # raised to `angular_exponent`.
-DISTANCE_MODES = ("inverse_square", "inverse_square_cutoff", "window_radius", "halo_radius", "none")
-ANGULAR_MODES = ("linear_angle", "linear_cos", "smoothstep_cos")
+DISTANCE_MODES = ("inverse_square", "inverse_square_cutoff", "window_radius", "halo_radius", "none", "table")
+ANGULAR_MODES = ("linear_angle", "linear_cos", "smoothstep_cos", "none", "cos")
+# Gels: "projector", a picture across the outer cone; "cube", a cube map strip (6 faces side by side in
+# D3D order +x -x +y -y +z -z with D3D face UVs) looked up along (P - light) in the frame
+# (forward, left, up), left = forward x up (rasterizer_xbox_environment.c:1244-1255: (-forward, -left,
+# -up) dotted with light - P).
 
 
 class HaloLight(mi.Emitter):
@@ -74,17 +79,39 @@ class HaloLight(mi.Emitter):
         self.angular_mode = props.get("angular_mode", "linear_angle")
         self.angular_exponent = props.get("angular_exponent", 1.0)
         assert self.angular_mode in ANGULAR_MODES, self.angular_mode
+        if self.kind != "spot" and not props.has_property("cos_falloff") and self.angular_mode != "cos":
+            self.angular_mode = "none"
         self.gel = props["gel"] if props.has_property("gel") else None
+        self.gel_kind = props.get("gel_kind", "projector")
+        self.gel_face_px = props.get("gel_face_px", 64)
+        self.table = props["table"] if props.has_property("table") else None
+        self.table_n = props.get("table_n", 2)
+        self.cos_falloff = props.get("cos_falloff", math.cos(self.half_in))
+        self.cos_cutoff = props.get("cos_cutoff", math.cos(self.half_out))
+        fwd = _normalize(_vec(props, "direction", [0, 0, -1]))
+        up = _normalize(_vec(props, "up") or [0.0, 0.0, 1.0])
+        left = _normalize(_cross(fwd, up))
+        # The cube's frame for (P - light): forward, left, up (up made perpendicular to forward).
+        # rasterizer_xbox_environment.c:1244-1255 loads (-forward, -left, -up) and dots them with
+        # (light - P); the flashlight's gel has its beam on the +x face (centre 0.99, -x face black).
+        upp = _cross(left, fwd)
+        self.cx, self.cy, self.cz = (mi.Vector3f(v) for v in (fwd, left, upp))
         self.m_flags = mi.EmitterFlags.DeltaPosition
 
     # Radiant intensity toward world direction w (unit, pointing away from the light).
     def radiant_intensity(self, w, active=True):
         f = mi.Spectrum(self.intensity)
-        if self.kind != "spot":
+        if self.kind != "spot" and self.gel is None and self.angular_mode == "none":
             return f
         lx, ly, lz = dr.dot(w, self.ex), dr.dot(w, self.ey), dr.dot(w, self.ez)
-        cos_in, cos_out = math.cos(self.half_in), math.cos(self.half_out)
-        if self.angular_mode == "linear_angle":
+        cos_in, cos_out = self.cos_falloff, self.cos_cutoff
+        if self.gel is not None and self.gel_kind == "cube":
+            f = f * self.cube_gel(w, active)
+        if self.angular_mode == "none":
+            a = mi.Float(1.0)
+        elif self.angular_mode == "cos":  # a Lambertian disk facing forward
+            a = dr.maximum(lz, 0.0)
+        elif self.angular_mode == "linear_angle":
             th = dr.acos(dr.clip(lz, -1.0, 1.0))
             a = dr.clip((self.half_out - th) / max(self.half_out - self.half_in, 1e-6), 0.0, 1.0)
         else:
@@ -92,9 +119,10 @@ class HaloLight(mi.Emitter):
             a = t if self.angular_mode == "linear_cos" else t * t * (3.0 - 2.0 * t)
         if self.angular_exponent != 1.0:
             a = dr.power(a, self.angular_exponent)
-        a = dr.select(lz > cos_out, a, 0.0)
+        if self.angular_mode not in ("none", "cos"):
+            a = dr.select(lz > cos_out, a, 0.0)
         f = f * a
-        if self.gel is not None:
+        if self.gel is not None and self.gel_kind == "projector":
             t_out = math.tan(min(self.half_out, math.radians(89.0)))
             inv = 1.0 / (dr.maximum(lz, 1e-6) * t_out)
             si = dr.zeros(mi.SurfaceInteraction3f)
@@ -105,10 +133,36 @@ class HaloLight(mi.Emitter):
             f = f * dr.select(inside, g, 0.0)
         return f
 
+    def cube_gel(self, w, active):
+        x, y, z = dr.dot(w, self.cx), dr.dot(w, self.cy), dr.dot(w, self.cz)
+        ax, ay, az = dr.abs(x), dr.abs(y), dr.abs(z)
+        on_x = (ax >= ay) & (ax >= az)
+        on_y = ~on_x & (ay >= az)
+        on_z = ~on_x & ~on_y
+        # D3D: +x (sc -z, tc -y), -x (+z, -y), +y (+x, +z), -y (+x, -z), +z (+x, -y), -z (-x, -y).
+        face = dr.select(on_x, dr.select(x > 0, 0, 1), dr.select(on_y, dr.select(y > 0, 2, 3), dr.select(z > 0, 4, 5)))
+        ma = dr.select(on_x, ax, dr.select(on_y, ay, az))
+        sc = dr.select(on_x, dr.select(x > 0, -z, z), dr.select(on_y, x, dr.select(z > 0, x, -x)))
+        tc = dr.select(on_x, -y, dr.select(on_y, dr.select(y > 0, z, -z), -y))
+        u = 0.5 * (sc / ma + 1.0)
+        v = 0.5 * (tc / ma + 1.0)
+        # Keep the lookup half a texel inside its face so the strip's neighbours never bleed in.
+        n = 6.0 * self.gel_face_px if hasattr(self, "gel_face_px") else 6.0 * 64
+        si = dr.zeros(mi.SurfaceInteraction3f)
+        eps = 0.5 / (n / 6.0)
+        si.uv = mi.Point2f((mi.Float(face) + dr.clip(u, eps, 1 - eps)) / 6.0, dr.clip(v, eps, 1 - eps))
+        return self.gel.eval(si, active)
+
     def distance_factor(self, dist2):
         m, r = self.distance_mode, max(self.radius, 1e-6)
         if m == "none":
             return mi.Float(1.0)
+        if m == "table":
+            t = dr.sqrt(dist2) / r
+            n = self.table_n
+            si = dr.zeros(mi.SurfaceInteraction3f)
+            si.uv = mi.Point2f((dr.clip(t, 0.0, 1.0) * (n - 1) + 0.5) / n, 0.5)
+            return dr.select(t < 1.0, self.table.eval_1(si), 0.0)
         if m == "halo_radius":
             return dr.power(dr.clip(1.0 - dr.sqrt(dist2) / r, 0.0, 1.0), self.distance_exponent)
         inv = dr.rcp(dist2)
@@ -261,41 +315,73 @@ class HaloSky(mi.Emitter):
         return f"HaloSky[ambient {self.ambient}, {len(self.suns)} sun(s)]"
 
 
-# How the detail map combines with the base map (`mode`), Halo's detail map functions:
-#   double_biased_multiply  base * detail * 2 (Halo's default for environment shaders)
-#   multiply                base * detail
-#   biased_add              base + detail - 0.5
-#   none                    base alone
+# How a detail map combines with the color so far (`*_mode`), Halo's detail functions, in the game's
+# gamma space:
+#   double_biased_multiply  c * d * 2;  multiply  c * d;  biased_add  c + 2 * d - 1
 ALBEDO_MODES = ("double_biased_multiply", "multiply", "biased_add", "none")
 
 
+def _combine(c, d, mode):
+    if mode == "double_biased_multiply":
+        return c * d * 2.0
+    if mode == "multiply":
+        return c * d
+    if mode == "biased_add":
+        return c + 2.0 * d - 1.0
+    return c
+
+
 class HaloAlbedo(mi.Texture):
-    """A shader's diffuse albedo: its base map combined with its detail map, which tiles `detail_scale`
-    times as often, then clamped to [0, 1] (an albedo above 1 would create energy)."""
+    """A shader's diffuse albedo as the game's texture pass makes it (rasterizer_xbox_environment.c's
+    _rasterizer_environment_diffuse_texture_draw, rasterizer_xbox_models.c), in gamma space:
+      detail = (1 - secondary.a) * secondary + secondary.a * detail   (with a secondary detail map)
+      color  = clamp(base combined with detail, 0, 1), then with micro detail
+    Maps stored as linear (value^gamma, the .lin maps) are taken back to gamma space first, and the
+    result is made linear again: albedo = clamp(color, 0, 1)^gamma. Each map has its own UV scale."""
 
     def __init__(self, props):
         mi.Texture.__init__(self, props)
-        self.base = props["base"]
-        self.detail = props["detail"] if props.has_property("detail") else None
-        self.scale = props.get("detail_scale", 1.0)
-        self.mode = props.get("mode", "double_biased_multiply")
+        g = lambda k: props[k] if props.has_property(k) else None
+        self.base, self.detail, self.secondary = g("base"), g("detail"), g("secondary")
+        self.secondary_alpha, self.micro = g("secondary_alpha"), g("micro")
+        self.base_scale = [props.get("base_scale_u", 1.0), props.get("base_scale_v", 1.0)]
+        self.detail_scale = [props.get("detail_scale_u", 1.0), props.get("detail_scale_v", 1.0)]
+        self.secondary_scale = props.get("secondary_scale", 1.0)
+        self.micro_scale = props.get("micro_scale", 1.0)
+        self.detail_mode = props.get("detail_mode", "double_biased_multiply")
+        self.micro_mode = props.get("micro_mode", "double_biased_multiply")
+        self.gamma = props.get("gamma", 1.0)
         self.mean_value = props.get("mean_value", 0.5)
-        assert self.mode in ALBEDO_MODES, self.mode
+        assert self.detail_mode in ALBEDO_MODES and self.micro_mode in ALBEDO_MODES
+
+    def _at(self, tex, si, su, sv, active):
+        si2 = mi.SurfaceInteraction3f(si)
+        si2.uv = mi.Point2f(si.uv.x * su, si.uv.y * sv)
+        v = tex.eval(si2, active)
+        return v if self.gamma == 1.0 else dr.power(dr.maximum(v, 0.0), 1.0 / self.gamma)
+
+    def _at1(self, tex, si, s, active):
+        si2 = mi.SurfaceInteraction3f(si)
+        si2.uv = si.uv * s
+        return tex.eval_1(si2, active)
 
     def eval(self, si, active=True):
-        b = self.base.eval(si, active)
-        if self.detail is None or self.mode == "none":
-            return dr.clip(b, 0.0, 1.0)
-        si2 = mi.SurfaceInteraction3f(si)
-        si2.uv = si.uv * self.scale
-        d = self.detail.eval(si2, active)
-        if self.mode == "double_biased_multiply":
-            c = b * d * 2.0
-        elif self.mode == "multiply":
-            c = b * d
-        else:
-            c = b + d - 0.5
-        return dr.clip(c, 0.0, 1.0)
+        bu, bv = self.base_scale
+        c = self._at(self.base, si, bu, bv, active)
+        d = None
+        if self.detail is not None:
+            d = self._at(self.detail, si, self.detail_scale[0], self.detail_scale[1], active)
+        if self.secondary is not None:
+            s = self._at(self.secondary, si, self.secondary_scale, self.secondary_scale, active)
+            a = self._at1(self.secondary_alpha, si, self.secondary_scale, active) if self.secondary_alpha is not None else 1.0
+            d = s if d is None else (1.0 - a) * s + a * d
+        if d is not None:
+            c = dr.clip(_combine(c, d, self.detail_mode), 0.0, 1.0)
+        if self.micro is not None:
+            m = self._at(self.micro, si, self.micro_scale, self.micro_scale, active)
+            c = dr.clip(_combine(c, m, self.micro_mode), 0.0, 1.0)
+        c = dr.clip(c, 0.0, 1.0)
+        return c if self.gamma == 1.0 else dr.power(c, self.gamma)
 
     def eval_1(self, si, active=True):
         return mi.luminance(self.eval(si, active))
@@ -310,7 +396,7 @@ class HaloAlbedo(mi.Texture):
         pass
 
     def to_string(self):
-        return f"HaloAlbedo[{self.mode}]"
+        return "HaloAlbedo[%s, %s]" % (self.detail_mode, self.micro_mode)
 
 
 _registered = False
