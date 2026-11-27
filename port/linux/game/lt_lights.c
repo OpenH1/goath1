@@ -108,7 +108,12 @@ transport applies the same rule (xgpu_vulkan_lt.c's lt_kind_k). */
 way (~/dev/rt2-calibration.json's dynamic_power_scales.point_projectile) */
 #define LT_LIGHTS_PROJECTILE_POWER_SCALE 0.41f
 #define LT_LIGHTS_EFFECT_POWER_SCALE 7.85f
-#define LT_LIGHTS_SUN_POWER_SCALE 0.488f
+/* a sun's (a narrow sky light's) and a fill's (a sky light LT_LIGHTS_FILL_DIAMETER
+across or more, b30's 50 degree one): ~/dev/rt2-calibration.json's
+sun_power_scale and fill_power_scale (xgpu_vulkan_lt.c's, the same rule) */
+#define LT_LIGHTS_SUN_POWER_SCALE 0.417f
+#define LT_LIGHTS_FILL_POWER_SCALE 0.187f
+#define LT_LIGHTS_FILL_DIAMETER 0.17453293f
 /* the emitters' radii (world units): E1's flashlight disk, then
 dynamic_lights.c's shadow disks' (SHADOWED_DISK_*) */
 #define LT_LIGHTS_FLASHLIGHT_DISK 0.01f
@@ -310,11 +315,11 @@ static int lt_suns(int count)
 		lt_copy3(out->up, up.i, up.j, up.k);
 		lt_left(out);
 		out->cone_inner = out->cone_outer = -1.0f;
-		out->power_scale = LT_LIGHTS_SUN_POWER_SCALE;
+		out->power_scale = light->diameter >= LT_LIGHTS_FILL_DIAMETER ? LT_LIGHTS_FILL_POWER_SCALE :
+			LT_LIGHTS_SUN_POWER_SCALE;
 		lt_copy3(out->color, light->color.red, light->color.green, light->color.blue);
-		lt_copy3(out->power, light->color.red * light->power * LT_LIGHTS_SUN_POWER_SCALE,
-			light->color.green * light->power * LT_LIGHTS_SUN_POWER_SCALE,
-			light->color.blue * light->power * LT_LIGHTS_SUN_POWER_SCALE);
+		lt_copy3(out->power, light->color.red * light->power * out->power_scale,
+			light->color.green * light->power * out->power_scale, light->color.blue * light->power * out->power_scale);
 		out->angular_diameter = light->diameter;
 		count++;
 	}

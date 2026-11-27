@@ -134,10 +134,11 @@ LT_SUN_ROW */
 /* the suns' direct share of the lightmap, a k for a sun (a narrow sky
 light) and one for a fill (a wide one, LT_FILL_DIAMETER across or more:
 b30's 50 degree sky light): ~/dev/rt2-calibration.json's sun_power_scale and
-fill_power_scale (the static fit of the truth renderer on b30, sun and fill
-fitted apart) */
-#define LT_SUN_POWER_SCALE 0.488f
-#define LT_FILL_POWER_SCALE 0.488f
+fill_power_scale: the sun's from the lightmap's own sun shadows (its
+sunlit less its shadowed, b30), the fill's from the truth renderer's static
+fit with sun and fill apart (b30, the lightmap ^2.2)) */
+#define LT_SUN_POWER_SCALE 0.417f
+#define LT_FILL_POWER_SCALE 0.187f
 #define LT_FILL_DIAMETER 0.17453293f
 enum
 {
