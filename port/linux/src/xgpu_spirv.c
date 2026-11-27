@@ -2188,7 +2188,8 @@ static void rt_bounce_declare(struct module *m, struct pixel_state *state);
 static unsigned int rt_bounce_add(struct module *m, struct pixel_state *state, unsigned int light);
 /* HALO_LT_E1 (port/linux/vulkan/xgpu_vulkan_lt.h, below) */
 static int lt_e1_on(void);
-static unsigned int lt_e1_add(struct module *m, struct pixel_state *state, unsigned int lit, unsigned int tint);
+static unsigned int lt_e1_add(struct module *m, struct pixel_state *state, unsigned int lit, unsigned int tint,
+	unsigned int p, unsigned int n);
 
 static unsigned int pixel_input(struct module *m, struct pixel_state *state, unsigned int variable_id, unsigned int type)
 {
@@ -6088,7 +6089,7 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 		if (!lt_e1_on())
 			store(&m, linear_variable, rt_bounce_add(&m, &state, load(&m, m.t_v3, linear_variable)));
 		added = dynamic_light_add(&m, &state, lit, sum, load(&m, m.t_v3, linear_variable), FALSE);
-		added = lt_e1_add(&m, &state, added, 0);
+		added = lt_e1_add(&m, &state, added, 0, p, shaded);
 		/* (a metal's diffuse light darkened: material_read) */
 		if (state.metalness)
 			added = fscale(&m, 3, added, fsub(&m, 1, constant_float(&m, 1.0f), fmul(&m, 1, state.metalness,
@@ -6239,7 +6240,8 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 		lit = dynamic_light_add(&m, &state, xyz(&m, result), sum, fmul(&m, 3, load(&m, m.t_v3, linear_variable),
 			xyz(&m, uniform(&m, U_DYNAMIC_LIGHT_TINT, -1))), (program->hdr & XGPU_HDR_LIGHTS) != 0);
 		lit = lt_e1_add(&m, &state, lit, ext2(&m, GLSL_POW, m.t_v3, fmax_scalar(&m, 3,
-			xyz(&m, uniform(&m, U_DYNAMIC_LIGHT_TINT, -1)), 0.0f), constant_splat(&m, 3, 2.2f)));
+			xyz(&m, uniform(&m, U_DYNAMIC_LIGHT_TINT, -1)), 0.0f), constant_splat(&m, 3, 2.2f)),
+			pixel_input(&m, &state, state.in_world_position, m.t_v3), n);
 		/* (HALO_LIGHT_SHADOWS_VIEW: the lights over the surface darkened,
 		not under the shoulder, so a lit wall shows them too) */
 		if (state.light_shadows && light_shadows_view())
@@ -8788,17 +8790,25 @@ static int lt_e1_on(void)
 }
 
 /* ... the traced flashlight's light (linear, at display.rt_bounce's
-binding) added to lit (the game's lights' result, gamma) linearly, by tint
-(linear; 0: by 1), after the game's own lights' shoulder, as GLSL:
+binding: its irradiance but for the receiver's cosine) by the cosine of the
+surface's own shaded normal n (its bump or normal map's, as the game's
+lights have it) toward the lamp, from p, added to lit (the game's lights'
+result, gamma) linearly, by tint (linear; 0: by 1), after the game's own
+lights' shoulder, as GLSL:
+light *= max(dot(n, normalize(texel(FLASHLIGHT + 23).xyz - p)), 0.0);
 pow(pow(max(lit, 0.0), vec3(2.2)) + light * tint, vec3(1.0 / 2.2)); lit as it
 is without the mode or the binding */
-static unsigned int lt_e1_add(struct module *m, struct pixel_state *state, unsigned int lit, unsigned int tint)
+static unsigned int lt_e1_add(struct module *m, struct pixel_state *state, unsigned int lit, unsigned int tint,
+	unsigned int p, unsigned int n)
 {
-	unsigned int light;
+	unsigned int light, to_lamp;
 
 	if (!lt_e1_on() || !state->rt_bounce || !state->frag_coord)
 		return lit;
 	light = rt_bounce_add(m, state, constant_splat(m, 3, 0.0f));
+	to_lamp = ext1(m, GLSL_NORMALIZE, m->t_v3, fsub(m, 3, flashlight_vector(m,
+		constant_int(m, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 23)), p));
+	light = fscale(m, 3, light, fmax_scalar(m, 1, fdot(m, n, to_lamp), 0.0f));
 	if (tint)
 		light = fmul(m, 3, light, tint);
 	return ext2(m, GLSL_POW, m->t_v3, fadd(m, 3, ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, lit, 0.0f),

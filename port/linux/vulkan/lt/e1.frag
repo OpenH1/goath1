@@ -164,7 +164,7 @@ vec2 concentric(vec2 xi)
     return r * vec2(cos(theta), sin(theta));
 }
 
-// the flashlight's irradiance at p (normal n): the gel and falloff as the game's decoding has them (gamma, so
+// the flashlight's light arriving at p (normal n: the geometric one), its irradiance but for the receiver's cosine: the gel and falloff as the game's decoding has them (gamma, so
 // raised to 2.2 here), the cosine at the receiver and one shadow ray to a point of the disk, stratified over the
 // frames by the R2 sequence from a per-pixel start
 vec3 flashlight(vec3 p, vec3 n, ivec2 pixel, int receiver)
@@ -205,8 +205,10 @@ vec3 flashlight(vec3 p, vec3 n, ivec2 pixel, int receiver)
     }
     // (a disk emitter's irradiance: its intensity (the gel's angular profile, linear, by the power's scale) by
     // the cosines at the receiver and the emitter over the distance squared, in the range window)
+    // (the receiver's cosine left to the surfaces, which have its bump-mapped normal: xgpu_spirv.c's lt_e1_add;
+    // the geometric normal here decides only which side is lit and where the shadow rays start)
     return pow(max(pass.color.rgb * gel, vec3(0.0)), vec3(2.2)) *
-        (pass.lamp.w * facing * emitting * window * seen / max(d * d, 1.0e-4));
+        (pass.lamp.w * emitting * window * seen / max(d * d, 1.0e-4));
 }
 
 void main()
