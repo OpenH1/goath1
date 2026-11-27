@@ -37,6 +37,7 @@ Nothing is changed in the game: it is read only, on the game's thread.
 #include "game/game_globals.h"
 #include "rasterizer/common/rasterizer_common.h"
 #include "rasterizer/rasterizer_geometry.h"
+#include "rasterizer/rasterizer.h"
 #include "rasterizer/rasterizer_lights.h"
 #include "scenario/scenario.h"
 #include "scenario/scenario_definitions.h"
@@ -1666,8 +1667,9 @@ static void rtlm_lights_write(char const *path)
 				"\"attached_to_first_person_weapon\":%s,\"object\":", source,
 				TEST_FLAG(light->flags, 3) ? "true" : "false");
 			rtlm_string(file, object ? rtlm_tag_name(object->definition_index) : "");
-			fprintf(file, ",\"from\":\"light datum at this tick (object_lights.c): position, forward, up as the lights' "
-				"preprocessing placed them; color (0..1) the tag's color bounds by the object's function or the "
+			fprintf(file, ",\"from\":\"position, direction, up, color and radius as drawn this frame (rasterizer_lights.lights[], "
+				"what object_lights.c's lights_preprocess_scene submitted; as_drawn false: the light datum's), the "
+				"datum's own place (the unit's or object's marker) beside them; color (0..1) the tag's color bounds by the object's function or the "
 				"effect's fade, already made; radius the tag's radius x its modifier by that intensity. power 1: "
 				"Halo's lights have no power, color is what the rasterizer adds at the light (gamma space)\"}");
 			written++;
