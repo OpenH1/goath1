@@ -23,7 +23,7 @@ CONTROLS = {
                        "room-kept"),
     "flash-gone-with-effect": (("\t\t\tflash->position = position;\n\t\t\tcontinue;",
                                 "\t\t\tflash->position = position;\n\t\t\tlight_sources_add(&position, entry->radius, "
-                                "&entry->color, 1.0f, FALSE);\n\t\t\tcontinue;"), "flash-fades"),
+                                "&entry->color, 1.0f, FALSE, 0);\n\t\t\tcontinue;"), "flash-fades"),
     # (#1248: an effect lasting past its flash flashed again each time it was over)
     "flash-repeats": (("\t\tif (fraction >= 1.0f && flash->seen)\n\t\t\tcontinue;\n", ""), "flash-fades"),
     "flash-restarted": (("\t\t\t\tflash->start = time;\n\t\t\t}\n", "\t\t\t}\n\t\t\tflash->start = time;\n"),
@@ -44,7 +44,7 @@ def generated(control=None):
     helpers = "\n".join(inline(math, name) for name in ["vector_from_points3d", "dot_product3d", "magnitude_squared3d",
                                                          "magnitude3d"])
     glow = "\n".join(re.findall(r"^#define LIGHT_PORT_WEAPON_GLOW_\w+ .+$", lights, re.M))
-    defines = "\n".join(re.findall(r"^#define LIGHT_SOURCES_RANGE .+$", sources, re.M))
+    defines = "\n".join(re.findall(r"^#define LIGHT_SOURCES_(?:RANGE .+|KEY\((?:.*\\\n)*.*)$", sources, re.M))
     enums = "\n".join(re.findall(r"^enum\n\{\n(?:\t[^\n]*\n)*?\};", sources, re.M))
     tables = "\n".join(re.search(r"^static struct light_source_" + name + r" const light_source_" + name +
                                  r"s\[\] =\n\{.*?^\};", sources, re.M | re.S).group(0)
