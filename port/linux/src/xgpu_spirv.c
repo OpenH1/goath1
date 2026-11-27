@@ -7138,10 +7138,6 @@ static void light_shadows_trace_main(struct module *m, struct words *locals, str
 		m->t_float, fadd(m, 1, fmul(m, 1, constant_float(m, 0.06711056f), px), fmul(m, 1, constant_float(m, 0.00583715f),
 		py)))), fmul(m, 1, constant_float(m, 0.618034f), frame)));
 	from = fadd(m, 3, p, fscale(m, 3, n, constant_float(m, XGPU_LIGHT_SHADOWS_BIAS)));
-	/* (HALO_LIGHT_SHADOWS_VIEW=2, checking: a pixel the pre-pass found, half
-	seen where no light reaches it) */
-	if (light_shadows_view() == 2)
-		store(m, seen_variable, constant_splat(m, 4, 0.5f));
 	for (channel = 0; channel < XGPU_LIGHT_SHADOWS_CHANNELS; channel++)
 	{
 		unsigned int number = uextract(m, shadowed, (unsigned int)channel), light_merge, reach_merge;
@@ -7158,6 +7154,10 @@ static void light_shadows_trace_main(struct module *m, struct words *locals, str
 		share = light_shadows_rays(m, locals, pass, query, from, xyz(m, light),
 			fscale(m, 3, to, ext1(m, GLSL_INVERSE_SQRT, m->t_float, fmax_scalar(m, 1, d2, 1.0e-8f))),
 			extract(m, disks, channel), rays, noise, owner, uextract(m, owners, (unsigned int)channel));
+		/* (HALO_LIGHT_SHADOWS_VIEW=2, checking: a pixel the light reaches half
+		seen, whatever its rays found) */
+		if (light_shadows_view() == 2)
+			share = fadd(m, 1, fmul(m, 1, share, constant_float(m, 0.0f)), constant_float(m, 0.5f));
 		store(m, seen_variable, op3(m, OP_COMPOSITE_INSERT, m->t_v4, share, load(m, m->t_v4, seen_variable),
 			(unsigned int)channel));
 		selection_end(m, reach_merge);
