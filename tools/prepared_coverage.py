@@ -105,6 +105,9 @@ def report(name, context, label, status, output, image, arguments):
             failed = True
             continue
         recording = Recording(str(recording_path), arguments.exact)
+        # (the recorder's own misses, each after its "# missed:" stack; a draw written again unmarked is one the
+        # preparation made, or one marked before, recorded in another context: xgpu_manifest_record_draw)
+        recording.misses = [miss for miss in recording.misses if miss[1]]
         missed = len(recording.misses)
         failed = failed or missed > 0 or vulkan > 0 or unmade > 0 or recording.enumerations == 0
         lines.append(f"{name} {context} {instance.name}: {missed} missed of {len(recording.enumerated)} draws "
