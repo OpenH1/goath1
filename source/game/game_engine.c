@@ -1835,7 +1835,7 @@ enum
 /* port: campaign scoring's columns after the score (campaign_score_hud.c):
 kills, headshots, deaths and best streak, their widths, and how many the
 scoreboard drawn has (as many as its view has room for; none but there) */
-static short const scoreboard_stat_widths[] = { 64, 118, 86, 122 };
+static short const scoreboard_stat_widths[] = { 76, 152, 110, 166 };
 static wchar_t const *const scoreboard_stat_names[] = { L"KILLS", L"HEADSHOTS", L"DEATHS", L"BEST STREAK" };
 static short scoreboard_stat_count = 0;
 
@@ -3017,7 +3017,7 @@ static void game_engine_rasterize_scoreboard(
 				/* (the ping, nearly as wide as its column, given room) */
 				panel.x1 = (short)(block_left + scaled_width + padding + (ping_shown ? 8.0f * SCOREBOARD_SCALE : 0.0f));
 				panel.y0 = (short)(top - header_height - padding);
-				panel.y1 = (short)(top + height + padding);
+				panel.y1 = (short)(top + height - header_height + padding);
 				draw_quad(&panel, ((pixel32)panel_alpha << 24) | (background & 0x00FFFFFF));
 			}
 		}

@@ -79,6 +79,9 @@ enum
 	SCORE_FILL_SUMMARY_FROM = 40,
 };
 
+/* the scoreboard's header's size, the summary's times this */
+#define SCORE_BOARD_SCALE 1.35f
+
 /* ---------- globals */
 
 static struct
@@ -860,8 +863,9 @@ real campaign_score_hud_board_header(
 		best = 4120;
 	else if (!campaign_score_personal_best(&best))
 		best = NONE;
+	/* (a size up from the summary's: the scoreboard's text is larger) */
 	return score_draw_header(state, self_slot, count > 1, count > 1 ? L"CO-OP" : L"CAMPAIGN", FALSE, best, left,
-		right, top, height / 480.0f, alpha, draw) - top;
+		right, top, SCORE_BOARD_SCALE * height / 480.0f, alpha, draw) - top;
 }
 
 void campaign_score_hud_draw(
