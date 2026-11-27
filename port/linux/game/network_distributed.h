@@ -316,7 +316,7 @@ enum
 	/* the co-op host's campaign score (network_campaign_score.c), reliably,
 	to each OpenH1 client: the players' tallies that changed and the events
 	since, at most each 8 ticks */
-	_distributed_message_campaign_score = 160, /* netver: pending */
+	_distributed_message_campaign_score = 160,
 
 	NUMBER_OF_DISTRIBUTED_MESSAGES
 };
