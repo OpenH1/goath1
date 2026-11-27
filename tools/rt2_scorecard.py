@@ -71,13 +71,14 @@ RIG = ROOT / "tools" / "rig" / "goat-rig"
 RECORDINGS = "rt2-scorecard"  # (under the remote $HOME)
 # the held scenes: name, recording, frame held, what it is
 SCENES = [
-# (the *_lights recordings carry the light list, HALO_LT_LIGHTS=1, made from local/rt2-main: the same ticks and
-# cameras as the first ones, c20 598, b30 898, combat 1369)
-    ("c20", "c20_lights.hrpl", 702, "c20's Flood corner, the flashlight"),
-    ("a10", "a10_lights.hrpl", 906, "a10's cryo deck, a still camera on the reflective floor"),
-    ("b30", "b30_lights.hrpl", 180, "b30's Pelican passing the beach rock (b30_exterior's view)"),
-    ("combat", "combat_lights.hrpl", 494, "b30's beach in combat: plasma lights"),
-    ("c20walk", "c20_walk_motion.hrpl", 605, "c20's corridor walked toward a Flood, the flashlight on (motion)"),
+# (the *_refl recordings, made from local/rt2-indirect@68b9b6de1 with HALO_LT_LIGHTS=1: the material records carry each
+# shader's reflection strength; the same ticks and cameras as the *_lights ones: c20 598, a10 372, b30 898,
+# combat 1369, c20walk 497)
+    ("c20", "c20_refl.hrpl", 745, "c20's Flood corner, the flashlight"),
+    ("a10", "a10_refl.hrpl", 925, "a10's cryo deck, a still camera on the reflective floor"),
+    ("b30", "b30_refl.hrpl", 282, "b30's Pelican passing the beach rock (b30_exterior's view)"),
+    ("combat", "combat_refl.hrpl", 593, "b30's beach in combat: plasma lights"),
+    ("c20walk", "c20_walk_refl.hrpl", 595, "c20's corridor walked toward a Flood, the flashlight on (motion)"),
 ]
 STABILITY_HOST = "omarchy"
 TRUTH_HOST = "5900x"
