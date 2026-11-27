@@ -1088,7 +1088,13 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 		if (every < 0)
 			every = getenv("HALO_LT_E1_DUMP_EVERY") ? atol(getenv("HALO_LT_E1_DUMP_EVERY")) : 0;
 		if ((lt.since_start < LT_DUMPS && lt.dumps[lt.since_start]) || (every > 0 && !(lt.since_start % every)))
+		{
 			lt_dump(rectangle, pass, &params, denoised ? denoised : lt.means[lt.current], inputs);
+			/* (HALO_LT_E1_DUMP_FINAL: and the light the surfaces read, the
+			suns' share in alpha) */
+			if (getenv("HALO_LT_E1_DUMP_FINAL"))
+				lt_dump_one(rectangle, pass, &params, light_image, inputs, 0, "_final");
+		}
 	}
 	xgpu_vulkan_rt_bounce_set(light_image);
 	if (!lt.said)
