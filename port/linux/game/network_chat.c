@@ -2850,9 +2850,9 @@ void network_chat_report_note_cancel(
 }
 
 /* the note's keys, as the chat line's, into its own text: Enter finishes
-the report with it, Escape without one; left (the game over, the map left, a menu opened or a
-cinematic begun over it), with what was typed. Each frame, before the
-chat's own (which needs a network game) */
+the report with it, Escape without one; left (the game over, the map left,
+a menu opened or a cinematic begun over it), with what was typed. Each
+frame, before the chat's own (which needs a network game) */
 static void chat_report_update(
 	void)
 {
