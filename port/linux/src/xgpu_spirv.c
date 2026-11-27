@@ -4610,20 +4610,55 @@ static void light_shadows_begin(struct module *m, struct pixel_state *state, str
 	read->seen = op(m, OP_IMAGE_FETCH, m->t_v4, 4, operands);
 }
 
-/* a light's falloff (light: its index, an int) times its channel */
-static unsigned int light_shadows_factor(struct module *m, const struct light_shadows_read *read, unsigned int light,
-	unsigned int falloff)
+/* (HALO_LIGHT_SHADOWS_VIEW=1, checking: each shadowed light drawn in its
+channel's tint where its disk is seen, red where it is not, its falloff
+whole; the other lights as they are) */
+static int light_shadows_view(void)
 {
-	unsigned int number, shadow = constant_float(m, 1.0f);
+	static int on = -1;
+
+	if (on < 0)
+	{
+		const char *view = getenv("HALO_LIGHT_SHADOWS_VIEW");
+
+		on = view && *view && strcmp(view, "0") ? 1 : 0;
+	}
+	return on;
+}
+
+/* a light's falloff (light: its index, an int) times its channel; with
+the view, the falloff whole, and in *tint (0 none: not shadowed) the
+colour it is drawn in */
+static unsigned int light_shadows_factor(struct module *m, const struct light_shadows_read *read, unsigned int light,
+	unsigned int falloff, unsigned int *tint)
+{
+	static const float tints[XGPU_LIGHT_SHADOWS_CHANNELS][3] = { { 0.0f, 2.0f, 0.0f }, { 0.0f, 0.6f, 2.5f },
+		{ 1.6f, 1.6f, 0.0f }, { 0.0f, 1.6f, 1.6f } };
+	unsigned int number, shadow = constant_float(m, 1.0f), matched = 0, color = 0;
 	int channel;
 
+	*tint = 0;
 	if (!read->shadowed)
 		return falloff;
 	number = op2(m, OP_I_ADD, m->t_uint, op1(m, OP_BITCAST, m->t_uint, light), constant_uint(m, 1));
 	for (channel = 0; channel < XGPU_LIGHT_SHADOWS_CHANNELS; channel++)
-		shadow = fselect(m, op2(m, OP_I_EQUAL, m->t_bool, uextract(m, read->shadowed, (unsigned int)channel), number),
-			extract(m, read->seen, channel), shadow);
-	return fmul(m, 1, falloff, shadow);
+	{
+		unsigned int is = op2(m, OP_I_EQUAL, m->t_bool, uextract(m, read->shadowed, (unsigned int)channel), number);
+
+		shadow = fselect(m, is, extract(m, read->seen, channel), shadow);
+		if (!light_shadows_view())
+			continue;
+		matched = matched ? op2(m, OP_LOGICAL_OR, m->t_bool, matched, is) : is;
+		color = select_n(m, 3, is, constant_vector(m, 3, tints[channel]), color ? color :
+			constant_splat(m, 3, 0.0f));
+	}
+	if (!light_shadows_view())
+		return fmul(m, 1, falloff, shadow);
+	/* tint * seen + red * (1 - seen), where a channel is the light's */
+	*tint = vec4_of(m, fadd(m, 3, fscale(m, 3, color, shadow), fscale(m, 3, constant_vector(m, 3,
+		(const float[]){ 3.0f, 0.0f, 0.0f }), fsub(m, 1, constant_float(m, 1.0f), shadow))),
+		fselect(m, matched, constant_float(m, 1.0f), constant_float(m, 0.0f)));
+	return falloff;
 }
 
 /* dynamic_light_sum(p, n, surface_normal, environment): the lights of the
@@ -4643,7 +4678,7 @@ static unsigned int dynamic_light_sum(struct module *m, struct pixel_state *stat
 	unsigned int outer_header, outer_condition, outer_body, outer_continue, outer_merge;
 	unsigned int inner_header, inner_condition, inner_body, inner_continue, inner_merge;
 	unsigned int word, bits, light, position, to_light, distance_squared, x2, l, window, core, falloff, facing;
-	unsigned int cone, color, spot, grid2, w, own = 0;
+	unsigned int cone, color, spot, grid2, w, own = 0, tint = 0;
 	struct light_shadows_read shadows;
 
 	/* cell = sign(offset) * log2(1.0 + abs(offset) * grid[1].w) * grid[1].xyz + vec3(16.0, 16.0, 8.0) */
@@ -4752,7 +4787,7 @@ static unsigned int dynamic_light_sum(struct module *m, struct pixel_state *stat
 	core = fmax_scalar(m, 1, fmul(m, 1, fmul(m, 1, extract(m, grid2, 1), w), w),
 		(float)(1.0 / (XGPU_DYNAMIC_LIGHTS_CORE * XGPU_DYNAMIC_LIGHTS_CORE)));
 	falloff = fdiv(m, 1, fmul(m, 1, window, window), fadd(m, 1, constant_float(m, 1.0f), fmul(m, 1, distance_squared, core)));
-	falloff = light_shadows_factor(m, &shadows, light, falloff);
+	falloff = light_shadows_factor(m, &shadows, light, falloff, &tint);
 	if (environment)
 	{
 		facing = fmul(m, 1, fmax_scalar(m, 1, fdot(m, n, l), 0.0f),
@@ -4766,6 +4801,10 @@ static unsigned int dynamic_light_sum(struct module *m, struct pixel_state *stat
 	}
 	cone = dynamic_light(m, 3, light);
 	color = dynamic_light(m, 2, light);
+	/* (HALO_LIGHT_SHADOWS_VIEW: a shadowed light in its tint) */
+	if (tint)
+		color = vec4_of(m, select_n(m, 3, compare(m, OP_F_ORD_GREATER_THAN, extract(m, tint, 3), constant_float(m, 0.5f)),
+			xyz(m, tint), xyz(m, color)), extract(m, color, 3));
 	spot = saturate(m, 1, fadd(m, 1, fmul(m, 1, fdot(m, l, fneg(m, 3, xyz(m, cone))), extract(m, cone, 3)), extract(m, color, 3)));
 	store(m, sum_variable, fadd(m, 3, load(m, m->t_v3, sum_variable),
 		fscale(m, 3, xyz(m, color), fmul(m, 1, fmul(m, 1, falloff, facing), spot))));

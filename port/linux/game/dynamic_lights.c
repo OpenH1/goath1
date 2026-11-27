@@ -69,6 +69,7 @@ structure's 3D BSP, from which a pixel finds its cluster
 #include "world_rt.h"
 
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -733,6 +734,34 @@ static void dynamic_lights_shadowed(long count)
 		disks[slot] = (light->flags & HALO_DYNAMIC_LIGHT_PROJECTILE) ? SHADOWED_DISK_PROJECTILE :
 			disk < SHADOWED_DISK_LEAST ? SHADOWED_DISK_LEAST : disk > SHADOWED_DISK_MOST ? SHADOWED_DISK_MOST : disk;
 		owners[slot] = dynamic_lights.owners[indices[slot]];
+	}
+	/* (HALO_LIGHT_SHADOWS_VIEW, checking: the chosen, once a second) */
+	{
+		static int view = -1;
+		static unsigned long long said;
+		unsigned long long now = platform_shared_clock_microseconds();
+
+		if (view < 0)
+			view = getenv("HALO_LIGHT_SHADOWS_VIEW") && strcmp(getenv("HALO_LIGHT_SHADOWS_VIEW"), "0") ? 1 : 0;
+		if (view && now - said >= 1000000)
+		{
+			char line[768];
+			int at = snprintf(line, sizeof(line), "light shadows: frame %lu: %d of %ld lights shadowed",
+				dynamic_lights.frame, chosen, count);
+
+			said = now;
+			for (slot = 0; slot < chosen && at > 0 && at < (int)sizeof(line); slot++)
+			{
+				struct halo_dynamic_light const *light = &dynamic_lights.lights[indices[slot]];
+
+				at += snprintf(line + at, sizeof(line) - (size_t)at, "; [%d] light %d%s at %.2f %.2f %.2f radius %.2f "
+					"score %.3f disk %.2f owner %lu", slot, indices[slot],
+					(light->flags & HALO_DYNAMIC_LIGHT_PROJECTILE) ? " (projectile)" : "", (double)light->position[0],
+					(double)light->position[1], (double)light->position[2], (double)light->radius,
+					(double)scores[slot], (double)disks[slot], owners[slot]);
+			}
+			platform_log("%s", line);
+		}
 	}
 	if (chosen && !(dynamic_lights.frame % 72) && config_boolean("debug.dynamic_lights_log"))
 	{
