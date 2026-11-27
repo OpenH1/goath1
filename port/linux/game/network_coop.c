@@ -501,6 +501,10 @@ static struct
 	real_point3d watching_host_position;
 	real_vector3d watching_host_forward;
 	long heard_time;
+	/* the host fade last started here, by its start time; none until the
+	first presentation played (fade_known), as a fade begun at the game's
+	first tick, time 0, is one too */
+	boolean fade_known;
 	long fade_start_time;
 	/* the host's presentations as they arrived, by the host's tick; the
 	newest tick heard and the tick last played (nothing is played until
@@ -4138,7 +4142,7 @@ static void client_presentation_apply(
 	}
 
 	/* start each new fade, backdated to when the host started it */
-	if (presentation->fade_start_time != coop_presentation.fade_start_time)
+	if (!coop_presentation.fade_known || presentation->fade_start_time != coop_presentation.fade_start_time)
 	{
 		real_rgb_color color;
 
@@ -4149,6 +4153,7 @@ static void client_presentation_apply(
 			TEST_FLAG(presentation->flags, _presentation_fading_out_bit),
 			game_time_get() - presentation->fade_elapsed);
 		coop_presentation.fade_start_time = presentation->fade_start_time;
+		coop_presentation.fade_known = TRUE;
 	}
 
 	skip_vote.offered = TEST_FLAG(presentation->flags, _presentation_skippable_bit);
