@@ -839,6 +839,44 @@ void xgpu_vulkan_rt_textures(const struct xgpu_world_rt_texture *textures, uint3
 	}
 }
 
+/* the hit sets' stand-in texture (white, 1x1) and their sampler, made
+once: what a set names in every slot that has no image of its own, so a
+set can be made whether or not the scene has been built (its draws are
+drawn from the first frame: xgpu_vulkan_rt_hit_set); FALSE if out of
+memory */
+static int rt_stand_in_make(void)
+{
+	static const unsigned char white[4] = { 255, 255, 255, 255 };
+	struct xgpu_vulkan_image_description description;
+	struct xgpu_vulkan_sampler_description sampler;
+
+	if (rt.stand_in && rt.sampler)
+		return 1;
+	if (!rt.stand_in)
+	{
+		memset(&description, 0, sizeof(description));
+		description.type = XGPU_VULKAN_IMAGE_2D;
+		description.format = XGPU_VULKAN_FORMAT_RGBA8;
+		description.usage = XGPU_VULKAN_USAGE_SAMPLED;
+		description.width = description.height = description.depth_or_layers = description.levels = 1;
+		rt.stand_in = xgpu_vulkan_image_create(&description);
+		if (!rt.stand_in)
+			return 0;
+		xgpu_vulkan_image_upload(rt.stand_in, 0, 0, 0, 0, 0, 1, 1, 1, white, 4, 4);
+	}
+	if (!rt.sampler)
+	{
+		memset(&sampler, 0, sizeof(sampler));
+		sampler.minify = sampler.magnify = XGPU_VULKAN_FILTER_LINEAR;
+		sampler.mip = XGPU_VULKAN_MIP_LINEAR;
+		sampler.address[0] = sampler.address[1] = sampler.address[2] = XGPU_VULKAN_ADDRESS_WRAP;
+		sampler.anisotropy = 1;
+		rt.sampler = xgpu_vulkan_sampler(&sampler);
+	}
+	rt.hit_version++;
+	return rt.sampler != VK_NULL_HANDLE;
+}
+
 /* the textures' slots' images found for this submission (each frame: so
 the texture cache keeps them, and one made again is seen), at most
 RT_TEXTURES_FOUND new ones; a slot whose view changed changes the hit
@@ -851,29 +889,8 @@ static void rt_textures_find(void)
 	if (rt.textures_serial == serial || !rt.hit_layout)
 		return;
 	rt.textures_serial = serial;
-	if (!rt.stand_in)
-	{
-		static const unsigned char white[4] = { 255, 255, 255, 255 };
-		struct xgpu_vulkan_image_description description;
-		struct xgpu_vulkan_sampler_description sampler;
-
-		memset(&description, 0, sizeof(description));
-		description.type = XGPU_VULKAN_IMAGE_2D;
-		description.format = XGPU_VULKAN_FORMAT_RGBA8;
-		description.usage = XGPU_VULKAN_USAGE_SAMPLED;
-		description.width = description.height = description.depth_or_layers = description.levels = 1;
-		rt.stand_in = xgpu_vulkan_image_create(&description);
-		if (!rt.stand_in)
-			return;
-		xgpu_vulkan_image_upload(rt.stand_in, 0, 0, 0, 0, 0, 1, 1, 1, white, 4, 4);
-		memset(&sampler, 0, sizeof(sampler));
-		sampler.minify = sampler.magnify = XGPU_VULKAN_FILTER_LINEAR;
-		sampler.mip = XGPU_VULKAN_MIP_LINEAR;
-		sampler.address[0] = sampler.address[1] = sampler.address[2] = XGPU_VULKAN_ADDRESS_WRAP;
-		sampler.anisotropy = 1;
-		rt.sampler = xgpu_vulkan_sampler(&sampler);
-		rt.hit_version++;
-	}
+	if (!rt_stand_in_make())
+		return;
 	for (slot = 1; slot < XGPU_WORLD_RT_TEXTURES; slot++)
 	{
 		const struct xgpu_stream_texture_stage *stage = &rt.textures[slot];
@@ -921,8 +938,14 @@ VkDescriptorSet xgpu_vulkan_rt_hit_set(void)
 
 	if (!rt.ready || !rt.hit_pool)
 		return VK_NULL_HANDLE;
-	/* (a table and the stand-in made, so a set has something to name) */
+	/* (a table and the stand-in made, so a set has something to name: here,
+	not only as the scene's textures are found, which a frame with no scene
+	never does; without a set every draw of display.ambient_occlusion
+	"world" was dropped, the level's structure with them, until a scene was
+	first built) */
 	if (!rt.hit_buffer.buffer && !rt_hit_room(0))
+		return VK_NULL_HANDLE;
+	if (!rt_stand_in_make())
 		return VK_NULL_HANDLE;
 	stand_in = xgpu_vulkan_image_view(rt.stand_in);
 	if (!stand_in || !rt.sampler)
