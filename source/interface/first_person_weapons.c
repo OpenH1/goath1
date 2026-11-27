@@ -760,8 +760,9 @@ static void first_person_weapon_draw_slot(
 				weapon_definition->weapon.interface_definition.first_person_animations.index);
 			struct render_lighting *lighting= object_get_cached_render_lighting(unit_index, FLT_MAX);
 			/* port: (not lit by the unit's own flashlight, whose lamp is on
-			the weapon: object_lights.c) */
-			struct render_lighting first_person_lighting;
+			the weapon: object_lights.c; kept past the draws, which may be
+			drawn later than here) */
+			static struct render_lighting first_person_lighting;
 			/* port: the weapon's and the arms' function values and
 			change colors, and the camouflage, between the last two
 			ticks', as the world's objects are drawn
