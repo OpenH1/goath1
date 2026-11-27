@@ -26,7 +26,8 @@ pinger's colour (network_markers_render_outlines, before the HUD: the nearest
 MARKER_OUTLINES_DRAWN of a view), through walls, except an enemy player's
 (on foot or riding) in a game against players, which shows only where it is
 seen. An enemy unit or vehicle (markers_object_enemy) has a small red arrow
-over the name and a red inner edge to its outline.
+over the name and a red inner edge to its outline (orange for a reddish
+pinger's: markers_enemy_color).
 
 Who sees it: in the campaign (co-op, split screen) every player; in a
 multiplayer game with teams, the player's team; in a game without teams,
@@ -240,9 +241,13 @@ height, and a red inner edge of its outline (this part of the outline's
 width) */
 #define MARKER_ENEMY_CUE_PART 0.45f
 #define MARKER_ENEMY_EDGE_PART 0.4f
-/* an outline's width (the view's -1..1 units, of its height: about 3 of a
-1080-line display's pixels), and the most a view draws (the nearest) */
-#define MARKER_OUTLINE_WIDTH 0.0058f
+/* an outline's width (the view's -1..1 units, of its height: about 4 of a
+1080-line display's pixels, whatever the object's size or distance, so a
+small or far one reads), its soft glow's (this many times as wide, this
+part as opaque), and the most a view draws (the nearest) */
+#define MARKER_OUTLINE_WIDTH 0.0075f
+#define MARKER_GLOW_WIDTH_PART 2.0f
+#define MARKER_GLOW_ALPHA_PART 0.35f
 #define MARKER_OUTLINES_DRAWN 8
 
 /* ---------- structures */
@@ -656,6 +661,26 @@ static boolean markers_object_enemy(
 		rider_index = rider->object.next_object_index;
 	}
 	return enemy;
+}
+
+/* an enemy's cue's colour: red, or orange for a pinger whose own colour is
+reddish (a red team's), so that it still reads apart from theirs */
+static void markers_enemy_color(
+	real_rgb_color const *pinger_color,
+	real_rgb_color *color)
+{
+	if (pinger_color->red > 0.5f && pinger_color->green < 0.45f && pinger_color->blue < 0.45f)
+	{
+		color->red = 1.0f;
+		color->green = 0.62f;
+		color->blue = 0.05f;
+	}
+	else
+	{
+		color->red = 0.92f;
+		color->green = 0.12f;
+		color->blue = 0.10f;
+	}
 }
 
 /* a pinged item's icon (as the pickup prompt draws it, from the HUD's
@@ -1379,10 +1404,11 @@ void network_markers_render(
 			still the ping's) */
 			if (enemy)
 			{
-				static real_rgb_color const enemy_red = { 0.92f, 0.12f, 0.10f };
+				real_rgb_color enemy_red;
 				real_point2d center;
 				real height = half_height * 2.0f * MARKER_ENEMY_CUE_PART;
 
+				markers_enemy_color(&color, &enemy_red);
 				center.x = drawn.x;
 				center.y = top - 1.0f - height * 0.5f;
 				hud_render_nav_point_arrow(markers_globals.nav_index, 0 /* on the screen */, &center, height,
@@ -1496,20 +1522,25 @@ void network_markers_render_outlines(
 			{ 1.0f, 0.0f }, { -1.0f, 0.0f }, { 0.0f, 1.0f }, { 0.0f, -1.0f },
 			{ 0.7071f, 0.7071f }, { -0.7071f, 0.7071f }, { 0.7071f, -0.7071f }, { -0.7071f, -0.7071f },
 		};
-		static real_rgb_color const enemy_red = { 0.92f, 0.12f, 0.10f };
+		real_rgb_color enemy_red;
 		struct object_datum *object = object_get(outlines[index].object_index);
 		byte alpha = (byte)PIN((long)(255.0f * outlines[index].alpha + 0.5f), 0, 255);
 		short ring;
 
 		/* (scissored to the object and its outline's pixels about it) */
 		draw_bounds_cube(&object->object.bounding_sphere_center,
-			object->object.bounding_sphere_radius * 1.5f + outlines[index].distance * 0.01f + 0.1f);
+			object->object.bounding_sphere_radius * 1.5f + outlines[index].distance * 0.03f + 0.1f);
+		markers_enemy_color(&outlines[index].color, &enemy_red);
 		rasterizer_ping_outline_pass(TRUE, 0.0f, 0.0f, 0, FALSE);
 		render_object_outline(outlines[index].object_index);
-		for (ring = outlines[index].enemy ? 0 : 1; ring < 2; ring++)
+		/* (an enemy's edge, the outline, its glow: the first drawn of them
+		keeps a pixel) */
+		for (ring = outlines[index].enemy ? 0 : 1; ring < 3; ring++)
 		{
-			real width = ring == 0 ? MARKER_OUTLINE_WIDTH * MARKER_ENEMY_EDGE_PART : MARKER_OUTLINE_WIDTH;
-			pixel32 color = ((pixel32)alpha << 24) |
+			real width = ring == 0 ? MARKER_OUTLINE_WIDTH * MARKER_ENEMY_EDGE_PART :
+				ring == 1 ? MARKER_OUTLINE_WIDTH : MARKER_OUTLINE_WIDTH * MARKER_GLOW_WIDTH_PART;
+			byte ring_alpha = ring == 2 ? (byte)(alpha * MARKER_GLOW_ALPHA_PART) : alpha;
+			pixel32 color = ((pixel32)ring_alpha << 24) |
 				real_rgb_color_to_pixel32(ring == 0 ? &enemy_red : &outlines[index].color);
 			short direction;
 

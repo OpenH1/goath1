@@ -1535,7 +1535,8 @@ static void network_test_profiles(
 }
 
 /* debug.network_test_name: the name the machine's first player takes (its
-profile's, which it joins with), in ASCII */
+profile's, which it joins with), in ASCII; "<name>#<n>" also its colour
+(the profile's colour of that index: 3 blue, 6 green) */
 static void network_test_set_name(
 	void)
 {
@@ -1546,9 +1547,11 @@ static void network_test_set_name(
 	if (!name || !name[0])
 		return;
 	player_ui_get_active_player_profile(0, &profile);
-	for (index = 0; name[index] && index < MAXIMUM_PLAYER_PROFILE_NAME_LENGTH - 1; index++)
+	for (index = 0; name[index] && name[index] != '#' && index < MAXIMUM_PLAYER_PROFILE_NAME_LENGTH - 1; index++)
 		profile.player_name[index] = (wchar_t)(unsigned char)name[index];
 	profile.player_name[index] = 0;
+	if (strchr(name, '#'))
+		profile.primary_color_index = (short)atoi(strchr(name, '#') + 1);
 	player_ui_set_active_player_profile(0, player_ui_get_active_player_profile_index(0), &profile);
 	platform_log("network test: this machine's player is named %s", name);
 }
