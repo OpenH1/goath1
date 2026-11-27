@@ -3534,7 +3534,7 @@ static int rt_shadows_pipeline(const struct stream_target *color, const struct s
 	pipeline->blend_destination = XGPU_BLEND_SOURCE_COLOR;
 	pipeline->blend_operation = XGPU_BLEND_ADD;
 	pipeline->color_mask = 7;
-	/* (the level's pixels alone: the models' have the stencil's first bit) */
+	/* (not the first-person weapon's pixels: they have the stencil's first bit) */
 	pipeline->stencil_test = 1;
 	pipeline->stencil_function = XGPU_COMPARE_EQUAL;
 	pipeline->stencil_fail = pipeline->stencil_depth_fail = pipeline->stencil_pass = XGPU_STENCIL_KEEP;

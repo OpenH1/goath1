@@ -7,8 +7,9 @@ through, as the backend builds its acceleration structures of it. The
 meshes: the loaded structure BSP's collision geometry, and each object
 definition's nodes' collision geometry (the first permutation's, in the
 node's space), a mesh for each node that has some, or for an item with
-none (a grenade, a weapon or equipment on the ground) a box about its
-bounding sphere; made as they are first drawn
+none (a grenade, a weapon or equipment on the ground) its model's render
+mesh as drawn, else a box about its bounding sphere; made as they are
+first drawn
 and kept until the map unloads (the backend's bottom-level structures,
 built once). The instances: each frame, the structure (which stops a ray
 and occludes nothing: the lightmaps and the field hold its occlusion) and
