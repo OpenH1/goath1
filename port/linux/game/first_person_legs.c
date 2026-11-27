@@ -3,9 +3,10 @@ FIRST_PERSON_LEGS.C
 
 Your own legs in first person (Video Setup > FOV and Viewmodels > Legs): the
 player's own body, which the game animates as everyone else sees it but does
-not draw for its own player, drawn from its belly down. Look down while
-standing, running, strafing, crouching or jumping and the legs move as the
-body's animation moves them.
+not draw for its own player, drawn but its head and arms. Look down while
+standing, running, strafing, crouching or jumping and you see your chest's
+armour, your belly and your legs, the legs moving as the body's animation
+moves them.
 
 Only the drawing is changed, from a copy of the body's pose; the body itself,
 its hit boxes and markers, are the game's as ever. The legs are drawn in the
@@ -31,22 +32,25 @@ none of which depends on where the view looks but for the aim's heading:
   swung with every turn of the view, their feet sliding, and walking at an
   angle they faced the aim (#772). It turns by the frames' time, as smoothly
   at any frame rate and any number of ticks a second.
-- The eye is over the front of its hips and belly at rest, along that
-  heading (first_person_legs_front): the game's eye is over the middle of the
-  body, its spine, where looking down showed the top of the hips and the
-  belly before the eye, and the armour's belly is deep; a person's eyes are
-  over the front of their belly. (Set back 37 cm, the thighs reached forward
-  under the eye from behind it, #772.) The heading is level, so the feet stay
-  put however the view tilts (#724).
-- Its chest and all above it (the neck, the head, the arms: the first-person
-  arms are the weapon's) are folded into the chest's joint, and its belly,
-  closed so, is flattened onto its joint's height, a lid over the hips. The
-  eye is then never inside the body nor near enough for the near plane
-  (0.0625 world units, about 19 cm, before the eye) to cut it, standing,
-  walking or crouching: the chest's armour, which reached up to the eye and
-  23 cm before it, was what the near plane cut, showing it hollow and the
-  open collar; and looking down shows the belly as a lid, not a dark cone of
-  it rising toward the eye.
+- The eye is over the front of its helmet at rest, along that heading
+  (first_person_legs_front), where a Spartan's eyes are, behind the visor:
+  the game's eye is over the middle of the body, its spine, where the
+  chest's armour reached 23 cm before the eye and up to it. The heading is
+  level, so the feet stay put however the view tilts (#724).
+- Its head and its arms (the first-person arms are the weapon's) are folded
+  into the top of the neck and into the shoulders, closing them; the rest is
+  drawn as the game poses it, the chest's armour too.
+- Its upper body is turned back about its waist until it leans
+  FIRST_PERSON_LEGS_UPPER_LEAN (26 degrees) back from upright, by the pose
+  alone: the game's eye is at the chin, low in the helmet, as high as the top
+  of the chest's armour, and looking down showed the collar under the eye, a
+  dark pit filling the view, the more as the run leans the body forward. A
+  person's eyes are high over their collar: looking down they see the front
+  of their chest, their belly and their feet, and so does this.
+- The view's near plane is brought in to FIRST_PERSON_LEGS_NEAR_REACH (about
+  6 cm at its corners, near_clip.c) while the body is drawn: the game's, 19
+  cm before the eye, cut the chest open at a wide view or crouching. The
+  depth buffer keeps its precision at any near distance (far_clip.c).
 - The game's eye is just above the joint of the body's head, 10 to 11 cm
   below the eye standing, walking and crouching. Only where the eye is lower
   in the body than that (a crouch jump: the eye comes down to crouching
@@ -61,7 +65,11 @@ second, and whatever the near plane still cut folded away, a part at a time:
 the lean stepped as each frame's pose and view came, and parts folded and
 came back from frame to frame, so the legs shook and flickered looking down,
 the skin between the hips and a chest leant back as far as 86 degrees
-stretched, and the parts folded showed as slivers (#772).
+stretched, and the parts folded showed as slivers (#772). Then (#826,
+#882) the chest and all above it were folded into the chest's joint and the
+belly, closed so, flattened onto its joint's height, a lid over the hips:
+looking down showed one thigh beside a big black faceted lid where the body
+was cut off.
 
 The body's shadow is drawn too, placed as the legs are, but whole
 (first_person_legs_shadow_node_matrices): its legs stand on their own
@@ -107,6 +115,7 @@ body, what others see, is as ever: nothing of the unit changes.
 #include "models/model_animation_definitions.h"
 #include "game/game.h"
 #include "game/players.h"
+#include "camera/director.h"
 #include "units/units.h"
 #include "units/bipeds.h"
 #include "units/biped_definitions.h"
@@ -146,9 +155,8 @@ enum
 	FIRST_PERSON_LEGS_MAXIMUM_NODES = 64,
 };
 
-/* a part folded away: its node's scale (the chest and all above it, folded
-into the chest's joint; in the VR mode, the head and arms, folded into the
-neck and shoulders) */
+/* a part folded away: its node's scale (the head and the arms, folded into
+the top of the neck and the shoulders) */
 #define FIRST_PERSON_LEGS_FOLDED 0.001f
 
 /* the flat screen's body (first_person_legs_place): lowered where its head
@@ -156,9 +164,18 @@ would be less than this below the eye (world units: about 8 cm; the Master
 Chief's head's joint is 10 to 11 cm below it standing, walking and
 crouching) */
 #define FIRST_PERSON_LEGS_HEAD_BELOW 0.025f
-/* ... its belly flattened onto the top of its hips to this of its height, a
-lid over them (first_person_legs_node_matrices) */
-#define FIRST_PERSON_LEGS_LID 0.05f
+/* ... and its view's near plane brought in to where its corners are this far
+from the eye (first_person_legs_near_reach, near_clip.c: world units, about
+6 cm), nearer than any of the body drawn comes to the eye (the chest's armour,
+24 cm or more; a crouch's knee) */
+#define FIRST_PERSON_LEGS_NEAR_REACH 0.02f
+/* ... its upper body turned back about its waist until its line from the
+waist to the neck leans this far back from upright (radians: 26 degrees),
+by no more than FIRST_PERSON_LEGS_UPPER_TURN_MOST (radians: 57 degrees, the
+run's forward lean, about 30 degrees, and this) (first_person_legs_node_
+matrices) */
+#define FIRST_PERSON_LEGS_UPPER_LEAN 0.45f
+#define FIRST_PERSON_LEGS_UPPER_TURN_MOST 1.0f
 
 /* the flat screen's lower body's heading (first_person_legs_lower_turn),
 radians and per second: standing, it stays planted until the aim is more than
@@ -357,22 +374,6 @@ void first_person_legs_reset(
 	object_mesh_reset();
 }
 
-#ifdef HALO_VR
-/* a node of the legs: the hips, thighs, calves, feet and toes */
-static boolean first_person_legs_node(
-	char const *name)
-{
-	static char const *const parts[] = { "pelvis", "thigh", "calf", "foot", "toe", "leg" };
-	short index;
-
-	for (index = 0; index < (short)NUMBEROF(parts); index++)
-	{
-		if (first_person_legs_name_has(name, parts[index]))
-			return TRUE;
-	}
-	return FALSE;
-}
-
 /* a vector turned by the rotation from the frame from (forward, left, up)
 to the frame to */
 static void first_person_legs_turn(
@@ -409,6 +410,22 @@ static void first_person_legs_rotate(
 	matrix->position.x = pivot->x + offset.i + move->i;
 	matrix->position.y = pivot->y + offset.j + move->j;
 	matrix->position.z = pivot->z + offset.k + move->k;
+}
+
+#ifdef HALO_VR
+/* a node of the legs: the hips, thighs, calves, feet and toes */
+static boolean first_person_legs_node(
+	char const *name)
+{
+	static char const *const parts[] = { "pelvis", "thigh", "calf", "foot", "toe", "leg" };
+	short index;
+
+	for (index = 0; index < (short)NUMBEROF(parts); index++)
+	{
+		if (first_person_legs_name_has(name, parts[index]))
+			return TRUE;
+	}
+	return FALSE;
 }
 
 /* whether an eye's view (its frustum, each plane's distance outward) has
@@ -1605,19 +1622,23 @@ static void first_person_legs_yaw(
 
 /* where the eye is over, in the model's frame (forward, left: its origin, the
 unit's, is under the game's eye): before the hips' joint at rest (the root's,
-pelvis), as far forward as the front of the hips and belly at rest (the
-surface on the pelvis and belly, belly: the model's own, object_mesh), as a
-person's eyes are over the front of their belly. The Master Chief's armour
-reaches about 20 cm before his hips' joint: over the joint, looking down showed
-the hips and belly before the eye, filling the view under it; set back farther
-(37 cm, before #772's second report), the thighs reached forward under the
-eye from behind it. Worked out once for each model */
+pelvis), as far forward as the front of the helmet at rest (the surface on the
+head, head: the model's own, object_mesh), where a Spartan's eyes are, behind
+its visor. The Master Chief's helmet reaches about 24 cm before his hips' joint,
+as far as his chest's armour does: the eye is over the front of his chest, and
+looking down shows the chest below the eye, and the belly, the hips and the
+legs before it. Over the hips' joint (the game's own place) the chest's armour
+reached 23 cm before the eye and up to it; over the front of the belly (19 cm,
+#772's second report, with the chest folded away) it reached before the eye
+and hid the legs below it; set back farther (37 cm, before that) the thighs
+reached forward under the eye from behind it. Worked out once for each
+model */
 static void first_person_legs_front(
 	struct object_datum const *object,
 	struct model const *model,
 	long count,
 	short pelvis,
-	short belly,
+	short head,
 	real_point3d *front)
 {
 	static long model_index = NONE;
@@ -1639,7 +1660,7 @@ static void first_person_legs_front(
 			struct object_mesh_vertex const *vertex = &mesh->vertices[index];
 			short node = vertex->weight >= 16384 ? vertex->nodes[0] : vertex->nodes[1];
 
-			if (node < count && (node == pelvis || node == belly) && vertex->position.x > found.x)
+			if (node < count && first_person_legs_below(model, node, head) && vertex->position.x > found.x)
 				found.x = vertex->position.x;
 		}
 	}
@@ -1651,14 +1672,15 @@ own as it is drawn now, turned to the view drawn's heading and moved to its
 eye (render_interpolation_view_body); its lower body turned from there to its
 own heading (first_person_legs_lower_get), about the eye, the walk of its own
 blended in as far as it is drawn; moved along that heading so that the eye is
-over the front of its hips and belly at rest (first_person_legs_front: the
-game's eye is over the unit's origin); and lowered where its head is less than
+over the front of its helmet at rest (first_person_legs_front: the game's eye
+is over the unit's origin); and lowered where its head is less than
 FIRST_PERSON_LEGS_HEAD_BELOW below the eye (first_person_legs.c's notes at the
-top). *chest: the neck's parent, the Master Chief's "bip01 spine1"; *belly:
-the chest's parent, below it ("bip01 spine"), or the chest. The same for any
-view and pitch: nothing is weighed against the view but the eye's height and
-the aim's heading. FALSE: none (in the VR mode's eye pass, or a body without
-named hips, thighs and neck) */
+top). *head_node: its head's node (the Master Chief's "bip01 head"), or its
+neck's; *waist: the node its upper body turns about at the waist, the chest's
+parent ("bip01 spine"), or the chest (the neck's parent); *heading: the lower
+body's heading (level). The same for any view and pitch: nothing is weighed
+against the view but the eye's height and the aim's heading. FALSE: none (in
+the VR mode's eye pass, or a body without named hips, thighs and neck) */
 static boolean first_person_legs_place(
 	long object_index,
 	struct object_datum const *object,
@@ -1666,8 +1688,9 @@ static boolean first_person_legs_place(
 	long count,
 	real_matrix4x3 const *nodes,
 	real_matrix4x3 *placed,
-	short *chest,
-	short *belly)
+	short *head_node,
+	short *waist,
+	real_vector3d *heading)
 {
 	short pelvis = NONE, neck = NONE, head = NONE, thighs = 0;
 	short index;
@@ -1697,12 +1720,16 @@ static boolean first_person_legs_place(
 		return FALSE;
 	if (head == NONE)
 		head = neck;
-	*chest = TAG_BLOCK_GET_ELEMENT(&model->nodes, neck, struct model_node)->parent_node_index;
-	if (*chest == NONE || *chest == pelvis)
-		*chest = neck;
-	*belly = TAG_BLOCK_GET_ELEMENT(&model->nodes, *chest, struct model_node)->parent_node_index;
-	if (*belly == NONE || *belly == pelvis)
-		*belly = *chest;
+	*head_node = head;
+	{
+		short chest = TAG_BLOCK_GET_ELEMENT(&model->nodes, neck, struct model_node)->parent_node_index;
+
+		if (chest == NONE || chest == pelvis)
+			chest = neck;
+		*waist = TAG_BLOCK_GET_ELEMENT(&model->nodes, chest, struct model_node)->parent_node_index;
+		if (*waist == NONE || *waist == pelvis)
+			*waist = chest;
+	}
 
 	/* (the body, between the ticks, turned to the view drawn's heading and
 	moved to its eye: that is the newest step's, a tick's motion on, aimed in
@@ -1761,12 +1788,11 @@ static boolean first_person_legs_place(
 		forward.i = (real)cos(lower->yaw);
 		forward.j = (real)sin(lower->yaw);
 	}
-	/* (the eye over the front of the hips and belly at rest, along that
-	heading) */
+	/* (the eye over the front of the helmet at rest, along that heading) */
 	{
 		real_point3d front;
 
-		first_person_legs_front(object, model, count, pelvis, *belly, &front);
+		first_person_legs_front(object, model, count, pelvis, head, &front);
 		for (index = 0; index < count; index++)
 		{
 			placed[index].position.x -= forward.i * front.x - forward.j * front.y;
@@ -1781,17 +1807,18 @@ static boolean first_person_legs_place(
 		for (index = 0; index < count; index++)
 			placed[index].position.z -= drop;
 	}
+	*heading = forward;
 	return TRUE;
 }
 
 /* the pose to draw the body with: in the VR mode, the VR mode's
 (first_person_legs_vr_body, first_person_legs_vr_seated); on the flat
-screen, the body placed for the eye (first_person_legs_place), its chest and
-all above it folded into the chest's joint, and its belly, closed so, flattened
-onto the top of its hips, a lid over them (FIRST_PERSON_LEGS_LID): looking
-straight down from over the hips, the belly as a person sees theirs, not
-into the hips, nor a dark cone of it toward the eye. NULL: none (a body
-without named legs and neck) */
+screen, the body placed for the eye (first_person_legs_place), all of it but
+its head and its arms (the first-person arms are the weapon's), which are
+folded into the top of the neck and into the shoulders, closing them: looking
+down, the chest's armour, the belly, the hips and the legs, as a Spartan sees
+his own, nothing cut open nor closed by a lid. NULL: none (a body without
+named legs and neck) */
 real_matrix4x3 const *first_person_legs_node_matrices(
 	long object_index,
 	real_matrix4x3 const *nodes)
@@ -1799,9 +1826,9 @@ real_matrix4x3 const *first_person_legs_node_matrices(
 	struct object_datum *object = object_try_and_get(object_index);
 	struct model const *model;
 	long count;
-	short chest, belly;
+	short head, waist, left_arm = NONE, right_arm = NONE;
 	short index;
-	real lid;
+	real_vector3d heading;
 
 	if (!object || !nodes || !first_person_legs_model(object, &model, &count))
 		return NULL;
@@ -1816,29 +1843,103 @@ real_matrix4x3 const *first_person_legs_node_matrices(
 			return body;
 	}
 #endif
-	if (!first_person_legs_place(object_index, object, model, count, nodes, first_person_legs_matrices, &chest, &belly))
+	if (!first_person_legs_place(object_index, object, model, count, nodes, first_person_legs_matrices, &head, &waist,
+		&heading))
+	{
 		return NULL;
+	}
 	for (index = 0; index < count; index++)
 	{
-		if (first_person_legs_below(model, index, chest))
+		char const *name = TAG_BLOCK_GET_ELEMENT(&model->nodes, index, struct model_node)->name;
+
+		if (left_arm == NONE && first_person_legs_name_has(name, "l upperarm"))
+			left_arm = index;
+		if (right_arm == NONE && first_person_legs_name_has(name, "r upperarm"))
+			right_arm = index;
+	}
+	/* (its upper body turned back about its waist until it leans
+	FIRST_PERSON_LEGS_UPPER_LEAN back from upright, its neck and collar back
+	and down from under the eye: the game's eye is at the chin, low in the
+	helmet, the top of the chest's armour as high as it, and looking down
+	showed the collar under the eye, a dark pit filling the view, the more as
+	the run leans the body forward; a person's eyes are high over their
+	collar, and looking down they see their chest's front, their belly and
+	their feet. By the pose alone: the same drawn again, whatever came
+	before) */
+	{
+		real_point3d pivot = first_person_legs_matrices[waist].position;
+		real_point3d const *neck = &first_person_legs_matrices[TAG_BLOCK_GET_ELEMENT(&model->nodes, head,
+			struct model_node)->parent_node_index == NONE ? head :
+			TAG_BLOCK_GET_ELEMENT(&model->nodes, head, struct model_node)->parent_node_index].position;
+		real ahead = (neck->x - pivot.x) * heading.i + (neck->y - pivot.y) * heading.j;
+		real turn = (real)atan2(ahead, neck->z - pivot.z) + FIRST_PERSON_LEGS_UPPER_LEAN;
+		real c, s;
+		real_vector3d from[3], to[3];
+
+		turn = PIN(turn, 0.f, FIRST_PERSON_LEGS_UPPER_TURN_MOST);
+		c = (real)cos(turn);
+		s = (real)sin(turn);
+
+		from[0] = heading;
+		from[1].i = -heading.j;
+		from[1].j = heading.i;
+		from[1].k = 0.f;
+		from[2] = *global_up3d;
+		to[0].i = heading.i * c;
+		to[0].j = heading.j * c;
+		to[0].k = s;
+		to[1] = from[1];
+		to[2].i = -heading.i * s;
+		to[2].j = -heading.j * s;
+		to[2].k = c;
+		for (index = 0; index < count; index++)
 		{
-			first_person_legs_matrices[index].position = first_person_legs_matrices[chest].position;
+			if (first_person_legs_below(model, index, waist))
+				first_person_legs_rotate(&first_person_legs_matrices[index], from, to, &pivot, global_zero_vector3d);
+		}
+	}
+	/* (the head folded into the top of the neck, its joint, and each arm
+	into its shoulder, closing them, as the VR mode's: folded into the
+	chest's joint, the chest went with them and the collar or the belly
+	was left open, #772's open collar and #826's lid) */
+	for (index = 0; index < count; index++)
+	{
+		short up;
+
+		for (up = index; up != NONE && up != head && up != left_arm && up != right_arm;
+			up = TAG_BLOCK_GET_ELEMENT(&model->nodes, up, struct model_node)->parent_node_index);
+		if (up != NONE)
+		{
+			first_person_legs_matrices[index].position = first_person_legs_matrices[up].position;
 			first_person_legs_matrices[index].scale = FIRST_PERSON_LEGS_FOLDED;
 		}
 	}
-	lid = first_person_legs_matrices[belly].position.z;
-	for (index = 0; index < count; index++)
-	{
-		if (first_person_legs_below(model, index, belly))
-		{
-			first_person_legs_matrices[index].forward.k *= FIRST_PERSON_LEGS_LID;
-			first_person_legs_matrices[index].left.k *= FIRST_PERSON_LEGS_LID;
-			first_person_legs_matrices[index].up.k *= FIRST_PERSON_LEGS_LID;
-			first_person_legs_matrices[index].position.z = lid +
-				(first_person_legs_matrices[index].position.z - lid) * FIRST_PERSON_LEGS_LID;
-		}
-	}
 	return first_person_legs_matrices;
+}
+
+/* render.c: how far from the eye the near plane's corners may reach in a
+local player's view (world units, near_clip.c): with their own body drawn
+in the first person on the flat screen, FIRST_PERSON_LEGS_NEAR_REACH (the
+chest's armour comes within a few centimeters of the eye, where the game's
+near plane, 19 cm before it, cut it open); else 0 (the view's own). The
+depth buffer keeps its precision as a share of the distance at any near
+distance (far_clip.c) */
+real first_person_legs_near_reach(
+	short local_player_index)
+{
+	long player_index = local_player_index == NONE ? NONE : local_player_get_player_index(local_player_index);
+	long unit_index = player_index == NONE ? NONE : player_get(player_index)->unit_index;
+
+#ifdef HALO_VR
+	if (halo_vr_running())
+		return 0.f;
+#endif
+	if (unit_index == NONE || director_get_perspective(local_player_index) != _director_perspective_first_person ||
+		!first_person_legs_wanted(unit_index))
+	{
+		return 0.f;
+	}
+	return FIRST_PERSON_LEGS_NEAR_REACH;
 }
 
 /* render_objects.c: the pose to draw the body's shadow with on the flat
@@ -1853,11 +1954,12 @@ real_matrix4x3 const *first_person_legs_shadow_node_matrices(
 	struct object_datum *object = object_try_and_get(object_index);
 	struct model const *model;
 	long count;
-	short chest, belly;
+	short head, waist;
+	real_vector3d heading;
 
 	if (!object || !nodes || object->object.parent_object_index != NONE ||
 		!first_person_legs_model(object, &model, &count) ||
-		!first_person_legs_place(object_index, object, model, count, nodes, shadow, &chest, &belly))
+		!first_person_legs_place(object_index, object, model, count, nodes, shadow, &head, &waist, &heading))
 	{
 		return NULL;
 	}

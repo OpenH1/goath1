@@ -3,16 +3,17 @@ FIRST_PERSON_LEGS_PLACE.C
 
 The first-person body on the flat screen (port/linux/game/first_person_legs.c):
 its pose (first_person_legs_node_matrices: the body placed for the eye by
-first_person_legs_place, its chest and all above it folded into the chest's
-joint) and its shadow's (first_person_legs_shadow_node_matrices), made for a
+first_person_legs_place, its head and arms folded into the top of its neck
+and its shoulders, its upper body leant back about its waist) and its
+shadow's (first_person_legs_shadow_node_matrices), made for a
 body of the test's own, a skeleton of the game's node names placed as the
 cyborg's are about its eye (standing, crouching, a crouch jump's), in views
 of the test's own:
 
 - planted (#724, #772): the view tilted from level to looking straight down,
   and turned: the legs' pose is the same in every frame, the body moved along
-  its own heading so that the eye is over the front of its hips and belly at
-  rest (the model's mesh's), its feet where the game has them less that; and
+  its own heading so that the eye is over the front of its helmet at rest
+  (the model's mesh's), its feet where the game has them less that; and
   seen from the view drawn (render_interpolation_view_body), turned to the
   lower body's own heading about the eye (first_person_legs_lower_get), the
   same however the view turns;
@@ -20,17 +21,21 @@ of the test's own:
   eye's vertical, nothing else changed;
 - stateless (#772): drawn again in the same view after other views, the pose
   is the same, whatever came before (no lean stepped frame by frame);
-- clear (#772): standing and crouching on the ground, nothing drawn is
-  within the game's near distance of the eye nor above it, the chest and all
-  above it folded into the chest's joint, the belly flattened onto its joint's
-  height, and nothing lowered;
+- clear (#772, the lid): standing and crouching on the ground, the chest
+  drawn, nothing flattened into a lid nor folded but the head and arms,
+  nothing drawn within the near plane's reach of the eye
+  (FIRST_PERSON_LEGS_NEAR_REACH) nor above it, its upper body leant
+  FIRST_PERSON_LEGS_UPPER_LEAN back from upright (the run's forward lean
+  undone too), and nothing lowered;
 - crouch_jump (#692): the eye down at the hips: the body lowered as far as
   keeps its head below the eye as the ground's poses have it, nothing drawn
   near the eye;
-- rigid (#772): what is drawn is the game's pose moved whole: every two
-  nodes drawn as far apart as the game has them (nothing stretched);
+- rigid (#772): what is drawn is the game's pose moved whole, its upper
+  body turned whole about the waist: every two nodes of the lower body, and
+  every two of the upper, drawn as far apart as the game has them (nothing
+  stretched);
 - shadow: the shadow's pose is placed as the legs are, nothing folded nor
-  flattened.
+  leant.
 */
 
 #include "harness.h"
@@ -38,6 +43,7 @@ of the test's own:
 
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define MIN(a, b) ((a) > (b) ? (b) : (a))
+#define PIN(n, floor, ceiling) ((n) < (floor) ? (floor) : MIN((n), (ceiling)))
 #define _pi 3.14159265358979323846
 #define TAG_STRING_LENGTH 31
 
@@ -80,7 +86,9 @@ static struct
 } global_window_parameters;
 static real_point3d const test_origin3d = { 0.f, 0.f, 0.f };
 static real_vector3d const test_forward3d = { 1.f, 0.f, 0.f }, test_up3d = { 0.f, 0.f, 1.f };
+static real_vector3d const test_zero3d = { 0.f, 0.f, 0.f };
 #define global_origin3d (&test_origin3d)
+#define global_zero_vector3d (&test_zero3d)
 #define global_forward3d (&test_forward3d)
 #define global_up3d (&test_up3d)
 
@@ -215,8 +223,9 @@ static real const crouch_jump[NODES][3] =
 static real_point3d const test_eye = { 12.5f, -40.25f, 3.0f };
 static real_matrix4x3 game_pose[NODES];
 
-/* the model's surface at rest: the front of the hips and of the belly, and
-farther forward the knee's and the chest's, which are not the hips' */
+/* the model's surface at rest: the front of the hips and of the belly, the
+front of the helmet (its visor) and behind it the head's, and farther forward
+the knee's and the chest's, which are not the helmet's */
 static struct object_mesh_vertex test_vertices[] =
 {
 	{ { 0.040f, 0.0f, 0.40f }, { PELVIS, PELVIS }, 32767 },
@@ -224,8 +233,10 @@ static struct object_mesh_vertex test_vertices[] =
 	{ { 0.030f, -0.05f, 0.30f }, { LEFT_THIGH, PELVIS }, 20000 },
 	{ { 0.150f, 0.05f, 0.20f }, { LEFT_CALF, LEFT_THIGH }, 32767 },
 	{ { 0.230f, 0.0f, 0.55f }, { SPINE1, SPINE }, 32767 },
+	{ { 0.080f, 0.0f, 0.66f }, { HEAD, NECK }, 30000 },
+	{ { 0.020f, 0.03f, 0.70f }, { HEAD, HEAD }, 32767 },
 };
-#define TEST_FRONT 0.061f
+#define TEST_FRONT 0.080f
 
 /* the game's pose of a body facing yaw (radians), each node where table puts
 it from the eye */
@@ -277,19 +288,55 @@ static real distance(real_point3d a, real_point3d b)
 	return sqrtf((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z));
 }
 
-static boolean above_chest(short node)
+/* a node folded away: the head, the arms, and what hangs from them */
+static boolean folded(short node)
 {
 	for (; node != NONE; node = nodes_named[node].parent_node_index)
 	{
-		if (node == SPINE1)
+		if (node == HEAD || node == LEFT_ARM || node == RIGHT_ARM)
 			return TRUE;
 	}
 	return FALSE;
 }
 
-/* the pose drawn: every node not above the chest drawn, where it is clear of
-the eye; those above folded into the chest's joint; all of it the game's
-moved whole (by moved, its distance from the game's); TRUE: lowered */
+/* the joint a folded node is folded into */
+static short folded_into(short node)
+{
+	for (; node != NONE; node = nodes_named[node].parent_node_index)
+	{
+		if (node == HEAD || node == LEFT_ARM || node == RIGHT_ARM)
+			return node;
+	}
+	return NONE;
+}
+
+/* a node of the upper body, turned about the waist (the belly's joint) */
+static boolean upper(short node)
+{
+	for (; node != NONE; node = nodes_named[node].parent_node_index)
+	{
+		if (node == SPINE)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+/* how far a pose's upper body leans forward from upright (radians, along
+the body's heading; back negative): its line from the waist to the neck */
+static real leaning(real_matrix4x3 const *pose)
+{
+	real_vector3d heading = test_unit.object.forward;
+	real ahead = (pose[NECK].position.x - pose[SPINE].position.x) * heading.i +
+		(pose[NECK].position.y - pose[SPINE].position.y) * heading.j;
+
+	return atan2f(ahead, pose[NECK].position.z - pose[SPINE].position.z);
+}
+
+/* the pose drawn: every node drawn but the head and arms, folded into their
+joints; nothing flattened (a lid) nor scaled; the lower body the game's moved
+whole (by moved, its distance from the game's), the upper turned whole about
+the waist, leant back from upright as the code says; what is drawn clear of
+the eye, below it and beyond the near plane's reach */
 static void check_drawn(real_matrix4x3 const *pose, char const *what, real_vector3d *moved)
 {
 	short a, b;
@@ -300,39 +347,63 @@ static void check_drawn(real_matrix4x3 const *pose, char const *what, real_vecto
 	moved->k = pose[PELVIS].position.z - game_pose[PELVIS].position.z;
 	for (a = 0; a < NODES; a++)
 	{
-		if (above_chest(a))
+		real_vector3d const *axes[3] = { &pose[a].forward, &pose[a].left, &pose[a].up };
+		short axis;
+
+		if (folded(a))
 		{
-			CHECK(pose[a].scale < 0.01f && distance(pose[a].position, pose[SPINE1].position) < 1.0e-6f,
-				"%s: node %d not folded into the chest's joint", what, a);
+			CHECK(pose[a].scale < 0.01f && distance(pose[a].position, pose[folded_into(a)].position) < 1.0e-6f,
+				"%s: node %d not folded into its joint", what, a);
 			continue;
 		}
-		CHECK(pose[a].scale == 1.f, "%s: node %d scaled %g", what, a, pose[a].scale);
-		/* (the belly flattened onto its joint's height, the rest as it was) */
-		CHECK(fabsf(pose[a].up.k - game_pose[a].up.k * (a == SPINE ? FIRST_PERSON_LEGS_LID : 1.f)) < 1.0e-5f,
-			"%s: node %d flattened %g", what, a, pose[a].up.k);
-		/* (moved whole: as the hips are) */
-		CHECK(fabsf(pose[a].position.x - game_pose[a].position.x - moved->i) < 1.0e-5f &&
-			fabsf(pose[a].position.y - game_pose[a].position.y - moved->j) < 1.0e-5f &&
-			fabsf(pose[a].position.z - game_pose[a].position.z - moved->k) < 1.0e-5f,
-			"%s: node %d not moved as the hips are", what, a);
+		CHECK(pose[a].scale == 1.f, "%s: node %d scaled %g (folded away)", what, a, pose[a].scale);
+		/* (no lid: every axis whole, none flattened) */
+		for (axis = 0; axis < 3; axis++)
+		{
+			CHECK(fabsf(magnitude3d((real_vector3d *)axes[axis]) - 1.f) < 1.0e-4f, "%s: node %d's axis %d flattened %g",
+				what, a, axis, magnitude3d((real_vector3d *)axes[axis]));
+		}
+		/* (the lower body and the waist moved whole: as the hips are) */
+		if (!upper(a) || a == SPINE)
+		{
+			CHECK(fabsf(pose[a].position.x - game_pose[a].position.x - moved->i) < 1.0e-5f &&
+				fabsf(pose[a].position.y - game_pose[a].position.y - moved->j) < 1.0e-5f &&
+				fabsf(pose[a].position.z - game_pose[a].position.z - moved->k) < 1.0e-5f,
+				"%s: node %d not moved as the hips are", what, a);
+		}
 		for (b = 0; b < a; b++)
 		{
-			if (!above_chest(b))
+			if (!folded(b) && (upper(a) == upper(b) || b == SPINE))
 			{
 				CHECK(fabsf(distance(pose[a].position, pose[b].position) -
 					distance(game_pose[a].position, game_pose[b].position)) < 1.0e-5f,
 					"%s: nodes %d and %d stretched", what, a, b);
 			}
 		}
-		/* (the eye clear: what is drawn is below the eye and farther than
-		the near plane) */
-		CHECK(distance(pose[a].position, test_eye) > GAME_NEAR && pose[a].position.z < test_eye.z - GAME_NEAR,
-			"%s: node %d %.3f from the eye, %.3f below it", what, a, distance(pose[a].position, test_eye),
-			test_eye.z - pose[a].position.z);
+		/* (the eye clear: what is drawn is beyond the near plane's reach,
+		and below the eye or behind it, the chest's joint and the neck's
+		too; a crouch's neck, leant back, is level with the eye 16 cm
+		behind it) */
+		{
+			real ahead = (pose[a].position.x - test_eye.x) * test_unit.object.forward.i +
+				(pose[a].position.y - test_eye.y) * test_unit.object.forward.j;
+
+			CHECK(distance(pose[a].position, test_eye) > 2.f * FIRST_PERSON_LEGS_NEAR_REACH &&
+				(pose[a].position.z < test_eye.z - FIRST_PERSON_LEGS_NEAR_REACH ||
+				ahead < -2.f * FIRST_PERSON_LEGS_NEAR_REACH),
+				"%s: node %d %.3f from the eye, %.3f below it, %.3f before it", what, a,
+				distance(pose[a].position, test_eye), test_eye.z - pose[a].position.z, ahead);
+		}
 	}
-	/* (the chest's joint, where the body is closed, too) */
-	CHECK(test_eye.z - pose[SPINE1].position.z > GAME_NEAR, "%s: the chest's joint %.3f below the eye", what,
-		test_eye.z - pose[SPINE1].position.z);
+	/* (the chest drawn, leant back from upright, the game's lean undone) */
+	CHECK(pose[SPINE1].scale == 1.f && pose[NECK].scale == 1.f, "%s: the chest folded away", what);
+	{
+		real game = leaning(game_pose);
+		real expected = game - PIN(game + FIRST_PERSON_LEGS_UPPER_LEAN, 0.f, FIRST_PERSON_LEGS_UPPER_TURN_MOST);
+
+		CHECK(fabsf(leaning(pose) - expected) < 1.0e-3f && leaning(pose) < 0.f,
+			"%s: the upper body leans %.3f, the game's %.3f", what, leaning(pose), game);
+	}
 }
 
 /* whether a pose is another turned by angle (radians) about the eye's
@@ -485,7 +556,7 @@ int main(int argc, char **argv)
 		for (node = 0; node < NODES; node++)
 		{
 			CHECK(shadow[node].scale == 1.f, "the shadow's node %d folded", node);
-			if (!above_chest(node) && node != SPINE)
+			if (!upper(node))
 			{
 				CHECK(!memcmp(&shadow[node], &drawn[node], sizeof(drawn[node])),
 					"the shadow's node %d not where the legs' is", node);
