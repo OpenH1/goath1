@@ -1079,6 +1079,17 @@ int main(int argc, char **argv)
 		CHECK(kind_total(&screen, MENU_SCREEN_TAB, -2) == 6, "its tabs");
 		CHECK(kind_total(&screen, MENU_SCREEN_COLUMN, -2) == 2, "its columns");
 		menu_screen_free(&screen);
+		/* (its KEEP or REVERT after a display change: a pop-up of two choices,
+		REVERT focused, B and REVERT reverting, KEEP keeping) */
+		CHECK(read_text(goat_keep_xml, &screen, problem), "KEEP or REVERT's file is refused: %s", problem);
+		CHECK(screen.back && !strcmp(screen.back, "goat keep revert"), "its back");
+		CHECK(kind_total(&screen, MENU_SCREEN_DIALOG, -1) == 1 &&
+			kind_total(&screen, MENU_SCREEN_ITEM, kind_first(&screen, MENU_SCREEN_LIST)) == 2, "its two choices");
+		CHECK(block_of(&screen, "keep") && !strcmp(block_of(&screen, "keep")->action, "goat keep") &&
+			block_of(&screen, "revert") && !strcmp(block_of(&screen, "revert")->action, "goat keep revert"),
+			"its choices' actions");
+		CHECK(!strcmp(screen.blocks[kind_first(&screen, MENU_SCREEN_LIST)].focus, "revert"), "its focus");
+		menu_screen_free(&screen);
 	}
 	else if (!strcmp(name, "keyboard"))
 	{

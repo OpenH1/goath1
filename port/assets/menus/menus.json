@@ -338,6 +338,7 @@
   "screens/coop_who.xml",
   "screens/dlss_addon.xml",
   "screens/game_data.xml",
+  "screens/goat_keep.xml",
   "screens/goat_settings.xml",
   "screens/keyboard.xml",
   "screens/layout_bindings.xml",
