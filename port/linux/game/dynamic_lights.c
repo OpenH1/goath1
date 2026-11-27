@@ -106,6 +106,9 @@ static struct
 	on (NONE none) */
 	unsigned long long keys[MAXIMUM_LIGHTS_PER_WINDOW];
 	long objects[MAXIMUM_LIGHTS_PER_WINDOW];
+	/* a glow standing in for what the lightmap lights (light_sources.c's
+	baked: no shadow) */
+	boolean baked[MAXIMUM_LIGHTS_PER_WINDOW];
 	struct halo_dynamic_light lights[MAXIMUM_LIGHTS_PER_WINDOW];
 	unsigned long frame;
 	/* each light whose clusters were noted (dynamic_lights_clusters; one
@@ -435,6 +438,7 @@ static long dynamic_lights_sources(
 		dynamic_lights.owners[count] = 0;
 		dynamic_lights.objects[count] = NONE;
 		dynamic_lights.keys[count] = source->key;
+		dynamic_lights.baked[count] = source->baked;
 		dynamic_lights_clusters(count, MIN(cluster_count, MAXIMUM_CLUSTERS_PER_STRUCTURE), clusters);
 		if (!(dynamic_lights.frame % 72) && source_index < 4 && config_boolean("debug.dynamic_lights_log"))
 		{
@@ -546,6 +550,7 @@ void dynamic_lights_submit(
 	total = dynamic_lights_sources(dynamic_lights_copies(count));
 	dynamic_lights_shadowed(total);
 	memset(dynamic_lights.keys, 0, sizeof(dynamic_lights.keys));
+	memset(dynamic_lights.baked, 0, sizeof(dynamic_lights.baked));
 	halo_dynamic_lights_set(dynamic_lights.lights, (int)total, camera, right_axis, up_axis,
 		(unsigned int const (*)[4])dynamic_lights.cluster_masks);
 	memset(dynamic_lights.cluster_masks, 0, sizeof(dynamic_lights.cluster_masks));
@@ -709,9 +714,10 @@ HALO_DYNAMIC_LIGHTS_SHADOWED cast shadows, those whose shadows show:
   reaches 1.5 to 2 world units for a few frames: its shadow is a speck on
   a surface it barely lights, gone before it is seen, and takes a slot;
 - not a light that lights only the models (a lamp's gel, which the game's
-  own pass draws on the structure), nor one on scenery that has not moved
-  (a level's fixture lamp: the lightmap has its light, and its shadow is
-  the lightmap's), nor a light out of reach or dark;
+  own pass draws on the structure), nor a glow of the port's own standing
+  in for what the lightmap lights (a powerup's, a teleporter's: Prisoner's
+  overshield took a slot and drew a speckled shadow at the feet), nor a
+  light out of reach or dark;
 - by the same part of the view dynamic_lights_rank ranks the lights by, a
   light chosen last frame counted SHADOWED_KEEP times as much (a light
   keeps its shadow until another clearly passes it: no flicker between two
@@ -751,12 +757,12 @@ static struct
 	int chosen_count;
 } shadowed_history;
 
-/* the lights of count (each one's key, 0 not known; static: on a still
-fixture, the lightmap's) to shadow at now (seconds), into indices with
+/* the lights of count (each one's key, 0 not known; baked: a glow
+standing in for the lightmap's light) to shadow at now (seconds), into indices with
 their scores, most first; how many (at most HALO_DYNAMIC_LIGHTS_SHADOWED).
 It keeps what it chose and how long each has lasted for the next frame */
 static int dynamic_lights_shadow_pick(struct halo_dynamic_light const *lights, unsigned long long const *keys,
-	boolean const *still, long count, real now, real_vector3d const *forward, int *indices, real *scores)
+	boolean const *baked, long count, real now, real_vector3d const *forward, int *indices, real *scores)
 {
 	int last = shadowed_history.current, next = !last;
 	int chosen = 0, slot, seen;
@@ -774,7 +780,7 @@ static int dynamic_lights_shadow_pick(struct halo_dynamic_light const *lights, u
 
 		if (!(light->radius > 0.0f) || !(intensity > 0.0f) || (light->flags & HALO_DYNAMIC_LIGHT_MODELS_ONLY))
 			continue;
-		if (!flashlight && (light->radius < SHADOWED_LEAST_RADIUS || still[light_index]))
+		if (!flashlight && (light->radius < SHADOWED_LEAST_RADIUS || baked[light_index]))
 			continue;
 		/* (how long it has lasted: since it first qualified) */
 		if (key)
@@ -832,25 +838,12 @@ static int dynamic_lights_shadow_pick(struct halo_dynamic_light const *lights, u
 	return chosen;
 }
 
-/* whether a light is a level's fixture's (its object scenery, or a light
-fixture or a machine, that has not moved: the lightmap was made with it
-lit) */
-static boolean dynamic_lights_still(long object_index)
-{
-	struct object_datum *object;
-
-	if (object_index == NONE || !(object = object_try_and_get(object_index)))
-		return FALSE;
-	return FALSE;
-}
-
 static void dynamic_lights_shadowed(long count)
 {
 	int indices[HALO_DYNAMIC_LIGHTS_SHADOWED];
 	float disks[HALO_DYNAMIC_LIGHTS_SHADOWED];
 	unsigned long owners[HALO_DYNAMIC_LIGHTS_SHADOWED];
 	real scores[HALO_DYNAMIC_LIGHTS_SHADOWED];
-	boolean still[MAXIMUM_LIGHTS_PER_WINDOW];
 	real_vector3d forward = render.camera.forward;
 	int chosen = 0, slot;
 	long light_index;
@@ -866,9 +859,7 @@ static void dynamic_lights_shadowed(long count)
 	}
 	if (normalize3d(&forward) <= 0.0f)
 		forward.i = forward.j = forward.k = 0.0f;
-	for (light_index = 0; light_index < count; light_index++)
-		still[light_index] = dynamic_lights_still(dynamic_lights.objects[light_index]);
-	chosen = dynamic_lights_shadow_pick(dynamic_lights.lights, dynamic_lights.keys, still, count,
+	chosen = dynamic_lights_shadow_pick(dynamic_lights.lights, dynamic_lights.keys, dynamic_lights.baked, count,
 		render_interpolation_game_time_sec(game_time_get()), &forward, indices, scores);
 	for (slot = 0; slot < chosen; slot++)
 	{
