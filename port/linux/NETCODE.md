@@ -2084,6 +2084,8 @@ seconds. A client takes it only from the host's stream in an OpenH1 game
 under way; one whose host sends none (a Legacy game, an OpenCE host) shows
 no score, and an OpenCE client is sent none. Split-screen players share the
 host's state.
+The events' kinds include an assassination (15) and a driver's assist (16),
+which a build of protocol version 38 refuses as kinds it does not know.
 
 ### Pings
 

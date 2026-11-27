@@ -1,0 +1,3 @@
+a co-op host's campaign score carries two more kinds of event, an
+assassination (15) and a driver's assist (16), which an older client refuses
+(network_campaign_score.c)

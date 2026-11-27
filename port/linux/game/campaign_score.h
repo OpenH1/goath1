@@ -64,6 +64,13 @@ enum campaign_score_event_kind
 	player having died during it */
 	_campaign_score_event_encounter_cleared,
 	_campaign_score_event_flawless,
+	/* a kill's bonus: a melee from behind that killed an unaware enemy
+	outright (the game's instant kill of the unsuspecting), in place of the
+	melee's */
+	_campaign_score_event_assassination,
+	/* a kill by a gunner or passenger (a player or an ally's AI) of the
+	vehicle a player drives: the driver's share; victim_class the kill's */
+	_campaign_score_event_driver_assist,
 	NUMBER_OF_CAMPAIGN_SCORE_EVENT_KINDS
 };
 
@@ -121,10 +128,12 @@ void campaign_score_new_map(void);
 void campaign_score_tick(void);
 /* damage.c: a killing blow (the unit's body depleted by it, alive before),
 as it is dealt, its actor still the unit's: the damage, its category
-(damage.c's _damage_category_*) and whether it struck the head */
+(damage.c's _damage_category_*), whether it struck the head, and whether it
+killed outright as a blow lethal to the unsuspecting (a melee from behind
+on an unaware unit) */
 struct damage_data;
 void campaign_score_unit_killed(long unit_index, struct damage_data const *damage, short damage_category,
-	boolean head);
+	boolean head, boolean unsuspecting);
 /* projectiles.c: a projectile stuck to an object */
 void campaign_score_projectile_stuck(long projectile_index, long object_index);
 /* game_state.c: a checkpoint saved, and a revert to it */

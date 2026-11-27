@@ -1492,9 +1492,11 @@ void object_cause_damage(
 	/* port: the gametype's friendly fire (game_engine_friendly_damage) */
 	short friendly_damage;
 	/* port: campaign scoring's (port/linux/game/campaign_score.c): whether
-	the object was dead before the damage, and the damage struck its head */
+	the object was dead before the damage, the damage struck its head, and
+	it killed outright as lethal to the unsuspecting (an assassination) */
 	boolean was_dead;
 	boolean head_hit;
+	boolean unsuspecting_kill;
 
 	/* the distributed netcode (port/linux/NETCODE.md): the host deals
 	damage; a client reports its own players' hits instead, and the host
@@ -1760,6 +1762,7 @@ void object_cause_damage(
 			friendly_damage = _friendly_damage_all;
 			was_dead = TEST_FLAG(current_object->object.damage_flags, _object_dead_bit) != 0;
 			head_hit = FALSE;
+			unsuspecting_kill = FALSE;
 
 			if (collision_model_index != NONE)
 			{
@@ -1841,6 +1844,7 @@ void object_cause_damage(
 						_object_cannot_take_damage_bit))
 				{
 					force_kill = TRUE;
+					unsuspecting_kill = TRUE;
 				}
 
 				/* port: nor does a teammate's hit kill outright (a melee from
@@ -1861,6 +1865,11 @@ void object_cause_damage(
 						being_damaged_flags,
 						_object_being_damaged_killed_instantly_bit,
 						TRUE);
+				}
+				else
+				{
+					/* (an assassination only where the blow killed outright) */
+					unsuspecting_kill = FALSE;
 				}
 
 				if (friendly_damage != _friendly_damage_none &&
@@ -1966,7 +1975,8 @@ void object_cause_damage(
 				if (victim && !was_dead &&
 					TEST_FLAG(being_damaged_flags, _object_being_damaged_body_depleted_bit))
 				{
-					campaign_score_unit_killed(current_object_index, damage, damage_definition->category, head_hit);
+					campaign_score_unit_killed(current_object_index, damage, damage_definition->category, head_hit,
+						unsuspecting_kill);
 				}
 			}
 			object_damage_aftermath(
