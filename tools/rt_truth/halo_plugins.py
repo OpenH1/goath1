@@ -427,13 +427,38 @@ class HaloBump(mi.BSDF):
         mi.BSDF.__init__(self, props)
         self.nested = props["bsdf"]
         self.bump = props["bump"]
+        # The bump map's mip levels (box-filtered), chosen by the pixel's footprint as a GPU's trilinear
+        # sampling does, so the truth's bump detail compares like for like with the real-time render.
+        self.levels = []
+        i = 0
+        while props.has_property("bump_mip%d" % i):
+            self.levels.append(props["bump_mip%d" % i])
+            i += 1
+        self.size = [props.get("bump_width", 1.0), props.get("bump_height", 1.0)]
+        self.scale = [props.get("bump_scale_u", 1.0), props.get("bump_scale_v", 1.0)]
+        self.pixel_angle = props.get("pixel_angle", 0.0)
         self.m_flags = self.nested.flags()
         self.m_components = [self.nested.flags(i) for i in range(self.nested.component_count())]
+
+    def _texel(self, si, active):
+        if not self.levels or self.pixel_angle <= 0:
+            return self.bump.eval(si, active)
+        # The footprint of a camera ray's pixel at the hit (a ray cone), in texels of level 0 along the
+        # texture's more stretched axis (the GPU's isotropic choice).
+        foot = si.t * self.pixel_angle / dr.maximum(dr.abs(mi.Frame3f.cos_theta(si.wi)), 0.05)
+        tu = foot * self.scale[0] * self.size[0] / dr.maximum(dr.norm(si.dp_du), 1e-8)
+        tv = foot * self.scale[1] * self.size[1] / dr.maximum(dr.norm(si.dp_dv), 1e-8)
+        lod = dr.clip(dr.log2(dr.maximum(dr.maximum(tu, tv), 1.0)), 0.0, len(self.levels) - 1.0)
+        out = mi.Color3f(0.0)
+        for k, tex in enumerate(self.levels):
+            w = dr.maximum(1.0 - dr.abs(lod - k), 0.0)
+            out += dr.select(w > 0, tex.eval(si, active & (w > 0)) * w, 0.0)
+        return out
 
     def _perturbed(self, si, active):
         T = si.shape.eval_attribute_3("vertex_halo_tangent", si, active)
         B = si.shape.eval_attribute_3("vertex_halo_binormal", si, active)
-        b = self.bump.eval(si, active) * 2.0 - 1.0
+        b = self._texel(si, active) * 2.0 - 1.0
         N = si.sh_frame.n
         n = dr.normalize(T * b.x + B * b.y + N * dr.maximum(b.z, 0.05))
         n = dr.select(dr.isfinite(n.x) & (dr.squared_norm(T) > 0), n, N)

@@ -321,7 +321,13 @@ class Scene:
             if self.has_tangents():
                 # The game's own: n = normalize(T b.x + B b.y + N max(b.z, 0.05)), b = texel x 2 - 1, with the
                 # vertex's tangent and binormal (xgpu_spirv.c:5811-5821).
-                bsdf = {"type": "halo_bump", "bump": nm, "bsdf": bsdf}
+                bsdf = {"type": "halo_bump", "bump": nm, "bsdf": bsdf, "bump_width": float(bump.shape[1]),
+                        "bump_height": float(bump.shape[0]), "bump_scale_u": su, "bump_scale_v": sv,
+                        "pixel_angle": self.pixel_angle()}
+                for k, lvl in enumerate(self.mips(bump[:, :, :3])):
+                    bsdf["bump_mip%d" % k] = mi.load_dict({
+                        "type": "bitmap", "bitmap": mi.Bitmap(lvl), "raw": True, "filter_type": "bilinear",
+                        "wrap_mode": "repeat", "to_uv": mi.ScalarTransform4f().scale([su, sv, 1.0])})
                 summary["bump"] = "the game's frame, scale %g x %g" % (su, sv)
             else:
                 bsdf = {"type": "normalmap", "normalmap": nm, "bsdf": bsdf}
@@ -351,6 +357,26 @@ class Scene:
             emitter = {"type": "area", "radiance": {"type": "rgb", "value": L}}
             summary["emission"] = "area emitter, radiance %s (radiosity units)" % [round(x, 4) for x in L]
         return bsdf_obj, emitter, summary
+
+    def pixel_angle(self):
+        """The angle one pixel spans at the image centre (the ray cone's spread)."""
+        c = self.camera
+        return 2.0 * math.tan(math.radians(float(c["fov_h_deg"])) / 2.0) / float(c["width"])
+
+    @staticmethod
+    def mips(img):
+        """Box-filtered mip levels down to 1 texel (as the GPU's mip chain), level 0 first."""
+        out = [np.ascontiguousarray(img, np.float32)]
+        while max(out[-1].shape[:2]) > 1:
+            a = out[-1]
+            h, w = max(a.shape[0] // 2, 1), max(a.shape[1] // 2, 1)
+            a = a[:h * 2 if a.shape[0] > 1 else 1, :w * 2 if a.shape[1] > 1 else 1]
+            if a.shape[0] > 1:
+                a = 0.5 * (a[0::2] + a[1::2])
+            if a.shape[1] > 1:
+                a = 0.5 * (a[:, 0::2] + a[:, 1::2])
+            out.append(np.ascontiguousarray(a, np.float32))
+        return out
 
     def has_tangents(self):
         self.load_geometry()
