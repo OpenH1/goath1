@@ -139,6 +139,12 @@ int world_proxies_source_solid(long id)
 	return id == 400;
 }
 
+/* (no sky in view: an interior's bake, all of its light occluded) */
+float world_proxies_source_sky_outdoor(void)
+{
+	return 0.0f;
+}
+
 /* (no static scenery's pages) */
 int world_sdf_scenery_layer(void const *lightmap_bitmap)
 {

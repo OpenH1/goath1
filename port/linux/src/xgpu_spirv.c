@@ -6168,13 +6168,26 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 				fadd(&m, 3, added, self_illumination), XGPU_HDR_BOOST_OF(program->hdr),
 				XGPU_HDR_SELF_ILLUMINATION_VALUE));
 	}
-	/* (display.ambient_occlusion: a lightmap pass's light, by the
-	occlusion, before the enhanced dynamic lights add theirs) */
+	/* (display.ambient_occlusion: a lightmap pass's light, its indirect
+	share by the occlusion, before the enhanced dynamic lights add theirs:
+	linear, light - (1 - occlusion) * min(light, INDIRECT); xgpu.h's
+	XGPU_AMBIENT_OCCLUSION_INDIRECT) */
 	if (occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_LIGHTMAP)
 	{
 		static const unsigned int rgb[4] = { 4, 5, 6, 3 };
+		unsigned int light = ext2(&m, GLSL_POW, m.t_v3, fmax_scalar(&m, 3, xyz(&m, result), 0.0f),
+			constant_splat(&m, 3, 2.2f));
+		/* (the level outdoors, the block's grid[0].w; 0 an interior's: all of it) */
+		unsigned int level = extract(&m, world_ao_vector(&m, 3, constant_int(&m, 0)), 3);
+		unsigned int indirect = op3(&m, OP_SELECT, m.t_v3, op2(&m, OP_F_ORD_GREATER_THAN, m.t_bv3, splat(&m, 3, level),
+			constant_splat(&m, 3, 0.0f)), ext2(&m, GLSL_F_MIN, m.t_v3, light, splat(&m, 3, level)), light);
 
-		result = shuffle(&m, 4, result, fscale(&m, 3, xyz(&m, result), state.occlusion), rgb);
+		/* (the occlusion as it multiplied the gamma light, occlusion^2.2 of
+		the linear: an interior's light as it was) */
+		light = fsub(&m, 3, light, fscale(&m, 3, indirect, fsub(&m, 1, constant_float(&m, 1.0f),
+			ext2(&m, GLSL_POW, m.t_float, fmax_scalar(&m, 1, state.occlusion, 0.0f), constant_float(&m, 2.2f)))));
+		result = shuffle(&m, 4, result, ext2(&m, GLSL_POW, m.t_v3, fmax_scalar(&m, 3, light, 0.0f),
+			constant_splat(&m, 3, (float)(1.0 / 2.2))), rgb);
 	}
 
 	if (environment)

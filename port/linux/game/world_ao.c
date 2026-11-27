@@ -671,6 +671,11 @@ void world_ao_window_begin(short local_player_index, short rasterizer_target, fl
 	if (!world_ao.cells)
 		return;
 	world_ao_grid(world_ao.proxies, world_ao.count, camera_position, world_ao.grid, world_ao.cells);
+	/* (and, in its first vector's unused w, the lightmap's indirect light
+	the occlusion takes: under a sky with an outdoor ambient, where the
+	bake holds the sun's direct light too, up to WORLD_AO_INDIRECT; 0, an
+	interior's bake, all of it: xgpu.h's XGPU_AMBIENT_OCCLUSION_INDIRECT) */
+	world_ao.grid[0][3] = world_proxies_source_sky_outdoor() > 0.0f ? WORLD_AO_INDIRECT : 0.0f;
 	halo_world_ao_window((float const (*)[4])field, (float const (*)[4])parameters,
 		(float const (*)[3][4])world_ao.proxies, (int)world_ao.count, (float const (*)[4])world_ao.grid,
 		(unsigned int const (*)[4])world_ao.cells);
