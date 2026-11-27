@@ -135,7 +135,7 @@ static struct
 	/* the diffuse channel, the specular */
 	struct denoise_channel channels[2];
 	/* checking (HALO_LT_DENOISE_*) */
-	int camera_only, no_gradients, spatial, ema, motion_view;
+	int camera_only, no_gradients, spatial, ema, motion_view, cap;
 	/* HALO_LT_DENOISE_DUMP's: those dumped */
 	const char *dumps;
 } denoise = { .spatial = -1 };
@@ -175,6 +175,8 @@ static int denoise_shaders(void)
 		denoise.dumps = getenv("HALO_LT_DENOISE_DUMP");
 		denoise.ema = getenv("HALO_LT_DENOISE_EMA") && strcmp(getenv("HALO_LT_DENOISE_EMA"), "0");
 		denoise.motion_view = getenv("HALO_LT_DENOISE_MOTION_VIEW") ? atoi(getenv("HALO_LT_DENOISE_MOTION_VIEW")) : 0;
+		/* (HALO_LT_DENOISE_CAP: the diffuse history's cap, checking) */
+		denoise.cap = getenv("HALO_LT_DENOISE_CAP") ? atoi(getenv("HALO_LT_DENOISE_CAP")) : 0;
 		if (denoise.motion_view)
 			denoise.spatial = 0;
 	}
@@ -414,7 +416,7 @@ static struct xgpu_vulkan_image *denoise_channel_draw(struct denoise_channel *ch
 	params.size[1] = (float)height;
 	params.size[2] = (float)gradient_width;
 	params.size[3] = (float)gradient_height;
-	params.control[0] = specular ? DENOISE_SPECULAR_CAP : DENOISE_CAP;
+	params.control[0] = specular ? DENOISE_SPECULAR_CAP : denoise.cap > 0 ? denoise.cap : DENOISE_CAP;
 	params.control[1] = (history_valid ? DENOISE_HISTORY : 0) | (denoise.camera_only ? DENOISE_CAMERA_ONLY : 0) |
 		(denoise.ema ? DENOISE_EMA : 0) | (specular ? DENOISE_SPECULAR : 0) |
 		(denoise.motion_view ? DENOISE_MOTION_VIEW : 0) | (denoise.motion_view == 2 ? DENOISE_MOTION_RAW : 0);
