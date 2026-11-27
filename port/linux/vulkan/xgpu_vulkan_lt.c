@@ -43,6 +43,7 @@ HALO_LT_E1_UNSHADOWED=1 (checking) casts no shadow ray. Render thread alone.
 #include "xgpu_stream.h"
 #include "xgpu_vulkan.h"
 #include "xgpu_vulkan_denoise.h"
+#include "xgpu_vulkan_dlss.h"
 #include "xgpu_vulkan_lt.h"
 #include "xgpu_vulkan_lt_lights.h"
 
@@ -1037,8 +1038,21 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 		/* (no spatial reuse in the re-shade: the last frame's reservoirs
 		are not kept; RIS alone, its seed the last frame's) */
 		lt.reshade_params.lights[2] &= ~LT_LIGHTS_REUSE;
-		denoised = xgpu_vulkan_denoise_draw(lt.means[lt.current], had ? history : NULL, inputs,
-			had ? lt.previous : NULL, lt.guides, pass, rectangle);
+		/* (HALO_LT_DENOISER=rr on RTX: DLSS Ray Reconstruction instead,
+		xgpu_vulkan_dlss.c; ours then not run at all) */
+		if (xgpu_vulkan_dlss_lt_selected())
+		{
+			struct xgpu_vulkan_dlss_lt_cameras cameras;
+
+			memcpy(cameras.camera, pass->camera, sizeof(cameras.camera));
+			memcpy(cameras.previous, pass->previous, sizeof(cameras.previous));
+			memcpy(cameras.previous_corners, pass->previous_corners, sizeof(cameras.previous_corners));
+			denoised = xgpu_vulkan_dlss_lt_denoise(lt.means[lt.current], inputs, lt.guides, &cameras, rectangle,
+				!had || pass->history[0] == 0.0f);
+		}
+		else
+			denoised = xgpu_vulkan_denoise_draw(lt.means[lt.current], had ? history : NULL, inputs,
+				had ? lt.previous : NULL, lt.guides, pass, rectangle);
 		xgpu_vulkan_pass_owner(LT_OWNER);
 	}
 	/* (W2: the suns' share a dynamic object shadows, its own history kept
