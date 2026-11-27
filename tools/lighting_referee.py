@@ -404,6 +404,15 @@ def build_on(machine, ref):
     return result
 
 
+def feature_off(setting):
+    """a feature's settings turned off: its on/off settings negated (the others, such as the AO it needs, kept)"""
+    out = []
+    for item in setting.split():
+        key, _, value = item.partition("=")
+        out.append(f"{key}=false" if value.lower() in ("true", "1", "on") else item)
+    return out
+
+
 def scene_settings(scene, variant_settings, extra):
     settings = list(SCENES[scene])
     # (a variant's own moments in place of the scene's)
@@ -459,10 +468,10 @@ def plan(build, baseline, machine, timing, only, mutate, features, overrides=(),
         staged = {"corridor": corridor, "cryo": SCENES["cryo"]}
         configurations = [("timed", corridor, [])]
         if feature_cost:
+            # (each feature timed on and explicitly off in its scene: a preset may turn it on by itself)
             for name, setting in features.items():
                 scene = FEATURE_SCENES.get(name, "corridor")
-                if scene != "corridor" and (f"timed-{scene}", staged[scene], []) not in configurations:
-                    configurations.append((f"timed-{scene}", staged[scene], []))
+                configurations.append((f"timed-{name}-off", staged[scene], feature_off(setting)))
                 configurations.append((f"timed-{name}", staged[scene], setting.split()))
         for host in timing:
             for variant, stage, more in configurations:
@@ -844,11 +853,10 @@ def check_cost(table, timed):
                               median[name] <= budget[name])
                 elif median[name] >= 0.05:
                     table.add("cost", f"{machine} {name}", median[name], "(reported)", None)
-        elif not variant.startswith("timed-") or variant[6:] not in FEATURES and variant[6:] in SCENES:
+        elif variant.endswith("-off"):
             continue
         else:
-            base = (machine, "timed-" + FEATURE_SCENES[variant[6:]]) if variant[6:] in FEATURE_SCENES else \
-                (machine, "timed")
+            base = (machine, variant + "-off")
             if base not in medians:
                 continue
             more = median["frame"] - medians[base]["frame"]
