@@ -4916,7 +4916,8 @@ static void flashlight_light(struct module *m, const struct flashlight_read *rea
 		/* (HALO_FLASHLIGHT_SHADOW_VIEW=1, checking: the map's share seen, whole,
 		in place of the gel and falloff; 2: the map's distance over the
 		pixel's, a tenth of a world unit a band) */
-		if (getenv("HALO_FLASHLIGHT_SHADOW_VIEW") && atoi(getenv("HALO_FLASHLIGHT_SHADOW_VIEW")) == 1)
+		if (getenv("HALO_FLASHLIGHT_SHADOW_VIEW") && (atoi(getenv("HALO_FLASHLIGHT_SHADOW_VIEW")) == 1 ||
+			atoi(getenv("HALO_FLASHLIGHT_SHADOW_VIEW")) == 3))
 		{
 			store(m, spot_variable, fmul(m, 1, lit, constant_float(m, 0.25f)));
 			store(m, falloff_variable, constant_float(m, 1.0f));
@@ -7748,7 +7749,9 @@ static void flashlight_map_main(struct module *m, struct words *locals, struct w
 	label_at(m, body);
 	candidate = op2(m, OP_RAY_QUERY_GET_INTERSECTION_INSTANCE_CUSTOM_INDEX, m->t_int, query,
 		constant_int(m, RAY_QUERY_CANDIDATE));
+	/* (HALO_FLASHLIGHT_SHADOW_VIEW=3, checking: no owner left out) */
 	selection_begin(m, rt_candidate_commits(m, locals, query, op2(m, OP_I_EQUAL, m->t_bool, candidate, constant_int(m, 0)),
+		getenv("HALO_FLASHLIGHT_SHADOW_VIEW") && atoi(getenv("HALO_FLASHLIGHT_SHADOW_VIEW")) == 3 ? constant_bool(m, TRUE) :
 		op2(m, OP_I_NOT_EQUAL, m->t_bool, op1(m, OP_BITCAST, m->t_uint, candidate), owner)), &mine_merge);
 	op_void(m, OP_RAY_QUERY_CONFIRM_INTERSECTION, 1, &query);
 	selection_end(m, mine_merge);
