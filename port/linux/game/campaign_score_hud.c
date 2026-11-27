@@ -64,6 +64,7 @@ touched.
 int config_boolean(char const *name);
 unsigned long system_milliseconds(void);
 void platform_log(char const *format, ...);
+void halo_screenshot_named(const char *name);
 
 /* ---------- constants */
 
@@ -126,6 +127,10 @@ static struct
 	long drawn_scenario;
 	/* when each group's pop-up began to show (0: waiting) */
 	unsigned long shown_at[SCORE_GROUPS];
+	/* debug.score_pictures: the pop-ups' pictures saved, and the
+	summaries' */
+	short popup_pictures;
+	boolean summary_pictured;
 	/* debug.score_fill's state, and the last period it made groups of */
 	struct campaign_score_state fill;
 	long fill_period;
@@ -591,6 +596,15 @@ static void score_draw_popup(
 	alpha *= rise;
 	if (alpha <= 0.0f)
 		return;
+	/* (debug.score_pictures: the first few pop-ups saved, risen) */
+	if (rise >= 1.0f && now - score_hud.shown_at[current] < 400 && score_hud.popup_pictures < 4 &&
+		config_boolean("debug.score_pictures"))
+	{
+		char name[32];
+
+		snprintf(name, sizeof(name), "score_popup_%d", (int)++score_hud.popup_pictures);
+		halo_screenshot_named(name);
+	}
 	score_view(&x0, &y0, &width, &height);
 	unit = height / 480.0f;
 	/* (just right of and below the reticle, small: clear of the reticle,
@@ -743,6 +757,12 @@ static void score_draw_summary(
 	}
 	alpha = MIN((real)age / SCORE_SUMMARY_FADE_MILLISECONDS, (real)(duration - age) / SCORE_SUMMARY_FADE_MILLISECONDS);
 	alpha = PIN(alpha, 0.0f, 1.0f);
+	/* (debug.score_pictures: each summary saved, faded in) */
+	if (age >= 1000 && !score_hud.summary_pictured && config_boolean("debug.score_pictures"))
+	{
+		score_hud.summary_pictured = TRUE;
+		halo_screenshot_named(score_hud.summary_compact ? "score_summary_compact" : "score_summary");
+	}
 	score_view(&x0, &y0, &width, &height);
 	unit = height / 480.0f;
 	/* (the next level being played: small, at the right under the
@@ -904,6 +924,7 @@ static void score_summary_update(
 	{
 		score_hud.summary_pending = FALSE;
 		score_hud.summary_shown = TRUE;
+		score_hud.summary_pictured = FALSE;
 		score_hud.summary_at = system_milliseconds();
 		score_hud.summary_compact = scenario != score_hud.summary_scenario;
 	}
@@ -912,6 +933,7 @@ static void score_summary_update(
 	if (score_hud.summary_shown && !score_hud.summary_compact && scenario != score_hud.summary_scenario)
 	{
 		score_hud.summary_compact = TRUE;
+		score_hud.summary_pictured = FALSE;
 		score_hud.summary_at = system_milliseconds();
 	}
 	score_hud.drawn_scenario = scenario;
