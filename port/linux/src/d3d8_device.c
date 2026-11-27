@@ -9774,6 +9774,7 @@ static BOOL screenshot_this_frame(void)
 	/* (debug.screenshot_at's seconds, and the next of them not yet saved) */
 	static double moments[64];
 	static int moment_count, moment_next;
+	static BOOL quit_after;
 	double now;
 
 	if (every < 0)
@@ -9788,6 +9789,11 @@ static BOOL screenshot_this_frame(void)
 			char *end;
 			double second = strtod(at, &end);
 
+			if (!strncmp(at, "quit", 4))
+			{
+				quit_after = TRUE;
+				break;
+			}
 			if (end == at)
 				break;
 			moments[moment_count++] = second;
@@ -9802,6 +9808,13 @@ static BOOL screenshot_this_frame(void)
 	{
 		snprintf(screenshot_name, sizeof(screenshot_name), "=at%d", moment_next++);
 		return TRUE;
+	}
+	/* (a last "quit": the game ends once every moment is saved, the
+	frame after the last) */
+	if (quit_after && moment_next == moment_count && moment_count > 0)
+	{
+		platform_log("screenshot: every debug.screenshot_at moment saved: quitting");
+		exit(EXIT_SUCCESS);
 	}
 	if (every <= 0 || device.frame % (unsigned long)every != 0)
 		return FALSE;

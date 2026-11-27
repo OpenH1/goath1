@@ -3496,7 +3496,8 @@ static const struct config_setting config_settings[] =
 	{ "debug.screenshot_at", _config_string, "\"\"", "HALO_SCREENSHOT_AT", _environment_value, _platform_all,
 		"Seconds of the scenario's simulation, separated by commas: the first\n"
 		"frame at or after each saved to screenshot_directory as at<n>.bmp (n\n"
-		"from 0, in the list's order); empty none." },
+		"from 0, in the list's order); a last \"quit\" ends the game once\n"
+		"they are saved; empty none." },
 	{ "debug.screenshot_halves", _config_boolean, "false", "HALO_SCREENSHOT_HALVES", _environment_set_is_true,
 		_platform_all, "With display.hdr drawing: each frame saved to screenshot_directory\n"
 		"also as its half floats (<name>.rgba16f), and the 3D view left as\n"
