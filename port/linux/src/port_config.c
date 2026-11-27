@@ -1685,6 +1685,14 @@ static const struct config_setting config_settings[] =
 		"original's. Read as a level begins; a loaded save keeps the size it was\n"
 		"played at. Settings > Interface > Campaign, and BATTLE in the co-op\n"
 		"host's lobby." },
+	{ "campaign.scoring", _config_boolean, "true", "HALO_CAMPAIGN_SCORING", _environment_value, _platform_all,
+		"Campaign scoring, solo, split screen and co-op this computer hosts:\n"
+		"points for each kill (more for tougher enemies, headshots, melee,\n"
+		"sticks, multi-kills and streaks), times the difficulty, and a bonus\n"
+		"as a level ends, with personal bests per level, difficulty and\n"
+		"player count (campaign_scores.txt). false: no score is kept. Read as\n"
+		"a level begins; a co-op host sends its word to the players. The\n"
+		"score never changes the game." },
 	{ "game.spartan_link", _config_boolean, "true", "HALO_GAME_SPARTAN_LINK", _environment_value, _platform_all,
 		"Hosting a team game: whether its players may show their Spartan link\n"
 		"(display.spartan_link); false, nobody's shows in it. Co-op always\n"
