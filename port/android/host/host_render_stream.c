@@ -24,7 +24,10 @@ A backend that shows the frames on a display paces the game by it
 (frame_pacing.h): the game starts a frame only while at most
 FRAME_PACING_QUEUED of its frames wait for the display, and not before the
 budget a frame takes ahead of the display's latch it is for (or, bounded
-only, without that start time). A backend whose display queues its frames
+only, without that start time; or, a display of variable refresh, two of
+its frames waiting and each started its lead before the GPU is predicted
+free, so that the game writes a frame while the GPU draws the one before).
+A backend whose display queues its frames
 (vsync's FIFO) bounds the frames ahead of its GPU as well
 (host_render_stream_frames_ahead): the game starts a frame only while at
 most one of its frames' work is unfinished, whatever the display says, so
@@ -1492,6 +1495,19 @@ static struct
 	uint32_t frames_ahead;
 	uint64_t latch, period;
 	struct frame_pacing_costs costs;
+	/* (HOST_RENDER_DISPLAY_VARIABLE, VRR's) the frames' leads, their start
+	to handed to the GPU (their costs' kind, which the margin is added to);
+	their times on the GPU; when the GPU finished the last frame it has (0:
+	not known); and when each of the last frames was handed to it, by its
+	number (as frames_submitted counts it) */
+	struct frame_pacing_costs leads;
+	struct frame_pacing_gpu gpu_times;
+	uint64_t gpu_done;
+	struct
+	{
+		uint32_t frame;
+		uint64_t time;
+	} handed[8];
 	/* the refresh each of the last frames was started for (by its number,
 	as frames_submitted counts it), and whether it waited for its start;
 	the frames played when the stream opened, and frames_submitted then */
@@ -1581,6 +1597,20 @@ void host_render_stream_gpu_completed(void)
 /* (render.lock held) a fence's frames retired and its bytes released */
 static void fence_account(const struct fence_entry *entry)
 {
+	/* (VRR's prediction of the GPU: the frame's time on it, from when it
+	was handed to it or the GPU finished the frame before, to now, which
+	the GPU's word on it is told at; the frames of one fence share it) */
+	if (entry->frames)
+	{
+		uint32_t frame = render.retired_frames + entry->frames;
+		uint64_t now = monotonic_nanoseconds(), start = render.gpu_done;
+
+		if (render.handed[frame % 8].frame == frame && render.handed[frame % 8].time > start)
+			start = render.handed[frame % 8].time;
+		if (start && now > start)
+			frame_pacing_gpu_add(&render.gpu_times, (now - start) / entry->frames);
+		render.gpu_done = now;
+	}
 	render.retired_frames += entry->frames;
 	__atomic_store_n(&render.ring->frames_retired, render.retired_frames, __ATOMIC_RELEASE);
 	__atomic_store_n(&render.ring->released, entry->position, __ATOMIC_RELEASE);
@@ -1838,6 +1868,14 @@ static void *render_thread(void *argument)
 				if (input && submitted > input && render.frame_started > submitted)
 					input += render.frame_started - submitted;
 				frame_pacing_cost_add(&render.costs, input, ready);
+				/* (VRR's: the frame's lead, and when it was handed to the GPU) */
+				frame_pacing_cost_add(&render.leads, input, ready);
+				{
+					uint32_t frame = render.submitted_at_open + (render.frames_played - render.played_at_open);
+
+					render.handed[frame % 8].frame = frame;
+					render.handed[frame % 8].time = ready;
+				}
 				period = render.period;
 				pthread_mutex_unlock(&render.lock);
 				/* (the frame's work, from its input to the frame handed to the
@@ -1953,6 +1991,8 @@ int host_render_stream_open(uint32_t ring_address)
 	render.frames_taken = ring->frames_submitted;
 	render.played_at_open = render.frames_played;
 	render.submitted_at_open = ring->frames_submitted;
+	render.gpu_done = 0;
+	memset(render.handed, 0, sizeof(render.handed));
 	if (getenv("HALO_FRAME_PACING_MARGIN_MS") && atof(getenv("HALO_FRAME_PACING_MARGIN_MS")) > 0.0)
 	{
 		render.costs.margin = (uint64_t)(atof(getenv("HALO_FRAME_PACING_MARGIN_MS")) * 1e6);
@@ -2207,6 +2247,11 @@ static void display_wait(uint64_t *start)
 {
 	struct timespec until;
 	uint64_t start_time, now, budget, extra;
+	/* (VRR: the frame the GPU draws and the one done may both wait for the
+	display, whose word on a frame comes only after its GPU work: the game
+	writes the next frame meanwhile) */
+	uint32_t queued = render.display_paced == HOST_RENDER_DISPLAY_VARIABLE ? FRAME_PACING_VARIABLE_QUEUED :
+		FRAME_PACING_QUEUED;
 
 	if (!render.display_paced)
 		return;
@@ -2219,7 +2264,7 @@ static void display_wait(uint64_t *start)
 		until.tv_nsec -= 1000000000L;
 	}
 	while (!render.ring->error && render.display_paced &&
-		!frame_pacing_may_start(render.ring->frames_submitted, render.frames_taken, FRAME_PACING_QUEUED))
+		!frame_pacing_may_start(render.ring->frames_submitted, render.frames_taken, queued))
 	{
 		if (!*start)
 		{
@@ -2230,7 +2275,7 @@ static void display_wait(uint64_t *start)
 		{
 			/* (the display takes no frames: those it has not taken are
 			counted taken, so that the game goes on) */
-			render.frames_taken = render.ring->frames_submitted - FRAME_PACING_QUEUED;
+			render.frames_taken = render.ring->frames_submitted - queued;
 			break;
 		}
 	}
@@ -2249,6 +2294,35 @@ static void display_wait(uint64_t *start)
 	frames do, a load zone's switch: its start so much earlier, within a
 	refresh) */
 	extra = (uint64_t)__atomic_load_n(&render.ring->frame_extra_microseconds, __ATOMIC_RELAXED) * 1000ull;
+	/* (VRR: no refresh the frame is for; started its lead before the GPU
+	is predicted free of the frames it has) */
+	if (render.display_paced == HOST_RENDER_DISPLAY_VARIABLE)
+	{
+		uint32_t next = render.ring->frames_submitted + 1, first = render.retired_frames + 1;
+		uint32_t pending = render.ring->frames_submitted - render.retired_frames;
+		uint64_t handed = render.handed[first % 8].frame == first ? render.handed[first % 8].time : 0;
+
+		render.targets[next % 8].frame = next;
+		render.targets[next % 8].target = 0;
+		now = monotonic_nanoseconds();
+		start_time = frame_pacing_variable_start_time(frame_pacing_gpu_free(render.gpu_done, handed,
+			(int32_t)pending > 0 ? pending : 0, frame_pacing_gpu_time(&render.gpu_times), now),
+			frame_pacing_budget(&render.leads, 0) + (extra < FRAME_PACING_WAIT_MAXIMUM_NS ? extra : FRAME_PACING_WAIT_MAXIMUM_NS));
+		/* (no longer than the longest wait for the display: a GPU that
+		stopped says nothing more) */
+		if (start_time > now && start_time - now < FRAME_PACING_WAIT_MAXIMUM_NS)
+		{
+			if (!*start)
+			{
+				*start = now;
+				render.ring->waits++;
+			}
+			pthread_mutex_unlock(&render.lock);
+			sleep_until(start_time);
+			pthread_mutex_lock(&render.lock);
+		}
+		return;
+	}
 	budget = frame_pacing_budget(&render.costs, render.period) + (extra < render.period ? extra : render.period);
 	start_time = frame_pacing_start_time(render.latch, render.period,
 		render.ring->frames_submitted - render.frames_taken, budget);

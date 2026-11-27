@@ -35,7 +35,11 @@ missed the refresh they were started for.
 Bounded only (display.low_latency off), the game starts a frame as soon as
 at most one of its frames waits for the display, by the same present wait:
 never more frames queued ahead of the display, but no wait for the start
-time (HOST_RENDER_DISPLAY_BOUNDED). Windows' NVIDIA driver, presenting
+time (HOST_RENDER_DISPLAY_BOUNDED). With VRR (display.vrr) two frames may
+wait for the display, and each starts just in time for the GPU
+(HOST_RENDER_DISPLAY_VARIABLE, frame_pacing.h): a variable display takes a
+frame only once its GPU work is done, so bounded by it alone the game's
+work and the GPU's took turns. Windows' NVIDIA driver, presenting
 through DXGI (its "Vulkan/OpenGL present method" layered on DXGI, which it
 chose for FIFO in issue #274's capture), queued five refreshes of frames
 ahead of the display while auto was off there: 81 ms from a present to the
@@ -351,7 +355,8 @@ static void present_done(const struct entry *entry, uint64_t shown, uint64_t per
 		host_logf(HOST_LOG_INFO, "vulkan: pacing %s: %u frames, %u refreshes showed a frame again, %u times not "
 			"known; %u shown at their refresh, %u after it (%u ran long), %u started late; margin %.2f ms, "
 			"budget %.2f ms; input to screen %.1f / %.1f ms (median / 95th percentile), refresh %.3f ms",
-			paced == HOST_RENDER_DISPLAY_PACED ? "on" : paced ? "bounded" : "off", pacing.frames, pacing.repeated, pacing.unknown, statistics.kept, statistics.missed,
+			paced == HOST_RENDER_DISPLAY_PACED ? "on" : paced == HOST_RENDER_DISPLAY_VARIABLE ? "VRR" :
+			paced ? "bounded" : "off", pacing.frames, pacing.repeated, pacing.unknown, statistics.kept, statistics.missed,
 			statistics.overran, statistics.late_starts, (double)statistics.margin / 1e6,
 			(double)statistics.budget / 1e6, (double)median, (double)high, (double)refresh / 1e6);
 	}
@@ -622,8 +627,10 @@ static int pacing_set(int paced)
 	pthread_mutex_unlock(&pacing.lock);
 	host_render_stream_display_paced(paced);
 	host_logf(HOST_LOG_INFO, "vulkan: low latency %s: the game's frames %s",
-		paced == HOST_RENDER_DISPLAY_PACED ? "on" : paced ? "bounded" : "off",
+		paced == HOST_RENDER_DISPLAY_PACED ? "on" : paced == HOST_RENDER_DISPLAY_VARIABLE ? "VRR" :
+		paced ? "bounded" : "off",
 		paced == HOST_RENDER_DISPLAY_PACED ? "start in time for the refresh they are shown at" :
+		paced == HOST_RENDER_DISPLAY_VARIABLE ? "start in time for the GPU, one written while it draws the one before" :
 		paced ? "start while at most one waits for the display" : "are not paced by the display");
 	return paced;
 }
@@ -632,8 +639,10 @@ int xgpu_vulkan_pacing_mode(int mode, int interval, int fifo, uint64_t period)
 {
 	/* (auto and on: paced, on every driver that says when it took a
 	present, Windows' too since issue #274 measured it unpaced: five
-	refreshes queued. Off: bounded, never more frames queued than one) */
-	int level = mode == 2 ? HOST_RENDER_DISPLAY_BOUNDED : HOST_RENDER_DISPLAY_PACED;
+	refreshes queued. Off: bounded, never more frames queued than one. VRR:
+	each frame started just in time for the GPU, frame_pacing.h) */
+	int level = mode == 3 ? HOST_RENDER_DISPLAY_VARIABLE : mode == 2 ? HOST_RENDER_DISPLAY_BOUNDED :
+		HOST_RENDER_DISPLAY_PACED;
 	int wanted = pacing.available && fifo && thread_start() ? level : 0;
 	int ready;
 

@@ -55,9 +55,9 @@ HALO_VULKAN_HDR_OUTPUT ("scrgb", "pq") chooses the swapchain's encoding
 where the surface has both. Not on Android, nor in the VR mode.
 
 display.vrr (sdl_platform.c's platform_vrr): with VRR on, the guest gives
-the window vsync and VRR_ON, and the frames are bounded by the display, not
-started just in time for a refresh that a variable display does not have
-(xgpu_vulkan_pacing.c's HOST_RENDER_DISPLAY_BOUNDED). Its auto asks
+the window vsync and VRR_ON, and the frames are started just in time for
+the GPU, not for a refresh that a variable display does not have
+(xgpu_vulkan_pacing.c's HOST_RENDER_DISPLAY_VARIABLE). Its auto asks
 host_vulkan_vrr whether the system says VRR is active: gamescope's
 properties on its X server's root window (GAMESCOPE_VRR_FEEDBACK, set while
 it shows a frame by VRR; or GAMESCOPE_VRR_CAPABLE and GAMESCOPE_VRR_ENABLED
@@ -731,7 +731,7 @@ int host_vulkan_window_open(uint32_t window, uint32_t debug, uint32_t shader_fol
 		if (object != vulkan_window)
 			return 0;
 		xgpu_vulkan_window_interval(interval);
-		xgpu_vulkan_window_low_latency(debug & VRR_ON ? 2 : debug & LOW_LATENCY_ON ? 1 : debug & LOW_LATENCY_OFF ? 2 : 0);
+		xgpu_vulkan_window_low_latency(debug & VRR_ON ? 3 : debug & LOW_LATENCY_ON ? 1 : debug & LOW_LATENCY_OFF ? 2 : 0);
 		return 1;
 	}
 	if (getenv("HALO_VULKAN_STATS"))
@@ -791,7 +791,7 @@ int host_vulkan_window_open(uint32_t window, uint32_t debug, uint32_t shader_fol
 		host_logf(HOST_LOG_INFO, "vulkan: the window is not one SDL draws with Vulkan: its frames are not shown");
 	}
 	options.interval = interval;
-	options.low_latency = debug & VRR_ON ? 2 : debug & LOW_LATENCY_ON ? 1 : debug & LOW_LATENCY_OFF ? 2 : 0;
+	options.low_latency = debug & VRR_ON ? 3 : debug & LOW_LATENCY_ON ? 1 : debug & LOW_LATENCY_OFF ? 2 : 0;
 	{
 		static const VkPresentModeKHR modes[] = { VK_PRESENT_MODE_IMMEDIATE_KHR, VK_PRESENT_MODE_MAILBOX_KHR,
 			VK_PRESENT_MODE_FIFO_KHR, VK_PRESENT_MODE_FIFO_RELAXED_KHR };

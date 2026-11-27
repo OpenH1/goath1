@@ -1604,7 +1604,7 @@ static struct
 	each frame is shown for (FIFO; the swapchain's present mode is made for
 	0 or more) */
 	int interval;
-	/* display.low_latency (any thread, atomic: 0 auto, 1 on, 2 off), and
+	/* display.low_latency (any thread, atomic: 0 auto, 1 on, 2 off, 3 VRR), and
 	whether the game is paced by the display now (xgpu_vulkan_pacing.c);
 	the device has VK_KHR_present_id and VK_KHR_present_wait, and
 	VK_GOOGLE_display_timing */
@@ -9494,7 +9494,7 @@ void xgpu_vulkan_window_hidden(int hidden)
 
 void xgpu_vulkan_window_low_latency(int mode)
 {
-	__atomic_store_n(&vk.low_latency, (uint32_t)(mode >= 0 && mode <= 2 ? mode : 0), __ATOMIC_RELEASE);
+	__atomic_store_n(&vk.low_latency, (uint32_t)(mode >= 0 && mode <= 3 ? mode : 0), __ATOMIC_RELEASE);
 }
 
 void xgpu_vulkan_window_interval(int interval)
@@ -13517,7 +13517,7 @@ int xgpu_vulkan_initialize(const struct xgpu_vulkan_options *options)
 	if (!check(vkCreateSemaphore(vk.device, &semaphore, NULL, &vk.timeline), "vkCreateSemaphore"))
 		return 0;
 	semaphore.pNext = NULL;
-	vk.low_latency = (uint32_t)(options->low_latency >= 0 && options->low_latency <= 2 ? options->low_latency : 0);
+	vk.low_latency = (uint32_t)(options->low_latency >= 0 && options->low_latency <= 3 ? options->low_latency : 0);
 	if (vk.present_wait || vk.display_timing)
 	{
 		struct xgpu_vulkan_pacing_device pacing;

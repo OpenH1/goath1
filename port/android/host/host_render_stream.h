@@ -364,12 +364,17 @@ it (shows it, or drops it; at once for a frame it has nothing to show of).
 The game then starts a frame only while at most FRAME_PACING_QUEUED of its
 frames wait for the display. HOST_RENDER_DISPLAY_BOUNDED in place of 1
 keeps that bound alone: the frames are started as soon as it lets them, not
-just in time for their refresh. host_render_stream_frame_shown gives the time
+just in time for their refresh. HOST_RENDER_DISPLAY_VARIABLE, a display of
+variable refresh (VRR), lets FRAME_PACING_VARIABLE_QUEUED frames wait for
+it and starts each just in time for the GPU, which the backend says has
+finished a frame by host_render_stream_gpu_passed: the game writes a frame
+while the GPU draws the one before. host_render_stream_frame_shown gives the time
 the frame reached the screen with its input time
 (host_render_stream_frame_input, while the backend ends it), for
 host_render_stream_latency: nanoseconds of CLOCK_MONOTONIC, the game's. */
 #define HOST_RENDER_DISPLAY_PACED 1
 #define HOST_RENDER_DISPLAY_BOUNDED 2
+#define HOST_RENDER_DISPLAY_VARIABLE 3
 void host_render_stream_display_paced(int paced);
 /* (any thread) the most frames whose work (the GPU's included) may be
 unfinished, besides the one the game has just given, when it starts the
