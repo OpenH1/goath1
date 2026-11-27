@@ -598,7 +598,7 @@ static long structure_append(struct rt_export_mesh *mesh, long *bsp_surfaces, lo
 				struct structure_material);
 			byte const *vertices = (byte const *)material->compressed_vertex_data.address;
 			long vertex_count = material->vertices.count, first_vertex = mesh->vertex_count;
-			long surface_index, vertex_index, material = material_index(material->shader.index);
+			long surface_index, vertex_index, material_number_written = material_index(material->shader.index);
 			byte const *lightmap_vertices = material->lightmap_vertices.count == vertex_count &&
 				material->compressed_vertex_data.size >= vertex_count * (vertex_size + lightmap_vertex_size) ?
 				vertices + vertex_count * vertex_size : NULL;
@@ -644,7 +644,8 @@ static long structure_append(struct rt_export_mesh *mesh, long *bsp_surfaces, lo
 					continue;
 				}
 				mesh_face(mesh, first_vertex + surface->vertex_indices[0], first_vertex + surface->vertex_indices[1],
-					first_vertex + surface->vertex_indices[2], material, lightmap_vertices ? lightmap->bitmap_index : -1);
+					first_vertex + surface->vertex_indices[2], material_number_written,
+					lightmap_vertices ? lightmap->bitmap_index : -1);
 			}
 		}
 	}
