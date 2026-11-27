@@ -514,9 +514,8 @@ def check_parity(table, runs):
         same = total = 0
         for moment in (0, 1):
             for box in HUD:
-                for a, b in zip(hud_pixels(c[moment], box), hud_pixels(e[moment], box)):
-                    if a is None or b is None:
-                        total += a is not None or b is not None
+                for (a, hud_a), (b, hud_b) in zip(hud_pixels(c[moment], box), hud_pixels(e[moment], box)):
+                    if not hud_a and not hud_b:
                         continue
                     total += 1
                     same += max(abs(p - q) for p, q in zip(a, b)) <= HUD_CODES
@@ -554,7 +553,8 @@ def check_whole(table, runs):
     0.03 to 0.07)"""
     broken, worst = [], 0.0
     for run in runs:
-        if not run.folder:
+        # (the build's own pictures: a baseline's are its own business)
+        if not run.folder or run.variant.startswith("baseline"):
             continue
         for path in sorted((run.folder / "game" / "shots").glob("at*.png")):
             try:
@@ -574,14 +574,14 @@ def check_whole(table, runs):
 
 
 def hud_pixels(picture, box):
-    """the HUD's own pixels of a box: bright ones (its blue meters and white text), else None"""
+    """the pixels of a box, each with whether it is the HUD's own (bright: its blue meters and white text)"""
     x0, y0, x1, y1 = box
     out = []
     for y in range(y0, y1):
         for x in range(x0, x1):
             at = (y * picture.width + x) * 3
-            pixel = picture.rgb[at:at + 3]
-            out.append(tuple(pixel) if max(pixel) >= 160 else None)
+            pixel = tuple(picture.rgb[at:at + 3])
+            out.append((pixel, max(pixel) >= 160))
     return out
 
 
