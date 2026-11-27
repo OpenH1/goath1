@@ -33,10 +33,11 @@ on your own machines.
 ## Versions
 
 `info`'s `"protocol"` is the protocol's version, `HOST_RENDER_REPLAY_PROTOCOL`
-in `host_render_replay.h`: **2**. `"protocols"` lists every version the
-service serves: a version 2 service serves version 1's clients unchanged
-(version 2 added `cost` and `info`'s `protocols`, `capabilities` and
-`cost_methods`; nothing of version 1 changed). `cost`'s `"cpu"` and `info`'s
+in `host_render_replay.h`: **3**. `"protocols"` lists every version the
+service serves: a version 3 service serves version 1's and 2's clients
+unchanged (version 2 added `cost` and `info`'s `protocols`, `capabilities`
+and `cost_methods`; version 3 added `hold` and the `hold` and `linear`
+capabilities; nothing earlier changed). `cost`'s `"cpu"` and `info`'s
 `call_kinds` were added to version 2 later: a service has them if its
 `capabilities` has `"cpu_cost"`. The version is raised when a
 request or a reply changes so that a client of the old version would misread
@@ -52,9 +53,9 @@ otherwise refuses it and says so.
 
 ```json
 {"cmd": "info"}
-{"ok": true, "protocol": 2, "protocols": [1, 2], "frames": 1676, "width": 2560, "height": 1440,
+{"ok": true, "protocol": 3, "protocols": [1, 2, 3], "frames": 1676, "width": 2560, "height": 1440,
  "backend": "metal", "build": "85ccc010a", "marks": true, "records": 4196312,
- "capabilities": ["frame", "draws", "thumbs", "ids", "pick", "cost", "cpu_cost"], "cost_methods": ["subtract"]}
+ "capabilities": ["frame", "draws", "thumbs", "hold", "linear", "ids", "pick", "cost", "cpu_cost"], "cost_methods": ["subtract"]}
 ```
 
 `frames`: the recording's frames, numbered from 0. `width`, `height`: the
@@ -62,7 +63,8 @@ last frame's back buffer (a frame's own size is in its `frame` reply).
 `backend`: `"metal"` or `"vulkan"`. `build`: the replay's git commit, which a
 client can key a cache of pictures on (with `backend`). `marks`: the
 recording has MARK records (`debug.render_marks`, below). `records`: the
-stream's records. `capabilities`: what this service does (`ids` and `pick`
+stream's records. `capabilities`: what this service does (`hold` and
+`linear`: the hold below and its EXR pictures; `ids` and `pick`
 need the backend's ID buffer, `cost` its GPU timing; `cpu_cost`: `cost`
 takes `"cpu"`). `cost_methods`: the methods `cost` can measure draws with
 (below), the default last. `call_kinds` (where the backend counts its calls
@@ -142,6 +144,47 @@ Written to `dir` as `thumb_<n>.png` (`thumb_<n>.qoi` and `"qoi"` with `"image":
 "qoi"`); with `"inline": true` or no `dir`, each is `{"n", "png_base64"}` (or
 `"qoi_base64"`), deflated with `"compress": true`. A frame that cannot be
 played is left out.
+
+### hold
+
+```json
+{"cmd": "hold", "n": 2210, "frames": 120, "shots": [1, 30, 120], "dir": "/abs/hold", "linear": true}
+{"ok": true, "n": 2210, "frames": 120, "reset": false, "reprojection": "identity", "linear_source": "display",
+ "shots": [{"k": 1, "png": "/abs/hold/hold_2210_1.png", "exr": "/abs/hold/hold_2210_1.exr"}, ...],
+ "width": 1920, "height": 1080, "ms": 4120.3}
+```
+
+Frame `n` held: the world frozen at it while the temporal passes run on, the
+still camera to measure their noise and convergence with (shimmer,
+swelling). Play 1 is the frame played exactly, as `frame` plays it; plays 2
+to `frames` (default 120) are the frame played again where it is, after
+itself, each record as recorded but:
+
+- the reprojection is the identity: MOTION's RESOLVE matrix the identity (a
+  pixel was where it is), the pre-pass's previous camera and corners its
+  own, and the previous frame's constants (CONSTANTS past register 192) left
+  out, so that the current ones stand for them;
+- the frame's number advances by one a play: the pre-pass's `history[1]`,
+  which every ray-traced pass turns its noise by (the occlusion's rays, the
+  lights' shadows, the bounce's pixel a tile). No pass seeds its noise from
+  a clock;
+- the jitter stays the frame's (it is in its projection).
+
+With `"reset": true` play 1 is held too, its histories begun again (the
+pre-pass's `history[0]` 0, MOTION's frame-before flag 0, the temporal
+technique's reset): frame 1 against 120 is then convergence from nothing.
+
+- `"shots"`: the plays whose pictures are kept (default 1, 30 and 120), as
+  `dir/hold_<n>_<k>.png` (`.qoi` with `"image": "qoi"`); with `"inline":
+  true` or no `dir`, each is `{"k", "png_base64"}` (or `"qoi_base64"`).
+- `"linear": true`: each shot also as an OpenEXR file (`.exr`, or
+  `"exr_base64"` inline): scanline, uncompressed, half-float B, G and R,
+  linear light. `linear_source` says what it is the linear light of:
+  `"display"`, the presented picture's sRGB decoded (the back buffer is an
+  SDR picture; a backend that reads its linear target before the tone map
+  would say `"scene"`).
+
+A frame asked for after a hold is played from the start again, exactly.
 
 ### cost
 
