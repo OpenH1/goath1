@@ -5193,7 +5193,7 @@ static unsigned int dynamic_light_add(struct module *m, struct pixel_state *stat
 	room = fmax_scalar(m, 3, fsub(m, 3, constant_splat(m, 3, 1.0f), knee), (float)1.0e-3);
 	soft = fadd(m, 3, knee, fmul(m, 3, room, fsub(m, 3, constant_splat(m, 3, 1.0f), ext1(m, GLSL_EXP, m->t_v3,
 		fdiv(m, 3, fneg(m, 3, fmax_scalar(m, 3, fsub(m, 3, y, knee), 0.0f)), room)))));
-	soft = select_n(m, 3, op2(m, OP_F_ORD_LESS_THAN_EQUAL, m->t_bv3, y, knee), y, soft);
+	soft = op3(m, OP_SELECT, m->t_v3, op2(m, OP_F_ORD_LESS_THAN_EQUAL, m->t_bv3, y, knee), y, soft);
 	if (hdr)
 	{
 		unsigned int past = fmax_scalar(m, 3, fsub(m, 3, y, constant_splat(m, 3, 1.0f)), 0.0f);
@@ -5967,7 +5967,7 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 			fmax_scalar(&m, 1, fdot(&m, normal, normal), (float)1.0e-24)));
 		unsigned int p = pixel_input(&m, &state, state.in_world_position, m.t_v3);
 		unsigned int lit, occlusion = occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_MODEL ? state.occlusion : 0;
-		unsigned int reflection = 0, exponent = 0, sum, shaded = n, added, flash_variable;
+		unsigned int reflection = 0, exponent = 0, sum, shaded = n, added, linear_variable;
 		static const unsigned int rgb[4] = { 4, 5, 6, 3 };
 
 		/* (a model's material maps: its normal, and its occlusion with the
@@ -6009,9 +6009,12 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 			shine_variable = local(&m, &state.locals, m.t_v3);
 			store(&m, shine_variable, constant_splat(&m, 3, 0.0f));
 		}
-		flash_variable = local(&m, &state.locals, m.t_v3);
-		sum = dynamic_light_sum(&m, &state, p, shaded, n, FALSE, reflection, exponent, shine_variable, flash_variable);
-		added = dynamic_light_add(&m, &state, lit, sum, load(&m, m.t_v3, flash_variable), FALSE);
+		linear_variable = local(&m, &state.locals, m.t_v3);
+		/* (linear_variable: the linear light added past the game's lights'
+		gamma sum, dynamic_light_add's linear; another linear light, a
+		bounce's, adds into it before the add) */
+		sum = dynamic_light_sum(&m, &state, p, shaded, n, FALSE, reflection, exponent, shine_variable, linear_variable);
+		added = dynamic_light_add(&m, &state, lit, sum, load(&m, m.t_v3, linear_variable), FALSE);
 		/* (a metal's diffuse light darkened: material_read) */
 		if (state.metalness)
 			added = fscale(&m, 3, added, fsub(&m, 1, constant_float(&m, 1.0f), fmul(&m, 1, state.metalness,
@@ -6125,7 +6128,7 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 	{
 		/* the lightmap pass's light, before the textures multiply it */
 		unsigned int surface_normal = ext1(&m, GLSL_NORMALIZE, m.t_v3, xyz(&m, pixel_input(&m, &state, state.in_world_normal, m.t_v4)));
-		unsigned int bump, n, sum, lit, flash_variable;
+		unsigned int bump, n, sum, lit, linear_variable;
 		static const unsigned int rgb[4] = { 4, 5, 6, 3 };
 
 		if (program->stages[0].sampler == _xgpu_sampler_2d)
@@ -6136,12 +6139,13 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 			fscale(&m, 3, pixel_input(&m, &state, state.in_world_tangent, m.t_v3), extract(&m, bump, 0)),
 			fscale(&m, 3, pixel_input(&m, &state, state.in_world_binormal, m.t_v3), extract(&m, bump, 1))),
 			fscale(&m, 3, surface_normal, fmax_scalar(&m, 1, extract(&m, bump, 2), 0.05f))));
-		flash_variable = local(&m, &state.locals, m.t_v3);
+		linear_variable = local(&m, &state.locals, m.t_v3);
+		/* (linear_variable as the models': the linear light past the sum) */
 		sum = dynamic_light_sum(&m, &state, pixel_input(&m, &state, state.in_world_position, m.t_v3), n, surface_normal, TRUE,
-			0, 0, 0, flash_variable);
+			0, 0, 0, linear_variable);
 		/* (by the shader's material colour, as the gel pass multiplies it) */
 		sum = fmul(&m, 3, sum, xyz(&m, uniform(&m, U_DYNAMIC_LIGHT_TINT, -1)));
-		lit = dynamic_light_add(&m, &state, xyz(&m, result), sum, fmul(&m, 3, load(&m, m.t_v3, flash_variable),
+		lit = dynamic_light_add(&m, &state, xyz(&m, result), sum, fmul(&m, 3, load(&m, m.t_v3, linear_variable),
 			xyz(&m, uniform(&m, U_DYNAMIC_LIGHT_TINT, -1))), (program->hdr & XGPU_HDR_LIGHTS) != 0);
 		/* (HALO_LIGHT_SHADOWS_VIEW: the lights over the surface darkened,
 		not under the shoulder, so a lit wall shows them too) */
@@ -7539,7 +7543,10 @@ static unsigned int light_shadows_rays(struct module *m, struct words *locals, s
 		operands[0] = query;
 		operands[1] = load(m, type0(m, OP_TYPE_ACCELERATION_STRUCTURE), pass->scene);
 		operands[2] = constant_uint(m, 0);
-		operands[3] = constant_uint(m, 0xFFu);
+		/* (the structure, the objects and the local player's own body, not
+		the first-person weapon and hands, drawn in a view of their own; the
+		body leaves its own lights' rays as their owner, below) */
+		operands[3] = constant_uint(m, XGPU_SPIRV_RT_MASK_SHADOWS);
 		operands[4] = from;
 		operands[5] = constant_float(m, 0.0f);
 		operands[6] = fdiv(m, 3, d, splat(m, 3, far));

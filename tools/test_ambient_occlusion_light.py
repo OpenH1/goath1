@@ -86,10 +86,9 @@ def test_model_lit_by_the_dynamic_lights(shaders):
     added = added[:added.index(";")]
     summed = source[source.index("float3 sum = dynamic_light_sum("):]
     summed = summed[:summed.index(";")]
-    # the occlusion in the base's lighting alone, the lights' sum (and the flashlight's, added as the game's pass
-    # adds it to that base) added after
+    # the occlusion in the base's lighting alone, the lights' sum (and the panels' linear light) added after
     assert "model_lighting(u, in.xWorldNormal, occlusion)" in base
-    assert "v0.rgb = dynamic_light_add(dynamic_lights, base, sum + flashlight_gamma_add(base, flash))" == added
+    assert "v0.rgb = dynamic_light_add(dynamic_lights, base, sum, linear_light)" == added
     assert "occlusion" not in summed
 
 
