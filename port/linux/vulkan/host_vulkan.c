@@ -885,6 +885,7 @@ int host_vulkan_window_open(uint32_t window, uint32_t debug, uint32_t shader_fol
 	host_render_stream_set_backend(&backend);
 	host_render_stream_set_screenshot_writer(host_screenshot_write);
 	host_render_stream_set_screenshot_halves_writer(host_screenshot_write_halves);
+	host_render_stream_set_screenshot_later_writer(host_screenshot_write_later);
 	/* (HALO_RENDER_SHOTS' pictures: host_render_record.h) */
 	host_render_record_set_shooter(xgpu_vulkan_stream_shot);
 	atexit(vulkan_shutdown);

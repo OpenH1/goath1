@@ -964,6 +964,49 @@ static int stream_read_target_halves(void *context, uint32_t number, uint32_t wi
 	return xgpu_vulkan_read_halves(target->image, 0, halves);
 }
 
+/* the screenshot key's target read back without a wait
+(xgpu_vulkan_readback_begin), BGRA8 or display.hdr's half floats */
+struct later_pixels
+{
+	struct host_render_later_pixels pixels;
+	struct xgpu_vulkan_readback *readback;
+};
+
+static const void *later_pixels_wait(struct host_render_later_pixels *pixels)
+{
+	return xgpu_vulkan_readback_wait(((struct later_pixels *)pixels)->readback);
+}
+
+static void later_pixels_release(struct host_render_later_pixels *pixels)
+{
+	xgpu_vulkan_readback_release(((struct later_pixels *)pixels)->readback);
+	free(pixels);
+}
+
+static struct host_render_later_pixels *stream_read_target_later(void *context, uint32_t number, uint32_t width,
+	uint32_t height)
+{
+	struct stream_target *target = target_get(number);
+	struct later_pixels *later;
+
+	(void)context;
+	if (!target || target->depth || target->width != width || target->height != height ||
+		!(later = calloc(1, sizeof(*later))))
+	{
+		return NULL;
+	}
+	target_resolve(target);
+	later->readback = xgpu_vulkan_readback_begin(target->image, 0, &later->pixels.halves);
+	if (!later->readback)
+	{
+		free(later);
+		return NULL;
+	}
+	later->pixels.wait = later_pixels_wait;
+	later->pixels.release = later_pixels_release;
+	return &later->pixels;
+}
+
 /* ---------- textures */
 
 /* the axes (bit 0 u, 1 v, 2 w) whose border colour the shader draws: none
@@ -5261,6 +5304,7 @@ const struct host_render_backend *xgpu_vulkan_stream_backend(void)
 		backend.clear_target = stream_clear_target;
 		backend.read_target = stream_read_target;
 		backend.read_target_halves = stream_read_target_halves;
+		backend.read_target_later = stream_read_target_later;
 		backend.set_textures = stream_set_textures;
 		backend.set_constants = stream_set_constants;
 		backend.vertex_program = stream_vertex_program;

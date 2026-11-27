@@ -19,7 +19,11 @@ display.hdr's back buffer comes as its half floats
 (host_screenshot_write_halves), tone mapped into BGRA8 on the same thread
 (xgpu_hdr_sdr_pixel, as the backends' read_target with tone_map): its powf
 a pixel took a 4K frame up to a tenth of a second, which the render thread
-had spent on it.
+had spent on it. Where the backend can, the frame comes still being read
+back (host_screenshot_write_later: read_target_later's), and the thread
+waits for the GPU and reads it where the GPU left it, so that the render
+thread neither waits for the GPU nor copies the frame (a 4K HDR one's
+66 MB, with the wait, held it and the game about 50 ms).
 */
 
 #include "host_render_stream.h"
@@ -46,6 +50,9 @@ struct screenshot_job
 	/* (display.hdr's half floats, RGBA, malloc'd: made bgra on the
 	thread) */
 	uint16_t *halves;
+	/* (or the frame still being read back: its pixels, waited for and made
+	bgra on the thread, then released) */
+	struct host_render_later_pixels *later;
 	uint32_t width, height;
 	char *path, *part;
 	SDL_Thread *thread;
@@ -139,11 +146,39 @@ static int png_write(unsigned char *bgra, uint32_t width, uint32_t height, const
 	return written;
 }
 
+/* the frame read back for a job (job->later): waited for, made BGRA8 (a
+copy, whose alpha png_write sets), and let go of; NULL if it never came or
+there is no memory */
+static unsigned char *later_bgra(struct screenshot_job *job)
+{
+	const void *pixels = job->later->wait(job->later);
+	size_t bytes = (size_t)job->width * job->height * 4;
+	unsigned char *bgra = NULL;
+
+	if (pixels && job->later->halves)
+		bgra = halves_tone_mapped(pixels, job->width, job->height);
+	else if (pixels && (bgra = SDL_malloc(bytes)) != NULL)
+		memcpy(bgra, pixels, bytes);
+	job->later->release(job->later);
+	job->later = NULL;
+	return bgra;
+}
+
 static int SDLCALL job_run(void *data)
 {
 	struct screenshot_job *job = data;
 
-	if (job->halves)
+	if (job->later)
+	{
+		job->bgra = later_bgra(job);
+		if (!job->bgra)
+		{
+			SDL_RemovePath(job->part);
+			SDL_Log("screenshot: %s could not be written (the frame could not be read back)", job->path);
+			return 0;
+		}
+	}
+	else if (job->halves)
 	{
 		job->bgra = halves_tone_mapped(job->halves, job->width, job->height);
 		free(job->halves);
@@ -162,6 +197,8 @@ static int SDLCALL job_run(void *data)
 
 static void job_free(struct screenshot_job *job)
 {
+	if (job->later)
+		job->later->release(job->later);
 	SDL_free(job->bgra);
 	free(job->halves);
 	SDL_free(job->path);
@@ -213,9 +250,11 @@ static void at_exit(void)
 }
 
 /* the picture (bgra, copied; or *halves, taken when started: *halves
-NULL then) handed to a thread of its own; 0 if none can take it (too many
-being written, or no memory or thread), for the caller to write it */
-static int job_start(const unsigned char *bgra, uint16_t **halves, uint32_t width, uint32_t height, const char *path)
+NULL then; or *later, the same) handed to a thread of its own; 0 if none can
+take it (too many being written, or no memory or thread), for the caller to
+write it */
+static int job_start(const unsigned char *bgra, uint16_t **halves, struct host_render_later_pixels **later,
+	uint32_t width, uint32_t height, const char *path)
 {
 	SDL_Mutex *lock = writers_lock();
 	struct screenshot_job *job;
@@ -232,15 +271,15 @@ static int job_start(const unsigned char *bgra, uint16_t **halves, uint32_t widt
 	job = index < SCREENSHOT_WRITERS ? SDL_calloc(1, sizeof(*job)) : NULL;
 	if (job)
 	{
-		job->bgra = *halves ? NULL : SDL_malloc(bytes);
+		job->bgra = *halves || *later ? NULL : SDL_malloc(bytes);
 		job->path = SDL_strdup(path);
 		job->part = SDL_malloc(part_size);
 		job->width = width;
 		job->height = height;
 	}
-	if (job && (*halves || job->bgra) && job->path && job->part)
+	if (job && (*halves || *later || job->bgra) && job->path && job->part)
 	{
-		if (!*halves)
+		if (!*halves && !*later)
 			memcpy(job->bgra, bgra, bytes);
 		snprintf(job->part, part_size, "%s.part", path);
 		/* (the .part made now: the name taken, for the next picture of
@@ -259,6 +298,8 @@ static int job_start(const unsigned char *bgra, uint16_t **halves, uint32_t widt
 		/* (the thread's from now on) */
 		job->halves = *halves;
 		*halves = NULL;
+		job->later = *later;
+		*later = NULL;
 		writers.jobs[index] = job;
 		if (!writers.at_exit)
 			writers.at_exit = atexit(at_exit) == 0;
@@ -270,9 +311,11 @@ static int job_start(const unsigned char *bgra, uint16_t **halves, uint32_t widt
 }
 
 /* bgra's (copied) or *halves' picture (taken, *halves NULL, when its
-thread writes it; else the caller's to free) */
-static int screenshot_write(unsigned char *bgra, uint16_t **halves, uint32_t width, uint32_t height,
-	const char *directory, char *name, uint32_t name_size)
+thread writes it; else the caller's to free), or *later's (the same; where
+no thread takes it, -1: it is not waited for here, on the render thread,
+whose work it waits for) */
+static int screenshot_write(unsigned char *bgra, uint16_t **halves, struct host_render_later_pixels **later,
+	uint32_t width, uint32_t height, const char *directory, char *name, uint32_t name_size)
 {
 	SDL_Time now;
 	SDL_DateTime date;
@@ -310,7 +353,13 @@ static int screenshot_write(unsigned char *bgra, uint16_t **halves, uint32_t wid
 		return failed(name, name_size, "too many in one second");
 	}
 	/* (on a thread of its own, or, if none takes it, here) */
-	written = job_start(bgra, halves, width, height, path);
+	written = job_start(bgra, halves, later, width, height, path);
+	if (!written && *later)
+	{
+		SDL_free(path);
+		name[0] = 0;
+		return -1;
+	}
 	if (!written && *halves)
 	{
 		bgra = halves_tone_mapped(*halves, width, height);
@@ -329,15 +378,29 @@ int host_screenshot_write(unsigned char *bgra, uint32_t width, uint32_t height, 
 	uint32_t name_size)
 {
 	uint16_t *halves = NULL;
+	struct host_render_later_pixels *later = NULL;
 
-	return screenshot_write(bgra, &halves, width, height, directory, name, name_size);
+	return screenshot_write(bgra, &halves, &later, width, height, directory, name, name_size);
 }
 
 int host_screenshot_write_halves(uint16_t *halves, uint32_t width, uint32_t height, const char *directory, char *name,
 	uint32_t name_size)
 {
-	int written = screenshot_write(NULL, &halves, width, height, directory, name, name_size);
+	struct host_render_later_pixels *later = NULL;
+	int written = screenshot_write(NULL, &halves, &later, width, height, directory, name, name_size);
 
 	free(halves);
+	return written;
+}
+
+int host_screenshot_write_later(struct host_render_later_pixels *pixels, uint32_t width, uint32_t height,
+	const char *directory, char *name, uint32_t name_size)
+{
+	uint16_t *halves = NULL;
+	int written = screenshot_write(NULL, &halves, &pixels, width, height, directory, name, name_size);
+
+	/* (not taken: a failure before a thread, or none free) */
+	if (pixels)
+		pixels->release(pixels);
 	return written;
 }

@@ -435,6 +435,21 @@ tone mapping to the caller (the screenshot key's, on the PNG's thread:
 host_screenshot.c). 1 on success, 0 if it cannot be read, -1 if the image
 is not RGBA16F */
 int xgpu_vulkan_read_halves(struct xgpu_vulkan_image *image, uint32_t layer, uint16_t **halves);
+/* a layer's first level copied, after the work recorded so far, into a
+buffer of its own without waiting for the GPU (a screenshot's, a Save
+Report's: a 4K display.hdr frame read back and copied held the render
+thread, and the game, about 50 ms): NULL where it cannot be (a format other
+than BGRA8 or RGBA16F, both buffers in use, no memory), for the caller to
+read it as before. *halves: whether its pixels are RGBA16F's half floats
+(else BGRA8). xgpu_vulkan_readback_wait, on any thread but the render
+thread's (whose submission it waits for), waits for the GPU to have copied
+it and gives its rows from the first, NULL if they never come (the device
+lost, the renderer shut down); xgpu_vulkan_readback_release, on any thread,
+lets go of it, once, waited for or not */
+struct xgpu_vulkan_readback;
+struct xgpu_vulkan_readback *xgpu_vulkan_readback_begin(struct xgpu_vulkan_image *image, uint32_t layer, int *halves);
+const void *xgpu_vulkan_readback_wait(struct xgpu_vulkan_readback *readback);
+void xgpu_vulkan_readback_release(struct xgpu_vulkan_readback *readback);
 
 /* ---------- samplers */
 

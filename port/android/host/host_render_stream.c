@@ -435,11 +435,22 @@ void host_render_stream_set_screenshot_halves_writer(host_render_screenshot_halv
 	screenshot_halves_writer = writer;
 }
 
+static host_render_screenshot_later_writer screenshot_later_writer;
+
+void host_render_stream_set_screenshot_later_writer(host_render_screenshot_later_writer writer)
+{
+	screenshot_later_writer = writer;
+}
+
 /* XGPU_STREAM_SCREENSHOT: the target read as READ_TARGET reads it, tone
-mapped, into the guest's pixels, and written; 1 if written. display.hdr's
-back buffer is read as it is and tone mapped by the writer, on the PNG's
-thread: tone mapped here, a 4K frame's held the render thread (and the
-game's) up to a tenth of a second */
+mapped, into the guest's pixels, and written; 1 if written. Where the
+backend can, its copy is only begun here (read_target_later): the writer's
+thread waits for the GPU, reads it and tone maps it. A 4K display.hdr frame
+read back here (66 MB, the GPU waited for and the frame copied) held the
+render thread, and the game, which waits for the answer, 43 to 59 ms at each
+Save Report. Else display.hdr's back buffer is read as it is and tone
+mapped by the writer, on the PNG's thread: tone mapped here, a 4K frame's
+held them up to a tenth of a second */
 static uint32_t screenshot(const struct host_render_backend *backend, void *context,
 	const struct xgpu_stream_screenshot *shot, uint32_t size)
 {
@@ -461,6 +472,23 @@ static uint32_t screenshot(const struct host_render_backend *backend, void *cont
 	read.pixels = shot->pixels;
 	read.size = shot->size;
 	name = host_pointer(shot->name);
+	if (backend->read_target_later && screenshot_later_writer)
+	{
+		struct host_render_later_pixels *later = backend->read_target_later(context, shot->target, shot->width,
+			shot->height);
+		int later_written;
+
+		if (later)
+		{
+			name[0] = 0;
+			later_written = screenshot_later_writer(later, shot->width, shot->height, shot->directory, name,
+				XGPU_STREAM_SCREENSHOT_NAME);
+			name[XGPU_STREAM_SCREENSHOT_NAME - 1] = 0;
+			if (later_written >= 0)
+				return later_written ? 1 : 0;
+			/* (no thread free for it: read now) */
+		}
+	}
 	if (backend->read_target_halves && screenshot_halves_writer)
 	{
 		uint16_t *halves = NULL;
