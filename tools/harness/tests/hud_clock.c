@@ -63,8 +63,8 @@ static unsigned long config_changes(void) { return changes; }
 
 /* the view and the text */
 static struct font_header font = { 12, 3 };
-static struct { struct { rectangle2d window_bounds, viewport_bounds; } camera; } render =
-	{ { { 0, 0, 852, 480 }, { 0, 0, 852, 480 } } };
+static struct { struct { rectangle2d window_bounds, viewport_bounds; } camera; short local_player_index; } render =
+	{ { { 0, 0, 852, 480 }, { 0, 0, 852, 480 } }, 0 };
 static long hud_get_font_index(void) { return 0; }
 static struct font_header *font_definition_get(long index) { (void)index; return &font; }
 static void hud_get_text_color(real_argb_color *color) { memset(color, 0, sizeof(*color)); }
@@ -81,6 +81,22 @@ static void rasterizer_draw_unicode_string(rectangle2d const *bounds, void *a, v
 	(void)bounds; (void)a; (void)b; (void)flags;
 	wcsncpy(drawn, string, NUMBEROF(drawn) - 1);
 	draws++;
+}
+
+/* the HUD's state line (hud_messaging.c's, which draws it whether the HUD
+is shown or not): the action's response sets it ("Hold BACK for score"),
+hud_enable_custom_state_message clears it */
+static wchar_t state_line[32];
+static void hud_show_action_response(long player_index)
+{
+	(void)player_index;
+	wcscpy(state_line, L"Hold BACK for score");
+}
+static void hud_enable_custom_state_message(short local_player_index, boolean enabled)
+{
+	(void)local_player_index;
+	(void)enabled;
+	state_line[0] = 0;
 }
 
 #include "under_test.inc"
@@ -170,6 +186,24 @@ int main(int argc, char **argv)
 		studio = FALSE;
 		keys_held = FLAG(HALO_KEYBOARD_HIDE_HUD);
 		CHECK(!hud_shown(), "the key did not hide the HUD with the studio off");
+		return 0;
+	}
+	CASE("state_line")
+	{
+		/* (the state line goes with the HUD: the multiplayer start's score
+		hint, set while the HUD shows, not left drawn once it is hidden) */
+		engine_running = TRUE;
+		hud_update_state_line(0);
+		CHECK(!wcscmp(state_line, L"Hold BACK for score"), "the HUD shown, no state line: \"%ls\"", state_line);
+		scripted.show_hud = FALSE;
+		hud_update_state_line(0);
+		CHECK(!*state_line, "the scripts' show_hud 0 left the state line: \"%ls\"", state_line);
+		scripted.show_hud = TRUE;
+		hud_update_state_line(0);
+		CHECK(*state_line, "the HUD shown again, no state line");
+		keys_held = FLAG(HALO_KEYBOARD_HIDE_HUD);
+		hud_update_state_line(0);
+		CHECK(!*state_line, "the player's Hide HUD left the state line: \"%ls\"", state_line);
 		return 0;
 	}
 	CASE("hide_setting")
