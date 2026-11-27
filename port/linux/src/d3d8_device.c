@@ -452,9 +452,6 @@ struct draw_inputs
 	they were told with, taken as each draw is made (material_modes_told);
 	as a record plays, the recorded draw's */
 	uint32_t material_modes;
-	/* display.rt_reflections: the class its reflection's texel is traced
-	as (halo_rt_reflection: xgpu.h's XGPU_RT_REFLECTION_*), 0 none */
-	uint32_t rt_reflection;
 	/* the region of its texture each stage samples, as a texture of its own
 	with its border beyond it (d3d8_texture_region: its size and origin, in
 	the texture's coordinates; size 0: the whole texture) */
@@ -567,9 +564,16 @@ static struct
 	int read;
 	unsigned long read_at;
 	int on;
+	/* the class the draws from now on trace as (xgpu.h's
+	XGPU_RT_REFLECTION_*), 0 none: not a draw's input, which the records
+	keep in their form (the shipped records stay as they are); a record's
+	draw has none (rt_reflection_modes) */
+	uint32_t tag;
 } rt_reflections;
 
 unsigned long halo_gpu_settings_taken(void);
+/* (a record playing: below) */
+static BOOL journal_playing;
 
 static int rt_reflections_wanted(void)
 {
@@ -584,7 +588,7 @@ static int rt_reflections_wanted(void)
 
 void halo_rt_reflection(int reflection)
 {
-	inputs.rt_reflection = reflection > 0 && reflection <= HALO_RT_REFLECTION_WATER && rt_reflections_wanted() ?
+	rt_reflections.tag = reflection > 0 && reflection <= HALO_RT_REFLECTION_WATER && rt_reflections_wanted() ?
 		(uint32_t)reflection : 0;
 }
 
@@ -594,10 +598,11 @@ _DOT_RFLCT_SPEC, _DOT_RFLCT_SPEC_CONST) */
 static DWORD rt_reflection_modes(DWORD texture_modes)
 {
 	DWORD stage3 = (texture_modes >> 15) & 0x1f;
+	uint32_t tag = journal_playing ? 0 : rt_reflections.tag;
 
-	if (!inputs.rt_reflection || (stage3 != 0x03 && stage3 != 0x0c && stage3 != 0x12))
+	if (!tag || (stage3 != 0x03 && stage3 != 0x0c && stage3 != 0x12))
 		return 0;
-	return ((DWORD)inputs.rt_reflection << XGPU_TEXTURE_MODES_RT_REFLECTION_SHIFT) & XGPU_TEXTURE_MODES_RT_REFLECTION;
+	return ((DWORD)tag << XGPU_TEXTURE_MODES_RT_REFLECTION_SHIFT) & XGPU_TEXTURE_MODES_RT_REFLECTION;
 }
 
 /* the game's renderer's category, for the backend's timing
@@ -6555,6 +6560,8 @@ struct retained_context
 	uint32_t cutout_depth, lights_unreached, model_unreached, per_pixel, lights_active, world_ao, hud_meter;
 	/* (a model's material maps: material_modes, and their images) */
 	uint32_t material_modes, material_normal, material_orm;
+	/* (display.rt_reflections: the draw's tag, rt_reflection_modes) */
+	uint32_t rt_reflection;
 	int32_t hdr_mode, hdr_boost;
 	/* display.temporal_aa's LOD bias (draw_lod_bias: its samplers') */
 	float lod_bias;
@@ -6862,6 +6869,8 @@ static BOOL retained_context_make(struct retained_context *context, struct verte
 	RETAINED_TAKE(material_normal, (uint32_t)number);
 	number = material_modes() ? material.orm : 0;
 	RETAINED_TAKE(material_orm, (uint32_t)number);
+	number = journal_playing ? 0 : (long)rt_reflections.tag;
+	RETAINED_TAKE(rt_reflection, (uint32_t)number);
 	number = hdr.mode;
 	RETAINED_TAKE(hdr_mode, number);
 	number = hdr.boost;
