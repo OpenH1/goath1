@@ -4869,6 +4869,9 @@ static void stream_world_ao_prepass(void *context, const struct xgpu_stream_worl
 		xgpu_vulkan_light_shadows_draw(prepass.inputs, &record->pass, lights_cells ? (const uint32_t (*)[4])(lights_cells +
 			(XGPU_DYNAMIC_LIGHTS_GRID_X * XGPU_DYNAMIC_LIGHTS_GRID_Y * XGPU_DYNAMIC_LIGHTS_GRID_Z +
 			XGPU_DYNAMIC_LIGHTS_SHADOWED) * 16) : NULL);
+		/* (HALO_PT_MEASURE_RAYS: the path tracing's ray throughput measured
+		from the pre-pass's surfaces: xgpu_vulkan_pt_measure.c) */
+		xgpu_vulkan_pt_measure_draw(prepass.inputs, &record->pass);
 		/* (the surfaces' walk, played next, from the pre-pass's depth) */
 		if (prepass.primed_depth)
 			prepass_prime_end(record->replay);

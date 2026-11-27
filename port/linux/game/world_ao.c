@@ -21,6 +21,7 @@ Nothing here runs unless the setting is "world" or "ray_traced": every
 other value (and the Classic preset's "off") draws exactly as before.
 */
 
+#include "pt_measure.h"
 #include "rt_shadows.h"
 #include "world_ao.h"
 #include "rt_reflections.h"
@@ -595,6 +596,10 @@ void world_ao_window_begin(short local_player_index, short rasterizer_target, fl
 
 	(void)local_player_index;
 	(void)rasterizer_target;
+	/* (HALO_PT_MEASURE_FIT: the path tracing's static fit study, a share a
+	window: pt_measure.c) */
+	if (!render_enumerating)
+		pt_measure_frame();
 	/* (its span, whatever the setting: halo_world_ao_span) */
 	world_ao.span = WORLD_AO_SPAN_OPEN;
 	halo_world_ao_span(WORLD_AO_SPAN_OPEN);

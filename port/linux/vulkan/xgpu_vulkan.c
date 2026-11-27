@@ -12562,6 +12562,8 @@ static int device_make(const struct xgpu_vulkan_options *options)
 		device.scratch_alignment = structure_properties.minAccelerationStructureScratchOffsetAlignment;
 		device.timestamp_period = vk.capabilities.gpu_timestamps ? vk.properties.limits.timestampPeriod : 0.0f;
 		vk.capabilities.ray_queries = xgpu_vulkan_rt_create(&device);
+		if (vk.capabilities.ray_queries)
+			(void)xgpu_vulkan_pt_measure_create(&device);
 	}
 
 	vk.capabilities.largest_target = vk.properties.limits.maxImageDimension2D;
@@ -13500,6 +13502,7 @@ void xgpu_vulkan_initialize_undo(void)
 	{
 		vkDeviceWaitIdle(vk.device);
 		xgpu_vulkan_pacing_stop();
+		xgpu_vulkan_pt_measure_destroy();
 		xgpu_vulkan_rt_destroy();
 		xgpu_vulkan_fsr_destroy();
 		xgpu_vulkan_dlss_destroy();
