@@ -39,22 +39,29 @@ WIDTH, HEIGHT = 1920, 1080
 # ---------- the scenes
 
 # c20's dark corridor: the player placed facing a Flood combat form that stands a step in front of the far wall, at
-# its crease with the floor. Moments: 0 the flashlight off, 1 on, 2 three frames later (stability). The "moved"
-# corridor has the Flood a step to the side. (A fixed camera beside the player, debug_camera_load, does not serve:
-# the first-person flashlight goes with the camera.)
+# its crease with the floor. Moments: 0 the flashlight off, 1 on, 2 three frames later (stability). The "crease"
+# scenes add a second local player as a light off the view's axis (debug.network_test_place's second pose).
 C20 = "HALO_NETWORK_TEST=campaign:levels\\c20\\c20"
+PLAYER_ONE = "-26.65 15.71 -4.6 -70 -8"
 STAGE = [C20, "HALO_NETWORK_TEST_START=2", "HALO_SKIP_CINEMATICS=1", f"HALO_FRAME_TIME={FRAME_TIME}",
-         "HALO_NETWORK_TEST_PLACE=-26.65 15.71 -4.6 -70 -8@8"]
+         f"HALO_NETWORK_TEST_PLACE={PLAYER_ONE}@8"]
 FLOOD = 'debug_object_place "characters\\floodcombat_human\\floodcombat_human -25.42 12.33 -4.5 110"'
-FLOOD_MOVED = FLOOD.replace("-25.42 12.33", "-25.02 12.48")
 SHORT_AT = "HALO_SCREENSHOT_AT=12,14.5,14.6,quit"
 SCENES = {
     "corridor": STAGE + [
         f"HALO_NETWORK_TEST_CUES=5 ai_erase_all|5.1 render_shadows 0|9 {FLOOD}",
         "HALO_TEST_INPUT=script:12.5-13 flashlight", SHORT_AT],
-    "moved": STAGE + [
-        f"HALO_NETWORK_TEST_CUES=5 ai_erase_all|5.1 render_shadows 0|9 {FLOOD_MOVED}",
-        "HALO_TEST_INPUT=script:12.5-13 flashlight", SHORT_AT],
+    # the off-axis light: a second local player (split screen: the first one's view is the top half) placed beside
+    # the Flood, its flashlight aimed across it at the slanted wall beyond; and the same with that player a step
+    # aside (the light moved)
+    "crease": [item for item in STAGE if not item.startswith("HALO_NETWORK_TEST_PLACE")] + [
+        f"HALO_NETWORK_TEST_CUES=5 ai_erase_all|5.1 render_shadows 0|9 {FLOOD}", "HALO_NETWORK_TEST_PLAYERS=2",
+        f"HALO_NETWORK_TEST_PLACE={PLAYER_ONE};-23.71 13.48 -4.6 -146 -25@8",
+        "HALO_TEST_INPUT=script:12.5-13 p2 flashlight", SHORT_AT],
+    "crease-moved": [item for item in STAGE if not item.startswith("HALO_NETWORK_TEST_PLACE")] + [
+        f"HALO_NETWORK_TEST_CUES=5 ai_erase_all|5.1 render_shadows 0|9 {FLOOD}", "HALO_NETWORK_TEST_PLAYERS=2",
+        f"HALO_NETWORK_TEST_PLACE={PLAYER_ONE};-23.71 13.98 -4.6 -152 -25@8",
+        "HALO_TEST_INPUT=script:12.5-13 p2 flashlight", SHORT_AT],
     # the same corridor, no Flood: a frag grenade thrown at the far wall (moment 0 before it, 1 as it bursts,
     # 14.2 s: found once by a burst of moments)
     "blast": STAGE + [
@@ -108,6 +115,8 @@ MUTATIONS = {
     "lights-brighter": {"variants": ("enhanced",), "settings": ["HALO_DYNAMIC_LIGHTS_LOOK=3.4"]},
     # every ray-traced light shadow's ray sent back into its own surface: everything the lights reach shadowed
     "shadows-everywhere": {"variants": ("traced",), "settings": ["HALO_LIGHT_SHADOWS_VIEW=4"]},
+    # the lights' shadows gone (the flashlight's and the dynamic lights'): the shadow rows must fail
+    "shadows-gone": {"variants": ("traced",), "settings": ["HALO_LIGHT_SHADOWS_OFF=1", "HALO_FLASHLIGHT_SHADOWS_OFF=1"]},
     # the HDR frame's glows pushed past their ceilings (display.hdr_highlight_boost at its most)
     "hdr-boost": {"variants": ("hdr",), "settings": ["HALO_HDR_HIGHLIGHT_BOOST=4"]},
     # the Classic picture changed (its anisotropic filtering raised, a quiet change)
@@ -131,12 +140,13 @@ PLAYER = {
 HUD = [(140, 80, 420, 190), (1480, 80, 1780, 180), (130, 800, 340, 1010)]
 # the player's view about the Flood: the crease of the far wall and the floor as a line, its feet, the area its
 # shadow falls in, and the Flood itself (as placed, and as moved)
+# the first player's view in the crease scene (the top half of the split screen): the slanted wall beyond the Flood
+# as a polygon (the floor the rest), the Flood's feet, the area its shadow falls in, the Flood itself
 NEAR = {
-    "crease": ((600, 532), (1030, 532)),
-    "feet": (965, 580),
-    "around": (760, 360, 1200, 660),
-    "caster": (905, 415, 1010, 590),
-    "caster moved": (1005, 415, 1110, 590),
+    "wall": [(994, 322), (1192, 285), (1192, 150), (994, 150)],
+    "feet": (955, 325),
+    "around": (880, 200, 1200, 380),
+    "caster": (925, 240, 985, 330),
 }
 # the metal just under the AR's counter, which its panel light reaches
 PANEL_UNDER = (1240, 780, 1400, 900)
@@ -348,6 +358,10 @@ def mirror_ref(build, machine):
     return target if known.returncode == 0 else None
 
 
+# what the referee needs of a build's own code: the captures, and the second player's pose
+NEEDED = [("port/linux/src/port_config.c", "debug.screenshot_at"), ("port/linux/game/network_test.c", "place_second")]
+
+
 def has_capture(build, machine="omarchy"):
     """whether a build has debug.screenshot_at (the referee's pictures need it): a ref of origin, of this checkout,
     or (local/<name>) of the machine's mirror"""
@@ -356,10 +370,15 @@ def has_capture(build, machine="omarchy"):
     if build.startswith("local/"):
         refs = [mirror_ref(build, machine) or build]
     for ref in refs:
-        shown = subprocess.run(["git", "-C", str(ROOT), "show", f"{ref}:port/linux/src/port_config.c"],
-                               capture_output=True, text=True)
-        if shown.returncode == 0:
-            return "debug.screenshot_at" in shown.stdout
+        found = True
+        for path, marker in NEEDED:
+            shown = subprocess.run(["git", "-C", str(ROOT), "show", f"{ref}:{path}"], capture_output=True, text=True)
+            if shown.returncode != 0:
+                found = None
+                break
+            found = found and marker in shown.stdout
+        if found is not None:
+            return found
     return True
 
 
@@ -383,6 +402,14 @@ def graft(build, machines):
     steps = [["git", "-C", str(ROOT), "worktree", "add", "-q", "--detach", str(tree), base],
              ["git", "-C", str(tree), "-c", "user.name=referee", "-c", "user.email=referee@localhost",
               "cherry-pick", "-x", *commits]]
+    # (only the commits the build lacks: one that merged some of them already)
+    base_ref = steps[0][-1]
+    missing = subprocess.run(["git", "-C", str(ROOT), "cherry", base_ref, "origin/tools/lighting-referee"],
+                             capture_output=True, text=True).stdout.split("\n")
+    lacking = {line[2:] for line in missing if line.startswith("+ ")}
+    steps[1] = steps[1][:-len(commits)] + [c for c in commits if c in lacking]
+    if len(steps[1]) == 9:
+        return None
     for step in steps:
         if subprocess.run(step, capture_output=True).returncode != 0:
             subprocess.run(["git", "-C", str(tree), "cherry-pick", "--abort"], capture_output=True)
@@ -441,7 +468,8 @@ def plan(build, baseline, machine, timing, only, mutate, features, overrides=(),
         wanted |= {("corridor", "classic"), ("corridor", "enhanced"), ("blast", "classic"), ("blast", "enhanced"),
                    ("daylight", "classic"), ("daylight", "enhanced")}
     if "shadow" in only:
-        wanted |= {("corridor", "untraced"), ("corridor", "traced"), ("moved", "untraced"), ("moved", "traced")}
+        wanted |= {("corridor", "untraced"), ("corridor", "traced"), ("crease", "untraced"), ("crease", "traced"),
+                   ("crease-moved", "untraced"), ("crease-moved", "traced")}
     if "hdr" in only or features:
         wanted |= {("corridor", "hdr")}
     if "identity" in only:
@@ -659,23 +687,31 @@ def direction(points):
     return (math.degrees(0.5 * math.atan2(2 * sxy, sxx - syy))) % 180.0
 
 
+def inside(polygon, point):
+    x, y = point
+    within = False
+    for index in range(len(polygon)):
+        (x0, y0), (x1, y1) = polygon[index], polygon[index - 1]
+        if (y0 > y) != (y1 > y) and x < x0 + (y - y0) * (x1 - x0) / (y1 - y0):
+            within = not within
+    return within
+
+
 def side_of(line, point):
     (x0, y0), (x1, y1) = line
     return (x1 - x0) * (point[1] - y0) - (y1 - y0) * (point[0] - x0)
 
 
-# (the crease, contact and moving rows need a light off the view's axis: the flashlight's lamp is beside the eye,
-# so the Flood hides its own shadow on the wall behind it. Until a scene stages such a light, those rows report
-# their numbers as n/a; the rows about what must stay lit are checked)
+# (the floor and bend rows: the second player's beam lights too little floor behind the Flood for a floor shadow
+# of any size in this view, a thin contact line; until the staging lights more of it, they report their numbers
+# as n/a)
 STAGED = None
-UNSTAGED = "n/a until a light off the view's axis is staged"
+UNSTAGED = "n/a: the staging lights too little floor behind the Flood"
 
 
 def check_shadow(table, runs):
     u = pictures(runs, "corridor", "untraced", (1,))
     t = pictures(runs, "corridor", "traced", (1,))
-    um = pictures(runs, "moved", "untraced", (1,))
-    tm = pictures(runs, "moved", "traced", (1,))
     if not u or not t:
         table.add("shadow", "corridor", "missing", "pictures", False, "a run made no pictures")
         return
@@ -685,22 +721,42 @@ def check_shadow(table, runs):
     level = ratios[len(ratios) // 2] if ratios else 0.0
     table.add("shadow", "shadows-off reference sound", level, f"x{1 / SHADOW_SAME:.2f}..x{SHADOW_SAME:.2f}",
               1 / SHADOW_SAME <= level <= SHADOW_SAME, "HALO_LIGHT_SHADOWS_OFF / HALO_FLASHLIGHT_SHADOWS_OFF")
-    # about the caster: the shadow on the wall and on the floor, bending at the crease, touching the feet
-    mask, _ = shadow_mask(u[0], t[0], NEAR["around"])
-    caster = NEAR["caster"]
-    outside = {p for p in mask if not (caster[0] <= p[0] < caster[2] and caster[1] <= p[1] < caster[3])}
-    wall = [p for p in outside if side_of(NEAR["crease"], p) < 0]
-    floor = [p for p in outside if side_of(NEAR["crease"], p) >= 0]
-    # (counted in full-size pixels: the mask is of every second pixel each way)
-    table.add("shadow", "on the wall", len(wall) * 4, f">= {SHADOW_LEAST} px", STAGED and len(wall) * 4 >= SHADOW_LEAST, UNSTAGED)
-    table.add("shadow", "on the floor", len(floor) * 4, f">= {SHADOW_LEAST} px", STAGED and len(floor) * 4 >= SHADOW_LEAST, UNSTAGED)
-    a, b = direction(wall), direction(floor)
-    bend = abs(a - b) if a is not None and b is not None else 0.0
-    bend = min(bend, 180 - bend)
-    table.add("shadow", "bends at the crease", bend, f">= {SHADOW_BEND} deg", STAGED and bend >= SHADOW_BEND, UNSTAGED)
-    feet = NEAR["feet"]
-    near = min((math.hypot(p[0] - feet[0], p[1] - feet[1]) for p in outside), default=float("inf"))
-    table.add("shadow", "touches the feet", near, f"<= {SHADOW_CONTACT} px", STAGED and near <= SHADOW_CONTACT, UNSTAGED)
+    # the off-axis light (the second player's flashlight): the shadow on the wall and on the floor, bending at the
+    # crease, touching the feet; moving when the light moves
+    cu = pictures(runs, "crease", "untraced", (1,))
+    ct = pictures(runs, "crease", "traced", (1,))
+    if not cu or not ct:
+        table.add("shadow", "crease scene", "missing", "pictures", False, "a run made no pictures")
+        outside = set()
+    else:
+        mask, _ = shadow_mask(cu[0], ct[0], NEAR["around"], step=1)
+        caster = NEAR["caster"]
+        outside = {p for p in mask if not (caster[0] <= p[0] < caster[2] and caster[1] <= p[1] < caster[3])}
+        wall = [p for p in outside if inside(NEAR["wall"], p)]
+        floor = [p for p in outside if not inside(NEAR["wall"], p)]
+        table.add("shadow", "on the wall", len(wall), f">= {SHADOW_LEAST} px", len(wall) >= SHADOW_LEAST)
+        table.add("shadow", "on the floor", len(floor), f">= {SHADOW_LEAST} px", STAGED and len(floor) >= SHADOW_LEAST,
+                  UNSTAGED)
+        a, b = direction(wall), direction(floor)
+        bend = abs(a - b) if a is not None and b is not None else 0.0
+        bend = min(bend, 180 - bend)
+        table.add("shadow", "bends at the crease", bend, f">= {SHADOW_BEND} deg", STAGED and bend >= SHADOW_BEND,
+                  UNSTAGED)
+        feet = NEAR["feet"]
+        near = min((math.hypot(p[0] - feet[0], p[1] - feet[1]) for p in outside), default=float("inf"))
+        table.add("shadow", "touches the feet", near, f"<= {SHADOW_CONTACT} px", near <= SHADOW_CONTACT)
+    mu = pictures(runs, "crease-moved", "untraced", (1,))
+    mt = pictures(runs, "crease-moved", "traced", (1,))
+    if not mu or not mt:
+        table.add("shadow", "moves with the light", "missing", "pictures", False)
+    else:
+        moved, _ = shadow_mask(mu[0], mt[0], NEAR["around"], step=1)
+        caster = NEAR["caster"]
+        moved = {p for p in moved if not (caster[0] <= p[0] < caster[2] and caster[1] <= p[1] < caster[3])}
+        union = outside | moved
+        changed = len(outside ^ moved) / len(union) if union else 0.0
+        table.add("shadow", "moves with the light", changed, f">= {SHADOW_MOVED} changed",
+                  changed >= SHADOW_MOVED and len(moved) >= SHADOW_LEAST)
     # the light from beside the eye, so what is seen is lit: the caster's front, the floor before it and the
     # first-person weapon (whose lamp it is) stay lit
     for box, limit, item in ((NEAR["caster"], SHADOW_SELF, "caster's lit front kept"),
@@ -709,17 +765,6 @@ def check_shadow(table, runs):
         shaded, lit = shadow_mask(u[0], t[0], box)
         share = len(shaded) / lit if lit else 0.0
         table.add("shadow", item, share, f"<= {limit} shadowed", share <= limit)
-    # the caster moved a step: its shadow moves with it
-    if not um or not tm:
-        table.add("shadow", "moves with the caster", "missing", "pictures", False)
-        return
-    moved, _ = shadow_mask(um[0], tm[0], NEAR["around"])
-    caster = NEAR["caster moved"]
-    moved = {p for p in moved if not (caster[0] <= p[0] < caster[2] and caster[1] <= p[1] < caster[3])}
-    union = outside | moved
-    changed = len(outside ^ moved) / len(union) if union else 0.0
-    table.add("shadow", "moves with the caster", changed, f">= {SHADOW_MOVED} changed",
-              STAGED and changed >= SHADOW_MOVED and len(moved) * 4 >= SHADOW_LEAST, UNSTAGED)
 
 
 def halves_luminance(values, width, height, step=4):

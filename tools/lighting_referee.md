@@ -38,11 +38,11 @@ grenade bursting at that wall; a30's beach in daylight. Variants keep the rest o
   checks the two pictures' overall level agrees). Rows: shadowed pixels on the wall and on the floor beside the
   Flood, the angle between the two parts (it bends at the crease), the distance to the feet, the shares of the
   Flood's lit front, the floor before it and the first-person weapon shadowed, and how much of the shadow changes
-  when the Flood is placed a step aside. The crease, contact and moving rows report n/a until a light off the
-  view's axis is staged: the flashlight's lamp is beside the eye, so the Flood hides its own shadow on the wall.
-  (Bolts and muzzle flashes never get a shadow slot, #1287. A posed camera, `debug_camera_set`, keeps the flashlight
-  with the player and does show the Flood's shadow on the wall from the side, but too small in c20's corridor so far;
-  a second co-op player's flashlight is the next staging to try.)
+  when the light moves. The crease rows use a light off the view's axis: a second local player (split screen,
+  `debug.network_test_place`'s second pose) beside the Flood, its flashlight aimed across it at the slanted wall,
+  seen from the first player's view; "moves" steps that player half a unit. The floor and bend rows report n/a for
+  now: that beam lights too little floor behind the Flood for more than a thin contact line. (Bolts and muzzle
+  flashes never get a shadow slot, #1287.)
 - *hdr*: the HDR frame's half floats (`debug.screenshot_halves`, the view not tone mapped): the AR counter's
   brightest pixel, and the frame's.
 - *runs*: every run exited cleanly, and every picture is whole: no frame mostly one colour, and with world AO (the
@@ -83,6 +83,6 @@ grenade bursting at that wall; a30's beach in daylight. Variants keep the rest o
   frame 12, LIGHT SHADOWS 1.5, AO 1.5, a feature +2; 5900X (RTX 4090, a 240 Hz target: 4.2 ms) 3, 0.4, 0.4, +0.5;
   bosgame (RTX 3090, Windows, `--timing ...,bosgame`) 5, 0.8, 0.8, +1. Other passes are reported.
 
-**Negative controls** (`--mutate`): `lights-brighter` (parity), `shadows-everywhere` (shadow), `hdr-boost` (hdr),
+**Negative controls** (`--mutate`): `lights-brighter` (parity), `shadows-everywhere` (shadow), `hdr-boost` (hdr), `shadows-gone` (shadow: the lights' shadows off in the traced runs),
 `classic-changed` (identity), `heavy` (cost). Each must fail its check; run them after changing a threshold.
 Regions and thresholds are constants at the top of the script; regions are pixels of the 1920x1080 picture.
