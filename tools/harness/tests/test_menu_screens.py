@@ -191,7 +191,7 @@ def built(fault=None):
                                            f"static char const {name}_xml[] =\n" +
                                            c_string((ROOT / f"port/assets/menus/screens/{name}.xml").read_bytes()) +
                                            ";\n" for name in ("coop", "coop_who", "coop_join", "add_player", "stick_test", "keyboard",
-                                                        "controller_layout", "goat_settings")))
+                                                        "controller_layout", "goat_settings", "goat_keep")))
     (work / "menu_screens.h").write_text(read("port/linux/include/menu_screens.h"))
     executable = work / "menu_screens"
     command = ["clang", *ABI_FLAGS, "-std=gnu99", "-O1", "-Wall", "-Werror", "-Wno-unused-function",
@@ -289,8 +289,11 @@ def test_actions_registered():
         elif binding.startswith("goat."):
             # (GOAT Settings', goat_settings.inc's pc_menu_goat_value)
             assert '"goat."' in value, binding
-            assert f'"{binding}"' in re.search(r"\nint pc_menu_goat_value\(.*?\n\}\n",
-                                                read("port/linux/game/goat_settings.inc"), re.S).group(0), binding
+            # (KEEP or REVERT's goat.keep_*: goat_keep_revert.inc's goat_keep_value)
+            include, function = (("goat_keep_revert.inc", "static boolean goat_keep_value")
+                                if binding.startswith("goat.keep_") else ("goat_settings.inc", "int pc_menu_goat_value"))
+            assert f'"{binding}"' in re.search(r"\n" + re.escape(function) + r"\(.*?\n\}\n",
+                                                read(f"port/linux/game/{include}"), re.S).group(0), binding
         elif binding.startswith("data."):
             # (Settings' GAME DATA's, port/linux/src/game_data_page.c's game_data_page_value)
             assert '"data."' in value, binding

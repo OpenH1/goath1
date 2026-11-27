@@ -396,6 +396,9 @@ picture, the line, the words for no rows) -->
 	<!-- the question of a controller layout's bindings (screens/layout_bindings.xml, as Controller Layouts' ITS
 	BINDINGS opens it), a pop-up -->
 	<widget name="screens/layout_bindings" width="640" height="480" flags="pass_unhandled_to_focused_child"/>
+	<!-- KEEP or REVERT after GOAT Settings' APPLY changes the display (screens/goat_keep.xml, goat_keep_revert.inc),
+	a pop-up -->
+	<widget name="screens/goat_keep" width="640" height="480" flags="pass_unhandled_to_focused_child"/>
 	<!-- a <stick>'s (Stick Test's): its label, its circle's anchor (the engine draws the circle there, as large as
 	its radius: menu_screen.c), its reading, its detail and its hint, each about its middle -->
 	<widget name="screens/stick_label" type="text" width="240" height="24" font="ui\large_ui" color="#FF8DB6E6" align="center" text_flags="no_focus_test"/>
