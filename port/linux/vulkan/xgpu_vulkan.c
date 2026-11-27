@@ -12928,7 +12928,8 @@ static int flashlight_shadow_make(void)
 {
 	struct xgpu_vulkan_image_description description;
 	uint32_t size = vk.capabilities.ray_queries ? XGPU_VULKAN_FLASHLIGHT_SHADOW_SIZE : 1, index;
-	uint16_t *far;
+	/* (not "far": Windows' headers define it away) */
+	uint16_t *texels;
 
 	memset(&description, 0, sizeof(description));
 	description.type = XGPU_VULKAN_IMAGE_2D;
@@ -12937,16 +12938,16 @@ static int flashlight_shadow_make(void)
 	description.width = description.height = size;
 	description.depth_or_layers = description.levels = 1;
 	vk.flashlight_shadow = xgpu_vulkan_image_create(&description);
-	far = malloc((size_t)size * size * 8);
-	if (!vk.flashlight_shadow || !far)
+	texels = malloc((size_t)size * size * 8);
+	if (!vk.flashlight_shadow || !texels)
 	{
-		free(far);
+		free(texels);
 		return 0;
 	}
 	for (index = 0; index < size * size * 4; index++)
-		far[index] = 0x7bffu;
-	xgpu_vulkan_image_upload(vk.flashlight_shadow, 0, 0, 0, 0, 0, size, size, 1, far, size * 8, size * size * 8);
-	free(far);
+		texels[index] = 0x7bffu;
+	xgpu_vulkan_image_upload(vk.flashlight_shadow, 0, 0, 0, 0, 0, size, size, 1, texels, size * 8, size * size * 8);
+	free(texels);
 	return 1;
 }
 
