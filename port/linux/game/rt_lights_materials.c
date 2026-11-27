@@ -37,6 +37,8 @@ Nothing is changed in the game: it is read only, on the game's thread.
 #include "game/game_globals.h"
 #include "rasterizer/common/rasterizer_common.h"
 #include "rasterizer/rasterizer_geometry.h"
+#include "rasterizer/rasterizer.h"
+#include "rasterizer/rasterizer_lights.h"
 #include "scenario/scenario.h"
 #include "scenario/scenario_definitions.h"
 #include "scenario/sky_definitions.h"
@@ -527,6 +529,9 @@ static struct
 	int texture_count;
 	DWORD palette[256];
 } rtlm;
+
+/* a note written at the top of lights.json (NULL none: the debug trigger's) */
+static char const *rtlm_note = NULL;
 
 /* ---------- small helpers */
 
@@ -1565,7 +1570,14 @@ static void rtlm_lights_write(char const *path)
 	}
 	fprintf(file, "{\"map\":");
 	rtlm_string(file, cache_file_loaded_map_name() ? cache_file_loaded_map_name() : "");
-	fprintf(file, ",\"tick\":%ld,\n\"sky\":", game_time_get());
+	fprintf(file, ",\"tick\":%ld,\n", game_time_get());
+	if (rtlm_note)
+	{
+		fprintf(file, "\"note\":");
+		rtlm_string(file, rtlm_note);
+		fprintf(file, ",\n");
+	}
+	fprintf(file, "\"sky\":");
 	if (scenario && scenario->sky_references.count > 0)
 		rtlm_sky(file, main_sky, cluster_counts[main_sky]);
 	else
@@ -1589,6 +1601,10 @@ static void rtlm_lights_write(char const *path)
 			struct rtlm_light_definition const *definition = tag_get(RTLM_LIGHT_TAG, light->definition_index);
 			struct object_datum *object = light->object_index != NONE ? object_try_and_get(light->object_index) : NULL;
 			char const *source = "object", *gel;
+			struct rasterizer_light_submit_parameters const *drawn;
+			real_point3d position;
+			real_vector3d forward, up;
+			real_rgb_color color;
 			real radius;
 
 			if (!definition)
@@ -1612,15 +1628,31 @@ static void rtlm_lights_write(char const *path)
 				source = "device";
 			else if (TEST_FLAG(definition->flags, _rtlm_light_is_first_person_flashlight_bit))
 				source = "flashlight";
-			radius = light->radius;
+			/* (as drawn: the rasterizer's light this frame, which the game
+			placed apart from the datum for a first-person flashlight, at the
+			first-person weapon's "flashlight" marker, 0.5 back along its
+			forward: first_person_weapons.c's first_person_weapon_center_
+			flashlight, from object_lights.c; the datum where it has none) */
+			drawn = light->rasterizer_light_index >= 0 &&
+				light->rasterizer_light_index < rasterizer_lights.light_count &&
+				rasterizer_lights.lights[light->rasterizer_light_index].definition == (void *)definition ?
+				&rasterizer_lights.lights[light->rasterizer_light_index] : NULL;
+			position = drawn ? drawn->position : light->position;
+			forward = drawn ? drawn->forward : light->forward;
+			up = drawn ? drawn->up : light->up;
+			color = drawn ? drawn->color : light->color;
+			radius = drawn ? drawn->radius : light->radius;
 			gel = rtlm_texture(definition->gel_map.index, 0, TRUE);
 			fprintf(file, "%s{\"tag\":", written ? ",\n" : "");
 			rtlm_string(file, rtlm_tag_name(light->definition_index));
 			fprintf(file, ",\"kind\":\"%s\",\"position\":[%.6g,%.6g,%.6g],\"direction\":[%.6g,%.6g,%.6g],"
-				"\"up\":[%.6g,%.6g,%.6g],\"color\":", definition->runtime_cosine_falloff_angle != -1.0f ? "spot" : "point",
-				light->position.x, light->position.y, light->position.z, light->forward.i, light->forward.j,
-				light->forward.k, light->up.i, light->up.j, light->up.k);
-			rtlm_rgb(file, &light->color);
+				"\"up\":[%.6g,%.6g,%.6g],\"as_drawn\":%s,\"datum_position\":[%.6g,%.6g,%.6g],"
+				"\"datum_direction\":[%.6g,%.6g,%.6g],\"color\":",
+				definition->runtime_cosine_falloff_angle != -1.0f ? "spot" : "point",
+				position.x, position.y, position.z, forward.i, forward.j, forward.k, up.i, up.j, up.k,
+				drawn ? "true" : "false", light->position.x, light->position.y, light->position.z,
+				light->forward.i, light->forward.j, light->forward.k);
+			rtlm_rgb(file, &color);
 			fprintf(file, ",\"power\":1,\"radius\":%.6g,\"falloff\":\"distance_attenuation (this file) at d / radius, "
 				"times N.L, times the gel; none past radius\"", radius);
 			rtlm_cone(file, definition);
@@ -1632,10 +1664,12 @@ static void rtlm_lights_write(char const *path)
 			fprintf(file, ",\"gel_frame\":\"the cube map sampled along (P - light) in the frame of -forward, -left, -up "
 				"(left = forward x up), after turning forward and up by the gel's yaw/pitch/roll functions at the game "
 				"time (rasterizer_xbox_environment.c's _rasterizer_environment_diffuse_light_begin)\",\"source\":\"%s\","
-				"\"object\":", source);
+				"\"attached_to_first_person_weapon\":%s,\"object\":", source,
+				TEST_FLAG(light->flags, 3) ? "true" : "false");
 			rtlm_string(file, object ? rtlm_tag_name(object->definition_index) : "");
-			fprintf(file, ",\"from\":\"light datum at this tick (object_lights.c): position, forward, up as the lights' "
-				"preprocessing placed them; color (0..1) the tag's color bounds by the object's function or the "
+			fprintf(file, ",\"from\":\"position, direction, up, color and radius as drawn this frame (rasterizer_lights.lights[], "
+				"what object_lights.c's lights_preprocess_scene submitted; as_drawn false: the light datum's), the "
+				"datum's own place (the unit's or object's marker) beside them; color (0..1) the tag's color bounds by the object's function or the "
 				"effect's fade, already made; radius the tag's radius x its modifier by that intensity. power 1: "
 				"Halo's lights have no power, color is what the rasterizer adds at the light (gamma space)\"}");
 			written++;
@@ -1787,4 +1821,30 @@ void rt_lights_materials_debug_frame(void)
 	fclose(file);
 	platform_log("rt2 lights: debug trigger at tick %ld: %s, %ld BSP shaders", game_time_get(), folder, count);
 	rt_lights_materials_write(folder);
+	/* (and existing scenes of this map, HALO_RT2_LIGHTS_SCENES=<folder>;...:
+	their materials from the tags, their lights from this run's tick, not
+	the scene's, said so in lights.json) */
+	if (getenv("HALO_RT2_LIGHTS_SCENES") && written == 1)
+	{
+		char scenes[4096], *scene, *next;
+
+		snprintf(scenes, sizeof(scenes), "%s", getenv("HALO_RT2_LIGHTS_SCENES"));
+		for (scene = scenes; scene && *scene; scene = next)
+		{
+			char const *base;
+
+			next = strchr(scene, ';');
+			if (next)
+				*next++ = 0;
+			base = strrchr(scene, '/') ? strrchr(scene, '/') + 1 : scene;
+			if (strncmp(base, name, strlen(name)) || base[strlen(name)] != '_')
+				continue;
+			rtlm_note = "materials, textures, the skies, the light tags (the flashlight's gel, cone and radius among "
+				"them), the distance attenuation and the radiosity summary hold for this scene; the lights[] and "
+				"their positions are NOT this scene's tick but the lights test's (its tick above): the scene's own "
+				"come from the engine export calling rt_lights_materials_write at its tick";
+			rt_lights_materials_write(scene);
+			rtlm_note = NULL;
+		}
+	}
 }
