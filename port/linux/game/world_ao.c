@@ -23,6 +23,7 @@ other value (and the Classic preset's "off") draws exactly as before.
 
 #include "rt_shadows.h"
 #include "world_ao.h"
+#include "rt_reflections.h"
 #include "world_cascades.h"
 #include "world_proxies.h"
 #include "world_rt.h"
@@ -109,12 +110,18 @@ frame's objects, which the ray-traced scene is made of, alone; found at the
 next frame where the setting came on in play) */
 static int world_ao_scene_found;
 
+/* (... or display.rt_reflections: rt_reflections.c) */
+static int rt_scene_wanted(void)
+{
+	return rt_shadows_on() || rt_reflections_on();
+}
+
 void world_ao_map_loaded(void)
 {
 	world_ao_scene_found = 0;
 	if (!world_ao_mode())
 	{
-		if (rt_shadows_on())
+		if (rt_scene_wanted())
 		{
 			world_scene_map_loaded();
 			world_ao_scene_found = 1;
@@ -130,7 +137,7 @@ void world_ao_bsp_switched(short bsp_index)
 {
 	if (!world_ao_mode())
 	{
-		if (rt_shadows_on())
+		if (rt_scene_wanted())
 			world_scene_bsp_switched(bsp_index);
 		return;
 	}
@@ -320,8 +327,8 @@ void world_ao_frame_begin(void)
 	if (!world_ao_mode())
 	{
 		/* (display.shadows "ray_traced": the frame's objects, for the
-		ray-traced scene) */
-		if (rt_shadows_on())
+		ray-traced scene; display.rt_reflections' too) */
+		if (rt_scene_wanted())
 		{
 			if (!world_ao_scene_found)
 				world_scene_map_loaded();
@@ -619,7 +626,7 @@ void world_ao_window_begin(short local_player_index, short rasterizer_target, fl
 		/* (display.shadows "ray_traced": the frame's ray-traced scene before
 		the pre-pass's end, where the dynamic lights' shadows are traced:
 		dynamic_lights.c, xgpu.h's XGPU_DYNAMIC_LIGHTS_SHADOWED) */
-		if (!(mode & WORLD_AO_RAYS) && rt_shadows_on())
+		if (!(mode & WORLD_AO_RAYS) && rt_scene_wanted())
 			world_rt_frame(world_ao_scene.frame);
 		if (world_ao_scene.windows_frame != world_ao_scene.frame)
 		{

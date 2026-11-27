@@ -166,6 +166,9 @@ bitwise or (GroupNonUniformArithmetic) */
 	SPV_EXT_descriptor_indexing) */
 	BOOL ray_query;
 	unsigned int rt_hit_table, rt_hit_textures;
+	/* (display.rt_reflections: the ray-traced scene a surface's reflection
+	traces, 0 until declared: rt_reflection_texel) */
+	unsigned int rt_reflection_scene;
 
 	unsigned int glsl;
 	unsigned int t_void, t_bool, t_int, t_uint, t_float;
@@ -1620,6 +1623,11 @@ unsigned long xgpu_spirv_vertex_inputs(const struct xgpu_vertex_program *program
 	return vertex_inputs(program, lighting);
 }
 
+BOOL xgpu_spirv_vertex_world_position(const struct nv2a_vertex_lighting *lighting)
+{
+	return lighting_position(lighting);
+}
+
 /* ---------- display.temporal_aa's motion
 
 The objects' draws while a window's objects draw with the motion
@@ -1800,7 +1808,7 @@ BOOL xgpu_spirv_vertex_shader(const struct xgpu_vertex_program *program, unsigne
 	fog_out = interface_variable(&m, m.t_float, STORAGE_OUTPUT, XGPU_SPIRV_LOCATION_FOG, "xFog");
 	if (lighting)
 		world_normal_out = interface_variable(&m, m.t_v4, STORAGE_OUTPUT, XGPU_SPIRV_LOCATION_WORLD_NORMAL, "xWorldNormal");
-	if (lighting_position(lighting))
+	if (lighting_position(lighting) || options->world_position_input)
 		world_position_out = interface_variable(&m, m.t_v3, STORAGE_OUTPUT, XGPU_SPIRV_LOCATION_WORLD_POSITION, "xWorldPosition");
 	if (environment)
 	{
@@ -1858,6 +1866,10 @@ BOOL xgpu_spirv_vertex_shader(const struct xgpu_vertex_program *program, unsigne
 			world_normal = state.zero;
 		if (lighting_position(lighting))
 			world_position = constant_splat(&m, 3, 0.0f);
+		/* (display.rt_reflections: a level's surface's position, in the
+		world as it is: xgpu_spirv_options' world_position_input) */
+		else if (options->world_position_input)
+			world_position = xyz(&m, state.inputs[0]);
 	}
 
 	for (index = 0; index < program->instruction_count; index++)
@@ -2160,6 +2172,10 @@ struct pixel_state
 	/* display.shadows "ray_traced": the dynamic lights' shadows' mask, read
 	in the lights' loop (light_shadows_declare; 0 none) */
 	unsigned int light_shadows;
+	/* display.rt_reflections: texture 3's reflection traced
+	(rt_reflection_texel: the program's rt_reflection, and the pixel's
+	world position read) */
+	BOOL rt_reflection;
 };
 
 static unsigned int pixel_input(struct module *m, struct pixel_state *state, unsigned int variable_id, unsigned int type)
@@ -2511,6 +2527,8 @@ static unsigned int material_reflection(struct module *m, struct pixel_state *st
 	return op(m, OP_IMAGE_SAMPLE_IMPLICIT_LOD, m->t_v4, 4, operands);
 }
 
+static unsigned int rt_reflection_texel(struct module *m, struct pixel_state *state, unsigned int r, unsigned int cube);
+
 static void texture_stage(struct module *m, struct pixel_state *state, int stage)
 {
 	const struct xgpu_pixel_program *program = state->program;
@@ -2578,6 +2596,10 @@ static void texture_stage(struct module *m, struct pixel_state *state, int stage
 			state->t[stage] = material_reflection(m, state, xt);
 		else
 			state->t[stage] = sample(m, state, stage, xt);
+		/* (display.rt_reflections: the reflection's texel traced along the
+		same vector) */
+		if (stage == 3 && state->rt_reflection)
+			state->t[stage] = rt_reflection_texel(m, state, xyz(m, xt), state->t[stage]);
 		break;
 	case XGPU_TEXTURE_PASSTHRU:
 		state->t[stage] = saturate(m, 4, xt);
@@ -2681,6 +2703,10 @@ static void texture_stage(struct module *m, struct pixel_state *state, int stage
 		r = fsub(m, 3, fdiv(m, 3, fscale(m, 3, fscale(m, 3, n, constant_float(m, 2.0f)), fdot(m, n, e)),
 			splat(m, 3, fmax_scalar(m, 1, fdot(m, n, n), (float)1.0e-20))), e);
 		state->t[stage] = sample(m, state, stage, vec4_of(m, r, one));
+		/* (display.rt_reflections: the reflection's texel traced along the
+		bump map's reflection) */
+		if (stage == 3 && state->rt_reflection)
+			state->t[stage] = rt_reflection_texel(m, state, r, state->t[stage]);
 		break;
 	}
 	case XGPU_TEXTURE_DOT_STR_3D:
@@ -5466,7 +5492,7 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 	BOOL occluder = !world && (program->ambient_occlusion & XGPU_AMBIENT_OCCLUSION_WORLD_INPUTS);
 	unsigned int world_ao_words = 0;
 	BOOL world_position = (program->per_pixel_lighting && (program->per_pixel_lighting == 2 ||
-		program->dynamic_lights == XGPU_DYNAMIC_LIGHTS_MODEL)) || environment || world;
+		program->dynamic_lights == XGPU_DYNAMIC_LIGHTS_MODEL)) || environment || world || program->rt_reflection;
 	BOOL count_samples = program->count_samples && options->count_samples;
 	unsigned int comparison = program->alpha_test ? comparison_opcode(program->alpha_test) : 0;
 	BOOL sample_mask = comparison && program->alpha_test_samples && program->alpha_test != D3DCMP_EQUAL &&
@@ -5582,6 +5608,9 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 		state.in_world_normal = interface_variable(&m, m.t_v4, STORAGE_INPUT, XGPU_SPIRV_LOCATION_WORLD_NORMAL, "xWorldNormal");
 	if (world_position)
 		state.in_world_position = interface_variable(&m, m.t_v3, STORAGE_INPUT, XGPU_SPIRV_LOCATION_WORLD_POSITION, "xWorldPosition");
+	/* (display.rt_reflections: not in the pre-pass's twins, which write no
+	colour, nor a VR effect's) */
+	state.rt_reflection = program->rt_reflection && state.in_world_position && !world_inputs && !occluder && !effect;
 	if (environment)
 	{
 		state.in_world_binormal = interface_variable(&m, m.t_v3, STORAGE_INPUT, XGPU_SPIRV_LOCATION_WORLD_BINORMAL, "xWorldBinormal");
@@ -6321,6 +6350,220 @@ static unsigned int rt_candidate_commits(struct module *m, struct words *locals,
 	selection_end(m, merge);
 	return op2(m, OP_LOGICAL_AND, m->t_bool, op2(m, OP_LOGICAL_OR, m->t_bool, condition, structure),
 		compare(m, OP_F_ORD_GREATER_THAN, load(m, m->t_float, passes), constant_float(m, 0.5f)));
+}
+
+/* ---------- display.rt_reflections (docs/rt-plan/2-reflections.md)
+
+A draw the game tags (xgpu_shader.h's rt_reflection) has its reflection's
+texel, texture 3's cube map lookup, traced instead: one ray from the
+pixel's world position along the very vector the game looks its cube map
+up by (the vertex program's, or the bump map's DOT_REFLECT_SPECULAR
+reflection), so a bumped floor's ripples bend it as they bent the cube
+map. The game's combiners after it (its masks, fresnel, tints, the
+lightmap's reflection mask in the target's alpha) are untouched: only the
+cube map's colour is the scene's. As GLSL:
+
+vec3 d = normalize(r);
+rayQueryInitializeEXT(q, scene, 0, MASK_REFLECTIONS, p + d * START, 0.0, d, DISTANCE);
+while (rayQueryProceedEXT(q)) if (alpha passes: rt_candidate_commits) rayQueryConfirmIntersectionEXT(q);
+vec4 texel = cube;
+if (hit && its mesh has attributes) {
+  the triangle's material and corners (rt_candidate_commits' reading, of the committed hit);
+  vec3 c = base(uv * (model ? its map scale : 1)).rgb;
+  if (environment && detail) c *= 2.0 * detail(uv * detail_scale).rgb;      (the default biased multiply)
+  c *= lightmap ? lightmap(lightmap_uv).rgb : vec3(OBJECT_LIGHT);
+  texel.rgb = mix(clamp(c, 0, 1), cube.rgb, smoothstep(DISTANCE * FADE, DISTANCE, t));
+}
+(a model's material roughness: texel = mix(texel, cube, smoothstep(ROUGH, ROUGHEST, roughness)))
+
+A miss, a hit past the distance, or a hit without attributes (the
+collision meshes, an object's box) keeps the cube map: the sky, as Halo
+drew it. No second bounce; the hit's own reflection is not added. */
+#define RT_REFLECTION_DISTANCE 25.0f
+#define RT_REFLECTION_FADE 0.8f
+#define RT_REFLECTION_START 0.02f
+#define RT_REFLECTION_ROUGH 0.2f
+#define RT_REFLECTION_ROUGHEST 0.35f
+/* (an object hit's light: the hit table has no object's lighting yet) */
+#define RT_REFLECTION_OBJECT_LIGHT 0.6f
+/* (the shader types of world_rt_game.c's materials: shaders.c's) */
+#define RT_REFLECTION_KIND_ENVIRONMENT 3u
+#define RT_REFLECTION_KIND_MODEL 4u
+
+/* HALO_RT_REFLECTIONS_VIEW=1: each traced texel green where its ray met
+the scene with attributes, red where it kept the cube map (for checking
+which surfaces trace) */
+static int rt_reflections_view(void)
+{
+	static int view = -1;
+
+	if (view < 0)
+	{
+		const char *given = getenv("HALO_RT_REFLECTIONS_VIEW");
+
+		view = given ? atoi(given) : 0;
+	}
+	return view;
+}
+
+/* a texel of the hit set's textures: slot (a uint, clamped), at st, at a
+fixed level */
+static unsigned int rt_hit_texel(struct module *m, unsigned int slot_word, unsigned int st, float level)
+{
+	unsigned int slot = ext2(m, GLSL_U_MIN, m->t_uint, slot_word, constant_uint(m, XGPU_SPIRV_RT_HIT_TEXTURES - 1));
+	unsigned int operands[4], pointer, sampled;
+
+	decorate(m, slot, DECORATION_NON_UNIFORM, 0, NULL);
+	operands[0] = m->rt_hit_textures;
+	operands[1] = slot;
+	pointer = op(m, OP_ACCESS_CHAIN, type_pointer(m, STORAGE_UNIFORM_CONSTANT, type_sampled_image(m, DIM_2D, FALSE, FALSE,
+		TRUE)), 2, operands);
+	decorate(m, pointer, DECORATION_NON_UNIFORM, 0, NULL);
+	sampled = load(m, type_sampled_image(m, DIM_2D, FALSE, FALSE, TRUE), pointer);
+	decorate(m, sampled, DECORATION_NON_UNIFORM, 0, NULL);
+	operands[0] = sampled;
+	operands[1] = st;
+	operands[2] = IMAGE_OPERANDS_LOD;
+	operands[3] = constant_float(m, level);
+	return op(m, OP_IMAGE_SAMPLE_EXPLICIT_LOD, m->t_v4, 4, operands);
+}
+
+static unsigned int rt_reflection_texel(struct module *m, struct pixel_state *state, unsigned int r, unsigned int cube)
+{
+	struct words *locals = &state->locals;
+	unsigned int query = local(m, locals, type0(m, OP_TYPE_RAY_QUERY)), texel = local(m, locals, m->t_v4);
+	unsigned int committed = constant_int(m, RAY_QUERY_COMMITTED), candidate = constant_int(m, RAY_QUERY_CANDIDATE);
+	unsigned int p = pixel_input(m, state, state->in_world_position, m->t_v3);
+	unsigned int d = ext1(m, GLSL_NORMALIZE, m->t_v3, r);
+	unsigned int header = id_new(m), condition = id_new(m), body = id_new(m), next = id_new(m), merge = id_new(m);
+	unsigned int operands[8], kind, hit_merge, attributes_merge, mine_merge, value, structure;
+	unsigned int t, mesh, record, attributes, geometry, primitive, corners, material_word, material, at;
+	unsigned int uv[3], lightmap_uv[3], b, st, lst, shader_kind, scale[2], base_scale, color, detail, light, fade;
+	int corner;
+
+	if (!m->rt_reflection_scene)
+	{
+		m->rt_reflection_scene = variable(m, type0(m, OP_TYPE_ACCELERATION_STRUCTURE), STORAGE_UNIFORM_CONSTANT,
+			"rt_reflection_scene");
+		decorate1(m, m->rt_reflection_scene, DECORATION_DESCRIPTOR_SET, XGPU_SPIRV_SET_OCCLUSION);
+		decorate1(m, m->rt_reflection_scene, DECORATION_BINDING, XGPU_SPIRV_BINDING_WORLD_AO_SCENE);
+		m->ray_query = TRUE;
+	}
+	rt_hits_declare(m);
+	store(m, texel, cube);
+	operands[0] = query;
+	operands[1] = load(m, type0(m, OP_TYPE_ACCELERATION_STRUCTURE), m->rt_reflection_scene);
+	operands[2] = constant_uint(m, 0);
+	operands[3] = constant_uint(m, XGPU_SPIRV_RT_MASK_REFLECTIONS);
+	operands[4] = fadd(m, 3, p, fscale(m, 3, d, constant_float(m, RT_REFLECTION_START)));
+	operands[5] = constant_float(m, 0.0f);
+	operands[6] = d;
+	operands[7] = constant_float(m, RT_REFLECTION_DISTANCE);
+	op_void(m, OP_RAY_QUERY_INITIALIZE, 8, operands);
+	branch(m, header);
+	label_at(m, header);
+	operands[0] = merge;
+	operands[1] = next;
+	operands[2] = 0;
+	op_void(m, OP_LOOP_MERGE, 3, operands);
+	branch(m, condition);
+	label_at(m, condition);
+	branch_conditional(m, op1(m, OP_RAY_QUERY_PROCEED, m->t_bool, query), body, merge);
+	label_at(m, body);
+	/* (every owner's: a surface sees itself, the player too) */
+	structure = op2(m, OP_I_EQUAL, m->t_bool, op2(m, OP_RAY_QUERY_GET_INTERSECTION_INSTANCE_CUSTOM_INDEX, m->t_int, query,
+		candidate), constant_int(m, 0));
+	selection_begin(m, rt_candidate_commits(m, locals, query, structure, constant_bool(m, TRUE)), &mine_merge);
+	op_void(m, OP_RAY_QUERY_CONFIRM_INTERSECTION, 1, &query);
+	selection_end(m, mine_merge);
+	branch(m, next);
+	label_at(m, next);
+	branch(m, header);
+	label_at(m, merge);
+	kind = op2(m, OP_RAY_QUERY_GET_INTERSECTION_TYPE, m->t_uint, query, committed);
+	/* (the hit's mesh, and its attributes: 0 a mesh of triangles alone) */
+	mesh = uand(m, op2(m, OP_RAY_QUERY_GET_INTERSECTION_INSTANCE_SHADER_BINDING_TABLE_RECORD_OFFSET, m->t_uint, query,
+		committed), constant_uint(m, XGPU_SPIRV_RT_HIT_MESHES - 1));
+	record = op2(m, OP_SHIFT_LEFT_LOGICAL, m->t_uint, mesh, constant_uint(m, 2));
+	selection_begin(m, op2(m, OP_I_NOT_EQUAL, m->t_bool, kind, constant_uint(m, 0)), &hit_merge);
+	attributes = rt_hit_word(m, uadd(m, record, constant_uint(m, 1)));
+	selection_begin(m, unot_zero(m, attributes), &attributes_merge);
+	t = op2(m, OP_RAY_QUERY_GET_INTERSECTION_T, m->t_float, query, committed);
+	geometry = op2(m, OP_RAY_QUERY_GET_INTERSECTION_GEOMETRY_INDEX, m->t_uint, query, committed);
+	/* (an alpha-tested triangle's index past the opaque ones) */
+	primitive = uadd(m, op2(m, OP_RAY_QUERY_GET_INTERSECTION_PRIMITIVE_INDEX, m->t_uint, query, committed),
+		op3(m, OP_SELECT, m->t_uint, op2(m, OP_I_EQUAL, m->t_bool, geometry, constant_uint(m, 1)),
+		rt_hit_word(m, uadd(m, record, constant_uint(m, 3))), constant_uint(m, 0)));
+	corners = uadd(m, rt_hit_word(m, record), op2(m, OP_I_MUL, m->t_uint, primitive, constant_uint(m, 3)));
+	material_word = rt_hit_word(m, uadd(m, rt_hit_word(m, uadd(m, record, constant_uint(m, 2))),
+		op2(m, OP_SHIFT_RIGHT_LOGICAL, m->t_uint, primitive, constant_uint(m, 1))));
+	material = uand(m, op2(m, OP_SHIFT_RIGHT_LOGICAL, m->t_uint, material_word, op2(m, OP_SHIFT_LEFT_LOGICAL, m->t_uint,
+		uand(m, primitive, constant_uint(m, 1)), constant_uint(m, 4))), constant_uint(m, 0xFFFFu));
+	at = uadd(m, constant_uint(m, XGPU_SPIRV_RT_HIT_MATERIALS), op2(m, OP_SHIFT_LEFT_LOGICAL, m->t_uint, material,
+		constant_uint(m, 4)));
+	for (corner = 0; corner < 3; corner++)
+	{
+		unsigned int vertex = rt_hit_word(m, uadd(m, corners, constant_uint(m, (unsigned int)corner)));
+		unsigned int first = uadd(m, attributes, op2(m, OP_I_MUL, m->t_uint, vertex, constant_uint(m, 6))), xy_parts[2];
+
+		xy_parts[0] = rt_hit_float(m, first);
+		xy_parts[1] = rt_hit_float(m, uadd(m, first, constant_uint(m, 1)));
+		uv[corner] = construct(m, 2, xy_parts);
+		lightmap_uv[corner] = ext1(m, GLSL_UNPACK_SNORM_2X16, m->t_v2, rt_hit_word(m, uadd(m, first, constant_uint(m, 4))));
+	}
+	b = op2(m, OP_RAY_QUERY_GET_INTERSECTION_BARYCENTRICS, m->t_v2, query, committed);
+	st = fadd(m, 2, fadd(m, 2, uv[0], fscale(m, 2, fsub(m, 2, uv[1], uv[0]), extract(m, b, 0))),
+		fscale(m, 2, fsub(m, 2, uv[2], uv[0]), extract(m, b, 1)));
+	lst = fadd(m, 2, fadd(m, 2, lightmap_uv[0], fscale(m, 2, fsub(m, 2, lightmap_uv[1], lightmap_uv[0]), extract(m, b, 0))),
+		fscale(m, 2, fsub(m, 2, lightmap_uv[2], lightmap_uv[0]), extract(m, b, 1)));
+	shader_kind = rt_hit_word(m, uadd(m, at, constant_uint(m, 1)));
+	/* (a model's base map at its map's scale, which the material keeps in
+	the alpha map's: world_rt_game.c) */
+	scale[0] = rt_hit_float(m, uadd(m, at, constant_uint(m, 5)));
+	scale[1] = rt_hit_float(m, uadd(m, at, constant_uint(m, 6)));
+	base_scale = select_n(m, 2, op2(m, OP_I_EQUAL, m->t_bool, shader_kind, constant_uint(m, RT_REFLECTION_KIND_MODEL)),
+		construct(m, 2, scale), constant_splat(m, 2, 1.0f));
+	color = xyz(m, rt_hit_texel(m, rt_hit_word(m, uadd(m, at, constant_uint(m, 7))), fmul(m, 2, st, base_scale),
+		XGPU_SPIRV_RT_HIT_LEVEL));
+	/* (an environment's detail map, as its default function: biased multiply) */
+	{
+		unsigned int detail_slot = rt_hit_word(m, uadd(m, at, constant_uint(m, 8)));
+		unsigned int detail_scale = rt_hit_float(m, uadd(m, at, constant_uint(m, 9)));
+
+		detail = fscale(m, 3, xyz(m, rt_hit_texel(m, detail_slot, fscale(m, 2, st, detail_scale), XGPU_SPIRV_RT_HIT_LEVEL)),
+			constant_float(m, 2.0f));
+		detail = select_n(m, 3, op2(m, OP_LOGICAL_AND, m->t_bool, unot_zero(m, detail_slot), op2(m, OP_I_EQUAL, m->t_bool,
+			shader_kind, constant_uint(m, RT_REFLECTION_KIND_ENVIRONMENT))), detail, constant_splat(m, 3, 1.0f));
+	}
+	{
+		unsigned int lightmap_slot = rt_hit_word(m, uadd(m, at, constant_uint(m, 14)));
+
+		light = select_n(m, 3, unot_zero(m, lightmap_slot), xyz(m, rt_hit_texel(m, lightmap_slot, lst, 0.0f)),
+			constant_splat(m, 3, RT_REFLECTION_OBJECT_LIGHT));
+	}
+	color = saturate(m, 3, fmul(m, 3, fmul(m, 3, color, detail), light));
+	fade = ext3(m, GLSL_SMOOTH_STEP, m->t_float, constant_float(m, RT_REFLECTION_DISTANCE * RT_REFLECTION_FADE),
+		constant_float(m, RT_REFLECTION_DISTANCE), t);
+	color = ext3(m, GLSL_F_MIX, m->t_v3, color, xyz(m, cube), splat(m, 3, fade));
+	if (rt_reflections_view() == 1)
+		color = constant_vector(m, 3, (const float[]){ 0.0f, 1.0f, 0.0f });
+	store(m, texel, vec4_of(m, color, extract(m, cube, 3)));
+	selection_end(m, attributes_merge);
+	selection_end(m, hit_merge);
+	value = load(m, m->t_v4, texel);
+	if (rt_reflections_view() == 1)
+	{
+		/* (red where the cube map was kept) */
+		unsigned int kept = op2(m, OP_F_ORD_EQUAL, m->t_bool, extract(m, value, 1), extract(m, cube, 1));
+
+		value = select_n(m, 4, op2(m, OP_LOGICAL_AND, m->t_bool, kept, op2(m, OP_F_ORD_EQUAL, m->t_bool,
+			extract(m, value, 0), extract(m, cube, 0))), constant_v4(m, 1.0f, 0.0f, 0.0f, 1.0f), value);
+	}
+	/* (a model's material: rough, the cube map's blur kept) */
+	if (state->roughness)
+		value = ext3(m, GLSL_F_MIX, m->t_v4, value, cube, splat(m, 4, ext3(m, GLSL_SMOOTH_STEP, m->t_float,
+			constant_float(m, RT_REFLECTION_ROUGH), constant_float(m, RT_REFLECTION_ROUGHEST), state->roughness)));
+	return value;
 }
 
 /* the occlusion at a point from a pixel's inputs (words): its static term

@@ -221,6 +221,9 @@ struct stream_pipeline
 	/* display.hdr: its pixel shader blends in the shader, interlocked
 	(interlocked): it writes its target as a storage image */
 	uint8_t interlocked;
+	/* display.rt_reflections: its pixel shader traces its reflection's
+	texel (xgpu.h's XGPU_RT_REFLECTION_*: rt_reflection_of), 0 none */
+	uint8_t rt_reflection;
 	/* the vertex constants its vertex shader reads (xgpu_spirv_module's),
 	and the run of registers from the first of them to the last */
 	uint64_t constants_read[3], constants_run[3];
@@ -1545,6 +1548,32 @@ static int interlocked(const struct xgpu_stream_pipeline_define *definition)
 	return !xgpu_pixel_program_depth_stage(&pixel);
 }
 
+/* display.rt_reflections (docs/rt-plan/2-reflections.md, xgpu.h's
+XGPU_TEXTURE_MODES_RT_REFLECTION): the class a pipeline's pixel shader
+traces its reflection's texel as, where the device has ray queries, its
+texture 3 is the game's reflection lookup (CUBEMAP, DOT_REFLECT_SPECULAR or
+its constant's), one view, and its vertex shader can hand the pixel its
+world position: its lighting's, or (the level's surfaces, their vertices in
+the world) its position as it is (world_position_input); else 0, the cube
+map */
+static uint8_t rt_reflection_of(const struct xgpu_stream_pipeline_key *key,
+	const struct nv2a_vertex_lighting *lighting, BOOL *world_position_input)
+{
+	unsigned long reflection = XGPU_RT_REFLECTION_OF(key->pixel.texture_modes);
+	unsigned long stage3 = (key->pixel.texture_modes >> 15) & 0x1f;
+
+	*world_position_input = FALSE;
+	if (!reflection || !stream.capabilities.ray_queries || key->immediate || key->views != XGPU_MULTIVIEW_NONE ||
+		(stage3 != 0x03 && stage3 != 0x0c && stage3 != 0x12))
+		return 0;
+	if (xgpu_spirv_vertex_world_position(lighting))
+		return (uint8_t)reflection;
+	if (!XGPU_RT_REFLECTION_WORLD_VERTICES(reflection))
+		return 0;
+	*world_position_input = TRUE;
+	return (uint8_t)reflection;
+}
+
 /* a pipeline's shaders for a variant: made if the pipeline has none for it;
 0 if they cannot be */
 static int pipeline_shaders(struct stream_pipeline *entry, const struct xgpu_stream_pipeline_define *definition,
@@ -1605,6 +1634,8 @@ static int pipeline_shaders(struct stream_pipeline *entry, const struct xgpu_str
 	options.subgroups = stream.capabilities.subgroups;
 	/* (display.temporal_aa: a window's objects' variant, its motion too) */
 	options.motion = motion.making != 0;
+	/* (display.rt_reflections: rt_reflection_of) */
+	entry->rt_reflection = rt_reflection_of(key, lighting, &options.world_position_input);
 	program = malloc(sizeof(*program));
 	if (!program)
 		return 0;
@@ -1622,6 +1653,7 @@ static int pipeline_shaders(struct stream_pipeline *entry, const struct xgpu_str
 	free(program);
 	pixel_program_convert(&definition->pixel_program, &pixel);
 	pixel.material_maps = xgpu_pixel_program_material_maps(&pixel, definition->key.pixel.texture_modes);
+	pixel.rt_reflection = entry->rt_reflection;
 	/* (a VR effect's, where its program leaves the effects' textures free) */
 	entry->effect = entry->effect_tests_depth = 0;
 	if (key->pixel.vr_effect && key->pixel.vr_effect <= XGPU_SPIRV_EFFECT_THICK && xgpu_spirv_effect_possible(&pixel))
@@ -2633,6 +2665,14 @@ static int draw_pipeline(const struct draw_input *input, int apart)
 	draw.dynamic = &stream.dynamic;
 	draw.dynamic_lights = stream.definition->pixel_program.dynamic_lights != 0;
 	draw.ambient_occlusion = stream.definition->pixel_program.ambient_occlusion != 0;
+	/* (display.rt_reflections: the ray-traced scene, built for the frame
+	before its first draw that traces it, and its hit set: the occlusion's
+	sets) */
+	if (entry->rt_reflection)
+	{
+		(void)xgpu_vulkan_rt_build();
+		draw.ambient_occlusion = 1;
+	}
 	draw.reads_color = pipeline.color_read;
 	draw.stores_color = pipeline.color_store;
 	{

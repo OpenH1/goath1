@@ -452,6 +452,9 @@ struct draw_inputs
 	they were told with, taken as each draw is made (material_modes_told);
 	as a record plays, the recorded draw's */
 	uint32_t material_modes;
+	/* display.rt_reflections: the class its reflection's texel is traced
+	as (halo_rt_reflection: xgpu.h's XGPU_RT_REFLECTION_*), 0 none */
+	uint32_t rt_reflection;
 	/* the region of its texture each stage samples, as a texture of its own
 	with its border beyond it (d3d8_texture_region: its size and origin, in
 	the texture's coordinates; size 0: the whole texture) */
@@ -550,6 +553,51 @@ void halo_timing_category(int category)
 void halo_hdr_draw_kind(int kind)
 {
 	inputs.hdr_kind = kind;
+}
+
+/* ---------- display.rt_reflections (docs/rt-plan/2-reflections.md)
+
+The game's rasterizer tags the draws whose texture 3 is a reflection's
+cube map (halo_rt_reflection); where the setting is on and the backend has
+ray queries, the tag goes into the pixel key (rt_reflection_modes), and the
+backend traces that texel through the ray-traced scene. The scene itself is
+the game's (port/linux/game/rt_reflections.c). */
+static struct
+{
+	int read;
+	unsigned long read_at;
+	int on;
+} rt_reflections;
+
+unsigned long halo_gpu_settings_taken(void);
+
+static int rt_reflections_wanted(void)
+{
+	if (!rt_reflections.read || rt_reflections.read_at != halo_gpu_settings_taken())
+	{
+		rt_reflections.read = 1;
+		rt_reflections.read_at = halo_gpu_settings_taken();
+		rt_reflections.on = config_boolean("display.rt_reflections") && xgpu_backend_capabilities.ray_queries;
+	}
+	return rt_reflections.on;
+}
+
+void halo_rt_reflection(int reflection)
+{
+	inputs.rt_reflection = reflection > 0 && reflection <= HALO_RT_REFLECTION_MIRROR && rt_reflections_wanted() ?
+		(uint32_t)reflection : 0;
+}
+
+/* the reflection's bits of a draw's pixel key: its tag, where texture 3 is
+a cube map's lookup the game reflects by (PS_TEXTUREMODES_CUBEMAP,
+_DOT_RFLCT_SPEC, _DOT_RFLCT_SPEC_CONST) */
+static DWORD rt_reflection_modes(DWORD texture_modes)
+{
+	DWORD stage3 = (texture_modes >> 15) & 0x1f;
+
+	if (!inputs.rt_reflection || (stage3 != 0x03 && stage3 != 0x0c && stage3 != 0x12))
+		return 0;
+	return ((DWORD)inputs.rt_reflection << XGPU_TEXTURE_MODES_RT_REFLECTION_SHIFT) & XGPU_TEXTURE_MODES_RT_REFLECTION;
 }
 
 /* the game's renderer's category, for the backend's timing
@@ -7249,6 +7297,8 @@ static BOOL prepare_draw(BOOL immediate, unsigned long primitive)
 	/* (a model's material maps: kept by pipeline_derived where they are
 	drawn; not the manifest's, which records the draw as the map has it) */
 	pipeline_key.pixel.texture_modes |= material_modes();
+	/* (display.rt_reflections: the reflection traced, rt_reflection_modes) */
+	pipeline_key.pixel.texture_modes |= rt_reflection_modes(key.texture_modes);
 	/* ...and what the settings make of it as they are now: its targets'
 	samples and format, its alpha test (a sample mask, where the backend
 	has one), its tag (display.hdr: from its blend), and its lighting

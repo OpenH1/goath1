@@ -356,6 +356,11 @@ struct xgpu_pixel_program
 	unsigned long material_maps;
 	/* display.hdr's tag (nv2a_pixel_shader_key.hdr: xgpu_hdr.h) */
 	unsigned short hdr;
+	/* display.rt_reflections: texture 3's reflection texel traced, the
+	class (xgpu.h's XGPU_RT_REFLECTION_*) the Vulkan backend found for the
+	draw (its pipeline's vertex shader hands on the world position); 0 the
+	cube map, as the other backends always draw it */
+	unsigned char rt_reflection;
 };
 
 /* the material maps a decoded program samples (its material_maps), of its
