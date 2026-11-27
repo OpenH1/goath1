@@ -75,7 +75,7 @@ What is built (`port/linux/vulkan/xgpu_vulkan_gi.c`, `xgpu_spirv.c`'s `xgpu_spir
   lights alone, never its lightmap, so nothing static is counted twice. One light is picked by its share of the
   unshadowed sum and gets one shadow ray through the structure (the first step of resampled importance sampling:
   unbiased, one shadow ray for any number of lights). The sample is `albedo * light`.
-- **Cache.** A world-space grid of 64x64x32 cells of 0.125 world units (8x8x4 world units) around the camera, kept in
+- **Cache.** A world-space grid of 64x64x32 cells of 0.25 world units (16x16x8 world units) around the camera, kept in
   place in the world (toroidal addressing: cells entering the grid start empty, nothing is copied), 6 faces a cell
   (RGBA16F, 384x2048, two in turn per window). Each face averages the frame's samples that lie in its cell, weighted by
   `max(dot(n, face), 0)^2`. Its history is kept at 0.9 a 60th of a second (at most 64 samples), so a light's fade shows
@@ -94,7 +94,19 @@ with a resolve that gathers each cell's samples from the screen. ReSTIR-style li
 makes many lights affordable here: the pick by share already gives one shadow ray per sample for any light count;
 reservoir reuse across pixels and frames would let all 128 lights bounce at the same cost.
 
-Results: RESULTS_HERE
+Results (c20's first room, Enhanced lights, `display.ambient_occlusion` "ray_traced", `debug.rt_render_geometry` 1;
+the Classic-look combination with "world" AO and ray-traced shadows draws no structure there on master, a separate bug):
+
+- A frag grenade's burst warms the near wall and floor in its color; a muzzle flash's bounce is faint. At strength 1
+  (physically scaled, the dark Forerunner textures' albedo) it is subtler than the CPU bounce, which boosts its
+  albedo 3x. `HALO_RT_BOUNCE_STRENGTH` scales it for looking; 0.125-unit cells were too small a grid for that room.
+- GPU cost of the passes: 0.42 ms at 4K on the 4090 (whole GPU frame 2.45 to 2.87 ms); 0.53 ms at 1080p on the 8060S (its whole frame not compared: other runs shared the GPU).
+- Stable: frame-to-frame PSNR with the bounce matches the scene without it to 4 digits (no flicker of its own).
+- Open: the flashlight's bounce is not shown yet (the scripted flashlight did not turn on in these runs); one
+  ray per 16 pixels leaves the near field blocky at 0.25-unit cells; objects receive it per pixel but stage 4's
+  probes are not built; split screen keeps a cache per window.
+- Checking: `HALO_RT_BOUNCE_VIEW` 1 (where surfaces read it), 2 (the samples), 3 and 4 (the cache's weights),
+  5 (the cells' projection); `HALO_RT_BOUNCE_LOG` logs the lights; `HALO_RT_BOUNCE_CELL` sets the cell.
 
 ## Denoising
 
