@@ -70,8 +70,11 @@ Render thread alone.
 CELLS^2 by CELLS x 8 octants x CASCADES) */
 #define INDIRECT_CACHE_WIDTH (32 * 32)
 #define INDIRECT_CACHE_HEIGHT (32 * 8 * 6)
-/* the hits' share's history (frames) */
+/* the hits' share's history (frames); the bounce's own ahead of the
+denoiser ("denoise": its noise counted down before it joins the direct
+light's sample, which the denoiser's gradients then follow) */
 #define INDIRECT_COVERAGE_CAP 16
+#define INDIRECT_BOUNCE_CAP 16
 
 _Static_assert(INDIRECT_PARAMS_OFFSET + 64 <= 192 * 16, "the parameters within the uniforms");
 
@@ -263,7 +266,7 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 	uint32_t width, height, half_width, half_height;
 	int32_t half[4], whole[4] = { 0, 0, INDIRECT_CACHE_WIDTH, INDIRECT_CACHE_HEIGHT };
 	float parameters[4][4];
-	int reset, accumulate, axis, index;
+	int reset, accumulate, counted, axis, index;
 
 	indirect.specular_light = NULL;
 	if (!xgpu_vulkan_lt_indirect_on() || !frame->inputs || !frame->direct || !frame->table || !frame->guides ||
@@ -277,6 +280,7 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 	half_width = (width + 1) / 2;
 	half_height = (height + 1) / 2;
 	accumulate = frame->mode == XGPU_VULKAN_LT_E2 || frame->mode == XGPU_VULKAN_LT_ACCUMULATE;
+	counted = accumulate || frame->mode == XGPU_VULKAN_LT_DENOISE;
 	/* (the total's format follows the mode: E2's and accumulate's means in
 	full floats) */
 	if (indirect.total && (xgpu_vulkan_image_description(indirect.total)->format != (accumulate ?
@@ -297,7 +301,7 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 	{
 		indirect.caches[index] = indirect_image(indirect.caches[index], XGPU_VULKAN_FORMAT_RGBA32F,
 			INDIRECT_CACHE_WIDTH, INDIRECT_CACHE_HEIGHT);
-		if (accumulate)
+		if (counted)
 			indirect.histories[index] = indirect_image(indirect.histories[index], XGPU_VULKAN_FORMAT_RGBA32F, width,
 				height);
 		if (indirect.reflections)
@@ -311,7 +315,7 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 	}
 	if (indirect.reflections)
 		indirect.specular_raw = indirect_image(indirect.specular_raw, XGPU_VULKAN_FORMAT_RGBA16F, width, height);
-	if (!indirect.bounce || !indirect.total || !indirect.caches[0] || !indirect.caches[1] || (accumulate && (!indirect.histories[0] || !indirect.histories[1])) ||
+	if (!indirect.bounce || !indirect.total || !indirect.caches[0] || !indirect.caches[1] || (counted && (!indirect.histories[0] || !indirect.histories[1])) ||
 		(indirect.reflections && (!indirect.specular_raw || !indirect.coverage[0] || !indirect.coverage[1] ||
 		(accumulate && (!indirect.specular_histories[0] || !indirect.specular_histories[1])))))
 		return NULL;
@@ -344,10 +348,12 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 		indirect.cache_current ^= 1;
 		indirect.cache_valid = 1;
 	}
-	/* 4: the diffuse signal: the bounce upsampled, added to the direct
-	sample, or counted and summed with the direct mean */
-	before = accumulate ? indirect.histories[indirect.current] : NULL;
-	if (accumulate)
+	/* 4: the diffuse signal: the bounce upsampled, counted in its own
+	history (E2's and accumulate's cap; "denoise" INDIRECT_BOUNCE_CAP) and
+	summed with the direct light (its mean, or the sample the denoiser takes),
+	or (raw) added to the direct sample as it is */
+	before = counted ? indirect.histories[indirect.current] : NULL;
+	if (counted)
 	{
 		struct xgpu_vulkan_image *now = indirect.histories[indirect.current ^ 1];
 		struct xgpu_vulkan_image *textures[6] = { frame->inputs, frame->direct, frame->previous_inputs, frame->guides,
@@ -355,9 +361,10 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 		struct xgpu_vulkan_image *sum[6] = { frame->inputs, frame->direct, NULL, NULL, NULL, now };
 
 		indirect_pass(now, frame->rectangle, frame, INDIRECT_COMBINE | INDIRECT_ACCUMULATE |
-			(reset ? INDIRECT_RESET : 0), frame->cap, textures, &indirect.wide, parameters);
+			(reset ? INDIRECT_RESET : 0), accumulate ? frame->cap : INDIRECT_BOUNCE_CAP, textures, &indirect.wide,
+			parameters);
 		indirect_pass(indirect.total, frame->rectangle, frame, INDIRECT_SUM | (indirect.only ? INDIRECT_ONLY : 0),
-			frame->cap, sum, &indirect.wide, parameters);
+			frame->cap, sum, accumulate ? &indirect.wide : &indirect.half, parameters);
 	}
 	else
 	{
