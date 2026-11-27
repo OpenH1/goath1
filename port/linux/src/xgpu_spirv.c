@@ -8934,6 +8934,11 @@ static unsigned int lt_reflection_texel(struct module *m, struct pixel_state *st
 	if (rt_reflections_view() == 1)
 		rgb = construct(m, 3, (unsigned int[]){ fsub(m, 1, constant_float(m, 1.0f), extract(m, s, 3)), extract(m, s, 3),
 			constant_float(m, 0.0f) });
+	/* (=2: the binding's width / 4000 in blue, checking) */
+	if (rt_reflections_view() == 2)
+		rgb = construct(m, 3, (unsigned int[]){ extract(m, s, 3), fmul(m, 1, op1(m, OP_CONVERT_S_TO_F, m->t_float,
+			extract(m, pixel, 0)), constant_float(m, 1.0f / 4000.0f)), fmul(m, 1, op1(m, OP_CONVERT_S_TO_F, m->t_float,
+			extract(m, size, 0)), constant_float(m, 1.0f / 4000.0f)) });
 	return vec4_of(m, rgb, extract(m, cube, 3));
 }
 
