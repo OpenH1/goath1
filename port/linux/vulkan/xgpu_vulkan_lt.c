@@ -61,8 +61,8 @@ HALO_LT_E1_UNSHADOWED=1 (checking) casts no shadow ray. Render thread alone.
 #define LT_DISK_RADIUS 0.01f
 /* the flashlight's linear power over the tag's decoding taken to linear, set once so that the beam's centre on the
 c20 corner's wall at about 3 m shows as bright as the original's gamma add, falling off physically from there
-(~/dev/rt2-calibration.json's flashlight_power_scale and its derivation; the truth renderer uses the same) */
-#define LT_POWER_SCALE 1.0f
+(~/dev/rt2-calibration.json's flashlight_power_scale and its derivation, with the physical falloff of lt/e1.frag; the truth renderer uses the same) */
+#define LT_POWER_SCALE 1.009f
 /* the lamp moved this far in a frame (world units): a jump, the count started again */
 #define LT_JUMP 0.25f
 /* where the parameters start in the draw set's uniforms (lt/e1.frag's) */
