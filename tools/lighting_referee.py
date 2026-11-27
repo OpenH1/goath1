@@ -278,10 +278,22 @@ def ssh_target(machine):
 def play(run, work, seconds=150, reuse=False):
     """one goat-rig run, its pictures (and half floats) fetched, its folder on the machine removed; with reuse, a
     run already fetched is kept as it is"""
-    if reuse and (work / run.label / "summary.txt").exists():
+    if reuse and (work / run.label / "summary.txt").exists() and \
+            "exit 0" in (work / run.label / "summary.txt").read_text():
         run.folder = work / run.label
         run.summary = (run.folder / "summary.txt").read_text()
         return run
+    for attempt in range(3):
+        if attempt:
+            time.sleep(15)
+        play_once(run, work, seconds)
+        # (again when ssh was refused: every helper's runs open connections to the machines at once)
+        if "exit 0" in run.summary or not re.search(r"kex_exchange|Connection (reset|closed)|ssh:", run.summary):
+            break
+    return run
+
+
+def play_once(run, work, seconds):
     options = ["run", run.label, "--build", run.build, "--seconds", seconds] + (["--shared"] if run.shared else [])
     result = rig(*options, "--", *run.settings, machine=run.machine)
     run.summary = (result.stdout + result.stderr).strip()
@@ -427,7 +439,7 @@ def plan(build, baseline, machine, timing, only, mutate, features, overrides=(),
                                         "HALO_TEST_INPUT=script:12.5-13 flashlight",
                                         "HALO_SCREENSHOT_AT=16,quit"] + TIMED + more + extra("timed")
                     timed.append(Run("corridor", variant, build, settings, host, shared=False,
-                                     label=f"lref-{tag}-{variant}-{repeat}"))
+                                     label=f"lref-{tag}-{host}-{variant}-{repeat}"))
     return runs, timed
 
 
@@ -502,8 +514,8 @@ def check_parity(table, runs):
                         continue
                     total += 1
                     same += max(abs(p - q) for p, q in zip(a, b)) <= HUD_CODES
-        share = same / total if total else 0.0
-        table.add("parity", "HUD identical", share, f">= {HUD_SAME} of its pixels", share >= HUD_SAME)
+        differ = total - same
+        table.add("parity", "HUD identical", differ, f"0 of {total} px differ > {HUD_CODES} code", differ == 0)
     c = pictures(runs, "blast", "classic", (0, 1))
     e = pictures(runs, "blast", "enhanced", (0, 1))
     if not c or not e:
@@ -727,7 +739,7 @@ def pass_groups(log):
     sums = []
     for match in PASS_GROUPS.finditer(log):
         groups = {}
-        for name, value in re.findall(r"([A-Z][A-Z ]*[A-Z]) ([0-9.]+) ms", match.group(1)):
+        for name, value in re.findall(r"[;,]\s*([A-Z][A-Z ]*[A-Z]) ([0-9.]+)", match.group(1)):
             groups[name.strip()] = float(value)
         if groups:
             sums.append(groups)
@@ -862,12 +874,13 @@ def main():
     by_machine = {}
     for run in timed:
         by_machine.setdefault(run.machine, []).append(run)
-    with concurrent.futures.ThreadPoolExecutor(len(runs) + len(by_machine) + 1) as pool:
+    with concurrent.futures.ThreadPoolExecutor(len(by_machine) + 2) as pool, \
+            concurrent.futures.ThreadPoolExecutor(6) as pictures_pool:
         future_identity = pool.submit(run_identity, build, baseline, args.machine) \
             if "identity" in only and baseline != build else None
         future_timed = [pool.submit(lambda group: [play(r, work, reuse=args.reuse) for r in group], group)
                         for machine, group in by_machine.items() if machine != args.machine]
-        list(pool.map(lambda r: play(r, work, reuse=args.reuse), runs))
+        list(pictures_pool.map(lambda r: play(r, work, reuse=args.reuse), runs))
         print(f"referee: {len(runs)} picture runs in {time.monotonic() - started:.0f} s", flush=True)
         for run in by_machine.get(args.machine, []):
             play(run, work, reuse=args.reuse)
