@@ -61,25 +61,72 @@ long world_rt_source_structure(short index, float *triangles, long maximum)
 	return 2;
 }
 
-/* (the render triangles: 3 opaque, 2 alpha-tested, 1 transparent; and
-the kinds asked for with room, the triangles themselves) */
-static int render_asked, render_filled[3];
+/* (the render mesh: two opaque triangles of material 0, an alpha-tested
+one of material 1, one transparent left out; and the times it was read,
+and filled) */
+static int render_asked, render_filled;
 
-long world_rt_source_structure_render(short index, int surfaces, float *triangles, long maximum)
+long world_rt_source_structure_mesh(short index, struct world_rt_source_mesh *mesh)
 {
-	static const float wall[3][9] = { { 0, 0, 0, 0, 0, 1, 0, 1, 1 }, { 0, 0, 0, 0, 1, 1, 0, 1, 0 },
-		{ 5, 0, 0, 5, 0, 1, 5, 1, 1 } };
-	long count = surfaces == WORLD_RT_SURFACES_OPAQUE ? 3 : surfaces == WORLD_RT_SURFACES_ALPHA_TESTED ? 2 : 1;
+	static const float positions[7][3] = { { 0, 0, 0 }, { 0, 0, 1 }, { 0, 1, 1 }, { 0, 1, 0 }, { 5, 0, 0 }, { 5, 0, 1 },
+		{ 5, 1, 1 } };
+	static const unsigned long corners[3][3] = { { 0, 1, 2 }, { 0, 2, 3 }, { 4, 5, 6 } };
+	int vertex, triangle, material, map;
 
-	CHECK(index == bsp_index, "another BSP's render triangles: %d", index);
-	CHECK(surfaces >= 0 && surfaces <= 2, "surfaces %d", surfaces);
+	CHECK(index == bsp_index, "another BSP's render mesh: %d", index);
 	render_asked++;
-	if (triangles)
+	if (mesh->vertices)
 	{
-		render_filled[surfaces]++;
-		memcpy(triangles, wall, sizeof(float) * 9 * (maximum < count ? maximum : count));
+		CHECK(mesh->vertex_count >= 7 && mesh->triangle_count >= 3 && mesh->material_count >= 2, "room: %ld %ld %ld",
+			mesh->vertex_count, mesh->triangle_count, mesh->material_count);
+		render_filled++;
+		for (vertex = 0; vertex < 7; vertex++)
+		{
+			memset(&mesh->vertices[vertex], 0, sizeof(mesh->vertices[vertex]));
+			memcpy(mesh->vertices[vertex].position, positions[vertex], sizeof(positions[vertex]));
+			mesh->vertices[vertex].normal[0] = mesh->vertices[vertex].tangent[1] = 1.0f;
+			mesh->vertices[vertex].binormal[2] = vertex == 6 ? -1.0f : 1.0f;
+			mesh->vertices[vertex].uv[0] = (float)vertex;
+		}
+		for (triangle = 0; triangle < 3; triangle++)
+		{
+			memcpy(mesh->triangles[triangle], corners[triangle], sizeof(corners[triangle]));
+			mesh->triangle_materials[triangle] = triangle == 2;
+		}
+		for (material = 0; material < 2; material++)
+		{
+			struct world_rt_source_material *out = &mesh->materials[material];
+
+			memset(out, 0, sizeof(*out));
+			for (map = 0; map < WORLD_RT_MAPS; map++)
+				out->maps[map].bitmap = -1;
+			out->shader = 100 + material;
+			out->kind = 3;
+			out->alpha_cutoff = 0.5f;
+			out->alpha_map = material ? WORLD_RT_MAP_BUMP : -1;
+			out->flags = material ? WORLD_RT_MATERIAL_ALPHA_TESTED : 0;
+			out->alpha_scale[0] = out->alpha_scale[1] = material ? 2.0f : 1.0f;
+			out->maps[WORLD_RT_MAP_BASE].bitmap = 200;
+			out->maps[WORLD_RT_MAP_BUMP].bitmap = material ? 201 : -1;
+			out->maps[WORLD_RT_MAP_LIGHTMAP].bitmap = 300;
+		}
 	}
-	return count;
+	mesh->vertex_count = 7;
+	mesh->triangle_count = 3;
+	mesh->opaque_count = 2;
+	mesh->material_count = 2;
+	mesh->left_out = 1;
+	return 3;
+}
+
+/* (bitmap 200 loaded, 201 once bump_loaded) */
+static int bump_loaded;
+static const unsigned long base_header[5], bump_header[5];
+
+void const *world_rt_source_texture(struct world_rt_source_map const *map)
+{
+	return map->bitmap == 200 ? (void const *)base_header : map->bitmap == 201 && bump_loaded ? (void const *)bump_header :
+		NULL;
 }
 
 short world_rt_source_definition(long definition, float sphere[4], int *item)
@@ -160,6 +207,14 @@ static struct
 	float first[9];
 } meshes[16];
 static int mesh_count, releases;
+/* (the last mesh as drawn: its counts, triangles' materials and the
+materials it carried; the textures' slots last sent, and the times) */
+static struct world_rt_mesh_header drawn;
+static unsigned short drawn_materials[3];
+static struct world_rt_material carried[4];
+static struct world_rt_texture textures_sent[8];
+static unsigned long textures_count;
+static int textures_sendings;
 /* (the meshes let go of alone) */
 static unsigned long released[16];
 static int released_count;
@@ -178,6 +233,42 @@ void halo_world_ao_mesh(unsigned long id, unsigned long count, float const *tria
 	meshes[mesh_count].count = count;
 	memcpy(meshes[mesh_count].first, triangles, sizeof(meshes[mesh_count].first));
 	mesh_count++;
+}
+
+void halo_world_rt_mesh(unsigned long id, void const *data, unsigned long size)
+{
+	struct world_rt_mesh_header const *header = data;
+	float const *positions = (float const *)(header + 1);
+	unsigned int const *corners = (unsigned int const *)(positions + header->vertex_count * 3);
+	struct world_rt_vertex const *vertices = (struct world_rt_vertex const *)(corners + header->triangle_count * 3);
+	unsigned short const *materials = (unsigned short const *)(vertices + header->vertex_count);
+	struct world_rt_material const *made = (struct world_rt_material const *)((unsigned char const *)materials +
+		((header->triangle_count * 2 + 3) & ~3u));
+	int corner;
+
+	CHECK(id && mesh_count < 16, "a mesh as drawn %lu", id);
+	CHECK(size == (unsigned long)((unsigned char const *)(made + header->material_count) - (unsigned char const *)data),
+		"its size %lu", size);
+	CHECK(header->triangle_count <= 3 && header->material_count <= 4, "its counts");
+	drawn = *header;
+	memcpy(drawn_materials, materials, sizeof(drawn_materials));
+	memcpy(carried, made, header->material_count * sizeof(*made));
+	/* (the tangent's sign: the last vertex's binormal turned) */
+	CHECK(vertices[0].flags == 0 && vertices[6].flags == 1 && vertices[3].uv[0] == 3.0f && vertices[0].normal == 32767,
+		"the vertices: %u %u", vertices[0].flags, vertices[6].flags);
+	meshes[mesh_count].id = id;
+	meshes[mesh_count].count = header->triangle_count;
+	for (corner = 0; corner < 3; corner++)
+		memcpy(meshes[mesh_count].first + corner * 3, positions + corners[corner] * 3, 3 * sizeof(float));
+	mesh_count++;
+}
+
+void halo_world_rt_textures(struct world_rt_texture const *textures, unsigned long count)
+{
+	CHECK(count && count <= 8, "%lu textures", count);
+	memcpy(textures_sent, textures, count * sizeof(*textures));
+	textures_count = count;
+	textures_sendings++;
 }
 
 void halo_world_ao_mesh_release(unsigned long id)
@@ -263,6 +354,15 @@ static void arithmetic_case(void)
 		transform[0][3] == 3.0f, "the box's transform");
 	CHECK(world_rt_owner(-1) == 0 && world_rt_owner(0x10003) == 4 && world_rt_owner(0x7fff0000) == 1,
 		"the owners");
+	/* the octahedral normals: up, along x, down (a corner), along -y */
+	{
+		static const float up[3] = { 0, 0, 1 }, x[3] = { 1, 0, 0 }, down[3] = { 0, 0, -1 }, minus_y[3] = { 0, -1, 0 };
+
+		CHECK(world_rt_octahedral(up) == 0 && world_rt_octahedral(x) == 32767 &&
+			world_rt_octahedral(down) == (32767UL | 32767UL << 16) && world_rt_octahedral(minus_y) == 0x80010000UL,
+			"the octahedral map: %lx %lx %lx %lx", world_rt_octahedral(up), world_rt_octahedral(x),
+			world_rt_octahedral(down), world_rt_octahedral(minus_y));
+	}
 }
 
 static struct world_ao_instance const *instance_of(unsigned long owner, unsigned int kind)
@@ -345,43 +445,65 @@ static void render_case(void)
 	world_rt_frame(1);
 	CHECK(mesh_count == 3 && render_asked == 0, "the first frame: %d meshes, %d asked", mesh_count, render_asked);
 	CHECK(instance_of(0, WORLD_RT_STRUCTURE)->mesh == 1, "the collision mesh first");
-	/* the next: the opaque render triangles, in the collision mesh's place */
+	/* the next: the render mesh, in the collision mesh's place: its opaque
+	triangles, then its alpha-tested one */
 	world_rt_frame(2);
 	CHECK(mesh_count == 4 && meshes[3].id == 4 && meshes[3].count == 3 && meshes[3].first[2] == 0.0f &&
 		meshes[3].first[5] == 1.0f, "the render mesh: %d %lu %lu", mesh_count, meshes[3].id, meshes[3].count);
-	CHECK(render_filled[WORLD_RT_SURFACES_OPAQUE] == 1 && !render_filled[WORLD_RT_SURFACES_ALPHA_TESTED] &&
-		!render_filled[WORLD_RT_SURFACES_TRANSPARENT], "filled: %d %d %d", render_filled[0], render_filled[1],
-		render_filled[2]);
+	CHECK(render_filled == 1 && drawn.opaque_count == 2 && drawn.vertex_count == 7, "filled %d, %u opaque",
+		render_filled, drawn.opaque_count);
+	/* (its materials the map's, both new to it; the alpha-tested one's alpha
+	map the bump map's slot, at its scale) */
+	CHECK(drawn.material_count == 2 && carried[0].index == 0 && carried[1].index == 1 && drawn_materials[0] == 0 &&
+		drawn_materials[1] == 0 && drawn_materials[2] == 1, "its materials: %u", drawn.material_count);
+	CHECK(carried[0].alpha_map == 0 && carried[1].alpha_map && carried[1].alpha_map == carried[1].bump_map &&
+		carried[1].alpha_scale[0] == 2.0f && carried[0].base_map && carried[0].base_map == carried[1].base_map &&
+		carried[0].lightmap && carried[0].lightmap != carried[0].base_map && carried[1].flags == WORLD_RT_MATERIAL_ALPHA_TESTED,
+		"the materials' slots: %u %u %u", carried[1].alpha_map, carried[0].base_map, carried[0].lightmap);
+	/* (the textures' slots: base, lightmap and bump, the bump map not loaded) */
+	CHECK(textures_sendings == 1 && textures_count == 3, "the textures sent: %d, %lu", textures_sendings, textures_count);
+	CHECK(textures_sent[0].header == base_header && textures_sent[0].slot == carried[0].base_map &&
+		textures_sent[2].slot == carried[1].bump_map && !textures_sent[2].header, "the textures' headers");
 	CHECK(instance_count == 4 && instance_of(0, WORLD_RT_STRUCTURE)->mesh == 4, "the structure's instance: %u",
 		instance_of(0, WORLD_RT_STRUCTURE)->mesh);
 	/* (and its collision mesh let go of) */
 	CHECK(released_count == 1 && released[0] == 1, "let go of: %d %lu", released_count, released[0]);
-	/* made once */
+	/* made once; a texture sent again only as it changes */
 	world_rt_frame(3);
-	CHECK(mesh_count == 4 && render_filled[WORLD_RT_SURFACES_OPAQUE] == 1 &&
-		instance_of(0, WORLD_RT_STRUCTURE)->mesh == 4, "made again: %d", mesh_count);
-	/* another BSP: its collision mesh, then its render mesh */
-	bsp_index = 1;
+	CHECK(mesh_count == 4 && render_filled == 1 && instance_of(0, WORLD_RT_STRUCTURE)->mesh == 4, "made again: %d",
+		mesh_count);
+	CHECK(textures_sendings == 1, "the textures sent again: %d", textures_sendings);
+	bump_loaded = 1;
 	world_rt_frame(4);
-	CHECK(mesh_count == 5 && instance_of(0, WORLD_RT_STRUCTURE)->mesh == 5, "another BSP's collision mesh");
+	CHECK(textures_sendings == 2 && textures_count == 1 && textures_sent[0].header == bump_header &&
+		textures_sent[0].slot == carried[1].bump_map, "the bump map once loaded: %d %lu", textures_sendings, textures_count);
+	/* another BSP: its collision mesh, then its render mesh, whose materials
+	the map has already */
+	bsp_index = 1;
 	world_rt_frame(5);
+	CHECK(mesh_count == 5 && instance_of(0, WORLD_RT_STRUCTURE)->mesh == 5, "another BSP's collision mesh");
+	world_rt_frame(6);
 	CHECK(mesh_count == 6 && meshes[5].count == 3 && instance_of(0, WORLD_RT_STRUCTURE)->mesh == 6,
 		"another BSP's render mesh");
+	CHECK(drawn.material_count == 0 && drawn_materials[2] == 1, "its materials carried again: %u", drawn.material_count);
 	CHECK(released_count == 2 && released[1] == 5, "another BSP's collision mesh let go of: %d", released_count);
 	/* back to the first: its render mesh at once, nothing made or read */
 	bsp_index = 0;
 	asked = render_asked;
-	world_rt_frame(6);
+	world_rt_frame(7);
 	CHECK(mesh_count == 6 && render_asked == asked && instance_of(0, WORLD_RT_STRUCTURE)->mesh == 4,
 		"back to the first BSP: %d meshes, its render mesh %u", mesh_count, instance_of(0, WORLD_RT_STRUCTURE)->mesh);
-	world_rt_frame(7);
-	CHECK(mesh_count == 6 && render_asked == asked, "back to the first BSP, the frame after: %d", mesh_count);
-	/* the map's end: the collision mesh first again */
-	world_rt_map_unloaded();
 	world_rt_frame(8);
-	CHECK(mesh_count == 9 && instance_of(0, WORLD_RT_STRUCTURE)->mesh == 1, "after the map's end: %d", mesh_count);
+	CHECK(mesh_count == 6 && render_asked == asked, "back to the first BSP, the frame after: %d", mesh_count);
+	/* the map's end: the collision mesh first again, the materials and
+	textures the next map's */
+	world_rt_map_unloaded();
 	world_rt_frame(9);
-	CHECK(mesh_count == 10 && instance_of(0, WORLD_RT_STRUCTURE)->mesh == 4, "its render mesh again");
+	CHECK(mesh_count == 9 && instance_of(0, WORLD_RT_STRUCTURE)->mesh == 1, "after the map's end: %d", mesh_count);
+	world_rt_frame(10);
+	CHECK(mesh_count == 10 && instance_of(0, WORLD_RT_STRUCTURE)->mesh == 4 && drawn.material_count == 2,
+		"its render mesh again: %u materials", drawn.material_count);
+	CHECK(textures_count == 3, "its textures again: %lu", textures_count);
 }
 
 int main(int argc, char **argv)

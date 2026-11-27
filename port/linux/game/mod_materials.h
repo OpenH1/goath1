@@ -23,5 +23,8 @@ unsigned long mod_materials_identity(void);
 /* (rasterizer_xbox_models.c) a shader_model's part is drawn next with this
 base map (its texture 0 set): the renderer told its maps, or none */
 void mod_materials_model_draw(long base_map_tag_index);
+/* a bitmap's material maps, images (0 none): the ray-traced scene's
+materials (world_rt_game.c) */
+void mod_materials_maps(long base_map_tag_index, unsigned int *normal_map, unsigned int *orm_map);
 
 #endif

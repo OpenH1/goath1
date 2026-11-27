@@ -30,6 +30,21 @@ this file: xgpu_vulkan_rt_create).
   the submission's draws, which the main commands' first barrier orders
   after them; they never end a pass.
 - Until a scene is built, the draws' occlusion set names an empty one.
+- What a ray's hit reads (docs/rt-plan/1-geometry.md, "Per-hit data"):
+  the hit table, one storage buffer (host-visible, its words kept beside
+  it to grow it), and the textures' slots, a bindless array of
+  XGPU_WORLD_RT_TEXTURES (their images found again each frame, which keeps
+  them in the texture cache; the empty ones a white stand-in), both in the
+  hit set (XGPU_VULKAN_SET_RT_HITS), written again only as they change.
+  The table: each mesh's record (RT_HIT_MESH: its corners', attributes' and
+  triangles' materials' words and its opaque triangles' count; a mesh of
+  triangles' all 0), each material's (RT_HIT_MATERIAL: xgpu_stream.h's
+  struct xgpu_world_rt_material, sixteen words), then the meshes' data. An
+  instance names its mesh by its shader binding table offset, which ray
+  queries have no other use for. Everything there is checked as it comes
+  (every corner, material and slot in range), so the shaders read it
+  unchecked. Nothing is taken out of it until the map's end, which makes
+  another (the GPU may still read the last frames' meshes).
 - A build with a mesh of RT_LOGGED_TRIANGLES or more (the level's) is
   logged: its meshes, triangles, structures' and scratch's bytes, the
   meshes' storage so far, and its GPU time where the queue has timestamps
@@ -38,8 +53,11 @@ this file: xgpu_vulkan_rt_create).
 Render thread alone, as the core.
 */
 
+#include "xgpu_backend.h"
+#include "xgpu_spirv.h"
 #include "xgpu_stream.h"
 #include "xgpu_vulkan.h"
+#include "xgpu_vulkan_textures.h"
 #include "host.h"
 
 #include <math.h>
@@ -57,6 +75,18 @@ enum
 };
 
 #define RT_CHUNK_BYTES ((VkDeviceSize)16 << 20)
+/* the hit table's records (words): each mesh's (four: its corners' first
+word, its attributes', its triangles' materials' (two to a word, the
+first low), its opaque triangles' count), each material's (sixteen), then
+the meshes' data; and the hit sets in turn */
+#define RT_HIT_MESH 0u
+#define RT_HIT_MATERIAL (XGPU_STREAM_WORLD_AO_MESHES * 4u)
+#define RT_HIT_DATA (RT_HIT_MATERIAL + XGPU_WORLD_RT_MATERIALS * 16u)
+#define RT_HIT_SETS 4u
+_Static_assert(RT_HIT_MATERIAL == XGPU_SPIRV_RT_HIT_MATERIALS && XGPU_STREAM_WORLD_AO_MESHES == XGPU_SPIRV_RT_HIT_MESHES &&
+	XGPU_WORLD_RT_TEXTURES == XGPU_SPIRV_RT_HIT_TEXTURES, "the hit table as the shaders read it");
+/* the new textures found a frame at most (each may be read from the guest) */
+#define RT_TEXTURES_FOUND 16u
 /* a mesh of so many triangles has a buffer of its own, and is compacted */
 #define RT_OWN_TRIANGLES 1024u
 /* the most meshes compacted at once (the compacted sizes' queries) */
@@ -94,6 +124,13 @@ struct rt_mesh
 	VkDeviceSize bytes;
 	uint32_t compacting;
 	int compaction_asked;
+	/* (an indexed one: xgpu_vulkan_rt_mesh_indexed) its positions and
+	corners until it is built, its vertices, its opaque triangles (the
+	first so many: the rest alpha-tested) */
+	int indexed;
+	float *positions;
+	uint32_t *indices;
+	uint32_t vertex_count, opaque_count;
 };
 
 struct rt_scene
@@ -159,6 +196,33 @@ static struct
 	VkQueryPool compacted_sizes;
 	uint32_t compacted_ids[RT_COMPACTED], compacted_count;
 	uint64_t compacted_serial;
+	/* what a hit reads: the hit table (its words, those used, the buffer
+	they are copied into), the materials written, the textures' slots (as
+	described, and the view each was last found as), the stand-in, the
+	sampler; the hit sets' layout, pool and sets (each its contents'
+	version and the last submission that read it), the version now, the
+	last set handed out, and the submission the textures were last found
+	for */
+	PFN_vkCreateDescriptorSetLayout create_layout;
+	PFN_vkDestroyDescriptorSetLayout destroy_layout;
+	PFN_vkCreateDescriptorPool create_pool;
+	PFN_vkDestroyDescriptorPool destroy_pool;
+	PFN_vkAllocateDescriptorSets allocate_sets;
+	PFN_vkUpdateDescriptorSets update_sets;
+	uint32_t *hit_words;
+	uint32_t hit_used, hit_capacity;
+	struct rt_buffer hit_buffer;
+	unsigned char hit_materials[XGPU_WORLD_RT_MATERIALS];
+	struct xgpu_stream_texture_stage textures[XGPU_WORLD_RT_TEXTURES];
+	VkImageView texture_views[XGPU_WORLD_RT_TEXTURES];
+	struct xgpu_vulkan_image *stand_in;
+	VkSampler sampler;
+	VkDescriptorSetLayout hit_layout;
+	VkDescriptorPool hit_pool;
+	VkDescriptorSet hit_sets[RT_HIT_SETS];
+	uint64_t hit_set_versions[RT_HIT_SETS], hit_set_used[RT_HIT_SETS];
+	uint64_t hit_version, textures_serial;
+	int hit_current;
 	/* the meshes (by id) and those not yet built */
 	struct rt_mesh *meshes[XGPU_STREAM_WORLD_AO_MESHES];
 	uint32_t pending;
@@ -348,11 +412,22 @@ static void rt_meshes_release(void)
 		if (mesh->structure)
 			rt_garbage_add(mesh->own.buffer ? &mesh->own : NULL, mesh->structure);
 		free(mesh->triangles);
+		free(mesh->positions);
+		free(mesh->indices);
 		free(mesh);
 		rt.meshes[id] = NULL;
 	}
 	rt.compacted_count = 0;
 	rt.live_bytes = rt.live_most = 0;
+	/* (a new hit table: the GPU may still read the old) */
+	if (rt.hit_buffer.buffer)
+		rt_garbage_add(&rt.hit_buffer, VK_NULL_HANDLE);
+	memset(&rt.hit_buffer, 0, sizeof(rt.hit_buffer));
+	free(rt.hit_words);
+	rt.hit_words = NULL;
+	rt.hit_used = rt.hit_capacity = 0;
+	memset(rt.hit_materials, 0, sizeof(rt.hit_materials));
+	rt.hit_version++;
 	for (id = 0; id < rt.chunk_count; id++)
 		rt_garbage_add(&rt.chunks[id], VK_NULL_HANDLE);
 	memset(rt.chunks, 0, sizeof(rt.chunks));
@@ -413,6 +488,8 @@ void xgpu_vulkan_rt_mesh_release(uint32_t id)
 	host_logf(HOST_LOG_INFO, "vulkan: the ray-traced scene's mesh %u let go of (%.2f MB); %.2f MB of meshes now", id,
 		(double)mesh->bytes / 1048576.0, (double)rt.live_bytes / 1048576.0);
 	free(mesh->triangles);
+	free(mesh->positions);
+	free(mesh->indices);
 	free(mesh);
 	rt.meshes[id] = NULL;
 }
@@ -450,6 +527,401 @@ void xgpu_vulkan_rt_mesh(uint32_t id, uint32_t count, const float *triangles)
 	rt.pending++;
 }
 
+/* ---------- what a hit reads */
+
+/* room for count more words in the hit table (made with its records the
+first time: a larger one copied from its words, the old let go of once
+the GPU is done with it); where they start, 0 if there is none */
+static uint32_t rt_hit_room(uint32_t count)
+{
+	uint32_t capacity, at;
+	uint32_t *grown;
+	struct rt_buffer buffer;
+
+	if (!rt.hit_words)
+		rt.hit_used = RT_HIT_DATA;
+	if ((uint64_t)rt.hit_used + count <= rt.hit_capacity)
+	{
+		at = rt.hit_used;
+		rt.hit_used += count;
+		return at;
+	}
+	for (capacity = rt.hit_capacity ? rt.hit_capacity : 1u << 20; (uint64_t)capacity < (uint64_t)rt.hit_used + count;
+		capacity *= 2)
+	{
+		if (capacity >= 1u << 28)
+			return 0;
+	}
+	grown = realloc(rt.hit_words, (size_t)capacity * 4u);
+	if (!grown)
+		return 0;
+	if (!rt.hit_words)
+		memset(grown, 0, (size_t)RT_HIT_DATA * 4u);
+	rt.hit_words = grown;
+	if (!rt_buffer_make((VkDeviceSize)capacity * 4u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, 1, &buffer))
+		return 0;
+	memcpy(buffer.mapped, rt.hit_words, (size_t)rt.hit_used * 4u);
+	if (rt.hit_buffer.buffer)
+		rt_garbage_add(&rt.hit_buffer, VK_NULL_HANDLE);
+	rt.hit_buffer = buffer;
+	rt.hit_capacity = capacity;
+	rt.hit_version++;
+	at = rt.hit_used;
+	rt.hit_used += count;
+	return at;
+}
+
+/* words written into the hit table, and its buffer */
+static void rt_hit_write(uint32_t at, const void *words, uint32_t count)
+{
+	memcpy(rt.hit_words + at, words, (size_t)count * 4u);
+	memcpy((uint32_t *)rt.hit_buffer.mapped + at, words, (size_t)count * 4u);
+}
+
+/* a material's slots in range (FALSE: not) */
+static int rt_material_checked(const struct xgpu_world_rt_material *material)
+{
+	return material->index < XGPU_WORLD_RT_MATERIALS && isfinite(material->alpha_cutoff) &&
+		isfinite(material->alpha_scale[0]) && isfinite(material->alpha_scale[1]) && isfinite(material->detail_scale) &&
+		material->alpha_map < XGPU_WORLD_RT_TEXTURES && material->base_map < XGPU_WORLD_RT_TEXTURES &&
+		material->detail_map < XGPU_WORLD_RT_TEXTURES && material->multipurpose_map < XGPU_WORLD_RT_TEXTURES &&
+		material->bump_map < XGPU_WORLD_RT_TEXTURES && material->normal_map < XGPU_WORLD_RT_TEXTURES &&
+		material->orm_map < XGPU_WORLD_RT_TEXTURES && material->lightmap < XGPU_WORLD_RT_TEXTURES;
+}
+
+void xgpu_vulkan_rt_mesh_indexed(uint32_t id, const void *data, uint32_t size)
+{
+	const struct xgpu_world_rt_mesh *header = data;
+	const float *positions;
+	const uint32_t *indices;
+	const struct xgpu_world_rt_vertex *attributes;
+	const uint16_t *triangle_materials;
+	const struct xgpu_world_rt_material *materials;
+	struct rt_mesh *mesh;
+	uint32_t vertex_count, triangle_count, index, record[4], corners_at, attributes_at, materials_at;
+	uint64_t expected;
+
+	if (!rt.ready || !id || id >= XGPU_STREAM_WORLD_AO_MESHES || rt.meshes[id] || !data || size < sizeof(*header))
+		return;
+	rt_garbage_collect();
+	vertex_count = header->vertex_count;
+	triangle_count = header->triangle_count;
+	if (!vertex_count || vertex_count > XGPU_WORLD_RT_VERTICES || !triangle_count ||
+		triangle_count > XGPU_STREAM_WORLD_AO_MESH_TRIANGLES || header->opaque_count > triangle_count ||
+		header->material_count > XGPU_WORLD_RT_MATERIALS)
+		return;
+	expected = sizeof(*header) + (uint64_t)vertex_count * 12u + (uint64_t)triangle_count * 12u +
+		(uint64_t)vertex_count * sizeof(struct xgpu_world_rt_vertex) + (((uint64_t)triangle_count * 2u + 3u) & ~(uint64_t)3u) +
+		(uint64_t)header->material_count * sizeof(struct xgpu_world_rt_material);
+	if (expected != size)
+		return;
+	positions = (const float *)(header + 1);
+	indices = (const uint32_t *)(positions + (size_t)vertex_count * 3u);
+	attributes = (const struct xgpu_world_rt_vertex *)(indices + (size_t)triangle_count * 3u);
+	triangle_materials = (const uint16_t *)(attributes + vertex_count);
+	materials = (const struct xgpu_world_rt_material *)((const unsigned char *)triangle_materials +
+		(((size_t)triangle_count * 2u + 3u) & ~(size_t)3u));
+	/* (every position, corner, material and slot in range: the shaders
+	read them unchecked) */
+	for (index = 0; index < vertex_count * 3u; index++)
+	{
+		if (!isfinite(positions[index]) || fabsf(positions[index]) > 1.0e6f)
+			return;
+	}
+	for (index = 0; index < triangle_count * 3u; index++)
+	{
+		if (indices[index] >= vertex_count)
+			return;
+	}
+	for (index = 0; index < vertex_count; index++)
+	{
+		if (!isfinite(attributes[index].uv[0]) || !isfinite(attributes[index].uv[1]))
+			return;
+	}
+	for (index = 0; index < triangle_count; index++)
+	{
+		if (triangle_materials[index] >= XGPU_WORLD_RT_MATERIALS)
+			return;
+	}
+	for (index = 0; index < header->material_count; index++)
+	{
+		if (!rt_material_checked(&materials[index]))
+			return;
+	}
+	mesh = calloc(1, sizeof(*mesh));
+	if (!mesh)
+		return;
+	mesh->positions = malloc((size_t)vertex_count * 12u);
+	mesh->indices = malloc((size_t)triangle_count * 12u);
+	corners_at = rt_hit_room(triangle_count * 3u + vertex_count * 6u + (triangle_count + 1u) / 2u);
+	if (!mesh->positions || !mesh->indices || !corners_at)
+	{
+		free(mesh->positions);
+		free(mesh->indices);
+		free(mesh);
+		return;
+	}
+	memcpy(mesh->positions, positions, (size_t)vertex_count * 12u);
+	memcpy(mesh->indices, indices, (size_t)triangle_count * 12u);
+	mesh->indexed = 1;
+	mesh->count = triangle_count;
+	mesh->vertex_count = vertex_count;
+	mesh->opaque_count = header->opaque_count;
+	/* its data and record in the hit table */
+	attributes_at = corners_at + triangle_count * 3u;
+	materials_at = attributes_at + vertex_count * 6u;
+	rt_hit_write(corners_at, indices, triangle_count * 3u);
+	rt_hit_write(attributes_at, attributes, vertex_count * 6u);
+	rt_hit_write(materials_at, triangle_materials, triangle_count / 2u);
+	if (triangle_count & 1u)
+	{
+		uint32_t last = triangle_materials[triangle_count - 1];
+
+		rt_hit_write(materials_at + triangle_count / 2u, &last, 1);
+	}
+	record[0] = corners_at;
+	record[1] = attributes_at;
+	record[2] = materials_at;
+	record[3] = header->opaque_count;
+	rt_hit_write(RT_HIT_MESH + id * 4u, record, 4);
+	/* (a material once a map: the GPU may be reading it) */
+	for (index = 0; index < header->material_count; index++)
+	{
+		if (rt.hit_materials[materials[index].index])
+			continue;
+		rt.hit_materials[materials[index].index] = 1;
+		rt_hit_write(RT_HIT_MATERIAL + materials[index].index * 16u, &materials[index], 16);
+	}
+	rt.meshes[id] = mesh;
+	rt.pending++;
+}
+
+void xgpu_vulkan_rt_textures(const struct xgpu_world_rt_texture *textures, uint32_t count)
+{
+	uint32_t index;
+
+	if (!rt.ready || !textures)
+		return;
+	for (index = 0; index < count && index < XGPU_WORLD_RT_TEXTURES; index++)
+	{
+		uint32_t slot = textures[index].slot;
+
+		if (!slot || slot >= XGPU_WORLD_RT_TEXTURES)
+			continue;
+		rt.textures[slot] = textures[index].stage;
+		/* (found again at the next frame) */
+		rt.texture_views[slot] = VK_NULL_HANDLE;
+	}
+}
+
+/* the textures' slots' images found for this submission (each frame: so
+the texture cache keeps them, and one made again is seen), at most
+RT_TEXTURES_FOUND new ones; a slot whose view changed changes the hit
+sets' version */
+static void rt_textures_find(void)
+{
+	uint32_t slot, found = 0;
+	uint64_t serial = xgpu_vulkan_serial();
+
+	if (rt.textures_serial == serial || !rt.hit_layout)
+		return;
+	rt.textures_serial = serial;
+	if (!rt.stand_in)
+	{
+		static const unsigned char white[4] = { 255, 255, 255, 255 };
+		struct xgpu_vulkan_image_description description;
+		struct xgpu_vulkan_sampler_description sampler;
+
+		memset(&description, 0, sizeof(description));
+		description.type = XGPU_VULKAN_IMAGE_2D;
+		description.format = XGPU_VULKAN_FORMAT_RGBA8;
+		description.usage = XGPU_VULKAN_USAGE_SAMPLED;
+		description.width = description.height = description.depth_or_layers = description.levels = 1;
+		rt.stand_in = xgpu_vulkan_image_create(&description);
+		if (!rt.stand_in)
+			return;
+		xgpu_vulkan_image_upload(rt.stand_in, 0, 0, 0, 0, 0, 1, 1, 1, white, 4, 4);
+		memset(&sampler, 0, sizeof(sampler));
+		sampler.minify = sampler.magnify = XGPU_VULKAN_FILTER_LINEAR;
+		sampler.mip = XGPU_VULKAN_MIP_LINEAR;
+		sampler.address[0] = sampler.address[1] = sampler.address[2] = XGPU_VULKAN_ADDRESS_WRAP;
+		sampler.anisotropy = 1;
+		rt.sampler = xgpu_vulkan_sampler(&sampler);
+		rt.hit_version++;
+	}
+	for (slot = 1; slot < XGPU_WORLD_RT_TEXTURES; slot++)
+	{
+		const struct xgpu_stream_texture_stage *stage = &rt.textures[slot];
+		struct xgpu_vulkan_image *image = NULL;
+		VkImageView view;
+
+		if (stage->source == XGPU_SOURCE_NONE)
+			continue;
+		if (!rt.texture_views[slot])
+		{
+			if (found >= RT_TEXTURES_FOUND)
+				continue;
+			found++;
+		}
+		if (stage->source == XGPU_SOURCE_TEXTURE)
+			image = xgpu_vulkan_textures_header(stage->resource);
+		else if (stage->source == XGPU_STREAM_SOURCE_IMAGE)
+			image = xgpu_vulkan_textures_get(stage);
+		/* (a 2D one alone: the array is of 2D images) */
+		view = image && xgpu_vulkan_image_description(image)->type == XGPU_VULKAN_IMAGE_2D ?
+			xgpu_vulkan_image_view(image) : VK_NULL_HANDLE;
+		if (!view)
+			view = xgpu_vulkan_image_view(rt.stand_in);
+		if (view != rt.texture_views[slot])
+		{
+			rt.texture_views[slot] = view;
+			rt.hit_version++;
+		}
+	}
+}
+
+VkDescriptorSetLayout xgpu_vulkan_rt_hit_layout(void)
+{
+	return rt.ready ? rt.hit_layout : VK_NULL_HANDLE;
+}
+
+VkDescriptorSet xgpu_vulkan_rt_hit_set(void)
+{
+	VkDescriptorBufferInfo table;
+	VkDescriptorImageInfo images[XGPU_WORLD_RT_TEXTURES];
+	VkWriteDescriptorSet writes[2];
+	uint64_t serial = xgpu_vulkan_serial(), done = xgpu_vulkan_completed();
+	uint32_t which, slot;
+	VkImageView stand_in;
+
+	if (!rt.ready || !rt.hit_pool)
+		return VK_NULL_HANDLE;
+	/* (a table and the stand-in made, so a set has something to name) */
+	if (!rt.hit_buffer.buffer && !rt_hit_room(0))
+		return VK_NULL_HANDLE;
+	stand_in = xgpu_vulkan_image_view(rt.stand_in);
+	if (!stand_in || !rt.sampler)
+		return VK_NULL_HANDLE;
+	if (rt.hit_current >= 0 && rt.hit_set_versions[rt.hit_current] == rt.hit_version)
+	{
+		rt.hit_set_used[rt.hit_current] = serial;
+		return rt.hit_sets[rt.hit_current];
+	}
+	/* (one no work not yet done reads; none: the last, as it was) */
+	for (which = 0; which < RT_HIT_SETS; which++)
+	{
+		if ((int)which != rt.hit_current && rt.hit_set_used[which] < serial && rt.hit_set_used[which] <= done)
+			break;
+	}
+	if (which == RT_HIT_SETS)
+	{
+		if (rt.hit_current < 0)
+			return VK_NULL_HANDLE;
+		rt.hit_set_used[rt.hit_current] = serial;
+		return rt.hit_sets[rt.hit_current];
+	}
+	memset(&table, 0, sizeof(table));
+	table.buffer = rt.hit_buffer.buffer;
+	table.range = VK_WHOLE_SIZE;
+	for (slot = 0; slot < XGPU_WORLD_RT_TEXTURES; slot++)
+	{
+		images[slot].sampler = rt.sampler;
+		images[slot].imageView = rt.texture_views[slot] ? rt.texture_views[slot] : stand_in;
+		images[slot].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+	}
+	memset(writes, 0, sizeof(writes));
+	writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+	writes[0].dstSet = rt.hit_sets[which];
+	writes[0].dstBinding = 0;
+	writes[0].descriptorCount = 1;
+	writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+	writes[0].pBufferInfo = &table;
+	writes[1] = writes[0];
+	writes[1].dstBinding = 1;
+	writes[1].descriptorCount = XGPU_WORLD_RT_TEXTURES;
+	writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+	writes[1].pBufferInfo = NULL;
+	writes[1].pImageInfo = images;
+	rt.update_sets(rt.device, 2, writes, 0, NULL);
+	rt.hit_set_versions[which] = rt.hit_version;
+	rt.hit_set_used[which] = serial;
+	rt.hit_current = (int)which;
+	return rt.hit_sets[which];
+}
+
+/* the hit sets' layout, pool and sets (FALSE: none can be made) */
+static int rt_hit_sets_make(void)
+{
+	VkDescriptorSetLayoutBinding bindings[2];
+	VkDescriptorSetLayoutCreateInfo layout;
+	VkDescriptorPoolSize sizes[2];
+	VkDescriptorPoolCreateInfo pool;
+	VkDescriptorSetLayout layouts[RT_HIT_SETS];
+	VkDescriptorSetAllocateInfo allocate;
+	uint32_t which;
+
+	if (!rt.create_layout || !rt.destroy_layout || !rt.create_pool || !rt.destroy_pool || !rt.allocate_sets ||
+		!rt.update_sets)
+		return 0;
+	memset(bindings, 0, sizeof(bindings));
+	bindings[0].binding = 0;
+	bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+	bindings[0].descriptorCount = 1;
+	bindings[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+	bindings[1].binding = 1;
+	bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+	bindings[1].descriptorCount = XGPU_WORLD_RT_TEXTURES;
+	bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+	memset(&layout, 0, sizeof(layout));
+	layout.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+	layout.bindingCount = 2;
+	layout.pBindings = bindings;
+	if (rt.create_layout(rt.device, &layout, NULL, &rt.hit_layout) != VK_SUCCESS)
+	{
+		rt.hit_layout = VK_NULL_HANDLE;
+		return 0;
+	}
+	sizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+	sizes[0].descriptorCount = RT_HIT_SETS;
+	sizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+	sizes[1].descriptorCount = RT_HIT_SETS * XGPU_WORLD_RT_TEXTURES;
+	memset(&pool, 0, sizeof(pool));
+	pool.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+	pool.maxSets = RT_HIT_SETS;
+	pool.poolSizeCount = 2;
+	pool.pPoolSizes = sizes;
+	if (rt.create_pool(rt.device, &pool, NULL, &rt.hit_pool) != VK_SUCCESS)
+	{
+		rt.hit_pool = VK_NULL_HANDLE;
+		return 0;
+	}
+	for (which = 0; which < RT_HIT_SETS; which++)
+		layouts[which] = rt.hit_layout;
+	memset(&allocate, 0, sizeof(allocate));
+	allocate.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+	allocate.descriptorPool = rt.hit_pool;
+	allocate.descriptorSetCount = RT_HIT_SETS;
+	allocate.pSetLayouts = layouts;
+	if (rt.allocate_sets(rt.device, &allocate, rt.hit_sets) != VK_SUCCESS)
+	{
+		rt.destroy_pool(rt.device, rt.hit_pool, NULL);
+		rt.hit_pool = VK_NULL_HANDLE;
+		return 0;
+	}
+	rt.hit_current = -1;
+	return 1;
+}
+
+/* a mesh's build's input: its triangles, or an indexed one's positions
+and corners (each aligned) */
+static VkDeviceSize rt_mesh_input_bytes(const struct rt_mesh *mesh)
+{
+	if (!mesh->indexed)
+		return ((VkDeviceSize)mesh->count * 36u + 15u) & ~(VkDeviceSize)15u;
+	return (((VkDeviceSize)mesh->vertex_count * 12u + 15u) & ~(VkDeviceSize)15u) +
+		(((VkDeviceSize)mesh->count * 12u + 15u) & ~(VkDeviceSize)15u);
+}
+
 /* the meshes not yet built, built in one call into the early commands (a
 mesh that cannot be is left out from then on) */
 static void rt_meshes_build(VkCommandBuffer commands)
@@ -463,12 +935,15 @@ static void rt_meshes_build(VkCommandBuffer commands)
 	uint32_t id, count = 0, index, triangles = 0, largest = 0;
 	VkMemoryBarrier barrier;
 	int logged, own;
+	uint32_t geometry_count = 0;
 
 	if (!rt.pending)
 		return;
 	infos = calloc(rt.pending, sizeof(*infos));
-	geometries = calloc(rt.pending, sizeof(*geometries));
-	ranges = calloc(rt.pending, sizeof(*ranges));
+	/* (two geometries a mesh at most: an indexed one's opaque and
+	alpha-tested triangles) */
+	geometries = calloc(rt.pending * 2, sizeof(*geometries));
+	ranges = calloc(rt.pending * 2, sizeof(*ranges));
 	range_pointers = calloc(rt.pending, sizeof(*range_pointers));
 	scratch_offsets = calloc(rt.pending, sizeof(*scratch_offsets));
 	memset(&vertices, 0, sizeof(vertices));
@@ -478,7 +953,7 @@ static void rt_meshes_build(VkCommandBuffer commands)
 	for (id = 1; id < XGPU_STREAM_WORLD_AO_MESHES; id++)
 	{
 		if (rt.meshes[id] && !rt.meshes[id]->built)
-			vertex_bytes += ((VkDeviceSize)rt.meshes[id]->count * 36u + 15u) & ~(VkDeviceSize)15u;
+			vertex_bytes += rt_mesh_input_bytes(rt.meshes[id]);
 	}
 	if (!rt_buffer_make(vertex_bytes, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, 1, &vertices))
 		goto done;
@@ -489,35 +964,69 @@ static void rt_meshes_build(VkCommandBuffer commands)
 		VkAccelerationStructureBuildSizesInfoKHR sizes;
 		VkAccelerationStructureCreateInfoKHR create;
 		VkAccelerationStructureDeviceAddressInfoKHR address;
-		VkAccelerationStructureGeometryKHR *geometry = &geometries[count];
+		VkAccelerationStructureGeometryKHR *geometry = &geometries[geometry_count];
 		VkAccelerationStructureBuildGeometryInfoKHR *info = &infos[count];
+		uint32_t primitives[2], geometry_index, mesh_geometries;
 
 		if (!mesh || mesh->built)
 			continue;
 		/* (left out from now on, whether it is built or not) */
 		mesh->built = 1;
-		memcpy((unsigned char *)vertices.mapped + vertex_bytes, mesh->triangles, (size_t)mesh->count * 36u);
-		geometry->sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-		geometry->geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-		geometry->geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
-		geometry->geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
-		geometry->geometry.triangles.vertexData.deviceAddress = vertices.address + vertex_bytes;
-		geometry->geometry.triangles.vertexStride = 12;
-		geometry->geometry.triangles.maxVertex = mesh->count * 3 - 1;
-		geometry->geometry.triangles.indexType = VK_INDEX_TYPE_NONE_KHR;
-		geometry->flags = VK_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR;
-		vertex_bytes += ((VkDeviceSize)mesh->count * 36u + 15u) & ~(VkDeviceSize)15u;
+		/* its geometries: a mesh of triangles' one, an indexed one's opaque
+		triangles (geometry 0, opaque: never a ray's candidate) and, where
+		it has them, its alpha-tested ones (geometry 1, which the pass's
+		candidate loop tests), their corners after its positions */
+		mesh_geometries = mesh->indexed && mesh->opaque_count < mesh->count ? 2 : 1;
+		primitives[0] = mesh->indexed ? mesh->opaque_count : mesh->count;
+		primitives[1] = mesh->count - primitives[0];
+		for (geometry_index = 0; geometry_index < mesh_geometries; geometry_index++)
+		{
+			VkAccelerationStructureGeometryKHR *each = &geometry[geometry_index];
+
+			each->sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+			each->geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+			each->geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+			each->geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+			each->geometry.triangles.vertexData.deviceAddress = vertices.address + vertex_bytes;
+			each->geometry.triangles.vertexStride = 12;
+			if (mesh->indexed)
+			{
+				each->geometry.triangles.maxVertex = mesh->vertex_count - 1;
+				each->geometry.triangles.indexType = VK_INDEX_TYPE_UINT32;
+				each->geometry.triangles.indexData.deviceAddress = vertices.address + vertex_bytes +
+					(((VkDeviceSize)mesh->vertex_count * 12u + 15u) & ~(VkDeviceSize)15u);
+			}
+			else
+			{
+				each->geometry.triangles.maxVertex = mesh->count * 3 - 1;
+				each->geometry.triangles.indexType = VK_INDEX_TYPE_NONE_KHR;
+			}
+			each->flags = VK_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR |
+				(geometry_index == 0 ? VK_GEOMETRY_OPAQUE_BIT_KHR : 0);
+			ranges[geometry_count + geometry_index].primitiveCount = primitives[geometry_index];
+			/* (the alpha-tested ones' corners after the opaque ones', in bytes) */
+			ranges[geometry_count + geometry_index].primitiveOffset = geometry_index ? primitives[0] * 12u : 0;
+		}
+		if (mesh->indexed)
+		{
+			memcpy((unsigned char *)vertices.mapped + vertex_bytes, mesh->positions, (size_t)mesh->vertex_count * 12u);
+			memcpy((unsigned char *)vertices.mapped + vertex_bytes + (((VkDeviceSize)mesh->vertex_count * 12u + 15u) &
+				~(VkDeviceSize)15u), mesh->indices, (size_t)mesh->count * 12u);
+		}
+		else
+			memcpy((unsigned char *)vertices.mapped + vertex_bytes, mesh->triangles, (size_t)mesh->count * 36u);
+		vertex_bytes += rt_mesh_input_bytes(mesh);
 		own = mesh->count >= RT_OWN_TRIANGLES;
 		info->sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
 		info->type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
 		info->flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR |
 			(own && rt.compacted_sizes ? VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR : 0);
 		info->mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
-		info->geometryCount = 1;
+		info->geometryCount = mesh_geometries;
 		info->pGeometries = geometry;
 		memset(&sizes, 0, sizeof(sizes));
 		sizes.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
-		rt.sizes(rt.device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, info, &mesh->count, &sizes);
+		rt.sizes(rt.device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, info, primitives, &sizes);
 		memset(&create, 0, sizeof(create));
 		create.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
 		create.size = sizes.accelerationStructureSize;
@@ -553,8 +1062,8 @@ static void rt_meshes_build(VkCommandBuffer commands)
 		}
 		scratch_offsets[count] = scratch_bytes;
 		scratch_bytes += (sizes.buildScratchSize + rt.scratch_alignment - 1) & ~(VkDeviceSize)(rt.scratch_alignment - 1);
-		ranges[count].primitiveCount = mesh->count;
-		range_pointers[count] = &ranges[count];
+		range_pointers[count] = &ranges[geometry_count];
+		geometry_count += mesh_geometries;
 		count++;
 	}
 	if (!count)
@@ -616,10 +1125,13 @@ done:
 	/* (every mesh tried: their triangles let go of) */
 	for (id = 1; id < XGPU_STREAM_WORLD_AO_MESHES; id++)
 	{
-		if (rt.meshes[id] && rt.meshes[id]->built && rt.meshes[id]->triangles)
+		if (rt.meshes[id] && rt.meshes[id]->built)
 		{
 			free(rt.meshes[id]->triangles);
-			rt.meshes[id]->triangles = NULL;
+			free(rt.meshes[id]->positions);
+			free(rt.meshes[id]->indices);
+			rt.meshes[id]->triangles = rt.meshes[id]->positions = NULL;
+			rt.meshes[id]->indices = NULL;
 		}
 	}
 	rt.pending = 0;
@@ -849,9 +1361,14 @@ static int rt_instance_of(const struct xgpu_world_ao_instance *given, VkAccelera
 	}
 	instance->instanceCustomIndex = given->owner;
 	instance->mask = given->kind;
-	instance->instanceShaderBindingTableRecordOffset = 0;
+	/* (its mesh, for the hit table: ray queries have no other use for it) */
+	instance->instanceShaderBindingTableRecordOffset = given->mesh;
+	/* (the structure's opaque geometry stops a ray at once, its
+	alpha-tested one is a candidate: the meshes' geometries say which; an
+	object's every triangle a candidate, so that the pass leaves a pixel's
+	own out) */
 	instance->flags = given->kind == XGPU_WORLD_AO_INSTANCE_STRUCTURE ?
-		VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR | VK_GEOMETRY_INSTANCE_FORCE_OPAQUE_BIT_KHR :
+		VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR :
 		VK_GEOMETRY_INSTANCE_FORCE_NO_OPAQUE_BIT_KHR | (rt.flip ? VK_GEOMETRY_INSTANCE_TRIANGLE_FLIP_FACING_BIT_KHR : 0);
 	instance->accelerationStructureReference = mesh->address;
 	return 1;
@@ -925,6 +1442,7 @@ int xgpu_vulkan_rt_build(void)
 	if (!rt.ready)
 		return 0;
 	rt_build_time_read();
+	rt_textures_find();
 	if (rt.compacted_count && xgpu_vulkan_completed() >= rt.compacted_serial)
 		rt_meshes_compact(xgpu_vulkan_early_commands());
 	if (!rt.given_new)
@@ -1026,6 +1544,12 @@ int xgpu_vulkan_rt_create(const struct xgpu_vulkan_rt_device *device)
 	LOAD(vkGetQueryPoolResults, query_results)
 	LOAD(vkCmdWriteAccelerationStructuresPropertiesKHR, properties)
 	LOAD(vkCmdCopyAccelerationStructureKHR, copy)
+	LOAD(vkCreateDescriptorSetLayout, create_layout)
+	LOAD(vkDestroyDescriptorSetLayout, destroy_layout)
+	LOAD(vkCreateDescriptorPool, create_pool)
+	LOAD(vkDestroyDescriptorPool, destroy_pool)
+	LOAD(vkAllocateDescriptorSets, allocate_sets)
+	LOAD(vkUpdateDescriptorSets, update_sets)
 #undef LOAD
 	rt.ready = rt.create && rt.destroy && rt.sizes && rt.build && rt.structure_address && rt.buffer_address &&
 		rt.create_buffer && rt.destroy_buffer && rt.requirements && rt.allocate && rt.free_memory && rt.bind && rt.map &&
@@ -1044,6 +1568,11 @@ int xgpu_vulkan_rt_create(const struct xgpu_vulkan_rt_device *device)
 		if (rt.create_queries(rt.device, &create, NULL, &rt.times) != VK_SUCCESS)
 			rt.times = VK_NULL_HANDLE;
 	}
+	/* (what a hit reads: without its sets, no ray queries, as the shaders
+	that trace bind them) */
+	rt.hit_current = -1;
+	if (rt.ready && !rt_hit_sets_make())
+		rt.ready = 0;
 	/* (the large meshes' compaction) */
 	if (rt.ready && rt.properties && rt.copy && rt.create_queries && rt.reset_queries && rt.query_results)
 	{
@@ -1090,6 +1619,14 @@ void xgpu_vulkan_rt_destroy(void)
 		rt.destroy_queries(rt.device, rt.times, NULL);
 	if (rt.compacted_sizes)
 		rt.destroy_queries(rt.device, rt.compacted_sizes, NULL);
+	rt_buffer_free(&rt.hit_buffer);
+	free(rt.hit_words);
+	if (rt.stand_in)
+		xgpu_vulkan_image_destroy(rt.stand_in);
+	if (rt.hit_pool)
+		rt.destroy_pool(rt.device, rt.hit_pool, NULL);
+	if (rt.hit_layout)
+		rt.destroy_layout(rt.device, rt.hit_layout, NULL);
 	free(rt.garbage);
 	free(rt.given);
 	memset(&rt, 0, sizeof(rt));

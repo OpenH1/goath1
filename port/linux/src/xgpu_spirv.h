@@ -71,6 +71,19 @@ combined image sampler, 3D, linear, clamped to its edge) and its table of
 cells (3D, RGBA8, read with texelFetch), and the window's block (a uniform
 buffer) */
 #define XGPU_SPIRV_SET_OCCLUSION 3
+/* (with ray queries) what a ray's hit reads (xgpu_vulkan_rt.c's hit set):
+the hit table, a storage buffer of words, and XGPU_WORLD_RT_TEXTURES
+textures' slots, sampled at an alpha-tested candidate */
+#define XGPU_SPIRV_SET_RT_HITS 4
+#define XGPU_SPIRV_BINDING_RT_HIT_TABLE 0
+#define XGPU_SPIRV_BINDING_RT_HIT_TEXTURES 1
+/* (its layout: the meshes' records, four words each, then the materials'
+from XGPU_SPIRV_RT_HIT_MATERIALS, sixteen each; the textures' slots; the
+level an alpha map is sampled at) */
+#define XGPU_SPIRV_RT_HIT_MESHES 4096u
+#define XGPU_SPIRV_RT_HIT_MATERIALS (4096u * 4u)
+#define XGPU_SPIRV_RT_HIT_TEXTURES 512u
+#define XGPU_SPIRV_RT_HIT_LEVEL 1.0f
 #define XGPU_SPIRV_BINDING_WORLD_SDF 1
 #define XGPU_SPIRV_BINDING_WORLD_AO 2
 #define XGPU_SPIRV_BINDING_WORLD_SDF_TABLE 3

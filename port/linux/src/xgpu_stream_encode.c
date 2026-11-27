@@ -1215,6 +1215,88 @@ void xgpu_backend_world_ao_mesh(unsigned long id, unsigned long count, const flo
 	record_body->pad[0] = record_body->pad[1] = 0;
 }
 
+void xgpu_backend_world_ao_mesh_indexed(unsigned long id, const void *data, unsigned long size)
+{
+	const struct xgpu_world_rt_mesh *mesh = data;
+	struct xgpu_stream_world_ao_mesh *record_body;
+	unsigned char *place;
+
+	if (!stream.open || !id || id >= XGPU_STREAM_WORLD_AO_MESHES || !data || size < sizeof(*mesh) ||
+		size > 0x7fffffffUL || mesh->triangle_count > XGPU_STREAM_WORLD_AO_MESH_TRIANGLES)
+		return;
+	record_body = record_data(XGPU_STREAM_WORLD_AO_MESH, sizeof(*record_body), carried_one((uint32_t)size), &place);
+	record_body->id = (uint32_t)id;
+	record_body->count = mesh->triangle_count;
+	record_body->size = (uint32_t)size;
+	record_body->data = carry_one(&place, data, (uint32_t)size);
+	record_body->kind = XGPU_WORLD_AO_MESH_INDEXED;
+	record_body->pad[0] = record_body->pad[1] = 0;
+}
+
+void xgpu_backend_world_rt_textures(const struct xgpu_backend_rt_texture *textures, unsigned long count)
+{
+	struct xgpu_world_rt_texture described[64];
+	struct xgpu_stream_world_ao_mesh *record_body;
+	unsigned char *place;
+	unsigned long index;
+
+	if (!stream.open || !count)
+		return;
+	/* (a record of at most 64 at a time) */
+	if (count > 64)
+	{
+		xgpu_backend_world_rt_textures(textures, 64);
+		xgpu_backend_world_rt_textures(textures + 64, count - 64);
+		return;
+	}
+	memset(described, 0, sizeof(described));
+	for (index = 0; index < count; index++)
+	{
+		struct xgpu_stream_texture_stage *stage = &described[index].stage;
+
+		described[index].slot = (uint32_t)textures[index].slot;
+		stage->sampled = 1;
+		stage->sampler_type = _xgpu_sampler_2d;
+#ifndef XGPU_STREAM_TEST
+		if (textures[index].header)
+		{
+			/* (an Xbox texture's header: its format and size words, as
+			the backend reads them: D3D's Common, Data, Lock, Format, Size) */
+			const uint32_t *words = textures[index].header;
+
+			stage->source = XGPU_SOURCE_TEXTURE;
+			stage->resource = STREAM_ADDRESS(textures[index].header);
+			stage->resource_format = words[3];
+			stage->resource_size = words[4];
+		}
+		else if (textures[index].image)
+		{
+			const struct xgpu_image *image = xgpu_image_get(textures[index].image);
+
+			if (image)
+			{
+				stage->source = XGPU_STREAM_SOURCE_IMAGE;
+				stage->resource = textures[index].image;
+				stage->resource_format = (uint32_t)image->format;
+				stage->resource_size = (uint32_t)image->serial;
+				stage->data = STREAM_ADDRESS(image->pixels);
+				stage->width = (uint32_t)image->width;
+				stage->height = (uint32_t)image->height;
+				stage->levels = (uint32_t)image->levels;
+			}
+		}
+#endif
+	}
+	record_body = record_data(XGPU_STREAM_WORLD_AO_MESH, sizeof(*record_body),
+		carried_one((uint32_t)(count * sizeof(described[0]))), &place);
+	record_body->id = 0;
+	record_body->count = (uint32_t)count;
+	record_body->size = (uint32_t)(count * sizeof(described[0]));
+	record_body->data = carry_one(&place, described, record_body->size);
+	record_body->kind = XGPU_WORLD_AO_MESH_TEXTURES;
+	record_body->pad[0] = record_body->pad[1] = 0;
+}
+
 void xgpu_backend_world_ao_mesh_release(unsigned long id)
 {
 	struct xgpu_stream_world_ao_mesh *record_body;

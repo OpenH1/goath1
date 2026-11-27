@@ -852,6 +852,28 @@ void halo_world_ao_mesh(unsigned long id, unsigned long count, float const *tria
 		xgpu_backend_world_ao_mesh(id, count, triangles);
 }
 
+_Static_assert(sizeof(struct world_rt_mesh_header) == sizeof(struct xgpu_world_rt_mesh) &&
+	sizeof(struct world_rt_vertex) == sizeof(struct xgpu_world_rt_vertex) &&
+	sizeof(struct world_rt_material) == sizeof(struct xgpu_world_rt_material) &&
+	offsetof(struct world_rt_material, self_illumination) == offsetof(struct xgpu_world_rt_material, self_illumination) &&
+	sizeof(struct world_rt_texture) == sizeof(struct xgpu_backend_rt_texture) &&
+	WORLD_RT_MATERIALS == XGPU_WORLD_RT_MATERIALS && WORLD_RT_TEXTURES == XGPU_WORLD_RT_TEXTURES &&
+	WORLD_RT_MATERIAL_ALPHA_TESTED == XGPU_WORLD_RT_MATERIAL_ALPHA_TESTED &&
+	WORLD_RT_MATERIAL_TWO_SIDED == XGPU_WORLD_RT_MATERIAL_TWO_SIDED &&
+	WORLD_RT_MATERIAL_TRANSPARENT == XGPU_WORLD_RT_MATERIAL_TRANSPARENT, "the ray-traced scene's meshes as drawn");
+
+void halo_world_rt_mesh(unsigned long id, void const *data, unsigned long size)
+{
+	if (xgpu_backend_capabilities.ray_queries)
+		xgpu_backend_world_ao_mesh_indexed(id, data, size);
+}
+
+void halo_world_rt_textures(struct world_rt_texture const *textures, unsigned long count)
+{
+	if (xgpu_backend_capabilities.ray_queries)
+		xgpu_backend_world_rt_textures((struct xgpu_backend_rt_texture const *)textures, count);
+}
+
 void halo_world_ao_mesh_release(unsigned long id)
 {
 	if (xgpu_backend_capabilities.ray_queries)
