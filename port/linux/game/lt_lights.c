@@ -466,7 +466,7 @@ static void lt_dump(int count, int window)
 	for (index = 0; index < count; index++)
 	{
 		struct xgpu_stream_lt_light const *light = &lt.lights[index];
-		char const *tag = light->gel_tag >= 0 ? tag_get_name(light->gel_tag) : NULL;
+		char const *tag = light->gel_tag != -1 ? tag_get_name(light->gel_tag) : NULL;
 
 		fprintf(lt.dump, "%s{\"id\":\"%08x%08x\",\"source\":\"%s\",\"kind\":\"%s\",\"flags\":%u,\"object\":%d,"
 			"\"owner\":%u", index ? "," : "", light->id[1], light->id[0], sources[(light->id[1] >> 24) & 7],
@@ -479,9 +479,9 @@ static void lt_dump(int count, int window)
 		lt_dump_vector(lt.dump, "color", light->color);
 		lt_dump_vector(lt.dump, "power", light->power);
 		fprintf(lt.dump, ",\"power_scale\":%.6g,\"emitter_radius\":%.6g,\"radius\":%.6g,\"cone_cosines\":[%.6g,%.6g],"
-			"\"angular_diameter\":%.6g,\"gel_slot\":%d,\"gel\":\"", (double)light->power_scale,
+			"\"angular_diameter\":%.6g,\"gel_slot\":%d,\"gel_tag\":%d,\"gel\":\"", (double)light->power_scale,
 			(double)light->emitter_radius, (double)light->range, (double)light->cone_inner, (double)light->cone_outer,
-			(double)light->angular_diameter, light->gel_slot);
+			(double)light->angular_diameter, light->gel_slot, light->gel_tag);
 		for (; tag && *tag; tag++)
 			fprintf(lt.dump, *tag == '\\' || *tag == '"' ? "\\%c" : "%c", *tag);
 		fprintf(lt.dump, "\"}");
