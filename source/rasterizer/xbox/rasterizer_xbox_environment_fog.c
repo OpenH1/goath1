@@ -394,6 +394,43 @@ static struct render_animation const *cached_animation = NULL;
 static boolean reported_too_many_opaque_models = FALSE;
 static boolean local_fog_screen_first_time = TRUE;
 
+/* port: the HUD's Spartan link draws a teammate's view as the player's own
+window (port/linux/game/spartan_link.c), so its fog screen would move the
+window's layers, wind and last camera by the teammate's camera, and the
+player's next frame by the difference back: the fog's layers jumped every
+frame. The window's state is kept as the feed begins and put back as it
+ends (as lights_port_keep keeps the lights') */
+static struct
+{
+	boolean kept;
+	boolean first_time;
+	real_matrix4x3 previous_camera_matrix[MAXIMUM_WINDOWS];
+	struct rasterizer_environment_fog_screen_window windows[MAXIMUM_WINDOWS];
+} fog_screen_port_kept;
+
+void fog_screen_port_keep(
+	boolean keep)
+{
+	if (keep)
+	{
+		fog_screen_port_kept.first_time = local_fog_screen_first_time;
+		csmemcpy(fog_screen_port_kept.previous_camera_matrix, previous_camera_matrix,
+			sizeof(previous_camera_matrix));
+		csmemcpy(fog_screen_port_kept.windows, windows, sizeof(windows));
+		fog_screen_port_kept.kept = TRUE;
+	}
+	else if (fog_screen_port_kept.kept)
+	{
+		local_fog_screen_first_time = fog_screen_port_kept.first_time;
+		csmemcpy(previous_camera_matrix, fog_screen_port_kept.previous_camera_matrix,
+			sizeof(previous_camera_matrix));
+		csmemcpy(windows, fog_screen_port_kept.windows, sizeof(windows));
+		fog_screen_port_kept.kept = FALSE;
+	}
+
+	return;
+}
+
 static boolean rasterizer_environment_fog_screen_is_active(
 	void);
 static boolean rasterizer_environment_fog_screen_layer_count_valid(

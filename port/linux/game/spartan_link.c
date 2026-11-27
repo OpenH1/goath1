@@ -182,6 +182,8 @@ void halo_screenshot_named(const char *name);
 
 /* source/objects/object_lights.c */
 void lights_port_keep(boolean keep);
+/* source/rasterizer/xbox/rasterizer_xbox_environment_fog.c */
+void fog_screen_port_keep(boolean keep);
 
 /* port/linux/game/render_interpolation.c */
 void render_interpolation_unit_camera_position(long unit_index, real_point3d *position);
@@ -2623,8 +2625,10 @@ static boolean spartan_link_feed_prepare(
 	spartan_link.posed_unit = through_eyes && object_get(feed->unit_index)->object.parent_object_index == NONE ?
 		feed->unit_index : NONE;
 	halo_view_begin(view, width, height);
-	/* (what the view's drawing sets of the lights, put back after it) */
+	/* (what the view's drawing sets of the lights and the fog screen, put
+	back after it) */
 	lights_port_keep(TRUE);
+	fog_screen_port_keep(TRUE);
 	if (spartan_link.log)
 	{
 		platform_log("spartan link: %ld %d %ld %d %.4f %.4f %.4f %.5f %.5f %.5f %.4f %.3f %.3f", game_time_get(),
@@ -2673,6 +2677,7 @@ void spartan_link_feed_end(
 		spartan_link.drawing_microseconds += platform_shared_clock_microseconds() - spartan_link.drawing_began;
 	halo_view_end();
 	lights_port_keep(FALSE);
+	fog_screen_port_keep(FALSE);
 	spartan_link.drawing = FALSE;
 	spartan_link.hidden_unit = NONE;
 	spartan_link.posed_unit = NONE;
