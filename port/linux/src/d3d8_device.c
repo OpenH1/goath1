@@ -5894,6 +5894,31 @@ int halo_dynamic_lights_gel(const void *gel_texture, const void *attenuation_tex
 		(double)dynamic_lights.falloff[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF / 2],
 		(double)dynamic_lights.falloff[3 * XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF / 4],
 		(double)dynamic_lights.falloff[7 * XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF / 8]);
+	/* (HALO_FLASHLIGHT_GEL_DUMP, checking: the cookie and the gel's faces as
+	pictures in the screenshot folder) */
+	if (getenv("HALO_FLASHLIGHT_GEL_DUMP"))
+	{
+		unsigned char *bgra = malloc(XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE * XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE * 4);
+
+		for (index = 0; bgra && index < XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE * XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE;
+			index++)
+		{
+			bgra[index * 4] = bgra[index * 4 + 1] = bgra[index * 4 + 2] = dynamic_lights.cookie[index];
+			bgra[index * 4 + 3] = 255;
+		}
+		if (bgra)
+			xgpu_write_bmp("flashlight_cookie", bgra, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE,
+				XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE, FALSE);
+		free(bgra);
+		for (face = 0; face < 6; face++)
+		{
+			char name[32];
+
+			snprintf(name, sizeof(name), "flashlight_gel_face%d_", face);
+			xgpu_write_bmp(name, (const unsigned char *)gel.faces[face], gel.description.width, gel.description.height,
+				FALSE);
+		}
+	}
 	free(attenuation);
 	for (face = 0; face < 6; face++)
 		free(gel.faces[face]);
