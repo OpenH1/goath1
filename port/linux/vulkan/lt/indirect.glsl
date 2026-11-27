@@ -444,8 +444,9 @@ vec4 specular_main(ivec2 pixel)
         distance += hit.t;
         hits++;
     }
-    // (the hits' distance their mean: a miss's a 0 where none met the scene)
-    return hits > 0 ? vec4(sum / float(rays), max(distance / float(hits), 1.0e-3)) : vec4(0.0);
+    // (the hits' radiance and distance their means: the coverage's count, SPEC_HISTORY, keeps the misses' share; a 0
+    // where none met the scene)
+    return hits > 0 ? vec4(sum / float(hits), max(distance / float(hits), 1.0e-3)) : vec4(0.0);
 }
 
 // the bounce's samples about pixel on its surface (the 5x5 blocks about its own, Gaussian, 3 pixels; each block's traced pixel within a
