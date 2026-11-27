@@ -571,7 +571,7 @@ boolean lt_lights_sun_shadow(long object_index)
 	real_point3d center;
 	real radius;
 	long index;
-	collision_result collision;
+	struct collision_result collision;
 
 	if (pass_sun < 0)
 	{
