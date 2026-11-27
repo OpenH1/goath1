@@ -49,6 +49,10 @@ struct world_proxy_shape
 {
 	short kind; /* world_proxy_kind */
 	short node_index; /* the node it rides on (-1: the object's root) */
+	/* the node's collision permutation it is of: the object has it while
+	that node's is this one (world_proxies_source_permutations; a Jackal's
+	shield up, 0, or off, 1) */
+	short permutation;
 	/* sphere: a (centre), radius; capsule: a, b (its segment's ends),
 	radius; box: a (centre), axes[0..2] (its half extents along each, in
 	the node's space), radius unused */

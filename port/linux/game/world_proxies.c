@@ -87,6 +87,8 @@ static struct
 	struct world_proxies_source source;
 	struct world_proxies_source_instance instances[WORLD_PROXIES_MAXIMUM_INSTANCES];
 	struct world_proxies_frame frames[WORLD_PROXIES_SOURCE_MAXIMUM_NODES];
+	/* (an instance's nodes' collision permutations now) */
+	signed char permutations[WORLD_PROXIES_SOURCE_MAXIMUM_NODES];
 	struct world_proxies_candidate candidates[WORLD_PROXY_MAXIMUM_PER_WINDOW];
 	long candidate_count, candidate_slots;
 } world_proxies;
@@ -799,6 +801,31 @@ static void biped_shapes(struct world_proxies_source const *source, struct world
 	set_keep_largest(&all, WORLD_PROXIES_BIPED_SHAPES);
 	for (i = 0; i < all.count; i++)
 		set_add(set, &all.shapes[i]);
+	/* (and each kept node's other collision permutations' shapes, which the
+	object has instead while its region is so: a Jackal's shield off as it
+	dies leaves its frame, not the shield, #1311; none where the permutation
+	has no geometry, so then the node has none) */
+	for (i = 0; i < all.count; i++)
+	{
+		short node = all.shapes[i].node_index, permutation;
+
+		if (node < 0 || node >= source->node_count)
+			continue;
+		for (permutation = 1; permutation < source->nodes[node].permutation_count &&
+			permutation < WORLD_PROXIES_SOURCE_PERMUTATIONS; permutation++)
+		{
+			struct world_proxies_source other = *source;
+			struct world_proxy_shape shape;
+
+			other.nodes[node].vertex_count = source->nodes[node].other_vertex_counts[permutation - 1];
+			other.nodes[node].vertices = source->nodes[node].other_vertices[permutation - 1];
+			if (other.nodes[node].vertex_count < 4)
+				continue;
+			biped_node_shape(&other, node, &shape);
+			shape.permutation = permutation;
+			set_add(set, &shape);
+		}
+	}
 }
 
 /* a node's collision vertices' bounds in another node's space (the
@@ -1332,6 +1359,30 @@ void world_proxies_field_place(struct world_proxies_source_field const *field, s
 	}
 }
 
+/* whether an object has a shape now: the shape is of its node's
+collision permutation the object has (permutations: count of them, from
+world_proxies_source_permutations; a node past them has its first) */
+static int shape_present(struct world_proxy_shape const *shape, signed char const *permutations, short count)
+{
+	int permutation = shape->node_index >= 0 && shape->node_index < count ? permutations[shape->node_index] : 0;
+
+	return shape->permutation == permutation;
+}
+
+/* an object's permutations, where its set has shapes of more than one
+(its count: 0, every node's first) */
+static short instance_permutations(struct world_proxy_set const *set, long id)
+{
+	short shape_index;
+
+	for (shape_index = 0; shape_index < set->count; shape_index++)
+	{
+		if (set->shapes[shape_index].permutation != 0)
+			return world_proxies_source_permutations(id, world_proxies.permutations, WORLD_PROXIES_SOURCE_MAXIMUM_NODES);
+	}
+	return 0;
+}
+
 long world_proxies_place(long definition, struct world_proxies_frame const *frames, short node_count,
 	struct world_proxy *proxies, long maximum)
 {
@@ -1343,6 +1394,9 @@ long world_proxies_place(long definition, struct world_proxies_frame const *fram
 	{
 		struct world_proxy_shape const *shape = &set->shapes[shape_index];
 
+		/* (as the definition stands, its nodes' first permutations) */
+		if (shape->permutation != 0)
+			continue;
 		shape_place(shape, &frames[shape->node_index >= 0 && shape->node_index < node_count ? shape->node_index : 0],
 			&proxies[count++]);
 	}
@@ -1369,7 +1423,7 @@ long world_proxies_scene(float const camera_position[3], float reach, struct wor
 		struct world_proxies_source_instance const *instance = &world_proxies.instances[instance_index];
 		struct world_proxy_set const *set = world_proxies_definition(instance->definition);
 		struct world_proxies_source_field field;
-		short node_count, shape_index;
+		short node_count, shape_index, permutation_count;
 		int fielded = 0;
 
 		/* (a static placement the field holds is the structure's) */
@@ -1378,6 +1432,7 @@ long world_proxies_scene(float const camera_position[3], float reach, struct wor
 		node_count = world_proxies_source_nodes(instance->id, world_proxies.frames, WORLD_PROXIES_SOURCE_MAXIMUM_NODES);
 		if (node_count <= 0)
 			continue;
+		permutation_count = instance_permutations(set, instance->id);
 		/* (an occlusion field, drawn or on its way, stands in for the shapes
 		it is fielded for: not a distance, so neither is here) */
 		for (shape_index = 0; shape_index < set->count; shape_index++)
@@ -1389,6 +1444,8 @@ long world_proxies_scene(float const camera_position[3], float reach, struct wor
 			float centre[3], offset[3];
 
 			if (fielded && world_proxy_set_fielded(set, shape_index))
+				continue;
+			if (!shape_present(shape, world_proxies.permutations, permutation_count))
 				continue;
 			shape_place(shape, &world_proxies.frames[shape->node_index >= 0 && shape->node_index < node_count ?
 				shape->node_index : 0], &proxies[count]);
@@ -1422,7 +1479,7 @@ long world_proxies_window(float const camera_position[3], struct world_proxy *pr
 		struct world_proxies_source_instance const *instance = &world_proxies.instances[instance_index];
 		struct world_proxy_set const *set = world_proxies_definition(instance->definition);
 		struct world_proxies_source_field field;
-		short node_count, shape_index;
+		short node_count, shape_index, permutation_count;
 		/* (an object with an occlusion field drawn: the field in place of the
 		shapes it stands in for (world_proxy_set_fielded): a vehicle's boxes,
 		whose wheels keep their spheres, which turn and spring; a piece of
@@ -1436,6 +1493,7 @@ long world_proxies_window(float const camera_position[3], struct world_proxy *pr
 		node_count = world_proxies_source_nodes(instance->id, world_proxies.frames, WORLD_PROXIES_SOURCE_MAXIMUM_NODES);
 		if (node_count <= 0)
 			continue;
+		permutation_count = instance_permutations(set, instance->id);
 		for (shape_index = 0; shape_index < set->count; shape_index++)
 			fielded = fielded || world_proxy_set_fielded(set, shape_index);
 		boxless = fielded && instance->field_awaited;
@@ -1458,6 +1516,8 @@ long world_proxies_window(float const camera_position[3], struct world_proxy *pr
 				struct world_proxy_shape const *shape = &set->shapes[shape_index];
 
 				if (boxless && world_proxy_set_fielded(set, shape_index))
+					continue;
+				if (!shape_present(shape, world_proxies.permutations, permutation_count))
 					continue;
 				shape_place(shape, &world_proxies.frames[shape->node_index >= 0 && shape->node_index < node_count ?
 					shape->node_index : 0], &placed[0]);

@@ -67,6 +67,20 @@ short world_proxies_source_nodes(long id, struct world_proxies_frame *frames, sh
 	return 0;
 }
 
+/* (each node's collision permutation now, of every instance: fake_permutation_count
+of them, 0 none known) */
+static signed char fake_permutations[4];
+static short fake_permutation_count;
+
+short world_proxies_source_permutations(long id, signed char *permutations, short maximum)
+{
+	short count = fake_permutation_count < maximum ? fake_permutation_count : maximum;
+
+	(void)id;
+	memcpy(permutations, fake_permutations, (size_t)count);
+	return count;
+}
+
 int world_proxies_source_frustum(float planes[4][4])
 {
 	memcpy(planes, fake.planes, sizeof(fake.planes));
@@ -836,6 +850,56 @@ static void skeleton_case(void)
 		CHECK(proxies[index].v[2][0] > 0.12f, "scaled radius %g", proxies[index].v[2][0]);
 }
 
+/* a node's collision permutations: the shape of the one the object has
+now, none where it has no geometry (a Jackal's shield off as it dies: its
+frame left, the shield's shape gone, #1311) */
+static void permutation_case(void)
+{
+	static float frame_vertices[CYLINDER_VERTICES][4];
+	struct world_proxy_set const *set;
+	float const camera[3] = { -5.0f, 0.0f, 1.0f };
+	struct world_proxy proxies[WORLD_PROXY_MAXIMUM_PER_WINDOW];
+	long owners[WORLD_PROXY_MAXIMUM_PER_WINDOW], count, index, placed;
+	short node;
+
+	biped_definition();
+	/* the thigh's second permutation has no geometry; the calf's a thinner
+	cylinder */
+	fake.sources[1].nodes[1].permutation_count = 2;
+	fake.sources[1].nodes[2].permutation_count = 2;
+	cylinder(frame_vertices, 0.5f, 0.03f);
+	fake.sources[1].nodes[2].other_vertex_counts[0] = CYLINDER_VERTICES;
+	fake.sources[1].nodes[2].other_vertices[0] = frame_vertices[0];
+	set = world_proxies_definition(1);
+	CHECK(set && set->count == 3, "%d shapes", set ? set->count : -1);
+	fake.instance_count = 0;
+	fake.frustum = 0;
+	add_instance(7, 1, 0.0f, 0.0f, 0.0f);
+	fake.frame_counts[0] = 3;
+	for (node = 0; node < 3; node++)
+	{
+		fake.frames[0][node] = fake.sources[1].nodes[node].default_frame;
+		fake.frames[0][node].position[0] += 3.0f;
+	}
+	/* the first permutations: the thigh's and the calf's, as before */
+	fake_permutation_count = 3;
+	memset(fake_permutations, 0, sizeof(fake_permutations));
+	count = world_proxies_window(camera, proxies, owners, WORLD_PROXY_MAXIMUM_PER_WINDOW, &dynamic_count);
+	CHECK(count == 2, "%ld up", count);
+	for (index = 0; index < count; index++)
+		CHECK(proxies[index].v[2][0] > 0.06f, "a first permutation's radius %g", proxies[index].v[2][0]);
+	/* the others: no thigh, the thin calf */
+	fake_permutations[1] = fake_permutations[2] = 1;
+	count = world_proxies_window(camera, proxies, owners, WORLD_PROXY_MAXIMUM_PER_WINDOW, &dynamic_count);
+	CHECK(count == 1 && proxies[0].v[2][0] < 0.04f, "%ld off: radius %g", count, count ? proxies[0].v[2][0] : 0.0f);
+	/* the scene's list too */
+	placed = world_proxies_scene(camera, 100.0f, proxies, owners, WORLD_PROXY_MAXIMUM_PER_WINDOW);
+	CHECK(placed == 1 && proxies[0].v[2][0] < 0.04f, "%ld in the scene's", placed);
+	/* the definition placed as it stands: its first permutations */
+	CHECK(world_proxies_place(1, fake.frames[0], 3, proxies, WORLD_PROXY_MAXIMUM_PER_WINDOW) == 2, "placed as it stands");
+	fake_permutation_count = 0;
+}
+
 static void owner_case(void)
 {
 	float const camera[3] = { -5.0f, 0.0f, 1.0f };
@@ -1253,6 +1317,8 @@ int main(int argc, char **argv)
 		culling_case();
 	else if (!strcmp(name, "skeleton"))
 		skeleton_case();
+	else if (!strcmp(name, "permutation"))
+		permutation_case();
 	else if (!strcmp(name, "owner"))
 		owner_case();
 	else if (!strcmp(name, "baked"))

@@ -264,6 +264,9 @@ int world_proxies_source_definition(long definition, struct world_proxies_source
 		node->vertex_count = 0;
 		node->vertex_stride = sizeof(struct collision_vertex);
 		node->vertices = NULL;
+		node->permutation_count = 0;
+		memset(node->other_vertex_counts, 0, sizeof(node->other_vertex_counts));
+		memset(node->other_vertices, 0, sizeof(node->other_vertices));
 		/* (a collision node is the model's node of its index, as the collision
 		tests take them: collision_models.c) */
 		if (collision_model && collision_model->nodes.address && node_index < collision_model->nodes.count)
@@ -275,11 +278,25 @@ int world_proxies_source_definition(long definition, struct world_proxies_source
 			{
 				struct collision_bsp const *bsp = TAG_BLOCK_GET_ELEMENT(&collision_node->bsps, 0, struct collision_bsp);
 
+				short permutation;
+
 				if (bsp->vertices.address && bsp->vertices.count > 0)
 				{
 					node->vertex_count = bsp->vertices.count;
 					node->vertices = &TAG_BLOCK_GET_ELEMENT(&bsp->vertices, 0, struct collision_vertex)->point.x;
 					collision_any = TRUE;
+				}
+				/* (its other permutations: a region's other pieces, which the
+				object may have instead, world_proxies_source_permutations) */
+				node->permutation_count = (short)MIN(collision_node->bsps.count, WORLD_PROXIES_SOURCE_PERMUTATIONS);
+				for (permutation = 1; permutation < node->permutation_count; permutation++)
+				{
+					bsp = TAG_BLOCK_GET_ELEMENT(&collision_node->bsps, permutation, struct collision_bsp);
+					if (!bsp->vertices.address || bsp->vertices.count <= 0)
+						continue;
+					node->other_vertex_counts[permutation - 1] = bsp->vertices.count;
+					node->other_vertices[permutation - 1] =
+						&TAG_BLOCK_GET_ELEMENT(&bsp->vertices, 0, struct collision_vertex)->point.x;
 				}
 			}
 		}
@@ -348,6 +365,41 @@ short world_proxies_source_nodes(long id, struct world_proxies_frame *frames, sh
 	count = MIN(count, maximum);
 	for (node_index = 0; node_index < count; node_index++)
 		frame_from_matrix(&matrices[node_index], &frames[node_index]);
+	return count;
+}
+
+short world_proxies_source_permutations(long id, signed char *permutations, short maximum)
+{
+	struct object_datum *object = (struct object_datum *)object_try_and_get(id);
+	struct object_definition const *definition;
+	struct collision_model const *collision_model;
+	short count, node_index;
+
+	if (!object)
+		return 0;
+	definition = object_definition_get(object->definition_index);
+	if (!definition || definition->object.collision_model.index == NONE)
+		return 0;
+	collision_model = collision_model_definition_get(definition->object.collision_model.index);
+	if (!collision_model || !collision_model->nodes.address)
+		return 0;
+	count = (short)MIN(collision_model->nodes.count, maximum);
+	for (node_index = 0; node_index < count; node_index++)
+	{
+		struct collision_node const *collision_node =
+			TAG_BLOCK_GET_ELEMENT(&collision_model->nodes, node_index, struct collision_node);
+		short permutation = 0;
+
+		/* (as collision_models.c takes it: the region's permutation, pinned
+		to the node's BSPs; a node of no region keeps its first) */
+		if (collision_node->region_index >= 0 && collision_node->region_index < MAXIMUM_REGIONS_PER_OBJECT)
+		{
+			permutation = collision_node->bsps.count > 0 ?
+				(short)PIN(object->object.region_permutations[collision_node->region_index], 0, collision_node->bsps.count - 1) :
+				-1;
+		}
+		permutations[node_index] = (signed char)MIN(permutation, 127);
+	}
 	return count;
 }
 

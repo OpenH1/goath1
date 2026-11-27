@@ -52,6 +52,14 @@ int world_proxies_source_field(long definition, struct world_proxies_source_fiel
 	return 0;
 }
 
+short world_proxies_source_permutations(long id, signed char *permutations, short maximum)
+{
+	(void)id;
+	(void)permutations;
+	(void)maximum;
+	return 0;
+}
+
 int world_proxies_source_frustum(float planes[4][4])
 {
 	(void)planes;
