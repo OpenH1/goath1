@@ -200,6 +200,7 @@ struct game_options;
 #include "speedrun_state.h" /* port: port/linux/game/speedrun_state.c */
 #include "subtitles.h" /* port: port/linux/game/subtitles.c */
 #include "practice.h" /* port: port/linux/game/practice.c */
+#include "campaign_score.h" /* port: port/linux/game/campaign_score.c */
 #include "network_latency_trace.h" /* port: port/linux/game/network_latency_trace.c */
 
 /* network_game_globals.c's */
@@ -490,6 +491,9 @@ static void game_tick_after_substeps(
 	/* port: a co-op host's extra enemies placed (network_coop.c): in the
 	tick, which a demo's playback of the host's ticks runs as they ran */
 	network_coop_tick_end();
+	/* port: campaign scoring's word to the co-op clients (campaign_score.c:
+	it reads the game and changes nothing) */
+	campaign_score_tick();
 	/* port: and at its end, before the frame draws the lights */
 	game_state_check_data_arrays();
 	lights_port_recover();
@@ -881,6 +885,8 @@ void game_initialize_for_new_map(
 	practice_new_level();
 	/* port: no hijack under way (port/linux/game/vehicle_hijack.c) */
 	vehicle_hijack_reset();
+	/* port: campaign scoring's new level (port/linux/game/campaign_score.c) */
+	campaign_score_new_map();
 
 	game_globals->active = TRUE;
 	halo_load_trace("objects.begin", NULL); /* port: loading measurement */

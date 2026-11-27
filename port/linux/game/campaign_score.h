@@ -103,24 +103,35 @@ long campaign_score_events_since(long *cursor, struct campaign_score_event *out,
 co-op player count): FALSE until a level has ended with a score */
 boolean campaign_score_level_summary(struct campaign_score_state *out, boolean *new_personal_best);
 
-/* the hooks (the game's kill and damage paths, its main loop) */
-void campaign_score_initialize(void);
-void campaign_score_dispose(void);
-/* a map began (game_initialize_for_new_map) or ended (its dispose) */
+/* the name of a victim class for the text ("Elite Major") */
+char const *campaign_score_class_name(long victim_class);
+
+/* the hooks: none changes the game */
+/* game.c: a map began (game_initialize_for_new_map); and each tick's end */
 void campaign_score_new_map(void);
-void campaign_score_map_ended(void);
-/* the game's tick ended (game_tick) */
 void campaign_score_tick(void);
-/* a unit died (units.c's unit_kill path, after the killing blow's record):
-the unit, and the damage that killed it */
+/* damage.c: a killing blow (the unit's body depleted by it, alive before),
+as it is dealt, its actor still the unit's: the damage, its category
+(damage.c's _damage_category_*) and whether it struck the head */
 struct damage_data;
-void campaign_score_unit_died(long unit_index, struct damage_data const *damage);
-/* a plasma grenade stuck to an object (projectiles.c) */
+void campaign_score_unit_killed(long unit_index, struct damage_data const *damage, short damage_category,
+	boolean head);
+/* projectiles.c: a projectile stuck to an object */
 void campaign_score_projectile_stuck(long projectile_index, long object_index);
-/* the level was won (the game's win, before the next level) */
+/* game_state.c: a checkpoint saved, and a revert to it */
+void campaign_score_checkpoint_saved(void);
+void campaign_score_reverted(void);
+/* main.c: the level won, before the next level */
 void campaign_score_level_won(void);
-/* bigger battles: a wave cleared (a hook; nothing calls it without a clean
-signal) */
+/* bigger battles: a wave cleared by a player. A hook: the game has no clean
+signal of a wave yet, so nothing calls it */
 void campaign_score_wave_cleared(long player_index);
+
+/* network_campaign_score.c: a client's word from its host (the state's
+header, a player's record, an event, the level's end) */
+void campaign_score_heard_state(boolean enabled, long team_score, short player_count, real difficulty_multiplier);
+void campaign_score_heard_player(short slot, struct campaign_score_player const *player);
+void campaign_score_heard_event(struct campaign_score_event const *event);
+void campaign_score_heard_level_end(void);
 
 #endif

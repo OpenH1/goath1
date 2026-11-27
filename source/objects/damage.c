@@ -144,6 +144,7 @@ symbols in this file:
 #include "server_team_switch.h" /* port: port/linux/game/server_team_switch.c */
 #include "royale.h" /* port: port/linux/game/royale.c */
 #include "vehicle_hijack.h" /* port: port/linux/game/vehicle_hijack.c */
+#include "campaign_score.h" /* port: port/linux/game/campaign_score.c */
 
 /* network_game_globals.c's */
 boolean network_game_distributed_client(void);
@@ -1490,6 +1491,10 @@ void object_cause_damage(
 	long damaged_object_indices[16];
 	/* port: the gametype's friendly fire (game_engine_friendly_damage) */
 	short friendly_damage;
+	/* port: campaign scoring's (port/linux/game/campaign_score.c): whether
+	the object was dead before the damage, and the damage struck its head */
+	boolean was_dead;
+	boolean head_hit;
 
 	/* the distributed netcode (port/linux/NETCODE.md): the host deals
 	damage; a client reports its own players' hits instead, and the host
@@ -1753,6 +1758,8 @@ void object_cause_damage(
 			being_damaged_flags = 0;
 			body_part = NONE;
 			friendly_damage = _friendly_damage_all;
+			was_dead = TEST_FLAG(current_object->object.damage_flags, _object_dead_bit) != 0;
+			head_hit = FALSE;
 
 			if (collision_model_index != NONE)
 			{
@@ -1820,6 +1827,7 @@ void object_cause_damage(
 				}
 
 				damage->material_type = damage_material->material_type;
+				head_hit = TEST_FLAG(damage_material->flags, _damage_material_head_bit) != 0;
 
 				if (cheat.omnipotent && damage->owner_player_index != NONE)
 					force_kill = TRUE;
@@ -1953,6 +1961,13 @@ void object_cause_damage(
 				struct unit_datum *victim = unit_try_and_get(current_object_index);
 
 				victim_player_index = victim ? victim->unit.player_index : NONE;
+				/* port: a killing blow scored, the unit's actor and player still
+				its own (campaign_score.c: it changes nothing) */
+				if (victim && !was_dead &&
+					TEST_FLAG(being_damaged_flags, _object_being_damaged_body_depleted_bit))
+				{
+					campaign_score_unit_killed(current_object_index, damage, damage_definition->category, head_hit);
+				}
 			}
 			object_damage_aftermath(
 				current_object_index,

@@ -1,0 +1,3 @@
+the co-op host's campaign score to each OpenH1 client (distributed message
+campaign_score, network_campaign_score.c): the players' tallies that changed
+and the events since, reliably, at most each 8 ticks
