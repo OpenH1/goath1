@@ -8826,8 +8826,8 @@ static unsigned int lt_e1_guides(struct module *m, struct pixel_state *state, un
 {
 	unsigned int normal = xyz(m, pixel_input(m, state, state->in_world_normal, m->t_v4)), roughness, material;
 
-	roughness = state->roughness ? op1(m, OP_CONVERT_F_TO_U, m->t_uint, ext1(m, GLSL_FLOOR, m->t_float, fadd(m, 1,
-		fmul(m, 1, saturate(m, 1, state->roughness), constant_float(m, 255.0f)), constant_float(m, 0.5f)))) :
+	roughness = state->roughness ? op1(m, OP_BITCAST, m->t_uint, op1(m, OP_CONVERT_F_TO_S, m->t_int, ext1(m, GLSL_FLOOR,
+		m->t_float, fadd(m, 1, fmul(m, 1, saturate(m, 1, state->roughness), constant_float(m, 255.0f)), constant_float(m, 0.5f))))) :
 		constant_uint(m, XGPU_SPIRV_GUIDES_ROUGHNESS_NONE);
 	material = op2(m, OP_BITWISE_OR, m->t_uint, op2(m, OP_SHIFT_LEFT_LOGICAL, m->t_uint, roughness,
 		constant_uint(m, XGPU_SPIRV_GUIDES_ROUGHNESS_SHIFT)), constant_uint(m, specular ? 255u <<
