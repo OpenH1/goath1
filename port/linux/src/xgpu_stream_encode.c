@@ -1211,7 +1211,24 @@ void xgpu_backend_world_ao_mesh(unsigned long id, unsigned long count, const flo
 	record_body->count = (uint32_t)count;
 	record_body->size = size;
 	record_body->data = size ? carry_one(&place, triangles, size) : 0;
-	record_body->pad[0] = record_body->pad[1] = record_body->pad[2] = 0;
+	record_body->kind = XGPU_WORLD_AO_MESH_TRIANGLES;
+	record_body->pad[0] = record_body->pad[1] = 0;
+}
+
+void xgpu_backend_world_ao_mesh_release(unsigned long id)
+{
+	struct xgpu_stream_world_ao_mesh *record_body;
+	unsigned char *place;
+
+	if (!stream.open || !id || id >= XGPU_STREAM_WORLD_AO_MESHES)
+		return;
+	record_body = record_data(XGPU_STREAM_WORLD_AO_MESH, sizeof(*record_body), 0, &place);
+	record_body->id = (uint32_t)id;
+	record_body->count = 0;
+	record_body->size = 0;
+	record_body->data = 0;
+	record_body->kind = XGPU_WORLD_AO_MESH_RELEASE;
+	record_body->pad[0] = record_body->pad[1] = 0;
 }
 
 void xgpu_backend_world_ao_instances(const struct xgpu_world_ao_instance *instances, unsigned long count)

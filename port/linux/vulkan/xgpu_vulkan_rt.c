@@ -10,9 +10,14 @@ this file: xgpu_vulkan_rt_create).
 
 - Each mesh is a bottom-level structure, built once (fast to trace): its
   triangles kept as they come and built at the next frame's scene with any
-  others that came, in one call, then let go of. They live in large buffers
-  of their own (a map's few hundred, never one allocation each), let go of
-  together with the meshes (id 0, a map's end).
+  others that came, in one call, then let go of. The small ones live in
+  large buffers of their own (a map's few hundred, never one allocation
+  each), let go of together with the meshes (id 0, a map's end). One of
+  RT_OWN_TRIANGLES or more (a level's) has a buffer of its own and is
+  compacted once built (its compacted size read a few frames later, never
+  waited for, then copied into a buffer of that size, the first let go
+  of), so that it can be let go of alone (xgpu_vulkan_rt_mesh_release: the
+  level's collision mesh once its render mesh is in the scene).
 - The frame's instances are a top-level structure, built again (fast to
   build) before the pass that first reads them: three in turn, each written
   only once the GPU is done with the work that read it. An instance whose
@@ -52,6 +57,10 @@ enum
 };
 
 #define RT_CHUNK_BYTES ((VkDeviceSize)16 << 20)
+/* a mesh of so many triangles has a buffer of its own, and is compacted */
+#define RT_OWN_TRIANGLES 1024u
+/* the most meshes compacted at once (the compacted sizes' queries) */
+#define RT_COMPACTED 64u
 /* a build logged has a mesh of so many triangles */
 #define RT_LOGGED_TRIANGLES 2048u
 /* an acceleration structure's offset in its buffer (the specification's) */
@@ -78,6 +87,11 @@ struct rt_mesh
 	/* its triangles until it is built (NULL after) */
 	float *triangles;
 	int built;
+	/* (RT_OWN_TRIANGLES or more) its own buffer; its structure's bytes; its
+	compacted size's query (its index plus one: asked, not yet read) */
+	struct rt_buffer own;
+	VkDeviceSize bytes;
+	uint32_t compacting;
 };
 
 struct rt_scene
@@ -133,6 +147,16 @@ static struct
 	uint64_t timed_serial;
 	float timestamp_period;
 	VkDeviceSize structure_bytes;
+	/* the meshes' structures' bytes now (less those let go of and what
+	compaction saved), and the most they have been this map */
+	VkDeviceSize live_bytes, live_most;
+	/* the compacted sizes asked (the meshes' ids; 0 one let go of since),
+	read once the GPU is past the submission that asked */
+	PFN_vkCmdWriteAccelerationStructuresPropertiesKHR properties;
+	PFN_vkCmdCopyAccelerationStructureKHR copy;
+	VkQueryPool compacted_sizes;
+	uint32_t compacted_ids[RT_COMPACTED], compacted_count;
+	uint64_t compacted_serial;
 	/* the meshes (by id) and those not yet built */
 	struct rt_mesh *meshes[XGPU_STREAM_WORLD_AO_MESHES];
 	uint32_t pending;
@@ -320,11 +344,13 @@ static void rt_meshes_release(void)
 		if (!mesh)
 			continue;
 		if (mesh->structure)
-			rt_garbage_add(NULL, mesh->structure);
+			rt_garbage_add(mesh->own.buffer ? &mesh->own : NULL, mesh->structure);
 		free(mesh->triangles);
 		free(mesh);
 		rt.meshes[id] = NULL;
 	}
+	rt.compacted_count = 0;
+	rt.live_bytes = rt.live_most = 0;
 	for (id = 0; id < rt.chunk_count; id++)
 		rt_garbage_add(&rt.chunks[id], VK_NULL_HANDLE);
 	memset(rt.chunks, 0, sizeof(rt.chunks));
@@ -348,6 +374,45 @@ static void rt_build_time_read(void)
 	rt.timed = 0;
 	host_logf(HOST_LOG_INFO, "vulkan: the ray-traced scene's meshes built in %.3f ms of GPU time",
 		(double)(stamps[1] - stamps[0]) * (double)rt.timestamp_period * 1.0e-6);
+}
+
+/* the meshes' structures' bytes now, after a change */
+static void rt_live_bytes(VkDeviceSize added, VkDeviceSize taken)
+{
+	rt.live_bytes += added;
+	rt.live_bytes -= taken < rt.live_bytes ? taken : rt.live_bytes;
+	if (rt.live_bytes > rt.live_most)
+		rt.live_most = rt.live_bytes;
+}
+
+void xgpu_vulkan_rt_mesh_release(uint32_t id)
+{
+	struct rt_mesh *mesh;
+	uint32_t index;
+
+	if (!rt.ready || !id || id >= XGPU_STREAM_WORLD_AO_MESHES || !rt.meshes[id])
+		return;
+	rt_garbage_collect();
+	mesh = rt.meshes[id];
+	if (mesh->structure)
+	{
+		rt_garbage_add(mesh->own.buffer ? &mesh->own : NULL, mesh->structure);
+		rt_live_bytes(0, mesh->bytes);
+		/* (the scene built again: the instances may still name it) */
+		rt.given_new = 1;
+	}
+	if (!mesh->built && rt.pending)
+		rt.pending--;
+	for (index = 0; index < rt.compacted_count; index++)
+	{
+		if (rt.compacted_ids[index] == id)
+			rt.compacted_ids[index] = 0;
+	}
+	host_logf(HOST_LOG_INFO, "vulkan: the ray-traced scene's mesh %u let go of (%.2f MB); %.2f MB of meshes now", id,
+		(double)mesh->bytes / 1048576.0, (double)rt.live_bytes / 1048576.0);
+	free(mesh->triangles);
+	free(mesh);
+	rt.meshes[id] = NULL;
 }
 
 void xgpu_vulkan_rt_mesh(uint32_t id, uint32_t count, const float *triangles)
@@ -395,7 +460,8 @@ static void rt_meshes_build(VkCommandBuffer commands)
 	VkDeviceSize vertex_bytes = 0, scratch_bytes = 0, *scratch_offsets, built_bytes = 0, largest_bytes = 0;
 	uint32_t id, count = 0, index, triangles = 0, largest = 0;
 	VkMemoryBarrier barrier;
-	int logged;
+	int logged, own;
+	uint32_t compacting = 0, compacting_ids[RT_COMPACTED];
 
 	if (!rt.pending)
 		return;
@@ -440,9 +506,11 @@ static void rt_meshes_build(VkCommandBuffer commands)
 		geometry->geometry.triangles.indexType = VK_INDEX_TYPE_NONE_KHR;
 		geometry->flags = VK_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR;
 		vertex_bytes += ((VkDeviceSize)mesh->count * 36u + 15u) & ~(VkDeviceSize)15u;
+		own = mesh->count >= RT_OWN_TRIANGLES;
 		info->sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
 		info->type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-		info->flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+		info->flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR |
+			(own && rt.compacted_sizes ? VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR : 0);
 		info->mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
 		info->geometryCount = 1;
 		info->pGeometries = geometry;
@@ -453,12 +521,26 @@ static void rt_meshes_build(VkCommandBuffer commands)
 		create.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
 		create.size = sizes.accelerationStructureSize;
 		create.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-		if (!rt_storage_take(sizes.accelerationStructureSize, &create.buffer, &create.offset) ||
-			rt.create(rt.device, &create, NULL, &mesh->structure) != VK_SUCCESS)
+		if (own)
+		{
+			if (rt_buffer_make(sizes.accelerationStructureSize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR, 0,
+				&mesh->own))
+				create.buffer = mesh->own.buffer;
+		}
+		else if (!rt_storage_take(sizes.accelerationStructureSize, &create.buffer, &create.offset))
+			create.buffer = VK_NULL_HANDLE;
+		if (!create.buffer || rt.create(rt.device, &create, NULL, &mesh->structure) != VK_SUCCESS)
 		{
 			mesh->structure = VK_NULL_HANDLE;
+			if (mesh->own.buffer)
+				rt_buffer_free(&mesh->own);
 			continue;
 		}
+		mesh->bytes = sizes.accelerationStructureSize;
+		rt_live_bytes(mesh->bytes, 0);
+		/* (its compacted size asked after the build, where none is asked) */
+		if (own && rt.compacted_sizes && compacting < RT_COMPACTED && !rt.compacted_count)
+			compacting_ids[compacting++] = id;
 		memset(&address, 0, sizeof(address));
 		address.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
 		address.accelerationStructure = mesh->structure;
@@ -488,8 +570,10 @@ static void rt_meshes_build(VkCommandBuffer commands)
 			{
 				if (rt.meshes[id] && rt.meshes[id]->structure == infos[index].dstAccelerationStructure)
 				{
-					rt_garbage_add(NULL, rt.meshes[id]->structure);
+					rt_garbage_add(rt.meshes[id]->own.buffer ? &rt.meshes[id]->own : NULL, rt.meshes[id]->structure);
+					memset(&rt.meshes[id]->own, 0, sizeof(rt.meshes[id]->own));
 					rt.meshes[id]->structure = VK_NULL_HANDLE;
+					rt_live_bytes(0, rt.meshes[id]->bytes);
 				}
 			}
 		}
@@ -518,10 +602,10 @@ static void rt_meshes_build(VkCommandBuffer commands)
 			rt.timed_serial = xgpu_vulkan_serial();
 		}
 		host_logf(HOST_LOG_INFO, "vulkan: the ray-traced scene's meshes built: %u, %u triangles, %.2f MB of structures "
-			"(the largest %u triangles, %.2f MB, %.1f B a triangle), %.2f MB of scratch; %.2f MB of meshes so far",
-			count, triangles, (double)built_bytes / 1048576.0, largest, (double)largest_bytes / 1048576.0,
-			(double)largest_bytes / (double)largest, (double)scratch_bytes / 1048576.0,
-			(double)rt.structure_bytes / 1048576.0);
+			"(the largest %u triangles, %.2f MB, %.1f B a triangle), %.2f MB of scratch; %.2f MB of meshes built so far, "
+			"%.2f MB now (at most %.2f MB)", count, triangles, (double)built_bytes / 1048576.0, largest,
+			(double)largest_bytes / 1048576.0, (double)largest_bytes / (double)largest, (double)scratch_bytes / 1048576.0,
+			(double)rt.structure_bytes / 1048576.0, (double)rt.live_bytes / 1048576.0, (double)rt.live_most / 1048576.0);
 	}
 	/* (the meshes built before the scene that names them) */
 	memset(&barrier, 0, sizeof(barrier));
@@ -530,6 +614,23 @@ static void rt_meshes_build(VkCommandBuffer commands)
 	barrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
 	rt.barrier(commands, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
 		VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1, &barrier, 0, NULL, 0, NULL);
+	/* (the large ones' compacted sizes asked, read a few frames later) */
+	if (compacting)
+	{
+		VkAccelerationStructureKHR structures[RT_COMPACTED];
+
+		for (index = 0; index < compacting; index++)
+		{
+			structures[index] = rt.meshes[compacting_ids[index]]->structure;
+			rt.meshes[compacting_ids[index]]->compacting = index + 1;
+			rt.compacted_ids[index] = compacting_ids[index];
+		}
+		rt.reset_queries(commands, rt.compacted_sizes, 0, compacting);
+		rt.properties(commands, compacting, structures, VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR,
+			rt.compacted_sizes, 0);
+		rt.compacted_count = compacting;
+		rt.compacted_serial = xgpu_vulkan_serial();
+	}
 done:
 	/* (every mesh tried: their triangles let go of) */
 	for (id = 1; id < XGPU_STREAM_WORLD_AO_MESHES; id++)
@@ -550,6 +651,84 @@ done:
 	free(ranges);
 	free(range_pointers);
 	free(scratch_offsets);
+}
+
+/* the large meshes whose compacted sizes the GPU has written, copied into
+structures of those sizes (in the early commands, before the scene that
+names them), the first let go of */
+static void rt_meshes_compact(VkCommandBuffer commands)
+{
+	VkDeviceSize sizes[RT_COMPACTED];
+	VkDeviceSize before = 0, after = 0;
+	uint32_t index, copied = 0;
+
+	if (rt.query_results(rt.device, rt.compacted_sizes, 0, rt.compacted_count, sizeof(sizes), sizes, sizeof(sizes[0]),
+		VK_QUERY_RESULT_64_BIT) != VK_SUCCESS)
+	{
+		rt.compacted_count = 0;
+		return;
+	}
+	for (index = 0; index < rt.compacted_count; index++)
+	{
+		uint32_t id = rt.compacted_ids[index];
+		struct rt_mesh *mesh = id ? rt.meshes[id] : NULL;
+		VkAccelerationStructureCreateInfoKHR create;
+		VkCopyAccelerationStructureInfoKHR copy;
+		VkAccelerationStructureDeviceAddressInfoKHR address;
+		VkAccelerationStructureKHR compact = VK_NULL_HANDLE;
+		struct rt_buffer buffer;
+
+		if (!mesh || !mesh->structure || mesh->compacting != index + 1)
+			continue;
+		mesh->compacting = 0;
+		if (!sizes[index] || sizes[index] >= mesh->bytes ||
+			!rt_buffer_make(sizes[index], VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR, 0, &buffer))
+			continue;
+		memset(&create, 0, sizeof(create));
+		create.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+		create.buffer = buffer.buffer;
+		create.size = sizes[index];
+		create.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+		if (rt.create(rt.device, &create, NULL, &compact) != VK_SUCCESS)
+		{
+			rt_buffer_free(&buffer);
+			continue;
+		}
+		memset(&copy, 0, sizeof(copy));
+		copy.sType = VK_STRUCTURE_TYPE_COPY_ACCELERATION_STRUCTURE_INFO_KHR;
+		copy.src = mesh->structure;
+		copy.dst = compact;
+		copy.mode = VK_COPY_ACCELERATION_STRUCTURE_MODE_COMPACT_KHR;
+		rt.copy(commands, &copy);
+		rt_garbage_add(&mesh->own, mesh->structure);
+		mesh->own = buffer;
+		mesh->structure = compact;
+		memset(&address, 0, sizeof(address));
+		address.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+		address.accelerationStructure = compact;
+		mesh->address = rt.structure_address(rt.device, &address);
+		before += mesh->bytes;
+		after += sizes[index];
+		rt_live_bytes(sizes[index], mesh->bytes);
+		mesh->bytes = sizes[index];
+		copied++;
+	}
+	rt.compacted_count = 0;
+	if (copied)
+	{
+		VkMemoryBarrier barrier;
+
+		memset(&barrier, 0, sizeof(barrier));
+		barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+		barrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+		barrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+		rt.barrier(commands, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+			VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1, &barrier, 0, NULL, 0, NULL);
+		/* (the scene built again, naming the compacted ones) */
+		rt.given_new = 1;
+		host_logf(HOST_LOG_INFO, "vulkan: the ray-traced scene's meshes compacted: %u, %.2f MB to %.2f MB; %.2f MB of "
+			"meshes now", copied, (double)before / 1048576.0, (double)after / 1048576.0, (double)rt.live_bytes / 1048576.0);
+	}
 }
 
 /* ---------- the scenes */
@@ -735,6 +914,8 @@ int xgpu_vulkan_rt_build(void)
 	if (!rt.ready)
 		return 0;
 	rt_build_time_read();
+	if (rt.compacted_count && xgpu_vulkan_completed() >= rt.compacted_serial)
+		rt_meshes_compact(xgpu_vulkan_early_commands());
 	if (!rt.given_new)
 		return rt.current >= 0;
 	rt_garbage_collect();
@@ -831,6 +1012,8 @@ int xgpu_vulkan_rt_create(const struct xgpu_vulkan_rt_device *device)
 	LOAD(vkCmdResetQueryPool, reset_queries)
 	LOAD(vkCmdWriteTimestamp, timestamp)
 	LOAD(vkGetQueryPoolResults, query_results)
+	LOAD(vkCmdWriteAccelerationStructuresPropertiesKHR, properties)
+	LOAD(vkCmdCopyAccelerationStructureKHR, copy)
 #undef LOAD
 	rt.ready = rt.create && rt.destroy && rt.sizes && rt.build && rt.structure_address && rt.buffer_address &&
 		rt.create_buffer && rt.destroy_buffer && rt.requirements && rt.allocate && rt.free_memory && rt.bind && rt.map &&
@@ -848,6 +1031,18 @@ int xgpu_vulkan_rt_create(const struct xgpu_vulkan_rt_device *device)
 		create.queryCount = 2;
 		if (rt.create_queries(rt.device, &create, NULL, &rt.times) != VK_SUCCESS)
 			rt.times = VK_NULL_HANDLE;
+	}
+	/* (the large meshes' compaction) */
+	if (rt.ready && rt.properties && rt.copy && rt.create_queries && rt.reset_queries && rt.query_results)
+	{
+		VkQueryPoolCreateInfo create;
+
+		memset(&create, 0, sizeof(create));
+		create.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+		create.queryType = VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR;
+		create.queryCount = RT_COMPACTED;
+		if (rt.create_queries(rt.device, &create, NULL, &rt.compacted_sizes) != VK_SUCCESS)
+			rt.compacted_sizes = VK_NULL_HANDLE;
 	}
 	return rt.ready;
 }
@@ -881,6 +1076,8 @@ void xgpu_vulkan_rt_destroy(void)
 	}
 	if (rt.times)
 		rt.destroy_queries(rt.device, rt.times, NULL);
+	if (rt.compacted_sizes)
+		rt.destroy_queries(rt.device, rt.compacted_sizes, NULL);
 	free(rt.garbage);
 	free(rt.given);
 	memset(&rt, 0, sizeof(rt));

@@ -256,6 +256,8 @@ _INSTANCES): a mesh of the scene, count triangles of nine floats (id 0:
 every mesh let go of), and the frame's instances of them */
 struct xgpu_world_ao_instance;
 void xgpu_backend_world_ao_mesh(unsigned long id, unsigned long count, const float *triangles);
+/* ... one mesh let go of alone (its id not given again this map) */
+void xgpu_backend_world_ao_mesh_release(unsigned long id);
 void xgpu_backend_world_ao_instances(const struct xgpu_world_ao_instance *instances, unsigned long count);
 BOOL xgpu_backend_display_hdr(float *headroom);
 BOOL xgpu_backend_display_white(float *nits);

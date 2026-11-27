@@ -4026,7 +4026,10 @@ static void stream_world_ao_window(void *context, const struct xgpu_stream_world
 static void stream_world_ao_mesh(void *context, const struct xgpu_stream_world_ao_mesh *record)
 {
 	(void)context;
-	xgpu_vulkan_rt_mesh(record->id, record->count, record->size ? host_pointer(record->data) : NULL);
+	if (record->kind == XGPU_WORLD_AO_MESH_RELEASE)
+		xgpu_vulkan_rt_mesh_release(record->id);
+	else
+		xgpu_vulkan_rt_mesh(record->id, record->count, record->size ? host_pointer(record->data) : NULL);
 }
 
 static void stream_world_ao_instances(void *context, const struct xgpu_stream_world_ao_instances *record)
