@@ -4677,6 +4677,7 @@ static BOOL cutout_stencil_repeatable(void)
 }
 
 static BOOL per_pixel_lighting(void);
+static BOOL per_pixel_lighting_setting(void);
 
 /* ---------- a model's material maps (xgpu.h's XGPU_TEXTURE_MODES_MATERIAL)
 
@@ -6438,7 +6439,7 @@ each pixel (xgpu_spirv.c's model lighting), from shaders of their own; read
 again as the front end takes a change up between frames (as the dynamic
 lights are: dynamic_lights_read_settings). The enhanced dynamic lights light
 models for each pixel too, whatever it says. */
-static BOOL per_pixel_lighting(void)
+static BOOL per_pixel_lighting_setting(void)
 {
 	static BOOL read;
 	static unsigned long read_at;
@@ -6450,7 +6451,12 @@ static BOOL per_pixel_lighting(void)
 		read_at = halo_gpu_settings_taken();
 		enabled = config_boolean("display.per_pixel_lighting") != 0;
 	}
-	return enabled || halo_dynamic_lights_enhanced();
+	return enabled;
+}
+
+static BOOL per_pixel_lighting(void)
+{
+	return per_pixel_lighting_setting() || halo_dynamic_lights_enhanced();
 }
 
 /* display.soft_particles (#1116): on a flat screen, an effect shader's group
@@ -7275,7 +7281,7 @@ static BOOL retained_context_make(struct retained_context *context, struct verte
 	RETAINED_TAKE(lights_unreached, flag);
 	flag = dynamic_lights.model_unreached != 0;
 	RETAINED_TAKE(model_unreached, flag);
-	flag = per_pixel_lighting() != 0;
+	flag = (per_pixel_lighting() != 0) | (per_pixel_lighting_setting() ? 2 : 0);
 	RETAINED_TAKE(per_pixel, flag);
 	flag = dynamic_lights_active() != 0;
 	RETAINED_TAKE(lights_active, flag);
@@ -7758,6 +7764,7 @@ static BOOL prepare_draw(BOOL immediate, unsigned long primitive)
 	facts.hdr = hdr_tag(&pipeline_key);
 	/* (a cut-out's depth: no light) */
 	facts.per_pixel = !cutout_depth_drawing && per_pixel_lighting();
+	facts.per_pixel_setting = facts.per_pixel && per_pixel_lighting_setting();
 	facts.lights_active = !cutout_depth_drawing && !lights_unreached_drawing && !dynamic_lights.model_unreached &&
 		dynamic_lights_active();
 	facts.environment = inputs.lights_environment;

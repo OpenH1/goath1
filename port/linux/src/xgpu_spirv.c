@@ -5822,7 +5822,7 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 	keeps it) */
 	BOOL occluder = !world && (program->ambient_occlusion & XGPU_AMBIENT_OCCLUSION_WORLD_INPUTS);
 	unsigned int world_ao_words = 0;
-	BOOL world_position = (program->per_pixel_lighting && (program->per_pixel_lighting == 2 ||
+	BOOL world_position = (program->per_pixel_lighting && ((program->per_pixel_lighting & 3) == 2 ||
 		program->dynamic_lights == XGPU_DYNAMIC_LIGHTS_MODEL)) || environment || world || program->rt_reflection;
 	BOOL count_samples = program->count_samples && options->count_samples;
 	unsigned int comparison = program->alpha_test ? comparison_opcode(program->alpha_test) : 0;
@@ -5931,7 +5931,8 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 	for (stage = 0; stage < 4; stage++)
 		state.in_t[stage] = interface_variable(&m, m.t_v4, STORAGE_INPUT, XGPU_SPIRV_LOCATION_T0 + stage, coordinate_names[stage]);
 	state.in_fog = interface_variable(&m, m.t_float, STORAGE_INPUT, XGPU_SPIRV_LOCATION_FOG, "xFog");
-	if (occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_VERTEX)
+	if (occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_VERTEX ||
+		(program->per_pixel_lighting & XGPU_PER_PIXEL_VERTEX_AMBIENT))
 	{
 		state.in_light_ambient = interface_variable(&m, m.t_v3, STORAGE_INPUT, XGPU_SPIRV_LOCATION_LIGHT_AMBIENT,
 			"xLightAmbient");
@@ -6019,7 +6020,18 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 			if (state.material_occlusion)
 				occlusion = occlusion ? fmul(&m, 1, occlusion, state.material_occlusion) : state.material_occlusion;
 		}
-		lit = model_lighting(&m, &state, program->per_pixel_lighting == 2, TRUE, occlusion);
+		/* (its ambient and distant lights the vertex's, as the game's program
+		gives them, by the occlusion: xgpu.h's XGPU_PER_PIXEL_VERTEX_AMBIENT;
+		else for each pixel) */
+		if (program->per_pixel_lighting & XGPU_PER_PIXEL_VERTEX_AMBIENT)
+		{
+			lit = pixel_input(&m, &state, state.in_light_ambient, m.t_v3);
+			if (occlusion)
+				lit = fscale(&m, 3, lit, occlusion);
+			lit = saturate(&m, 3, lit);
+		}
+		else
+			lit = model_lighting(&m, &state, (program->per_pixel_lighting & 3) == 2, TRUE, occlusion);
 
 		if (program->stages[3].mode == XGPU_TEXTURE_CUBEMAP && state.in_t[3])
 		{
@@ -6066,7 +6078,7 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 	{
 		static const unsigned int rgb[4] = { 4, 5, 6, 3 };
 
-		state.v0 = shuffle(&m, 4, state.v0, model_lighting(&m, &state, program->per_pixel_lighting == 2, FALSE,
+		state.v0 = shuffle(&m, 4, state.v0, model_lighting(&m, &state, (program->per_pixel_lighting & 3) == 2, FALSE,
 			occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_MODEL ? state.occlusion : 0), rgb);
 	}
 	else if (occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_VERTEX)

@@ -2718,7 +2718,7 @@ char *xgpu_msl_pixel_shader(const struct xgpu_pixel_program *program, const stru
 	int stage;
 
 	pixel_usage(program, &usage);
-	world_position = (program->per_pixel_lighting && (program->per_pixel_lighting == 2 ||
+	world_position = (program->per_pixel_lighting && ((program->per_pixel_lighting & 3) == 2 ||
 		program->dynamic_lights == XGPU_DYNAMIC_LIGHTS_MODEL)) || environment || world;
 	if (comparison && *comparison && program->alpha_test_samples && comparison[0] != '=' && comparison[0] != '!')
 		sample_mask = TRUE;
@@ -2746,7 +2746,8 @@ char *xgpu_msl_pixel_shader(const struct xgpu_pixel_program *program, const stru
 	if (motion)
 		xgpu_text_append(&text, "\tfloat3 xMotionCurrent [[user(xMotionCurrent)]];\n"
 			"\tfloat3 xMotionPrevious [[user(xMotionPrevious)]];\n");
-	if (occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_VERTEX)
+	if (occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_VERTEX ||
+		(program->per_pixel_lighting & XGPU_PER_PIXEL_VERTEX_AMBIENT))
 		xgpu_text_append(&text, "\tfloat3 xLightAmbient [[user(xLightAmbient)]];\n\tfloat3 xLightPoint [[user(xLightPoint)]];\n");
 	if (program->per_pixel_lighting || environment || world)
 		xgpu_text_append(&text, "\tfloat4 xWorldNormal [[user(xWorldNormal)]];\n");
@@ -2767,7 +2768,7 @@ char *xgpu_msl_pixel_shader(const struct xgpu_pixel_program *program, const stru
 	if (program->dynamic_lights)
 		dynamic_lights_functions(&text, &functions);
 	if (program->per_pixel_lighting)
-		model_lighting(&functions, program->per_pixel_lighting == 2, program->dynamic_lights == XGPU_DYNAMIC_LIGHTS_MODEL,
+		model_lighting(&functions, (program->per_pixel_lighting & 3) == 2, program->dynamic_lights == XGPU_DYNAMIC_LIGHTS_MODEL,
 			occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_MODEL);
 	xgpu_text_append(&functions, "%s%s", pixel_functions, border_function);
 	if (program->lightmap_filter)
@@ -2873,18 +2874,24 @@ char *xgpu_msl_pixel_shader(const struct xgpu_pixel_program *program, const stru
 				"\t\thighlight_scale = %.9g / widened;\n", (double)lobe, (double)XGPU_DYNAMIC_LIGHTS_HIGHLIGHT_WIDEST,
 				(double)(lobe * XGPU_DYNAMIC_LIGHTS_HIGHLIGHT));
 		}
+		/* (its ambient and distant lights the vertex's: xgpu.h's
+		XGPU_PER_PIXEL_VERTEX_AMBIENT) */
+		if (program->per_pixel_lighting & XGPU_PER_PIXEL_VERTEX_AMBIENT)
+			xgpu_text_append(&text, "\t\tfloat3 base = saturate(in.xLightAmbient%s), linear_light = float3(0.0);\n",
+				occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_MODEL ? " * occlusion" : "");
+		else
+			xgpu_text_append(&text, "\t\tfloat3 base = model_lighting(u, in.xWorldNormal%s), linear_light = float3(0.0);\n",
+				occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_MODEL ? ", occlusion" : "");
 		xgpu_text_append(&text,
-			"\t\tfloat3 base = model_lighting(u, in.xWorldNormal%s), linear_light = float3(0.0);\n"
 			"\t\tfloat3 sum = dynamic_light_sum(dynamic_lights, dynamic_light_cells, dynamic_light_world, in.xWorldPosition, n, n,\n"
 			"\t\t\tfalse, u.model_lights[%d], reflection, shine, linear_light);\n"
 			"\t\tv0.rgb = dynamic_light_add(dynamic_lights, base, sum, linear_light);\n"
-			"\t}\n", occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_MODEL ? ", occlusion" : "",
-			XGPU_MODEL_LIGHT_OWN_LIGHTS);
+			"\t}\n", XGPU_MODEL_LIGHT_OWN_LIGHTS);
 	}
 	else if (register_read(&usage, XGPU_REGISTER_V0) && program->per_pixel_lighting)
 	{
 		xgpu_text_append(&text, "\tv0.rgb = model_lighting(u, in.xWorldNormal%s%s);\n",
-			program->per_pixel_lighting == 2 ? ", in.xWorldPosition" : "",
+			(program->per_pixel_lighting & 3) == 2 ? ", in.xWorldPosition" : "",
 			occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_MODEL ? ", occlusion" : "");
 	}
 	else if (register_read(&usage, XGPU_REGISTER_V0) && occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_VERTEX)
