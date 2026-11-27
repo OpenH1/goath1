@@ -2147,18 +2147,18 @@ int xgpu_vulkan_rt_build(void)
 
 	if (!rt.ready)
 		return 0;
-	/* (its memory, every RT_MEMORY_LOGGED frames it has meshes) */
-	if (rt.live_bytes && ++rt.memory_frames >= RT_MEMORY_LOGGED)
-	{
-		rt.memory_frames = 0;
-		rt_memory_log("now");
-	}
 	rt_build_time_read();
 	rt_textures_find();
 	if (rt.compacted_count && xgpu_vulkan_completed() >= rt.compacted_serial)
 		rt_meshes_compact(xgpu_vulkan_early_commands());
 	if (!rt.given_new)
 		return rt.current >= 0;
+	/* (its memory, every RT_MEMORY_LOGGED frames' instances, with meshes) */
+	if (rt.live_bytes && ++rt.memory_frames >= RT_MEMORY_LOGGED)
+	{
+		rt.memory_frames = 0;
+		rt_memory_log("now");
+	}
 	rt_garbage_collect();
 	commands = xgpu_vulkan_early_commands();
 	rt_meshes_build(commands);
