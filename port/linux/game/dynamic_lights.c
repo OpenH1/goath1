@@ -68,6 +68,7 @@ structure's 3D BSP, from which a pixel finds its cluster
 #include "light_sources.h"
 #include "rt_shadows.h"
 #include "world_rt.h"
+#include "render_enumerate.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -498,6 +499,7 @@ void dynamic_lights_submit(
 	real_vector3d right;
 	float camera[3], right_axis[3], up_axis[3];
 	long logged = 0;
+	boolean unlit;
 
 	dynamic_lights.frame++;
 	for (light_index = 0; light_index < count; light_index++)
@@ -581,11 +583,19 @@ void dynamic_lights_submit(
 			dynamic_lights.cluster_masks[cluster][light_index >> 5] |= 1u << (light_index & 31);
 	}
 	dynamic_lights_world();
-	total = dynamic_lights_sources(dynamic_lights_copies(count));
+	/* (a map's preparation's pass lit by none of the renderer's lights: none
+	of the port's own lights or the bounce's either, so that its draws are
+	those of play no light reaches, the models' and the structure's drawn
+	without the lights' loop: render_enumerate_unlit) */
+	unlit = render_enumerate_unlit();
+	total = dynamic_lights_copies(count);
+	if (!unlit)
+		total = dynamic_lights_sources(total);
 	dynamic_lights_shadowed(total);
 	memset(dynamic_lights.keys, 0, sizeof(dynamic_lights.keys));
 	memset(dynamic_lights.baked, 0, sizeof(dynamic_lights.baked));
-	total = dynamic_lights_bounce(dynamic_lights.lights, total); /* (dynamic_lights_bounce.c) */
+	if (!unlit)
+		total = dynamic_lights_bounce(dynamic_lights.lights, total); /* (dynamic_lights_bounce.c) */
 	halo_dynamic_lights_set(dynamic_lights.lights, (int)total, camera, right_axis, up_axis,
 		(unsigned int const (*)[4])dynamic_lights.cluster_masks);
 	memset(dynamic_lights.cluster_masks, 0, sizeof(dynamic_lights.cluster_masks));

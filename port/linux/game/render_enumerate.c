@@ -880,6 +880,11 @@ boolean render_enumerate_has_mirror(void)
 	return enumerate.mirrors && pass_part() != _part_mirror;
 }
 
+boolean render_enumerate_unlit(void)
+{
+	return render_enumerating && !pass_dynamic_lights();
+}
+
 boolean render_enumerate_pending(boolean scope)
 {
 	static int setting = -1;
@@ -1158,7 +1163,8 @@ static void lights_submit(void)
 		if (light_index != NONE)
 			enumerate.light_indices[enumerate.light_count++] = light_index;
 	}
-	/* (the renderer's: these and the window's, or none) */
+	/* (the renderer's: these and the window's, or none at all: dynamic_lights.c
+	gives none of its own then either, render_enumerate_unlit) */
 	if (halo_dynamic_lights_walked())
 	{
 		long count = rasterizer_lights.light_count;

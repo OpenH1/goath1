@@ -31,6 +31,11 @@ boolean render_enumerate_structure_wanted(short structure_bsp_index);
 the pass being drawn */
 short render_enumerate_target(void);
 boolean render_enumerate_has_mirror(void);
+/* the pass being drawn is one lit by none of the renderer's lights (with
+them walked, the first of its two lightings: dynamic_lights.c then gives
+the front end no light at all, its own and the bounce's none either, so
+that every draw is made as a draw no light reaches) */
+boolean render_enumerate_unlit(void);
 /* the window's parts: after the visibility's (every material's surfaces),
 after the objects' (every model) */
 void render_enumerate_structure(void);
