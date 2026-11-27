@@ -7,10 +7,13 @@ collision geometry, as world_scene.c fans it, and a definition's nodes'
 collision geometry (the first permutation's BSP of each collision node, the
 model's node of the same index, as the collision tests take them:
 collision_models.c) and its bounding sphere. With debug.rt_render_geometry,
-the structure's render triangles too (docs/rt-plan/1-geometry.md, stage 1):
-its lightmaps' materials' surfaces over their compressed environment
-vertices, sorted by the material's shader into opaque, alpha-tested and
-transparent ones. Read only; render-only.
+the render meshes too (docs/rt-plan/1-geometry.md): the structure's, its
+lightmaps' materials' surfaces over their compressed environment vertices,
+sorted by the material's shader into opaque, alpha-tested and transparent
+ones; and a definition's model's, its regions' first permutations at one
+level of detail for every view, read from the vertex and index buffers the
+game draws them from (as object_mesh.c reads them), each vertex with its
+nodes. Read only; render-only.
 */
 
 #include "cseries.h"
@@ -21,6 +24,8 @@ transparent ones. Read only; render-only.
 #include "physics/collision_bsp_definitions.h"
 #include "physics/collision_model_definitions.h"
 #include "rasterizer/rasterizer_geometry.h"
+#include "rasterizer/rasterizer_model_types.h"
+#include "shaders/shaders.h"
 #include "scenario/scenario.h"
 #include "shaders/shader_definitions.h"
 #include "structures/structure_bsp_definitions.h"
@@ -34,6 +39,7 @@ transparent ones. Read only; render-only.
 
 #include <stddef.h>
 #include <string.h>
+#include <xtl.h>
 
 /* (cache_files.c) */
 boolean tag_index_is_group(long tag_index, long group_tag);
@@ -110,6 +116,54 @@ typedef char verify_world_rt_shader_model_multipurpose_map[
 	offsetof(struct world_rt_shader_model, multipurpose_map) == 0xBC ? 1 : -1];
 typedef char verify_world_rt_shader_model_detail_map[offsetof(struct world_rt_shader_model, detail_map) == 0xDC ? 1 : -1];
 typedef char verify_world_rt_environment_vertex[sizeof(struct environment_vertex_compressed_layout) == 32 ? 1 : -1];
+
+/* this build's model geometry and part (models.c's, as object_mesh.c has
+them: no header declares them) */
+struct world_rt_model_geometry
+{
+	byte reserved[0x24];
+	struct tag_block parts;
+};
+
+struct world_rt_model_part
+{
+	unsigned long flags;
+	short shader_index;
+	char previous_part_index;
+	char next_part_index;
+	short centroid_primary_node_index;
+	short centroid_secondary_node_index;
+	real centroid_primary_node_weight;
+	real centroid_secondary_node_weight;
+	real_point3d centroid;
+	struct tag_block uncompressed_vertices;
+	struct tag_block compressed_vertices;
+	struct tag_block triangles;
+	struct triangle_buffer triangle_buffer;
+	struct vertex_buffer vertex_buffer;
+};
+
+struct world_rt_model_shader_reference
+{
+	struct tag_reference shader;
+	short permutation_index;
+	word pad;
+	long unused[3];
+};
+
+typedef char verify_world_rt_model_part[sizeof(struct world_rt_model_part) == 0x68 ? 1 : -1];
+
+enum
+{
+	/* (models.c's) a part not drawn; one whose vertices name its own nodes */
+	_world_rt_model_part_stripped_bit = 0,
+	_world_rt_model_part_local_nodes_bit = 1,
+	/* the levels of detail (models.c's), and the one the rays take: the
+	second most detailed, the nearest there is where a permutation has
+	none (docs/rt-plan/1-geometry.md: one level for every view) */
+	_world_rt_model_detail_levels = 5,
+	_world_rt_model_detail_rays = 3,
+};
 
 /* ---------- private code */
 
@@ -381,6 +435,271 @@ long world_rt_source_structure_mesh(short bsp_index, struct world_rt_source_mesh
 		}
 		if (surfaces == WORLD_RT_SURFACES_OPAQUE)
 			mesh->opaque_count = mesh->triangle_count;
+	}
+	return mesh->triangle_count;
+}
+
+/* a model part's vertices and triangles onto the mesh (or counted), its
+material the mesh's next (FALSE: it cannot be read, the mesh not used) */
+static int model_part_add(struct world_rt_source_mesh *mesh, struct model const *model,
+	struct world_rt_model_part const *part, int surfaces, short node_count, int filled, long vertex_room,
+	long triangle_room, long material_room)
+{
+	struct vertex_buffer const *vertex_buffer = &part->vertex_buffer;
+	struct triangle_buffer const *triangle_buffer = &part->triangle_buffer;
+	struct world_rt_model_shader_reference const *reference;
+	struct shader const *shader;
+	byte *vertices = NULL;
+	BYTE *indices = NULL;
+	long stride, index_count, index, first_vertex = mesh->vertex_count;
+	int kind;
+	float scale[2];
+
+	if (TEST_FLAG(part->flags, _world_rt_model_part_stripped_bit) || !VALID_INDEX(part->shader_index, model->shaders.count))
+		return TRUE;
+	reference = TAG_BLOCK_GET_ELEMENT(&model->shaders, part->shader_index, struct world_rt_model_shader_reference);
+	shader = reference->shader.index != NONE && tag_index_is_group(reference->shader.index, SHADER_DEFINITION_TAG) ?
+		shader_definition_get(reference->shader.index) : NULL;
+	if (!shader || !shader_type_is_valid_for_model(shader->base.type))
+		return TRUE;
+	/* (its kind: a shader_model alpha-tested unless it says not, any other a
+	transparent one, left out) */
+	if (shader_type_is_transparent(shader->base.type) || shader->base.type != _world_rt_shader_type_model)
+		kind = WORLD_RT_SURFACES_TRANSPARENT;
+	else
+		kind = TEST_FLAG(((struct world_rt_shader_model const *)shader)->flags, _world_rt_shader_model_not_alpha_tested_bit) ?
+			WORLD_RT_SURFACES_OPAQUE : WORLD_RT_SURFACES_ALPHA_TESTED;
+	if (kind != surfaces)
+		return TRUE;
+	if (!vertex_buffer->hardware_format || vertex_buffer->count <= 0 || !triangle_buffer->hardware_format ||
+		triangle_buffer->count <= 0)
+		return TRUE;
+	if (vertex_buffer->type == _rasterizer_vertex_type_model_compressed)
+		stride = sizeof(struct model_vertex_compressed);
+	else if (vertex_buffer->type == _rasterizer_vertex_type_model_uncompressed)
+		stride = sizeof(struct model_vertex_uncompressed);
+	else
+		return TRUE;
+	if (triangle_buffer->type == _triangle_buffer_type_precompiled_strip)
+		index_count = triangle_buffer->count + 2;
+	else if (triangle_buffer->type == _triangle_buffer_type_triangles)
+		index_count = triangle_buffer->count * 3;
+	else
+		return TRUE;
+	if (mesh->material_count >= WORLD_RT_MATERIALS)
+		return TRUE;
+	if (filled && (mesh->vertex_count + vertex_buffer->count > vertex_room || mesh->material_count >= material_room))
+		return FALSE;
+	IDirect3DVertexBuffer8_Lock((IDirect3DVertexBuffer8 *)vertex_buffer->hardware_format, 0, 0, &vertices, D3DLOCK_READONLY);
+	IDirect3DIndexBuffer8_Lock((IDirect3DIndexBuffer8 *)triangle_buffer->hardware_format, 0, 0, &indices, D3DLOCK_READONLY);
+	if (!vertices || !indices)
+	{
+		if (vertices)
+			IDirect3DVertexBuffer8_Unlock((IDirect3DVertexBuffer8 *)vertex_buffer->hardware_format);
+		if (indices)
+			IDirect3DIndexBuffer8_Unlock((IDirect3DIndexBuffer8 *)triangle_buffer->hardware_format);
+		return TRUE;
+	}
+	/* (a compressed vertex's coordinates are scaled by the model's base map
+	scale as it is drawn: rasterizer_model_begin_parameters') */
+	scale[0] = model->base_map_scale.i != 0.0f ? model->base_map_scale.i : 1.0f;
+	scale[1] = model->base_map_scale.j != 0.0f ? model->base_map_scale.j : 1.0f;
+	if (filled)
+	{
+		material_describe(reference->shader.index, &mesh->materials[mesh->material_count]);
+		for (index = 0; index < vertex_buffer->count; index++)
+		{
+			struct world_rt_source_vertex *out = &mesh->vertices[first_vertex + index];
+			long node0, node1;
+			real weight;
+
+			memset(out, 0, sizeof(*out));
+			if (vertex_buffer->type == _rasterizer_vertex_type_model_compressed)
+			{
+				struct model_vertex_compressed const *in = (void const *)(vertices + index * stride);
+
+				memcpy(out->position, &in->position, sizeof(out->position));
+				unpacked(in->normal, out->normal);
+				unpacked(in->tangent, out->tangent);
+				unpacked(in->binormal, out->binormal);
+				out->uv[0] = (float)in->texcoord.x / 32767.0f * scale[0];
+				out->uv[1] = (float)in->texcoord.y / 32767.0f * scale[1];
+				node0 = in->nodes[0] / 3;
+				node1 = in->nodes[1] / 3;
+				weight = (real)in->node_weight * (1.0f / 32767.0f);
+			}
+			else
+			{
+				struct model_vertex_uncompressed const *in = (void const *)(vertices + index * stride);
+
+				memcpy(out->position, &in->position, sizeof(out->position));
+				memcpy(out->normal, &in->normal, sizeof(out->normal));
+				memcpy(out->tangent, &in->tangent, sizeof(out->tangent));
+				memcpy(out->binormal, &in->binormal, sizeof(out->binormal));
+				out->uv[0] = in->texcoord.x;
+				out->uv[1] = in->texcoord.y;
+				node0 = in->nodes[0];
+				node1 = in->nodes[1];
+				weight = in->node_weights[0];
+			}
+			/* (a part with its own node map, which this build's part doesn't
+			carry: held to the node its middle is on, as object_mesh.c holds
+			it) */
+			if (TEST_FLAG(part->flags, _world_rt_model_part_local_nodes_bit))
+			{
+				node0 = node1 = VALID_INDEX(part->centroid_primary_node_index, node_count) ?
+					part->centroid_primary_node_index : 0;
+				weight = 1.0f;
+			}
+			if (!VALID_INDEX(node0, node_count))
+				node0 = 0;
+			if (!VALID_INDEX(node1, node_count))
+			{
+				node1 = node0;
+				weight = 1.0f;
+			}
+			if (!valid_real(out->position[0]) || !valid_real(out->position[1]) || !valid_real(out->position[2]))
+				out->position[0] = out->position[1] = out->position[2] = 0.0f;
+			if (!valid_real(out->uv[0]) || !valid_real(out->uv[1]))
+				out->uv[0] = out->uv[1] = 0.0f;
+			out->nodes[0] = (short)node0;
+			out->nodes[1] = (short)node1;
+			out->weight = valid_real(weight) ? PIN(weight, 0.0f, 1.0f) : 1.0f;
+		}
+	}
+	mesh->vertex_count += vertex_buffer->count;
+	/* its triangles: a strip's every one (turning, its degenerate ones left
+	out), or a list's */
+	{
+		unsigned short const *list = (unsigned short const *)indices;
+
+		for (index = 0; index + 2 < index_count; index += triangle_buffer->type == _triangle_buffer_type_precompiled_strip ? 1 : 3)
+		{
+			unsigned short a = list[index], b = list[index + 1], c = list[index + 2];
+
+			if (a == b || b == c || a == c || a >= vertex_buffer->count || b >= vertex_buffer->count ||
+				c >= vertex_buffer->count)
+				continue;
+			/* (a strip's odd triangles turn the other way) */
+			if (triangle_buffer->type == _triangle_buffer_type_precompiled_strip && (index & 1))
+			{
+				unsigned short swap = b;
+
+				b = c;
+				c = swap;
+			}
+			if (filled)
+			{
+				if (mesh->triangle_count >= triangle_room)
+					break;
+				mesh->triangles[mesh->triangle_count][0] = (unsigned long)(first_vertex + a);
+				mesh->triangles[mesh->triangle_count][1] = (unsigned long)(first_vertex + b);
+				mesh->triangles[mesh->triangle_count][2] = (unsigned long)(first_vertex + c);
+				mesh->triangle_materials[mesh->triangle_count] = (unsigned short)mesh->material_count;
+			}
+			mesh->triangle_count++;
+		}
+	}
+	IDirect3DVertexBuffer8_Unlock((IDirect3DVertexBuffer8 *)vertex_buffer->hardware_format);
+	IDirect3DIndexBuffer8_Unlock((IDirect3DIndexBuffer8 *)triangle_buffer->hardware_format);
+	mesh->material_count++;
+	return TRUE;
+}
+
+long world_rt_source_model_mesh(long definition, struct world_rt_source_mesh *mesh, float (*inverses)[3][4])
+{
+	struct object_definition const *object_definition;
+	struct model const *model;
+	int filled = mesh->vertices && mesh->triangles && mesh->triangle_materials && mesh->materials;
+	long vertex_room = mesh->vertex_count, triangle_room = mesh->triangle_count, material_room = mesh->material_count;
+	short region_index, node_index, node_count;
+	int surfaces;
+
+	mesh->vertex_count = mesh->triangle_count = mesh->opaque_count = mesh->material_count = mesh->left_out = 0;
+	if (definition == NONE)
+		return 0;
+	object_definition = object_definition_get(definition);
+	if (!object_definition || object_definition->object.model.index == NONE)
+		return 0;
+	model = model_definition_get(object_definition->object.model.index);
+	if (!model || !model->nodes.address || model->nodes.count <= 0 || !model->regions.address ||
+		!model->geometries.address || model->geometries.count <= 0)
+		return 0;
+	node_count = (short)MIN(model->nodes.count, WORLD_RT_NODES);
+	if (inverses)
+	{
+		for (node_index = 0; node_index < node_count; node_index++)
+		{
+			struct model_node const *node = TAG_BLOCK_GET_ELEMENT(&model->nodes, node_index, struct model_node);
+			real_matrix4x3 const *matrix = &node->runtime_default_inverse_matrix;
+			int row;
+
+			/* (its columns the forward, left and up axes, scaled, then its
+			position: a model point into the node's space) */
+			for (row = 0; row < 3; row++)
+			{
+				inverses[node_index][row][0] = matrix->scale * (&matrix->forward.i)[row];
+				inverses[node_index][row][1] = matrix->scale * (&matrix->left.i)[row];
+				inverses[node_index][row][2] = matrix->scale * (&matrix->up.i)[row];
+				inverses[node_index][row][3] = (&matrix->position.x)[row];
+			}
+		}
+	}
+	for (surfaces = WORLD_RT_SURFACES_OPAQUE; surfaces <= WORLD_RT_SURFACES_TRANSPARENT; surfaces++)
+	{
+		long before = mesh->triangle_count;
+
+		for (region_index = 0; region_index < MIN(model->regions.count, MAXIMUM_REGIONS_PER_OBJECT); region_index++)
+		{
+			struct model_region const *region = TAG_BLOCK_GET_ELEMENT(&model->regions, region_index, struct model_region);
+			struct model_region_permutation const *permutation;
+			short geometry_index = NONE, level, step;
+
+			if (region->permutations.count <= 0 || !region->permutations.address)
+				continue;
+			permutation = TAG_BLOCK_GET_ELEMENT(&region->permutations, 0, struct model_region_permutation);
+			/* (the rays' level, or the nearest there is: the less detailed first) */
+			for (step = 0; step < 2 * _world_rt_model_detail_levels && !VALID_INDEX(geometry_index, model->geometries.count);
+				step++)
+			{
+				level = (short)(_world_rt_model_detail_rays + (step & 1 ? (step + 1) / 2 : -(step / 2)));
+				if (level >= 0 && level < _world_rt_model_detail_levels)
+					geometry_index = permutation->geometry_indices[level];
+			}
+			if (!VALID_INDEX(geometry_index, model->geometries.count))
+				continue;
+			{
+				struct world_rt_model_geometry const *geometry = TAG_BLOCK_GET_ELEMENT(&model->geometries, geometry_index,
+					struct world_rt_model_geometry);
+				long part_index;
+
+				if (geometry->parts.count <= 0 || geometry->parts.count > MAXIMUM_PARTS_PER_MODEL_GEOMETRY ||
+					!geometry->parts.address)
+					continue;
+				for (part_index = 0; part_index < geometry->parts.count; part_index++)
+				{
+					struct world_rt_model_part const *part = TAG_BLOCK_GET_ELEMENT(&geometry->parts, part_index,
+						struct world_rt_model_part);
+
+					/* (the transparent ones counted, left out) */
+					if (surfaces == WORLD_RT_SURFACES_TRANSPARENT)
+					{
+						struct world_rt_source_mesh counted;
+
+						memset(&counted, 0, sizeof(counted));
+						model_part_add(&counted, model, part, surfaces, node_count, FALSE, 0, 0, 0);
+						mesh->left_out += counted.triangle_count;
+						continue;
+					}
+					if (!model_part_add(mesh, model, part, surfaces, node_count, filled, vertex_room, triangle_room,
+						material_room))
+						return 0;
+				}
+			}
+		}
+		if (surfaces == WORLD_RT_SURFACES_OPAQUE)
+			mesh->opaque_count = mesh->triangle_count;
+		(void)before;
 	}
 	return mesh->triangle_count;
 }

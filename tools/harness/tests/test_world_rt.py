@@ -12,7 +12,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from harness import CHECK_FAILED, build, mutated, read, run  # noqa: E402
 
-CASES = ["arithmetic", "frame", "render"]
+CASES = ["arithmetic", "frame", "render", "model"]
 GAME = "port/linux/game/world_rt.c"
 CONTROLS = [
     # a mesh wound inward kept so (the backend's front faces then the inside)
@@ -49,6 +49,12 @@ CONTROLS = [
     ("\t\tif (slot->sent && header == slot->header)", "\t\tif (header == slot->header)", "render"),
     # ... or the alpha-tested material's alpha map not its slot
     ("\t\tworld_rt_slot(&source->maps[source->alpha_map], 0) : 0;", "\t\t0 : 0;", "render"),
+    # a model's triangles left in its model's space (not each node's), or not turned to face out
+    ("world_rt_transformed(inverses[node_index], mesh.vertices[vertex].position, 1, out->position);", "", "model"),
+    ("\tif (facing < 0.0f)\n", "\tif (0)\n", "model"),
+    # its collision meshes made beside them
+    ("\tfor (node_index = 0; node_index < entry->node_count && !any; node_index++)",
+     "\tfor (node_index = 0; node_index < entry->node_count; node_index++)", "model"),
     # the octahedral map's lower half not folded
     ("\tif (vector[2] < 0.0f)\n", "\tif (0)\n", "arithmetic"),
     # ... or not made again for another BSP

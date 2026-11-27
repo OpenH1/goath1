@@ -87,6 +87,8 @@ struct world_rt_definition
 	long definition; /* its tag index; -1 an empty entry */
 	short node_count;
 	short boxed;
+	/* (debug.rt_render_geometry) its meshes are its model's as drawn */
+	short drawn;
 	float sphere[4];
 	unsigned short meshes[WORLD_RT_NODES];
 };
@@ -625,6 +627,175 @@ static void world_rt_structure_render(void)
 	world_rt_source_mesh_free(&mesh);
 }
 
+/* a point (or, rotation alone, a direction) by a row-major 3x4 */
+static void world_rt_transformed(float const transform[3][4], float const in[3], int point, float out[3])
+{
+	int row;
+
+	for (row = 0; row < 3; row++)
+	{
+		out[row] = transform[row][0] * in[0] + transform[row][1] * in[1] + transform[row][2] * in[2] +
+			(point ? transform[row][3] : 0.0f);
+	}
+}
+
+static void world_rt_unit(float vector[3])
+{
+	float length = sqrtf(vector[0] * vector[0] + vector[1] * vector[1] + vector[2] * vector[2]);
+
+	if (length > 0.0f)
+	{
+		vector[0] /= length;
+		vector[1] /= length;
+		vector[2] /= length;
+	}
+}
+
+int world_rt_triangle_node(struct world_rt_source_vertex const *a, struct world_rt_source_vertex const *b,
+	struct world_rt_source_vertex const *c)
+{
+	struct world_rt_source_vertex const *corners[3];
+	int major[3], corner;
+
+	corners[0] = a;
+	corners[1] = b;
+	corners[2] = c;
+	for (corner = 0; corner < 3; corner++)
+		major[corner] = corners[corner]->weight >= 0.5f ? corners[corner]->nodes[0] : corners[corner]->nodes[1];
+	/* (two corners' node, else the first's) */
+	return major[1] == major[2] ? major[1] : major[0];
+}
+
+void world_rt_face_out(struct world_rt_source_vertex const *vertices, unsigned long triangle[3])
+{
+	float const *a = vertices[triangle[0]].position, *b = vertices[triangle[1]].position, *c = vertices[triangle[2]].position;
+	float u[3], v[3], facing = 0.0f;
+	int k;
+
+	for (k = 0; k < 3; k++)
+	{
+		u[k] = b[k] - a[k];
+		v[k] = c[k] - a[k];
+	}
+	for (k = 0; k < 3; k++)
+	{
+		float cross = u[(k + 1) % 3] * v[(k + 2) % 3] - u[(k + 2) % 3] * v[(k + 1) % 3];
+
+		facing += cross * (vertices[triangle[0]].normal[k] + vertices[triangle[1]].normal[k] +
+			vertices[triangle[2]].normal[k]);
+	}
+	if (facing < 0.0f)
+	{
+		unsigned long swap = triangle[1];
+
+		triangle[1] = triangle[2];
+		triangle[2] = swap;
+	}
+}
+
+/* (debug.rt_render_geometry) a definition's model's render mesh as drawn,
+split by node: each triangle on its corners' major node (two corners', else
+the first's; a joint's blended corners held so), its vertices in that
+node's space (its default inverse), turned to face as its normals do, a
+mesh for each node that has some (entry's meshes). Its triangles made (0:
+none, its collision meshes then) */
+static long world_rt_definition_render(long definition, struct world_rt_definition *entry)
+{
+	struct world_rt_source_mesh mesh, part;
+	float (*inverses)[3][4] = NULL;
+	signed char *nodes = NULL;
+	long *stamps = NULL, *remap = NULL, expected, count, triangle, made = 0;
+	short node_index;
+
+	memset(&mesh, 0, sizeof(mesh));
+	memset(&part, 0, sizeof(part));
+	expected = world_rt_source_model_mesh(definition, &mesh, NULL);
+	if (expected <= 0 || expected > WORLD_RT_MESH_TRIANGLES || !world_rt_source_mesh_make(&mesh))
+		goto done;
+	inverses = malloc(sizeof(*inverses) * WORLD_RT_NODES);
+	count = inverses ? world_rt_source_model_mesh(definition, &mesh, inverses) : 0;
+	if (count != expected)
+		goto done;
+	part.vertex_count = mesh.vertex_count;
+	part.triangle_count = mesh.triangle_count;
+	part.material_count = mesh.material_count;
+	nodes = malloc((size_t)mesh.triangle_count);
+	stamps = malloc(sizeof(*stamps) * (size_t)mesh.vertex_count);
+	remap = malloc(sizeof(*remap) * (size_t)mesh.vertex_count);
+	if (!nodes || !stamps || !remap || !world_rt_source_mesh_make(&part))
+		goto done;
+	free(part.materials);
+	part.materials = mesh.materials;
+	for (triangle = 0; triangle < mesh.triangle_count; triangle++)
+	{
+		int node = world_rt_triangle_node(&mesh.vertices[mesh.triangles[triangle][0]],
+			&mesh.vertices[mesh.triangles[triangle][1]], &mesh.vertices[mesh.triangles[triangle][2]]);
+
+		nodes[triangle] = (signed char)(node >= 0 && node < entry->node_count ? node : 0);
+	}
+	memset(stamps, 0xFF, sizeof(*stamps) * (size_t)mesh.vertex_count);
+	for (node_index = 0; node_index < entry->node_count; node_index++)
+	{
+		unsigned long id, size;
+
+		part.vertex_count = part.triangle_count = part.opaque_count = 0;
+		part.material_count = mesh.material_count;
+		for (triangle = 0; triangle < mesh.triangle_count; triangle++)
+		{
+			int corner;
+
+			if (nodes[triangle] != node_index)
+				continue;
+			for (corner = 0; corner < 3; corner++)
+			{
+				unsigned long vertex = mesh.triangles[triangle][corner];
+
+				if (stamps[vertex] != node_index)
+				{
+					struct world_rt_source_vertex *out = &part.vertices[part.vertex_count];
+
+					*out = mesh.vertices[vertex];
+					world_rt_transformed(inverses[node_index], mesh.vertices[vertex].position, 1, out->position);
+					world_rt_transformed(inverses[node_index], mesh.vertices[vertex].normal, 0, out->normal);
+					world_rt_transformed(inverses[node_index], mesh.vertices[vertex].tangent, 0, out->tangent);
+					world_rt_transformed(inverses[node_index], mesh.vertices[vertex].binormal, 0, out->binormal);
+					world_rt_unit(out->normal);
+					world_rt_unit(out->tangent);
+					world_rt_unit(out->binormal);
+					stamps[vertex] = node_index;
+					remap[vertex] = part.vertex_count++;
+				}
+				part.triangles[part.triangle_count][corner] = (unsigned long)remap[vertex];
+			}
+			world_rt_face_out(part.vertices, part.triangles[part.triangle_count]);
+			part.triangle_materials[part.triangle_count] = mesh.triangle_materials[triangle];
+			part.opaque_count += triangle < mesh.opaque_count;
+			part.triangle_count++;
+		}
+		if (!part.triangle_count)
+			continue;
+		size = world_rt_blob(&part);
+		id = size ? world_rt_id_take() : 0;
+		if (!id)
+			continue;
+		halo_world_rt_mesh(id, world_rt.blob, size);
+		world_rt.count_triangles += part.triangle_count;
+		entry->meshes[node_index] = (unsigned short)id;
+		made += part.triangle_count;
+	}
+	entry->drawn = made > 0;
+done:
+	if (part.materials == mesh.materials)
+		part.materials = NULL;
+	world_rt_source_mesh_free(&part);
+	world_rt_source_mesh_free(&mesh);
+	free(inverses);
+	free(nodes);
+	free(stamps);
+	free(remap);
+	return made;
+}
+
 /* a definition's meshes, made as it is first drawn (NULL: none can be
 kept) */
 static struct world_rt_definition *world_rt_definition(long definition)
@@ -659,7 +830,12 @@ static struct world_rt_definition *world_rt_definition(long definition)
 	entry->node_count = world_rt_source_definition(definition, entry->sphere, &item);
 	if (entry->node_count > WORLD_RT_NODES)
 		entry->node_count = WORLD_RT_NODES;
-	for (node_index = 0; node_index < entry->node_count; node_index++)
+	/* (debug.rt_render_geometry: its model's render mesh as drawn, a mesh for
+	each node; its collision meshes where it has none) */
+	if (entry->node_count > 0 && config_boolean("debug.rt_render_geometry"))
+		triangles = world_rt_definition_render(definition, entry);
+	any = triangles > 0;
+	for (node_index = 0; node_index < entry->node_count && !any; node_index++)
 	{
 		long count = world_rt_source_node(definition, node_index, NULL, 0);
 
@@ -668,9 +844,9 @@ static struct world_rt_definition *world_rt_definition(long definition)
 		count = world_rt_source_node(definition, node_index, world_rt.triangles, count);
 		world_rt_orient(world_rt.triangles, count, WORLD_RT_ORIENT_LEAST);
 		entry->meshes[node_index] = (unsigned short)world_rt_mesh_send(count);
-		any = any || entry->meshes[node_index];
 		triangles += entry->meshes[node_index] ? count : 0;
 	}
+	any = triangles > 0;
 	/* (none: an item's box about its bounding sphere, on its first node) */
 	if (!any && item && entry->node_count > 0 && entry->sphere[3] > 0.0f && entry->sphere[3] <= WORLD_RT_BOX_LARGEST)
 	{
@@ -683,8 +859,8 @@ static struct world_rt_definition *world_rt_definition(long definition)
 	}
 	/* (measuring) */
 	if (world_rt.counts_wanted > 0)
-		platform_log("world ao: the ray-traced scene's %s: %d nodes, %ld triangles%s", world_rt_source_name(definition),
-			(int)entry->node_count, triangles, entry->boxed ? ", its box" : "");
+		platform_log("world ao: the ray-traced scene's %s: %d nodes, %ld triangles%s%s", world_rt_source_name(definition),
+			(int)entry->node_count, triangles, entry->boxed ? ", its box" : "", entry->drawn ? ", as drawn" : "");
 	return entry;
 }
 
