@@ -2560,6 +2560,8 @@ static void device_backend_ready(void)
 	for (index = 0; index < XGPU_VERTEX_ATTRIBUTE_COUNT; index++)
 		device.attributes[index][3] = 1.0f;
 	xgpu_backend_initialize();
+	/* (display.ray_tracing "auto": on where the backend has ray queries) */
+	config_ray_queries_set(xgpu_backend_capabilities.ray_queries);
 	memory_watch_initialize();
 	mirror_page_size_set(memory_watch_page_size());
 	debug_settings.skip_vertex_shaders = config_string("debug.gpu_skip_vertex_shaders");

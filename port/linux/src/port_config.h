@@ -59,6 +59,10 @@ display.graphics chooses that the player has not set are read at their
 "classic" values (config_boolean, config_integer, config_string; not
 config_text); config_changes moves as it changes */
 void config_battery_saver_set(int saving);
+/* whether the backend has ray queries (d3d8_device.c, once it is ready):
+display.ray_tracing "auto" chooses its settings by it; config_changes moves
+as it changes */
+void config_ray_queries_set(int ray_queries);
 
 /* whether this is a dedicated server (server.enabled, --server,
 HALO_SERVER: port/linux/src/server_mode.c), whose settings the file holds */
