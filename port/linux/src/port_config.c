@@ -3379,12 +3379,13 @@ static const struct config_setting config_settings[] =
 		"(VK_KHR_push_descriptor, where the device has it) rather than kept as\n"
 		"descriptor sets. The pictures are the same; to measure the CPU's time\n"
 		"per frame against the kept sets." },
-	{ "debug.vulkan_bar_uploads", _config_boolean, "false", "HALO_VULKAN_BAR_UPLOADS", _environment_set_is_true,
+	{ "debug.vulkan_bar_uploads", _config_boolean, "true", "HALO_VULKAN_BAR_UPLOADS", _environment_value,
 		_platform_all,
 		"Vulkan: the stream's upload ring and the mirror's segments, which the CPU\n"
 		"writes and the GPU reads every frame, in the GPU's own memory the CPU can\n"
-		"write (a heap over 256 MB: resizable BAR) rather than the host's. Not on\n"
-		"an integrated GPU, whose memory is the host's. The log says which." },
+		"write (a heap over 2 GB: resizable BAR) rather than the host's. On by\n"
+		"default; not on an integrated GPU, whose memory is the host's, nor where\n"
+		"there is no such heap. The log says which." },
 	{ "debug.skip_cinematics", _config_boolean, "false", "HALO_SKIP_CINEMATICS", _environment_set_is_true, _platform_all,
 		"Skip each cinematic in a local game: as the skip button does where it can\n"
 		"be skipped, else run at sixteen times its speed (a test reaches play in\n"

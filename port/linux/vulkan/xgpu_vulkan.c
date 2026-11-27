@@ -1966,9 +1966,11 @@ enum
 
 #define BAR_RING 1
 #define BAR_MIRROR 2
-/* (a heap no larger is the old 256 MB window, which the driver keeps for
-its own use) */
-#define BAR_HEAP_LEAST ((VkDeviceSize)256 * 1024 * 1024)
+/* (a heap no larger than 2 GB is not used: the old 256 MB window, which
+the driver keeps for its own use, or a small card's, where the ring and the
+mirror at their largest, 128 + 256 MB and the rename spares' 64 MB, would
+take a share the textures need) */
+#define BAR_HEAP_LEAST ((VkDeviceSize)2048 * 1024 * 1024)
 
 /* the bar memory's type for a buffer of these memory type bits made for
 host, or -1 */
@@ -12849,15 +12851,22 @@ static int device_make(const struct xgpu_vulkan_options *options)
 	/* (bar memory: the ring and the mirror's segments, which the CPU writes
 and the GPU reads every frame, in the device's own memory where the CPU can
 write all of it, a heap larger than the old 256 MB window, and where the
-host's memory isn't the device's already (an integrated GPU, as before).
-debug.vulkan_bar_uploads; off, neither) */
+host's memory isn't the device's already (not an integrated GPU).
+debug.vulkan_bar_uploads, on by default; off, neither) */
 	vk.bar_type = -1;
 	if (options->bar_uploads)
 	{
 		int host = memory_type(~0u, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 0);
 		uint32_t index;
 
-		vk.bar_uploads = BAR_RING | BAR_MIRROR;
+		/* (not on an integrated GPU, whose "device" memory is the host's own:
+		omarchy's Radeon 8060S measured no faster with it, a little slower
+		(1% low 122 against 131 fps), and the Steam Deck's is a small carve-out
+		the textures need; RADV lists the host's GTT type first, so the test
+		below on the first host type does not catch it) */
+		int integrated = vk.properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU;
+
+		vk.bar_uploads = integrated ? 0 : BAR_RING | BAR_MIRROR;
 		for (index = 0; vk.bar_uploads && host >= 0 && index < vk.memory_properties.memoryTypeCount; index++)
 		{
 			const VkMemoryType *type = &vk.memory_properties.memoryTypes[index];
@@ -12880,9 +12889,9 @@ debug.vulkan_bar_uploads; off, neither) */
 				vk.bar_uploads & BAR_RING ? " ring" : "", vk.bar_uploads == (BAR_RING | BAR_MIRROR) ? " and the" : "",
 				vk.bar_uploads & BAR_MIRROR ? " mirror" : "");
 		else
-			host_logf(HOST_LOG_INFO, "vulkan: no bar memory used (%s)",
+			host_logf(HOST_LOG_INFO, "vulkan: no bar memory used (%s)", integrated ? "an integrated GPU" :
 				host >= 0 && (vk.memory_properties.memoryTypes[host].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) ?
-				"the host's memory is the device's" : "none larger than 256 MB");
+				"the host's memory is the device's" : "none larger than 2 GB");
 	}
 	vk.capabilities.scaled_shorts = format_has(VK_FORMAT_R16G16_SSCALED, 1, VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT) &&
 		format_has(VK_FORMAT_R16G16B16_SSCALED, 1, VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT) &&
