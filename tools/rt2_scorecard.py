@@ -287,7 +287,7 @@ def pictures(env, recording, frames, hold=None):
     result = {}
     for n, data in datas.items():
         w, h, lum = rt2_stability.png_luminance(data)
-        result[n] = (np.asarray(lum, dtype=np.float64).reshape(h, w), rt2_stability.png_rgb_numpy(data))
+        result[n] = (np.asarray(lum, dtype=np.float64).reshape(h, w), rt2_stability.png_rgb_numpy(data), data)
     return result
 
 
@@ -313,8 +313,10 @@ def visual(replay, env, out):
     off = pictures(env + ["HALO_LT_SUN=0"], recording, [frame], hold=30)[frame]
     clamp = pictures(env + ["HALO_LT_SUN_CLAMP_VIEW=1"], recording, [frame], hold=30)[frame]
     shadowed = lit[0] < 0.85 * off[0]
-    rgb = clamp[1]
-    magenta = (rgb[..., 0] > 250) & (rgb[..., 1] < 5) & (rgb[..., 2] > 250)
+    # (the view's magenta, which the surface's texture then multiplies: red and blue, no green)
+    rgb = clamp[1].astype(np.int32)
+    magenta = (rgb[..., 0] > 30) & (rgb[..., 2] > 30) & (rgb[..., 1] * 10 < np.minimum(rgb[..., 0], rgb[..., 2]))
+    shadowed |= magenta
     share = float(shadowed.mean())
     clamped = float((magenta & shadowed).sum() / max(shadowed.sum(), 1))
     found.append(("sun shadow share", name, share, SHADOW_LEAST, True, f"{int(shadowed.sum())} px darkened 15%+"))
@@ -322,11 +324,17 @@ def visual(replay, env, out):
                   f"({magenta.mean():.3%} of the frame)"))
     folder = out / name
     folder.mkdir(parents=True, exist_ok=True)
-    (folder / "shadowed.npy").write_bytes(np.packbits(shadowed).tobytes())
+    for label, picture in (("sun_on", lit), ("sun_off", off), ("sun_clamp_view", clamp)):
+        (folder / f"{label}.png").write_bytes(picture[2])
     name, recording, start, last, light, what = VISUAL_AFTERGLOW
     frames = list(range(start, last + AFTER + 1))
     with_light = pictures(env, recording, frames)
     without = pictures(env + [f"HALO_LT_DROP=id:{light}"], recording, frames)
+    folder = out / name
+    folder.mkdir(parents=True, exist_ok=True)
+    for n in (last, last + AFTER):
+        (folder / f"afterglow_{n}_with.png").write_bytes(with_light[n][2])
+        (folder / f"afterglow_{n}_without.png").write_bytes(without[n][2])
     seen = tile_largest(with_light[last][0], without[last][0])
     after = tile_largest(with_light[last + AFTER][0], without[last + AFTER][0])
     found.append((f"afterglow {AFTER} frames", name, after, AFTERGLOW_MOST, False,
