@@ -95,6 +95,13 @@ static void screen_text_set(struct widget_instance *widget, char const *utf8)
 	widget->sets++;
 }
 
+/* (menu_screen.c's: set only if they differ) */
+static void screen_text_change(struct widget_instance *widget, char const *utf8)
+{
+	if (strcmp(widget->text, utf8))
+		screen_text_set(widget, utf8);
+}
+
 #include "under_test.inc"
 
 int main(int argc, char **argv)
@@ -129,12 +136,18 @@ int main(int argc, char **argv)
 		dialog_frame(&open);
 		CHECK(!strcmp(text.text, "Reverting in 3 seconds") && !strcmp(revert.text, "REVERT (3)"), "and again: %s",
 			revert.text);
+		/* (a frame with the same value: nothing set again) */
+		text.sets = revert.sets = 0;
+		dialog_frame(&open);
+		CHECK(text.sets == 0 && revert.sets == 0, "unchanged words not set again: %d %d", text.sets, revert.sets);
 		return 0;
 	}
 	if (!strcmp(name, "unbound"))
 	{
+		/* (its words other than its block's label: still not touched) */
+		snprintf(keep.text, sizeof(keep.text), "%s", "KEEP IT");
 		dialog_frame(&open);
-		CHECK(keep.sets == 0 && !strcmp(keep.text, "KEEP"), "a label with no bindings is left as it was made");
+		CHECK(keep.sets == 0 && !strcmp(keep.text, "KEEP IT"), "a label with no bindings is left as it was made");
 		CHECK(bare.sets == 0, "a choice with no block is left alone");
 		return 0;
 	}
