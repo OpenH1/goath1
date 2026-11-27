@@ -409,10 +409,10 @@ static void material_describe(long shader_index, struct world_rt_source_material
 			material->alpha_map = WORLD_RT_MAP_BASE;
 		}
 	}
-	material_reflection(shader, material);
 	/* (a transparent one drawn as a cutout: its first map's alpha tested) */
 	else if (!shader_cutout(shader, material))
 		material->flags |= WORLD_RT_MATERIAL_TRANSPARENT;
+	material_reflection(shader, material);
 	/* (the mods' material maps of its base map: docs/mods.md) */
 	if (material->maps[WORLD_RT_MAP_BASE].bitmap != NONE)
 		mod_materials_maps(material->maps[WORLD_RT_MAP_BASE].bitmap, &material->normal_image, &material->orm_image);
