@@ -1600,6 +1600,11 @@ static void render_object_rt_shadows(
 		long object_index = render_object_globals.rendered_object_indices[rendered_object_index];
 		struct object_datum *object = object_get(object_index);
 
+		/* port: an object whose sun shadow the light-transport pass casts
+		(port/linux/game/lt_lights.c) is no caster here, as in
+		render_object_shadow_begin: its shadow is not drawn twice */
+		if (!contact && lt_lights_sun_shadow(object_index))
+			continue;
 		if ((!object_is_first_person_camera(object_index) ||
 				(first_person_legs_wanted(object_index) && first_person_legs_shadow_node_matrices(
 					object_index, object_get_node_matrices(object_index)))) &&
