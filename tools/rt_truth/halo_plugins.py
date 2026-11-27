@@ -546,7 +546,7 @@ class HaloLightmapRadiance(mi.Texture):
     def __init__(self, props):
         mi.Texture.__init__(self, props)
         self.albedo = props["albedo"]
-        self.lightmap = props["lightmap"]
+        self.lightmap = props["lightmap"] if props.has_property("lightmap") else None
         self.gamma = props.get("gamma", 2.2)
         # An environment shader's self-illumination as the lightmap pass adds it at the tick (rasterizer_
         # xbox_environment.c:862-898): map.r x primary + map.g x secondary + map.b x plasma, added to the
@@ -557,10 +557,13 @@ class HaloLightmapRadiance(mi.Texture):
                           for k in ("si_primary", "si_secondary", "si_plasma")]
 
     def eval(self, si, active=True):
-        u3 = si.shape.eval_attribute_3("vertex_halo_uv2", si, active)
-        si2 = mi.SurfaceInteraction3f(si)
-        si2.uv = mi.Point2f(u3.x, u3.y)
-        lm = dr.maximum(self.lightmap.eval(si2, active), 0.0)
+        if self.lightmap is None:  # an object's environment shader: its self-illumination alone
+            lm = mi.Color3f(0.0)
+        else:
+            u3 = si.shape.eval_attribute_3("vertex_halo_uv2", si, active)
+            si2 = mi.SurfaceInteraction3f(si)
+            si2.uv = mi.Point2f(u3.x, u3.y)
+            lm = dr.maximum(self.lightmap.eval(si2, active), 0.0)
         if self.si_map is not None:
             si3 = mi.SurfaceInteraction3f(si)
             si3.uv = si.uv * self.si_scale

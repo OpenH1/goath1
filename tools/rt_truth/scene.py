@@ -483,11 +483,17 @@ class Scene:
     # environment shaders' is in the lightmap group, folded into the lightmap as the game's pass does)
     def object_glow(self):
         out = {}
+        self.load_geometry()
+        for fpath, g in self.geometry.items():  # objects with environment shaders that self-illuminate
+            if fpath.parent.name == "objects":
+                for mid in np.unique(g[4]):
+                    if self.env_self_illum(int(mid)) is not None:
+                        out.setdefault(fpath.resolve(), {})[int(mid)] = [0, 0, 0]
         p = self.folder / "geometry" / "objects.json"
         if p.exists():
             for o in json.loads(p.read_text()):
                 for e in o.get("self_illumination") or []:
-                    if e.get("material", -1) >= 0 and max(e["color"]) > 0:
+                    if e.get("material", -1) >= 0 and max(e["color"]) > 0:  # (models' drawn colors)
                         out.setdefault((self.folder / "geometry" / o["file"]).resolve(), {})[int(e["material"])] = e["color"]
         return out
 
@@ -633,7 +639,12 @@ class Scene:
                 if group == "glow" and is_object:
                     color = glow.get(fpath.resolve(), {}).get(int(mid))
                     mask = self.multipurpose(int(mid)) if color else None
-                    if mask is not None:
+                    env_si = self.env_self_illum(int(mid))
+                    if env_si is not None:
+                        # an object drawn with an environment shader (a console's screens): its self-
+                        # illumination at the tick, as the lightmap pass adds it, on no lightmap
+                        em_obj = mi.load_dict({"type": "area", "radiance": dict(env_si, albedo=self.albedos[int(mid)])})
+                    elif mask is not None:
                         em_obj = mi.load_dict({"type": "area", "radiance": {
                             "type": "halo_self_illum", "albedo": self.albedos[int(mid)], "mask": mask,
                             "color": [float(c) for c in color]}})
@@ -732,6 +743,21 @@ class Scene:
             self.mesh_faces[name] = (fpath, fsel)
             shapes[name] = self.make_mesh(name, pos[vv], n, uv[vv], inv.reshape(-1, 3), surf, em,
                                           tb[vv] if tb is not None else None, a2)
+
+    def env_self_illum(self, idx):
+        m = self.materials[idx] if 0 <= idx < len(self.materials) else {}
+        sim = m.get("self_illumination") if isinstance(m.get("self_illumination"), dict) else {}
+        now = sim.get("now")
+        img = self.image(sim["map"]) if sim.get("map") else None
+        if m.get("type") != "environment" or not now or img is None:
+            return None
+        if max(now["primary"] + now["secondary"]) <= 0 and max(sim.get("plasma_on", [0])) <= 0:
+            return None
+        pv = float(now.get("plasma_value", 0.0))
+        plasma = [a * pv + b * (1 - pv) for a, b in zip(sim.get("plasma_on", [0, 0, 0]), sim.get("plasma_off", [0, 0, 0]))]
+        return {"type": "halo_lightmap_radiance", "gamma": 2.2, "si_map": self.bitmap(img[:, :, :3]),
+                "si_scale": float(sim.get("map_scale") or 1.0), "si_primary": now["primary"],
+                "si_secondary": now["secondary"], "si_plasma": plasma}
 
     def multipurpose(self, idx):
         m = self.materials[idx] if 0 <= idx < len(self.materials) else {}
