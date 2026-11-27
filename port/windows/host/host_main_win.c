@@ -88,7 +88,8 @@ static void log_sink(int priority, const char *line)
 
 /* the standard error stream, or (none: a release build) halo.log beside the
 executable: made afresh, but in the copy the launcher started, which adds to
-the launcher's lines; both write it (shared for writing) */
+the launcher's lines, and in the copy started for Windows' graphics
+preference (host_display_win.c); both write it (shared for writing) */
 static void log_open(void)
 {
 	HANDLE handle = GetStdHandle(STD_ERROR_HANDLE);
@@ -106,7 +107,7 @@ static void log_open(void)
 		return;
 	wcscpy(slash + 1, L"halo.log");
 	log_handle = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
-		host_launched() ? OPEN_ALWAYS : CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+		host_launched() || host_gpu_restarted() ? OPEN_ALWAYS : CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 	log_appends = log_handle != INVALID_HANDLE_VALUE;
 }
 

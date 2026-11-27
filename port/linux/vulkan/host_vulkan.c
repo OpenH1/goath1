@@ -158,6 +158,11 @@ int host_display_adapter_luid(void *window, unsigned char luid[8]);
 int host_display_adapters(void (*each)(void *context, const char *name, unsigned vendor, unsigned device,
 	unsigned long long dedicated_memory, const unsigned char luid[8], int software), void *context);
 
+/* #1283: Windows' graphics preference for the game set, and the game started
+again, where a card DXGI lists is not in Vulkan's list
+(port/windows/host/host_display_win.c) */
+void host_gpu_preference_check(const char *missing, void *window);
+
 /* (#1283: DXGI's adapters, which the backend logs beside Vulkan's devices) */
 static struct xgpu_vulkan_adapter display_adapters[16];
 static int display_adapter_count;
@@ -864,6 +869,19 @@ int host_vulkan_window_open(uint32_t window, uint32_t debug, uint32_t shader_fol
 		return 0;
 #endif
 	}
+#ifdef _WIN32
+	{
+		SDL_PropertiesID properties = SDL_GetWindowProperties(object);
+		void *handle = properties ? SDL_GetPointerProperty(properties, SDL_PROP_WINDOW_WIN32_HWND_POINTER, NULL) :
+			NULL;
+
+		/* (a copy started for the preference gets the loader's variables
+		as the player has them: its layer filters are its own) */
+		if (xgpu_vulkan_adapter_missing()[0])
+			xgpu_vulkan_loader_environment_restore();
+		host_gpu_preference_check(xgpu_vulkan_adapter_missing(), handle);
+	}
+#endif
 #ifdef HALO_VR
 	host_vr_vulkan_set_depth_format(xgpu_vulkan_depth_format());
 	/* (VR's window, hidden while the headset shows the game, is not

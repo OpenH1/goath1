@@ -8815,6 +8815,11 @@ void xgpu_vulkan_window_gamut(float target)
 	__atomic_store_n(&vk.window_gamut, bits, __ATOMIC_RELEASE);
 }
 
+const char *xgpu_vulkan_adapter_missing(void)
+{
+	return vk.adapter_missing;
+}
+
 int xgpu_vulkan_device_luid(unsigned char luid[8])
 {
 	VkPhysicalDeviceIDProperties id;
@@ -10718,6 +10723,15 @@ static void environment_write(const char *name, const char *value)
 #endif
 }
 
+static void environment_clear(const char *name)
+{
+#ifdef _WIN32
+	SetEnvironmentVariableA(name, NULL);
+#else
+	unsetenv(name);
+#endif
+}
+
 /* (the loader's layer filters' globs are not case-sensitive) */
 static int text_has_folded(const char *text, const char *part)
 {
@@ -10734,32 +10748,112 @@ static int text_has_folded(const char *text, const char *part)
 	return 0;
 }
 
-static int load_functions(void)
-{
-	char value[1024], appended[1100];
+/* The implicit layers that can take GPUs out of the loader's device list,
+which the game turns off, as the loader looks for layers, so that every GPU
+is listed and the game chooses its device itself (physical_choose):
 
-	/* AMD's driver for a Ryzen's integrated GPU brings an implicit layer,
-	VK_LAYER_AMD_switchable_graphics_64 (and _32; amdvlk's on Linux too),
-	which can take the other vendors' GPUs out of the device list: #1269's
-	RTX 5070, its monitor's, was not listed, and the game drew with the
-	integrated Radeon. The game chooses its device itself (physical_choose),
-	so the layer is turned off before the loader looks for layers: by its
-	manifest's disable_environment, and (#1283, where the GPU was still not
-	listed) by the loader's own filter too, VK_LOADER_LAYERS_DISABLE (loaders
-	of 1.3.234 on), its glob added to any the player's value has. A player
-	who has set the layer's variable already keeps the layer as that says. */
-	if (!environment_read("DISABLE_LAYER_AMD_SWITCHABLE_GRAPHICS_1", value, sizeof(value)))
+AMD's, VK_LAYER_AMD_switchable_graphics_64 (and _32; amdvlk's on Linux
+too), which a Ryzen's integrated GPU's driver brings: #1269's RTX 5070, its
+monitor's, was not listed, and the game drew with the integrated Radeon.
+
+NVIDIA's, VK_LAYER_NV_optimus (nv-vk64.json on Windows), which sorts and
+can filter the devices by the GPU Windows and NVIDIA's profile give the
+program (#1283, where the 5070 was still not listed with AMD's off).
+Windows only: Linux's is on only for PRIME's render offload, which the
+player asks for (prime-run), and is left as it is. A laptop's dGPU is then
+listed with its iGPU, and the game's rule takes the discrete one, which
+NVIDIA's driver presents through the iGPU's display (a device that cannot
+present to the window is not usable: the iGPU then). A player who sets
+__VK_LAYER_NV_optimus keeps the layer as that says.
+
+Each by its manifest's disable_environment and by the loader's own filter,
+VK_LOADER_LAYERS_DISABLE (loaders of 1.3.234 on), its glob added to any the
+player's value has. A player who has set the layer's variable already keeps
+the layer as that says. */
+enum { LAYER_FILTER_AMD = 1, LAYER_FILTER_NV = 2 };
+
+static const struct layer_filter
+{
+	int bit;
+	const char *variable, *glob, *part, *name;
+} layer_filters[] =
+{
+	{ LAYER_FILTER_AMD, "DISABLE_LAYER_AMD_SWITCHABLE_GRAPHICS_1", "VK_LAYER_AMD_switchable_graphics*",
+		"switchable_graphics", "AMD's VK_LAYER_AMD_switchable_graphics" },
+	{ LAYER_FILTER_NV, "DISABLE_LAYER_NV_OPTIMUS_1", "VK_LAYER_NV_optimus", "nv_optimus",
+		"NVIDIA's VK_LAYER_NV_optimus" },
+};
+
+/* the loader's environment as the player had it (read once: the game's own
+values are not the player's after), and the filters the game adds */
+static struct
+{
+	int known;
+	int filters;
+	int disable_set;
+	char disable[1024];
+} loader_environment;
+
+/* the loader's environment: the player's, with the game's filters of
+filters (LAYER_FILTER_*, of loader_environment.filters) */
+static void loader_environment_set(int filters)
+{
+	char value[1300];
+	size_t index;
+
+	snprintf(value, sizeof(value), "%s", loader_environment.disable_set ? loader_environment.disable : "");
+	for (index = 0; index < sizeof(layer_filters) / sizeof(layer_filters[0]); index++)
 	{
-		environment_write("DISABLE_LAYER_AMD_SWITCHABLE_GRAPHICS_1", "1");
-		if (!environment_read("VK_LOADER_LAYERS_DISABLE", value, sizeof(value)) || !value[0])
-			environment_write("VK_LOADER_LAYERS_DISABLE", "VK_LAYER_AMD_switchable_graphics*");
-		else if (!text_has_folded(value, "switchable_graphics") && !text_has_folded(value, "~implicit~") &&
+		const struct layer_filter *filter = &layer_filters[index];
+
+		if (!(loader_environment.filters & filter->bit))
+			continue;
+		if (!(filters & filter->bit))
+		{
+			environment_clear(filter->variable);
+			continue;
+		}
+		environment_write(filter->variable, "1");
+		if (!value[0])
+			snprintf(value, sizeof(value), "%s", filter->glob);
+		else if (!text_has_folded(value, filter->part) && !text_has_folded(value, "~implicit~") &&
 			!text_has_folded(value, "~all~"))
 		{
-			snprintf(appended, sizeof(appended), "%s,VK_LAYER_AMD_switchable_graphics*", value);
-			environment_write("VK_LOADER_LAYERS_DISABLE", appended);
+			size_t length = strlen(value);
+
+			snprintf(value + length, sizeof(value) - length, ",%s", filter->glob);
 		}
 	}
+	if (value[0] || loader_environment.disable_set)
+		environment_write("VK_LOADER_LAYERS_DISABLE", value);
+	else
+		environment_clear("VK_LOADER_LAYERS_DISABLE");
+}
+
+void xgpu_vulkan_loader_environment_restore(void)
+{
+	if (loader_environment.known)
+		loader_environment_set(0);
+}
+
+static int load_functions(void)
+{
+	char value[1024];
+
+	if (!loader_environment.known)
+	{
+		loader_environment.known = 1;
+		loader_environment.disable_set = environment_read("VK_LOADER_LAYERS_DISABLE", loader_environment.disable,
+			sizeof(loader_environment.disable)) != NULL;
+		if (!environment_read("DISABLE_LAYER_AMD_SWITCHABLE_GRAPHICS_1", value, sizeof(value)))
+			loader_environment.filters |= LAYER_FILTER_AMD;
+#ifdef _WIN32
+		if (!environment_read("DISABLE_LAYER_NV_OPTIMUS_1", value, sizeof(value)) &&
+			!environment_read("__VK_LAYER_NV_optimus", value, sizeof(value)))
+			loader_environment.filters |= LAYER_FILTER_NV;
+#endif
+	}
+	loader_environment_set(loader_environment.filters);
 #ifdef _WIN32
 	if (!vk.library)
 		vk.library = LoadLibraryExW(L"vulkan-1.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
@@ -11093,6 +11187,134 @@ static void adapters_log(const struct xgpu_vulkan_options *options, const VkPhys
 	}
 }
 
+#ifdef _WIN32
+/* the PCI vendor and device IDs of the devices a bare instance lists with
+the game's layer filters of filters alone (LAYER_FILTER_*); their count, -1
+if there is no instance */
+static int probe_devices(int filters, uint32_t (*ids)[2], uint32_t most)
+{
+	VkApplicationInfo application;
+	VkInstanceCreateInfo info;
+	VkInstance instance = VK_NULL_HANDLE;
+	VkPhysicalDevice devices[16];
+	uint32_t count = most < 16 ? most : 16, index;
+	PFN_vkEnumeratePhysicalDevices enumerate;
+	PFN_vkGetPhysicalDeviceProperties describe;
+	PFN_vkDestroyInstance destroy;
+	VkResult result;
+
+	memset(&application, 0, sizeof(application));
+	application.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+	application.apiVersion = VK_API_VERSION_1_1;
+	memset(&info, 0, sizeof(info));
+	info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+	info.pApplicationInfo = &application;
+	loader_environment_set(filters);
+	result = vkCreateInstance(&info, NULL, &instance);
+	if (result != VK_SUCCESS)
+	{
+		loader_environment_set(loader_environment.filters);
+		return -1;
+	}
+	enumerate = (PFN_vkEnumeratePhysicalDevices)vkGetInstanceProcAddr(instance, "vkEnumeratePhysicalDevices");
+	describe = (PFN_vkGetPhysicalDeviceProperties)vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceProperties");
+	destroy = (PFN_vkDestroyInstance)vkGetInstanceProcAddr(instance, "vkDestroyInstance");
+	if (!enumerate || !describe || enumerate(instance, &count, devices) < 0)
+		count = 0;
+	for (index = 0; index < count; index++)
+	{
+		VkPhysicalDeviceProperties properties;
+
+		describe(devices[index], &properties);
+		ids[index][0] = properties.vendorID;
+		ids[index][1] = properties.deviceID;
+	}
+	if (destroy)
+		destroy(instance, NULL);
+	loader_environment_set(loader_environment.filters);
+	return (int)count;
+}
+
+static int probe_lists(const uint32_t (*ids)[2], int count, const struct xgpu_vulkan_adapter *adapter)
+{
+	int index;
+
+	for (index = 0; index < count; index++)
+	{
+		if (ids[index][0] == adapter->vendor && ids[index][1] == adapter->device)
+			return 1;
+	}
+	return 0;
+}
+
+/* #1283: on a computer with more than one GPU, for each NVIDIA or AMD card
+DXGI lists that Vulkan lists too, which of the game's layer filters made it
+visible: the loader asked again (a bare instance, at the start alone) with
+none of them, and then with each alone. A report's log then says which layer
+hid it rather than that it is listed */
+static void layer_filters_explain(const struct xgpu_vulkan_options *options,
+	const VkPhysicalDeviceProperties *properties, uint32_t count)
+{
+	enum { MOST = 16 };
+	uint32_t none[MOST][2], alone[2][MOST][2];
+	int none_count = -2, alone_count[2] = { -2, -2 }, hardware = 0, index;
+	uint32_t device;
+	size_t filter;
+
+	for (index = 0; index < options->adapter_count; index++)
+		hardware += !options->adapters[index].software;
+	if (!loader_environment.filters || hardware < 2)
+		return;
+	for (index = 0; index < options->adapter_count; index++)
+	{
+		const struct xgpu_vulkan_adapter *adapter = &options->adapters[index];
+		char which[160];
+		int listed = 0, other;
+
+		if (adapter->software || (adapter->vendor != 0x10de && adapter->vendor != 0x1002))
+			continue;
+		for (device = 0; device < count && !listed; device++)
+			listed = properties[device].vendorID == adapter->vendor && properties[device].deviceID == adapter->device;
+		/* (the same card twice in DXGI's list: told once) */
+		for (other = 0; other < index && listed; other++)
+			listed = !(options->adapters[other].vendor == adapter->vendor &&
+				options->adapters[other].device == adapter->device);
+		if (!listed)
+			continue;
+		if (none_count == -2)
+			none_count = probe_devices(0, none, MOST);
+		if (none_count < 0)
+			return;
+		if (probe_lists((const uint32_t (*)[2])none, none_count, adapter))
+		{
+			host_logf(HOST_LOG_INFO, "vulkan: %s is in Vulkan's list without the game's layer filters too",
+				adapter->name);
+			continue;
+		}
+		/* (each filter alone: the one that lists the card is the layer that
+		hid it; neither alone, both together) */
+		which[0] = 0;
+		for (filter = 0; filter < sizeof(layer_filters) / sizeof(layer_filters[0]); filter++)
+		{
+			if (!(loader_environment.filters & layer_filters[filter].bit))
+				continue;
+			if (alone_count[filter] == -2)
+				alone_count[filter] = probe_devices(layer_filters[filter].bit, alone[filter], MOST);
+			if (alone_count[filter] >= 0 &&
+				probe_lists((const uint32_t (*)[2])alone[filter], alone_count[filter], adapter))
+			{
+				size_t length = strlen(which);
+
+				snprintf(which + length, sizeof(which) - length, "%s%s", length ? " and " : "",
+					layer_filters[filter].name);
+			}
+		}
+		host_logf(HOST_LOG_INFO, "vulkan: %s is in Vulkan's list because the game turned off %s; without that "
+			"it is hidden (#1283)", adapter->name, which[0] ? which : "the layers it filters, both together");
+	}
+}
+#endif
+
 /* a physical device of Vulkan 1.3 with a graphics queue (that can present to
 the surface, with one; VR's runtime's device may have none that can, and
 then draws only the headset's frames), chosen by display.gpu and the rule
@@ -11234,6 +11456,10 @@ static int physical_choose(const struct xgpu_vulkan_options *options)
 		host_logf(HOST_LOG_INFO, "vulkan: the loader lists no GPU");
 	layers_log(count ? devices[0] : VK_NULL_HANDLE);
 	adapters_log(options, properties, luids, luid_valid, count);
+#ifdef _WIN32
+	if (!options->choose_physical)
+		layer_filters_explain(options, properties, count);
+#endif
 	if (chosen < 0)
 	{
 		host_logf(HOST_LOG_ERROR, "vulkan: no device of Vulkan 1.3 with a graphics queue%s (%u listed)",
