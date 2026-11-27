@@ -3148,7 +3148,8 @@ shadowed slot (xgpu_vulkan_light_shadows.c), the stream's targets bound
 again after it; not while a map is prepared */
 static void dynamic_lights_flashlight(void)
 {
-	if (stream.preparing || !stream.capabilities.ray_queries || !lights_cells)
+	/* (HALO_LT_E1: its traced pass casts the flashlight's shadow) */
+	if (stream.preparing || !stream.capabilities.ray_queries || !lights_cells || xgpu_vulkan_lt_mode())
 		return;
 	if (xgpu_vulkan_flashlight_draw(lights_cells))
 		targets_bind();
@@ -4886,7 +4887,12 @@ static void stream_world_ao_prepass(void *context, const struct xgpu_stream_worl
 						prepass.rays_drawn ? "traced by ray queries" : "stepped through the distance-field scene");
 				}
 			}
-			if (prepass.pixels && rectangle[2] > rectangle[0] && rectangle[3] > rectangle[1] &&
+			/* (HALO_LT_E1: no occlusion pass, its traced rays and history
+			left out of the light-transport experiment: the surfaces read
+			the stand-in, none) */
+			if (xgpu_vulkan_lt_mode())
+				xgpu_vulkan_world_ao_set_pixels(NULL);
+			else if (prepass.pixels && rectangle[2] > rectangle[0] && rectangle[3] > rectangle[1] &&
 				xgpu_vulkan_pipeline_ready(pass))
 			{
 				prepass_pass_draw(prepass.pixels, rectangle, &uniforms, pass);
@@ -4896,9 +4902,13 @@ static void stream_world_ao_prepass(void *context, const struct xgpu_stream_worl
 		/* (display.shadows "ray_traced": the dynamic lights' shadows, from
 		the pre-pass's inputs, for the lights the cells name:
 		xgpu_vulkan_light_shadows.c) */
-		xgpu_vulkan_light_shadows_draw(prepass.inputs, &record->pass, lights_cells ? (const uint32_t (*)[4])(lights_cells +
-			(XGPU_DYNAMIC_LIGHTS_GRID_X * XGPU_DYNAMIC_LIGHTS_GRID_Y * XGPU_DYNAMIC_LIGHTS_GRID_Z +
-			XGPU_DYNAMIC_LIGHTS_SHADOWED) * 16) : NULL);
+		/* (HALO_LT_E1: none, the experiment's own flashlight alone traced) */
+		if (xgpu_vulkan_lt_mode())
+			xgpu_vulkan_light_shadows_end();
+		else
+			xgpu_vulkan_light_shadows_draw(prepass.inputs, &record->pass, lights_cells ? (const uint32_t (*)[4])(lights_cells +
+				(XGPU_DYNAMIC_LIGHTS_GRID_X * XGPU_DYNAMIC_LIGHTS_GRID_Y * XGPU_DYNAMIC_LIGHTS_GRID_Z +
+				XGPU_DYNAMIC_LIGHTS_SHADOWED) * 16) : NULL);
 		/* (display.rt_bounce: the dynamic lights' bounced light, from the
 		pre-pass's inputs: xgpu_vulkan_gi.c; HALO_LT_E1, the flashlight's
 		traced direct light in its place: xgpu_vulkan_lt.c) */

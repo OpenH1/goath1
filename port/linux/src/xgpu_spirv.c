@@ -2611,7 +2611,7 @@ static void texture_stage(struct module *m, struct pixel_state *state, int stage
 			state->t[stage] = sample(m, state, stage, xt);
 		/* (display.rt_reflections: the reflection's texel traced along the
 		same vector) */
-		if (stage == 3 && state->rt_reflection)
+		if (stage == 3 && state->rt_reflection && !lt_e1_on()) /* (HALO_LT_E1: none) */
 			state->t[stage] = rt_reflection_texel(m, state, xyz(m, xt), state->t[stage]);
 		break;
 	case XGPU_TEXTURE_PASSTHRU:
@@ -2718,7 +2718,7 @@ static void texture_stage(struct module *m, struct pixel_state *state, int stage
 		state->t[stage] = sample(m, state, stage, vec4_of(m, r, one));
 		/* (display.rt_reflections: the reflection's texel traced along the
 		bump map's reflection) */
-		if (stage == 3 && state->rt_reflection)
+		if (stage == 3 && state->rt_reflection && !lt_e1_on()) /* (HALO_LT_E1: none) */
 			state->t[stage] = rt_reflection_texel(m, state, r, state->t[stage]);
 		break;
 	}
