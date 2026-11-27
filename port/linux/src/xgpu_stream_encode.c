@@ -127,6 +127,14 @@ _Static_assert(XGPU_STREAM_UNIFORM_PIECES <= 64, "uniform pieces");
 
 struct xgpu_backend_capabilities xgpu_backend_capabilities;
 
+/* (the game's ray-traced scene, port/linux/game/world_rt.c) its render
+geometry's budget here, in MB: 0 none given */
+unsigned long halo_world_rt_budget(void);
+unsigned long halo_world_rt_budget(void)
+{
+	return xgpu_backend_capabilities.rt_budget;
+}
+
 /* the numbered definitions (pipeline keys, vertex layouts): their bytes
 by number, found by a hash of them */
 struct numbering
@@ -697,6 +705,7 @@ void xgpu_backend_initialize(void)
 	xgpu_backend_capabilities.hdr = stream.capabilities.hdr;
 	xgpu_backend_capabilities.deep_sdr = stream.capabilities.deep_sdr;
 	xgpu_backend_capabilities.ray_queries = stream.capabilities.ray_queries;
+	xgpu_backend_capabilities.rt_budget = (unsigned long)stream.capabilities.rt_budget * 8u;
 	xgpu_backend_capabilities.soft_effects = stream.capabilities.soft_effects;
 	xgpu_backend_capabilities.temporal_upscale = stream.capabilities.temporal_upscale;
 	xgpu_backend_capabilities.temporal_dlss = stream.capabilities.temporal_dlss;

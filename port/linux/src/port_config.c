@@ -3462,12 +3462,14 @@ static const struct config_setting config_settings[] =
 	{ "debug.world_scene_log", _config_boolean, "false", "HALO_WORLD_SCENE_LOG", _environment_value, _platform_all,
 		"With display.ambient_occlusion \"world\", log the world scene's counts\n"
 		"(the level's triangles, the objects drawn, the lights) now and then." },
-	{ "debug.rt_render_geometry", _config_boolean, "false", "HALO_RT_RENDER_GEOMETRY", _environment_value, _platform_all,
-		"With display.ambient_occlusion or display.shadows \"ray_traced\", the\n"
-		"level traced as it is drawn (its render triangles, the alpha-tested\n"
-		"ones' rays tested by their alpha), not as its collision geometry,\n"
-		"from the frame after the level's first; for checking\n"
-		"(docs/rt-plan/1-geometry.md)." },
+	{ "debug.rt_render_geometry", _config_string, "\"auto\"", "HALO_RT_RENDER_GEOMETRY", _environment_value,
+		_platform_all,
+		"With display.ambient_occlusion or display.shadows \"ray_traced\", what\n"
+		"the rays hit: \"auto\" the level and objects as they are drawn (their\n"
+		"render triangles, cutouts tested by their alpha), their collision\n"
+		"geometry only until the render mesh is made or past this GPU's memory\n"
+		"budget; \"on\" as drawn whatever the budget; \"off\" the collision\n"
+		"geometry alone (docs/rt-plan/1-geometry.md)." },
 	{ "debug.world_scene_dump", _config_boolean, "false", "HALO_WORLD_SCENE_DUMP", _environment_value, _platform_all,
 		"With display.ambient_occlusion \"world\", write each level BSP's\n"
 		"collision triangles to the data folder as it loads, to look at in a\n"
@@ -3810,6 +3812,13 @@ static const struct
 	/* (MSAA's 8 samples, gone: twice 4x's work for edges no smoother to
 	see, where SMAA or a temporal technique does better for less) */
 	{ "display.anti_aliasing", "msaa8x", "msaa4x" },
+	/* (the ray-traced scene's render geometry a switch, off by default:
+	"auto" now, a file's or the environment's true or false read as on or
+	off) */
+	{ "debug.rt_render_geometry", "true", "on" },
+	{ "debug.rt_render_geometry", "false", "off" },
+	{ "debug.rt_render_geometry", "1", "on" },
+	{ "debug.rt_render_geometry", "0", "off" },
 	{ NULL, NULL, NULL },
 };
 
@@ -5240,6 +5249,7 @@ static const struct
 	{ "display.ambient_occlusion", { "off", "world", "ray_traced", NULL }, "off" },
 	{ "display.temporal_aa", { "off", "fsr", "dlss", "metalfx", NULL }, "off" },
 	{ "display.shadows", { "classic", "ray_traced", NULL }, "classic" },
+	{ "debug.rt_render_geometry", { "auto", "on", "off", NULL }, "auto" },
 	{ "display.astc_textures", { "auto", "always", "off", NULL }, NULL },
 	{ "display.picture_position", { "center", "top", "bottom", NULL }, NULL },
 	{ "display.orientation", { "landscape", "portrait", "auto", NULL }, NULL },

@@ -38,7 +38,8 @@ CONTROLS = [
     # the meshes kept past the map's end
     ("\tif (world_rt.sent)\n\t\thalo_world_ao_mesh(0, 0, NULL);", "", "frame"),
     # debug.rt_render_geometry's render mesh made with the switch off
-    ("if (config_boolean(\"debug.rt_render_geometry\"))", "if (1)", "frame"),
+    ("\tif (world_rt.render_geometry)\n\t{\n\t\tif (world_rt.bsps[bsp_index].render)",
+     "\tif (1)\n\t{\n\t\tif (world_rt.bsps[bsp_index].render)", "frame"),
     # ... or in the same frame as the collision mesh (a load waits for it)
     ("\tworld_rt.collision_count = count;\n",
      "\tworld_rt.collision_count = count;\n\tif (world_rt.render_due)\n\t\tworld_rt_structure_render();\n", "render"),

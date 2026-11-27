@@ -78,6 +78,13 @@ enum
 	WORLD_RT_MATERIAL_ALPHA_TESTED = 1,
 	WORLD_RT_MATERIAL_TWO_SIDED = 2,
 	WORLD_RT_MATERIAL_TRANSPARENT = 4,
+	/* the scene as drawn's memory (world_rt.c's budget): a triangle's
+	bytes, estimated (its share of a bottom-level structure, about 160
+	before compaction on RADV, with its corners, material and vertices'
+	attributes in the hit table), and the budget where the backend gives
+	none (MB) */
+	WORLD_RT_TRIANGLE_BYTES = 200,
+	WORLD_RT_BUDGET_DEFAULT = 128,
 };
 
 /* the half side of an item's box with no collision geometry, a share of

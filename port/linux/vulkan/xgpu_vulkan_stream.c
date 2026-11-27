@@ -5139,6 +5139,7 @@ static void stream_initialize(void *context, struct xgpu_stream_capabilities *ca
 	capabilities->temporal_dlss = stream.capabilities.temporal_dlss != 0;
 	/* (the DLSS add-on's download offered: an NVIDIA GPU, dlss_addon.c) */
 	capabilities->dlss_gpu = stream.capabilities.dlss_gpu != 0;
+	capabilities->rt_budget = (uint8_t)(stream.capabilities.rt_budget / 8 > 255 ? 255 : stream.capabilities.rt_budget / 8);
 	snprintf(capabilities->device, sizeof(capabilities->device), "%s", stream.capabilities.device);
 }
 

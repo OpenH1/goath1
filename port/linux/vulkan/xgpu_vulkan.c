@@ -12553,6 +12553,29 @@ static int device_make(const struct xgpu_vulkan_options *options)
 		device.scratch_alignment = structure_properties.minAccelerationStructureScratchOffsetAlignment;
 		device.timestamp_period = vk.capabilities.gpu_timestamps ? vk.properties.limits.timestampPeriod : 0.0f;
 		vk.capabilities.ray_queries = xgpu_vulkan_rt_create(&device);
+		/* (the render geometry's budget by the GPU's class: a discrete
+		card's by its memory, an integrated one's, which shares the
+		system's, smaller; the Steam Deck's class the least) */
+		if (vk.capabilities.ray_queries)
+		{
+			VkDeviceSize local = 0;
+			uint32_t heap;
+			int discrete = vk.properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+
+			for (heap = 0; heap < vk.memory_properties.memoryHeapCount; heap++)
+			{
+				if (vk.memory_properties.memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+					local += vk.memory_properties.memoryHeaps[heap].size;
+			}
+			if (discrete)
+				vk.capabilities.rt_budget = local >= ((VkDeviceSize)12 << 30) ? 512 : local >= ((VkDeviceSize)6 << 30) ?
+					256 : 128;
+			else
+				vk.capabilities.rt_budget = local >= ((VkDeviceSize)8 << 30) ? 256 : local >= ((VkDeviceSize)2 << 30) ?
+					128 : 64;
+			host_logf(HOST_LOG_INFO, "vulkan: the ray-traced scene's budget %d MB (%s, %.1f GB device-local)",
+				vk.capabilities.rt_budget, discrete ? "discrete" : "integrated", (double)local / 1073741824.0);
+		}
 	}
 
 	vk.capabilities.largest_target = vk.properties.limits.maxImageDimension2D;
