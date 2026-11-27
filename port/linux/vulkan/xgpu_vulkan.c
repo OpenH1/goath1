@@ -11530,7 +11530,10 @@ static int layouts_make(void)
 	draw[0].binding = 0;
 	draw[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
 	draw[0].descriptorCount = 1;
-	draw[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+	/* (the vertex constants; display.shadows "ray_traced"'s pixel shader
+	reads its casters there too: a binding its stage cannot see is
+	undefined, and hung the GPU on NVIDIA's drivers, Xid 109) */
+	draw[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 	draw[1].binding = 1;
 	draw[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
 	draw[1].descriptorCount = 1;

@@ -6512,7 +6512,10 @@ BOOL xgpu_spirv_rt_shadows_pass(const struct xgpu_spirv_options *options, struct
 		p = fdiv(&m, 3, xyz(&m, h), splat(&m, 3, extract(&m, h, 3)));
 	}
 	camera = rt_shadows_vector(&m, header, constant_int(&m, RT_SHADOWS_CAMERA));
-	count = op1(&m, OP_CONVERT_F_TO_S, m.t_int, extract(&m, camera, 3));
+	/* (within the block's casters whatever the header holds: the loop
+	always ends) */
+	count = ext3(&m, GLSL_S_CLAMP, m.t_int, op1(&m, OP_CONVERT_F_TO_S, m.t_int, extract(&m, camera, 3)),
+		constant_int(&m, 0), constant_int(&m, XGPU_RT_SHADOWS_CASTERS));
 	/* the rays' start: off the surface toward the camera, which sees it */
 	to_camera = fsub(&m, 3, xyz(&m, camera), p);
 	far = ext2(&m, GLSL_F_MAX, m.t_float, ext1(&m, GLSL_LENGTH, m.t_float, to_camera), constant_float(&m, 1.0e-4f));
