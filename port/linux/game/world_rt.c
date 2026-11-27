@@ -269,6 +269,7 @@ static void world_rt_structure(void)
 		if (world_rt.bsps[bsp_index].render)
 		{
 			world_rt.structure = world_rt.bsps[bsp_index].render;
+			platform_log("world ao: the ray-traced scene's structure, BSP %d: its render mesh kept", (int)bsp_index);
 			return;
 		}
 		world_rt.render_due = 1;
@@ -277,6 +278,7 @@ static void world_rt_structure(void)
 	if (world_rt.bsps[bsp_index].collision)
 	{
 		world_rt.structure = world_rt.bsps[bsp_index].collision;
+		platform_log("world ao: the ray-traced scene's structure, BSP %d: its mesh kept", (int)bsp_index);
 		return;
 	}
 	count = world_rt_source_structure(bsp_index, NULL, 0);
