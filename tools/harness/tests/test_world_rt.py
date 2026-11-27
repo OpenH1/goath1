@@ -32,7 +32,7 @@ CONTROLS = [
     # the structure's mesh not made again for another BSP
     ("\tif (bsp_index == world_rt.bsp_index)\n\t{", "\tif (world_rt.structure)\n\t{", "frame"),
     # a box for anything with no collision geometry (an emitter's, the sky's ring's sphere)
-    ("\tif (!any && item && entry->node_count > 0", "\tif (!any && entry->node_count > 0", "frame"),
+    ("\tif (!any && item && entry->node_count > 0 && entry->sphere[3]", "\tif (!any && entry->node_count > 0 && entry->sphere[3]", "frame"),
     # the instances handed again in the same frame
     ("\tif (world_rt.framed && world_rt.frame == frame)\n\t\treturn;", "", "frame"),
     # the meshes kept past the map's end
