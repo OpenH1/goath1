@@ -60,13 +60,18 @@ def write_exr(path, img):
     mi.Bitmap(np.ascontiguousarray(img, np.float32)).write(str(path))
 
 
-def noise_stats(s1, s2, n, floor_frac=0.05):
+# Noise is judged relative to a pixel's light, or, where the picture shows it darker, relative to this
+# much light on the display (linear, 1 = paper white; sRGB code 25 of 255): darker noise is not seen.
+DISPLAY_FLOOR = 0.01
+
+
+def noise_stats(s1, s2, n, floor):
     """Per-pixel standard error of the mean luminance over n independent passes, relative to the pixel's
-    luminance, or to floor_frac of the image's mean where the pixel is darker than that."""
+    luminance, or to `floor` (the same units) where the pixel is darker than that."""
     mean = s1 / n
     var = np.maximum(s2 / n - mean * mean, 0.0) * n / max(n - 1, 1)
     se = np.sqrt(var / n)
-    floor = floor_frac * max(mean.mean(), 1e-12)
+    floor = max(floor, 1e-12)
     rel = se / np.maximum(mean, floor)
     # The image mean's error: from the passes' image means.
     return {"median_rel": float(np.median(rel)), "p95_rel": float(np.percentile(rel, 95)),
@@ -95,6 +100,14 @@ def render_scene(folder, out=None, spp_pass=16, target=0.01, max_spp=65536, max_
     s2 = np.zeros((H, W))
     n = 0
     stats = {}
+    orig_path = folder / "original.png"
+    original, keep = None, None
+    if orig_path.exists():
+        original = (read_image(orig_path)[:, :, :3] * 255.0 + 0.5).astype(np.uint8)
+        if original.shape[:2] != (H, W):
+            from PIL import Image
+            original = np.asarray(Image.fromarray(original).resize((W, H), Image.BILINEAR))
+        keep = display.rect_mask((H, W), sc.camera.get("mask_rects"))
     log("scene built in %.1f s" % (time.time() - t0))
     t_render = time.time()
     with GpuLock(gpu_lock, log):
@@ -114,10 +127,18 @@ def render_scene(folder, out=None, spp_pass=16, target=0.01, max_spp=65536, max_
             s2 += y * y
             n += 1
             el = (time.time() - t_render) / 60.0
-            if n >= min_passes:
-                stats = noise_stats(s1, s2, n)
+            if n >= min_passes and (n == min_passes or n % 8 == 0 or n * spp_pass >= max_spp):
+                # The floor follows the exposure the picture will have (or 5% of the mean light without an
+                # original).
+                if original is not None:
+                    mean_now = sum(acc[g]["full"] for g in groups) / n
+                    k_now, _ = display.match_exposure(mean_now, original, keep, iters=40)
+                    floor = DISPLAY_FLOOR / k_now
+                else:
+                    floor = 0.05 * (s1 / n).mean()
+                stats = noise_stats(s1, s2, n, floor)
                 done = stats["median_rel"] <= target and stats["p95_rel"] <= 3 * target
-                if n % 8 == 0 or done:
+                if True:
                     log("pass %d (%d spp): median noise %.3f%%, 95th %.3f%%, %.1f min" % (
                         n, n * spp_pass, 100 * stats["median_rel"], 100 * stats["p95_rel"], el))
                 if done or n * spp_pass >= max_spp or el >= max_minutes:
@@ -131,14 +152,8 @@ def render_scene(folder, out=None, spp_pass=16, target=0.01, max_spp=65536, max_
     indirect = sum(mean[g]["full"] - mean[g]["d2"] for g in groups)
 
     # The one global exposure: the truth's picture as bright on average as the original's.
-    orig_path = folder / "original.png"
-    original = None
-    if orig_path.exists():
-        original = (read_image(orig_path)[:, :, :3] * 255.0 + 0.5).astype(np.uint8)
-        if original.shape[:2] != (H, W):
-            from PIL import Image
-            original = np.asarray(Image.fromarray(original).resize((W, H), Image.BILINEAR))
-        k, target_light = display.match_exposure(full, original)
+    if original is not None:
+        k, target_light = display.match_exposure(full, original, keep)
     else:
         k, target_light = 1.0, None
     out.mkdir(parents=True, exist_ok=True)
@@ -168,7 +183,7 @@ def render_scene(folder, out=None, spp_pass=16, target=0.01, max_spp=65536, max_
     lines = [
         "spp %d (%d passes of %d), %s" % (spp, n, spp_pass, variant),
         "time %.1f min" % minutes,
-        "noise (standard error of the mean luminance, per pixel, relative; floor 5% of the image mean):",
+        "noise (standard error of the mean luminance, per pixel, relative; floor: light shown at %g of paper white):" % DISPLAY_FLOOR,
         "  median %.3f%%  95th %.3f%%  99th %.3f%%  converged %s (target median %.2f%%, 95th %.2f%%)" % (
             100 * stats.get("median_rel", float("nan")), 100 * stats.get("p95_rel", float("nan")),
             100 * stats.get("p99_rel", float("nan")), stats.get("converged"), 100 * target, 300 * target),

@@ -170,8 +170,16 @@ class Scene:
         if lpath.exists():
             self.lights = json.loads(lpath.read_text())
         else:
-            self.lights = None
-            self.placeholders.append("lights.json missing: placeholder sky (ambient 1.0 white, no sun, no lights)")
+            # Placeholder until the lights helper writes lights.json: a white sky of radiance 1 and a
+            # flashlight at the camera along its view (cone 30/60 degrees, power 1, inverse-square, no gel).
+            c = self.camera
+            self.lights = {"sky": {"tag": "placeholder", "sun": [], "ambient": {"color": [1, 1, 1], "power": 1.0}},
+                           "lights": [{"tag": "placeholder flashlight", "kind": "spot", "source": "flashlight",
+                                       "position": c["position"], "direction": c["forward"], "up": c["up"],
+                                       "color": [1, 1, 1], "power": 1.0, "cone_deg": [30.0, 60.0],
+                                       "falloff": "inverse square"}]}
+            self.placeholders.append("lights.json missing: placeholder sky (ambient 1, no sun) and a placeholder "
+                                     "flashlight at the camera (power 1, cone 30/60, no gel)")
         self._tex_cache = {}
 
     # A texture path from the JSON: relative to the scene folder, else to the scenes folder above it.

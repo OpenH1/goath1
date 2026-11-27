@@ -70,20 +70,34 @@ def picture_light(rgb8):
     return linear(rgb8.astype(np.float64) / 255.0) @ LUMA.astype(np.float64)
 
 
-def match_exposure(truth, original_rgb8, iters=60):
+def rect_mask(shape, rects):
+    """True where a pixel counts: outside every rect ([x0, y0, x1, y1] in pixels, or {x, y, w, h})."""
+    keep = np.ones(shape, bool)
+    for r in rects or []:
+        if isinstance(r, dict):
+            x0, y0, x1, y1 = r["x"], r["y"], r["x"] + r["w"], r["y"] + r["h"]
+        else:
+            x0, y0, x1, y1 = r
+        keep[int(y0):int(y1), int(x0):int(x1)] = False
+    return keep
+
+
+def match_exposure(truth, original_rgb8, keep=None, iters=60):
     """The one global exposure k for which the truth's SDR picture shows, on average, the light the
-    original shows (mean luminance of the pictures' linear light). Bisection on log k (the mean rises
+    original shows (mean luminance of the pictures' linear light, outside camera.json's mask_rects: the
+    HUD's text). Bisection on log k (the mean rises
     with k)."""
-    target = picture_light(original_rgb8).mean()
+    keep = np.ones(truth.shape[:2], bool) if keep is None else keep
+    target = picture_light(original_rgb8)[keep].mean()
     lum = truth @ LUMA
     if not np.isfinite(target) or target <= 0 or lum.mean() <= 0:
         return 1.0, target
     # Subsample for speed; the mean of a large regular subsample is the image's to well under 0.1%.
-    sub = truth[::2, ::2]
+    sub, ksub = truth[::2, ::2], keep[::2, ::2]
     lo, hi = np.log(1e-6), np.log(1e6)
     for _ in range(iters):
         mid = 0.5 * (lo + hi)
-        m = picture_light(sdr_pixels(sub * np.exp(mid))).mean()
+        m = picture_light(sdr_pixels(sub * np.exp(mid)))[ksub].mean()
         if m < target:
             lo = mid
         else:
