@@ -333,11 +333,12 @@ static struct
 {
 	long object;
 	void const *shader;
-	real_rgb_color color;
+	real_rgb_color color, change_color;
 } rt_export_self_illuminations[RT_EXPORT_SELF_ILLUMINATIONS];
 static long rt_export_self_illumination_count;
 
-void rt_export_note_self_illumination(long unique_identifier, void const *shader, real_rgb_color const *color)
+void rt_export_note_self_illumination(long unique_identifier, void const *shader, real_rgb_color const *color,
+	real_rgb_color const *change_color)
 {
 	long index;
 
@@ -349,6 +350,7 @@ void rt_export_note_self_illumination(long unique_identifier, void const *shader
 			rt_export_self_illuminations[index].shader == shader)
 		{
 			rt_export_self_illuminations[index].color = *color;
+			rt_export_self_illuminations[index].change_color = *change_color;
 			return;
 		}
 	}
@@ -357,6 +359,7 @@ void rt_export_note_self_illumination(long unique_identifier, void const *shader
 		rt_export_self_illuminations[rt_export_self_illumination_count].object = unique_identifier;
 		rt_export_self_illuminations[rt_export_self_illumination_count].shader = shader;
 		rt_export_self_illuminations[rt_export_self_illumination_count].color = *color;
+		rt_export_self_illuminations[rt_export_self_illumination_count].change_color = *change_color;
 		rt_export_self_illumination_count++;
 	}
 }
@@ -377,8 +380,9 @@ static long material_index(long shader_tag)
 	return rt_export.material_count++;
 }
 
-/* an object's self-illumination as drawn: [{"shader": tag, "color": [r, g, b]}] (the drawn colors in
-[0, 1], gamma space; the multipurpose map's green masks it) */
+/* an object's self-illumination and change color as drawn: [{"material", "color", "change_color"}] (gamma
+space; rasterizer_xbox_models.c's combiners: light + multipurpose.g x color, then the base map x lerp(1,
+change color, multipurpose.a); a shader without a multipurpose map reads 1 there) */
 static void self_illumination_write(FILE *list, long object_index)
 {
 	long index, written = 0;
@@ -395,10 +399,11 @@ static void self_illumination_write(FILE *list, long object_index)
 				rt_export_self_illuminations[index].shader)
 				break;
 		}
-		fprintf(list, "%s{\"material\":%ld,\"color\":[%.6g,%.6g,%.6g]}", written ? "," : ",\"self_illumination\":[",
-			material < rt_export.material_count ? material : -1L,
+		fprintf(list, "%s{\"material\":%ld,\"color\":[%.6g,%.6g,%.6g],\"change_color\":[%.6g,%.6g,%.6g]}",
+			written ? "," : ",\"self_illumination\":[", material < rt_export.material_count ? material : -1L,
 			rt_export_self_illuminations[index].color.red, rt_export_self_illuminations[index].color.green,
-			rt_export_self_illuminations[index].color.blue);
+			rt_export_self_illuminations[index].color.blue, rt_export_self_illuminations[index].change_color.red,
+			rt_export_self_illuminations[index].change_color.green, rt_export_self_illuminations[index].change_color.blue);
 		written++;
 	}
 	if (written)

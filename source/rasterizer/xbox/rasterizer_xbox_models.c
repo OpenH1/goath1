@@ -129,7 +129,7 @@ symbols in this file:
 
 /* (GOAT H1: rt_export.c's, when it is linked) */
 extern void rt_export_note_self_illumination(long unique_identifier, void const *shader,
-	real_rgb_color const *color) __attribute__((weak));
+	real_rgb_color const *color, real_rgb_color const *change_color) __attribute__((weak));
 
 /* ---------- constants */
 
@@ -2047,12 +2047,6 @@ void _rasterizer_model_draw(
 					self_illumination_color.blue *= external_color->blue;
 				}
 
-				/* (GOAT H1: the truth export's record of the self-illumination
-				color as drawn, per object and shader: rt_export.c) */
-				if (rt_export_note_self_illumination)
-					rt_export_note_self_illumination(local_parameters->unique_identifier, shader,
-						&self_illumination_color);
-
 				if (shader_model->model.change_color_source>0 &&
 					shader_model->model.change_color_source<
 						NUMBER_OF_SHADER_ANIMATION_SOURCES)
@@ -2077,6 +2071,12 @@ void _rasterizer_model_draw(
 				{
 					diffuse_change_color = *global_real_rgb_white;
 				}
+
+				/* (GOAT H1: the truth export's record of the self-illumination and
+				change colors as drawn, per object and shader: rt_export.c) */
+				if (rt_export_note_self_illumination)
+					rt_export_note_self_illumination(local_parameters->unique_identifier, shader,
+						&self_illumination_color, &diffuse_change_color);
 
 				vertex_shader_work =
 					rasterizer_frame_statistics.vertex_shader_instruction_count;
