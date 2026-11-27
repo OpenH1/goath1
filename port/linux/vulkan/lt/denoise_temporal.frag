@@ -19,7 +19,12 @@ layout(set = 1, binding = 5) uniform sampler2D gradients;
 
 layout(location = 0) out uvec4 result;
 
-// the share of the light that changed about pixel's stratum (its 3x3 strata: their sums' ratio)
+// the gradient's gain: a change's share cut from the history four times over (A-SVGF's history weight goes up with the
+// normalized gradient; here, so that a light coming on over a few frames is followed within them, while a lamp
+// drifting a percent a frame keeps most of a 64-frame history)
+const float GAIN = 4.0;
+
+// the share of the light that changed about pixel's stratum (its 3x3 strata: their sums' ratio, by the gain)
 float changed(ivec2 pixel)
 {
     if ((pass.control.y & GRADIENTS) == 0)
@@ -29,7 +34,7 @@ float changed(ivec2 pixel)
     for (int y = -1; y <= 1; y++)
         for (int x = -1; x <= 1; x++)
             sums += texelFetch(gradients, clamp(stratum + ivec2(x, y), ivec2(0), top), 0).xy;
-    return sums.y > 1.0e-8 ? clamp(sums.x / sums.y, 0.0, 1.0) : 0.0;
+    return sums.y > 1.0e-8 ? clamp(GAIN * sums.x / sums.y, 0.0, 1.0) : 0.0;
 }
 
 void main()
