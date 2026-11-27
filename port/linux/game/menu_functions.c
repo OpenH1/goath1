@@ -3166,6 +3166,9 @@ static boolean settings_condition_term(struct widget_instance *list, char const 
 	/* (the renderer has ray queries: display.shadows "ray_traced") */
 	if (!strcmp(name, "ray_queries"))
 		return halo_world_ao_ray_queries() != 0;
+	/* (the renderer draws display.contact_shadows: Vulkan's) */
+	if (!strcmp(name, "contact_drawn"))
+		return halo_contact_shadows_drawn() != 0;
 	/* (MCC's install found, whose subtitles display.subtitles shows) */
 	if (!strcmp(name, "mcc_subtitles"))
 		return subtitles_available();

@@ -192,6 +192,7 @@ void dynamic_lights_note(long rasterizer_light_index, long flags, real cone_scal
 boolean dynamic_lights_first_person(long weapon_index, real_point3d *position);
 void dynamic_lights_submit(void);
 void dynamic_lights_brighten(long rasterizer_light_index, real scale);
+void dynamic_lights_owner(long rasterizer_light_index, long object_index);
 void dynamic_lights_rank(long *lights, short count,
 	void (*describe)(long light, real_point3d *position, real *radius, real *intensity));
 void dynamic_lights_drawn(long light, real_point3d const *position, real radius, real_rgb_color const *color);
@@ -1683,6 +1684,7 @@ void lights_preprocess_scene(
 								flags |= HALO_DYNAMIC_LIGHT_HALO;
 						}
 						dynamic_lights_note(light->rasterizer_light_index, flags, cone_scale, cone_offset, &light->position);
+						dynamic_lights_owner(light->rasterizer_light_index, light->object_index);
 						if (weapon_glow_scale != 1.0f)
 							dynamic_lights_brighten(light->rasterizer_light_index, weapon_glow_scale);
 						/* (and its copies on its flare's other markers) */

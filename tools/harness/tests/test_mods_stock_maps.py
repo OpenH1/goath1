@@ -30,7 +30,8 @@ def generated(fault=None):
     source = read(SOURCE)
     start = source.index("static struct\n{\n\tboolean map_loaded;")
     globals_text = source[start:source.index("} mods_globals;", start) + len("} mods_globals;")] + "\n"
-    code = function(source, "mods_tags_loaded")
+    # (with the built-ins' changes it reads: the HD effects' and the MCC import's)
+    code = "\n".join(function(source, name) for name in ("builtin_changes_now", "builtins_on", "mods_tags_loaded"))
     if fault:
         code = mutated(code, *fault)
     return (("globals.inc", globals_text), ("under_test.inc", code + "\n"))

@@ -72,7 +72,7 @@ enum
 {
 	GLSL_F_ABS = 4, GLSL_F_SIGN = 6, GLSL_ACOS = 17, GLSL_ATAN = 18, GLSL_ATAN2 = 25, GLSL_FLOOR = 8, GLSL_FRACT = 10, GLSL_SIN = 13, GLSL_COS = 14, GLSL_POW = 26, GLSL_EXP = 27, GLSL_EXP2 = 29,
 	GLSL_LOG2 = 30, GLSL_SQRT = 31, GLSL_INVERSE_SQRT = 32, GLSL_F_MIN = 37, GLSL_F_MAX = 40, GLSL_F_CLAMP = 43,
-	GLSL_U_MIN = 38, GLSL_S_CLAMP = 45, GLSL_F_MIX = 46, GLSL_SMOOTH_STEP = 49, GLSL_LENGTH = 66, GLSL_CROSS = 68, GLSL_NORMALIZE = 69, GLSL_FIND_I_LSB = 73,
+	GLSL_U_MIN = 38, GLSL_S_MIN = 39, GLSL_S_MAX = 42, GLSL_S_CLAMP = 45, GLSL_F_MIX = 46, GLSL_SMOOTH_STEP = 49, GLSL_LENGTH = 66, GLSL_CROSS = 68, GLSL_NORMALIZE = 69, GLSL_FIND_I_LSB = 73,
 	GLSL_PACK_SNORM_2X16 = 56, GLSL_PACK_HALF_2X16 = 58, GLSL_UNPACK_SNORM_2X16 = 60, GLSL_UNPACK_HALF_2X16 = 62,
 };
 
@@ -2127,6 +2127,9 @@ struct pixel_state
 	unsigned int vertex_normal, shaded_normal, material_occlusion, roughness, metalness;
 	/* (the unit vector from the pixel to the eye, in the world) */
 	unsigned int to_eye;
+	/* display.shadows "ray_traced": the dynamic lights' shadows' mask, read
+	in the lights' loop (light_shadows_declare; 0 none) */
+	unsigned int light_shadows;
 };
 
 static unsigned int pixel_input(struct module *m, struct pixel_state *state, unsigned int variable_id, unsigned int type)
@@ -4525,6 +4528,86 @@ static unsigned int dynamic_light_cluster_mask(struct module *m, struct pixel_st
 	return load(m, m->t_uv4, mask_variable);
 }
 
+/* ---------- display.shadows "ray_traced": the dynamic lights' shadows, as
+the surfaces read them (xgpu.h's XGPU_DYNAMIC_LIGHTS_SHADOWED)
+
+A surface found once a pixel (display.ambient_occlusion "world"'s sampled
+draws: drawn after the pre-pass, where the mask is traced) with the
+enhanced lights reads, before its loop of them, the mask's texel at the
+pixel (XGPU_SPIRV_SET_OCCLUSION, XGPU_SPIRV_BINDING_LIGHT_SHADOWS: a 1x1 of 1
+where none is traced) and which lights its channels are (the cells'
+texel); each light of its cell is multiplied by its channel, a light no
+channel is by 1. As GLSL:
+
+uvec4 shadowed = texelFetch(cells, ivec3(SHADOWED % 32, SHADOWED / 32, GRID_Z), 0);
+vec4 seen = texelFetch(light_shadows, min(ivec2(gl_FragCoord.xy), textureSize(light_shadows, 0) - 1), 0);
+...
+float shadow = 1.0;
+for (int c = 0; c < 4; c++) shadow = shadowed[c] == uint(light + 1) ? seen[c] : shadow;
+falloff *= shadow; */
+
+static void light_shadows_declare(struct module *m, struct pixel_state *state)
+{
+	state->light_shadows = variable(m, type_sampled_image(m, DIM_2D, FALSE, FALSE, TRUE), STORAGE_UNIFORM_CONSTANT,
+		"light_shadows");
+	decorate1(m, state->light_shadows, DECORATION_DESCRIPTOR_SET, XGPU_SPIRV_SET_OCCLUSION);
+	decorate1(m, state->light_shadows, DECORATION_BINDING, XGPU_SPIRV_BINDING_LIGHT_SHADOWS);
+}
+
+/* the cells' texel n past XGPU_DYNAMIC_LIGHTS_SHADOWED (xgpu.h) */
+static unsigned int light_shadows_texel(struct module *m, int n)
+{
+	int texel = XGPU_DYNAMIC_LIGHTS_SHADOWED + n;
+
+	return dynamic_light_texel(m, op(m, OP_COMPOSITE_CONSTRUCT, m->t_iv3, 3, (unsigned int[]){
+		constant_int(m, texel % XGPU_DYNAMIC_LIGHTS_GRID_X), constant_int(m, texel / XGPU_DYNAMIC_LIGHTS_GRID_X),
+		constant_int(m, XGPU_DYNAMIC_LIGHTS_GRID_Z) }));
+}
+
+/* the pixel's mask and its channels' lights, read once before the loop
+(shadowed 0: none read, no light shadowed) */
+struct light_shadows_read
+{
+	unsigned int shadowed, seen;
+};
+
+static void light_shadows_begin(struct module *m, struct pixel_state *state, struct light_shadows_read *read)
+{
+	unsigned int sampled, image, frag, size, at, operands[4];
+
+	memset(read, 0, sizeof(*read));
+	if (!state->light_shadows || !state->frag_coord)
+		return;
+	read->shadowed = light_shadows_texel(m, 0);
+	sampled = load(m, type_sampled_image(m, DIM_2D, FALSE, FALSE, TRUE), state->light_shadows);
+	image = op(m, OP_IMAGE, type_sampled_image(m, DIM_2D, FALSE, FALSE, FALSE), 1, &sampled);
+	frag = load(m, m->t_v4, state->frag_coord);
+	size = op2(m, OP_I_SUB, m->t_iv2, image_size(m, image, m->t_iv2), op(m, OP_COMPOSITE_CONSTRUCT, m->t_iv2, 2,
+		(unsigned int[]){ constant_int(m, 1), constant_int(m, 1) }));
+	at = ext2(m, GLSL_S_MIN, m->t_iv2, op1(m, OP_CONVERT_F_TO_S, m->t_iv2, xy(m, frag)), size);
+	operands[0] = image;
+	operands[1] = at;
+	operands[2] = IMAGE_OPERANDS_LOD;
+	operands[3] = constant_int(m, 0);
+	read->seen = op(m, OP_IMAGE_FETCH, m->t_v4, 4, operands);
+}
+
+/* a light's falloff (light: its index, an int) times its channel */
+static unsigned int light_shadows_factor(struct module *m, const struct light_shadows_read *read, unsigned int light,
+	unsigned int falloff)
+{
+	unsigned int number, shadow = constant_float(m, 1.0f);
+	int channel;
+
+	if (!read->shadowed)
+		return falloff;
+	number = op2(m, OP_I_ADD, m->t_uint, op1(m, OP_BITCAST, m->t_uint, light), constant_uint(m, 1));
+	for (channel = 0; channel < XGPU_LIGHT_SHADOWS_CHANNELS; channel++)
+		shadow = fselect(m, op2(m, OP_I_EQUAL, m->t_bool, uextract(m, read->shadowed, (unsigned int)channel), number),
+			extract(m, read->seen, channel), shadow);
+	return fmul(m, 1, falloff, shadow);
+}
+
 /* dynamic_light_sum(p, n, surface_normal, environment): the lights of the
 pixel's cell, summed (a model's but those its object's own that do not light
 it, its model_lights[XGPU_MODEL_LIGHT_OWN_LIGHTS]); its loops are SPIR-V's structured loops, its values
@@ -4543,6 +4626,7 @@ static unsigned int dynamic_light_sum(struct module *m, struct pixel_state *stat
 	unsigned int inner_header, inner_condition, inner_body, inner_continue, inner_merge;
 	unsigned int word, bits, light, position, to_light, distance_squared, x2, l, window, core, falloff, facing;
 	unsigned int cone, color, spot, grid2, w, own = 0;
+	struct light_shadows_read shadows;
 
 	/* cell = sign(offset) * log2(1.0 + abs(offset) * grid[1].w) * grid[1].xyz + vec3(16.0, 16.0, 8.0) */
 	offset = fsub(m, 3, p, xyz(m, grid0));
@@ -4564,6 +4648,7 @@ static unsigned int dynamic_light_sum(struct module *m, struct pixel_state *stat
 	/* (a model's: the lights it is not lit by, xgpu.h) */
 	if (!environment)
 		own = uniform(m, U_MODEL_LIGHTS, XGPU_MODEL_LIGHT_OWN_LIGHTS);
+	light_shadows_begin(m, state, &shadows);
 
 	sum_variable = local(m, &state->locals, m->t_v3);
 	word_variable = local(m, &state->locals, m->t_int);
@@ -4649,6 +4734,7 @@ static unsigned int dynamic_light_sum(struct module *m, struct pixel_state *stat
 	core = fmax_scalar(m, 1, fmul(m, 1, fmul(m, 1, extract(m, grid2, 1), w), w),
 		(float)(1.0 / (XGPU_DYNAMIC_LIGHTS_CORE * XGPU_DYNAMIC_LIGHTS_CORE)));
 	falloff = fdiv(m, 1, fmul(m, 1, window, window), fadd(m, 1, constant_float(m, 1.0f), fmul(m, 1, distance_squared, core)));
+	falloff = light_shadows_factor(m, &shadows, light, falloff);
 	if (environment)
 	{
 		facing = fmul(m, 1, fmax_scalar(m, 1, fdot(m, n, l), 0.0f),
@@ -5385,6 +5471,8 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 			state.frag_coord = variable(&m, m.t_v4, STORAGE_INPUT, "gl_FragCoord");
 			decorate1(&m, state.frag_coord, DECORATION_BUILT_IN, BUILT_IN_FRAG_COORD);
 		}
+		if (program->dynamic_lights)
+			light_shadows_declare(&m, &state);
 	}
 	if (count_samples)
 	{
@@ -6677,6 +6765,258 @@ BOOL xgpu_spirv_rt_shadows_pass(const struct xgpu_spirv_options *options, struct
 	label_at(&m, merge);
 	selection_end(&m, sky_merge);
 	store(&m, out, vec4_of(&m, load(&m, m.t_v3, light_variable), constant_float(&m, 1.0f)));
+	result = module_end(&m, EXECUTION_MODEL_FRAGMENT, main_id, &locals, module);
+	free(locals.words);
+	return result;
+}
+
+/* ---------- display.shadows "ray_traced": the dynamic lights' shadows'
+passes (xgpu_spirv.h's xgpu_spirv_light_shadows_pass; xgpu.h's
+XGPU_DYNAMIC_LIGHTS_SHADOWED)
+
+After the pre-pass, before the surfaces read it. The trace, as GLSL:
+
+uvec4 words = texelFetch(inputs, pixel, 0);
+uvec4 shadowed = cells[SHADOWED], owners = cells[SHADOWED + 2], how = cells[SHADOWED + 3];
+vec4 disks = uintBitsToFloat(cells[SHADOWED + 1]), seen = vec4(1.0);
+if ((words.y & PRESENT) != 0 && shadowed.x != 0) {
+  vec3 p = position(pixel, uintBitsToFloat(words.z)), n = unfold(unpackSnorm2x16(words.x));
+  int owner = int(words.w); float rays = clamp(float(how.x), 1.0, RAYS);
+  float frame = how.y != 0 ? history.y : 0.0;   (turned each frame only where a temporal technique accumulates)
+  float noise = fract(52.9829189 * fract(0.06711056 * pixel.x + 0.00583715 * pixel.y) + 0.618034 * frame);
+  vec3 from = p + n * BIAS;
+  for (int c = 0; c < 4; c++) if (shadowed[c] != 0) {
+    vec4 light = lights.position[shadowed[c] - 1]; float w = abs(light.w);
+    vec3 to = light.xyz - from; float d2 = dot(to, to);
+    if (d2 * w * w < 1.0 && dot(n, to) > 0.0) {
+      vec3 l = to * inversesqrt(d2), x, y (Duff's frame about l); float lit = 0.0;
+      for (int k = 0; k < rays; k++) {
+        float angle = 2 pi fract(noise + 0.618034 k), r = disks[c] * sqrt((k + 0.5) / rays);
+        vec3 d = light.xyz + (x cos(angle) + y sin(angle)) * r - from; float far = length(d);
+        rayQueryInitializeEXT(q, scene, 0, 0xFF, from, 0.0, d / far, max(far - max(SHORT disks[c], SHORT_LEAST), 0.0));
+        while (rayQueryProceedEXT(q))   (an object's candidate committed but the pixel's own and the light's owner's)
+          if (index(candidate) != owner && index(candidate) != owners[c]) rayQueryConfirmIntersectionEXT(q);
+        lit += committed(q) == none ? 1.0 : 0.0;   (the structure, opaque, stops it)
+      }
+      seen[c] = lit / rays;
+    }
+  }
+}
+light_shadows = seen;
+
+The filter (no temporal technique): each pixel's mask the mean of the 3x3
+about it that are of its surface (drawn, their distances within 3% and
+2 cm of its own, their normals within about 37 degrees). */
+
+/* a float image's texel (the trace's mask, at the history's binding) */
+static unsigned int light_shadows_fetch(struct module *m, unsigned int variable_id, unsigned int at)
+{
+	unsigned int operands[4], sampled = load(m, type_sampled_image(m, DIM_2D, FALSE, FALSE, TRUE), variable_id);
+
+	operands[0] = op(m, OP_IMAGE, type_sampled_image(m, DIM_2D, FALSE, FALSE, FALSE), 1, &sampled);
+	operands[1] = at;
+	operands[2] = IMAGE_OPERANDS_LOD;
+	operands[3] = constant_int(m, 0);
+	return op(m, OP_IMAGE_FETCH, m->t_v4, 4, operands);
+}
+
+/* the rays toward one light's disk from a point: their share that reach
+it (a float), ray queries through the scene */
+static unsigned int light_shadows_rays(struct module *m, struct words *locals, struct world_ao_pass_state *pass,
+	unsigned int query, unsigned int from, unsigned int center, unsigned int l, unsigned int disk, unsigned int rays,
+	unsigned int noise, unsigned int owner, unsigned int light_owner)
+{
+	unsigned int lit_variable = local(m, locals, m->t_float);
+	unsigned int nx = extract(m, l, 0), ny = extract(m, l, 1), nz = extract(m, l, 2), sign, fa, fb, x, y, shortened;
+	int ray;
+
+	sign = fselect(m, compare(m, OP_F_ORD_GREATER_THAN_EQUAL, nz, constant_float(m, 0.0f)), constant_float(m, 1.0f),
+		constant_float(m, -1.0f));
+	fa = fdiv(m, 1, constant_float(m, -1.0f), fadd(m, 1, sign, nz));
+	fb = fmul(m, 1, fmul(m, 1, nx, ny), fa);
+	x = construct(m, 3, (unsigned int[]){ fadd(m, 1, constant_float(m, 1.0f), fmul(m, 1, fmul(m, 1, fmul(m, 1, sign, nx),
+		nx), fa)), fmul(m, 1, sign, fb), fneg(m, 1, fmul(m, 1, sign, nx)) });
+	y = construct(m, 3, (unsigned int[]){ fb, fadd(m, 1, sign, fmul(m, 1, fmul(m, 1, ny, ny), fa)), fneg(m, 1, ny) });
+	shortened = fmax_scalar(m, 1, fmul(m, 1, disk, constant_float(m, XGPU_LIGHT_SHADOWS_SHORT)),
+		XGPU_LIGHT_SHADOWS_SHORT_LEAST);
+	store(m, lit_variable, constant_float(m, 0.0f));
+	for (ray = 0; ray < XGPU_LIGHT_SHADOWS_RAYS; ray++)
+	{
+		unsigned int ray_merge = 0, angle, radius, offset, d, far, operands[8];
+		unsigned int header = id_new(m), condition = id_new(m), body = id_new(m), next = id_new(m), merge = id_new(m);
+		unsigned int candidate, mine_merge, kind;
+
+		if (ray)
+			selection_begin(m, compare(m, OP_F_ORD_LESS_THAN, constant_float(m, (float)ray), rays), &ray_merge);
+		angle = fmul(m, 1, constant_float(m, 6.28318531f), ext1(m, GLSL_FRACT, m->t_float, fadd(m, 1, noise,
+			constant_float(m, 0.618034f * (float)ray))));
+		radius = fmul(m, 1, disk, fsqrt(m, fdiv(m, 1, constant_float(m, (float)ray + 0.5f), rays)));
+		offset = fadd(m, 3, fscale(m, 3, x, fmul(m, 1, radius, ext1(m, GLSL_COS, m->t_float, angle))),
+			fscale(m, 3, y, fmul(m, 1, radius, ext1(m, GLSL_SIN, m->t_float, angle))));
+		d = fsub(m, 3, fadd(m, 3, center, offset), from);
+		far = fmax_scalar(m, 1, flength(m, d), 1.0e-4f);
+		operands[0] = query;
+		operands[1] = load(m, type0(m, OP_TYPE_ACCELERATION_STRUCTURE), pass->scene);
+		operands[2] = constant_uint(m, 0);
+		operands[3] = constant_uint(m, 0xFFu);
+		operands[4] = from;
+		operands[5] = constant_float(m, 0.0f);
+		operands[6] = fdiv(m, 3, d, splat(m, 3, far));
+		operands[7] = fmax_scalar(m, 1, fsub(m, 1, far, shortened), 0.0f);
+		op_void(m, OP_RAY_QUERY_INITIALIZE, 8, operands);
+		branch(m, header);
+		label_at(m, header);
+		operands[0] = merge;
+		operands[1] = next;
+		operands[2] = 0;
+		op_void(m, OP_LOOP_MERGE, 3, operands);
+		branch(m, condition);
+		label_at(m, condition);
+		branch_conditional(m, op1(m, OP_RAY_QUERY_PROCEED, m->t_bool, query), body, merge);
+		label_at(m, body);
+		candidate = op2(m, OP_RAY_QUERY_GET_INTERSECTION_INSTANCE_CUSTOM_INDEX, m->t_int, query,
+			constant_int(m, RAY_QUERY_CANDIDATE));
+		selection_begin(m, op2(m, OP_LOGICAL_AND, m->t_bool, op2(m, OP_I_NOT_EQUAL, m->t_bool, candidate, owner),
+			op2(m, OP_I_NOT_EQUAL, m->t_bool, op1(m, OP_BITCAST, m->t_uint, candidate), light_owner)), &mine_merge);
+		op_void(m, OP_RAY_QUERY_CONFIRM_INTERSECTION, 1, &query);
+		selection_end(m, mine_merge);
+		branch(m, next);
+		label_at(m, next);
+		branch(m, header);
+		label_at(m, merge);
+		kind = op2(m, OP_RAY_QUERY_GET_INTERSECTION_TYPE, m->t_uint, query, constant_int(m, RAY_QUERY_COMMITTED));
+		store(m, lit_variable, fadd(m, 1, load(m, m->t_float, lit_variable), fselect(m,
+			op2(m, OP_I_EQUAL, m->t_bool, kind, constant_uint(m, 0)), constant_float(m, 1.0f), constant_float(m, 0.0f))));
+		if (ray)
+			selection_end(m, ray_merge);
+	}
+	return fdiv(m, 1, load(m, m->t_float, lit_variable), rays);
+}
+
+static void light_shadows_trace_main(struct module *m, struct words *locals, struct world_ao_pass_state *pass,
+	unsigned int out)
+{
+	unsigned int frag = load(m, m->t_v4, pass->frag_coord);
+	unsigned int pixel = op1(m, OP_CONVERT_F_TO_S, m->t_iv2, xy(m, frag));
+	unsigned int words = world_ao_pass_fetch(m, pass->inputs, pixel);
+	unsigned int shadowed = light_shadows_texel(m, 0);
+	unsigned int disks = op1(m, OP_BITCAST, m->t_v4, light_shadows_texel(m, 1));
+	unsigned int owners = light_shadows_texel(m, 2), how = light_shadows_texel(m, 3);
+	unsigned int seen_variable = local(m, locals, m->t_v4), query = local(m, locals, type0(m, OP_TYPE_RAY_QUERY));
+	unsigned int present, merge, p, n, owner, rays, frame, px, py, noise, from;
+	int channel;
+
+	store(m, seen_variable, constant_splat(m, 4, 1.0f));
+	present = op2(m, OP_LOGICAL_AND, m->t_bool, unot_zero(m, uand(m, uextract(m, words, 1),
+		constant_uint(m, XGPU_WORLD_AO_INPUT_PRESENT))), unot_zero(m, uextract(m, shadowed, 0)));
+	selection_begin(m, present, &merge);
+	p = world_ao_pass_position(m, pass, pixel, op1(m, OP_BITCAST, m->t_float, uextract(m, words, 2)));
+	n = world_ao_unfold(m, ext1(m, GLSL_UNPACK_SNORM_2X16, m->t_v2, uextract(m, words, 0)));
+	owner = op1(m, OP_BITCAST, m->t_int, uextract(m, words, 3));
+	rays = fclamp(m, 1, op1(m, OP_CONVERT_U_TO_F, m->t_float, uextract(m, how, 0)), 1.0f, (float)XGPU_LIGHT_SHADOWS_RAYS);
+	frame = fselect(m, unot_zero(m, uextract(m, how, 1)), extract(m, world_ao_pass_vector(m, pass, WORLD_AO_PASS_HISTORY,
+		0), 1), constant_float(m, 0.0f));
+	px = op1(m, OP_CONVERT_S_TO_F, m->t_float, op2(m, OP_COMPOSITE_EXTRACT, m->t_int, pixel, 0));
+	py = op1(m, OP_CONVERT_S_TO_F, m->t_float, op2(m, OP_COMPOSITE_EXTRACT, m->t_int, pixel, 1));
+	noise = ext1(m, GLSL_FRACT, m->t_float, fadd(m, 1, fmul(m, 1, constant_float(m, 52.9829189f), ext1(m, GLSL_FRACT,
+		m->t_float, fadd(m, 1, fmul(m, 1, constant_float(m, 0.06711056f), px), fmul(m, 1, constant_float(m, 0.00583715f),
+		py)))), fmul(m, 1, constant_float(m, 0.618034f), frame)));
+	from = fadd(m, 3, p, fscale(m, 3, n, constant_float(m, XGPU_LIGHT_SHADOWS_BIAS)));
+	for (channel = 0; channel < XGPU_LIGHT_SHADOWS_CHANNELS; channel++)
+	{
+		unsigned int number = uextract(m, shadowed, (unsigned int)channel), light_merge, reach_merge;
+		unsigned int light, w, to, d2, reach, share;
+
+		selection_begin(m, unot_zero(m, number), &light_merge);
+		light = dynamic_light(m, 1, op1(m, OP_BITCAST, m->t_int, op2(m, OP_I_SUB, m->t_uint, number, constant_uint(m, 1))));
+		w = ext1(m, GLSL_F_ABS, m->t_float, extract(m, light, 3));
+		to = fsub(m, 3, xyz(m, light), from);
+		d2 = fdot(m, to, to);
+		reach = op2(m, OP_LOGICAL_AND, m->t_bool, compare(m, OP_F_ORD_LESS_THAN, fmul(m, 1, fmul(m, 1, d2, w), w),
+			constant_float(m, 1.0f)), compare(m, OP_F_ORD_GREATER_THAN, fdot(m, n, to), constant_float(m, 0.0f)));
+		selection_begin(m, reach, &reach_merge);
+		share = light_shadows_rays(m, locals, pass, query, from, xyz(m, light),
+			fscale(m, 3, to, ext1(m, GLSL_INVERSE_SQRT, m->t_float, fmax_scalar(m, 1, d2, 1.0e-8f))),
+			extract(m, disks, channel), rays, noise, owner, uextract(m, owners, (unsigned int)channel));
+		store(m, seen_variable, op3(m, OP_COMPOSITE_INSERT, m->t_v4, share, load(m, m->t_v4, seen_variable),
+			(unsigned int)channel));
+		selection_end(m, reach_merge);
+		selection_end(m, light_merge);
+	}
+	selection_end(m, merge);
+	store(m, out, load(m, m->t_v4, seen_variable));
+}
+
+static void light_shadows_filter_main(struct module *m, struct words *locals, struct world_ao_pass_state *pass,
+	unsigned int out)
+{
+	unsigned int frag = load(m, m->t_v4, pass->frag_coord);
+	unsigned int pixel = op1(m, OP_CONVERT_F_TO_S, m->t_iv2, xy(m, frag));
+	unsigned int words = world_ao_pass_fetch(m, pass->inputs, pixel);
+	unsigned int raw = light_shadows_fetch(m, pass->history, pixel);
+	unsigned int sampled, image, last, zero, present, merge, distance, n, sum, total;
+	int dx, dy;
+
+	(void)locals;
+	store(m, out, raw);
+	present = unot_zero(m, uand(m, uextract(m, words, 1), constant_uint(m, XGPU_WORLD_AO_INPUT_PRESENT)));
+	selection_begin(m, present, &merge);
+	sampled = load(m, type_sampled_image(m, DIM_2D, FALSE, FALSE, TRUE), pass->history);
+	image = op(m, OP_IMAGE, type_sampled_image(m, DIM_2D, FALSE, FALSE, FALSE), 1, &sampled);
+	last = op2(m, OP_I_SUB, m->t_iv2, image_size(m, image, m->t_iv2), op(m, OP_COMPOSITE_CONSTRUCT, m->t_iv2, 2,
+		(unsigned int[]){ constant_int(m, 1), constant_int(m, 1) }));
+	zero = op(m, OP_COMPOSITE_CONSTRUCT, m->t_iv2, 2, (unsigned int[]){ constant_int(m, 0), constant_int(m, 0) });
+	distance = op1(m, OP_BITCAST, m->t_float, uextract(m, words, 2));
+	n = world_ao_unfold(m, ext1(m, GLSL_UNPACK_SNORM_2X16, m->t_v2, uextract(m, words, 0)));
+	sum = raw;
+	total = constant_float(m, 1.0f);
+	for (dy = -1; dy <= 1; dy++)
+	{
+		for (dx = -1; dx <= 1; dx++)
+		{
+			unsigned int at, near, near_distance, same, weight;
+
+			if (!dx && !dy)
+				continue;
+			at = ext3(m, GLSL_S_CLAMP, m->t_iv2, op2(m, OP_I_ADD, m->t_iv2, pixel, op(m, OP_COMPOSITE_CONSTRUCT, m->t_iv2, 2,
+				(unsigned int[]){ constant_int(m, dx), constant_int(m, dy) })), zero, last);
+			near = world_ao_pass_fetch(m, pass->inputs, at);
+			near_distance = op1(m, OP_BITCAST, m->t_float, uextract(m, near, 2));
+			same = op2(m, OP_LOGICAL_AND, m->t_bool, op2(m, OP_LOGICAL_AND, m->t_bool,
+				unot_zero(m, uand(m, uextract(m, near, 1), constant_uint(m, XGPU_WORLD_AO_INPUT_PRESENT))),
+				compare(m, OP_F_ORD_LESS_THAN_EQUAL, ext1(m, GLSL_F_ABS, m->t_float, fsub(m, 1, near_distance, distance)),
+				fadd(m, 1, fmul(m, 1, distance, constant_float(m, 0.03f)), constant_float(m, 0.02f)))),
+				compare(m, OP_F_ORD_GREATER_THAN_EQUAL, fdot(m, n, world_ao_unfold(m, ext1(m, GLSL_UNPACK_SNORM_2X16, m->t_v2,
+				uextract(m, near, 0)))), constant_float(m, 0.8f)));
+			weight = fselect(m, same, constant_float(m, 1.0f), constant_float(m, 0.0f));
+			sum = fadd(m, 4, sum, fscale(m, 4, light_shadows_fetch(m, pass->history, at), weight));
+			total = fadd(m, 1, total, weight);
+		}
+	}
+	store(m, out, fdiv(m, 4, sum, splat(m, 4, total)));
+	selection_end(m, merge);
+}
+
+BOOL xgpu_spirv_light_shadows_pass(int which, const struct xgpu_spirv_options *options, struct xgpu_spirv_module *module)
+{
+	struct module m;
+	struct words locals = { 0 };
+	struct world_ao_pass_state pass;
+	unsigned int main_id, out;
+	BOOL result;
+
+	if (which == XGPU_SPIRV_LIGHT_SHADOWS_TRACE && !options->ray_queries)
+		return FALSE;
+	module_begin(&m, EXECUTION_MODEL_FRAGMENT);
+	world_ao_declare(&m);
+	world_ao_pass_declare(&m, &pass, which == XGPU_SPIRV_LIGHT_SHADOWS_TRACE);
+	declare_dynamic_lights(&m);
+	out = interface_variable(&m, m.t_v4, STORAGE_OUTPUT, 0, "light_shadows");
+	main_id = function_begin(&m);
+	if (which == XGPU_SPIRV_LIGHT_SHADOWS_TRACE)
+		light_shadows_trace_main(&m, &locals, &pass, out);
+	else
+		light_shadows_filter_main(&m, &locals, &pass, out);
 	result = module_end(&m, EXECUTION_MODEL_FRAGMENT, main_id, &locals, module);
 	free(locals.words);
 	return result;

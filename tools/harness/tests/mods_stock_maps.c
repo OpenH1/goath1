@@ -32,6 +32,13 @@ static unsigned long hd_effects_changes(void) { return 0; }
 static void hd_effects_build_now(char const *directory) { (void)directory; }
 static char const *cache_files_map_directory(void) { return "maps"; }
 static long mod_bitmaps_update(boolean remove_all, boolean at_load) { (void)remove_all; (void)at_load; return 0; }
+/* (the MCC import: none here, no test run's import (HALO_MCC_IMPORT), and
+its material maps and sounds never played) */
+static void mcc_import_now(char const *maps_folder, char const *only, int voices)
+{ (void)maps_folder; (void)only; (void)voices; }
+static unsigned long mcc_import_changes(void) { return 0; }
+static void mod_materials_update(boolean remove_all, boolean at_load) { (void)remove_all; (void)at_load; }
+static long mod_sounds_update(boolean remove_all, boolean at_load) { (void)remove_all; (void)at_load; return 0; }
 
 #include "globals.inc"
 

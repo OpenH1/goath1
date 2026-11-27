@@ -709,6 +709,27 @@ found) */
 /* (and, where the device has ray queries, the ray-traced scene's top-level
 acceleration structure: xgpu_vulkan_rt_scene) */
 #define XGPU_VULKAN_BINDING_WORLD_AO_SCENE 8
+/* (and display.shadows "ray_traced"'s dynamic lights' shadows' mask, which
+the surfaces found once a pixel read: a 2D image of four bytes, a channel a
+light, read by texel, a 1x1 of every light seen where none is traced;
+xgpu.h's XGPU_DYNAMIC_LIGHTS_SHADOWED) */
+#define XGPU_VULKAN_BINDING_LIGHT_SHADOWS 9
+struct xgpu_world_ao_pass;
+/* the mask the occlusion's sets name from now on (NULL: the stand-in), and
+whether they name this one */
+void xgpu_vulkan_light_shadows_set(struct xgpu_vulkan_image *image);
+int xgpu_vulkan_light_shadows_bound(const struct xgpu_vulkan_image *image);
+/* display.shadows "ray_traced"'s passes (xgpu_vulkan_light_shadows.c): their
+pipelines made as a map's are (ray queries: the device has them), and the
+passes drawn after the pre-pass (its inputs, of the window's target's
+size, and its pass's uniforms) for the shadowed lights (the cells' texels
+from xgpu.h's XGPU_DYNAMIC_LIGHTS_SHADOWED: none, no pass), their mask then
+what the surfaces read until the next pre-pass begins
+(xgpu_vulkan_light_shadows_end: the stand-in) */
+void xgpu_vulkan_light_shadows_prepare(int ray_queries);
+void xgpu_vulkan_light_shadows_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_world_ao_pass *pass,
+	const uint32_t (*shadowed)[4]);
+void xgpu_vulkan_light_shadows_end(void);
 struct xgpu_world_ao_block;
 /* the stand-ins and the sampler made (the core's start): 0 if they cannot be */
 int xgpu_vulkan_world_ao_create(void);

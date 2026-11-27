@@ -17,6 +17,10 @@
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/op_auto_pickup" x="28" y="100"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/op_vehicle_hijack" x="28" y="121"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/op_spartan_link" x="28" y="142"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/op_spectate_on_death" x="28" y="163"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/section_5" x="28" y="190"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/op_sim_rate" x="28" y="210"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/op_enhanced_animations" x="28" y="231"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/button_bar" y="414"/>
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items" source="tools/port_settings.py settings_files/_settings_page">
@@ -92,11 +96,71 @@
 		<on event="created" run="port setting load"/>
 		<on event="a" run="port setting segment"/>
 	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/op_spectate_on_death" width="344" height="20" flags="pass_unhandled_to_focused_child" bitmap="main_menu/settings/row" color="#FF2896FF" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/spectate_on_death_label"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/spectate_on_death_spinner" x="188"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/spectate_on_death_seg0" x="188" y="1"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/spectate_on_death_seg1" x="336" y="1"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/spectate_on_death_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/labels" string_index="4" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/spectate_on_death_seg0" type="text" controller="1" width="144" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="TEAMMATE'S VIEW" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/spectate_on_death_seg1" type="text" controller="1" width="144" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="DEATH CAMERA" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/spectate_on_death_spinner" type="spinner" top="1" width="140" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="TEAMMATE'S VIEW|DEATH CAMERA" setting="game.spectate_on_death" values="teammates|off" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="4 -6 16 0" footer_bounds="4 140 16 146" wide="20 120" source="tools/port_settings.py settings_files/_settings_page">
+		<on event="created" run="port setting load"/>
+		<on event="a" run="port setting segment"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/section_5" width="344" height="18" bitmap="main_menu/settings/section" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/section_5_title"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/section_5_title" type="text" controller="1" width="344" height="18" wide="0 244" string_list="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/labels" string_index="5" color="#FF6F9CD0" text_x="2" text_y="1" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/op_sim_rate" width="344" height="20" flags="pass_unhandled_to_focused_child" bitmap="main_menu/settings/row" color="#FF2896FF" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/sim_rate_label"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/sim_rate_spinner" x="188"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/sim_rate_seg0" x="188" y="1"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/sim_rate_seg1" x="306" y="1"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/sim_rate_seg2" x="424" y="1"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/sim_rate_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/labels" string_index="6" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/sim_rate_seg0" type="text" controller="1" width="114" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="ORIGINAL (30)" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/sim_rate_seg1" type="text" controller="1" width="114" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="60" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/sim_rate_seg2" type="text" controller="1" width="114" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="120" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/sim_rate_spinner" type="spinner" top="1" width="140" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="ORIGINAL (30)|60|120" setting="game.sim_rate" values="30|60|120" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="4 -6 16 0" footer_bounds="4 140 16 146" wide="20 120" source="tools/port_settings.py settings_files/_settings_page">
+		<on event="created" run="port setting load"/>
+		<on event="a" run="port setting segment"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/op_enhanced_animations" width="344" height="20" flags="pass_unhandled_to_focused_child" bitmap="main_menu/settings/row" color="#FF2896FF" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/enhanced_animations_label"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/enhanced_animations_spinner" x="188"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/enhanced_animations_seg0" x="188" y="1"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/enhanced_animations_seg1" x="283" y="1"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/enhanced_animations_label" type="text" controller="1" width="184" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/labels" string_index="7" color="#FF2896FF" text_x="10" text_y="1" wide="0 20" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/enhanced_animations_seg0" type="text" controller="1" width="91" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="CLASSIC" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/enhanced_animations_seg1" type="text" controller="1" width="91" height="18" flags="keep_ends" bitmap="main_menu/settings/segment" text="ENHANCED" color="#FF2896FF" align="center" text_y="0" text_flags="no_focus_test" wide="20 0" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/enhanced_animations_spinner" type="spinner" top="1" width="140" height="18" flags="pass_unhandled_to_focused_child left_right_tabs_items" strings="CLASSIC|ENHANCED" setting="game.enhanced_animations" values="false|true" font="ui\small_ui" color="#FF2896FF" align="center" text_y="0" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="4 -6 16 0" footer_bounds="4 140 16 146" wide="20 120" source="tools/port_settings.py settings_files/_settings_page">
+		<on event="created" run="port setting load"/>
+		<on event="a" run="port setting segment"/>
+	</widget>
 	<strings name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/labels">
 		<string text="MULTIPLAYER"/>
 		<string text="WEAPON PICKUP"/>
 		<string text="VEHICLE HIJACKING"/>
 		<string text="SPARTAN LINK"/>
+		<string text="WHILE DEAD"/>
+		<string text="GAME"/>
+		<string text="TICK RATE"/>
+		<string text="ANIMATIONS"/>
 	</strings>
 	<strings name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/gameplay/help_strings">
 		<string text=""/>
@@ -104,5 +168,9 @@
 		<string text="Multiplayer, with a weapon slot empty: Hold picks up a weapon as you hold the action button, as on the Xbox; Walk Over as you walk over it, as in Custom Edition. Online: the host's choice."/>
 		<string text="Hold the action button beside an enemy's Ghost, Warthog or landed Banshee to throw the rider out and take it. Online: the host's choice."/>
 		<string text="Team games you host: players may show their teammates' views beside the motion tracker. Co-op always has it. Online: the host's choice."/>
+		<string text="While you wait to respawn in co-op or a team game: watch a living teammate through their eyes (A or Jump for the next), or the game's death camera."/>
+		<string text=""/>
+		<string text="How often the world updates each second, in games on this device (campaign, split screen, bots). 60 and 120 respond faster and take more of the processor. Online games play at their host's tick rate: a GOAT H1 game's (GOAT H1 60 Tick), a Legacy game's 30."/>
+		<string text="Enhanced: you turn with your aim in a jump and a grenade throw, and your legs keep moving as you throw. Classic moves as the Xbox did, so the AI plays as it did. Online: the host's choice."/>
 	</strings>
 </menus>

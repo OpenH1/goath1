@@ -46,6 +46,20 @@ samples, is the mean of their light, not of their codes. Only an edge's
 pixels, whose samples differ, are written: one whose samples are alike is
 its own mean already, and is discarded, unwritten and unconverted.
 
+CONTACT_SHADOWS is display.contact_shadows' pass (xgpu_vulkan_contact_shadows.c,
+docs/dynamic-shadows-plan.md's stage 2): drawn with the vertex shader above
+over a window's 3D view after its lightmap pass, where display.shadows is
+not "ray_traced", it finds each pixel's point from the depth and, for each
+caster whose volume holds it (the ray-traced shadows' casters, a few less),
+marches a short way toward the caster's light (its classic shadow's
+direction, the lightmap's dominant light: the sun outdoors) in screen
+space, a step at a time projected into the depth: a step behind what the
+depth holds, by less than a guessed thickness, is in shadow. Drawn after
+the classic receivers, it writes the light taken before them (its second
+texture) times its shadow, and the blend keeps the lesser of that and the
+pixel: the darker of the two shadows, not both. Its uniforms are a block of
+their own (CONTACT_SHADOWS_UNIFORMS).
+
 Beside them, CLEAR is the pixel shader of the core's clears of some of a
 target's colour channels (xgpu_vulkan.c, xgpu_vulkan_clear), which
 vkCmdClearAttachments cannot do: drawn with the vertex shader above,
@@ -671,6 +685,120 @@ void main()
 \tresult = color;
 }
 """
+# display.contact_shadows' pass: its block (std140, set 0, binding 1; as
+# xgpu_vulkan_contact_shadows.c's struct contact_header writes it) and the
+# depth (set 1, binding 0). unproject's rows take the framebuffer's (x, y,
+# depth, 1) to the world's homogeneous point; project's the world's to the
+# framebuffer's, times w (the camera's distance ahead, times view.z's
+# inverse); camera's w the casters' count; march the length, thickness,
+# start and depth bias (its share of the camera's distance in w); view the
+# fade's start and 1 / its length, 1 / project[3]'s length, the strength;
+# bounds the viewport's pixels (x0, y0, x1, y1). Each caster two vec4s:
+# its bounding sphere, and its direction's x and y, its darkness's bits
+# (red lowest). The light before the classic receivers (set 1, binding 1),
+# by texel, at the pixel's place.
+CONTACT_SHADOWS = """#version 450
+const int STEPS = 12;
+const int CASTERS = 48;
+layout(std140, set = 0, binding = 1) uniform ContactUniforms
+{
+\tvec4 unproject[4];
+\tvec4 project[4];
+\tvec4 camera;
+\tvec4 march;
+\tvec4 view;
+\tvec4 bounds;
+\tvec4 reserved[4];
+\tvec4 casters[CASTERS * 2];
+};
+layout(set = 1, binding = 0) uniform sampler2D depth_texture;
+layout(set = 1, binding = 1) uniform sampler2D light_texture;
+layout(location = 0) out vec4 result;
+
+float depth_at(vec2 pixel)
+{
+#if REVERSED_DEPTH
+\treturn 1.0 - texelFetch(depth_texture, ivec2(pixel), 0).r;
+#else
+\treturn texelFetch(depth_texture, ivec2(pixel), 0).r;
+#endif
+}
+
+void main()
+{
+\tvec2 pixel = gl_FragCoord.xy;
+\tfloat depth = depth_at(pixel);
+\tvec4 h = vec4(dot(unproject[0], vec4(pixel, depth, 1.0)), dot(unproject[1], vec4(pixel, depth, 1.0)),
+\t\tdot(unproject[2], vec4(pixel, depth, 1.0)), dot(unproject[3], vec4(pixel, depth, 1.0)));
+\tvec3 p = h.xyz / h.w;
+\t// (the surface's normal from its neighbours, facing the camera: a pixel
+\t// facing away from a light gets no shadow from it, as its own surface
+\t// would be found in its way)
+\tvec3 n = cross(dFdx(p), dFdy(p));
+\tn *= dot(n, camera.xyz - p) < 0.0 ? -1.0 : 1.0;
+\tn /= max(length(n), 1.0e-6);
+\tif (depth >= 1.0)
+\t\tdiscard;
+\tfloat distance_ = length(camera.xyz - p);
+\tfloat faded = 1.0 - clamp((distance_ - view.x) * view.y, 0.0, 1.0);
+\tif (faded <= 0.0)
+\t\tdiscard;
+\t// (interleaved gradient noise, the same each frame: the steps' start)
+\tfloat noise = fract(52.9829189 * fract(0.06711056 * (pixel.x - 0.5) + 0.00583715 * (pixel.y - 0.5)));
+\tfloat bias = march.w * distance_;
+\tint count = min(int(camera.w), CASTERS);
+\tvec3 light = vec3(1.0);
+\tfor (int i = 0; i < count; i++)
+\t{
+\t\tvec4 a = casters[i * 2], b = casters[i * 2 + 1];
+\t\tvec3 v = vec3(b.xy, -sqrt(max(1.0 - dot(b.xy, b.xy), 0.0)));
+\t\tvec3 rel = p - a.xyz;
+\t\tfloat along = dot(rel, v);
+\t\tvec3 side = rel - v * along;
+\t\t// (its volume: half its radius toward the light, twice it away, and a
+\t\t// quarter again to each side)
+\t\tif (along < -0.5 * a.w || along > 2.0 * a.w || dot(side, side) > 1.5625 * a.w * a.w)
+\t\t\tcontinue;
+\t\tvec3 l = -v;
+\t\tfloat facing = dot(n, l);
+\t\tif (facing <= 0.05)
+\t\t\tcontinue;
+\t\tvec3 from = p + n * (march.z + bias);
+\t\tfloat step_ = march.x / float(STEPS);
+\t\tfloat hit = 0.0;
+\t\tfor (int k = 0; k < STEPS; k++)
+\t\t{
+\t\t\tfloat t = step_ * (float(k) + noise);
+\t\t\tvec4 q = vec4(from + l * t, 1.0);
+\t\t\tfloat w = dot(project[3], q);
+\t\t\tif (w <= 0.0)
+\t\t\t\tbreak;
+\t\t\tvec2 s = vec2(dot(project[0], q), dot(project[1], q)) / w;
+\t\t\tif (any(lessThan(s, bounds.xy)) || any(greaterThanEqual(s, bounds.zw)))
+\t\t\t\tbreak;
+\t\t\tfloat scene = depth_at(s);
+\t\t\tif (scene >= 1.0)
+\t\t\t\tcontinue;
+\t\t\t// (how far the step is behind what the depth holds there, in world
+\t\t\t// units: a world point's 1 / w is its unprojection's w)
+\t\t\tfloat behind = (w - 1.0 / dot(unproject[3], vec4(s, scene, 1.0))) * view.z;
+\t\t\tif (behind > bias && behind < march.y)
+\t\t\t{
+\t\t\t\thit = 1.0 - 0.5 * float(k) / float(STEPS);
+\t\t\t\tbreak;
+\t\t\t}
+\t\t}
+\t\tfloat ends = along >= 0.0 ? 1.0 - along / (2.0 * a.w) : 1.0 + along / (0.5 * a.w);
+\t\tvec3 darkness = unpackUnorm4x8(floatBitsToUint(b.z)).rgb;
+\t\tlight *= 1.0 - darkness * (hit * clamp(ends, 0.0, 1.0) * smoothstep(0.05, 0.3, facing) * faded * view.w);
+\t}
+\tif (all(greaterThanEqual(light, vec3(0.998))))
+\t\tdiscard;
+\t// (the light before the classic receivers, shadowed; the blend's MIN keeps
+\t// the darker of it and what they left)
+\tresult = vec4(texelFetch(light_texture, ivec2(pixel), 0).rgb * light, 1.0);
+}
+"""
 # SMAA's lookup textures: their file, size and channels
 TEXTURES = (("area", "area_tex.zlib", 160, 560, 2), ("search", "search_tex.zlib", 64, 16, 1))
 
@@ -771,6 +899,8 @@ def generate(args):
     programs["loading_picture"] = ("frag", LOADING_PICTURE_SOURCE)
     programs["resolve_light"] = ("frag", resolve_light_program())
     programs["clear"] = ("frag", CLEAR)
+    programs["contact_shadows"] = ("frag", CONTACT_SHADOWS.replace("#version 450\n", "#version 450\n"
+                                                                   "#define REVERSED_DEPTH 1\n", 1))
     text = [
         "/* Generated by tools/vulkan_post_shaders.py from its GLSL, xgpu_hdr.c and port/third_party/smaa. "
         "Do not edit. */\n",
@@ -778,7 +908,7 @@ def generate(args):
     ]
     for name, (stage, code) in programs.items():
         path = build / f"{name}.{stage}"
-        path.write_text(code if name == "clear" else translate(stage, code, UNITS))
+        path.write_text(code if name in ("clear", "contact_shadows") else translate(stage, code, UNITS))
         spv = path.with_suffix(f".{stage}.spv")
         spv.unlink(missing_ok=True)
         subprocess.run([args.compiler, "-V", "--target-env", "vulkan1.1", "-o", str(spv), str(path)],
@@ -794,6 +924,8 @@ def generate(args):
     text.append("};\n")
     text.append("const struct xgpu_vulkan_post_module xgpu_vulkan_post_clear =\n{")
     text.append("\tclear_frag, sizeof(clear_frag) / 4,\n};\n")
+    text.append("const struct xgpu_vulkan_post_module xgpu_vulkan_post_contact_shadows =\n{")
+    text.append("\tcontact_shadows_frag, sizeof(contact_shadows_frag) / 4,\n};\n")
     for name, file, width, height, channels in TEXTURES:
         texels = zlib.decompress((SMAA / file).read_bytes())
         if len(texels) != width * height * channels:

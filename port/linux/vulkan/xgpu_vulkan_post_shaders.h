@@ -104,6 +104,11 @@ extern const struct xgpu_vulkan_post_module xgpu_vulkan_post_programs[XGPU_VULKA
 drawn with the vertex shader above, it writes the colour of its uniforms'
 block (set 0, binding 1: a vec4) */
 extern const struct xgpu_vulkan_post_module xgpu_vulkan_post_clear;
+/* display.contact_shadows' pass (xgpu_vulkan_contact_shadows.c): drawn with
+the vertex shader above, it reads the depth (set 1, binding 0) and its
+block (set 0, binding 1: the pass's header and casters), and writes the
+light its pixel keeps, multiplied in by the blend */
+extern const struct xgpu_vulkan_post_module xgpu_vulkan_post_contact_shadows;
 
 /* SMAA's lookup textures, their texels' bytes four to a word (the first in
 the lowest bits): the area texture's two channels, the search texture's

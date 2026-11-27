@@ -46,6 +46,7 @@ Conventions carried over from the Xbox:
 #include "halo_linux_source_fixups.h"
 #include "panini_projection.h"
 #include "rt_shadows.h"
+#include "contact_shadows.h"
 #include "world_ao.h"
 #include "world_cascades.h"
 #include "world_proxies.h"
@@ -5286,6 +5287,11 @@ static struct
 	BOOL world_sent;
 	/* the glows: each one's middle and size, its color (the display's) */
 	struct xgpu_dynamic_lights_halos halos;
+	/* display.shadows "ray_traced": the lights that cast shadows, given for
+	the frame's lights next (halo_dynamic_lights_shadowed: xgpu.h's
+	XGPU_DYNAMIC_LIGHTS_SHADOWED's texels, their words; count 0 none) */
+	unsigned int shadowed[XGPU_LIGHT_SHADOWS_CHANNELS][3];
+	int shadowed_count;
 } dynamic_lights;
 
 /* port/linux/game/network_standard.c's: whether the game played lets the
@@ -5500,6 +5506,62 @@ void halo_dynamic_lights_world(const unsigned int (*texels)[4], int count)
 	dynamic_lights.world_sent = FALSE;
 }
 
+/* display.shadows "ray_traced": the lights that cast shadows
+(port/linux/game/dynamic_lights.c), each by its channel of the mask, for the
+frame's lights given next */
+typedef char dynamic_lights_shadowed_fit[HALO_DYNAMIC_LIGHTS_SHADOWED == XGPU_LIGHT_SHADOWS_CHANNELS &&
+	XGPU_DYNAMIC_LIGHTS_SHADOWED + 3 < XGPU_DYNAMIC_LIGHTS_GRID_X * XGPU_DYNAMIC_LIGHTS_GRID_Y ? 1 : -1];
+
+void halo_dynamic_lights_shadowed(const int *indices, const float *disks, const unsigned long *owners, int count)
+{
+	int channel;
+
+	if (count < 0 || !indices || !disks || !owners)
+		count = 0;
+	if (count > XGPU_LIGHT_SHADOWS_CHANNELS)
+		count = XGPU_LIGHT_SHADOWS_CHANNELS;
+	for (channel = 0; channel < count; channel++)
+	{
+		dynamic_lights.shadowed[channel][0] = indices[channel] >= 0 ? (unsigned int)indices[channel] + 1u : 0u;
+		memcpy(&dynamic_lights.shadowed[channel][1], &disks[channel], sizeof(float));
+		dynamic_lights.shadowed[channel][2] = (unsigned int)owners[channel];
+	}
+	dynamic_lights.shadowed_count = count;
+}
+
+/* ... into the clusters' slice of the cells (xgpu.h), of the count of
+lights given: each channel's light, its disk, its owner, and the rays a
+light and whether a temporal technique accumulates the view; taken (none
+the next frame unless given again) */
+static void dynamic_lights_shadowed_texels(int count)
+{
+	unsigned int (*slice)[4] = (unsigned int (*)[4])dynamic_lights.mask[XGPU_DYNAMIC_LIGHTS_GRID_Z];
+	int channel, shadowed = 0;
+
+	for (channel = 0; channel < dynamic_lights.shadowed_count; channel++)
+	{
+		unsigned int light = dynamic_lights.shadowed[channel][0];
+
+		if (!light || light > (unsigned int)count)
+			continue;
+		slice[XGPU_DYNAMIC_LIGHTS_SHADOWED][shadowed] = light;
+		slice[XGPU_DYNAMIC_LIGHTS_SHADOWED + 1][shadowed] = dynamic_lights.shadowed[channel][1];
+		slice[XGPU_DYNAMIC_LIGHTS_SHADOWED + 2][shadowed] = dynamic_lights.shadowed[channel][2];
+		shadowed++;
+	}
+	/* (a temporal technique's accumulation the denoiser: a ray or two a
+	light, turned each frame; else a few, the same each frame, and the mask
+	filtered: xgpu_vulkan_light_shadows.c) */
+	if (shadowed)
+	{
+		BOOL temporal = temporal_upscaling();
+
+		slice[XGPU_DYNAMIC_LIGHTS_SHADOWED + 3][0] = temporal ? 2u : 3u;
+		slice[XGPU_DYNAMIC_LIGHTS_SHADOWED + 3][1] = temporal ? 1u : 0u;
+	}
+	dynamic_lights.shadowed_count = 0;
+}
+
 /* the frame's lights (the game's dynamic_lights.c): where they are, as the
 objects are drawn; the camera's position and axes (the glows face it); the
 clusters each light reaches (each cluster's mask of them) */
@@ -5541,6 +5603,7 @@ void halo_dynamic_lights_set(const struct halo_dynamic_light *lights, int count,
 	memset(dynamic_lights.mask, 0, sizeof(dynamic_lights.mask));
 	if (cluster_masks)
 		memcpy(dynamic_lights.mask[XGPU_DYNAMIC_LIGHTS_GRID_Z], cluster_masks, XGPU_DYNAMIC_LIGHTS_CLUSTERS * 16);
+	dynamic_lights_shadowed_texels(count);
 	if (dynamic_lights.world && !dynamic_lights.world_sent)
 	{
 		xgpu_backend_dynamic_lights_world((const void *)dynamic_lights.world, dynamic_lights.world_count);
@@ -5795,6 +5858,63 @@ static void rt_shadows_prepare(void)
 
 	if (setting && !strcmp(setting, "ray_traced") && xgpu_backend_capabilities.ray_queries)
 		xgpu_backend_rt_shadows(0, 0, &none);
+	/* (and display.contact_shadows', whatever the shadows: either may be
+	chosen in play) */
+	if (config_boolean("display.contact_shadows"))
+		xgpu_backend_contact_shadows(0, 0, &none);
+}
+
+/* display.contact_shadows (port/linux/game/contact_shadows.c): the 3D
+view's targets the pass draws into (FALSE: none, no pass) */
+static BOOL contact_shadows_targets(struct render_target_entry **color, struct render_target_entry **depth)
+{
+	if (!device.gl_ready)
+		return FALSE;
+#ifdef HALO_VR
+	vr_frame_resume();
+	/* (the eyes' pass, or the flat screen's) */
+	if (vr_gl.pass != HALO_VR_PASS_NONE)
+		return FALSE;
+#endif
+	*color = render_target_get(device.render_target);
+	*depth = render_target_get(device.depth_stencil);
+	return *color && *depth && (*depth)->target.depth && (*color)->target.layers <= 1;
+}
+
+/* ... the window's light, before the classic shadows' receivers: a record
+of no casters into the targets (the pass, after them, keeps the lesser of
+what they left and this light times its own shadow) */
+void halo_contact_shadows_light(void)
+{
+	static struct xgpu_rt_shadows none;
+	struct render_target_entry *color, *depth;
+
+	if (contact_shadows_targets(&color, &depth))
+		xgpu_backend_contact_shadows(color->target.number, depth->target.number, &none);
+}
+
+/* ... and the window's casters, after the receivers, as halo_rt_shadows
+hands them, with any backend */
+void halo_contact_shadows(struct rt_shadow_caster const *casters, int count, float const camera[3])
+{
+	static struct xgpu_rt_shadows shadows;
+	struct xgpu_dynamic_lights_halos const *halos = &dynamic_lights.halos;
+	struct render_target_entry *color, *depth;
+
+	if (!contact_shadows_targets(&color, &depth))
+		return;
+	if (count < 0)
+		count = 0;
+	if (count > XGPU_CONTACT_SHADOWS_CASTERS)
+		count = XGPU_CONTACT_SHADOWS_CASTERS;
+	shadows.count = count;
+	memcpy(shadows.casters, casters, (size_t)count * sizeof(shadows.casters[0]));
+	memcpy(shadows.projection, halos->projection, sizeof(shadows.projection));
+	memcpy(shadows.viewport_scale, halos->viewport_scale, sizeof(shadows.viewport_scale));
+	memcpy(shadows.viewport_offset, halos->viewport_offset, sizeof(shadows.viewport_offset));
+	shadows.screen_offset = (float)UI_OFFSET;
+	memcpy(shadows.camera, camera, sizeof(shadows.camera));
+	xgpu_backend_contact_shadows(color->target.number, depth->target.number, &shadows);
 }
 
 /* display.per_pixel_lighting: the model lighting programs' draws are lit for
@@ -5846,6 +5966,17 @@ void halo_effect_soft(int soft)
 int halo_soft_effects_drawn(void)
 {
 	return xgpu_backend_capabilities.soft_effects != 0;
+}
+
+/* (display.contact_shadows: the Vulkan backend's pass; Metal draws none
+yet) */
+int halo_contact_shadows_drawn(void)
+{
+#ifdef HALO_METAL
+	return 0;
+#else
+	return xgpu_backend_capabilities.largest_target != 0;
+#endif
 }
 
 int halo_temporal_upscale_drawn(void)

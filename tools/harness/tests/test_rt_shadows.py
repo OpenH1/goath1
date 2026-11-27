@@ -62,4 +62,4 @@ def test_the_classic_path_is_skipped_where_it_is_on():
     assert early < source.index("rasterizer_shadow_atlas_begin();") and early < source.index(
         "process_rendered_objects(&data);\n\n\t\t/* port: (as above) */")
     block = source[early:source.index("\tif (render_shadows)\n\t{", early)]
-    assert "render_object_rt_shadows();" in block and "return;" in block
+    assert "render_object_rt_shadows(FALSE);" in block and "return;" in block

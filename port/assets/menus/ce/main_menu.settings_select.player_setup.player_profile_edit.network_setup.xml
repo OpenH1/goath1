@@ -322,7 +322,7 @@
 		<string text="Link your Discord account, so that servers that block VPNs let you in while you use one."/>
 		<string text="Which games the server browser and the local network's list show: full and empty games, a password, the ping, the game types, and words to search for."/>
 		<string text="Hides offensive words in names and text from other players, maps and mods, as stars."/>
-		<string text="Multiplayer's rules: how weapons are picked up, and vehicle hijacking. Online: the host's choice."/>
+		<string text="The game's rules: how weapons are picked up, vehicle hijacking, the view while dead, the tick rate and the animations."/>
 		<string text=""/>
 		<string text="Joining a game on a map you do not have downloads it, if it is shared: a Custom Edition map from the players, an MCC map from the host, after asking."/>
 		<string text="In another player's game, sends its map to the players who join without it, as a torrent's peers do."/>

@@ -492,6 +492,34 @@ send those that changed (the command stream's DYNAMIC_LIGHTS_CHANGE) */
 /* the most nodes a pixel walks down the BSP (bsp3d.c's
 MAXIMUM_BSP3D_TRAVERSAL_DEPTH) */
 #define XGPU_DYNAMIC_LIGHTS_WORLD_DEPTH 128
+
+/* display.shadows "ray_traced"'s shadows of the dynamic lights
+(docs/dynamic-shadows-plan.md, stage 1; port/linux/game/dynamic_lights.c
+chooses them): the few lights that matter most cast shadows, found by one
+pass of ray queries after display.ambient_occlusion "world"'s pre-pass
+(port/linux/vulkan/xgpu_vulkan_light_shadows.c), from its pixels' distance,
+normal and owner, into a mask of a channel a light (the light's share of
+the pixel's view of its disk), which the surfaces drawn after it read in
+their loop of the lights (xgpu_spirv.c's light_shadows_*). The lights are in
+the cells' texture's clusters' slice, past the walk's two texels: at
+XGPU_DYNAMIC_LIGHTS_SHADOWED, four words, each channel's light (its index
+plus one; 0 none); at the next, their disks' radii (world units, a float's
+bits); at the next, their owners among the ray-traced scene's instances
+(world_rt.h's world_rt_owner: a ray leaves them out; 0 none); at the next,
+the rays a light and whether the window's view is accumulated by a
+temporal technique (FSR, DLSS: 1, the rays turned each frame and no filter
+of the mask; 0, the rays the same each frame and the mask filtered). No
+channel's light: the surfaces read none of it, and the backend draws no
+pass. */
+#define XGPU_DYNAMIC_LIGHTS_SHADOWED (XGPU_DYNAMIC_LIGHTS_WALK + 2)
+#define XGPU_LIGHT_SHADOWS_CHANNELS 4
+/* the most rays a light, a pixel; the rays' start off the surface (world
+units); and how far short of the light's disk a ray ends (of the disk's
+radius, and at least the least: the light's own glow, a bolt's body) */
+#define XGPU_LIGHT_SHADOWS_RAYS 4
+#define XGPU_LIGHT_SHADOWS_BIAS 0.04f
+#define XGPU_LIGHT_SHADOWS_SHORT 1.5f
+#define XGPU_LIGHT_SHADOWS_SHORT_LEAST 0.1f
 enum
 {
 	XGPU_DYNAMIC_LIGHTS_ENVIRONMENT = 1,

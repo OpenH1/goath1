@@ -40,8 +40,10 @@ records are 23's (only INITIALIZE's answer grew, which the replay's own
 backend gives; a recording holds none); a recording of 3 plays as it did.
 5: the stream's 25, whose records are 24's (only the frames' GPU times
 after the pipelines' states, which a replay does not give:
-host_render_stream_gpu_frames); a recording of 4 plays as it did */
-#define HOST_RENDER_RECORD_VERSION 5
+host_render_stream_gpu_frames); a recording of 4 plays as it did.
+6: the stream's 26, whose records are 25's and CONTACT_SHADOWS; a recording
+of 5 (none of them) plays as it did */
+#define HOST_RENDER_RECORD_VERSION 6
 
 /* the file: this header, then blocks, each a block header and its bytes:
 together, the events, each an event header and its bytes (an event may
