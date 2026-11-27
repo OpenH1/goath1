@@ -7086,6 +7086,21 @@ static unsigned int light_shadows_rays(struct module *m, struct words *locals, s
 			operands[6] = fneg(m, 3, normal);
 			operands[7] = constant_float(m, 1.0f);
 		}
+		/* (HALO_LIGHT_SHADOWS_VIEW=5, checking the objects: each ray toward
+		HALO_LIGHT_SHADOWS_POINT, "x,y,z", inside an object, which must stop
+		it) */
+		if (light_shadows_view() == 5)
+		{
+			float point[3] = { 0.0f, 0.0f, 0.0f };
+			const char *given = getenv("HALO_LIGHT_SHADOWS_POINT");
+			unsigned int to_point;
+
+			if (given)
+				(void)sscanf(given, "%f,%f,%f", &point[0], &point[1], &point[2]);
+			to_point = fsub(m, 3, constant_vector(m, 3, point), from);
+			operands[6] = ext1(m, GLSL_NORMALIZE, m->t_v3, to_point);
+			operands[7] = fmax_scalar(m, 1, fsub(m, 1, flength(m, to_point), constant_float(m, 0.05f)), 0.0f);
+		}
 		op_void(m, OP_RAY_QUERY_INITIALIZE, 8, operands);
 		branch(m, header);
 		label_at(m, header);
