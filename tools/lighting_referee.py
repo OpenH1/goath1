@@ -84,9 +84,11 @@ HDR = TRACED + ["HALO_HDR=on", "HALO_SCREENSHOT_HALVES=1"]
 TIMED = ["HALO_GRAPHICS=enhanced", "HALO_SHADOWS=ray_traced", "HALO_PASS_TIMES=1"]
 # the features landing on the ray-traced work, each a setting turned on (--feature NAME=VAR=VALUE adds or changes
 # one): off, the pictures must equal the baseline's; on, no NaN or blown-out pixel, no flicker, within its cost
+# (a feature's settings separated by spaces)
 FEATURES = {
     "bounce": "HALO_DYNAMIC_LIGHT_BOUNCE=true",
     "reflections": "HALO_RT_REFLECTIONS=true",
+    "rt-bounce": "HALO_RT_BOUNCE=true HALO_AMBIENT_OCCLUSION=ray_traced",
 }
 
 # the negative controls: settings that break one check's subject on purpose (--mutate), each of which must fail
@@ -405,7 +407,7 @@ def plan(build, baseline, machine, timing, only, mutate, features, overrides=(),
 
     variants = {"classic": CLASSIC, "enhanced": ENHANCED, "traced": TRACED, "untraced": UNTRACED, "hdr": HDR}
     for name, setting in features.items():
-        variants[f"{name}-on"] = HDR + [setting]
+        variants[f"{name}-on"] = HDR + setting.split()
     wanted = set()
     if "parity" in only:
         wanted |= {("corridor", "classic"), ("corridor", "enhanced"), ("blast", "classic"), ("blast", "enhanced"),
@@ -434,7 +436,7 @@ def plan(build, baseline, machine, timing, only, mutate, features, overrides=(),
                             label=f"lref-{slug(baseline)}-base-traced"))
     timed = []
     if "cost" in only:
-        configurations = [("timed", [])] + ([(f"timed-{name}", [setting]) for name, setting in features.items()]
+        configurations = [("timed", [])] + ([(f"timed-{name}", setting.split()) for name, setting in features.items()]
                                             if feature_cost else [])
         for host in timing:
             for variant, more in configurations:
