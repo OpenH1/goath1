@@ -9099,6 +9099,16 @@ void halo_screen_tone_map(short x0, short y0, short x1, short y1)
 	inputs.hdr_view = FALSE;
 	if (!device.gl_ready || !hdr.active)
 		return;
+	/* (debug.screenshot_halves: the view's values kept as drawn, for the
+	frames' half floats) */
+	{
+		static int halves = -1;
+
+		if (halves < 0)
+			halves = config_boolean("debug.screenshot_halves") ? 1 : 0;
+		if (halves)
+			return;
+	}
 	target = render_target_get(&device.back_buffer);
 	if (!target || target->target.format != XGPU_FORMAT_RGBA16F)
 		return;
@@ -9263,6 +9273,35 @@ void xgpu_write_bmp(const char *name, const unsigned char *pixels, unsigned long
 	fclose(file);
 }
 
+/* debug.screenshot_halves: a display.hdr frame's half floats (RGBA, rows
+from the top), named as xgpu_write_bmp names its BMP, as <name>.rgba16f:
+"H1HALF16", its width and height (32 bits each, little endian), then the
+pixels, 8 bytes each: the frame's values as drawn, which the screenshot's
+BMP clamps to [0, 1] (tools/lighting_referee.py reads them) */
+static void write_halves(const char *name, const unsigned short *halves, unsigned long width, unsigned long height)
+{
+	const char *directory = config_string("debug.screenshot_directory");
+	unsigned char header[16] = { 'H', '1', 'H', 'A', 'L', 'F', '1', '6' };
+	char path[512];
+	FILE *file;
+	int byte;
+
+	if (name[0] == '=')
+		snprintf(path, sizeof(path), "%s/%s.rgba16f", directory, name + 1);
+	else
+		snprintf(path, sizeof(path), "%s/%s%05lu.rgba16f", directory, name, xgpu_screenshot_number());
+	if (!(file = fopen(path, "wb")))
+		return;
+	for (byte = 0; byte < 4; byte++)
+	{
+		header[8 + byte] = (unsigned char)(width >> (8 * byte));
+		header[12 + byte] = (unsigned char)(height >> (8 * byte));
+	}
+	fwrite(header, 1, sizeof(header), file);
+	fwrite(halves, 8, (size_t)width * height, file);
+	fclose(file);
+}
+
 /* the determinism check's hash of each frame (port/linux/game/determinism_log.c) */
 int determinism_log_frames(void);
 void determinism_log_frame(unsigned char const *pixels, long width, long height);
@@ -9362,7 +9401,17 @@ static void write_screenshot(struct render_target_entry *target)
 	if (*config_string("debug.screenshot_stream"))
 		write_screenshot_stream(pixels, width, height);
 	else
+	{
 		xgpu_write_bmp(screenshot_name[0] ? screenshot_name : "frame", pixels, width, height, FALSE);
+		if (target->target.format == XGPU_FORMAT_RGBA16F && config_boolean("debug.screenshot_halves"))
+		{
+			unsigned short *halves = xgpu_backend_read_target_halves(target->target.number);
+
+			if (halves)
+				write_halves(screenshot_name[0] ? screenshot_name : "frame", halves, width, height);
+			free(halves);
+		}
+	}
 	screenshot_name[0] = 0;
 	free(pixels);
 }
@@ -9722,13 +9771,37 @@ static BOOL screenshot_this_frame(void)
 {
 	static long every = -1;
 	static double from, until;
+	/* (debug.screenshot_at's seconds, and the next of them not yet saved) */
+	static double moments[64];
+	static int moment_count, moment_next;
 	double now;
 
 	if (every < 0)
 	{
+		const char *at = config_string("debug.screenshot_at");
+
 		every = config_integer("debug.screenshot_every");
 		from = config_real("debug.screenshot_from");
 		until = config_real("debug.screenshot_until");
+		while (at && *at && moment_count < (int)(sizeof(moments) / sizeof(moments[0])))
+		{
+			char *end;
+			double second = strtod(at, &end);
+
+			if (end == at)
+				break;
+			moments[moment_count++] = second;
+			at = end;
+			while (*at == ',' || *at == ' ')
+				at++;
+		}
+	}
+	/* (debug.screenshot_at: the first frame at or after each of its
+	seconds, as at<n>.bmp; one a frame, in the list's order) */
+	if (moment_next < moment_count && sim_trace_scenario_seconds() >= moments[moment_next])
+	{
+		snprintf(screenshot_name, sizeof(screenshot_name), "=at%d", moment_next++);
+		return TRUE;
 	}
 	if (every <= 0 || device.frame % (unsigned long)every != 0)
 		return FALSE;

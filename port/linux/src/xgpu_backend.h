@@ -342,6 +342,10 @@ its first, malloc'd: display.hdr's back buffer clamped to [0, 1], or with
 tone_map tone mapped into it (xgpu_hdr.h's xgpu_hdr_sdr_pixel). Answered
 now; a screenshot can wait for the frame's end. */
 unsigned char *xgpu_backend_read_target(xgpu_target target, int layer, BOOL tone_map);
+/* a display.hdr (RGBA16F) target's half floats as they are, RGBA rows from
+its first, 8 bytes a pixel, malloc'd; NULL for any other target
+(debug.screenshot_halves) */
+unsigned short *xgpu_backend_read_target_halves(xgpu_target target);
 /* the screenshot key's picture (controls.screenshot): the target, tone
 mapped as xgpu_backend_read_target's, written by the host as a PNG file in
 directory (made if it is missing), named for the local date and time; its

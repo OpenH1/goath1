@@ -905,7 +905,11 @@ struct xgpu_stream_clear_target
 pixels as BGRA rows from its first into pixels (guest memory of
 width * height * 4 bytes, as the target was made), then the reply.
 display.hdr's RGBA16F back buffer is clamped to [0, 1], as an SDR display
-shows it, or with tone_map, tone mapped into it (xgpu_hdr_sdr_pixel) */
+shows it, or with tone_map, tone mapped into it (xgpu_hdr_sdr_pixel). With
+tone_map XGPU_STREAM_READ_HALVES, an RGBA16F target's half floats as they
+are instead (RGBA, 8 bytes a pixel, pixels width * height * 8 bytes: the
+debug capture of debug.screenshot_halves); any other target fails */
+#define XGPU_STREAM_READ_HALVES 2u
 struct xgpu_stream_read_target
 {
 	uint32_t header;

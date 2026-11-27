@@ -1573,6 +1573,35 @@ unsigned char *xgpu_backend_read_target(xgpu_target target, int layer, BOOL tone
 	return pixels;
 }
 
+unsigned short *xgpu_backend_read_target_halves(xgpu_target target)
+{
+	struct xgpu_stream_read_target *record_body;
+	unsigned char *pixels;
+	uint32_t size;
+
+	if (!stream.open || target >= TARGET_MAXIMUM || !stream.targets[target].width)
+		return NULL;
+	size = stream.targets[target].width * stream.targets[target].height * 8;
+	pixels = stream_allocate(16, size);
+	if (!pixels)
+		return NULL;
+	record_body = record(XGPU_STREAM_READ_TARGET, sizeof(*record_body));
+	record_body->target = target;
+	record_body->layer = -1;
+	record_body->tone_map = XGPU_STREAM_READ_HALVES;
+	record_body->pixels = STREAM_ADDRESS(pixels);
+	record_body->size = size;
+	record_body->reply = STREAM_ADDRESS(&stream.replies->value);
+	stream.replies->value = 0;
+	synchronous();
+	if (!stream.replies->value)
+	{
+		stream_free(pixels);
+		return NULL;
+	}
+	return (unsigned short *)pixels;
+}
+
 BOOL xgpu_backend_screenshot(xgpu_target target, const char *directory, char *name, unsigned long name_size)
 {
 	struct xgpu_stream_screenshot *record_body;
