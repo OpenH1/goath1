@@ -10,7 +10,9 @@ dynamic_lights.c draws after the game's.
 
 /* a light the frame draws: where, how far it reaches, its color (the
 game's lights', 0 to 1), whether a glow is drawn about it (a projectile's
-with no model), and how much of the view it lights (its rank) */
+with no model), how much of the view it lights (its rank), and what it is
+from frame to frame (its effect's or its object's and its row, its
+marker's; dynamic_lights_shadowed's: how long it has lasted) */
 struct light_source
 {
 	real_point3d position;
@@ -18,6 +20,7 @@ struct light_source
 	real_rgb_color color;
 	boolean halo;
 	real score;
+	unsigned long long key;
 };
 
 void light_sources_new_map(void);

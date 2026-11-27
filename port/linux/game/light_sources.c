@@ -68,6 +68,12 @@ enum
 	LIGHT_SOURCES_TAG_INDICES = 0x10000,
 };
 
+/* a light's key (struct light_source): what made it (1 an effect, 2 an
+object, 3 a firer's flames), its handle, its row and its marker */
+#define LIGHT_SOURCES_KEY(kind, handle, row, marker) (((unsigned long long)(unsigned long)(handle) & 0xffffffffull) | \
+	((unsigned long long)(unsigned short)(row) << 32) | ((unsigned long long)(unsigned char)(marker) << 48) | \
+	((unsigned long long)(kind) << 56))
+
 /* lights this far from the camera and nearer are drawn (world units: a
 light reaches past it only when it is as wide, an explosion's) */
 #define LIGHT_SOURCES_RANGE 40.0f
@@ -336,7 +342,8 @@ static void light_sources_add(
 	real radius,
 	real_rgb_color const *color,
 	real strength,
-	boolean halo)
+	boolean halo,
+	unsigned long long key)
 {
 	struct light_source *source;
 	real_vector3d offset;
@@ -360,6 +367,7 @@ static void light_sources_add(
 	source->color.green = color->green * strength;
 	source->color.blue = color->blue * strength;
 	source->halo = halo;
+	source->key = key;
 	source->score = intensity * radius / (distance > radius ? distance : radius);
 	if (dot_product3d(&offset, &render.camera.forward) < -(radius + 0.1f))
 		source->score *= 1.0f / 64.0f;
@@ -441,7 +449,8 @@ static void light_sources_effects(
 		}
 		if (going)
 			light_sources_add(&position, entry->radius, &entry->color,
-				light_sources_flicker(time, (unsigned long)effect_index), FALSE);
+				light_sources_flicker(time, (unsigned long)effect_index), FALSE,
+				LIGHT_SOURCES_KEY(1, effect_index, row, 0));
 	}
 	/* (the flashes, as long as they last, their effects gone or not; one
 	over is kept, lighting nothing, while its effect lasts: an effect
@@ -465,7 +474,7 @@ static void light_sources_effects(
 		}
 		fraction = MAX(fraction, 0.0f);
 		light_sources_add(&flash->position, entry->radius * (0.6f + 0.4f * (1.0f - fraction)), &entry->color,
-			1.0f - fraction, FALSE);
+			1.0f - fraction, FALSE, LIGHT_SOURCES_KEY(1, flash->effect_index, flash->row, 0));
 	}
 }
 
@@ -520,7 +529,7 @@ static void light_sources_streams(
 		light_sources_add(&center, entry->radius, &entry->color,
 			MIN(count / (real)LIGHT_SOURCES_STREAM_FULL, 1.0f) *
 				light_sources_flicker(time, (unsigned long)light_sources.streams[index].owner_index),
-			FALSE);
+			FALSE, LIGHT_SOURCES_KEY(3, light_sources.streams[index].owner_index, light_sources.streams[index].row, 0));
 	}
 	light_sources.stream_count = 0;
 }
@@ -644,7 +653,7 @@ static void light_sources_objects(
 					if (held)
 						dynamic_lights_first_person(iterator.index, &position);
 					light_sources_add(&position, entry->radius, &entry->color,
-						strength * dynamic_lights_share(count), FALSE);
+						strength * dynamic_lights_share(count), FALSE, LIGHT_SOURCES_KEY(2, iterator.index, row, index));
 				}
 				continue;
 			}
@@ -656,7 +665,8 @@ static void light_sources_objects(
 			position.z += entry->offset.k * object->object.up.k;
 			light_sources_add(&position, entry->radius, &entry->color, strength,
 				object->object.type == _object_type_projectile &&
-					object_definition_get(object->definition_index)->object.model.index == NONE);
+					object_definition_get(object->definition_index)->object.model.index == NONE,
+				LIGHT_SOURCES_KEY(2, iterator.index, row, 0));
 		}
 	}
 }
