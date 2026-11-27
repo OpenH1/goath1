@@ -509,6 +509,12 @@ void debug_free(
 	struct debug_memory_header *header =
 		(struct debug_memory_header *)pointer - 1;
 
+	/* port: free(NULL) does nothing, as the C library's does. The port's
+	callers free what an optional file's read gave, NULL when there is none
+	(a saved game without BIGGER BATTLES' file beside it read the header
+	at NULL - 0x20 and crashed on Continue, #1283) */
+	if (!pointer)
+		return;
 	debug_check_memory_globals(file, line);
 	debug_check_pointer_header(header, file, line);
 	debug_check_pointer_overrun(pointer, file, line);
