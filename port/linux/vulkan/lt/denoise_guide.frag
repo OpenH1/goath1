@@ -5,9 +5,9 @@
 // FOLD (built again as denoise_guide_fold.frag): the one diffuse signal too, the second output: the direct light's
 // 1-spp sample plus the dynamic lights' bounce (half resolution, lt/indirect.glsl's BOUNCE: a texel a 2x2 block, its
 // traced pixel this frame's phase's) upsampled on the pixel's surface, so that the denoiser's one temporal stage
-// counts both (~/dev/rt2-realtime-design.md section 1.5): the 3x3 blocks about the pixel's own, each kept where its
+// counts both (~/dev/rt2-realtime-design.md section 1.5): the 5x5 blocks about the pixel's own, each kept where its
 // traced pixel is of the same owner, its normal within 25 degrees and its point on this pixel's plane, Gaussian by
-// the pixel distance; where none of them is, the 5x5's outer ring.
+// the pixel distance (3 pixels).
 #version 460
 #extension GL_GOOGLE_include_directive : require
 
@@ -74,15 +74,8 @@ void main()
     vec3 p = world_point(pixel, uintBitsToFloat(words.z)), sum = vec3(0.0);
     float distance = length(p - pass.camera[0].xyz), weights = 0.0;
     ivec2 middle = pixel / 2;
-    for (int k = 0; k < 9; k++)
-        tap(middle + ivec2(k % 3 - 1, k / 3 - 1), pixel, p, n, words.w, distance, sum, weights);
-    if (weights <= 0.0)
-        for (int k = 0; k < 16; k++)
-        {
-            // (the ring: its 16 blocks, the rows above and below, then the columns' middle three)
-            ivec2 off = k < 10 ? ivec2(k % 5 - 2, k < 5 ? -2 : 2) : ivec2(k < 13 ? -2 : 2, (k - 10) % 3 - 1);
-            tap(middle + off, pixel, p, n, words.w, distance, sum, weights);
-        }
+    for (int k = 0; k < 25; k++)
+        tap(middle + ivec2(k % 5 - 2, k / 5 - 2), pixel, p, n, words.w, distance, sum, weights);
     vec3 e = weights > 0.0 ? sum / weights : vec3(0.0);
     // (bounce.w's 2, HALO_LT_INDIRECT=only, checking: the bounce alone)
     combined = vec4((int(pass.bounce.w) & 2) != 0 ? e : light.rgb + e, light.a);

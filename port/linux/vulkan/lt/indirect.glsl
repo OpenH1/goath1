@@ -309,6 +309,19 @@ bool surface_at(ivec2 pixel, out vec3 p, out vec3 n, out vec3 shaded, out uint o
         all(lessThan(pixel, pass.corners.zw));
 }
 
+// a pixel's surface from its inputs alone (surface_at's, no shaded normal): present, its point, geometric normal
+bool point_at(ivec2 pixel, out vec3 p, out vec3 n)
+{
+    uvec4 words = texelFetch(inputs, pixel, 0);
+    n = unfold(unpackSnorm2x16(words.x));
+    vec2 low = vec2(pass.corners.xy), size = vec2(pass.corners.zw) - low;
+    vec2 screen = (vec2(pixel) + 0.5 - low) * 2.0 / size - 1.0;
+    vec3 ray = normalize(pass.camera[1].xyz + pass.camera[2].xyz * screen.x + pass.camera[3].xyz * screen.y);
+    p = pass.camera[0].xyz + ray * uintBitsToFloat(words.z);
+    return (words.y & INPUT_PRESENT) != 0u && all(greaterThanEqual(pixel, pass.corners.xy)) &&
+        all(lessThan(pixel, pass.corners.zw));
+}
+
 vec4 bounce_main(ivec2 block)
 {
     int phase = int(pass.indirect[1].y);
@@ -551,16 +564,23 @@ void main()
             ivec2 block = ivec2(floor(q * 0.5));
             if (any(lessThan(block, ivec2(0))) || any(greaterThanEqual(block, blocks)))
                 continue;
+            // (the block's pixel of this frame's phase first, from the inputs alone: where it has a surface it is the
+            // one traced (bounce_main takes the first in turn that has one), so a point of another cell or octant is
+            // left out before its sample is read; else the sample says which was)
+            vec3 sp, sn;
+            bool known = point_at(block * 2 + block_pixel(phase), sp, sn);
+            if (known && (cascade_of(sp) != k || octant_of(sn) != octant || ivec3(floor(sp / size)) != c))
+                continue;
             vec4 s = texelFetch(reservoirs, block, 0);
             if (s.a < 0.5)
                 continue;
             float code = s.a - 1.0;
             int which = int(floor(code / 1024.0));
             uint l = uint(code - 1024.0 * float(which));
-            vec3 sp, sn, ss;
-            uint other;
-            if (!surface_at(block * 2 + block_pixel(phase + which), sp, sn, ss, other) || cascade_of(sp) != k ||
-                octant_of(sn) != octant || ivec3(floor(sp / size)) != c || (light != 0xFFFFFFFFu && l != light))
+            if (!known && (!point_at(block * 2 + block_pixel(phase + which), sp, sn) || cascade_of(sp) != k ||
+                octant_of(sn) != octant || ivec3(floor(sp / size)) != c))
+                continue;
+            if (light != 0xFFFFFFFFu && l != light)
                 continue;
             light = l;
             sum += s.rgb;
