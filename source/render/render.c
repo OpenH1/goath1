@@ -951,9 +951,21 @@ static void render_player_frame(
 	if (!render_vr_eye_pass && !render_vr_scope_pass)
 #endif
 	{
+		/* port: and the player's own body drawn in the first person, nearer
+		still, so that it cuts nothing of the body (port/linux/game/first_
+		person_legs.c) */
+		extern real first_person_legs_near_reach(short local_player_index);
+		real body = first_person_legs_near_reach(window->local_player_index);
+
 		camera->z_near = render_near_clip_distance(camera, &frustum_bounds);
 		window->rasterizer_camera.z_near =
 			render_near_clip_distance(&window->rasterizer_camera, &frustum_bounds);
+		if (body > 0.0f)
+		{
+			camera->z_near = render_near_clip_distance_reaching(camera, &frustum_bounds, body);
+			window->rasterizer_camera.z_near =
+				render_near_clip_distance_reaching(&window->rasterizer_camera, &frustum_bounds, body);
+		}
 	}
 
 	if (screenshot_combined_index != NULL)

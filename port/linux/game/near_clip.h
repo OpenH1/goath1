@@ -17,6 +17,11 @@ own, or nearer where the view is so wide that the game's near plane would
 reach farther than NEAR_CLIP_REACH from the eye at its corners */
 real render_near_clip_distance(struct render_camera const *camera, real_rectangle2d const *frustum_bounds);
 
+/* the same, with the corners reaching no farther than reach from the eye
+(world units) in place of NEAR_CLIP_REACH */
+real render_near_clip_distance_reaching(struct render_camera const *camera, real_rectangle2d const *frustum_bounds,
+	real reach);
+
 /* the first-person weapon's near clip distance (world units), its own
 (z_near, rasterizer_first_person_weapon_near_clip_distance), from its
 projection (the camera's field of view and viewport, the frustum's bounds),
