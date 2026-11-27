@@ -90,6 +90,16 @@ struct xgpu_vulkan_output
 	float levels;
 };
 
+/* an adapter as Windows' DXGI describes it (xgpu_vulkan_options.adapters) */
+struct xgpu_vulkan_adapter
+{
+	char name[128];
+	unsigned vendor;
+	unsigned long long dedicated_memory;
+	unsigned char luid[8];
+	int software;
+};
+
 struct xgpu_vulkan_options
 {
 	/* the instance extensions the window's surface needs (SDL's), count of
@@ -133,6 +143,11 @@ swapchain takes where the surface has it (0: the swap interval's choice) */
 	const char *gpu;
 	int display_luid_known;
 	unsigned char display_luid[8];
+	/* the adapters Windows' DXGI lists (none elsewhere), logged beside the
+	loader's devices: one Windows has that Vulkan does not list is told
+	(#1283) */
+	const struct xgpu_vulkan_adapter *adapters;
+	int adapter_count;
 	/* OpenXR owns device selection and augments device creation. NULL for
 	the desktop path. These callbacks run before the render thread starts. */
 	VkResult (*create_instance)(PFN_vkGetInstanceProcAddr, const VkInstanceCreateInfo *,

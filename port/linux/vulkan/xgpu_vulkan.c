@@ -67,8 +67,10 @@ options' gamma) first, where the setting is not 1.
 #else
 #include <dlfcn.h>
 #endif
+#include <ctype.h>
 #include <math.h>
 #include <pthread.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1252,6 +1254,9 @@ static struct
 	uint32_t queue_family, timestamp_bits;
 	/* the chosen device's place among those the loader lists (physical_choose) */
 	uint32_t gpu_index, gpu_count;
+	/* an NVIDIA or AMD adapter Windows lists that Vulkan does not (#1283;
+	physical_choose's; "" none) */
+	char adapter_missing[64];
 	int validation;
 	uint32_t validation_messages;
 
@@ -10685,22 +10690,75 @@ void xgpu_vulkan_capabilities(struct xgpu_vulkan_capabilities *capabilities)
 
 /* ---------- initialization */
 
+/* an environment variable as the loader reads it (Windows: the process's
+own block, which SetEnvironmentVariableA changes and the C library's getenv
+does not see); NULL if not set */
+static const char *environment_read(const char *name, char *text, size_t size)
+{
+#ifdef _WIN32
+	DWORD length = GetEnvironmentVariableA(name, text, (DWORD)size);
+
+	return length && length < size ? text : NULL;
+#else
+	const char *value = getenv(name);
+
+	if (!value)
+		return NULL;
+	snprintf(text, size, "%s", value);
+	return text;
+#endif
+}
+
+static void environment_write(const char *name, const char *value)
+{
+#ifdef _WIN32
+	SetEnvironmentVariableA(name, value);
+#else
+	setenv(name, value, 1);
+#endif
+}
+
+/* (the loader's layer filters' globs are not case-sensitive) */
+static int text_has_folded(const char *text, const char *part)
+{
+	size_t length = strlen(part), index;
+
+	for (; *text; text++)
+	{
+		for (index = 0; index < length && text[index] &&
+			tolower((unsigned char)text[index]) == tolower((unsigned char)part[index]); index++)
+			;
+		if (index == length)
+			return 1;
+	}
+	return 0;
+}
+
 static int load_functions(void)
 {
+	char value[1024], appended[1100];
+
 	/* AMD's driver for a Ryzen's integrated GPU brings an implicit layer,
-	VK_LAYER_AMD_switchable_graphics (amdvlk's on Linux too), which can take
-	the other vendors' GPUs out of the device list: #1269's RTX 5070, its
-	monitor's, was not listed, and the game drew with the integrated Radeon.
-	The game chooses its device itself (physical_choose), so the layer is
-	turned off before the loader reads its manifest's disable_environment,
-	unless the player has set that variable already. */
-	if (!getenv("DISABLE_LAYER_AMD_SWITCHABLE_GRAPHICS_1"))
+	VK_LAYER_AMD_switchable_graphics_64 (and _32; amdvlk's on Linux too),
+	which can take the other vendors' GPUs out of the device list: #1269's
+	RTX 5070, its monitor's, was not listed, and the game drew with the
+	integrated Radeon. The game chooses its device itself (physical_choose),
+	so the layer is turned off before the loader looks for layers: by its
+	manifest's disable_environment, and (#1283, where the GPU was still not
+	listed) by the loader's own filter too, VK_LOADER_LAYERS_DISABLE (loaders
+	of 1.3.234 on), its glob added to any the player's value has. A player
+	who has set the layer's variable already keeps the layer as that says. */
+	if (!environment_read("DISABLE_LAYER_AMD_SWITCHABLE_GRAPHICS_1", value, sizeof(value)))
 	{
-#ifdef _WIN32
-		SetEnvironmentVariableA("DISABLE_LAYER_AMD_SWITCHABLE_GRAPHICS_1", "1");
-#else
-		setenv("DISABLE_LAYER_AMD_SWITCHABLE_GRAPHICS_1", "1", 0);
-#endif
+		environment_write("DISABLE_LAYER_AMD_SWITCHABLE_GRAPHICS_1", "1");
+		if (!environment_read("VK_LOADER_LAYERS_DISABLE", value, sizeof(value)) || !value[0])
+			environment_write("VK_LOADER_LAYERS_DISABLE", "VK_LAYER_AMD_switchable_graphics*");
+		else if (!text_has_folded(value, "switchable_graphics") && !text_has_folded(value, "~implicit~") &&
+			!text_has_folded(value, "~all~"))
+		{
+			snprintf(appended, sizeof(appended), "%s,VK_LAYER_AMD_switchable_graphics*", value);
+			environment_write("VK_LOADER_LAYERS_DISABLE", appended);
+		}
 	}
 #ifdef _WIN32
 	if (!vk.library)
@@ -10924,6 +10982,113 @@ static int required_features(const VkPhysicalDeviceFeatures2 *features,
 	return 1;
 }
 
+/* (text appended to a list, ", " between its items; cut where it is full) */
+static void list_add(char *text, size_t size, size_t *length, const char *format, ...)
+{
+	va_list arguments;
+	int written;
+
+	if (*length + 3 >= size)
+		return;
+	if (*length)
+	{
+		memcpy(text + *length, ", ", 3);
+		*length += 2;
+	}
+	va_start(arguments, format);
+	written = vsnprintf(text + *length, size - *length, format, arguments);
+	va_end(arguments);
+	if (written > 0)
+		*length += (size_t)written < size - *length ? (size_t)written : size - *length - 1;
+}
+
+/* #1283: the loader's version and the layers it knows of (the implicit ones
+and the explicit ones it finds), with which the instance has on (asked of a
+physical device: the loader answers vkEnumerateDeviceLayerProperties with the
+instance's layers), and the player's layer filter, in one line */
+static void layers_log(VkPhysicalDevice device)
+{
+	VkLayerProperties layers[48], on[48];
+	uint32_t count = 48, on_count = 0, index, other, version = VK_API_VERSION_1_0;
+	PFN_vkEnumerateDeviceLayerProperties enumerate_on = (PFN_vkEnumerateDeviceLayerProperties)
+		vkGetInstanceProcAddr(vk.instance, "vkEnumerateDeviceLayerProperties");
+	char text[900], filter[256];
+	const char *disable = environment_read("VK_LOADER_LAYERS_DISABLE", filter, sizeof(filter));
+	size_t length = 0;
+	int on_known = 0;
+
+	if (vkEnumerateInstanceVersion)
+		vkEnumerateInstanceVersion(&version);
+	if (vkEnumerateInstanceLayerProperties(&count, layers) < 0)
+		count = 0;
+	if (device && enumerate_on)
+	{
+		on_count = 48;
+		on_known = enumerate_on(device, &on_count, on) >= 0;
+		if (!on_known)
+			on_count = 0;
+	}
+	text[0] = 0;
+	for (index = 0; index < count; index++)
+	{
+		int is_on = 0;
+
+		for (other = 0; other < on_count; other++)
+			is_on |= !strcmp(on[other].layerName, layers[index].layerName);
+		list_add(text, sizeof(text), &length, "%s%s", layers[index].layerName, is_on ? " (on)" : "");
+	}
+	host_logf(HOST_LOG_INFO, "vulkan: the loader has Vulkan %u.%u.%u; its layers: %s%s%s%s",
+		VK_API_VERSION_MAJOR(version), VK_API_VERSION_MINOR(version), VK_API_VERSION_PATCH(version),
+		count ? text : "none", count && !on_known ? " (which are on not known)" : "", disable ? "; VK_LOADER_LAYERS_DISABLE=" : "",
+		disable ? disable : "");
+}
+
+/* #1283: the adapters Windows' DXGI lists, in one line, and a warning for an
+NVIDIA or AMD one the loader does not list (by the LUID, else the vendor of a
+device that has none): Windows has its driver, but not that driver's Vulkan
+part, or a broken one */
+static void adapters_log(const struct xgpu_vulkan_options *options, const VkPhysicalDeviceProperties *properties,
+	unsigned char (*luids)[8], const int *luid_valid, uint32_t count)
+{
+	char text[900];
+	size_t length = 0;
+	uint32_t device;
+	int index;
+
+	vk.adapter_missing[0] = 0;
+	if (!options->adapter_count)
+		return;
+	text[0] = 0;
+	for (index = 0; index < options->adapter_count; index++)
+	{
+		const struct xgpu_vulkan_adapter *adapter = &options->adapters[index];
+
+		list_add(text, sizeof(text), &length, "%s (vendor %04x, %llu MB dedicated%s)", adapter->name, adapter->vendor,
+			adapter->dedicated_memory >> 20, adapter->software ? ", software" : "");
+	}
+	host_logf(HOST_LOG_INFO, "vulkan: Windows' adapters (DXGI): %s", text);
+	/* (the headset's runtime's one device is not the loader's list) */
+	if (options->choose_physical)
+		return;
+	for (index = 0; index < options->adapter_count; index++)
+	{
+		const struct xgpu_vulkan_adapter *adapter = &options->adapters[index];
+		int listed = 0;
+
+		if (adapter->software || (adapter->vendor != 0x10de && adapter->vendor != 0x1002))
+			continue;
+		for (device = 0; device < count && !listed; device++)
+			listed = luid_valid[device] ? !memcmp(luids[device], adapter->luid, 8) :
+				properties[device].vendorID == adapter->vendor;
+		if (listed)
+			continue;
+		host_logf(HOST_LOG_WARN, "vulkan: %s is visible to Windows but not to Vulkan, which usually means its driver's "
+			"Vulkan part is missing or broken: reinstalling that driver usually fixes it", adapter->name);
+		if (!vk.adapter_missing[0])
+			snprintf(vk.adapter_missing, sizeof(vk.adapter_missing), "%s", adapter->name);
+	}
+}
+
 /* a physical device of Vulkan 1.3 with a graphics queue (that can present to
 the surface, with one; VR's runtime's device may have none that can, and
 then draws only the headset's frames), chosen by display.gpu and the rule
@@ -10937,6 +11102,9 @@ static int physical_choose(const struct xgpu_vulkan_options *options)
 	struct xgpu_gpu gpus[MOST];
 	uint32_t families_chosen[MOST], timestamp_bits[MOST];
 	const char *skipped[MOST];
+	unsigned char luids[MOST][8];
+	int luid_valid[MOST];
+	char drivers[MOST][96];
 	uint32_t count = 0, index;
 	char why[256];
 	int chosen;
@@ -10964,6 +11132,7 @@ static int physical_choose(const struct xgpu_vulkan_options *options)
 	for (index = 0; index < count; index++)
 	{
 		VkPhysicalDeviceIDProperties id;
+		VkPhysicalDeviceDriverProperties driver;
 		VkPhysicalDeviceProperties2 properties2;
 		VkPhysicalDeviceMemoryProperties memory;
 		VkQueueFamilyProperties families[16];
@@ -10971,11 +11140,16 @@ static int physical_choose(const struct xgpu_vulkan_options *options)
 		int graphics = -1;
 
 		memset(&id, 0, sizeof(id));
+		memset(&driver, 0, sizeof(driver));
 		memset(&properties2, 0, sizeof(properties2));
 		id.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES;
+		driver.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES;
 		properties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
 		properties2.pNext = &id;
 		vkGetPhysicalDeviceProperties(devices[index], &properties[index]);
+		/* (the driver's name and version, a 1.2 device's) */
+		if (properties[index].apiVersion >= VK_API_VERSION_1_2)
+			id.pNext = &driver;
 		memset(&gpus[index], 0, sizeof(gpus[index]));
 		gpus[index].name = properties[index].deviceName;
 		gpus[index].type = (int)properties[index].deviceType;
@@ -10989,6 +11163,13 @@ static int physical_choose(const struct xgpu_vulkan_options *options)
 			gpus[index].drives_display = options->display_luid_known && id.deviceLUIDValid &&
 				!memcmp(id.deviceLUID, options->display_luid, 8);
 		}
+		luid_valid[index] = id.deviceLUIDValid != 0;
+		memcpy(luids[index], id.deviceLUID, 8);
+		if (driver.driverName[0])
+			snprintf(drivers[index], sizeof(drivers[index]), "%s%s%s", driver.driverName, driver.driverInfo[0] ? " " : "",
+				driver.driverInfo);
+		else
+			snprintf(drivers[index], sizeof(drivers[index]), "driver %08x", properties[index].driverVersion);
 		vkGetPhysicalDeviceMemoryProperties(devices[index], &memory);
 		for (heap = 0; heap < memory.memoryHeapCount; heap++)
 		{
@@ -11036,10 +11217,10 @@ static int physical_choose(const struct xgpu_vulkan_options *options)
 		chosen = xgpu_gpu_choose(gpus, (int)count, options->gpu, why, sizeof(why));
 	for (index = 0; index < count; index++)
 	{
-		host_logf(HOST_LOG_INFO, "vulkan: GPU %u of %u: %s (%s, Vulkan %u.%u.%u, %llu MB device-local%s): %s%s",
-			index, count, properties[index].deviceName, xgpu_gpu_type_name(gpus[index].type),
+		host_logf(HOST_LOG_INFO, "vulkan: GPU %u of %u: %s (%s, vendor %04x, Vulkan %u.%u.%u, %s, %llu MB device-local%s): %s%s",
+			index, count, properties[index].deviceName, xgpu_gpu_type_name(gpus[index].type), properties[index].vendorID,
 			VK_API_VERSION_MAJOR(properties[index].apiVersion), VK_API_VERSION_MINOR(properties[index].apiVersion),
-			VK_API_VERSION_PATCH(properties[index].apiVersion),
+			VK_API_VERSION_PATCH(properties[index].apiVersion), drivers[index],
 			(unsigned long long)(gpus[index].local_memory >> 20),
 			gpus[index].drives_display ? ", drives the window's display" : "",
 			(int)index == chosen ? "chosen, " : skipped[index] ? "not usable, " : "not chosen",
@@ -11047,6 +11228,8 @@ static int physical_choose(const struct xgpu_vulkan_options *options)
 	}
 	if (!count)
 		host_logf(HOST_LOG_INFO, "vulkan: the loader lists no GPU");
+	layers_log(count ? devices[0] : VK_NULL_HANDLE);
+	adapters_log(options, properties, luids, luid_valid, count);
 	if (chosen < 0)
 	{
 		host_logf(HOST_LOG_ERROR, "vulkan: no device of Vulkan 1.3 with a graphics queue%s (%u listed)",
@@ -11566,11 +11749,20 @@ static int device_make(const struct xgpu_vulkan_options *options)
 		vk.nvidia = properties12.driverID == VK_DRIVER_ID_NVIDIA_PROPRIETARY;
 		/* (the problem report's GPU line: which of the GPUs listed was
 		chosen first, where the driver's long text cannot cut it off) */
-		snprintf(vk.capabilities.device, sizeof(vk.capabilities.device), "%s (GPU %u of %u, Vulkan %u.%u.%u, %s%s%s)",
-			vk.properties.deviceName, vk.gpu_index, vk.gpu_count, VK_API_VERSION_MAJOR(vk.properties.apiVersion),
-			VK_API_VERSION_MINOR(vk.properties.apiVersion), VK_API_VERSION_PATCH(vk.properties.apiVersion),
-			properties12.driverName[0] ? properties12.driverName : "driver", properties12.driverInfo[0] ? " " : "",
-			properties12.driverInfo);
+		if (vk.adapter_missing[0])
+			/* (#1283: the GPU Windows has that Vulkan does not list, before
+			the driver's text, which the line's room would cut it off by) */
+			snprintf(vk.capabilities.device, sizeof(vk.capabilities.device),
+				"%s (GPU %u of %u, Vulkan %u.%u.%u; not in Vulkan: %s)", vk.properties.deviceName, vk.gpu_index,
+				vk.gpu_count, VK_API_VERSION_MAJOR(vk.properties.apiVersion),
+				VK_API_VERSION_MINOR(vk.properties.apiVersion), VK_API_VERSION_PATCH(vk.properties.apiVersion),
+				vk.adapter_missing);
+		else
+			snprintf(vk.capabilities.device, sizeof(vk.capabilities.device), "%s (GPU %u of %u, Vulkan %u.%u.%u, %s%s%s)",
+				vk.properties.deviceName, vk.gpu_index, vk.gpu_count, VK_API_VERSION_MAJOR(vk.properties.apiVersion),
+				VK_API_VERSION_MINOR(vk.properties.apiVersion), VK_API_VERSION_PATCH(vk.properties.apiVersion),
+				properties12.driverName[0] ? properties12.driverName : "driver", properties12.driverInfo[0] ? " " : "",
+				properties12.driverInfo);
 	}
 	host_logf(HOST_LOG_INFO, "vulkan: %s (Vulkan %u.%u.%u, driver %08x)%s%s%s%s%s%s%s", vk.properties.deviceName,
 		VK_API_VERSION_MAJOR(vk.properties.apiVersion), VK_API_VERSION_MINOR(vk.properties.apiVersion),
