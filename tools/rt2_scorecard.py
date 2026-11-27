@@ -116,7 +116,7 @@ def target(host):
 
 def remote_script(command, lock):
     """a bash script on a rig: the owner's own game not running, the GPU lock as goat-rig takes it ("shared":
-    gpu.lock shared and one of its 3 picture slots; "alone": gpu.lock, waited for at most 5 minutes), in a private
+    gpu.lock shared and one of its 3 picture slots; "alone": gpu.lock, waited for at most 2 minutes), in a private
     network (loopback only) where the machine allows it"""
     lines = ['set -e', 'if pgrep -f "^$HOME/Applications/OpenH1/bin/openh1" >/dev/null; then '
              'echo "the machine owner is playing" >&2; exit 3; fi', 'mkdir -p ~/goat-rig/locks']
@@ -126,7 +126,7 @@ def remote_script(command, lock):
                   'if flock -n 8; then break 2; fi; done; sleep 0.5; done']
     elif lock == "alone":
         lines += ['exec 9>>~/goat-rig/locks/gpu.lock',
-                  'flock -w 300 9 || { echo "the GPU lock is busy" >&2; exit 4; }']
+                  'flock -w 120 9 || { echo "the GPU lock is busy (2 minutes)" >&2; exit 4; }']
     lines.append('if unshare -rn true 2>/dev/null; then exec unshare -rn sh -c \'ip link set lo up 2>/dev/null; '
                  'exec "$@"\' sh ' + command + '; else exec ' + command + '; fi')
     return "\n".join(lines)
@@ -285,8 +285,7 @@ def truth(out, mutate, run_id):
         local.mkdir(parents=True, exist_ok=True)
         subprocess.run(["rsync", "-a", f"{target(TRUTH_HOST)}:{work}/{name}/compare/", f"{local}/"],
                        capture_output=True)
-        provenance = subprocess.run(ssh(TRUTH_HOST, f"cat {scene}/realtime/realtime.json 2>/dev/null || true; "
-                                                    f"date -r {scene}/realtime/irradiance.exr +%H:%M"),
+        provenance = subprocess.run(ssh(TRUTH_HOST, f"echo; date -r {scene}/realtime/irradiance.exr +%H:%M"),
                                     capture_output=True, text=True).stdout.strip().splitlines()
         data["realtime_made"] = provenance[-1] if provenance else "?"
         (local / "compare.json").write_text(json.dumps(data, indent=2) + "\n")
@@ -340,9 +339,9 @@ def table(rows):
         return f"{value:.2f}" if "cost" in kind else f"{value:.2%}"
 
     width = max(len(r["check"]) for r in rows)
-    lines = [f"{'check':<{width}}  {'scene':<7} {'value':>8} {'target':>8}  verdict  notes"]
+    lines = [f"{'check':<{width}}  {'scene':<10} {'value':>8} {'target':>8}  verdict  notes"]
     for r in rows:
-        lines.append(f"{r['check']:<{width}}  {r['scene']:<7} {shown(r['value'], r['check']):>8} "
+        lines.append(f"{r['check']:<{width}}  {r['scene']:<10} {shown(r['value'], r['check']):>8} "
                      f"{'≤' + shown(r['target'], r['check']) if r['target'] is not None else '':>8}  "
                      f"{r['verdict']:<7}  {r['said'] or ''}")
     return "\n".join(lines)
