@@ -227,6 +227,11 @@ vec3 flashlight(vec3 p, vec3 n, vec3 shaded, ivec2 pixel, int receiver)
 void main()
 {
     ivec2 pixel = ivec2(gl_FragCoord.xy);
+    if ((pass.control.w & GRADIENT) != 0 && !lt_gradient_pixel(pixel, pass.history.y))
+    {
+        result = vec4(0.0);
+        return;
+    }
     uvec4 words = texelFetch(inputs, pixel, 0);
     vec3 n = unfold(unpackSnorm2x16(words.x));
     vec3 shaded = unfold(unpackSnorm2x16(texelFetch(guides, pixel, 0).x));
@@ -247,8 +252,6 @@ void main()
     }
     result = vec4(0.0);
     if ((words.y & INPUT_PRESENT) == 0u)
-        return;
-    if ((pass.control.w & GRADIENT) != 0 && !lt_gradient_pixel(pixel, pass.history.y))
         return;
     int receiver = int(words.w);
     vec3 lit = pass.control.y != 0 ? flashlight(p, n, shaded, pixel, receiver) : vec3(0.0);

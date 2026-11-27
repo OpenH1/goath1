@@ -173,6 +173,7 @@ static int denoise_shaders(void)
 	denoise.temporal_pass.color_format = XGPU_VULKAN_FORMAT_RGBA32_UINT;
 	denoise.guide_pass = denoise.temporal_pass;
 	denoise.guide_pass.pixel_shader = denoise.guide;
+	denoise.guide_pass.color_format = XGPU_VULKAN_FORMAT_RG32_UINT;
 	/* (the a-trous passes in half floats: rgb and the standard deviation) */
 	denoise.atrous_pass = denoise.gradient_pass;
 	denoise.atrous_pass.pixel_shader = denoise.atrous;
@@ -340,7 +341,7 @@ struct xgpu_vulkan_image *xgpu_vulkan_denoise_draw(struct xgpu_vulkan_image *raw
 		denoise.filtered[index] = denoise_image(denoise.filtered[index], XGPU_VULKAN_FORMAT_RGBA16F, width, height);
 	}
 	denoise.result = denoise_image(denoise.result, XGPU_VULKAN_FORMAT_RGBA16F, width, height);
-	denoise.filter_guide = denoise_image(denoise.filter_guide, XGPU_VULKAN_FORMAT_RGBA32_UINT, width, height);
+	denoise.filter_guide = denoise_image(denoise.filter_guide, XGPU_VULKAN_FORMAT_RG32_UINT, width, height);
 	denoise.reshaded = denoise_image(denoise.reshaded, XGPU_VULKAN_FORMAT_RGBA32F, width, height);
 	denoise.gradients = denoise_image(denoise.gradients, XGPU_VULKAN_FORMAT_RGBA32F, gradient_width, gradient_height);
 	denoise.previous_inputs = denoise_image(denoise.previous_inputs, XGPU_VULKAN_FORMAT_RGBA32_UINT, width, height);

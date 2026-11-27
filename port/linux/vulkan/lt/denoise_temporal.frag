@@ -104,9 +104,9 @@ void main()
             count = counts / weights;
             moment = moments / weights;
         }
-        // (the mean, where all of the 4x4 about the point is the same surface, by Catmull-Rom's weights instead: a
-        // bilinear history, resampled every frame in motion, would smooth away the bump map's detail in the light)
-        if (weights > 0.999)
+        // (in motion, the mean, where all of the 4x4 about the point is the same surface, by Catmull-Rom's weights
+        // instead: a bilinear history, resampled every frame, would smooth away the bump map's detail in the light)
+        if (weights > 0.999 && cap < float(pass.control.x))
         {
             vec4 wx = catmull_rom(t.x), wy = catmull_rom(t.y);
             vec3 sharp = vec3(0.0);

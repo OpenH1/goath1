@@ -5,7 +5,7 @@
 // alone). The weights are normalized, so a flat region's mean is kept. The first pass reads the temporal stage's mean
 // (its deviation: the samples' over the root of the count); each passes on (rgb, the estimate's standard deviation,
 // propagated as the root of the sum of w^2 var over the weights' sum), in half floats. Each pixel's guides are read
-// from the filter guide (lt/denoise_guide.frag): one texel.
+// from the filter guide (lt/denoise_guide.frag): one 8-byte texel.
 #version 460
 #extension GL_GOOGLE_include_directive : require
 
@@ -40,9 +40,9 @@ bool inside(ivec2 q)
 void main()
 {
     ivec2 pixel = ivec2(gl_FragCoord.xy);
-    uvec4 g = texelFetch(filter_guide, pixel, 0);
+    uvec2 g = texelFetch(filter_guide, pixel, 0).xy;
     result = vec4(0.0);
-    if (g.z == 0u)
+    if ((g.y & 0xFFFFu) == 0u)
         return;
     vec4 centre = fetch(pixel);
     float count = unpackHalf2x16(texelFetch(history, pixel, 0).w).x;
@@ -53,8 +53,9 @@ void main()
         result = vec4(centre.rgb, sqrt(max(centre.a, 0.0)));
         return;
     }
-    vec3 shaded = unfold(unpackSnorm2x16(g.x)), n = unfold(unpackSnorm2x16(g.y));
-    float distance = uintBitsToFloat(g.z);
+    vec4 normals = unpackSnorm4x8(g.x);
+    vec3 shaded = unfold(normals.xy), n = unfold(normals.zw);
+    float distance = unpackHalf2x16(g.y).x;
     vec3 p = world_point(pixel, distance);
     float lp = luminance(centre.rgb);
     // (the variance prefiltered 3x3, Gaussian, over the same surface; in the first pass, under 4 frames, where the
@@ -69,15 +70,15 @@ void main()
         for (int x = -1; x <= 1; x++)
         {
             ivec2 q = pixel + ivec2(x, y);
-            uvec4 other = texelFetch(filter_guide, q, 0);
-            if (!inside(q) || other.w != g.w || other.z == 0u)
+            uvec2 other = texelFetch(filter_guide, q, 0).xy;
+            if (!inside(q) || (other.y >> 16) != (g.y >> 16) || (other.y & 0xFFFFu) == 0u)
                 continue;
             float w = (x == 0 ? 0.5 : 0.25) * (y == 0 ? 0.5 : 0.25);
             vec4 c = fetch(q);
             v += w * c.a;
             vw += w;
-            if (young && dot(unfold(unpackSnorm2x16(other.x)), shaded) >= 0.9994 &&
-                dot(unfold(unpackSnorm2x16(other.y)), n) >= 0.99)
+            vec4 on = unpackSnorm4x8(other.x);
+            if (young && dot(unfold(on.xy), shaded) >= 0.9994 && dot(unfold(on.zw), n) >= 0.99)
             {
                 float l = luminance(c.rgb);
                 for (int k = 0; k < 4; k++)
@@ -105,8 +106,8 @@ void main()
             ivec2 q = pixel + ivec2(x, y) * step;
             if (!inside(q))
                 continue;
-            uvec4 other = texelFetch(filter_guide, q, 0);
-            if (other.z == 0u || other.w != g.w)
+            uvec2 other = texelFetch(filter_guide, q, 0).xy;
+            if ((other.y & 0xFFFFu) == 0u || (other.y >> 16) != (g.y >> 16))
                 continue;
             vec4 c = fetch(q);
             if (young && unpackHalf2x16(texelFetch(history, q, 0).w).x < 4.0)
@@ -114,11 +115,12 @@ void main()
             float w = kernel[abs(x)] * kernel[abs(y)];
             if (x != 0 || y != 0)
             {
-                vec3 pq = world_point(q, uintBitsToFloat(other.z));
+                vec3 pq = world_point(q, unpackHalf2x16(other.y).x);
+                vec4 on = unpackSnorm4x8(other.x);
                 // (the shaded normal's turn, strictly: the bump map's detail is in the light, and kept; the geometric
                 // one's more loosely: which side faces the light; the depth off this pixel's plane; the luminance)
-                float e = (1.0 - dot(shaded, unfold(unpackSnorm2x16(other.x)))) / pass.tuning.w +
-                    (1.0 - dot(n, unfold(unpackSnorm2x16(other.y)))) / (10.0 * pass.tuning.w) +
+                float e = (1.0 - dot(shaded, unfold(on.xy))) / pass.tuning.w +
+                    (1.0 - dot(n, unfold(on.zw))) / (10.0 * pass.tuning.w) +
                     abs(dot(n, pq - p)) / sigma_z + abs(luminance(c.rgb) - lp) / sigma_l;
                 w *= exp(-e);
             }
