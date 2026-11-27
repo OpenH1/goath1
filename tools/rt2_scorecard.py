@@ -75,6 +75,7 @@ SCENES = [
     ("a10", "a10.hrpl", 900, "a10's cryo deck, a still camera on the reflective floor"),
     ("b30", "b30.hrpl", 180, "b30's beach rock (b30_exterior's view)"),
     ("combat", "combat.hrpl", 480, "b30's beach in combat: plasma lights"),
+    ("c20walk", "c20_walk.hrpl", 600, "c20's corridor walked toward a Flood, the flashlight on (motion)"),
 ]
 STABILITY_HOST = "omarchy"
 TRUTH_HOST = "5900x"
@@ -486,7 +487,7 @@ def main():
     parser.add_argument("--replay-5900x", help="a replay binary on the 5900X instead (its path there)")
     parser.add_argument("--env", action="append", default=[], help="VAR=value for the replays (again for more)")
     parser.add_argument("--mutate", choices=["noise", "bias", "raw"], help="a negative control: must fail")
-    parser.add_argument("--scenes", nargs="*", help="only these held scenes (c20 a10 b30 combat)")
+    parser.add_argument("--scenes", nargs="*", help="only these held scenes (c20 a10 b30 combat c20walk)")
     parser.add_argument("--no-cost", action="store_true", help="no cost runs")
     parser.add_argument("--out", type=Path, default=ROOT / "build" / "rt2_scorecard", help="the pictures' folder")
     # shader

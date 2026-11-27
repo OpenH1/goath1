@@ -7,6 +7,9 @@
 #version 460
 #extension GL_EXT_ray_query : require
 #extension GL_EXT_nonuniform_qualifier : require
+#extension GL_GOOGLE_include_directive : require
+
+#include "gradient_pixel.glsl"
 
 // (xgpu.h, xgpu_spirv.h)
 #define INPUT_PRESENT 0x400u
@@ -28,6 +31,9 @@
 #define COPY_GEOMETRIC 8
 #define COPY_SHADED 16
 #define COPY_PRESENT 32
+// the denoiser's re-shade (xgpu_vulkan_lt_reshade: the previous frame's uniforms, inputs and guides, this frame's
+// light): only its gradient pixels shaded, the rest 0
+#define GRADIENT 128
 
 // the draw set's uniforms: struct xgpu_world_ao_pass, then (at 1024) xgpu_vulkan_lt.c's struct lt_params
 layout(set = 0, binding = 1, std140) uniform Pass
@@ -241,6 +247,8 @@ void main()
     }
     result = vec4(0.0);
     if ((words.y & INPUT_PRESENT) == 0u)
+        return;
+    if ((pass.control.w & GRADIENT) != 0 && !lt_gradient_pixel(pixel, pass.history.y))
         return;
     int receiver = int(words.w);
     vec3 lit = pass.control.y != 0 ? flashlight(p, n, shaded, pixel, receiver) : vec3(0.0);

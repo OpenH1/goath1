@@ -7,6 +7,8 @@ It writes port/linux/vulkan/lt/xgpu_vulkan_lt_shaders.inc, the SPIR-V of the GLS
 xgpu_vulkan_lt.c includes: the game needs no shader compiler. --check verifies that the checked-in file still matches.
 
 E1/E2 (the flashlight's direct light, accumulated by count): lt/e1.vert, a triangle over the window, and lt/e1.frag.
+W3, the denoiser (xgpu_vulkan_denoise.c): lt/denoise_gradient.frag, denoise_temporal.frag and denoise_atrous.frag,
+with lt/denoise_common.glsl and lt/gradient_pixel.glsl included.
 """
 
 from __future__ import annotations
@@ -22,7 +24,9 @@ ROOT = Path(__file__).resolve().parents[1]
 FOLDER = ROOT / "port/linux/vulkan/lt"
 OUTPUT = FOLDER / "xgpu_vulkan_lt_shaders.inc"
 # (the array's name, the source)
-KERNELS = [("lt_e1_vertex_spirv", "e1.vert"), ("lt_e1_spirv", "e1.frag")]
+KERNELS = [("lt_e1_vertex_spirv", "e1.vert"), ("lt_e1_spirv", "e1.frag"),
+           ("lt_denoise_gradient_spirv", "denoise_gradient.frag"), ("lt_denoise_temporal_spirv", "denoise_temporal.frag"),
+           ("lt_denoise_atrous_spirv", "denoise_atrous.frag")]
 
 
 def spirv(source: Path) -> bytes:
