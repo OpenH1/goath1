@@ -59,6 +59,7 @@ traces their bounce off the real surfaces into a world-space cache
 
 /* port/linux/src/port_config.c */
 int config_boolean(const char *name);
+char const *config_string(char const *name);
 /* port/linux/src (halo.log) */
 void platform_log(const char *format, ...);
 unsigned long long platform_shared_clock_microseconds(void);
@@ -117,6 +118,9 @@ light's reach) and as near this facing */
 #define BOUNCE_SAME_WALL_SCALE 0.25f
 #define BOUNCE_SAME_FACING 0.7f
 #define BOUNCE_WINDOWS 4
+/* the enhanced lights' brightness where debug.dynamic_lights_look gives none
+(d3d8_device.c's) */
+#define BOUNCE_LIGHTS_BRIGHTNESS 1.7f
 
 enum
 {
@@ -545,6 +549,7 @@ static boolean dynamic_lights_bounce_gpu(
 	struct xgpu_rt_bounce bounce;
 	short chosen[XGPU_RT_BOUNCE_LIGHTS], chosen_count, index, channel;
 	unsigned long long now;
+	real brightness;
 
 	if (!config_boolean("display.rt_bounce") || !halo_dynamic_lights_enhanced() || !halo_world_ao_ray_queries() ||
 		!world_ao_mode())
@@ -563,6 +568,15 @@ static boolean dynamic_lights_bounce_gpu(
 	last[window] = now;
 	chosen_count = game_in_progress() && global_structure_bsp_get() ?
 		dynamic_lights_bounce_gpu_choose(lights, count, &render.camera.position, chosen) : 0;
+	/* (the enhanced lights' brightness, as the renderer scales their color:
+	debug.dynamic_lights_look's first number, d3d8_device.c's 1.7) */
+	{
+		char const *look = config_string("debug.dynamic_lights_look");
+		char *end;
+		double value = look && *look ? strtod(look, &end) : 0.0;
+
+		brightness = look && *look && end != look && value > 0.0 ? (real)value : BOUNCE_LIGHTS_BRIGHTNESS;
+	}
 	for (index = 0; index < chosen_count; index++)
 	{
 		struct halo_dynamic_light const *light = &lights[chosen[index]];
@@ -571,7 +585,7 @@ static boolean dynamic_lights_bounce_gpu(
 		memcpy(out->position, light->position, sizeof(out->position));
 		out->radius = light->radius;
 		for (channel = 0; channel < 3; channel++)
-			out->color[channel] = powf(MAX(light->color[channel], 0.0f), 2.2f);
+			out->color[channel] = powf(MAX(light->color[channel], 0.0f), 2.2f) * brightness;
 		memcpy(out->axis, light->axis, sizeof(out->axis));
 		out->cone_scale = light->cone_scale;
 		out->cone_offset = light->cone_offset;
