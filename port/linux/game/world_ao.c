@@ -640,7 +640,7 @@ void world_ao_window_begin(short local_player_index, short rasterizer_target, fl
 		/* (display.shadows "ray_traced": the frame's ray-traced scene before
 		the pre-pass's end, where the dynamic lights' shadows are traced:
 		dynamic_lights.c, xgpu.h's XGPU_DYNAMIC_LIGHTS_SHADOWED) */
-		if (!(mode & WORLD_AO_RAYS) && rt_scene_wanted())
+		if (!(mode & WORLD_AO_RAYS) && world_ao_rt_wanted())
 			world_rt_frame(world_ao_scene.frame);
 		if (world_ao_scene.windows_frame != world_ao_scene.frame)
 		{
