@@ -67,21 +67,24 @@ void add_quadrants(inout vec3 quadrants[4], int x, int y, float l)
 }
 
 #ifdef PAIR
-// the diffuse's and the specular's texels at q: (rgb, variance) each; their counts (FIRST: the histories'; else the
-// diffuse's is not needed and the specular's is 1 where it has one, 0 where not)
-void fetch_both(ivec2 q, bool first, out vec4 d, out vec4 s, out float dc, out float sc)
+// the diffuse's texel at q: (rgb, variance), its count (FIRST: the history's; else not needed)
+vec4 fetch_diffuse(ivec2 q, bool first, out float count)
+{
+    count = 4.0;
+    if (first)
+        return from_history(texelFetch(diffuse_history, q, 0), count);
+    vec4 a = texelFetch(diffuse_source, q, 0);
+    return vec4(a.rgb, a.a * a.a);
+}
+
+// the specular's, the same; its count (FIRST: the history's; else 1 where it has one, 0 where not)
+vec4 fetch_specular(ivec2 q, bool first, out float count)
 {
     if (first)
-    {
-        d = from_history(texelFetch(diffuse_history, q, 0), dc);
-        s = from_history(texelFetch(specular_history, q, 0), sc);
-        return;
-    }
-    vec4 a = texelFetch(diffuse_source, q, 0), b = texelFetch(specular_source, q, 0);
-    d = vec4(a.rgb, a.a * a.a);
-    s = vec4(b.rgb, b.a * b.a);
-    dc = 4.0;
-    sc = b.a < 0.0 ? 0.0 : 1.0;
+        return from_history(texelFetch(specular_history, q, 0), count);
+    vec4 b = texelFetch(specular_source, q, 0);
+    count = b.a < 0.0 ? 0.0 : 1.0;
+    return vec4(b.rgb, b.a * b.a);
 }
 
 void main()
@@ -93,9 +96,8 @@ void main()
     if ((g.y & 0xFFFFu) == 0u)
         return;
     bool first = (pass.control.y & FIRST) != 0;
-    vec4 dcentre, scentre;
     float dcount, scount;
-    fetch_both(pixel, first, dcentre, scentre, dcount, scount);
+    vec4 dcentre = fetch_diffuse(pixel, first, dcount), scentre = fetch_specular(pixel, first, scount);
     bool has_specular = scount > 0.0;
     vec4 normals = unpackSnorm4x8(g.x);
     vec3 shaded = unfold(normals.xy), n = unfold(normals.zw);
@@ -114,9 +116,8 @@ void main()
             if (!inside(q) || (other.y >> 16) != (g.y >> 16) || (other.y & 0xFFFFu) == 0u)
                 continue;
             float w = (x == 0 ? 0.5 : 0.25) * (y == 0 ? 0.5 : 0.25);
-            vec4 dc, sc;
-            float dn, sn;
-            fetch_both(q, first, dc, sc, dn, sn);
+            float dn, sn = 0.0;
+            vec4 dc = fetch_diffuse(q, first, dn), sc = has_specular ? fetch_specular(q, first, sn) : vec4(0.0);
             vec4 on = unpackSnorm4x8(other.x);
             bool alike = (dyoung || syoung) && dot(unfold(on.xy), shaded) >= 0.9994 && dot(unfold(on.zw), n) >= 0.99;
             dv += w * dc.a;
@@ -149,9 +150,8 @@ void main()
             uvec2 other = texelFetch(filter_guide, q, 0).xy;
             if ((other.y & 0xFFFFu) == 0u || (other.y >> 16) != (g.y >> 16))
                 continue;
-            vec4 dc, sc;
-            float dn, sn;
-            fetch_both(q, first, dc, sc, dn, sn);
+            float dn, sn = 0.0;
+            vec4 dc = fetch_diffuse(q, first, dn), sc = has_specular ? fetch_specular(q, first, sn) : vec4(0.0);
             if (dyoung && dn < 4.0)
                 dc.a = dspatial;
             float k = kernel[abs(x)] * kernel[abs(y)], geometry = 0.0;
