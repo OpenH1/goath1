@@ -167,6 +167,20 @@ def render_scene(folder, out=None, spp_pass=8, target=0.01, max_spp=65536, max_m
             original = np.asarray(Image.fromarray(original).resize((W, H), Image.BILINEAR))
     log("scene built in %.1f s" % (time.time() - t0))
     scales = {g: 1.0 for g in groups}
+    # Resume: the sums of earlier chunks of this render (same groups, size and samples a pass), so a long
+    # render can run in pieces and give the GPU back between them.
+    state_path = out / "_state.npz"
+    if state_path.exists():
+        st = np.load(state_path, allow_pickle=True)
+        if list(st["groups"]) == groups and int(st["spp_pass"]) == spp_pass and st["s1_" + groups[0]].shape == (H, W):
+            n = int(st["n"])
+            for g in groups:
+                for k in acc[g]:
+                    acc[g][k] = st["acc_%s_%s" % (g, k)]
+                acc_w[g] = st["accw_" + g]
+                s1[g], s2[g] = st["s1_" + g], st["s2_" + g]
+            log("resumed at pass %d (%d spp)" % (n, n * spp_pass))
+    n0 = n
     t_render = time.time()
     with GpuLock(gpu_lock, log):
         while True:
@@ -183,7 +197,7 @@ def render_scene(folder, out=None, spp_pass=8, target=0.01, max_spp=65536, max_m
                 s2[g] += y * y
             n += 1
             el = (time.time() - t_render) / 60.0
-            if n >= min_passes and (n == min_passes or n % 8 == 0 or n * spp_pass >= max_spp):
+            if n >= min_passes and (n == min_passes or n % 8 == 0 or n * spp_pass >= max_spp or el >= max_minutes):
                 if use_fit:
                     (k, *_), _, _ = best_fit(samples, keep, [acc[g]["full"] / n for g in statics], lambda *a: None)
                     scales.update(zip(statics, k))
@@ -198,6 +212,14 @@ def render_scene(folder, out=None, spp_pass=8, target=0.01, max_spp=65536, max_m
                     stats["converged"] = bool(done)
                     break
     spp = n * spp_pass
+    out.mkdir(parents=True, exist_ok=True)
+    save = {"groups": np.array(groups), "spp_pass": spp_pass, "n": n}
+    for g in groups:
+        for k in acc[g]:
+            save["acc_%s_%s" % (g, k)] = acc[g][k].astype(np.float32)
+        save["accw_" + g] = acc_w[g].astype(np.float32)
+        save["s1_" + g], save["s2_" + g] = s1[g], s2[g]
+    np.savez(state_path, **save)
     mean = {g: {k: v / n for k, v in acc[g].items()} for g in groups}
     out.mkdir(parents=True, exist_ok=True)
     fit_lines = []
