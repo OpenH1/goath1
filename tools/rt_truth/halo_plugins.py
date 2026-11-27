@@ -43,6 +43,12 @@ def _opq(v):
     return dr.opaque(mi.Float, float(v))
 
 
+def _opq_list(values):
+    a = mi.Float(values)
+    dr.make_opaque(a)
+    return a
+
+
 def _vec(props, name, default=None):
     if not props.has_property(name):
         return default
@@ -442,9 +448,9 @@ class HaloBump(mi.BSDF):
         self.mips = props["bump_mips"] if props.has_property("bump_mips") else None
         self.n_levels = props.get("bump_levels", 0)
         pad = lambda v: v + [v[-1] if v else 0.0] * (16 - len(v))
-        self.mip_x = dr.opaque(mi.Float, pad([props.get("bump_mip_x%d" % k, 0.0) for k in range(self.n_levels)]))
-        self.mip_w = dr.opaque(mi.Float, pad([props.get("bump_mip_w%d" % k, 1.0) for k in range(self.n_levels)]))
-        self.mip_h = dr.opaque(mi.Float, pad([props.get("bump_mip_h%d" % k, 1.0) for k in range(self.n_levels)]))
+        self.mip_x = _opq_list(pad([props.get("bump_mip_x%d" % k, 0.0) for k in range(self.n_levels)]))
+        self.mip_w = _opq_list(pad([props.get("bump_mip_w%d" % k, 1.0) for k in range(self.n_levels)]))
+        self.mip_h = _opq_list(pad([props.get("bump_mip_h%d" % k, 1.0) for k in range(self.n_levels)]))
         self.top = _opq(max(self.n_levels - 1, 0))
         # (constants as opaque values: every material's code is then the same and the kernel compiles one
         # function for them all; Python numbers would be literals, a function per material)
