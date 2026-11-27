@@ -61,10 +61,10 @@ SCENES = {
         "HALO_NETWORK_TEST_CUES=5 ai_erase_all|5.1 render_shadows 0",
         "HALO_TEST_INPUT=script:12.5 throw",
         "HALO_SCREENSHOT_AT=12,14.2,quit"],
-    # a30's beach in daylight: no dynamic light in sight, so Enhanced must change nothing
-    "daylight": ["HALO_NETWORK_TEST=campaign:levels\\a30\\a30", "HALO_NETWORK_TEST_START=2", "HALO_SKIP_CINEMATICS=1",
-                 f"HALO_FRAME_TIME={FRAME_TIME}", "HALO_NETWORK_TEST_CUES=3 ai_erase_all",
-                 "HALO_SCREENSHOT_AT=8,quit"],
+    # Blood Gulch in daylight, one machine's game: no dynamic light in sight, so Enhanced must change nothing
+    "daylight": ["HALO_NETWORK_TEST=log", "@data/init.txt=map_name levels\\test\\bloodgulch\\bloodgulch",
+                 f"HALO_FRAME_TIME={FRAME_TIME}", "HALO_NETWORK_TEST_CUES=1 ai_erase_all",
+                 "HALO_NETWORK_TEST_PLACE=60 -120 2 30 -5@2", "HALO_SCREENSHOT_AT=5,quit"],
 }
 
 # the variants. The rest of the look is Classic's in each (display.graphics "classic"), so that only the lights
@@ -128,10 +128,10 @@ BLAST = {"wall left": (400, 100, 800, 450), "wall above": (850, 40, 1200, 250), 
 
 # ---------- thresholds
 
-PARITY_RATIO = 1.25        # an Enhanced light's mean added light over Classic's, either way, per region
+PARITY_RATIO = 1.05        # an Enhanced light's mean added light over Classic's, either way, per region
 PARITY_SHAPE = 0.85        # the correlation of the added light's pattern (a beam's hot disk and ring) with Classic's
 PARITY_FLOOR = 0.002       # added light (linear) under this in Classic is no light to compare
-HUD_SAME = 0.995           # the HUD's own pixels within 2 codes of Classic's
+HUD_SAME = 1.0             # the HUD's own pixels identical to Classic's
 DAYLIGHT_DIFFERENT = 0.001  # bytes of the daylight control that may differ by more than 2 codes
 SHADOW_DARKER = 0.4        # shadowed: the traced picture's light this much under the untraced one's
 SHADOW_LEAST = 150         # shadowed pixels a side of the crease needs (1920x1080)
@@ -274,8 +274,13 @@ def ssh_target(machine):
     return hosts.get(machine, machine)
 
 
-def play(run, work, seconds=150):
-    """one goat-rig run, its pictures (and half floats) fetched, its folder on the machine removed"""
+def play(run, work, seconds=150, reuse=False):
+    """one goat-rig run, its pictures (and half floats) fetched, its folder on the machine removed; with reuse, a
+    run already fetched is kept as it is"""
+    if reuse and (work / run.label / "summary.txt").exists():
+        run.folder = work / run.label
+        run.summary = (run.folder / "summary.txt").read_text()
+        return run
     options = ["run", run.label, "--build", run.build, "--seconds", seconds] + (["--shared"] if run.shared else [])
     result = rig(*options, "--", *run.settings, machine=run.machine)
     run.summary = (result.stdout + result.stderr).strip()
@@ -346,13 +351,13 @@ def scene_settings(scene, variant_settings, extra):
     return settings + variant_settings + extra
 
 
-def plan(build, baseline, machine, timing, only, mutate, features):
+def plan(build, baseline, machine, timing, only, mutate, features, overrides=(), feature_cost=False):
     """the runs: each check's scenes and variants, the baseline's pictures (identity), the timing runs"""
     tag = slug(build) + (f"-{mutate}" if mutate else "")
     mutation = MUTATIONS.get(mutate, {"variants": (), "settings": []})
 
     def extra(variant):
-        return list(mutation["settings"]) if variant in mutation["variants"] else []
+        return list(overrides) + (list(mutation["settings"]) if variant in mutation["variants"] else [])
 
     variants = {"classic": CLASSIC, "enhanced": ENHANCED, "traced": TRACED, "untraced": UNTRACED, "hdr": HDR}
     for name, setting in features.items():
@@ -384,7 +389,8 @@ def plan(build, baseline, machine, timing, only, mutate, features):
                             label=f"lref-{slug(baseline)}-base-traced"))
     timed = []
     if "cost" in only:
-        configurations = [("timed", [])] + [(f"timed-{name}", [setting]) for name, setting in features.items()]
+        configurations = [("timed", [])] + ([(f"timed-{name}", [setting]) for name, setting in features.items()]
+                                            if feature_cost else [])
         for host in timing:
             for variant, more in configurations:
                 for repeat in range(3):
@@ -466,7 +472,7 @@ def check_parity(table, runs):
                         total += a is not None or b is not None
                         continue
                     total += 1
-                    same += max(abs(p - q) for p, q in zip(a, b)) <= 2
+                    same += a == b
         share = same / total if total else 0.0
         table.add("parity", "HUD identical", share, f">= {HUD_SAME} of its pixels", share >= HUD_SAME)
     c = pictures(runs, "blast", "classic", (0, 1))
@@ -758,9 +764,13 @@ def main():
     parser.add_argument("--feature", action="append", default=[], metavar="NAME=VAR=VALUE",
                         help="a feature and the setting that turns it on (default: " +
                         ", ".join(f"{k}={v}" for k, v in FEATURES.items()) + ")")
+    parser.add_argument("--set", action="append", default=[], metavar="VAR=VALUE",
+                        help="a setting for every run of the build (not the baseline's): HALO_RT_RENDER_GEOMETRY=1")
     parser.add_argument("--mutate", choices=sorted(MUTATIONS), help="a negative control: break one subject")
     parser.add_argument("--work", type=Path, default=ROOT / "build" / "lighting_referee",
                         help="where the pictures and the table are kept")
+    parser.add_argument("--feature-cost", action="store_true", help="time each feature on too (three runs each)")
+    parser.add_argument("--reuse", action="store_true", help="the runs already fetched into --work kept, not run again")
     parser.add_argument("--no-build", action="store_true", help="the builds as the machines have them")
     args = parser.parse_args()
     only = {c.strip() for c in args.only.split(",") if c.strip()}
@@ -798,7 +808,8 @@ def main():
                     sys.exit(2)
         print(f"referee: built in {time.monotonic() - started:.0f} s", flush=True)
 
-    runs, timed = plan(build, baseline, args.machine, timing, only, args.mutate, features)
+    runs, timed = plan(build, baseline, args.machine, timing, only, args.mutate, features, args.set,
+                       args.feature_cost)
     # (the timing runs wait for the GPU alone, each machine's in turn; the picture runs share it, three at once)
     by_machine = {}
     for run in timed:
@@ -806,12 +817,12 @@ def main():
     with concurrent.futures.ThreadPoolExecutor(len(runs) + len(by_machine) + 1) as pool:
         future_identity = pool.submit(run_identity, build, baseline, args.machine) \
             if "identity" in only and baseline != build else None
-        future_timed = [pool.submit(lambda group: [play(r, work) for r in group], group)
+        future_timed = [pool.submit(lambda group: [play(r, work, reuse=args.reuse) for r in group], group)
                         for machine, group in by_machine.items() if machine != args.machine]
-        list(pool.map(lambda r: play(r, work), runs))
+        list(pool.map(lambda r: play(r, work, reuse=args.reuse), runs))
         print(f"referee: {len(runs)} picture runs in {time.monotonic() - started:.0f} s", flush=True)
         for run in by_machine.get(args.machine, []):
-            play(run, work)
+            play(run, work, reuse=args.reuse)
         for future in future_timed:
             future.result()
         identity = future_identity.result() if future_identity else None
