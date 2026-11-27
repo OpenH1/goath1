@@ -2188,6 +2188,7 @@ static void rt_bounce_declare(struct module *m, struct pixel_state *state);
 static unsigned int rt_bounce_add(struct module *m, struct pixel_state *state, unsigned int light);
 /* HALO_LT_E1 (port/linux/vulkan/xgpu_vulkan_lt.h, below) */
 static int lt_e1_on(void);
+static unsigned int lt_e1_twin_normal(struct module *m, unsigned int words, unsigned int n);
 static unsigned int lt_e1_add(struct module *m, struct pixel_state *state, unsigned int lit, unsigned int tint,
 	unsigned int p, unsigned int n);
 
@@ -5841,6 +5842,8 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 	keeps it) */
 	BOOL occluder = !world && (program->ambient_occlusion & XGPU_AMBIENT_OCCLUSION_WORLD_INPUTS);
 	unsigned int world_ao_words = 0;
+	/* (HALO_LT_E1: the shaded normal the dynamic lights use, for the twin's inputs; 0 none) */
+	unsigned int lt_shaded_normal = 0;
 	BOOL world_position = (program->per_pixel_lighting && ((program->per_pixel_lighting & 3) == 2 ||
 		program->dynamic_lights == XGPU_DYNAMIC_LIGHTS_MODEL)) || environment || world || program->rt_reflection;
 	BOOL count_samples = program->count_samples && options->count_samples;
@@ -6027,6 +6030,8 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 		unsigned int p = pixel_input(&m, &state, state.in_world_position, m.t_v3);
 		unsigned int lit, occlusion = occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_MODEL ? state.occlusion : 0;
 		unsigned int reflection = 0, exponent = 0, sum, shaded = n, added, linear_variable;
+
+		lt_shaded_normal = n;
 		static const unsigned int rgb[4] = { 4, 5, 6, 3 };
 
 		/* (a model's material maps: its normal, and its occlusion with the
@@ -6036,6 +6041,7 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 			material_read(&m, &state, p, n);
 			if (state.shaded_normal)
 				shaded = state.shaded_normal;
+			lt_shaded_normal = shaded;
 			if (state.material_occlusion)
 				occlusion = occlusion ? fmul(&m, 1, occlusion, state.material_occlusion) : state.material_occlusion;
 		}
@@ -6227,6 +6233,7 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 			fscale(&m, 3, pixel_input(&m, &state, state.in_world_tangent, m.t_v3), extract(&m, bump, 0)),
 			fscale(&m, 3, pixel_input(&m, &state, state.in_world_binormal, m.t_v3), extract(&m, bump, 1))),
 			fscale(&m, 3, surface_normal, fmax_scalar(&m, 1, extract(&m, bump, 2), 0.05f))));
+		lt_shaded_normal = n;
 		linear_variable = local(&m, &state.locals, m.t_v3);
 		/* (linear_variable as the models': the linear light past the sum) */
 		sum = dynamic_light_sum(&m, &state, pixel_input(&m, &state, state.in_world_position, m.t_v3), n, surface_normal, TRUE,
@@ -6384,6 +6391,10 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 	if (zsprite_hidden)
 		discard_if(&m, zsprite_hidden);
 	/* (finite: finite4; the pre-pass's twin, its inputs) */
+	/* (HALO_LT_E1: the shaded normal in the twin's inputs too, for the
+	traced flashlight's cosine: lt_e1_twin_normal) */
+	if (world_inputs && lt_e1_on())
+		world_ao_words = lt_e1_twin_normal(&m, world_ao_words, lt_shaded_normal);
 	if (world_inputs)
 		store(&m, color_out, world_ao_words);
 	else if (occluder)
@@ -8789,26 +8800,56 @@ static int lt_e1_on(void)
 	return on;
 }
 
+/* ... a twin's inputs (four words: xgpu.h's XGPU_WORLD_AO_INPUT_*) with
+the surface's shaded normal n (0 none: as they are), which the traced pass
+lights by: octahedral, two signed bytes in the second word's high half (the
+occlusion's value, which the mode's pass never reads), and its bit 0x1000 */
+static unsigned int lt_e1_twin_normal(struct module *m, unsigned int words, unsigned int n)
+{
+	unsigned int absolute, folded, flipped, positive, negative, bytes[2], packed;
+	int axis;
+
+	if (!n)
+		return words;
+	n = ext1(m, GLSL_NORMALIZE, m->t_v3, n);
+	absolute = ext1(m, GLSL_F_ABS, m->t_v3, n);
+	folded = fdiv(m, 2, xy(m, n), splat(m, 2, fmax_scalar(m, 1, fadd(m, 1, fadd(m, 1, extract(m, absolute, 0),
+		extract(m, absolute, 1)), extract(m, absolute, 2)), 1.0e-24f)));
+	positive = op2(m, OP_F_ORD_GREATER_THAN_EQUAL, m->t_bv2, folded, constant_splat(m, 2, 0.0f));
+	flipped = fmul(m, 2, fsub(m, 2, constant_splat(m, 2, 1.0f), ext1(m, GLSL_F_ABS, m->t_v2,
+		op(m, OP_VECTOR_SHUFFLE, m->t_v2, 4, (unsigned int[]){ folded, folded, 1, 0 }))),
+		op3(m, OP_SELECT, m->t_v2, positive, constant_splat(m, 2, 1.0f), constant_splat(m, 2, -1.0f)));
+	negative = compare(m, OP_F_ORD_LESS_THAN, extract(m, n, 2), constant_float(m, 0.0f));
+	folded = select_n(m, 2, negative, flipped, folded);
+	for (axis = 0; axis < 2; axis++)
+		bytes[axis] = op2(m, OP_BITWISE_AND, m->t_uint, op1(m, OP_BITCAST, m->t_uint, op1(m, OP_CONVERT_F_TO_S, m->t_int,
+			ext1(m, GLSL_FLOOR, m->t_float, fadd(m, 1, fmul(m, 1, fclamp(m, 1, extract(m, folded, (unsigned int)axis), -1.0f,
+			1.0f), constant_float(m, 127.0f)), constant_float(m, 0.5f))))), constant_uint(m, 255));
+	packed = op2(m, OP_BITWISE_OR, m->t_uint, op2(m, OP_SHIFT_LEFT_LOGICAL, m->t_uint, op2(m, OP_BITWISE_OR, m->t_uint,
+		bytes[0], op2(m, OP_SHIFT_LEFT_LOGICAL, m->t_uint, bytes[1], constant_uint(m, 8))), constant_uint(m, 16)),
+		op2(m, OP_BITWISE_OR, m->t_uint, op2(m, OP_BITWISE_AND, m->t_uint, uextract(m, words, 1), constant_uint(m, 0xFFFFu)),
+		constant_uint(m, 0x1000u)));
+	return op3(m, OP_COMPOSITE_INSERT, m->t_uv4, packed, words, 1);
+}
+
 /* ... the traced flashlight's light (linear, at display.rt_bounce's
-binding: its irradiance but for the receiver's cosine) by the cosine of the
-surface's own shaded normal n (its bump or normal map's, as the game's
-lights have it) toward the lamp, from p, added to lit (the game's lights'
-result, gamma) linearly, by tint (linear; 0: by 1), after the game's own
-lights' shoulder, as GLSL:
-light *= max(dot(n, normalize(texel(FLASHLIGHT + 23).xyz - p)), 0.0);
+binding: its irradiance, by the surface's shaded normal from the twin's
+inputs) added to lit (the game's lights' result, gamma) linearly, by tint
+(linear; 0: by 1), after the game's own lights' shoulder, as GLSL:
 pow(pow(max(lit, 0.0), vec3(2.2)) + light * tint, vec3(1.0 / 2.2)); lit as it
 is without the mode or the binding */
 static unsigned int lt_e1_add(struct module *m, struct pixel_state *state, unsigned int lit, unsigned int tint,
 	unsigned int p, unsigned int n)
 {
-	unsigned int light, to_lamp;
+	unsigned int light;
 
 	if (!lt_e1_on() || !state->rt_bounce || !state->frag_coord)
 		return lit;
 	light = rt_bounce_add(m, state, constant_splat(m, 3, 0.0f));
-	to_lamp = ext1(m, GLSL_NORMALIZE, m->t_v3, fsub(m, 3, flashlight_vector(m,
-		constant_int(m, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 23)), p));
-	light = fscale(m, 3, light, fmax_scalar(m, 1, fdot(m, n, to_lamp), 0.0f));
+	/* (the pass's light has the receiver's cosine, by the shaded normal the
+	twin's inputs carry: lt_e1_twin_normal) */
+	(void)p;
+	(void)n;
 	if (tint)
 		light = fmul(m, 3, light, tint);
 	return ext2(m, GLSL_POW, m->t_v3, fadd(m, 3, ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, lit, 0.0f),

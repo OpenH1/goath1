@@ -23,6 +23,13 @@
 #define VISIBILITY 1
 #define RESET 2
 #define COPY 4
+// (with COPY: the pass's inputs written in place of the mean, for checking: the geometric normal, the shaded one,
+// whether the pre-pass drew the pixel)
+#define COPY_GEOMETRIC 8
+#define COPY_SHADED 16
+#define COPY_PRESENT 32
+// (the twin's inputs: the shaded normal's bit, xgpu_spirv.c's lt_e1_twin_normal)
+#define INPUT_SHADED 0x1000u
 
 // the draw set's uniforms: struct xgpu_world_ao_pass, then (at 1024) xgpu_vulkan_lt.c's struct lt_params
 layout(set = 0, binding = 1, std140) uniform Pass
@@ -164,10 +171,10 @@ vec2 concentric(vec2 xi)
     return r * vec2(cos(theta), sin(theta));
 }
 
-// the flashlight's light arriving at p (normal n: the geometric one), its irradiance but for the receiver's cosine: the gel and falloff as the game's decoding has them (gamma, so
+// the flashlight's irradiance at p (normal n: the geometric one; shaded: the bump-mapped one): the gel and falloff as the game's decoding has them (gamma, so
 // raised to 2.2 here), the cosine at the receiver and one shadow ray to a point of the disk, stratified over the
 // frames by the R2 sequence from a per-pixel start
-vec3 flashlight(vec3 p, vec3 n, ivec2 pixel, int receiver)
+vec3 flashlight(vec3 p, vec3 n, vec3 shaded, ivec2 pixel, int receiver)
 {
     vec3 f = pass.forward.xyz, u = pass.up.xyz, s = pass.left.xyz;
     vec3 v = p - pass.light.xyz;
@@ -190,7 +197,7 @@ vec3 flashlight(vec3 p, vec3 n, ivec2 pixel, int receiver)
     vec3 to = emitter - p;
     float d = length(to);
     vec3 l = to / max(d, 1.0e-6);
-    float facing = dot(n, l), emitting = dot(normalize(f), -l);
+    float facing = min(dot(n, l), dot(shaded, l)), emitting = dot(normalize(f), -l);
     // (the range window: (1 - (d / r)^4)^2, smooth, 0 only at the tag's radius)
     float x = d * abs(pass.light.w), window = clamp(1.0 - x * x * x * x, 0.0, 1.0);
     window *= window;
@@ -205,32 +212,36 @@ vec3 flashlight(vec3 p, vec3 n, ivec2 pixel, int receiver)
     }
     // (a disk emitter's irradiance: its intensity (the gel's angular profile, linear, by the power's scale) by
     // the cosines at the receiver and the emitter over the distance squared, in the range window)
-    // (the receiver's cosine left to the surfaces, which have its bump-mapped normal: xgpu_spirv.c's lt_e1_add;
-    // the geometric normal here decides only which side is lit and where the shadow rays start)
+    // (the receiver's cosine by its shaded, bump-mapped normal; the geometric one decides the lit side and where the
+    // shadow rays start)
     return pow(max(pass.color.rgb * gel, vec3(0.0)), vec3(2.2)) *
-        (pass.lamp.w * emitting * window * seen / max(d * d, 1.0e-4));
+        (pass.lamp.w * dot(shaded, l) * emitting * window * seen / max(d * d, 1.0e-4));
 }
 
 void main()
 {
     ivec2 pixel = ivec2(gl_FragCoord.xy);
+    uvec4 words = texelFetch(inputs, pixel, 0);
+    vec3 n = unfold(unpackSnorm2x16(words.x));
+    vec3 shaded = (words.y & INPUT_SHADED) != 0u ? unfold(unpackSnorm4x8(words.y >> 16).xy) : n;
     if ((pass.control.w & COPY) != 0)
     {
-        result = texelFetch(history_image, pixel, 0);
+        bool present = (words.y & INPUT_PRESENT) != 0u;
+        result = (pass.control.w & COPY_GEOMETRIC) != 0 ? vec4(present ? n : vec3(0.0), 1.0) :
+            (pass.control.w & COPY_SHADED) != 0 ? vec4(present ? shaded : vec3(0.0), 1.0) :
+            (pass.control.w & COPY_PRESENT) != 0 ? vec4(present ? 1.0 : 0.0) : texelFetch(history_image, pixel, 0);
         return;
     }
-    uvec4 words = texelFetch(inputs, pixel, 0);
     result = vec4(0.0);
     if ((words.y & INPUT_PRESENT) == 0u)
         return;
     float distance = uintBitsToFloat(words.z);
-    vec3 n = unfold(unpackSnorm2x16(words.x));
     int receiver = int(words.w);
     vec2 low = vec2(pass.corners.xy), size = vec2(pass.corners.zw) - low;
     vec2 screen = (vec2(pixel) + 0.5 - low) * 2.0 / size - 1.0;
     vec3 ray = normalize(pass.camera[1].xyz + pass.camera[2].xyz * screen.x + pass.camera[3].xyz * screen.y);
     vec3 p = pass.camera[0].xyz + ray * distance;
-    vec3 lit = pass.control.y != 0 ? flashlight(p, n, pixel, receiver) : vec3(0.0);
+    vec3 lit = pass.control.y != 0 ? flashlight(p, n, shaded, pixel, receiver) : vec3(0.0);
     // (the history at the same point where it is the same surface: the previous frame's guides within 3% in
     // distance, 25 degrees in normal, the same owner; else none, a disocclusion)
     vec3 mean = vec3(0.0);
