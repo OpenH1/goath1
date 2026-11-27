@@ -3510,6 +3510,15 @@ static const struct config_setting config_settings[] =
 	{ "debug.screenshot_until", _config_real, "0.0", "HALO_SCREENSHOT_UNTIL", _environment_value, _platform_all,
 		"With screenshot_every, save until this many seconds of the scenario's\n"
 		"simulation; 0 to the last frame." },
+	{ "debug.screenshot_at", _config_string, "\"\"", "HALO_SCREENSHOT_AT", _environment_value, _platform_all,
+		"Seconds of the scenario's simulation, separated by commas: the first\n"
+		"frame at or after each saved to screenshot_directory as at<n>.bmp (n\n"
+		"from 0, in the list's order); a last \"quit\" ends the game once\n"
+		"they are saved; empty none." },
+	{ "debug.screenshot_halves", _config_boolean, "false", "HALO_SCREENSHOT_HALVES", _environment_set_is_true,
+		_platform_all, "With display.hdr drawing: each frame saved to screenshot_directory\n"
+		"also as its half floats (<name>.rgba16f), and the 3D view left as\n"
+		"drawn, not tone mapped, so its light past white is kept." },
 	{ "debug.texture_dump_directory", _config_string, "\"\"", "HALO_TEXTURE_DUMP", _environment_value, _platform_all,
 		"A folder to write every texture to as it is uploaded; empty none." },
 	{ "debug.sample_seconds", _config_real, "0.0", "HALO_SAMPLE", _environment_value, _platform_android | _platform_guest,

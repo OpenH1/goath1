@@ -947,6 +947,22 @@ static int stream_read_target(void *context, const struct xgpu_stream_read_targe
 	(void)context;
 	if (!target || target->depth || !record->pixels || (uint64_t)target->width * target->height * 4 > record->size)
 		return 0;
+	/* (debug.screenshot_halves: the half floats as they are) */
+	if (record->tone_map == XGPU_STREAM_READ_HALVES)
+	{
+		uint16_t *halves = NULL;
+		size_t size = (size_t)target->width * target->height * 8;
+		int read;
+
+		if (size > record->size)
+			return 0;
+		target_resolve(target);
+		read = xgpu_vulkan_read_halves(target->image, 0, &halves) > 0;
+		if (read)
+			memcpy(host_pointer(record->pixels), halves, size);
+		free(halves);
+		return read;
+	}
 	target_resolve(target);
 	return xgpu_vulkan_read_pixels(target->image, record->layer > 0 ? (uint32_t)record->layer : 0,
 		host_pointer(record->pixels), target->width * 4, record->tone_map != 0);
