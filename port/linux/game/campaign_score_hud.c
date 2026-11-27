@@ -7,16 +7,23 @@ only reads campaign_score.h and draws). Arcade style but quiet:
 - The pop-ups. A player's events close together (within
   SCORE_GROUP_MILLISECONDS of the last) are one group, its points summed
   and its words the most notable event's ("+150 Triple Kill", not three
-  kills and a multi-kill), shown small at the right of the player's view,
-  below the middle and clear of the reticle, for SCORE_POPUP_MILLISECONDS
-  after its last event, then faded; the player's own score under it.
+  kills and a multi-kill), shown small just right of and below the
+  reticle (clear of it and of a weapon's own counter), for
+  SCORE_POPUP_MILLISECONDS after it began to show or its last event, then
+  faded; the player's own score under it. Each group waits its turn, the
+  oldest first: none is lost to a cutscene (none shows while one plays)
+  or a level's loading; one with others waiting is shown more briefly.
   Deaths are not shown. display.score_popups (each player profile's own)
-  hides them. None while a cutscene plays.
+  hides them.
 - The level's summary (campaign_score_level_summary): once a level ends
-  with a score, a panel in each view for SCORE_SUMMARY_MILLISECONDS: the
-  team's total (co-op) or the player's, NEW PERSONAL BEST when it is one,
-  and the players by score (the first SCORE_SUMMARY_ROWS and this view's
-  own) with their kills, headshots, deaths and best streak.
+  with a score, and no cutscene plays, a panel in each view for
+  SCORE_SUMMARY_MILLISECONDS: the team's total (co-op) or the player's,
+  NEW PERSONAL BEST when it is one, and the players by score (the first
+  SCORE_SUMMARY_ROWS and this view's own) with their kills, headshots,
+  deaths and best streak. Once the next level is being played, only the
+  total and the badge, small at the right under the shield's meter, for
+  SCORE_SUMMARY_COMPACT_MILLISECONDS, so that it covers none of its
+  fighting.
 - For the scoreboard (game_engine.c) and the Spartan link (spartan_link.c):
   the score shown, a player's entry, a number's thousands, and a player's
   latest groups (the link's feed of a teammate's events).
@@ -65,12 +72,18 @@ enum
 	/* a pop-up shown after its group's last event, then its fade, and its
 	rise as it comes */
 	SCORE_POPUP_MILLISECONDS = 1600,
+	/* (a group shown with more waiting behind it: shorter) */
+	SCORE_POPUP_QUEUED_MILLISECONDS = 900,
+	/* a group waiting longer than this is not shown (a game left paused) */
+	SCORE_POPUP_STALE_MILLISECONDS = 60000,
 	SCORE_POPUP_FADE_MILLISECONDS = 350,
 	SCORE_POPUP_RISE_MILLISECONDS = 140,
 	/* the groups kept (the pop-ups' and the Spartan link's) */
 	SCORE_GROUPS = 48,
 	/* the summary's time, its fades, and its rows (and the view's own) */
-	SCORE_SUMMARY_MILLISECONDS = 12000,
+	SCORE_SUMMARY_MILLISECONDS = 6000,
+	/* the summary small in a corner, once the next level is being played */
+	SCORE_SUMMARY_COMPACT_MILLISECONDS = 4000,
 	SCORE_SUMMARY_FADE_MILLISECONDS = 500,
 	SCORE_SUMMARY_ROWS = 4,
 	/* debug.score_fill: a group every so many seconds, the summary's
@@ -97,6 +110,15 @@ static struct
 	boolean summary_best;
 	boolean summary_shown;
 	unsigned long summary_at;
+	/* a summary waiting for a cutscene to end; shown small in a corner (the
+	next level is played); the level it came in, and the level of the last
+	frame drawn */
+	boolean summary_pending;
+	boolean summary_compact;
+	long summary_scenario;
+	long drawn_scenario;
+	/* when each group's pop-up began to show (0: waiting) */
+	unsigned long shown_at[SCORE_GROUPS];
 	/* debug.score_fill's state, and the last period it made groups of */
 	struct campaign_score_state fill;
 	long fill_period;
@@ -266,6 +288,7 @@ static void score_group_add(
 	index = score_hud.next;
 	score_hud.next = (short)((score_hud.next + 1) % SCORE_GROUPS);
 	csmemset(&score_hud.groups[index], 0, sizeof(score_hud.groups[index]));
+	score_hud.shown_at[index] = 0;
 	score_hud.groups[index].player = player;
 	score_hud.groups[index].points = points;
 	score_hud.groups[index].first_at = now ? now : 1;
@@ -477,50 +500,97 @@ static void score_color(
 	color->alpha = alpha;
 }
 
-/* the window's player's latest group, as a pop-up */
+/* the window's player's pop-up: the group showing (from when it began to
+show, or its last event if later), else the oldest waiting, which begins
+to show now. A group waits while a cutscene plays or the game loads, so
+that none is lost; it is shown more briefly while others wait behind it */
 static void score_draw_popup(
 	short local_player_index)
 {
 	long self = local_player_get_player_index(local_player_index);
-	struct campaign_score_hud_group group;
+	short player = self != NONE ? (short)DATUM_INDEX_TO_ABSOLUTE_INDEX(self) : NONE;
+	struct campaign_score_hud_group const *group;
 	struct campaign_score_player const *entry;
 	unsigned long now = system_milliseconds();
+	unsigned long show = SCORE_POPUP_MILLISECONDS;
 	unsigned long age;
+	short current = NONE;
+	short waiting = NONE;
+	short waiting_count = 0;
+	short index;
 	real_argb_color color;
 	real x0, y0, width, height, unit, alpha, rise, x, y;
 	wchar_t text[48];
 	wchar_t points[16];
 
-	if (self == NONE || !config_player_boolean(local_player_index, "display.score_popups") ||
-		cinematic_in_progress() ||
-		!campaign_score_hud_recent(self, SCORE_POPUP_MILLISECONDS + SCORE_POPUP_FADE_MILLISECONDS, &group, 1) ||
-		!group.text[0])
+	if (player == NONE || !config_player_boolean(local_player_index, "display.score_popups") ||
+		cinematic_in_progress())
 	{
 		return;
 	}
-	age = now - group.last_at;
-	alpha = age <= SCORE_POPUP_MILLISECONDS ? 1.0f :
-		1.0f - (real)(age - SCORE_POPUP_MILLISECONDS) / SCORE_POPUP_FADE_MILLISECONDS;
-	rise = PIN((real)(now - group.first_at) / SCORE_POPUP_RISE_MILLISECONDS, 0.0f, 1.0f);
+	for (index = 0; index < SCORE_GROUPS; index++)
+	{
+		struct campaign_score_hud_group const *candidate = &score_hud.groups[index];
+
+		if (!candidate->last_at || candidate->player != player || !candidate->text[0])
+			continue;
+		if (!score_hud.shown_at[index])
+		{
+			if (now - candidate->last_at > SCORE_POPUP_STALE_MILLISECONDS)
+			{
+				score_hud.shown_at[index] = 1;
+				continue;
+			}
+			waiting_count++;
+			if (waiting == NONE || candidate->first_at < score_hud.groups[waiting].first_at)
+				waiting = index;
+		}
+		else if (now - MAX(score_hud.shown_at[index], candidate->last_at) <
+			SCORE_POPUP_MILLISECONDS + SCORE_POPUP_FADE_MILLISECONDS &&
+			(current == NONE || score_hud.shown_at[index] > score_hud.shown_at[current]))
+		{
+			current = index;
+		}
+	}
+	if (current == NONE)
+	{
+		if (waiting == NONE)
+			return;
+		current = waiting;
+		score_hud.shown_at[current] = now ? now : 1;
+		waiting_count--;
+	}
+	group = &score_hud.groups[current];
+	if (waiting_count > 0)
+		show = SCORE_POPUP_QUEUED_MILLISECONDS;
+	age = now - MAX(score_hud.shown_at[current], group->last_at);
+	if (age >= show + SCORE_POPUP_FADE_MILLISECONDS)
+	{
+		/* (its time cut short by those behind it: the next, next frame) */
+		score_hud.shown_at[current] = 1;
+		return;
+	}
+	alpha = age <= show ? 1.0f : 1.0f - (real)(age - show) / SCORE_POPUP_FADE_MILLISECONDS;
+	rise = PIN((real)(now - score_hud.shown_at[current]) / SCORE_POPUP_RISE_MILLISECONDS, 0.0f, 1.0f);
 	alpha *= rise;
 	if (alpha <= 0.0f)
 		return;
 	score_view(&x0, &y0, &width, &height);
 	unit = height / 480.0f;
-	/* (right of the reticle, below the middle: off its line, clear of the
-	shield at the top right and the timer at the bottom right) */
-	x = x0 + MIN(width * 0.5f + height * 0.46f, width - 24.0f * unit);
-	y = y0 + height * 0.57f + (1.0f - rise) * 6.0f * unit;
-	campaign_score_hud_number(group.points >= 0 ? group.points : -group.points, points, NUMBEROF(points));
-	usnprintf(text, NUMBEROF(text), L"%s%s %s", group.points >= 0 ? L"+" : L"-", points, group.text);
-	score_color(&color, 0.35f, 0.95f * alpha);
-	score_text(text, x, y, 1, 0.78f * unit, &color);
+	/* (just right of and below the reticle, small: clear of the reticle,
+	and short of a weapon's own counter further right) */
+	x = x0 + width * 0.5f + height * 0.075f;
+	y = y0 + height * 0.5f + height * 0.07f + (1.0f - rise) * 4.0f * unit;
+	campaign_score_hud_number(group->points >= 0 ? group->points : -group->points, points, NUMBEROF(points));
+	usnprintf(text, NUMBEROF(text), L"%s%s %s", group->points >= 0 ? L"+" : L"-", points, group->text);
+	score_color(&color, 0.35f, 0.9f * alpha);
+	score_text(text, x, y, 0, 0.47f * unit, &color);
 	entry = campaign_score_hud_player(self);
 	if (entry)
 	{
 		campaign_score_hud_number(entry->score, points, NUMBEROF(points));
-		score_color(&color, 0.0f, 0.6f * alpha);
-		score_text(points, x, y + score_line_height() * 0.8f * unit, 1, 0.6f * unit, &color);
+		score_color(&color, 0.0f, 0.55f * alpha);
+		score_text(points, x, y + score_line_height() * 0.5f * unit, 0, 0.36f * unit, &color);
 	}
 }
 
@@ -644,19 +714,61 @@ static void score_draw_summary(
 	wchar_t number[16];
 	boolean coop;
 
-	if (!score_hud.summary_shown)
+	unsigned long duration = score_hud.summary_compact ? SCORE_SUMMARY_COMPACT_MILLISECONDS :
+		SCORE_SUMMARY_MILLISECONDS;
+
+	if (!score_hud.summary_shown || cinematic_in_progress())
 		return;
 	age = now - score_hud.summary_at;
-	if (age >= SCORE_SUMMARY_MILLISECONDS)
+	if (age >= duration)
 	{
 		score_hud.summary_shown = FALSE;
 		return;
 	}
-	alpha = MIN((real)age / SCORE_SUMMARY_FADE_MILLISECONDS,
-		(real)(SCORE_SUMMARY_MILLISECONDS - age) / SCORE_SUMMARY_FADE_MILLISECONDS);
+	alpha = MIN((real)age / SCORE_SUMMARY_FADE_MILLISECONDS, (real)(duration - age) / SCORE_SUMMARY_FADE_MILLISECONDS);
 	alpha = PIN(alpha, 0.0f, 1.0f);
 	score_view(&x0, &y0, &width, &height);
 	unit = height / 480.0f;
+	/* (the next level being played: small, at the right under the
+	shield's meter, the total and the badge) */
+	if (score_hud.summary_compact)
+	{
+		real compact_width = 190.0f * unit;
+		real best_width = score_text_width(L"NEW PERSONAL BEST") * 0.45f * unit + 10.0f * unit;
+		real compact_line = score_line_height() * 0.5f * unit;
+
+		ranked_count = score_ranked(state, ranked, NUMBEROF(ranked));
+		coop = ranked_count > 1;
+		right = x0 + width - 20.0f * unit;
+		left = right - compact_width;
+		top = y0 + height * 0.17f;
+		score_panel(left, top, right, top + compact_line * (score_hud.summary_best ? 4.4f : 3.2f) + 8.0f * unit,
+			0xB00A1A33UL, alpha);
+		score_panel(left, top, right, top + 1.5f * unit, 0xFF6F9CD0UL, alpha);
+		left += 8.0f * unit;
+		right -= 8.0f * unit;
+		y = top + 5.0f * unit;
+		score_color(&color, 0.0f, 0.75f * alpha);
+		score_text(L"LEVEL COMPLETE", left, y, 0, 0.45f * unit, &color);
+		y += compact_line * 1.1f;
+		campaign_score_hud_number(coop ? state->team_score : self_slot != NONE &&
+			self_slot < CAMPAIGN_SCORE_MAX_PLAYERS ? state->players[self_slot].score : state->team_score,
+			number, NUMBEROF(number));
+		score_color(&color, 0.5f, alpha);
+		score_text(coop ? L"TEAM SCORE" : L"SCORE", left, y + compact_line * 0.45f, 0, 0.45f * unit, &color);
+		score_text(number, right, y, 1, 0.8f * unit, &color);
+		y += compact_line * 2.0f;
+		if (score_hud.summary_best)
+		{
+			score_panel(left, y - 1.0f * unit, left + best_width, y + compact_line + 1.0f * unit, 0xFFE8C15AUL, alpha);
+			color.red = 0.08f;
+			color.green = 0.06f;
+			color.blue = 0.02f;
+			color.alpha = alpha;
+			score_text(L"NEW PERSONAL BEST", left + 5.0f * unit, y, 0, 0.45f * unit, &color);
+		}
+		return;
+	}
 	line = score_line_height() * 0.7f * unit;
 	if (line <= 0.0f)
 		return;
@@ -741,28 +853,52 @@ static void score_summary_update(
 	void)
 {
 	boolean best = FALSE;
+	boolean changed = FALSE;
+	long scenario = global_scenario_index;
 
 	if (score_fill())
 	{
 		long second = score_campaign() ? game_time_get() / TICKS_PER_SECOND : 0;
 
-		if (second == SCORE_FILL_SUMMARY_FROM && !score_hud.summary_shown)
+		if (second == SCORE_FILL_SUMMARY_FROM && !score_hud.summary_shown && !score_hud.summary_pending)
 		{
 			score_hud.summary = score_hud.fill;
-			score_hud.summary_best = TRUE;
-			score_hud.summary_shown = TRUE;
-			score_hud.summary_at = system_milliseconds() - SCORE_SUMMARY_FADE_MILLISECONDS;
+			best = TRUE;
+			changed = TRUE;
 		}
-		return;
 	}
-	if (campaign_score_level_summary(&score_hud.scratch, &best) &&
+	else if (campaign_score_level_summary(&score_hud.scratch, &best) &&
 		memcmp(&score_hud.scratch, &score_hud.summary, sizeof(score_hud.summary)) != 0)
 	{
 		score_hud.summary = score_hud.scratch;
+		changed = TRUE;
+	}
+	if (changed)
+	{
+		/* (the level it ended in: the one drawn last, the next being loaded
+		since if this frame's is another) */
 		score_hud.summary_best = best;
+		score_hud.summary_pending = TRUE;
+		score_hud.summary_shown = FALSE;
+		score_hud.summary_scenario = score_hud.drawn_scenario;
+	}
+	/* (shown once no cutscene plays: in full on the level it ended in,
+	else small in a corner, the next level being played) */
+	if (score_hud.summary_pending && !cinematic_in_progress())
+	{
+		score_hud.summary_pending = FALSE;
 		score_hud.summary_shown = TRUE;
 		score_hud.summary_at = system_milliseconds();
+		score_hud.summary_compact = scenario != score_hud.summary_scenario;
 	}
+	/* (the next level begun while it shows in full: small, for its own
+	time) */
+	if (score_hud.summary_shown && !score_hud.summary_compact && scenario != score_hud.summary_scenario)
+	{
+		score_hud.summary_compact = TRUE;
+		score_hud.summary_at = system_milliseconds();
+	}
+	score_hud.drawn_scenario = scenario;
 }
 
 /* ---------- public code */
