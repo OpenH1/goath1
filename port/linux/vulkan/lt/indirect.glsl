@@ -407,7 +407,9 @@ vec4 specular_main(ivec2 pixel)
     if (!surface_at(pixel, p, n, shaded, owner))
         return vec4(0.0, 0.0, 0.0, -1.0);
     uint material = texelFetch(guides, pixel, 0).z;
-    if (((material >> 24) & 255u) == 0u)
+    // (the structure's alone: the surfaces read the pass's reflections there only, xgpu_spirv.c's
+    // lt_reflection_traced; an object's keeps its cube map)
+    if (((material >> 24) & 255u) == 0u || owner != 0u)
         return vec4(0.0, 0.0, 0.0, -1.0);
     uint byte = (material >> 16) & 255u;
     float roughness = byte == 255u ? (owner == 0u ? ROUGH_STRUCTURE : ROUGH_OBJECT) : float(byte) / 255.0;

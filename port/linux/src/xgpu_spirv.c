@@ -8942,14 +8942,14 @@ static unsigned int lt_e1_add(struct module *m, struct pixel_state *state, unsig
 	return ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, base, 0.0f), constant_splat(m, 3, 1.0f / 2.2f));
 }
 
-/* whether a reflection's texel is HALO_LT_E1's pass's: the structure's and
-the models' (the pre-pass's surfaces, whose guides the pass traced from);
-the level's glass and water are not in the pre-pass (their pixels' guides
-are the surfaces behind them): their cube maps, as the game drew them */
+/* whether a reflection's texel is HALO_LT_E1's pass's: the structure's
+(the pre-pass's surfaces, whose guides the pass traced from). The level's
+glass and water are not in the pre-pass, nor every model yet (characters:
+their pixels' guides can be the surfaces behind them): their cube maps, as
+the game drew them */
 static BOOL lt_reflection_traced(const struct pixel_state *state)
 {
-	return state->rt_reflection && (state->program->rt_reflection == XGPU_RT_REFLECTION_STRUCTURE ||
-		state->program->rt_reflection == XGPU_RT_REFLECTION_MODEL);
+	return state->rt_reflection && state->program->rt_reflection == XGPU_RT_REFLECTION_STRUCTURE;
 }
 
 /* HALO_LT_E1's reflections (~/dev/rt2-realtime-design.md section 1.4;
