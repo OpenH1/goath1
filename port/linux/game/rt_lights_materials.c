@@ -37,6 +37,7 @@ Nothing is changed in the game: it is read only, on the game's thread.
 #include "game/game_globals.h"
 #include "rasterizer/common/rasterizer_common.h"
 #include "rasterizer/rasterizer_geometry.h"
+#include "rasterizer/rasterizer_lights.h"
 #include "scenario/scenario.h"
 #include "scenario/scenario_definitions.h"
 #include "scenario/sky_definitions.h"
@@ -1599,6 +1600,10 @@ static void rtlm_lights_write(char const *path)
 			struct rtlm_light_definition const *definition = tag_get(RTLM_LIGHT_TAG, light->definition_index);
 			struct object_datum *object = light->object_index != NONE ? object_try_and_get(light->object_index) : NULL;
 			char const *source = "object", *gel;
+			struct rasterizer_light_submit_parameters const *drawn;
+			real_point3d position;
+			real_vector3d forward, up;
+			real_rgb_color color;
 			real radius;
 
 			if (!definition)
@@ -1622,15 +1627,31 @@ static void rtlm_lights_write(char const *path)
 				source = "device";
 			else if (TEST_FLAG(definition->flags, _rtlm_light_is_first_person_flashlight_bit))
 				source = "flashlight";
-			radius = light->radius;
+			/* (as drawn: the rasterizer's light this frame, which the game
+			placed apart from the datum for a first-person flashlight, at the
+			first-person weapon's "flashlight" marker, 0.5 back along its
+			forward: first_person_weapons.c's first_person_weapon_center_
+			flashlight, from object_lights.c; the datum where it has none) */
+			drawn = light->rasterizer_light_index >= 0 &&
+				light->rasterizer_light_index < rasterizer_lights.light_count &&
+				rasterizer_lights.lights[light->rasterizer_light_index].definition == (void *)definition ?
+				&rasterizer_lights.lights[light->rasterizer_light_index] : NULL;
+			position = drawn ? drawn->position : light->position;
+			forward = drawn ? drawn->forward : light->forward;
+			up = drawn ? drawn->up : light->up;
+			color = drawn ? drawn->color : light->color;
+			radius = drawn ? drawn->radius : light->radius;
 			gel = rtlm_texture(definition->gel_map.index, 0, TRUE);
 			fprintf(file, "%s{\"tag\":", written ? ",\n" : "");
 			rtlm_string(file, rtlm_tag_name(light->definition_index));
 			fprintf(file, ",\"kind\":\"%s\",\"position\":[%.6g,%.6g,%.6g],\"direction\":[%.6g,%.6g,%.6g],"
-				"\"up\":[%.6g,%.6g,%.6g],\"color\":", definition->runtime_cosine_falloff_angle != -1.0f ? "spot" : "point",
-				light->position.x, light->position.y, light->position.z, light->forward.i, light->forward.j,
-				light->forward.k, light->up.i, light->up.j, light->up.k);
-			rtlm_rgb(file, &light->color);
+				"\"up\":[%.6g,%.6g,%.6g],\"as_drawn\":%s,\"datum_position\":[%.6g,%.6g,%.6g],"
+				"\"datum_direction\":[%.6g,%.6g,%.6g],\"color\":",
+				definition->runtime_cosine_falloff_angle != -1.0f ? "spot" : "point",
+				position.x, position.y, position.z, forward.i, forward.j, forward.k, up.i, up.j, up.k,
+				drawn ? "true" : "false", light->position.x, light->position.y, light->position.z,
+				light->forward.i, light->forward.j, light->forward.k);
+			rtlm_rgb(file, &color);
 			fprintf(file, ",\"power\":1,\"radius\":%.6g,\"falloff\":\"distance_attenuation (this file) at d / radius, "
 				"times N.L, times the gel; none past radius\"", radius);
 			rtlm_cone(file, definition);
