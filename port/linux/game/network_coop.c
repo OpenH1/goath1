@@ -3376,6 +3376,18 @@ void network_coop_note_object_effect(
 	event->value = marker_index;
 }
 
+/* A client that has not played the host's presentation yet doesn't know
+whether a cutscene is starting: as a map starts, or after a revert, it would
+show its own player's view, spectating the host, for the ticks before the
+host's first presentation arrives, then cut to the cutscene. The screen is
+held black meanwhile, as the original holds a cutscene's start; the host's
+fade takes over with the first presentation played. */
+boolean network_coop_presentation_pending(
+	void)
+{
+	return coop_client() && !coop_presentation.playing;
+}
+
 boolean network_coop_skip_offered(
 	void)
 {

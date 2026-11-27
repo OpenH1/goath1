@@ -153,6 +153,9 @@ network_coop_vote_skip returns FALSE outside network co-op, where the
 cinematic is skipped as usual. */
 boolean network_coop_skip_offered(void);
 boolean network_coop_vote_skip(void);
+/* player_effects.c: whether a client's screen is held black because it has
+not yet played the host's presentation (its camera, fade and letterbox) */
+boolean network_coop_presentation_pending(void);
 /* main.c: after a co-op host reverts to its last saved state (to skip a
 cinematic, or because the mission failed); now is the game time before the
 revert */
