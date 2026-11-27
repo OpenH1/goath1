@@ -9,6 +9,7 @@ python3 tools/lighting_referee.py <branch|sha|local/name>          # everything,
 python3 tools/lighting_referee.py my-branch --only parity,shadow     # a part
 python3 tools/lighting_referee.py my-branch --timing omarchy,5900x,bosgame
 python3 tools/lighting_referee.py master --mutate shadows-everywhere # a negative control: must FAIL
+python3 tools/lighting_referee.py local/rt-tonight --set HALO_RT_RENDER_GEOMETRY=true --baseline local/rt-before
 ```
 
 It prints a table and writes `build/lighting_referee/<build>/table.txt` and `summary.json` (the verdict, every row,
@@ -28,19 +29,28 @@ grenade bursting at that wall; a30's beach in daylight. Variants keep the rest o
 - *parity*: Enhanced lights with shadows off against Classic, as the light added (light on minus off, linear
   luminance) per region: the wall pool, floor, character and first-person weapon for the flashlight, three wall
   patches for the blast; the weapon with the flashlight off (the old counter lamp); the HUD's own pixels; a daylight
-  frame with no dynamic light in sight.
+  frame with no dynamic light in sight (`HALO_PANEL_LIGHTS_OFF=1`: the AR counter's panel light, an Enhanced
+  extra, off). The panel light has rows of its own, the flashlight off: the metal just under the counter +0.5 to +3
+  luma over Classic (the glow is there, and a glow, not a lamp: #1297 measured 31.1 against 30.2), the barrel beyond
+  it within 1.
 - *shadow*: the traced picture against the same build with its lights' shadows off (`HALO_LIGHT_SHADOWS_OFF=1`,
   `HALO_FLASHLIGHT_SHADOWS_OFF=1`: every branch must keep these meaning "no shadows, nothing else"; the first row
   checks the two pictures' overall level agrees). Rows: shadowed pixels on the wall and on the floor beside the
   Flood, the angle between the two parts (it bends at the crease), the distance to the feet, the shares of the
   Flood's lit front, the floor before it and the first-person weapon shadowed, and how much of the shadow changes
-  when the Flood is placed a step aside.
+  when the Flood is placed a step aside. The crease, contact and moving rows report n/a until a light off the
+  view's axis is staged: the flashlight's lamp is beside the eye, so the Flood hides its own shadow on the wall.
 - *hdr*: the HDR frame's half floats (`debug.screenshot_halves`, the view not tone mapped): the AR counter's
   brightest pixel, and the frame's.
-- *features* (bounce, reflections; `--feature NAME=VAR=VALUE` adds or changes one): on, no NaN or infinite value,
+- *runs*: every run exited cleanly, and every picture is whole: no frame mostly one colour, and with world AO (the
+  traced variants) the commonest colour under 20% of any frame. World AO once dropped the structure's draws until a
+  ray-traced scene existed (the clear colour in their place: 0.87 of the frame; whole frames read 0.03 to 0.07).
+- *features* (bounce, reflections, rt-bounce: `display.rt_bounce` with ray-traced AO; `--feature NAME="VAR=VALUE
+  ..."` adds or changes one): on, no NaN or infinite value,
   no blown-out pixels, no more flicker than off; off, the traced pictures equal the baseline's (meaningful for a
   branch that adds only that feature: give `--baseline` the point it branched from). "draws nothing" (n/a) means
-  the setting changed nothing in this build. `--feature-cost` times each one on.
+  the setting changed nothing in this build. `--feature-cost` times each one on. Reflections are checked in their own scene, a10's cryo deck (a static
+  camera on its reflective floor), and timed there against the same scene off.
 - *cost*: `debug.pass_times` on the whole Enhanced look with ray-traced shadows and the flashlight on, 1920x1080,
   each machine alone on its GPU, three runs, the median of the last summaries.
 - *identity*: the Classic pictures of every scene byte-identical to the baseline's (master), and

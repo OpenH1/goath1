@@ -61,10 +61,19 @@ SCENES = {
         "HALO_NETWORK_TEST_CUES=5 ai_erase_all|5.1 render_shadows 0",
         "HALO_TEST_INPUT=script:12.5 throw",
         "HALO_SCREENSHOT_AT=12,14.2,quit"],
+    # a10's cryo deck, a static camera on its reflective floor (the reflections' scene: the corridor has nothing
+    # that reflects); the co-op skip voted, the camera posed every 4 s (moments 0 and 1, a tenth of a second apart)
+    "cryo": ["HALO_NETWORK_TEST=local:levels\\a10\\a10:coop", "HALO_TEST_INPUT=script:1 jump; 2 jump; 3 jump",
+             "HALO_SKIP_CINEMATICS=1", f"HALO_FRAME_TIME={FRAME_TIME}",
+             "HALO_NETWORK_TEST_CUES=" + "|".join(f'{t} debug_camera_set "-55.4 0.8 0.62 0 -12 0 70"'
+                                                  for t in range(2, 23, 4)),
+             "HALO_SCREENSHOT_AT=22,22.1,quit"],
     # Blood Gulch in daylight, one machine's game: no dynamic light in sight, so Enhanced must change nothing
     "daylight": ["HALO_NETWORK_TEST=log", "@data/init.txt=map_name levels\\test\\bloodgulch\\bloodgulch",
                  f"HALO_FRAME_TIME={FRAME_TIME}", "HALO_NETWORK_TEST_CUES=1 ai_erase_all",
-                 "HALO_NETWORK_TEST_PLACE=60 -120 2 30 -5@2", "HALO_SCREENSHOT_AT=5,quit"],
+                 "HALO_NETWORK_TEST_PLACE=60 -120 2 30 -5@2", "HALO_SCREENSHOT_AT=5,quit",
+                 # (the AR counter's panel light, an Enhanced extra, off here: the "panel glow" rows measure it)
+                 "HALO_PANEL_LIGHTS_OFF=1"],
 }
 
 # the variants. The rest of the look is Classic's in each (display.graphics "classic"), so that only the lights
@@ -84,7 +93,8 @@ HDR = TRACED + ["HALO_HDR=on", "HALO_SCREENSHOT_HALVES=1"]
 TIMED = ["HALO_GRAPHICS=enhanced", "HALO_SHADOWS=ray_traced", "HALO_PASS_TIMES=1"]
 # the features landing on the ray-traced work, each a setting turned on (--feature NAME=VAR=VALUE adds or changes
 # one): off, the pictures must equal the baseline's; on, no NaN or blown-out pixel, no flicker, within its cost
-# (a feature's settings separated by spaces)
+# (a feature's settings separated by spaces; its scene, the corridor unless named here)
+FEATURE_SCENES = {"reflections": "cryo"}
 FEATURES = {
     "bounce": "HALO_DYNAMIC_LIGHT_BOUNCE=true",
     "reflections": "HALO_RT_REFLECTIONS=true",
@@ -99,10 +109,10 @@ MUTATIONS = {
     "shadows-everywhere": {"variants": ("traced",), "settings": ["HALO_LIGHT_SHADOWS_VIEW=4"]},
     # the HDR frame's glows pushed past their ceilings (display.hdr_highlight_boost at its most)
     "hdr-boost": {"variants": ("hdr",), "settings": ["HALO_HDR_HIGHLIGHT_BOOST=4"]},
-    # the Classic picture changed (FXAA over it)
-    "classic-changed": {"variants": ("classic",), "settings": ["HALO_ANTI_ALIASING=fxaa"]},
+    # the Classic picture changed (its anisotropic filtering raised, a quiet change)
+    "classic-changed": {"variants": ("classic",), "settings": ["HALO_ANISOTROPIC_FILTERING=16"]},
     # the GPU's work made four times larger (twice the pixels each way)
-    "heavy": {"variants": ("timed",), "settings": ["HALO_RENDER_SCALE=2.0"]},
+    "heavy": {"variants": ("timed",), "settings": ["HALO_SUPERSAMPLING=2.0"]},
 }
 
 # ---------- regions (pixels of the 1920x1080 picture: x0, y0, x1, y1)
@@ -127,6 +137,8 @@ NEAR = {
     "caster": (905, 415, 1010, 590),
     "caster moved": (1005, 415, 1110, 590),
 }
+# the metal just under the AR's counter, which its panel light reaches
+PANEL_UNDER = (1240, 780, 1400, 900)
 # the blast's light on the walls about it, away from the burst's own sprites
 BLAST = {"wall left": (400, 100, 800, 450), "wall above": (850, 40, 1200, 250), "wall right": (1150, 350, 1900, 650)}
 
@@ -138,6 +150,8 @@ PARITY_FLOOR = 0.002       # added light (linear) under this in Classic is no li
 HUD_SAME = 1.0             # the HUD's own pixels identical to Classic's, to a code (the view behind a translucent
 HUD_CODES = 1              # meter rounds to 8 bits after the blend)
 WORLD_AO_CLEAR = 0.2       # the commonest colour's share of a frame with world AO (the structure missing: 0.87)
+PANEL_GLOW = (0.5, 3.0)    # the panel light under the counter over Classic, 8-bit luma: there, and a glow, not a
+PANEL_BARREL = 1.0         # lamp (#1297: the rifle 31.1 against 30.2); the barrel beyond its reach within 1
 DAYLIGHT_DIFFERENT = 0.001  # bytes of the daylight control that may differ by more than 2 codes
 SHADOW_DARKER = 0.4        # shadowed: the traced picture's light this much under the untraced one's
 SHADOW_LEAST = 150         # shadowed pixels a side of the crease needs (1920x1080)
@@ -397,7 +411,8 @@ def scene_settings(scene, variant_settings, extra):
     return settings + variant_settings + extra
 
 
-def plan(build, baseline, machine, timing, only, mutate, features, overrides=(), feature_cost=False):
+def plan(build, baseline, machine, timing, only, mutate, features, overrides=(), feature_cost=False,
+         feature_baseline=None):
     """the runs: each check's scenes and variants, the baseline's pictures (identity), the timing runs"""
     tag = slug(build) + (f"-{mutate}" if mutate else "")
     mutation = MUTATIONS.get(mutate, {"variants": (), "settings": []})
@@ -420,7 +435,9 @@ def plan(build, baseline, machine, timing, only, mutate, features, overrides=(),
         wanted |= {("corridor", "classic"), ("blast", "classic"), ("daylight", "classic")}
     if features:
         wanted |= {("corridor", "traced")}
-        wanted |= {("corridor", f"{name}-on") for name in features}
+        for name in features:
+            scene = FEATURE_SCENES.get(name, "corridor")
+            wanted |= {(scene, "hdr"), (scene, f"{name}-on")}
     runs = []
     for scene, variant in sorted(wanted):
         runs.append(Run(scene, variant, build, scene_settings(scene, variants[variant], extra(variant)), machine,
@@ -430,20 +447,26 @@ def plan(build, baseline, machine, timing, only, mutate, features, overrides=(),
             for scene in ("corridor", "blast", "daylight"):
                 runs.append(Run(scene, "baseline", baseline, scene_settings(scene, CLASSIC, list(overrides)), machine,
                                 label=f"lref-{slug(baseline)}-base-{scene}"))
-        if features:
-            runs.append(Run("corridor", "baseline-traced", baseline, scene_settings("corridor", TRACED, list(overrides)),
-                            machine,
-                            label=f"lref-{slug(baseline)}-base-traced"))
+    if features and feature_baseline:
+        runs.append(Run("corridor", "baseline-traced", feature_baseline,
+                        scene_settings("corridor", TRACED, list(overrides)), machine,
+                        label=f"lref-{slug(feature_baseline)}-base-traced"))
     timed = []
     if "cost" in only:
-        configurations = [("timed", [])] + ([(f"timed-{name}", setting.split()) for name, setting in features.items()]
-                                            if feature_cost else [])
+        corridor = STAGE + [f"HALO_NETWORK_TEST_CUES=5 ai_erase_all|9 {FLOOD}", "HALO_TEST_INPUT=script:12.5-13 flashlight",
+                            "HALO_SCREENSHOT_AT=16,quit"]
+        staged = {"corridor": corridor, "cryo": SCENES["cryo"]}
+        configurations = [("timed", corridor, [])]
+        if feature_cost:
+            for name, setting in features.items():
+                scene = FEATURE_SCENES.get(name, "corridor")
+                if scene != "corridor" and (f"timed-{scene}", staged[scene], []) not in configurations:
+                    configurations.append((f"timed-{scene}", staged[scene], []))
+                configurations.append((f"timed-{name}", staged[scene], setting.split()))
         for host in timing:
-            for variant, more in configurations:
+            for variant, stage, more in configurations:
                 for repeat in range(3):
-                    settings = STAGE + [f"HALO_NETWORK_TEST_CUES=5 ai_erase_all|9 {FLOOD}",
-                                        "HALO_TEST_INPUT=script:12.5-13 flashlight",
-                                        "HALO_SCREENSHOT_AT=16,quit"] + TIMED + more + extra("timed")
+                    settings = stage + TIMED + more + extra("timed")
                     timed.append(Run("corridor", variant, build, settings, host, shared=False,
                                      label=f"lref-{tag}-{host}-{variant}-{repeat}"))
     return runs, timed
@@ -504,13 +527,13 @@ def check_parity(table, runs):
     else:
         for name in ("wall pool", "floor", "character", "weapon barrel"):
             parity_region(table, f"flashlight {name}", c[1], c[0], e[1], e[0], PLAYER[name])
-        # (with the flashlight off: the weapon lit by nothing but its own displays, as Classic lights it)
-        box = PLAYER["weapon barrel"]
-        mc = statistics.fmean(v for _, _, v in c[0].luminance(box, 2))
-        me = statistics.fmean(v for _, _, v in e[0].luminance(box, 2))
-        ratio = me / mc if mc > 0 else float("inf")
-        table.add("parity", "weapon, flashlight off", ratio, f"x{1 / PARITY_RATIO:.2f}..x{PARITY_RATIO:.2f}",
-                  1 / PARITY_RATIO <= ratio <= PARITY_RATIO)
+        # (with the flashlight off: the counter's panel light, an Enhanced extra, glows on the metal just under it,
+        # a glow and not a lamp; the barrel beyond it as Classic lights it)
+        glow = luma(e[0], PANEL_UNDER) - luma(c[0], PANEL_UNDER)
+        table.add("parity", "panel glow under the counter", glow, f"+{PANEL_GLOW[0]}..+{PANEL_GLOW[1]} luma",
+                  PANEL_GLOW[0] <= glow <= PANEL_GLOW[1])
+        glow = luma(e[0], PLAYER["weapon barrel"]) - luma(c[0], PLAYER["weapon barrel"])
+        table.add("parity", "panel glow on the barrel", glow, f"within {PANEL_BARREL} luma", abs(glow) <= PANEL_BARREL)
         same = total = 0
         for moment in (0, 1):
             for box in HUD:
@@ -534,7 +557,7 @@ def check_parity(table, runs):
         table.add("parity", "daylight", "missing", "pictures", False, "a run made no pictures")
     else:
         different = sum(abs(a - b) > 2 for a, b in zip(c[0].rgb, e[0].rgb)) / len(c[0].rgb)
-        table.add("parity", "daylight unchanged", different, f"<= {DAYLIGHT_DIFFERENT} differ",
+        table.add("parity", "daylight unchanged (panel lights off)", different, f"<= {DAYLIGHT_DIFFERENT} differ",
                   different <= DAYLIGHT_DIFFERENT)
 
 
@@ -571,6 +594,19 @@ def check_whole(table, runs):
     if any("HALO_AMBIENT_OCCLUSION=world" in run.settings for run in runs):
         table.add("runs", "world AO: structure drawn", worst, f"< {WORLD_AO_CLEAR} clear colour, every frame",
                   worst < WORLD_AO_CLEAR)
+
+
+def luma(picture, box):
+    """the mean 8-bit luma (Rec. 601) of a box: #1297's measure of the barrel"""
+    x0, y0, x1, y1 = box
+    total = count = 0
+    for y in range(y0, y1):
+        row = y * picture.width * 3
+        for x in range(x0, x1):
+            at = row + x * 3
+            total += 0.299 * picture.rgb[at] + 0.587 * picture.rgb[at + 1] + 0.114 * picture.rgb[at + 2]
+            count += 1
+    return total / count if count else 0.0
 
 
 def hud_pixels(picture, box):
@@ -717,9 +753,10 @@ def flicker(run):
 
 
 def check_features(table, runs, features, baseline):
-    off = runs.get(("corridor", "hdr"))
     for name in features:
-        on = runs.get(("corridor", f"{name}-on"))
+        scene = FEATURE_SCENES.get(name, "corridor")
+        off = runs.get((scene, "hdr"))
+        on = runs.get((scene, f"{name}-on"))
         try:
             width, height, values = read_halves(on.shot(1, "rgba16f"))
         except (OSError, ValueError, AttributeError):
@@ -806,8 +843,14 @@ def check_cost(table, timed):
                               median[name] <= budget[name])
                 elif median[name] >= 0.05:
                     table.add("cost", f"{machine} {name}", median[name], "(reported)", None)
-        elif (machine, "timed") in medians:
-            more = median["frame"] - medians[(machine, "timed")]["frame"]
+        elif not variant.startswith("timed-") or variant[6:] not in FEATURES and variant[6:] in SCENES:
+            continue
+        else:
+            base = (machine, "timed-" + FEATURE_SCENES[variant[6:]]) if variant[6:] in FEATURE_SCENES else \
+                (machine, "timed")
+            if base not in medians:
+                continue
+            more = median["frame"] - medians[base]["frame"]
             limit = budget.get("+feature", float("inf"))
             table.add("cost", f"{machine} {variant[6:]} adds", more, f"<= {limit} ms", more <= limit)
 
@@ -857,6 +900,8 @@ def main():
     parser.add_argument("--mutate", choices=sorted(MUTATIONS), help="a negative control: break one subject")
     parser.add_argument("--work", type=Path, default=ROOT / "build" / "lighting_referee",
                         help="where the pictures and the table are kept")
+    parser.add_argument("--feature-baseline", help="the build the features off must equal (the state before them); "
+                        "no comparison without it")
     parser.add_argument("--feature-cost", action="store_true", help="time each feature on too (three runs each)")
     parser.add_argument("--reuse", action="store_true", help="the runs already fetched into --work kept, not run again")
     parser.add_argument("--no-build", action="store_true", help="the builds as the machines have them")
@@ -875,10 +920,12 @@ def main():
     machines = sorted({args.machine, *timing})
 
     # (a build without the captures gets them picked onto it; the baseline too)
-    build, baseline = args.build, args.baseline
+    build, baseline, feature_baseline = args.build, args.baseline, args.feature_baseline
     if not args.no_build:
-        for which in ("build", "baseline"):
-            ref = build if which == "build" else baseline
+        for which in ("build", "baseline", "feature"):
+            ref = {"build": build, "baseline": baseline, "feature": feature_baseline}[which]
+            if not ref:
+                continue
             if ref.startswith("local/lref/") or has_capture(ref, args.machine):
                 continue
             grafted = graft(ref, machines)
@@ -886,8 +933,14 @@ def main():
                 print(f"referee: {ref} has no debug.screenshot_at and the capture commits do not pick onto it")
                 sys.exit(2)
             print(f"referee: {ref} lacks the captures: built as {grafted}", flush=True)
-            build, baseline = (grafted, baseline) if which == "build" else (build, grafted)
-        builds = sorted({(m, b) for m in machines for b in (build, baseline) if m == args.machine or b == build})
+            if which == "build":
+                build = grafted
+            elif which == "baseline":
+                baseline = grafted
+            else:
+                feature_baseline = grafted
+        builds = sorted({(m, b) for m in machines for b in (build, baseline, feature_baseline)
+                         if b and (m == args.machine or b == build)})
         with concurrent.futures.ThreadPoolExecutor(len(builds)) as pool:
             for (machine, ref), result in zip(builds, pool.map(lambda mb: build_on(*mb), builds)):
                 if result.returncode != 0:
@@ -896,7 +949,7 @@ def main():
         print(f"referee: built in {time.monotonic() - started:.0f} s", flush=True)
 
     runs, timed = plan(build, baseline, args.machine, timing, only, args.mutate, features, args.set,
-                       args.feature_cost)
+                       args.feature_cost, feature_baseline)
     # (the timing runs wait for the GPU alone, each machine's in turn; the picture runs share it, three at once)
     by_machine = {}
     for run in timed:
@@ -920,8 +973,12 @@ def main():
     keyed = {(r.scene, r.variant): r for r in runs}
     table = Table()
     for run in runs + timed:
-        if "exit 0" not in run.summary or ("failed asserts" in run.summary and "no failed asserts" not in
-                                           run.summary):
+        # (the run's own summary, fetched with it, where there is one: goat-rig's output on the way may carry an
+        # ssh or rsync complaint about something else)
+        fetched = run.folder / "summary.txt" if run.folder else None
+        if fetched and fetched.exists():
+            run.summary = fetched.read_text(errors="replace")
+        if not re.search(r": exit 0\b", run.summary) or re.search(r"asserts [1-9][0-9]* failed", run.summary):
             table.add("runs", run.label, "trouble", "exit 0", False,
                       run.summary.splitlines()[0] if run.summary else "no summary")
     check_whole(table, runs)
@@ -932,7 +989,7 @@ def main():
     if "hdr" in only:
         check_hdr(table, keyed)
     if features:
-        check_features(table, keyed, features, baseline)
+        check_features(table, keyed, features, feature_baseline)
     if "cost" in only:
         check_cost(table, timed)
     if "identity" in only:
