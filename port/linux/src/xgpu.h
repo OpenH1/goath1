@@ -367,7 +367,8 @@ outdoor bake mixes in. Under a sky with an outdoor ambient (Blood Gulch,
 b30) the bakes' shade sits at 3 to 5% linear and their sun at 80 to 95%,
 18 to 26 times over it (docs/rt-plan/4-path-tracing.md "Measured"): a
 texel brighter than their geometric middle, sqrt(0.04 x 0.9), is sunlit,
-its light past that the sun's: light -= (1 - occlusion) * min(light, this),
+its light past that the sun's: light -= (1 - occlusion^2.2) * min(light, this)
+(the occlusion as it multiplied the gamma light),
 sunlit sand darkened by a fifth of the occlusion at most. An interior's
 bake (a10's: no outdoor ambient, its median texel 1.3%) is its emitters'
 and their bounce, all of it occluded. The level is the block's grid[0].w

@@ -2991,7 +2991,7 @@ char *xgpu_msl_pixel_shader(const struct xgpu_pixel_program *program, const stru
 		xgpu_text_append(&text, "\t{\n"
 			"\t\tfloat3 light = pow(max(result.rgb, float3(0.0)), float3(2.2));\n"
 			"\t\tfloat level = world_ao.grid[0].w;\n"
-			"\t\tlight -= (level > 0.0 ? min(light, float3(level)) : light) * (1.0 - occlusion);\n"
+			"\t\tlight -= (level > 0.0 ? min(light, float3(level)) : light) * (1.0 - pow(max(occlusion, 0.0), 2.2));\n"
 			"\t\tresult.rgb = pow(max(light, float3(0.0)), float3(1.0 / 2.2));\n"
 			"\t}\n");
 
