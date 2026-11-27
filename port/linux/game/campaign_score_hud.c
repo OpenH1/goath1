@@ -5,7 +5,8 @@ What campaign scoring shows (campaign_score.c keeps the score; this file
 only reads campaign_score.h and draws). Arcade style but quiet:
 
 - The pop-ups. A player's events close together (within
-  SCORE_GROUP_MILLISECONDS of the last) are one group, its points summed
+  SCORE_GROUP_TICKS of the last in the game's time, the events' own ticks)
+  are one group, its points summed
   and its words the most notable event's ("+150 Triple Kill", not three
   kills and a multi-kill), shown small just right of and below the
   reticle (clear of it and of a weapon's own counter), for
@@ -68,8 +69,11 @@ void platform_log(char const *format, ...);
 
 enum
 {
-	/* a player's events this close to the group's last are one group */
-	SCORE_GROUP_MILLISECONDS = 1000,
+	/* a player's events this close to the group's last, in the game's time
+	(ticks: the events' own, not when they reached this machine, so that a
+	level's last and the next's first, which come together after the load,
+	stay apart) are one group */
+	SCORE_GROUP_TICKS = TICKS_PER_SECOND,
 	/* a pop-up shown after its group's last event, then its fade, and its
 	rise as it comes */
 	SCORE_POPUP_MILLISECONDS = 1600,
@@ -104,6 +108,8 @@ static struct
 	struct campaign_score_hud_group groups[SCORE_GROUPS];
 	/* each group's rank (its words' event's), as a new event weighs in */
 	short ranks[SCORE_GROUPS];
+	/* and its last event's tick */
+	long ticks[SCORE_GROUPS];
 	short next;
 	/* the summary shown: its copy, its best, since when */
 	struct campaign_score_state summary;
@@ -257,6 +263,7 @@ static void score_group_add(
 	long points,
 	short rank,
 	wchar_t const *text,
+	long tick,
 	unsigned long now)
 {
 	short index;
@@ -266,7 +273,8 @@ static void score_group_add(
 	{
 		struct campaign_score_hud_group *group = &score_hud.groups[index];
 
-		if (group->last_at && group->player == player && now - group->last_at <= SCORE_GROUP_MILLISECONDS &&
+		if (group->last_at && group->player == player && tick >= score_hud.ticks[index] &&
+			tick - score_hud.ticks[index] <= SCORE_GROUP_TICKS &&
 			(newest == NONE || group->last_at > score_hud.groups[newest].last_at))
 		{
 			newest = index;
@@ -278,6 +286,7 @@ static void score_group_add(
 
 		group->points += points;
 		group->last_at = now;
+		score_hud.ticks[newest] = tick;
 		if (rank >= score_hud.ranks[newest])
 		{
 			score_hud.ranks[newest] = rank;
@@ -296,6 +305,7 @@ static void score_group_add(
 	score_hud.groups[index].last_at = now ? now : 1;
 	ustrncpy(score_hud.groups[index].text, text, NUMBEROF(score_hud.groups[index].text) - 1);
 	score_hud.ranks[index] = rank;
+	score_hud.ticks[index] = tick;
 }
 
 /* debug.score_fill's made-up score: the players in the game, each with
@@ -362,7 +372,7 @@ static void score_fill_update(
 			long pick = (period + order++) % NUMBEROF(groups);
 
 			score_group_add((short)DATUM_INDEX_TO_ABSOLUTE_INDEX(iterator.datum_index), groups[pick].points,
-				groups[pick].rank, groups[pick].text, system_milliseconds());
+				groups[pick].rank, groups[pick].text, game_time_get(), system_milliseconds());
 		}
 	}
 }
@@ -391,9 +401,8 @@ static void score_poll(
 			short rank = score_event_words(&events[index], text, NUMBEROF(text));
 
 			if (rank > 0)
-				score_group_add(events[index].player, events[index].points, rank, text, system_milliseconds());
-			platform_log("campaign score: event %d of %ld points for player %d polled (tmp)", (int)events[index].kind,
-				events[index].points, (int)events[index].player);
+				score_group_add(events[index].player, events[index].points, rank, text, events[index].tick,
+					system_milliseconds());
 		}
 		if (count < (long)NUMBEROF(events))
 			break;
@@ -529,14 +538,6 @@ static void score_draw_popup(
 	if (player == NONE || !config_player_boolean(local_player_index, "display.score_popups") ||
 		cinematic_in_progress())
 	{
-		static unsigned long logged_at;
-
-		if (player != NONE && now - logged_at > 1000)
-		{
-			logged_at = now;
-			platform_log("campaign score: pop-ups held (tmp): cinematic %d, setting %d", (int)cinematic_in_progress(),
-				config_player_boolean(local_player_index, "display.score_popups"));
-		}
 		return;
 	}
 	for (index = 0; index < SCORE_GROUPS; index++)
