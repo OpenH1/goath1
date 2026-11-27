@@ -956,13 +956,6 @@ PAGES = {
             ("REFRESH RATE", "display.refresh_rate", [("AUTO", "0")],
              "How many times a second the display shows a picture while the game is fullscreen. Auto keeps the "
              "display's own. VSync and Max FPS's Auto follow it.", "computer"),
-            # (display.gpu: port/linux/game/menu_tags.c adds the devices the
-            # renderer found as it started, each set by its name, or its index
-            # beside an identical card; dimmed where the game has no choice:
-            # SETTINGS_ROW_ENABLED)
-            (f"GPU {RESTART}", "display.gpu", [("AUTO", "auto")],
-             "The graphics card that draws the game, from the next start. Auto prefers a separate graphics card "
-             "over built-in graphics.|Not on Mac or in VR.", "computer"),
             ("FRAME RATE & SYNC ›", None, _page_screen(*FRAME_RATE),
              "VSync, variable refresh (G-SYNC, FreeSync), the most frames a second and low latency.", None),
             ("FIELD OF VIEW", "display.fov", FIELDS_OF_VIEW,
@@ -1374,6 +1367,13 @@ PAGES = {
             ("ANTI-ALIASING", "display.anti_aliasing",
              [("OFF", "off"), ("FXAA", "fxaa"), ("SMAA", "smaa"), ("MSAA 2X (BEST)", "msaa2x"), ("MSAA 4X", "msaa4x")],
              ANTI_ALIASING_HELP, "android", "anti_aliasing_android"),
+            # (display.gpu: port/linux/game/menu_tags.c adds the devices the
+            # renderer found as it started, each set by its name, or its index
+            # beside an identical card; dimmed where the game has no choice:
+            # SETTINGS_ROW_ENABLED)
+            (f"GPU {RESTART}", "display.gpu", [("AUTO", "auto")],
+             "The graphics card that draws the game, from the next start. Auto prefers a separate graphics card "
+             "over built-in graphics.|Not on Mac or in VR.", "computer"),
             ("TEXTURE FILTERING", "display.anisotropic_filtering",
              [("OFF", "0"), ("2X", "2"), ("4X", "4"), ("8X", "8"), ("16X", "16")],
              "Keeps floors and walls sharp into the distance, at a small cost. Off looks as the Xbox did: surfaces "
