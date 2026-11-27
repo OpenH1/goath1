@@ -350,19 +350,21 @@ vec4 bounce_main(ivec2 block)
 // the shader's strength head-on to grazing (the record's flags, Schlick's fresnel at this view's cosine c) times its
 // specular mask (the base, bump or multipurpose map's alpha); and the light it would reflect, guessed from the light
 // there: Halo's lightmap's (linear) and the pass's direct light this frame (the reservoirs' binding), as on a
-// half-bright surface. 0 where the eye's ray finds another surface
+// half-bright surface. 0 where the eye's ray finds no surface at the pixel's point. (Only the segment of the eye's ray
+// about the point is traced, within the tolerance either side: the pixel's own surface is what is looked for, and the
+// pre-pass already found it nearest; a whole ray from the eye cost as much as the reflections' own rays.)
 float reflection_seen(ivec2 pixel, vec3 p, float c)
 {
     vec3 eye = pass.camera[0].xyz, d = p - eye;
-    float distance = length(d);
+    float distance = length(d), tolerance = 0.02 * distance + 0.02;
     d /= max(distance, 1.0e-6);
     rayQueryEXT q;
-    rayQueryInitializeEXT(q, scene, 0u, MASK_REFLECTIONS, eye, 0.0, d, distance * 1.02 + 0.02);
+    rayQueryInitializeEXT(q, scene, 0u, MASK_REFLECTIONS, eye, max(distance - tolerance, 0.0), d,
+        distance + tolerance);
     while (rayQueryProceedEXT(q))
         if (alpha_passes(q))
             rayQueryConfirmIntersectionEXT(q);
-    if (rayQueryGetIntersectionTypeEXT(q, true) == gl_RayQueryCommittedIntersectionNoneEXT ||
-        abs(rayQueryGetIntersectionTEXT(q, true) - distance) > 0.02 * distance + 0.02)
+    if (rayQueryGetIntersectionTypeEXT(q, true) == gl_RayQueryCommittedIntersectionNoneEXT)
         return 0.0;
     uint mesh = uint(rayQueryGetIntersectionInstanceShaderBindingTableRecordOffsetEXT(q, true)) & (HIT_MESHES - 1u);
     uint record = mesh << 2, attributes = table.words[record + 1u];
