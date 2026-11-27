@@ -588,8 +588,13 @@ static void *rtlm_block(struct tag_block const *block, long index, long size)
 
 static voidpf rtlm_zalloc(voidpf opaque, uInt items, uInt size)
 {
+	void *address = malloc((size_t)items * size);
+
+	/* (the game's malloc, which free here is: cseries.h's; calloc is not) */
 	(void)opaque;
-	return calloc(items, size);
+	if (address)
+		memset(address, 0, (size_t)items * size);
+	return address;
 }
 
 static void rtlm_zfree(voidpf opaque, voidpf address)
