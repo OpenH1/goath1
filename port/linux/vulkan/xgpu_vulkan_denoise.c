@@ -9,9 +9,10 @@ sample (HALO_LT_E1=denoise, xgpu_vulkan_lt.c):
 1. the re-shade (xgpu_vulkan_lt_reshade): E1's kernel at the previous frame's
    gradient pixels (one a 3x3 stratum, lt/gradient_pixel.glsl), with the
    previous frame's surfaces and seed but this frame's light and scene;
-2. the gradients (lt/denoise_gradient.frag): a texel a stratum, the change of
-   the light where this frame's pixels were those gradient pixels (A-SVGF,
-   Schied 2018: the same sample shaded twice, so nothing but a real change);
+2. the gradients (lt/denoise_gradient.frag): a texel a previous stratum, the
+   change of the light at its gradient pixel where this frame still sees that
+   surface (A-SVGF, Schied 2018: the same sample shaded twice, so nothing but
+   a real change);
 3. the temporal stage (lt/denoise_temporal.frag): the history where it is the
    same surface (owner, distance within 3%, normal within 25 degrees;
    reprojected by the cameras, or the guides' motion once they carry it), its
@@ -381,14 +382,14 @@ struct xgpu_vulkan_image *xgpu_vulkan_denoise_draw(struct xgpu_vulkan_image *raw
 	frame's light, against its own samples) */
 	if (history_valid && previous_raw && previous_inputs && !denoise.no_gradients)
 	{
-		struct xgpu_vulkan_image *textures[5] = { inputs, previous_guide, denoise.reshaded, previous_raw, guides };
+		struct xgpu_vulkan_image *textures[4] = { guide, previous_guide, denoise.reshaded, previous_raw };
 
 		xgpu_vulkan_lt_reshade(denoise.reshaded, &denoise.previous_pass, previous_inputs, denoise.previous_guides);
 		gradient_rectangle[0] = 0;
 		gradient_rectangle[1] = 0;
 		gradient_rectangle[2] = (int32_t)gradient_width;
 		gradient_rectangle[3] = (int32_t)gradient_height;
-		denoise_pass(denoise.gradients, gradient_rectangle, &uniforms, &params, &denoise.gradient_pass, textures, 5);
+		denoise_pass(denoise.gradients, gradient_rectangle, &uniforms, &params, &denoise.gradient_pass, textures, 4);
 		params.control[1] |= DENOISE_GRADIENTS;
 	}
 	/* 3: the temporal stage */

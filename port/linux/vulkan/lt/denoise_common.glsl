@@ -57,6 +57,27 @@ vec3 world_point(ivec2 pixel, float distance)
     return pass.camera[0].xyz + ray * distance;
 }
 
+// a pixel's world point from the previous frame's camera and its distance then
+vec3 previous_point(ivec2 pixel, float distance)
+{
+    vec2 low = vec2(pass.previous_corners.xy), size = vec2(pass.previous_corners.zw) - low;
+    vec2 screen = (vec2(pixel) + 0.5 - low) * 2.0 / size - 1.0;
+    vec3 ray = normalize(pass.previous[1].xyz + pass.previous[2].xyz * screen.x + pass.previous[3].xyz * screen.y);
+    return pass.previous[0].xyz + ray * distance;
+}
+
+// where p is in this frame's pixels (continuous); false off its view
+bool project(vec3 p, out vec2 at)
+{
+    vec3 w = p - pass.camera[0].xyz, f = pass.camera[1].xyz, r = pass.camera[2].xyz, u = pass.camera[3].xyz;
+    float along = dot(w, f) / dot(f, f);
+    if (along <= 0.0)
+        return false;
+    vec2 screen = vec2(dot(w, r) / dot(r, r), dot(w, u) / dot(u, u)) / along;
+    at = vec2(pass.corners.xy) + (screen + 1.0) * 0.5 * vec2(pass.corners.zw - pass.corners.xy);
+    return all(greaterThanEqual(at, vec2(pass.corners.xy))) && all(lessThan(at, vec2(pass.corners.zw)));
+}
+
 // where p was in the frame before, in its pixels (continuous: a pixel's middle at +0.5), from the cameras (E1's own
 // reprojection, lt/e1.frag), or the guides' motion where they carry it; false off its view
 bool reproject(vec3 p, ivec2 pixel, uint motion, out vec2 at)

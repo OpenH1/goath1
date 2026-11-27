@@ -24,16 +24,16 @@ layout(location = 0) out uvec4 result;
 // (A-SVGF's history weight goes up with the normalized gradient)
 const float GAIN = 16.0;
 
-// the light's change about pixel's stratum (its 3x3 strata's gradient samples, its own 8 times over: a moving shadow's
-// edge cut where it is): x the relighting, the ratio of the
+// the light's change about at, where the history comes from (the previous frame's 3x3 strata's gradient samples about
+// it, its own 8 times over: a moving shadow's edge cut where it is): x the relighting, the ratio of the
 // re-shaded samples' sum to the previous ones' (a change alike over the strata: the lamp nearer, a light fading in),
 // which scales the history; y the share to cut from its count, by the gain: what of the change the ratio does not
 // explain (changes of both signs there: a shadow or the beam's edge moving; all of it where there was no light)
-vec2 changed(ivec2 pixel)
+vec2 changed(vec2 at)
 {
     if ((pass.control.y & GRADIENTS) == 0)
         return vec2(1.0, 0.0);
-    ivec2 stratum = pixel / 3, top = ivec2(pass.size.zw) - 1;
+    ivec2 stratum = ivec2(floor(at)) / 3, top = ivec2(pass.size.zw) - 1;
     vec4 sums = vec4(0.0);
     for (int y = -1; y <= 1; y++)
         for (int x = -1; x <= 1; x++)
@@ -129,7 +129,7 @@ void main()
         }
     }
     // (anti-lag: the history relit by the change's ratio, its count cut by the share the ratio does not explain)
-    vec2 change = changed(pixel);
+    vec2 change = count > 0.0 ? changed(at) : vec2(1.0, 0.0);
     mean *= change.x;
     moment *= change.x * change.x;
     count *= 1.0 - change.y;
