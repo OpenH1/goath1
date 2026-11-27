@@ -1604,7 +1604,7 @@ static struct
 	each frame is shown for (FIFO; the swapchain's present mode is made for
 	0 or more) */
 	int interval;
-	/* display.low_latency (any thread, atomic: 0 auto, 1 on, 2 off), and
+	/* display.low_latency (any thread, atomic: 0 auto, 1 on, 2 off, 3 VRR), and
 	whether the game is paced by the display now (xgpu_vulkan_pacing.c);
 	the device has VK_KHR_present_id and VK_KHR_present_wait, and
 	VK_GOOGLE_display_timing */
@@ -9571,10 +9571,15 @@ static int swapchain_make(void)
 	presents): the least, two at least, so that the swapchain itself bounds
 	the frames queued ahead of the display, beside the GPU's bound
 	(xgpu_vulkan_pacing_frames_ahead). Else one more than the least, for
-	the frames queued ahead) */
+	the frames queued ahead. VRR: two may wait for it, so four, the render
+	thread never held for an image while the display is slow to let one go) */
 	info.minImageCount = capabilities.minImageCount + 1;
 	if (vk.paced && vk.interval <= 1)
-		info.minImageCount = capabilities.minImageCount > 3 ? capabilities.minImageCount : 3;
+	{
+		uint32_t least = vk.paced == XGPU_VULKAN_PACING_VARIABLE ? 4 : 3;
+
+		info.minImageCount = capabilities.minImageCount > least ? capabilities.minImageCount : least;
+	}
 	else if (!vk.paced && vk.present_mode == VK_PRESENT_MODE_FIFO_KHR)
 		info.minImageCount = capabilities.minImageCount > 2 ? capabilities.minImageCount : 2;
 	if (capabilities.maxImageCount && info.minImageCount > capabilities.maxImageCount)
@@ -9664,7 +9669,7 @@ void xgpu_vulkan_window_hidden(int hidden)
 
 void xgpu_vulkan_window_low_latency(int mode)
 {
-	__atomic_store_n(&vk.low_latency, (uint32_t)(mode >= 0 && mode <= 2 ? mode : 0), __ATOMIC_RELEASE);
+	__atomic_store_n(&vk.low_latency, (uint32_t)(mode >= 0 && mode <= 3 ? mode : 0), __ATOMIC_RELEASE);
 }
 
 void xgpu_vulkan_window_interval(int interval)
@@ -10893,7 +10898,8 @@ static void frame_pacing_update(void)
 	fifo = vk.swapchain ? vk.present_mode == VK_PRESENT_MODE_FIFO_KHR : vk.interval > 0;
 	paced = xgpu_vulkan_pacing_mode((int)__atomic_load_n(&vk.low_latency, __ATOMIC_ACQUIRE), vk.interval, fifo,
 		vk.frame % 120 ? 0 : host_vulkan_display_period());
-	if (!paced != !vk.paced && vk.swapchain && vk.interval <= 1)
+	if ((!paced != !vk.paced || (paced == XGPU_VULKAN_PACING_VARIABLE) != (vk.paced == XGPU_VULKAN_PACING_VARIABLE)) &&
+		vk.swapchain && vk.interval <= 1)
 		vk.swapchain_stale = 1;
 	vk.paced = paced;
 }
@@ -13687,7 +13693,7 @@ int xgpu_vulkan_initialize(const struct xgpu_vulkan_options *options)
 	if (!check(vkCreateSemaphore(vk.device, &semaphore, NULL, &vk.timeline), "vkCreateSemaphore"))
 		return 0;
 	semaphore.pNext = NULL;
-	vk.low_latency = (uint32_t)(options->low_latency >= 0 && options->low_latency <= 2 ? options->low_latency : 0);
+	vk.low_latency = (uint32_t)(options->low_latency >= 0 && options->low_latency <= 3 ? options->low_latency : 0);
 	if (vk.present_wait || vk.display_timing)
 	{
 		struct xgpu_vulkan_pacing_device pacing;

@@ -993,7 +993,8 @@ IMMEDIATE); the swapchain is made again when that changes. More than 1
 (battery saver's, at most 8) shows each frame for that many refreshes: it
 is presented that many times (xgpu_vulkan_frame_end) */
 void xgpu_vulkan_window_interval(int interval);
-/* display.low_latency (any thread): 0 auto, 1 on, 2 off. On, with vsync
+/* display.low_latency (any thread): 0 auto, 1 on, 2 off; 3 display.vrr on
+(xgpu_vulkan_pacing.c's HOST_RENDER_DISPLAY_VARIABLE). On, with vsync
 (the swap interval 1 or more, FIFO) and a device that says when each
 present reaches the screen, the game starts each frame just in time for
 the refresh it is shown at, with at most one frame waiting for the display

@@ -38,6 +38,25 @@ more between the player's hand and the picture.
   minutes at most, where the display's own lead (a compositor that takes
   its frames a few milliseconds before the refresh) and the frames' spikes
   call for more.
+- A display of variable refresh (VRR: HOST_RENDER_DISPLAY_VARIABLE) has no
+  latch to start a frame for: it shows each frame once its GPU work is
+  done, so the display's word on a frame comes only after the GPU has
+  finished it, and later still where a present is answered as the frame
+  after it reaches the screen. Bounded by the display alone, at most one
+  frame waiting for it, the game started a frame only once the GPU had
+  finished the one before: each frame took the game's time and the GPU's
+  added, not the longer of the two (a 138 Hz VRR display at 4K, capped at
+  135: 70 to 100 frames a second, 10 to 14.5 ms each, at about 3.5 ms of
+  the game's and 6 of the GPU's). With VRR, FRAME_PACING_VARIABLE_QUEUED
+  frames may wait for the display (the one the GPU draws and the one it
+  has done), the GPU's own bound (host_render_stream_frames_ahead) keeps
+  no more than one frame before on the GPU, and each frame is started just
+  in time for the GPU: its lead (the most a frame took from its start to
+  handed to the GPU, and the margin) before the GPU is predicted to be free
+  of the frames it has (frame_pacing_gpu_free,
+  frame_pacing_variable_start_time). The game writes a frame while the GPU
+  draws the one before, the frames come at the cap whenever the longer of
+  the two fits it, and a frame waits for the GPU no longer than the margin.
 - Battery saver (display.battery_saver, battery_saver.c) shows each frame
   for a whole number of the display's refreshes, each on screen as long as
   the others, so that the game draws BATTERY_SAVER_MOST frames a second or
@@ -64,6 +83,12 @@ include it as it is.
 /* finished frames that may wait for the display while the game writes the
 next (the one on screen not counted) */
 #define FRAME_PACING_QUEUED 1
+/* with VRR: the frame the GPU draws, and the one it has done that the
+display has not yet said it took */
+#define FRAME_PACING_VARIABLE_QUEUED 2
+/* with VRR: the frames whose GPU time the prediction takes the least of
+(frame_pacing_gpu_time) */
+#define FRAME_PACING_GPU_FRAMES 8
 /* the longest the game waits for the display to take a frame: a display
 that takes none (a window covered, minimized, between the desktop and
 fullscreen) must not stop the game, nor one that pauses for a few refreshes
@@ -107,6 +132,13 @@ struct frame_pacing_costs
 	shown in time since it or the least last changed; the misses counted */
 	uint64_t margin, hold;
 	uint32_t kept, held, misses;
+};
+
+/* (VRR) the GPU's times of the last frames (frame_pacing_gpu_add) */
+struct frame_pacing_gpu
+{
+	uint64_t nanoseconds[FRAME_PACING_GPU_FRAMES];
+	uint32_t next, count;
 };
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -205,6 +237,63 @@ static FRAME_PACING_UNUSED uint64_t frame_pacing_start_time(uint64_t latch, uint
 		return 0;
 	target = latch + (uint64_t)(pending + 1) * period;
 	return target > budget ? target - budget : 0;
+}
+
+/* (VRR) a frame's time on the GPU: from when it was handed to the GPU, or
+the GPU finished the frame before if that was later, to when the GPU
+finished it */
+static FRAME_PACING_UNUSED void frame_pacing_gpu_add(struct frame_pacing_gpu *gpu, uint64_t nanoseconds)
+{
+	if (!nanoseconds || nanoseconds > 1000000000ull)
+		return;
+	gpu->nanoseconds[gpu->next++ % FRAME_PACING_GPU_FRAMES] = nanoseconds;
+	if (gpu->count < FRAME_PACING_GPU_FRAMES)
+		gpu->count++;
+}
+
+/* (VRR) the time a frame is predicted to take on the GPU: the least of the
+last FRAME_PACING_GPU_FRAMES (0: none yet). The least, not the most: a
+GPU predicted free too early only has the next frame wait for it, a
+little; one predicted free too late is left without work */
+static FRAME_PACING_UNUSED uint64_t frame_pacing_gpu_time(const struct frame_pacing_gpu *gpu)
+{
+	uint64_t least = 0;
+	uint32_t index;
+
+	for (index = 0; index < gpu->count; index++)
+	{
+		if (!least || gpu->nanoseconds[index] < least)
+			least = gpu->nanoseconds[index];
+	}
+	return least;
+}
+
+/* (VRR) when the GPU is predicted to be free of the game's frames: done,
+when it finished the last of them it has finished (0: not known); handed,
+when the first it has not finished was handed to it (0: not yet, it is
+still being played: now); pending, the frames it has not finished, the one
+the game has just given among them (0: none, the GPU free now); gpu, a
+frame's time on it (frame_pacing_gpu_time). 0: free now */
+static FRAME_PACING_UNUSED uint64_t frame_pacing_gpu_free(uint64_t done, uint64_t handed, uint32_t pending,
+	uint64_t gpu, uint64_t now)
+{
+	uint64_t start = handed ? handed : now;
+
+	if (!pending || !gpu)
+		return 0;
+	if (done > start)
+		start = done;
+	return start + (uint64_t)pending * gpu;
+}
+
+/* (VRR) when the game should start its next frame: its lead (the most a
+frame took from its start to handed to the GPU, and the margin:
+frame_pacing_budget) before the GPU is free (frame_pacing_gpu_free), so
+that the frame reaches the GPU as it finishes the one before, not after
+(0: at once) */
+static FRAME_PACING_UNUSED uint64_t frame_pacing_variable_start_time(uint64_t free, uint64_t lead)
+{
+	return free > lead ? free - lead : 0;
 }
 
 /* a display that takes no frames while its window is hidden (a Mac's on

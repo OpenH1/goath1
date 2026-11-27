@@ -35,14 +35,17 @@ statistics) or pacing is asked; returns whether it can pace */
 int xgpu_vulkan_pacing_start(const struct xgpu_vulkan_pacing_device *device);
 void xgpu_vulkan_pacing_stop(void);
 
-/* (render thread) display.low_latency's mode: 0 auto, 1 on, 2 off; the
-swap interval (the refreshes each frame is shown for: 0 as 1) and whether
-the present mode is FIFO (pacing only with it: vsync's, or the only mode a
-surface has); the display's refresh period by the window's mode (0: as
-before), the fallback for the display's own.
-Returns whether the game is paced by the display (the command stream
-told). */
+/* (render thread) display.low_latency's mode: 0 auto, 1 on, 2 off, 3
+display.vrr on; the swap interval (the refreshes each frame is shown for: 0
+as 1) and whether the present mode is FIFO (pacing only with it: vsync's,
+or the only mode a surface has); the display's refresh period by the
+window's mode (0: as before), the fallback for the display's own.
+Returns how the game is paced by the display (the command stream told:
+host_render_stream.h's HOST_RENDER_DISPLAY_*, 0 not at all), VRR's
+XGPU_VULKAN_PACING_VARIABLE among them. */
 int xgpu_vulkan_pacing_mode(int mode, int interval, int fifo, uint64_t period);
+/* (host_render_stream.h's HOST_RENDER_DISPLAY_VARIABLE) */
+#define XGPU_VULKAN_PACING_VARIABLE 3
 
 /* (render thread) the swapchain presented to from now on (VK_NULL_HANDLE:
 none), before the one before is destroyed: its presents not yet shown are
