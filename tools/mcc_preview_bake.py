@@ -883,7 +883,10 @@ def main(argv=None) -> int:
         print(f"  ({time.time() - start:.0f} s)")
         textures.loaded.clear()
     if args.fits_out:
-        args.fits_out.write_text(json.dumps({"version": 1, "meshes": fits_out}, indent=1) + "\n")
+        # (the texture-only layouts, which have no fit, kept from the file as they are)
+        kept = json.loads(args.fits_out.read_text()).get("layouts") if args.fits_out.is_file() else None
+        fits = {"version": 1, "meshes": fits_out, **({"layouts": kept} if kept else {})}
+        args.fits_out.write_text(json.dumps(fits, indent=1) + "\n")
     args.mod.mkdir(parents=True, exist_ok=True)
     (args.mod / "mod.toml").write_text(
         'name = "MCC HD textures (test)"\nid = "mcc_hd_test"\nversion = "0.1"\n'

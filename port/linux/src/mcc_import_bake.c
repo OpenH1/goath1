@@ -20,6 +20,12 @@ k-d tree of samples is near enough.
   detail of the MCC map that agrees with it best; change color ours.
 - <bitmap>.normal.png and .orm.png beside the diffuse for the enhanced
   graphics (port/linux/game/mod_materials.c).
+- A layout (mcc_import.json's "layouts": MCC's textures already in our
+  bitmap's UV layout, as the Spartan's are): no mesh, MCC's texel at the same
+  UV; the diffuse's channels matched to ours over our model's islands, our
+  texels kept where MCC's color has its visor hole, our multipurpose map
+  kept, the normal map's green flipped, the .orm.png from MCC's occlusion, its
+  color's alpha (roughness) and metalness.
 */
 
 #include "mcc_import_bake.h"
@@ -37,8 +43,9 @@ k-d tree of samples is near enough.
 
 int mkdir(const char *path, unsigned int mode);
 
-#define MESH_ROOT "MCC/Content/UI/Features/Customization/Characters/H1/"
-#define TEXTURE_ROOT "MCC/Content/UI/Features/Customization/SharedTextures/H1/"
+#define CUSTOMIZATION_ROOT "MCC/Content/UI/Features/Customization/"
+#define MESH_ROOT CUSTOMIZATION_ROOT "Characters/H1/"
+#define TEXTURE_ROOT CUSTOMIZATION_ROOT "SharedTextures/H1/"
 
 #define MAXIMUM_PIECES 64
 #define MAXIMUM_BITMAPS 32
@@ -55,6 +62,7 @@ int mkdir(const char *path, unsigned int mode);
 #define FORMAT_DXT3 15
 #define FORMAT_DXT5 16
 
+#define GROUP_BITMAP 0x6269746DUL
 #define GROUP_MODEL 0x6D6F6465UL
 #define GROUP_SHADER_MODEL 0x736F736FUL
 
@@ -1201,10 +1209,9 @@ static int material_roles(const struct ue4_pak *pak, const struct mcc_textures *
 	return any;
 }
 
-/* a texture's top mip as 8-bit RGBA; NULL if not read */
-static unsigned char *texture_load(const struct ue4_pak *pak, const char *name, long *width, long *height)
+/* a texture asset's top mip as 8-bit RGBA; NULL if not read (or asset < 0) */
+static unsigned char *texture_load(const struct ue4_pak *pak, long asset, long *width, long *height)
 {
-	long asset = ue4_pak_find_asset(pak, TEXTURE_ROOT, name);
 	struct ue4_texture texture;
 	const char *reason;
 	unsigned char *rgba;
@@ -1794,7 +1801,7 @@ static int sample_role(const struct ue4_pak *pak, const struct mcc_mesh *mcc, co
 
 		if (!name[0] || done[section])
 			continue;
-		image = texture_load(pak, name, &width, &height);
+		image = texture_load(pak, ue4_pak_find_asset(pak, TEXTURE_ROOT, name), &width, &height);
 		/* (every section of the same texture sampled from this one load) */
 		for (other = section; other < section_count; other++)
 		{
@@ -2161,7 +2168,8 @@ static int map_get(struct run *run, const char *name)
 	return run->map_count - 1;
 }
 
-static long model_find(const struct xbox_map *map, const char *name)
+/* the tag of a group and name (any case) with a definition, or -1 */
+static long tag_find(const struct xbox_map *map, unsigned long wanted_group, const char *name)
 {
 	long index;
 
@@ -2170,7 +2178,7 @@ static long model_find(const struct xbox_map *map, const char *name)
 		unsigned long group, definition;
 		const char *found;
 
-		if (instance_get(map, index, &group, &found, &definition) && group == GROUP_MODEL && definition &&
+		if (instance_get(map, index, &group, &found, &definition) && group == wanted_group && definition &&
 			ascii_case_equal(found, name))
 		{
 			return index;
@@ -3015,7 +3023,7 @@ static void bake_mesh(struct run *run, unsigned int first, unsigned int last)
 		unsigned long group, definition;
 		const char *name;
 
-		if (map < 0 || (tag = model_find(&run->maps[map], entry->model)) < 0 ||
+		if (map < 0 || (tag = tag_find(&run->maps[map], GROUP_MODEL, entry->model)) < 0 ||
 			!instance_get(&run->maps[map], tag, &group, &name, &definition))
 		{
 			run_log(run, "  %s: not in %s", entry->model, entry->map);
@@ -3069,6 +3077,357 @@ static void bake_mesh(struct run *run, unsigned int first, unsigned int last)
 	free(mcc);
 }
 
+/* ---------- a layout: MCC's textures already in our bitmap's UV layout */
+
+/* the visor hole: where MCC's color's alpha is under this, grown this many
+texels (at 2048) over its blended edge */
+#define VISOR_ALPHA 16
+#define VISOR_GROWTH 4
+
+/* a texture under the layout's folder (of MCC's Customization folder), or -1 */
+static long layout_asset(const struct ue4_pak *pak, const struct mcc_import_layout *layout, const char *name)
+{
+	char root[MAXIMUM_PATH];
+
+	snprintf(root, sizeof(root), "%s%s", CUSTOMIZATION_ROOT, layout->root);
+	return ue4_pak_find_asset(pak, root, name);
+}
+
+/* a texture (8-bit RGBA) at our bitmap's size, RGBA floats: each of our
+texels takes MCC's at the same UV, the texels' centers lined up (at the same
+size, a copy) */
+static void layout_resample(const unsigned char *image, long image_width, long image_height, long width, long height,
+	float *out)
+{
+	long x, y;
+
+	for (y = 0; y < height; y++)
+		for (x = 0; x < width; x++)
+		{
+			double value[4];
+			int channel;
+
+			bilinear_wrap(image, image_width, image_height, (x + 0.5) * image_width / width,
+				(y + 0.5) * image_height / height, value);
+			for (channel = 0; channel < 4; channel++)
+				out[4 * ((size_t)y * (size_t)width + (size_t)x) + channel] = (float)value[channel];
+		}
+}
+
+/* our bitmap's islands: the texels the model's parts draw; 0 if out of memory */
+static int layout_islands(const struct piece *pieces, int count, long width, long height, unsigned char *island)
+{
+	size_t texels = (size_t)width * (size_t)height, texel;
+	long *tri_of = malloc(sizeof(long) * texels);
+	float *bary = malloc(sizeof(float) * 3 * texels);
+	int piece;
+
+	if (!tri_of || !bary)
+	{
+		free(tri_of);
+		free(bary);
+		return 0;
+	}
+	memset(island, 0, texels);
+	for (piece = 0; piece < count; piece++)
+	{
+		raster(&pieces[piece], width, height, tri_of, bary);
+		for (texel = 0; texel < texels; texel++)
+			island[texel] |= tri_of[texel] >= 0;
+	}
+	free(tri_of);
+	free(bary);
+	return 1;
+}
+
+/* a mask grown `steps` texels (to its 4 neighbors each step, not wrapped);
+work is as large */
+static void mask_grow(unsigned char *mask, unsigned char *work, long width, long height, long steps)
+{
+	long step, x, y;
+
+	for (step = 0; step < steps; step++)
+	{
+		memcpy(work, mask, (size_t)width * (size_t)height);
+		for (y = 0; y < height; y++)
+			for (x = 0; x < width; x++)
+			{
+				size_t at = (size_t)y * (size_t)width + (size_t)x;
+
+				if (!mask[at] && ((y > 0 && mask[at - (size_t)width]) || (y + 1 < height && mask[at + (size_t)width]) ||
+					(x > 0 && mask[at - 1]) || (x + 1 < width && mask[at + 1])))
+				{
+					work[at] = 1;
+				}
+			}
+		memcpy(mask, work, (size_t)width * (size_t)height);
+	}
+}
+
+/* the visor: MCC's color's alpha hole (MCC paints it white, where ours has
+the visor's own texels), grown over its edge, where our model draws or
+within the padding's reach of it (a texel beside an island is read there by
+the filtering and the mips: a mirrored visor's seam); how many texels, or -1
+if out of memory */
+static long layout_visor(const float *color, const unsigned char *island, long width, long height, unsigned char *visor)
+{
+	size_t texels = (size_t)width * (size_t)height, texel;
+	unsigned char *near = malloc(texels), *work = malloc(texels);
+	long steps = (long)round_even(VISOR_GROWTH * (double)width / 2048.0), count = 0;
+
+	if (!near || !work)
+	{
+		free(near);
+		free(work);
+		return -1;
+	}
+	for (texel = 0; texel < texels; texel++)
+		visor[texel] = color[4 * texel + 3] < VISOR_ALPHA;
+	mask_grow(visor, work, width, height, steps < 1 ? 1 : steps);
+	memcpy(near, island, texels);
+	mask_grow(near, work, width, height, PAD_STEPS);
+	for (texel = 0; texel < texels; texel++)
+	{
+		visor[texel] = visor[texel] && near[texel];
+		count += visor[texel];
+	}
+	free(near);
+	free(work);
+	return count;
+}
+
+/* MCC's color (RGBA floats) into out (ours enlarged, RGBA floats): MCC's
+paint is lighter and greyer than ours by design, so each channel's mean and
+contrast over our islands (less the visor) set to ours there; our texels kept
+on the visor; 0 if too few texels to match */
+static int layout_color(const float *color, float *out, const unsigned char *island, const unsigned char *visor,
+	size_t texels)
+{
+	double n = 0, mcc_mean[3] = { 0, 0, 0 }, ours_mean[3] = { 0, 0, 0 }, mcc_var[3] = { 0, 0, 0 }, ours_var[3] = { 0, 0, 0 };
+	size_t texel;
+	int channel;
+
+	for (texel = 0; texel < texels; texel++)
+		if (island[texel] && !visor[texel])
+		{
+			n++;
+			for (channel = 0; channel < 3; channel++)
+			{
+				mcc_mean[channel] += color[4 * texel + channel];
+				ours_mean[channel] += out[4 * texel + channel];
+			}
+		}
+	if (n < 100)
+		return 0;
+	for (channel = 0; channel < 3; channel++)
+	{
+		mcc_mean[channel] /= n;
+		ours_mean[channel] /= n;
+	}
+	for (texel = 0; texel < texels; texel++)
+		if (island[texel] && !visor[texel])
+			for (channel = 0; channel < 3; channel++)
+			{
+				double m = color[4 * texel + channel] - mcc_mean[channel], o = out[4 * texel + channel] - ours_mean[channel];
+
+				mcc_var[channel] += m * m;
+				ours_var[channel] += o * o;
+			}
+	for (channel = 0; channel < 3; channel++)
+	{
+		double mcc_sd = sqrt(mcc_var[channel] / n), ours_sd = sqrt(ours_var[channel] / n);
+		double slope = ours_sd / (mcc_sd > 1e-3 ? mcc_sd : 1e-3);
+
+		for (texel = 0; texel < texels; texel++)
+			if (!visor[texel])
+				out[4 * texel + channel] = (float)((color[4 * texel + channel] - mcc_mean[channel]) * slope + ours_mean[channel]);
+	}
+	return 1;
+}
+
+/* MCC's DirectX normal map (red and green; green toward the picture's
+bottom) in our convention (green toward its top), flat on the visor: 8-bit
+RGB */
+static void layout_normal(const float *normal, const unsigned char *visor, size_t texels, unsigned char *rgb)
+{
+	size_t texel;
+
+	for (texel = 0; texel < texels; texel++)
+	{
+		double n[3] = { 0, 0, 1 };
+		int axis;
+
+		if (!visor[texel])
+		{
+			n[0] = normal[4 * texel] / 127.5 - 1;
+			n[1] = -(normal[4 * texel + 1] / 127.5 - 1);
+			n[2] = sqrt(clampd(1 - n[0] * n[0] - n[1] * n[1], 0, 1));
+			unit3(n);
+		}
+		for (axis = 0; axis < 3; axis++)
+			rgb[3 * texel + axis] = (unsigned char)clampd(round_even((n[axis] * 0.5 + 0.5) * 255), 0, 255);
+	}
+}
+
+/* the occlusion, roughness (the color's alpha) and metalness (RGBA floats,
+red read; occlusion or metallic NULL: none) on the classic look's baseline
+(no occlusion, sharp reflection, no metal) as the fitted bake makes them:
+the occlusion's 90th percentile over the islands full, the roughness above
+its median halved, the metalness above half; the visor the baseline. 8-bit
+RGB; 0 if out of memory */
+static int layout_orm(const float *color, const float *occlusion, const float *metallic, const unsigned char *island,
+	const unsigned char *visor, size_t texels, unsigned char *rgb)
+{
+	float *raw = malloc(sizeof(float) * (texels ? texels : 1));
+	size_t texel;
+	int role;
+
+	if (!raw)
+		return 0;
+	for (role = 0; role < 3; role++)
+	{
+		const float *values = role == 0 ? occlusion : role == 1 ? color : metallic;
+		int channel = role == 1 ? 3 : 0;
+		float fallback = role == 0 ? 255.0f : 0.0f;
+		double low = 0, scale = 1;
+		size_t count = 0;
+
+		for (texel = 0; values && texel < texels; texel++)
+			if (island[texel] && !visor[texel])
+				raw[count++] = values[4 * texel + channel];
+		if (role == 0)
+		{
+			double top = percentile(raw, count, 0.9);
+
+			scale = 255.0 / (top > 1 ? top : 1);
+		}
+		else if (role == 1)
+		{
+			low = percentile(raw, count, 0.5);
+			scale = 0.5;
+		}
+		else
+		{
+			low = 128;
+		}
+		for (texel = 0; texel < texels; texel++)
+			rgb[3 * texel + role] = (unsigned char)(values && !visor[texel] ?
+				clampd(round_even(clampd((values[4 * texel + channel] - low) * scale, 0, 255)), 0, 255) : fallback);
+	}
+	free(raw);
+	return 1;
+}
+
+/* one layout's bitmap and its material maps (our multipurpose map is kept) */
+static void bake_layout(struct run *run, const struct mcc_import_layout *layout)
+{
+	const char *names[4] = { layout->color, layout->normal, layout->occlusion, layout->metallic };
+	float *textures[4] = { NULL, NULL, NULL, NULL }, *classic = NULL, *out = NULL;
+	unsigned char *island = NULL, *visor = NULL, *rgb = NULL;
+	struct bitmap_source *source = NULL;
+	int map = map_get(run, layout->map), count, role, format;
+	long tag, width, height, visor_count, island_count = 0;
+	unsigned long group, definition;
+	const char *name;
+	size_t texels, texel;
+	char path[MAXIMUM_PATH];
+
+	if (map < 0 || (tag = tag_find(&run->maps[map], GROUP_MODEL, layout->model)) < 0 ||
+		!instance_get(&run->maps[map], tag, &group, &name, &definition))
+	{
+		run_log(run, "%s: not in %s", layout->model, layout->map);
+		return;
+	}
+	run->piece_count = count = model_pieces(&run->maps[map], definition, run->pieces, MAXIMUM_PIECES);
+	run_log(run, "%s (%s): %d parts, MCC's textures in its layout (%s)", layout->model, layout->map, count, layout->root);
+	if (!count || (tag = tag_find(&run->maps[map], GROUP_BITMAP, layout->bitmap)) < 0 ||
+		!(source = bitmap_get(run, map, tag, 0)) || !bitmaps_read(run))
+	{
+		run_log(run, "  %s: not in %s", layout->bitmap, layout->map);
+		goto finished;
+	}
+	if (source->count != 1 || source->type != 0 || !(classic = bitmap_rgba(source)))
+	{
+		run_log(run, "    %s: %ld bitmaps of type %d, format %d, left out", source->name, source->count, source->type,
+			source->format);
+		goto finished;
+	}
+	bake_size(source->width, source->height, run->options->max_size, &width, &height);
+	texels = (size_t)width * (size_t)height;
+	island = malloc(texels);
+	visor = malloc(texels);
+	rgb = malloc(3 * texels);
+	if (!island || !visor || !rgb || !layout_islands(run->pieces, count, width, height, island))
+		goto finished;
+	for (role = 0; role < 4; role++)
+	{
+		unsigned char *image;
+		long image_width = 0, image_height = 0;
+
+		if (!names[role][0])
+			continue;
+		if (!(image = texture_load(run->pak, layout_asset(run->pak, layout, names[role]), &image_width, &image_height)))
+		{
+			run_log(run, "    %s: not read%s", names[role], role == 0 ? ", left out" : "");
+			if (role == 0)
+				goto finished;
+			continue;
+		}
+		textures[role] = malloc(sizeof(float) * 4 * texels);
+		if (textures[role])
+			layout_resample(image, image_width, image_height, width, height, textures[role]);
+		free(image);
+		if (!textures[role] || run_progress(run, 0.15f * (float)(role + 1)))
+			goto finished;
+	}
+	if (!textures[0] || (visor_count = layout_visor(textures[0], island, width, height, visor)) < 0 ||
+		!(out = classic_enlarged(classic, source->width, source->height, width, height)))
+	{
+		goto finished;
+	}
+	for (texel = 0; texel < texels; texel++)
+		island_count += island[texel];
+	if (!layout_color(textures[0], out, island, visor, texels))
+	{
+		run_log(run, "    %s: too few texels on its islands (%ld), left out", source->name, island_count);
+		goto finished;
+	}
+	format = bitmap_write(run, source, out, width, height, bitmap_has_alpha(source));
+	run_log(run, "    %s: %ldx%ld -> %ldx%ld, islands %.1f%%, ours kept on the visor's %ld texels, %s", source->name,
+		source->width, source->height, width, height, 100.0 * (double)island_count / (double)texels, visor_count,
+		format == 5 ? "DXT5" : format == 1 ? "DXT1" : "not written");
+	if (!format || run_progress(run, 0.8f))
+		goto finished;
+	if (textures[1])
+	{
+		layout_normal(textures[1], visor, texels, rgb);
+		tag_path(path, sizeof(path), run->options->out_folder, source->name, ".normal.png");
+		if (png_write(path, rgb, width, height))
+			run->written++;
+	}
+	if (layout_orm(textures[0], textures[2], textures[3], island, visor, texels, rgb))
+	{
+		tag_path(path, sizeof(path), run->options->out_folder, source->name, ".orm.png");
+		if (png_write(path, rgb, width, height))
+			run->written++;
+	}
+
+finished:
+	for (role = 0; role < 4; role++)
+		free(textures[role]);
+	free(classic);
+	free(out);
+	free(island);
+	free(visor);
+	free(rgb);
+	run_mesh_free(run);
+}
+
+static int layout_wanted(const char *only, const struct mcc_import_layout *layout)
+{
+	return wanted(only, layout->model) || wanted(only, layout->root);
+}
+
 long mcc_bake_textures(const struct ue4_pak *pak, const struct mcc_bake_options *options, char *report,
 	size_t report_size)
 {
@@ -3098,6 +3457,8 @@ long mcc_bake_textures(const struct ue4_pak *pak, const struct mcc_bake_options 
 		}
 		meshes += wanted(options->only, mcc_import_fits[first].mesh);
 	}
+	for (index = 0; index < (int)mcc_import_layout_count; index++)
+		meshes += layout_wanted(options->only, &mcc_import_layouts[index]);
 	for (first = 0; first < mcc_import_fit_count && !run->canceled; first = last)
 	{
 		for (last = first + 1; last < mcc_import_fit_count && !strcmp(mcc_import_fits[last].mesh, mcc_import_fits[first].mesh);
@@ -3113,11 +3474,22 @@ long mcc_bake_textures(const struct ue4_pak *pak, const struct mcc_bake_options 
 		bake_mesh(run, first, last);
 		mesh++;
 	}
+	for (index = 0; index < (int)mcc_import_layout_count && !run->canceled; index++)
+	{
+		if (!layout_wanted(options->only, &mcc_import_layouts[index]))
+			continue;
+		run->progress_base = (float)mesh / (float)(meshes ? meshes : 1);
+		run->progress_share = 1.0f / (float)(meshes ? meshes : 1);
+		run->within_bitmap_base = 0;
+		run->within_bitmap_share = 1;
+		bake_layout(run, &mcc_import_layouts[index]);
+		mesh++;
+	}
 	for (index = 0; index < run->map_count; index++)
 		free(run->maps[index].tags);
 	mcc_textures_free(&run->textures);
 	written = run->canceled ? -1 : run->written;
-	snprintf(report, report_size, "%ld bitmaps (%ld files) from %u preview meshes%s", run->bitmaps_written, run->written,
+	snprintf(report, report_size, "%ld bitmaps (%ld files) from %u MCC models%s", run->bitmaps_written, run->written,
 		meshes, run->canceled ? ", canceled" : "");
 	free(run);
 	return written;

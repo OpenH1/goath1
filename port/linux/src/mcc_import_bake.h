@@ -42,6 +42,30 @@ struct mcc_import_fit
 extern const struct mcc_import_fit mcc_import_fits[];
 extern const unsigned int mcc_import_fit_count;
 
+/* one of our bitmaps whose UV layout MCC's own textures already have (MCC's
+model is ours, the same UVs): texel for texel, no mesh and no fit
+(mcc_import.json's "layouts"). As MCC's character textures are: the color's
+alpha is the roughness, with a hole where the visor is (painted white there,
+so our texels are kept), and the normal map is DirectX's (green down). */
+struct mcc_import_layout
+{
+	/* our model (its parts mark the bitmap's islands), the stock map it is
+	read from, and the bitmap */
+	const char *model;
+	const char *map;
+	const char *bitmap;
+	/* the textures' folder under MCC's Customization folder (ending in /),
+	and each texture's name ("" for none) */
+	const char *root;
+	const char *color;
+	const char *normal;
+	const char *metallic;
+	const char *occlusion;
+};
+
+extern const struct mcc_import_layout mcc_import_layouts[];
+extern const unsigned int mcc_import_layout_count;
+
 /* the import's progress and cancel: called now and then with 0 to 1, a
 nonzero return cancels */
 typedef int (*mcc_bake_progress_proc)(void *context, float fraction);
@@ -70,7 +94,7 @@ struct mcc_bake_options
 	void (*say)(const char *line);
 };
 
-/* Bakes every fit's bitmaps from the pak; how many files were written (a
+/* Bakes every fit's and layout's bitmaps from the pak; how many files were written (a
 .bitmap, .normal.png or .orm.png each), or -1 if canceled; report says what
 happened in a line. */
 long mcc_bake_textures(const struct ue4_pak *pak, const struct mcc_bake_options *options, char *report,

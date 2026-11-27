@@ -2232,10 +2232,10 @@ PAGES = {
             # test_port_settings.py's test_settings_rows_fit)
             (SECTION, "IMPORT FROM MCC"),
             ("MCC IMPORT", "display.mcc_import", ON_OFF,
-             "Draws and plays what was imported from your MCC install: sharper weapon and vehicle textures and "
+             "Draws and plays what was imported from your MCC install: sharper weapon, vehicle and Spartan textures and "
              "MCC's clearer dialogue. A mod of the same thing wins. Off uses the game's own.", "desktop"),
             ("IMPORT FROM MCC", None, None,
-             "If you own Halo MCC, builds sharper weapon and vehicle textures and clearer English dialogue from "
+             "If you own Halo MCC, builds sharper weapon, vehicle and Spartan textures and clearer English dialogue from "
              "your own install. Nothing is downloaded or shared.", "desktop", "mcc_import_now",
              "port settings mcc import"),
             ("REMOVE MCC IMPORT", None, None,
