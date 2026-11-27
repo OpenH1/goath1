@@ -28,6 +28,7 @@ kills, solo and co-op.
 #include "cseries.h"
 #include "cseries/errors.h"
 #include "ai/actors.h"
+#include "ai/encounters.h"
 #include "game/game.h"
 #include "game/game_allegiance.h"
 #include "game/game_engine.h"
@@ -70,6 +71,11 @@ enum
 	/* ... and all of it each this many, for a client that missed some */
 	CAMPAIGN_SCORE_REFRESH_TICKS = 10 * 30,
 	CAMPAIGN_SCORE_MAXIMUM_BESTS = 1024,
+	/* the encounters followed (their absolute indices; the game has 128), the
+	enemies' units followed in them, and the units killed in one tick */
+	CAMPAIGN_SCORE_MAX_ENCOUNTERS = 256,
+	CAMPAIGN_SCORE_MAX_TRACKED_UNITS = 4096,
+	CAMPAIGN_SCORE_MAX_DIED_PER_TICK = 256,
 	CAMPAIGN_SCORE_LEVEL_NAME_SIZE = 64,
 };
 
@@ -142,7 +148,12 @@ static struct
 	number times this, to 4 steps */
 	short streak_step;
 	short streak_steps_maximum;
-	short wave_clear;
+	/* an encounter cleared: this percent of its kills' points (their table's,
+	before the multiplier), at least the minimum; and flawless, this percent
+	of that more */
+	short encounter_percent;
+	short encounter_minimum;
+	short flawless_percent;
 	short level_bonus;
 	short level_deathless_bonus;
 	short death;
@@ -153,7 +164,7 @@ static struct
 	15, 10, 5, 10, 15,
 	{ 25, 50, 100, 150, 200 },
 	50, 4,
-	250,
+	25, 50, 50,
 	1000, 500,
 	25, 50, 100,
 };
@@ -170,6 +181,39 @@ struct campaign_score_timing
 	long last_kill_tick;
 	short multi_count;
 	short pad;
+};
+
+/* each encounter's tallies, kept with the checkpoint's copy: the points
+(the table's, before the multiplier) and the count of the kills of its
+enemies, the players' deaths when it began, and whether its bonus was given */
+struct campaign_score_encounter_tallies
+{
+	long kill_points[CAMPAIGN_SCORE_MAX_ENCOUNTERS];
+	short kills[CAMPAIGN_SCORE_MAX_ENCOUNTERS];
+	long deaths_at_start[CAMPAIGN_SCORE_MAX_ENCOUNTERS];
+	boolean awarded[CAMPAIGN_SCORE_MAX_ENCOUNTERS];
+};
+
+/* the encounters as the last tick left them: their tallies, their living
+enemies, and the living enemies' units, each with its encounter; rescan,
+the next tick only looks (after a revert, whose units are another tick's) */
+struct campaign_score_encounter_tracking
+{
+	struct campaign_score_encounter_tallies tallies;
+	short living[CAMPAIGN_SCORE_MAX_ENCOUNTERS];
+	long tracked_units[CAMPAIGN_SCORE_MAX_TRACKED_UNITS];
+	short tracked_encounters[CAMPAIGN_SCORE_MAX_TRACKED_UNITS];
+	long tracked_count;
+	boolean rescan;
+};
+
+/* an encounter cleared: its bonus, and its flawless bonus (0: a player died) */
+struct campaign_score_encounter_clear
+{
+	short encounter;
+	short kills;
+	long bonus;
+	long flawless_bonus;
 };
 
 struct campaign_score_best
@@ -207,6 +251,13 @@ static struct
 	long events_sent;
 	long last_send_tick;
 	long last_refresh_tick;
+	/* the encounters, the copy of their tallies at the last checkpoint, the
+	units killed this tick, and the encounters' indices (by absolute index) */
+	struct campaign_score_encounter_tracking encounters;
+	struct campaign_score_encounter_tallies encounters_checkpoint;
+	long died_units[CAMPAIGN_SCORE_MAX_DIED_PER_TICK];
+	short died_count;
+	long encounter_indices[CAMPAIGN_SCORE_MAX_ENCOUNTERS];
 	/* the last level's summary */
 	boolean summary_valid;
 	boolean summary_new_best;
@@ -458,6 +509,86 @@ static long campaign_score_player_death(
 	return campaign_score_player_deduct(player, campaign_score_bonuses.death);
 }
 
+/* an encounter's bonus for its kills' points (the table's): before the
+multiplier */
+static long campaign_score_encounter_bonus(
+	long kill_points)
+{
+	return MAX(campaign_score_bonuses.encounter_minimum, kill_points * campaign_score_bonuses.encounter_percent / 100);
+}
+
+/* a tick's look at the encounters: the living enemies' units now (units, and
+each one's encounter, by absolute index), whether a unit died
+(unit_died: killed, its body there dead or gone with its killing blow), whether an
+encounter is still to respawn some (respawn_pending), and the players' deaths
+so far. An encounter is cleared when it had living enemies the tick before,
+has none now, every one of those died (none erased, none moved to another
+encounter: migrated), none is still to respawn, and it was not cleared
+before (since the level began, or as the checkpoint reverted to had it).
+The cleared ones written to cleared (at most maximum); their count */
+static long campaign_score_encounters_step(
+	struct campaign_score_encounter_tracking *tracking,
+	long const *units,
+	short const *encounters,
+	long count,
+	boolean (*unit_died)(long unit_index),
+	boolean (*respawn_pending)(short encounter),
+	long team_deaths,
+	struct campaign_score_encounter_clear *cleared,
+	long maximum)
+{
+	static short living[CAMPAIGN_SCORE_MAX_ENCOUNTERS];
+	struct campaign_score_encounter_tallies *tallies = &tracking->tallies;
+	long cleared_count = 0;
+	long index;
+	short encounter;
+
+	csmemset(living, 0, sizeof(living));
+	count = MIN(count, CAMPAIGN_SCORE_MAX_TRACKED_UNITS);
+	for (index = 0; index < count; index++)
+	{
+		if (VALID_INDEX(encounters[index], CAMPAIGN_SCORE_MAX_ENCOUNTERS))
+			living[encounters[index]]++;
+	}
+	for (encounter = 0; !tracking->rescan && encounter < CAMPAIGN_SCORE_MAX_ENCOUNTERS; encounter++)
+	{
+		boolean all_died = TRUE;
+		boolean any_died = FALSE;
+		struct campaign_score_encounter_clear *clear;
+
+		/* (a fight begun: the deaths it is flawless without) */
+		if (tracking->living[encounter] == 0 && living[encounter] > 0 && !tallies->awarded[encounter])
+			tallies->deaths_at_start[encounter] = team_deaths;
+		if (tracking->living[encounter] == 0 || living[encounter] > 0 || tallies->awarded[encounter])
+			continue;
+		for (index = 0; index < tracking->tracked_count; index++)
+		{
+			if (tracking->tracked_encounters[index] != encounter)
+				continue;
+			if (unit_died(tracking->tracked_units[index]))
+				any_died = TRUE;
+			else
+				all_died = FALSE;
+		}
+		if (!all_died || !any_died || (respawn_pending && respawn_pending(encounter)) || cleared_count >= maximum)
+			continue;
+		tallies->awarded[encounter] = TRUE;
+		clear = &cleared[cleared_count++];
+		clear->encounter = encounter;
+		clear->kills = tallies->kills[encounter];
+		clear->bonus = campaign_score_encounter_bonus(tallies->kill_points[encounter]);
+		clear->flawless_bonus = team_deaths == tallies->deaths_at_start[encounter] ?
+			clear->bonus * campaign_score_bonuses.flawless_percent / 100 : 0;
+	}
+	tracking->rescan = FALSE;
+	csmemcpy(tracking->living, living, sizeof(living));
+	csmemcpy(tracking->tracked_units, units, count * sizeof(*units));
+	csmemcpy(tracking->tracked_encounters, encounters, count * sizeof(*encounters));
+	tracking->tracked_count = count;
+
+	return cleared_count;
+}
+
 /* ---------- private code: the game's side */
 
 static void campaign_score_team_total(
@@ -591,70 +722,103 @@ static boolean campaign_score_bests_path(
 	return length > 0 && (size_t)length < size;
 }
 
-/* the level's team score against the best kept for it, and the best kept
-(TRUE: a new best, written) */
-static boolean campaign_score_personal_best(
+/* the bests as the file has them, read as each map begins */
+static struct
+{
+	struct campaign_score_best bests[CAMPAIGN_SCORE_MAXIMUM_BESTS];
+	long count;
+	/* campaign_score_personal_best's last answer, for this many players */
+	short cached_players;
+	long cached_index;
+} campaign_score_bests;
+
+static void campaign_score_bests_read(
+	void)
+{
+	char path[1100];
+	char line[256];
+	FILE *file;
+
+	campaign_score_bests.count = 0;
+	campaign_score_bests.cached_players = NONE;
+	if (!campaign_score_bests_path(path, sizeof(path)) || !(file = fopen(path, "r")))
+		return;
+	while (campaign_score_bests.count < CAMPAIGN_SCORE_MAXIMUM_BESTS && fgets(line, sizeof(line), file))
+	{
+		struct campaign_score_best *best = &campaign_score_bests.bests[campaign_score_bests.count];
+		int read_difficulty;
+		int read_players;
+		long read_score;
+
+		if (line[0] == '#' || sscanf(line, "%63s %d %d %ld", best->level, &read_difficulty, &read_players,
+			&read_score) != 4)
+		{
+			continue;
+		}
+		best->level[CAMPAIGN_SCORE_LEVEL_NAME_SIZE - 1] = 0;
+		best->difficulty = (short)read_difficulty;
+		best->players = (short)read_players;
+		best->score = read_score;
+		campaign_score_bests.count++;
+	}
+	fclose(file);
+}
+
+/* the best kept for a level, difficulty and player count: its index, NONE */
+static long campaign_score_bests_find(
+	char const *level,
+	short difficulty,
+	short players)
+{
+	long index;
+
+	for (index = 0; index < campaign_score_bests.count; index++)
+	{
+		struct campaign_score_best const *best = &campaign_score_bests.bests[index];
+
+		if (best->difficulty == difficulty && best->players == players && !strcmp(best->level, level))
+			return index;
+	}
+	return NONE;
+}
+
+static char const *campaign_score_level_name(
+	void)
+{
+	return global_scenario_index != NONE ? tag_get_name(global_scenario_index) : "";
+}
+
+/* the level's team score against the best kept for it (TRUE: a new best,
+kept and written) */
+static boolean campaign_score_record_best(
 	char const *level,
 	short difficulty,
 	short players,
 	long score)
 {
-	static struct campaign_score_best bests[CAMPAIGN_SCORE_MAXIMUM_BESTS];
 	char path[1100];
 	char temporary[1110];
-	char line[256];
 	FILE *file;
-	long count = 0;
 	long index;
-	long found = NONE;
+	long found;
 
 	if (!level || !*level || score <= 0 || !campaign_score_bests_path(path, sizeof(path)))
 		return FALSE;
-	file = fopen(path, "r");
-	if (file)
-	{
-		while (count < CAMPAIGN_SCORE_MAXIMUM_BESTS && fgets(line, sizeof(line), file))
-		{
-			struct campaign_score_best *best = &bests[count];
-			int read_difficulty;
-			int read_players;
-			long read_score;
-
-			if (line[0] == '#' || sscanf(line, "%63s %d %d %ld", best->level, &read_difficulty, &read_players,
-				&read_score) != 4)
-			{
-				continue;
-			}
-			best->level[CAMPAIGN_SCORE_LEVEL_NAME_SIZE - 1] = 0;
-			best->difficulty = (short)read_difficulty;
-			best->players = (short)read_players;
-			best->score = read_score;
-			count++;
-		}
-		fclose(file);
-	}
-	for (index = 0; index < count; index++)
-	{
-		if (!strcmp(bests[index].level, level) && bests[index].difficulty == difficulty &&
-			bests[index].players == players)
-		{
-			found = index;
-			break;
-		}
-	}
-	if (found != NONE && bests[found].score >= score)
+	found = campaign_score_bests_find(level, difficulty, players);
+	if (found != NONE && campaign_score_bests.bests[found].score >= score)
 		return FALSE;
 	if (found == NONE)
 	{
-		if (count >= CAMPAIGN_SCORE_MAXIMUM_BESTS)
+		if (campaign_score_bests.count >= CAMPAIGN_SCORE_MAXIMUM_BESTS)
 			return FALSE;
-		found = count++;
-		csstrncpy(bests[found].level, level, CAMPAIGN_SCORE_LEVEL_NAME_SIZE - 1);
-		bests[found].level[CAMPAIGN_SCORE_LEVEL_NAME_SIZE - 1] = 0;
-		bests[found].difficulty = difficulty;
-		bests[found].players = players;
+		found = campaign_score_bests.count++;
+		csstrncpy(campaign_score_bests.bests[found].level, level, CAMPAIGN_SCORE_LEVEL_NAME_SIZE - 1);
+		campaign_score_bests.bests[found].level[CAMPAIGN_SCORE_LEVEL_NAME_SIZE - 1] = 0;
+		campaign_score_bests.bests[found].difficulty = difficulty;
+		campaign_score_bests.bests[found].players = players;
 	}
-	bests[found].score = score;
+	campaign_score_bests.bests[found].score = score;
+	campaign_score_bests.cached_players = NONE;
 
 	snprintf(temporary, sizeof(temporary), "%s.new", path);
 	file = fopen(temporary, "w");
@@ -662,9 +826,12 @@ static boolean campaign_score_personal_best(
 		return TRUE;
 	fprintf(file, "# campaign scoring's personal bests: level, difficulty (0 easy to 3 legendary), players, "
 		"team score\n");
-	for (index = 0; index < count; index++)
-		fprintf(file, "%s %d %d %ld\n", bests[index].level, bests[index].difficulty, bests[index].players,
-			bests[index].score);
+	for (index = 0; index < campaign_score_bests.count; index++)
+	{
+		struct campaign_score_best const *best = &campaign_score_bests.bests[index];
+
+		fprintf(file, "%s %d %d %ld\n", best->level, best->difficulty, best->players, best->score);
+	}
 	if (fclose(file) == 0)
 		rename(temporary, path);
 	else
@@ -678,11 +845,11 @@ static void campaign_score_summarize(
 	void)
 {
 	short players = campaign_score_player_total();
-	char const *level = global_scenario_index != NONE ? tag_get_name(global_scenario_index) : "";
+	char const *level = campaign_score_level_name();
 
 	campaign_score.summary = campaign_score.state;
 	campaign_score.summary_valid = TRUE;
-	campaign_score.summary_new_best = campaign_score_personal_best(level, game_difficulty_level_get(),
+	campaign_score.summary_new_best = campaign_score_record_best(level, game_difficulty_level_get(),
 		players > 0 ? players : 1, campaign_score.state.team_score);
 	error(_error_log, "campaign score: %s ended at %ld (%d players)%s", level, campaign_score.state.team_score,
 		players, campaign_score.summary_new_best ? ", a personal best" : "");
@@ -712,6 +879,168 @@ static void campaign_score_send(
 	csmemset(campaign_score.dirty, 0, sizeof(campaign_score.dirty));
 }
 
+/* ---------- private code: the encounters */
+
+/* the encounter (its absolute index) of a unit's actor, or its swarm's;
+NONE for none */
+static short campaign_score_unit_encounter(
+	struct unit_datum const *unit)
+{
+	long actor_index = unit->unit.actor_index != NONE ? unit->unit.actor_index : unit->unit.swarm_actor_index;
+	struct actor_datum const *actor = actor_index != NONE ? actor_try_and_get(actor_index) : NULL;
+	short encounter;
+
+	if (!actor || actor->meta.encounter_index == NONE)
+		return NONE;
+	encounter = (short)DATUM_INDEX_TO_ABSOLUTE_INDEX(actor->meta.encounter_index);
+	return VALID_INDEX(encounter, CAMPAIGN_SCORE_MAX_ENCOUNTERS) ? encounter : NONE;
+}
+
+/* (campaign_score_encounters_step's) a unit killed (its killing blow seen
+this tick), or its body there dead */
+static boolean campaign_score_unit_died(
+	long unit_index)
+{
+	struct unit_datum *unit;
+	short index;
+
+	for (index = 0; index < campaign_score.died_count; index++)
+	{
+		if (campaign_score.died_units[index] == unit_index)
+			return TRUE;
+	}
+	unit = unit_try_and_get(unit_index);
+	return unit && TEST_FLAG(unit->object.damage_flags, _object_dead_bit);
+}
+
+/* (... and) an encounter that respawns, with some of its squads still to */
+static boolean campaign_score_respawn_pending(
+	short encounter_absolute_index)
+{
+	struct encounter_datum *encounter =
+		encounter_try_and_get(campaign_score.encounter_indices[encounter_absolute_index]);
+	short squad;
+
+	if (!encounter || !encounter->respawn_enabled)
+		return FALSE;
+	for (squad = 0; squad < encounter->squad_count; squad++)
+	{
+		short squad_index = (short)(encounter->squad_base + squad);
+
+		if (VALID_INDEX(squad_index, MAXIMUM_SQUADS_PER_MAP) && squad_array[squad_index].respawn_actors_left > 0)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+static void campaign_score_track_unit(
+	long unit_index,
+	short encounter,
+	long *units,
+	short *encounters,
+	long *count)
+{
+	struct unit_datum *unit = unit_try_and_get(unit_index);
+
+	if (!unit || TEST_FLAG(unit->object.damage_flags, _object_dead_bit) || *count >= CAMPAIGN_SCORE_MAX_TRACKED_UNITS)
+		return;
+	units[*count] = unit_index;
+	encounters[*count] = encounter;
+	(*count)++;
+}
+
+/* a tick's look at the encounters: each enemy actor's living units (a
+swarm's each), by its encounter now; and the bonus of each one cleared, every
+player's */
+static void campaign_score_encounters_update(
+	void)
+{
+	static long units[CAMPAIGN_SCORE_MAX_TRACKED_UNITS];
+	static short encounters[CAMPAIGN_SCORE_MAX_TRACKED_UNITS];
+	struct campaign_score_encounter_clear cleared[16];
+	struct data_iterator iterator;
+	struct actor_datum *actor;
+	long count = 0;
+	long team_deaths = 0;
+	long cleared_count;
+	long index;
+	short slot;
+
+	data_iterator_new(&iterator, actor_data);
+	while ((actor = (struct actor_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		short encounter;
+
+		if (actor->meta.encounter_index == NONE || !game_team_is_enemy(_game_team_player, actor->meta.team_index))
+			continue;
+		encounter = (short)DATUM_INDEX_TO_ABSOLUTE_INDEX(actor->meta.encounter_index);
+		if (!VALID_INDEX(encounter, CAMPAIGN_SCORE_MAX_ENCOUNTERS))
+			continue;
+		campaign_score.encounter_indices[encounter] = actor->meta.encounter_index;
+		if (actor->meta.swarm)
+		{
+			long unit_index = actor->meta.swarm_unit_index;
+			short guard = 0;
+
+			while (unit_index != NONE && guard++ < 256)
+			{
+				struct unit_datum *unit = unit_try_and_get(unit_index);
+
+				campaign_score_track_unit(unit_index, encounter, units, encounters, &count);
+				unit_index = unit ? unit->unit.swarm_next_unit_index : NONE;
+			}
+		}
+		else if (actor->meta.unit_index != NONE)
+		{
+			campaign_score_track_unit(actor->meta.unit_index, encounter, units, encounters, &count);
+		}
+	}
+	for (slot = 0; slot < campaign_score.state.player_count; slot++)
+		team_deaths += campaign_score.state.players[slot].deaths;
+	cleared_count = campaign_score_encounters_step(&campaign_score.encounters, units, encounters, count,
+		campaign_score_unit_died, campaign_score_respawn_pending, team_deaths, cleared, NUMBEROF(cleared));
+	campaign_score.died_count = 0;
+
+	for (index = 0; index < cleared_count; index++)
+	{
+		struct campaign_score_encounter_clear const *clear = &cleared[index];
+		long bonus = campaign_score_scaled(clear->bonus, campaign_score.state.difficulty_multiplier);
+		long flawless = campaign_score_scaled(clear->flawless_bonus, campaign_score.state.difficulty_multiplier);
+		struct player_datum *player;
+
+		error(_error_log, "campaign score: encounter %d cleared, %d kills of %ld points: +%ld%s", clear->encounter,
+			clear->kills, campaign_score.encounters.tallies.kill_points[clear->encounter], bonus,
+			flawless ? ", flawless" : "");
+		data_iterator_new(&iterator, player_data);
+		while ((player = data_iterator_next(&iterator)) != NULL)
+		{
+			struct campaign_score_event event;
+
+			(void)player;
+			slot = campaign_score_slot(iterator.datum_index);
+			if (slot == NONE)
+				continue;
+			event.player = slot;
+			event.kind = _campaign_score_event_encounter_cleared;
+			event.points = bonus;
+			event.tick = game_time_get();
+			event.victim_class = clear->kills;
+			campaign_score_add_events(&event, 1);
+			campaign_score.state.players[slot].score += bonus;
+			if (flawless)
+			{
+				event.kind = _campaign_score_event_flawless;
+				event.points = flawless;
+				campaign_score_add_events(&event, 1);
+				campaign_score.state.players[slot].score += flawless;
+			}
+			campaign_score.dirty[slot] = TRUE;
+		}
+	}
+	if (cleared_count)
+		campaign_score_team_total();
+}
+
 /* ---------- public code */
 
 boolean campaign_score_enabled(
@@ -731,6 +1060,30 @@ char const *campaign_score_class_name(
 {
 	return VALID_INDEX(victim_class, NUMBER_OF_CAMPAIGN_SCORE_CLASSES) ? campaign_score_points[victim_class].name :
 		campaign_score_points[_campaign_score_class_other].name;
+}
+
+boolean campaign_score_personal_best(
+	long *score)
+{
+	short players;
+
+	if (score)
+		*score = 0;
+	if (!global_scenario || global_scenario->type != _scenario_type_solo || !player_data)
+		return FALSE;
+	players = campaign_score_player_total();
+	players = players > 0 ? players : 1;
+	if (players != campaign_score_bests.cached_players)
+	{
+		campaign_score_bests.cached_players = players;
+		campaign_score_bests.cached_index = campaign_score_bests_find(campaign_score_level_name(),
+			game_difficulty_level_get(), players);
+	}
+	if (campaign_score_bests.cached_index == NONE)
+		return FALSE;
+	if (score)
+		*score = campaign_score_bests.bests[campaign_score_bests.cached_index].score;
+	return TRUE;
 }
 
 long campaign_score_events_since(
@@ -785,6 +1138,10 @@ void campaign_score_new_map(
 	csmemset(campaign_score.betrayals_since_checkpoint, 0, sizeof(campaign_score.betrayals_since_checkpoint));
 	csmemset(campaign_score.betrayal_points_since_checkpoint, 0,
 		sizeof(campaign_score.betrayal_points_since_checkpoint));
+	csmemset(&campaign_score.encounters, 0, sizeof(campaign_score.encounters));
+	csmemset(&campaign_score.encounters_checkpoint, 0, sizeof(campaign_score.encounters_checkpoint));
+	campaign_score.died_count = 0;
+	campaign_score_bests_read();
 	campaign_score.heard = FALSE;
 	campaign_score.level_over = FALSE;
 	campaign_score.keeping = campaign_score_keeps();
@@ -812,6 +1169,7 @@ void campaign_score_tick(
 	data_iterator_new(&iterator, player_data);
 	while (data_iterator_next(&iterator))
 		campaign_score_slot(iterator.datum_index);
+	campaign_score_encounters_update();
 	now = game_time_get();
 	if (now - campaign_score.last_send_tick >= CAMPAIGN_SCORE_SEND_TICKS || now < campaign_score.last_send_tick)
 		campaign_score_send(FALSE);
@@ -833,6 +1191,9 @@ void campaign_score_unit_killed(
 	unit = unit_try_and_get(unit_index);
 	if (!unit)
 		return;
+	/* (a death the encounters count, whoever's: its body may go at once) */
+	if (campaign_score.died_count < CAMPAIGN_SCORE_MAX_DIED_PER_TICK)
+		campaign_score.died_units[campaign_score.died_count++] = unit_index;
 	victim_slot = campaign_score_slot(unit->unit.player_index);
 	killer_slot = campaign_score_slot(damage->owner_player_index);
 	victim_class = campaign_score_unit_class(unit);
@@ -869,7 +1230,14 @@ void campaign_score_unit_killed(
 	{
 		struct campaign_score_event events[CAMPAIGN_SCORE_EVENTS_PER_KILL];
 		long event_count = 0;
+		short encounter = campaign_score_unit_encounter(unit);
 
+		/* (its encounter's kills, for the encounter's bonus) */
+		if (encounter != NONE && VALID_INDEX(victim_class, NUMBER_OF_CAMPAIGN_SCORE_CLASSES))
+		{
+			campaign_score.encounters.tallies.kill_points[encounter] += campaign_score_points[victim_class].points;
+			campaign_score.encounters.tallies.kills[encounter]++;
+		}
 		campaign_score_player_kill(&campaign_score.state.players[killer_slot],
 			&campaign_score.timings[killer_slot], killer_slot, game_time_get(), victim_class, damage_category, head,
 			campaign_score.state.difficulty_multiplier, events, &event_count);
@@ -928,6 +1296,7 @@ void campaign_score_checkpoint_saved(
 			campaign_score.state.players[0].kills, campaign_score.state.players[0].headshots);
 	}
 	campaign_score.checkpoint = campaign_score.state;
+	campaign_score.encounters_checkpoint = campaign_score.encounters.tallies;
 	csmemset(campaign_score.deaths_since_checkpoint, 0, sizeof(campaign_score.deaths_since_checkpoint));
 	csmemset(campaign_score.betrayals_since_checkpoint, 0, sizeof(campaign_score.betrayals_since_checkpoint));
 	csmemset(campaign_score.betrayal_points_since_checkpoint, 0,
@@ -942,6 +1311,11 @@ void campaign_score_reverted(
 	if (!campaign_score.keeping || campaign_score.level_over)
 		return;
 	campaign_score.state = campaign_score.checkpoint;
+	/* (the encounters as the checkpoint had them: those cleared since may be
+	cleared again; the next tick only looks at the units, another tick's) */
+	campaign_score.encounters.tallies = campaign_score.encounters_checkpoint;
+	campaign_score.encounters.rescan = TRUE;
+	campaign_score.died_count = 0;
 	/* (the deaths and betrayals since stay counted, and every player's
 	streak ends: what was played since is played again) */
 	for (slot = 0; slot < CAMPAIGN_SCORE_MAX_PLAYERS; slot++)
@@ -994,29 +1368,6 @@ void campaign_score_level_won(
 	campaign_score_send(TRUE);
 	/* (the level's over: nothing more counts until the next) */
 	campaign_score.level_over = TRUE;
-}
-
-void campaign_score_wave_cleared(
-	long player_index)
-{
-	struct campaign_score_event event;
-	short slot;
-
-	if (!campaign_score.keeping || campaign_score.level_over)
-		return;
-	slot = campaign_score_slot(player_index);
-	if (slot == NONE)
-		return;
-	event.player = slot;
-	event.kind = _campaign_score_event_wave_clear;
-	event.points = campaign_score_scaled(campaign_score_bonuses.wave_clear,
-		campaign_score.state.difficulty_multiplier);
-	event.tick = game_time_get();
-	event.victim_class = _campaign_score_class_wave;
-	campaign_score.state.players[slot].score += event.points;
-	campaign_score_add_events(&event, 1);
-	campaign_score.dirty[slot] = TRUE;
-	campaign_score_team_total();
 }
 
 /* ---------- public code: a client's word from its host */

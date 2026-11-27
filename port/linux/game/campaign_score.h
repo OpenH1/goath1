@@ -40,7 +40,7 @@ enum campaign_score_victim_class
 	_campaign_score_class_player,			/* betrayals of players */
 	_campaign_score_class_vehicle_light,	/* ghost, banshee, a crewed turret */
 	_campaign_score_class_vehicle_heavy,	/* wraith, a crewed warthog, scorpion */
-	_campaign_score_class_wave,			/* a wave cleared (bigger battles) */
+	_campaign_score_class_wave,			/* (unused: Halo's fights are encounters) */
 	NUMBER_OF_CAMPAIGN_SCORE_CLASSES
 };
 
@@ -53,12 +53,17 @@ enum campaign_score_event_kind
 	_campaign_score_event_multi_kill,	/* kills close together: points is the bonus, victim_class the count */
 	_campaign_score_event_streak,		/* kills without dying: victim_class the streak */
 	_campaign_score_event_vehicle,		/* a crewed vehicle destroyed */
-	_campaign_score_event_wave_clear,	/* bigger battles' wave cleared */
+	_campaign_score_event_wave_clear,	/* (unused: _campaign_score_event_encounter_cleared) */
 	_campaign_score_event_death,		/* the player died (points <= 0) */
 	_campaign_score_event_betrayal,		/* an ally or another player killed (points <= 0) */
 	_campaign_score_event_level_bonus,	/* the level finished */
 	_campaign_score_event_grenade,		/* a kill's bonus: a grenade */
 	_campaign_score_event_splatter,		/* a kill's bonus: run over */
+	/* an enemy encounter (a fight the level's designer placed) cleared: every
+	player's, victim_class the encounter's kills; and its flawless bonus, no
+	player having died during it */
+	_campaign_score_event_encounter_cleared,
+	_campaign_score_event_flawless,
 	NUMBER_OF_CAMPAIGN_SCORE_EVENT_KINDS
 };
 
@@ -102,6 +107,10 @@ long campaign_score_events_since(long *cursor, struct campaign_score_event *out,
 /* the level's summary, and a personal best (per level, difficulty, solo or
 co-op player count): FALSE until a level has ended with a score */
 boolean campaign_score_level_summary(struct campaign_score_state *out, boolean *new_personal_best);
+/* the personal best kept for the level played, its difficulty and the game's
+player count (this machine's file, a client's too): FALSE for none. Cheap
+each frame (the file is read as each map begins) */
+boolean campaign_score_personal_best(long *score);
 
 /* the name of a victim class for the text ("Elite Major") */
 char const *campaign_score_class_name(long victim_class);
@@ -123,9 +132,6 @@ void campaign_score_checkpoint_saved(void);
 void campaign_score_reverted(void);
 /* main.c: the level won, before the next level */
 void campaign_score_level_won(void);
-/* bigger battles: a wave cleared by a player. A hook: the game has no clean
-signal of a wave yet, so nothing calls it */
-void campaign_score_wave_cleared(long player_index);
 
 /* network_campaign_score.c: a client's word from its host (the state's
 header, a player's record, an event, the level's end) */
