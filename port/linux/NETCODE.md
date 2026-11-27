@@ -2072,8 +2072,8 @@ game (its numbers pending: `port/linux/net_changes/vehicle-hijack.txt`):
 Campaign scoring (`port/linux/game/campaign_score.c`, `campaign.scoring`, on
 by default) only watches the game: the host keeps the score and nothing of
 the simulation changes. A co-op host sends it to its OpenH1 clients
-(`_distributed_message_campaign_score`, reliably, `network_campaign_score.c`;
-its numbers pending: `port/linux/net_changes/campaign-score.txt`): at most
+(distributed message 160, `_distributed_message_campaign_score`, reliably,
+`network_campaign_score.c`; from protocol version 38): at most
 each 8 ticks, a header (a format byte, the option and the level's end as
 flags, the player count, the difficulty's multiplier in hundredths, the
 team's score) with the tallies of the players that changed (56 bytes each)
@@ -2291,6 +2291,9 @@ A party's leader joins a game first and its members follow it in
   copy of the record leaves the bit clear, and a Legacy game's clients, who
   hear nothing of the host's, may show it. A machine of protocol 36 would
   show it anyway, so the version is raised.
+- From protocol version 38 a co-op host sends its campaign score
+  (distributed message 160: "Campaign scores" above). A machine of protocol
+  37 drops it as a kind it does not know and shows no score.
 - The listing's stamp says the host holds room (its fifth byte, 1). A
   Legacy host, and an older OpenH1 one (which drops 128 as a kind it does not
   know), hold nothing: the browser says there is no room guarantee and the

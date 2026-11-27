@@ -794,7 +794,7 @@ int main(int argc, char **argv)
 			rights += block->kind == MENU_SCREEN_BUTTON && block->side && !strcmp(block->side, "right");
 		}
 		/* (the choices: BOTS, SKILL, TEAMS, a GOAT H1 host's HIJACK and
-		SPARTAN LINK, a co-op host's BATTLE and SCORING, and FRIEND; the panels' buttons: a co-op host's fix too,
+		SPARTAN LINK, a co-op host's BATTLE and SCORE, and FRIEND; the panels' buttons: a co-op host's fix too,
 		coop.fix; the bar's right: a co-op host's COPY LINK too) */
 		CHECK(choices == 8 && panel_buttons == 9, "%d choices, %d panel buttons", choices, panel_buttons);
 		CHECK(rights == 7, "%d buttons at the bar's right", rights);

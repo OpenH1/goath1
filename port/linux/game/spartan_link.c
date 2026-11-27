@@ -2952,14 +2952,15 @@ void spartan_link_draw(
 				0.8f * line_scale, &color);
 		}
 	}
-	if (!spartan_link_shown(local_player_index))
+	/* (campaign scoring: with the link hidden, the teammates' scores in its
+	place, none while a line shows there) */
+	if (!spartan_link_shown(local_player_index) &&
+		(!window->line_milliseconds || system_milliseconds() - window->line_at >= window->line_milliseconds))
 	{
-		/* (campaign scoring: the teammates' scores in its place, none
-		while a line shows there) */
-		if (!window->line_milliseconds || system_milliseconds() - window->line_at >= window->line_milliseconds)
-			spartan_link_draw_scores_line(local_player_index);
-		return;
+		spartan_link_draw_scores_line(local_player_index);
 	}
+	if (!spartan_link_shown(local_player_index))
+		return;
 	white = spartan_link_white();
 	if (!white)
 		return;

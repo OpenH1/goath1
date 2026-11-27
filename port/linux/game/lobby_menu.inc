@@ -31,7 +31,7 @@ for a matchmaking game's, its playlist's), a GOAT H1 game's host's
 HIJACK (game.vehicle_hijack, as Host Controls' row has it) and, in a team
 game, SPARTAN LINK (game.spartan_link: the teammates' feeds), in co-op the
 host's BATTLE (campaign.bigger_battles: BIGGER BATTLES, on top of EXTRA
-ENEMIES; coop_enemies.c) and SCORING (campaign.scoring: campaign_score.c),
+ENEMIES; coop_enemies.c) and SCORE (campaign.scoring: campaign_score.c),
 how the game is, and the host's
 GAME SETTINGS (Server Setup, in the lobby's place), HOST CONTROLS and START
 GAME, or a player's WAITING FOR THE HOST.
@@ -1932,7 +1932,7 @@ static boolean menu_host_bigger_battles_step(short step)
 	return TRUE;
 }
 
-/* the host's SCORING (the lobby's SCORING, ON or OFF): config.toml's
+/* the host's SCORING (the lobby's SCORE, ON or OFF): config.toml's
 campaign.scoring, which the host reads as each level begins and sends its
 score from (campaign_score.c); solo and split screen read it too */
 static boolean menu_host_scoring_toggle(void)
