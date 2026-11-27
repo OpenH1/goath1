@@ -5629,6 +5629,8 @@ its light reaches, its tint the colour it averages to; the falloff the
 game's distance attenuation (a volume about the light, the cube of its
 radius) along its axes from its middle, linear. */
 
+#define GEL_MAX(a, b) ((a) > (b) ? (a) : (b))
+
 struct gel_faces
 {
 	struct xgpu_texture_description description;
@@ -5779,7 +5781,7 @@ static float gel_attenuation_at(const DWORD *texels, const struct xgpu_texture_d
 				index[2] >= size[2])
 				continue;
 			texel = texels[(index[2] * size[1] + index[1]) * size[0] + index[0]];
-			value += weight * MAX(gel_channel(texel, 16), MAX(gel_channel(texel, 8), gel_channel(texel, 0)));
+			value += weight * GEL_MAX(gel_channel(texel, 16), GEL_MAX(gel_channel(texel, 8), gel_channel(texel, 0)));
 		}
 		sum += value;
 	}
@@ -5833,7 +5835,7 @@ int halo_dynamic_lights_gel(const void *gel_texture, const void *attenuation_tex
 
 				gel_at(&gel, side ? -1.0f : 1.0f, ((float)x + 0.5f) / grid * 2.0f - 1.0f, ((float)y + 0.5f) / grid * 2.0f - 1.0f,
 					rgb);
-				energy[side] += MAX(rgb[0], MAX(rgb[1], rgb[2]));
+				energy[side] += GEL_MAX(rgb[0], GEL_MAX(rgb[1], rgb[2]));
 			}
 	sign = energy[1] > energy[0] ? -1.0f : 1.0f;
 	/* (the square its light reaches, out to 56 degrees; a texel's margin) */
@@ -5844,8 +5846,8 @@ int halo_dynamic_lights_gel(const void *gel_texture, const void *attenuation_tex
 			float rgb[3];
 
 			gel_at(&gel, sign, a, b, rgb);
-			if (MAX(rgb[0], MAX(rgb[1], rgb[2])) > 2.0f / 255.0f)
-				width = MAX(width, MAX(fabsf(a), fabsf(b)));
+			if (GEL_MAX(rgb[0], GEL_MAX(rgb[1], rgb[2])) > 2.0f / 255.0f)
+				width = GEL_MAX(width, GEL_MAX(fabsf(a), fabsf(b)));
 		}
 	width = width + 1.5f * 3.0f / grid;
 	width = width < 0.05f ? 0.05f : width > 1.5f ? 1.5f : width;
@@ -5857,7 +5859,7 @@ int halo_dynamic_lights_gel(const void *gel_texture, const void *attenuation_tex
 			float rgb[3], brightest;
 
 			gel_at(&gel, sign, a, b, rgb);
-			brightest = MAX(rgb[0], MAX(rgb[1], rgb[2]));
+			brightest = GEL_MAX(rgb[0], GEL_MAX(rgb[1], rgb[2]));
 			dynamic_lights.cookie[y * XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE + x] =
 				(unsigned char)(brightest * 255.0f + 0.5f);
 			for (index = 0; index < 3; index++)
