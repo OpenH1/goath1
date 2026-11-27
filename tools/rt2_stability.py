@@ -35,8 +35,19 @@ ROOT = Path(__file__).resolve().parent.parent
 TILE = 32
 LAST = 20
 MASKED_KINDS = {"hud", "text", "menu_widget", "cinematic_letterbox", "debug"}
-OWNER_GAME = "^/home/paulhontz/Applications/OpenH1/bin/openh1"
-HOSTS = {"omarchy": "paulhontz@omarchy.fabric", "5900x": "paulhontz@5900x.fabric"}
+# (the machine owner's own game, which goat-rig never runs beside: the remote shell's $HOME)
+OWNER_GAME = "^$HOME/Applications/OpenH1/bin/openh1"
+
+
+def ssh_target(host):
+    """goat-rig's: <name>.fabric, unless ~/.config/goat-rig/hosts gives a "<name> <user@host>" line"""
+    hosts = Path.home() / ".config" / "goat-rig" / "hosts"
+    if hosts.is_file():
+        for line in hosts.read_text().splitlines():
+            parts = line.split()
+            if len(parts) == 2 and parts[0] == host:
+                return parts[1]
+    return host if "@" in host or "." in host else f"{host}.fabric"
 
 
 def srgb_linear(byte):
@@ -115,10 +126,10 @@ class Service:
     def __init__(self, recording, replay, host):
         command = [replay, recording, "--serve"]
         if host:
-            target = HOSTS.get(host, host)
+            target = ssh_target(host)
             remote = " ".join(shlex.quote(part) for part in command)
             if "5900x" in target:
-                remote = (f"if pgrep -fa {shlex.quote(OWNER_GAME)} >/dev/null; then echo 'the owner is playing' >&2; "
+                remote = (f"if pgrep -fa \"{OWNER_GAME}\" >/dev/null; then echo 'the owner is playing' >&2; "
                           f"exit 3; fi; {remote}")
             # (goat-rig's GPU lock, shared: a run for pictures, not timings)
             remote = f"mkdir -p ~/goat-rig/locks; flock -s ~/goat-rig/locks/gpu.lock sh -c {shlex.quote(remote)}"
