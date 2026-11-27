@@ -160,6 +160,13 @@ def luminance(img):
 
 # ---------------------------------------------------------------- scene
 
+# Shared by every Scene of a process (a render builds several: its groups, white, flat): images, the
+# geometry as read, and mip chains.
+_IMAGES = {}
+_GEOMETRY = {}
+_MIPS = {}
+_BITMAPS = {}
+
 class Scene:
     """One scene folder, loaded; `notes` collects every placeholder and every choice made from free text."""
 
@@ -209,14 +216,18 @@ class Scene:
         if p is None:
             return None
         key = str(p)
-        if key not in self._tex_cache:
-            self._tex_cache[key] = read_image(p)
-        return self._tex_cache[key]
+        if key not in _IMAGES:
+            _IMAGES[key] = read_image(p)
+        return _IMAGES[key]
 
     @staticmethod
     def bitmap(arr, wrap="repeat"):
-        return mi.load_dict({"type": "bitmap", "bitmap": mi.Bitmap(np.ascontiguousarray(arr, np.float32)),
-                             "raw": True, "filter_type": "bilinear", "wrap_mode": wrap})
+        # (one Mitsuba texture per array view: views of the shared images keep their address)
+        key = (arr.__array_interface__["data"][0], arr.shape, arr.strides, wrap)
+        if key not in _BITMAPS:
+            _BITMAPS[key] = (arr, mi.load_dict({"type": "bitmap", "bitmap": mi.Bitmap(np.ascontiguousarray(arr, np.float32)),
+                                                "raw": True, "filter_type": "bilinear", "wrap_mode": wrap}))
+        return _BITMAPS[key][1]
 
     # ---- materials
 
@@ -329,7 +340,10 @@ class Scene:
                 bsdf = {"type": "halo_bump", "bump": nm, "bsdf": bsdf, "bump_width": float(bump.shape[1]),
                         "bump_height": float(bump.shape[0]), "bump_scale_u": su, "bump_scale_v": sv,
                         "pixel_angle": self.pixel_angle()}
-                for k, lvl in enumerate(self.mips(bump[:, :, :3])):
+                mkey = m["bump_map"]
+                if mkey not in _MIPS:
+                    _MIPS[mkey] = self.mips(bump[:, :, :3])
+                for k, lvl in enumerate(_MIPS[mkey]):
                     bsdf["bump_mip%d" % k] = mi.load_dict({
                         "type": "bitmap", "bitmap": mi.Bitmap(lvl), "raw": True, "filter_type": "bilinear",
                         "wrap_mode": "repeat", "to_uv": mi.ScalarTransform4f().scale([su, sv, 1.0])})
@@ -498,6 +512,10 @@ class Scene:
         return False
 
     def load_geometry(self):
+        if getattr(self, "geometry", None) is None and str(self.folder) in _GEOMETRY:
+            self.geometry, self.bounds, self.n_tris, self.flipped = _GEOMETRY[str(self.folder)]
+            if self.flipped:
+                self.note_once("%d of %d triangles wound against their normals: rewound" % (self.flipped, self.n_tris))
         if getattr(self, "geometry", None) is None:
             self.geometry = {}
             for fpath in self.geometry_files():
@@ -523,6 +541,7 @@ class Scene:
             self.n_tris = sum(len(g[3]) for g in self.geometry.values())
             if getattr(self, "flipped", 0):
                 self.note_once("%d of %d triangles wound against their normals: rewound" % (self.flipped, self.n_tris))
+            _GEOMETRY[str(self.folder)] = (self.geometry, self.bounds, self.n_tris, getattr(self, "flipped", 0))
 
     def material(self, mid):
         if not hasattr(self, "_mat_cache"):
