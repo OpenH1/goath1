@@ -322,7 +322,7 @@ def compare(original, mood, path, placeholders):
     canvas.save(path)
 
 
-def render_flashlight_direct(folder, out=None, flashlight_scale=None, flashlight_emitter=None, spp_pass=8, target=0.002, max_spp=4096,
+def render_flashlight_direct(folder, out=None, flashlight_scale=None, flashlight_emitter=None, centers=False, spp_pass=8, target=0.002, max_spp=4096,
                              max_minutes=30.0, gpu_lock=os.path.expanduser("~/goat-rig/locks/gpu.lock"), log=print):
     """Only truth_parts/direct_flashlight.exr: the flashlight's one-bounce light, converged (for comparing
     the real-time flashlight before the whole truth)."""
@@ -349,8 +349,8 @@ def render_flashlight_direct(folder, out=None, flashlight_scale=None, flashlight
             wait_for_no_player(log)
             img = render_pass(scene, spp_pass, n, parts=True)["direct"].astype(np.float64)
             acc += img
-            acc_w += render_pass(white, spp_pass, n, parts=True)["direct"]
-            acc_f = acc_f + render_pass(flat, spp_pass, n, parts=True, max_depth=2)["direct"]
+            acc_w += render_pass(white, spp_pass, n, parts=True, centers=centers)["direct"]
+            acc_f = acc_f + render_pass(flat, spp_pass, n, parts=True, max_depth=2, centers=centers)["direct"]
             y = img @ display.LUMA.astype(np.float64)
             s1 += y
             s2 += y * y

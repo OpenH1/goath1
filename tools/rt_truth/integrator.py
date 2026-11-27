@@ -133,7 +133,7 @@ def trace(scene, sampler, ray, rr_depth=5, max_depth=1024):
     return state[-3], state[-2], state[-1]
 
 
-def render_pass(scene, spp, seed, parts=False, max_depth=1024):
+def render_pass(scene, spp, seed, parts=False, max_depth=1024, centers=False):
     """One pass of `spp` samples per pixel (uniform over the pixel: a box filter): the full light as
     an H x W x 3 array, or with parts=True a dict of emission, direct and indirect (which sum to it)."""
     import numpy as np
@@ -145,8 +145,10 @@ def render_pass(scene, spp, seed, parts=False, max_depth=1024):
     sampler.seed(dr.opaque(mi.UInt32, seed), n)
     idx = dr.arange(mi.UInt32, n)
     pix = idx // spp
-    x = mi.Float(pix % W) + sampler.next_1d()
-    y = mi.Float(pix // W) + sampler.next_1d()
+    # centers: each sample at its pixel's centre (as a rasterizer shades it) rather than over its area
+    jx, jy = sampler.next_1d(), sampler.next_1d()
+    x = mi.Float(pix % W) + (0.5 if centers else jx)
+    y = mi.Float(pix // W) + (0.5 if centers else jy)
     ray, w = sensor.sample_ray(0.0, 0.5, mi.Point2f(x / W, y / H), mi.Point2f(0.5, 0.5))
     Le, Ld, Li = trace(scene, sampler, ray, max_depth=max_depth)
     out = {}
