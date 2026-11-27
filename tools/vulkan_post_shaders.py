@@ -104,6 +104,8 @@ VERTEX_SOURCE = (
     "\tgl_Position = vec4(float((gl_VertexID & 1) << 2) - 1.0, float((gl_VertexID & 2) << 1) - 1.0, 0.0, 1.0);\n"
     "}\n"
 )
+# (a pixel with no edge written back as it is, never discarded: the pass draws
+# a whole target's view into a cleared spare, xgpu_vulkan_post.c)
 FXAA_SOURCE = (
     "uniform sampler2D color_texture;\n"
     "\n"
@@ -141,7 +143,10 @@ FXAA_SOURCE = (
     "\n"
     "\t\n"
     "\tif (range < max(EDGE_THRESHOLD_MINIMUM, highest * EDGE_THRESHOLD))\n"
-    "\t\tdiscard;\n"
+    "\t{\n"
+    "\t\tresult = textureLod(color_texture, position, 0.0);\n"
+    "\t\treturn;\n"
+    "\t}\n"
     "\tfloat up_left = luma_at(position + vec2(-metrics.x, -metrics.y));\n"
     "\tfloat up_right = luma_at(position + vec2(metrics.x, -metrics.y));\n"
     "\tfloat down_left = luma_at(position + vec2(-metrics.x, metrics.y));\n"

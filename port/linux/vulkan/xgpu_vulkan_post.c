@@ -17,8 +17,9 @@ the other, never copied. Over part of a target (a split screen's window),
 the target's pixels in the rectangle are copied first and the last pass
 draws them back into the target: drawn whole into another image, the view
 would cost more than the copy of the rectangle. FXAA and SMAA's blend write
-each pixel's own alpha (the game keeps values of its own in destination
-alpha), so the spare holds all of the target's pixels.
+every pixel, with its own alpha (the game keeps values of its own in
+destination alpha), so the spare holds all of the target's pixels: none
+discards one (FXAA's pixel with no edge writes its own texel back).
 
 Each pass is a pass of the core's (xgpu_vulkan.c) of its own: the barrier
 that ends one makes what it drew visible to the next one's samples, and

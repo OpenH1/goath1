@@ -32,3 +32,14 @@ def test_every_build_draws_smaa():
     values = device[device.index("anti_aliasing_values[] ="):]
     values = values[:values.index("};")]
     assert re.findall(r'\{ "smaa", (\w+), 0, 1.0f \}', values) == ["_anti_aliasing_smaa"]
+
+
+def test_spare_passes_write_every_pixel():
+    """FXAA, SMAA's blend and Panini draw a whole target's view into the spare, cleared as their pass begins
+    (port/linux/vulkan/xgpu_vulkan_post.c, port/macos/xgpu_metal_post.c): a pixel they discarded would stay
+    black. FXAA's pixel with no edge once was (only the edges were drawn, build 2548 to 2552)."""
+    sys.path.insert(0, str(ROOT / "tools"))
+    import vulkan_post_shaders as vulkan  # noqa: E402
+
+    for name in ("FXAA_SOURCE", "SMAA_BLEND_SOURCE", "PANINI_SOURCE"):
+        assert "discard" not in getattr(vulkan, name), name
