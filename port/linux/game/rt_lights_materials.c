@@ -58,11 +58,12 @@ Nothing is changed in the game: it is read only, on the game's thread.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
 
 /* (cache_files.c) */
 boolean tag_index_is_group(long tag_index, long group_tag);
 void platform_log(const char *format, ...);
+/* (the C library's, as world_sdf.c declares it) */
+int mkdir(const char *path, unsigned int mode);
 /* (object_lights.c) */
 extern struct data_array *light_data;
 /* (bitmaps.c: the palettized bump maps' palette, which the rasterizer gives
@@ -806,7 +807,7 @@ static char const *rtlm_texture(long bitmap_tag, short bitmap_index, int linear)
 	struct rtlm_texture *texture;
 	char name[200], file_path[1300];
 	char const *tag_name;
-	struct stat status;
+	FILE *existing;
 	int at;
 
 	if (bitmap_tag == NONE)
@@ -836,8 +837,9 @@ static char const *rtlm_texture(long bitmap_tag, short bitmap_index, int linear)
 		snprintf(name + at, sizeof(name) - at, "#%d", (int)bitmap_index);
 	snprintf(texture->path, sizeof(texture->path), "../textures/%s.%s.png", name, linear ? "lin" : "raw");
 	snprintf(file_path, sizeof(file_path), "%s/%s.%s.png", rtlm.textures_folder, name, linear ? "lin" : "raw");
-	if (stat(file_path, &status) == 0)
+	if ((existing = fopen(file_path, "rb")) != NULL)
 	{
+		fclose(existing);
 		texture->ok = TRUE;
 	}
 	else
