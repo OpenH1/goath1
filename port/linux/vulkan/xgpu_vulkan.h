@@ -840,6 +840,13 @@ struct xgpu_vulkan_rt_device
 };
 int xgpu_vulkan_rt_create(const struct xgpu_vulkan_rt_device *device);
 void xgpu_vulkan_rt_destroy(void);
+/* path tracing's stage 0, the ray throughput's measurement
+(xgpu_vulkan_pt_measure.c, HALO_PT_MEASURE_RAYS): made with the ray
+queries' device (0: not wanted), and its pass at the occlusion's pre-pass's
+end, from its inputs and camera */
+int xgpu_vulkan_pt_measure_create(const struct xgpu_vulkan_rt_device *device);
+void xgpu_vulkan_pt_measure_destroy(void);
+void xgpu_vulkan_pt_measure_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_world_ao_pass *pass);
 /* display.temporal_aa "fsr" (xgpu_vulkan_fsr.c): the device it makes its
 images, pipelines and sets on, and the pipeline cache */
 struct xgpu_vulkan_fsr_device
