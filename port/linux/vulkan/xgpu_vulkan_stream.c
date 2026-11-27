@@ -4674,6 +4674,30 @@ static int prepass_tables(void)
 	return 0;
 }
 
+/* an occluder's twin (xgpu_stream_world_ao_twin) of a lit model, not the
+first-person weapon's (first_person_latch's stencil mark), made one that
+writes its pixel's inputs as a model with the world's light would (its
+light the model's, or the vertices' where it is lit for each), its depth
+test the draw's own; nonzero where it was */
+static int lt_model_twin(struct xgpu_stream_pipeline_define *twin, const struct xgpu_stream_pipeline_define *definition)
+{
+	const struct xgpu_stream_pipeline_key *key = &definition->key;
+	uint8_t light;
+
+	if (twin->pixel_program.ambient_occlusion != XGPU_STREAM_WORLD_AO_OCCLUDER ||
+		(key->lighting != _lighting_model && key->lighting != _lighting_model_point &&
+		key->lighting != _lighting_model_split) ||
+		(key->stencil_test && (key->stencil_write_mask & 1) && key->stencil_pass == XGPU_STENCIL_REPLACE &&
+		(stream.dynamic.stencil_reference & 1)))
+		return 0;
+	light = key->lighting == _lighting_model_split ? XGPU_AMBIENT_OCCLUSION_LIGHT_VERTEX :
+		XGPU_AMBIENT_OCCLUSION_LIGHT_MODEL;
+	twin->key.pixel.ambient_occlusion = twin->pixel_program.ambient_occlusion =
+		(uint8_t)(XGPU_STREAM_WORLD_AO_INPUTS | light);
+	twin->key.depth_function = key->depth_function;
+	return 1;
+}
+
 /* HALO_LT_TWINS_LOG=1 (checking): each pipeline the pre-pass draws, once,
 what its twin is (inputs, an occluder, none) and why */
 static void prepass_twin_log(uint32_t id, const struct xgpu_stream_pipeline_define *definition, uint8_t twin)
@@ -4710,6 +4734,13 @@ static void prepass_draw(const struct draw_input *input)
 		return;
 	twin = *definition;
 	made = xgpu_stream_world_ao_twin(&twin);
+	/* (HALO_LT_E1: a lit model drawn as an occluder, a character or a
+	moving object without the world's light (the Flood), its inputs and
+	guides written all the same, so that the pass and its denoiser see it:
+	its normal, owner, distance and motion. The first-person weapon, which
+	marks its pixels in the stencil, stays an occluder) */
+	if (made && xgpu_vulkan_lt_mode())
+		(void)lt_model_twin(&twin, definition);
 	prepass_twin_log(id, definition, made ? twin.pixel_program.ambient_occlusion : 0);
 	if (!made)
 		return;
