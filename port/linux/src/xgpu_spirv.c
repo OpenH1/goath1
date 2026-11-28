@@ -2193,8 +2193,9 @@ struct pixel_state
 	none), the to-eye vector and the material's alpha it is found by */
 	unsigned int lt_spec, lt_spec_v, lt_spec_alpha;
 	/* a level lit live (a sky dome row in the table: lt_forward_sky): a bool
-	variable, 0 none made yet */
-	unsigned int lt_live;
+	variable, 0 none made yet; and whether the sky is open straight above
+	the receiver there (a float variable, 1 or 0) */
+	unsigned int lt_live, lt_open;
 };
 
 /* display.rt_bounce (below) */
@@ -9797,12 +9798,15 @@ is added: the suns there are the lightmap's share */
 
 static void lt_forward_sky(struct module *m, struct pixel_state *state, const struct lt_forward_read *read)
 {
-	unsigned int sky = local(m, &state->locals, m->t_v3);
+	unsigned int sky = local(m, &state->locals, m->t_v3), dome_sum = local(m, &state->locals, m->t_v3), open_merge;
 	int k;
 
 	state->lt_live = local(m, &state->locals, m->t_bool);
+	state->lt_open = local(m, &state->locals, m->t_float);
 	store(m, state->lt_live, constant_bool(m, FALSE));
+	store(m, state->lt_open, constant_float(m, 1.0f));
 	store(m, sky, constant_splat(m, 3, 0.0f));
+	store(m, dome_sum, constant_splat(m, 3, 0.0f));
 	for (k = 0; k < XGPU_SPIRV_LT_SUNS; k++)
 	{
 		unsigned int row = constant_int(m, XGPU_SPIRV_LT_SUN_ROW + k), t1, t4, t5, l, directional, dome, narrow;
@@ -9819,7 +9823,7 @@ static void lt_forward_sky(struct module *m, struct pixel_state *state, const st
 		narrow = compare(m, OP_F_ORD_LESS_THAN, extract(m, t5, 3), constant_float(m, 0.2f));
 		store(m, state->lt_live, op2(m, OP_LOGICAL_OR, m->t_bool, load(m, m->t_bool, state->lt_live), dome));
 		facing = fmul(m, 1, constant_float(m, 0.5f), fadd(m, 1, constant_float(m, 1.0f), extract(m, read->shaded, 2)));
-		store(m, sky, fadd(m, 3, load(m, m->t_v3, sky), fscale(m, 3, xyz(m, t4),
+		store(m, dome_sum, fadd(m, 3, load(m, m->t_v3, dome_sum), fscale(m, 3, xyz(m, t4),
 			fselect(m, dome, facing, constant_float(m, 0.0f)))));
 		lit = fselect(m, op2(m, OP_LOGICAL_AND, m->t_bool, op2(m, OP_LOGICAL_AND, m->t_bool, directional,
 			op1(m, OP_LOGICAL_NOT, m->t_bool, dome)), compare(m, OP_F_ORD_GREATER_THAN, fdot(m, read->n, l),
@@ -9834,6 +9838,19 @@ static void lt_forward_sky(struct module *m, struct pixel_state *state, const st
 		store(m, sky, fadd(m, 3, load(m, m->t_v3, sky), fscale(m, 3, xyz(m, t4), load(m, m->t_float, lit_variable))));
 		selection_end(m, merge);
 	}
+	/* (lit live: whether the sky is open straight above it, one ray, its
+	own object counted (a Pelican's bay roofed by its hull): the forward
+	receivers have no bounce (the cache is the pass's), so where the sky is
+	not open above (a vehicle's bay, an underside) the dome's light is left
+	out and the game's own model lighting kept in its place
+	(lt_forward_add), as the light that reaches there by bouncing; an
+	interim for the bounce a forward receiver lacks) */
+	selection_begin(m, load(m, m->t_bool, state->lt_live), &open_merge);
+	store(m, state->lt_open, lt_forward_visible(m, state, read->origin, fadd(m, 3, read->origin,
+		constant_vector(m, 3, (const float[]){ 0.0f, 0.0f, LT_SUN_REACH })), constant_float(m, 0.0f), constant_int(m, -1), constant_int(m, -1)));
+	selection_end(m, open_merge);
+	store(m, sky, fadd(m, 3, load(m, m->t_v3, sky), fscale(m, 3, load(m, m->t_v3, dome_sum),
+		load(m, m->t_float, state->lt_open))));
 	store(m, read->sum, fadd(m, 3, load(m, m->t_v3, read->sum), select_n(m, 3, load(m, m->t_bool, state->lt_live),
 		load(m, m->t_v3, sky), constant_splat(m, 3, 0.0f))));
 	/* (lit live by the level's own lamps (the table's lamp rows are
@@ -10020,7 +10037,8 @@ static unsigned int lt_forward_add(struct module *m, struct pixel_state *state, 
 		light = fmul(m, 3, light, tint);
 	/* (a level lit live: the game's own light here, the lightmap's or a
 	model's lighting from it, left out; the sky's in light: lt_forward_sky) */
-	lit = select_n(m, 3, load(m, m->t_bool, state->lt_live), constant_splat(m, 3, 0.0f), lit);
+	lit = select_n(m, 3, load(m, m->t_bool, state->lt_live), fscale(m, 3, lit,
+		fsub(m, 1, constant_float(m, 1.0f), load(m, m->t_float, state->lt_open))), lit);
 	return ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, fadd(m, 3, ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, lit, 0.0f),
 		constant_splat(m, 3, 2.2f)), light), 0.0f), constant_splat(m, 3, 1.0f / 2.2f));
 }
