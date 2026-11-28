@@ -9,7 +9,7 @@ Made by `python -m rt_truth emitters <scene folder> --out <file>` (tools/rt_trut
 emitters") from any rt2 scene export of that BSP. In short, each `lamps` entry has `radiance` (linear, the game's light units) and `triangles` (world
 positions, lifted 0.01 wu off the surface, wound to glow toward their normal) to sample as area lights.
 
-The build packs each file (tools/lt_emitters_data.py: about 416 KB for the 23 shipped, zlib) into openh1.assets beside
+The build packs each file (tools/lt_emitters_data.py: about 465 KB for the 25 shipped, zlib) into openh1.assets beside
 the game, and the game unpacks the loaded BSP's at map load; `python3 tools/lt_emitters_data.py --check` fails
 where a file does not build or holds more than the game takes (8192 triangles, 1024 groups a BSP).
 
@@ -157,6 +157,35 @@ solver's own transport at the screen's spots (texels near a spot, each lamp grou
   lamp drawable, and the strip that lit the cell there is 40% of the level's power. With the shadow rays off, its
   light arrives.
 
+## Why the per-cell fit missed at the cameras (2026-11-28)
+Traced at each screen camera: rays from the spot into the BSP, each hit taken to its nearest lightmap sample, and
+the solve's own light there against the bake (the report's `rooms_samples.npz`, each sample's bake, weight, cell
+and each group's light). The texels the fit used match at every camera (a10 spot 2 x1.01, c20's library x1.07).
+The miss is in the texels it left out, and those are what the cameras look at:
+- **Texels within 0.5 wu of a lamp** (left out as an unresolved near field): 74% of a10 spot 2's view, 15-43% of
+  a10's, d20's and a50's area. There the traced light is over the bake at every BSP: within 0.1 wu x2.9-5.3, 0.1-0.25 wu x2.3-3.8, 0.25-0.5 wu
+  x1.4-1.7, past 0.5 wu x0.8-1.1 (a10 bsp0, a50 bsp1, d20 bsp4). It's a smooth roll-off over half a world unit,
+  not a sub-texel spike: the bake's lamps light their own surroundings less than a Lambertian area light does.
+  No scale per lamp group can match both sides. Taking those texels into the match (any space) lowers the group, and the far
+  room goes dark: a10 bsp0 in game at x0.45/x0.35, black 33%. The cameras also show the related pattern in every variant at a50/d20:
+  floor rows under the bake (x0.2-0.6), top rows over (x1.5-2.5). The bake's lamps send relatively more light far
+  and down, and less to their grazing neighbors, than a cosine emitter. That needs an emission lobe the pass can
+  sample (fitted per BSP against the bake), which is the emitter sampling's job (lt/e1.frag, lt/indirect.glsl),
+  not the scales'.
+- **Texels the bake clipped** (left out as "at least this"): 81% of the c20 library camera's view. There the
+  traced light is x3.4 the clip, so the live floor is white where classic shows the texture at light 1.0.
+  Matching them as shown (`--clipped as-shown`) or as a lower bound (`--clipped floor`) halves the solve's light at that camera
+  (x3.12 to x1.54 / x1.99), yet in game the library floor stays blown (11% to 9-10%). The rest of that excess isn't
+  the scales'. Note for the camera's owner: where the real light is about 3x the clip, live goes white where classic
+  sits at 1.0. That's the tone shoulder handling light above white, a camera question as well as a fit one.
+- Not the cause: the cell's own match (a10 bsp0 x1.33, c40 bsp7 x1.21 typical), the fixtures' winding (their lamp
+  triangles face as their vertex normals do), or the solve's display space alone (as-shown against linear: same
+  verdicts).
+
+The solve's new switches (`python -m rt_truth emitters --help`): `--near` (0 keeps every texel), `--clipped
+out|as-shown|floor`, `--match linear|shown` (each cell's mean as the game shows it, ^1/2.2) and `--fit-cell`. Each
+file records them in `fit.match`. The report folder holds `rooms_samples.npz` for a look texel by texel.
+
 ## Looked at in the game (the screen, 2026-11-28)
 `python3 tools/rt2_emitter_screen.py --build <ref> --out DIR` plays each level twice on the 5900X as players run it
 (the menu setting off and on, the MCC import, the HUD hidden, a fixed frame time), switches to each BSP with a
@@ -217,6 +246,10 @@ Shipped, screened with the contrast fix (below; a10_bsp1 has one spot: no second
 | d40_bsp4 | 2 | x1.14 | x1.12 | x1.32 | 0% | 2% | 0% | pass |
 | d40_bsp5 | 1 | x0.92 | x0.93 | x0.99 | 1% | 5% | 0% | pass |
 | d40_bsp5 | 2 | x1.02 | x1.02 | x1.03 | 1% | 5% | 0% | pass |
+| c40_bsp7 (as shown, 2026-11-28) | 1 | x1.14 | x1.44 | x0.94 | 3% | 16% | 0% | pass |
+| c40_bsp7 (as shown) | 2 | x1.20 | x1.56 | x1.10 | 1% | 6% | 0% | pass |
+| d40_bsp7 (as shown) | 1 | x0.79 | x0.81 | x0.56 | 5% | 35% | 0% | pass |
+| d40_bsp7 (as shown) | 2 | x0.63 | x0.55 | x0.70 | 2% | 18% | 0% | pass |
 
 Not shipped (an outdoor BSP's lamps cannot be matched apart from the sky, or nothing is left to them):
 - a10_bsp7: all sky (space outside the ship): no lamp-lit cell.
@@ -289,6 +322,13 @@ Not shipped (an outdoor BSP's lamps cannot be matched apart from the sky, or not
 | d40_bsp7 | 1 | x0.60 | x0.53 | x0.63 | 5% | 55% | 0% | nothing in view |
 | d40_bsp7 | 2 | x0.60 | x0.53 | x0.63 | 5% | 55% | 0% | nothing in view |
 
+- Re-solved as shown (`--near 0 --clipped as-shown --match shown`, 2026-11-28) and screened again: c40 bsp7 and d40 bsp7
+  pass and ship (above; d40 bsp7's cameras now show its rooms). The rest still fail, so they keep their lightmap.
+  a10 bsp0 x0.45/x0.35, black 33% (the near-lamp texels in the match pull its groups down). c20 bsp0's library x1.27, blown 9%
+  (11% before: not the scales', see above), its other camera x1.10 passes. a10 bsp4 x0.42, a10 bsp5 x1.70, a10 bsp8
+  x0.56, a30 bsp1 x0.31, a50 bsp1 x0.27/x0.38, a50 bsp2 x0.47, a50 bsp3 x0.43, b40 bsp3 black 17%, b40 bsp11 and
+  c40 bsp11 a camera with nothing in view, c40 bsp12 x0.53, d20 bsp0 x0.55, d20 bsp1 black 26%, d20 bsp4 x0.35/x0.54. The
+  pattern in every variant (floors under, near-lamp surfaces over) is the near-field one above.
 - No lightmap in that level (nothing to solve from): b40 bsp6, bsp7 and bsp12, c40 bsp3 and bsp4; d40 bsp9 has
   no surfaces.
 
