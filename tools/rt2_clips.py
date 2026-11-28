@@ -67,6 +67,13 @@ PLAYER = "(unit (list_get (players) 0))"
 # controller (debug.test_input "script:" events), what it shows). The scenario's clock starts when the player has a
 # unit; a cue runs at the first tick at or after its second.
 MOMENTS = {
+    # (Damnation, a multiplayer map in a local game: the script's camera held in the lower hall by the spotlights,
+    # where the live picture was a tenth of the classic's)
+    "damnation_hall": (
+        "local:damnation:slayer", 16, 22,
+        [(15, cam(-2.0, -8.8, 6.5, 0, -10))],
+        "",
+        "Damnation's lower hall by its spotlights, a held camera"),
     # (b30 opens with the Pelican's ride, a cutscene skipped by playing it fast, undrawn: the beach from about 29 s,
     # the Pelicans landed until about 40 s)
     "b30_sun": (
@@ -165,7 +172,7 @@ MOMENTS = {
 
 # the moments not yet frame-identical run to run (on-demand pipeline compiles still land on different frames there:
 # about 15% and 96% of frames differ); played only when named, not by "all"
-FOLLOW_UP = set()
+FOLLOW_UP = {"damnation_hall"}
 
 
 def say(*words):
@@ -304,7 +311,8 @@ def settings(moment, lighting):
     lines = [f"{second:g} {line}" for second, line in cues]
     env = COMMON + [
         f"HALO_RAY_TRACED_LIGHTING={'1' if lighting else '0'}",
-        f"HALO_NETWORK_TEST=campaign:{level}",
+        # (a level named with its game, a multiplayer map's "local:<map>:<game>", as it is)
+        f"HALO_NETWORK_TEST={level if ':' in level else 'campaign:' + level}",
         "HALO_NETWORK_TEST_CUES=" + "|".join(lines),
         f"HALO_SCREENSHOT_FROM={start:g}",
         f"HALO_SCREENSHOT_UNTIL={end:g}",
