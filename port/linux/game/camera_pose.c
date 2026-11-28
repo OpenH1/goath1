@@ -279,6 +279,8 @@ static void camera_pose_write_camera(FILE *file, struct scenario_cutscene_camera
 		point->name[0] ? point->name : "-");
 }
 
+/* (actors: "actor <x> <y> <z> <yaw> 0 0 0 <encounter>/<squad> <team>") */
+
 /* the scenario's placed objects of one kind (their blocks' element sizes:
 the object's placement, then the kind's own fields), with their tags' names:
 "object <x> <y> <z> <yaw> <pitch> <roll> 0 <tag>" */
@@ -366,7 +368,17 @@ void camera_pose_write_places(char const *path)
 				struct actor_starting_location *location = TAG_BLOCK_GET_ELEMENT(&squad->starting_locations, k,
 					struct actor_starting_location);
 
-				camera_pose_write_place(file, "actor", &location->position, location->facing, 0.0f, 0.0f, 0.0f);
+				struct location place;
+
+				/* (with its encounter and squad, for ai_place, and the encounter's team) */
+				scenario_location_from_point(&place, &location->position);
+				if (place.cluster_index != NONE)
+				{
+					fprintf(file, "actor %.3f %.3f %.3f %.2f 0.00 0.00 0.00 %s/%s %d\n", location->position.x,
+						location->position.y, location->position.z, location->facing / DEGREES_TO_RADIANS,
+						encounter->name[0] ? encounter->name : "-", squad->name[0] ? squad->name : "-",
+						(int)encounter->team_index);
+				}
 			}
 		}
 	}

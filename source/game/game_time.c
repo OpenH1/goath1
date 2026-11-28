@@ -879,6 +879,30 @@ void game_time_update(
 	return;
 }
 
+/* port: debug.frame_time (each frame a fixed game time, for runs that must
+draw the same pictures every time: the determinism check, tools/rt2_clips.py):
+the frames' local seed (the particles as they move each frame, the camera's
+shake) set again at each tick's end from the tick and the game's local seed,
+so the frames after it draw alike every run: the frames drawn before (the
+menus', a load's, a skipped cutscene's) are as many as they take */
+void random_math_port_seeds(unsigned long *global_seed, unsigned long *local_seed);
+void random_math_port_set_frame_seed(unsigned long seed);
+double config_real(const char *name);
+
+static void game_time_port_frame_seed(
+	void)
+{
+	static int fixed = -1;
+	unsigned long global_seed, local_seed;
+
+	if (fixed < 0)
+		fixed = config_real("debug.frame_time") > 0.0;
+	if (!fixed)
+		return;
+	random_math_port_seeds(&global_seed, &local_seed);
+	random_math_port_set_frame_seed(~local_seed ^ ((unsigned long)game_time_globals->server_time * 2654435761u));
+}
+
 /* ---------- private code */
 
 /* port: the next sub-step of game.sim_rate run (port/linux/game/sim_rate.h):
@@ -921,6 +945,7 @@ static boolean game_time_run_substep(
 			profile_scope(game_time_network_distributed_tick_section, network_distributed_tick();)
 		}
 		random_math_port_set_ticking(FALSE);
+		game_time_port_frame_seed();
 		determinism_log_tick_end(game_time_globals->server_time);
 	}
 	else
