@@ -44,6 +44,7 @@ may still draw from it.
 #include "errors.h"
 #include "bitmaps/bitmaps.h"
 #include "bitmaps/bitmap_group.h"
+#include "cache/cache_files.h"
 #include "main/console.h"
 #include "tag_files/tag_groups.h"
 #include "../src/port_mods.h" /* port: port/linux/src/port_mods.c */
