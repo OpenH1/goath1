@@ -189,8 +189,26 @@ static int indirect_shaders(void)
 		started again) */
 		indirect.made = indirect.failed = indirect.cache_valid = indirect.bounce_history_valid = 0;
 		indirect.current = indirect.cache_current = 0;
-		/* (the bounce's phase counted from the start again) */
+		/* (the bounce's phase counted from the start again, and its images
+made again, as the stream's first frames made them: a replay played from
+its start again draws the game's frames, not what the last play left) */
 		indirect.frames = 0;
+		{
+			struct xgpu_vulkan_image **made[] = { &indirect.bounce, &indirect.total, &indirect.histories[0],
+				&indirect.histories[1], &indirect.specular_raw, &indirect.coverage[0], &indirect.coverage[1],
+				&indirect.specular_histories[0], &indirect.specular_histories[1], &indirect.caches[0],
+				&indirect.caches[1], &indirect.bounce_histories[0], &indirect.bounce_histories[1] };
+			size_t index;
+
+			for (index = 0; index < sizeof(made) / sizeof(made[0]); index++)
+			{
+				if (*made[index] && xgpu_vulkan_rt_bounce_bound(*made[index]))
+					xgpu_vulkan_rt_bounce_set(NULL);
+				xgpu_vulkan_image_destroy(*made[index]);
+				*made[index] = NULL;
+			}
+			indirect.bounce_history = NULL;
+		}
 		indirect.generation = generation;
 	}
 	if (indirect.made)
