@@ -29,6 +29,9 @@ nodes. Read only; render-only.
 #include "shaders/shaders.h"
 #include "scenario/scenario.h"
 #include "shaders/shader_definitions.h"
+#include "objects/objects.h"
+#include "game/game.h"
+#include "math/periodic_functions.h"
 #include "structures/structure_bsp_definitions.h"
 #include "tag_files/tag_groups.h"
 #include "bitmaps/bitmap_group.h"
@@ -137,9 +140,37 @@ struct world_rt_transparent_generic_map
 	word flags;
 	word pad;
 	real map_u_scale, map_v_scale;
-	byte reserved0C[0x18 - 0x0C];
+	real map_u_offset, map_v_offset;
+	real map_rotation;
+	real mipmap_bias;
 	struct tag_reference map;
-	byte reserved28[0x64 - 0x28];
+	byte reserved2C[0x64 - 0x2C];
+};
+
+/* (a generic shader's stage, shader_transparent_generic_preprocessor.c's:
+its constant colours and its combiner's inputs and outputs, each one an
+index into the tag's lists, below) */
+struct world_rt_transparent_generic_stage
+{
+	word flags;
+	short pad02;
+	short constant_color0_animation_source;
+	short constant_color0_animation_function;
+	real constant_color0_animation_period;
+	real_argb_color constant_color0_lower, constant_color0_upper;
+	real_argb_color color1;
+	short color_inputs[4][2];
+	short color_output_AB, color_output_AB_function;
+	short color_output_CD, color_output_CD_function;
+	short color_output_AB_CD_mux_sum, color_output_mapping;
+	short alpha_inputs[4][2];
+	short alpha_output_A, alpha_output_B, alpha_output_C, alpha_output_mapping;
+};
+
+struct world_rt_shader_transparent_generic
+{
+	struct world_rt_shader_transparent transparent;
+	struct tag_block stages;
 };
 
 struct world_rt_transparent_chicago_map
@@ -155,6 +186,13 @@ typedef char verify_world_rt_shader_transparent_maps[offsetof(struct world_rt_sh
 typedef char verify_world_rt_shader_transparent_blend[
 	offsetof(struct world_rt_shader_transparent, framebuffer_blend_function) == 0x2C ? 1 : -1];
 typedef char verify_world_rt_transparent_generic_map[sizeof(struct world_rt_transparent_generic_map) == 0x64 ? 1 : -1];
+typedef char verify_world_rt_transparent_generic_map_map[
+	offsetof(struct world_rt_transparent_generic_map, map) == 0x1C ? 1 : -1];
+typedef char verify_world_rt_transparent_generic_stage[sizeof(struct world_rt_transparent_generic_stage) == 0x70 ? 1 : -1];
+typedef char verify_world_rt_transparent_generic_stage_inputs[
+	offsetof(struct world_rt_transparent_generic_stage, color_inputs) == 0x3C ? 1 : -1];
+typedef char verify_world_rt_shader_transparent_generic_stages[
+	offsetof(struct world_rt_shader_transparent_generic, stages) == 0x60 ? 1 : -1];
 typedef char verify_world_rt_transparent_chicago_map[sizeof(struct world_rt_transparent_chicago_map) == 0xDC ? 1 : -1];
 
 /* (rasterizer_geometry.c's environment_vertex_compressed) */
@@ -482,6 +520,7 @@ static void material_describe(long shader_index, struct world_rt_source_material
 
 	memset(material, 0, sizeof(*material));
 	material->shader = shader_index;
+	material->region = -1;
 	material->alpha_map = -1;
 	material->alpha_cutoff = 127.0f / 255.0f;
 	material->alpha_scale[0] = material->alpha_scale[1] = material->detail_scale = 1.0f;
@@ -761,7 +800,7 @@ long world_rt_source_structure_mesh(short bsp_index, struct world_rt_source_mesh
 /* a model part's vertices and triangles onto the mesh (or counted), its
 material the mesh's next (FALSE: it cannot be read, the mesh not used) */
 static int model_part_add(struct world_rt_source_mesh *mesh, struct model const *model,
-	struct world_rt_model_part const *part, int surfaces, short node_count, int filled, long vertex_room,
+	struct world_rt_model_part const *part, short region, int surfaces, short node_count, int filled, long vertex_room,
 	long triangle_room, long material_room)
 {
 	struct vertex_buffer const *vertex_buffer = &part->vertex_buffer;
@@ -838,6 +877,7 @@ what it adds) */
 	if (filled)
 	{
 		material_describe(reference->shader.index, &mesh->materials[mesh->material_count]);
+		mesh->materials[mesh->material_count].region = region;
 		if (surfaces == WORLD_RT_SURFACES_ADDITIVE)
 			additive_map(shader, &mesh->materials[mesh->material_count]);
 		for (index = 0; index < vertex_buffer->count; index++)
@@ -1027,12 +1067,12 @@ static long model_mesh(long definition, struct world_rt_source_mesh *mesh, float
 						struct world_rt_source_mesh counted;
 
 						memset(&counted, 0, sizeof(counted));
-						model_part_add(&counted, model, part, surfaces, node_count, FALSE, 0, 0, 0);
+						model_part_add(&counted, model, part, region_index, surfaces, node_count, FALSE, 0, 0, 0);
 						mesh->left_out += counted.triangle_count;
 						continue;
 					}
-					if (!model_part_add(mesh, model, part, surfaces, node_count, filled, vertex_room, triangle_room,
-						material_room))
+					if (!model_part_add(mesh, model, part, region_index, surfaces, node_count, filled, vertex_room,
+						triangle_room, material_room))
 						return 0;
 				}
 			}
@@ -1213,4 +1253,246 @@ long world_rt_source_node(long definition, short node_index, short permutation, 
 char const *world_rt_source_name(long definition)
 {
 	return definition == NONE ? "none" : tag_get_name(definition);
+}
+
+/* ---------- an object lamp's glow, a transparent generic shader's stages
+run on the CPU (world_rt.c's object lamps) */
+
+/* (render_interpolation.c: an object's shading as it is drawn) */
+float const *render_interpolation_object_function_values(long object_index);
+union real_rgb_color const *render_interpolation_object_change_colors(long object_index);
+float render_interpolation_game_time_sec(long ticks);
+
+int world_rt_source_shading(long id, struct world_rt_source_shading *shading)
+{
+	struct object_datum *object = object_try_and_get(id);
+	float const *values;
+	union real_rgb_color const *colours;
+	int index;
+
+	memset(shading, 0, sizeof(*shading));
+	if (!object)
+		return FALSE;
+	values = render_interpolation_object_function_values(id);
+	colours = render_interpolation_object_change_colors(id);
+	for (index = 0; index < 4; index++)
+	{
+		union real_rgb_color const *colour = colours ? &colours[index] : &object->object.outgoing_change_colors[index];
+
+		shading->values[index] = values ? values[index] : object->object.outgoing_function_values[index];
+		shading->colours[index][0] = colour->red;
+		shading->colours[index][1] = colour->green;
+		shading->colours[index][2] = colour->blue;
+	}
+	shading->time = render_interpolation_game_time_sec(game_time_get());
+	for (index = 0; index < MAXIMUM_REGIONS_PER_OBJECT && index < 8; index++)
+		shading->permutations[index] = object->object.region_permutations[index];
+	shading->destroyed = object->object.regions_destroyed_flags;
+	return TRUE;
+}
+
+static struct world_rt_shader_transparent_generic const *glow_shader(long shader_index)
+{
+	struct shader const *shader = shader_index != NONE && tag_index_is_group(shader_index, SHADER_DEFINITION_TAG) ?
+		shader_definition_get(shader_index) : NULL;
+	struct world_rt_shader_transparent_generic const *generic = (void const *)shader;
+
+	/* (a 2D first map: a cube one is a reflection, not something on the
+	surface) */
+	if (!shader || shader->base.type != _world_rt_shader_type_transparent_generic ||
+		generic->transparent.type != 0 || generic->transparent.maps.count <= 0 || !generic->transparent.maps.address ||
+		generic->stages.count <= 0 || !generic->stages.address)
+		return NULL;
+	return generic;
+}
+
+int world_rt_source_glow_maps(long shader, struct world_rt_source_map maps[4], float transforms[4][4])
+{
+	struct world_rt_shader_transparent_generic const *generic = glow_shader(shader);
+	int index, count;
+
+	if (!generic)
+		return 0;
+	count = (int)MIN(generic->transparent.maps.count, 4);
+	for (index = 0; index < 4; index++)
+	{
+		maps[index].bitmap = NONE;
+		maps[index].index = 0;
+		transforms[index][0] = transforms[index][1] = 1.0f;
+		transforms[index][2] = transforms[index][3] = 0.0f;
+	}
+	for (index = 0; index < count; index++)
+	{
+		struct world_rt_transparent_generic_map const *map =
+			&((struct world_rt_transparent_generic_map const *)generic->transparent.maps.address)[index];
+
+		map_of(&map->map, &maps[index]);
+		transforms[index][0] = map->map_u_scale != 0.0f ? map->map_u_scale : 1.0f;
+		transforms[index][1] = map->map_v_scale != 0.0f ? map->map_v_scale : 1.0f;
+		transforms[index][2] = map->map_u_offset;
+		transforms[index][3] = map->map_v_offset;
+	}
+	return count;
+}
+
+/* (shader_transparent_generic_preprocessor.c's tables: an input's register,
+its alpha bit 0x10 and its mapping 0xE0; a constant one, the zero register
+mapped) */
+static const long glow_color_inputs[25] = { -1, -1, -1, -1, -1, 8, 9, 10, 11, 4, 5, 12, 13, 1, 2, 24, 25, 26, 27, 20, 21,
+	28, 29, 17, 18 };
+static const long glow_alpha_inputs[25] = { -1, -1, -1, -1, -1, 24, 25, 26, 27, 20, 21, 28, 29, 17, 18, 8, 9, 10, 11, 4, 5,
+	12, 13, 1, 2 };
+static const long glow_constant_inputs[5][8] = {
+	{ 0x00, 0x20, 0x40, 0x20, 0x80, 0xa0, 0x00, 0x00 },
+	{ 0x20, 0x00, 0x20, 0x40, 0xa0, 0x80, 0x20, 0x40 },
+	{ 0xa0, 0xa0, 0x00, 0x00, 0x00, 0x00, 0xa0, 0x80 },
+	{ 0x00, 0x20, 0x40, 0x20, 0x80, 0xa0, 0x40, 0x20 },
+	{ 0x00, 0x20, 0x40, 0x20, 0x80, 0xa0, 0x80, 0xa0 } };
+static const int glow_outputs[9] = { 0, 12, 13, 4, 5, 8, 9, 10, 11 };
+
+static long glow_input_code(long const table[25], short input, short mapping)
+{
+	if (input < 0 || input >= 25 || mapping < 0 || mapping >= 8)
+		return 0;
+	return table[input] < 0 ? glow_constant_inputs[input][mapping] : table[input] | (long)mapping << 5;
+}
+
+/* (the NV2A's input mappings) */
+static float glow_mapped(float x, long code)
+{
+	float clamped = x < 0.0f ? 0.0f : x;
+
+	switch ((code >> 5) & 7)
+	{
+	case 0: return clamped;
+	case 1: return 1.0f - (clamped > 1.0f ? 1.0f : clamped);
+	case 2: return 2.0f * clamped - 1.0f;
+	case 3: return 1.0f - 2.0f * clamped;
+	case 4: return clamped - 0.5f;
+	case 5: return 0.5f - clamped;
+	case 6: return x;
+	default: return -x;
+	}
+}
+
+/* (its output mapping, the tag's index: identity, half, two, four, bias,
+bias then two; clamped as the combiner's registers are) */
+static float glow_output(float x, short mapping)
+{
+	switch (mapping)
+	{
+	case 1: x *= 0.5f; break;
+	case 2: x *= 2.0f; break;
+	case 3: x *= 4.0f; break;
+	case 4: x -= 0.5f; break;
+	case 5: x = 2.0f * (x - 0.5f); break;
+	default: break;
+	}
+	return x < -1.0f ? -1.0f : x > 1.0f ? 1.0f : x;
+}
+
+void world_rt_source_glow(long shader, unsigned long const texels[4], struct world_rt_source_shading const *shading,
+	float rgb[3])
+{
+	struct world_rt_shader_transparent_generic const *generic = glow_shader(shader);
+	float registers[16][4], written[16][4];
+	short stage_index, stage_count;
+	int index, channel;
+
+	rgb[0] = rgb[1] = rgb[2] = 0.0f;
+	if (!generic)
+		return;
+	memset(registers, 0, sizeof(registers));
+	for (index = 0; index < 4; index++)
+	{
+		registers[8 + index][0] = (float)((texels[index] >> 16) & 0xFF) / 255.0f;
+		registers[8 + index][1] = (float)((texels[index] >> 8) & 0xFF) / 255.0f;
+		registers[8 + index][2] = (float)(texels[index] & 0xFF) / 255.0f;
+		registers[8 + index][3] = (float)((texels[index] >> 24) & 0xFF) / 255.0f;
+	}
+	/* (the vertex colours, the diffuse light and the perpendicular fade:
+	full, a glow as seen face on; r0's alpha starts as the first map's) */
+	for (channel = 0; channel < 4; channel++)
+		registers[4][channel] = registers[5][channel] = 1.0f;
+	registers[12][3] = registers[8][3];
+	stage_count = (short)MIN(generic->stages.count, 7);
+	for (stage_index = 0; stage_index < stage_count; stage_index++)
+	{
+		struct world_rt_transparent_generic_stage const *stage =
+			&((struct world_rt_transparent_generic_stage const *)generic->stages.address)[stage_index];
+		float in[4][3], ab[4], cd[4], sum[4], f;
+		int mux = (stage->flags & 1) != 0, alpha_mux = (stage->flags & 2) != 0;
+		long code;
+
+		/* (its constant colours as rasterizer_xbox_transparent_geometry.c
+		sets them: colour 0 between its bounds by its function, times an
+		object's change colour) */
+		if (shading && (stage->flags & 4))
+			f = shading->values[0];
+		else
+			f = periodic_function_evaluate(stage->constant_color0_animation_function,
+				stage->constant_color0_animation_period != 0.0f && shading ?
+					shading->time / stage->constant_color0_animation_period : 0.0f);
+		for (channel = 0; channel < 4; channel++)
+		{
+			float value = stage->constant_color0_lower.n[channel] +
+				f * (stage->constant_color0_upper.n[channel] - stage->constant_color0_lower.n[channel]);
+
+			value = PIN(value, 0.0f, 1.0f);
+			/* (argb: alpha first) */
+			registers[1][channel == 0 ? 3 : channel - 1] = value;
+			registers[2][channel == 0 ? 3 : channel - 1] = PIN(stage->color1.n[channel], 0.0f, 1.0f);
+		}
+		if (stage->constant_color0_animation_source > 0 && stage->constant_color0_animation_source <= 4 && shading)
+		{
+			for (channel = 0; channel < 3; channel++)
+				registers[1][channel] *= PIN(shading->colours[stage->constant_color0_animation_source - 1][channel], 0.0f, 1.0f);
+		}
+		memcpy(written, registers, sizeof(written));
+		/* (the colour part) */
+		for (index = 0; index < 4; index++)
+		{
+			code = glow_input_code(glow_color_inputs, stage->color_inputs[index][0], stage->color_inputs[index][1]);
+			for (channel = 0; channel < 3; channel++)
+				in[index][channel] = glow_mapped(registers[code & 0x0F][code & 0x10 ? 3 : channel], code);
+		}
+		for (channel = 0; channel < 3; channel++)
+		{
+			ab[channel] = stage->color_output_AB_function == 1 ?
+				in[0][0] * in[1][0] + in[0][1] * in[1][1] + in[0][2] * in[1][2] : in[0][channel] * in[1][channel];
+			cd[channel] = stage->color_output_CD_function == 1 ?
+				in[2][0] * in[3][0] + in[2][1] * in[3][1] + in[2][2] * in[3][2] : in[2][channel] * in[3][channel];
+			sum[channel] = mux ? (registers[12][3] >= 0.5f ? cd[channel] : ab[channel]) : ab[channel] + cd[channel];
+		}
+		for (channel = 0; channel < 3; channel++)
+		{
+			if (stage->color_output_AB > 0 && stage->color_output_AB < 9)
+				written[glow_outputs[stage->color_output_AB]][channel] = glow_output(ab[channel], stage->color_output_mapping);
+			if (stage->color_output_CD > 0 && stage->color_output_CD < 9)
+				written[glow_outputs[stage->color_output_CD]][channel] = glow_output(cd[channel], stage->color_output_mapping);
+			if (stage->color_output_AB_CD_mux_sum > 0 && stage->color_output_AB_CD_mux_sum < 9)
+				written[glow_outputs[stage->color_output_AB_CD_mux_sum]][channel] =
+					glow_output(sum[channel], stage->color_output_mapping);
+		}
+		/* (the alpha part: an input's alpha, or its blue) */
+		for (index = 0; index < 4; index++)
+		{
+			code = glow_input_code(glow_alpha_inputs, stage->alpha_inputs[index][0], stage->alpha_inputs[index][1]);
+			in[index][0] = glow_mapped(registers[code & 0x0F][code & 0x10 ? 3 : 2], code);
+		}
+		ab[3] = in[0][0] * in[1][0];
+		cd[3] = in[2][0] * in[3][0];
+		sum[3] = alpha_mux ? (registers[12][3] >= 0.5f ? cd[3] : ab[3]) : ab[3] + cd[3];
+		if (stage->alpha_output_A > 0 && stage->alpha_output_A < 9)
+			written[glow_outputs[stage->alpha_output_A]][3] = glow_output(ab[3], stage->alpha_output_mapping);
+		if (stage->alpha_output_B > 0 && stage->alpha_output_B < 9)
+			written[glow_outputs[stage->alpha_output_B]][3] = glow_output(cd[3], stage->alpha_output_mapping);
+		if (stage->alpha_output_C > 0 && stage->alpha_output_C < 9)
+			written[glow_outputs[stage->alpha_output_C]][3] = glow_output(sum[3], stage->alpha_output_mapping);
+		memcpy(registers, written, sizeof(registers));
+	}
+	/* (the final combiner: r0, rasterizer_xbox_transparent_geometry.c's,
+	every generic shader's) */
+	for (channel = 0; channel < 3; channel++)
+		rgb[channel] = PIN(registers[12][channel], 0.0f, 1.0f);
 }

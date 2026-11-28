@@ -805,19 +805,81 @@ static void lt_dump(int count, int window)
 	fflush(lt.dump);
 }
 
+/* the object lamps a view's pass takes (xgpu_vulkan_lt_lights.h's
+XGPU_VULKAN_LT_OBJECT_LAMPS_MAXIMUM) */
+#define LT_OBJECT_LAMPS_SENT 512
+
+/* a lamp's importance to a view: its power (luminance by area) over its
+distance squared from the camera, no nearer than its own size */
+static float lt_object_lamp_importance(float const corners[9], float const radiance[3], real_point3d const *eye)
+{
+	float e1[3], e2[3], c[3], middle[3], d2, area;
+	int axis;
+
+	for (axis = 0; axis < 3; axis++)
+	{
+		e1[axis] = corners[3 + axis] - corners[axis];
+		e2[axis] = corners[6 + axis] - corners[axis];
+		middle[axis] = (corners[axis] + corners[3 + axis] + corners[6 + axis]) / 3.0f - (&eye->x)[axis];
+	}
+	c[0] = e1[1] * e2[2] - e1[2] * e2[1];
+	c[1] = e1[2] * e2[0] - e1[0] * e2[2];
+	c[2] = e1[0] * e2[1] - e1[1] * e2[0];
+	area = 0.5f * sqrtf(c[0] * c[0] + c[1] * c[1] + c[2] * c[2]);
+	d2 = middle[0] * middle[0] + middle[1] * middle[1] + middle[2] * middle[2];
+	return (0.2126f * radiance[0] + 0.7152f * radiance[1] + 0.0722f * radiance[2]) * area / (d2 > area ? d2 : area);
+}
+
+static float const *lt_object_lamp_order_importances;
+
+static int lt_object_lamp_order(void const *a, void const *b)
+{
+	float x = lt_object_lamp_order_importances[*(long const *)a], y = lt_object_lamp_order_importances[*(long const *)b];
+
+	return x > y ? -1 : x < y ? 1 : 0;
+}
+
 /* the frame's object lamps (world_rt.c's world_rt_lamps) after the list:
-records of kind XGPU_LT_LIGHT_OBJECT_EMITTER, the frame's whole; the
-count with them */
+records of kind XGPU_LT_LIGHT_OBJECT_EMITTER, every object's where the
+pass has room, else those that matter most to this view (a far Pelican's
+strips do not take a near shield's room); the count with them */
 static int lt_object_lamps_append(struct xgpu_stream_lt_light *lights, int count, int maximum)
 {
+	static float *importances;
+	static long *order;
 	float const (*corners)[9];
 	float const (*radiance)[3];
 	unsigned long const *owners;
-	long lamps = world_rt_lamps(&corners, &radiance, &owners), index;
+	long lamps = world_rt_lamps(&corners, &radiance, &owners), index, taken;
+	int sorted = FALSE;
 
-	for (index = 0; index < lamps && count < maximum; index++)
+	if (maximum - count > LT_OBJECT_LAMPS_SENT)
+		maximum = count + LT_OBJECT_LAMPS_SENT;
+	if (lamps > maximum - count)
+	{
+		if (!importances)
+			importances = malloc(sizeof(*importances) * 4096);
+		if (!order)
+			order = malloc(sizeof(*order) * 4096);
+		if (lamps > 4096 || !importances || !order)
+			lamps = MIN(lamps, (long)(maximum - count));
+		else
+		{
+			for (index = 0; index < lamps; index++)
+			{
+				importances[index] = lt_object_lamp_importance(corners[index], radiance[index], &render.camera.position);
+				order[index] = index;
+			}
+			lt_object_lamp_order_importances = importances;
+			qsort(order, (size_t)lamps, sizeof(*order), lt_object_lamp_order);
+			sorted = TRUE;
+		}
+	}
+	for (taken = 0; taken < lamps && count < maximum; taken++)
 	{
 		struct xgpu_stream_lt_light *out = &lights[count++];
+
+		index = sorted ? order[taken] : taken;
 
 		memset(out, 0, sizeof(*out));
 		out->id[0] = (unsigned int)index;

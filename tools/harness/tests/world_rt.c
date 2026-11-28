@@ -213,6 +213,31 @@ unsigned long *world_rt_source_texels(struct world_rt_source_map const *map, uns
 	return NULL;
 }
 
+/* (no objects' shading, and no generic shader's stages, here) */
+int world_rt_source_shading(long id, struct world_rt_source_shading *shading)
+{
+	(void)id;
+	memset(shading, 0, sizeof(*shading));
+	return 0;
+}
+
+int world_rt_source_glow_maps(long shader, struct world_rt_source_map maps[4], float transforms[4][4])
+{
+	(void)shader;
+	(void)maps;
+	(void)transforms;
+	return 0;
+}
+
+void world_rt_source_glow(long shader, unsigned long const texels[4], struct world_rt_source_shading const *shading,
+	float rgb[3])
+{
+	(void)shader;
+	(void)texels;
+	(void)shading;
+	rgb[0] = rgb[1] = rgb[2] = 0.0f;
+}
+
 /* (bitmap 200 loaded, 201 once bump_loaded) */
 static int bump_loaded;
 static const unsigned long base_header[5], bump_header[5];

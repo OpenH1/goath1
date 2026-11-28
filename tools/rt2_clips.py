@@ -94,6 +94,27 @@ MOMENTS = {
         [],
         "29-33 move=0,1; 33-43 hunt",
         "b30's opening in first person inside the Pelican's bay (its ceiling, its lamps, the marines), then the landing"),
+    # (the landing zone's camp's two portable shields, scenery placed by the scenario at about (-53.6, 8.8) and
+    # (-57.5, 6.3), the camp placed afresh, the marines taken away; the script's camera beside them, a slow pan)
+    "b30_shields": (
+        "levels\\b30\\b30", 37, 49,
+        [(26, "cheat_deathless_player true"),
+         (28, "ai_erase beach_lz_marine"),
+         (28.5, "ai_erase beach_lz"),
+         (33, "ai_place beach_lz"),
+         (36.5, cam(-49.0, 12.0, 5.6, 205, -11)),
+         (37, cam(-49.0, 12.0, 5.6, 225, -11, 12))],
+        "",
+        "b30's landing zone camp: the Covenant's portable shields (purple, drawn adding), the ground and the Covenant "
+        "about them; a slow pan"),
+    # (a50's opening at night on the cliff, after its cutscene (skipped by playing it fast, undrawn: the clip comes
+    # after it): its two portable shields at about (0, -28.2) and (-3.8, -25.6), the camera close by, a slow pan)
+    "a50_shields": (
+        "levels\\a50\\a50", 40, 52,
+        [(39.5, cam(3.0, -30.0, 88.8, 140, -18)),
+         (40, cam(3.0, -30.0, 88.8, 165, -18, 12))],
+        "",
+        "a50's opening at night: the Covenant's portable shields on the cliff, the ground about them; a slow pan"),
     "a10_cryo": (
         "levels\\a10\\a10", 12, 24,
         [(11.5, cam(-52.0, 0.0, 0.6, 180, -12)),
