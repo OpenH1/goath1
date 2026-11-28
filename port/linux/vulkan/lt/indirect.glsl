@@ -7,7 +7,8 @@
 //   record's albedo (linear) times the hit's dynamic light: one light of the hit's cell chosen by its unshadowed
 //   light (the flashlight among them), one shadow ray to it, plus the radiance cache's indirect light there. Only
 //   dynamic light: the static bounce is the lightmap's, never counted twice. Out: rgb the irradiance's sample (a
-//   cosine sample's estimator: albedo x the hit's irradiance), a 1 + the light-id hash + 1024 x the block's pixel.
+//   cosine sample's estimator: albedo x the hit's irradiance), a 1 + the block's light-id hash (block_hash: its four
+//   pixels' lights, whichever it traced) + 1024 x the block's pixel.
 // SPECULAR_RAY (full resolution, the guides' specular mask's pixels): one GGX ray (Heitz's visible normals; the
 //   guides' roughness, else a fallback by owner); its hit shaded as Halo's lightmap x albedo (the record's lightmap
 //   page; a model 0.6 of its albedo, as display.rt_reflections had it) plus the dynamic direct and the cache, faded
@@ -19,7 +20,8 @@
 // CACHE_RESOLVE (over the cache's slots, lt/indirect_cache.glsl): each slot's cell's bounce samples this frame,
 //   gathered where the cell is seen (16 taps over its footprint, each kept where its traced pixel is in that cell),
 //   merged by count (1/n up to 256: never an exponential average); a slot starts again when its cell or its
-//   light-id hash changes, and keeps its mean where no sample came (off the view, hidden).
+//   light-id hash (cell_hash: the lights at its cell's middle) changes, and keeps its mean where no sample came (off
+//   the view, hidden).
 // SPEC_FINAL: the light the surfaces read's right half (xgpu_spirv.c's lt_reflection_texel): the specular
 //   radiance and the hits' share.
 
@@ -322,16 +324,14 @@ vec3 direct_one(vec3 p, vec3 n, int owner, ivec2 pixel, float salt, inout uint h
     return lit * (total / chosen_weight);
 }
 
-// the light-id hash of p's lights (its cell's, by their stable ids: the light table's texel 7; the flashlight's
-// being on), 10 bits
-uint light_hash(vec3 p, vec3 n)
+// the light-id hash of a set of the light grid's cells' lights (their rows' union, by their stable ids: the light
+// table's texel 7; the flashlight's being on; the level's light sources' groups), 10 bits
+uint lights_hash(uvec4 mask)
 {
     uint h = pass.control.y != 0 && (pass.lights.z & LIGHTS_FLASHLIGHT) != 0 ? 0x2545u : 0u;
     // (the level's light sources: their set's groups, so the cache starts again when they come)
     h += uint(pass.emitter_counts.w) * 0x9e37u;
     if (pass.lights.x > 0)
-    {
-        uvec4 mask = cell_lights(p + n * 0.02);
         for (int word = 0; word < 4; word++)
         {
             uint bits = mask[word];
@@ -345,8 +345,19 @@ uint light_hash(vec3 p, vec3 n)
                     h += cache_hash(floatBitsToUint(row_texel(row, 7).x) + 1u);
             }
         }
-    }
     return h & 1023u;
+}
+
+// the light-id hash a history is started again by: a function of what the history is of, never of which of its
+// points this frame's sample happened to come from (~/dev/rt2-realtime-design.md section 10, "Bounce noise, final
+// round"). A bounce block's: its four pixels' cells' lights together (the block traces one pixel a frame, in turn:
+// keyed by the traced pixel's cell, a block across two of the light grid's cells read a new hash every frame and its
+// history started again every frame, a still frame's light never settling). A cache cell's: the lights of the light
+// grid's cell at its middle (keyed by whichever sample it took first, a cell across two of them changed with the
+// phase, so its slot started again and its hits fell back to a ray of the dome every other frame)
+uint cell_hash(ivec3 c, int k)
+{
+    return lights_hash(cell_lights((vec3(c) + 0.5) * cascade_size(k)));
 }
 
 // the cache's indirect light at a hit: its cell's mean where the slot holds that cell (its check) for the same lights;
@@ -362,7 +373,7 @@ vec3 cache_find(vec3 p, vec3 n, out bool found)
     ivec3 c = ivec3(floor(p / cascade_size(k)));
     vec4 slot = texelFetch(cache_image, slot_texel(c, octant_of(n), k), 0);
     uint packed = uint(max(slot.a, 0.0)), count = packed & 511u;
-    if (count == 0u || ((packed >> 9) & 15u) != cell_check(c, k) || (packed >> 13) != light_hash(p, n))
+    if (count == 0u || ((packed >> 9) & 15u) != cell_check(c, k) || (packed >> 13) != cell_hash(c, k))
         return vec3(0.0);
     found = true;
     return max(slot.rgb, vec3(0.0));
@@ -458,6 +469,18 @@ bool point_at(ivec2 pixel, out vec3 p, out vec3 n)
         all(lessThan(pixel, pass.corners.zw));
 }
 
+uint block_hash(ivec2 block)
+{
+    uvec4 mask = uvec4(0u);
+    for (int k = 0; k < 4; k++)
+    {
+        vec3 p, n;
+        if (point_at(block * 2 + block_pixel(k), p, n))
+            mask |= cell_lights(p + n * 0.02);
+    }
+    return lights_hash(mask);
+}
+
 vec4 bounce_main(ivec2 block, out vec3 p, out vec3 n, out uint owner, out bool found)
 {
     int phase = int(pass.indirect[1].y);
@@ -502,7 +525,7 @@ vec4 bounce_main(ivec2 block, out vec3 p, out vec3 n, out uint owner, out bool f
     e /= float(rays);
     if (any(isnan(e)) || any(isinf(e)))
         e = vec3(0.0);
-    return vec4(e, 1.0 + float(light_hash(p, n)) + 1024.0 * float(which));
+    return vec4(e, 1.0 + float(block_hash(block)) + 1024.0 * float(which));
 }
 
 // how much of the reflection a pixel shows (its own surface's: the eye's ray to its point, the material record there):
@@ -842,14 +865,15 @@ void main()
         if (!project_now(centre, at, along))
             return;
         // (the cell's half width in pixels; 4x4 taps over it, each a bounce block's sample taken where its traced
-        // pixel's point is of this cell (its cascade, place and octant) and of the first taken's lights)
+        // pixel's point is of this cell (its cascade, place and octant); the slot keyed by its own cell's lights,
+        // cell_hash)
         float reach = clamp(0.5 * size / (length(pass.camera[2].xyz) * along) * 0.5 *
             float(pass.corners.z - pass.corners.x), 1.0, 64.0);
         ivec2 blocks = ivec2(pass.indirect[0].xy);
         int phase = int(pass.indirect[1].y);
         vec3 sum = vec3(0.0);
         float samples = 0.0;
-        uint light = 0xFFFFFFFFu;
+        uint light = cell_hash(c, k);
         for (int t = 0; t < 16; t++)
         {
             vec2 q = at + (vec2(float(t & 3), float(t >> 2)) - 1.5) / 1.5 * reach;
@@ -866,15 +890,10 @@ void main()
             vec4 s = texelFetch(reservoirs, block, 0);
             if (s.a < 0.5)
                 continue;
-            float code = s.a - 1.0;
-            int which = int(floor(code / 1024.0));
-            uint l = uint(code - 1024.0 * float(which));
+            int which = int(floor((s.a - 1.0) / 1024.0));
             if (!known && (!point_at(block * 2 + block_pixel(phase + which), sp, sn) || cascade_of(sp) != k ||
                 octant_of(sn) != octant || ivec3(floor(sp / size)) != c))
                 continue;
-            if (light != 0xFFFFFFFFu && l != light)
-                continue;
-            light = l;
             sum += s.rgb;
             samples += 1.0;
         }
