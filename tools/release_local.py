@@ -5,7 +5,8 @@ workflow's release (.github/workflows/build.yml), through the same scripts
 (tools/ci_build.py for each build, tools/ci_plan.py's test lists,
 tools/release_package.py, tools/release_names.py --check-release,
 tools/macos_appcast.py, tools/release_sign.py). docs/releasing.md, "From our
-own machines", has the steps and how to change a machine.
+own machines", has the steps and how to change a machine, and where this
+tool stands: parked, its first dry run stopped at the Linux build.
 
     python3 tools/release_local.py build   --number N [--ref REF] [--only P,P] [--no-dlss]
     python3 tools/release_local.py sign    --number N       # on the signing Mac, at its keyboard
@@ -182,21 +183,21 @@ class Release:
     # --- the Linux machine (omarchy)
     def sandbox(self, tree: str, commands: str) -> str:
         """a script: commands run in the CI image's file system (the self-hosted runners' sandbox,
-        tools/ci-runner/host.sh, with the network: configure fetches), tree at /work, the rig's compile cache
+        tools/ci-runner/host.sh, with the network: configure fetches), tree at /runner (a folder the image has: its root is read-only), the rig's compile cache
         and the guests' LLVM kept"""
         inner = f"set -euo pipefail\nexport {LINUX_CACHE_ENV}\n{commands}"
         return f"""
 mkdir -p ~/goat-rig/llvm-cache {self.dir}/home
 bwrap --ro-bind ~/goat-rig/ci/rootfs / --dev /dev --tmpfs /dev/shm --proc /proc --ro-bind /sys /sys \\
   --tmpfs /run --tmpfs /tmp --tmpfs /var/tmp --ro-bind /etc/resolv.conf /etc/resolv.conf \\
-  --bind {tree} /work --bind ~/goat-rig/ccache /goat-rig/ccache --bind ~/goat-rig/llvm-cache /cache/llvm \\
+  --bind {tree} /runner --bind ~/goat-rig/ccache /goat-rig/ccache --bind ~/goat-rig/llvm-cache /cache/llvm \\
   --bind {self.dir}/home /home/build \\
   --unshare-user --uid 0 --gid 0 --unshare-pid --unshare-ipc --die-with-parent --new-session \\
   --clearenv --setenv HOME /home/build --setenv TMPDIR /tmp --setenv LANG C.UTF-8 \\
   --setenv PATH /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \\
   --setenv CI_BUILD_NUMBER {self.number} --setenv CI_COMPILER_LAUNCHER ccache \\
-  --setenv CCACHE_DIR /goat-rig/ccache --setenv CCACHE_BASEDIR /work --setenv CI_GUEST_LLVM_CACHE /cache/llvm \\
-  --chdir /work nice -n 10 bash -c {shlex.quote(inner)}
+  --setenv CCACHE_DIR /goat-rig/ccache --setenv CCACHE_BASEDIR /runner --setenv CI_GUEST_LLVM_CACHE /cache/llvm \\
+  --chdir /runner nice -n 10 bash -c {shlex.quote(inner)}
 """
 
     def to_artifacts(self, tree: str, names) -> str:
@@ -254,7 +255,7 @@ status=0
 [ -z "$light" ] || (PATH="$(python3 tools/guest_toolchain.py --cache "$CI_GUEST_LLVM_CACHE"):$PATH" python3 tools/test_light_storage.py) || status=1
 [ -z "$parallel" ] || python3 -m pytest -q -rs -n 24 --dist loadfile $parallel || status=1
 python3 tools/scorecard/ci.py || status=1
-echo "$status" > /work/build-tests.status
+echo "$status" > /runner/build-tests.status
 python3 tools/ci_build.py linux_x86_64 release
 python3 tools/ci_build.py linux_x86_64 release --vr
 """) + self.to_artifacts(tree, ARTIFACTS["linux-x86_64"]) + f"""
