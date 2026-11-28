@@ -129,6 +129,7 @@ void xgpu_vulkan_lt_lights_receive(void *context, const struct xgpu_stream_lt_li
 				memcpy(out->radiance, in[index].power, sizeof(out->radiance));
 				out->owner = in[index].owner;
 				out->two_sided = (in[index].flags & XGPU_LT_LAMP_TWO_SIDED) != 0;
+				out->additive = (in[index].flags & XGPU_LT_LAMP_ADDITIVE) != 0;
 			}
 			else
 				lt_lights.lights[window][kept++] = in[index];

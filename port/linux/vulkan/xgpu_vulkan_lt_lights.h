@@ -48,7 +48,7 @@ toward both sides (an additive part drawn from both); count of them */
 struct xgpu_vulkan_lt_object_lamp
 {
 	float corners[9], radiance[3];
-	uint32_t owner, two_sided;
+	uint32_t owner, two_sided, additive;
 };
 const struct xgpu_vulkan_lt_object_lamp *xgpu_vulkan_lt_object_lamps(int window, int *count);
 

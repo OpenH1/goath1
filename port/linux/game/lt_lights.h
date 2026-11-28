@@ -50,6 +50,8 @@ enum
 /* an XGPU_LT_LIGHT_OBJECT_EMITTER record's flags (xgpu_stream.h's): an
 additive part drawn from both sides, which glows toward both */
 #define XGPU_LT_LAMP_TWO_SIDED 1u
+/* (an additive part: a glow drawn over its object, not shadowed by it) */
+#define XGPU_LT_LAMP_ADDITIVE 2u
 
 /* its flags: the first five are the enhanced lights' own
 (halo_dynamic_lights.h's HALO_DYNAMIC_LIGHT_*), the same bits */

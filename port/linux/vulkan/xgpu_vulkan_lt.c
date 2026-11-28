@@ -1223,8 +1223,12 @@ static int lt_object_lamp_rows(const float eye[3])
 			index == count - 1 ? 1.0f : running / total);
 		lt_set(texels[4 * index + 1], lamp->corners[3] - lamp->corners[0], lamp->corners[4] - lamp->corners[1],
 			lamp->corners[5] - lamp->corners[2], area[index]);
+		/* (w: its owner (the ray-traced scene's instance of its object) x
+		4, plus 2 an additive part's, plus 1 two-sided: lt/e1.frag's
+		object_lamp_sample) */
 		lt_set(texels[4 * index + 2], lamp->corners[6] - lamp->corners[0], lamp->corners[7] - lamp->corners[1],
-			lamp->corners[8] - lamp->corners[2], lamp->two_sided ? 1.0f : 0.0f);
+			lamp->corners[8] - lamp->corners[2], (float)(lamp->owner & 0xFFFFFu) * 4.0f + (lamp->additive ? 2.0f : 0.0f) +
+			(lamp->two_sided ? 1.0f : 0.0f));
 		lt_set(texels[4 * index + 3], lamp->radiance[0], lamp->radiance[1], lamp->radiance[2], power[index] / total);
 	}
 	used = (4 * count + LT_TABLE_TEXELS - 1) / LT_TABLE_TEXELS;

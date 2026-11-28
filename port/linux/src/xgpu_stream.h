@@ -1572,6 +1572,8 @@ enum
 /* an XGPU_LT_LIGHT_OBJECT_EMITTER record's flags: an additive part drawn
 from both sides, which glows toward both */
 #define XGPU_LT_LAMP_TWO_SIDED 1u
+/* (an additive part: a glow drawn over its object, not shadowed by it) */
+#define XGPU_LT_LAMP_ADDITIVE 2u
 enum
 {
 	XGPU_LT_LIGHT_MODELS_ONLY = 1 << 0,

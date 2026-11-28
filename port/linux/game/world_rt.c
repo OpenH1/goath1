@@ -169,6 +169,9 @@ struct world_rt_lamp
 	unsigned long (*samples)[4];
 	/* (an additive part drawn from both sides: it glows toward both) */
 	int two_sided;
+	/* (an additive part: a glow drawn over its object, which does not
+	shadow it, lt/e1.frag's object_lamp_sample) */
+	int additive;
 };
 
 /* ---------- globals */
@@ -235,7 +238,7 @@ static struct
 	float (*lamp_corners)[9], (*lamp_radiance)[3];
 	unsigned long *lamp_owners;
 	/* (the sides each glows toward: 1, or 2 an additive part drawn from
-	both) */
+	both; and WORLD_RT_LAMP_ADDITIVE, an additive part's, world_rt.h) */
 	unsigned char *lamp_sides;
 	long lamp_count;
 	struct
@@ -1144,6 +1147,7 @@ static void world_rt_lamps_made(struct world_rt_definition *entry, short node, s
 		lamp->sample_count = glow ? count : 0;
 		lamp->samples = samples;
 		lamp->two_sided = additive && (material->flags & WORLD_RT_MATERIAL_TWO_SIDED) != 0;
+		lamp->additive = additive;
 		/* (a skinned model's: on its triangle's major node, in that node's
 		space, as its rigid parts are) */
 		if (inverses)
@@ -1241,7 +1245,8 @@ static void world_rt_lamps_placed(struct world_rt_definition const *definition, 
 			world_rt_transformed(transform, &lamp->corners[3 * corner], 1,
 				&world_rt.lamp_corners[world_rt.lamp_count][3 * corner]);
 		world_rt.lamp_owners[world_rt.lamp_count] = owner;
-		world_rt.lamp_sides[world_rt.lamp_count] = lamp->two_sided ? 2 : 1;
+		world_rt.lamp_sides[world_rt.lamp_count] = (unsigned char)((lamp->two_sided ? 2 : 1) |
+			(lamp->additive ? WORLD_RT_LAMP_ADDITIVE : 0));
 		if (world_rt.counts_wanted > 0)
 		{
 			float const *q = world_rt.lamp_corners[world_rt.lamp_count], *r = world_rt.lamp_radiance[world_rt.lamp_count];

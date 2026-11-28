@@ -595,6 +595,17 @@ vec3 emitter_light(vec3 p, vec3 n, vec3 shaded, int tri, vec2 ab, out vec3 q)
     return emitter_texel(2 * int(t1.w) + 1).rgb * (lit * emitting / (max(d2, 0.01) * 3.14159265));
 }
 
+// whether q (an object lamp's point) is seen from p (normal n), the lamp's own object (owner) left out
+float emitter_visible_by(vec3 p, vec3 n, vec3 q, uint owner)
+{
+    vec3 origin = p + n * ray_lift(p);
+    vec3 ray = q - origin;
+    float length_to = length(ray);
+    float t_max = length_to - 0.02;
+    return t_max > 0.0 ? visible_by(origin, ray / length_to, t_max, -1, owner == 0u ? 0xffffffffu : owner, MASK_AO) :
+        0.0;
+}
+
 // whether q (a light source's point) is seen from p (normal n), the receiver's own object left out
 float emitter_visible(vec3 p, vec3 n, vec3 q, int receiver)
 {
@@ -639,8 +650,8 @@ vec3 lamp_light(vec3 p, vec3 n, vec3 shaded, int lamp, vec2 ab, out vec3 q)
     float d2 = max(dot(to, to), 1.0e-6);
     vec3 l = to * inversesqrt(d2);
     float emitting = dot(normalize(cross(t1.xyz, t2.xyz)), -l), lit = max(dot(shaded, l), 0.0);
-    // (an additive part drawn from both sides glows toward both: t2.w 1)
-    if (t2.w > 0.5)
+    // (an additive part drawn from both sides glows toward both: t2.w odd; t2.w is owner x 4 + additive x 2 + that)
+    if (mod(t2.w, 2.0) > 0.5)
         emitting = abs(emitting);
     if (emitting <= 0.0 || dot(n, l) <= 0.0 || lit <= 0.0)
         return vec3(0.0);
@@ -653,6 +664,7 @@ vec3 object_lamp_sample(vec3 p, vec3 n, vec3 shaded, int candidates, inout uint 
         return vec3(0.0);
     float w_sum = 0.0, chosen_target = 0.0;
     vec3 chosen_f = vec3(0.0), chosen_q = vec3(0.0);
+    int chosen = 0;
     for (int k = 0; k < candidates; k++)
     {
         int lamp = lamp_pick(random(h));
@@ -670,12 +682,21 @@ vec3 object_lamp_sample(vec3 p, vec3 n, vec3 shaded, int candidates, inout uint 
             chosen_f = f;
             chosen_q = q;
             chosen_target = target;
+            chosen = lamp;
         }
     }
     if (chosen_target <= 0.0)
         return vec3(0.0);
     vec3 e = chosen_f * (w_sum / (float(candidates) * chosen_target));
-    return shadow ? e * emitter_visible(p, n, chosen_q, -1) : e;
+    // (an additive part's glow is drawn over its object, a shell about its body (a Covenant turret's energy about
+    // its column, a shield's about its frame): its own object's surfaces do not shadow it, as the original draws
+    // it over them; a self-illuminated triangle's (a Pelican's bay strips) do. Its owner in the table's t2.w / 4)
+    if (!shadow)
+        return e;
+    float w2 = lamp_texel(4 * chosen + 2).w;
+    if (mod(w2, 4.0) >= 2.0)
+        return e * emitter_visible_by(p, n, chosen_q, uint(floor(w2 * 0.25)));
+    return e * emitter_visible(p, n, chosen_q, -1);
 }
 
 // one candidate point of the level's light sources for p: u the group's choice, xi the point's. Out: its triangle
