@@ -1073,7 +1073,7 @@ def analyse(args, files, regions, pictures, save, out):
            "dir": f"{service_home(args.host)}/{save}"}
     w, h = (int(v) for v in SIZE.split("x"))
     job["width"], job["height"] = w, h
-    text = ssh(args.host, f"python3 - {shlex.quote(json.dumps(job))} <<'PY'\n{ANALYSE}\nPY\n")
+    text = ssh(args.host, f"mkdir -p ~/{save} && python3 - {shlex.quote(json.dumps(job))} <<'PY'\n{ANALYSE}\nPY\n")
     result = json.loads(text.strip().splitlines()[-1])
     if pictures:
         out.mkdir(parents=True, exist_ok=True)
