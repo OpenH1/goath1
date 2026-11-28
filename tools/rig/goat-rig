@@ -8,7 +8,9 @@
     goat-rig fetch [<host>:]<label> <dest>          a run's pictures, videos and logs copied to <dest>
     goat-rig clean [--older-than DAYS] [--builds]    old runs (and builds) removed
     goat-rig status                                  locks, disk, cache
-    goat-rig @<host> <command...>                    the command run on omarchy or 5900x over ssh (from a Mac)
+    goat-rig bosgame build|run|status ...             (omarchy) the Windows build, run in bosgame's VM (RTX 3090)
+    goat-rig @<host> <command...>                    the command run on omarchy or 5900x over ssh (from a Mac);
+                                                     @bosgame runs `goat-rig bosgame <command...>` on omarchy
 
 Everything lives in ~/goat-rig of the machine (GOAT_RIG overrides): repo.git (a bare clone of GitHub's
 OpenH1/goath1), builds/<name> (one worktree per branch, its build/ in it), ccache, runs/<label>, locks.
@@ -41,6 +43,7 @@ LAUNCHER = RIG / "bin" / "rig-ccache"
 OPENCE = RIG / "opence-359"
 MCC = RIG / "mcc-maps" / "mcc_maps"
 MAPS = RIG / "maps"
+XWIN = RIG / "xwin"
 # the machine owner's own game (any install in ~/Applications/OpenH1*: OpenH1, OpenH1-Beta, OpenH1-RT): never start one while it runs, stop ours if it
 # starts
 OWNER_GAME = f"^{HOME}/Applications/OpenH1[^/ ]*/bin/openh1"
@@ -209,9 +212,13 @@ def cmd_build(argv):
     parser.add_argument("--configure", default="", help="more configure.py options, one string")
     parser.add_argument("--clean", action="store_true", help="ninja -t clean first (the cache stays)")
     parser.add_argument("--jobs", type=int, default=cores(), help="ninja -j (default: all cores but 2)")
+    parser.add_argument("--windows", action="store_true", help="the Windows build, cross-compiled against "
+                        "~/goat-rig/xwin (its own worktree, <name>.win): build/windows/halo.exe")
     args = parser.parse_args(argv)
     sha, named = resolve(args.ref)
     tree = tree_of(args.ref, sha, named)
+    if args.windows:
+        tree = tree.with_name(tree.name + ".win")
     BUILDS.mkdir(parents=True, exist_ok=True)
     with locked(f"build-{tree.name}.lock", f"build {args.ref}", f"waiting for another build of {tree.name}"):
         with locked("mirror.lock", "worktree"):
@@ -225,6 +232,8 @@ def cmd_build(argv):
         git("clean", "-fdq", cwd=tree)
         (tree / ".rig-ref").write_text(f"{args.ref} {sha}\n")
         options = ["--compiler-launcher", str(LAUNCHER)] + (["--release"] if args.release else [])
+        if args.windows:
+            options += windows_cross_options()
         options += shlex.split(args.configure)
         configured = tree / "build.ninja"
         stamp = tree / "build" / ".rig-configure"
@@ -237,7 +246,7 @@ def cmd_build(argv):
                     die(f"configure failed: {tree / 'configure.log'}", status=1)
             stamp.parent.mkdir(parents=True, exist_ok=True)
             stamp.write_text(" ".join(options))
-        targets = args.targets or DEFAULT_TARGETS
+        targets = args.targets or (["windows"] if args.windows else DEFAULT_TARGETS)
         start = time.monotonic()
         with build_slot():
             with open(tree / "build.log", "w") as log:
@@ -251,7 +260,19 @@ def cmd_build(argv):
             print("\n".join([line for line in text if "error:" in line or "FAILED" in line][:40] or text[-30:]))
             die(f"build of {args.ref} ({sha[:10]}) failed after {seconds:.0f} s: {tree / 'build.log'}", status=1)
     say(f"built {args.ref} ({sha[:10]}) in {seconds:.0f} s")
-    print(tree / "build" / "linux_x86_64" / "halo")
+    print(tree / "build" / ("windows/halo.exe" if args.windows else "linux_x86_64/halo"))
+    return tree, sha, seconds
+
+
+def windows_cross_options():
+    """configure.py --windows-cross against the MSVC toolchain and SDK xwin splatted into ~/goat-rig/xwin/sysroot
+    (install.sh: `xwin splat --use-winsysroot-style`, with x64 links to xwin's x86_64 library folders)"""
+    root = XWIN / "sysroot"
+    vctools = sorted((root / "VC/Tools/MSVC").glob("*/include"))
+    sdk = root / "Windows Kits/10"
+    if not vctools or not (sdk / "Include").is_dir():
+        die(f"no MSVC toolchain in {root}: run tools/rig/install.sh omarchy --windows from a checkout")
+    return ["--windows-cross", "--windows-vctools-dir", str(vctools[-1].parent), "--windows-sdk-dir", str(sdk)]
 
 
 def seed_third_party(tree):
@@ -801,6 +822,169 @@ def cmd_exec(argv):
         sys.exit(subprocess.run(command, cwd=tree, env=build_env()).returncode)
 
 
+# ---------- bosgame: the Windows VM (RTX 3090, NVIDIA's Windows driver), driven from omarchy
+
+# bosgame's ssh target from omarchy, where its builds are made (`goat-rig @bosgame ...` from a Mac runs there)
+BOSGAME = os.environ.get("GOAT_RIG_BOSGAME", "bosgame.fabric")
+BOSGAME_BUILDER = "omarchy"
+# what the Windows build's folder in the VM needs (ci_build.py's package, less the licences)
+WINDOWS_FILES = ["halo.exe", "SDL3.dll", "openh1.assets", "prepared.records", "brokers.txt", "masters.txt",
+                 "relays.txt"]
+# the run's settings in the VM (winvm's run.ps1 adds HALO_DATA_ROOT, HALO_NET_ADDRESS=127.0.0.1, the dummy audio
+# driver, a 1280x720 window, HALO_GPU_STATS and no vsync): muted, loopback only, port 25150, no updates or services
+BOSGAME_ENV = {
+    "HALO_VOLUME": "0", "HALO_NET_PORT": str(PORT), "HALO_NET_BROADCAST": "127.255.255.255",
+    "HALO_NET_STUN": "127.0.0.9:3478", "HALO_SERVER_MASTER_PUBLISH": "false", "HALO_DISCORD_APPLICATION": "",
+    "HALO_UPDATE_ANSWER": "no", "HALO_SERVER_AUTO_UPDATE": "false", "HALO_RANDOM_SEED": "12345",
+    "HALO_SCREENSHOT_DIR": "C:\\openh1\\rigshots",
+}
+# on bosgame: one run at a time (its own lock around winvm's fetch, run and stop), the build put in the VM only when
+# it differs from the one there, the pictures copied into winvm's run folder
+BOSGAME_SCRIPT = r'''
+set -uo pipefail
+build=$1 tag=$2; shift 2
+mkdir -p ~/goat-rig
+exec 8>~/goat-rig/bosgame.lock
+if ! flock -n 8; then echo "goat-rig: waiting for bosgame (another run holds it)"; flock 8; fi
+# (as the user, through winvm only: no root, no change of the 3090's passthrough mode. winvm stop would hand the
+# card to the host (gpu-mode ai), and giving it back to the VM is then a reboot, so a VM that was off is left up and
+# said so; shutting it down with the card kept for the VM needs a winvm command that does only that)
+was=$(winvm status | sed -n 's/^vm: //p')
+restore() {
+    case $was in running*) ;; *) echo "goat-rig: the VM was off and is left running (winvm has no shutdown that keeps the 3090 for the VM)";; esac
+}
+trap restore EXIT
+case $was in running*) ;; *) echo "goat-rig: starting the VM";; esac
+in_vm=$(winvm ps 'Get-Content C:\openh1\game\rig-build.txt -ErrorAction SilentlyContinue' | tr -d '\r')
+if [ "$in_vm" = "$tag" ]; then echo "goat-rig: the build is in the VM already"
+else winvm fetch "$build" | tail -1 || exit 1; fi
+winvm ps 'Remove-Item -Recurse -Force C:\openh1\rigshots -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force C:\openh1\rigshots | Out-Null'
+winvm run "$@"
+status=$?
+run=$(readlink -f ~/winvm/runs/last)
+rm -rf "$run/rigshots" && winvm get C:/openh1/rigshots "$run/" 2>/dev/null || true
+echo "RUN=$run STATUS=$status"
+# (the builds sent here, a week old, removed)
+find ~/goat-rig/builds -mindepth 1 -maxdepth 1 -type d -mtime +7 -exec rm -rf {} + 2>/dev/null
+'''
+
+
+def cmd_bosgame(argv):
+    """goat-rig bosgame build|run|status on omarchy: the Windows build made here, run in bosgame's VM"""
+    if not argv or argv[0] not in ("build", "run", "status"):
+        die("goat-rig bosgame build <ref> | run <label> [options] [-- VAR=...] | status")
+    if argv[0] == "build":
+        cmd_build(["--windows"] + argv[1:])
+        return
+    if argv[0] == "status":
+        sys.exit(subprocess.run(["ssh", BOSGAME, "winvm status; flock -n ~/goat-rig/bosgame.lock true 2>/dev/null "
+                                 "|| echo 'goat-rig: a run holds bosgame'"]).returncode)
+    options, groups = split_groups(argv[1:])
+    parser = argparse.ArgumentParser(prog="goat-rig bosgame run", description="one game in bosgame's Windows VM")
+    parser.add_argument("label", help="the run's name: its folder is ~/goat-rig/runs/<label>/bosgame on omarchy")
+    parser.add_argument("--build", default="master", help="a branch, pr/N or sha, built for Windows here first "
+                        "(default master)")
+    parser.add_argument("--release", action="store_true", help="the release build (LTO, no assertions)")
+    parser.add_argument("--seconds", type=float, default=30, help="the game quits after this (default 30)")
+    parser.add_argument("--shots", help="every:<frames> or at:<second>[+<more frames>]")
+    parser.add_argument("--map", default="bloodgulch", help="local Slayer on this map (default bloodgulch)")
+    parser.add_argument("--bots", type=int, default=3)
+    parser.add_argument("--menu", action="store_true", help="the main menu, no game")
+    args = parser.parse_args(options)
+    settings = groups[0] if groups else []
+    for item in settings:
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", item, re.S) or "\n" in item:
+            die(f"{item}: VAR=VALUE (one line; VAR= unsets it)")
+    if any(item.split("=", 1)[0] == "HALO_NET_PORT" and item.split("=", 1)[1] == "5150" for item in settings):
+        die("never port 5150")
+    started = time.monotonic()
+    tree, sha, build_seconds = cmd_build(["--windows", args.build] + (["--release"] if args.release else []))
+    # the folder sent: the files, and a tag (the files' hashes) that says whether the VM has it already
+    out = tree / "build/windows"
+    stage = out / "rig-stage"
+    shutil.rmtree(stage, ignore_errors=True)
+    stage.mkdir()
+    for name in WINDOWS_FILES:
+        os.link(out / name, stage / name)
+    digest = subprocess.run(["sha256sum", *WINDOWS_FILES], cwd=stage, capture_output=True, text=True).stdout
+    tag = f"{args.build} {sha[:10]} " + subprocess.run(["sha256sum"], input=digest, capture_output=True,
+                                                       text=True).stdout.split()[0][:16]
+    (stage / "rig-build.txt").write_text(tag + "\n")
+    remote = f"goat-rig/builds/{tree.name}"
+    if subprocess.run(["rsync", "-az", "--delete", "--rsync-path", f"mkdir -p {remote} && rsync", f"{stage}/",
+                       f"{BOSGAME}:{remote}/"]).returncode:
+        die(f"could not copy the build to {BOSGAME}", status=1)
+    shutil.rmtree(stage, ignore_errors=True)
+    shots = parse_shots(args.shots)
+    keep = int(shots.pop("_keep_frames", 0))
+    env = dict(BOSGAME_ENV, **shots)
+    # (--redirect: a build that is not a release's logs to its console, which the run's stderr.txt then keeps)
+    winvm = ["--redirect", "--seconds", f"{args.seconds:g}"] + (["--menus"] if args.menu else
+                                                  ["--map", args.map, "--bots", str(args.bots)])
+    winvm += [f"{key}={value}" for key, value in env.items()] + settings
+    run = RUNS / args.label / "bosgame"
+    shutil.rmtree(run, ignore_errors=True)
+    run.mkdir(parents=True)
+    say(f"running {args.build} ({sha[:10]}) in bosgame's VM for {args.seconds:g} s")
+    played = time.monotonic()
+    # (the script from a file: winvm's own ssh calls would read the rest of it from the input)
+    result = subprocess.run(["ssh", BOSGAME, "s=$(mktemp) && cat > $s && bash $s " + shlex.join([remote, tag, *winvm])
+                             + " < /dev/null; e=$?; rm -f $s; exit $e"],
+                            input=BOSGAME_SCRIPT, capture_output=True, text=True)
+    run_seconds = time.monotonic() - played
+    (run / "winvm.txt").write_text(result.stdout + result.stderr)
+    found = re.search(r"^RUN=(\S+) STATUS=(\d+)", result.stdout, re.M)
+    if not found:
+        print(result.stdout[-3000:] + result.stderr[-3000:])
+        die(f"the run in bosgame's VM failed: {run / 'winvm.txt'}", status=1)
+    for line in result.stdout.splitlines():
+        if line.startswith("goat-rig:"):
+            print(line, flush=True)
+    include = ["--include=*/", "--include=*.bmp", "--include=*.png", "--include=*.txt", "--include=*.log",
+               "--include=*.json", "--exclude=maps/", "--exclude=*"]
+    subprocess.run(["rsync", "-a", "--prune-empty-dirs", *include, f"{BOSGAME}:{found.group(1)}/", f"{run}/"])
+    (run / "shots").mkdir(exist_ok=True)
+    for path in list(run.rglob("*.bmp")) + list(run.rglob("*.png")):
+        if path.parent != run / "shots":
+            shutil.move(str(path), run / "shots" / path.name)
+    if keep:
+        trim_frames(run / "shots", keep)
+    for path in sorted((run / "shots").glob("*.bmp")):
+        to_png(path)
+    shutil.rmtree(run / "rigshots", ignore_errors=True)
+    if not (run / "halo.log").exists() and (run / "stderr.txt").exists():
+        (run / "stderr.txt").rename(run / "halo.log")
+    log = (run / "halo.log").read_text(errors="replace").replace("\r", "") if (run / "halo.log").exists() else ""
+    debug = (run / "debug.txt").read_text(errors="replace") if (run / "debug.txt").exists() else ""
+    exit_text = (run / "exit.txt").read_text().strip() if (run / "exit.txt").exists() else ""
+    if not exit_text.lstrip("-").isdigit():
+        # (a redirected run's exit.txt is empty: Start-Process keeps no code then; the host logs it)
+        exited = re.findall(r"the game exited \((-?\d+)\)", log)
+        exit_text = exited[-1] if exited else ""
+    frames = re.findall(r"(\d+\.\d+) ms between frames", log)
+    gpu = re.findall(r"GPU (\d+\.\d+) ms a frame", log)
+    asserts = re.findall(r"asserts: (\d+) failed, (\d+) warnings", log + debug)
+    pictures = len(list((run / "shots").glob("*.png")))
+    lines = [f"bosgame ({args.build} {sha[:10]}, Windows): exit {exit_text or '?'}, "
+             + (f"asserts {asserts[-1][0]} failed, {asserts[-1][1]} warnings" if asserts else "no failed asserts")
+             + f", {pictures} pictures, built in {build_seconds:.0f} s, ran in {run_seconds:.0f} s "
+             f"(all {time.monotonic() - started:.0f} s)",
+             "    ms between frames (each 600 frames): " + (" ".join(frames) or "none logged"),
+             "    GPU ms a frame: " + (" ".join(gpu) or "none logged")]
+    lines += ["    " + line for line in failure_signs(log, args.menu)]
+    lines += ["    " + line.strip()[:200] for line in log.splitlines()
+              if re.search(r"vulkan: GPU|ray quer|ray.traced|ray tracing", line, re.I)][:12]
+    lines.append(f"    {run}  (from a Mac: goat-rig fetch bosgame:{args.label} <dest>)")
+    (run / "summary.txt").write_text("\n".join(lines) + "\n")
+    (run / "result.json").write_text(json.dumps({
+        "exit": int(exit_text) if exit_text.lstrip("-").isdigit() else None, "build": args.build, "sha": sha,
+        "tag": tag, "frame_ms": [float(v) for v in frames], "gpu_ms": [float(v) for v in gpu],
+        "pictures": pictures, "build_seconds": round(build_seconds), "run_seconds": round(run_seconds),
+        "vm_run": found.group(1)}, indent=1))
+    print("\n".join(lines), flush=True)
+    sys.exit(0 if exit_text == "0" else 1)
+
+
 # ---------- fetch, clean, status, remote
 
 
@@ -810,6 +994,8 @@ def cmd_fetch(argv):
     parser.add_argument("dest", type=Path)
     args = parser.parse_args(argv)
     host, _, label = args.what.rpartition(":")
+    if host == "bosgame":
+        host = BOSGAME_BUILDER
     args.dest.mkdir(parents=True, exist_ok=True)
     include = ["--include=*/", "--include=*.png", "--include=*.mp4", "--include=*.txt", "--include=*.log",
                "--include=*.json", "--exclude=*"]
@@ -862,6 +1048,9 @@ def cmd_status(argv):
 
 
 def cmd_remote(host, argv):
+    if host == "bosgame":
+        # (bosgame's VM is driven from omarchy, which builds for it)
+        host, argv = BOSGAME_BUILDER, ["bosgame"] + argv
     target = hosts().get(host, host)
     script = "exec ~/goat-rig/bin/goat-rig " + shlex.join(argv) + "\n"
     # (to bash on its input: the login shell, fish on the 5900X, reads none of it)
@@ -879,7 +1068,7 @@ def main():
     if command == "_inside":
         sys.exit(inside(rest[0]))
     commands = {"build": cmd_build, "path": cmd_path, "run": cmd_run, "exec": cmd_exec, "fetch": cmd_fetch,
-                "clean": cmd_clean, "status": cmd_status}
+                "clean": cmd_clean, "status": cmd_status, "bosgame": cmd_bosgame}
     if command not in commands:
         die(f"{command}: build, path, run, exec, fetch, clean or status (goat-rig --help)")
     commands[command](rest)

@@ -40,6 +40,7 @@ feed's, or a multisampled view (the front end's).
 #include "render/render.h"
 #include "render/render_cameras.h"
 
+#include "lt_lights.h"
 #include "motion_vectors.h"
 
 #include <math.h>
@@ -272,17 +273,21 @@ boolean motion_vectors_window_begin(short local_player_index, boolean eligible, 
 {
 	struct motion_window *slot;
 	real jitter_x = 0.0f, jitter_y = 0.0f;
+	int technique = motion_vectors_technique();
 
 	motion_vectors.active = FALSE;
 	motion_vectors.drawing = NULL;
 	motion_vectors.drawing_nodes = motion_vectors.named_nodes = NULL;
-	if (!motion_vectors_technique() || !eligible || local_player_index < 0 || local_player_index >= 4 ||
+	/* (no technique, the light-transport pass on: the frame before's
+	registers alone, for the pre-pass's twins' motion, not jittered) */
+	if ((!technique && !lt_lights_sent()) || !eligible || local_player_index < 0 || local_player_index >= 4 ||
 		!frustum->projection_valid || !objects_made())
 	{
 		return FALSE;
 	}
-	motion_vectors_jitter(motion_vectors.frame, &jitter_x, &jitter_y);
-	if (!halo_motion_window(TRUE, jitter_x, jitter_y))
+	if (technique)
+		motion_vectors_jitter(motion_vectors.frame, &jitter_x, &jitter_y);
+	if (!halo_motion_window(technique ? TRUE : HALO_MOTION_PREVIOUS, jitter_x, jitter_y))
 		return FALSE;
 	slot = &motion_vectors.windows[local_player_index];
 	window_camera(&motion_vectors.now, camera, frustum);

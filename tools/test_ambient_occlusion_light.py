@@ -80,11 +80,25 @@ def test_model_lit_for_each_pixel(shaders):
 
 def test_model_lit_by_the_dynamic_lights(shaders):
     source = body(shaders["model_dynamic", 1])
+    base = source[source.index("float3 base = model_lighting("):]
+    base = base[:base.index(";")]
     added = source[source.index("v0.rgb = dynamic_light_add("):]
     added = added[:added.index(";")]
-    # the occlusion in the base's lighting alone, the lights' sum added after
-    assert "model_lighting(u, in.xWorldNormal, occlusion)" in added
-    assert "occlusion" not in added[added.index("dynamic_light_sum("):]
+    summed = source[source.index("float3 sum = dynamic_light_sum("):]
+    summed = summed[:summed.index(";")]
+    # the occlusion in the base's lighting alone, the lights' sum (and the panels' linear light) added after
+    assert "model_lighting(u, in.xWorldNormal, occlusion)" in base
+    assert "v0.rgb = dynamic_light_add(dynamic_lights, base, sum, linear_light)" == added
+    assert "occlusion" not in summed
+
+
+def test_model_lit_by_the_dynamic_lights_over_the_vertex_light(shaders):
+    # the enhanced lights without display.per_pixel_lighting: the ambient and distant lights the vertex's, as the
+    # game's program gives them (xgpu.h's XGPU_PER_PIXEL_VERTEX_AMBIENT), so a model no light reaches is the game's
+    source = body(shaders["model_dynamic_vertex", 1])
+    assert "float3 base = saturate(in.xLightAmbient * occlusion)" in source
+    assert "model_lighting(" not in source
+    assert "v0.rgb = dynamic_light_add(" in source
 
 
 def test_model_lit_for_each_vertex(shaders):
@@ -101,16 +115,17 @@ def test_model_lit_for_each_vertex(shaders):
 def test_lightmap_pass(shaders):
     for name in ("lightmap", "lightmap_dynamic"):
         source = body(shaders[name, 1])
-        assert source.count("result.rgb *= occlusion;") == 1, name
+        # (its indirect share alone, xgpu.h's XGPU_AMBIENT_OCCLUSION_INDIRECT: never the sun's direct light)
+        assert source.count("light -= (level > 0.0 ? min(light, float3(level))") == 1, name
         if name == "lightmap_dynamic":
             # the lightmap's light by the occlusion before the lights add theirs
-            assert source.index("result.rgb *= occlusion;") < source.index("dynamic_light_add")
+            assert source.index("light -= (level > 0.0 ? min(light, float3(level))") < source.index("dynamic_light_add")
 
 
 def test_spirv_modules_valid(check, tmp_path):
     subprocess.run([str(check), "spirv", str(tmp_path)], check=True)
     modules = sorted(tmp_path.glob("*.spv"))
-    assert len(modules) == 11
+    assert len(modules) == 13
     if not VALIDATOR:
         pytest.skip("no spirv-val")
     for module in modules:

@@ -1391,17 +1391,19 @@ PAGES = {
              "Draws movement smoothly between the game's 30 updates a second, so that it looks fluid at any frame "
              "rate. Off shows each update as it is.", None),
             (SECTION, "LIGHTING"),
+            # (display.ray_tracing: the ray-traced settings together, where the
+            # graphics card has ray queries alone, SETTINGS_ROW_WHEN; Auto is
+            # On there with Enhanced graphics: port_config.c's
+            # config_ray_tracing)
+            ("RAY TRACING", "display.ray_tracing", [("AUTO", "auto"), ("ON", "on"), ("OFF", "off")],
+             "Traces light on the graphics card: soft shadows, shade in corners and under things, real "
+             "reflections, and plasma light bounced off walls. Auto is On where your card supports it. Off draws "
+             "the game as before.", "desktop android"),
             # (here, not on Video's tab: Refresh Rate took its row there)
             ("SHADOW QUALITY", "display.shadow_resolution",
              [("XBOX", "128"), ("MEDIUM", "256"), ("HIGH", "512"), ("ULTRA", "1024")],
              "How sharp the shadows of characters, vehicles and weapons are. Xbox is the original's soft, blocky "
              "shadow; each step up is crisper, and costs a little more of the graphics card.", None),
-            # (display.contact_shadows: where the renderer draws it, Vulkan's,
-            # not in the headset: SETTINGS_ROW_WHEN, settings_condition_term's
-            # contact_drawn)
-            ("CONTACT SHADOWS", "display.contact_shadows", ON_OFF,
-             "Adds fine shadows where characters and vehicles touch the ground and walls. Does nothing where "
-             "Ray Traced Shadows are on, which already trace them.", "desktop android"),
             ("SMOOTH LIGHTING", "display.per_pixel_lighting", ON_OFF,
              "Lights characters and weapons smoothly, without the flat facets of the Xbox's lighting, at a small "
              "cost.", None),
@@ -1563,15 +1565,22 @@ PAGES = {
              "Lowers the Render Resolution for a moment when the graphics card cannot keep up with the display, "
              "down to 50%, instead of dropping frames, and raises it again as it can. Best with an Upscaler.",
              "desktop"),
-            (SECTION, "RAY TRACING"),
+            (SECTION, "SHADOWS"),
             # (display.shadows: where the graphics card has ray queries alone,
             # SETTINGS_ROW_WHEN; Advanced Graphics and Brightness
-            # have no room: the processor's shadows' work taken off it)
+            # have no room: the processor's shadows' work taken off it. Advanced
+            # Graphics' Ray Tracing turns it on with the others)
             ("RAY TRACED SHADOWS", "display.shadows", [("OFF", "classic"), ("ON", "ray_traced")],
              "The shadows of characters and vehicles traced by the graphics card from their own shapes, soft at "
              "the edges, in the same place and darkness as the game's, which frees the processor's shadow work. Off "
              "draws them as the Xbox did.",
              "desktop android"),
+            # (display.contact_shadows: where the renderer draws it, Vulkan's,
+            # not in the headset: SETTINGS_ROW_WHEN, settings_condition_term's
+            # contact_drawn; Advanced Graphics' Ray Tracing took its row there)
+            ("CONTACT SHADOWS", "display.contact_shadows", ON_OFF,
+             "Adds fine shadows where characters and vehicles touch the ground and walls. Does nothing where "
+             "Ray Traced Shadows are on, which already trace them.", "desktop android"),
         ],
     },
     PERFORMANCE_TOOLS[0]: {
@@ -2918,7 +2927,7 @@ SETTINGS_ROW_WHEN = {
     "dlss_addon": "dlss_addon_installed+!vr",
     "temporal_aa_sharpness": "temporal_upscale+!vr temporal_metalfx+!vr",
     # (the renderer has ray queries: settings_condition_term's ray_queries)
-    "shadows": "ray_queries",
+    "shadows": "ray_queries", "ray_tracing": "ray_queries",
     # (the renderer draws display.contact_shadows: settings_condition_term's contact_drawn)
     "contact_shadows": "contact_drawn+!vr",
     # (the Mac's display paces its frames already)

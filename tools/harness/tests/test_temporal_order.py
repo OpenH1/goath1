@@ -57,7 +57,9 @@ def generated(fault=None):
     stream = read(STREAM)
     states = "\n".join(re.search(pattern, device, re.M | re.S).group(0) for pattern in (
         r"^static struct\n\{\n\tfloat factor;.*?^\} temporal = .*?;\n", r"^static struct\n\{\n\tBOOL on, objects;.*?^\} motion;\n"))
-    code = "\n\n".join([states] + [function(device, name) for name in (
+    # (halo_motion_window's light-transport value, defined beside it)
+    defines = re.search(r"^#define HALO_MOTION_PREVIOUS .*$", device, re.M).group(0)
+    code = "\n\n".join([states, defines] + [function(device, name) for name in (
         "scaled_pixel", "view_corners", "temporal_scale_render", "temporal_scale_display", "temporal_lod_bias",
         "draw_lod_bias", "halo_screen_view_begin", "halo_screen_view_end", "halo_motion_window", "temporal_upscale",
         "halo_motion_resolve", "halo_screen_tone_map", "halo_motion_jitter_phases", "render_scale_configured")])

@@ -281,6 +281,9 @@ struct xgpu_vulkan_capabilities
 	/* ... and the GPU an NVIDIA one where DLSS's add-on could run (Linux,
 	Windows): the game offers the add-on's download there (dlss_addon.c) */
 	int dlss_gpu;
+	/* the ray-traced scene's render geometry's budget (MB) by the GPU's
+	class: its type and device-local memory (0 without ray queries) */
+	int rt_budget;
 	/* the device, its Vulkan version and driver, in a few words (a
 	report's: port/linux/src/report.c) */
 	char device[96];
@@ -764,6 +767,27 @@ the surfaces found once a pixel read: a 2D image of four bytes, a channel a
 light, read by texel, a 1x1 of every light seen where none is traced;
 xgpu.h's XGPU_DYNAMIC_LIGHTS_SHADOWED) */
 #define XGPU_VULKAN_BINDING_LIGHT_SHADOWS 9
+/* the enhanced flashlight's shadow map in the draw set, and its size (xgpu_spirv.h's
+XGPU_SPIRV_BINDING_FLASHLIGHT_SHADOW, xgpu.h's XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_SHADOW_SIZE) */
+#define XGPU_VULKAN_BINDING_FLASHLIGHT_SHADOW 5
+#define XGPU_VULKAN_FLASHLIGHT_SHADOW_SIZE 512
+/* (and display.rt_bounce's bounced light, which the surfaces found once a
+pixel add: a 2D image of four halves, read by texel, a 1x1 of none where
+none is traced; xgpu_spirv.h's XGPU_SPIRV_BINDING_RT_BOUNCE) */
+#define XGPU_VULKAN_BINDING_RT_BOUNCE 10
+/* the bounced light the occlusion's sets name from now on (NULL: the
+stand-in), and whether they name this one */
+void xgpu_vulkan_rt_bounce_set(struct xgpu_vulkan_image *image);
+int xgpu_vulkan_rt_bounce_bound(const struct xgpu_vulkan_image *image);
+/* display.rt_bounce's passes (xgpu_vulkan_gi.c): the window's lights (the
+stream's RT_BOUNCE), the passes drawn after the pre-pass (its inputs and
+its pass's uniforms; where the device has ray queries) and the stand-in
+named again as the next pre-pass begins */
+struct xgpu_stream_rt_bounce;
+struct xgpu_world_ao_pass;
+void xgpu_vulkan_rt_bounce_lights(const struct xgpu_stream_rt_bounce *record);
+void xgpu_vulkan_rt_bounce_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_world_ao_pass *pass);
+void xgpu_vulkan_rt_bounce_end(void);
 struct xgpu_world_ao_pass;
 /* the mask the occlusion's sets name from now on (NULL: the stand-in), and
 whether they name this one */
@@ -780,6 +804,13 @@ void xgpu_vulkan_light_shadows_prepare(int ray_queries);
 void xgpu_vulkan_light_shadows_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_world_ao_pass *pass,
 	const uint32_t (*shadowed)[4]);
 void xgpu_vulkan_light_shadows_end(void);
+/* the enhanced flashlight's shadow map (xgpu.h's XGPU_DYNAMIC_LIGHTS_FLASHLIGHT):
+its image, which the draw set names (xgpu_vulkan.c), and its pass, drawn as
+the frame's lights come with a shadowed slot (cells: the cells as the GPU
+has them, xgpu_vulkan_stream.c), its pipeline made the first time; 1 if
+it drew */
+struct xgpu_vulkan_image *xgpu_vulkan_flashlight_shadow_image(void);
+int xgpu_vulkan_flashlight_draw(const unsigned char *cells);
 struct xgpu_world_ao_block;
 /* the stand-ins and the sampler made (the core's start): 0 if they cannot be */
 int xgpu_vulkan_world_ao_create(void);

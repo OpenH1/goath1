@@ -54,7 +54,7 @@ enum
 	OP_I_EQUAL = 170, OP_I_NOT_EQUAL = 171, OP_S_LESS_THAN = 177,
 	OP_F_ORD_EQUAL = 180, OP_F_UNORD_NOT_EQUAL = 183, OP_F_ORD_LESS_THAN = 184, OP_F_ORD_GREATER_THAN = 186,
 	OP_F_ORD_LESS_THAN_EQUAL = 188, OP_F_ORD_GREATER_THAN_EQUAL = 190,
-	OP_SHIFT_RIGHT_ARITHMETIC = 195, OP_SHIFT_LEFT_LOGICAL = 196, OP_BITWISE_OR = 197, OP_BITWISE_AND = 199,
+	OP_SHIFT_RIGHT_ARITHMETIC = 195, OP_SHIFT_LEFT_LOGICAL = 196, OP_BITWISE_OR = 197, OP_BITWISE_XOR = 198, OP_BITWISE_AND = 199,
 	OP_CONVERT_U_TO_F = 112,
 	OP_ANY = 154, OP_U_GREATER_THAN_EQUAL = 174, OP_U_LESS_THAN = 176, OP_SHIFT_RIGHT_LOGICAL = 194,
 	OP_GROUP_NON_UNIFORM_BITWISE_OR = 359,
@@ -166,12 +166,17 @@ bitwise or (GroupNonUniformArithmetic) */
 	SPV_EXT_descriptor_indexing) */
 	BOOL ray_query;
 	unsigned int rt_hit_table, rt_hit_textures;
+	/* (display.rt_reflections: the ray-traced scene a surface's reflection
+	traces, 0 until declared: rt_reflection_texel) */
+	unsigned int rt_reflection_scene;
 
 	unsigned int glsl;
 	unsigned int t_void, t_bool, t_int, t_uint, t_float;
 	unsigned int t_v2, t_v3, t_v4, t_iv2, t_iv3, t_iv4, t_uv4, t_bv2, t_bv3, t_bv4;
 	/* the uniform blocks' variables (0 until declared) */
 	unsigned int constants, uniforms, dynamic_lights, dynamic_light_cells, samples, view_index;
+	/* (the enhanced flashlight's shadow map: 0 until declared, flashlight_shadow_declare) */
+	unsigned int flashlight_shadow;
 	/* (display.ambient_occlusion "world": the window's block and the
 	structure's distance field) */
 	unsigned int world_ao, world_sdf, world_sdf_table, world_ao_scenery, world_ao_objects;
@@ -1620,6 +1625,11 @@ unsigned long xgpu_spirv_vertex_inputs(const struct xgpu_vertex_program *program
 	return vertex_inputs(program, lighting);
 }
 
+BOOL xgpu_spirv_vertex_world_position(const struct nv2a_vertex_lighting *lighting)
+{
+	return lighting_position(lighting);
+}
+
 /* ---------- display.temporal_aa's motion
 
 The objects' draws while a window's objects draw with the motion
@@ -1800,7 +1810,7 @@ BOOL xgpu_spirv_vertex_shader(const struct xgpu_vertex_program *program, unsigne
 	fog_out = interface_variable(&m, m.t_float, STORAGE_OUTPUT, XGPU_SPIRV_LOCATION_FOG, "xFog");
 	if (lighting)
 		world_normal_out = interface_variable(&m, m.t_v4, STORAGE_OUTPUT, XGPU_SPIRV_LOCATION_WORLD_NORMAL, "xWorldNormal");
-	if (lighting_position(lighting))
+	if (lighting_position(lighting) || options->world_position_input)
 		world_position_out = interface_variable(&m, m.t_v3, STORAGE_OUTPUT, XGPU_SPIRV_LOCATION_WORLD_POSITION, "xWorldPosition");
 	if (environment)
 	{
@@ -1858,6 +1868,10 @@ BOOL xgpu_spirv_vertex_shader(const struct xgpu_vertex_program *program, unsigne
 			world_normal = state.zero;
 		if (lighting_position(lighting))
 			world_position = constant_splat(&m, 3, 0.0f);
+		/* (display.rt_reflections: a level's surface's position, in the
+		world as it is: xgpu_spirv_options' world_position_input) */
+		else if (options->world_position_input)
+			world_position = xyz(&m, state.inputs[0]);
 	}
 
 	for (index = 0; index < program->instruction_count; index++)
@@ -2160,7 +2174,27 @@ struct pixel_state
 	/* display.shadows "ray_traced": the dynamic lights' shadows' mask, read
 	in the lights' loop (light_shadows_declare; 0 none) */
 	unsigned int light_shadows;
+	/* display.rt_reflections: texture 3's reflection traced
+	(rt_reflection_texel: the program's rt_reflection, and the pixel's
+	world position read) */
+	BOOL rt_reflection;
+	/* display.rt_bounce: the bounced light found once a pixel, which the
+	lights' sums add (rt_bounce_declare; 0 none) */
+	unsigned int rt_bounce;
 };
+
+/* display.rt_bounce (below) */
+static void rt_bounce_declare(struct module *m, struct pixel_state *state);
+static unsigned int rt_bounce_add(struct module *m, struct pixel_state *state, unsigned int light);
+/* HALO_LT_E1 (port/linux/vulkan/xgpu_vulkan_lt.h, below) */
+static int lt_e1_on(void);
+static unsigned int lt_e1_guides(struct module *m, struct pixel_state *state, unsigned int shaded, BOOL specular,
+	unsigned int motion);
+static unsigned int lt_guides_motion(struct module *m, unsigned int current_in, unsigned int previous_in);
+static unsigned int lt_e1_add(struct module *m, struct pixel_state *state, unsigned int lit, unsigned int tint,
+	unsigned int p, unsigned int n);
+static unsigned int lt_reflection_texel(struct module *m, struct pixel_state *state, unsigned int cube);
+static BOOL lt_reflection_traced(const struct pixel_state *state);
 
 static unsigned int pixel_input(struct module *m, struct pixel_state *state, unsigned int variable_id, unsigned int type)
 {
@@ -2511,6 +2545,8 @@ static unsigned int material_reflection(struct module *m, struct pixel_state *st
 	return op(m, OP_IMAGE_SAMPLE_IMPLICIT_LOD, m->t_v4, 4, operands);
 }
 
+static unsigned int rt_reflection_texel(struct module *m, struct pixel_state *state, unsigned int r, unsigned int cube);
+
 static void texture_stage(struct module *m, struct pixel_state *state, int stage)
 {
 	const struct xgpu_pixel_program *program = state->program;
@@ -2578,6 +2614,12 @@ static void texture_stage(struct module *m, struct pixel_state *state, int stage
 			state->t[stage] = material_reflection(m, state, xt);
 		else
 			state->t[stage] = sample(m, state, stage, xt);
+		/* (display.rt_reflections: the reflection's texel traced along the
+		same vector) */
+		if (stage == 3 && state->rt_reflection && !lt_e1_on())
+			state->t[stage] = rt_reflection_texel(m, state, xyz(m, xt), state->t[stage]);
+		else if (stage == 3 && lt_reflection_traced(state)) /* (HALO_LT_E1: the pass's own) */
+			state->t[stage] = lt_reflection_texel(m, state, state->t[stage]);
 		break;
 	case XGPU_TEXTURE_PASSTHRU:
 		state->t[stage] = saturate(m, 4, xt);
@@ -2681,6 +2723,12 @@ static void texture_stage(struct module *m, struct pixel_state *state, int stage
 		r = fsub(m, 3, fdiv(m, 3, fscale(m, 3, fscale(m, 3, n, constant_float(m, 2.0f)), fdot(m, n, e)),
 			splat(m, 3, fmax_scalar(m, 1, fdot(m, n, n), (float)1.0e-20))), e);
 		state->t[stage] = sample(m, state, stage, vec4_of(m, r, one));
+		/* (display.rt_reflections: the reflection's texel traced along the
+		bump map's reflection) */
+		if (stage == 3 && state->rt_reflection && !lt_e1_on())
+			state->t[stage] = rt_reflection_texel(m, state, r, state->t[stage]);
+		else if (stage == 3 && lt_reflection_traced(state)) /* (HALO_LT_E1: the pass's own) */
+			state->t[stage] = lt_reflection_texel(m, state, state->t[stage]);
 		break;
 	}
 	case XGPU_TEXTURE_DOT_STR_3D:
@@ -4680,8 +4728,284 @@ static unsigned int light_shadows_factor(struct module *m, const struct light_sh
 	return falloff;
 }
 
+/* ---------- the enhanced flashlight (xgpu.h's XGPU_DYNAMIC_LIGHTS_FLASHLIGHT)
+
+A light the slots name is lit through its gel, as the game's gel pass
+projects it, its own falloff, and, for the shadowed slot, its shadow map,
+in place of its cone and the lights' falloff. As GLSL:
+
+uvec4 slots = texel(FLASHLIGHT), head = texel(FLASHLIGHT + 1);
+if (any(slots == uvec4(light + 1))) {
+  int slot = the first that is; vec3 f, u, s = the slot's forward, up, left;
+  vec3 v = p - light.xyz; float z = dot(v, f), R = uintBitsToFloat(head.y);
+  vec2 ab = vec2(dot(v, s), dot(v, u)) / max(z, 1e-4) / R;
+  spot = z > 0 && all(lessThan(abs(ab), vec2(1))) ? pow(cookie(ab * 0.5 + 0.5), 2.2) : 0;
+  falloff = profile(length(v) * abs(light.w));   (32 values, linear between)
+  environment: facing = max(dot(n, l), 0) * saturate(dot(surface_normal, l) * 8)   (the gel pass's horizon)
+  if (head.x == slot + 1)   (the map's from the lamp: ab and v of p - lamp)
+    spot *= the map's 3x3 tent of comparisons at ab: lit where the map's distance >= length(v) - bias,
+      bias = uintBitsToFloat(head.w) + length(v) * (2 R / SIZE) * 1.5 / max(dot(surface_normal, l), 0.25)
+} */
+
+/* the clusters' slice's texel at an index (an int) */
+static unsigned int flashlight_texel(struct module *m, unsigned int index)
+{
+	return dynamic_light_texel(m, op(m, OP_COMPOSITE_CONSTRUCT, m->t_iv3, 3, (unsigned int[]){
+		op2(m, OP_BITWISE_AND, m->t_int, index, constant_int(m, XGPU_DYNAMIC_LIGHTS_GRID_X - 1)),
+		op2(m, OP_SHIFT_RIGHT_ARITHMETIC, m->t_int, index, constant_int(m, 5)),
+		constant_int(m, XGPU_DYNAMIC_LIGHTS_GRID_Z) }));
+}
+
+static unsigned int flashlight_vector(struct module *m, unsigned int index)
+{
+	return xyz(m, op1(m, OP_BITCAST, m->t_v4, flashlight_texel(m, index)));
+}
+
+static unsigned int int_add(struct module *m, unsigned int a, int b)
+{
+	return op2(m, OP_I_ADD, m->t_int, a, constant_int(m, b));
+}
+
+/* the cookie's byte at (x, y), ints within it, 0 to 1 */
+static unsigned int flashlight_cookie_byte(struct module *m, unsigned int x, unsigned int y)
+{
+	unsigned int k = op2(m, OP_I_ADD, m->t_int, op2(m, OP_I_MUL, m->t_int, y,
+		constant_int(m, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE)), x);
+	unsigned int texel = flashlight_texel(m, int_add(m, op2(m, OP_SHIFT_RIGHT_ARITHMETIC, m->t_int, k,
+		constant_int(m, 4)), XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE));
+	unsigned int word = op2(m, OP_VECTOR_EXTRACT_DYNAMIC, m->t_uint, texel, op2(m, OP_BITWISE_AND, m->t_int,
+		op2(m, OP_SHIFT_RIGHT_ARITHMETIC, m->t_int, k, constant_int(m, 2)), constant_int(m, 3)));
+	unsigned int shift = op1(m, OP_BITCAST, m->t_uint, op2(m, OP_SHIFT_LEFT_LOGICAL, m->t_int,
+		op2(m, OP_BITWISE_AND, m->t_int, k, constant_int(m, 3)), constant_int(m, 3)));
+	unsigned int byte = op2(m, OP_BITWISE_AND, m->t_uint, op2(m, OP_SHIFT_RIGHT_LOGICAL, m->t_uint, word, shift),
+		constant_uint(m, 255));
+
+	return fmul(m, 1, op1(m, OP_CONVERT_U_TO_F, m->t_float, byte), constant_float(m, 1.0f / 255.0f));
+}
+
+/* a bilinear lookup at (x, y), texel units from the first's middle, of a
+grid size square: the four texels' ints (clamped) and weights */
+struct flashlight_bilinear
+{
+	unsigned int x0, y0, x1, y1, fx, fy;
+};
+
+static void flashlight_bilinear(struct module *m, unsigned int x, unsigned int y, int size,
+	struct flashlight_bilinear *b)
+{
+	unsigned int floor_x = ext1(m, GLSL_FLOOR, m->t_float, x), floor_y = ext1(m, GLSL_FLOOR, m->t_float, y);
+	unsigned int ix = op1(m, OP_CONVERT_F_TO_S, m->t_int, floor_x), iy = op1(m, OP_CONVERT_F_TO_S, m->t_int, floor_y);
+	unsigned int zero = constant_int(m, 0), last = constant_int(m, size - 1);
+
+	b->fx = fsub(m, 1, x, floor_x);
+	b->fy = fsub(m, 1, y, floor_y);
+	b->x0 = ext3(m, GLSL_S_CLAMP, m->t_int, ix, zero, last);
+	b->y0 = ext3(m, GLSL_S_CLAMP, m->t_int, iy, zero, last);
+	b->x1 = ext3(m, GLSL_S_CLAMP, m->t_int, int_add(m, ix, 1), zero, last);
+	b->y1 = ext3(m, GLSL_S_CLAMP, m->t_int, int_add(m, iy, 1), zero, last);
+}
+
+static unsigned int flashlight_mix(struct module *m, unsigned int a, unsigned int b, unsigned int t)
+{
+	return ext3(m, GLSL_F_MIX, m->t_float, a, b, t);
+}
+
+static void flashlight_shadow_declare(struct module *m)
+{
+	if (m->flashlight_shadow)
+		return;
+	m->flashlight_shadow = variable(m, type_sampled_image(m, DIM_2D, FALSE, FALSE, TRUE), STORAGE_UNIFORM_CONSTANT,
+		"flashlight_shadow");
+	decorate1(m, m->flashlight_shadow, DECORATION_DESCRIPTOR_SET, XGPU_SPIRV_SET_DRAW);
+	decorate1(m, m->flashlight_shadow, DECORATION_BINDING, XGPU_SPIRV_BINDING_FLASHLIGHT_SHADOW);
+}
+
+/* the map's comparisons at (x, y), texel units: the share lit of its four
+texels about it, bilinear */
+static unsigned int flashlight_shadow_compare(struct module *m, unsigned int image, unsigned int x, unsigned int y,
+	unsigned int receiver)
+{
+	struct flashlight_bilinear b;
+	unsigned int lit[4], operands[4];
+	int corner;
+
+	flashlight_bilinear(m, x, y, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_SHADOW_SIZE, &b);
+	for (corner = 0; corner < 4; corner++)
+	{
+		operands[0] = image;
+		operands[1] = op(m, OP_COMPOSITE_CONSTRUCT, m->t_iv2, 2, (unsigned int[]){ corner & 1 ? b.x1 : b.x0,
+			corner & 2 ? b.y1 : b.y0 });
+		operands[2] = IMAGE_OPERANDS_LOD;
+		operands[3] = constant_int(m, 0);
+		lit[corner] = fselect(m, compare(m, OP_F_ORD_GREATER_THAN_EQUAL, extract(m, op(m, OP_IMAGE_FETCH, m->t_v4, 4,
+			operands), 0), receiver), constant_float(m, 1.0f), constant_float(m, 0.0f));
+	}
+	return flashlight_mix(m, flashlight_mix(m, lit[0], lit[1], b.fx), flashlight_mix(m, lit[2], lit[3], b.fx), b.fy);
+}
+
+/* read once before the loop of the lights */
+struct flashlight_read
+{
+	unsigned int slots, head;
+};
+
+static void flashlight_begin(struct module *m, struct flashlight_read *read)
+{
+	read->slots = flashlight_texel(m, constant_int(m, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT));
+	read->head = flashlight_texel(m, constant_int(m, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 1));
+}
+
+/* every light's falloff on the structure (the game's distance
+attenuation, xgpu.h's XGPU_DYNAMIC_LIGHTS_ATTENUATION) at a distance, of a
+light whose w is 1 / its radius (its sign the models-only's) */
+static unsigned int light_attenuation(struct module *m, unsigned int distance, unsigned int w)
+{
+	unsigned int t, f, index, low, high;
+
+	t = fmul(m, 1, saturate(m, 1, fmul(m, 1, distance, ext1(m, GLSL_F_ABS, m->t_float, w))),
+		constant_float(m, (float)(XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF - 1)));
+	f = ext1(m, GLSL_FLOOR, m->t_float, t);
+	index = ext3(m, GLSL_S_CLAMP, m->t_int, op1(m, OP_CONVERT_F_TO_S, m->t_int, f), constant_int(m, 0),
+		constant_int(m, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF - 1));
+	low = op1(m, OP_BITCAST, m->t_float, op2(m, OP_VECTOR_EXTRACT_DYNAMIC, m->t_uint, flashlight_texel(m, int_add(m,
+		op2(m, OP_SHIFT_RIGHT_ARITHMETIC, m->t_int, index, constant_int(m, 2)), XGPU_DYNAMIC_LIGHTS_ATTENUATION)),
+		op2(m, OP_BITWISE_AND, m->t_int, index, constant_int(m, 3))));
+	index = ext2(m, GLSL_S_MIN, m->t_int, int_add(m, index, 1), constant_int(m, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF - 1));
+	high = op1(m, OP_BITCAST, m->t_float, op2(m, OP_VECTOR_EXTRACT_DYNAMIC, m->t_uint, flashlight_texel(m, int_add(m,
+		op2(m, OP_SHIFT_RIGHT_ARITHMETIC, m->t_int, index, constant_int(m, 2)), XGPU_DYNAMIC_LIGHTS_ATTENUATION)),
+		op2(m, OP_BITWISE_AND, m->t_int, index, constant_int(m, 3))));
+	return flashlight_mix(m, low, high, fsub(m, 1, t, f));
+}
+
+/* a light of the loop (an int), at p (l and position as the loop has
+them): where it is a flashlight's, on the structure its spot (1, a
+point's) by its gel, as the game's gel pass multiplies it, and on every
+surface, for the shadowed slot, by its shadow map; the spot's variable
+changed in place (the falloff's by the checking views alone) */
+static void flashlight_light(struct module *m, const struct flashlight_read *read, unsigned int light, unsigned int p,
+	unsigned int position, unsigned int l, unsigned int surface_normal, BOOL environment, BOOL shadowed,
+	unsigned int falloff_variable, unsigned int spot_variable)
+{
+	unsigned int number = op1(m, OP_BITCAST, m->t_uint, int_add(m, light, 1)), is[4], any, slot, merge;
+	unsigned int base, forward, up, left, v, z, width, inverse, a, b, inside, x, y, cookie, distance;
+	struct flashlight_bilinear bl;
+	int k;
+
+	for (k = 0; k < 4; k++)
+		is[k] = op2(m, OP_I_EQUAL, m->t_bool, uextract(m, read->slots, (unsigned int)k), number);
+	any = op2(m, OP_LOGICAL_OR, m->t_bool, op2(m, OP_LOGICAL_OR, m->t_bool, is[0], is[1]),
+		op2(m, OP_LOGICAL_OR, m->t_bool, is[2], is[3]));
+	selection_begin(m, any, &merge);
+	slot = op3(m, OP_SELECT, m->t_int, is[0], constant_int(m, 0), op3(m, OP_SELECT, m->t_int, is[1], constant_int(m, 1),
+		op3(m, OP_SELECT, m->t_int, is[2], constant_int(m, 2), constant_int(m, 3))));
+	base = int_add(m, op2(m, OP_I_MUL, m->t_int, slot, constant_int(m, 3)), XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 2);
+	forward = flashlight_vector(m, base);
+	up = flashlight_vector(m, int_add(m, base, 1));
+	left = flashlight_vector(m, int_add(m, base, 2));
+	v = fsub(m, 3, p, xyz(m, position));
+	z = fdot(m, v, forward);
+	width = op1(m, OP_BITCAST, m->t_float, uextract(m, read->head, 1));
+	inverse = fdiv(m, 1, constant_float(m, 1.0f), fmul(m, 1, fmax_scalar(m, 1, z, 1.0e-4f), fmax_scalar(m, 1, width,
+		1.0e-4f)));
+	a = fmul(m, 1, fdot(m, v, left), inverse);
+	b = fmul(m, 1, fdot(m, v, up), inverse);
+	inside = op2(m, OP_LOGICAL_AND, m->t_bool, compare(m, OP_F_ORD_GREATER_THAN, z, constant_float(m, 1.0e-4f)),
+		op2(m, OP_LOGICAL_AND, m->t_bool,
+		compare(m, OP_F_ORD_LESS_THAN, ext1(m, GLSL_F_ABS, m->t_float, a), constant_float(m, 1.0f)),
+		compare(m, OP_F_ORD_LESS_THAN, ext1(m, GLSL_F_ABS, m->t_float, b), constant_float(m, 1.0f))));
+	if (environment)
+	{
+		/* (the cookie, bilinear: texel (x, y) at u = sign(a) sqrt(|a|)'s (2 x + 1) / N - 1, xgpu.h; as it
+		is, the display's gamma, as the gel pass multiplies it) */
+		x = fmul(m, 1, ext1(m, GLSL_F_SIGN, m->t_float, a), fsqrt(m, ext1(m, GLSL_F_ABS, m->t_float, a)));
+		y = fmul(m, 1, ext1(m, GLSL_F_SIGN, m->t_float, b), fsqrt(m, ext1(m, GLSL_F_ABS, m->t_float, b)));
+		x = fsub(m, 1, fmul(m, 1, fadd(m, 1, fmul(m, 1, x, constant_float(m, 0.5f)), constant_float(m, 0.5f)),
+			constant_float(m, (float)XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE)), constant_float(m, 0.5f));
+		y = fsub(m, 1, fmul(m, 1, fadd(m, 1, fmul(m, 1, y, constant_float(m, 0.5f)), constant_float(m, 0.5f)),
+			constant_float(m, (float)XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE)), constant_float(m, 0.5f));
+		flashlight_bilinear(m, x, y, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE, &bl);
+		cookie = flashlight_mix(m, flashlight_mix(m, flashlight_cookie_byte(m, bl.x0, bl.y0),
+			flashlight_cookie_byte(m, bl.x1, bl.y0), bl.fx), flashlight_mix(m, flashlight_cookie_byte(m, bl.x0, bl.y1),
+			flashlight_cookie_byte(m, bl.x1, bl.y1), bl.fx), bl.fy);
+		store(m, spot_variable, fmul(m, 1, load(m, m->t_float, spot_variable), fselect(m, inside, cookie,
+			constant_float(m, 0.0f))));
+	}
+	/* (the shadowed slot's map: a 3x3 tent, four bilinear comparisons) */
+	if (shadowed)
+	{
+		unsigned int shadow_merge, sampled, image, mx, my, texel_width, bias, receiver, lit, facing_light;
+		unsigned int lamp_v, lamp_z, lamp_inverse, lamp_inside;
+		const float size = (float)XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_SHADOW_SIZE;
+
+		/* (the map's from the lamp: its own a, b and distance; a point
+		behind the lamp, or outside the map, is not shadowed) */
+		lamp_v = fsub(m, 3, p, flashlight_vector(m, constant_int(m, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 23)));
+		lamp_z = fdot(m, lamp_v, forward);
+		lamp_inverse = fdiv(m, 1, constant_float(m, 1.0f), fmul(m, 1, fmax_scalar(m, 1, lamp_z, 1.0e-4f),
+			fmax_scalar(m, 1, width, 1.0e-4f)));
+		a = fmul(m, 1, fdot(m, lamp_v, left), lamp_inverse);
+		b = fmul(m, 1, fdot(m, lamp_v, up), lamp_inverse);
+		lamp_inside = op2(m, OP_LOGICAL_AND, m->t_bool, compare(m, OP_F_ORD_GREATER_THAN, lamp_z, constant_float(m, 1.0e-4f)),
+			op2(m, OP_LOGICAL_AND, m->t_bool,
+			compare(m, OP_F_ORD_LESS_THAN, ext1(m, GLSL_F_ABS, m->t_float, a), constant_float(m, 1.0f)),
+			compare(m, OP_F_ORD_LESS_THAN, ext1(m, GLSL_F_ABS, m->t_float, b), constant_float(m, 1.0f))));
+		selection_begin(m, op2(m, OP_LOGICAL_AND, m->t_bool, op2(m, OP_LOGICAL_AND, m->t_bool, inside, lamp_inside),
+			op2(m, OP_I_EQUAL, m->t_bool, uextract(m, read->head, 0), op1(m, OP_BITCAST, m->t_uint, int_add(m, slot, 1)))),
+			&shadow_merge);
+		distance = flength(m, lamp_v);
+		flashlight_shadow_declare(m);
+		sampled = load(m, type_sampled_image(m, DIM_2D, FALSE, FALSE, TRUE), m->flashlight_shadow);
+		image = op(m, OP_IMAGE, type_sampled_image(m, DIM_2D, FALSE, FALSE, FALSE), 1, &sampled);
+		mx = fsub(m, 1, fmul(m, 1, fadd(m, 1, fmul(m, 1, a, constant_float(m, 0.5f)), constant_float(m, 0.5f)),
+			constant_float(m, size)), constant_float(m, 0.5f));
+		my = fsub(m, 1, fmul(m, 1, fadd(m, 1, fmul(m, 1, b, constant_float(m, 0.5f)), constant_float(m, 0.5f)),
+			constant_float(m, size)), constant_float(m, 0.5f));
+		/* bias = head.w + distance * (2 R / size) * 1.5 / max(|dot(surface_normal, l)|, 0.25): a texel
+		and a half of the map at the receiver along its slope, so the caster does not shadow itself */
+		texel_width = fmul(m, 1, distance, fmul(m, 1, width, constant_float(m, 2.0f * 1.5f / size)));
+		facing_light = fmax_scalar(m, 1, ext1(m, GLSL_F_ABS, m->t_float, fdot(m, surface_normal, l)), 0.25f);
+		bias = fadd(m, 1, op1(m, OP_BITCAST, m->t_float, uextract(m, read->head, 3)), fdiv(m, 1, texel_width,
+			facing_light));
+		receiver = fsub(m, 1, distance, bias);
+		lit = fadd(m, 1, fadd(m, 1, flashlight_shadow_compare(m, image, fsub(m, 1, mx, constant_float(m, 0.5f)),
+			fsub(m, 1, my, constant_float(m, 0.5f)), receiver), flashlight_shadow_compare(m, image,
+			fadd(m, 1, mx, constant_float(m, 0.5f)), fsub(m, 1, my, constant_float(m, 0.5f)), receiver)),
+			fadd(m, 1, flashlight_shadow_compare(m, image, fsub(m, 1, mx, constant_float(m, 0.5f)),
+			fadd(m, 1, my, constant_float(m, 0.5f)), receiver), flashlight_shadow_compare(m, image,
+			fadd(m, 1, mx, constant_float(m, 0.5f)), fadd(m, 1, my, constant_float(m, 0.5f)), receiver)));
+		lit = fmul(m, 1, lit, constant_float(m, 0.25f));
+		store(m, spot_variable, fmul(m, 1, load(m, m->t_float, spot_variable), lit));
+		/* (HALO_FLASHLIGHT_SHADOW_VIEW=1 or 3, checking: the map's share seen,
+		whole, in place of the gel and falloff; 2: the map's distance, a
+		world unit a band) */
+		if (getenv("HALO_FLASHLIGHT_SHADOW_VIEW") && (atoi(getenv("HALO_FLASHLIGHT_SHADOW_VIEW")) == 1 ||
+			atoi(getenv("HALO_FLASHLIGHT_SHADOW_VIEW")) == 3))
+		{
+			store(m, spot_variable, lit);
+			store(m, falloff_variable, constant_float(m, 1.0f));
+		}
+		if (getenv("HALO_FLASHLIGHT_SHADOW_VIEW") && atoi(getenv("HALO_FLASHLIGHT_SHADOW_VIEW")) == 2)
+		{
+			unsigned int operands[4];
+
+			operands[0] = image;
+			operands[1] = op(m, OP_COMPOSITE_CONSTRUCT, m->t_iv2, 2, (unsigned int[]){
+				op1(m, OP_CONVERT_F_TO_S, m->t_int, fadd(m, 1, mx, constant_float(m, 0.5f))),
+				op1(m, OP_CONVERT_F_TO_S, m->t_int, fadd(m, 1, my, constant_float(m, 0.5f))) });
+			operands[2] = IMAGE_OPERANDS_LOD;
+			operands[3] = constant_int(m, 0);
+			store(m, spot_variable, ext1(m, GLSL_FRACT, m->t_float, extract(m, op(m, OP_IMAGE_FETCH, m->t_v4, 4, operands), 0)));
+			store(m, falloff_variable, constant_float(m, 1.0f));
+		}
+		selection_end(m, shadow_merge);
+	}
+	selection_end(m, merge);
+}
+
 /* dynamic_light_sum(p, n, surface_normal, environment): the lights of the
-pixel's cell, summed (a model's but those its object's own that do not light
+pixel's cell, each as the light model has it (xgpu.h: as the game adds it
+to the structure or to a model, in its gamma), summed, the panels' linear
+light summed into the linear variable apart (a model's but those its object's own that do not light
 it, its model_lights[XGPU_MODEL_LIGHT_OWN_LIGHTS]); its loops are SPIR-V's structured loops, its values
 kept in the function's variables. With a reflection (a model's, of the eye
 about its normal; 0 none), each light's highlight along it, to the exponent,
@@ -4689,16 +5013,18 @@ summed into the shine variable as well (xgpu.h XGPU_DYNAMIC_LIGHTS_HIGHLIGHT;
 xgpu_msl.c's dynamic_light_sum) */
 static unsigned int dynamic_light_sum(struct module *m, struct pixel_state *state, unsigned int p, unsigned int n,
 	unsigned int surface_normal, BOOL environment, unsigned int reflection, unsigned int exponent,
-	unsigned int shine_variable)
+	unsigned int shine_variable, unsigned int linear_variable)
 {
 	unsigned int grid0 = dynamic_light(m, 0, constant_int(m, 0)), grid1 = dynamic_light(m, 0, constant_int(m, 1));
 	unsigned int offset, cell, mask, cell_index, operands[4];
 	unsigned int sum_variable, word_variable, bits_variable;
 	unsigned int outer_header, outer_condition, outer_body, outer_continue, outer_merge;
 	unsigned int inner_header, inner_condition, inner_body, inner_continue, inner_merge;
-	unsigned int word, bits, light, position, to_light, distance_squared, x2, l, window, core, falloff, facing;
-	unsigned int cone, color, spot, grid2, w, own = 0, tint = 0;
+	unsigned int word, bits, light, position, to_light, distance_squared, x2, l, falloff, facing;
+	unsigned int cone, color, spot, w, own = 0, tint = 0, panels, panel, panel_falloff, a2;
+	unsigned int light_falloff, light_spot, lit_light;
 	struct light_shadows_read shadows;
+	struct flashlight_read flashlight;
 
 	/* cell = sign(offset) * log2(1.0 + abs(offset) * grid[1].w) * grid[1].xyz + vec3(16.0, 16.0, 8.0) */
 	offset = fsub(m, 3, p, xyz(m, grid0));
@@ -4716,11 +5042,16 @@ static unsigned int dynamic_light_sum(struct module *m, struct pixel_state *stat
 	a little off its surface: xgpu.h) */
 	mask = dynamic_light_cluster_mask(m, state, mask, fadd(m, 3, p, fscale(m, 3, surface_normal,
 		constant_float(m, XGPU_DYNAMIC_LIGHTS_CLUSTER_OFFSET))), environment);
-	grid2 = dynamic_light(m, 0, constant_int(m, 2));
 	/* (a model's: the lights it is not lit by, xgpu.h) */
 	if (!environment)
 		own = uniform(m, U_MODEL_LIGHTS, XGPU_MODEL_LIGHT_OWN_LIGHTS);
 	light_shadows_begin(m, state, &shadows);
+	flashlight_begin(m, &flashlight);
+	/* (the panels among the lights, a bit each: xgpu.h's XGPU_DYNAMIC_LIGHTS_PANELS) */
+	panels = flashlight_texel(m, constant_int(m, XGPU_DYNAMIC_LIGHTS_PANELS));
+	light_falloff = local(m, &state->locals, m->t_float);
+	light_spot = local(m, &state->locals, m->t_float);
+	store(m, linear_variable, constant_splat(m, 3, 0.0f));
 
 	sum_variable = local(m, &state->locals, m->t_v3);
 	word_variable = local(m, &state->locals, m->t_int);
@@ -4768,6 +5099,18 @@ static unsigned int dynamic_light_sum(struct module *m, struct pixel_state *stat
 	store(m, bits_variable, op2(m, OP_BITWISE_AND, m->t_uint, bits, op2(m, OP_I_SUB, m->t_uint, bits, constant_uint(m, 1))));
 	position = dynamic_light(m, 1, light);
 	w = extract(m, position, 3);
+	/* (HALO_LT_E1: every light that lights the structure (position.w > 0;
+	not a models-only light, whose structure the game's own gel pass lights)
+	is the traced pass's, added after the sum, lt_e1_add: if (position.w >
+	0.0) continue;) */
+	if (lt_e1_on() && state->rt_bounce)
+	{
+		unsigned int skip = id_new(m), condition = compare(m, OP_F_ORD_GREATER_THAN, w, constant_float(m, 0.0f));
+
+		selection_merge(m, skip);
+		branch_conditional(m, condition, inner_continue, skip);
+		label_at(m, skip);
+	}
 	if (environment)
 	{
 		unsigned int skip = id_new(m), condition = compare(m, OP_F_ORD_LESS_THAN, w, constant_float(m, 0.0f));
@@ -4802,39 +5145,64 @@ static unsigned int dynamic_light_sum(struct module *m, struct pixel_state *stat
 		label_at(m, skip);
 	}
 	l = fscale(m, 3, to_light, ext1(m, GLSL_INVERSE_SQRT, m->t_float, fmax_scalar(m, 1, distance_squared, (float)1.0e-8)));
-	window = fsub(m, 1, constant_float(m, 1.0f), fmul(m, 1, x2, x2));
-	core = fmax_scalar(m, 1, fmul(m, 1, fmul(m, 1, extract(m, grid2, 1), w), w),
-		(float)(1.0 / (XGPU_DYNAMIC_LIGHTS_CORE * XGPU_DYNAMIC_LIGHTS_CORE)));
-	falloff = fdiv(m, 1, fmul(m, 1, window, window), fadd(m, 1, constant_float(m, 1.0f), fmul(m, 1, distance_squared, core)));
-	falloff = light_shadows_factor(m, &shadows, light, falloff, &tint);
+	cone = dynamic_light(m, 3, light);
+	color = dynamic_light(m, 2, light);
+	/* (the light model, xgpu.h: as the game adds the light to the surface) */
 	if (environment)
 	{
+		/* the gel pass: T(d / r) * max(dot(n, l), 0) * saturate(8 dot(surface_normal, l)), its gel (1 a point's) */
+		falloff = light_attenuation(m, fsqrt(m, distance_squared), w);
 		facing = fmul(m, 1, fmax_scalar(m, 1, fdot(m, n, l), 0.0f),
-			saturate(m, 1, fadd(m, 1, fmul(m, 1, fdot(m, surface_normal, l), constant_float(m, 4.0f)), constant_float(m, 0.5f))));
+			saturate(m, 1, fmul(m, 1, fdot(m, surface_normal, l), constant_float(m, 8.0f))));
+		spot = constant_float(m, 1.0f);
 	}
 	else
 	{
-		unsigned int wrap = extract(m, grid2, 3);
-
-		facing = saturate(m, 1, fdiv(m, 1, fadd(m, 1, fdot(m, n, l), wrap), fadd(m, 1, constant_float(m, 1.0f), wrap)));
+		/* the model lighting: max(1 - d^2 / r^2, 0) * saturate(dot(n, l)) * saturate(dot(l, -axis) * scale + offset) */
+		falloff = fsub(m, 1, constant_float(m, 1.0f), x2);
+		facing = saturate(m, 1, fdot(m, n, l));
+		spot = saturate(m, 1, fadd(m, 1, fmul(m, 1, fdot(m, l, fneg(m, 3, xyz(m, cone))), extract(m, cone, 3)),
+			extract(m, color, 3)));
 	}
-	cone = dynamic_light(m, 3, light);
-	color = dynamic_light(m, 2, light);
+	/* (a panel: a^2 / (a^2 + d^2) * (1 - d^2 / r^2)^2 by the cosine off its face, linear) */
+	panel = op1(m, OP_CONVERT_U_TO_F, m->t_float, op2(m, OP_BITWISE_AND, m->t_uint, op2(m, OP_SHIFT_RIGHT_LOGICAL, m->t_uint,
+		op2(m, OP_VECTOR_EXTRACT_DYNAMIC, m->t_uint, panels, word), op1(m, OP_BITCAST, m->t_uint,
+		op2(m, OP_BITWISE_AND, m->t_int, light, constant_int(m, 31)))), constant_uint(m, 1)));
+	a2 = fmax_scalar(m, 1, extract(m, color, 3), 1.0e-8f);
+	panel_falloff = fmul(m, 1, fdiv(m, 1, a2, fadd(m, 1, a2, distance_squared)),
+		fmul(m, 1, fsub(m, 1, constant_float(m, 1.0f), x2), fsub(m, 1, constant_float(m, 1.0f), x2)));
+	{
+		unsigned int is_panel = compare(m, OP_F_ORD_GREATER_THAN, panel, constant_float(m, 0.5f));
+
+		falloff = fselect(m, is_panel, panel_falloff, falloff);
+		spot = fselect(m, is_panel, saturate(m, 1, fdot(m, l, fneg(m, 3, xyz(m, cone)))), spot);
+	}
+	falloff = light_shadows_factor(m, &shadows, light, falloff, &tint);
 	/* (HALO_LIGHT_SHADOWS_VIEW: a shadowed light in its tint) */
 	if (tint)
 		color = vec4_of(m, select_n(m, 3, compare(m, OP_F_ORD_GREATER_THAN, extract(m, tint, 3), constant_float(m, 0.5f)),
 			xyz(m, tint), xyz(m, color)), extract(m, color, 3));
-	spot = saturate(m, 1, fadd(m, 1, fmul(m, 1, fdot(m, l, fneg(m, 3, xyz(m, cone))), extract(m, cone, 3)), extract(m, color, 3)));
-	store(m, sum_variable, fadd(m, 3, load(m, m->t_v3, sum_variable),
-		fscale(m, 3, xyz(m, color), fmul(m, 1, fmul(m, 1, falloff, facing), spot))));
+	/* (the flashlight's: its gel on the structure, its shadow map everywhere) */
+	store(m, light_falloff, falloff);
+	store(m, light_spot, spot);
+	flashlight_light(m, &flashlight, light, p, position, l, surface_normal, environment, TRUE, light_falloff, light_spot);
+	falloff = load(m, m->t_float, light_falloff);
+	spot = load(m, m->t_float, light_spot);
+	/* (the game's lights in its gamma, summed; the panels' linear apart) */
+	lit_light = fscale(m, 3, xyz(m, color), fmul(m, 1, fmul(m, 1, falloff, facing), spot));
+	store(m, sum_variable, fadd(m, 3, load(m, m->t_v3, sum_variable), fscale(m, 3, lit_light,
+		fsub(m, 1, constant_float(m, 1.0f), panel))));
+	store(m, linear_variable, fadd(m, 3, load(m, m->t_v3, linear_variable), fscale(m, 3, lit_light, panel)));
 	if (reflection)
 	{
-		/* shine += color.rgb * (falloff * spot * saturate(dot(n, l) * 4.0) * pow(max(dot(reflection, l), 0.0), exponent)) */
+		/* shine += color.rgb^2 * (falloff * spot * saturate(dot(n, l) * 4.0) * pow(max(dot(reflection, l), 0.0), exponent))
+		(linear: the colour's square, about its gamma's) */
 		unsigned int lobe = ext2(m, GLSL_POW, m->t_float, fmax_scalar(m, 1, fdot(m, reflection, l), 0.0f), exponent);
 		unsigned int horizon = saturate(m, 1, fmul(m, 1, fdot(m, n, l), constant_float(m, 4.0f)));
 
 		store(m, shine_variable, fadd(m, 3, load(m, m->t_v3, shine_variable),
-			fscale(m, 3, xyz(m, color), fmul(m, 1, fmul(m, 1, fmul(m, 1, falloff, spot), horizon), lobe))));
+			fscale(m, 3, fmul(m, 3, xyz(m, color), xyz(m, color)), fmul(m, 1, fmul(m, 1, fmul(m, 1, falloff, spot), horizon),
+			lobe))));
 	}
 	branch(m, inner_continue);
 	label_at(m, inner_continue);
@@ -4848,45 +5216,51 @@ static unsigned int dynamic_light_sum(struct module *m, struct pixel_state *stat
 	return load(m, m->t_v3, sum_variable);
 }
 
-/* dynamic_light_add(base, light): the light added to the base under the
-shoulder, in linear space; the base as it is (saturated) where there is no
-light, as the shoulder gives it, but for its rounding there and back */
+/* dynamic_light_add(base, light, linear): the light model's sum (xgpu.h)
+added to the light already there as the game's framebuffer adds it, the
+base and the sum in its gamma, (base + light)^2.2, and the panels' linear
+light (0 none) added there, under a shoulder that leaves all below
+max(base^2.2, ADD_KNEE) as it is (so a light that leaves the pixel below
+white is the game's own) and rolls the rest off toward white; with
+display.hdr past white too, toward the lights' white (xgpu_hdr.h's
+xgpu_hdr_lights). The base as it is (saturated) where there is no light */
 static unsigned int dynamic_light_add(struct module *m, struct pixel_state *state, unsigned int base,
-	unsigned int light, BOOL hdr)
+	unsigned int light, unsigned int linear, BOOL hdr)
 {
-	unsigned int grid2, brightest, had, room, gamma, lit, added, after, any_light, result_variable;
+	unsigned int had_gamma, had, knee, room, y, soft, gamma, added, after, any_light, result_variable;
 
 	result_variable = local(m, &state->locals, m->t_v3);
 	store(m, result_variable, saturate(m, 3, base));
-	any_light = op1(m, OP_ANY, m->t_bool, op2(m, OP_F_UNORD_NOT_EQUAL, m->t_bv3, light,
-		constant_splat(m, 3, 0.0f)));
+	any_light = op1(m, OP_ANY, m->t_bool, op2(m, OP_F_UNORD_NOT_EQUAL, m->t_bv3, light, constant_splat(m, 3, 0.0f)));
+	if (linear)
+		any_light = op2(m, OP_LOGICAL_OR, m->t_bool, any_light, op1(m, OP_ANY, m->t_bool, op2(m, OP_F_UNORD_NOT_EQUAL,
+			m->t_bv3, linear, constant_splat(m, 3, 0.0f))));
 	added = id_new(m);
 	after = id_new(m);
 	selection_merge(m, after);
 	branch_conditional(m, any_light, added, after);
 	label_at(m, added);
-	grid2 = dynamic_light(m, 0, constant_int(m, 2));
-	brightest = ext2(m, GLSL_F_MAX, m->t_float, extract(m, light, 0), ext2(m, GLSL_F_MAX, m->t_float, extract(m, light, 1),
-		extract(m, light, 2)));
-	light = fadd(m, 3, light, splat(m, 3, fmul(m, 1, fmax_scalar(m, 1, fsub(m, 1, brightest, constant_float(m, 1.0f)), 0.0f),
-		extract(m, grid2, 2))));
-	had = ext2(m, GLSL_POW, m->t_v3, saturate(m, 3, base), constant_splat(m, 3, 2.2f));
-	room = fmax_scalar(m, 3, fsub(m, 3, constant_splat(m, 3, 1.0f), had), (float)1.0e-3);
-	gamma = constant_splat(m, 3, (float)(1.0 / 2.2));
-	lit = fadd(m, 3, had, fmul(m, 3, room, fsub(m, 3, constant_splat(m, 3, 1.0f),
-		ext1(m, GLSL_EXP, m->t_v3, fdiv(m, 3, fneg(m, 3, light), room)))));
-	/* (display.hdr: the same below white, and what its shoulder squeezes
-	under white rolled off toward the lights' white instead: xgpu_hdr.h's
-	xgpu_hdr_lights, xgpu_msl.c's dynamic_light_add_hdr) */
+	gamma = constant_splat(m, 3, 2.2f);
+	had_gamma = saturate(m, 3, base);
+	had = ext2(m, GLSL_POW, m->t_v3, had_gamma, gamma);
+	y = ext2(m, GLSL_POW, m->t_v3, fadd(m, 3, had_gamma, fmax_scalar(m, 3, light, 0.0f)), gamma);
+	if (linear)
+		y = fadd(m, 3, y, fmax_scalar(m, 3, linear, 0.0f));
+	/* soft = y <= k ? y : k + (1 - k) (1 - exp(-(y - k) / (1 - k))), k = max(had, ADD_KNEE) */
+	knee = fmax_scalar(m, 3, had, XGPU_DYNAMIC_LIGHTS_ADD_KNEE);
+	room = fmax_scalar(m, 3, fsub(m, 3, constant_splat(m, 3, 1.0f), knee), (float)1.0e-3);
+	soft = fadd(m, 3, knee, fmul(m, 3, room, fsub(m, 3, constant_splat(m, 3, 1.0f), ext1(m, GLSL_EXP, m->t_v3,
+		fdiv(m, 3, fneg(m, 3, fmax_scalar(m, 3, fsub(m, 3, y, knee), 0.0f)), room)))));
+	soft = op3(m, OP_SELECT, m->t_v3, op2(m, OP_F_ORD_LESS_THAN_EQUAL, m->t_bv3, y, knee), y, soft);
 	if (hdr)
 	{
-		unsigned int past = fmax_scalar(m, 3, fsub(m, 3, fadd(m, 3, had, light), constant_splat(m, 3, 1.0f)), 0.0f);
+		unsigned int past = fmax_scalar(m, 3, fsub(m, 3, y, constant_splat(m, 3, 1.0f)), 0.0f);
 		unsigned int white_room = constant_splat(m, 3, XGPU_HDR_LIGHTS_WHITE - 1.0f);
 
-		lit = fadd(m, 3, lit, fmul(m, 3, white_room, fsub(m, 3, constant_splat(m, 3, 1.0f),
+		soft = fadd(m, 3, soft, fmul(m, 3, white_room, fsub(m, 3, constant_splat(m, 3, 1.0f),
 			ext1(m, GLSL_EXP, m->t_v3, fdiv(m, 3, fneg(m, 3, past), white_room)))));
 	}
-	store(m, result_variable, ext2(m, GLSL_POW, m->t_v3, lit, gamma));
+	store(m, result_variable, ext2(m, GLSL_POW, m->t_v3, soft, constant_splat(m, 3, (float)(1.0 / 2.2))));
 	branch(m, after);
 	label_at(m, after);
 	return load(m, m->t_v3, result_variable);
@@ -5473,8 +5847,12 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 	keeps it) */
 	BOOL occluder = !world && (program->ambient_occlusion & XGPU_AMBIENT_OCCLUSION_WORLD_INPUTS);
 	unsigned int world_ao_words = 0;
-	BOOL world_position = (program->per_pixel_lighting && (program->per_pixel_lighting == 2 ||
-		program->dynamic_lights == XGPU_DYNAMIC_LIGHTS_MODEL)) || environment || world;
+	/* (HALO_LT_E1: the twin's guides' output, and the shaded normal the dynamic lights use: 0 none) */
+	unsigned int lt_guides_out = 0, lt_shaded_normal = 0;
+	/* (its motion's positions, this frame's and the frame before's: 0 none) */
+	unsigned int lt_motion_current = 0, lt_motion_previous = 0;
+	BOOL world_position = (program->per_pixel_lighting && ((program->per_pixel_lighting & 3) == 2 ||
+		program->dynamic_lights == XGPU_DYNAMIC_LIGHTS_MODEL)) || environment || world || program->rt_reflection;
 	BOOL count_samples = program->count_samples && options->count_samples;
 	unsigned int comparison = program->alpha_test ? comparison_opcode(program->alpha_test) : 0;
 	BOOL sample_mask = comparison && program->alpha_test_samples && program->alpha_test != D3DCMP_EQUAL &&
@@ -5556,7 +5934,10 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 			decorate1(&m, state.frag_coord, DECORATION_BUILT_IN, BUILT_IN_FRAG_COORD);
 		}
 		if (program->dynamic_lights)
+		{
 			light_shadows_declare(&m, &state);
+			rt_bounce_declare(&m, &state); /* display.rt_bounce */
+		}
 	}
 	if (count_samples)
 	{
@@ -5579,7 +5960,8 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 	for (stage = 0; stage < 4; stage++)
 		state.in_t[stage] = interface_variable(&m, m.t_v4, STORAGE_INPUT, XGPU_SPIRV_LOCATION_T0 + stage, coordinate_names[stage]);
 	state.in_fog = interface_variable(&m, m.t_float, STORAGE_INPUT, XGPU_SPIRV_LOCATION_FOG, "xFog");
-	if (occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_VERTEX)
+	if (occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_VERTEX ||
+		(program->per_pixel_lighting & XGPU_PER_PIXEL_VERTEX_AMBIENT))
 	{
 		state.in_light_ambient = interface_variable(&m, m.t_v3, STORAGE_INPUT, XGPU_SPIRV_LOCATION_LIGHT_AMBIENT,
 			"xLightAmbient");
@@ -5590,12 +5972,25 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 		state.in_world_normal = interface_variable(&m, m.t_v4, STORAGE_INPUT, XGPU_SPIRV_LOCATION_WORLD_NORMAL, "xWorldNormal");
 	if (world_position)
 		state.in_world_position = interface_variable(&m, m.t_v3, STORAGE_INPUT, XGPU_SPIRV_LOCATION_WORLD_POSITION, "xWorldPosition");
+	/* (display.rt_reflections: not in the pre-pass's twins, which write no
+	colour, nor a VR effect's) */
+	state.rt_reflection = program->rt_reflection && state.in_world_position && !world_inputs && !occluder && !effect;
 	if (environment)
 	{
 		state.in_world_binormal = interface_variable(&m, m.t_v3, STORAGE_INPUT, XGPU_SPIRV_LOCATION_WORLD_BINORMAL, "xWorldBinormal");
 		state.in_world_tangent = interface_variable(&m, m.t_v3, STORAGE_INPUT, XGPU_SPIRV_LOCATION_WORLD_TANGENT, "xWorldTangent");
 	}
 	color_out = interface_variable(&m, world_inputs || occluder ? m.t_uv4 : m.t_v4, STORAGE_OUTPUT, 0, "fragment_color");
+	if (world_inputs && lt_e1_on())
+		lt_guides_out = interface_variable(&m, m.t_uv4, STORAGE_OUTPUT, XGPU_SPIRV_GUIDES_LOCATION, "lt_guides");
+	/* (and the twin's motion, where its vertex shader hands it on: xgpu_spirv.h's C1) */
+	if (lt_guides_out && options->motion && !program->multiview)
+	{
+		lt_motion_current = interface_variable(&m, m.t_v3, STORAGE_INPUT, XGPU_SPIRV_LOCATION_MOTION_CURRENT,
+			"xMotionCurrent");
+		lt_motion_previous = interface_variable(&m, m.t_v3, STORAGE_INPUT, XGPU_SPIRV_LOCATION_MOTION_PREVIOUS,
+			"xMotionPrevious");
+	}
 	/* (display.temporal_aa: the motion, the second attachment's: the
 	previous position less the current, as a fraction of the view, x right
 	and y down, and the pixel's depth, which the resolve finds it still is) */
@@ -5651,7 +6046,9 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 			fmax_scalar(&m, 1, fdot(&m, normal, normal), (float)1.0e-24)));
 		unsigned int p = pixel_input(&m, &state, state.in_world_position, m.t_v3);
 		unsigned int lit, occlusion = occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_MODEL ? state.occlusion : 0;
-		unsigned int reflection = 0, exponent = 0, sum, shaded = n, added;
+		unsigned int reflection = 0, exponent = 0, sum, shaded = n, added, linear_variable;
+
+		lt_shaded_normal = n;
 		static const unsigned int rgb[4] = { 4, 5, 6, 3 };
 
 		/* (a model's material maps: its normal, and its occlusion with the
@@ -5661,10 +6058,22 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 			material_read(&m, &state, p, n);
 			if (state.shaded_normal)
 				shaded = state.shaded_normal;
+			lt_shaded_normal = shaded;
 			if (state.material_occlusion)
 				occlusion = occlusion ? fmul(&m, 1, occlusion, state.material_occlusion) : state.material_occlusion;
 		}
-		lit = model_lighting(&m, &state, program->per_pixel_lighting == 2, TRUE, occlusion);
+		/* (its ambient and distant lights the vertex's, as the game's program
+		gives them, by the occlusion: xgpu.h's XGPU_PER_PIXEL_VERTEX_AMBIENT;
+		else for each pixel) */
+		if (program->per_pixel_lighting & XGPU_PER_PIXEL_VERTEX_AMBIENT)
+		{
+			lit = pixel_input(&m, &state, state.in_light_ambient, m.t_v3);
+			if (occlusion)
+				lit = fscale(&m, 3, lit, occlusion);
+			lit = saturate(&m, 3, lit);
+		}
+		else
+			lit = model_lighting(&m, &state, (program->per_pixel_lighting & 3) == 2, TRUE, occlusion);
 
 		if (program->stages[3].mode == XGPU_TEXTURE_CUBEMAP && state.in_t[3])
 		{
@@ -5693,8 +6102,17 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 			shine_variable = local(&m, &state.locals, m.t_v3);
 			store(&m, shine_variable, constant_splat(&m, 3, 0.0f));
 		}
-		sum = dynamic_light_sum(&m, &state, p, shaded, n, FALSE, reflection, exponent, shine_variable);
-		added = dynamic_light_add(&m, &state, lit, sum, FALSE);
+		linear_variable = local(&m, &state.locals, m.t_v3);
+		/* (linear_variable: the linear light added past the game's lights'
+		gamma sum, dynamic_light_add's linear; another linear light, a
+		bounce's, adds into it before the add) */
+		sum = dynamic_light_sum(&m, &state, p, shaded, n, FALSE, reflection, exponent, shine_variable, linear_variable);
+		/* display.rt_bounce: the bounced light, linear, into the linear sum
+		(HALO_LT_E1: the traced flashlight there, added after, linearly) */
+		if (!lt_e1_on())
+			store(&m, linear_variable, rt_bounce_add(&m, &state, load(&m, m.t_v3, linear_variable)));
+		added = dynamic_light_add(&m, &state, lit, sum, load(&m, m.t_v3, linear_variable), FALSE);
+		added = lt_e1_add(&m, &state, added, 0, p, shaded);
 		/* (a metal's diffuse light darkened: material_read) */
 		if (state.metalness)
 			added = fscale(&m, 3, added, fsub(&m, 1, constant_float(&m, 1.0f), fmul(&m, 1, state.metalness,
@@ -5705,7 +6123,7 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 	{
 		static const unsigned int rgb[4] = { 4, 5, 6, 3 };
 
-		state.v0 = shuffle(&m, 4, state.v0, model_lighting(&m, &state, program->per_pixel_lighting == 2, FALSE,
+		state.v0 = shuffle(&m, 4, state.v0, model_lighting(&m, &state, (program->per_pixel_lighting & 3) == 2, FALSE,
 			occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_MODEL ? state.occlusion : 0), rgb);
 	}
 	else if (occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_VERTEX)
@@ -5731,7 +6149,7 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 		static const unsigned int rgb[4] = { 4, 5, 6, 3 };
 
 		state.t[3] = shuffle(&m, 4, state.t[3], dynamic_light_add(&m, &state, xyz(&m, state.t[3]),
-			fscale(&m, 3, load(&m, m.t_v3, shine_variable), highlight_scale), FALSE), rgb);
+			constant_splat(&m, 3, 0.0f), fscale(&m, 3, load(&m, m.t_v3, shine_variable), highlight_scale), FALSE), rgb);
 	}
 	/* (a model's material: its reflection by its occlusion, and a metal's
 	tinted by its base map) */
@@ -5795,20 +6213,33 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 				fadd(&m, 3, added, self_illumination), XGPU_HDR_BOOST_OF(program->hdr),
 				XGPU_HDR_SELF_ILLUMINATION_VALUE));
 	}
-	/* (display.ambient_occlusion: a lightmap pass's light, by the
-	occlusion, before the enhanced dynamic lights add theirs) */
+	/* (display.ambient_occlusion: a lightmap pass's light, its indirect
+	share by the occlusion, before the enhanced dynamic lights add theirs:
+	linear, light - (1 - occlusion) * min(light, INDIRECT); xgpu.h's
+	XGPU_AMBIENT_OCCLUSION_INDIRECT) */
 	if (occlusion_light == XGPU_AMBIENT_OCCLUSION_LIGHT_LIGHTMAP)
 	{
 		static const unsigned int rgb[4] = { 4, 5, 6, 3 };
+		unsigned int light = ext2(&m, GLSL_POW, m.t_v3, fmax_scalar(&m, 3, xyz(&m, result), 0.0f),
+			constant_splat(&m, 3, 2.2f));
+		/* (the level outdoors, the block's grid[0].w; 0 an interior's: all of it) */
+		unsigned int level = extract(&m, world_ao_vector(&m, 3, constant_int(&m, 0)), 3);
+		unsigned int indirect = op3(&m, OP_SELECT, m.t_v3, op2(&m, OP_F_ORD_GREATER_THAN, m.t_bv3, splat(&m, 3, level),
+			constant_splat(&m, 3, 0.0f)), ext2(&m, GLSL_F_MIN, m.t_v3, light, splat(&m, 3, level)), light);
 
-		result = shuffle(&m, 4, result, fscale(&m, 3, xyz(&m, result), state.occlusion), rgb);
+		/* (the occlusion as it multiplied the gamma light, occlusion^2.2 of
+		the linear: an interior's light as it was) */
+		light = fsub(&m, 3, light, fscale(&m, 3, indirect, fsub(&m, 1, constant_float(&m, 1.0f),
+			ext2(&m, GLSL_POW, m.t_float, fmax_scalar(&m, 1, state.occlusion, 0.0f), constant_float(&m, 2.2f)))));
+		result = shuffle(&m, 4, result, ext2(&m, GLSL_POW, m.t_v3, fmax_scalar(&m, 3, light, 0.0f),
+			constant_splat(&m, 3, (float)(1.0 / 2.2))), rgb);
 	}
 
 	if (environment)
 	{
 		/* the lightmap pass's light, before the textures multiply it */
 		unsigned int surface_normal = ext1(&m, GLSL_NORMALIZE, m.t_v3, xyz(&m, pixel_input(&m, &state, state.in_world_normal, m.t_v4)));
-		unsigned int bump, n, sum, lit;
+		unsigned int bump, n, sum, lit, linear_variable;
 		static const unsigned int rgb[4] = { 4, 5, 6, 3 };
 
 		if (program->stages[0].sampler == _xgpu_sampler_2d)
@@ -5819,10 +6250,22 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 			fscale(&m, 3, pixel_input(&m, &state, state.in_world_tangent, m.t_v3), extract(&m, bump, 0)),
 			fscale(&m, 3, pixel_input(&m, &state, state.in_world_binormal, m.t_v3), extract(&m, bump, 1))),
 			fscale(&m, 3, surface_normal, fmax_scalar(&m, 1, extract(&m, bump, 2), 0.05f))));
+		lt_shaded_normal = n;
+		linear_variable = local(&m, &state.locals, m.t_v3);
+		/* (linear_variable as the models': the linear light past the sum) */
 		sum = dynamic_light_sum(&m, &state, pixel_input(&m, &state, state.in_world_position, m.t_v3), n, surface_normal, TRUE,
-			0, 0, 0);
-		lit = dynamic_light_add(&m, &state, xyz(&m, result), fmul(&m, 3, sum,
+			0, 0, 0, linear_variable);
+		/* display.rt_bounce: the bounced light, linear, into the linear sum
+		(HALO_LT_E1: the traced flashlight there, added after, linearly) */
+		if (!lt_e1_on())
+			store(&m, linear_variable, rt_bounce_add(&m, &state, load(&m, m.t_v3, linear_variable)));
+		/* (by the shader's material colour, as the gel pass multiplies it) */
+		sum = fmul(&m, 3, sum, xyz(&m, uniform(&m, U_DYNAMIC_LIGHT_TINT, -1)));
+		lit = dynamic_light_add(&m, &state, xyz(&m, result), sum, fmul(&m, 3, load(&m, m.t_v3, linear_variable),
 			xyz(&m, uniform(&m, U_DYNAMIC_LIGHT_TINT, -1))), (program->hdr & XGPU_HDR_LIGHTS) != 0);
+		lit = lt_e1_add(&m, &state, lit, ext2(&m, GLSL_POW, m.t_v3, fmax_scalar(&m, 3,
+			xyz(&m, uniform(&m, U_DYNAMIC_LIGHT_TINT, -1)), 0.0f), constant_splat(&m, 3, 2.2f)),
+			pixel_input(&m, &state, state.in_world_position, m.t_v3), n);
 		/* (HALO_LIGHT_SHADOWS_VIEW: the lights over the surface darkened,
 		not under the shoulder, so a lit wall shows them too) */
 		if (state.light_shadows && light_shadows_view())
@@ -5965,6 +6408,11 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 	if (zsprite_hidden)
 		discard_if(&m, zsprite_hidden);
 	/* (finite: finite4; the pre-pass's twin, its inputs) */
+	/* (HALO_LT_E1: the twin's guides, xgpu_spirv.h's C1) */
+	if (lt_guides_out)
+		store(&m, lt_guides_out, lt_e1_guides(&m, &state, lt_shaded_normal,
+			program->stages[3].mode == XGPU_TEXTURE_CUBEMAP, lt_motion_current ?
+			lt_guides_motion(&m, lt_motion_current, lt_motion_previous) : constant_uint(&m, XGPU_SPIRV_GUIDES_MOTION_NONE)));
 	if (world_inputs)
 		store(&m, color_out, world_ao_words);
 	else if (occluder)
@@ -6329,6 +6777,226 @@ static unsigned int rt_candidate_commits(struct module *m, struct words *locals,
 	selection_end(m, merge);
 	return op2(m, OP_LOGICAL_AND, m->t_bool, op2(m, OP_LOGICAL_OR, m->t_bool, condition, structure),
 		compare(m, OP_F_ORD_GREATER_THAN, load(m, m->t_float, passes), constant_float(m, 0.5f)));
+}
+
+/* ---------- display.rt_reflections (docs/rt-plan/2-reflections.md)
+
+A draw the game tags (xgpu_shader.h's rt_reflection) has its reflection's
+texel, texture 3's cube map lookup, traced instead: one ray from the
+pixel's world position along the very vector the game looks its cube map
+up by (the vertex program's, or the bump map's DOT_REFLECT_SPECULAR
+reflection), so a bumped floor's ripples bend it as they bent the cube
+map. The game's combiners after it (its masks, fresnel, tints, the
+lightmap's reflection mask in the target's alpha) are untouched: only the
+cube map's colour is the scene's. As GLSL:
+
+vec3 d = normalize(r);
+rayQueryInitializeEXT(q, scene, 0, MASK_REFLECTIONS, p + d * START, 0.0, d, DISTANCE);
+while (rayQueryProceedEXT(q)) if (alpha passes: rt_candidate_commits) rayQueryConfirmIntersectionEXT(q);
+vec4 texel = cube;
+if (hit && its mesh has attributes) {
+  the triangle's material and corners (rt_candidate_commits' reading, of the committed hit);
+  vec3 c = base(uv * (model ? its map scale : 1)).rgb;
+  if (environment && detail) c *= 2.0 * detail(uv * detail_scale).rgb;      (the default biased multiply)
+  c *= lightmap ? lightmap(lightmap_uv).rgb : vec3(OBJECT_LIGHT);
+  texel.rgb = mix(clamp(c, 0, 1), cube.rgb, smoothstep(DISTANCE * FADE, DISTANCE, t));
+}
+(a model's material roughness: texel = mix(texel, cube, smoothstep(ROUGH, ROUGHEST, roughness)))
+
+A miss, a hit past the distance, or a hit without attributes (the
+collision meshes, an object's box) keeps the cube map: the sky, as Halo
+drew it. No second bounce; the hit's own reflection is not added. */
+#define RT_REFLECTION_DISTANCE 25.0f
+#define RT_REFLECTION_FADE 0.8f
+#define RT_REFLECTION_START 0.02f
+#define RT_REFLECTION_ROUGH 0.2f
+#define RT_REFLECTION_ROUGHEST 0.35f
+/* (an object hit's light: the hit table has no object's lighting yet) */
+#define RT_REFLECTION_OBJECT_LIGHT 0.6f
+/* (the shader types of world_rt_game.c's materials: shaders.c's) */
+#define RT_REFLECTION_KIND_ENVIRONMENT 3u
+#define RT_REFLECTION_KIND_MODEL 4u
+
+/* HALO_RT_REFLECTIONS_VIEW=1: each traced texel green where its ray met
+the scene with attributes, red where it kept the cube map (for checking
+which surfaces trace) */
+static int rt_reflections_view(void)
+{
+	static int view = -1;
+
+	if (view < 0)
+	{
+		const char *given = getenv("HALO_RT_REFLECTIONS_VIEW");
+
+		view = given ? atoi(given) : 0;
+	}
+	return view;
+}
+
+/* a texel of the hit set's textures: slot (a uint, clamped), at st, at a
+fixed level */
+static unsigned int rt_hit_texel(struct module *m, unsigned int slot_word, unsigned int st, float level)
+{
+	unsigned int slot = ext2(m, GLSL_U_MIN, m->t_uint, slot_word, constant_uint(m, XGPU_SPIRV_RT_HIT_TEXTURES - 1));
+	unsigned int operands[4], pointer, sampled;
+
+	decorate(m, slot, DECORATION_NON_UNIFORM, 0, NULL);
+	operands[0] = m->rt_hit_textures;
+	operands[1] = slot;
+	pointer = op(m, OP_ACCESS_CHAIN, type_pointer(m, STORAGE_UNIFORM_CONSTANT, type_sampled_image(m, DIM_2D, FALSE, FALSE,
+		TRUE)), 2, operands);
+	decorate(m, pointer, DECORATION_NON_UNIFORM, 0, NULL);
+	sampled = load(m, type_sampled_image(m, DIM_2D, FALSE, FALSE, TRUE), pointer);
+	decorate(m, sampled, DECORATION_NON_UNIFORM, 0, NULL);
+	operands[0] = sampled;
+	operands[1] = st;
+	operands[2] = IMAGE_OPERANDS_LOD;
+	operands[3] = constant_float(m, level);
+	return op(m, OP_IMAGE_SAMPLE_EXPLICIT_LOD, m->t_v4, 4, operands);
+}
+
+static unsigned int rt_reflection_texel(struct module *m, struct pixel_state *state, unsigned int r, unsigned int cube)
+{
+	struct words *locals = &state->locals;
+	unsigned int query = local(m, locals, type0(m, OP_TYPE_RAY_QUERY)), texel = local(m, locals, m->t_v4);
+	unsigned int committed = constant_int(m, RAY_QUERY_COMMITTED), candidate = constant_int(m, RAY_QUERY_CANDIDATE);
+	unsigned int p = pixel_input(m, state, state->in_world_position, m->t_v3);
+	unsigned int d = ext1(m, GLSL_NORMALIZE, m->t_v3, r);
+	unsigned int header = id_new(m), condition = id_new(m), body = id_new(m), next = id_new(m), merge = id_new(m);
+	unsigned int operands[8], kind, hit_merge, attributes_merge, mine_merge, value, structure;
+	unsigned int t, mesh, record, attributes, geometry, primitive, corners, material_word, material, at;
+	unsigned int uv[3], lightmap_uv[3], b, st, lst, shader_kind, scale[2], base_scale, color, detail, light, fade;
+	unsigned int ray_length;
+	int corner;
+
+	if (!m->rt_reflection_scene)
+	{
+		m->rt_reflection_scene = variable(m, type0(m, OP_TYPE_ACCELERATION_STRUCTURE), STORAGE_UNIFORM_CONSTANT,
+			"rt_reflection_scene");
+		decorate1(m, m->rt_reflection_scene, DECORATION_DESCRIPTOR_SET, XGPU_SPIRV_SET_OCCLUSION);
+		decorate1(m, m->rt_reflection_scene, DECORATION_BINDING, XGPU_SPIRV_BINDING_WORLD_AO_SCENE);
+		m->ray_query = TRUE;
+	}
+	rt_hits_declare(m);
+	store(m, texel, cube);
+	/* (water: a ray below the horizon keeps the cube map, its length 0) */
+	ray_length = constant_float(m, RT_REFLECTION_DISTANCE);
+	if (state->program->rt_reflection == XGPU_RT_REFLECTION_WATER)
+		ray_length = fselect(m, compare(m, OP_F_ORD_GREATER_THAN, extract(m, d, 2), constant_float(m, 0.0f)), ray_length,
+			constant_float(m, 0.0f));
+	operands[0] = query;
+	operands[1] = load(m, type0(m, OP_TYPE_ACCELERATION_STRUCTURE), m->rt_reflection_scene);
+	operands[2] = constant_uint(m, 0);
+	operands[3] = constant_uint(m, XGPU_SPIRV_RT_MASK_REFLECTIONS);
+	operands[4] = fadd(m, 3, p, fscale(m, 3, d, constant_float(m, RT_REFLECTION_START)));
+	operands[5] = constant_float(m, 0.0f);
+	operands[6] = d;
+	operands[7] = ray_length;
+	op_void(m, OP_RAY_QUERY_INITIALIZE, 8, operands);
+	branch(m, header);
+	label_at(m, header);
+	operands[0] = merge;
+	operands[1] = next;
+	operands[2] = 0;
+	op_void(m, OP_LOOP_MERGE, 3, operands);
+	branch(m, condition);
+	label_at(m, condition);
+	branch_conditional(m, op1(m, OP_RAY_QUERY_PROCEED, m->t_bool, query), body, merge);
+	label_at(m, body);
+	/* (every owner's: a surface sees itself, the player too) */
+	structure = op2(m, OP_I_EQUAL, m->t_bool, op2(m, OP_RAY_QUERY_GET_INTERSECTION_INSTANCE_CUSTOM_INDEX, m->t_int, query,
+		candidate), constant_int(m, 0));
+	selection_begin(m, rt_candidate_commits(m, locals, query, structure, constant_bool(m, TRUE)), &mine_merge);
+	op_void(m, OP_RAY_QUERY_CONFIRM_INTERSECTION, 1, &query);
+	selection_end(m, mine_merge);
+	branch(m, next);
+	label_at(m, next);
+	branch(m, header);
+	label_at(m, merge);
+	kind = op2(m, OP_RAY_QUERY_GET_INTERSECTION_TYPE, m->t_uint, query, committed);
+	/* (the hit's mesh, and its attributes: 0 a mesh of triangles alone) */
+	mesh = uand(m, op2(m, OP_RAY_QUERY_GET_INTERSECTION_INSTANCE_SHADER_BINDING_TABLE_RECORD_OFFSET, m->t_uint, query,
+		committed), constant_uint(m, XGPU_SPIRV_RT_HIT_MESHES - 1));
+	record = op2(m, OP_SHIFT_LEFT_LOGICAL, m->t_uint, mesh, constant_uint(m, 2));
+	selection_begin(m, op2(m, OP_I_NOT_EQUAL, m->t_bool, kind, constant_uint(m, 0)), &hit_merge);
+	attributes = rt_hit_word(m, uadd(m, record, constant_uint(m, 1)));
+	selection_begin(m, unot_zero(m, attributes), &attributes_merge);
+	t = op2(m, OP_RAY_QUERY_GET_INTERSECTION_T, m->t_float, query, committed);
+	geometry = op2(m, OP_RAY_QUERY_GET_INTERSECTION_GEOMETRY_INDEX, m->t_uint, query, committed);
+	/* (an alpha-tested triangle's index past the opaque ones) */
+	primitive = uadd(m, op2(m, OP_RAY_QUERY_GET_INTERSECTION_PRIMITIVE_INDEX, m->t_uint, query, committed),
+		op3(m, OP_SELECT, m->t_uint, op2(m, OP_I_EQUAL, m->t_bool, geometry, constant_uint(m, 1)),
+		rt_hit_word(m, uadd(m, record, constant_uint(m, 3))), constant_uint(m, 0)));
+	corners = uadd(m, rt_hit_word(m, record), op2(m, OP_I_MUL, m->t_uint, primitive, constant_uint(m, 3)));
+	material_word = rt_hit_word(m, uadd(m, rt_hit_word(m, uadd(m, record, constant_uint(m, 2))),
+		op2(m, OP_SHIFT_RIGHT_LOGICAL, m->t_uint, primitive, constant_uint(m, 1))));
+	material = uand(m, op2(m, OP_SHIFT_RIGHT_LOGICAL, m->t_uint, material_word, op2(m, OP_SHIFT_LEFT_LOGICAL, m->t_uint,
+		uand(m, primitive, constant_uint(m, 1)), constant_uint(m, 4))), constant_uint(m, 0xFFFFu));
+	at = uadd(m, constant_uint(m, XGPU_SPIRV_RT_HIT_MATERIALS), op2(m, OP_SHIFT_LEFT_LOGICAL, m->t_uint, material,
+		constant_uint(m, 4)));
+	for (corner = 0; corner < 3; corner++)
+	{
+		unsigned int vertex = rt_hit_word(m, uadd(m, corners, constant_uint(m, (unsigned int)corner)));
+		unsigned int first = uadd(m, attributes, op2(m, OP_I_MUL, m->t_uint, vertex, constant_uint(m, 6))), xy_parts[2];
+
+		xy_parts[0] = rt_hit_float(m, first);
+		xy_parts[1] = rt_hit_float(m, uadd(m, first, constant_uint(m, 1)));
+		uv[corner] = construct(m, 2, xy_parts);
+		lightmap_uv[corner] = ext1(m, GLSL_UNPACK_SNORM_2X16, m->t_v2, rt_hit_word(m, uadd(m, first, constant_uint(m, 4))));
+	}
+	b = op2(m, OP_RAY_QUERY_GET_INTERSECTION_BARYCENTRICS, m->t_v2, query, committed);
+	st = fadd(m, 2, fadd(m, 2, uv[0], fscale(m, 2, fsub(m, 2, uv[1], uv[0]), extract(m, b, 0))),
+		fscale(m, 2, fsub(m, 2, uv[2], uv[0]), extract(m, b, 1)));
+	lst = fadd(m, 2, fadd(m, 2, lightmap_uv[0], fscale(m, 2, fsub(m, 2, lightmap_uv[1], lightmap_uv[0]), extract(m, b, 0))),
+		fscale(m, 2, fsub(m, 2, lightmap_uv[2], lightmap_uv[0]), extract(m, b, 1)));
+	shader_kind = rt_hit_word(m, uadd(m, at, constant_uint(m, 1)));
+	/* (a model's base map at its map's scale, which the material keeps in
+	the alpha map's: world_rt_game.c) */
+	scale[0] = rt_hit_float(m, uadd(m, at, constant_uint(m, 5)));
+	scale[1] = rt_hit_float(m, uadd(m, at, constant_uint(m, 6)));
+	base_scale = select_n(m, 2, op2(m, OP_I_EQUAL, m->t_bool, shader_kind, constant_uint(m, RT_REFLECTION_KIND_MODEL)),
+		construct(m, 2, scale), constant_splat(m, 2, 1.0f));
+	color = xyz(m, rt_hit_texel(m, rt_hit_word(m, uadd(m, at, constant_uint(m, 7))), fmul(m, 2, st, base_scale),
+		XGPU_SPIRV_RT_HIT_LEVEL));
+	/* (an environment's detail map, as its default function: biased multiply) */
+	{
+		unsigned int detail_slot = rt_hit_word(m, uadd(m, at, constant_uint(m, 8)));
+		unsigned int detail_scale = rt_hit_float(m, uadd(m, at, constant_uint(m, 9)));
+
+		detail = fscale(m, 3, xyz(m, rt_hit_texel(m, detail_slot, fscale(m, 2, st, detail_scale), XGPU_SPIRV_RT_HIT_LEVEL)),
+			constant_float(m, 2.0f));
+		detail = select_n(m, 3, op2(m, OP_LOGICAL_AND, m->t_bool, unot_zero(m, detail_slot), op2(m, OP_I_EQUAL, m->t_bool,
+			shader_kind, constant_uint(m, RT_REFLECTION_KIND_ENVIRONMENT))), detail, constant_splat(m, 3, 1.0f));
+	}
+	{
+		unsigned int lightmap_slot = rt_hit_word(m, uadd(m, at, constant_uint(m, 14)));
+
+		light = select_n(m, 3, unot_zero(m, lightmap_slot), xyz(m, rt_hit_texel(m, lightmap_slot, lst, 0.0f)),
+			constant_splat(m, 3, RT_REFLECTION_OBJECT_LIGHT));
+	}
+	color = saturate(m, 3, fmul(m, 3, fmul(m, 3, color, detail), light));
+	fade = ext3(m, GLSL_SMOOTH_STEP, m->t_float, constant_float(m, RT_REFLECTION_DISTANCE * RT_REFLECTION_FADE),
+		constant_float(m, RT_REFLECTION_DISTANCE), t);
+	color = ext3(m, GLSL_F_MIX, m->t_v3, color, xyz(m, cube), splat(m, 3, fade));
+	if (rt_reflections_view() == 1)
+		color = constant_vector(m, 3, (const float[]){ 0.0f, 1.0f, 0.0f });
+	store(m, texel, vec4_of(m, color, extract(m, cube, 3)));
+	selection_end(m, attributes_merge);
+	selection_end(m, hit_merge);
+	value = load(m, m->t_v4, texel);
+	if (rt_reflections_view() == 1)
+	{
+		/* (red where the cube map was kept) */
+		unsigned int kept = op2(m, OP_F_ORD_EQUAL, m->t_bool, extract(m, value, 1), extract(m, cube, 1));
+
+		value = select_n(m, 4, op2(m, OP_LOGICAL_AND, m->t_bool, kept, op2(m, OP_F_ORD_EQUAL, m->t_bool,
+			extract(m, value, 0), extract(m, cube, 0))), constant_v4(m, 1.0f, 0.0f, 0.0f, 1.0f), value);
+	}
+	/* (a model's material: rough, the cube map's blur kept) */
+	if (state->roughness)
+		value = ext3(m, GLSL_F_MIX, m->t_v4, value, cube, splat(m, 4, ext3(m, GLSL_SMOOTH_STEP, m->t_float,
+			constant_float(m, RT_REFLECTION_ROUGH), constant_float(m, RT_REFLECTION_ROUGHEST), state->roughness)));
+	return value;
 }
 
 /* the occlusion at a point from a pixel's inputs (words): its static term
@@ -7285,7 +7953,10 @@ static unsigned int light_shadows_rays(struct module *m, struct words *locals, s
 		operands[0] = query;
 		operands[1] = load(m, type0(m, OP_TYPE_ACCELERATION_STRUCTURE), pass->scene);
 		operands[2] = constant_uint(m, 0);
-		operands[3] = constant_uint(m, 0xFFu);
+		/* (the structure, the objects and the local player's own body, not
+		the first-person weapon and hands, drawn in a view of their own; the
+		body leaves its own lights' rays as their owner, below) */
+		operands[3] = constant_uint(m, XGPU_SPIRV_RT_MASK_SHADOWS);
 		operands[4] = from;
 		operands[5] = constant_float(m, 0.0f);
 		operands[6] = fdiv(m, 3, d, splat(m, 3, far));
@@ -7452,6 +8123,97 @@ static void light_shadows_filter_main(struct module *m, struct words *locals, st
 	selection_end(m, merge);
 }
 
+/* the enhanced flashlight's shadow map (xgpu_spirv.h's
+XGPU_SPIRV_LIGHT_SHADOWS_FLASHLIGHT), as GLSL:
+
+uvec4 head = texel(FLASHLIGHT + 1); int slot = int(head.x) - 1; float R = uintBitsToFloat(head.y);
+vec4 light = lights.position[texel(FLASHLIGHT)[slot] - 1]; float reach = 1.0 / abs(light.w);
+vec2 ab = (gl_FragCoord.xy / SIZE * 2.0 - 1.0) * R;
+vec3 d = normalize(forward + left * ab.x + up * ab.y), lamp = texel(FLASHLIGHT + 23).xyz;
+rayQueryInitializeEXT(q, scene, 0, MASK_AO, lamp, 0.02, d, reach + length(lamp - light.xyz));   (no first-person models, no own body)
+while (rayQueryProceedEXT(q)) if (index(candidate) != owner) commit where its alpha passes;
+out = vec4(committed(q) ? t : reach, 0, 0, 1); */
+static void flashlight_map_main(struct module *m, struct words *locals, struct world_ao_pass_state *pass,
+	unsigned int out)
+{
+	unsigned int frag = load(m, m->t_v4, pass->frag_coord), head, slot, width, number, light, position, reach;
+	unsigned int base, forward, up, left, a, b, d, query = local(m, locals, type0(m, OP_TYPE_RAY_QUERY));
+	unsigned int owner, operands[8], header, condition, body, next, merge, candidate, mine_merge, kind, t, distance;
+	unsigned int result_variable = local(m, locals, m->t_v4), slots, valid, valid_merge, lamp;
+	const float size = (float)XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_SHADOW_SIZE;
+
+	store(m, result_variable, constant_vector(m, 4, (const float[]){ 1.0e4f, 0.0f, 0.0f, 1.0f }));
+	head = flashlight_texel(m, constant_int(m, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 1));
+	slots = flashlight_texel(m, constant_int(m, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT));
+	valid = op2(m, OP_LOGICAL_AND, m->t_bool, unot_zero(m, uextract(m, head, 0)),
+		op2(m, OP_U_LESS_THAN, m->t_bool, uextract(m, head, 0), constant_uint(m, XGPU_DYNAMIC_LIGHTS_FLASHLIGHTS + 1)));
+	selection_begin(m, valid, &valid_merge);
+	slot = int_add(m, op1(m, OP_BITCAST, m->t_int, uextract(m, head, 0)), -1);
+	number = op2(m, OP_VECTOR_EXTRACT_DYNAMIC, m->t_uint, slots, slot);
+	light = ext2(m, GLSL_S_MAX, m->t_int, int_add(m, op1(m, OP_BITCAST, m->t_int, number), -1), constant_int(m, 0));
+	position = dynamic_light(m, 1, light);
+	reach = fdiv(m, 1, constant_float(m, 1.0f), fmax_scalar(m, 1, ext1(m, GLSL_F_ABS, m->t_float, extract(m, position, 3)),
+		1.0e-4f));
+	width = op1(m, OP_BITCAST, m->t_float, uextract(m, head, 1));
+	base = int_add(m, op2(m, OP_I_MUL, m->t_int, slot, constant_int(m, 3)), XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 2);
+	forward = flashlight_vector(m, base);
+	up = flashlight_vector(m, int_add(m, base, 1));
+	left = flashlight_vector(m, int_add(m, base, 2));
+	a = fmul(m, 1, fsub(m, 1, fmul(m, 1, extract(m, frag, 0), constant_float(m, 2.0f / size)), constant_float(m, 1.0f)),
+		width);
+	b = fmul(m, 1, fsub(m, 1, fmul(m, 1, extract(m, frag, 1), constant_float(m, 2.0f / size)), constant_float(m, 1.0f)),
+		width);
+	d = ext1(m, GLSL_NORMALIZE, m->t_v3, fadd(m, 3, forward, fadd(m, 3, fscale(m, 3, left, a), fscale(m, 3, up, b))));
+	owner = op2(m, OP_COMPOSITE_EXTRACT, m->t_uint, flashlight_texel(m, constant_int(m, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 14)),
+		3);
+	operands[0] = query;
+	operands[1] = load(m, type0(m, OP_TYPE_ACCELERATION_STRUCTURE), pass->scene);
+	operands[2] = constant_uint(m, 0);
+	operands[3] = constant_uint(m, XGPU_SPIRV_RT_MASK_AO);
+	/* (from the lamp, as far as the light's reach past it) */
+	lamp = flashlight_vector(m, constant_int(m, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 23));
+	reach = fadd(m, 1, reach, flength(m, fsub(m, 3, lamp, xyz(m, position))));
+	operands[4] = lamp;
+	operands[5] = constant_float(m, 0.02f);
+	operands[6] = d;
+	operands[7] = reach;
+	op_void(m, OP_RAY_QUERY_INITIALIZE, 8, operands);
+	header = id_new(m);
+	condition = id_new(m);
+	body = id_new(m);
+	next = id_new(m);
+	merge = id_new(m);
+	branch(m, header);
+	label_at(m, header);
+	operands[0] = merge;
+	operands[1] = next;
+	operands[2] = 0;
+	op_void(m, OP_LOOP_MERGE, 3, operands);
+	branch(m, condition);
+	label_at(m, condition);
+	branch_conditional(m, op1(m, OP_RAY_QUERY_PROCEED, m->t_bool, query), body, merge);
+	label_at(m, body);
+	candidate = op2(m, OP_RAY_QUERY_GET_INTERSECTION_INSTANCE_CUSTOM_INDEX, m->t_int, query,
+		constant_int(m, RAY_QUERY_CANDIDATE));
+	/* (HALO_FLASHLIGHT_SHADOW_VIEW=3, checking: no owner left out) */
+	selection_begin(m, rt_candidate_commits(m, locals, query, op2(m, OP_I_EQUAL, m->t_bool, candidate, constant_int(m, 0)),
+		getenv("HALO_FLASHLIGHT_SHADOW_VIEW") && atoi(getenv("HALO_FLASHLIGHT_SHADOW_VIEW")) == 3 ? constant_bool(m, TRUE) :
+		op2(m, OP_I_NOT_EQUAL, m->t_bool, op1(m, OP_BITCAST, m->t_uint, candidate), owner)), &mine_merge);
+	op_void(m, OP_RAY_QUERY_CONFIRM_INTERSECTION, 1, &query);
+	selection_end(m, mine_merge);
+	branch(m, next);
+	label_at(m, next);
+	branch(m, header);
+	label_at(m, merge);
+	kind = op2(m, OP_RAY_QUERY_GET_INTERSECTION_TYPE, m->t_uint, query, constant_int(m, RAY_QUERY_COMMITTED));
+	t = op2(m, OP_RAY_QUERY_GET_INTERSECTION_T, m->t_float, query, constant_int(m, RAY_QUERY_COMMITTED));
+	distance = fselect(m, op2(m, OP_I_EQUAL, m->t_bool, kind, constant_uint(m, 0)), reach, t);
+	store(m, result_variable, construct4(m, distance, constant_float(m, 0.0f), constant_float(m, 0.0f),
+		constant_float(m, 1.0f)));
+	selection_end(m, valid_merge);
+	store(m, out, load(m, m->t_v4, result_variable));
+}
+
 BOOL xgpu_spirv_light_shadows_pass(int which, const struct xgpu_spirv_options *options, struct xgpu_spirv_module *module)
 {
 	struct module m;
@@ -7460,21 +8222,847 @@ BOOL xgpu_spirv_light_shadows_pass(int which, const struct xgpu_spirv_options *o
 	unsigned int main_id, out;
 	BOOL result;
 
-	if (which == XGPU_SPIRV_LIGHT_SHADOWS_TRACE && !options->ray_queries)
+	if (which != XGPU_SPIRV_LIGHT_SHADOWS_FILTER && !options->ray_queries)
 		return FALSE;
 	module_begin(&m, EXECUTION_MODEL_FRAGMENT);
 	world_ao_declare(&m);
-	world_ao_pass_declare(&m, &pass, which == XGPU_SPIRV_LIGHT_SHADOWS_TRACE);
+	world_ao_pass_declare(&m, &pass, which != XGPU_SPIRV_LIGHT_SHADOWS_FILTER);
 	declare_dynamic_lights(&m);
 	out = interface_variable(&m, m.t_v4, STORAGE_OUTPUT, 0, "light_shadows");
 	main_id = function_begin(&m);
 	if (which == XGPU_SPIRV_LIGHT_SHADOWS_TRACE)
 		light_shadows_trace_main(&m, &locals, &pass, out);
+	else if (which == XGPU_SPIRV_LIGHT_SHADOWS_FLASHLIGHT)
+		flashlight_map_main(&m, &locals, &pass, out);
 	else
 		light_shadows_filter_main(&m, &locals, &pass, out);
 	result = module_end(&m, EXECUTION_MODEL_FRAGMENT, main_id, &locals, module);
 	free(locals.words);
 	return result;
+}
+
+/* ---------- display.rt_bounce: the bounced light's passes (xgpu_spirv.h's
+xgpu_spirv_rt_bounce_pass; docs/rt-plan/3-gi.md, stage 3)
+
+Only the dynamic lights' bounce: a ray's hit is lit by the block's lights
+alone, never by its lightmap (whose light has its bounce baked in already).
+In the enhanced lights' units a surface's light times its texture is what
+it shows, so a hit shows albedo * light, and the light a surface gets back
+from the hemisphere it faces is the mean of what its cosine-weighted rays
+see: the receiver's texture then multiplies it, as it does the lights'.
+The trace, as GLSL:
+
+ivec2 tile = ivec2(gl_FragCoord.xy), pixel = clamp(pick(tile, frame), corners.xy, corners.zw - 1);
+uvec4 words = texelFetch(inputs, pixel, 0); vec4 sample = vec4(0.0);
+if ((words.y & PRESENT) != 0) {
+  sample.a = 1.0;
+  if (count > 0) {
+    vec3 p = position(pixel, uintBitsToFloat(words.z)), n = unfold(unpackSnorm2x16(words.x));
+    (Duff's x, y about n and the pixel's noise u, v, w, the AO rays')
+    vec3 d = x sqrt(u) cos(2 pi v) + y sqrt(u) sin(2 pi v) + n sqrt(1 - u);
+    rayQueryInitializeEXT(q, scene, CULL_BACK, MASK_AO, p + n BIAS, 0.0, d, REACH);  (the pixel's own left out)
+    if (committed(q) is a triangle) {
+      the hit's corners, normal (the object's to the world, toward the ray) and base map's texel (LEVEL),
+      albedo = slot == 0 ? NONE : min(pow(texel.rgb, 2.2), MOST);
+      for each light i: c[i] = color * window(d2 / r2)^2 * max(dot(nh, l), 0) * spot, w[i] = max(c[i]);
+      W = sum(w); pick i with w[i] / W (noise w);
+      if (W > 0) sample.rgb = albedo * c[i] * (W / w[i]) * (the structure's shadow ray from the hit to it reaches);
+    }
+  }
+}
+
+(one light by its share is the unbiased estimate of all of them with one
+shadow ray: resampled importance sampling's first step.)
+
+The resolve, a fragment a cell's face:
+vec3 s = (x, y, z of the texel), w = origin + mod(s - origin, GRID);
+vec4 history = valid && w inside the last grid ? texelFetch(history, texel, 0) : vec4(0.0);
+where (w + 0.5) cell is in front of the eye, for the 4x4 squares about where it is seen:
+  the square's sample and its pixel's position and normal; it counts where it is in w,
+  max(dot(n, face), 0)^2 its weight;
+h = min(history.a keep, MOST);
+cache = total > 0 ? vec4((history.rgb h + sum) / (h + total), min(h + total, MOST)) : vec4(history.rgb fade, history.a);
+
+The gather: the pixel's eight cells about p + n cell / 4, trilinear, each of
+the three faces it faces by n's square along them, each by its history's
+weight up to 1, normalized. */
+
+#define RT_BOUNCE_OP_TYPE_MATRIX 24u
+#define RT_BOUNCE_OP_GET_OBJECT_TO_WORLD 6031u
+/* the shadow rays' mask: the structure's alone */
+#define RT_BOUNCE_MASK_STRUCTURE 0x01u
+
+struct rt_bounce_state
+{
+	struct world_ao_pass_state pass;
+	unsigned int block;
+	/* the resolve's samples, and the gather's cache (at the history's) */
+	unsigned int samples;
+};
+
+static int rt_bounce_view(void)
+{
+	static int view = -1;
+
+	if (view < 0)
+	{
+		const char *given = getenv("HALO_RT_BOUNCE_VIEW");
+
+		view = given ? atoi(given) : 0;
+	}
+	return view;
+}
+
+static unsigned int rt_bounce_vector(struct module *m, struct rt_bounce_state *state, int index)
+{
+	return rt_shadows_vector(m, state->block, constant_int(m, index));
+}
+
+static unsigned int rt_bounce_iv2(struct module *m, unsigned int x, unsigned int y)
+{
+	return op(m, OP_COMPOSITE_CONSTRUCT, m->t_iv2, 2, (unsigned int[]){ x, y });
+}
+
+/* interleaved gradient noise at (x, y), turned by the frame */
+static unsigned int rt_bounce_noise(struct module *m, unsigned int x, unsigned int y, unsigned int frame, float a, float b,
+	float step)
+{
+	return ext1(m, GLSL_FRACT, m->t_float, fadd(m, 1, fmul(m, 1, constant_float(m, 52.9829189f), ext1(m, GLSL_FRACT,
+		m->t_float, fadd(m, 1, fmul(m, 1, constant_float(m, a), x), fmul(m, 1, constant_float(m, b), y)))),
+		fmul(m, 1, constant_float(m, step), frame)));
+}
+
+/* the pixel of a square (an ivec2) that casts its ray this frame, inside
+the window's corners */
+static unsigned int rt_bounce_pick(struct module *m, struct rt_bounce_state *state, unsigned int tile, unsigned int frame)
+{
+	unsigned int tx = op1(m, OP_CONVERT_S_TO_F, m->t_float, op2(m, OP_COMPOSITE_EXTRACT, m->t_int, tile, 0));
+	unsigned int ty = op1(m, OP_CONVERT_S_TO_F, m->t_float, op2(m, OP_COMPOSITE_EXTRACT, m->t_int, tile, 1));
+	unsigned int ox = ext1(m, GLSL_FLOOR, m->t_float, fmul(m, 1, rt_bounce_noise(m, tx, ty, frame, 0.06711056f, 0.00583715f,
+		0.618034f), constant_float(m, (float)XGPU_RT_BOUNCE_TILE)));
+	unsigned int oy = ext1(m, GLSL_FLOOR, m->t_float, fmul(m, 1, rt_bounce_noise(m, ty, tx, frame, 0.06711056f, 0.00583715f,
+		0.7548777f), constant_float(m, (float)XGPU_RT_BOUNCE_TILE)));
+	unsigned int at = op1(m, OP_CONVERT_F_TO_S, m->t_iv2, construct(m, 2, (unsigned int[]){
+		fadd(m, 1, fmul(m, 1, tx, constant_float(m, (float)XGPU_RT_BOUNCE_TILE)), ox),
+		fadd(m, 1, fmul(m, 1, ty, constant_float(m, (float)XGPU_RT_BOUNCE_TILE)), oy) }));
+	unsigned int corners = world_ao_pass_vector(m, &state->pass, WORLD_AO_PASS_CORNERS, 0);
+	unsigned int low = op(m, OP_VECTOR_SHUFFLE, m->t_iv2, 4, (unsigned int[]){ corners, corners, 0, 1 });
+	unsigned int high = op2(m, OP_I_SUB, m->t_iv2, op(m, OP_VECTOR_SHUFFLE, m->t_iv2, 4,
+		(unsigned int[]){ corners, corners, 2, 3 }), rt_bounce_iv2(m, constant_int(m, 1), constant_int(m, 1)));
+
+	return ext3(m, GLSL_S_CLAMP, m->t_iv2, at, low, high);
+}
+
+/* a pixel's inputs: present (a bool), its position and normal */
+static void rt_bounce_pixel(struct module *m, struct rt_bounce_state *state, unsigned int pixel, unsigned int *present,
+	unsigned int *p, unsigned int *n, unsigned int *owner)
+{
+	unsigned int words = world_ao_pass_fetch(m, state->pass.inputs, pixel);
+
+	*present = unot_zero(m, uand(m, uextract(m, words, 1), constant_uint(m, XGPU_WORLD_AO_INPUT_PRESENT)));
+	*p = world_ao_pass_position(m, &state->pass, pixel, op1(m, OP_BITCAST, m->t_float, uextract(m, words, 2)));
+	*n = world_ao_unfold(m, ext1(m, GLSL_UNPACK_SNORM_2X16, m->t_v2, uextract(m, words, 0)));
+	if (owner)
+		*owner = op1(m, OP_BITCAST, m->t_int, uextract(m, words, 3));
+}
+
+/* a ray query from origin along d to far, its candidates committed where
+rt_candidate_commits takes them: objects (where objects, but the owner's)
+and the structure's alpha-tested ones */
+static void rt_bounce_query(struct module *m, struct words *locals, struct rt_bounce_state *state, unsigned int query,
+	unsigned int flags, unsigned int mask, unsigned int origin, unsigned int d, unsigned int far, BOOL objects,
+	unsigned int owner)
+{
+	unsigned int operands[8], candidate, mine_merge, condition_id;
+	unsigned int header = id_new(m), condition = id_new(m), body = id_new(m), next = id_new(m), merge = id_new(m);
+
+	operands[0] = query;
+	operands[1] = load(m, type0(m, OP_TYPE_ACCELERATION_STRUCTURE), state->pass.scene);
+	operands[2] = constant_uint(m, flags);
+	operands[3] = constant_uint(m, mask);
+	operands[4] = origin;
+	operands[5] = constant_float(m, 0.0f);
+	operands[6] = d;
+	operands[7] = far;
+	op_void(m, OP_RAY_QUERY_INITIALIZE, 8, operands);
+	branch(m, header);
+	label_at(m, header);
+	operands[0] = merge;
+	operands[1] = next;
+	operands[2] = 0;
+	op_void(m, OP_LOOP_MERGE, 3, operands);
+	branch(m, condition);
+	label_at(m, condition);
+	branch_conditional(m, op1(m, OP_RAY_QUERY_PROCEED, m->t_bool, query), body, merge);
+	label_at(m, body);
+	candidate = op2(m, OP_RAY_QUERY_GET_INTERSECTION_INSTANCE_CUSTOM_INDEX, m->t_int, query,
+		constant_int(m, RAY_QUERY_CANDIDATE));
+	condition_id = objects ? op2(m, OP_I_NOT_EQUAL, m->t_bool, candidate, owner) : constant_bool(m, FALSE);
+	selection_begin(m, rt_candidate_commits(m, locals, query, op2(m, OP_I_EQUAL, m->t_bool, candidate, constant_int(m, 0)),
+		condition_id), &mine_merge);
+	op_void(m, OP_RAY_QUERY_CONFIRM_INTERSECTION, 1, &query);
+	selection_end(m, mine_merge);
+	branch(m, next);
+	label_at(m, next);
+	branch(m, header);
+	label_at(m, merge);
+}
+
+/* the committed hit's world normal (toward the ray: against d) and its base
+map's color (linear, at most MOST) */
+static void rt_bounce_hit(struct module *m, unsigned int query, unsigned int d, unsigned int *normal_out,
+	unsigned int *albedo_out)
+{
+	unsigned int committed = constant_int(m, RAY_QUERY_COMMITTED);
+	unsigned int mesh, record, primitive, corners, attributes, material_word, material, at, uv[3], normals[3], b, bx, by, st;
+	unsigned int alpha_tested, slot, operands[4], pointer, sampled, texel, nobj, matrix, columns[3], nw, albedo, has_data;
+	int corner;
+
+	rt_hits_declare(m);
+	mesh = uand(m, op2(m, OP_RAY_QUERY_GET_INTERSECTION_INSTANCE_SHADER_BINDING_TABLE_RECORD_OFFSET, m->t_uint, query,
+		committed), constant_uint(m, XGPU_SPIRV_RT_HIT_MESHES - 1));
+	record = op2(m, OP_SHIFT_LEFT_LOGICAL, m->t_uint, mesh, constant_uint(m, 2));
+	/* (an alpha-tested triangle's index past the opaque ones: geometry 1) */
+	alpha_tested = op2(m, OP_I_EQUAL, m->t_bool, op2(m, OP_RAY_QUERY_GET_INTERSECTION_GEOMETRY_INDEX, m->t_uint, query,
+		committed), constant_uint(m, 1));
+	/* (a mesh of triangles alone, a collision mesh's: its record all 0, no
+	data; read as mesh 0's first words, in range, and taken as a grey wall
+	facing the ray) */
+	has_data = unot_zero(m, rt_hit_word(m, record));
+	primitive = op3(m, OP_SELECT, m->t_uint, has_data, uadd(m, op2(m, OP_RAY_QUERY_GET_INTERSECTION_PRIMITIVE_INDEX,
+		m->t_uint, query, committed), op3(m, OP_SELECT, m->t_uint, alpha_tested, rt_hit_word(m, uadd(m, record,
+		constant_uint(m, 3))), constant_uint(m, 0))), constant_uint(m, 0));
+	corners = uadd(m, rt_hit_word(m, record), op2(m, OP_I_MUL, m->t_uint, primitive, constant_uint(m, 3)));
+	attributes = rt_hit_word(m, uadd(m, record, constant_uint(m, 1)));
+	material_word = rt_hit_word(m, uadd(m, rt_hit_word(m, uadd(m, record, constant_uint(m, 2))),
+		op2(m, OP_SHIFT_RIGHT_LOGICAL, m->t_uint, primitive, constant_uint(m, 1))));
+	material = uand(m, op2(m, OP_SHIFT_RIGHT_LOGICAL, m->t_uint, material_word, op2(m, OP_SHIFT_LEFT_LOGICAL, m->t_uint,
+		uand(m, primitive, constant_uint(m, 1)), constant_uint(m, 4))), constant_uint(m, 0xFFFFu));
+	at = uadd(m, constant_uint(m, XGPU_SPIRV_RT_HIT_MATERIALS), op2(m, OP_SHIFT_LEFT_LOGICAL, m->t_uint, material,
+		constant_uint(m, 4)));
+	for (corner = 0; corner < 3; corner++)
+	{
+		unsigned int vertex = rt_hit_word(m, uadd(m, corners, constant_uint(m, (unsigned int)corner)));
+		unsigned int first = uadd(m, attributes, op2(m, OP_I_MUL, m->t_uint, vertex, constant_uint(m, 6))), xy[2];
+
+		xy[0] = rt_hit_float(m, first);
+		xy[1] = rt_hit_float(m, uadd(m, first, constant_uint(m, 1)));
+		uv[corner] = construct(m, 2, xy);
+		normals[corner] = world_ao_unfold(m, ext1(m, GLSL_UNPACK_SNORM_2X16, m->t_v2, rt_hit_word(m, uadd(m, first,
+			constant_uint(m, 2)))));
+	}
+	b = op2(m, OP_RAY_QUERY_GET_INTERSECTION_BARYCENTRICS, m->t_v2, query, committed);
+	bx = extract(m, b, 0);
+	by = extract(m, b, 1);
+	st = fadd(m, 2, fadd(m, 2, uv[0], fscale(m, 2, fsub(m, 2, uv[1], uv[0]), bx)), fscale(m, 2, fsub(m, 2, uv[2], uv[0]), by));
+	nobj = fadd(m, 3, fadd(m, 3, normals[0], fscale(m, 3, fsub(m, 3, normals[1], normals[0]), bx)),
+		fscale(m, 3, fsub(m, 3, normals[2], normals[0]), by));
+	/* (the object's space to the world's: its matrix's first three columns) */
+	matrix = op2(m, RT_BOUNCE_OP_GET_OBJECT_TO_WORLD, type2(m, RT_BOUNCE_OP_TYPE_MATRIX, m->t_v3, 4), query, committed);
+	for (corner = 0; corner < 3; corner++)
+		columns[corner] = op2(m, OP_COMPOSITE_EXTRACT, m->t_v3, matrix, (unsigned int)corner);
+	nw = fadd(m, 3, fadd(m, 3, fscale(m, 3, columns[0], extract(m, nobj, 0)), fscale(m, 3, columns[1], extract(m, nobj, 1))),
+		fscale(m, 3, columns[2], extract(m, nobj, 2)));
+	nw = fscale(m, 3, nw, ext1(m, GLSL_INVERSE_SQRT, m->t_float, fmax_scalar(m, 1, fdot(m, nw, nw), 1.0e-12f)));
+	nw = select_n(m, 3, compare(m, OP_F_ORD_GREATER_THAN, fdot(m, nw, d), constant_float(m, 0.0f)), fneg(m, 3, nw), nw);
+	/* (its base map, slot 0 none: the white stand-in, a grey taken instead) */
+	slot = ext2(m, GLSL_U_MIN, m->t_uint, rt_hit_word(m, uadd(m, at, constant_uint(m, 7))),
+		constant_uint(m, XGPU_SPIRV_RT_HIT_TEXTURES - 1));
+	decorate(m, slot, DECORATION_NON_UNIFORM, 0, NULL);
+	operands[0] = m->rt_hit_textures;
+	operands[1] = slot;
+	pointer = op(m, OP_ACCESS_CHAIN, type_pointer(m, STORAGE_UNIFORM_CONSTANT, type_sampled_image(m, DIM_2D, FALSE, FALSE,
+		TRUE)), 2, operands);
+	decorate(m, pointer, DECORATION_NON_UNIFORM, 0, NULL);
+	sampled = load(m, type_sampled_image(m, DIM_2D, FALSE, FALSE, TRUE), pointer);
+	decorate(m, sampled, DECORATION_NON_UNIFORM, 0, NULL);
+	operands[0] = sampled;
+	operands[1] = st;
+	operands[2] = IMAGE_OPERANDS_LOD;
+	operands[3] = constant_float(m, XGPU_RT_BOUNCE_ALBEDO_LEVEL);
+	texel = op(m, OP_IMAGE_SAMPLE_EXPLICIT_LOD, m->t_v4, 4, operands);
+	albedo = ext2(m, GLSL_F_MIN, m->t_v3, ext2(m, GLSL_POW, m->t_v3, saturate(m, 3, xyz(m, texel)),
+		constant_splat(m, 3, 2.2f)), constant_splat(m, 3, XGPU_RT_BOUNCE_ALBEDO_MOST));
+	albedo = select_n(m, 3, op2(m, OP_I_EQUAL, m->t_bool, slot, constant_uint(m, 0)),
+		constant_splat(m, 3, XGPU_RT_BOUNCE_ALBEDO_NONE), albedo);
+	*normal_out = select_n(m, 3, has_data, nw, fneg(m, 3, d));
+	*albedo_out = select_n(m, 3, has_data, albedo, constant_splat(m, 3, XGPU_RT_BOUNCE_ALBEDO_NONE));
+}
+
+/* what a light gives a point h facing nh (a vec3: its color by its
+falloff, how squarely it is faced and its cone), as the enhanced lights'
+window; and its position */
+static unsigned int rt_bounce_light(struct module *m, struct rt_bounce_state *state, int light, unsigned int h,
+	unsigned int nh, unsigned int *position_out)
+{
+	unsigned int position = rt_bounce_vector(m, state, XGPU_RT_BOUNCE_BLOCK_LIGHTS + 3 * light);
+	unsigned int color = rt_bounce_vector(m, state, XGPU_RT_BOUNCE_BLOCK_LIGHTS + 3 * light + 1);
+	unsigned int cone = rt_bounce_vector(m, state, XGPU_RT_BOUNCE_BLOCK_LIGHTS + 3 * light + 2);
+	unsigned int to = fsub(m, 3, xyz(m, position), h), d2 = fdot(m, to, to), radius = extract(m, position, 3);
+	unsigned int x2 = fdiv(m, 1, d2, fmax_scalar(m, 1, fmul(m, 1, radius, radius), 1.0e-6f));
+	unsigned int window = saturate(m, 1, fsub(m, 1, constant_float(m, 1.0f), fmul(m, 1, x2, x2)));
+	unsigned int l = fscale(m, 3, to, ext1(m, GLSL_INVERSE_SQRT, m->t_float, fmax_scalar(m, 1, d2, 1.0e-8f)));
+	unsigned int facing = fmax_scalar(m, 1, fdot(m, nh, l), 0.0f);
+	unsigned int spot = saturate(m, 1, fadd(m, 1, fmul(m, 1, fdot(m, l, fneg(m, 3, xyz(m, cone))), extract(m, cone, 3)),
+		extract(m, color, 3)));
+	unsigned int counted = compare(m, OP_F_ORD_LESS_THAN, constant_float(m, (float)light),
+		extract(m, rt_bounce_vector(m, state, XGPU_RT_BOUNCE_BLOCK_EYE), 3));
+
+	*position_out = xyz(m, position);
+	return select_n(m, 3, counted, fscale(m, 3, xyz(m, color), fmul(m, 1, fmul(m, 1, fmul(m, 1, window, window), facing),
+		spot)), constant_splat(m, 3, 0.0f));
+}
+
+static void rt_bounce_trace_main(struct module *m, struct words *locals, struct rt_bounce_state *state, unsigned int out)
+{
+	unsigned int frag = load(m, m->t_v4, state->pass.frag_coord);
+	unsigned int tile = op1(m, OP_CONVERT_F_TO_S, m->t_iv2, xy(m, frag));
+	unsigned int frame = extract(m, world_ao_pass_vector(m, &state->pass, WORLD_AO_PASS_HISTORY, 0), 1);
+	unsigned int pixel = rt_bounce_pick(m, state, tile, frame);
+	unsigned int query = local(m, locals, type0(m, OP_TYPE_RAY_QUERY));
+	unsigned int present, p, n, owner, present_merge, lights_merge, hit_merge, lit_merge;
+	unsigned int x, y, u, v, radius, angle, d, origin, kind, h, nh, albedo, px, py, pick;
+	unsigned int contributions[XGPU_RT_BOUNCE_BLOCK_LIGHTS_MOST], positions[XGPU_RT_BOUNCE_BLOCK_LIGHTS_MOST];
+	unsigned int weights[XGPU_RT_BOUNCE_BLOCK_LIGHTS_MOST], total, target, prefix, found, chosen, chosen_at;
+	int light;
+
+	store(m, out, constant_splat(m, 4, 0.0f));
+	rt_bounce_pixel(m, state, pixel, &present, &p, &n, &owner);
+	selection_begin(m, present, &present_merge);
+	store(m, out, constant_vector(m, 4, (const float[]){ 0.0f, 0.0f, 0.0f, 1.0f }));
+	selection_begin(m, compare(m, OP_F_ORD_GREATER_THAN, extract(m, rt_bounce_vector(m, state, XGPU_RT_BOUNCE_BLOCK_EYE),
+		3), constant_float(m, 0.0f)), &lights_merge);
+	world_ao_ray_frame(m, n, pixel, frame, &x, &y, &u, &v);
+	radius = fsqrt(m, u);
+	angle = fmul(m, 1, constant_float(m, 6.28318531f), v);
+	d = fadd(m, 3, fadd(m, 3, fscale(m, 3, x, fmul(m, 1, radius, ext1(m, GLSL_COS, m->t_float, angle))),
+		fscale(m, 3, y, fmul(m, 1, radius, ext1(m, GLSL_SIN, m->t_float, angle)))),
+		fscale(m, 3, n, fsqrt(m, fmax_scalar(m, 1, fsub(m, 1, constant_float(m, 1.0f), u), 0.0f))));
+	origin = fadd(m, 3, p, fscale(m, 3, n, constant_float(m, XGPU_RT_BOUNCE_BIAS)));
+	rt_bounce_query(m, locals, state, query, RAY_FLAGS_CULL_BACK_FACING_TRIANGLES, XGPU_SPIRV_RT_MASK_AO, origin, d,
+		constant_float(m, XGPU_RT_BOUNCE_REACH), TRUE, owner);
+	kind = op2(m, OP_RAY_QUERY_GET_INTERSECTION_TYPE, m->t_uint, query, constant_int(m, RAY_QUERY_COMMITTED));
+	selection_begin(m, op2(m, OP_I_NOT_EQUAL, m->t_bool, kind, constant_uint(m, 0)), &hit_merge);
+	h = fadd(m, 3, origin, fscale(m, 3, d, op2(m, OP_RAY_QUERY_GET_INTERSECTION_T, m->t_float, query,
+		constant_int(m, RAY_QUERY_COMMITTED))));
+	rt_bounce_hit(m, query, d, &nh, &albedo);
+	/* (the lights' shares, and one chosen by them) */
+	total = constant_float(m, 0.0f);
+	for (light = 0; light < XGPU_RT_BOUNCE_BLOCK_LIGHTS_MOST; light++)
+	{
+		contributions[light] = rt_bounce_light(m, state, light, h, nh, &positions[light]);
+		weights[light] = ext2(m, GLSL_F_MAX, m->t_float, extract(m, contributions[light], 0), ext2(m, GLSL_F_MAX, m->t_float,
+			extract(m, contributions[light], 1), extract(m, contributions[light], 2)));
+		total = fadd(m, 1, total, weights[light]);
+	}
+	px = op1(m, OP_CONVERT_S_TO_F, m->t_float, op2(m, OP_COMPOSITE_EXTRACT, m->t_int, pixel, 0));
+	py = op1(m, OP_CONVERT_S_TO_F, m->t_float, op2(m, OP_COMPOSITE_EXTRACT, m->t_int, pixel, 1));
+	pick = rt_bounce_noise(m, fadd(m, 1, px, constant_float(m, 37.0f)), fadd(m, 1, py, constant_float(m, 11.0f)), frame,
+		0.06711056f, 0.00583715f, 0.5698403f);
+	target = fmul(m, 1, pick, total);
+	prefix = constant_float(m, 0.0f);
+	found = constant_bool(m, FALSE);
+	chosen = constant_splat(m, 3, 0.0f);
+	chosen_at = constant_splat(m, 3, 0.0f);
+	for (light = 0; light < XGPU_RT_BOUNCE_BLOCK_LIGHTS_MOST; light++)
+	{
+		unsigned int take;
+
+		prefix = fadd(m, 1, prefix, weights[light]);
+		take = op2(m, OP_LOGICAL_AND, m->t_bool, op1(m, OP_LOGICAL_NOT, m->t_bool, found), op2(m, OP_LOGICAL_AND, m->t_bool,
+			compare(m, OP_F_ORD_LESS_THAN, target, prefix), compare(m, OP_F_ORD_GREATER_THAN, weights[light],
+			constant_float(m, 0.0f))));
+		chosen = select_n(m, 3, take, fscale(m, 3, contributions[light], fdiv(m, 1, total, fmax_scalar(m, 1, weights[light],
+			1.0e-12f))), chosen);
+		chosen_at = select_n(m, 3, take, positions[light], chosen_at);
+		found = op2(m, OP_LOGICAL_OR, m->t_bool, found, take);
+	}
+	selection_begin(m, found, &lit_merge);
+	{
+		unsigned int from = fadd(m, 3, h, fscale(m, 3, nh, constant_float(m, XGPU_RT_BOUNCE_BIAS)));
+		unsigned int to = fsub(m, 3, chosen_at, from), far = fmax_scalar(m, 1, flength(m, to), 1.0e-4f), seen;
+
+		rt_bounce_query(m, locals, state, query, 0, RT_BOUNCE_MASK_STRUCTURE, from, fdiv(m, 3, to, splat(m, 3, far)),
+			fmax_scalar(m, 1, fsub(m, 1, far, constant_float(m, 0.05f)), 0.0f), FALSE, 0);
+		seen = op2(m, OP_I_EQUAL, m->t_bool, op2(m, OP_RAY_QUERY_GET_INTERSECTION_TYPE, m->t_uint, query,
+			constant_int(m, RAY_QUERY_COMMITTED)), constant_uint(m, 0));
+		store(m, out, vec4_of(m, select_n(m, 3, seen, fmul(m, 3, albedo, chosen), constant_splat(m, 3, 0.0f)),
+			constant_float(m, 1.0f)));
+	}
+	selection_end(m, lit_merge);
+	selection_end(m, hit_merge);
+	selection_end(m, lights_merge);
+	selection_end(m, present_merge);
+}
+
+/* a float's floor's float of a vec3's: floor(a / b) * b's remainder, a
+modulo b (b positive) */
+static unsigned int rt_bounce_modulo(struct module *m, unsigned int a, unsigned int b)
+{
+	return fsub(m, 3, a, fmul(m, 3, b, ext1(m, GLSL_FLOOR, m->t_v3, fdiv(m, 3, a, b))));
+}
+
+static unsigned int rt_bounce_all3(struct module *m, unsigned int opcode, unsigned int a, unsigned int b)
+{
+	return op2(m, OP_LOGICAL_AND, m->t_bool, op2(m, OP_LOGICAL_AND, m->t_bool,
+		compare(m, opcode, extract(m, a, 0), extract(m, b, 0)), compare(m, opcode, extract(m, a, 1), extract(m, b, 1))),
+		compare(m, opcode, extract(m, a, 2), extract(m, b, 2)));
+}
+
+static void rt_bounce_resolve_main(struct module *m, struct words *locals, struct rt_bounce_state *state, unsigned int out)
+{
+	unsigned int frag = load(m, m->t_v4, state->pass.frag_coord);
+	unsigned int texel = op1(m, OP_CONVERT_F_TO_S, m->t_iv2, xy(m, frag));
+	unsigned int fx = op1(m, OP_CONVERT_S_TO_F, m->t_float, op2(m, OP_COMPOSITE_EXTRACT, m->t_int, texel, 0));
+	unsigned int fy = op1(m, OP_CONVERT_S_TO_F, m->t_float, op2(m, OP_COMPOSITE_EXTRACT, m->t_int, texel, 1));
+	unsigned int origin_vector = rt_bounce_vector(m, state, XGPU_RT_BOUNCE_BLOCK_ORIGIN);
+	unsigned int previous = rt_bounce_vector(m, state, XGPU_RT_BOUNCE_BLOCK_PREVIOUS);
+	unsigned int times = rt_bounce_vector(m, state, XGPU_RT_BOUNCE_BLOCK_TIMES);
+	unsigned int sizes = rt_bounce_vector(m, state, XGPU_RT_BOUNCE_BLOCK_SIZES);
+	unsigned int eye = xyz(m, rt_bounce_vector(m, state, XGPU_RT_BOUNCE_BLOCK_EYE));
+	unsigned int origin = xyz(m, origin_vector), cell = extract(m, origin_vector, 3);
+	unsigned int dims = constant_vector(m, 3, (const float[]){ (float)XGPU_RT_BOUNCE_GRID_X, (float)XGPU_RT_BOUNCE_GRID_Y,
+		(float)XGPU_RT_BOUNCE_GRID_Z });
+	unsigned int face, sx, sz, sy, s, w, valid, history, center, offset, a, b, c, front, corners, low, size, screen, tile;
+	unsigned int axis, sign, fn, sum_variable = local(m, locals, m->t_v3), total_variable = local(m, locals, m->t_float);
+	unsigned int front_merge, last, zero, frame, kept, got, sum, total, value, weight_out;
+	int dx, dy;
+
+	face = ext1(m, GLSL_FLOOR, m->t_float, fdiv(m, 1, fx, constant_float(m, (float)XGPU_RT_BOUNCE_GRID_X)));
+	sx = fsub(m, 1, fx, fmul(m, 1, face, constant_float(m, (float)XGPU_RT_BOUNCE_GRID_X)));
+	sz = ext1(m, GLSL_FLOOR, m->t_float, fdiv(m, 1, fy, constant_float(m, (float)XGPU_RT_BOUNCE_GRID_Y)));
+	sy = fsub(m, 1, fy, fmul(m, 1, sz, constant_float(m, (float)XGPU_RT_BOUNCE_GRID_Y)));
+	s = construct(m, 3, (unsigned int[]){ sx, sy, sz });
+	w = fadd(m, 3, origin, rt_bounce_modulo(m, fsub(m, 3, s, origin), dims));
+	valid = op2(m, OP_LOGICAL_AND, m->t_bool, op2(m, OP_LOGICAL_AND, m->t_bool,
+		compare(m, OP_F_ORD_GREATER_THAN, extract(m, previous, 3), constant_float(m, 0.5f)),
+		rt_bounce_all3(m, OP_F_ORD_GREATER_THAN_EQUAL, w, xyz(m, previous))),
+		rt_bounce_all3(m, OP_F_ORD_LESS_THAN, w, fadd(m, 3, xyz(m, previous), dims)));
+	history = select_n(m, 4, valid, light_shadows_fetch(m, state->pass.history, texel), constant_splat(m, 4, 0.0f));
+	/* (the face's way: +x, -x, +y, -y, +z, -z) */
+	axis = ext1(m, GLSL_FLOOR, m->t_float, fmul(m, 1, face, constant_float(m, 0.5f)));
+	sign = fsub(m, 1, constant_float(m, 1.0f), fmul(m, 1, constant_float(m, 2.0f), fsub(m, 1, face, fmul(m, 1, axis,
+		constant_float(m, 2.0f)))));
+	fn = construct(m, 3, (unsigned int[]){
+		fselect(m, compare(m, OP_F_ORD_EQUAL, axis, constant_float(m, 0.0f)), sign, constant_float(m, 0.0f)),
+		fselect(m, compare(m, OP_F_ORD_EQUAL, axis, constant_float(m, 1.0f)), sign, constant_float(m, 0.0f)),
+		fselect(m, compare(m, OP_F_ORD_EQUAL, axis, constant_float(m, 2.0f)), sign, constant_float(m, 0.0f)) });
+	/* (where its middle is seen: (s, s x, s y) of its offset from the eye) */
+	center = fscale(m, 3, fadd(m, 3, w, constant_splat(m, 3, 0.5f)), cell);
+	offset = fsub(m, 3, center, eye);
+	a = fdot(m, xyz(m, rt_bounce_vector(m, state, XGPU_RT_BOUNCE_BLOCK_UNPROJECT)), offset);
+	b = fdot(m, xyz(m, rt_bounce_vector(m, state, XGPU_RT_BOUNCE_BLOCK_UNPROJECT + 1)), offset);
+	c = fdot(m, xyz(m, rt_bounce_vector(m, state, XGPU_RT_BOUNCE_BLOCK_UNPROJECT + 2)), offset);
+	front = compare(m, OP_F_ORD_GREATER_THAN, a, constant_float(m, 1.0e-3f));
+	store(m, sum_variable, constant_splat(m, 3, 0.0f));
+	store(m, total_variable, constant_float(m, 0.0f));
+	selection_begin(m, front, &front_merge);
+	corners = world_ao_pass_vector(m, &state->pass, WORLD_AO_PASS_CORNERS, 0);
+	low = op1(m, OP_CONVERT_S_TO_F, m->t_v2, op(m, OP_VECTOR_SHUFFLE, m->t_iv2, 4, (unsigned int[]){ corners, corners, 0, 1 }));
+	size = fsub(m, 2, op1(m, OP_CONVERT_S_TO_F, m->t_v2, op(m, OP_VECTOR_SHUFFLE, m->t_iv2, 4,
+		(unsigned int[]){ corners, corners, 2, 3 })), low);
+	screen = construct(m, 2, (unsigned int[]){ fdiv(m, 1, b, a), fdiv(m, 1, c, a) });
+	screen = fadd(m, 2, low, fmul(m, 2, fscale(m, 2, fadd(m, 2, screen, constant_splat(m, 2, 1.0f)), constant_float(m, 0.5f)),
+		size));
+	/* (far off the screen: none of it seen; clamped, so the float fits) */
+	screen = ext3(m, GLSL_F_CLAMP, m->t_v2, screen, constant_splat(m, 2, -65536.0f), constant_splat(m, 2, 65536.0f));
+	tile = op1(m, OP_CONVERT_F_TO_S, m->t_iv2, ext1(m, GLSL_FLOOR, m->t_v2, fscale(m, 2, screen,
+		constant_float(m, 1.0f / (float)XGPU_RT_BOUNCE_TILE))));
+	last = op1(m, OP_CONVERT_F_TO_S, m->t_iv2, fsub(m, 2, construct(m, 2, (unsigned int[]){ extract(m, sizes, 1),
+		extract(m, sizes, 2) }), constant_splat(m, 2, 1.0f)));
+	zero = rt_bounce_iv2(m, constant_int(m, 0), constant_int(m, 0));
+	frame = extract(m, world_ao_pass_vector(m, &state->pass, WORLD_AO_PASS_HISTORY, 0), 1);
+	sum = constant_splat(m, 3, 0.0f);
+	total = constant_float(m, 0.0f);
+	for (dy = -2; dy < 2; dy++)
+	{
+		for (dx = -2; dx < 2; dx++)
+		{
+			unsigned int at = ext3(m, GLSL_S_CLAMP, m->t_iv2, op2(m, OP_I_ADD, m->t_iv2, tile, rt_bounce_iv2(m,
+				constant_int(m, dx), constant_int(m, dy))), zero, last);
+			unsigned int sample = light_shadows_fetch(m, state->samples, at);
+			unsigned int pixel = rt_bounce_pick(m, state, at, frame), present, p, n, inside, facing, weight;
+
+			rt_bounce_pixel(m, state, pixel, &present, &p, &n, NULL);
+			inside = rt_bounce_all3(m, OP_F_ORD_EQUAL, ext1(m, GLSL_FLOOR, m->t_v3, fscale(m, 3, p, fdiv(m, 1,
+				constant_float(m, 1.0f), cell))), w);
+			facing = fmax_scalar(m, 1, fdot(m, n, fn), 0.0f);
+			weight = fselect(m, op2(m, OP_LOGICAL_AND, m->t_bool, op2(m, OP_LOGICAL_AND, m->t_bool, present, inside),
+				compare(m, OP_F_ORD_GREATER_THAN, extract(m, sample, 3), constant_float(m, 0.5f))),
+				fmul(m, 1, facing, facing), constant_float(m, 0.0f));
+			sum = fadd(m, 3, sum, fscale(m, 3, xyz(m, sample), weight));
+			total = fadd(m, 1, total, weight);
+		}
+	}
+	store(m, sum_variable, sum);
+	store(m, total_variable, total);
+	selection_end(m, front_merge);
+	sum = load(m, m->t_v3, sum_variable);
+	total = load(m, m->t_float, total_variable);
+	kept = ext2(m, GLSL_F_MIN, m->t_float, fmul(m, 1, extract(m, history, 3), extract(m, times, 1)), extract(m, times, 2));
+	got = compare(m, OP_F_ORD_GREATER_THAN, total, constant_float(m, 0.0f));
+	value = select_n(m, 3, got, fdiv(m, 3, fadd(m, 3, fscale(m, 3, xyz(m, history), kept), sum),
+		splat(m, 3, fmax_scalar(m, 1, fadd(m, 1, kept, total), 1.0e-6f))), fscale(m, 3, xyz(m, history), extract(m, times, 3)));
+	weight_out = fselect(m, got, ext2(m, GLSL_F_MIN, m->t_float, fadd(m, 1, kept, total), extract(m, times, 2)),
+		extract(m, history, 3));
+	store(m, out, vec4_of(m, value, weight_out));
+}
+
+static void rt_bounce_gather_main(struct module *m, struct words *locals, struct rt_bounce_state *state, unsigned int out)
+{
+	unsigned int frag = load(m, m->t_v4, state->pass.frag_coord);
+	unsigned int pixel = op1(m, OP_CONVERT_F_TO_S, m->t_iv2, xy(m, frag));
+	unsigned int origin_vector = rt_bounce_vector(m, state, XGPU_RT_BOUNCE_BLOCK_ORIGIN);
+	unsigned int origin = xyz(m, origin_vector), cell = extract(m, origin_vector, 3);
+	unsigned int dims = constant_vector(m, 3, (const float[]){ (float)XGPU_RT_BOUNCE_GRID_X, (float)XGPU_RT_BOUNCE_GRID_Y,
+		(float)XGPU_RT_BOUNCE_GRID_Z });
+	unsigned int present, p, n, merge, g, base, f, value, total, faces[3], face_weights[3];
+	int corner, axis;
+
+	(void)locals;
+	store(m, out, constant_splat(m, 4, 0.0f));
+	rt_bounce_pixel(m, state, pixel, &present, &p, &n, NULL);
+	selection_begin(m, present, &merge);
+	g = fsub(m, 3, fscale(m, 3, fadd(m, 3, p, fscale(m, 3, n, fmul(m, 1, cell, constant_float(m, 0.25f)))), fdiv(m, 1,
+		constant_float(m, 1.0f), cell)), constant_splat(m, 3, 0.5f));
+	base = ext1(m, GLSL_FLOOR, m->t_v3, g);
+	f = fsub(m, 3, g, base);
+	for (axis = 0; axis < 3; axis++)
+	{
+		unsigned int component = extract(m, n, (unsigned int)axis);
+
+		faces[axis] = fadd(m, 1, constant_float(m, (float)(2 * axis)), fselect(m, compare(m, OP_F_ORD_LESS_THAN, component,
+			constant_float(m, 0.0f)), constant_float(m, 1.0f), constant_float(m, 0.0f)));
+		face_weights[axis] = fmul(m, 1, component, component);
+	}
+	value = constant_splat(m, 3, 0.0f);
+	total = constant_float(m, 0.0f);
+	for (corner = 0; corner < 8; corner++)
+	{
+		const float step[3] = { (float)(corner & 1), (float)((corner >> 1) & 1), (float)((corner >> 2) & 1) };
+		unsigned int wc = fadd(m, 3, base, constant_vector(m, 3, step)), inside, slot, trilinear = constant_float(m, 1.0f);
+
+		for (axis = 0; axis < 3; axis++)
+		{
+			unsigned int fa = extract(m, f, (unsigned int)axis);
+
+			trilinear = fmul(m, 1, trilinear, step[axis] > 0.5f ? fa : fsub(m, 1, constant_float(m, 1.0f), fa));
+		}
+		inside = op2(m, OP_LOGICAL_AND, m->t_bool, rt_bounce_all3(m, OP_F_ORD_GREATER_THAN_EQUAL, wc, origin),
+			rt_bounce_all3(m, OP_F_ORD_LESS_THAN, wc, fadd(m, 3, origin, dims)));
+		trilinear = fselect(m, inside, trilinear, constant_float(m, 0.0f));
+		slot = rt_bounce_modulo(m, wc, dims);
+		for (axis = 0; axis < 3; axis++)
+		{
+			unsigned int at = op1(m, OP_CONVERT_F_TO_S, m->t_iv2, construct(m, 2, (unsigned int[]){
+				fadd(m, 1, extract(m, slot, 0), fmul(m, 1, faces[axis], constant_float(m, (float)XGPU_RT_BOUNCE_GRID_X))),
+				fadd(m, 1, extract(m, slot, 1), fmul(m, 1, extract(m, slot, 2), constant_float(m, (float)XGPU_RT_BOUNCE_GRID_Y))) }));
+			unsigned int cached = light_shadows_fetch(m, state->pass.history, at);
+			unsigned int weight = fmul(m, 1, fmul(m, 1, trilinear, face_weights[axis]), saturate(m, 1, extract(m, cached, 3)));
+
+			value = fadd(m, 3, value, fscale(m, 3, xyz(m, cached), weight));
+			total = fadd(m, 1, total, weight);
+		}
+	}
+	value = fscale(m, 3, value, fdiv(m, 1, extract(m, rt_bounce_vector(m, state, XGPU_RT_BOUNCE_BLOCK_SIZES), 3),
+		fmax_scalar(m, 1, total, 0.5f)));
+	/* (HALO_RT_BOUNCE_VIEW, checking: 1 magenta where the surfaces read it,
+	2 the trace's samples, 3 the cache's weight in green over its light) */
+	if (rt_bounce_view() == 1)
+		value = constant_vector(m, 3, (const float[]){ 1.0f, 0.0f, 1.0f });
+	else if (rt_bounce_view() == 2)
+		value = fscale(m, 3, xyz(m, light_shadows_fetch(m, state->samples, op2(m, OP_SHIFT_RIGHT_ARITHMETIC, m->t_iv2, pixel,
+			rt_bounce_iv2(m, constant_int(m, 2), constant_int(m, 2))))), constant_float(m, 10.0f));
+	else if (rt_bounce_view() == 5)
+	{
+		/* (where the pixel's own cell's middle is seen, against the pixel: red x, green y, a 200th of a pixel) */
+		unsigned int center = fscale(m, 3, fadd(m, 3, ext1(m, GLSL_FLOOR, m->t_v3, fscale(m, 3, p, fdiv(m, 1,
+			constant_float(m, 1.0f), cell))), constant_splat(m, 3, 0.5f)), cell);
+		unsigned int offset = fsub(m, 3, center, xyz(m, rt_bounce_vector(m, state, XGPU_RT_BOUNCE_BLOCK_EYE)));
+		unsigned int a = fdot(m, xyz(m, rt_bounce_vector(m, state, XGPU_RT_BOUNCE_BLOCK_UNPROJECT)), offset);
+		unsigned int b = fdot(m, xyz(m, rt_bounce_vector(m, state, XGPU_RT_BOUNCE_BLOCK_UNPROJECT + 1)), offset);
+		unsigned int c = fdot(m, xyz(m, rt_bounce_vector(m, state, XGPU_RT_BOUNCE_BLOCK_UNPROJECT + 2)), offset);
+		unsigned int corners = world_ao_pass_vector(m, &state->pass, WORLD_AO_PASS_CORNERS, 0), low, size, screen;
+
+		low = op1(m, OP_CONVERT_S_TO_F, m->t_v2, op(m, OP_VECTOR_SHUFFLE, m->t_iv2, 4, (unsigned int[]){ corners, corners, 0, 1 }));
+		size = fsub(m, 2, op1(m, OP_CONVERT_S_TO_F, m->t_v2, op(m, OP_VECTOR_SHUFFLE, m->t_iv2, 4,
+			(unsigned int[]){ corners, corners, 2, 3 })), low);
+		screen = construct(m, 2, (unsigned int[]){ fdiv(m, 1, b, a), fdiv(m, 1, c, a) });
+		screen = fadd(m, 2, low, fmul(m, 2, fscale(m, 2, fadd(m, 2, screen, constant_splat(m, 2, 1.0f)),
+			constant_float(m, 0.5f)), size));
+		screen = ext1(m, GLSL_F_ABS, m->t_v2, fsub(m, 2, screen, op1(m, OP_CONVERT_S_TO_F, m->t_v2, pixel)));
+		value = construct(m, 3, (unsigned int[]){ fmul(m, 1, extract(m, screen, 0), constant_float(m, 0.005f)),
+			fmul(m, 1, extract(m, screen, 1), constant_float(m, 0.005f)), constant_float(m, 0.0f) });
+	}
+	else if (rt_bounce_view() == 4)
+		value = construct(m, 3, (unsigned int[]){ constant_float(m, 0.0f), saturate(m, 1, fmul(m, 1, extract(m,
+			light_shadows_fetch(m, state->pass.history, pixel), 3), constant_float(m, 0.1f))), constant_float(m, 0.0f) });
+	else if (rt_bounce_view() == 3)
+		value = fadd(m, 3, value, construct(m, 3, (unsigned int[]){ constant_float(m, 0.0f),
+			saturate(m, 1, fmul(m, 1, total, constant_float(m, 0.5f))), constant_float(m, 0.0f) }));
+	store(m, out, vec4_of(m, value, constant_float(m, 1.0f)));
+	selection_end(m, merge);
+}
+
+BOOL xgpu_spirv_rt_bounce_pass(int which, const struct xgpu_spirv_options *options, struct xgpu_spirv_module *module)
+{
+	struct module m;
+	struct words locals = { 0 };
+	struct rt_bounce_state state;
+	unsigned int main_id, out;
+	BOOL result;
+
+	if (which == XGPU_SPIRV_RT_BOUNCE_TRACE && !options->ray_queries)
+		return FALSE;
+	module_begin(&m, EXECUTION_MODEL_FRAGMENT);
+	memset(&state, 0, sizeof(state));
+	world_ao_declare(&m);
+	world_ao_pass_declare(&m, &state.pass, which == XGPU_SPIRV_RT_BOUNCE_TRACE);
+	state.block = rt_shadows_block(&m, XGPU_RT_BOUNCE_BLOCK, XGPU_SPIRV_BINDING_CONSTANTS, "rt_bounce_block");
+	if (which == XGPU_SPIRV_RT_BOUNCE_RESOLVE || which == XGPU_SPIRV_RT_BOUNCE_GATHER)
+	{
+		state.samples = variable(&m, type_sampled_image(&m, DIM_2D, FALSE, FALSE, TRUE), STORAGE_UNIFORM_CONSTANT,
+			"rt_bounce_samples");
+		decorate1(&m, state.samples, DECORATION_DESCRIPTOR_SET, XGPU_SPIRV_SET_TEXTURES);
+		decorate1(&m, state.samples, DECORATION_BINDING, XGPU_SPIRV_RT_BOUNCE_SAMPLES);
+	}
+	out = interface_variable(&m, m.t_v4, STORAGE_OUTPUT, 0, "rt_bounce");
+	main_id = function_begin(&m);
+	if (which == XGPU_SPIRV_RT_BOUNCE_TRACE)
+		rt_bounce_trace_main(&m, &locals, &state, out);
+	else if (which == XGPU_SPIRV_RT_BOUNCE_RESOLVE)
+		rt_bounce_resolve_main(&m, &locals, &state, out);
+	else
+		rt_bounce_gather_main(&m, &locals, &state, out);
+	result = module_end(&m, EXECUTION_MODEL_FRAGMENT, main_id, &locals, module);
+	free(locals.words);
+	return result;
+}
+
+/* the surfaces found once a pixel: the window's bounced light (the
+occlusion set's XGPU_SPIRV_BINDING_RT_BOUNCE, a 1x1 of none where none is
+traced) */
+static void rt_bounce_declare(struct module *m, struct pixel_state *state)
+{
+	state->rt_bounce = variable(m, type_sampled_image(m, DIM_2D, FALSE, FALSE, TRUE), STORAGE_UNIFORM_CONSTANT,
+		"rt_bounce");
+	decorate1(m, state->rt_bounce, DECORATION_DESCRIPTOR_SET, XGPU_SPIRV_SET_OCCLUSION);
+	decorate1(m, state->rt_bounce, DECORATION_BINDING, XGPU_SPIRV_BINDING_RT_BOUNCE);
+}
+
+/* ... added to light (linear, the enhanced lights' units), as GLSL:
+light + texelFetch(rt_bounce, min(ivec2(gl_FragCoord.xy), textureSize(rt_bounce, 0) - 1), 0).rgb */
+/* display.rt_bounce's binding's texel at the pixel (a vec4) */
+static unsigned int rt_bounce_texel(struct module *m, struct pixel_state *state)
+{
+	unsigned int sampled, image, last, at, operands[4];
+
+	sampled = load(m, type_sampled_image(m, DIM_2D, FALSE, FALSE, TRUE), state->rt_bounce);
+	image = op(m, OP_IMAGE, type_sampled_image(m, DIM_2D, FALSE, FALSE, FALSE), 1, &sampled);
+	last = op2(m, OP_I_SUB, m->t_iv2, image_size(m, image, m->t_iv2), rt_bounce_iv2(m, constant_int(m, 1), constant_int(m, 1)));
+	at = ext2(m, GLSL_S_MIN, m->t_iv2, op1(m, OP_CONVERT_F_TO_S, m->t_iv2, xy(m, load(m, m->t_v4, state->frag_coord))), last);
+	operands[0] = image;
+	operands[1] = at;
+	operands[2] = IMAGE_OPERANDS_LOD;
+	operands[3] = constant_int(m, 0);
+	return op(m, OP_IMAGE_FETCH, m->t_v4, 4, operands);
+}
+
+static unsigned int rt_bounce_add(struct module *m, struct pixel_state *state, unsigned int light)
+{
+	if (!state->rt_bounce || !state->frag_coord)
+		return light;
+	return fadd(m, 3, light, xyz(m, rt_bounce_texel(m, state)));
+}
+
+/* HALO_LT_SUN_CLAMP_VIEW (lt_e1_add), read once */
+static int lt_sun_clamp_view(void)
+{
+	static int on = -1;
+
+	if (on < 0)
+		on = getenv("HALO_LT_SUN_CLAMP_VIEW") && atoi(getenv("HALO_LT_SUN_CLAMP_VIEW")) == 1;
+	return on;
+}
+
+/* HALO_LT_E1 (port/linux/vulkan/xgpu_vulkan_lt.h: E1 and E2 of the one
+light-transport pass): set and not "off", "0" or "false", read once */
+static int lt_e1_on(void)
+{
+	static int on = -1;
+
+	if (on < 0)
+	{
+		const char *given = getenv("HALO_LT_E1");
+
+		on = given && *given && strcmp(given, "off") && strcmp(given, "0") && strcmp(given, "false");
+	}
+	return on;
+}
+
+/* an octahedral normal, packSnorm2x16 (world_ao_inputs' folding) */
+static unsigned int lt_octahedral(struct module *m, unsigned int n)
+{
+	unsigned int absolute, folded, flipped, positive, negative;
+
+	n = ext1(m, GLSL_NORMALIZE, m->t_v3, n);
+	absolute = ext1(m, GLSL_F_ABS, m->t_v3, n);
+	folded = fdiv(m, 2, xy(m, n), splat(m, 2, fmax_scalar(m, 1, fadd(m, 1, fadd(m, 1, extract(m, absolute, 0),
+		extract(m, absolute, 1)), extract(m, absolute, 2)), 1.0e-24f)));
+	positive = op2(m, OP_F_ORD_GREATER_THAN_EQUAL, m->t_bv2, folded, constant_splat(m, 2, 0.0f));
+	flipped = fmul(m, 2, fsub(m, 2, constant_splat(m, 2, 1.0f), ext1(m, GLSL_F_ABS, m->t_v2,
+		op(m, OP_VECTOR_SHUFFLE, m->t_v2, 4, (unsigned int[]){ folded, folded, 1, 0 }))),
+		op3(m, OP_SELECT, m->t_v2, positive, constant_splat(m, 2, 1.0f), constant_splat(m, 2, -1.0f)));
+	negative = compare(m, OP_F_ORD_LESS_THAN, extract(m, n, 2), constant_float(m, 0.0f));
+	return ext1(m, GLSL_PACK_SNORM_2X16, m->t_uint, select_n(m, 2, negative, flipped, folded));
+}
+
+/* a twin's motion (xgpu_spirv.h's C1): its positions as motion_screen has
+them, this frame's and the frame before's, the one less the other as a
+fraction of the window, x right and y down, in fixed point; NONE where
+either is behind the eye or it moved more than the range */
+static unsigned int lt_guides_motion(struct module *m, unsigned int current_in, unsigned int previous_in)
+{
+	static const float half_down[2] = { 0.5f / XGPU_SPIRV_GUIDES_MOTION_RANGE, -0.5f / XGPU_SPIRV_GUIDES_MOTION_RANGE };
+	unsigned int current = load(m, m->t_v3, current_in), previous = load(m, m->t_v3, previous_in);
+	unsigned int current_w = extract(m, current, 2), previous_w = extract(m, previous, 2);
+	unsigned int now = fdiv(m, 2, xy(m, current), splat(m, 2, current_w));
+	unsigned int before = fdiv(m, 2, xy(m, previous), splat(m, 2, previous_w));
+	unsigned int moved, packed, kept, largest;
+
+	moved = fmul(m, 2, fsub(m, 2, now, before), constant_vector(m, 2, half_down));
+	packed = op2(m, OP_BITWISE_XOR, m->t_uint, ext1(m, GLSL_PACK_SNORM_2X16, m->t_uint, moved),
+		constant_uint(m, XGPU_SPIRV_GUIDES_MOTION_FLIP));
+	moved = ext1(m, GLSL_F_ABS, m->t_v2, moved);
+	largest = ext2(m, GLSL_F_MAX, m->t_float, extract(m, moved, 0), extract(m, moved, 1));
+	/* (both in front of the eyes, within the range: not NaN) */
+	kept = op2(m, OP_LOGICAL_AND, m->t_bool, op2(m, OP_LOGICAL_AND, m->t_bool,
+		compare(m, OP_F_ORD_GREATER_THAN, current_w, constant_float(m, 0.0f)),
+		compare(m, OP_F_ORD_GREATER_THAN, previous_w, constant_float(m, 0.0f))),
+		compare(m, OP_F_ORD_LESS_THAN_EQUAL, largest, constant_float(m, 1.0f)));
+	return op3(m, OP_SELECT, m->t_uint, kept, packed, constant_uint(m, XGPU_SPIRV_GUIDES_MOTION_NONE));
+}
+
+/* a twin's guides (xgpu_spirv.h's C1): the shaded normal (0: the
+interpolated one), the interpolated one, the material word (no id yet; the
+roughness where the draw has one; the specular mask), the motion
+(lt_guides_motion, or NONE) */
+static unsigned int lt_e1_guides(struct module *m, struct pixel_state *state, unsigned int shaded, BOOL specular,
+	unsigned int motion)
+{
+	unsigned int normal = xyz(m, pixel_input(m, state, state->in_world_normal, m->t_v4)), roughness, material;
+
+	roughness = state->roughness ? op1(m, OP_BITCAST, m->t_uint, op1(m, OP_CONVERT_F_TO_S, m->t_int, ext1(m, GLSL_FLOOR,
+		m->t_float, fadd(m, 1, fmul(m, 1, saturate(m, 1, state->roughness), constant_float(m, 255.0f)), constant_float(m, 0.5f))))) :
+		constant_uint(m, XGPU_SPIRV_GUIDES_ROUGHNESS_NONE);
+	material = op2(m, OP_BITWISE_OR, m->t_uint, op2(m, OP_SHIFT_LEFT_LOGICAL, m->t_uint, roughness,
+		constant_uint(m, XGPU_SPIRV_GUIDES_ROUGHNESS_SHIFT)), constant_uint(m, specular ? 255u <<
+		XGPU_SPIRV_GUIDES_SPECULAR_SHIFT : 0u));
+	return op(m, OP_COMPOSITE_CONSTRUCT, m->t_uv4, 4, (unsigned int[]){ lt_octahedral(m, shaded ? shaded : normal),
+		lt_octahedral(m, normal), material, motion });
+}
+
+/* ... the traced lights' light (linear, at display.rt_bounce's binding:
+their irradiance, its cosine by the shaded normal of the twins' guides,
+lt_e1_guides) added to lit (the game's lights' result, gamma) linearly, by
+tint (linear; 0: by 1, a model's), after the game's own lights' shoulder;
+the light less than 0 on the structure where a dynamic object shadows the
+sun (the suns' share taken off: lt/e1.frag), as GLSL:
+pow(max(pow(max(lit, 0.0), vec3(2.2)) + light * tint, 0.0), vec3(1.0 / 2.2)); lit as it
+is without the mode or the binding */
+static unsigned int lt_e1_add(struct module *m, struct pixel_state *state, unsigned int lit, unsigned int tint,
+	unsigned int p, unsigned int n)
+{
+	unsigned int light, to_lamp, texel, base;
+
+	if (!lt_e1_on() || !state->rt_bounce || !state->frag_coord)
+		return lit;
+	texel = rt_bounce_texel(m, state);
+	light = xyz(m, texel);
+	/* (the pass's light has the receiver's cosine, by the guides' shaded
+	normal: lt_e1_guides) */
+	(void)p;
+	(void)n;
+	(void)to_lamp;
+	/* (a model's (no tint) never less than 0: the suns' share is the
+	structure's, whose pixel a model the pre-pass did not draw reads) */
+	if (tint)
+		light = fmul(m, 3, light, tint);
+	else
+		light = fmax_scalar(m, 3, light, 0.0f);
+	(void)texel;
+	base = fadd(m, 3, ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, lit, 0.0f), constant_splat(m, 3, 2.2f)), light);
+	/* (HALO_LT_SUN_CLAMP_VIEW=1, checking: magenta where the sum is less
+	than 0 in a channel, the suns' share taken off more than the lightmap's
+	light has) */
+	if (lt_sun_clamp_view())
+	{
+		unsigned int below = op1(m, OP_ANY, m->t_bool, op2(m, OP_F_ORD_LESS_THAN, m->t_bv3, base,
+			constant_splat(m, 3, 0.0f)));
+
+		return select_n(m, 3, below, constant_vector(m, 3, (const float[]){ 1.0f, 0.0f, 1.0f }),
+			ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, base, 0.0f), constant_splat(m, 3, 1.0f / 2.2f)));
+	}
+	/* (less than 0 where the suns' share a dynamic object shadows is more
+	than the lightmap's light: kept at 0) */
+	return ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, base, 0.0f), constant_splat(m, 3, 1.0f / 2.2f));
+}
+
+/* whether a reflection's texel is HALO_LT_E1's pass's: the structure's
+(the pre-pass's surfaces, whose guides the pass traced from). The level's
+glass and water are not in the pre-pass, nor every model yet (characters:
+their pixels' guides can be the surfaces behind them): their cube maps, as
+the game drew them */
+static BOOL lt_reflection_traced(const struct pixel_state *state)
+{
+	return state->rt_reflection && state->program->rt_reflection == XGPU_RT_REFLECTION_STRUCTURE;
+}
+
+/* HALO_LT_E1's reflections (~/dev/rt2-realtime-design.md section 1.4;
+port/linux/vulkan/xgpu_vulkan_lt_indirect.c): the reflection's texel
+(texture 3's cube map lookup, whose colour the game's combiners then mask,
+tint and fresnel as they did) from the pass's traced and denoised specular,
+the right half of display.rt_bounce's binding: its radiance s.rgb (linear,
+the hits' share of the lobe's) and the hits' share s.a; where the rays left
+the scene (the sky, past their reach), the cube map, as GLSL:
+ivec2 size = textureSize(rt_bounce, 0); int half = size.x >> 1;
+ivec2 at = ivec2(clamp(int(gl_FragCoord.x), 0, max(half - 1, 0)) + half, min(int(gl_FragCoord.y), size.y - 1));
+vec4 s = texelFetch(rt_bounce, at, 0);
+texel = vec4(pow(max(s.rgb + (1.0 - s.a) * pow(max(cube.rgb, 0.0), vec3(2.2)), 0.0), vec3(1.0 / 2.2)), cube.a);
+(the binding's stand-in, 1x1 of nothing: the cube map) */
+static unsigned int lt_reflection_texel(struct module *m, struct pixel_state *state, unsigned int cube)
+{
+	unsigned int sampled, image, size, half, pixel, x, y, at, s, operands[4], linear, rgb;
+
+	if (!state->rt_bounce)
+		rt_bounce_declare(m, state);
+	if (!state->frag_coord)
+	{
+		state->frag_coord = variable(m, m->t_v4, STORAGE_INPUT, "gl_FragCoord");
+		decorate1(m, state->frag_coord, DECORATION_BUILT_IN, BUILT_IN_FRAG_COORD);
+	}
+	sampled = load(m, type_sampled_image(m, DIM_2D, FALSE, FALSE, TRUE), state->rt_bounce);
+	image = op(m, OP_IMAGE, type_sampled_image(m, DIM_2D, FALSE, FALSE, FALSE), 1, &sampled);
+	size = image_size(m, image, m->t_iv2);
+	half = op2(m, OP_SHIFT_RIGHT_ARITHMETIC, m->t_int, op2(m, OP_COMPOSITE_EXTRACT, m->t_int, size, 0), constant_int(m, 1));
+	pixel = op1(m, OP_CONVERT_F_TO_S, m->t_iv2, xy(m, load(m, m->t_v4, state->frag_coord)));
+	x = op2(m, OP_I_ADD, m->t_int, ext3(m, GLSL_S_CLAMP, m->t_int, op2(m, OP_COMPOSITE_EXTRACT, m->t_int, pixel, 0), constant_int(m, 0),
+		ext2(m, GLSL_S_MAX, m->t_int, int_add(m, half, -1), constant_int(m, 0))), half);
+	y = ext2(m, GLSL_S_MIN, m->t_int, op2(m, OP_COMPOSITE_EXTRACT, m->t_int, pixel, 1), int_add(m, op2(m, OP_COMPOSITE_EXTRACT, m->t_int, size, 1), -1));
+	at = rt_bounce_iv2(m, x, y);
+	operands[0] = image;
+	operands[1] = at;
+	operands[2] = IMAGE_OPERANDS_LOD;
+	operands[3] = constant_int(m, 0);
+	s = op(m, OP_IMAGE_FETCH, m->t_v4, 4, operands);
+	linear = ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, xyz(m, cube), 0.0f), constant_splat(m, 3, 2.2f));
+	rgb = fadd(m, 3, xyz(m, s), fscale(m, 3, linear, fsub(m, 1, constant_float(m, 1.0f), extract(m, s, 3))));
+	rgb = ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, rgb, 0.0f), constant_splat(m, 3, 1.0f / 2.2f));
+	/* (HALO_RT_REFLECTIONS_VIEW=1: green by the hits' share, red the rest) */
+	if (rt_reflections_view() == 1)
+		rgb = construct(m, 3, (unsigned int[]){ fsub(m, 1, constant_float(m, 1.0f), extract(m, s, 3)), extract(m, s, 3),
+			constant_float(m, 0.0f) });
+	return vec4_of(m, rgb, extract(m, cube, 3));
 }
 
 /* ---------- the enhanced dynamic lights' glows (xgpu_spirv.h) */

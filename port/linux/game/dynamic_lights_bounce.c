@@ -28,6 +28,12 @@ what the frame finds (BOUNCE_EASE seconds of game time) and fade where a ray
 loses its wall; a steady light's bounce settles and stays, and it fades with
 its light. A light no longer among the chosen takes its bounce with it.
 Only the drawing changes: nothing simulated, nothing sent between machines.
+
+display.rt_bounce (docs/rt-plan/3-gi.md, stage 3) takes its place where the
+backend has ray queries and display.ambient_occlusion's pre-pass runs: the
+same choice of lights is handed to the GPU (xgpu_backend_rt_bounce), which
+traces their bounce off the real surfaces into a world-space cache
+(port/linux/vulkan/xgpu_vulkan_gi.c), and no bounce lights are placed.
 */
 
 #include "cseries.h"
@@ -43,6 +49,7 @@ Only the drawing changes: nothing simulated, nothing sent between machines.
 #include "cache/texture_cache.h"
 #include "shaders/shader_definitions.h"
 #include "../src/xgpu_coverage.h"
+#include "rt_bounce.h"
 
 #include <xtl.h>
 
@@ -52,11 +59,16 @@ Only the drawing changes: nothing simulated, nothing sent between machines.
 
 /* port/linux/src/port_config.c */
 int config_boolean(const char *name);
+char const *config_string(char const *name);
 /* port/linux/src (halo.log) */
 void platform_log(const char *format, ...);
 unsigned long long platform_shared_clock_microseconds(void);
 /* port/linux/game/dynamic_lights.c */
 void dynamic_lights_clusters(long rasterizer_light_index, short count, short const *clusters);
+/* port/linux/game/world_ao.c, port/linux/src/xgpu_stream_encode.c */
+int world_ao_mode(void);
+int halo_world_ao_ray_queries(void);
+void xgpu_backend_rt_bounce(struct xgpu_rt_bounce const *bounce);
 /* port/linux/game/door_portals.c */
 short door_portals_clusters_in_sphere(short cluster_index, real_point3d const *position, real radius,
 	short maximum_count, short *clusters);
@@ -106,6 +118,9 @@ light's reach) and as near this facing */
 #define BOUNCE_SAME_WALL_SCALE 0.25f
 #define BOUNCE_SAME_FACING 0.7f
 #define BOUNCE_WINDOWS 4
+/* the enhanced lights' brightness where debug.dynamic_lights_look gives none
+(d3d8_device.c's) */
+#define BOUNCE_LIGHTS_BRIGHTNESS 1.7f
 
 enum
 {
@@ -330,7 +345,10 @@ static short dynamic_lights_bounce_choose(
 		real intensity = MAX(light->color[0], MAX(light->color[1], light->color[2]));
 		real dx, dy, dz, distance, score;
 
-		if ((light->flags & HALO_DYNAMIC_LIGHT_MODELS_ONLY) || !(light->radius >= BOUNCE_LEAST_RADIUS) ||
+		/* (not the flashlight's: a narrow beam through its gel, which a
+		bounce about its light would spill all round) */
+		if ((light->flags & (HALO_DYNAMIC_LIGHT_MODELS_ONLY | HALO_DYNAMIC_LIGHT_FLASHLIGHT)) ||
+			!(light->radius >= BOUNCE_LEAST_RADIUS) ||
 			!(intensity >= BOUNCE_LEAST_INTENSITY))
 		{
 			continue;
@@ -471,6 +489,114 @@ static void dynamic_lights_bounce_cast(
 		facing, albedo, target);
 }
 
+/* ---------- display.rt_bounce: the GPU's bounce */
+
+/* the lights the GPU bounces: dynamic_lights_bounce_choose's, at most
+XGPU_RT_BOUNCE_LIGHTS of them, and the flashlight too (its light on the
+structure is the game's own gel pass's, models-only to the enhanced lights,
+but it bounces all the same); how many */
+static short dynamic_lights_bounce_gpu_choose(
+	struct halo_dynamic_light const *lights,
+	long count,
+	real_point3d const *camera,
+	short *chosen)
+{
+	real scores[XGPU_RT_BOUNCE_LIGHTS];
+	short chosen_count = 0, slot;
+	long index;
+
+	for (index = 0; index < count; index++)
+	{
+		struct halo_dynamic_light const *light = &lights[index];
+		real intensity = MAX(light->color[0], MAX(light->color[1], light->color[2]));
+		real dx, dy, dz, distance, score;
+
+		if (((light->flags & HALO_DYNAMIC_LIGHT_MODELS_ONLY) && !(light->flags & HALO_DYNAMIC_LIGHT_FLASHLIGHT)) ||
+			!(light->radius >= BOUNCE_LEAST_RADIUS) || !(intensity >= BOUNCE_LEAST_INTENSITY))
+		{
+			continue;
+		}
+		dx = light->position[0] - camera->x;
+		dy = light->position[1] - camera->y;
+		dz = light->position[2] - camera->z;
+		distance = sqrtf(dx * dx + dy * dy + dz * dz);
+		score = intensity * light->radius / (distance > light->radius ? distance : light->radius);
+		for (slot = chosen_count; slot > 0 && scores[slot - 1] < score; slot--)
+		{
+			if (slot < XGPU_RT_BOUNCE_LIGHTS)
+			{
+				scores[slot] = scores[slot - 1];
+				chosen[slot] = chosen[slot - 1];
+			}
+		}
+		if (slot >= XGPU_RT_BOUNCE_LIGHTS)
+			continue;
+		scores[slot] = score;
+		chosen[slot] = (short)index;
+		if (chosen_count < XGPU_RT_BOUNCE_LIGHTS)
+			chosen_count++;
+	}
+	return chosen_count;
+}
+
+/* the GPU bounces the window's lights (the setting on, ray queries, the
+pre-pass): the chosen lights handed over, TRUE; else FALSE, and the CPU's
+bounce (if on) places its lights */
+static boolean dynamic_lights_bounce_gpu(
+	struct halo_dynamic_light const *lights,
+	long count,
+	short window)
+{
+	static unsigned long long last[BOUNCE_WINDOWS];
+	static boolean said;
+	struct xgpu_rt_bounce bounce;
+	short chosen[XGPU_RT_BOUNCE_LIGHTS], chosen_count, index, channel;
+	unsigned long long now;
+	real brightness;
+
+	if (!config_boolean("display.rt_bounce") || !halo_dynamic_lights_enhanced() || !halo_world_ao_ray_queries() ||
+		!world_ao_mode())
+	{
+		return FALSE;
+	}
+	if (!said)
+	{
+		platform_log("dynamic lights: display.rt_bounce: bounced light traced on the GPU");
+		said = TRUE;
+	}
+	memset(&bounce, 0, sizeof(bounce));
+	now = platform_shared_clock_microseconds();
+	bounce.window = window;
+	bounce.seconds = last[window] && now > last[window] ? (real)((double)(now - last[window]) * 1.0e-6) : 0.0f;
+	last[window] = now;
+	chosen_count = game_in_progress() && global_structure_bsp_get() ?
+		dynamic_lights_bounce_gpu_choose(lights, count, &render.camera.position, chosen) : 0;
+	/* (the enhanced lights' brightness, as the renderer scales their color:
+	debug.dynamic_lights_look's first number, d3d8_device.c's 1.7) */
+	{
+		char const *look = config_string("debug.dynamic_lights_look");
+		char *end;
+		double value = look && *look ? strtod(look, &end) : 0.0;
+
+		brightness = look && *look && end != look && value > 0.0 ? (real)value : BOUNCE_LIGHTS_BRIGHTNESS;
+	}
+	for (index = 0; index < chosen_count; index++)
+	{
+		struct halo_dynamic_light const *light = &lights[chosen[index]];
+		struct xgpu_rt_bounce_light *out = &bounce.lights[bounce.count++];
+
+		memcpy(out->position, light->position, sizeof(out->position));
+		out->radius = light->radius;
+		for (channel = 0; channel < 3; channel++)
+			out->color[channel] = powf(MAX(light->color[channel], 0.0f), 2.2f) * brightness;
+		memcpy(out->axis, light->axis, sizeof(out->axis));
+		out->cone_scale = light->cone_scale;
+		out->cone_offset = light->cone_offset;
+	}
+	xgpu_backend_rt_bounce(&bounce);
+	return TRUE;
+}
+
 /* dynamic_lights.c's dynamic_lights_submit: the frame's bounce lights after
 its count of lights (as they go to the renderer), in the room they leave;
 the count of all */
@@ -489,10 +615,15 @@ long dynamic_lights_bounce(
 	long room, made = 0;
 	real time, ease;
 
-	if (!config_boolean("display.dynamic_light_bounce") || !halo_dynamic_lights_enhanced())
-		return count;
 	if (window < 0 || window >= BOUNCE_WINDOWS)
 		window = 0;
+	if (dynamic_lights_bounce_gpu(lights, count, window))
+	{
+		memset(&bounce.windows[window], 0, sizeof(bounce.windows[window]));
+		return count;
+	}
+	if (!config_boolean("display.dynamic_light_bounce") || !halo_dynamic_lights_enhanced())
+		return count;
 	structure = global_structure_bsp_get();
 	room = MIN((long)BOUNCE_MAXIMUM, (long)MAXIMUM_LIGHTS_PER_WINDOW - count);
 	if (!structure || room <= 0 || !game_in_progress())

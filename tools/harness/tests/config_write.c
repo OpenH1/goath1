@@ -57,6 +57,18 @@ static void config_graphics_line(long setting, char *line, size_t size)
 static void config_graphics_apply(void)
 {
 }
+
+/* (display.graphics and display.ray_tracing, the presets: none of the test's) */
+static int config_preset_chooses(long setting)
+{
+	(void)setting;
+	return 0;
+}
+
+static const char *config_preset_setting(size_t entry)
+{
+	return entry < NUMBER_OF_CONFIG_GRAPHICS ? config_graphics[entry].name : NULL;
+}
 static volatile unsigned long config_change_count;
 static int config_answer_only;
 

@@ -1055,7 +1055,12 @@ void rasterizer_water_draw(
 				0,
 				D3DTSS_MIPMAPLODBIAS,
 				mipmap_lod_bias.bits);
+			/* port: display.rt_reflections: the reflection's cube map (texture
+			3) traced, the level's water (its vertices in the world:
+			port/linux/src/d3d8_device.c) */
+			halo_rt_reflection(HALO_RT_REFLECTION_WATER);
 			rasterizer_transparent_geometry_group_draw__internal(group, FALSE);
+			halo_rt_reflection(HALO_RT_REFLECTION_NONE); /* port: (drawn) */
 			IDirect3DDevice8_SetTextureStageState(
 				global_d3d_device,
 				0,

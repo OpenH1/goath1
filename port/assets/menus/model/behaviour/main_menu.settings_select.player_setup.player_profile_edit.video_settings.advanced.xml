@@ -65,14 +65,14 @@
 		<on event="created" run="port setting load"/>
 		<on event="a" run="port setting segment"/>
 	</behaviour>
+	<behaviour name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/op_ray_tracing" flags="pass_unhandled_to_focused_child"/>
+	<behaviour name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/ray_tracing_spinner" flags="pass_unhandled_to_focused_child left_right_tabs_items">
+		<on event="created" run="port setting load"/>
+		<on event="a" run="port setting segment"/>
+	</behaviour>
 	<behaviour name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/op_shadow_resolution" flags="pass_unhandled_to_focused_child"/>
 	<behaviour name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/shadow_resolution_spinner" flags="pass_unhandled_to_focused_child left_right_tabs_items">
 		<on event="created" run="port setting load"/>
-	</behaviour>
-	<behaviour name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/op_contact_shadows" flags="pass_unhandled_to_focused_child"/>
-	<behaviour name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/contact_shadows_spinner" flags="pass_unhandled_to_focused_child left_right_tabs_items">
-		<on event="created" run="port setting load"/>
-		<on event="a" run="port setting segment"/>
 	</behaviour>
 	<behaviour name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/op_per_pixel_lighting" flags="pass_unhandled_to_focused_child"/>
 	<behaviour name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/per_pixel_lighting_spinner" flags="pass_unhandled_to_focused_child left_right_tabs_items">

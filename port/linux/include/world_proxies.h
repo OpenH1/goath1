@@ -109,6 +109,9 @@ and its pages hold (world_sdf.h's world_sdf_scenery_baked): its draws take
 none of the field, which holds its own geometry
 (port/linux/game/world_proxies_game.c, which reads the object) */
 int world_proxies_source_baked(long id);
+/* the sky in view's outdoor ambient radiosity power (0 none: an interior's
+bake, lit by its emitters and their bounce alone) */
+float world_proxies_source_sky_outdoor(void);
 /* whether a static scenery placement's own geometry is in the field: its
 definition has collision geometry, which the bake folds in (world_sdf.c's
 sdf_scenery_copy). A shrub's or a fern's has none: the field does not hold

@@ -196,6 +196,10 @@ struct xgpu_draw_facts
 	dynamic lights); the enhanced lights lighting the frame; the structure's
 	lightmap pass drawing */
 	int per_pixel, lights_active, environment;
+	/* display.per_pixel_lighting itself (per_pixel is it or the enhanced
+	lights): a model the enhanced lights light without it keeps its
+	ambient light the vertex's (xgpu.h's XGPU_PER_PIXEL_VERTEX_AMBIENT) */
+	int per_pixel_setting;
 	/* the backend has a sample mask (xgpu_backend_capabilities) */
 	int sample_mask;
 	/* display.smooth_lightmaps on, and the draw's texture 2 a 2D lookup

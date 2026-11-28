@@ -89,6 +89,18 @@ int rt_shadows_on(void)
 	return shadows_on;
 }
 
+/* (the enhanced flashlight's shadow, dynamic_lights.c's: tested apart) */
+int dynamic_lights_flashlight_shadows_on(void)
+{
+	return 0;
+}
+
+/* (display.rt_reflections: rt_reflections.c's, off here) */
+int rt_reflections_on(void)
+{
+	return 0;
+}
+
 /* the parts (their stubs' behaviour: the real ones are tested apart) */
 void world_scene_map_loaded(void) { scene_loads++; }
 void world_scene_map_unloaded(void) {}
@@ -125,6 +137,12 @@ int world_proxies_source_baked(long id)
 int world_proxies_source_solid(long id)
 {
 	return id == 400;
+}
+
+/* (no sky in view: an interior's bake, all of its light occluded) */
+float world_proxies_source_sky_outdoor(void)
+{
+	return 0.0f;
 }
 
 /* (no static scenery's pages) */

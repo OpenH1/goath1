@@ -53,6 +53,8 @@ The conventions (SPIR-V 1.3, Vulkan 1.1):
 #define XGPU_SPIRV_BINDING_DYNAMIC_LIGHTS 2
 #define XGPU_SPIRV_BINDING_DYNAMIC_LIGHT_CELLS 3
 #define XGPU_SPIRV_BINDING_SAMPLES 4
+/* (the enhanced flashlight's shadow map: xgpu.h's XGPU_DYNAMIC_LIGHTS_FLASHLIGHT) */
+#define XGPU_SPIRV_BINDING_FLASHLIGHT_SHADOW 5
 #define XGPU_SPIRV_SET_TEXTURES 1
 /* (a model's material maps, past the four stages: xgpu.h's
 XGPU_TEXTURE_MODES_NORMAL_MAP, _ORM_MAP; 2D, at texture 0's coordinates) */
@@ -120,6 +122,9 @@ reads: xgpu_stream.h's WORLD_AO_MESH, _INSTANCES) */
 the surfaces found once a pixel read, a channel a light: a 2D image of
 four bytes, read by texel; xgpu.h's XGPU_DYNAMIC_LIGHTS_SHADOWED) */
 #define XGPU_SPIRV_BINDING_LIGHT_SHADOWS 9
+/* (display.rt_bounce: the bounced light the surfaces found once a pixel
+add, a 2D image of RGBA16F read by texel, a 1x1 of none where it is not
+traced: XGPU_SPIRV_BINDING_RT_BOUNCE, xgpu_spirv_rt_bounce_pass) */
 
 /* the locations of what the vertex shader hands the pixel shader */
 enum
@@ -261,6 +266,12 @@ struct xgpu_spirv_options
 	program run again on the previous frame's registers, which the
 	constants' block holds after the 192 (384 vec4s then); not with views */
 	BOOL motion;
+	/* display.rt_reflections: the vertex shader hands its position (input
+	0, the level's vertices being in the world) on as the world position
+	(XGPU_SPIRV_LOCATION_WORLD_POSITION), where its lighting does not
+	(xgpu_spirv_vertex_world_position), for a pixel shader that traces its
+	reflection (xgpu_shader.h's rt_reflection) */
+	BOOL world_position_input;
 };
 
 /* ---------- the VR mode's effects
@@ -346,6 +357,9 @@ BOOL xgpu_spirv_vertex_shader(const struct xgpu_vertex_program *program, unsigne
 lighting reads: the pipeline's vertex layout has these alone */
 unsigned long xgpu_spirv_vertex_inputs(const struct xgpu_vertex_program *program,
 	const struct nv2a_vertex_lighting *lighting);
+/* the vertex shader of that lighting hands the pixel its world position
+(XGPU_SPIRV_LOCATION_WORLD_POSITION) */
+BOOL xgpu_spirv_vertex_world_position(const struct nv2a_vertex_lighting *lighting);
 
 /* the pixel program (xgpu_shader.h) as a fragment shader, entry point
 "main". FALSE if out of memory. */
@@ -385,6 +399,9 @@ sees); the rays' masks: the occlusion's (the structure and objects), the
 shadows' (and the player's body) */
 #define XGPU_SPIRV_RT_MASK_AO 0x03u
 #define XGPU_SPIRV_RT_MASK_SHADOWS 0x0Bu
+/* (display.rt_reflections' rays: the structure, objects and the player's
+own body, who sees themself in a polished floor) */
+#define XGPU_SPIRV_RT_MASK_REFLECTIONS 0x0Bu
 
 /* the ray-traced scene's skinning (xgpu_vulkan_rt.c): a compute shader of
 XGPU_SPIRV_RT_SKIN_GROUP invocations a group, one a vertex (x) of a job
@@ -410,14 +427,136 @@ draw set's, the occlusion set (its block's camera; the ray-traced scene).
 _TRACE: each pixel's view of each shadowed light's disk, a few rays by ray
 queries (options' ray_queries), a channel a light; _FILTER: the trace's mask
 (at XGPU_SPIRV_WORLD_AO_PASS_HISTORY) averaged over the 3x3 pixels about
-each of the same surface (where no temporal technique accumulates it).
+each of the same surface (where no temporal technique accumulates it);
+_FLASHLIGHT: the enhanced flashlight's shadow map (xgpu.h's
+XGPU_DYNAMIC_LIGHTS_FLASHLIGHT), a ray a texel from the light along the
+texel's direction in its gel's frame, its red the distance to what the ray
+met (the light's radius where none), the light's owner and the
+first-person models and the local player's own body left out.
 FALSE if out of memory. */
 enum
 {
 	XGPU_SPIRV_LIGHT_SHADOWS_TRACE,
 	XGPU_SPIRV_LIGHT_SHADOWS_FILTER,
+	XGPU_SPIRV_LIGHT_SHADOWS_FLASHLIGHT,
 };
 BOOL xgpu_spirv_light_shadows_pass(int pass, const struct xgpu_spirv_options *options, struct xgpu_spirv_module *module);
+
+/* display.rt_bounce (docs/rt-plan/3-gi.md, stage 3;
+port/linux/vulkan/xgpu_vulkan_gi.c): the dynamic lights' bounced light,
+passes drawn with world_ao_pass's vertex shader after the pre-pass, its
+uniforms (struct xgpu_world_ao_pass) and its inputs at
+XGPU_SPIRV_WORLD_AO_PASS_INPUTS, the passes' block (XGPU_RT_BOUNCE_BLOCK
+vec4s, below) at the draw set's constants, the occlusion set (its block's
+camera; the ray-traced scene) and the hit set. The cache: a grid of
+XGPU_RT_BOUNCE_GRID_* cells of XGPU_RT_BOUNCE_BLOCK_ORIGIN's w world units
+about the camera, its cells kept where they are in the world (each at its
+cell's coordinates modulo the grid's), six faces a cell (+x, -x, +y, -y,
++z, -z), laid out as a 2D image of RGBA16F, a cell's face at (x + GRID_X
+face, y + GRID_Y z): the light a surface facing that way there receives of
+the bounce (its mean radiance over the cosine-weighted hemisphere, the
+enhanced lights' units), and the weight of its history.
+_TRACE: one pixel of each XGPU_RT_BOUNCE_TILE square (a different one
+each frame) casts one cosine-weighted ray through the ray-traced scene
+(options' ray_queries); the surface it meets, lit by one of the block's
+lights (chosen by its share, its shadow ray through the structure) times
+its base map's color, is the sample (its alpha 1 where the pixel is
+drawn); into an image a texel a square. _RESOLVE: each cell's face, the
+samples about where its middle is seen that lie in it, weighted by how
+squarely they face its way, blended into its history (at
+XGPU_SPIRV_WORLD_AO_PASS_HISTORY; the samples at XGPU_SPIRV_RT_BOUNCE_SAMPLES),
+into the new cache. _GATHER: each pixel's light from the cache, its eight
+cells' faces it faces, into an image of the window's size, which the
+surfaces found once a pixel add to the dynamic lights' (the occlusion set's
+XGPU_SPIRV_BINDING_RT_BOUNCE). FALSE if out of memory. */
+enum
+{
+	XGPU_SPIRV_RT_BOUNCE_TRACE,
+	XGPU_SPIRV_RT_BOUNCE_RESOLVE,
+	XGPU_SPIRV_RT_BOUNCE_GATHER,
+};
+#define XGPU_SPIRV_BINDING_RT_BOUNCE 10
+
+/* The light-transport pass's guides (contract C1, ~/dev/rt2-realtime-design.md
+section 1.1), with HALO_LT_E1 alone: the pre-pass's twins keep their
+pipelines' dynamic lights (so they shade their bump or normal map's normal
+as the surfaces do) and write, beside their inputs, a second RGBA32Uint
+target (the pass's second colour attachment, location
+XGPU_SPIRV_GUIDES_LOCATION), a pixel each:
+- x: the shaded normal (the bump map's on the structure, the normal map's on
+  a model with one, else the interpolated one), octahedral, packSnorm2x16;
+- y: the geometric (interpolated vertex) normal, the same;
+- z: the material id (low 16 bits; 0 not known yet), the roughness (bits
+  16-23, 0 to 255; 255 where the draw has none) and the specular mask (bits
+  24-31: 255 where the draw has a reflection stage, else 0);
+- w: the motion: where the point is less where it was the frame before, as
+  a fraction of the window (its corners' width and height), x right and y
+  down, the jitter left out (both positions the vertex program's with this
+  frame's, xgpu_spirv.c's motion_screen); stored as
+  packSnorm2x16(motion / XGPU_SPIRV_GUIDES_MOTION_RANGE) ^
+  XGPU_SPIRV_GUIDES_MOTION_FLIP (fixed point: a step of 1/131068 of the
+  window, 0.015 px at 1920, the same for any motion; a half float's step
+  grows with it). The frame before's from the previous frame's registers
+  (192 to 383: its camera, a skinned or moving object's nodes; xgpu_stream.h's
+  MOTION, phase NONE where only these are kept). XGPU_SPIRV_GUIDES_MOTION_NONE
+  (0, which no motion stores: packSnorm2x16 never gives -32768): none (a
+  point behind either eye, a move of more than the range, or a twin without
+  motion: the cameras' reprojection stands for it).
+A pixel the pre-pass drew no twin at has none (its inputs say so: their
+PRESENT bit). */
+#define XGPU_SPIRV_GUIDES_LOCATION 1
+#define XGPU_SPIRV_GUIDES_MATERIAL_MASK 0xFFFFu
+#define XGPU_SPIRV_GUIDES_ROUGHNESS_SHIFT 16
+#define XGPU_SPIRV_GUIDES_SPECULAR_SHIFT 24
+#define XGPU_SPIRV_GUIDES_ROUGHNESS_NONE 255u
+#define XGPU_SPIRV_GUIDES_MOTION_NONE 0u
+#define XGPU_SPIRV_GUIDES_MOTION_FLIP 0x80008000u
+#define XGPU_SPIRV_GUIDES_MOTION_RANGE 0.25f
+#define XGPU_SPIRV_RT_BOUNCE_SAMPLES 3
+#define XGPU_RT_BOUNCE_GRID_X 64
+#define XGPU_RT_BOUNCE_GRID_Y 64
+#define XGPU_RT_BOUNCE_GRID_Z 32
+#define XGPU_RT_BOUNCE_CACHE_WIDTH (XGPU_RT_BOUNCE_GRID_X * 6)
+#define XGPU_RT_BOUNCE_CACHE_HEIGHT (XGPU_RT_BOUNCE_GRID_Y * XGPU_RT_BOUNCE_GRID_Z)
+#define XGPU_RT_BOUNCE_CELL 0.25f
+#define XGPU_RT_BOUNCE_TILE 4
+/* a bounce ray's reach and its start off the surface (world units); the
+base map's level a hit reads (its average, more or less), and its color
+at most (none sends on all it gets) or where it has none */
+#define XGPU_RT_BOUNCE_REACH 4.0f
+#define XGPU_RT_BOUNCE_BIAS 0.02f
+#define XGPU_RT_BOUNCE_ALBEDO_LEVEL 4.0f
+#define XGPU_RT_BOUNCE_ALBEDO_MOST 0.9f
+#define XGPU_RT_BOUNCE_ALBEDO_NONE 0.35f
+/* the bounce's strength (HALO_RT_BOUNCE_STRENGTH for looking): 2, the gain
+the level's own bake fits over one bounce off the same albedo indoors (a10's
+2.0, docs/rt-plan/4-path-tracing.md's static fit; Blood Gulch 3.2 and b30
+4.0 with their sky), so that a dynamic light bounces as much as the bake's
+lights do: several bounces (1 / (1 - albedo), 1.4 to 2 for the levels'
+0.3 to 0.5) and the detail maps this albedo leaves out */
+#define XGPU_RT_BOUNCE_STRENGTH 2.0f
+/* the passes' block (vec4s): the grid's first cell (its coordinates) and
+the cell's size; the last frame's first cell and 1 where its cache is
+this one's; the frame's number, the history's share kept, its most, and
+a cell's fading where nothing is seen of it; the rows that take a point's
+offset from the eye to (s, s x, s y) of the screen (the inverse of the
+camera's [1], [2], [3] as columns); the eye and the lights' count; the
+samples' square, the samples' image's width and height, the strength;
+then each light's three: position and reach, linear color and cone
+offset, axis and cone scale */
+enum
+{
+	XGPU_RT_BOUNCE_BLOCK_ORIGIN,
+	XGPU_RT_BOUNCE_BLOCK_PREVIOUS,
+	XGPU_RT_BOUNCE_BLOCK_TIMES,
+	XGPU_RT_BOUNCE_BLOCK_UNPROJECT,
+	XGPU_RT_BOUNCE_BLOCK_EYE = XGPU_RT_BOUNCE_BLOCK_UNPROJECT + 3,
+	XGPU_RT_BOUNCE_BLOCK_SIZES,
+	XGPU_RT_BOUNCE_BLOCK_LIGHTS,
+	XGPU_RT_BOUNCE_BLOCK = XGPU_RT_BOUNCE_BLOCK_LIGHTS + 3 * 8,
+};
+#define XGPU_RT_BOUNCE_BLOCK_LIGHTS_MOST 8
+BOOL xgpu_spirv_rt_bounce_pass(int pass, const struct xgpu_spirv_options *options, struct xgpu_spirv_module *module);
 
 /* the enhanced dynamic lights' glows (xgpu_backend.h's
 xgpu_backend_dynamic_lights_halos):

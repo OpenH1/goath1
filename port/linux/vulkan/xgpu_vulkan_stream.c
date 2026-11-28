@@ -52,6 +52,7 @@ its swapchain.
 #include "xgpu.h"
 #include "xgpu_backend.h"
 #include "xgpu_dynamic_lights_world.h"
+#include "xgpu_vulkan_lt_lights.h"
 #include "xgpu_hdr.h"
 #include "xgpu_shader.h"
 #include "xgpu_spirv.h"
@@ -59,6 +60,7 @@ its swapchain.
 #include "xgpu_vulkan_contact_shadows.h"
 #include "xgpu_vulkan_effects.h"
 #include "xgpu_vulkan_loading.h"
+#include "xgpu_vulkan_lt.h"
 #include "xgpu_vulkan_post.h"
 #include "xgpu_vulkan_post_shaders.h"
 #include "xgpu_vulkan_fsr.h"
@@ -231,6 +233,9 @@ struct stream_pipeline
 	/* display.hdr: its pixel shader blends in the shader, interlocked
 	(interlocked): it writes its target as a storage image */
 	uint8_t interlocked;
+	/* display.rt_reflections: its pixel shader traces its reflection's
+	texel (xgpu.h's XGPU_RT_REFLECTION_*: rt_reflection_of), 0 none */
+	uint8_t rt_reflection;
 	/* the vertex constants its vertex shader reads (xgpu_spirv_module's),
 	and the run of registers from the first of them to the last */
 	uint64_t constants_read[3], constants_run[3];
@@ -394,6 +399,9 @@ static struct
 	double trace_seconds[4];
 	uint64_t trace_counts[4];
 	uint32_t pipeline_misses;
+	/* (HALO_LT_E1: a world pipeline's or a twin's draw made and waited for
+	now, not drawn apart: draw_input, prepass_draw) */
+	int world_now, wait_world;
 	/* the depth targets' copies made for the draws that sample them
 	(target_depth_sampled), for the statistics */
 	uint32_t depth_copies;
@@ -429,7 +437,7 @@ static struct
 {
 	int active, failed, twins;
 	uint32_t width, height, twins_made;
-	struct xgpu_vulkan_image *inputs, *depth, *pixels;
+	struct xgpu_vulkan_image *inputs, *depth, *pixels, *guides;
 	/* the previous pass's occlusion (the history the next reprojects:
 	the two in turn), and the cascades' linear sampler */
 	struct xgpu_vulkan_image *history;
@@ -439,6 +447,10 @@ static struct
 	/* (draw_pipeline: the twin's entry drawn with, in place of the
 	pipeline's own) */
 	struct stream_pipeline *drawing;
+	/* (HALO_LT_E1: the twin made, or drawn, writes its motion into the
+	guides, xgpu_spirv.h's C1: its vertex shader run on the frame before's
+	registers too, the 384 uploaded for it) */
+	int motion_making, motion_drawing;
 	VkShaderModule shaders[2];
 	VkSampler sampler;
 	struct xgpu_vulkan_pipeline_description pass;
@@ -1006,6 +1018,22 @@ static int stream_read_target(void *context, const struct xgpu_stream_read_targe
 	(void)context;
 	if (!target || target->depth || !record->pixels || (uint64_t)target->width * target->height * 4 > record->size)
 		return 0;
+	/* (debug.screenshot_halves: the half floats as they are) */
+	if (record->tone_map == XGPU_STREAM_READ_HALVES)
+	{
+		uint16_t *halves = NULL;
+		size_t size = (size_t)target->width * target->height * 8;
+		int read;
+
+		if (size > record->size)
+			return 0;
+		target_resolve(target);
+		read = xgpu_vulkan_read_halves(target->image, 0, &halves) > 0;
+		if (read)
+			memcpy(host_pointer(record->pixels), halves, size);
+		free(halves);
+		return read;
+	}
 	target_resolve(target);
 	return xgpu_vulkan_read_pixels(target->image, record->layer > 0 ? (uint32_t)record->layer : 0,
 		host_pointer(record->pixels), target->width * 4, record->tone_map != 0);
@@ -1654,6 +1682,32 @@ static int interlocked(const struct xgpu_stream_pipeline_define *definition)
 	return !xgpu_pixel_program_depth_stage(&pixel);
 }
 
+/* display.rt_reflections (docs/rt-plan/2-reflections.md, xgpu.h's
+XGPU_TEXTURE_MODES_RT_REFLECTION): the class a pipeline's pixel shader
+traces its reflection's texel as, where the device has ray queries, its
+texture 3 is the game's reflection lookup (CUBEMAP, DOT_REFLECT_SPECULAR or
+its constant's), one view, and its vertex shader can hand the pixel its
+world position: its lighting's, or (the level's surfaces, their vertices in
+the world) its position as it is (world_position_input); else 0, the cube
+map */
+static uint8_t rt_reflection_of(const struct xgpu_stream_pipeline_key *key,
+	const struct nv2a_vertex_lighting *lighting, BOOL *world_position_input)
+{
+	unsigned long reflection = XGPU_RT_REFLECTION_OF(key->pixel.texture_modes);
+	unsigned long stage3 = (key->pixel.texture_modes >> 15) & 0x1f;
+
+	*world_position_input = FALSE;
+	if (!reflection || !stream.capabilities.ray_queries || key->immediate || key->views != XGPU_MULTIVIEW_NONE ||
+		(stage3 != 0x03 && stage3 != 0x0c && stage3 != 0x12))
+		return 0;
+	if (xgpu_spirv_vertex_world_position(lighting))
+		return (uint8_t)reflection;
+	if (!XGPU_RT_REFLECTION_WORLD_VERTICES(reflection))
+		return 0;
+	*world_position_input = TRUE;
+	return (uint8_t)reflection;
+}
+
 /* a pipeline's shaders for a variant: made if the pipeline has none for it;
 0 if they cannot be */
 static int pipeline_shaders(struct stream_pipeline *entry, const struct xgpu_stream_pipeline_define *definition,
@@ -1713,7 +1767,9 @@ static int pipeline_shaders(struct stream_pipeline *entry, const struct xgpu_str
 	options.reversed_depth = XGPU_VULKAN_REVERSED_DEPTH;
 	options.subgroups = stream.capabilities.subgroups;
 	/* (display.temporal_aa: a window's objects' variant, its motion too) */
-	options.motion = motion.making != 0;
+	options.motion = motion.making != 0 || prepass.motion_making;
+	/* (display.rt_reflections: rt_reflection_of) */
+	entry->rt_reflection = rt_reflection_of(key, lighting, &options.world_position_input);
 	program = malloc(sizeof(*program));
 	if (!program)
 		return 0;
@@ -1722,7 +1778,7 @@ static int pipeline_shaders(struct stream_pipeline *entry, const struct xgpu_str
 	if (xgpu_spirv_vertex_shader(program, packed, integers, lighting, &options, &module))
 	{
 		snprintf(name, sizeof(name), "vs%08x%08x_%lx_%lx_%u_view%u_fovea%u%s", (unsigned)(hash >> 32), (unsigned)hash,
-			packed, integers, key->lighting, key->views, variant->foveated, motion.making ? "_motion" : "");
+			packed, integers, key->lighting, key->views, variant->foveated, options.motion ? "_motion" : "");
 		shader_dump(name, &module);
 		entry->vertex_shader = xgpu_vulkan_shader(module.words, module.count);
 		free(module.words);
@@ -1731,6 +1787,7 @@ static int pipeline_shaders(struct stream_pipeline *entry, const struct xgpu_str
 	free(program);
 	pixel_program_convert(&definition->pixel_program, &pixel);
 	pixel.material_maps = xgpu_pixel_program_material_maps(&pixel, definition->key.pixel.texture_modes);
+	pixel.rt_reflection = entry->rt_reflection;
 	/* (a VR effect's, where its program leaves the effects' textures free) */
 	entry->effect = entry->effect_tests_depth = 0;
 	if (key->pixel.vr_effect && key->pixel.vr_effect <= XGPU_SPIRV_EFFECT_THICK && xgpu_spirv_effect_possible(&pixel))
@@ -1745,7 +1802,7 @@ static int pipeline_shaders(struct stream_pipeline *entry, const struct xgpu_str
 	{
 		snprintf(name, sizeof(name), "ps_%08x_%02x%02x%02x%02x_fovea%u_effect%u%u%s", bytes_hash(&definition->pixel_program,
 			sizeof(definition->pixel_program)), options.border[0], options.border[1], options.border[2], options.border[3],
-			variant->foveated, (unsigned)options.effect, (unsigned)options.effect_fade, motion.making ? "_motion" : "");
+			variant->foveated, (unsigned)options.effect, (unsigned)options.effect_fade, options.motion ? "_motion" : "");
 		shader_dump(name, &module);
 		entry->pixel_shader = xgpu_vulkan_shader(module.words, module.count);
 		free(module.words);
@@ -2035,12 +2092,12 @@ static int uniforms_update(const struct stream_pipeline *entry)
 		to->world_ao[1] = from->world_ao[1];
 		to->world_ao[2] = from->world_ao[2];
 		to->world_ao[3] = from->world_ao[3];
-		/* (the enhanced dynamic lights' tint, in linear light: worked out
+		/* (the enhanced dynamic lights' tint, gamma, as the gel pass multiplies it: worked out
 		again where the colour changed) */
 		if (!stream.tint_valid || memcmp(stream.tint_from, from->ps_final_c0, sizeof(stream.tint_from)))
 		{
 			for (stage = 0; stage < 3; stage++)
-				stream.tint[stage] = powf(from->ps_final_c0[stage], 2.2f);
+				stream.tint[stage] = from->ps_final_c0[stage];
 			memcpy(stream.tint_from, from->ps_final_c0, sizeof(stream.tint_from));
 			stream.tint_valid = 1;
 		}
@@ -2526,7 +2583,7 @@ static int draw_pipeline(const struct draw_input *input, int apart)
 	struct variant variant;
 	struct xgpu_vulkan_dynamic_state split_dynamic;
 	uint32_t index, attempt;
-	int motion_drawn, motion_writes, made, split, first_person;
+	int motion_drawn, motion_writes, previous_constants, made, split, first_person;
 	double traced;
 
 	if (!stream.pipeline_id || !stream.definition || !input->count)
@@ -2560,6 +2617,9 @@ static int draw_pipeline(const struct draw_input *input, int apart)
 	motion.making = 0;
 	if (!made)
 		return 1;
+	/* (a writer's, or a twin's writing its motion into the guides: the
+	frame before's registers too) */
+	previous_constants = motion_writes || (prepass.drawing && prepass.motion_drawing);
 	pipeline.vertex_shader = entry->vertex_shader;
 	pipeline.pixel_shader = entry->pixel_shader;
 	pipeline.primitive_class = primitive_class(input->primitive);
@@ -2612,8 +2672,15 @@ static int draw_pipeline(const struct draw_input *input, int apart)
 		pipeline.view_mask = 0;
 		pipeline.depth_format = XGPU_VULKAN_FORMAT_D24S8;
 	}
+	/* (HALO_LT_E1: a twin's guides, its second attachment, xgpu_spirv.h's
+	C1; an occluder's attachment unwritten) */
+	if (prepass.drawing && xgpu_vulkan_lt_mode() && prepass.guides)
+	{
+		pipeline.motion_format = XGPU_VULKAN_FORMAT_RGBA32_UINT;
+		pipeline.motion_mask = (stream.definition->pixel_program.ambient_occlusion & 0x10u) ? 15 : 0;
+	}
 	/* (display.temporal_aa: the motion's attachment, written or not) */
-	if (motion_drawn)
+	else if (motion_drawn)
 	{
 		pipeline.motion_format = XGPU_VULKAN_FORMAT_RGBA32F;
 		pipeline.motion_mask = motion_writes ? 15 : 0;
@@ -2643,6 +2710,8 @@ static int draw_pipeline(const struct draw_input *input, int apart)
 
 		if (stream.preparing)
 			(void)xgpu_vulkan_pipeline_prepare(&pipeline);
+		else if (stream.world_now)
+			draw.pipeline = xgpu_vulkan_pipeline(&pipeline);
 		else if (apart)
 			draw.pipeline = xgpu_vulkan_pipeline_ready(&pipeline);
 		else if (stream.prepared)
@@ -2724,7 +2793,7 @@ static int draw_pipeline(const struct draw_input *input, int apart)
 		}
 		/* (display.temporal_aa: a writer's registers, this frame's and the
 		frame before's, 384: its own upload, never the others') */
-		if (motion_writes)
+		if (previous_constants)
 		{
 			void *to = xgpu_vulkan_upload((uint32_t)sizeof(stream.constants), 256, &previous_range);
 
@@ -2742,11 +2811,19 @@ static int draw_pipeline(const struct draw_input *input, int apart)
 	if (attempt == 3)
 		return 1;
 	memcpy(draw.textures, stream.textures, sizeof(draw.textures));
-	draw.constants = motion_writes ? previous_range : stream.constants_range;
+	draw.constants = previous_constants ? previous_range : stream.constants_range;
 	draw.uniforms = stream.uniforms_range;
 	draw.dynamic = &stream.dynamic;
 	draw.dynamic_lights = stream.definition->pixel_program.dynamic_lights != 0;
 	draw.ambient_occlusion = stream.definition->pixel_program.ambient_occlusion != 0;
+	/* (display.rt_reflections: the ray-traced scene, built for the frame
+	before its first draw that traces it, and its hit set: the occlusion's
+	sets) */
+	if (entry->rt_reflection)
+	{
+		(void)xgpu_vulkan_rt_build();
+		draw.ambient_occlusion = 1;
+	}
 	draw.reads_color = pipeline.color_read;
 	draw.stores_color = pipeline.color_store;
 	{
@@ -2922,6 +2999,21 @@ static void draw_input(const struct draw_input *input)
 	{
 		return;
 	}
+	/* (the replay, HALO_LT_E1: the world's made now and waited for, not its
+	stand-in drawn: a stand-in has the game's own lights, not the
+	light-transport pass's, and a replay played from the start has no map
+	preparation's pipelines, so its first frames would show the classic
+	lights; deterministic for its checks. The game draws the stand-in, a
+	frame or two, never waiting: its map's preparation makes this mode's
+	pipelines (render_prepared.c's derivation counts the mode)) */
+	else if (stream.wait_world && xgpu_vulkan_lt_mode() && stream.pipelines[id].state != XGPU_STREAM_PIPELINE_FAILED)
+	{
+		stream.world_now = 1;
+		draw_pipeline(input, 0);
+		stream.world_now = 0;
+		if (stream.pipelines[id].state != XGPU_STREAM_PIPELINE_FAILED)
+			return;
+	}
 	{
 		struct variant variant;
 
@@ -3088,6 +3180,8 @@ cells as the GPU has them: the stream's changes applied, with the lights
 the world is walked for (made each frame) */
 static struct xgpu_dynamic_lights_world lights_world;
 static unsigned char *lights_cells;
+/* (and the frame's block, for HALO_LT_E1's pass: xgpu_vulkan_lt.c) */
+static struct xgpu_dynamic_lights_block lights_block;
 
 /* when the world last came (seconds of the monotonic clock) */
 static double lights_world_given;
@@ -3162,6 +3256,7 @@ static void dynamic_lights_cells(const struct xgpu_stream_dynamic_lights_block *
 	uint32_t first = DYNAMIC_LIGHTS_CELLS_SIZE, end = 0, part;
 	uint32_t walk[8];
 
+	memcpy(&lights_block, block, sizeof(lights_block));
 	if (!lights_cells)
 		lights_cells = calloc(1, DYNAMIC_LIGHTS_CELLS_SIZE);
 	if (!lights_cells)
@@ -3214,7 +3309,23 @@ static void dynamic_lights_cells(const struct xgpu_stream_dynamic_lights_block *
 		if (WALK_END > end)
 			end = WALK_END;
 	}
-	xgpu_vulkan_dynamic_lights_upload(block, sizeof(*block), lights_cells, first < end ? first : 0, first < end ? end : 0);
+	/* (HALO_LT_DROP, the light transport's calibration: lights of a kind
+	left out of both the game's lights and the pass's, its "off") */
+	xgpu_vulkan_lt_block_filter(&lights_block, count);
+	xgpu_vulkan_dynamic_lights_upload(&lights_block, sizeof(lights_block), lights_cells, first < end ? first : 0,
+		first < end ? end : 0);
+}
+
+/* the enhanced flashlight's shadow map, as the frame's lights name a
+shadowed slot (xgpu_vulkan_light_shadows.c), the stream's targets bound
+again after it; not while a map is prepared */
+static void dynamic_lights_flashlight(void)
+{
+	/* (HALO_LT_E1: its traced pass casts the flashlight's shadow) */
+	if (stream.preparing || !stream.capabilities.ray_queries || !lights_cells || xgpu_vulkan_lt_mode())
+		return;
+	if (xgpu_vulkan_flashlight_draw(lights_cells))
+		targets_bind();
 }
 
 static void stream_dynamic_lights_upload(void *context, const struct xgpu_stream_dynamic_lights_upload *record)
@@ -3225,6 +3336,7 @@ static void stream_dynamic_lights_upload(void *context, const struct xgpu_stream
 	if (!cells || record->size != DYNAMIC_LIGHTS_CELLS_SIZE)
 		return;
 	dynamic_lights_cells(&record->block, record->count, 0, DYNAMIC_LIGHTS_CELLS_SIZE, cells);
+	dynamic_lights_flashlight();
 }
 
 static void stream_dynamic_lights_change(void *context, const struct xgpu_stream_dynamic_lights_change *record)
@@ -3235,6 +3347,7 @@ static void stream_dynamic_lights_change(void *context, const struct xgpu_stream
 	if (record->size && !cells)
 		return;
 	dynamic_lights_cells(&record->block, record->count, record->offset, record->size, cells);
+	dynamic_lights_flashlight();
 }
 
 static void stream_dynamic_lights_world(void *context, const struct xgpu_stream_dynamic_lights_world *record)
@@ -3787,6 +3900,15 @@ int xgpu_vulkan_shadows_window(const struct xgpu_stream_rt_shadows *record,
 		}
 	}
 	return 1;
+}
+
+/* display.rt_bounce: a window's lights that bounce (xgpu_vulkan_gi.c) */
+static void stream_rt_bounce(void *context, const struct xgpu_stream_rt_bounce *record)
+{
+	(void)context;
+	if (stream.preparing || !stream.capabilities.ray_queries)
+		return;
+	xgpu_vulkan_rt_bounce_lights(record);
 }
 
 static void stream_rt_shadows(void *context, const struct xgpu_stream_rt_shadows *record)
@@ -4704,6 +4826,49 @@ static int prepass_tables(void)
 	return 0;
 }
 
+/* an occluder's twin (xgpu_stream_world_ao_twin) of a lit model, not the
+first-person weapon's (first_person_latch's stencil mark), made one that
+writes its pixel's inputs as a model with the world's light would (its
+light the model's, or the vertices' where it is lit for each), its depth
+test the draw's own; nonzero where it was */
+static int lt_model_twin(struct xgpu_stream_pipeline_define *twin, const struct xgpu_stream_pipeline_define *definition)
+{
+	const struct xgpu_stream_pipeline_key *key = &definition->key;
+	uint8_t light;
+
+	if (twin->pixel_program.ambient_occlusion != XGPU_STREAM_WORLD_AO_OCCLUDER ||
+		(key->lighting != _lighting_model && key->lighting != _lighting_model_point &&
+		key->lighting != _lighting_model_split) ||
+		(key->stencil_test && (key->stencil_write_mask & 1) && key->stencil_pass == XGPU_STENCIL_REPLACE &&
+		(stream.dynamic.stencil_reference & 1)))
+		return 0;
+	light = key->lighting == _lighting_model_split ? XGPU_AMBIENT_OCCLUSION_LIGHT_VERTEX :
+		XGPU_AMBIENT_OCCLUSION_LIGHT_MODEL;
+	twin->key.pixel.ambient_occlusion = twin->pixel_program.ambient_occlusion =
+		(uint8_t)(XGPU_STREAM_WORLD_AO_INPUTS | light);
+	twin->key.depth_function = key->depth_function;
+	return 1;
+}
+
+/* HALO_LT_TWINS_LOG=1 (checking): each pipeline the pre-pass draws, once,
+what its twin is (inputs, an occluder, none) and why */
+static void prepass_twin_log(uint32_t id, const struct xgpu_stream_pipeline_define *definition, uint8_t twin)
+{
+	static int on = -1;
+	static uint8_t *said;
+	const struct xgpu_stream_pipeline_key *key = &definition->key;
+
+	if (on < 0)
+		on = getenv("HALO_LT_TWINS_LOG") && atoi(getenv("HALO_LT_TWINS_LOG")) > 0;
+	if (!on || (!said && !(said = calloc(XGPU_STREAM_PIPELINES, 1))) || said[id])
+		return;
+	said[id] = 1;
+	host_logf(HOST_LOG_WARN, "vulkan: twin: pipeline %u: %s (occlusion %02x, lighting %u, depth test %u write %u "
+		"function %u, blend %u source %u, colour mask %x)", id, !twin ? "none" : (twin & 0x10u) ?
+		"inputs" : "occluder", definition->pixel_program.ambient_occlusion, key->lighting, key->depth_test,
+		key->depth_write, key->depth_function, key->blend, key->pixel.source_blend, key->color_mask);
+}
+
 /* a draw of the pre-pass: its pipeline's twin's (xgpu_stream_world_ao_twin:
 where it has the world's light read from its pixels, or is an occluder; its
 shaders made now, a few a frame); else none */
@@ -4715,12 +4880,32 @@ static void prepass_draw(const struct draw_input *input)
 	struct xgpu_vulkan_pipeline_description pipeline = stream.pipeline;
 	struct stream_pipeline *entry;
 	struct variant variant;
+	int made, motion;
 
 	if (!id || id >= XGPU_STREAM_PIPELINES || !definition || !prepass_tables())
 		return;
 	twin = *definition;
-	if (!xgpu_stream_world_ao_twin(&twin))
+	made = xgpu_stream_world_ao_twin(&twin);
+	/* (HALO_LT_E1: a lit model drawn as an occluder, a character or a
+	moving object without the world's light (the Flood), its inputs and
+	guides written all the same, so that the pass and its denoiser see it:
+	its normal, owner, distance and motion. The first-person weapon, which
+	marks its pixels in the stencil, stays an occluder) */
+	if (made && xgpu_vulkan_lt_mode())
+		(void)lt_model_twin(&twin, definition);
+	prepass_twin_log(id, definition, made ? twin.pixel_program.ambient_occlusion : 0);
+	if (!made)
 		return;
+	/* (HALO_LT_E1: a twin with the world's light is drawn with the dynamic
+	lights' shading, so it shades its bump or normal map's normal for the
+	guides: the structure's as the structure's, the rest as a model's,
+	whether or not lights reach the draw now, so that one twin serves both
+	and the map's preparation makes it) */
+	if (xgpu_vulkan_lt_mode() && (twin.pixel_program.ambient_occlusion & 0x10u))
+		twin.key.pixel.dynamic_lights = twin.pixel_program.dynamic_lights = twin.key.lighting ==
+			XGPU_LIGHTING_ENVIRONMENT ? XGPU_DYNAMIC_LIGHTS_ENVIRONMENT : XGPU_DYNAMIC_LIGHTS_MODEL;
+	/* (HALO_LT_E1: a twin with inputs writes its motion into the guides) */
+	motion = xgpu_vulkan_lt_mode() && (twin.pixel_program.ambient_occlusion & 0x10u);
 	entry = &prepass.entries[id];
 	if (memcmp(&twin, &prepass.definitions[id], sizeof(twin)))
 	{
@@ -4731,8 +4916,12 @@ static void prepass_draw(const struct draw_input *input)
 	variant.integer_attributes = twin.key.immediate ? 0 : input->integers;
 	if (entry->state != XGPU_STREAM_PIPELINE_MADE || memcmp(&entry->variant, &variant, sizeof(variant)))
 	{
+		/* (the replay, HALO_LT_E1: every twin made as it is first drawn,
+		its pipeline waited for: a pixel without its inputs has none of the
+		pass's light) */
 		if (entry->state == XGPU_STREAM_PIPELINE_FAILED ||
-			(!stream.preparing && prepass.twins_made >= WORLD_AO_TWINS_A_FRAME))
+			(!stream.preparing && prepass.twins_made >= WORLD_AO_TWINS_A_FRAME &&
+			!(stream.wait_world && xgpu_vulkan_lt_mode())))
 			return;
 		/* (not made as the map was prepared: a miss, as a pipeline's; none
 		limited while it is) */
@@ -4744,15 +4933,22 @@ static void prepass_draw(const struct draw_input *input)
 		}
 		if (entry->state == XGPU_STREAM_PIPELINE_MADE)
 			entry->state = XGPU_STREAM_PIPELINE_UNKNOWN;
-		if (!pipeline_shaders(entry, &prepass.definitions[id], &variant))
+		prepass.motion_making = motion;
+		made = pipeline_shaders(entry, &prepass.definitions[id], &variant);
+		prepass.motion_making = 0;
+		if (!made)
 			return;
 	}
+	prepass.motion_drawing = motion;
 	stream.definition = &prepass.definitions[id];
 	/* (an occluder's: strictly nearer) */
 	stream.pipeline.depth_function = twin.key.depth_function;
 	prepass.drawing = entry;
+	stream.world_now = stream.wait_world && xgpu_vulkan_lt_mode() && !stream.preparing;
 	(void)draw_pipeline(input, 1);
+	stream.world_now = 0;
 	prepass.drawing = NULL;
+	prepass.motion_drawing = 0;
 	stream.definition = definition;
 	stream.pipeline = pipeline;
 	stream.pipeline_id = id;
@@ -4880,12 +5076,21 @@ static void stream_world_ao_prepass(void *context, const struct xgpu_stream_worl
 		/* (what the surfaces read: 1, until the pass finds it) */
 		xgpu_vulkan_world_ao_set_pixels(NULL);
 		xgpu_vulkan_light_shadows_end();
+		xgpu_vulkan_rt_bounce_end();
 		if (!target || !prepass_shaders() || !prepass_tables())
 			return;
 		/* (debug.pass_times: the pre-pass's draws and its pass, to the END) */
 		xgpu_vulkan_pass_owner(PASS_OWNER_AO);
 		prepass.inputs = prepass_image(prepass.inputs, XGPU_VULKAN_FORMAT_RGBA32_UINT, target->width, target->height);
 		prepass.depth = prepass_image(prepass.depth, XGPU_VULKAN_FORMAT_D24S8, target->width, target->height);
+		/* (HALO_LT_E1: the twins' guides beside their inputs, the second
+		colour attachment: xgpu_spirv.h's C1) */
+		if (xgpu_vulkan_lt_mode())
+		{
+			prepass.guides = prepass_image(prepass.guides, XGPU_VULKAN_FORMAT_RGBA32_UINT, target->width,
+				target->height);
+			xgpu_vulkan_lt_guides(prepass.guides);
+		}
 		if (!prepass.inputs || !prepass.depth)
 			return;
 		prepass.width = target->width;
@@ -4894,6 +5099,8 @@ static void stream_world_ao_prepass(void *context, const struct xgpu_stream_worl
 		/* (a walk played twice: the pre-pass begun from the window's depth,
 		its own handed to the surfaces' walk at the END) */
 		prepass.primed_depth = record->replay ? prepass_prime_begin() : 0;
+		if (xgpu_vulkan_lt_mode() && prepass.guides)
+			xgpu_vulkan_set_motion_target(prepass.guides, prepass.inputs);
 		xgpu_vulkan_set_target_views(prepass.inputs, prepass.depth, 0, 1);
 		whole[0][0] = whole[0][1] = 0;
 		whole[0][2] = (int32_t)target->width;
@@ -4904,6 +5111,9 @@ static void stream_world_ao_prepass(void *context, const struct xgpu_stream_worl
 	}
 	if (record->phase == XGPU_WORLD_AO_PREPASS_END && prepass.active)
 	{
+		/* (HALO_LT_E1: the guides' attachment let go of) */
+		if (xgpu_vulkan_lt_mode())
+			xgpu_vulkan_set_motion_target(NULL, NULL);
 		const int32_t *corners = record->pass.corners;
 		/* (found at a quarter of the pixels: each 2x2 block's) */
 		int32_t scale = record->pass.camera[3][3] >= 2.0f ? 2 : 1;
@@ -4956,7 +5166,12 @@ static void stream_world_ao_prepass(void *context, const struct xgpu_stream_worl
 						prepass.rays_drawn ? "traced by ray queries" : "stepped through the distance-field scene");
 				}
 			}
-			if (prepass.pixels && rectangle[2] > rectangle[0] && rectangle[3] > rectangle[1] &&
+			/* (HALO_LT_E1: no occlusion pass, its traced rays and history
+			left out of the light-transport experiment: the surfaces read
+			the stand-in, none) */
+			if (xgpu_vulkan_lt_mode())
+				xgpu_vulkan_world_ao_set_pixels(NULL);
+			else if (prepass.pixels && rectangle[2] > rectangle[0] && rectangle[3] > rectangle[1] &&
 				xgpu_vulkan_pipeline_ready(pass))
 			{
 				prepass_pass_draw(prepass.pixels, rectangle, &uniforms, pass);
@@ -4966,9 +5181,18 @@ static void stream_world_ao_prepass(void *context, const struct xgpu_stream_worl
 		/* (display.shadows "ray_traced": the dynamic lights' shadows, from
 		the pre-pass's inputs, for the lights the cells name:
 		xgpu_vulkan_light_shadows.c) */
-		xgpu_vulkan_light_shadows_draw(prepass.inputs, &record->pass, lights_cells ? (const uint32_t (*)[4])(lights_cells +
-			(XGPU_DYNAMIC_LIGHTS_GRID_X * XGPU_DYNAMIC_LIGHTS_GRID_Y * XGPU_DYNAMIC_LIGHTS_GRID_Z +
-			XGPU_DYNAMIC_LIGHTS_SHADOWED) * 16) : NULL);
+		/* (HALO_LT_E1: none, the experiment's own flashlight alone traced) */
+		if (xgpu_vulkan_lt_mode())
+			xgpu_vulkan_light_shadows_end();
+		else
+			xgpu_vulkan_light_shadows_draw(prepass.inputs, &record->pass, lights_cells ? (const uint32_t (*)[4])(lights_cells +
+				(XGPU_DYNAMIC_LIGHTS_GRID_X * XGPU_DYNAMIC_LIGHTS_GRID_Y * XGPU_DYNAMIC_LIGHTS_GRID_Z +
+				XGPU_DYNAMIC_LIGHTS_SHADOWED) * 16) : NULL);
+		/* (display.rt_bounce: the dynamic lights' bounced light, from the
+		pre-pass's inputs: xgpu_vulkan_gi.c; HALO_LT_E1, the flashlight's
+		traced direct light in its place: xgpu_vulkan_lt.c) */
+		if (!xgpu_vulkan_lt_draw(prepass.inputs, &record->pass, lights_cells, &lights_block))
+			xgpu_vulkan_rt_bounce_draw(prepass.inputs, &record->pass);
 		/* (the surfaces' walk, played next, from the pre-pass's depth) */
 		if (prepass.primed_depth)
 			prepass_prime_end(record->replay);
@@ -4979,6 +5203,7 @@ static void stream_world_ao_prepass(void *context, const struct xgpu_stream_worl
 	/* (_NONE: the surfaces read 1) */
 	prepass.primed_depth = 0;
 	xgpu_vulkan_light_shadows_end();
+	xgpu_vulkan_rt_bounce_end();
 	if (prepass.active)
 	{
 		prepass.active = 0;
@@ -5296,6 +5521,7 @@ static void stream_initialize(void *context, struct xgpu_stream_capabilities *ca
 	capabilities->temporal_dlss = stream.capabilities.temporal_dlss != 0;
 	/* (the DLSS add-on's download offered: an NVIDIA GPU, dlss_addon.c) */
 	capabilities->dlss_gpu = stream.capabilities.dlss_gpu != 0;
+	capabilities->rt_budget = (uint8_t)(stream.capabilities.rt_budget / 8 > 255 ? 255 : stream.capabilities.rt_budget / 8);
 	snprintf(capabilities->device, sizeof(capabilities->device), "%s", stream.capabilities.device);
 }
 
@@ -5388,6 +5614,11 @@ static uint32_t stream_prepared(void *context)
 	return started >= 0.0 && finished >= started ? (uint32_t)((finished - started) * 1000.0) : 0;
 }
 
+void xgpu_vulkan_stream_wait_world(int wait)
+{
+	stream.wait_world = wait;
+}
+
 void xgpu_vulkan_stream_debug(int statistics, const char *shader_folder)
 {
 	stream.statistics = statistics != 0;
@@ -5477,6 +5708,8 @@ const struct host_render_backend *xgpu_vulkan_stream_backend(void)
 		/* display.temporal_aa's motion */
 		backend.motion = stream_motion;
 		backend.rt_shadows = stream_rt_shadows;
+		backend.rt_bounce = stream_rt_bounce;
+		backend.lt_lights = xgpu_vulkan_lt_lights_receive;
 		backend.contact_shadows = stream_contact_shadows;
 		/* ... "ray_traced"'s scene (xgpu_vulkan_rt.c), where the device has
 		ray queries */

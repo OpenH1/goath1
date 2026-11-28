@@ -33,6 +33,19 @@ void rasterizer_environment_reflection_lightmap_masks_begin(
 	void);
 void rasterizer_environment_diffuse_lights_begin(
 	void);
+/* port: (rasterizer_xbox_environment.c: the enhanced flashlight's gel) */
+union real_vector3d;
+boolean rasterizer_environment_port_gel(
+	long light_index,
+	union real_vector3d *forward,
+	union real_vector3d *up,
+	union real_vector3d *left,
+	void const **gel,
+	void const **attenuation);
+void rasterizer_environment_port_gel_textures(
+	long gel_bitmap_group_index,
+	void const **gel,
+	void const **attenuation);
 void rasterizer_environment_specular_lights_begin(
 	void);
 void rasterizer_environment_fog_begin(

@@ -127,6 +127,10 @@ symbols in this file:
 #include "world_ao.h" /* port: port/linux/game/world_ao.c */
 #include "mod_materials.h" /* port: port/linux/game/mod_materials.c */
 
+/* (GOAT H1: rt_export.c's, when it is linked) */
+extern void rt_export_note_self_illumination(long unique_identifier, void const *shader,
+	real_rgb_color const *color, real_rgb_color const *change_color) __attribute__((weak));
+
 /* ---------- constants */
 
 enum
@@ -2068,6 +2072,12 @@ void _rasterizer_model_draw(
 					diffuse_change_color = *global_real_rgb_white;
 				}
 
+				/* (GOAT H1: the truth export's record of the self-illumination and
+				change colors as drawn, per object and shader: rt_export.c) */
+				if (rt_export_note_self_illumination)
+					rt_export_note_self_illumination(local_parameters->unique_identifier, shader,
+						&self_illumination_color, &diffuse_change_color);
+
 				vertex_shader_work =
 					rasterizer_frame_statistics.vertex_shader_instruction_count;
 
@@ -2392,6 +2402,16 @@ void _rasterizer_model_draw(
 						self_illumination_color.blue>0.0f) ?
 						HALO_HDR_KIND_SELF_ILLUMINATION | HALO_HDR_KIND_SELF_ILLUMINATION_STAGES(1<<1) :
 						HALO_HDR_KIND_NONE);
+				/* port: display.rt_reflections: the reflection's cube map
+				(texture 3) traced, but in the first-person view (drawn in a
+				projection of its own: port/linux/src/d3d8_device.c) */
+				halo_rt_reflection(
+					shader_model->model.reflection_cube_map.index!=NONE &&
+					reflection_fraction>0.0f &&
+					!local_sky_flag &&
+					!TEST_FLAG(local_parameters->geometry_flags, _rasterizer_geometry_first_person_bit) ?
+						HALO_RT_REFLECTION_MODEL :
+						HALO_RT_REFLECTION_NONE);
 
 				IDirect3DDevice8_SetRenderState(
 					global_d3d_device,
@@ -2491,6 +2511,7 @@ void _rasterizer_model_draw(
 				}
 				halo_hdr_draw_kind(HALO_HDR_KIND_NONE); /* port: (drawn) */
 				world_ao_cards(FALSE); /* port: (drawn) */
+				halo_rt_reflection(HALO_RT_REFLECTION_NONE); /* port: (drawn) */
 			}
 
 			if (local_environment_fog_screen_flag)

@@ -23,6 +23,7 @@ other value (and the Classic preset's "off") draws exactly as before.
 
 #include "rt_shadows.h"
 #include "world_ao.h"
+#include "rt_reflections.h"
 #include "world_cascades.h"
 #include "world_proxies.h"
 #include "world_rt.h"
@@ -111,12 +112,30 @@ frame's objects, which the ray-traced scene is made of, alone; found at the
 next frame where the setting came on in play) */
 static int world_ao_scene_found;
 
+/* (port/linux/game/dynamic_lights.c: the enhanced flashlight's shadow,
+traced through the same scene) */
+int dynamic_lights_flashlight_shadows_on(void);
+/* (display.rt_reflections: rt_reflections.c) */
+int rt_reflections_on(void);
+
+/* whether the frame's ray-traced scene is made where this setting is not:
+for display.shadows "ray_traced", the enhanced flashlight's shadow, or
+display.rt_reflections */
+static int world_ao_rt_wanted(void)
+{
+	return rt_shadows_on() || dynamic_lights_flashlight_shadows_on() || rt_reflections_on();
+}
+
+/* the frame's objects were found for it (world_ao_frame_begin), so
+world_ao_rt_frame can make it */
+static unsigned long world_ao_rt_begun_frame;
+
 void world_ao_map_loaded(void)
 {
 	world_ao_scene_found = 0;
 	if (!world_ao_mode())
 	{
-		if (rt_shadows_on())
+		if (world_ao_rt_wanted())
 		{
 			world_scene_map_loaded();
 			world_ao_scene_found = 1;
@@ -132,7 +151,7 @@ void world_ao_bsp_switched(short bsp_index)
 {
 	if (!world_ao_mode())
 	{
-		if (rt_shadows_on())
+		if (world_ao_rt_wanted())
 			world_scene_bsp_switched(bsp_index);
 		return;
 	}
@@ -323,16 +342,18 @@ void world_ao_frame_begin(void)
 	{
 		/* (display.shadows "ray_traced": the frame's objects, for the
 		ray-traced scene) */
-		if (rt_shadows_on())
+		if (world_ao_rt_wanted())
 		{
 			if (!world_ao_scene_found)
 				world_scene_map_loaded();
 			world_ao_scene_found = 1;
 			world_scene_frame_begin();
+			world_ao_rt_begun_frame = world_ao_scene.frame;
 		}
 		return;
 	}
 	world_scene_frame_begin();
+	world_ao_rt_begun_frame = world_ao_scene.frame;
 	/* (not with debug.world_ao_test's made-up field, which the level's
 	would overwrite in the backend's one texture) */
 	test = config_string("debug.world_ao_test");
@@ -621,7 +642,7 @@ void world_ao_window_begin(short local_player_index, short rasterizer_target, fl
 		/* (display.shadows "ray_traced": the frame's ray-traced scene before
 		the pre-pass's end, where the dynamic lights' shadows are traced:
 		dynamic_lights.c, xgpu.h's XGPU_DYNAMIC_LIGHTS_SHADOWED) */
-		if (!(mode & WORLD_AO_RAYS) && rt_shadows_on())
+		if (!(mode & WORLD_AO_RAYS) && world_ao_rt_wanted())
 			world_rt_frame(world_ao_scene.frame);
 		if (world_ao_scene.windows_frame != world_ao_scene.frame)
 		{
@@ -652,6 +673,11 @@ void world_ao_window_begin(short local_player_index, short rasterizer_target, fl
 	if (!world_ao.cells)
 		return;
 	world_ao_grid(world_ao.proxies, world_ao.count, camera_position, world_ao.grid, world_ao.cells);
+	/* (and, in its first vector's unused w, the lightmap's indirect light
+	the occlusion takes: under a sky with an outdoor ambient, where the
+	bake holds the sun's direct light too, up to WORLD_AO_INDIRECT; 0, an
+	interior's bake, all of it: xgpu.h's XGPU_AMBIENT_OCCLUSION_INDIRECT) */
+	world_ao.grid[0][3] = world_proxies_source_sky_outdoor() > 0.0f ? WORLD_AO_INDIRECT : 0.0f;
 	halo_world_ao_window((float const (*)[4])field, (float const (*)[4])parameters,
 		(float const (*)[3][4])world_ao.proxies, (int)world_ao.count, (float const (*)[4])world_ao.grid,
 		(unsigned int const (*)[4])world_ao.cells);
@@ -737,7 +763,7 @@ void world_ao_object_begin(long object_index)
 		if (baked)
 			reference = WORLD_AO_REFERENCE_NO_FIELD;
 		/* (its own instances, which its pixels' rays leave out) */
-		if ((world_ao_mode() & WORLD_AO_RAYS) || rt_shadows_on())
+		if ((world_ao_mode() & WORLD_AO_RAYS) || world_ao_rt_wanted())
 			rays_owner = world_rt_owner(object_index);
 	}
 	halo_world_ao_object(owner, reference, rays_owner);
@@ -746,6 +772,11 @@ void world_ao_object_begin(long object_index)
 void world_ao_rt_frame(void)
 {
 	world_rt_frame(world_ao_scene.frame);
+}
+
+int world_ao_rt_scene_ready(void)
+{
+	return world_ao_scene_found && world_ao_rt_begun_frame == world_ao_scene.frame;
 }
 
 void world_ao_cards(int cards)

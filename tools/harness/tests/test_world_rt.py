@@ -41,7 +41,8 @@ CONTROLS = [
     # the meshes kept past the map's end
     ("\tif (world_rt.sent)\n\t\thalo_world_ao_mesh(0, 0, NULL);", "", "frame"),
     # debug.rt_render_geometry's render mesh made with the switch off
-    ("if (config_boolean(\"debug.rt_render_geometry\"))", "if (1)", "frame"),
+    ("\tif (world_rt.render_geometry)\n\t{\n\t\tif (world_rt.bsps[bsp_index].render)",
+     "\tif (1)\n\t{\n\t\tif (world_rt.bsps[bsp_index].render)", "frame"),
     # ... or in the same frame as the collision mesh (a load waits for it)
     ("\tworld_rt.collision_count = count;\n",
      "\tworld_rt.collision_count = count;\n\tif (world_rt.render_due)\n\t\tworld_rt_structure_render();\n", "render"),
@@ -56,8 +57,8 @@ CONTROLS = [
     ("world_rt_transformed(inverses[node_index], mesh.vertices[vertex].position, 1, out->position);", "", "model"),
     ("\tif (facing < 0.0f)\n", "\tif (0)\n", "model"),
     # its collision meshes made beside them
-    ("\tfor (node_index = 0; node_index < entry->node_count && !any; node_index++)",
-     "\tfor (node_index = 0; node_index < entry->node_count; node_index++)", "model"),
+    ("\tif (!any)\n\t\ttriangles = world_rt_collision_meshes(",
+     "\tif (1)\n\t\ttriangles += world_rt_collision_meshes(", "model"),
     # a skinned model split by node (its joints torn), or its pose without its nodes' default inverses, or not
     # into its first node's space, or its instance not naming its pose (the backend refits nothing)
     ("\tif (world_rt_blended(mesh.vertices, mesh.vertex_count))", "\tif (0)", "skin"),

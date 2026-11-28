@@ -24,9 +24,15 @@ void platform_log(const char *format, ...)
 /* debug.rt_render_geometry */
 static int render_on;
 
-int config_boolean(const char *name)
+const char *config_string(const char *name)
 {
-	return !strcmp(name, "debug.rt_render_geometry") && render_on;
+	return !strcmp(name, "debug.rt_render_geometry") && render_on ? "auto" : "off";
+}
+
+/* (the backend's budget: room for all of the fake world's) */
+unsigned long halo_world_rt_budget(void)
+{
+	return 64;
 }
 
 unsigned long long platform_shared_clock_microseconds(void)

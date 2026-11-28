@@ -1633,6 +1633,11 @@ static struct
 	occlusion's sets name (NULL: the stand-in, a 1x1 of every light seen:
 	xgpu_vulkan_light_shadows_set) */
 	struct xgpu_vulkan_image *light_shadows, *light_shadows_stand_in;
+	/* the enhanced flashlight's shadow map (flashlight_shadow_make) */
+	struct xgpu_vulkan_image *flashlight_shadow;
+	/* display.rt_bounce: the bounced light the occlusion's sets name (NULL:
+	the stand-in, a 1x1 of none: xgpu_vulkan_rt_bounce_set) */
+	struct xgpu_vulkan_image *rt_bounce, *rt_bounce_stand_in;
 	uint64_t occlusion_serial, occlusion_world_number;
 	/* the window's display (any thread, atomic: HDR on, its SDR white's
 	and its headroom's bits, and whether they changed since the render
@@ -3892,7 +3897,9 @@ static void timing_mark(VkCommandBuffer main, const struct segment *segment, int
 	else
 	{
 		image = segment->color.image ? segment->color.image : segment->depth.image;
-		snprintf(timing.passes[timing.pass_count].label, TIMING_LABEL, "%s%ux%u%s%s%s", aside ? "aside " : "pass ",
+		/* (a setting's pass named by its owner first, where the passes' owners are kept: HALO_PASS_TIMES) */
+		snprintf(timing.passes[timing.pass_count].label, TIMING_LABEL, "%s%s%s%ux%u%s%s%s",
+			segment->owner ? segment->owner : "", segment->owner ? " " : "", aside ? "aside " : "pass ",
 			segment->area.extent.width, segment->area.extent.height, segment->color.image ? " colour" : "",
 			segment->depth.image ? " depth" : "", image && image->description.samples > 1 ? " msaa" : "");
 		timing.passes[timing.pass_count].width = segment->area.extent.width;
@@ -7597,9 +7604,9 @@ occlusion binds it: the last one, where it is of the same field and
 submission, else one written now */
 static VkDescriptorSet occlusion_set(void)
 {
-	VkDescriptorImageInfo field_image, table_image, scenery_image, objects_image, pixels_image, shadows_image;
+	VkDescriptorImageInfo field_image, table_image, scenery_image, objects_image, pixels_image, shadows_image, bounce_image;
 	VkDescriptorBufferInfo block;
-	VkWriteDescriptorSet writes[8];
+	VkWriteDescriptorSet writes[9];
 	VkWriteDescriptorSetAccelerationStructureKHR scene_write;
 	VkAccelerationStructureKHR scene = VK_NULL_HANDLE;
 	struct xgpu_vulkan_image *field = xgpu_vulkan_world_ao_field_image();
@@ -7608,12 +7615,13 @@ static VkDescriptorSet occlusion_set(void)
 	struct xgpu_vulkan_image *objects = xgpu_vulkan_world_ao_objects_image();
 	struct xgpu_vulkan_image *pixels = xgpu_vulkan_world_ao_pixels_image();
 	struct xgpu_vulkan_image *shadows = vk.light_shadows ? vk.light_shadows : vk.light_shadows_stand_in;
+	struct xgpu_vulkan_image *bounce = vk.rt_bounce ? vk.rt_bounce : vk.rt_bounce_stand_in;
 	uint64_t serial = vk.serial;
 	int index;
 
 	if (!field || !field->sampled || !table || !table->sampled || !scenery || !scenery->sampled ||
 		!objects || !objects->sampled || !pixels || !pixels->sampled || !shadows || !shadows->sampled ||
-		!vk.occlusion_layout)
+		!bounce || !bounce->sampled || !vk.occlusion_layout)
 		return VK_NULL_HANDLE;
 	/* (display.ambient_occlusion "world"'s block in this submission's ring) */
 	if (!xgpu_vulkan_world_ao_block(serial, &block))
@@ -7632,6 +7640,7 @@ static VkDescriptorSet occlusion_set(void)
 	objects->used = vk.serial;
 	pixels->used = vk.serial;
 	shadows->used = vk.serial;
+	bounce->used = vk.serial;
 	if (vk.occlusion_set && vk.occlusion_serial == vk.serial && vk.occlusion_world_number == xgpu_vulkan_world_ao_number())
 		return vk.occlusion_set;
 	vk.occlusion_set = set_allocate(vk.occlusion_layout);
@@ -7653,8 +7662,10 @@ static VkDescriptorSet occlusion_set(void)
 	pixels_image.imageView = pixels->sampled;
 	shadows_image = field_image;
 	shadows_image.imageView = shadows->sampled;
+	bounce_image = field_image;
+	bounce_image.imageView = bounce->sampled;
 	memset(writes, 0, sizeof(writes));
-	for (index = 0; index < 7; index++)
+	for (index = 0; index < 8; index++)
 	{
 		writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 		writes[index].dstSet = vk.occlusion_set;
@@ -7676,20 +7687,22 @@ static VkDescriptorSet occlusion_set(void)
 	writes[5].pImageInfo = &pixels_image;
 	writes[6].dstBinding = XGPU_VULKAN_BINDING_LIGHT_SHADOWS;
 	writes[6].pImageInfo = &shadows_image;
+	writes[7].dstBinding = XGPU_VULKAN_BINDING_RT_BOUNCE;
+	writes[7].pImageInfo = &bounce_image;
 	if (scene)
 	{
 		memset(&scene_write, 0, sizeof(scene_write));
 		scene_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
 		scene_write.accelerationStructureCount = 1;
 		scene_write.pAccelerationStructures = &scene;
-		writes[7].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-		writes[7].pNext = &scene_write;
-		writes[7].dstSet = vk.occlusion_set;
-		writes[7].dstBinding = XGPU_VULKAN_BINDING_WORLD_AO_SCENE;
-		writes[7].descriptorCount = 1;
-		writes[7].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+		writes[8].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		writes[8].pNext = &scene_write;
+		writes[8].dstSet = vk.occlusion_set;
+		writes[8].dstBinding = XGPU_VULKAN_BINDING_WORLD_AO_SCENE;
+		writes[8].descriptorCount = 1;
+		writes[8].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
 	}
-	vkUpdateDescriptorSets(vk.device, scene ? 8 : 7, writes, 0, NULL);
+	vkUpdateDescriptorSets(vk.device, scene ? 9 : 8, writes, 0, NULL);
 	return vk.occlusion_set;
 }
 
@@ -7707,6 +7720,38 @@ void xgpu_vulkan_light_shadows_set(struct xgpu_vulkan_image *image)
 int xgpu_vulkan_light_shadows_bound(const struct xgpu_vulkan_image *image)
 {
 	return image && vk.light_shadows == image;
+}
+
+/* display.rt_bounce: the bounced light the occlusion's sets name from now
+on (xgpu_vulkan_gi.c; NULL: the stand-in, none) */
+void xgpu_vulkan_rt_bounce_set(struct xgpu_vulkan_image *image)
+{
+	if (vk.rt_bounce == image)
+		return;
+	vk.rt_bounce = image;
+	xgpu_vulkan_world_ao_touch();
+}
+
+int xgpu_vulkan_rt_bounce_bound(const struct xgpu_vulkan_image *image)
+{
+	return image && vk.rt_bounce == image;
+}
+
+static int rt_bounce_stand_in_make(void)
+{
+	static const unsigned char none[4] = { 0, 0, 0, 0 };
+	struct xgpu_vulkan_image_description description;
+
+	memset(&description, 0, sizeof(description));
+	description.type = XGPU_VULKAN_IMAGE_2D;
+	description.format = XGPU_VULKAN_FORMAT_RGBA8;
+	description.usage = XGPU_VULKAN_USAGE_SAMPLED;
+	description.width = description.height = description.depth_or_layers = description.levels = 1;
+	vk.rt_bounce_stand_in = xgpu_vulkan_image_create(&description);
+	if (!vk.rt_bounce_stand_in)
+		return 0;
+	xgpu_vulkan_image_upload(vk.rt_bounce_stand_in, 0, 0, 0, 0, 0, 1, 1, 1, none, 4, 4);
+	return 1;
 }
 
 static int light_shadows_stand_in_make(void)
@@ -8518,7 +8563,10 @@ static void draw_body(const struct xgpu_vulkan_draw *draw)
 		/* (and the enhanced dynamic lights' cells, which the draws' set
 		names: no upload of them put aside before this pass) */
 		if (draw->dynamic_lights)
+		{
 			image_use(vk.lights_cells);
+			image_use(vk.flashlight_shadow);
+		}
 		/* (and display.ambient_occlusion "world"'s) */
 		if (draw->ambient_occlusion)
 		{
@@ -8679,7 +8727,11 @@ static void draw_body(const struct xgpu_vulkan_draw *draw)
 	}
 	/* (the lights written after this are written after it: in order) */
 	if (draw->dynamic_lights)
+	{
 		vk.lights_block->used = vk.lights_cells->used = vk.serial;
+		if (vk.flashlight_shadow)
+			vk.flashlight_shadow->used = vk.serial;
+	}
 	sets[0] = vk.draw_set;
 	offsets[0] = (uint32_t)draw->constants.offset;
 	offsets[1] = (uint32_t)draw->uniforms.offset;
@@ -12935,6 +12987,29 @@ static int device_make(const struct xgpu_vulkan_options *options)
 		device.scratch_alignment = structure_properties.minAccelerationStructureScratchOffsetAlignment;
 		device.timestamp_period = vk.capabilities.gpu_timestamps ? vk.properties.limits.timestampPeriod : 0.0f;
 		vk.capabilities.ray_queries = xgpu_vulkan_rt_create(&device);
+		/* (the render geometry's budget by the GPU's class: a discrete
+		card's by its memory, an integrated one's, which shares the
+		system's, smaller; the Steam Deck's class the least) */
+		if (vk.capabilities.ray_queries)
+		{
+			VkDeviceSize local = 0;
+			uint32_t heap;
+			int discrete = vk.properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+
+			for (heap = 0; heap < vk.memory_properties.memoryHeapCount; heap++)
+			{
+				if (vk.memory_properties.memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+					local += vk.memory_properties.memoryHeaps[heap].size;
+			}
+			if (discrete)
+				vk.capabilities.rt_budget = local >= ((VkDeviceSize)12 << 30) ? 512 : local >= ((VkDeviceSize)6 << 30) ?
+					256 : 128;
+			else
+				vk.capabilities.rt_budget = local >= ((VkDeviceSize)8 << 30) ? 256 : local >= ((VkDeviceSize)2 << 30) ?
+					128 : 64;
+			host_logf(HOST_LOG_INFO, "vulkan: the ray-traced scene's budget %d MB (%s, %.1f GB device-local)",
+				vk.capabilities.rt_budget, discrete ? "discrete" : "integrated", (double)local / 1073741824.0);
+		}
 	}
 
 	vk.capabilities.largest_target = vk.properties.limits.maxImageDimension2D;
@@ -13131,7 +13206,7 @@ debug.vulkan_bar_uploads, on by default; off, neither) */
 
 static int layouts_make(void)
 {
-	VkDescriptorSetLayoutBinding draw[5], textures[8];
+	VkDescriptorSetLayoutBinding draw[6], textures[9];
 	VkDescriptorSetLayoutCreateInfo info;
 	VkPipelineLayoutCreateInfo layout;
 	VkDescriptorSetLayout sets[5];
@@ -13161,9 +13236,14 @@ static int layouts_make(void)
 	draw[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 	draw[4].descriptorCount = 1;
 	draw[4].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+	/* (the enhanced flashlight's shadow map: xgpu.h's XGPU_DYNAMIC_LIGHTS_FLASHLIGHT) */
+	draw[5].binding = XGPU_VULKAN_BINDING_FLASHLIGHT_SHADOW;
+	draw[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+	draw[5].descriptorCount = 1;
+	draw[5].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 	memset(&info, 0, sizeof(info));
 	info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-	info.bindingCount = 5;
+	info.bindingCount = 6;
 	info.pBindings = draw;
 	if (!check(vkCreateDescriptorSetLayout(vk.device, &info, NULL, &vk.draw_layout), "vkCreateDescriptorSetLayout"))
 		return 0;
@@ -13242,18 +13322,21 @@ static int layouts_make(void)
 	/* (and display.shadows "ray_traced"'s dynamic lights' shadows' mask) */
 	textures[6] = textures[5];
 	textures[6].binding = XGPU_VULKAN_BINDING_LIGHT_SHADOWS;
+	/* (and display.rt_bounce's bounced light) */
+	textures[7] = textures[5];
+	textures[7].binding = XGPU_VULKAN_BINDING_RT_BOUNCE;
 	info.flags = 0;
-	info.bindingCount = 7;
+	info.bindingCount = 8;
 	/* (and display.ambient_occlusion "ray_traced"'s scene, where the device
 	has ray queries) */
 	if (vk.capabilities.ray_queries)
 	{
-		textures[7].binding = XGPU_VULKAN_BINDING_WORLD_AO_SCENE;
-		textures[7].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-		textures[7].descriptorCount = 1;
-		textures[7].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-		textures[7].pImmutableSamplers = NULL;
-		info.bindingCount = 8;
+		textures[8].binding = XGPU_VULKAN_BINDING_WORLD_AO_SCENE;
+		textures[8].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+		textures[8].descriptorCount = 1;
+		textures[8].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+		textures[8].pImmutableSamplers = NULL;
+		info.bindingCount = 9;
 	}
 	info.pBindings = textures;
 	if (!check(vkCreateDescriptorSetLayout(vk.device, &info, NULL, &vk.occlusion_layout), "vkCreateDescriptorSetLayout"))
@@ -13270,6 +13353,37 @@ static int layouts_make(void)
 	return check(vkCreatePipelineLayout(vk.device, &layout, NULL, &vk.pipeline_layout), "vkCreatePipelineLayout");
 }
 
+/* the enhanced flashlight's shadow map (xgpu.h's XGPU_DYNAMIC_LIGHTS_FLASHLIGHT,
+xgpu_vulkan_light_shadows.c draws it), which the draw set names: made once,
+every texel as far as a half float goes (nothing shadowed until drawn); 1 by
+1 without ray queries, where it is never drawn nor read */
+static int flashlight_shadow_make(void)
+{
+	struct xgpu_vulkan_image_description description;
+	uint32_t size = vk.capabilities.ray_queries ? XGPU_VULKAN_FLASHLIGHT_SHADOW_SIZE : 1, index;
+	/* (not "far": Windows' headers define it away) */
+	uint16_t *texels;
+
+	memset(&description, 0, sizeof(description));
+	description.type = XGPU_VULKAN_IMAGE_2D;
+	description.format = XGPU_VULKAN_FORMAT_RGBA16F;
+	description.usage = XGPU_VULKAN_USAGE_SAMPLED | (vk.capabilities.ray_queries ? XGPU_VULKAN_USAGE_TARGET : 0);
+	description.width = description.height = size;
+	description.depth_or_layers = description.levels = 1;
+	vk.flashlight_shadow = xgpu_vulkan_image_create(&description);
+	texels = malloc((size_t)size * size * 8);
+	if (!vk.flashlight_shadow || !texels)
+	{
+		free(texels);
+		return 0;
+	}
+	for (index = 0; index < size * size * 4; index++)
+		texels[index] = 0x7bffu;
+	xgpu_vulkan_image_upload(vk.flashlight_shadow, 0, 0, 0, 0, 0, size, size, 1, texels, size * 8, size * size * 8);
+	free(texels);
+	return 1;
+}
+
 /* the draw set: the ring's ranges (dynamic offsets) of the constants and
 uniforms, the lights' block and cells, the visibility counters */
 static int draw_set_make(void)
@@ -13278,8 +13392,8 @@ static int draw_set_make(void)
 	VkDescriptorPoolCreateInfo pool;
 	VkDescriptorSetAllocateInfo allocate;
 	VkDescriptorBufferInfo buffers[4];
-	VkDescriptorImageInfo cells;
-	VkWriteDescriptorSet writes[5];
+	VkDescriptorImageInfo cells, flashlight;
+	VkWriteDescriptorSet writes[6];
 	struct xgpu_vulkan_image_description description;
 	int index;
 
@@ -13288,7 +13402,7 @@ static int draw_set_make(void)
 	sizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 	sizes[1].descriptorCount = 1;
 	sizes[2].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-	sizes[2].descriptorCount = 1;
+	sizes[2].descriptorCount = 2;
 	sizes[3].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 	sizes[3].descriptorCount = 1;
 	memset(&pool, 0, sizeof(pool));
@@ -13318,7 +13432,7 @@ static int draw_set_make(void)
 	description.levels = 1;
 	vk.lights_cells = xgpu_vulkan_image_create(&description);
 	vk.lights_cells_uploaded = 0;
-	if (!vk.lights_block || !vk.samples || !vk.lights_cells)
+	if (!vk.lights_block || !vk.samples || !vk.lights_cells || !flashlight_shadow_make())
 		return 0;
 	/* (no world yet: its header's node count 0) */
 	{
@@ -13345,8 +13459,11 @@ static int draw_set_make(void)
 	cells.sampler = vk.stand_in_sampler;
 	cells.imageView = vk.lights_cells->sampled;
 	cells.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+	flashlight.sampler = vk.stand_in_sampler;
+	flashlight.imageView = vk.flashlight_shadow->sampled;
+	flashlight.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 	memset(writes, 0, sizeof(writes));
-	for (index = 0; index < 5; index++)
+	for (index = 0; index < 6; index++)
 	{
 		writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 		writes[index].dstSet = vk.draw_set;
@@ -13362,8 +13479,16 @@ static int draw_set_make(void)
 	writes[3].pImageInfo = &cells;
 	writes[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 	writes[4].pBufferInfo = &buffers[3];
-	vkUpdateDescriptorSets(vk.device, 5, writes, 0, NULL);
+	writes[5].dstBinding = XGPU_VULKAN_BINDING_FLASHLIGHT_SHADOW;
+	writes[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+	writes[5].pImageInfo = &flashlight;
+	vkUpdateDescriptorSets(vk.device, 6, writes, 0, NULL);
 	return 1;
+}
+
+struct xgpu_vulkan_image *xgpu_vulkan_flashlight_shadow_image(void)
+{
+	return vk.flashlight_shadow;
 }
 
 void xgpu_vulkan_dynamic_lights_upload(const void *block, uint32_t size, const void *cells, uint32_t first,
@@ -13454,6 +13579,9 @@ static int stand_ins_make(void)
 		return 0;
 	/* (display.shadows "ray_traced"'s mask of every light seen) */
 	if (!light_shadows_stand_in_make())
+		return 0;
+	/* (display.rt_bounce's none) */
+	if (!rt_bounce_stand_in_make())
 		return 0;
 	(void)sampler;
 	return 1;

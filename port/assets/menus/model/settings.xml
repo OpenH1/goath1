@@ -593,17 +593,18 @@
 			<choice shown="OFF" value="false"/>
 		</row>
 		<section key="section_10" title="LIGHTING"/>
+		<row key="ray_tracing" kind="choice" setting="display.ray_tracing" label="RAY TRACING" crumb="VIDEO › ADVANCED GRAPHICS" when="desktop+ray_queries android+ray_queries">
+			<help>Traces light on the graphics card: soft shadows, shade in corners and under things, real reflections, and plasma light bounced off walls. Auto is On where your card supports it. Off draws the game as before.</help>
+			<choice shown="AUTO" value="auto"/>
+			<choice shown="ON" value="on"/>
+			<choice shown="OFF" value="off"/>
+		</row>
 		<row key="shadow_resolution" kind="choice" setting="display.shadow_resolution" label="SHADOW QUALITY" crumb="VIDEO › ADVANCED GRAPHICS" search="shadows" search_choices="xbox medium high ultra">
 			<help>How sharp the shadows of characters, vehicles and weapons are. Xbox is the original's soft, blocky shadow; each step up is crisper, and costs a little more of the graphics card.</help>
 			<choice shown="XBOX" value="128"/>
 			<choice shown="MEDIUM" value="256"/>
 			<choice shown="HIGH" value="512"/>
 			<choice shown="ULTRA" value="1024"/>
-		</row>
-		<row key="contact_shadows" kind="choice" setting="display.contact_shadows" label="CONTACT SHADOWS" crumb="VIDEO › ADVANCED GRAPHICS" search="shadows" when="desktop+contact_drawn+!vr android+contact_drawn+!vr">
-			<help>Adds fine shadows where characters and vehicles touch the ground and walls. Does nothing where Ray Traced Shadows are on, which already trace them.</help>
-			<choice shown="ON" value="true"/>
-			<choice shown="OFF" value="false"/>
 		</row>
 		<row key="per_pixel_lighting" kind="choice" setting="display.per_pixel_lighting" label="SMOOTH LIGHTING" crumb="VIDEO › ADVANCED GRAPHICS">
 			<help>Lights characters and weapons smoothly, without the flat facets of the Xbox's lighting, at a small cost.</help>
@@ -875,11 +876,16 @@
 			<choice shown="ON" value="true"/>
 			<choice shown="OFF" value="false"/>
 		</row>
-		<section key="section_14" title="RAY TRACING" when="desktop android"/>
+		<section key="section_14" title="SHADOWS" when="desktop android"/>
 		<row key="shadows" kind="choice" setting="display.shadows" label="RAY TRACED SHADOWS" crumb="VIDEO › FRAME RATE &amp; SYNC" search="shadows" when="desktop+ray_queries android+ray_queries">
 			<help>The shadows of characters and vehicles traced by the graphics card from their own shapes, soft at the edges, in the same place and darkness as the game's, which frees the processor's shadow work. Off draws them as the Xbox did.</help>
 			<choice shown="OFF" value="classic"/>
 			<choice shown="ON" value="ray_traced"/>
+		</row>
+		<row key="contact_shadows" kind="choice" setting="display.contact_shadows" label="CONTACT SHADOWS" crumb="VIDEO › FRAME RATE &amp; SYNC" search="shadows" when="desktop+contact_drawn+!vr android+contact_drawn+!vr">
+			<help>Adds fine shadows where characters and vehicles touch the ground and walls. Does nothing where Ray Traced Shadows are on, which already trace them.</help>
+			<choice shown="ON" value="true"/>
+			<choice shown="OFF" value="false"/>
 		</row>
 		<button key="button_defaults" kind="defaults" run="port settings defaults" help="Puts this page's settings back to their defaults."/>
 		<button key="button_ok" kind="ok" run="port settings keep" help="Saves your changes, on this page and every tab, and applies them."/>
@@ -1668,17 +1674,6 @@
 			<choice shown="2X" value="2x"/>
 			<choice shown="3X" value="3x"/>
 		</row>
-		<section key="section_2" title="SCORING"/>
-		<row key="scoring" kind="choice" setting="campaign.scoring" label="SCORING" crumb="INTERFACE › CAMPAIGN">
-			<help>Points for your kills in the campaign, solo, split screen and co-op you host: Tab shows each player's score and the team's, and each level ends with a summary and your best. Online: the host's choice.</help>
-			<choice shown="ON" value="true"/>
-			<choice shown="OFF" value="false"/>
-		</row>
-		<row key="score_popups" kind="choice" setting="display.score_popups" label="SCORE POP-UPS" crumb="INTERFACE › CAMPAIGN">
-			<help>The small points that come up at the right of the screen as you score, such as +150 Triple Kill. Off hides them; Tab still shows the scores.</help>
-			<choice shown="ON" value="true"/>
-			<choice shown="OFF" value="false"/>
-		</row>
 		<button key="button_defaults" kind="defaults" run="port settings defaults" help="Puts this page's settings back to their defaults."/>
 		<button key="button_ok" kind="ok" run="port settings keep" help="Saves your changes, on this page and every tab, and applies them."/>
 		<button key="button_cancel" kind="cancel" run="port settings page cancel" help="Goes back without these changes."/>
@@ -1916,12 +1911,12 @@
 		</row>
 		<section key="section_6" title="IMPORT FROM MCC" when="desktop"/>
 		<row key="mcc_import" kind="choice" setting="display.mcc_import" label="MCC IMPORT" crumb="MODS › MCC PACKAGES" search="mcc" when="desktop">
-			<help>Draws and plays what was imported from your MCC install: sharper weapon, vehicle and Spartan textures and MCC's clearer dialogue. A mod of the same thing wins. Off uses the game's own.</help>
+			<help>Draws and plays what was imported from your MCC install: sharper weapon and vehicle textures and MCC's clearer dialogue. A mod of the same thing wins. Off uses the game's own.</help>
 			<choice shown="ON" value="true"/>
 			<choice shown="OFF" value="false"/>
 		</row>
 		<row key="mcc_import_now" kind="status" label="IMPORT FROM MCC" crumb="MODS › MCC PACKAGES" search="mcc textures voices dialogue" when="desktop" run="port settings mcc import">
-			<help>If you own Halo MCC, builds sharper weapon, vehicle and Spartan textures and clearer English dialogue from your own install. Nothing is downloaded or shared.</help>
+			<help>If you own Halo MCC, builds sharper weapon and vehicle textures and clearer English dialogue from your own install. Nothing is downloaded or shared.</help>
 		</row>
 		<row key="mcc_import_remove" kind="status" label="REMOVE MCC IMPORT" crumb="MODS › MCC PACKAGES" search="mcc" when="desktop" run="port settings mcc import remove">
 			<help>Deletes what was imported from MCC.</help>

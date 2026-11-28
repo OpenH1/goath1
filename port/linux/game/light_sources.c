@@ -122,16 +122,12 @@ struct light_source_object
 	real radius;
 	real_vector3d offset;
 	/* a lit display's: the way its face looks, along the marker's
-	forward, left and up (0 0 0: a lamp, which shines every way); its
-	strength light_sources_display_strength's */
+	forward, left and up (0 0 0: a lamp, which shines every way), and its
+	face's area (square world units): a panel of the light model
+	(xgpu.h), a Lambertian disk as large, its radiance its color */
 	real_vector3d facing;
+	real area;
 };
-
-/* the renderer's falloff of a light of radius r, which the enhanced
-dynamic lights add in linear light (xgpu_spirv.c's dynamic_light_sum, the
-look's default brightness in d3d8_device.c's dynamic_lights_read_settings):
-its color^2.2 times BRIGHTNESS times (1 - (d/r)^4)^2 / (1 + 12 (d/r)^2) */
-#define LIGHT_SOURCES_RENDER_BRIGHTNESS 1.7f
 
 /* an effect's light: its time a flash's, seconds */
 struct light_source_effect
@@ -175,11 +171,11 @@ static struct light_source_object const light_source_objects[] =
 		3.0f, { 0.0f, 0.0f, 1.0f } },
 	/* the assault rifle's ammo counter: a display about 0.009 by 0.019
 	world units (3 by 6 cm), facing back along the gun toward the eye, its
-	light at its foot (where it meets the gun's top, which it lights); it
-	reaches 0.05, its soft core (0.05 / sqrt(12)) about the display's size
-	(light_sources_display_strength) */
+	light at its foot (where it meets the gun's top, which it lights), a
+	panel: its light a^2 / (a^2 + d^2) of its own at d (a disk's of its
+	area, a = 0.0074), a hundredth by 0.08 */
 	{ 'weap', "weapons\\assault rifle\\assault rifle", "primary trigger", _light_source_magazine, NONE,
-		{ 0.35f, 0.80f, 1.00f }, 0.05f, { -0.16f, 0.00f, 0.03f }, { -1.00f, 0.00f, 0.00f } },
+		{ 0.35f, 0.80f, 1.00f }, 0.08f, { -0.16f, 0.00f, 0.03f }, { -1.00f, 0.00f, 0.00f }, 0.009f * 0.019f },
 	/* a flamethrower's fire, as a fire's */
 	{ 'proj', "weapons\\flamethrower\\flame", NULL, _light_source_stream, NONE, { 1.00f, 0.60f, 0.25f }, 4.0f },
 };
@@ -359,19 +355,16 @@ static boolean light_sources_display(
 	return entry->facing.i != 0.0f || entry->facing.j != 0.0f || entry->facing.k != 0.0f;
 }
 
-/* a lit display's strength, a scale of its color (the display's own, as
-drawn): a surface at a lit panel's face sees the panel's own brightness (a
-Lambertian emitter of radiance L lights what touches it by pi L, which
-reflects albedo times L), so the light's peak, at its middle, is the
-display's color: its color^2.2 times BRIGHTNESS there is the color^2.2.
-Not a lamp's: the assault rifle's counter drawn as a lamp of 0.35 world
-units that shines every way lit all the gun cyan, the barrel 2.7 times as
-bright as the corridor's light left it. As its color, in gamma (the game's
-lights' 0 to 1, which the renderer takes to the power 2.2) */
-static real light_sources_display_strength(
+/* HALO_PANEL_LIGHTS_OFF=1 (the lighting referee's daylight control): the lit
+displays' lights left out */
+static boolean light_sources_panels_off(
 	void)
 {
-	return powf(1.0f / LIGHT_SOURCES_RENDER_BRIGHTNESS, 1.0f / 2.2f);
+	static int off = -1;
+
+	if (off < 0)
+		off = getenv("HALO_PANEL_LIGHTS_OFF") && strcmp(getenv("HALO_PANEL_LIGHTS_OFF"), "0") ? 1 : 0;
+	return off != 0;
 }
 
 /* a light kept as a candidate, scored as dynamic_lights_rank scores the
@@ -410,6 +403,7 @@ static struct light_source *light_sources_add(
 	source->key = key;
 	source->baked = FALSE;
 	source->facing.i = source->facing.j = source->facing.k = 0.0f;
+	source->area = 0.0f;
 	source->score = intensity * radius / (distance > radius ? distance : radius);
 	if (dot_product3d(&offset, &render.camera.forward) < -(radius + 0.1f))
 		source->score *= 1.0f / 64.0f;
@@ -654,12 +648,15 @@ static void light_sources_objects(
 				light_sources_stream_add(object->object.owner_object_index, row, &position);
 				continue;
 			}
+			/* (HALO_PANEL_LIGHTS_OFF=1, measuring: no lit display, the
+			light model's panels, which the game has none of; every other
+			light as it is) */
+			if (light_sources_display(entry) && light_sources_panels_off())
+				continue;
 			if (entry->kind == _light_source_magazine)
 				strength = light_sources_held_strength(iterator.index, object);
 			else if (held)
 				continue;
-			if (light_sources_display(entry))
-				strength *= light_sources_display_strength();
 			if (entry->function_index != NONE)
 				strength = render_interpolation_object_function_values(iterator.index)[entry->function_index];
 			if (entry->kind == _light_source_burn)
@@ -730,6 +727,7 @@ static void light_sources_objects(
 							source->facing.i = facing.i / length;
 							source->facing.j = facing.j / length;
 							source->facing.k = facing.k / length;
+							source->area = entry->area;
 						}
 					}
 				}

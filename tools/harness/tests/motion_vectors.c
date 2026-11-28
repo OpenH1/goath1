@@ -71,6 +71,13 @@ int halo_temporal_metalfx_drawn(void)
 	return 0;
 }
 
+/* (lt_lights.c's: the light-transport pass off, so the previous frame's
+registers are kept only with a technique on) */
+boolean lt_lights_sent(void)
+{
+	return FALSE;
+}
+
 /* the front end, as the backend would have it: this frame's registers and
 the frame before's (each this frame's but where set apart) */
 static float registers[192][4], previous[192][4];

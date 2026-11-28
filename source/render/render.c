@@ -94,6 +94,7 @@ symbols in this file:
 #include "panini.h" /* port: port/linux/game/panini.c */
 #include "near_clip.h" /* port: port/linux/game/near_clip.c */
 #include "world_ao.h" /* port: port/linux/game/world_ao.c */
+#include "rt_reflections.h" /* port: port/linux/game/rt_reflections.c */
 #include "motion_vectors.h" /* port: port/linux/game/motion_vectors.c */
 #include "royale_beam.h" /* port: port/linux/game/royale_beam.c */
 #include "royale_fx.h" /* port: port/linux/game/royale_fx.c */
@@ -512,6 +513,10 @@ static void render_window(
 		lightmap pass, which the later passes never read */
 		if (!render_link_pass) /* port: (spartan_link.c) */
 			world_ao_window_begin(local_player_index, rasterizer_target, &render.camera.position.x);
+		/* port: display.rt_reflections: the frame's ray-traced scene, which
+		the shiny surfaces' reflections trace (port/linux/game/rt_reflections.c) */
+		rt_reflections_window(rasterizer_target == _render_target_primary && !rasterizer_camera->mirrored &&
+			!render_link_pass);
 		/* port: ... found once a pixel: the opaque surfaces' inputs to it
 		drawn first, alone (the pre-pass: the same draws as below, their
 		transparent parts, widgets and fog left for below:
