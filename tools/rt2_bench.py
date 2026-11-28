@@ -18,6 +18,19 @@ changed and its frames drawn again by the replay in seconds, with numbers, witho
         picture (lossless PNG) in --out. --watch: again on each saved change of the GLSL or of --settings (VAR=value
         lines: the light pass's HALO_LT_* settings), until Ctrl-C. --repeat 2: unchanged code twice, compared
 
+    python3 tools/rt2_bench.py view cut_share,history,disocclusion --moment a50_shields --build local/my-branch
+        [--region x,y,w,h] [--hold 60 | --count 30] [--warm N] [--set ...]
+        the shortcuts' internals at the moment's frame (the replay's rt_view): the denoiser's temporal stage drawn
+        again from the same inputs (lt/denoise_temporal.frag's PROBE, HALO_LT_DENOISE_PROBE=1), what it decided at
+        each pixel. Pictures (grey = value / --scale, or the 99th percentile; dark purple: not drawn or no value)
+        of any of: found (the history's count found where it is the same surface), cut (the gradients' share cut,
+        changed()), kept (the count after both cuts), count (the count used this frame: the history length),
+        cut_share (1 - kept / found: the history cut), disocclusion, z_factor / z_score (the sample's own cut),
+        bounce_hold, footprint, grad_before / grad_now / grad_change (the stochastic gradient's inputs about the
+        pixel), lit_before / lit_now / lit_change (the deterministic half's), relit, cap, mean_luminance; and each
+        --region's means and the shares of its pixels found, disoccluded, cut by the gradients, by the sample, held
+        by the bounce, moving, relit
+
 What is drawn is the game's frame sequence as recorded: the camera, the objects and the lights moving as they did,
 the light pass's histories (the denoiser's, the radiance cache's, the reservoirs') made by the same frames as in the
 game. By default (--warm -1) every frame from the recording's start is played whole, by a replay of its own: the
@@ -530,9 +543,76 @@ def run(args):
         scratch.cleanup()
 
 
+# ---------- view: the shortcuts' internals
+
+VIEW_SHARES = ("found", "disoccluded", "gradient_cut", "sample_cut", "bounce_hold", "moving", "relit")
+VIEW_MEANS = ("count", "found", "cut_share", "cut", "z_factor", "grad_before", "grad_now", "grad_change", "lit_before",
+              "lit_now", "lit_change", "relit")
+
+
+def view_lines(box, label):
+    mean, share = box["mean"], box["share"]
+
+    def number(value):
+        return "-" if value is None else f"{value:.4g}"
+
+    return [f"{label}: {box['drawn']} of {box['pixels']} px drawn",
+            "    share: " + ", ".join(f"{k} {share[k] * 100:.1f}%" for k in VIEW_SHARES),
+            "    mean:  " + ", ".join(f"{k} {number(mean.get(k))}" for k in VIEW_MEANS)]
+
+
+def view(args):
+    folder = f"{REMOTE}/{name_of(args)}"
+    meta = meta_of(args.host, folder)
+    frame = args.frame if args.frame is not None else meta["frame"]
+    if args.count and not args.hold and args.frame is None:
+        frame = max(0, meta["frame"] - args.count + 1)
+    out = Path(args.out).expanduser()
+    out.mkdir(parents=True, exist_ok=True)
+    regions = [float(v) for r in args.region for v in r.split(",")]
+    shows = args.show or "cut_share,history,disocclusion,cut"
+    request = {"cmd": "rt_view", "view": "denoise", "show": shows, "n": frame, "warm": args.warm, "last": 1,
+               "inline": True, "compress": True, "scale": args.scale}
+    request.update({"hold": args.hold} if args.hold else {"count": args.count})
+    if regions:
+        request["regions"] = regions
+    env = [f"{k}={v}" for k, v in settings_from(args.settings, args.set).items()] + ["HALO_LT_DENOISE_PROBE=1"]
+    started = time.monotonic()
+    service = open_service(args.host, args.build, folder, env)
+    try:
+        if "rt_view" not in service.ask({"cmd": "info"}).get("capabilities", []):
+            raise SystemExit("rt2_bench: this replay has no rt_view (build it from a branch with the views)")
+        reply = service.ask(request)
+    finally:
+        service.close()
+    if not reply.get("ok"):
+        raise SystemExit(f"rt2_bench: {reply.get('error', reply)}")
+    seconds = time.monotonic() - started
+    last = reply["pictures"][-1]["frame"]
+    (out / "view_frame.png").write_bytes(base64.b64decode(reply["pictures"][-1]["png_base64"]))
+    say(f"rt2_bench: the denoiser at frame {last} ({'held ' + str(args.hold) if args.hold else 'as recorded'}; "
+        f"{'exact' if args.warm < 0 and reply.get('exact') else 'warm ' + str(args.warm)}) in {seconds:.1f} s")
+    for picture in reply["view"]["pictures"]:
+        path = out / f"view_{picture['show']}.png"
+        path.write_bytes(base64.b64decode(picture["png_base64"]))
+        say(f"    {picture['show']}: {path} (white = {picture['scale']:.4g})")
+    say(f"    the frame itself: {out / 'view_frame.png'}")
+    for line in view_lines(reply["view"]["whole"], "whole picture"):
+        say(line)
+    for i, box in enumerate(reply["view"]["regions"]):
+        for line in view_lines(box, f"region {i + 1} {','.join(f'{v:g}' for v in box['box'])}"):
+            say(line)
+    if args.json:
+        with open(out / "view.json", "w") as f:
+            json.dump({"frame": last, "view": {k: v for k, v in reply["view"].items() if k != "pictures"},
+                       "seconds": seconds}, f, indent=1)
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("what", choices=["record", "verify", "run"])
+    parser.add_argument("what", choices=["record", "verify", "run", "view"])
+    parser.add_argument("show", nargs="?", help="view: the pictures, a comma between (see above)")
     parser.add_argument("--moment", required=True, choices=list(rt2_clips.MOMENTS), help="tools/rt2_clips.py's")
     parser.add_argument("--build", required=True, help="the build (goat-rig build's ref: a branch, local/<name>)")
     parser.add_argument("--host", default="omarchy", choices=("omarchy", "5900x", *rt2_clips.WINDOWS_HOSTS),
@@ -556,9 +636,10 @@ def main():
     parser.add_argument("--watch", action="store_true", help="run: again on each saved change, until Ctrl-C")
     parser.add_argument("--repeat", type=int, default=1, help="run: unchanged code drawn this many times, compared")
     parser.add_argument("--json", action="store_true", help="run: each version's numbers into OUT/versions.jsonl")
+    parser.add_argument("--scale", type=float, default=0, help="view: white's value (0: the 99th percentile)")
     parser.add_argument("--out", default=str(ROOT / "build" / "rt2_bench"), help="run: the pictures' folder")
     args = parser.parse_args()
-    return {"record": record, "verify": verify, "run": run}[args.what](args)
+    return {"record": record, "verify": verify, "run": run, "view": view}[args.what](args)
 
 
 if __name__ == "__main__":

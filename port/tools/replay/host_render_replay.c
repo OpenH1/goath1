@@ -4037,7 +4037,7 @@ static void rt_view_box_json(struct text *text, const struct host_render_replay_
 				float value = rt_view_value(view, at, field < view->fields ? view->names[field] :
 					rt_view_derived[field - view->fields]);
 
-				if (value == value)
+				if (isfinite(value))
 				{
 					sums[field] += value;
 					counted[field]++;
@@ -4174,12 +4174,14 @@ static void serve_rt_view(struct text *text, const struct request *request)
 				const float *at = &view.values[pixel * view.fields];
 
 				values[pixel] = ((int)at[7] & 1) ? rt_view_value(&view, at, what) : NAN;
-				if (values[pixel] == values[pixel])
+				if (!isfinite(values[pixel]))
+					values[pixel] = NAN;
+				else
 					sorted[valued++] = fabsf(values[pixel]);
 			}
 			if (used <= 0)
 				used = valued ? percentile_of(sorted, valued, 99) : 1.0;
-			if (used <= 0)
+			if (!(used > 0) || !isfinite(used))
 				used = 1.0;
 			for (pixel = 0; pixel < count; pixel++)
 			{
