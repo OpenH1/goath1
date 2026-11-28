@@ -576,6 +576,7 @@ unsigned long halo_gpu_settings_taken(void);
 static BOOL journal_playing;
 
 int lt_lights_pass_on(void); /* port/linux/game/lt_lights.h */
+void lt_lights_update(void);
 
 static int rt_reflections_wanted(void)
 {
@@ -742,13 +743,15 @@ static BOOL world_ao_applies(void)
 }
 
 /* while a map's pipelines are prepared, the world's light as the window's
-draws will have it in play where the setting is on (no window is given
-then: world_ao.c's world_ao_window_begin): the world's for every one, read
-from the pre-pass where it would find the window's once a pixel (its span
-found: the primary view into the back buffer, world_ao_prepass_begin) */
+draws will have it in play wherever its window is given then (no window is
+given while preparing: world_ao.c's world_ao_window_begin, by the same
+world_ao_window_on, so display.ambient_occlusion or the ray-traced lighting
+alike): the world's for every one, read from the pre-pass where it would
+find the window's once a pixel (its span found: the primary view into the
+back buffer, world_ao_prepass_begin) */
 static BOOL world_ao_preparing(void)
 {
-	return world_ao.preparing && !world_ao.failed && world_ao_mode() != 0;
+	return world_ao.preparing && !world_ao.failed && world_ao_window_on();
 }
 
 /* the window's span is one the pre-pass finds once a pixel (its first-person
@@ -7945,6 +7948,9 @@ void halo_gpu_prepare(int new_map)
 	the backend's flag cleared as it begins: world_ao_key) */
 	world_ao.preparing = TRUE;
 	world_ao.twins = FALSE;
+	/* (the backend told whether the light-transport pass is on before it
+	prepares: its shaders' variant, as play draws them) */
+	lt_lights_update();
 	if (device.gl_ready)
 	{
 		xgpu_backend_prepare();

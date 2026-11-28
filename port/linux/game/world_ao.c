@@ -116,6 +116,11 @@ int world_ao_mode(void)
 	return world_ao.mode;
 }
 
+int world_ao_window_on(void)
+{
+	return world_ao_mode() != 0 || lt_lights_pass_on();
+}
+
 /* (display.shadows "ray_traced" where this setting is not: the scene of the
 frame's objects, which the ray-traced scene is made of, alone; found at the
 next frame where the setting came on in play) */
@@ -616,7 +621,7 @@ void world_ao_window_begin(short local_player_index, short rasterizer_target, fl
 	world_ao_key) */
 	/* (the ray-traced lighting reads the pre-pass's surfaces whatever this
 	setting: its window, without the occlusion's shapes or field) */
-	if (!mode && !lt_lights_pass_on())
+	if (!world_ao_window_on())
 		return;
 	if (render_enumerating)
 	{
