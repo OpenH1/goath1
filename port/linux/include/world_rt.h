@@ -279,6 +279,11 @@ long world_rt_source_model_mesh(long definition, struct world_rt_source_mesh *me
 /* a map's texture as the renderer has it now (its header: NULL while it is
 not loaded, which this asks for) */
 void const *world_rt_source_texture(struct world_rt_source_map const *map);
+/* a map's 2D texture's texels (ARGB words) at its first level no larger
+than largest each way, and that level's size: the caller frees them; NULL
+where it cannot be read (world_rt.c's object lamps) */
+unsigned long *world_rt_source_texels(struct world_rt_source_map const *map, unsigned long largest,
+	unsigned long *width, unsigned long *height);
 /* a definition's nodes (at most WORLD_RT_NODES), its bounding sphere in
 its model's space (centre, radius) and whether it is an item (a weapon,
 equipment or garbage); 0 if it has none */

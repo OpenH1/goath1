@@ -38,6 +38,7 @@ nodes. Read only; render-only.
 #include "world_proxies_source.h"
 #include "world_rt.h"
 #include "world_scene.h"
+#include "../src/xgpu_coverage.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -991,6 +992,27 @@ void const *world_rt_source_texture(struct world_rt_source_map const *map)
 	if (!bitmap || bitmap->type != _world_rt_bitmap_type_2d)
 		return NULL;
 	return _texture_cache_bitmap_get_hardware_format(bitmap, FALSE, TRUE);
+}
+
+unsigned long *world_rt_source_texels(struct world_rt_source_map const *map, unsigned long largest,
+	unsigned long *width, unsigned long *height)
+{
+	struct bitmap_group *group;
+	struct bitmap_data const *bitmap;
+	DWORD const *header;
+
+	*width = *height = 0;
+	if (map->bitmap == NONE || map->index < 0 || !tag_index_is_group(map->bitmap, BITMAP_GROUP_TAG) ||
+		!(group = bitmap_group_get(map->bitmap)) || !group->bitmaps.address || map->index >= group->bitmaps.count)
+		return NULL;
+	/* (loaded as a draw loads it, and waited for: dynamic_lights_bounce.c's
+	read of a base map) */
+	header = texture_cache_port_load((unsigned long)map->bitmap, (unsigned long)map->index);
+	bitmap = TAG_BLOCK_GET_ELEMENT(&group->bitmaps, map->index, struct bitmap_data);
+	if (!header || !bitmap || !bitmap->base_address || bitmap->type != _world_rt_bitmap_type_2d)
+		return NULL;
+	return xgpu_texture_texels((unsigned int)header[3], (unsigned int)header[4],
+		(unsigned char const *)bitmap->base_address, largest, width, height);
 }
 
 short world_rt_source_definition(long definition, float sphere[4], int *item)

@@ -53,7 +53,6 @@ const char *config_string(const char *name);
 for this GPU, in MB (0: the backend has none) */
 unsigned long halo_world_rt_budget(void);
 void platform_log(const char *format, ...);
-unsigned long *rt_lights_materials_texels(long bitmap_tag, short bitmap_index, unsigned long *width, unsigned long *height);
 /* (xbox_kernel.c) the monotonic clock */
 unsigned long long platform_shared_clock_microseconds(void);
 
@@ -88,6 +87,8 @@ lamp, and its samples a side */
 #define WORLD_RT_LAMP_K 0.48f
 #define WORLD_RT_LAMP_LEAST 0.02f
 #define WORLD_RT_LAMP_SAMPLES 6
+/* (the maps read at their first level no larger than this each way) */
+#define WORLD_RT_LAMP_TEXELS 128
 
 /* the least volume a mesh is turned by: a closed node's is far more */
 #define WORLD_RT_ORIENT_LEAST 1.0e-6f
@@ -956,7 +957,7 @@ static unsigned long const *world_rt_lamp_bitmap(struct world_rt_source_map cons
 	index = world_rt.lamp_bitmap_count++;
 	world_rt.lamp_bitmaps[index].tag = map->bitmap;
 	world_rt.lamp_bitmaps[index].index = (short)map->index;
-	world_rt.lamp_bitmaps[index].texels = rt_lights_materials_texels(map->bitmap, (short)map->index,
+	world_rt.lamp_bitmaps[index].texels = world_rt_source_texels(map, WORLD_RT_LAMP_TEXELS,
 		&world_rt.lamp_bitmaps[index].width, &world_rt.lamp_bitmaps[index].height);
 	*width = world_rt.lamp_bitmaps[index].width;
 	*height = world_rt.lamp_bitmaps[index].height;
@@ -993,14 +994,12 @@ static void world_rt_lamps_made(struct world_rt_definition *entry, short node, s
 		int i, j, channel, count = 0;
 		struct world_rt_lamp *lamp;
 
-		if (!material->self_illumination || getenv("HALO_WORLD_RT_LAMPS_OFF"))
+		if (!material->self_illumination)
 			continue;
 		mask = world_rt_lamp_bitmap(&material->maps[WORLD_RT_MAP_MULTIPURPOSE], &mask_width, &mask_height);
 		if (!mask || !mask_width || !mask_height)
 			continue;
 		base = world_rt_lamp_bitmap(&material->maps[WORLD_RT_MAP_BASE], &base_width, &base_height);
-		if (getenv("HALO_WORLD_RT_LAMPS_DECODE_ONLY"))
-			continue;
 		for (channel = 0; channel < 3; channel++)
 			colour[channel] = (float)((material->self_illumination >> (8 * channel)) & 0xFF) / 255.0f;
 		for (i = 0; i < 3; i++)
