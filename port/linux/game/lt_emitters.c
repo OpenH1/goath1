@@ -377,6 +377,53 @@ static void lt_emitters_tags(short bsp_index)
 		memcpy(lt_emitters.triangles[lt_emitters.triangle_count], found[index].corners, sizeof(float) * 9);
 		lt_emitters.group_of[lt_emitters.triangle_count++] = lt_emitters.group_count - 1;
 	}
+	/* (the four strongest groups, where they are: for staging a look) */
+	{
+		int shown, group, best;
+		static float group_power[LT_EMITTERS_GROUPS_MAXIMUM], group_middle[LT_EMITTERS_GROUPS_MAXIMUM][3];
+		int used[LT_EMITTERS_GROUPS_MAXIMUM];
+
+		memset(group_power, 0, sizeof(group_power));
+		memset(group_middle, 0, sizeof(group_middle));
+		memset(used, 0, sizeof(used));
+		for (index = 0; index < lt_emitters.triangle_count; index++)
+		{
+			float const *c = lt_emitters.triangles[index], *r = lt_emitters.radiance[lt_emitters.group_of[index]];
+			float e1[3], e2[3], n[3], area;
+			int axis;
+
+			for (axis = 0; axis < 3; axis++)
+			{
+				e1[axis] = c[3 + axis] - c[axis];
+				e2[axis] = c[6 + axis] - c[axis];
+			}
+			n[0] = e1[1] * e2[2] - e1[2] * e2[1];
+			n[1] = e1[2] * e2[0] - e1[0] * e2[2];
+			n[2] = e1[0] * e2[1] - e1[1] * e2[0];
+			area = 0.5f * sqrtf(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+			group_power[lt_emitters.group_of[index]] += area * (0.2126f * r[0] + 0.7152f * r[1] + 0.0722f * r[2]);
+			for (axis = 0; axis < 3; axis++)
+				group_middle[lt_emitters.group_of[index]][axis] += area * (c[axis] + c[3 + axis] + c[6 + axis]) / 3.0f;
+		}
+		for (shown = 0; shown < 4 && shown < lt_emitters.group_count; shown++)
+		{
+			best = -1;
+			for (group = 0; group < lt_emitters.group_count; group++)
+				if (!used[group] && (best < 0 || group_power[group] > group_power[best]))
+					best = group;
+			used[best] = 1;
+			{
+				float const *r = lt_emitters.radiance[best];
+				float luminance = 0.2126f * r[0] + 0.7152f * r[1] + 0.0722f * r[2];
+				float area = luminance > 0.0f ? group_power[best] / luminance : 0.0f;
+
+				platform_log("lt emitters: strong group %d: radiance %.3g %.3g %.3g, area %.3g, power %.3g, at %.1f %.1f %.1f",
+					best, r[0], r[1], r[2], area, group_power[best],
+					area > 0.0f ? group_middle[best][0] / area : 0.0f, area > 0.0f ? group_middle[best][1] / area : 0.0f,
+					area > 0.0f ? group_middle[best][2] / area : 0.0f);
+			}
+		}
+	}
 	platform_log("lt emitters: the rule's glowing surfaces: %ld triangles (%ld materials), %ld kept, %.1f%% of their "
 		"power; total power %.3g", count, mesh.material_count, kept, total > 0.0 ? 100.0 * total_kept / total : 0.0,
 		total);
