@@ -283,6 +283,8 @@ static struct
 	/* the settings (read once): HALO_LT_ONLY, _HEROES, _RESTIR, _SUN,
 	_KIND_SCALE, _DROP */
 	int settings_read, only, heroes_on, restir_on, sun_on, reuse_on, only_ids, emitter_reservoirs_valid;
+	/* (HALO_LT_MASK's, the workbench's light by term: LT_MASK_*) */
+	int mask;
 	uint32_t only_id[LT_ONLY_IDS];
 	float kind_scale[5];
 	int drop_kind;
@@ -458,6 +460,9 @@ VkShaderModule xgpu_vulkan_lt_kernel(const char *source)
 		{ "e1.vert", lt_e1_vertex_spirv, sizeof(lt_e1_vertex_spirv) / sizeof(uint32_t) },
 		{ "denoise_gradient.frag", lt_denoise_gradient_spirv, sizeof(lt_denoise_gradient_spirv) / sizeof(uint32_t) },
 		{ "denoise_temporal.frag", lt_denoise_temporal_spirv, sizeof(lt_denoise_temporal_spirv) / sizeof(uint32_t) },
+		/* (the workbench's view of it: xgpu_vulkan_denoise.c's HALO_LT_DENOISE_PROBE) */
+		{ "denoise_temporal_probe.frag", lt_denoise_temporal_probe_spirv,
+			sizeof(lt_denoise_temporal_probe_spirv) / sizeof(uint32_t) },
 		{ "denoise_atrous.frag", lt_denoise_atrous_spirv, sizeof(lt_denoise_atrous_spirv) / sizeof(uint32_t) },
 		{ "denoise_atrous_pair.frag", lt_denoise_atrous_pair_spirv,
 			sizeof(lt_denoise_atrous_pair_spirv) / sizeof(uint32_t) },
@@ -599,6 +604,17 @@ owner. Its row in the light table is its index in the block, so the cells'
 masks name it; the view's shadowed flashlight keeps E1's own path (its row
 skipped). The suns are the list's directional lights. */
 
+/* HALO_LT_MASK ("emitters,objects", checking: the workbench's light by term,
+tools/rt2_bench.py terms): the level's light sources (the solved lamps) and
+the objects' own lamps left out of the pass and its bounce, by their counts
+in the pass's uniforms; the table's lights are HALO_LT_KIND_SCALE's, the
+flashlight HALO_LT_DROP's */
+enum
+{
+	LT_MASK_EMITTERS = 1,
+	LT_MASK_OBJECTS = 2,
+};
+
 /* HALO_LT_KIND_SCALE's kinds (a sun's "sun", a wide sky light's "fill") */
 static const char *const lt_kind_names[5] = { "point", "spot", "panel", "sun", "fill" };
 
@@ -659,6 +675,11 @@ static void lt_settings(void)
 		if (given)
 			given++;
 	}
+	given = getenv("HALO_LT_MASK");
+	lt.mask = (given && strstr(given, "emitters") ? LT_MASK_EMITTERS : 0) |
+		(given && strstr(given, "objects") ? LT_MASK_OBJECTS : 0);
+	if (lt.mask)
+		host_logf(HOST_LOG_WARN, "vulkan: light transport: mask %d (checking)", lt.mask);
 	given = getenv("HALO_LT_DROP");
 	lt.drop_kind = !given || !*given ? -2 : !strcmp(given, "all") ? 9 : !strcmp(given, "flashlight") ? 8 : -2;
 	/* (id:<hex>: that light alone, by its id's low word) */
@@ -1528,6 +1549,11 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 	/* (the objects' own lamps, in a level lit live: emitter_bases' w their
 count, lt/e1.frag's object_lamp_sample) */
 	params->emitter_bases[3] = (params->lights[2] & LT_LIGHTS_REAL) && !lt.only ? lt_object_lamp_rows(block->grid[0]) : 0;
+	/* (HALO_LT_MASK's, checking) */
+	if (lt.mask & LT_MASK_EMITTERS)
+		params->emitter_counts[3] = 0;
+	if (lt.mask & LT_MASK_OBJECTS)
+		params->emitter_bases[3] = 0;
 	lt.live = real && params->lights[1] > 0;
 }
 

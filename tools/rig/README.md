@@ -154,7 +154,26 @@ python3 tools/rt2_bench.py run ... --warm 120         # faster, the histories co
 Each try is a replay of its own (exact, the same every time): the changed kernels compiled on the Mac, sent to the
 rig, the frames drawn, the last picture to `build/rt2_bench/v<N>.png`. The game's C (`lt_lights.c`) needs a new
 recording; the backend's C (`xgpu_vulkan_lt*.c`) a replay rebuilt (`goat-rig build <ref> linux_replay`). The
-replay's own requests are `rt_set`, `rt_reload` and `rt_frames` (docs/replay_protocol.md).
+replay's own requests are `rt_set`, `rt_reload`, `rt_frames` and `rt_view` (docs/replay_protocol.md).
+
+Triage first: before changing anything, ask the bench which kind of problem it is.
+```sh
+python3 tools/rt2_bench.py record --moment a50_shields --build local/my-branch --setting-off --name a50-classic  # once
+python3 tools/rt2_bench.py triage --moment a50_shields --build local/my-branch --classic a50-classic \
+  --region 560,400,200,80          # per region: ESTIMATOR (realtime vs reference: bias, motion, noise), the terms,
+                                   # the DENOISER's history cut, DATA/LOOK (reference vs classic), FIRST LOOK AT
+python3 tools/rt2_bench.py view cut_share,history,cut,grad_change --region ...   # the denoiser's decisions (9 s)
+python3 tools/rt2_bench.py reference --region ...  # the converged picture, error/bias pictures and numbers
+python3 tools/rt2_bench.py terms --region ...      # sun, sky, lights, flashlight, solved lamps, object lamps, bounce
+```
+An ESTIMATOR answer (realtime off the reference by more than its noise) is the shortcuts': `view` says what the
+denoiser cut, `run --set HALO_LT_REUSE=0` / `HALO_LT_INDIRECT=nocache` which shortcut moves it. A DATA/LOOK answer
+(the reference itself off the classic look) is the lights' data: `terms` says whose light it is (a lamp too dim, a
+light missing). The reference is the same kernels on the same held frame with the shortcuts off (no ReSTIR reuse,
+the bounce traced, no denoiser: its input sample accumulated, 2000 plays after 200, converged when the mean's error
+from 8 batches is under 1%); what stays is the data and the models (the sky, the materials, the lamps' power, one
+bounce from the hits' direct light, the bounce at half resolution, the first-person and forward receivers' paths).
+Everything stays on the rig; the 5900X (after the owner check) accumulates fastest.
 
 `--host bosgame` runs the same three on the Windows VM's RTX 3090: the Windows build and `windows_replay`
 cross-compiled on omarchy, the recording made by `goat-rig @bosgame run` (its own data folder in the VM, the maps and

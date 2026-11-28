@@ -261,6 +261,49 @@ p/100 x count); `regions` (`[x, y, w, h, ...]` in pixels from the top-left): eac
 mean (`std`) and that over its mean. Over a run of moving frames the deviation is the motion's as well as the
 noise's; a hold's is the noise's. No pixels are masked (the bench's moments hide the HUD).
 
+### rt_view: the light pass's internals (the workbench's views)
+
+Where `capabilities` has `"rt_view"`: `rt_frames`'s play and reply, then what the light pass's shortcuts did at the
+last play's frame, or the pass's light summed over the plays.
+
+```json
+{"cmd": "rt_view", "view": "denoise", "show": "cut_share,history", "n": 1360, "count": 1, "warm": -1,
+ "regions": [560, 400, 200, 80], "inline": true}
+{"ok": true, ...rt_frames's..., "exact": true,
+ "view": {"name": "denoise", "show": "cut_share,history", "fields": ["found", "cut", ...],
+          "whole": {"box": [0, 0, 1280, 720], "pixels": 921600, "drawn": 921600,
+                    "mean": {"found": 2.6, "cut": 0.60, ..., "cut_share": 0.63, "disocclusion": 0.001},
+                    "share": {"found": 0.999, "disoccluded": 0.001, "gradient_cut": 0.968, "sample_cut": 0.079,
+                              "bounce_hold": 0.009, "moving": 0.999, "relit": 0.94}},
+          "regions": [{...as whole...}],
+          "pictures": [{"show": "cut_share", "scale": 1, "png_base64": "..."}, ...]}}
+{"cmd": "rt_view", "accumulate": "sample,light", "save": "/abs/folder", "n": 1360, "hold": 2200, "last": 2000}
+{"ok": true, ...rt_frames's..., "exact": true,
+ "accumulated": [{"view": "sample", "plays": 2000, "width": 1280, "height": 720, "batches": [250, ...],
+                  "f32": "/abs/folder/sample.f32"}, ...]}
+```
+
+The backend's views (Vulkan's, `HALO_LT_DENOISE_PROBE=1`: drawn only with it, and the service sets it, a reload,
+where it is not already set, `"exact": false` then, as after `rt_set`; a service started with it is exact):
+
+- `denoise`: the denoiser's diffuse temporal stage drawn again from the same inputs (lt/denoise_temporal.frag built
+  with `PROBE`; the game's kernel is built without it and is unchanged), 16 fields a pixel: `found` (the history's
+  count found where it is the same surface), `cut` (the gradients' share cut, `changed()`), `kept` (the count after
+  both cuts), `count` (the count used this frame), `z_factor` and `z_score` (the pixel's own sample's cut, beyond 3
+  deviations), `bounce_hold` (the bounce's count the history was held to; -1 none), `footprint` (the bilinear
+  weights found), `flags`, `grad_before`/`grad_now` (the stochastic gradient's luminance about the pixel, weighted as
+  `changed()` weights them), `lit_before`/`lit_now` (the deterministic half's), `relit`, `cap`, `mean_luminance`.
+  `show` takes any field or `cut_share` (1 - kept / found), `disocclusion`, `history` (count), `grad_change`,
+  `lit_change` (relative), a comma between; each picture grey = value / `scale` (or the 99th percentile), dark
+  purple where there is no value. `share` is the drawn pixels' share with each flag.
+- `sample`: the diffuse sample the temporal stage took (the bounce folded in; a, the bounce's count). `light`: the
+  denoised diffuse irradiance (the a-trous passes' last).
+
+`"accumulate"` (views, a comma between, at most 4): each one's rgb summed over the measured plays (the last `last`)
+and saved as `save/<view>.f32`, 13 float32 a pixel, rows from the top: the mean rgb, the mean luminance (Rec. 709),
+the luminance's deviation over the plays, and the mean luminance of each of 8 batches of the plays in turn (the
+mean's error, where the plays are correlated, is the batches' spread / sqrt(8)). No `show` with it: no view picture.
+
 ### cost
 
 ```json
