@@ -216,6 +216,12 @@ void world_rt_map_unloaded(void);
 meshes of its own (not the structure's, not an item's box): a ray meets its
 shape, so the light-transport pass's sun shadow is cast by it */
 int world_rt_object_traced(long object_index);
+/* (display.ray_traced_lighting) the last frame's object lamps: each a
+triangle of an object's self-illuminated surfaces where it glows, placed
+with the object (world-space corners, wound to glow toward their normal),
+its radiance (linear, the pass's units) and its object's owner; their
+count */
+long world_rt_lamps(float const (**corners)[9], float const (**radiance)[3], unsigned long const **owners);
 
 /* an object's owner among the instances (its datum index plus one; 0 none,
 -1 an object index), which a pixel of its own leaves out */

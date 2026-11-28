@@ -492,8 +492,9 @@ vec4 bounce_main(ivec2 block, out vec3 p, out vec3 n, out uint owner, out bool f
         // (the hit lit by the level's light sources too, one point and ray: their light bounces, and the cache, which
         // gathers these samples, carries it on to the next bounce: a room lit only through its doors by the next
         // rooms' lamps, a10's cryo deck)
+        // (an object's lamp the ray meets is not added: its light is the hit's direct light, object_lamp_sample's)
         if (hit.attributes)
-            e += hit.glow + hit.albedo * (direct_one(hit.p, hit.n, hit.owner, pixel, 6.0 + 17.0 * float(k), h) +
+            e += hit.albedo * (object_lamp_sample(hit.p, hit.n, hit.n, 1, h, true) + direct_one(hit.p, hit.n, hit.owner, pixel, 6.0 + 17.0 * float(k), h) +
                 cache_lookup(hit.p, hit.n) + (real ? sky_at(hit, pixel, 7.0 + 17.0 * float(k), true) : vec3(0.0)) +
                 emitter_sample(hit.p, hit.n, hit.n, EMITTER_BOUNCE_CANDIDATES, h, hit.owner, true));
         else if (real && !hit.hit)

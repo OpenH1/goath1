@@ -795,6 +795,37 @@ static void lt_dump(int count, int window)
 	fflush(lt.dump);
 }
 
+/* the frame's object lamps (world_rt.c's world_rt_lamps) after the list:
+records of kind XGPU_LT_LIGHT_OBJECT_EMITTER, the frame's whole; the
+count with them */
+static int lt_object_lamps_append(struct xgpu_stream_lt_light *lights, int count, int maximum)
+{
+	float const (*corners)[9];
+	float const (*radiance)[3];
+	unsigned long const *owners;
+	long lamps = world_rt_lamps(&corners, &radiance, &owners), index;
+
+	for (index = 0; index < lamps && count < maximum; index++)
+	{
+		struct xgpu_stream_lt_light *out = &lights[count++];
+
+		memset(out, 0, sizeof(*out));
+		out->id[0] = (unsigned int)index;
+		out->kind = XGPU_LT_LIGHT_OBJECT_EMITTER;
+		out->object = (unsigned int)lamps;
+		out->owner = (unsigned int)owners[index];
+		out->gel_slot = -1;
+		out->gel_tag = -1;
+		memcpy(out->position, corners[index], sizeof(float) * 3);
+		memcpy(out->forward, corners[index] + 3, sizeof(float) * 3);
+		memcpy(out->up, corners[index] + 6, sizeof(float) * 3);
+		memcpy(out->power, radiance[index], sizeof(float) * 3);
+		out->cone_inner = out->cone_outer = -1.0f;
+		out->power_scale = 1.0f;
+	}
+	return count;
+}
+
 /* ---------- public code */
 
 void lt_lights_frame(struct halo_dynamic_light const *lights, unsigned long long const *keys, long const *objects,
@@ -824,8 +855,8 @@ void lt_lights_frame(struct halo_dynamic_light const *lights, unsigned long long
 	lt.frame++;
 	/* (and this frame's share of the level's light sources' triangles, after
 	the lights: not in the dump) */
-	xgpu_backend_lt_lights(lt.lights, lt_emitters_append(lt.lights, written, XGPU_STREAM_LT_LIGHTS_MAXIMUM), window,
-		lt.frame);
+	xgpu_backend_lt_lights(lt.lights, lt_object_lamps_append(lt.lights, lt_emitters_append(lt.lights, written,
+		XGPU_STREAM_LT_LIGHTS_MAXIMUM), XGPU_STREAM_LT_LIGHTS_MAXIMUM), window, lt.frame);
 	lt_dump(written, window);
 }
 

@@ -817,6 +817,22 @@ static DWORD *rtlm_bitmap_decode(long bitmap_tag, short bitmap_index, unsigned l
 	return pixels;
 }
 
+/* a 2D bitmap's first level as ARGB words, for the ray-traced scene's
+object lamps (world_rt.c's world_rt_lamps_made): the caller frees it;
+NULL where it cannot be read or is not 2D */
+DWORD *rt_lights_materials_texels(long bitmap_tag, short bitmap_index, unsigned long *width, unsigned long *height)
+{
+	struct xgpu_texture_description description;
+	DWORD *texels = rtlm_bitmap_decode(bitmap_tag, bitmap_index, width, height, &description);
+
+	if (texels && (description.cube_map || description.depth > 1))
+	{
+		free(texels);
+		return NULL;
+	}
+	return texels;
+}
+
 /* a bitmap written once to the textures folder; its path as the scene
 names it ("../textures/<name>"), or NULL */
 static char const *rtlm_texture(long bitmap_tag, short bitmap_index, int linear)
