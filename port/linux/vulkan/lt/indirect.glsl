@@ -65,7 +65,7 @@
 // the bounce's rays where its history starts again
 #define BOUNCE_FIRST 4
 // lit live (real_sky): the bounce's rays a frame, and where its history starts again
-#define BOUNCE_LIVE 2
+#define BOUNCE_LIVE 4
 #define BOUNCE_LIVE_FIRST 32
 // the roughness up to which a reflection is its mirror ray alone
 #define MIRROR_ROUGHNESS 0.1
