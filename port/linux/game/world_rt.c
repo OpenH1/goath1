@@ -1026,12 +1026,12 @@ gain: xgpu_hdr_boost_emitter at XGPU_HDR_ENERGY_LEVEL toward
 XGPU_HDR_CEILING_ENERGY_VALUE), in place; its hue kept */
 static void world_rt_energy(float rgb[3])
 {
-	float extra[3], most = MAX(rgb[0], MAX(rgb[1], rgb[2])), extra_most, share;
+	float extra[3], most = fmaxf(rgb[0], fmaxf(rgb[1], rgb[2])), extra_most, share;
 	int channel;
 
 	for (channel = 0; channel < 3; channel++)
-		extra[channel] = MAX(rgb[channel], 0.0f) * WORLD_RT_ENERGY_GAIN;
-	extra_most = MAX(extra[0], MAX(extra[1], extra[2]));
+		extra[channel] = fmaxf(rgb[channel], 0.0f) * WORLD_RT_ENERGY_GAIN;
+	extra_most = fmaxf(extra[0], fmaxf(extra[1], extra[2]));
 	if (!(extra_most > 0.0f))
 		return;
 	share = (WORLD_RT_ENERGY_CEILING - most) / extra_most;
