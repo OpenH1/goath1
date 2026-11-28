@@ -95,7 +95,9 @@
 #define EMITTER_ROW 136
 // the objects' own lamps this frame (xgpu_vulkan_lt.c's LT_OBJECT_LAMP_ROW, 4 texels each), pass.emitter_bases.w of them
 #define OBJECT_LAMP_ROW 16128
-#define OBJECT_LAMP_CANDIDATES 4
+// (RIS's candidates: the lamps are drawn by their importance to the view, not to the receiver, so most candidates
+// near a shield are lamps far from it; 16 rather than 4 cut the a50 shield base's frame-to-frame noise by a third)
+#define OBJECT_LAMP_CANDIDATES 16
 #define EMITTER_CELL_GROUPS 32
 #define EMITTER_LEVEL_SHARE 0.1
 // RIS's candidates: the direct light's, a bounce hit's
@@ -605,7 +607,8 @@ float emitter_visible(vec3 p, vec3 n, vec3 q, int receiver)
 }
 
 // ---------- the objects' own lamps (xgpu_vulkan_lt.c's lt_object_lamp_rows): a model's self-illuminated triangles where
-// they glow, placed with the object this frame (a Pelican's bay strips), Lambertian and one-sided toward the winding:
+// they glow, placed with the object this frame (a Pelican's bay strips), Lambertian and one-sided toward the winding
+// (both sides: an additive part drawn from both, a Covenant shield's shell):
 // RIS over candidates drawn by power and area, one shadow ray, every instance counted (its own object's other surfaces
 // shadow a lamp too). The pass's units, as emitter_light's
 
@@ -636,6 +639,9 @@ vec3 lamp_light(vec3 p, vec3 n, vec3 shaded, int lamp, vec2 ab, out vec3 q)
     float d2 = max(dot(to, to), 1.0e-6);
     vec3 l = to * inversesqrt(d2);
     float emitting = dot(normalize(cross(t1.xyz, t2.xyz)), -l), lit = max(dot(shaded, l), 0.0);
+    // (an additive part drawn from both sides glows toward both: t2.w 1)
+    if (t2.w > 0.5)
+        emitting = abs(emitting);
     if (emitting <= 0.0 || dot(n, l) <= 0.0 || lit <= 0.0)
         return vec3(0.0);
     return lamp_texel(4 * lamp + 3).rgb * (lit * emitting / (max(d2, 0.01) * 3.14159265));
@@ -1334,16 +1340,16 @@ void main()
         bool fresh = (pass.control.w & (RESET | GRADIENT)) == RESET || !reproject(p, n, words.w, q);
         lit += sun_real(p, n, shaded, pixel, fresh ? SUN_FIRST : 1);
     }
+    else if (receiver == 0 && pass.lights.y > 0)
+    {
+        bool fresh = (pass.control.w & (RESET | GRADIENT)) == RESET || !reproject(p, n, words.w, q);
+        lit += sun_cmax(n) - sun_share(p, n, pixel, fresh ? SUN_FIRST : 1);
+    }
     // (lit live: the objects' own lamps, a Pelican's bay lit by its strips)
     if ((pass.lights.z & LIGHTS_REAL) != 0 && pass.emitter_bases.w > 0)
     {
         uint h = seed(pixel, 9u);
         lit += object_lamp_sample(p, n, shaded, OBJECT_LAMP_CANDIDATES, h, (pass.control.w & VISIBILITY) != 0);
-    }
-    else if (receiver == 0 && pass.lights.y > 0)
-    {
-        bool fresh = (pass.control.w & (RESET | GRADIENT)) == RESET || !reproject(p, n, words.w, q);
-        lit += sun_cmax(n) - sun_share(p, n, pixel, fresh ? SUN_FIRST : 1);
     }
     // (the history at the same point where it is the same surface; else none, a disocclusion)
     vec3 mean = vec3(0.0);

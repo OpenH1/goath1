@@ -1569,6 +1569,9 @@ enum
 	(xgpu_vulkan_lt_lights.c's xgpu_vulkan_lt_object_lamps) */
 	XGPU_LT_LIGHT_OBJECT_EMITTER,
 };
+/* an XGPU_LT_LIGHT_OBJECT_EMITTER record's flags: an additive part drawn
+from both sides, which glows toward both */
+#define XGPU_LT_LAMP_TWO_SIDED 1u
 enum
 {
 	XGPU_LT_LIGHT_MODELS_ONLY = 1 << 0,
