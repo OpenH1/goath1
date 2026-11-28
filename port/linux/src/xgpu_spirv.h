@@ -505,7 +505,11 @@ a gel's origin apart from the emitter (the flashlight's). */
 #define XGPU_SPIRV_LT_SUN_ROW 128
 #define XGPU_SPIRV_LT_SUNS 8
 #define XGPU_SPIRV_LT_FLASHLIGHT_ROW (XGPU_SPIRV_LT_SUN_ROW + XGPU_SPIRV_LT_SUNS)
-#define XGPU_SPIRV_LT_TABLE_ROWS (XGPU_SPIRV_LT_FLASHLIGHT_ROW + 1)
+/* (then the level's light sources' strongest groups about the eye, as
+panels: xgpu_vulkan_lt.c's lt_lamp_rows) */
+#define XGPU_SPIRV_LT_LAMP_ROW (XGPU_SPIRV_LT_FLASHLIGHT_ROW + 1)
+#define XGPU_SPIRV_LT_LAMPS 4
+#define XGPU_SPIRV_LT_TABLE_ROWS (XGPU_SPIRV_LT_LAMP_ROW + XGPU_SPIRV_LT_LAMPS)
 #define XGPU_SPIRV_LT_KIND_CLASSIC (-1)
 #define XGPU_SPIRV_LT_KIND_FLASHLIGHT (-2)
 

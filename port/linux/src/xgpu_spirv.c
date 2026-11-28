@@ -9959,6 +9959,14 @@ static unsigned int lt_forward_light(struct module *m, struct pixel_state *state
 	lt_forward_row(m, state, &read, constant_int(m, XGPU_SPIRV_LT_FLASHLIGHT_ROW));
 	/* (a level lit live: the sky's light too) */
 	lt_forward_sky(m, state, &read);
+	/* (the level's light sources' strongest groups about the eye, as
+	panels: a level lit live by its lamps) */
+	{
+		int k;
+
+		for (k = 0; k < XGPU_SPIRV_LT_LAMPS; k++)
+			lt_forward_row(m, state, &read, constant_int(m, XGPU_SPIRV_LT_LAMP_ROW + k));
+	}
 	if (read.spec)
 	{
 		int k;
