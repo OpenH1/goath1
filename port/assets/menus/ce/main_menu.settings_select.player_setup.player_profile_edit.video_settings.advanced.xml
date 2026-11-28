@@ -299,7 +299,7 @@
 		<string text="Smooths jagged edges. On a computer SMAA looks as good as MSAA for much less of the graphics card, and an Upscaler (Frame Rate &amp; Sync) can look better still. MSAA is best on phones and in VR."/>
 		<string text="The graphics card that draws the game, from the next start. Auto prefers a separate graphics card over built-in graphics.|Not on Mac or in VR."/>
 		<string text="Keeps floors and walls sharp into the distance, at a small cost. Off looks as the Xbox did: surfaces blur a few steps away."/>
-		<string text="Draws the Assault Rifle's muzzle flash sharper, redrawn from your own maps. Off draws the game's own."/>
+		<string text="Draws the Assault Rifle's muzzle flash and the blood sharper, redrawn from your own maps. Off draws the game's own."/>
 		<string text="How detailed characters and vehicles stay in the distance. Xbox simplifies them as on a TV; Full keeps their detail for your screen; Highest always draws the most. Auto is Full."/>
 		<string text="Draws movement smoothly between the game's 30 updates a second, so that it looks fluid at any frame rate. Off shows each update as it is."/>
 		<string text=""/>
