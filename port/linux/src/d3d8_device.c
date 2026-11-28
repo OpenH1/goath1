@@ -6255,7 +6255,11 @@ static BOOL dynamic_lights_active(void);
 
 static BOOL lights_reach_parted(void)
 {
-	return xgpu_backend_capabilities.draw_bounds && !preparation.active && !journal_recording && dynamic_lights_active();
+	/* (none parted with the ray-traced lighting: every triangle reads its
+	light, which reaches where no dynamic light does: the sun's share, the
+	bounce) */
+	return xgpu_backend_capabilities.draw_bounds && !preparation.active && !journal_recording && dynamic_lights_active() &&
+		!lt_lights_pass_on();
 }
 
 /* the lightmap pass's triangles being drawn are ones no light reaches
@@ -6316,7 +6320,7 @@ static BOOL dynamic_lights_active(void)
 	/* (the setting as it is now: a map's preparation played back from its
 	record before anything else read it) */
 	dynamic_lights_read_settings();
-	return inputs.lights_count > 0 && dynamic_lights.enhanced;
+	return (inputs.lights_count > 0 || lt_lights_pass_on()) && dynamic_lights.enhanced;
 }
 
 /* the glows of the frame's bolts' lights, into the 3D view, after its
