@@ -287,6 +287,7 @@ static const uint32_t record_minimum[XGPU_STREAM_RECORD_TYPES] =
 	[XGPU_STREAM_CONTACT_SHADOWS] = sizeof(struct xgpu_stream_rt_shadows),
 	[XGPU_STREAM_RT_BOUNCE] = sizeof(struct xgpu_stream_rt_bounce),
 	[XGPU_STREAM_LT_LIGHTS] = sizeof(struct xgpu_stream_lt_lights),
+	[XGPU_STREAM_LT_INPUTS] = sizeof(struct xgpu_stream_lt_inputs),
 	[XGPU_STREAM_PANINI] = sizeof(struct xgpu_stream_panini),
 	[XGPU_STREAM_WORLD_AO_WINDOW] = sizeof(struct xgpu_stream_world_ao_window),
 	[XGPU_STREAM_WORLD_AO_FIELD] = sizeof(struct xgpu_stream_world_ao_field),
@@ -876,6 +877,16 @@ static int decode_record(struct host_render_decoder *decoder, const unsigned cha
 				list->count * (uint32_t)sizeof(struct xgpu_stream_lt_light))))
 			return XGPU_STREAM_ERROR_BOUNDS;
 		CALL(lt_lights, list);
+		break;
+	}
+	case XGPU_STREAM_LT_INPUTS:
+	{
+		const struct xgpu_stream_lt_inputs *inputs = (const void *)start;
+
+		if (!inputs->bytes || inputs->bytes > XGPU_STREAM_LT_INPUTS_MOST || inputs->window < 0 || inputs->window > 3 ||
+			!data_inside(decoder, start, size, inputs->inputs, inputs->bytes))
+			return XGPU_STREAM_ERROR_BOUNDS;
+		CALL(lt_inputs, inputs);
 		break;
 	}
 	case XGPU_STREAM_WORLD_AO_PREPASS:

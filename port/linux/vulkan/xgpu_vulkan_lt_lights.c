@@ -86,10 +86,20 @@ static void lt_emitter_take(const struct xgpu_stream_lt_light *light)
 
 void xgpu_vulkan_lt_lights_receive(void *context, const struct xgpu_stream_lt_lights *record)
 {
-	const void *lights = record->count ? host_pointer(record->lights) : NULL;
-	int window = record->window;
-
 	(void)context;
+	xgpu_vulkan_lt_lights_take(record->count ? host_pointer(record->lights) : NULL, record->count, record->window,
+		record->frame);
+}
+
+void xgpu_vulkan_lt_lights_take(const struct xgpu_stream_lt_light *lights, uint32_t count, int window, uint32_t frame)
+{
+	struct
+	{
+		uint32_t count, frame;
+	} list, *record = &list;
+
+	list.count = count;
+	list.frame = frame;
 	/* (window -1: the pass turned off, port/linux/game/lt_lights.c) */
 	if (window == -1)
 	{
