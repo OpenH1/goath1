@@ -1510,7 +1510,10 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.build != 'false' && needs.changes.outputs.ios != 'false' }}
     # The iOS app (port/ios/README.md), built as the macOS one is, debug only
     # and signed ad hoc: the job checks that it builds, and its .ipa is for
-    # sideloading tools to sign again. The release does not publish it yet.
+    # sideloading tools to sign again. The release publishes it as it is,
+    # halo-ios-debug.zip (and its symbols), and waits for this job: an iOS
+    # build that failed or found no runner is carried over from the last
+    # release, never left out.
     runs-on: macos-15
     timeout-minutes: 50
     env:
@@ -1625,7 +1628,10 @@ jobs:
     # DLSS add-on's files, which the Linux x86-64 and Windows builds are
     # pinned to (dlss-pin), are published beside the builds; without a pin,
     # none, and the release goes on.
-    needs: [changes, dlss-pin, linux-x86_64, tests, linux-arm64, android, windows, macos]
+    # (and the iOS app, which it waits for: build-2554 went out without it, a
+    # release that did not wait for the ios job; its result never holds the
+    # release back, "Carry the iOS build over")
+    needs: [changes, dlss-pin, linux-x86_64, tests, linux-arm64, android, windows, macos, ios]
     if: >-
       ${{ !cancelled() && needs.changes.outputs.release == 'true' &&
       needs['linux-x86_64'].result == 'success' && needs.tests.result == 'success' &&
@@ -1770,12 +1776,34 @@ jobs:
           echo "The macOS build is $previous's: GitHub had no macOS runner free for this one." > mac-carried.txt
           echo "::warning::macOS job cancelled: carried $previous's macOS build over"
 
+      # the iOS app (debug, for sideloading) when its job did not succeed: the
+      # last release's, so no release goes out without it (--check-release)
+      - name: Carry the iOS build over
+        if: ${{ needs.ios.result != 'success' }}
+        run: |
+          previous="$(gh release list --limit 20 --json tagName,createdAt \
+            --jq '[.[] | select(.tagName | startswith("build-"))] | sort_by(.createdAt) | reverse | .[0].tagName // ""')"
+          [ -n "$previous" ] || { echo "::error::no iOS build, and no earlier release to carry one over from"; exit 1; }
+          mkdir -p carried-ios
+          gh release download "$previous" --dir carried-ios --pattern halo-ios-debug.zip
+          gh release download "$previous" --dir carried-ios --pattern 'OpenH1-iOS*-symbols.zip' ||
+            echo "::warning::$previous has no iOS symbols to carry over"
+          cp carried-ios/* release/
+          echo "The iOS build is $previous's: this run's iOS job did not succeed (${{ needs.ios.result }})." >> mac-carried.txt
+          echo "::warning::iOS job ${{ needs.ios.result }}: carried $previous's iOS build over"
+
       # a warning for each build without its symbols zip, or with one that
       # holds no guest image (tools/release_names.py): never a reason to
       # hold the release back
       - name: Check the symbols
         continue-on-error: true
         run: python3 tools/release_names.py --check-symbols release
+
+      # every file a release publishes (tools/release_names.py EXPECTED: each
+      # platform's builds, the iOS app, the Windows replay tool, the appcast):
+      # one missing stops the release, rather than publish without it
+      - name: Check every file is there
+        run: python3 tools/release_names.py --check-release release
 
       # SHA256SUMS of every file the release publishes (the symbols zips too), signed with the
       # release key's seed (the OPENH1_RELEASE_KEY secret, 64 hex digits:
