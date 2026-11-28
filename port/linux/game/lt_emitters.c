@@ -12,8 +12,9 @@ and multiplayer), from each shader's own data, no per-level number. Every
 structure surface (opaque, alpha-tested or transparent: Damnation's light
 panels are transparent cards) whose shader has radiosity power (the
 lightmap tool's emitter, the designers' light for the bake) glows with
-radiance power x colour of emitted light / pi (LT_EMITTERS_EXITANCE_TO_
-RADIANCE), toward its normal, a transparent shader's card both ways; the
+radiance power x colour of emitted light x LT_TOOL_K (1 / pi: the tool's
+exitance as radiance; the colour linearized keeping its luminance,
+lt_light_colour.h), toward its normal, a transparent shader's card both ways; the
 strongest LT_EMITTERS_TRIANGLES_MAXIMUM by power when there are more,
 grouped by shader and 12 wu cell. A BSP that has them is lit live
 (lt_lights_real_sky): its lightmap dropped in every cluster.
@@ -44,6 +45,7 @@ built in (checking against the rule).
 
 #include "halo_dynamic_lights.h"
 #include "lt_emitters_assets.h"
+#include "lt_light_colour.h"
 #include "lt_lights.h"
 #include "world_rt.h"
 
@@ -61,14 +63,12 @@ table has room for them: xgpu_vulkan_lt.c's LT_EMITTER_*_MAXIMUM) */
 #define LT_EMITTERS_GROUPS_MAXIMUM 1024
 /* records a frame (of the list's XGPU_STREAM_LT_LIGHTS_MAXIMUM) */
 #define LT_EMITTERS_A_FRAME 192
-/* the one emission rule's constant: a shader's radiosity power x colour of
-emitted light is the lightmap tool's emitted exitance M (light leaving a
-unit of area), and a Lambertian emitter of exitance M has radiance M / pi,
-in the pass's units (a white Lambertian surface lit by radiance L over its
-hemisphere shows L). No fit. Checked against the per-BSP solves
+/* (the one emission rule's constant is lt_light_colour.h's LT_TOOL_K: a
+shader's radiosity power x colour of emitted light is the lightmap tool's
+emitted exitance M, and a Lambertian emitter of exitance M has radiance
+M / pi in the pass's units. Checked against the per-BSP solves
 (port/assets/emitters/*.json, 2429 lamp groups' solved radiance over power
-x colour): median 0.27, power-weighted 0.43, each BSP's 0.15 to 0.6 */
-#define LT_EMITTERS_EXITANCE_TO_RADIANCE 0.31830989f
+x colour): median 0.27, power-weighted 0.43, each BSP's 0.15 to 0.6) */
 /* the shared emission model's class hook (2026-11-28 art decision): ENERGY glows
 (additive and plasma-style transparent shaders: plasma, shields, energy
 fields) take one class factor on both their drawn value and their cast
@@ -248,20 +248,30 @@ static long lt_emitters_cell_of(float const *corners)
 	return key;
 }
 
-/* a material's emitted radiance by the one rule (LT_EMITTERS_EXITANCE_TO_
-RADIANCE): its shader's radiosity power x colour of emitted light, the
-lightmap tool's emitter, over pi; and whether it glows both ways (a
-transparent shader's card) */
+/* a material's emitted radiance by the one rule (LT_TOOL_K): its shader's
+radiosity power x colour of emitted light (linearized keeping its
+luminance, lt_light_colour_tool), the lightmap tool's emitter, over pi; and
+whether it glows both ways (a transparent shader's card) */
 static void lt_emitters_rule(long shader_index, float radiance[3], int *two_sided)
 {
 	struct shader const *shader = shader_index != NONE && tag_index_is_group(shader_index, SHADER_DEFINITION_TAG) ?
 		shader_definition_get(shader_index) : NULL;
 	struct shader_radiosity_properties const *radiosity = shader ? &shader->base.radiosity : NULL;
 	float power = radiosity && radiosity->power > 0.0f && radiosity->power < 1.0e6f ? radiosity->power : 0.0f;
+	int channel;
 
-	radiance[0] = radiosity ? radiosity->color_of_emitted_light.red * power * LT_EMITTERS_EXITANCE_TO_RADIANCE : 0.0f;
-	radiance[1] = radiosity ? radiosity->color_of_emitted_light.green * power * LT_EMITTERS_EXITANCE_TO_RADIANCE : 0.0f;
-	radiance[2] = radiosity ? radiosity->color_of_emitted_light.blue * power * LT_EMITTERS_EXITANCE_TO_RADIANCE : 0.0f;
+	radiance[0] = radiance[1] = radiance[2] = 0.0f;
+	if (radiosity)
+	{
+		float colour[3];
+
+		colour[0] = radiosity->color_of_emitted_light.red;
+		colour[1] = radiosity->color_of_emitted_light.green;
+		colour[2] = radiosity->color_of_emitted_light.blue;
+		lt_light_colour_tool(colour, radiance);
+		for (channel = 0; channel < 3; channel++)
+			radiance[channel] *= power * LT_TOOL_K;
+	}
 	*two_sided = shader && shader->base.type != LT_EMITTERS_SHADER_ENVIRONMENT;
 	/* (the energy class's factor) */
 	if (shader && shader->base.type == LT_EMITTERS_SHADER_TRANSPARENT_PLASMA)

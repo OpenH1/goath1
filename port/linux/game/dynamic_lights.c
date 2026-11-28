@@ -75,6 +75,7 @@ structure's 3D BSP, from which a pixel finds its cluster
 #include "memory/data.h"
 #include "tag_files/tag_files.h"
 #include "objects/object_definitions.h"
+#include "lt_light_colour.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -522,9 +523,11 @@ the ray-traced lighting lights live (lt_lights_real_sky: its lightmap
 dropped) would lose them; so there each becomes a light of the frame (after
 the game's and the own lights, in the room they leave): at the light's
 place along its forward, its cone the tag's (the pass's cone_ramp between
-the falloff and cutoff cosines), its power the radiosity colour x
-intensity (the lightmap tool's units, linear) x DYNAMIC_LIGHTS_BAKED_K
-(lt_lights.c takes the colour to linear: color^2.2 x its kind's k). Its
+the falloff and cutoff cosines), its power the radiosity colour
+(linearized keeping its luminance, lt_light_colour.h) x intensity (the
+lightmap tool's irradiance a unit away on its axis) x LT_TOOL_K, the tool's
+unit as every radiosity source's (lt_lights.c takes the colour to linear,
+color^2.2 x its kind's k, so the colour is sent as that power's root). Its
 reach: where its light on axis falls to DYNAMIC_LIGHTS_BAKED_LEAST. A light
 the game draws (flagged dynamic) is the game's already. Lit with the
 lightmap (the setting off, or a level that keeps its lightmap), none: the
@@ -536,12 +539,11 @@ game makes no datum for (neither dynamic nor with a lens flare) from its
 object's attachment; none in a BSP whose lamps are the per-BSP solve from the bake
 (lt_emitters_fitted, the check), which holds their light already. */
 
-/* the k: the lightmap tool's intensity to the pass's power, a50's
-floodlights' (levels\a50\devices\light_ground's "light ground spot":
-radiosity 1.8 white, cone cosines 0.94 and 0.5) pools on the back walls
-against the classic's lightmap (linear mean over each wall's pool: 0.37
-on the left, 0.55 on the right) */
-#define DYNAMIC_LIGHTS_BAKED_K 0.446f
+/* (the k is the tool's unit, lt_light_colour.h's LT_TOOL_K: checked, not
+fitted, on a50's floodlights (levels\a50\devices\light_ground's "light
+ground spot": radiosity 1.8 white), whose pools on the back walls the old
+fit against the classic's lightmap (0.446 with the colour taken linear
+after it) gave 0.617 of power, the tool's unit 0.573) */
 /* the light on axis (linear irradiance) where a light's reach ends, and the
 reach's bounds (world units) */
 #define DYNAMIC_LIGHTS_BAKED_LEAST 0.0005f
@@ -643,7 +645,8 @@ static boolean dynamic_lights_baked_definition(char const *definition, float *in
 }
 
 /* one baked light as a light of the frame (the a50 rule: colour x
-intensity x DYNAMIC_LIGHTS_BAKED_K, a spot of the tag's cone); the count
+intensity x LT_TOOL_K, the colour linearized keeping its luminance, a
+spot of the tag's cone); the count
 after it */
 static long dynamic_lights_baked_add(long count, real_point3d const *position, real_vector3d const *forward,
 	float intensity, real_rgb_color const *color, float inner, float outer, long object_index,
@@ -654,14 +657,17 @@ static long dynamic_lights_baked_add(long count, real_point3d const *position, r
 	short cluster_count;
 	struct location location;
 	real_vector3d to;
-	float power[3], strongest, reach;
+	float colour[3], power[3], strongest, reach;
 	int channel;
 
 	if (count >= MAXIMUM_LIGHTS_PER_WINDOW)
 		return count;
-	power[0] = color->red * intensity * DYNAMIC_LIGHTS_BAKED_K;
-	power[1] = color->green * intensity * DYNAMIC_LIGHTS_BAKED_K;
-	power[2] = color->blue * intensity * DYNAMIC_LIGHTS_BAKED_K;
+	colour[0] = color->red;
+	colour[1] = color->green;
+	colour[2] = color->blue;
+	lt_light_colour_tool(colour, power);
+	for (channel = 0; channel < 3; channel++)
+		power[channel] *= intensity * LT_TOOL_K;
 	strongest = MAX(power[0], MAX(power[1], power[2]));
 	if (!(strongest > 0.0f))
 		return count;
@@ -683,7 +689,7 @@ static long dynamic_lights_baked_add(long count, real_point3d const *position, r
 	out->radius = reach;
 	/* (lt_lights.c takes the colour to linear and by the spot's k) */
 	for (channel = 0; channel < 3; channel++)
-		out->color[channel] = powf(power[channel] / DYNAMIC_LIGHTS_BAKED_SPOT_K, 1.0f / 2.2f);
+		out->color[channel] = lt_image_encoded(power[channel] / DYNAMIC_LIGHTS_BAKED_SPOT_K);
 	out->axis[0] = forward->i;
 	out->axis[1] = forward->j;
 	out->axis[2] = forward->k;
