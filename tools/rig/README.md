@@ -125,6 +125,21 @@ tools/rig/goat-rig @bosgame run rt --build my-branch --seconds 30 --shots at:12+
   HALO_SHADOWS=ray_traced HALO_AMBIENT_OCCLUSION=ray_traced
 ```
 
+**11. The ray tracing's standard clips** (omarchy; `tools/rt2_clips.py`, run from a Mac checkout): the same staged
+moments played live in each build, side by side, with the menu setting only and the MCC import linked.
+```sh
+python3 tools/rt2_clips.py --list                                   # the moments
+python3 tools/rt2_clips.py --build my-branch --out ~/Desktop/clips  # classic | my-branch with the setting on
+python3 tools/rt2_clips.py --build my-branch --base master --moments c20_flashlight --out DIR   # master | my-branch
+python3 tools/rt2_clips.py --build my-branch --repeat               # played twice, the raw frames compared
+```
+Each moment is a campaign start with cues and a scripted controller on the scenario's clock, the fixed seed and a
+fixed frame time, so no recording goes stale. Staging notes: `debug_camera_set "<x y z yaw pitch roll fov> <seconds>"`
+moves the script's camera over the seconds; the flashlight goes on with
+`unit_set_desired_flashlight_state (unit (list_get (players) 0)) 1` (the script's `flashlight` button toggles it
+every tick it is held); a skipped cutscene (b30's Pelican ride, to about 29 s) is played fast and undrawn, so cues
+in it land late and no frame is drawn there; console paths are relative to the run's data folder.
+
 ## What it does for you
 
 - **build** `<branch|sha|pr/N|local branch>` fetches `~/goat-rig/repo.git` (a bare clone of GitHub's
