@@ -24,6 +24,9 @@ int xgpu_vulkan_lt_lights_window(void);
 /* whether the game has the light-transport pass on (display.ray_traced_lighting):
 a list received since its last window -1 (the pass turned off) */
 int xgpu_vulkan_lt_lights_on(void);
+/* everything received let go, as at the stream's start (a replay played
+from its start again: xgpu_vulkan_lt_shaders_reload); between frames */
+void xgpu_vulkan_lt_lights_reset(void);
 
 /* the level's static light sources (port/linux/game/lt_emitters.c), the set
 the lists last carried whole: each triangle its corners (wound to glow

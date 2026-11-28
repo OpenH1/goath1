@@ -168,6 +168,18 @@ void xgpu_vulkan_lt_lights_receive(void *context, const struct xgpu_stream_lt_li
 	}
 }
 
+void xgpu_vulkan_lt_lights_reset(void)
+{
+	FILE *log = lt_lights.log;
+	int log_read = lt_lights.log_read;
+
+	/* (as at the stream's start: no list received, the pass off until one
+	comes, no light sources' set, no lamps; the log kept open) */
+	memset(&lt_lights, 0, sizeof(lt_lights));
+	lt_lights.log = log;
+	lt_lights.log_read = log_read;
+}
+
 const struct xgpu_stream_lt_light *xgpu_vulkan_lt_lights(int window, int *count, uint32_t *frame)
 {
 	if (window < 0 || window > 3 || !lt_lights.counts[window])

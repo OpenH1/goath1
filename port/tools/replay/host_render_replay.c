@@ -3203,6 +3203,8 @@ static void serve_info(struct text *text)
 		TEXT(text, ",\"rt_frames\"");
 	if (platform->view_read && platform->read_target)
 		TEXT(text, ",\"rt_view\"");
+	if (platform->lt_checkpoint && platform->read_target)
+		TEXT(text, ",\"rt_checkpoint\"");
 	TEXT(text, "]");
 	/* (the kinds of the driver's calls cost's "cpu" counts, if any) */
 	if (platform->calls_watch && platform->call_kinds && platform->call_kinds <= CPU_KINDS_MOST)
@@ -3836,6 +3838,86 @@ static void rt_measure_json(struct text *text, const struct rt_measure *measure,
 
 /* (rt_view's accumulation: called after each measured play, k of plays, with the measured plays' first) */
 static void (*rt_frames_each)(uint32_t k, uint32_t first, uint32_t plays);
+/* the light pass's checkpoint (rt_checkpoint): the frame it was kept at
+the end of (UINT32_MAX: none) */
+static uint32_t checkpoint_frame = UINT32_MAX;
+
+/* the recording played from its start to frame "after"'s start, every frame
+up to it without its GPU work (play_to_skipping), and the light pass's state
+at that point put back from the checkpoint (kept at the end of the frame
+before): the frames from there are then drawn as the play that kept it
+drew them. NULL, or why not */
+static const char *checkpoint_play_to(uint32_t after)
+{
+	uint32_t index;
+
+	play_again();
+	for (index = 0; index < RECENT; index++)
+		recent[index].frame = UINT32_MAX;
+	play_to_skipping(recording.frames[after].first, recording.frames[after].first);
+	sync_all();
+	platform->lt_checkpoint(2);
+	play_inexact = 0;
+	return NULL;
+}
+
+/* {"cmd":"rt_checkpoint","n":F}: the recording played from its start, every
+frame whole (the game's), to frame F, and the light pass's whole state kept
+at its end (its images, its bounce's and denoiser's, the pre-pass's
+occlusion's; their CPU histories): an rt_frames with "checkpoint" then plays
+from there. {"cmd":"rt_checkpoint","drop":true} lets it go */
+static void serve_rt_checkpoint(struct text *text, const struct request *request)
+{
+	double number, started = seconds_now();
+	const char *error;
+	uint32_t n;
+	int state;
+
+	if (!platform->lt_checkpoint)
+	{
+		reply_error(text, "this backend has no light pass to keep");
+		return;
+	}
+	if (request_true(request, "drop"))
+	{
+		platform->lt_checkpoint(3);
+		checkpoint_frame = UINT32_MAX;
+		/* (done at the next frame's pre-pass: played from the start) */
+		play_inexact = 1;
+		TEXT(text, "{\"ok\":true}");
+		return;
+	}
+	if (!request_number(request, "n", &number) || number < 0 || number + 1 >= recording.frame_count)
+	{
+		reply_error(text, "no frame (n), or the recording's last");
+		return;
+	}
+	n = (uint32_t)number;
+	seek_whole = UINT32_MAX;
+	play_inexact = 1;
+	error = frame_play_as(n, 0, 0, 1);
+	seek_whole = SEEK_WHOLE_FRAMES;
+	if (error)
+	{
+		reply_error(text, error);
+		return;
+	}
+	/* (kept at the next frame's pre-pass: that frame's records played) */
+	platform->lt_checkpoint(1);
+	play_to(recording.frames[n + 1].end);
+	sync_all();
+	play_inexact = 1;
+	state = platform->lt_checkpoint(0);
+	if (state != 1)
+	{
+		platform->lt_checkpoint(3);
+		checkpoint_frame = UINT32_MAX;
+		reply_error(text, (state & 2) ? "frame n + 1 has no light pass to keep it at" : "the checkpoint was not kept");
+		return;
+	}
+	checkpoint_frame = n;
+	text_printf(text, "{\"ok\":true,\"n\":%u,\"ms\":%.1f}", n, (seconds_now() - started) * 1000.0);
+}
 
 /* {"cmd":"rt_frames","n":N,"count":30,"warm":8,"last":20,"regions":[x,y,w,h,...],"dir":"<folder>"} and, held,
 {"cmd":"rt_frames","n":N,"hold":120,...}: the frames n to n+count-1 played exactly, as recorded (the world, the
@@ -3884,6 +3966,26 @@ static void serve_rt_frames(struct text *text, const struct request *request)
 	hold.active = 0;
 	/* (always from the start: the histories the game's, whatever was played before) */
 	play_inexact = 1;
+	/* ("checkpoint": the frames before the checkpoint's end without their GPU work, the light pass's state put
+	back there, the frames after it whole: rt_checkpoint) */
+	if (request_true(request, "checkpoint"))
+	{
+		if (checkpoint_frame == UINT32_MAX || !platform->lt_checkpoint || !(platform->lt_checkpoint(0) & 1))
+		{
+			reply_error(text, "no checkpoint (rt_checkpoint first)");
+			seek_whole = SEEK_WHOLE_FRAMES;
+			return;
+		}
+		if (n <= checkpoint_frame)
+		{
+			reply_error(text, "n must be after the checkpoint's frame");
+			seek_whole = SEEK_WHOLE_FRAMES;
+			return;
+		}
+		checkpoint_play_to(checkpoint_frame + 1);
+		seek_whole = UINT32_MAX;
+		warm = (double)(n - checkpoint_frame - 1);
+	}
 	text_printf(text, "{\"ok\":true,\"n\":%u,\"mode\":\"%s\",\"plays\":%u,\"warm\":%d", n, held ? "hold" : "frames",
 		plays, warm < 0 ? -1 : (int)warm);
 	TEXT(text, ",\"pictures\":[");
@@ -3952,6 +4054,17 @@ static void serve_rt_frames(struct text *text, const struct request *request)
 	seek_whole = SEEK_WHOLE_FRAMES;
 	if (held)
 		play_inexact = 1;
+	if (request_true(request, "checkpoint"))
+	{
+		/* (the frames after it are not the recording's own play: the next frame asked for is played from the
+		start) */
+		play_inexact = 1;
+		if (!error && (platform->lt_checkpoint(0) & 2))
+		{
+			platform->lt_checkpoint(0);
+			error = "the checkpoint was not put back (no light pass at the frame after it)";
+		}
+	}
 	if (error)
 	{
 		free(measure.sum);
@@ -5467,6 +5580,8 @@ static int serve(void)
 			serve_rt_frames(&reply, request);
 		else if (!strcmp(command, "rt_view"))
 			serve_rt_view(&reply, request);
+		else if (!strcmp(command, "rt_checkpoint"))
+			serve_rt_checkpoint(&reply, request);
 		else if (!strcmp(command, "quit"))
 			break;
 		else

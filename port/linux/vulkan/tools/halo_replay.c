@@ -196,6 +196,13 @@ static int vulkan_view_read(const char *name, struct host_render_replay_view *vi
 	return 1;
 }
 
+static int vulkan_lt_checkpoint(int what)
+{
+	if (what)
+		xgpu_vulkan_lt_checkpoint_ask(what);
+	return (xgpu_vulkan_lt_checkpoint_pending() ? 2 : 0) | (xgpu_vulkan_lt_checkpoint_valid() ? 1 : 0);
+}
+
 static const struct host_render_replay_platform vulkan_platform =
 {
 	.backend = "vulkan",
@@ -220,6 +227,7 @@ static const struct host_render_replay_platform vulkan_platform =
 	/* (debug: the light pass's views, rt_view) */
 	.view_read = vulkan_view_read,
 	.view_setting = vulkan_view_setting,
+	.lt_checkpoint = vulkan_lt_checkpoint,
 };
 
 int main(int argc, char *argv[])

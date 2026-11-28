@@ -224,6 +224,11 @@ struct host_render_replay_platform
 	the backend has no such view */
 	int (*view_read)(const char *name, struct host_render_replay_view *view);
 	const char *(*view_setting)(const char *name);
+	/* Debug (NULL: none): the light pass's checkpoint (the service's
+	rt_checkpoint): what 1 keeps its state, 2 puts it back, 3 lets it go, at
+	the next frame's pre-pass; 0 asks nothing. Returns whether one is still
+	asked (2) and whether one is kept (1) */
+	int (*lt_checkpoint)(int what);
 };
 
 int host_render_replay_main(int argc, char *argv[], const struct host_render_replay_platform *platform);

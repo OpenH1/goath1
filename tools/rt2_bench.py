@@ -11,7 +11,8 @@ changed and its frames drawn again by the replay in seconds, with numbers, witho
         frame before played whole; the same frame by two replays (determinism); and how far a faster try strays
         (--converge: only so many frames before played whole, against the exact frame)
     python3 tools/rt2_bench.py run --moment a50_shields --build local/my-branch [--hold 60 | --count 30]
-        [--warm N] [--set HALO_LT_SUN=0] [--settings FILE] [--region x,y,w,h] [--watch] [--repeat 2] [--out DIR]
+        [--checkpoint K | --exact | --warm N] [--set HALO_LT_SUN=0] [--settings FILE] [--region x,y,w,h] [--watch]
+        [--repeat 2] [--out DIR]
         the workbench: the light pass's kernels compiled here from port/linux/vulkan/lt (only those whose source
         changed: tools/vulkan_lt_shaders.py's compiler), sent to the rig, and the moment's frames drawn by the
         build's replay with them (HALO_LT_SHADER_DIR) and the settings; each version's numbers and its last
@@ -43,15 +44,21 @@ changed and its frames drawn again by the replay in seconds, with numbers, witho
 
 What is drawn is the game's frame sequence as recorded: the camera, the objects and the lights moving as they did,
 the light pass's histories (the denoiser's, the radiance cache's, the reservoirs') made by the same frames as in the
-game. By default (--warm -1) every frame from the recording's start is played whole, by a replay of its own: the
-game's frames bit for bit (verify), about 32 s for a50_shields' 1360 frames on omarchy, nearly all of it the light
-pass's GPU time on the frames before. --warm N plays only the N frames before whole (the rest without their GPU work:
-faster, but the histories start cold there; verify --converge measures its error). --hold instead holds the moment's
+game. The light pass's state comes from an exact play kept at a checkpoint (below); --exact plays every frame from
+the recording's start whole in a replay of its own (the game's frames bit for bit, about 32 s for a50_shields' 1360
+frames on omarchy); --warm N plays only the N frames before whole (faster, but the histories start cold there;
+verify --converge measures its error). --hold instead holds the moment's
 frame (played exactly first) as though the world stood still while time goes on: the noise and the convergence.
 
-Each try is a replay of its own: within one replay a play from the start again does not yet draw what the first
-play drew (the bounce keeps something from it; with HALO_LT_INDIRECT=0 or the pass off it does), so the replay's
-rt_set/rt_reload (docs/replay_protocol.md) are for exploring, and the numbers come from fresh replays.
+Checkpoints (the default): one replay serves every try. It plays the recording once, exactly, to --checkpoint
+frames before the first measured frame and keeps the light pass's whole state there (rt_checkpoint: its images and
+histories, the bounce's, the denoiser's, the pre-pass's occlusion's). Each try then reloads the kernels and settings
+(rt_reload), plays the frames before the checkpoint without their GPU work, puts the state back, and plays the last
+--checkpoint frames and the measured ones whole with the new code: a couple of seconds, not a full replay. With
+unchanged code a try is the full replay bit for bit (verify checks it); with new code the frames before the
+checkpoint were drawn by the code the run started with, so its effect needs --checkpoint frames to reach the
+histories (verify --change measures how far a try strays by k). --exact: each try a fresh replay with every frame
+whole (the old way, ~35 s); --warm N: a fresh replay, the N frames before whole and the histories cold.
 
 The numbers are tools/rt2_stability.py's measures on the presented picture's sRGB decoded to linear light (Rec. 709
 luminance): the mean, the colour's means, the temporal standard deviation of each pixel over the last --last plays
@@ -95,6 +102,10 @@ REMOTE = "goat-rig/rt2-bench"  # (under the rig's $HOME)
 SIZE = rt2_clips.SIZE
 SHOT_EVERY = 20
 WINDOWS_BUILDS = "goat-rig/builds"  # (bosgame: the replays in the VM, under its home)
+# run's default --checkpoint: the frames played whole with the new code before the measured ones. verify --change
+# HALO_LT_DENOISE_CAP=16 (a50_shields, 5900X): 8.6% of pixels off at 20, 1.7% (at most 4 of 255) at 60, then about
+# 0.8% (at most 3) from 100 on, the reservoirs' noise; warm 120's cold start strays 16% (at most 11)
+CHECKPOINT_FRAMES = 60
 
 
 def say(*words):
@@ -350,8 +361,97 @@ def verify(args):
         same, lines = compare(args.host, replay, f"{folder}/verify/warm{warm}", f"{folder}/verify/exact1")
         say(f"rt2_bench: warm {warm} ({seconds:.1f} s): {lines[0] if lines else '?'}; mean "
             f"{reply['stats']['mean']:.6f}")
+    # 4. checkpoints: restore plus k frames, unchanged code, against the exact frame (bit for bit)
+    if args.checkpoint > 0:
+        ok &= checkpoint_check(args, folder, replay, last)
+    # 5. a change's reach from a checkpoint: the change's exact frames against a try's, by the frames since it
+    if args.change:
+        checkpoint_reach(args, folder, replay, last)
     say("rt2_bench: VERIFY " + ("PASS: the replay draws the game's frames, the same every time" if ok else "FAIL"))
     return 0 if ok else 1
+
+
+def frames_named(host, folder):
+    """rt_<n>_<k>.png in a rig folder renamed frame_<n+k-1>.png (halo_replay --compare's names)"""
+    moves = []
+    for name in ssh(host, f"ls ~/{folder}").split():
+        match = re.match(r"rt_(\d+)_(\d+)\.png$", name)
+        if match:
+            moves.append(f"mv {name} frame_{int(match.group(1)) + int(match.group(2)) - 1:05d}.png")
+    if moves:
+        ssh(host, f"cd ~/{folder} && " + " && ".join(moves))
+
+
+def checkpoint_check(args, folder, replay, last):
+    """the moment's frame from a checkpoint args.checkpoint frames before it, unchanged code, in the replay that
+    kept it, after a play of the whole: the same picture as the exact one, bit for bit"""
+    k = args.checkpoint
+    out = f"{folder}/verify/checkpoint"
+    ssh(args.host, f"mkdir -p ~/{out}")
+    service = open_service(args.host, args.build, folder)
+    try:
+        if "rt_checkpoint" not in service.ask({"cmd": "info"}).get("capabilities", []):
+            say("rt2_bench: CHECKPOINT: this replay has none")
+            return False
+        started = time.monotonic()
+        service.ask({"cmd": "rt_checkpoint", "n": last - k - 1})
+        kept = time.monotonic() - started
+        seconds = []
+        for _ in range(2):
+            started = time.monotonic()
+            service.ask({"cmd": "rt_frames", "n": last, "count": 1, "last": 1, "checkpoint": True,
+                         "dir": f"{service_home(args.host)}/{out}"})
+            seconds.append(time.monotonic() - started)
+    finally:
+        service.close()
+    frames_named(args.host, out)
+    same, lines = compare(args.host, replay, out, f"{folder}/verify/exact1")
+    say(f"rt2_bench: CHECKPOINT (frame {last} from a checkpoint {k} frames before, unchanged code, against the "
+        f"exact frame): {lines[-1] if lines else '?'}; kept in {kept:.1f} s, tries "
+        f"{', '.join(f'{x:.1f}' for x in seconds)} s")
+    return same
+
+
+def checkpoint_reach(args, folder, replay, last):
+    """how far a try from a checkpoint strays with a change (args.change: VAR=value settings, the stand-in for an
+    edit): the change's exact frames (a fresh replay, every frame whole) against a try's from a checkpoint kept with
+    the build's code --span frames before, frame by frame: the error by the frames since the checkpoint"""
+    span = args.span
+    first = last - span + 1
+    change = " ".join(args.change)
+    out = f"{folder}/verify/reach"
+    ssh(args.host, f"rm -rf ~/{out} && mkdir -p ~/{out}/exact ~/{out}/try")
+    home = service_home(args.host)
+    every = max(1, span // 24)
+    started = time.monotonic()
+    draw_once(args.host, args.build, folder, {"cmd": "rt_frames", "n": first, "count": span, "warm": -1,
+                                               "last": 1, "every": every}, env=args.change, out=f"{out}/exact")
+    exact_seconds = time.monotonic() - started
+    service = open_service(args.host, args.build, folder)
+    try:
+        service.ask({"cmd": "rt_checkpoint", "n": first - 1})
+        service.ask({"cmd": "rt_reload", "env": change})
+        started = time.monotonic()
+        service.ask({"cmd": "rt_frames", "n": first, "count": span, "last": 1, "every": every, "checkpoint": True,
+                     "dir": f"{home}/{out}/try"})
+        try_seconds = time.monotonic() - started
+    finally:
+        service.close()
+    for side in ("exact", "try"):
+        frames_named(args.host, f"{out}/{side}")
+    _, lines = compare(args.host, replay, f"{out}/try", f"{out}/exact")
+    # (the change's own effect: its exact frame against the build's, so that a change that does nothing shows)
+    ssh(args.host, f"mkdir -p ~/{out}/own && cp ~/{out}/exact/frame_{last:05d}.png ~/{out}/own/")
+    _, own = compare(args.host, replay, f"{out}/own", f"{folder}/verify/exact1")
+    say(f"rt2_bench: REACH of {change} from a checkpoint (the build's code before it): the try against the "
+        f"change's exact frames (exact {exact_seconds:.1f} s, the try's {span} frames {try_seconds:.1f} s); the "
+        f"change itself at frame {last}: {own[0] if own else '?'}")
+    for line in lines:
+        match = re.match(r"frame_(\d+)\.png: \w+ \((\d+) of (\d+) pixels differ, by at most (\d+)\)", line)
+        if match:
+            n, differ, pixels, most = (int(g) for g in match.groups())
+            say(f"    k {n - first + 1:4d} (frame {n}): {100.0 * differ / pixels:6.2f}% of pixels differ, "
+                f"at most {most}")
 
 
 _homes = {}
@@ -463,8 +563,13 @@ def run(args):
         raise SystemExit("rt2_bench: --region x,y,w,h")
     remote = f"{REMOTE}/spv/{os.getpid()}"
     home = service_home(args.host)
-    request = {"cmd": "rt_frames", "n": frame, "warm": args.warm, "last": args.last, "inline": True,
+    checkpointed = args.warm is None and not args.exact
+    warm = -1 if args.exact or args.warm is None else args.warm
+    request = {"cmd": "rt_frames", "n": frame, "warm": warm, "last": args.last, "inline": True,
                "compress": True}
+    if checkpointed:
+        request["checkpoint"] = True
+        request.pop("warm")
     request.update({"hold": args.hold} if args.hold else {"count": args.count})
     if regions:
         request["regions"] = regions
@@ -472,9 +577,11 @@ def run(args):
         request["reset"] = True
     what = (f"frame {frame} held {args.hold} plays" if args.hold else
             f"frames {frame}-{frame + args.count - 1} as recorded")
-    say(f"rt2_bench: {args.moment} ({meta['build']} {meta['sha']}): {what}; "
-        f"{'every frame before played whole (exact)' if args.warm < 0 else f'the {args.warm} before played whole'}; "
-        f"the last {args.last} measured; replay {args.build}")
+    how = (f"from a checkpoint {args.checkpoint} frames before (one replay for every try)" if checkpointed else
+           "every frame before played whole (exact, a replay a try)" if warm < 0 else
+           f"the {warm} before played whole (a replay a try)")
+    say(f"rt2_bench: {args.moment} ({meta['build']} {meta['sha']}): {what}; {how}; the last {args.last} measured; "
+        f"replay {args.build}")
     scratch = tempfile.TemporaryDirectory()
     kernels = Kernels(scratch.name)
     base = None
@@ -487,8 +594,22 @@ def run(args):
             paths.append(Path(args.settings))
         return tuple(sorted((str(p), p.stat().st_mtime_ns) for p in paths if p.exists()))
 
+    service = None
+    applied = {}
     try:
         ssh(args.host, f"mkdir -p ~/{remote}/k")
+        if checkpointed:
+            checkpoint_at = frame - args.checkpoint - 1
+            if checkpoint_at < 0:
+                raise SystemExit("rt2_bench: --checkpoint reaches before the recording's start")
+            t0 = time.monotonic()
+            service = open_service(args.host, args.build, folder)
+            if "rt_checkpoint" not in service.ask({"cmd": "info"}).get("capabilities", []):
+                raise SystemExit("rt2_bench: this replay has no rt_checkpoint (build it from a branch with it), "
+                                 "or run with --exact")
+            service.ask({"cmd": "rt_checkpoint", "n": checkpoint_at})
+            say(f"rt2_bench: the checkpoint kept at frame {checkpoint_at} (an exact play, the build's own kernels) "
+                f"in {time.monotonic() - t0:.1f} s")
         seen = None
         while True:
             now = stamp()
@@ -522,8 +643,19 @@ def run(args):
                                        capture_output=True)
                     env.append(f"HALO_LT_SHADER_DIR={home}/{remote}/k")
                 t1 = time.monotonic()
-                # (each try a replay of its own: exact, and the same every time)
-                reply = draw_once(args.host, args.build, folder, request, env)
+                if service:
+                    # (the kernels and settings read again by the one replay, its frames from the checkpoint)
+                    given = dict(settings)
+                    words = [f"{k}={v}" for k, v in given.items()] + [f"-{k}" for k in applied if k not in given]
+                    if not args.built_in:
+                        words.append(f"HALO_LT_SHADER_DIR={home}/{remote}/k")
+                    service.ask({"cmd": "rt_reload", "env": " ".join(words),
+                                 **({} if args.built_in else {"dir": f"{home}/{remote}/k"})})
+                    applied = given
+                    reply = service.ask(request)
+                else:
+                    # (each try a replay of its own: exact, and the same every time)
+                    reply = draw_once(args.host, args.build, folder, request, env)
                 t_render = time.monotonic() - t1
                 picture = out / f"v{version}.png"
                 data = base64.b64decode(reply["pictures"][-1]["png_base64"])
@@ -555,6 +687,8 @@ def run(args):
     except KeyboardInterrupt:
         return 0
     finally:
+        if service:
+            service.close()
         ssh(args.host, f"rm -rf ~/{remote}", check=False)
         scratch.cleanup()
 
@@ -971,11 +1105,22 @@ def main():
     parser.add_argument("--pictures", type=int, default=3, help="verify: the game's pictures compared (the last)")
     parser.add_argument("--converge", default="30,120,300,600",
                         help="verify: the warms whose frame is compared with the exact one (the fast tries' error)")
+    parser.add_argument("--change", action="append", default=[],
+                        help="verify: VAR=value, a setting standing in for an edit: its reach from a checkpoint, by "
+                             "the frames since (again)")
+    parser.add_argument("--span", type=int, default=240, help="verify --change: the frames after the checkpoint")
     parser.add_argument("--frame", type=int, help="run: the frame (default the moment's, record's)")
     parser.add_argument("--count", type=int, default=30, help="run: the frames played as recorded, to the moment's")
     parser.add_argument("--hold", type=int, default=0, help="run: the moment's frame held this many plays instead")
     parser.add_argument("--reset", action="store_true", help="run --hold: the histories begun again (the scorecard's)")
-    parser.add_argument("--warm", type=int, default=-1, help="run: the frames before played whole (-1, the default: every one, exact; fewer is faster, verify --converge gives its error)")
+    parser.add_argument("--checkpoint", type=int, default=CHECKPOINT_FRAMES,
+                        help="run: the frames played whole with the new code before the measured ones, from the "
+                             f"checkpoint (default {CHECKPOINT_FRAMES}; verify --change gives the error by k)")
+    parser.add_argument("--exact", action="store_true",
+                        help="run: each try a fresh replay, every frame before played whole (no checkpoint)")
+    parser.add_argument("--warm", type=int, default=None,
+                        help="run: each try a fresh replay, only the N frames before played whole (-1: every one, "
+                             "as --exact); verify --converge gives its error")
     parser.add_argument("--last", type=int, default=20, help="run: the plays measured (the last)")
     parser.add_argument("--set", action="append", default=[], help="run: VAR=value, a light pass setting (again); record: the game's environment")
     parser.add_argument("--settings", help="run: a file of VAR=value lines, watched with --watch")

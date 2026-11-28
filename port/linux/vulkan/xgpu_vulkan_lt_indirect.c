@@ -172,6 +172,58 @@ static void indirect_settings(void)
 			indirect.indirect, indirect.only, indirect.cache, indirect.reflections);
 }
 
+int xgpu_vulkan_lt_indirect_images(struct xgpu_vulkan_lt_image *out, int most)
+{
+	struct xgpu_vulkan_lt_image mine[] = { { "bounce", &indirect.bounce }, { "total", &indirect.total },
+		{ "histories0", &indirect.histories[0] }, { "histories1", &indirect.histories[1] },
+		{ "specular_raw", &indirect.specular_raw }, { "coverage0", &indirect.coverage[0] },
+		{ "coverage1", &indirect.coverage[1] }, { "specular_histories0", &indirect.specular_histories[0] },
+		{ "specular_histories1", &indirect.specular_histories[1] }, { "caches0", &indirect.caches[0] },
+		{ "caches1", &indirect.caches[1] }, { "bounce_histories0", &indirect.bounce_histories[0] },
+		{ "bounce_histories1", &indirect.bounce_histories[1] } };
+	int count = 0, index;
+
+	for (index = 0; index < (int)(sizeof(mine) / sizeof(mine[0])) && count < most; index++)
+		out[count++] = mine[index];
+	return count;
+}
+
+/* the bounce's CPU history (what a reload begins again): its turns, its
+count, whether the cache and the bounce's history are had */
+struct indirect_history
+{
+	int current, cache_current, cache_valid, bounce_history_valid;
+	unsigned long frames;
+};
+
+size_t xgpu_vulkan_lt_indirect_history(void *blob, int restore)
+{
+	struct indirect_history *history = blob;
+
+	if (!history)
+		return sizeof(*history);
+	if (restore)
+	{
+		indirect.current = history->current;
+		indirect.cache_current = history->cache_current;
+		indirect.cache_valid = history->cache_valid;
+		indirect.bounce_history_valid = history->bounce_history_valid;
+		indirect.frames = history->frames;
+		/* (this frame's, made again by its draw) */
+		indirect.bounce_history = indirect.specular_light = indirect.final = NULL;
+		indirect.phase = indirect.bounced = 0;
+	}
+	else
+	{
+		history->current = indirect.current;
+		history->cache_current = indirect.cache_current;
+		history->cache_valid = indirect.cache_valid;
+		history->bounce_history_valid = indirect.bounce_history_valid;
+		history->frames = indirect.frames;
+	}
+	return sizeof(*history);
+}
+
 int xgpu_vulkan_lt_indirect_on(void)
 {
 	indirect_settings();
@@ -209,6 +261,8 @@ its start again draws the game's frames, not what the last play left) */
 			}
 			indirect.bounce_history = NULL;
 		}
+		indirect.phase = indirect.bounced = 0;
+		indirect.specular_light = indirect.final = NULL;
 		indirect.generation = generation;
 	}
 	if (indirect.made)
@@ -353,6 +407,12 @@ static void indirect_parameters(const struct xgpu_vulkan_lt_indirect_frame *fram
 				INDIRECT_REFLECTION_THRESHOLD;
 		parameters[2][2] = threshold;
 	}
+}
+
+void xgpu_vulkan_lt_indirect_settle(void)
+{
+	if (xgpu_vulkan_lt_indirect_on())
+		(void)indirect_shaders();
 }
 
 struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_lt_indirect_frame *frame)

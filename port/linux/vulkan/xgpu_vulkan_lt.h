@@ -19,6 +19,7 @@ takes over).
 #define __HALO_LINUX_XGPU_VULKAN_LT_H
 
 #include "xgpu.h"
+#include <stddef.h>
 #include "xgpu_stream.h"
 
 struct xgpu_vulkan_image;
@@ -76,6 +77,38 @@ void xgpu_vulkan_lt_shaders_reload(const char *folder);
 /* the HALO_LT_* settings' generation, raised by each reload: the pass, the
 bounce and the denoiser read their settings again when it changes */
 unsigned xgpu_vulkan_lt_settings_generation(void);
+/* every image of the light pass's that one frame leaves to the next (the
+pass's, its bounce's, its denoiser's; each named, where its pointer is),
+into out (at most most): their count. The replay's rt_state (digests) and
+checkpoints read them */
+struct xgpu_vulkan_lt_image
+{
+	const char *name;
+	struct xgpu_vulkan_image **image;
+};
+#define XGPU_VULKAN_LT_IMAGES_MOST 64
+int xgpu_vulkan_lt_images(struct xgpu_vulkan_lt_image *out, int most);
+int xgpu_vulkan_lt_indirect_images(struct xgpu_vulkan_lt_image *out, int most);
+int xgpu_vulkan_denoise_images(struct xgpu_vulkan_lt_image *out, int most);
+/* the pre-pass's images the pass reads across frames (xgpu_vulkan_stream.c:
+the occlusion's history in turn) */
+int xgpu_vulkan_stream_lt_images(struct xgpu_vulkan_lt_image *out, int most);
+/* the bounce's and the denoiser's CPU histories: into blob (restore 0) or
+from it (restore 1); blob NULL: its size */
+size_t xgpu_vulkan_lt_indirect_history(void *blob, int restore);
+size_t xgpu_vulkan_denoise_history(void *blob, int restore);
+/* a reload's beginning again done now (the kernels and the histories), not
+at the next draw */
+void xgpu_vulkan_lt_indirect_settle(void);
+void xgpu_vulkan_denoise_settle(void);
+/* the replay's checkpoint (rt_checkpoint): what 1 keep, 2 put back, 3 let
+go, at the next frame's pre-pass (any thread, between frames); whether one
+is asked still; whether one is kept */
+void xgpu_vulkan_lt_checkpoint_ask(int what);
+int xgpu_vulkan_lt_checkpoint_pending(void);
+int xgpu_vulkan_lt_checkpoint_valid(void);
+/* (the stream's, at each frame's pre-pass: what was asked done) */
+void xgpu_vulkan_lt_checkpoint_service(void);
 /* debug (HALO_LT_DROP=point|spot|panel|flashlight|all|id:<hex>, the
 per-kind calibration's "off", in any mode): the frame's block of lights (count of them) as it
 goes to the GPU, those of the kind given their colour 0; otherwise

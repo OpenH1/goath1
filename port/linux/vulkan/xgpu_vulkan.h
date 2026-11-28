@@ -438,6 +438,8 @@ tone mapping to the caller (the screenshot key's, on the PNG's thread:
 host_screenshot.c). 1 on success, 0 if it cannot be read, -1 if the image
 is not RGBA16F */
 int xgpu_vulkan_read_halves(struct xgpu_vulkan_image *image, uint32_t layer, uint16_t **halves);
+/* a 2D colour image's bytes' digest (0: none), waiting for the GPU */
+uint64_t xgpu_vulkan_image_digest(struct xgpu_vulkan_image *image);
 /* a layer's first level copied, after the work recorded so far, into a
 buffer of its own without waiting for the GPU (a screenshot's, a Save
 Report's: a 4K display.hdr frame read back and copied held the render
@@ -876,6 +878,9 @@ xgpu_world_rt_pose), which its instances name */
 struct xgpu_world_rt_pose;
 void xgpu_vulkan_rt_poses(const struct xgpu_world_rt_pose *poses, uint32_t count);
 void xgpu_vulkan_rt_textures(const struct xgpu_world_rt_texture *textures, uint32_t count);
+/* the textures' slots' images found again from the next frame, as at the
+stream's start (a replay played from its start again) */
+void xgpu_vulkan_rt_textures_again(void);
 /* the hit set (XGPU_VULKAN_SET_RT_HITS): its layout, which the pipelines'
 layout holds where the device has ray queries, and the set the draws that
 trace bind beside the occlusion's (its hit table and textures as they are
