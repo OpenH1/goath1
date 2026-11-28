@@ -222,7 +222,7 @@ def owner_playing(host):
 # coreutils, ~ for the home) run there too, MSYS handing the native programs Windows paths. The script goes inline
 # as base64 (nothing quoted through PowerShell's native arguments), leaving standard input to the command (the
 # replay's protocol, a tar stream). RT2_BOSGAME_ROUTE replaces the hops, e.g.
-# "paulhontz@pauls-macbook-pro.fabric,bosgame,halo@192.168.122.119" for the route through the MacBook.
+# "<user>@<another machine>,bosgame,halo@192.168.122.119" for a route through another machine bosgame admits.
 
 WINDOWS_HOSTS = ("bosgame",)
 WINDOWS_ROUTE = "omarchy,bosgame.fabric,halo@192.168.122.119"

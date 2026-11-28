@@ -132,8 +132,8 @@ def build_windows(host, ref, game):
     files = "halo_replay.exe SDL3.dll"
     builder = ["ssh", "-o", "BatchMode=yes", rt2_clips.rig_target(rt2_clips.WINDOWS_BUILDER)]
     there = os.path.dirname(replay_path(host, ref))
-    digest = subprocess.run(builder + [f"cd ~/{built} && sha256sum {files} | cut -c1-64"], capture_output=True, text=True,
-                            check=True).stdout
+    digest = subprocess.run(builder + [f"cd ~/{built} && sha256sum {files} | cut -c1-64"], capture_output=True,
+                            text=True, check=True).stdout
     if ssh(host, f"cd ~/{there} 2>/dev/null && sha256sum {files} | cut -c1-64 || true") == digest:
         return
     source = subprocess.Popen(builder + [f"tar -C ~/{built} -cf - {files}"], stdout=subprocess.PIPE)
@@ -482,11 +482,11 @@ def run(args):
                     if changed and rt2_clips.windows(args.host):
                         # (no rsync in the VM: the changed kernels as a tar stream through the hops)
                         names = [f"{name}.spv" for name in changed]
+                        stream = subprocess.run(["tar", "--no-xattrs", "--no-mac-metadata", "-C", scratch.name,
+                                                 "-cf", "-", *names], capture_output=True, check=True,
+                                                env={**os.environ, "COPYFILE_DISABLE": "1"}).stdout
                         subprocess.run(rt2_clips.remote_argv(args.host, f"tar -xf - -C ~/{remote}/k"), check=True,
-                                       capture_output=True,
-                                       input=subprocess.run(["tar", "-C", scratch.name, "-cf", "-", *names],
-                                                            capture_output=True, check=True,
-                                                            env={**os.environ, "COPYFILE_DISABLE": "1"}).stdout)
+                                       capture_output=True, input=stream)
                     elif changed:
                         subprocess.run(["rsync", "-a", "--delete", f"{scratch.name}/",
                                         f"{rt2_clips.rig_target(args.host)}:{remote}/k/"], check=True,
