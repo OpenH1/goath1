@@ -707,34 +707,23 @@ int world_ao_prepass_begin(void)
 	return halo_world_ao_prepass_begin();
 }
 
-long network_test_cues_start_tick(void);
+double sim_trace_scenario_seconds(void);
 
 /* the frame the passes' noise is seeded by (the pre-pass's history[1]: the
 light-transport pass, its denoiser and the bounce): the frames drawn so far;
-with debug.frame_time (each frame a fixed game time, for runs that must
-draw the same pictures every time: the determinism check, tools/rt2_clips.py)
-the frames since the scenario's clock started instead, as many at each of
-its moments every run, where the count from the game's start is not (a
-map's load draws as many frames as it takes) */
+with debug.frame_time (each frame a fixed game time, for runs that must draw
+the same pictures every time: the determinism check, tools/rt2_clips.py) the
+frame of the scenario's clock instead (its seconds over the frame time),
+which falls alike every run, where the count of frames drawn does not (a
+map's load, or a cutscene skipped, draws as many frames as it takes) */
 static unsigned long world_ao_seed_frame(void)
 {
-	static unsigned long counted, seed;
-	static long start = -1;
-	long now;
+	double frame_time = config_real("debug.frame_time");
+	double seconds;
 
-	if (config_real("debug.frame_time") <= 0.0)
+	if (frame_time <= 0.0 || (seconds = sim_trace_scenario_seconds()) < 0.0)
 		return world_ao_scene.frame;
-	now = network_test_cues_start_tick();
-	if (now != start)
-	{
-		start = now;
-		seed = 0;
-	}
-	/* (once a frame, whatever its windows) */
-	else if (counted != world_ao_scene.frame)
-		seed++;
-	counted = world_ao_scene.frame;
-	return seed;
+	return (unsigned long)(seconds / frame_time + 0.5);
 }
 
 void world_ao_prepass_end(short x0, short y0, short x1, short y1, float const camera[4][4])

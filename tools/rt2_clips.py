@@ -190,8 +190,13 @@ def compose(host, folder, moment, left, right, left_label, right_label, start):
     select = "+".join(f"eq(n\\,{n})" for n in stills)
     script = f"""set -e
 cd ~/{folder}
-if [ -e ~/goat-rig/runs/{left} ]; then mv ~/goat-rig/runs/{left}/game/video.mp4 {moment}_left.mp4; fi
-if [ -e ~/goat-rig/runs/{right} ]; then mv ~/goat-rig/runs/{right}/game/video.mp4 {moment}_right.mp4; fi
+for pair in "{left} left" "{right} right"; do set -- $pair
+  if [ -e ~/goat-rig/runs/$1 ]; then
+    mv ~/goat-rig/runs/$1/game/video.mp4 {moment}_$2.mp4
+    cp ~/goat-rig/runs/$1/game/halo.log {moment}_$2.log
+    cp ~/goat-rig/runs/$1/summary.txt {moment}_$2.summary.txt
+  fi
+done
 rm -rf ~/goat-rig/runs/{left} ~/goat-rig/runs/{right}
 ffmpeg -nostdin -loglevel error -y -i {moment}_left.mp4 -i {moment}_right.mp4 -filter_complex "{graph}" -map "[v]" \\
   -c:v libx264 -preset medium -crf 20 -pix_fmt yuv420p -movflags +faststart {moment}.mp4
@@ -220,6 +225,7 @@ def main():
                         "the build with the setting on)")
     parser.add_argument("--moments", default="all", help="all, or names separated by commas (--list)")
     parser.add_argument("--repeat", action="store_true", help="the build's side played twice, its frames compared")
+    parser.add_argument("--classic", action="store_true", help="with --repeat: the classic side (the setting off)")
     parser.add_argument("--host", default="omarchy", choices=("omarchy", "5900x"))
     parser.add_argument("--name", help="the rig's folder ~/goat-rig/rt2-clips/<name> (default from the builds)")
     parser.add_argument("--out", help="a local folder for the side-by-side MP4s, sheets and stills")
@@ -251,7 +257,8 @@ def main():
     ssh(args.host, f"mkdir -p ~/{folder}")
 
     if args.repeat:
-        sides = [(args.build, True, f"{args.build} (run 1)"), (args.build, True, f"{args.build} (run 2)")]
+        lit = not args.classic
+        sides = [(args.build, lit, f"{args.build} (run {n})") for n in (1, 2)]
     elif args.base:
         sides = [(args.base, True, f"{args.base} (ray-traced lighting on)"),
                  (args.build, True, f"{args.build} (ray-traced lighting on)")]
