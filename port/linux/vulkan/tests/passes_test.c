@@ -3013,7 +3013,7 @@ static void hdr_post_test(void)
 	xgpu_vulkan_set_target_views(&target, &depth, 0, 1);
 	hdr_triangle(0);
 	memset(hdr_events, 0, sizeof(hdr_events));
-	xgpu_vulkan_post_tone_map(&target, &depth, corners, tone);
+	xgpu_vulkan_post_tone_map(&target, &depth, corners, tone, NULL);
 	assert(strspn(hdr_events, "URISD") == strlen(hdr_events) && strstr(hdr_events, "URI") && strchr(hdr_events, 'D'));
 	assert(vk.color == &target && vk.depth == &depth && vk.pass_active);
 	assert(!hdr_blend_attachment.blendEnable && hdr_blend_attachment.colorWriteMask == 7);
@@ -3026,7 +3026,7 @@ static void hdr_post_test(void)
 	/* (an 8-bit target is no HDR frame: nothing) */
 	post_image(&frame, 6, XGPU_VULKAN_FORMAT_BGRA8, 64, 48);
 	memset(hdr_events, 0, sizeof(hdr_events));
-	xgpu_vulkan_post_tone_map(&frame, NULL, corners, tone);
+	xgpu_vulkan_post_tone_map(&frame, NULL, corners, tone, NULL);
 	assert(!hdr_events[0]);
 
 	/* the encoding into an image of its own, of the swapchain's format

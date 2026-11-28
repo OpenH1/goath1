@@ -58,10 +58,11 @@ D24S8) or none, made now or queued where preparing; 0 if it cannot be.
 The tone map over the corners of a target (its first layer), in the pass
 drawing into it and its depth (bound after as they are, so that the pass
 goes on): a draw reading each pixel where it is drawn (the core's local
-reads), its colour alone written; hdr the mode and the peak. */
+reads), its colour alone written; hdr the mode and the peak; camera (NULL
+none) the camera's contrast and exposure, for XGPU_HDR_MODE_CAMERA. */
 int xgpu_vulkan_post_prepare_hdr(uint8_t depth_format, uint32_t samples, int preparing);
 void xgpu_vulkan_post_tone_map(struct xgpu_vulkan_image *target, struct xgpu_vulkan_image *depth,
-	const int32_t corners[4], const float hdr[4]);
+	const int32_t corners[4], const float hdr[4], const float camera[4]);
 /* The frame's last pass before the swapchain (the core's options'
 encode, #1108): encode_prepare makes its pipelines at the start, for the
 swapchains' formats (XGPU_VULKAN_FORMAT_RGBA16F, scRGB's;
