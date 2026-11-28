@@ -107,6 +107,10 @@ transport applies the same rule (xgpu_vulkan_lt.c's lt_kind_k). */
 /* a projectile's (a plasma bolt's, a needle's): measured apart, the same
 way (~/dev/rt2-calibration.json's dynamic_power_scales.point_projectile) */
 #define LT_LIGHTS_PROJECTILE_POWER_SCALE 0.41f
+/* one of the port's own lights on a projectile (light_sources.c's: a
+needle's in flight or stuck): measured on needles apart
+(dynamic_power_scales.point_own_projectile; xgpu_vulkan_lt.c's the same) */
+#define LT_LIGHTS_OWN_PROJECTILE_POWER_SCALE 0.45f
 #define LT_LIGHTS_EFFECT_POWER_SCALE 7.85f
 /* a sun's (a narrow sky light's) and a fill's (a sky light LT_LIGHTS_FILL_DIAMETER
 across or more, b30's 50 degree one): ~/dev/rt2-calibration.json's
@@ -334,6 +338,8 @@ static float lt_power_scale(struct xgpu_stream_lt_light const *light)
 		return LT_LIGHTS_POWER_SCALE;
 	/* (and one of the port's own effect flashes, light_sources.c's key
 kind 1: a projectile's reach, not an explosion's) */
+	if ((light->flags & XGPU_LT_LIGHT_PROJECTILE) && (light->id[1] >> 24) >= 1 && (light->id[1] >> 24) <= 3)
+		return LT_LIGHTS_OWN_PROJECTILE_POWER_SCALE;
 	if ((light->flags & XGPU_LT_LIGHT_PROJECTILE) || (light->id[1] >> 24) == 1)
 		return LT_LIGHTS_PROJECTILE_POWER_SCALE;
 	return light->object != 0xffffffffu ? LT_LIGHTS_OBJECT_POWER_SCALE : LT_LIGHTS_EFFECT_POWER_SCALE;

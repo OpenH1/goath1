@@ -74,6 +74,12 @@ point light's on an object (a muzzle flash), on none (an explosion) */
 /* a projectile's light (a plasma bolt's, a needle's: lt_lights.c flags them),
 measured apart (dynamic_power_scales.point_projectile) */
 #define LT_PROJECTILE_POWER_SCALE 0.41f
+/* one of the port's own lights on a projectile (light_sources.c: a
+needle's, in flight or stuck; a mortar shell's, a rocket's exhaust, a
+Sentinel's beam, which the record cannot tell from a needle's), measured
+on needles apart (~/dev/rt2-calibration.json's
+dynamic_power_scales.point_own_projectile) */
+#define LT_OWN_PROJECTILE_POWER_SCALE 0.45f
 #define LT_EFFECT_POWER_SCALE 7.85f
 /* the lamp moved this far in a frame (world units): a jump, the count started again */
 #define LT_JUMP 0.25f
@@ -556,6 +562,8 @@ static float lt_kind_k(const struct xgpu_stream_lt_light *light)
 (light_sources.c's key kind 1: a needle bursting, a shot's flash), lights
 of a projectile's reach (1 to 1.5 world units), not an explosion's (10),
 whose k is for its reach: the projectile's) */
+	if ((light->flags & XGPU_LT_LIGHT_PROJECTILE) && source >= 1 && source <= 3)
+		return LT_OWN_PROJECTILE_POWER_SCALE;
 	if ((light->flags & XGPU_LT_LIGHT_PROJECTILE) || source == 1)
 		return LT_PROJECTILE_POWER_SCALE;
 	/* (one of the port's own lights on an object or a firer's flames
