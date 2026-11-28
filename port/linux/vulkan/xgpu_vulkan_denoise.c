@@ -176,6 +176,74 @@ static struct
 	const char *dumps;
 } denoise = { .spatial = -1 };
 
+int xgpu_vulkan_denoise_images(struct xgpu_vulkan_lt_image *out, int most)
+{
+	static const char *const names[2][11] = {
+		{ "d.histories0", "d.histories1", "d.filter_guides0", "d.filter_guides1", "d.filtered0", "d.filtered1",
+			"d.result", "d.reshaded", "d.gradients", "d.combined", "d.previous_guides" },
+		{ "s.histories0", "s.histories1", "s.filter_guides0", "s.filter_guides1", "s.filtered0", "s.filtered1",
+			"s.result", "s.reshaded", "s.gradients", "s.combined", "s.previous_guides" } };
+	int count = 0, channel, index;
+
+	for (channel = 0; channel < 2; channel++)
+	{
+		struct denoise_channel *c = &denoise.channels[channel];
+		struct xgpu_vulkan_image **images[11] = { &c->histories[0], &c->histories[1], &c->filter_guides[0],
+			&c->filter_guides[1], &c->filtered[0], &c->filtered[1], &c->result, &c->reshaded, &c->gradients,
+			&c->combined, &c->previous_guides };
+
+		for (index = 0; index < 11 && count < most; index++)
+		{
+			out[count].name = names[channel][index];
+			out[count++].image = images[index];
+		}
+	}
+	return count;
+}
+
+/* the denoiser's CPU history: each channel's turn, whether its last
+frame is had, that frame's pass, its count; the live flag */
+struct denoise_history
+{
+	int current[2], previous_valid[2];
+	struct xgpu_world_ao_pass previous_pass[2];
+	unsigned long draws[2];
+	int live;
+};
+
+size_t xgpu_vulkan_denoise_history(void *blob, int restore)
+{
+	struct denoise_history *history = blob;
+	int channel;
+
+	if (!history)
+		return sizeof(*history);
+	for (channel = 0; channel < 2; channel++)
+	{
+		struct denoise_channel *c = &denoise.channels[channel];
+
+		if (restore)
+		{
+			c->current = history->current[channel];
+			c->previous_valid = history->previous_valid[channel];
+			c->previous_pass = history->previous_pass[channel];
+			c->draws = history->draws[channel];
+		}
+		else
+		{
+			history->current[channel] = c->current;
+			history->previous_valid[channel] = c->previous_valid;
+			history->previous_pass[channel] = c->previous_pass;
+			history->draws[channel] = c->draws;
+		}
+	}
+	if (restore)
+		denoise.live = history->live;
+	else
+		history->live = denoise.live;
+	return sizeof(*history);
+}
+
 static VkShaderModule denoise_kernel(const char *source)
 {
 	VkShaderModule module = xgpu_vulkan_lt_kernel(source);
@@ -192,9 +260,29 @@ static int denoise_shaders(void)
 
 	if (denoise.generation != generation)
 	{
-		/* (a reload: the kernels made again, the history started again) */
-		denoise.made = denoise.failed = denoise.channels[0].previous_valid = denoise.channels[1].previous_valid = 0;
-		denoise.channels[0].current = denoise.channels[1].current = 0;
+		/* (a reload: the kernels made again, and each channel as at the
+		stream's start: its images let go, made again (zero) at their first
+		use, its turn, its frame before and its count) */
+		int channel;
+
+		denoise.made = denoise.failed = 0;
+		for (channel = 0; channel < 2; channel++)
+		{
+			struct denoise_channel *c = &denoise.channels[channel];
+			struct xgpu_vulkan_image **images[] = { &c->histories[0], &c->histories[1], &c->filter_guides[0],
+				&c->filter_guides[1], &c->filtered[0], &c->filtered[1], &c->result, &c->reshaded, &c->gradients,
+				&c->combined, &c->previous_guides };
+			size_t index;
+
+			for (index = 0; index < sizeof(images) / sizeof(images[0]); index++)
+			{
+				if (xgpu_vulkan_rt_bounce_bound(*images[index]))
+					xgpu_vulkan_rt_bounce_set(NULL);
+				xgpu_vulkan_image_destroy(*images[index]);
+			}
+			memset(c, 0, sizeof(*c));
+		}
+		denoise.live = 0;
 		denoise.generation = generation;
 	}
 	if (denoise.made)
@@ -623,6 +711,11 @@ static struct xgpu_vulkan_image *denoise_channel_draw(struct denoise_channel *ch
 			denoise.spatial ? DENOISE_PASSES : 0);
 	}
 	return output;
+}
+
+void xgpu_vulkan_denoise_settle(void)
+{
+	(void)denoise_shaders();
 }
 
 struct xgpu_vulkan_image *xgpu_vulkan_denoise_draw(struct xgpu_vulkan_image *raw,

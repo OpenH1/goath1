@@ -3374,11 +3374,65 @@ static void dynamic_lights_flashlight(void)
 		targets_bind();
 }
 
+/* the light pass's settings generation the stream's lights were kept in
+(xgpu_vulkan_lt_settings_generation: 0 not yet) */
+static unsigned lights_generation;
+
+/* a reload (a replay played from its start again: the generation raised)
+lets go of every light kept, as at the stream's start, so that the frames
+are drawn as the game drew them: the cells and the block (none until the
+first that comes: the light pass draws nothing before it), the GPU's cells
+and block zero again, the world and its boxes; the pre-pass's guides made
+again (they keep the sky's pixels of the frames before); the ray-traced
+scene's textures' slots given again. Never in the game (no reload). Called by
+each record the light pass's state is made from (the lights, the pre-pass,
+the ray-traced scene's), so that it comes before the first of them */
+static void lights_restart(void)
+{
+	unsigned generation = xgpu_vulkan_lt_settings_generation();
+
+	if (lights_generation == generation)
+		return;
+	if (lights_generation)
+	{
+		unsigned char *zero = calloc(1, DYNAMIC_LIGHTS_CELLS_SIZE);
+
+		free(lights_cells);
+		lights_cells = NULL;
+		memset(&lights_block, 0, sizeof(lights_block));
+		if (zero)
+			xgpu_vulkan_dynamic_lights_upload(&lights_block, sizeof(lights_block), zero, 0, DYNAMIC_LIGHTS_CELLS_SIZE);
+		free(zero);
+		xgpu_dynamic_lights_world_free(&lights_world);
+		lights_world_given = 0.0;
+		if (prepass.guides)
+		{
+			xgpu_vulkan_lt_guides(NULL);
+			xgpu_vulkan_image_destroy(prepass.guides);
+			prepass.guides = NULL;
+		}
+		xgpu_vulkan_rt_textures_again();
+	}
+	lights_generation = generation;
+}
+
+int xgpu_vulkan_stream_lt_images(struct xgpu_vulkan_lt_image *out, int most)
+{
+	struct xgpu_vulkan_lt_image mine[] = { { "prepass.history", &prepass.history },
+		{ "prepass.pixels", &prepass.pixels } };
+	int count = 0, index;
+
+	for (index = 0; index < (int)(sizeof(mine) / sizeof(mine[0])) && count < most; index++)
+		out[count++] = mine[index];
+	return count;
+}
+
 static void stream_dynamic_lights_upload(void *context, const struct xgpu_stream_dynamic_lights_upload *record)
 {
 	const void *cells = host_pointer(record->cells);
 
 	(void)context;
+	lights_restart();
 	if (!cells || record->size != DYNAMIC_LIGHTS_CELLS_SIZE)
 		return;
 	dynamic_lights_cells(&record->block, record->count, 0, DYNAMIC_LIGHTS_CELLS_SIZE, cells);
@@ -3390,6 +3444,7 @@ static void stream_dynamic_lights_change(void *context, const struct xgpu_stream
 	const void *cells = record->size ? host_pointer(record->cells) : NULL;
 
 	(void)context;
+	lights_restart();
 	if (record->size && !cells)
 		return;
 	dynamic_lights_cells(&record->block, record->count, record->offset, record->size, cells);
@@ -3401,6 +3456,7 @@ static void stream_dynamic_lights_world(void *context, const struct xgpu_stream_
 	const void *texels = host_pointer(record->texels);
 
 	(void)context;
+	lights_restart();
 	if (!texels || !record->count || record->count > XGPU_STREAM_DYNAMIC_LIGHTS_WORLD_TEXELS)
 		return;
 	if (host_load_trace_switch("HALO_LIGHTS_WORLD_VERIFY", &lights_verify))
@@ -4366,6 +4422,7 @@ static void stream_world_ao_window(void *context, const struct xgpu_stream_world
 static void stream_world_ao_mesh(void *context, const struct xgpu_stream_world_ao_mesh *record)
 {
 	(void)context;
+	lights_restart();
 	if (record->kind == XGPU_WORLD_AO_MESH_RELEASE)
 		xgpu_vulkan_rt_mesh_release(record->id);
 	else if (record->kind == XGPU_WORLD_AO_MESH_INDEXED || record->kind == XGPU_WORLD_AO_MESH_SKINNED)
@@ -4382,6 +4439,7 @@ static void stream_world_ao_mesh(void *context, const struct xgpu_stream_world_a
 static void stream_world_ao_instances(void *context, const struct xgpu_stream_world_ao_instances *record)
 {
 	(void)context;
+	lights_restart();
 	xgpu_vulkan_rt_instances(record->size ? host_pointer(record->data) : NULL, record->count);
 }
 
@@ -5105,6 +5163,7 @@ static void stream_world_ao_prepass(void *context, const struct xgpu_stream_worl
 	struct stream_target *target = target_get(record->target);
 
 	(void)context;
+	lights_restart();
 	/* (a map prepared: whether its draws are the pre-pass's in play, their
 	twins made with them, prepass_twin_prepare) */
 	if (stream.preparing)
@@ -5118,6 +5177,9 @@ static void stream_world_ao_prepass(void *context, const struct xgpu_stream_worl
 	{
 		static const float zero[4];
 		int32_t whole[1][4];
+
+		/* (the replay's checkpoint, between the frame before and this) */
+		xgpu_vulkan_lt_checkpoint_service();
 
 		/* (what the surfaces read: 1, until the pass finds it) */
 		xgpu_vulkan_world_ao_set_pixels(NULL);

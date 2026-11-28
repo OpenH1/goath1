@@ -954,6 +954,17 @@ static void rt_textures_find(void)
 	}
 }
 
+void xgpu_vulkan_rt_textures_again(void)
+{
+	/* (a replay played from its start again: the slots as at the stream's
+	start, none given, until the stream gives them again; each image then
+	found, RT_TEXTURES_FOUND a frame) */
+	memset(rt.textures, 0, sizeof(rt.textures));
+	memset(rt.texture_views, 0, sizeof(rt.texture_views));
+	rt.textures_serial = 0;
+	rt.hit_version++;
+}
+
 VkDescriptorSetLayout xgpu_vulkan_rt_hit_layout(void)
 {
 	return rt.ready ? rt.hit_layout : VK_NULL_HANDLE;

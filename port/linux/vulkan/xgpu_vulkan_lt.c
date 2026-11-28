@@ -416,6 +416,11 @@ void xgpu_vulkan_lt_shaders_reload(const char *folder)
 		lt_shader_folder_read = 1;
 	}
 	__atomic_add_fetch(&lt_settings_generation, 1, __ATOMIC_ACQ_REL);
+	/* (the game's light lists let go too: until the stream's first list
+	comes again the pass is off, as it was at the start; otherwise the frames
+	before it, a menu's, are lit by the pass, and the histories it starts
+	with are theirs) */
+	xgpu_vulkan_lt_lights_reset();
 	__atomic_store_n(&lt_reload_asked, 1, __ATOMIC_RELEASE);
 }
 
@@ -492,6 +497,100 @@ VkShaderModule xgpu_vulkan_lt_kernel(const char *source)
 	return VK_NULL_HANDLE;
 }
 
+static struct xgpu_vulkan_image *lt_image_free(struct xgpu_vulkan_image *image);
+static void lt_object_lamps_restart(void);
+int xgpu_vulkan_lt_images(struct xgpu_vulkan_lt_image *out, int most)
+{
+	struct xgpu_vulkan_lt_image mine[] = { { "lt.means0", &lt.means[0] }, { "lt.means1", &lt.means[1] },
+		{ "lt.previous", &lt.previous }, { "lt.guides", &lt.guides }, { "lt.table", &lt.table },
+		{ "lt.reservoirs0", &lt.reservoirs[0] }, { "lt.reservoirs1", &lt.reservoirs[1] }, { "lt.final", &lt.final },
+		{ "lt.forward_table", &lt.forward_table }, { "lt.emitter_visibility", &lt.emitter_visibility } };
+	int count = 0, index;
+
+	for (index = 0; index < (int)(sizeof(mine) / sizeof(mine[0])) && count < most; index++)
+		out[count++] = mine[index];
+	count += xgpu_vulkan_lt_indirect_images(out + count, most - count);
+	count += xgpu_vulkan_denoise_images(out + count, most - count);
+	count += xgpu_vulkan_stream_lt_images(out + count, most - count);
+	return count;
+}
+
+/* HALO_LT_STATE_LOG=N (debug: two plays' state compared, the leaks a
+checkpoint must not have): the first N frames after each start, every
+image's digest logged before the pass and after it; HALO_LT_STATE_EVERY=M
+(and HALO_LT_STATE_FROM=F): each M-th pre-pass frame's (from F) after it */
+static float lt_state_frame;
+
+static void lt_state_log(const char *when, struct xgpu_vulkan_image *inputs)
+{
+	static long frames = -1;
+	struct xgpu_vulkan_lt_image images[XGPU_VULKAN_LT_IMAGES_MOST];
+	char line[4096];
+	size_t used;
+	int count, index;
+
+	if (frames < 0)
+		frames = getenv("HALO_LT_STATE_LOG") ? atol(getenv("HALO_LT_STATE_LOG")) : 0;
+	/* (HALO_LT_STATE_EVERY=M: and each M-th pre-pass frame's after) */
+	if (getenv("HALO_LT_STATE_EVERY") && !strcmp(when, "after") && lt_state_frame >= 1.0f &&
+		!((long)lt_state_frame % atol(getenv("HALO_LT_STATE_EVERY"))) &&
+		(!getenv("HALO_LT_STATE_FROM") || (long)lt_state_frame >= atol(getenv("HALO_LT_STATE_FROM"))))
+		;
+	else if (!frames || (long)lt.since_start > frames)
+		return;
+	count = xgpu_vulkan_lt_images(images, XGPU_VULKAN_LT_IMAGES_MOST);
+	used = (size_t)snprintf(line, sizeof(line), "lt state %lu %s (pre-pass frame %.0f): inputs=%016llx",
+		lt.since_start, when, lt_state_frame,
+		(unsigned long long)xgpu_vulkan_image_digest(inputs));
+	for (index = 0; index < count && used < sizeof(line); index++)
+		used += (size_t)snprintf(line + used, sizeof(line) - used, " %s=%016llx", images[index].name,
+			(unsigned long long)xgpu_vulkan_image_digest(*images[index].image));
+	host_logf(HOST_LOG_WARN, "vulkan: %s", line);
+}
+
+
+/* every piece of the pass's state that one frame leaves to the next, as at
+the stream's start (a reload: a replay played from its start again draws
+what the game drew, bit for bit): its images let go (made again, zero, as
+at their first use), the light table's rows and ids and the frame before's,
+the lamp's, the reservoirs' and the images' turns, the level's light
+sources' set (taken again from the lists, its visibility traced again), the
+live flag; and the images the occlusion's sets name, none. The settings,
+kernels and pipelines are the reload's own (lt_shaders). The bounce and the
+denoiser restart theirs by the kernels' generation. */
+static void lt_restart(void)
+{
+	struct xgpu_vulkan_image **images[] = { &lt.means[0], &lt.means[1], &lt.previous, &lt.dump, &lt.table,
+		&lt.reservoirs[0], &lt.reservoirs[1], &lt.final, &lt.forward_table, &lt.emitter_visibility };
+	size_t index;
+
+	xgpu_vulkan_rt_bounce_set(NULL);
+	xgpu_vulkan_lt_table_set(NULL);
+	for (index = 0; index < sizeof(images) / sizeof(images[0]); index++)
+		*images[index] = lt_image_free(*images[index]);
+	lt.previous_valid = 0;
+	lt.reservoirs_valid = lt.emitter_reservoirs_valid = 0;
+	lt.current = lt.ids_current = lt.reservoir_current = 0;
+	lt.had_light = 0;
+	memset(lt.last_lamp, 0, sizeof(lt.last_lamp));
+	lt.since_start = 0;
+	memset(&lt.reshade_params, 0, sizeof(lt.reshade_params));
+	memset(lt.first_person, 0, sizeof(lt.first_person));
+	lt.handled = 0;
+	memset(lt.texels, 0, sizeof(lt.texels));
+	memset(lt.previous_texels, 0, sizeof(lt.previous_texels));
+	lt.previous_rows = 0;
+	memset(lt.ids, 0, sizeof(lt.ids));
+	memset(lt.rows, 0, sizeof(lt.rows));
+	lt.ids_frame = 0;
+	lt.live = 0;
+	lt.emitter_version = lt.emitter_uploaded = lt.emitter_seen = lt.emitter_solved = 0;
+	memset(lt.emitter_grid, 0, sizeof(lt.emitter_grid));
+	memset(lt.emitter_counts, 0, sizeof(lt.emitter_counts));
+	memset(lt.emitter_bases, 0, sizeof(lt.emitter_bases));
+	lt_object_lamps_restart();
+}
+
 static int lt_shaders(void)
 {
 	struct xgpu_vulkan_sampler_description sampler;
@@ -503,13 +602,7 @@ static int lt_shaders(void)
 		/* (every history as at the stream's start, so that a replay played
 		from its start again draws what the game drew: the reservoirs, the
 		table's frame before, the images' turns) */
-		lt.reservoirs_valid = lt.emitter_reservoirs_valid = 0;
-		lt.current = lt.ids_current = lt.reservoir_current = 0;
-		lt.had_light = 0;
-		lt.since_start = 0;
-		lt.previous_rows = 0;
-		memset(lt.rows, 0, sizeof(lt.rows));
-		memset(lt.ids, 0, sizeof(lt.ids));
+		lt_restart();
 		lt_generation++;
 	}
 	if (lt.made)
@@ -544,6 +637,15 @@ static int lt_shaders(void)
 	if (reloaded)
 		(void)xgpu_vulkan_pipeline(&lt.pass);
 	return 1;
+}
+
+/* an image of the pass's let go (never one the sets still name): NULL */
+static struct xgpu_vulkan_image *lt_image_free(struct xgpu_vulkan_image *image)
+{
+	if (xgpu_vulkan_rt_bounce_bound(image))
+		xgpu_vulkan_rt_bounce_set(NULL);
+	xgpu_vulkan_image_destroy(image);
+	return NULL;
 }
 
 static struct xgpu_vulkan_image *lt_image(struct xgpu_vulkan_image *image, uint8_t format, uint32_t width,
@@ -1258,9 +1360,22 @@ that a lamp's light that changes (a shield's shimmer, a Pelican flying)
 relights the history instead of cutting it as noise */
 static int lt_object_lamps_before;
 
+/* each window's object lamps, this frame's and the frame before's
+(lt_object_lamp_halves: frame-to-frame state, lt_restart and the
+checkpoints') */
+static float lt_object_lamp_kept[4][1 + 2 * LT_OBJECT_LAMP_ROWS][LT_TABLE_TEXELS][4];
+
+/* (lt_restart's: no lamps the frame before, as at the stream's start) */
+static void lt_object_lamps_restart(void)
+{
+	memset(lt_object_lamp_kept, 0, sizeof(lt_object_lamp_kept));
+	memset(lt_object_lamp_texels, 0, sizeof(lt_object_lamp_texels));
+	lt_object_lamps_before = 0;
+}
+
 static void lt_object_lamp_halves(int count)
 {
-	static float halves[4][1 + 2 * LT_OBJECT_LAMP_ROWS][LT_TABLE_TEXELS][4];
+	float (*halves)[1 + 2 * LT_OBJECT_LAMP_ROWS][LT_TABLE_TEXELS][4] = lt_object_lamp_kept;
 	int window = xgpu_vulkan_lt_lights_window();
 	float (*rows)[LT_TABLE_TEXELS][4];
 
@@ -1906,6 +2021,7 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 	}
 	if (!lt.dumps_read)
 		lt_dumps_read();
+	lt_state_frame = pass->history[1];
 	if (!xgpu_vulkan_pipeline_ready(&lt.pass) || !xgpu_vulkan_rt_build())
 		return 1;
 	size = xgpu_vulkan_image_description(inputs);
@@ -1921,6 +2037,7 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 	}
 	if (rectangle[2] <= rectangle[0] || rectangle[3] <= rectangle[1])
 		return 1;
+	lt_state_log("before", inputs);
 	lt.means[0] = lt_image(lt.means[0], XGPU_VULKAN_FORMAT_RGBA32F, size->width, size->height);
 	lt.means[1] = lt_image(lt.means[1], XGPU_VULKAN_FORMAT_RGBA32F, size->width, size->height);
 	if (!lt.previous || xgpu_vulkan_image_description(lt.previous)->width != size->width ||
@@ -2141,6 +2258,7 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 		}
 	}
 	xgpu_vulkan_rt_bounce_set(light_image);
+	lt_state_log("after", inputs);
 	if (!lt.said)
 	{
 		lt.said = 1;
@@ -2148,4 +2266,222 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 			size->width, size->height);
 	}
 	return 1;
+}
+
+/* ---------- checkpoints (the replay's rt_checkpoint, tools/rt2_bench.py):
+every piece of the pass's frame-to-frame state (xgpu_vulkan_lt_images' images,
+the pass's, the bounce's and the denoiser's CPU histories, the level's light
+sources' tables) kept at a frame, and put back at the same point of a later
+play of the recording, which then draws the frames after it as the first
+play did. Asked from any thread between frames; done on the render thread at
+the next frame's pre-pass (xgpu_vulkan_lt_checkpoint_service). */
+
+/* the pass's own CPU history: what lt_restart begins again */
+struct lt_history
+{
+	int previous_valid, current, had_light;
+	float last_lamp[3];
+	unsigned long since_start;
+	struct lt_params reshade_params;
+	unsigned char first_person[LT_TABLE_ROWS];
+	int handled;
+	float texels[LT_TABLE_ROWS][LT_TABLE_TEXELS][4];
+	float previous_texels[LT_TABLE_ROWS][LT_TABLE_TEXELS][4];
+	int previous_rows;
+	uint32_t ids[2][LT_TABLE_ROWS][2];
+	int rows[2], ids_current, reservoir_current, reservoirs_valid, emitter_reservoirs_valid;
+	unsigned long ids_frame;
+	int live, emitter_version, emitter_uploaded, emitter_seen, emitter_solved;
+	float emitter_grid[4];
+	int32_t emitter_counts[4], emitter_bases[4];
+};
+
+#define LT_HISTORY_FIELDS(X) X(previous_valid) X(current) X(had_light) X(last_lamp) X(since_start) X(reshade_params) \
+	X(first_person) X(handled) X(texels) X(previous_texels) X(previous_rows) X(ids) X(rows) X(ids_current) \
+	X(reservoir_current) X(reservoirs_valid) X(emitter_reservoirs_valid) X(ids_frame) X(live) X(emitter_version) \
+	X(emitter_uploaded) X(emitter_seen) X(emitter_solved) X(emitter_grid) X(emitter_counts) X(emitter_bases)
+
+static struct
+{
+	int asked, valid;
+	/* the images kept (NULL: none there), by xgpu_vulkan_lt_images' order */
+	int count;
+	struct xgpu_vulkan_image *images[XGPU_VULKAN_LT_IMAGES_MOST];
+	struct lt_history history;
+	/* the light sources' tables (their visibility's weights in them) */
+	float emitter_texels[LT_EMITTER_TEXELS][4];
+	float emitter_cell_final[LT_EMITTER_CELLS_MAXIMUM][LT_EMITTER_CELL_GROUPS];
+	/* the object lamps' (each window's this frame and the frame before's) */
+	float object_lamp_rows[4][1 + 2 * LT_OBJECT_LAMP_ROWS][LT_TABLE_TEXELS][4];
+	float object_lamp_texels[LT_OBJECT_LAMPS * 4][4];
+	int object_lamps_before;
+	void *indirect, *denoise;
+	unsigned long saves, restores;
+} lt_checkpoint;
+
+void xgpu_vulkan_lt_checkpoint_ask(int what)
+{
+	__atomic_store_n(&lt_checkpoint.asked, what, __ATOMIC_RELEASE);
+}
+
+int xgpu_vulkan_lt_checkpoint_pending(void)
+{
+	return __atomic_load_n(&lt_checkpoint.asked, __ATOMIC_ACQUIRE);
+}
+
+int xgpu_vulkan_lt_checkpoint_valid(void)
+{
+	return lt_checkpoint.valid;
+}
+
+/* an image of the pass's let go, never one the sets still name */
+static void lt_checkpoint_free(struct xgpu_vulkan_image *image)
+{
+	if (!image)
+		return;
+	if (xgpu_vulkan_rt_bounce_bound(image))
+		xgpu_vulkan_rt_bounce_set(NULL);
+	if (image == lt.forward_table)
+		xgpu_vulkan_lt_table_set(NULL);
+	xgpu_vulkan_image_destroy(image);
+}
+
+/* a copy of image (its description's, its first level and layer) */
+static struct xgpu_vulkan_image *lt_checkpoint_copy(struct xgpu_vulkan_image *image, struct xgpu_vulkan_image *into)
+{
+	const struct xgpu_vulkan_image_description *given = xgpu_vulkan_image_description(image);
+	const struct xgpu_vulkan_image_description *had = into ? xgpu_vulkan_image_description(into) : NULL;
+
+	if (!had || had->format != given->format || had->width != given->width || had->height != given->height)
+	{
+		struct xgpu_vulkan_image_description description = *given;
+
+		lt_checkpoint_free(into);
+		description.usage |= XGPU_VULKAN_USAGE_SAMPLED | XGPU_VULKAN_USAGE_TARGET;
+		into = xgpu_vulkan_image_create(&description);
+		if (!into)
+			return NULL;
+	}
+	xgpu_vulkan_image_copy(image, 0, 0, into, 0, 0);
+	return into;
+}
+
+static void lt_checkpoint_save(void)
+{
+	struct xgpu_vulkan_lt_image images[XGPU_VULKAN_LT_IMAGES_MOST];
+	int count = xgpu_vulkan_lt_images(images, XGPU_VULKAN_LT_IMAGES_MOST), index;
+
+	for (index = 0; index < XGPU_VULKAN_LT_IMAGES_MOST; index++)
+	{
+		struct xgpu_vulkan_image *image = index < count ? *images[index].image : NULL;
+
+		if (image)
+			lt_checkpoint.images[index] = lt_checkpoint_copy(image, lt_checkpoint.images[index]);
+		else
+		{
+			if (lt_checkpoint.images[index])
+				xgpu_vulkan_image_destroy(lt_checkpoint.images[index]);
+			lt_checkpoint.images[index] = NULL;
+		}
+	}
+	lt_checkpoint.count = count;
+#define X(field) memcpy(&lt_checkpoint.history.field, &lt.field, sizeof(lt.field));
+	LT_HISTORY_FIELDS(X)
+#undef X
+	memcpy(lt_checkpoint.emitter_texels, lt_emitter_texels, sizeof(lt_emitter_texels));
+	memcpy(lt_checkpoint.emitter_cell_final, lt_emitter_cell_final, sizeof(lt_emitter_cell_final));
+	memcpy(lt_checkpoint.object_lamp_rows, lt_object_lamp_kept, sizeof(lt_object_lamp_kept));
+	memcpy(lt_checkpoint.object_lamp_texels, lt_object_lamp_texels, sizeof(lt_object_lamp_texels));
+	lt_checkpoint.object_lamps_before = lt_object_lamps_before;
+	free(lt_checkpoint.indirect);
+	free(lt_checkpoint.denoise);
+	lt_checkpoint.indirect = malloc(xgpu_vulkan_lt_indirect_history(NULL, 0));
+	lt_checkpoint.denoise = malloc(xgpu_vulkan_denoise_history(NULL, 0));
+	lt_checkpoint.valid = lt_checkpoint.indirect && lt_checkpoint.denoise;
+	if (lt_checkpoint.valid)
+	{
+		xgpu_vulkan_lt_indirect_history(lt_checkpoint.indirect, 0);
+		xgpu_vulkan_denoise_history(lt_checkpoint.denoise, 0);
+	}
+	lt_checkpoint.saves++;
+}
+
+static void lt_checkpoint_restore(void)
+{
+	struct xgpu_vulkan_lt_image images[XGPU_VULKAN_LT_IMAGES_MOST];
+	int count = xgpu_vulkan_lt_images(images, XGPU_VULKAN_LT_IMAGES_MOST), index;
+
+	if (!lt_checkpoint.valid || count != lt_checkpoint.count)
+	{
+		host_logf(HOST_LOG_WARN, "vulkan: light transport: no checkpoint to restore");
+		return;
+	}
+	/* (a reload since begins the pass, its bounce and its denoiser again
+	first, at their next draw: done now, before what is put back, never
+	after it) */
+	(void)lt_shaders();
+	xgpu_vulkan_lt_indirect_settle();
+	xgpu_vulkan_denoise_settle();
+#define X(field) memcpy(&lt.field, &lt_checkpoint.history.field, sizeof(lt.field));
+	LT_HISTORY_FIELDS(X)
+#undef X
+	memcpy(lt_emitter_texels, lt_checkpoint.emitter_texels, sizeof(lt_emitter_texels));
+	memcpy(lt_emitter_cell_final, lt_checkpoint.emitter_cell_final, sizeof(lt_emitter_cell_final));
+	memcpy(lt_object_lamp_kept, lt_checkpoint.object_lamp_rows, sizeof(lt_object_lamp_kept));
+	memcpy(lt_object_lamp_texels, lt_checkpoint.object_lamp_texels, sizeof(lt_object_lamp_texels));
+	lt_object_lamps_before = lt_checkpoint.object_lamps_before;
+	xgpu_vulkan_lt_indirect_history(lt_checkpoint.indirect, 1);
+	xgpu_vulkan_denoise_history(lt_checkpoint.denoise, 1);
+	/* (each image's contents put back where the pass has it; made where it
+	has none, let go of where the play kept none; the pre-pass's guides the
+	stream's own, never let go of) */
+	for (index = 0; index < count; index++)
+	{
+		struct xgpu_vulkan_image *kept = lt_checkpoint.images[index], **slot = images[index].image;
+		int owned = slot != &lt.guides && strncmp(images[index].name, "prepass.", 8);
+
+		if (kept)
+		{
+			struct xgpu_vulkan_image *into = lt_checkpoint_copy(kept, *slot);
+
+			if (into != *slot && !owned)
+			{
+				/* (another size: the stream's makes its own again) */
+				lt_checkpoint_free(into);
+				continue;
+			}
+			*slot = into;
+		}
+		else if (*slot && owned)
+		{
+			lt_checkpoint_free(*slot);
+			*slot = NULL;
+		}
+	}
+	lt_checkpoint.restores++;
+}
+
+void xgpu_vulkan_lt_checkpoint_service(void)
+{
+	int asked = __atomic_load_n(&lt_checkpoint.asked, __ATOMIC_ACQUIRE);
+
+	if (!asked)
+		return;
+	if (asked == 1)
+		lt_checkpoint_save();
+	else if (asked == 2)
+		lt_checkpoint_restore();
+	else if (asked == 3)
+	{
+		/* (let go of) */
+		int index;
+
+		for (index = 0; index < XGPU_VULKAN_LT_IMAGES_MOST; index++)
+		{
+			xgpu_vulkan_image_destroy(lt_checkpoint.images[index]);
+			lt_checkpoint.images[index] = NULL;
+		}
+		lt_checkpoint.valid = 0;
+	}
+	__atomic_store_n(&lt_checkpoint.asked, 0, __ATOMIC_RELEASE);
 }

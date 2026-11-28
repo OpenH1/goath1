@@ -149,10 +149,14 @@ python3 tools/rt2_bench.py verify --moment a50_shields --build local/my-branch  
 python3 tools/rt2_bench.py run --moment a50_shields --build local/my-branch --watch \
   --region 600,300,80,80 --settings my.env                                              # edit lt/*.frag or my.env, save: numbers
 python3 tools/rt2_bench.py run ... --hold 60          # the moment's frame held: noise (temporal std over the last 20)
-python3 tools/rt2_bench.py run ... --warm 120         # faster, the histories cold 120 frames before (verify --converge: its error)
+python3 tools/rt2_bench.py run ... --checkpoint 120   # the new code's reach before the measured frames (default 60)
+python3 tools/rt2_bench.py run ... --exact            # each try a fresh replay, every frame whole (~35 s)
 ```
-Each try is a replay of its own (exact, the same every time): the changed kernels compiled on the Mac, sent to the
-rig, the frames drawn, the last picture to `build/rt2_bench/v<N>.png`. The game's C (`lt_lights.c`) needs a new
+One replay serves every try: it plays the moment once exactly and keeps the light pass's whole state a checkpoint
+(`--checkpoint` frames) before the measured frames; each try reloads the changed kernels (compiled on the Mac, sent
+to the rig) and settings, puts that state back and plays the rest whole, the last picture to
+`build/rt2_bench/v<N>.png`. Unchanged code gives the full replay's frames bit for bit (`verify` checks it);
+`verify --change VAR=value` shows how far a try strays by the frames since the checkpoint. The game's C (`lt_lights.c`) needs a new
 recording; the backend's C (`xgpu_vulkan_lt*.c`) a replay rebuilt (`goat-rig build <ref> linux_replay`). The
 replay's own requests are `rt_set`, `rt_reload`, `rt_frames` and `rt_view` (docs/replay_protocol.md).
 

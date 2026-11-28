@@ -5454,6 +5454,45 @@ static int readback(struct xgpu_vulkan_image *image, uint32_t layer, VkDeviceSiz
 	return 1;
 }
 
+/* a 2D colour image's first level's bytes' digest (64-bit FNV-1a), after
+the work recorded so far (waits for the GPU): the replay's checks that two
+plays leave the same state (rt_state); 0 where it cannot be read */
+uint64_t xgpu_vulkan_image_digest(struct xgpu_vulkan_image *image)
+{
+	uint64_t digest = 0xcbf29ce484222325ull;
+	size_t size, index;
+	uint32_t texel;
+
+	if (!image)
+		return 0;
+	switch (image->description.format)
+	{
+	case XGPU_VULKAN_FORMAT_RGBA32F:
+	case XGPU_VULKAN_FORMAT_RGBA32_UINT:
+		texel = 16;
+		break;
+	case XGPU_VULKAN_FORMAT_RGBA16F:
+	case XGPU_VULKAN_FORMAT_RG32_UINT:
+	case XGPU_VULKAN_FORMAT_RGBA16:
+		texel = 8;
+		break;
+	case XGPU_VULKAN_FORMAT_RGBA8:
+		texel = 4;
+		break;
+	default:
+		return 0;
+	}
+	size = (size_t)image->description.width * image->description.height * texel;
+	if (image->description.type != XGPU_VULKAN_IMAGE_2D || !readback(image, 0, (VkDeviceSize)size))
+		return 0;
+	for (index = 0; index < size; index++)
+	{
+		digest ^= vk.readback_mapped[index];
+		digest *= 0x100000001b3ull;
+	}
+	return digest ? digest : 1;
+}
+
 int xgpu_vulkan_read_halves(struct xgpu_vulkan_image *image, uint32_t layer, uint16_t **halves)
 {
 	size_t size = (size_t)image->description.width * image->description.height * 8;

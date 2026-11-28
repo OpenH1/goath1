@@ -229,12 +229,35 @@ those they read once and keep; a setting read only when the backend starts is no
 of every picture kept, so the next frame is played from the recording's start. (`reload` itself now lets go of the
 pictures kept too.)
 
-A play from the recording's start begins the light pass's histories again too (its reservoirs, its table's frame
-before, its images' turns, the bounce's phase and images, the denoiser's), as a reload does. A fresh service's
-first play of a frame, every frame before played whole, is the game's frame bit for bit (a50_shields, 1280x720,
-`tools/rt2_bench.py verify`); a later play from the start in the same service is not yet: with the bounce on
-(`HALO_LT_INDIRECT` not 0) it still differs (about 20% of the pixels, by up to 50 of 255), so exact numbers come
-from a service of their own.
+A play from the recording's start begins all of the light pass's frame-to-frame state again, as at the stream's
+start (a reload's `xgpu_vulkan_lt_settings_generation`): the game's light lists (the pass is off until the first
+comes), the stream's dynamic lights' cells, block and world (the pass draws nothing until the first cells come, as
+in the game), the pre-pass's guides, the ray-traced scene's texture slots, the pass's images, tables and turns, the
+bounce's and the denoiser's. A fresh service's first play of a frame, every frame before played whole, is the
+game's frame bit for bit (a50_shields, 1280x720, `tools/rt2_bench.py verify`), and a later play from the start in
+the same service draws every frame of the level as the first did. (The menu's frames before the level still differ
+after a play of the level, with the pass off too: not the light pass's.)
+
+### rt_checkpoint: the light pass's state kept at a frame
+
+```json
+{"cmd": "rt_checkpoint", "n": 1299}
+{"ok": true, "n": 1299, "ms": 33012.4}
+{"cmd": "rt_frames", "n": 1360, "count": 1, "checkpoint": true, "last": 1, "inline": true}
+{"cmd": "rt_checkpoint", "drop": true}
+```
+
+`rt_checkpoint` plays the recording from its start to frame `n`, every frame whole, and keeps the light pass's
+whole state at its end (done at frame n + 1's pre-pass): every image the pass reads across frames
+(`xgpu_vulkan_lt_images`: the pass's means, inputs before, guides, light table and forward table, reservoirs and
+light; the bounce's, its cache's and its histories'; the denoiser's channels'; the pre-pass's occlusion's history),
+copied on the GPU, and the CPU histories (the pass's table rows and ids before, its turns, the light sources' tables
+and visibility; the bounce's turns and count; the denoiser's turns and frame before). `rt_frames` with
+`"checkpoint": true` then plays the recording from its start without the GPU work of the frames up to `n`, puts
+the state back at frame n + 1's pre-pass, and plays the frames from n + 1 whole (`warm` is ignored; `n` must be
+after the checkpoint's). With the kernels and settings unchanged its frames are the full play's bit for bit; after
+an `rt_reload` they are the new code's from the checkpoint on (the workbench's tries: `tools/rt2_bench.py run`).
+`"drop": true` lets the kept state go.
 
 ```json
 {"cmd": "rt_frames", "n": 1331, "count": 30, "warm": 60, "last": 20, "regions": [600, 300, 64, 64], "inline": true}
