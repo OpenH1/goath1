@@ -30,6 +30,8 @@ OUTPUT = FOLDER / "xgpu_vulkan_lt_shaders.inc"
 KERNELS = [("lt_e1_vertex_spirv", "e1.vert", []), ("lt_e1_spirv", "e1.frag", []),
            ("lt_denoise_gradient_spirv", "denoise_gradient.frag", []),
            ("lt_denoise_temporal_spirv", "denoise_temporal.frag", []),
+           # (the workbench's view of the temporal stage: xgpu_vulkan_denoise.c's HALO_LT_DENOISE_PROBE)
+           ("lt_denoise_temporal_probe_spirv", "denoise_temporal.frag", ["PROBE"]),
            ("lt_denoise_atrous_spirv", "denoise_atrous.frag", []),
            ("lt_denoise_atrous_pair_spirv", "denoise_atrous.frag", ["PAIR"]),
            ("lt_denoise_atrous_final_spirv", "denoise_atrous.frag", ["FINAL"]), ("lt_denoise_guide_spirv", "denoise_guide.frag", []),
@@ -42,7 +44,7 @@ def kernel_name(source: str, defines=()) -> str:
     with its define (e1.frag's LT_INDIRECT: e1_indirect.frag)"""
     if "LT_INDIRECT" in defines:
         return source.replace(".frag", "_indirect.frag")
-    for define in ("FOLD", "PAIR", "FINAL"):
+    for define in ("FOLD", "PAIR", "FINAL", "PROBE"):
         if define in defines:
             return source.replace(".frag", f"_{define.lower()}.frag")
     return source

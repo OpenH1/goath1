@@ -22,6 +22,7 @@ again at each "reload" request.
 #include "host_render_replay.h"
 #include "host_render_stream.h"
 #include "xgpu_vulkan.h"
+#include "xgpu_vulkan_denoise.h"
 #include "xgpu_vulkan_lt.h"
 #include "xgpu_vulkan_stream.h"
 
@@ -131,6 +132,60 @@ static void vulkan_calls_watch(uint64_t *ticks, uint64_t *counts)
 	xgpu_vulkan_calls_watch(ticks, counts, ticks ? host_render_replay_ticks : NULL);
 }
 
+/* ---------- debug: the light pass's views (the service's rt_view) */
+
+/* lt/denoise_temporal.frag's PROBE fields, its four windows' in turn */
+static const char *const vulkan_denoise_view_names[16] = {
+	"found", "cut", "kept", "count", "z_factor", "bounce_hold", "footprint", "flags",
+	"grad_before", "grad_now", "lit_before", "lit_now", "relit", "cap", "z_score", "mean_luminance" };
+
+static float vulkan_half(uint16_t half)
+{
+	uint32_t sign = (uint32_t)(half >> 15) << 31, exponent = (half >> 10) & 31, mantissa = half & 1023, bits;
+	float value;
+
+	if (!exponent)
+	{
+		value = (float)mantissa * (1.0f / 16777216.0f);
+		return sign ? -value : value;
+	}
+	bits = sign | (exponent == 31 ? 0x7f800000u | (mantissa << 13) : ((exponent + 112) << 23) | (mantissa << 13));
+	memcpy(&value, &bits, sizeof(value));
+	return value;
+}
+
+static const char *vulkan_view_setting(const char *name)
+{
+	return name && !strcmp(name, "denoise") ? "HALO_LT_DENOISE_PROBE=1" : NULL;
+}
+
+static int vulkan_view_read(const char *name, struct host_render_replay_view *view)
+{
+	uint16_t *halves;
+	uint32_t width, height, x, y, field;
+
+	memset(view, 0, sizeof(*view));
+	if (!vulkan_view_setting(name) || !xgpu_vulkan_denoise_probe_read(&halves, &width, &height))
+		return 0;
+	view->values = malloc((size_t)width * height * 16 * sizeof(float));
+	if (!view->values)
+	{
+		free(halves);
+		return 0;
+	}
+	for (y = 0; y < height; y++)
+		for (x = 0; x < width; x++)
+			for (field = 0; field < 16; field++)
+				view->values[((size_t)y * width + x) * 16 + field] =
+					vulkan_half(halves[(((size_t)y * 4 * width) + (field / 4) * width + x) * 4 + field % 4]);
+	free(halves);
+	view->width = width;
+	view->height = height;
+	view->fields = 16;
+	view->names = vulkan_denoise_view_names;
+	return 1;
+}
+
 static const struct host_render_replay_platform vulkan_platform =
 {
 	.backend = "vulkan",
@@ -152,6 +207,9 @@ static const struct host_render_replay_platform vulkan_platform =
 	/* (debug: the light-transport pass's kernels from HALO_LT_SHADER_DIR's
 	SPIR-V, read again on "reload") */
 	.shaders_reload = xgpu_vulkan_lt_shaders_reload,
+	/* (debug: the light pass's views, rt_view) */
+	.view_read = vulkan_view_read,
+	.view_setting = vulkan_view_setting,
 };
 
 int main(int argc, char *argv[])

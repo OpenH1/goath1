@@ -147,6 +147,16 @@ struct host_render_replay_cost
 	const char *note;
 };
 
+/* a backend's view of the last frame played (rt_view): fields floats a
+pixel, interleaved, rows from the top (values malloc'd, the caller's to
+free); names each field's */
+struct host_render_replay_view
+{
+	uint32_t width, height, fields;
+	const char *const *names;
+	float *values;
+};
+
 struct host_render_replay_platform
 {
 	/* "metal", "vulkan" */
@@ -207,6 +217,13 @@ struct host_render_replay_platform
 	Vulkan's light-transport pass, HALO_LT_SHADER_DIR); folder NULL: the
 	one it reads from already */
 	void (*shaders_reload)(const char *folder);
+	/* Debug (NULL: none): the backend's named view of the last frame it
+	played (the service's "rt_view": Vulkan's "denoise", the denoiser's
+	temporal stage, HALO_LT_DENOISE_PROBE); 1 on success. view_setting:
+	the VAR=value that turns that view on (it is drawn only then); NULL if
+	the backend has no such view */
+	int (*view_read)(const char *name, struct host_render_replay_view *view);
+	const char *(*view_setting)(const char *name);
 };
 
 int host_render_replay_main(int argc, char *argv[], const struct host_render_replay_platform *platform);

@@ -36,6 +36,13 @@ negative controls). HALO_LT_DENOISE_MOTION_VIEW=1 (checking) makes the
 result each pixel's guides' motion less the cameras' reprojection (rg, in
 pixels; b 1 where the guides carry motion, 2 where not, 0 nothing drawn),
 the spatial stage left out; =2 the guides' motion itself (pixels) and, in b, the pixel's distance negated.
+HALO_LT_DENOISE_PROBE=1 (the workbench's view, tools/rt2_bench.py view)
+draws the diffuse temporal stage again each frame, from the same inputs, as
+lt/denoise_temporal.frag's PROBE variant: what it decided at each pixel (the
+history found, the gradients' cut, the sample's own cut, the bounce's hold,
+the count used, the disocclusion, the gradients' inputs) into an image of
+its own, which xgpu_vulkan_denoise_probe_read reads back. Off, nothing of it
+is drawn or made.
 HALO_LT_DENOISE_DUMP ("1-5,30,120": the denoiser's draws counted from its
 first) writes the result at those draws into HALO_LT_DENOISE_DUMP_DIR (the
 current folder by default) as denoise_<draw>.rgba16f, E1's dumps' form (a
@@ -138,18 +145,24 @@ struct denoise_channel
 	struct xgpu_world_ao_pass previous_pass;
 	/* HALO_LT_DENOISE_DUMP's: the draws counted */
 	unsigned long draws;
+	/* (HALO_LT_DENOISE_PROBE's: the probe, four windows wide, RGBA16F) */
+	struct xgpu_vulkan_image *probe;
 };
 
 static struct
 {
 	int made, failed, said;
 	unsigned generation;
-	VkShaderModule vertex, gradient, temporal, guide, guide_fold, atrous, atrous_pair, atrous_final;
+	VkShaderModule vertex, gradient, temporal, guide, guide_fold, atrous, atrous_pair, atrous_final, temporal_probe;
 	VkSampler sampler;
 	struct xgpu_vulkan_pipeline_description gradient_pass, temporal_pass, guide_pass, guide_fold_pass, atrous_pass;
 	/* the spatial stage's shared passes (lt/denoise_pair.glsl): the two
 	channels at once, and the last into the light the surfaces read */
 	struct xgpu_vulkan_pipeline_description atrous_pair_pass, atrous_final_pass;
+	/* (HALO_LT_DENOISE_PROBE's: the temporal stage's view; probe_drawn,
+	the probe's frame drawn) */
+	struct xgpu_vulkan_pipeline_description temporal_probe_pass;
+	int probe, probe_drawn;
 	/* the diffuse channel, the specular */
 	struct denoise_channel channels[2];
 	/* checking (HALO_LT_DENOISE_*) */
@@ -202,6 +215,7 @@ static int denoise_shaders(void)
 		denoise.motion_view = getenv("HALO_LT_DENOISE_MOTION_VIEW") ? atoi(getenv("HALO_LT_DENOISE_MOTION_VIEW")) : 0;
 		/* (HALO_LT_DENOISE_CAP: the diffuse history's cap, checking) */
 		denoise.cap = getenv("HALO_LT_DENOISE_CAP") ? atoi(getenv("HALO_LT_DENOISE_CAP")) : 0;
+		denoise.probe = getenv("HALO_LT_DENOISE_PROBE") && strcmp(getenv("HALO_LT_DENOISE_PROBE"), "0");
 		if (denoise.motion_view)
 			denoise.spatial = 0;
 	}
@@ -213,6 +227,7 @@ static int denoise_shaders(void)
 	denoise.atrous = denoise_kernel("denoise_atrous.frag");
 	denoise.atrous_pair = denoise_kernel("denoise_atrous_pair.frag");
 	denoise.atrous_final = denoise_kernel("denoise_atrous_final.frag");
+	denoise.temporal_probe = denoise.probe ? denoise_kernel("denoise_temporal_probe.frag") : VK_NULL_HANDLE;
 	if (!denoise.sampler)
 	{
 		memset(&sampler, 0, sizeof(sampler));
@@ -266,6 +281,14 @@ static int denoise_shaders(void)
 	(void)xgpu_vulkan_pipeline_prepare(&denoise.atrous_pass);
 	(void)xgpu_vulkan_pipeline_prepare(&denoise.atrous_pair_pass);
 	(void)xgpu_vulkan_pipeline_prepare(&denoise.atrous_final_pass);
+	memset(&denoise.temporal_probe_pass, 0, sizeof(denoise.temporal_probe_pass));
+	if (denoise.temporal_probe)
+	{
+		denoise.temporal_probe_pass = denoise.temporal_pass;
+		denoise.temporal_probe_pass.pixel_shader = denoise.temporal_probe;
+		denoise.temporal_probe_pass.color_format = XGPU_VULKAN_FORMAT_RGBA16F;
+		(void)xgpu_vulkan_pipeline_prepare(&denoise.temporal_probe_pass);
+	}
 	denoise.made = 1;
 	return 1;
 }
@@ -536,6 +559,21 @@ static struct xgpu_vulkan_image *denoise_channel_draw(struct denoise_channel *ch
 
 		denoise_pass(channel->histories[channel->current], rectangle, &uniforms, &params, &denoise.temporal_pass,
 			textures, 6);
+		/* (the workbench's view: the same stage from the same inputs, what
+		it decided into the probe's four windows; the history it read is
+		the other turn's, which the pass above did not write) */
+		if (!specular && denoise.probe && denoise.temporal_probe_pass.pixel_shader &&
+			xgpu_vulkan_pipeline_ready(&denoise.temporal_probe_pass))
+		{
+			int32_t wide[4] = { rectangle[0], rectangle[1], rectangle[2] + 3 * (int32_t)width, rectangle[3] };
+
+			channel->probe = denoise_image(channel->probe, XGPU_VULKAN_FORMAT_RGBA16F, 4 * width, height);
+			if (channel->probe)
+			{
+				denoise_pass(channel->probe, wide, &uniforms, &params, &denoise.temporal_probe_pass, textures, 6);
+				denoise.probe_drawn = 1;
+			}
+		}
 	}
 	/* 4: the spatial stage (the first pass from the history; the stage left
 	out, checking: one pass of step 0, the mean alone) */
@@ -725,4 +763,16 @@ struct xgpu_vulkan_image *xgpu_vulkan_denoise_specular_draw(struct xgpu_vulkan_i
 	const int32_t rectangle[4])
 {
 	return denoise_channel_draw(&denoise.channels[1], 1, raw, NULL, inputs, NULL, guides, pass, rectangle, NULL, 0);
+}
+
+int xgpu_vulkan_denoise_probe_read(uint16_t **halves, uint32_t *width, uint32_t *height)
+{
+	struct xgpu_vulkan_image *probe = denoise.channels[0].probe;
+
+	*halves = NULL;
+	if (!denoise.probe_drawn || !probe || xgpu_vulkan_read_halves(probe, 0, halves) != 1 || !*halves)
+		return 0;
+	*width = xgpu_vulkan_image_description(probe)->width / 4;
+	*height = xgpu_vulkan_image_description(probe)->height;
+	return 1;
 }

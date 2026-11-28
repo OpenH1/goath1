@@ -458,6 +458,9 @@ VkShaderModule xgpu_vulkan_lt_kernel(const char *source)
 		{ "e1.vert", lt_e1_vertex_spirv, sizeof(lt_e1_vertex_spirv) / sizeof(uint32_t) },
 		{ "denoise_gradient.frag", lt_denoise_gradient_spirv, sizeof(lt_denoise_gradient_spirv) / sizeof(uint32_t) },
 		{ "denoise_temporal.frag", lt_denoise_temporal_spirv, sizeof(lt_denoise_temporal_spirv) / sizeof(uint32_t) },
+		/* (the workbench's view of it: xgpu_vulkan_denoise.c's HALO_LT_DENOISE_PROBE) */
+		{ "denoise_temporal_probe.frag", lt_denoise_temporal_probe_spirv,
+			sizeof(lt_denoise_temporal_probe_spirv) / sizeof(uint32_t) },
 		{ "denoise_atrous.frag", lt_denoise_atrous_spirv, sizeof(lt_denoise_atrous_spirv) / sizeof(uint32_t) },
 		{ "denoise_atrous_pair.frag", lt_denoise_atrous_pair_spirv,
 			sizeof(lt_denoise_atrous_pair_spirv) / sizeof(uint32_t) },
