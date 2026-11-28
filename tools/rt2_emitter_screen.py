@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""The emitter files' screen: every BSP with a solved lamp file (port/assets/emitters) looked at in the game, classic
-against live, on lossless stills, and measured.
+"""The emitters' screen: every BSP with a spot (tools/rt2_emitter_spots.json: the campaign's BSPs whose bake has lamp-lit
+rooms) looked at in the game, classic against live (the one rule's glowing surfaces, lt_emitters.c), on lossless
+stills, and measured. `--env HALO_LT_EMITTERS=solved --name solved` screens the per-BSP solved files instead (the
+check the rule is compared against).
 
     python3 tools/rt2_emitter_screen.py --build local/my-branch --out DIR
     python3 tools/rt2_emitter_screen.py --build local/my-branch --bsps a50_bsp2,d20_bsp3 --out DIR
@@ -341,7 +343,7 @@ def level_plan(level, bsps, spots):
     return cues, shots, order
 
 
-def play(host, label, build, level, lighting, cues, shots, seconds):
+def play(host, label, build, level, lighting, cues, shots, seconds, extra=()):
     who = owner_playing(host)
     if who:
         raise SystemExit(f"rt2_emitter_screen: {host}'s owner is playing ({who}); not starting")
@@ -349,7 +351,7 @@ def play(host, label, build, level, lighting, cues, shots, seconds):
            "@link/mcc_import=~/mcc-import-data/mcc_import", f"HALO_RAY_TRACED_LIGHTING={1 if lighting else 0}",
            f"HALO_NETWORK_TEST=campaign:levels\\{level}\\{level}", "HALO_FRAME_TIME=0.0166666667",
            "HALO_NETWORK_TEST_CUES=" + "|".join(f"{t:g} {line}" for t, line in cues),
-           "HALO_SCREENSHOT_AT=" + ",".join(f"{t:g}" for t in shots) + ",quit"]
+           "HALO_SCREENSHOT_AT=" + ",".join(f"{t:g}" for t in shots) + ",quit"] + (list(extra) if lighting else [])
     say(f"rt2_emitter_screen: playing {label} (ray-traced lighting {'on' if lighting else 'off'})")
     result = subprocess.run([sys.executable, str(RIG), f"@{host}", "run", label, "--build", build, "--shared",
                              "--size", SIZE, "--seconds", str(seconds), "--", *env], text=True, capture_output=True)
@@ -361,7 +363,11 @@ def play(host, label, build, level, lighting, cues, shots, seconds):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--build", help="the build (a branch, sha or local/<name> goat-rig builds)")
-    parser.add_argument("--bsps", help="only these BSPs (names as the files', separated by commas)")
+    parser.add_argument("--bsps", help="only these BSPs (names as the spots', separated by commas; default every BSP "
+                        "with a spot: the one rule lights them all)")
+    parser.add_argument("--env", action="append", default=[],
+                        help="VAR=value for the live side (a check: HALO_LT_EMITTERS=solved, the per-BSP files)")
+    parser.add_argument("--name", help="the rig's folder and runs' suffix (default the build's): two screens at once")
     parser.add_argument("--host", default="5900x", choices=("5900x", "omarchy"))
     parser.add_argument("--out", help="a local folder for results.json, the pairs and the sheet")
     parser.add_argument("--spots", action="store_true", help="the cameras picked again (tools/rt2_emitter_spots.json)")
@@ -374,11 +380,11 @@ def main():
     if args.rig_measure:
         return rig_measure(args.rig_measure)
     files = bsp_files()
-    bsps = args.bsps.split(",") if args.bsps else list(files)
-    for bsp in bsps:
-        if bsp not in files:
-            parser.error(f"{bsp}: no port/assets/emitters/{bsp}.json")
     spots = json.loads(SPOTS.read_text()) if SPOTS.exists() else {}
+    bsps = args.bsps.split(",") if args.bsps else sorted(set(files) | set(spots))
+    for bsp in bsps:
+        if bsp not in files and bsp not in spots:
+            parser.error(f"{bsp}: no spot in {SPOTS.name} and no port/assets/emitters/{bsp}.json to pick one from")
     missing = [b for b in bsps if b not in spots]
     if args.spots or missing:
         spots.update(pick_spots(args.host, bsps if args.spots else missing))
@@ -390,7 +396,8 @@ def main():
                             capture_output=True)
     if result.returncode:
         raise SystemExit(f"rt2_emitter_screen: building {args.build} failed:\n{result.stdout[-1500:]}")
-    folder = f"{REMOTE}/{args.build.replace('/', '-')}"
+    name = (args.name or args.build).replace("/", "-")
+    folder = f"{REMOTE}/{name}"
     ssh(args.host, f"rm -rf ~/{folder} && mkdir -p ~/{folder}")
     levels = {}
     for bsp in bsps:
@@ -406,11 +413,11 @@ def main():
             cues, shots, order = level_plan(level, members, spots)
             side = {}
             for lighting in (False, True):
-                label = f"screen-{level}-{'live' if lighting else 'classic'}"
+                label = f"screen-{level}-{'live' if lighting else 'classic'}" + (f"-{args.name}" if args.name else "")
                 side[lighting] = label
                 labels.append(label)
                 jobs.append(pool.submit(play, args.host, label, args.build, level, lighting, cues, shots,
-                                        args.seconds))
+                                        args.seconds, args.env))
             for bsp, n, still in order:
                 plan["shots"].setdefault(bsp, []).append(
                     [f"~/goat-rig/runs/{side[False]}/game/shots/at{still}.png",

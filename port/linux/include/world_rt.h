@@ -280,6 +280,9 @@ invisible clip: nothing draws it, so the render geometry has none), the
 opaque ones first, then the alpha-tested; each of its materials its own.
 Its counts, then (arrays given) its data; its triangles (0 none) */
 long world_rt_source_structure_mesh(short bsp_index, struct world_rt_source_mesh *mesh);
+/* the same with its transparent surfaces after (their materials and
+triangles last: lt_emitters.c's glowing surfaces, not traced) */
+long world_rt_source_structure_mesh_all(short bsp_index, struct world_rt_source_mesh *mesh);
 /* a definition's model's render mesh, its model's space (its default pose),
 each vertex with its nodes: its regions' first permutations at one level of
 detail (the second most detailed), the opaque parts first, then the

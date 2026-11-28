@@ -684,7 +684,21 @@ long world_rt_source_structure(short bsp_index, float *triangles, long maximum)
 	return count;
 }
 
+static long structure_mesh(short bsp_index, struct world_rt_source_mesh *mesh, int last_surfaces);
+
 long world_rt_source_structure_mesh(short bsp_index, struct world_rt_source_mesh *mesh)
+{
+	return structure_mesh(bsp_index, mesh, WORLD_RT_SURFACES_ALPHA_TESTED);
+}
+
+long world_rt_source_structure_mesh_all(short bsp_index, struct world_rt_source_mesh *mesh)
+{
+	return structure_mesh(bsp_index, mesh, WORLD_RT_SURFACES_TRANSPARENT);
+}
+
+/* (the structure's render surfaces up to that kind: the opaque, then the
+alpha-tested, then the transparent: lt_emitters.c's glowing surfaces) */
+static long structure_mesh(short bsp_index, struct world_rt_source_mesh *mesh, int last_surfaces)
 {
 	struct structure_bsp const *structure_bsp;
 	long vertex_size = rasterizer_geometry_get_vertex_size(_rasterizer_vertex_type_environment_compressed);
@@ -701,7 +715,7 @@ long world_rt_source_structure_mesh(short bsp_index, struct world_rt_source_mesh
 	if (!structure_bsp || !structure_bsp->lightmaps.address || !structure_bsp->surfaces.address)
 		return 0;
 	/* (the opaque materials, then the alpha-tested) */
-	for (surfaces = WORLD_RT_SURFACES_OPAQUE; surfaces <= WORLD_RT_SURFACES_ALPHA_TESTED; surfaces++)
+	for (surfaces = WORLD_RT_SURFACES_OPAQUE; surfaces <= last_surfaces; surfaces++)
 	{
 		for (lightmap_index = 0; lightmap_index < structure_bsp->lightmaps.count; lightmap_index++)
 		{
