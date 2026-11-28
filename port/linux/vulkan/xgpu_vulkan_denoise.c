@@ -448,6 +448,8 @@ static struct xgpu_vulkan_image *denoise_channel_draw(struct denoise_channel *ch
 	history_valid = channel->previous_valid && pass->history[0] != 0.0f;
 	uniforms = *pass;
 	memset(&params, 0, sizeof(params));
+	/* (a level lit live: lt/denoise_pair.glsl's live) */
+	params.suns[1] = denoise.live;
 	params.size[0] = (float)width;
 	params.size[1] = (float)height;
 	params.size[2] = (float)gradient_width;
@@ -606,6 +608,8 @@ static struct xgpu_vulkan_image *denoise_shared(struct xgpu_vulkan_denoise_final
 	int index, dumped = denoise.dumps && *denoise.dumps && denoise_dumped(d->draws);
 
 	memset(&params, 0, sizeof(params));
+	/* (a level lit live: lt/denoise_pair.glsl's live) */
+	params.suns[1] = denoise.live;
 	params.size[0] = (float)size->width;
 	params.size[1] = (float)size->height;
 	params.tuning[1] = DENOISE_SIGMA_LUMINANCE;
