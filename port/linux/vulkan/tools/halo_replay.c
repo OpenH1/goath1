@@ -168,7 +168,9 @@ it took (rgb, a the bounce's count); "light": the denoised diffuse irradiance (r
 static int vulkan_view_read(const char *name, struct host_render_replay_view *view)
 {
 	int which = !vulkan_view_setting(name) ? -1 : !strcmp(name, "sample") ? 1 : !strcmp(name, "light") ? 2 : 0;
-	uint32_t width, height, x, y, field, fields = which ? 4 : 16, windows = which ? 1 : 4;
+	/* (the sample: the probe's fifth window) */
+	uint32_t width, height, x, y, field, fields = which ? 4 : 16, windows = which == 2 ? 1 : 5;
+	uint32_t from = which == 1 ? 16 : 0;
 	uint16_t *halves;
 
 	memset(view, 0, sizeof(*view));
@@ -184,7 +186,8 @@ static int vulkan_view_read(const char *name, struct host_render_replay_view *vi
 		for (x = 0; x < width; x++)
 			for (field = 0; field < fields; field++)
 				view->values[((size_t)y * width + x) * fields + field] =
-					vulkan_half(halves[(((size_t)y * windows * width) + (field / 4) * width + x) * 4 + field % 4]);
+					vulkan_half(halves[(((size_t)y * windows * width) + ((from + field) / 4) * width + x) * 4 +
+						(from + field) % 4]);
 	free(halves);
 	view->width = width;
 	view->height = height;

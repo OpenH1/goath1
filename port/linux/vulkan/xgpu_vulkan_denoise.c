@@ -145,7 +145,7 @@ struct denoise_channel
 	struct xgpu_world_ao_pass previous_pass;
 	/* HALO_LT_DENOISE_DUMP's: the draws counted */
 	unsigned long draws;
-	/* (HALO_LT_DENOISE_PROBE's: the probe, four windows wide, RGBA16F) */
+	/* (HALO_LT_DENOISE_PROBE's: the probe, five windows wide, RGBA16F) */
 	struct xgpu_vulkan_image *probe;
 };
 
@@ -163,9 +163,7 @@ static struct
 	the probe's frame drawn) */
 	struct xgpu_vulkan_pipeline_description temporal_probe_pass;
 	int probe, probe_drawn;
-	/* (and the diffuse sample the temporal stage took, the bounce folded
-	in, this frame) */
-	struct xgpu_vulkan_image *probe_sample;
+
 	/* the diffuse channel, the specular */
 	struct denoise_channel channels[2];
 	/* checking (HALO_LT_DENOISE_*) */
@@ -568,14 +566,13 @@ static struct xgpu_vulkan_image *denoise_channel_draw(struct denoise_channel *ch
 		if (!specular && denoise.probe && denoise.temporal_probe_pass.pixel_shader &&
 			xgpu_vulkan_pipeline_ready(&denoise.temporal_probe_pass))
 		{
-			int32_t wide[4] = { rectangle[0], rectangle[1], rectangle[2] + 3 * (int32_t)width, rectangle[3] };
+			int32_t wide[4] = { rectangle[0], rectangle[1], rectangle[2] + 4 * (int32_t)width, rectangle[3] };
 
-			channel->probe = denoise_image(channel->probe, XGPU_VULKAN_FORMAT_RGBA16F, 4 * width, height);
+			channel->probe = denoise_image(channel->probe, XGPU_VULKAN_FORMAT_RGBA16F, 5 * width, height);
 			if (channel->probe)
 			{
 				denoise_pass(channel->probe, wide, &uniforms, &params, &denoise.temporal_probe_pass, textures, 6);
 				denoise.probe_drawn = 1;
-				denoise.probe_sample = raw;
 			}
 		}
 	}
@@ -771,13 +768,12 @@ struct xgpu_vulkan_image *xgpu_vulkan_denoise_specular_draw(struct xgpu_vulkan_i
 
 int xgpu_vulkan_denoise_probe_read(int which, uint16_t **halves, uint32_t *width, uint32_t *height)
 {
-	struct xgpu_vulkan_image *image = which == 1 ? denoise.probe_sample : which == 2 ? denoise.channels[0].result :
-		denoise.channels[0].probe;
+	struct xgpu_vulkan_image *image = which == 2 ? denoise.channels[0].result : denoise.channels[0].probe;
 
 	*halves = NULL;
 	if (!denoise.probe_drawn || !image || xgpu_vulkan_read_halves(image, 0, halves) != 1 || !*halves)
 		return 0;
-	*width = xgpu_vulkan_image_description(image)->width / (which ? 1 : 4);
+	*width = xgpu_vulkan_image_description(image)->width / (which == 2 ? 1 : 5);
 	*height = xgpu_vulkan_image_description(image)->height;
 	return 1;
 }

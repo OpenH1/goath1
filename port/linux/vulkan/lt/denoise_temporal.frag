@@ -20,7 +20,7 @@ layout(set = 1, binding = 5) uniform usampler2D gradients;
 
 #ifdef PROBE
 // (the workbench's view of this stage, xgpu_vulkan_denoise.c's HALO_LT_DENOISE_PROBE: the same pass drawn again from
-// the same inputs into an image of its own four windows wide, RGBA16F, what it decided at each pixel in place of its
+// the same inputs into an image of its own five windows wide, RGBA16F, what it decided at each pixel in place of its
 // history; the game's kernel is built without PROBE, and its history is the one the real pass wrote)
 layout(location = 0) out vec4 probe;
 uvec4 result;
@@ -153,7 +153,8 @@ void main()
 {
     ivec2 pixel = ivec2(gl_FragCoord.xy);
 #ifdef PROBE
-    // (which of the four windows: 0 the counts, 1 the cuts' detail, 2 the gradients' inputs, 3 the relighting)
+    // (which of the five windows: 0 the counts, 1 the cuts' detail, 2 the gradients' inputs, 3 the relighting, 4 the
+    // sample taken (rgb, a the raw's: the bounce's count where it is folded in))
     int section = pixel.x / int(pass.size.x);
     pixel.x -= section * int(pass.size.x);
     probe = vec4(0.0);
@@ -352,6 +353,7 @@ void main()
     probe = section == 0 ? vec4(probe_found, cut, probe_kept, count) :
         section == 1 ? vec4(probe_z, probe_bounce, probe_weights, float(probe_flags)) :
         section == 2 ? probe_gradients(at) :
-        vec4(relit, cap, min(probe_score, 60000.0), luminance(mean));
+        section == 3 ? vec4(relit, cap, min(probe_score, 60000.0), luminance(mean)) :
+        vec4(sample_rgb, raw_texel.a);
 #endif
 }

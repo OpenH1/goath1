@@ -82,11 +82,11 @@ void xgpu_vulkan_denoise_prepare(void);
 
 /* (debug, HALO_LT_DENOISE_PROBE=1: the workbench's views) of the last
 frame drawn, after the work recorded so far (waits for the GPU), into
-*halves (malloc'd, the caller's) as RGBA half floats: which 0, the diffuse
-temporal stage's probe, an image four windows wide (*width each, *height),
-each pixel's four windows' fields as lt/denoise_temporal.frag's PROBE
-writes them; 1, the diffuse sample that stage took (the bounce folded in;
-a the bounce's count); 2, the denoised diffuse irradiance (the a-trous
+*halves (malloc'd, the caller's) as RGBA half floats: which 0 or 1, the
+diffuse temporal stage's probe, an image five windows wide (*width each,
+*height), each pixel's windows' fields as lt/denoise_temporal.frag's PROBE
+writes them (the fifth the diffuse sample that stage took: the bounce folded
+in, a the bounce's count); 2, the denoised diffuse irradiance (the a-trous
 passes' last). 1 on success, 0 none drawn (or not half floats) */
 int xgpu_vulkan_denoise_probe_read(int which, uint16_t **halves, uint32_t *width, uint32_t *height);
 
