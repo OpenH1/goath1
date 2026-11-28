@@ -3663,7 +3663,8 @@ static const char *environment_set(const char *given, struct text *said)
 		}
 		else
 			return "env: VAR=value or -VAR, separated by spaces";
-		TEXT(said, first ? "" : ",");
+		if (!first)
+			TEXT(said, ",");
 		text_string(said, word);
 		first = 0;
 	}
@@ -4136,7 +4137,8 @@ static void serve_rt_view(struct text *text, const struct request *request)
 
 		for (field = 0; field < view.fields; field++)
 		{
-			TEXT(text, field ? "," : "");
+			if (field)
+				TEXT(text, ",");
 			text_string(text, view.names[field]);
 		}
 	}
@@ -4148,7 +4150,8 @@ static void serve_rt_view(struct text *text, const struct request *request)
 	TEXT(text, ",\"regions\":[");
 	for (region = 0; region < regions; region++)
 	{
-		TEXT(text, region ? "," : "");
+		if (region)
+			TEXT(text, ",");
 		rt_view_box_json(text, &view, &request->numbers[region * 4]);
 	}
 	TEXT(text, "]");
@@ -4202,7 +4205,9 @@ static void serve_rt_view(struct text *text, const struct request *request)
 				}
 				bgra[pixel * 4 + 3] = 255;
 			}
-			TEXT(text, first ? "{\"show\":" : ",{\"show\":");
+			if (!first)
+				TEXT(text, ",");
+			TEXT(text, "{\"show\":");
 			first = 0;
 			text_string(text, what);
 			text_printf(text, ",\"scale\":%.6g", used);
