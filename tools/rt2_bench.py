@@ -766,15 +766,19 @@ REFERENCE_ENV = ["HALO_LT_REUSE=0",           # no ReSTIR reuse: RIS alone each 
                  "HALO_LT_INDIRECT=nocache"]  # the bounce traced: no radiance-cache lookups at its hits
 # what each term keeps (the rest masked: HALO_LT_KIND_SCALE's table kinds, HALO_LT_MASK's lamps, HALO_LT_DROP's
 # flashlight); every direct term with the bounce off, the bounce the whole less the direct
-_NONE = "HALO_LT_KIND_SCALE=point=0,spot=0,panel=0,sun=0,fill=0"
+_NONE = "HALO_LT_KIND_SCALE=point=0,spot=0,panel=0,sun=0,fill=0,dome=0"
 TERMS = {
     "all": [],
     "direct": ["HALO_LT_INDIRECT=0"],
-    "sun": ["HALO_LT_INDIRECT=0", "HALO_LT_KIND_SCALE=point=0,spot=0,panel=0,fill=0", "HALO_LT_MASK=emitters,objects",
-            "HALO_LT_DROP=flashlight"],
-    "sky": ["HALO_LT_INDIRECT=0", "HALO_LT_KIND_SCALE=point=0,spot=0,panel=0,sun=0", "HALO_LT_MASK=emitters,objects",
-            "HALO_LT_DROP=flashlight"],
-    "lights": ["HALO_LT_INDIRECT=0", "HALO_LT_KIND_SCALE=sun=0,fill=0", "HALO_LT_MASK=emitters,objects",
+    # (a level lit live: its sky rows' own real k scaled by the kind's where given; the sun a narrow sky light, the
+    # sky the wide ones, the dome the outdoor ambient dome)
+    "sun": ["HALO_LT_INDIRECT=0", "HALO_LT_KIND_SCALE=point=0,spot=0,panel=0,fill=0,dome=0",
+            "HALO_LT_MASK=emitters,objects", "HALO_LT_DROP=flashlight"],
+    "sky": ["HALO_LT_INDIRECT=0", "HALO_LT_KIND_SCALE=point=0,spot=0,panel=0,sun=0,dome=0",
+            "HALO_LT_MASK=emitters,objects", "HALO_LT_DROP=flashlight"],
+    "dome": ["HALO_LT_INDIRECT=0", "HALO_LT_KIND_SCALE=point=0,spot=0,panel=0,sun=0,fill=0",
+             "HALO_LT_MASK=emitters,objects", "HALO_LT_DROP=flashlight"],
+    "lights": ["HALO_LT_INDIRECT=0", "HALO_LT_KIND_SCALE=sun=0,fill=0,dome=0", "HALO_LT_MASK=emitters,objects",
                "HALO_LT_DROP=flashlight"],
     "flashlight": ["HALO_LT_INDIRECT=0", _NONE, "HALO_LT_MASK=emitters,objects"],
     "solved_lamps": ["HALO_LT_INDIRECT=0", _NONE, "HALO_LT_MASK=objects", "HALO_LT_DROP=flashlight"],
@@ -782,8 +786,8 @@ TERMS = {
     # (every source masked: what no mask reaches, each term's run less it)
     "none": ["HALO_LT_INDIRECT=0", _NONE, "HALO_LT_MASK=emitters,objects", "HALO_LT_DROP=flashlight"],
 }
-TERM_ORDER = ["sun", "sky", "lights", "flashlight", "solved_lamps", "object_lamps", "bounce", "unmasked"]
-TERM_RUNS = ["sun", "sky", "lights", "flashlight", "solved_lamps", "object_lamps", "none", "all", "direct"]
+TERM_ORDER = ["sun", "sky", "dome", "lights", "flashlight", "solved_lamps", "object_lamps", "bounce", "unmasked"]
+TERM_RUNS = ["sun", "sky", "dome", "lights", "flashlight", "solved_lamps", "object_lamps", "none", "all", "direct"]
 
 # run on the rig (numpy there): the saved views' numbers by region, and small pictures
 ANALYSE = r"""
