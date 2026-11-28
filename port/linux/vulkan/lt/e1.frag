@@ -140,6 +140,19 @@ layout(set = 0, binding = 1, std140) uniform Pass
 #endif
 } pass;
 
+// how far a ray starts off its receiver: the receiver's point is found on
+// the pixel's middle ray, at the drawn point's distance, and the drawn point
+// lies anywhere in the pixel (the camera's jitter, the pass's own scale), so
+// up to a pixel's width off its surface: 1.5 pixels' width at its distance,
+// over a floor (a fixed fraction of the distance fell short on b30's beach,
+// whole triangles shadowed by themselves)
+float ray_lift(vec3 p)
+{
+    float pixel_width = 2.0 * length(pass.camera[2].xyz) /
+        (length(pass.camera[1].xyz) * max(float(pass.corners.z - pass.corners.x), 1.0));
+    return 0.004 + 1.5 * pixel_width * length(p - pass.camera[0].xyz);
+}
+
 layout(set = 0, binding = 3) uniform usampler3D cells;
 layout(set = 1, binding = 0) uniform usampler2D inputs;
 layout(set = 1, binding = 1) uniform sampler2D history_image;
@@ -303,7 +316,7 @@ vec3 flashlight(vec3 p, vec3 n, vec3 shaded, ivec2 pixel, int receiver)
     if ((pass.control.w & VISIBILITY) != 0)
     {
         // (off the surface by a little more far away, where the distance's float has less room)
-        vec3 origin = p + n * (0.004 + 0.0005 * length(p - pass.camera[0].xyz));
+        vec3 origin = p + n * ray_lift(p);
         seen = visible(origin, normalize(emitter - origin), max(length(emitter - origin) - 0.01, 0.0), receiver);
     }
     // (a disk emitter's irradiance: its intensity (the gel's angular profile, linear, by the power's scale) by
@@ -477,7 +490,7 @@ vec3 light_sample(int row, vec3 p, vec3 n, vec3 shaded, vec2 xi, int receiver, b
         return vec3(0.0);
     if (shadow)
     {
-        vec3 origin = p + n * (0.004 + 0.0005 * length(p - pass.camera[0].xyz));
+        vec3 origin = p + n * ray_lift(p);
         vec3 ray = emitter - origin;
         float length_to = length(ray);
         // (ending short of the emitter: its own glow, a bolt's body, the weapon it is on: emitter_body's reach)
@@ -575,7 +588,7 @@ vec3 emitter_light(vec3 p, vec3 n, vec3 shaded, int tri, vec2 ab, out vec3 q)
 // whether q (a light source's point) is seen from p (normal n), the receiver's own object left out
 float emitter_visible(vec3 p, vec3 n, vec3 q, int receiver)
 {
-    vec3 origin = p + n * (0.004 + 0.0005 * length(p - pass.camera[0].xyz));
+    vec3 origin = p + n * ray_lift(p);
     vec3 ray = q - origin;
     float length_to = length(ray);
     // (ending short of the lamp's own surface, 0.01 under the light)
@@ -888,7 +901,7 @@ vec3 sun_cmax(vec3 n)
 vec3 sun_share(vec3 p, vec3 n, ivec2 pixel, int rays)
 {
     vec3 share = vec3(0.0);
-    vec3 origin = p + n * (0.004 + 0.0005 * length(p - pass.camera[0].xyz));
+    vec3 origin = p + n * ray_lift(p);
     for (int s = 0; s < pass.lights.y; s++)
     {
         int row = SUN_ROW + s;
@@ -920,7 +933,7 @@ vec3 sun_share(vec3 p, vec3 n, ivec2 pixel, int rays)
 vec3 sun_real(vec3 p, vec3 n, vec3 shaded, ivec2 pixel, int rays)
 {
     vec3 light = vec3(0.0);
-    vec3 origin = p + n * (0.004 + 0.0005 * length(p - pass.camera[0].xyz));
+    vec3 origin = p + n * ray_lift(p);
     for (int s = 0; s < pass.lights.y; s++)
     {
         int row = SUN_ROW + s;
