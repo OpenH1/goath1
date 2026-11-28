@@ -367,6 +367,17 @@ static int lt_sky_lit(short sky_index)
 	return FALSE;
 }
 
+/* whether the view is in an exterior cluster, one that sees a lit sky (the
+camera's cluster, structure_visibility.c's render.visible_sky_index): an
+outdoor level's interiors (b30's corridors) keep their lightmap while the
+view is in them, their light the emitters' the tags lack until step 2
+(~/dev/rt2-realtime-design.md section 9: the view's cluster now, each
+surface's own cluster next) */
+static int lt_view_exterior(void)
+{
+	return render.visible_sky_index != NONE && lt_sky_lit(render.visible_sky_index);
+}
+
 /* whether the level (its BSP) is lit live, the lightmap dropped: its
 clusters that see a lit sky (exterior clusters, the only ones Bungie's
 lightmap tool lit with the sky's lights and dome) LT_LIGHTS_REAL_SKY_SHARE
@@ -386,7 +397,7 @@ int lt_lights_real_sky(void)
 	if (!bsp || !scenario)
 		return FALSE;
 	if (bsp == lt.real_bsp)
-		return lt.live;
+		return lt.live && lt_view_exterior();
 	lt.real_bsp = bsp;
 	for (index = 0; bsp->clusters.address && index < bsp->clusters.count; index++)
 	{
@@ -400,7 +411,7 @@ int lt_lights_real_sky(void)
 	lt.live = total > 0 && (float)exterior >= LT_LIGHTS_REAL_SKY_SHARE * (float)total;
 	platform_log("lt lights: %ld of the BSP's %ld clusters see a lit sky: %s", exterior, total,
 		lt.live ? "lit live (the sky's lights and dome, the lightmap dropped)" : "the lightmap kept");
-	return lt.live;
+	return lt.live && lt_view_exterior();
 }
 
 /* HALO_LT_SUN_ANGLES=<yaw>,<pitch> (degrees; checking): the sky's first
