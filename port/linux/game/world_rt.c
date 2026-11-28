@@ -620,6 +620,7 @@ static long world_rt_material(struct world_rt_source_material const *source, str
 	made->normal_map = world_rt_slot(NULL, source->normal_image);
 	made->orm_map = world_rt_slot(NULL, source->orm_image);
 	made->lightmap = world_rt_slot(lightmap, 0);
+	made->self_illumination = source->self_illumination;
 	*new_one = 1;
 	return index;
 }

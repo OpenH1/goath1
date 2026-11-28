@@ -47,6 +47,8 @@
 // the shader types (shaders.c's; xgpu_spirv.c's RT_REFLECTION_KIND_*)
 #define KIND_ENVIRONMENT 3u
 #define KIND_MODEL 4u
+// (the live lights' one k: lt_lights.c's LT_LIGHTS_REAL_*_POWER_SCALE)
+#define GLOW_K 0.48
 #define MASK_REFLECTIONS 0x1Bu
 // the rays' reach (world units), the reflections' fade from 80% of it (display.rt_reflections')
 #define BOUNCE_REACH 32.0
@@ -87,7 +89,7 @@ struct Hit
 {
     bool hit, attributes;
     float t;
-    vec3 p, n, albedo, surface;
+    vec3 p, n, albedo, surface, glow;
     int owner;
 };
 
@@ -172,7 +174,7 @@ vec3 light_below(vec3 p)
 // shows the player (MASK_REFLECTIONS)
 Hit trace(vec3 origin, vec3 d, float t_max, int skip, bool lightmap, uint mask)
 {
-    Hit hit = Hit(false, false, 0.0, vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), 0);
+    Hit hit = Hit(false, false, 0.0, vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), 0);
     rayQueryEXT q;
     rayQueryInitializeEXT(q, scene, 0u, mask, origin, 0.0, d, t_max);
     while (rayQueryProceedEXT(q))
@@ -221,6 +223,17 @@ Hit trace(vec3 origin, vec3 d, float t_max, int skip, bool lightmap, uint mask)
         base *= 2.0 * hit_texel(detail, st * uintBitsToFloat(table.words[at + 9u]), level);
     base = clamp(base, 0.0, 1.0);
     hit.albedo = pow(base, vec3(2.2));
+    // (a model's self-illumination, lit live: an object's own lamps, the light it gives what it meets; as the model
+    // pass draws it, the colour masked by the multipurpose map's green added to the light before the albedo
+    // multiplies, so its radiance is albedo x (mask x colour)^2.2 (tools/rt_truth's HaloSelfIllum), at the live
+    // lights' one k (lt_lights.c's LT_LIGHTS_REAL_*_POWER_SCALE). The level's own glowing surfaces are its emitters,
+    // sampled apart (emitter_sample))
+    uint glow = table.words[at + 15u];
+    if (kind == KIND_MODEL && glow != 0u && (pass.lights.z & LIGHTS_REAL) != 0)
+    {
+        float mask = hit_texel(table.words[at + 10u], st * scale, level).g;
+        hit.glow = GLOW_K * hit.albedo * pow(clamp(unpackUnorm4x8(glow).rgb * mask, 0.0, 1.0), vec3(2.2));
+    }
     if (lightmap)
     {
         uint page = table.words[at + 14u];
@@ -480,7 +493,7 @@ vec4 bounce_main(ivec2 block, out vec3 p, out vec3 n, out uint owner, out bool f
         // gathers these samples, carries it on to the next bounce: a room lit only through its doors by the next
         // rooms' lamps, a10's cryo deck)
         if (hit.attributes)
-            e += hit.albedo * (direct_one(hit.p, hit.n, hit.owner, pixel, 6.0 + 17.0 * float(k), h) +
+            e += hit.glow + hit.albedo * (direct_one(hit.p, hit.n, hit.owner, pixel, 6.0 + 17.0 * float(k), h) +
                 cache_lookup(hit.p, hit.n) + (real ? sky_at(hit, pixel, 7.0 + 17.0 * float(k), true) : vec3(0.0)) +
                 emitter_sample(hit.p, hit.n, hit.n, EMITTER_BOUNCE_CANDIDATES, h, hit.owner, true));
         else if (real && !hit.hit)
@@ -698,7 +711,7 @@ vec4 specular_main(ivec2 pixel)
             continue;
         // (lit live: the hit's own live light in place of its lightmap)
         // (lit live by the level's light sources alone, no sky: their light, the lightmap dropped too)
-        vec3 radiance = (real_sky() ? hit.albedo * sky_at(hit, pixel, 11.0 + 17.0 * float(k), false) :
+        vec3 radiance = hit.glow + (real_sky() ? hit.albedo * sky_at(hit, pixel, 11.0 + 17.0 * float(k), false) :
             (pass.lights.z & LIGHTS_REAL) != 0 ? vec3(0.0) : pow(hit.surface, vec3(2.2))) +
             hit.albedo * (direct_one(hit.p, hit.n, hit.owner, pixel, 10.0 + 17.0 * float(k), h) +
             cache_lookup(hit.p, hit.n) + emitter_sample(hit.p, hit.n, hit.n, EMITTER_BOUNCE_CANDIDATES, h, hit.owner,
