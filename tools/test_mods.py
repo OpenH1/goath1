@@ -225,7 +225,7 @@ def game(tmp_path_factory) -> Path:
     if not GAME.is_file() or not (MAPS / "bloodgulch.map").is_file() or not shutil.which("xvfb-run"):
         pytest.skip(f"needs {GAME.relative_to(ROOT)}, assets/maps/bloodgulch.map and xvfb-run")
     folder = tmp_path_factory.mktemp("game")
-    for name in ("halo", "libSDL3.so.0"):
+    for name in ("halo", "libSDL3.so.0", "openh1.assets"):
         if (GAME.parent / name).is_file():
             shutil.copy2(GAME.parent / name, folder / name)
     return folder / "halo"
