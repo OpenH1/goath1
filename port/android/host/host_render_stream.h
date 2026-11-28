@@ -139,6 +139,10 @@ struct host_render_backend
 	/* the light-transport pass's light list (xgpu_stream.h's LT_LIGHTS:
 	its count, window and lights inside the stream checked); none: not kept */
 	void (*lt_lights)(void *context, const struct xgpu_stream_lt_lights *record);
+	/* the light list's inputs (xgpu_stream.h's LT_INPUTS: its bytes inside
+	the stream checked); none in the backends (the replay's light-list unit
+	takes them) */
+	void (*lt_inputs)(void *context, const struct xgpu_stream_lt_inputs *record);
 	void (*world_ao_cascades)(void *context, const struct xgpu_stream_world_ao_cascades *record);
 	/* display.ambient_occlusion "ray_traced" (xgpu_stream.h's WORLD_AO_MESH,
 	_INSTANCES: the decoder has checked their sizes, not the instances'

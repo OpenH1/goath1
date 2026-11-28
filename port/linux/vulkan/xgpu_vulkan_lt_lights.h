@@ -15,6 +15,10 @@ here. Render thread alone.
 /* the stream's LT_LIGHTS (host_render_stream.h's lt_lights), its count,
 window and lights checked by the decoder */
 void xgpu_vulkan_lt_lights_receive(void *context, const struct xgpu_stream_lt_lights *record);
+/* the same for a list in the host's memory (count records for window, the
+game's count of lists sent): the replay's light-list unit's (port/tools/
+replay, HALO_LT_UNIT), which builds the list again from its inputs */
+void xgpu_vulkan_lt_lights_take(const struct xgpu_stream_lt_light *lights, uint32_t count, int window, uint32_t frame);
 /* a window's (0 to 3) last list: its lights (count of them; NULL none) and
 the game's count of lists sent when it was */
 const struct xgpu_stream_lt_light *xgpu_vulkan_lt_lights(int window, int *count, uint32_t *frame);

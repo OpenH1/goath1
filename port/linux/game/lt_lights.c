@@ -75,6 +75,7 @@ against the truth export's lights.json at the same tick.
 #include "physics/collisions.h"
 #include "halo_dynamic_lights.h"
 #include "lt_lights.h"
+#include "lt_lights_inputs.h"
 #include "world_rt.h"
 
 #include <math.h>
@@ -91,39 +92,13 @@ void platform_log(const char *format, ...);
 /* (port/linux/src/xgpu_stream_encode.c: count records, xgpu_stream.h's
 layout, for window) */
 void xgpu_backend_lt_lights(const void *lights, int count, int window, unsigned int frame);
+/* (the same: the frame's inputs, bytes of them, xgpu_stream.h's LT_INPUTS) */
+void xgpu_backend_lt_inputs(const void *inputs, unsigned int bytes, int window, unsigned int frame);
 /* (object_lights.c) */
 extern struct data_array *light_data;
 
-/* k: the flashlight's, measured (~/dev/rt2-calibration.json); the suns' the
-truth helper's fit of the lightmap's direct share (sun_power_scale) */
-#define LT_LIGHTS_POWER_SCALE 1.009f
-/* a point light's k (a muzzle flash, an explosion, a projectile's light,
-the port's own lights: lt_point_power_scale) from the classic light model's
-own falloff (display.ray_traced_lighting off: d3d8_device.c's look[0],
-xgpu_spirv.c's dynamic_light_sum_classic): the linear light it adds at d is
-BRIGHTNESS x color^2.2 x W(d / r) / (1 + core d^2), core = max(CORE / r^2,
-1 / CORE_MOST^2), W the range window; so the classic's light scales with
-its reach, and one k a kind cannot match it at every reach
-(~/dev/rt2-calibration.json's dynamic_power_scales) */
-#define LT_LIGHTS_CLASSIC_BRIGHTNESS 1.7f
-#define LT_LIGHTS_CLASSIC_CORE 12.0f
-#define LT_LIGHTS_CLASSIC_CORE_MOST 0.6f
-/* a sun's (a narrow sky light's) and a fill's (a sky light LT_LIGHTS_FILL_DIAMETER
-across or more, b30's 50 degree one): ~/dev/rt2-calibration.json's
-sun_power_scale and fill_power_scale (xgpu_vulkan_lt.c's, the same rule) */
-#define LT_LIGHTS_SUN_POWER_SCALE 0.417f
-#define LT_LIGHTS_FILL_POWER_SCALE 0.187f
-#define LT_LIGHTS_FILL_DIAMETER 0.17453293f
-/* a level lit live (lt_lights_real_sky): the sky's lights and its ambient
-dome as the whole light, each group's k for each channel from the truth
-renderer's multi-bounce render of b30 (432 samples a pixel, every bounce)
-against its lightmap as the game shows it (pages ^2.2), the lightmap the
-answer key only: the sun's, and the sky's (its wide lights and its dome:
-the lightmap tool's sky alike), red, green and blue (R^2 0.536, 0.568,
-0.620; one k for all, 0.457 0.475 0.594, R^2 0.524, 0.554, 0.614;
-~/dev/rt2-calibration.json's real_sky colour_fit) */
-static const float lt_lights_real_sun_k[3] = { 0.558f, 0.592f, 0.722f };
-static const float lt_lights_real_sky_k[3] = { 0.324f, 0.338f, 0.506f };
+/* (the k's, the suns' and the sky's, and the emitters' radii: lt_lights_build.c, where the list is built
+from what this file gathers) */
 /* the share of the BSP's clusters that must see a lit sky for the level to
 be lit live: Bungie's lightmap tool lit only those (a sky light's "affects
 exteriors"; the outdoor ambient radiosity "for exterior clusters"), so the
@@ -134,14 +109,6 @@ flags (bit 0: it lights exterior clusters) */
 #define LT_SKY_OUTDOOR_AMBIENT_COLOR_OFFSET 0x48
 #define LT_SKY_OUTDOOR_AMBIENT_POWER_OFFSET 0x54
 #define LT_SKY_LIGHT_AFFECTS_EXTERIORS_BIT 0
-/* the emitters' radii (world units): E1's flashlight disk, then
-dynamic_lights.c's shadow disks' (SHADOWED_DISK_*) */
-#define LT_LIGHTS_FLASHLIGHT_DISK 0.01f
-#define LT_LIGHTS_PROJECTILE_DISK 0.05f
-#define LT_LIGHTS_DISK_SCALE 0.05f
-#define LT_LIGHTS_DISK_LEAST 0.1f
-#define LT_LIGHTS_DISK_MOST 0.5f
-
 /* (rt_lights_materials.c's rtlm_light_definition: the light tag, as far as
 its gel) */
 struct lt_light_definition
@@ -203,6 +170,14 @@ static struct
 	FILE *dump;
 	unsigned int frame;
 	struct xgpu_stream_lt_light lights[XGPU_STREAM_LT_LIGHTS_MAXIMUM];
+	/* the frame's inputs (lt_lights_inputs.h): the header, its lights, its
+	lamps, one record */
+	union
+	{
+		struct lt_inputs head;
+		unsigned char bytes[sizeof(struct lt_inputs) + LT_INPUTS_LIGHTS_MOST * sizeof(struct lt_input_light) +
+			LT_INPUTS_LAMPS_MOST * sizeof(struct lt_input_lamp)];
+	} inputs;
 	/* the sky lights.json names (the most clusters'), for the BSP it was found for */
 	void const *sky_bsp;
 	short sky_index;
@@ -281,34 +256,6 @@ void lt_lights_update(void)
 boolean lt_lights_sent(void)
 {
 	return lt_lights_wanted() != 0;
-}
-
-static float lt_linear(float value)
-{
-	return value > 0.0f ? powf(value, 2.2f) : 0.0f;
-}
-
-static void lt_copy3(float out[3], float x, float y, float z)
-{
-	out[0] = x;
-	out[1] = y;
-	out[2] = z;
-}
-
-/* left = forward x up, normalized */
-static void lt_left(struct xgpu_stream_lt_light *out)
-{
-	real_vector3d forward, up, left;
-
-	forward.i = out->forward[0];
-	forward.j = out->forward[1];
-	forward.k = out->forward[2];
-	up.i = out->up[0];
-	up.j = out->up[1];
-	up.k = out->up[2];
-	cross_product3d(&forward, &up, &left);
-	normalize3d(&left);
-	lt_copy3(out->left, left.i, left.j, left.k);
 }
 
 /* the sky lights.json takes: the one the most BSP clusters name */
@@ -444,311 +391,159 @@ static void lt_sun_angles(short sky_index, long light_index, real_euler_angles2d
 	}
 }
 
-/* the suns after count records; the count of all */
-static int lt_suns(int count)
+/* ---------- the inputs (lt_lights_inputs.h): what the list's building reads of the game */
+
+/* the sky's part: the sky lights.json takes, whether the level is lit live,
+its lights (their directions as render_sky.c aims its lens flare) and its
+outdoor ambient radiosity */
+static void lt_gather_sky(struct lt_inputs *in)
 {
 	struct scenario *scenario = global_scenario_get();
-	int live;
 	short sky_index;
 	char const *sky;
 	struct tag_block const *block;
 	long index;
 
+	in->has_sky = FALSE;
+	in->sky_light_count = 0;
 	if (!scenario || scenario->sky_references.count <= 0)
-		return count;
+		return;
 	sky_index = lt_sky_index();
 	sky = (char const *)scenario_get_sky(sky_index);
 	if (!sky)
-		return count;
-	live = lt_lights_real_sky();
+		return;
+	in->has_sky = TRUE;
+	in->sky_index = sky_index;
+	in->live = lt_lights_real_sky();
 	block = (struct tag_block const *)(sky + LT_SKY_LIGHTS_OFFSET);
-	for (index = 0; block->address && index < block->count && count < XGPU_STREAM_LT_LIGHTS_MAXIMUM; index++)
+	for (index = 0; block->address && index < block->count && index < XGPU_STREAM_LT_LIGHTS_MAXIMUM; index++)
 	{
 		struct lt_sky_light const *light = (struct lt_sky_light const *)block->address + index;
-		struct xgpu_stream_lt_light *out = &lt.lights[count];
+		struct lt_input_sky_light *out;
 		real_vector3d direction;
 		real_euler_angles2d up_angles;
 		real_vector3d up;
-
 		real_euler_angles2d angles = light->direction;
 
-		memset(out, 0, sizeof(*out));
+		if (index >= LT_INPUTS_SKY_LIGHTS)
+		{
+			/* (more than the inputs hold: not built from them) */
+			in->version = 0;
+			break;
+		}
+		out = &in->sky_lights[in->sky_light_count++];
 		lt_sun_angles(sky_index, index, &angles);
 		vector3d_from_euler_angles2d(&direction, &angles);
 		/* (an up: the direction's, a quarter turn of pitch above it) */
 		up_angles.yaw = angles.yaw;
 		up_angles.pitch = angles.pitch + 0.5f * _pi;
 		vector3d_from_euler_angles2d(&up, &up_angles);
-		out->id[0] = ((unsigned int)sky_index << 8) | (unsigned int)(index & 0xff);
-		out->id[1] = (unsigned int)XGPU_LT_LIGHT_SOURCE_SUN << 24;
-		out->kind = XGPU_LT_LIGHT_DIRECTIONAL;
-		out->flags = XGPU_LT_LIGHT_LIGHTMAP_DIRECT;
-		out->object = 0xffffffffu;
-		out->gel_slot = -1;
-		out->gel_tag = -1;
-		lt_copy3(out->forward, direction.i, direction.j, direction.k);
-		lt_copy3(out->up, up.i, up.j, up.k);
-		lt_left(out);
-		out->cone_inner = out->cone_outer = -1.0f;
-		out->power_scale = light->diameter >= LT_LIGHTS_FILL_DIAMETER ? LT_LIGHTS_FILL_POWER_SCALE :
-			LT_LIGHTS_SUN_POWER_SCALE;
-		lt_copy3(out->color, light->color.red, light->color.green, light->color.blue);
-		lt_copy3(out->power, light->color.red * light->power * out->power_scale,
-			light->color.green * light->power * out->power_scale, light->color.blue * light->power * out->power_scale);
-		/* (lit live: its group's k each channel, a wide one the sky's) */
-		if (live)
-		{
-			float const *k = light->diameter >= LT_LIGHTS_FILL_DIAMETER ? lt_lights_real_sky_k : lt_lights_real_sun_k;
-
-			out->flags |= XGPU_LT_LIGHT_REAL_SKY;
-			out->power_scale = k[1];
-			lt_copy3(out->power, light->color.red * light->power * k[0], light->color.green * light->power * k[1],
-				light->color.blue * light->power * k[2]);
-		}
-		out->angular_diameter = light->diameter;
-		count++;
+		out->direction[0] = direction.i;
+		out->direction[1] = direction.j;
+		out->direction[2] = direction.k;
+		out->up[0] = up.i;
+		out->up[1] = up.j;
+		out->up[2] = up.k;
+		out->color[0] = light->color.red;
+		out->color[1] = light->color.green;
+		out->color[2] = light->color.blue;
+		out->power = light->power;
+		out->diameter = light->diameter;
+		out->flags = (unsigned int)light->flags;
 	}
-	/* (lit live: the sky's outdoor ambient radiosity, a dome of that
-	radiance over the whole sphere (the lightmap tool's uniform sky; below
-	the horizon the ground stands in front of it), forward up, its angular
-	diameter the whole turn) */
-	if (live && count < XGPU_STREAM_LT_LIGHTS_MAXIMUM)
-	{
-		struct xgpu_stream_lt_light *out = &lt.lights[count];
-		real_rgb_color color;
-		real power;
-
-		memcpy(&color, sky + LT_SKY_OUTDOOR_AMBIENT_COLOR_OFFSET, sizeof(color));
-		memcpy(&power, sky + LT_SKY_OUTDOOR_AMBIENT_POWER_OFFSET, sizeof(power));
-		if (power > 0.0f && power < 1.0e6f)
-		{
-			memset(out, 0, sizeof(*out));
-			out->id[0] = ((unsigned int)sky_index << 8) | 0xffu;
-			out->id[1] = (unsigned int)XGPU_LT_LIGHT_SOURCE_SUN << 24;
-			out->kind = XGPU_LT_LIGHT_DIRECTIONAL;
-			out->flags = XGPU_LT_LIGHT_LIGHTMAP_DIRECT | XGPU_LT_LIGHT_REAL_SKY | XGPU_LT_LIGHT_SKY_DOME;
-			out->object = 0xffffffffu;
-			out->gel_slot = -1;
-			out->gel_tag = -1;
-			lt_copy3(out->forward, 0.0f, 0.0f, 1.0f);
-			lt_copy3(out->up, 1.0f, 0.0f, 0.0f);
-			lt_left(out);
-			out->cone_inner = out->cone_outer = -1.0f;
-			out->power_scale = lt_lights_real_sky_k[1];
-			lt_copy3(out->color, color.red, color.green, color.blue);
-			lt_copy3(out->power, color.red * power * lt_lights_real_sky_k[0], color.green * power * lt_lights_real_sky_k[1],
-				color.blue * power * lt_lights_real_sky_k[2]);
-			out->angular_diameter = _pi * 2.0f;
-			count++;
-		}
-	}
-	return count;
+	memcpy(in->ambient_color, sky + LT_SKY_OUTDOOR_AMBIENT_COLOR_OFFSET, sizeof(in->ambient_color));
+	memcpy(&in->ambient_power, sky + LT_SKY_OUTDOOR_AMBIENT_POWER_OFFSET, sizeof(in->ambient_power));
 }
 
-/* a point light's k: the classic's light at half its reach over the
-pass's there at k = 1, BRIGHTNESS max(d^2, emitter^2) / (1 + core d^2) at
-d = r / 2 (both have the same range window): so it adds what the classic
-adds where most of what it lights is seen; tools/rt2_effect_k.py measured
-the light each kind adds over its held frames' pixels against the classic's
-(~/dev/rt2-calibration.json's dynamic_power_scales: the need over this k
-0.57 to 1.2, about 1 on average; the classic's whole flux over the reach
-was 0.8 to 1.6) */
-static float lt_point_power_scale(float range, float emitter_radius)
-{
-	float core = LT_LIGHTS_CLASSIC_CORE / (range * range);
-	float least = 1.0f / (LT_LIGHTS_CLASSIC_CORE_MOST * LT_LIGHTS_CLASSIC_CORE_MOST);
-	float d2 = 0.25f * range * range, r2 = emitter_radius * emitter_radius;
-
-	if (!(range > 0.0f))
-		return 0.0f;
-	core = core > least ? core : least;
-	return LT_LIGHTS_CLASSIC_BRIGHTNESS * (d2 > r2 ? d2 : r2) / (1.0f + core * d2);
-}
-
-/* a light's k by its kind: a point's from its reach (lt_point_power_scale),
-the rest (a flashlight, a lamp, a panel) the flashlight's */
-static float lt_power_scale(struct xgpu_stream_lt_light const *light)
-{
-	if ((light->flags & XGPU_LT_LIGHT_FLASHLIGHT) || light->kind != XGPU_LT_LIGHT_POINT)
-		return LT_LIGHTS_POWER_SCALE;
-	return lt_point_power_scale(light->range, light->emitter_radius);
-}
-
-/* the rasterizer light a copy (key) is of: its index, or NONE */
-static long lt_copy_parent(unsigned long long const *keys, long game_count, unsigned long long key)
-{
-	long index;
-
-	for (index = 0; index < game_count; index++)
-	{
-		if ((keys[index] >> 56) == XGPU_LT_LIGHT_SOURCE_GAME && (keys[index] & 0xffffffffull) == (key & 0xffffffffull))
-			return index;
-	}
-	return NONE;
-}
-
-static int lt_build(struct halo_dynamic_light const *lights, unsigned long long const *keys, long const *objects,
+/* the lights' part: each light as drawn and what its rasterizer light, its
+tag, its datum, the gel pass and its object say of it */
+static void lt_gather_lights(struct lt_inputs *in, struct lt_input_light *out_lights,
+	struct halo_dynamic_light const *lights, unsigned long long const *keys, long const *objects,
 	unsigned long const *owners, unsigned char const *baked, long game_count, long count)
 {
 	long index;
-	int written = 0, flashlights = 0;
 
-	for (index = 0; index < count && written < XGPU_STREAM_LT_LIGHTS_MAXIMUM; index++)
+	in->light_count = (int)count;
+	in->game_count = (int)game_count;
+	if (count > LT_INPUTS_LIGHTS_MOST)
+	{
+		in->version = 0;
+		in->light_count = 0;
+		return;
+	}
+	for (index = 0; index < count; index++)
 	{
 		struct halo_dynamic_light const *light = &lights[index];
-		struct xgpu_stream_lt_light *out = &lt.lights[written];
+		struct lt_input_light *out = &out_lights[index];
 		unsigned long long key = keys[index];
 		unsigned int source = (unsigned int)(key >> 56);
-		long drawn_index = index < game_count ? index :
-			source == XGPU_LT_LIGHT_SOURCE_COPY ? lt_copy_parent(keys, game_count, key) : NONE;
-		struct rasterizer_light_submit_parameters const *drawn = drawn_index != NONE &&
-			drawn_index < rasterizer_lights.light_count ? &rasterizer_lights.lights[drawn_index] : NULL;
-		struct lt_light_definition const *definition = drawn ?
-			(struct lt_light_definition const *)(void const *)drawn->definition : NULL;
+		long carrier = objects[index] != NONE ? objects[index] : (source == 2 || source == 3) ? (long)(key & 0xffffffffull) :
+			NONE;
 		real_vector3d forward, up, left;
-		float disk;
-		int channel;
 
-		if (!(light->radius > 0.0f) || !(light->color[0] > 0.0f || light->color[1] > 0.0f || light->color[2] > 0.0f))
-			continue;
 		memset(out, 0, sizeof(*out));
-		if (!key)
-		{
-			key = ((unsigned long long)XGPU_LT_LIGHT_SOURCE_FRAME << 56) | (unsigned long long)index;
-			out->flags |= XGPU_LT_LIGHT_UNSTABLE_ID;
-		}
-		out->id[0] = (unsigned int)(key & 0xffffffffull);
-		out->id[1] = (unsigned int)(key >> 32);
-		/* (a copy numbered among its own light's copies, in their markers'
-		order: dynamic_lights.c's key numbers it among all the frame's copies,
-		which shift as other lights' copies come and go) */
-		if (source == XGPU_LT_LIGHT_SOURCE_COPY)
-		{
-			int other;
-			unsigned int number = 1;
-
-			for (other = 0; other < written; other++)
-			{
-				if (lt.lights[other].id[0] == out->id[0] && (lt.lights[other].id[1] >> 24) == XGPU_LT_LIGHT_SOURCE_COPY)
-					number++;
-			}
-			out->id[1] = ((unsigned int)XGPU_LT_LIGHT_SOURCE_COPY << 24) | number;
-		}
-		out->flags |= (unsigned int)light->flags & 0x1fu;
-		if (baked[index])
-			out->flags |= XGPU_LT_LIGHT_BAKED;
-		out->object = objects[index] != NONE ? (unsigned int)objects[index] : 0xffffffffu;
-		/* (one of the port's own lights (light_sources.c) on an object, its
-		key's kind 2, or a firer's flames, 3: that object's, its handle in the
-		key; it is a light on an object (a bolt's, a thruster's glow), whose k
-		is a point's on an object, not an explosion's: lt_power_scale) */
-		if ((source == 2 || source == 3) && out->object == 0xffffffffu)
-		{
-			struct object_datum const *carrier;
-
-			out->object = (unsigned int)(key & 0xffffffffull);
-			/* (a projectile's own light, a needle's: a projectile's light, as
-			the game's own projectiles' are flagged) */
-			carrier = (struct object_datum const *)object_try_and_get((long)out->object);
-			if (carrier && carrier->object.type == _object_type_projectile)
-				out->flags |= XGPU_LT_LIGHT_PROJECTILE;
-		}
-		/* (its owner in every mode: the top parent of the object it is on,
-		a held weapon's holder (world_rt_owner is the handle's arithmetic
-		alone). dynamic_lights.c records one only with ray-traced shadows,
-		and none for its own lights, the ammo counter's in its holder's
-		hands among them. The pass's rays leave the owner out, and its
-		lights never light the owner's own surfaces (lt/indirect.glsl's
-		direct_one): a light on its carrier's model would light that model
-		from a few centimetres) */
+		memcpy(out->position, light->position, sizeof(out->position));
+		memcpy(out->axis, light->axis, sizeof(out->axis));
+		out->radius = light->radius;
+		memcpy(out->color, light->color, sizeof(out->color));
+		out->flags = (unsigned int)light->flags;
+		out->cone_scale = light->cone_scale;
+		out->cone_offset = light->cone_offset;
+		out->key[0] = (unsigned int)(key & 0xffffffffull);
+		out->key[1] = (unsigned int)(key >> 32);
+		out->object = (int)objects[index];
 		out->owner = (unsigned int)owners[index];
-		if (!out->owner && out->object != 0xffffffffu && object_try_and_get((long)out->object))
-			out->owner = (unsigned int)world_rt_owner(object_get_ultimate_parent((long)out->object));
-		out->gel_slot = -1;
-		out->gel_tag = -1;
-		lt_copy3(out->position, light->position[0], light->position[1], light->position[2]);
-		lt_copy3(out->emitter, light->position[0], light->position[1], light->position[2]);
-		lt_copy3(out->forward, light->axis[0], light->axis[1], light->axis[2]);
-		if (drawn)
-			lt_copy3(out->up, drawn->up.i, drawn->up.j, drawn->up.k);
-		else
-			lt_copy3(out->up, 0.0f, 0.0f, 1.0f);
-		out->range = light->radius;
-		lt_copy3(out->color, light->color[0], light->color[1], light->color[2]);
-		out->cone_inner = out->cone_outer = -1.0f;
-		out->kind = XGPU_LT_LIGHT_POINT;
-		if (definition)
+		out->baked = baked[index] != 0;
+		out->gel_index = NONE;
+		if (index < rasterizer_lights.light_count)
 		{
-			if (definition->runtime_cosine_falloff_angle != -1.0f)
+			struct rasterizer_light_submit_parameters const *drawn = &rasterizer_lights.lights[index];
+			struct lt_light_definition const *definition =
+				(struct lt_light_definition const *)(void const *)drawn->definition;
+
+			out->has_drawn = TRUE;
+			out->drawn_up[0] = drawn->up.i;
+			out->drawn_up[1] = drawn->up.j;
+			out->drawn_up[2] = drawn->up.k;
+			if (definition)
 			{
-				out->kind = XGPU_LT_LIGHT_SPOT;
-				out->cone_inner = definition->runtime_cosine_falloff_angle;
-				out->cone_outer = definition->runtime_cosine_cutoff_angle;
-			}
-			if (TEST_FLAG(definition->flags, _lt_definition_no_specular_bit))
-				out->flags |= XGPU_LT_LIGHT_NO_SPECULAR;
-			if (TEST_FLAG(definition->flags, _lt_definition_dont_light_own_object_bit))
-				out->flags |= XGPU_LT_LIGHT_NOT_OWN_OBJECT;
-			if (definition->gel_map.index != NONE)
-			{
-				out->flags |= XGPU_LT_LIGHT_GEL;
-				out->gel_tag = (int)definition->gel_map.index;
+				out->has_definition = TRUE;
+				out->falloff_cosine = definition->runtime_cosine_falloff_angle;
+				out->cutoff_cosine = definition->runtime_cosine_cutoff_angle;
+				out->definition_flags = (unsigned int)definition->flags;
+				out->gel_index = (int)definition->gel_map.index;
 			}
 		}
-		else if (light->flags & HALO_DYNAMIC_LIGHT_PANEL)
-			out->kind = XGPU_LT_LIGHT_PANEL;
-		else if (light->cone_scale > 0.0f)
-		{
-			/* (an own light's cone: scale (cos - outer), offset -scale outer) */
-			out->kind = XGPU_LT_LIGHT_SPOT;
-			out->cone_outer = -light->cone_offset / light->cone_scale;
-			out->cone_inner = out->cone_outer + 1.0f / light->cone_scale;
-		}
-		/* (the light datum's own flag: on the first-person weapon) */
 		if (source == XGPU_LT_LIGHT_SOURCE_GAME && light_data)
 		{
-			struct lt_light_datum const *datum = datum_try_and_get(light_data, (long)out->id[0]);
+			struct lt_light_datum const *datum = datum_try_and_get(light_data, (long)out->key[0]);
 
-			if (datum && TEST_FLAG(datum->flags, LT_LIGHT_DATUM_FIRST_PERSON_BIT))
-				out->flags |= XGPU_LT_LIGHT_FIRST_PERSON;
+			out->first_person = datum && TEST_FLAG(datum->flags, LT_LIGHT_DATUM_FIRST_PERSON_BIT);
 		}
-		/* (a gel's frame as the gel pass turns it; the flashlights' slots in
-		the order dynamic_lights_flashlights gives them) */
 		if (index < game_count && rasterizer_environment_port_gel(index, &forward, &up, &left, NULL, NULL))
 		{
-			lt_copy3(out->forward, forward.i, forward.j, forward.k);
-			lt_copy3(out->up, up.i, up.j, up.k);
-			lt_copy3(out->left, left.i, left.j, left.k);
-			if ((light->flags & HALO_DYNAMIC_LIGHT_FLASHLIGHT) && !(light->flags & HALO_DYNAMIC_LIGHT_MODELS_ONLY) &&
-				flashlights < HALO_DYNAMIC_LIGHTS_FLASHLIGHTS)
-			{
-				real_point3d lamp;
+			real_point3d lamp;
 
-				out->gel_slot = flashlights++;
-				if (objects[index] != NONE && first_person_weapon_flashlight_lamp(objects[index], &lamp))
-					lt_copy3(out->emitter, lamp.x, lamp.y, lamp.z);
+			out->has_gel = TRUE;
+			memcpy(out->gel_forward, &forward, sizeof(out->gel_forward));
+			memcpy(out->gel_up, &up, sizeof(out->gel_up));
+			memcpy(out->gel_left, &left, sizeof(out->gel_left));
+			if ((light->flags & HALO_DYNAMIC_LIGHT_FLASHLIGHT) && objects[index] != NONE &&
+				first_person_weapon_flashlight_lamp(objects[index], &lamp))
+			{
+				out->has_lamp = TRUE;
+				memcpy(out->lamp, &lamp, sizeof(out->lamp));
 			}
 		}
-		else
-			lt_left(out);
-		/* (the emitter's size) */
-		disk = light->radius * LT_LIGHTS_DISK_SCALE;
-		disk = disk < LT_LIGHTS_DISK_LEAST ? LT_LIGHTS_DISK_LEAST : disk > LT_LIGHTS_DISK_MOST ? LT_LIGHTS_DISK_MOST : disk;
-		if (light->flags & HALO_DYNAMIC_LIGHT_FLASHLIGHT)
-			disk = LT_LIGHTS_FLASHLIGHT_DISK;
-		else if (out->kind == XGPU_LT_LIGHT_PANEL)
-			disk = light->cone_offset > 0.0f ? sqrtf(light->cone_offset) : LT_LIGHTS_DISK_LEAST;
-		else if (light->flags & HALO_DYNAMIC_LIGHT_PROJECTILE)
-			disk = LT_LIGHTS_PROJECTILE_DISK;
-		out->emitter_radius = disk;
-		/* (the power: its kind's k, once its kind, flags and object are
-		known) */
-		out->power_scale = lt_power_scale(out);
-		for (channel = 0; channel < 3; channel++)
-			out->power[channel] = lt_linear(light->color[channel]) * out->power_scale;
-		written++;
+		if (carrier != NONE)
+		{
+			struct object_datum const *object = (struct object_datum const *)object_try_and_get(carrier);
+
+			out->carrier_exists = object != NULL;
+			out->carrier_projectile = object && object->object.type == _object_type_projectile;
+			out->carrier_owner = object ? (unsigned int)world_rt_owner(object_get_ultimate_parent(carrier)) : 0;
+		}
 	}
-	return lt_suns(written);
 }
 
 /* ---------- the dump */
@@ -805,101 +600,50 @@ static void lt_dump(int count, int window)
 	fflush(lt.dump);
 }
 
-/* the object lamps a view's pass takes (xgpu_vulkan_lt_lights.h's
-XGPU_VULKAN_LT_OBJECT_LAMPS_MAXIMUM) */
-#define LT_OBJECT_LAMPS_SENT 512
-
-/* a lamp's importance to a view: its power (luminance by area) over its
-distance squared from the camera, no nearer than its own size */
-static float lt_object_lamp_importance(float const corners[9], float const radiance[3], real_point3d const *eye)
+/* the object lamps' part (world_rt.c's world_rt_lamps, world_rt_lamp_sides)
+and the camera their choice is by: every lamp where lt_lights_build.c ranks
+them, else the first it sends */
+static void lt_gather_lamps(struct lt_inputs *in, struct lt_input_lamp *out)
 {
-	float e1[3], e2[3], c[3], middle[3], d2, area;
-	int axis;
-
-	for (axis = 0; axis < 3; axis++)
-	{
-		e1[axis] = corners[3 + axis] - corners[axis];
-		e2[axis] = corners[6 + axis] - corners[axis];
-		middle[axis] = (corners[axis] + corners[3 + axis] + corners[6 + axis]) / 3.0f - (&eye->x)[axis];
-	}
-	c[0] = e1[1] * e2[2] - e1[2] * e2[1];
-	c[1] = e1[2] * e2[0] - e1[0] * e2[2];
-	c[2] = e1[0] * e2[1] - e1[1] * e2[0];
-	area = 0.5f * sqrtf(c[0] * c[0] + c[1] * c[1] + c[2] * c[2]);
-	d2 = middle[0] * middle[0] + middle[1] * middle[1] + middle[2] * middle[2];
-	return (0.2126f * radiance[0] + 0.7152f * radiance[1] + 0.0722f * radiance[2]) * area / (d2 > area ? d2 : area);
-}
-
-static float const *lt_object_lamp_order_importances;
-
-static int lt_object_lamp_order(void const *a, void const *b)
-{
-	float x = lt_object_lamp_order_importances[*(long const *)a], y = lt_object_lamp_order_importances[*(long const *)b];
-
-	return x > y ? -1 : x < y ? 1 : 0;
-}
-
-/* the frame's object lamps (world_rt.c's world_rt_lamps) after the list:
-records of kind XGPU_LT_LIGHT_OBJECT_EMITTER, every object's where the
-pass has room, else those that matter most to this view (a far Pelican's
-strips do not take a near shield's room); the count with them */
-static int lt_object_lamps_append(struct xgpu_stream_lt_light *lights, int count, int maximum)
-{
-	static float *importances;
-	static long *order;
 	float const (*corners)[9];
 	float const (*radiance)[3];
 	unsigned long const *owners;
 	long lamps = world_rt_lamps(&corners, &radiance, &owners), index, taken;
 	unsigned char const *sides = world_rt_lamp_sides();
-	int sorted = FALSE;
 
-	if (maximum - count > LT_OBJECT_LAMPS_SENT)
-		maximum = count + LT_OBJECT_LAMPS_SENT;
-	if (lamps > maximum - count)
+	in->camera[0] = render.camera.position.x;
+	in->camera[1] = render.camera.position.y;
+	in->camera[2] = render.camera.position.z;
+	in->lamps_in_world = (int)lamps;
+	in->has_sides = sides != NULL;
+	taken = lamps <= LT_INPUTS_LAMPS_MOST ? lamps : XGPU_STREAM_LT_LIGHTS_MAXIMUM < LT_INPUTS_LAMPS_MOST ?
+		XGPU_STREAM_LT_LIGHTS_MAXIMUM : LT_INPUTS_LAMPS_MOST;
+	for (index = 0; index < taken; index++)
 	{
-		if (!importances)
-			importances = malloc(sizeof(*importances) * 4096);
-		if (!order)
-			order = malloc(sizeof(*order) * 4096);
-		if (lamps > 4096 || !importances || !order)
-			lamps = MIN(lamps, (long)(maximum - count));
-		else
-		{
-			for (index = 0; index < lamps; index++)
-			{
-				importances[index] = lt_object_lamp_importance(corners[index], radiance[index], &render.camera.position) *
-					(sides && (sides[index] & 3) == 2 ? 2.0f : 1.0f);
-				order[index] = index;
-			}
-			lt_object_lamp_order_importances = importances;
-			qsort(order, (size_t)lamps, sizeof(*order), lt_object_lamp_order);
-			sorted = TRUE;
-		}
+		memcpy(out[index].corners, corners[index], sizeof(out[index].corners));
+		memcpy(out[index].radiance, radiance[index], sizeof(out[index].radiance));
+		out[index].owner = (unsigned int)owners[index];
+		out[index].sides = sides ? sides[index] : 0;
 	}
-	for (taken = 0; taken < lamps && count < maximum; taken++)
+	in->lamp_count = (int)taken;
+}
+
+typedef char lt_lamp_additive_assert[WORLD_RT_LAMP_ADDITIVE == 4 ? 1 : -1];
+
+/* whether the inputs ride in the stream (xgpu_stream.h's LT_INPUTS): while
+the frames are recorded (HALO_RENDER_RECORD), for the replay to build the
+list again, or HALO_LT_INPUTS=1 */
+static int lt_inputs_sent(void)
+{
+	static int sent = -1;
+
+	if (sent < 0)
 	{
-		struct xgpu_stream_lt_light *out = &lights[count++];
+		char const *record = getenv("HALO_RENDER_RECORD");
 
-		index = sorted ? order[taken] : taken;
-
-		memset(out, 0, sizeof(*out));
-		out->id[0] = (unsigned int)index;
-		out->kind = XGPU_LT_LIGHT_OBJECT_EMITTER;
-		out->flags = (sides && (sides[index] & 3) == 2 ? XGPU_LT_LAMP_TWO_SIDED : 0) |
-			(sides && (sides[index] & WORLD_RT_LAMP_ADDITIVE) ? XGPU_LT_LAMP_ADDITIVE : 0);
-		out->object = (unsigned int)lamps;
-		out->owner = (unsigned int)owners[index];
-		out->gel_slot = -1;
-		out->gel_tag = -1;
-		memcpy(out->position, corners[index], sizeof(float) * 3);
-		memcpy(out->forward, corners[index] + 3, sizeof(float) * 3);
-		memcpy(out->up, corners[index] + 6, sizeof(float) * 3);
-		memcpy(out->power, radiance[index], sizeof(float) * 3);
-		out->cone_inner = out->cone_outer = -1.0f;
-		out->power_scale = 1.0f;
+		sent = lt_switch("HALO_LT_INPUTS") >= 0 ? lt_switch("HALO_LT_INPUTS") : record && *record;
 	}
-	return count;
+	return sent;
 }
 
 /* ---------- public code */
@@ -908,30 +652,30 @@ void lt_lights_frame(struct halo_dynamic_light const *lights, unsigned long long
 	unsigned long const *owners, unsigned char const *baked, long game_count, long count)
 {
 	int written, window = render.window_index;
+	struct lt_inputs *in = &lt.inputs.head;
+	struct lt_input_light *in_lights = (struct lt_input_light *)(in + 1);
+	struct lt_input_lamp *in_lamps;
 
 	lt_lights_announce(lt_lights_wanted());
 	if (!lt_lights_wanted())
 		return;
-	written = lt_build(lights, keys, objects, owners, baked, game_count, count);
-	/* (every float finite: none not a number or infinite reaches the pass) */
-	{
-		int index, word;
-
-		for (index = 0; index < written; index++)
-		{
-			float *values = &lt.lights[index].position[0];
-
-			for (word = 0; word < 28; word++)
-			{
-				if (!isfinite(values[word]))
-					values[word] = 0.0f;
-			}
-		}
-	}
+	/* (what the building reads of the game, then the list built from it
+	alone: lt_lights_build.c) */
+	memset(in, 0, sizeof(*in));
+	in->version = LT_INPUTS_VERSION;
+	in->window = window;
+	lt_gather_sky(in);
+	lt_gather_lights(in, in_lights, lights, keys, objects, owners, baked, game_count, count);
+	in_lamps = (struct lt_input_lamp *)(in_lights + in->light_count);
+	lt_gather_lamps(in, in_lamps);
+	in->bytes = (unsigned int)(sizeof(*in) + in->light_count * sizeof(*in_lights) + in->lamp_count * sizeof(*in_lamps));
+	written = lt_lights_build_list(in, in_lights, lt.lights);
 	lt.frame++;
+	if (lt_inputs_sent())
+		xgpu_backend_lt_inputs(in, in->bytes, window, lt.frame);
 	/* (and this frame's share of the level's light sources' triangles, after
 	the lights: not in the dump) */
-	xgpu_backend_lt_lights(lt.lights, lt_object_lamps_append(lt.lights, lt_emitters_append(lt.lights, written,
+	xgpu_backend_lt_lights(lt.lights, lt_lights_build_lamps(in, in_lamps, lt.lights, lt_emitters_append(lt.lights, written,
 		XGPU_STREAM_LT_LIGHTS_MAXIMUM), XGPU_STREAM_LT_LIGHTS_MAXIMUM), window, lt.frame);
 	lt_dump(written, window);
 }

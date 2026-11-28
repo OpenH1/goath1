@@ -941,6 +941,10 @@ void xgpu_backend_rt_bounce(const struct xgpu_rt_bounce *bounce);
 lights, xgpu_stream.h's struct xgpu_stream_lt_light each (at most
 XGPU_STREAM_LT_LIGHTS_MAXIMUM), and the game's count of lists sent; copied */
 void xgpu_backend_lt_lights(const void *lights, int count, int window, unsigned int frame);
+/* the list's inputs (port/linux/game/lt_lights_inputs.h: bytes of them),
+sent before window's list of frame while the frames are recorded, for the
+replay to build the list again; copied */
+void xgpu_backend_lt_inputs(const void *inputs, unsigned int bytes, int window, unsigned int frame);
 
 /* display.contact_shadows (port/linux/game/contact_shadows.c;
 docs/dynamic-shadows-plan.md, stage 2): the same casters' short, sharp

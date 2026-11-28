@@ -370,6 +370,11 @@ enum
 	/* the light-transport pass's light list: every dynamic light as drawn
 	and the suns (port/linux/game/lt_lights.c; xgpu_backend_lt_lights) */
 	XGPU_STREAM_LT_LIGHTS,
+	/* the light list's inputs, before the frame's LT_LIGHTS: what
+	port/linux/game/lt_lights_build.c reads of the game (lt_lights_inputs.h),
+	sent while the frames are recorded, for the replay's light-list unit
+	(xgpu_backend_lt_inputs); the backend takes no notice of it */
+	XGPU_STREAM_LT_INPUTS,
 	XGPU_STREAM_RECORD_TYPES,
 };
 
@@ -1628,6 +1633,17 @@ struct xgpu_stream_lt_lights
 	uint32_t frame;
 };
 
+/* LT_INPUTS: bytes of the inputs (lt_lights_inputs.h's struct lt_inputs,
+its lights and lamps) at inputs, for window's list of frame */
+#define XGPU_STREAM_LT_INPUTS_MOST (4u << 20)
+struct xgpu_stream_lt_inputs
+{
+	uint32_t header;
+	uint32_t bytes, inputs;
+	int32_t window;
+	uint32_t frame;
+};
+
 /* ---------- the VR mode
 
 The backend composes each frame (the eyes' images, the HUD's and its
@@ -2052,6 +2068,7 @@ XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_rt_shadows, 160);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_rt_bounce, 16 + 48 * XGPU_STREAM_RT_BOUNCE_LIGHTS);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_lt_light, 144);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_lt_lights, 20);
+XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_lt_inputs, 20);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_dynamic_lights_world, 12);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_vr_info, 108);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_vr_eyes, 36 + 4 * 52);

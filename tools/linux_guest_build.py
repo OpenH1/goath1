@@ -427,3 +427,48 @@ def _generate_replay(n: Writer, target: LinuxGuest, build: Path, host_obj_dir: P
     n.build(outputs=replay, rule=f"{prefix}_replay_link", inputs=replay_objects, implicit=[libsdl])
     n.build(outputs=f"{target.name}_replay", rule="phony", inputs=[replay, staged_sdl])
     n.build(outputs="linux_replay", rule="phony", inputs=[f"{target.name}_replay"])
+    if target.arch is X32:
+        _generate_lt_unit(n, target, build, third_party_folder(target))
+
+
+# the light-list unit's own C (port/linux/game/lt_lights_build.c) and the parts of the guest's C library it calls
+# (musl's powf and qsort, so it computes what the game computes, bit for bit)
+LT_UNIT_SOURCE = LINUX_DIR / "game" / "lt_lights_build.c"
+LT_UNIT_MUSL = ["src/math/powf.c", "src/math/powf_data.c", "src/math/exp2f_data.c", "src/math/__math_oflowf.c",
+                "src/math/__math_uflowf.c", "src/math/__math_invalidf.c", "src/math/__math_xflowf.c",
+                "src/stdlib/qsort.c", "src/stdlib/qsort_nr.c"]
+# (their names in the unit: its own, beside the host's C library's)
+LT_UNIT_RENAMES = "-Dpowf=lt_musl_powf -Dqsort=lt_musl_qsort -Dqsort_r=lt_musl_qsort_r"
+
+
+def _generate_lt_unit(n: Writer, target: LinuxGuest, build: Path, third_party: Path) -> None:
+    """build/<name>/lt_lights_unit.so (ninja linux_lt_unit): the light list's building as a shared object the
+    replay loads (HALO_LT_UNIT), compiled as the game compiles it (the guest's LLVM, -O2, no contraction, the
+    baseline x86-64) for the host's ABI"""
+    prefix, label = target.name, target.label
+    musl_dir = third_party / "musl-1.2.5"
+    guest = build / "guest"
+    libc_arch = ANDROID_DIR / "guest" / "libc" / "arch" / "x32"
+    code = "--target=x86_64-linux-gnu -fPIC -march=x86-64 -ffp-contract=off -O2 -fvisibility=hidden -w"
+    musl_cflags = (f"{code} {LT_UNIT_RENAMES} -nostdinc -std=c99 -ffreestanding -fno-common -D_XOPEN_SOURCE=700 "
+                   f"-I{libc_arch} -I{ANDROID_DIR}/guest/libc/arch/generic -I{musl_dir}/arch/generic "
+                   f"-I{guest}/libc_internal -I{ANDROID_DIR}/guest/libc/src_include -I{musl_dir}/src/include "
+                   f"-I{musl_dir}/src/internal -I{guest}/libc_include -I{musl_dir}/include")
+    n.rule(name=f"{prefix}_lt_unit_cc", command=f"${prefix}_guest_cc -MMD -MF $out.d $cflags -c $in -o $out",
+           description=f"{label} LT UNIT CC $out", depfile="$out.d", deps="gcc")
+    objects = []
+    for source in LT_UNIT_MUSL:
+        obj = build / "lt_unit" / (Path(source).name + ".o")
+        n.build(outputs=obj, rule=f"{prefix}_lt_unit_cc", inputs=musl_dir / source,
+                order_only=[guest / "libc_include" / "bits" / "alltypes.h", guest / "libc_internal" / "version.h"],
+                variables={"cflags": musl_cflags})
+        objects.append(obj)
+    obj = build / "lt_unit" / "lt_lights_build.c.o"
+    n.build(outputs=obj, rule=f"{prefix}_lt_unit_cc", inputs=LT_UNIT_SOURCE,
+            variables={"cflags": f"{code} -std=gnu89 -DLT_LIGHTS_UNIT=1"})
+    objects.insert(0, obj)
+    n.rule(name=f"{prefix}_lt_unit_link",
+           command=f"${prefix}_guest_cc --target=x86_64-linux-gnu -fuse-ld=lld -shared -nostdlib -o $out $in",
+           description=f"{label} LINK $out")
+    n.build(outputs=build / "lt_lights_unit.so", rule=f"{prefix}_lt_unit_link", inputs=objects)
+    n.build(outputs="linux_lt_unit", rule="phony", inputs=[build / "lt_lights_unit.so"])
