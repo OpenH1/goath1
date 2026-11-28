@@ -2189,6 +2189,10 @@ static unsigned int rt_bounce_add(struct module *m, struct pixel_state *state, u
 /* HALO_LT_E1 (port/linux/vulkan/xgpu_vulkan_lt.h, below) */
 static int lt_e1_on(void);
 static int lt_light_model(void);
+/* the light-transport pass (port/linux/vulkan/xgpu_vulkan_lt.h; HALO_LT_E1
+or display.ray_traced_lighting) on for the shader being made: its options'
+light_transport (xgpu_spirv_pixel_shader sets it) */
+static int lt_shader_on;
 static unsigned int lt_e1_guides(struct module *m, struct pixel_state *state, unsigned int shaded, BOOL specular,
 	unsigned int motion);
 static unsigned int lt_guides_motion(struct module *m, unsigned int current_in, unsigned int previous_in);
@@ -9135,11 +9139,6 @@ static int lt_sun_clamp_view(void)
 		on = getenv("HALO_LT_SUN_CLAMP_VIEW") && atoi(getenv("HALO_LT_SUN_CLAMP_VIEW")) == 1;
 	return on;
 }
-
-/* the light-transport pass (port/linux/vulkan/xgpu_vulkan_lt.h; HALO_LT_E1
-or display.ray_traced_lighting) on for the shader being made: its options'
-light_transport (xgpu_spirv_pixel_shader sets it) */
-static int lt_shader_on;
 
 static int lt_e1_on(void)
 {
