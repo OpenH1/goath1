@@ -9,6 +9,190 @@
       "crc": 750334310,
       "maps": ["putput", "wizard", "carousel", "chillout", "longest", "beavercreek", "hangemhigh", "prisoner",
                "bloodgulch", "boardingaction", "ratrace", "sidewinder", "damnation", "c20", "d20", "a30", "b30"]
+    },
+    {
+      "name": "blood_splat",
+      "tag": "effects\\decals\\blood splats\\bitmaps\\blood splat",
+      "recipe": "splat",
+      "scale": 4,
+      "smallest": 32,
+      "crc": 1285860699,
+      "maps": ["putput", "wizard", "carousel", "chillout", "longest", "beavercreek", "hangemhigh", "prisoner",
+               "bloodgulch", "boardingaction", "ratrace", "sidewinder", "damnation", "c20", "d20", "a30", "b30",
+               "a10", "d40", "c10", "c40", "a50", "b40"]
+    },
+    {
+      "name": "blood_splat_elite",
+      "tag": "effects\\decals\\blood splats\\bitmaps\\blood splat elite",
+      "recipe": "splat",
+      "scale": 4,
+      "smallest": 32,
+      "crc": 1772401824,
+      "maps": ["putput", "wizard", "carousel", "chillout", "longest", "beavercreek", "hangemhigh", "prisoner",
+               "bloodgulch", "boardingaction", "ratrace", "sidewinder", "damnation", "c20", "d20", "a30", "b30",
+               "a10", "d40", "c10", "c40", "a50", "b40"]
+    },
+    {
+      "name": "blood_splat_engineer",
+      "tag": "effects\\decals\\blood splats\\bitmaps\\blood splat engineer",
+      "recipe": "splat",
+      "scale": 4,
+      "smallest": 32,
+      "crc": 240424013,
+      "maps": ["putput", "wizard", "carousel", "chillout", "longest", "beavercreek", "hangemhigh", "prisoner",
+               "bloodgulch", "boardingaction", "ratrace", "sidewinder", "damnation", "c20", "d20", "a30", "b30",
+               "a10", "d40", "c10", "c40", "a50", "b40"]
+    },
+    {
+      "name": "blood_splat_grunt",
+      "tag": "effects\\decals\\blood splats\\bitmaps\\blood splat grunt",
+      "recipe": "splat",
+      "scale": 4,
+      "smallest": 32,
+      "crc": 2872687108,
+      "maps": ["putput", "wizard", "carousel", "chillout", "longest", "beavercreek", "hangemhigh", "prisoner",
+               "bloodgulch", "boardingaction", "ratrace", "sidewinder", "damnation", "c20", "d20", "a30", "b30",
+               "a10", "d40", "c10", "c40", "a50", "b40"]
+    },
+    {
+      "name": "blood_splat_hunter",
+      "tag": "effects\\decals\\blood splats\\bitmaps\\blood splat hunter",
+      "recipe": "splat",
+      "scale": 4,
+      "smallest": 32,
+      "crc": 2044924740,
+      "maps": ["putput", "wizard", "carousel", "chillout", "longest", "beavercreek", "hangemhigh", "prisoner",
+               "bloodgulch", "boardingaction", "ratrace", "sidewinder", "damnation", "c20", "d20", "a30", "b30",
+               "a10", "d40", "c10", "c40", "a50", "b40"]
+    },
+    {
+      "name": "blood_splat_hunter_glow",
+      "tag": "effects\\decals\\blood splats\\bitmaps\\blood splat hunter glow",
+      "recipe": "splat",
+      "scale": 4,
+      "smallest": 32,
+      "crc": 3544528318,
+      "maps": ["putput", "wizard", "carousel", "chillout", "longest", "beavercreek", "hangemhigh", "prisoner",
+               "bloodgulch", "boardingaction", "ratrace", "sidewinder", "damnation", "c20", "d20", "a30", "b30",
+               "a10", "d40", "c10", "c40", "a50", "b40"]
+    },
+    {
+      "name": "glowingdrip_splat",
+      "tag": "effects\\decals\\blood splats\\bitmaps\\glowingdrip splat",
+      "recipe": "splat",
+      "scale": 4,
+      "smallest": 32,
+      "crc": 3718226060,
+      "maps": ["damnation", "c20", "d20", "c10", "d40", "a50", "b40"]
+    },
+    {
+      "name": "blood_smear_elite_lg",
+      "tag": "effects\\decals\\blood splats\\bitmaps\\blood smear elite lg",
+      "recipe": "splat",
+      "scale": 4,
+      "smallest": 32,
+      "crc": 163430312,
+      "maps": ["d20", "c10", "a50", "b40"]
+    },
+    {
+      "name": "blood_smear_elite_med",
+      "tag": "effects\\decals\\blood splats\\bitmaps\\blood smear elite med",
+      "recipe": "splat",
+      "scale": 4,
+      "smallest": 32,
+      "crc": 1197663231,
+      "maps": ["d20", "c10", "a50", "b40"]
+    },
+    {
+      "name": "blood_smear_elite_sm",
+      "tag": "effects\\decals\\blood splats\\bitmaps\\blood smear elite sm",
+      "recipe": "splat",
+      "scale": 4,
+      "smallest": 32,
+      "crc": 1962649117,
+      "maps": ["d20", "c10", "a50", "b40"]
+    },
+    {
+      "name": "blood_smear_grunt_lg",
+      "tag": "effects\\decals\\blood splats\\bitmaps\\blood smear grunt lg",
+      "recipe": "splat",
+      "scale": 4,
+      "smallest": 32,
+      "crc": 3451454083,
+      "maps": ["d20", "c10", "a50", "b40"]
+    },
+    {
+      "name": "blood_smear_grunt_med",
+      "tag": "effects\\decals\\blood splats\\bitmaps\\blood smear grunt med",
+      "recipe": "splat",
+      "scale": 4,
+      "smallest": 32,
+      "crc": 2602226760,
+      "maps": ["d20", "c10", "c40", "a50", "b40"]
+    },
+    {
+      "name": "blood_smear_grunt_sm",
+      "tag": "effects\\decals\\blood splats\\bitmaps\\blood smear grunt sm",
+      "recipe": "splat",
+      "scale": 4,
+      "smallest": 32,
+      "crc": 389637063,
+      "maps": ["d20", "c10", "a50", "b40"]
+    },
+    {
+      "name": "blood_burst",
+      "tag": "effects\\particles\\solid\\bitmaps\\blood burst",
+      "recipe": "splat",
+      "scale": 4,
+      "smallest": 32,
+      "crc": 2433440208,
+      "maps": ["putput", "wizard", "carousel", "chillout", "longest", "beavercreek", "hangemhigh", "prisoner",
+               "bloodgulch", "boardingaction", "ratrace", "sidewinder", "damnation", "c20", "d20", "a30", "b30",
+               "a10", "d40", "c10", "c40", "a50", "b40"]
+    },
+    {
+      "name": "blood_generic_burst",
+      "tag": "effects\\particles\\solid\\bitmaps\\blood generic burst",
+      "recipe": "splat",
+      "scale": 4,
+      "smallest": 32,
+      "crc": 1711562978,
+      "maps": ["putput", "wizard", "carousel", "chillout", "longest", "beavercreek", "hangemhigh", "prisoner",
+               "bloodgulch", "boardingaction", "ratrace", "sidewinder", "damnation", "c20", "d20", "a30", "b30",
+               "a10", "d40", "c10", "c40", "a50", "b40"]
+    },
+    {
+      "name": "blood_h_impact",
+      "tag": "effects\\particles\\solid\\bitmaps\\blood h impact",
+      "recipe": "splat",
+      "scale": 4,
+      "smallest": 32,
+      "crc": 781523254,
+      "maps": ["putput", "wizard", "carousel", "chillout", "longest", "beavercreek", "hangemhigh", "prisoner",
+               "bloodgulch", "boardingaction", "ratrace", "sidewinder", "damnation", "c20", "d20", "a30", "b30",
+               "a10", "d40", "c10", "c40", "a50", "b40"]
+    },
+    {
+      "name": "blood_elite_impact_burst",
+      "tag": "effects\\particles\\solid\\bitmaps\\blood elite impact burst",
+      "recipe": "splat",
+      "scale": 4,
+      "smallest": 32,
+      "crc": 2135637486,
+      "maps": ["putput", "wizard", "carousel", "chillout", "longest", "beavercreek", "hangemhigh", "prisoner",
+               "bloodgulch", "boardingaction", "ratrace", "sidewinder", "damnation", "c20", "d20", "a30", "b30",
+               "a10", "d40", "c10", "c40", "a50", "b40"]
+    },
+    {
+      "name": "blood_engineer",
+      "tag": "effects\\particles\\solid\\bitmaps\\blood engineer",
+      "recipe": "splat",
+      "scale": 4,
+      "smallest": 16,
+      "crc": 2543625137,
+      "maps": ["putput", "wizard", "carousel", "chillout", "longest", "beavercreek", "hangemhigh", "prisoner",
+               "bloodgulch", "boardingaction", "ratrace", "sidewinder", "damnation", "c20", "d20", "a30", "b30",
+               "a10", "d40", "c10", "c40", "a50", "b40"]
     }
   ]
 }
