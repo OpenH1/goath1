@@ -9,6 +9,7 @@ and places them in the scenario. Each value says where it comes from
 /* ---------- headers */
 
 #include "stagekit.h"
+#include "objects/damage_effect_definitions.h"
 
 /* ---------- constants */
 
@@ -217,6 +218,25 @@ void prop_biped_shield(
 	it: the shield's fraction a tick, a full shield in that many seconds) */
 	resistance->runtime_shield_recharge_velocity = recharge_seconds > 0.f ?
 		1.f / (recharge_seconds * TICKS_PER_SECOND) : 0.f;
+}
+
+void prop_biped_flesh(
+	struct stage *stage,
+	real body_vitality)
+{
+	struct damage_resistance *resistance = &biped_body(stage)->resistance;
+	struct damage_resistance_material *flesh;
+
+	resistance->maximum_body_vitality = body_vitality;
+	/* its one damage material (human), whatever of the body is struck (damage.c takes
+	a hit's body damage times its material's multiplier: a body of none, as
+	a box's collision has, takes nothing) */
+	flesh = cache_block(&resistance->materials, 1, sizeof(*flesh));
+	strcpy(flesh->name, "body");
+	flesh->material_type = _material_human;
+	flesh->shield_damage_multiplier = 1.f;
+	flesh->body_damage_multiplier = 1.f;
+	resistance->indirect_damage_material_index = 0;
 }
 
 void prop_biped_crouch(
@@ -487,18 +507,71 @@ void prop_grenades(
 	slots[WEAPON_CLASS_ANIMATION_THROW_GRENADE].animation_index = 0;
 }
 
+void prop_biped_struck(
+	struct stage *stage,
+	real hard_ping)
+{
+	enum { QUATERNION_ONE = 32767 };
+	/* (model_animations.c's: the damage animations' slots, a type of damage,
+	a direction and a part of the body each) */
+	enum { DAMAGE_ANIMATION_SLOTS = 4 * 4 * 11 };
+	/* (StageKit's own: a second) */
+	enum { STRUCK_FRAMES = 30 };
+	struct animation_graph *graph = stage->biped_animations;
+	struct animation_graph_animation_index *slots;
+	struct animation *animation;
+	short *rotation;
+	real *scale;
+	short index;
+
+	/* (its one node: prop_grenades' root) */
+	if (!graph->nodes.count)
+	{
+		fprintf(stderr, "stagekit: prop_biped_struck needs prop_grenades' node first\n");
+		exit(1);
+	}
+	/* (units.c's unit_ping_animation: a blow of more than this fraction of the
+	body's vitality pings it hard, which interrupts a throw) */
+	stage->biped->unit.hard_ping_threshold = hard_ping;
+	/* an animation of its one node, standing still, which unit_ping_animation
+	plays for every hard ping and kill, whichever way it is struck */
+	animation = cache_block_add(&graph->animations, sizeof(*animation));
+	strcpy(animation->name, "stand unarmed struck");
+	animation->type = _animation_base;
+	animation->frame_count = STRUCK_FRAMES;
+	animation->frame_size = sizeof(real_point3d);
+	animation->node_count = 1;
+	animation->next_animation_index = NONE;
+	animation->sound_index = NONE;
+	animation->runtime_parent_animation_index = (short)(graph->animations.count - 1);
+	animation->weight = 1.f;
+	animation->runtime_normalized_weight = 1.f;
+	animation->nodes_with_translation_flags[0] = 1;
+	animation->default_data.size = 4 * sizeof(short) + sizeof(real);
+	rotation = animation->default_data.address = cache_allocate(animation->default_data.size);
+	rotation[3] = QUATERNION_ONE;
+	scale = (real *)(rotation + 4);
+	*scale = 1.f;
+	animation->data.size = STRUCK_FRAMES * sizeof(real_point3d);
+	animation->data.address = cache_allocate(animation->data.size);
+	slots = cache_block(&graph->unit_damage_animations, DAMAGE_ANIMATION_SLOTS, sizeof(*slots));
+	for (index = 0; index < DAMAGE_ANIMATION_SLOTS; index++)
+		slots[index].animation_index = (short)(graph->animations.count - 1);
+}
+
 /* ---------- weapons and projectiles (tools/scorecard's scenarios) */
 
-long prop_projectile(
+static long projectile_new(
 	char const *name,
-	struct projectile_shape const *shape)
+	struct projectile_shape const *shape,
+	struct projectile_definition **definition)
 {
 	struct projectile_definition *projectile;
 	void *data;
 	long handle = cache_tag_new(FOURCC('p', 'r', 'o', 'j'), FOURCC('o', 'b', 'j', 'e'), NONE, name,
 		sizeof(struct projectile_definition), &data);
 
-	projectile = data;
+	projectile = *definition = data;
 	projectile->object.type = _object_type_projectile;
 	cache_reference(&projectile->object.model, prop_empty_model());
 	/* (StageKit's own: a point, a hundredth round) */
@@ -540,6 +613,42 @@ long prop_projectile(
 			responses[material].perpendicular_friction = shape->friction;
 		}
 	}
+	return handle;
+}
+
+long prop_projectile(
+	char const *name,
+	struct projectile_shape const *shape)
+{
+	struct projectile_definition *projectile;
+
+	return projectile_new(name, shape, &projectile);
+}
+
+long prop_damaging_projectile(
+	char const *name,
+	struct projectile_shape const *shape,
+	real damage)
+{
+	struct projectile_definition *projectile;
+	struct damage_effect_definition *effect;
+	void *data;
+	long handle = projectile_new(name, shape, &projectile);
+	long effect_handle = cache_tag_new(FOURCC('j', 'p', 't', '!'), NONE, NONE, name,
+		sizeof(struct damage_effect_definition), &data);
+	short material;
+
+	/* (what it does to an object it strikes, projectiles.c's
+	projectile_collision: damage.c takes the damage between its bounds, at
+	the projectile's speed's share of it, from the body's vitality, scaled by
+	the struck material's modifier, here 1 on every one) */
+	effect = data;
+	cache_no_reference(&effect->sound, FOURCC('s', 'n', 'd', '!'));
+	effect->damage.damage_lower_bound = damage;
+	effect->damage.damage_upper_bound = damage;
+	for (material = 0; material < MAXIMUM_NUMBER_OF_MATERIAL_TYPES; material++)
+		effect->damage.material_modifiers[material] = 1.f;
+	cache_reference(&projectile->projectile.impact_damage, effect_handle);
 	return handle;
 }
 

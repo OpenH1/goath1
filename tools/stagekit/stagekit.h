@@ -173,6 +173,10 @@ in recharge_seconds once stun_seconds have passed since it was struck
 (damage.c) */
 void prop_biped_shield(struct stage *stage, real body_vitality, real shield_vitality, real recharge_seconds,
 	real stun_seconds);
+/* the players' biped given a body of this vitality that damage hurts: one
+damage material of flesh (multipliers of 1), which every hit on it strikes */
+void prop_biped_flesh(struct stage *stage, real body_vitality);
+
 /* the players' biped given a crouch: its animations' crouching seat, unarmed
 as its standing one, without which units.c never seats it crouched (and
 bipeds.c never lowers it) */
@@ -184,6 +188,12 @@ players' biped throws (its throw animation, which lets go of the grenade a
 third of a second in) at throw_speed world units a second along its aim,
 from its eyes */
 void prop_grenades(struct stage *stage, long projectile_handle, short count, real throw_speed);
+
+/* the players' biped given an animation of being struck (standing still for
+a second), which every hard ping and kill plays: without one a unit struck
+keeps the animation it had (units.c's unit_ping_animation); and pinged hard
+by a blow of more than hard_ping of its body's vitality. After prop_grenades */
+void prop_biped_struck(struct stage *stage, real hard_ping);
 
 /* an AI's biped: the players' biped standing at position facing along x,
 named name, which the console makes an actor of the variant variant_name
@@ -199,6 +209,10 @@ void prop_ai_command_list(struct stage *stage, char const *name, struct ai_walke
 
 /* a projectile of the shape, which draws nothing */
 long prop_projectile(char const *name, struct projectile_shape const *shape);
+
+/* the same, which does damage (in points of a body's vitality) to an object
+it strikes */
+long prop_damaging_projectile(char const *name, struct projectile_shape const *shape, real damage);
 
 /* a weapon of one trigger that fires the projectile rate_of_fire times a
 second while it is held, from no magazine (it never runs out) */
