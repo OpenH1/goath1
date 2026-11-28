@@ -506,10 +506,6 @@ enum
 	UNIT_PACKED_FORM_BIT = 7,
 	UNIT_PACKED_DECK_BIT = 6,
 	UNIT_PACKED_AGE_MASK = 0x1F,
-	/* the fewest bytes of a tick state's entry: a packed difference's form,
-	player and parts with no part (distributed_unit_packed_read), as a dead
-	player's or one standing still is; a whole state's entry has a byte more */
-	UNIT_DIFFERENCE_MINIMUM_SIZE = 3,
 };
 enum
 {
@@ -11159,8 +11155,8 @@ void network_distributed_handle_message(
 	case _distributed_message_player_prediction:
 	case _distributed_message_unit_states: entry_size = DISTRIBUTED_UNIT_STATE_MINIMUM_SIZE; break;
 	/* (a packed difference is shorter than a whole state: a message of them
-	is not cut off by the whole state's least, UNIT_DIFFERENCE_MINIMUM_SIZE) */
-	case _distributed_message_unit_state_differences: entry_size = UNIT_DIFFERENCE_MINIMUM_SIZE; break;
+	is not cut off by the whole state's least, DISTRIBUTED_UNIT_DIFFERENCE_MINIMUM_SIZE) */
+	case _distributed_message_unit_state_differences: entry_size = DISTRIBUTED_UNIT_DIFFERENCE_MINIMUM_SIZE; break;
 	case _distributed_message_substep_states: entry_size = 1 + DISTRIBUTED_UNIT_STATE_MINIMUM_SIZE; break;
 	case _distributed_message_substep_state_requests: entry_size = sizeof(struct distributed_substep_request); break;
 	case _distributed_message_player_statistics: entry_size = sizeof(struct distributed_player_statistics); break;

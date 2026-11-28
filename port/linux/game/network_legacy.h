@@ -101,6 +101,10 @@ enum
 	/* a unit state's bytes on the wire: its player, flags and parts, and
 	the most it has */
 	DISTRIBUTED_UNIT_STATE_MINIMUM_SIZE = 3,
+	/* the fewest bytes of a tick state's entry: a packed difference's form,
+	player and parts with no part (distributed_unit_packed_read), as a dead
+	player's or one standing still is; a whole state's entry has a byte more */
+	DISTRIBUTED_UNIT_DIFFERENCE_MINIMUM_SIZE = 3,
 	/* (a deck part: its vehicle, node, place, velocity, ticks, flags and peak) */
 	DISTRIBUTED_DECK_SIZE = 4 + 2 + 12 + 6 + 1 + 1 + 2,
 	DISTRIBUTED_UNIT_STATE_MAXIMUM_SIZE = 3 + 4 + (4 + 2) + (12 + 3 * 6) + DISTRIBUTED_DECK_SIZE + 2 + 2 * 2 + 4 * 2 +
