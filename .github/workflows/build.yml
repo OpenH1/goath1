@@ -1661,6 +1661,7 @@ jobs:
             tools/linux_package.py
             tools/macos_appcast.py
             tools/release_names.py
+            tools/release_package.py
             tools/release_sign.py
             port/assets/release-key.pub
             port/linux/include/halo_port_limits.h
@@ -1690,36 +1691,12 @@ jobs:
       # image with its source lines, and Windows's PDBs) zipped beside it,
       # OpenH1-<machine>[-debug]-symbols.zip, for tools/symbolize_crash.py:
       # a symbols zip that fails warns, and the release goes on
+      # (tools/release_package.py, which tools/release_local.py packages with too)
       - name: Package
         run: |
-          mkdir release
-          for build in artifacts/*/; do
-            name="$(basename "$build")"
-            published="$(python3 tools/release_names.py "$name")"
-            case "$name" in
-              halo-*-symbols)
-                (cd "$build" && zip -qr "$GITHUB_WORKSPACE/release/$published.zip" .) ||
-                  { echo "::warning::$name could not be zipped: the release has no $published.zip"; rm -f "release/$published.zip"; } ;;
-              halo-steam-frame-*) cp "$build/$name.zip" "release/$published.zip" ;;
-              halo-linux-*) python3 tools/linux_package.py zip "$build" "release/$published.zip" ;;
-              halo-macos-*) cp "$build/OpenH1.dmg" "release/$published.dmg" ;;
-              halo-android-*)
-                apks=("$build"*.apk)
-                if [ "${#apks[@]}" -ne 1 ] || [ ! -f "${apks[0]}" ]; then
-                  echo "::error::$name has no single APK"; exit 1
-                fi
-                cp "${apks[0]}" "release/$published.apk" ;;
-              *) (cd "$build" && zip -qr "$GITHUB_WORKSPACE/release/$published.zip" .) ;;
-            esac
-          done
-          # (no package holds NVIDIA's files: then the DLSS add-on's, apart)
-          python3 tools/dlss_addon.py check-package release
-          if ls dlss-addon/openh1-dlss-* > /dev/null 2>&1; then
-            cp dlss-addon/openh1-dlss-* release/
-          else
-            echo "::warning::no DLSS add-on pinned: this release offers none"
-          fi
-          ls -l release
+          dlss=()
+          if ls dlss-addon/openh1-dlss-* > /dev/null 2>&1; then dlss=(--dlss dlss-addon); fi
+          python3 tools/release_package.py package artifacts release "${dlss[@]}"
 
       # the macOS app's appcast (tools/macos_appcast.py), when its disk image
       # was signed for it (the macOS job's OpenH1.dmg.sparkle): this release's
@@ -1839,10 +1816,9 @@ jobs:
           # network version: <n>", which a dedicated server's
           # server.auto_update reads: port/linux/src/updater.c. A new one is
           # started once the game being played is over)
-          versions="$(python3 tools/ci_build.py notes)"
-          printf '%s\n\nCommit: %s\nBuild: %s\n%s\n\nThe release builds are for playing; the debug builds stop at the first failed assertion and log it.\n\nOn Windows (64-bit Windows 10 1903 or later, with a Vulkan 1.3 graphics driver), download OpenH1-Windows.zip.\n\nOn Linux and the Steam Deck, download OpenH1-Linux.zip (OpenH1-Linux-ARM64.zip on 64-bit ARM, OpenH1-Linux-VR.zip for VR): it draws with Vulkan 1.3.\n\nOn the Steam Frame, in desktop mode, download OpenH1-Steam-Frame.zip, unzip it and open install.sh in it (port/linux/frame/README.md).\n\nOn macOS (Apple silicon, macOS 14.4 or later), download OpenH1.dmg, open it and drag GOAT H1 to Applications: the app is signed and notarized.\n\nOn Android (64-bit, Android 9 or later, with Vulkan 1.3), download OpenH1-Android.apk on the phone and install it. The app is signed with OpenH1'"'"'s own key now: an install signed before it must be uninstalled once first (back up its maps and save folders).\n\nThe -symbols zips are not for playing: each has one build'"'"'s debugging information (OpenH1-macOS-symbols.zip is OpenH1.dmg'"'"'s, OpenH1-Linux-debug-symbols.zip OpenH1-Linux-debug.zip'"'"'s), which tools/symbolize_crash.py gives a crash report'"'"'s frames their source lines with.\n' \
-            "$subject" "$COMMIT_URL" "$RUN_URL" "$versions" > notes.md
-          if [ -f mac-carried.txt ]; then printf '\n%s\n' "$(cat mac-carried.txt)" >> notes.md; fi
+          # (tools/release_package.py notes, tools/release_local.py's too)
+          python3 tools/release_package.py notes --subject "$subject" --commit-url "$COMMIT_URL" \
+            --build-url "$RUN_URL" --carried mac-carried.txt > notes.md
           # (a dry run: what would be published, kept as an artifact, and nothing published)
           if [ "$PUBLISH" != true ]; then
             echo "::notice::dry run: $tag not published"

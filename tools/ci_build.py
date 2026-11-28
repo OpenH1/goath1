@@ -23,7 +23,7 @@ guests' compiler is the pinned LLVM 22 that configure.py downloads,
 tools/guest_toolchain.py). A profile build is a debug build with
 configure.py --profile, so that the profiling build is built too. CI_COMPILER_LAUNCHER (ccache, say) is
 passed on as --compiler-launcher, CI_GUEST_LLVM_CACHE as --guest-llvm-cache, and CI_GUEST_ASM_CACHE as
---guest-asm-cache. A release's build gets its number (CI_BUILD_NUMBER, as
+--guest-asm-cache, and CI_CONFIGURE_ARGS's options are added as they are. A release's build gets its number (CI_BUILD_NUMBER, as
 HALO_BUILD_NUMBER), which its release is named after and the self-updater
 compares.
 
@@ -271,6 +271,13 @@ def main() -> int:
     if number.isdigit() and int(number) > 0:
         os.environ["HALO_BUILD_NUMBER"] = number
         print(f"build number {number}", flush=True)
+    # more configure.py options, one string: tools/release_local.py's
+    # Windows build on Linux, --windows-cross against an MSVC toolchain
+    # (port/windows/README.md), the same build the workflow makes on Windows
+    extra = os.environ.get("CI_CONFIGURE_ARGS", "")
+    if extra:
+        import shlex
+        configure += shlex.split(extra)
     run(configure)
 
     if args.platform == "ios":
