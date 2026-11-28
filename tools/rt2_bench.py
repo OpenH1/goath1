@@ -633,8 +633,11 @@ TERMS = {
     "flashlight": ["HALO_LT_INDIRECT=0", _NONE, "HALO_LT_MASK=emitters,objects"],
     "solved_lamps": ["HALO_LT_INDIRECT=0", _NONE, "HALO_LT_MASK=objects", "HALO_LT_DROP=flashlight"],
     "object_lamps": ["HALO_LT_INDIRECT=0", _NONE, "HALO_LT_MASK=emitters", "HALO_LT_DROP=flashlight"],
+    # (every source masked: what no mask reaches, each term's run less it)
+    "none": ["HALO_LT_INDIRECT=0", _NONE, "HALO_LT_MASK=emitters,objects", "HALO_LT_DROP=flashlight"],
 }
-TERM_ORDER = ["sun", "sky", "lights", "flashlight", "solved_lamps", "object_lamps", "bounce"]
+TERM_ORDER = ["sun", "sky", "lights", "flashlight", "solved_lamps", "object_lamps", "bounce", "unmasked"]
+TERM_RUNS = ["sun", "sky", "lights", "flashlight", "solved_lamps", "object_lamps", "none", "all", "direct"]
 
 # run on the rig (numpy there): the saved views' numbers by region, and small pictures
 ANALYSE = r"""
@@ -732,7 +735,7 @@ def realtime_and_reference(args, folder, meta, save, terms=()):
                                                     "accumulate": "sample"}),
     }
     for term in terms:
-        if term != "bounce":
+        if term in TERMS:
             jobs[f"term_{term}"] = ([*args.set, *REFERENCE_ENV, *TERMS[term]],
                                     {"n": frame, "hold": args.term_plays + skip, "warm": -1,
                                      "last": args.term_plays, "accumulate": "sample"})
@@ -808,14 +811,14 @@ def terms(args):
     regions = regions_of(args)
     started = time.monotonic()
     try:
-        files, seconds, frame = realtime_and_reference(args, folder, meta, save, TERM_ORDER + ["all", "direct"])
+        files, seconds, frame = realtime_and_reference(args, folder, meta, save, TERM_RUNS)
         white = args.scale or 0.05
-        pictures = {f"term_{t}": ["light", f"term_{t}", white] for t in TERM_ORDER if t != "bounce"}
+        pictures = {f"term_{t}": ["light", f"term_{t}", white] for t in TERM_RUNS}
         result = analyse(args, files, regions, pictures, save, out)
     finally:
         ssh(args.host, f"rm -rf ~/{save}", check=False)
     say(f"rt2_bench: light by term at frame {frame} (each the reference's, {args.term_plays} plays, the others "
-        f"masked; bounce = all less direct, the sky's dome through the bounce included); "
+        f"masked, less the run with every source masked; bounce = all less direct, the sky's dome through the bounce included; unmasked = what no mask reaches); "
         f"{time.monotonic() - started:.0f} s")
     for i, r in enumerate(result["regions"]):
         say(terms_line(r, "whole picture" if i == 0 else f"region {i} {','.join(f'{v:g}' for v in r['box'])}"))
@@ -827,8 +830,12 @@ def terms(args):
 
 
 def term_means(r):
-    means = {t: r[f"term_{t}"]["mean"] for t in TERM_ORDER if f"term_{t}" in r}
+    """each source's light: its run (the others masked, no bounce) less the run with every source masked; the
+    bounce, the whole less the direct; unmasked, what no mask reaches (the run with every source masked)"""
+    none = r["term_none"]["mean"]
+    means = {t: r[f"term_{t}"]["mean"] - none for t in TERM_ORDER if t in TERMS}
     means["bounce"] = r["term_all"]["mean"] - r["term_direct"]["mean"]
+    means["unmasked"] = none
     return means
 
 
@@ -871,7 +878,7 @@ def triage(args):
         return reply["stats"]["regions"]
 
     try:
-        files, seconds, _ = realtime_and_reference(args, folder, meta, save, TERM_ORDER + ["all", "direct"])
+        files, seconds, _ = realtime_and_reference(args, folder, meta, save, TERM_RUNS)
         t = time.monotonic()
         denoiser()
         seconds["denoiser"] = time.monotonic() - t
