@@ -1173,7 +1173,7 @@ static long world_rt_staged_counts[3];
 static float world_rt_staged_radiance[3];
 /* (measuring) each definition's lamps placed and their power (luminance by
 area), summed over the frames */
-static struct { long definition, count; double power, area; } world_rt_lamp_shares[32];
+static struct { long definition, count; double power, area, rgb[3]; } world_rt_lamp_shares[32];
 
 /* a node's lamps (its instance's transform this frame) onto the frame's */
 static void world_rt_lamps_placed(struct world_rt_definition const *definition, short node,
@@ -1229,8 +1229,8 @@ static void world_rt_lamps_placed(struct world_rt_definition const *definition, 
 			/* (measuring: a generic shader's first lamp of each frame-600th, its object's shading) */
 			if (world_rt.counts_wanted > 0 && shading && world_rt.count_frames == 1 &&
 				(index == 0 || !definition->lamps[index - 1].samples))
-				printf("world ao: %s's lamp: functions %.2f %.2f %.2f %.2f, change colours %.2f %.2f %.2f | %.2f %.2f %.2f | "
-					"%.2f %.2f %.2f | %.2f %.2f %.2f, radiance %.4f %.4f %.4f\n", world_rt_source_name(definition->definition),
+				platform_log("world ao: %s's lamp: functions %.2f %.2f %.2f %.2f, change colours %.2f %.2f %.2f | %.2f %.2f %.2f | "
+					"%.2f %.2f %.2f | %.2f %.2f %.2f, radiance %.4f %.4f %.4f", world_rt_source_name(definition->definition),
 					shading->values[0], shading->values[1], shading->values[2], shading->values[3], shading->colours[0][0],
 					shading->colours[0][1], shading->colours[0][2], shading->colours[1][0], shading->colours[1][1],
 					shading->colours[1][2], shading->colours[2][0], shading->colours[2][1], shading->colours[2][2],
@@ -1271,6 +1271,8 @@ static void world_rt_lamps_placed(struct world_rt_definition const *definition, 
 				world_rt_lamp_shares[share].power += (0.2126 * r[0] + 0.7152 * r[1] + 0.0722 * r[2]) * 0.5 *
 					sqrt(c[0] * c[0] + c[1] * c[1] + c[2] * c[2]);
 				world_rt_lamp_shares[share].area += 0.5 * sqrt(c[0] * c[0] + c[1] * c[1] + c[2] * c[2]);
+				for (axis = 0; axis < 3; axis++)
+					world_rt_lamp_shares[share].rgb[axis] += r[axis] * 0.5 * sqrt(c[0] * c[0] + c[1] * c[1] + c[2] * c[2]);
 			}
 		}
 		world_rt.lamp_count++;
@@ -1835,10 +1837,10 @@ void world_rt_frame(unsigned long frame)
 		world_rt.count_instances += count;
 		if (++world_rt.count_frames >= 600)
 		{
-			printf("world ao: the ray-traced scene's %.1f instances a frame; %lu meshes made, %ld triangles\n",
+			platform_log("world ao: the ray-traced scene's %.1f instances a frame; %lu meshes made, %ld triangles",
 				(double)world_rt.count_instances / 600.0, world_rt.next_mesh - 1, world_rt.count_triangles);
-			printf("world ao: object lamps this frame %ld; generic shaders' a frame: %.1f placed (radiance %.3f %.3f "
-				"%.3f each), %.1f too faint, %.1f of regions not drawn\n", world_rt.lamp_count,
+			platform_log("world ao: object lamps this frame %ld; generic shaders' a frame: %.1f placed (radiance %.3f %.3f "
+				"%.3f each), %.1f too faint, %.1f of regions not drawn", world_rt.lamp_count,
 				(double)world_rt_staged_counts[0] / 600.0,
 				world_rt_staged_counts[0] ? world_rt_staged_radiance[0] / (float)world_rt_staged_counts[0] : 0.0f,
 				world_rt_staged_counts[0] ? world_rt_staged_radiance[1] / (float)world_rt_staged_counts[0] : 0.0f,
@@ -1851,14 +1853,17 @@ void world_rt_frame(unsigned long frame)
 				for (share = 0; share < 32 && world_rt_lamp_shares[share].count; share++)
 					total += world_rt_lamp_shares[share].power;
 				for (share = 0; share < 32 && world_rt_lamp_shares[share].count; share++)
-					printf("world ao: object lamps of %s: %.1f a frame, %.4f of their power (%.5f luminance x area, "
-						"%.5f area a frame: radiance %.4f)\n",
+					platform_log("world ao: object lamps of %s: %.1f a frame, %.4f of their power (%.5f luminance x area, "
+						"%.5f area a frame: radiance %.4f, rgb %.4f %.4f %.4f)",
 						world_rt_source_name(world_rt_lamp_shares[share].definition),
 						(double)world_rt_lamp_shares[share].count / 600.0,
 						total > 0.0 ? world_rt_lamp_shares[share].power / total : 0.0,
 						world_rt_lamp_shares[share].power / 600.0, world_rt_lamp_shares[share].area / 600.0,
 						world_rt_lamp_shares[share].area > 0.0 ?
-							world_rt_lamp_shares[share].power / world_rt_lamp_shares[share].area : 0.0);
+							world_rt_lamp_shares[share].power / world_rt_lamp_shares[share].area : 0.0,
+						world_rt_lamp_shares[share].area > 0.0 ? world_rt_lamp_shares[share].rgb[0] / world_rt_lamp_shares[share].area : 0.0,
+						world_rt_lamp_shares[share].area > 0.0 ? world_rt_lamp_shares[share].rgb[1] / world_rt_lamp_shares[share].area : 0.0,
+						world_rt_lamp_shares[share].area > 0.0 ? world_rt_lamp_shares[share].rgb[2] / world_rt_lamp_shares[share].area : 0.0);
 				memset(world_rt_lamp_shares, 0, sizeof(world_rt_lamp_shares));
 			}
 			memset(world_rt_staged_counts, 0, sizeof(world_rt_staged_counts));
