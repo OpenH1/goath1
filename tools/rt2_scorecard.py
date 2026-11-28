@@ -240,6 +240,35 @@ def note(rows, kind, scene, said, verdict="—"):
     rows.append({"check": kind, "scene": scene, "value": None, "target": None, "verdict": verdict, "said": said})
 
 
+# a live scene's baseline: the same hold with the pass off; a pixel whose picture moves there by itself (a material's
+# own animation or dithering: b30's far sand) more than this (its relative temporal deviation over the last plays, or
+# its change from play 1 or 30 to 120) is left out of the pass's measures, so only what the pass adds is judged
+BASELINE_MOVES = 0.0025
+
+
+def baseline_still(replay, env, recording, frame, width, height, mask):
+    """the measure's mask less the pixels that move with the pass off (BASELINE_MOVES), and how many those are"""
+    service = Service(STABILITY_HOST, replay, f"{RECORDINGS}/{recording}",
+                      [e for e in env if not e.startswith("HALO_LT_E1=")] + ["HALO_LT_E1=off"], "shared")
+    try:
+        reply = service.ask({"cmd": "hold", "n": frame, "frames": 120, "shots": rt2_stability.shots_for(120),
+                             "inline": True, "compress": True, "reset": True})
+    finally:
+        service.close()
+    plays = {}
+    for shot in reply["shots"]:
+        _, _, lum = rt2_stability.png_luminance(base64.b64decode(shot["png_base64"]))
+        plays[shot["k"]] = np.asarray(lum, np.float64)
+    last = np.stack([plays[k] for k in range(120 - rt2_stability.LAST + 1, 121)])
+    mean = last.mean(0)
+    floor = np.maximum(mean, 0.002)
+    deviation = np.sqrt(np.maximum((last * last).mean(0) - mean * mean, 0.0)) / floor
+    drift = np.maximum(np.abs(plays[1] - plays[120]), np.abs(plays[30] - plays[120])) / floor
+    moving = (deviation > BASELINE_MOVES) | (drift > 4 * BASELINE_MOVES)
+    keep = np.asarray(mask, bool) & ~moving
+    return keep.astype(int).tolist(), int((np.asarray(mask, bool) & moving).sum())
+
+
 def stability(scene, replay, env, out, mutate):
     name, recording, frame, _ = scene
     folder = out / name
@@ -250,6 +279,9 @@ def stability(scene, replay, env, out, mutate):
         info, reply, width, height, mask, mask_said = rt2_stability.hold(service, frame, 120, reset=True)
     finally:
         service.close()
+    if name.endswith("live"):
+        mask, moving = baseline_still(replay, env, recording, frame, width, height, mask)
+        mask_said += f"; {moving} pixels that move with the pass off left out"
     perturb = None
     if mutate == "noise":
         generator = np.random.default_rng(7)
