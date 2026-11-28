@@ -1579,7 +1579,7 @@ PAGES = {
             # shown while one of them can be: SETTINGS_ROW_WHEN)
             ("EXPERIMENTAL ›", None, _page_screen(*EXPERIMENTAL),
              "Features still in progress, off by default: expect visual bugs and a lower frame rate.",
-             "desktop android"),
+             "desktop android", "experimental"),
         ],
     },
     EXPERIMENTAL[0]: {
