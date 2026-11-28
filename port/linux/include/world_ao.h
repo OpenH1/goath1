@@ -104,6 +104,13 @@ on (WORLD_AO_RAYS where "ray_traced" is and the backend has ray queries);
 Classic preset) */
 int world_ao_mode(void);
 
+/* a window's block and pre-pass are given in play: display.ambient_occlusion
+on (world_ao_mode), or the ray-traced lighting, which reads the pre-pass's
+surfaces whatever that setting. A map's preparation makes the keys and
+twins of the window's draws by this, as play draws them (d3d8_device.c's
+world_ao_preparing) */
+int world_ao_window_on(void);
+
 /* the map loaded (scenario_load: its scene found, its fields looked for in
 the cache; a missing one baked in the background, never here), a BSP
 switched to (scenario_switch_structure_bsp), the map unloaded
