@@ -92,14 +92,21 @@ SCENES = [
 #   channel (HALO_LT_SUN_CLAMP_VIEW=1's magenta), at most CLAMP_MOST: the subtraction tints nothing;
 # - afterglow: AFTER frames after a light is gone (its last frame, its id), the largest 32x32 tile change of the
 #   picture against the same frames played without that light (HALO_LT_DROP=id:), at most AFTERGLOW_MOST; and
-#   while it was there the same at least AFTERGLOW_SEEN (the check sees the light at all)
+#   while it was there the largest share of the frame's pixels it visibly changes (SEEN_LEVELS sRGB levels or
+#   more, over its frames) at least AFTERGLOW_SEEN (the check sees the light at all). AFTERGLOW_SEEN from the
+#   classic look's own grenade (the setting off: its light per pixel by its exact formula, tools/rt2_effect_k.py's
+#   method): at its brightest (frame 673) it visibly changes 11.5% of the pixels, and by its last frame (702) none,
+#   so the share is taken over the light's life, not at its end; a quarter of the classic's, since the pass's
+#   physical falloff gathers the same light closer to the blast (3.6% at 673, 6.8% at its peak); two plays without
+#   the light change no pixel
 VISUAL_SUN = ("b30sun", "b30_sun.hrpl", 650)
 VISUAL_AFTERGLOW = ("b30fight", "b30_fight.hrpl", 660, 702, "ea94000c", "the grenade's explosion")
 AFTER = 8
 SHADOW_LEAST = 0.005
 CLAMP_MOST = 0.01
 AFTERGLOW_MOST = 0.02
-AFTERGLOW_SEEN = 0.05
+AFTERGLOW_SEEN = 0.025
+SEEN_LEVELS = 2
 STABILITY_HOST = "omarchy"
 TRUTH_HOST = "5900x"
 COST_HOSTS = {"5900x": "RTX 4090", "omarchy": "Radeon 8060S"}
@@ -304,6 +311,14 @@ def tile_largest(a, b):
     return float((np.abs(ta - tb)[keep] / np.maximum(tb[keep], 1e-6)).max()) if keep.any() else 0.0
 
 
+def visible_share(a, b):
+    """the share of the pixels whose sRGB value differs by SEEN_LEVELS or more between a and b (linear luminance)"""
+    def srgb(v):
+        v = np.clip(v, 0.0, 1.0)
+        return np.where(v <= 0.0031308, 12.92 * v, 1.055 * np.power(v, 1 / 2.4) - 0.055)
+    return float((np.abs(srgb(a) - srgb(b)) * 255 >= SEEN_LEVELS).mean())
+
+
 def visual(replay, env, out):
     """the visual checks (VISUAL_*): [(check, scene, value, target, at least?, said)]"""
     replay_path_for_visual[0] = replay
@@ -335,10 +350,11 @@ def visual(replay, env, out):
     for n in (last, last + AFTER):
         (folder / f"afterglow_{n}_with.png").write_bytes(with_light[n][2])
         (folder / f"afterglow_{n}_without.png").write_bytes(without[n][2])
-    seen = tile_largest(with_light[last][0], without[last][0])
+    seen = max(visible_share(with_light[n][0], without[n][0]) for n in range(start, last + 1))
     after = tile_largest(with_light[last + AFTER][0], without[last + AFTER][0])
     found.append((f"afterglow {AFTER} frames", name, after, AFTERGLOW_MOST, False,
-                  f"{what} ({light}): {seen:.1%} while there (at least {AFTERGLOW_SEEN:.0%})"))
+                  f"{what} ({light}): {seen:.1%} of the pixels visibly lit at most while there (at least "
+                  f"{AFTERGLOW_SEEN:.1%})"))
     if seen < AFTERGLOW_SEEN:
         found.append(("afterglow seen", name, seen, AFTERGLOW_SEEN, True, "the light is not seen: the check sees nothing"))
     return found
