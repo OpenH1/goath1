@@ -638,9 +638,9 @@ vec3 sun_share(vec3 p, vec3 n, ivec2 pixel, int rays)
     return share;
 }
 
-// lit live: the suns' whole direct light at p (each a disk of its angular diameter sampled as sun_share does, each
-// ray's cosine by the shaded normal, its visibility through every occluder: the structure, the objects, the viewer's
-// own model for its shadow), power x cos for a cone above the horizon, unshadowed. The dome's row is the bounce's
+// lit live: the suns' whole direct light at p: each one's unblocked irradiance (power x the shaded cosine at its axis)
+// by the share of its disk (its angular diameter, sampled as sun_share does) that rays find unblocked through every
+// occluder (the structure, the objects, the viewer's own model for its shadow). The dome's row is the bounce's
 vec3 sun_real(vec3 p, vec3 n, vec3 shaded, ivec2 pixel, int rays)
 {
     vec3 light = vec3(0.0);
@@ -662,11 +662,13 @@ vec3 sun_real(vec3 p, vec3 n, vec3 shaded, ivec2 pixel, int rays)
             float r2 = dot(disk, disk), c = 1.0 - r2 * (1.0 - half_cos), sine = sqrt(max(1.0 - c * c, 0.0));
             vec2 around = r2 > 0.0 ? disk * inversesqrt(r2) : vec2(0.0);
             vec3 d = normalize(f * c + (left * around.x + up * around.y) * sine);
-            float lit = max(dot(shaded, d), 0.0);
-            if (dot(n, d) > 0.0 && lit > 0.0)
-                seen += lit * visible_by(origin, d, SUN_REACH, -1, 0xffffffffu, RT_MASK_SUN);
+            if (dot(n, d) > 0.0)
+                seen += visible_by(origin, d, SUN_REACH, -1, 0xffffffffu, RT_MASK_SUN);
         }
-        light += t4.rgb * (seen / (float(rays) * 0.5 * (1.0 + half_cos)));
+        // (the rays find the share of the cone that is seen; the light is its unblocked irradiance (power x the shaded
+        // cosine at its axis: exact for a cone above the horizon) by that share. Where nothing blocks it, it has no
+        // noise at all, however wide the light: b30's 50 degree fill no longer shimmers on open ground)
+        light += t4.rgb * (max(dot(shaded, f), 0.0) * seen / float(rays));
     }
     return light;
 }
