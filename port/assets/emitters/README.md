@@ -9,7 +9,7 @@ Made by `python -m rt_truth emitters <scene folder> --out <file>` (tools/rt_trut
 emitters") from any rt2 scene export of that BSP. In short, each `lamps` entry has `radiance` (linear, the game's light units) and `triangles` (world
 positions, lifted 0.01 wu off the surface, wound to glow toward their normal) to sample as area lights.
 
-The build packs each file (tools/lt_emitters_data.py: about 390 KB for the 19 shipped, zlib) into openh1.assets beside
+The build packs each file (tools/lt_emitters_data.py: about 350 KB for the 18 shipped, zlib) into openh1.assets beside
 the game, and the game unpacks the loaded BSP's at map load; `python3 tools/lt_emitters_data.py --check` fails
 where a file does not build or holds more than the game takes (8192 triangles, 1024 groups a BSP).
 
@@ -123,7 +123,7 @@ whole frame, its lower 40% (mostly floor) and middle band (mostly walls); "black
 classic shows them lit (live under 4% of white and under a third of classic), of the frame and of the worst cell
 of a 4x4 grid; "blown": pixels near white live where classic is under 60% of white. A BSP ships when every still
 of it has its whole-frame ratio within 0.6 to 1.6, black under 10% of the frame and under 50% of every cell, and
-blown under 10%; a still that shows nothing (a camera outside the rooms) or repeats the level's still before it
+blown under 3% (c20 bsp2's library floor went fully white at 7%); a still that shows nothing (a camera outside the rooms) or repeats the level's still before it
 (the game no longer drawing new frames) is not a look, and a BSP that is not looked at is not shipped.
 
 Shipped (a10_bsp1 has one spot: no second camera inside a lit room was found):
@@ -149,8 +149,6 @@ Shipped (a10_bsp1 has one spot: no second camera inside a lit room was found):
 | c10_bsp2 | 2 | x0.91 | x1.11 | x0.77 | 0% | 0% | 0% | pass |
 | c10_bsp4 | 1 | x0.61 | x0.53 | x0.60 | 5% | 39% | 0% | pass |
 | c10_bsp4 | 2 | x0.76 | x0.76 | x0.65 | 3% | 19% | 0% | pass |
-| c20_bsp2 | 1 | x1.42 | x1.10 | x1.69 | 0% | 0% | 7% | pass |
-| c20_bsp2 | 2 | x0.71 | x0.61 | x0.75 | 0% | 2% | 0% | pass |
 | c40_bsp7 | 1 | x1.18 | x1.50 | x0.97 | 2% | 15% | 0% | pass |
 | c40_bsp7 | 2 | x1.25 | x1.62 | x1.15 | 1% | 5% | 0% | pass |
 | c40_bsp8 | 1 | x0.77 | x0.81 | x0.59 | 2% | 12% | 0% | pass |
@@ -211,9 +209,11 @@ Not shipped (an outdoor BSP's lamps cannot be matched apart from the sky, or not
 | c10_bsp5 | 2 | x0.72 | x0.77 | x0.84 | 1% | 14% | 0% | nothing in view |
 | c20_bsp0 | 1 | x1.42 | x1.22 | x1.70 | 0% | 0% | 11% | FAIL |
 | c20_bsp0 | 2 | x0.63 | x0.63 | x0.63 | 0% | 0% | 0% | nothing in view |
-| c20_bsp1 | 1 | x1.49 | x1.10 | x1.80 | 0% | 0% | 7% | pass |
+| c20_bsp1 | 1 | x1.49 | x1.10 | x1.80 | 0% | 0% | 7% | FAIL |
 | c20_bsp1 | 2 | x0.70 | x0.67 | x0.78 | 0% | 0% | 0% | nothing in view |
-| c20_bsp3 | 1 | x1.44 | x1.10 | x1.73 | 0% | 0% | 7% | pass |
+| c20_bsp2 | 1 | x1.42 | x1.10 | x1.69 | 0% | 0% | 7% | FAIL |
+| c20_bsp2 | 2 | x0.71 | x0.61 | x0.75 | 0% | 2% | 0% | pass |
+| c20_bsp3 | 1 | x1.44 | x1.10 | x1.73 | 0% | 0% | 7% | FAIL |
 | c20_bsp3 | 2 | x1.04 | x0.65 | x1.18 | 0% | 3% | 0% | nothing in view |
 | c40_bsp0 | 1 | x0.70 | x0.55 | x0.76 | 26% | 72% | 0% | FAIL |
 | c40_bsp0 | 2 | x0.90 | x1.16 | x0.71 | 23% | 74% | 0% | FAIL |

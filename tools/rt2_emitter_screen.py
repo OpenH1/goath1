@@ -22,7 +22,7 @@ no large region goes black (under 10% of the frame and under 50% of every cell),
 (classic's frame not flat (most of it one colour, as Halo's void outside the rooms is), nor the level's still
 before it again: a camera outside the BSP's rooms, or a game
 that stopped drawing new frames, is not a look); and no large
-region blows out (live near white where classic is under 60% of white: under 10% of the frame). The lossless
+region blows out (live near white where classic is under 60% of white: under 3% of the frame). The lossless
 stills stay on the rig in ~/goat-rig/rt2-emitter-screen/<build>/. It prints a table (the README's
 rows), and copies results.json, a still pair per spot and a contact sheet of the pairs to --out. Runs on the 5900X by
 default (its owner's own game checked before every run, as goat-rig does too); the rig's runs are removed.
@@ -52,7 +52,7 @@ OPENING = 60.0  # the scenario's second the first BSP is switched to (past every
 EACH = 10.0  # seconds a BSP
 PASS_RATIO = (0.6, 1.6)
 BLACK_FRAME, BLACK_CELL = 0.10, 0.50
-BLOWN = 0.10
+BLOWN = 0.03
 LOCK = threading.Lock()
 
 
