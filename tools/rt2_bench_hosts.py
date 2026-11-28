@@ -56,8 +56,8 @@ import rt2_scorecard
 SHARED = "goat-rig/rt2-bench/shared"  # (under the rig's $HOME)
 HOSTS = ("5900x", "omarchy", "bosgame")
 AUTO_DEFAULT = ("verify", "run", "view", "reference", "terms", "triage")
-# replays drawing at once per GPU before a host counts as full (measured: see the PR)
-CAPS = {"5900x": 4, "omarchy": 3, "bosgame": 3}
+# replays drawing at once per GPU: goat-rig's 3 picture slots (rt2_scorecard.remote_script); more wait for a slot
+CAPS = {"5900x": 3, "omarchy": 3, "bosgame": 3}
 MIN_FREE_GB = {"5900x": 60, "omarchy": 60, "bosgame": 15}
 MAX_SHARED_GB = {"5900x": 40, "omarchy": 40, "bosgame": 12}
 RECENT_SECONDS = 3600  # (a recording used within this is never collected)
@@ -423,7 +423,11 @@ def probe_script(host, refs):
         for ref in refs:
             lines.append(f"test -f ~/{rt2_clips_replay(host, ref)} && echo \"built {ref}\"")
     else:
-        lines += ["echo \"replays $(pgrep -c -f '/halo_replay( |$)')\"",
+        # (the replays drawing (argv0 halo_replay) or queued for one of the GPU's 3 picture slots: each replay's
+        # outermost script once, its wrappers not counted again; the larger of the two counts)
+        lines += ["echo \"replays $(ps -eo pid=,ppid=,args= | awk '{a=$0; sub(/^ *[0-9]+ +[0-9]+ +/, \"\", a)} "
+                  "a ~ /^[^ ]*halo_replay( |$)/ {n++; next} a ~ /halo_replay/ && a ~ /gpu-shared/ {w[$1]=$2} "
+                  "END {for (p in w) if (!(w[p] in w)) o++; print (o > n ? o : n) + 0}')\"",
                   f"echo \"game $(pgrep -fa \"{rt2_clips.OWNER_GAME}\" | head -1)\"",
                   "u=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null | head -1);"
                   " [ -n \"$u\" ] || u=$(cat /sys/class/drm/card*/device/gpu_busy_percent 2>/dev/null | sort -n | "
@@ -484,35 +488,39 @@ def probe(host, refs):
     return state
 
 
-def score(state, needs):
-    """lower is better: the GPU's share taken (replays over the cap, its load), plus what must be done first (its
-    replay built: 0.5; a recording copied from another rig: COPY_COST); None: not eligible (its owner playing, a
-    game in the VM, unreachable, or a recording it lacks and cannot be given)"""
+def score(state, needs, work=1):
+    """the seconds the command is expected to take there (lower is better): an exact try's time on the host's GPU
+    alone (ALONE) times the replays sharing it plus this one (measured: a GPU's throughput does not grow with
+    replays at once, each takes that much longer), times the command's work in tries (WORK), plus what must be done
+    first (its replay built, BUILD_SECONDS; each recording copied from another rig, COPY_SECONDS) and a measuring
+    run's lock (LOCK_SECONDS). None: not eligible (its owner playing, a game in the VM, unreachable, or a
+    recording it lacks and cannot be given)"""
     host = state["host"]
     if state["error"] or state["game"]:
         return None
-    s = state["replays"] / CAPS[host] + 0.25 * state["util"] / 100
+    s = ALONE[host] * (state["replays"] + 1) * work
     if state["lock"] == "held":
-        s += 1.0  # (a measuring run has the GPU alone: replays wait for it)
-    if state["replays"] >= CAPS[host]:
-        s += 2.0
+        s += LOCK_SECONDS
     for need in needs:
         if need in state["ready"]:
             continue
         if need[0] == "built":
-            s += 0.5
-        elif need[0] == "shared" and need[1] == "?":
-            return None  # (not built and no guess of its key: not sent there on spec)
-        elif need[0] == "shared" and state["copyable"].get(need):
-            s += COPY_COST
+            s += BUILD_SECONDS
+        elif need[0] == "shared" and need[1] != "?" and state["copyable"].get(need):
+            s += COPY_SECONDS
         else:
-            return None
+            return None  # (a recording it cannot be given, or no guess of its key: not sent there on spec)
     return s
 
 
-# a copy (about 2 GB rig to rig) against a busy GPU: worth it when the host with the recording is past its cap
-# (the try there 3-6x slower) or a measuring run holds it
-COPY_COST = 1.0
+# measured 2026-11-28 on a50_shields (1380 frames, every frame whole): one exact try alone on each GPU; omarchy 3 at
+# once 118 s each, 6 at once 106 s then 204 s (the 3 picture slots), so the throughput stays one try's
+ALONE = {"5900x": 9.3, "omarchy": 35.0, "bosgame": 20.0}
+COPY_SECONDS = 50.0  # (1.8 GB rig to rig, rsync: 50 s measured 5900X to omarchy)
+BUILD_SECONDS = 30.0  # (the replay built warm)
+LOCK_SECONDS = 60.0
+# a command's work in exact tries (run --watch: a session of tries)
+WORK = {"run": 1, "view": 1, "verify": 4, "reference": 6, "terms": 12, "triage": 15}
 
 
 def why(state):
@@ -525,7 +533,7 @@ def why(state):
         " and no rig can copy it"
 
 
-def choose(hosts, needs_of, describe=True):
+def choose(hosts, needs_of, describe=True, work=1):
     """the least-busy eligible host: (host, its state, the states of all); needs_of(state) gives what the command
     needs on it and which of those it has (sets state['ready'], state['copyable'])"""
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(hosts)) as pool:
@@ -538,7 +546,7 @@ def choose(hosts, needs_of, describe=True):
                              rt2_clips.windows(state["host"]) and
                              any(o["host"] != state["host"] and not rt2_clips.windows(o["host"]) and
                                  newest(o["have"], need[1]) for o in states)}
-        state["score"] = score(state, state["needs"])
+        state["score"] = score(state, state["needs"], work)
         if state["score"] is not None:
             scored.append(state)
     if describe:
@@ -548,7 +556,7 @@ def choose(hosts, needs_of, describe=True):
                                f"{s['replays']}/{CAPS[s['host']]} replays, GPU {s['util']:.0f}%"
                                f"{', lock held' if s['lock'] == 'held' else ''}"
                                f"{'' if all(n in s['ready'] for n in s['needs']) else ', ' + ', '.join(n[0] + ' missing' for n in s['needs'] if n not in s['ready'])}"
-                               f" (score {s['score']:.2f})") for s in states))
+                               f" (about {s['score']:.0f} s)") for s in states))
     if not scored:
         raise SystemExit("rt2_bench: no host is eligible now: " + "; ".join(f"{s['host']} {why(s)}" for s in
                                                                          states) +
@@ -612,7 +620,8 @@ def resolve(args, build_fn):
     else:
         hosts = [args.host]
     needs_of = needs_for(args)
-    host, state, states = choose(hosts, needs_of, describe=len(hosts) > 1)
+    work = WORK.get(args.what, 1) * (5 if getattr(args, "watch", False) else 1)
+    host, state, states = choose(hosts, needs_of, describe=len(hosts) > 1, work=work)
     tried = []
     while True:
         try:
