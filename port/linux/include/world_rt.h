@@ -68,6 +68,9 @@ enum
 	WORLD_RT_SURFACES_OPAQUE = 0,
 	WORLD_RT_SURFACES_ALPHA_TESTED = 1,
 	WORLD_RT_SURFACES_TRANSPARENT = 2,
+	/* (an object's lamps alone: its additive transparent parts,
+	world_rt_source_model_lamps) */
+	WORLD_RT_SURFACES_ADDITIVE = 3,
 	/* a material's maps (struct world_rt_source_material's maps) */
 	WORLD_RT_MAP_BASE = 0,
 	WORLD_RT_MAP_DETAIL,
@@ -216,6 +219,12 @@ void world_rt_map_unloaded(void);
 meshes of its own (not the structure's, not an item's box): a ray meets its
 shape, so the light-transport pass's sun shadow is cast by it */
 int world_rt_object_traced(long object_index);
+/* (display.ray_traced_lighting) the last frame's object lamps: each a
+triangle of an object's self-illuminated surfaces where it glows, placed
+with the object (world-space corners, wound to glow toward their normal),
+its radiance (linear, the pass's units) and its object's owner; their
+count */
+long world_rt_lamps(float const (**corners)[9], float const (**radiance)[3], unsigned long const **owners);
 
 /* an object's owner among the instances (its datum index plus one; 0 none,
 -1 an object index), which a pixel of its own leaves out */
@@ -270,9 +279,20 @@ alpha-tested ones, the transparent ones counted (left_out). Its counts, then
 node's default inverse, the model's space into the node's (a row-major
 3x4); its triangles (0 none) */
 long world_rt_source_model_mesh(long definition, struct world_rt_source_mesh *mesh, float (*inverses)[3][4]);
+/* ... and its additive transparent parts alone (a Pelican's bay lights:
+transparent shaders drawn adding to the frame), the ray-traced scene's
+object lamps (world_rt.c), each material's base map the shader's first
+map, its self-illumination white, its flags transparent; as
+world_rt_source_model_mesh, counted where the arrays are not given */
+long world_rt_source_model_lamps(long definition, struct world_rt_source_mesh *mesh);
 /* a map's texture as the renderer has it now (its header: NULL while it is
 not loaded, which this asks for) */
 void const *world_rt_source_texture(struct world_rt_source_map const *map);
+/* a map's 2D texture's texels (ARGB words) at its first level no larger
+than largest each way, and that level's size: the caller frees them; NULL
+where it cannot be read (world_rt.c's object lamps) */
+unsigned long *world_rt_source_texels(struct world_rt_source_map const *map, unsigned long largest,
+	unsigned long *width, unsigned long *height);
 /* a definition's nodes (at most WORLD_RT_NODES), its bounding sphere in
 its model's space (centre, radius) and whether it is an item (a weapon,
 equipment or garbage); 0 if it has none */

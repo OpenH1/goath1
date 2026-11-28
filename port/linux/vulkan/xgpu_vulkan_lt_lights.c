@@ -38,6 +38,9 @@ static struct
 	uint32_t emitter_generation;
 	int emitter_count, emitter_groups, emitter_solved, emitter_had_count, emitter_version, emitter_whole;
 	struct xgpu_vulkan_lt_emitter emitters[XGPU_VULKAN_LT_EMITTERS_MAXIMUM];
+	/* each window's last list's object lamps (its own frame's whole) */
+	struct xgpu_vulkan_lt_object_lamp lamps[4][XGPU_VULKAN_LT_OBJECT_LAMPS_MAXIMUM];
+	int lamp_counts[4];
 	unsigned char emitter_had[XGPU_VULKAN_LT_EMITTERS_MAXIMUM];
 } lt_lights;
 
@@ -107,14 +110,30 @@ void xgpu_vulkan_lt_lights_receive(void *context, const struct xgpu_stream_lt_li
 		uint32_t index;
 		int kept = 0;
 
+		int lamps = 0;
+
 		for (index = 0; in && index < record->count; index++)
 		{
 			if (in[index].kind == XGPU_LT_LIGHT_EMITTER)
 				lt_emitter_take(&in[index]);
+			else if (in[index].kind == XGPU_LT_LIGHT_OBJECT_EMITTER)
+			{
+				struct xgpu_vulkan_lt_object_lamp *out;
+
+				if (lamps >= XGPU_VULKAN_LT_OBJECT_LAMPS_MAXIMUM)
+					continue;
+				out = &lt_lights.lamps[window][lamps++];
+				memcpy(out->corners, in[index].position, sizeof(float) * 3);
+				memcpy(out->corners + 3, in[index].forward, sizeof(float) * 3);
+				memcpy(out->corners + 6, in[index].up, sizeof(float) * 3);
+				memcpy(out->radiance, in[index].power, sizeof(out->radiance));
+				out->owner = in[index].owner;
+			}
 			else
 				lt_lights.lights[window][kept++] = in[index];
 		}
 		lt_lights.counts[window] = kept;
+		lt_lights.lamp_counts[window] = lamps;
 	}
 	lt_lights.frames[window] = record->frame;
 	lt_lights.last_window = window;
@@ -185,4 +204,15 @@ const struct xgpu_vulkan_lt_emitter *xgpu_vulkan_lt_emitters(int *count, int *gr
 	*solved = lt_lights.emitter_solved;
 	*version = lt_lights.emitter_version;
 	return lt_lights.emitters;
+}
+
+const struct xgpu_vulkan_lt_object_lamp *xgpu_vulkan_lt_object_lamps(int window, int *count)
+{
+	if (!lt_lights.on || window < 0 || window > 3)
+	{
+		*count = 0;
+		return NULL;
+	}
+	*count = lt_lights.lamp_counts[window];
+	return lt_lights.lamps[window];
 }

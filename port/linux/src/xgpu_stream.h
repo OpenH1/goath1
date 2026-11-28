@@ -1564,6 +1564,10 @@ enum
 	(port/linux/game/lt_emitters.c, lt_lights.h has its members): the
 	backend gathers a set's by its generation (xgpu_vulkan_lt_lights.c) */
 	XGPU_LT_LIGHT_EMITTER,
+	/* a triangle of an object's own lamps this frame (world_rt.c's
+	world_rt_lamps), not a light: the backend takes the frame's whole
+	(xgpu_vulkan_lt_lights.c's xgpu_vulkan_lt_object_lamps) */
+	XGPU_LT_LIGHT_OBJECT_EMITTER,
 };
 enum
 {

@@ -39,6 +39,13 @@ enum
 	gel_slot its group; position, forward and up its corners (wound to glow
 	toward their normal); power its group's radiance */
 	XGPU_LT_LIGHT_EMITTER,
+	/* one triangle of an object's own lamps this frame (world_rt.c's
+	world_rt_lamps: a model's self-illuminated triangles, where they glow,
+	moved with it), not a light of the list: id[0] its index this frame,
+	object the frame's count, owner its object's ray-traced owner;
+	position, forward and up its corners (wound to glow toward their
+	normal); power its radiance (linear, the pass's units) */
+	XGPU_LT_LIGHT_OBJECT_EMITTER,
 };
 
 /* its flags: the first five are the enhanced lights' own
