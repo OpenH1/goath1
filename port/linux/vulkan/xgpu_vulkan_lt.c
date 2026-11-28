@@ -574,6 +574,10 @@ static void lt_settings(void)
 			lt.drop_kind);
 }
 
+/* (HALO_LT_TABLE_LOG: each row's record's flags this frame, its object's
+absence in the top bit; 0 a row from the block alone) */
+static uint32_t lt_row_flags[XGPU_DYNAMIC_LIGHTS_MAXIMUM];
+
 /* the list's record of the block's light at position (its 1 / radius in
 w): the same place (within a millimetre) and reach; NULL none */
 static const struct xgpu_stream_lt_light *lt_record(const struct xgpu_stream_lt_light *list, int count,
@@ -729,6 +733,7 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 			block->color[row][2] > 0.0f))
 			continue;
 		light = lt_record(list, listed, position);
+		lt_row_flags[row] = light ? light->flags | (light->object == 0xffffffffu ? 0x80000000u : 0u) : 0u;
 		if (lt.only == 3)
 		{
 			int kept = 0;
@@ -870,11 +875,12 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 		for (row = 0; table_log && row < rows; row++)
 			if (lt.texels[row][4][3] >= 0.0f)
 				host_logf(HOST_LOG_WARN, "vulkan: light transport: table frame %.0f row %d id %08x %08x kind %.0f at "
-					"%.2f %.2f %.2f emitter %.3f range %.2f power %.4f %.4f %.4f", (double)lt.ids_frame, row,
+					"%.2f %.2f %.2f emitter %.3f range %.2f power %.4f %.4f %.4f flags %08x", (double)lt.ids_frame, row,
 					lt.ids[now][row][0], lt.ids[now][row][1], (double)lt.texels[row][4][3],
 					(double)lt.texels[row][0][0], (double)lt.texels[row][0][1], (double)lt.texels[row][0][2],
 					(double)lt.texels[row][0][3], lt.texels[row][1][3] > 0.0f ? 1.0 / (double)lt.texels[row][1][3] : 0.0,
-					(double)lt.texels[row][4][0], (double)lt.texels[row][4][1], (double)lt.texels[row][4][2]);
+					(double)lt.texels[row][4][0], (double)lt.texels[row][4][1], (double)lt.texels[row][4][2],
+					(unsigned)lt_row_flags[row]);
 	}
 	/* (the lights the pass lights: with no more than the 2 heroes, no
 	reservoirs are drawn) */
