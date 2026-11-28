@@ -955,6 +955,68 @@ def lamp_groups(sc, cell):
                 tri += list((T - 0.01 * ng[g][:, None, :])[:, [0, 2, 1]])
             out.append({"material": m, "shader": sc.materials[m]["tag"], "cell": key.tolist(), "power": p,
                         "color": col, "two_sided": two, "triangles": np.array(tri), "area": float(ar[g].sum())})
+    if FIXTURES:
+        out += fixture_groups(sc, cell, out)
+    return out
+
+
+FIXTURES = True  # the level's light fixtures' glowing parts are lamp candidates too (set by --fixtures off)
+# (scenery and light fixtures, placed once and never moving: a machine or control (a door, a lift) moves and has
+# its own lamps at run time, xgpu_vulkan_lt_object_lamps)
+FIXTURE_TYPES = (6, 9)
+
+
+def fixture_glow(sc, mid, otype):
+    """A baked object's glowing part: (color, two_sided) or None. A model shader's self-illumination (its upper
+    colour, the "on" one: a fixture's lamp, light_ceiling's housing glow) on any baked object; a light fixture's
+    (type 9) transparent parts too (its light card or cone, both faces). The tags give them no radiosity power
+    (model shaders have none), yet the bake has their light: d20's and a50's rooms are lit by light_ceiling
+    fixtures alone, and without them the fit held the nearest glow strips at its 20x limit."""
+    m = sc.materials[mid] if 0 <= mid < len(sc.materials) else {}
+    si = m.get("self_illumination") if isinstance(m.get("self_illumination"), dict) else {}
+    up = [float(c) for c in (si.get("color_upper") or [0, 0, 0])]
+    if max(up) > 0 and not (m.get("type") or "").startswith("transparent"):
+        return up, False
+    if otype == 9 and (m.get("type") or "").startswith("transparent"):
+        return [1.0, 1.0, 1.0], True
+    return None
+
+
+def fixture_groups(sc, cell, bsp_groups):
+    """The static baked objects' glowing parts (fixture_glow; FIXTURE_TYPES) as lamp groups, by material and `cell` wu cell like the
+    BSP's: world triangles lifted 0.01 wu toward their normals. Their prior power is the BSP lamps' median tag
+    power (none: 1), so the fit's per-group scale starts at the level's; it fits them as it fits the BSP's."""
+    types = sc.object_types()
+    powers = sorted(g["power"] for g in bsp_groups)
+    p0 = powers[len(powers) // 2] if powers else 1.0
+    found = {}
+    for fpath, (opos, onrm, ouv, otris, omats, *_r) in sc.geometry.items():
+        otype = types.get(fpath.resolve())
+        if fpath.parent.name != "objects" or otype not in FIXTURE_TYPES:
+            continue
+        for mid in np.unique(omats):
+            glow = fixture_glow(sc, int(mid), otype)
+            if glow is None:
+                continue
+            T = opos[otris[omats == mid]]
+            cr = np.cross(T[:, 1] - T[:, 0], T[:, 2] - T[:, 0])
+            ar = 0.5 * np.linalg.norm(cr, axis=1)
+            ok = ar > 1e-8
+            T, cr, ar = T[ok], cr[ok], ar[ok]
+            ng = cr / (2 * ar)[:, None]
+            cells = np.floor(T.mean(1) / cell).astype(np.int64)
+            for i in range(len(T)):
+                k = (int(mid), tuple(cells[i]))
+                f = found.setdefault(k, {"tri": [], "area": 0.0, "glow": glow})
+                f["tri"].append(T[i] + 0.01 * ng[i])
+                if glow[1]:
+                    f["tri"].append((T[i] - 0.01 * ng[i])[[0, 2, 1]])
+                f["area"] += float(ar[i])
+    out = []
+    for (mid, key), f in sorted(found.items()):
+        out.append({"material": mid, "shader": sc.materials[mid]["tag"], "cell": list(key), "power": p0,
+                    "color": f["glow"][0], "two_sided": f["glow"][1], "triangles": np.array(f["tri"]),
+                    "area": f["area"], "fixture": True})
     return out
 
 
@@ -1040,6 +1102,16 @@ def solve_rooms(folder, out, spp=128, max_samples=300000, cell=12.0, report=None
     total = float((w * (Xl @ s)).sum() / max(float(Yc.sum()), 1e-30))  # against the bake less the sky
     log("rooms: %d lamp groups in %g wu cells; level scale %.4g; traced / bake over the level %.3f; per cell "
         "(area-weighted) within x%.2f typically" % (len(order), cell, k0, total, spread))
+    # Groups held at the 20x limit: the bake's light there has no source among the BSP's lamps (d20's rooms, lit
+    # in the bake by what the tags do not give), and the cell's mean was met by the few texels beside a strip,
+    # its near-field peak, while the rest of the room stays dark: the game shows those rooms black with hot spots.
+    pw = np.array([lamps[i]["power"] * float(np.array(lamps[i]["color"]) @ display.LUMA) * lamps[i]["area"]
+                   for i in order]) * s
+    at_limit = s >= k0 * 20 * 0.999
+    limit_share = float(pw[at_limit].sum() / max(pw.sum(), 1e-30))
+    if limit_share > 0.05:
+        log("rooms: %d groups held at the 20x limit, %.0f%% of the lamps' power: their cells' light is not the "
+            "lamps' (near-field peaks meet the cell's mean); not a file to ship" % (int(at_limit.sum()), 100 * limit_share))
     scen, bsp, h = scenario_key(sc)
     doc = {"format": FORMAT, "map": (sc.camera.get("map") or Path(folder).name.split("_")[0]), "scenario": scen,
            "bsp_index": bsp, "solved_from": {"bsp_and_lightmaps_sha256_16": h, "scene": Path(folder).name},
@@ -1051,6 +1123,7 @@ def solve_rooms(folder, out, spp=128, max_samples=300000, cell=12.0, report=None
                           "surfaces in one %g wu cell), set so each cell's traced mean light equals the bake's" % cell,
                    "level_scale": round(k0, 6), "traced_over_bake_level": round(total, 4),
                    "cell_brightness_spread": round(spread, 3), "cell_wu": cell, "spp": spp,
+                   "groups_at_limit": int(at_limit.sum()), "power_share_at_limit": round(limit_share, 4),
                    "sky": {"bake_share": round(sky_share, 4), "cells_left_to_it_bake_share": round(out_share, 4),
                            "scales": {keys[j][4:]: round(float(k), 6) for j, k in zip(si, ks)},
                            "how": "the sky's tag parts traced too; their scales fitted where the lamps at the level "
@@ -1069,6 +1142,8 @@ def solve_rooms(folder, out, spp=128, max_samples=300000, cell=12.0, report=None
             "radiance": [round(c * L["power"] * EMISSION_RADIANCE_PER_POWER * float(s[j]), 6) for c in L["color"]],
             "scale": round(float(s[j]), 6), "scale_over_level": round(float(s[j] / k0), 4), "tag_power": L["power"],
             "tag_color": L["color"], "two_sided": L["two_sided"], "area_wu2": round(L["area"], 4),
+            **({"fixture": True, "from": "a baked object's glowing part (fixture_glow): the BSP lamps' median tag "
+                "power as its prior"} if L.get("fixture") else {}),
             "triangles": [[round(float(x), 4) for x in t.ravel()] for t in L["triangles"]]})
     doc["seconds"] = round(time.time() - t0, 1)
     out = Path(out)
