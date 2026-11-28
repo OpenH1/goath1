@@ -65,9 +65,9 @@ luminance): the mean, the colour's means, the temporal standard deviation of eac
 (p50, p99; relative to the pixel's mean where it is above 0.002) and each --region's mean and deviation. They are
 computed by the replay (rt_frames), next to the pictures: no picture crosses the network but the last.
 
-What a try reaches: the GLSL of port/linux/vulkan/lt and the HALO_LT_* settings. Not reached without recording
-again: the game's side (lt_lights.c's light list, the object lamps' gather: they are in the recording's LT_LIGHTS
-records). The backend's C (xgpu_vulkan_lt*.c, the denoiser's and the bounce's C): push the branch to the rig's
+What a try reaches: the GLSL of port/linux/vulkan/lt and the HALO_LT_* settings; with --unit, how the light list
+is built (port/linux/game/lt_lights_build.c, from the recording's LT_INPUTS). Not reached without recording again:
+what feeds the list's inputs (lt_lights.c's gather, lt_emitters.c, world_rt.c's object lamps, dynamic_lights.c). The backend's C (xgpu_vulkan_lt*.c, the denoiser's and the bounce's C): push the branch to the rig's
 mirror and rebuild the replay (goat-rig build <ref> linux_replay, about 30 s warm), then run again on the same
 recording. Recordings hold the game's art: they stay on the rig.
 
