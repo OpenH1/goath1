@@ -44,6 +44,7 @@ symbols in this file:
 #include "cseries/cseries.h"
 #include "cseries/errors.h"
 #include "game/game.h"
+#include "main/main.h"
 #include "math/real_math.h"
 #include "models/model_animation_definitions.h"
 #include "objects/objects.h"
@@ -412,15 +413,16 @@ read a tick more or less of it at one frame rate than another, or with other
 frame timing, and a cutscene that sleeps on it (a30's opening) went on a tick
 apart (#1236). At 30, a tick a frame, the frame counted it down by a tick's
 time (1/30 s) after the tick, as this does, and only while the director moved
-the scripts' camera (director_scripted_camera_running), as this does: the
-scripts read what they read there. The camera itself is moved by the frames,
+the scripts' camera (director_scripted_camera_running), and not in the ticks a
+script skips (game_skip_ticks: a30's opening skips 5), which ran with no frame
+between them, as this does: the scripts read what they read there. The camera itself is moved by the frames,
 from what the tick left (scripted_camera_time_drawn) */
 void scripted_camera_tick(
 	void)
 {
 	camera_script_drawn_timer = camera_script_globals.timer;
 	camera_script_drawn_held = FALSE;
-	if (director_scripted_camera_running())
+	if (director_scripted_camera_running() && !main_skipping_ticks())
 	{
 		camera_script_globals.timer = MAX(
 			0.f,
