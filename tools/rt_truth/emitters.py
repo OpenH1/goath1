@@ -982,6 +982,44 @@ def fixture_glow(sc, mid, otype):
     return None
 
 
+CONES = False  # a fixture's light cone or card a source beside its glowing lamp (set by --cones on; study)
+GLOW_KEPT = 0.99  # the share of a fixture group's glow its kept triangles hold (fixture_groups' thinning)
+# (barycentric points a triangle's self-illumination mask is read at: its middle, and halfway to each corner and
+# to each edge's middle)
+_MASK_POINTS = np.array([[1 / 3, 1 / 3, 1 / 3], [2 / 3, 1 / 6, 1 / 6], [1 / 6, 2 / 3, 1 / 6], [1 / 6, 1 / 6, 2 / 3],
+                         [1 / 2, 1 / 2, 0], [0, 1 / 2, 1 / 2], [1 / 2, 0, 1 / 2]])
+
+
+def self_illum_mask(sc, mid, UV):
+    """Each triangle's glow over its area, 0 to 1: a model shader's self-illumination as the model pass draws
+    it, (mask x color)^2.2 with the mask the multipurpose map's green (HaloSelfIllum), read at _MASK_POINTS of
+    each triangle (UV: T x 3 x 2, the map's u and v scales applied) and averaged as mask^2.2. None when the shader
+    has no multipurpose map (it glows all over)."""
+    m = sc.materials[mid] if 0 <= mid < len(sc.materials) else {}
+    img = sc.image(m["multipurpose_map"]) if m.get("multipurpose_map") else None
+    if img is None or not len(UV):
+        return None
+    tex = sc.bitmap(img[:, :, 1:2])
+    su, sv = float(m.get("map_u_scale") or 1.0), float(m.get("map_v_scale") or 1.0)
+    P = np.einsum("pc,tcx->tpx", _MASK_POINTS, UV).reshape(-1, 2) * np.array([su, sv])
+    si = dr.zeros(mi.SurfaceInteraction3f, len(P))
+    si.uv = mi.Point2f(P[:, 0].astype(np.float32), P[:, 1].astype(np.float32))
+    g = np.clip(np.array(tex.eval_1(si)), 0.0, 1.0).reshape(len(UV), len(_MASK_POINTS))
+    return (g ** GAMMA).mean(1)
+
+
+def thin_glow(T, ar, glow):
+    """The triangles that hold GLOW_KEPT of a group's glow (area x glow over its area), the strongest first: a
+    fixture's housing, where its mask is black, gives no light and is not a light source to sample."""
+    w = ar * glow
+    total = float(w.sum())
+    if total <= 0:
+        return np.zeros(0, np.int64)
+    order = np.argsort(-w, kind="stable")
+    n = int(np.searchsorted(np.cumsum(w[order]), GLOW_KEPT * total) + 1)
+    return np.sort(order[:min(n, len(order))])
+
+
 def fixture_groups(sc, cell, bsp_groups):
     """The static baked objects' glowing parts (fixture_glow; FIXTURE_TYPES) as lamp groups, by material and `cell` wu cell like the
     BSP's: world triangles lifted 0.01 wu toward their normals. Their prior power is the BSP lamps' median tag
@@ -994,18 +1032,36 @@ def fixture_groups(sc, cell, bsp_groups):
         otype = types.get(fpath.resolve())
         if fpath.parent.name != "objects" or otype not in FIXTURE_TYPES:
             continue
+        # (an object whose lamp glows (a model part with its self-illumination mask lit) is lit by that lamp: its
+        # light cone or card is the lamp's light seen in the air (an additive shader, no radiosity power), not a
+        # second source, so it is a source only on a fixture without such a lamp)
+        parts = {}
         for mid in np.unique(omats):
             glow = fixture_glow(sc, int(mid), otype)
-            if glow is None:
+            if glow is not None:
+                parts[int(mid)] = glow
+        lamp = False
+        for mid, glow in parts.items():
+            if not glow[1]:
+                sel = otris[omats == mid]
+                mask = self_illum_mask(sc, mid, ouv[sel])
+                lamp = lamp or mask is None or bool((mask > 0).any())
+        for mid, glow in parts.items():
+            if glow[1] and lamp and not CONES:
                 continue
-            T = opos[otris[omats == mid]]
+            sel = otris[omats == mid]
+            T, UV = opos[sel], ouv[sel]
             cr = np.cross(T[:, 1] - T[:, 0], T[:, 2] - T[:, 0])
             ar = 0.5 * np.linalg.norm(cr, axis=1)
             ok = ar > 1e-8
-            T, cr, ar = T[ok], cr[ok], ar[ok]
+            T, UV, cr, ar = T[ok], UV[ok], cr[ok], ar[ok]
             ng = cr / (2 * ar)[:, None]
+            # (a model shader glows where its mask does: only the triangles that hold its glow, each glowing
+            # evenly at the group's radiance as the pass samples it; a light card or cone glows all over)
+            mask = None if glow[1] else self_illum_mask(sc, int(mid), UV)
+            keep = thin_glow(T, ar, mask) if mask is not None else np.arange(len(T))
             cells = np.floor(T.mean(1) / cell).astype(np.int64)
-            for i in range(len(T)):
+            for i in keep:
                 k = (int(mid), tuple(cells[i]))
                 f = found.setdefault(k, {"tri": [], "area": 0.0, "glow": glow})
                 f["tri"].append(T[i] + 0.01 * ng[i])
@@ -1037,6 +1093,17 @@ def solve_rooms(folder, out, spp=128, max_samples=300000, cell=12.0, report=None
     near = near_emitters(sc, S["pos"], 0.5)
     w = np.where(clipped | near, 0.0, S["w"])
     lamps = lamp_groups(sc, cell)
+    # (a fixture is a light of this BSP only inside its lit space: the scenario's objects stand in every BSP's,
+    # and one placed where this BSP has no lightmapped surface in its cell or the cells beside it lights none of
+    # the bake, so the bake cannot set it and the fit pushed it to its limit (d20 bsp0's other halls))
+    have = {tuple(c) for c in np.unique(np.floor(S["pos"][S["w"] > 0] / cell).astype(np.int64), axis=0).tolist()}
+    near = [(a, b, c) for a in (-1, 0, 1) for b in (-1, 0, 1) for c in (-1, 0, 1)]
+    inside = [not L.get("fixture") or any((L["cell"][0] + a, L["cell"][1] + b, L["cell"][2] + c) in have
+                                          for a, b, c in near) for L in lamps]
+    if not all(inside):
+        log("rooms: %d fixture groups (%d triangles) outside the BSP's lightmapped cells left out" % (
+            inside.count(False), sum(len(L["triangles"]) for L, ok in zip(lamps, inside) if not ok)))
+        lamps = [L for L, ok in zip(lamps, inside) if ok]
     src = {"patch:%d" % i: ([c * L["power"] * EMISSION_RADIANCE_PER_POWER for c in L["color"]], L["triangles"])
            for i, L in enumerate(lamps)}
     sky = sky_parts(sc)  # the sky's dome and lights at the tag's power, to tell the sky's light from the lamps'
@@ -1087,14 +1154,33 @@ def solve_rooms(folder, out, spp=128, max_samples=300000, cell=12.0, report=None
         log("rooms: the sky (its tags x %s) gives %.1f%% of the bake's light; %.1f%% is in cells left to it" % (
             ", ".join("%s %.3g" % (keys[j][4:], k) for j, k in zip(si, ks)), 100 * sky_share, 100 * out_share))
     k0 = float(Yc.sum() / max((w * Xl.sum(1)).sum(), 1e-30))
-    s = np.full(len(order), k0)
     land = np.stack([np.bincount(inv, w * Xl[:, j], nc) for j in range(len(order))], 1)  # cells x lamps
+    # (and a fixture whose light reaches the bake's texels at under 1% of the fixtures' typical reach for its
+    # area: a lamp behind a wall of this BSP's halls, which the bake cannot set either)
+    fx = np.array([bool(lamps[i].get("fixture")) for i in order], bool)
+    if fx.any():
+        reach = land.sum(0) / np.maximum([lamps[i]["area"] for i in order], 1e-30)
+        cut = fx & (reach < 0.01 * float(np.median(reach[fx])))
+        if cut.any():
+            log("rooms: %d fixture groups whose light does not reach the bake left out" % int(cut.sum()))
+            order = [i for i, c in zip(order, cut) if not c]
+            Xl, land, fx = Xl[:, ~cut], land[:, ~cut], fx[~cut]
     share = land / np.maximum(land.sum(0, keepdims=True), 1e-30)
+    level = np.full(len(order), k0)
+    s = level.copy()
     for it in range(30):
         Fc = land @ s
         ratio = np.where((Fc > 0) & (Yc > 0), Yc / np.maximum(Fc, 1e-30), 1.0)
-        s = np.clip(s * np.exp(0.5 * (share * np.log(ratio)[:, None]).sum(0)), k0 / 20, k0 * 20)
+        s = np.clip(s * np.exp(0.5 * (share * np.log(ratio)[:, None]).sum(0)), level / 20, level * 20)
     Fc = land @ s
+    if report:
+        # (the cells' bake less the sky, each group's light landing in them, the scales: for a look at a fit)
+        Path(report).mkdir(parents=True, exist_ok=True)
+        keys_c, first = np.unique(tc, axis=0, return_index=True)
+        np.savez_compressed(Path(report) / "rooms_cells.npz", cells=keys_c, bake=Yc, bake_all=Y0, land=land, scale=s,
+                            level=level, fixture=fx, area=np.bincount(inv, w, nc),
+                            shaders=np.array([lamps[i]["shader"] for i in order]),
+                            group_cells=np.array([lamps[i]["cell"] for i in order]))
     lit = (Yc > 0) & (Fc > 0)
     wc = np.bincount(inv, w, nc)
     lr = np.log(np.maximum(Fc[lit], 1e-30) / Yc[lit])
@@ -1107,7 +1193,7 @@ def solve_rooms(folder, out, spp=128, max_samples=300000, cell=12.0, report=None
     # its near-field peak, while the rest of the room stays dark: the game shows those rooms black with hot spots.
     pw = np.array([lamps[i]["power"] * float(np.array(lamps[i]["color"]) @ display.LUMA) * lamps[i]["area"]
                    for i in order]) * s
-    at_limit = s >= k0 * 20 * 0.999
+    at_limit = s >= level * 20 * 0.999
     limit_share = float(pw[at_limit].sum() / max(pw.sum(), 1e-30))
     if limit_share > 0.05:
         log("rooms: %d groups held at the 20x limit, %.0f%% of the lamps' power: their cells' light is not the "
@@ -1140,7 +1226,7 @@ def solve_rooms(folder, out, spp=128, max_samples=300000, cell=12.0, report=None
         doc["lamps"].append({
             "id": j, "shader": L["shader"], "region": {"min": lo, "max": [x + cell for x in lo]},
             "radiance": [round(c * L["power"] * EMISSION_RADIANCE_PER_POWER * float(s[j]), 6) for c in L["color"]],
-            "scale": round(float(s[j]), 6), "scale_over_level": round(float(s[j] / k0), 4), "tag_power": L["power"],
+            "scale": round(float(s[j]), 6), "scale_over_level": round(float(s[j] / level[j]), 4), "tag_power": L["power"],
             "tag_color": L["color"], "two_sided": L["two_sided"], "area_wu2": round(L["area"], 4),
             **({"fixture": True, "from": "a baked object's glowing part (fixture_glow): the BSP lamps' median tag "
                 "power as its prior"} if L.get("fixture") else {}),
