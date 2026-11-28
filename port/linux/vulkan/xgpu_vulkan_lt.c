@@ -239,6 +239,9 @@ static struct
 	float kind_scale[5];
 	int drop_kind;
 	uint32_t drop_id;
+	/* the last pass lit its level live (LT_LIGHTS_REAL: the camera's
+	contrast, xgpu_vulkan_lt_live) */
+	int live;
 } lt = { -1 };
 
 void xgpu_vulkan_lt_guides(struct xgpu_vulkan_image *guides)
@@ -253,6 +256,11 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_table_halves(int32_t lights[4])
 	lights[2] = LT_TABLE_ROWS;
 	lights[3] = XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE;
 	return lt.forward_table;
+}
+
+int xgpu_vulkan_lt_live(void)
+{
+	return xgpu_vulkan_lt_mode() && lt.live;
 }
 
 int xgpu_vulkan_lt_mode(void)
@@ -988,6 +996,7 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 	params->lights[2] = (lt.only >= 2 ? 0 : LT_LIGHTS_FLASHLIGHT) | (lt.heroes_on ? LT_LIGHTS_HEROES : 0) |
 		(lt.restir_on && (lt.handled > 2 || !lt.heroes_on) ? LT_LIGHTS_RESTIR : 0) |
 		(real && params->lights[1] > 0 ? LT_LIGHTS_REAL : 0);
+	lt.live = (params->lights[2] & LT_LIGHTS_REAL) != 0;
 }
 
 /* the view's shadowed flashlight's index in the block (-1 none) */

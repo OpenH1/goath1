@@ -9327,7 +9327,7 @@ static void hdr_metadata_set(int made);
 void xgpu_vulkan_hdr_state(int active, int mode, int paper_white_nits, int paper_white, int ui_nits)
 {
 	vk.hdr_active = active != 0;
-	vk.hdr_mode = mode == XGPU_HDR_MODE_PUNCHY ? XGPU_HDR_MODE_PUNCHY : XGPU_HDR_MODE_FAITHFUL;
+	vk.hdr_mode = mode == XGPU_HDR_MODE_PUNCHY || mode == XGPU_HDR_MODE_CAMERA ? mode : XGPU_HDR_MODE_FAITHFUL;
 	vk.hdr_paper_white_nits = paper_white_nits > 0 ? paper_white_nits : 0;
 	vk.hdr_paper_white = paper_white > 0 ? paper_white : 100;
 	vk.hdr_ui_nits = ui_nits > 0 ? ui_nits : 0;
