@@ -228,6 +228,9 @@ with the object (world-space corners, wound to glow toward their normal),
 its radiance (linear, the pass's units) and its object's owner; their
 count */
 long world_rt_lamps(float const (**corners)[9], float const (**radiance)[3], unsigned long const **owners);
+/* the frame's lamps' sides, in world_rt_lamps' order: 1, or 2 where it glows
+toward both (an additive part drawn from both sides); NULL none */
+unsigned char const *world_rt_lamp_sides(void);
 
 /* an object's owner among the instances (its datum index plus one; 0 none,
 -1 an object index), which a pixel of its own leaves out */

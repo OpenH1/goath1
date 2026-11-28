@@ -47,6 +47,9 @@ enum
 	normal); power its radiance (linear, the pass's units) */
 	XGPU_LT_LIGHT_OBJECT_EMITTER,
 };
+/* an XGPU_LT_LIGHT_OBJECT_EMITTER record's flags (xgpu_stream.h's): an
+additive part drawn from both sides, which glows toward both */
+#define XGPU_LT_LAMP_TWO_SIDED 1u
 
 /* its flags: the first five are the enhanced lights' own
 (halo_dynamic_lights.h's HALO_DYNAMIC_LIGHT_*), the same bits */

@@ -375,6 +375,10 @@ static boolean additive_map(struct shader const *shader, struct world_rt_source_
 	{
 		map_of(map, &material->maps[WORLD_RT_MAP_BASE]);
 		material->flags |= WORLD_RT_MATERIAL_TRANSPARENT;
+		/* (drawn from both sides: it adds its glow seen from either, so it
+		emits toward both) */
+		if (TEST_FLAG(transparent->flags, _world_rt_shader_transparent_two_sided_bit))
+			material->flags |= WORLD_RT_MATERIAL_TWO_SIDED;
 		material->alpha_scale[0] = u_scale != 0.0f ? u_scale : 1.0f;
 		material->alpha_scale[1] = v_scale != 0.0f ? v_scale : 1.0f;
 		material->self_illumination = 0xFFFFFFFFu;

@@ -165,6 +165,8 @@ struct world_rt_lamp
 	long shader;
 	long sample_count;
 	unsigned long (*samples)[4];
+	/* (an additive part drawn from both sides: it glows toward both) */
+	int two_sided;
 };
 
 /* ---------- globals */
@@ -230,6 +232,9 @@ static struct
 	(ARGB words, NULL one that could not be read) */
 	float (*lamp_corners)[9], (*lamp_radiance)[3];
 	unsigned long *lamp_owners;
+	/* (the sides each glows toward: 1, or 2 an additive part drawn from
+	both) */
+	unsigned char *lamp_sides;
 	long lamp_count;
 	struct
 	{
@@ -1136,6 +1141,7 @@ static void world_rt_lamps_made(struct world_rt_definition *entry, short node, s
 		lamp->shader = glow ? material->shader : -1;
 		lamp->sample_count = glow ? count : 0;
 		lamp->samples = samples;
+		lamp->two_sided = additive && (material->flags & WORLD_RT_MATERIAL_TWO_SIDED) != 0;
 		/* (a skinned model's: on its triangle's major node, in that node's
 		space, as its rigid parts are) */
 		if (inverses)
@@ -1174,7 +1180,8 @@ static void world_rt_lamps_placed(struct world_rt_definition const *definition, 
 		world_rt.lamp_corners = malloc(sizeof(*world_rt.lamp_corners) * WORLD_RT_LAMPS);
 		world_rt.lamp_radiance = malloc(sizeof(*world_rt.lamp_radiance) * WORLD_RT_LAMPS);
 		world_rt.lamp_owners = malloc(sizeof(*world_rt.lamp_owners) * WORLD_RT_LAMPS);
-		if (!world_rt.lamp_corners || !world_rt.lamp_radiance || !world_rt.lamp_owners)
+		world_rt.lamp_sides = malloc(sizeof(*world_rt.lamp_sides) * WORLD_RT_LAMPS);
+		if (!world_rt.lamp_corners || !world_rt.lamp_radiance || !world_rt.lamp_owners || !world_rt.lamp_sides)
 			return;
 	}
 	for (index = 0; index < definition->lamp_count && world_rt.lamp_count < WORLD_RT_LAMPS; index++)
@@ -1232,6 +1239,7 @@ static void world_rt_lamps_placed(struct world_rt_definition const *definition, 
 			world_rt_transformed(transform, &lamp->corners[3 * corner], 1,
 				&world_rt.lamp_corners[world_rt.lamp_count][3 * corner]);
 		world_rt.lamp_owners[world_rt.lamp_count] = owner;
+		world_rt.lamp_sides[world_rt.lamp_count] = lamp->two_sided ? 2 : 1;
 		if (world_rt.counts_wanted > 0)
 		{
 			float const *q = world_rt.lamp_corners[world_rt.lamp_count], *r = world_rt.lamp_radiance[world_rt.lamp_count];
@@ -1259,6 +1267,11 @@ static void world_rt_lamps_placed(struct world_rt_definition const *definition, 
 		}
 		world_rt.lamp_count++;
 	}
+}
+
+unsigned char const *world_rt_lamp_sides(void)
+{
+	return world_rt.lamp_corners ? world_rt.lamp_sides : NULL;
 }
 
 long world_rt_lamps(float const (**corners)[9], float const (**radiance)[3], unsigned long const **owners)
@@ -1503,10 +1516,15 @@ static struct world_rt_definition *world_rt_definition(long definition)
 	{
 		long lamp, staged = 0;
 
+		long both = 0;
+
 		for (lamp = 0; lamp < entry->lamp_count; lamp++)
+		{
 			staged += entry->lamps[lamp].samples != NULL;
-		platform_log("world ao: the ray-traced scene's %s: %ld object lamps (%ld a generic shader's stages)",
-			world_rt_source_name(definition), entry->lamp_count, staged);
+			both += entry->lamps[lamp].two_sided != 0;
+		}
+		platform_log("world ao: the ray-traced scene's %s: %ld object lamps (%ld a generic shader's stages, %ld "
+			"two-sided)", world_rt_source_name(definition), entry->lamp_count, staged, both);
 	}
 	/* (measuring) */
 	if (world_rt.counts_wanted > 0)

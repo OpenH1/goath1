@@ -175,8 +175,9 @@ LT_EMITTER_ROW to LT_TABLE_HEIGHT, its texels in order (a row's 8 in turn):
 /* the objects' own lamps this frame (xgpu_vulkan_lt_object_lamps) in the
 table's last rows, from LT_OBJECT_LAMP_ROW (lt/e1.frag's OBJECT_LAMP_ROW),
 4 texels a triangle: its first corner and the lamps' power share up to and
-with it; its first edge and its area; its second edge and its object's
-owner; its radiance and its power's share */
+with it; its first edge and its area; its second edge and 1 where it glows
+toward both sides (else 0, toward its normal); its radiance and its power's
+share */
 #define LT_OBJECT_LAMPS XGPU_VULKAN_LT_OBJECT_LAMPS_MAXIMUM
 #define LT_OBJECT_LAMP_ROWS (LT_OBJECT_LAMPS * 4 / LT_TABLE_TEXELS)
 #define LT_OBJECT_LAMP_ROW (LT_TABLE_HEIGHT - LT_OBJECT_LAMP_ROWS)
@@ -1164,7 +1165,7 @@ static int lt_object_lamp_rows(const float eye[3])
 				to[axis] = (lamp->corners[axis] + lamp->corners[3 + axis] + lamp->corners[6 + axis]) / 3.0f - eye[axis];
 			d2 = to[0] * to[0] + to[1] * to[1] + to[2] * to[2];
 			power[index] = (0.2126f * lamp->radiance[0] + 0.7152f * lamp->radiance[1] + 0.0722f * lamp->radiance[2]) *
-				area[index] / (d2 > area[index] ? d2 : area[index]);
+				area[index] / (d2 > area[index] ? d2 : area[index]) * (lamp->two_sided ? 2.0f : 1.0f);
 		}
 		if (!(power[index] > 0.0f) || !isfinite(power[index]))
 			power[index] = 0.0f;
@@ -1182,7 +1183,7 @@ static int lt_object_lamp_rows(const float eye[3])
 		lt_set(texels[4 * index + 1], lamp->corners[3] - lamp->corners[0], lamp->corners[4] - lamp->corners[1],
 			lamp->corners[5] - lamp->corners[2], area[index]);
 		lt_set(texels[4 * index + 2], lamp->corners[6] - lamp->corners[0], lamp->corners[7] - lamp->corners[1],
-			lamp->corners[8] - lamp->corners[2], (float)lamp->owner);
+			lamp->corners[8] - lamp->corners[2], lamp->two_sided ? 1.0f : 0.0f);
 		lt_set(texels[4 * index + 3], lamp->radiance[0], lamp->radiance[1], lamp->radiance[2], power[index] / total);
 	}
 	used = (4 * count + LT_TABLE_TEXELS - 1) / LT_TABLE_TEXELS;
