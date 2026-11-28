@@ -133,6 +133,14 @@ MOMENTS = {
         "a50's opening at night: the Covenant's portable shields on the cliff, the ground about them; a slow pan"),
     # (a30's BSP 1, the emitter screen's first spot: a lamp-lit room with no solved file, black live before the one
     # rule; the sweep's scene_a30_bsp1)
+    # (a50's canyon at night beside the landing cliff, a player's report of flickering black squares in the shadows
+    # (RTX 4090, 4K, DLSS, bigger battles 2x): his spot and view, then a slow pan; his settings in MOMENT_SETTINGS)
+    "a50_night": (
+        "levels\\a50\\a50", 40, 50,
+        [(39.5, cam(24.881, -16.562, 90.378, 193.2, -10.3)),
+         (40, cam(24.881, -16.562, 90.378, 213.2, -10.3, 10))],
+        "",
+        "a50's canyon at night with bigger battles 2x: the rock walls' shadows and the ground; a slow pan"),
     "a30_bsp1": (
         "levels\\a30\\a30", 34, 40,
         [(30, "ai_erase_all"), (30.5, "switch_bsp 1"), (33, cam(-340.98, 43.52, 44.32, 255, -9)),
@@ -182,6 +190,13 @@ MOMENTS = {
          (6, cam(-92.43, -5.21, 8.11, 285, -9)), (7, cam(-92.43, -5.21, 8.11, 315, -9, 10))],
         "",
         "d40's BSP 4 (x1.24): a lamp-lit room, live from its emitter file; a slow pan"),
+}
+
+
+# a moment's own settings beside the menu setting's (a player's report played as he had it)
+MOMENT_SETTINGS = {
+    "a50_night": ["HALO_BIGGER_BATTLES=2x", "HALO_TEMPORAL_AA=dlss", "HALO_HDR=on", "HALO_HDR_MODE=punchy",
+                  "HALO_HDR_HIGHLIGHT_BOOST=3", "HALO_SHIELD_GLOW_INTENSITY=light_show"],
 }
 
 
@@ -335,6 +350,7 @@ def settings(moment, lighting):
         "HALO_TRACE=clip.trace",
         f"HALO_TRACE_SECONDS={end + 0.25:g}",
     ]
+    env += MOMENT_SETTINGS.get(moment, [])
     if script:
         env.append(f"HALO_TEST_INPUT=script:{script}")
     return env
