@@ -9403,16 +9403,20 @@ static unsigned int lt_e1_guides(struct module *m, struct pixel_state *state, un
 		lt_octahedral(m, normal), material, motion });
 }
 
-/* the camera's light curve (xgpu_hdr.h's XGPU_HDR_MODE_CAMERA): each
-channel of the light, before the albedo multiplies, to PIVOT (E / PIVOT)^
-CONTRAST; where the pass's light is the whole light (live), else as it is */
+/* the camera's light curve (xgpu_hdr.h's XGPU_HDR_MODE_CAMERA): the light's
+luminance Y, before the albedo multiplies, to PIVOT (Y / PIVOT)^CONTRAST,
+its chroma kept (the light times (Y / PIVOT)^(CONTRAST - 1)), so a light's
+colour stays its designer's and the curve does not saturate; where the
+pass's light is the whole light (live), else as it is */
 static unsigned int lt_light_curve(struct module *m, unsigned int light, unsigned int live)
 {
-	unsigned int curved = fscale(m, 3, ext2(m, GLSL_POW, m->t_v3, fscale(m, 3, fmax_scalar(m, 3, light, 0.0f),
-		constant_float(m, 1.0f / XGPU_HDR_CAMERA_LIGHT_PIVOT)), constant_splat(m, 3, XGPU_HDR_CAMERA_LIGHT_CONTRAST)),
-		constant_float(m, XGPU_HDR_CAMERA_LIGHT_PIVOT));
+	unsigned int positive = fmax_scalar(m, 3, light, 0.0f);
+	unsigned int luminance = fmax_scalar(m, 1, fdot(m, positive,
+		constant_vector(m, 3, (const float[]){ 0.2126f, 0.7152f, 0.0722f })), 1.0e-12f);
+	unsigned int gain = ext2(m, GLSL_POW, m->t_float, fmul(m, 1, luminance,
+		constant_float(m, 1.0f / XGPU_HDR_CAMERA_LIGHT_PIVOT)), constant_float(m, XGPU_HDR_CAMERA_LIGHT_CONTRAST - 1.0f));
 
-	return select_n(m, 3, live, curved, light);
+	return select_n(m, 3, live, fscale(m, 3, positive, gain), light);
 }
 
 /* ... the traced lights' light (linear, at display.rt_bounce's binding:

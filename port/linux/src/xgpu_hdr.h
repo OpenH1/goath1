@@ -313,10 +313,14 @@ frame's values made linear) is
   against b30's bake, the best exposure with the live sky's k is 0.99.
 - its contrast on the light, not here: where the pass's light is the
   whole light (a level lit live by its sky or its glowing surfaces), the
-  compose (xgpu_spirv.c's lt_e1_add, lt_forward_add) curves each channel
-  of the demodulated light, before the albedo multiplies, about
-  XGPU_HDR_CAMERA_LIGHT_PIVOT: E to PIVOT (E / PIVOT)^XGPU_HDR_CAMERA_LIGHT_
-  CONTRAST. One curve on every live view, day and night; the frame's
+  compose (xgpu_spirv.c's lt_e1_add, lt_forward_add) curves the
+  demodulated light's luminance Y, before the albedo multiplies, about
+  XGPU_HDR_CAMERA_LIGHT_PIVOT: Y to PIVOT (Y / PIVOT)^XGPU_HDR_CAMERA_LIGHT_
+  CONTRAST, its chroma kept. Not each channel apart: a channel's own power
+  moved a light's hue (a designer's colour is the on-screen colour) and
+  lifted a night's blue fill, whose blue alone sat above the pivot, while
+  its luminance is far below it (a50: darker in luminance, bluer and
+  brighter in the picture). One curve on every live view, day and night; the frame's
   contrast here stays 1 (the window uniform's x). Where a level keeps its
   lightmap, the lightmap is already a picture (the bake's own look), and
   the pass's added light is not curved. The contrast is the bake's own
@@ -324,8 +328,7 @@ frame's values made linear) is
   ~/dev/rt2-calibration.json's real_sky: sunlit over shaded 5.88 against
   3.78, ln 5.88 / ln 3.78 = 1.33), which the tags' powers in the tool's one
   unit (lt_light_colour.h's LT_TOOL_K) do not have: it lifts the sun and
-  deepens the shade, and on light per channel it gives the bake's warmer
-  sun and bluer shade too. The pivot is middle grey's light, 0.18 (b30's
+  deepens the shade. The pivot is middle grey's light, 0.18 (b30's
   numbers put the light that the curve leaves as it is near 0.2: the
   shade's 0.84 and the sun's 3.1 of it).
 - rolled off: each channel under Punchy's shoulder (identity to
