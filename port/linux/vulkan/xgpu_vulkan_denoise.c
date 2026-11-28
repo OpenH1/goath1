@@ -60,6 +60,9 @@ Render thread alone.
 #define DENOISE_KIND 0xfb
 /* the diffuse history's cap (frames) */
 #define DENOISE_CAP 64
+/* a level lit live: the diffuse's history longer, as the bounce's (xgpu_vulkan_lt_indirect.c's
+INDIRECT_BOUNCE_CAP_LIVE): its light the sky's, which stays; the gradients still cut it where a light changes */
+#define DENOISE_CAP_LIVE 128
 /* the a-trous passes (steps 1, 2, 4) */
 #define DENOISE_PASSES 3
 /* the luminance's edge-stop (standard deviations of the estimate), the
@@ -151,6 +154,8 @@ static struct
 	struct denoise_channel channels[2];
 	/* checking (HALO_LT_DENOISE_*) */
 	int camera_only, no_gradients, spatial, ema, motion_view, cap;
+	/* this frame a level lit live (the final's real): DENOISE_CAP_LIVE */
+	int live;
 	/* HALO_LT_DENOISE_DUMP's: those dumped */
 	const char *dumps;
 } denoise = { .spatial = -1 };
@@ -443,11 +448,14 @@ static struct xgpu_vulkan_image *denoise_channel_draw(struct denoise_channel *ch
 	history_valid = channel->previous_valid && pass->history[0] != 0.0f;
 	uniforms = *pass;
 	memset(&params, 0, sizeof(params));
+	/* (a level lit live: lt/denoise_pair.glsl's live) */
+	params.suns[1] = denoise.live;
 	params.size[0] = (float)width;
 	params.size[1] = (float)height;
 	params.size[2] = (float)gradient_width;
 	params.size[3] = (float)gradient_height;
-	params.control[0] = specular ? DENOISE_SPECULAR_CAP : denoise.cap > 0 ? denoise.cap : DENOISE_CAP;
+	params.control[0] = specular ? DENOISE_SPECULAR_CAP : denoise.cap > 0 ? denoise.cap : denoise.live ? DENOISE_CAP_LIVE :
+		DENOISE_CAP;
 	params.control[1] = (history_valid ? DENOISE_HISTORY : 0) | (denoise.camera_only ? DENOISE_CAMERA_ONLY : 0) |
 		(denoise.ema ? DENOISE_EMA : 0) | (specular ? DENOISE_SPECULAR : 0) |
 		(denoise.motion_view ? DENOISE_MOTION_VIEW : 0) | (denoise.motion_view == 2 ? DENOISE_MOTION_RAW : 0);
@@ -600,6 +608,8 @@ static struct xgpu_vulkan_image *denoise_shared(struct xgpu_vulkan_denoise_final
 	int index, dumped = denoise.dumps && *denoise.dumps && denoise_dumped(d->draws);
 
 	memset(&params, 0, sizeof(params));
+	/* (a level lit live: lt/denoise_pair.glsl's live) */
+	params.suns[1] = denoise.live;
 	params.size[0] = (float)size->width;
 	params.size[1] = (float)size->height;
 	params.tuning[1] = DENOISE_SIGMA_LUMINANCE;
@@ -631,6 +641,7 @@ static struct xgpu_vulkan_image *denoise_shared(struct xgpu_vulkan_denoise_final
 	params.control[1] = 0;
 	params.control[2] = 4;
 	params.suns[0] = out->suns;
+	params.suns[1] = out->real;
 	memcpy(params.sun, out->sun, sizeof(params.sun));
 	{
 		struct xgpu_vulkan_image *textures[6] = { d->filtered[1], dh, guide, inputs,
@@ -688,6 +699,7 @@ struct xgpu_vulkan_image *xgpu_vulkan_denoise_frame(struct xgpu_vulkan_image *ra
 
 	out->drawn = 0;
 	out->specular_denoised = NULL;
+	denoise.live = out->real;
 	if (!denoise_shaders())
 		return NULL;
 	/* (the checking modes, or a pipeline not made yet: the channels' own

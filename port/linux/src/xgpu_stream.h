@@ -1575,6 +1575,11 @@ enum
 	XGPU_LT_LIGHT_NO_SPECULAR = 1 << 12,
 	XGPU_LT_LIGHT_NOT_OWN_OBJECT = 1 << 13,
 	XGPU_LT_LIGHT_UNSTABLE_ID = 1 << 14,
+	/* a sky light of a level lit live (lt_lights.c's lt_lights_real_sky:
+	the lightmap dropped, the sky's lights the whole light), and the sky's
+	ambient dome (a directional record of the whole sphere, forward up) */
+	XGPU_LT_LIGHT_REAL_SKY = 1 << 15,
+	XGPU_LT_LIGHT_SKY_DOME = 1 << 16,
 };
 enum
 {

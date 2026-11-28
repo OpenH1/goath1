@@ -83,6 +83,10 @@ SCENES = [
     # the progress clip's two moments, the light list and motion recorded)
     ("b30sun", "b30_sun.hrpl", 650, "b30's beach in the sun: the Pelican, a Warthog, an Elite, the player (sun shadows)"),
     ("b30fight", "b30_fight.hrpl", 600, "b30's beach firefight: plasma bolts, needles, a grenade by a Warthog"),
+# (live mode, the lightmap dropped: the sky's sun, fill, dome and bounce, recorded with the setting alone, the MCC
+# import and debug.render_marks from local/rt2-outdoor-real-light; on both rigs)
+    ("b30live", "b30_live.hrpl", 545, "b30's beach lit live: a Warthog and an Elite in the sun, the cliff's shade"),
+    ("bglive", "bg_live.hrpl", 485, "Blood Gulch lit live: a base wall, the sun's edge across it"),
 ]
 # the visual checks (each found escaped once, by the progress clip of f7223c72e): on omarchy, shared, the pictures
 # of the presented frame (sRGB decoded): (name, recording, frame, what)
@@ -243,6 +247,35 @@ def note(rows, kind, scene, said, verdict="—"):
     rows.append({"check": kind, "scene": scene, "value": None, "target": None, "verdict": verdict, "said": said})
 
 
+# a live scene's baseline: the same hold with the pass off; a pixel whose picture moves there by itself (a material's
+# own animation or dithering: b30's far sand) more than this (its relative temporal deviation over the last plays, or
+# its change from play 1 or 30 to 120) is left out of the pass's measures, so only what the pass adds is judged
+BASELINE_MOVES = 0.0025
+
+
+def baseline_still(replay, env, recording, frame, width, height, mask):
+    """the measure's mask less the pixels that move with the pass off (BASELINE_MOVES), and how many those are"""
+    service = Service(STABILITY_HOST, replay, f"{RECORDINGS}/{recording}",
+                      [e for e in env if not e.startswith("HALO_LT_E1=")] + ["HALO_LT_E1=off"], "shared")
+    try:
+        reply = service.ask({"cmd": "hold", "n": frame, "frames": 120, "shots": rt2_stability.shots_for(120),
+                             "inline": True, "compress": True, "reset": True})
+    finally:
+        service.close()
+    plays = {}
+    for shot in reply["shots"]:
+        _, _, lum = rt2_stability.png_luminance(base64.b64decode(shot["png_base64"]))
+        plays[shot["k"]] = np.asarray(lum, np.float64)
+    last = np.stack([plays[k] for k in range(120 - rt2_stability.LAST + 1, 121)])
+    mean = last.mean(0)
+    floor = np.maximum(mean, 0.002)
+    deviation = np.sqrt(np.maximum((last * last).mean(0) - mean * mean, 0.0)) / floor
+    drift = np.maximum(np.abs(plays[1] - plays[120]), np.abs(plays[30] - plays[120])) / floor
+    moving = (deviation > BASELINE_MOVES) | (drift > 4 * BASELINE_MOVES)
+    keep = np.asarray(mask, bool) & ~moving
+    return keep.astype(int).tolist(), int((np.asarray(mask, bool) & moving).sum())
+
+
 def stability(scene, replay, env, out, mutate):
     name, recording, frame, _ = scene
     folder = out / name
@@ -253,6 +286,9 @@ def stability(scene, replay, env, out, mutate):
         info, reply, width, height, mask, mask_said = rt2_stability.hold(service, frame, 120, reset=True)
     finally:
         service.close()
+    if name.endswith("live"):
+        mask, moving = baseline_still(replay, env, recording, frame, width, height, mask)
+        mask_said += f"; {moving} pixels that move with the pass off left out"
     perturb = None
     if mutate == "noise":
         generator = np.random.default_rng(7)

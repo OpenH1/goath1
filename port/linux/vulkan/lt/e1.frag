@@ -60,6 +60,12 @@
 #define LIGHTS_HEROES 2
 #define LIGHTS_RESTIR 4
 #define LIGHTS_REUSE 8
+// a level lit live (lt_lights.c's lt_lights_real_sky, ~/dev/rt2-realtime-design.md section 9): the suns' rows are the
+// sky's whole light, not the lightmap's share; a row of angular diameter past a half turn is the sky's dome (the
+// bounce's: a ray that leaves the scene returns it, lt/indirect.glsl)
+#define LIGHTS_REAL 16
+#define DOME_DIAMETER 3.2
+#define RT_MASK_SUN 0x0Bu
 // the light table (xgpu_vulkan_lt.c's lt_table): a row a light, TABLE_TEXELS texels; the block's lights' rows
 // first (by their index in the block), the suns' from SUN_ROW
 #define SUN_ROW 128
@@ -587,6 +593,9 @@ void reservoir_merge(inout Reservoir r, vec4 other, int row, vec3 p, vec3 shaded
 vec3 sun_cmax(vec3 n)
 {
     vec3 cmax = vec3(0.0);
+    // (lit live: no lightmap, no share of it to take off)
+    if ((pass.lights.z & LIGHTS_REAL) != 0)
+        return cmax;
     for (int s = 0; s < pass.lights.y; s++)
     {
         vec4 t1 = row_texel(SUN_ROW + s, 1), t4 = row_texel(SUN_ROW + s, 4);
@@ -629,6 +638,41 @@ vec3 sun_share(vec3 p, vec3 n, ivec2 pixel, int rays)
         share += t4.rgb * min(blocked / (float(rays) * 0.5 * (1.0 + half_cos)), cosine);
     }
     return share;
+}
+
+// lit live: the suns' whole direct light at p: each one's unblocked irradiance (power x the shaded cosine at its axis)
+// by the share of its disk (its angular diameter, sampled as sun_share does) that rays find unblocked through every
+// occluder (the structure, the objects, the viewer's own model for its shadow). The dome's row is the bounce's
+vec3 sun_real(vec3 p, vec3 n, vec3 shaded, ivec2 pixel, int rays)
+{
+    vec3 light = vec3(0.0);
+    vec3 origin = p + n * (0.004 + 0.0005 * length(p - pass.camera[0].xyz));
+    for (int s = 0; s < pass.lights.y; s++)
+    {
+        int row = SUN_ROW + s;
+        vec4 t1 = row_texel(row, 1), t4 = row_texel(row, 4), t5 = row_texel(row, 5);
+        if (t4.w < 0.0 || t5.w > DOME_DIAMETER)
+            continue;
+        vec3 f = t1.xyz, up = row_texel(row, 2).xyz, left = row_texel(row, 3).xyz;
+        float half_cos = cos(0.5 * t5.w), seen = 0.0;
+        // (none of the cone above the surface's horizon)
+        if (dot(n, f) <= -sqrt(max(1.0 - half_cos * half_cos, 0.0)))
+            continue;
+        for (int k = 0; k < rays; k++)
+        {
+            vec2 disk = concentric(stratified(pixel, 17.0 + float(s) * 16.0 + float(k)));
+            float r2 = dot(disk, disk), c = 1.0 - r2 * (1.0 - half_cos), sine = sqrt(max(1.0 - c * c, 0.0));
+            vec2 around = r2 > 0.0 ? disk * inversesqrt(r2) : vec2(0.0);
+            vec3 d = normalize(f * c + (left * around.x + up * around.y) * sine);
+            if (dot(n, d) > 0.0)
+                seen += visible_by(origin, d, SUN_REACH, -1, 0xffffffffu, RT_MASK_SUN);
+        }
+        // (the rays find the share of the cone that is seen; the light is its unblocked irradiance (power x the shaded
+        // cosine at its axis: exact for a cone above the horizon) by that share. Where nothing blocks it, it has no
+        // noise at all, however wide the light: b30's 50 degree fill no longer shimmers on open ground)
+        light += t4.rgb * (max(dot(shaded, f), 0.0) * seen / float(rays));
+    }
+    return light;
 }
 
 // where p (normal n, owner word) was the frame before, on the same surface (the previous frame's guides within 3%
@@ -700,7 +744,7 @@ void main()
     if ((pass.control.w & FINAL) != 0)
     {
         result = vec4(texelFetch(history_image, pixel, 0).rgb - (present && receiver == 0 ? sun_cmax(n) : vec3(0.0)),
-            0.0);
+            (pass.lights.z & LIGHTS_REAL) != 0 ? 1.0 : 0.0);
         return;
     }
     // (the reservoirs: RIS over the cell's lights but the heroes, merged with the last frame's at the same point)
@@ -777,7 +821,13 @@ void main()
     // (the suns on the structure, which the lightmap lights: their whole share less what a dynamic object blocks,
     // FINAL taking the whole off; SUN_FIRST rays where the pixel has no history)
     ivec2 q;
-    if (receiver == 0 && pass.lights.y > 0)
+    if ((pass.lights.z & LIGHTS_REAL) != 0 && pass.lights.y > 0)
+    {
+        // (lit live: every receiver, the suns' whole light)
+        bool fresh = (pass.control.w & (RESET | GRADIENT)) == RESET || !reproject(p, n, words.w, q);
+        lit += sun_real(p, n, shaded, pixel, fresh ? SUN_FIRST : 1);
+    }
+    else if (receiver == 0 && pass.lights.y > 0)
     {
         bool fresh = (pass.control.w & (RESET | GRADIENT)) == RESET || !reproject(p, n, words.w, q);
         lit += sun_cmax(n) - sun_share(p, n, pixel, fresh ? SUN_FIRST : 1);

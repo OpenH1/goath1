@@ -106,7 +106,11 @@ void pair(const bool wave_specular)
     float distance = unpackHalf2x16(g.y).x;
     vec3 p = world_point(pixel, distance);
     float dl = luminance(dcentre.rgb), sl = luminance(scentre.rgb);
-    bool dyoung = first && dcount < 4.0, syoung = first && has_specular && scount < 4.0;
+    // (a level lit live: a pixel's first frame already many rays (lt/e1.frag's SUN_FIRST, the bounce's
+    // BOUNCE_LIVE_FIRST): its own variance, not the spatial guess, which bled a sunlit part's light over a shaded one
+    // of the same object (b30's Warthog 10% bright for its first frames))
+    bool live = pass.suns.y != 0;
+    bool dyoung = first && dcount < 4.0 && !live, syoung = first && has_specular && scount < 4.0;
     float dv = 0.0, dvw = 0.0, sv = 0.0, svw = 0.0;
     vec3 dq[4] = vec3[4](vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0));
     vec3 sq[4] = vec3[4](vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0));
@@ -220,7 +224,9 @@ void main()
     vec3 cmax = (words.y & INPUT_PRESENT) != 0u && words.w == 0u ? sun_cmax(unfold(unpackSnorm2x16(words.x))) :
         vec3(0.0);
     uvec2 g = texelFetch(filter_guide, pixel, 0).xy;
-    result = vec4(-cmax, 0.0);
+    // (a level lit live: alpha 1, which drops the surfaces' lightmap and model lighting; else 0)
+    float real = pass.suns.y != 0 ? 1.0 : 0.0;
+    result = vec4(-cmax, real);
     if ((g.y & 0xFFFFu) == 0u)
         return;
     vec4 c = texelFetch(diffuse_source, pixel, 0);
@@ -229,7 +235,7 @@ void main()
     // (a pixel under 4 frames: the first two passes alone; step 0, checking: the last pass's)
     if (pass.control.z == 0 || (pass.control.z > 2 && count < 4.0))
     {
-        result = vec4(centre.rgb - cmax, 0.0);
+        result = vec4(centre.rgb - cmax, real);
         return;
     }
     vec4 normals = unpackSnorm4x8(g.x);
@@ -276,6 +282,6 @@ void main()
             sum += w * rgb;
             weights += w;
         }
-    result = vec4(sum / weights - cmax, 0.0);
+    result = vec4(sum / weights - cmax, real);
 }
 #endif

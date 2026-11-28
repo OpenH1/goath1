@@ -2192,6 +2192,9 @@ struct pixel_state
 	/* the one light model's shine (lt_ggx): its sum (a vec3 variable, 0
 	none), the to-eye vector and the material's alpha it is found by */
 	unsigned int lt_spec, lt_spec_v, lt_spec_alpha;
+	/* a level lit live (a sky dome row in the table: lt_forward_sky): a bool
+	variable, 0 none made yet */
+	unsigned int lt_live;
 };
 
 /* display.rt_bounce (below) */
@@ -9407,8 +9410,12 @@ static unsigned int lt_e1_add(struct module *m, struct pixel_state *state, unsig
 		light = fmul(m, 3, light, tint);
 	else
 		light = fmax_scalar(m, 3, light, 0.0f);
-	(void)texel;
-	base = fadd(m, 3, ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, lit, 0.0f), constant_splat(m, 3, 2.2f)), light);
+	/* (the light's alpha: 1 where the level is lit live (lt/e1.frag's
+	LIGHTS_REAL), whose static light the pass's light is: the game's own
+	light here (the lightmap's, a model's lighting from the lightmap under
+	it) left out; 0 otherwise, and the binding's stand-in's: added to it) */
+	base = fadd(m, 3, fscale(m, 3, ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, lit, 0.0f), constant_splat(m, 3, 2.2f)),
+		fsub(m, 1, constant_float(m, 1.0f), saturate(m, 1, extract(m, texel, 3)))), light);
 	/* (HALO_LT_SUN_CLAMP_VIEW=1, checking: magenta where the sum is less
 	than 0 in a channel, the suns' share taken off more than the lightmap's
 	light has) */
@@ -9776,6 +9783,61 @@ static void lt_forward_sun(struct module *m, struct pixel_state *state, const st
 	selection_end(m, merge);
 }
 
+/* a level lit live (~/dev/rt2-realtime-design.md section 9; the table has
+a sky dome row: an angular diameter past DOME): the sky's light at a
+forward receiver, added to read->sum, and state->lt_live set. Each sun row
+(XGPU_SPIRV_LT_SUN_ROW on): the dome's radiance by the share of the sky the
+shaded normal faces, (1 + n.z) / 2 (the ground below it stands in front of
+the rest), unshadowed; a narrow sun's power by the shaded cosine with one
+visibility ray toward it (as lt_forward_sun's); a wide one's by its cosine,
+unshadowed. No bounce: the cache is the pass's, which a forward receiver
+has no pixel of. Where the level keeps its lightmap (no dome row) nothing
+is added: the suns there are the lightmap's share */
+#define LT_FORWARD_DOME_DIAMETER 3.2f
+
+static void lt_forward_sky(struct module *m, struct pixel_state *state, const struct lt_forward_read *read)
+{
+	unsigned int sky = local(m, &state->locals, m->t_v3);
+	int k;
+
+	state->lt_live = local(m, &state->locals, m->t_bool);
+	store(m, state->lt_live, constant_bool(m, FALSE));
+	store(m, sky, constant_splat(m, 3, 0.0f));
+	for (k = 0; k < XGPU_SPIRV_LT_SUNS; k++)
+	{
+		unsigned int row = constant_int(m, XGPU_SPIRV_LT_SUN_ROW + k), t1, t4, t5, l, directional, dome, narrow;
+		unsigned int lit, lit_variable = local(m, &state->locals, m->t_float), merge, ray_merge, seen, facing;
+
+		selection_begin(m, op2(m, OP_S_LESS_THAN, m->t_bool, row, read->rows), &merge);
+		t4 = lt_table_texel(m, read->image, row, 4);
+		t1 = lt_table_texel(m, read->image, row, 1);
+		t5 = lt_table_texel(m, read->image, row, 5);
+		l = xyz(m, t1);
+		directional = compare(m, OP_F_ORD_GREATER_THAN, extract(m, t4, 3), constant_float(m, 2.5f));
+		dome = op2(m, OP_LOGICAL_AND, m->t_bool, directional,
+			compare(m, OP_F_ORD_GREATER_THAN, extract(m, t5, 3), constant_float(m, LT_FORWARD_DOME_DIAMETER)));
+		narrow = compare(m, OP_F_ORD_LESS_THAN, extract(m, t5, 3), constant_float(m, 0.2f));
+		store(m, state->lt_live, op2(m, OP_LOGICAL_OR, m->t_bool, load(m, m->t_bool, state->lt_live), dome));
+		facing = fmul(m, 1, constant_float(m, 0.5f), fadd(m, 1, constant_float(m, 1.0f), extract(m, read->shaded, 2)));
+		store(m, sky, fadd(m, 3, load(m, m->t_v3, sky), fscale(m, 3, xyz(m, t4),
+			fselect(m, dome, facing, constant_float(m, 0.0f)))));
+		lit = fselect(m, op2(m, OP_LOGICAL_AND, m->t_bool, op2(m, OP_LOGICAL_AND, m->t_bool, directional,
+			op1(m, OP_LOGICAL_NOT, m->t_bool, dome)), compare(m, OP_F_ORD_GREATER_THAN, fdot(m, read->n, l),
+			constant_float(m, 0.0f))), fmax_scalar(m, 1, fdot(m, read->shaded, l), 0.0f), constant_float(m, 0.0f));
+		store(m, lit_variable, lit);
+		selection_begin(m, op2(m, OP_LOGICAL_AND, m->t_bool, narrow,
+			compare(m, OP_F_ORD_GREATER_THAN, lit, constant_float(m, 0.0f))), &ray_merge);
+		seen = lt_forward_visible(m, state, read->origin, fadd(m, 3, read->origin, fscale(m, 3, l,
+			constant_float(m, LT_SUN_REACH))), constant_float(m, 0.0f), constant_int(m, -1), read->receiver);
+		store(m, lit_variable, fmul(m, 1, lit, seen));
+		selection_end(m, ray_merge);
+		store(m, sky, fadd(m, 3, load(m, m->t_v3, sky), fscale(m, 3, xyz(m, t4), load(m, m->t_float, lit_variable))));
+		selection_end(m, merge);
+	}
+	store(m, read->sum, fadd(m, 3, load(m, m->t_v3, read->sum), select_n(m, 3, load(m, m->t_bool, state->lt_live),
+		load(m, m->t_v3, sky), constant_splat(m, 3, 0.0f))));
+}
+
 /* the pass's direct light at p (n its geometric normal, shaded its shaded
 one): linear irradiance; with state->lt_spec, the shine summed there too
 (lt_forward_read's spec) */
@@ -9895,6 +9957,8 @@ static unsigned int lt_forward_light(struct module *m, struct pixel_state *state
 	label_at(m, outer_merge);
 	/* (the view's shadowed flashlight, E1's, in its own row) */
 	lt_forward_row(m, state, &read, constant_int(m, XGPU_SPIRV_LT_FLASHLIGHT_ROW));
+	/* (a level lit live: the sky's light too) */
+	lt_forward_sky(m, state, &read);
 	if (read.spec)
 	{
 		int k;
@@ -9933,6 +9997,9 @@ static unsigned int lt_forward_add(struct module *m, struct pixel_state *state, 
 	light = lt_forward_light(m, state, p, n, shaded, tint != 0);
 	if (tint)
 		light = fmul(m, 3, light, tint);
+	/* (a level lit live: the game's own light here, the lightmap's or a
+	model's lighting from it, left out; the sky's in light: lt_forward_sky) */
+	lit = select_n(m, 3, load(m, m->t_bool, state->lt_live), constant_splat(m, 3, 0.0f), lit);
 	return ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, fadd(m, 3, ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, lit, 0.0f),
 		constant_splat(m, 3, 2.2f)), light), 0.0f), constant_splat(m, 3, 1.0f / 2.2f));
 }

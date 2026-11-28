@@ -114,6 +114,25 @@ sun_power_scale and fill_power_scale (xgpu_vulkan_lt.c's, the same rule) */
 #define LT_LIGHTS_SUN_POWER_SCALE 0.417f
 #define LT_LIGHTS_FILL_POWER_SCALE 0.187f
 #define LT_LIGHTS_FILL_DIAMETER 0.17453293f
+/* a level lit live (lt_lights_real_sky): the sky's lights and its ambient
+dome as the whole light, each k from the truth renderer's multi-bounce render
+of b30 (880 samples a pixel, every bounce) against its lightmap as the game
+shows it (pages ^2.2), the lightmap the answer key only: a sun's 0.60, the
+sky's (its wide lights and its dome: one k, the lightmap tool's sky) 0.34
+(R^2 0.567; ~/dev/rt2-calibration.json's real_sky) */
+#define LT_LIGHTS_REAL_SUN_POWER_SCALE 0.60f
+#define LT_LIGHTS_REAL_FILL_POWER_SCALE 0.34f
+#define LT_LIGHTS_REAL_AMBIENT_POWER_SCALE 0.34f
+/* the share of the BSP's clusters that must see a lit sky for the level to
+be lit live: Bungie's lightmap tool lit only those (a sky light's "affects
+exteriors"; the outdoor ambient radiosity "for exterior clusters"), so the
+tags' lights explain the bake there and nowhere else */
+#define LT_LIGHTS_REAL_SKY_SHARE 0.5f
+/* the sky tag's outdoor ambient radiosity colour and power, a sky light's
+flags (bit 0: it lights exterior clusters) */
+#define LT_SKY_OUTDOOR_AMBIENT_COLOR_OFFSET 0x48
+#define LT_SKY_OUTDOOR_AMBIENT_POWER_OFFSET 0x54
+#define LT_SKY_LIGHT_AFFECTS_EXTERIORS_BIT 0
 /* the emitters' radii (world units): E1's flashlight disk, then
 dynamic_lights.c's shadow disks' (SHADOWED_DISK_*) */
 #define LT_LIGHTS_FLASHLIGHT_DISK 0.01f
@@ -186,6 +205,9 @@ static struct
 	/* the sky lights.json names (the most clusters'), for the BSP it was found for */
 	void const *sky_bsp;
 	short sky_index;
+	/* whether that BSP is lit live (lt_lights_real_sky): -1 not known */
+	void const *real_bsp;
+	int live;
 } lt = { -1 };
 
 /* ---------- the list */
@@ -316,10 +338,101 @@ static short lt_sky_index(void)
 	return lt.sky_index;
 }
 
+/* whether a sky lights clusters live: an exterior-lighting light with power,
+or an outdoor ambient dome */
+static int lt_sky_lit(short sky_index)
+{
+	char const *sky = (char const *)scenario_get_sky(sky_index);
+	struct tag_block const *block;
+	real power;
+	long index;
+
+	if (!sky)
+		return FALSE;
+	memcpy(&power, sky + LT_SKY_OUTDOOR_AMBIENT_POWER_OFFSET, sizeof(power));
+	if (power > 0.0f && power < 1.0e6f)
+		return TRUE;
+	block = (struct tag_block const *)(sky + LT_SKY_LIGHTS_OFFSET);
+	for (index = 0; block->address && index < block->count; index++)
+	{
+		struct lt_sky_light const *light = (struct lt_sky_light const *)block->address + index;
+
+		if (light->power > 0.0f && TEST_FLAG(light->flags, LT_SKY_LIGHT_AFFECTS_EXTERIORS_BIT))
+			return TRUE;
+	}
+	return FALSE;
+}
+
+/* whether the view is in an exterior cluster, one that sees a lit sky (the
+camera's cluster, structure_visibility.c's render.visible_sky_index): an
+outdoor level's interiors (b30's corridors) keep their lightmap while the
+view is in them, their light the emitters' the tags lack until step 2
+(~/dev/rt2-realtime-design.md section 9: the view's cluster now, each
+surface's own cluster next) */
+static int lt_view_exterior(void)
+{
+	return render.visible_sky_index != NONE && lt_sky_lit(render.visible_sky_index);
+}
+
+/* whether the level (its BSP) is lit live, the lightmap dropped: its
+clusters that see a lit sky (exterior clusters, the only ones Bungie's
+lightmap tool lit with the sky's lights and dome) LT_LIGHTS_REAL_SKY_SHARE
+of them or more. Interior clusters' light came from emitters the tags
+mostly lack (a10's cryo deck: none), so a level made mostly of them keeps
+its lightmap until those are solved (~/dev/rt2-realtime-design.md section
+9). HALO_LT_REAL_SKY=0 or 1 overrides it (checking) */
+int lt_lights_real_sky(void)
+{
+	struct structure_bsp *bsp = global_structure_bsp_get();
+	struct scenario *scenario = global_scenario_get();
+	char const *given = getenv("HALO_LT_REAL_SKY");
+	long index, exterior = 0, total = 0;
+
+	if (given && *given)
+		return atoi(given) != 0;
+	if (!bsp || !scenario)
+		return FALSE;
+	if (bsp == lt.real_bsp)
+		return lt.live && lt_view_exterior();
+	lt.real_bsp = bsp;
+	for (index = 0; bsp->clusters.address && index < bsp->clusters.count; index++)
+	{
+		struct structure_cluster const *cluster = (struct structure_cluster const *)bsp->clusters.address + index;
+
+		total++;
+		if (cluster->sky_index >= 0 && cluster->sky_index < scenario->sky_references.count &&
+			lt_sky_lit(cluster->sky_index))
+			exterior++;
+	}
+	lt.live = total > 0 && (float)exterior >= LT_LIGHTS_REAL_SKY_SHARE * (float)total;
+	platform_log("lt lights: %ld of the BSP's %ld clusters see a lit sky: %s", exterior, total,
+		lt.live ? "lit live (the sky's lights and dome, the lightmap dropped)" : "the lightmap kept");
+	return lt.live && lt_view_exterior();
+}
+
+/* HALO_LT_SUN_ANGLES=<yaw>,<pitch> (degrees; checking): the sky's first
+light's direction in place of the tag's. b30's bake's sun shadows do not
+match its tag's sun (yaw 50, pitch 35) and could not be matched by a
+direction alone (~/dev/rt2-realtime-design.md section 9.3): the tag's is
+kept */
+static void lt_sun_angles(short sky_index, long light_index, real_euler_angles2d *angles)
+{
+	char const *given = getenv("HALO_LT_SUN_ANGLES");
+	float yaw, pitch;
+
+	(void)sky_index;
+	if (given && light_index == 0 && sscanf(given, "%f,%f", &yaw, &pitch) == 2)
+	{
+		angles->yaw = yaw * (_pi / 180.0f);
+		angles->pitch = pitch * (_pi / 180.0f);
+	}
+}
+
 /* the suns after count records; the count of all */
 static int lt_suns(int count)
 {
 	struct scenario *scenario = global_scenario_get();
+	int live;
 	short sky_index;
 	char const *sky;
 	struct tag_block const *block;
@@ -331,6 +444,7 @@ static int lt_suns(int count)
 	sky = (char const *)scenario_get_sky(sky_index);
 	if (!sky)
 		return count;
+	live = lt_lights_real_sky();
 	block = (struct tag_block const *)(sky + LT_SKY_LIGHTS_OFFSET);
 	for (index = 0; block->address && index < block->count && count < XGPU_STREAM_LT_LIGHTS_MAXIMUM; index++)
 	{
@@ -340,11 +454,14 @@ static int lt_suns(int count)
 		real_euler_angles2d up_angles;
 		real_vector3d up;
 
+		real_euler_angles2d angles = light->direction;
+
 		memset(out, 0, sizeof(*out));
-		vector3d_from_euler_angles2d(&direction, &light->direction);
+		lt_sun_angles(sky_index, index, &angles);
+		vector3d_from_euler_angles2d(&direction, &angles);
 		/* (an up: the direction's, a quarter turn of pitch above it) */
-		up_angles.yaw = light->direction.yaw;
-		up_angles.pitch = light->direction.pitch + 0.5f * _pi;
+		up_angles.yaw = angles.yaw;
+		up_angles.pitch = angles.pitch + 0.5f * _pi;
 		vector3d_from_euler_angles2d(&up, &up_angles);
 		out->id[0] = ((unsigned int)sky_index << 8) | (unsigned int)(index & 0xff);
 		out->id[1] = (unsigned int)XGPU_LT_LIGHT_SOURCE_SUN << 24;
@@ -359,11 +476,51 @@ static int lt_suns(int count)
 		out->cone_inner = out->cone_outer = -1.0f;
 		out->power_scale = light->diameter >= LT_LIGHTS_FILL_DIAMETER ? LT_LIGHTS_FILL_POWER_SCALE :
 			LT_LIGHTS_SUN_POWER_SCALE;
+		if (live)
+		{
+			out->flags |= XGPU_LT_LIGHT_REAL_SKY;
+			out->power_scale = light->diameter >= LT_LIGHTS_FILL_DIAMETER ? LT_LIGHTS_REAL_FILL_POWER_SCALE :
+				LT_LIGHTS_REAL_SUN_POWER_SCALE;
+		}
 		lt_copy3(out->color, light->color.red, light->color.green, light->color.blue);
 		lt_copy3(out->power, light->color.red * light->power * out->power_scale,
 			light->color.green * light->power * out->power_scale, light->color.blue * light->power * out->power_scale);
 		out->angular_diameter = light->diameter;
 		count++;
+	}
+	/* (lit live: the sky's outdoor ambient radiosity, a dome of that
+	radiance over the whole sphere (the lightmap tool's uniform sky; below
+	the horizon the ground stands in front of it), forward up, its angular
+	diameter the whole turn) */
+	if (live && count < XGPU_STREAM_LT_LIGHTS_MAXIMUM)
+	{
+		struct xgpu_stream_lt_light *out = &lt.lights[count];
+		real_rgb_color color;
+		real power;
+
+		memcpy(&color, sky + LT_SKY_OUTDOOR_AMBIENT_COLOR_OFFSET, sizeof(color));
+		memcpy(&power, sky + LT_SKY_OUTDOOR_AMBIENT_POWER_OFFSET, sizeof(power));
+		if (power > 0.0f && power < 1.0e6f)
+		{
+			memset(out, 0, sizeof(*out));
+			out->id[0] = ((unsigned int)sky_index << 8) | 0xffu;
+			out->id[1] = (unsigned int)XGPU_LT_LIGHT_SOURCE_SUN << 24;
+			out->kind = XGPU_LT_LIGHT_DIRECTIONAL;
+			out->flags = XGPU_LT_LIGHT_LIGHTMAP_DIRECT | XGPU_LT_LIGHT_REAL_SKY | XGPU_LT_LIGHT_SKY_DOME;
+			out->object = 0xffffffffu;
+			out->gel_slot = -1;
+			out->gel_tag = -1;
+			lt_copy3(out->forward, 0.0f, 0.0f, 1.0f);
+			lt_copy3(out->up, 1.0f, 0.0f, 0.0f);
+			lt_left(out);
+			out->cone_inner = out->cone_outer = -1.0f;
+			out->power_scale = LT_LIGHTS_REAL_AMBIENT_POWER_SCALE;
+			lt_copy3(out->color, color.red, color.green, color.blue);
+			lt_copy3(out->power, color.red * power * out->power_scale, color.green * power * out->power_scale,
+				color.blue * power * out->power_scale);
+			out->angular_diameter = _pi * 2.0f;
+			count++;
+		}
 	}
 	return count;
 }
@@ -683,6 +840,10 @@ boolean lt_lights_sun_shadow(long object_index)
 	}
 	if (!pass_sun || object_index == NONE || !lt_lights_pass_on())
 		return FALSE;
+	/* (a level lit live: every shadow the traced sun's and sky's, never the
+	game's projected one, whatever the object's shape in the scene) */
+	if (lt_lights_real_sky())
+		return object_try_and_get(object_index) != NULL;
 	/* (only an object the ray-traced scene holds with a shape of its own,
 	which the pass's sun rays meet at any height (lt/e1.frag's sun_share):
 	not scenery baked as the structure is, not an item's box, not what the

@@ -124,6 +124,8 @@ enum
 	LT_LIGHTS_HEROES = 2,
 	LT_LIGHTS_RESTIR = 4,
 	LT_LIGHTS_REUSE = 8,
+	/* (a level lit live: lt/e1.frag's LIGHTS_REAL) */
+	LT_LIGHTS_REAL = 16,
 };
 /* the light table (lt/e1.frag's): a row a light, LT_TABLE_TEXELS RGBA32F
 texels; the block's lights' rows by their index there, the suns' from
@@ -154,6 +156,21 @@ fit with sun and fill apart (b30, the lightmap ^2.2)) */
 #define LT_SUN_POWER_SCALE 0.417f
 #define LT_FILL_POWER_SCALE 0.187f
 #define LT_FILL_DIAMETER 0.17453293f
+/* a level lit live: lt_lights.c's real k (its records carry them; these
+for HALO_LT_REAL_SKY=1 on a recording made before) */
+#define LT_REAL_SUN_POWER_SCALE 0.60f
+#define LT_REAL_FILL_POWER_SCALE 0.34f
+#define LT_REAL_AMBIENT_POWER_SCALE 0.34f
+
+/* HALO_LT_REAL_SKY=1 (checking): a recording's suns lit live */
+static int lt_real_replay(void)
+{
+	static int on = -1;
+
+	if (on < 0)
+		on = getenv("HALO_LT_REAL_SKY") && atoi(getenv("HALO_LT_REAL_SKY")) == 1;
+	return on;
+}
 enum
 {
 	LT_KIND_SKIP = XGPU_SPIRV_LT_KIND_CLASSIC,
@@ -693,7 +710,7 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 {
 	const struct xgpu_stream_lt_light *list;
 	const uint32_t *panels = lt_texel(cells, XGPU_DYNAMIC_LIGHTS_PANELS);
-	int listed, rows = (int)block->grid[0][3], row, suns = 0, index, now, before;
+	int listed, rows = (int)block->grid[0][3], row, suns = 0, index, now, before, real = 0;
 	struct xgpu_vulkan_image_description description;
 
 	lt_settings();
@@ -815,9 +832,45 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 		lt_set(t[1], light->forward[0], light->forward[1], light->forward[2], 0.0f);
 		lt_set(t[2], light->up[0], light->up[1], light->up[2], -1.0f);
 		lt_set(t[3], light->left[0], light->left[1], light->left[2], -1.0f);
-		lt_power(light, light->angular_diameter >= LT_FILL_DIAMETER ? 4 : 3, t[4]);
+		/* (a level lit live: the record's power, its own k (the sky's whole
+		light, lt_lights.c's real k), the dome among them) */
+		if (light->flags & XGPU_LT_LIGHT_REAL_SKY)
+		{
+			lt_set(t[4], light->power[0], light->power[1], light->power[2], 0.0f);
+			real = 1;
+		}
+		else if (lt_real_replay() && light->power_scale > 0.0f)
+		{
+			/* (HALO_LT_REAL_SKY=1, checking a recording made before: its
+			suns lit live by lt_lights.c's real k) */
+			float k = (light->angular_diameter >= LT_FILL_DIAMETER ? LT_REAL_FILL_POWER_SCALE :
+				LT_REAL_SUN_POWER_SCALE) / light->power_scale;
+
+			lt_set(t[4], light->power[0] * k, light->power[1] * k, light->power[2] * k, 0.0f);
+			real = 1;
+		}
+		else
+			lt_power(light, light->angular_diameter >= LT_FILL_DIAMETER ? 4 : 3, t[4]);
 		t[4][3] = (float)LT_KIND_DIRECTIONAL;
 		lt_set(t[5], 0.0f, -1.0f, 0.0f, light->angular_diameter);
+		suns++;
+	}
+	/* (HALO_LT_REAL_SKY=1 on a recording made before: the sky's dome,
+	HALO_LT_DOME's colour x power (b30's by default), by the real k) */
+	if (real && lt_real_replay() && suns < LT_SUNS)
+	{
+		float (*t)[4] = lt.texels[LT_SUN_ROW + suns];
+		float dome[3] = { 0.572549f * 0.12f, 0.552941f * 0.12f, 0.705882f * 0.12f };
+		const char *given = getenv("HALO_LT_DOME");
+
+		if (given)
+			sscanf(given, "%f,%f,%f", &dome[0], &dome[1], &dome[2]);
+		lt_set(t[1], 0.0f, 0.0f, 1.0f, 0.0f);
+		lt_set(t[2], 1.0f, 0.0f, 0.0f, -1.0f);
+		lt_set(t[3], 0.0f, 1.0f, 0.0f, -1.0f);
+		lt_set(t[4], dome[0] * LT_REAL_AMBIENT_POWER_SCALE, dome[1] * LT_REAL_AMBIENT_POWER_SCALE,
+			dome[2] * LT_REAL_AMBIENT_POWER_SCALE, (float)LT_KIND_DIRECTIONAL);
+		lt_set(t[5], 0.0f, -1.0f, 0.0f, 6.2831853f);
 		suns++;
 	}
 	/* (the view's shadowed flashlight, E1's light (its parameters, lt_light),
@@ -933,7 +986,8 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 	their checks) */
 	params->lights[1] = lt.table && !lt.only ? suns : 0;
 	params->lights[2] = (lt.only >= 2 ? 0 : LT_LIGHTS_FLASHLIGHT) | (lt.heroes_on ? LT_LIGHTS_HEROES : 0) |
-		(lt.restir_on && (lt.handled > 2 || !lt.heroes_on) ? LT_LIGHTS_RESTIR : 0);
+		(lt.restir_on && (lt.handled > 2 || !lt.heroes_on) ? LT_LIGHTS_RESTIR : 0) |
+		(real && params->lights[1] > 0 ? LT_LIGHTS_REAL : 0);
 }
 
 /* the view's shadowed flashlight's index in the block (-1 none) */
@@ -1250,6 +1304,7 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 	indirect_frame.cap = params.control[0];
 	indirect_frame.start = start;
 	indirect_frame.previous_valid = lt.previous_valid;
+	indirect_frame.live = (params.lights[2] & LT_LIGHTS_REAL) != 0;
 	/* (ours the denoiser: the bounce counted in its one temporal stage) */
 	indirect_frame.fold = mode == XGPU_VULKAN_LT_DENOISE && !xgpu_vulkan_dlss_lt_selected();
 	diffuse = xgpu_vulkan_lt_indirect_draw(&indirect_frame);
@@ -1298,7 +1353,8 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 			bounce.image = xgpu_vulkan_lt_indirect_bounce(&bounce.phase, &bounce.only);
 			shared.final = lt.final;
 			shared.wide = xgpu_vulkan_lt_indirect_on();
-			for (sun = 0; sun < params.lights[1] && sun < LT_SUNS; sun++)
+			shared.real = (params.lights[2] & LT_LIGHTS_REAL) != 0;
+			for (sun = 0; sun < params.lights[1] && sun < LT_SUNS && !shared.real; sun++)
 				if (lt.texels[LT_SUN_ROW + sun][4][3] >= 0.0f)
 				{
 					memcpy(shared.sun[2 * shared.suns], lt.texels[LT_SUN_ROW + sun][1], sizeof(shared.sun[0]));
