@@ -50,6 +50,8 @@ enum
 /* an XGPU_LT_LIGHT_OBJECT_EMITTER record's flags (xgpu_stream.h's): an
 additive part drawn from both sides, which glows toward both */
 #define XGPU_LT_LAMP_TWO_SIDED 1u
+/* (an additive part: a glow drawn over its object, not shadowed by it) */
+#define XGPU_LT_LAMP_ADDITIVE 2u
 
 /* its flags: the first five are the enhanced lights' own
 (halo_dynamic_lights.h's HALO_DYNAMIC_LIGHT_*), the same bits */
@@ -94,6 +96,7 @@ enum
 	XGPU_LT_LIGHT_SOURCE_SUN = 6,       /* low word: the sky's index << 8 | the light's */
 	XGPU_LT_LIGHT_SOURCE_FRAME = 7,     /* low word: the light's place this frame (UNSTABLE_ID) */
 	XGPU_LT_LIGHT_SOURCE_EMITTER = 8,   /* an EMITTER's (its high word's low 24 bits the set's generation) */
+	XGPU_LT_LIGHT_SOURCE_FIXTURE = 9,   /* a light fixture's (dynamic_lights.c): low word its object's handle */
 };
 
 /* 144 bytes. Positions in world units; directions unit length. */

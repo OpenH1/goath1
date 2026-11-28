@@ -195,6 +195,8 @@ def record(args):
             # (rt2_clips' fixed frame time, without its video: 1/60 s of game time a frame)
             f"HALO_FRAME_TIME={1 / rt2_clips.FPS:.10f}",
             "HALO_TRACE=bench.trace", f"HALO_TRACE_SECONDS={at + 0.1:g}"]
+    # (--set: the game's own settings for the recording, a measuring log's)
+    env += args.set
     label = f"bench-{name_of(args)}"[:80]
     started = time.monotonic()
     # (bosgame's run: one game in the VM through winvm, muted and on loopback, under bosgame's lock; its window
@@ -975,7 +977,7 @@ def main():
     parser.add_argument("--reset", action="store_true", help="run --hold: the histories begun again (the scorecard's)")
     parser.add_argument("--warm", type=int, default=-1, help="run: the frames before played whole (-1, the default: every one, exact; fewer is faster, verify --converge gives its error)")
     parser.add_argument("--last", type=int, default=20, help="run: the plays measured (the last)")
-    parser.add_argument("--set", action="append", default=[], help="run: VAR=value, a light pass setting (again)")
+    parser.add_argument("--set", action="append", default=[], help="run: VAR=value, a light pass setting (again); record: the game's environment")
     parser.add_argument("--settings", help="run: a file of VAR=value lines, watched with --watch")
     parser.add_argument("--region", action="append", default=[], help="run: x,y,w,h, a region measured (again)")
     parser.add_argument("--built-in", action="store_true", help="run: the build's own kernels (no GLSL compiled)")

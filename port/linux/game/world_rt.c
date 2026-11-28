@@ -42,6 +42,8 @@ as it changes, halo_world_rt_textures).
 int lt_lights_pass_on(void);
 /* (port/linux/game/world_proxies_game.c: a static placement the lightmaps hold, world_proxies.h) */
 int world_proxies_source_lightmapped(long id);
+/* (port/linux/game/dynamic_lights.c: a light fixture whose light is lit live, a spot of its own) */
+int dynamic_lights_fixture_lit(long id);
 
 #include <math.h>
 #include <stdio.h>
@@ -167,6 +169,9 @@ struct world_rt_lamp
 	unsigned long (*samples)[4];
 	/* (an additive part drawn from both sides: it glows toward both) */
 	int two_sided;
+	/* (an additive part: a glow drawn over its object, which does not
+	shadow it, lt/e1.frag's object_lamp_sample) */
+	int additive;
 };
 
 /* ---------- globals */
@@ -233,7 +238,7 @@ static struct
 	float (*lamp_corners)[9], (*lamp_radiance)[3];
 	unsigned long *lamp_owners;
 	/* (the sides each glows toward: 1, or 2 an additive part drawn from
-	both) */
+	both; and WORLD_RT_LAMP_ADDITIVE, an additive part's, world_rt.h) */
 	unsigned char *lamp_sides;
 	long lamp_count;
 	struct
@@ -1142,6 +1147,7 @@ static void world_rt_lamps_made(struct world_rt_definition *entry, short node, s
 		lamp->sample_count = glow ? count : 0;
 		lamp->samples = samples;
 		lamp->two_sided = additive && (material->flags & WORLD_RT_MATERIAL_TWO_SIDED) != 0;
+		lamp->additive = additive;
 		/* (a skinned model's: on its triangle's major node, in that node's
 		space, as its rigid parts are) */
 		if (inverses)
@@ -1239,7 +1245,8 @@ static void world_rt_lamps_placed(struct world_rt_definition const *definition, 
 			world_rt_transformed(transform, &lamp->corners[3 * corner], 1,
 				&world_rt.lamp_corners[world_rt.lamp_count][3 * corner]);
 		world_rt.lamp_owners[world_rt.lamp_count] = owner;
-		world_rt.lamp_sides[world_rt.lamp_count] = lamp->two_sided ? 2 : 1;
+		world_rt.lamp_sides[world_rt.lamp_count] = (unsigned char)((lamp->two_sided ? 2 : 1) |
+			(lamp->additive ? WORLD_RT_LAMP_ADDITIVE : 0));
 		if (world_rt.counts_wanted > 0)
 		{
 			float const *q = world_rt.lamp_corners[world_rt.lamp_count], *r = world_rt.lamp_radiance[world_rt.lamp_count];
@@ -1721,8 +1728,9 @@ void world_rt_frame(unsigned long frame)
 			world_rt_transform(&world_rt.frames[0], instance->transform);
 			world_rt_pose(definition, owner, (unsigned long)object->id, instance->transform, &world_rt.poses[pose_count]);
 			instance->pad = (unsigned int)++pose_count;
-			/* (its lamps, on their nodes as posed) */
-			if (definition->lamp_count > 0 && kind == WORLD_RT_OBJECT)
+			/* (its lamps, on their nodes as posed; none of a light fixture
+			lit live: its light is its spot, its lens's glow that light seen) */
+			if (definition->lamp_count > 0 && kind == WORLD_RT_OBJECT && !dynamic_lights_fixture_lit(object->id))
 			{
 				float transform[3][4];
 				struct world_rt_source_shading shading;
@@ -1758,8 +1766,9 @@ void world_rt_frame(unsigned long frame)
 			if (instance)
 				world_rt_transform(&world_rt.frames[node_index], instance->transform);
 		}
-		/* (its lamps, on their nodes, moved with it) */
-		if (definition->lamp_count > 0 && kind != WORLD_RT_SHADOWLESS)
+		/* (its lamps, on their nodes, moved with it; as above, none of a
+		light fixture lit live) */
+		if (definition->lamp_count > 0 && kind != WORLD_RT_SHADOWLESS && !dynamic_lights_fixture_lit(object->id))
 		{
 			float transform[3][4];
 			struct world_rt_source_shading shading;

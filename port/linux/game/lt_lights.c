@@ -869,7 +869,7 @@ static int lt_object_lamps_append(struct xgpu_stream_lt_light *lights, int count
 			for (index = 0; index < lamps; index++)
 			{
 				importances[index] = lt_object_lamp_importance(corners[index], radiance[index], &render.camera.position) *
-					(sides && sides[index] == 2 ? 2.0f : 1.0f);
+					(sides && (sides[index] & 3) == 2 ? 2.0f : 1.0f);
 				order[index] = index;
 			}
 			lt_object_lamp_order_importances = importances;
@@ -886,7 +886,8 @@ static int lt_object_lamps_append(struct xgpu_stream_lt_light *lights, int count
 		memset(out, 0, sizeof(*out));
 		out->id[0] = (unsigned int)index;
 		out->kind = XGPU_LT_LIGHT_OBJECT_EMITTER;
-		out->flags = sides && sides[index] == 2 ? XGPU_LT_LAMP_TWO_SIDED : 0;
+		out->flags = (sides && (sides[index] & 3) == 2 ? XGPU_LT_LAMP_TWO_SIDED : 0) |
+			(sides && (sides[index] & WORLD_RT_LAMP_ADDITIVE) ? XGPU_LT_LAMP_ADDITIVE : 0);
 		out->object = (unsigned int)lamps;
 		out->owner = (unsigned int)owners[index];
 		out->gel_slot = -1;
