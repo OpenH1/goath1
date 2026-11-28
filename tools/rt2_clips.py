@@ -70,18 +70,23 @@ MOMENTS = {
     "b30_sun": (
         "levels\\b30\\b30", 30, 42,
         [(26, "ai_erase_all"),
-         (27, 'debug_object_place "vehicles\\warthog\\warthog -62.0 27.0 1.6 200"'),
-         (27.5, 'debug_object_place "characters\\elite\\elite -60.0 24.0 1.6 160"'),
-         (29, cam(-72.0, 17.0, 3.2, 40, -9)),
-         (30, cam(-69.0, 26.0, 3.6, 5, -10, 12))],
+         (27, 'debug_object_place "vehicles\\warthog\\warthog -63.0 24.0 1.6 200"'),
+         (27.5, 'debug_object_place "characters\\elite\\elite -64.0 21.0 1.6 200"'),
+         (29, cam(-73.0, 16.0, 3.4, 50, -9)),
+         (30, cam(-70.0, 20.0, 3.4, 25, -9, 12))],
         "",
         "b30's beach in the sun: the Pelicans landing, a Warthog, an Elite, their shadows on the sand; a slow camera move"),
+    # (the landing zone's Covenant camp, beach_lz, placed afresh as the player lands (about 36 s), the marines taken
+    # away so that it fires at the player, who cannot die; the player turned toward it)
     "b30_fight": (
-        "levels\\b30\\b30", 31, 43,
-        [(26, "cheat_deathless_player 1")],
-        "29-33 move=0,1; 33-43 hunt; 34-36 fire; 37-37.4 throw; 40-40.4 throw",
-        "b30's beach in first person: the rifle's muzzle flashes, two grenades, the Covenant's fire where they reach "
-        "the player"),
+        "levels\\b30\\b30", 37, 49,
+        [(26, "cheat_deathless_player true"),
+         (28, "ai_erase beach_lz_marine"),
+         (28.5, "ai_erase beach_lz"),
+         (33, "ai_place beach_lz")],
+        "36.5 aim=-73,-4; 37-49 hunt; 38-40 fire; 42-42.4 throw; 46-46.4 throw",
+        "b30's landing zone in first person: the Covenant camp's plasma and needles, the rifle's muzzle flashes, two "
+        "grenades"),
     "a10_cryo": (
         "levels\\a10\\a10", 12, 24,
         [(11.5, cam(-52.0, 0.0, 0.6, 180, -12)),
@@ -96,17 +101,18 @@ MOMENTS = {
         "a10's cryo deck's shiny floor and metal at a low angle (the original's reflections); a slow sideways move"),
     "c20_flashlight": (
         "levels\\c20\\c20", 5, 17,
-        [(2, "ai_erase_all"),
-         (3, f"unit_set_desired_flashlight_state {PLAYER} 1")],
-        "5-8 move=0,0.6; 8-14 look=-0.22,0; 8-14 move=0,0.4",
+        # (its desired state set again: the first may come while the fly-in, a skipped cutscene, still holds the
+        # player)
+        [(2, "ai_erase_all")] + [(t, f"unit_set_desired_flashlight_state {PLAYER} 1") for t in (3, 4.5, 6)],
+        "5-11 move=0,1; 11-17 look=0.15,0",
         "c20's Library in first person with the flashlight on (by the console: the scripted button toggles it each "
-        "tick it is held); walking, then a slow turn"),
+        "tick it is held); walking up to a wall, then a slow turn along it"),
 }
 
 
 # the moments not yet frame-identical run to run (on-demand pipeline compiles still land on different frames there:
 # about 15% and 96% of frames differ); played only when named, not by "all"
-FOLLOW_UP = {"a10_cryo", "b30_sun"}
+FOLLOW_UP = set()
 
 
 def say(*words):

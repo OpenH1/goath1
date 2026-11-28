@@ -6658,9 +6658,30 @@ VkPipeline xgpu_vulkan_pipeline(const struct xgpu_vulkan_pipeline_description *d
 	return entry->pipeline;
 }
 
+/* debug.frame_time (HALO_FRAME_TIME: each frame a fixed game time, for runs
+that must draw the same pictures every time: the determinism check,
+tools/rt2_clips.py): a pipeline asked for is made and waited for, never
+skipped for as many frames as its compiler takes */
+static int pipeline_frames_fixed(void)
+{
+	static int fixed = -1;
+
+	if (fixed < 0)
+	{
+		const char *seconds = getenv("HALO_FRAME_TIME");
+
+		fixed = seconds && atof(seconds) > 0.0;
+	}
+	return fixed;
+}
+
 VkPipeline xgpu_vulkan_pipeline_ready(const struct xgpu_vulkan_pipeline_description *description)
 {
-	struct pipeline_entry *entry = pipeline_find_apart(description, 1);
+	struct pipeline_entry *entry;
+
+	if (pipeline_frames_fixed())
+		return xgpu_vulkan_pipeline(description);
+	entry = pipeline_find_apart(description, 1);
 
 	if (!entry)
 		return VK_NULL_HANDLE;
