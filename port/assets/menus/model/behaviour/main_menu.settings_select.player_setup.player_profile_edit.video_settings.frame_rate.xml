@@ -98,9 +98,9 @@
 		<on event="created" run="port setting load"/>
 		<on event="a" run="port setting segment"/>
 	</behaviour>
-	<behaviour name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/op_experimental" flags="pass_unhandled_to_focused_child">
-		<on event="a" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/experimental/experimental_screen"/>
-		<on event="start" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/experimental/experimental_screen"/>
-		<on event="left_mouse" run="mouse emit accept event"/>
+	<behaviour name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/op_movies" flags="pass_unhandled_to_focused_child"/>
+	<behaviour name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/movies_spinner" flags="pass_unhandled_to_focused_child left_right_tabs_items">
+		<on event="created" run="port setting load"/>
+		<on event="a" run="port setting segment"/>
 	</behaviour>
 </model>

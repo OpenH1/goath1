@@ -61,13 +61,7 @@
 		<row key="first_person" kind="link" label="FIRST PERSON ›" crumb="VIDEO › DISPLAY" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/first_person/first_person_screen">
 			<help>The vehicles' and scopes' fields of view, the Panini projection, how far you see, the reticle, a passenger's view, and your weapon, body and shields.</help>
 		</row>
-		<row key="movies" kind="choice" setting="display.movies" label="STARTUP MOVIES" crumb="VIDEO › DISPLAY" search="intro">
-			<help>Plays the Xbox's intro movie as the game starts, and its attract movies on an idle main menu. Any button skips the intro.</help>
-			<note>They are the bink folder of your Xbox disc image, copied with the maps. Without them, put the disc's bink folder beside your maps folder.</note>
-			<choice shown="ON" value="true"/>
-			<choice shown="OFF" value="false"/>
-		</row>
-		<section key="section_11" title="GRAPHICS"/>
+		<section key="section_10" title="GRAPHICS"/>
 		<row key="graphics" kind="choice" setting="display.graphics" label="QUALITY" crumb="VIDEO › GRAPHICS" search="preset" search_choices="custom">
 			<help>Enhanced: smoother edges, sharper textures and shadows, smoother lighting. Classic looks as the Xbox did.</help>
 			<note>Changing one shows CUSTOM.</note>
@@ -91,6 +85,9 @@
 		</row>
 		<row key="advanced_graphics" kind="link" label="ADVANCED GRAPHICS ›" crumb="VIDEO › GRAPHICS" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/advanced_graphics_screen">
 			<help>Render resolution, anti-aliasing, texture filtering, model detail, shadows, the lighting and the shields' glow, and smooth motion.</help>
+		</row>
+		<row key="experimental" kind="link" label="EXPERIMENTAL ›" crumb="VIDEO › GRAPHICS" when="desktop+ray_queries android+ray_queries" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/experimental/experimental_screen">
+			<help>Features still in progress, off by default: expect visual bugs and a lower frame rate.</help>
 		</row>
 		<button key="button_defaults" kind="defaults" run="port settings defaults" help="Puts this tab's settings back to their defaults. Nothing changes until OK."/>
 		<button key="button_ok" kind="ok" run="port settings ok" help="Keeps your changes, on every tab, and applies them."/>
@@ -875,14 +872,17 @@
 			<choice shown="ON" value="true"/>
 			<choice shown="OFF" value="false"/>
 		</row>
-		<section key="section_14" title="RAY TRACING" when="desktop android"/>
+		<section key="section_14" title="RAY TRACING"/>
 		<row key="shadows" kind="choice" setting="display.shadows" label="RAY TRACED SHADOWS" crumb="VIDEO › FRAME RATE &amp; SYNC" search="shadows" when="desktop+ray_queries android+ray_queries">
 			<help>The shadows of characters and vehicles traced by the graphics card from their own shapes, soft at the edges, in the same place and darkness as the game's, which frees the processor's shadow work. Off draws them as the Xbox did.</help>
 			<choice shown="OFF" value="classic"/>
 			<choice shown="ON" value="ray_traced"/>
 		</row>
-		<row key="experimental" kind="link" label="EXPERIMENTAL ›" crumb="VIDEO › FRAME RATE &amp; SYNC" when="desktop+ray_queries android+ray_queries" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/experimental/experimental_screen">
-			<help>Features still in progress, off by default: expect visual bugs and a lower frame rate.</help>
+		<row key="movies" kind="choice" setting="display.movies" label="STARTUP MOVIES" crumb="VIDEO › FRAME RATE &amp; SYNC" search="intro">
+			<help>Plays the Xbox's intro movie as the game starts, and its attract movies on an idle main menu. Any button skips the intro.</help>
+			<note>They are the bink folder of your Xbox disc image, copied with the maps. Without them, put the disc's bink folder beside your maps folder.</note>
+			<choice shown="ON" value="true"/>
+			<choice shown="OFF" value="false"/>
 		</row>
 		<button key="button_defaults" kind="defaults" run="port settings defaults" help="Puts this page's settings back to their defaults."/>
 		<button key="button_ok" kind="ok" run="port settings keep" help="Saves your changes, on this page and every tab, and applies them."/>
@@ -890,7 +890,7 @@
 	</screen>
 	<screen name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/experimental/experimental_screen" kind="settings" layout="page" geometry="tall" title="EXPERIMENTAL">
 		<section key="section_0" title="STILL IN PROGRESS" when="desktop android"/>
-		<row key="ray_traced_lighting" kind="choice" setting="display.ray_traced_lighting" label="RAY-TRACED LIGHTING" crumb="VIDEO › FRAME RATE &amp; SYNC › EXPERIMENTAL" when="desktop+ray_queries android+ray_queries">
+		<row key="ray_traced_lighting" kind="choice" setting="display.ray_traced_lighting" label="RAY-TRACED LIGHTING" crumb="VIDEO › EXPERIMENTAL" when="desktop+ray_queries android+ray_queries">
 			<help>Experimental: lighting traced from the level's own lights, the flashlight and the sun. Still in progress: expect visual bugs and a lower frame rate.</help>
 			<choice shown="ON" value="true"/>
 			<choice shown="OFF" value="false"/>
