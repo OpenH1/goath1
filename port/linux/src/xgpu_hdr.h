@@ -313,8 +313,11 @@ frame's values made linear) is
   against b30's bake, the best exposure with the live sky's k is 0.99.
 - given contrast about middle grey (XGPU_HDR_CAMERA_MIDDLE): its luminance
   L to MIDDLE (L / MIDDLE)^contrast, its hue kept. 1 where the level keeps
-  its lightmap, which is already a picture (the bake's own look);
-  XGPU_HDR_CAMERA_CONTRAST where it is lit live (lt/e1.frag's LIGHTS_REAL):
+  its lightmap, which is already a picture (the bake's own look), and where
+  the level's light sources solved from that lightmap light it (an interior
+  view: port/assets/emitters, fitted to the bake's light, its spread in it);
+  XGPU_HDR_CAMERA_CONTRAST where the sky lights it live (lt/e1.frag's
+  LIGHTS_REAL from the sky's records, xgpu_vulkan_lt_live):
   the traced light's brightness quantiles matched to the bake's as shown
   (b30_exterior, albedo x page^2.2: the mood, not pixel for pixel), 1.22,
   error 0.13 in log brightness against 0.30 without it. (The bake's sunlit
