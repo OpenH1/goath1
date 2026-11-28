@@ -24,7 +24,7 @@
 #define HIT_MATERIALS (4096u * 4u)
 #define HIT_TEXTURES 512u
 #define HIT_LEVEL 1.0
-#define MASK_AO 0x03u
+#define MASK_AO 0x13u
 #define COOKIE_SIZE 80
 #define GRID_Z 16
 #define FALLOFF 32
@@ -68,6 +68,8 @@
 #define PANEL 2
 #define DIRECTIONAL 3
 #define RT_MASK_STRUCTURE 0x01u
+// (the sun's dynamic objects: the objects and the player's body, not one that casts no shadow, XGPU_WORLD_AO_INSTANCE_SHADOWLESS
+// (b30's ring overhead), whose shadow neither the game nor the lightmap has)
 #define RT_MASK_DYNAMIC 0x0Au
 #define M_CAP 20.0
 

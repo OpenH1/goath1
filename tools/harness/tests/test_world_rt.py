@@ -25,7 +25,7 @@ CONTROLS = [
     # the box's centre left at the node's origin
     ("\t\t\tposition += frame->axes[column][row] * sphere[column];\n", "", "arithmetic"),
     # the static scenery the field and its pages hold traced as an object (its occlusion twice)
-    ("unsigned long owner = object->baked ? 0 : world_rt_owner(object->id);",
+    ("unsigned long owner = structure ? 0 : world_rt_owner(object->id);",
      "unsigned long owner = world_rt_owner(object->id);", "frame"),
     # ... or left out (rays through the trees and rocks)
     ("\t\tdefinition = world_rt_definition(object->definition);\n",

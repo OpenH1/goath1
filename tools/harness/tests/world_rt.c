@@ -288,6 +288,14 @@ long world_proxies_source_instances(struct world_proxies_source_instance *instan
 	return index;
 }
 
+/* (world_proxies_game.c's: the fake world's static placement is the one
+already baked) */
+int world_proxies_source_lightmapped(long id)
+{
+	(void)id;
+	return 0;
+}
+
 short world_proxies_source_nodes(long id, struct world_proxies_frame *frames, short maximum)
 {
 	short node, count = id == 0x20005 || id == 0x50010 ? 1 : 2;
