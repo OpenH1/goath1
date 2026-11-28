@@ -114,6 +114,51 @@ MOMENTS = {
         "5-11 move=0,1; 11-17 look=0.15,0",
         "c20's Library in first person with the flashlight on (by the console: the scripted button toggles it each "
         "tick it is held); walking up to a wall, then a slow turn along it"),
+    # (the emitter files' BSPs, indoors where the lamps light it: the start, then switch_bsp to the BSP and the
+    # script's camera at a spot inside a lamp-lit room (picked from the BSP's mesh beside its strongest lamp groups); a
+    # slow pan. The level's own scripts still run: it shows the BSP as lit, not a moment of play)
+    "b40_bsp8": (
+        "levels\\b40\\b40", 7, 17,
+        [(3, "ai_erase_all"), (3.5, "cheat_deathless_player true"), (4, "switch_bsp 8"),
+         (6, cam(259.74, -581.58, 23.61, -15, -9)), (7, cam(259.74, -581.58, 23.61, 15, -9, 10))],
+        "",
+        "b40's lower levels (BSP 8): the Covenant ship's corridors' wall lamps; a slow pan"),
+    "c10_bsp1": (
+        "levels\\c10\\c10", 7, 17,
+        [(3, "ai_erase_all"), (3.5, "cheat_deathless_player true"), (4, "switch_bsp 1"),
+         (6, cam(-53.16, -6.05, 2.86, -15, -9)), (7, cam(-53.16, -6.05, 2.86, 15, -9, 10))],
+        "",
+        "c10's first interior (BSP 1, the worst cells: x3.6): the Flood lab's lamps; a slow pan"),
+    "d20_bsp0": (
+        "levels\\d20\\d20", 7, 17,
+        [(3, "ai_erase_all"), (3.5, "cheat_deathless_player true"), (4, "switch_bsp 0"),
+         (6, cam(66.38, -87.27, -72.86, 255, -9)), (7, cam(66.38, -87.27, -72.86, 285, -9, 10))],
+        "",
+        "d20's first hall (BSP 0): the Library-style corridor's lamps; a slow pan"),
+    "d20_bsp3": (
+        "levels\\d20\\d20", 7, 17,
+        [(3, "ai_erase_all"), (3.5, "cheat_deathless_player true"), (4, "switch_bsp 3"),
+         (6, cam(-15.64, -53.32, -79.88, 105, -9)), (7, cam(-15.64, -53.32, -79.88, 135, -9, 10))],
+        "",
+        "d20's BSP 3 (x3.5, sky 61%): a lamp-lit room off the shafts; a slow pan"),
+    "d40_bsp4": (
+        "levels\\d40\\d40", 7, 17,
+        [(3, "ai_erase_all"), (3.5, "cheat_deathless_player true"), (4, "switch_bsp 4"),
+         (6, cam(-92.43, -5.21, 8.11, 285, -9)), (7, cam(-92.43, -5.21, 8.11, 315, -9, 10))],
+        "",
+        "d40's BSP 4: the Autumn's lamp-lit corridors; a slow pan"),
+    "a50_bsp2": (
+        "levels\\a50\\a50", 7, 17,
+        [(3, "ai_erase_all"), (3.5, "cheat_deathless_player true"), (4, "switch_bsp 2"),
+         (6, cam(33.85, -39.86, -25.91, 285, -9)), (7, cam(33.85, -39.86, -25.91, 315, -9, 10))],
+        "",
+        "a50's BSP 2 (x3.0): the Covenant ship's interior lamps; a slow pan"),
+    "a50_bsp1": (
+        "levels\\a50\\a50", 7, 17,
+        [(3, "ai_erase_all"), (3.5, "cheat_deathless_player true"), (4, "switch_bsp 1"),
+         (6, cam(-8.8, 2.01, -20.65, -15, -9)), (7, cam(-8.8, 2.01, -20.65, 15, -9, 10))],
+        "",
+        "a50's BSP 1 (x2.6): the Covenant ship's interior lamps; a slow pan"),
 }
 
 

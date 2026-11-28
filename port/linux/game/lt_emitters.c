@@ -135,11 +135,16 @@ static float lt_emitters_float(unsigned char const *bytes)
 static int lt_emitters_solved(char const *scenario, short bsp_index)
 {
 	unsigned int size = 0, group_count, triangle_count, group, triangle, first, count, value;
-	unsigned char *pack = (unsigned char *)lt_emitters_asset_read(scenario, bsp_index, &size);
+	unsigned char *pack;
 	unsigned char const *groups, *triangles;
 
-	if (!pack)
+	size = lt_emitters_asset_size(scenario, bsp_index);
+	pack = size ? malloc(size) : NULL;
+	if (!pack || !lt_emitters_asset_read(scenario, bsp_index, pack, size))
+	{
+		free(pack);
 		return FALSE;
+	}
 	group_count = size >= 8 ? lt_emitters_word(pack) : 0;
 	triangle_count = size >= 8 ? lt_emitters_word(pack + 4) : 0;
 	groups = pack + 8;

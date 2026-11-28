@@ -24,8 +24,10 @@ struct lt_emitters_asset
 extern struct lt_emitters_asset const lt_emitters_assets[];
 extern unsigned int const lt_emitters_asset_count;
 
-/* the scenario's BSP's pack, unpacked (the caller frees it), its size in
-*size; NULL where none is built in or openh1.assets cannot give it */
-void *lt_emitters_asset_read(char const *scenario, int bsp_index, unsigned int *size);
+/* the scenario's BSP's pack's size unpacked (0: none built in) */
+unsigned int lt_emitters_asset_size(char const *scenario, int bsp_index);
+/* the pack unpacked into out (of size bytes, the size above; the caller's
+memory, as the game's own allocator holds it): nonzero when it was */
+int lt_emitters_asset_read(char const *scenario, int bsp_index, void *out, unsigned int size);
 
 #endif
