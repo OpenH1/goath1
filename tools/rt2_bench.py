@@ -31,6 +31,16 @@ changed and its frames drawn again by the replay in seconds, with numbers, witho
         --region's means and the shares of its pixels found, disoccluded, cut by the gradients, by the sample, held
         by the bounce, moving, relit
 
+    python3 tools/rt2_bench.py reference|terms|triage --moment a50_shields --build local/my-branch --region x,y,w,h
+        [--classic NAME] [--plays 2000] [--term-plays 600]
+        reference: the same kernels on the held frame with the real-time shortcuts off (REFERENCE_ENV: no ReSTIR
+        reuse, the bounce traced without the radiance cache; the denoiser bypassed, its input sample accumulated),
+        converged when the mean's error from 8 batches is under 1%, against the real-time frame: error = bias (the
+        held real-time mean less the reference) + motion (as recorded less held), and the held noise. terms: the
+        reference's light by source (TERMS: each with the others masked, less all masked) and the bounce. triage:
+        both, the denoiser's history cut, and the reference against the classic look (a record --setting-off
+        recording): estimator problem or data/look problem, per region
+
 What is drawn is the game's frame sequence as recorded: the camera, the objects and the lights moving as they did,
 the light pass's histories (the denoiser's, the radiance cache's, the reservoirs') made by the same frames as in the
 game. By default (--warm -1) every frame from the recording's start is played whole, by a replay of its own: the
