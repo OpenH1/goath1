@@ -980,7 +980,8 @@ static float world_rt_lamp_texel(unsigned long const *texels, unsigned long widt
 material that glows (its self-illumination colour) sampled at points
 spread over it (its base map and its multipurpose map's green, as the
 model pass reads them at the coordinates by the map scale) */
-static void world_rt_lamps_made(struct world_rt_definition *entry, short node, struct world_rt_source_mesh const *part)
+static void world_rt_lamps_made(struct world_rt_definition *entry, short node, struct world_rt_source_mesh const *part,
+	float (*inverses)[3][4])
 {
 	long triangle;
 
@@ -1042,8 +1043,21 @@ static void world_rt_lamps_made(struct world_rt_definition *entry, short node, s
 		entry->lamps = lamp;
 		lamp = &entry->lamps[entry->lamp_count++];
 		lamp->node = node;
-		for (i = 0; i < 3; i++)
-			memcpy(&lamp->corners[3 * i], corner[i]->position, sizeof(float) * 3);
+		/* (a skinned model's: on its triangle's major node, in that node's
+		space, as its rigid parts are) */
+		if (inverses)
+		{
+			int major = world_rt_triangle_node(corner[0], corner[1], corner[2]);
+
+			lamp->node = (short)(major >= 0 && major < entry->node_count ? major : 0);
+			for (i = 0; i < 3; i++)
+				world_rt_transformed(inverses[lamp->node], corner[i]->position, 1, &lamp->corners[3 * i]);
+		}
+		else
+		{
+			for (i = 0; i < 3; i++)
+				memcpy(&lamp->corners[3 * i], corner[i]->position, sizeof(float) * 3);
+		}
 		memcpy(lamp->radiance, sum, sizeof(sum));
 	}
 }
@@ -1125,6 +1139,10 @@ static long world_rt_definition_render(long definition, struct world_rt_definiti
 	refit for each object) */
 	if (world_rt_blended(mesh.vertices, mesh.vertex_count))
 	{
+		world_rt_lamps_made(entry, -1, &mesh, inverses);
+		if (entry->lamp_count > 0)
+			platform_log("ray-traced scene: %s: %ld object lamp triangles (skinned)", world_rt_source_name(definition),
+				entry->lamp_count);
 		made = world_rt_definition_skinned(&mesh, inverses, entry);
 		goto done;
 	}
@@ -1179,7 +1197,7 @@ static long world_rt_definition_render(long definition, struct world_rt_definiti
 		{
 			long before = entry->lamp_count;
 
-			world_rt_lamps_made(entry, node_index, &part);
+			world_rt_lamps_made(entry, node_index, &part, NULL);
 			if (entry->lamp_count > before)
 				platform_log("ray-traced scene: %s node %d: %ld object lamp triangles", world_rt_source_name(definition),
 					(int)node_index, entry->lamp_count - before);
@@ -1503,6 +1521,17 @@ void world_rt_frame(unsigned long frame)
 			world_rt_transform(&world_rt.frames[0], instance->transform);
 			world_rt_pose(definition, owner, (unsigned long)object->id, instance->transform, &world_rt.poses[pose_count]);
 			instance->pad = (unsigned int)++pose_count;
+			/* (its lamps, on their nodes as posed) */
+			if (definition->lamp_count > 0 && kind == WORLD_RT_OBJECT)
+			{
+				float transform[3][4];
+
+				for (node_index = 0; node_index < definition->node_count; node_index++)
+				{
+					world_rt_transform(&world_rt.frames[node_index], transform);
+					world_rt_lamps_placed(definition, node_index, (float const (*)[4])transform, owner);
+				}
+			}
 			/* (measuring: whether the first-person body's nodes move) */
 			if (kind == WORLD_RT_PLAYER)
 				world_rt_player_posed(&world_rt.poses[pose_count - 1]);
@@ -1526,7 +1555,7 @@ void world_rt_frame(unsigned long frame)
 			if (instance)
 				world_rt_transform(&world_rt.frames[node_index], instance->transform);
 			/* (its lamps, moved with it) */
-			if (instance && permutation == 0 && definition->lamp_count > 0)
+			if (instance && permutation == 0 && definition->lamp_count > 0 && kind != WORLD_RT_SHADOWLESS)
 				world_rt_lamps_placed(definition, node_index, instance->transform, owner);
 		}
 	}
