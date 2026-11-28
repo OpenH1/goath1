@@ -993,7 +993,7 @@ static void world_rt_lamps_made(struct world_rt_definition *entry, short node, s
 		int i, j, channel, count = 0;
 		struct world_rt_lamp *lamp;
 
-		if (!material->self_illumination)
+		if (!material->self_illumination || getenv("HALO_WORLD_RT_LAMPS_OFF"))
 			continue;
 		mask = world_rt_lamp_bitmap(&material->maps[WORLD_RT_MAP_MULTIPURPOSE], &mask_width, &mask_height);
 		if (!mask || !mask_width || !mask_height)
