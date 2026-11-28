@@ -178,6 +178,14 @@ the bounce traced, no denoiser: its input sample accumulated, 2000 plays after 2
 from 8 batches is under 1%); what stays is the data and the models (the sky, the materials, the lamps' power, one
 bounce from the hits' direct light, the bounce at half resolution, the first-person and forward receivers' paths).
 Everything stays on the rig; the 5900X (after the owner check) accumulates fastest.
+Each result (every accumulation, the denoiser's numbers, the presented pictures' numbers) is kept beside the
+recording (`<recording>/cache/<key>`) under a key of everything it depends on: the recording's bytes, the replay's
+binary (the backend's C and the built-in kernels' SPIR-V; only the commit label and the linker's build id left
+out), the files a setting points to (`HALO_LT_SHADER_DIR`'s kernels, `HALO_LT_UNIT`), the GPU and its driver, the
+settings and the request. So a triage again with nothing changed draws nothing, and a changed kernel, setting,
+rebuild or recording draws only what it changes; `--no-cache` draws everything. The whole rig's cache stays under
+20 GB (`RT2_BENCH_CACHE_GB`), the least recently used dropped first, and nothing is kept with under 60 GB free.
+`--kernels` gives view, reference, terms and triage the working tree's kernels, as `run` has them.
 
 `--host bosgame` runs the same three on the Windows VM's RTX 3090: the Windows build and `windows_replay`
 cross-compiled on omarchy, the recording made by `goat-rig @bosgame run` (its own data folder in the VM, the maps and
