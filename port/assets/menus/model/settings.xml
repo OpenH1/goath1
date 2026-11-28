@@ -92,6 +92,9 @@
 		<row key="advanced_graphics" kind="link" label="ADVANCED GRAPHICS ›" crumb="VIDEO › GRAPHICS" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/advanced_graphics_screen">
 			<help>Render resolution, anti-aliasing, texture filtering, model detail, shadows, the lighting and the shields' glow, and smooth motion.</help>
 		</row>
+		<row key="experimental" kind="link" label="EXPERIMENTAL ›" crumb="VIDEO › GRAPHICS" when="desktop+ray_queries android+ray_queries" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/experimental/experimental_screen">
+			<help>Features still in progress, off by default: expect visual bugs and a lower frame rate.</help>
+		</row>
 		<button key="button_defaults" kind="defaults" run="port settings defaults" help="Puts this tab's settings back to their defaults. Nothing changes until OK."/>
 		<button key="button_ok" kind="ok" run="port settings ok" help="Keeps your changes, on every tab, and applies them."/>
 		<button key="button_cancel" kind="cancel" run="port settings cancel" help="Leaves Settings without keeping any change."/>
@@ -881,16 +884,13 @@
 			<choice shown="OFF" value="classic"/>
 			<choice shown="ON" value="ray_traced"/>
 		</row>
-		<row key="experimental" kind="link" label="EXPERIMENTAL ›" crumb="VIDEO › FRAME RATE &amp; SYNC" when="desktop+ray_queries android+ray_queries" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/experimental/experimental_screen">
-			<help>Features still in progress, off by default: expect visual bugs and a lower frame rate.</help>
-		</row>
 		<button key="button_defaults" kind="defaults" run="port settings defaults" help="Puts this page's settings back to their defaults."/>
 		<button key="button_ok" kind="ok" run="port settings keep" help="Saves your changes, on this page and every tab, and applies them."/>
 		<button key="button_cancel" kind="cancel" run="port settings page cancel" help="Goes back without these changes."/>
 	</screen>
 	<screen name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/experimental/experimental_screen" kind="settings" layout="page" geometry="tall" title="EXPERIMENTAL">
 		<section key="section_0" title="STILL IN PROGRESS" when="desktop android"/>
-		<row key="ray_traced_lighting" kind="choice" setting="display.ray_traced_lighting" label="RAY-TRACED LIGHTING" crumb="VIDEO › FRAME RATE &amp; SYNC › EXPERIMENTAL" when="desktop+ray_queries android+ray_queries">
+		<row key="ray_traced_lighting" kind="choice" setting="display.ray_traced_lighting" label="RAY-TRACED LIGHTING" crumb="VIDEO › EXPERIMENTAL" when="desktop+ray_queries android+ray_queries">
 			<help>Experimental: lighting traced from the level's own lights, the flashlight and the sun. Still in progress: expect visual bugs and a lower frame rate.</help>
 			<choice shown="ON" value="true"/>
 			<choice shown="OFF" value="false"/>

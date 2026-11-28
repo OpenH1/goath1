@@ -784,8 +784,8 @@ FRAME_RATE = ("video_settings/frame_rate", "frame_rate_screen")
 # developers' timings and logs and the benchmark, their own page as Frame
 # Rate's is full)
 PERFORMANCE_TOOLS = ("video_settings/frame_rate/performance_tools", "performance_tools_screen")
-# (Frame Rate & Sync's EXPERIMENTAL: the features still in progress, off by
-# default (display.ray_traced_lighting); shown where one of them can be)
+# (Video's EXPERIMENTAL: the features still in progress, off by default
+# (display.ray_traced_lighting); shown where one of them can be)
 EXPERIMENTAL = ("video_settings/frame_rate/experimental", "experimental_screen")
 # (display.gamma, and display.hdr's settings and the display's peak on the
 # renderers that draw it)
@@ -1000,6 +1000,11 @@ PAGES = {
             ("ADVANCED GRAPHICS ›", None, _page_screen(*ADVANCED),
              "Render resolution, anti-aliasing, texture filtering, model detail, shadows, the lighting and the "
              "shields' glow, and smooth motion.", None),
+            # (the features still in progress, their own page, EXPERIMENTAL;
+            # shown while one of them can be: SETTINGS_ROW_WHEN)
+            ("EXPERIMENTAL ›", None, _page_screen(*EXPERIMENTAL),
+             "Features still in progress, off by default: expect visual bugs and a lower frame rate.",
+             "desktop android", "experimental"),
         ],
     },
     "audio_settings": {
@@ -1575,11 +1580,6 @@ PAGES = {
              "the edges, in the same place and darkness as the game's, which frees the processor's shadow work. Off "
              "draws them as the Xbox did.",
              "desktop android"),
-            # (the features still in progress, their own page, EXPERIMENTAL;
-            # shown while one of them can be: SETTINGS_ROW_WHEN)
-            ("EXPERIMENTAL ›", None, _page_screen(*EXPERIMENTAL),
-             "Features still in progress, off by default: expect visual bugs and a lower frame rate.",
-             "desktop android", "experimental"),
         ],
     },
     EXPERIMENTAL[0]: {

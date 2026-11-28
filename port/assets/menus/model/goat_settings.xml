@@ -34,6 +34,7 @@
 		<row key="graphics" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/video_settings_screen"/>
 		<row key="high_res_text" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/video_settings_screen"/>
 		<row key="battery_saver" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/video_settings_screen"/>
+		<row key="experimental" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/video_settings_screen"/>
 		<section key="section_1" title="ADVANCED GRAPHICS"/>
 		<row key="render_resolution" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/advanced_graphics_screen"/>
 		<row key="render_resolution_metalfx" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/advanced_graphics_screen"/>
@@ -70,7 +71,6 @@
 		<row key="dynamic_resolution" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/frame_rate_screen"/>
 		<section key="section_5" title="RAY TRACING"/>
 		<row key="shadows" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/frame_rate_screen"/>
-		<row key="experimental" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/frame_rate_screen"/>
 	</screen>
 	<screen name="goat/audio" kind="goat" tab="AUDIO">
 		<section key="section_0" title="SOUND"/>

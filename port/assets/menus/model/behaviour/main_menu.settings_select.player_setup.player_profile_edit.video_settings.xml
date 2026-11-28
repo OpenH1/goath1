@@ -173,4 +173,9 @@
 		<on event="start" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced/advanced_graphics_screen"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
 	</behaviour>
+	<behaviour name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_experimental" flags="pass_unhandled_to_focused_child">
+		<on event="a" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/experimental/experimental_screen"/>
+		<on event="start" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/experimental/experimental_screen"/>
+		<on event="left_mouse" run="mouse emit accept event"/>
+	</behaviour>
 </model>

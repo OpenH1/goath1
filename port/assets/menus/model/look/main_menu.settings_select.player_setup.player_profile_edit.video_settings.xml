@@ -26,6 +26,7 @@
 		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_battery_saver" x="28" y="403"/>
 		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_brightness_settings" x="28" y="428"/>
 		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_advanced_graphics" x="28" y="453"/>
+		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_experimental" x="28" y="478"/>
 		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/button_bar" x="0" y="448"/>
 		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/tabs" x="0" y="46"/>
 		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/tabs_search" x="0" y="46"/>
@@ -330,5 +331,12 @@
 	</look>
 	<look name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced_graphics_label" type="text" box="0 0 332 24" wide="0 244" past="0 193">
 		<text font="ui\small_ui" color="#FF2896FF" at="10 3" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/labels" index="16" scale="1 1.2"/>
+	</look>
+	<look name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_experimental" box="0 0 344 24" wide="-106 244" past="-143 193" picture="main_menu/settings/row_tall">
+		<text color="#FF2896FF"/>
+		<at widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/experimental_label" x="0" y="0"/>
+	</look>
+	<look name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/experimental_label" type="text" box="0 0 332 24" wide="0 244" past="0 193">
+		<text font="ui\small_ui" color="#FF2896FF" at="10 3" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/labels" index="17" scale="1 1.2"/>
 	</look>
 </model>

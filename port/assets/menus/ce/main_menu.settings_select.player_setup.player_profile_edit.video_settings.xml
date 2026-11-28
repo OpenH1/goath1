@@ -32,6 +32,7 @@
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_battery_saver" x="28" y="381"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_brightness_settings" x="28" y="402"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_advanced_graphics" x="28" y="423"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_experimental" x="28" y="444" platform="desktop android"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/button_bar" y="414"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/tabs" y="76"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/tabs_search" y="76"/>
@@ -351,6 +352,14 @@
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/advanced_graphics_label" type="text" controller="1" width="332" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/labels" string_index="16" color="#FF2896FF" text_x="10" text_y="1" wide="0 244" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
 	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/op_experimental" width="344" height="20" flags="pass_unhandled_to_focused_child" bitmap="main_menu/settings/row" color="#FF2896FF" platform="desktop android" wide="-106 244" source="tools/port_settings.py settings_files/_settings_page">
+		<on event="a" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/experimental/experimental_screen"/>
+		<on event="start" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/experimental/experimental_screen"/>
+		<on event="left_mouse" run="mouse emit accept event"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings/experimental_label"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/experimental_label" type="text" controller="1" width="332" height="20" string_list="main_menu/settings_select/player_setup/player_profile_edit/video_settings/labels" string_index="17" color="#FF2896FF" text_x="10" text_y="1" wide="0 244" font="ui\small_ui" source="tools/port_settings.py settings_files/_settings_page/_settings_text">
+	</widget>
 	<strings name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/labels">
 		<string text="DISPLAY"/>
 		<string text="WINDOW"/>
@@ -369,6 +378,7 @@
 		<string text="BATTERY SAVER"/>
 		<string text="BRIGHTNESS ›"/>
 		<string text="ADVANCED GRAPHICS ›"/>
+		<string text="EXPERIMENTAL ›"/>
 	</strings>
 	<strings name="main_menu/settings_select/player_setup/player_profile_edit/video_settings/help_strings">
 		<string text="The window, the frame rate and the graphics."/>
@@ -389,5 +399,6 @@
 		<string text="Up to 60 frames a second and Classic graphics, for a longer battery and a cooler device. Auto turns it on while the device runs on its battery. Your own settings come back as it turns off."/>
 		<string text="How bright the picture is: its gamma, soft particles, and on an HDR display, HDR's look, how bright white and the HUD are, and the display's peak."/>
 		<string text="Render resolution, anti-aliasing, texture filtering, model detail, shadows, the lighting and the shields' glow, and smooth motion."/>
+		<string text="Features still in progress, off by default: expect visual bugs and a lower frame rate."/>
 	</strings>
 </menus>
