@@ -17,7 +17,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
-from test_render_manifest import compile_reader  # noqa: E402
+from test_render_manifest import compile_reader, settings_initializer  # noqa: E402
 
 COVERAGE = ROOT / "tools/prepared_coverage.txt.gz"
 LABEL = re.compile(r"^# coverage (\S+) (walk|replay|scope|play) (\d+) ([0-9a-f]+)$")
@@ -27,6 +27,11 @@ CATEGORIES = {1: "the sky", 2: "models", 16: "transparents", 22: "queued transpa
               26: "the screen effect", 27: "the HUD", 255: "the interface"}
 VERSION = int(re.search(r"#define XGPU_MANIFEST_VERSION (\d+)", (ROOT / "port/linux/src/xgpu_manifest.h").read_text())[1])
 
+# the settings the coverage is checked under: the records' own, and each changed
+MATRIX = {"defaults": {}, "soft_particles_off": {"soft": 0}, "output_depth_8": {"deep": 0}, "hdr": {"hdr": 1},
+          "hdr_boost": {"hdr": 1, "boost": "XGPU_HDR_BOOST_MOST"}, "alpha_drop_off": {"alpha_drop": 0},
+          "smooth_lightmaps_off": {"smooth_lightmaps": 0}}
+
 CHECKER = r"""
 #include "xgpu_manifest.h"
 #include "xgpu_hdr.h"
@@ -35,18 +40,10 @@ CHECKER = r"""
 #include <stdlib.h>
 #include <string.h>
 
-/* the settings checked: the records' defaults (no multisampling, SDR in a
-16-bit frame, the enhanced lights, soft effects, Vulkan's alpha tests that
-cannot fail dropped), and each one changed */
+/* the settings checked: the records' (test_render_manifest.py's
+RECORD_SETTINGS), and each one changed (the test's matrix) */
 static const struct { const char *name; struct xgpu_manifest_settings settings; } matrix[] = {
-	{ "defaults", { 1, 0, 1, 1, XGPU_MANIFEST_OCCLUSION_OFF, 1, 1, 0, 1, 1 } },
-	{ "soft_particles_off", { 1, 0, 1, 1, XGPU_MANIFEST_OCCLUSION_OFF, 1, 0, 0, 1, 1 } },
-	{ "output_depth_8", { 1, 0, 1, 1, XGPU_MANIFEST_OCCLUSION_OFF, 0, 1, 0, 1, 1 } },
-	{ "hdr", { 1, 1, 1, 1, XGPU_MANIFEST_OCCLUSION_OFF, 1, 1, 0, 1, 1 } },
-	{ "hdr_boost", { 1, 1, 1, 1, XGPU_MANIFEST_OCCLUSION_OFF, 1, 1, XGPU_HDR_BOOST_MOST, 1, 1 } },
-	{ "alpha_drop_off", { 1, 0, 1, 1, XGPU_MANIFEST_OCCLUSION_OFF, 1, 1, 0, 0, 1 } },
-	{ "smooth_lightmaps_off", { 1, 0, 1, 1, XGPU_MANIFEST_OCCLUSION_OFF, 1, 1, 0, 1, 0 } },
-};
+MATRIX};
 
 #define FIELD(name, member) { name, offsetof(struct xgpu_manifest_draw, member), \
 	sizeof(((struct xgpu_manifest_draw *)0)->member) }
@@ -173,7 +170,8 @@ def named(miss):
 @pytest.fixture(scope="module")
 def checker(tmp_path_factory):
     folder = tmp_path_factory.mktemp("coverage")
-    (folder / "checker.c").write_text(CHECKER)
+    (folder / "checker.c").write_text(CHECKER.replace("MATRIX", "".join(
+        f'\t{{ "{name}", {settings_initializer(**changed)} }},\n' for name, changed in MATRIX.items())))
     return compile_reader(folder, folder / "checker.c", folder / "checker")
 
 

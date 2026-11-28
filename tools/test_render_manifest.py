@@ -282,21 +282,37 @@ int main(void) {
 
 # ---------- the committed manifest and the shipped records
 
-DERIVER = r"""
+# the settings the stock maps' records are made with (tools/prepared_records.py: every setting at its default, the
+# game's own first start: no multisampling, no HDR, each pixel lit, the enhanced dynamic lights, no ambient occlusion,
+# display.output_depth "auto"'s 16-bit frame on a computer, soft effects, Vulkan's alpha tests that cannot fail
+# dropped, the lightmaps' cubic filter, no ray-traced lighting): each field of xgpu_manifest.h's struct
+# xgpu_manifest_settings by name, so that a new one is chosen here (test_record_settings_are_the_defaults), and
+# tools/test_preparation_coverage.py's matrix is made from them
+RECORD_SETTINGS = {"samples": 1, "hdr": 0, "per_pixel_lighting": 1, "enhanced_lights": 1,
+                   "ambient_occlusion": "XGPU_MANIFEST_OCCLUSION_OFF", "deep": 1, "soft": 1, "boost": 0,
+                   "alpha_drop": 1, "smooth_lightmaps": 1, "light_model": 0}
+# (the fields that are one boolean setting's: its default the record's)
+RECORD_SETTINGS_CONFIG = {"per_pixel_lighting": "display.per_pixel_lighting", "soft": "display.soft_particles",
+                          "smooth_lightmaps": "display.smooth_lightmaps", "light_model": "display.ray_traced_lighting"}
+
+
+def settings_initializer(**changed):
+    """a struct xgpu_manifest_settings' initializer: the records' settings, the changed ones changed"""
+    unknown = set(changed) - set(RECORD_SETTINGS)
+    assert not unknown, unknown
+    return "{ " + ", ".join(f".{name} = {value}" for name, value in dict(RECORD_SETTINGS, **changed).items()) + " }"
+
+
+def deriver_source(**changed):
+    """a deriver of each draw of a manifest under the records' settings (the changed ones changed), its hash as a
+    record's (render_prepared.c's prepared_draws)"""
+    return r"""
 #include "xgpu_manifest.h"
 #include <stdio.h>
-#include <string.h>
-/* each draw of a manifest as the settings the stock maps' records are made
-with derive it (tools/prepared_records.py: every setting's default, the
-game's own first start: no multisampling, no HDR, the enhanced dynamic
-lights, which light each pixel, no ambient occlusion, display.output_depth
-"auto"'s 16-bit frame on a computer, soft effects, Vulkan's alpha tests that
-cannot fail dropped), its hash as a record's
-(render_prepared.c's prepared_draws) */
 int main(int argc, char **argv)
 {
 	struct xgpu_manifest manifest;
-	struct xgpu_manifest_settings settings;
+	struct xgpu_manifest_settings settings = SETTINGS;
 	char error[256];
 	uint32_t index;
 
@@ -306,15 +322,6 @@ int main(int argc, char **argv)
 		printf("error: %s\n", error);
 		return 1;
 	}
-	memset(&settings, 0, sizeof(settings));
-	settings.samples = 1;
-	settings.per_pixel_lighting = 1;
-	settings.enhanced_lights = 1;
-	settings.deep = 1;
-	/* (display.soft_particles on, and Vulkan's dropped alpha tests that
-	cannot fail) */
-	settings.soft = 1;
-	settings.alpha_drop = 1;
 	for (index = 0; index < manifest.draw_count; index++)
 	{
 		struct xgpu_manifest_draw draw;
@@ -325,7 +332,8 @@ int main(int argc, char **argv)
 	xgpu_manifest_free(&manifest);
 	return 0;
 }
-"""
+""".replace("SETTINGS", settings_initializer(**changed))
+
 
 COMMITTED = ROOT / "port" / "assets" / "render" / "manifest.txt"
 PREPARED = ROOT / "port" / "assets" / "prepared"
@@ -336,7 +344,7 @@ REMAKE = ("run tools/prepared_records.py again (it records the manifest in the s
 @pytest.fixture(scope="module")
 def deriver(tmp_path_factory):
     folder = tmp_path_factory.mktemp("deriver")
-    (folder / "deriver.c").write_text(DERIVER)
+    (folder / "deriver.c").write_text(deriver_source())
     return compile_reader(folder, folder / "deriver.c", folder / "deriver")
 
 
@@ -372,6 +380,27 @@ def test_manifest_holds_every_shipped_records_draw(deriver):
                          f"{missing}: the Mac's and iOS's shader libraries would compile them as the maps load. {REMAKE}.")
 
 
+def test_record_settings_are_the_defaults():
+    """RECORD_SETTINGS names every field of struct xgpu_manifest_settings, and
+    a field that is one boolean setting's is that setting's default, as the
+    records are made: a setting added to the derivation, or a default
+    changed, is not missed by the deriver (display.smooth_lightmaps, on by
+    default since #1225, was, and the shipped records' cubic lightmap
+    passes were seen missing from the manifest)"""
+    header = (SOURCE / "xgpu_manifest.h").read_text()
+    body = header[header.index("struct xgpu_manifest_settings\n{"):]
+    body = re.sub(r"/\*.*?\*/", "", body[:body.index("};")], flags=re.S)
+    fields = re.findall(r"(\w+)\s*[,;]", body.split("{", 1)[1])
+    assert fields == list(RECORD_SETTINGS), (fields, list(RECORD_SETTINGS))
+    config = (SOURCE / "port_config.c").read_text(encoding="latin-1")
+    macros = dict(re.findall(r'#define (GRAPHICS_\w+) "(\w+)"', config))
+    for field, name in RECORD_SETTINGS_CONFIG.items():
+        default = re.search(r'\{ "' + re.escape(name) + r'", _config_boolean, (\w+|"\w+"),', config)
+        assert default, name
+        value = default[1].strip('"') if default[1].startswith('"') else macros[default[1]]
+        assert RECORD_SETTINGS[field] == (value == "true"), (field, name, value)
+
+
 def test_negative_a_draw_without_its_context(deriver, tmp_path):
     """the manifest's draws as no setting changes them, their contexts lost:
     the records' draws lit for each pixel by the enhanced lights are not
@@ -391,8 +420,7 @@ def test_negative_derived_as_an_8_bit_frame(tmp_path):
     setting (xgpu_manifest_settings' deep)"""
     folder = tmp_path / "shallow"
     folder.mkdir()
-    (folder / "deriver.c").write_text(DERIVER.replace("\tsettings.deep = 1;\n", ""))
-    assert "settings.deep" not in (folder / "deriver.c").read_text()
+    (folder / "deriver.c").write_text(deriver_source(deep=0))
     shallow = compile_reader(folder, folder / "deriver.c", folder / "deriver")
     assert records_missing(derived_hashes(shallow, COMMITTED))
 
