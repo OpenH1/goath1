@@ -85,7 +85,7 @@ pass draws it, albedo x (mask x colour)^2.2 (tools/rt_truth's
 HaloSelfIllum); a triangle glowing less on average (its luminance) is no
 lamp, and its samples a side */
 #define WORLD_RT_LAMP_K 0.48f
-#define WORLD_RT_LAMP_LEAST 0.02f
+#define WORLD_RT_LAMP_LEAST 0.001f
 #define WORLD_RT_LAMP_SAMPLES 6
 /* (the maps read at their first level no larger than this each way) */
 #define WORLD_RT_LAMP_TEXELS 128
