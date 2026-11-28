@@ -76,15 +76,15 @@ MOMENTS = {
          (30, cam(-70.0, 20.0, 3.4, 25, -9, 12))],
         "",
         "b30's beach in the sun: the Pelicans landing, a Warthog, an Elite, their shadows on the sand; a slow camera move"),
-    # (the landing zone's Covenant camp, beach_lz, placed afresh by the player's start, the marines taken away so
-    # that it fires at the player, who cannot die)
+    # (the landing zone's Covenant camp, beach_lz, placed afresh as the player lands (about 36 s), the marines taken
+    # away so that it fires at the player, who cannot die; the player turned toward it)
     "b30_fight": (
-        "levels\\b30\\b30", 31, 43,
-        [(26, "cheat_deathless_player 1"),
+        "levels\\b30\\b30", 37, 49,
+        [(26, "cheat_deathless_player true"),
          (28, "ai_erase beach_lz_marine"),
          (28.5, "ai_erase beach_lz"),
-         (29, "ai_place beach_lz")],
-        "30 aim=-8,-3; 31-43 hunt; 33-35 fire; 36-36.4 throw; 40-40.4 throw",
+         (33, "ai_place beach_lz")],
+        "36.5 aim=-73,-4; 37-49 hunt; 38-40 fire; 42-42.4 throw; 46-46.4 throw",
         "b30's landing zone in first person: the Covenant camp's plasma and needles, the rifle's muzzle flashes, two "
         "grenades"),
     "a10_cryo": (
@@ -104,7 +104,7 @@ MOMENTS = {
         # (its desired state set again: the first may come while the fly-in, a skipped cutscene, still holds the
         # player)
         [(2, "ai_erase_all")] + [(t, f"unit_set_desired_flashlight_state {PLAYER} 1") for t in (3, 4.5, 6)],
-        "5-9 move=0,1; 9-15 look=-0.2,0",
+        "5-11 move=0,1; 11-17 look=0.15,0",
         "c20's Library in first person with the flashlight on (by the console: the scripted button toggles it each "
         "tick it is held); walking up to a wall, then a slow turn along it"),
 }
