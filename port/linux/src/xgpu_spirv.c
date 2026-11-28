@@ -7213,6 +7213,48 @@ static unsigned int rt_hit_texel(struct module *m, unsigned int slot_word, unsig
 	return op(m, OP_IMAGE_SAMPLE_EXPLICIT_LOD, m->t_v4, 4, operands);
 }
 
+/* the one light model's reflection colour (~/dev/rt2-realtime-design.md
+section 10, "Reflection colour"): a traced reflection is the scene's light,
+and Halo's cube map carries, besides its fake scene, the material's own hue
+(an Elite's armour's blue-violet, the Covenant's metals): its chroma, the
+whole map's mean (its smallest level) over that mean's luminance, tints the
+traced light as a metal's F0 colour would, the luminance left to the scene.
+A grey cube map tints nothing. As GLSL:
+vec3 mean = textureLod(cube, vec3(0, 0, 1), 16.0).rgb;
+return clamp(mean / max(dot(mean, vec3(0.2126, 0.7152, 0.0722)), 1e-3), 0.0, 4.0) */
+static unsigned int lt_reflection_chroma(struct module *m, struct pixel_state *state)
+{
+	unsigned int operands[4], mean;
+
+	operands[0] = texture_load(m, state, 3);
+	operands[1] = constant_vector(m, 3, (const float[]){ 0.0f, 0.0f, 1.0f });
+	operands[2] = IMAGE_OPERANDS_LOD;
+	operands[3] = constant_float(m, 16.0f);
+	mean = xyz(m, op(m, OP_IMAGE_SAMPLE_EXPLICIT_LOD, m->t_v4, 4, operands));
+	return fclamp(m, 3, fdiv(m, 3, mean, splat(m, 3, fmax_scalar(m, 1, fdot(m, mean,
+		constant_vector(m, 3, (const float[]){ 0.2126f, 0.7152f, 0.0722f })), 1.0e-3f))), 0.0f, 4.0f);
+}
+
+/* a model's traced reflection with the one light model (~/dev/rt2-realtime-
+design.md section 10, "Reflection colour"): the cube map's texel at the
+ray's direction scaled by how bright the scene is there against the cube
+map's own mean, at most 4 times, as GLSL:
+vec3 mean = textureLod(cube, vec3(0, 0, 1), 16.0).rgb;
+return texel * clamp(lum(traced) / max(lum(mean), 1e-3), 0.0, 4.0); */
+static unsigned int lt_reflection_lit_cube(struct module *m, struct pixel_state *state, unsigned int traced,
+	unsigned int texel)
+{
+	unsigned int operands[4], mean, weights = constant_vector(m, 3, (const float[]){ 0.2126f, 0.7152f, 0.0722f });
+
+	operands[0] = texture_load(m, state, 3);
+	operands[1] = constant_vector(m, 3, (const float[]){ 0.0f, 0.0f, 1.0f });
+	operands[2] = IMAGE_OPERANDS_LOD;
+	operands[3] = constant_float(m, 16.0f);
+	mean = xyz(m, op(m, OP_IMAGE_SAMPLE_EXPLICIT_LOD, m->t_v4, 4, operands));
+	return fscale(m, 3, texel, fclamp_scalar(m, fdiv(m, 1, fdot(m, traced, weights),
+		fmax_scalar(m, 1, fdot(m, mean, weights), 1.0e-3f)), 0.0f, 4.0f));
+}
+
 static unsigned int rt_reflection_texel(struct module *m, struct pixel_state *state, unsigned int r, unsigned int cube)
 {
 	struct words *locals = &state->locals;
@@ -7333,6 +7375,13 @@ static unsigned int rt_reflection_texel(struct module *m, struct pixel_state *st
 			constant_splat(m, 3, RT_REFLECTION_OBJECT_LIGHT));
 	}
 	color = saturate(m, 3, fmul(m, 3, fmul(m, 3, color, detail), light));
+	/* (the one light model, a model's: Halo's cube map kept as the armour's
+	or paint's own pattern and hue, its brightness the scene's: the cube's
+	texel by the traced light's luminance over the cube's mean's, so an
+	Elite keeps its sheen and darkens where the scene is dark:
+	lt_reflection_lit_cube) */
+	if (lt_e1_on())
+		color = lt_reflection_lit_cube(m, state, color, xyz(m, cube));
 	fade = ext3(m, GLSL_SMOOTH_STEP, m->t_float, constant_float(m, RT_REFLECTION_DISTANCE * RT_REFLECTION_FADE),
 		constant_float(m, RT_REFLECTION_DISTANCE), t);
 	color = ext3(m, GLSL_F_MIX, m->t_v3, color, xyz(m, cube), splat(m, 3, fade));
@@ -9955,7 +10004,9 @@ static unsigned int lt_reflection_texel(struct module *m, struct pixel_state *st
 	operands[3] = constant_int(m, 0);
 	s = op(m, OP_IMAGE_FETCH, m->t_v4, 4, operands);
 	linear = ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, xyz(m, cube), 0.0f), constant_splat(m, 3, 2.2f));
-	rgb = fadd(m, 3, xyz(m, s), fscale(m, 3, linear, fsub(m, 1, constant_float(m, 1.0f), extract(m, s, 3))));
+	/* (the traced light by the cube map's hue: lt_reflection_chroma) */
+	rgb = fadd(m, 3, fmul(m, 3, xyz(m, s), ext2(m, GLSL_POW, m->t_v3, lt_reflection_chroma(m, state),
+		constant_splat(m, 3, 2.2f))), fscale(m, 3, linear, fsub(m, 1, constant_float(m, 1.0f), extract(m, s, 3))));
 	rgb = ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, rgb, 0.0f), constant_splat(m, 3, 1.0f / 2.2f));
 	/* (HALO_RT_REFLECTIONS_VIEW=1: green by the hits' share, red the rest) */
 	if (rt_reflections_view() == 1)

@@ -122,6 +122,40 @@ vec3 hit_texel(uint slot, vec2 st, float level)
     return textureLod(hit_textures[nonuniformEXT(min(slot, HIT_TEXTURES - 1u))], st, level).rgb;
 }
 
+// the level's static light where an object stands, for an object a reflection meets (it has no lightmap): the
+// lightmap of the structure straight below the hit, as Halo lights its models from the lightmap under them
+// (render_objects.c's model lighting samples it there), gamma; OBJECT_LIGHT where no structure is within reach below
+// (~/dev/rt2-realtime-design.md section 10, "Reflection hits")
+#define BELOW_REACH 8.0
+vec3 light_below(vec3 p)
+{
+    rayQueryEXT q;
+    rayQueryInitializeEXT(q, scene, gl_RayFlagsOpaqueEXT, RT_MASK_STRUCTURE, p + vec3(0.0, 0.0, 0.05), 0.0,
+        vec3(0.0, 0.0, -1.0), BELOW_REACH);
+    while (rayQueryProceedEXT(q))
+        rayQueryConfirmIntersectionEXT(q);
+    if (rayQueryGetIntersectionTypeEXT(q, true) == gl_RayQueryCommittedIntersectionNoneEXT)
+        return vec3(OBJECT_LIGHT);
+    uint mesh = uint(rayQueryGetIntersectionInstanceShaderBindingTableRecordOffsetEXT(q, true)) & (HIT_MESHES - 1u);
+    uint record = mesh << 2, attributes = table.words[record + 1u];
+    if (attributes == 0u)
+        return vec3(OBJECT_LIGHT);
+    uint primitive = uint(rayQueryGetIntersectionPrimitiveIndexEXT(q, true)) +
+        (rayQueryGetIntersectionGeometryIndexEXT(q, true) == 1 ? table.words[record + 3u] : 0u);
+    uint corners = table.words[record] + primitive * 3u;
+    uint material_word = table.words[table.words[record + 2u] + (primitive >> 1)];
+    uint at = HIT_MATERIALS + (((material_word >> ((primitive & 1u) << 4)) & 0xFFFFu) << 4);
+    uint page = table.words[at + 14u];
+    if (page == 0u)
+        return vec3(OBJECT_LIGHT);
+    vec2 b = rayQueryGetIntersectionBarycentricsEXT(q, true);
+    vec3 w = vec3(1.0 - b.x - b.y, b.x, b.y);
+    vec2 lst = vec2(0.0);
+    for (int corner = 0; corner < 3; corner++)
+        lst += w[corner] * unpackSnorm2x16(table.words[attributes + table.words[corners + uint(corner)] * 6u + 4u]);
+    return hit_texel(page, lst, 0.0);
+}
+
 // the first surface along d of the instances mask takes (alpha-tested; skip's object left out, -1 none, the
 // structure never): where, its normal (toward the ray), its albedo (linear) and, with lightmap, Halo's colour there
 // (base x detail x lightmap, gamma), from the hit table (xgpu_spirv.c's rt_reflection_texel's reading).
@@ -184,7 +218,7 @@ Hit trace(vec3 origin, vec3 d, float t_max, int skip, bool lightmap, uint mask)
     if (lightmap)
     {
         uint page = table.words[at + 14u];
-        hit.surface = clamp(base * (page != 0u ? hit_texel(page, lst, 0.0) : vec3(OBJECT_LIGHT)), 0.0, 1.0);
+        hit.surface = clamp(base * (page != 0u ? hit_texel(page, lst, 0.0) : light_below(hit.p)), 0.0, 1.0);
     }
     return hit;
 }
@@ -550,7 +584,7 @@ vec4 specular_main(ivec2 pixel)
         return vec4(0.0, 0.0, 0.0, -1.0);
     uint material = texelFetch(guides, pixel, 0).z;
     // (the structure's alone: the surfaces read the pass's reflections there only, xgpu_spirv.c's
-    // lt_reflection_traced; an object's keeps its cube map)
+    // lt_reflection_traced; a model traces its own mirror ray)
     if (((material >> 24) & 255u) == 0u || owner != 0u)
         return vec4(0.0, 0.0, 0.0, -1.0);
     uint byte = (material >> 16) & 255u;
