@@ -870,8 +870,9 @@ static int decode_record(struct host_render_decoder *decoder, const unsigned cha
 	{
 		const struct xgpu_stream_lt_lights *list = (const void *)start;
 
-		/* (window -1, no lights: the pass turned off) */
-		if (list->count > XGPU_STREAM_LT_LIGHTS_MAXIMUM || list->window < -1 || list->window > 3 ||
+		/* (window -1, no lights: the pass turned off; -2, none: on, its
+		lists to come) */
+		if (list->count > XGPU_STREAM_LT_LIGHTS_MAXIMUM || list->window < -2 || list->window > 3 ||
 			(list->window < 0 && list->count) ||
 			(list->count && !data_inside(decoder, start, size, list->lights,
 				list->count * (uint32_t)sizeof(struct xgpu_stream_lt_light))))

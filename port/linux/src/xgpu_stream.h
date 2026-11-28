@@ -1557,7 +1557,9 @@ whose lt_lights.h has the game's copy of the light, the same: change both):
 count lights (0 to XGPU_STREAM_LT_LIGHTS_MAXIMUM, 144 bytes each) inline at
 lights (none: 0), the window (0 to 3) and the game's count of lists sent.
 A list turns the pass on (display.ray_traced_lighting, where HALO_LT_E1 does
-not say); window -1, with none, turns it off */
+not say); window -1, with none, turns it off; window -2, with none, turns
+it on before its first list (as a map is prepared, so that its shaders are
+the pass's variant: lt_lights.c's lt_lights_announce) */
 #define XGPU_STREAM_LT_LIGHTS_MAXIMUM 1024
 enum
 {
