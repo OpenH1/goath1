@@ -940,7 +940,7 @@ static DWORD const *world_rt_lamp_bitmap(struct world_rt_source_map const *map, 
 {
 	int index;
 
-	if (map->bitmap == NONE || map->index < 0)
+	if (map->bitmap == -1 || map->index < 0)
 		return NULL;
 	for (index = 0; index < world_rt.lamp_bitmap_count; index++)
 	{
