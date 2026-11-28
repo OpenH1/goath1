@@ -156,8 +156,14 @@ One replay serves every try: it plays the moment once exactly and keeps the ligh
 (`--checkpoint` frames) before the measured frames; each try reloads the changed kernels (compiled on the Mac, sent
 to the rig) and settings, puts that state back and plays the rest whole, the last picture to
 `build/rt2_bench/v<N>.png`. Unchanged code gives the full replay's frames bit for bit (`verify` checks it);
-`verify --change VAR=value` shows how far a try strays by the frames since the checkpoint. The game's C (`lt_lights.c`) needs a new
-recording; the backend's C (`xgpu_vulkan_lt*.c`) a replay rebuilt (`goat-rig build <ref> linux_replay`). The
+`verify --change VAR=value` shows how far a try strays by the frames since the checkpoint. How the light list is built
+(`port/linux/game/lt_lights_build.c`: the kinds, the k's, the spot conversion, the suns' and the sky's constants,
+the object lamps' choice) is tried with `--unit` on a recording made by a build with the list's inputs
+(`LT_INPUTS`): the working tree's file compiled on the rig in about a second and loaded by the replay, the list
+built again from the recorded inputs (`verify --unit`: every list the recorded one with unchanged code; a50, an
+edit to numbers 2.6 s). What feeds the inputs (`lt_lights.c`'s gather, `lt_emitters.c`, `world_rt.c`'s lamps,
+`dynamic_lights.c`) needs a new recording; the backend's C (`xgpu_vulkan_lt*.c`) a replay rebuilt
+(`goat-rig build <ref> linux_replay`). The
 replay's own requests are `rt_set`, `rt_reload`, `rt_frames` and `rt_view` (docs/replay_protocol.md).
 
 Triage first: before changing anything, ask the bench which kind of problem it is.
