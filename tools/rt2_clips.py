@@ -25,7 +25,9 @@ every frame), a contact sheet and three stills, and copies only those to --out. 
 """
 
 import argparse
+import base64
 import concurrent.futures
+import os
 import shlex
 import subprocess
 import sys
@@ -182,9 +184,12 @@ def rig(host, *argv, capture=False):
 
 
 def ssh(host, script, capture=True, check=True):
-    target = rig_target(host)
-    result = subprocess.run(["ssh", "-o", "BatchMode=yes", target, "bash", "-s"], input=script, text=True,
-                            capture_output=capture)
+    if windows(host):
+        result = subprocess.run(remote_argv(host, script), stdin=subprocess.DEVNULL, text=True,
+                                capture_output=capture)
+    else:
+        result = subprocess.run(["ssh", "-o", "BatchMode=yes", rig_target(host), "bash", "-s"], input=script,
+                                text=True, capture_output=capture)
     if check and result.returncode:
         raise SystemExit(f"rt2_clips: {host}: {(result.stderr or '').strip()[-400:]}")
     return result
@@ -201,9 +206,96 @@ def rig_target(host):
 
 
 def owner_playing(host):
-    """the machine owner's own game running (any ~/Applications/OpenH1* install)"""
-    result = ssh(host, f'pgrep -fa "{OWNER_GAME}" || true')
+    """the machine owner's own game running (any ~/Applications/OpenH1* install; in the Windows VM any game)"""
+    if windows(host):
+        result = ssh(host, WINDOWS_GAME_RUNNING)
+    else:
+        result = ssh(host, f'pgrep -fa "{OWNER_GAME}" || true')
     return result.stdout.strip()
+
+
+# ---------- bosgame: the Windows VM with the RTX 3090 (tools/rig/README.md's "bosgame"), the same scripts there
+#
+# The VM refuses a Mac's ssh: it is reached in hops, each hop's ssh running the next with the rest quoted, by
+# default through omarchy (which builds for it), then bosgame's host (where its locks are), then the VM, whose ssh
+# shell, PowerShell, starts Git Bash (C:\Program Files\Git) on the script. So the scripts the Linux rigs run (bash,
+# coreutils, ~ for the home) run there too, MSYS handing the native programs Windows paths. The script goes inline
+# as base64 (nothing quoted through PowerShell's native arguments), leaving standard input to the command (the
+# replay's protocol, a tar stream). RT2_BOSGAME_ROUTE replaces the hops, e.g.
+# "paulhontz@pauls-macbook-pro.fabric,bosgame,halo@192.168.122.119" for the route through the MacBook.
+
+WINDOWS_HOSTS = ("bosgame",)
+WINDOWS_ROUTE = "omarchy,bosgame.fabric,halo@192.168.122.119"
+WINDOWS_BUILDER = "omarchy"  # (goat-rig @bosgame build: cross-compiled there, in builds/<name>.win)
+VM_BASH = r"& 'C:\Program Files\Git\bin\bash.exe'"
+# on the VM's host, around a replay: goat-rig's bosgame lock and winvm's own, shared (a game run there waits)
+WINDOWS_LOCKS = "flock -s ~/goat-rig/bosgame.lock flock -s ~/winvm/.lock "
+# a game in the VM (a player's or a run's: OpenH1, goath1 or the bench's halo.exe), not a replay
+WINDOWS_GAME_RUNNING = ("tasklist //NH //FO CSV | tr -d '\\r' | grep -iE '^\"(halo|openh1|goath1)[^\"]*\\.exe\"' "
+                        "| grep -vi '^\"halo_replay' || true")
+# the MCC import's data in the VM (copied once from omarchy's), linked into each recording's data folder
+WINDOWS_MCC_IMPORT = "goat-rig/mcc_import"
+WINDOWS_MAPS = r"C:\openh1\data\maps"
+
+
+def windows(host):
+    return host in WINDOWS_HOSTS
+
+
+def windows_route():
+    hops = [h for h in os.environ.get("RT2_BOSGAME_ROUTE", WINDOWS_ROUTE).split(",") if h]
+    return [rig_target(hops[0])] + hops[1:]
+
+
+def remote_argv(host, script, prefix=""):
+    """the argv that runs a bash script on the host, standard input left to it: one ssh to a Linux rig, or the hops
+    to the Windows VM (prefix: a command on the VM's host that the last ssh runs under)"""
+    if not windows(host):
+        return ["ssh", "-o", "BatchMode=yes", rig_target(host), "bash -c " + shlex.quote(script)]
+    encoded = base64.b64encode(script.encode()).decode()
+    words = f"{VM_BASH} -c '. <(base64 -d <<<{encoded})'"
+    hops = windows_route()
+    for i in range(len(hops) - 1, 0, -1):
+        words = (prefix if i == len(hops) - 1 else "") + f"ssh -o BatchMode=yes {hops[i]} " + shlex.quote(words)
+    return ["ssh", "-o", "BatchMode=yes", hops[0], words]
+
+
+def windows_settings(moment, data):
+    """a moment's settings for a game in the VM (goat-rig @bosgame run's, as settings() gives a Linux rig's): its
+    own data folder (data, a Windows path: the maps and the MCC import linked there by windows_data_folder, as
+    goat-rig run's @link does), no bots, the window at SIZE"""
+    env = [e for e in settings(moment, True) if not e.startswith("@")]
+    return env + [f"HALO_DATA_ROOT={data}", "HALO_BOTS=", f"HALO_WINDOW_SIZE={SIZE}"]
+
+
+def windows_data_folder(host, folder):
+    """~/<folder> in the VM made a game's data folder: the maps and the MCC import linked (junctions), the import
+    copied from omarchy's first when the VM has none yet"""
+    have = ssh(host, f"test -e ~/{WINDOWS_MCC_IMPORT}/.copied && echo yes || true").stdout.strip()
+    if have != "yes":
+        say(f"rt2_clips: copying the MCC import's data from {WINDOWS_BUILDER} into the VM (once)")
+        source = subprocess.Popen(["ssh", "-o", "BatchMode=yes", rig_target(WINDOWS_BUILDER),
+                                   "tar -C ~/mcc-import-data/mcc_import -cf - ."], stdout=subprocess.PIPE)
+        to = f"~/{WINDOWS_MCC_IMPORT}"
+        sink = subprocess.run(remote_argv(host, f"set -e; rm -rf {to}; mkdir -p {to}; tar -xf - -C {to}; "
+                                                f"touch {to}/.copied"),
+                              stdin=source.stdout, capture_output=True, text=True)
+        source.stdout.close()
+        if source.wait() or sink.returncode:
+            raise SystemExit(f"rt2_clips: the MCC import's copy failed: {sink.stderr.strip()[-400:]}")
+    ssh(host, f"""set -e
+mkdir -p ~/{folder}
+{windows_unlink(folder)}
+cd ~/{folder}
+cmd //c mklink //J maps '{WINDOWS_MAPS}' >/dev/null
+cmd //c mklink //J mcc_import "$(cygpath -w ~/{WINDOWS_MCC_IMPORT})" >/dev/null
+""")
+
+
+def windows_unlink(folder):
+    """a bash line removing a data folder's junctions alone (before an rm -rf of it, to be sure of their targets)"""
+    return (f"for link in ~/{folder}/maps ~/{folder}/mcc_import; do if [ -e $link ]; then "
+            f"cmd //c rmdir \"$(cygpath -w $link)\" >/dev/null; fi; done")
 
 
 def settings(moment, lighting):

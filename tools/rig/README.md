@@ -156,6 +156,13 @@ rig, the frames drawn, the last picture to `build/rt2_bench/v<N>.png`. The game'
 recording; the backend's C (`xgpu_vulkan_lt*.c`) a replay rebuilt (`goat-rig build <ref> linux_replay`). The
 replay's own requests are `rt_set`, `rt_reload` and `rt_frames` (docs/replay_protocol.md).
 
+`--host bosgame` runs the same three on the Windows VM's RTX 3090: the Windows build and `windows_replay`
+cross-compiled on omarchy, the recording made by `goat-rig @bosgame run` (its own data folder in the VM, the maps and
+the MCC import linked; the import copied from omarchy's once), the replay (`halo_replay.exe`) run in the VM, its
+recordings in the VM's `~/goat-rig/rt2-bench`. The VM is reached through omarchy and bosgame's host
+(`RT2_BOSGAME_ROUTE` changes the hops), where the replay holds bosgame's and winvm's locks shared; its scripts run
+in Git Bash there. Nothing starts while a game runs in the VM.
+
 ## What it does for you
 
 - **build** `<branch|sha|pr/N|local branch>` fetches `~/goat-rig/repo.git` (a bare clone of GitHub's
