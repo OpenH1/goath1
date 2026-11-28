@@ -1084,6 +1084,12 @@ static boolean projectile_step(
 	boolean whole_tick = opens_tick && closes_tick;
 	/* port: where in its tick the line it travels on starts (a sub-step's) */
 	real segment_start = 0.0f;
+	/* port: the length of the update this one runs inside, given back at its
+	end: a grenade let go of in a projectile's update (a unit it struck lets
+	go) steps at once in a sub-step (projectile_substep_launch_on_tick), and
+	the update it interrupted goes on with its own length. Outside one, a
+	tick's (a detonation outside an update spans a tick) */
+	real enclosing_update_seconds = projectile_update_seconds;
 
 	projectile = projectile_get(projectile_index);
 	definition = projectile_definition_get(projectile->definition_index);
@@ -1602,8 +1608,7 @@ static boolean projectile_step(
 		&projectile->object.forward,
 		&projectile->object.up);
 
-	/* port: (a detonation outside an update spans a tick) */
-	projectile_update_seconds = seconds_per_tick;
+	projectile_update_seconds = enclosing_update_seconds;
 	profile_exit(projectile_update_section);
 
 	return TRUE;
