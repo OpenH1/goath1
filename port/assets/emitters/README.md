@@ -9,7 +9,9 @@ Made by `python -m rt_truth emitters <scene folder> --out <file>` (tools/rt_trut
 emitters") from any rt2 scene export of that BSP. In short, each `lamps` entry has `radiance` (linear, the game's light units) and `triangles` (world
 positions, lifted 0.01 wu off the surface, wound to glow toward their normal) to sample as area lights.
 
-Not yet packaged into builds: that comes with the pass that reads them.
+The build packs each file (tools/lt_emitters_data.py: about 950 KB for all 51, zlib) into openh1.assets beside
+the game, and the game unpacks the loaded BSP's at map load; `python3 tools/lt_emitters_data.py --check` fails
+where a file does not build or holds more than the game takes (8192 triangles, 1024 groups a BSP).
 
 ## The format
 One file a BSP: `<map>_bsp<k>.json` (`port/assets/emitters/` in the repo, shipped beside the game like the
