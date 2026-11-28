@@ -422,6 +422,7 @@ symbols in this file:
 #include "mcc_cache.h" /* port: port/linux/game/mcc_cache.c */
 #include "motion_vectors.h" /* port: port/linux/game/motion_vectors.c */
 #include "mods.h" /* port: port/linux/game/mod_bitmaps.c */
+int lt_lights_pass_on(void); /* port: port/linux/game/lt_lights.c (the ray-traced lighting on) */
 
 /* ---------- constants */
 
