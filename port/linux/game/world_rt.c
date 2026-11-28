@@ -961,8 +961,6 @@ static unsigned long const *world_rt_lamp_bitmap(struct world_rt_source_map cons
 		&world_rt.lamp_bitmaps[index].width, &world_rt.lamp_bitmaps[index].height);
 	*width = world_rt.lamp_bitmaps[index].width;
 	*height = world_rt.lamp_bitmaps[index].height;
-	platform_log("ray-traced scene: lamp map %s %ld: %lux%lu%s", world_rt_source_tag_name(map->bitmap), (long)map->index,
-		*width, *height, world_rt.lamp_bitmaps[index].texels ? "" : " (unread)");
 	return world_rt.lamp_bitmaps[index].texels;
 }
 
@@ -997,12 +995,18 @@ static void world_rt_lamps_made(struct world_rt_definition *entry, short node, s
 		int i, j, channel, count = 0;
 		struct world_rt_lamp *lamp;
 
+		/* (an additive transparent part's: what its first map adds, no mask) */
+		int additive = (material->flags & WORLD_RT_MATERIAL_TRANSPARENT) != 0;
+
 		if (!material->self_illumination)
 			continue;
-		mask = world_rt_lamp_bitmap(&material->maps[WORLD_RT_MAP_MULTIPURPOSE], &mask_width, &mask_height);
-		if (!mask || !mask_width || !mask_height)
+		mask = additive ? NULL :
+			world_rt_lamp_bitmap(&material->maps[WORLD_RT_MAP_MULTIPURPOSE], &mask_width, &mask_height);
+		if (!additive && (!mask || !mask_width || !mask_height))
 			continue;
 		base = world_rt_lamp_bitmap(&material->maps[WORLD_RT_MAP_BASE], &base_width, &base_height);
+		if (additive && (!base || !base_width || !base_height))
+			continue;
 		for (channel = 0; channel < 3; channel++)
 			colour[channel] = (float)((material->self_illumination >> (8 * channel)) & 0xFF) / 255.0f;
 		for (i = 0; i < 3; i++)
@@ -1019,8 +1023,15 @@ static void world_rt_lamps_made(struct world_rt_definition *entry, short node, s
 					continue;
 				st[0] = (c * corner[0]->uv[0] + a * corner[1]->uv[0] + b * corner[2]->uv[0]) * material->alpha_scale[0];
 				st[1] = (c * corner[0]->uv[1] + a * corner[1]->uv[1] + b * corner[2]->uv[1]) * material->alpha_scale[1];
-				m = world_rt_lamp_texel(mask, mask_width, mask_height, st[0], st[1], 8);
-				for (channel = 0; channel < 3; channel++)
+				m = mask ? world_rt_lamp_texel(mask, mask_width, mask_height, st[0], st[1], 8) : 1.0f;
+				for (channel = 0; channel < 3 && additive; channel++)
+				{
+					float added = world_rt_lamp_texel(base, base_width, base_height, st[0], st[1], 16 - 8 * channel) *
+						colour[channel];
+
+					sum[channel] += powf(added, 2.2f);
+				}
+				for (channel = 0; channel < 3 && !additive; channel++)
 				{
 					float albedo = base && base_width && base_height ?
 						powf(world_rt_lamp_texel(base, base_width, base_height, st[0], st[1], 16 - 8 * channel), 2.2f) :
@@ -1037,16 +1048,6 @@ static void world_rt_lamps_made(struct world_rt_definition *entry, short node, s
 		for (channel = 0; channel < 3; channel++)
 			sum[channel] *= WORLD_RT_LAMP_K / (float)count;
 		luminance = 0.2126f * sum[0] + 0.7152f * sum[1] + 0.0722f * sum[2];
-		if (getenv("HALO_WORLD_RT_LAMPS_LOG") && strstr(world_rt_source_name(entry->definition), "pelican") &&
-			luminance > 0.0f)
-		{
-			float st0 = corner[0]->uv[0], st1 = corner[0]->uv[1];
-
-			platform_log("lamp check: node %d tri %ld glow %.4f colour %.2f %.2f %.2f uv %.3f %.3f scale %.2f %.2f mask@uv %.3f",
-				(int)node, triangle, (double)luminance, (double)colour[0], (double)colour[1], (double)colour[2], (double)st0,
-				(double)st1, (double)material->alpha_scale[0], (double)material->alpha_scale[1],
-				(double)world_rt_lamp_texel(mask, mask_width, mask_height, st0, st1, 8));
-		}
 		if (luminance < WORLD_RT_LAMP_LEAST)
 			continue;
 		lamp = realloc(entry->lamps, sizeof(*entry->lamps) * (size_t)(entry->lamp_count + 1));
@@ -1149,12 +1150,22 @@ static long world_rt_definition_render(long definition, struct world_rt_definiti
 	part.materials = mesh.materials;
 	/* (a model whose joints blend two nodes: one skinned mesh, posed and
 	refit for each object) */
+	/* (its additive transparent parts, its lamps alone: on their triangles'
+	major nodes) */
+	{
+		struct world_rt_source_mesh lamps;
+
+		memset(&lamps, 0, sizeof(lamps));
+		if (world_rt_source_model_lamps(definition, &lamps) > 0 && world_rt_source_mesh_make(&lamps) &&
+			world_rt_source_model_lamps(definition, &lamps) > 0)
+		{
+			world_rt_lamps_made(entry, -1, &lamps, inverses);
+		}
+		world_rt_source_mesh_free(&lamps);
+	}
 	if (world_rt_blended(mesh.vertices, mesh.vertex_count))
 	{
 		world_rt_lamps_made(entry, -1, &mesh, inverses);
-		if (entry->lamp_count > 0)
-			platform_log("ray-traced scene: %s: %ld object lamp triangles (skinned)", world_rt_source_name(definition),
-				entry->lamp_count);
 		made = world_rt_definition_skinned(&mesh, inverses, entry);
 		goto done;
 	}
@@ -1206,14 +1217,7 @@ static long world_rt_definition_render(long definition, struct world_rt_definiti
 		}
 		if (!part.triangle_count)
 			continue;
-		{
-			long before = entry->lamp_count;
-
-			world_rt_lamps_made(entry, node_index, &part, NULL);
-			if (entry->lamp_count > before)
-				platform_log("ray-traced scene: %s node %d: %ld object lamp triangles", world_rt_source_name(definition),
-					(int)node_index, entry->lamp_count - before);
-		}
+		world_rt_lamps_made(entry, node_index, &part, NULL);
 		size = world_rt_blob(&part);
 		id = size ? world_rt_id_take() : 0;
 		if (!id)
@@ -1566,9 +1570,17 @@ void world_rt_frame(unsigned long frame)
 			instance = world_rt_instance_add(&count, mesh, owner, kind);
 			if (instance)
 				world_rt_transform(&world_rt.frames[node_index], instance->transform);
-			/* (its lamps, moved with it) */
-			if (instance && permutation == 0 && definition->lamp_count > 0 && kind != WORLD_RT_SHADOWLESS)
-				world_rt_lamps_placed(definition, node_index, instance->transform, owner);
+		}
+		/* (its lamps, on their nodes, moved with it) */
+		if (definition->lamp_count > 0 && kind != WORLD_RT_SHADOWLESS)
+		{
+			float transform[3][4];
+
+			for (node_index = 0; node_index < node_count && node_index < definition->node_count; node_index++)
+			{
+				world_rt_transform(&world_rt.frames[node_index], transform);
+				world_rt_lamps_placed(definition, node_index, (float const (*)[4])transform, owner);
+			}
 		}
 	}
 	/* (as drawn) the first-person weapon and hands as last drawn, their own
