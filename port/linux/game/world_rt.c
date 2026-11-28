@@ -88,6 +88,8 @@ the median of their 357 lamps, 5.36 (quartiles 1.57 and 42.7;
 ~/dev/rt2-calibration.json's object_lamps); a triangle glowing less on
 average (its luminance) is no lamp, and its samples a side */
 #define WORLD_RT_LAMP_K 5.36f
+/* (a material's kind: its shader's type, shader_transparent_generic's) */
+#define WORLD_RT_SHADER_TRANSPARENT_GENERIC 5
 #define WORLD_RT_LAMP_LEAST 0.01f
 #define WORLD_RT_LAMP_SAMPLES 6
 /* (the maps read at their first level no larger than this each way) */
@@ -152,7 +154,16 @@ struct world_rt_definition
 struct world_rt_lamp
 {
 	short node;
+	/* (a model's) the region its triangle is in (-1: any) */
+	short region;
 	float corners[9], radiance[3];
+	/* (a transparent generic shader's, drawn adding: its glow as each
+	object of it draws it, its stages run on its maps' texels at its sample
+	points with the object's change colours and functions; shader NONE: the
+	radiance above) */
+	long shader;
+	long sample_count;
+	unsigned long (*samples)[4];
 };
 
 /* ---------- globals */
@@ -979,6 +990,17 @@ static float world_rt_lamp_texel(unsigned long const *texels, unsigned long widt
 	return (float)((texels[y * (long)width + x] >> shift) & 0xFF) / 255.0f;
 }
 
+/* ... and the whole texel (ARGB) */
+static unsigned long world_rt_lamp_word(unsigned long const *texels, unsigned long width, unsigned long height, float s,
+	float t)
+{
+	long x = (long)floorf((s - floorf(s)) * (float)width), y = (long)floorf((t - floorf(t)) * (float)height);
+
+	x = x < 0 ? 0 : x >= (long)width ? (long)width - 1 : x;
+	y = y < 0 ? 0 : y >= (long)height ? (long)height - 1 : y;
+	return texels[y * (long)width + x];
+}
+
 /* a node's part's lamps onto the definition's: each triangle of a
 material that glows (its self-illumination colour) sampled at points
 spread over it (its base map and its multipurpose map's green, as the
@@ -1000,9 +1022,28 @@ static void world_rt_lamps_made(struct world_rt_definition *entry, short node, s
 
 		/* (an additive transparent part's: what its first map adds, no mask) */
 		int additive = (material->flags & WORLD_RT_MATERIAL_TRANSPARENT) != 0;
+		/* (... a generic shader's: what its stages add, from its maps) */
+		struct world_rt_source_map glow_maps[4];
+		float glow_transforms[4][4];
+		int glow = additive && material->kind == WORLD_RT_SHADER_TRANSPARENT_GENERIC ?
+			world_rt_source_glow_maps(material->shader, glow_maps, glow_transforms) : 0;
+		unsigned long const *glow_texels[4] = { NULL, NULL, NULL, NULL };
+		unsigned long glow_width[4] = { 0, 0, 0, 0 }, glow_height[4] = { 0, 0, 0, 0 };
+		unsigned long (*samples)[4] = NULL;
 
 		if (!material->self_illumination)
 			continue;
+		if (glow)
+		{
+			for (i = 0; i < glow; i++)
+				glow_texels[i] = world_rt_lamp_bitmap(&glow_maps[i], &glow_width[i], &glow_height[i]);
+			/* (its first map unread: not a lamp, as below) */
+			if (!glow_texels[0] || !glow_width[0] || !glow_height[0])
+				continue;
+			samples = malloc(sizeof(*samples) * WORLD_RT_LAMP_SAMPLES * WORLD_RT_LAMP_SAMPLES);
+			if (!samples)
+				continue;
+		}
 		mask = additive ? NULL :
 			world_rt_lamp_bitmap(&material->maps[WORLD_RT_MAP_MULTIPURPOSE], &mask_width, &mask_height);
 		if (!additive && (!mask || !mask_width || !mask_height))
@@ -1027,6 +1068,28 @@ static void world_rt_lamps_made(struct world_rt_definition *entry, short node, s
 				st[0] = (c * corner[0]->uv[0] + a * corner[1]->uv[0] + b * corner[2]->uv[0]) * material->alpha_scale[0];
 				st[1] = (c * corner[0]->uv[1] + a * corner[1]->uv[1] + b * corner[2]->uv[1]) * material->alpha_scale[1];
 				m = mask ? world_rt_lamp_texel(mask, mask_width, mask_height, st[0], st[1], 8) : 1.0f;
+				if (glow)
+				{
+					float uv[2], rgb[3];
+					int map;
+
+					uv[0] = c * corner[0]->uv[0] + a * corner[1]->uv[0] + b * corner[2]->uv[0];
+					uv[1] = c * corner[0]->uv[1] + a * corner[1]->uv[1] + b * corner[2]->uv[1];
+					for (map = 0; map < 4; map++)
+					{
+						samples[count][map] = map < glow && glow_texels[map] && glow_width[map] && glow_height[map] ?
+							world_rt_lamp_word(glow_texels[map], glow_width[map], glow_height[map],
+								uv[0] * glow_transforms[map][0] + glow_transforms[map][2],
+								uv[1] * glow_transforms[map][1] + glow_transforms[map][3]) : 0;
+					}
+					/* (as an object of white change colours draws it, to
+					find whether it glows at all) */
+					world_rt_source_glow(material->shader, samples[count], NULL, rgb);
+					for (channel = 0; channel < 3; channel++)
+						sum[channel] += powf(rgb[channel], 2.2f);
+					count++;
+					continue;
+				}
 				for (channel = 0; channel < 3 && additive; channel++)
 				{
 					float added = world_rt_lamp_texel(base, base_width, base_height, st[0], st[1], 16 - 8 * channel) *
@@ -1047,18 +1110,31 @@ static void world_rt_lamps_made(struct world_rt_definition *entry, short node, s
 			}
 		}
 		if (!count)
+		{
+			free(samples);
 			continue;
+		}
 		for (channel = 0; channel < 3; channel++)
 			sum[channel] *= WORLD_RT_LAMP_K / (float)count;
 		luminance = 0.2126f * sum[0] + 0.7152f * sum[1] + 0.0722f * sum[2];
 		if (luminance < WORLD_RT_LAMP_LEAST)
+		{
+			free(samples);
 			continue;
+		}
 		lamp = realloc(entry->lamps, sizeof(*entry->lamps) * (size_t)(entry->lamp_count + 1));
 		if (!lamp)
+		{
+			free(samples);
 			return;
+		}
 		entry->lamps = lamp;
 		lamp = &entry->lamps[entry->lamp_count++];
 		lamp->node = node;
+		lamp->region = material->region;
+		lamp->shader = glow ? material->shader : -1;
+		lamp->sample_count = glow ? count : 0;
+		lamp->samples = samples;
 		/* (a skinned model's: on its triangle's major node, in that node's
 		space, as its rigid parts are) */
 		if (inverses)
@@ -1080,7 +1156,7 @@ static void world_rt_lamps_made(struct world_rt_definition *entry, short node, s
 
 /* a node's lamps (its instance's transform this frame) onto the frame's */
 static void world_rt_lamps_placed(struct world_rt_definition const *definition, short node,
-	float const transform[3][4], unsigned long owner)
+	float const transform[3][4], unsigned long owner, struct world_rt_source_shading const *shading)
 {
 	long index;
 
@@ -1099,10 +1175,34 @@ static void world_rt_lamps_placed(struct world_rt_definition const *definition, 
 
 		if (lamp->node != node)
 			continue;
+		/* (its triangle drawn: its region standing, at the permutation it
+		was taken from) */
+		if (shading && lamp->region >= 0 && lamp->region < 8 &&
+			((shading->destroyed & (1u << lamp->region)) || shading->permutations[lamp->region] != 0))
+			continue;
+		if (lamp->samples)
+		{
+			float *radiance = world_rt.lamp_radiance[world_rt.lamp_count], rgb[3];
+			long sample;
+			int channel;
+
+			radiance[0] = radiance[1] = radiance[2] = 0.0f;
+			for (sample = 0; sample < lamp->sample_count; sample++)
+			{
+				world_rt_source_glow(lamp->shader, lamp->samples[sample], shading, rgb);
+				for (channel = 0; channel < 3; channel++)
+					radiance[channel] += powf(rgb[channel], 2.2f);
+			}
+			for (channel = 0; channel < 3; channel++)
+				radiance[channel] *= WORLD_RT_LAMP_K / (float)lamp->sample_count;
+			if (0.2126f * radiance[0] + 0.7152f * radiance[1] + 0.0722f * radiance[2] < WORLD_RT_LAMP_LEAST)
+				continue;
+		}
+		else
+			memcpy(world_rt.lamp_radiance[world_rt.lamp_count], lamp->radiance, sizeof(lamp->radiance));
 		for (corner = 0; corner < 3; corner++)
 			world_rt_transformed(transform, &lamp->corners[3 * corner], 1,
 				&world_rt.lamp_corners[world_rt.lamp_count][3 * corner]);
-		memcpy(world_rt.lamp_radiance[world_rt.lamp_count], lamp->radiance, sizeof(lamp->radiance));
 		world_rt.lamp_owners[world_rt.lamp_count] = owner;
 		world_rt.lamp_count++;
 	}
@@ -1345,6 +1445,16 @@ static struct world_rt_definition *world_rt_definition(long definition)
 		}
 		entry->boxed = world_rt.box != 0;
 	}
+	/* (its lamps, once a map) */
+	if (entry->lamp_count > 0)
+	{
+		long lamp, staged = 0;
+
+		for (lamp = 0; lamp < entry->lamp_count; lamp++)
+			staged += entry->lamps[lamp].samples != NULL;
+		platform_log("world ao: the ray-traced scene's %s: %ld object lamps (%ld a generic shader's stages)",
+			world_rt_source_name(definition), entry->lamp_count, staged);
+	}
 	/* (measuring) */
 	if (world_rt.counts_wanted > 0)
 		platform_log("world ao: the ray-traced scene's %s: %d nodes, %ld triangles%s%s", world_rt_source_name(definition),
@@ -1544,11 +1654,14 @@ void world_rt_frame(unsigned long frame)
 			if (definition->lamp_count > 0 && kind == WORLD_RT_OBJECT)
 			{
 				float transform[3][4];
+				struct world_rt_source_shading shading;
+				int shaded = world_rt_source_shading(object->id, &shading);
 
 				for (node_index = 0; node_index < definition->node_count; node_index++)
 				{
 					world_rt_transform(&world_rt.frames[node_index], transform);
-					world_rt_lamps_placed(definition, node_index, (float const (*)[4])transform, owner);
+					world_rt_lamps_placed(definition, node_index, (float const (*)[4])transform, owner,
+						shaded ? &shading : NULL);
 				}
 			}
 			/* (measuring: whether the first-person body's nodes move) */
@@ -1578,11 +1691,14 @@ void world_rt_frame(unsigned long frame)
 		if (definition->lamp_count > 0 && kind != WORLD_RT_SHADOWLESS)
 		{
 			float transform[3][4];
+			struct world_rt_source_shading shading;
+			int shaded = world_rt_source_shading(object->id, &shading);
 
 			for (node_index = 0; node_index < node_count && node_index < definition->node_count; node_index++)
 			{
 				world_rt_transform(&world_rt.frames[node_index], transform);
-				world_rt_lamps_placed(definition, node_index, (float const (*)[4])transform, owner);
+				world_rt_lamps_placed(definition, node_index, (float const (*)[4])transform, owner,
+					shaded ? &shading : NULL);
 			}
 		}
 	}
@@ -1686,7 +1802,11 @@ void world_rt_map_unloaded(void)
 		{
 			if (world_rt.definitions[index].definition != -1)
 			{
+				long lamp;
+
 				free(world_rt.definitions[index].inverses);
+				for (lamp = 0; lamp < world_rt.definitions[index].lamp_count; lamp++)
+					free(world_rt.definitions[index].lamps[lamp].samples);
 				free(world_rt.definitions[index].lamps);
 			}
 		}

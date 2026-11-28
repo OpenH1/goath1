@@ -151,6 +151,9 @@ struct world_rt_source_material
 	unsigned int normal_image, orm_image;
 	/* its self-illumination's colour (RGBA8, R low; 0 none: a model's) */
 	unsigned int self_illumination;
+	/* (a model's part) the region of the model it is in, its first
+	permutation's (-1: none, the structure's) */
+	short region;
 };
 
 /* a render mesh as the game has it: its counts (the first opaque_count
@@ -293,6 +296,28 @@ than largest each way, and that level's size: the caller frees them; NULL
 where it cannot be read (world_rt.c's object lamps) */
 unsigned long *world_rt_source_texels(struct world_rt_source_map const *map, unsigned long largest,
 	unsigned long *width, unsigned long *height);
+/* an object's shading as it is drawn this frame (render_interpolation's):
+its function values and change colours A to D, the game's time (seconds),
+and its regions' permutations and destroyed flags (bit per region) */
+struct world_rt_source_shading
+{
+	float values[4], colours[4][3], time;
+	unsigned char permutations[8];
+	unsigned int destroyed;
+};
+/* (FALSE: no such object) */
+int world_rt_source_shading(long id, struct world_rt_source_shading *shading);
+/* a transparent generic shader (an object lamp's, drawn adding): its maps,
+at most 4, and each one's coordinates' scale and offset (u scale, v scale,
+u offset, v offset); 0 if its stages cannot be run here (none, or a cube
+first map) */
+int world_rt_source_glow_maps(long shader, struct world_rt_source_map maps[4], float transforms[4][4]);
+/* ... what it adds at a point: its stages' combiners run as the pixel
+shader runs them (shader_transparent_generic_preprocessor.c's registers),
+on its maps' texels there (ARGB words), with an object's shading (NULL:
+white change colours, functions and time 0); its colour, 0 to 1 */
+void world_rt_source_glow(long shader, unsigned long const texels[4], struct world_rt_source_shading const *shading,
+	float rgb[3]);
 /* a definition's nodes (at most WORLD_RT_NODES), its bounding sphere in
 its model's space (centre, radius) and whether it is an item (a weapon,
 equipment or garbage); 0 if it has none */
