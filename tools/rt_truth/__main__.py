@@ -47,6 +47,8 @@ def main():
                    help="rooms: the tag's lamps, brightness matched per room-sized cell (the chosen form); "
                    "fit: the free least-squares fit with added patches")
     e.add_argument("--cell", type=float, default=12.0, help="rooms: the cell, wu")
+    e.add_argument("--outside", type=float, default=0.05, help="rooms: a cell whose lamps give under this share of "
+                   "the bake's light is the sky's (an opening, a hull outside), left out")
     e.add_argument("--patch-size", type=float, default=2.0, help="the candidate patches' cell, wu")
     e.add_argument("--weights", default="area", choices=("area", "display"),
                    help="squared errors by world area (linear light), or as the shown page sees them")
@@ -85,7 +87,8 @@ def main():
         wait_for_no_player(print)
         with GpuLock(os.path.expanduser("~/goat-rig/locks/gpu.lock"), print):  # shared, as a truth render: no timing run
             if a.mode == "rooms":
-                return _E.solve_rooms(a.scene, a.out, spp=max(a.spp, 128), max_samples=a.samples, cell=a.cell)
+                return _E.solve_rooms(a.scene, a.out, spp=max(a.spp, 128), max_samples=a.samples, cell=a.cell,
+                                     outside=a.outside)
             solve_level(a.scene, a.out, spp=a.spp, max_samples=a.samples, max_added=a.max_added,
                         report=a.report, weights=a.weights, patch_size=a.patch_size)
     elif a.cmd == "compare":
