@@ -56,6 +56,18 @@ int config_boolean(const char *name)
 	return 0;
 }
 
+/* (debug.frame_time: none, the noise seeded by the frames drawn) */
+double config_real(const char *name)
+{
+	(void)name;
+	return 0.0;
+}
+
+double sim_trace_scenario_seconds(void)
+{
+	return -1.0;
+}
+
 /* (found once a pixel: the front end's pre-pass, none here) */
 static int prepass_found;
 

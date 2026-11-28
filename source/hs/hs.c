@@ -11848,7 +11848,7 @@ static struct hs_function_definition_with_1_parameter const debug_camera_set_def
 		"debug_camera_set",
 		hs_macro_function_parse,
 		hs_debug_camera_set_evaluate,
-		"puts the camera at \"<x> <y> <z> <yaw> <pitch> <roll> <field of view>\" (degrees) at once, or gives it back (\"off\").",
+		"puts the camera at \"<x> <y> <z> <yaw> <pitch> <roll> <field of view> [<seconds>]\" (degrees) at once or moving there over the seconds, or gives it back (\"off\").",
 		NULL,
 		1,
 		{ _hs_type_string },

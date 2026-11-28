@@ -37,6 +37,7 @@ other value (and the Classic preset's "off") draws exactly as before.
 
 const char *config_string(const char *name);
 int config_boolean(const char *name);
+double config_real(const char *name);
 unsigned long halo_gpu_settings_taken(void);
 unsigned long long SDL_GetTicksNS(void);
 void platform_log(const char *format, ...);
@@ -706,12 +707,31 @@ int world_ao_prepass_begin(void)
 	return halo_world_ao_prepass_begin();
 }
 
+double sim_trace_scenario_seconds(void);
+
+/* the frame the passes' noise is seeded by (the pre-pass's history[1]: the
+light-transport pass, its denoiser and the bounce): the frames drawn so far;
+with debug.frame_time (each frame a fixed game time, for runs that must draw
+the same pictures every time: the determinism check, tools/rt2_clips.py) the
+frame of the scenario's clock instead (its seconds over the frame time),
+which falls alike every run, where the count of frames drawn does not (a
+map's load, or a cutscene skipped, draws as many frames as it takes) */
+static unsigned long world_ao_seed_frame(void)
+{
+	double frame_time = config_real("debug.frame_time");
+	double seconds;
+
+	if (frame_time <= 0.0 || (seconds = sim_trace_scenario_seconds()) < 0.0)
+		return world_ao_scene.frame;
+	return (unsigned long)(seconds / frame_time + 0.5);
+}
+
 void world_ao_prepass_end(short x0, short y0, short x1, short y1, float const camera[4][4])
 {
 	/* (the previous frame's occlusion reprojected only where one window
 	draws a frame, this one and the last: split screen's share the
 	backend's texture) */
-	halo_world_ao_prepass_end(x0, y0, x1, y1, camera, (float const (*)[4])world_ao.cascades, world_ao_scene.frame,
+	halo_world_ao_prepass_end(x0, y0, x1, y1, camera, (float const (*)[4])world_ao.cascades, world_ao_seed_frame(),
 		world_ao_scene.windows == 1 && world_ao_scene.last_windows == 1 &&
 		world_ao_scene.windows_frame == world_ao_scene.last_frame + 1);
 }
