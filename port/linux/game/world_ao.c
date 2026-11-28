@@ -706,12 +706,42 @@ int world_ao_prepass_begin(void)
 	return halo_world_ao_prepass_begin();
 }
 
+long network_test_cues_start_tick(void);
+
+/* the frame the passes' noise is seeded by (the pre-pass's history[1]: the
+light-transport pass, its denoiser and the bounce): the frames drawn so far;
+with debug.frame_time (each frame a fixed game time, for runs that must
+draw the same pictures every time: the determinism check, tools/rt2_clips.py)
+the frames since the scenario's clock started instead, as many at each of
+its moments every run, where the count from the game's start is not (a
+map's load draws as many frames as it takes) */
+static unsigned long world_ao_seed_frame(void)
+{
+	static unsigned long counted, seed;
+	static long start = NONE;
+	long now;
+
+	if (config_real("debug.frame_time") <= 0.0)
+		return world_ao_scene.frame;
+	now = network_test_cues_start_tick();
+	if (now != start)
+	{
+		start = now;
+		seed = 0;
+	}
+	/* (once a frame, whatever its windows) */
+	else if (counted != world_ao_scene.frame)
+		seed++;
+	counted = world_ao_scene.frame;
+	return seed;
+}
+
 void world_ao_prepass_end(short x0, short y0, short x1, short y1, float const camera[4][4])
 {
 	/* (the previous frame's occlusion reprojected only where one window
 	draws a frame, this one and the last: split screen's share the
 	backend's texture) */
-	halo_world_ao_prepass_end(x0, y0, x1, y1, camera, (float const (*)[4])world_ao.cascades, world_ao_scene.frame,
+	halo_world_ao_prepass_end(x0, y0, x1, y1, camera, (float const (*)[4])world_ao.cascades, world_ao_seed_frame(),
 		world_ao_scene.windows == 1 && world_ao_scene.last_windows == 1 &&
 		world_ao_scene.windows_frame == world_ao_scene.last_frame + 1);
 }
