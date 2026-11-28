@@ -131,6 +131,14 @@ MOMENTS = {
          (40, cam(3.0, -30.0, 88.8, 165, -18, 12))],
         "",
         "a50's opening at night: the Covenant's portable shields on the cliff, the ground about them; a slow pan"),
+    # (a30's BSP 1, the emitter screen's first spot: a lamp-lit room with no solved file, black live before the one
+    # rule; the sweep's scene_a30_bsp1)
+    "a30_bsp1": (
+        "levels\\a30\\a30", 34, 40,
+        [(30, "ai_erase_all"), (30.5, "switch_bsp 1"), (33, cam(-340.98, 43.52, 44.32, 255, -9)),
+         (34, cam(-340.98, 43.52, 44.32, 285, -9, 6))],
+        "",
+        "a30's BSP 1: a lamp-lit room (the emitter screen's spot 1), a slow pan"),
     "a10_cryo": (
         "levels\\a10\\a10", 12, 24,
         [(11.5, cam(-52.0, 0.0, 0.6, 180, -12)),
@@ -179,7 +187,7 @@ MOMENTS = {
 
 # the moments not yet frame-identical run to run (on-demand pipeline compiles still land on different frames there:
 # about 15% and 96% of frames differ); played only when named, not by "all"
-FOLLOW_UP = {"damnation_hall", "b40_torch"}
+FOLLOW_UP = {"damnation_hall", "b40_torch", "a30_bsp1"}
 
 
 def say(*words):
