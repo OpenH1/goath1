@@ -8,6 +8,7 @@ derives; a miss names the fields it differs in from the playback's nearest draw,
 category: the sky, models, the interface). The negative controls play back a record that lost an input of the draws
 (the soft group, the high-res text's atlas, the shadows' regions), or the main menu's record without its scene: the
 test names what is missing."""
+import functools
 import gzip
 import re
 import sys
@@ -76,10 +77,15 @@ static int load(const char *path, struct xgpu_manifest *manifest)
 	return 1;
 }
 
+static int compare_draws(const void *a, const void *b)
+{
+	return memcmp(a, b, sizeof(struct xgpu_manifest_draw));
+}
+
 int main(int argc, char **argv)
 {
 	struct xgpu_manifest walk, replay;
-	struct xgpu_manifest_draw *made;
+	struct xgpu_manifest_draw *made, *sorted;
 	size_t combination;
 	uint32_t index, other;
 	int misses = 0;
@@ -87,21 +93,27 @@ int main(int argc, char **argv)
 	if (argc < 3 || !load(argv[1], &walk) || !load(argv[2], &replay))
 		return 2;
 	made = calloc(replay.draw_count + 1, sizeof(*made));
+	sorted = calloc(replay.draw_count + 1, sizeof(*sorted));
 	for (combination = 0; combination < sizeof(matrix) / sizeof(matrix[0]); combination++)
 	{
 		const struct xgpu_manifest_settings *settings = &matrix[combination].settings;
 
 		for (other = 0; other < replay.draw_count; other++)
 			xgpu_manifest_derive(&replay.draws[other], &replay.contexts[other], settings, 0, &made[other]);
+		/* (the playback's draws sorted by their bytes: each walk draw found by a binary search, not a scan) */
+		memcpy(sorted, made, replay.draw_count * sizeof(*made));
+		qsort(sorted, replay.draw_count, sizeof(*sorted), compare_draws);
 		for (index = 0; index < walk.draw_count; index++)
 		{
 			struct xgpu_manifest_draw wanted;
 			uint32_t nearest = 0, nearest_difference = 0xffffffffu;
 			size_t field;
-			int found = 0;
 
 			xgpu_manifest_derive(&walk.draws[index], &walk.contexts[index], settings, 0, &wanted);
-			for (other = 0; other < replay.draw_count && !found; other++)
+			if (replay.draw_count && bsearch(&wanted, sorted, replay.draw_count, sizeof(*sorted), compare_draws))
+				continue;
+			/* a miss: the playback's draw nearest it (the fewest bytes apart, the first such), to name the fields */
+			for (other = 0; other < replay.draw_count; other++)
 			{
 				const unsigned char *a = (const unsigned char *)&wanted, *b = (const unsigned char *)&made[other];
 				uint32_t difference = 0;
@@ -109,15 +121,12 @@ int main(int argc, char **argv)
 
 				for (at = 0; at < sizeof(wanted); at++)
 					difference += a[at] != b[at];
-				found = !difference;
 				if (difference < nearest_difference)
 				{
 					nearest_difference = difference;
 					nearest = other;
 				}
 			}
-			if (found)
-				continue;
 			misses++;
 			printf("miss %s: vertex %08x%08x, category %u, differing:", matrix[combination].name,
 				(unsigned)wanted.key.vertex_program[1], (unsigned)wanted.key.vertex_program[0],
@@ -141,6 +150,12 @@ def sections():
     """{(map, width, models): {"walk": lines, "replay": lines, "play": lines}}"""
     if not COVERAGE.is_file():
         pytest.skip("no coverage recorded (tools/prepared_records.py)")
+    return parsed()
+
+
+@functools.lru_cache(maxsize=None)
+def parsed():
+    """the coverage read once (the tests only read it)"""
     groups, current = {}, None
     with gzip.open(COVERAGE, "rt") as file:
         for line in file:
