@@ -479,6 +479,10 @@ static int stream_read_target(void *context, const struct xgpu_stream_read_targe
 	height = entry->description.height;
 	if ((uint64_t)width * height * 4 > record->size)
 		return 0;
+	/* (debug.screenshot_halves: the half floats as they are) */
+	if (record->tone_map == XGPU_STREAM_READ_HALVES)
+		return entry->description.format == XGPU_METAL_FORMAT_RGBA16F && (uint64_t)width * height * 8 <= record->size &&
+			xgpu_metal_read_pixels(entry->texture, 0, 0, 0, 0, width, height, host_pointer(record->pixels), width * 8);
 	if (entry->description.format == XGPU_METAL_FORMAT_RGBA16F)
 		return read_half_floats(entry, record->layer > 0 ? (uint32_t)record->layer : 0, host_pointer(record->pixels),
 			record->tone_map != 0);

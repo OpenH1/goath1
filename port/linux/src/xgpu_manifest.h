@@ -196,6 +196,10 @@ struct xgpu_draw_facts
 	dynamic lights); the enhanced lights lighting the frame; the structure's
 	lightmap pass drawing */
 	int per_pixel, lights_active, environment;
+	/* display.per_pixel_lighting itself (per_pixel is it or the enhanced
+	lights): a model the enhanced lights light without it keeps its
+	ambient light the vertex's (xgpu.h's XGPU_PER_PIXEL_VERTEX_AMBIENT) */
+	int per_pixel_setting;
 	/* the backend has a sample mask (xgpu_backend_capabilities) */
 	int sample_mask;
 	/* display.smooth_lightmaps on, and the draw's texture 2 a 2D lookup
@@ -235,6 +239,11 @@ struct xgpu_manifest_settings
 {
 	int samples, hdr, per_pixel_lighting, enhanced_lights, ambient_occlusion, deep, soft, boost, alpha_drop;
 	int smooth_lightmaps;
+	/* the ray-traced lighting's light model (display.ray_traced_lighting:
+	port/linux/game/lt_lights.h): a model the enhanced lights reach lit for
+	each pixel without display.per_pixel_lighting (XGPU_PER_PIXEL_VERTEX_AMBIENT);
+	0, as xgpu_manifest_settings gives it, as before */
+	int light_model;
 };
 
 /* display.ambient_occlusion: off, or found in the world ("world"; without

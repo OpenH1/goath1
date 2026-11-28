@@ -42,6 +42,11 @@ each on standard output (the log on standard error):
 		"inline":true)
 	{"cmd":"cost","n":N,"repeats":R,"draws":[..]}  (or "all":true, "top":K;
 		"cpu":true: the CPU's time too)
+	{"cmd":"hold","n":N,"frames":F,"shots":[1,30,120],"dir":"<folder>",
+		"linear":true}  (or "inline":true, "reset":true, "image":"qoi")
+	{"cmd":"reload","dir":"<folder>"}  (debug: the backend's kernels
+		from the folder's SPIR-V files from the next play; "dir" left
+		out, the folder already read again)
 
 cost: frame N's GPU time, the frame's and its passes' (the backend's
 timestamps at their boundaries) and its draws' (the frame played again with
@@ -55,6 +60,13 @@ records of a draw: those after the draw before it, to it), the backend's
 calls of its driver among it (their time and count, by kind), each draw's,
 pass's and record type's, the median of R plays without the GPU's
 timestamps (and R more with the driver's calls watched).
+
+hold: frame N played exactly, then again where it is F - 1 times more as
+though the world stood still: the reprojection the identity (the previous
+camera and constants the frame's own), the frame's number (the noise of
+the ray-traced passes) advancing a play; the shots' pictures (1 the frame
+as recorded), and with "linear" each as an OpenEXR file of half floats
+(the presented picture's linear light).
 
 A frame is played exactly: the frames before it are played first (from the
 recording's start again for one before the frame last played; those more
@@ -87,7 +99,7 @@ its record's kind and primitive.
 /* the service's protocol, in info's "protocol": raised when a request or a
 reply changes so that a client reading the old one would misread it (an
 added field does not raise it); docs/replay_protocol.md */
-#define HOST_RENDER_REPLAY_PROTOCOL 2
+#define HOST_RENDER_REPLAY_PROTOCOL 3
 
 /* the draws an ID buffer keeps for each pixel (pick's stack) */
 #define HOST_RENDER_REPLAY_ID_DEPTH 8
@@ -190,6 +202,11 @@ struct host_render_replay_platform
 	uint32_t call_kinds;
 	const char *const *call_kind_names;
 	void (*calls_watch)(uint64_t *ticks, uint64_t *counts);
+	/* Debug (NULL: none): the backend's own kernels read again from a
+	folder's files before the next frame it plays (the service's "reload":
+	Vulkan's light-transport pass, HALO_LT_SHADER_DIR); folder NULL: the
+	one it reads from already */
+	void (*shaders_reload)(const char *folder);
 };
 
 int host_render_replay_main(int argc, char *argv[], const struct host_render_replay_platform *platform);

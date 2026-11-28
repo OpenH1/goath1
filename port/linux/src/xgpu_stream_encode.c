@@ -127,6 +127,14 @@ _Static_assert(XGPU_STREAM_UNIFORM_PIECES <= 64, "uniform pieces");
 
 struct xgpu_backend_capabilities xgpu_backend_capabilities;
 
+/* (the game's ray-traced scene, port/linux/game/world_rt.c) its render
+geometry's budget here, in MB: 0 none given */
+unsigned long halo_world_rt_budget(void);
+unsigned long halo_world_rt_budget(void)
+{
+	return xgpu_backend_capabilities.rt_budget;
+}
+
 /* the numbered definitions (pipeline keys, vertex layouts): their bytes
 by number, found by a hash of them */
 struct numbering
@@ -697,6 +705,7 @@ void xgpu_backend_initialize(void)
 	xgpu_backend_capabilities.hdr = stream.capabilities.hdr;
 	xgpu_backend_capabilities.deep_sdr = stream.capabilities.deep_sdr;
 	xgpu_backend_capabilities.ray_queries = stream.capabilities.ray_queries;
+	xgpu_backend_capabilities.rt_budget = (unsigned long)stream.capabilities.rt_budget * 8u;
 	xgpu_backend_capabilities.soft_effects = stream.capabilities.soft_effects;
 	xgpu_backend_capabilities.temporal_upscale = stream.capabilities.temporal_upscale;
 	xgpu_backend_capabilities.temporal_dlss = stream.capabilities.temporal_dlss;
@@ -1571,6 +1580,35 @@ unsigned char *xgpu_backend_read_target(xgpu_target target, int layer, BOOL tone
 		return NULL;
 	}
 	return pixels;
+}
+
+unsigned short *xgpu_backend_read_target_halves(xgpu_target target)
+{
+	struct xgpu_stream_read_target *record_body;
+	unsigned char *pixels;
+	uint32_t size;
+
+	if (!stream.open || target >= TARGET_MAXIMUM || !stream.targets[target].width)
+		return NULL;
+	size = stream.targets[target].width * stream.targets[target].height * 8;
+	pixels = stream_allocate(16, size);
+	if (!pixels)
+		return NULL;
+	record_body = record(XGPU_STREAM_READ_TARGET, sizeof(*record_body));
+	record_body->target = target;
+	record_body->layer = -1;
+	record_body->tone_map = XGPU_STREAM_READ_HALVES;
+	record_body->pixels = STREAM_ADDRESS(pixels);
+	record_body->size = size;
+	record_body->reply = STREAM_ADDRESS(&stream.replies->value);
+	stream.replies->value = 0;
+	synchronous();
+	if (!stream.replies->value)
+	{
+		stream_free(pixels);
+		return NULL;
+	}
+	return (unsigned short *)pixels;
 }
 
 BOOL xgpu_backend_screenshot(xgpu_target target, const char *directory, char *name, unsigned long name_size)
@@ -2862,6 +2900,42 @@ void xgpu_backend_rt_shadows(xgpu_target color, xgpu_target depth, const struct 
 void xgpu_backend_contact_shadows(xgpu_target color, xgpu_target depth, const struct xgpu_rt_shadows *shadows)
 {
 	rt_shadows_record(XGPU_STREAM_CONTACT_SHADOWS, XGPU_CONTACT_SHADOWS_CASTERS, color, depth, shadows);
+}
+
+_Static_assert(sizeof(struct xgpu_rt_bounce_light) == sizeof(struct xgpu_stream_rt_bounce_light) &&
+	XGPU_RT_BOUNCE_LIGHTS == XGPU_STREAM_RT_BOUNCE_LIGHTS, "a bounced light (xgpu_stream.h)");
+
+void xgpu_backend_rt_bounce(const struct xgpu_rt_bounce *bounce)
+{
+	struct xgpu_stream_rt_bounce *record_body;
+	int count = bounce->count < 0 ? 0 : bounce->count > XGPU_RT_BOUNCE_LIGHTS ? XGPU_RT_BOUNCE_LIGHTS : bounce->count;
+
+	if (!stream.open)
+		return;
+	record_body = record(XGPU_STREAM_RT_BOUNCE, sizeof(*record_body));
+	record_body->count = count;
+	record_body->window = bounce->window;
+	record_body->seconds = bounce->seconds;
+	memset(record_body->lights, 0, sizeof(record_body->lights));
+	memcpy(record_body->lights, bounce->lights, (size_t)count * sizeof(record_body->lights[0]));
+	stream_finite(&record_body->lights[0].position[0], (unsigned long)count * 12, "bounced light value", 0);
+}
+
+void xgpu_backend_lt_lights(const void *lights, int count, int window, unsigned int frame)
+{
+	struct xgpu_stream_lt_lights *record_body;
+	unsigned char *place;
+	uint32_t bytes;
+
+	if (!stream.open || count < 0 || count > XGPU_STREAM_LT_LIGHTS_MAXIMUM)
+		return;
+	bytes = (uint32_t)count * (uint32_t)sizeof(struct xgpu_stream_lt_light);
+	record_body = record_data(XGPU_STREAM_LT_LIGHTS, sizeof(*record_body), bytes ? carried_one(bytes) : 0, &place);
+	record_body->count = (uint32_t)count;
+	record_body->window = window;
+	record_body->frame = frame;
+	/* (its floats made finite by the game: lt_lights.c) */
+	record_body->lights = bytes ? carry_one(&place, lights, bytes) : 0;
 }
 
 /* ---------- the VR mode */

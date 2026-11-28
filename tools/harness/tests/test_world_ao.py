@@ -17,12 +17,12 @@ CONTROLS = [
     # the frame's work done when it is off
     ("\t\treturn;\n\t}\n\tworld_scene_frame_begin();", "\t}\n\tworld_scene_frame_begin();", "off"),
     # display.shadows "ray_traced": the frame's objects not found without this setting (no ray-traced scene)
-    ("\t\tif (rt_shadows_on())\n\t\t{\n\t\t\tif (!world_ao_scene_found)", "\t\tif (0)\n\t\t{\n\t\t\tif (!world_ao_scene_found)",
+    ("\t\tif (world_ao_rt_wanted())\n\t\t{\n\t\t\tif (!world_ao_scene_found)", "\t\tif (0)\n\t\t{\n\t\t\tif (!world_ao_scene_found)",
      "shadows"),
     # ... nor the map's scene where it came on in play
     ("\t\t\tif (!world_ao_scene_found)\n\t\t\t\tworld_scene_map_loaded();\n", "", "shadows"),
     # ... the frame's objects found whatever display.shadows says
-    ("\t\tif (rt_shadows_on())\n\t\t{\n\t\t\tif (!world_ao_scene_found)", "\t\tif (1)\n\t\t{\n\t\t\tif (!world_ao_scene_found)",
+    ("\t\tif (world_ao_rt_wanted())\n\t\t{\n\t\t\tif (!world_ao_scene_found)", "\t\tif (1)\n\t\t{\n\t\t\tif (!world_ao_scene_found)",
      "shadows"),
     # ... the ray-traced scene's frame not built for them
     ("\tworld_rt_frame(world_ao_scene.frame);\n}", "}", "shadows"),
@@ -70,7 +70,7 @@ def generated(fault=None):
     if fault:
         game = mutated(game, *fault)
     headers = [(name, read(f"port/linux/include/{name}"))
-               for name in ("rt_shadows.h", "world_ao.h", "world_cascades.h", "world_proxies.h", "world_rt.h", "world_scene.h",
+               for name in ("rt_reflections.h", "rt_shadows.h", "world_ao.h", "world_cascades.h", "world_proxies.h", "world_rt.h", "world_scene.h",
                             "world_sdf.h")]
     return tuple(headers) + (("under_test.inc", game),)
 

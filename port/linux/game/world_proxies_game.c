@@ -23,6 +23,7 @@ object's node matrices, read inside the frame's render_interpolation pose
 #include "physics/collision_model_definitions.h"
 #include "render/render.h"
 #include "render/render_debug.h"
+#include "scenario/scenario.h"
 #include "tag_files/tag_groups.h"
 
 #include "object_mesh.h"
@@ -133,6 +134,26 @@ static int object_baked(long object_index, long definition)
 }
 
 /* ---------- public code */
+
+/* the sky in view's outdoor ambient radiosity power (the sky tag's, at
+0x54, after its indoor ambient radiosity's colour and power at 0x38 and
+0x44 and its outdoor colour at 0x48; its indoor fog screen at 0x98, which
+tag_schema_render.c checks); 0 where none is in view: what lights an
+outdoor bake besides its sun (Blood Gulch's, b30's), none in an interior's
+(a10's ship: docs/rt-plan/4-path-tracing.md "Measured") */
+float world_proxies_source_sky_outdoor(void)
+{
+	unsigned char const *sky;
+	real power;
+
+	if (!render.visible_sky_model || render.visible_sky_index == NONE)
+		return 0.0f;
+	sky = (unsigned char const *)scenario_get_sky(render.visible_sky_index);
+	if (!sky)
+		return 0.0f;
+	memcpy(&power, sky + 0x54, sizeof(power));
+	return power > 0.0f && power < 1.0e6f ? (float)power : 0.0f;
+}
 
 int world_proxies_source_baked(long id)
 {

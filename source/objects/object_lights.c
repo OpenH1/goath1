@@ -193,6 +193,7 @@ void dynamic_lights_note(long rasterizer_light_index, long flags, real cone_scal
 	real_point3d const *tick_position);
 boolean dynamic_lights_first_person(long weapon_index, real_point3d *position);
 void dynamic_lights_submit(void);
+void rt_lights_materials_debug_frame(void); /* port: port/linux/game/rt_lights_materials.c */
 void dynamic_lights_brighten(long rasterizer_light_index, real scale);
 void dynamic_lights_owner(long rasterizer_light_index, long object_index);
 void dynamic_lights_identify(long rasterizer_light_index, long light_handle);
@@ -203,6 +204,9 @@ void dynamic_lights_clusters(long rasterizer_light_index, short count, short con
 real dynamic_lights_share(short count);
 void dynamic_lights_copy(long rasterizer_light_index, short number, real_point3d const *position,
 	real_vector3d const *axis);
+boolean dynamic_lights_flashlight_gel(long gel_bitmap_group_index);
+void lt_lights_update(void);
+int lt_lights_pass_on(void);
 /* port: port/linux/game/door_portals.c (closed doors shut their portals to
 the lights) */
 void door_portals_update(void);
@@ -1721,9 +1725,8 @@ void lights_preprocess_scene(
 						}
 						if (!light_port_lights_structure(definition))
 							flags |= HALO_DYNAMIC_LIGHT_MODELS_ONLY;
-						/* (the flashlight: its shadow always cast, on the models
-						it lights here; the structure's is its gel's, the game's
-						pass) */
+						/* (the flashlight: lit through its gel, with its shadow
+						map, port/linux/game/dynamic_lights.c) */
 						if (TEST_FLAG(definition->flags, _light_definition_is_first_person_flashlight_bit))
 							flags |= HALO_DYNAMIC_LIGHT_FLASHLIGHT;
 						/* (a plasma bolt's: a projectile with no model; a
@@ -1885,6 +1888,10 @@ void lights_preprocess_scene(
 	/* port: the frame's lights to the renderer (display.dynamic_lights) */
 	if (halo_dynamic_lights_enhanced())
 		dynamic_lights_submit();
+	else
+		lt_lights_update(); /* port: port/linux/game/lt_lights.c */
+	/* port: the rt2 truth scene's lights test (HALO_RT2_LIGHTS_TEST) */
+	rt_lights_materials_debug_frame();
 	profile_exit(lights_section);
 
 	return;
@@ -2422,12 +2429,18 @@ static void light_port_drawn_center(
 
 /* port: whether the enhanced dynamic lights light the structure with this
 light (display.dynamic_lights, port/linux/game/dynamic_lights.c): all but a
-spotlight's (a flashlight's, a lamp's) and one with a gel (a headlight's, the
-Pillar of Autumn's turning alarm lights', whose cube map lights the room only
-where it points as their marker turns), whose shape the game's own pass draws */
+spotlight's (a lamp's) and one with a gel (a headlight's, the Pillar of
+Autumn's turning alarm lights', whose cube map lights the room only where it
+points as their marker turns), whose shape the game's own pass draws. The
+flashlight is theirs where its gel could be made the renderer's
+(dynamic_lights_flashlight_gel): lit through that gel as the game's pass
+projects it, on the structure, the models and the first-person view alike,
+with its shadow */
 static boolean light_port_lights_structure(
 	struct point_light_definition const *definition)
 {
+	if (TEST_FLAG(definition->flags, _light_definition_is_first_person_flashlight_bit) && lt_lights_pass_on())
+		return dynamic_lights_flashlight_gel(definition->gel_map.index);
 	return definition->cutoff_angle >= _pi / 2
 		&& definition->gel_map.index == NONE
 		&& definition->gel_secondary_map.index == NONE;

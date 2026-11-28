@@ -552,6 +552,59 @@ void halo_hdr_draw_kind(int kind)
 	inputs.hdr_kind = kind;
 }
 
+/* ---------- display.rt_reflections (docs/rt-plan/2-reflections.md)
+
+The game's rasterizer tags the draws whose texture 3 is a reflection's
+cube map (halo_rt_reflection); where the setting is on and the backend has
+ray queries, the tag goes into the pixel key (rt_reflection_modes), and the
+backend traces that texel through the ray-traced scene. The scene itself is
+the game's (port/linux/game/rt_reflections.c). */
+static struct
+{
+	int read;
+	unsigned long read_at;
+	int on;
+	/* the class the draws from now on trace as (xgpu.h's
+	XGPU_RT_REFLECTION_*), 0 none: not a draw's input, which the records
+	keep in their form (the shipped records stay as they are); a record's
+	draw has none (rt_reflection_modes) */
+	uint32_t tag;
+} rt_reflections;
+
+unsigned long halo_gpu_settings_taken(void);
+/* (a record playing: below) */
+static BOOL journal_playing;
+
+static int rt_reflections_wanted(void)
+{
+	if (!rt_reflections.read || rt_reflections.read_at != halo_gpu_settings_taken())
+	{
+		rt_reflections.read = 1;
+		rt_reflections.read_at = halo_gpu_settings_taken();
+		rt_reflections.on = config_boolean("display.rt_reflections") && xgpu_backend_capabilities.ray_queries;
+	}
+	return rt_reflections.on;
+}
+
+void halo_rt_reflection(int reflection)
+{
+	rt_reflections.tag = reflection > 0 && reflection <= HALO_RT_REFLECTION_WATER && rt_reflections_wanted() ?
+		(uint32_t)reflection : 0;
+}
+
+/* the reflection's bits of a draw's pixel key: its tag, where texture 3 is
+a cube map's lookup the game reflects by (PS_TEXTUREMODES_CUBEMAP,
+_DOT_RFLCT_SPEC, _DOT_RFLCT_SPEC_CONST) */
+static DWORD rt_reflection_modes(DWORD texture_modes)
+{
+	DWORD stage3 = (texture_modes >> 15) & 0x1f;
+	uint32_t tag = journal_playing ? 0 : rt_reflections.tag;
+
+	if (!tag || (stage3 != 0x03 && stage3 != 0x0c && stage3 != 0x12))
+		return 0;
+	return ((DWORD)tag << XGPU_TEXTURE_MODES_RT_REFLECTION_SHIFT) & XGPU_TEXTURE_MODES_RT_REFLECTION;
+}
+
 /* the game's renderer's category, for the backend's timing
 (xgpu_backend_category) */
 static void category_send(int category)
@@ -648,6 +701,10 @@ too and the difference none), and its objects drawing their motion */
 static struct
 {
 	BOOL on, objects;
+	/* (the light-transport pass's alone: the frame before's registers kept
+	for the pre-pass's twins' motion, xgpu_stream.h's MOTION phase NONE; no
+	jitter, no objects' motion drawn, nothing resolved) */
+	BOOL previous_only;
 	float jitter[2];
 	/* the upscaler's texture LOD bias, added to the game's for the
 	textures with mip levels that the window's 3D view samples (0 none:
@@ -860,7 +917,12 @@ _Static_assert(sizeof(struct world_rt_mesh_header) == sizeof(struct xgpu_world_r
 	WORLD_RT_MATERIALS == XGPU_WORLD_RT_MATERIALS && WORLD_RT_TEXTURES == XGPU_WORLD_RT_TEXTURES &&
 	WORLD_RT_MATERIAL_ALPHA_TESTED == XGPU_WORLD_RT_MATERIAL_ALPHA_TESTED &&
 	WORLD_RT_MATERIAL_TWO_SIDED == XGPU_WORLD_RT_MATERIAL_TWO_SIDED &&
-	WORLD_RT_MATERIAL_TRANSPARENT == XGPU_WORLD_RT_MATERIAL_TRANSPARENT, "the ray-traced scene's meshes as drawn");
+	WORLD_RT_MATERIAL_TRANSPARENT == XGPU_WORLD_RT_MATERIAL_TRANSPARENT &&
+	WORLD_RT_MATERIAL_MASK_BUMP == XGPU_WORLD_RT_MATERIAL_MASK_BUMP &&
+	WORLD_RT_MATERIAL_MASK_MULTIPURPOSE == XGPU_WORLD_RT_MATERIAL_MASK_MULTIPURPOSE &&
+	WORLD_RT_MATERIAL_REFLECTION_PERPENDICULAR_SHIFT == XGPU_WORLD_RT_MATERIAL_REFLECTION_PERPENDICULAR_SHIFT &&
+	WORLD_RT_MATERIAL_REFLECTION_PARALLEL_SHIFT == XGPU_WORLD_RT_MATERIAL_REFLECTION_PARALLEL_SHIFT,
+	"the ray-traced scene's meshes as drawn");
 
 void halo_world_rt_mesh(unsigned long id, void const *data, unsigned long size)
 {
@@ -2507,6 +2569,8 @@ static void device_backend_ready(void)
 	for (index = 0; index < XGPU_VERTEX_ATTRIBUTE_COUNT; index++)
 		device.attributes[index][3] = 1.0f;
 	xgpu_backend_initialize();
+	/* (display.ray_tracing "auto": on where the backend has ray queries) */
+	config_ray_queries_set(xgpu_backend_capabilities.ray_queries);
 	memory_watch_initialize();
 	mirror_page_size_set(memory_watch_page_size());
 	debug_settings.skip_vertex_shaders = config_string("debug.gpu_skip_vertex_shaders");
@@ -4624,6 +4688,7 @@ static BOOL cutout_stencil_repeatable(void)
 }
 
 static BOOL per_pixel_lighting(void);
+static BOOL per_pixel_lighting_setting(void);
 
 /* ---------- a model's material maps (xgpu.h's XGPU_TEXTURE_MODES_MATERIAL)
 
@@ -5304,7 +5369,8 @@ static struct
 	network_standard_enhanced_lights_allowed) */
 	BOOL allowed;
 	/* the look: [0] the lights' brightness, the core (1 / (1 + core x^2)),
-	the spill past white, the models' wrap; [1] the glow's size (of the
+	the spill past white, the models' wrap (the classic light model's: the
+	ray-traced lighting's reads none, xgpu.h); [1] the glow's size (of the
 	light's radius), brightness, softness against what it meets (world
 	units), its least size (debug.dynamic_lights_look; xgpu_spirv.c) */
 	float look[2][4];
@@ -5335,6 +5401,18 @@ static struct
 	XGPU_DYNAMIC_LIGHTS_SHADOWED's texels, their words; count 0 none) */
 	unsigned int shadowed[XGPU_LIGHT_SHADOWS_CHANNELS][3];
 	int shadowed_count;
+	/* the enhanced flashlight (xgpu.h's XGPU_DYNAMIC_LIGHTS_FLASHLIGHT): the
+	frame's flashlights given next (halo_dynamic_lights_flashlights), and the
+	gel they are lit through (halo_dynamic_lights_gel: its cookie, its half
+	width, its tint and the falloff, linear; ready once made) */
+	struct halo_flashlight flashlights[XGPU_DYNAMIC_LIGHTS_FLASHLIGHTS];
+	int flashlight_count;
+	unsigned char cookie[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE * XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE];
+	float gel_width, gel_tint[3], falloff[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF];
+	BOOL gel_ready, attenuation_ready;
+	/* the frame's lights lit through it (their colour its tint, as bright
+	as the game's gel pass has them) */
+	unsigned char flashlight_lit[XGPU_DYNAMIC_LIGHTS_MAXIMUM];
 } dynamic_lights;
 
 /* port/linux/game/network_standard.c's: whether the game played lets the
@@ -5349,6 +5427,8 @@ arithmetic's rounding */
 
 static void dynamic_lights_read_settings(void)
 {
+	/* ([0] the classic light model's, which the ray-traced lighting's
+	(xgpu.h) does not read) */
 	static const float defaults[2][4] = { { 1.7f, 12.0f, 0.18f, 0.25f }, { 0.22f, 1.2f, 0.12f, 0.035f } };
 	const char *look;
 	BOOL allowed = network_standard_enhanced_lights_allowed() != 0;
@@ -5605,9 +5685,410 @@ static void dynamic_lights_shadowed_texels(int count)
 	dynamic_lights.shadowed_count = 0;
 }
 
+/* ---------- the enhanced flashlight (xgpu.h's XGPU_DYNAMIC_LIGHTS_FLASHLIGHT)
+
+Its gel, as the game's gel pass samples it: a cube map, at the direction
+the pass's vertex program gives it from the gel's rows (rasterizer_xbox_
+environment.c: the beam, left and up, each times the offset from the
+light), which is (1, a, b) for (a, b) = (left, up) over the beam, or its
+opposite (the program's sign, found here: the way the gel's light is). The
+cookie is the gel's brightest channel at those directions over the square
+its light reaches, its tint the colour it averages to; the falloff the
+game's distance attenuation (a volume about the light, the cube of its
+radius) along its axes from its middle, linear. */
+
+#define GEL_MAX(a, b) ((a) > (b) ? (a) : (b))
+
+struct gel_faces
+{
+	struct xgpu_texture_description description;
+	DWORD *faces[6];
+};
+
+/* a channel of an ARGB word, 0 to 1 */
+static float gel_channel(DWORD texel, int shift)
+{
+	return (float)((texel >> shift) & 255u) * (1.0f / 255.0f);
+}
+
+/* the cube's colour at a direction (D3D's faces: +x, -x, +y, -y, +z, -z),
+bilinear on its face */
+static void gel_sample(const struct gel_faces *gel, const float d[3], float rgb[3])
+{
+	float ax = fabsf(d[0]), ay = fabsf(d[1]), az = fabsf(d[2]), sc, tc, ma, u, v, fu, fv;
+	unsigned long width = gel->description.width, height = gel->description.height;
+	int face, x0, y0, x1, y1, channel;
+	const DWORD *texels;
+
+	if (ax >= ay && ax >= az)
+	{
+		face = d[0] >= 0.0f ? 0 : 1;
+		sc = d[0] >= 0.0f ? -d[2] : d[2];
+		tc = -d[1];
+		ma = ax;
+	}
+	else if (ay >= az)
+	{
+		face = d[1] >= 0.0f ? 2 : 3;
+		sc = d[0];
+		tc = d[1] >= 0.0f ? d[2] : -d[2];
+		ma = ay;
+	}
+	else
+	{
+		face = d[2] >= 0.0f ? 4 : 5;
+		sc = d[2] >= 0.0f ? d[0] : -d[0];
+		tc = -d[1];
+		ma = az;
+	}
+	texels = gel->faces[face];
+	if (!texels || !(ma > 0.0f))
+	{
+		rgb[0] = rgb[1] = rgb[2] = 0.0f;
+		return;
+	}
+	u = (sc / ma * 0.5f + 0.5f) * (float)width - 0.5f;
+	v = (tc / ma * 0.5f + 0.5f) * (float)height - 0.5f;
+	fu = u - floorf(u);
+	fv = v - floorf(v);
+	x0 = (int)floorf(u);
+	y0 = (int)floorf(v);
+	x1 = x0 + 1;
+	y1 = y0 + 1;
+	x0 = x0 < 0 ? 0 : x0 >= (int)width ? (int)width - 1 : x0;
+	x1 = x1 < 0 ? 0 : x1 >= (int)width ? (int)width - 1 : x1;
+	y0 = y0 < 0 ? 0 : y0 >= (int)height ? (int)height - 1 : y0;
+	y1 = y1 < 0 ? 0 : y1 >= (int)height ? (int)height - 1 : y1;
+	for (channel = 0; channel < 3; channel++)
+	{
+		int shift = 16 - 8 * channel;
+		float top = gel_channel(texels[y0 * width + x0], shift) * (1.0f - fu) + gel_channel(texels[y0 * width + x1], shift) * fu;
+		float bottom = gel_channel(texels[y1 * width + x0], shift) * (1.0f - fu) +
+			gel_channel(texels[y1 * width + x1], shift) * fu;
+
+		rgb[channel] = top * (1.0f - fv) + bottom * fv;
+	}
+}
+
+/* the gel's colour at (a, b) along sign's beam */
+static void gel_at(const struct gel_faces *gel, float sign, float a, float b, float rgb[3])
+{
+	float d[3];
+
+	d[0] = sign;
+	d[1] = sign * a;
+	d[2] = sign * b;
+	gel_sample(gel, d, rgb);
+}
+
+/* a texture's level 0 (all of a cube's faces, or a volume's slices) as
+ARGB words, decoded from its header's texels; NULL where it cannot be */
+static DWORD *gel_decode(const DWORD *header, struct xgpu_texture_description *description, int face)
+{
+	const unsigned char *texels;
+	unsigned long count;
+	DWORD *pixels;
+
+	if (!header || !header[1] || header[1] == XGPU_MCC_TEXTURE_DATA)
+		return NULL;
+	xgpu_texture_describe(header[3], header[4], description);
+	if (!description->width || !description->height || description->width > 2048 || description->height > 2048)
+		return NULL;
+	count = description->width * description->height * (description->depth > 1 ? description->depth : 1);
+	texels = (const unsigned char *)PLATFORM_PHYSICAL_TO_VIRTUAL(header[1]) +
+		(unsigned long)face * xgpu_texture_face_size(description);
+	pixels = malloc(count * sizeof(*pixels));
+	if (!pixels)
+		return NULL;
+	if (description->compressed)
+		xgpu_texture_decode_dxt(description, 0, texels, pixels);
+	else if (!xgpu_texture_decode_level(description, 0, texels, NULL, pixels))
+	{
+		free(pixels);
+		return NULL;
+	}
+	return pixels;
+}
+
+/* the falloff: the volume's brightest channel at t (0 its middle, 1 its
+side) along each of its six axes, averaged, trilinear */
+static float gel_attenuation_at(const DWORD *texels, const struct xgpu_texture_description *description, float t)
+{
+	static const int axes[6][3] = { { 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 } };
+	long size[3] = { (long)description->width, (long)description->height, (long)description->depth };
+	float sum = 0.0f;
+	int axis;
+
+	for (axis = 0; axis < 6; axis++)
+	{
+		float at[3], f[3], value = 0.0f;
+		long base[3];
+		int k, corner;
+
+		for (k = 0; k < 3; k++)
+		{
+			at[k] = (0.5f + 0.5f * t * (float)axes[axis][k]) * (float)size[k] - 0.5f;
+			base[k] = (long)floorf(at[k]);
+			f[k] = at[k] - floorf(at[k]);
+		}
+		for (corner = 0; corner < 8; corner++)
+		{
+			float weight = 1.0f;
+			long index[3];
+			DWORD texel;
+
+			for (k = 0; k < 3; k++)
+			{
+				int high = (corner >> k) & 1;
+
+				index[k] = base[k] + high;
+				weight *= high ? f[k] : 1.0f - f[k];
+			}
+			/* (the border's black past the volume) */
+			if (index[0] < 0 || index[1] < 0 || index[2] < 0 || index[0] >= size[0] || index[1] >= size[1] ||
+				index[2] >= size[2])
+				continue;
+			texel = texels[(index[2] * size[1] + index[1]) * size[0] + index[0]];
+			value += weight * GEL_MAX(gel_channel(texel, 16), GEL_MAX(gel_channel(texel, 8), gel_channel(texel, 0)));
+		}
+		sum += value;
+	}
+	return sum / 6.0f;
+}
+
+/* the game's distance attenuation (rasterizer_data's, a volume about a
+light, the cube of its radius), which every light's gel pass samples, as
+the light model's falloff on the structure (xgpu.h's
+XGPU_DYNAMIC_LIGHTS_ATTENUATION): along its axes from its middle, as it
+is (the display's gamma, as the pass multiplies it); 1 - x^2 where it
+cannot be read */
+void halo_dynamic_lights_attenuation(const void *attenuation_texture)
+{
+	static const void *made;
+	static DWORD made_data;
+	const DWORD *header = attenuation_texture;
+	struct xgpu_texture_description description;
+	DWORD *attenuation;
+	int index;
+
+	if (dynamic_lights.attenuation_ready && made == attenuation_texture && (!header || made_data == header[1]))
+		return;
+	made = attenuation_texture;
+	made_data = header ? header[1] : 0;
+	attenuation = gel_decode(header, &description, 0);
+	if (attenuation && description.depth < 2)
+	{
+		free(attenuation);
+		attenuation = NULL;
+	}
+	for (index = 0; index < XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF; index++)
+	{
+		float t = (float)index / (XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF - 1), value;
+
+		value = attenuation ? gel_attenuation_at(attenuation, &description, t) : 1.0f - t * t;
+		dynamic_lights.falloff[index] = value < 0.0f ? 0.0f : value > 1.0f ? 1.0f : value;
+	}
+	/* (none past the radius, as the volume's border is black) */
+	dynamic_lights.falloff[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF - 1] = 0.0f;
+	platform_log("dynamic lights: the falloff on the structure %s: %.3f %.3f %.3f %.3f %.3f at 0, 1/4, 1/2, 3/4, 7/8 "
+		"of the radius (gamma)", attenuation ? "the game's distance attenuation" : "1 - x^2 (no attenuation read)",
+		(double)dynamic_lights.falloff[0], (double)dynamic_lights.falloff[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF / 4],
+		(double)dynamic_lights.falloff[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF / 2],
+		(double)dynamic_lights.falloff[3 * XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF / 4],
+		(double)dynamic_lights.falloff[7 * XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF / 8]);
+	free(attenuation);
+	dynamic_lights.attenuation_ready = TRUE;
+}
+
+int halo_dynamic_lights_gel(const void *gel_texture, const void *attenuation_texture)
+{
+	static const void *made_gel, *made_attenuation;
+	static DWORD made_data;
+	static int made_result;
+	const DWORD *header = gel_texture;
+	struct gel_faces gel;
+	float sign = 1.0f, energy[2] = { 0.0f, 0.0f }, width = 0.0f, tint[3] = { 0.0f, 0.0f, 0.0f }, most = 0.0f;
+	int face, index, x, y, side;
+	const int grid = 96;
+
+	if (!header)
+		return 0;
+	if (made_gel == gel_texture && made_attenuation == attenuation_texture && made_data == header[1])
+		return made_result;
+	made_gel = gel_texture;
+	made_attenuation = attenuation_texture;
+	made_data = header[1];
+	made_result = 0;
+	dynamic_lights.gel_ready = FALSE;
+	memset(&gel, 0, sizeof(gel));
+	for (face = 0; face < 6; face++)
+	{
+		gel.faces[face] = gel_decode(header, &gel.description, face);
+		if (!gel.faces[face] || !gel.description.cube_map)
+			break;
+	}
+	if (face < 6)
+	{
+		platform_log("flashlight: its gel (format %08lx) could not be read: lit as the game lights it",
+			(unsigned long)header[3]);
+		for (face = 0; face < 6; face++)
+			free(gel.faces[face]);
+		return 0;
+	}
+	/* (the program's sign: the way the gel's light is, within 45 degrees
+	of the beam) */
+	for (side = 0; side < 2; side++)
+		for (y = 0; y < grid; y++)
+			for (x = 0; x < grid; x++)
+			{
+				float rgb[3];
+
+				gel_at(&gel, side ? -1.0f : 1.0f, ((float)x + 0.5f) / grid * 2.0f - 1.0f, ((float)y + 0.5f) / grid * 2.0f - 1.0f,
+					rgb);
+				energy[side] += GEL_MAX(rgb[0], GEL_MAX(rgb[1], rgb[2]));
+			}
+	sign = energy[1] > energy[0] ? -1.0f : 1.0f;
+	/* (the square its light reaches, out to 56 degrees; a texel's margin) */
+	for (y = 0; y < grid; y++)
+		for (x = 0; x < grid; x++)
+		{
+			float a = (((float)x + 0.5f) / grid * 2.0f - 1.0f) * 1.5f, b = (((float)y + 0.5f) / grid * 2.0f - 1.0f) * 1.5f;
+			float rgb[3];
+
+			gel_at(&gel, sign, a, b, rgb);
+			if (GEL_MAX(rgb[0], GEL_MAX(rgb[1], rgb[2])) > 2.0f / 255.0f)
+				width = GEL_MAX(width, GEL_MAX(fabsf(a), fabsf(b)));
+		}
+	width = width + 1.5f * 3.0f / grid;
+	width = width < 0.05f ? 0.05f : width > 1.5f ? 1.5f : width;
+	for (y = 0; y < XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE; y++)
+		for (x = 0; x < XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE; x++)
+		{
+			/* (each axis warped, its square: the texels closer at the middle,
+			where the hot disk and its ring are; xgpu.h) */
+			float u = ((float)x + 0.5f) / XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE * 2.0f - 1.0f;
+			float v = ((float)y + 0.5f) / XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE * 2.0f - 1.0f;
+			float a = u * fabsf(u) * width, b = v * fabsf(v) * width;
+			float rgb[3], brightest;
+
+			gel_at(&gel, sign, a, b, rgb);
+			brightest = GEL_MAX(rgb[0], GEL_MAX(rgb[1], rgb[2]));
+			dynamic_lights.cookie[y * XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE + x] =
+				(unsigned char)(brightest * 255.0f + 0.5f);
+			for (index = 0; index < 3; index++)
+				tint[index] += rgb[index];
+			most += brightest;
+		}
+	for (index = 0; index < 3; index++)
+		dynamic_lights.gel_tint[index] = most > 0.0f ? tint[index] / most : 1.0f;
+	dynamic_lights.gel_width = width;
+	halo_dynamic_lights_attenuation(attenuation_texture);
+	platform_log("flashlight: its gel %lux%lu (format %08lx) %s its beam, %.3f wide (%.1f degrees), tint %.2f %.2f %.2f",
+		gel.description.width, gel.description.height, (unsigned long)header[3], sign > 0.0f ? "along" : "against",
+		(double)width, atan((double)width) * 2.0 * 180.0 / 3.14159265, (double)dynamic_lights.gel_tint[0],
+		(double)dynamic_lights.gel_tint[1], (double)dynamic_lights.gel_tint[2]);
+	/* (HALO_FLASHLIGHT_GEL_DUMP, checking: the cookie and the gel's faces as
+	pictures in the screenshot folder) */
+	if (getenv("HALO_FLASHLIGHT_GEL_DUMP"))
+	{
+		unsigned char *bgra = malloc(XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE * XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE * 4);
+
+		for (index = 0; bgra && index < XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE * XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE;
+			index++)
+		{
+			bgra[index * 4] = bgra[index * 4 + 1] = bgra[index * 4 + 2] = dynamic_lights.cookie[index];
+			bgra[index * 4 + 3] = 255;
+		}
+		if (bgra)
+			xgpu_write_bmp("flashlight_cookie", bgra, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE,
+				XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE, FALSE);
+		free(bgra);
+		for (face = 0; face < 6; face++)
+		{
+			char name[32];
+
+			snprintf(name, sizeof(name), "flashlight_gel_face%d_", face);
+			xgpu_write_bmp(name, (const unsigned char *)gel.faces[face], gel.description.width, gel.description.height,
+				FALSE);
+		}
+	}
+	for (face = 0; face < 6; face++)
+		free(gel.faces[face]);
+	dynamic_lights.gel_ready = TRUE;
+	made_result = 1;
+	return 1;
+}
+
+void halo_dynamic_lights_flashlights(const struct halo_flashlight *flashlights, int count)
+{
+	if (count < 0 || !flashlights)
+		count = 0;
+	if (count > XGPU_DYNAMIC_LIGHTS_FLASHLIGHTS)
+		count = XGPU_DYNAMIC_LIGHTS_FLASHLIGHTS;
+	memcpy(dynamic_lights.flashlights, flashlights, (size_t)count * sizeof(*flashlights));
+	dynamic_lights.flashlight_count = count;
+}
+
+/* ... into the clusters' slice of the cells (xgpu.h), of the count of
+lights given; taken (none the next frame unless given again) */
+typedef char dynamic_lights_flashlight_fits[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE +
+	XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE * XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE / 16 <=
+	XGPU_DYNAMIC_LIGHTS_GRID_X * XGPU_DYNAMIC_LIGHTS_GRID_Y - 1 && XGPU_DYNAMIC_LIGHTS_ATTENUATION == XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 15 && XGPU_DYNAMIC_LIGHTS_FLASHLIGHT == XGPU_DYNAMIC_LIGHTS_SHADOWED + 4 &&
+	HALO_DYNAMIC_LIGHTS_FLASHLIGHTS == XGPU_DYNAMIC_LIGHTS_FLASHLIGHTS &&
+	(XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE * XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE) % 16 == 0 ? 1 : -1];
+
+static void dynamic_lights_flashlight_texels(int count)
+{
+	unsigned int (*slice)[4] = (unsigned int (*)[4])dynamic_lights.mask[XGPU_DYNAMIC_LIGHTS_GRID_Z];
+	float bias = XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_BIAS;
+	int slot, used = 0;
+
+	memset(dynamic_lights.flashlight_lit, 0, sizeof(dynamic_lights.flashlight_lit));
+	/* (every light's falloff on the structure) */
+	if (!dynamic_lights.attenuation_ready)
+		halo_dynamic_lights_attenuation(NULL);
+	memcpy(slice[XGPU_DYNAMIC_LIGHTS_ATTENUATION], dynamic_lights.falloff, sizeof(dynamic_lights.falloff));
+	if (!dynamic_lights.gel_ready)
+	{
+		dynamic_lights.flashlight_count = 0;
+		return;
+	}
+	for (slot = 0; slot < dynamic_lights.flashlight_count; slot++)
+	{
+		const struct halo_flashlight *flashlight = &dynamic_lights.flashlights[slot];
+		int base = XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 2 + 3 * used;
+
+		if (flashlight->light < 0 || flashlight->light >= count)
+			continue;
+		slice[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT][used] = (unsigned int)flashlight->light + 1u;
+		dynamic_lights.flashlight_lit[flashlight->light] = 1;
+		memcpy(slice[base], flashlight->forward, sizeof(flashlight->forward));
+		memcpy(slice[base + 1], flashlight->up, sizeof(flashlight->up));
+		memcpy(slice[base + 2], flashlight->left, sizeof(flashlight->left));
+		if (flashlight->shadowed && xgpu_backend_capabilities.ray_queries && !slice[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 1][0])
+		{
+			slice[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 1][0] = (unsigned int)used + 1u;
+			slice[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 14][3] = (unsigned int)flashlight->owner;
+			memcpy(slice[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 23], flashlight->lamp, sizeof(flashlight->lamp));
+		}
+		used++;
+	}
+	dynamic_lights.flashlight_count = 0;
+	if (!used)
+		return;
+	memcpy(&slice[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 1][1], &dynamic_lights.gel_width, sizeof(float));
+	slice[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 1][2] = 1u;
+	memcpy(&slice[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 1][3], &bias, sizeof(float));
+	memcpy(slice[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 14], dynamic_lights.gel_tint, sizeof(dynamic_lights.gel_tint));
+	memcpy(slice[XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE], dynamic_lights.cookie, sizeof(dynamic_lights.cookie));
+}
+
 /* the frame's lights (the game's dynamic_lights.c): where they are, as the
 objects are drawn; the camera's position and axes (the glows face it); the
 clusters each light reaches (each cluster's mask of them) */
+/* (port/linux/game/lt_lights.c: the ray-traced lighting on) */
+int lt_lights_pass_on(void);
+
 void halo_dynamic_lights_set(const struct halo_dynamic_light *lights, int count, const float camera[3],
 	const float right[3], const float up[3], const unsigned int (*cluster_masks)[4])
 {
@@ -5615,6 +6096,9 @@ void halo_dynamic_lights_set(const struct halo_dynamic_light *lights, int count,
 	struct xgpu_dynamic_lights_halos *halos = &dynamic_lights.halos;
 	float scales[3], lower[3][XGPU_DYNAMIC_LIGHTS_GRID_X], upper[3][XGPU_DYNAMIC_LIGHTS_GRID_X];
 	int index, axis;
+	/* the ray-traced lighting's light model (xgpu.h; port/linux/game/lt_lights.h),
+	else the classic one */
+	BOOL light_model = lt_lights_pass_on() != 0;
 
 	inputs.lights_count = 0;
 	dynamic_lights.reach_count = 0;
@@ -5647,6 +6131,9 @@ void halo_dynamic_lights_set(const struct halo_dynamic_light *lights, int count,
 	if (cluster_masks)
 		memcpy(dynamic_lights.mask[XGPU_DYNAMIC_LIGHTS_GRID_Z], cluster_masks, XGPU_DYNAMIC_LIGHTS_CLUSTERS * 16);
 	dynamic_lights_shadowed_texels(count);
+	/* (the ray-traced lighting's light model alone: lt_lights.h) */
+	if (light_model)
+		dynamic_lights_flashlight_texels(count);
 	if (dynamic_lights.world && !dynamic_lights.world_sent)
 	{
 		xgpu_backend_dynamic_lights_world((const void *)dynamic_lights.world, dynamic_lights.world_count);
@@ -5656,7 +6143,11 @@ void halo_dynamic_lights_set(const struct halo_dynamic_light *lights, int count,
 	{
 		const struct halo_dynamic_light *light = &lights[index];
 		float offset[3];
-		float brightness = dynamic_lights.look[0][0];
+		/* (the light model, xgpu.h: its colour the game's, gamma, as its
+		passes add it; the flashlight's by its gel's tint, as the gel
+		pass's; a panel's linear) */
+		BOOL flashlight = light_model && dynamic_lights.flashlight_lit[index] != 0;
+		BOOL panel = (light->flags & HALO_DYNAMIC_LIGHT_PANEL) != 0;
 
 		if (!(light->radius > 0.0f))
 			continue;
@@ -5686,13 +6177,18 @@ void halo_dynamic_lights_set(const struct halo_dynamic_light *lights, int count,
 			light->radius;
 		for (axis = 0; axis < 3; axis++)
 		{
-			/* (linear: the display's gamma out) */
-			dynamic_lights.data.color[index][axis] = powf(light->color[axis], 2.2f) * brightness;
+			/* (classic: linear, the display's gamma out) */
+			dynamic_lights.data.color[index][axis] = !light_model ?
+				powf(light->color[axis], 2.2f) * dynamic_lights.look[0][0] : panel ? powf(light->color[axis], 2.2f) :
+				light->color[axis] * (flashlight ? dynamic_lights.gel_tint[axis] : 1.0f);
 			dynamic_lights.data.cone[index][axis] = light->axis[axis];
 			offset[axis] = light->position[axis] - camera[axis];
 		}
 		dynamic_lights.data.color[index][3] = light->cone_offset;
 		dynamic_lights.data.cone[index][3] = light->cone_scale;
+		if (panel && light_model)
+			((unsigned int (*)[4])dynamic_lights.mask[XGPU_DYNAMIC_LIGHTS_GRID_Z])[XGPU_DYNAMIC_LIGHTS_PANELS][index >> 5] |=
+				1u << (index & 31);
 		dynamic_lights_mark(dynamic_lights.mask, offset, light->radius, scales,
 			(const float (*)[XGPU_DYNAMIC_LIGHTS_GRID_X])lower, (const float (*)[XGPU_DYNAMIC_LIGHTS_GRID_X])upper, index);
 		if ((light->flags & HALO_DYNAMIC_LIGHT_HALO) && halos->count < XGPU_DYNAMIC_LIGHTS_MAXIMUM)
@@ -5965,7 +6461,7 @@ each pixel (xgpu_spirv.c's model lighting), from shaders of their own; read
 again as the front end takes a change up between frames (as the dynamic
 lights are: dynamic_lights_read_settings). The enhanced dynamic lights light
 models for each pixel too, whatever it says. */
-static BOOL per_pixel_lighting(void)
+static BOOL per_pixel_lighting_setting(void)
 {
 	static BOOL read;
 	static unsigned long read_at;
@@ -5977,7 +6473,12 @@ static BOOL per_pixel_lighting(void)
 		read_at = halo_gpu_settings_taken();
 		enabled = config_boolean("display.per_pixel_lighting") != 0;
 	}
-	return enabled || halo_dynamic_lights_enhanced();
+	return enabled;
+}
+
+static BOOL per_pixel_lighting(void)
+{
+	return per_pixel_lighting_setting() || halo_dynamic_lights_enhanced();
 }
 
 /* display.soft_particles (#1116): on a flat screen, an effect shader's group
@@ -6507,6 +7008,8 @@ struct retained_context
 	uint32_t cutout_depth, lights_unreached, model_unreached, per_pixel, lights_active, world_ao, hud_meter;
 	/* (a model's material maps: material_modes, and their images) */
 	uint32_t material_modes, material_normal, material_orm;
+	/* (display.rt_reflections: the draw's tag, rt_reflection_modes) */
+	uint32_t rt_reflection;
 	int32_t hdr_mode, hdr_boost;
 	/* display.temporal_aa's LOD bias (draw_lod_bias: its samplers') */
 	float lod_bias;
@@ -6800,7 +7303,9 @@ static BOOL retained_context_make(struct retained_context *context, struct verte
 	RETAINED_TAKE(lights_unreached, flag);
 	flag = dynamic_lights.model_unreached != 0;
 	RETAINED_TAKE(model_unreached, flag);
-	flag = per_pixel_lighting() != 0;
+	/* (and the ray-traced lighting's light model, which derives a model's
+	draw without the setting otherwise: lt_lights.h) */
+	flag = (per_pixel_lighting() != 0) | (per_pixel_lighting_setting() ? 2 : 0) | (lt_lights_pass_on() ? 4 : 0);
 	RETAINED_TAKE(per_pixel, flag);
 	flag = dynamic_lights_active() != 0;
 	RETAINED_TAKE(lights_active, flag);
@@ -6814,6 +7319,8 @@ static BOOL retained_context_make(struct retained_context *context, struct verte
 	RETAINED_TAKE(material_normal, (uint32_t)number);
 	number = material_modes() ? material.orm : 0;
 	RETAINED_TAKE(material_orm, (uint32_t)number);
+	number = journal_playing ? 0 : (long)rt_reflections.tag;
+	RETAINED_TAKE(rt_reflection, (uint32_t)number);
 	number = hdr.mode;
 	RETAINED_TAKE(hdr_mode, number);
 	number = hdr.boost;
@@ -7249,6 +7756,8 @@ static BOOL prepare_draw(BOOL immediate, unsigned long primitive)
 	/* (a model's material maps: kept by pipeline_derived where they are
 	drawn; not the manifest's, which records the draw as the map has it) */
 	pipeline_key.pixel.texture_modes |= material_modes();
+	/* (display.rt_reflections: the reflection traced, rt_reflection_modes) */
+	pipeline_key.pixel.texture_modes |= rt_reflection_modes(key.texture_modes);
 	/* ...and what the settings make of it as they are now: its targets'
 	samples and format, its alpha test (a sample mask, where the backend
 	has one), its tag (display.hdr: from its blend), and its lighting
@@ -7279,6 +7788,9 @@ static BOOL prepare_draw(BOOL immediate, unsigned long primitive)
 	facts.hdr = hdr_tag(&pipeline_key);
 	/* (a cut-out's depth: no light) */
 	facts.per_pixel = !cutout_depth_drawing && per_pixel_lighting();
+	/* (without the ray-traced lighting's light model, as the setting were on:
+	lt_lights.h) */
+	facts.per_pixel_setting = facts.per_pixel && (per_pixel_lighting_setting() || !lt_lights_pass_on());
 	facts.lights_active = !cutout_depth_drawing && !lights_unreached_drawing && !dynamic_lights.model_unreached &&
 		dynamic_lights_active();
 	facts.environment = inputs.lights_environment;
@@ -8866,11 +9378,15 @@ void halo_screen_view_end(int drawn, short x0, short y0, short x1, short y1)
 	destination->last_rendered = device.frame + 1;
 }
 
+/* (motion_vectors.h's: the previous frame's registers alone) */
+#define HALO_MOTION_PREVIOUS 2
+
 int halo_motion_window(int on, float jitter_x, float jitter_y)
 {
 	struct render_target_entry *target;
 
 	motion.on = FALSE;
+	motion.previous_only = FALSE;
 	motion.jitter[0] = motion.jitter[1] = 0.0f;
 	motion.lod_bias = 0.0f;
 	/* (the window's 3D view at its own scale from halo_screen_view_begin,
@@ -8883,6 +9399,14 @@ int halo_motion_window(int on, float jitter_x, float jitter_y)
 		return FALSE;
 	}
 	motion.on = TRUE;
+	/* (HALO_MOTION_PREVIOUS: the previous frame's registers alone, kept by
+	the backend from here on) */
+	if (on == HALO_MOTION_PREVIOUS)
+	{
+		motion.previous_only = TRUE;
+		xgpu_backend_motion(XGPU_MOTION_NONE, target->target.number, NULL);
+		return TRUE;
+	}
 	motion.lod_bias = temporal_lod_bias();
 	/* (MetalFX's spatial scaler, where the GPU has no temporal one: an
 	iOS's temporal_metalfx 2; one frame alone, not jittered) */
@@ -8925,7 +9449,7 @@ void halo_motion_objects(int begin)
 	/* (the span, whatever the setting: the draws' input, journaled) */
 	inputs.motion_objects = begin && device.render_target == &device.back_buffer &&
 		device.depth_stencil == &device.depth_buffer;
-	if (!motion.on || (begin ? motion.objects : !motion.objects))
+	if (!motion.on || motion.previous_only || (begin ? motion.objects : !motion.objects))
 		return;
 	motion.objects = FALSE;
 	if (begin && (device.render_target != &device.back_buffer || device.depth_stencil != &device.depth_buffer ||
@@ -9013,7 +9537,8 @@ void halo_motion_resolve(short x0, short y0, short x1, short y1, float const rep
 	int index;
 
 	halo_motion_objects(FALSE);
-	if (!motion.on || !(target = render_target_get(&device.back_buffer)) || !(width > 0.0f) || !(height > 0.0f))
+	if (!motion.on || motion.previous_only || !(target = render_target_get(&device.back_buffer)) || !(width > 0.0f) ||
+		!(height > 0.0f))
 		return;
 	memset(&pass, 0, sizeof(pass));
 	view_corners(target, x0, y0, x1, y1, corners);
@@ -9099,6 +9624,16 @@ void halo_screen_tone_map(short x0, short y0, short x1, short y1)
 	inputs.hdr_view = FALSE;
 	if (!device.gl_ready || !hdr.active)
 		return;
+	/* (debug.screenshot_halves: the view's values kept as drawn, for the
+	frames' half floats) */
+	{
+		static int halves = -1;
+
+		if (halves < 0)
+			halves = config_boolean("debug.screenshot_halves") ? 1 : 0;
+		if (halves)
+			return;
+	}
 	target = render_target_get(&device.back_buffer);
 	if (!target || target->target.format != XGPU_FORMAT_RGBA16F)
 		return;
@@ -9263,6 +9798,35 @@ void xgpu_write_bmp(const char *name, const unsigned char *pixels, unsigned long
 	fclose(file);
 }
 
+/* debug.screenshot_halves: a display.hdr frame's half floats (RGBA, rows
+from the top), named as xgpu_write_bmp names its BMP, as <name>.rgba16f:
+"H1HALF16", its width and height (32 bits each, little endian), then the
+pixels, 8 bytes each: the frame's values as drawn, which the screenshot's
+BMP clamps to [0, 1] (tools/lighting_referee.py reads them) */
+static void write_halves(const char *name, const unsigned short *halves, unsigned long width, unsigned long height)
+{
+	const char *directory = config_string("debug.screenshot_directory");
+	unsigned char header[16] = { 'H', '1', 'H', 'A', 'L', 'F', '1', '6' };
+	char path[512];
+	FILE *file;
+	int byte;
+
+	if (name[0] == '=')
+		snprintf(path, sizeof(path), "%s/%s.rgba16f", directory, name + 1);
+	else
+		snprintf(path, sizeof(path), "%s/%s%05lu.rgba16f", directory, name, xgpu_screenshot_number());
+	if (!(file = fopen(path, "wb")))
+		return;
+	for (byte = 0; byte < 4; byte++)
+	{
+		header[8 + byte] = (unsigned char)(width >> (8 * byte));
+		header[12 + byte] = (unsigned char)(height >> (8 * byte));
+	}
+	fwrite(header, 1, sizeof(header), file);
+	fwrite(halves, 8, (size_t)width * height, file);
+	fclose(file);
+}
+
 /* the determinism check's hash of each frame (port/linux/game/determinism_log.c) */
 int determinism_log_frames(void);
 void determinism_log_frame(unsigned char const *pixels, long width, long height);
@@ -9362,7 +9926,17 @@ static void write_screenshot(struct render_target_entry *target)
 	if (*config_string("debug.screenshot_stream"))
 		write_screenshot_stream(pixels, width, height);
 	else
+	{
 		xgpu_write_bmp(screenshot_name[0] ? screenshot_name : "frame", pixels, width, height, FALSE);
+		if (target->target.format == XGPU_FORMAT_RGBA16F && config_boolean("debug.screenshot_halves"))
+		{
+			unsigned short *halves = xgpu_backend_read_target_halves(target->target.number);
+
+			if (halves)
+				write_halves(screenshot_name[0] ? screenshot_name : "frame", halves, width, height);
+			free(halves);
+		}
+	}
 	screenshot_name[0] = 0;
 	free(pixels);
 }
@@ -9722,13 +10296,50 @@ static BOOL screenshot_this_frame(void)
 {
 	static long every = -1;
 	static double from, until;
+	/* (debug.screenshot_at's seconds, and the next of them not yet saved) */
+	static double moments[64];
+	static int moment_count, moment_next;
+	static BOOL quit_after;
 	double now;
 
 	if (every < 0)
 	{
+		const char *at = config_string("debug.screenshot_at");
+
 		every = config_integer("debug.screenshot_every");
 		from = config_real("debug.screenshot_from");
 		until = config_real("debug.screenshot_until");
+		while (at && *at && moment_count < (int)(sizeof(moments) / sizeof(moments[0])))
+		{
+			char *end;
+			double second = strtod(at, &end);
+
+			if (!strncmp(at, "quit", 4))
+			{
+				quit_after = TRUE;
+				break;
+			}
+			if (end == at)
+				break;
+			moments[moment_count++] = second;
+			at = end;
+			while (*at == ',' || *at == ' ')
+				at++;
+		}
+	}
+	/* (debug.screenshot_at: the first frame at or after each of its
+	seconds, as at<n>.bmp; one a frame, in the list's order) */
+	if (moment_next < moment_count && sim_trace_scenario_seconds() >= moments[moment_next])
+	{
+		snprintf(screenshot_name, sizeof(screenshot_name), "=at%d", moment_next++);
+		return TRUE;
+	}
+	/* (a last "quit": the game ends once every moment is saved, the
+	frame after the last) */
+	if (quit_after && moment_next == moment_count && moment_count > 0)
+	{
+		platform_log("screenshot: every debug.screenshot_at moment saved: quitting");
+		exit(EXIT_SUCCESS);
 	}
 	if (every <= 0 || device.frame % (unsigned long)every != 0)
 		return FALSE;

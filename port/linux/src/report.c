@@ -2969,7 +2969,7 @@ int report_benchmark_write(unsigned long first, unsigned long last, const char *
 {
 	static const char *const settings[] = {
 		"display.graphics", "display.mode", "display.resolution", "display.window_size",
-		"display.resolution_scaling", "display.anti_aliasing", "display.ambient_occlusion",
+		"display.resolution_scaling", "display.anti_aliasing", "display.ambient_occlusion", "display.ray_tracing",
 		"display.dynamic_lights", "display.vsync", "display.vrr", "display.max_fps", "display.low_latency",
 		"game.sim_rate",
 	};

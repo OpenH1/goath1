@@ -1560,6 +1560,78 @@ static int left_out(uint32_t type)
 		type == XGPU_STREAM_TONE_MAP || type == XGPU_STREAM_PANINI || type == XGPU_STREAM_PRESENT;
 }
 
+/* The hold (serve_hold): a frame played again where it is, after itself,
+as though the world stood still and time went on. Each record of its
+play is written to the ring as the recording has it, then changed here:
+- the reprojection is the identity: MOTION's RESOLVE reprojects a pixel to
+  where it is (the camera has not moved), the pre-pass's previous camera
+  and corners are its own, and the previous frame's constants (CONSTANTS
+  past XGPU_STREAM_PREVIOUS_CONSTANTS) are left out (a SKIP in their
+  place), so that the backend's copy of the current ones stands for them
+  (xgpu_vulkan_stream.c's stream_set_constants);
+- the frame's number advances: the pre-pass's history[1], which every
+  ray-traced pass turns its noise by (the occlusion's rays, the lights'
+  shadows, the bounce's pixel a tile), is the recorded one plus the play's;
+- with reset, the first play's histories begin again (the pre-pass's
+  history[0] 0, MOTION's motion[3] 0, the temporal technique's reset 1).
+The jitter stays the frame's (it is in its projection). */
+static struct
+{
+	int active, reset;
+	/* the play (0 the frame as recorded, played exactly) */
+	uint32_t play;
+} hold;
+
+static void hold_patch(unsigned char *bytes, const struct record *record)
+{
+	if (record->type == XGPU_STREAM_CONSTANTS && record->bytes >= sizeof(struct xgpu_stream_constants))
+	{
+		const struct xgpu_stream_constants *constants = (const void *)bytes;
+
+		if (constants->first >= XGPU_STREAM_PREVIOUS_CONSTANTS)
+		{
+			uint32_t header = XGPU_STREAM_HEADER(XGPU_STREAM_SKIP, record->size);
+
+			memcpy(bytes, &header, 4);
+		}
+	}
+	else if (record->type == XGPU_STREAM_MOTION && record->bytes >= sizeof(struct xgpu_stream_motion))
+	{
+		struct xgpu_stream_motion *motion = (void *)bytes;
+
+		if (motion->phase == XGPU_MOTION_RESOLVE)
+		{
+			int row, column;
+
+			for (row = 0; row < 4; row++)
+				for (column = 0; column < 4; column++)
+					motion->pass.reproject[row][column] = row == column ? 1.0f : 0.0f;
+			motion->pass.motion[3] = hold.reset && hold.play == 1 ? 0.0f : 1.0f;
+		}
+		else if (motion->phase == XGPU_MOTION_UPSCALE)
+		{
+			struct xgpu_temporal_pass *temporal = (void *)&motion->pass;
+
+			temporal->reset = hold.reset && hold.play == 1;
+		}
+	}
+	else if (record->type == XGPU_STREAM_WORLD_AO_PREPASS && record->bytes >= sizeof(struct xgpu_stream_world_ao_prepass))
+	{
+		struct xgpu_stream_world_ao_prepass *prepass = (void *)bytes;
+
+		if (prepass->phase == XGPU_WORLD_AO_PREPASS_BEGIN || prepass->phase == XGPU_WORLD_AO_PREPASS_END)
+		{
+			struct xgpu_world_ao_pass *pass = &prepass->pass;
+
+			memcpy(pass->previous, pass->camera, sizeof(pass->previous));
+			memcpy(pass->previous_corners, pass->corners, sizeof(pass->previous_corners));
+			pass->history[1] = fmodf(pass->history[1] + (float)hold.play, 65536.0f);
+			if (hold.reset && hold.play == 1)
+				pass->history[0] = 0.0f;
+		}
+	}
+}
+
 /* the records written to (not including) last; those before skip that
 draw or clear left out (a SKIP in their place, which restore knows) */
 static void play_to_skipping(uint32_t last, uint32_t skip)
@@ -1578,6 +1650,8 @@ static void play_to_skipping(uint32_t last, uint32_t skip)
 		}
 		room(at, record->size);
 		memcpy((unsigned char *)host_pointer(ring->buffer) + (at & mask), record->data, record->bytes);
+		if (hold.active)
+			hold_patch((unsigned char *)host_pointer(ring->buffer) + (at & mask), record);
 		if (next_record < skip && record->type == XGPU_STREAM_DRAW_IMMEDIATE &&
 			record->bytes >= sizeof(struct xgpu_stream_draw_immediate))
 		{
@@ -3103,17 +3177,21 @@ static void serve_info(struct text *text)
 {
 	const struct frame *last = recording.frame_count ? &recording.frames[recording.frame_count - 1] : NULL;
 
-	text_printf(text, "{\"ok\":true,\"protocol\":%u,\"protocols\":[1,2],\"frames\":%u,\"width\":%u,\"height\":%u,"
+	text_printf(text, "{\"ok\":true,\"protocol\":%u,\"protocols\":[1,2,3],\"frames\":%u,\"width\":%u,\"height\":%u,"
 		"\"backend\":\"%s\",\"build\":\"%s\",\"marks\":%s,\"records\":%u", HOST_RENDER_REPLAY_PROTOCOL,
 		recording.frame_count, last ? last->width : 0, last ? last->height : 0, platform->backend, HALO_REPLAY_BUILD,
 		marks.present ? "true" : "false", recording.record_count);
 	/* (what this service does: the requests beyond version 1's, and what a
 	backend may lack) */
 	TEXT(text, ",\"capabilities\":[\"frame\",\"draws\",\"thumbs\"");
+	if (platform->read_target)
+		TEXT(text, ",\"hold\",\"linear\"");
 	if (platform->ids_begin)
 		TEXT(text, ",\"ids\",\"pick\"");
 	if (platform->cost_begin && platform->cost_end)
 		TEXT(text, ",\"cost\",\"cpu_cost\"");
+	if (platform->shaders_reload)
+		TEXT(text, ",\"reload\"");
 	TEXT(text, "]");
 	/* (the kinds of the driver's calls cost's "cpu" counts, if any) */
 	if (platform->calls_watch && platform->call_kinds && platform->call_kinds <= CPU_KINDS_MOST)
@@ -3226,6 +3304,302 @@ static void serve_frame(struct text *text, const struct request *request)
 		}
 		free(top);
 	}
+	TEXT(text, "}");
+}
+
+/* ---------- the service: the hold, and linear pictures */
+
+/* a little-endian word (EXR's) */
+static void store32le(unsigned char *to, uint32_t value)
+{
+	to[0] = (unsigned char)value;
+	to[1] = (unsigned char)(value >> 8);
+	to[2] = (unsigned char)(value >> 16);
+	to[3] = (unsigned char)(value >> 24);
+}
+
+/* a float as a half (rounded to nearest; no denormals kept below 2^-24) */
+static uint16_t half_from(float value)
+{
+	union { float f; uint32_t u; } bits = { value };
+	uint32_t sign = (bits.u >> 16) & 0x8000u, exponent = (bits.u >> 23) & 0xffu, mantissa = bits.u & 0x7fffffu;
+	int e;
+
+	if (exponent == 0xffu)
+		return (uint16_t)(sign | 0x7c00u | (mantissa ? 0x200u : 0));
+	e = (int)exponent - 127 + 15;
+	if (e >= 31)
+		return (uint16_t)(sign | 0x7c00u);
+	if (e <= 0)
+	{
+		if (e < -10)
+			return (uint16_t)sign;
+		mantissa |= 0x800000u;
+		return (uint16_t)(sign | ((mantissa >> (14 - e)) + ((mantissa >> (13 - e)) & 1u)));
+	}
+	return (uint16_t)((sign | ((uint32_t)e << 10) | (mantissa >> 13)) + ((mantissa >> 12) & 1u));
+}
+
+/* an sRGB-encoded byte's linear light (IEC 61966-2-1) */
+static float srgb_linear(unsigned char byte)
+{
+	float c = (float)byte / 255.0f;
+
+	return c <= 0.04045f ? c / 12.92f : powf((c + 0.055f) / 1.055f, 2.4f);
+}
+
+/* the picture's linear light as an OpenEXR file (scanline, uncompressed,
+half B, G, R: what any EXR reader reads); malloc'd, its size in size */
+static unsigned char *exr_encode(const unsigned char *bgra, uint32_t width, uint32_t height, size_t *size)
+{
+	static const char channels[] = "B\0\1\0\0\0\0\0\0\0\1\0\0\0\1\0\0\0"
+		"G\0\1\0\0\0\0\0\0\0\1\0\0\0\1\0\0\0"
+		"R\0\1\0\0\0\0\0\0\0\1\0\0\0\1\0\0\0";
+	float table[256];
+	unsigned char header[512], *bytes, *at;
+	size_t header_size = 0, line_bytes = 8 + (size_t)width * 6, total;
+	uint32_t x, y;
+	int i;
+
+#define EXR_PUT(data, count) (memcpy(header + header_size, (data), (count)), header_size += (count))
+#define EXR_ATTRIBUTE(name, type, count) (EXR_PUT(name, strlen(name) + 1), EXR_PUT(type, strlen(type) + 1), \
+	store32le(header + header_size, (uint32_t)(count)), header_size += 4)
+	{
+		uint32_t words[4];
+		float one = 1.0f, zeros[2] = { 0.0f, 0.0f };
+		unsigned char none = 0;
+
+		store32le(header, 20000630u);
+		store32le(header + 4, 2u);
+		header_size = 8;
+		EXR_ATTRIBUTE("channels", "chlist", sizeof(channels));
+		EXR_PUT(channels, sizeof(channels));
+		EXR_ATTRIBUTE("compression", "compression", 1);
+		EXR_PUT(&none, 1);
+		words[0] = words[1] = 0;
+		words[2] = width - 1;
+		words[3] = height - 1;
+		EXR_ATTRIBUTE("dataWindow", "box2i", 16);
+		for (i = 0; i < 4; i++)
+			store32le(header + header_size + 4 * (size_t)i, words[i]);
+		header_size += 16;
+		EXR_ATTRIBUTE("displayWindow", "box2i", 16);
+		for (i = 0; i < 4; i++)
+			store32le(header + header_size + 4 * (size_t)i, words[i]);
+		header_size += 16;
+		EXR_ATTRIBUTE("lineOrder", "lineOrder", 1);
+		EXR_PUT(&none, 1);
+		EXR_ATTRIBUTE("pixelAspectRatio", "float", 4);
+		EXR_PUT(&one, 4);
+		EXR_ATTRIBUTE("screenWindowCenter", "v2f", 8);
+		EXR_PUT(zeros, 8);
+		EXR_ATTRIBUTE("screenWindowWidth", "float", 4);
+		EXR_PUT(&one, 4);
+		EXR_PUT(&none, 1);
+	}
+#undef EXR_ATTRIBUTE
+#undef EXR_PUT
+	for (i = 0; i < 256; i++)
+		table[i] = srgb_linear((unsigned char)i);
+	total = header_size + 8 * (size_t)height + line_bytes * height;
+	bytes = malloc(total);
+	if (!bytes)
+		return NULL;
+	memcpy(bytes, header, header_size);
+	at = bytes + header_size + 8 * (size_t)height;
+	for (y = 0; y < height; y++)
+	{
+		uint64_t offset = (uint64_t)(at - bytes);
+		const unsigned char *row = bgra + (size_t)y * width * 4;
+		int channel;
+
+		store32le(bytes + header_size + 8 * (size_t)y, (uint32_t)offset);
+		store32le(bytes + header_size + 8 * (size_t)y + 4, (uint32_t)(offset >> 32));
+		store32le(at, y);
+		store32le(at + 4, (uint32_t)(width * 6));
+		at += 8;
+		/* (B, G, R: the channels in their names' order, each a run of the
+		line's halves; the picture's bytes are BGRA) */
+		for (channel = 0; channel < 3; channel++)
+		{
+			for (x = 0; x < width; x++)
+			{
+				uint16_t half = half_from(table[row[4 * x + (uint32_t)channel]]);
+
+				at[0] = (unsigned char)half;
+				at[1] = (unsigned char)(half >> 8);
+				at += 2;
+			}
+		}
+	}
+	*size = total;
+	return bytes;
+}
+
+static int hold_shot_wanted(const struct request *request, uint32_t k)
+{
+	int index;
+
+	if (request_find(request, "shots") < 0)
+		return k == 1 || k == 30 || k == 120;
+	for (index = 0; index < request->number_count; index++)
+	{
+		if ((uint32_t)request->numbers[index] == k)
+			return 1;
+	}
+	return 0;
+}
+
+/* {"cmd":"hold","n":N,"frames":F,"shots":[1,30,120],"dir":"<folder>","linear":true}: frame n held (hold, above)
+F plays in all, the shots' pictures kept: the first the frame as recorded, played exactly (with "reset": the
+first held play, its histories begun again) */
+static void serve_hold(struct text *text, const struct request *request)
+{
+	const char *directory = request_string(request, "dir"), *error;
+	int qoi = request_qoi(request), linear = request_true(request, "linear"), first = 1;
+	int inline_reply = request_true(request, "inline") || !directory, compress = request_true(request, "compress");
+	double number, frames = 120, started = seconds_now();
+	uint32_t n, count, k;
+
+	if (!request_number(request, "n", &number) || number < 0)
+	{
+		reply_error(text, "no frame (n)");
+		return;
+	}
+	n = (uint32_t)number;
+	request_number(request, "frames", &frames);
+	if (frames < 1 || frames > 1000000)
+	{
+		reply_error(text, "frames: 1 to 1000000");
+		return;
+	}
+	count = (uint32_t)frames;
+	if (!platform->read_target)
+	{
+		reply_error(text, "this backend reads no pictures");
+		return;
+	}
+	if (directory)
+		mkdir(directory, 0755);
+	hold.reset = request_true(request, "reset");
+	hold.active = 0;
+	if ((error = frame_play_as(n, 0, 0, 1)))
+	{
+		reply_error(text, error);
+		return;
+	}
+	text_printf(text, "{\"ok\":true,\"n\":%u,\"frames\":%u,\"reset\":%s,\"reprojection\":\"identity\"", n, count,
+		hold.reset ? "true" : "false");
+	if (linear)
+		TEXT(text, ",\"linear_source\":\"display\"");
+	TEXT(text, ",\"shots\":[");
+	for (k = 1; k <= count; k++)
+	{
+		int wanted = hold_shot_wanted(request, k);
+		unsigned char *pixels = NULL;
+		uint32_t width = 0, height = 0;
+
+		if (k == 1 && !hold.reset)
+		{
+			pixels = kept.pixels;
+			width = kept.width;
+			height = kept.height;
+		}
+		else
+		{
+			hold.play = hold.reset ? k : k - 1;
+			frame_again(n);
+			play_inexact = 1;
+			inspect.frame = n;
+			inspect.pixels_wanted = wanted;
+			inspect.ids_wanted = 0;
+			hold.active = 1;
+			play_again_here = 1;
+			play_to(recording.frames[n].end);
+			sync_all();
+			play_again_here = 0;
+			hold.active = 0;
+			inspect.frame = UINT32_MAX;
+			pixels = inspect.pixels;
+			width = inspect.width;
+			height = inspect.height;
+			inspect.pixels = NULL;
+			if (ring->error)
+				break;
+		}
+		if (wanted && pixels)
+		{
+			char path[4096];
+
+			text_printf(text, "%s{\"k\":%u", first ? "" : ",", k);
+			first = 0;
+			if (inline_reply)
+			{
+				picture_inline(text, pixels, width, height, qoi, compress);
+			}
+			else
+			{
+				snprintf(path, sizeof(path), "%s/hold_%u_%u.%s", directory, n, k, qoi ? "qoi" : "png");
+				if (picture_write(pixels, width, height, qoi, path))
+				{
+					TEXT(text, qoi ? ",\"qoi\":" : ",\"png\":");
+					text_string(text, path);
+				}
+			}
+			if (linear)
+			{
+				size_t size;
+				unsigned char *exr = exr_encode(pixels, width, height, &size);
+
+				if (exr && inline_reply)
+				{
+					char *encoded = host_render_replay_base64(exr, size);
+
+					if (encoded)
+					{
+						TEXT(text, ",\"exr_base64\":\"");
+						text_add(text, encoded, strlen(encoded));
+						TEXT(text, "\"");
+					}
+					free(encoded);
+				}
+				else if (exr)
+				{
+					snprintf(path, sizeof(path), "%s/hold_%u_%u.exr", directory, n, k);
+					if (file_write(path, exr, size))
+					{
+						TEXT(text, ",\"exr\":");
+						text_string(text, path);
+					}
+				}
+				free(exr);
+			}
+			TEXT(text, "}");
+		}
+		if (pixels != kept.pixels)
+			free(pixels);
+	}
+	text_printf(text, "],\"width\":%u,\"height\":%u,\"ms\":%.1f}", kept.width, kept.height,
+		(seconds_now() - started) * 1000.0);
+}
+
+/* {"cmd":"reload","dir":"<folder>"}: the backend's kernels read again from the folder's files (the one it read
+from already, without "dir") as the next play begins; that play's history begins again */
+static void serve_reload(struct text *text, const struct request *request)
+{
+	const char *directory = request_string(request, "dir");
+
+	if (!platform->shaders_reload)
+	{
+		reply_error(text, "this backend reads no kernels from files");
+		return;
+	}
+	platform->shaders_reload(directory);
+	TEXT(text, "{\"ok\":true,\"dir\":");
+	if (directory)
+		text_string(text, directory);
+	else
+		TEXT(text, "null");
 	TEXT(text, "}");
 }
 
@@ -3516,7 +3890,7 @@ static const char *const record_type_names[XGPU_STREAM_RECORD_TYPES] =
 	[XGPU_STREAM_HDR_PEAK_NITS] = "hdr_peak_nits",
 	[XGPU_STREAM_HDR_GAMUT] = "hdr_gamut",
 	[XGPU_STREAM_PASS_TIMES] = "pass_times", [XGPU_STREAM_MOTION] = "motion", [XGPU_STREAM_RT_SHADOWS] = "rt_shadows",
-	[XGPU_STREAM_CONTACT_SHADOWS] = "contact_shadows", [XGPU_STREAM_GPUS] = "gpus",
+	[XGPU_STREAM_CONTACT_SHADOWS] = "contact_shadows", [XGPU_STREAM_GPUS] = "gpus", [XGPU_STREAM_RT_BOUNCE] = "rt_bounce", [XGPU_STREAM_LT_LIGHTS] = "lt_lights",
 	[XGPU_STREAM_WORLD_AO_WINDOW] = "world_ao_window", [XGPU_STREAM_WORLD_AO_FIELD] = "world_ao_field",
 	[XGPU_STREAM_PIPELINE_STAND_IN] = "pipeline_stand_in", [XGPU_STREAM_CATEGORY] = "category",
 	[XGPU_STREAM_DYNAMIC_LIGHTS_WORLD] = "dynamic_lights_world", [XGPU_STREAM_WORLD_AO_PREPASS] = "world_ao_prepass",
@@ -4256,6 +4630,10 @@ static int serve(void)
 			serve_thumbs(&reply, request);
 		else if (!strcmp(command, "cost"))
 			serve_cost(&reply, request);
+		else if (!strcmp(command, "hold"))
+			serve_hold(&reply, request);
+		else if (!strcmp(command, "reload"))
+			serve_reload(&reply, request);
 		else if (!strcmp(command, "quit"))
 			break;
 		else

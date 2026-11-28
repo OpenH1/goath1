@@ -98,6 +98,9 @@ struct xgpu_backend_capabilities
 	/* display.ambient_occlusion "ray_traced": the occlusion's rays traced
 	by the GPU's ray queries (xgpu_backend_world_ao_mesh, _instances) */
 	BOOL ray_queries;
+	/* ... and the render geometry's budget there (MB; 0 none given:
+	port/linux/game/world_rt.c's default), by the GPU's class */
+	unsigned long rt_budget;
 	/* display.soft_particles: an effect drawn on a flat screen (no views)
 	soft against the scene's depth, as the VR mode's eyes draw it (the pixel
 	key's vr_effect at 1: d3d8_device.c's soft_effect_key) */
@@ -342,6 +345,10 @@ its first, malloc'd: display.hdr's back buffer clamped to [0, 1], or with
 tone_map tone mapped into it (xgpu_hdr.h's xgpu_hdr_sdr_pixel). Answered
 now; a screenshot can wait for the frame's end. */
 unsigned char *xgpu_backend_read_target(xgpu_target target, int layer, BOOL tone_map);
+/* a display.hdr (RGBA16F) target's half floats as they are, RGBA rows from
+its first, 8 bytes a pixel, malloc'd; NULL for any other target
+(debug.screenshot_halves) */
+unsigned short *xgpu_backend_read_target_halves(xgpu_target target);
 /* the screenshot key's picture (controls.screenshot): the target, tone
 mapped as xgpu_backend_read_target's, written by the host as a PNG file in
 directory (made if it is missing), named for the local date and time; its
@@ -896,6 +903,44 @@ struct xgpu_rt_shadows
 };
 
 void xgpu_backend_rt_shadows(xgpu_target color, xgpu_target depth, const struct xgpu_rt_shadows *shadows);
+
+/* ---------- display.rt_bounce (port/linux/game/dynamic_lights_bounce.c;
+docs/rt-plan/3-gi.md, stage 3): bounced light from the dynamic lights by
+the GPU's ray queries
+
+A window's lights that bounce (the strongest few to the view: the CPU
+bounce's choice), given before its pre-pass ends: each one's position, reach
+(world units), linear color (times the strength) and cone (the enhanced
+lights': its axis, scale and offset; omni 0, 0 and 1); the window (0 to 3)
+and the seconds since its last (the cache's fading). The backend traces a
+few pixels' bounce through the ray-traced scene into a world-space cache
+around the camera and lights the surfaces found once a pixel by it
+(xgpu_vulkan_gi.c). Where the backend has ray queries and the pre-pass
+alone; a count of 0 lets the cache fade. */
+/* (the game's copy of these: port/linux/include/rt_bounce.h, the same) */
+#define XGPU_RT_BOUNCE_LIGHTS 8
+struct xgpu_rt_bounce_light
+{
+	float position[3];
+	float radius;
+	float color[3];
+	float cone_offset;
+	float axis[3];
+	float cone_scale;
+};
+struct xgpu_rt_bounce
+{
+	int count, window;
+	float seconds;
+	struct xgpu_rt_bounce_light lights[XGPU_RT_BOUNCE_LIGHTS];
+};
+void xgpu_backend_rt_bounce(const struct xgpu_rt_bounce *bounce);
+
+/* ---------- the light-transport pass's light list (port/linux/game/lt_lights.c;
+~/dev/rt2-realtime-design.md, contract C4): a window's (0 to 3) count
+lights, xgpu_stream.h's struct xgpu_stream_lt_light each (at most
+XGPU_STREAM_LT_LIGHTS_MAXIMUM), and the game's count of lists sent; copied */
+void xgpu_backend_lt_lights(const void *lights, int count, int window, unsigned int frame);
 
 /* display.contact_shadows (port/linux/game/contact_shadows.c;
 docs/dynamic-shadows-plan.md, stage 2): the same casters' short, sharp

@@ -45,8 +45,9 @@ own GPU time (xgpu_stream_gpu_frames) after the pipelines' states, which a
 host of 24 would not write and a guest of 24 has no room for. 26:
 CONTACT_SHADOWS (display.contact_shadows), which a host of 25 would refuse
 as a record it does not know. 27: GPUS (display.gpu's devices, Settings'
-GRAPHICS CARD), which a host of 26 would refuse so */
-#define XGPU_STREAM_VERSION 27
+GRAPHICS CARD), which a host of 26 would refuse so. 28: LT_LIGHTS (the
+light-transport pass's light list), which a host of 27 would refuse so */
+#define XGPU_STREAM_VERSION 28
 #define XGPU_STREAM_LOADING_ART_BYTES (640u * 480u * 4u)
 /* and the picture at its own size after it, where there is one (loading_art.h's LOADING_ART_SOURCE_BYTES) */
 #define XGPU_STREAM_LOADING_ART_SOURCE_BYTES (1600u * 1200u * 4u)
@@ -363,6 +364,12 @@ enum
 	/* the devices the backend can draw with (synchronous:
 	xgpu_stream_gpus; xgpu_backend_gpus) */
 	XGPU_STREAM_GPUS,
+	/* display.rt_bounce: a window's lights that bounce
+	(xgpu_backend_rt_bounce) */
+	XGPU_STREAM_RT_BOUNCE,
+	/* the light-transport pass's light list: every dynamic light as drawn
+	and the suns (port/linux/game/lt_lights.c; xgpu_backend_lt_lights) */
+	XGPU_STREAM_LT_LIGHTS,
 	XGPU_STREAM_RECORD_TYPES,
 };
 
@@ -508,7 +515,11 @@ struct xgpu_stream_capabilities
 	/* the GPU an NVIDIA one where the DLSS add-on could run
 	(xgpu_backend_capabilities' dlss_gpu; a pad byte before, 0 from an
 	older host: the size and the version are as they were) */
-	uint8_t dlss_gpu, pad[2];
+	uint8_t dlss_gpu;
+	/* the ray-traced scene's render geometry's budget for this GPU, in 8 MB
+	(xgpu_backend_capabilities' rt_budget; a pad byte before, 0 from an
+	older host: the game's default then) */
+	uint8_t rt_budget, pad;
 	/* the GPU, its API and driver, in a few words (a report's:
 	port/linux/src/report.c), NUL terminated */
 	char device[96];
@@ -905,7 +916,11 @@ struct xgpu_stream_clear_target
 pixels as BGRA rows from its first into pixels (guest memory of
 width * height * 4 bytes, as the target was made), then the reply.
 display.hdr's RGBA16F back buffer is clamped to [0, 1], as an SDR display
-shows it, or with tone_map, tone mapped into it (xgpu_hdr_sdr_pixel) */
+shows it, or with tone_map, tone mapped into it (xgpu_hdr_sdr_pixel). With
+tone_map XGPU_STREAM_READ_HALVES, an RGBA16F target's half floats as they
+are instead (RGBA, 8 bytes a pixel, pixels width * height * 8 bytes: the
+debug capture of debug.screenshot_halves); any other target fails */
+#define XGPU_STREAM_READ_HALVES 2u
 struct xgpu_stream_read_target
 {
 	uint32_t header;
@@ -1511,6 +1526,87 @@ struct xgpu_stream_rt_shadows
 	struct xgpu_stream_rt_shadow_caster casters[];
 };
 
+/* xgpu_backend.h's struct xgpu_rt_bounce (its lights, count of them
+used, 48 bytes each) */
+#define XGPU_STREAM_RT_BOUNCE_LIGHTS 8
+struct xgpu_stream_rt_bounce_light
+{
+	float position[3];
+	float radius;
+	float color[3];
+	float cone_offset;
+	float axis[3];
+	float cone_scale;
+};
+struct xgpu_stream_rt_bounce
+{
+	uint32_t header;
+	int32_t count, window;
+	float seconds;
+	struct xgpu_stream_rt_bounce_light lights[XGPU_STREAM_RT_BOUNCE_LIGHTS];
+};
+
+/* LT_LIGHTS: a window's light list for the light-transport pass
+(~/dev/rt2-realtime-design.md's contract C4; port/linux/game/lt_lights.c,
+whose lt_lights.h has the game's copy of the light, the same: change both):
+count lights (0 to XGPU_STREAM_LT_LIGHTS_MAXIMUM, 144 bytes each) inline at
+lights (none: 0), the window (0 to 3) and the game's count of lists sent.
+A list turns the pass on (display.ray_traced_lighting, where HALO_LT_E1 does
+not say); window -1, with none, turns it off */
+#define XGPU_STREAM_LT_LIGHTS_MAXIMUM 1024
+enum
+{
+	XGPU_LT_LIGHT_POINT,
+	XGPU_LT_LIGHT_SPOT,
+	XGPU_LT_LIGHT_PANEL,
+	XGPU_LT_LIGHT_DIRECTIONAL,
+};
+enum
+{
+	XGPU_LT_LIGHT_MODELS_ONLY = 1 << 0,
+	XGPU_LT_LIGHT_HALO = 1 << 1,
+	XGPU_LT_LIGHT_PROJECTILE = 1 << 2,
+	XGPU_LT_LIGHT_FLASHLIGHT = 1 << 3,
+	XGPU_LT_LIGHT_PANEL_FLAG = 1 << 4,
+	XGPU_LT_LIGHT_GEL = 1 << 8,
+	XGPU_LT_LIGHT_BAKED = 1 << 9,
+	XGPU_LT_LIGHT_FIRST_PERSON = 1 << 10,
+	XGPU_LT_LIGHT_LIGHTMAP_DIRECT = 1 << 11,
+	XGPU_LT_LIGHT_NO_SPECULAR = 1 << 12,
+	XGPU_LT_LIGHT_NOT_OWN_OBJECT = 1 << 13,
+	XGPU_LT_LIGHT_UNSTABLE_ID = 1 << 14,
+};
+enum
+{
+	XGPU_LT_LIGHT_SOURCE_OWN_FIRST = 1,
+	XGPU_LT_LIGHT_SOURCE_GAME = 4,
+	XGPU_LT_LIGHT_SOURCE_COPY = 5,
+	XGPU_LT_LIGHT_SOURCE_SUN = 6,
+	XGPU_LT_LIGHT_SOURCE_FRAME = 7,
+};
+/* (each member as lt_lights.h describes it) */
+struct xgpu_stream_lt_light
+{
+	uint32_t id[2];
+	uint32_t kind, flags;
+	uint32_t object, owner;
+	int32_t gel_slot, gel_tag;
+	float position[3], emitter_radius;
+	float forward[3], range;
+	float up[3], cone_inner;
+	float left[3], cone_outer;
+	float emitter[3], power_scale;
+	float power[3], angular_diameter;
+	float color[3], gel_width;
+};
+struct xgpu_stream_lt_lights
+{
+	uint32_t header;
+	uint32_t count, lights;
+	int32_t window;
+	uint32_t frame;
+};
+
 /* ---------- the VR mode
 
 The backend composes each frame (the eyes' images, the HUD's and its
@@ -1784,6 +1880,18 @@ tracing) read the rest */
 #define XGPU_WORLD_RT_MATERIAL_ALPHA_TESTED 1u
 #define XGPU_WORLD_RT_MATERIAL_TWO_SIDED 2u
 #define XGPU_WORLD_RT_MATERIAL_TRANSPARENT 4u
+/* (the light transport's reflections, lt/indirect.glsl: how much a
+surface reflects, from its shader, in the flags' high bits: its specular
+mask the bump map's alpha (an environment's "bump map is specular mask"), or
+the multipurpose map's (a model's), else the base map's; and its reflection's
+strength head-on and at grazing view (luminance x 128, 0 to 255: the
+specular brightness x its tint x the reflection's brightness, an
+environment's; a model's brightness x tint)) */
+#define XGPU_WORLD_RT_MATERIAL_MASK_BUMP 0x100u
+#define XGPU_WORLD_RT_MATERIAL_MASK_MULTIPURPOSE 0x200u
+#define XGPU_WORLD_RT_MATERIAL_REFLECTION_PERPENDICULAR_SHIFT 16
+#define XGPU_WORLD_RT_MATERIAL_REFLECTION_PARALLEL_SHIFT 24
+#define XGPU_WORLD_RT_MATERIAL_REFLECTION_SCALE 128.0f
 struct xgpu_world_rt_material
 {
 	uint32_t index, kind, flags;
@@ -1908,6 +2016,9 @@ XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_dynamic_lights_block, 6192);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_dynamic_lights_halos, 192);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_rt_shadow_caster, 32);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_rt_shadows, 160);
+XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_rt_bounce, 16 + 48 * XGPU_STREAM_RT_BOUNCE_LIGHTS);
+XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_lt_light, 144);
+XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_lt_lights, 20);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_dynamic_lights_world, 12);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_vr_info, 108);
 XGPU_STREAM_ASSERT_SIZE(struct xgpu_stream_vr_eyes, 36 + 4 * 52);

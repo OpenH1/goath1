@@ -34,6 +34,10 @@ enum
 	/* a unit's flashlight (the game's side only: it always casts a
 	shadow, dynamic_lights_shadowed) */
 	HALO_DYNAMIC_LIGHT_FLASHLIGHT = 8,
+	/* a lit panel (a display: light_sources.c), a Lambertian disk facing
+	along its axis, its radius squared in cone_offset, its color the
+	display's own (xgpu.h's XGPU_DYNAMIC_LIGHTS_PANELS) */
+	HALO_DYNAMIC_LIGHT_PANEL = 16,
 };
 /* the vertex constant (as the game numbers them) a model's draw has the
 rasterizer lights it is not lit by in (rasterizer_set_model_lighting: its
@@ -66,6 +70,32 @@ given before it (count 0: none) and taken by it (xgpu.h's
 XGPU_DYNAMIC_LIGHTS_SHADOWED) */
 #define HALO_DYNAMIC_LIGHTS_SHADOWED 4
 void halo_dynamic_lights_shadowed(const int *indices, const float *disks, const unsigned long *owners, int count);
+/* the enhanced flashlight (xgpu.h's XGPU_DYNAMIC_LIGHTS_FLASHLIGHT): the
+frame's flashlights, given before halo_dynamic_lights_set and taken by it,
+each its light's index among those it is given, its gel's frame as the
+game's gel pass has it (its beam, up and left: rasterizer_xbox_environment.c),
+and whether its shadow map is traced (one at most), with its owner among the
+ray-traced scene's instances (world_rt_owner, which its rays leave out) and
+where its shadows are cast from (its lamp on the weapon in hand) */
+#define HALO_DYNAMIC_LIGHTS_FLASHLIGHTS 4
+struct halo_flashlight
+{
+	int light;
+	float forward[3], up[3], left[3];
+	int shadowed;
+	unsigned long owner;
+	float lamp[3];
+};
+void halo_dynamic_lights_flashlights(const struct halo_flashlight *flashlights, int count);
+/* the gel the flashlights are lit through, and the game's distance
+attenuation (each a texture's header, D3DBaseTexture's, as the texture
+cache gives it: a cube map, and a volume), made the renderer's cookie and
+falloff (xgpu.h); 1 if it could be (the gel decoded), else 0: the
+flashlight is then lit as the game lights it */
+int halo_dynamic_lights_gel(const void *gel, const void *attenuation);
+/* the game's distance attenuation texture (its header; NULL none), every
+light's falloff on the structure (xgpu.h's XGPU_DYNAMIC_LIGHTS_ATTENUATION) */
+void halo_dynamic_lights_attenuation(const void *attenuation);
 /* the structure's 3D BSP, from which a pixel finds its cluster (xgpu.h's
 world: count texels of four words, count at most
 HALO_DYNAMIC_LIGHTS_WORLD_TEXELS), when it changes; copied */

@@ -149,6 +149,9 @@ def test_draw_inputs_negative(name):
 KEPT_ELSEWHERE = {
     'halo_world_ao_object': "the ray-traced scene's owner: a uniform (world_object), no key",
     'halo_world_ao_cards': "the cards' flag: a uniform (world_object), no key",
+    'halo_rt_reflection': "display.rt_reflections' tag (off by default): a record's draw has none (d3d8_device.c's "
+                          "rt_reflection_modes), so the shipped records keep their form; the traced variants are made "
+                          "at their first draw. Into struct draw_inputs when the records are next made again",
     'halo_shadow_map_scale': "display.shadow_resolution's scale: the shadow maps' size, made as a record plays",
     'halo_screen_ui_offset': "the menus' centring: the viewport, dynamic state",
     'halo_screen_ui_offset_to': "the menus' centring: the viewport, dynamic state",
@@ -196,6 +199,12 @@ KEPT_ELSEWHERE = {
     'halo_dynamic_lights_shadowed': "display.shadows \"ray_traced\"'s shadowed lights: texels of the lights' cells "
                                     "(the backend's data, sent each frame), which no pipeline is built from (the "
                                     "surfaces read the mask, a stand-in where none is traced, whatever it holds)",
+    'halo_dynamic_lights_flashlights': "the enhanced flashlight's slots: texels of the lights' cells (the backend's "
+                                       "data, sent each frame), which no pipeline is built from",
+    'halo_dynamic_lights_attenuation': "the light model's falloff on the structure: texels of the lights' cells (the "
+                                       "backend's data, sent each frame), which no pipeline is built from",
+    'halo_dynamic_lights_gel': "the enhanced flashlight's gel and falloff, made once a map: texels of the lights' "
+                               "cells, which no pipeline is built from",
     'd3d8_draw_immediate_packed': "Begin, SetVertexData and End's own: the registers and the immediate draw as "
                                   "they leave them, journaled as the immediate draw (JOURNAL_DRAW_IMMEDIATE)",
 }

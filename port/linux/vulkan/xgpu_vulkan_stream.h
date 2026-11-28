@@ -21,6 +21,10 @@ the stream is played): the backend's statistics logged every 600 frames,
 and the folder each shader module is written into as it is made, as
 <name>.spv (NULL or empty: none; the string is kept) */
 void xgpu_vulkan_stream_debug(int statistics, const char *shader_folder);
+/* (the replay, port/linux/vulkan/tools/halo_replay.c: its checks
+deterministic) with HALO_LT_E1, a world pipeline or a twin not made yet made
+and waited for as it is drawn, not its stand-in drawn (the game never waits) */
+void xgpu_vulkan_stream_wait_world(int wait);
 
 /* Host VR composition uses the same numbered targets as the stream. A
 replacement image remains owned by the composer, including at target deletion. */

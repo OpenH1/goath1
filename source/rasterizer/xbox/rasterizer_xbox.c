@@ -422,6 +422,7 @@ symbols in this file:
 #include "mcc_cache.h" /* port: port/linux/game/mcc_cache.c */
 #include "motion_vectors.h" /* port: port/linux/game/motion_vectors.c */
 #include "mods.h" /* port: port/linux/game/mod_bitmaps.c */
+int lt_lights_pass_on(void); /* port: port/linux/game/lt_lights.c (the ray-traced lighting on) */
 
 /* ---------- constants */
 
@@ -1235,9 +1236,10 @@ void rasterizer_set_model_lighting(
 		&lighting_constants,
 		NUMBER_OF_MODEL_LIGHTING_CONSTANTS);
 	/* port: with the enhanced dynamic lights, which light the model by every
-	light near it, the object's own lights it is not lit by
-	(RENDER_LIGHTING_OWN_LIGHT: a Covenant door's light, inside the door,
-	lit all of it and left a dark spot where it is) */
+	light near it, the lights this draw is not lit by
+	(RENDER_LIGHTING_OWN_LIGHT, the object's lighting's list, whoever put
+	a light there: a Covenant door's own light, inside the door, lit all
+	of it and left a dark spot where it is) */
 	if (halo_dynamic_lights_enhanced())
 	{
 		real own_lights[4];
@@ -1248,10 +1250,14 @@ void rasterizer_set_model_lighting(
 			long own_light = RENDER_LIGHTING_OWN_LIGHT(lighting, slot);
 
 			own_lights[slot] = -1.0f;
-			/* (a light this frame, which says so: not what a lighting made
-			elsewhere left in the pads) */
-			if (own_light != NONE && own_light < rasterizer_lights.light_count &&
-				TEST_FLAG(rasterizer_lights.lights[own_light].definition->flags, 2 /* dont light own object */))
+			/* (a light this frame: with the ray-traced lighting's light
+			model (port/linux/game/lt_lights.h) the list is the lighting's,
+			made with its pads cleared, object_lights.c's
+			lights_port_own_light; else one which says so, not what a
+			lighting made elsewhere left in the pads) */
+			if (own_light != NONE && own_light >= 0 && own_light < rasterizer_lights.light_count &&
+				(lt_lights_pass_on() ||
+				TEST_FLAG(rasterizer_lights.lights[own_light].definition->flags, 2 /* dont light own object */)))
 			{
 				own_lights[slot] = (real)own_light;
 			}

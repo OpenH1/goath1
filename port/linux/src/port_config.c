@@ -205,6 +205,8 @@ whose GPU has MetalFX's temporal scaler (config_default_of) */
 #define TEMPORAL_AA_DEFAULT "\"off\""
 /* (in the comment of each setting it chooses) */
 #define GRAPHICS_CHOOSES "\nCommented out, display.graphics chooses it."
+/* (in the comment of each setting display.ray_tracing chooses) */
+#define RAY_TRACING_CHOOSES "\nCommented out, display.ray_tracing chooses it."
 /* in input.mouse_sensitivity's comment: a file with it has the mouse's
 settings in CS2's units; one without, the older versions' (config_migrate_mouse) */
 #define CONFIG_MOUSE_MARK "Counter-Strike 2's"
@@ -536,6 +538,21 @@ static const struct config_setting config_settings[] =
 		_environment_value, _platform_all,
 		"The size the objects' shadows are drawn at, in pixels each way: 128 as\n"
 		"on the Xbox, or 256, 512 or 1024 for smoother edges, as soft." GRAPHICS_CHOOSES },
+	{ "display.ray_tracing", _config_string, "\"off\"", "HALO_RAY_TRACING", _environment_value, _platform_all,
+		"Ray tracing together (work in progress, off by default): \"auto\", \"on\"\n"
+		"or \"off\". On, display.shadows and display.ambient_occlusion are\n"
+		"\"ray_traced\", and display.rt_reflections and display.rt_bounce on, each\n"
+		"set here winning over it; off, they are as before. \"auto\" is on where\n"
+		"the GPU and its Vulkan driver have ray queries and display.graphics is\n"
+		"\"enhanced\", off elsewhere (Metal, Android, older GPUs, the VR mode)." },
+	{ "display.ray_traced_lighting", _config_boolean, "false", "HALO_RAY_TRACED_LIGHTING", _environment_value,
+		_platform_all,
+		"Experimental: the level's lights, the flashlight and the sun traced on\n"
+		"the GPU (one light-transport pass through a denoiser), with the enhanced\n"
+		"dynamic lights' newer light model. Still in progress: expect visual bugs\n"
+		"and a lower frame rate. Vulkan where the GPU has ray queries, with\n"
+		"display.dynamic_lights \"enhanced\"; off elsewhere. Off, nothing of it\n"
+		"runs (port/linux/game/lt_lights.h)." },
 	{ "display.shadows", _config_string, "\"classic\"", "HALO_SHADOWS", _environment_value, _platform_all,
 		"The objects' shadows on the level: \"classic\" as the game draws them\n"
 		"(each drawn into a map, blurred and laid over the ground under it), or\n"
@@ -543,12 +560,20 @@ static const struct config_setting config_settings[] =
 		"objects' own shapes, in the same direction and darkness, soft at their\n"
 		"edges, with none of the classic shadows' work on the processor; where\n"
 		"the GPU and its Vulkan driver have ray queries (\"classic\" elsewhere,\n"
-		"Metal included). docs/world-ao.md, \"Ray-traced shadows\"." },
+		"Metal included). docs/world-ao.md, \"Ray-traced shadows\"." RAY_TRACING_CHOOSES },
 	{ "display.contact_shadows", _config_boolean, "true", "HALO_CONTACT_SHADOWS", _environment_value, _platform_all,
 		"Small, sharp shadows where the objects meet the level (under their\n"
 		"feet, against a wall), found from the depth on the GPU, beside the\n"
 		"classic shadows; not drawn where display.shadows \"ray_traced\" is\n"
 		"(its rays find the same contact). Vulkan; Metal draws none yet." },
+	{ "display.rt_reflections", _config_boolean, "false", "HALO_RT_REFLECTIONS", _environment_value, _platform_all,
+		"Reflections traced by the GPU's ray queries through the level and\n"
+		"the objects, in place of the shiny surfaces' fixed cube maps (the\n"
+		"polished floors, glass, water, the Covenant's metals), through the\n"
+		"game's own reflection masks, at the same strength and tint; the cube\n"
+		"map where a ray leaves the scene. Mirror-like only for now. Vulkan\n"
+		"where the device has ray queries (the cube maps elsewhere); best with\n"
+		"debug.rt_render_geometry. docs/rt-plan/2-reflections.md." RAY_TRACING_CHOOSES },
 	{ "display.menus", _config_string, "\"pc\"", "HALO_MENUS", _environment_value, _platform_all,
 		"The menus: \"pc\" for the PC version's main menu (port/assets/menus,\n"
 		"and a menus folder here for your own), \"xbox\" for the Xbox's." },
@@ -1844,6 +1869,13 @@ static const struct config_setting config_settings[] =
 		"through the level on the CPU, so it works on any graphics card. The\n"
 		"level's own light already has its bounce baked in. Only the drawing\n"
 		"changes." },
+	{ "display.rt_bounce", _config_boolean, "false", "HALO_RT_BOUNCE", _environment_value, _platform_all,
+		"With display.dynamic_lights \"enhanced\" and display.ambient_occlusion\n"
+		"\"world\" or \"ray_traced\", on a graphics card that ray traces\n"
+		"(Vulkan): the bounced light of plasma bolts, explosions, muzzle\n"
+		"flashes and the flashlight traced on the GPU off the real walls and\n"
+		"objects, in their colors, in place of display.dynamic_light_bounce's\n"
+		"few lights. Only the drawing changes." RAY_TRACING_CHOOSES },
 	{ "display.ambient_occlusion", _config_string, GRAPHICS_AMBIENT_OCCLUSION, "HALO_AMBIENT_OCCLUSION",
 		_environment_value, _platform_all,
 		"Ambient occlusion, which the Xbox did not have: the ambient light of\n"
@@ -1857,7 +1889,7 @@ static const struct config_setting config_settings[] =
 		"through their own shapes, where the GPU and its Vulkan driver have ray\n"
 		"queries; \"world\" elsewhere, the Mac's and iOS's Metal included). The\n"
 		"older \"subtle\" and \"strong\" are read as \"world\"."
-		GRAPHICS_CHOOSES },
+		"\nCommented out, display.graphics and display.ray_tracing choose it." },
 	{ "display.soft_particles", _config_boolean, GRAPHICS_SOFT_PARTICLES, "HALO_SOFT_PARTICLES", _environment_value,
 		_platform_desktop,
 		"Smoke, dust, steam and weather fade softly where they meet walls and\n"
@@ -2672,6 +2704,9 @@ static const struct config_setting config_settings[] =
 		"Log each local player's camera each tick, with whether it is dead and\n"
 		"whom it watches (game.spectate_on_death's tests:\n"
 		"port/linux/game/dead_spectate.c)." },
+	{ "debug.rt_export", _config_string, "\"\"", "HALO_RT_EXPORT", _environment_value, _platform_all,
+		"\"<second> <folder>\": at that second of the cues' clock, the moment written\n"
+		"to the folder as a ray-traced truth scene (port/linux/game/rt_export.c); empty none." },
 	{ "debug.spectate_shots", _config_string, "\"\"", "HALO_SPECTATE_SHOTS", _environment_value, _platform_all,
 		"Ticks (\"<tick>,<tick>...\") whose first frame is saved as\n"
 		"debug.screenshot_directory's tick<tick>.bmp; empty none." },
@@ -2746,7 +2781,8 @@ static const struct config_setting config_settings[] =
 		_platform_all,
 		"\"<x> <y> <z> <yaw> <pitch>[@<seconds>]\": that many seconds (1 if not\n"
 		"given) into an automated test game the first local player is put at\n"
-		"that point, facing that way (degrees), once; \"\" never." },
+		"that point, facing that way (degrees), once; \"\" never. After a \";\",\n"
+		"\"<x> <y> <z> <yaw> <pitch>\" for the second local player too." },
 	{ "debug.network_test_elevator", _config_real, "0.0", "HALO_NETWORK_TEST_ELEVATOR", _environment_value, _platform_all,
 		"This many seconds into an automated test game each machine lists the\n"
 		"level's elevators, stands every player on the one of\n"
@@ -3503,12 +3539,15 @@ static const struct config_setting config_settings[] =
 	{ "debug.world_scene_log", _config_boolean, "false", "HALO_WORLD_SCENE_LOG", _environment_value, _platform_all,
 		"With display.ambient_occlusion \"world\", log the world scene's counts\n"
 		"(the level's triangles, the objects drawn, the lights) now and then." },
-	{ "debug.rt_render_geometry", _config_boolean, "false", "HALO_RT_RENDER_GEOMETRY", _environment_value, _platform_all,
-		"With display.ambient_occlusion or display.shadows \"ray_traced\", the\n"
-		"level traced as it is drawn (its render triangles, the alpha-tested\n"
-		"ones' rays tested by their alpha), not as its collision geometry,\n"
-		"from the frame after the level's first; for checking\n"
-		"(docs/rt-plan/1-geometry.md)." },
+	{ "debug.rt_render_geometry", _config_string, "\"auto\"", "HALO_RT_RENDER_GEOMETRY", _environment_value,
+		_platform_all,
+		"With display.ambient_occlusion or display.shadows \"ray_traced\", what\n"
+		"the rays hit: \"auto\", with display.ray_traced_lighting, the level and\n"
+		"objects as they are drawn (their render triangles, cutouts tested by\n"
+		"their alpha), their collision geometry only until the render mesh is\n"
+		"made or past this GPU's memory budget, and without it the collision\n"
+		"geometry; \"on\" as drawn whatever the budget; \"off\" the collision\n"
+		"geometry alone (docs/rt-plan/1-geometry.md)." },
 	{ "debug.world_scene_dump", _config_boolean, "false", "HALO_WORLD_SCENE_DUMP", _environment_value, _platform_all,
 		"With display.ambient_occlusion \"world\", write each level BSP's\n"
 		"collision triangles to the data folder as it loads, to look at in a\n"
@@ -3534,6 +3573,15 @@ static const struct config_setting config_settings[] =
 	{ "debug.screenshot_until", _config_real, "0.0", "HALO_SCREENSHOT_UNTIL", _environment_value, _platform_all,
 		"With screenshot_every, save until this many seconds of the scenario's\n"
 		"simulation; 0 to the last frame." },
+	{ "debug.screenshot_at", _config_string, "\"\"", "HALO_SCREENSHOT_AT", _environment_value, _platform_all,
+		"Seconds of the scenario's simulation, separated by commas: the first\n"
+		"frame at or after each saved to screenshot_directory as at<n>.bmp (n\n"
+		"from 0, in the list's order); a last \"quit\" ends the game once\n"
+		"they are saved; empty none." },
+	{ "debug.screenshot_halves", _config_boolean, "false", "HALO_SCREENSHOT_HALVES", _environment_set_is_true,
+		_platform_all, "With display.hdr drawing: each frame saved to screenshot_directory\n"
+		"also as its half floats (<name>.rgba16f), and the 3D view left as\n"
+		"drawn, not tone mapped, so its light past white is kept." },
 	{ "debug.texture_dump_directory", _config_string, "\"\"", "HALO_TEXTURE_DUMP", _environment_value, _platform_all,
 		"A folder to write every texture to as it is uploaded; empty none." },
 	{ "debug.sample_seconds", _config_real, "0.0", "HALO_SAMPLE", _environment_value, _platform_android | _platform_guest,
@@ -3851,6 +3899,13 @@ static const struct
 	/* (MSAA's 8 samples, gone: twice 4x's work for edges no smoother to
 	see, where SMAA or a temporal technique does better for less) */
 	{ "display.anti_aliasing", "msaa8x", "msaa4x" },
+	/* (the ray-traced scene's render geometry a switch, off by default:
+	"auto" now, a file's or the environment's true or false read as on or
+	off) */
+	{ "debug.rt_render_geometry", "true", "on" },
+	{ "debug.rt_render_geometry", "false", "off" },
+	{ "debug.rt_render_geometry", "1", "on" },
+	{ "debug.rt_render_geometry", "0", "off" },
 	{ NULL, NULL, NULL },
 };
 
@@ -4968,14 +5023,95 @@ static long config_graphics_entry(long setting)
 	return -1;
 }
 
-/* the value the preset (display.graphics's value: "classic", else
-"enhanced") gives the setting, as the table above writes it */
+/* ---------- display.ray_tracing
+
+The settings ray tracing chooses, each at its value in "on" where the player
+has not set it, else at the one it has without (its default, or the one
+display.graphics gives it); one set wins over it, as over display.graphics,
+and Settings writing one at the value it gives leaves it to it again
+(config_write). "auto" is on where the backend has said it has ray queries
+(config_ray_queries_set, d3d8_device.c's device_backend_ready: until then,
+and where it has none, off, the settings as before) and display.graphics is
+"enhanced"; not in the VR mode, whose headset's frames have no room for it.
+Battery saver reads them at their values without it (config_read). */
+static const struct
+{
+	const char *name;
+	/* (as the table above writes it) */
+	const char *on;
+} config_ray_tracing[] =
+{
+	{ "display.shadows", "\"ray_traced\"" },
+	{ "display.ambient_occlusion", "\"ray_traced\"" },
+	{ "display.rt_reflections", "true" },
+	{ "display.rt_bounce", "true" },
+};
+
+#define NUMBER_OF_CONFIG_RAY_TRACING (sizeof(config_ray_tracing) / sizeof(config_ray_tracing[0]))
+
+/* whether the backend has ray queries, once it has said */
+static int config_ray_queries;
+/* (battery saver's: each at its value without ray tracing) */
+static struct config_value config_ray_tracing_off[NUMBER_OF_CONFIG_RAY_TRACING];
+
+/* the setting's entry in config_ray_tracing, or -1 */
+static long config_ray_tracing_entry(long setting)
+{
+	size_t entry;
+
+	for (entry = 0; setting >= 0 && entry < NUMBER_OF_CONFIG_RAY_TRACING; entry++)
+	{
+		if (!strcmp(config_ray_tracing[entry].name, config_settings[setting].name))
+			return (long)entry;
+	}
+	return -1;
+}
+
+/* whether display.ray_tracing is on, under display.graphics's value */
+static int config_ray_tracing_on(const char *graphics)
+{
+	const char *setting = config_values[config_setting_index("display.ray_tracing")].string;
+
+	if (setting && !strcmp(setting, "on"))
+		return 1;
+	if (setting && !strcmp(setting, "off"))
+		return 0;
+#ifdef HALO_VR
+	return 0;
+#else
+	return config_ray_queries && !(graphics && !strcmp(graphics, "classic"));
+#endif
+}
+
+/* the value the presets (display.graphics's value: "classic", else
+"enhanced"; and display.ray_tracing, resolved under it) give the setting, as
+the tables write it */
 static const char *config_graphics_text(const char *graphics, long setting)
 {
 	long entry = config_graphics_entry(setting);
+	long ray_tracing = config_ray_tracing_entry(setting);
 
+	if (ray_tracing >= 0 && config_ray_tracing_on(graphics))
+		return config_ray_tracing[ray_tracing].on;
 	return entry >= 0 && graphics && !strcmp(graphics, "classic") ? config_graphics[entry].classic :
 		config_settings[setting].default_value;
+}
+
+/* whether a preset (display.graphics, display.ray_tracing) chooses the
+setting */
+static int config_preset_chooses(long setting)
+{
+	return config_graphics_entry(setting) >= 0 || config_ray_tracing_entry(setting) >= 0;
+}
+
+/* the name of the entry'th setting a preset chooses, else NULL past the last
+(each of both tables; display.ambient_occlusion, in both, twice) */
+static const char *config_preset_setting(size_t entry)
+{
+	if (entry < NUMBER_OF_CONFIG_GRAPHICS)
+		return config_graphics[entry].name;
+	entry -= NUMBER_OF_CONFIG_GRAPHICS;
+	return entry < NUMBER_OF_CONFIG_RAY_TRACING ? config_ray_tracing[entry].name : NULL;
 }
 
 static int config_values_equal(const struct config_value *a, const struct config_value *b, enum config_type type)
@@ -5020,11 +5156,12 @@ values (the strings before are kept, as config_set_from_text keeps them) */
 static void config_graphics_apply(void)
 {
 	const char *graphics = config_values[config_setting_index("display.graphics")].string;
+	const char *name;
 	size_t entry;
 
-	for (entry = 0; entry < NUMBER_OF_CONFIG_GRAPHICS; entry++)
+	for (entry = 0; (name = config_preset_setting(entry)) != NULL; entry++)
 	{
-		long setting = config_setting_index(config_graphics[entry].name);
+		long setting = config_setting_index(name);
 
 		if (setting >= 0 && !config_set[setting])
 			config_set_from_table_text(&config_values[setting], config_settings[setting].type,
@@ -5055,6 +5192,34 @@ static void config_battery_values_set(void)
 			config_set_from_table_text(&config_battery_values[entry], config_settings[setting].type,
 				config_graphics[entry].classic);
 	}
+	for (entry = 0; entry < NUMBER_OF_CONFIG_RAY_TRACING; entry++)
+	{
+		long setting = config_setting_index(config_ray_tracing[entry].name);
+
+		if (setting >= 0)
+			config_set_from_table_text(&config_ray_tracing_off[entry], config_settings[setting].type,
+				config_settings[setting].default_value);
+	}
+}
+
+static const struct config_value *config_value(const char *name, enum config_type type);
+
+void config_ray_queries_set(int ray_queries)
+{
+	/* (the file read first) */
+	config_value("display.ray_tracing", _config_string);
+	pthread_mutex_lock(&config_lock);
+	if (!config_ray_queries != !ray_queries)
+	{
+		config_ray_queries = ray_queries != 0;
+		config_graphics_apply();
+		platform_log("settings: display.ray_tracing \"%s\": ray tracing %s", config_values[config_setting_index(
+			"display.ray_tracing")].string, config_ray_tracing_on(config_values[config_setting_index(
+			"display.graphics")].string) ? "on" : "off");
+		/* (what keeps one of them reads it again) */
+		config_change_count++;
+	}
+	pthread_mutex_unlock(&config_lock);
 }
 
 void config_battery_saver_set(int saving)
@@ -5281,6 +5446,8 @@ static const struct
 	{ "display.ambient_occlusion", { "off", "world", "ray_traced", NULL }, "off" },
 	{ "display.temporal_aa", { "off", "fsr", "dlss", "metalfx", NULL }, "off" },
 	{ "display.shadows", { "classic", "ray_traced", NULL }, "classic" },
+	{ "debug.rt_render_geometry", { "auto", "on", "off", NULL }, "auto" },
+	{ "display.ray_tracing", { "auto", "on", "off", NULL }, "off" },
 	{ "display.astc_textures", { "auto", "always", "off", NULL }, NULL },
 	{ "display.picture_position", { "center", "top", "bottom", NULL }, NULL },
 	{ "display.orientation", { "landscape", "portrait", "auto", NULL }, NULL },
@@ -5932,8 +6099,12 @@ static const struct config_value *config_read(const char *name, enum config_type
 		return value;
 	setting = config_setting_index(name);
 	entry = config_graphics_entry(setting);
-	return entry >= 0 && !config_graphics[entry].simulation && config_settings[setting].type == type &&
-		!config_set[setting] ? &config_battery_values[entry] : value;
+	if (entry >= 0)
+		return !config_graphics[entry].simulation && config_settings[setting].type == type && !config_set[setting] ?
+			&config_battery_values[entry] : value;
+	entry = config_ray_tracing_entry(setting);
+	return entry >= 0 && config_settings[setting].type == type && !config_set[setting] ?
+		&config_ray_tracing_off[entry] : value;
 }
 
 /* ---------- writing a setting */
@@ -6173,7 +6344,7 @@ int config_write(const char *name, const char *value)
 	/* (one display.graphics chooses, at the value it gives it: left to it,
 	commented out) */
 	config_set[index] = 1;
-	if (config_graphics_entry(index) >= 0 && config_graphics_gives(index))
+	if (config_preset_chooses(index) && config_graphics_gives(index))
 	{
 		config_set[index] = 0;
 		config_graphics_line(index, line_text, line_size);
@@ -6183,21 +6354,21 @@ int config_write(const char *name, const char *value)
 	updated = config_set_line(text ? text : "", section, key, line_text);
 	/* (display.graphics: those it chooses that are set at the value it now
 	gives them left to it too, and the others it chooses at its values) */
-	if (!strcmp(name, "display.graphics"))
+	if (!strcmp(name, "display.graphics") || !strcmp(name, "display.ray_tracing"))
 	{
+		const char *chosen;
 		size_t entry;
 
-		for (entry = 0; entry < NUMBER_OF_CONFIG_GRAPHICS && updated; entry++)
+		for (entry = 0; (chosen = config_preset_setting(entry)) != NULL && updated; entry++)
 		{
-			long setting = config_setting_index(config_graphics[entry].name);
-			const char *setting_dot = strchr(config_graphics[entry].name, '.');
+			long setting = config_setting_index(chosen);
+			const char *setting_dot = strchr(chosen, '.');
 			char *next;
 
 			if (setting < 0 || !setting_dot || !config_set[setting] || !config_graphics_gives(setting))
 				continue;
 			config_graphics_line(setting, line_text, line_size);
-			snprintf(section, sizeof(section), "%.*s", (int)(setting_dot - config_graphics[entry].name),
-				config_graphics[entry].name);
+			snprintf(section, sizeof(section), "%.*s", (int)(setting_dot - chosen), chosen);
 			next = config_set_line(updated, section, setting_dot + 1, line_text);
 			if (!next)
 				continue;

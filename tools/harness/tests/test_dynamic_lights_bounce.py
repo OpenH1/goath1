@@ -18,7 +18,8 @@ CONTROLS = {
     "carried-to-new-wall": (("\t\t\tslot->color[0] = slot->color[1] = slot->color[2] = 0.0f;\n", "\t\t\t;\n"),
                             "new-wall-starts-dark"),
     "never-fades": (("slot->color[channel] *= 1.0f - ease;", "slot->color[channel] *= 1.0f;"), "fades-with-source"),
-    "models-only-bounce": (("(light->flags & HALO_DYNAMIC_LIGHT_MODELS_ONLY) || ", ""), "choose-strongest"),
+    "models-only-bounce": (("(light->flags & (HALO_DYNAMIC_LIGHT_MODELS_ONLY | HALO_DYNAMIC_LIGHT_FLASHLIGHT)) ||", "0 ||"),
+                           "choose-strongest"),
     "match-taken": (("if (!tracks[index].used || taken[index])", "if (!tracks[index].used)"), "match-nearest"),
 }
 

@@ -248,6 +248,11 @@ static struct
 	boolean place;
 	real_point3d place_position;
 	real place_yaw, place_pitch, place_time;
+	/* (and the second local player's, after a ";": a split screen's other
+	player, a light of its own beside the first one's view) */
+	boolean place_second;
+	real_point3d place_second_position;
+	real place_second_yaw, place_second_pitch;
 	/* ... or ("object:<name>[:<distance>[:<degrees>]]"): that far from the
 	nearest object lying about whose tag's name has it (one with a unit
 	riding it first), facing it, from a side the level leaves a line from
@@ -533,6 +538,16 @@ static void network_test_read_settings(
 		network_test.place_yaw = yaw;
 		network_test.place_pitch = pitch;
 		network_test.place_time = at ? (real)atof(at + 1) : 1.0f;
+		{
+			char const *second = strchr(place, ';');
+
+			network_test.place_second = second && sscanf(second + 1, "%f %f %f %f %f", &x, &y, &z, &yaw, &pitch) == 5;
+			network_test.place_second_position.x = x;
+			network_test.place_second_position.y = y;
+			network_test.place_second_position.z = z;
+			network_test.place_second_yaw = yaw;
+			network_test.place_second_pitch = pitch;
+		}
 	}
 	{
 		char const *seat = config_string("debug.network_test_vehicle_seat");
@@ -2632,10 +2647,13 @@ static void network_test_pickup(
 /* debug.network_test_place: the first local player's unit put at a point,
 facing (yaw, pitch in degrees) that way, as the debug camera's numbers give
 them, once, for pictures of one place; whether it was */
-static boolean network_test_place(
-	void)
+static boolean network_test_place_one(
+	short local_player,
+	real_point3d const *position,
+	real yaw,
+	real pitch)
 {
-	long player_index = local_player_get_player_index(0);
+	long player_index = local_player_get_player_index(local_player);
 	struct player_datum *player;
 	struct unit_datum *unit;
 	real_euler_angles2d angles;
@@ -2646,8 +2664,8 @@ static boolean network_test_place(
 	player = player_get(player_index);
 	if (player->unit_index == NONE)
 		return FALSE;
-	angles.yaw = DEGREES_TO_RADIANS(network_test.place_yaw);
-	angles.pitch = DEGREES_TO_RADIANS(network_test.place_pitch);
+	angles.yaw = DEGREES_TO_RADIANS(yaw);
+	angles.pitch = DEGREES_TO_RADIANS(pitch);
 	vector3d_from_euler_angles2d(&facing, &angles);
 	/* (by an object: the nearest whose tag's name has the name, not carried,
 	from the side the player is on, the eye a little over its middle) */
@@ -2745,14 +2763,27 @@ static boolean network_test_place(
 	forward = facing;
 	forward.k = 0.0f;
 	normalize3d(&forward);
-	object_set_position(player->unit_index, &network_test.place_position, &forward, NULL);
+	object_set_position(player->unit_index, position, &forward, NULL);
 	unit = unit_get(player->unit_index);
 	unit->unit.desired_facing_vector = forward;
 	unit->unit.desired_aiming_vector = facing;
 	unit->unit.desired_looking_vector = facing;
-	player_control_set_facing(0, &facing);
-	platform_log("network test: placed at %.3f %.3f %.3f, yaw %.1f pitch %.1f", network_test.place_position.x,
-		network_test.place_position.y, network_test.place_position.z, network_test.place_yaw, network_test.place_pitch);
+	player_control_set_facing(local_player, &facing);
+	platform_log("network test: placed at %.3f %.3f %.3f, yaw %.1f pitch %.1f (local player %d)", position->x,
+		position->y, position->z, yaw, pitch, local_player);
+	return TRUE;
+}
+
+static boolean network_test_place(
+	void)
+{
+	if (!network_test_place_one(0, &network_test.place_position, network_test.place_yaw, network_test.place_pitch))
+		return FALSE;
+	if (network_test.place_second)
+	{
+		network_test_place_one(1, &network_test.place_second_position, network_test.place_second_yaw,
+			network_test.place_second_pitch);
+	}
 	return TRUE;
 }
 

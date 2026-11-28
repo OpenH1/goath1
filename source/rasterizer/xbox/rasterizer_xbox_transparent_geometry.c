@@ -3420,7 +3420,15 @@ void rasterizer_transparent_geometry_group_draw(
 										_shader_transparent_glass_flag_bump_map_is_specular_mask_bit) ?
 										0x08 : 0x14)<<16) | 0x1C002000;
 								rasterizer_set_pixel_shader(&pixel_shader);
+								/* port: display.rt_reflections: the reflection's cube
+								map (texture 3) traced, the level's glass (its vertices
+								in the world; not a dynamic mirror's target:
+								port/linux/src/d3d8_device.c) */
+								halo_rt_reflection(!group->node_matrices &&
+									reflection_type != _shader_transparent_glass_reflection_type_dynamic_mirror ?
+									HALO_RT_REFLECTION_MIRROR : HALO_RT_REFLECTION_NONE);
 								rasterizer_transparent_geometry_group_draw__internal(group, FALSE);
+								halo_rt_reflection(HALO_RT_REFLECTION_NONE); /* port: (drawn) */
 							}
 
 							if (glass->diffuse_map.index != NONE ||

@@ -80,6 +80,7 @@ loaded) and the walk made.
 
 /* the platform layer's (port/linux/src/port_config.c, xbox_files.c) */
 int config_text(char const *name, char *text, size_t size);
+int lt_lights_pass_on(void);
 void platform_log(char const *format, ...);
 /* (port/linux/src/d3d8_device.c's) */
 unsigned long long halo_gpu_journal_derivation(unsigned long long hash);
@@ -181,7 +182,6 @@ static char const *const prepared_settings[] =
 	"display.soft_particles",
 	"display.structure_culling", "display.first_person_legs", "display.viewmodel_shield", "display.viewmodel_visible",
 };
-
 static struct
 {
 	boolean recording;
@@ -386,6 +386,16 @@ static uint64_t prepared_derivation(void)
 			snprintf(value, sizeof(value), "classic");
 		hash = prepared_hash_string(prepared_settings[index], hash);
 		hash = prepared_hash_string(value, hash);
+	}
+	/* (and the light-transport pass, display.ray_traced_lighting or
+	HALO_LT_E1, whose surfaces and pre-pass twins differ: counted only where
+	it is on, so a record made under the defaults keeps its derivation) */
+	if (lt_lights_pass_on())
+	{
+		char const *mode = getenv("HALO_LT_E1");
+
+		hash = prepared_hash_string("HALO_LT_E1", hash);
+		hash = prepared_hash_string(mode && *mode ? mode : "denoise", hash);
 	}
 	return hash;
 }

@@ -203,6 +203,29 @@ XGPU_STREAM_MATERIAL_STAGE). Without either bit the draw is as it was */
 #define XGPU_TEXTURE_MODES_NORMAL_MAP 0x40000000u
 #define XGPU_TEXTURE_MODES_ORM_MAP 0x20000000u
 #define XGPU_TEXTURE_MODES_MATERIAL (XGPU_TEXTURE_MODES_NORMAL_MAP | XGPU_TEXTURE_MODES_ORM_MAP)
+/* display.rt_reflections (docs/rt-plan/2-reflections.md, d3d8_device.c's
+halo_rt_reflection): a draw whose texture 3 is the game's reflection cube
+map (a CUBEMAP or DOT_REFLECT_SPECULAR lookup) has its texel traced through
+the ray-traced scene instead, the cube map where the ray leaves it; the
+class (XGPU_RT_REFLECTION_*) in these bits: the structure's reflection pass,
+the level's glass and its water (their vertices in the world: the vertex
+shader hands the position on as it is), or a model (lit for each pixel: its
+lighting's world position). Without the bits the draw is as it was */
+#define XGPU_TEXTURE_MODES_RT_REFLECTION 0x1c000000u
+#define XGPU_TEXTURE_MODES_RT_REFLECTION_SHIFT 26
+#define XGPU_RT_REFLECTION_NONE 0u
+#define XGPU_RT_REFLECTION_STRUCTURE 1u
+#define XGPU_RT_REFLECTION_MODEL 2u
+#define XGPU_RT_REFLECTION_MIRROR 3u
+/* (water: level, so a ray its waves turn below the horizon would meet the
+water itself, and keeps the cube map's lower half, as the game drew it) */
+#define XGPU_RT_REFLECTION_WATER 4u
+#define XGPU_RT_REFLECTION_OF(texture_modes) \
+	(((unsigned long)(texture_modes) & XGPU_TEXTURE_MODES_RT_REFLECTION) >> XGPU_TEXTURE_MODES_RT_REFLECTION_SHIFT)
+/* (its class's vertices are in the world) */
+#define XGPU_RT_REFLECTION_WORLD_VERTICES(reflection) \
+	((reflection) == XGPU_RT_REFLECTION_STRUCTURE || (reflection) == XGPU_RT_REFLECTION_MIRROR || \
+	(reflection) == XGPU_RT_REFLECTION_WATER)
 /* (the stages' own bits) */
 #define XGPU_TEXTURE_MODES_STAGES 0x000fffffu
 /* display.soft_particles: a first-person weapon's effect drawn over the
@@ -337,6 +360,20 @@ pixels: world_ao.h's WORLD_AO_UPSAMPLE_*) */
 #define XGPU_WORLD_AO_REFERENCE_LEAST 0.25f
 #define XGPU_WORLD_AO_REACH_FADE 0.25f
 #define XGPU_WORLD_AO_FLOOR 0.2f
+/* the lightmap's indirect light, linear, which the ambient occlusion takes
+from a lightmap pass's light (XGPU_AMBIENT_OCCLUSION_LIGHT_LIGHTMAP): the
+occlusion is of the indirect light alone, never the sun's direct light an
+outdoor bake mixes in. Under a sky with an outdoor ambient (Blood Gulch,
+b30) the bakes' shade sits at 3 to 5% linear and their sun at 80 to 95%,
+18 to 26 times over it (docs/rt-plan/4-path-tracing.md "Measured"): a
+texel brighter than their geometric middle, sqrt(0.04 x 0.9), is sunlit,
+its light past that the sun's: light -= (1 - occlusion^2.2) * min(light, this)
+(the occlusion as it multiplied the gamma light),
+sunlit sand darkened by a fifth of the occlusion at most. An interior's
+bake (a10's: no outdoor ambient, its median texel 1.3%) is its emitters'
+and their bounce, all of it occluded. The level is the block's grid[0].w
+(port/linux/game/world_ao.c's WORLD_AO_INDIRECT; 0: all of the light) */
+#define XGPU_AMBIENT_OCCLUSION_INDIRECT 0.19f
 /* the field's (world_sdf.h's WORLD_SDF_*: d3d8_device.c checks they agree) */
 #define XGPU_WORLD_SDF_BRICK 8
 #define XGPU_WORLD_SDF_BRICK_SPAN 9
@@ -429,6 +466,13 @@ world units; its outer cells hold every point past it) with small cells near
 the camera, where lights are seen large. A cell has the lights whose spheres
 meet its box (d3d8_device.c's dynamic_lights_mark). */
 #define XGPU_DYNAMIC_LIGHTS_MAXIMUM 128
+/* a model lit by the enhanced dynamic lights where display.per_pixel_lighting
+is off: its pixel key's per_pixel_lighting (the program's lights, 1 or 2)
+with this bit, its ambient and distant lights the vertex's, as the game's
+program lights them (XGPU_LIGHTING_MODEL_SPLIT's xLightAmbient), the lights
+added for each pixel over them, so a model no light reaches is drawn as the
+game draws it (xgpu_manifest.c's xgpu_draw_derive) */
+#define XGPU_PER_PIXEL_VERTEX_AMBIENT 4
 #define XGPU_DYNAMIC_LIGHTS_GRID_X 32
 #define XGPU_DYNAMIC_LIGHTS_GRID_Y 32
 #define XGPU_DYNAMIC_LIGHTS_GRID_Z 16
@@ -520,6 +564,74 @@ radius, and at least the least: the light's own glow, a bolt's body) */
 #define XGPU_LIGHT_SHADOWS_BIAS 0.04f
 #define XGPU_LIGHT_SHADOWS_SHORT 1.5f
 #define XGPU_LIGHT_SHADOWS_SHORT_LEAST 0.1f
+
+/* The enhanced flashlight (port/linux/game/dynamic_lights.c,
+d3d8_device.c's halo_dynamic_lights_flashlights): a unit's flashlight lights
+the structure, the models and the first-person view in the one loop of the
+lights (xgpu_spirv.c's, xgpu_msl.c's dynamic_light_sum), through its own
+gel as the game's gel pass projects it, its own distance falloff, and one
+shadow map in the gel's frame. Past the shadowed lights' texels, in the
+clusters' slice:
+
+- FLASHLIGHT: four words, each slot's light (its index plus one; 0 none);
+- FLASHLIGHT + 1: the shadowed slot plus one (0: no map this frame), the
+  gel's half width in the projection (tan, float bits), the cookie there
+  (1), the map's bias (world units, float bits);
+- FLASHLIGHT + 2 + 3 * slot, + 1, + 2: the slot's gel frame: its forward
+  (the beam), up and left (floats' bits), the gel pass's rows;
+- FLASHLIGHT + 14: the gel's tint, gamma (floats' bits);
+- FLASHLIGHT + 15 to + 22 (ATTENUATION): every light's falloff on the
+  structure, gamma: 32 floats' bits, from the light to its radius (the
+  game's distance attenuation's);
+- FLASHLIGHT + 23: where the shadowed slot's shadows are cast from (its
+  lamp on the weapon in hand, floats' bits): the map's middle, in the same
+  frame, a and b of v = p - lamp;
+- FLASHLIGHT_COOKIE on: the gel's brightness (the game's, gamma, as the
+  gel pass multiplies it), a byte a
+  texel, FLASHLIGHT_COOKIE_SIZE square, rows from -up, columns from -left:
+  texel (x, y) is the direction forward + a left + b up, a = u |u| width
+  for u from -1 to 1 at the texels' middles (and b of v the same): each
+  axis warped, so the texels are closer at the middle, where the gel's hot
+  disk and ring are.
+
+A pixel at p: v = p - light, a = dot(v, left) / dot(v, forward), b the
+same with up, for the cookie; the map, from the lamp, (its own image, the draw set's binding
+XGPU_SPIRV_BINDING_FLASHLIGHT_SHADOW, FLASHLIGHT_SHADOW_SIZE square, in
+the same a, b as the cookie) holds, in red, the distance from the light
+to what its ray first met (its radius where none). */
+#define XGPU_DYNAMIC_LIGHTS_FLASHLIGHT (XGPU_DYNAMIC_LIGHTS_SHADOWED + 4)
+#define XGPU_DYNAMIC_LIGHTS_FLASHLIGHTS 4
+#define XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF 32
+#define XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE (XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 24)
+#define XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE 80
+#define XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_SHADOW_SIZE 512
+/* The light model (port/linux/game/dynamic_lights.c): every enhanced light is a point,
+a spot (the flashlight: its gel, above) or a panel, and each is added as
+the game adds it for the surface it lights, in the display's gamma
+(xgpu_spirv.c's dynamic_light_sum, dynamic_light_add):
+
+- the structure (the game's gel pass): color * gel * T(d / r) *
+  max(dot(n, l), 0) * saturate(8 dot(surface normal, l)), times the
+  shader's material colour, T the game's distance attenuation (its 32
+  values at ATTENUATION, the falloff above: every light's, read from the
+  game's texture as it is, gamma) and the gel 1 for a point;
+- a model and the first-person view (the game's model lighting): color *
+  max(1 - d^2 / r^2, 0) * saturate(dot(n, l)) * the cone;
+- a panel (PANELS: a mask of the lights that are, four words): a small
+  lit display, a Lambertian disk, in linear light: color (linear) *
+  a^2 / (a^2 + d^2) * (1 - d^2 / r^2)^2 * the cosine off its face (the
+  cone's axis) * saturate(dot(n, l)), a^2 in the colour's w.
+
+The sum is added to the light already there as the game's framebuffer
+adds it, (base + sum)^2.2 linear, the panels' added there, under a
+shoulder that leaves all below max(base, ADD_KNEE) (linear) as it is. */
+#define XGPU_DYNAMIC_LIGHTS_ATTENUATION (XGPU_DYNAMIC_LIGHTS_FLASHLIGHT + 15)
+#define XGPU_DYNAMIC_LIGHTS_PANELS (XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE + \
+	XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE * XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE / 16)
+#define XGPU_DYNAMIC_LIGHTS_ADD_KNEE 0.7f
+/* the map's bias at the light's radius past its texel's width there, and
+its least (world units) */
+#define XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_BIAS 0.03f
 enum
 {
 	XGPU_DYNAMIC_LIGHTS_ENVIRONMENT = 1,

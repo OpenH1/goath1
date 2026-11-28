@@ -763,7 +763,11 @@ int xgpu_draw_derive(const struct xgpu_draw_facts *facts, int unlit, struct xgpu
 	derived->lightmap_cubic = (uint8_t)(facts->smooth_lightmaps && facts->lightmap_stage && facts->environment &&
 		!facts->immediate);
 	derived->lighting = XGPU_LIGHTING_NONE;
-	if (!unlit && facts->lights && !facts->lighting_failed && facts->per_pixel)
+	/* (lit for each pixel where display.per_pixel_lighting says, or the
+	enhanced lights reach it; a model they do not reach, without the
+	setting, lit for each vertex as the game lights it) */
+	if (!unlit && facts->lights && !facts->lighting_failed && facts->per_pixel &&
+		(facts->per_pixel_setting || (facts->lights_active && facts->world_found)))
 	{
 		/* a model lighting program's draw lit for each pixel: the enhanced
 		dynamic lights in its two point lights' place, its ambient light by
@@ -775,6 +779,14 @@ int xgpu_draw_derive(const struct xgpu_draw_facts *facts, int unlit, struct xgpu
 		if (facts->world && (facts->lights == 2 || facts->world_found))
 			derived->ambient_occlusion = (uint8_t)(facts->world | XGPU_AMBIENT_OCCLUSION_LIGHT_MODEL);
 		derived->lighting = facts->lights == 2 ? XGPU_LIGHTING_MODEL_POINT : XGPU_LIGHTING_MODEL;
+		/* (the lights alone for each pixel, its ambient and distant lights
+		the vertex's, as the game's program gives them: where no light adds
+		any, the game's own picture) */
+		if (!facts->per_pixel_setting && derived->dynamic_lights == XGPU_DYNAMIC_LIGHTS_MODEL && !facts->split_failed)
+		{
+			derived->per_pixel_lighting |= XGPU_PER_PIXEL_VERTEX_AMBIENT;
+			derived->lighting = XGPU_LIGHTING_MODEL_SPLIT;
+		}
 		return 1;
 	}
 	if (!unlit && facts->lights && !facts->lighting_failed && !facts->split_failed && facts->world &&
@@ -897,6 +909,7 @@ int xgpu_manifest_derive(const struct xgpu_manifest_draw *draw, const struct xgp
 	enhanced lights light each pixel whatever display.per_pixel_lighting
 	says) */
 	facts.per_pixel = settings->per_pixel_lighting || settings->enhanced_lights;
+	facts.per_pixel_setting = settings->per_pixel_lighting || !settings->light_model;
 	facts.lights_active = settings->enhanced_lights && context->lights_present;
 	facts.environment = context->environment;
 	facts.sample_mask = 1;

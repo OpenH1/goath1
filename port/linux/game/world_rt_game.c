@@ -6,7 +6,7 @@ the game (world_rt.h's world_rt_source_*): the loaded structure BSP's
 collision geometry, as world_scene.c fans it, and a definition's nodes'
 collision geometry (the first permutation's BSP of each collision node, the
 model's node of the same index, as the collision tests take them:
-collision_models.c) and its bounding sphere. With debug.rt_render_geometry,
+collision_models.c) and its bounding sphere. As drawn (debug.rt_render_geometry, by default),
 the render meshes too (docs/rt-plan/1-geometry.md): the structure's, its
 lightmaps' materials' surfaces over their compressed environment vertices,
 sorted by the material's shader into opaque, alpha-tested and transparent
@@ -55,6 +55,14 @@ enum
 	/* a shader's type (shaders.c's _shader_type_*) */
 	_world_rt_shader_type_environment = 3,
 	_world_rt_shader_type_model = 4,
+	_world_rt_shader_type_transparent_generic = 5,
+	_world_rt_shader_type_transparent_chicago = 6,
+	/* a transparent shader's flags and blend (rasterizer_xbox_transparent_
+	geometry.c's): alpha-tested, a decal, two-sided; alpha-blended */
+	_world_rt_shader_transparent_alpha_tested_bit = 0,
+	_world_rt_shader_transparent_decal_bit = 1,
+	_world_rt_shader_transparent_two_sided_bit = 2,
+	_world_rt_framebuffer_blend_alpha_blend = 0,
 	/* shader_environment's flags (rasterizer_xbox_environment.c's) */
 	_world_rt_shader_environment_alpha_tested_bit = 0,
 	_world_rt_shader_environment_bump_map_is_specular_mask_bit = 1,
@@ -98,6 +106,45 @@ struct world_rt_shader_model
 	real detail_map_scale;
 	struct tag_reference detail_map;
 };
+
+/* (rasterizer_xbox_transparent_geometry.c's shader_transparent_generic and
+_chicago, the same to their maps; and each one's map: its scales and
+bitmap) */
+struct world_rt_shader_transparent
+{
+	struct shader shader;
+	byte numeric_counter_limit;
+	byte flags;
+	short type;
+	short framebuffer_blend_function;
+	byte reserved2E[0x54 - 0x2E];
+	struct tag_block maps;
+};
+
+struct world_rt_transparent_generic_map
+{
+	word flags;
+	word pad;
+	real map_u_scale, map_v_scale;
+	byte reserved0C[0x18 - 0x0C];
+	struct tag_reference map;
+	byte reserved28[0x64 - 0x28];
+};
+
+struct world_rt_transparent_chicago_map
+{
+	byte reserved00[0x54];
+	real map_u_scale, map_v_scale;
+	byte reserved5C[0x6C - 0x5C];
+	struct tag_reference map;
+	byte reserved7C[0xDC - 0x7C];
+};
+
+typedef char verify_world_rt_shader_transparent_maps[offsetof(struct world_rt_shader_transparent, maps) == 0x54 ? 1 : -1];
+typedef char verify_world_rt_shader_transparent_blend[
+	offsetof(struct world_rt_shader_transparent, framebuffer_blend_function) == 0x2C ? 1 : -1];
+typedef char verify_world_rt_transparent_generic_map[sizeof(struct world_rt_transparent_generic_map) == 0x64 ? 1 : -1];
+typedef char verify_world_rt_transparent_chicago_map[sizeof(struct world_rt_transparent_chicago_map) == 0xDC ? 1 : -1];
 
 /* (rasterizer_geometry.c's environment_vertex_compressed) */
 struct environment_vertex_compressed_layout
@@ -186,6 +233,123 @@ static void map_of(struct tag_reference const *reference, struct world_rt_source
 	map->index = 0;
 }
 
+/* a transparent shader drawn as a cutout (a tree's leaves, a fence's
+card): shader_transparent_generic or _chicago, alpha-tested and blended
+by alpha, not a decal, with a first map; its first map's bitmap and
+scales into material (NULL: not one) */
+static boolean shader_cutout(struct shader const *shader, struct world_rt_source_material *material)
+{
+	struct world_rt_shader_transparent const *transparent = (void const *)shader;
+	struct tag_reference const *map;
+	real u_scale, v_scale;
+
+	if (!shader || (shader->base.type != _world_rt_shader_type_transparent_generic &&
+		shader->base.type != _world_rt_shader_type_transparent_chicago) ||
+		!TEST_FLAG(transparent->flags, _world_rt_shader_transparent_alpha_tested_bit) ||
+		TEST_FLAG(transparent->flags, _world_rt_shader_transparent_decal_bit) ||
+		transparent->framebuffer_blend_function != _world_rt_framebuffer_blend_alpha_blend ||
+		transparent->maps.count <= 0 || !transparent->maps.address)
+	{
+		return FALSE;
+	}
+	if (shader->base.type == _world_rt_shader_type_transparent_generic)
+	{
+		struct world_rt_transparent_generic_map const *first = transparent->maps.address;
+
+		map = &first->map;
+		u_scale = first->map_u_scale;
+		v_scale = first->map_v_scale;
+	}
+	else
+	{
+		struct world_rt_transparent_chicago_map const *first = transparent->maps.address;
+
+		map = &first->map;
+		u_scale = first->map_u_scale;
+		v_scale = first->map_v_scale;
+	}
+	if (map->index == NONE)
+		return FALSE;
+	if (material)
+	{
+		map_of(map, &material->maps[WORLD_RT_MAP_BASE]);
+		material->flags |= WORLD_RT_MATERIAL_ALPHA_TESTED;
+		if (TEST_FLAG(transparent->flags, _world_rt_shader_transparent_two_sided_bit))
+			material->flags |= WORLD_RT_MATERIAL_TWO_SIDED;
+		material->alpha_map = WORLD_RT_MAP_BASE;
+		material->alpha_scale[0] = u_scale != 0.0f ? u_scale : 1.0f;
+		material->alpha_scale[1] = v_scale != 0.0f ? v_scale : 1.0f;
+	}
+	return TRUE;
+}
+
+/* ---------- its reflection (the light transport's: where a reflection
+ray is worth its cost, lt/indirect.glsl): shader_environment's specular and
+reflection blocks (rt_lights_materials.c's rtlm_environment_specular,
+_reflection: the specular brightness at 0x290, its tint head-on and at
+grazing view at 0x2A8, 0x2B4; the reflection's brightness head-on and at
+grazing view at 0x2F4, 0x2F8), shader_model's (its brightness and tint
+head-on and at grazing view at 0x144 to 0x160) */
+#define WORLD_RT_ENVIRONMENT_SPECULAR_BRIGHTNESS 0x290
+#define WORLD_RT_ENVIRONMENT_SPECULAR_PERPENDICULAR 0x2A8
+#define WORLD_RT_ENVIRONMENT_SPECULAR_PARALLEL 0x2B4
+#define WORLD_RT_ENVIRONMENT_REFLECTION_PERPENDICULAR 0x2F4
+#define WORLD_RT_ENVIRONMENT_REFLECTION_PARALLEL 0x2F8
+#define WORLD_RT_MODEL_REFLECTION_PERPENDICULAR 0x144
+#define WORLD_RT_MODEL_REFLECTION_PARALLEL 0x154
+
+static float shader_real(void const *shader, int offset)
+{
+	float value;
+
+	memcpy(&value, (char const *)shader + offset, sizeof(value));
+	return value == value ? value : 0.0f;
+}
+
+static float shader_luminance(void const *shader, int offset)
+{
+	return 0.2126f * shader_real(shader, offset) + 0.7152f * shader_real(shader, offset + 4) +
+		0.0722f * shader_real(shader, offset + 8);
+}
+
+/* a strength as the flags carry it (x 128, 0 to 255) */
+static unsigned long reflection_byte(float strength)
+{
+	float scaled = strength * 128.0f + 0.5f;
+
+	return scaled <= 0.0f ? 0ul : scaled >= 255.0f ? 255ul : (unsigned long)scaled;
+}
+
+static void material_reflection(struct shader const *shader, struct world_rt_source_material *material)
+{
+	float perpendicular, parallel;
+
+	if (shader->base.type == _world_rt_shader_type_environment)
+	{
+		float brightness = shader_real(shader, WORLD_RT_ENVIRONMENT_SPECULAR_BRIGHTNESS);
+
+		perpendicular = brightness * shader_luminance(shader, WORLD_RT_ENVIRONMENT_SPECULAR_PERPENDICULAR) *
+			shader_real(shader, WORLD_RT_ENVIRONMENT_REFLECTION_PERPENDICULAR);
+		parallel = brightness * shader_luminance(shader, WORLD_RT_ENVIRONMENT_SPECULAR_PARALLEL) *
+			shader_real(shader, WORLD_RT_ENVIRONMENT_REFLECTION_PARALLEL);
+		if (TEST_FLAG(((struct world_rt_shader_environment const *)shader)->flags,
+			_world_rt_shader_environment_bump_map_is_specular_mask_bit))
+			material->flags |= WORLD_RT_MATERIAL_MASK_BUMP;
+	}
+	else if (shader->base.type == _world_rt_shader_type_model)
+	{
+		perpendicular = shader_real(shader, WORLD_RT_MODEL_REFLECTION_PERPENDICULAR) *
+			shader_luminance(shader, WORLD_RT_MODEL_REFLECTION_PERPENDICULAR + 4);
+		parallel = shader_real(shader, WORLD_RT_MODEL_REFLECTION_PARALLEL) *
+			shader_luminance(shader, WORLD_RT_MODEL_REFLECTION_PARALLEL + 4);
+		material->flags |= WORLD_RT_MATERIAL_MASK_MULTIPURPOSE;
+	}
+	else
+		return;
+	material->flags |= reflection_byte(perpendicular) << WORLD_RT_MATERIAL_REFLECTION_PERPENDICULAR_SHIFT |
+		reflection_byte(parallel) << WORLD_RT_MATERIAL_REFLECTION_PARALLEL_SHIFT;
+}
+
 /* a shader as a render mesh's material: its type and flags, its maps, and
 what its alpha test tests (rasterizer_xbox_environment.c: an alpha-tested
 environment's bump map's alpha; rasterizer_xbox_models.c: a model's base
@@ -245,8 +409,10 @@ static void material_describe(long shader_index, struct world_rt_source_material
 			material->alpha_map = WORLD_RT_MAP_BASE;
 		}
 	}
-	else
+	/* (a transparent one drawn as a cutout: its first map's alpha tested) */
+	else if (!shader_cutout(shader, material))
 		material->flags |= WORLD_RT_MATERIAL_TRANSPARENT;
+	material_reflection(shader, material);
 	/* (the mods' material maps of its base map: docs/mods.md) */
 	if (material->maps[WORLD_RT_MAP_BASE].bitmap != NONE)
 		mod_materials_maps(material->maps[WORLD_RT_MAP_BASE].bitmap, &material->normal_image, &material->orm_image);
@@ -265,7 +431,7 @@ static int material_surfaces(struct structure_material const *material)
 	if (!shader)
 		return -1;
 	if (shader->base.type != _world_rt_shader_type_environment)
-		return WORLD_RT_SURFACES_TRANSPARENT;
+		return shader_cutout(shader, NULL) ? WORLD_RT_SURFACES_ALPHA_TESTED : WORLD_RT_SURFACES_TRANSPARENT;
 	return TEST_FLAG(((struct world_rt_shader_environment const *)shader)->flags,
 		_world_rt_shader_environment_alpha_tested_bit) ? WORLD_RT_SURFACES_ALPHA_TESTED : WORLD_RT_SURFACES_OPAQUE;
 }
@@ -277,12 +443,13 @@ static boolean definition_is_model(long definition)
 	return tag_index_is_group(definition, MODELS_GROUP_TAG) || tag_index_is_group(definition, 'mod2');
 }
 
-/* a definition's collision model (NULL none) */
+/* a definition's collision model (NULL none: a model itself, the
+first-person weapon's or hands', has none) */
 static struct collision_model const *definition_collision_model(long definition)
 {
 	struct object_definition const *object_definition;
 
-	if (definition == NONE)
+	if (definition == NONE || definition_is_model(definition))
 		return NULL;
 	object_definition = object_definition_get(definition);
 	if (!object_definition || object_definition->object.collision_model.index == NONE)
@@ -472,9 +639,12 @@ static int model_part_add(struct world_rt_source_mesh *mesh, struct model const 
 		shader_definition_get(reference->shader.index) : NULL;
 	if (!shader || !shader_type_is_valid_for_model(shader->base.type))
 		return TRUE;
-	/* (its kind: a shader_model alpha-tested unless it says not, any other a
-	transparent one, left out) */
-	if (shader_type_is_transparent(shader->base.type) || shader->base.type != _world_rt_shader_type_model)
+	/* (its kind: a shader_model alpha-tested unless it says not, a
+	transparent one drawn as a cutout alpha-tested, any other transparent
+	one left out) */
+	if (shader_cutout(shader, NULL))
+		kind = WORLD_RT_SURFACES_ALPHA_TESTED;
+	else if (shader_type_is_transparent(shader->base.type) || shader->base.type != _world_rt_shader_type_model)
 		kind = WORLD_RT_SURFACES_TRANSPARENT;
 	else
 		kind = TEST_FLAG(((struct world_rt_shader_model const *)shader)->flags, _world_rt_shader_model_not_alpha_tested_bit) ?

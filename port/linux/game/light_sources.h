@@ -26,8 +26,10 @@ struct light_source
 	boolean baked;
 	/* a lit display's (a flat panel, light_sources.c): the way its face
 	looks, along which it shines as a panel does (by the cosine off it); 0
-	0 0 a light that shines every way */
+	0 0 a light that shines every way), and its face's area (square world
+	units: the light model's panel, xgpu.h) */
 	real_vector3d facing;
+	real area;
 };
 
 void light_sources_new_map(void);

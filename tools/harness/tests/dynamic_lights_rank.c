@@ -164,25 +164,17 @@ static int shadow_case(char const *case_name)
 			chosen ? indices[0] : -1);
 		return 0;
 	}
-	if (!strcmp(case_name, "shadow-flashlight-first"))
+	if (!strcmp(case_name, "shadow-flashlight-skipped"))
 	{
-		/* five near explosions, lasting, and a flashlight (small, just on,
-		not known): the flashlight first */
-		short i;
-
+		/* a flashlight, nearer and as bright as an explosion, lasting: it
+		casts its own, by its own map (dynamic_lights_flashlights), and takes
+		no slot of the mask */
 		frame_new();
-		for (i = 0; i < 5; i++)
-			frame_light(2.0f, (real)i, 10.0f, 40 + i, 0);
+		frame_light(2.0f, 0.0f, 10.0f, 50, HALO_DYNAMIC_LIGHT_FLASHLIGHT);
+		frame_light(5.0f, 1.0f, 10.0f, 51, 0);
 		pick(0.0f, indices);
-		frame_light(0.5f, 0.0f, 2.0f, 0, HALO_DYNAMIC_LIGHT_FLASHLIGHT);
 		chosen = pick(1.0f, indices);
-		CHECK(chosen == HALO_DYNAMIC_LIGHTS_SHADOWED && indices[0] == 5, "the flashlight first: %d, %d", chosen,
-			indices[0]);
-		/* far and dim: still first */
-		frame_lights[5].position[0] = 60.0f;
-		frame_lights[5].color[0] = frame_lights[5].color[1] = frame_lights[5].color[2] = 0.05f;
-		chosen = pick(1.1f, indices);
-		CHECK(indices[0] == 5, "a far flashlight first too: %d", indices[0]);
+		CHECK(chosen == 1 && indices[0] == 1, "the flashlight takes no slot: %d, %d", chosen, chosen ? indices[0] : -1);
 		return 0;
 	}
 	if (!strcmp(case_name, "shadow-kept"))

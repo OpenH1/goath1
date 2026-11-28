@@ -63,9 +63,11 @@ VR_STREAM_SOURCES = [Path("port/linux/host/host_vr_stream.c")]
 # its GitHub release (the NVIDIA RTX SDKs license, its LICENSE.txt: not open
 # source; the repository holds none of it). Its NGX headers and static library
 # build the module beside the game (libopenh1_dlss.so), which alone links them;
-# the DLSS runtime (libnvidia-ngx-dlss.so.<version>, redistributable with the
-# game) and the license are staged beside it. Linux x86-64, and Windows x64
-# (openh1_dlss.dll, nvngx_dlss.dll beside it: tools/windows_build.py).
+# the DLSS runtimes (libnvidia-ngx-dlss.so.<version>, Super Resolution's, and
+# libnvidia-ngx-dlssd.so.<version>, Ray Reconstruction's: redistributable with
+# the game) and the license are staged beside it. Linux x86-64, and Windows x64
+# (openh1_dlss.dll, nvngx_dlss.dll and nvngx_dlssd.dll beside it:
+# tools/windows_build.py).
 DLSS_SDK_TAG = "v310.9.16"
 DLSS_SDK_URLS = [
     "https://raw.githubusercontent.com/NVIDIA/DLSS/{tag}/{name}",
@@ -76,24 +78,31 @@ DLSS_SDK_FILES = {
     "include/nvsdk_ngx.h": "dc38e7467cf415379c9d12ae1b6e4a494c453ed92720fb53e92aecb523e7b848",
     "include/nvsdk_ngx_defs.h": "ea23f33497cd274860d1c25a97644fce807dcb0037c594547203343103fad03e",
     "include/nvsdk_ngx_defs_vk.h": "0a24d0861ace7d6b9362a67b7f08bea1b33ea123c5ce730b19133de8a891d031",
+    "include/nvsdk_ngx_defs_dlssd.h": "2e97fe1595b1334f71b51724f2cb67496e8c296a7a2eec5606da53055882e716",
     "include/nvsdk_ngx_params.h": "943bc8cc5cdae03b6303016fbad3183636f2335ae27a2d18776798c3b4efabbc",
     "include/nvsdk_ngx_vk.h": "2d364ce7132881eb669e9498fd570d74cba563b1fbebc82c235f8e1ad2dd8b6d",
     "include/nvsdk_ngx_loader.h": "abdf5f66a692620538357d29fdf78e3e2a677ee8140b7a638962ecb766585e75",
 }
-# (each platform's NGX library and DLSS runtime)
+# (each platform's NGX library and DLSS runtimes)
 DLSS_SDK_PLATFORM_FILES = {
     "linux": {
         "lib/Linux_x86_64/libnvsdk_ngx.a": "d3c50bb0d9624fc35e502a8e929b8fc1e2b505017ebdb84c0d5b627e11a235df",
         "lib/Linux_x86_64/rel/libnvidia-ngx-dlss.so.310.9.16":
             "30982c937afed85c96b8d313323de9a650a2eec6de1bb0f714b21750f4ce98f6",
+        "lib/Linux_x86_64/rel/libnvidia-ngx-dlssd.so.310.9.16":
+            "a5d59de18841f15779039dda567a15dd723ba737915f489271fdb5f109fbfb96",
     },
     "windows": {
         "lib/Windows_x86_64/x64/nvsdk_ngx_s.lib": "7b9a5239c1145af5f645ab472aa066f9ea79db36ac819562312aae69d65f3765",
         "lib/Windows_x86_64/rel/nvngx_dlss.dll": "d00b5b0ab29c3ca101b70c3a5ecb3a01b7ef33766a3383a28a18623083e6123e",
+        "lib/Windows_x86_64/rel/nvngx_dlssd.dll": "b49435ae346f227feafe7bbe937d88277ea0ee7323975ec06488f377fdb46cee",
     },
 }
 DLSS_RUNTIME = "libnvidia-ngx-dlss.so.310.9.16"
 DLSS_RUNTIME_WINDOWS = "nvngx_dlss.dll"
+# (Ray Reconstruction's)
+DLSS_RR_RUNTIME = "libnvidia-ngx-dlssd.so.310.9.16"
+DLSS_RR_RUNTIME_WINDOWS = "nvngx_dlssd.dll"
 
 
 def fetch_dlss_sdk(sdk_dir: Path, platform: str = "linux") -> None:
@@ -113,8 +122,9 @@ def fetch_dlss_sdk(sdk_dir: Path, platform: str = "linux") -> None:
 
 def dlss_module(n: Writer, prefix: str, label: str, build: Path, host_cc: str, host_cflags: str,
                 vulkan_headers: Path, sdk_dir: Path) -> List[Path]:
-    """Build the DLSS module beside the game, and stage the DLSS runtime and
-    the SDK's license beside it: their paths"""
+    """Build the DLSS module beside the game, and stage the DLSS runtimes
+    (Super Resolution's, Ray Reconstruction's) and the SDK's license beside
+    it: their paths (the module, the runtimes, the license)"""
     module = build / "libopenh1_dlss.so"
     obj = build / "host" / "obj" / "dlss" / "openh1_dlss.c.o"
     library = sdk_dir / "lib/Linux_x86_64/libnvsdk_ngx.a"
@@ -124,18 +134,19 @@ def dlss_module(n: Writer, prefix: str, label: str, build: Path, host_cc: str, h
            command=f"${prefix}_cc -shared -o $out $in {library} -lstdc++ -ldl -Wl,--no-undefined",
            description=f"{label} LINK $out")
     n.build(outputs=module, rule=f"{prefix}_dlss_link", inputs=obj, implicit=[library])
-    runtime = build / DLSS_RUNTIME
-    n.build(outputs=runtime, rule=f"{prefix}_copy", inputs=sdk_dir / "lib/Linux_x86_64/rel" / DLSS_RUNTIME)
+    runtimes = [build / DLSS_RUNTIME, build / DLSS_RR_RUNTIME]
+    for runtime in runtimes:
+        n.build(outputs=runtime, rule=f"{prefix}_copy", inputs=sdk_dir / "lib/Linux_x86_64/rel" / runtime.name)
     license_copy = build / "NVIDIA-DLSS-LICENSE.txt"
     n.build(outputs=license_copy, rule=f"{prefix}_copy", inputs=sdk_dir / "LICENSE.txt")
-    return [module, runtime, license_copy]
+    return [module, *runtimes, license_copy]
 
 
 def dlss_module_windows(n: Writer, build: Path, host_cflags: str, cross_prefix: str, sdk_dir: Path) -> List[Path]:
     """The Windows build's DLSS module, openh1_dlss.dll (the same source, with
     the game's clang and lld-link: NGX's nvsdk_ngx_s.lib is plain MSVC
-    objects of the static runtime, clang's default), and the DLSS runtime and
-    the SDK's license beside it: their paths"""
+    objects of the static runtime, clang's default), and the DLSS runtimes
+    and the SDK's license beside it: their paths (as dlss_module's)"""
     module = build / "openh1_dlss.dll"
     obj = build / "host" / "obj" / "dlss" / "openh1_dlss.c.o"
     library = sdk_dir / "lib/Windows_x86_64/x64/nvsdk_ngx_s.lib"
@@ -146,11 +157,12 @@ def dlss_module_windows(n: Writer, build: Path, host_cflags: str, cross_prefix: 
            f"-Wl,/DYNAMICBASE -Wl,/HIGHENTROPYVA -o $out $in {library} -ladvapi32 -luser32",
            description="WINDOWS LINK $out")
     n.build(outputs=module, rule="windows_dlss_link", inputs=obj, implicit=[library])
-    runtime = build / DLSS_RUNTIME_WINDOWS
-    n.build(outputs=runtime, rule="windows_copy", inputs=sdk_dir / "lib/Windows_x86_64/rel" / DLSS_RUNTIME_WINDOWS)
+    runtimes = [build / DLSS_RUNTIME_WINDOWS, build / DLSS_RR_RUNTIME_WINDOWS]
+    for runtime in runtimes:
+        n.build(outputs=runtime, rule="windows_copy", inputs=sdk_dir / "lib/Windows_x86_64/rel" / runtime.name)
     license_copy = build / "NVIDIA-DLSS-LICENSE.txt"
     n.build(outputs=license_copy, rule="windows_copy", inputs=sdk_dir / "LICENSE.txt")
-    return [module, runtime, license_copy]
+    return [module, *runtimes, license_copy]
 
 
 # the DLSS add-on's targets the builds made (configure.py's ninja dlss_addon)
@@ -159,15 +171,16 @@ DLSS_ADDON_TARGETS: List[str] = []
 
 def dlss_addon(n: Writer, prefix: str, platform: str, outputs: List[Path], out: Path) -> str:
     """ninja dlss_addon_<prefix>: the add-on's archive, manifest and license
-    (tools/dlss_addon.py pack) in out from the module, the DLSS runtime and
+    (tools/dlss_addon.py pack) in out from the module, the DLSS runtimes and
     NVIDIA's license (dlss_module's outputs); its target's name"""
-    module, runtime, license_copy = outputs
+    module, *runtimes, license_copy = outputs
+    runtime_options = " ".join(f"--runtime {runtime}" for runtime in runtimes)
     stamp = out / f"{platform}.stamp"
     n.rule(name=f"{prefix}_dlss_addon",
            command=(f"$python tools/dlss_addon.py pack --platform {platform} --module {module} "
-                    f"--runtime {runtime} --license {license_copy} --out {out} --stamp $out"),
+                    f"{runtime_options} --license {license_copy} --out {out} --stamp $out"),
            description=f"DLSS ADD-ON {platform}")
-    n.build(outputs=stamp, rule=f"{prefix}_dlss_addon", inputs=[module, runtime, license_copy],
+    n.build(outputs=stamp, rule=f"{prefix}_dlss_addon", inputs=[module, *runtimes, license_copy],
             implicit=[Path("tools/dlss_addon.py")])
     target = f"dlss_addon_{prefix}"
     n.build(outputs=target, rule="phony", inputs=[stamp])

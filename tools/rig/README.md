@@ -101,6 +101,27 @@ The host's `halo.log` has `the partner brought beside the host`, `stress test:` 
 drawn so far, and the `benchmark:` line with the fps and the game thread's time. Without the partner flag (one
 instance, `HALO_STRESS_TEST=uncapped`) it is the solo stress test.
 
+## bosgame: Windows and the RTX 3090
+
+**bosgame** is the Windows test machine: a Windows 11 VM (`halo-win`) with an RTX 3090 passed through, so NVIDIA's
+Windows driver and ray queries (`display.shadows ray_traced`, `display.ambient_occlusion ray_traced`) get tested
+there. `goat-rig @bosgame build <branch>` cross-compiles the Windows build on omarchy (`goat-rig build --windows`:
+clang and lld against the MSVC toolchain in `~/goat-rig/xwin`, the shared ccache, its own worktree
+`builds/<branch>.win`; about 20 s from nothing, seconds when cached). `goat-rig @bosgame run <label> --build <branch>
+[--seconds S] [--shots at:12+1] [--map M] [--bots N] [--menu] [--release] -- VAR=value ...` builds it, copies it to
+bosgame and puts it in the VM (only when it differs from the one there), plays one local Slayer game through
+`winvm run` (muted, loopback, port 25150, broadcast 127.255.255.255, no updates or services; the window shows on the
+VM's own screen only), then keeps `halo.log`, `debug.txt`, the pictures (PNG), `result.json` and `summary.txt`
+(frame and GPU times, stalls, the `vulkan: GPU` and ray-tracing lines) in omarchy's `~/goat-rig/runs/<label>/bosgame`;
+`goat-rig fetch bosgame:<label> <dest>` brings them to the Mac. One run at a time (`~/goat-rig/bosgame.lock` on
+bosgame, around winvm's own lock). A VM that is off is started by winvm and left running afterwards: `winvm stop`
+would hand the 3090 to the host, and giving it back to the VM takes a reboot. `goat-rig @bosgame status` shows the VM.
+Setup: `tools/rig/install.sh omarchy --windows` (once; omarchy reaches `bosgame.fabric` directly).
+```sh
+tools/rig/goat-rig @bosgame run rt --build my-branch --seconds 30 --shots at:12+1 -- \
+  HALO_SHADOWS=ray_traced HALO_AMBIENT_OCCLUSION=ray_traced
+```
+
 ## What it does for you
 
 - **build** `<branch|sha|pr/N|local branch>` fetches `~/goat-rig/repo.git` (a bare clone of GitHub's

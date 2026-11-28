@@ -15,8 +15,15 @@ index, so that a switch back to one makes nothing again: a10's start goes
 are let go of when the map unloads. HALO_WORLD_AO_COUNTS logs, every 600
 frames, the instances a frame and the meshes made.
 
-With debug.rt_render_geometry (docs/rt-plan/1-geometry.md) the structure is
-traced as drawn: its render mesh, made the frame after its collision mesh,
+With the ray-traced lighting (debug.rt_render_geometry "auto", the default,
+and display.ray_traced_lighting; docs/rt-plan/1-geometry.md; "on" whatever
+the budget and the lighting, "off" never) the scene is traced as drawn, and the
+collision meshes are the fallback alone: until a render mesh is made, and
+past the GPU's budget (halo_world_rt_budget: the render meshes' and the
+posed skinned objects' bytes, estimated at WORLD_RT_TRIANGLE_BYTES a
+triangle; logged once a map), where a definition's or the level's
+collision meshes stand in for what is left. The structure is traced as
+drawn: its render mesh, made the frame after its collision mesh,
 which stands in for it until then (so that a load waits for no more than it
 did) and is let go of as the render mesh takes its place. That mesh is
 indexed, its opaque triangles then its alpha-tested ones (whose rays test
@@ -31,12 +38,18 @@ as it changes, halo_world_rt_textures).
 #include "world_proxies_source.h"
 #include "world_rt.h"
 
+/* (port/linux/game/lt_lights.c: the ray-traced lighting on) */
+int lt_lights_pass_on(void);
+
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-int config_boolean(const char *name);
+const char *config_string(const char *name);
+/* (xgpu_stream_encode.c) the ray-traced scene's render geometry's budget
+for this GPU, in MB (0: the backend has none) */
+unsigned long halo_world_rt_budget(void);
 void platform_log(const char *format, ...);
 /* (xbox_kernel.c) the monotonic clock */
 unsigned long long platform_shared_clock_microseconds(void);
@@ -51,6 +64,9 @@ enum
 	/* the most objects of a frame read (world_scene.h's
 	WORLD_SCENE_MAXIMUM_INSTANCES) */
 	WORLD_RT_OBJECTS = 2048,
+	/* the objects the last frame's scene held with their own meshes, by
+	their datum's absolute index (world_rt_object_traced) */
+	WORLD_RT_TRACED = 8192,
 	/* the BSPs whose meshes are kept by index (a scenario's most:
 	scenario_definitions.h's MAXIMUM_STRUCTURE_BSPS_PER_SCENARIO) */
 	WORLD_RT_BSPS = 32,
@@ -87,13 +103,18 @@ struct world_rt_definition
 	long definition; /* its tag index; -1 an empty entry */
 	short node_count;
 	short boxed;
-	/* (debug.rt_render_geometry) its meshes are its model's as drawn; or
+	/* (as drawn) its meshes are its model's as drawn; or
 	skinned, its one skinned mesh (meshes[0]) posed by its nodes' default
 	inverses (heap, node_count of them) */
 	short drawn, skinned;
 	float (*inverses)[3][4];
 	float sphere[4];
 	unsigned short meshes[WORLD_RT_NODES];
+	/* (as drawn) its triangles; and (skinned, past the budget) its
+	collision meshes, made the first time one is wanted */
+	long triangles;
+	short collision_made;
+	unsigned short collision[WORLD_RT_NODES];
 	/* (its collision meshes) each node's of its other permutations (a
 	region's other pieces: a Jackal's shield off), permutation 1 first, 0
 	none; and whether any node has them */
@@ -110,7 +131,7 @@ static struct
 	unsigned long next_mesh;
 	int sent;
 	/* the structure's mesh traced (0 none) and its BSP (-1 none), the box's;
-	(debug.rt_render_geometry) whether its render mesh is to be made, the
+	(as drawn) whether its render mesh is to be made, the
 	collision mesh's triangles; and each BSP's meshes made, by its index
 	(its collision mesh let go of once its render mesh is made) */
 	unsigned long structure, box;
@@ -144,12 +165,21 @@ static struct
 	float *triangles;
 	long triangle_capacity;
 	int full_logged;
-	/* debug.rt_render_geometry, this frame */
-	int render_geometry;
+	/* debug.rt_render_geometry, this frame: whether the scene is as drawn,
+	and whether the budget holds it ("auto"); the budget (bytes, 0 not yet
+	asked), the render meshes' bytes held (estimated), the skinned objects'
+	posed this frame, and whether it was logged as past */
+	int render_geometry, budgeted;
+	unsigned long long budget, render_bytes, skinned_bytes;
+	int past_logged;
 	/* (measuring: HALO_WORLD_AO_COUNTS) whether the first-person body's
 	pose moved, frames posed and moved, the last pose's first transforms */
 	long player_posed, player_moved;
 	float player_last[4][3][4];
+	/* the objects the last frame's scene held with meshes of their own
+	(as drawn or their collision meshes, not an item's box), by their
+	datum's absolute index: its id and that frame (world_rt_object_traced) */
+	unsigned long traced_id[WORLD_RT_TRACED], traced_frame[WORLD_RT_TRACED];
 	/* (measuring: HALO_WORLD_AO_COUNTS) */
 	int counts_wanted;
 	long count_frames, count_instances, count_triangles;
@@ -358,6 +388,42 @@ static int world_rt_room(long count)
 	return 1;
 }
 
+/* debug.rt_render_geometry: as drawn where "on", and where "auto" with the
+ray-traced lighting (display.ray_traced_lighting: lt_lights.h), within the
+budget; else (an older true or false is read as on or off: port_config.c)
+the collision geometry, as before it */
+static void world_rt_render_mode(void)
+{
+	const char *mode = config_string("debug.rt_render_geometry");
+
+	world_rt.render_geometry = !strcmp(mode, "on") || (!strcmp(mode, "auto") && lt_lights_pass_on());
+	world_rt.budgeted = world_rt.render_geometry && strcmp(mode, "on") != 0;
+	if (!world_rt.budget)
+	{
+		char const *given = getenv("HALO_RT_GEOMETRY_BUDGET_MB");
+		unsigned long megabytes = given && atol(given) > 0 ? (unsigned long)atol(given) : halo_world_rt_budget();
+
+		world_rt.budget = (unsigned long long)(megabytes ? megabytes : WORLD_RT_BUDGET_DEFAULT) << 20;
+	}
+}
+
+/* whether triangles more as drawn fit the budget: the meshes kept (the
+level's and definitions', made once) first, a skinned object posed this
+frame in what they leave; past it logged once a map */
+static int world_rt_render_fits(long triangles, int skinned)
+{
+	unsigned long long wanted = (unsigned long long)(triangles > 0 ? triangles : 0) * WORLD_RT_TRIANGLE_BYTES;
+
+	if (!world_rt.budgeted || world_rt.render_bytes + (skinned ? world_rt.skinned_bytes : 0) + wanted <= world_rt.budget)
+		return 1;
+	if (!world_rt.past_logged)
+		platform_log("world ao: the ray-traced scene as drawn is past this GPU's budget (%.0f MB; %.1f MB held, %.1f MB "
+			"posed, %ld triangles more): the rest traced as collision geometry", (double)(world_rt.budget >> 20),
+			(double)world_rt.render_bytes / 1048576.0, (double)world_rt.skinned_bytes / 1048576.0, triangles);
+	world_rt.past_logged = 1;
+	return 0;
+}
+
 /* a new mesh's id (0: the ids are spent) */
 static unsigned long world_rt_id_take(void)
 {
@@ -418,7 +484,7 @@ static void world_rt_structure(void)
 	if (bsp_index < 0 || bsp_index >= WORLD_RT_BSPS)
 		return;
 	/* (its render mesh, made before) */
-	if (config_boolean("debug.rt_render_geometry"))
+	if (world_rt.render_geometry)
 	{
 		if (world_rt.bsps[bsp_index].render)
 		{
@@ -658,7 +724,7 @@ static void world_rt_source_mesh_free(struct world_rt_source_mesh *mesh)
 	memset(mesh, 0, sizeof(*mesh));
 }
 
-/* (debug.rt_render_geometry) the structure's render mesh in its collision
+/* (as drawn) the structure's render mesh in its collision
 mesh's place, the frame after that was made: its opaque triangles, then its
 alpha-tested ones; the transparent ones counted and left out */
 static void world_rt_structure_render(void)
@@ -677,6 +743,12 @@ static void world_rt_structure_render(void)
 		world_rt_source_mesh_free(&mesh);
 		return;
 	}
+	/* (past the budget: its collision mesh kept) */
+	if (!world_rt_render_fits(expected, 0))
+	{
+		world_rt_source_mesh_free(&mesh);
+		return;
+	}
 	count = world_rt_source_structure_mesh(bsp_index, &mesh);
 	size = count == expected ? world_rt_blob(&mesh) : 0;
 	id = size ? world_rt_id_take() : 0;
@@ -687,12 +759,13 @@ static void world_rt_structure_render(void)
 	}
 	halo_world_rt_mesh(id, world_rt.blob, size);
 	world_rt.count_triangles += count;
+	world_rt.render_bytes += (unsigned long long)count * WORLD_RT_TRIANGLE_BYTES;
 	/* (in its collision mesh's place, which is let go of) */
 	world_rt.structure = world_rt.bsps[bsp_index].render = id;
 	if (world_rt.bsps[bsp_index].collision)
 		halo_world_ao_mesh_release(world_rt.bsps[bsp_index].collision);
 	world_rt.bsps[bsp_index].collision = 0;
-	platform_log("world ao: the ray-traced scene's structure, BSP %d, as drawn (debug.rt_render_geometry): %ld "
+	platform_log("world ao: the ray-traced scene's structure, BSP %d, as drawn: %ld "
 		"triangles (collision %ld), %ld of them alpha-tested, %ld transparent left out; %ld vertices, %ld materials "
 		"(%ld of the map's), %ld textures; %.0f KB, read in %.2f ms", (int)bsp_index, count, world_rt.collision_count,
 		count - mesh.opaque_count, mesh.left_out, mesh.vertex_count, mesh.material_count, world_rt.material_count,
@@ -767,7 +840,7 @@ void world_rt_face_out(struct world_rt_source_vertex const *vertices, unsigned l
 	}
 }
 
-/* (debug.rt_render_geometry) a skinned definition's mesh: its model's
+/* (as drawn) a skinned definition's mesh: its model's
 whole, in its model's space, turned to face as its normals do, with each
 vertex's nodes and weight after it (halo_world_rt_skinned_mesh); its nodes'
 default inverses kept to pose its objects. Its triangles (0 none) */
@@ -810,10 +883,11 @@ static long world_rt_definition_skinned(struct world_rt_source_mesh *mesh, float
 	entry->meshes[0] = (unsigned short)id;
 	entry->skinned = 1;
 	entry->drawn = 1;
+	entry->triangles = mesh->triangle_count;
 	return mesh->triangle_count;
 }
 
-/* (debug.rt_render_geometry) a definition's model's render mesh as drawn,
+/* (as drawn) a definition's model's render mesh as drawn,
 split by node: each triangle on its corners' major node (two corners', else
 the first's; a joint's blended corners held so), its vertices in that
 node's space (its default inverse), turned to face as its normals do, a
@@ -834,7 +908,9 @@ static long world_rt_definition_render(long definition, struct world_rt_definiti
 		goto done;
 	inverses = malloc(sizeof(*inverses) * WORLD_RT_NODES);
 	count = inverses ? world_rt_source_model_mesh(definition, &mesh, inverses) : 0;
-	if (count != expected)
+	/* (past the budget: its collision meshes; a skinned one's own is
+	counted as each object of it is posed) */
+	if (count != expected || (!world_rt_blended(mesh.vertices, mesh.vertex_count) && !world_rt_render_fits(count, 0)))
 		goto done;
 	part.vertex_count = mesh.vertex_count;
 	part.triangle_count = mesh.triangle_count;
@@ -911,6 +987,8 @@ static long world_rt_definition_render(long definition, struct world_rt_definiti
 		made += part.triangle_count;
 	}
 	entry->drawn = made > 0;
+	entry->triangles = made;
+	world_rt.render_bytes += (unsigned long long)made * WORLD_RT_TRIANGLE_BYTES;
 done:
 	if (part.materials == mesh.materials)
 		part.materials = NULL;
@@ -923,6 +1001,46 @@ done:
 	return made;
 }
 
+/* a definition's nodes' collision meshes into meshes (0 none), and with
+permuted each node's other permutations' (a region's other pieces: the
+object has one of them at a time, as its collision tests take it,
+world_proxies_source_permutations; *any_permuted whether any node has
+them); their triangles (the first permutation's) */
+static long world_rt_collision_meshes(long definition, short node_count, unsigned short *meshes,
+	unsigned short (*permuted)[WORLD_RT_PERMUTATIONS - 1], short *any_permuted)
+{
+	short node_index;
+	long triangles = 0;
+
+	for (node_index = 0; node_index < node_count; node_index++)
+	{
+		short permutations = permuted ? world_rt_source_node_permutations(definition, node_index) : 1, permutation;
+
+		for (permutation = 0; permutation < permutations && permutation < WORLD_RT_PERMUTATIONS; permutation++)
+		{
+			long count = world_rt_source_node(definition, node_index, permutation, NULL, 0);
+			unsigned short mesh;
+
+			if (count <= 0 || count > WORLD_RT_MESH_TRIANGLES || !world_rt_room(count))
+				continue;
+			count = world_rt_source_node(definition, node_index, permutation, world_rt.triangles, count);
+			world_rt_orient(world_rt.triangles, count, WORLD_RT_ORIENT_LEAST);
+			mesh = (unsigned short)world_rt_mesh_send(count);
+			if (permutation == 0)
+			{
+				meshes[node_index] = mesh;
+				triangles += mesh ? count : 0;
+			}
+			else
+			{
+				permuted[node_index][permutation - 1] = mesh;
+				*any_permuted = 1;
+			}
+		}
+	}
+	return triangles;
+}
+
 /* a definition's meshes, made as it is first drawn (NULL: none can be
 kept) */
 static struct world_rt_definition *world_rt_definition(long definition)
@@ -930,7 +1048,6 @@ static struct world_rt_definition *world_rt_definition(long definition)
 	unsigned long slot = ((unsigned long)definition * 2654435761UL) & (WORLD_RT_DEFINITIONS - 1);
 	struct world_rt_definition *entry;
 	long probes;
-	short node_index;
 	int any = 0, item = 0;
 	long triangles = 0;
 
@@ -957,44 +1074,19 @@ static struct world_rt_definition *world_rt_definition(long definition)
 	entry->node_count = world_rt_source_definition(definition, entry->sphere, &item);
 	if (entry->node_count > WORLD_RT_NODES)
 		entry->node_count = WORLD_RT_NODES;
-	/* (debug.rt_render_geometry: its model's render mesh as drawn, a mesh for
-	each node; its collision meshes where it has none) */
-	if (entry->node_count > 0 && config_boolean("debug.rt_render_geometry"))
+	/* (as drawn: its model's render mesh, a mesh for each node; its
+	collision meshes where it has none, or past the budget) */
+	if (entry->node_count > 0 && world_rt.render_geometry)
 		triangles = world_rt_definition_render(definition, entry);
 	any = triangles > 0;
-	for (node_index = 0; node_index < entry->node_count && !any; node_index++)
-	{
-		/* (each of its permutations: the object has one of them at a time,
-		as its collision tests take it, world_proxies_source_permutations) */
-		short permutations = world_rt_source_node_permutations(definition, node_index), permutation;
-
-		for (permutation = 0; permutation < permutations && permutation < WORLD_RT_PERMUTATIONS; permutation++)
-		{
-			long count = world_rt_source_node(definition, node_index, permutation, NULL, 0);
-			unsigned short mesh;
-
-			if (count <= 0 || count > WORLD_RT_MESH_TRIANGLES || !world_rt_room(count))
-				continue;
-			count = world_rt_source_node(definition, node_index, permutation, world_rt.triangles, count);
-			world_rt_orient(world_rt.triangles, count, WORLD_RT_ORIENT_LEAST);
-			mesh = (unsigned short)world_rt_mesh_send(count);
-			if (permutation == 0)
-			{
-				entry->meshes[node_index] = mesh;
-				triangles += mesh ? count : 0;
-			}
-			else
-			{
-				entry->permuted[node_index][permutation - 1] = mesh;
-				entry->any_permuted = 1;
-			}
-		}
-	}
+	if (!any)
+		triangles = world_rt_collision_meshes(definition, entry->node_count, entry->meshes, entry->permuted,
+			&entry->any_permuted);
 	any = triangles > 0;
 	/* (none: an item's model's render mesh as drawn, a grenade's say: the
 	box about its bounding sphere, far larger than a grenade, cast a square
 	shadow about each one lying on the ground) */
-	if (!any && item && entry->node_count > 0 && !config_boolean("debug.rt_render_geometry"))
+	if (!any && item && entry->node_count > 0 && !world_rt.render_geometry)
 	{
 		triangles = world_rt_definition_render(definition, entry);
 		any = triangles > 0;
@@ -1088,7 +1180,8 @@ void world_rt_frame(unsigned long frame)
 	world_rt.frame = frame;
 	if (!world_rt.counts_wanted)
 		world_rt.counts_wanted = getenv("HALO_WORLD_AO_COUNTS") ? 1 : -1;
-	world_rt.render_geometry = config_boolean("debug.rt_render_geometry") != 0;
+	world_rt_render_mode();
+	world_rt.skinned_bytes = 0;
 	if (!world_rt.instances)
 		world_rt.instances = malloc(sizeof(*world_rt.instances) * WORLD_RT_INSTANCES);
 	if (!world_rt.poses)
@@ -1122,7 +1215,7 @@ void world_rt_frame(unsigned long frame)
 		struct world_rt_definition const *definition;
 		unsigned long owner = object->baked ? 0 : world_rt_owner(object->id);
 		/* (the body a local player sees from in first person: its own mask,
-		with debug.rt_render_geometry) */
+		as drawn) */
 		unsigned int kind = object->baked ? WORLD_RT_STRUCTURE : object->first_person && world_rt.render_geometry ?
 			WORLD_RT_PLAYER : WORLD_RT_OBJECT;
 		short node_count, node_index, permutation_count;
@@ -1133,6 +1226,21 @@ void world_rt_frame(unsigned long frame)
 		node_count = world_proxies_source_nodes(object->id, world_rt.frames, WORLD_RT_NODES);
 		if (node_count <= 0)
 			continue;
+		/* (its sun shadow the light-transport pass's: lt_lights.c's
+		lt_lights_sun_shadow; not a box's, which has no shape of it) */
+		if (!definition->boxed && kind != WORLD_RT_STRUCTURE)
+		{
+			unsigned long slot = (unsigned long)object->id & 0xffffu;
+			int meshes = definition->skinned;
+
+			for (node_index = 0; node_index < definition->node_count && !meshes; node_index++)
+				meshes = definition->meshes[node_index] || definition->collision[node_index];
+			if (meshes && slot < WORLD_RT_TRACED)
+			{
+				world_rt.traced_id[slot] = (unsigned long)object->id;
+				world_rt.traced_frame[slot] = frame;
+			}
+		}
 		if (definition->boxed)
 		{
 			struct world_ao_instance *instance = world_rt_instance_add(&count, world_rt.box, owner, kind);
@@ -1141,13 +1249,34 @@ void world_rt_frame(unsigned long frame)
 				world_rt_box_transform(&world_rt.frames[0], definition->sphere, instance->transform);
 			continue;
 		}
-		/* (skinned: one instance on its first node, posed) */
+		/* (skinned: one instance on its first node, posed; past the budget,
+		its collision meshes on its nodes) */
+		if (definition->skinned && !world_rt_render_fits(definition->triangles, 1))
+		{
+			struct world_rt_definition *fallback = (struct world_rt_definition *)definition;
+
+			if (!fallback->collision_made)
+				world_rt_collision_meshes(fallback->definition, fallback->node_count, fallback->collision, NULL, NULL);
+			fallback->collision_made = 1;
+			for (node_index = 0; node_index < node_count && node_index < definition->node_count; node_index++)
+			{
+				struct world_ao_instance *instance;
+
+				if (!definition->collision[node_index])
+					continue;
+				instance = world_rt_instance_add(&count, definition->collision[node_index], owner, kind);
+				if (instance)
+					world_rt_transform(&world_rt.frames[node_index], instance->transform);
+			}
+			continue;
+		}
 		if (definition->skinned)
 		{
 			struct world_ao_instance *instance;
 
 			if (pose_count >= WORLD_RT_POSES || node_count < definition->node_count)
 				continue;
+			world_rt.skinned_bytes += (unsigned long long)definition->triangles * WORLD_RT_TRIANGLE_BYTES;
 			instance = world_rt_instance_add(&count, definition->meshes[0], owner, kind);
 			if (!instance)
 				continue;
@@ -1178,8 +1307,8 @@ void world_rt_frame(unsigned long frame)
 				world_rt_transform(&world_rt.frames[node_index], instance->transform);
 		}
 	}
-	/* (debug.rt_render_geometry) the first-person weapon and hands as last
-	drawn, their own mask's, on their nodes */
+	/* (as drawn) the first-person weapon and hands as last drawn, their own
+	mask's, on their nodes */
 	if (world_rt.render_geometry)
 	{
 		int which;
@@ -1238,6 +1367,14 @@ void world_rt_frame(unsigned long frame)
 	}
 }
 
+int world_rt_object_traced(long object_index)
+{
+	unsigned long slot = (unsigned long)object_index & 0xffffu;
+
+	return world_rt.framed && object_index != -1 && slot < WORLD_RT_TRACED &&
+		world_rt.traced_id[slot] == (unsigned long)object_index && world_rt.traced_frame[slot] == world_rt.frame;
+}
+
 void world_rt_map_unloaded(void)
 {
 	if (world_rt.sent)
@@ -1260,6 +1397,8 @@ void world_rt_map_unloaded(void)
 	world_rt.framed = 0;
 	world_rt.full_logged = 0;
 	world_rt.count_triangles = 0;
+	world_rt.render_bytes = world_rt.skinned_bytes = 0;
+	world_rt.past_logged = 0;
 	if (world_rt.definitions)
 	{
 		long index;

@@ -117,6 +117,7 @@ symbols in this file:
 #include "world_ao.h" /* port: port/linux/game/world_ao.c */
 #include "rt_shadows.h" /* port: port/linux/game/rt_shadows.c */
 #include "contact_shadows.h" /* port: port/linux/game/contact_shadows.c */
+#include "lt_lights.h" /* port: port/linux/game/lt_lights.c */
 #include "royale_cinema.h" /* port: port/linux/game/royale_cinema.c */
 
 /* ---------- constants */
@@ -1073,6 +1074,11 @@ static boolean render_object_shadow_begin(
 	struct object_datum *object;
 	real shadow_intensity = level_of_detail;
 
+	/* port: the light-transport pass's sun shadow drawn for it in place of
+	this one (port/linux/game/lt_lights.c) */
+	if (lt_lights_sun_shadow(data->object_index))
+		return FALSE;
+
 	object_get_bounding_sphere(data->object_index, &center, &radius);
 
 	perpendicular3d(&data->lighting->shadow_vector, &shadow_right);
@@ -1625,6 +1631,11 @@ static void render_object_rt_shadows(
 		long object_index = render_object_globals.rendered_object_indices[rendered_object_index];
 		struct object_datum *object = object_get(object_index);
 
+		/* port: an object whose sun shadow the light-transport pass casts
+		(port/linux/game/lt_lights.c) is no caster here, as in
+		render_object_shadow_begin: its shadow is not drawn twice */
+		if (!contact && lt_lights_sun_shadow(object_index))
+			continue;
 		if ((!object_is_first_person_camera(object_index) ||
 				(first_person_legs_wanted(object_index) && first_person_legs_shadow_node_matrices(
 					object_index, object_get_node_matrices(object_index)))) &&
