@@ -157,6 +157,8 @@ struct host_render_replay_view
 	float *values;
 };
 
+struct xgpu_stream_lt_light;
+
 struct host_render_replay_platform
 {
 	/* "metal", "vulkan" */
@@ -229,6 +231,12 @@ struct host_render_replay_platform
 	the next frame's pre-pass; 0 asks nothing. Returns whether one is still
 	asked (2) and whether one is kept (1) */
 	int (*lt_checkpoint)(int what);
+	/* Debug (NULL: none): a light list (xgpu_stream.h's LT_LIGHTS records,
+	count of them, for window, the game's count of lists sent) handed to the
+	backend as though the stream had it: the light-list unit's
+	(HALO_LT_UNIT=<lt_lights_unit.so>: the list built again from the
+	recorded LT_INPUTS by the unit's code, port/linux/game/lt_lights_build.c) */
+	void (*lt_lights_take)(const struct xgpu_stream_lt_light *lights, uint32_t count, int window, uint32_t frame);
 };
 
 int host_render_replay_main(int argc, char *argv[], const struct host_render_replay_platform *platform);

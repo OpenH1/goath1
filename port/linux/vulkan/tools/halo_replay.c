@@ -24,6 +24,7 @@ again at each "reload" request.
 #include "xgpu_vulkan.h"
 #include "xgpu_vulkan_denoise.h"
 #include "xgpu_vulkan_lt.h"
+#include "xgpu_vulkan_lt_lights.h"
 #include "xgpu_vulkan_stream.h"
 
 #include <stdio.h>
@@ -228,6 +229,8 @@ static const struct host_render_replay_platform vulkan_platform =
 	.view_read = vulkan_view_read,
 	.view_setting = vulkan_view_setting,
 	.lt_checkpoint = vulkan_lt_checkpoint,
+	/* (debug: the light list built again by the light-list unit) */
+	.lt_lights_take = xgpu_vulkan_lt_lights_take,
 };
 
 int main(int argc, char *argv[])

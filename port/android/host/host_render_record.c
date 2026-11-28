@@ -424,6 +424,14 @@ static void record_memory(const unsigned char *start, uint32_t type, uint32_t si
 			outside(list->lights, list->count * (uint32_t)sizeof(struct xgpu_stream_lt_light));
 		break;
 	}
+	case XGPU_STREAM_LT_INPUTS:
+	{
+		const struct xgpu_stream_lt_inputs *inputs = (const void *)start;
+
+		if (inputs->bytes && inputs->bytes <= XGPU_STREAM_LT_INPUTS_MOST)
+			outside(inputs->inputs, inputs->bytes);
+		break;
+	}
 	case XGPU_STREAM_VR_INITIALIZE:
 		outside(((const struct xgpu_stream_reply_record *)start)->reply, sizeof(struct xgpu_stream_vr_info));
 		break;

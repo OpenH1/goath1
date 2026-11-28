@@ -1473,6 +1473,126 @@ static void outer_frame_end(void *context)
 	frame_closed();
 }
 
+/* ---------- the light-list unit (HALO_LT_UNIT=<lt_lights_unit.so>)
+
+The game's light list built again from its recorded inputs (xgpu_stream.h's
+LT_INPUTS, sent before each LT_LIGHTS while the game recorded) by the
+unit's code: port/linux/game/lt_lights_build.c built alone (ninja
+linux_lt_unit, or tools/rt2_bench.py run --unit), so a change to how the
+list is built is tried on a recording without recording again. Each rebuilt
+list goes to the backend in place of the recorded one (platform's
+lt_lights_take) and is compared with it: unchanged code gives the recorded
+list byte for byte (info's "lt_unit"). A list whose inputs did not come
+just before it (an older recording) plays as recorded. */
+
+typedef int (*lt_unit_build_function)(const void *record, unsigned int bytes, const struct xgpu_stream_lt_light *recorded,
+	int recorded_count, struct xgpu_stream_lt_light *out, int maximum);
+
+static struct
+{
+	int tried;
+	SDL_SharedObject *object;
+	lt_unit_build_function build;
+	char path[1024];
+	/* each window's last inputs: their bytes, the game's list count they
+	were sent with */
+	unsigned char *inputs[4];
+	uint32_t bytes[4], capacity[4], frame[4];
+	int have[4];
+	struct xgpu_stream_lt_light lights[XGPU_STREAM_LT_LIGHTS_MAXIMUM];
+	/* lists rebuilt, of them the same as recorded, the others, the first
+	other's list count; lists played as recorded (no inputs) */
+	uint32_t rebuilt, same, differ, first_differ, as_recorded;
+} unit;
+
+/* (loaded again when the setting names another: rt_set, rt_reload) */
+static void unit_load(void)
+{
+	const char *path = getenv("HALO_LT_UNIT");
+
+	if (!path)
+		path = "";
+	if (unit.tried && !strcmp(path, unit.path))
+		return;
+	unit.tried = 1;
+	if (unit.object)
+		SDL_UnloadObject(unit.object);
+	unit.object = NULL;
+	unit.build = NULL;
+	unit.rebuilt = unit.same = unit.differ = unit.first_differ = unit.as_recorded = 0;
+	snprintf(unit.path, sizeof(unit.path), "%s", path);
+	if (!*path || !platform->lt_lights_take)
+		return;
+	unit.object = SDL_LoadObject(path);
+	if (unit.object)
+		unit.build = (lt_unit_build_function)(void (*)(void))SDL_LoadFunction(unit.object, "lt_lights_unit_build");
+	if (!unit.build)
+		fprintf(stderr, "halo_replay: the light-list unit %s could not be loaded (%s)\n", path, SDL_GetError());
+	else
+		fprintf(stderr, "halo_replay: the light list built again by %s\n", path);
+}
+
+/* the kept inputs forgotten (a play from the recording's start: none of
+the play before may reach its first lists) */
+static void unit_forget(void)
+{
+	memset(unit.have, 0, sizeof(unit.have));
+}
+
+static void outer_lt_inputs(void *context, const struct xgpu_stream_lt_inputs *record)
+{
+	int window = record->window;
+
+	if (play.inner->lt_inputs)
+		play.inner->lt_inputs(context, record);
+	unit_load();
+	if (!unit.build || window < 0 || window > 3)
+		return;
+	if (unit.capacity[window] < record->bytes)
+	{
+		unsigned char *grown = realloc(unit.inputs[window], record->bytes);
+
+		if (!grown)
+			return;
+		unit.inputs[window] = grown;
+		unit.capacity[window] = record->bytes;
+	}
+	memcpy(unit.inputs[window], host_pointer(record->inputs), record->bytes);
+	unit.bytes[window] = record->bytes;
+	unit.frame[window] = record->frame;
+	unit.have[window] = 1;
+}
+
+static void outer_lt_lights(void *context, const struct xgpu_stream_lt_lights *record)
+{
+	int window = record->window, count;
+	const struct xgpu_stream_lt_light *recorded = record->count ? host_pointer(record->lights) : NULL;
+
+	unit_load();
+	if (!unit.build || window < 0 || window > 3 || !unit.have[window] || unit.frame[window] != record->frame)
+	{
+		if (unit.build && window >= 0)
+			unit.as_recorded++;
+		play.inner->lt_lights(context, record);
+		return;
+	}
+	unit.have[window] = 0;
+	count = unit.build(unit.inputs[window], unit.bytes[window], recorded, (int)record->count, unit.lights,
+		XGPU_STREAM_LT_LIGHTS_MAXIMUM);
+	if (count < 0)
+	{
+		unit.as_recorded++;
+		play.inner->lt_lights(context, record);
+		return;
+	}
+	unit.rebuilt++;
+	if ((uint32_t)count == record->count && (!count || !memcmp(unit.lights, recorded, (size_t)count * sizeof(*recorded))))
+		unit.same++;
+	else if (!unit.differ++)
+		unit.first_differ = record->frame;
+	platform->lt_lights_take(unit.lights, (uint32_t)count, window, record->frame);
+}
+
 static void outer_install(void)
 {
 	play.inner = host_render_stream_backend();
@@ -1495,6 +1615,9 @@ static void outer_install(void)
 		play.outer.present = outer_present;
 	if (play.inner->frame_end)
 		play.outer.frame_end = outer_frame_end;
+	if (play.inner->lt_lights)
+		play.outer.lt_lights = outer_lt_lights;
+	play.outer.lt_inputs = outer_lt_inputs;
 	host_render_stream_set_backend(&play.outer);
 }
 
@@ -1712,7 +1835,9 @@ static void play_again(void)
 	play.index = 0;
 	next_record = 0;
 	/* (the backend's temporal passes begun again, as at the stream's start:
-	their histories are the frames played since, as the game's were) */
+	their histories are the frames played since, as the game's were; the
+	light-list unit's inputs with them) */
+	unit_forget();
 	if (platform->shaders_reload)
 		platform->shaders_reload(NULL);
 }
@@ -3188,6 +3313,16 @@ static void serve_info(struct text *text)
 		"\"backend\":\"%s\",\"build\":\"%s\",\"marks\":%s,\"records\":%u", HOST_RENDER_REPLAY_PROTOCOL,
 		recording.frame_count, last ? last->width : 0, last ? last->height : 0, platform->backend, HALO_REPLAY_BUILD,
 		marks.present ? "true" : "false", recording.record_count);
+	/* (the light-list unit: HALO_LT_UNIT) */
+	unit_load();
+	if (unit.tried && unit.path[0])
+	{
+		TEXT(text, ",\"lt_unit\":{\"path\":");
+		text_string(text, unit.path);
+		text_printf(text, ",\"loaded\":%s,\"rebuilt\":%u,\"same\":%u,\"differ\":%u,\"first_differ\":%u,"
+			"\"as_recorded\":%u}", unit.build ? "true" : "false", unit.rebuilt, unit.same, unit.differ, unit.first_differ,
+			unit.as_recorded);
+	}
 	/* (what this service does: the requests beyond version 1's, and what a
 	backend may lack) */
 	TEXT(text, ",\"capabilities\":[\"frame\",\"draws\",\"thumbs\"");
@@ -4828,7 +4963,7 @@ static const char *const record_type_names[XGPU_STREAM_RECORD_TYPES] =
 	[XGPU_STREAM_HDR_PEAK_NITS] = "hdr_peak_nits",
 	[XGPU_STREAM_HDR_GAMUT] = "hdr_gamut",
 	[XGPU_STREAM_PASS_TIMES] = "pass_times", [XGPU_STREAM_MOTION] = "motion", [XGPU_STREAM_RT_SHADOWS] = "rt_shadows",
-	[XGPU_STREAM_CONTACT_SHADOWS] = "contact_shadows", [XGPU_STREAM_GPUS] = "gpus", [XGPU_STREAM_RT_BOUNCE] = "rt_bounce", [XGPU_STREAM_LT_LIGHTS] = "lt_lights",
+	[XGPU_STREAM_CONTACT_SHADOWS] = "contact_shadows", [XGPU_STREAM_GPUS] = "gpus", [XGPU_STREAM_RT_BOUNCE] = "rt_bounce", [XGPU_STREAM_LT_LIGHTS] = "lt_lights", [XGPU_STREAM_LT_INPUTS] = "lt_inputs",
 	[XGPU_STREAM_WORLD_AO_WINDOW] = "world_ao_window", [XGPU_STREAM_WORLD_AO_FIELD] = "world_ao_field",
 	[XGPU_STREAM_PIPELINE_STAND_IN] = "pipeline_stand_in", [XGPU_STREAM_CATEGORY] = "category",
 	[XGPU_STREAM_DYNAMIC_LIGHTS_WORLD] = "dynamic_lights_world", [XGPU_STREAM_WORLD_AO_PREPASS] = "world_ao_prepass",

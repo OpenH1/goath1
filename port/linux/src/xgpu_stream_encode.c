@@ -2938,6 +2938,20 @@ void xgpu_backend_lt_lights(const void *lights, int count, int window, unsigned 
 	record_body->lights = bytes ? carry_one(&place, lights, bytes) : 0;
 }
 
+void xgpu_backend_lt_inputs(const void *inputs, unsigned int bytes, int window, unsigned int frame)
+{
+	struct xgpu_stream_lt_inputs *record_body;
+	unsigned char *place;
+
+	if (!stream.open || !bytes || bytes > XGPU_STREAM_LT_INPUTS_MOST)
+		return;
+	record_body = record_data(XGPU_STREAM_LT_INPUTS, sizeof(*record_body), carried_one(bytes), &place);
+	record_body->bytes = bytes;
+	record_body->window = window;
+	record_body->frame = frame;
+	record_body->inputs = carry_one(&place, inputs, bytes);
+}
+
 /* ---------- the VR mode */
 
 BOOL xgpu_backend_vr_supported(void)
