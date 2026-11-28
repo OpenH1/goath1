@@ -4966,15 +4966,24 @@ void xgpu_vulkan_image_copy(struct xgpu_vulkan_image *source, uint32_t source_le
 
 int xgpu_vulkan_image_copy_depth(struct xgpu_vulkan_image *source, struct xgpu_vulkan_image *destination)
 {
+	uint32_t layer;
+
 	if (!source || !destination || !(source->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) ||
 		source->aspect != destination->aspect || source->description.format != destination->description.format ||
 		source->description.samples > 1 || destination->description.samples > 1 ||
 		source->description.width != destination->description.width ||
-		source->description.height != destination->description.height)
+		source->description.height != destination->description.height ||
+		source->description.depth_or_layers != destination->description.depth_or_layers)
 	{
 		return 0;
 	}
-	return image_copy(source, 0, 0, destination, 0, 0, 1);
+	/* (each layer: the VR mode's eyes) */
+	for (layer = 0; layer < (source->description.depth_or_layers ? source->description.depth_or_layers : 1); layer++)
+	{
+		if (!image_copy(source, 0, layer, destination, 0, layer, 1))
+			return 0;
+	}
+	return 1;
 }
 
 static int image_copy(struct xgpu_vulkan_image *source, uint32_t source_level, uint32_t source_layer,

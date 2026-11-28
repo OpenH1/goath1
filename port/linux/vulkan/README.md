@@ -521,12 +521,15 @@ draws them as before. As drawn:
   bulge's front over its thickness, so an effect meets a wall along its
   shape, not its card's plane. The depth is not written (a pixel shader
   that writes it turns off early depth testing, and the effects write none).
-- The depth is sampled in a pass that writes none of it (`reads_depth`):
-  the first effect of the frame ends the pass the scene was drawn in (whose
-  depth is stored), and the effects and whatever else writes no depth or
-  stencil draw in the next, which stores neither (`VK_ATTACHMENT_STORE_OP_NONE`).
-  A draw that writes depth or stencil ends it again. The glows are drawn in
-  it too (the depth bound, untested), so they need no pass of their own.
+- The depth is sampled from a copy of it (`target_depth_sampled`), never
+  from the attachment the draw is tested against: the copy is made outside
+  a pass the first time a draw samples the depth after it was written (a
+  draw, a clear), about twice a frame (after the scene, after the
+  first-person weapon), and the effects then draw in the scene's pass. The
+  glows and the ray-traced and contact shadows sample it the same way.
+  Sampling the attachment in a pass that writes none of it (`reads_depth`,
+  still the fallback where no copy can be made) is valid Vulkan, but AMD's
+  Windows driver read its compressed depth as blocks (#1247).
 - The glows (`display.dynamic_lights = "enhanced"`) are the light each bolt
   scatters toward each eye from a haze about it, whose density falls off
   as the card's glow did across it (a wide Gaussian less its value at the
