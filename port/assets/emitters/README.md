@@ -37,8 +37,8 @@ glowing shaders, the sky's lights and its outdoor ambient dome, and light tags' 
     (lt_lights_build.c `lt_point_power_scale`).
   - Glows with no radiosity data (an object's self-illumination, an additive part) emit what they show, by 1: the
     same radiance whether a light sample reaches them (world_rt.c's lamps) or a bounce or reflection ray hits them
-    (lt/indirect.glsl `hit.glow`). The energy class (shields, plasma) has its hook at 1 in both
-    (`WORLD_RT_LAMP_ENERGY_FACTOR`, `LT_EMITTERS_ENERGY_FACTOR`), pending a decision.
+    (lt/indirect.glsl `hit.glow`). The energy class (shields, the turret's plasma, energy fields, powerups) is an art choice: its object lamps emit 3 times what they show
+    (`WORLD_RT_LAMP_ENERGY_FACTOR`, classified by `world_rt_source_energy`); the level's `LT_EMITTERS_ENERGY_FACTOR` stays 1.
   - The suns' share of a kept lightmap (0.417 / 0.187, levels that keep their bake) is a measure of the lightmap,
     not a light.
 - **Colours.** Every designer colour is an on-screen colour, so its hue is c^2.2. The tool multiplies colour by

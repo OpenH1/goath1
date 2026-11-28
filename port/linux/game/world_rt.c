@@ -91,12 +91,14 @@ the same radiance a ray that hits it sees (lt/indirect.glsl's hit.glow). A
 triangle glowing less on average (its luminance) than WORLD_RT_LAMP_LEAST is
 no lamp (the same triangles as when the lamps were 5.36 times their glow),
 and its samples a side */
-/* the energy class's emission hook (2026-11-28 art decision, parked: the
-shields', plasma's and energy fields' glows, an object's transparent,
-additive parts): one factor on both its drawn glow and its cast light,
-so lit stays shown; 1, the physical rule, until it is decided (as
-lt_emitters.c's LT_EMITTERS_ENERGY_FACTOR for the level's) */
-#define WORLD_RT_LAMP_ENERGY_FACTOR 1.0f
+/* the energy class's emission (an art choice, 2026-11-28, not a fit: energy glows
+"turned up a bit", glowing like Halo's plasma): an energy glow's lamps
+(world_rt_source_energy: shields, the turret's plasma, energy fields,
+powerups; an object's transparent generic or chicago part drawn adding,
+with no radiosity power) emit this many times what the glow shows. Every
+other glow emits what it shows, by 1. One factor for the class, not a
+fit (lt_emitters.c's LT_EMITTERS_ENERGY_FACTOR is the level's, still 1) */
+#define WORLD_RT_LAMP_ENERGY_FACTOR 3.0f
 /* (a material's kind: its shader's type, shader_transparent_generic's) */
 #define WORLD_RT_SHADER_TRANSPARENT_GENERIC 5
 #define WORLD_RT_LAMP_LEAST 0.00187f
@@ -178,6 +180,9 @@ struct world_rt_lamp
 	/* (an additive part: a glow drawn over its object, which does not
 	shadow it, lt/e1.frag's object_lamp_sample) */
 	int additive;
+	/* (its emission over what it shows: WORLD_RT_LAMP_ENERGY_FACTOR for an
+	energy glow, else 1) */
+	float emission;
 };
 
 /* ---------- globals */
@@ -1039,6 +1044,8 @@ static void world_rt_lamps_made(struct world_rt_definition *entry, short node, s
 
 		/* (an additive transparent part's: what its first map adds, no mask) */
 		int additive = (material->flags & WORLD_RT_MATERIAL_TRANSPARENT) != 0;
+		/* (an energy glow's: WORLD_RT_LAMP_ENERGY_FACTOR) */
+		float emission = additive && world_rt_source_energy(material->shader) ? WORLD_RT_LAMP_ENERGY_FACTOR : 1.0f;
 		/* (... a generic shader's: what its stages add, from its maps) */
 		struct world_rt_source_map glow_maps[4];
 		float glow_transforms[4][4];
@@ -1137,7 +1144,7 @@ static void world_rt_lamps_made(struct world_rt_definition *entry, short node, s
 			continue;
 		}
 		for (channel = 0; channel < 3; channel++)
-			sum[channel] *= (additive ? WORLD_RT_LAMP_ENERGY_FACTOR : 1.0f) / (float)count;
+			sum[channel] *= emission / (float)count;
 		luminance = 0.2126f * sum[0] + 0.7152f * sum[1] + 0.0722f * sum[2];
 		if (luminance < WORLD_RT_LAMP_LEAST)
 		{
@@ -1159,6 +1166,7 @@ static void world_rt_lamps_made(struct world_rt_definition *entry, short node, s
 		lamp->samples = samples;
 		lamp->two_sided = additive && (material->flags & WORLD_RT_MATERIAL_TWO_SIDED) != 0;
 		lamp->additive = additive;
+		lamp->emission = emission;
 		/* (a skinned model's: on its triangle's major node, in that node's
 		space, as its rigid parts are) */
 		if (inverses)
@@ -1231,7 +1239,7 @@ static void world_rt_lamps_placed(struct world_rt_definition const *definition, 
 					radiance[channel] += rgb[channel];
 			}
 			for (channel = 0; channel < 3; channel++)
-				radiance[channel] *= (lamp->additive ? WORLD_RT_LAMP_ENERGY_FACTOR : 1.0f) / (float)lamp->sample_count;
+				radiance[channel] *= lamp->emission / (float)lamp->sample_count;
 			if (0.2126f * radiance[0] + 0.7152f * radiance[1] + 0.0722f * radiance[2] < WORLD_RT_LAMP_LEAST)
 			{
 				world_rt_staged_counts[1]++;

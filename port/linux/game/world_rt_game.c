@@ -1342,6 +1342,14 @@ static struct world_rt_shader_transparent_generic const *glow_shader(long shader
 	return generic;
 }
 
+int world_rt_source_energy(long shader_index)
+{
+	struct shader const *shader = shader_index != NONE && tag_index_is_group(shader_index, SHADER_DEFINITION_TAG) ?
+		shader_definition_get(shader_index) : NULL;
+
+	return shader && additive_map(shader, NULL) && !(shader->base.radiosity.power > 0.0f);
+}
+
 int world_rt_source_glow_maps(long shader, struct world_rt_source_map maps[4], float transforms[4][4])
 {
 	struct world_rt_shader_transparent_generic const *generic = glow_shader(shader);

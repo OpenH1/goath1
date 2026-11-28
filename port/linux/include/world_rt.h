@@ -316,6 +316,12 @@ struct world_rt_source_shading
 };
 /* (FALSE: no such object) */
 int world_rt_source_shading(long id, struct world_rt_source_shading *shading);
+/* whether a shader is an energy glow (the Covenant turret's energy, a
+portable shield, a plasma weapon's or powerup's glow, an energy field): a
+transparent generic or chicago shader drawn adding, with no radiosity power
+(rt2-glow-power's rule; object lamps are an object's, never the sky's or
+the first-person view's) */
+int world_rt_source_energy(long shader);
 /* a transparent generic shader (an object lamp's, drawn adding): its maps,
 at most 4, and each one's coordinates' scale and offset (u scale, v scale,
 u offset, v offset); 0 if its stages cannot be run here (none, or a cube
