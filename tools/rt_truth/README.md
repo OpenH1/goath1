@@ -48,6 +48,30 @@ game's own units (color and attenuation table decoded ^2.2) unless a physical mo
 `--flashlight-direct-only` / `--dynamic-direct-only [--light i]` render only that group's direct light (and
 its irradiance), for comparing a real-time light before the whole truth.
 
+## Solving the emitters (indoor static light, traced live)
+The lightmap is the answer key for the level's static light sources: `python -m rt_truth emitters <scene>
+--out <map>_bsp<k>.json [--report DIR]` (`emitters.py`) writes the level's emitter file (rt2-scene-format.md,
+"Emitters"), and `render <scene> --static emitters --emitters <file>` traces the static light from it (group
+`solved`: the BSP with its full materials and objects, lit only by the file's sources, every bounce traced),
+writing `static_fit_residual.png` (the bake less the traced light at the lit BSP pixels) and `bake_bsp.png`.
+Any export of the level will do (the whole BSP is used, not the view): `scenes.json` has the commands.
+- Samples are the BSP's lightmap texels (centres inside each lightmapped triangle; a triangle without one
+  gets one at its middle), weighted by world area, up to `--samples`; their target is the texel ^2.2, the
+  radiance a white surface shows (see "Static light"). Glowing and transparent surfaces are left out.
+- Transport is the lightmap tool's world: the BSP alone (no objects), diffuse surfaces of the BSP's albedos,
+  cutouts passed, next-event estimation at each vertex, up to 8 vertices. Each light event is credited to its
+  source (emitter registry id to source), so one pass gives every source's light at unit power.
+- Sources, in order of preference: (1) the shaders with radiosity power (environment lamps, light cards:
+  transparent ones glow on both faces), at the tag's color x power x one fitted scale each; (2) the sky's
+  ambient dome and each sky light (other light tags are objects', which the bake never saw); (3) the indoor
+  ambient floor (the sky's indoor ambient radiosity, a constant); (4) only for what those leave, added
+  rectangles (`--max-added`, each kept only if it adds `--min-gain` of R^2) on the brightest texels near the
+  largest positive residual, one-sided, light only (not drawn), RGB power free.
+- The fit: area-weighted nonnegative least squares; the shaders' scales are pulled toward one shared scale
+  (the tag's relative powers as the prior), the pull chosen by two-fold spatial cross-validation (8 wu cells),
+  so nearly collinear sources (a lamp and its neighbour, sun and dome) do not trade light. R^2 is of the
+  luminance over the samples; `--report` writes each page's residual and the bake beside the fit.
+
 ## The path tracer
 `integrator.py` is Mitsuba's unidirectional path tracer (next event estimation, MIS, Russian roulette)
 written out with symbolic loops so that shadow rays pass alpha cutouts (Mitsuba's `path` stops them there,
