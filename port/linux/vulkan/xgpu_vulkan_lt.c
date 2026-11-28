@@ -286,8 +286,11 @@ static struct
 	float kind_scale[5];
 	int drop_kind;
 	uint32_t drop_id;
-	/* the last pass lit its level live (LT_LIGHTS_REAL: the camera's
-	contrast, xgpu_vulkan_lt_live) */
+	/* the last pass lit its level live by the sky's traced lights, the
+	view in a cluster that sees the sky (the camera's contrast,
+	xgpu_vulkan_lt_live; not where the level's light sources solved from
+	its own lightmap are the light alone: their fit is the bake's light
+	already, its spread in it) */
 	int live;
 	/* the light sources' tables (lt_emitter_tables): the set's number they
 	are of (0 none), the one in the table's image, its parameters, whether
@@ -1494,7 +1497,7 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 	/* (the objects' own lamps, in a level lit live: emitter_bases' w their
 count, lt/e1.frag's object_lamp_sample) */
 	params->emitter_bases[3] = (params->lights[2] & LT_LIGHTS_REAL) && !lt.only ? lt_object_lamp_rows() : 0;
-	lt.live = (params->lights[2] & LT_LIGHTS_REAL) != 0;
+	lt.live = real && params->lights[1] > 0;
 }
 
 /* the view's shadowed flashlight's index in the block (-1 none) */

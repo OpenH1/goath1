@@ -5371,9 +5371,10 @@ static void stream_tone_map(void *context, const struct xgpu_stream_tone_map *re
 	target->written++;
 	if (color_image == target->multisampled)
 		target->unresolved = 1;
-	/* (the camera's contrast where the pass lit the level live: its light
-	physical, the bake's look not in it; 1 where the lightmap is, a picture
-	already: xgpu_hdr.h's XGPU_HDR_MODE_CAMERA) */
+	/* (the camera's contrast where the pass lit the level live by the sky:
+	its light physical, the bake's look not in it; 1 where the lightmap is,
+	a picture already, and where the level's solved light sources light it,
+	fitted to that picture's light: xgpu_hdr.h's XGPU_HDR_MODE_CAMERA) */
 	if (frame.mode == XGPU_HDR_MODE_CAMERA && xgpu_vulkan_lt_live())
 		camera[0] = XGPU_HDR_CAMERA_CONTRAST;
 	xgpu_vulkan_post_tone_map(color_image, depth_image, record->corners, hdr, camera);
