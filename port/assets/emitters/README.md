@@ -9,7 +9,7 @@ Made by `python -m rt_truth emitters <scene folder> --out <file>` (tools/rt_trut
 emitters") from any rt2 scene export of that BSP. In short, each `lamps` entry has `radiance` (linear, the game's light units) and `triangles` (world
 positions, lifted 0.01 wu off the surface, wound to glow toward their normal) to sample as area lights.
 
-The build packs each file (tools/lt_emitters_data.py: about 930 KB for all 49, zlib) into openh1.assets beside
+The build packs each file (tools/lt_emitters_data.py: about 470 KB for the 21 shipped, zlib) into openh1.assets beside
 the game, and the game unpacks the loaded BSP's at map load; `python3 tools/lt_emitters_data.py --check` fails
 where a file does not build or holds more than the game takes (8192 triangles, 1024 groups a BSP).
 
@@ -58,7 +58,9 @@ cells the lamps light; 1 = all of it), and its typical cell ratio (the area-weig
 12 wu cell's traced mean light over the bake's: x1.3 means a typical cell is within 30%). "Sky" is the bake's
 share the sky's own tags give (traced too, fitted where only the sky lights, then taken off the bake; not in
 the file). 2048 paths: c20 bsp1's cells match the same at 4096 (x2.95 both before the sky rule), while 128
-(the first two files' count) gave x4.05; a10 and c20 bsp0 are solved again at 2048 here.
+(the first two files' count) gave x4.05; a10 and c20 bsp0 were solved again at 2048 here, but those two
+solves failed the screen below, so their files stay the first (128-path) ones. The table is every BSP solved;
+the files shipped are the ones that passed the screen.
 
 | BSP | lamp groups | triangles | lamps / bake | typical cell | sky |
 |---|---|---|---|---|---|
@@ -112,6 +114,60 @@ the file). 2048 paths: c20 bsp1's cells match the same at 4096 (x2.95 both befor
 | d40_bsp6 | 52 | 900 | 0.98 | x1.52 | 74% |
 | d40_bsp7 | 190 | 2737 | 0.97 | x2.52 | 20% |
 
+## Looked at in the game (the screen, 2026-11-28)
+`python3 tools/rt2_emitter_screen.py --build <ref> --out DIR` plays each level twice on the 5900X as players run it
+(the menu setting off and on, the MCC import, the HUD hidden, a fixed frame time), switches to each BSP with a
+file and takes a lossless still at two cameras inside rooms its lamps light (tools/rt2_emitter_spots.json, picked
+from the BSP's mesh beside its strongest lamp groups). Per still pair, live over classic in linear luminance: the
+whole frame, its lower 40% (mostly floor) and middle band (mostly walls); "black": pixels near-black live where
+classic shows them lit (live under 4% of white and under a third of classic), of the frame and of the worst cell
+of a 4x4 grid; "blown": pixels near white live where classic is under 60% of white. A BSP ships when every still
+of it has its whole-frame ratio within 0.6 to 1.6, black under 10% of the frame and under 50% of every cell, and
+blown under 10%; a still that shows nothing (a camera outside the rooms) or repeats the level's still before it
+(the game no longer drawing new frames) is not a look, and a BSP that is not looked at is not shipped.
+
+Shipped (a10_bsp1 has one spot: no second camera inside a lit room was found):
+
+| BSP | spot | overall | floor | walls | black | worst cell | blown | verdict |
+|---|---|---|---|---|---|---|---|---|
+| a10_bsp1 | 1 | x1.37 | x1.64 | x1.00 | 4% | 22% | 0% | pass |
+| a10_bsp2 | 1 | x0.93 | x0.78 | x1.06 | 2% | 10% | 0% | pass |
+| a10_bsp2 | 2 | x1.31 | x0.91 | x1.51 | 0% | 2% | 0% | pass |
+| a10_bsp3 | 1 | x0.84 | x0.85 | x0.78 | 1% | 6% | 0% | pass |
+| a10_bsp3 | 2 | x0.74 | x0.81 | x0.77 | 3% | 24% | 0% | pass |
+| a10_bsp6 | 1 | x0.79 | x0.75 | x0.85 | 1% | 6% | 0% | pass |
+| a10_bsp6 | 2 | x1.07 | x0.94 | x1.09 | 1% | 9% | 0% | pass |
+| b40_bsp8 | 1 | x0.78 | x0.83 | x0.61 | 2% | 14% | 0% | pass |
+| b40_bsp8 | 2 | x0.68 | x0.67 | x0.69 | 2% | 23% | 0% | pass |
+| b40_bsp9 | 1 | x1.12 | x1.28 | x1.16 | 3% | 25% | 0% | pass |
+| b40_bsp9 | 2 | x1.08 | x1.42 | x0.85 | 2% | 22% | 0% | pass |
+| b40_bsp10 | 1 | x0.73 | x0.77 | x0.80 | 4% | 24% | 0% | pass |
+| b40_bsp10 | 2 | x1.49 | x1.97 | x0.66 | 4% | 27% | 0% | pass |
+| c10_bsp1 | 1 | x0.80 | x0.94 | x0.76 | 1% | 5% | 0% | pass |
+| c10_bsp1 | 2 | x0.82 | x0.96 | x0.81 | 2% | 14% | 0% | pass |
+| c10_bsp2 | 1 | x0.88 | x1.06 | x0.86 | 1% | 6% | 0% | pass |
+| c10_bsp2 | 2 | x0.91 | x1.11 | x0.77 | 0% | 0% | 0% | pass |
+| c10_bsp4 | 1 | x0.61 | x0.53 | x0.60 | 5% | 39% | 0% | pass |
+| c10_bsp4 | 2 | x0.76 | x0.76 | x0.65 | 3% | 19% | 0% | pass |
+| c20_bsp1 | 1 | x1.49 | x1.10 | x1.80 | 0% | 0% | 7% | pass |
+| c20_bsp1 | 2 | x0.70 | x0.67 | x0.78 | 0% | 0% | 0% | pass |
+| c20_bsp2 | 1 | x1.42 | x1.10 | x1.69 | 0% | 0% | 7% | pass |
+| c20_bsp2 | 2 | x0.71 | x0.61 | x0.75 | 0% | 2% | 0% | pass |
+| c20_bsp3 | 1 | x1.44 | x1.10 | x1.73 | 0% | 0% | 7% | pass |
+| c20_bsp3 | 2 | x1.04 | x0.65 | x1.18 | 0% | 3% | 0% | pass |
+| c40_bsp7 | 1 | x1.18 | x1.50 | x0.97 | 2% | 15% | 0% | pass |
+| c40_bsp7 | 2 | x1.25 | x1.62 | x1.15 | 1% | 5% | 0% | pass |
+| c40_bsp8 | 1 | x0.77 | x0.81 | x0.59 | 2% | 12% | 0% | pass |
+| c40_bsp8 | 2 | x0.67 | x0.65 | x0.68 | 2% | 23% | 0% | pass |
+| c40_bsp10 | 1 | x0.94 | x0.95 | x0.96 | 2% | 11% | 0% | pass |
+| c40_bsp10 | 2 | x1.56 | x1.97 | x0.69 | 4% | 27% | 2% | pass |
+| d40_bsp1 | 1 | x0.80 | x0.66 | x0.91 | 2% | 13% | 0% | pass |
+| d40_bsp1 | 2 | x0.82 | x0.78 | x0.97 | 1% | 5% | 0% | pass |
+| d40_bsp4 | 1 | x0.84 | x0.84 | x0.71 | 0% | 4% | 0% | pass |
+| d40_bsp4 | 2 | x0.85 | x0.70 | x0.93 | 0% | 5% | 0% | pass |
+| d40_bsp5 | 1 | x0.92 | x0.93 | x0.99 | 1% | 5% | 0% | pass |
+| d40_bsp5 | 2 | x1.02 | x1.02 | x1.03 | 1% | 5% | 0% | pass |
+
 Not shipped (an outdoor BSP's lamps cannot be matched apart from the sky, or nothing is left to them):
 - a10_bsp7: all sky (space outside the ship): no lamp-lit cell.
 - a30_bsp0: outdoors (sky 74%); the lamp cells left match only within x13.
@@ -126,6 +182,69 @@ Not shipped (an outdoor BSP's lamps cannot be matched apart from the sky, or not
   where the bake lights its walls and floor green.
 - d20_bsp0 (43 groups, x2.71): looked at in game (d20_bsp0), the first hall's lower floor goes black live where the
   bake lights it, while its walls come out brighter.
+- Failed the screen (numbers above; a10_bsp0 and c20_bsp0 keep their earlier files):
+
+| BSP | spot | overall | floor | walls | black | worst cell | blown | verdict |
+|---|---|---|---|---|---|---|---|---|
+| a10_bsp0 | 1 | x0.60 | x0.45 | x0.85 | 13% | 48% | 0% | FAIL |
+| a10_bsp0 | 2 | x2.11 | x1.28 | x0.84 | 8% | 29% | 10% | FAIL |
+| a10_bsp4 | 1 | x2.48 | x2.21 | x1.32 | 0% | 4% | 14% | FAIL |
+| a10_bsp4 | 2 | x0.54 | x0.45 | x0.58 | 1% | 8% | 0% | FAIL |
+| a10_bsp5 | 1 | x3.21 | x4.41 | x3.31 | 1% | 7% | 3% | FAIL |
+| a10_bsp8 | 1 | x0.71 | x1.00 | x0.57 | 0% | 1% | 0% | pass |
+| a10_bsp8 | 2 | x0.71 | x1.00 | x0.57 | 0% | 1% | 0% | nothing in view |
+| a30_bsp1 | 1 | x0.25 | x0.24 | x0.26 | 54% | 86% | 0% | FAIL |
+| a30_bsp1 | 2 | x0.94 | x0.95 | x0.94 | 0% | 0% | 0% | pass |
+| a50_bsp2 | 1 | x0.85 | x1.09 | x0.48 | 6% | 25% | 0% | pass |
+| a50_bsp2 | 2 | x0.49 | x0.33 | x0.56 | 6% | 15% | 0% | FAIL |
+| a50_bsp3 | 1 | x0.73 | x0.83 | x0.55 | 16% | 80% | 0% | FAIL |
+| a50_bsp3 | 2 | x0.29 | x0.05 | x0.43 | 8% | 44% | 0% | FAIL |
+| b40_bsp0 | 1 | x0.51 | x0.64 | x0.37 | 34% | 83% | 0% | FAIL |
+| b40_bsp0 | 2 | x0.71 | x0.68 | x0.66 | 1% | 8% | 0% | pass |
+| b40_bsp3 | 1 | x0.47 | x0.44 | x0.44 | 0% | 0% | 0% | FAIL |
+| b40_bsp3 | 2 | x0.57 | x0.70 | x0.57 | 23% | 92% | 0% | FAIL |
+| b40_bsp4 | 1 | x0.59 | x0.61 | x0.65 | 4% | 12% | 0% | FAIL |
+| b40_bsp4 | 2 | x0.57 | x0.57 | x0.56 | 0% | 1% | 0% | FAIL |
+| b40_bsp5 | 1 | x0.53 | x0.54 | x0.55 | 6% | 44% | 0% | FAIL |
+| b40_bsp5 | 2 | x0.59 | x0.51 | x0.48 | 27% | 52% | 0% | FAIL |
+| b40_bsp11 | 1 | x1.47 | x1.95 | x0.65 | 5% | 30% | 0% | nothing in view |
+| b40_bsp11 | 2 | x1.47 | x1.95 | x0.64 | 5% | 30% | 0% | nothing in view |
+| c10_bsp3 | 1 | x0.62 | x0.59 | x0.62 | 3% | 17% | 0% | pass |
+| c10_bsp3 | 2 | x0.29 | x0.23 | x0.41 | 52% | 97% | 0% | FAIL |
+| c10_bsp5 | 1 | x0.48 | x0.38 | x0.49 | 2% | 21% | 0% | FAIL |
+| c10_bsp5 | 2 | x0.72 | x0.77 | x0.84 | 1% | 14% | 0% | pass |
+| c20_bsp0 | 1 | x1.42 | x1.22 | x1.70 | 0% | 0% | 11% | FAIL |
+| c20_bsp0 | 2 | x0.63 | x0.63 | x0.63 | 0% | 0% | 0% | pass |
+| c40_bsp0 | 1 | x0.70 | x0.55 | x0.76 | 26% | 72% | 0% | FAIL |
+| c40_bsp0 | 2 | x0.90 | x1.16 | x0.71 | 23% | 74% | 0% | FAIL |
+| c40_bsp5 | 1 | x0.53 | x0.55 | x0.56 | 6% | 35% | 0% | FAIL |
+| c40_bsp5 | 2 | x0.67 | x0.54 | x0.57 | 4% | 12% | 0% | pass |
+| c40_bsp6 | 1 | x0.61 | x0.56 | x0.57 | 2% | 8% | 0% | pass |
+| c40_bsp6 | 2 | x0.47 | x0.46 | x0.42 | 5% | 15% | 0% | FAIL |
+| c40_bsp9 | 1 | x1.12 | x1.48 | x0.90 | 2% | 22% | 0% | pass |
+| c40_bsp9 | 2 | x0.92 | x0.37 | x1.63 | 53% | 100% | 0% | FAIL |
+| c40_bsp11 | 1 | x1.54 | x1.96 | x0.67 | 5% | 31% | 2% | nothing in view |
+| c40_bsp11 | 2 | x1.54 | x1.96 | x0.67 | 5% | 31% | 2% | nothing in view |
+| c40_bsp12 | 1 | x1.54 | x1.96 | x0.67 | 5% | 31% | 2% | nothing in view |
+| c40_bsp12 | 2 | x1.54 | x1.96 | x0.67 | 5% | 31% | 2% | nothing in view |
+| d20_bsp1 | 1 | x1.06 | x0.97 | x1.04 | 0% | 2% | 0% | pass |
+| d20_bsp1 | 2 | x0.73 | x0.95 | x0.58 | 14% | 50% | 0% | FAIL |
+| d20_bsp2 | 1 | x0.23 | x0.17 | x0.26 | 20% | 84% | 0% | FAIL |
+| d20_bsp2 | 2 | x0.32 | x0.11 | x0.51 | 47% | 100% | 0% | FAIL |
+| d20_bsp3 | 1 | x1.85 | x3.42 | x1.26 | 4% | 21% | 0% | FAIL |
+| d20_bsp3 | 2 | x1.09 | x0.99 | x1.32 | 4% | 14% | 0% | pass |
+| d20_bsp4 | 1 | x0.10 | x0.02 | x0.15 | 73% | 100% | 0% | FAIL |
+| d20_bsp4 | 2 | x0.21 | x0.08 | x0.25 | 36% | 78% | 0% | FAIL |
+| d40_bsp0 | 1 | x0.45 | x0.50 | x0.47 | 22% | 95% | 0% | FAIL |
+| d40_bsp0 | 2 | x0.54 | x0.46 | x0.56 | 1% | 7% | 0% | FAIL |
+| d40_bsp2 | 1 | x0.57 | x0.49 | x0.67 | 10% | 52% | 0% | FAIL |
+| d40_bsp3 | 1 | x0.64 | x0.49 | x0.56 | 3% | 16% | 0% | pass |
+| d40_bsp3 | 2 | x1.06 | x0.79 | x1.19 | 12% | 64% | 0% | FAIL |
+| d40_bsp6 | 1 | x0.56 | x0.36 | x0.60 | 10% | 57% | 0% | FAIL |
+| d40_bsp6 | 2 | x0.60 | x0.54 | x0.63 | 5% | 54% | 0% | FAIL |
+| d40_bsp7 | 1 | x0.60 | x0.53 | x0.63 | 5% | 55% | 0% | nothing in view |
+| d40_bsp7 | 2 | x0.60 | x0.53 | x0.63 | 5% | 55% | 0% | nothing in view |
+
 - No lightmap in that level (nothing to solve from): b40 bsp6, bsp7 and bsp12, c40 bsp3 and bsp4; d40 bsp9 has
   no surfaces.
 

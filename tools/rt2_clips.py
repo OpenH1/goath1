@@ -116,7 +116,7 @@ MOMENTS = {
         "tick it is held); walking up to a wall, then a slow turn along it"),
     # (the emitter files' BSPs, indoors where the lamps light it: the start, then switch_bsp to the BSP and the
     # script's camera at a spot inside a lamp-lit room (picked from the BSP's mesh beside its strongest lamp groups); a
-    # slow pan. The level's own scripts still run: it shows the BSP as lit, not a moment of play. b40, c10 and a50
+    # slow pan. The level's own scripts still run: it shows the BSP as lit, not a moment of play. b40 and c10
     # open with a cutscene, skipped by playing it fast, undrawn, which runs the game's clock past a clip in it: their
     # clips come after it)
     "b40_bsp8": (
@@ -131,36 +131,12 @@ MOMENTS = {
          (49, cam(-53.16, -6.05, 2.86, -15, -9)), (50, cam(-53.16, -6.05, 2.86, 15, -9, 10))],
         "",
         "c10's BSP 1 (the worst cells: x3.60): a lamp-lit room, live from its emitter file; a slow pan"),
-    "d20_bsp0": (
-        "levels\\d20\\d20", 7, 17,
-        [(3, "ai_erase_all"), (4, "switch_bsp 0"),
-         (6, cam(66.38, -87.27, -72.86, 255, -9)), (7, cam(66.38, -87.27, -72.86, 285, -9, 10))],
-        "",
-        "d20's BSP 0 (x2.71): a lamp-lit room, live from its emitter file; a slow pan"),
-    "d20_bsp3": (
-        "levels\\d20\\d20", 7, 17,
-        [(3, "ai_erase_all"), (4, "switch_bsp 3"),
-         (6, cam(-5.56, -67.3, -74.39, 135, -9)), (7, cam(-5.56, -67.3, -74.39, 165, -9, 10))],
-        "",
-        "d20's BSP 3 (x3.52, the sky 61%): a lamp-lit room, live from its emitter file; a slow pan"),
     "d40_bsp4": (
         "levels\\d40\\d40", 7, 17,
         [(3, "ai_erase_all"), (4, "switch_bsp 4"),
          (6, cam(-92.43, -5.21, 8.11, 285, -9)), (7, cam(-92.43, -5.21, 8.11, 315, -9, 10))],
         "",
         "d40's BSP 4 (x1.24): a lamp-lit room, live from its emitter file; a slow pan"),
-    "a50_bsp2": (
-        "levels\\a50\\a50", 50, 60,
-        [(46, "ai_erase_all"), (47, "switch_bsp 2"),
-         (49, cam(33.85, -39.86, -25.91, 285, -9)), (50, cam(33.85, -39.86, -25.91, 315, -9, 10))],
-        "",
-        "a50's BSP 2 (x3.04): a lamp-lit room, live from its emitter file; a slow pan"),
-    "a50_bsp1": (
-        "levels\\a50\\a50", 50, 60,
-        [(46, "ai_erase_all"), (47, "switch_bsp 1"),
-         (49, cam(2.94, 2.77, -22.37, 285, -9)), (50, cam(2.94, 2.77, -22.37, 315, -9, 10))],
-        "",
-        "a50's BSP 1 (x2.63): a lamp-lit room, live from its emitter file; a slow pan"),
 }
 
 

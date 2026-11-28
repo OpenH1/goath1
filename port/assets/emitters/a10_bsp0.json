@@ -11,20 +11,11 @@
  "units": "radiance in the game's linear light units: a white Lambertian surface lit by a source of radiance L over its whole hemisphere shows L; the lightmap's texel v as the game shows it is v^2.2 of these units. Positions in Halo world units (1 wu = 10 ft), z up",
  "fit": {
   "how": "the tag's lamps at the tag's color x relative power; one scale per lamp group (a shader's surfaces in one 12 wu cell), set so each cell's traced mean light equals the bake's",
-  "level_scale": 0.331172,
-  "traced_over_bake_level": 0.9896,
-  "cell_brightness_spread": 1.332,
+  "level_scale": 0.333516,
+  "traced_over_bake_level": 0.9895,
+  "cell_brightness_spread": 1.314,
   "cell_wu": 12.0,
-  "spp": 2048,
-  "sky": {
-   "bake_share": 0.0,
-   "cells_left_to_it_bake_share": 0.0,
-   "scales": {
-    "sun0": 0.0,
-    "sun1": 0.0
-   },
-   "how": "the sky's tag parts traced too; their scales fitted where the lamps at the level scale give under 0.05 of the bake's light, their light taken off the bake before the lamps are matched; a cell the sky gives all but 0.05 of is left to it. Not in this file: the sky is traced from its own tags apart"
-  },
+  "spp": 128,
   "samples": 60847,
   "samples_used": 43917,
   "transport": "BSP and the level's scenery/machines, diffuse bounces off their albedos, every bounce"
@@ -58,12 +49,12 @@
     ]
    },
    "radiance": [
-    22.298543,
-    24.466458,
-    23.227646
+    20.97435,
+    23.013524,
+    21.848278
    ],
-   "scale": 0.329058,
-   "scale_over_level": 0.9936,
+   "scale": 0.309517,
+   "scale_over_level": 0.928,
    "tag_power": 80.0,
    "tag_color": [
     0.847059,
@@ -245,12 +236,12 @@
     ]
    },
    "radiance": [
-    18.652029,
-    20.465422,
-    19.429194
+    17.020534,
+    18.675309,
+    17.72972
    ],
-   "scale": 0.275247,
-   "scale_over_level": 0.8311,
+   "scale": 0.251171,
+   "scale_over_level": 0.7531,
    "tag_power": 80.0,
    "tag_color": [
     0.847059,
@@ -432,12 +423,12 @@
     ]
    },
    "radiance": [
-    29.318341,
-    32.168736,
-    30.539934
+    32.452329,
+    35.607419,
+    33.804505
    ],
-   "scale": 0.432649,
-   "scale_over_level": 1.3064,
+   "scale": 0.478897,
+   "scale_over_level": 1.4359,
    "tag_power": 80.0,
    "tag_color": [
     0.847059,
@@ -509,12 +500,12 @@
     ]
    },
    "radiance": [
-    15.959118,
-    17.5107,
-    16.624079
+    10.942228,
+    12.006057,
+    11.398153
    ],
-   "scale": 0.235508,
-   "scale_over_level": 0.7111,
+   "scale": 0.161474,
+   "scale_over_level": 0.4842,
    "tag_power": 80.0,
    "tag_color": [
     0.847059,
@@ -641,12 +632,12 @@
     ]
    },
    "radiance": [
-    1.122089,
-    1.231181,
-    1.168843
+    1.601144,
+    1.756811,
+    1.667858
    ],
-   "scale": 0.016559,
-   "scale_over_level": 0.05,
+   "scale": 0.023628,
+   "scale_over_level": 0.0708,
    "tag_power": 80.0,
    "tag_color": [
     0.847059,
@@ -685,12 +676,12 @@
     ]
    },
    "radiance": [
-    0.038246,
-    0.053023,
-    0.030857
+    0.036251,
+    0.050257,
+    0.029248
    ],
-   "scale": 0.110826,
-   "scale_over_level": 0.3346,
+   "scale": 0.105045,
+   "scale_over_level": 0.315,
    "tag_power": 1.0,
    "tag_color": [
     0.345098,
@@ -806,12 +797,12 @@
     ]
    },
    "radiance": [
-    0.031694,
-    0.04394,
-    0.025571
+    0.030206,
+    0.041876,
+    0.024371
    ],
-   "scale": 0.091841,
-   "scale_over_level": 0.2773,
+   "scale": 0.087528,
+   "scale_over_level": 0.2624,
    "tag_power": 1.0,
    "tag_color": [
     0.345098,
@@ -927,12 +918,12 @@
     ]
    },
    "radiance": [
-    0.023196,
-    0.032159,
-    0.018715
+    0.022102,
+    0.030641,
+    0.017832
    ],
-   "scale": 0.067217,
-   "scale_over_level": 0.203,
+   "scale": 0.064045,
+   "scale_over_level": 0.192,
    "tag_power": 1.0,
    "tag_color": [
     0.345098,
@@ -1862,12 +1853,12 @@
     ]
    },
    "radiance": [
-    0.042374,
-    0.058745,
-    0.034188
+    0.038004,
+    0.052688,
+    0.030663
    ],
-   "scale": 0.122787,
-   "scale_over_level": 0.3708,
+   "scale": 0.110127,
+   "scale_over_level": 0.3302,
    "tag_power": 1.0,
    "tag_color": [
     0.345098,
@@ -2775,12 +2766,12 @@
     ]
    },
    "radiance": [
-    0.068453,
-    0.094901,
-    0.055229
+    0.092712,
+    0.128532,
+    0.074801
    ],
-   "scale": 0.198359,
-   "scale_over_level": 0.599,
+   "scale": 0.268653,
+   "scale_over_level": 0.8055,
    "tag_power": 1.0,
    "tag_color": [
     0.345098,
@@ -2830,12 +2821,12 @@
     ]
    },
    "radiance": [
-    0.005714,
-    0.007922,
-    0.00461
+    0.008478,
+    0.011753,
+    0.00684
    ],
-   "scale": 0.016559,
-   "scale_over_level": 0.05,
+   "scale": 0.024566,
+   "scale_over_level": 0.0737,
    "tag_power": 1.0,
    "tag_color": [
     0.345098,
@@ -2885,12 +2876,12 @@
     ]
    },
    "radiance": [
-    2.856642,
+    2.997549,
     0.0,
     0.0
    ],
-   "scale": 0.285664,
-   "scale_over_level": 0.8626,
+   "scale": 0.299755,
+   "scale_over_level": 0.8988,
    "tag_power": 10.0,
    "tag_color": [
     1.0,
@@ -2940,12 +2931,12 @@
     ]
    },
    "radiance": [
-    13.128996,
-    14.405427,
-    13.676036
+    11.966273,
+    13.129661,
+    12.464866
    ],
-   "scale": 0.193744,
-   "scale_over_level": 0.585,
+   "scale": 0.176586,
+   "scale_over_level": 0.5295,
    "tag_power": 80.0,
    "tag_color": [
     0.847059,
@@ -3061,12 +3052,12 @@
     ]
    },
    "radiance": [
-    1.04048,
+    0.877152,
     0.0,
     0.0
    ],
-   "scale": 0.104048,
-   "scale_over_level": 0.3142,
+   "scale": 0.087715,
+   "scale_over_level": 0.263,
    "tag_power": 10.0,
    "tag_color": [
     1.0,
@@ -3116,12 +3107,12 @@
     ]
    },
    "radiance": [
-    2.425076,
+    1.503596,
     0.0,
     0.0
    ],
-   "scale": 0.242508,
-   "scale_over_level": 0.7323,
+   "scale": 0.15036,
+   "scale_over_level": 0.4508,
    "tag_power": 10.0,
    "tag_color": [
     1.0,
@@ -3171,12 +3162,12 @@
     ]
    },
    "radiance": [
-    1.840121,
+    2.459202,
     0.0,
     0.0
    ],
-   "scale": 0.184012,
-   "scale_over_level": 0.5556,
+   "scale": 0.24592,
+   "scale_over_level": 0.7374,
    "tag_power": 10.0,
    "tag_color": [
     1.0,
@@ -3226,12 +3217,12 @@
     ]
    },
    "radiance": [
-    0.165586,
+    0.249691,
     0.0,
     0.0
    ],
-   "scale": 0.016559,
-   "scale_over_level": 0.05,
+   "scale": 0.024969,
+   "scale_over_level": 0.0749,
    "tag_power": 10.0,
    "tag_color": [
     1.0,
@@ -3281,12 +3272,12 @@
     ]
    },
    "radiance": [
-    273.288597,
-    295.412081,
-    331.850605
+    283.560005,
+    306.514989,
+    344.323036
    ],
-   "scale": 0.276542,
-   "scale_over_level": 0.835,
+   "scale": 0.286936,
+   "scale_over_level": 0.8603,
    "tag_power": 1200.0,
    "tag_color": [
     0.823529,
@@ -3402,12 +3393,12 @@
     ]
    },
    "radiance": [
-    255.136758,
-    275.790799,
-    309.809075
+    327.31136,
+    353.808139,
+    397.449707
    ],
-   "scale": 0.258174,
-   "scale_over_level": 0.7796,
+   "scale": 0.331208,
+   "scale_over_level": 0.9931,
    "tag_power": 1200.0,
    "tag_color": [
     0.823529,
@@ -3523,12 +3514,12 @@
     ]
    },
    "radiance": [
-    64.483151,
-    69.703244,
-    78.301008
+    60.093769,
+    64.958529,
+    72.971041
    ],
-   "scale": 0.065251,
-   "scale_over_level": 0.197,
+   "scale": 0.060809,
+   "scale_over_level": 0.1823,
    "tag_power": 1200.0,
    "tag_color": [
     0.823529,
@@ -4524,12 +4515,12 @@
     ]
    },
    "radiance": [
-    97.938527,
-    105.866927,
-    118.925414
+    71.016191,
+    76.765152,
+    86.233989
    ],
-   "scale": 0.099105,
-   "scale_over_level": 0.2993,
+   "scale": 0.071862,
+   "scale_over_level": 0.2155,
    "tag_power": 1200.0,
    "tag_color": [
     0.823529,
@@ -5525,11 +5516,11 @@
     ]
    },
    "radiance": [
-    16.363791,
-    17.688486,
-    19.870327
+    16.479582,
+    17.813651,
+    20.010931
    ],
-   "scale": 0.016559,
+   "scale": 0.016676,
    "scale_over_level": 0.05,
    "tag_power": 1200.0,
    "tag_color": [
@@ -5756,12 +5747,12 @@
     ]
    },
    "radiance": [
-    114.110625,
-    123.348202,
-    138.562971
+    78.676279,
+    85.045346,
+    95.535529
    ],
-   "scale": 0.115469,
-   "scale_over_level": 0.3487,
+   "scale": 0.079613,
+   "scale_over_level": 0.2387,
    "tag_power": 1200.0,
    "tag_color": [
     0.823529,
@@ -5987,12 +5978,12 @@
     ]
    },
    "radiance": [
-    124.063159,
-    136.124861,
-    129.232439
+    148.952256,
+    163.433733,
+    155.158578
    ],
-   "scale": 1.830793,
-   "scale_over_level": 5.5282,
+   "scale": 2.19808,
+   "scale_over_level": 6.5906,
    "tag_power": 80.0,
    "tag_color": [
     0.847059,
@@ -6086,11 +6077,11 @@
     ]
    },
    "radiance": [
-    0.090261,
-    0.088962,
-    0.075325
+    0.090899,
+    0.089591,
+    0.075858
    ],
-   "scale": 0.016559,
+   "scale": 0.016676,
    "scale_over_level": 0.05,
    "tag_power": 10.0,
    "tag_color": [
@@ -6207,12 +6198,12 @@
     ]
    },
    "radiance": [
-    0.035876,
-    0.049798,
-    0.056223
+    0.024831,
+    0.034466,
+    0.038914
    ],
-   "scale": 0.027308,
-   "scale_over_level": 0.0825,
+   "scale": 0.018901,
+   "scale_over_level": 0.0567,
    "tag_power": 2.5,
    "tag_color": [
     0.52549,
@@ -6262,12 +6253,12 @@
     ]
    },
    "radiance": [
-    52.875431,
-    58.016101,
-    55.078566
+    51.643686,
+    56.664602,
+    53.795498
    ],
-   "scale": 0.78028,
-   "scale_over_level": 2.3561,
+   "scale": 0.762103,
+   "scale_over_level": 2.2851,
    "tag_power": 80.0,
    "tag_color": [
     0.847059,
@@ -7527,12 +7518,12 @@
     ]
    },
    "radiance": [
-    128.127585,
-    140.584439,
-    133.466215
+    159.932028,
+    175.480984,
+    166.595839
    ],
-   "scale": 1.890771,
-   "scale_over_level": 5.7093,
+   "scale": 2.360108,
+   "scale_over_level": 7.0765,
    "tag_power": 80.0,
    "tag_color": [
     0.847059,
@@ -7604,12 +7595,12 @@
     ]
    },
    "radiance": [
-    61.034894,
-    66.968845,
-    63.578006
+    51.051566,
+    56.014915,
+    53.178707
    ],
-   "scale": 0.900688,
-   "scale_over_level": 2.7197,
+   "scale": 0.753365,
+   "scale_over_level": 2.2589,
    "tag_power": 80.0,
    "tag_color": [
     0.847059,
@@ -8143,12 +8134,12 @@
     ]
    },
    "radiance": [
-    5.427675,
-    5.955366,
-    5.653827
+    5.943805,
+    6.521675,
+    6.191463
    ],
-   "scale": 0.080096,
-   "scale_over_level": 0.2419,
+   "scale": 0.087712,
+   "scale_over_level": 0.263,
    "tag_power": 80.0,
    "tag_color": [
     0.847059,
@@ -8198,12 +8189,12 @@
     ]
    },
    "radiance": [
-    34.038149,
-    37.347416,
-    35.456401
+    34.335237,
+    37.673387,
+    35.765867
    ],
-   "scale": 0.502299,
-   "scale_over_level": 1.5167,
+   "scale": 0.506683,
+   "scale_over_level": 1.5192,
    "tag_power": 80.0,
    "tag_color": [
     0.847059,
@@ -8748,12 +8739,12 @@
     ]
    },
    "radiance": [
-    32.913393,
-    36.113308,
-    34.28478
+    34.938906,
+    38.335746,
+    36.394689
    ],
-   "scale": 0.485701,
-   "scale_over_level": 1.4666,
+   "scale": 0.515591,
+   "scale_over_level": 1.5459,
    "tag_power": 80.0,
    "tag_color": [
     0.847059,
@@ -9085,5 +9076,5 @@
    ]
   }
  ],
- "seconds": 72.3
+ "seconds": 17.0
 }
