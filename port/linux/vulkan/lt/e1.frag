@@ -49,6 +49,11 @@
 // the light the surfaces read: history_image's light less the suns' whole direct share (cmax): less than 0 where a
 // dynamic object shadows the sun
 #define FINAL 2048
+// the level's light sources: a texel a cell's 4 groups (the row the cell, x its groups 4x to 4x + 3), each the share of
+// EMITTER_VISIBILITY_RAYS rays from points of the cell to points of the group that the structure lets through
+// (xgpu_vulkan_lt.c's lt_emitter_visibility, once a set)
+#define EMITTER_VISIBILITY 4096
+#define EMITTER_VISIBILITY_RAYS 16
 // the suns' rays a sun where the pixel has no history (a reset, a cut, a disocclusion), so that the first frame's
 // shadow is as good as the later ones' average
 #define SUN_FIRST 12
@@ -76,6 +81,15 @@
 #define RT_MASK_STRUCTURE 0x01u
 #define RT_MASK_DYNAMIC 0x0Au
 #define M_CAP 20.0
+// the level's light sources' texels in the table, from its row EMITTER_ROW (xgpu_vulkan_lt.c's LT_EMITTER_ROW, past
+// the suns' rows); a cell's groups; the share of the samples drawn by the level's power (the rest by the cell's)
+#define EMITTER_ROW 136
+#define EMITTER_CELL_GROUPS 32
+#define EMITTER_LEVEL_SHARE 0.1
+// RIS's candidates: the direct light's, a bounce hit's
+#define EMITTER_CANDIDATES 12
+#define EMITTER_PICKS 2
+#define EMITTER_BOUNCE_CANDIDATES 3
 
 // the draw set's uniforms: struct xgpu_world_ao_pass, then (at 1024) xgpu_vulkan_lt.c's struct lt_params
 layout(set = 0, binding = 1, std140) uniform Pass
@@ -106,6 +120,12 @@ layout(set = 0, binding = 1, std140) uniform Pass
     vec4 grid[2];
     // x the block's lights in the table, y the suns, z LIGHTS_*, w COPY_REACH's row
     ivec4 lights;
+    // the level's light sources (xgpu_vulkan_lt.c's lt_emitter_tables): their cells' grid (its low corner, 1 / its
+    // cell's size); its cells along each axis and w the groups (0 none); the triangles' and the cells' first texels,
+    // z the triangles
+    vec4 emitter_grid;
+    ivec4 emitter_counts;
+    ivec4 emitter_bases;
 #ifdef LT_INDIRECT
     // (the indirect light's and reflections' kernel, lt/indirect.glsl: xgpu_vulkan_lt_indirect.c's struct
     // lt_indirect_params)
@@ -461,6 +481,175 @@ vec3 light_sample(int row, vec3 p, vec3 n, vec3 shaded, vec2 xi, int receiver, b
     return power * lit;
 }
 
+// ---------- the level's light sources (~/dev/rt2-realtime-design.md section 11): each a group of triangles of one
+// radiance (Lambertian, one-sided, toward the triangle's winding), sampled as area lights: a group drawn by its
+// light about p (its cell's, the grid's: power over the distance squared at the cell, the cell's strongest) mixed
+// with its share of the level's power (EMITTER_LEVEL_SHARE: no group is never drawn), a triangle of it by its area
+// and a point of that uniformly, one shadow ray. The pass's irradiance is the true one over pi: L cos cos' A / d^2 / pi
+
+vec4 emitter_texel(int k)
+{
+    return texelFetch(light_table, ivec2(k & 7, EMITTER_ROW + (k >> 3)), 0);
+}
+
+// p's cell's first texel (-1 off the grid)
+int emitter_cell(vec3 p)
+{
+    ivec3 c = ivec3(floor((p - pass.emitter_grid.xyz) * pass.emitter_grid.w));
+    if (any(lessThan(c, ivec3(0))) || any(greaterThanEqual(c, pass.emitter_counts.xyz)))
+        return -1;
+    return pass.emitter_bases.y + (EMITTER_CELL_GROUPS / 2) * (c.x + pass.emitter_counts.x * (c.y + pass.emitter_counts.y * c.z));
+}
+
+// a group by the level's power (its cumulative share, texel 0's w): a binary search
+int emitter_level_pick(float u)
+{
+    int low = 0, high = pass.emitter_counts.w - 1;
+    while (low < high)
+    {
+        int middle = (low + high) >> 1;
+        if (emitter_texel(2 * middle).w > u)
+            high = middle;
+        else
+            low = middle + 1;
+    }
+    return low;
+}
+
+// the cell's entries (EMITTER_CELL_GROUPS groups, each with its chance up to and with it), read once a receiver
+vec4 emitter_cell_texels[EMITTER_CELL_GROUPS / 2];
+
+void emitter_cell_read(int cell)
+{
+    for (int k = 0; k < EMITTER_CELL_GROUPS / 2; k++)
+        emitter_cell_texels[k] = cell >= 0 ? emitter_texel(cell + k) : vec4(-1.0, 2.0, -1.0, 2.0);
+}
+
+// the cell's chance of a group (its entries'), and with u its pick (-1 none)
+float emitter_cell_chance(int group, float u, out int picked)
+{
+    float before = 0.0, chance = 0.0;
+    picked = -1;
+    for (int k = 0; k < EMITTER_CELL_GROUPS / 2; k++)
+    {
+        vec4 t = emitter_cell_texels[k];
+        for (int half_ = 0; half_ < 2; half_++)
+        {
+            float g = half_ == 0 ? t.x : t.z, up_to = half_ == 0 ? t.y : t.w;
+            if (g < 0.0)
+                return chance;
+            if (int(g) == group)
+                chance = up_to - before;
+            if (picked < 0 && u < up_to)
+                picked = int(g);
+            before = up_to;
+        }
+    }
+    return chance;
+}
+
+// one candidate point of the level's light sources for p (normal n, shaded the bump-mapped one): u the group's
+// choice, xi the point's. Out: the point, and its light at p unshadowed in area measure (radiance x cos x cos' /
+// d^2 / pi, the pass's units) and the chance density of drawing it (per world unit squared); false none
+bool emitter_candidate(vec3 p, vec3 n, vec3 shaded, int cell, float u, vec2 xi, out vec3 q, out vec3 f,
+    out float density)
+{
+    int group, picked;
+    q = vec3(0.0);
+    f = vec3(0.0);
+    density = 0.0;
+    float level_share = cell >= 0 ? EMITTER_LEVEL_SHARE : 1.0;
+    if (u < level_share)
+        group = emitter_level_pick(u / level_share);
+    else
+    {
+        emitter_cell_chance(-1, (u - level_share) / (1.0 - level_share), picked);
+        group = picked;
+    }
+    if (group < 0)
+        return false;
+    vec4 g0 = emitter_texel(2 * group), g1 = emitter_texel(2 * group + 1);
+    float chance = level_share * g1.w;
+    if (cell >= 0)
+        chance += (1.0 - level_share) * emitter_cell_chance(group, 2.0, picked);
+    if (chance <= 0.0 || g0.z <= 0.0)
+        return false;
+    // (a triangle by its area: the group's areas up to and with each, a binary search)
+    float a = xi.x * g0.z;
+    int low = int(g0.x), high = int(g0.x) + int(g0.y) - 1;
+    while (low < high)
+    {
+        int middle = (low + high) >> 1;
+        if (emitter_texel(pass.emitter_bases.x + 3 * middle).w > a)
+            high = middle;
+        else
+            low = middle + 1;
+    }
+    vec4 t0 = emitter_texel(pass.emitter_bases.x + 3 * low), t1 = emitter_texel(pass.emitter_bases.x + 3 * low + 1),
+        t2 = emitter_texel(pass.emitter_bases.x + 3 * low + 2);
+    float before = low > int(g0.x) ? emitter_texel(pass.emitter_bases.x + 3 * (low - 1)).w : 0.0;
+    float x = clamp((a - before) / max(t0.w - before, 1.0e-12), 0.0, 1.0), s = sqrt(x);
+    q = t0.xyz + t1.xyz * (s * (1.0 - xi.y)) + t2.xyz * (s * xi.y);
+    vec3 to = q - p;
+    float d2 = max(dot(to, to), 1.0e-6);
+    vec3 l = to * inversesqrt(d2);
+    float emitting = dot(normalize(cross(t1.xyz, t2.xyz)), -l), lit = max(dot(shaded, l), 0.0);
+    density = chance / g0.z;
+    if (emitting <= 0.0 || dot(n, l) <= 0.0 || lit <= 0.0)
+        return true;
+    // (the distance squared no less than a hundredth of a world unit's: a receiver touching a lamp)
+    f = g1.rgb * (lit * emitting / (max(d2, 0.01) * 3.14159265));
+    return true;
+}
+
+// the level's light sources' light at p, unbiased: RIS over candidates of them (each drawn by its group's light
+// about p and its area, weighted by its own unshadowed light there), one shadow ray to the one chosen
+vec3 emitter_sample(vec3 p, vec3 n, vec3 shaded, int candidates, inout uint h, int receiver, bool shadow)
+{
+    if (pass.emitter_counts.w <= 0)
+        return vec3(0.0);
+    int cell = emitter_cell(p + n * 0.02);
+    // (a cell no group lights: the level's power alone)
+    if (cell >= 0 && emitter_texel(cell).x < 0.0)
+        cell = -1;
+    emitter_cell_read(cell);
+    vec3 chosen = vec3(0.0), chosen_f = vec3(0.0);
+    float w_sum = 0.0, chosen_target = 0.0;
+    for (int k = 0; k < candidates; k++)
+    {
+        vec3 q, f;
+        float density;
+        float u = random(h);
+        vec2 xi = vec2(random(h), random(h));
+        if (!emitter_candidate(p, n, shaded, cell, u, xi, q, f, density) || density <= 0.0)
+            continue;
+        float target = luminance_of(f);
+        if (target <= 0.0)
+            continue;
+        float w = target / density;
+        w_sum += w;
+        if (random(h) * w_sum < w)
+        {
+            chosen = q;
+            chosen_f = f;
+            chosen_target = target;
+        }
+    }
+    if (chosen_target <= 0.0)
+        return vec3(0.0);
+    float seen = 1.0;
+    if (shadow)
+    {
+        vec3 origin = p + n * (0.004 + 0.0005 * length(p - pass.camera[0].xyz));
+        vec3 ray = chosen - origin;
+        float length_to = length(ray);
+        // (ending short of the lamp's own surface, 0.01 under the light)
+        float t_max = length_to - 0.02;
+        seen = t_max > 0.0 ? visible_by(origin, ray / length_to, t_max, receiver, 0xffffffffu, MASK_AO) : 0.0;
+    }
+    return chosen_f * (seen * w_sum / (float(candidates) * chosen_target));
+}
+
 // a reservoir: its light's row (-1 none), the sum of the weights, its count, the chosen one's target
 struct Reservoir
 {
@@ -700,6 +889,55 @@ uint seed(ivec2 pixel, uint salt)
     return h;
 }
 
+// EMITTER_VISIBILITY's texel
+vec4 emitter_visibility(ivec2 at)
+{
+    int cell = at.y, dx = pass.emitter_counts.x, dy = pass.emitter_counts.y;
+    vec3 c = vec3(float(cell % dx), float((cell / dx) % dy), float(cell / (dx * dy)));
+    float size = 1.0 / pass.emitter_grid.w;
+    vec3 low = pass.emitter_grid.xyz + c * size;
+    emitter_cell_read(pass.emitter_bases.y + (EMITTER_CELL_GROUPS / 2) * cell);
+    uint h = uint(cell) * 9277u + uint(at.x) * 1973u + 0x2545u;
+    hash_next(h);
+    vec4 shares = vec4(0.0);
+    for (int k = 0; k < 4; k++)
+    {
+        int slot = at.x * 4 + k;
+        vec4 t = emitter_cell_texels[slot >> 1];
+        int group = int((slot & 1) == 0 ? t.x : t.z);
+        if (group < 0)
+            continue;
+        vec4 g0 = emitter_texel(2 * group);
+        float reached = 0.0;
+        for (int r = 0; r < EMITTER_VISIBILITY_RAYS; r++)
+        {
+            vec3 a = low + vec3(random(h), random(h), random(h)) * size;
+            // (a point of the group by area)
+            float u = random(h) * g0.z;
+            int first = int(g0.x), last = int(g0.x) + int(g0.y) - 1;
+            while (first < last)
+            {
+                int middle = (first + last) >> 1;
+                if (emitter_texel(pass.emitter_bases.x + 3 * middle).w > u)
+                    last = middle;
+                else
+                    first = middle + 1;
+            }
+            vec4 t0 = emitter_texel(pass.emitter_bases.x + 3 * first);
+            vec4 t1 = emitter_texel(pass.emitter_bases.x + 3 * first + 1), t2 = emitter_texel(pass.emitter_bases.x + 3 * first + 2);
+            float s = sqrt(random(h)), v = random(h);
+            vec3 b = t0.xyz + t1.xyz * (s * (1.0 - v)) + t2.xyz * (s * v);
+            vec3 d = b - a;
+            float length_to = length(d);
+            if (length_to <= 0.03 || dot(cross(t1.xyz, t2.xyz), d) >= 0.0)
+                continue;
+            reached += visible_by(a, d / length_to, length_to - 0.02, -1, 0xffffffffu, RT_MASK_STRUCTURE);
+        }
+        shares[k] = reached / float(EMITTER_VISIBILITY_RAYS);
+    }
+    return shares;
+}
+
 // (LT_INDIRECT: the indirect light's and reflections' kernel instead, its own main: lt/indirect.glsl)
 #ifdef LT_INDIRECT
 #include "indirect.glsl"
@@ -707,6 +945,11 @@ uint seed(ivec2 pixel, uint salt)
 void main()
 {
     ivec2 pixel = ivec2(gl_FragCoord.xy);
+    if ((pass.control.w & EMITTER_VISIBILITY) != 0)
+    {
+        result = emitter_visibility(pixel);
+        return;
+    }
     if ((pass.control.w & GRADIENT) != 0)
         pixel = lt_gradient_pixel_in(pixel, pass.history.y);
     uvec4 words = texelFetch(inputs, pixel, 0);
@@ -813,6 +1056,15 @@ void main()
             if (weight > 0.0)
                 lit += light_sample(r.row, p, n, shaded, stratified(pixel, 3.0), receiver, shadow) * weight;
         }
+    }
+    // (the level's light sources: one point of them, one ray)
+    if (pass.emitter_counts.w > 0)
+    {
+        // (two independent picks, a shadow ray each: most of a level's lamps are behind a wall from most receivers)
+        uint h = seed(pixel, 4u);
+        for (int k = 0; k < EMITTER_PICKS; k++)
+            lit += emitter_sample(p, n, shaded, EMITTER_CANDIDATES, h, receiver, (pass.control.w & VISIBILITY) != 0) *
+                (1.0 / float(EMITTER_PICKS));
     }
     // (the suns on the structure, which the lightmap lights: their whole share less what a dynamic object blocks,
     // FINAL taking the whole off; SUN_FIRST rays where the pixel has no history)
