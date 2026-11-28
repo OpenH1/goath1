@@ -160,7 +160,11 @@ void main()
     vec2 screen = to_screen(vec2(pixel) + 0.5, pass.corners);
     g_distance = uintBitsToFloat(words.z);
     g_n = unfold(unpackSnorm2x16(words.x));
-    g_s = unfold(unpackSnorm2x16(texelFetch(guides, pixel, 0).x));
+    uvec4 guide = texelFetch(guides, pixel, 0);
+    // (the reflections' half where the pixel has no reflection stage: nothing, which no surface reads)
+    if (g_right == 1 && (guide.z >> 24) == 0u)
+        return;
+    g_s = unfold(unpackSnorm2x16(guide.x));
     if (dot(g_s, g_s) < 0.5 || dot(g_s, g_n) < 0.0)
         g_s = g_n;
     g_p = ray(screen) * g_distance;

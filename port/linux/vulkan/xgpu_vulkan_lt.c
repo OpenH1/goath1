@@ -659,6 +659,10 @@ static int lt_shaders(void)
 	lt.scale_down.samples = 1;
 	lt.scale_up = lt.pass;
 	lt.scale_up.pixel_shader = xgpu_vulkan_lt_kernel("scale_up.frag");
+	/* (half floats: the output's light is written and read once a frame, its
+	bandwidth the upsample's cost at 4K; the light's range and the shares
+	in alpha fit them) */
+	lt.scale_up.color_format = XGPU_VULKAN_FORMAT_RGBA16F;
 	lt.made = 1;
 	/* (a reload's pipeline made now, so the next play draws with it) */
 	if (reloaded)
@@ -2475,7 +2479,7 @@ static int lt_scaled(struct xgpu_vulkan_image *inputs, const struct xgpu_world_a
 	/* (the light the surfaces read at the output's pixels, both halves
 	where it is wide) */
 	wide = xgpu_vulkan_image_description(light)->width >= 2 * width;
-	lt.full = lt_image(lt.full, XGPU_VULKAN_FORMAT_RGBA32F, size->width * (wide ? 2 : 1), size->height);
+	lt.full = lt_image(lt.full, XGPU_VULKAN_FORMAT_RGBA16F, size->width * (wide ? 2 : 1), size->height);
 	if (!lt.full)
 	{
 		xgpu_vulkan_rt_bounce_set(NULL);
