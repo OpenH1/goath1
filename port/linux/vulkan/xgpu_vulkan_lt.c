@@ -1296,6 +1296,7 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 	indirect_frame.cap = params.control[0];
 	indirect_frame.start = start;
 	indirect_frame.previous_valid = lt.previous_valid;
+	indirect_frame.live = (params.lights[2] & LT_LIGHTS_REAL) != 0;
 	/* (ours the denoiser: the bounce counted in its one temporal stage) */
 	indirect_frame.fold = mode == XGPU_VULKAN_LT_DENOISE && !xgpu_vulkan_dlss_lt_selected();
 	diffuse = xgpu_vulkan_lt_indirect_draw(&indirect_frame);

@@ -40,6 +40,9 @@
 #define SHINE_ONLY 16777216
 // (with BOUNCE: its history too, the second output)
 #define BOUNCE_HISTORY 8388608
+// (with CACHE_RESOLVE: the slots' means this pass's samples alone: the warm-up, xgpu_vulkan_lt_indirect.c's
+// INDIRECT_WARM)
+#define CACHE_REPLACE 33554432
 
 // the shader types (shaders.c's; xgpu_spirv.c's RT_REFLECTION_KIND_*)
 #define KIND_ENVIRONMENT 3u
@@ -844,7 +847,7 @@ void main()
             return;
         uint packed = uint(max(before.a, 0.0)), count = packed & 511u, check = cell_check(c, k);
         vec3 mean = before.rgb;
-        if (count == 0u || ((packed >> 9) & 15u) != check || (packed >> 13) != light)
+        if (count == 0u || ((packed >> 9) & 15u) != check || (packed >> 13) != light || (flags & CACHE_REPLACE) != 0)
         {
             count = 0u;
             mean = vec3(0.0);

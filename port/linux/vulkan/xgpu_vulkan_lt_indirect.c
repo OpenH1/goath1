@@ -68,6 +68,17 @@ Render thread alone.
 /* (with SPECULAR_RAY, HALO_LT_SHINE_VIEW=1, checking: the lights' shine
 alone, no ray: lt/indirect.glsl's SHINE_ONLY) */
 #define INDIRECT_SHINE_ONLY 16777216
+/* (with CACHE_RESOLVE: the slots' means this pass's samples alone, the
+cells' earlier light let go: the cache's warm-up) */
+#define INDIRECT_CACHE_REPLACE 33554432
+/* a level lit live: the passes of bounce and cache resolve drawn where the
+cache starts again (a map's start, a cut, a hold's reset), each slot's mean
+the last pass's alone, so each pass adds one bounce of the sky's light
+(lt/indirect.glsl's bounce reads the cache the pass before left): the
+first frame sees the sky's light bounced INDIRECT_WARM times, not once, and
+the cache's later frames only refine it (no slow climb to the converged
+light: the held frame's swelling) */
+#define INDIRECT_WARM 6
 /* where its parameters are in the uniforms (lt/e1.frag's indirect[4]) */
 #define INDIRECT_PARAMS_OFFSET 1536
 /* the cache's slots (a texel each, RGBA32F: 24 MB; lt/indirect_cache.glsl's
@@ -408,6 +419,27 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 	indirect_parameters(frame, parameters);
 	indirect.phase = (int)(indirect.frames & 3);
 	xgpu_vulkan_pass_owner("LIGHT TRANSPORT");
+	/* 0: a live level's cache warmed where it starts again */
+	if (frame->live && indirect.cache && (reset || !indirect.cache_valid))
+	{
+		int pass;
+
+		for (pass = 0; pass < INDIRECT_WARM; pass++)
+		{
+			struct xgpu_vulkan_image *bounce[6] = { frame->inputs, indirect.caches[indirect.cache_current],
+				frame->previous_inputs, frame->guides, frame->table, NULL };
+			struct xgpu_vulkan_image *resolve[6] = { frame->inputs, indirect.caches[indirect.cache_current], NULL,
+				frame->guides, NULL, indirect.bounce };
+
+			indirect_pass(indirect.bounce, half, frame, INDIRECT_BOUNCE | INDIRECT_RESET, frame->cap, bounce,
+				&indirect.wide, parameters);
+			resolve[1] = indirect.caches[indirect.cache_current];
+			indirect_pass(indirect.caches[indirect.cache_current ^ 1], whole, frame, INDIRECT_CACHE_RESOLVE |
+				INDIRECT_CACHE_REPLACE, frame->cap, resolve, &indirect.wide, parameters);
+			indirect.cache_current ^= 1;
+			indirect.cache_valid = 1;
+		}
+	}
 	/* 1, 2: the bounce and the reflections' rays (the last frame's cache) */
 	{
 		struct xgpu_vulkan_image *textures[6] = { frame->inputs, indirect.caches[indirect.cache_current],

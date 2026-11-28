@@ -44,6 +44,9 @@ struct xgpu_vulkan_lt_indirect_frame
 	the draw's diffuse signal the direct light's alone; the denoiser takes
 	the bounce from xgpu_vulkan_lt_indirect_bounce */
 	int fold;
+	/* a level lit live (lt/e1.frag's LIGHTS_REAL): the cache warmed where it
+	starts again (INDIRECT_WARM passes) */
+	int live;
 };
 
 /* whether the indirect light and the reflections are drawn (the settings,
