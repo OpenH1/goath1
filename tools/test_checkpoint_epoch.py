@@ -45,6 +45,7 @@ typedef float real;
 #define NUMBEROF(a) ((long)(sizeof(a)/sizeof((a)[0])))
 #define csmemmove memmove
 #define DISTRIBUTED_UNIT_STATE_MINIMUM_SIZE 1
+#define UNIT_DIFFERENCE_MINIMUM_SIZE 1
 #define DISTRIBUTED_RELAYED_ACTION_MINIMUM_SIZE 1
 #define DISTRIBUTED_FORWARDED_INPUT_MINIMUM_SIZE 1
 #define _game_connection_network_client 1
