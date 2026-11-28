@@ -55,6 +55,13 @@ The lightmap is the answer key for the level's static light sources: `python -m 
 `solved`: the BSP with its full materials and objects, lit only by the file's sources, every bounce traced),
 writing `static_fit_residual.png` (the bake less the traced light at the lit BSP pixels) and `bake_bsp.png`.
 Any export of the level will do (the whole BSP is used, not the view): `scenes.json` has the commands.
+- `--mode rooms` (the default, what `port/assets/emitters/` holds): only the level's own glowing shaders, at
+  the tag's color x relative power, split into lamp groups by 12 wu cells (`--cell`); each group gets one
+  scale, a damped fixed point that moves it by the bake-over-traced mean light of the cells its light lands
+  in, so every cell's traced mean light equals the bake's. No texel-level fit, nothing added. The rest of
+  this section is `--mode fit`, the free fit kept for study: on a10 and c20 no set of diffuse emitters in the
+  exported geometry reproduces the bake texel by texel (R^2 about 0.33 with every 2 wu surface patch free),
+  while b30's sun and sky reproduce it at 0.70 as shown.
 - Samples are the BSP's lightmap texels (centres inside each lightmapped triangle; a triangle without one
   gets one at its middle), weighted by world area, up to `--samples`; their target is the texel ^2.2, the
   radiance a white surface shows (see "Static light"). Glowing and transparent surfaces are left out.
