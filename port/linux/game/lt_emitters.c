@@ -69,7 +69,7 @@ hemisphere shows L). No fit. Checked against the per-BSP solves
 (port/assets/emitters/*.json, 2429 lamp groups' solved radiance over power
 x colour): median 0.27, power-weighted 0.43, each BSP's 0.15 to 0.6 */
 #define LT_EMITTERS_EXITANCE_TO_RADIANCE 0.31830989f
-/* the shared emission model's class hook (Erin, 2026-11-28): ENERGY glows
+/* the shared emission model's class hook (2026-11-28 art decision): ENERGY glows
 (additive and plasma-style transparent shaders: plasma, shields, energy
 fields) take one class factor on both their drawn value and their cast
 light, so they glow like hot plasma; rt2-glow-power sets its value (1: the
