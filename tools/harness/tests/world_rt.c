@@ -468,6 +468,10 @@ void world_rt_source_first_person_next(void)
 {
 }
 
+void world_rt_source_first_person_forget(void)
+{
+}
+
 void halo_world_rt_textures(struct world_rt_texture const *textures, unsigned long count)
 {
 	CHECK(count && count <= 8, "%lu textures", count);

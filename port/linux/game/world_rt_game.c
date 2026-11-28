@@ -628,6 +628,31 @@ static boolean definition_is_model(long definition)
 	return tag_index_is_group(definition, MODELS_GROUP_TAG) || tag_index_is_group(definition, 'mod2');
 }
 
+/* a definition's object definition (NULL none: a model itself, or an index
+that is not a loaded object's tag, which tag_get would halt on) */
+static struct object_definition const *definition_object(long definition)
+{
+	if (definition == NONE || !tag_index_is_group(definition, OBJECT_DEFINITION_TAG))
+		return NULL;
+	return object_definition_get(definition);
+}
+
+/* a definition's model: a model itself (the first-person weapon's and
+hands') or an object's (NULL none, or not a loaded model's tag) */
+static struct model const *definition_model(long definition)
+{
+	struct object_definition const *object_definition;
+
+	if (definition == NONE)
+		return NULL;
+	if (definition_is_model(definition))
+		return model_definition_get(definition);
+	object_definition = definition_object(definition);
+	if (!object_definition || !definition_is_model(object_definition->object.model.index))
+		return NULL;
+	return model_definition_get(object_definition->object.model.index);
+}
+
 /* a definition's collision model (NULL none: a model itself, the
 first-person weapon's or hands', has none) */
 static struct collision_model const *definition_collision_model(long definition)
@@ -636,8 +661,9 @@ static struct collision_model const *definition_collision_model(long definition)
 
 	if (definition == NONE || definition_is_model(definition))
 		return NULL;
-	object_definition = object_definition_get(definition);
-	if (!object_definition || object_definition->object.collision_model.index == NONE)
+	object_definition = definition_object(definition);
+	if (!object_definition || !tag_index_is_group(object_definition->object.collision_model.index,
+			'coll'))
 		return NULL;
 	return collision_model_definition_get(object_definition->object.collision_model.index);
 }
@@ -999,7 +1025,6 @@ what it adds) */
 
 static long model_mesh(long definition, struct world_rt_source_mesh *mesh, float (*inverses)[3][4], int lamps)
 {
-	struct object_definition const *object_definition;
 	struct model const *model;
 	int filled = mesh->vertices && mesh->triangles && mesh->triangle_materials && mesh->materials;
 	long vertex_room = mesh->vertex_count, triangle_room = mesh->triangle_count, material_room = mesh->material_count;
@@ -1010,15 +1035,7 @@ static long model_mesh(long definition, struct world_rt_source_mesh *mesh, float
 	if (definition == NONE)
 		return 0;
 	/* (a model itself: the first-person weapon's and hands') */
-	if (definition_is_model(definition))
-		model = model_definition_get(definition);
-	else
-	{
-		object_definition = object_definition_get(definition);
-		if (!object_definition || object_definition->object.model.index == NONE)
-			return 0;
-		model = model_definition_get(object_definition->object.model.index);
-	}
+	model = definition_model(definition);
 	if (!model || !model->nodes.address || model->nodes.count <= 0 || !model->regions.address ||
 		!model->geometries.address || model->geometries.count <= 0)
 		return 0;
@@ -1155,16 +1172,11 @@ short world_rt_source_definition(long definition, float sphere[4], int *item)
 	*item = FALSE;
 	if (definition == NONE)
 		return 0;
+	model = definition_model(definition);
 	if (definition_is_model(definition))
-	{
-		model = model_definition_get(definition);
 		return model && model->nodes.address ? (short)MIN(model->nodes.count, WORLD_RT_NODES) : 0;
-	}
-	object_definition = object_definition_get(definition);
-	if (!object_definition || object_definition->object.model.index == NONE)
-		return 0;
-	model = model_definition_get(object_definition->object.model.index);
-	if (!model || !model->nodes.address || model->nodes.count <= 0)
+	object_definition = definition_object(definition);
+	if (!object_definition || !model || !model->nodes.address || model->nodes.count <= 0)
 		return 0;
 	sphere[0] = object_definition->object.bounding_offset.x;
 	sphere[1] = object_definition->object.bounding_offset.y;
@@ -1237,6 +1249,12 @@ short world_rt_source_first_person(int which, long *model, long *unit, struct wo
 
 void world_rt_source_first_person_next(void)
 {
+	first_person_frame++;
+}
+
+void world_rt_source_first_person_forget(void)
+{
+	memset(first_person_drawn, 0, sizeof(first_person_drawn));
 	first_person_frame++;
 }
 

@@ -343,6 +343,10 @@ it), the unit holding it, its nodes (world space, at most maximum); 0 none
 drawn */
 short world_rt_source_first_person(int which, long *model, long *unit, struct world_proxies_frame *frames, short maximum);
 void world_rt_source_first_person_next(void);
+/* the first-person models as drawn forgotten: their tag indices are the
+unloading map's (world_rt_map_unloaded; the next map's first frame would
+read them before its own first-person view is drawn) */
+void world_rt_source_first_person_forget(void);
 /* a definition's tag's name (HALO_WORLD_AO_COUNTS' log) */
 char const *world_rt_source_name(long definition);
 
