@@ -339,6 +339,13 @@ int world_proxies_source_lightmapped(long id)
 	return 0;
 }
 
+/* (dynamic_lights.c's: no light fixture is lit live in the fake world) */
+int dynamic_lights_fixture_lit(long id)
+{
+	(void)id;
+	return 0;
+}
+
 short world_proxies_source_nodes(long id, struct world_proxies_frame *frames, short maximum)
 {
 	short node, count = id == 0x20005 || id == 0x50010 ? 1 : 2;
