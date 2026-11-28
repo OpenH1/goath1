@@ -178,7 +178,10 @@ void dynamic_lights_note(
 }
 
 /* a rasterizer light just submitted: the object it is on (NONE none),
-whose collision meshes do not shadow it (display.shadows "ray_traced") */
+whose collision meshes do not shadow it, and whose surfaces it does not
+light (the ray-traced pass's: lt_lights.h). Recorded in every mode
+(world_rt_owner is the handle's arithmetic alone): a light's owner does
+not depend on which rays happen to be on */
 void dynamic_lights_owner(
 	long rasterizer_light_index,
 	long object_index)
@@ -188,8 +191,7 @@ void dynamic_lights_owner(
 	/* (an object freed before its light: no owner, none climbed to) */
 	if (object_index != NONE && !object_try_and_get(object_index))
 		object_index = NONE;
-	dynamic_lights.owners[rasterizer_light_index] = object_index != NONE &&
-		(rt_shadows_on() || dynamic_lights_flashlight_shadows_on()) ?
+	dynamic_lights.owners[rasterizer_light_index] = object_index != NONE ?
 		world_rt_owner(object_get_ultimate_parent(object_index)) : 0;
 	dynamic_lights.objects[rasterizer_light_index] = object_index;
 }

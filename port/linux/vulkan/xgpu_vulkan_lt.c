@@ -742,7 +742,15 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 			lt_set(t[2], light->up[0], light->up[1], light->up[2], light->cone_inner);
 			lt_set(t[3], light->left[0], light->left[1], light->left[2], light->cone_outer);
 			lt_power(light, kind, t[4]);
-			lt_set(t[5], (float)light->owner, (float)light->gel_slot, light->gel_width, 0.0f);
+			/* (w: the emitter's body, a projectile's light's projectile (a
+			plasma bolt, a needle: the glowing thing is the light), its
+			instance among the ray-traced scene's (world_rt_owner's
+			arithmetic on its handle, for records made before lt_lights.c
+			gave every light its owner); 0 none. lt/indirect.glsl's
+			direct_one: a ray that meets that body has met the light) */
+			lt_set(t[5], (float)light->owner, (float)light->gel_slot, light->gel_width,
+				(light->flags & XGPU_LT_LIGHT_PROJECTILE) && (light->owner || light->object != 0xffffffffu) ?
+				(float)(light->owner ? light->owner : (light->object & 0xFFFFu) + 1u) : 0.0f);
 			lt.first_person[row] = (light->flags & XGPU_LT_LIGHT_FIRST_PERSON) != 0;
 			lt.ids[now][row][0] = light->id[0];
 			lt.ids[now][row][1] = light->id[1] | 1u << 23;

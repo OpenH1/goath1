@@ -466,7 +466,17 @@ static int lt_build(struct halo_dynamic_light const *lights, unsigned long long 
 			if (carrier && carrier->object.type == _object_type_projectile)
 				out->flags |= XGPU_LT_LIGHT_PROJECTILE;
 		}
+		/* (its owner in every mode: the top parent of the object it is on,
+		a held weapon's holder (world_rt_owner is the handle's arithmetic
+		alone). dynamic_lights.c records one only with ray-traced shadows,
+		and none for its own lights, the ammo counter's in its holder's
+		hands among them. The pass's rays leave the owner out, and its
+		lights never light the owner's own surfaces (lt/indirect.glsl's
+		direct_one): a light on its carrier's model would light that model
+		from a few centimetres) */
 		out->owner = (unsigned int)owners[index];
+		if (!out->owner && out->object != 0xffffffffu && object_try_and_get((long)out->object))
+			out->owner = (unsigned int)world_rt_owner(object_get_ultimate_parent((long)out->object));
 		out->gel_slot = -1;
 		out->gel_tag = -1;
 		lt_copy3(out->position, light->position[0], light->position[1], light->position[2]);

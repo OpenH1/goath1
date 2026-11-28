@@ -110,14 +110,19 @@ vec3 hit_texel(uint slot, vec2 st, float level)
     return textureLod(hit_textures[nonuniformEXT(min(slot, HIT_TEXTURES - 1u))], st, level).rgb;
 }
 
-// the first surface along d (alpha-tested; skip's object left out, -1 none, the structure never): where, its
-// normal (toward the ray), its albedo (linear) and, with lightmap, Halo's colour there (base x detail x lightmap,
-// gamma), from the hit table (xgpu_spirv.c's rt_reflection_texel's reading)
-Hit trace(vec3 origin, vec3 d, float t_max, int skip, bool lightmap)
+// the first surface along d of the instances mask takes (alpha-tested; skip's object left out, -1 none, the
+// structure never): where, its normal (toward the ray), its albedo (linear) and, with lightmap, Halo's colour there
+// (base x detail x lightmap, gamma), from the hit table (xgpu_spirv.c's rt_reflection_texel's reading).
+// The viewer's own body (the third-person model a local player sees from in first person, the instances'
+// XGPU_WORLD_AO_INSTANCE_PLAYER), by ~/dev/rt2-realtime-design.md section 1.3's rule: the eye never sees it (it sees
+// the first-person weapon and hands, drawn where the body is not), so the rays that carry light to what the eye sees
+// leave it out, as the direct light's shadow rays do (MASK_AO: the bounce's); a reflection shows it, as a mirror
+// shows the player (MASK_REFLECTIONS)
+Hit trace(vec3 origin, vec3 d, float t_max, int skip, bool lightmap, uint mask)
 {
     Hit hit = Hit(false, false, 0.0, vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), 0);
     rayQueryEXT q;
-    rayQueryInitializeEXT(q, scene, 0u, MASK_REFLECTIONS, origin, 0.0, d, t_max);
+    rayQueryInitializeEXT(q, scene, 0u, mask, origin, 0.0, d, t_max);
     while (rayQueryProceedEXT(q))
     {
         int candidate = rayQueryGetIntersectionInstanceCustomIndexEXT(q, false);
@@ -194,12 +199,19 @@ float flashlight_estimate(vec3 p, vec3 n)
 }
 
 // the dynamic direct light at a hit: one of its cell's lights (and the flashlight) chosen by its unshadowed light,
-// one shadow ray to it, over its chance
+// one shadow ray to it, over its chance. A light whose emitter the ray has met is left out: the hit within its
+// emitter's radius, or on its emitter's body (the light table's texel 5.w: a projectile's light's projectile, the
+// plasma bolt or needle that is the glow, bigger than the radius the tags give no size for). The direct light's
+// next-event sample already counts that light at the ray's origin, so lighting the emitter's own surface again here
+// is the light counted twice, at the emitter's whole exitance (hundreds of times the scene's light, met by one ray
+// in thousands: the held frames' fireflies). Every other light lights the hit, a carrier's model too: an Elite's
+// weapon glow its arm, a vehicle's lamp its body, a needle the ground and whoever it is stuck in.
 vec3 direct_one(vec3 p, vec3 n, int owner, ivec2 pixel, float salt, inout uint h)
 {
     float total = 0.0, chosen_weight = 0.0;
     int chosen = -2;
-    if (pass.control.y != 0 && (pass.lights.z & LIGHTS_FLASHLIGHT) != 0)
+    if (pass.control.y != 0 && (pass.lights.z & LIGHTS_FLASHLIGHT) != 0 &&
+        distance(p, pass.lamp.xyz) >= pass.forward.w)
     {
         float e = flashlight_estimate(p, n);
         if (e > 0.0)
@@ -221,6 +233,9 @@ vec3 direct_one(vec3 p, vec3 n, int owner, ivec2 pixel, float salt, inout uint h
                 bits &= bits - 1u;
                 if (row >= pass.lights.x)
                     break;
+                vec4 emitter = row_texel(row, 0);
+                if (distance(p, emitter.xyz) < emitter.w || (owner != 0 && int(row_texel(row, 5).w) == owner))
+                    continue;
                 float e = light_estimate(row, p, n);
                 if (e <= 0.0)
                     continue;
@@ -349,7 +364,7 @@ vec4 bounce_main(ivec2 block, out vec3 p, out vec3 n, out uint owner, out bool f
         vec3 d = cosine_direction(shaded, stratified(pixel, 5.0 + 17.0 * float(k)));
         if (dot(d, n) <= 0.0)
             continue;
-        Hit hit = trace(origin, d, BOUNCE_REACH, int(owner), false);
+        Hit hit = trace(origin, d, BOUNCE_REACH, int(owner), false, MASK_AO);
         if (hit.attributes)
             e += hit.albedo * (direct_one(hit.p, hit.n, hit.owner, pixel, 6.0 + 17.0 * float(k), h) +
                 cache_lookup(hit.p, hit.n));
@@ -452,7 +467,7 @@ vec4 specular_main(ivec2 pixel)
         if (dot(l, n) <= 0.0)
             l = reflect(-v, n);
         // (every owner's: a surface sees itself, the player too)
-        Hit hit = trace(origin, l, SPECULAR_REACH, -1, true);
+        Hit hit = trace(origin, l, SPECULAR_REACH, -1, true, MASK_REFLECTIONS);
         if (!hit.attributes)
             continue;
         vec3 radiance = pow(hit.surface, vec3(2.2)) + hit.albedo * (direct_one(hit.p, hit.n, hit.owner, pixel,

@@ -285,7 +285,7 @@ vec3 flashlight(vec3 p, vec3 n, vec3 shaded, ivec2 pixel, int receiver)
 
 // the light table's texel of a row: 0 the emitter's middle and radius, 1 forward and 1 / range (0 none), 2 up and
 // the cone's inner cosine, 3 left and its outer one (-1 none), 4 the linear power and the kind (less than 0: not this
-// pass's), 5 the owner, the gel's slot (-1 none), its half width, a sun's angular diameter, 6 x the row this light
+// pass's), 5 the owner, the gel's slot (-1 none), its half width, a sun's angular diameter (another light's: its emitter's body's instance, 0 none, lt/indirect.glsl's direct_one), 6 x the row this light
 // had the frame before (-1 none) and y the row now of the light that had this row the frame before (-1 none)
 vec4 row_texel(int row, int texel)
 {
