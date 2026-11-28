@@ -181,13 +181,24 @@ share */
 #define LT_OBJECT_LAMPS XGPU_VULKAN_LT_OBJECT_LAMPS_MAXIMUM
 #define LT_OBJECT_LAMP_ROWS (LT_OBJECT_LAMPS * 4 / LT_TABLE_TEXELS)
 #define LT_OBJECT_LAMP_ROW (LT_TABLE_HEIGHT - LT_OBJECT_LAMP_ROWS)
-#define LT_EMITTER_TEXELS ((LT_OBJECT_LAMP_ROW - LT_EMITTER_ROW) * LT_TABLE_TEXELS)
+/* (before them, the frame before's lamps, which the denoiser's re-shade
+draws: lt_object_lamp_halves, lt/e1.frag's lamp_texel) */
+#define LT_OBJECT_LAMP_BEFORE_ROW (LT_OBJECT_LAMP_ROW - LT_OBJECT_LAMP_ROWS)
+#define LT_EMITTER_TEXELS ((LT_OBJECT_LAMP_BEFORE_ROW - LT_EMITTER_ROW) * LT_TABLE_TEXELS)
 #define LT_EMITTER_CELL_GROUPS 32
 #define LT_EMITTER_CELL_TEXELS (LT_EMITTER_CELL_GROUPS / 2)
 /* the grid's reach past the light sources (world units), and its least cell */
 #define LT_EMITTER_MARGIN 24.0f
 #define LT_EMITTER_CELL_LEAST 3.0f
 _Static_assert(LT_OBJECT_LAMP_ROW == 16128, "lt/e1.frag's OBJECT_LAMP_ROW");
+/* the forward table's rows past its two halves (xgpu_vulkan_lt_table_halves):
+the objects' lamps for the denoiser's deterministic gradients
+(lt/denoise_gradient.frag's LAMP_HALVES_ROW: lt_object_lamp_halves), a
+header row (texel 0: this frame's count, the frame before's) then this
+frame's lamps' rows and the frame before's, lt/e1.frag's layout */
+#define LT_HALVES_LAMP_ROW (2 * LT_TABLE_ROWS)
+#define LT_HALVES_HEIGHT (LT_HALVES_LAMP_ROW + 1 + 2 * LT_OBJECT_LAMP_ROWS)
+_Static_assert(LT_HALVES_LAMP_ROW == 282 && LT_OBJECT_LAMP_ROWS == 256, "lt/denoise_gradient.frag's LAMP_HALVES_ROW");
 _Static_assert(LT_EMITTER_CELL_GROUPS == 32 && LT_EMITTER_CELL_TEXELS % LT_TABLE_TEXELS == 0 && LT_EMITTER_ROW == 136,
 	"the light sources' rows as lt/e1.frag reads them (EMITTER_ROW, EMITTER_CELL_GROUPS)");
 _Static_assert(LT_TABLE_TEXELS == XGPU_SPIRV_LT_TABLE_TEXELS && LT_SUN_ROW == XGPU_SPIRV_LT_SUN_ROW &&
@@ -1172,9 +1183,11 @@ static void lt_lamp_rows(const float eye[3])
 
 /* the frame's object lamps into the table's last rows (LT_OBJECT_LAMP_ROW):
 their count (0 none) */
+static float lt_object_lamp_texels[LT_OBJECT_LAMPS * 4][4];
+
 static int lt_object_lamp_rows(const float eye[3])
 {
-	static float texels[LT_OBJECT_LAMPS * 4][4];
+	float (*texels)[4] = lt_object_lamp_texels;
 	const struct xgpu_vulkan_lt_object_lamp *lamps;
 	float total = 0.0f, running = 0.0f, power[LT_OBJECT_LAMPS], area[LT_OBJECT_LAMPS];
 	int count, index, axis, used = 0;
@@ -1235,6 +1248,44 @@ static int lt_object_lamp_rows(const float eye[3])
 	xgpu_vulkan_image_upload(lt.table, 0, 0, 0, LT_OBJECT_LAMP_ROW, 0, LT_TABLE_TEXELS, (uint32_t)used, 1, texels,
 		LT_TABLE_TEXELS * 16, LT_TABLE_TEXELS * (uint32_t)used * 16);
 	return count;
+}
+
+/* the frame's object lamps (lt_object_lamp_rows' texels, count of them)
+and the frame before's, each window's, into the forward table's rows past
+its halves (LT_HALVES_LAMP_ROW): the denoiser's deterministic gradients
+take their unshadowed light by both frames' (lt/denoise_gradient.frag), so
+that a lamp's light that changes (a shield's shimmer, a Pelican flying)
+relights the history instead of cutting it as noise */
+static int lt_object_lamps_before;
+
+static void lt_object_lamp_halves(int count)
+{
+	static float halves[4][1 + 2 * LT_OBJECT_LAMP_ROWS][LT_TABLE_TEXELS][4];
+	int window = xgpu_vulkan_lt_lights_window();
+	float (*rows)[LT_TABLE_TEXELS][4];
+
+	if (window < 0 || window >= 4)
+		window = 0;
+	rows = halves[window];
+	memcpy(rows[1 + LT_OBJECT_LAMP_ROWS], rows[1], sizeof(float) * LT_OBJECT_LAMP_ROWS * LT_TABLE_TEXELS * 4);
+	rows[0][0][1] = rows[0][0][0];
+	if (count < 0)
+		count = 0;
+	if (count > LT_OBJECT_LAMPS)
+		count = LT_OBJECT_LAMPS;
+	if (count > 0)
+		memcpy(rows[1], lt_object_lamp_texels, sizeof(float) * 4 * 4 * (size_t)count);
+	rows[0][0][0] = (float)count;
+	/* (the frame before's into the pass's table too, for its re-shade) */
+	lt_object_lamps_before = (int)rows[0][0][1];
+	if (lt.table && lt_object_lamps_before > 0)
+		xgpu_vulkan_image_upload(lt.table, 0, 0, 0, LT_OBJECT_LAMP_BEFORE_ROW, 0, LT_TABLE_TEXELS,
+			(uint32_t)((4 * lt_object_lamps_before + LT_TABLE_TEXELS - 1) / LT_TABLE_TEXELS), 1, rows[1 + LT_OBJECT_LAMP_ROWS],
+			LT_TABLE_TEXELS * 16, LT_TABLE_TEXELS * 16 * (uint32_t)((4 * lt_object_lamps_before + LT_TABLE_TEXELS - 1) /
+			LT_TABLE_TEXELS));
+	if (lt.forward_table)
+		xgpu_vulkan_image_upload(lt.forward_table, 0, 0, 0, LT_HALVES_LAMP_ROW, 0, LT_TABLE_TEXELS,
+			1 + 2 * LT_OBJECT_LAMP_ROWS, 1, rows, LT_TABLE_TEXELS * 16, LT_TABLE_TEXELS * (1 + 2 * LT_OBJECT_LAMP_ROWS) * 16);
 }
 
 /* the frame's light table into lt.texels (and the GPU's), its rows' and
@@ -1509,7 +1560,7 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 		description.format = XGPU_VULKAN_FORMAT_RGBA32F;
 		description.usage = XGPU_VULKAN_USAGE_SAMPLED | XGPU_VULKAN_USAGE_COPIED;
 		description.width = LT_TABLE_TEXELS;
-		description.height = 2 * LT_TABLE_ROWS;
+		description.height = LT_HALVES_HEIGHT;
 		description.depth_or_layers = 1;
 		description.levels = 1;
 		lt.forward_table = xgpu_vulkan_image_create(&description);
@@ -1558,6 +1609,7 @@ count, lt/e1.frag's object_lamp_sample) */
 		params->emitter_counts[3] = 0;
 	if (lt.mask & LT_MASK_OBJECTS)
 		params->emitter_bases[3] = 0;
+	lt_object_lamp_halves(params->emitter_bases[3]);
 	lt.live = real && params->lights[1] > 0;
 }
 
@@ -2001,6 +2053,12 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 		int had = lt.previous_valid;
 
 		lt.reshade_params = params;
+		/* (its object lamps the frame before's, as that frame's sample drew
+		them (lt/e1.frag's lamp_texel): a lamp's light changes only in the
+		deterministic gradients, by the sum of every lamp's (a shield's
+		shimmer moves each of its triangles' light much and their sum
+		little: a 1-spp sample of them, seen as changed, cut the history) */
+		lt.reshade_params.emitter_bases[3] = params.emitter_bases[3] > 0 ? lt_object_lamps_before : 0;
 		lt.reshade_params.control[3] &= ~LT_RESET;
 		lt.reshade_params.control[3] |= LT_GRADIENT;
 		/* (no spatial reuse in the re-shade: the last frame's reservoirs

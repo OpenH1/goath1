@@ -623,9 +623,12 @@ float emitter_visible(vec3 p, vec3 n, vec3 q, int receiver)
 // RIS over candidates drawn by power and area, one shadow ray, every instance counted (its own object's other surfaces
 // shadow a lamp too). The pass's units, as emitter_light's
 
+// (the re-shade's (GRADIENT) the frame before's lamps, as that frame's sample drew them: xgpu_vulkan_lt.c's
+// LT_OBJECT_LAMP_BEFORE_ROW)
 vec4 lamp_texel(int k)
 {
-    return texelFetch(light_table, ivec2(k & 7, OBJECT_LAMP_ROW + (k >> 3)), 0);
+    int first = (pass.control.w & GRADIENT) != 0 ? OBJECT_LAMP_ROW - 256 : OBJECT_LAMP_ROW;
+    return texelFetch(light_table, ivec2(k & 7, first + (k >> 3)), 0);
 }
 
 int lamp_pick(float u)

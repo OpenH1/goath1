@@ -109,6 +109,39 @@ vec3 row_light(int row, vec3 p, vec3 n, vec3 shaded)
     return t4.rgb * (profile * max(dot(shaded, l), 0.0) * window);
 }
 
+// the objects' own lamps (xgpu_vulkan_lt.c's lt_object_lamp_halves): past the table's two halves, a header row (texel
+// 0: this frame's count, the frame before's), then each frame's lamps' rows, lt/e1.frag's layout (4 texels a triangle:
+// its first corner; its first edge and area; its second edge and owner x 4 + additive x 2 + two-sided; its radiance)
+#define LAMP_HALVES_ROW 282
+#define LAMP_ROWS 256
+
+vec4 lamp_texel(int first, int k)
+{
+    return texelFetch(light_table, ivec2(k & 7, first + (k >> 3)), 0);
+}
+
+// a half's lamps' unshadowed light at p, each from its triangle's middle (lt/e1.frag's lamp_light there, times its
+// area: the triangle's whole light while it is far against its size)
+vec3 lamps_light(int first, int count, vec3 p, vec3 n, vec3 shaded)
+{
+    vec3 sum = vec3(0.0);
+    for (int lamp = 0; lamp < count; lamp++)
+    {
+        vec4 t0 = lamp_texel(first, 4 * lamp), t1 = lamp_texel(first, 4 * lamp + 1), t2 = lamp_texel(first, 4 * lamp + 2);
+        vec3 to = t0.xyz + (t1.xyz + t2.xyz) * (1.0 / 3.0) - p;
+        float d2 = max(dot(to, to), 1.0e-6);
+        vec3 l = to * inversesqrt(d2);
+        vec3 c = cross(t1.xyz, t2.xyz);
+        float emitting = dot(c, -l) / max(length(c), 1.0e-12), lit = max(dot(shaded, l), 0.0);
+        if (mod(t2.w, 2.0) > 0.5)
+            emitting = abs(emitting);
+        if (emitting <= 0.0 || dot(n, l) <= 0.0 || lit <= 0.0)
+            continue;
+        sum += lamp_texel(first, 4 * lamp + 3).rgb * (lit * emitting * t1.w / (max(d2, 0.01) * 3.14159265));
+    }
+    return sum;
+}
+
 // every light of a table's half at p: its block's rows (rows of them from first), and the view's flashlight's row
 vec3 table_light(int first, int rows, vec3 p, vec3 n, vec3 shaded)
 {
@@ -159,6 +192,10 @@ void main()
             shaded = n;
         a = table_light(0, pass.lights.x, p, n, shaded);
         b = table_light(pass.lights.z, pass.lights.y, p, n, shaded);
+        // (and the objects' lamps, each frame's)
+        vec4 counts = texelFetch(light_table, ivec2(0, LAMP_HALVES_ROW), 0);
+        a += lamps_light(LAMP_HALVES_ROW + 1, int(counts.x), p, n, shaded);
+        b += lamps_light(LAMP_HALVES_ROW + 1 + LAMP_ROWS, int(counts.y), p, n, shaded);
     }
     else
     {
