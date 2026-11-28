@@ -533,8 +533,8 @@ bake has them. The object a light is on gives no object lamps then
 every light the bake had (tools/rt2_lightdata_audit.py lists them for each
 level): a point (no cone) as a spot whose cone is the whole sphere; one the
 game makes no datum for (neither dynamic nor with a lens flare) from its
-object's attachment; none in a BSP whose lamps were solved from the bake
-(lt_emitters_live), which holds their light already. */
+object's attachment; none in a BSP whose lamps are the per-BSP solve from the bake
+(lt_emitters_fitted, the check), which holds their light already. */
 
 /* the k: the lightmap tool's intensity to the pass's power, a50's
 floodlights' (levels\a50\devices\light_ground's "light ground spot":
@@ -586,12 +586,12 @@ static long dynamic_lights_baked_objects[DYNAMIC_LIGHTS_BAKED_OBJECTS];
 static int dynamic_lights_baked_object_count;
 
 /* whether the baked lights are lit live this frame (lt_lights_real_sky):
-not where the BSP's light sources are solved from its lightmap
-(lt_emitters_live: c10's, d20's), whose lamps were fitted to the bake with
+not where the BSP's lamps are the per-BSP solve (lt_emitters_fitted, the
+check HALO_LT_EMITTERS=solved: c10's, d20's), whose lamps were fitted to the bake with
 these lights in it, until a solve takes them as sources it knows */
 static boolean dynamic_lights_baked_live(void)
 {
-	return lt_lights_pass_on() && lt_lights_real_sky() && !lt_emitters_live();
+	return lt_lights_pass_on() && lt_lights_real_sky() && !lt_emitters_fitted();
 }
 
 /* whether an object carries a light the lightmap baked, lit live (world_rt.c:

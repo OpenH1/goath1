@@ -7,18 +7,20 @@ surfaces as area lights, each a group of triangles of one radiance, which the
 pass samples by power and traces live (lt/e1.frag's emitter_sample), so the
 lightmap is no longer the static light where they are known.
 
-Where they come from, for the loaded BSP:
-- solved (port/assets/emitters/<map>_bsp<k>.json, packed by
-  tools/lt_emitters_data.py into openh1.assets and unpacked here when the BSP
-  changes: lt_emitters_assets.h): the indoor emitters' solve from the BSP's own lightmap, the level's lamp shaders at the tag's
-  colour x relative power, one brightness a lamp group (a shader's surfaces in
-  a 12 wu cell), set so each cell's traced light matches the bake's. A BSP
-  that has them is lit live (lt_lights_real_sky).
-- else the tags: every structure surface whose shader has radiosity power
-  (the lightmap tool's emitter), its radiance the shader's colour of emitted
-  light x power x LT_EMITTERS_TAG_SCALE, grouped the same way. These light a
-  level the sky already lights live (an outdoor level's interiors); they do
-  not by themselves turn a level live.
+Where they come from, for the loaded BSP: ONE rule on every map (campaign
+and multiplayer), from each shader's own data, no per-level number. Every
+structure surface (opaque, alpha-tested or transparent: Damnation's light
+panels are transparent cards) whose shader has radiosity power (the
+lightmap tool's emitter, the designers' light for the bake) glows with
+radiance power x colour of emitted light / pi (LT_EMITTERS_EXITANCE_TO_
+RADIANCE), toward its normal, a transparent shader's card both ways; the
+strongest LT_EMITTERS_TRIANGLES_MAXIMUM by power when there are more,
+grouped by shader and 12 wu cell. A BSP that has them is lit live
+(lt_lights_real_sky): its lightmap dropped in every cluster.
+
+The per-BSP solves (port/assets/emitters/<map>_bsp<k>.json, packed by
+tools/lt_emitters_data.py into openh1.assets, lt_emitters_assets.h) are the
+check only (HALO_LT_EMITTERS=solved): lamps fitted to each BSP's bake.
 
 They reach the backend in the light list (xgpu_stream.h's LT_LIGHTS) as
 records of kind XGPU_LT_LIGHT_EMITTER, LT_EMITTERS_A_FRAME of them each
@@ -26,8 +28,8 @@ frame in turn, so a replay begun at any frame has them all within a few
 frames; the backend gathers them by the set's generation
 (xgpu_vulkan_lt_lights.c) and builds its sampling tables once a set.
 
-HALO_LT_EMITTERS: 0 none (checking); "tags" the tags' alone, even where a
-solved file is built in.
+HALO_LT_EMITTERS: 0 none (checking); "solved" the per-BSP solve where one is
+built in (checking against the rule).
 */
 
 #include "cseries.h"
@@ -59,9 +61,17 @@ table has room for them: xgpu_vulkan_lt.c's LT_EMITTER_*_MAXIMUM) */
 #define LT_EMITTERS_GROUPS_MAXIMUM 1024
 /* records a frame (of the list's XGPU_STREAM_LT_LIGHTS_MAXIMUM) */
 #define LT_EMITTERS_A_FRAME 192
-/* the tags' radiance: colour x power x this, the indoor solve's level scale
-(a10's lamps 0.334, c20's 0.384: port/assets/emitters/*.json's fit) */
-#define LT_EMITTERS_TAG_SCALE 0.36f
+/* the one emission rule's constant: a shader's radiosity power x colour of
+emitted light is the lightmap tool's emitted exitance M (light leaving a
+unit of area), and a Lambertian emitter of exitance M has radiance M / pi,
+in the pass's units (a white Lambertian surface lit by radiance L over its
+hemisphere shows L). No fit. Checked against the per-BSP solves
+(port/assets/emitters/*.json, 2429 lamp groups' solved radiance over power
+x colour): median 0.27, power-weighted 0.43, each BSP's 0.15 to 0.6 */
+#define LT_EMITTERS_EXITANCE_TO_RADIANCE 0.31830989f
+/* (shader_definitions.h's environment type: glows toward its normal; any
+other, a transparent card, both ways) */
+#define LT_EMITTERS_SHADER_ENVIRONMENT 3
 /* the tags' groups' cell (world units) and how far a triangle is lifted off
 its surface toward its normal (the solve's) */
 #define LT_EMITTERS_CELL 12.0f
@@ -81,7 +91,9 @@ static struct
 	float (*radiance)[3];
 } lt_emitters;
 
-/* HALO_LT_EMITTERS: 1 (unset) all, 0 none, 2 the tags' alone */
+/* HALO_LT_EMITTERS: 1 (unset) the rule's, 0 none, 2 ("tags") the rule's too,
+3 ("solved") a built-in per-BSP solve where there is one (the check), else
+the rule's */
 static int lt_emitters_setting(void)
 {
 	static int setting = -1;
@@ -90,7 +102,8 @@ static int lt_emitters_setting(void)
 	{
 		char const *given = getenv("HALO_LT_EMITTERS");
 
-		setting = !given || !*given ? 1 : !strcmp(given, "tags") ? 2 : strcmp(given, "0") && strcmp(given, "off");
+		setting = !given || !*given ? 1 : !strcmp(given, "tags") ? 2 : !strcmp(given, "solved") ? 3 :
+			strcmp(given, "0") && strcmp(given, "off");
 	}
 	return setting;
 }
@@ -181,10 +194,12 @@ static int lt_emitters_solved(char const *scenario, short bsp_index)
 	return lt_emitters.group_count > 0;
 }
 
-/* a tags' triangle: its material and cell, for grouping */
+/* a glowing triangle: its material, cell and order (grouping), its power
+(the cap's choice: luminance x area x sides) and its corners */
 struct lt_emitters_found
 {
-	long material, cell;
+	long material, cell, order;
+	float power;
 	float corners[9];
 };
 
@@ -194,7 +209,20 @@ static int lt_emitters_found_order(void const *a, void const *b)
 
 	if (x->material != y->material)
 		return x->material < y->material ? -1 : 1;
-	return x->cell < y->cell ? -1 : x->cell > y->cell;
+	if (x->cell != y->cell)
+		return x->cell < y->cell ? -1 : 1;
+	return x->order < y->order ? -1 : x->order > y->order;
+}
+
+/* (the strongest first; ties by the mesh's order, so the choice is the same
+every run) */
+static int lt_emitters_found_power(void const *a, void const *b)
+{
+	struct lt_emitters_found const *x = a, *y = b;
+
+	if (x->power != y->power)
+		return x->power > y->power ? -1 : 1;
+	return x->order < y->order ? -1 : x->order > y->order;
 }
 
 static long lt_emitters_cell_of(float const *corners)
@@ -212,47 +240,68 @@ static long lt_emitters_cell_of(float const *corners)
 	return key;
 }
 
-/* the tags' emitters: the structure's surfaces whose shader has radiosity
-power, lifted off their surface toward their normal, grouped by shader and
+/* a material's emitted radiance by the one rule (LT_EMITTERS_EXITANCE_TO_
+RADIANCE): its shader's radiosity power x colour of emitted light, the
+lightmap tool's emitter, over pi; and whether it glows both ways (a
+transparent shader's card) */
+static void lt_emitters_rule(long shader_index, float radiance[3], int *two_sided)
+{
+	struct shader const *shader = shader_index != NONE && tag_index_is_group(shader_index, SHADER_DEFINITION_TAG) ?
+		shader_definition_get(shader_index) : NULL;
+	struct shader_radiosity_properties const *radiosity = shader ? &shader->base.radiosity : NULL;
+	float power = radiosity && radiosity->power > 0.0f && radiosity->power < 1.0e6f ? radiosity->power : 0.0f;
+
+	radiance[0] = radiosity ? radiosity->color_of_emitted_light.red * power * LT_EMITTERS_EXITANCE_TO_RADIANCE : 0.0f;
+	radiance[1] = radiosity ? radiosity->color_of_emitted_light.green * power * LT_EMITTERS_EXITANCE_TO_RADIANCE : 0.0f;
+	radiance[2] = radiosity ? radiosity->color_of_emitted_light.blue * power * LT_EMITTERS_EXITANCE_TO_RADIANCE : 0.0f;
+	*two_sided = shader && shader->base.type != LT_EMITTERS_SHADER_ENVIRONMENT;
+}
+
+/* the BSP's glowing surfaces by the rule: every structure surface, opaque,
+alpha-tested or transparent, whose shader emits (lt_emitters_rule), lifted
+off its surface toward its normal (a two-sided one's other face too), the
+strongest LT_EMITTERS_TRIANGLES_MAXIMUM by power, grouped by shader and
 cell */
 static void lt_emitters_tags(short bsp_index)
 {
 	struct world_rt_source_mesh mesh;
 	struct lt_emitters_found *found = NULL;
 	float (*radiance)[3] = NULL;
-	long triangle, count = 0, index;
+	int *two_sided = NULL;
+	long triangle, count = 0, room = 0, index, kept;
+	double total = 0.0, total_kept = 0.0;
 
 	memset(&mesh, 0, sizeof(mesh));
-	if (world_rt_source_structure_mesh(bsp_index, &mesh) <= 0 || mesh.material_count <= 0)
+	if (world_rt_source_structure_mesh_all(bsp_index, &mesh) <= 0 || mesh.material_count <= 0)
 		return;
 	mesh.vertices = malloc(sizeof(*mesh.vertices) * (size_t)mesh.vertex_count);
 	mesh.triangles = malloc(sizeof(*mesh.triangles) * (size_t)mesh.triangle_count);
 	mesh.triangle_materials = malloc(sizeof(*mesh.triangle_materials) * (size_t)mesh.triangle_count);
 	mesh.materials = malloc(sizeof(*mesh.materials) * (size_t)mesh.material_count);
 	radiance = malloc(sizeof(*radiance) * (size_t)mesh.material_count);
-	found = malloc(sizeof(*found) * LT_EMITTERS_TRIANGLES_MAXIMUM);
-	if (!mesh.vertices || !mesh.triangles || !mesh.triangle_materials || !mesh.materials || !radiance || !found ||
-		world_rt_source_structure_mesh(bsp_index, &mesh) <= 0)
+	two_sided = malloc(sizeof(*two_sided) * (size_t)mesh.material_count);
+	if (!mesh.vertices || !mesh.triangles || !mesh.triangle_materials || !mesh.materials || !radiance || !two_sided ||
+		world_rt_source_structure_mesh_all(bsp_index, &mesh) <= 0)
 	{
 		goto done;
 	}
 	for (index = 0; index < mesh.material_count; index++)
-	{
-		long shader_index = mesh.materials[index].shader;
-		struct shader const *shader = shader_index != NONE && tag_index_is_group(shader_index, SHADER_DEFINITION_TAG) ?
-			shader_definition_get(shader_index) : NULL;
-		struct shader_radiosity_properties const *radiosity = shader ? &shader->base.radiosity : NULL;
-		float power = radiosity && radiosity->power > 0.0f && radiosity->power < 1.0e6f ? radiosity->power : 0.0f;
-
-		radiance[index][0] = radiosity ? radiosity->color_of_emitted_light.red * power * LT_EMITTERS_TAG_SCALE : 0.0f;
-		radiance[index][1] = radiosity ? radiosity->color_of_emitted_light.green * power * LT_EMITTERS_TAG_SCALE : 0.0f;
-		radiance[index][2] = radiosity ? radiosity->color_of_emitted_light.blue * power * LT_EMITTERS_TAG_SCALE : 0.0f;
-	}
-	for (triangle = 0; triangle < mesh.triangle_count && count < LT_EMITTERS_TRIANGLES_MAXIMUM; triangle++)
+		lt_emitters_rule(mesh.materials[index].shader, radiance[index], &two_sided[index]);
+	for (triangle = 0; triangle < mesh.triangle_count; triangle++)
 	{
 		long material = mesh.triangle_materials[triangle];
-		float *corners = found[count].corners, e1[3], e2[3], normal[3], length;
-		int corner, axis;
+
+		if (radiance[material][0] + radiance[material][1] + radiance[material][2] > 0.0f)
+			room += two_sided[material] ? 2 : 1;
+	}
+	found = room ? malloc(sizeof(*found) * (size_t)room) : NULL;
+	if (!found)
+		goto done;
+	for (triangle = 0; triangle < mesh.triangle_count; triangle++)
+	{
+		long material = mesh.triangle_materials[triangle];
+		float corners[9], e1[3], e2[3], normal[3], length, luminance;
+		int corner, axis, side;
 
 		if (radiance[material][0] + radiance[material][1] + radiance[material][2] <= 0.0f)
 			continue;
@@ -283,15 +332,41 @@ static void lt_emitters_tags(short bsp_index)
 				length = -length;
 			}
 		}
-		for (corner = 0; corner < 3; corner++)
-			for (axis = 0; axis < 3; axis++)
-				corners[3 * corner + axis] += normal[axis] / length * LT_EMITTERS_LIFT;
-		found[count].material = material;
-		found[count].cell = lt_emitters_cell_of(corners);
-		count++;
+		luminance = 0.2126f * radiance[material][0] + 0.7152f * radiance[material][1] + 0.0722f * radiance[material][2];
+		for (side = 0; side < (two_sided[material] ? 2 : 1); side++)
+		{
+			float *out = found[count].corners;
+			float lift = side ? -LT_EMITTERS_LIFT : LT_EMITTERS_LIFT;
+
+			memcpy(out, corners, sizeof(corners));
+			/* (the other face: the winding turned, lifted the other way) */
+			if (side)
+			{
+				memcpy(out + 3, corners + 6, sizeof(float) * 3);
+				memcpy(out + 6, corners + 3, sizeof(float) * 3);
+			}
+			for (corner = 0; corner < 3; corner++)
+				for (axis = 0; axis < 3; axis++)
+					out[3 * corner + axis] += normal[axis] / length * lift;
+			found[count].material = material;
+			found[count].cell = lt_emitters_cell_of(out);
+			found[count].order = count;
+			found[count].power = luminance * 0.5f * fabsf(length);
+			total += found[count].power;
+			count++;
+		}
 	}
-	qsort(found, (size_t)count, sizeof(*found), lt_emitters_found_order);
-	for (index = 0; index < count && lt_emitters.group_count <= LT_EMITTERS_GROUPS_MAXIMUM; index++)
+	/* (the strongest within the backend's room, the same every run) */
+	kept = count;
+	if (kept > LT_EMITTERS_TRIANGLES_MAXIMUM)
+	{
+		qsort(found, (size_t)count, sizeof(*found), lt_emitters_found_power);
+		kept = LT_EMITTERS_TRIANGLES_MAXIMUM;
+	}
+	for (index = 0; index < kept; index++)
+		total_kept += found[index].power;
+	qsort(found, (size_t)kept, sizeof(*found), lt_emitters_found_order);
+	for (index = 0; index < kept; index++)
 	{
 		if (!index || found[index].material != found[index - 1].material || found[index].cell != found[index - 1].cell)
 		{
@@ -302,9 +377,13 @@ static void lt_emitters_tags(short bsp_index)
 		memcpy(lt_emitters.triangles[lt_emitters.triangle_count], found[index].corners, sizeof(float) * 9);
 		lt_emitters.group_of[lt_emitters.triangle_count++] = lt_emitters.group_count - 1;
 	}
+	platform_log("lt emitters: the rule's glowing surfaces: %ld triangles (%ld materials), %ld kept, %.1f%% of their "
+		"power; total power %.3g", count, mesh.material_count, kept, total > 0.0 ? 100.0 * total_kept / total : 0.0,
+		total);
 done:
 	free(found);
 	free(radiance);
+	free(two_sided);
 	free(mesh.vertices);
 	free(mesh.triangles);
 	free(mesh.triangle_materials);
@@ -326,7 +405,7 @@ static void lt_emitters_update(void)
 	if (!bsp || !setting || !global_scenario_try_and_get() || !lt_emitters_room())
 		return;
 	scenario = global_scenario_index != NONE ? tag_get_name(global_scenario_index) : NULL;
-	if (setting == 1)
+	if (setting == 3)
 		lt_emitters.solved = lt_emitters_solved(scenario, global_structure_bsp_index);
 	if (!lt_emitters.solved)
 		lt_emitters_tags(global_structure_bsp_index);
@@ -338,12 +417,19 @@ static void lt_emitters_update(void)
 	hash = (hash ^ (unsigned int)lt_emitters.solved) * 16777619u;
 	lt_emitters.generation = (hash & 0xffffffu) | (hash & 0xffffffu ? 0u : 1u);
 	platform_log("lt emitters: %d triangles in %d groups, %s", lt_emitters.triangle_count, lt_emitters.group_count,
-		lt_emitters.solved ? "solved from the lightmap (the level lit live)" : "the tags' radiosity shaders");
+		lt_emitters.solved ? "solved from the lightmap (the check: HALO_LT_EMITTERS=solved)" :
+		"the shaders' own emission (the one rule)");
 }
 
 /* ---------- public code */
 
 int lt_emitters_live(void)
+{
+	lt_emitters_update();
+	return lt_emitters.triangle_count > 0;
+}
+
+int lt_emitters_fitted(void)
 {
 	lt_emitters_update();
 	return lt_emitters.solved && lt_emitters.triangle_count > 0;
@@ -365,7 +451,7 @@ int lt_emitters_append(struct xgpu_stream_lt_light *lights, int count, int maxim
 		out->id[0] = (unsigned int)index;
 		out->id[1] = (unsigned int)XGPU_LT_LIGHT_SOURCE_EMITTER << 24 | lt_emitters.generation;
 		out->kind = XGPU_LT_LIGHT_EMITTER;
-		out->flags = lt_emitters.solved ? XGPU_LT_LIGHT_EMITTER_SOLVED : 0;
+		out->flags = XGPU_LT_LIGHT_EMITTER_SOLVED;
 		out->object = (unsigned int)lt_emitters.triangle_count;
 		out->owner = (unsigned int)lt_emitters.group_count;
 		out->gel_slot = lt_emitters.group_of[index];

@@ -174,10 +174,12 @@ sky's lights, its dome and their bounce the static light (its BSP's
 clusters mostly exterior; HALO_LT_REAL_SKY overrides) */
 int lt_lights_real_sky(void);
 /* the level's static light sources (lt_emitters.c): whether the loaded
-BSP's are solved from its lightmap (the level then lit live); and this
-frame's share of their records, after count records of lights (at most
-maximum in all): the count of all */
+BSP has glowing surfaces by the one rule (the level then lit live); whether
+they are the per-BSP solve from its lightmap instead (HALO_LT_EMITTERS=
+solved, the check); and this frame's share of their records, after count
+records of lights (at most maximum in all): the count of all */
 int lt_emitters_live(void);
+int lt_emitters_fitted(void);
 int lt_emitters_append(struct xgpu_stream_lt_light *lights, int count, int maximum);
 /* each frame: the backend told when the pass is turned off */
 void lt_lights_update(void);
