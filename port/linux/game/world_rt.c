@@ -1176,7 +1176,14 @@ static long world_rt_definition_render(long definition, struct world_rt_definiti
 		}
 		if (!part.triangle_count)
 			continue;
-		world_rt_lamps_made(entry, node_index, &part);
+		{
+			long before = entry->lamp_count;
+
+			world_rt_lamps_made(entry, node_index, &part);
+			if (entry->lamp_count > before)
+				platform_log("ray-traced scene: %s node %d: %ld object lamp triangles", world_rt_source_name(definition),
+					(int)node_index, entry->lamp_count - before);
+		}
 		size = world_rt_blob(&part);
 		id = size ? world_rt_id_take() : 0;
 		if (!id)
