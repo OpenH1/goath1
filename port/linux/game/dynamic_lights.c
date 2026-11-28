@@ -579,10 +579,13 @@ extern struct data_array *light_data;
 static long dynamic_lights_baked_objects[DYNAMIC_LIGHTS_BAKED_OBJECTS];
 static int dynamic_lights_baked_object_count;
 
-/* whether the baked lights are lit live this frame (lt_lights_real_sky) */
+/* whether the baked lights are lit live this frame (lt_lights_real_sky):
+not where the BSP's light sources are solved from its lightmap
+(lt_emitters_live: c10's, d20's), whose lamps were fitted to the bake with
+these lights in it, until a solve takes them as sources it knows */
 static boolean dynamic_lights_baked_live(void)
 {
-	return lt_lights_pass_on() && lt_lights_real_sky();
+	return lt_lights_pass_on() && lt_lights_real_sky() && !lt_emitters_live();
 }
 
 /* whether an object carries a light the lightmap baked, lit live (world_rt.c:
@@ -651,8 +654,6 @@ static long dynamic_lights_fixtures(
 		if (TEST_FLAG(light->flags, 0) || !(intensity > 0.0f) || !(intensity < 1.0e6f) ||
 			light->parent_light_index != NONE)
 			continue;
-		if (light->object_index != NONE && dynamic_lights_baked_object_count < DYNAMIC_LIGHTS_BAKED_OBJECTS)
-			dynamic_lights_baked_objects[dynamic_lights_baked_object_count++] = light->object_index;
 		if (count >= MAXIMUM_LIGHTS_PER_WINDOW)
 			continue;
 		power[0] = color.red * intensity * DYNAMIC_LIGHTS_BAKED_K;
@@ -700,6 +701,9 @@ static long dynamic_lights_fixtures(
 			((unsigned long long)(unsigned long)iterator.datum_index & 0xffffffffull);
 		dynamic_lights.baked[count] = FALSE;
 		dynamic_lights_clusters(count, MIN(cluster_count, MAXIMUM_CLUSTERS_PER_STRUCTURE), clusters);
+		/* (its object's lamps none: this spot is its light) */
+		if (light->object_index != NONE && dynamic_lights_baked_object_count < DYNAMIC_LIGHTS_BAKED_OBJECTS)
+			dynamic_lights_baked_objects[dynamic_lights_baked_object_count++] = light->object_index;
 		count++;
 	}
 	return count;
