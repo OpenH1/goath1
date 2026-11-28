@@ -3144,6 +3144,15 @@ static void hdr_read(void)
 	{
 		display = xgpu_backend_display_hdr(&headroom);
 		active = setting == XGPU_HDR_ON || (setting == XGPU_HDR_AUTO && display);
+		/* (display.ray_traced_lighting: the pass's light is physical, past
+		white where it is bright; the frame drawn in HDR to keep it, on an
+		SDR display too, and the 3D view through the camera (xgpu_hdr.h's
+		XGPU_HDR_MODE_CAMERA), which brings it into the display's range) */
+		if (lt_lights_pass_on())
+		{
+			active = TRUE;
+			mode = XGPU_HDR_MODE_CAMERA;
+		}
 	}
 #ifdef HALO_VR
 	if (halo_vr_running())
@@ -3190,7 +3199,8 @@ static void hdr_read(void)
 	if (active != hdr.active)
 	{
 		platform_log("HDR: %s (display.hdr \"%s\", %s)", active ? "on" : "off", config_string("display.hdr"),
-			mode == XGPU_HDR_MODE_PUNCHY ? "punchy" : "faithful");
+			mode == XGPU_HDR_MODE_CAMERA ? "the ray-traced lighting's camera" : mode == XGPU_HDR_MODE_PUNCHY ?
+			"punchy" : "faithful");
 		hdr.active = active;
 		render_targets_evict();
 	}

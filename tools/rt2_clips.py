@@ -87,6 +87,13 @@ MOMENTS = {
         "36.5 aim=-73,-4; 37-49 hunt; 38-40 fire; 42-42.4 throw; 46-46.4 throw",
         "b30's landing zone in first person: the Covenant camp's plasma and needles, the rifle's muzzle flashes, two "
         "grenades"),
+    # (the opening's Pelican flight, the player in its bay: the bay lit by the game's model lighting where no sky is
+    # open above (the forward receivers' interim), its grates and the marines by the pass)
+    "b30_bay": (
+        "levels\\b30\\b30", 31, 43,
+        [],
+        "29-33 move=0,1; 33-43 hunt",
+        "b30's opening in first person inside the Pelican's bay (its ceiling, its lamps, the marines), then the landing"),
     "a10_cryo": (
         "levels\\a10\\a10", 12, 24,
         [(11.5, cam(-52.0, 0.0, 0.6, 180, -12)),

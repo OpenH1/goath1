@@ -5343,7 +5343,7 @@ static void stream_tone_map(void *context, const struct xgpu_stream_tone_map *re
 	struct stream_target *depth = stream.color == record->target ? target_get(stream.depth) : NULL;
 	struct xgpu_vulkan_image *color_image, *depth_image;
 	struct xgpu_hdr_frame frame;
-	float hdr[4];
+	float hdr[4], camera[4] = { 1.0f, XGPU_HDR_CAMERA_EXPOSURE, 0.0f, 0.0f };
 
 	(void)context;
 	if (!target || target->depth || target->format != XGPU_VULKAN_FORMAT_RGBA16F || target->layers > 1)
@@ -5371,7 +5371,12 @@ static void stream_tone_map(void *context, const struct xgpu_stream_tone_map *re
 	target->written++;
 	if (color_image == target->multisampled)
 		target->unresolved = 1;
-	xgpu_vulkan_post_tone_map(color_image, depth_image, record->corners, hdr);
+	/* (the camera's contrast where the pass lit the level live: its light
+	physical, the bake's look not in it; 1 where the lightmap is, a picture
+	already: xgpu_hdr.h's XGPU_HDR_MODE_CAMERA) */
+	if (frame.mode == XGPU_HDR_MODE_CAMERA && xgpu_vulkan_lt_live())
+		camera[0] = XGPU_HDR_CAMERA_CONTRAST;
+	xgpu_vulkan_post_tone_map(color_image, depth_image, record->corners, hdr, camera);
 	/* (the stream's targets again: the same, so that the pass goes on) */
 	targets_bind();
 }

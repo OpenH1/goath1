@@ -1560,6 +1560,10 @@ enum
 	XGPU_LT_LIGHT_SPOT,
 	XGPU_LT_LIGHT_PANEL,
 	XGPU_LT_LIGHT_DIRECTIONAL,
+	/* a triangle of the level's static light sources, not a light
+	(port/linux/game/lt_emitters.c, lt_lights.h has its members): the
+	backend gathers a set's by its generation (xgpu_vulkan_lt_lights.c) */
+	XGPU_LT_LIGHT_EMITTER,
 };
 enum
 {
@@ -1575,6 +1579,12 @@ enum
 	XGPU_LT_LIGHT_NO_SPECULAR = 1 << 12,
 	XGPU_LT_LIGHT_NOT_OWN_OBJECT = 1 << 13,
 	XGPU_LT_LIGHT_UNSTABLE_ID = 1 << 14,
+	/* a sky light of a level lit live (lt_lights.c's lt_lights_real_sky:
+	the lightmap dropped, the sky's lights the whole light), and the sky's
+	ambient dome (a directional record of the whole sphere, forward up) */
+	XGPU_LT_LIGHT_REAL_SKY = 1 << 15,
+	XGPU_LT_LIGHT_SKY_DOME = 1 << 16,
+	XGPU_LT_LIGHT_EMITTER_SOLVED = 1 << 17,
 };
 enum
 {
@@ -1583,6 +1593,7 @@ enum
 	XGPU_LT_LIGHT_SOURCE_COPY = 5,
 	XGPU_LT_LIGHT_SOURCE_SUN = 6,
 	XGPU_LT_LIGHT_SOURCE_FRAME = 7,
+	XGPU_LT_LIGHT_SOURCE_EMITTER = 8,
 };
 /* (each member as lt_lights.h describes it) */
 struct xgpu_stream_lt_light

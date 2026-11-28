@@ -146,6 +146,8 @@ struct world_rt_source_material
 	float alpha_scale[2], detail_scale;
 	struct world_rt_source_map maps[WORLD_RT_MAPS];
 	unsigned int normal_image, orm_image;
+	/* its self-illumination's colour (RGBA8, R low; 0 none: a model's) */
+	unsigned int self_illumination;
 };
 
 /* a render mesh as the game has it: its counts (the first opaque_count

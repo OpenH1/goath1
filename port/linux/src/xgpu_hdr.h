@@ -98,6 +98,9 @@ enum
 {
 	XGPU_HDR_MODE_FAITHFUL,
 	XGPU_HDR_MODE_PUNCHY,
+	/* display.ray_traced_lighting's camera (no setting of its own: the
+	front end's, while the light-transport pass is on; below) */
+	XGPU_HDR_MODE_CAMERA,
 };
 
 /* display.hdr_paper_white_nits: paper white in nits, these at most and
@@ -294,6 +297,46 @@ PUNCHY_BRIGHT), and its shoulder's knee (of the peak, at most paper white) */
 /* Faithful's colour past white: its own hue at 1 (the frame's values), the
 SDR frame's clipped colour from this far past it */
 #define XGPU_HDR_FAITHFUL_CLIPPED 2.0f
+/* The camera (XGPU_HDR_MODE_CAMERA), display.ray_traced_lighting's tone
+map, on SDR displays and HDR ones alike: while the light-transport pass
+lights the world, the frame is drawn in HDR whatever display.hdr says (the
+pass's light past white kept, xgpu_hdr_classify's XGPU_HDR_LIGHTS), and
+the 3D view goes through this instead of Faithful or Punchy. Its light (the
+frame's values made linear) is
+- exposed: times the exposure, fixed, 1. Halo has no eye adaptation: its
+  levels' moods (a dark corridor, a bright beach) are the bake's absolute
+  light, and the pass's lights are calibrated against the bake at that
+  exposure (~/dev/rt2-calibration.json: the k of each kind), so the
+  calibration is the exposure. A metered, adapting exposure would lift the
+  dark rooms and dim the beach toward one grey, pump with every muzzle flash
+  and the flashlight, and give held frames and replays a history. Fitted
+  against b30's bake, the best exposure with the live sky's k is 0.99.
+- given contrast about middle grey (XGPU_HDR_CAMERA_MIDDLE): its luminance
+  L to MIDDLE (L / MIDDLE)^contrast, its hue kept. 1 where the level keeps
+  its lightmap, which is already a picture (the bake's own look);
+  XGPU_HDR_CAMERA_CONTRAST where it is lit live (lt/e1.frag's LIGHTS_REAL):
+  the traced light's brightness quantiles matched to the bake's as shown
+  (b30_exterior, albedo x page^2.2: the mood, not pixel for pixel), 1.22,
+  error 0.13 in log brightness against 0.30 without it. (The bake's sunlit
+  over shaded is 6.1 against the light's 3.8: 3.8^1.35.)
+- rolled off: each channel under Punchy's shoulder (identity to
+  XGPU_HDR_PUNCHY_KNEE of the peak, at most paper white; rising toward the
+  peak, never reaching it), so that the flashlight's pool, an explosion's
+  core and the sun on the sand keep their detail on an SDR display (a peak
+  of 1: white from 0.75 up rolled off, white itself at 0.875) and reach for
+  the peak on an HDR one, each channel apart, so that a core of light goes
+  white-hot as the original's clip has it.
+The HUD is drawn after it, over the tone mapped view, and the encoding
+then shows the frame for the display as it shows every frame. No white
+balance: the bake's light has more colour between sun and shade than the
+tags' (b30: warmer in the sun, bluer in the shade, its pages' ^2.2 on the
+light), which one gain a channel cannot give (a gain fitted to b30's beach
+turned Blood Gulch's sand pale; one from the lightmap's mean, sunlit texels
+dominating, made b30 warmer still). That colour is the sky lights' own,
+for their calibration. */
+#define XGPU_HDR_CAMERA_EXPOSURE 1.0f
+#define XGPU_HDR_CAMERA_CONTRAST 1.22f
+#define XGPU_HDR_CAMERA_MIDDLE 0.18f
 
 /* the display's encodings (xgpu_hdr_frame.output) */
 enum
@@ -631,6 +674,26 @@ static inline void xgpu_hdr_tone_map_full(float rgb[3], int mode, float peak, fl
 static inline void xgpu_hdr_tone_map(float rgb[3], int mode, float peak)
 {
 	xgpu_hdr_tone_map_full(rgb, mode, peak, 0.0f);
+}
+
+/* the camera's tone map of one pixel's colour (XGPU_HDR_MODE_CAMERA,
+above), in place: exposure and contrast its own (the tone map's window
+uniform's x and y), the peak and the full-frame peak as the tone map's */
+static inline void xgpu_hdr_camera(float rgb[3], float contrast, float exposure, float peak, float full_frame)
+{
+	static const float luma[3] = { 0.2126f, 0.7152f, 0.0722f };
+	float light[3], luminance = 0.0f, scale = 1.0f, knee = fminf(1.0f, XGPU_HDR_PUNCHY_KNEE * peak);
+	int channel;
+
+	for (channel = 0; channel < 3; channel++)
+	{
+		light[channel] = xgpu_hdr_linear(rgb[channel] < 0.0f ? 0.0f : rgb[channel]) * exposure;
+		luminance += luma[channel] * light[channel];
+	}
+	if (luminance > 0.0f && contrast != 1.0f)
+		scale = XGPU_HDR_CAMERA_MIDDLE * powf(luminance / XGPU_HDR_CAMERA_MIDDLE, contrast) / luminance;
+	for (channel = 0; channel < 3; channel++)
+		rgb[channel] = xgpu_hdr_encoded(xgpu_hdr_highlight(light[channel] * scale, knee, peak, full_frame));
 }
 
 /* the display's black (#1122; xgpu_hdr_frame.black, the output's units):

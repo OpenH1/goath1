@@ -38,6 +38,10 @@ enum
 DENOISE while it sends its light lists (display.ray_traced_lighting:
 xgpu_vulkan_lt_lights_on), OFF until it does and once it says it is off */
 int xgpu_vulkan_lt_mode(void);
+/* the pass on and its last frame's level lit live (lt/e1.frag's LIGHTS_REAL:
+the sky's lights the whole static light, no lightmap), for the camera's
+contrast (xgpu_hdr.h's XGPU_HDR_MODE_CAMERA) */
+int xgpu_vulkan_lt_live(void);
 /* the pre-pass's twins' guides (xgpu_spirv.h's C1), which the pass reads
 for the shaded normal */
 void xgpu_vulkan_lt_guides(struct xgpu_vulkan_image *guides);

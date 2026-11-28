@@ -97,7 +97,14 @@ struct world_rt_shader_model
 	struct shader shader;
 	word flags;
 	short type;
-	byte reserved2C[0x9C - 0x2C];
+	byte reserved2C[0x70 - 0x2C];
+	/* (its self-illumination: rasterizer_xbox_models.c's colour, its
+	animation's bounds) */
+	short self_illumination_color_source;
+	short self_illumination_animation_function;
+	real self_illumination_animation_period;
+	real_rgb_color self_illumination_lower, self_illumination_upper;
+	byte reserved90[0x9C - 0x90];
 	real map_u_scale, map_v_scale;
 	struct tag_reference base_map;
 	byte reservedB4[0xBC - 0xB4];
@@ -160,6 +167,8 @@ typedef char verify_world_rt_shader_environment_detail_map[
 	offsetof(struct world_rt_shader_environment, primary_detail_map) == 0xB8 ? 1 : -1];
 typedef char verify_world_rt_shader_environment_bump_map[
 	offsetof(struct world_rt_shader_environment, bump_map) == 0x128 ? 1 : -1];
+typedef char verify_world_rt_shader_model_self_illumination[
+	offsetof(struct world_rt_shader_model, self_illumination_lower) == 0x78 ? 1 : -1];
 typedef char verify_world_rt_shader_model_base_map[offsetof(struct world_rt_shader_model, base_map) == 0xA4 ? 1 : -1];
 typedef char verify_world_rt_shader_model_multipurpose_map[
 	offsetof(struct world_rt_shader_model, multipurpose_map) == 0xBC ? 1 : -1];
@@ -462,6 +471,28 @@ static void material_describe(long shader_index, struct world_rt_source_material
 		material->alpha_scale[1] = model->map_v_scale != 0.0f ? model->map_v_scale : 1.0f;
 		if (TEST_FLAG(model->flags, _world_rt_shader_model_two_sided_bit))
 			material->flags |= WORLD_RT_MATERIAL_TWO_SIDED;
+		/* (its self-illumination's colour, the middle of its animation's
+		bounds, RGBA8 with alpha 255 where it glows: masked by the
+		multipurpose map's green, lt/indirect.glsl's glow) */
+		{
+			real_rgb_color const *lower = &model->self_illumination_lower, *upper = &model->self_illumination_upper;
+			float rgb[3];
+			int channel;
+
+			rgb[0] = 0.5f * (lower->red + upper->red);
+			rgb[1] = 0.5f * (lower->green + upper->green);
+			rgb[2] = 0.5f * (lower->blue + upper->blue);
+			if (model->multipurpose_map.index != NONE && rgb[0] + rgb[1] + rgb[2] > 1.0f / 255.0f)
+			{
+				material->self_illumination = 0xFF000000u;
+				for (channel = 0; channel < 3; channel++)
+				{
+					float c = rgb[channel] < 0.0f ? 0.0f : rgb[channel] > 1.0f ? 1.0f : rgb[channel];
+
+					material->self_illumination |= (unsigned int)(c * 255.0f + 0.5f) << (8 * channel);
+				}
+			}
+		}
 		if (!TEST_FLAG(model->flags, _world_rt_shader_model_not_alpha_tested_bit))
 		{
 			material->flags |= WORLD_RT_MATERIAL_ALPHA_TESTED;

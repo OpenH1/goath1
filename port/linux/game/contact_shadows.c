@@ -16,6 +16,9 @@ the darker of the two shadows, not their product.
 
 int config_boolean(const char *name);
 unsigned long halo_gpu_settings_taken(void);
+/* (lt_lights.c) */
+int lt_lights_pass_on(void);
+int lt_lights_real_sky(void);
 
 static struct
 {
@@ -40,7 +43,9 @@ int contact_shadows_on(void)
 		contact_shadows.read_at = changes;
 		contact_shadows.wanted = config_boolean("display.contact_shadows") != 0;
 	}
-	return contact_shadows.wanted && !rt_shadows_on();
+	/* (a level lit live: its shadows the traced sun's and sky's alone,
+	lt_lights.h) */
+	return contact_shadows.wanted && !rt_shadows_on() && !(lt_lights_pass_on() && lt_lights_real_sky());
 }
 
 void contact_shadows_begin(void)
