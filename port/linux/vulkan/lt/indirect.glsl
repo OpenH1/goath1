@@ -420,14 +420,47 @@ vec3 dome_at(vec3 p, vec3 n, ivec2 pixel, float salt)
     return dome_radiance() * visible_by(origin, d, SUN_REACH, -1, 0xffffffffu, MASK_AO);
 }
 
-// a hit's light lit live: the suns' direct (one ray each) and the sky's dome and bounce (the cache's, else one ray
-// to the dome; ray false: the dome's unblocked light by the share of the sky the normal faces, (1 + n.z) / 2, no
-// ray, for a reflection's hit, whose single sample a pixel would otherwise flicker)
+// the suns' direct light at a bounce's hit: ONE ray a sun, the narrow sun and the wide fill alike, its direction in
+// the sun's disk drawn by the ray's own salt. The same estimator as sun_real's (the unblocked irradiance at the
+// axis by the seen share of the cone), so the same expectation, with one sample of the share in place of sun_real's
+// minimum of SUN_NARROW_RAYS / SUN_WIDE_RAYS. That minimum is for what the eye sees directly, whose one sample is a
+// pixel's; a hit's light is one of the bounce's several rays a block, averaged by the bounce's history and the
+// cache, so a 2 + 8 ray estimate of each hit's share (about 40% of the pass's rays, ~/dev/rt2-unified-design.md
+// section 1) bought noise the averaging already removes. The dome's light is not here: it is the cache's (sky_at)
+vec3 suns_at(vec3 p, vec3 n, ivec2 pixel, float salt)
+{
+    vec3 light = vec3(0.0);
+    vec3 origin = p + n * ray_lift(p);
+    for (int s = 0; s < pass.lights.y; s++)
+    {
+        int row = SUN_ROW + s;
+        vec4 t1 = row_texel(row, 1), t4 = row_texel(row, 4), t5 = row_texel(row, 5);
+        if (t4.w < 0.0 || t5.w > DOME_DIAMETER)
+            continue;
+        vec3 f = t1.xyz, up = row_texel(row, 2).xyz, left = row_texel(row, 3).xyz;
+        float half_cos = cos(0.5 * t5.w), axis = max(dot(n, f), 0.0);
+        if (axis <= 0.0)
+            continue;
+        vec2 disk = concentric(stratified(pixel, salt + 0.5 + 0.37 * float(s)));
+        float r2 = dot(disk, disk), c = 1.0 - r2 * (1.0 - half_cos), sine = sqrt(max(1.0 - c * c, 0.0));
+        vec2 around = r2 > 0.0 ? disk * inversesqrt(r2) : vec2(0.0);
+        vec3 d = normalize(f * c + (left * around.x + up * around.y) * sine);
+        if (dot(n, d) > 0.0)
+            light += t4.rgb * (axis * visible_by(origin, d, SUN_REACH, -1, 0xffffffffu, RT_MASK_SUN));
+    }
+    return light;
+}
+
+// a hit's light lit live: the suns' direct and the sky's dome and bounce (the cache's, else one ray to the dome).
+// ray true (a bounce's hit): one ray a sun (suns_at). ray false (a reflection's hit, whose single sample a pixel
+// shows as it is, so it would flicker): the suns as sun_real has them, and the dome's unblocked light by the share
+// of the sky the normal faces, (1 + n.z) / 2, no ray
 vec3 sky_at(Hit hit, ivec2 pixel, float salt, bool ray)
 {
     bool found;
     vec3 cached = cache_find(hit.p, hit.n, found);
-    return sun_real(hit.p, hit.n, hit.n, pixel, 1) + (found ? vec3(0.0) : ray ? dome_at(hit.p, hit.n, pixel, salt) :
+    vec3 suns = ray ? suns_at(hit.p, hit.n, pixel, salt) : sun_real(hit.p, hit.n, hit.n, pixel, 1);
+    return suns + (found ? vec3(0.0) : ray ? dome_at(hit.p, hit.n, pixel, salt) :
         dome_radiance() * (0.5 + 0.5 * hit.n.z));
 }
 
