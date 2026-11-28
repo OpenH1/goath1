@@ -306,7 +306,10 @@ def draw_once(host, ref, folder, request, env=(), out=None):
         if out:
             ssh(host, f"mkdir -p ~/{out}")
             request = {**request, "dir": f"{service_home(host)}/{out}"}
-        return service.ask(request)
+        reply = service.ask(request)
+        if any(e.startswith("HALO_LT_UNIT=") for e in env):
+            reply["lt_unit"] = service.ask({"cmd": "info"}).get("lt_unit")
+        return reply
     finally:
         service.close()
 
@@ -332,7 +335,9 @@ def verify(args):
         out = f"{folder}/verify/{tag}"
         started = time.monotonic()
         reply = draw_once(args.host, args.build, folder, {"cmd": "rt_frames", "n": n, "count": 1, "warm": warm,
-                                                           "last": 1}, out=f"{out}/raw")
+                                                           "last": 1}, env=args.set, out=f"{out}/raw")
+        if unit_line(reply):
+            say("    " + unit_line(reply))
         ssh(args.host, f"mv {shlex.quote(reply['pictures'][-1]['png'])} ~/{out}/frame_{n:05d}.png")
         return reply, time.monotonic() - started
 
@@ -368,6 +373,19 @@ def verify(args):
     # 5. a change's reach from a checkpoint: the change's exact frames against a try's, by the frames since it
     if args.change:
         checkpoint_reach(args, folder, replay, last)
+    # 6. the light-list unit (--unit): every list it built the recorded one, and a second play from the start in the
+    # same replay too (none of the first play's inputs reaching the second's lists)
+    if args.unit:
+        service = open_service(args.host, args.build, folder, args.set)
+        try:
+            for _ in range(2):
+                service.ask({"cmd": "rt_frames", "n": last, "count": 1, "warm": -1, "last": 1})
+            info = service.ask({"cmd": "info"}).get("lt_unit") or {}
+        finally:
+            service.close()
+        same = bool(info.get("loaded")) and info.get("rebuilt", 0) > 0 and not info.get("differ")
+        say(f"rt2_bench: UNIT (two plays from the start in one replay): {unit_line({'lt_unit': info})}")
+        ok &= same
     say("rt2_bench: VERIFY " + ("PASS: the replay draws the game's frames, the same every time" if ok else "FAIL"))
     return 0 if ok else 1
 
@@ -554,6 +572,69 @@ def edited_kernels(args):
     return [f"HALO_LT_SHADER_DIR={service_home(args.host)}/{remote}"]
 
 
+UNIT_SOURCES = [ROOT / "port/linux/game/lt_lights_build.c", ROOT / "port/linux/game/lt_lights.h",
+                ROOT / "port/linux/game/lt_lights_inputs.h"]
+
+# on the rig: the working tree's lt_lights_build.c compiled as the build's linux_lt_unit compiles it (its commands,
+# ninja -t commands), linked with the build's musl objects, into the folder the sources came to
+UNIT_COMPILE = r"""
+set -e
+tree=~/goat-rig/builds/$1; out=~/$2
+cd "$tree"
+[ -f build/linux_x86_64/lt_lights_unit.so ] || { echo "no lt_lights_unit.so in $1 (goat-rig build <ref> linux_lt_unit)" >&2; exit 5; }
+ninja -t commands build/linux_x86_64/lt_lights_unit.so | grep -E 'lt_lights_build\.c\.o$|-shared .*lt_lights_unit\.so' |
+  sed -e "s#port/linux/game/lt_lights_build.c#$out/lt_lights_build.c#" \
+      -e "s#-MMD -MF [^ ]*##" \
+      -e "s#-o build/linux_x86_64/lt_unit/lt_lights_build.c.o#-o $out/lt_lights_build.c.o#" \
+      -e "s#-o build/linux_x86_64/lt_lights_unit.so#-o $out/lt_lights_unit.so.part#" \
+      -e "s#build/linux_x86_64/lt_unit/lt_lights_build.c.o#$out/lt_lights_build.c.o#" > "$out/commands.sh"
+bash "$out/commands.sh"
+mv "$out/lt_lights_unit.so.part" "$out/lt_lights_unit.so"
+"""
+
+
+def unit_env(args):
+    """--unit: the light list built again in the replay from the recording's inputs by the working tree's
+    lt_lights_build.c (compiled on the rig in about a second, into ~/goat-rig/rt2-bench/unit/<its sources' hash>,
+    reused while they are the same); the setting that loads it. --unit built: the build's own lt_lights_unit.so"""
+    unit = getattr(args, "unit", None)
+    if not unit:
+        return []
+    if rt2_clips.windows(args.host):
+        raise SystemExit("rt2_bench: --unit runs on omarchy or the 5900X (the replay's unit is Linux's)")
+    tree = rt2_scorecard.build_folder(args.build)
+    if unit == "built":
+        return [f"HALO_LT_UNIT={service_home(args.host)}/goat-rig/builds/{tree}/build/linux_x86_64/lt_lights_unit.so"]
+    digest = hashlib.sha256(tree.encode())
+    for path in UNIT_SOURCES:
+        digest.update(path.name.encode() + b"\0" + path.read_bytes())
+    remote = f"{REMOTE}/unit/{digest.hexdigest()[:16]}"
+    started = time.monotonic()
+    if ssh(args.host, f"test -f ~/{remote}/lt_lights_unit.so && echo kept", check=False).strip() != "kept":
+        ssh(args.host, f"mkdir -p ~/{remote}")
+        subprocess.run(["rsync", "-a", *[str(p) for p in UNIT_SOURCES], f"{rt2_clips.rig_target(args.host)}:{remote}/"],
+                       check=True, capture_output=True)
+        result = subprocess.run(rt2_scorecard.ssh(args.host, "bash -s " + tree + " " + remote), input=UNIT_COMPILE,
+                                text=True, capture_output=True)
+        if result.returncode:
+            raise SystemExit(f"rt2_bench: lt_lights_build.c does not compile:\n{(result.stderr or result.stdout)[-2000:]}")
+        say(f"rt2_bench: the working tree's light-list unit built on {args.host} in {time.monotonic() - started:.1f} s")
+    return [f"HALO_LT_UNIT={service_home(args.host)}/{remote}/lt_lights_unit.so"]
+
+
+def unit_line(info):
+    """the replay's light-list unit's counts (info's lt_unit)"""
+    unit = (info or {}).get("lt_unit")
+    if not unit:
+        return None
+    if not unit.get("loaded"):
+        return f"the light-list unit {unit.get('path')} NOT loaded"
+    note = (f"{unit['differ']} other (the first at list {unit['first_differ']})" if unit["differ"] else
+            "every one the same as recorded")
+    return (f"light lists built again by the unit: {unit['rebuilt']} ({note}); {unit['as_recorded']} as recorded "
+            "(no inputs recorded with them)")
+
+
 def settings_from(path, given):
     values = {}
     if path:
@@ -631,6 +712,8 @@ def run(args):
         paths = [p for p in vulkan_lt_shaders.FOLDER.glob("*.*") if p.suffix != ".inc"]
         if args.settings:
             paths.append(Path(args.settings))
+        if args.unit == "tree":
+            paths += UNIT_SOURCES
         return tuple(sorted((str(p), p.stat().st_mtime_ns) for p in paths if p.exists()))
 
     service = None
@@ -665,6 +748,15 @@ def run(args):
                     time.sleep(0.25)
                     continue
                 t_compile = time.monotonic() - t0
+                if args.unit == "tree":
+                    try:
+                        args.set = [e for e in args.set if not e.startswith("HALO_LT_UNIT=")] + unit_env(args)
+                    except SystemExit as error:
+                        say(f"v{version}: {error}; the last version kept")
+                        if not args.watch:
+                            return 1
+                        time.sleep(0.25)
+                        continue
                 settings = settings_from(args.settings, args.set)
                 env = [f"{k}={v}" for k, v in settings.items()]
                 if not args.built_in:
@@ -692,6 +784,8 @@ def run(args):
                                  **({} if args.built_in else {"dir": f"{home}/{remote}/k"})})
                     applied = given
                     reply = service.ask(request)
+                    if "HALO_LT_UNIT" in given:
+                        reply["lt_unit"] = service.ask({"cmd": "info"}).get("lt_unit")
                 else:
                     # (each try a replay of its own: exact, and the same every time)
                     reply = draw_once(args.host, args.build, folder, request, env)
@@ -708,6 +802,8 @@ def run(args):
                 say(f"v{version} [{', '.join(changed) or 'no kernel changed'}"
                     f"{'; ' + ' '.join(env[:-1] if not args.built_in else env) if settings else ''}]: "
                     f"{shown(stats, base)}")
+                if unit_line(reply):
+                    say("    " + unit_line(reply))
                 say(f"    {picture} (sha {digest}); edit to numbers {total:.1f} s: compile {t_compile:.1f}, "
                     f"replay {t_render:.1f} (its frames {reply['ms'] / 1000:.1f})")
                 if args.json:
@@ -1366,6 +1462,10 @@ def main():
     parser.add_argument("--kernels", action="store_true",
                         help="view/reference/terms/triage: the working tree's kernels (as run sends them), not the "
                              "build's own")
+    parser.add_argument("--unit", nargs="?", const="tree", choices=("tree", "built"),
+                        help="the light list built again from the recording's inputs by the working tree's "
+                             "lt_lights_build.c (compiled on the rig; run --watch: again on each saved change), or "
+                             "the build's own (--unit built); a recording made by a build with the inputs")
     parser.add_argument("--no-cache", action="store_true",
                         help="reference/terms/triage: every result drawn again, none kept (the cache: ~/goat-rig/"
                              "rt2-bench/<name>/cache, keyed by the recording, the replay's code, the kernels, the "
@@ -1373,6 +1473,8 @@ def main():
     args = parser.parse_args()
     if args.what in ("view", "reference", "terms", "triage"):
         args.set = [*args.set, *edited_kernels(args)]
+    if args.what in ("verify", "run", "view", "reference", "terms", "triage"):
+        args.set = [*args.set, *unit_env(args)]
     return {"record": record, "verify": verify, "run": run, "view": view, "reference": reference, "terms": terms,
             "triage": triage}[args.what](args)
 
