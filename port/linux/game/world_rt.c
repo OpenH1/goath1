@@ -1173,7 +1173,7 @@ static long world_rt_staged_counts[3];
 static float world_rt_staged_radiance[3];
 /* (measuring) each definition's lamps placed and their power (luminance by
 area), summed over the frames */
-static struct { long definition, count; double power; } world_rt_lamp_shares[32];
+static struct { long definition, count; double power, area; } world_rt_lamp_shares[32];
 
 /* a node's lamps (its instance's transform this frame) onto the frame's */
 static void world_rt_lamps_placed(struct world_rt_definition const *definition, short node,
@@ -1270,6 +1270,7 @@ static void world_rt_lamps_placed(struct world_rt_definition const *definition, 
 				world_rt_lamp_shares[share].count++;
 				world_rt_lamp_shares[share].power += (0.2126 * r[0] + 0.7152 * r[1] + 0.0722 * r[2]) * 0.5 *
 					sqrt(c[0] * c[0] + c[1] * c[1] + c[2] * c[2]);
+				world_rt_lamp_shares[share].area += 0.5 * sqrt(c[0] * c[0] + c[1] * c[1] + c[2] * c[2]);
 			}
 		}
 		world_rt.lamp_count++;
@@ -1850,10 +1851,14 @@ void world_rt_frame(unsigned long frame)
 				for (share = 0; share < 32 && world_rt_lamp_shares[share].count; share++)
 					total += world_rt_lamp_shares[share].power;
 				for (share = 0; share < 32 && world_rt_lamp_shares[share].count; share++)
-					printf("world ao: object lamps of %s: %.1f a frame, %.4f of their power\n",
+					printf("world ao: object lamps of %s: %.1f a frame, %.4f of their power (%.5f luminance x area, "
+						"%.5f area a frame: radiance %.4f)\n",
 						world_rt_source_name(world_rt_lamp_shares[share].definition),
 						(double)world_rt_lamp_shares[share].count / 600.0,
-						total > 0.0 ? world_rt_lamp_shares[share].power / total : 0.0);
+						total > 0.0 ? world_rt_lamp_shares[share].power / total : 0.0,
+						world_rt_lamp_shares[share].power / 600.0, world_rt_lamp_shares[share].area / 600.0,
+						world_rt_lamp_shares[share].area > 0.0 ?
+							world_rt_lamp_shares[share].power / world_rt_lamp_shares[share].area : 0.0);
 				memset(world_rt_lamp_shares, 0, sizeof(world_rt_lamp_shares));
 			}
 			memset(world_rt_staged_counts, 0, sizeof(world_rt_staged_counts));

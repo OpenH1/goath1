@@ -164,7 +164,7 @@ python3 tools/rt2_bench.py triage --moment a50_shields --build local/my-branch -
                                    # the DENOISER's history cut, DATA/LOOK (reference vs classic), FIRST LOOK AT
 python3 tools/rt2_bench.py view cut_share,history,cut,grad_change --region ...   # the denoiser's decisions (9 s)
 python3 tools/rt2_bench.py reference --region ...  # the converged picture, error/bias pictures and numbers
-python3 tools/rt2_bench.py terms --region ...      # sun, sky, lights, flashlight, solved lamps, object lamps, bounce
+python3 tools/rt2_bench.py terms --region ...      # sun, sky, dome, lights, flashlight, solved lamps, object lamps, bounce
 ```
 An ESTIMATOR answer (realtime off the reference by more than its noise) is the shortcuts': `view` says what the
 denoiser cut, `run --set HALO_LT_REUSE=0` / `HALO_LT_INDIRECT=nocache` which shortcut moves it. A DATA/LOOK answer
