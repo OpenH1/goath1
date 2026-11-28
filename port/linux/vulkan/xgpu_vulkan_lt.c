@@ -1118,8 +1118,15 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 	struct lt_params params;
 	int32_t rectangle[4];
 	int axis, light, start;
+	/* (the mode in effect: HALO_LT_E1's, or, not given, the game's light
+	lists' (display.ray_traced_lighting's shipping configuration: the
+	denoised pass), never the setting's unread -2: tested as lt.mode, that
+	ran the shipping pass as "accumulate", its history counted up to 2^20
+	frames and no denoiser, so a light that went stayed in it for hundreds of
+	frames) */
+	int mode = xgpu_vulkan_lt_mode();
 
-	if (!xgpu_vulkan_lt_mode())
+	if (!mode)
 		return 0;
 	/* (what the pass reads is not what it draws into) */
 	xgpu_vulkan_rt_bounce_set(NULL);
@@ -1129,7 +1136,7 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 	{
 		(void)xgpu_vulkan_pipeline_prepare(&lt.pass);
 		/* (the denoiser's made with it, so that both are there together) */
-		if (lt.mode == XGPU_VULKAN_LT_DENOISE)
+		if (mode == XGPU_VULKAN_LT_DENOISE)
 			xgpu_vulkan_denoise_prepare();
 		lt.prepared = 1;
 	}
@@ -1182,8 +1189,8 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 
 		if (unshadowed < 0)
 			unshadowed = getenv("HALO_LT_E1_UNSHADOWED") && strcmp(getenv("HALO_LT_E1_UNSHADOWED"), "0");
-		params.control[0] = lt.mode == XGPU_VULKAN_LT_RAW || lt.mode == XGPU_VULKAN_LT_DENOISE ? 1 :
-			lt.mode == XGPU_VULKAN_LT_E2 ? LT_E2_CAP : LT_ACCUMULATE_CAP;
+		params.control[0] = mode == XGPU_VULKAN_LT_RAW || mode == XGPU_VULKAN_LT_DENOISE ? 1 :
+			mode == XGPU_VULKAN_LT_E2 ? LT_E2_CAP : LT_ACCUMULATE_CAP;
 		params.control[1] = light;
 		params.control[2] = XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE;
 		params.control[3] = (unshadowed ? 0 : LT_VISIBILITY) | (start ? LT_RESET : 0);
@@ -1231,12 +1238,12 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 	indirect_frame.params_size = sizeof(params);
 	indirect_frame.control_offset = offsetof(struct lt_params, control);
 	indirect_frame.rectangle = rectangle;
-	indirect_frame.mode = lt.mode;
+	indirect_frame.mode = mode;
 	indirect_frame.cap = params.control[0];
 	indirect_frame.start = start;
 	indirect_frame.previous_valid = lt.previous_valid;
 	/* (ours the denoiser: the bounce counted in its one temporal stage) */
-	indirect_frame.fold = lt.mode == XGPU_VULKAN_LT_DENOISE && !xgpu_vulkan_dlss_lt_selected();
+	indirect_frame.fold = mode == XGPU_VULKAN_LT_DENOISE && !xgpu_vulkan_dlss_lt_selected();
 	diffuse = xgpu_vulkan_lt_indirect_draw(&indirect_frame);
 	if (!diffuse)
 		diffuse = lt.means[lt.current];
@@ -1245,7 +1252,7 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 	lt.final = lt_image(lt.final, XGPU_VULKAN_FORMAT_RGBA32F, size->width * (xgpu_vulkan_lt_indirect_on() ? 2 : 1),
 		size->height);
 	memset(&shared, 0, sizeof(shared));
-	if (lt.mode == XGPU_VULKAN_LT_DENOISE)
+	if (mode == XGPU_VULKAN_LT_DENOISE)
 	{
 		/* (the denoiser: this frame's sample and the last's, this frame's
 		inputs and the last's (before they are copied over), this frame's
