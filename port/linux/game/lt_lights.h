@@ -94,6 +94,7 @@ enum
 	XGPU_LT_LIGHT_SOURCE_SUN = 6,       /* low word: the sky's index << 8 | the light's */
 	XGPU_LT_LIGHT_SOURCE_FRAME = 7,     /* low word: the light's place this frame (UNSTABLE_ID) */
 	XGPU_LT_LIGHT_SOURCE_EMITTER = 8,   /* an EMITTER's (its high word's low 24 bits the set's generation) */
+	XGPU_LT_LIGHT_SOURCE_FIXTURE = 9,   /* a light fixture's (dynamic_lights.c): low word its object's handle */
 };
 
 /* 144 bytes. Positions in world units; directions unit length. */

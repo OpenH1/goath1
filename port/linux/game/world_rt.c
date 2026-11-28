@@ -42,6 +42,8 @@ as it changes, halo_world_rt_textures).
 int lt_lights_pass_on(void);
 /* (port/linux/game/world_proxies_game.c: a static placement the lightmaps hold, world_proxies.h) */
 int world_proxies_source_lightmapped(long id);
+/* (port/linux/game/dynamic_lights.c: a light fixture whose light is lit live, a spot of its own) */
+int dynamic_lights_fixture_lit(long id);
 
 #include <math.h>
 #include <stdio.h>
@@ -1721,8 +1723,9 @@ void world_rt_frame(unsigned long frame)
 			world_rt_transform(&world_rt.frames[0], instance->transform);
 			world_rt_pose(definition, owner, (unsigned long)object->id, instance->transform, &world_rt.poses[pose_count]);
 			instance->pad = (unsigned int)++pose_count;
-			/* (its lamps, on their nodes as posed) */
-			if (definition->lamp_count > 0 && kind == WORLD_RT_OBJECT)
+			/* (its lamps, on their nodes as posed; none of a light fixture
+			lit live: its light is its spot, its lens's glow that light seen) */
+			if (definition->lamp_count > 0 && kind == WORLD_RT_OBJECT && !dynamic_lights_fixture_lit(object->id))
 			{
 				float transform[3][4];
 				struct world_rt_source_shading shading;
@@ -1758,8 +1761,9 @@ void world_rt_frame(unsigned long frame)
 			if (instance)
 				world_rt_transform(&world_rt.frames[node_index], instance->transform);
 		}
-		/* (its lamps, on their nodes, moved with it) */
-		if (definition->lamp_count > 0 && kind != WORLD_RT_SHADOWLESS)
+		/* (its lamps, on their nodes, moved with it; as above, none of a
+		light fixture lit live) */
+		if (definition->lamp_count > 0 && kind != WORLD_RT_SHADOWLESS && !dynamic_lights_fixture_lit(object->id))
 		{
 			float transform[3][4];
 			struct world_rt_source_shading shading;

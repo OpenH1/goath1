@@ -72,6 +72,8 @@ structure's 3D BSP, from which a pixel finds its cluster
 #include "rasterizer/rasterizer_environment.h"
 #include "lt_lights.h"
 #include "render_enumerate.h"
+#include "memory/data.h"
+#include "tag_files/tag_files.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -507,6 +509,202 @@ static long dynamic_lights_sources(
 	return count;
 }
 
+/* ---------- the lights the lightmap baked, lit live
+
+A light tag has a radiosity intensity and colour (0xD4, 0xD8) that the game
+never reads: the lightmap tool's. The lights placed with the level's objects
+(a50's floodlights on their stands, the light fixtures' and scenery's lights
+at their markers) that have them were baked into the lightmap as spot or
+point lights, cone as the tag's (its runtime cosines); in play most are a
+lens flare alone (their datum not flagged dynamic: no light drawn). A level
+the ray-traced lighting lights live (lt_lights_real_sky: its lightmap
+dropped) would lose them; so there each becomes a light of the frame (after
+the game's and the own lights, in the room they leave): at the light's
+place along its forward, its cone the tag's (the pass's cone_ramp between
+the falloff and cutoff cosines), its power the radiosity colour x
+intensity (the lightmap tool's units, linear) x DYNAMIC_LIGHTS_BAKED_K
+(lt_lights.c takes the colour to linear: color^2.2 x its kind's k). Its
+reach: where its light on axis falls to DYNAMIC_LIGHTS_BAKED_LEAST. A light
+the game draws (flagged dynamic) is the game's already. Lit with the
+lightmap (the setting off, or a level that keeps its lightmap), none: the
+bake has them. The object a light is on gives no object lamps then
+(world_rt.c: its lens's glow is that light, seen). */
+
+/* the k: the lightmap tool's intensity to the pass's power, a50's
+floodlights' (levels\a50\devices\light_ground's "light ground spot":
+radiosity 1.8 white, cone cosines 0.94 and 0.5) pools on the back walls
+against the classic's lightmap (linear mean over each wall's pool: 0.37
+on the left, 0.55 on the right) */
+#define DYNAMIC_LIGHTS_BAKED_K 0.446f
+/* the light on axis (linear irradiance) where a light's reach ends, and the
+reach's bounds (world units) */
+#define DYNAMIC_LIGHTS_BAKED_LEAST 0.0005f
+#define DYNAMIC_LIGHTS_BAKED_REACH_LEAST 2.0f
+#define DYNAMIC_LIGHTS_BAKED_REACH_MOST 60.0f
+/* drawn while its reach comes this near the camera */
+#define DYNAMIC_LIGHTS_BAKED_RANGE 40.0f
+/* (lt_lights.c's k for a spot, and for a point, which it multiplies the
+colour's linear by: a point's from its reach, so the baked lights are
+spots, a point one a spot with no cone) */
+#define DYNAMIC_LIGHTS_BAKED_SPOT_K 1.009f
+#define DYNAMIC_LIGHTS_BAKED_OBJECTS 64
+
+/* (object_lights.c's light_datum, as far as its intensity scale) */
+struct dynamic_lights_light_datum
+{
+	struct datum_header header;
+	word flags;
+	long definition_index;
+	long rasterizer_light_index;
+	long marker;
+	long cluster_reference;
+	real_rgb_color color;
+	byte reserved20[0xC];
+	long object_index;
+	real_point3d position;
+	real_vector3d forward;
+	real_vector3d up;
+	real radius;
+	long parent_light_index;
+};
+/* (the light tag's, rt_lights_materials.c's rtlm_light_definition) */
+#define DYNAMIC_LIGHTS_TAG_COSINE_FALLOFF 0x1C
+#define DYNAMIC_LIGHTS_TAG_COSINE_CUTOFF 0x20
+#define DYNAMIC_LIGHTS_TAG_RADIOSITY_INTENSITY 0xD4
+#define DYNAMIC_LIGHTS_TAG_RADIOSITY_COLOR 0xD8
+#define DYNAMIC_LIGHTS_LIGHT_TAG 0x6C696768 /* 'ligh' */
+extern struct data_array *light_data;
+
+/* the objects the frame's baked lights are on */
+static long dynamic_lights_baked_objects[DYNAMIC_LIGHTS_BAKED_OBJECTS];
+static int dynamic_lights_baked_object_count;
+
+/* whether the baked lights are lit live this frame (lt_lights_real_sky) */
+static boolean dynamic_lights_baked_live(void)
+{
+	return lt_lights_pass_on() && lt_lights_real_sky();
+}
+
+/* whether an object carries a light the lightmap baked, lit live (world_rt.c:
+its lamps, its lens's glow, are then none: the light is its light) */
+int dynamic_lights_fixture_lit(long id)
+{
+	int index;
+
+	if (id == NONE || !dynamic_lights_baked_live())
+		return FALSE;
+	for (index = 0; index < dynamic_lights_baked_object_count; index++)
+	{
+		if (dynamic_lights_baked_objects[index] == id)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+static long dynamic_lights_fixtures(
+	long count)
+{
+	static void const *logged_scenario;
+	struct data_iterator iterator;
+	struct dynamic_lights_light_datum const *light;
+	boolean logging = FALSE;
+
+	dynamic_lights_baked_object_count = 0;
+	if (!dynamic_lights_baked_live() || !light_data)
+		return count;
+	/* (debug.dynamic_lights_log: each one, once a map) */
+	if (logged_scenario != (void const *)global_scenario_try_and_get())
+	{
+		logged_scenario = global_scenario_try_and_get();
+		logging = config_boolean("debug.dynamic_lights_log") != 0;
+	}
+	data_iterator_new(&iterator, light_data);
+	while ((light = (struct dynamic_lights_light_datum const *)data_iterator_next(&iterator)) != NULL)
+	{
+		char const *definition = (char const *)tag_get(DYNAMIC_LIGHTS_LIGHT_TAG, light->definition_index);
+		struct halo_dynamic_light *out;
+		short clusters[MAXIMUM_CLUSTERS_PER_STRUCTURE];
+		short cluster_count;
+		struct location location;
+		real_vector3d to;
+		real_rgb_color color;
+		float intensity, inner, outer, power[3], strongest, reach;
+		int channel;
+
+		if (!definition)
+			continue;
+		memcpy(&intensity, definition + DYNAMIC_LIGHTS_TAG_RADIOSITY_INTENSITY, sizeof(intensity));
+		memcpy(&color, definition + DYNAMIC_LIGHTS_TAG_RADIOSITY_COLOR, sizeof(color));
+		memcpy(&inner, definition + DYNAMIC_LIGHTS_TAG_COSINE_FALLOFF, sizeof(inner));
+		memcpy(&outer, definition + DYNAMIC_LIGHTS_TAG_COSINE_CUTOFF, sizeof(outer));
+		if (logging && intensity > 0.0f)
+			platform_log("dynamic lights: baked light %s (%08lx, flags %x, object %08lx type %d) at %.2f %.2f %.2f "
+				"forward %.2f %.2f %.2f: radiosity %.3f x %.3f %.3f %.3f, cone %.3f %.3f, radius %.2f",
+				tag_get_name(light->definition_index), (unsigned long)iterator.datum_index, (unsigned)light->flags,
+				(unsigned long)light->object_index, light->object_index != NONE && object_try_and_get(light->object_index) ?
+				(int)((struct object_datum *)object_try_and_get(light->object_index))->object.type : -1,
+				(double)light->position.x, (double)light->position.y, (double)light->position.z,
+				(double)light->forward.i, (double)light->forward.j, (double)light->forward.k, (double)intensity,
+				(double)color.red, (double)color.green, (double)color.blue, (double)inner, (double)outer,
+				(double)light->radius);
+		/* (one the game draws: the game's light already) */
+		if (TEST_FLAG(light->flags, 0) || !(intensity > 0.0f) || !(intensity < 1.0e6f) ||
+			light->parent_light_index != NONE)
+			continue;
+		if (light->object_index != NONE && dynamic_lights_baked_object_count < DYNAMIC_LIGHTS_BAKED_OBJECTS)
+			dynamic_lights_baked_objects[dynamic_lights_baked_object_count++] = light->object_index;
+		if (count >= MAXIMUM_LIGHTS_PER_WINDOW)
+			continue;
+		power[0] = color.red * intensity * DYNAMIC_LIGHTS_BAKED_K;
+		power[1] = color.green * intensity * DYNAMIC_LIGHTS_BAKED_K;
+		power[2] = color.blue * intensity * DYNAMIC_LIGHTS_BAKED_K;
+		strongest = MAX(power[0], MAX(power[1], power[2]));
+		if (!(strongest > 0.0f))
+			continue;
+		reach = sqrtf(strongest / DYNAMIC_LIGHTS_BAKED_LEAST);
+		reach = reach < DYNAMIC_LIGHTS_BAKED_REACH_LEAST ? DYNAMIC_LIGHTS_BAKED_REACH_LEAST :
+			reach > DYNAMIC_LIGHTS_BAKED_REACH_MOST ? DYNAMIC_LIGHTS_BAKED_REACH_MOST : reach;
+		vector_from_points3d(&render.camera.position, &light->position, &to);
+		if (magnitude3d(&to) - reach > DYNAMIC_LIGHTS_BAKED_RANGE)
+			continue;
+		scenario_location_from_point(&location, &light->position);
+		if (location.cluster_index == NONE)
+			continue;
+		cluster_count = door_portals_clusters_in_sphere(location.cluster_index, &light->position, reach,
+			MAXIMUM_CLUSTERS_PER_STRUCTURE, clusters);
+		out = &dynamic_lights.lights[count];
+		out->position[0] = light->position.x;
+		out->position[1] = light->position.y;
+		out->position[2] = light->position.z;
+		out->radius = reach;
+		/* (lt_lights.c takes the colour to linear and by the spot's k) */
+		for (channel = 0; channel < 3; channel++)
+			out->color[channel] = powf(power[channel] / DYNAMIC_LIGHTS_BAKED_SPOT_K, 1.0f / 2.2f);
+		out->axis[0] = light->forward.i;
+		out->axis[1] = light->forward.j;
+		out->axis[2] = light->forward.k;
+		/* (its cone as an own light's: scale (cos - outer), offset -scale
+		outer. One with no cone, a point, is left out: the pass's k for a
+		point follows its reach (lt_point_power_scale), not the bake's
+		units; a50's all have cones) */
+		if (!(outer > -1.0f && outer < 1.0f))
+			continue;
+		if (!(inner > outer + 0.001f) || inner > 1.0f)
+			inner = MIN(outer + 0.001f, 1.0f);
+		out->cone_scale = 1.0f / (inner - outer);
+		out->cone_offset = -out->cone_scale * outer;
+		out->flags = 0;
+		dynamic_lights.owners[count] = 0;
+		dynamic_lights.objects[count] = light->object_index;
+		dynamic_lights.keys[count] = ((unsigned long long)XGPU_LT_LIGHT_SOURCE_FIXTURE << 56) |
+			((unsigned long long)(unsigned long)iterator.datum_index & 0xffffffffull);
+		dynamic_lights.baked[count] = FALSE;
+		dynamic_lights_clusters(count, MIN(cluster_count, MAXIMUM_CLUSTERS_PER_STRUCTURE), clusters);
+		count++;
+	}
+	return count;
+}
+
 static void dynamic_lights_shadowed(long count);
 static void dynamic_lights_flashlights(long count);
 long dynamic_lights_bounce(struct halo_dynamic_light *lights, long count);
@@ -615,7 +813,7 @@ void dynamic_lights_submit(
 	unlit = render_enumerate_unlit();
 	total = dynamic_lights_copies(count);
 	if (!unlit)
-		total = dynamic_lights_sources(total);
+		total = dynamic_lights_fixtures(dynamic_lights_sources(total));
 	dynamic_lights_shadowed(total);
 	if (lt_lights_pass_on())
 		dynamic_lights_flashlights(count);

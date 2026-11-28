@@ -1601,6 +1601,7 @@ enum
 	XGPU_LT_LIGHT_SOURCE_SUN = 6,
 	XGPU_LT_LIGHT_SOURCE_FRAME = 7,
 	XGPU_LT_LIGHT_SOURCE_EMITTER = 8,
+	XGPU_LT_LIGHT_SOURCE_FIXTURE = 9,
 };
 /* (each member as lt_lights.h describes it) */
 struct xgpu_stream_lt_light
