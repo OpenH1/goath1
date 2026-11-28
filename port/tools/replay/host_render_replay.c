@@ -1711,6 +1711,10 @@ static void play_again(void)
 	play.offset = start - recording.records[0].position;
 	play.index = 0;
 	next_record = 0;
+	/* (the backend's temporal passes begun again, as at the stream's start:
+	their histories are the frames played since, as the game's were) */
+	if (platform->shaders_reload)
+		platform->shaders_reload(NULL);
 }
 
 /* the frame just played (frame n: the records played to its end) to be
@@ -2870,6 +2874,9 @@ static int inspected_take(uint32_t n)
 
 /* (HALO_REPLAY_SEEK_SKIPS=0: every frame on the way played whole) */
 static int seek_skips = 1;
+/* the frames played whole before the one asked for (SEEK_WHOLE_FRAMES; an
+rt_frames's "warm"): the rest before them without their GPU work */
+static uint32_t seek_whole = SEEK_WHOLE_FRAMES;
 /* the play is not where the recording had it (a cost played a frame again
 after itself): the next frame is played from the start */
 static int play_inexact;
@@ -2922,7 +2929,7 @@ static const char *frame_play_as(uint32_t n, int ids, int draws, int played)
 	recent_from = !recent_keep ? UINT32_MAX : n >= RECENT ? n - (RECENT - 1) : 0;
 	inspect.frame = n;
 	{
-		uint32_t whole = n > SEEK_WHOLE_FRAMES ? n - SEEK_WHOLE_FRAMES : 0;
+		uint32_t whole = n > seek_whole ? n - seek_whole : 0;
 
 		/* (the pictures kept only of frames drawn whole) */
 		if (recent_from != UINT32_MAX && recent_from < whole && next_record < recording.frames[whole].first)
@@ -3191,7 +3198,9 @@ static void serve_info(struct text *text)
 	if (platform->cost_begin && platform->cost_end)
 		TEXT(text, ",\"cost\",\"cpu_cost\"");
 	if (platform->shaders_reload)
-		TEXT(text, ",\"reload\"");
+		TEXT(text, ",\"reload\",\"rt_set\"");
+	if (platform->shaders_reload && platform->read_target)
+		TEXT(text, ",\"rt_frames\"");
 	TEXT(text, "]");
 	/* (the kinds of the driver's calls cost's "cpu" counts, if any) */
 	if (platform->calls_watch && platform->call_kinds && platform->call_kinds <= CPU_KINDS_MOST)
@@ -3450,6 +3459,32 @@ static int hold_shot_wanted(const struct request *request, uint32_t k)
 	return 0;
 }
 
+/* a held play of frame n (the k'th: hold.play from it), after frame n was played exactly: its picture (wanted),
+or NULL */
+static unsigned char *hold_play(uint32_t n, uint32_t k, int wanted, uint32_t *width, uint32_t *height)
+{
+	unsigned char *pixels;
+
+	hold.play = hold.reset ? k : k - 1;
+	frame_again(n);
+	play_inexact = 1;
+	inspect.frame = n;
+	inspect.pixels_wanted = wanted;
+	inspect.ids_wanted = 0;
+	hold.active = 1;
+	play_again_here = 1;
+	play_to(recording.frames[n].end);
+	sync_all();
+	play_again_here = 0;
+	hold.active = 0;
+	inspect.frame = UINT32_MAX;
+	pixels = inspect.pixels;
+	*width = inspect.width;
+	*height = inspect.height;
+	inspect.pixels = NULL;
+	return pixels;
+}
+
 /* {"cmd":"hold","n":N,"frames":F,"shots":[1,30,120],"dir":"<folder>","linear":true}: frame n held (hold, above)
 F plays in all, the shots' pictures kept: the first the frame as recorded, played exactly (with "reset": the
 first held play, its histories begun again) */
@@ -3507,23 +3542,7 @@ static void serve_hold(struct text *text, const struct request *request)
 		}
 		else
 		{
-			hold.play = hold.reset ? k : k - 1;
-			frame_again(n);
-			play_inexact = 1;
-			inspect.frame = n;
-			inspect.pixels_wanted = wanted;
-			inspect.ids_wanted = 0;
-			hold.active = 1;
-			play_again_here = 1;
-			play_to(recording.frames[n].end);
-			sync_all();
-			play_again_here = 0;
-			hold.active = 0;
-			inspect.frame = UINT32_MAX;
-			pixels = inspect.pixels;
-			width = inspect.width;
-			height = inspect.height;
-			inspect.pixels = NULL;
+			pixels = hold_play(n, k, wanted, &width, &height);
 			if (ring->error)
 				break;
 		}
@@ -3583,6 +3602,364 @@ static void serve_hold(struct text *text, const struct request *request)
 		(seconds_now() - started) * 1000.0);
 }
 
+/* ---------- the lighting workbench (tools/rt2_bench.py): rt_set, rt_reload, rt_frames */
+
+/* every picture kept let go, and the next frame played from the start: what was drawn before a reload or a
+setting's change is not what the frames draw now */
+static void pictures_forget(void)
+{
+	uint32_t index;
+
+	inspected_free(&kept);
+	for (index = 0; index < INSPECTED_KEPT; index++)
+		inspected_free(&inspected[index]);
+	for (index = 0; index < RECENT; index++)
+	{
+		free(recent[index].pixels);
+		recent[index].pixels = NULL;
+		recent[index].frame = UINT32_MAX;
+	}
+	play_inexact = 1;
+}
+
+/* "env": "VAR=value VAR2=value -VAR3": the replay's own environment set (-VAR: unset); NULL, or what is wrong */
+static const char *environment_set(const char *given, struct text *said)
+{
+	char word[1024];
+	int first = 1;
+
+	while (given && *given)
+	{
+		size_t length = 0;
+		char *equals;
+
+		while (*given == ' ' || *given == '\t' || *given == '\n')
+			given++;
+		while (*given && *given != ' ' && *given != '\t' && *given != '\n' && length + 1 < sizeof(word))
+			word[length++] = *given++;
+		word[length] = 0;
+		if (!length)
+			break;
+		equals = strchr(word, '=');
+		if (word[0] == '-' && !equals)
+		{
+#ifdef _WIN32
+			_putenv_s(word + 1, "");
+#else
+			unsetenv(word + 1);
+#endif
+		}
+		else if (equals && equals != word)
+		{
+			*equals = 0;
+#ifdef _WIN32
+			_putenv_s(word, equals + 1);
+#else
+			setenv(word, equals + 1, 1);
+#endif
+			*equals = '=';
+		}
+		else
+			return "env: VAR=value or -VAR, separated by spaces";
+		TEXT(said, first ? "" : ",");
+		text_string(said, word);
+		first = 0;
+	}
+	return NULL;
+}
+
+/* {"cmd":"rt_set","env":"HALO_LT_SUN=0 -HALO_LT_DROP"} and {"cmd":"rt_reload","dir":"<folder>","env":"..."}: the
+light pass's settings (its HALO_LT_* environment) changed and read again, and with rt_reload its kernels read again
+from the folder's SPIR-V (reload's); the next frame is played from the start */
+static void serve_rt_set(struct text *text, const struct request *request, int kernels)
+{
+	const char *directory = request_string(request, "dir"), *error;
+	struct text said = { NULL, 0, 0 };
+
+	if (!platform->shaders_reload)
+	{
+		reply_error(text, "this backend has no light pass to set");
+		return;
+	}
+	if ((error = environment_set(request_string(request, "env"), &said)))
+	{
+		free(said.data);
+		reply_error(text, error);
+		return;
+	}
+	platform->shaders_reload(kernels ? directory : NULL);
+	pictures_forget();
+	TEXT(text, "{\"ok\":true,\"set\":[");
+	if (said.used)
+		text_add(text, said.data, said.used);
+	TEXT(text, "],\"dir\":");
+	if (kernels && directory)
+		text_string(text, directory);
+	else
+		TEXT(text, "null");
+	TEXT(text, "}");
+	free(said.data);
+}
+
+static int float_compare(const void *a, const void *b)
+{
+	float x = *(const float *)a, y = *(const float *)b;
+
+	return x < y ? -1 : x > y;
+}
+
+/* tools/rt2_stability.py's percentile: the sorted values' [p/100 x count] */
+static double percentile_of(float *values, size_t count, double p)
+{
+	size_t at;
+
+	if (!count)
+		return 0.0;
+	qsort(values, count, sizeof(float), float_compare);
+	at = (size_t)(p / 100.0 * (double)count);
+	return values[at < count ? at : count - 1];
+}
+
+/* the measured plays' luminance (the presented picture's sRGB decoded to linear light, Rec. 709's weights:
+tools/rt2_stability.py's), each pixel's sum and sum of squares */
+struct rt_measure
+{
+	uint32_t width, height, plays, first, last;
+	double *sum, *squares, rgb[3];
+	float lut[256];
+};
+
+static int rt_measure_add(struct rt_measure *measure, const unsigned char *bgra, uint32_t width, uint32_t height,
+	uint32_t k)
+{
+	size_t pixel, count = (size_t)width * height;
+
+	if (!measure->sum)
+	{
+		uint32_t index;
+
+		measure->width = width;
+		measure->height = height;
+		measure->sum = calloc(count, sizeof(double));
+		measure->squares = calloc(count, sizeof(double));
+		if (!measure->sum || !measure->squares)
+			return 0;
+		for (index = 0; index < 256; index++)
+			measure->lut[index] = (float)srgb_linear((unsigned char)index);
+		measure->first = k;
+	}
+	if (width != measure->width || height != measure->height)
+		return 0;
+	for (pixel = 0; pixel < count; pixel++)
+	{
+		double r = measure->lut[bgra[pixel * 4 + 2]], g = measure->lut[bgra[pixel * 4 + 1]],
+			b = measure->lut[bgra[pixel * 4]], luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+
+		measure->sum[pixel] += luminance;
+		measure->squares[pixel] += luminance * luminance;
+		measure->rgb[0] += r;
+		measure->rgb[1] += g;
+		measure->rgb[2] += b;
+	}
+	measure->plays++;
+	measure->last = k;
+	return 1;
+}
+
+/* the measures as ,"stats":{...}: the mean luminance and colour, the temporal standard deviation's p50 and p99
+(absolute, and relative to the pixel's mean where it is above 0.002), and each region's mean and its pixels'
+deviation's mean (absolute, and relative to the region's mean) */
+static void rt_measure_json(struct text *text, const struct rt_measure *measure, const struct request *request)
+{
+	size_t count = (size_t)measure->width * measure->height, pixel, relative_count = 0;
+	float *deviation = malloc(count * sizeof(float)), *relative = malloc(count * sizeof(float));
+	double plays = measure->plays, total = 0;
+	int region, regions = request_find(request, "regions") >= 0 ? request->number_count / 4 : 0;
+
+	if (!measure->plays || !deviation || !relative)
+	{
+		free(deviation);
+		free(relative);
+		return;
+	}
+	for (pixel = 0; pixel < count; pixel++)
+	{
+		double mean = measure->sum[pixel] / plays, variance = measure->squares[pixel] / plays - mean * mean;
+
+		deviation[pixel] = (float)sqrt(variance > 0.0 ? variance : 0.0);
+		total += mean;
+		if (mean > 0.002)
+			relative[relative_count++] = (float)(deviation[pixel] / mean);
+	}
+	text_printf(text, ",\"stats\":{\"plays\":[%u,%u],\"measured\":%u,\"mean\":%.6f,\"rgb\":[%.6f,%.6f,%.6f]",
+		measure->first, measure->last, measure->plays, total / (double)count, measure->rgb[0] / (plays * count),
+		measure->rgb[1] / (plays * count), measure->rgb[2] / (plays * count));
+	TEXT(text, ",\"regions\":[");
+	for (region = 0; region < regions; region++)
+	{
+		const double *box = &request->numbers[region * 4];
+		uint32_t x0 = box[0] > 0 ? (uint32_t)box[0] : 0, y0 = box[1] > 0 ? (uint32_t)box[1] : 0, x, y;
+		uint32_t x1 = (uint32_t)(box[0] + box[2]), y1 = (uint32_t)(box[1] + box[3]);
+		double sum = 0, deviations = 0;
+		size_t inside = 0;
+
+		x1 = x1 < measure->width ? x1 : measure->width;
+		y1 = y1 < measure->height ? y1 : measure->height;
+		for (y = y0; y < y1; y++)
+			for (x = x0; x < x1; x++)
+			{
+				pixel = (size_t)y * measure->width + x;
+				sum += measure->sum[pixel] / plays;
+				deviations += deviation[pixel];
+				inside++;
+			}
+		text_printf(text, "%s{\"box\":[%g,%g,%g,%g],\"pixels\":%zu,\"mean\":%.6f,\"std\":%.6f,\"relative_std\":%.6f}",
+			region ? "," : "", box[0], box[1], box[2], box[3], inside, inside ? sum / (double)inside : 0.0,
+			inside ? deviations / (double)inside : 0.0, sum > 0 ? deviations / sum : 0.0);
+	}
+	TEXT(text, "]");
+	if (measure->plays > 1)
+	{
+		double p50 = percentile_of(deviation, count, 50), p99 = percentile_of(deviation, count, 99);
+		double r50 = percentile_of(relative, relative_count, 50), r99 = percentile_of(relative, relative_count, 99);
+
+		text_printf(text, ",\"temporal_std\":{\"p50\":%.6f,\"p99\":%.6f,\"relative_p50\":%.6f,\"relative_p99\":%.6f}",
+			p50, p99, r50, r99);
+	}
+	TEXT(text, "}");
+	free(deviation);
+	free(relative);
+}
+
+/* {"cmd":"rt_frames","n":N,"count":30,"warm":8,"last":20,"regions":[x,y,w,h,...],"dir":"<folder>"} and, held,
+{"cmd":"rt_frames","n":N,"hold":120,...}: the frames n to n+count-1 played exactly, as recorded (the world, the
+camera and the lights moving as they did; the temporal passes' histories as the game's), from the recording's start,
+the warm frames before n played whole and the rest without their GPU work; or, with hold, frame n played exactly and
+held for hold plays in all (hold's, without its reset unless "reset"). The last plays measured (rt_measure_json); the
+last play's picture kept (and every "every"th), as rt_<n>_<k>.png in dir or inline */
+static void serve_rt_frames(struct text *text, const struct request *request)
+{
+	const char *directory = request_string(request, "dir"), *error = NULL;
+	int qoi = request_qoi(request), first = 1;
+	int inline_reply = request_true(request, "inline") || !directory, compress = request_true(request, "compress");
+	double number, count = 30, held = 0, warm = SEEK_WHOLE_FRAMES, last = 20, every = 0, started = seconds_now();
+	struct rt_measure measure;
+	uint32_t n, plays, k, measured_from;
+
+	memset(&measure, 0, sizeof(measure));
+	if (!request_number(request, "n", &number) || number < 0)
+	{
+		reply_error(text, "no frame (n)");
+		return;
+	}
+	n = (uint32_t)number;
+	request_number(request, "count", &count);
+	request_number(request, "hold", &held);
+	request_number(request, "warm", &warm);
+	request_number(request, "last", &last);
+	request_number(request, "every", &every);
+	plays = held >= 1 ? (uint32_t)held : (uint32_t)(count >= 1 ? count : 1);
+	if (plays > 100000 || (!held && (uint64_t)n + plays > recording.frame_count))
+	{
+		reply_error(text, held ? "hold: 1 to 100000" : "past the recording's frames");
+		return;
+	}
+	if (!platform->read_target)
+	{
+		reply_error(text, "this backend reads no pictures");
+		return;
+	}
+	if (directory)
+		mkdir(directory, 0755);
+	measured_from = last >= 1 && (uint32_t)last < plays ? plays - (uint32_t)last + 1 : 1;
+	/* (warm < 0: every frame before n played whole) */
+	seek_whole = warm < 0 ? UINT32_MAX : (uint32_t)warm;
+	hold.reset = request_true(request, "reset");
+	hold.active = 0;
+	/* (always from the start: the histories the game's, whatever was played before) */
+	play_inexact = 1;
+	text_printf(text, "{\"ok\":true,\"n\":%u,\"mode\":\"%s\",\"plays\":%u,\"warm\":%d", n, held ? "hold" : "frames",
+		plays, warm < 0 ? -1 : (int)warm);
+	TEXT(text, ",\"pictures\":[");
+	for (k = 1; k <= plays && !error; k++)
+	{
+		int wanted = k == plays || (every >= 1 && k % (uint32_t)every == 0), measured = k >= measured_from;
+		unsigned char *pixels = NULL;
+		uint32_t width = 0, height = 0;
+
+		if (k == 1 || !held)
+		{
+			/* (frame n+k-1 played exactly, after the one before it) */
+			uint32_t frame = held ? n : n + k - 1;
+
+			if (held && hold.reset)
+			{
+				if ((error = frame_play_as(n, 0, 0, 1)))
+					break;
+				pixels = hold_play(n, k, wanted || measured, &width, &height);
+			}
+			else
+			{
+				if ((error = frame_play_as(frame, 0, 0, 1)))
+					break;
+				pixels = kept.pixels;
+				width = kept.width;
+				height = kept.height;
+			}
+		}
+		else
+			pixels = hold_play(n, k, wanted || measured, &width, &height);
+		if (ring->error)
+			error = "the stream stopped";
+		if (!pixels)
+		{
+			if (!error && (wanted || measured))
+				error = "a play's picture was not read";
+			continue;
+		}
+		if (measured && !rt_measure_add(&measure, pixels, width, height, k))
+			error = "the plays' pictures differ in size";
+		if (wanted)
+		{
+			char path[4096];
+
+			text_printf(text, "%s{\"k\":%u,\"frame\":%u", first ? "" : ",", k, held ? n : n + k - 1);
+			first = 0;
+			if (inline_reply)
+				picture_inline(text, pixels, width, height, qoi, compress);
+			else
+			{
+				snprintf(path, sizeof(path), "%s/rt_%u_%u.%s", directory, n, k, qoi ? "qoi" : "png");
+				if (picture_write(pixels, width, height, qoi, path))
+				{
+					TEXT(text, qoi ? ",\"qoi\":" : ",\"png\":");
+					text_string(text, path);
+				}
+			}
+			TEXT(text, "}");
+		}
+		if (pixels != kept.pixels)
+			free(pixels);
+	}
+	seek_whole = SEEK_WHOLE_FRAMES;
+	if (held)
+		play_inexact = 1;
+	if (error)
+	{
+		free(measure.sum);
+		free(measure.squares);
+		text->used = 0;
+		reply_error(text, error);
+		return;
+	}
+	TEXT(text, "]");
+	rt_measure_json(text, &measure, request);
+	text_printf(text, ",\"width\":%u,\"height\":%u,\"ms\":%.1f}", measure.width, measure.height,
+		(seconds_now() - started) * 1000.0);
+	free(measure.sum);
+	free(measure.squares);
+}
+
 /* {"cmd":"reload","dir":"<folder>"}: the backend's kernels read again from the folder's files (the one it read
 from already, without "dir") as the next play begins; that play's history begins again */
 static void serve_reload(struct text *text, const struct request *request)
@@ -3595,6 +3972,7 @@ static void serve_reload(struct text *text, const struct request *request)
 		return;
 	}
 	platform->shaders_reload(directory);
+	pictures_forget();
 	TEXT(text, "{\"ok\":true,\"dir\":");
 	if (directory)
 		text_string(text, directory);
@@ -4634,6 +5012,12 @@ static int serve(void)
 			serve_hold(&reply, request);
 		else if (!strcmp(command, "reload"))
 			serve_reload(&reply, request);
+		else if (!strcmp(command, "rt_set"))
+			serve_rt_set(&reply, request, 0);
+		else if (!strcmp(command, "rt_reload"))
+			serve_rt_set(&reply, request, 1);
+		else if (!strcmp(command, "rt_frames"))
+			serve_rt_frames(&reply, request);
 		else if (!strcmp(command, "quit"))
 			break;
 		else

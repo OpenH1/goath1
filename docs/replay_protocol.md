@@ -209,6 +209,58 @@ kernel already made is not compiled again. `tools/rt2_scorecard.py shader`
 compiles the GLSL, copies it and asks for this. Only where `capabilities`
 has `"reload"`.
 
+### rt_set, rt_reload, rt_frames: the lighting workbench
+
+Debug requests for the ray-traced lighting's workbench (`tools/rt2_bench.py`), where `capabilities` has
+`"rt_set"` and `"rt_frames"`: a recording's frames drawn again with the light pass's kernels or settings
+changed, without the game, and measured.
+
+```json
+{"cmd": "rt_set", "env": "HALO_LT_SUN=0 HALO_LT_KIND_SCALE=sun=0.5 -HALO_LT_DROP"}
+{"ok": true, "set": ["HALO_LT_SUN=0", "HALO_LT_KIND_SCALE=sun=0.5", "-HALO_LT_DROP"], "dir": null}
+{"cmd": "rt_reload", "dir": "/abs/spv", "env": "HALO_LT_RESTIR=0"}
+{"ok": true, "set": ["HALO_LT_RESTIR=0"], "dir": "/abs/spv"}
+```
+
+`rt_set` sets the service's own environment (`VAR=value`; `-VAR` unsets it; separated by spaces), and the light
+pass, its bounce and its denoiser read their `HALO_LT_*` settings again (`xgpu_vulkan_lt_settings_generation`:
+those they read once and keep; a setting read only when the backend starts is not reached). `rt_reload` is that and
+`reload` at once: the kernels read again from `dir`'s SPIR-V. Either begins the pass's histories again and lets go
+of every picture kept, so the next frame is played from the recording's start. (`reload` itself now lets go of the
+pictures kept too.)
+
+A play from the recording's start begins the light pass's histories again too (its reservoirs, its table's frame
+before, its images' turns, the bounce's phase and images, the denoiser's), as a reload does. A fresh service's
+first play of a frame, every frame before played whole, is the game's frame bit for bit (a50_shields, 1280x720,
+`tools/rt2_bench.py verify`); a later play from the start in the same service is not yet: with the bounce on
+(`HALO_LT_INDIRECT` not 0) it still differs (about 20% of the pixels, by up to 50 of 255), so exact numbers come
+from a service of their own.
+
+```json
+{"cmd": "rt_frames", "n": 1331, "count": 30, "warm": 60, "last": 20, "regions": [600, 300, 64, 64], "inline": true}
+{"ok": true, "n": 1331, "mode": "frames", "plays": 30, "warm": 60,
+ "pictures": [{"k": 30, "frame": 1360, "png_base64": "..."}],
+ "stats": {"plays": [11, 30], "measured": 20, "mean": 0.0412, "rgb": [0.05, 0.04, 0.06],
+           "regions": [{"box": [600, 300, 64, 64], "pixels": 4096, "mean": 0.12, "std": 0.004, "relative_std": 0.033}],
+           "temporal_std": {"p50": 0.0003, "p99": 0.004, "relative_p50": 0.01, "relative_p99": 0.09}},
+ "width": 1280, "height": 720, "ms": 2210.4}
+```
+
+Frames `n` to `n + count - 1` played exactly as recorded (the camera, the objects and the lights moving as they
+did), always from the recording's start: the `warm` frames before `n` played whole (default 8; `-1`: every frame,
+the game's sequence exactly, so the temporal passes' histories are the game's) and the rest without their GPU work,
+as `frame`'s seek. With `"hold": H` instead, frame `n` played exactly and then held (as `hold` holds it, without its
+reset unless `"reset": true`) for H plays in all. The last play's picture is kept (and every `"every"`th), as
+`dir/rt_<n>_<k>.png` (`.qoi` with `"image": "qoi"`) or inline (`"compress"`).
+
+`stats` measures the last `last` plays (default 20), as `tools/rt2_stability.py` does: the presented picture's
+sRGB decoded to linear light, Rec. 709 luminance. `mean`: the plays' and pixels' mean luminance; `rgb`: the linear
+colour's means; `temporal_std`: each pixel's standard deviation over the plays, its p50 and p99, absolute and
+relative to the pixel's mean (where that is above 0.002), and its percentile is that tool's (the sorted values' at
+p/100 x count); `regions` (`[x, y, w, h, ...]` in pixels from the top-left): each one's mean, its pixels' deviation's
+mean (`std`) and that over its mean. Over a run of moving frames the deviation is the motion's as well as the
+noise's; a hold's is the noise's. No pixels are masked (the bench's moments hide the HUD).
+
 ### cost
 
 ```json

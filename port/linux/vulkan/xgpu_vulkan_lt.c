@@ -386,6 +386,14 @@ draw, its count started again. */
 
 static char lt_shader_folder[1024];
 static int lt_shader_folder_read, lt_reload_asked;
+/* (the HALO_LT_* settings' generation: a reload's, so that the pass, the
+bounce and the denoiser read them again; the replay's "rt_set") */
+static unsigned lt_settings_generation = 1;
+
+unsigned xgpu_vulkan_lt_settings_generation(void)
+{
+	return __atomic_load_n(&lt_settings_generation, __ATOMIC_ACQUIRE);
+}
 
 void xgpu_vulkan_lt_shaders_reload(const char *folder)
 {
@@ -394,6 +402,7 @@ void xgpu_vulkan_lt_shaders_reload(const char *folder)
 		snprintf(lt_shader_folder, sizeof(lt_shader_folder), "%s", folder);
 		lt_shader_folder_read = 1;
 	}
+	__atomic_add_fetch(&lt_settings_generation, 1, __ATOMIC_ACQ_REL);
 	__atomic_store_n(&lt_reload_asked, 1, __ATOMIC_RELEASE);
 }
 
@@ -475,6 +484,16 @@ static int lt_shaders(void)
 	if (reloaded)
 	{
 		lt.made = lt.failed = lt.prepared = lt.previous_valid = 0;
+		/* (every history as at the stream's start, so that a replay played
+		from its start again draws what the game drew: the reservoirs, the
+		table's frame before, the images' turns) */
+		lt.reservoirs_valid = lt.emitter_reservoirs_valid = 0;
+		lt.current = lt.ids_current = lt.reservoir_current = 0;
+		lt.had_light = 0;
+		lt.since_start = 0;
+		lt.previous_rows = 0;
+		memset(lt.rows, 0, sizeof(lt.rows));
+		memset(lt.ids, 0, sizeof(lt.ids));
 		lt_generation++;
 	}
 	if (lt.made)
@@ -588,9 +607,10 @@ static void lt_settings(void)
 	const char *given;
 	int kind;
 
-	if (lt.settings_read)
+	if (lt.settings_read == (int)xgpu_vulkan_lt_settings_generation())
 		return;
-	lt.settings_read = 1;
+	lt.settings_read = (int)xgpu_vulkan_lt_settings_generation();
+	lt.only_ids = 0;
 	given = getenv("HALO_LT_ONLY");
 	lt.only = given && !strcmp(given, "flashlight") ? 1 : given && !strcmp(given, "others") ? 2 : 0;
 	/* (ids:<hex>,<hex>: those lights alone, by their id's low word, the
