@@ -41,8 +41,11 @@ nodes. Read only; render-only.
 #include "../src/xgpu_coverage.h"
 
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 #include <xtl.h>
+
+void platform_log(const char *format, ...);
 
 /* (cache_files.c) */
 boolean tag_index_is_group(long tag_index, long group_tag);
@@ -740,6 +743,10 @@ static int model_part_add(struct world_rt_source_mesh *mesh, struct model const 
 	else
 		kind = TEST_FLAG(((struct world_rt_shader_model const *)shader)->flags, _world_rt_shader_model_not_alpha_tested_bit) ?
 			WORLD_RT_SURFACES_OPAQUE : WORLD_RT_SURFACES_ALPHA_TESTED;
+	if (kind == WORLD_RT_SURFACES_TRANSPARENT && surfaces == WORLD_RT_SURFACES_OPAQUE && getenv("HALO_WORLD_RT_LAMPS_LOG"))
+		platform_log("lamp check: transparent part: %s type %d blend %d", tag_get_name(reference->shader.index),
+			(int)shader->base.type, shader_type_is_transparent(shader->base.type) ?
+			(int)((struct world_rt_shader_transparent const *)shader)->framebuffer_blend_function : -1);
 	if (kind != surfaces)
 		return TRUE;
 	if (!vertex_buffer->hardware_format || vertex_buffer->count <= 0 || !triangle_buffer->hardware_format ||
