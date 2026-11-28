@@ -39,6 +39,8 @@ const char *config_string(const char *name);
 int config_boolean(const char *name);
 double config_real(const char *name);
 unsigned long halo_gpu_settings_taken(void);
+/* (the ray-traced lighting on: lt_lights.c) */
+int lt_lights_pass_on(void);
 unsigned long long SDL_GetTicksNS(void);
 void platform_log(const char *format, ...);
 /* (render_enumerate.c's: the window drawn is a map's first frame's, unseen,
@@ -95,6 +97,12 @@ int world_ao_mode(void)
 		world_ao.rays = setting && !strcmp(setting, "ray_traced");
 		world_ao.mode = setting && (!strcmp(setting, "world") || world_ao.rays) ? WORLD_AO_PROXIES | WORLD_AO_FIELD : 0;
 	}
+	/* (the ray-traced lighting on traces the occlusion itself, in its
+	light: neither "world" nor "ray_traced" drawn, the setting kept for when
+	it is off again; its window and pre-pass are still made for it, as with
+	the setting "off": world_ao_window_begin) */
+	if (lt_lights_pass_on())
+		return 0;
 	/* (the backend's ray queries, once it has said: until then, and
 	without them, "world") */
 	if (world_ao.rays && halo_world_ao_ray_queries())
@@ -118,8 +126,6 @@ traced through the same scene) */
 int dynamic_lights_flashlight_shadows_on(void);
 /* (display.rt_reflections: rt_reflections.c) */
 int rt_reflections_on(void);
-/* (the ray-traced lighting on: lt_lights.c) */
-int lt_lights_pass_on(void);
 
 /* whether the frame's ray-traced scene is made where this setting is not:
 for display.shadows "ray_traced", the enhanced flashlight's shadow,

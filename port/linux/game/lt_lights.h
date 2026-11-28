@@ -169,6 +169,11 @@ lights are enhanced; HALO_LT_E1, where given, overrides it (debug). Off,
 nothing of the pass or of the light model it brings runs: the dynamic
 lights, the flashlight and the surfaces are master's */
 int lt_lights_pass_on(void);
+/* ... were display.ray_traced_lighting on (lighting) and display.dynamic_lights
+"enhanced" (enhanced 1, 0 not, -1 as the front end took it up): the same
+decision for the menus' choices before they are kept (menu_functions.c's
+rt_lighting_on, which dims the older ray-traced rows it supersedes) */
+int lt_lights_pass_chosen(int lighting, int enhanced);
 /* whether the level is lit live with the pass on: the lightmap dropped, the
 sky's lights, its dome and their bounce the static light (its BSP's
 clusters mostly exterior; HALO_LT_REAL_SKY overrides) */

@@ -18,6 +18,8 @@ display.ambient_occlusion is not "ray_traced": world_ao_rt_frame).
 
 const char *config_string(const char *name);
 unsigned long halo_gpu_settings_taken(void);
+/* (the ray-traced lighting on: lt_lights.c) */
+int lt_lights_pass_on(void);
 void platform_log(const char *format, ...);
 unsigned long long SDL_GetTicksNS(void);
 
@@ -47,7 +49,9 @@ int rt_shadows_on(void)
 		rt_shadows.read_at = changes;
 		rt_shadows.wanted = setting && !strcmp(setting, "ray_traced");
 	}
-	if (!rt_shadows.wanted)
+	/* (the ray-traced lighting on traces every light's shadows itself: the
+	setting kept, drawn as "classic" until it is off again) */
+	if (!rt_shadows.wanted || lt_lights_pass_on())
 		return 0;
 	if (halo_world_ao_ray_queries())
 		return 1;

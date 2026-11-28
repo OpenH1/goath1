@@ -5485,8 +5485,17 @@ static void dynamic_lights_read_settings(void)
 hands them over, and leaves the structure to them) */
 int halo_dynamic_lights_enhanced(void)
 {
+	return halo_dynamic_lights_enhanced_chosen(-1);
+}
+
+/* ... with display.dynamic_lights chosen "enhanced" (1) or not (0), as the
+menus have it before it is kept; -1 as the front end took it up */
+int halo_dynamic_lights_enhanced_chosen(int enhanced)
+{
 	dynamic_lights_read_settings();
-	return dynamic_lights.enhanced && !dynamic_lights.failed && device.gl_ready &&
+	if (enhanced < 0)
+		enhanced = dynamic_lights.enhanced;
+	return enhanced && dynamic_lights.allowed && !dynamic_lights.failed && device.gl_ready &&
 		xgpu_backend_capabilities.dynamic_lights;
 }
 
