@@ -144,7 +144,7 @@ in it land late and no frame is drawn there; console paths are relative to the r
 recorded once (`HALO_RENDER_RECORD`, the menu setting, the MCC import, 1/60 s frames), then the light pass's GLSL
 and `HALO_LT_*` settings tried on it by the replay, no game, with lossless pictures and numbers:
 ```sh
-python3 tools/rt2_bench.py record --moment a50_shields --build local/my-branch --at 46   # once: ~/goat-rig/rt2-bench/<moment>-<build>
+python3 tools/rt2_bench.py record --moment a50_shields --build local/my-branch --at 46   # refused if one exists (see below)
 python3 tools/rt2_bench.py verify --moment a50_shields --build local/my-branch           # must PASS: the game's frames, bit for bit
 python3 tools/rt2_bench.py run --moment a50_shields --build local/my-branch --watch \
   --region 600,300,80,80 --settings my.env                                              # edit lt/*.frag or my.env, save: numbers
@@ -168,8 +168,8 @@ replay's own requests are `rt_set`, `rt_reload`, `rt_frames` and `rt_view` (docs
 
 Triage first: before changing anything, ask the bench which kind of problem it is.
 ```sh
-python3 tools/rt2_bench.py record --moment a50_shields --build local/my-branch --setting-off --name a50-classic  # once
-python3 tools/rt2_bench.py triage --moment a50_shields --build local/my-branch --classic a50-classic \
+python3 tools/rt2_bench.py record --moment a50_shields --build local/my-branch --at 46 --setting-off  # refused if one exists
+python3 tools/rt2_bench.py triage --moment a50_shields --build local/my-branch --classic auto \
   --region 560,400,200,80          # per region: ESTIMATOR (realtime vs reference: bias, motion, noise), the terms,
                                    # the DENOISER's history cut, DATA/LOOK (reference vs classic), FIRST LOOK AT
 python3 tools/rt2_bench.py view cut_share,history,cut,grad_change --region ...   # the denoiser's decisions (9 s)
@@ -193,12 +193,32 @@ rebuild or recording draws only what it changes; `--no-cache` draws everything. 
 20 GB (`RT2_BENCH_CACHE_GB`), the least recently used dropped first, and nothing is kept with under 60 GB free.
 `--kernels` gives view, reference, terms and triage the working tree's kernels, as `run` has them.
 
-`--host bosgame` runs the same three on the Windows VM's RTX 3090: the Windows build and `windows_replay`
+**Shared recordings, one per moment and game side** (`tools/rt2_bench_hosts.py`): a recording holds what the game
+sent the renderer, so it stays valid for every build whose game side is the same. Recordings live in
+`~/goat-rig/rt2-bench/shared/<moment>[-classic][-at<s>]@<key>` on each rig, `<key>` a hash of the build's tree without
+the replay's side (port/linux/vulkan: the backend, the light pass's C and GLSL; xgpu_spirv.c; port/tools/replay;
+lt_lights_build.c, the light-list unit, once recordings carry LT_INPUTS), the docs and the workbench's Python, plus
+the moment's staging. Stale (a new key) when the game's C changes (lt_lights.c's gather, lt_emitters.c,
+dynamic_lights.c, xgpu_stream.h, lt_lights.h / lt_lights_inputs.h, the recorder), its assets or the staging.
+`record` REFUSES when a valid recording of the moment exists on any rig and says which (`--force-new REASON` records
+a new generation anyway, the reason logged on the rig and a row added to `~/dev/rt2-recordings.md`); `--name NAME`
+becomes a link to the shared one. `run`, `view`, `reference`, `terms`, `triage` and `verify` find it by `--moment`
+(`--at S` picks one to another second), never record, and copy it from another Linux rig when that beats waiting.
+Each record collects its rig's old shared recordings to a budget (least recently used first, none used within the
+hour; 60 GB free kept on the 5900X and omarchy).
+
+**`--host auto`**, the default but for `record` (omarchy): every rig probed at once (its `halo_replay`s, its GPU's
+load, a measuring run's lock, its owner's game: the 5900X only when its owner is not playing, checked again before
+every replay; the VM with no game in it) and the try sent to the least busy below its cap (`CAPS`), a rig with the
+recording first. `--host 5900x|omarchy|bosgame` still picks one.
+
+`--host bosgame` runs the same commands on the Windows VM's RTX 3090: the Windows build and `windows_replay`
 cross-compiled on omarchy, the recording made by `goat-rig @bosgame run` (its own data folder in the VM, the maps and
 the MCC import linked; the import copied from omarchy's once), the replay (`halo_replay.exe`) run in the VM, its
 recordings in the VM's `~/goat-rig/rt2-bench`. The VM is reached through omarchy and bosgame's host
 (`RT2_BOSGAME_ROUTE` changes the hops), where the replay holds bosgame's and winvm's locks shared; its scripts run
-in Git Bash there. Nothing starts while a game runs in the VM.
+in Git Bash there. Nothing starts while a game runs in the VM. `reference`, `terms` and `triage` work out their
+numbers with the VM's Python 3.12 and numpy, their pictures brought back as a tar stream through the hops.
 
 ## What it does for you
 

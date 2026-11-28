@@ -43,7 +43,7 @@ MAIN_BRANCHES = ("refs/heads/master", "refs/heads/dev")
 
 # The tests that need no build, the tests job's (in shards, tools/ci_test_shards.py)
 NO_BUILD_TESTS = [
-    "tools/test_host_units.py", "tools/test_host_pages.py", "tools/test_android_elf_alignment.py",
+    "tools/test_host_units.py", "tools/test_host_pages.py", "tools/test_android_elf_alignment.py", "tools/test_rt2_bench_hosts.py",
     "tools/test_guest_image_check.py", "tools/test_check_host_imports.py", "tools/test_host_syscall.py",
     "tools/test_guest_layout.py", "tools/test_linux_guest_build.py", "tools/test_build_errors.py",
     "tools/test_guest_toolchain.py", "tools/test_linux_port.py", "tools/test_join_page.py",
