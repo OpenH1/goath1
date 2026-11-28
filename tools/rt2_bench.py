@@ -817,14 +817,14 @@ job = json.loads(sys.argv[1])
 home = os.path.expanduser("~")
 def sha_file(path, blank=()):
     data = open(path, "rb").read()
+    blank = [b"\0" + w.encode() + b"\0" for w in blank if w]
     # (the linker's build id: the note's header (name size 4, id size 20, NT_GNU_BUILD_ID) and "GNU", then the id)
     note = b"\x04\x00\x00\x00\x14\x00\x00\x00\x03\x00\x00\x00GNU\x00"
     at = data.find(note)
-    if at >= 0 and blank:
+    if at >= 0 and blank is not None:
         data = data[:at + 16] + bytes(20) + data[at + 36:]
     for word in blank:
-        if word:
-            data = data.replace(word.encode(), b"\0" * len(word))
+        data = data.replace(word, b"\0" * len(word))
     return hashlib.sha256(data).hexdigest()
 def recording(folder):
     # (the recording's hash, kept beside it while its size, time and inode are the same)
@@ -848,9 +848,13 @@ def recording(folder):
 out = {"recordings": {f: recording(f) for f in job["folders"]}}
 replay = os.path.join(home, job["replay"])
 tree = replay.split("/build/")[0]
-label = subprocess.run(["git", "-C", tree, "rev-parse", "--short=12", "HEAD"], capture_output=True,
-                       text=True).stdout.strip()
-out["code"] = sha_file(replay, blank=[label] if re.fullmatch(r"[0-9a-f]{12}", label) else [""])
+# (the label is the commit configure.py last ran at, not always the tree's HEAD: any of the tree's recent commits'
+# that the binary holds, as a whole string)
+data = open(replay, "rb").read()
+commits = subprocess.run(["git", "-C", tree, "rev-list", "--max-count=2000", "HEAD"], capture_output=True,
+                         text=True).stdout.split()
+labels = [c[:12] for c in commits if (b"\0" + c[:12].encode() + b"\0") in data]
+out["code"] = sha_file(replay, blank=labels)
 def folder_hash(path):
     digest = hashlib.sha256()
     for name in sorted(os.listdir(path)):
