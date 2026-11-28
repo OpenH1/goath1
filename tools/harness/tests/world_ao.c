@@ -101,6 +101,12 @@ int rt_reflections_on(void)
 	return 0;
 }
 
+/* (display.ray_traced_lighting: lt_lights.c's, off here) */
+int lt_lights_pass_on(void)
+{
+	return 0;
+}
+
 /* the parts (their stubs' behaviour: the real ones are tested apart) */
 void world_scene_map_loaded(void) { scene_loads++; }
 void world_scene_map_unloaded(void) {}
