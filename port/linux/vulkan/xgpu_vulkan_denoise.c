@@ -73,8 +73,10 @@ depth's (a share of the distance off the pixel's plane), the shaded normal's
 
 _Static_assert(sizeof(struct xgpu_world_ao_pass) <= DENOISE_PARAMS_OFFSET, "the pass's uniforms before the parameters");
 _Static_assert(XGPU_WORLD_AO_INPUT_PRESENT == 0x400u && XGPU_SPIRV_GUIDES_MOTION_NONE == 0u &&
-	XGPU_SPIRV_GUIDES_MOTION_FLIP == 0x80008000u && XGPU_SPIRV_GUIDES_MOTION_RANGE == 0.25f,
-	"lt/denoise_common.glsl's constants");
+	XGPU_SPIRV_GUIDES_MOTION_FLIP == 0x80008000u, "lt/denoise_common.glsl's constants");
+/* (XGPU_SPIRV_GUIDES_MOTION_RANGE, 0.25 in lt/denoise_common.glsl too, is a
+float, and a comparison of floats is not an integer constant expression for
+every compiler (CI's clang refuses it): the two are kept alike by hand) */
 
 /* lt/denoise_common.glsl's, std140 */
 struct denoise_params
