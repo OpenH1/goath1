@@ -37,6 +37,7 @@ other value (and the Classic preset's "off") draws exactly as before.
 
 const char *config_string(const char *name);
 int config_boolean(const char *name);
+double config_real(const char *name);
 unsigned long halo_gpu_settings_taken(void);
 unsigned long long SDL_GetTicksNS(void);
 void platform_log(const char *format, ...);
@@ -718,7 +719,7 @@ map's load draws as many frames as it takes) */
 static unsigned long world_ao_seed_frame(void)
 {
 	static unsigned long counted, seed;
-	static long start = NONE;
+	static long start = -1;
 	long now;
 
 	if (config_real("debug.frame_time") <= 0.0)
