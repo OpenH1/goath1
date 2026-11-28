@@ -273,6 +273,12 @@ static struct
 	turn, the light after the suns' share (what the surfaces read); each
 	row's light's id this frame and the last (0 none), the rows' count */
 	struct xgpu_vulkan_image *table, *reservoirs[2], *final;
+	/* (the lighting at a reduced resolution, lt_scaled: the pre-pass's
+	inputs and guides at the lighting's pixels, the light the surfaces read
+	at the output's; the light the pass bound last; the kernels) */
+	struct xgpu_vulkan_image *low_inputs, *low_guides, *full, *bound;
+	struct xgpu_vulkan_pipeline_description scale_down, scale_up;
+	int scale, scale_said;
 	/* (the forward table: this frame's rows, the flashlight's among them,
 	then the frame before's: the one light model's forward receivers' and
 	the denoiser's deterministic gradients', xgpu_vulkan_lt_table_halves) */
@@ -491,6 +497,9 @@ VkShaderModule xgpu_vulkan_lt_kernel(const char *source)
 		{ "denoise_guide_fold.frag", lt_denoise_guide_fold_spirv, sizeof(lt_denoise_guide_fold_spirv) / sizeof(uint32_t) },
 		/* (the indirect light and reflections: xgpu_vulkan_lt_indirect.c) */
 		{ "e1_indirect.frag", lt_indirect_spirv, sizeof(lt_indirect_spirv) / sizeof(uint32_t) },
+		/* (the lighting at a reduced resolution: lt_scaled) */
+		{ "scale_down.frag", lt_scale_down_spirv, sizeof(lt_scale_down_spirv) / sizeof(uint32_t) },
+		{ "scale_up.frag", lt_scale_up_spirv, sizeof(lt_scale_up_spirv) / sizeof(uint32_t) },
 	};
 	size_t index;
 
@@ -564,10 +573,12 @@ denoiser restart theirs by the kernels' generation. */
 static void lt_restart(void)
 {
 	struct xgpu_vulkan_image **images[] = { &lt.means[0], &lt.means[1], &lt.previous, &lt.dump, &lt.table,
-		&lt.reservoirs[0], &lt.reservoirs[1], &lt.final, &lt.forward_table, &lt.emitter_visibility };
+		&lt.reservoirs[0], &lt.reservoirs[1], &lt.final, &lt.forward_table, &lt.emitter_visibility, &lt.low_inputs,
+		&lt.low_guides, &lt.full };
 	size_t index;
 
 	xgpu_vulkan_rt_bounce_set(NULL);
+	lt.bound = NULL;
 	xgpu_vulkan_lt_table_set(NULL);
 	for (index = 0; index < sizeof(images) / sizeof(images[0]); index++)
 		*images[index] = lt_image_free(*images[index]);
@@ -635,6 +646,19 @@ static int lt_shaders(void)
 	lt.pass.samples = 1;
 	lt.copy = lt.pass;
 	lt.copy.color_format = XGPU_VULKAN_FORMAT_RGBA16F;
+	/* (the lighting at a reduced resolution, lt_scaled: the inputs and
+	guides shrunk, two outputs; the light upsampled) */
+	memset(&lt.scale_down, 0, sizeof(lt.scale_down));
+	lt.scale_down.vertex_shader = lt.vertex;
+	lt.scale_down.pixel_shader = xgpu_vulkan_lt_kernel("scale_down.frag");
+	lt.scale_down.primitive_class = XGPU_VULKAN_CLASS_TRIANGLES;
+	lt.scale_down.color_mask = 15;
+	lt.scale_down.color_format = XGPU_VULKAN_FORMAT_RGBA32_UINT;
+	lt.scale_down.motion_format = XGPU_VULKAN_FORMAT_RGBA32_UINT;
+	lt.scale_down.motion_mask = 15;
+	lt.scale_down.samples = 1;
+	lt.scale_up = lt.pass;
+	lt.scale_up.pixel_shader = xgpu_vulkan_lt_kernel("scale_up.frag");
 	lt.made = 1;
 	/* (a reload's pipeline made now, so the next play draws with it) */
 	if (reloaded)
@@ -2013,7 +2037,7 @@ void xgpu_vulkan_lt_reshade(struct xgpu_vulkan_image *into, const struct xgpu_wo
 		previous_inputs, previous_guides, NULL);
 }
 
-int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_world_ao_pass *pass,
+static int lt_draw_at(struct xgpu_vulkan_image *inputs, const struct xgpu_world_ao_pass *pass,
 	const unsigned char *cells, const struct xgpu_dynamic_lights_block *block)
 {
 	const struct xgpu_vulkan_image_description *size;
@@ -2284,6 +2308,7 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 		}
 	}
 	xgpu_vulkan_rt_bounce_set(light_image);
+	lt.bound = light_image;
 	lt_state_log("after", inputs);
 	if (!lt.said)
 	{
@@ -2292,6 +2317,213 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 			size->width, size->height);
 	}
 	return 1;
+}
+
+/* ---------- the lighting at a reduced resolution: its cost follows the
+lighting's pixels, not the output's. Where the output has more than
+LT_SCALE_PIXELS pixels (4K's 8.3 million), the pass runs, as it is, at
+1/scale of the output each way (4K: 1920x1080), the scale the least whole
+number that brings it within: the pre-pass's inputs and guides shrunk to a
+texel each (lt/scale.frag's DOWN: the output pixel under the texel's middle,
+the same every frame, its distance measured again along the texel's own ray
+to that pixel's plane), the window's corners divided alike; then the light
+the surfaces read upsampled to the output's pixels on each pixel's own
+surface (lt/scale.frag's UP: a joint bilateral upsample by owner, plane and
+normals, both halves where it is wide). The shipping pass only
+(HALO_LT_E1=denoise, ours): the other modes, the reference's among them, and
+DLSS Ray Reconstruction stay at the output's. HALO_LT_SCALE=N (checking)
+takes N (1: the output's resolution, as before). */
+#define LT_SCALE_PIXELS 2600000u
+
+struct lt_scale_params
+{
+	int32_t other_corners[4];
+	int32_t sizes[4];
+};
+
+static int lt_scale_for(uint32_t width, uint32_t height)
+{
+	const char *given = getenv("HALO_LT_SCALE");
+	int scale = 1;
+
+	if (xgpu_vulkan_lt_mode() != XGPU_VULKAN_LT_DENOISE || xgpu_vulkan_dlss_lt_selected())
+		return 1;
+	if (given && *given)
+	{
+		scale = atoi(given);
+		return scale < 1 ? 1 : scale > 4 ? 4 : scale;
+	}
+	while (scale < 4 && (uint64_t)(width / scale) * (height / scale) > LT_SCALE_PIXELS)
+		scale++;
+	return scale;
+}
+
+/* one of lt/scale.frag's draws over rectangle of into */
+static void lt_scale_draw(struct xgpu_vulkan_image *into, const int32_t rectangle[4],
+	const struct xgpu_world_ao_pass *uniforms, const struct lt_scale_params *params,
+	const struct xgpu_vulkan_pipeline_description *pipeline, struct xgpu_vulkan_image *const *textures, int count,
+	uint8_t label)
+{
+	struct xgpu_vulkan_dynamic_state dynamic;
+	struct xgpu_vulkan_draw draw;
+	unsigned char *bytes;
+	int stage;
+
+	memset(&draw, 0, sizeof(draw));
+	draw.pipeline = xgpu_vulkan_pipeline_ready(pipeline);
+	if (!draw.pipeline)
+		return;
+	for (stage = 0; stage < count; stage++)
+	{
+		draw.textures[stage].kind = XGPU_VULKAN_IMAGE_2D;
+		draw.textures[stage].sampler = lt.sampler;
+		draw.textures[stage].image = textures[stage];
+	}
+	bytes = xgpu_vulkan_upload(192 * 16, 256, &draw.uniforms);
+	if (!bytes)
+		return;
+	memset(bytes, 0, 192 * 16);
+	memcpy(bytes, uniforms, sizeof(*uniforms));
+	memcpy(bytes + LT_PARAMS_OFFSET, params, sizeof(*params));
+	draw.constants = draw.uniforms;
+	memset(&dynamic, 0, sizeof(dynamic));
+	dynamic.viewport[0] = dynamic.scissor[0] = rectangle[0];
+	dynamic.viewport[1] = dynamic.scissor[1] = rectangle[1];
+	dynamic.viewport[2] = dynamic.scissor[2] = rectangle[2] - rectangle[0];
+	dynamic.viewport[3] = dynamic.scissor[3] = rectangle[3] - rectangle[1];
+	dynamic.depth_range[1] = 1.0f;
+	draw.dynamic = &dynamic;
+	draw.topology = XGPU_VULKAN_TOPOLOGY_TRIANGLES;
+	draw.count = 3;
+	draw.ambient_occlusion = 1;
+	draw.dynamic_lights = 1;
+	draw.kind[0] = LT_KIND;
+	draw.kind[1] = label;
+	xgpu_vulkan_set_target_views(into, NULL, 0, 1);
+	xgpu_vulkan_draw(&draw);
+}
+
+/* a window's corners (or a rectangle) at 1/scale, clamped to extent */
+static void lt_scale_corners(const int32_t from[4], int scale, uint32_t width, uint32_t height, int32_t to[4])
+{
+	int axis;
+
+	for (axis = 0; axis < 2; axis++)
+	{
+		int32_t extent = (int32_t)(axis ? height : width);
+		int32_t low = from[axis] < 0 ? 0 : from[axis] / scale;
+		int32_t high = from[axis + 2] < 0 ? 0 : (from[axis + 2] + scale - 1) / scale;
+
+		to[axis] = low > extent ? extent : low;
+		to[axis + 2] = high > extent ? extent : high;
+	}
+}
+
+/* the pass at 1/scale of the output (0: not drawn so, the caller draws it at the output's) */
+static int lt_scaled(struct xgpu_vulkan_image *inputs, const struct xgpu_world_ao_pass *pass,
+	const unsigned char *cells, const struct xgpu_dynamic_lights_block *block, int scale)
+{
+	const struct xgpu_vulkan_image_description *size = xgpu_vulkan_image_description(inputs);
+	struct xgpu_world_ao_pass low_pass = *pass;
+	struct xgpu_vulkan_image *full_guides = lt.guides, *light;
+	struct lt_scale_params params;
+	uint32_t width = (size->width + (uint32_t)scale - 1) / (uint32_t)scale;
+	uint32_t height = (size->height + (uint32_t)scale - 1) / (uint32_t)scale;
+	int32_t whole[4], rectangle[4];
+	int drawn, wide, half;
+
+	if (!lt_shaders() || !full_guides || !lt.scale_down.pixel_shader || !lt.scale_up.pixel_shader)
+		return 0;
+	if (!xgpu_vulkan_pipeline_ready(&lt.scale_down) || !xgpu_vulkan_pipeline_ready(&lt.scale_up))
+	{
+		(void)xgpu_vulkan_pipeline_prepare(&lt.scale_down);
+		(void)xgpu_vulkan_pipeline_prepare(&lt.scale_up);
+		return 0;
+	}
+	lt.low_inputs = lt_image(lt.low_inputs, XGPU_VULKAN_FORMAT_RGBA32_UINT, width, height);
+	lt.low_guides = lt_image(lt.low_guides, XGPU_VULKAN_FORMAT_RGBA32_UINT, width, height);
+	if (!lt.low_inputs || !lt.low_guides)
+		return 0;
+	whole[0] = whole[1] = 0;
+	whole[2] = (int32_t)size->width;
+	whole[3] = (int32_t)size->height;
+	lt_scale_corners(pass->corners, scale, width, height, low_pass.corners);
+	lt_scale_corners(pass->previous_corners, scale, width, height, low_pass.previous_corners);
+	lt_scale_corners(whole, scale, width, height, rectangle);
+	/* (the inputs and guides at the lighting's pixels) */
+	xgpu_vulkan_pass_owner(LT_OWNER);
+	memset(&params, 0, sizeof(params));
+	memcpy(params.other_corners, pass->corners, sizeof(params.other_corners));
+	params.sizes[0] = (int32_t)size->width;
+	params.sizes[1] = (int32_t)width;
+	{
+		struct xgpu_vulkan_image *textures[2] = { inputs, full_guides };
+
+		xgpu_vulkan_set_motion_target(lt.low_guides, lt.low_inputs);
+		lt_scale_draw(lt.low_inputs, rectangle, &low_pass, &params, &lt.scale_down, textures, 2, 'D');
+		xgpu_vulkan_set_motion_target(NULL, NULL);
+	}
+	xgpu_vulkan_pass_owner(NULL);
+	/* (the pass as it is, at them) */
+	lt.guides = lt.low_guides;
+	lt.bound = NULL;
+	drawn = lt_draw_at(lt.low_inputs, &low_pass, cells, block);
+	lt.guides = full_guides;
+	light = lt.bound;
+	if (!drawn || !light)
+		return 1;
+	/* (the light the surfaces read at the output's pixels, both halves
+	where it is wide) */
+	wide = xgpu_vulkan_image_description(light)->width >= 2 * width;
+	lt.full = lt_image(lt.full, XGPU_VULKAN_FORMAT_RGBA32F, size->width * (wide ? 2 : 1), size->height);
+	if (!lt.full)
+	{
+		xgpu_vulkan_rt_bounce_set(NULL);
+		return 1;
+	}
+	xgpu_vulkan_pass_owner(LT_OWNER);
+	memcpy(params.other_corners, low_pass.corners, sizeof(params.other_corners));
+	params.sizes[2] = wide;
+	for (half = 0; half < (wide ? 2 : 1); half++)
+	{
+		struct xgpu_vulkan_image *textures[5] = { inputs, full_guides, lt.low_inputs, lt.low_guides, light };
+		int32_t at[4];
+		int axis;
+
+		for (axis = 0; axis < 2; axis++)
+		{
+			int32_t extent = (int32_t)(axis ? size->height : size->width);
+
+			at[axis] = pass->corners[axis] < 0 ? 0 : pass->corners[axis] > extent ? extent : pass->corners[axis];
+			at[axis + 2] = pass->corners[axis + 2] < at[axis] ? at[axis] : pass->corners[axis + 2] > extent ? extent :
+				pass->corners[axis + 2];
+		}
+		at[0] += half * (int32_t)size->width;
+		at[2] += half * (int32_t)size->width;
+		if (at[2] > at[0] && at[3] > at[1])
+			lt_scale_draw(lt.full, at, pass, &params, &lt.scale_up, textures, 5, 'U');
+	}
+	xgpu_vulkan_pass_owner(NULL);
+	xgpu_vulkan_rt_bounce_set(lt.full);
+	if (lt.scale_said != scale)
+	{
+		lt.scale_said = scale;
+		host_logf(HOST_LOG_INFO, "vulkan: light transport: lit at 1/%d of the output (%ux%u for %ux%u), upsampled on "
+			"each pixel's surface", scale, width, height, size->width, size->height);
+	}
+	return 1;
+}
+
+int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_world_ao_pass *pass,
+	const unsigned char *cells, const struct xgpu_dynamic_lights_block *block)
+{
+	int scale = inputs ? lt_scale_for(xgpu_vulkan_image_description(inputs)->width,
+		xgpu_vulkan_image_description(inputs)->height) : 1;
+
+	lt.scale = scale;
+	if (scale > 1 && pass && cells && block && lt_scaled(inputs, pass, cells, block, scale))
+		return 1;
+	return lt_draw_at(inputs, pass, cells, block);
 }
 
 /* ---------- checkpoints (the replay's rt_checkpoint, tools/rt2_bench.py):
