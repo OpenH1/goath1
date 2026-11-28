@@ -200,8 +200,9 @@ float flashlight_estimate(vec3 p, vec3 n)
 
 // the dynamic direct light at a hit: one of its cell's lights (and the flashlight) chosen by its unshadowed light,
 // one shadow ray to it, over its chance. A light whose emitter the ray has met is left out: the hit within its
-// emitter's radius, or on its emitter's body (the light table's texel 5.w: a projectile's light's projectile, the
-// plasma bolt or needle that is the glow, bigger than the radius the tags give no size for). The direct light's
+// emitter's body (lt/e1.frag's emitter_body: the reach its shadow rays stop short of, a needle stuck in a rock's
+// glow), or on its emitter's object (the light table's texel 5.w: a projectile's light's projectile, the plasma
+// bolt that is the glow, bigger than the radius the tags give no size for). The direct light's
 // next-event sample already counts that light at the ray's origin, so lighting the emitter's own surface again here
 // is the light counted twice, at the emitter's whole exitance (hundreds of times the scene's light, met by one ray
 // in thousands: the held frames' fireflies). Every other light lights the hit, a carrier's model too: an Elite's
@@ -234,7 +235,7 @@ vec3 direct_one(vec3 p, vec3 n, int owner, ivec2 pixel, float salt, inout uint h
                 if (row >= pass.lights.x)
                     break;
                 vec4 emitter = row_texel(row, 0);
-                if (distance(p, emitter.xyz) < emitter.w || (owner != 0 && int(row_texel(row, 5).w) == owner))
+                if (distance(p, emitter.xyz) < emitter_body(emitter.w) || (owner != 0 && int(row_texel(row, 5).w) == owner))
                     continue;
                 float e = light_estimate(row, p, n);
                 if (e <= 0.0)

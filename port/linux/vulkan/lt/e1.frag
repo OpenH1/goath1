@@ -372,6 +372,14 @@ float light_estimate(int row, vec3 p, vec3 shaded)
     return luminance_of(t4.rgb) * profile * facing * window;
 }
 
+// how far about a light's middle its emitter's body reaches (its own glow, a bolt's body, the weapon it is on): the
+// shadow rays end short of it, and a bounce ray that meets a surface within it has met the light itself
+// (lt/indirect.glsl's direct_one)
+float emitter_body(float radius)
+{
+    return max(1.5 * radius, 0.1);
+}
+
 // a row's light at p with one point of its emitter (xi) and, with shadow, one ray to it: point a sphere (its disk
 // facing p), spot a disk facing forward in its cone (its gel the angular profile), panel a one-sided Lambertian disk
 vec3 light_sample(int row, vec3 p, vec3 n, vec3 shaded, vec2 xi, int receiver, bool shadow)
@@ -436,8 +444,8 @@ vec3 light_sample(int row, vec3 p, vec3 n, vec3 shaded, vec2 xi, int receiver, b
         vec3 origin = p + n * (0.004 + 0.0005 * length(p - pass.camera[0].xyz));
         vec3 ray = emitter - origin;
         float length_to = length(ray);
-        // (ending short of the emitter: its own glow, a bolt's body, the weapon it is on)
-        float t_max = length_to - max(1.5 * radius, 0.1);
+        // (ending short of the emitter: its own glow, a bolt's body, the weapon it is on: emitter_body's reach)
+        float t_max = length_to - emitter_body(radius);
         if (t_max > 0.0)
             lit *= visible_by(origin, ray / length_to, t_max, receiver, uint(t5.x), MASK_AO);
     }
