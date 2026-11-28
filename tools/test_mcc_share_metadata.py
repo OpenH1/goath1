@@ -105,6 +105,18 @@ def metadata_tool(tmp_path_factory):
     shutil.rmtree(work)
 
 
+@pytest.fixture(autouse=True)
+def no_installed_steam(tmp_path, monkeypatch):
+    """The scan sees only each test's own library: the machine's Steam folders (HOME's, XDG's, the launch
+    context's and Program Files') are pointed at an empty folder, so an installed game's workshop is never read."""
+    empty = tmp_path / "no-home"
+    monkeypatch.setenv("HOME", str(empty))
+    for name in ("XDG_DATA_HOME", "STEAM_COMPAT_CLIENT_INSTALL_PATH"):
+        monkeypatch.delenv(name, raising=False)
+    for name in ("ProgramFiles(x86)", "ProgramFiles"):
+        monkeypatch.setenv(name, str(empty))
+
+
 def run(tool, operation, root, campaign, level="first", entries=()):
     result = subprocess.run([str(tool), operation, str(root), str(int(campaign)), level,
                              *(f"{kind} {size} {name}" for kind, size, name in entries)],
@@ -363,11 +375,8 @@ def test_bounded_json_and_png_mutations(metadata_tool, tmp_path):
 
 
 @pytest.mark.parametrize("kind", ["Default", "default", "DEFAULT", "dEfAuLt", None])
-def test_campaign_kind_across_native_metadata_paths(metadata_tool, tmp_path, monkeypatch, kind):
+def test_campaign_kind_across_native_metadata_paths(metadata_tool, tmp_path, kind):
     # A later mission must not hide the whole campaign due to capitalization.
-    monkeypatch.setenv("HOME", str(tmp_path / "no-home"))
-    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
-    monkeypatch.delenv("STEAM_COMPAT_CLIENT_INSTALL_PATH", raising=False)
     root = tmp_path / "steamapps/workshop/content/976730/111"
     package(root, True)
     (root / "maps").mkdir()
