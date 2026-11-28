@@ -79,13 +79,16 @@ enum
 	WORLD_RT_LAMP_BITMAPS = 64,
 };
 
-/* an object lamp's radiance (linear, the pass's units): the live lights'
-one k (lt_lights.c's LT_LIGHTS_REAL_*_POWER_SCALE) on the glow as the model
-pass draws it, albedo x (mask x colour)^2.2 (tools/rt_truth's
-HaloSelfIllum); a triangle glowing less on average (its luminance) is no
-lamp, and its samples a side */
-#define WORLD_RT_LAMP_K 0.48f
-#define WORLD_RT_LAMP_LEAST 0.001f
+/* an object lamp's radiance (linear, the pass's units): its glow as drawn
+(a model's self-illumination albedo x (mask x colour)^2.2, tools/rt_truth's
+HaloSelfIllum; an additive part's map colour^2.2) times the light a lamp of
+that glow gives, measured: the a10 and c20 lamp solves'
+(port/assets/emitters) solved radiance over their glow's (the tag colour^2.2),
+the median of their 357 lamps, 5.36 (quartiles 1.57 and 42.7;
+~/dev/rt2-calibration.json's object_lamps); a triangle glowing less on
+average (its luminance) is no lamp, and its samples a side */
+#define WORLD_RT_LAMP_K 5.36f
+#define WORLD_RT_LAMP_LEAST 0.01f
 #define WORLD_RT_LAMP_SAMPLES 6
 /* (the maps read at their first level no larger than this each way) */
 #define WORLD_RT_LAMP_TEXELS 128
