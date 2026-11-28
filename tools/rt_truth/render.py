@@ -18,7 +18,7 @@ from .scene import Scene, read_image
 from .integrator import render_pass
 
 # A player's game on the machine: the render waits while one runs (the GPU is theirs then).
-PLAYER_GAME = r"^/home/[^/]+/Applications/OpenH1/bin/openh1"
+PLAYER_GAME = r"^/home/[^/]+/Applications/OpenH1[^/ ]*/bin/openh1"  # any install: OpenH1, -Beta, -RT
 
 
 def player_playing():
@@ -38,17 +38,17 @@ class GpuLock:
     """The rig's GPU lock, taken shared (as `goat-rig run --shared`): a truth render is no timing
     measurement, so it runs beside picture runs and only waits out an exclusive (timing) holder."""
 
-    def __init__(self, path, log):
-        self.path, self.log, self.f = path, log, None
+    def __init__(self, path, log, exclusive=False):
+        self.path, self.log, self.f, self.mode = path, log, None, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
 
     def __enter__(self):
         if self.path and os.path.exists(os.path.dirname(self.path)):
             self.f = open(self.path, "a")
             try:
-                fcntl.flock(self.f, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                fcntl.flock(self.f, self.mode | fcntl.LOCK_NB)
             except BlockingIOError:
                 self.log("waiting for the GPU lock %s" % self.path)
-                fcntl.flock(self.f, fcntl.LOCK_SH)
+                fcntl.flock(self.f, self.mode)
         return self
 
     def __exit__(self, *a):
@@ -126,12 +126,12 @@ def best_fit(samples, keep, static_means, log):
 def render_scene(folder, out=None, spp_pass=8, target=0.01, max_spp=65536, max_minutes=60.0,
                  min_passes=4, gpu_lock=os.path.expanduser("~/goat-rig/locks/gpu.lock"),
                  log=print, flashlight_scale=None, flashlight_emitter=None, static_mode="lightmap",
-                 object_static="halo"):
+                 object_static="halo", emitters_file=None):
     folder = Path(folder)
     out = Path(out) if out else folder / "truth"
     from . import VARIANT as variant
     sc = Scene(folder, flashlight_scale, flashlight_emitter=flashlight_emitter, static_mode=static_mode,
-               object_static=object_static)
+               object_static=object_static, emitters_file=emitters_file)
     t0 = time.time()
     groups = [g for g in sc.groups if sc.group_has_light(g)]
     statics = [g for g in groups if g in sc.static_groups]
@@ -141,7 +141,7 @@ def render_scene(folder, out=None, spp_pass=8, target=0.01, max_spp=65536, max_m
     # The same light on white Lambertian surfaces (same normal maps and cutouts): its direct part is the
     # demodulated irradiance the real-time comparison uses.
     wsc = Scene(folder, flashlight_scale, white=True, flashlight_emitter=flashlight_emitter, static_mode=static_mode,
-                object_static=object_static)
+                object_static=object_static, emitters_file=emitters_file)
     whites = {g: mi.load_dict(wsc.build(g)) for g in groups}
     acc_w = {g: np.zeros((len(samples["valid"]), len(samples["valid"][0]), 3)) for g in groups}
     grey = [m["index"] for m in sc.material_summaries.values() if "placeholder" in m.get("albedo", "")]
@@ -235,6 +235,21 @@ def render_scene(folder, out=None, spp_pass=8, target=0.01, max_spp=65536, max_m
             "  scale %s %.6g" % (g, scales[g]) for g in statics]
         write_exr(out / "static_fit_residual.exr", np.where(m, y_img - fit_img, 0.0)[..., None].repeat(3, -1))
         residual_png(y_img, fit_img, m, out / "static_fit_residual.png")
+    elif sc.static_mode == "emitters":
+        # the bake against the light traced from the emitter file, at the lit BSP pixels (no fit: scale 1)
+        m = samples["valid"] & keep & (samples["albedo"] @ display.LUMA > 0.02)
+        y_img = (samples["albedo"] * np.maximum(samples["lightmap"], 0.0) ** 2.2) @ display.LUMA
+        fit_img = mean["solved"]["full"] @ display.LUMA
+        ss = ((y_img[m] - y_img[m].mean()) ** 2).sum()
+        r2v = float(1 - ((y_img[m] - fit_img[m]) ** 2).sum() / ss) if ss > 0 else float("nan")
+        fit_lines = ["static light: traced from %s; against the bake (albedo x lightmap^2.2) at %d lit BSP pixels: "
+                     "R^2 %.3f, traced / bake mean light %.3f" % (Path(emitters_file).name, int(m.sum()), r2v,
+                                                                   fit_img[m].mean() / max(y_img[m].mean(), 1e-12))]
+        write_exr(out / "static_fit_residual.exr", np.where(m, y_img - fit_img, 0.0)[..., None].repeat(3, -1))
+        residual_png(y_img, fit_img, m, out / "static_fit_residual.png")
+        bake = display.sdr_pixels(np.where(m[..., None], samples["albedo"] * np.maximum(samples["lightmap"], 0.0) ** 2.2, 0.0))
+        from PIL import Image
+        Image.fromarray(bake).save(out / "bake_bsp.png")
     else:
         fit_lines = (["static light: Halo's lightmap (albedo x lightmap^2.2 emitted by the BSP), scale 1"]
                      if sc.static_mode == "lightmap" else

@@ -171,8 +171,10 @@ class Scene:
     """One scene folder, loaded; `notes` collects every placeholder and every choice made from free text."""
 
     def __init__(self, folder, flashlight_scale=None, white=False, bump=True, flashlight_emitter=None,
-                 static_mode="lightmap", object_static="halo"):
+                 static_mode="lightmap", object_static="halo", emitters_file=None):
         halo_plugins.register()
+        # static_mode "emitters": the static light traced from a solved emitter file (emitters.py)
+        self.emitters_file = emitters_file
         # object_static "halo": objects take their static light as the game's model lighting does, from the
         # lightmap beneath them (object_lights.c lights_prepare_for_object_static's ambient share), instead of
         # only the light the lightmapped walls re-emit ("physical")
@@ -480,13 +482,19 @@ class Scene:
     # and show it in reflections. No exposure: the lightmap is in the frame's units. "fit" keeps the
     # emitter reconstruction (sky, sun, radiosity emitters fitted to the lightmap).
     LIGHTMAP_GROUPS = ("lightmap", "glow", "flashlight", "dynamic")
+    # static_mode "emitters": the static light is traced from the emitter file's sources (group "solved")
+    EMITTER_GROUPS = ("solved", "glow", "flashlight", "dynamic")
 
     @property
     def groups(self):
+        if self.static_mode == "emitters":
+            return self.EMITTER_GROUPS
         return self.LIGHTMAP_GROUPS if self.static_mode == "lightmap" else self.GROUPS
 
     @property
     def static_groups(self):
+        if self.static_mode == "emitters":
+            return ("solved",)
         return ("lightmap",) if self.static_mode == "lightmap" else self.STATIC_GROUPS
 
     # glow: the objects' self-illumination as drawn at the tick (objects.json's self_illumination; the
@@ -603,7 +611,7 @@ class Scene:
         return self._obj_types
 
     def emitter_group(self, fpath):
-        if self.static_mode == "lightmap" and (fpath.parent.name != "objects" or
+        if self.static_mode in ("lightmap", "emitters") and (fpath.parent.name != "objects" or
                                                self.object_types().get(fpath.resolve()) in self.BAKED_OBJECT_TYPES):
             return "baked"  # the lightmap holds their glow: they emit in no group
         if fpath.parent.name != "objects":
@@ -623,6 +631,8 @@ class Scene:
     def group_has_light(self, group):
         if group == "glow":
             return bool(self.object_glow())
+        if group == "solved":
+            return True
         if group == "lightmap":
             self.load_geometry()
             return any((g[6] >= 0).any() for f, g in self.geometry.items() if f.parent.name != "objects")
@@ -680,6 +690,11 @@ class Scene:
         """The Mitsuba scene dict (without integrator) of one light group (None: every light)."""
         halo_plugins.register()
         self.load_geometry()
+        if group == "solved":
+            from .emitters import solved_scene_dict
+            d = solved_scene_dict(self, self.emitters_file)
+            self.material_summaries = {int(m): self.material(int(m))[2] for m in range(len(self.materials))}
+            return d
         shapes = {}
         summaries = {}
         self.mesh_faces = {}
