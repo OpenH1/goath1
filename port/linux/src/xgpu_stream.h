@@ -1892,6 +1892,13 @@ environment's; a model's brightness x tint)) */
 #define XGPU_WORLD_RT_MATERIAL_REFLECTION_PERPENDICULAR_SHIFT 16
 #define XGPU_WORLD_RT_MATERIAL_REFLECTION_PARALLEL_SHIFT 24
 #define XGPU_WORLD_RT_MATERIAL_REFLECTION_SCALE 128.0f
+/* (and its roughness, derived from its shader where it reflects, in bits
+10 to 14: the code k (1 to 31) is a roughness of k x
+XGPU_WORLD_RT_MATERIAL_ROUGHNESS_STEP, 0 none: world_rt_game.c's
+material_roughness, ~/dev/rt2-realtime-design.md section 10) */
+#define XGPU_WORLD_RT_MATERIAL_ROUGHNESS_SHIFT 10
+#define XGPU_WORLD_RT_MATERIAL_ROUGHNESS_MASK 0x1fu
+#define XGPU_WORLD_RT_MATERIAL_ROUGHNESS_STEP 0.02f
 struct xgpu_world_rt_material
 {
 	uint32_t index, kind, flags;

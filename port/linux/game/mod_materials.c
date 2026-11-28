@@ -7,7 +7,11 @@ bitmap tag, a mod's tags folder may have two PNGs in the bitmap's layout,
   tags/<bitmap>.normal.png  a tangent-space normal map (RGB the normal's x,
                             y and z, green toward the picture's top);
   tags/<bitmap>.orm.png     occlusion in red, roughness in green, metalness
-                            in blue (glTF's packing).
+                            in blue (glTF's packing), and where it has an
+                            alpha channel, how much the part glows in alpha
+                            (the MCC import's _EMISSIVE: with the ray-traced
+                            lighting, the base map's colour at full light);
+                            an RGB file glows nowhere.
 
 A model's part drawn with a shader_model whose base map is that bitmap is
 then drawn with them by the enhanced graphics (the Vulkan renderer's
@@ -143,8 +147,10 @@ static unsigned int material_map_read(
 	long file,
 	char const *path,
 	unsigned long *bytes,
-	char const **reason)
+	char const **reason,
+	boolean alpha_kept)
 {
+	boolean has_alpha;
 	unsigned long size, stamp[2], width = 0, height = 0, levels;
 	unsigned char *data, *pixels;
 	unsigned int image;
@@ -165,6 +171,8 @@ static unsigned int material_map_read(
 		free(data);
 		return 0;
 	}
+	/* (the PNG's colour type, IHDR's byte 25: 6 RGBA, 4 grey and alpha) */
+	has_alpha = size > 25 && (data[25] == 6 || data[25] == 4);
 	pixels = hud_hires_png_pixels(data, size, &width, &height);
 	free(data);
 	if (!pixels)
@@ -177,6 +185,15 @@ static unsigned int material_map_read(
 		free(pixels);
 		*reason = "its sides are not powers of two from 4 to 2048";
 		return 0;
+	}
+	/* (a map whose alpha is not its own (the ORM's emissive) where the file
+	has none: 0, not the decoder's opaque 255) */
+	if (!alpha_kept && !has_alpha)
+	{
+		unsigned long pixel;
+
+		for (pixel = 0; pixel < width * height; pixel++)
+			pixels[pixel * 4 + 3] = 0;
 	}
 	*bytes = width * height * 4;
 	if (!mods_memory_take(*bytes))
@@ -290,7 +307,8 @@ long mod_materials_update(
 
 			if (files[map] == NONE && !imported[map][0])
 				continue;
-			material->images[map] = material_map_read(files[map], imported[map], &material->bytes[map], &reason);
+			material->images[map] = material_map_read(files[map], imported[map], &material->bytes[map], &reason,
+				map != _material_map_orm);
 			if (material->images[map])
 			{
 				map_count++;

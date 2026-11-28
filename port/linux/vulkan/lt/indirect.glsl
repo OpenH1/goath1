@@ -36,6 +36,8 @@
 #define INDIRECT_ONLY 1048576
 #define COVERAGE 2097152
 #define CACHE_ON 4194304
+// (with SPECULAR_RAY, checking: the lights' shine alone, no ray (HALO_LT_SHINE_VIEW=1))
+#define SHINE_ONLY 16777216
 // (with BOUNCE: its history too, the second output)
 #define BOUNCE_HISTORY 8388608
 
@@ -61,6 +63,16 @@
 #define BOUNCE_FIRST 4
 // the roughness up to which a reflection is its mirror ray alone
 #define MIRROR_ROUGHNESS 0.1
+// the record's roughness code (xgpu_stream.h's XGPU_WORLD_RT_MATERIAL_ROUGHNESS_*)
+#define ROUGHNESS_SHIFT 10u
+#define ROUGHNESS_MASK 0x1Fu
+#define ROUGHNESS_STEP 0.02
+// past this roughness no ray is traced: the lobe is wide enough that the cube map (Halo's own soft environment)
+// stands for the scene's reflection, the lights' shine on top (direct_specular)
+#define ROUGH_TRACED 0.5
+// the suns whose shine a reflection takes (narrower than this, radians: b30's 0.2 degree sun, not its 50 degree fill,
+// whose light the rays' misses already show as the sky)
+#define SUN_SPEC_WIDEST 0.2
 
 // (the bindings as the modes use them)
 #define cache_image history_image
@@ -384,8 +396,9 @@ vec4 bounce_main(ivec2 block, out vec3 p, out vec3 n, out uint owner, out bool f
 // half-bright surface. 0 where the eye's ray finds no surface at the pixel's point. (Only the segment of the eye's ray
 // about the point is traced, within the tolerance either side: the pixel's own surface is what is looked for, and the
 // pre-pass already found it nearest; a whole ray from the eye cost as much as the reflections' own rays.)
-float reflection_seen(ivec2 pixel, vec3 p, float c)
+float reflection_seen(ivec2 pixel, vec3 p, float c, out float derived)
 {
+    derived = -1.0;
     vec3 eye = pass.camera[0].xyz, d = p - eye;
     float distance = length(d), tolerance = 0.02 * distance + 0.02;
     d /= max(distance, 1.0e-6);
@@ -408,6 +421,9 @@ float reflection_seen(ivec2 pixel, vec3 p, float c)
     uint material_word = table.words[table.words[record + 2u] + (primitive >> 1)];
     uint at = HIT_MATERIALS + (((material_word >> ((primitive & 1u) << 4)) & 0xFFFFu) << 4);
     uint flags = table.words[at + 2u];
+    // (the roughness its shader's data gives, world_rt_game.c's material_roughness: -1 none)
+    uint code = (flags >> ROUGHNESS_SHIFT) & ROUGHNESS_MASK;
+    derived = code != 0u ? float(code) * ROUGHNESS_STEP : -1.0;
     float perpendicular = float((flags >> 16) & 255u) / 128.0, parallel = float(flags >> 24) / 128.0;
     if (max(perpendicular, parallel) <= 0.0)
         return 0.0;
@@ -434,6 +450,98 @@ float reflection_seen(ivec2 pixel, vec3 p, float c)
     return mix(perpendicular, parallel, f) * mask * light;
 }
 
+// GGX's lobe (~/dev/rt2-realtime-design.md section 10) toward l, pi D Vis (Smith's height-correlated visibility): the
+// radiance a light of irradiance E (the pass's units, the true one over pi) reflects is E x this, before the Fresnel
+// term, which Halo's combiners supply after (the shader's reflection strength, tint and mask)
+float ggx_lobe(vec3 n, vec3 v, vec3 l, float alpha)
+{
+    vec3 h = normalize(l + v);
+    float nl = max(dot(n, l), 0.0), nv = max(dot(n, v), 1.0e-4), nh = max(dot(n, h), 0.0);
+    float a2 = alpha * alpha, q = nh * nh * (a2 - 1.0) + 1.0;
+    float vis = 0.5 / (nl * sqrt(nv * nv * (1.0 - a2) + a2) + nv * sqrt(nl * nl * (1.0 - a2) + a2) + 1.0e-7);
+    return a2 / max(q * q, 1.0e-12) * vis;
+}
+
+// alpha widened by an emitter of radius r at distance d (Karis's sphere-light normalization): a small light on a smooth
+// surface is a highlight of the light's size, not a speck that aliases
+float ggx_widened(float alpha, float r, float d)
+{
+    return min(alpha + 0.5 * r / max(d, 1.0e-3), 1.0);
+}
+
+// the lights' shine at a pixel (its point p, geometric normal n, shaded normal, to-eye v, alpha): the view's flashlight
+// and the suns each with their shadow ray; one of the cell's other lights chosen by its unshadowed shine (its light by
+// the lobe toward its middle), one shadow ray to it, over its chance
+vec3 direct_specular(vec3 p, vec3 n, vec3 normal, vec3 v, float alpha, int receiver, ivec2 pixel, inout uint h)
+{
+    vec3 spec = vec3(0.0);
+    if (pass.control.y != 0 && (pass.lights.z & LIGHTS_FLASHLIGHT) != 0)
+    {
+        vec3 to = pass.lamp.xyz - p;
+        float d = length(to);
+        vec3 l = to / max(d, 1.0e-6);
+        vec3 e = flashlight(p, n, normal, pixel, receiver);
+        if (dot(e, e) > 0.0)
+            spec += e * ggx_lobe(normal, v, l, ggx_widened(alpha, pass.forward.w, d));
+    }
+    if (pass.lights.x > 0)
+    {
+        uvec4 mask = cell_lights(p + n * 0.02);
+        float total = 0.0, chosen_weight = 0.0;
+        int chosen = -1;
+        for (int word = 0; word < 4; word++)
+        {
+            uint bits = mask[word];
+            while (bits != 0u)
+            {
+                int row = word * 32 + findLSB(bits);
+                bits &= bits - 1u;
+                if (row >= pass.lights.x)
+                    break;
+                float e = light_estimate(row, p, normal);
+                if (e <= 0.0)
+                    continue;
+                vec4 t0 = row_texel(row, 0);
+                vec3 to = t0.xyz - p;
+                float d = length(to);
+                e *= ggx_lobe(normal, v, to / max(d, 1.0e-6), ggx_widened(alpha, t0.w, d));
+                if (e <= 0.0)
+                    continue;
+                total += e;
+                if (random(h) * total < e)
+                {
+                    chosen = row;
+                    chosen_weight = e;
+                }
+            }
+        }
+        if (chosen >= 0 && chosen_weight > 0.0)
+        {
+            vec4 t0 = row_texel(chosen, 0);
+            vec3 to = t0.xyz - p;
+            float d = length(to);
+            vec3 e = light_sample(chosen, p, n, normal, stratified(pixel, 21.0), receiver, true);
+            spec += e * ggx_lobe(normal, v, to / max(d, 1.0e-6), ggx_widened(alpha, t0.w, d)) * (total / chosen_weight);
+        }
+    }
+    vec3 origin = p + n * (0.004 + 0.0005 * length(p - pass.camera[0].xyz));
+    for (int s = 0; s < pass.lights.y; s++)
+    {
+        int row = SUN_ROW + s;
+        vec4 t1 = row_texel(row, 1), t4 = row_texel(row, 4), t5 = row_texel(row, 5);
+        float cosine = max(dot(normal, t1.xyz), 0.0);
+        if (t4.w < 0.0 || t5.w >= SUN_SPEC_WIDEST || cosine <= 0.0 || dot(n, t1.xyz) <= 0.0)
+            continue;
+        float lobe = ggx_lobe(normal, v, t1.xyz, min(alpha + 0.5 * t5.w, 1.0));
+        if (lobe * luminance_of(t4.rgb) * cosine <= 1.0e-4)
+            continue;
+        spec += t4.rgb * cosine * lobe * visible_by(origin, t1.xyz, SUN_REACH, -1, 0xffffffffu, MASK_REFLECTIONS);
+    }
+    if (any(isnan(spec)) || any(isinf(spec)))
+        spec = vec3(0.0);
+    return spec;
+}
+
 vec4 specular_main(ivec2 pixel)
 {
     vec3 p, n, shaded;
@@ -446,11 +554,19 @@ vec4 specular_main(ivec2 pixel)
     if (((material >> 24) & 255u) == 0u || owner != 0u)
         return vec4(0.0, 0.0, 0.0, -1.0);
     uint byte = (material >> 16) & 255u;
-    float roughness = byte == 255u ? (owner == 0u ? ROUGH_STRUCTURE : ROUGH_OBJECT) : float(byte) / 255.0;
     vec3 v = normalize(pass.camera[0].xyz - p), normal = dot(shaded, v) > 0.0 ? shaded : n;
     // (only where the reflection can be seen: elsewhere the cube map, as the game drew it)
-    if (reflection_seen(pixel, p, max(dot(normal, v), 0.0)) < pass.indirect[2].z)
+    float derived;
+    if (reflection_seen(pixel, p, max(dot(normal, v), 0.0), derived) < pass.indirect[2].z)
         return vec4(0.0, 0.0, 0.0, -1.0);
+    // (the roughness: the material map's (the guides'), else its shader's data's (the record's), else by owner)
+    float roughness = byte != 255u ? float(byte) / 255.0 : derived >= 0.0 ? derived :
+        (owner == 0u ? ROUGH_STRUCTURE : ROUGH_OBJECT);
+    uint hs = seed(pixel, 17u);
+    vec3 shine = direct_specular(p, n, normal, v, max(roughness * roughness, 1.0e-3), int(owner), pixel, hs);
+    // (a rough lobe: no ray, the cube map for the scene (a miss) and the lights' shine)
+    if (roughness > ROUGH_TRACED || (pass.control.w & SHINE_ONLY) != 0)
+        return vec4(shine, 0.0);
     // (a surface this smooth, Halo's own without a roughness map among them: its mirror ray, the same each frame,
     // no noise; its texture's level prefilters the hit)
     // (BOUNCE_FIRST rays where the history starts again, the bounce's rule: a sampled lobe's first frame as good as
@@ -482,7 +598,7 @@ vec4 specular_main(ivec2 pixel)
     }
     // (the hits' radiance and distance their means: the coverage's count, SPEC_HISTORY, keeps the misses' share; a 0
     // where none met the scene)
-    return hits > 0 ? vec4(sum / float(hits), max(distance / float(hits), 1.0e-3)) : vec4(0.0);
+    return hits > 0 ? vec4(sum / float(hits) + shine, max(distance / float(hits), 1.0e-3)) : vec4(shine, 0.0);
 }
 
 // the bounce's samples about pixel on its surface (the 5x5 blocks about its own, Gaussian, 3 pixels; each block's traced pixel within a

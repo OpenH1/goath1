@@ -303,9 +303,10 @@ static void png_chunk(unsigned char *out, size_t *at, const char *type, const un
 	*at += 12 + size;
 }
 
-static int png_write(const char *path, const unsigned char *rgb, long width, long height)
+/* an 8-bit PNG of channels 3 (RGB) or 4 (RGBA) */
+static int png_write_channels(const char *path, const unsigned char *rgb, long width, long height, int channels)
 {
-	size_t raw_size = (size_t)height * (size_t)(width * 3 + 1);
+	size_t raw_size = (size_t)height * (size_t)(width * channels + 1);
 	unsigned long packed_size = (unsigned long)(raw_size + raw_size / 1000 + 64);
 	unsigned char *raw = malloc(raw_size), *out = malloc(packed_size + 128);
 	unsigned char header[13];
@@ -317,14 +318,15 @@ static int png_write(const char *path, const unsigned char *rgb, long width, lon
 		goto finished;
 	for (y = 0; y < height; y++)
 	{
-		raw[(size_t)y * (size_t)(width * 3 + 1)] = 0;
-		memcpy(raw + (size_t)y * (size_t)(width * 3 + 1) + 1, rgb + (size_t)y * (size_t)width * 3, (size_t)width * 3);
+		raw[(size_t)y * (size_t)(width * channels + 1)] = 0;
+		memcpy(raw + (size_t)y * (size_t)(width * channels + 1) + 1, rgb + (size_t)y * (size_t)width * channels,
+			(size_t)width * channels);
 	}
 	memcpy(out, "\x89PNG\r\n\x1a\n", 8);
 	put_be32(header, (unsigned long)width);
 	put_be32(header + 4, (unsigned long)height);
 	header[8] = 8;
-	header[9] = 2;
+	header[9] = channels == 4 ? 6 : 2;
 	header[10] = header[11] = header[12] = 0;
 	png_chunk(out, &at, "IHDR", header, sizeof(header));
 	{
@@ -363,6 +365,11 @@ finished:
 	free(raw);
 	free(out);
 	return written;
+}
+
+static int png_write(const char *path, const unsigned char *rgb, long width, long height)
+{
+	return png_write_channels(path, rgb, width, height, 3);
 }
 
 /* ---------- DXT: decoding ours, encoding the bake */
@@ -2414,6 +2421,9 @@ static int bitmap_write(struct run *run, const struct bitmap_source *source, flo
 	return written ? (dxt5 ? 5 : 1) : 0;
 }
 
+/* the least of MCC's emissive (0 to 255) that counts as a glow */
+#define EMISSIVE_LEAST 8.0f
+
 /* MCC's normal map and its occlusion, roughness and metalness in our
 layout: <bitmap>.normal.png (tangent space, red along +u, green toward the
 picture's top) and <bitmap>.orm.png */
@@ -2591,9 +2601,34 @@ static void extras_write(struct run *run, const struct mcc_mesh *mcc, const stru
 		for (texel = 0; texel < texels; texel++)
 			rgb[3 * texel + role_index] = (unsigned char)clampd(round_even(ok[texel] ? values[texel] : fallback), 0, 255);
 	}
-	tag_path(path, sizeof(path), run->options->out_folder, source->name, ".orm.png");
-	if (png_write(path, rgb, width, height))
-		run->written++;
+	/* (and MCC's emissive, where the part glows anywhere: the alpha, an RGBA
+	file; mod_materials.c reads an RGB one as glowing nowhere) */
+	{
+		unsigned char *rgba = malloc(4 * texels);
+		long glowing = 0;
+
+		sample_role(run->pak, mcc, look, _role_emissive, _sample_mean, values);
+		for (texel = 0; texel < texels; texel++)
+		{
+			ok[texel] = look->state[texel] == _texel_found && !isnan(values[texel]);
+			if (!ok[texel])
+				values[texel] = 0.0f;
+			glowing += ok[texel] && values[texel] >= EMISSIVE_LEAST;
+		}
+		if (rgba && glowing > 16)
+		{
+			dilate(values, ok, width, height, 1, PAD_STEPS);
+			for (texel = 0; texel < texels; texel++)
+			{
+				memcpy(rgba + 4 * texel, rgb + 3 * texel, 3);
+				rgba[4 * texel + 3] = (unsigned char)clampd(round_even(ok[texel] ? values[texel] : 0.0f), 0, 255);
+			}
+		}
+		tag_path(path, sizeof(path), run->options->out_folder, source->name, ".orm.png");
+		if (rgba && glowing > 16 ? png_write_channels(path, rgba, width, height, 4) : png_write(path, rgb, width, height))
+			run->written++;
+		free(rgba);
+	}
 
 finished:
 	free(normal);
