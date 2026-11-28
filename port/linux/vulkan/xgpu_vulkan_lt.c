@@ -386,6 +386,14 @@ draw, its count started again. */
 
 static char lt_shader_folder[1024];
 static int lt_shader_folder_read, lt_reload_asked;
+/* (the HALO_LT_* settings' generation: a reload's, so that the pass, the
+bounce and the denoiser read them again; the replay's "rt_set") */
+static unsigned lt_settings_generation = 1;
+
+unsigned xgpu_vulkan_lt_settings_generation(void)
+{
+	return __atomic_load_n(&lt_settings_generation, __ATOMIC_ACQUIRE);
+}
 
 void xgpu_vulkan_lt_shaders_reload(const char *folder)
 {
@@ -394,6 +402,7 @@ void xgpu_vulkan_lt_shaders_reload(const char *folder)
 		snprintf(lt_shader_folder, sizeof(lt_shader_folder), "%s", folder);
 		lt_shader_folder_read = 1;
 	}
+	__atomic_add_fetch(&lt_settings_generation, 1, __ATOMIC_ACQ_REL);
 	__atomic_store_n(&lt_reload_asked, 1, __ATOMIC_RELEASE);
 }
 
@@ -588,9 +597,10 @@ static void lt_settings(void)
 	const char *given;
 	int kind;
 
-	if (lt.settings_read)
+	if (lt.settings_read == (int)xgpu_vulkan_lt_settings_generation())
 		return;
-	lt.settings_read = 1;
+	lt.settings_read = (int)xgpu_vulkan_lt_settings_generation();
+	lt.only_ids = 0;
 	given = getenv("HALO_LT_ONLY");
 	lt.only = given && !strcmp(given, "flashlight") ? 1 : given && !strcmp(given, "others") ? 2 : 0;
 	/* (ids:<hex>,<hex>: those lights alone, by their id's low word, the

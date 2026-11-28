@@ -154,6 +154,8 @@ static struct
 	struct denoise_channel channels[2];
 	/* checking (HALO_LT_DENOISE_*) */
 	int camera_only, no_gradients, spatial, ema, motion_view, cap;
+	/* (the settings' generation read: xgpu_vulkan_lt_settings_generation) */
+	unsigned settings_read;
 	/* this frame a level lit live (the final's real): DENOISE_CAP_LIVE */
 	int live;
 	/* HALO_LT_DENOISE_DUMP's: those dumped */
@@ -184,9 +186,11 @@ static int denoise_shaders(void)
 		return 1;
 	if (denoise.failed)
 		return 0;
-	if (denoise.spatial < 0)
+	if (denoise.spatial < 0 || denoise.settings_read != xgpu_vulkan_lt_settings_generation())
 	{
 		const char *spatial = getenv("HALO_LT_DENOISE_SPATIAL");
+
+		denoise.settings_read = xgpu_vulkan_lt_settings_generation();
 
 		denoise.spatial = !spatial || strcmp(spatial, "0");
 		denoise.camera_only = getenv("HALO_LT_DENOISE_CAMERA") && strcmp(getenv("HALO_LT_DENOISE_CAMERA"), "0");

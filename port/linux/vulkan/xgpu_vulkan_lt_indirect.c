@@ -157,9 +157,9 @@ static void indirect_settings(void)
 {
 	const char *given;
 
-	if (indirect.settings_read)
+	if (indirect.settings_read == (int)xgpu_vulkan_lt_settings_generation())
 		return;
-	indirect.settings_read = 1;
+	indirect.settings_read = (int)xgpu_vulkan_lt_settings_generation();
 	given = getenv("HALO_LT_INDIRECT");
 	indirect.indirect = !given || strcmp(given, "0");
 	indirect.only = given && !strcmp(given, "only");
