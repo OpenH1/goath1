@@ -328,9 +328,11 @@ uint light_hash(vec3 p, vec3 n)
     return h & 1023u;
 }
 
-// the cache's indirect light at a hit: its cell's mean where the slot holds that cell (its check) for the same lights
-vec3 cache_lookup(vec3 p, vec3 n)
+// the cache's indirect light at a hit: its cell's mean where the slot holds that cell (its check) for the same lights;
+// found false where it holds none
+vec3 cache_find(vec3 p, vec3 n, out bool found)
 {
+    found = false;
     if ((pass.control.w & CACHE_ON) == 0)
         return vec3(0.0);
     int k = cascade_of(p);
@@ -341,7 +343,53 @@ vec3 cache_lookup(vec3 p, vec3 n)
     uint packed = uint(max(slot.a, 0.0)), count = packed & 511u;
     if (count == 0u || ((packed >> 9) & 15u) != cell_check(c, k) || (packed >> 13) != light_hash(p, n))
         return vec3(0.0);
+    found = true;
     return max(slot.rgb, vec3(0.0));
+}
+
+vec3 cache_lookup(vec3 p, vec3 n)
+{
+    bool found;
+    return cache_find(p, n, found);
+}
+
+// ---------- a level lit live (lt/e1.frag's LIGHTS_REAL; ~/dev/rt2-realtime-design.md section 9)
+
+bool real_sky()
+{
+    return (pass.lights.z & LIGHTS_REAL) != 0 && pass.lights.y > 0;
+}
+
+// the sky's dome: the radiance of a ray that leaves the scene (its rows' power, the light a white surface facing
+// the whole unblocked dome shows)
+vec3 dome_radiance()
+{
+    vec3 dome = vec3(0.0);
+    for (int s = 0; s < pass.lights.y; s++)
+    {
+        vec4 t4 = row_texel(SUN_ROW + s, 4), t5 = row_texel(SUN_ROW + s, 5);
+        if (t4.w >= 0.0 && t5.w > DOME_DIAMETER)
+            dome += t4.rgb;
+    }
+    return dome;
+}
+
+// the sky's light arriving at a hit that the cache has nothing for: one cosine ray from it to the dome (its later
+// bounces left out)
+vec3 dome_at(vec3 p, vec3 n, ivec2 pixel, float salt)
+{
+    vec3 d = cosine_direction(n, stratified(pixel, salt));
+    vec3 origin = p + n * (0.004 + 0.0005 * length(p - pass.camera[0].xyz));
+    return dome_radiance() * visible_by(origin, d, SUN_REACH, -1, 0xffffffffu, MASK_AO);
+}
+
+// a hit's light lit live: the suns' direct (one ray each) and the sky's dome and bounce (the cache's, else one ray
+// to the dome)
+vec3 sky_at(Hit hit, ivec2 pixel, float salt)
+{
+    bool found;
+    vec3 cached = cache_find(hit.p, hit.n, found);
+    return sun_real(hit.p, hit.n, hit.n, pixel, 1) + (found ? vec3(0.0) : dome_at(hit.p, hit.n, pixel, salt));
 }
 
 // where p is in this frame's pixels (continuous); false off its view
@@ -412,10 +460,14 @@ vec4 bounce_main(ivec2 block, out vec3 p, out vec3 n, out uint owner, out bool f
         vec3 d = cosine_direction(shaded, stratified(pixel, 5.0 + 17.0 * float(k)));
         if (dot(d, n) <= 0.0)
             continue;
-        Hit hit = trace(origin, d, BOUNCE_REACH, int(owner), false, MASK_AO);
+        // (lit live: as far as the sky, a ray that leaves the scene the dome's)
+        bool real = real_sky();
+        Hit hit = trace(origin, d, real ? SUN_REACH : BOUNCE_REACH, int(owner), false, MASK_AO);
         if (hit.attributes)
             e += hit.albedo * (direct_one(hit.p, hit.n, hit.owner, pixel, 6.0 + 17.0 * float(k), h) +
-                cache_lookup(hit.p, hit.n));
+                cache_lookup(hit.p, hit.n) + (real ? sky_at(hit, pixel, 7.0 + 17.0 * float(k)) : vec3(0.0)));
+        else if (real && !hit.hit)
+            e += dome_radiance();
     }
     e /= float(rays);
     if (any(isnan(e)) || any(isinf(e)))
@@ -622,7 +674,9 @@ vec4 specular_main(ivec2 pixel)
         Hit hit = trace(origin, l, SPECULAR_REACH, -1, true, MASK_REFLECTIONS);
         if (!hit.attributes)
             continue;
-        vec3 radiance = pow(hit.surface, vec3(2.2)) + hit.albedo * (direct_one(hit.p, hit.n, hit.owner, pixel,
+        // (lit live: the hit's own live light in place of its lightmap)
+        vec3 radiance = (real_sky() ? hit.albedo * sky_at(hit, pixel, 11.0 + 17.0 * float(k)) :
+            pow(hit.surface, vec3(2.2))) + hit.albedo * (direct_one(hit.p, hit.n, hit.owner, pixel,
             10.0 + 17.0 * float(k), h) + cache_lookup(hit.p, hit.n));
         if (any(isnan(radiance)) || any(isinf(radiance)))
             radiance = vec3(0.0);

@@ -61,6 +61,9 @@ enum
 	XGPU_LT_LIGHT_NOT_OWN_OBJECT = 1 << 13,
 	/* its id is this frame's alone (a light the game gave no handle) */
 	XGPU_LT_LIGHT_UNSTABLE_ID = 1 << 14,
+	/* (xgpu_stream.h's: a sky light of a level lit live, the sky's dome) */
+	XGPU_LT_LIGHT_REAL_SKY = 1 << 15,
+	XGPU_LT_LIGHT_SKY_DOME = 1 << 16,
 };
 
 /* an id's source (its high word's top byte; dynamic_lights.c's keys, as
@@ -144,6 +147,10 @@ lights are enhanced; HALO_LT_E1, where given, overrides it (debug). Off,
 nothing of the pass or of the light model it brings runs: the dynamic
 lights, the flashlight and the surfaces are master's */
 int lt_lights_pass_on(void);
+/* whether the level is lit live with the pass on: the lightmap dropped, the
+sky's lights, its dome and their bounce the static light (its BSP's
+clusters mostly exterior; HALO_LT_REAL_SKY overrides) */
+int lt_lights_real_sky(void);
 /* each frame: the backend told when the pass is turned off */
 void lt_lights_update(void);
 
