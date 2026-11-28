@@ -81,6 +81,9 @@ def test_modes(event, ref, version, dry, mode, publish):
     assert plan["save"] == ("true" if mode == "full" else "false")
     assert plan["release"] == ("true" if mode == "release" else "false")
     assert plan["dry_run"] == ("true" if mode == "release" and publish == "false" else "false")
+    # (a release builds every platform, iOS's too, which its release waits for and publishes)
+    if mode == "release":
+        assert all(plan[platform] == "true" for platform in ("linux_arm64", "android", "windows", "macos", "ios"))
 
 
 def test_an_older_number_is_refused():

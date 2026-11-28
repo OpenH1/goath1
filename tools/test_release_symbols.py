@@ -163,3 +163,58 @@ def test_ci_build_notes_needs_only_the_release_s_checkout():
     local = {name for name in imports if (ROOT / "tools" / f"{name}.py").is_file()}
     assert {f"tools/{name}.py" for name in local} <= files
     assert "tools/release_names.py" in files
+
+
+# build-2554's files, which went out without the iOS app (its release did not wait for the ios job)
+BUILD_2554 = """appcast.xml halo-windows-replay.zip OpenH1-Android-debug-symbols.zip OpenH1-Android-debug.apk
+OpenH1-Android-symbols.zip OpenH1-Android.apk OpenH1-debug.dmg OpenH1-Linux-ARM64-debug-symbols.zip
+OpenH1-Linux-ARM64-debug.zip OpenH1-Linux-ARM64-symbols.zip OpenH1-Linux-ARM64.zip OpenH1-Linux-debug-symbols.zip
+OpenH1-Linux-debug.zip OpenH1-Linux-symbols.zip OpenH1-Linux-VR-symbols.zip OpenH1-Linux-VR.zip OpenH1-Linux.zip
+OpenH1-macOS-debug-symbols.zip OpenH1-macOS-symbols.zip OpenH1-Steam-Frame-symbols.zip OpenH1-Steam-Frame.zip
+OpenH1-Windows-debug-symbols.zip OpenH1-Windows-debug.zip OpenH1-Windows-symbols.zip OpenH1-Windows.zip
+OpenH1.dmg SHA256SUMS SHA256SUMS.sig""".split()
+
+
+def check_release(folder):
+    return subprocess.run([sys.executable, str(ROOT / "tools/release_names.py"), "--check-release", str(folder)],
+                          capture_output=True, text=True)
+
+
+def test_a_release_without_a_platform_s_file_is_refused(tmp_path):
+    for name in BUILD_2554:
+        (tmp_path / name).write_bytes(b"x")
+    result = check_release(tmp_path)
+    assert result.returncode == 1 and "::error::the release has no ios: halo-ios-debug.zip" in result.stdout
+    (tmp_path / "halo-ios-debug.zip").write_bytes(b"x")
+    assert check_release(tmp_path).returncode == 0
+    # (an empty file, an upload cut short, counts as missing)
+    (tmp_path / "OpenH1-Windows.zip").write_bytes(b"")
+    result = check_release(tmp_path)
+    assert result.returncode == 1 and "windows: OpenH1-Windows.zip" in result.stdout
+
+
+def test_every_build_the_workflow_uploads_is_expected():
+    """each player's build the workflow uploads (not its symbols) is in EXPECTED, under its published name"""
+    expected = {name for names in release_names.EXPECTED.values() for name in names}
+    uploaded = set(re.findall(r"- uses: actions/upload-artifact@v4\n(?:\s+if: [^\n]*\n)?\s+with:\n\s+name: "
+                              r"(halo-[a-z0-9_-]+)\n", WORKFLOW))
+    builds = {name for name in uploaded if not name.endswith("-symbols")}
+    assert {"halo-ios-debug", "halo-windows-replay", "halo-macos-release"} <= builds
+    for artifact in builds:
+        platform = next((p for p in release_names.EXTENSIONS if artifact.startswith(f"halo-{p}-")), None)
+        published = release_names.published(artifact) + release_names.EXTENSIONS.get(platform, ".zip")
+        assert published in expected, artifact
+
+
+def test_the_release_waits_for_ios_and_checks_every_file():
+    release = WORKFLOW[WORKFLOW.index("\n  release:\n"):WORKFLOW.index("\n  check:\n")]
+    needs = re.search(r"\n    needs: \[([^\]]*)\]", release).group(1).replace(" ", "").split(",")
+    assert "ios" in needs and "macos" in needs
+    # (its result never holds the release back: carried over instead)
+    condition = release[release.index("    if: >-"):release.index("    runs-on:")]
+    assert "needs.ios.result" not in condition
+    assert "- name: Carry the iOS build over\n        if: ${{ needs.ios.result != 'success' }}" in release
+    # (the check after every file is in place, before the sums are signed)
+    check = release.index("python3 tools/release_names.py --check-release release")
+    assert release.index("- name: Carry the iOS build over") < check < release.index("- name: Sums and signature")
+    assert release.index("- name: Carry the macOS build over") < check
