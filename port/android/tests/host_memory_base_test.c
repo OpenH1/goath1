@@ -116,15 +116,17 @@ static void test_window_pages(void)
 		-1, 0) == a);
 	CHECK(at(a)[0] == 0 && at(a)[0xfff] == 0);
 	CHECK(at(b)[0] == 0x22);
-	/* a read-only 4 KB page beside a writable one: the host page stays
-	writable (the union) */
+	/* a read-only 4 KB page beside a writable one: b's host page stays
+	writable (the union, where the two share a host page) */
 	CHECK(host_guest_mprotect(a, 0x1000, PROT_READ) == 0);
 	CHECK(host_memory_window_protection(host_address(b)) == (PROT_READ | PROT_WRITE));
 	at(b)[1] = 0x33;
 	CHECK(at(b)[1] == 0x33);
-	/* the write tracking hears of the window's host pages that change */
+	/* the write tracking hears of the window's host pages that change, with
+	the page's new protection: the union where b shares a's host page (16 KB
+	pages), a's own read-only where 4 KB pages keep them apart */
 	CHECK(forgotten_size == host_page_size() && forgotten_address == (a & ~(uint32_t)(host_page_size() - 1)));
-	CHECK(forgotten_protection == (PROT_READ | PROT_WRITE));
+	CHECK(forgotten_protection == (host_page_size() > 0x1000 ? (PROT_READ | PROT_WRITE) : PROT_READ));
 	CHECK(host_guest_munmap(a, 0x2000) == 0);
 	CHECK(host_memory_window_protection(host_address(a)) == PROT_NONE);
 }
