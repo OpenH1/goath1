@@ -94,6 +94,10 @@ denoiser ("denoise": its noise counted down before it joins the direct
 light's sample, which the denoiser's gradients then follow) */
 #define INDIRECT_COVERAGE_CAP 16
 #define INDIRECT_BOUNCE_CAP 32
+/* a level lit live: the bounce is the sky's light, which stays: a longer
+history (a light that comes or goes starts it again by the light-id hash
+all the same, lt/indirect.glsl) */
+#define INDIRECT_BOUNCE_CAP_LIVE 128
 
 _Static_assert(INDIRECT_PARAMS_OFFSET + 64 <= 192 * 16, "the parameters within the uniforms");
 
@@ -453,7 +457,7 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 			int history_reset = reset || !indirect.bounce_history_valid;
 
 			memcpy(counted, parameters, sizeof(counted));
-			counted[3][0] = (float)INDIRECT_BOUNCE_CAP;
+			counted[3][0] = (float)(frame->live ? INDIRECT_BOUNCE_CAP_LIVE : INDIRECT_BOUNCE_CAP);
 			textures[5] = indirect.bounce_histories[indirect.current];
 			indirect.bounce_history = indirect.bounce_histories[indirect.current ^ 1];
 			xgpu_vulkan_set_motion_target(indirect.bounce_history, indirect.bounce);
