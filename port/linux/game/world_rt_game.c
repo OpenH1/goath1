@@ -786,6 +786,11 @@ static int model_part_add(struct world_rt_source_mesh *mesh, struct model const 
 	one left out) */
 	if (shader_cutout(shader, NULL))
 		kind = WORLD_RT_SURFACES_ALPHA_TESTED;
+	/* (an environment shader on a model, a b30 device's metal strips and
+	panels: opaque, or alpha-tested as its flag says, as on the structure) */
+	else if (shader->base.type == _world_rt_shader_type_environment)
+		kind = TEST_FLAG(((struct world_rt_shader_environment const *)shader)->flags,
+			_world_rt_shader_environment_alpha_tested_bit) ? WORLD_RT_SURFACES_ALPHA_TESTED : WORLD_RT_SURFACES_OPAQUE;
 	else if (shader_type_is_transparent(shader->base.type) || shader->base.type != _world_rt_shader_type_model)
 		kind = WORLD_RT_SURFACES_TRANSPARENT;
 	else
