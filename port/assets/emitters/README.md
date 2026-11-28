@@ -9,7 +9,7 @@ Made by `python -m rt_truth emitters <scene folder> --out <file>` (tools/rt_trut
 emitters") from any rt2 scene export of that BSP. In short, each `lamps` entry has `radiance` (linear, the game's light units) and `triangles` (world
 positions, lifted 0.01 wu off the surface, wound to glow toward their normal) to sample as area lights.
 
-The build packs each file (tools/lt_emitters_data.py: about 950 KB for all 51, zlib) into openh1.assets beside
+The build packs each file (tools/lt_emitters_data.py: about 930 KB for all 49, zlib) into openh1.assets beside
 the game, and the game unpacks the loaded BSP's at map load; `python3 tools/lt_emitters_data.py --check` fails
 where a file does not build or holds more than the game takes (8192 triangles, 1024 groups a BSP).
 
@@ -71,7 +71,6 @@ the file). 2048 paths: c20 bsp1's cells match the same at 4096 (x2.95 both befor
 | a10_bsp6 | 31 | 828 | 0.99 | x1.27 | 0% |
 | a10_bsp8 | 67 | 399 | 0.92 | x1.61 | 0% |
 | a30_bsp1 | 46 | 1236 | 0.90 | x1.89 | 87% |
-| a50_bsp1 | 60 | 1634 | 0.99 | x2.63 | 0% |
 | a50_bsp2 | 46 | 1176 | 0.99 | x3.04 | 3% |
 | a50_bsp3 | 48 | 850 | 1.00 | x1.03 | 3% |
 | b40_bsp0 | 134 | 3304 | 0.88 | x1.64 | 62% |
@@ -100,7 +99,6 @@ the file). 2048 paths: c20 bsp1's cells match the same at 4096 (x2.95 both befor
 | c40_bsp10 | 144 | 2840 | 0.99 | x1.22 | 0% |
 | c40_bsp11 | 164 | 3432 | 1.00 | x1.29 | 0% |
 | c40_bsp12 | 47 | 1048 | 1.00 | x1.08 | 0% |
-| d20_bsp0 | 43 | 736 | 0.97 | x2.71 | 2% |
 | d20_bsp1 | 52 | 5528 | 0.87 | x2.25 | 61% |
 | d20_bsp2 | 65 | 1274 | 0.98 | x1.10 | 8% |
 | d20_bsp3 | 49 | 1160 | 0.98 | x3.52 | 61% |
@@ -124,6 +122,10 @@ Not shipped (an outdoor BSP's lamps cannot be matched apart from the sky, or not
 - c40_bsp1: outdoors (sky 35%); lamps 0.67 of the rest, x4.0.
 - c40_bsp2: lamps reach 0.71 of the bake (held at 20x), x2.6.
 - d40_bsp8: all sky: no lamp-lit cell.
+- a50_bsp1 (60 groups, x2.63): looked at in game (tools/rt2_clips.py a50_bsp1), its lamp-lit room goes nearly black live
+  where the bake lights its walls and floor green.
+- d20_bsp0 (43 groups, x2.71): looked at in game (d20_bsp0), the first hall's lower floor goes black live where the
+  bake lights it, while its walls come out brighter.
 - No lightmap in that level (nothing to solve from): b40 bsp6, bsp7 and bsp12, c40 bsp3 and bsp4; d40 bsp9 has
   no surfaces.
 
