@@ -95,7 +95,9 @@
 #define EMITTER_ROW 136
 // the objects' own lamps this frame (xgpu_vulkan_lt.c's LT_OBJECT_LAMP_ROW, 4 texels each), pass.emitter_bases.w of them
 #define OBJECT_LAMP_ROW 16128
-#define OBJECT_LAMP_CANDIDATES 4
+// (RIS's candidates: the lamps are drawn by their importance to the view, not to the receiver, so most candidates
+// near a shield are lamps far from it; 16 rather than 4 cut the a50 shield base's frame-to-frame noise by a third)
+#define OBJECT_LAMP_CANDIDATES 16
 #define EMITTER_CELL_GROUPS 32
 #define EMITTER_LEVEL_SHARE 0.1
 // RIS's candidates: the direct light's, a bounce hit's
