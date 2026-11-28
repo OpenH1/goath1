@@ -433,7 +433,10 @@ def probe_script(host, refs):
                   "u=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null | head -1);"
                   " [ -n \"$u\" ] || u=$(cat /sys/class/drm/card*/device/gpu_busy_percent 2>/dev/null | sort -n | "
                   "tail -1); echo \"util $u\"",
-                  "flock -n -s ~/goat-rig/locks/gpu.lock true 2>/dev/null && echo 'lock free' || echo 'lock held'"]
+                  "flock -n -s ~/goat-rig/locks/gpu.lock true 2>/dev/null && echo 'lock free' || echo 'lock held'",
+                  # (rt2_bench.py run's kept replays: idle ones draw nothing, busy ones serve a run)
+                  "for j in ~/goat-rig/rt2-bench/keep/*.json; do [ -S \"${j%.json}.sock\" ] || continue; b=idle; "
+                  "[ -e \"${j%.json}.busy\" ] && b=busy; echo \"kept $b $(cat \"$j\")\"; done"]
         for ref in refs:
             lines.append(f"if test -x ~/{rt2_clips_replay(host, ref)}; then echo \"built {ref}\"; "
                          f"echo \"key {ref} $({key_command(host, ref)})\"; "
@@ -453,7 +456,7 @@ def probe(host, refs):
     """the host's state for choose(): replays, util, game, lock, built refs, keys, have (shared ids), named"""
     from rt2_bench import ssh
     state = {"host": host, "replays": 0, "util": 0.0, "game": "", "lock": "free", "built": set(), "keys": {},
-             "have": set(), "named": set(), "error": None}
+             "have": set(), "named": set(), "kept": [], "error": None}
     try:
         text = ssh(host, probe_script(host, refs))
         if rt2_clips.windows(host):
@@ -486,6 +489,14 @@ def probe(host, refs):
             state["have"].add(rest.strip())
         elif word == "named":
             state["named"].add(rest.strip())
+        elif word == "kept":
+            busy, _, info = rest.partition(" ")
+            try:
+                state["kept"].append({**json.loads(info), "busy": busy == "busy"})
+            except ValueError:
+                pass
+    # (an idle kept replay is no load)
+    state["replays"] = max(0, state["replays"] - sum(1 for k in state["kept"] if not k["busy"]))
     return state
 
 
@@ -499,7 +510,9 @@ def score(state, needs, work=1):
     host = state["host"]
     if state["error"] or state["game"]:
         return None
-    s = (ALONE[host] + OVERHEAD[host]) * (1 + SLOWER[host] * state["replays"]) * work
+    # (run: a replay kept there for this build and recording, its checkpoint a try's couple of seconds away)
+    s = WARM_SECONDS + OVERHEAD[host] if state.get("warm") else \
+        (ALONE[host] + OVERHEAD[host]) * (1 + SLOWER[host] * state["replays"]) * work
     if state["lock"] == "held":
         s += LOCK_SECONDS
     for need in needs:
@@ -524,6 +537,7 @@ SLOWER = {"5900x": 0.4, "omarchy": 1.2, "bosgame": 0.7}
 COPY_SECONDS = 50.0  # (1.8 GB rig to rig, rsync: 50 s measured 5900X to omarchy)
 BUILD_SECONDS = 30.0  # (the replay built warm)
 LOCK_SECONDS = 60.0
+WARM_SECONDS = 3.0  # (run, a kept replay's try from its checkpoint)
 # a command's work in exact tries (run --watch: a session of tries)
 WORK = {"run": 1, "view": 1, "verify": 4, "reference": 6, "terms": 12, "triage": 15}
 
@@ -599,6 +613,15 @@ def needs_for(args):
                     ready.add(need)
         elif args.name is None:
             needs.append(("shared", "?"))  # (not built there: its key unknown until it is)
+        # (run from a checkpoint: a replay kept there for this build and the recording it would use)
+        if args.what == "run" and not getattr(args, "exact", False) and getattr(args, "warm", None) is None:
+            from rt2_scorecard import replay_path
+            recordings = {f"goat-rig/rt2-bench/{n}/moment.hrpl" for n in names}
+            if args.name is None and key:
+                recordings |= {f"{SHARED}/{newest(state['have'], rid)}/moment.hrpl"
+                               for rid in wanted_ids(args, key[1]) if newest(state["have"], rid)}
+            state["warm"] = any(k.get("replay") == replay_path(args.build) and k.get("recording") in recordings
+                                for k in state.get("kept", ()))
         return needs, ready
 
     return needs_of
