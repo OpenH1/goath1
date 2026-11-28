@@ -9,7 +9,6 @@
 		<row key="refresh_rate" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/video_settings_screen"/>
 		<row key="fov" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/video_settings_screen"/>
 		<row key="orientation" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/video_settings_screen"/>
-		<row key="movies" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/video_settings_screen"/>
 		<row key="hdr_display" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/brightness/brightness_screen"/>
 		<section key="section_1" title="PICTURE"/>
 		<row key="gamma" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/brightness/brightness_screen"/>
@@ -71,6 +70,7 @@
 		<row key="dynamic_resolution" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/frame_rate_screen"/>
 		<section key="section_5" title="RAY TRACING"/>
 		<row key="shadows" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/frame_rate_screen"/>
+		<row key="movies" kind="ref" open="main_menu/settings_select/player_setup/player_profile_edit/video_settings/frame_rate/frame_rate_screen"/>
 	</screen>
 	<screen name="goat/audio" kind="goat" tab="AUDIO">
 		<section key="section_0" title="SOUND"/>

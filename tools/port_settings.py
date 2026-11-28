@@ -975,9 +975,6 @@ PAGES = {
             ("FIRST PERSON ›", None, _page_screen(*FIRST_PERSON),
              "The vehicles' and scopes' fields of view, the Panini projection, how far you see, the reticle, a "
              "passenger's view, and your weapon, body and shields.", None),
-            # (port/linux/src/bink_movie.c; the help says where the movies go:
-            # MOVIES_HELP)
-            ("STARTUP MOVIES", "display.movies", ON_OFF, MOVIES_HELP, None),
             (SECTION, "GRAPHICS"),
             # (Classic or Enhanced, CUSTOM while any setting it chooses is
             # another value: menu_functions.c's graphics_preset_show; choosing
@@ -1580,6 +1577,10 @@ PAGES = {
              "the edges, in the same place and darkness as the game's, which frees the processor's shadow work. Off "
              "draws them as the Xbox did.",
              "desktop android"),
+            # (port/linux/src/bink_movie.c; the help says where the movies go:
+            # MOVIES_HELP. Here, not on Video's list, which EXPERIMENTAL took
+            # the room of)
+            ("STARTUP MOVIES", "display.movies", ON_OFF, MOVIES_HELP, None),
         ],
     },
     EXPERIMENTAL[0]: {
