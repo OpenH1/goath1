@@ -19,7 +19,8 @@ Measured per still pair (linear luminance, the sRGB stills decoded): the mean of
 classic shows them lit (live under 4% of white and under a third of classic, classic over 2%), as a share of the frame
 and in the worst cell of a 4x4 grid. A BSP passes when at both spots the whole frame's ratio is within 0.6 to 1.6 and
 no large region goes black (under 10% of the frame and under 50% of every cell), and something is in view
-(classic's frame not flat, nor the level's still before it again: a camera outside the BSP's rooms, or a game
+(classic's frame not flat (most of it one colour, as Halo's void outside the rooms is), nor the level's still
+before it again: a camera outside the BSP's rooms, or a game
 that stopped drawing new frames, is not a look); and no large
 region blows out (live near white where classic is under 60% of white: under 10% of the frame). The lossless
 stills stay on the rig in ~/goat-rig/rt2-emitter-screen/<build>/. It prints a table (the README's
@@ -248,7 +249,9 @@ def rig_measure(folder):
                 float(np.abs(previous[level] - ca).mean()) < 0.002
             previous[level] = ca
             row["stale"] = bool(stale)
-            row["seen"] = bool(ca.std() > 0.003) and not stale
+            # (Halo's void outside the BSP's rooms is one flat colour: most of the frame within a hair of its median)
+            flat = float((np.abs(ca - np.median(ca)) < 0.002).mean()) > 0.6
+            row["seen"] = bool(ca.std() > 0.003) and not flat and not stale
             row["pass"] = (row["seen"] and PASS_RATIO[0] <= row["overall"] <= PASS_RATIO[1]
                            and row["black"] < BLACK_FRAME and row["black_cell"] < BLACK_CELL and row["blown"] < BLOWN)
             rows.append(row)

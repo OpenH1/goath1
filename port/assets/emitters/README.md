@@ -9,7 +9,7 @@ Made by `python -m rt_truth emitters <scene folder> --out <file>` (tools/rt_trut
 emitters") from any rt2 scene export of that BSP. In short, each `lamps` entry has `radiance` (linear, the game's light units) and `triangles` (world
 positions, lifted 0.01 wu off the surface, wound to glow toward their normal) to sample as area lights.
 
-The build packs each file (tools/lt_emitters_data.py: about 470 KB for the 21 shipped, zlib) into openh1.assets beside
+The build packs each file (tools/lt_emitters_data.py: about 390 KB for the 19 shipped, zlib) into openh1.assets beside
 the game, and the game unpacks the loaded BSP's at map load; `python3 tools/lt_emitters_data.py --check` fails
 where a file does not build or holds more than the game takes (8192 triangles, 1024 groups a BSP).
 
@@ -149,12 +149,8 @@ Shipped (a10_bsp1 has one spot: no second camera inside a lit room was found):
 | c10_bsp2 | 2 | x0.91 | x1.11 | x0.77 | 0% | 0% | 0% | pass |
 | c10_bsp4 | 1 | x0.61 | x0.53 | x0.60 | 5% | 39% | 0% | pass |
 | c10_bsp4 | 2 | x0.76 | x0.76 | x0.65 | 3% | 19% | 0% | pass |
-| c20_bsp1 | 1 | x1.49 | x1.10 | x1.80 | 0% | 0% | 7% | pass |
-| c20_bsp1 | 2 | x0.70 | x0.67 | x0.78 | 0% | 0% | 0% | pass |
 | c20_bsp2 | 1 | x1.42 | x1.10 | x1.69 | 0% | 0% | 7% | pass |
 | c20_bsp2 | 2 | x0.71 | x0.61 | x0.75 | 0% | 2% | 0% | pass |
-| c20_bsp3 | 1 | x1.44 | x1.10 | x1.73 | 0% | 0% | 7% | pass |
-| c20_bsp3 | 2 | x1.04 | x0.65 | x1.18 | 0% | 3% | 0% | pass |
 | c40_bsp7 | 1 | x1.18 | x1.50 | x0.97 | 2% | 15% | 0% | pass |
 | c40_bsp7 | 2 | x1.25 | x1.62 | x1.15 | 1% | 5% | 0% | pass |
 | c40_bsp8 | 1 | x0.77 | x0.81 | x0.59 | 2% | 12% | 0% | pass |
@@ -182,7 +178,7 @@ Not shipped (an outdoor BSP's lamps cannot be matched apart from the sky, or not
   where the bake lights its walls and floor green.
 - d20_bsp0 (43 groups, x2.71): looked at in game (d20_bsp0), the first hall's lower floor goes black live where the
   bake lights it, while its walls come out brighter.
-- Failed the screen (numbers above; a10_bsp0 and c20_bsp0 keep their earlier files):
+- Failed the screen, or not looked at ("nothing in view"; a10_bsp0 and c20_bsp0 keep their earlier files):
 
 | BSP | spot | overall | floor | walls | black | worst cell | blown | verdict |
 |---|---|---|---|---|---|---|---|---|
@@ -191,7 +187,7 @@ Not shipped (an outdoor BSP's lamps cannot be matched apart from the sky, or not
 | a10_bsp4 | 1 | x2.48 | x2.21 | x1.32 | 0% | 4% | 14% | FAIL |
 | a10_bsp4 | 2 | x0.54 | x0.45 | x0.58 | 1% | 8% | 0% | FAIL |
 | a10_bsp5 | 1 | x3.21 | x4.41 | x3.31 | 1% | 7% | 3% | FAIL |
-| a10_bsp8 | 1 | x0.71 | x1.00 | x0.57 | 0% | 1% | 0% | pass |
+| a10_bsp8 | 1 | x0.71 | x1.00 | x0.57 | 0% | 1% | 0% | nothing in view |
 | a10_bsp8 | 2 | x0.71 | x1.00 | x0.57 | 0% | 1% | 0% | nothing in view |
 | a30_bsp1 | 1 | x0.25 | x0.24 | x0.26 | 54% | 86% | 0% | FAIL |
 | a30_bsp1 | 2 | x0.94 | x0.95 | x0.94 | 0% | 0% | 0% | pass |
@@ -201,7 +197,7 @@ Not shipped (an outdoor BSP's lamps cannot be matched apart from the sky, or not
 | a50_bsp3 | 2 | x0.29 | x0.05 | x0.43 | 8% | 44% | 0% | FAIL |
 | b40_bsp0 | 1 | x0.51 | x0.64 | x0.37 | 34% | 83% | 0% | FAIL |
 | b40_bsp0 | 2 | x0.71 | x0.68 | x0.66 | 1% | 8% | 0% | pass |
-| b40_bsp3 | 1 | x0.47 | x0.44 | x0.44 | 0% | 0% | 0% | FAIL |
+| b40_bsp3 | 1 | x0.47 | x0.44 | x0.44 | 0% | 0% | 0% | nothing in view |
 | b40_bsp3 | 2 | x0.57 | x0.70 | x0.57 | 23% | 92% | 0% | FAIL |
 | b40_bsp4 | 1 | x0.59 | x0.61 | x0.65 | 4% | 12% | 0% | FAIL |
 | b40_bsp4 | 2 | x0.57 | x0.57 | x0.56 | 0% | 1% | 0% | FAIL |
@@ -212,9 +208,13 @@ Not shipped (an outdoor BSP's lamps cannot be matched apart from the sky, or not
 | c10_bsp3 | 1 | x0.62 | x0.59 | x0.62 | 3% | 17% | 0% | pass |
 | c10_bsp3 | 2 | x0.29 | x0.23 | x0.41 | 52% | 97% | 0% | FAIL |
 | c10_bsp5 | 1 | x0.48 | x0.38 | x0.49 | 2% | 21% | 0% | FAIL |
-| c10_bsp5 | 2 | x0.72 | x0.77 | x0.84 | 1% | 14% | 0% | pass |
+| c10_bsp5 | 2 | x0.72 | x0.77 | x0.84 | 1% | 14% | 0% | nothing in view |
 | c20_bsp0 | 1 | x1.42 | x1.22 | x1.70 | 0% | 0% | 11% | FAIL |
-| c20_bsp0 | 2 | x0.63 | x0.63 | x0.63 | 0% | 0% | 0% | pass |
+| c20_bsp0 | 2 | x0.63 | x0.63 | x0.63 | 0% | 0% | 0% | nothing in view |
+| c20_bsp1 | 1 | x1.49 | x1.10 | x1.80 | 0% | 0% | 7% | pass |
+| c20_bsp1 | 2 | x0.70 | x0.67 | x0.78 | 0% | 0% | 0% | nothing in view |
+| c20_bsp3 | 1 | x1.44 | x1.10 | x1.73 | 0% | 0% | 7% | pass |
+| c20_bsp3 | 2 | x1.04 | x0.65 | x1.18 | 0% | 3% | 0% | nothing in view |
 | c40_bsp0 | 1 | x0.70 | x0.55 | x0.76 | 26% | 72% | 0% | FAIL |
 | c40_bsp0 | 2 | x0.90 | x1.16 | x0.71 | 23% | 74% | 0% | FAIL |
 | c40_bsp5 | 1 | x0.53 | x0.55 | x0.56 | 6% | 35% | 0% | FAIL |
