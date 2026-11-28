@@ -1037,6 +1037,15 @@ static void world_rt_lamps_made(struct world_rt_definition *entry, short node, s
 		for (channel = 0; channel < 3; channel++)
 			sum[channel] *= WORLD_RT_LAMP_K / (float)count;
 		luminance = 0.2126f * sum[0] + 0.7152f * sum[1] + 0.0722f * sum[2];
+		if (getenv("HALO_WORLD_RT_LAMPS_LOG") && triangle % 50 == 0)
+		{
+			float st0 = corner[0]->uv[0], st1 = corner[0]->uv[1];
+
+			platform_log("lamp check: tri %ld glow %.4f colour %.2f %.2f %.2f uv %.3f %.3f scale %.2f %.2f mask@uv %.3f",
+				triangle, (double)luminance, (double)colour[0], (double)colour[1], (double)colour[2], (double)st0,
+				(double)st1, (double)material->alpha_scale[0], (double)material->alpha_scale[1],
+				(double)world_rt_lamp_texel(mask, mask_width, mask_height, st0, st1, 8));
+		}
 		if (luminance < WORLD_RT_LAMP_LEAST)
 			continue;
 		lamp = realloc(entry->lamps, sizeof(*entry->lamps) * (size_t)(entry->lamp_count + 1));
