@@ -6,6 +6,7 @@ Android, .zip for the rest). The workflow's artifacts and dist/ keep their own n
 
     python3 tools/release_names.py <artifact>   # its published name, without the extension
     python3 tools/release_names.py --check-symbols <folder>   # warns of a build without its symbols
+    python3 tools/release_names.py --check-release <folder>   # fails when a file every release has is missing
 
 The self-updaters ask for these names (port/linux/src/updater.c's
 UPDATE_NAME, and the Android app's Updater.java, with -debug for a debug
@@ -21,6 +22,15 @@ builds' names (OpenH1.dmg) are not. --check-symbols warns (a GitHub
 ::warning:: line) of each build in a release's folder whose symbols are
 missing or hold no image, and never fails: symbols missing do not stop a
 release.
+
+--check-release fails (exit 1, a ::error:: line for each) when the release's
+folder lacks a file every release publishes (EXPECTED below: each platform's
+builds, the iOS app, the Windows replay tool and the Mac's appcast), so that
+a build whose artifact never arrived (a job the release did not wait for, an
+upload that failed: build-2554 went out without its iOS app) stops the
+release instead of publishing without it. The GitHub workflow's release job
+and tools/release_local.py both run it before the sums are signed. Symbols
+stay --check-symbols's (warnings only), and the DLSS add-on is optional.
 """
 
 import sys
@@ -42,6 +52,18 @@ NAMES = {
 SYMBOLS_NAMES = {
     "macos": "OpenH1-macOS",
     "ios": "OpenH1-iOS",
+}
+
+# every file a release publishes, by platform (the builds' names above with
+# their extension; the iOS app keeps its artifact's name, halo-ios-debug.zip,
+# as the releases always had it): --check-release
+EXPECTED = {
+    "linux-x86_64": ["OpenH1-Linux.zip", "OpenH1-Linux-debug.zip", "OpenH1-Linux-VR.zip"],
+    "linux-arm64": ["OpenH1-Linux-ARM64.zip", "OpenH1-Linux-ARM64-debug.zip", "OpenH1-Steam-Frame.zip"],
+    "windows": ["OpenH1-Windows.zip", "OpenH1-Windows-debug.zip", "halo-windows-replay.zip"],
+    "android": ["OpenH1-Android.apk", "OpenH1-Android-debug.apk"],
+    "macos": ["OpenH1.dmg", "OpenH1-debug.dmg", "appcast.xml"],
+    "ios": ["halo-ios-debug.zip"],
 }
 
 # the file in each symbols zip that tools/symbolize_crash.py reads
@@ -96,6 +118,13 @@ def missing_symbols(folder: Path) -> list:
     return problems
 
 
+def missing_files(folder: Path) -> list:
+    """the files of EXPECTED a release's folder lacks (or has empty), as
+    <platform>: <file>"""
+    return [f"{platform}: {name}" for platform, names in EXPECTED.items() for name in names
+            if not (folder / name).is_file() or (folder / name).stat().st_size == 0]
+
+
 def main() -> int:
     arguments = sys.argv[1:]
     if len(arguments) == 2 and arguments[0] == "--check-symbols":
@@ -104,6 +133,15 @@ def main() -> int:
             print(f"::warning::{problem}")
         if not problems:
             print("every build has its symbols")
+        return 0
+    if len(arguments) == 2 and arguments[0] == "--check-release":
+        missing = missing_files(Path(arguments[1]))
+        for name in missing:
+            print(f"::error::the release has no {name}")
+        if missing:
+            print(f"{len(missing)} expected files missing: nothing is published", file=sys.stderr)
+            return 1
+        print(f"every expected file is there ({sum(len(names) for names in EXPECTED.values())})")
         return 0
     if len(arguments) != 1:
         print(__doc__, file=sys.stderr)
