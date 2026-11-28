@@ -7,32 +7,39 @@ changed and its frames drawn again by the replay in seconds, with numbers, witho
         HALO_RENDER_RECORD, until --at seconds on the scenario's clock (default the moment's end), the game's own
         pictures of every 20th frame kept beside it (HALO_RENDER_SHOTS), in ~/goat-rig/rt2-bench/<name>/
     python3 tools/rt2_bench.py verify --moment a50_shields --build local/my-branch
-        fidelity: the replay's frames against the game's own (lossless, pixel for pixel), with every frame before
-        played whole and with the default 8; and determinism: the same frames drawn twice by the replay
+        the acceptance test: the replay's frames against the game's own pictures (lossless, pixel for pixel), every
+        frame before played whole; the same frame by two replays (determinism); and how far a faster try strays
+        (--converge: only so many frames before played whole, against the exact frame)
     python3 tools/rt2_bench.py run --moment a50_shields --build local/my-branch [--hold 60 | --count 30]
-        [--set HALO_LT_SUN=0] [--settings FILE] [--region x,y,w,h] [--watch] [--repeat 2] [--out DIR]
+        [--warm N] [--set HALO_LT_SUN=0] [--settings FILE] [--region x,y,w,h] [--watch] [--repeat 2] [--out DIR]
         the workbench: the light pass's kernels compiled here from port/linux/vulkan/lt (only those whose source
-        changed), sent to the replay, which keeps the recording and the GPU's state, and the frames drawn again;
-        each version's numbers and its last picture (lossless PNG). --watch: again on each saved change of the GLSL or
-        of --settings (VAR=value lines: the light pass's HALO_LT_* settings), until Ctrl-C
+        changed: tools/vulkan_lt_shaders.py's compiler), sent to the rig, and the moment's frames drawn by the
+        build's replay with them (HALO_LT_SHADER_DIR) and the settings; each version's numbers and its last
+        picture (lossless PNG) in --out. --watch: again on each saved change of the GLSL or of --settings (VAR=value
+        lines: the light pass's HALO_LT_* settings), until Ctrl-C. --repeat 2: unchanged code twice, compared
 
 What is drawn is the game's frame sequence as recorded: the camera, the objects and the lights moving as they did,
 the light pass's histories (the denoiser's, the radiance cache's, the reservoirs') made by the same frames as in the
-game, from the recording's start (rt_frames: the frames before the moment played without their GPU work but the
-last --warm, played whole; --warm -1 plays every frame whole, the game's exactly). --hold instead holds the moment's
+game. By default (--warm -1) every frame from the recording's start is played whole, by a replay of its own: the
+game's frames bit for bit (verify), about 32 s for a50_shields' 1360 frames on omarchy, nearly all of it the light
+pass's GPU time on the frames before. --warm N plays only the N frames before whole (the rest without their GPU work:
+faster, but the histories start cold there; verify --converge measures its error). --hold instead holds the moment's
 frame (played exactly first) as though the world stood still while time goes on: the noise and the convergence.
+
+Each try is a replay of its own: within one replay a play from the start again does not yet draw what the first
+play drew (the bounce keeps something from it; with HALO_LT_INDIRECT=0 or the pass off it does), so the replay's
+rt_set/rt_reload (docs/replay_protocol.md) are for exploring, and the numbers come from fresh replays.
 
 The numbers are tools/rt2_stability.py's measures on the presented picture's sRGB decoded to linear light (Rec. 709
 luminance): the mean, the colour's means, the temporal standard deviation of each pixel over the last --last plays
 (p50, p99; relative to the pixel's mean where it is above 0.002) and each --region's mean and deviation. They are
-computed by the replay (docs/replay_protocol.md, rt_frames), next to the pictures: no picture crosses the network
-but the last.
+computed by the replay (rt_frames), next to the pictures: no picture crosses the network but the last.
 
-What a reload reaches: the GLSL of port/linux/vulkan/lt (tools/vulkan_lt_shaders.py's kernels) and the settings
-the light pass, the bounce and the denoiser read from the environment (xgpu_vulkan_lt_settings_generation). Not
-reached without recording again: the game's side (lt_lights.c's light list, the object lamps' gather: they are in
-the recording's LT_LIGHTS records) and the backend's C (xgpu_vulkan_lt*.c: rebuild the replay, about 30 s warm, and
-run again). Recordings hold the game's art: they stay on the rig.
+What a try reaches: the GLSL of port/linux/vulkan/lt and the HALO_LT_* settings. Not reached without recording
+again: the game's side (lt_lights.c's light list, the object lamps' gather: they are in the recording's LT_LIGHTS
+records). The backend's C (xgpu_vulkan_lt*.c, the denoiser's and the bounce's C): push the branch to the rig's
+mirror and rebuild the replay (goat-rig build <ref> linux_replay, about 30 s warm), then run again on the same
+recording. Recordings hold the game's art: they stay on the rig.
 """
 
 from __future__ import annotations
@@ -155,6 +162,28 @@ def open_service(host, ref, folder, env=()):
 
 # ---------- verify
 
+def draw_once(host, ref, folder, request, env=(), out=None):
+    """one try in a replay of its own (a fresh process: the backend as at the stream's start, so the frames are
+    the game's; within one process a play from the start again still differs, see the module's doc): the reply"""
+    service = open_service(host, ref, folder, env)
+    try:
+        if "rt_frames" not in service.ask({"cmd": "info"}).get("capabilities", []):
+            raise SystemExit("rt2_bench: this replay has no rt_frames (build it from a branch with the workbench)")
+        if out:
+            ssh(host, f"mkdir -p ~/{out}")
+            request = {**request, "dir": f"{service_home(host)}/{out}"}
+        return service.ask(request)
+    finally:
+        service.close()
+
+
+def compare(host, replay, first, second):
+    """halo_replay --compare of two folders of frame_<n>.png on the rig: (all identical, its lines)"""
+    lines = ssh(host, f"~/{replay} --compare ~/{first} ~/{second} || true").strip().splitlines()
+    last = lines[-1] if lines else "?"
+    return last.endswith(" 0 differ") and not last.startswith("0 "), lines
+
+
 def verify(args):
     folder = f"{REMOTE}/{name_of(args)}"
     meta = meta_of(args.host, folder)
@@ -163,35 +192,42 @@ def verify(args):
         say(f"rt2_bench: note: recorded by {meta['build']}, replayed by {args.build}: only the same build is "
             "expected to match")
     frames = [n for n in meta["shots"] if n <= meta["frame"]][-args.pictures:]
-    service = open_service(args.host, args.build, folder)
-    try:
-        if "rt_frames" not in service.ask({"cmd": "info"}).get("capabilities", []):
-            raise SystemExit("rt2_bench: this replay has no rt_frames")
-        results = {}
-        # (every frame before played whole: the game's sequence exactly, twice; the default 8: how far a short warm
-        # strays)
-        for warm, attempt in ((-1, 1), (-1, 2), (8, 1)):
-            out = f"{folder}/verify/w{warm}_{attempt}"
-            ssh(args.host, f"rm -rf ~/{out} && mkdir -p ~/{out}")
-            started = time.monotonic()
-            for n in frames:
-                reply = service.ask({"cmd": "rt_frames", "n": n, "count": 1, "warm": warm, "last": 1,
-                                     "dir": f"{service_home(args.host)}/{out}"})
-                ssh(args.host, f"mv {shlex.quote(reply['pictures'][-1]['png'])} ~/{out}/frame_{n:05d}.png")
-            seconds = time.monotonic() - started
-            against = "game" if attempt == 1 else f"verify/w{warm}_1"
-            lines = ssh(args.host, f"cd ~/{folder} && ~/{replay} --compare verify/w{warm}_{attempt} {against} "
-                        "|| true").strip().splitlines()
-            same = lines[-1] if lines else "?"
-            results[(warm, attempt)] = same.endswith(" 0 differ") and not same.startswith("0 ")
-            what = (f"warm {warm}: against the game's pictures" if attempt == 1 else
-                    f"warm {warm}: against its own first run (determinism)")
-            say(f"rt2_bench: {what}: {same} ({seconds:.1f} s for {len(frames)} frames)")
-            for line in lines[:-1]:
-                say("    " + line)
-        ok = results[(-1, 1)] and results[(-1, 2)]
-    finally:
-        service.close()
+    ssh(args.host, f"rm -rf ~/{folder}/verify")
+
+    def drawn(tag, n, warm):
+        out = f"{folder}/verify/{tag}"
+        started = time.monotonic()
+        reply = draw_once(args.host, args.build, folder, {"cmd": "rt_frames", "n": n, "count": 1, "warm": warm,
+                                                           "last": 1}, out=f"{out}/raw")
+        ssh(args.host, f"mv {shlex.quote(reply['pictures'][-1]['png'])} ~/{out}/frame_{n:05d}.png")
+        return reply, time.monotonic() - started
+
+    ok = True
+    # 1. fidelity: each game picture against the replay's frame, every frame before it played whole
+    exact = None
+    for n in frames:
+        exact, seconds = drawn("exact", n, -1)
+        say(f"rt2_bench: frame {n} drawn exactly in {seconds:.1f} s (a replay of its own, every frame before whole)")
+    same, lines = compare(args.host, replay, f"{folder}/verify/exact", f"{folder}/game")
+    say("rt2_bench: FIDELITY (the replay's frames against the game's own pictures): " + lines[-1])
+    for line in lines[:-1]:
+        say("    " + line)
+    ok &= same
+    # 2. determinism: the moment's frame drawn again by another replay
+    last = frames[-1]
+    drawn("again", last, -1)
+    ssh(args.host, f"mkdir -p ~/{folder}/verify/exact1 && cp ~/{folder}/verify/exact/frame_{last:05d}.png "
+        f"~/{folder}/verify/exact1/")
+    same, lines = compare(args.host, replay, f"{folder}/verify/again", f"{folder}/verify/exact1")
+    say("rt2_bench: DETERMINISM (the same frame by two replays): " + lines[-1] +
+        f"; the exact frame's mean {exact['stats']['mean']:.6f}")
+    ok &= same
+    # 3. the fast tries' error: only the warm frames before the moment played whole, against the exact frame
+    for warm in [int(w) for w in args.converge.split(",") if w]:
+        reply, seconds = drawn(f"warm{warm}", last, warm)
+        same, lines = compare(args.host, replay, f"{folder}/verify/warm{warm}", f"{folder}/verify/exact1")
+        say(f"rt2_bench: warm {warm} ({seconds:.1f} s): {lines[0] if lines else '?'}; mean "
+            f"{reply['stats']['mean']:.6f}")
     say("rt2_bench: VERIFY " + ("PASS: the replay draws the game's frames, the same every time" if ok else "FAIL"))
     return 0 if ok else 1
 
@@ -270,15 +306,6 @@ def settings_from(path, given):
     return values
 
 
-def env_words(now, before):
-    words = [f"{k}={v}" for k, v in now.items() if before.get(k) != v]
-    words += [f"-{k}" for k in before if k not in now]
-    for word in words:
-        if " " in word:
-            raise SystemExit(f"rt2_bench: {word}: a setting's value has no spaces")
-    return " ".join(words)
-
-
 def shown(stats, base):
     def delta(value, was):
         if was is None or was == 0:
@@ -322,15 +349,14 @@ def run(args):
         request["reset"] = True
     what = (f"frame {frame} held {args.hold} plays" if args.hold else
             f"frames {frame}-{frame + args.count - 1} as recorded")
-    say(f"rt2_bench: {args.moment} ({meta['build']} {meta['sha']}): {what}, warm {args.warm}, the last {args.last} "
-        f"measured; replay {args.build}")
-    service = None
+    say(f"rt2_bench: {args.moment} ({meta['build']} {meta['sha']}): {what}; "
+        f"{'every frame before played whole (exact)' if args.warm < 0 else f'the {args.warm} before played whole'}; "
+        f"the last {args.last} measured; replay {args.build}")
     scratch = tempfile.TemporaryDirectory()
     kernels = Kernels(scratch.name)
-    settings = {}
     base = None
     version = 0
-    pictures = set()
+    pictures = []
 
     def stamp():
         paths = [p for p in vulkan_lt_shaders.FOLDER.glob("*.*") if p.suffix != ".inc"]
@@ -339,23 +365,13 @@ def run(args):
         return tuple(sorted((str(p), p.stat().st_mtime_ns) for p in paths if p.exists()))
 
     try:
-        started = time.monotonic()
-        service = open_service(args.host, args.build, folder)
-        caps = service.ask({"cmd": "info"}).get("capabilities", [])
-        if "rt_frames" not in caps:
-            raise SystemExit("rt2_bench: this replay has no rt_frames (build it from a branch with the workbench)")
-        ssh(args.host, f"mkdir -p ~/{remote}")
-        say(f"rt2_bench: the replay up in {time.monotonic() - started:.1f} s")
+        ssh(args.host, f"mkdir -p ~/{remote}/k")
         seen = None
-        repeats = args.repeat
         while True:
             now = stamp()
-            if now != seen or repeats > 1:
-                if now == seen:
-                    repeats -= 1
+            if now != seen or len(pictures) < args.repeat:
                 seen = now
                 version += 1
-                timing = {}
                 t0 = time.monotonic()
                 try:
                     changed = kernels.compile() if not args.built_in else []
@@ -365,57 +381,49 @@ def run(args):
                         return 1
                     time.sleep(0.25)
                     continue
-                timing["compile"] = time.monotonic() - t0
-                t1 = time.monotonic()
-                wanted = settings_from(args.settings, args.set)
-                words = env_words(wanted, settings)
-                if changed or version == 1:
-                    if not args.built_in:
+                t_compile = time.monotonic() - t0
+                settings = settings_from(args.settings, args.set)
+                env = [f"{k}={v}" for k, v in settings.items()]
+                if not args.built_in:
+                    if changed:
                         subprocess.run(["rsync", "-a", "--delete", f"{scratch.name}/",
                                         f"{rt2_clips.rig_target(args.host)}:{remote}/k/"], check=True,
                                        capture_output=True)
-                    reply = service.ask({"cmd": "rt_reload", "env": words,
-                                         **({} if args.built_in else {"dir": f"{home}/{remote}/k"})})
-                elif words or repeats:
-                    reply = service.ask({"cmd": "rt_set", "env": words})
-                settings = wanted
-                timing["send"] = time.monotonic() - t1
-                t2 = time.monotonic()
-                reply = service.ask(request)
-                timing["render"] = time.monotonic() - t2
+                    env.append(f"HALO_LT_SHADER_DIR={home}/{remote}/k")
+                t1 = time.monotonic()
+                # (each try a replay of its own: exact, and the same every time)
+                reply = draw_once(args.host, args.build, folder, request, env)
+                t_render = time.monotonic() - t1
                 picture = out / f"v{version}.png"
                 data = base64.b64decode(reply["pictures"][-1]["png_base64"])
                 picture.write_bytes(data)
                 (out / "latest.png").write_bytes(data)
                 digest = hashlib.sha256(data).hexdigest()[:12]
-                pictures.add(digest)
                 stats = reply["stats"]
+                pictures.append((digest, json.dumps(stats, sort_keys=True)))
                 base = base or stats
                 total = time.monotonic() - t0
                 say(f"v{version} [{', '.join(changed) or 'no kernel changed'}"
-                    f"{'; ' + words if words else ''}]: {shown(stats, base)}")
-                say(f"    {picture} (sha {digest}); {total:.1f} s: compile {timing['compile']:.1f}, send "
-                    f"{timing['send']:.1f}, replay {timing['render']:.1f} (its own {reply['ms'] / 1000:.1f})")
+                    f"{'; ' + ' '.join(env[:-1] if not args.built_in else env) if settings else ''}]: "
+                    f"{shown(stats, base)}")
+                say(f"    {picture} (sha {digest}); edit to numbers {total:.1f} s: compile {t_compile:.1f}, "
+                    f"replay {t_render:.1f} (its frames {reply['ms'] / 1000:.1f})")
                 if args.json:
                     with open(out / "versions.jsonl", "a") as log:
                         log.write(json.dumps({"version": version, "changed": changed, "settings": settings,
                                               "stats": stats, "picture": str(picture), "sha": digest,
-                                              "seconds": timing}) + "\n")
-            if not args.watch:
-                if args.repeat > 1 and repeats <= 1:
-                    same = len(pictures) == 1
-                    say(f"rt2_bench: {args.repeat} runs of unchanged code: "
-                        f"{'identical pictures and numbers' if same else 'DIFFERENT pictures'}")
+                                              "seconds": {"compile": t_compile, "replay": t_render}}) + "\n")
+            if not args.watch and len(pictures) >= args.repeat:
+                if args.repeat > 1:
+                    same = len(set(pictures)) == 1
+                    say(f"rt2_bench: {args.repeat} tries of unchanged code: "
+                        f"{'identical pictures and numbers' if same else 'DIFFERENT'}")
                     return 0 if same else 1
-                if repeats <= 1:
-                    return 0
-                continue
+                return 0
             time.sleep(0.2)
     except KeyboardInterrupt:
         return 0
     finally:
-        if service:
-            service.close()
         ssh(args.host, f"rm -rf ~/{remote}", check=False)
         scratch.cleanup()
 
@@ -430,11 +438,13 @@ def main():
     parser.add_argument("--at", type=float, help="record: the moment's second the recording ends at")
     parser.add_argument("--seconds", type=float, default=420, help="record: the run's limit in real seconds")
     parser.add_argument("--pictures", type=int, default=3, help="verify: the game's pictures compared (the last)")
+    parser.add_argument("--converge", default="30,120,300,600",
+                        help="verify: the warms whose frame is compared with the exact one (the fast tries' error)")
     parser.add_argument("--frame", type=int, help="run: the frame (default the moment's, record's)")
     parser.add_argument("--count", type=int, default=30, help="run: the frames played as recorded, to the moment's")
     parser.add_argument("--hold", type=int, default=0, help="run: the moment's frame held this many plays instead")
     parser.add_argument("--reset", action="store_true", help="run --hold: the histories begun again (the scorecard's)")
-    parser.add_argument("--warm", type=int, default=60, help="run: the frames before played whole (-1: every one)")
+    parser.add_argument("--warm", type=int, default=-1, help="run: the frames before played whole (-1, the default: every one, exact; fewer is faster, verify --converge gives its error)")
     parser.add_argument("--last", type=int, default=20, help="run: the plays measured (the last)")
     parser.add_argument("--set", action="append", default=[], help="run: VAR=value, a light pass setting (again)")
     parser.add_argument("--settings", help="run: a file of VAR=value lines, watched with --watch")

@@ -140,6 +140,22 @@ moves the script's camera over the seconds; the flashlight goes on with
 every tick it is held); a skipped cutscene (b30's Pelican ride, to about 29 s) is played fast and undrawn, so cues
 in it land late and no frame is drawn there; console paths are relative to the run's data folder; `debug_scenario_places "<file>"` lists each actor's `<encounter>/<squad>` for `ai_place`. With `debug.frame_time` the game waits for each pipeline and times its score popups and particles' randomness by the frames, so a classic run plays the same frames every time.
 
+**12. The lighting workbench** (`tools/rt2_bench.py`, ray-traced lighting): a `tools/rt2_clips.py` moment
+recorded once (`HALO_RENDER_RECORD`, the menu setting, the MCC import, 1/60 s frames), then the light pass's GLSL
+and `HALO_LT_*` settings tried on it by the replay, no game, with lossless pictures and numbers:
+```sh
+python3 tools/rt2_bench.py record --moment a50_shields --build local/my-branch --at 46   # once: ~/goat-rig/rt2-bench/<moment>-<build>
+python3 tools/rt2_bench.py verify --moment a50_shields --build local/my-branch           # must PASS: the game's frames, bit for bit
+python3 tools/rt2_bench.py run --moment a50_shields --build local/my-branch --watch \
+  --region 600,300,80,80 --settings my.env                                              # edit lt/*.frag or my.env, save: numbers
+python3 tools/rt2_bench.py run ... --hold 60          # the moment's frame held: noise (temporal std over the last 20)
+python3 tools/rt2_bench.py run ... --warm 120         # faster, the histories cold 120 frames before (verify --converge: its error)
+```
+Each try is a replay of its own (exact, the same every time): the changed kernels compiled on the Mac, sent to the
+rig, the frames drawn, the last picture to `build/rt2_bench/v<N>.png`. The game's C (`lt_lights.c`) needs a new
+recording; the backend's C (`xgpu_vulkan_lt*.c`) a replay rebuilt (`goat-rig build <ref> linux_replay`). The
+replay's own requests are `rt_set`, `rt_reload` and `rt_frames` (docs/replay_protocol.md).
+
 ## What it does for you
 
 - **build** `<branch|sha|pr/N|local branch>` fetches `~/goat-rig/repo.git` (a bare clone of GitHub's

@@ -229,6 +229,13 @@ those they read once and keep; a setting read only when the backend starts is no
 of every picture kept, so the next frame is played from the recording's start. (`reload` itself now lets go of the
 pictures kept too.)
 
+A play from the recording's start begins the light pass's histories again too (its reservoirs, its table's frame
+before, its images' turns, the bounce's phase and images, the denoiser's), as a reload does. A fresh service's
+first play of a frame, every frame before played whole, is the game's frame bit for bit (a50_shields, 1280x720,
+`tools/rt2_bench.py verify`); a later play from the start in the same service is not yet: with the bounce on
+(`HALO_LT_INDIRECT` not 0) it still differs (about 20% of the pixels, by up to 50 of 255), so exact numbers come
+from a service of their own.
+
 ```json
 {"cmd": "rt_frames", "n": 1331, "count": 30, "warm": 60, "last": 20, "regions": [600, 300, 64, 64], "inline": true}
 {"ok": true, "n": 1331, "mode": "frames", "plays": 30, "warm": 60,
