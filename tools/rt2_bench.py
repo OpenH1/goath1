@@ -94,6 +94,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
+import rt2_bench_cache  # noqa: E402
 import rt2_clips  # noqa: E402
 import rt2_scorecard  # noqa: E402
 import vulkan_lt_shaders  # noqa: E402
@@ -515,6 +516,44 @@ class Kernels:
         return sorted(wanted)
 
 
+def edited_kernels(args):
+    """view/reference/terms/triage --kernels: the working tree's kernels as run sends them (compiled here, only those
+    whose sources changed since the last time: build/rt2_bench/kernels), in a rig folder named by their contents
+    (~/goat-rig/rt2-bench/spv/<hash>, kept for the cache's key and reused); the setting that points the replay
+    there"""
+    if not getattr(args, "kernels", False):
+        return []
+    local = ROOT / "build" / "rt2_bench" / "kernels"
+    local.mkdir(parents=True, exist_ok=True)
+    kept = local / "keys.json"
+    kernels = Kernels(local)
+    try:
+        kernels.keys = json.loads(kept.read_text())
+    except (OSError, ValueError):
+        pass
+    started = time.monotonic()
+    changed = kernels.compile()
+    kept.write_text(json.dumps(kernels.keys))
+    names = sorted(f"{vulkan_lt_shaders.kernel_name(source, defines)}.spv"
+                   for _, source, defines in vulkan_lt_shaders.KERNELS)
+    digest = hashlib.sha256()
+    for name in names:
+        digest.update(name.encode() + b"\0" + (local / name).read_bytes())
+    remote = f"{REMOTE}/spv/{digest.hexdigest()[:16]}"
+    if rt2_clips.windows(args.host):
+        stream = subprocess.run(["tar", "--no-xattrs", "--no-mac-metadata", "-C", str(local), "-cf", "-", *names],
+                                capture_output=True, check=True, env={**os.environ, "COPYFILE_DISABLE": "1"}).stdout
+        subprocess.run(rt2_clips.remote_argv(args.host, f"mkdir -p ~/{remote} && tar -xf - -C ~/{remote}"),
+                       check=True, capture_output=True, input=stream)
+    else:
+        ssh(args.host, f"mkdir -p ~/{remote}")
+        subprocess.run(["rsync", "-a", *[str(local / n) for n in names], f"{rt2_clips.rig_target(args.host)}:{remote}/"],
+                       check=True, capture_output=True)
+    say(f"rt2_bench: the working tree's kernels ({len(changed)} compiled, {time.monotonic() - started:.1f} s): "
+        f"{args.host}:~/{remote}")
+    return [f"HALO_LT_SHADER_DIR={service_home(args.host)}/{remote}"]
+
+
 def settings_from(path, given):
     values = {}
     if path:
@@ -758,6 +797,133 @@ def view(args):
                        "seconds": seconds}, f, indent=1)
     return 0
 
+# ---------- the results' cache: a replay's accumulated views and replies kept by everything they depend on
+
+# What a replay's result depends on, each part hashed on the rig (FINGERPRINT): the recording (moment.hrpl's
+# bytes: every record the game sent, the lights' tables and their inputs among them), the light pass's code (the
+# replay's binary: the backend's C and the kernels' SPIR-V built into it, with only the two parts that name the
+# build rather than its code blanked: the commit label HALO_REPLAY_BUILD and the linker's build id), any kernels or
+# light-list unit the settings point the replay to (HALO_LT_SHADER_DIR's files, HALO_LT_UNIT's), and the GPU and
+# its driver; then the settings and the request themselves (job_key). The replay draws the same frame bit for bit
+# for the same inputs (verify's DETERMINISM), so a result kept under that key is the result a replay would give.
+# CACHE_VERSION: what the bench asks of a result (its files' layout); raised when that changes.
+CACHE = "cache"  # (beside the recording: ~/goat-rig/rt2-bench/<name>/cache/<key>)
+CACHE_GB = float(os.environ.get("RT2_BENCH_CACHE_GB", "20"))  # (each rig's whole cache, oldest used dropped first)
+CACHE_FREE_GB = 60  # (never cached when the rig's disk would have less free)
+
+from rt2_bench_cache import CACHE_VERSION, FINGERPRINT_LIB, job_key  # noqa: E402,F401
+
+FINGERPRINT = FINGERPRINT_LIB + r"""
+job = json.loads(sys.argv[1])
+home = os.path.expanduser("~")
+tree = os.path.join(home, job["replay"]).split("/build/")[0]
+commits = subprocess.run(["git", "-C", tree, "rev-list", "--max-count=2000", "HEAD"], capture_output=True,
+                         text=True).stdout.split()
+gpu = subprocess.run("nvidia-smi --query-gpu=name,driver_version --format=csv,noheader 2>/dev/null || "
+                     "(pacman -Q mesa vulkan-radeon 2>/dev/null; grep -h PCI_ID /sys/class/drm/card*/device/uevent "
+                     "2>/dev/null | sort -u)", shell=True, capture_output=True, text=True).stdout.strip()
+print(json.dumps(fingerprint(job, home, commits, gpu + " / " + os.uname().release)))
+"""
+
+# the settings that point the replay to files: their contents are part of the key
+FILE_SETTINGS = ("HALO_LT_SHADER_DIR", "HALO_LT_UNIT")
+
+
+class Cache:
+    """the rig's kept results for one build's replay (lookups and saves by job_key); off with --no-cache"""
+
+    def __init__(self, args, folders, env_paths=()):
+        self.host = args.host
+        self.on = not getattr(args, "no_cache", False) and not rt2_clips.windows(args.host)
+        self.hits, self.misses = [], []
+        self.fingerprints = {}
+        if not self.on:
+            return
+        paths = {}
+        for setting in env_paths:
+            key, _, value = setting.partition("=")
+            if key in FILE_SETTINGS:
+                paths[key] = value
+        job = {"folders": list(folders), "replay": replay_path(args.host, args.build), "paths": paths}
+        started = time.monotonic()
+        found = json.loads(ssh(args.host, f"python3 - {shlex.quote(json.dumps(job))} <<'PY'\n{FINGERPRINT}\nPY\n")
+                           .strip().splitlines()[-1])
+        self.seconds = time.monotonic() - started
+        for folder in folders:
+            self.fingerprints[folder] = {"version": CACHE_VERSION, "recording": found["recordings"][folder],
+                                         "code": found["code"], "files": found["files"], "gpu": found["gpu"]}
+
+    def key(self, folder, env, request):
+        return job_key(self.fingerprints[folder], env, request)
+
+    def place(self, folder, key):
+        return f"{folder}/{CACHE}/{key}"
+
+    def look(self, items):
+        """the kept entries of these (folder, key)s read in one go (each one's use time renewed)"""
+        if not self.on or not items:
+            return
+        script = "".join(f"e=~/{self.place(folder, key)}/entry.json; if [ -f $e ]; then touch $e; "
+                         f"echo \"{key} $(base64 -w0 $e)\"; fi\n" for folder, key in items)
+        self.known = getattr(self, "known", {})
+        for folder, key in items:
+            self.known.setdefault(key, None)
+        for line in ssh(self.host, script, check=False).splitlines():
+            key, _, data = line.partition(" ")
+            if data:
+                self.known[key] = json.loads(base64.b64decode(data))
+
+    def get(self, folder, key, kind):
+        """the kept result (the f32 file's rig path for "f32", else the reply), or None"""
+        if not self.on:
+            return None
+        if key not in getattr(self, "known", {}):
+            self.look([(folder, key)])
+        entry = self.known.get(key)
+        place = self.place(folder, key)
+        if not entry:
+            self.misses.append(key)
+            return None
+        self.hits.append(key)
+        return f"{service_home(self.host)}/{place}/{entry['f32']}" if kind == "f32" else entry["reply"]
+
+    def put(self, folder, key, save, reply, f32=None, inputs=None):
+        """a fresh result kept: the save folder (an f32 accumulation's) moved under the key, or the reply alone"""
+        if not self.on:
+            return f32
+        place = self.place(folder, key)
+        entry = {"key": key, "inputs": inputs, "reply": reply, "made": time.strftime("%Y-%m-%d %H:%M:%S")}
+        if f32:
+            entry["f32"] = os.path.basename(f32)
+        free = f"$(( $(df -Pk ~ | awk 'NR==2 {{print $4}}') / 1048576 ))"
+        script = (f"set -e; if [ {free} -lt {CACHE_FREE_GB + 1} ]; then echo full; exit 0; fi\n"
+                  f"mkdir -p ~/{folder}/{CACHE}; rm -rf ~/{place}.part ~/{place}\n" +
+                  (f"mv ~/{save} ~/{place}.part\n" if f32 else f"mkdir -p ~/{place}.part\n") +
+                  f"cat > ~/{place}.part/entry.json <<'EOF'\n{json.dumps(entry)}\nEOF\n"
+                  f"mv ~/{place}.part ~/{place}; echo kept")
+        if ssh(self.host, script).strip() != "kept":
+            say(f"rt2_bench: the rig has under {CACHE_FREE_GB} GB free: not cached")
+            return f32
+        return f"{service_home(self.host)}/{place}/{entry['f32']}" if f32 else None
+
+    def trim(self):
+        """the rig's whole cache (every recording's) kept under CACHE_GB, the least recently used dropped first"""
+        if not self.on or not self.misses:
+            return
+        script = (f"cd ~/{REMOTE} 2>/dev/null || exit 0\n"
+                  f"ls -d */{CACHE}/*/ 2>/dev/null | grep -v '\\.part/$' | while read d; do "
+                  "echo \"$(stat -c %Y \"$d/entry.json\" 2>/dev/null || echo 0) $(du -sk \"$d\" | cut -f1) $d\"; "
+                  f"done | sort -rn | awk -v cap={int(CACHE_GB * 1048576)} '{{t += $2; if (t > cap) print $3}}' | "
+                  "xargs -r rm -rf")
+        ssh(self.host, script, check=False)
+
+    def summary(self):
+        if not self.on:
+            return "the cache off"
+        return (f"cache: {len(self.hits)} kept, {len(self.misses)} drawn (the inputs hashed in "
+                f"{self.seconds:.1f} s)")
+
+
 # ---------- reference, terms, triage: the shortcuts against the converged picture, the light by term
 
 # the real-time shortcuts the reference turns off (the same kernels, the same frame; docs: tools/rig/README.md, recipe 12)
@@ -836,11 +1002,14 @@ print(json.dumps(out))
 """
 
 
+PROBE = "HALO_LT_DENOISE_PROBE=1"  # (the views' passes: only the workbench sets it)
+
+
 def accumulate(args, folder, env, request, save):
     """one replay of its own: rt_view's accumulation of the views into the rig's save folder; the reply"""
     home = service_home(args.host)
     ssh(args.host, f"mkdir -p ~/{save}")
-    service = open_service(args.host, args.build, folder, list(env) + ["HALO_LT_DENOISE_PROBE=1"])
+    service = open_service(args.host, args.build, folder, list(env) + [PROBE])
     try:
         if "rt_view" not in service.ask({"cmd": "info"}).get("capabilities", []):
             raise SystemExit("rt2_bench: this replay has no rt_view (build it from a branch with the views)")
@@ -855,7 +1024,7 @@ def analyse(args, files, regions, pictures, save, out):
            "dir": f"{service_home(args.host)}/{save}"}
     w, h = (int(v) for v in SIZE.split("x"))
     job["width"], job["height"] = w, h
-    text = ssh(args.host, f"python3 - {shlex.quote(json.dumps(job))} <<'PY'\n{ANALYSE}\nPY\n")
+    text = ssh(args.host, f"mkdir -p ~/{save} && python3 - {shlex.quote(json.dumps(job))} <<'PY'\n{ANALYSE}\nPY\n")
     result = json.loads(text.strip().splitlines()[-1])
     if pictures:
         out.mkdir(parents=True, exist_ok=True)
@@ -879,7 +1048,7 @@ def regions_of(args):
     return regions
 
 
-def realtime_and_reference(args, folder, meta, save, terms=()):
+def realtime_and_reference(args, folder, meta, save, terms=(), cache=None):
     """the game's light at the moment's frame (as recorded, exact), the same frame held (its noise and its mean), the
     reference (the shortcuts off, held, accumulated), and each term's reference: their saved files and seconds"""
     frame = args.frame if args.frame is not None else meta["frame"]
@@ -898,6 +1067,15 @@ def realtime_and_reference(args, folder, meta, save, terms=()):
                                     {"n": frame, "hold": args.term_plays + skip, "warm": -1,
                                      "last": args.term_plays, "accumulate": "sample"})
     files, seconds = {}, {}
+    cache = cache or Cache(args, [folder], args.set)
+    keys = {name: cache.key(folder, [*env, PROBE], request) for name, (env, request) in jobs.items()}
+    cache.look([(folder, key) for key in keys.values()])
+    for name, key in keys.items():
+        path = cache.get(folder, key, "f32")
+        if path:
+            files[name] = path
+            seconds[name] = 0.0
+    wanted = {name: job for name, job in jobs.items() if name not in files}
 
     def one(item):
         name, (env, request) = item
@@ -906,14 +1084,19 @@ def realtime_and_reference(args, folder, meta, save, terms=()):
         if not reply.get("ok"):
             raise SystemExit(f"rt2_bench: {name}: {reply.get('error')}")
         view = reply["accumulated"][0]
-        return name, view["f32"], time.monotonic() - started
+        path = cache.put(folder, keys[name], f"{save}/{name}", {k: v for k, v in reply.items() if k != "accumulated"},
+                         f32=view["f32"], inputs={"env": sorted([*env, PROBE]), "request": request})
+        return name, path, time.monotonic() - started
 
-    owner_check(args.host)
-    # (three replays at once share the GPU: goat-rig run --shared's limit)
+    if wanted:
+        owner_check(args.host)
+    # (three replays at once share the GPU: goat-rig run --shared's limit; the longest first)
+    order = sorted(wanted.items(), key=lambda item: -item[1][1].get("hold", 1))
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
-        for name, path, took in pool.map(one, jobs.items()):
+        for name, path, took in pool.map(one, order):
             files[name] = path
             seconds[name] = took
+    cache.trim()
     return files, seconds, frame
 
 
@@ -929,7 +1112,8 @@ def reference(args):
     regions = regions_of(args)
     started = time.monotonic()
     try:
-        files, seconds, frame = realtime_and_reference(args, folder, meta, save)
+        cache = Cache(args, [folder], args.set)
+        files, seconds, frame = realtime_and_reference(args, folder, meta, save, cache=cache)
         white = args.scale or 0.05
         pictures = {"reference": ["light", "reference", white], "realtime": ["light", "realtime", white],
                     "error": ["error", "realtime", "reference", white * 0.02],
@@ -939,7 +1123,8 @@ def reference(args):
         ssh(args.host, f"rm -rf ~/{save}", check=False)
     say(f"rt2_bench: reference at frame {frame}: {args.plays} plays (after {args.skip}) with "
         f"{' '.join(REFERENCE_ENV)}, the denoiser bypassed (its input sample accumulated); total "
-        f"{time.monotonic() - started:.0f} s ({', '.join(f'{k} {v:.0f} s' for k, v in seconds.items())})")
+        f"{time.monotonic() - started:.0f} s ({', '.join(f'{k} {v:.0f} s' for k, v in seconds.items())}; "
+        f"{cache.summary()})")
     for name in pictures:
         say(f"    {name}: {out / (name + '.png')}")
     for i, r in enumerate(result["regions"]):
@@ -969,7 +1154,8 @@ def terms(args):
     regions = regions_of(args)
     started = time.monotonic()
     try:
-        files, seconds, frame = realtime_and_reference(args, folder, meta, save, TERM_RUNS)
+        cache = Cache(args, [folder], args.set)
+        files, seconds, frame = realtime_and_reference(args, folder, meta, save, TERM_RUNS, cache)
         white = args.scale or 0.05
         pictures = {f"term_{t}": ["light", f"term_{t}", white] for t in TERM_RUNS}
         result = analyse(args, files, regions, pictures, save, out)
@@ -977,7 +1163,7 @@ def terms(args):
         ssh(args.host, f"rm -rf ~/{save}", check=False)
     say(f"rt2_bench: light by term at frame {frame} (each the reference's, {args.term_plays} plays, the others "
         f"masked, less the run with every source masked; bounce = all less direct, the sky's dome through the bounce included; unmasked = what no mask reaches); "
-        f"{time.monotonic() - started:.0f} s")
+        f"{time.monotonic() - started:.0f} s; {cache.summary()}")
     for i, r in enumerate(result["regions"]):
         say(terms_line(r, "whole picture" if i == 0 else f"region {i} {','.join(f'{v:g}' for v in r['box'])}"))
     for name in pictures:
@@ -1018,39 +1204,67 @@ def triage(args):
     started = time.monotonic()
     frame = args.frame if args.frame is not None else meta["frame"]
     view_reply = {}
+    classic_folder = f"{REMOTE}/{args.classic}" if args.classic else None
+    cache = Cache(args, [folder] + ([classic_folder] if classic_folder else []), args.set)
+
+    def kept(where, env, request, draw):
+        """a replay's reply, from the cache or drawn (and kept)"""
+        key = cache.key(where, env, request)
+        reply = cache.get(where, key, "reply")
+        if reply is None:
+            reply = draw()
+            cache.put(where, key, None, reply, inputs={"env": sorted(env), "request": request})
+        return reply
 
     def denoiser():
-        service = open_service(args.host, args.build, folder, [*args.set, "HALO_LT_DENOISE_PROBE=1"])
-        try:
-            view_reply["denoiser"] = service.ask({"cmd": "rt_view", "view": "denoise", "show": "cut_share", "n": frame,
-                                                  "count": 1, "warm": -1, "last": 1, "regions": sum(regions, []),
-                                                  "inline": True, "compress": True})
-        finally:
-            service.close()
+        env = [*args.set, PROBE]
+        request = {"cmd": "rt_view", "view": "denoise", "show": "cut_share", "n": frame, "count": 1, "warm": -1,
+                   "last": 1, "regions": sum(regions, []), "inline": True, "compress": True}
 
-    def presented(name, env, n=None):
-        reply = draw_once(args.host, args.build, f"{REMOTE}/{name}", {"cmd": "rt_frames",
-                                                                       "n": frame if n is None else n, "count": 1,
-                                                                       "warm": -1, "last": 1, "inline": True,
-                                                                       "compress": True,
-                                                                       "regions": sum(regions, [])}, env)
-        return reply["stats"]["regions"]
+        def draw():
+            service = open_service(args.host, args.build, folder, env)
+            try:
+                reply = service.ask(request)
+            finally:
+                service.close()
+            # (the numbers kept, not the pictures)
+            return {"view": {k: v for k, v in reply["view"].items() if k != "pictures"}}
 
-    try:
-        files, seconds, _ = realtime_and_reference(args, folder, meta, save, TERM_RUNS)
+        view_reply["denoiser"] = kept(folder, env, request, draw)
+
+    def presented(where, env, n=None):
+        request = {"cmd": "rt_frames", "n": frame if n is None else n, "count": 1, "warm": -1, "last": 1, "inline": True,
+                   "compress": True, "regions": sum(regions, [])}
+
+        def draw():
+            reply = draw_once(args.host, args.build, where, request, env)
+            return {"stats": reply["stats"]}
+
+        return kept(where, env, request, draw)["stats"]["regions"]
+
+    def side():
+        """the exact frames beside the accumulations: the denoiser's view, the classic and the game's pictures"""
+        took = {}
         t = time.monotonic()
         denoiser()
-        seconds["denoiser"] = time.monotonic() - t
-        classic = None
+        took["denoiser"] = time.monotonic() - t
         if args.classic:
             t = time.monotonic()
             # (the classic recording's frame at the same game second: both end at the moment's --at, 1/60 s a
             # frame, but the setting's loading draws a different number of frames first, so counted from the end)
-            classic_frames = meta_of(args.host, f"{REMOTE}/{args.classic}")["frames"]
-            classic_frame = frame - (meta["frames"] - classic_frames)
-            classic = presented(args.classic, [], classic_frame)
-            game = presented(name_of(args), list(args.set))
-            seconds["classic"] = time.monotonic() - t
+            view_reply["classic_frame"] = frame - (meta["frames"] - meta_of(args.host, classic_folder)["frames"])
+            view_reply["classic"] = presented(classic_folder, [], view_reply["classic_frame"])
+            view_reply["game"] = presented(folder, list(args.set))
+            took["classic"] = time.monotonic() - t
+        return took
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as aside:
+            beside = aside.submit(side)
+            files, seconds, _ = realtime_and_reference(args, folder, meta, save, TERM_RUNS, cache)
+            seconds.update(beside.result())
+        classic, game = view_reply.get("classic"), view_reply.get("game")
+        classic_frame = view_reply.get("classic_frame")
         white = args.scale or 0.05
         pictures = {"reference": ["light", "reference", white], "error": ["error", "realtime", "reference",
                                                                           white * 0.02]}
@@ -1058,7 +1272,7 @@ def triage(args):
     finally:
         ssh(args.host, f"rm -rf ~/{save}", check=False)
     say(f"rt2_bench: TRIAGE at frame {frame} ({time.monotonic() - started:.0f} s: "
-        f"{', '.join(f'{k} {v:.0f} s' for k, v in seconds.items())})")
+        f"{', '.join(f'{k} {v:.0f} s' for k, v in seconds.items())}; {cache.summary()})")
     report = []
     for i, r in enumerate(result["regions"][1:]):
         ref, rt = r["reference"]["mean"] or 1e-12, r["realtime"]["mean"]
@@ -1100,7 +1314,8 @@ def triage(args):
         (out / "triage.json").write_text(json.dumps({"frame": frame, "seconds": seconds, **result,
                                                      "denoiser": view_reply["denoiser"]["view"]["regions"],
                                                      "classic": classic, "game": game if classic else None,
-                                                     "classic_frame": classic_frame if classic else None},
+                                                     "classic_frame": classic_frame if classic else None,
+                                                     "cache": {"kept": len(cache.hits), "drawn": len(cache.misses)}},
                                                     indent=1))
     return 0
 
@@ -1152,7 +1367,16 @@ def main():
     parser.add_argument("--classic", help="triage: the classic recording's name (record --setting-off --name NAME)")
     parser.add_argument("--scale", type=float, default=0, help="view: white's value (0: the 99th percentile)")
     parser.add_argument("--out", default=str(ROOT / "build" / "rt2_bench"), help="run: the pictures' folder")
+    parser.add_argument("--kernels", action="store_true",
+                        help="view/reference/terms/triage: the working tree's kernels (as run sends them), not the "
+                             "build's own")
+    parser.add_argument("--no-cache", action="store_true",
+                        help="reference/terms/triage: every result drawn again, none kept (the cache: ~/goat-rig/"
+                             "rt2-bench/<name>/cache, keyed by the recording, the replay's code, the kernels, the "
+                             "GPU, the settings and the request)")
     args = parser.parse_args()
+    if args.what in ("view", "reference", "terms", "triage"):
+        args.set = [*args.set, *edited_kernels(args)]
     return {"record": record, "verify": verify, "run": run, "view": view, "reference": reference, "terms": terms,
             "triage": triage}[args.what](args)
 
