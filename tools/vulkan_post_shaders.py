@@ -54,7 +54,10 @@ caster whose volume holds it (the ray-traced shadows' casters, a few less),
 marches a short way toward the caster's light (its classic shadow's
 direction, the lightmap's dominant light: the sun outdoors) in screen
 space, a step at a time projected into the depth: a step behind what the
-depth holds, by less than a guessed thickness, is in shadow. Drawn after
+depth holds, by less than a guessed thickness, is in shadow. Its steps are
+the same for every pixel (no noise, which no pass after it averages under
+SMAA: #1290's dotted fringe), and its normal comes from the nearer of each
+pair of neighbours, never across an object's outline. Drawn after
 the classic receivers, it writes the light taken before them (its second
 texture) times its shadow, and the blend keeps the lesser of that and the
 pixel: the darker of the two shadows, not both. Its uniforms are a block of
@@ -729,27 +732,46 @@ float depth_at(vec2 pixel)
 #endif
 }
 
+// (a pixel's point in the world, from its depth; one of the sky's far away)
+vec3 point_at(vec2 pixel)
+{
+\tfloat depth = depth_at(pixel);
+\tif (depth >= 1.0)
+\t\treturn vec3(1.0e30);
+\tvec4 h = vec4(dot(unproject[0], vec4(pixel, depth, 1.0)), dot(unproject[1], vec4(pixel, depth, 1.0)),
+\t\tdot(unproject[2], vec4(pixel, depth, 1.0)), dot(unproject[3], vec4(pixel, depth, 1.0)));
+\treturn h.xyz / h.w;
+}
+
+// (the way along the surface toward a neighbour pixel, by the nearer of the
+// two on either side: across an object's outline the other side's point is
+// another surface's, far off)
+vec3 along_surface(vec3 p, vec2 pixel, vec2 offset)
+{
+\tvec3 a = point_at(clamp(pixel + offset, bounds.xy + 0.5, bounds.zw - 0.5)) - p;
+\tvec3 b = p - point_at(clamp(pixel - offset, bounds.xy + 0.5, bounds.zw - 0.5));
+\treturn dot(a, a) < dot(b, b) ? a : b;
+}
+
 void main()
 {
 \tvec2 pixel = gl_FragCoord.xy;
 \tfloat depth = depth_at(pixel);
-\tvec4 h = vec4(dot(unproject[0], vec4(pixel, depth, 1.0)), dot(unproject[1], vec4(pixel, depth, 1.0)),
-\t\tdot(unproject[2], vec4(pixel, depth, 1.0)), dot(unproject[3], vec4(pixel, depth, 1.0)));
-\tvec3 p = h.xyz / h.w;
-\t// (the surface's normal from its neighbours, facing the camera: a pixel
-\t// facing away from a light gets no shadow from it, as its own surface
-\t// would be found in its way)
-\tvec3 n = cross(dFdx(p), dFdy(p));
-\tn *= dot(n, camera.xyz - p) < 0.0 ? -1.0 : 1.0;
-\tn /= max(length(n), 1.0e-6);
 \tif (depth >= 1.0)
 \t\tdiscard;
+\tvec3 p = point_at(pixel);
+\t// (the surface's normal from its own neighbours, facing the camera: a
+\t// pixel facing away from a light gets no shadow from it, as its own
+\t// surface would be found in its way. Not dFdx and dFdy's, whose 2x2
+\t// quads straddle an object's outline: the floor's pixels beside a body
+\t// took a normal half the body's, a dotted fringe)
+\tvec3 n = cross(along_surface(p, pixel, vec2(1.0, 0.0)), along_surface(p, pixel, vec2(0.0, 1.0)));
+\tn *= dot(n, camera.xyz - p) < 0.0 ? -1.0 : 1.0;
+\tn /= max(length(n), 1.0e-6);
 \tfloat distance_ = length(camera.xyz - p);
 \tfloat faded = 1.0 - clamp((distance_ - view.x) * view.y, 0.0, 1.0);
 \tif (faded <= 0.0)
 \t\tdiscard;
-\t// (interleaved gradient noise, the same each frame: the steps' start)
-\tfloat noise = fract(52.9829189 * fract(0.06711056 * (pixel.x - 0.5) + 0.00583715 * (pixel.y - 0.5)));
 \tfloat bias = march.w * distance_;
 \tint count = min(int(camera.w), CASTERS);
 \tvec3 light = vec3(1.0);
@@ -769,11 +791,18 @@ void main()
 \t\tif (facing <= 0.05)
 \t\t\tcontinue;
 \t\tvec3 from = p + n * (march.z + bias);
+\t\t// (the same steps for every pixel, no noise: no temporal pass
+\t\t// averages a pixel's noise away under SMAA, FXAA or none, and noise
+\t\t// tied to the screen crawls over the floor as the view moves. Where
+\t\t// the march went behind the depth is found between the step before
+\t\t// and the first behind, so the shadow's darkness follows the caster
+\t\t// smoothly, not a step at a time)
 \t\tfloat step_ = march.x / float(STEPS);
 \t\tfloat hit = 0.0;
+\t\tfloat t_before = 0.0, behind_before = 0.0;
 \t\tfor (int k = 0; k < STEPS; k++)
 \t\t{
-\t\t\tfloat t = step_ * (float(k) + noise);
+\t\t\tfloat t = step_ * float(k + 1);
 \t\t\tvec4 q = vec4(from + l * t, 1.0);
 \t\t\tfloat w = dot(project[3], q);
 \t\t\tif (w <= 0.0)
@@ -783,15 +812,27 @@ void main()
 \t\t\t\tbreak;
 \t\t\tfloat scene = depth_at(s);
 \t\t\tif (scene >= 1.0)
+\t\t\t{
+\t\t\t\tt_before = t;
+\t\t\t\tbehind_before = -1.0;
 \t\t\t\tcontinue;
+\t\t\t}
 \t\t\t// (how far the step is behind what the depth holds there, in world
 \t\t\t// units: a world point's 1 / w is its unprojection's w)
 \t\t\tfloat behind = (w - 1.0 / dot(unproject[3], vec4(s, scene, 1.0))) * view.z;
 \t\t\tif (behind > bias && behind < march.y)
 \t\t\t{
-\t\t\t\thit = 1.0 - 0.5 * float(k) / float(STEPS);
+\t\t\t\t// (where it crossed: between the step before, in front, and
+\t\t\t\t// this one; after a step behind something thicker, here)
+\t\t\t\tfloat crossed = behind_before <= bias ?
+\t\t\t\t\tmix(t_before, t, clamp((bias - behind_before) / (behind - behind_before), 0.0, 1.0)) : t;
+\t\t\t\t// (more the nearer it is, and none at the march's end: no edge
+\t\t\t\t// where a caster leaves its reach)
+\t\t\t\thit = (1.0 - 0.5 * crossed / march.x) * (1.0 - smoothstep(0.6 * march.x, march.x, crossed));
 \t\t\t\tbreak;
 \t\t\t}
+\t\t\tt_before = t;
+\t\t\tbehind_before = behind;
 \t\t}
 \t\tfloat ends = along >= 0.0 ? 1.0 - along / (2.0 * a.w) : 1.0 + along / (0.5 * a.w);
 \t\tvec3 darkness = unpackUnorm4x8(floatBitsToUint(b.z)).rgb;

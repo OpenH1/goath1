@@ -18,19 +18,19 @@ def selected(plan):
 
 
 def test_a_harness_source_brings_its_tests_and_the_core():
-    plan = ci_plan.quick(["port/linux/src/xinput_sdl.c"], "")
+    plan = ci_plan.quick(["source/text/draw_string.c"], "")
     tests = selected(plan)
-    assert "tools/harness/tests/test_back_pause.py" in tests  # (it reads xinput_sdl.c)
+    assert "tools/harness/tests/test_unicode_line_breaks.py" in tests  # (it reads draw_string.c)
     assert set(ci_plan.CORE_TESTS) <= tests
     assert len(tests) < len(ci_plan.test_files(ci_plan.NO_BUILD_TESTS)) / 2
     assert plan["scorecard"] == "true" and plan["windows"] in ("true", "false")
 
 
 def test_a_changed_test_and_its_case_run():
-    tests = selected(ci_plan.quick(["tools/harness/tests/back_pause.c"], ""))
-    assert "tools/harness/tests/test_back_pause.py" in tests
-    assert "tools/harness/tests/test_back_pause.py" in selected(
-        ci_plan.quick(["tools/harness/tests/test_back_pause.py"], ""))
+    tests = selected(ci_plan.quick(["tools/harness/tests/unicode_line_breaks.c"], ""))
+    assert "tools/harness/tests/test_unicode_line_breaks.py" in tests
+    assert "tools/harness/tests/test_unicode_line_breaks.py" in selected(
+        ci_plan.quick(["tools/harness/tests/test_unicode_line_breaks.py"], ""))
 
 
 def test_a_python_tool_brings_the_tests_that_import_it():
@@ -49,14 +49,14 @@ def test_infrastructure_runs_everything():
 
 
 def test_platforms_only_for_their_files():
-    plan = ci_plan.quick(["tools/harness/tests/test_back_pause.py"], "")
+    plan = ci_plan.quick(["tools/harness/tests/test_unicode_line_breaks.py"], "")
     assert not any(plan[name] == "true" for name in ci_plan.PLATFORMS)
     assert plan["scorecard"] == "false"
     assert ci_plan.quick(["port/windows/host/host_crash_win.c"], "")["windows"] == "true"
     assert ci_plan.quick(["port/android/app/build.gradle"], "")["android"] == "true"
     assert ci_plan.quick(["port/macos/presenter.m"], "")["macos"] == "true"
     # (a commit asks for one)
-    assert ci_plan.quick(["tools/harness/tests/test_back_pause.py"], "Fix it [mac]")["macos"] == "true"
+    assert ci_plan.quick(["tools/harness/tests/test_unicode_line_breaks.py"], "Fix it [mac]")["macos"] == "true"
 
 
 def test_documentation_alone_is_small():

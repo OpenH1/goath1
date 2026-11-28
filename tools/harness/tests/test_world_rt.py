@@ -25,7 +25,7 @@ CONTROLS = [
     # the box's centre left at the node's origin
     ("\t\t\tposition += frame->axes[column][row] * sphere[column];\n", "", "arithmetic"),
     # the static scenery the field and its pages hold traced as an object (its occlusion twice)
-    ("unsigned long owner = object->baked ? 0 : world_rt_owner(object->id);",
+    ("unsigned long owner = structure ? 0 : world_rt_owner(object->id);",
      "unsigned long owner = world_rt_owner(object->id);", "frame"),
     # ... or left out (rays through the trees and rocks)
     ("\t\tdefinition = world_rt_definition(object->definition);\n",
@@ -65,8 +65,8 @@ CONTROLS = [
     ("\t\tworld_rt_compose(node, definition->inverses[node_index], node);\n", "", "skin"),
     ("\t\tworld_rt_compose(inverse, node, pose->transforms[node_index]);",
      "\t\tmemcpy(pose->transforms[node_index], node, sizeof(node));", "skin"),
-    ("\t\t\tinstance->pad = (unsigned int)++pose_count;\n\t\t\t/* (measuring",
-     "\t\t\t++pose_count;\n\t\t\t/* (measuring", "skin"),
+    ("\t\t\tinstance->pad = (unsigned int)++pose_count;\n\t\t\t/* (its lamps",
+     "\t\t\t++pose_count;\n\t\t\t/* (its lamps", "skin"),
     # the octahedral map's lower half not folded
     ("\tif (vector[2] < 0.0f)\n", "\tif (0)\n", "arithmetic"),
     # ... or not made again for another BSP

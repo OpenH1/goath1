@@ -400,13 +400,14 @@ BOOL xgpu_spirv_rt_shadows_pass(const struct xgpu_spirv_options *options, struct
 XGPU_WORLD_AO_INSTANCE_*): the structure, objects, the first-person weapon
 (drawn in a view of its own: no world ray meets it), and the local
 player's own body in first person (which casts shadows, and nothing else
-sees); the rays' masks: the occlusion's (the structure and objects), the
-shadows' (and the player's body) */
-#define XGPU_SPIRV_RT_MASK_AO 0x03u
-#define XGPU_SPIRV_RT_MASK_SHADOWS 0x0Bu
+sees), and (the ray-traced lighting's) an object that casts no shadow,
+which only the pass's sun leaves out; the rays' masks: the occlusion's
+(the structure and objects), the shadows' (and the player's body) */
+#define XGPU_SPIRV_RT_MASK_AO 0x13u
+#define XGPU_SPIRV_RT_MASK_SHADOWS 0x1Bu
 /* (display.rt_reflections' rays: the structure, objects and the player's
 own body, who sees themself in a polished floor) */
-#define XGPU_SPIRV_RT_MASK_REFLECTIONS 0x0Bu
+#define XGPU_SPIRV_RT_MASK_REFLECTIONS 0x1Bu
 
 /* the ray-traced scene's skinning (xgpu_vulkan_rt.c): a compute shader of
 XGPU_SPIRV_RT_SKIN_GROUP invocations a group, one a vertex (x) of a job
@@ -482,6 +483,36 @@ enum
 };
 #define XGPU_SPIRV_BINDING_RT_BOUNCE 10
 
+/* The one light model's forward receivers (~/dev/rt2-realtime-design.md,
+"One light model for every receiver"): with the light-transport pass on,
+a draw lit by the enhanced dynamic lights that reads no pass light of its
+own (the first-person weapon and hands, a blended or self-illuminated
+model's or structure's pass: none drawn into the pre-pass) evaluates the
+pass's direct light itself, from the pass's light table (xgpu_vulkan_lt.c's
+lt_table, lt/e1.frag's light_table), bound to the occlusion set here: an
+RGBA32F image XGPU_SPIRV_LT_TABLE_TEXELS wide, a row a light, the block's
+lights' rows by their index in the block, the suns' from
+XGPU_SPIRV_LT_SUN_ROW, and the view's shadowed flashlight (the pass's own
+E1 light, which no block row carries for the pass) at
+XGPU_SPIRV_LT_FLASHLIGHT_ROW. Texel 4's w is the row's kind (0 a point, 1 a
+spot, 2 a panel, 3 a sun), less than 0 where the pass does not light it:
+XGPU_SPIRV_LT_KIND_CLASSIC (the classic sum still adds it: a models-only
+light) or XGPU_SPIRV_LT_KIND_FLASHLIGHT (the block's row of the view's
+flashlight, lit from its own row). Texel 6's w is 1 where texel 6's xyz is
+a gel's origin apart from the emitter (the flashlight's). */
+#define XGPU_SPIRV_BINDING_LT_TABLE 11
+#define XGPU_SPIRV_LT_TABLE_TEXELS 8
+#define XGPU_SPIRV_LT_SUN_ROW 128
+#define XGPU_SPIRV_LT_SUNS 8
+#define XGPU_SPIRV_LT_FLASHLIGHT_ROW (XGPU_SPIRV_LT_SUN_ROW + XGPU_SPIRV_LT_SUNS)
+/* (then the level's light sources' strongest groups about the eye, as
+panels: xgpu_vulkan_lt.c's lt_lamp_rows) */
+#define XGPU_SPIRV_LT_LAMP_ROW (XGPU_SPIRV_LT_FLASHLIGHT_ROW + 1)
+#define XGPU_SPIRV_LT_LAMPS 4
+#define XGPU_SPIRV_LT_TABLE_ROWS (XGPU_SPIRV_LT_LAMP_ROW + XGPU_SPIRV_LT_LAMPS)
+#define XGPU_SPIRV_LT_KIND_CLASSIC (-1)
+#define XGPU_SPIRV_LT_KIND_FLASHLIGHT (-2)
+
 /* The light-transport pass's guides (contract C1, ~/dev/rt2-realtime-design.md
 section 1.1), with HALO_LT_E1 alone: the pre-pass's twins keep their
 pipelines' dynamic lights (so they shade their bump or normal map's normal
@@ -512,6 +543,10 @@ PRESENT bit). */
 #define XGPU_SPIRV_GUIDES_LOCATION 1
 #define XGPU_SPIRV_GUIDES_MATERIAL_MASK 0xFFFFu
 #define XGPU_SPIRV_GUIDES_ROUGHNESS_SHIFT 16
+/* (the material word's low byte: a bump-mapped surface's own normal
+variance within the pixel, Toksvig's, 0 to 1 by 255ths: lt/indirect.glsl's
+shine) */
+#define XGPU_SPIRV_GUIDES_BUMP_VARIANCE_MASK 0xFFu
 #define XGPU_SPIRV_GUIDES_SPECULAR_SHIFT 24
 #define XGPU_SPIRV_GUIDES_ROUGHNESS_NONE 255u
 #define XGPU_SPIRV_GUIDES_MOTION_NONE 0u

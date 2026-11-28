@@ -18,8 +18,12 @@ receivers, it writes the lesser of what they left and the light taken
 before them (xgpu_vulkan_stream.c's contact_shadows_light) times its own
 shadow: a pixel in both is darkened by the darker alone, not twice.
 
-It fades out between 8 and 20 world units from the camera, and its steps
-start at the same noise every frame (no history, no shimmer while still).
+It fades out between 8 and 20 world units from the camera. Its steps are the
+same for every pixel, with no noise (#1290: nothing after it averages noise
+away under SMAA, so it stayed a dotted fringe around bodies that crawled as
+the view moved); where the march went behind the depth is found between two
+steps, and the shadow fades to nothing at the march's end. A pixel's normal
+is from the nearer neighbour on each side, never across an object's outline.
 Its pipeline is made as a map is prepared (a record of no casters), for
 each of the map's targets. Off screen nothing casts, and a caster's
 thickness is guessed: the plan's limits of a screen-space pass.

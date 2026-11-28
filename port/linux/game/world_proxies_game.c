@@ -108,10 +108,9 @@ static boolean object_occludes(long object_index)
 	return object->object.type != _object_type_projectile && object->object.type != _object_type_sound_scenery;
 }
 
-/* a static scenery placement that the drawn field and its pages hold
-(or, awaited, that the field on its way will hold): scenery or a device on
-no other object, standing where one baked stands */
-static int object_static(long object_index, long definition, int awaited)
+/* a static scenery placement found among found's placements: scenery or
+a device on no other object, standing where one of them stands */
+static int object_placed(long object_index, long definition, int (*found)(long, float const[3]))
 {
 	struct object_datum *object = (struct object_datum *)object_try_and_get(object_index);
 	float position[3];
@@ -125,7 +124,14 @@ static int object_static(long object_index, long definition, int awaited)
 	position[0] = object->object.position.x;
 	position[1] = object->object.position.y;
 	position[2] = object->object.position.z;
-	return awaited ? world_sdf_scenery_awaited(definition, position) : world_sdf_scenery_baked(definition, position);
+	return found(definition, position);
+}
+
+/* one that the drawn field and its pages hold (or, awaited, that the
+field on its way will hold) */
+static int object_static(long object_index, long definition, int awaited)
+{
+	return object_placed(object_index, definition, awaited ? world_sdf_scenery_awaited : world_sdf_scenery_baked);
 }
 
 static int object_baked(long object_index, long definition)
@@ -160,6 +166,13 @@ int world_proxies_source_baked(long id)
 	struct object_datum *object = (struct object_datum *)object_try_and_get(id);
 
 	return object && object_baked(id, object->definition_index);
+}
+
+int world_proxies_source_lightmapped(long id)
+{
+	struct object_datum *object = (struct object_datum *)object_try_and_get(id);
+
+	return object && object_placed(id, object->definition_index, world_sdf_scenery_lightmapped);
 }
 
 int world_proxies_source_solid(long id)
@@ -330,6 +343,16 @@ int world_proxies_source_definition(long definition, struct world_proxies_source
 	return TRUE;
 }
 
+/* an object that casts no shadow (its definition's "does not cast
+shadow", or its kind's: a device, a projectile; render_objects.c draws it
+none) */
+static int object_shadowless(long object_index)
+{
+	struct object_datum *object = (struct object_datum *)object_try_and_get(object_index);
+
+	return object && TEST_FLAG(object->object.flags, _object_shadowless_bit);
+}
+
 /* the unit a local player sees from in first person (director.c's
 perspective and followed unit) */
 static int object_first_person(long object_index)
@@ -366,6 +389,7 @@ long world_proxies_source_instances(struct world_proxies_source_instance *instan
 		instances[count].baked = object_baked(scene[index].id, scene[index].definition);
 		instances[count].field_awaited = world_sdf_object_awaited(scene[index].definition);
 		instances[count].first_person = object_first_person(scene[index].id);
+		instances[count].shadowless = object_shadowless(scene[index].id);
 		count++;
 	}
 	return count;

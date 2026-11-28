@@ -29,24 +29,27 @@ const float BOUNCE_CAP = 32.0;
 const float SAME = 1.0e-3;
 
 // the light's change about at, where the history comes from (the previous frame's 3x3 strata's gradient samples about
-// it, its own 8 times over: a moving shadow's edge cut where it is): relight, each channel's ratio of the re-shaded
-// samples' sum to the previous ones' (a change alike over the strata: the lamp nearer, a light fading in, a coloured
-// light gone, whose hue leaves with it; a channel with no light before takes the luminance's ratio), which scales the
-// history; the result the share to cut from its count, by the gain: what of the change the ratio does not explain,
-// each sample against the ratio's prediction (a shadow or the beam's edge moving; all of it where there was no light)
+// it, its own 8 times over: a moving shadow's edge cut where it is): relight, each channel's ratio of the light now to
+// the light before, which scales the history; the result the share to cut from its count, by the gain: what of the
+// change the ratio does not explain, each stochastic sample against the ratio's prediction (a shadow or the beam's
+// edge moving; all of it where there was no light). The ratio is the deterministic half's where it has one (every
+// light's unshadowed light by the two frames' tables: lt/denoise_gradient.frag; noise-free, so a light that went,
+// came or moved relights every pixel it reaches, at once), else the stochastic samples' (a channel with no light
+// before takes the luminance's ratio)
 float changed(vec2 at, out vec3 relight)
 {
     relight = vec3(1.0);
     if ((pass.control.y & GRADIENTS) == 0)
         return 0.0;
-    ivec2 stratum = ivec2(floor(at)) / 3, top = ivec2(pass.size.zw) - 1;
+    ivec2 stratum = ivec2(floor(at)) / 3, top = ivec2(pass.size.zw) - 1, right = ivec2(int(pass.size.z), 0);
     vec3 before_rgb[9], now_rgb[9];
     float weight[9];
-    vec3 before_sum = vec3(0.0), now_sum = vec3(0.0);
-    float weights = 0.0;
+    vec3 before_sum = vec3(0.0), now_sum = vec3(0.0), lit_before = vec3(0.0), lit_now = vec3(0.0);
+    float weights = 0.0, lit_weights = 0.0;
     for (int k = 0; k < 9; k++)
     {
-        uvec4 g = texelFetch(gradients, clamp(stratum + ivec2(k % 3 - 1, k / 3 - 1), ivec2(0), top), 0);
+        ivec2 s = clamp(stratum + ivec2(k % 3 - 1, k / 3 - 1), ivec2(0), top);
+        uvec4 g = texelFetch(gradients, s, 0);
         vec2 x = unpackHalf2x16(g.x), y = unpackHalf2x16(g.y), z = unpackHalf2x16(g.z);
         before_rgb[k] = vec3(x, y.x);
         now_rgb[k] = vec3(y.y, z);
@@ -54,20 +57,46 @@ float changed(vec2 at, out vec3 relight)
         before_sum += weight[k] * before_rgb[k];
         now_sum += weight[k] * now_rgb[k];
         weights += weight[k];
+        // (the deterministic half's)
+        uvec4 d = texelFetch(gradients, s + right, 0);
+        float dw = float(d.w) * (k == 4 ? 8.0 : 1.0);
+        vec2 dx = unpackHalf2x16(d.x), dy = unpackHalf2x16(d.y), dz = unpackHalf2x16(d.z);
+        lit_before += dw * vec3(dx, dy.x);
+        lit_now += dw * vec3(dy.y, dz);
+        lit_weights += dw;
     }
     float before = luminance(before_sum), now = luminance(now_sum), larger = max(before, now);
+    float lit_was = luminance(lit_before), lit_is = luminance(lit_now), lit_larger = max(lit_was, lit_is);
+    bool exact = lit_weights > 0.0 && lit_larger > 1.0e-8;
+    if (exact)
+    {
+        // (a light where there was none: all of the history cut)
+        if (lit_was <= 1.0e-3 * lit_larger)
+            return 1.0;
+        float lit_ratio = abs(lit_is - lit_was) <= SAME * lit_larger ? 1.0 : lit_is / lit_was;
+        for (int c = 0; c < 3; c++)
+            relight[c] = lit_before[c] <= 1.0e-3 * lit_was ? lit_ratio :
+                abs(lit_now[c] - lit_before[c]) <= SAME * max(lit_now[c], lit_before[c]) ? 1.0 :
+                lit_now[c] / lit_before[c];
+    }
     if (weights <= 0.0 || larger <= 1.0e-8)
         return 0.0;
-    if (before <= 1.0e-3 * larger)
-        return 1.0;
-    // (the samples are half floats: a change within their rounding (SAME, relative) is none, so a light that stayed
-    // never relights the history or cuts its count by the rounding's noise, which would walk a held picture's mean)
-    float ratio = now / before, off = 0.0;
-    if (abs(now - before) <= SAME * larger)
-        ratio = 1.0;
-    for (int c = 0; c < 3; c++)
-        relight[c] = before_sum[c] <= 1.0e-3 * before ? ratio :
-            abs(now_sum[c] - before_sum[c]) <= SAME * max(now_sum[c], before_sum[c]) ? 1.0 : now_sum[c] / before_sum[c];
+    if (!exact)
+    {
+        if (before <= 1.0e-3 * larger)
+            return 1.0;
+        // (the samples are half floats: a change within their rounding (SAME, relative) is none, so a light that
+        // stayed never relights the history or cuts its count by the rounding's noise, which would walk a held
+        // picture's mean)
+        float ratio = now / before;
+        if (abs(now - before) <= SAME * larger)
+            ratio = 1.0;
+        for (int c = 0; c < 3; c++)
+            relight[c] = before_sum[c] <= 1.0e-3 * before ? ratio :
+                abs(now_sum[c] - before_sum[c]) <= SAME * max(now_sum[c], before_sum[c]) ? 1.0 :
+                now_sum[c] / before_sum[c];
+    }
+    float off = 0.0;
     for (int k = 0; k < 9; k++)
     {
         float a = luminance(now_rgb[k]), b = luminance(relight * before_rgb[k]);

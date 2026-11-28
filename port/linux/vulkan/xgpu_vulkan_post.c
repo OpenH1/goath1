@@ -819,7 +819,7 @@ int xgpu_vulkan_post_prepare_hdr(uint8_t depth_format, uint32_t samples, int pre
 }
 
 void xgpu_vulkan_post_tone_map(struct xgpu_vulkan_image *target, struct xgpu_vulkan_image *depth,
-	const int32_t corners[4], const float hdr[4])
+	const int32_t corners[4], const float hdr[4], const float camera[4])
 {
 	const struct xgpu_vulkan_image_description *description;
 	struct xgpu_vulkan_pipeline_description pipeline;
@@ -861,6 +861,9 @@ void xgpu_vulkan_post_tone_map(struct xgpu_vulkan_image *target, struct xgpu_vul
 	uniforms->metrics[2] = (float)description->width;
 	uniforms->metrics[3] = (float)description->height;
 	memcpy(uniforms->hdr, hdr, sizeof(uniforms->hdr));
+	/* (the camera's, XGPU_HDR_MODE_CAMERA: its contrast, its exposure) */
+	if (camera)
+		memcpy(uniforms->window, camera, sizeof(uniforms->window));
 	draw.constants = draw.uniforms;
 	memset(&dynamic, 0, sizeof(dynamic));
 	dynamic.viewport[0] = dynamic.scissor[0] = rectangle[0];

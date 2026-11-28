@@ -7,7 +7,8 @@
 //   record's albedo (linear) times the hit's dynamic light: one light of the hit's cell chosen by its unshadowed
 //   light (the flashlight among them), one shadow ray to it, plus the radiance cache's indirect light there. Only
 //   dynamic light: the static bounce is the lightmap's, never counted twice. Out: rgb the irradiance's sample (a
-//   cosine sample's estimator: albedo x the hit's irradiance), a 1 + the light-id hash + 1024 x the block's pixel.
+//   cosine sample's estimator: albedo x the hit's irradiance), a 1 + the block's light-id hash (block_hash: its four
+//   pixels' lights, whichever it traced) + 1024 x the block's pixel.
 // SPECULAR_RAY (full resolution, the guides' specular mask's pixels): one GGX ray (Heitz's visible normals; the
 //   guides' roughness, else a fallback by owner); its hit shaded as Halo's lightmap x albedo (the record's lightmap
 //   page; a model 0.6 of its albedo, as display.rt_reflections had it) plus the dynamic direct and the cache, faded
@@ -19,7 +20,8 @@
 // CACHE_RESOLVE (over the cache's slots, lt/indirect_cache.glsl): each slot's cell's bounce samples this frame,
 //   gathered where the cell is seen (16 taps over its footprint, each kept where its traced pixel is in that cell),
 //   merged by count (1/n up to 256: never an exponential average); a slot starts again when its cell or its
-//   light-id hash changes, and keeps its mean where no sample came (off the view, hidden).
+//   light-id hash (cell_hash: the lights at its cell's middle) changes, and keeps its mean where no sample came (off
+//   the view, hidden).
 // SPEC_FINAL: the light the surfaces read's right half (xgpu_spirv.c's lt_reflection_texel): the specular
 //   radiance and the hits' share.
 
@@ -36,13 +38,20 @@
 #define INDIRECT_ONLY 1048576
 #define COVERAGE 2097152
 #define CACHE_ON 4194304
+// (with SPECULAR_RAY, checking: the lights' shine alone, no ray (HALO_LT_SHINE_VIEW=1))
+#define SHINE_ONLY 16777216
 // (with BOUNCE: its history too, the second output)
 #define BOUNCE_HISTORY 8388608
+// (with CACHE_RESOLVE: the slots' means this pass's samples alone: the warm-up, xgpu_vulkan_lt_indirect.c's
+// INDIRECT_WARM)
+#define CACHE_REPLACE 33554432
 
 // the shader types (shaders.c's; xgpu_spirv.c's RT_REFLECTION_KIND_*)
 #define KIND_ENVIRONMENT 3u
 #define KIND_MODEL 4u
-#define MASK_REFLECTIONS 0x0Bu
+// (the live lights' one k: lt_lights.c's LT_LIGHTS_REAL_*_POWER_SCALE)
+#define GLOW_K 0.48
+#define MASK_REFLECTIONS 0x1Bu
 // the rays' reach (world units), the reflections' fade from 80% of it (display.rt_reflections')
 #define BOUNCE_REACH 32.0
 #define SPECULAR_REACH 25.0
@@ -59,8 +68,21 @@
 #define MASK_MULTIPURPOSE 0x200u
 // the bounce's rays where its history starts again
 #define BOUNCE_FIRST 4
+// lit live (real_sky): the bounce's rays a frame, and where its history starts again
+#define BOUNCE_LIVE 4
+#define BOUNCE_LIVE_FIRST 32
 // the roughness up to which a reflection is its mirror ray alone
 #define MIRROR_ROUGHNESS 0.1
+// the record's roughness code (xgpu_stream.h's XGPU_WORLD_RT_MATERIAL_ROUGHNESS_*)
+#define ROUGHNESS_SHIFT 10u
+#define ROUGHNESS_MASK 0x1Fu
+#define ROUGHNESS_STEP 0.02
+// past this roughness no ray is traced: the lobe is wide enough that the cube map (Halo's own soft environment)
+// stands for the scene's reflection, the lights' shine on top (direct_specular)
+#define ROUGH_TRACED 0.5
+// the suns whose shine a reflection takes (narrower than this, radians: b30's 0.2 degree sun, not its 50 degree fill,
+// whose light the rays' misses already show as the sky)
+#define SUN_SPEC_WIDEST 0.2
 
 // (the bindings as the modes use them)
 #define cache_image history_image
@@ -69,7 +91,7 @@ struct Hit
 {
     bool hit, attributes;
     float t;
-    vec3 p, n, albedo, surface;
+    vec3 p, n, albedo, surface, glow;
     int owner;
 };
 
@@ -110,14 +132,53 @@ vec3 hit_texel(uint slot, vec2 st, float level)
     return textureLod(hit_textures[nonuniformEXT(min(slot, HIT_TEXTURES - 1u))], st, level).rgb;
 }
 
-// the first surface along d (alpha-tested; skip's object left out, -1 none, the structure never): where, its
-// normal (toward the ray), its albedo (linear) and, with lightmap, Halo's colour there (base x detail x lightmap,
-// gamma), from the hit table (xgpu_spirv.c's rt_reflection_texel's reading)
-Hit trace(vec3 origin, vec3 d, float t_max, int skip, bool lightmap)
+// the level's static light where an object stands, for an object a reflection meets (it has no lightmap): the
+// lightmap of the structure straight below the hit, as Halo lights its models from the lightmap under them
+// (render_objects.c's model lighting samples it there), gamma; OBJECT_LIGHT where no structure is within reach below
+// (~/dev/rt2-realtime-design.md section 10, "Reflection hits")
+#define BELOW_REACH 8.0
+vec3 light_below(vec3 p)
 {
-    Hit hit = Hit(false, false, 0.0, vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), 0);
     rayQueryEXT q;
-    rayQueryInitializeEXT(q, scene, 0u, MASK_REFLECTIONS, origin, 0.0, d, t_max);
+    rayQueryInitializeEXT(q, scene, gl_RayFlagsOpaqueEXT, RT_MASK_STRUCTURE, p + vec3(0.0, 0.0, 0.05), 0.0,
+        vec3(0.0, 0.0, -1.0), BELOW_REACH);
+    while (rayQueryProceedEXT(q))
+        rayQueryConfirmIntersectionEXT(q);
+    if (rayQueryGetIntersectionTypeEXT(q, true) == gl_RayQueryCommittedIntersectionNoneEXT)
+        return vec3(OBJECT_LIGHT);
+    uint mesh = uint(rayQueryGetIntersectionInstanceShaderBindingTableRecordOffsetEXT(q, true)) & (HIT_MESHES - 1u);
+    uint record = mesh << 2, attributes = table.words[record + 1u];
+    if (attributes == 0u)
+        return vec3(OBJECT_LIGHT);
+    uint primitive = uint(rayQueryGetIntersectionPrimitiveIndexEXT(q, true)) +
+        (rayQueryGetIntersectionGeometryIndexEXT(q, true) == 1 ? table.words[record + 3u] : 0u);
+    uint corners = table.words[record] + primitive * 3u;
+    uint material_word = table.words[table.words[record + 2u] + (primitive >> 1)];
+    uint at = HIT_MATERIALS + (((material_word >> ((primitive & 1u) << 4)) & 0xFFFFu) << 4);
+    uint page = table.words[at + 14u];
+    if (page == 0u)
+        return vec3(OBJECT_LIGHT);
+    vec2 b = rayQueryGetIntersectionBarycentricsEXT(q, true);
+    vec3 w = vec3(1.0 - b.x - b.y, b.x, b.y);
+    vec2 lst = vec2(0.0);
+    for (int corner = 0; corner < 3; corner++)
+        lst += w[corner] * unpackSnorm2x16(table.words[attributes + table.words[corners + uint(corner)] * 6u + 4u]);
+    return hit_texel(page, lst, 0.0);
+}
+
+// the first surface along d of the instances mask takes (alpha-tested; skip's object left out, -1 none, the
+// structure never): where, its normal (toward the ray), its albedo (linear) and, with lightmap, Halo's colour there
+// (base x detail x lightmap, gamma), from the hit table (xgpu_spirv.c's rt_reflection_texel's reading).
+// The viewer's own body (the third-person model a local player sees from in first person, the instances'
+// XGPU_WORLD_AO_INSTANCE_PLAYER), by ~/dev/rt2-realtime-design.md section 1.3's rule: the eye never sees it (it sees
+// the first-person weapon and hands, drawn where the body is not), so the rays that carry light to what the eye sees
+// leave it out, as the direct light's shadow rays do (MASK_AO: the bounce's); a reflection shows it, as a mirror
+// shows the player (MASK_REFLECTIONS)
+Hit trace(vec3 origin, vec3 d, float t_max, int skip, bool lightmap, uint mask)
+{
+    Hit hit = Hit(false, false, 0.0, vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), 0);
+    rayQueryEXT q;
+    rayQueryInitializeEXT(q, scene, 0u, mask, origin, 0.0, d, t_max);
     while (rayQueryProceedEXT(q))
     {
         int candidate = rayQueryGetIntersectionInstanceCustomIndexEXT(q, false);
@@ -164,10 +225,21 @@ Hit trace(vec3 origin, vec3 d, float t_max, int skip, bool lightmap)
         base *= 2.0 * hit_texel(detail, st * uintBitsToFloat(table.words[at + 9u]), level);
     base = clamp(base, 0.0, 1.0);
     hit.albedo = pow(base, vec3(2.2));
+    // (a model's self-illumination, lit live: an object's own lamps, the light it gives what it meets; as the model
+    // pass draws it, the colour masked by the multipurpose map's green added to the light before the albedo
+    // multiplies, so its radiance is albedo x (mask x colour)^2.2 (tools/rt_truth's HaloSelfIllum), at the live
+    // lights' one k (lt_lights.c's LT_LIGHTS_REAL_*_POWER_SCALE). The level's own glowing surfaces are its emitters,
+    // sampled apart (emitter_sample))
+    uint glow = table.words[at + 15u];
+    if (kind == KIND_MODEL && glow != 0u && (pass.lights.z & LIGHTS_REAL) != 0)
+    {
+        float mask = hit_texel(table.words[at + 10u], st * scale, level).g;
+        hit.glow = GLOW_K * hit.albedo * pow(clamp(unpackUnorm4x8(glow).rgb * mask, 0.0, 1.0), vec3(2.2));
+    }
     if (lightmap)
     {
         uint page = table.words[at + 14u];
-        hit.surface = clamp(base * (page != 0u ? hit_texel(page, lst, 0.0) : vec3(OBJECT_LIGHT)), 0.0, 1.0);
+        hit.surface = clamp(base * (page != 0u ? hit_texel(page, lst, 0.0) : light_below(hit.p)), 0.0, 1.0);
     }
     return hit;
 }
@@ -194,12 +266,21 @@ float flashlight_estimate(vec3 p, vec3 n)
 }
 
 // the dynamic direct light at a hit: one of its cell's lights (and the flashlight) chosen by its unshadowed light,
-// one shadow ray to it, over its chance
+// one shadow ray to it, over its chance. A light whose emitter the ray has met is left out: the hit within its
+// emitter's body (lt/e1.frag's emitter_body: the reach its shadow rays stop short of, a needle stuck in a rock's
+// glow), or on the instance it leaves unlit (the light table's texel 5.w: a projectile's light's projectile, the
+// plasma bolt that is the glow, bigger than the radius the tags give no size for; the owner of one whose tag says
+// "don't light own object", as lt/e1.frag's light_sample has it). The direct light's
+// next-event sample already counts that light at the ray's origin, so lighting the emitter's own surface again here
+// is the light counted twice, at the emitter's whole exitance (hundreds of times the scene's light, met by one ray
+// in thousands: the held frames' fireflies). Every other light lights the hit, a carrier's model too: an Elite's
+// weapon glow its arm, a vehicle's lamp its body, a needle the ground and whoever it is stuck in.
 vec3 direct_one(vec3 p, vec3 n, int owner, ivec2 pixel, float salt, inout uint h)
 {
     float total = 0.0, chosen_weight = 0.0;
     int chosen = -2;
-    if (pass.control.y != 0 && (pass.lights.z & LIGHTS_FLASHLIGHT) != 0)
+    if (pass.control.y != 0 && (pass.lights.z & LIGHTS_FLASHLIGHT) != 0 &&
+        distance(p, pass.lamp.xyz) >= pass.forward.w)
     {
         float e = flashlight_estimate(p, n);
         if (e > 0.0)
@@ -221,6 +302,9 @@ vec3 direct_one(vec3 p, vec3 n, int owner, ivec2 pixel, float salt, inout uint h
                 bits &= bits - 1u;
                 if (row >= pass.lights.x)
                     break;
+                vec4 emitter = row_texel(row, 0);
+                if (distance(p, emitter.xyz) < emitter_body(emitter.w) || (owner != 0 && int(row_texel(row, 5).w) == owner))
+                    continue;
                 float e = light_estimate(row, p, n);
                 if (e <= 0.0)
                     continue;
@@ -240,14 +324,14 @@ vec3 direct_one(vec3 p, vec3 n, int owner, ivec2 pixel, float salt, inout uint h
     return lit * (total / chosen_weight);
 }
 
-// the light-id hash of p's lights (its cell's, by their stable ids: the light table's texel 7; the flashlight's
-// being on), 10 bits
-uint light_hash(vec3 p, vec3 n)
+// the light-id hash of a set of the light grid's cells' lights (their rows' union, by their stable ids: the light
+// table's texel 7; the flashlight's being on; the level's light sources' groups), 10 bits
+uint lights_hash(uvec4 mask)
 {
     uint h = pass.control.y != 0 && (pass.lights.z & LIGHTS_FLASHLIGHT) != 0 ? 0x2545u : 0u;
+    // (the level's light sources: their set's groups, so the cache starts again when they come)
+    h += uint(pass.emitter_counts.w) * 0x9e37u;
     if (pass.lights.x > 0)
-    {
-        uvec4 mask = cell_lights(p + n * 0.02);
         for (int word = 0; word < 4; word++)
         {
             uint bits = mask[word];
@@ -261,13 +345,26 @@ uint light_hash(vec3 p, vec3 n)
                     h += cache_hash(floatBitsToUint(row_texel(row, 7).x) + 1u);
             }
         }
-    }
     return h & 1023u;
 }
 
-// the cache's indirect light at a hit: its cell's mean where the slot holds that cell (its check) for the same lights
-vec3 cache_lookup(vec3 p, vec3 n)
+// the light-id hash a history is started again by: a function of what the history is of, never of which of its
+// points this frame's sample happened to come from (~/dev/rt2-realtime-design.md section 10, "Bounce noise, final
+// round"). A bounce block's: its four pixels' cells' lights together (the block traces one pixel a frame, in turn:
+// keyed by the traced pixel's cell, a block across two of the light grid's cells read a new hash every frame and its
+// history started again every frame, a still frame's light never settling). A cache cell's: the lights of the light
+// grid's cell at its middle (keyed by whichever sample it took first, a cell across two of them changed with the
+// phase, so its slot started again and its hits fell back to a ray of the dome every other frame)
+uint cell_hash(ivec3 c, int k)
 {
+    return lights_hash(cell_lights((vec3(c) + 0.5) * cascade_size(k)));
+}
+
+// the cache's indirect light at a hit: its cell's mean where the slot holds that cell (its check) for the same lights;
+// found false where it holds none
+vec3 cache_find(vec3 p, vec3 n, out bool found)
+{
+    found = false;
     if ((pass.control.w & CACHE_ON) == 0)
         return vec3(0.0);
     int k = cascade_of(p);
@@ -276,9 +373,64 @@ vec3 cache_lookup(vec3 p, vec3 n)
     ivec3 c = ivec3(floor(p / cascade_size(k)));
     vec4 slot = texelFetch(cache_image, slot_texel(c, octant_of(n), k), 0);
     uint packed = uint(max(slot.a, 0.0)), count = packed & 511u;
-    if (count == 0u || ((packed >> 9) & 15u) != cell_check(c, k) || (packed >> 13) != light_hash(p, n))
+    if (count == 0u || ((packed >> 9) & 15u) != cell_check(c, k) || (packed >> 13) != cell_hash(c, k))
         return vec3(0.0);
+    found = true;
     return max(slot.rgb, vec3(0.0));
+}
+
+vec3 cache_lookup(vec3 p, vec3 n)
+{
+    bool found;
+    return cache_find(p, n, found);
+}
+
+// the cache's light at a hit: none on a dynamic object (owner > 0), whose cells the cache does not keep (its
+// resolve leaves an object's samples out: a moving object's light is not where it was)
+vec3 cache_at(Hit hit)
+{
+    return hit.owner > 0 ? vec3(0.0) : cache_lookup(hit.p, hit.n);
+}
+
+// ---------- a level lit live (lt/e1.frag's LIGHTS_REAL; ~/dev/rt2-realtime-design.md section 9)
+
+bool real_sky()
+{
+    return (pass.lights.z & LIGHTS_REAL) != 0 && pass.lights.y > 0;
+}
+
+// the sky's dome: the radiance of a ray that leaves the scene (its rows' power, the light a white surface facing
+// the whole unblocked dome shows)
+vec3 dome_radiance()
+{
+    vec3 dome = vec3(0.0);
+    for (int s = 0; s < pass.lights.y; s++)
+    {
+        vec4 t4 = row_texel(SUN_ROW + s, 4), t5 = row_texel(SUN_ROW + s, 5);
+        if (t4.w >= 0.0 && t5.w > DOME_DIAMETER)
+            dome += t4.rgb;
+    }
+    return dome;
+}
+
+// the sky's light arriving at a hit that the cache has nothing for: one cosine ray from it to the dome (its later
+// bounces left out)
+vec3 dome_at(vec3 p, vec3 n, ivec2 pixel, float salt)
+{
+    vec3 d = cosine_direction(n, stratified(pixel, salt));
+    vec3 origin = p + n * ray_lift(p);
+    return dome_radiance() * visible_by(origin, d, SUN_REACH, -1, 0xffffffffu, MASK_AO);
+}
+
+// a hit's light lit live: the suns' direct (one ray each) and the sky's dome and bounce (the cache's, else one ray
+// to the dome; ray false: the dome's unblocked light by the share of the sky the normal faces, (1 + n.z) / 2, no
+// ray, for a reflection's hit, whose single sample a pixel would otherwise flicker)
+vec3 sky_at(Hit hit, ivec2 pixel, float salt, bool ray)
+{
+    bool found;
+    vec3 cached = cache_find(hit.p, hit.n, found);
+    return sun_real(hit.p, hit.n, hit.n, pixel, 1) + (found ? vec3(0.0) : ray ? dome_at(hit.p, hit.n, pixel, salt) :
+        dome_radiance() * (0.5 + 0.5 * hit.n.z));
 }
 
 // where p is in this frame's pixels (continuous); false off its view
@@ -324,6 +476,18 @@ bool point_at(ivec2 pixel, out vec3 p, out vec3 n)
         all(lessThan(pixel, pass.corners.zw));
 }
 
+uint block_hash(ivec2 block)
+{
+    uvec4 mask = uvec4(0u);
+    for (int k = 0; k < 4; k++)
+    {
+        vec3 p, n;
+        if (point_at(block * 2 + block_pixel(k), p, n))
+            mask |= cell_lights(p + n * 0.02);
+    }
+    return lights_hash(mask);
+}
+
 vec4 bounce_main(ivec2 block, out vec3 p, out vec3 n, out uint owner, out bool found)
 {
     int phase = int(pass.indirect[1].y);
@@ -341,23 +505,35 @@ vec4 bounce_main(ivec2 block, out vec3 p, out vec3 n, out uint owner, out bool f
     which--;
     // (BOUNCE_FIRST rays where the history starts again, so its first frame is as good as a few: the suns' share's
     // rule, lt/e1.frag)
-    int rays = (pass.control.w & RESET) != 0 ? BOUNCE_FIRST : 1;
-    vec3 e = vec3(0.0), origin = p + n * (0.004 + 0.0005 * length(p - pass.camera[0].xyz));
+    // (lit live: the sky's bounce the most of the light in shade, BOUNCE_LIVE rays a frame, BOUNCE_LIVE_FIRST where
+    // the history starts again, so its first frame is near its converged one)
+    bool live = real_sky();
+    int rays = (pass.control.w & RESET) != 0 ? (live ? BOUNCE_LIVE_FIRST : BOUNCE_FIRST) : (live ? BOUNCE_LIVE : 1);
+    vec3 e = vec3(0.0), origin = p + n * ray_lift(p);
     uint h = seed(pixel, 11u);
     for (int k = 0; k < rays; k++)
     {
         vec3 d = cosine_direction(shaded, stratified(pixel, 5.0 + 17.0 * float(k)));
         if (dot(d, n) <= 0.0)
             continue;
-        Hit hit = trace(origin, d, BOUNCE_REACH, int(owner), false);
+        // (lit live: as far as the sky, a ray that leaves the scene the dome's)
+        bool real = real_sky();
+        Hit hit = trace(origin, d, real ? SUN_REACH : BOUNCE_REACH, int(owner), false, MASK_AO);
+        // (the hit lit by the level's light sources too, one point and ray: their light bounces, and the cache, which
+        // gathers these samples, carries it on to the next bounce: a room lit only through its doors by the next
+        // rooms' lamps, a10's cryo deck)
+        // (an object's lamp the ray meets is not added: its light is the hit's direct light, object_lamp_sample's)
         if (hit.attributes)
-            e += hit.albedo * (direct_one(hit.p, hit.n, hit.owner, pixel, 6.0 + 17.0 * float(k), h) +
-                cache_lookup(hit.p, hit.n));
+            e += hit.albedo * (object_lamp_sample(hit.p, hit.n, hit.n, 1, h, true) + direct_one(hit.p, hit.n, hit.owner, pixel, 6.0 + 17.0 * float(k), h) +
+                cache_at(hit) + (real ? sky_at(hit, pixel, 7.0 + 17.0 * float(k), true) : vec3(0.0)) +
+                emitter_sample(hit.p, hit.n, hit.n, EMITTER_BOUNCE_CANDIDATES, h, hit.owner, true));
+        else if (real && !hit.hit)
+            e += dome_radiance();
     }
     e /= float(rays);
     if (any(isnan(e)) || any(isinf(e)))
         e = vec3(0.0);
-    return vec4(e, 1.0 + float(light_hash(p, n)) + 1024.0 * float(which));
+    return vec4(e, 1.0 + float(block_hash(block)) + 1024.0 * float(which));
 }
 
 // how much of the reflection a pixel shows (its own surface's: the eye's ray to its point, the material record there):
@@ -367,8 +543,9 @@ vec4 bounce_main(ivec2 block, out vec3 p, out vec3 n, out uint owner, out bool f
 // half-bright surface. 0 where the eye's ray finds no surface at the pixel's point. (Only the segment of the eye's ray
 // about the point is traced, within the tolerance either side: the pixel's own surface is what is looked for, and the
 // pre-pass already found it nearest; a whole ray from the eye cost as much as the reflections' own rays.)
-float reflection_seen(ivec2 pixel, vec3 p, float c)
+float reflection_seen(ivec2 pixel, vec3 p, float c, out float derived)
 {
+    derived = -1.0;
     vec3 eye = pass.camera[0].xyz, d = p - eye;
     float distance = length(d), tolerance = 0.02 * distance + 0.02;
     d /= max(distance, 1.0e-6);
@@ -391,6 +568,9 @@ float reflection_seen(ivec2 pixel, vec3 p, float c)
     uint material_word = table.words[table.words[record + 2u] + (primitive >> 1)];
     uint at = HIT_MATERIALS + (((material_word >> ((primitive & 1u) << 4)) & 0xFFFFu) << 4);
     uint flags = table.words[at + 2u];
+    // (the roughness its shader's data gives, world_rt_game.c's material_roughness: -1 none)
+    uint code = (flags >> ROUGHNESS_SHIFT) & ROUGHNESS_MASK;
+    derived = code != 0u ? float(code) * ROUGHNESS_STEP : -1.0;
     float perpendicular = float((flags >> 16) & 255u) / 128.0, parallel = float(flags >> 24) / 128.0;
     if (max(perpendicular, parallel) <= 0.0)
         return 0.0;
@@ -417,6 +597,100 @@ float reflection_seen(ivec2 pixel, vec3 p, float c)
     return mix(perpendicular, parallel, f) * mask * light;
 }
 
+// GGX's lobe (~/dev/rt2-realtime-design.md section 10) toward l, pi D Vis (Smith's height-correlated visibility): the
+// radiance a light of irradiance E (the pass's units, the true one over pi) reflects is E x this, before the Fresnel
+// term, which Halo's combiners supply after (the shader's reflection strength, tint and mask)
+float ggx_lobe(vec3 n, vec3 v, vec3 l, float alpha)
+{
+    vec3 h = normalize(l + v);
+    float nl = max(dot(n, l), 0.0), nv = max(dot(n, v), 1.0e-4), nh = max(dot(n, h), 0.0);
+    float a2 = alpha * alpha, q = nh * nh * (a2 - 1.0) + 1.0;
+    float vis = 0.5 / (nl * sqrt(nv * nv * (1.0 - a2) + a2) + nv * sqrt(nl * nl * (1.0 - a2) + a2) + 1.0e-7);
+    return a2 / max(q * q, 1.0e-12) * vis;
+}
+
+// alpha widened by an emitter of radius r at distance d (Karis's sphere-light normalization): a small light on a smooth
+// surface is a highlight of the light's size, not a speck that aliases
+float ggx_widened(float alpha, float r, float d)
+{
+    return min(alpha + 0.5 * r / max(d, 1.0e-3), 1.0);
+}
+
+// the lights' shine at a pixel (its point p, geometric normal n, shaded normal, to-eye v, alpha): the view's flashlight
+// and the suns each with their shadow ray; one of the cell's other lights chosen by its unshadowed shine (its light by
+// the lobe toward its middle), one shadow ray to it, over its chance
+vec3 direct_specular(vec3 p, vec3 n, vec3 normal, vec3 v, float alpha, int receiver, ivec2 pixel, inout uint h)
+{
+    vec3 spec = vec3(0.0);
+    if (pass.control.y != 0 && (pass.lights.z & LIGHTS_FLASHLIGHT) != 0)
+    {
+        vec3 to = pass.lamp.xyz - p;
+        float d = length(to);
+        vec3 l = to / max(d, 1.0e-6);
+        vec3 e = flashlight(p, n, normal, pixel, receiver);
+        if (dot(e, e) > 0.0)
+            spec += e * ggx_lobe(normal, v, l, ggx_widened(alpha, pass.forward.w, d));
+    }
+    if (pass.lights.x > 0)
+    {
+        uvec4 mask = cell_lights(p + n * 0.02);
+        float total = 0.0, chosen_weight = 0.0;
+        int chosen = -1;
+        for (int word = 0; word < 4; word++)
+        {
+            uint bits = mask[word];
+            while (bits != 0u)
+            {
+                int row = word * 32 + findLSB(bits);
+                bits &= bits - 1u;
+                if (row >= pass.lights.x)
+                    break;
+                float e = light_estimate(row, p, normal);
+                if (e <= 0.0)
+                    continue;
+                vec4 t0 = row_texel(row, 0);
+                vec3 to = t0.xyz - p;
+                float d = length(to);
+                e *= ggx_lobe(normal, v, to / max(d, 1.0e-6), ggx_widened(alpha, t0.w, d));
+                if (e <= 0.0)
+                    continue;
+                total += e;
+                if (random(h) * total < e)
+                {
+                    chosen = row;
+                    chosen_weight = e;
+                }
+            }
+        }
+        if (chosen >= 0 && chosen_weight > 0.0)
+        {
+            vec4 t0 = row_texel(chosen, 0);
+            vec3 to = t0.xyz - p;
+            float d = length(to);
+            vec3 e = light_sample(chosen, p, n, normal, stratified(pixel, 21.0), receiver, true);
+            spec += e * ggx_lobe(normal, v, to / max(d, 1.0e-6), ggx_widened(alpha, t0.w, d)) * (total / chosen_weight);
+        }
+    }
+    vec3 origin = p + n * ray_lift(p);
+    for (int s = 0; s < pass.lights.y; s++)
+    {
+        int row = SUN_ROW + s;
+        vec4 t1 = row_texel(row, 1), t4 = row_texel(row, 4), t5 = row_texel(row, 5);
+        float cosine = max(dot(normal, t1.xyz), 0.0);
+        if (t4.w < 0.0 || t5.w >= SUN_SPEC_WIDEST || cosine <= 0.0 || dot(n, t1.xyz) <= 0.0)
+            continue;
+        float lobe = ggx_lobe(normal, v, t1.xyz, min(alpha + 0.5 * t5.w, 1.0));
+        if (lobe * luminance_of(t4.rgb) * cosine <= 1.0e-4)
+            continue;
+        // (the sun's blockers: not an object that casts no shadow, e1.frag's RT_MASK_DYNAMIC)
+        spec += t4.rgb * cosine * lobe * visible_by(origin, t1.xyz, SUN_REACH, -1, 0xffffffffu,
+            RT_MASK_STRUCTURE | RT_MASK_DYNAMIC);
+    }
+    if (any(isnan(spec)) || any(isinf(spec)))
+        spec = vec3(0.0);
+    return spec;
+}
+
 vec4 specular_main(ivec2 pixel)
 {
     vec3 p, n, shaded;
@@ -425,22 +699,46 @@ vec4 specular_main(ivec2 pixel)
         return vec4(0.0, 0.0, 0.0, -1.0);
     uint material = texelFetch(guides, pixel, 0).z;
     // (the structure's alone: the surfaces read the pass's reflections there only, xgpu_spirv.c's
-    // lt_reflection_traced; an object's keeps its cube map)
+    // lt_reflection_traced; a model traces its own mirror ray)
     if (((material >> 24) & 255u) == 0u || owner != 0u)
         return vec4(0.0, 0.0, 0.0, -1.0);
     uint byte = (material >> 16) & 255u;
-    float roughness = byte == 255u ? (owner == 0u ? ROUGH_STRUCTURE : ROUGH_OBJECT) : float(byte) / 255.0;
     vec3 v = normalize(pass.camera[0].xyz - p), normal = dot(shaded, v) > 0.0 ? shaded : n;
     // (only where the reflection can be seen: elsewhere the cube map, as the game drew it)
-    if (reflection_seen(pixel, p, max(dot(normal, v), 0.0)) < pass.indirect[2].z)
+    float derived;
+    if (reflection_seen(pixel, p, max(dot(normal, v), 0.0), derived) < pass.indirect[2].z)
         return vec4(0.0, 0.0, 0.0, -1.0);
+    // (the roughness: the material map's (the guides'), else its shader's data's (the record's), else by owner)
+    float roughness = byte != 255u ? float(byte) / 255.0 : derived >= 0.0 ? derived :
+        (owner == 0u ? ROUGH_STRUCTURE : ROUGH_OBJECT);
+    uint hs = seed(pixel, 17u);
+    // (the lobe widened by how much the shaded normal turns within the pixel (its neighbours' in the guides): a bump
+    // map finer than a far pixel, grazing sand, gave a sun's highlight pixel by pixel that crawled as the eye moved, a
+    // hatch; the normal's variance there added to alpha^2, Kaplanyan et al.'s specular antialiasing, at most 0.18)
+    float alpha2 = roughness * roughness * roughness * roughness;
+    {
+        vec3 nx = unfold(unpackSnorm2x16(texelFetch(guides, min(pixel + ivec2(1, 0), pass.corners.zw - 1), 0).x));
+        vec3 ny = unfold(unpackSnorm2x16(texelFetch(guides, min(pixel + ivec2(0, 1), pass.corners.zw - 1), 0).x));
+        vec3 dx = dot(nx, nx) > 0.5 ? nx - normal : vec3(0.0), dy = dot(ny, ny) > 0.5 ? ny - normal : vec3(0.0);
+        // (... and the bump map's own spread within the pixel: Toksvig's variance from its mip level's averaged
+        // normal, the guides' low byte (xgpu_spirv.c's lt_e1_guides); together no more than 0.5)
+        alpha2 += min(0.5 * (dot(dx, dx) + dot(dy, dy)) + float(material & 255u) / 255.0, 0.5);
+    }
+    float alpha = max(sqrt(alpha2), 1.0e-3);
+    vec3 shine = direct_specular(p, n, normal, v, alpha, int(owner), pixel, hs);
+    // (a rough lobe: no ray, the cube map for the scene (a miss) and the lights' shine)
+    if (roughness > ROUGH_TRACED || (pass.control.w & SHINE_ONLY) != 0)
+        return vec4(shine, 0.0);
     // (a surface this smooth, Halo's own without a roughness map among them: its mirror ray, the same each frame,
     // no noise; its texture's level prefilters the hit)
     // (BOUNCE_FIRST rays where the history starts again, the bounce's rule: a sampled lobe's first frame as good as
     // a few)
-    bool mirror = roughness <= MIRROR_ROUGHNESS;
+    // (lit live: every reflection its mirror ray, its texture's level prefiltering the hit, as Halo's own cube maps
+    // are a mirror lookup of a prefiltered map: a lobe sampled a ray a frame over the live sun's and sky's hits, light
+    // against shade, flickered past the denoiser (Blood Gulch's metal walls: 2.4% temporal against 0.7% mirrored))
+    bool mirror = roughness <= MIRROR_ROUGHNESS || real_sky();
     int rays = !mirror && (pass.control.w & RESET) != 0 ? BOUNCE_FIRST : 1, hits = 0;
-    vec3 origin = p + n * (0.004 + 0.0005 * length(p - pass.camera[0].xyz)), sum = vec3(0.0);
+    vec3 origin = p + n * ray_lift(p), sum = vec3(0.0);
     float distance = 0.0;
     uint h = seed(pixel, 13u);
     for (int k = 0; k < rays; k++)
@@ -452,11 +750,16 @@ vec4 specular_main(ivec2 pixel)
         if (dot(l, n) <= 0.0)
             l = reflect(-v, n);
         // (every owner's: a surface sees itself, the player too)
-        Hit hit = trace(origin, l, SPECULAR_REACH, -1, true);
+        Hit hit = trace(origin, l, SPECULAR_REACH, -1, true, MASK_REFLECTIONS);
         if (!hit.attributes)
             continue;
-        vec3 radiance = pow(hit.surface, vec3(2.2)) + hit.albedo * (direct_one(hit.p, hit.n, hit.owner, pixel,
-            10.0 + 17.0 * float(k), h) + cache_lookup(hit.p, hit.n));
+        // (lit live: the hit's own live light in place of its lightmap)
+        // (lit live by the level's light sources alone, no sky: their light, the lightmap dropped too)
+        vec3 radiance = hit.glow + (real_sky() ? hit.albedo * sky_at(hit, pixel, 11.0 + 17.0 * float(k), false) :
+            (pass.lights.z & LIGHTS_REAL) != 0 ? vec3(0.0) : pow(hit.surface, vec3(2.2))) +
+            hit.albedo * (direct_one(hit.p, hit.n, hit.owner, pixel, 10.0 + 17.0 * float(k), h) +
+            cache_at(hit) + emitter_sample(hit.p, hit.n, hit.n, EMITTER_BOUNCE_CANDIDATES, h, hit.owner,
+            true));
         if (any(isnan(radiance)) || any(isinf(radiance)))
             radiance = vec3(0.0);
         sum += radiance * (1.0 - smoothstep(SPECULAR_REACH * SPECULAR_FADE, SPECULAR_REACH, hit.t));
@@ -465,7 +768,7 @@ vec4 specular_main(ivec2 pixel)
     }
     // (the hits' radiance and distance their means: the coverage's count, SPEC_HISTORY, keeps the misses' share; a 0
     // where none met the scene)
-    return hits > 0 ? vec4(sum / float(hits), max(distance / float(hits), 1.0e-3)) : vec4(0.0);
+    return hits > 0 ? vec4(sum / float(hits) + shine, max(distance / float(hits), 1.0e-3)) : vec4(shine, 0.0);
 }
 
 // the bounce's samples about pixel on its surface (the 5x5 blocks about its own, Gaussian, 3 pixels; each block's traced pixel within a
@@ -583,14 +886,15 @@ void main()
         if (!project_now(centre, at, along))
             return;
         // (the cell's half width in pixels; 4x4 taps over it, each a bounce block's sample taken where its traced
-        // pixel's point is of this cell (its cascade, place and octant) and of the first taken's lights)
+        // pixel's point is of this cell (its cascade, place and octant); the slot keyed by its own cell's lights,
+        // cell_hash)
         float reach = clamp(0.5 * size / (length(pass.camera[2].xyz) * along) * 0.5 *
             float(pass.corners.z - pass.corners.x), 1.0, 64.0);
         ivec2 blocks = ivec2(pass.indirect[0].xy);
         int phase = int(pass.indirect[1].y);
         vec3 sum = vec3(0.0);
         float samples = 0.0;
-        uint light = 0xFFFFFFFFu;
+        uint light = cell_hash(c, k);
         for (int t = 0; t < 16; t++)
         {
             vec2 q = at + (vec2(float(t & 3), float(t >> 2)) - 1.5) / 1.5 * reach;
@@ -607,15 +911,14 @@ void main()
             vec4 s = texelFetch(reservoirs, block, 0);
             if (s.a < 0.5)
                 continue;
-            float code = s.a - 1.0;
-            int which = int(floor(code / 1024.0));
-            uint l = uint(code - 1024.0 * float(which));
+            int which = int(floor((s.a - 1.0) / 1024.0));
             if (!known && (!point_at(block * 2 + block_pixel(phase + which), sp, sn) || cascade_of(sp) != k ||
                 octant_of(sn) != octant || ivec3(floor(sp / size)) != c))
                 continue;
-            if (light != 0xFFFFFFFFu && l != light)
+            // (a dynamic object's surface, its owner's instance, is no cell's: the cache is the world's, still, and an
+            // object moves through its cells (a Pelican in flight); its light is the object's own, cache_at's)
+            if (texelFetch(inputs, block * 2 + block_pixel(phase + which), 0).w != 0u)
                 continue;
-            light = l;
             sum += s.rgb;
             samples += 1.0;
         }
@@ -623,7 +926,7 @@ void main()
             return;
         uint packed = uint(max(before.a, 0.0)), count = packed & 511u, check = cell_check(c, k);
         vec3 mean = before.rgb;
-        if (count == 0u || ((packed >> 9) & 15u) != check || (packed >> 13) != light)
+        if (count == 0u || ((packed >> 9) & 15u) != check || (packed >> 13) != light || (flags & CACHE_REPLACE) != 0)
         {
             count = 0u;
             mean = vec3(0.0);

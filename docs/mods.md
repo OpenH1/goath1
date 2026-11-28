@@ -229,7 +229,7 @@ plays), and `debug.txt` and the console say why.
   sizes) is left out. The HUD's digits can be the map's size or twice it.
 - The menus draw a bitmap in their widgets' bounds, whatever its size.
 - The game's own HD effects (`display.hd_effects`: the Assault Rifle's muzzle
-  flash, redrawn from your maps) are drawn the same way, under every mod: a
+  flash and the blood, redrawn from your maps) are drawn the same way, under every mod: a
   mod's bitmap of the same name is drawn instead of the game's redraw.
 - A lightmap (a structure BSP's bitmap, its usage *light map*) is drawn
   only on the BSP layout it was baked for: each of the BSP's lightmaps
@@ -295,6 +295,10 @@ mods/
   a DirectX-style map).
 - `<bitmap>.orm.png` packs ambient occlusion in red, roughness in green
   (0 smooth, 255 rough) and metalness in blue (0 not a metal), as glTF does.
+  An RGBA file's alpha is how much the part glows (0 not at all): with
+  ray-traced lighting on, the glowing part shows its base map's color at
+  full light (the MCC import writes MCC's emissive maps there). An RGB
+  file glows nowhere.
 - Either can be left out. Each is an 8-bit RGB or RGBA PNG, not
   interlaced, each side a power of two from 4 to 2048, and need not be the
   bitmap's size.

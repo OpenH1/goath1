@@ -2581,6 +2581,32 @@ static int draw_writes_motion(void)
 	return draw_motion_drawn() && motion_writer(stream.definition) && motion_tables();
 }
 
+/* debug.frame_time (HALO_FRAME_TIME: each frame a fixed game time, for runs
+that must draw the same pictures every time: the determinism check,
+tools/rt2_clips.py): every pipeline the map's preparation did not make is
+made and waited for as it is first drawn, whatever the mode, as the replay's
+world pipelines are (wait_world), not drawn apart on the compilers, its draw
+skipped (or its stand-in drawn) for as many frames as that takes */
+static int frames_fixed(void)
+{
+	static int fixed = -1;
+
+	if (fixed < 0)
+	{
+		const char *seconds = getenv("HALO_FRAME_TIME");
+
+		fixed = seconds && atof(seconds) > 0.0;
+	}
+	return fixed;
+}
+
+/* the world's pipelines and twins made now and waited for (the replay in
+the light-transport mode, or debug.frame_time) */
+static int world_waited(void)
+{
+	return (stream.wait_world && xgpu_vulkan_lt_mode()) || frames_fixed();
+}
+
 static int draw_pipeline(const struct draw_input *input, int apart)
 {
 	struct xgpu_vulkan_pipeline_description pipeline = stream.pipeline;
@@ -2718,7 +2744,7 @@ static int draw_pipeline(const struct draw_input *input, int apart)
 
 		if (stream.preparing)
 			(void)xgpu_vulkan_pipeline_prepare(&pipeline);
-		else if (stream.world_now)
+		else if (stream.world_now || frames_fixed())
 			draw.pipeline = xgpu_vulkan_pipeline(&pipeline);
 		else if (apart)
 			draw.pipeline = xgpu_vulkan_pipeline_ready(&pipeline);
@@ -2829,9 +2855,21 @@ static int draw_pipeline(const struct draw_input *input, int apart)
 	sets) */
 	if (entry->rt_reflection)
 	{
-		(void)xgpu_vulkan_rt_build();
+		/* (with the light-transport pass on, the scene its pass built this
+		frame, not built again: below) */
+		if (!xgpu_vulkan_lt_mode())
+			(void)xgpu_vulkan_rt_build();
 		draw.ambient_occlusion = 1;
 	}
+	/* (the light-transport pass on: a draw lit by the dynamic lights reads
+	the pass's light table and traces its visibility (the one light model's
+	forward receivers, xgpu_spirv.h's XGPU_SPIRV_BINDING_LT_TABLE): the
+	occlusion's sets and the hit set, the scene as the pass built it this
+	frame (not built again here: a build between the pass and the surfaces
+	finds the hits' textures again, which moved the reflections' hits
+	between a held frame's plays)) */
+	if (draw.dynamic_lights && xgpu_vulkan_lt_mode())
+		draw.ambient_occlusion = 1;
 	draw.reads_color = pipeline.color_read;
 	draw.stores_color = pipeline.color_store;
 	{
@@ -3014,7 +3052,7 @@ static void draw_input(const struct draw_input *input)
 	lights; deterministic for its checks. The game draws the stand-in, a
 	frame or two, never waiting: its map's preparation makes this mode's
 	pipelines (render_prepared.c's derivation counts the mode)) */
-	else if (stream.wait_world && xgpu_vulkan_lt_mode() && stream.pipelines[id].state != XGPU_STREAM_PIPELINE_FAILED)
+	else if (world_waited() && stream.pipelines[id].state != XGPU_STREAM_PIPELINE_FAILED)
 	{
 		stream.world_now = 1;
 		draw_pipeline(input, 0);
@@ -4929,7 +4967,7 @@ static void prepass_draw(const struct draw_input *input)
 		pass's light) */
 		if (entry->state == XGPU_STREAM_PIPELINE_FAILED ||
 			(!stream.preparing && prepass.twins_made >= WORLD_AO_TWINS_A_FRAME &&
-			!(stream.wait_world && xgpu_vulkan_lt_mode())))
+			!world_waited()))
 			return;
 		/* (not made as the map was prepared: a miss, as a pipeline's; none
 		limited while it is) */
@@ -4952,7 +4990,7 @@ static void prepass_draw(const struct draw_input *input)
 	/* (an occluder's: strictly nearer) */
 	stream.pipeline.depth_function = twin.key.depth_function;
 	prepass.drawing = entry;
-	stream.world_now = stream.wait_world && xgpu_vulkan_lt_mode() && !stream.preparing;
+	stream.world_now = world_waited() && !stream.preparing;
 	(void)draw_pipeline(input, 1);
 	stream.world_now = 0;
 	prepass.drawing = NULL;
@@ -5305,7 +5343,7 @@ static void stream_tone_map(void *context, const struct xgpu_stream_tone_map *re
 	struct stream_target *depth = stream.color == record->target ? target_get(stream.depth) : NULL;
 	struct xgpu_vulkan_image *color_image, *depth_image;
 	struct xgpu_hdr_frame frame;
-	float hdr[4];
+	float hdr[4], camera[4] = { 1.0f, XGPU_HDR_CAMERA_EXPOSURE, 0.0f, 0.0f };
 
 	(void)context;
 	if (!target || target->depth || target->format != XGPU_VULKAN_FORMAT_RGBA16F || target->layers > 1)
@@ -5333,7 +5371,12 @@ static void stream_tone_map(void *context, const struct xgpu_stream_tone_map *re
 	target->written++;
 	if (color_image == target->multisampled)
 		target->unresolved = 1;
-	xgpu_vulkan_post_tone_map(color_image, depth_image, record->corners, hdr);
+	/* (the camera's contrast where the pass lit the level live: its light
+	physical, the bake's look not in it; 1 where the lightmap is, a picture
+	already: xgpu_hdr.h's XGPU_HDR_MODE_CAMERA) */
+	if (frame.mode == XGPU_HDR_MODE_CAMERA && xgpu_vulkan_lt_live())
+		camera[0] = XGPU_HDR_CAMERA_CONTRAST;
+	xgpu_vulkan_post_tone_map(color_image, depth_image, record->corners, hdr, camera);
 	/* (the stream's targets again: the same, so that the pass goes on) */
 	targets_bind();
 }

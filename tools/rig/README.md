@@ -66,6 +66,9 @@ goat-rig run clip --seconds 25 --video 60 -- HALO_NETWORK_TEST=local:bloodgulch:
   HALO_SCREENSHOT_FROM=8 HALO_SCREENSHOT_UNTIL=12 "HALO_TEST_INPUT=script:6-14 move=0,1; 8-12 look=0.3,0"
 ```
 
+`video.framemd5` beside it holds each frame's MD5 as the game drew it (before the lossy encoding), so two runs'
+frames compare exactly; `tools/rt2_clips.py --repeat` does that for the ray tracing's standard moments.
+
 **7. OpenCE 359 as one side** (omarchy only; the build must have cross-play):
 ```sh
 goat-rig run xplay --pair host:opence client:my-branch --seconds 75 --shots every:1500 -- \
@@ -121,6 +124,21 @@ Setup: `tools/rig/install.sh omarchy --windows` (once; omarchy reaches `bosgame.
 tools/rig/goat-rig @bosgame run rt --build my-branch --seconds 30 --shots at:12+1 -- \
   HALO_SHADOWS=ray_traced HALO_AMBIENT_OCCLUSION=ray_traced
 ```
+
+**11. The ray tracing's standard clips** (omarchy; `tools/rt2_clips.py`, run from a Mac checkout): the same staged
+moments played live in each build, side by side, with the menu setting only and the MCC import linked.
+```sh
+python3 tools/rt2_clips.py --list                                   # the moments
+python3 tools/rt2_clips.py --build my-branch --out ~/Desktop/clips  # classic | my-branch with the setting on
+python3 tools/rt2_clips.py --build my-branch --base master --moments c20_flashlight --out DIR   # master | my-branch
+python3 tools/rt2_clips.py --build my-branch --repeat               # played twice, the raw frames compared
+```
+Each moment is a campaign start with cues and a scripted controller on the scenario's clock, the fixed seed and a
+fixed frame time, so no recording goes stale. Staging notes: `debug_camera_set "<x y z yaw pitch roll fov> <seconds>"`
+moves the script's camera over the seconds; the flashlight goes on with
+`unit_set_desired_flashlight_state (unit (list_get (players) 0)) 1` (the script's `flashlight` button toggles it
+every tick it is held); a skipped cutscene (b30's Pelican ride, to about 29 s) is played fast and undrawn, so cues
+in it land late and no frame is drawn there; console paths are relative to the run's data folder; `debug_scenario_places "<file>"` lists each actor's `<encounter>/<squad>` for `ai_place`. With `debug.frame_time` the game waits for each pipeline and times its score popups and particles' randomness by the frames, so a classic run plays the same frames every time.
 
 ## What it does for you
 

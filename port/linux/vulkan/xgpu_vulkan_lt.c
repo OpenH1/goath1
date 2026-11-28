@@ -68,19 +68,15 @@ HALO_LT_E1_UNSHADOWED=1 (checking) casts no shadow ray. Render thread alone.
 c20 corner's wall at about 3 m shows as bright as the original's gamma add, falling off physically from there
 (~/dev/rt2-calibration.json's flashlight_power_scale and its derivation, with the physical falloff of lt/e1.frag; the truth renderer uses the same) */
 #define LT_POWER_SCALE 1.009f
-/* the other kinds' (~/dev/rt2-calibration.json's dynamic_power_scales): a
-point light's on an object (a muzzle flash), on none (an explosion) */
-#define LT_OBJECT_POWER_SCALE 0.845f
-/* a projectile's light (a plasma bolt's, a needle's: lt_lights.c flags them),
-measured apart (dynamic_power_scales.point_projectile) */
-#define LT_PROJECTILE_POWER_SCALE 0.41f
-/* one of the port's own lights on a projectile (light_sources.c: a
-needle's, in flight or stuck; a mortar shell's, a rocket's exhaust, a
-Sentinel's beam, which the record cannot tell from a needle's), measured
-on needles apart (~/dev/rt2-calibration.json's
-dynamic_power_scales.point_own_projectile) */
-#define LT_OWN_PROJECTILE_POWER_SCALE 0.45f
-#define LT_EFFECT_POWER_SCALE 7.85f
+/* a point light's k (lt_lights.c's lt_point_power_scale, the same rule:
+~/dev/rt2-calibration.json's dynamic_power_scales): the classic light
+model's own light (BRIGHTNESS x color^2.2 x W(d / r) / (1 + core d^2),
+core = max(CORE / r^2, 1 / CORE_MOST^2)) over the pass's at k = 1, at half
+the reach, so each light adds what the classic adds about it, whatever its
+reach (a muzzle flash, an explosion, a bolt, the port's own lights) */
+#define LT_CLASSIC_BRIGHTNESS 1.7f
+#define LT_CLASSIC_CORE 12.0f
+#define LT_CLASSIC_CORE_MOST 0.6f
 /* the lamp moved this far in a frame (world units): a jump, the count started again */
 #define LT_JUMP 0.25f
 /* where the parameters start in the draw set's uniforms (lt/e1.frag's) */
@@ -90,7 +86,7 @@ dynamic_power_scales.point_own_projectile) */
 _Static_assert(sizeof(struct xgpu_world_ao_pass) <= LT_PARAMS_OFFSET, "the pass's uniforms before the parameters");
 _Static_assert(XGPU_DYNAMIC_LIGHTS_GRID_Z == 16 && XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE == 80 &&
 	XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF == 32 && XGPU_WORLD_CASCADES == 4 && XGPU_WORLD_AO_INPUT_PRESENT == 0x400u &&
-	XGPU_SPIRV_RT_MASK_AO == 0x03u && XGPU_SPIRV_RT_HIT_TEXTURES == 512u, "lt/e1.frag's constants");
+	XGPU_SPIRV_RT_MASK_AO == 0x13u && XGPU_SPIRV_RT_HIT_TEXTURES == 512u, "lt/e1.frag's constants");
 
 /* lt/e1.frag's, std140 */
 struct lt_params
@@ -103,6 +99,13 @@ struct lt_params
 	block lights, its suns, LT_LIGHTS_*, COPY_REACH's row */
 	float grid[2][4];
 	int32_t lights[4];
+	/* the level's light sources (lt_emitter_tables): their cells' grid (its
+	low corner, 1 / its cell's size), its cells along each axis and the
+	groups (0 none), the triangles' and the cells' first texels and the
+	triangles */
+	float emitter_grid[4];
+	int32_t emitter_counts[4];
+	int32_t emitter_bases[4];
 };
 _Static_assert(LT_PARAMS_OFFSET + sizeof(struct lt_params) <= 192 * 16, "the parameters within the uniforms");
 enum
@@ -120,6 +123,9 @@ enum
 	LT_RESERVOIR = 512,
 	LT_COPY_REACH = 1024,
 	LT_FINAL = 2048,
+	/* (the level's light sources: each cell's share of rays reaching each
+	of its groups, lt_emitter_visibility) */
+	LT_EMITTER_VISIBILITY = 4096,
 };
 /* lights[2]'s (lt/e1.frag's LIGHTS_*) */
 enum
@@ -128,6 +134,10 @@ enum
 	LT_LIGHTS_HEROES = 2,
 	LT_LIGHTS_RESTIR = 4,
 	LT_LIGHTS_REUSE = 8,
+	/* (a level lit live: lt/e1.frag's LIGHTS_REAL) */
+	LT_LIGHTS_REAL = 16,
+	/* (the level's light sources' reservoirs drawn: LIGHTS_EMITTER_REUSE) */
+	LT_LIGHTS_EMITTER_REUSE = 32,
 };
 /* the light table (lt/e1.frag's): a row a light, LT_TABLE_TEXELS RGBA32F
 texels; the block's lights' rows by their index there, the suns' from
@@ -135,7 +145,54 @@ LT_SUN_ROW */
 #define LT_TABLE_TEXELS 8
 #define LT_SUN_ROW XGPU_DYNAMIC_LIGHTS_MAXIMUM
 #define LT_SUNS 8
-#define LT_TABLE_ROWS (LT_SUN_ROW + LT_SUNS)
+/* (past the suns, the view's shadowed flashlight's row: the pass's own E1
+light, which no block row carries for the pass; read by the one light
+model's forward receivers alone, xgpu_spirv.h's XGPU_SPIRV_LT_FLASHLIGHT_ROW) */
+#define LT_FLASHLIGHT_ROW (LT_SUN_ROW + LT_SUNS)
+/* (then the level's light sources' strongest groups about the eye, as
+panels, for the forward receivers alone: lt_lamp_rows) */
+#define LT_LAMP_ROW (LT_FLASHLIGHT_ROW + 1)
+#define LT_LAMPS 4
+#define LT_TABLE_ROWS (LT_LAMP_ROW + LT_LAMPS)
+/* (the pass's own table, the image its kernels read: the block's rows and
+the suns' alone, as before the forward receivers; the flashlight's row and
+the frame before's rows are in the forward table, an image of their own,
+so that nothing the pass reads changes with them) */
+#define LT_PASS_ROWS (LT_SUN_ROW + LT_SUNS)
+/* the level's light sources (xgpu_vulkan_lt_emitters; ~/dev/rt2-realtime-
+design.md section 11) in the pass's table below its rows, from
+LT_EMITTER_ROW to LT_TABLE_HEIGHT, its texels in order (a row's 8 in turn):
+- a group 2: its first triangle, its triangles, its area, the groups' power
+  up to and with it over all of theirs; its radiance and its power's share;
+- a triangle 3 (from the triangles' base): its first corner and the group's
+  area up to and with it; its two edges from the first corner (the first's w its group);
+- a cell of the grid over them LT_EMITTER_CELL_TEXELS (from the cells' base, rows): up to
+  LT_EMITTER_CELL_GROUPS groups (-1 none) each with its chance up to and with
+  it, the groups that light the cell most by their power over the distance
+  squared (lt/e1.frag's emitter_sample mixes in the level's power too) */
+#define LT_EMITTER_ROW LT_PASS_ROWS
+#define LT_TABLE_HEIGHT 16384
+/* the objects' own lamps this frame (xgpu_vulkan_lt_object_lamps) in the
+table's last rows, from LT_OBJECT_LAMP_ROW (lt/e1.frag's OBJECT_LAMP_ROW),
+4 texels a triangle: its first corner and the lamps' power share up to and
+with it; its first edge and its area; its second edge and its object's
+owner; its radiance and its power's share */
+#define LT_OBJECT_LAMPS XGPU_VULKAN_LT_OBJECT_LAMPS_MAXIMUM
+#define LT_OBJECT_LAMP_ROWS (LT_OBJECT_LAMPS * 4 / LT_TABLE_TEXELS)
+#define LT_OBJECT_LAMP_ROW (LT_TABLE_HEIGHT - LT_OBJECT_LAMP_ROWS)
+#define LT_EMITTER_TEXELS ((LT_OBJECT_LAMP_ROW - LT_EMITTER_ROW) * LT_TABLE_TEXELS)
+#define LT_EMITTER_CELL_GROUPS 32
+#define LT_EMITTER_CELL_TEXELS (LT_EMITTER_CELL_GROUPS / 2)
+/* the grid's reach past the light sources (world units), and its least cell */
+#define LT_EMITTER_MARGIN 24.0f
+#define LT_EMITTER_CELL_LEAST 3.0f
+_Static_assert(LT_OBJECT_LAMP_ROW == 16128, "lt/e1.frag's OBJECT_LAMP_ROW");
+_Static_assert(LT_EMITTER_CELL_GROUPS == 32 && LT_EMITTER_CELL_TEXELS % LT_TABLE_TEXELS == 0 && LT_EMITTER_ROW == 136,
+	"the light sources' rows as lt/e1.frag reads them (EMITTER_ROW, EMITTER_CELL_GROUPS)");
+_Static_assert(LT_TABLE_TEXELS == XGPU_SPIRV_LT_TABLE_TEXELS && LT_SUN_ROW == XGPU_SPIRV_LT_SUN_ROW &&
+	LT_SUNS == XGPU_SPIRV_LT_SUNS && LT_FLASHLIGHT_ROW == XGPU_SPIRV_LT_FLASHLIGHT_ROW &&
+	LT_LAMP_ROW == XGPU_SPIRV_LT_LAMP_ROW && LT_LAMPS == XGPU_SPIRV_LT_LAMPS &&
+	LT_TABLE_ROWS == XGPU_SPIRV_LT_TABLE_ROWS, "the light table as the forward receivers read it (xgpu_spirv.h)");
 #define LT_ONLY_IDS 8
 /* the suns' direct share of the lightmap, a k for a sun (a narrow sky
 light) and one for a fill (a wide one, LT_FILL_DIAMETER across or more:
@@ -146,15 +203,36 @@ fit with sun and fill apart (b30, the lightmap ^2.2)) */
 #define LT_SUN_POWER_SCALE 0.417f
 #define LT_FILL_POWER_SCALE 0.187f
 #define LT_FILL_DIAMETER 0.17453293f
+/* a level lit live: lt_lights.c's real k (its records carry them; these
+for HALO_LT_REAL_SKY=1 on a recording made before) */
+#define LT_REAL_SUN_POWER_SCALE 0.48f
+#define LT_REAL_FILL_POWER_SCALE 0.48f
+#define LT_REAL_AMBIENT_POWER_SCALE 0.48f
+
+/* HALO_LT_REAL_SKY=1 (checking): a recording's suns lit live */
+static int lt_real_replay(void)
+{
+	static int on = -1;
+
+	if (on < 0)
+		on = getenv("HALO_LT_REAL_SKY") && atoi(getenv("HALO_LT_REAL_SKY")) == 1;
+	return on;
+}
 enum
 {
-	LT_KIND_SKIP = -1,
-	LT_KIND_POINT,
+	LT_KIND_SKIP = XGPU_SPIRV_LT_KIND_CLASSIC,
+	/* (the block's row of the view's shadowed flashlight: not the pass's
+	block row, lit from LT_FLASHLIGHT_ROW) */
+	LT_KIND_FLASHLIGHT = XGPU_SPIRV_LT_KIND_FLASHLIGHT,
+	/* (the pass's kinds from 0: lt/e1.frag's POINT, SPOT, PANEL, DIRECTIONAL) */
+	LT_KIND_POINT = 0,
 	LT_KIND_SPOT,
 	LT_KIND_PANEL,
 	LT_KIND_DIRECTIONAL,
 };
 /* (without a light list: the emitters' radii as lt_lights.c gives them) */
+_Static_assert(LT_KIND_POINT == 0 && LT_KIND_SPOT == 1 && LT_KIND_PANEL == 2 && LT_KIND_DIRECTIONAL == 3,
+	"the kinds as lt/e1.frag numbers them");
 #define LT_DISK_SCALE 0.05f
 #define LT_DISK_LEAST 0.1f
 #define LT_DISK_MOST 0.5f
@@ -183,24 +261,61 @@ static struct
 	turn, the light after the suns' share (what the surfaces read); each
 	row's light's id this frame and the last (0 none), the rows' count */
 	struct xgpu_vulkan_image *table, *reservoirs[2], *final;
+	/* (the forward table: this frame's rows, the flashlight's among them,
+	then the frame before's: the one light model's forward receivers' and
+	the denoiser's deterministic gradients', xgpu_vulkan_lt_table_halves) */
+	struct xgpu_vulkan_image *forward_table;
+	/* (each row's light is one the game placed on the first-person
+	weapon (XGPU_LT_LIGHT_FIRST_PERSON): the forward table's texel 7's y) */
+	unsigned char first_person[LT_TABLE_ROWS];
 	int handled;
 	float texels[LT_TABLE_ROWS][LT_TABLE_TEXELS][4];
+	/* (the frame before's, kept below this frame's in the table's image
+	(rows from LT_TABLE_ROWS): the denoiser's deterministic gradients,
+	xgpu_vulkan_lt_table_halves) */
+	float previous_texels[LT_TABLE_ROWS][LT_TABLE_TEXELS][4];
+	int previous_rows;
 	uint32_t ids[2][LT_TABLE_ROWS][2];
 	int rows[2], ids_current, reservoir_current, reservoirs_valid;
 	/* (the stream's frame, the pre-pass's history[1]: HALO_LT_TABLE_LOG's) */
 	unsigned long ids_frame;
 	/* the settings (read once): HALO_LT_ONLY, _HEROES, _RESTIR, _SUN,
 	_KIND_SCALE, _DROP */
-	int settings_read, only, heroes_on, restir_on, sun_on, reuse_on, only_ids;
+	int settings_read, only, heroes_on, restir_on, sun_on, reuse_on, only_ids, emitter_reservoirs_valid;
 	uint32_t only_id[LT_ONLY_IDS];
 	float kind_scale[5];
 	int drop_kind;
 	uint32_t drop_id;
+	/* the last pass lit its level live (LT_LIGHTS_REAL: the camera's
+	contrast, xgpu_vulkan_lt_live) */
+	int live;
+	/* the light sources' tables (lt_emitter_tables): the set's number they
+	are of (0 none), the one in the table's image, its parameters, whether
+	the set is solved (the level lit live) */
+	int emitter_version, emitter_uploaded, emitter_seen;
+	struct xgpu_vulkan_image *emitter_visibility;
+	float emitter_grid[4];
+	int32_t emitter_counts[4], emitter_bases[4];
+	int emitter_solved;
 } lt = { -1 };
 
 void xgpu_vulkan_lt_guides(struct xgpu_vulkan_image *guides)
 {
 	lt.guides = guides;
+}
+
+struct xgpu_vulkan_image *xgpu_vulkan_lt_table_halves(int32_t lights[4])
+{
+	lights[0] = lt.forward_table ? lt.rows[lt.ids_current] : 0;
+	lights[1] = lt.forward_table ? lt.previous_rows : 0;
+	lights[2] = LT_TABLE_ROWS;
+	lights[3] = XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE;
+	return lt.forward_table;
+}
+
+int xgpu_vulkan_lt_live(void)
+{
+	return xgpu_vulkan_lt_mode() && lt.live;
 }
 
 int xgpu_vulkan_lt_mode(void)
@@ -538,6 +653,10 @@ static void lt_settings(void)
 			lt.drop_kind);
 }
 
+/* (HALO_LT_TABLE_LOG: each row's record's flags this frame, its object's
+absence in the top bit; 0 a row from the block alone) */
+static uint32_t lt_row_flags[XGPU_DYNAMIC_LIGHTS_MAXIMUM];
+
 /* the list's record of the block's light at position (its 1 / radius in
 w): the same place (within a millimetre) and reach; NULL none */
 static const struct xgpu_stream_lt_light *lt_record(const struct xgpu_stream_lt_light *list, int count,
@@ -558,28 +677,34 @@ static const struct xgpu_stream_lt_light *lt_record(const struct xgpu_stream_lt_
 	return NULL;
 }
 
-/* a light's k by its kind (lt_lights.c's lt_power_scale, the same rule:
-~/dev/rt2-calibration.json): the flashlight's, a point's on an object (a
-muzzle flash, a bolt) or on none (an explosion), the rest the flashlight's */
+/* a point light's k: the classic's light at half its reach over the
+pass's there at k = 1, BRIGHTNESS max(d^2, emitter^2) / (1 + core d^2) at
+d = r / 2 (both have the same range window): so it adds what the classic
+adds where most of what it lights is seen; tools/rt2_effect_k.py measured
+the light each kind adds over its held frames' pixels against the classic's
+(~/dev/rt2-calibration.json's dynamic_power_scales: the need over this k
+0.57 to 1.2, about 1 on average; the classic's whole flux over the reach
+was 0.8 to 1.6); lt_lights.c's lt_point_power_scale, operation for operation */
+static float lt_point_k(float range, float emitter_radius)
+{
+	float core = LT_CLASSIC_CORE / (range * range);
+	float least = 1.0f / (LT_CLASSIC_CORE_MOST * LT_CLASSIC_CORE_MOST);
+	float d2 = 0.25f * range * range, r2 = emitter_radius * emitter_radius;
+
+	if (!(range > 0.0f))
+		return 0.0f;
+	core = core > least ? core : least;
+	return LT_CLASSIC_BRIGHTNESS * (d2 > r2 ? d2 : r2) / (1.0f + core * d2);
+}
+
+/* a light's k by its kind (lt_lights.c's lt_power_scale, the same rule): a
+point's from its reach (a recording made before carries its kind's old k,
+taken off by the record's power_scale), the rest the flashlight's */
 static float lt_kind_k(const struct xgpu_stream_lt_light *light)
 {
-	unsigned int source = light->id[1] >> 24;
-
 	if ((light->flags & XGPU_LT_LIGHT_FLASHLIGHT) || light->kind != XGPU_LT_LIGHT_POINT)
 		return LT_POWER_SCALE;
-	/* (a projectile's; and one of the port's own effect flashes
-(light_sources.c's key kind 1: a needle bursting, a shot's flash), lights
-of a projectile's reach (1 to 1.5 world units), not an explosion's (10),
-whose k is for its reach: the projectile's) */
-	if ((light->flags & XGPU_LT_LIGHT_PROJECTILE) && source >= 1 && source <= 3)
-		return LT_OWN_PROJECTILE_POWER_SCALE;
-	if ((light->flags & XGPU_LT_LIGHT_PROJECTILE) || source == 1)
-		return LT_PROJECTILE_POWER_SCALE;
-	/* (one of the port's own lights on an object or a firer's flames
-	(light_sources.c's key kinds 2 and 3): on an object, though a record
-	made before lt_lights.c named its object has none) */
-	return light->object != 0xffffffffu || source == 2 || source == 3 ? LT_OBJECT_POWER_SCALE :
-		LT_EFFECT_POWER_SCALE;
+	return lt_point_k(light->range, light->emitter_radius);
 }
 
 /* a record's power as the pass uses it: its kind's k (a recording made
@@ -640,6 +765,419 @@ void xgpu_vulkan_lt_block_filter(struct xgpu_dynamic_lights_block *block, uint32
 	}
 }
 
+/* ---------- the level's light sources (xgpu_vulkan_lt_lights.h's set)
+
+Built once a set, into the table's rows from LT_EMITTER_ROW (above). Each
+group's triangles are sampled by area, a group by its power: anywhere by its
+share of the level's, and within the grid by its light at the cell's middle
+(power over the distance squared, none where its plane faces away from the
+whole cell), the cell's LT_EMITTER_CELL_GROUPS strongest. */
+
+struct lt_emitter_group
+{
+	int first, count;
+	float area, power, low[3], high[3], middle[3], axis[3];
+	/* (every triangle facing within ~18 degrees of axis) */
+	int flat;
+};
+
+static float lt_emitter_texels[LT_EMITTER_TEXELS][4];
+/* each cell's groups (-1 none) and their light there unshadowed, the
+strongest first, before the visibility (lt_emitter_visibility) scales them */
+#define LT_EMITTER_CELLS_MAXIMUM (LT_EMITTER_TEXELS / LT_EMITTER_CELL_TEXELS)
+static int lt_emitter_cell_groups[LT_EMITTER_CELLS_MAXIMUM][LT_EMITTER_CELL_GROUPS];
+static float lt_emitter_cell_weights[LT_EMITTER_CELLS_MAXIMUM][LT_EMITTER_CELL_GROUPS];
+/* each group's middle, axis (its summed normal, unit), area, radiance and
+whether it is flat (lt_lamp_rows' panels) */
+#define LT_EMITTER_GROUPS_MAXIMUM 1024
+static struct
+{
+	float middle[3], axis[3], area, radiance[3];
+	int flat;
+} lt_emitter_group_info[LT_EMITTER_GROUPS_MAXIMUM];
+/* each cell's groups' weights as its chances have them (after the
+visibility) */
+static float lt_emitter_cell_final[LT_EMITTER_CELLS_MAXIMUM][LT_EMITTER_CELL_GROUPS];
+/* the share of its weight a group keeps where no ray from the cell reached
+it: none of the light is ever unreachable (the sampling stays unbiased
+anyway: lt/e1.frag mixes in the level's power) */
+#define LT_EMITTER_VISIBILITY_FLOOR 0.02f
+
+/* a cell's texels: its groups each with its chance up to and with it, the
+weights scaled by each group's share of rays that reached it from the cell
+(visibility, NULL: all) */
+static void lt_emitter_cell_write(int cell, float (*texels)[4], const float *visibility)
+{
+	float weights[LT_EMITTER_CELL_GROUPS], sum = 0.0f, up_to = 0.0f;
+	int slot, last = -1;
+
+	for (slot = 0; slot < LT_EMITTER_CELL_GROUPS; slot++)
+	{
+		float seen = visibility ? visibility[slot] : 1.0f;
+
+		weights[slot] = lt_emitter_cell_groups[cell][slot] >= 0 ? lt_emitter_cell_weights[cell][slot] *
+			(seen > LT_EMITTER_VISIBILITY_FLOOR ? seen : LT_EMITTER_VISIBILITY_FLOOR) : 0.0f;
+		lt_emitter_cell_final[cell][slot] = weights[slot];
+		sum += weights[slot];
+		if (weights[slot] > 0.0f)
+			last = slot;
+	}
+	for (slot = 0; slot < LT_EMITTER_CELL_GROUPS; slot++)
+	{
+		float *texel = texels[slot >> 1] + 2 * (slot & 1);
+		int kept = slot <= last && lt_emitter_cell_groups[cell][slot] >= 0;
+
+		up_to += kept ? weights[slot] : 0.0f;
+		texel[0] = kept ? (float)lt_emitter_cell_groups[cell][slot] : -1.0f;
+		texel[1] = kept && sum > 0.0f ? (slot == last ? 1.0f : up_to / sum) : 2.0f;
+	}
+}
+
+static void lt_emitter_cross(const float a[3], const float b[3], float out[3])
+{
+	out[0] = a[1] * b[2] - a[2] * b[1];
+	out[1] = a[2] * b[0] - a[0] * b[2];
+	out[2] = a[0] * b[1] - a[1] * b[0];
+}
+
+/* a group's light at a cell (its middle, half its diagonal): 0 where the
+group's plane faces away from all the cell */
+static float lt_emitter_weight(const struct lt_emitter_group *group, const float middle[3], float half)
+{
+	float d2 = 0.0f, facing = 0.0f;
+	int axis;
+
+	for (axis = 0; axis < 3; axis++)
+	{
+		float below = group->low[axis] - middle[axis], above = middle[axis] - group->high[axis];
+		float out = below > 0.0f ? below : above > 0.0f ? above : 0.0f;
+
+		d2 += out * out;
+		facing += (middle[axis] - group->middle[axis]) * group->axis[axis];
+	}
+	if (group->flat && facing < -half - 0.05f)
+		return 0.0f;
+	return group->power / (d2 > half * half ? d2 : half * half);
+}
+
+static void lt_emitter_tables(void)
+{
+	const struct xgpu_vulkan_lt_emitter *set;
+	struct lt_emitter_group *groups;
+	int count, group_count, solved, version, triangle, index, cell, cells, dims[3], axis;
+	int triangle_base, cell_base;
+	float total = 0.0f, running = 0.0f, low[3] = { 1.0e30f, 1.0e30f, 1.0e30f }, high[3] = { -1.0e30f, -1.0e30f, -1.0e30f };
+	float size;
+
+	set = xgpu_vulkan_lt_emitters(&count, &group_count, &solved, &version);
+	if (version == lt.emitter_version)
+		return;
+	lt.emitter_version = version;
+	memset(lt.emitter_counts, 0, sizeof(lt.emitter_counts));
+	lt.emitter_solved = 0;
+	triangle_base = 2 * group_count;
+	cell_base = (triangle_base + 3 * count + LT_TABLE_TEXELS - 1) / LT_TABLE_TEXELS * LT_TABLE_TEXELS;
+	if (!set || count <= 0 || group_count <= 0 || group_count > LT_EMITTER_GROUPS_MAXIMUM ||
+		cell_base + LT_TABLE_TEXELS > LT_EMITTER_TEXELS)
+	{
+		if (set)
+			host_logf(HOST_LOG_WARN, "vulkan: light transport: the level's light sources (%d triangles) do not fit",
+				count);
+		return;
+	}
+	groups = calloc((size_t)group_count, sizeof(*groups));
+	if (!groups)
+		return;
+	memset(lt_emitter_texels, 0, sizeof(lt_emitter_texels));
+	for (index = 0; index < group_count; index++)
+	{
+		groups[index].first = -1;
+		for (axis = 0; axis < 3; axis++)
+		{
+			groups[index].low[axis] = 1.0e30f;
+			groups[index].high[axis] = -1.0e30f;
+		}
+		groups[index].flat = 1;
+	}
+	/* (the triangles in their groups' order: the game sends them so) */
+	for (triangle = 0; triangle < count; triangle++)
+	{
+		const struct xgpu_vulkan_lt_emitter *in = &set[triangle];
+		struct lt_emitter_group *group = &groups[in->group];
+		float e1[3], e2[3], normal[3], area;
+		int corner;
+
+		if (group->first < 0)
+			group->first = triangle;
+		group->count = triangle - group->first + 1;
+		for (axis = 0; axis < 3; axis++)
+		{
+			e1[axis] = in->corners[3 + axis] - in->corners[axis];
+			e2[axis] = in->corners[6 + axis] - in->corners[axis];
+		}
+		lt_emitter_cross(e1, e2, normal);
+		area = 0.5f * sqrtf(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
+		group->area += area;
+		for (axis = 0; axis < 3; axis++)
+		{
+			group->axis[axis] += normal[axis];
+			for (corner = 0; corner < 3; corner++)
+			{
+				float v = in->corners[3 * corner + axis];
+
+				group->low[axis] = v < group->low[axis] ? v : group->low[axis];
+				group->high[axis] = v > group->high[axis] ? v : group->high[axis];
+			}
+		}
+		lt_set(lt_emitter_texels[triangle_base + 3 * triangle], in->corners[0], in->corners[1], in->corners[2],
+			group->area);
+		lt_set(lt_emitter_texels[triangle_base + 3 * triangle + 1], e1[0], e1[1], e1[2], (float)in->group);
+		lt_set(lt_emitter_texels[triangle_base + 3 * triangle + 2], e2[0], e2[1], e2[2], 0.0f);
+	}
+	for (index = 0; index < group_count; index++)
+	{
+		struct lt_emitter_group *group = &groups[index];
+		const float *radiance = group->first >= 0 ? set[group->first].radiance : NULL;
+		float length = sqrtf(group->axis[0] * group->axis[0] + group->axis[1] * group->axis[1] +
+			group->axis[2] * group->axis[2]);
+
+		if (!radiance || group->area <= 0.0f)
+			continue;
+		group->power = (0.2126f * radiance[0] + 0.7152f * radiance[1] + 0.0722f * radiance[2]) * group->area;
+		for (axis = 0; axis < 3; axis++)
+		{
+			group->middle[axis] = 0.5f * (group->low[axis] + group->high[axis]);
+			group->axis[axis] = length > 0.0f ? group->axis[axis] / length : 0.0f;
+			low[axis] = group->low[axis] < low[axis] ? group->low[axis] : low[axis];
+			high[axis] = group->high[axis] > high[axis] ? group->high[axis] : high[axis];
+		}
+		/* (flat: the summed normal nearly as long as the triangles' areas'
+		sum, twice the area) */
+		group->flat = length >= 0.95f * 2.0f * group->area;
+		total += group->power;
+	}
+	if (!(total > 0.0f))
+	{
+		free(groups);
+		return;
+	}
+	for (index = 0; index < group_count; index++)
+	{
+		const struct lt_emitter_group *group = &groups[index];
+		const float *radiance = group->first >= 0 ? set[group->first].radiance : NULL;
+
+		running += group->power;
+		memcpy(lt_emitter_group_info[index].middle, group->middle, sizeof(group->middle));
+		memcpy(lt_emitter_group_info[index].axis, group->axis, sizeof(group->axis));
+		lt_emitter_group_info[index].area = group->area;
+		lt_emitter_group_info[index].flat = group->flat && group->power > 0.0f;
+		if (radiance)
+			memcpy(lt_emitter_group_info[index].radiance, radiance, sizeof(lt_emitter_group_info[index].radiance));
+		lt_set(lt_emitter_texels[2 * index], (float)(group->first < 0 ? 0 : group->first), (float)group->count,
+			group->area, index == group_count - 1 ? 1.0f : running / total);
+		if (radiance && group->power > 0.0f)
+			lt_set(lt_emitter_texels[2 * index + 1], radiance[0], radiance[1], radiance[2], group->power / total);
+	}
+	/* (the grid: cells as small as its rows let them be) */
+	cells = (LT_EMITTER_TEXELS - cell_base) / LT_EMITTER_CELL_TEXELS;
+	for (axis = 0; axis < 3; axis++)
+	{
+		low[axis] -= LT_EMITTER_MARGIN;
+		high[axis] += LT_EMITTER_MARGIN;
+	}
+	for (size = LT_EMITTER_CELL_LEAST;; size *= 1.125f)
+	{
+		long all = 1;
+
+		for (axis = 0; axis < 3; axis++)
+		{
+			dims[axis] = (int)ceilf((high[axis] - low[axis]) / size);
+			dims[axis] = dims[axis] < 1 ? 1 : dims[axis];
+			all *= dims[axis];
+		}
+		if (all <= cells)
+		{
+			cells = (int)all;
+			break;
+		}
+	}
+	for (cell = 0; cell < cells; cell++)
+	{
+		float middle[3], weights[LT_EMITTER_CELL_GROUPS];
+		int chosen[LT_EMITTER_CELL_GROUPS], kept = 0, at = cell, slot;
+		float (*texels)[4] = &lt_emitter_texels[cell_base + cell * LT_EMITTER_CELL_TEXELS];
+
+		for (axis = 0; axis < 3; axis++)
+		{
+			middle[axis] = low[axis] + ((float)(at % dims[axis]) + 0.5f) * size;
+			at /= dims[axis];
+		}
+		for (index = 0; index < group_count; index++)
+		{
+			float w = groups[index].power > 0.0f ? lt_emitter_weight(&groups[index], middle, 0.5f * size * 1.7320508f) :
+				0.0f;
+
+			if (!(w > 0.0f))
+				continue;
+			/* (kept strongest first) */
+			if (kept == LT_EMITTER_CELL_GROUPS && w <= weights[kept - 1])
+				continue;
+			slot = kept < LT_EMITTER_CELL_GROUPS ? kept++ : kept - 1;
+			while (slot > 0 && weights[slot - 1] < w)
+			{
+				weights[slot] = weights[slot - 1];
+				chosen[slot] = chosen[slot - 1];
+				slot--;
+			}
+			weights[slot] = w;
+			chosen[slot] = index;
+		}
+		for (slot = 0; slot < LT_EMITTER_CELL_GROUPS; slot++)
+		{
+			lt_emitter_cell_groups[cell][slot] = slot < kept ? chosen[slot] : -1;
+			lt_emitter_cell_weights[cell][slot] = slot < kept ? weights[slot] : 0.0f;
+		}
+		lt_emitter_cell_write(cell, texels, NULL);
+	}
+	free(groups);
+	lt.emitter_grid[0] = low[0];
+	lt.emitter_grid[1] = low[1];
+	lt.emitter_grid[2] = low[2];
+	lt.emitter_grid[3] = 1.0f / size;
+	lt.emitter_counts[0] = dims[0];
+	lt.emitter_counts[1] = dims[1];
+	lt.emitter_counts[2] = dims[2];
+	lt.emitter_counts[3] = group_count;
+	lt.emitter_bases[0] = triangle_base;
+	lt.emitter_bases[1] = cell_base;
+	lt.emitter_bases[2] = count;
+	lt.emitter_bases[3] = 0;
+	lt.emitter_solved = solved;
+	lt.emitter_uploaded = 0;
+	lt.emitter_seen = 0;
+	host_logf(HOST_LOG_INFO, "vulkan: light transport: the level's light sources as lights: %d triangles, %d groups "
+		"(power %.3g), a grid of %dx%dx%d cells of %.2f wu", count, group_count, (double)total, dims[0], dims[1],
+		dims[2], (double)size);
+}
+
+/* the forward receivers' lamps (the first-person weapon, the blended and
+self-lit passes, which the pass's samples do not reach: xgpu_spirv.c's
+lt_forward_light): the LT_LAMPS flat groups that light the eye's cell most
+(its chances' weights, visibility in them), each a one-sided Lambertian disk
+of its area at its middle facing its axis, its radiance the panel's power
+(lt/e1.frag's PANEL: L r^2 / (r^2 + d^2) on its axis, the disk's light) */
+static void lt_lamp_rows(const float eye[3])
+{
+	int cell = -1, axis, slot, lamp, taken[LT_LAMPS], count = 0;
+	float best[LT_LAMPS];
+
+	for (axis = 0, cell = 0; axis < 3; axis++)
+	{
+		int c = (int)floorf((eye[axis] - lt.emitter_grid[axis]) * lt.emitter_grid[3]);
+
+		if (c < 0 || c >= lt.emitter_counts[axis])
+			return;
+		cell += c * (axis == 0 ? 1 : axis == 1 ? lt.emitter_counts[0] : lt.emitter_counts[0] * lt.emitter_counts[1]);
+	}
+	for (slot = 0; slot < LT_EMITTER_CELL_GROUPS; slot++)
+	{
+		int group = lt_emitter_cell_groups[cell][slot], at;
+		float w = lt_emitter_cell_final[cell][slot];
+
+		if (group < 0 || group >= LT_EMITTER_GROUPS_MAXIMUM || !lt_emitter_group_info[group].flat || !(w > 0.0f))
+			continue;
+		if (count == LT_LAMPS && w <= best[count - 1])
+			continue;
+		at = count < LT_LAMPS ? count++ : count - 1;
+		while (at > 0 && best[at - 1] < w)
+		{
+			best[at] = best[at - 1];
+			taken[at] = taken[at - 1];
+			at--;
+		}
+		best[at] = w;
+		taken[at] = group;
+	}
+	for (lamp = 0; lamp < count; lamp++)
+	{
+		float (*t)[4] = lt.texels[LT_LAMP_ROW + lamp];
+		const float *f = lt_emitter_group_info[taken[lamp]].axis;
+		float up[3], left[3], length;
+
+		/* (any frame about its axis: the disk is round) */
+		if (fabsf(f[2]) < 0.9f)
+			lt_emitter_cross(f, (const float[3]){ 0.0f, 0.0f, 1.0f }, up);
+		else
+			lt_emitter_cross(f, (const float[3]){ 1.0f, 0.0f, 0.0f }, up);
+		length = sqrtf(up[0] * up[0] + up[1] * up[1] + up[2] * up[2]);
+		for (axis = 0; axis < 3; axis++)
+			up[axis] /= length;
+		lt_emitter_cross(f, up, left);
+		lt_set(t[0], lt_emitter_group_info[taken[lamp]].middle[0], lt_emitter_group_info[taken[lamp]].middle[1],
+			lt_emitter_group_info[taken[lamp]].middle[2], sqrtf(lt_emitter_group_info[taken[lamp]].area / 3.14159265f));
+		lt_set(t[1], f[0], f[1], f[2], 0.0f);
+		lt_set(t[2], up[0], up[1], up[2], -1.0f);
+		lt_set(t[3], left[0], left[1], left[2], -1.0f);
+		lt_set(t[4], lt_emitter_group_info[taken[lamp]].radiance[0], lt_emitter_group_info[taken[lamp]].radiance[1],
+			lt_emitter_group_info[taken[lamp]].radiance[2], (float)LT_KIND_PANEL);
+		lt_set(t[5], 0.0f, -1.0f, 0.0f, 0.0f);
+		lt_set(t[6], -1.0f, -1.0f, 0.0f, 0.0f);
+	}
+}
+
+/* the frame's object lamps into the table's last rows (LT_OBJECT_LAMP_ROW):
+their count (0 none) */
+static int lt_object_lamp_rows(void)
+{
+	static float texels[LT_OBJECT_LAMPS * 4][4];
+	const struct xgpu_vulkan_lt_object_lamp *lamps;
+	float total = 0.0f, running = 0.0f, power[LT_OBJECT_LAMPS], area[LT_OBJECT_LAMPS];
+	int count, index, axis, used = 0;
+
+	lamps = xgpu_vulkan_lt_object_lamps(xgpu_vulkan_lt_lights_window(), &count);
+	if (!lamps || count <= 0 || !lt.table)
+		return 0;
+	if (count > LT_OBJECT_LAMPS)
+		count = LT_OBJECT_LAMPS;
+	for (index = 0; index < count; index++)
+	{
+		const struct xgpu_vulkan_lt_object_lamp *lamp = &lamps[index];
+		float e1[3], e2[3], normal[3];
+
+		for (axis = 0; axis < 3; axis++)
+		{
+			e1[axis] = lamp->corners[3 + axis] - lamp->corners[axis];
+			e2[axis] = lamp->corners[6 + axis] - lamp->corners[axis];
+		}
+		lt_emitter_cross(e1, e2, normal);
+		area[index] = 0.5f * sqrtf(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
+		power[index] = (0.2126f * lamp->radiance[0] + 0.7152f * lamp->radiance[1] + 0.0722f * lamp->radiance[2]) *
+			area[index];
+		if (!(power[index] > 0.0f) || !isfinite(power[index]))
+			power[index] = 0.0f;
+		total += power[index];
+	}
+	if (!(total > 0.0f))
+		return 0;
+	for (index = 0; index < count; index++)
+	{
+		const struct xgpu_vulkan_lt_object_lamp *lamp = &lamps[index];
+
+		running += power[index];
+		lt_set(texels[4 * index], lamp->corners[0], lamp->corners[1], lamp->corners[2],
+			index == count - 1 ? 1.0f : running / total);
+		lt_set(texels[4 * index + 1], lamp->corners[3] - lamp->corners[0], lamp->corners[4] - lamp->corners[1],
+			lamp->corners[5] - lamp->corners[2], area[index]);
+		lt_set(texels[4 * index + 2], lamp->corners[6] - lamp->corners[0], lamp->corners[7] - lamp->corners[1],
+			lamp->corners[8] - lamp->corners[2], (float)lamp->owner);
+		lt_set(texels[4 * index + 3], lamp->radiance[0], lamp->radiance[1], lamp->radiance[2], power[index] / total);
+	}
+	used = (4 * count + LT_TABLE_TEXELS - 1) / LT_TABLE_TEXELS;
+	xgpu_vulkan_image_upload(lt.table, 0, 0, 0, LT_OBJECT_LAMP_ROW, 0, LT_TABLE_TEXELS, (uint32_t)used, 1, texels,
+		LT_TABLE_TEXELS * 16, LT_TABLE_TEXELS * (uint32_t)used * 16);
+	return count;
+}
+
 /* the frame's light table into lt.texels (and the GPU's), its rows' and
 suns' counts into params; skip: the view's shadowed flashlight's index in
 the block (-1 none), E1's own */
@@ -648,7 +1186,7 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 {
 	const struct xgpu_stream_lt_light *list;
 	const uint32_t *panels = lt_texel(cells, XGPU_DYNAMIC_LIGHTS_PANELS);
-	int listed, rows = (int)block->grid[0][3], row, suns = 0, index, now, before;
+	int listed, rows = (int)block->grid[0][3], row, suns = 0, index, now, before, real = 0;
 	struct xgpu_vulkan_image_description description;
 
 	lt_settings();
@@ -659,6 +1197,9 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 		rows = XGPU_DYNAMIC_LIGHTS_MAXIMUM;
 	now = lt.ids_current ^= 1;
 	before = now ^ 1;
+	memcpy(lt.previous_texels, lt.texels, sizeof(lt.texels));
+	memset(lt.first_person, 0, sizeof(lt.first_person));
+	lt.previous_rows = lt.rows[before];
 	memset(lt.texels, 0, sizeof(lt.texels));
 	memset(lt.ids[now], 0, sizeof(lt.ids[now]));
 	for (row = 0; row < LT_TABLE_ROWS; row++)
@@ -679,6 +1220,7 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 			block->color[row][2] > 0.0f))
 			continue;
 		light = lt_record(list, listed, position);
+		lt_row_flags[row] = light ? light->flags | (light->object == 0xffffffffu ? 0x80000000u : 0u) : 0u;
 		if (lt.only == 3)
 		{
 			int kept = 0;
@@ -700,7 +1242,20 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 			lt_set(t[2], light->up[0], light->up[1], light->up[2], light->cone_inner);
 			lt_set(t[3], light->left[0], light->left[1], light->left[2], light->cone_outer);
 			lt_power(light, kind, t[4]);
-			lt_set(t[5], (float)light->owner, (float)light->gel_slot, light->gel_width, 0.0f);
+			/* (w: the instance the light leaves unlit, 0 none: its owner,
+			where its tag says "don't light own object" (a Covenant door's
+			light, inside the door: the original leaves it out of the
+			object's lights) or where it is a projectile's (a plasma bolt,
+			a needle: the glowing thing is the light, so a ray that meets
+			it has met the light, lt/indirect.glsl's direct_one). Its
+			instance among the ray-traced scene's: world_rt_owner's
+			arithmetic on the object's handle for records made before
+			lt_lights.c gave every light its owner) */
+			lt_set(t[5], (float)light->owner, (float)light->gel_slot, light->gel_width,
+				(light->flags & (XGPU_LT_LIGHT_PROJECTILE | XGPU_LT_LIGHT_NOT_OWN_OBJECT)) &&
+				(light->owner || light->object != 0xffffffffu) ?
+				(float)(light->owner ? light->owner : (light->object & 0xFFFFu) + 1u) : 0.0f);
+			lt.first_person[row] = (light->flags & XGPU_LT_LIGHT_FIRST_PERSON) != 0;
 			lt.ids[now][row][0] = light->id[0];
 			lt.ids[now][row][1] = light->id[1] | 1u << 23;
 			/* (its stable id, 20 bits of it: the radiance cache's light-id
@@ -753,10 +1308,66 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 		lt_set(t[1], light->forward[0], light->forward[1], light->forward[2], 0.0f);
 		lt_set(t[2], light->up[0], light->up[1], light->up[2], -1.0f);
 		lt_set(t[3], light->left[0], light->left[1], light->left[2], -1.0f);
-		lt_power(light, light->angular_diameter >= LT_FILL_DIAMETER ? 4 : 3, t[4]);
+		/* (a level lit live: the record's power, its own k (the sky's whole
+		light, lt_lights.c's real k), the dome among them) */
+		if (light->flags & XGPU_LT_LIGHT_REAL_SKY)
+		{
+			lt_set(t[4], light->power[0], light->power[1], light->power[2], 0.0f);
+			real = 1;
+		}
+		else if (lt_real_replay() && light->power_scale > 0.0f)
+		{
+			/* (HALO_LT_REAL_SKY=1, checking a recording made before: its
+			suns lit live by lt_lights.c's real k) */
+			float k = (light->angular_diameter >= LT_FILL_DIAMETER ? LT_REAL_FILL_POWER_SCALE :
+				LT_REAL_SUN_POWER_SCALE) / light->power_scale;
+
+			lt_set(t[4], light->power[0] * k, light->power[1] * k, light->power[2] * k, 0.0f);
+			real = 1;
+		}
+		else
+			lt_power(light, light->angular_diameter >= LT_FILL_DIAMETER ? 4 : 3, t[4]);
 		t[4][3] = (float)LT_KIND_DIRECTIONAL;
 		lt_set(t[5], 0.0f, -1.0f, 0.0f, light->angular_diameter);
 		suns++;
+	}
+	/* (HALO_LT_REAL_SKY=1 on a recording made before: the sky's dome,
+	HALO_LT_DOME's colour x power (b30's by default), by the real k) */
+	if (real && lt_real_replay() && suns < LT_SUNS)
+	{
+		float (*t)[4] = lt.texels[LT_SUN_ROW + suns];
+		float dome[3] = { 0.572549f * 0.12f, 0.552941f * 0.12f, 0.705882f * 0.12f };
+		const char *given = getenv("HALO_LT_DOME");
+
+		if (given)
+			sscanf(given, "%f,%f,%f", &dome[0], &dome[1], &dome[2]);
+		lt_set(t[1], 0.0f, 0.0f, 1.0f, 0.0f);
+		lt_set(t[2], 1.0f, 0.0f, 0.0f, -1.0f);
+		lt_set(t[3], 0.0f, 1.0f, 0.0f, -1.0f);
+		lt_set(t[4], dome[0] * LT_REAL_AMBIENT_POWER_SCALE, dome[1] * LT_REAL_AMBIENT_POWER_SCALE,
+			dome[2] * LT_REAL_AMBIENT_POWER_SCALE, (float)LT_KIND_DIRECTIONAL);
+		lt_set(t[5], 0.0f, -1.0f, 0.0f, 6.2831853f);
+		suns++;
+	}
+	/* (the view's shadowed flashlight, E1's light (its parameters, lt_light),
+	in its own row for the one light model's forward receivers, the pass's
+	formula as a spot: the disk at the lamp, the gel from the game's light
+	(its origin in texel 6), the range window by the light's radius, the
+	linear power pow(colour, 2.2) by the flashlight's k; its block row marked
+	so the forward receivers' classic sum leaves it out) */
+	if (skip >= 0 && skip < rows)
+	{
+		float (*t)[4] = lt.texels[LT_FLASHLIGHT_ROW];
+
+		lt_set(t[0], params->lamp[0], params->lamp[1], params->lamp[2], LT_DISK_RADIUS);
+		lt_set(t[1], params->forward[0], params->forward[1], params->forward[2], fabsf(params->light[3]));
+		lt_set(t[2], params->up[0], params->up[1], params->up[2], -1.0f);
+		lt_set(t[3], params->left[0], params->left[1], params->left[2], -1.0f);
+		for (index = 0; index < 3; index++)
+			t[4][index] = powf(params->color[index] > 0.0f ? params->color[index] : 0.0f, 2.2f) * LT_POWER_SCALE;
+		t[4][3] = (float)LT_KIND_SPOT;
+		lt_set(t[5], (float)params->owners[0], 0.0f, params->color[3], 0.0f);
+		lt_set(t[6], params->light[0], params->light[1], params->light[2], 1.0f);
 	}
 	/* (each light's row the frame before, by its stable id, and the
 	other way: the reservoirs' temporal reuse) */
@@ -787,11 +1398,12 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 		for (row = 0; table_log && row < rows; row++)
 			if (lt.texels[row][4][3] >= 0.0f)
 				host_logf(HOST_LOG_WARN, "vulkan: light transport: table frame %.0f row %d id %08x %08x kind %.0f at "
-					"%.2f %.2f %.2f emitter %.3f range %.2f power %.4f %.4f %.4f", (double)lt.ids_frame, row,
+					"%.2f %.2f %.2f emitter %.3f range %.2f power %.4f %.4f %.4f flags %08x", (double)lt.ids_frame, row,
 					lt.ids[now][row][0], lt.ids[now][row][1], (double)lt.texels[row][4][3],
 					(double)lt.texels[row][0][0], (double)lt.texels[row][0][1], (double)lt.texels[row][0][2],
 					(double)lt.texels[row][0][3], lt.texels[row][1][3] > 0.0f ? 1.0 / (double)lt.texels[row][1][3] : 0.0,
-					(double)lt.texels[row][4][0], (double)lt.texels[row][4][1], (double)lt.texels[row][4][2]);
+					(double)lt.texels[row][4][0], (double)lt.texels[row][4][1], (double)lt.texels[row][4][2],
+					(unsigned)lt_row_flags[row]);
 	}
 	/* (the lights the pass lights: with no more than the 2 heroes, no
 	reservoirs are drawn) */
@@ -805,14 +1417,61 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 		description.format = XGPU_VULKAN_FORMAT_RGBA32F;
 		description.usage = XGPU_VULKAN_USAGE_SAMPLED | XGPU_VULKAN_USAGE_COPIED;
 		description.width = LT_TABLE_TEXELS;
-		description.height = LT_TABLE_ROWS;
+		/* (the light sources' rows below the pass's) */
+		description.height = LT_TABLE_HEIGHT;
 		description.depth_or_layers = 1;
 		description.levels = 1;
 		lt.table = xgpu_vulkan_image_create(&description);
+		lt.emitter_uploaded = 0;
 	}
 	if (lt.table)
-		xgpu_vulkan_image_upload(lt.table, 0, 0, 0, 0, 0, LT_TABLE_TEXELS, LT_TABLE_ROWS, 1, lt.texels,
-			LT_TABLE_TEXELS * 16, LT_TABLE_TEXELS * LT_TABLE_ROWS * 16);
+		xgpu_vulkan_image_upload(lt.table, 0, 0, 0, 0, 0, LT_TABLE_TEXELS, LT_PASS_ROWS, 1, lt.texels,
+			LT_TABLE_TEXELS * 16, LT_TABLE_TEXELS * LT_PASS_ROWS * 16);
+	/* (the level's light sources, once a set) */
+	lt_emitter_tables();
+	if (lt.table && lt.emitter_counts[3] > 0 && !lt.emitter_uploaded)
+	{
+		uint32_t used = (uint32_t)((lt.emitter_bases[1] + LT_EMITTER_CELL_TEXELS * lt.emitter_counts[0] *
+			lt.emitter_counts[1] * lt.emitter_counts[2]) / LT_TABLE_TEXELS);
+
+		xgpu_vulkan_image_upload(lt.table, 0, 0, 0, LT_EMITTER_ROW, 0, LT_TABLE_TEXELS, used, 1, lt_emitter_texels,
+			LT_TABLE_TEXELS * 16, LT_TABLE_TEXELS * used * 16);
+		lt.emitter_uploaded = 1;
+	}
+	/* (the forward receivers' lamps, where the level is lit live by them) */
+	if (((real && suns > 0) || lt.emitter_solved) && lt.table && lt.emitter_counts[3] > 0 && lt.emitter_uploaded &&
+		!lt.only)
+		lt_lamp_rows(block->grid[0]);
+	/* (the forward table: this frame's rows, then the frame before's) */
+	if (!lt.forward_table)
+	{
+		memset(&description, 0, sizeof(description));
+		description.type = XGPU_VULKAN_IMAGE_2D;
+		description.format = XGPU_VULKAN_FORMAT_RGBA32F;
+		description.usage = XGPU_VULKAN_USAGE_SAMPLED | XGPU_VULKAN_USAGE_COPIED;
+		description.width = LT_TABLE_TEXELS;
+		description.height = 2 * LT_TABLE_ROWS;
+		description.depth_or_layers = 1;
+		description.levels = 1;
+		lt.forward_table = xgpu_vulkan_image_create(&description);
+	}
+	if (lt.forward_table)
+	{
+		static float halves[2 * LT_TABLE_ROWS][LT_TABLE_TEXELS][4];
+
+		memcpy(halves, lt.texels, sizeof(lt.texels));
+		memcpy(halves[LT_TABLE_ROWS], lt.previous_texels, sizeof(lt.previous_texels));
+		/* (the block's row of the flashlight its own row lights: left out
+		of the forward receivers' classic sum) */
+		if (skip >= 0 && skip < rows)
+			halves[skip][4][3] = (float)LT_KIND_FLASHLIGHT;
+		for (row = 0; row < rows; row++)
+			halves[row][7][1] = lt.first_person[row] ? 1.0f : 0.0f;
+		xgpu_vulkan_image_upload(lt.forward_table, 0, 0, 0, 0, 0, LT_TABLE_TEXELS, 2 * LT_TABLE_ROWS, 1, halves,
+			LT_TABLE_TEXELS * 16, LT_TABLE_TEXELS * 2 * LT_TABLE_ROWS * 16);
+	}
+	/* (the forward receivers read it at the occlusion set's binding) */
+	xgpu_vulkan_lt_table_set(lt.forward_table);
 	memcpy(params->grid[0], block->grid[0], sizeof(params->grid[0]));
 	memcpy(params->grid[1], block->grid[1], sizeof(params->grid[1]));
 	params->lights[0] = lt.table ? rows : 0;
@@ -820,7 +1479,22 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 	their checks) */
 	params->lights[1] = lt.table && !lt.only ? suns : 0;
 	params->lights[2] = (lt.only >= 2 ? 0 : LT_LIGHTS_FLASHLIGHT) | (lt.heroes_on ? LT_LIGHTS_HEROES : 0) |
-		(lt.restir_on && (lt.handled > 2 || !lt.heroes_on) ? LT_LIGHTS_RESTIR : 0);
+		(lt.restir_on && (lt.handled > 2 || !lt.heroes_on) ? LT_LIGHTS_RESTIR : 0) |
+		(real && params->lights[1] > 0 ? LT_LIGHTS_REAL : 0) |
+		(lt.table && lt.emitter_counts[3] > 0 && lt.emitter_uploaded && lt.emitter_solved ? LT_LIGHTS_REAL : 0);
+	/* (the level's light sources, where its table has them and the level is
+	lit live: elsewhere the lightmap holds their light already) */
+	if ((params->lights[2] & LT_LIGHTS_REAL) && lt.table && lt.emitter_counts[3] > 0 && lt.emitter_uploaded &&
+		!lt.only)
+	{
+		memcpy(params->emitter_grid, lt.emitter_grid, sizeof(params->emitter_grid));
+		memcpy(params->emitter_counts, lt.emitter_counts, sizeof(params->emitter_counts));
+		memcpy(params->emitter_bases, lt.emitter_bases, sizeof(params->emitter_bases));
+	}
+	/* (the objects' own lamps, in a level lit live: emitter_bases' w their
+count, lt/e1.frag's object_lamp_sample) */
+	params->emitter_bases[3] = (params->lights[2] & LT_LIGHTS_REAL) && !lt.only ? lt_object_lamp_rows() : 0;
+	lt.live = (params->lights[2] & LT_LIGHTS_REAL) != 0;
 }
 
 /* the view's shadowed flashlight's index in the block (-1 none) */
@@ -894,6 +1568,85 @@ static void lt_pass_draw(struct xgpu_vulkan_image *into, const int32_t rectangle
 	draw.kind[0] = LT_KIND;
 	xgpu_vulkan_set_target_views(into, NULL, 0, 1);
 	xgpu_vulkan_draw(&draw);
+}
+
+/* a half float's value (visibility shares: 0 to 1) */
+static float lt_half(uint16_t h)
+{
+	int exponent = (h >> 10) & 31;
+	float mantissa = (float)(h & 1023);
+
+	if (h & 0x8000)
+		return 0.0f;
+	if (!exponent)
+		return mantissa * (1.0f / 16777216.0f);
+	if (exponent == 31)
+		return 1.0f;
+	return ldexpf(1.0f + mantissa / 1024.0f, exponent - 15);
+}
+
+/* once a set, with the ray-traced scene built: each cell's share of rays
+from points of it to points of each of its groups that the structure lets
+through (lt/e1.frag's EMITTER_VISIBILITY, a texel 4 groups), read back (the
+draw waited for: once, at the level's start), the cells' chances scaled by
+it, so a lamp behind a wall is seldom drawn for a room it does not light */
+static void lt_emitter_visibility(struct xgpu_vulkan_image *inputs, const struct xgpu_world_ao_pass *pass,
+	const struct lt_params *frame_params)
+{
+	int cells = lt.emitter_counts[0] * lt.emitter_counts[1] * lt.emitter_counts[2], cell;
+	int32_t rectangle[4];
+	struct lt_params params = *frame_params;
+	uint16_t *halves = NULL;
+	double mean = 0.0;
+	long counted = 0;
+
+	/* (the pass's kernel into a half-float target: the dump's pipeline) */
+	if (!xgpu_vulkan_pipeline_ready(&lt.copy))
+	{
+		(void)xgpu_vulkan_pipeline_prepare(&lt.copy);
+		return;
+	}
+	lt.emitter_seen = 1;
+	if (cells <= 0 || cells > LT_EMITTER_CELLS_MAXIMUM)
+		return;
+	lt.emitter_visibility = lt_image(lt.emitter_visibility, XGPU_VULKAN_FORMAT_RGBA16F, LT_EMITTER_CELL_GROUPS / 4,
+		(uint32_t)cells);
+	if (!lt.emitter_visibility)
+		return;
+	memcpy(params.emitter_grid, lt.emitter_grid, sizeof(params.emitter_grid));
+	memcpy(params.emitter_counts, lt.emitter_counts, sizeof(params.emitter_counts));
+	memcpy(params.emitter_bases, lt.emitter_bases, sizeof(params.emitter_bases));
+	params.control[3] = LT_EMITTER_VISIBILITY;
+	rectangle[0] = rectangle[1] = 0;
+	rectangle[2] = LT_EMITTER_CELL_GROUPS / 4;
+	rectangle[3] = cells;
+	lt_pass_draw(lt.emitter_visibility, rectangle, pass, &params, &lt.copy, inputs, lt.means[0], lt.previous,
+		lt.guides, NULL);
+	if (xgpu_vulkan_read_halves(lt.emitter_visibility, 0, &halves) != 1 || !halves)
+		return;
+	for (cell = 0; cell < cells; cell++)
+	{
+		float seen[LT_EMITTER_CELL_GROUPS];
+		int slot;
+
+		for (slot = 0; slot < LT_EMITTER_CELL_GROUPS; slot++)
+		{
+			seen[slot] = lt_half(halves[(size_t)cell * LT_EMITTER_CELL_GROUPS + (size_t)slot]);
+			if (lt_emitter_cell_groups[cell][slot] >= 0)
+			{
+				mean += seen[slot];
+				counted++;
+			}
+		}
+		lt_emitter_cell_write(cell, &lt_emitter_texels[lt.emitter_bases[1] + cell * LT_EMITTER_CELL_TEXELS], seen);
+	}
+	free(halves);
+	xgpu_vulkan_image_upload(lt.table, 0, 0, 0, LT_EMITTER_ROW + (uint32_t)(lt.emitter_bases[1] / LT_TABLE_TEXELS), 0,
+		LT_TABLE_TEXELS, (uint32_t)(cells * LT_EMITTER_CELL_TEXELS / LT_TABLE_TEXELS), 1,
+		lt_emitter_texels[lt.emitter_bases[1]], LT_TABLE_TEXELS * 16,
+		(uint32_t)(cells * LT_EMITTER_CELL_TEXELS * 16));
+	host_logf(HOST_LOG_INFO, "vulkan: light transport: the light sources' cells' visibility found (%d cells, mean "
+		"share %.2f)", cells, counted ? mean / (double)counted : 0.0);
 }
 
 /* HALO_LT_E1_DUMP: the mean as half floats, written as its frame comes */
@@ -1013,8 +1766,15 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 	struct lt_params params;
 	int32_t rectangle[4];
 	int axis, light, start;
+	/* (the mode in effect: HALO_LT_E1's, or, not given, the game's light
+	lists' (display.ray_traced_lighting's shipping configuration: the
+	denoised pass), never the setting's unread -2: tested as lt.mode, that
+	ran the shipping pass as "accumulate", its history counted up to 2^20
+	frames and no denoiser, so a light that went stayed in it for hundreds of
+	frames) */
+	int mode = xgpu_vulkan_lt_mode();
 
-	if (!xgpu_vulkan_lt_mode())
+	if (!mode)
 		return 0;
 	/* (what the pass reads is not what it draws into) */
 	xgpu_vulkan_rt_bounce_set(NULL);
@@ -1024,7 +1784,7 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 	{
 		(void)xgpu_vulkan_pipeline_prepare(&lt.pass);
 		/* (the denoiser's made with it, so that both are there together) */
-		if (lt.mode == XGPU_VULKAN_LT_DENOISE)
+		if (mode == XGPU_VULKAN_LT_DENOISE)
 			xgpu_vulkan_denoise_prepare();
 		lt.prepared = 1;
 	}
@@ -1058,6 +1818,9 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 	/* (W2: every other light, from the light table) */
 	lt.ids_frame = (unsigned long)pass->history[1];
 	lt_table(cells, block, light ? lt_flashlight_index(cells, block) : -1, &params);
+	/* (the level's light sources: once a set, their cells' visibility) */
+	if (lt.table && lt.emitter_counts[3] > 0 && lt.emitter_uploaded && !lt.emitter_seen)
+		lt_emitter_visibility(inputs, pass, &params);
 	/* (the count started again as the light comes, goes or jumps, or the
 	last frame's inputs are not had, or the pre-pass has no history: a cut,
 	a replay's hold begun again) */
@@ -1077,8 +1840,8 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 
 		if (unshadowed < 0)
 			unshadowed = getenv("HALO_LT_E1_UNSHADOWED") && strcmp(getenv("HALO_LT_E1_UNSHADOWED"), "0");
-		params.control[0] = lt.mode == XGPU_VULKAN_LT_RAW || lt.mode == XGPU_VULKAN_LT_DENOISE ? 1 :
-			lt.mode == XGPU_VULKAN_LT_E2 ? LT_E2_CAP : LT_ACCUMULATE_CAP;
+		params.control[0] = mode == XGPU_VULKAN_LT_RAW || mode == XGPU_VULKAN_LT_DENOISE ? 1 :
+			mode == XGPU_VULKAN_LT_E2 ? LT_E2_CAP : LT_ACCUMULATE_CAP;
 		params.control[1] = light;
 		params.control[2] = XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE;
 		params.control[3] = (unshadowed ? 0 : LT_VISIBILITY) | (start ? LT_RESET : 0);
@@ -1087,29 +1850,54 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 	lt.current ^= 1;
 	xgpu_vulkan_pass_owner(LT_OWNER);
 	/* (W2's reservoirs: RIS and the temporal reuse, from the last frame's,
-	which the main draw then reuses spatially) */
-	if ((params.lights[2] & LT_LIGHTS_RESTIR) && lt.handled > 2 && lt.reuse_on)
+	which the main draw then reuses spatially; the left half the dynamic
+	lights', the right half the level's light sources' (lt/e1.frag's
+	LIGHTS_EMITTER_REUSE)) */
 	{
-		struct lt_params reservoir_params = params;
-		struct xgpu_vulkan_image *before;
+		int dynamic = (params.lights[2] & LT_LIGHTS_RESTIR) && lt.handled > 2 && lt.reuse_on;
+		int emitters = params.emitter_counts[3] > 0 && lt.reuse_on;
 
-		lt.reservoirs[0] = lt_image(lt.reservoirs[0], XGPU_VULKAN_FORMAT_RGBA32F, size->width, size->height);
-		lt.reservoirs[1] = lt_image(lt.reservoirs[1], XGPU_VULKAN_FORMAT_RGBA32F, size->width, size->height);
-		if (lt.reservoirs[0] && lt.reservoirs[1])
+		if (dynamic || emitters)
 		{
-			before = lt.reservoirs[lt.reservoir_current];
-			lt.reservoir_current ^= 1;
-			reservoirs = lt.reservoirs[lt.reservoir_current];
-			reservoir_params.control[3] = LT_RESERVOIR | (start || !lt.reservoirs_valid || !lt.previous_valid ?
-				LT_RESET : 0);
-			lt_pass_draw(reservoirs, rectangle, pass, &reservoir_params, &lt.pass, inputs, history, lt.previous,
-				lt.guides, before);
-			lt.reservoirs_valid = 1;
-			params.lights[2] |= LT_LIGHTS_REUSE;
+			struct lt_params reservoir_params = params;
+			struct xgpu_vulkan_image *before;
+
+			lt.reservoirs[0] = lt_image(lt.reservoirs[0], XGPU_VULKAN_FORMAT_RGBA32F, 2 * size->width, size->height);
+			lt.reservoirs[1] = lt_image(lt.reservoirs[1], XGPU_VULKAN_FORMAT_RGBA32F, 2 * size->width, size->height);
+			if (lt.reservoirs[0] && lt.reservoirs[1])
+			{
+				before = lt.reservoirs[lt.reservoir_current];
+				lt.reservoir_current ^= 1;
+				reservoirs = lt.reservoirs[lt.reservoir_current];
+				if (dynamic)
+				{
+					reservoir_params.control[3] = LT_RESERVOIR | (start || !lt.reservoirs_valid || !lt.previous_valid ?
+						LT_RESET : 0);
+					lt_pass_draw(reservoirs, rectangle, pass, &reservoir_params, &lt.pass, inputs, history,
+						lt.previous, lt.guides, before);
+					params.lights[2] |= LT_LIGHTS_REUSE;
+				}
+				if (emitters)
+				{
+					int32_t right[4];
+
+					right[0] = rectangle[0] + (int32_t)size->width;
+					right[1] = rectangle[1];
+					right[2] = rectangle[2] + (int32_t)size->width;
+					right[3] = rectangle[3];
+					reservoir_params.control[3] = LT_RESERVOIR | (start || !lt.emitter_reservoirs_valid ||
+						!lt.previous_valid ? LT_RESET : 0);
+					lt_pass_draw(reservoirs, right, pass, &reservoir_params, &lt.pass, inputs, history, lt.previous,
+						lt.guides, before);
+					params.lights[2] |= LT_LIGHTS_EMITTER_REUSE;
+				}
+			}
+			else
+				dynamic = emitters = 0;
 		}
+		lt.reservoirs_valid = dynamic;
+		lt.emitter_reservoirs_valid = emitters;
 	}
-	else
-		lt.reservoirs_valid = 0;
 	lt_pass_draw(lt.means[lt.current], rectangle, pass, &params, &lt.pass, inputs, history, lt.previous, lt.guides,
 		reservoirs);
 	/* (the dynamic lights' indirect light and reflections,
@@ -1126,12 +1914,13 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 	indirect_frame.params_size = sizeof(params);
 	indirect_frame.control_offset = offsetof(struct lt_params, control);
 	indirect_frame.rectangle = rectangle;
-	indirect_frame.mode = lt.mode;
+	indirect_frame.mode = mode;
 	indirect_frame.cap = params.control[0];
 	indirect_frame.start = start;
 	indirect_frame.previous_valid = lt.previous_valid;
+	indirect_frame.live = (params.lights[2] & LT_LIGHTS_REAL) != 0;
 	/* (ours the denoiser: the bounce counted in its one temporal stage) */
-	indirect_frame.fold = lt.mode == XGPU_VULKAN_LT_DENOISE && !xgpu_vulkan_dlss_lt_selected();
+	indirect_frame.fold = mode == XGPU_VULKAN_LT_DENOISE && !xgpu_vulkan_dlss_lt_selected();
 	diffuse = xgpu_vulkan_lt_indirect_draw(&indirect_frame);
 	if (!diffuse)
 		diffuse = lt.means[lt.current];
@@ -1140,7 +1929,7 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 	lt.final = lt_image(lt.final, XGPU_VULKAN_FORMAT_RGBA32F, size->width * (xgpu_vulkan_lt_indirect_on() ? 2 : 1),
 		size->height);
 	memset(&shared, 0, sizeof(shared));
-	if (lt.mode == XGPU_VULKAN_LT_DENOISE)
+	if (mode == XGPU_VULKAN_LT_DENOISE)
 	{
 		/* (the denoiser: this frame's sample and the last's, this frame's
 		inputs and the last's (before they are copied over), this frame's
@@ -1152,7 +1941,7 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 		lt.reshade_params.control[3] |= LT_GRADIENT;
 		/* (no spatial reuse in the re-shade: the last frame's reservoirs
 		are not kept; RIS alone, its seed the last frame's) */
-		lt.reshade_params.lights[2] &= ~LT_LIGHTS_REUSE;
+		lt.reshade_params.lights[2] &= ~(LT_LIGHTS_REUSE | LT_LIGHTS_EMITTER_REUSE);
 		/* (HALO_LT_DENOISER=rr on RTX: DLSS Ray Reconstruction instead,
 		xgpu_vulkan_dlss.c; ours then not run at all) */
 		if (xgpu_vulkan_dlss_lt_selected())
@@ -1178,7 +1967,8 @@ int xgpu_vulkan_lt_draw(struct xgpu_vulkan_image *inputs, const struct xgpu_worl
 			bounce.image = xgpu_vulkan_lt_indirect_bounce(&bounce.phase, &bounce.only);
 			shared.final = lt.final;
 			shared.wide = xgpu_vulkan_lt_indirect_on();
-			for (sun = 0; sun < params.lights[1] && sun < LT_SUNS; sun++)
+			shared.real = (params.lights[2] & LT_LIGHTS_REAL) != 0;
+			for (sun = 0; sun < params.lights[1] && sun < LT_SUNS && !shared.real; sun++)
 				if (lt.texels[LT_SUN_ROW + sun][4][3] >= 0.0f)
 				{
 					memcpy(shared.sun[2 * shared.suns], lt.texels[LT_SUN_ROW + sun][1], sizeof(shared.sun[0]));

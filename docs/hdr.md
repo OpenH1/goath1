@@ -253,6 +253,22 @@ headroom over paper white; 1 on an SDR display):
   min(1, 0.75 *P*): the whole picture brighter, saturated colours kept.
 - **The shoulder**: identity up to its knee, then Reinhard's curve meeting
   the line at its slope, toward *P* and never reaching it.
+- **Camera** (`XGPU_HDR_MODE_CAMERA`, no setting of its own): the ray-traced
+  lighting's tone map. While `display.ray_traced_lighting`'s pass is on, the
+  frame is drawn in HDR even with `display.hdr` off or on an SDR display, so
+  that the pass's physical light past white is kept, and the view takes this
+  mode in place of Faithful or Punchy. *L* is multiplied by a fixed exposure
+  (1: the lights are calibrated against the bake at it, and Halo has no eye
+  adaptation). Its luminance *Y* then goes to 0.18 (*Y* / 0.18)^*c*, with its
+  hue kept, where *c* is the contrast: 1.22 where the level is lit live (no
+  lightmap) and 1 where it keeps its lightmap, which already carries the
+  bake's look. Each channel then goes under Punchy's shoulder (knee
+  min(1, 0.75 *P*)). On SDR, white from 0.75 up rolls off (white itself ends
+  at 0.875), so the flashlight's pool, an explosion and the sun on the sand
+  keep their detail. On HDR, everything under paper white stays as it is,
+  and the highlights reach toward the peak. The HUD is drawn after it, so
+  only the view is tone mapped. Why it is fixed, and how *c* was fitted, are
+  in `xgpu_hdr.h` (`XGPU_HDR_CAMERA_*`).
 
 The encoding, as the frame is presented (after the HUD), makes it linear,
 at most *P*, times paper white, in the display's encoding:

@@ -21,9 +21,12 @@ What it runs (all from recordings made once, ~/rt2-scorecard/<scene>.hrpl on oma
 - Cost, on both GPUs (the 4090, the 8060S; the GPU lock alone, one cost request each): the frame's passes the
   light transport and the denoiser own ("LIGHT TRANSPORT", "DENOISE"), against the 1080p budget.
 
-The replay's environment is --env's (HALO_LT_E1=e2 by default: the flashlight's pass at 1 spp, counted). The
-mutations: noise (2% of each pixel's luminance, random each play, added to the held pictures), bias (the realtime
-irradiance 5% brighter), raw (HALO_LT_E1=raw: the pass's own 1-spp noise, no history).
+The replay's environment is --env's, none by default: the pass as the recording's menu setting
+(display.ray_traced_lighting) runs it, the denoised pass players get. HALO_LT_E1=e2 (a 64-frame running mean that
+starts again only on the flashlight's change) is a debugging mode: its history holds a short light (the afterglow
+check's grenade) long after it is gone, so that check fails there by design. The mutations: noise (2% of each
+pixel's luminance, random each play, added to the held pictures), bias (the realtime irradiance 5% brighter), raw
+(HALO_LT_E1=raw: the pass's own 1-spp noise, no history).
 """
 
 import argparse
@@ -83,6 +86,10 @@ SCENES = [
     # the progress clip's two moments, the light list and motion recorded)
     ("b30sun", "b30_sun.hrpl", 650, "b30's beach in the sun: the Pelican, a Warthog, an Elite, the player (sun shadows)"),
     ("b30fight", "b30_fight.hrpl", 600, "b30's beach firefight: plasma bolts, needles, a grenade by a Warthog"),
+# (live mode, the lightmap dropped: the sky's sun, fill, dome and bounce, recorded with the setting alone, the MCC
+# import and debug.render_marks from local/rt2-outdoor-real-light; on both rigs)
+    ("b30live", "b30_live.hrpl", 545, "b30's beach lit live: a Warthog and an Elite in the sun, the cliff's shade"),
+    ("bglive", "bg_live.hrpl", 485, "Blood Gulch lit live: a base wall, the sun's edge across it"),
 ]
 # the visual checks (each found escaped once, by the progress clip of f7223c72e): on omarchy, shared, the pictures
 # of the presented frame (sRGB decoded): (name, recording, frame, what)
@@ -92,14 +99,21 @@ SCENES = [
 #   channel (HALO_LT_SUN_CLAMP_VIEW=1's magenta), at most CLAMP_MOST: the subtraction tints nothing;
 # - afterglow: AFTER frames after a light is gone (its last frame, its id), the largest 32x32 tile change of the
 #   picture against the same frames played without that light (HALO_LT_DROP=id:), at most AFTERGLOW_MOST; and
-#   while it was there the same at least AFTERGLOW_SEEN (the check sees the light at all)
+#   while it was there the largest share of the frame's pixels it visibly changes (SEEN_LEVELS sRGB levels or
+#   more, over its frames) at least AFTERGLOW_SEEN (the check sees the light at all). AFTERGLOW_SEEN from the
+#   classic look's own grenade (the setting off: its light per pixel by its exact formula, tools/rt2_effect_k.py's
+#   method): at its brightest (frame 673) it visibly changes 11.5% of the pixels, and by its last frame (702) none,
+#   so the share is taken over the light's life, not at its end; a quarter of the classic's, since the pass's
+#   physical falloff gathers the same light closer to the blast (3.6% at 673, 6.8% at its peak); two plays without
+#   the light change no pixel
 VISUAL_SUN = ("b30sun", "b30_sun.hrpl", 650)
 VISUAL_AFTERGLOW = ("b30fight", "b30_fight.hrpl", 660, 702, "ea94000c", "the grenade's explosion")
 AFTER = 8
 SHADOW_LEAST = 0.005
 CLAMP_MOST = 0.01
 AFTERGLOW_MOST = 0.02
-AFTERGLOW_SEEN = 0.05
+AFTERGLOW_SEEN = 0.025
+SEEN_LEVELS = 2
 STABILITY_HOST = "omarchy"
 TRUTH_HOST = "5900x"
 COST_HOSTS = {"5900x": "RTX 4090", "omarchy": "Radeon 8060S"}
@@ -121,7 +135,8 @@ TARGETS = {
     "cost 5900x": 1.5,
     "cost omarchy": 5.0,
 }
-DEFAULT_ENV = ["HALO_LT_E1=e2"]
+# (TEST AS PLAYERS RUN IT, 2026-11-28: the menu setting alone; HALO_LT_* only through --env, in a debugging run)
+DEFAULT_ENV = []
 NOISE = 0.02
 BIAS = 1.05
 lock_print = threading.Lock()
@@ -142,7 +157,7 @@ def remote_script(command, lock):
     """a bash script on a rig: the owner's own game not running, the GPU lock as goat-rig takes it ("shared":
     gpu.lock shared and one of its 3 picture slots; "alone": gpu.lock, waited for at most 2 minutes), in a private
     network (loopback only) where the machine allows it"""
-    lines = ['set -e', 'if pgrep -f "^$HOME/Applications/OpenH1/bin/openh1" >/dev/null; then '
+    lines = ['set -e', f'if pgrep -f "{rt2_stability.OWNER_GAME}" >/dev/null; then '
              'echo "the machine owner is playing" >&2; exit 3; fi', 'mkdir -p ~/goat-rig/locks']
     if lock == "shared":
         lines += ['exec 9>>~/goat-rig/locks/gpu.lock', 'flock -s 9',
@@ -236,6 +251,35 @@ def note(rows, kind, scene, said, verdict="—"):
     rows.append({"check": kind, "scene": scene, "value": None, "target": None, "verdict": verdict, "said": said})
 
 
+# a live scene's baseline: the same hold with the pass off; a pixel whose picture moves there by itself (a material's
+# own animation or dithering: b30's far sand) more than this (its relative temporal deviation over the last plays, or
+# its change from play 1 or 30 to 120) is left out of the pass's measures, so only what the pass adds is judged
+BASELINE_MOVES = 0.0025
+
+
+def baseline_still(replay, env, recording, frame, width, height, mask):
+    """the measure's mask less the pixels that move with the pass off (BASELINE_MOVES), and how many those are"""
+    service = Service(STABILITY_HOST, replay, f"{RECORDINGS}/{recording}",
+                      [e for e in env if not e.startswith("HALO_LT_E1=")] + ["HALO_LT_E1=off"], "shared")
+    try:
+        reply = service.ask({"cmd": "hold", "n": frame, "frames": 120, "shots": rt2_stability.shots_for(120),
+                             "inline": True, "compress": True, "reset": True})
+    finally:
+        service.close()
+    plays = {}
+    for shot in reply["shots"]:
+        _, _, lum = rt2_stability.png_luminance(base64.b64decode(shot["png_base64"]))
+        plays[shot["k"]] = np.asarray(lum, np.float64)
+    last = np.stack([plays[k] for k in range(120 - rt2_stability.LAST + 1, 121)])
+    mean = last.mean(0)
+    floor = np.maximum(mean, 0.002)
+    deviation = np.sqrt(np.maximum((last * last).mean(0) - mean * mean, 0.0)) / floor
+    drift = np.maximum(np.abs(plays[1] - plays[120]), np.abs(plays[30] - plays[120])) / floor
+    moving = (deviation > BASELINE_MOVES) | (drift > 4 * BASELINE_MOVES)
+    keep = np.asarray(mask, bool) & ~moving
+    return keep.astype(int).tolist(), int((np.asarray(mask, bool) & moving).sum())
+
+
 def stability(scene, replay, env, out, mutate):
     name, recording, frame, _ = scene
     folder = out / name
@@ -246,6 +290,9 @@ def stability(scene, replay, env, out, mutate):
         info, reply, width, height, mask, mask_said = rt2_stability.hold(service, frame, 120, reset=True)
     finally:
         service.close()
+    if name.endswith("live"):
+        mask, moving = baseline_still(replay, env, recording, frame, width, height, mask)
+        mask_said += f"; {moving} pixels that move with the pass off left out"
     perturb = None
     if mutate == "noise":
         generator = np.random.default_rng(7)
@@ -304,6 +351,14 @@ def tile_largest(a, b):
     return float((np.abs(ta - tb)[keep] / np.maximum(tb[keep], 1e-6)).max()) if keep.any() else 0.0
 
 
+def visible_share(a, b):
+    """the share of the pixels whose sRGB value differs by SEEN_LEVELS or more between a and b (linear luminance)"""
+    def srgb(v):
+        v = np.clip(v, 0.0, 1.0)
+        return np.where(v <= 0.0031308, 12.92 * v, 1.055 * np.power(v, 1 / 2.4) - 0.055)
+    return float((np.abs(srgb(a) - srgb(b)) * 255 >= SEEN_LEVELS).mean())
+
+
 def visual(replay, env, out):
     """the visual checks (VISUAL_*): [(check, scene, value, target, at least?, said)]"""
     replay_path_for_visual[0] = replay
@@ -335,10 +390,11 @@ def visual(replay, env, out):
     for n in (last, last + AFTER):
         (folder / f"afterglow_{n}_with.png").write_bytes(with_light[n][2])
         (folder / f"afterglow_{n}_without.png").write_bytes(without[n][2])
-    seen = tile_largest(with_light[last][0], without[last][0])
+    seen = max(visible_share(with_light[n][0], without[n][0]) for n in range(start, last + 1))
     after = tile_largest(with_light[last + AFTER][0], without[last + AFTER][0])
     found.append((f"afterglow {AFTER} frames", name, after, AFTERGLOW_MOST, False,
-                  f"{what} ({light}): {seen:.1%} while there (at least {AFTERGLOW_SEEN:.0%})"))
+                  f"{what} ({light}): {seen:.1%} of the pixels visibly lit at most while there (at least "
+                  f"{AFTERGLOW_SEEN:.1%})"))
     if seen < AFTERGLOW_SEEN:
         found.append(("afterglow seen", name, seen, AFTERGLOW_SEEN, True, "the light is not seen: the check sees nothing"))
     return found

@@ -25,4 +25,30 @@ int xgpu_vulkan_lt_lights_window(void);
 a list received since its last window -1 (the pass turned off) */
 int xgpu_vulkan_lt_lights_on(void);
 
+/* the level's static light sources (port/linux/game/lt_emitters.c), the set
+the lists last carried whole: each triangle its corners (wound to glow
+toward their normal), its group's radiance (linear) and its group; count of
+them, groups of groups, whether the set is solved from the lightmap (the
+level lit live), and its number (a new one each time a set is whole); NULL
+(0s) none */
+#define XGPU_VULKAN_LT_EMITTERS_MAXIMUM 8192
+struct xgpu_vulkan_lt_emitter
+{
+	float corners[9], radiance[3];
+	int group;
+};
+const struct xgpu_vulkan_lt_emitter *xgpu_vulkan_lt_emitters(int *count, int *groups, int *solved, int *version);
+
+/* a window's (0 to 3) last list's object lamps (port/linux/game/world_rt.c's
+world_rt_lamps: an object's self-illuminated triangles where they glow,
+this frame's place): each its corners (wound to glow toward their normal),
+radiance (linear) and its object's ray-traced owner; count of them */
+#define XGPU_VULKAN_LT_OBJECT_LAMPS_MAXIMUM 512
+struct xgpu_vulkan_lt_object_lamp
+{
+	float corners[9], radiance[3];
+	uint32_t owner;
+};
+const struct xgpu_vulkan_lt_object_lamp *xgpu_vulkan_lt_object_lamps(int window, int *count);
+
 #endif

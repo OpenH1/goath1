@@ -1560,6 +1560,14 @@ enum
 	XGPU_LT_LIGHT_SPOT,
 	XGPU_LT_LIGHT_PANEL,
 	XGPU_LT_LIGHT_DIRECTIONAL,
+	/* a triangle of the level's static light sources, not a light
+	(port/linux/game/lt_emitters.c, lt_lights.h has its members): the
+	backend gathers a set's by its generation (xgpu_vulkan_lt_lights.c) */
+	XGPU_LT_LIGHT_EMITTER,
+	/* a triangle of an object's own lamps this frame (world_rt.c's
+	world_rt_lamps), not a light: the backend takes the frame's whole
+	(xgpu_vulkan_lt_lights.c's xgpu_vulkan_lt_object_lamps) */
+	XGPU_LT_LIGHT_OBJECT_EMITTER,
 };
 enum
 {
@@ -1575,6 +1583,12 @@ enum
 	XGPU_LT_LIGHT_NO_SPECULAR = 1 << 12,
 	XGPU_LT_LIGHT_NOT_OWN_OBJECT = 1 << 13,
 	XGPU_LT_LIGHT_UNSTABLE_ID = 1 << 14,
+	/* a sky light of a level lit live (lt_lights.c's lt_lights_real_sky:
+	the lightmap dropped, the sky's lights the whole light), and the sky's
+	ambient dome (a directional record of the whole sphere, forward up) */
+	XGPU_LT_LIGHT_REAL_SKY = 1 << 15,
+	XGPU_LT_LIGHT_SKY_DOME = 1 << 16,
+	XGPU_LT_LIGHT_EMITTER_SOLVED = 1 << 17,
 };
 enum
 {
@@ -1583,6 +1597,7 @@ enum
 	XGPU_LT_LIGHT_SOURCE_COPY = 5,
 	XGPU_LT_LIGHT_SOURCE_SUN = 6,
 	XGPU_LT_LIGHT_SOURCE_FRAME = 7,
+	XGPU_LT_LIGHT_SOURCE_EMITTER = 8,
 };
 /* (each member as lt_lights.h describes it) */
 struct xgpu_stream_lt_light
@@ -1892,6 +1907,13 @@ environment's; a model's brightness x tint)) */
 #define XGPU_WORLD_RT_MATERIAL_REFLECTION_PERPENDICULAR_SHIFT 16
 #define XGPU_WORLD_RT_MATERIAL_REFLECTION_PARALLEL_SHIFT 24
 #define XGPU_WORLD_RT_MATERIAL_REFLECTION_SCALE 128.0f
+/* (and its roughness, derived from its shader where it reflects, in bits
+10 to 14: the code k (1 to 31) is a roughness of k x
+XGPU_WORLD_RT_MATERIAL_ROUGHNESS_STEP, 0 none: world_rt_game.c's
+material_roughness, ~/dev/rt2-realtime-design.md section 10) */
+#define XGPU_WORLD_RT_MATERIAL_ROUGHNESS_SHIFT 10
+#define XGPU_WORLD_RT_MATERIAL_ROUGHNESS_MASK 0x1fu
+#define XGPU_WORLD_RT_MATERIAL_ROUGHNESS_STEP 0.02f
 struct xgpu_world_rt_material
 {
 	uint32_t index, kind, flags;
@@ -1951,6 +1973,11 @@ own mask bit, which the passes' rays leave out), and the local player's
 own body in first person, which casts shadows and nothing else sees */
 #define XGPU_WORLD_AO_INSTANCE_FIRST_PERSON 4u
 #define XGPU_WORLD_AO_INSTANCE_PLAYER 8u
+/* (with the ray-traced lighting) an object that casts no shadow (its
+definition's "does not cast shadow", a device's: b30's ring overhead): an
+object to every ray but the pass's sun's, which takes off the lightmap's
+sun only where an object casting a shadow the lightmap lacks blocks it */
+#define XGPU_WORLD_AO_INSTANCE_SHADOWLESS 16u
 #define XGPU_WORLD_AO_INSTANCE_OWNERS (1u << 24)
 struct xgpu_world_ao_instance
 {

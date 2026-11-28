@@ -646,7 +646,9 @@ def inside(folder):
             encoders.append(subprocess.Popen(
                 ["ffmpeg", "-loglevel", "error", "-y", "-f", "rawvideo", "-pix_fmt", "bgra", "-s",
                  f"{width}x{height}", "-r", str(spec["video"]), "-i", str(fifo), "-c:v", "libx264", "-preset",
-                 "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(run / "video.mp4")],
+                 "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(run / "video.mp4"),
+                 # (and each frame's MD5 as the game gave it, before the lossy encoding: two runs compared)
+                 "-f", "framemd5", str(run / "video.framemd5")],
                 stdin=subprocess.DEVNULL, stdout=open(run / "video.log", "w"), stderr=subprocess.STDOUT))
         log = open(run / "halo.log", "w")
         process = subprocess.Popen(["nice", "-n", "5", instance["binary"]], cwd=run, env=instance["env"],

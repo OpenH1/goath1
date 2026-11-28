@@ -1638,6 +1638,10 @@ static struct
 	/* display.rt_bounce: the bounced light the occlusion's sets name (NULL:
 	the stand-in, a 1x1 of none: xgpu_vulkan_rt_bounce_set) */
 	struct xgpu_vulkan_image *rt_bounce, *rt_bounce_stand_in;
+	/* the light-transport pass's light table the occlusion's sets name
+	(NULL: the bounced light's image stands in, never read: the forward
+	receivers are made only with the pass on, xgpu_vulkan_lt_table_set) */
+	struct xgpu_vulkan_image *lt_table;
 	uint64_t occlusion_serial, occlusion_world_number;
 	/* the window's display (any thread, atomic: HDR on, its SDR white's
 	and its headroom's bits, and whether they changed since the render
@@ -6654,9 +6658,30 @@ VkPipeline xgpu_vulkan_pipeline(const struct xgpu_vulkan_pipeline_description *d
 	return entry->pipeline;
 }
 
+/* debug.frame_time (HALO_FRAME_TIME: each frame a fixed game time, for runs
+that must draw the same pictures every time: the determinism check,
+tools/rt2_clips.py): a pipeline asked for is made and waited for, never
+skipped for as many frames as its compiler takes */
+static int pipeline_frames_fixed(void)
+{
+	static int fixed = -1;
+
+	if (fixed < 0)
+	{
+		const char *seconds = getenv("HALO_FRAME_TIME");
+
+		fixed = seconds && atof(seconds) > 0.0;
+	}
+	return fixed;
+}
+
 VkPipeline xgpu_vulkan_pipeline_ready(const struct xgpu_vulkan_pipeline_description *description)
 {
-	struct pipeline_entry *entry = pipeline_find_apart(description, 1);
+	struct pipeline_entry *entry;
+
+	if (pipeline_frames_fixed())
+		return xgpu_vulkan_pipeline(description);
+	entry = pipeline_find_apart(description, 1);
 
 	if (!entry)
 		return VK_NULL_HANDLE;
@@ -7605,8 +7630,9 @@ submission, else one written now */
 static VkDescriptorSet occlusion_set(void)
 {
 	VkDescriptorImageInfo field_image, table_image, scenery_image, objects_image, pixels_image, shadows_image, bounce_image;
+	VkDescriptorImageInfo lt_table_image;
 	VkDescriptorBufferInfo block;
-	VkWriteDescriptorSet writes[9];
+	VkWriteDescriptorSet writes[10];
 	VkWriteDescriptorSetAccelerationStructureKHR scene_write;
 	VkAccelerationStructureKHR scene = VK_NULL_HANDLE;
 	struct xgpu_vulkan_image *field = xgpu_vulkan_world_ao_field_image();
@@ -7616,6 +7642,7 @@ static VkDescriptorSet occlusion_set(void)
 	struct xgpu_vulkan_image *pixels = xgpu_vulkan_world_ao_pixels_image();
 	struct xgpu_vulkan_image *shadows = vk.light_shadows ? vk.light_shadows : vk.light_shadows_stand_in;
 	struct xgpu_vulkan_image *bounce = vk.rt_bounce ? vk.rt_bounce : vk.rt_bounce_stand_in;
+	struct xgpu_vulkan_image *lt_table = vk.lt_table && vk.lt_table->sampled ? vk.lt_table : bounce;
 	uint64_t serial = vk.serial;
 	int index;
 
@@ -7641,6 +7668,7 @@ static VkDescriptorSet occlusion_set(void)
 	pixels->used = vk.serial;
 	shadows->used = vk.serial;
 	bounce->used = vk.serial;
+	lt_table->used = vk.serial;
 	if (vk.occlusion_set && vk.occlusion_serial == vk.serial && vk.occlusion_world_number == xgpu_vulkan_world_ao_number())
 		return vk.occlusion_set;
 	vk.occlusion_set = set_allocate(vk.occlusion_layout);
@@ -7664,8 +7692,10 @@ static VkDescriptorSet occlusion_set(void)
 	shadows_image.imageView = shadows->sampled;
 	bounce_image = field_image;
 	bounce_image.imageView = bounce->sampled;
+	lt_table_image = field_image;
+	lt_table_image.imageView = lt_table->sampled;
 	memset(writes, 0, sizeof(writes));
-	for (index = 0; index < 8; index++)
+	for (index = 0; index < 9; index++)
 	{
 		writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 		writes[index].dstSet = vk.occlusion_set;
@@ -7689,20 +7719,22 @@ static VkDescriptorSet occlusion_set(void)
 	writes[6].pImageInfo = &shadows_image;
 	writes[7].dstBinding = XGPU_VULKAN_BINDING_RT_BOUNCE;
 	writes[7].pImageInfo = &bounce_image;
+	writes[8].dstBinding = XGPU_VULKAN_BINDING_LT_TABLE;
+	writes[8].pImageInfo = &lt_table_image;
 	if (scene)
 	{
 		memset(&scene_write, 0, sizeof(scene_write));
 		scene_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
 		scene_write.accelerationStructureCount = 1;
 		scene_write.pAccelerationStructures = &scene;
-		writes[8].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-		writes[8].pNext = &scene_write;
-		writes[8].dstSet = vk.occlusion_set;
-		writes[8].dstBinding = XGPU_VULKAN_BINDING_WORLD_AO_SCENE;
-		writes[8].descriptorCount = 1;
-		writes[8].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+		writes[9].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		writes[9].pNext = &scene_write;
+		writes[9].dstSet = vk.occlusion_set;
+		writes[9].dstBinding = XGPU_VULKAN_BINDING_WORLD_AO_SCENE;
+		writes[9].descriptorCount = 1;
+		writes[9].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
 	}
-	vkUpdateDescriptorSets(vk.device, scene ? 9 : 8, writes, 0, NULL);
+	vkUpdateDescriptorSets(vk.device, scene ? 10 : 9, writes, 0, NULL);
 	return vk.occlusion_set;
 }
 
@@ -7735,6 +7767,16 @@ void xgpu_vulkan_rt_bounce_set(struct xgpu_vulkan_image *image)
 int xgpu_vulkan_rt_bounce_bound(const struct xgpu_vulkan_image *image)
 {
 	return image && vk.rt_bounce == image;
+}
+
+/* the light-transport pass's light table the occlusion's sets name from
+now on (xgpu_vulkan_lt.c; NULL: none) */
+void xgpu_vulkan_lt_table_set(struct xgpu_vulkan_image *image)
+{
+	if (vk.lt_table == image)
+		return;
+	vk.lt_table = image;
+	xgpu_vulkan_world_ao_touch();
 }
 
 static int rt_bounce_stand_in_make(void)
@@ -9306,7 +9348,7 @@ static void hdr_metadata_set(int made);
 void xgpu_vulkan_hdr_state(int active, int mode, int paper_white_nits, int paper_white, int ui_nits)
 {
 	vk.hdr_active = active != 0;
-	vk.hdr_mode = mode == XGPU_HDR_MODE_PUNCHY ? XGPU_HDR_MODE_PUNCHY : XGPU_HDR_MODE_FAITHFUL;
+	vk.hdr_mode = mode == XGPU_HDR_MODE_PUNCHY || mode == XGPU_HDR_MODE_CAMERA ? mode : XGPU_HDR_MODE_FAITHFUL;
 	vk.hdr_paper_white_nits = paper_white_nits > 0 ? paper_white_nits : 0;
 	vk.hdr_paper_white = paper_white > 0 ? paper_white : 100;
 	vk.hdr_ui_nits = ui_nits > 0 ? ui_nits : 0;
@@ -13206,7 +13248,7 @@ debug.vulkan_bar_uploads, on by default; off, neither) */
 
 static int layouts_make(void)
 {
-	VkDescriptorSetLayoutBinding draw[6], textures[9];
+	VkDescriptorSetLayoutBinding draw[6], textures[10];
 	VkDescriptorSetLayoutCreateInfo info;
 	VkPipelineLayoutCreateInfo layout;
 	VkDescriptorSetLayout sets[5];
@@ -13325,18 +13367,22 @@ static int layouts_make(void)
 	/* (and display.rt_bounce's bounced light) */
 	textures[7] = textures[5];
 	textures[7].binding = XGPU_VULKAN_BINDING_RT_BOUNCE;
+	/* (and the light-transport pass's light table, for the one light
+	model's forward receivers) */
+	textures[8] = textures[5];
+	textures[8].binding = XGPU_VULKAN_BINDING_LT_TABLE;
 	info.flags = 0;
-	info.bindingCount = 8;
+	info.bindingCount = 9;
 	/* (and display.ambient_occlusion "ray_traced"'s scene, where the device
 	has ray queries) */
 	if (vk.capabilities.ray_queries)
 	{
-		textures[8].binding = XGPU_VULKAN_BINDING_WORLD_AO_SCENE;
-		textures[8].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-		textures[8].descriptorCount = 1;
-		textures[8].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-		textures[8].pImmutableSamplers = NULL;
-		info.bindingCount = 9;
+		textures[9].binding = XGPU_VULKAN_BINDING_WORLD_AO_SCENE;
+		textures[9].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+		textures[9].descriptorCount = 1;
+		textures[9].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+		textures[9].pImmutableSamplers = NULL;
+		info.bindingCount = 10;
 	}
 	info.pBindings = textures;
 	if (!check(vkCreateDescriptorSetLayout(vk.device, &info, NULL, &vk.occlusion_layout), "vkCreateDescriptorSetLayout"))

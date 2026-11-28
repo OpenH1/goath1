@@ -3553,6 +3553,7 @@ proxies meanwhile (b30: 592 shapes, the window's 64 nearest walked by every
 pixel of the level) cost an Apple M2's GPU six times the frame the field
 does */
 static int sdf_placement_order(void const *a, void const *b);
+static void sdf_lightmapped_release(void);
 
 static void sdf_awaited_make(void)
 {
@@ -3890,6 +3891,7 @@ void world_sdf_map_loaded(void)
 
 void world_sdf_map_unloaded(void)
 {
+	sdf_lightmapped_release();
 	/* (a bake keeps going: it has copies, and its field is cached) */
 	sdf_field_release();
 	world_sdf.map_known = 0;
@@ -4260,6 +4262,71 @@ int world_sdf_scenery_baked(long definition, float const position[3])
 	return sdf_field_drawn() &&
 		sdf_placement_found(world_sdf.field.scenery.placements, world_sdf.field.scenery.placement_count, definition,
 			position);
+}
+
+/* the level's static scenery placements whatever display.ambient_occlusion
+(the scenario's that sdf_scenery_copy takes, sdf_scenery_placement), in
+sdf_placement_order: made the first time they are asked for in a BSP,
+let go of with the map */
+static struct
+{
+	struct scenario const *scenario;
+	struct structure_bsp const *bsp;
+	struct world_sdf_placement *placements;
+	unsigned long count;
+} sdf_lightmapped;
+
+static void sdf_lightmapped_release(void)
+{
+	free(sdf_lightmapped.placements);
+	memset(&sdf_lightmapped, 0, sizeof(sdf_lightmapped));
+}
+
+int world_sdf_scenery_lightmapped(long definition, float const position[3])
+{
+	struct scenario *scenario = global_scenario_get();
+	struct structure_bsp *bsp = global_structure_bsp_get();
+
+	if (!scenario || !bsp)
+		return 0;
+	if (scenario != sdf_lightmapped.scenario || bsp != sdf_lightmapped.bsp)
+	{
+		struct sdf_scenery_kind kinds[SDF_SCENERY_KINDS];
+		unsigned long room = 0;
+		int kind;
+
+		sdf_lightmapped_release();
+		sdf_lightmapped.scenario = scenario;
+		sdf_lightmapped.bsp = bsp;
+		sdf_scenery_kinds(scenario, kinds);
+		for (kind = 0; kind < SDF_SCENERY_KINDS; kind++)
+			room += kinds[kind].placements->address && kinds[kind].placements->count > 0 ?
+				(unsigned long)kinds[kind].placements->count : 0;
+		sdf_lightmapped.placements = room ? malloc(room * sizeof(*sdf_lightmapped.placements)) : NULL;
+		for (kind = 0; sdf_lightmapped.placements && kind < SDF_SCENERY_KINDS; kind++)
+		{
+			long index;
+
+			for (index = 0; kinds[kind].placements->address && index < kinds[kind].placements->count; index++)
+			{
+				struct scenario_object_datum const *placement;
+				long definition_index = sdf_scenery_placement(&kinds[kind], index, &placement);
+				struct world_sdf_placement *out = &sdf_lightmapped.placements[sdf_lightmapped.count];
+
+				if (definition_index == NONE)
+					continue;
+				out->definition = definition_index;
+				out->position[0] = placement->position.x;
+				out->position[1] = placement->position.y;
+				out->position[2] = placement->position.z;
+				sdf_lightmapped.count++;
+			}
+		}
+		if (sdf_lightmapped.count)
+			qsort(sdf_lightmapped.placements, sdf_lightmapped.count, sizeof(*sdf_lightmapped.placements),
+				sdf_placement_order);
+	}
+	return sdf_placement_found(sdf_lightmapped.placements, sdf_lightmapped.count, definition, position);
 }
 
 int world_sdf_object_awaited(long definition)

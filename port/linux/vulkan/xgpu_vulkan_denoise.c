@@ -60,6 +60,9 @@ Render thread alone.
 #define DENOISE_KIND 0xfb
 /* the diffuse history's cap (frames) */
 #define DENOISE_CAP 64
+/* a level lit live: the diffuse's history longer, as the bounce's (xgpu_vulkan_lt_indirect.c's
+INDIRECT_BOUNCE_CAP_LIVE): its light the sky's, which stays; the gradients still cut it where a light changes */
+#define DENOISE_CAP_LIVE 128
 /* the a-trous passes (steps 1, 2, 4) */
 #define DENOISE_PASSES 3
 /* the luminance's edge-stop (standard deviations of the estimate), the
@@ -90,6 +93,10 @@ struct denoise_params
 	/* (the final pass: the suns, each one's forward and power) */
 	int32_t suns[4];
 	float sun[16][4];
+	/* (the gradients' deterministic half: the light table's rows this
+	frame and the frame before, the frame before's first row, the
+	flashlight's cookie's first texel: xgpu_vulkan_lt_table_halves) */
+	int32_t lights[4];
 };
 /* the final pass's control.w (lt/denoise_pair.glsl's RIGHT): the right
 half's draw */
@@ -147,6 +154,8 @@ static struct
 	struct denoise_channel channels[2];
 	/* checking (HALO_LT_DENOISE_*) */
 	int camera_only, no_gradients, spatial, ema, motion_view, cap;
+	/* this frame a level lit live (the final's real): DENOISE_CAP_LIVE */
+	int live;
 	/* HALO_LT_DENOISE_DUMP's: those dumped */
 	const char *dumps;
 } denoise = { .spatial = -1 };
@@ -425,7 +434,10 @@ static struct xgpu_vulkan_image *denoise_channel_draw(struct denoise_channel *ch
 			return NULL;
 	}
 	channel->reshaded = denoise_image(channel->reshaded, XGPU_VULKAN_FORMAT_RGBA32F, gradient_width, gradient_height);
-	channel->gradients = denoise_image(channel->gradients, XGPU_VULKAN_FORMAT_RGBA32_UINT, gradient_width, gradient_height);
+	/* (twice as wide: the right half the deterministic gradients,
+	lt/denoise_gradient.frag) */
+	channel->gradients = denoise_image(channel->gradients, XGPU_VULKAN_FORMAT_RGBA32_UINT, 2 * gradient_width,
+		gradient_height);
 	/* (the specular's: no re-shade, none kept) */
 	channel->previous_guides = denoise_image(channel->previous_guides, XGPU_VULKAN_FORMAT_RGBA32_UINT,
 		specular ? 1 : width, specular ? 1 : height);
@@ -436,11 +448,14 @@ static struct xgpu_vulkan_image *denoise_channel_draw(struct denoise_channel *ch
 	history_valid = channel->previous_valid && pass->history[0] != 0.0f;
 	uniforms = *pass;
 	memset(&params, 0, sizeof(params));
+	/* (a level lit live: lt/denoise_pair.glsl's live) */
+	params.suns[1] = denoise.live;
 	params.size[0] = (float)width;
 	params.size[1] = (float)height;
 	params.size[2] = (float)gradient_width;
 	params.size[3] = (float)gradient_height;
-	params.control[0] = specular ? DENOISE_SPECULAR_CAP : denoise.cap > 0 ? denoise.cap : DENOISE_CAP;
+	params.control[0] = specular ? DENOISE_SPECULAR_CAP : denoise.cap > 0 ? denoise.cap : denoise.live ? DENOISE_CAP_LIVE :
+		DENOISE_CAP;
 	params.control[1] = (history_valid ? DENOISE_HISTORY : 0) | (denoise.camera_only ? DENOISE_CAMERA_ONLY : 0) |
 		(denoise.ema ? DENOISE_EMA : 0) | (specular ? DENOISE_SPECULAR : 0) |
 		(denoise.motion_view ? DENOISE_MOTION_VIEW : 0) | (denoise.motion_view == 2 ? DENOISE_MOTION_RAW : 0);
@@ -490,14 +505,23 @@ static struct xgpu_vulkan_image *denoise_channel_draw(struct denoise_channel *ch
 	frame's light, against its own samples) */
 	if (history_valid && previous_raw && previous_inputs && !denoise.no_gradients)
 	{
-		struct xgpu_vulkan_image *textures[4] = { guide, previous_guide, channel->reshaded, previous_raw };
+		struct xgpu_vulkan_image *textures[5] = { guide, previous_guide, channel->reshaded, previous_raw, NULL };
 
 		xgpu_vulkan_lt_reshade(channel->reshaded, &channel->previous_pass, previous_inputs, channel->previous_guides);
+		/* (and the light table, both frames', for the deterministic half;
+		none: the half left without, the stochastic alone) */
+		textures[4] = xgpu_vulkan_lt_table_halves(params.lights);
+		if (!textures[4])
+		{
+			/* (a float image in its float slot, never read: lights.z 0) */
+			textures[4] = previous_raw;
+			memset(params.lights, 0, sizeof(params.lights));
+		}
 		gradient_rectangle[0] = 0;
 		gradient_rectangle[1] = 0;
-		gradient_rectangle[2] = (int32_t)gradient_width;
+		gradient_rectangle[2] = 2 * (int32_t)gradient_width;
 		gradient_rectangle[3] = (int32_t)gradient_height;
-		denoise_pass(channel->gradients, gradient_rectangle, &uniforms, &params, &denoise.gradient_pass, textures, 4);
+		denoise_pass(channel->gradients, gradient_rectangle, &uniforms, &params, &denoise.gradient_pass, textures, 5);
 		params.control[1] |= DENOISE_GRADIENTS;
 	}
 	/* 3: the temporal stage */
@@ -584,6 +608,8 @@ static struct xgpu_vulkan_image *denoise_shared(struct xgpu_vulkan_denoise_final
 	int index, dumped = denoise.dumps && *denoise.dumps && denoise_dumped(d->draws);
 
 	memset(&params, 0, sizeof(params));
+	/* (a level lit live: lt/denoise_pair.glsl's live) */
+	params.suns[1] = denoise.live;
 	params.size[0] = (float)size->width;
 	params.size[1] = (float)size->height;
 	params.tuning[1] = DENOISE_SIGMA_LUMINANCE;
@@ -615,6 +641,7 @@ static struct xgpu_vulkan_image *denoise_shared(struct xgpu_vulkan_denoise_final
 	params.control[1] = 0;
 	params.control[2] = 4;
 	params.suns[0] = out->suns;
+	params.suns[1] = out->real;
 	memcpy(params.sun, out->sun, sizeof(params.sun));
 	{
 		struct xgpu_vulkan_image *textures[6] = { d->filtered[1], dh, guide, inputs,
@@ -672,6 +699,7 @@ struct xgpu_vulkan_image *xgpu_vulkan_denoise_frame(struct xgpu_vulkan_image *ra
 
 	out->drawn = 0;
 	out->specular_denoised = NULL;
+	denoise.live = out->real;
 	if (!denoise_shaders())
 		return NULL;
 	/* (the checking modes, or a pipeline not made yet: the channels' own

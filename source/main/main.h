@@ -153,6 +153,8 @@ void main_save_map_safe(
 void main_save_map_no_timeout(
 	void);
 
+boolean main_skipping_ticks(
+	void);
 void main_skip(
 	short ticks);
 

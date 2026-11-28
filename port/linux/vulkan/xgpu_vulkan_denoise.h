@@ -47,6 +47,9 @@ struct xgpu_vulkan_denoise_final
 	struct xgpu_vulkan_image *final;
 	int wide, suns;
 	float sun[16][4];
+	/* (a level lit live: no suns' share off, the light's alpha 1, the
+	surfaces' lightmap and model lighting dropped: xgpu_spirv.c's lt_e1_add) */
+	int real;
 	struct xgpu_vulkan_image *specular, *coverage;
 	int result;
 	int drawn;

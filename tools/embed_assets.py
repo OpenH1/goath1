@@ -81,7 +81,7 @@ PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 # the HD effects, numbers only: each stock bitmap the game redraws from the
 # player's maps (port/linux/src/hd_effects.h)
 EFFECT_LIST = Path("port/assets/effects/effects.json")
-EFFECT_RECIPES = {"flash": 1}
+EFFECT_RECIPES = {"flash": 1, "splat": 2}
 # the MCC import's fits of our models onto MCC's preview meshes, numbers only (port/linux/src/mcc_import_bake.h;
 # tools/mcc_preview_bake.py --fits-out makes it)
 MCC_FIT_LIST = Path("port/assets/mcc_import/mcc_import.json")

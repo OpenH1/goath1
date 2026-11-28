@@ -739,6 +739,54 @@ int xgpu_texture_average_color(unsigned int format_word, unsigned int size_word,
 	return 1;
 }
 
+/* ---------- a texture's texels at a small level (xgpu_coverage.h) */
+
+unsigned long *xgpu_texture_texels(unsigned int format_word, unsigned int size_word, const unsigned char *texels,
+	unsigned long largest, unsigned long *width, unsigned long *height)
+{
+	struct xgpu_texture_description description;
+	unsigned long level = 0, texel;
+	const unsigned char *source;
+	DWORD *decoded;
+	unsigned long *out;
+
+	*width = *height = 0;
+	xgpu_texture_describe((DWORD)format_word, (DWORD)size_word, &description);
+	if (!texels || description.cube_map || description.depth > 1 || description.linear || !description.width ||
+		!description.height || format_information(description.format).kind == _texel_unknown)
+	{
+		return NULL;
+	}
+	while (level + 1 < description.levels && (xgpu_texture_level_dimension(description.width, level) > largest ||
+		xgpu_texture_level_dimension(description.height, level) > largest))
+	{
+		level++;
+	}
+	*width = xgpu_texture_level_dimension(description.width, level);
+	*height = xgpu_texture_level_dimension(description.height, level);
+	source = texels + xgpu_texture_level_offset(&description, level);
+	decoded = malloc(*width * *height * sizeof(*decoded));
+	out = malloc(*width * *height * sizeof(*out));
+	if (!decoded || !out)
+	{
+		free(decoded);
+		free(out);
+		return NULL;
+	}
+	if (description.compressed)
+		xgpu_texture_decode_dxt(&description, level, source, decoded);
+	else if (!xgpu_texture_decode_level(&description, level, source, NULL, decoded))
+	{
+		free(decoded);
+		free(out);
+		return NULL;
+	}
+	for (texel = 0; texel < *width * *height; texel++)
+		out[texel] = (unsigned long)decoded[texel];
+	free(decoded);
+	return out;
+}
+
 /* ---------- levels that keep an alpha test's coverage (xgpu.h) */
 
 void xgpu_texture_coverage_begin(struct xgpu_texture_coverage *coverage, unsigned int pass)

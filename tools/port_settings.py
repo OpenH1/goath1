@@ -1386,7 +1386,7 @@ PAGES = {
             # (port/linux/src/hd_effects.c: the stock effects redrawn from the
             # player's own maps, once; beside the textures' filtering)
             ("HD EFFECTS", "display.hd_effects", ON_OFF,
-             "Draws the Assault Rifle's muzzle flash sharper, redrawn from your own maps. Off draws the game's "
+             "Draws the Assault Rifle's muzzle flash and the blood sharper, redrawn from your own maps. Off draws the game's "
              "own.", None),
             ("MODEL DETAIL", "display.model_detail",
              [("AUTO", "auto"), ("XBOX", "stock"), ("FULL", "native"), ("HIGHEST", "highest")],

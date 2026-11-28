@@ -29,10 +29,10 @@ truth export's lights.json, so the two agree at a tick):
   projectile 0.05, others 5% of the reach, 0.1 to 0.5).
 - power: the color as the enhanced lights draw it (the rasterizer's, times
   the port's brightening past 1), taken to linear (^2.2), times k
-  (lt_power_scale: ~/dev/rt2-calibration.json's flashlight_power_scale and
-  dynamic_power_scales, a k a kind; LT_LIGHTS_POWER_SCALE the flashlight's,
-  measured for the flashlight alone; the others' k to be measured each once,
-  the same way: see the report and lt_lights_power_scale). The gel is the
+  (lt_power_scale: the flashlight's measured, ~/dev/rt2-calibration.json's
+  flashlight_power_scale, which a lamp and a panel share; a point light's
+  from its reach and emitter, the classic light model's own light at half
+  the reach, lt_point_power_scale and dynamic_power_scales). The gel is the
   angular profile alone (pow(color * gel, 2.2) = pow(color, 2.2) x
   pow(gel, 2.2)).
 - range: the reach as drawn (the tag's radius by its modifier), the range
@@ -97,27 +97,43 @@ extern struct data_array *light_data;
 /* k: the flashlight's, measured (~/dev/rt2-calibration.json); the suns' the
 truth helper's fit of the lightmap's direct share (sun_power_scale) */
 #define LT_LIGHTS_POWER_SCALE 1.009f
-/* the other kinds' k, each measured once the flashlight's way
-(~/dev/rt2-calibration.json's dynamic_power_scales and their derivation):
-a point light on an object (a muzzle flash, a bolt), a point light on none
-(an effect's: an explosion); a spot that is no flashlight (a lamp) and a
-panel not measured (none staged): the flashlight's. The backend's light
-transport applies the same rule (xgpu_vulkan_lt.c's lt_kind_k). */
-#define LT_LIGHTS_OBJECT_POWER_SCALE 0.845f
-/* a projectile's (a plasma bolt's, a needle's): measured apart, the same
-way (~/dev/rt2-calibration.json's dynamic_power_scales.point_projectile) */
-#define LT_LIGHTS_PROJECTILE_POWER_SCALE 0.41f
-/* one of the port's own lights on a projectile (light_sources.c's: a
-needle's in flight or stuck): measured on needles apart
-(dynamic_power_scales.point_own_projectile; xgpu_vulkan_lt.c's the same) */
-#define LT_LIGHTS_OWN_PROJECTILE_POWER_SCALE 0.45f
-#define LT_LIGHTS_EFFECT_POWER_SCALE 7.85f
+/* a point light's k (a muzzle flash, an explosion, a projectile's light,
+the port's own lights: lt_point_power_scale) from the classic light model's
+own falloff (display.ray_traced_lighting off: d3d8_device.c's look[0],
+xgpu_spirv.c's dynamic_light_sum_classic): the linear light it adds at d is
+BRIGHTNESS x color^2.2 x W(d / r) / (1 + core d^2), core = max(CORE / r^2,
+1 / CORE_MOST^2), W the range window; so the classic's light scales with
+its reach, and one k a kind cannot match it at every reach
+(~/dev/rt2-calibration.json's dynamic_power_scales) */
+#define LT_LIGHTS_CLASSIC_BRIGHTNESS 1.7f
+#define LT_LIGHTS_CLASSIC_CORE 12.0f
+#define LT_LIGHTS_CLASSIC_CORE_MOST 0.6f
 /* a sun's (a narrow sky light's) and a fill's (a sky light LT_LIGHTS_FILL_DIAMETER
 across or more, b30's 50 degree one): ~/dev/rt2-calibration.json's
 sun_power_scale and fill_power_scale (xgpu_vulkan_lt.c's, the same rule) */
 #define LT_LIGHTS_SUN_POWER_SCALE 0.417f
 #define LT_LIGHTS_FILL_POWER_SCALE 0.187f
 #define LT_LIGHTS_FILL_DIAMETER 0.17453293f
+/* a level lit live (lt_lights_real_sky): the sky's lights and its ambient
+dome as the whole light, each group's k for each channel from the truth
+renderer's multi-bounce render of b30 (432 samples a pixel, every bounce)
+against its lightmap as the game shows it (pages ^2.2), the lightmap the
+answer key only: the sun's, and the sky's (its wide lights and its dome:
+the lightmap tool's sky alike), red, green and blue (R^2 0.536, 0.568,
+0.620; one k for all, 0.457 0.475 0.594, R^2 0.524, 0.554, 0.614;
+~/dev/rt2-calibration.json's real_sky colour_fit) */
+static const float lt_lights_real_sun_k[3] = { 0.558f, 0.592f, 0.722f };
+static const float lt_lights_real_sky_k[3] = { 0.324f, 0.338f, 0.506f };
+/* the share of the BSP's clusters that must see a lit sky for the level to
+be lit live: Bungie's lightmap tool lit only those (a sky light's "affects
+exteriors"; the outdoor ambient radiosity "for exterior clusters"), so the
+tags' lights explain the bake there and nowhere else */
+#define LT_LIGHTS_REAL_SKY_SHARE 0.5f
+/* the sky tag's outdoor ambient radiosity colour and power, a sky light's
+flags (bit 0: it lights exterior clusters) */
+#define LT_SKY_OUTDOOR_AMBIENT_COLOR_OFFSET 0x48
+#define LT_SKY_OUTDOOR_AMBIENT_POWER_OFFSET 0x54
+#define LT_SKY_LIGHT_AFFECTS_EXTERIORS_BIT 0
 /* the emitters' radii (world units): E1's flashlight disk, then
 dynamic_lights.c's shadow disks' (SHADOWED_DISK_*) */
 #define LT_LIGHTS_FLASHLIGHT_DISK 0.01f
@@ -190,6 +206,9 @@ static struct
 	/* the sky lights.json names (the most clusters'), for the BSP it was found for */
 	void const *sky_bsp;
 	short sky_index;
+	/* whether that BSP is lit live (lt_lights_real_sky): -1 not known */
+	void const *real_bsp;
+	int live;
 } lt = { -1 };
 
 /* ---------- the list */
@@ -320,10 +339,110 @@ static short lt_sky_index(void)
 	return lt.sky_index;
 }
 
+/* whether a sky lights clusters live: an exterior-lighting light with power,
+or an outdoor ambient dome */
+static int lt_sky_lit(short sky_index)
+{
+	char const *sky = (char const *)scenario_get_sky(sky_index);
+	struct tag_block const *block;
+	real power;
+	long index;
+
+	if (!sky)
+		return FALSE;
+	memcpy(&power, sky + LT_SKY_OUTDOOR_AMBIENT_POWER_OFFSET, sizeof(power));
+	if (power > 0.0f && power < 1.0e6f)
+		return TRUE;
+	block = (struct tag_block const *)(sky + LT_SKY_LIGHTS_OFFSET);
+	for (index = 0; block->address && index < block->count; index++)
+	{
+		struct lt_sky_light const *light = (struct lt_sky_light const *)block->address + index;
+
+		if (light->power > 0.0f && TEST_FLAG(light->flags, LT_SKY_LIGHT_AFFECTS_EXTERIORS_BIT))
+			return TRUE;
+	}
+	return FALSE;
+}
+
+/* whether the view is in an exterior cluster, one that sees a lit sky (the
+camera's cluster, structure_visibility.c's render.visible_sky_index): an
+outdoor level's interiors (b30's corridors) keep their lightmap while the
+view is in them, their light the emitters' the tags lack until step 2
+(~/dev/rt2-realtime-design.md section 9: the view's cluster now, each
+surface's own cluster next) */
+static int lt_view_exterior(void)
+{
+	return render.visible_sky_index != NONE && lt_sky_lit(render.visible_sky_index);
+}
+
+/* whether the level (its BSP) is lit live, the lightmap dropped: its
+clusters that see a lit sky (exterior clusters, the only ones Bungie's
+lightmap tool lit with the sky's lights and dome) LT_LIGHTS_REAL_SKY_SHARE
+of them or more. Interior clusters' light came from emitters the tags
+mostly lack (a10's cryo deck: none), so a level made mostly of them keeps
+its lightmap until those are solved (~/dev/rt2-realtime-design.md section
+9). HALO_LT_REAL_SKY=0 or 1 overrides it (checking) */
+int lt_lights_real_sky(void)
+{
+	struct structure_bsp *bsp = global_structure_bsp_get();
+	struct scenario *scenario = global_scenario_get();
+	char const *given = getenv("HALO_LT_REAL_SKY");
+	long index, exterior = 0, total = 0;
+
+	if (given && *given)
+		return atoi(given) != 0;
+	if (!bsp || !scenario)
+		return FALSE;
+	if (bsp == lt.real_bsp)
+		return lt.live && lt_view_exterior();
+	lt.real_bsp = bsp;
+	for (index = 0; bsp->clusters.address && index < bsp->clusters.count; index++)
+	{
+		struct structure_cluster const *cluster = (struct structure_cluster const *)bsp->clusters.address + index;
+
+		total++;
+		if (cluster->sky_index >= 0 && cluster->sky_index < scenario->sky_references.count &&
+			lt_sky_lit(cluster->sky_index))
+			exterior++;
+	}
+	lt.live = total > 0 && (float)exterior >= LT_LIGHTS_REAL_SKY_SHARE * (float)total;
+	/* (or its interior's light sources solved from its lightmap: the level's
+	own lamps traced live, lt_emitters.c) */
+	if (!lt.live && lt_emitters_live())
+	{
+		lt.live = TRUE;
+		platform_log("lt lights: %ld of the BSP's %ld clusters see a lit sky; its light sources solved: lit live "
+			"(its lamps, the sky's lights and dome, the lightmap dropped)", exterior, total);
+		return lt.live;
+	}
+	platform_log("lt lights: %ld of the BSP's %ld clusters see a lit sky: %s", exterior, total,
+		lt.live ? "lit live (the sky's lights and dome, the lightmap dropped)" : "the lightmap kept");
+	return lt.live && lt_view_exterior();
+}
+
+/* HALO_LT_SUN_ANGLES=<yaw>,<pitch> (degrees; checking): the sky's first
+light's direction in place of the tag's. b30's bake's sun shadows do not
+match its tag's sun (yaw 50, pitch 35) and could not be matched by a
+direction alone (~/dev/rt2-realtime-design.md section 9.3): the tag's is
+kept */
+static void lt_sun_angles(short sky_index, long light_index, real_euler_angles2d *angles)
+{
+	char const *given = getenv("HALO_LT_SUN_ANGLES");
+	float yaw, pitch;
+
+	(void)sky_index;
+	if (given && light_index == 0 && sscanf(given, "%f,%f", &yaw, &pitch) == 2)
+	{
+		angles->yaw = yaw * (_pi / 180.0f);
+		angles->pitch = pitch * (_pi / 180.0f);
+	}
+}
+
 /* the suns after count records; the count of all */
 static int lt_suns(int count)
 {
 	struct scenario *scenario = global_scenario_get();
+	int live;
 	short sky_index;
 	char const *sky;
 	struct tag_block const *block;
@@ -335,6 +454,7 @@ static int lt_suns(int count)
 	sky = (char const *)scenario_get_sky(sky_index);
 	if (!sky)
 		return count;
+	live = lt_lights_real_sky();
 	block = (struct tag_block const *)(sky + LT_SKY_LIGHTS_OFFSET);
 	for (index = 0; block->address && index < block->count && count < XGPU_STREAM_LT_LIGHTS_MAXIMUM; index++)
 	{
@@ -344,11 +464,14 @@ static int lt_suns(int count)
 		real_euler_angles2d up_angles;
 		real_vector3d up;
 
+		real_euler_angles2d angles = light->direction;
+
 		memset(out, 0, sizeof(*out));
-		vector3d_from_euler_angles2d(&direction, &light->direction);
+		lt_sun_angles(sky_index, index, &angles);
+		vector3d_from_euler_angles2d(&direction, &angles);
 		/* (an up: the direction's, a quarter turn of pitch above it) */
-		up_angles.yaw = light->direction.yaw;
-		up_angles.pitch = light->direction.pitch + 0.5f * _pi;
+		up_angles.yaw = angles.yaw;
+		up_angles.pitch = angles.pitch + 0.5f * _pi;
 		vector3d_from_euler_angles2d(&up, &up_angles);
 		out->id[0] = ((unsigned int)sky_index << 8) | (unsigned int)(index & 0xff);
 		out->id[1] = (unsigned int)XGPU_LT_LIGHT_SOURCE_SUN << 24;
@@ -366,25 +489,83 @@ static int lt_suns(int count)
 		lt_copy3(out->color, light->color.red, light->color.green, light->color.blue);
 		lt_copy3(out->power, light->color.red * light->power * out->power_scale,
 			light->color.green * light->power * out->power_scale, light->color.blue * light->power * out->power_scale);
+		/* (lit live: its group's k each channel, a wide one the sky's) */
+		if (live)
+		{
+			float const *k = light->diameter >= LT_LIGHTS_FILL_DIAMETER ? lt_lights_real_sky_k : lt_lights_real_sun_k;
+
+			out->flags |= XGPU_LT_LIGHT_REAL_SKY;
+			out->power_scale = k[1];
+			lt_copy3(out->power, light->color.red * light->power * k[0], light->color.green * light->power * k[1],
+				light->color.blue * light->power * k[2]);
+		}
 		out->angular_diameter = light->diameter;
 		count++;
+	}
+	/* (lit live: the sky's outdoor ambient radiosity, a dome of that
+	radiance over the whole sphere (the lightmap tool's uniform sky; below
+	the horizon the ground stands in front of it), forward up, its angular
+	diameter the whole turn) */
+	if (live && count < XGPU_STREAM_LT_LIGHTS_MAXIMUM)
+	{
+		struct xgpu_stream_lt_light *out = &lt.lights[count];
+		real_rgb_color color;
+		real power;
+
+		memcpy(&color, sky + LT_SKY_OUTDOOR_AMBIENT_COLOR_OFFSET, sizeof(color));
+		memcpy(&power, sky + LT_SKY_OUTDOOR_AMBIENT_POWER_OFFSET, sizeof(power));
+		if (power > 0.0f && power < 1.0e6f)
+		{
+			memset(out, 0, sizeof(*out));
+			out->id[0] = ((unsigned int)sky_index << 8) | 0xffu;
+			out->id[1] = (unsigned int)XGPU_LT_LIGHT_SOURCE_SUN << 24;
+			out->kind = XGPU_LT_LIGHT_DIRECTIONAL;
+			out->flags = XGPU_LT_LIGHT_LIGHTMAP_DIRECT | XGPU_LT_LIGHT_REAL_SKY | XGPU_LT_LIGHT_SKY_DOME;
+			out->object = 0xffffffffu;
+			out->gel_slot = -1;
+			out->gel_tag = -1;
+			lt_copy3(out->forward, 0.0f, 0.0f, 1.0f);
+			lt_copy3(out->up, 1.0f, 0.0f, 0.0f);
+			lt_left(out);
+			out->cone_inner = out->cone_outer = -1.0f;
+			out->power_scale = lt_lights_real_sky_k[1];
+			lt_copy3(out->color, color.red, color.green, color.blue);
+			lt_copy3(out->power, color.red * power * lt_lights_real_sky_k[0], color.green * power * lt_lights_real_sky_k[1],
+				color.blue * power * lt_lights_real_sky_k[2]);
+			out->angular_diameter = _pi * 2.0f;
+			count++;
+		}
 	}
 	return count;
 }
 
-/* a light's k by its kind: the flashlight's, a point's on an object or on
-none, the rest the flashlight's */
+/* a point light's k: the classic's light at half its reach over the
+pass's there at k = 1, BRIGHTNESS max(d^2, emitter^2) / (1 + core d^2) at
+d = r / 2 (both have the same range window): so it adds what the classic
+adds where most of what it lights is seen; tools/rt2_effect_k.py measured
+the light each kind adds over its held frames' pixels against the classic's
+(~/dev/rt2-calibration.json's dynamic_power_scales: the need over this k
+0.57 to 1.2, about 1 on average; the classic's whole flux over the reach
+was 0.8 to 1.6) */
+static float lt_point_power_scale(float range, float emitter_radius)
+{
+	float core = LT_LIGHTS_CLASSIC_CORE / (range * range);
+	float least = 1.0f / (LT_LIGHTS_CLASSIC_CORE_MOST * LT_LIGHTS_CLASSIC_CORE_MOST);
+	float d2 = 0.25f * range * range, r2 = emitter_radius * emitter_radius;
+
+	if (!(range > 0.0f))
+		return 0.0f;
+	core = core > least ? core : least;
+	return LT_LIGHTS_CLASSIC_BRIGHTNESS * (d2 > r2 ? d2 : r2) / (1.0f + core * d2);
+}
+
+/* a light's k by its kind: a point's from its reach (lt_point_power_scale),
+the rest (a flashlight, a lamp, a panel) the flashlight's */
 static float lt_power_scale(struct xgpu_stream_lt_light const *light)
 {
 	if ((light->flags & XGPU_LT_LIGHT_FLASHLIGHT) || light->kind != XGPU_LT_LIGHT_POINT)
 		return LT_LIGHTS_POWER_SCALE;
-	/* (and one of the port's own effect flashes, light_sources.c's key
-kind 1: a projectile's reach, not an explosion's) */
-	if ((light->flags & XGPU_LT_LIGHT_PROJECTILE) && (light->id[1] >> 24) >= 1 && (light->id[1] >> 24) <= 3)
-		return LT_LIGHTS_OWN_PROJECTILE_POWER_SCALE;
-	if ((light->flags & XGPU_LT_LIGHT_PROJECTILE) || (light->id[1] >> 24) == 1)
-		return LT_LIGHTS_PROJECTILE_POWER_SCALE;
-	return light->object != 0xffffffffu ? LT_LIGHTS_OBJECT_POWER_SCALE : LT_LIGHTS_EFFECT_POWER_SCALE;
+	return lt_point_power_scale(light->range, light->emitter_radius);
 }
 
 /* the rasterizer light a copy (key) is of: its index, or NONE */
@@ -466,7 +647,17 @@ static int lt_build(struct halo_dynamic_light const *lights, unsigned long long 
 			if (carrier && carrier->object.type == _object_type_projectile)
 				out->flags |= XGPU_LT_LIGHT_PROJECTILE;
 		}
+		/* (its owner in every mode: the top parent of the object it is on,
+		a held weapon's holder (world_rt_owner is the handle's arithmetic
+		alone). dynamic_lights.c records one only with ray-traced shadows,
+		and none for its own lights, the ammo counter's in its holder's
+		hands among them. The pass's rays leave the owner out, and its
+		lights never light the owner's own surfaces (lt/indirect.glsl's
+		direct_one): a light on its carrier's model would light that model
+		from a few centimetres) */
 		out->owner = (unsigned int)owners[index];
+		if (!out->owner && out->object != 0xffffffffu && object_try_and_get((long)out->object))
+			out->owner = (unsigned int)world_rt_owner(object_get_ultimate_parent((long)out->object));
 		out->gel_slot = -1;
 		out->gel_tag = -1;
 		lt_copy3(out->position, light->position[0], light->position[1], light->position[2]);
@@ -608,6 +799,37 @@ static void lt_dump(int count, int window)
 	fflush(lt.dump);
 }
 
+/* the frame's object lamps (world_rt.c's world_rt_lamps) after the list:
+records of kind XGPU_LT_LIGHT_OBJECT_EMITTER, the frame's whole; the
+count with them */
+static int lt_object_lamps_append(struct xgpu_stream_lt_light *lights, int count, int maximum)
+{
+	float const (*corners)[9];
+	float const (*radiance)[3];
+	unsigned long const *owners;
+	long lamps = world_rt_lamps(&corners, &radiance, &owners), index;
+
+	for (index = 0; index < lamps && count < maximum; index++)
+	{
+		struct xgpu_stream_lt_light *out = &lights[count++];
+
+		memset(out, 0, sizeof(*out));
+		out->id[0] = (unsigned int)index;
+		out->kind = XGPU_LT_LIGHT_OBJECT_EMITTER;
+		out->object = (unsigned int)lamps;
+		out->owner = (unsigned int)owners[index];
+		out->gel_slot = -1;
+		out->gel_tag = -1;
+		memcpy(out->position, corners[index], sizeof(float) * 3);
+		memcpy(out->forward, corners[index] + 3, sizeof(float) * 3);
+		memcpy(out->up, corners[index] + 6, sizeof(float) * 3);
+		memcpy(out->power, radiance[index], sizeof(float) * 3);
+		out->cone_inner = out->cone_outer = -1.0f;
+		out->power_scale = 1.0f;
+	}
+	return count;
+}
+
 /* ---------- public code */
 
 void lt_lights_frame(struct halo_dynamic_light const *lights, unsigned long long const *keys, long const *objects,
@@ -635,7 +857,10 @@ void lt_lights_frame(struct halo_dynamic_light const *lights, unsigned long long
 		}
 	}
 	lt.frame++;
-	xgpu_backend_lt_lights(lt.lights, written, window, lt.frame);
+	/* (and this frame's share of the level's light sources' triangles, after
+	the lights: not in the dump) */
+	xgpu_backend_lt_lights(lt.lights, lt_object_lamps_append(lt.lights, lt_emitters_append(lt.lights, written,
+		XGPU_STREAM_LT_LIGHTS_MAXIMUM), XGPU_STREAM_LT_LIGHTS_MAXIMUM), window, lt.frame);
 	lt_dump(written, window);
 }
 
@@ -663,6 +888,10 @@ boolean lt_lights_sun_shadow(long object_index)
 	}
 	if (!pass_sun || object_index == NONE || !lt_lights_pass_on())
 		return FALSE;
+	/* (a level lit live: every shadow the traced sun's and sky's, never the
+	game's projected one, whatever the object's shape in the scene) */
+	if (lt_lights_real_sky())
+		return object_try_and_get(object_index) != NULL;
 	/* (only an object the ray-traced scene holds with a shape of its own,
 	which the pass's sun rays meet at any height (lt/e1.frag's sun_share):
 	not scenery baked as the structure is, not an item's box, not what the

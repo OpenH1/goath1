@@ -65,6 +65,20 @@ Render thread alone.
 #define INDIRECT_COVERAGE 2097152
 #define INDIRECT_CACHE_ON 4194304
 #define INDIRECT_BOUNCE_HISTORY 8388608
+/* (with SPECULAR_RAY, HALO_LT_SHINE_VIEW=1, checking: the lights' shine
+alone, no ray: lt/indirect.glsl's SHINE_ONLY) */
+#define INDIRECT_SHINE_ONLY 16777216
+/* (with CACHE_RESOLVE: the slots' means this pass's samples alone, the
+cells' earlier light let go: the cache's warm-up) */
+#define INDIRECT_CACHE_REPLACE 33554432
+/* a level lit live: the passes of bounce and cache resolve drawn where the
+cache starts again (a map's start, a cut, a hold's reset), each slot's mean
+the last pass's alone, so each pass adds one bounce of the sky's light
+(lt/indirect.glsl's bounce reads the cache the pass before left): the
+first frame sees the sky's light bounced INDIRECT_WARM times, not once, and
+the cache's later frames only refine it (no slow climb to the converged
+light: the held frame's swelling) */
+#define INDIRECT_WARM 6
 /* where its parameters are in the uniforms (lt/e1.frag's indirect[4]) */
 #define INDIRECT_PARAMS_OFFSET 1536
 /* the cache's slots (a texel each, RGBA32F: 24 MB; lt/indirect_cache.glsl's
@@ -80,12 +94,16 @@ denoiser ("denoise": its noise counted down before it joins the direct
 light's sample, which the denoiser's gradients then follow) */
 #define INDIRECT_COVERAGE_CAP 16
 #define INDIRECT_BOUNCE_CAP 32
+/* a level lit live: the bounce is the sky's light, which stays: a longer
+history (a light that comes or goes starts it again by the light-id hash
+all the same, lt/indirect.glsl) */
+#define INDIRECT_BOUNCE_CAP_LIVE 128
 
 _Static_assert(INDIRECT_PARAMS_OFFSET + 64 <= 192 * 16, "the parameters within the uniforms");
 
 static struct
 {
-	int settings_read, indirect, reflections, cache, only, made, failed, said;
+	int settings_read, indirect, reflections, cache, only, made, failed, said, shine_only;
 	unsigned generation;
 	VkShaderModule vertex, fragment;
 	VkSampler sampler;
@@ -107,7 +125,33 @@ static struct
 	/* this frame's reflections' radiance (their samples, their count); the
 	light the surfaces read (HALO_LT_SPECULAR_DUMP=final's) */
 	struct xgpu_vulkan_image *specular_light, *final;
+	/* (a 1x1 RGBA32Uint of zeros: the uint slots' stand-in, lt/e1.frag's
+	inputs, previous_inputs and guides, where a mode binds none: a float
+	image there is an unsigned sampler's undefined read) */
+	struct xgpu_vulkan_image *uint_stand_in;
 } indirect;
+
+/* the stand-in for an unsigned slot left empty (NULL if it cannot be made) */
+static struct xgpu_vulkan_image *indirect_uint_stand_in(void)
+{
+	static const uint32_t zeros[4] = { 0u, 0u, 0u, 0u };
+	struct xgpu_vulkan_image_description description;
+
+	if (indirect.uint_stand_in)
+		return indirect.uint_stand_in;
+	memset(&description, 0, sizeof(description));
+	description.type = XGPU_VULKAN_IMAGE_2D;
+	description.format = XGPU_VULKAN_FORMAT_RGBA32_UINT;
+	description.usage = XGPU_VULKAN_USAGE_SAMPLED | XGPU_VULKAN_USAGE_COPIED;
+	description.width = 1;
+	description.height = 1;
+	description.depth_or_layers = 1;
+	description.levels = 1;
+	indirect.uint_stand_in = xgpu_vulkan_image_create(&description);
+	if (indirect.uint_stand_in)
+		xgpu_vulkan_image_upload(indirect.uint_stand_in, 0, 0, 0, 0, 0, 1, 1, 1, zeros, 16, 16);
+	return indirect.uint_stand_in;
+}
 
 static void indirect_settings(void)
 {
@@ -122,6 +166,7 @@ static void indirect_settings(void)
 	indirect.cache = !given || strcmp(given, "nocache");
 	given = getenv("HALO_LT_SPECULAR");
 	indirect.reflections = indirect.indirect && (!given || strcmp(given, "0"));
+	indirect.shine_only = getenv("HALO_LT_SHINE_VIEW") && atoi(getenv("HALO_LT_SHINE_VIEW")) == 1;
 	if (getenv("HALO_LT_INDIRECT") || getenv("HALO_LT_SPECULAR"))
 		host_logf(HOST_LOG_WARN, "vulkan: light transport: indirect %d (only %d, cache %d), reflections %d (checking)",
 			indirect.indirect, indirect.only, indirect.cache, indirect.reflections);
@@ -228,9 +273,15 @@ static void indirect_pass(struct xgpu_vulkan_image *into, const int32_t rectangl
 		return;
 	for (stage = 0; stage < 6; stage++)
 	{
+		/* (an empty slot: lt/e1.frag's unsigned ones (0 inputs, 2
+		previous_inputs, 3 guides) a zero uint image, the float ones the
+		table) */
+		int unsigned_slot = stage == 0 || stage == 2 || stage == 3;
+
 		draw.textures[stage].kind = XGPU_VULKAN_IMAGE_2D;
 		draw.textures[stage].sampler = indirect.sampler;
-		draw.textures[stage].image = textures[stage] ? textures[stage] : frame->table;
+		draw.textures[stage].image = textures[stage] ? textures[stage] : unsigned_slot && indirect_uint_stand_in() ?
+			indirect_uint_stand_in() : frame->table;
 	}
 	bytes = xgpu_vulkan_upload(192 * 16, 256, &draw.uniforms);
 	if (!bytes)
@@ -372,6 +423,27 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 	indirect_parameters(frame, parameters);
 	indirect.phase = (int)(indirect.frames & 3);
 	xgpu_vulkan_pass_owner("LIGHT TRANSPORT");
+	/* 0: a live level's cache warmed where it starts again */
+	if (frame->live && indirect.cache && (reset || !indirect.cache_valid))
+	{
+		int pass;
+
+		for (pass = 0; pass < INDIRECT_WARM; pass++)
+		{
+			struct xgpu_vulkan_image *bounce[6] = { frame->inputs, indirect.caches[indirect.cache_current],
+				frame->previous_inputs, frame->guides, frame->table, NULL };
+			struct xgpu_vulkan_image *resolve[6] = { frame->inputs, indirect.caches[indirect.cache_current], NULL,
+				frame->guides, NULL, indirect.bounce };
+
+			indirect_pass(indirect.bounce, half, frame, INDIRECT_BOUNCE | INDIRECT_RESET, frame->cap, bounce,
+				&indirect.wide, parameters);
+			resolve[1] = indirect.caches[indirect.cache_current];
+			indirect_pass(indirect.caches[indirect.cache_current ^ 1], whole, frame, INDIRECT_CACHE_RESOLVE |
+				INDIRECT_CACHE_REPLACE, frame->cap, resolve, &indirect.wide, parameters);
+			indirect.cache_current ^= 1;
+			indirect.cache_valid = 1;
+		}
+	}
 	/* 1, 2: the bounce and the reflections' rays (the last frame's cache) */
 	{
 		struct xgpu_vulkan_image *textures[6] = { frame->inputs, indirect.caches[indirect.cache_current],
@@ -385,7 +457,7 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 			int history_reset = reset || !indirect.bounce_history_valid;
 
 			memcpy(counted, parameters, sizeof(counted));
-			counted[3][0] = (float)INDIRECT_BOUNCE_CAP;
+			counted[3][0] = (float)(frame->live ? INDIRECT_BOUNCE_CAP_LIVE : INDIRECT_BOUNCE_CAP);
 			textures[5] = indirect.bounce_histories[indirect.current];
 			indirect.bounce_history = indirect.bounce_histories[indirect.current ^ 1];
 			xgpu_vulkan_set_motion_target(indirect.bounce_history, indirect.bounce);
@@ -404,7 +476,8 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 		textures[5] = frame->direct;
 		if (indirect.reflections)
 			indirect_pass(indirect.specular_raw, frame->rectangle, frame, INDIRECT_SPECULAR_RAY |
-				(reset ? INDIRECT_RESET : 0), frame->cap, textures, &indirect.half, parameters);
+				(reset ? INDIRECT_RESET : 0) | (indirect.shine_only ? INDIRECT_SHINE_ONLY : 0), frame->cap, textures,
+				&indirect.half, parameters);
 	}
 	if (indirect.cache)
 	{

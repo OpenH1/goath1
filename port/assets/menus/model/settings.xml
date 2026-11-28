@@ -573,7 +573,7 @@
 			<choice shown="16X" value="16"/>
 		</row>
 		<row key="hd_effects" kind="choice" setting="display.hd_effects" label="HD EFFECTS" crumb="VIDEO › ADVANCED GRAPHICS">
-			<help>Draws the Assault Rifle's muzzle flash sharper, redrawn from your own maps. Off draws the game's own.</help>
+			<help>Draws the Assault Rifle's muzzle flash and the blood sharper, redrawn from your own maps. Off draws the game's own.</help>
 			<choice shown="ON" value="true"/>
 			<choice shown="OFF" value="false"/>
 		</row>

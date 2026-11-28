@@ -575,13 +575,18 @@ unsigned long halo_gpu_settings_taken(void);
 /* (a record playing: below) */
 static BOOL journal_playing;
 
+int lt_lights_pass_on(void); /* port/linux/game/lt_lights.h */
+
 static int rt_reflections_wanted(void)
 {
 	if (!rt_reflections.read || rt_reflections.read_at != halo_gpu_settings_taken())
 	{
 		rt_reflections.read = 1;
 		rt_reflections.read_at = halo_gpu_settings_taken();
-		rt_reflections.on = config_boolean("display.rt_reflections") && xgpu_backend_capabilities.ray_queries;
+		/* (on with the ray-traced lighting too: its reflections are the
+		pass's, display.rt_reflections' tags say where) */
+		rt_reflections.on = (config_boolean("display.rt_reflections") || lt_lights_pass_on()) &&
+			xgpu_backend_capabilities.ray_queries;
 	}
 	return rt_reflections.on;
 }
@@ -921,7 +926,9 @@ _Static_assert(sizeof(struct world_rt_mesh_header) == sizeof(struct xgpu_world_r
 	WORLD_RT_MATERIAL_MASK_BUMP == XGPU_WORLD_RT_MATERIAL_MASK_BUMP &&
 	WORLD_RT_MATERIAL_MASK_MULTIPURPOSE == XGPU_WORLD_RT_MATERIAL_MASK_MULTIPURPOSE &&
 	WORLD_RT_MATERIAL_REFLECTION_PERPENDICULAR_SHIFT == XGPU_WORLD_RT_MATERIAL_REFLECTION_PERPENDICULAR_SHIFT &&
-	WORLD_RT_MATERIAL_REFLECTION_PARALLEL_SHIFT == XGPU_WORLD_RT_MATERIAL_REFLECTION_PARALLEL_SHIFT,
+	WORLD_RT_MATERIAL_REFLECTION_PARALLEL_SHIFT == XGPU_WORLD_RT_MATERIAL_REFLECTION_PARALLEL_SHIFT &&
+	WORLD_RT_MATERIAL_ROUGHNESS_SHIFT == XGPU_WORLD_RT_MATERIAL_ROUGHNESS_SHIFT &&
+	WORLD_RT_MATERIAL_ROUGHNESS_MASK == XGPU_WORLD_RT_MATERIAL_ROUGHNESS_MASK,
 	"the ray-traced scene's meshes as drawn");
 
 void halo_world_rt_mesh(unsigned long id, void const *data, unsigned long size)
@@ -3137,6 +3144,15 @@ static void hdr_read(void)
 	{
 		display = xgpu_backend_display_hdr(&headroom);
 		active = setting == XGPU_HDR_ON || (setting == XGPU_HDR_AUTO && display);
+		/* (display.ray_traced_lighting: the pass's light is physical, past
+		white where it is bright; the frame drawn in HDR to keep it, on an
+		SDR display too, and the 3D view through the camera (xgpu_hdr.h's
+		XGPU_HDR_MODE_CAMERA), which brings it into the display's range) */
+		if (lt_lights_pass_on())
+		{
+			active = TRUE;
+			mode = XGPU_HDR_MODE_CAMERA;
+		}
 	}
 #ifdef HALO_VR
 	if (halo_vr_running())
@@ -3183,7 +3199,8 @@ static void hdr_read(void)
 	if (active != hdr.active)
 	{
 		platform_log("HDR: %s (display.hdr \"%s\", %s)", active ? "on" : "off", config_string("display.hdr"),
-			mode == XGPU_HDR_MODE_PUNCHY ? "punchy" : "faithful");
+			mode == XGPU_HDR_MODE_CAMERA ? "the ray-traced lighting's camera" : mode == XGPU_HDR_MODE_PUNCHY ?
+			"punchy" : "faithful");
 		hdr.active = active;
 		render_targets_evict();
 	}
@@ -6255,7 +6272,11 @@ static BOOL dynamic_lights_active(void);
 
 static BOOL lights_reach_parted(void)
 {
-	return xgpu_backend_capabilities.draw_bounds && !preparation.active && !journal_recording && dynamic_lights_active();
+	/* (none parted with the ray-traced lighting: every triangle reads its
+	light, which reaches where no dynamic light does: the sun's share, the
+	bounce) */
+	return xgpu_backend_capabilities.draw_bounds && !preparation.active && !journal_recording && dynamic_lights_active() &&
+		!lt_lights_pass_on();
 }
 
 /* the lightmap pass's triangles being drawn are ones no light reaches
@@ -6316,7 +6337,7 @@ static BOOL dynamic_lights_active(void)
 	/* (the setting as it is now: a map's preparation played back from its
 	record before anything else read it) */
 	dynamic_lights_read_settings();
-	return inputs.lights_count > 0 && dynamic_lights.enhanced;
+	return (inputs.lights_count > 0 || lt_lights_pass_on()) && dynamic_lights.enhanced;
 }
 
 /* the glows of the frame's bolts' lights, into the 3D view, after its

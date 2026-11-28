@@ -74,7 +74,9 @@ void single_main()
     // four 2x2 quadrants about the pixel (Kuwahara's), among pixels of nearly the same normals, so that an edge in
     // the light, which one quadrant at least is clear of, is not taken for noise; it then stands for each young
     // pixel's in the propagation)
-    bool young = (pass.control.y & FIRST) != 0 && count < 4.0;
+    // (a level lit live: the diffuse's first frame already many rays, its own variance; the pair's rule,
+    // lt/denoise_pair.glsl's, so the diffuse is filtered the same with the reflections off as with them on)
+    bool young = (pass.control.y & FIRST) != 0 && count < 4.0 && (specular || pass.suns.y == 0);
     float v = 0.0, vw = 0.0;
     vec3 quadrants[4] = vec3[4](vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0));
     for (int y = -1; y <= 1; y++)

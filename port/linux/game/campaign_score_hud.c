@@ -64,6 +64,18 @@ touched.
 /* port_config.c's */
 int config_boolean(char const *name);
 unsigned long system_milliseconds(void);
+/* frames_clock.c */
+int frames_clock(unsigned long *milliseconds);
+
+/* the popups' clock: the computer's, or the frames' where their time is
+fixed (debug.frame_time), so that two runs draw the same popups at the same
+frames (tools/rt2_clips.py) */
+static unsigned long score_hud_now(void)
+{
+	unsigned long milliseconds;
+
+	return frames_clock(&milliseconds) ? milliseconds : system_milliseconds();
+}
 void platform_log(char const *format, ...);
 void halo_screenshot_named(const char *name);
 
@@ -404,7 +416,7 @@ static void score_fill_update(
 			long pick = (period + order++) % NUMBEROF(groups);
 
 			score_group_add((short)DATUM_INDEX_TO_ABSOLUTE_INDEX(iterator.datum_index), groups[pick].points,
-				groups[pick].rank, groups[pick].text, game_time_get(), system_milliseconds());
+				groups[pick].rank, groups[pick].text, game_time_get(), score_hud_now());
 		}
 	}
 }
@@ -434,7 +446,7 @@ static void score_poll(
 
 			if (rank > 0)
 				score_group_add(events[index].player, events[index].points, rank, text, events[index].tick,
-					system_milliseconds());
+					score_hud_now());
 		}
 		if (count < (long)NUMBEROF(events))
 			break;
@@ -561,7 +573,7 @@ static void score_draw_popup(
 	short player = self != NONE ? (short)DATUM_INDEX_TO_ABSOLUTE_INDEX(self) : NONE;
 	struct campaign_score_hud_group const *group;
 	struct campaign_score_player const *entry;
-	unsigned long now = system_milliseconds();
+	unsigned long now = score_hud_now();
 	unsigned long show = SCORE_POPUP_MILLISECONDS;
 	unsigned long age;
 	short current = NONE;
@@ -786,7 +798,7 @@ static void score_draw_summary(
 	short local_player_index)
 {
 	struct campaign_score_state const *state = &score_hud.summary;
-	unsigned long now = system_milliseconds();
+	unsigned long now = score_hud_now();
 	unsigned long age;
 	long self = local_player_get_player_index(local_player_index);
 	short self_slot = self != NONE ? (short)DATUM_INDEX_TO_ABSOLUTE_INDEX(self) : NONE;
@@ -982,7 +994,7 @@ static void score_summary_update(
 		score_hud.summary_pending = FALSE;
 		score_hud.summary_shown = TRUE;
 		score_hud.summary_pictured = FALSE;
-		score_hud.summary_at = system_milliseconds();
+		score_hud.summary_at = score_hud_now();
 		score_hud.summary_compact = strcmp(level, score_hud.summary_level) != 0;
 	}
 	/* (the next level begun while it shows in full: small, for its own
@@ -991,7 +1003,7 @@ static void score_summary_update(
 	{
 		score_hud.summary_compact = TRUE;
 		score_hud.summary_pictured = FALSE;
-		score_hud.summary_at = system_milliseconds();
+		score_hud.summary_at = score_hud_now();
 	}
 	csstrncpy(score_hud.drawn_level, level, sizeof(score_hud.drawn_level) - 1);
 }
@@ -1053,7 +1065,7 @@ short campaign_score_hud_recent(
 	struct campaign_score_hud_group *groups,
 	short maximum)
 {
-	unsigned long now = system_milliseconds();
+	unsigned long now = score_hud_now();
 	short player = player_index != NONE ? (short)DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index) : NONE;
 	short count = 0;
 	short step;

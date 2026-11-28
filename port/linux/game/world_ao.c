@@ -37,6 +37,7 @@ other value (and the Classic preset's "off") draws exactly as before.
 
 const char *config_string(const char *name);
 int config_boolean(const char *name);
+double config_real(const char *name);
 unsigned long halo_gpu_settings_taken(void);
 unsigned long long SDL_GetTicksNS(void);
 void platform_log(const char *format, ...);
@@ -121,11 +122,12 @@ int rt_reflections_on(void);
 int lt_lights_pass_on(void);
 
 /* whether the frame's ray-traced scene is made where this setting is not:
-for display.shadows "ray_traced", the enhanced flashlight's shadow, or
-display.rt_reflections */
+for display.shadows "ray_traced", the enhanced flashlight's shadow,
+display.rt_reflections, or the ray-traced lighting (its lights' shadows from
+every object) */
 static int world_ao_rt_wanted(void)
 {
-	return rt_shadows_on() || dynamic_lights_flashlight_shadows_on() || rt_reflections_on();
+	return rt_shadows_on() || dynamic_lights_flashlight_shadows_on() || rt_reflections_on() || lt_lights_pass_on();
 }
 
 /* the frame's objects were found for it (world_ao_frame_begin), so
@@ -606,7 +608,9 @@ void world_ao_window_begin(short local_player_index, short rasterizer_target, fl
 	the front end gives its draws the keys they have in play from their span
 	alone, and makes the pre-pass's twins of them, d3d8_device.c's
 	world_ao_key) */
-	if (!mode)
+	/* (the ray-traced lighting reads the pre-pass's surfaces whatever this
+	setting: its window, without the occlusion's shapes or field) */
+	if (!mode && !lt_lights_pass_on())
 		return;
 	if (render_enumerating)
 	{
@@ -703,12 +707,31 @@ int world_ao_prepass_begin(void)
 	return halo_world_ao_prepass_begin();
 }
 
+double sim_trace_scenario_seconds(void);
+
+/* the frame the passes' noise is seeded by (the pre-pass's history[1]: the
+light-transport pass, its denoiser and the bounce): the frames drawn so far;
+with debug.frame_time (each frame a fixed game time, for runs that must draw
+the same pictures every time: the determinism check, tools/rt2_clips.py) the
+frame of the scenario's clock instead (its seconds over the frame time),
+which falls alike every run, where the count of frames drawn does not (a
+map's load, or a cutscene skipped, draws as many frames as it takes) */
+static unsigned long world_ao_seed_frame(void)
+{
+	double frame_time = config_real("debug.frame_time");
+	double seconds;
+
+	if (frame_time <= 0.0 || (seconds = sim_trace_scenario_seconds()) < 0.0)
+		return world_ao_scene.frame;
+	return (unsigned long)(seconds / frame_time + 0.5);
+}
+
 void world_ao_prepass_end(short x0, short y0, short x1, short y1, float const camera[4][4])
 {
 	/* (the previous frame's occlusion reprojected only where one window
 	draws a frame, this one and the last: split screen's share the
 	backend's texture) */
-	halo_world_ao_prepass_end(x0, y0, x1, y1, camera, (float const (*)[4])world_ao.cascades, world_ao_scene.frame,
+	halo_world_ao_prepass_end(x0, y0, x1, y1, camera, (float const (*)[4])world_ao.cascades, world_ao_seed_frame(),
 		world_ao_scene.windows == 1 && world_ao_scene.last_windows == 1 &&
 		world_ao_scene.windows_frame == world_ao_scene.last_frame + 1);
 }
