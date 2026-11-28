@@ -214,6 +214,18 @@ def owner_playing(host):
     return result.stdout.strip()
 
 
+# the scene library's moments (tools/rt2_scenes.json, tools/rt2_sweep.py's): the same shape, named scene_*, for
+# rt2_bench.py's --moment; not played by "all"
+SCENES_FILE = ROOT / "tools" / "rt2_scenes.json"
+SCENES = set()
+if SCENES_FILE.exists():
+    import json as _json
+    for _name, _scene in _json.loads(SCENES_FILE.read_text())["scenes"].items():
+        MOMENTS[_name] = (_scene["map"], _scene["start"], _scene["end"],
+                          [(float(t), line) for t, line in _scene.get("cues", [])], _scene.get("script", ""),
+                          _scene["what"])
+        SCENES.add(_name)
+
 # ---------- bosgame: the Windows VM with the RTX 3090 (tools/rig/README.md's "bosgame"), the same scripts there
 #
 # The VM refuses a Mac's ssh: it is reached in hops, each hop's ssh running the next with the rest quoted, by
@@ -304,7 +316,8 @@ def settings(moment, lighting):
     lines = [f"{second:g} {line}" for second, line in cues]
     env = COMMON + [
         f"HALO_RAY_TRACED_LIGHTING={'1' if lighting else '0'}",
-        f"HALO_NETWORK_TEST=campaign:{level}",
+        # (a level named with its game, a multiplayer map's "local:<map>:<game>", as it is)
+        f"HALO_NETWORK_TEST={level if ':' in level else 'campaign:' + level}",
         "HALO_NETWORK_TEST_CUES=" + "|".join(lines),
         f"HALO_SCREENSHOT_FROM={start:g}",
         f"HALO_SCREENSHOT_UNTIL={end:g}",
@@ -398,7 +411,7 @@ def main():
         return 0
     if not args.build:
         parser.error("--build is needed")
-    moments = [m for m in MOMENTS if m not in FOLLOW_UP] if args.moments == "all" else args.moments.split(",")
+    moments = [m for m in MOMENTS if m not in FOLLOW_UP | SCENES] if args.moments == "all" else args.moments.split(",")
     for moment in moments:
         if moment not in MOMENTS:
             parser.error(f"{moment}: not a moment ({', '.join(MOMENTS)})")

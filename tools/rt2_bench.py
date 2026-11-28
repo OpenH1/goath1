@@ -888,8 +888,9 @@ def triage(args):
         finally:
             service.close()
 
-    def presented(name, env):
-        reply = draw_once(args.host, args.build, f"{REMOTE}/{name}", {"cmd": "rt_frames", "n": frame, "count": 1,
+    def presented(name, env, n=None):
+        reply = draw_once(args.host, args.build, f"{REMOTE}/{name}", {"cmd": "rt_frames",
+                                                                       "n": frame if n is None else n, "count": 1,
                                                                        "warm": -1, "last": 1, "inline": True,
                                                                        "compress": True,
                                                                        "regions": sum(regions, [])}, env)
@@ -903,7 +904,11 @@ def triage(args):
         classic = None
         if args.classic:
             t = time.monotonic()
-            classic = presented(args.classic, [])
+            # (the classic recording's frame at the same game second: both end at the moment's --at, 1/60 s a
+            # frame, but the setting's loading draws a different number of frames first, so counted from the end)
+            classic_frames = meta_of(args.host, f"{REMOTE}/{args.classic}")["frames"]
+            classic_frame = frame - (meta["frames"] - classic_frames)
+            classic = presented(args.classic, [], classic_frame)
             game = presented(name_of(args), list(args.set))
             seconds["classic"] = time.monotonic() - t
         white = args.scale or 0.05
@@ -949,7 +954,9 @@ def triage(args):
     if args.json:
         (out / "triage.json").write_text(json.dumps({"frame": frame, "seconds": seconds, **result,
                                                      "denoiser": view_reply["denoiser"]["view"]["regions"],
-                                                     "classic": classic}, indent=1))
+                                                     "classic": classic, "game": game if classic else None,
+                                                     "classic_frame": classic_frame if classic else None},
+                                                    indent=1))
     return 0
 
 

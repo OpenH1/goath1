@@ -1,0 +1,1078 @@
+{
+ "about": "tools/rt2_sweep.py's scene library: workbench moments (tools/rt2_bench.py --moment) and named regions (x,y,w,h at 1280x720) per moment. 'moments' are tools/rt2_clips.py's, used as they are; 'scenes' are moments of their own (the same fields as rt2_clips.MOMENTS), loaded into rt2_clips.MOMENTS.",
+ "moments": {
+  "a10_cryo": {
+   "tags": [
+    "indoor",
+    "lamps"
+   ],
+   "regions": {
+    "floor": [
+     880,
+     320,
+     320,
+     140
+    ],
+    "grate": [
+     690,
+     390,
+     180,
+     80
+    ],
+    "wall": [
+     690,
+     0,
+     200,
+     140
+    ],
+    "character": [
+     670,
+     300,
+     60,
+     80
+    ],
+    "crate": [
+     330,
+     540,
+     300,
+     160
+    ]
+   }
+  },
+  "a10_shine": {
+   "tags": [
+    "indoor",
+    "reflections"
+   ],
+   "regions": {
+    "dark wall": [
+     480,
+     160,
+     320,
+     320
+    ],
+    "pod": [
+     1030,
+     520,
+     240,
+     190
+    ],
+    "floor": [
+     480,
+     620,
+     400,
+     90
+    ],
+    "grate": [
+     330,
+     540,
+     140,
+     180
+    ]
+   }
+  },
+  "b30_sun": {
+   "tags": [
+    "outdoor",
+    "day",
+    "vehicle",
+    "character"
+   ],
+   "regions": {
+    "sand": [
+     160,
+     560,
+     480,
+     120
+    ],
+    "cliff shadow": [
+     560,
+     330,
+     400,
+     110
+    ],
+    "cliff": [
+     480,
+     40,
+     320,
+     160
+    ],
+    "character": [
+     790,
+     380,
+     50,
+     80
+    ],
+    "vehicle": [
+     570,
+     330,
+     80,
+     80
+    ],
+    "sky edge": [
+     0,
+     60,
+     320,
+     140
+    ]
+   }
+  },
+  "b30_fight": {
+   "tags": [
+    "outdoor",
+    "day",
+    "first-person",
+    "moving-light",
+    "covenant"
+   ],
+   "regions": {
+    "ground": [
+     0,
+     500,
+     400,
+     180
+    ],
+    "cliff": [
+     200,
+     40,
+     400,
+     240
+    ],
+    "gun": [
+     720,
+     400,
+     240,
+     240
+    ],
+    "sky edge": [
+     960,
+     0,
+     300,
+     200
+    ]
+   }
+  },
+  "b30_bay": {
+   "tags": [
+    "vehicle",
+    "first-person",
+    "character"
+   ],
+   "regions": {
+    "bay ceiling": [
+     80,
+     60,
+     560,
+     200
+    ],
+    "sand": [
+     880,
+     520,
+     320,
+     120
+    ],
+    "gun": [
+     720,
+     330,
+     200,
+     300
+    ],
+    "bay floor": [
+     0,
+     560,
+     400,
+     120
+    ],
+    "sky edge": [
+     400,
+     0,
+     560,
+     60
+    ]
+   }
+  },
+  "b30_shields": {
+   "tags": [
+    "outdoor",
+    "day",
+    "covenant",
+    "glow"
+   ],
+   "regions": {
+    "shield (glow)": [
+     720,
+     300,
+     90,
+     110
+    ],
+    "ground by shield": [
+     640,
+     400,
+     240,
+     80
+    ],
+    "ground": [
+     160,
+     520,
+     800,
+     180
+    ],
+    "structure shade": [
+     240,
+     120,
+     240,
+     180
+    ],
+    "sky edge": [
+     720,
+     100,
+     400,
+     140
+    ],
+    "character": [
+     520,
+     300,
+     40,
+     70
+    ]
+   }
+  },
+  "a50_shields": {
+   "tags": [
+    "outdoor",
+    "night",
+    "covenant",
+    "glow"
+   ],
+   "regions": {
+    "shield (glow)": [
+     780,
+     300,
+     80,
+     140
+    ],
+    "light pool": [
+     720,
+     440,
+     200,
+     80
+    ],
+    "lamp-lit cliff": [
+     240,
+     40,
+     240,
+     160
+    ],
+    "ground": [
+     80,
+     480,
+     480,
+     200
+    ],
+    "gun": [
+     1120,
+     560,
+     140,
+     140
+    ]
+   }
+  },
+  "c20_flashlight": {
+   "tags": [
+    "indoor",
+    "first-person",
+    "moving-light"
+   ],
+   "regions": {
+    "flashlight pool": [
+     640,
+     80,
+     240,
+     280
+    ],
+    "wall outside the cone": [
+     80,
+     80,
+     400,
+     400
+    ],
+    "gun": [
+     720,
+     420,
+     240,
+     280
+    ],
+    "far wall": [
+     1120,
+     80,
+     160,
+     400
+    ]
+   }
+  },
+  "b40_bsp8": {
+   "tags": [
+    "indoor",
+    "lamps"
+   ],
+   "regions": {
+    "floor": [
+     160,
+     480,
+     560,
+     200
+    ],
+    "wall": [
+     640,
+     160,
+     320,
+     140
+    ],
+    "lamp panel": [
+     112,
+     272,
+     128,
+     160
+    ],
+    "floor light strip": [
+     736,
+     550,
+     80,
+     170
+    ],
+    "glowing screen": [
+     1040,
+     0,
+     160,
+     130
+    ]
+   }
+  },
+  "c10_bsp1": {
+   "tags": [
+    "indoor",
+    "lamps"
+   ],
+   "regions": {
+    "floor": [
+     160,
+     560,
+     640,
+     160
+    ],
+    "far room": [
+     720,
+     300,
+     240,
+     140
+    ],
+    "wall": [
+     0,
+     80,
+     320,
+     240
+    ],
+    "light strip": [
+     160,
+     380,
+     100,
+     40
+    ],
+    "console glow": [
+     800,
+     260,
+     100,
+     60
+    ]
+   }
+  },
+  "d40_bsp4": {
+   "tags": [
+    "indoor",
+    "lamps"
+   ],
+   "regions": {
+    "lamp": [
+     1024,
+     64,
+     96,
+     48
+    ],
+    "light pool": [
+     720,
+     130,
+     210,
+     140
+    ],
+    "grate floor": [
+     512,
+     370,
+     450,
+     130
+    ],
+    "dark wall": [
+     0,
+     80,
+     440,
+     500
+    ],
+    "bench": [
+     960,
+     272,
+     300,
+     128
+    ]
+   }
+  }
+ },
+ "scenes": {
+  "scene_a10_bsp2": {
+   "map": "levels\\a10\\a10",
+   "start": 14,
+   "end": 20,
+   "cues": [
+    [
+     10,
+     "ai_erase_all"
+    ],
+    [
+     10.5,
+     "switch_bsp 2"
+    ],
+    [
+     13,
+     "debug_camera_set \"-28.65 37.59 1.24 165 -9 0 70\""
+    ],
+    [
+     14,
+     "debug_camera_set \"-28.65 37.59 1.24 195 -9 0 70 6\""
+    ]
+   ],
+   "what": "a10's BSP 2: a lamp-lit corridor of the Autumn, a slow pan",
+   "tags": [
+    "indoor",
+    "lamps"
+   ],
+   "regions": {
+    "floor": [
+     400,
+     450,
+     640,
+     230
+    ],
+    "ceiling panel": [
+     560,
+     120,
+     480,
+     160
+    ],
+    "wall": [
+     360,
+     330,
+     140,
+     200
+    ],
+    "red panel": [
+     960,
+     330,
+     100,
+     130
+    ],
+    "ceiling lamp": [
+     600,
+     0,
+     240,
+     30
+    ]
+   }
+  },
+  "scene_a30_bsp1": {
+   "map": "levels\\a30\\a30",
+   "start": 34,
+   "end": 40,
+   "cues": [
+    [
+     30,
+     "ai_erase_all"
+    ],
+    [
+     30.5,
+     "switch_bsp 1"
+    ],
+    [
+     33,
+     "debug_camera_set \"-340.98 43.52 44.32 255 -9 0 70\""
+    ],
+    [
+     34,
+     "debug_camera_set \"-340.98 43.52 44.32 285 -9 0 70 6\""
+    ]
+   ],
+   "what": "a30's BSP 1: a lamp-lit room (the emitter screen's spot 1), a slow pan",
+   "tags": [
+    "indoor",
+    "lamps"
+   ],
+   "regions": {
+    "floor": [
+     160,
+     450,
+     960,
+     250
+    ],
+    "wall": [
+     0,
+     40,
+     320,
+     300
+    ],
+    "far end": [
+     640,
+     280,
+     240,
+     140
+    ],
+    "ceiling": [
+     640,
+     0,
+     320,
+     180
+    ]
+   }
+  },
+  "scene_a50_bsp2": {
+   "map": "levels\\a50\\a50",
+   "start": 48,
+   "end": 54,
+   "cues": [
+    [
+     44,
+     "ai_erase_all"
+    ],
+    [
+     44.5,
+     "switch_bsp 2"
+    ],
+    [
+     47,
+     "debug_camera_set \"33.85 -39.86 -25.91 285 -9 0 70\""
+    ],
+    [
+     48,
+     "debug_camera_set \"33.85 -39.86 -25.91 315 -9 0 70 6\""
+    ]
+   ],
+   "what": "a50's BSP 2: inside the Truth and Reconciliation, lamp-lit, a slow pan",
+   "tags": [
+    "indoor",
+    "lamps",
+    "covenant"
+   ],
+   "regions": {
+    "floor": [
+     160,
+     520,
+     640,
+     180
+    ],
+    "plasma glow": [
+     0,
+     0,
+     460,
+     300
+    ],
+    "light pool": [
+     400,
+     320,
+     480,
+     80
+    ],
+    "dark crate": [
+     900,
+     200,
+     300,
+     300
+    ],
+    "glow strip": [
+     1000,
+     0,
+     80,
+     240
+    ]
+   }
+  },
+  "scene_b40_bsp4": {
+   "map": "levels\\b40\\b40",
+   "start": 54,
+   "end": 60,
+   "cues": [
+    [
+     50,
+     "ai_erase_all"
+    ],
+    [
+     50.5,
+     "switch_bsp 4"
+    ],
+    [
+     53,
+     "debug_camera_set \"40.55 -102.53 51.12 15 -9 0 70\""
+    ],
+    [
+     54,
+     "debug_camera_set \"40.55 -102.53 51.12 45 -9 0 70 6\""
+    ]
+   ],
+   "what": "b40's BSP 4: a lamp-lit room (the emitter screen's spot 1), a slow pan",
+   "tags": [
+    "indoor",
+    "lamps",
+    "night"
+   ],
+   "regions": {
+    "light pool": [
+     720,
+     464,
+     240,
+     112
+    ],
+    "wall": [
+     0,
+     80,
+     400,
+     400
+    ],
+    "lamp strip": [
+     720,
+     200,
+     320,
+     24
+    ],
+    "purple glow": [
+     800,
+     384,
+     400,
+     64
+    ],
+    "floor": [
+     1000,
+     600,
+     280,
+     120
+    ]
+   }
+  },
+  "scene_c10_bsp3": {
+   "map": "levels\\c10\\c10",
+   "start": 54,
+   "end": 60,
+   "cues": [
+    [
+     50,
+     "ai_erase_all"
+    ],
+    [
+     50.5,
+     "switch_bsp 3"
+    ],
+    [
+     53,
+     "debug_camera_set \"-17.53 43.85 -37.13 240 -9 0 70\""
+    ],
+    [
+     54,
+     "debug_camera_set \"-17.53 43.85 -37.13 270 -9 0 70 6\""
+    ]
+   ],
+   "what": "c10's BSP 3: a lamp-lit room (the emitter screen's spot 1), a slow pan",
+   "tags": [
+    "indoor",
+    "lamps",
+    "covenant"
+   ],
+   "regions": {
+    "floor": [
+     560,
+     480,
+     640,
+     200
+    ],
+    "wall": [
+     96,
+     160,
+     224,
+     272
+    ],
+    "far room": [
+     560,
+     240,
+     240,
+     160
+    ],
+    "light strip": [
+     320,
+     320,
+     96,
+     32
+    ],
+    "ledge": [
+     0,
+     480,
+     400,
+     240
+    ]
+   }
+  },
+  "scene_c20_bsp1": {
+   "map": "levels\\c20\\c20",
+   "start": 9,
+   "end": 15,
+   "cues": [
+    [
+     5,
+     "ai_erase_all"
+    ],
+    [
+     5.5,
+     "switch_bsp 1"
+    ],
+    [
+     8,
+     "debug_camera_set \"-2.67 -0.15 -19.92 330 -9 0 70\""
+    ],
+    [
+     9,
+     "debug_camera_set \"-2.67 -0.15 -19.92 360 -9 0 70 6\""
+    ]
+   ],
+   "what": "c20's BSP 1: a lamp-lit room (the emitter screen's spot 1), a slow pan",
+   "tags": [
+    "indoor",
+    "lamps"
+   ],
+   "regions": {
+    "floor": [
+     160,
+     480,
+     960,
+     160
+    ],
+    "wall": [
+     560,
+     80,
+     240,
+     240
+    ],
+    "light shaft": [
+     360,
+     40,
+     100,
+     260
+    ],
+    "left wall": [
+     0,
+     80,
+     320,
+     240
+    ]
+   }
+  },
+  "scene_d20_bsp2": {
+   "map": "levels\\d20\\d20",
+   "start": 24,
+   "end": 30,
+   "cues": [
+    [
+     20,
+     "ai_erase_all"
+    ],
+    [
+     20.5,
+     "switch_bsp 2"
+    ],
+    [
+     23,
+     "debug_camera_set \"-14.06 2.14 -70.6 165 -9 0 70\""
+    ],
+    [
+     24,
+     "debug_camera_set \"-14.06 2.14 -70.6 195 -9 0 70 6\""
+    ]
+   ],
+   "what": "d20's BSP 2: a lamp-lit room (the emitter screen's spot 1), a slow pan",
+   "tags": [
+    "indoor",
+    "lamps"
+   ],
+   "regions": {}
+  },
+  "scene_d40_bsp6": {
+   "map": "levels\\d40\\d40",
+   "start": 11,
+   "end": 17,
+   "cues": [
+    [
+     7,
+     "ai_erase_all"
+    ],
+    [
+     7.5,
+     "switch_bsp 6"
+    ],
+    [
+     10,
+     "debug_camera_set \"521.52 -5.15 120.83 0 -9 0 70\""
+    ],
+    [
+     11,
+     "debug_camera_set \"521.52 -5.15 120.83 30 -9 0 70 6\""
+    ]
+   ],
+   "what": "d40's BSP 6: a lamp-lit room (the emitter screen's spot 1), a slow pan",
+   "tags": [
+    "indoor",
+    "lamps"
+   ],
+   "regions": {}
+  },
+  "scene_a30_start": {
+   "map": "levels\\a30\\a30",
+   "start": 30,
+   "end": 36,
+   "cues": [
+    [
+     24,
+     "cheat_deathless_player true"
+    ]
+   ],
+   "script": "30-36 look=0.12,0",
+   "what": "a30's crash site in first person, daylight: the cliffs, the grass, the lifepod; a slow turn",
+   "tags": [
+    "outdoor",
+    "day",
+    "first-person"
+   ],
+   "regions": {}
+  },
+  "scene_b40_start": {
+   "map": "levels\\b40\\b40",
+   "start": 54,
+   "end": 60,
+   "cues": [
+    [
+     48,
+     "cheat_deathless_player true"
+    ]
+   ],
+   "script": "54-60 look=0.12,0",
+   "what": "b40's bridge at night in first person: the cliff, the Covenant's lights; a slow turn",
+   "tags": [
+    "outdoor",
+    "night",
+    "first-person"
+   ],
+   "regions": {}
+  },
+  "scene_c10_start": {
+   "map": "levels\\c10\\c10",
+   "start": 54,
+   "end": 60,
+   "cues": [
+    [
+     48,
+     "cheat_deathless_player true"
+    ]
+   ],
+   "script": "54-60 look=0.12,0",
+   "what": "c10's swamp in first person: fog, trees, the Pelican's drop zone; a slow turn",
+   "tags": [
+    "outdoor",
+    "night",
+    "first-person"
+   ],
+   "regions": {}
+  },
+  "scene_d20_flashlight": {
+   "map": "levels\\d20\\d20",
+   "start": 24,
+   "end": 30,
+   "cues": [
+    [
+     18,
+     "cheat_deathless_player true"
+    ],
+    [
+     21,
+     "unit_set_desired_flashlight_state (unit (list_get (players) 0)) 1"
+    ],
+    [
+     22,
+     "unit_set_desired_flashlight_state (unit (list_get (players) 0)) 1"
+    ],
+    [
+     23,
+     "unit_set_desired_flashlight_state (unit (list_get (players) 0)) 1"
+    ]
+   ],
+   "script": "24-30 look=0.12,0",
+   "what": "d20 (Keyes) in first person with the flashlight on: the Truth and Reconciliation's dark halls; a slow turn",
+   "tags": [
+    "indoor",
+    "dark",
+    "first-person",
+    "moving-light"
+   ],
+   "regions": {}
+  },
+  "scene_d40_start": {
+   "map": "levels\\d40\\d40",
+   "start": 11,
+   "end": 17,
+   "cues": [
+    [
+     5,
+     "cheat_deathless_player true"
+    ]
+   ],
+   "script": "11-17 look=0.12,0",
+   "what": "d40's opening on the Pillar of Autumn in first person; a slow turn",
+   "tags": [
+    "indoor",
+    "first-person"
+   ],
+   "regions": {}
+  },
+  "scene_mp_bloodgulch": {
+   "map": "local:levels\\test\\bloodgulch\\bloodgulch",
+   "start": 8,
+   "end": 14,
+   "cues": [
+    [
+     2,
+     "cheat_deathless_player true"
+    ]
+   ],
+   "script": "8-14 look=0.12,0",
+   "what": "Blood Gulch in daylight, a slayer game hosted alone, first person at the spawn; a slow turn",
+   "tags": [
+    "multiplayer",
+    "first-person",
+    "outdoor",
+    "day"
+   ],
+   "regions": {
+    "sand": [
+     800,
+     420,
+     400,
+     80
+    ],
+    "metal wall": [
+     640,
+     260,
+     320,
+     120
+    ],
+    "doorway": [
+     400,
+     260,
+     160,
+     140
+    ],
+    "sky edge": [
+     0,
+     180,
+     160,
+     100
+    ],
+    "gun": [
+     560,
+     560,
+     240,
+     120
+    ]
+   }
+  },
+  "scene_mp_sidewinder": {
+   "map": "local:levels\\test\\sidewinder\\sidewinder",
+   "start": 8,
+   "end": 14,
+   "cues": [
+    [
+     2,
+     "cheat_deathless_player true"
+    ]
+   ],
+   "script": "8-14 look=0.12,0",
+   "what": "Sidewinder's snow in daylight, a slayer game hosted alone, first person at the spawn; a slow turn",
+   "tags": [
+    "multiplayer",
+    "first-person",
+    "outdoor",
+    "day",
+    "snow"
+   ],
+   "regions": {}
+  },
+  "scene_mp_hangemhigh": {
+   "map": "local:levels\\test\\hangemhigh\\hangemhigh",
+   "start": 8,
+   "end": 14,
+   "cues": [
+    [
+     2,
+     "cheat_deathless_player true"
+    ]
+   ],
+   "script": "8-14 look=0.12,0",
+   "what": "Hang 'Em High's lamp-lit courtyard, a slayer game hosted alone, first person at the spawn; a slow turn",
+   "tags": [
+    "multiplayer",
+    "first-person",
+    "indoor",
+    "lamps"
+   ],
+   "regions": {}
+  },
+  "scene_mp_chillout": {
+   "map": "local:levels\\test\\chillout\\chillout",
+   "start": 8,
+   "end": 14,
+   "cues": [
+    [
+     2,
+     "cheat_deathless_player true"
+    ]
+   ],
+   "script": "8-14 look=0.12,0",
+   "what": "Chill Out's glowing rooms, a slayer game hosted alone, first person at the spawn; a slow turn",
+   "tags": [
+    "multiplayer",
+    "first-person",
+    "indoor",
+    "glow"
+   ],
+   "regions": {}
+  },
+  "scene_mp_damnation": {
+   "map": "local:levels\\test\\damnation\\damnation",
+   "start": 8,
+   "end": 14,
+   "cues": [
+    [
+     2,
+     "cheat_deathless_player true"
+    ]
+   ],
+   "script": "8-14 look=0.12,0",
+   "what": "Damnation's Covenant halls, a slayer game hosted alone, first person at the spawn; a slow turn",
+   "tags": [
+    "multiplayer",
+    "first-person",
+    "indoor",
+    "covenant"
+   ],
+   "regions": {}
+  }
+ }
+}
