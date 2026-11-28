@@ -1,14 +1,14 @@
 """tools/rt2_bench.py's results cache never hands back a stale result: its key changes with every input a replay's
 result depends on (the recording, the replay's code, the kernels and light-list unit it is pointed to, the GPU, the
 settings, the request), and does not change with what only names a build (its commit label, the linker's build id).
-The rig's fingerprint functions (rt2_bench.FINGERPRINT_LIB) run here, in this process, on stand-in files: no rig,
+The rig's fingerprint functions (rt2_bench_cache.FINGERPRINT_LIB) run here, in this process, on stand-in files: no rig,
 no ssh, no git, no subprocess."""
 
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import rt2_bench  # noqa: E402
+import rt2_bench_cache as rt2_bench  # noqa: E402 (the cache's key alone: importing the bench needs numpy)
 
 NOTE = b"\x04\x00\x00\x00\x14\x00\x00\x00\x03\x00\x00\x00GNU\x00"
 LABEL = "0123456789ab"
