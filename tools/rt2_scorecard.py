@@ -21,9 +21,12 @@ What it runs (all from recordings made once, ~/rt2-scorecard/<scene>.hrpl on oma
 - Cost, on both GPUs (the 4090, the 8060S; the GPU lock alone, one cost request each): the frame's passes the
   light transport and the denoiser own ("LIGHT TRANSPORT", "DENOISE"), against the 1080p budget.
 
-The replay's environment is --env's (HALO_LT_E1=e2 by default: the flashlight's pass at 1 spp, counted). The
-mutations: noise (2% of each pixel's luminance, random each play, added to the held pictures), bias (the realtime
-irradiance 5% brighter), raw (HALO_LT_E1=raw: the pass's own 1-spp noise, no history).
+The replay's environment is --env's, none by default: the pass as the recording's menu setting
+(display.ray_traced_lighting) runs it, the denoised pass players get. HALO_LT_E1=e2 (a 64-frame running mean that
+starts again only on the flashlight's change) is a debugging mode: its history holds a short light (the afterglow
+check's grenade) long after it is gone, so that check fails there by design. The mutations: noise (2% of each
+pixel's luminance, random each play, added to the held pictures), bias (the realtime irradiance 5% brighter), raw
+(HALO_LT_E1=raw: the pass's own 1-spp noise, no history).
 """
 
 import argparse
@@ -132,7 +135,8 @@ TARGETS = {
     "cost 5900x": 1.5,
     "cost omarchy": 5.0,
 }
-DEFAULT_ENV = ["HALO_LT_E1=e2"]
+# (TEST AS PLAYERS RUN IT, 2026-11-28: the menu setting alone; HALO_LT_* only through --env, in a debugging run)
+DEFAULT_ENV = []
 NOISE = 0.02
 BIAS = 1.05
 lock_print = threading.Lock()
@@ -153,7 +157,7 @@ def remote_script(command, lock):
     """a bash script on a rig: the owner's own game not running, the GPU lock as goat-rig takes it ("shared":
     gpu.lock shared and one of its 3 picture slots; "alone": gpu.lock, waited for at most 2 minutes), in a private
     network (loopback only) where the machine allows it"""
-    lines = ['set -e', 'if pgrep -f "^$HOME/Applications/OpenH1/bin/openh1" >/dev/null; then '
+    lines = ['set -e', f'if pgrep -f "{rt2_stability.OWNER_GAME}" >/dev/null; then '
              'echo "the machine owner is playing" >&2; exit 3; fi', 'mkdir -p ~/goat-rig/locks']
     if lock == "shared":
         lines += ['exec 9>>~/goat-rig/locks/gpu.lock', 'flock -s 9',

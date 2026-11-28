@@ -40,8 +40,9 @@ ROOT = Path(__file__).resolve().parent.parent
 TILE = 32
 LAST = 20
 MASKED_KINDS = {"hud", "text", "menu_widget", "cinematic_letterbox", "debug"}
-# (the machine owner's own game, which goat-rig never runs beside: the remote shell's $HOME)
-OWNER_GAME = "^$HOME/Applications/OpenH1/bin/openh1"
+# (the machine owner's own game, any install in ~/Applications/OpenH1* (OpenH1, OpenH1-Beta, OpenH1-RT), which goat-rig
+# never runs beside: the remote shell's $HOME)
+OWNER_GAME = "^$HOME/Applications/OpenH1[^/ ]*/bin/openh1"
 
 
 def ssh_target(host):
