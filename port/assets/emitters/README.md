@@ -1,5 +1,14 @@
 # Static light sources, one file a BSP
 
+**Since 2026-11-28 these files are a CHECK, not the source.** The game lights every BSP on every map (campaign
+and multiplayer) by one rule from each shader's own data (lt_emitters.c): every structure surface, opaque,
+alpha-tested or transparent, whose shader has radiosity power glows with radiance power x colour of emitted light
+/ pi (the lightmap tool's exitance M of a Lambertian emitter, L = M / pi; no fit), a transparent card both ways,
+the strongest 8192 triangles by power. The per-BSP fits below came out at 0.27 (median of 2429 lamp groups) to
+0.43 (power-weighted) for that same ratio, each BSP 0.15 to 0.6, so 1/pi = 0.318 sits in the middle.
+`HALO_LT_EMITTERS=solved` plays a BSP's file in place of the rule, for comparing;
+`tools/rt2_emitter_screen.py --env HALO_LT_EMITTERS=solved --name solved` screens the files that way.
+
 `<map>_bsp<k>.json`: the level's own glowing shaders (lamps, strips, light cards, screens: radiosity
 power > 0 in the shader tag) as area lights, at the tag's color and relative power, with one brightness
 scale per room-sized cluster (a 12 wu cell), set so each cell's traced light matches the original lightmap's.
