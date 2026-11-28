@@ -57,6 +57,11 @@
 // the suns' rays a sun where the pixel has no history (a reset, a cut, a disocclusion), so that the first frame's
 // shadow is as good as the later ones' average
 #define SUN_FIRST 12
+// a light this wide (radians: b30's fill, 50 degrees) or wider, and its rays a frame
+#define SUN_WIDE 0.17
+#define SUN_WIDE_RAYS 8
+// ... and a narrow one's (the sun's penumbra: a crown's edge, a structure's)
+#define SUN_NARROW_RAYS 2
 // how far the suns' rays go (world units): past any BSP (a Halo BSP is well under 1 km across), so a dynamic object
 // at any height between a surface and the sun shadows it (a Pelican high overhead)
 #define SUN_REACH 4096.0
@@ -1016,7 +1021,10 @@ vec3 sun_real(vec3 p, vec3 n, vec3 shaded, ivec2 pixel, int rays)
         // (none of the cone above the surface's horizon)
         if (dot(n, f) <= -sqrt(max(1.0 - half_cos * half_cos, 0.0)))
             continue;
-        for (int k = 0; k < rays; k++)
+        // (a wide light, b30's 50 degree fill, partly hidden (under the far trees' crowns, along a structure's
+        // edge): its seen share over SUN_WIDE_RAYS a frame, its noise there the frame's held p99 otherwise)
+        int n_rays = t5.w > SUN_WIDE ? max(rays, SUN_WIDE_RAYS) : max(rays, SUN_NARROW_RAYS);
+        for (int k = 0; k < n_rays; k++)
         {
             vec2 disk = concentric(stratified(pixel, 17.0 + float(s) * 16.0 + float(k)));
             float r2 = dot(disk, disk), c = 1.0 - r2 * (1.0 - half_cos), sine = sqrt(max(1.0 - c * c, 0.0));
@@ -1028,7 +1036,7 @@ vec3 sun_real(vec3 p, vec3 n, vec3 shaded, ivec2 pixel, int rays)
         // (the rays find the share of the cone that is seen; the light is its unblocked irradiance (power x the shaded
         // cosine at its axis: exact for a cone above the horizon) by that share. Where nothing blocks it, it has no
         // noise at all, however wide the light: b30's 50 degree fill no longer shimmers on open ground)
-        light += t4.rgb * (max(dot(shaded, f), 0.0) * seen / float(rays));
+        light += t4.rgb * (max(dot(shaded, f), 0.0) * seen / float(n_rays));
     }
     return light;
 }
