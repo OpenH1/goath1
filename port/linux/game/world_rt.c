@@ -53,7 +53,7 @@ const char *config_string(const char *name);
 for this GPU, in MB (0: the backend has none) */
 unsigned long halo_world_rt_budget(void);
 void platform_log(const char *format, ...);
-DWORD *rt_lights_materials_texels(long bitmap_tag, short bitmap_index, unsigned long *width, unsigned long *height);
+unsigned long *rt_lights_materials_texels(long bitmap_tag, short bitmap_index, unsigned long *width, unsigned long *height);
 /* (xbox_kernel.c) the monotonic clock */
 unsigned long long platform_shared_clock_microseconds(void);
 
@@ -220,7 +220,7 @@ static struct
 		long tag;
 		short index;
 		unsigned long width, height;
-		DWORD *texels;
+		unsigned long *texels;
 	} lamp_bitmaps[WORLD_RT_LAMP_BITMAPS];
 	int lamp_bitmap_count;
 	/* (measuring: HALO_WORLD_AO_COUNTS) */
@@ -935,7 +935,7 @@ static long world_rt_definition_skinned(struct world_rt_source_mesh *mesh, float
 lt/e1.frag's object_lamp_sample) */
 
 /* a bitmap's texels as decoded (kept; NULL none) */
-static DWORD const *world_rt_lamp_bitmap(struct world_rt_source_map const *map, unsigned long *width,
+static unsigned long const *world_rt_lamp_bitmap(struct world_rt_source_map const *map, unsigned long *width,
 	unsigned long *height)
 {
 	int index;
@@ -965,7 +965,7 @@ static DWORD const *world_rt_lamp_bitmap(struct world_rt_source_map const *map, 
 
 /* a texel's channel (shift 16 red, 8 green, 0 blue) at st, wrapped, as a
 fraction */
-static float world_rt_lamp_texel(DWORD const *texels, unsigned long width, unsigned long height, float s, float t,
+static float world_rt_lamp_texel(unsigned long const *texels, unsigned long width, unsigned long height, float s, float t,
 	int shift)
 {
 	long x = (long)floorf((s - floorf(s)) * (float)width), y = (long)floorf((t - floorf(t)) * (float)height);
@@ -987,7 +987,7 @@ static void world_rt_lamps_made(struct world_rt_definition *entry, short node, s
 	{
 		struct world_rt_source_material const *material = &part->materials[part->triangle_materials[triangle]];
 		struct world_rt_source_vertex const *corner[3];
-		DWORD const *base, *mask;
+		unsigned long const *base, *mask;
 		unsigned long base_width = 0, base_height = 0, mask_width = 0, mask_height = 0;
 		float colour[3], sum[3] = { 0.0f, 0.0f, 0.0f }, luminance;
 		int i, j, channel, count = 0;
