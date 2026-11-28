@@ -9358,8 +9358,12 @@ static unsigned int lt_e1_add(struct module *m, struct pixel_state *state, unsig
 		light = fmul(m, 3, light, tint);
 	else
 		light = fmax_scalar(m, 3, light, 0.0f);
-	(void)texel;
-	base = fadd(m, 3, ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, lit, 0.0f), constant_splat(m, 3, 2.2f)), light);
+	/* (the light's alpha: 1 where the level is lit live (lt/e1.frag's
+	LIGHTS_REAL), whose static light the pass's light is: the game's own
+	light here (the lightmap's, a model's lighting from the lightmap under
+	it) left out; 0 otherwise, and the binding's stand-in's: added to it) */
+	base = fadd(m, 3, fscale(m, 3, ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, lit, 0.0f), constant_splat(m, 3, 2.2f)),
+		fsub(m, 1, constant_float(m, 1.0f), saturate(m, 1, extract(m, texel, 3)))), light);
 	/* (HALO_LT_SUN_CLAMP_VIEW=1, checking: magenta where the sum is less
 	than 0 in a channel, the suns' share taken off more than the lightmap's
 	light has) */

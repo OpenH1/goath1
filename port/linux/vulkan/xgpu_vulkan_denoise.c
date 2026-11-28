@@ -631,6 +631,7 @@ static struct xgpu_vulkan_image *denoise_shared(struct xgpu_vulkan_denoise_final
 	params.control[1] = 0;
 	params.control[2] = 4;
 	params.suns[0] = out->suns;
+	params.suns[1] = out->real;
 	memcpy(params.sun, out->sun, sizeof(params.sun));
 	{
 		struct xgpu_vulkan_image *textures[6] = { d->filtered[1], dh, guide, inputs,
