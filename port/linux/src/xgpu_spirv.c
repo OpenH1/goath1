@@ -9836,6 +9836,19 @@ static void lt_forward_sky(struct module *m, struct pixel_state *state, const st
 	}
 	store(m, read->sum, fadd(m, 3, load(m, m->t_v3, read->sum), select_n(m, 3, load(m, m->t_bool, state->lt_live),
 		load(m, m->t_v3, sky), constant_splat(m, 3, 0.0f))));
+	/* (lit live by the level's own lamps (the table's lamp rows are
+	written only then, xgpu_vulkan_lt.c's lt_lamp_rows): live too, the
+	model lighting dropped all the same) */
+	for (k = 0; k < XGPU_SPIRV_LT_LAMPS; k++)
+	{
+		unsigned int row = constant_int(m, XGPU_SPIRV_LT_LAMP_ROW + k), merge;
+
+		selection_begin(m, op2(m, OP_S_LESS_THAN, m->t_bool, row, read->rows), &merge);
+		store(m, state->lt_live, op2(m, OP_LOGICAL_OR, m->t_bool, load(m, m->t_bool, state->lt_live),
+			compare(m, OP_F_ORD_GREATER_THAN_EQUAL, extract(m, lt_table_texel(m, read->image, row, 4), 3),
+			constant_float(m, -0.5f))));
+		selection_end(m, merge);
+	}
 }
 
 /* the pass's direct light at p (n its geometric normal, shaded its shaded

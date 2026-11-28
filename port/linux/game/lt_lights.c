@@ -117,12 +117,13 @@ sun_power_scale and fill_power_scale (xgpu_vulkan_lt.c's, the same rule) */
 /* a level lit live (lt_lights_real_sky): the sky's lights and its ambient
 dome as the whole light, each k from the truth renderer's multi-bounce render
 of b30 (880 samples a pixel, every bounce) against its lightmap as the game
-shows it (pages ^2.2), the lightmap the answer key only: a sun's 0.60, the
-sky's (its wide lights and its dome: one k, the lightmap tool's sky) 0.34
-(R^2 0.567; ~/dev/rt2-calibration.json's real_sky) */
-#define LT_LIGHTS_REAL_SUN_POWER_SCALE 0.60f
-#define LT_LIGHTS_REAL_FILL_POWER_SCALE 0.34f
-#define LT_LIGHTS_REAL_AMBIENT_POWER_SCALE 0.34f
+shows it (pages ^2.2), the lightmap the answer key only: one k for the
+sun, the wide lights and the dome alike, the lightmap tool's one unit
+(0.48, R^2 0.553 against 0.567 for a sun's and a sky's apart; the look's
+contrast the camera's, ~/dev/rt2-calibration.json's real_sky) */
+#define LT_LIGHTS_REAL_SUN_POWER_SCALE 0.48f
+#define LT_LIGHTS_REAL_FILL_POWER_SCALE 0.48f
+#define LT_LIGHTS_REAL_AMBIENT_POWER_SCALE 0.48f
 /* the share of the BSP's clusters that must see a lit sky for the level to
 be lit live: Bungie's lightmap tool lit only those (a sky light's "affects
 exteriors"; the outdoor ambient radiosity "for exterior clusters"), so the

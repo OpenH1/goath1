@@ -196,9 +196,9 @@ fit with sun and fill apart (b30, the lightmap ^2.2)) */
 #define LT_FILL_DIAMETER 0.17453293f
 /* a level lit live: lt_lights.c's real k (its records carry them; these
 for HALO_LT_REAL_SKY=1 on a recording made before) */
-#define LT_REAL_SUN_POWER_SCALE 0.60f
-#define LT_REAL_FILL_POWER_SCALE 0.34f
-#define LT_REAL_AMBIENT_POWER_SCALE 0.34f
+#define LT_REAL_SUN_POWER_SCALE 0.48f
+#define LT_REAL_FILL_POWER_SCALE 0.48f
+#define LT_REAL_AMBIENT_POWER_SCALE 0.48f
 
 /* HALO_LT_REAL_SKY=1 (checking): a recording's suns lit live */
 static int lt_real_replay(void)
