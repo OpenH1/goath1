@@ -15,6 +15,8 @@ for the windows whose surfaces trace their reflections.
 int config_boolean(const char *name);
 unsigned long halo_gpu_settings_taken(void);
 void platform_log(const char *format, ...);
+/* (lt_lights.c) */
+int lt_lights_pass_on(void);
 
 /* ---------- globals */
 
@@ -54,6 +56,9 @@ int rt_reflections_on(void)
 
 void rt_reflections_window(int primary)
 {
-	if (primary && rt_reflections_on())
+	/* (and for the ray-traced lighting: its lights' shadows from every
+	object, which display.ambient_occlusion "off" (the default) otherwise
+	leaves out of the scene but for the flashlight's) */
+	if (primary && (rt_reflections_on() || (lt_lights_pass_on() && world_ao_rt_scene_ready())))
 		world_ao_rt_frame();
 }

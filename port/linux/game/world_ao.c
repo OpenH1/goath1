@@ -121,11 +121,12 @@ int rt_reflections_on(void);
 int lt_lights_pass_on(void);
 
 /* whether the frame's ray-traced scene is made where this setting is not:
-for display.shadows "ray_traced", the enhanced flashlight's shadow, or
-display.rt_reflections */
+for display.shadows "ray_traced", the enhanced flashlight's shadow,
+display.rt_reflections, or the ray-traced lighting (its lights' shadows from
+every object) */
 static int world_ao_rt_wanted(void)
 {
-	return rt_shadows_on() || dynamic_lights_flashlight_shadows_on() || rt_reflections_on();
+	return rt_shadows_on() || dynamic_lights_flashlight_shadows_on() || rt_reflections_on() || lt_lights_pass_on();
 }
 
 /* the frame's objects were found for it (world_ao_frame_begin), so
@@ -606,7 +607,9 @@ void world_ao_window_begin(short local_player_index, short rasterizer_target, fl
 	the front end gives its draws the keys they have in play from their span
 	alone, and makes the pre-pass's twins of them, d3d8_device.c's
 	world_ao_key) */
-	if (!mode)
+	/* (the ray-traced lighting reads the pre-pass's surfaces whatever this
+	setting: its window, without the occlusion's shapes or field) */
+	if (!mode && !lt_lights_pass_on())
 		return;
 	if (render_enumerating)
 	{
