@@ -50,7 +50,10 @@ frames on omarchy); --warm N plays only the N frames before whole (faster, but t
 verify --converge measures its error). --hold instead holds the moment's
 frame (played exactly first) as though the world stood still while time goes on: the noise and the convergence.
 
-Checkpoints (the default): one replay serves every try. It plays the recording once, exactly, to --checkpoint
+Checkpoints (the default): one replay serves every try, across runs: on omarchy and the 5900X the replay is kept on
+the rig for (recording, replay build) by the first run (tools/rt2_bench_keep.py: ended after 20 idle minutes, when the
+owner plays, when the replay is rebuilt), and later runs join it, so only the first plays the recording through; each
+run says "warm: from the kept checkpoint" or "cold (why)". It plays the recording once, exactly, to --checkpoint
 frames before the first measured frame and keeps the light pass's whole state there (rt_checkpoint: its images and
 histories, the bounce's, the denoiser's, the pre-pass's occlusion's). Each try then reloads the kernels and settings
 (rt_reload), plays the frames before the checkpoint without their GPU work, puts the state back, and plays the last
@@ -58,7 +61,8 @@ histories, the bounce's, the denoiser's, the pre-pass's occlusion's). Each try t
 unchanged code a try is the full replay bit for bit (verify checks it); with new code the frames before the
 checkpoint were drawn by the code the run started with, so its effect needs --checkpoint frames to reach the
 histories (verify --change measures how far a try strays by k). --exact: each try a fresh replay with every frame
-whole (the old way, ~35 s); --warm N: a fresh replay, the N frames before whole and the histories cold.
+whole (the old way, ~35 s); --warm N: a fresh replay, the N frames before whole and the histories cold. bosgame
+keeps no replay between runs (each run's first try plays the recording through; --watch's later ones do not).
 
 The numbers are tools/rt2_stability.py's measures on the presented picture's sRGB decoded to linear light (Rec. 709
 luminance): the mean, the colour's means, the temporal standard deviation of each pixel over the last --last plays
@@ -294,6 +298,47 @@ def open_service(host, ref, folder, env=()):
     if rt2_clips.windows(host):
         return WindowsService(host, replay_path(host, ref), f"{folder}/moment.hrpl", list(env))
     return rt2_scorecard.Service(host, rt2_scorecard.replay_path(ref), f"{folder}/moment.hrpl", list(env), "shared")
+
+
+class KeptService(rt2_scorecard.Service):
+    """run's replay on a Linux rig: the one kept for (rig, recording, replay build) (tools/rt2_bench_keep.py, sent
+    inline), started detached if there is none; its checkpoint outlives this run. status: what it holds"""
+
+    def __init__(self, host, ref, replay, recording):
+        replay_script = rt2_scorecard.remote_script(
+            " ".join(["env", shlex.quote(replay), shlex.quote(recording), "--serve"]), "kept")
+        # (the program and the replay's script as base64: nothing in them quoted through the rig's login shell)
+        packed = [base64.b64encode(t.encode()).decode() for t in (KEEP_SOURCE.read_text(), replay_script)]
+        command = " ".join(["exec python3 -c", shlex.quote(KEEP_BOOT), packed[0], "connect", shlex.quote(recording),
+                            shlex.quote(replay), shlex.quote(ref), packed[1]])
+        self.host = host
+        self.errors = tempfile.TemporaryFile()
+        self.process = subprocess.Popen(rt2_scorecard.ssh(host, command), stdin=subprocess.PIPE,
+                                        stdout=subprocess.PIPE, stderr=self.errors, text=True, bufsize=1)
+        line = self.process.stdout.readline()
+        self.status = json.loads(line) if line.strip() else {"keep": "error", "why": self.tail()}
+
+    def tail(self):
+        self.errors.seek(0)
+        return " / ".join(self.errors.read().decode(errors="replace").strip().splitlines()[-3:]) or "no reply"
+
+
+KEEP_SOURCE = ROOT / "tools" / "rt2_bench_keep.py"
+KEEP_BOOT = "import base64, sys; exec(base64.b64decode(sys.argv.pop(1)))"
+
+
+def open_kept(host, ref, folder):
+    """run's replay: the kept one (Linux rigs), else one of this run's own; (service, its status)"""
+    owner_check(host)
+    if rt2_clips.windows(host):
+        return open_service(host, ref, folder), {"keep": "cold", "why": f"{host} keeps no replay between runs",
+                                                 "state": {}}
+    service = KeptService(host, ref, rt2_scorecard.replay_path(ref), f"{folder}/moment.hrpl")
+    if service.status.get("keep") not in ("warm", "cold"):
+        why = service.status.get("why")
+        service.close()
+        return open_service(host, ref, folder), {"keep": "cold", "why": f"no kept replay ({why})", "state": {}}
+    return service, service.status
 
 
 # ---------- verify
@@ -699,7 +744,7 @@ def run(args):
         request["reset"] = True
     what = (f"frame {frame} held {args.hold} plays" if args.hold else
             f"frames {frame}-{frame + args.count - 1} as recorded")
-    how = (f"from a checkpoint {args.checkpoint} frames before (one replay for every try)" if checkpointed else
+    how = (f"from a checkpoint {args.checkpoint} frames before (the replay kept on the rig)" if checkpointed else
            "every frame before played whole (exact, a replay a try)" if warm < 0 else
            f"the {warm} before played whole (a replay a try)")
     say(f"rt2_bench: {args.moment} ({meta['build']} {meta['sha']}): {what}; {how}; the last {args.last} measured; "
@@ -720,20 +765,35 @@ def run(args):
 
     service = None
     applied = {}
+    started = time.monotonic()
+    cold = None  # (why the run's first try had to keep a checkpoint, and its seconds; None: warm)
     try:
         ssh(args.host, f"mkdir -p ~/{remote}/k")
         if checkpointed:
             checkpoint_at = frame - args.checkpoint - 1
             if checkpoint_at < 0:
                 raise SystemExit("rt2_bench: --checkpoint reaches before the recording's start")
-            t0 = time.monotonic()
-            service = open_service(args.host, args.build, folder)
+            service, keep = open_kept(args.host, args.build, folder)
             if "rt_checkpoint" not in service.ask({"cmd": "info"}).get("capabilities", []):
                 raise SystemExit("rt2_bench: this replay has no rt_checkpoint (build it from a branch with it), "
                                  "or run with --exact")
-            service.ask({"cmd": "rt_checkpoint", "n": checkpoint_at})
-            say(f"rt2_bench: the checkpoint kept at frame {checkpoint_at} (an exact play, the build's own kernels) "
-                f"in {time.monotonic() - t0:.1f} s")
+            state = keep.get("state") or {}
+            applied = dict(state.get("applied") or {})
+            kept_at = state.get("checkpoint")
+            if kept_at != checkpoint_at:
+                why = keep.get("why") or (f"the kept checkpoint is at frame {kept_at}, this try's at {checkpoint_at}"
+                                          if kept_at is not None else "the kept replay holds no checkpoint")
+                if applied:
+                    # (the checkpoint kept with the build's own kernels and settings, as a fresh replay's)
+                    service.ask({"cmd": "rt_reload", "env": " ".join(f"-{k}" for k in applied), "dir": ""})
+                    applied = {}
+                t0 = time.monotonic()
+                service.ask({"cmd": "rt_checkpoint", "n": checkpoint_at})
+                cold = (why, time.monotonic() - t0)
+                say(f"rt2_bench: the checkpoint kept at frame {checkpoint_at} (an exact play, the build's own "
+                    f"kernels) in {cold[1]:.1f} s")
+        else:
+            cold = ("--exact" if warm < 0 else f"--warm {warm}", None)
         seen = None
         while True:
             now = stamp()
@@ -808,6 +868,16 @@ def run(args):
                     say("    " + unit_line(reply))
                 say(f"    {picture} (sha {digest}); edit to numbers {total:.1f} s: compile {t_compile:.1f}, "
                     f"replay {t_render:.1f} (its frames {reply['ms'] / 1000:.1f})")
+                if version == 1:
+                    whole = time.monotonic() - started
+                    if cold is None:
+                        say(f"rt2_bench: warm: from the kept checkpoint (frame {checkpoint_at}), {whole:.1f} s")
+                    elif cold[1] is None:
+                        say(f"rt2_bench: cold ({cold[0]}: a replay of its own, from the recording's start), "
+                            f"{whole:.1f} s")
+                    else:
+                        say(f"rt2_bench: cold ({cold[0]}): the checkpoint kept in {cold[1]:.1f} s, {whole:.1f} s "
+                            f"in all; the next runs of this recording and build start from it")
                 if args.json:
                     with open(out / "versions.jsonl", "a") as log:
                         log.write(json.dumps({"version": version, "changed": changed, "settings": settings,

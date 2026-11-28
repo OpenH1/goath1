@@ -152,10 +152,13 @@ python3 tools/rt2_bench.py run ... --hold 60          # the moment's frame held:
 python3 tools/rt2_bench.py run ... --checkpoint 120   # the new code's reach before the measured frames (default 60)
 python3 tools/rt2_bench.py run ... --exact            # each try a fresh replay, every frame whole (~35 s)
 ```
-One replay serves every try: it plays the moment once exactly and keeps the light pass's whole state a checkpoint
-(`--checkpoint` frames) before the measured frames; each try reloads the changed kernels (compiled on the Mac, sent
-to the rig) and settings, puts that state back and plays the rest whole, the last picture to
-`build/rt2_bench/v<N>.png`. Unchanged code gives the full replay's frames bit for bit (`verify` checks it);
+One replay serves every try, across separate `run` commands: the first `run` of a recording and replay build on a
+rig starts a kept replay there (`tools/rt2_bench_keep.py`, detached; ended by 20 idle minutes, the owner playing, a
+rebuild, or to keep at most 3), which plays the moment once exactly and keeps the light pass's whole state a
+checkpoint (`--checkpoint` frames) before the measured frames; each try (this run's or a later one's) reloads the
+changed kernels (compiled on the Mac, sent to the rig) and settings, puts that state back and plays the rest whole,
+the last picture to `build/rt2_bench/v<N>.png`. Each run says `warm: from the kept checkpoint` or `cold (why)`
+(a50 on omarchy: cold 56 s, warm 6-10 s, the 90 frames drawn; the kept replay holds the GPU lock only during a run). Unchanged code gives the full replay's frames bit for bit (`verify` checks it);
 `verify --change VAR=value` shows how far a try strays by the frames since the checkpoint. How the light list is built
 (`port/linux/game/lt_lights_build.c`: the kinds, the k's, the spot conversion, the suns' and the sky's constants,
 the object lamps' choice) is tried with `--unit` on a recording made by a build with the list's inputs
