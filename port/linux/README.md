@@ -4451,7 +4451,8 @@ that hides that severity and worse:
 A word is found however it is dressed: in capitals or with accents, in
 look-alike letters (Cyrillic, Greek, full-width, small capitals), in leet
 (`0` for o, `@` for a, `ph` for f), with its letters stretched ("fuuuck"),
-with punctuation between them (`f.u.c.k`), spaced out (`f u c k`, `fu ck`),
+with punctuation between them (`f.u.c.k`), spaced out (`f u c k`, `fu ck`, though not across the
+edges of other words: "push it" shows as it is),
 and with characters the game does not draw (zero-width spaces, the menus'
 `|` codes) between them. Each word may be found inside a name, at a word's
 start, or only as a whole word, as fits it, and some words are never
