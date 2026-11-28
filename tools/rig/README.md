@@ -138,7 +138,7 @@ fixed frame time, so no recording goes stale. Staging notes: `debug_camera_set "
 moves the script's camera over the seconds; the flashlight goes on with
 `unit_set_desired_flashlight_state (unit (list_get (players) 0)) 1` (the script's `flashlight` button toggles it
 every tick it is held); a skipped cutscene (b30's Pelican ride, to about 29 s) is played fast and undrawn, so cues
-in it land late and no frame is drawn there; console paths are relative to the run's data folder.
+in it land late and no frame is drawn there; console paths are relative to the run's data folder; `debug_scenario_places "<file>"` lists each actor's `<encounter>/<squad>` for `ai_place`. With `debug.frame_time` the game waits for each pipeline and times its score popups and particles' randomness by the frames, so a classic run plays the same frames every time.
 
 ## What it does for you
 
