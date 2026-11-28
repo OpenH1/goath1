@@ -115,15 +115,15 @@ sun_power_scale and fill_power_scale (xgpu_vulkan_lt.c's, the same rule) */
 #define LT_LIGHTS_FILL_POWER_SCALE 0.187f
 #define LT_LIGHTS_FILL_DIAMETER 0.17453293f
 /* a level lit live (lt_lights_real_sky): the sky's lights and its ambient
-dome as the whole light, each k from the truth renderer's multi-bounce render
-of b30 (880 samples a pixel, every bounce) against its lightmap as the game
-shows it (pages ^2.2), the lightmap the answer key only: one k for the
-sun, the wide lights and the dome alike, the lightmap tool's one unit
-(0.48, R^2 0.553 against 0.567 for a sun's and a sky's apart; the look's
-contrast the camera's, ~/dev/rt2-calibration.json's real_sky) */
-#define LT_LIGHTS_REAL_SUN_POWER_SCALE 0.48f
-#define LT_LIGHTS_REAL_FILL_POWER_SCALE 0.48f
-#define LT_LIGHTS_REAL_AMBIENT_POWER_SCALE 0.48f
+dome as the whole light, each group's k for each channel from the truth
+renderer's multi-bounce render of b30 (432 samples a pixel, every bounce)
+against its lightmap as the game shows it (pages ^2.2), the lightmap the
+answer key only: the sun's, and the sky's (its wide lights and its dome:
+the lightmap tool's sky alike), red, green and blue (R^2 0.536, 0.568,
+0.620; one k for all, 0.457 0.475 0.594, R^2 0.524, 0.554, 0.614;
+~/dev/rt2-calibration.json's real_sky colour_fit) */
+static const float lt_lights_real_sun_k[3] = { 0.558f, 0.592f, 0.722f };
+static const float lt_lights_real_sky_k[3] = { 0.324f, 0.338f, 0.506f };
 /* the share of the BSP's clusters that must see a lit sky for the level to
 be lit live: Bungie's lightmap tool lit only those (a sky light's "affects
 exteriors"; the outdoor ambient radiosity "for exterior clusters"), so the
@@ -486,15 +486,19 @@ static int lt_suns(int count)
 		out->cone_inner = out->cone_outer = -1.0f;
 		out->power_scale = light->diameter >= LT_LIGHTS_FILL_DIAMETER ? LT_LIGHTS_FILL_POWER_SCALE :
 			LT_LIGHTS_SUN_POWER_SCALE;
-		if (live)
-		{
-			out->flags |= XGPU_LT_LIGHT_REAL_SKY;
-			out->power_scale = light->diameter >= LT_LIGHTS_FILL_DIAMETER ? LT_LIGHTS_REAL_FILL_POWER_SCALE :
-				LT_LIGHTS_REAL_SUN_POWER_SCALE;
-		}
 		lt_copy3(out->color, light->color.red, light->color.green, light->color.blue);
 		lt_copy3(out->power, light->color.red * light->power * out->power_scale,
 			light->color.green * light->power * out->power_scale, light->color.blue * light->power * out->power_scale);
+		/* (lit live: its group's k each channel, a wide one the sky's) */
+		if (live)
+		{
+			float const *k = light->diameter >= LT_LIGHTS_FILL_DIAMETER ? lt_lights_real_sky_k : lt_lights_real_sun_k;
+
+			out->flags |= XGPU_LT_LIGHT_REAL_SKY;
+			out->power_scale = k[1];
+			lt_copy3(out->power, light->color.red * light->power * k[0], light->color.green * light->power * k[1],
+				light->color.blue * light->power * k[2]);
+		}
 		out->angular_diameter = light->diameter;
 		count++;
 	}
@@ -524,10 +528,10 @@ static int lt_suns(int count)
 			lt_copy3(out->up, 1.0f, 0.0f, 0.0f);
 			lt_left(out);
 			out->cone_inner = out->cone_outer = -1.0f;
-			out->power_scale = LT_LIGHTS_REAL_AMBIENT_POWER_SCALE;
+			out->power_scale = lt_lights_real_sky_k[1];
 			lt_copy3(out->color, color.red, color.green, color.blue);
-			lt_copy3(out->power, color.red * power * out->power_scale, color.green * power * out->power_scale,
-				color.blue * power * out->power_scale);
+			lt_copy3(out->power, color.red * power * lt_lights_real_sky_k[0], color.green * power * lt_lights_real_sky_k[1],
+				color.blue * power * lt_lights_real_sky_k[2]);
 			out->angular_diameter = _pi * 2.0f;
 			count++;
 		}
