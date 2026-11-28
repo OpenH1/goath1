@@ -1076,6 +1076,12 @@ def fixture_groups(sc, cell, bsp_groups):
     return out
 
 
+NEAR_WU = 0.5  # rooms: texels this close to a lamp left out of the match (set by --near; 0: none)
+CLIPPED_AS_SHOWN = False  # rooms: texels the bake clipped matched at their shown value (set by --clipped)
+MATCH = "linear"  # rooms: each cell's mean matched in linear light, or as shown (set by --match)
+FIT_CELL = None  # rooms: the cells whose mean light is matched, wu (set by --fit-cell; None: the lamp groups' cell)
+
+
 def solve_rooms(folder, out, spp=128, max_samples=300000, cell=12.0, report=None, log=print, outside=0.05):
     """The level's light from its own lamps (the shaders with radiosity power, at the tag's color and relative
     power), with one brightness scale per room-sized cluster of lamps (`cell` wu cells), set so that in each
@@ -1090,8 +1096,8 @@ def solve_rooms(folder, out, spp=128, max_samples=300000, cell=12.0, report=None
     S = texel_samples(sc, max_samples)
     y = S["target"] @ display.LUMA
     clipped = S["lm"].max(1) >= 0.985
-    near = near_emitters(sc, S["pos"], 0.5)
-    w = np.where(clipped | near, 0.0, S["w"])
+    near = near_emitters(sc, S["pos"], NEAR_WU) if NEAR_WU > 0 else np.zeros(len(y), bool)
+    w = np.where((clipped & (not CLIPPED_AS_SHOWN)) | near, 0.0, S["w"])
     lamps = lamp_groups(sc, cell)
     # (a fixture is a light of this BSP only inside its lit space: the scenario's objects stand in every BSP's,
     # and one placed where this BSP has no lightmapped surface in its cell or the cells beside it lights none of
@@ -1114,7 +1120,7 @@ def solve_rooms(folder, out, spp=128, max_samples=300000, cell=12.0, report=None
     order = [int(keys[j][6:]) for j in li]
     Xl = X[:, li] @ display.LUMA  # N x K, each lamp group at the tag's power
     Xs = X[:, si] @ display.LUMA  # N x parts, each sky part at the tag's power
-    tc = np.floor(S["pos"] / cell).astype(np.int64)
+    tc = np.floor(S["pos"] / (FIT_CELL or cell)).astype(np.int64)
     _, inv = np.unique(tc, axis=0, return_inverse=True)
     inv = inv.reshape(-1)
     nc = inv.max() + 1
@@ -1168,9 +1174,21 @@ def solve_rooms(folder, out, spp=128, max_samples=300000, cell=12.0, report=None
     share = land / np.maximum(land.sum(0, keepdims=True), 1e-30)
     level = np.full(len(order), k0)
     s = level.copy()
-    for it in range(30):
+    sky_t = Xs @ ks if si else np.zeros(len(y))
+    for it in range(30 if MATCH == "linear" else 60):
         Fc = land @ s
-        ratio = np.where((Fc > 0) & (Yc > 0), Yc / np.maximum(Fc, 1e-30), 1.0)
+        if MATCH == "linear":
+            ratio = np.where((Fc > 0) & (Yc > 0), Yc / np.maximum(Fc, 1e-30), 1.0)
+        else:
+            # as shown: each cell's mean of the light as the player sees it (^1/2.2, the page's own relation),
+            # traced (lamps + sky) against the bake; the ratio taken back to linear light for the scales
+            g = 1 / GAMMA
+            Ts = np.bincount(inv, w * np.maximum(Xl @ s + sky_t, 0.0) ** g, nc)
+            yt = y
+            if CLIPPED_AS_SHOWN == "floor":  # a clipped texel only says "at least this": no penalty above it
+                yt = np.where(clipped, np.maximum(y, Xl @ s + sky_t), y)
+            Bs = np.bincount(inv, w * np.maximum(yt, 0.0) ** g, nc)
+            ratio = np.where((Ts > 0) & (Bs > 0) & (Yc > 0), (Bs / np.maximum(Ts, 1e-30)) ** GAMMA, 1.0)
         s = np.clip(s * np.exp(0.5 * (share * np.log(ratio)[:, None]).sum(0)), level / 20, level * 20)
     Fc = land @ s
     if report:
@@ -1181,6 +1199,12 @@ def solve_rooms(folder, out, spp=128, max_samples=300000, cell=12.0, report=None
                             level=level, fixture=fx, area=np.bincount(inv, w, nc),
                             shaders=np.array([lamps[i]["shader"] for i in order]),
                             group_cells=np.array([lamps[i]["cell"] for i in order]))
+        # (each sample's bake, weight, cell, the sky's light and each group's light at unit scale: the fit
+        # looked at texel by texel, e.g. around a camera)
+        np.savez_compressed(Path(report) / "rooms_samples.npz", pos=S["pos"].astype(np.float32),
+                            ns=S["ns"].astype(np.float32), bake=y.astype(np.float32), w=w.astype(np.float32),
+                            w_all=w_all.astype(np.float32), area=S["w"].astype(np.float32), cell=inv, sky=(Xs @ ks).astype(np.float32),
+                            lamps=Xl.astype(np.float32), lm=S["lm"].astype(np.float32))
     lit = (Yc > 0) & (Fc > 0)
     wc = np.bincount(inv, w, nc)
     lr = np.log(np.maximum(Fc[lit], 1e-30) / Yc[lit])
@@ -1209,6 +1233,9 @@ def solve_rooms(folder, out, spp=128, max_samples=300000, cell=12.0, report=None
                           "surfaces in one %g wu cell), set so each cell's traced mean light equals the bake's" % cell,
                    "level_scale": round(k0, 6), "traced_over_bake_level": round(total, 4),
                    "cell_brightness_spread": round(spread, 3), "cell_wu": cell, "spp": spp,
+                   "match": {"space": MATCH, "fit_cell_wu": FIT_CELL or cell, "near_lamp_left_out_wu": NEAR_WU,
+                             "clipped": {False: "left out", True: "matched at the value shown",
+                                         "floor": "a lower bound (no penalty above)"}[CLIPPED_AS_SHOWN]},
                    "groups_at_limit": int(at_limit.sum()), "power_share_at_limit": round(limit_share, 4),
                    "sky": {"bake_share": round(sky_share, 4), "cells_left_to_it_bake_share": round(out_share, 4),
                            "scales": {keys[j][4:]: round(float(k), 6) for j, k in zip(si, ks)},
