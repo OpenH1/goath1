@@ -853,7 +853,8 @@ tree = replay.split("/build/")[0]
 data = open(replay, "rb").read()
 commits = subprocess.run(["git", "-C", tree, "rev-list", "--max-count=2000", "HEAD"], capture_output=True,
                          text=True).stdout.split()
-labels = [c[:12] for c in commits if (b"\0" + c[:12].encode() + b"\0") in data]
+held = set(m.decode() for m in re.findall(rb"\0([0-9a-f]{12})\0", data))
+labels = [c[:12] for c in commits if c[:12] in held]
 out["code"] = sha_file(replay, blank=labels)
 def folder_hash(path):
     digest = hashlib.sha256()
