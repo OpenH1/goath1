@@ -115,6 +115,9 @@ struct world_proxies_source_instance
 	/* the unit a local player sees from in first person (its body is not
 	drawn: the ray-traced scene's shadows alone take it) */
 	int first_person;
+	/* an object that casts no shadow (render_objects.c draws it none: its
+	definition's "does not cast shadow", a device's): b30's ring overhead */
+	int shadowless;
 };
 
 /* ---------- prototypes (port/linux/game/world_proxies_game.c) */

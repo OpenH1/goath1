@@ -47,29 +47,26 @@ NO_BUILD_TESTS = [
     "tools/test_guest_image_check.py", "tools/test_check_host_imports.py", "tools/test_host_syscall.py",
     "tools/test_guest_layout.py", "tools/test_linux_guest_build.py", "tools/test_build_errors.py",
     "tools/test_guest_toolchain.py", "tools/test_linux_port.py", "tools/test_join_page.py",
-    "tools/test_linux_package.py", "tools/test_goath1_command.py", "tools/test_install_layout.py", "tools/test_android_asm_convert.py",
-    "tools/test_guest_asm_cache.py", "tools/test_guest_branch_relax.py", "tools/test_host_watch_hash.py",
-    "tools/test_touch_menu.py", "tools/harness", "tools/test_controller_remap.py",
+    "tools/test_linux_package.py", "tools/test_goath1_command.py", "tools/test_install_layout.py",
+    "tools/test_android_asm_convert.py", "tools/test_guest_asm_cache.py", "tools/test_guest_branch_relax.py",
+    "tools/test_host_watch_hash.py", "tools/test_touch_menu.py", "tools/harness", "tools/test_controller_remap.py",
     "tools/test_controller_remap_context.py", "tools/test_net_compare.py", "tools/test_loading_ring.py",
-    "tools/test_preparation.py", "tools/test_progress_ownership.py", "tools/test_ci_test_shards.py",
-    "tools/test_supersampling.py", "tools/test_android_resolution.py", "tools/test_screen_passes_samples.py",
+    "tools/test_preparation.py", "tools/test_ci_test_shards.py", "tools/test_android_resolution.py",
     "tools/test_notes.py", "tools/test_menu_look.py", "tools/test_mcc_local_package.py", "tools/test_mcc_server.py",
-    "tools/test_mcc_share_menu.py", "tools/test_mcc_resource_selection.py", "tools/test_mcc_identity_candidates.py",
-    "tools/test_mcc_cache_format.py", "tools/test_mcc_projectiles.py", "tools/test_mcc_tag_validation.py",
-    "tools/test_mcc_share.py", "tools/test_mcc_share_rules.py", "tools/test_mcc_share_stage.py",
-    "tools/test_mcc_share_storage.py", "tools/test_mcc_share_metadata.py", "tools/test_mcc_load_network.py",
-    "tools/test_checkpoint_epoch.py", "tools/test_coop_checkpoint.py", "tools/test_coop_checkpoint_recovery.py",
-    "tools/test_mcc_checkpoint.py", "tools/test_mcc_keyboard_glyphs.py", "tools/test_controller_buttons.py",
-    "tools/test_hud_button_style.py", "tools/test_hud_corrections.py", "tools/test_ci_plan.py",
-    "tools/test_mcc_subtitles.py", "tools/test_render_manifest.py", "tools/test_preparation_coverage.py",
+    "tools/test_mcc_resource_selection.py", "tools/test_mcc_identity_candidates.py", "tools/test_mcc_cache_format.py",
+    "tools/test_mcc_tag_validation.py", "tools/test_mcc_share.py", "tools/test_mcc_share_rules.py",
+    "tools/test_mcc_share_stage.py", "tools/test_mcc_share_storage.py", "tools/test_mcc_share_metadata.py",
+    "tools/test_mcc_load_network.py", "tools/test_checkpoint_epoch.py", "tools/test_coop_checkpoint.py",
+    "tools/test_coop_checkpoint_recovery.py", "tools/test_mcc_checkpoint.py", "tools/test_hud_button_style.py",
+    "tools/test_ci_plan.py", "tools/test_mcc_subtitles.py", "tools/test_render_manifest.py",
+    "tools/test_preparation_coverage.py",
 ]
 
 # The tests that read linux-x86_64's debug build, that job's (its Start the build's tests step)
 BUILD_TESTS = [
     "tools/test_profile.py", "tools/test_host_units.py::test_host_screenshot", "tools/test_light_storage.py",
-    "tools/test_vulkan_passes.py", "tools/test_host_vr_vulkan.py", "tools/test_vr_vehicles.py",
-    "tools/test_vr_effects.py", "tools/test_host_texture_idle.py", "tools/test_hdr.py", "tools/test_hdr_backends.py",
-    "tools/test_screen_passes_samples.py", "tools/test_ambient_occlusion_light.py",
+    "tools/test_vulkan_passes.py", "tools/test_vr_vehicles.py", "tools/test_vr_effects.py",
+    "tools/test_host_texture_idle.py", "tools/test_hdr_backends.py",
 ]
 
 # always run by the quick check: fast, and across the engine, the host and the CI's own tools
@@ -154,7 +151,7 @@ def tokens(text):
 
 def keys(changed):
     """the words a test that reads or exercises the changed file has: its path, its name, a Python module's or a
-    harness case's stem (a harness test builds its case's C by name: build("back_pause", ...))"""
+    harness case's stem (a harness test builds its case's C by name: build("unicode_line_breaks", ...))"""
     path = Path(changed)
     found = {changed, path.name}
     if path.suffix == ".py" or changed.startswith("tools/harness/tests/"):

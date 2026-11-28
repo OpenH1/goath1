@@ -6,11 +6,12 @@ which are wanted, the thread that makes them, the map read, the recipe, and
 the tag file written.
 
 A map is read with xbox_map_file.c (inflated as it is read, never held
-whole). Its tags come first (the header says where they are: the end of the
-map), then,
-in a second pass, the stock bitmap's pages, which the tags place earlier.
-The pages' CRC-32 must be the effect's: any other bitmap (a modded map's) is
-not the stock one the recipe was made for, and the next map is tried.
+whole), once for all the effects wanted that list it: its tags first (the
+header says where they are: the end of the map), then, in a second pass,
+every one of those effects' stock pages, which the tags place earlier.
+Each effect's pages' CRC-32 must be its own: any other bitmap (a modded
+map's) is not the stock one the recipe was made for, and the effect's next
+map is tried. The maps' effects are made on up to BUILD_WORKERS threads.
 
 The flash recipe is tools/hd_muzzle_flash.py's, step for step, on planes of
 32-bit floats (the script's NumPy has 64): each page upscaled (bicubic, as
@@ -24,6 +25,19 @@ about 44 MB of planes while it is redrawn, given back after; the tag file
 is the bitmap's values, sequences and sprites as the map has them, its
 pages 32-bit (A8R8G8B8), at the scale (the AR's flash: two 1024 x 1024
 pages, 5.3 MB each with their mip levels, 11.2 MB in all).
+
+The splat recipe (the blood) is tools/hd_blood.py's, step for step, on
+planes of 32-bit floats: each DXT1 or DXT3 page decoded, then redrawn whole
+and each sprite's cell redrawn on its own over it (its edges clamped, so
+no cell bleeds into the next): each plane upscaled (Catmull-Rom, held
+within each texel's 3 x 3 neighbors' range), deblocked (within about a
+format's step of its blur, that blur) and its edges pushed toward their
+9 x 9 neighborhood's least or most (a soft shock filter), each cell's mean
+color given back the map's; a decal's alpha the map's (1 bit, each texel
+4 x 4), a particle's redrawn as its color is, its color under no alpha its
+neighbors'. A 128 x 128 sheet takes about 15 MB of planes while it is
+redrawn and becomes 512 x 512 A8R8G8B8 with mip levels down to the map's
+smallest (1.3 MB).
 */
 
 #include "hd_effects.h"
@@ -54,14 +68,6 @@ int halo_server_mode(void);
 #define MAXIMUM_PAGES 8
 #define MAXIMUM_PAGE_SIDE 512
 
-/* an Xbox map's (map_unpack.c's) */
-#define MAP_HEADER_SIZE 0x800
-#define MAP_HEADER_HEAD 0x68656164UL
-#define MAP_HEADER_FOOT 0x666F6F74UL
-#define MAP_VERSION 5
-#define MAP_TAGS_BASE XBOX_MAP_TAGS_BASE
-#define MAP_MOST_TAGS_SIZE XBOX_MAP_MOST_TAGS_SIZE
-
 /* the tags' (bitmap_group.h) */
 #define GROUP_BITMAP 0x6269746DUL
 #define BITMAP_ROOT_SIZE 0x6C
@@ -71,6 +77,8 @@ int halo_server_mode(void);
 #define BITMAP_LINEAR_FLAG 0x10
 #define BITMAP_FORMAT_A1R5G5B5 8
 #define BITMAP_FORMAT_A8R8G8B8 11
+#define BITMAP_FORMAT_DXT1 14
+#define BITMAP_FORMAT_DXT3 15
 #define BITMAP_GROUP_FORMAT_32_BIT 4
 #define BITMAP_POWER_OF_TWO_FLAG 1
 #define TAG_FILE_HEADER_SIZE 0x40
@@ -80,6 +88,25 @@ int halo_server_mode(void);
 #define FLASH_STEP (1.0f / 31.0f)
 /* Gaussians are cut at 4 sigma, as SciPy's (sigma at most 14: 57 texels) */
 #define MAXIMUM_RADIUS 64
+
+/* the splat recipe's (tools/hd_blood.py's): the deblocking's steps (five
+bits of color, DXT3's four of alpha) and blur (map texels); the edges'
+reach (map texels each way), the contrast from which a texel is on an edge
+and at which fully, and how far it is pushed; the particles' color under no
+alpha, their neighbors' (map texels) */
+#define SPLAT_COLOR_STEP (1.0f / 31.0f)
+#define SPLAT_ALPHA_STEP (1.0f / 15.0f)
+#define SPLAT_DEBLOCK_SIGMA 1.0f
+#define SPLAT_EDGE_REACH 1
+#define SPLAT_EDGE_LOW 0.06f
+#define SPLAT_EDGE_HIGH 0.2f
+#define SPLAT_EDGE_STRENGTH 0.75f
+#define SPLAT_BLEED_SIGMA 2.0f
+/* the most sprites' cells a page is redrawn by */
+#define MAXIMUM_CELLS 64
+/* the most threads a map's effects are made on (each about 15 MB of planes
+while it redraws a 128 x 128 sheet) */
+#define BUILD_WORKERS 4
 
 /* ---------- globals */
 
@@ -162,7 +189,8 @@ static void note_text(char *text, size_t size, long effect, unsigned long file_s
 {
 	const struct hd_effect_embedded *embedded = &hd_effects_embedded[effect];
 
-	snprintf(text, size, "openh1-hd-effects %d %08x %u %u %lu\n", HD_EFFECTS_RECIPE_VERSION, embedded->crc,
+	snprintf(text, size, "openh1-hd-effects %d %08x %u %u %lu\n",
+		embedded->recipe == _hd_effect_recipe_splat ? HD_EFFECTS_SPLAT_VERSION : HD_EFFECTS_RECIPE_VERSION, embedded->crc,
 		embedded->scale, embedded->smallest, file_size);
 }
 
@@ -218,7 +246,8 @@ static int write_file(const char *path, const void *data, unsigned long size)
 /* the stock bitmap read out of a map */
 struct effect_source
 {
-	unsigned char *tags;
+	/* the map's tags (the batch's, held while its effects are made) */
+	const unsigned char *tags;
 	unsigned long tags_size;
 	/* its definition, sequences and pages (where the tags have them) */
 	const unsigned char *root;
@@ -235,7 +264,6 @@ static void source_free(struct effect_source *source)
 {
 	long index;
 
-	free(source->tags);
 	for (index = 0; index < MAXIMUM_PAGES; index++)
 		free(source->pixels[index]);
 	memset(source, 0, sizeof(*source));
@@ -244,60 +272,53 @@ static void source_free(struct effect_source *source)
 /* the tags' bytes at `address` (`size` of them), or NULL outside them */
 static const unsigned char *tags_at(const struct effect_source *source, unsigned long address, unsigned long size)
 {
-	if (address < MAP_TAGS_BASE || address - MAP_TAGS_BASE > source->tags_size ||
-		size > source->tags_size - (address - MAP_TAGS_BASE))
-	{
-		return NULL;
-	}
-	return source->tags + (address - MAP_TAGS_BASE);
+	return xbox_map_tags_at(source->tags, source->tags_size, address, size);
 }
 
-/* Reads the effect's stock bitmap out of the map at `path`: 0 if the map has
-none, or not the stock one (its pages' CRC), or cannot be read. */
-static int source_read(const char *path, long effect, struct effect_source *source)
+/* whether a page (its format, side and bytes) is one the effect's recipe
+redraws: the flash's, 2D A1R5G5B5 squares; the splat's, DXT1 or DXT3 ones */
+static int page_taken(unsigned int recipe, const unsigned char *page)
 {
-	const struct hd_effect_embedded *embedded = &hd_effects_embedded[effect];
-	unsigned char header[MAP_HEADER_SIZE];
-	struct xbox_map_range ranges[MAXIMUM_PAGES];
-	unsigned long tags_offset, instances, count, index, crc = 0;
-	const unsigned char *root = NULL;
+	unsigned int width = half_le(page + 4), height = half_le(page + 6), format = half_le(page + 0xC);
+	unsigned long size = word_le(page + 0x1C), least;
 
-	memset(source, 0, sizeof(*source));
+	if (half_le(page + 0xA) != 0 || width != height || width < 8 || width > MAXIMUM_PAGE_SIDE || (width & (width - 1)))
+		return 0;
+	switch (recipe)
 	{
-		int descriptor = open(path, O_RDONLY | O_CLOEXEC);
-		int whole = descriptor >= 0 && pread(descriptor, header, sizeof(header), 0) == (ssize_t)sizeof(header);
-
-		if (descriptor >= 0)
-			close(descriptor);
-		if (!whole)
-			return 0;
-	}
-	if (word_le(header) != MAP_HEADER_HEAD || word_le(header + 0x7FC) != MAP_HEADER_FOOT ||
-		word_le(header + 4) != MAP_VERSION)
-	{
+	case _hd_effect_recipe_flash:
+		least = width * height * 2UL;
+		return format == BITMAP_FORMAT_A1R5G5B5 && size >= least && size <= 2 * least;
+	case _hd_effect_recipe_splat:
+		least = format == BITMAP_FORMAT_DXT1 ? width * height / 2UL : width * height;
+		return (format == BITMAP_FORMAT_DXT1 || format == BITMAP_FORMAT_DXT3) && size >= least && size <= 2 * least;
+	default:
 		return 0;
 	}
-	tags_offset = word_le(header + 0x10);
-	source->tags_size = word_le(header + 0x14);
-	if (tags_offset < MAP_HEADER_SIZE || source->tags_size < 0x10 || source->tags_size > MAP_MOST_TAGS_SIZE ||
-		!(source->tags = malloc(source->tags_size)))
-	{
-		goto refused;
-	}
-	ranges[0].offset = tags_offset;
-	ranges[0].size = source->tags_size;
-	ranges[0].destination = source->tags;
-	if (!xbox_map_ranges_read(path, ranges, 1))
-		goto refused;
+}
+
+/* Finds the effect's bitmap in a map's tags (`tags`, `tags_size` bytes)
+and the ranges of the map its pages are at (into `ranges`): their count,
+or 0 if the map has none, or not one its recipe takes. */
+static int source_find(const unsigned char *tags, unsigned long tags_size, long effect, struct effect_source *source,
+	struct xbox_map_range *ranges)
+{
+	const struct hd_effect_embedded *embedded = &hd_effects_embedded[effect];
+	const unsigned char *root = NULL;
+	unsigned long instances, count, index;
+	size_t length = strlen(embedded->tag);
+
+	memset(source, 0, sizeof(*source));
+	source->tags = tags;
+	source->tags_size = tags_size;
 
 	/* the tag of the effect's name, a bitmap */
-	instances = word_le(source->tags);
-	count = word_le(source->tags + 0xC);
+	instances = word_le(tags);
+	count = word_le(tags + 0xC);
 	for (index = 0; index < count && !root; index++)
 	{
 		const unsigned char *instance = tags_at(source, instances + index * 0x20, 0x20);
 		const unsigned char *name;
-		size_t length = strlen(embedded->tag);
 
 		if (!instance)
 			goto refused;
@@ -330,38 +351,41 @@ static int source_read(const char *path, long effect, struct effect_source *sour
 		}
 	}
 
-	/* its pages: 2D A1R5G5B5 squares, as the recipe has them */
+	/* its pages, as the recipe has them */
 	for (index = 0; index < (unsigned long)source->page_count; index++)
 	{
 		const unsigned char *page = source->pages + index * BITMAP_DATA_SIZE;
-		unsigned int width = half_le(page + 4), height = half_le(page + 6);
 		unsigned long size = word_le(page + 0x1C);
 
-		if (half_le(page + 0xA) != 0 || half_le(page + 0xC) != BITMAP_FORMAT_A1R5G5B5 || width != height ||
-			width < 8 || width > MAXIMUM_PAGE_SIDE || (width & (width - 1)) || size < width * height * 2UL ||
-			size > 4UL * width * height || !(source->pixels[index] = malloc(size)))
-		{
+		if (!page_taken(embedded->recipe, page) || !(source->pixels[index] = malloc(size)))
 			goto refused;
-		}
 		source->pixels_size[index] = size;
 		ranges[index].offset = word_le(page + 0x18);
 		ranges[index].size = size;
 		ranges[index].destination = source->pixels[index];
 	}
-	if (!xbox_map_ranges_read(path, ranges, (int)source->page_count))
-		goto refused;
-	for (index = 0; index < (unsigned long)source->page_count; index++)
-		crc = crc32(crc, source->pixels[index], (uInt)source->pixels_size[index]);
-	if (crc != embedded->crc)
-	{
-		platform_log("hd effects: %s's %s is not the stock one (CRC %08lx): passed", path, embedded->name, crc);
-		goto refused;
-	}
-	return 1;
+	return (int)source->page_count;
 
 refused:
 	source_free(source);
 	return 0;
+}
+
+/* whether the pages read are the stock ones (their CRC-32 the effect's) */
+static int source_stock(const char *path, long effect, const struct effect_source *source)
+{
+	unsigned long crc = 0;
+	long index;
+
+	for (index = 0; index < source->page_count; index++)
+		crc = crc32(crc, source->pixels[index], (uInt)source->pixels_size[index]);
+	if (crc != hd_effects_embedded[effect].crc)
+	{
+		platform_log("hd effects: %s's %s is not the stock one (CRC %08lx): passed", path,
+			hd_effects_embedded[effect].name, crc);
+		return 0;
+	}
+	return 1;
 }
 
 /* ---------- the flash recipe: planes of floats, width x height */
@@ -859,6 +883,513 @@ finished:
 	return bytes;
 }
 
+/* ---------- the splat recipe (tools/hd_blood.py): planes of floats, the
+edges clamped */
+
+static long clamp_index(long index, long count)
+{
+	return index < 0 ? 0 : index >= count ? count - 1 : index;
+}
+
+/* a Gaussian blur of `in` into `out` (not `in`), through `work`, as the
+script's: separable, cut at 4 sigma, the edges clamped */
+static void splat_blur(const float *in, float *out, float *work, long width, long height, float sigma)
+{
+	float kernel[2 * MAXIMUM_RADIUS + 1];
+	float row[MAXIMUM_PAGE_SIDE * 4 + 2 * MAXIMUM_RADIUS];
+	long radius = (long)(4.0f * sigma + 0.5f), x, y, k;
+	double sum = 0.0;
+
+	if (radius > MAXIMUM_RADIUS)
+		radius = MAXIMUM_RADIUS;
+	for (k = -radius; k <= radius; k++)
+		sum += kernel[k + radius] = (float)exp(-0.5 * (double)(k * k) / ((double)sigma * sigma));
+	for (k = 0; k <= 2 * radius; k++)
+		kernel[k] = (float)(kernel[k] / sum);
+	for (y = 0; y < height; y++)
+	{
+		const float *line = in + y * width;
+		float *target = work + y * width;
+
+		/* (the row with its clamped edges) */
+		for (x = 0; x < width + 2 * radius; x++)
+			row[x] = line[clamp_index(x - radius, width)];
+		for (x = 0; x < width; x++)
+		{
+			float total = 0.0f;
+
+			for (k = 0; k <= 2 * radius; k++)
+				total += kernel[k] * row[x + k];
+			target[x] = total;
+		}
+	}
+	for (y = 0; y < height; y++)
+	{
+		float *target = out + y * width;
+
+		memset(target, 0, (size_t)width * sizeof(*target));
+		for (k = -radius; k <= radius; k++)
+		{
+			const float *line = work + clamp_index(y + k, height) * width;
+			float weight = kernel[k + radius];
+
+			for (x = 0; x < width; x++)
+				target[x] += weight * line[x];
+		}
+	}
+}
+
+/* the least (or most) of each texel's (2 radius + 1)-square neighborhood,
+the edges clamped, into `out` (not `in`), through `work` */
+static void splat_extreme(const float *in, float *out, float *work, long width, long height, long radius, int most)
+{
+	float row[MAXIMUM_PAGE_SIDE * 4 + 2 * MAXIMUM_RADIUS];
+	long x, y, k;
+
+	for (y = 0; y < height; y++)
+	{
+		/* (the row with its clamped edges) */
+		for (x = 0; x < width + 2 * radius; x++)
+			row[x] = in[y * width + clamp_index(x - radius, width)];
+		for (x = 0; x < width; x++)
+		{
+			float value = row[x + radius];
+
+			for (k = 0; k <= 2 * radius; k++)
+				value = most ? (row[x + k] > value ? row[x + k] : value) : (row[x + k] < value ? row[x + k] : value);
+			work[y * width + x] = value;
+		}
+	}
+	for (y = 0; y < height; y++)
+	{
+		float *target = out + y * width;
+
+		memcpy(target, work + y * width, (size_t)width * sizeof(*target));
+		for (k = -radius; k <= radius; k++)
+		{
+			const float *line = work + clamp_index(y + k, height) * width;
+
+			for (x = 0; x < width; x++)
+				target[x] = most ? (line[x] > target[x] ? line[x] : target[x]) : (line[x] < target[x] ? line[x] : target[x]);
+		}
+	}
+}
+
+/* Catmull-Rom's four weights for each of the `scale` texels a map texel i
+becomes (phase p, centered at (p + 0.5) / scale - 0.5 map texels from i),
+on the map's texels from i + first[p] */
+static void splat_cubic_weights(long scale, long first[16], float weights[16][4])
+{
+	long phase;
+
+	for (phase = 0; phase < scale && phase < 16; phase++)
+	{
+		double position = ((double)phase + 0.5) / (double)scale - 0.5, f = position - floor(position);
+
+		first[phase] = (long)floor(position) - 1;
+		weights[phase][0] = (float)(((-0.5 * f + 1.0) * f - 0.5) * f);
+		weights[phase][1] = (float)((1.5 * f - 2.5) * f * f + 1.0);
+		weights[phase][2] = (float)(((-1.5 * f + 2.0) * f + 0.5) * f);
+		weights[phase][3] = (float)((0.5 * f - 0.5) * f * f);
+	}
+}
+
+/* `in` (width x height) upscaled `scale` times into `out`, bicubic,
+through `work` (width x height x scale), held within each texel's 3 x 3
+neighbors' range (planes of width x height: `low`, `high`, `small`) */
+static void splat_upscale(const float *in, float *out, float *work, float *low, float *high, float *small, long width,
+	long height, long scale)
+{
+	long wide = width * scale, tall = height * scale, first[16], x, y;
+	float weights[16][4];
+	int k;
+
+	splat_cubic_weights(scale, first, weights);
+	for (y = 0; y < height; y++)
+		for (x = 0; x < wide; x++)
+		{
+			long phase = x % scale, i = x / scale;
+			float total = 0.0f;
+
+			for (k = 0; k < 4; k++)
+				total += weights[phase][k] * in[y * width + clamp_index(i + first[phase] + k, width)];
+			work[y * wide + x] = total;
+		}
+	for (y = 0; y < tall; y++)
+	{
+		long phase = y % scale, i = y / scale;
+
+		for (x = 0; x < wide; x++)
+		{
+			float total = 0.0f;
+
+			for (k = 0; k < 4; k++)
+				total += weights[phase][k] * work[clamp_index(i + first[phase] + k, height) * wide + x];
+			out[y * wide + x] = total;
+		}
+	}
+	splat_extreme(in, low, small, width, height, 1, 0);
+	splat_extreme(in, high, small, width, height, 1, 1);
+	for (y = 0; y < tall; y++)
+		for (x = 0; x < wide; x++)
+		{
+			long source = (y / scale) * width + x / scale;
+
+			out[y * wide + x] = clampf(out[y * wide + x], low[source], high[source]);
+		}
+}
+
+/* the DXT blocks and banding smoothed: within about `step` of the
+neighborhood's smooth value, that; beyond it (the paint's detail) the
+texel as it is; never moved more than a step (`smooth`, `work`: planes) */
+static void splat_deblock(float *plane, float *smooth, float *work, long width, long height, long scale, float step)
+{
+	long index;
+
+	splat_blur(plane, smooth, work, width, height, SPLAT_DEBLOCK_SIGMA * (float)scale);
+	for (index = 0; index < width * height; index++)
+	{
+		float value = plane[index];
+		float keep = smoothstep(fabsf(value - smooth[index]) / step, 1.0f, 2.5f);
+
+		plane[index] = clampf(smooth[index] * (1.0f - keep) + value * keep, value - step, value + step);
+	}
+}
+
+/* the edges pushed toward their neighborhood's least or most, as far as
+its contrast says it is an edge (a soft shock filter; `low`, `high`,
+`work`: planes) */
+static void splat_crisp(float *plane, float *low, float *high, float *work, long width, long height, long scale)
+{
+	long index;
+
+	splat_extreme(plane, low, work, width, height, SPLAT_EDGE_REACH * scale, 0);
+	splat_extreme(plane, high, work, width, height, SPLAT_EDGE_REACH * scale, 1);
+	for (index = 0; index < width * height; index++)
+	{
+		float value = plane[index], contrast = high[index] - low[index];
+		float t = (value - low[index]) / (contrast > 1e-6f ? contrast : 1e-6f);
+		float target = low[index] + contrast * smoothstep(t, 0.25f, 0.75f);
+		float edge = smoothstep(contrast, SPLAT_EDGE_LOW, SPLAT_EDGE_HIGH) * SPLAT_EDGE_STRENGTH;
+
+		plane[index] = value + (target - value) * edge;
+	}
+}
+
+/* A cell of a page (its planes: red, green, blue and alpha, `width` x
+`height`, 0 to 1; changed: a particle's color bled under its alpha)
+redrawn at `scale` into `out` (four planes of width x height x scale x
+scale): 0 if out of memory. A decal's alpha is the map's (each texel
+scale x scale), a particle's redrawn as its color is. */
+static int splat_cell(float *in[4], long width, long height, long scale, int decal, float *out[4])
+{
+	enum { _smooth, _low, _high, _work, _small_low, _small_high, _small_work, _small_product, _small_blurred, _planes };
+	long wide = width * scale, tall = height * scale, count = wide * tall, small = width * height, index;
+	float *plane[_planes] = { 0 };
+	int c, made = 0;
+
+	for (index = 0; index < _planes; index++)
+		if (!(plane[index] = malloc((size_t)(index < _small_low ? count : small) * sizeof(float))))
+			goto finished;
+
+	/* a particle's color where its alpha is 0: its neighbors', weighted by
+	their alpha (the map's where none has any) */
+	if (!decal)
+	{
+		float *weight = plane[_small_low];
+
+		splat_blur(in[3], weight, plane[_small_work], width, height, SPLAT_BLEED_SIGMA);
+		for (c = 0; c < 3; c++)
+		{
+			for (index = 0; index < small; index++)
+				plane[_small_product][index] = in[c][index] * in[3][index];
+			splat_blur(plane[_small_product], plane[_small_blurred], plane[_small_work], width, height, SPLAT_BLEED_SIGMA);
+			for (index = 0; index < small; index++)
+				if (in[3][index] <= 0.0f && weight[index] > 1e-4f)
+					in[c][index] = plane[_small_blurred][index] / (weight[index] > 1e-4f ? weight[index] : 1e-4f);
+		}
+	}
+
+	/* each plane upscaled, deblocked and its edges made crisp */
+	for (c = 0; c < 4; c++)
+	{
+		if (c == 3 && decal)
+		{
+			long x, y;
+
+			for (y = 0; y < tall; y++)
+				for (x = 0; x < wide; x++)
+					out[3][y * wide + x] = in[3][(y / scale) * width + x / scale];
+			continue;
+		}
+		splat_upscale(in[c], out[c], plane[_work], plane[_small_low], plane[_small_high], plane[_small_work], width, height,
+			scale);
+		splat_deblock(out[c], plane[_smooth], plane[_work], wide, tall, scale, c == 3 ? SPLAT_ALPHA_STEP : SPLAT_COLOR_STEP);
+		splat_crisp(out[c], plane[_low], plane[_high], plane[_work], wide, tall, scale);
+	}
+	for (c = 0; c < 4; c++)
+		for (index = 0; index < count; index++)
+			out[c][index] = clampf(out[c][index], 0.0f, 1.0f);
+
+	/* the map's color: each channel's mean (weighted by the alpha, a
+	particle's), moved toward white or black, whichever it is off from */
+	{
+		double weight_in = 0.0, weight_out = 0.0;
+
+		for (index = 0; index < small; index++)
+			weight_in += decal ? 1.0 : (double)in[3][index];
+		for (index = 0; index < count; index++)
+			weight_out += decal ? 1.0 : (double)out[3][index];
+		for (c = 0; c < 3 && weight_in > 0.0 && weight_out > 0.0; c++)
+		{
+			double stock = 0.0, drawn = 0.0;
+
+			for (index = 0; index < small; index++)
+				stock += (double)in[c][index] * (decal ? 1.0 : (double)in[3][index]);
+			for (index = 0; index < count; index++)
+				drawn += (double)out[c][index] * (decal ? 1.0 : (double)out[3][index]);
+			stock /= weight_in;
+			drawn /= weight_out;
+			if (drawn < stock)
+			{
+				double factor = (1.0 - stock) / (1.0 - drawn > 1e-6 ? 1.0 - drawn : 1e-6);
+
+				for (index = 0; index < count; index++)
+					out[c][index] = (float)(1.0 - (1.0 - (double)out[c][index]) * factor);
+			}
+			else if (drawn > stock)
+			{
+				double factor = stock / drawn;
+
+				for (index = 0; index < count; index++)
+					out[c][index] = (float)((double)out[c][index] * factor);
+			}
+		}
+	}
+	made = 1;
+
+finished:
+	for (index = 0; index < _planes; index++)
+		free(plane[index]);
+	return made;
+}
+
+/* a page's DXT1 or DXT3 blocks (row by row) decoded into four planes
+(red, green, blue, alpha: 0 to 1), as hud_assets.py's decode_dxt */
+static void dxt_decode(const unsigned char *pixels, int dxt3, long side, float *planes[4])
+{
+	long blocks = side / 4, block;
+	int block_size = dxt3 ? 16 : 8;
+
+	for (block = 0; block < blocks * blocks; block++)
+	{
+		const unsigned char *chunk = pixels + block * block_size, *color = chunk + block_size - 8;
+		unsigned int c0 = half_le(color), c1 = half_le(color + 2), palette[4][4], i, k;
+		unsigned long bits = word_le(color + 4);
+		long left = block % blocks * 4, top = block / blocks * 4;
+
+		for (k = 0; k < 2; k++)
+		{
+			unsigned int value = k ? c1 : c0;
+
+			palette[k][0] = ((value >> 11) & 31) * 255 / 31;
+			palette[k][1] = ((value >> 5) & 63) * 255 / 63;
+			palette[k][2] = (value & 31) * 255 / 31;
+			palette[k][3] = 255;
+		}
+		for (k = 0; k < 3; k++)
+		{
+			if (dxt3 || c0 > c1)
+			{
+				palette[2][k] = (2 * palette[0][k] + palette[1][k]) / 3;
+				palette[3][k] = (palette[0][k] + 2 * palette[1][k]) / 3;
+			}
+			else
+			{
+				palette[2][k] = (palette[0][k] + palette[1][k]) / 2;
+				palette[3][k] = 0;
+			}
+		}
+		palette[2][3] = 255;
+		palette[3][3] = dxt3 || c0 > c1 ? 255 : 0;
+		for (i = 0; i < 16; i++)
+		{
+			const unsigned int *texel = palette[(bits >> (2 * i)) & 3];
+			long at = (top + (long)(i / 4)) * side + left + (long)(i % 4);
+			unsigned int alpha = dxt3 ? ((chunk[i / 2] >> (4 * (i & 1))) & 15) * 17 : texel[3];
+
+			for (k = 0; k < 3; k++)
+				planes[k][at] = (float)texel[k] / 255.0f;
+			planes[3][at] = (float)alpha / 255.0f;
+		}
+	}
+}
+
+/* a float from the tags (little-endian) */
+static float float_le(const unsigned char *bytes)
+{
+	union
+	{
+		unsigned int word;
+		float value;
+	} cast;
+
+	cast.word = (unsigned int)word_le(bytes);
+	return cast.value;
+}
+
+/* each of the page's sprites' boxes, in texels, once each (as the script's
+sprite_cells): their count */
+static long splat_cells(const struct effect_source *source, long page, long side, struct box *cells, long most)
+{
+	long sequence, count = 0;
+
+	for (sequence = 0; sequence < source->sequence_count; sequence++)
+	{
+		const unsigned char *in = source->sequences + sequence * BITMAP_SEQUENCE_SIZE;
+		const unsigned char *sprites = tags_at(source, word_le(in + 0x38), word_le(in + 0x34) * BITMAP_SPRITE_SIZE);
+		unsigned long sprite;
+
+		for (sprite = 0; sprites && sprite < word_le(in + 0x34); sprite++)
+		{
+			const unsigned char *at = sprites + sprite * BITMAP_SPRITE_SIZE;
+			struct box cell;
+			long index;
+
+			if ((long)(short)half_le(at) != page)
+				continue;
+			cell.left = (long)floor((double)float_le(at + 0x08) * (double)side + 1e-3);
+			cell.right = (long)ceil((double)float_le(at + 0x0C) * (double)side - 1e-3);
+			cell.top = (long)floor((double)float_le(at + 0x10) * (double)side + 1e-3);
+			cell.bottom = (long)ceil((double)float_le(at + 0x14) * (double)side - 1e-3);
+			cell.left = cell.left < 0 ? 0 : cell.left;
+			cell.top = cell.top < 0 ? 0 : cell.top;
+			cell.right = cell.right > side ? side : cell.right;
+			cell.bottom = cell.bottom > side ? side : cell.bottom;
+			if (cell.right <= cell.left || cell.bottom <= cell.top)
+				continue;
+			for (index = 0; index < count; index++)
+				if (!memcmp(&cells[index], &cell, sizeof(cell)))
+					break;
+			if (index == count && count < most)
+				cells[count++] = cell;
+		}
+	}
+	return count;
+}
+
+/* The page's levels as the tag file has them (A8R8G8B8), redrawn from its
+stock pixels (DXT1 or DXT3): the page whole, then each sprite's cell on its
+own over it; NULL if out of memory. *size: their bytes, *levels: how many. */
+static unsigned char *splat_page(const struct effect_source *source, long page, long scale, long smallest,
+	unsigned long *size, long *levels)
+{
+	const unsigned char *data = source->pages + page * BITMAP_DATA_SIZE;
+	long side = (long)half_le(data + 4), big = side * scale, count = big * big, cell_count, index, level_count = 1;
+	long level_side;
+	int decal = half_le(data + 0xC) == BITMAP_FORMAT_DXT1, c;
+	float *stock[4] = { 0 }, *drawn[4] = { 0 }, *cell_in[4] = { 0 }, *cell_out[4] = { 0 };
+	struct box cells[MAXIMUM_CELLS + 1];
+	unsigned char *bytes = NULL;
+	unsigned long total = 0;
+
+	*size = 0;
+	*levels = 0;
+	for (level_side = big; level_side > smallest && level_side > 1; level_side /= 2)
+		level_count++;
+	for (index = 0, level_side = big; index < level_count; index++, level_side /= 2)
+		total += (unsigned long)level_side * level_side * 4;
+	for (c = 0; c < 4; c++)
+	{
+		stock[c] = malloc((size_t)side * side * sizeof(float));
+		drawn[c] = malloc((size_t)count * sizeof(float));
+		cell_in[c] = malloc((size_t)side * side * sizeof(float));
+		cell_out[c] = malloc((size_t)count * sizeof(float));
+		if (!stock[c] || !drawn[c] || !cell_in[c] || !cell_out[c])
+			goto finished;
+	}
+	if (!(bytes = malloc(total)))
+		goto finished;
+	dxt_decode(source->pixels[page], !decal, side, stock);
+
+	/* the page whole (for the texels between the cells), then each cell */
+	cells[0].left = cells[0].top = 0;
+	cells[0].right = cells[0].bottom = side;
+	cell_count = 1 + splat_cells(source, page, side, cells + 1, MAXIMUM_CELLS);
+	for (index = 0; index < cell_count; index++)
+	{
+		const struct box *cell = &cells[index];
+		long width = cell->right - cell->left, height = cell->bottom - cell->top, x, y;
+
+		for (c = 0; c < 4; c++)
+			for (y = 0; y < height; y++)
+				memcpy(cell_in[c] + y * width, stock[c] + (cell->top + y) * side + cell->left, (size_t)width * sizeof(float));
+		if (!splat_cell(cell_in, width, height, scale, decal, index ? cell_out : drawn))
+			goto finished;
+		if (!index)
+			continue;
+		for (c = 0; c < 4; c++)
+			for (y = 0; y < height * scale; y++)
+				for (x = 0; x < width * scale; x++)
+					drawn[c][(cell->top * scale + y) * big + cell->left * scale + x] = cell_out[c][y * width * scale + x];
+	}
+
+	/* the levels: each a 2 x 2 box of the last (as floats), each rounded; a
+	decal's alpha 0 or 1 at each */
+	{
+		float *channels[4] = { drawn[2], drawn[1], drawn[0], drawn[3] };
+		unsigned char *level = bytes;
+		long level_index, x, y;
+
+		level_side = big;
+		for (level_index = 0; level_index < level_count; level_index++)
+		{
+			if (level_index)
+			{
+				long next = level_side / 2;
+
+				for (c = 0; c < 4; c++)
+					for (y = 0; y < next; y++)
+						for (x = 0; x < next; x++)
+						{
+							const float *last = channels[c];
+
+							channels[c][y * next + x] = 0.25f * (last[(2 * y) * level_side + 2 * x] +
+								last[(2 * y) * level_side + 2 * x + 1] + last[(2 * y + 1) * level_side + 2 * x] +
+								last[(2 * y + 1) * level_side + 2 * x + 1]);
+						}
+				level_side = next;
+			}
+			for (index = 0; index < level_side * level_side; index++)
+				for (c = 0; c < 4; c++)
+				{
+					float value = channels[c][index];
+
+					if (c == 3 && decal)
+						value = value >= 0.5f ? 1.0f : 0.0f;
+					*level++ = round_byte(clampf(value, 0.0f, 1.0f) * 255.0f);
+				}
+		}
+	}
+	*size = total;
+	*levels = level_count;
+
+finished:
+	for (c = 0; c < 4; c++)
+	{
+		free(stock[c]);
+		free(drawn[c]);
+		free(cell_in[c]);
+		free(cell_out[c]);
+	}
+	if (!*levels)
+	{
+		free(bytes);
+		bytes = NULL;
+	}
+	return bytes;
+}
+
 /* ---------- the tag file */
 
 /* The effect made from its source and written to the cache, with its note:
@@ -878,8 +1409,16 @@ static int effect_write(long effect, const struct effect_source *source)
 		const unsigned char *data = source->pages + page * BITMAP_DATA_SIZE;
 		long side = (long)half_le(data + 4);
 
-		levels[page] = flash_page(source->pixels[page], side, (half_le(data + 0xE) & BITMAP_LINEAR_FLAG) != 0,
-			(long)embedded->scale, (long)embedded->smallest, &level_sizes[page], &level_counts[page]);
+		if (embedded->recipe == _hd_effect_recipe_splat)
+		{
+			levels[page] = splat_page(source, page, (long)embedded->scale, (long)embedded->smallest, &level_sizes[page],
+				&level_counts[page]);
+		}
+		else
+		{
+			levels[page] = flash_page(source->pixels[page], side, (half_le(data + 0xE) & BITMAP_LINEAR_FLAG) != 0,
+				(long)embedded->scale, (long)embedded->smallest, &level_sizes[page], &level_counts[page]);
+		}
 		if (!levels[page])
 			goto finished;
 		pixels_size += level_sizes[page];
@@ -978,54 +1517,183 @@ finished:
 	return written;
 }
 
-/* the effect made from the first of its maps that has its stock bitmap */
-static int effect_make(long effect, const char *map_paths)
+/* the effects being made: which still are, and which of their maps were tried */
+struct build_state
 {
-	struct timespec began, ended;
-	const char *path;
+	int pending[MAXIMUM_EFFECTS];
+	unsigned char tried[MAXIMUM_EFFECTS][MAXIMUM_EFFECT_MAPS];
+	long total, done;
+};
 
-	clock_gettime(CLOCK_MONOTONIC, &began);
-	for (path = map_paths; path && *path; path += strlen(path) + 1)
+/* the effect's `index`th map's path, or NULL past its last */
+static const char *map_path_at(long effect, long index)
+{
+	const char *path = hd_effects.map_paths[effect];
+
+	for (; path && *path && index > 0; index--)
+		path += strlen(path) + 1;
+	return path && *path ? path : NULL;
+}
+
+/* (with no lock) the effect made or not, and the progress */
+static void effect_finish(struct build_state *state, long effect, int made)
+{
+	pthread_mutex_lock(&hd_effects.lock);
+	state->pending[effect] = 0;
+	hd_effects.queued[effect] = 0;
+	hd_effects.checked[effect] = made;
+	hd_effects.valid[effect] = made;
+	hd_effects.failed[effect] = !made;
+	hd_effects.progress = (float)++state->done / (float)(state->total ? state->total : 1);
+	pthread_mutex_unlock(&hd_effects.lock);
+}
+
+static double seconds_since(const struct timespec *began)
+{
+	struct timespec now;
+
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	return (double)(now.tv_sec - began->tv_sec) + (double)(now.tv_nsec - began->tv_nsec) / 1e9;
+}
+
+/* the effects of a map made on several threads */
+struct build_work
+{
+	struct build_state *state;
+	struct effect_source *sources;
+	const char *path;
+	long effects[MAXIMUM_EFFECTS];
+	long count, next;
+};
+
+static void *build_worker(void *context)
+{
+	struct build_work *work = context;
+
+	for (;;)
 	{
-		struct effect_source source;
+		struct timespec began;
+		long effect;
 		int made;
 
-		if (!source_read(path, effect, &source))
-			continue;
-		made = effect_write(effect, &source);
-		source_free(&source);
-		clock_gettime(CLOCK_MONOTONIC, &ended);
+		pthread_mutex_lock(&hd_effects.lock);
+		effect = work->next < work->count ? work->effects[work->next++] : -1;
+		pthread_mutex_unlock(&hd_effects.lock);
+		if (effect < 0)
+			return NULL;
+		clock_gettime(CLOCK_MONOTONIC, &began);
+		made = effect_write(effect, &work->sources[effect]);
 		platform_log("hd effects: %s %s from %s in %.2f s", hd_effects_embedded[effect].name,
-			made ? "made" : "could not be written", path,
-			(double)(ended.tv_sec - began.tv_sec) + (double)(ended.tv_nsec - began.tv_nsec) / 1e9);
-		return made;
+			made ? "made" : "could not be written", work->path, seconds_since(&began));
+		effect_finish(work->state, effect, made);
 	}
-	platform_log("hd effects: %s not made: no map of it has its stock bitmap", hd_effects_embedded[effect].name);
-	return 0;
+}
+
+/* Every effect still wanted that lists the map at `path` and has not tried
+it made from it, if the map has its stock bitmap: the map's tags read
+once, and all their pages in one more pass (a campaign map is over 300 MB
+inflated). */
+static void map_batch_make(struct build_state *state, const char *path)
+{
+	static struct effect_source sources[MAXIMUM_EFFECTS];
+	static struct xbox_map_range ranges[MAXIMUM_EFFECTS * MAXIMUM_PAGES];
+	unsigned char *tags;
+	unsigned long tags_size = 0;
+	int found[MAXIMUM_EFFECTS] = { 0 }, range_count = 0, read = 0;
+	long effect, index;
+	struct timespec began;
+
+	clock_gettime(CLOCK_MONOTONIC, &began);
+	tags = xbox_map_tags_read(path, &tags_size);
+	for (effect = 0; effect < effect_count(); effect++)
+	{
+		const char *other;
+
+		if (!state->pending[effect])
+			continue;
+		for (index = 0; (other = map_path_at(effect, index)) != NULL && index < MAXIMUM_EFFECT_MAPS; index++)
+			if (!state->tried[effect][index] && !strcmp(other, path))
+				break;
+		if (!other || index >= MAXIMUM_EFFECT_MAPS)
+			continue;
+		state->tried[effect][index] = 1;
+		if (tags && (found[effect] = source_find(tags, tags_size, effect, &sources[effect], ranges + range_count)) > 0)
+			range_count += found[effect];
+	}
+	if (range_count)
+		read = xbox_map_ranges_read(path, ranges, range_count);
+	platform_log("hd effects: %s read for %d pages in %.2f s", path, range_count, seconds_since(&began));
+
+	/* those with the stock bitmap made, on up to BUILD_WORKERS threads */
+	{
+		struct build_work work;
+		pthread_t workers[BUILD_WORKERS];
+		int started = 0;
+
+		memset(&work, 0, sizeof(work));
+		work.state = state;
+		work.sources = sources;
+		work.path = path;
+		for (effect = 0; effect < effect_count(); effect++)
+			if (found[effect] && read && source_stock(path, effect, &sources[effect]))
+				work.effects[work.count++] = effect;
+		while (started < BUILD_WORKERS - 1 && started < work.count - 1 &&
+			pthread_create(&workers[started], NULL, build_worker, &work) == 0)
+		{
+			started++;
+		}
+		build_worker(&work);
+		while (started > 0)
+			pthread_join(workers[--started], NULL);
+	}
+	for (effect = 0; effect < effect_count(); effect++)
+		if (found[effect])
+			source_free(&sources[effect]);
+	free(tags);
 }
 
 static void *build_thread(void *context)
 {
-	long effect, total = 0, done = 0;
+	static struct build_state state;
+	long effect;
+	struct timespec began;
 
 	(void)context;
-	for (effect = 0; effect < effect_count(); effect++)
-		total += hd_effects.queued[effect];
+	clock_gettime(CLOCK_MONOTONIC, &began);
+	memset(&state, 0, sizeof(state));
 	for (effect = 0; effect < effect_count(); effect++)
 	{
-		int made;
-
-		if (!hd_effects.queued[effect])
-			continue;
-		made = effect_make(effect, hd_effects.map_paths[effect]);
-		pthread_mutex_lock(&hd_effects.lock);
-		hd_effects.queued[effect] = 0;
-		hd_effects.checked[effect] = made;
-		hd_effects.valid[effect] = made;
-		hd_effects.failed[effect] = !made;
-		hd_effects.progress = (float)++done / (float)(total ? total : 1);
-		pthread_mutex_unlock(&hd_effects.lock);
+		state.pending[effect] = hd_effects.queued[effect];
+		state.total += state.pending[effect];
 	}
+	for (;;)
+	{
+		const char *path = NULL;
+
+		/* the next map: the first not tried of the first effect still wanted
+		(one with none left is not made) */
+		for (effect = 0; effect < effect_count() && !path; effect++)
+		{
+			long index;
+
+			if (!state.pending[effect])
+				continue;
+			for (index = 0; index < MAXIMUM_EFFECT_MAPS && (path = map_path_at(effect, index)) != NULL; index++)
+				if (!state.tried[effect][index])
+					break;
+			if (index >= MAXIMUM_EFFECT_MAPS)
+				path = NULL;
+			if (!path)
+			{
+				platform_log("hd effects: %s not made: no map of it has its stock bitmap", hd_effects_embedded[effect].name);
+				effect_finish(&state, effect, 0);
+			}
+		}
+		if (!path)
+			break;
+		map_batch_make(&state, path);
+	}
+	platform_log("hd effects: %ld done in %.2f s", state.done, seconds_since(&began));
 	pthread_mutex_lock(&hd_effects.lock);
 	hd_effects.made++;
 	hd_effects.running = 0;

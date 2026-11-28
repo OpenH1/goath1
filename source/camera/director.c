@@ -1311,6 +1311,19 @@ ran for it, and a cutscene's camera never left the world's origin: its co-op
 clients, shown the host's camera (network_coop.c), watched that. The first
 observer films the scripts' camera for it, as a host's first local player's
 does, while they have the camera (camera_control) */
+boolean director_scripted_camera_running(
+	void)
+{
+	short local_player_index = local_player_get_next(NONE);
+
+	if (local_player_index != NONE && local_player_get_player_index(local_player_index) != NONE)
+	{
+		return director_get(local_player_index)->camera_proc ==
+			(director_camera_update_proc)scripted_camera_update;
+	}
+	return director_unattended_scripted_camera(0);
+}
+
 boolean director_unattended_scripted_camera(
 	short local_player_index)
 {

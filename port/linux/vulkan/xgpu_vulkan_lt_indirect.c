@@ -65,6 +65,9 @@ Render thread alone.
 #define INDIRECT_COVERAGE 2097152
 #define INDIRECT_CACHE_ON 4194304
 #define INDIRECT_BOUNCE_HISTORY 8388608
+/* (with SPECULAR_RAY, HALO_LT_SHINE_VIEW=1, checking: the lights' shine
+alone, no ray: lt/indirect.glsl's SHINE_ONLY) */
+#define INDIRECT_SHINE_ONLY 16777216
 /* where its parameters are in the uniforms (lt/e1.frag's indirect[4]) */
 #define INDIRECT_PARAMS_OFFSET 1536
 /* the cache's slots (a texel each, RGBA32F: 24 MB; lt/indirect_cache.glsl's
@@ -85,7 +88,7 @@ _Static_assert(INDIRECT_PARAMS_OFFSET + 64 <= 192 * 16, "the parameters within t
 
 static struct
 {
-	int settings_read, indirect, reflections, cache, only, made, failed, said;
+	int settings_read, indirect, reflections, cache, only, made, failed, said, shine_only;
 	unsigned generation;
 	VkShaderModule vertex, fragment;
 	VkSampler sampler;
@@ -148,6 +151,7 @@ static void indirect_settings(void)
 	indirect.cache = !given || strcmp(given, "nocache");
 	given = getenv("HALO_LT_SPECULAR");
 	indirect.reflections = indirect.indirect && (!given || strcmp(given, "0"));
+	indirect.shine_only = getenv("HALO_LT_SHINE_VIEW") && atoi(getenv("HALO_LT_SHINE_VIEW")) == 1;
 	if (getenv("HALO_LT_INDIRECT") || getenv("HALO_LT_SPECULAR"))
 		host_logf(HOST_LOG_WARN, "vulkan: light transport: indirect %d (only %d, cache %d), reflections %d (checking)",
 			indirect.indirect, indirect.only, indirect.cache, indirect.reflections);
@@ -436,7 +440,8 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 		textures[5] = frame->direct;
 		if (indirect.reflections)
 			indirect_pass(indirect.specular_raw, frame->rectangle, frame, INDIRECT_SPECULAR_RAY |
-				(reset ? INDIRECT_RESET : 0), frame->cap, textures, &indirect.half, parameters);
+				(reset ? INDIRECT_RESET : 0) | (indirect.shine_only ? INDIRECT_SHINE_ONLY : 0), frame->cap, textures,
+				&indirect.half, parameters);
 	}
 	if (indirect.cache)
 	{

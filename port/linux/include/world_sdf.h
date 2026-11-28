@@ -335,6 +335,10 @@ struct world_sdf_header const *world_sdf_current(void);
 placement that the drawn field and its pages hold (the window's proxies
 put it apart: the lightmap pass reads its pages, the objects the field) */
 int world_sdf_scenery_baked(long definition, float const position[3]);
+/* whether it is a static scenery placement of the level whatever the
+field (none with display.ambient_occlusion off): one the level's lightmaps
+were baked with, its shadows in them */
+int world_sdf_scenery_lightmapped(long definition, float const position[3]);
 /* whether it is one that the current BSP's field will hold while the
 field is on its way (being looked for, baked or uploaded): the window
 leaves it out until the field is drawn, which it then fades in with. As

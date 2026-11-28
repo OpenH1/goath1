@@ -2,7 +2,8 @@
 HD_EFFECTS.H
 
 The HD effects (display.hd_effects): stock effect bitmaps (the Assault
-Rifle's first-person muzzle flash, for now) made sharper from the player's
+Rifle's first-person muzzle flash, and the blood's decals and particles)
+made sharper from the player's
 own maps, once, and drawn in the maps' bitmaps' place as a mod's bitmaps are
 (port/linux/game/mod_bitmaps.c), so that their sprites, sizes and HUD scale
 work as a mod's do.
@@ -13,7 +14,8 @@ the stock bitmap's pixels (every page's, as the Xbox maps store them), the
 recipe that redraws it and at what scale, and the stock maps it can be read
 from. hd_effects.c reads the bitmap out of the first of those maps the
 player has whose bitmap has that CRC, redraws it (the recipe: for the
-flash, tools/hd_muzzle_flash.py's math, in C) and keeps it, a Halo PC
+flash, tools/hd_muzzle_flash.py's math, in C; for the blood,
+tools/hd_blood.py's) and keeps it, a Halo PC
 bitmap tag file, in the data folder's hd_effects, beside the menus'
 pictures (menu_pictures.c), with a note of what it was made from. It is
 made again only when the note is not this build's: its CRC, scale or recipe
@@ -39,6 +41,10 @@ enum
 	upscaled, its banding smoothed, its cores sharpened and its glow
 	softened, each sprite as bright as the map's */
 	_hd_effect_recipe_flash = 1,
+	/* tools/hd_blood.py: DXT1 decal and DXT3 particle sheets of painted
+	splats, each sprite's cell upscaled on its own, deblocked and its edges
+	made crisp, its mean color the map's; a decal's alpha the map's */
+	_hd_effect_recipe_splat = 2,
 };
 
 /* an effect (effects.json): the name of its file in the cache, the bitmap
@@ -82,8 +88,9 @@ CRC-32 of the stock pixels it is made for: 0 when it is off, or there is
 none of that tag, or it is not made */
 int hd_effects_bitmap_file(const char *tag, char *path, unsigned long size, unsigned int *stock_crc);
 
-/* the recipe's version, in each note: a change of the recipe's math makes
-every effect again */
+/* the recipes' versions, in each note: a change of a recipe's math makes
+its effects again (the flash's, then the splat's) */
 #define HD_EFFECTS_RECIPE_VERSION 1
+#define HD_EFFECTS_SPLAT_VERSION 1
 
 #endif

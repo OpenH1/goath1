@@ -90,7 +90,7 @@ dynamic_power_scales.point_own_projectile) */
 _Static_assert(sizeof(struct xgpu_world_ao_pass) <= LT_PARAMS_OFFSET, "the pass's uniforms before the parameters");
 _Static_assert(XGPU_DYNAMIC_LIGHTS_GRID_Z == 16 && XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE == 80 &&
 	XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_FALLOFF == 32 && XGPU_WORLD_CASCADES == 4 && XGPU_WORLD_AO_INPUT_PRESENT == 0x400u &&
-	XGPU_SPIRV_RT_MASK_AO == 0x03u && XGPU_SPIRV_RT_HIT_TEXTURES == 512u, "lt/e1.frag's constants");
+	XGPU_SPIRV_RT_MASK_AO == 0x13u && XGPU_SPIRV_RT_HIT_TEXTURES == 512u, "lt/e1.frag's constants");
 
 /* lt/e1.frag's, std140 */
 struct lt_params

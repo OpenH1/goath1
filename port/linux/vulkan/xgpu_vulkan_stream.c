@@ -2829,7 +2829,10 @@ static int draw_pipeline(const struct draw_input *input, int apart)
 	sets) */
 	if (entry->rt_reflection)
 	{
-		(void)xgpu_vulkan_rt_build();
+		/* (with the light-transport pass on, the scene its pass built this
+		frame, not built again: below) */
+		if (!xgpu_vulkan_lt_mode())
+			(void)xgpu_vulkan_rt_build();
 		draw.ambient_occlusion = 1;
 	}
 	/* (the light-transport pass on: a draw lit by the dynamic lights reads

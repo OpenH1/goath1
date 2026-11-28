@@ -2169,6 +2169,9 @@ struct pixel_state
 	roughness and metalness (floats; 0 where there is no such map) */
 	unsigned int normal_map, orm_map;
 	unsigned int vertex_normal, shaded_normal, material_occlusion, roughness, metalness;
+	/* (with the one light model: the ORM map's alpha, the MCC import's
+	emissive, 0 to 1: lit_emissive) */
+	unsigned int material_emissive;
 	/* (the unit vector from the pixel to the eye, in the world) */
 	unsigned int to_eye;
 	/* display.shadows "ray_traced": the dynamic lights' shadows' mask, read
@@ -2186,6 +2189,9 @@ struct pixel_state
 	the pass's lights left out of the classic sum */
 	BOOL lt_forward;
 	unsigned int lt_table;
+	/* the one light model's shine (lt_ggx): its sum (a vec3 variable, 0
+	none), the to-eye vector and the material's alpha it is found by */
+	unsigned int lt_spec, lt_spec_v, lt_spec_alpha;
 };
 
 /* display.rt_bounce (below) */
@@ -2194,6 +2200,7 @@ static unsigned int rt_bounce_add(struct module *m, struct pixel_state *state, u
 /* HALO_LT_E1 (port/linux/vulkan/xgpu_vulkan_lt.h, below) */
 static int lt_e1_on(void);
 static int lt_light_model(void);
+static int lt_shine_view(void);
 /* the light-transport pass (port/linux/vulkan/xgpu_vulkan_lt.h; HALO_LT_E1
 or display.ray_traced_lighting) on for the shader being made: its options'
 light_transport (xgpu_spirv_pixel_shader sets it) */
@@ -2205,10 +2212,13 @@ static unsigned int lt_e1_add(struct module *m, struct pixel_state *state, unsig
 	unsigned int p, unsigned int n);
 static unsigned int lt_reflection_texel(struct module *m, struct pixel_state *state, unsigned int cube);
 static BOOL lt_reflection_traced(const struct pixel_state *state);
+static BOOL lt_reflection_inline(const struct pixel_state *state);
 static void lt_table_declare(struct module *m, struct pixel_state *state);
 static unsigned int lt_forward_skips(struct module *m, struct pixel_state *state, unsigned int light);
 static unsigned int lt_forward_add(struct module *m, struct pixel_state *state, unsigned int lit, unsigned int tint,
 	unsigned int p, unsigned int n, unsigned int shaded);
+static unsigned int lt_forward_light(struct module *m, struct pixel_state *state, unsigned int p, unsigned int n,
+	unsigned int shaded, BOOL environment);
 
 static unsigned int pixel_input(struct module *m, struct pixel_state *state, unsigned int variable_id, unsigned int type)
 {
@@ -2481,6 +2491,15 @@ the scene's light: a metal's black diffuse would read as unlit). */
 #define MATERIAL_REFLECTION_BLUR 6.0f
 #define MATERIAL_HIGHLIGHT_ROUGH 0.6f
 #define MATERIAL_METAL_DIFFUSE 0.5f
+/* the one light model's shine on a model without a roughness map (lt_ggx:
+Halo's model cube maps are a soft environment, the shaders' own "glossy"
+look; ~/dev/rt2-realtime-design.md section 10), and the least a map's
+roughness is taken as (a mirror's highlight of a point light is a speck) */
+#define LT_MODEL_ROUGHNESS 0.35f
+/* a glowing part's light (the MCC import's emissive at 1: the ORM map's
+alpha), linear, which the base map's colour then multiplies */
+#define LT_EMISSIVE_LIGHT 1.5f
+#define LT_MODEL_ROUGHEST_SMOOTH 0.08f
 
 static unsigned int dynamic_light(struct module *m, int member, unsigned int index_id);
 
@@ -2530,6 +2549,8 @@ static void material_read(struct module *m, struct pixel_state *state, unsigned 
 		state->material_occlusion = extract(m, texel, 0);
 		state->roughness = extract(m, texel, 1);
 		state->metalness = extract(m, texel, 2);
+		if (lt_light_model())
+			state->material_emissive = extract(m, texel, 3);
 	}
 }
 
@@ -2630,7 +2651,7 @@ static void texture_stage(struct module *m, struct pixel_state *state, int stage
 			state->t[stage] = sample(m, state, stage, xt);
 		/* (display.rt_reflections: the reflection's texel traced along the
 		same vector) */
-		if (stage == 3 && state->rt_reflection && !lt_e1_on())
+		if (stage == 3 && lt_reflection_inline(state))
 			state->t[stage] = rt_reflection_texel(m, state, xyz(m, xt), state->t[stage]);
 		else if (stage == 3 && lt_reflection_traced(state)) /* (HALO_LT_E1: the pass's own) */
 			state->t[stage] = lt_reflection_texel(m, state, state->t[stage]);
@@ -2739,7 +2760,7 @@ static void texture_stage(struct module *m, struct pixel_state *state, int stage
 		state->t[stage] = sample(m, state, stage, vec4_of(m, r, one));
 		/* (display.rt_reflections: the reflection's texel traced along the
 		bump map's reflection) */
-		if (stage == 3 && state->rt_reflection && !lt_e1_on())
+		if (stage == 3 && lt_reflection_inline(state))
 			state->t[stage] = rt_reflection_texel(m, state, r, state->t[stage]);
 		else if (stage == 3 && lt_reflection_traced(state)) /* (HALO_LT_E1: the pass's own) */
 			state->t[stage] = lt_reflection_texel(m, state, state->t[stage]);
@@ -6192,6 +6213,11 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 		state.lt_forward = TRUE;
 		lt_table_declare(&m, &state);
 	}
+	/* (the one light model's shine on a model with a reflection, lt_ggx: the
+	pass's light table read by the pre-pass's models too) */
+	else if (lt_shader_on && program->dynamic_lights == XGPU_DYNAMIC_LIGHTS_MODEL && program->per_pixel_lighting &&
+		program->stages[3].mode == XGPU_TEXTURE_CUBEMAP && !world_inputs && !occluder && !effect)
+		lt_table_declare(&m, &state);
 	if (count_samples)
 	{
 		unsigned int array = type1(&m, OP_TYPE_RUNTIME_ARRAY, m.t_uint), block;
@@ -6364,6 +6390,24 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 		}
 		else
 		{
+			/* (the shine, lt_ggx: a model with a reflection, by its roughness
+			map's roughness, else LT_MODEL_ROUGHNESS) */
+			if (state.lt_table && shine_variable)
+			{
+				unsigned int to_eye = fsub(&m, 3, xyz(&m, dynamic_light(&m, 0, constant_int(&m, 0))), p);
+				unsigned int roughness = state.roughness ? fmax_scalar(&m, 1, state.roughness, LT_MODEL_ROUGHEST_SMOOTH) :
+					constant_float(&m, LT_MODEL_ROUGHNESS);
+
+				state.lt_spec = local(&m, &state.locals, m.t_v3);
+				store(&m, state.lt_spec, constant_splat(&m, 3, 0.0f));
+				state.lt_spec_v = fscale(&m, 3, to_eye, ext1(&m, GLSL_INVERSE_SQRT, m.t_float,
+					fmax_scalar(&m, 1, fdot(&m, to_eye, to_eye), (float)1.0e-12)));
+				state.lt_spec_alpha = fmul(&m, 1, roughness, roughness);
+				/* (a model the pre-pass drew: the pass lit its diffuse light, so
+				only the loop's shine is kept here) */
+				if (!state.lt_forward)
+					(void)lt_forward_light(&m, &state, p, n, shaded, FALSE);
+			}
 			linear_variable = local(&m, &state.locals, m.t_v3);
 			/* (linear_variable: the linear light added past the game's lights'
 			gamma sum, dynamic_light_add's linear; another linear light, a
@@ -6379,10 +6423,20 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 			/* (a forward receiver: the pass's light found here) */
 			added = lt_forward_add(&m, &state, added, 0, p, n, shaded);
 		}
-		/* (a metal's diffuse light darkened: material_read) */
+		/* (a metal's diffuse light darkened: material_read; by half with the
+		one light model too: the first-person gun's reflection is still its
+		cube map, not the scene's light, and a black metal read as unlit) */
 		if (state.metalness)
 			added = fscale(&m, 3, added, fsub(&m, 1, constant_float(&m, 1.0f), fmul(&m, 1, state.metalness,
 				constant_float(&m, MATERIAL_METAL_DIFFUSE))));
+		/* (a glowing part, the MCC import's emissive (the ORM map's alpha,
+		mod_materials.c): with the one light model, as much light again as
+		the base map's colour at full light, LT_EMISSIVE_LIGHT, added after
+		the metal's darkening (a glow is not a reflection)) */
+		if (state.material_emissive)
+			added = ext2(&m, GLSL_POW, m.t_v3, fadd(&m, 3, ext2(&m, GLSL_POW, m.t_v3, fmax_scalar(&m, 3, added, 0.0f),
+				constant_splat(&m, 3, 2.2f)), splat(&m, 3, fmul(&m, 1, state.material_emissive,
+				constant_float(&m, LT_EMISSIVE_LIGHT)))), constant_splat(&m, 3, 1.0f / 2.2f));
 		state.v0 = shuffle(&m, 4, state.v0, added, rgb);
 	}
 	else if (program->per_pixel_lighting)
@@ -6418,6 +6472,19 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 			xyz(&m, state.t[3]), fscale(&m, 3, load(&m, m.t_v3, shine_variable), highlight_scale), FALSE) :
 			dynamic_light_add(&m, &state, xyz(&m, state.t[3]), constant_splat(&m, 3, 0.0f),
 			fscale(&m, 3, load(&m, m.t_v3, shine_variable), highlight_scale), FALSE), rgb);
+	}
+	/* (the one light model's shine, lt_ggx, added to the reflection's texel
+	linearly, as lt_e1_add adds light) */
+	if (state.lt_spec)
+	{
+		static const unsigned int rgb[4] = { 4, 5, 6, 3 };
+		/* (HALO_LT_SHINE_VIEW=1, checking: the reflection's texel the shine
+		alone, the cube map left out) */
+		unsigned int under = lt_shine_view() ? constant_splat(&m, 3, 0.0f) : ext2(&m, GLSL_POW, m.t_v3,
+			fmax_scalar(&m, 3, xyz(&m, state.t[3]), 0.0f), constant_splat(&m, 3, 2.2f));
+
+		state.t[3] = shuffle(&m, 4, state.t[3], ext2(&m, GLSL_POW, m.t_v3, fadd(&m, 3, under,
+			fmax_scalar(&m, 3, load(&m, m.t_v3, state.lt_spec), 0.0f)), constant_splat(&m, 3, 1.0f / 2.2f)), rgb);
 	}
 	/* (a model's material: its reflection by its occlusion, and a metal's
 	tinted by its base map) */
@@ -7146,6 +7213,48 @@ static unsigned int rt_hit_texel(struct module *m, unsigned int slot_word, unsig
 	return op(m, OP_IMAGE_SAMPLE_EXPLICIT_LOD, m->t_v4, 4, operands);
 }
 
+/* the one light model's reflection colour (~/dev/rt2-realtime-design.md
+section 10, "Reflection colour"): a traced reflection is the scene's light,
+and Halo's cube map carries, besides its fake scene, the material's own hue
+(an Elite's armour's blue-violet, the Covenant's metals): its chroma, the
+whole map's mean (its smallest level) over that mean's luminance, tints the
+traced light as a metal's F0 colour would, the luminance left to the scene.
+A grey cube map tints nothing. As GLSL:
+vec3 mean = textureLod(cube, vec3(0, 0, 1), 16.0).rgb;
+return clamp(mean / max(dot(mean, vec3(0.2126, 0.7152, 0.0722)), 1e-3), 0.0, 4.0) */
+static unsigned int lt_reflection_chroma(struct module *m, struct pixel_state *state)
+{
+	unsigned int operands[4], mean;
+
+	operands[0] = texture_load(m, state, 3);
+	operands[1] = constant_vector(m, 3, (const float[]){ 0.0f, 0.0f, 1.0f });
+	operands[2] = IMAGE_OPERANDS_LOD;
+	operands[3] = constant_float(m, 16.0f);
+	mean = xyz(m, op(m, OP_IMAGE_SAMPLE_EXPLICIT_LOD, m->t_v4, 4, operands));
+	return fclamp(m, 3, fdiv(m, 3, mean, splat(m, 3, fmax_scalar(m, 1, fdot(m, mean,
+		constant_vector(m, 3, (const float[]){ 0.2126f, 0.7152f, 0.0722f })), 1.0e-3f))), 0.0f, 4.0f);
+}
+
+/* a model's traced reflection with the one light model (~/dev/rt2-realtime-
+design.md section 10, "Reflection colour"): the cube map's texel at the
+ray's direction scaled by how bright the scene is there against the cube
+map's own mean, at most 4 times, as GLSL:
+vec3 mean = textureLod(cube, vec3(0, 0, 1), 16.0).rgb;
+return texel * clamp(lum(traced) / max(lum(mean), 1e-3), 0.0, 4.0); */
+static unsigned int lt_reflection_lit_cube(struct module *m, struct pixel_state *state, unsigned int traced,
+	unsigned int texel)
+{
+	unsigned int operands[4], mean, weights = constant_vector(m, 3, (const float[]){ 0.2126f, 0.7152f, 0.0722f });
+
+	operands[0] = texture_load(m, state, 3);
+	operands[1] = constant_vector(m, 3, (const float[]){ 0.0f, 0.0f, 1.0f });
+	operands[2] = IMAGE_OPERANDS_LOD;
+	operands[3] = constant_float(m, 16.0f);
+	mean = xyz(m, op(m, OP_IMAGE_SAMPLE_EXPLICIT_LOD, m->t_v4, 4, operands));
+	return fscale(m, 3, texel, fclamp_scalar(m, fdiv(m, 1, fdot(m, traced, weights),
+		fmax_scalar(m, 1, fdot(m, mean, weights), 1.0e-3f)), 0.0f, 4.0f));
+}
+
 static unsigned int rt_reflection_texel(struct module *m, struct pixel_state *state, unsigned int r, unsigned int cube)
 {
 	struct words *locals = &state->locals;
@@ -7266,6 +7375,13 @@ static unsigned int rt_reflection_texel(struct module *m, struct pixel_state *st
 			constant_splat(m, 3, RT_REFLECTION_OBJECT_LIGHT));
 	}
 	color = saturate(m, 3, fmul(m, 3, fmul(m, 3, color, detail), light));
+	/* (the one light model, a model's: Halo's cube map kept as the armour's
+	or paint's own pattern and hue, its brightness the scene's: the cube's
+	texel by the traced light's luminance over the cube's mean's, so an
+	Elite keeps its sheen and darkens where the scene is dark:
+	lt_reflection_lit_cube) */
+	if (lt_e1_on())
+		color = lt_reflection_lit_cube(m, state, color, xyz(m, cube));
 	fade = ext3(m, GLSL_SMOOTH_STEP, m->t_float, constant_float(m, RT_REFLECTION_DISTANCE * RT_REFLECTION_FADE),
 		constant_float(m, RT_REFLECTION_DISTANCE), t);
 	color = ext3(m, GLSL_F_MIX, m->t_v3, color, xyz(m, cube), splat(m, 3, fade));
@@ -9168,6 +9284,17 @@ static unsigned int rt_bounce_add(struct module *m, struct pixel_state *state, u
 	return fadd(m, 3, light, xyz(m, rt_bounce_texel(m, state)));
 }
 
+/* HALO_LT_SHINE_VIEW (the one light model's shine, lt_ggx, alone in the
+reflection's texel: checking), read once */
+static int lt_shine_view(void)
+{
+	static int on = -1;
+
+	if (on < 0)
+		on = getenv("HALO_LT_SHINE_VIEW") && atoi(getenv("HALO_LT_SHINE_VIEW")) == 1;
+	return on;
+}
+
 /* HALO_LT_SUN_CLAMP_VIEW (lt_e1_add), read once */
 static int lt_sun_clamp_view(void)
 {
@@ -9463,11 +9590,49 @@ static unsigned int lt_forward_cookie(struct module *m, unsigned int a, unsigned
 		flashlight_cookie_byte(m, bl.x1, bl.y1), bl.fx), bl.fy);
 }
 
-/* what lt_forward_light reads once a pixel */
+/* what lt_forward_light reads once a pixel; with spec (a vec3 variable, 0
+none), each light's GGX highlight (lt_ggx) summed there as well, by the
+pixel's to-eye vector v and the material's alpha (roughness squared) */
 struct lt_forward_read
 {
 	unsigned int image, rows, p, n, shaded, origin, receiver, sum, eye, first_person;
+	unsigned int spec, v, alpha;
 };
+
+/* ---------- the one light model's shine (~/dev/rt2-realtime-design.md
+section 10): GGX's specular lobe for a light from direction l, as the
+surfaces' reflection texel takes it (Halo's combiners after it supply the
+Fresnel term: the shader's reflection strength, tint and mask), in the
+pass's units (its irradiance is the true one over pi), as GLSL:
+
+vec3 h = normalize(l + v); float nl = max(dot(n, l), 0.0), nv = max(dot(n, v), 1e-4), nh = max(dot(n, h), 0.0);
+float a2 = alpha * alpha, q = nh * nh * (a2 - 1.0) + 1.0;
+float vis = 0.5 / (nl * sqrt(nv * nv * (1.0 - a2) + a2) + nv * sqrt(nl * nl * (1.0 - a2) + a2) + 1e-7);
+return a2 / max(q * q, 1e-12) * vis;     (pi D Vis: Smith's height-correlated visibility)
+
+alpha is widened by the emitter's angular radius (Karis's sphere-light
+normalization, alpha + radius / (2 distance)) so a small light on a smooth
+surface is a highlight of the light's size, not a speck that aliases. */
+static unsigned int lt_ggx(struct module *m, unsigned int n, unsigned int v, unsigned int l, unsigned int alpha)
+{
+	unsigned int h = ext1(m, GLSL_NORMALIZE, m->t_v3, fadd(m, 3, l, v));
+	unsigned int nl = fmax_scalar(m, 1, fdot(m, n, l), 0.0f), nv = fmax_scalar(m, 1, fdot(m, n, v), 1.0e-4f);
+	unsigned int nh = fmax_scalar(m, 1, fdot(m, n, h), 0.0f), a2 = fmul(m, 1, alpha, alpha);
+	unsigned int one_less = fsub(m, 1, constant_float(m, 1.0f), a2), q, vis;
+
+	q = fadd(m, 1, fmul(m, 1, fmul(m, 1, nh, nh), fsub(m, 1, a2, constant_float(m, 1.0f))), constant_float(m, 1.0f));
+	vis = fdiv(m, 1, constant_float(m, 0.5f), fadd(m, 1, fadd(m, 1,
+		fmul(m, 1, nl, fsqrt(m, fadd(m, 1, fmul(m, 1, fmul(m, 1, nv, nv), one_less), a2))),
+		fmul(m, 1, nv, fsqrt(m, fadd(m, 1, fmul(m, 1, fmul(m, 1, nl, nl), one_less), a2)))), constant_float(m, 1.0e-7f)));
+	return fmul(m, 1, fdiv(m, 1, a2, fmax_scalar(m, 1, fmul(m, 1, q, q), 1.0e-12f)), vis);
+}
+
+/* alpha widened by an emitter of radius r at distance d (lt_ggx), at most 1 */
+static unsigned int lt_ggx_widened(struct module *m, unsigned int alpha, unsigned int r, unsigned int d)
+{
+	return ext2(m, GLSL_F_MIN, m->t_float, fadd(m, 1, alpha, fdiv(m, 1, fmul(m, 1, r, constant_float(m, 0.5f)),
+		fmax_scalar(m, 1, d, 1.0e-3f))), constant_float(m, 1.0f));
+}
 
 /* a row's (an int) light at the pixel, added to the sum (lt_forward_light's
 loop body) */
@@ -9561,13 +9726,59 @@ static void lt_forward_row(struct module *m, struct pixel_state *state, const st
 		selection_end(m, ray_merge);
 		store(m, read->sum, fadd(m, 3, load(m, m->t_v3, read->sum), fscale(m, 3, xyz(m, t[4]),
 			load(m, m->t_float, lit_variable))));
+		/* (the shine: the same light, its visibility, by GGX's lobe toward the
+		emitter's middle at the widened roughness) */
+		if (read->spec)
+			store(m, read->spec, fadd(m, 3, load(m, m->t_v3, read->spec), fscale(m, 3, xyz(m, t[4]),
+				fmul(m, 1, load(m, m->t_float, lit_variable), lt_ggx(m, read->shaded, read->v, l,
+				lt_ggx_widened(m, read->alpha, extract(m, t[0], 3), d))))));
 	}
 	selection_end(m, lit_merge);
 	selection_end(m, merge);
 }
 
+/* the shine of a sun row (XGPU_SPIRV_LT_SUN_ROW + k) at the pixel, added
+to read->spec: a sun narrower than LT_SUN_SPEC_WIDEST (b30's 0.2 degree
+sun, not its 50 degree fill, whose light a traced reflection's misses
+already show as the sky), its power by the receiver's cosine, one
+visibility ray toward it as far as LT_SUN_REACH, GGX's lobe at the
+roughness widened by its angular radius */
+#define LT_SUN_SPEC_WIDEST 0.2f
+#define LT_SUN_REACH 4096.0f
+#define LT_FORWARD_SUN_ROWS 2
+
+static void lt_forward_sun(struct module *m, struct pixel_state *state, const struct lt_forward_read *read, int k)
+{
+	unsigned int row = constant_int(m, XGPU_SPIRV_LT_SUN_ROW + k), t1, t4, t5, l, cosine, lit, merge, ray_merge;
+	unsigned int lit_variable = local(m, &state->locals, m->t_float), taken, seen;
+
+	taken = op2(m, OP_S_LESS_THAN, m->t_bool, row, read->rows);
+	selection_begin(m, taken, &merge);
+	t4 = lt_table_texel(m, read->image, row, 4);
+	t1 = lt_table_texel(m, read->image, row, 1);
+	t5 = lt_table_texel(m, read->image, row, 5);
+	l = xyz(m, t1);
+	cosine = fmax_scalar(m, 1, fdot(m, read->shaded, l), 0.0f);
+	lit = fselect(m, op2(m, OP_LOGICAL_AND, m->t_bool, op2(m, OP_LOGICAL_AND, m->t_bool,
+		compare(m, OP_F_ORD_GREATER_THAN, extract(m, t4, 3), constant_float(m, 2.5f)),
+		compare(m, OP_F_ORD_LESS_THAN, extract(m, t5, 3), constant_float(m, LT_SUN_SPEC_WIDEST))),
+		compare(m, OP_F_ORD_GREATER_THAN, fdot(m, read->n, l), constant_float(m, 0.0f))), cosine, constant_float(m, 0.0f));
+	store(m, lit_variable, lit);
+	selection_begin(m, compare(m, OP_F_ORD_GREATER_THAN, lit, constant_float(m, 0.0f)), &ray_merge);
+	seen = lt_forward_visible(m, state, read->origin, fadd(m, 3, read->origin, fscale(m, 3, l,
+		constant_float(m, LT_SUN_REACH))), constant_float(m, 0.0f), constant_int(m, -1), read->receiver);
+	store(m, lit_variable, fmul(m, 1, lit, seen));
+	selection_end(m, ray_merge);
+	store(m, read->spec, fadd(m, 3, load(m, m->t_v3, read->spec), fscale(m, 3, xyz(m, t4),
+		fmul(m, 1, load(m, m->t_float, lit_variable), lt_ggx(m, read->shaded, read->v, l,
+		ext2(m, GLSL_F_MIN, m->t_float, fadd(m, 1, read->alpha, fmul(m, 1, extract(m, t5, 3), constant_float(m, 0.5f))),
+		constant_float(m, 1.0f)))))));
+	selection_end(m, merge);
+}
+
 /* the pass's direct light at p (n its geometric normal, shaded its shaded
-one): linear irradiance */
+one): linear irradiance; with state->lt_spec, the shine summed there too
+(lt_forward_read's spec) */
 static unsigned int lt_forward_light(struct module *m, struct pixel_state *state, unsigned int p, unsigned int n,
 	unsigned int shaded, BOOL environment)
 {
@@ -9585,6 +9796,9 @@ static unsigned int lt_forward_light(struct module *m, struct pixel_state *state
 	read.shaded = shaded;
 	read.sum = local(m, &state->locals, m->t_v3);
 	store(m, read.sum, constant_splat(m, 3, 0.0f));
+	read.spec = state->lt_spec;
+	read.v = state->lt_spec_v;
+	read.alpha = state->lt_spec_alpha;
 	/* (the draw's object: the first-person weapon's rays from the eye; its
 	own instance among the rays', left out) */
 	object = uniform(m, U_WORLD_AO, -1);
@@ -9681,6 +9895,13 @@ static unsigned int lt_forward_light(struct module *m, struct pixel_state *state
 	label_at(m, outer_merge);
 	/* (the view's shadowed flashlight, E1's, in its own row) */
 	lt_forward_row(m, state, &read, constant_int(m, XGPU_SPIRV_LT_FLASHLIGHT_ROW));
+	if (read.spec)
+	{
+		int k;
+
+		for (k = 0; k < LT_FORWARD_SUN_ROWS; k++)
+			lt_forward_sun(m, state, &read, k);
+	}
 	return load(m, m->t_v3, read.sum);
 }
 
@@ -9717,13 +9938,32 @@ static unsigned int lt_forward_add(struct module *m, struct pixel_state *state, 
 }
 
 /* whether a reflection's texel is HALO_LT_E1's pass's: the structure's
-(the pre-pass's surfaces, whose guides the pass traced from). The level's
-glass and water are not in the pre-pass, nor every model yet (characters:
-their pixels' guides can be the surfaces behind them): their cube maps, as
-the game drew them */
+(the pre-pass's surfaces, whose guides the pass traced from, glossy at
+their roughness and denoised). The level's glass and water are not in the
+pre-pass, nor every model (characters: their pixels' guides can be the
+surfaces behind them): a model traces its own mirror ray as
+display.rt_reflections does (lt_reflection_inline; its roughness map past
+RT_REFLECTION_ROUGHEST keeps its cube map) and takes the lights' shine
+(lt_ggx) on top; the glass and water keep their cube maps */
 static BOOL lt_reflection_traced(const struct pixel_state *state)
 {
 	return state->rt_reflection && state->program->rt_reflection == XGPU_RT_REFLECTION_STRUCTURE;
+}
+
+/* whether a reflection's texel is display.rt_reflections' own mirror ray
+(rt_reflection_texel): without the pass, every tagged draw's; with it, a
+model's alone: not the structure's (the pass's), nor the level's glass and
+water (transparent passes laid over the structure, b30's shore and a10's
+floors among them), whose cube maps keep the dynamic lights' glints the
+game draws over them (a hit's light is the lightmap's alone: the plasma's
+glow on b30's shore went with it) */
+static BOOL lt_reflection_inline(const struct pixel_state *state)
+{
+	if (!state->rt_reflection)
+		return FALSE;
+	if (!lt_e1_on())
+		return TRUE;
+	return state->program->rt_reflection == XGPU_RT_REFLECTION_MODEL;
 }
 
 /* HALO_LT_E1's reflections (~/dev/rt2-realtime-design.md section 1.4;
@@ -9764,7 +10004,9 @@ static unsigned int lt_reflection_texel(struct module *m, struct pixel_state *st
 	operands[3] = constant_int(m, 0);
 	s = op(m, OP_IMAGE_FETCH, m->t_v4, 4, operands);
 	linear = ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, xyz(m, cube), 0.0f), constant_splat(m, 3, 2.2f));
-	rgb = fadd(m, 3, xyz(m, s), fscale(m, 3, linear, fsub(m, 1, constant_float(m, 1.0f), extract(m, s, 3))));
+	/* (the traced light by the cube map's hue: lt_reflection_chroma) */
+	rgb = fadd(m, 3, fmul(m, 3, xyz(m, s), ext2(m, GLSL_POW, m->t_v3, lt_reflection_chroma(m, state),
+		constant_splat(m, 3, 2.2f))), fscale(m, 3, linear, fsub(m, 1, constant_float(m, 1.0f), extract(m, s, 3))));
 	rgb = ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, rgb, 0.0f), constant_splat(m, 3, 1.0f / 2.2f));
 	/* (HALO_RT_REFLECTIONS_VIEW=1: green by the hits' share, red the rest) */
 	if (rt_reflections_view() == 1)

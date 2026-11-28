@@ -20,8 +20,8 @@ Two elements together may read as one letter (ph f, vv w, \/ v, |< k).
 Then each term (text_filter_terms.inc, made by tools/text_filter_terms.py
 from Surge AI's list; and the player's own) is looked for from each element:
 a run of one letter reads as one ("fuuuck"); punctuation may come between
-letters ("f.u.c.k"); spaces too where the pieces are a letter or two
-("f u c k", "fu ck") or the match is whole words ("f uck"). A term's rule
+letters ("f.u.c.k"); spaces too where the match starts and ends at a
+word's edges ("f u c k", "fu ck", "f uck"; not "sh it" in "push it"). A term's rule
 says where it may be (inside a word, at a word's start, or as the whole
 word), and the allowed words (Scunthorpe) are never hidden. Nothing here
 knows the game: the harness builds it alone (tools/harness).
@@ -453,8 +453,6 @@ struct path
 {
 	long wildcards;
 	long real_letters;
-	long piece;
-	long longest_piece;
 	int spaced;
 	int crossed;
 };
@@ -519,8 +517,6 @@ static int text_filter_finish(
 	int start_boundary = attempt->start == 0 || !text_filter_word_character(&elements[attempt->start - 1]);
 	int end_boundary = end >= attempt->count || !text_filter_word_character(&elements[end]);
 
-	if (path.piece > path.longest_piece)
-		path.longest_piece = path.piece;
 	/* any letter (* ? #) once in a short word, twice in a longer one, and
 	never in a word of three letters */
 	if (path.wildcards && (attempt->length < 4 || path.wildcards > (attempt->length <= 5 ? 1 : 2)))
@@ -528,8 +524,9 @@ static int text_filter_finish(
 	/* a third of the letters letters, not digits or symbols (not "8008") */
 	if (!path.real_letters || path.real_letters * 3 < attempt->length)
 		return 0;
-	/* across spaces: pieces of a letter or two, or whole words */
-	if (path.spaced && path.longest_piece > 2 && !(start_boundary && end_boundary))
+	/* across spaces: only from a word's start to a word's end (the end of
+	"push" and the start of "it" spell nothing) */
+	if (path.spaced && !(start_boundary && end_boundary))
 		return 0;
 	switch (attempt->rule)
 	{
@@ -598,12 +595,7 @@ static int text_filter_next(
 	{
 		path.crossed = 1;
 		if (spaced)
-		{
 			path.spaced = 1;
-			if (path.piece > path.longest_piece)
-				path.longest_piece = path.piece;
-			path.piece = 0;
-		}
 	}
 	if ((element->letters || element->pair) && text_filter_try_letter(attempt, term_index, element_index, path))
 		return 1;
@@ -642,10 +634,7 @@ static int text_filter_after(
 		if (repeated != end &&
 			(attempt->rule != _text_filter_whole || attempt->length > 4 || repeated - end >= 2))
 		{
-			struct path longer = path;
-
-			longer.piece += repeated - end;
-			if (text_filter_next(attempt, term_index + 1, repeated, 0, 0, longer))
+			if (text_filter_next(attempt, term_index + 1, repeated, 0, 0, path))
 				return 1;
 		}
 	}
@@ -665,7 +654,6 @@ static int text_filter_try_letter(
 	{
 		struct path one = path;
 
-		one.piece++;
 		if (element->kind == _element_wildcard)
 			one.wildcards++;
 		else if (element->kind == _element_letter)
@@ -680,7 +668,6 @@ static int text_filter_try_letter(
 	{
 		struct path two = path;
 
-		two.piece++;
 		if (element->kind == _element_letter)
 			two.real_letters++;
 		if (text_filter_after(attempt, term_index, element_index + 2, two))

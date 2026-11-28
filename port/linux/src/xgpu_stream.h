@@ -1892,6 +1892,13 @@ environment's; a model's brightness x tint)) */
 #define XGPU_WORLD_RT_MATERIAL_REFLECTION_PERPENDICULAR_SHIFT 16
 #define XGPU_WORLD_RT_MATERIAL_REFLECTION_PARALLEL_SHIFT 24
 #define XGPU_WORLD_RT_MATERIAL_REFLECTION_SCALE 128.0f
+/* (and its roughness, derived from its shader where it reflects, in bits
+10 to 14: the code k (1 to 31) is a roughness of k x
+XGPU_WORLD_RT_MATERIAL_ROUGHNESS_STEP, 0 none: world_rt_game.c's
+material_roughness, ~/dev/rt2-realtime-design.md section 10) */
+#define XGPU_WORLD_RT_MATERIAL_ROUGHNESS_SHIFT 10
+#define XGPU_WORLD_RT_MATERIAL_ROUGHNESS_MASK 0x1fu
+#define XGPU_WORLD_RT_MATERIAL_ROUGHNESS_STEP 0.02f
 struct xgpu_world_rt_material
 {
 	uint32_t index, kind, flags;
@@ -1951,6 +1958,11 @@ own mask bit, which the passes' rays leave out), and the local player's
 own body in first person, which casts shadows and nothing else sees */
 #define XGPU_WORLD_AO_INSTANCE_FIRST_PERSON 4u
 #define XGPU_WORLD_AO_INSTANCE_PLAYER 8u
+/* (with the ray-traced lighting) an object that casts no shadow (its
+definition's "does not cast shadow", a device's: b30's ring overhead): an
+object to every ray but the pass's sun's, which takes off the lightmap's
+sun only where an object casting a shadow the lightmap lacks blocks it */
+#define XGPU_WORLD_AO_INSTANCE_SHADOWLESS 16u
 #define XGPU_WORLD_AO_INSTANCE_OWNERS (1u << 24)
 struct xgpu_world_ao_instance
 {
