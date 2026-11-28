@@ -194,6 +194,15 @@ long hs_runtime_evaluate(
 is a sleep_until's condition (hs_runtime.c) */
 boolean hs_runtime_waiting_on_call(
 	void);
+/* port: and whether what that wait starts, up to the script's next
+sleep_until, may leave a player behind (a door, a lift, a teleport, a
+cutscene, a script woken), rather than only directing the AI, speaking,
+saving or setting the scripts' variables: a30's waits for every player to
+fall back only send the Marines back. TRUE when it cannot tell. Network
+co-op brings the other players to a gate's volume (coop_scripts.c) only
+for such a wait. */
+boolean hs_runtime_waiting_call_is_a_gate(
+	void);
 /* port: only an actual console thread may use unrestricted map_name. */
 boolean hs_runtime_port_executing_console_command(
 	void);

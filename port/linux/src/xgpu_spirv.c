@@ -7379,8 +7379,8 @@ BOOL xgpu_spirv_world_ao_pass(int which, const struct xgpu_spirv_options *option
 /* ---------- display.shadows "ray_traced" (xgpu_spirv.h)
 
 The pass's pixel shader, over the 3D view after its lightmap pass, the
-level's pixels alone (the pipeline's stencil test leaves the models'), as
-GLSL:
+level and the models (the pipeline's stencil test leaves the first-person
+weapon's), as GLSL:
 
 float d = texelFetch(scene_depth, ivec2(gl_FragCoord.xy), 0).r;  (1 - it, reversed)
 vec3 light = vec3(1.0);
@@ -7388,6 +7388,7 @@ if (d < 1.0) {
   vec4 h = unproject * vec4(gl_FragCoord.xy, d, 1.0); vec3 p = h.xyz / h.w;
   float far = length(camera - p);
   vec3 from = p + (camera - p) / far * (BIAS + BIAS_FAR * far);
+  vec3 n = the depth's normal (each axis's nearer neighbour), facing the camera;
   float noise = fract(52.9829189 * fract(dot(gl_FragCoord.xy - 0.5, vec2(0.06711056, 0.00583715))));
   for (int i = 0; i < count; i++) {
     vec4 a = casters[2 i], b = casters[2 i + 1];
@@ -7404,7 +7405,7 @@ if (d < 1.0) {
           if (owner(candidate) == owner0 || owner(candidate) == owner1) rayQueryConfirmIntersectionEXT(q);
         if (committed and its custom index not 0) hits += 1.0;   (the structure, opaque, stops it)
       }
-      light *= 1.0 - unpack(b.z) * fade * hits / RAYS;
+      light *= 1.0 - unpack(b.z) * fade * clamp(dot(n, l) / FACING, 0, 1) * hits / RAYS;
     }
   }
 }
@@ -7571,6 +7572,36 @@ BOOL xgpu_spirv_rt_skin(struct xgpu_spirv_module *module)
 	return module_end(&m, EXECUTION_MODEL_GL_COMPUTE, main_id, &locals, module);
 }
 
+/* the scene's point at a pixel offset from this one (clamped to the image):
+its world position and its depth, as the pass finds its own (a vec4) */
+static unsigned int rt_shadows_point(struct module *m, unsigned int header, unsigned int raw, unsigned int pixel,
+	unsigned int size, BOOL reversed, int dx, int dy)
+{
+	unsigned int at, operands[4], depth, framebuffer, rows[4], h;
+	int row;
+
+	at = ext3(m, GLSL_S_CLAMP, m->t_iv2, op2(m, OP_I_ADD, m->t_iv2, pixel, construct(m, 2, (unsigned int[]){
+		constant_int(m, dx), constant_int(m, dy) })), construct(m, 2, (unsigned int[]){ constant_int(m, 0),
+		constant_int(m, 0) }), op2(m, OP_I_SUB, m->t_iv2, size, construct(m, 2, (unsigned int[]){ constant_int(m, 1),
+		constant_int(m, 1) })));
+	operands[0] = raw;
+	operands[1] = at;
+	operands[2] = IMAGE_OPERANDS_LOD;
+	operands[3] = constant_int(m, 0);
+	depth = extract(m, op(m, OP_IMAGE_FETCH, m->t_v4, 4, operands), 0);
+	if (reversed)
+		depth = fsub(m, 1, constant_float(m, 1.0f), depth);
+	{
+		unsigned int centre = fadd(m, 2, op1(m, OP_CONVERT_S_TO_F, m->t_v2, at), constant_splat(m, 2, 0.5f));
+
+		framebuffer = construct4(m, extract(m, centre, 0), extract(m, centre, 1), depth, constant_float(m, 1.0f));
+	}
+	for (row = 0; row < 4; row++)
+		rows[row] = fdot(m, rt_shadows_vector(m, header, constant_int(m, RT_SHADOWS_UNPROJECT + row)), framebuffer);
+	h = construct(m, 4, rows);
+	return vec4_of(m, fdiv(m, 3, xyz(m, h), splat(m, 3, extract(m, h, 3))), depth);
+}
+
 BOOL xgpu_spirv_rt_shadows_pass(const struct xgpu_spirv_options *options, struct xgpu_spirv_module *module)
 {
 	struct module m;
@@ -7579,7 +7610,7 @@ BOOL xgpu_spirv_rt_shadows_pass(const struct xgpu_spirv_options *options, struct
 	unsigned int light_variable, index_variable, hits_variable, operands[8];
 	unsigned int coord, pixel, sampled, depth, sky_merge, h, p, camera, to_camera, far, from, noise, count;
 	unsigned int header_id, condition, body, next, merge, i, a, b, bxy, v, rel, along, side, radius, inside_merge;
-	unsigned int fade, l, nx, ny, nz, s, fa, fb, x, y, darkness, owners, owner0, owner1, reach, ray_light;
+	unsigned int fade, l, nx, ny, nz, s, fa, fb, x, y, darkness, owners, owner0, owner1, reach, ray_light, normal;
 	int ray, row, channel;
 	BOOL result;
 
@@ -7637,6 +7668,37 @@ BOOL xgpu_spirv_rt_shadows_pass(const struct xgpu_spirv_options *options, struct
 	far = ext2(&m, GLSL_F_MAX, m.t_float, ext1(&m, GLSL_LENGTH, m.t_float, to_camera), constant_float(&m, 1.0e-4f));
 	from = fadd(&m, 3, p, fscale(&m, 3, fdiv(&m, 3, to_camera, splat(&m, 3, far)), fadd(&m, 1,
 		constant_float(&m, XGPU_RT_SHADOWS_BIAS), fmul(&m, 1, constant_float(&m, XGPU_RT_SHADOWS_BIAS_FAR), far))));
+	/* the surface's normal, from the depth: along each axis the neighbour
+	nearer in depth (so a silhouette's edge takes the surface's own), turned
+	to face the camera. A surface facing away from a caster's light has none
+	of its direct light to lose: its ray toward the light only goes back into
+	its own body (a Pelican's underside, a marine's far side), and the pass
+	would take its ambient light instead */
+	{
+		unsigned int raw = op(&m, OP_IMAGE, type_sampled_image(&m, DIM_2D, FALSE, FALSE, FALSE), 1, &sampled);
+		unsigned int size = image_size(&m, raw, m.t_iv2);
+		unsigned int right = rt_shadows_point(&m, header, raw, pixel, size, options->reversed_depth, 1, 0);
+		unsigned int left = rt_shadows_point(&m, header, raw, pixel, size, options->reversed_depth, -1, 0);
+		unsigned int down = rt_shadows_point(&m, header, raw, pixel, size, options->reversed_depth, 0, 1);
+		unsigned int up = rt_shadows_point(&m, header, raw, pixel, size, options->reversed_depth, 0, -1);
+		unsigned int du, dv, n, flip;
+
+		du = select_n(&m, 3, compare(&m, OP_F_ORD_LESS_THAN,
+			ext1(&m, GLSL_F_ABS, m.t_float, fsub(&m, 1, extract(&m, right, 3), depth)),
+			ext1(&m, GLSL_F_ABS, m.t_float, fsub(&m, 1, depth, extract(&m, left, 3)))),
+			fsub(&m, 3, xyz(&m, right), p), fsub(&m, 3, p, xyz(&m, left)));
+		dv = select_n(&m, 3, compare(&m, OP_F_ORD_LESS_THAN,
+			ext1(&m, GLSL_F_ABS, m.t_float, fsub(&m, 1, extract(&m, down, 3), depth)),
+			ext1(&m, GLSL_F_ABS, m.t_float, fsub(&m, 1, depth, extract(&m, up, 3)))),
+			fsub(&m, 3, xyz(&m, down), p), fsub(&m, 3, p, xyz(&m, up)));
+		n = ext2(&m, GLSL_CROSS, m.t_v3, du, dv);
+		/* (none where the neighbours give no plane: then it faces the camera) */
+		n = select_n(&m, 3, compare(&m, OP_F_ORD_GREATER_THAN, fdot(&m, n, n), constant_float(&m, 1.0e-20f)), n,
+			to_camera);
+		n = ext1(&m, GLSL_NORMALIZE, m.t_v3, n);
+		flip = compare(&m, OP_F_ORD_LESS_THAN, fdot(&m, n, to_camera), constant_float(&m, 0.0f));
+		normal = select_n(&m, 3, flip, fneg(&m, 3, n), n);
+	}
 	/* (interleaved gradient noise: the rays turned at each pixel) */
 	{
 		unsigned int px = fsub(&m, 1, extract(&m, coord, 0), constant_float(&m, 0.5f));
@@ -7763,8 +7825,12 @@ BOOL xgpu_spirv_rt_shadows_pass(const struct xgpu_spirv_options *options, struct
 	}
 	/* light *= 1 - darkness * fade * hits / RAYS (darkness a byte each) */
 	{
-		unsigned int share = fmul(&m, 1, saturate(&m, 1, fade), fdiv(&m, 1, load(&m, m.t_float, hits_variable),
-			constant_float(&m, (float)XGPU_RT_SHADOWS_RAYS)));
+		/* (and as far as the surface faces the light: none at or past its edge,
+		all from XGPU_RT_SHADOWS_FACING on) */
+		unsigned int facing = saturate(&m, 1, fmul(&m, 1, fdot(&m, normal, l),
+			constant_float(&m, 1.0f / XGPU_RT_SHADOWS_FACING)));
+		unsigned int share = fmul(&m, 1, fmul(&m, 1, saturate(&m, 1, fade), facing), fdiv(&m, 1,
+			load(&m, m.t_float, hits_variable), constant_float(&m, (float)XGPU_RT_SHADOWS_RAYS)));
 		unsigned int channels[3];
 
 		for (channel = 0; channel < 3; channel++)

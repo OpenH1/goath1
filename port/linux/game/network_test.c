@@ -253,6 +253,18 @@ static struct
 	boolean place_second;
 	real_point3d place_second_position;
 	real place_second_yaw, place_second_pitch;
+	/* ... or ("object:<name>[:<distance>[:<degrees>]]"): that far from the
+	nearest object lying about whose tag's name has it (one with a unit
+	riding it first), facing it, from a side the level leaves a line from
+	(the player's, turned that many degrees about it first: two machines'
+	players at one object from two sides) */
+	char place_object[64];
+	real place_distance;
+	real place_turn;
+	/* ... and the object, the player's aim kept on it (from where they
+	settle) until this tick */
+	long place_target;
+	long place_aim_until;
 	/* debug.network_test_elevator's: when, which elevator, and the one
 	chosen (NONE before), when its riders stood on it and it last stopped */
 	real elevator_time;
@@ -499,6 +511,27 @@ static void network_test_read_settings(
 		float x, y, z, yaw, pitch;
 
 		network_test.place = sscanf(place, "%f %f %f %f %f", &x, &y, &z, &yaw, &pitch) == 5;
+		network_test.place_object[0] = 0;
+		network_test.place_distance = 4.0f;
+		network_test.place_turn = 0.0f;
+		network_test.place_target = NONE;
+		if (!strncmp(place, "object:", 7))
+		{
+			char const *name = place + 7;
+			size_t length = strcspn(name, ":@");
+
+			snprintf(network_test.place_object, sizeof(network_test.place_object), "%.*s", (int)length, name);
+			if (name[length] == ':')
+			{
+				char const *turn = strchr(name + length + 1, ':');
+
+				network_test.place_distance = (real)atof(name + length + 1);
+				if (turn && (!at || turn < at))
+					network_test.place_turn = (real)atof(turn + 1);
+			}
+			network_test.place = network_test.place_object[0] != 0;
+			x = y = z = yaw = pitch = 0.0f;
+		}
 		network_test.place_position.x = x;
 		network_test.place_position.y = y;
 		network_test.place_position.z = z;
@@ -1527,7 +1560,8 @@ static void network_test_profiles(
 }
 
 /* debug.network_test_name: the name the machine's first player takes (its
-profile's, which it joins with), in ASCII */
+profile's, which it joins with), in ASCII; "<name>#<n>" also its colour
+(the profile's colour of that index: 3 blue, 6 green) */
 static void network_test_set_name(
 	void)
 {
@@ -1538,9 +1572,11 @@ static void network_test_set_name(
 	if (!name || !name[0])
 		return;
 	player_ui_get_active_player_profile(0, &profile);
-	for (index = 0; name[index] && index < MAXIMUM_PLAYER_PROFILE_NAME_LENGTH - 1; index++)
+	for (index = 0; name[index] && name[index] != '#' && index < MAXIMUM_PLAYER_PROFILE_NAME_LENGTH - 1; index++)
 		profile.player_name[index] = (wchar_t)(unsigned char)name[index];
 	profile.player_name[index] = 0;
+	if (strchr(name, '#'))
+		profile.primary_color_index = (short)atoi(strchr(name, '#') + 1);
 	player_ui_set_active_player_profile(0, player_ui_get_active_player_profile_index(0), &profile);
 	platform_log("network test: this machine's player is named %s", name);
 }
@@ -2631,6 +2667,99 @@ static boolean network_test_place_one(
 	angles.yaw = DEGREES_TO_RADIANS(yaw);
 	angles.pitch = DEGREES_TO_RADIANS(pitch);
 	vector3d_from_euler_angles2d(&facing, &angles);
+	/* (by an object: the nearest whose tag's name has the name, not carried,
+	from the side the player is on, the eye a little over its middle) */
+	if (network_test.place_object[0])
+	{
+		struct object_iterator objects;
+		real_point3d from = object_get(player->unit_index)->object.position;
+		real_point3d center;
+		long nearest_index = NONE;
+		real nearest_distance = 0.0f;
+		real_vector3d away;
+		real radius;
+
+		object_iterator_new(&objects, -1, 0);
+		while (object_iterator_next(&objects))
+		{
+			struct object_datum *object = object_get(objects.index);
+			real distance;
+
+			if (object->object.parent_object_index != NONE || objects.index == player->unit_index ||
+				!strstr(tag_get_name(object->definition_index), network_test.place_object))
+			{
+				continue;
+			}
+			/* (one with a rider first: debug.network_test_vehicle's) */
+			distance = distance3d(&from, &object->object.position) -
+				(object->object.first_child_object_index != NONE &&
+					object_try_and_get_and_verify_type(object->object.first_child_object_index, _object_mask_unit) ?
+					100000.0f : 0.0f);
+			if (nearest_index == NONE || distance < nearest_distance)
+			{
+				nearest_index = objects.index;
+				nearest_distance = distance;
+			}
+		}
+		if (nearest_index == NONE)
+			return FALSE;
+		object_get_bounding_sphere(nearest_index, &center, &radius);
+		away.i = from.x - center.x;
+		away.j = from.y - center.y;
+		away.k = 0.0f;
+		if (normalize3d(&away) == 0.0f)
+		{
+			away.i = 1.0f;
+			away.j = 0.0f;
+		}
+		if (network_test.place_turn != 0.0f)
+		{
+			real angle = DEGREES_TO_RADIANS(network_test.place_turn);
+			real i = away.i * (real)cos(angle) - away.j * (real)sin(angle);
+
+			away.j = away.i * (real)sin(angle) + away.j * (real)cos(angle);
+			away.i = i;
+		}
+		/* (the first of 16 ways round it, from the player's side, from which
+		the level leaves a line to its middle) */
+		{
+			short turn;
+
+			for (turn = 0; turn < 16; turn++)
+			{
+				real angle = (turn % 2 ? -1.0f : 1.0f) * (real)((turn + 1) / 2) * (6.2831853f / 16.0f);
+				real_vector3d way;
+				real_point3d eye;
+				real_vector3d line;
+				struct collision_result result;
+
+				way.i = away.i * (real)cos(angle) - away.j * (real)sin(angle);
+				way.j = away.i * (real)sin(angle) + away.j * (real)cos(angle);
+				way.k = 0.0f;
+				eye.x = center.x + way.i * network_test.place_distance;
+				eye.y = center.y + way.j * network_test.place_distance;
+				eye.z = center.z + 0.8f;
+				vector_from_points3d(&eye, &center, &line);
+				if (!collision_test_vector(FLAG(_collision_test_structure_bit) |
+					FLAG(_collision_test_front_facing_surfaces_bit), &eye, &line, NONE, &result))
+				{
+					away = way;
+					break;
+				}
+			}
+		}
+		network_test.place_position.x = center.x + away.i * network_test.place_distance;
+		network_test.place_position.y = center.y + away.j * network_test.place_distance;
+		network_test.place_position.z = center.z + 0.2f;
+		facing.i = -away.i * network_test.place_distance;
+		facing.j = -away.j * network_test.place_distance;
+		facing.k = -0.8f;
+		normalize3d(&facing);
+		platform_log("network test: placing by %s (%lx)", tag_get_name(object_get(nearest_index)->definition_index),
+			nearest_index);
+		network_test.place_target = nearest_index;
+		network_test.place_aim_until = game_time_get() + 10 * TICKS_PER_SECOND;
+	}
 	forward = facing;
 	forward.k = 0.0f;
 	normalize3d(&forward);
@@ -2656,6 +2785,34 @@ static boolean network_test_place(
 			network_test.place_second_pitch);
 	}
 	return TRUE;
+}
+
+/* ... by an object: the first local player's aim kept on its middle, from
+their eye as they settle, for a while */
+static void network_test_place_aim(
+	void)
+{
+	long player_index = local_player_get_player_index(0);
+	struct player_datum *player = player_index != NONE ? player_get(player_index) : NULL;
+	struct unit_datum *unit;
+	real_point3d head, center;
+	real_vector3d facing;
+	real radius;
+
+	if (network_test.place_target == NONE || game_time_get() >= network_test.place_aim_until ||
+		!player || player->unit_index == NONE || !object_try_and_get(network_test.place_target))
+	{
+		return;
+	}
+	unit_get_head_position(player->unit_index, &head);
+	object_get_bounding_sphere(network_test.place_target, &center, &radius);
+	vector_from_points3d(&head, &center, &facing);
+	if (normalize3d(&facing) == 0.0f)
+		return;
+	unit = unit_get(player->unit_index);
+	unit->unit.desired_aiming_vector = facing;
+	unit->unit.desired_looking_vector = facing;
+	player_control_set_facing(0, &facing);
 }
 
 /* debug.network_test_elevator: the level's elevators (machines that carry
@@ -3138,6 +3295,7 @@ void network_test_update(
 		{
 			network_test.place = FALSE;
 		}
+		network_test_place_aim();
 		if (network_test.pickup_time > 0.0f)
 		{
 			long pickup_time = (long)(network_test.pickup_time * TICKS_PER_SECOND);

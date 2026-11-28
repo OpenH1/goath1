@@ -207,6 +207,44 @@ enum
 	NUMBER_OF_PARTS,
 };
 
+/* The windows' contexts. A pipeline is the state the game's code sets at a
+draw, not its tag's alone, so each draw of the walk must be drawn in every
+context of state a window of the map draws it in; a context the walk does
+not reach is a pipeline made in play (render_marks.c's "did not make").
+Each row a context and how the walk reaches it:
+- the primary target's 3D view (render_window's _render_target_primary):
+  the world's, the objects' effects' and first person's parts, the
+  interface and screen flashes drawn after its tone map (pass 0);
+- a mirror's window (_render_target_secondary, render.c's
+  structure_visibility_find_mirror): _part_mirror, where any structure of
+  the map has a mirror: its world and its objects with their own effects
+  (object_effects_draw), unlit by the ambient occlusion, and its screen
+  flash, with no tone map before it (its HDR tag still the 3D view's):
+  screen_flashes_draw in its first pass;
+- the ambient occlusion's span (world_ao.c): the opaque surfaces inside it
+  (found by the pre-pass or not), the first-person weapon in its own
+  (world_ao_first_person), the transparent geometry outside it, as
+  render_window draws it after world_ao_window_end (transparents_flush);
+- an object's own: each stand-in model's effect drawn as an object of its
+  own (stand_in_source), whose transparent pre-pass the transparent
+  geometry draws once a source;
+- the first-person stencil: NUMBER_OF_STENCIL_CONTEXTS;
+- the fogs (NUMBER_OF_FOGS) and the renderer's lights (MAXIMUM_LIGHTINGS);
+- the scope's mono view (VR): an enumeration of its own (enumerate.scope).
+Not contexts of their own: split screen's windows (their viewports alone;
+render.c draws no mirror then), and the Spartan link's feeds
+(spartan_link.c: render_link_pass), which draw a part of the primary
+window's draws (no decals, detail objects, shadows or ambient occlusion)
+into the same target, and the feeds' images on the HUD, whose pipelines
+the interface's screen quads are (tools/prepared_coverage.py's split2 to
+split4 and link contexts: no pipeline missed on the campaign's levels,
+the walk's or the shipped records'). Not reached yet: a walk in a
+multiplayer split screen of 3 or 4 players draws fewer of the HUD's,
+lens flares' and environment shadows' states than a walk of 1 or 2 does
+(3 pipelines made in play on bloodgulch; its shipped record, walked
+alone, has them). A new context is a row here and the pass (or the
+call) that draws in it. */
+
 /* each fog's parts are drawn once, and with display.dynamic_lights
 "enhanced" again with the renderer's lights (the stand-in ones: models and
 the structure drawn lit for each pixel by them) */
@@ -236,7 +274,8 @@ map's enumerations have made, at most */
 #define MATERIAL_KEY_MIRROR 0x80000000UL
 /* (its class: whether its lightmap has a picture, and its flags) */
 #define MATERIAL_KEY_CLASS(key) ((key) >> 16)
-/* (an object index no object has, but not 0: camouflage's source) */
+/* (an object index no object has, but not 0: camouflage's source; with
+the low 16 bits a stand-in's own, stand_in_source) */
 #define STAND_IN_OBJECT_INDEX 0x7ffe0000
 
 boolean render_enumerating = FALSE;
@@ -693,6 +732,23 @@ static boolean stand_ins_next(struct structure_bsp *structure_bsp, struct enumer
 
 #endif
 
+static boolean pass_window_first(void)
+{
+	/* (each window's first pass: its own fog, unlit, the stencil as the
+	world leaves it) */
+	return enumerate.pass == _part_world || (enumerate.mirrors && enumerate.pass == _part_mirror);
+}
+
+/* the transparent geometry queued so far drawn where the queue has no more
+room (rasterizer_transparent_geometry_flush), outside the ambient
+occlusion's span, as render_window draws a window's (the contexts, above) */
+static void transparents_flush(void)
+{
+	world_ao_transparents(TRUE);
+	rasterizer_transparent_geometry_flush(TRANSPARENT_GROUPS_ROOM);
+	world_ao_transparents(FALSE);
+}
+
 static short pass_fog(void)
 {
 	return (short)(enumerate.pass / NUMBER_OF_PARTS % NUMBER_OF_FOGS);
@@ -878,6 +934,11 @@ short render_enumerate_target(void)
 boolean render_enumerate_has_mirror(void)
 {
 	return enumerate.mirrors && pass_part() != _part_mirror;
+}
+
+boolean render_enumerate_unlit(void)
+{
+	return render_enumerating && !pass_dynamic_lights();
 }
 
 boolean render_enumerate_pending(boolean scope)
@@ -1158,7 +1219,8 @@ static void lights_submit(void)
 		if (light_index != NONE)
 			enumerate.light_indices[enumerate.light_count++] = light_index;
 	}
-	/* (the renderer's: these and the window's, or none) */
+	/* (the renderer's: these and the window's, or none at all: dynamic_lights.c
+	gives none of its own then either, render_enumerate_unlit) */
 	if (halo_dynamic_lights_walked())
 	{
 		long count = rasterizer_lights.light_count;
@@ -1324,7 +1386,7 @@ static void model_draw(long model_index, short state_index, struct render_model_
 			if (!new_geometry)
 				continue;
 			rasterizer_debug_options.debug_model_lod = level;
-			rasterizer_transparent_geometry_flush(TRANSPARENT_GROUPS_ROOM);
+			transparents_flush();
 			/* (each model's shader made whole: a model's draw sets the part of
 			its pixel shader the models' share once a run of models,
 			rasterizer_xbox_models.c) */
@@ -1390,6 +1452,20 @@ static struct
 transparency (rasterizer_xbox_models.c sets a model's lights only for a draw
 with neither; a modifier shader is lit), drawn in the passes without the
 renderer's lights alone: those light nothing they draw */
+/* a stand-in model's object as an effect's source (camouflage's, a
+modifier's): each draw its own, as each object in play is, since the
+transparent geometry draws a source's pre-pass once for a run of its groups
+(rasterizer_xbox_transparent_geometry.c's last_source_object_index): with
+one source for every stand-in, the pre-pass drew for the first group only,
+so its pipeline was made only in the windows whose first effect group
+needed it (c40's mirror's had none). Not 0, which is no source */
+static long stand_in_source(void)
+{
+	static unsigned short next;
+
+	return STAND_IN_OBJECT_INDEX | (long)++next;
+}
+
 static boolean unlit_effects_drawn(void)
 {
 	return !pass_dynamic_lights();
@@ -1479,7 +1555,7 @@ static void object_effects_draw(void)
 
 			memset(&effect, 0, sizeof(effect));
 			effect.type = _render_model_effect_type_none;
-			effect.source_object_index = STAND_IN_OBJECT_INDEX;
+			effect.source_object_index = stand_in_source();
 			effect.source_object_centroid = render.camera.position;
 			if (modifier)
 			{
@@ -1487,10 +1563,16 @@ static void object_effects_draw(void)
 				model_draw(model_index, state, &effect, 0, 0);
 				effect.modifier_shader = NULL;
 			}
+			/* (each effect a source of its own: in play an object is
+			camouflaged or occludes itself, not both at once) */
 			if (camouflage && unlit_effects)
+			{
+				effect.source_object_index = stand_in_source();
 				camouflage_draw(model_index, state, &effect, 0);
+			}
 			if (self_occludes && unlit_effects)
 			{
+				effect.source_object_index = stand_in_source();
 				effect.type = _render_model_effect_type_modifier;
 				model_draw(model_index, state, &effect, 0, 0);
 				effect.type = _render_model_effect_type_none;
@@ -1538,12 +1620,12 @@ static void first_person_model_draw(long model_index)
 		memset(&effect, 0, sizeof(effect));
 		if (unlit_effects_drawn())
 		{
-			effect.source_object_index = STAND_IN_OBJECT_INDEX;
+			effect.source_object_index = stand_in_source();
 			effect.source_object_centroid = render.camera.position;
 			camouflage_draw(model_index, state, &effect, flags);
 		}
 		memset(&effect, 0, sizeof(effect));
-		effect.source_object_index = STAND_IN_OBJECT_INDEX;
+		effect.source_object_index = stand_in_source();
 		for (index = 0; index < modifier_count; index++)
 		{
 			effect.modifier_shader = shader_definition_get(modifiers[index]);
@@ -1624,9 +1706,16 @@ void render_enumerate_models(void)
 	switch (pass_part())
 	{
 	case _part_world:
-	case _part_mirror:
 		models_draw();
 		skies_draw();
+		break;
+	case _part_mirror:
+		/* (a mirror's window draws the objects it sees with their own
+		effects too: a transparent that occludes itself, camouflage, a
+		modifier shader, into its target unlit by the ambient occlusion) */
+		models_draw();
+		skies_draw();
+		object_effects_draw();
 		break;
 	case _part_object_effects:
 		object_effects_draw();
@@ -1752,6 +1841,8 @@ then draws as it would theirs */
 HDR tag makes a pipeline of their own): a self-illuminated particle's, a
 glow's (render_particles.c, glow.c) */
 static boolean effect_sprite_emitter = FALSE;
+/* the bitmaps of an effect's bitmap group drawn, at most (a multiple of 32) */
+#define EFFECT_BITMAPS_MOST 1024
 
 static void effect_sprite(long bitmap_group_index, struct shader_effect_definition const *shader)
 {
@@ -1784,23 +1875,35 @@ static void effect_sprite(long bitmap_group_index, struct shader_effect_definiti
 	origin.x = render.camera.position.x + render.camera.forward.i * 2.0f;
 	origin.y = render.camera.position.y + render.camera.forward.j * 2.0f;
 	origin.z = render.camera.position.z + render.camera.forward.k * 2.0f;
-	rasterizer_transparent_geometry_flush(TRANSPARENT_GROUPS_ROOM);
+	transparents_flush();
 	build_sprites_begin(&data, 1, bitmap_group_index, shader, flags);
 	/* (small: no more than ten sprites over half the screen are drawn,
 	render_sprite.c) */
 	build_sprite(&data, _build_sprite_normal, sequence_index, 0, &origin, &render.camera.forward, 0.0f, 0.001f, &color,
 		1.0f, 0);
 	build_sprites_end(&data);
-#ifdef HALO_VR
-	/* the VR mode's eyes draw large sprites thick (render_sprite.c): their
-	pipeline too, and each of the bitmaps' thickness, which the renderer
-	bakes as it first draws one (each sprite of a bitmap not yet drawn) */
-	if (vr_render_eye_pass() && !TEST_FLAG(flags, _build_sprites_first_person_bit))
+	/* every other bitmap its sprites draw, once each: the renderer bakes
+	each one's thickness (the fade of display.soft_particles, the VR mode's
+	bulge) as it first draws it, so the walk draws them all, on every
+	screen (the record is every setting's): a bitmap first drawn in play
+	would be drawn without one until its bake came back. The VR mode's eyes
+	draw large sprites thick (render_sprite.c): their pipeline too */
 	{
-		short bitmap_count = (short)MIN(bitmap_group->bitmaps.count, 64);
-		unsigned long drawn[2] = { 0, 0 };
+		short bitmap_count = (short)MIN(bitmap_group->bitmaps.count, EFFECT_BITMAPS_MOST);
+		unsigned long drawn[EFFECT_BITMAPS_MOST / 32];
+		short first_bitmap = TAG_BLOCK_GET_ELEMENT(&TAG_BLOCK_GET_ELEMENT(&bitmap_group->sequences, sequence_index,
+			struct bitmap_group_sequence)->sprites, 0, struct bitmap_group_sprite)->bitmap_index;
+		boolean thick = FALSE;
 
-		render_sprite_vr_thick_force(TRUE);
+#ifdef HALO_VR
+		thick = vr_render_eye_pass() && !TEST_FLAG(flags, _build_sprites_first_person_bit);
+		if (thick)
+			render_sprite_vr_thick_force(TRUE);
+#endif
+		memset(drawn, 0, sizeof(drawn));
+		/* (the first sprite's, drawn above; thick, it is drawn again) */
+		if (!thick && first_bitmap >= 0 && first_bitmap < bitmap_count)
+			drawn[first_bitmap >> 5] |= 1ul << (first_bitmap & 31);
 		for (sequence_index = 0; sequence_index < bitmap_group->sequences.count; sequence_index++)
 		{
 			struct bitmap_group_sequence *sequence = TAG_BLOCK_GET_ELEMENT(&bitmap_group->sequences, sequence_index,
@@ -1817,16 +1920,20 @@ static void effect_sprite(long bitmap_group_index, struct shader_effect_definiti
 				if (bitmap_index < 0 || bitmap_index >= bitmap_count || (drawn[bitmap_index >> 5] & (1ul << (bitmap_index & 31))))
 					continue;
 				drawn[bitmap_index >> 5] |= 1ul << (bitmap_index & 31);
-				rasterizer_transparent_geometry_flush(TRANSPARENT_GROUPS_ROOM);
+				transparents_flush();
 				build_sprites_begin(&data, 1, bitmap_group_index, shader, flags);
 				build_sprite(&data, _build_sprite_normal, sequence_index, sprite_index, &origin, &render.camera.forward,
 					0.0f, 0.001f, &color, 1.0f, 0);
 				build_sprites_end(&data);
 			}
 		}
-		render_sprite_vr_thick_force(FALSE);
-	}
+#ifdef HALO_VR
+		if (thick)
+			render_sprite_vr_thick_force(FALSE);
+#else
+		(void)thick;
 #endif
+	}
 }
 
 /* Light volumes use the widget sprite shader with depth testing, unlike
@@ -2102,7 +2209,7 @@ void render_enumerate_interface(void)
 
 void render_enumerate_screen_flashes(void)
 {
-	if (render_enumerating && enumerate.everything && enumerate.pass == 0)
+	if (render_enumerating && enumerate.everything && pass_window_first())
 	{
 		screen_flashes_draw();
 #ifdef HALO_VR

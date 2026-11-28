@@ -4,7 +4,8 @@ EFFECTS_TEST.C
 The VR mode's effects' arithmetic on the CPU (xgpu_vulkan_effects.c): the
 thickness bake's distances to the edge of known shapes (a disc, a square,
 two discs of different sizes on one sheet), its sphere profile, its mask
-(the alpha, or an added effect's brightness), and each eye's transforms: a
+(the alpha, or an added effect's brightness), the bake on the workers (each
+job back once, baked off this thread, the same bytes), and each eye's transforms: a
 world point through a view's clip transform and back through its
 unprojection, and the eye found where the eye's camera is.
 */
@@ -12,6 +13,8 @@ unprojection, and the eye found where the eye's camera is.
 #include "../xgpu_vulkan_effects.c"
 
 #include <assert.h>
+#include <pthread.h>
+#include <stdint.h>
 #include <stdio.h>
 
 #define CLOSE(a, b, tolerance) (fabs((double)(a) - (double)(b)) <= (tolerance))
@@ -139,6 +142,80 @@ static void masks(void)
 	assert(CLOSE(height_at(64, 32, 32), 15.5f * sqrtf(64.0f / 255.0f), 1.5));
 	/* too large a bitmap is not baked */
 	assert(!xgpu_vulkan_thickness_bake(sheet, XGPU_VULKAN_THICKNESS_LARGEST + 1, 1, baked));
+}
+
+/* ---------- the thickness baked apart */
+
+static pthread_t main_thread;
+static int decoded_off_main;
+
+/* (a job's input: a sheet's texels, ARGB words) */
+static int copy_decode(const struct xgpu_vulkan_thickness_job *job, uint32_t *texels)
+{
+	if (!pthread_equal(pthread_self(), main_thread))
+		__atomic_add_fetch(&decoded_off_main, 1, __ATOMIC_RELAXED);
+	if (!job->input)
+		return 0;
+	memcpy(texels, job->input, sizeof(uint32_t) * job->width * job->height);
+	return 1;
+}
+
+static struct xgpu_vulkan_thickness_job *sheet_job(uint32_t width, int owner, int decodable)
+{
+	struct xgpu_vulkan_thickness_job *job = calloc(1, sizeof(*job));
+
+	assert(job);
+	job->width = job->height = width;
+	job->decode = copy_decode;
+	job->owner = (void *)(intptr_t)owner;
+	if (decodable)
+	{
+		job->input = malloc(sizeof(uint32_t) * width * width);
+		assert(job->input);
+		memcpy(job->input, sheet, sizeof(uint32_t) * width * width);
+	}
+	return job;
+}
+
+static void baked_apart(void)
+{
+	static uint8_t expected[2][128 * 128 * 4];
+	struct xgpu_vulkan_thickness_job *job;
+	int seen[3] = { 0, 0, 0 };
+
+	main_thread = pthread_self();
+	assert(xgpu_vulkan_thickness_wait(0.0));
+	assert(!xgpu_vulkan_thickness_finished());
+	/* two sheets, and one whose texels cannot be decoded */
+	memset(sheet, 0, sizeof(sheet));
+	disc(sheet, 128, 64.0f, 64.0f, 40.0f, 0xffffffffu);
+	assert(xgpu_vulkan_thickness_bake(sheet, 128, 128, expected[0]));
+	assert(xgpu_vulkan_thickness_submit(sheet_job(128, 1, 1)));
+	memset(sheet, 0, sizeof(sheet));
+	disc(sheet, 64, 20.0f, 20.0f, 10.0f, 0x80ffffffu);
+	disc(sheet, 64, 44.0f, 44.0f, 16.0f, 0xffffffffu);
+	assert(xgpu_vulkan_thickness_bake(sheet, 64, 64, expected[1]));
+	assert(xgpu_vulkan_thickness_submit(sheet_job(64, 2, 1)));
+	assert(xgpu_vulkan_thickness_submit(sheet_job(64, 3, 0)));
+	assert(xgpu_vulkan_thickness_wait(10.0));
+	/* each back once, with its owner, baked on a worker, byte for byte as
+	the bake on this thread made it */
+	while ((job = xgpu_vulkan_thickness_finished()) != NULL)
+	{
+		int owner = (int)(intptr_t)job->owner;
+
+		assert(owner >= 1 && owner <= 3 && !seen[owner - 1]);
+		seen[owner - 1] = 1;
+		if (owner == 3)
+			assert(!job->thickness);
+		else
+			assert(job->thickness && !memcmp(job->thickness, expected[owner - 1], (size_t)job->width * job->height * 4));
+		assert(job->seconds >= 0.0);
+		xgpu_vulkan_thickness_free(job);
+	}
+	assert(seen[0] && seen[1] && seen[2]);
+	assert(decoded_off_main == 3);
+	assert(xgpu_vulkan_thickness_wait(0.0) && !xgpu_vulkan_thickness_finished());
 }
 
 /* ---------- each eye's transforms */
@@ -322,6 +399,7 @@ int main(void)
 	hemisphere();
 	two_sprites();
 	masks();
+	baked_apart();
 	views();
 	flat_view();
 	printf("ok\n");

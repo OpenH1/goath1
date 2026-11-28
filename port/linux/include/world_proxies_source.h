@@ -20,6 +20,9 @@ enum
 {
 	/* the most nodes read of a definition (the game's MAXIMUM_NODES_PER_MODEL) */
 	WORLD_PROXIES_SOURCE_MAXIMUM_NODES = 64,
+	/* the most collision permutations read of a node (a region's pieces as
+	the object has them now: a Jackal's shield up, or off as it dies) */
+	WORLD_PROXIES_SOURCE_PERMUTATIONS = 4,
 };
 
 /* what shapes a definition gets (docs/world-ao.md, "Proxies") */
@@ -55,6 +58,12 @@ struct world_proxies_source_node
 	long vertex_count;
 	long vertex_stride;
 	float const *vertices;
+	/* its collision permutations read (1 or more where it has geometry; the
+	first is the one above), and the others' vertices (the same stride),
+	permutation 1 first */
+	short permutation_count;
+	long other_vertex_counts[WORLD_PROXIES_SOURCE_PERMUTATIONS - 1];
+	float const *other_vertices[WORLD_PROXIES_SOURCE_PERMUTATIONS - 1];
 };
 
 /* a definition as the shapes are made from it */
@@ -123,6 +132,12 @@ int world_proxies_source_field(long definition, struct world_proxies_source_fiel
 /* an object's nodes as drawn this frame (world space), at most maximum;
 returns how many (0: not drawn) */
 short world_proxies_source_nodes(long id, struct world_proxies_frame *frames, short maximum);
+/* an object's collision permutation of each node now, at most maximum
+(as the collision tests take it, collision_models.c: its region's
+permutation, the last of the node's where it has fewer; 0 for a node of
+no region, whose first the shapes are of; -1 none: a region with no
+permutation); returns how many (0: not known, every node's first) */
+short world_proxies_source_permutations(long id, signed char *permutations, short maximum);
 /* the window's frustum: its 4 side planes, x y z d each (a point p is
 outside a plane where x*p.x + y*p.y + z*p.z - d > 0); FALSE: none known */
 int world_proxies_source_frustum(float planes[4][4]);

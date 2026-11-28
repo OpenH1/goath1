@@ -369,6 +369,26 @@ def mcc_fit_lines() -> List[str]:
     return lines
 
 
+MCC_LAYOUT_FIELDS = ("model", "map", "bitmap", "root", "color", "normal", "metallic", "occlusion")
+
+
+def mcc_layout_lines() -> List[str]:
+    """The MCC import's texture-only layouts' table (mcc_import_bake.h): a row per bitmap."""
+    data = json.loads((ROOT / MCC_FIT_LIST).read_text()) if (ROOT / MCC_FIT_LIST).is_file() else {}
+    layouts = data.get("layouts", [])
+    lines = ["const struct mcc_import_layout mcc_import_layouts[] =", "{"]
+    for layout in layouts:
+        if set(layout) != set(MCC_LAYOUT_FIELDS) or not layout["root"].endswith("/"):
+            sys.exit(f"{MCC_FIT_LIST}: a layout has {', '.join(MCC_LAYOUT_FIELDS)} (its root ending in /)")
+        lines.append("\t{ " + ", ".join(c_string(layout[field]) for field in MCC_LAYOUT_FIELDS) + " },")
+    if not layouts:
+        lines.append("\t{ 0 },")
+    lines.append("};")
+    lines.append(f"const unsigned int mcc_import_layout_count = {len(layouts)};")
+    lines.append("")
+    return lines
+
+
 def hud_asset_inputs() -> List[Path]:
     """The files the generated source is made from."""
     inputs = [listing for listing in (LAYOUT, CE_LAYOUT, MCC_LAYOUT, CE_STOCK, CUSTOM_EDITION_HUD, TITLE_LIST, BUTTON_LIST, CONTROLLER_LIST, FONT_LIST, MENU_LIST)
@@ -640,6 +660,7 @@ def main() -> None:
     lines.extend(picture_lines())
     lines.extend(effect_lines())
     lines.extend(mcc_fit_lines())
+    lines.extend(mcc_layout_lines())
     # the assets' file, its size and CRC-32 in its header too
     struct.pack_into("<I", assets.data, 8, len(assets.data))
     lines.append('#include "embedded_assets.h"')

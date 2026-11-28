@@ -7,8 +7,9 @@ through, as the backend builds its acceleration structures of it. The
 meshes: the loaded structure BSP's collision geometry, and each object
 definition's nodes' collision geometry (the first permutation's, in the
 node's space), a mesh for each node that has some, or for an item with
-none (a grenade, a weapon or equipment on the ground) a box about its
-bounding sphere; made as they are first drawn
+none (a grenade, a weapon or equipment on the ground) its model's render
+mesh as drawn, else a box about its bounding sphere; made as they are
+first drawn
 and kept until the map unloads (the backend's bottom-level structures,
 built once). The instances: each frame, the structure (which stops a ray
 and occludes nothing: the lightmaps and the field hold its occlusion) and
@@ -38,6 +39,9 @@ enum
 	WORLD_RT_INSTANCES = 4096,
 	/* the most nodes of a definition taken (world_proxies_source.h's) */
 	WORLD_RT_NODES = 64,
+	/* the most collision permutations of a node taken
+	(world_proxies_source.h's) */
+	WORLD_RT_PERMUTATIONS = 4,
 	/* the most triangles of a mesh (XGPU_STREAM_WORLD_AO_MESH_TRIANGLES) */
 	WORLD_RT_MESH_TRIANGLES = 1 << 20,
 	/* an instance's kind (xgpu_stream.h's XGPU_WORLD_AO_INSTANCE_*) */
@@ -265,9 +269,11 @@ void const *world_rt_source_texture(struct world_rt_source_map const *map);
 its model's space (centre, radius) and whether it is an item (a weapon,
 equipment or garbage); 0 if it has none */
 short world_rt_source_definition(long definition, float sphere[4], int *item);
-/* a node's collision geometry's triangles in its own space (as above):
-how many (0 none) */
-long world_rt_source_node(long definition, short node_index, float *triangles, long maximum);
+/* a node's collision geometry's triangles in its own space (as above), of
+one of its permutations (the BSP of that index: collision_models.c): how
+many (0 none); and how many permutations it has */
+long world_rt_source_node(long definition, short node_index, short permutation, float *triangles, long maximum);
+short world_rt_source_node_permutations(long definition, short node_index);
 /* the first local player's first-person weapon (which 0) or hands (1) as
 drawn since world_rt_source_first_person_next was last called: its model's
 tag index (as a definition: world_rt_source_definition and _model_mesh take

@@ -134,6 +134,7 @@ void object_bounds_cache_invalidate(void);
 /* port: port/linux/game/determinism_log.c */
 void determinism_log_game_state_allocation(char const *name, void const *address, long size);
 #include "demo.h" /* port: port/linux/game/demo.c */
+#include "campaign_score.h" /* port: port/linux/game/campaign_score.c */
 #include "../../port/linux/src/saved_game_writer.h" /* port: a co-op host's saved game's copy */
 
 /* port: riding taken from the settings after every load (bipeds.c) */
@@ -414,6 +415,8 @@ void game_state_save(
 	if (game_state_globals.saved_game_valid)
 	{
 		network_coop_checkpoint_saved();
+		/* port: campaign scoring's score as the checkpoint has it */
+		campaign_score_checkpoint_saved();
 		/* port: and a co-op host's checkpoint its own saved game */
 		game_state_coop_saved();
 	}
@@ -486,6 +489,11 @@ void game_state_revert(
 	{
 		game_state_globals.saved_game_valid = FALSE;
 		main_reset_map();
+	}
+	else
+	{
+		/* port: and campaign scoring's score back to the checkpoint's */
+		campaign_score_reverted();
 	}
 	game_state_call_after_load_procs();
 

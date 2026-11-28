@@ -9,13 +9,19 @@ The distances are Felzenszwalb and Huttenlocher's exact squared Euclidean
 distance transform ("Distance Transforms of Sampled Functions", 2012): the
 lower envelope of parabolas, a pass down each column and then along each
 row, linear in the texels.
+
+The bakes are made apart, on worker threads (xgpu_vulkan_thickness_submit):
+a queue of jobs waiting and one of jobs finished, under one lock.
 */
 
 #include "xgpu_vulkan_effects.h"
 
 #include <math.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <unistd.h>
 
 /* an inside texel's distance before the transform: farther than any (finite,
 so that two of them make no infinity less infinity) */
@@ -313,6 +319,185 @@ done:
 	free(inside);
 	free(parent);
 	return made;
+}
+
+/* ---------- the thickness baked apart */
+
+/* the workers, at most (a core each, and never all of a machine's) */
+#define BAKE_WORKERS_MOST 2
+
+static struct
+{
+	pthread_mutex_t lock;
+	/* a job waiting or finished, and the workers waiting for one */
+	pthread_cond_t waiting_changed;
+	/* (a job finished: for xgpu_vulkan_thickness_wait) */
+	pthread_cond_t baked;
+	struct xgpu_vulkan_thickness_job *waiting, *waiting_last, *finished, *finished_last;
+	/* the jobs being baked; the workers started */
+	int baking, workers;
+} bakes = { .lock = PTHREAD_MUTEX_INITIALIZER, .waiting_changed = PTHREAD_COND_INITIALIZER, .baked = PTHREAD_COND_INITIALIZER };
+
+static double bake_seconds(void)
+{
+	struct timespec now;
+
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	return (double)now.tv_sec + (double)now.tv_nsec * 1.0e-9;
+}
+
+static void bake_job(struct xgpu_vulkan_thickness_job *job)
+{
+	double started = bake_seconds();
+	size_t count = (size_t)job->width * job->height;
+	uint32_t *texels = count ? malloc(sizeof(uint32_t) * count) : NULL;
+	uint8_t *thickness = count ? malloc(count * 4) : NULL;
+
+	job->thickness = NULL;
+	if (texels && thickness && job->decode(job, texels) &&
+		xgpu_vulkan_thickness_bake(texels, job->width, job->height, thickness))
+	{
+		job->thickness = thickness;
+		thickness = NULL;
+	}
+	free(texels);
+	free(thickness);
+	job->seconds = bake_seconds() - started;
+}
+
+static void *bake_worker(void *unused)
+{
+	(void)unused;
+	pthread_mutex_lock(&bakes.lock);
+	for (;;)
+	{
+		struct xgpu_vulkan_thickness_job *job;
+
+		while (!bakes.waiting)
+			pthread_cond_wait(&bakes.waiting_changed, &bakes.lock);
+		job = bakes.waiting;
+		bakes.waiting = job->next;
+		if (!bakes.waiting)
+			bakes.waiting_last = NULL;
+		job->next = NULL;
+		bakes.baking++;
+		pthread_mutex_unlock(&bakes.lock);
+		bake_job(job);
+		pthread_mutex_lock(&bakes.lock);
+		bakes.baking--;
+		if (bakes.finished_last)
+			bakes.finished_last->next = job;
+		else
+			__atomic_store_n(&bakes.finished, job, __ATOMIC_RELEASE);
+		bakes.finished_last = job;
+		pthread_cond_broadcast(&bakes.baked);
+	}
+	return NULL;
+}
+
+/* the workers started, with the lock held: 0 if none could be */
+static int bake_workers_start(void)
+{
+	long processors = sysconf(_SC_NPROCESSORS_ONLN);
+	int wanted = processors >= 4 ? BAKE_WORKERS_MOST : 1;
+
+	while (bakes.workers < wanted)
+	{
+		pthread_attr_t attributes;
+		pthread_t thread;
+		int made;
+
+		pthread_attr_init(&attributes);
+		pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_DETACHED);
+		/* (the bake's working memory is on the heap) */
+		pthread_attr_setstacksize(&attributes, 256u << 10);
+		made = pthread_create(&thread, &attributes, bake_worker, NULL) == 0;
+		pthread_attr_destroy(&attributes);
+		if (!made)
+			break;
+		bakes.workers++;
+	}
+	return bakes.workers > 0;
+}
+
+int xgpu_vulkan_thickness_submit(struct xgpu_vulkan_thickness_job *job)
+{
+	int queued;
+
+	pthread_mutex_lock(&bakes.lock);
+	queued = bake_workers_start();
+	if (queued)
+	{
+		job->next = NULL;
+		job->thickness = NULL;
+		if (bakes.waiting_last)
+			bakes.waiting_last->next = job;
+		else
+			bakes.waiting = job;
+		bakes.waiting_last = job;
+		pthread_cond_signal(&bakes.waiting_changed);
+	}
+	pthread_mutex_unlock(&bakes.lock);
+	return queued;
+}
+
+struct xgpu_vulkan_thickness_job *xgpu_vulkan_thickness_finished(void)
+{
+	struct xgpu_vulkan_thickness_job *job;
+
+	/* (looked at without the lock first: each frame asks, and seldom is
+	one finished; a job finished just now is taken the next time) */
+	if (!__atomic_load_n(&bakes.finished, __ATOMIC_ACQUIRE))
+		return NULL;
+	pthread_mutex_lock(&bakes.lock);
+	job = bakes.finished;
+	if (job)
+	{
+		__atomic_store_n(&bakes.finished, job->next, __ATOMIC_RELEASE);
+		if (!bakes.finished)
+			bakes.finished_last = NULL;
+		job->next = NULL;
+	}
+	pthread_mutex_unlock(&bakes.lock);
+	return job;
+}
+
+int xgpu_vulkan_thickness_wait(double seconds)
+{
+	double until = bake_seconds() + seconds;
+	int idle;
+
+	pthread_mutex_lock(&bakes.lock);
+	while ((bakes.waiting || bakes.baking) && seconds > 0.0)
+	{
+		double left = until - bake_seconds();
+		struct timespec deadline;
+
+		if (left <= 0.0)
+			break;
+		/* (CLOCK_REALTIME, the condition's clock) */
+		clock_gettime(CLOCK_REALTIME, &deadline);
+		deadline.tv_sec += (time_t)left;
+		deadline.tv_nsec += (long)((left - (double)(time_t)left) * 1.0e9);
+		if (deadline.tv_nsec >= 1000000000L)
+		{
+			deadline.tv_sec++;
+			deadline.tv_nsec -= 1000000000L;
+		}
+		pthread_cond_timedwait(&bakes.baked, &bakes.lock, &deadline);
+	}
+	idle = !bakes.waiting && !bakes.baking;
+	pthread_mutex_unlock(&bakes.lock);
+	return idle;
+}
+
+void xgpu_vulkan_thickness_free(struct xgpu_vulkan_thickness_job *job)
+{
+	if (!job)
+		return;
+	free(job->thickness);
+	free(job->input);
+	free(job);
 }
 
 /* ---------- each eye's transforms */

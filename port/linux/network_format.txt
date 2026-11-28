@@ -55,7 +55,7 @@ define DISTRIBUTED_ANGULAR_VELOCITY_SCALE 4096.0f
 define DISTRIBUTED_TIME_WINDOW_TICKS DISTRIBUTED_TICK_WINDOW_TICKS
 define DISTRIBUTED_UNIT_SCALE 32767.0f
 define DISTRIBUTED_VELOCITY_SCALE 1024.0f
-define HALO_PORT_STANDARD_NETWORK_VERSION 37
+define HALO_PORT_STANDARD_NETWORK_VERSION 40
 define MCC_ADMISSION_DEADLINE 120000u
 define MCC_ADMISSION_GRACE 15000u
 define MCC_ADMISSION_HEARD 20000u
@@ -105,6 +105,7 @@ enum _distributed_message_admin_down 137
 enum _distributed_message_admin_up 138
 enum _distributed_message_aim_assist_policy 90
 enum _distributed_message_batch 16
+enum _distributed_message_campaign_score 160
 enum _distributed_message_chat_config 89
 enum _distributed_message_chat_down 88
 enum _distributed_message_chat_up 87
@@ -354,6 +355,9 @@ struct distributed_actor_damage 96a57e13e2b8
 struct distributed_actor_damage_message f985e899a708
 struct distributed_actor_state 8bd5e771659d
 struct distributed_actor_state_message 51a56e04a536
+struct distributed_campaign_score_event 318531a187aa
+struct distributed_campaign_score_header 4099fc8d1668
+struct distributed_campaign_score_player 889f43126594
 struct distributed_chat_config dfa4e32efe1e
 struct distributed_chat_line cdab1468ffe0
 struct distributed_client_build 503e4474b798

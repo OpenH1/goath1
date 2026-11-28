@@ -142,6 +142,7 @@ symbols in this file:
 #include "units/bipeds.h"
 #include "units/units.h"
 #include "sim_rate.h" /* port: port/linux/game/sim_rate.c */
+#include "campaign_score.h" /* port: port/linux/game/campaign_score.c */
 /* port: port/linux/game/overshield_effect.c */
 boolean overshield_effect_active(long object_index);
 boolean overshield_effect_hit_effect_allowed(long effect_index);
@@ -2364,7 +2365,11 @@ static void projectile_collision(
 		SET_FLAG(projectile->object.flags, _object_at_rest_bit, TRUE);
 		object_translate(projectile_index, new_position, &collision->location);
 		if (collision->type == _collision_result_object)
+		{
 			object_attach_to_node(collision->object_index, projectile_index, collision->node_index);
+			/* port: a grenade stuck, scored (campaign_score.c: it changes nothing) */
+			campaign_score_projectile_stuck(projectile_index, collision->object_index);
+		}
 
 		if (TEST_FLAG(definition->projectile.flags, _projectile_detonation_max_time_if_attached_bit))
 		{

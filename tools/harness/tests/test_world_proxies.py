@@ -10,11 +10,15 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from harness import CHECK_FAILED, build, mutated, read, run  # noqa: E402
 
-CASES = ["sphere", "capsule", "box", "reach", "bound", "far", "culling", "skeleton", "owner", "baked", "field", "none", "drawn"]
+CASES = ["sphere", "capsule", "box", "reach", "bound", "far", "culling", "skeleton", "permutation", "owner", "baked", "field", "none", "drawn"]
 HEADER = "port/linux/include/world_proxies.h"
 SOURCE = "port/linux/include/world_proxies_source.h"
 GAME = "port/linux/game/world_proxies.c"
 CONTROLS = [
+    # every node's shapes whatever its collision permutation now (a dead Jackal's shield's, #1311)
+    ("\treturn shape->permutation == permutation;", "\treturn 1;", "permutation"),
+    # ... or only its first permutation's (the shield's frame gone with it)
+    ("\t\t\tshape.permutation = permutation;\n\t\t\tset_add(set, &shape);", "", "permutation"),
     # a vehicle whose field is on its way shaded by its boxes meanwhile (six times an Apple M2's frame, #651)
     ("boxless = fielded && instance->field_awaited;", "boxless = 0;", "field"),
     # the static scenery's shapes taken among the dynamic objects' by their distance alone

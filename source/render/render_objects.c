@@ -452,6 +452,8 @@ void render_objects(
 	return;
 }
 
+/* port: the object render_object_outline draws alone (NONE: none) */
+static long render_outline_root = NONE;
 /* port: port/linux/game/menu_spartan.c */
 boolean menu_spartan_object(long object_index);
 real_matrix4x3 const *menu_spartan_node_matrices(long object_index, real_matrix4x3 const *nodes);
@@ -957,10 +959,32 @@ static void render_object_list(
 			}
 		}
 
+		/* port: (render_object_outline: the object alone, not those after it) */
+		if (object_index == render_outline_root)
+			break;
 		object_index = object->object.next_object_index;
 	}
 
 	return;
+}
+
+/* port: a pinged object and what it carries drawn as its shadow's casters
+are, in the view the rasterizer has now: its outline's passes (port/linux/
+game/network_markers.c, rasterizer_xbox_shadows.c's rasterizer_ping_outline_*) */
+void render_object_outline(
+	long object_index)
+{
+	static struct render_lighting lighting;
+	struct object_render_data data;
+
+	csmemset(&data, 0, sizeof(data));
+	data.object_index = object_index;
+	data.lighting = &lighting;
+	data.shadow = TRUE;
+	data.no_planar_fog = TRUE;
+	render_outline_root = object_index;
+	render_object_list(&data, NULL, object_index);
+	render_outline_root = NONE;
 }
 
 static void interpolate_real_rgb_color(
@@ -1084,6 +1108,13 @@ static boolean render_object_shadow_begin(
 	shadow_color.green = shadow_color.green * shadow_intensity + (1.f - shadow_intensity);
 	shadow_color.blue = shadow_color.blue * shadow_intensity + (1.f - shadow_intensity);
 
+	/* port: the shadow volume's radius as the rasterizer gives it, the
+	object's own, also where it sets nothing up (a mirror's window, not the
+	primary target): its receivers are walked all the same
+	(render_object_shadow_end), and the value left from the frame before, or
+	the stack's, could be no radius at all (c40's mirror: structures.c's
+	radius>=0 assert) */
+	data->shadow_bounding_radius = radius;
 	return rasterizer_environment_shadow_begin(
 		data->object_index,
 		&data->shadow_matrix,

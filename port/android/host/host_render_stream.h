@@ -54,6 +54,8 @@ struct host_render_texture_stage
 	struct xgpu_stream_texture_level levels[XGPU_STREAM_MIP_LEVELS];
 };
 
+struct host_render_later_pixels;
+
 struct host_render_backend
 {
 	void *context;
@@ -161,6 +163,11 @@ struct host_render_backend
 	cannot be read, -1 not RGBA16F (read with read_target). NULL: every
 	screenshot is read with read_target */
 	int (*read_target_halves)(void *context, uint32_t target, uint32_t width, uint32_t height, uint16_t **halves);
+	/* the screenshot key's target (width by height) read back without the
+	render thread waiting for the GPU or copying it: NULL where it cannot be
+	(read with read_target_halves or read_target then). NULL: never */
+	struct host_render_later_pixels *(*read_target_later)(void *context, uint32_t target, uint32_t width,
+		uint32_t height);
 
 	/* (the four stages, then the material maps': XGPU_STREAM_TEXTURE_STAGES,
 	which a backend may leave out) */
@@ -285,6 +292,31 @@ read tone mapped on the render thread as before */
 typedef int (*host_render_screenshot_halves_writer)(uint16_t *halves, uint32_t width, uint32_t height,
 	const char *directory, char *name, uint32_t name_size);
 void host_render_stream_set_screenshot_halves_writer(host_render_screenshot_halves_writer writer);
+/* a frame read back without the render thread waiting for it
+(read_target_later's): its pixels, rows from the top of format's
+(HOST_RENDER_LATER_*: BGRA8, display.hdr's RGBA half floats, or
+display.output_depth's RGBA 16-bit channels), waited for by wait on the thread that writes
+the picture (NULL if they never come: the device lost, the renderer shut
+down; never on the render thread, whose work it waits for), and let go of
+by release, once, waited for or not */
+enum
+{
+	HOST_RENDER_LATER_BGRA8,
+	HOST_RENDER_LATER_HALVES,
+	HOST_RENDER_LATER_DEEP,
+};
+struct host_render_later_pixels
+{
+	int format;
+	const void *(*wait)(struct host_render_later_pixels *pixels);
+	void (*release)(struct host_render_later_pixels *pixels);
+};
+/* the same of such pixels, which it takes (released, written or not): 1
+written, 0 not (the reason in name), -1 none of its threads free to take it
+(released: read it now, through the writers above) */
+typedef int (*host_render_screenshot_later_writer)(struct host_render_later_pixels *pixels, uint32_t width,
+	uint32_t height, const char *directory, char *name, uint32_t name_size);
+void host_render_stream_set_screenshot_later_writer(host_render_screenshot_later_writer writer);
 /* host_screenshot.c's, with SDL: YYYY-MM-DD_HH.MM.SS.png in local time
 (host_screenshot_name: the how manyth of its second, collision, from 0,
 adds _2, _3 and on). The name is answered at once and the file written on
@@ -295,6 +327,8 @@ int host_screenshot_write(unsigned char *bgra, uint32_t width, uint32_t height, 
 	uint32_t name_size);
 int host_screenshot_write_halves(uint16_t *halves, uint32_t width, uint32_t height, const char *directory, char *name,
 	uint32_t name_size);
+int host_screenshot_write_later(struct host_render_later_pixels *pixels, uint32_t width, uint32_t height,
+	const char *directory, char *name, uint32_t name_size);
 void host_screenshot_finish(void);
 void host_screenshot_name(char *name, uint32_t name_size, int year, int month, int day, int hour, int minute,
 	int second, unsigned collision);
@@ -370,12 +404,17 @@ it (shows it, or drops it; at once for a frame it has nothing to show of).
 The game then starts a frame only while at most FRAME_PACING_QUEUED of its
 frames wait for the display. HOST_RENDER_DISPLAY_BOUNDED in place of 1
 keeps that bound alone: the frames are started as soon as it lets them, not
-just in time for their refresh. host_render_stream_frame_shown gives the time
+just in time for their refresh. HOST_RENDER_DISPLAY_VARIABLE, a display of
+variable refresh (VRR), lets FRAME_PACING_VARIABLE_QUEUED frames wait for
+it and starts each just in time for the GPU, which the backend says has
+finished a frame by host_render_stream_gpu_passed: the game writes a frame
+while the GPU draws the one before. host_render_stream_frame_shown gives the time
 the frame reached the screen with its input time
 (host_render_stream_frame_input, while the backend ends it), for
 host_render_stream_latency: nanoseconds of CLOCK_MONOTONIC, the game's. */
 #define HOST_RENDER_DISPLAY_PACED 1
 #define HOST_RENDER_DISPLAY_BOUNDED 2
+#define HOST_RENDER_DISPLAY_VARIABLE 3
 void host_render_stream_display_paced(int paced);
 /* (any thread) the most frames whose work (the GPU's included) may be
 unfinished, besides the one the game has just given, when it starts the

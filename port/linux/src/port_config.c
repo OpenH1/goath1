@@ -494,6 +494,11 @@ static const struct config_setting config_settings[] =
 	{ "display.spartan_link_stats", _config_boolean, "true", "HALO_SPARTAN_LINK_STATS", _environment_value, _platform_all,
 		"The teammate's name, shield and health under each Spartan link feed\n"
 		"(display.spartan_link); false, the feeds alone." },
+	{ "display.score_popups", _config_boolean, "true", "HALO_SCORE_POPUPS", _environment_value, _platform_all,
+		"Campaign scoring's pop-ups (campaign.scoring): the points of each kill,\n"
+		"grouped (one \"+150 Triple Kill\"), small at the view's right for a\n"
+		"moment (campaign_score_hud.c); false: none, the scoreboard still has the\n"
+		"scores. Each player profile's own.", _scope_player },
 	{ "display.spartan_link_shown", _config_boolean, "false", "HALO_SPARTAN_LINK_SHOWN", _environment_value, _platform_all,
 		"Whether the Spartan link is shown (display.spartan_link): the key\n"
 		"turns it on and off and it stays so from game to game, each player\n"
@@ -568,6 +573,10 @@ static const struct config_setting config_settings[] =
 		"What runs the PC menus' generated screens: \"classic\" the game's\n"
 		"widgets, built from the menus' files; \"new\" the port's menu engine,\n"
 		"from the menus' model (docs/menu_engine.md), drawn the same way." },
+	{ "display.goat_menus", _config_boolean, "false", "HALO_GOAT_MENUS", _environment_value, _platform_all,
+		"Settings in the GOAT layout (with display.menu_engine \"new\"): one\n"
+		"screen of tabs, each its rows of Settings' pages, changed in place and\n"
+		"kept with APPLY. Off: Settings' own tabs and pages." },
 	{ "display.menu_language", _config_string, "\"maps\"", "HALO_MENU_LANGUAGE", _environment_value, _platform_all,
 		"The PC menus' language: \"maps\" for the language of the Custom Edition\n"
 		"whose loc.map is in custom_maps (as that edition shows them; English\n"
@@ -1702,6 +1711,14 @@ static const struct config_setting config_settings[] =
 		"original's. Read as a level begins; a loaded save keeps the size it was\n"
 		"played at. Settings > Interface > Campaign, and BATTLE in the co-op\n"
 		"host's lobby." },
+	{ "campaign.scoring", _config_boolean, "true", "HALO_CAMPAIGN_SCORING", _environment_value, _platform_all,
+		"Campaign scoring, solo, split screen and co-op this computer hosts:\n"
+		"points for each kill (more for tougher enemies, headshots, melee,\n"
+		"sticks, multi-kills and streaks), times the difficulty, and a bonus\n"
+		"as a level ends, with personal bests per level, difficulty and\n"
+		"player count (campaign_scores.txt). false: no score is kept. Read as\n"
+		"a level begins; a co-op host sends its word to the players. The\n"
+		"score never changes the game." },
 	{ "game.spartan_link", _config_boolean, "true", "HALO_GAME_SPARTAN_LINK", _environment_value, _platform_all,
 		"Hosting a team game: whether its players may show their Spartan link\n"
 		"(display.spartan_link); false, nobody's shows in it. Co-op always\n"
@@ -1802,7 +1819,7 @@ static const struct config_setting config_settings[] =
 	{ "display.first_person_legs", _config_boolean, "false", "HALO_FIRST_PERSON_LEGS", _environment_value, _platform_all,
 #endif
 		"Your own legs in first person, seen looking down: your body as others\n"
-		"see it, drawn from the belly down, moving as it moves, with its shadow.", _scope_player },
+		"see it, drawn but its head and arms, moving as it moves, with its shadow.", _scope_player },
 	{ "display.overshield_effect", _config_boolean, "true", "HALO_OVERSHIELD_EFFECT", _environment_value, _platform_all,
 		"The overshield as this machine draws it: its flare lit as it charges\n"
 		"and staying lit for as long as it lasts, its energy slower, in its own\n"
@@ -2658,6 +2675,17 @@ static const struct config_setting config_settings[] =
 		"screen is; else that many times a second, the feeds in turn, one a frame\n"
 		"at most, each image turned to its teammate's look between\n"
 		"(port/linux/game/spartan_link.c)." },
+	{ "debug.score_pictures", _config_boolean, "false", "HALO_SCORE_PICTURES", _environment_value, _platform_all,
+		"Campaign scoring's pictures (campaign_score_hud.c): the first pop-ups\n"
+		"saved as they show (score_popup_<n>, each logged with its wait) and the\n"
+		"level's summary a second\n"
+		"after it shows (score_summary, or score_summary_compact), to the\n"
+		"screenshot folder, for proofs of them." },
+	{ "debug.score_fill", _config_boolean, "false", "HALO_SCORE_FILL", _environment_value, _platform_all,
+		"Campaign scoring's screens drawn from made-up numbers, not the game's\n"
+		"score (campaign_score_hud.c): the scoreboard, the pop-ups, the Spartan\n"
+		"link's scores and events and, 40 seconds in, the level's summary, for\n"
+		"pictures of them before a score is kept." },
 	{ "debug.spartan_link_log", _config_boolean, "false", "HALO_SPARTAN_LINK_LOG", _environment_value, _platform_all,
 		"Log each Spartan link feed's camera as it is drawn (the tick, the local\n"
 		"player, the teammate, through their eyes, where it looks from and along,\n"
@@ -3377,6 +3405,19 @@ static const struct config_setting config_settings[] =
 		"\"mailbox\", \"fifo\" or \"fifo_relaxed\"; empty, the game's own choice (FIFO\n"
 		"with vsync, else mailbox, else immediate). One the surface does not have\n"
 		"is the game's choice, as the log says." },
+	{ "debug.vulkan_push_textures", _config_boolean, "false", "HALO_VULKAN_PUSH_TEXTURES", _environment_set_is_true,
+		_platform_all,
+		"Vulkan: each draw's textures pushed into the command buffer\n"
+		"(VK_KHR_push_descriptor, where the device has it) rather than kept as\n"
+		"descriptor sets. The pictures are the same; to measure the CPU's time\n"
+		"per frame against the kept sets." },
+	{ "debug.vulkan_bar_uploads", _config_boolean, "true", "HALO_VULKAN_BAR_UPLOADS", _environment_value,
+		_platform_all,
+		"Vulkan: the stream's upload ring and the mirror's segments, which the CPU\n"
+		"writes and the GPU reads every frame, in the GPU's own memory the CPU can\n"
+		"write (a heap over 2 GB: resizable BAR) rather than the host's. On by\n"
+		"default; not on an integrated GPU, whose memory is the host's, nor where\n"
+		"there is no such heap. The log says which." },
 	{ "debug.skip_cinematics", _config_boolean, "false", "HALO_SKIP_CINEMATICS", _environment_set_is_true, _platform_all,
 		"Skip each cinematic in a local game: as the skip button does where it can\n"
 		"be skipped, else run at sixteen times its speed (a test reaches play in\n"

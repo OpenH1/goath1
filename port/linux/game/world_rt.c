@@ -111,6 +111,11 @@ struct world_rt_definition
 	long triangles;
 	short collision_made;
 	unsigned short collision[WORLD_RT_NODES];
+	/* (its collision meshes) each node's of its other permutations (a
+	region's other pieces: a Jackal's shield off), permutation 1 first, 0
+	none; and whether any node has them */
+	unsigned short permuted[WORLD_RT_NODES][WORLD_RT_PERMUTATIONS - 1];
+	short any_permuted;
 };
 
 /* ---------- globals */
@@ -151,6 +156,8 @@ static struct
 	struct world_rt_pose *poses;
 	struct world_proxies_source_instance *objects;
 	struct world_proxies_frame frames[WORLD_RT_NODES];
+	/* (an object's collision permutation of each node now) */
+	signed char permutations[WORLD_RT_NODES];
 	float *triangles;
 	long triangle_capacity;
 	int full_logged;
@@ -988,23 +995,42 @@ done:
 	return made;
 }
 
-/* a definition's nodes' collision meshes into meshes (0 none); their
-triangles */
-static long world_rt_collision_meshes(long definition, short node_count, unsigned short *meshes)
+/* a definition's nodes' collision meshes into meshes (0 none), and with
+permuted each node's other permutations' (a region's other pieces: the
+object has one of them at a time, as its collision tests take it,
+world_proxies_source_permutations; *any_permuted whether any node has
+them); their triangles (the first permutation's) */
+static long world_rt_collision_meshes(long definition, short node_count, unsigned short *meshes,
+	unsigned short (*permuted)[WORLD_RT_PERMUTATIONS - 1], short *any_permuted)
 {
 	short node_index;
 	long triangles = 0;
 
 	for (node_index = 0; node_index < node_count; node_index++)
 	{
-		long count = world_rt_source_node(definition, node_index, NULL, 0);
+		short permutations = permuted ? world_rt_source_node_permutations(definition, node_index) : 1, permutation;
 
-		if (count <= 0 || count > WORLD_RT_MESH_TRIANGLES || !world_rt_room(count))
-			continue;
-		count = world_rt_source_node(definition, node_index, world_rt.triangles, count);
-		world_rt_orient(world_rt.triangles, count, WORLD_RT_ORIENT_LEAST);
-		meshes[node_index] = (unsigned short)world_rt_mesh_send(count);
-		triangles += meshes[node_index] ? count : 0;
+		for (permutation = 0; permutation < permutations && permutation < WORLD_RT_PERMUTATIONS; permutation++)
+		{
+			long count = world_rt_source_node(definition, node_index, permutation, NULL, 0);
+			unsigned short mesh;
+
+			if (count <= 0 || count > WORLD_RT_MESH_TRIANGLES || !world_rt_room(count))
+				continue;
+			count = world_rt_source_node(definition, node_index, permutation, world_rt.triangles, count);
+			world_rt_orient(world_rt.triangles, count, WORLD_RT_ORIENT_LEAST);
+			mesh = (unsigned short)world_rt_mesh_send(count);
+			if (permutation == 0)
+			{
+				meshes[node_index] = mesh;
+				triangles += mesh ? count : 0;
+			}
+			else
+			{
+				permuted[node_index][permutation - 1] = mesh;
+				*any_permuted = 1;
+			}
+		}
 	}
 	return triangles;
 }
@@ -1048,9 +1074,18 @@ static struct world_rt_definition *world_rt_definition(long definition)
 		triangles = world_rt_definition_render(definition, entry);
 	any = triangles > 0;
 	if (!any)
-		triangles = world_rt_collision_meshes(definition, entry->node_count, entry->meshes);
+		triangles = world_rt_collision_meshes(definition, entry->node_count, entry->meshes, entry->permuted,
+			&entry->any_permuted);
 	any = triangles > 0;
-	/* (none: an item's box about its bounding sphere, on its first node) */
+	/* (none: an item's model's render mesh as drawn, a grenade's say: the
+	box about its bounding sphere, far larger than a grenade, cast a square
+	shadow about each one lying on the ground) */
+	if (!any && item && entry->node_count > 0 && !config_boolean("debug.rt_render_geometry"))
+	{
+		triangles = world_rt_definition_render(definition, entry);
+		any = triangles > 0;
+	}
+	/* (still none: its box about its bounding sphere, on its first node) */
 	if (!any && item && entry->node_count > 0 && entry->sphere[3] > 0.0f && entry->sphere[3] <= WORLD_RT_BOX_LARGEST)
 	{
 		if (!world_rt.box && world_rt_room(12))
@@ -1177,7 +1212,7 @@ void world_rt_frame(unsigned long frame)
 		as drawn) */
 		unsigned int kind = object->baked ? WORLD_RT_STRUCTURE : object->first_person && world_rt.render_geometry ?
 			WORLD_RT_PLAYER : WORLD_RT_OBJECT;
-		short node_count, node_index;
+		short node_count, node_index, permutation_count;
 
 		definition = world_rt_definition(object->definition);
 		if (!definition || definition->node_count <= 0)
@@ -1215,7 +1250,7 @@ void world_rt_frame(unsigned long frame)
 			struct world_rt_definition *fallback = (struct world_rt_definition *)definition;
 
 			if (!fallback->collision_made)
-				world_rt_collision_meshes(fallback->definition, fallback->node_count, fallback->collision);
+				world_rt_collision_meshes(fallback->definition, fallback->node_count, fallback->collision, NULL, NULL);
 			fallback->collision_made = 1;
 			for (node_index = 0; node_index < node_count && node_index < definition->node_count; node_index++)
 			{
@@ -1247,13 +1282,21 @@ void world_rt_frame(unsigned long frame)
 				world_rt_player_posed(&world_rt.poses[pose_count - 1]);
 			continue;
 		}
+		/* (each node's collision mesh of the permutation the object has now:
+		a dead Jackal's shield is off, its frame alone left, #1311) */
+		permutation_count = definition->any_permuted ?
+			world_proxies_source_permutations(object->id, world_rt.permutations, WORLD_RT_NODES) : 0;
 		for (node_index = 0; node_index < node_count && node_index < definition->node_count; node_index++)
 		{
 			struct world_ao_instance *instance;
+			int permutation = node_index < permutation_count ? world_rt.permutations[node_index] : 0;
+			unsigned short mesh = permutation == 0 ? definition->meshes[node_index] :
+				permutation > 0 && permutation < WORLD_RT_PERMUTATIONS ?
+					definition->permuted[node_index][permutation - 1] : 0;
 
-			if (!definition->meshes[node_index])
+			if (!mesh)
 				continue;
-			instance = world_rt_instance_add(&count, definition->meshes[node_index], owner, kind);
+			instance = world_rt_instance_add(&count, mesh, owner, kind);
 			if (instance)
 				world_rt_transform(&world_rt.frames[node_index], instance->transform);
 		}

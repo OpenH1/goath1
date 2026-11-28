@@ -119,7 +119,7 @@ at every aspect ratio (in the menus' middle 640) and on a phone.
 
 | Element | Attributes | Meaning |
 | --- | --- | --- |
-| `<dialog>` | `title` (required), `text` | The box: its title and its words (wrapped to the box, bindings filled). A screen with one has nothing else but its `<list>` |
+| `<dialog>` | `title` (required), `text` | The box: its title and its words (wrapped to the box, bindings filled, and filled again each frame, its size as it opened; its choices' labels too). A screen with one has nothing else but its `<list>` |
 | `<list>` | `focus` | (in a `<dialog>`) Its choices: 1 to 4 `<item>`s, `focus` the one focused as it opens (each opening asks anew) |
 
 `screens/quit.xml` (in place of the PC version's Quit question) and
@@ -282,6 +282,7 @@ item uses the next of its `<hint>`s. The bindings are listed in
 | `{lobby.gametype}`, `{lobby.map}`, `{lobby.limits}`, `{lobby.kind}`, `{lobby.kind.tone}`, `{lobby.tick}`, `{lobby.opence}`, `{lobby.after}` | The next game: its gametype, map (a co-op game's level and difficulty), limits (`50 kills · 10 min`), GOAT H1 or LEGACY and its pill's tone, its tick rate (`120 TICK`), OPENCE CAN JOIN (the host's, while OpenCE's players may join), the game after it (a host's playlist's) |
 | `{lobby.bots}`, `{lobby.skill}`, `{lobby.teams}`, `{lobby.bots.shown}`, `{lobby.bots.locked}`, `{lobby.bots.count.locked}` | The host's bots: BOTS' choice (`ADD 3`), SKILL, TEAMS; (for `if`s and `dim`s) whether the host has them (any game but co-op), whether the gametype is one they do not play, and BOTS' a matchmaking game's too |
 | `{lobby.hijack}`, `{lobby.hijack.shown}` | The host's VEHICLE HIJACKING, `ON` or `OFF`; (for `if`s) whether this machine hosts a GOAT H1 game (co-op too; never a Legacy one) |
+| `{lobby.scoring}`, `{lobby.scoring.shown}` | The co-op host's SCORE (`campaign.scoring`, Settings' SCORING), `ON` or `OFF`; (for `if`s) whether this machine hosts a co-op game |
 | `{lobby.battle}`, `{lobby.battle.shown}` | The co-op host's BIGGER BATTLES (`campaign.bigger_battles`), `OFF`, `2X` or `3X`; (for `if`s) whether this machine hosts a co-op game |
 | `{lobby.status}`, `{lobby.start}`, `{lobby.waiting}` | How the game is (the countdown, the invite copied, how another controller joins...); START GAME's words (or `STARTING IN 3`); a player's (`Waiting for the host`) |
 | `{lobby.chat}` | (for `if`s) the lobby has its text chat now: the host's LOBBY TEXT CHAT on, as it told this machine, and `display.text_chat` |
@@ -352,6 +353,7 @@ sounds and the fades are the game's.
 | `lobby chat` | A line of the lobby's chat begun: on the keyboard typed (Enter sends it, Esc lets it go); on a controller and a touchscreen with the on-screen keyboard |
 | `lobby bots left`, `lobby bots right`, `lobby skill left`, `lobby skill right`, `lobby teams left`, `lobby teams right` | The host's bots' choices stepped: BOTS to the choice before or after (at its ends no further), SKILL and TEAMS round, written to `config.toml` as the generated lobby's spinners write them |
 | `lobby hijack left`, `lobby hijack right` | The host's VEHICLE HIJACKING turned over, as Host Controls' row does: the rule and the game's record at once (its clients told) and `game.vehicle_hijack` written to `config.toml` |
+| `lobby scoring left`, `lobby scoring right` | The co-op host's SCORING turned over, written to `config.toml` (`campaign.scoring`), which the host reads as each level begins |
 | `lobby battle left`, `lobby battle right` | The co-op host's BIGGER BATTLES stepped round OFF, 2X and 3X, written to `config.toml` (`campaign.bigger_battles`), which the host reads as each level begins; the clients need none of it |
 | `lobby card` | The row's player's card shown in the panel (theirs again: closed) |
 | `lobby card friend`, `lobby card mute`, `lobby card kick` | The card's ADD FRIEND (a friend request to their code: `network_party_slot_add_friend`), MUTE or UNMUTE (their machine's voice, lines and pings on this machine: `network_voice_mute_machine`), KICK (Host Controls' kick, and the card closed) |
@@ -738,6 +740,32 @@ layouts"). With no controller connected the rows show their words and nothing ca
 `screens/layout_bindings.xml` (#1144) is the CONTROLLER LAYOUTS page's ITS BINDINGS ›, a pop-up (its stand-in
 `screens/layout_bindings`): how many of the player's buttons the layout's bindings would change
 (`{layout.bindings}`), KEEP MINE (focused; B too) and USE THIS LAYOUT'S (`layout bindings use`, then back).
+
+## GOAT Settings
+
+`screens/goat_settings.xml` takes the place of Settings' first tab (`video_settings_screen`) while
+`display.goat_menus` is on (with `display.menu_engine` "new"; off, Settings keeps its own tabs and pages). It is
+one screen of six tabs (DISPLAY, GRAPHICS, AUDIO, CONTROLS, GAMEPLAY, SYSTEM), each the rows of some of
+Settings' pages under their sections' headings (the row source `goat.rows`). The tabs are the model's `goat/*`
+screens (`model/goat_settings.xml`, written by `tools/port_settings.py`'s `GOAT_TABS`): each row is a `ref` to a
+row of `model/settings.xml`, so its label, help, choices, slider and conditions are that page's own, and a row
+its page hides (`when`) is not shown. A dimmed row (`enabled`) is shown grey and takes no change. The network
+pages are not among them; SYSTEM's ONLINE opens Settings' own network tab.
+
+Left and right step a choice or a slider; A steps a choice (a toggle flips) or opens a row's page (a link, or a
+row neither choice nor slider), the changes kept on the way. Changes wait in Settings' pending list, their count
+in the band (`{goat.pending}`): Y (APPLY, `goat apply`) writes them to the profile, B (`goat cancel`) goes back
+and lets go of them. The panel shows the chosen row's label and help (`{goat.title}`, `{goat.help}`). The code
+is `menu_functions.c`'s `goat_settings.inc`.
+
+An APPLY that changes the display (its mode, resolution, window size, refresh rate, orientation, HDR or render
+resolution) sets those settings for this run alone and then asks over the screen, `screens/goat_keep.xml`: KEEP
+(`goat keep`) or REVERT (`goat keep revert`, focused; B too), its label counting down from 20 seconds
+(`{goat.keep_revert}`, `{goat.keep_text}`). At 0 REVERT is taken. KEEP writes them into config.toml; REVERT sets
+them back as they were before the APPLY, and the file never had the new values (nor does it if the game closes
+first); the other changes are written on APPLY as ever. A or B
+in the first half second after it shows does nothing, so a press meant for APPLY is not taken as an answer. The
+code is `goat_keep_revert.inc`.
 
 ## Leaving an editor with changes not saved
 

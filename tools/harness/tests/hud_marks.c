@@ -34,6 +34,9 @@ struct tag_block { long count; void *address; void *definition; };
 #define STACK_BUFFER_LENGTH 4
 #define match_vassert(file, line, condition, message) ((void)0)
 #define match_assert_stack_frame(file, line) ((void)0)
+#ifndef UNSIGNED_LONG_MAX
+#define UNSIGNED_LONG_MAX 0xffffffffUL
+#endif
 static char temporary[256];
 static long get_return_eip(void) { return 0; }
 static short check_stack_buffer(long *buffer) { (void)buffer; return NONE; }
@@ -586,6 +589,73 @@ int main(int argc, char **argv)
 					426.0 + reticle_offset.x, 240.0 + reticle_offset.y, scale);
 			}
 		}
+		return 0;
+	}
+
+	/* what a ping of an object is drawn as beside its arrow (network_markers.c's network_markers_shape): a weapon's or
+	equipment's pickup icon where it has one (else the arrow alone), a unit's or vehicle's outline, through walls
+	except one with an enemy player in it in a game against other players, which only shows where it is seen */
+	CASE("ping_shape")
+	{
+		static struct
+		{
+			short type;
+			boolean has_icon, versus_players, enemy_player;
+			short shape;
+			boolean through_walls;
+		} const cases[] =
+		{
+			{ _object_type_weapon, TRUE, FALSE, FALSE, _marker_shape_icon, FALSE },
+			/* an item with no pickup icon (a health pack, a powerup): its outline, through walls, in either game */
+			{ _object_type_weapon, FALSE, FALSE, FALSE, _marker_shape_outline, TRUE },
+			{ _object_type_equipment, TRUE, TRUE, FALSE, _marker_shape_icon, FALSE },
+			{ _object_type_equipment, FALSE, TRUE, FALSE, _marker_shape_outline, TRUE },
+			{ _object_type_equipment, FALSE, FALSE, FALSE, _marker_shape_outline, TRUE },
+			/* the campaign: the AI's soldiers and vehicles through walls */
+			{ _object_type_biped, FALSE, FALSE, FALSE, _marker_shape_outline, TRUE },
+			{ _object_type_vehicle, FALSE, FALSE, FALSE, _marker_shape_outline, TRUE },
+			/* against players: an ally, an empty vehicle through walls; an enemy player, on foot or in a vehicle,
+			not */
+			{ _object_type_biped, FALSE, TRUE, FALSE, _marker_shape_outline, TRUE },
+			{ _object_type_vehicle, FALSE, TRUE, FALSE, _marker_shape_outline, TRUE },
+			{ _object_type_biped, FALSE, TRUE, TRUE, _marker_shape_outline, FALSE },
+			{ _object_type_vehicle, FALSE, TRUE, TRUE, _marker_shape_outline, FALSE },
+			{ _object_type_scenery, TRUE, FALSE, FALSE, _marker_shape_arrow, FALSE },
+		};
+		short index;
+
+		for (index = 0; index < (short)NUMBEROF(cases); index++)
+		{
+			boolean through_walls = 2;
+			short shape = network_markers_shape(cases[index].type, cases[index].has_icon, cases[index].versus_players,
+				cases[index].enemy_player, &through_walls);
+
+			CHECK(shape == cases[index].shape && through_walls == cases[index].through_walls,
+				"case %d (type %d): shape %d through walls %d, not %d and %d", index, cases[index].type, shape,
+				through_walls, cases[index].shape, cases[index].through_walls);
+		}
+		return 0;
+	}
+
+	CASE("ping_claim_label")
+	{
+		/* (a claim's words: by a name of the whole 11 letters, no end; one
+		shorter; the claimer's own; and a short buffer, not overrun) */
+		wchar_t const full[12] = { 'A', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'X' };
+		wchar_t const joiny[12] = L"Joiny";
+		wchar_t label[40];
+		wchar_t small[20];
+
+		markers_claim_label(joiny, 11, label, 40);
+		CHECK(!wcscmp(label, L"Claimed by Joiny"), "the label %ls", label);
+		markers_claim_label(full, 11, label, 40);
+		CHECK(!wcscmp(label, L"Claimed by Abcdefghijk"), "the label of a whole name %ls", label);
+		markers_claim_label(NULL, 11, label, 40);
+		CHECK(!wcscmp(label, L"Claimed"), "the claimer's own label %ls", label);
+		small[11] = 0x7777;
+		markers_claim_label(joiny, 11, small, 11);
+		CHECK(small[11] == 0x7777 && small[10] == 0 && !wcsncmp(small, L"Claimed by", 10),
+			"a short buffer overrun or unended (%ls)", small);
 		return 0;
 	}
 

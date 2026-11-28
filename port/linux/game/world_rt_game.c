@@ -457,8 +457,9 @@ static struct collision_model const *definition_collision_model(long definition)
 	return collision_model_definition_get(object_definition->object.collision_model.index);
 }
 
-/* a collision model's node's first BSP (NULL none) */
-static struct collision_bsp const *node_collision_bsp(struct collision_model const *collision_model, short node_index)
+/* a collision model's node's BSP of a permutation (NULL none) */
+static struct collision_bsp const *node_collision_bsp(struct collision_model const *collision_model, short node_index,
+	short permutation)
 {
 	struct collision_node const *collision_node;
 
@@ -468,9 +469,9 @@ static struct collision_bsp const *node_collision_bsp(struct collision_model con
 		return NULL;
 	}
 	collision_node = TAG_BLOCK_GET_ELEMENT(&collision_model->nodes, node_index, struct collision_node);
-	if (!collision_node->bsps.address || collision_node->bsps.count <= 0)
+	if (!collision_node->bsps.address || permutation < 0 || permutation >= collision_node->bsps.count)
 		return NULL;
-	return TAG_BLOCK_GET_ELEMENT(&collision_node->bsps, 0, struct collision_bsp);
+	return TAG_BLOCK_GET_ELEMENT(&collision_node->bsps, permutation, struct collision_bsp);
 }
 
 /* ---------- public code */
@@ -996,9 +997,24 @@ void world_rt_source_first_person_next(void)
 	first_person_frame++;
 }
 
-long world_rt_source_node(long definition, short node_index, float *triangles, long maximum)
+short world_rt_source_node_permutations(long definition, short node_index)
 {
-	struct collision_bsp const *bsp = node_collision_bsp(definition_collision_model(definition), node_index);
+	struct collision_model const *collision_model = definition_collision_model(definition);
+	struct collision_node const *collision_node;
+
+	if (!collision_model || !collision_model->nodes.address || node_index < 0 ||
+		node_index >= collision_model->nodes.count)
+	{
+		return 0;
+	}
+	collision_node = TAG_BLOCK_GET_ELEMENT(&collision_model->nodes, node_index, struct collision_node);
+	return collision_node->bsps.address ? (short)collision_node->bsps.count : 0;
+}
+
+long world_rt_source_node(long definition, short node_index, short permutation, float *triangles, long maximum)
+{
+	struct collision_bsp const *bsp = node_collision_bsp(definition_collision_model(definition), node_index,
+		permutation);
 	long count = bsp ? world_scene_collision_fan(bsp, NULL) : 0;
 
 	if (!triangles || count <= 0)

@@ -39,6 +39,7 @@ What a pixel draws is what it drew with the game's BSP walked.
 #include "xgpu.h"
 
 #include <math.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -668,8 +669,10 @@ static uint32_t tree_depth(const uint32_t (*texels)[4], uint32_t nodes)
 	return deepest;
 }
 
-int xgpu_dynamic_lights_world_convert(struct xgpu_dynamic_lights_world *world, const uint32_t (*texels)[4],
-	uint32_t count)
+static void job_abandon(struct xgpu_dynamic_lights_world *world);
+
+/* (convert's and convert_later's) the GPU's tree, its boxes not yet found */
+static int convert_tree(struct xgpu_dynamic_lights_world *world, const uint32_t (*texels)[4], uint32_t count)
 {
 	struct convert_state state;
 	uint32_t root, index;
@@ -751,7 +754,162 @@ int xgpu_dynamic_lights_world_convert(struct xgpu_dynamic_lights_world *world, c
 	world->count = 1 + 2 * state.out_nodes;
 	world->nodes = state.out_nodes;
 	world->depth = tree_depth((const uint32_t (*)[4])world->texels, state.out_nodes);
-	bounds_make(world);
+	return 2;
+}
+
+int xgpu_dynamic_lights_world_convert(struct xgpu_dynamic_lights_world *world, const uint32_t (*texels)[4],
+	uint32_t count)
+{
+	int made;
+
+	job_abandon(world);
+	made = convert_tree(world, texels, count);
+	if (made == 2)
+		bounds_make(world);
+	return made != 0;
+}
+
+/* ---------- the boxes on a thread of their own (convert_later) */
+
+/* a world's boxes and groups being made: a world of their own (its tree a
+copy of the one it was made for), and whether it is done, or no longer
+wanted (its thread then frees it) */
+struct xgpu_dynamic_lights_world_job
+{
+	struct xgpu_dynamic_lights_world made;
+	int done, abandoned;
+};
+
+static pthread_mutex_t job_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void job_free(struct xgpu_dynamic_lights_world_job *job)
+{
+	xgpu_dynamic_lights_world_free(&job->made);
+	free(job);
+}
+
+static void job_make(struct xgpu_dynamic_lights_world_job *job)
+{
+	bounds_make(&job->made);
+	xgpu_dynamic_lights_world_group(&job->made);
+}
+
+static void *job_thread(void *argument)
+{
+	struct xgpu_dynamic_lights_world_job *job = argument;
+	int abandoned;
+
+	job_make(job);
+	pthread_mutex_lock(&job_lock);
+	job->done = 1;
+	abandoned = job->abandoned;
+	pthread_mutex_unlock(&job_lock);
+	if (abandoned)
+		job_free(job);
+	return NULL;
+}
+
+/* the world's job no longer wanted (a new world, or the world freed) */
+static void job_abandon(struct xgpu_dynamic_lights_world *world)
+{
+	struct xgpu_dynamic_lights_world_job *job = world->pending;
+	int done;
+
+	if (!job)
+		return;
+	world->pending = NULL;
+	pthread_mutex_lock(&job_lock);
+	done = job->done;
+	job->abandoned = 1;
+	pthread_mutex_unlock(&job_lock);
+	if (done)
+		job_free(job);
+}
+
+int xgpu_dynamic_lights_world_convert_later(struct xgpu_dynamic_lights_world *world, const uint32_t (*texels)[4],
+	uint32_t count)
+{
+	struct xgpu_dynamic_lights_world_job *job;
+	pthread_attr_t attributes;
+	pthread_t thread;
+	int made, started = 0;
+
+	job_abandon(world);
+	made = convert_tree(world, texels, count);
+	if (made != 2)
+		return made != 0;
+	/* (the job's tree and the room its boxes are counted in) */
+	job = calloc(1, sizeof(*job));
+	if (job)
+	{
+		job->made.texels = malloc((size_t)world->count * sizeof(*world->texels));
+		job->made.first = malloc((XGPU_DYNAMIC_LIGHTS_CLUSTERS + 1) * sizeof(*job->made.first));
+		job->made.box = malloc(XGPU_DYNAMIC_LIGHTS_CLUSTERS * sizeof(*job->made.box));
+	}
+	if (!job || !job->made.texels || !job->made.first || !job->made.box)
+	{
+		/* (no memory for it: made here, as convert makes it) */
+		if (job)
+			job_free(job);
+		bounds_make(world);
+		return 1;
+	}
+	memcpy(job->made.texels, world->texels, (size_t)world->count * sizeof(*world->texels));
+	job->made.count = world->count;
+	job->made.nodes = world->nodes;
+	job->made.depth = world->depth;
+	if (pthread_attr_init(&attributes) == 0)
+	{
+		pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_DETACHED);
+		started = pthread_create(&thread, &attributes, job_thread, job) == 0;
+		pthread_attr_destroy(&attributes);
+	}
+	if (!started)
+	{
+		/* (no thread: made here) */
+		job_make(job);
+		job->done = 1;
+	}
+	world->pending = job;
+	return 1;
+}
+
+int xgpu_dynamic_lights_world_take(struct xgpu_dynamic_lights_world *world)
+{
+	struct xgpu_dynamic_lights_world_job *job = world->pending;
+	struct xgpu_dynamic_lights_world *made;
+	int done;
+
+	if (!job)
+		return 0;
+	pthread_mutex_lock(&job_lock);
+	done = job->done;
+	pthread_mutex_unlock(&job_lock);
+	if (!done)
+		return 0;
+	world->pending = NULL;
+	made = &job->made;
+	groups_free(world);
+	free(world->boxes);
+	free(world->planes);
+	free(world->first);
+	free(world->box);
+	world->boxes = made->boxes;
+	world->planes = made->planes;
+	world->first = made->first;
+	world->box = made->box;
+	world->groups = made->groups;
+	world->root = made->root;
+	world->group_count = made->group_count;
+	world->group_bytes = made->group_bytes;
+	world->bounded = made->bounded;
+	made->boxes = NULL;
+	made->planes = NULL;
+	made->first = NULL;
+	made->box = NULL;
+	made->groups = NULL;
+	made->root = NULL;
+	job_free(job);
 	return 1;
 }
 
@@ -878,6 +1036,7 @@ void xgpu_dynamic_lights_world_walked_scan(const struct xgpu_dynamic_lights_worl
 
 void xgpu_dynamic_lights_world_free(struct xgpu_dynamic_lights_world *world)
 {
+	job_abandon(world);
 	groups_free(world);
 	free(world->texels);
 	free(world->boxes);

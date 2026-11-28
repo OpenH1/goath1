@@ -280,7 +280,8 @@ long ue4_pak_find_asset(const struct ue4_pak *pak, const char *root, const char 
 		const char *path = pak->names + pak->entries[entry].name;
 		size_t length = strlen(path);
 
-		if (length < root_length + name_length + 8 || strncmp(path, root, root_length) ||
+		/* (<root><name>.uasset at the least: in the root's own folder too) */
+		if (length < root_length + name_length + 7 || strncmp(path, root, root_length) ||
 			strcmp(path + length - 7, ".uasset") || path[length - 7 - name_length - 1] != '/' ||
 			strncmp(path + length - 7 - name_length, name, name_length))
 		{

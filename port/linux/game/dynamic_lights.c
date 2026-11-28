@@ -71,6 +71,7 @@ structure's 3D BSP, from which a pixel finds its cluster
 #include "world_ao.h"
 #include "rasterizer/rasterizer_environment.h"
 #include "lt_lights.h"
+#include "render_enumerate.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -120,10 +121,12 @@ static struct
 	boolean clusters_noted[MAXIMUM_LIGHTS_PER_WINDOW];
 	unsigned int cluster_masks[HALO_DYNAMIC_LIGHTS_CLUSTERS][4];
 	/* the frame's copies of the game's lights on their other markers
-	(dynamic_lights_copy): whose copy (its rasterizer light), where */
+	(dynamic_lights_copy): whose copy (its rasterizer light), which of its
+	light's copies (its marker's number), where */
 	struct
 	{
 		long rasterizer_light_index;
+		short number;
 		real_point3d position;
 		real_vector3d axis;
 	} copies[MAXIMUM_LIGHTS_PER_WINDOW];
@@ -136,12 +139,16 @@ static struct
 } dynamic_lights;
 
 /* a light's key (dynamic_lights.keys): the game's (its light's handle), a
-copy of one on another marker, or one of the port's own (light_sources.c's
-key, which has its kind in its top byte, 1 to 3) */
+copy of one on another marker (its light's handle and the copy's number
+among that light's own copies, from 1: DYNAMIC_LIGHTS_COPY_KEY), or one of
+the port's own (light_sources.c's key, which has its kind in its top byte,
+1 to 3) */
 #define DYNAMIC_LIGHTS_KEY_GAME (4ull << 56)
 #define DYNAMIC_LIGHTS_KEY_COPY (5ull << 56)
 
 int dynamic_lights_flashlight_shadows_on(void);
+#define DYNAMIC_LIGHTS_COPY_KEY(light_key, number) \
+	(DYNAMIC_LIGHTS_KEY_COPY | ((unsigned long long)(unsigned short)(number) << 32) | ((light_key) & 0xffffffffull))
 
 typedef char dynamic_lights_clusters_fit[HALO_DYNAMIC_LIGHTS_CLUSTERS >= MAXIMUM_CLUSTERS_PER_STRUCTURE ? 1 : -1];
 typedef char dynamic_lights_lights_fit[HALO_DYNAMIC_LIGHTS_MAXIMUM >= MAXIMUM_LIGHTS_PER_WINDOW ? 1 : -1];
@@ -218,10 +225,14 @@ real dynamic_lights_share(
 /* a rasterizer light just submitted: drawn again at another of its
 markers (a lens-flare-only light's, object_lights.c: its flare is drawn on
 each, a Banshee's two wings, a Ghost's three running lights), with its
-color, reach and flags, the marker's forward its axis; each copy reaches
-the clusters its sphere floods into from where it is */
+color, reach and flags, the marker's forward its axis; number its
+marker's among the light's markers (from 1: the light itself is on the
+first), which keys it from frame to frame whatever other lights' copies
+come and go; each copy reaches the clusters its sphere floods into from
+where it is */
 void dynamic_lights_copy(
 	long rasterizer_light_index,
+	short number,
 	real_point3d const *position,
 	real_vector3d const *axis)
 {
@@ -231,6 +242,7 @@ void dynamic_lights_copy(
 		return;
 	}
 	dynamic_lights.copies[dynamic_lights.copy_count].rasterizer_light_index = rasterizer_light_index;
+	dynamic_lights.copies[dynamic_lights.copy_count].number = number;
 	dynamic_lights.copies[dynamic_lights.copy_count].position = *position;
 	dynamic_lights.copies[dynamic_lights.copy_count].axis = *axis;
 	dynamic_lights.copy_count++;
@@ -260,9 +272,12 @@ static long dynamic_lights_copies(
 		*out = dynamic_lights.lights[dynamic_lights.copies[copy_index].rasterizer_light_index];
 		dynamic_lights.owners[count] = dynamic_lights.owners[dynamic_lights.copies[copy_index].rasterizer_light_index];
 		dynamic_lights.objects[count] = dynamic_lights.objects[dynamic_lights.copies[copy_index].rasterizer_light_index];
+		/* (its light's key and its own number among that light's copies,
+		not among the frame's: another light's copies coming or going leave
+		it as it was) */
 		dynamic_lights.keys[count] = dynamic_lights.keys[dynamic_lights.copies[copy_index].rasterizer_light_index] ?
-			DYNAMIC_LIGHTS_KEY_COPY | ((unsigned long long)(copy_index + 1) << 32) |
-			(dynamic_lights.keys[dynamic_lights.copies[copy_index].rasterizer_light_index] & 0xffffffffull) : 0;
+			DYNAMIC_LIGHTS_COPY_KEY(dynamic_lights.keys[dynamic_lights.copies[copy_index].rasterizer_light_index],
+			dynamic_lights.copies[copy_index].number) : 0;
 		out->position[0] = position->x;
 		out->position[1] = position->y;
 		out->position[2] = position->z;
@@ -493,6 +508,7 @@ void dynamic_lights_submit(
 	real_vector3d right;
 	float camera[3], right_axis[3], up_axis[3];
 	long logged = 0;
+	boolean unlit;
 
 	dynamic_lights.frame++;
 	for (light_index = 0; light_index < count; light_index++)
@@ -565,7 +581,14 @@ void dynamic_lights_submit(
 			dynamic_lights.cluster_masks[cluster][light_index >> 5] |= 1u << (light_index & 31);
 	}
 	dynamic_lights_world();
-	total = dynamic_lights_sources(dynamic_lights_copies(count));
+	/* (a map's preparation's pass lit by none of the renderer's lights: none
+	of the port's own lights or the bounce's either, so that its draws are
+	those of play no light reaches, the models' and the structure's drawn
+	without the lights' loop: render_enumerate_unlit) */
+	unlit = render_enumerate_unlit();
+	total = dynamic_lights_copies(count);
+	if (!unlit)
+		total = dynamic_lights_sources(total);
 	dynamic_lights_shadowed(total);
 	dynamic_lights_flashlights(count);
 	/* (the light-transport pass's list: every light as drawn, by its key, lt_lights.c) */
@@ -573,7 +596,8 @@ void dynamic_lights_submit(
 		dynamic_lights.baked, count, total);
 	memset(dynamic_lights.keys, 0, sizeof(dynamic_lights.keys));
 	memset(dynamic_lights.baked, 0, sizeof(dynamic_lights.baked));
-	total = dynamic_lights_bounce(dynamic_lights.lights, total); /* (dynamic_lights_bounce.c) */
+	if (!unlit)
+		total = dynamic_lights_bounce(dynamic_lights.lights, total); /* (dynamic_lights_bounce.c) */
 	/* (every light's falloff on the structure: the game's distance
 	attenuation, as its gel pass samples it, xgpu.h) */
 	{

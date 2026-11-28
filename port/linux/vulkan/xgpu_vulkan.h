@@ -139,6 +139,14 @@ swapchain takes where the surface has it (0: the swap interval's choice) */
 	/* debug.gpu_stats: display.low_latency's statistics logged too
 	(xgpu_vulkan_pacing.c) */
 	int statistics;
+	/* debug.vulkan_push_textures: each draw's textures pushed into the
+	command buffer (VK_KHR_push_descriptor, where the device has it) rather
+	than kept as descriptor sets */
+	int push_textures;
+	/* debug.vulkan_bar_uploads: the stream's ring and the mirror's segments
+	in the device's own memory the CPU can write (a heap larger than 256 MB,
+	a discrete GPU's resizable BAR) */
+	int bar_uploads;
 	/* display.gpu ("auto", NULL: the rule of xgpu_vulkan_gpu.h; or a
 	device's index or a part of its name); and the LUID of the adapter that
 	drives the window's monitor, where it is known (Windows' DXGI) */
@@ -398,8 +406,8 @@ of the same format (as much as both have), in the stream's order */
 void xgpu_vulkan_image_copy(struct xgpu_vulkan_image *source, uint32_t source_level, uint32_t source_layer,
 	struct xgpu_vulkan_image *destination, uint32_t destination_level, uint32_t destination_layer);
 /* copies the depth of one single-sampled depth image into another of the
-same format and size, the destination's stencil kept, in the stream's
-order; 0 where it cannot (nothing copied) */
+same format, size and layers (each layer), the destination's stencil kept,
+in the stream's order; 0 where it cannot */
 int xgpu_vulkan_image_copy_depth(struct xgpu_vulkan_image *source, struct xgpu_vulkan_image *destination);
 /* copies a rectangle (x0, y0, x1, y1) of a colour image's layer into the
 same place of another's first layer, of the same format, in the stream's
@@ -430,6 +438,21 @@ tone mapping to the caller (the screenshot key's, on the PNG's thread:
 host_screenshot.c). 1 on success, 0 if it cannot be read, -1 if the image
 is not RGBA16F */
 int xgpu_vulkan_read_halves(struct xgpu_vulkan_image *image, uint32_t layer, uint16_t **halves);
+/* a layer's first level copied, after the work recorded so far, into a
+buffer of its own without waiting for the GPU (a screenshot's, a Save
+Report's: a 4K display.hdr frame read back and copied held the render
+thread, and the game, about 50 ms): NULL where it cannot be (a format other
+than BGRA8, RGBA16F or RGBA16, both buffers in use, no memory), for the
+caller to read it as before. *format: its pixels' (XGPU_VULKAN_FORMAT_*:
+one of those three). xgpu_vulkan_readback_wait, on any thread but the render
+thread's (whose submission it waits for), waits for the GPU to have copied
+it and gives its rows from the first, NULL if they never come (the device
+lost, the renderer shut down); xgpu_vulkan_readback_release, on any thread,
+lets go of it, once, waited for or not */
+struct xgpu_vulkan_readback;
+struct xgpu_vulkan_readback *xgpu_vulkan_readback_begin(struct xgpu_vulkan_image *image, uint32_t layer, int *format);
+const void *xgpu_vulkan_readback_wait(struct xgpu_vulkan_readback *readback);
+void xgpu_vulkan_readback_release(struct xgpu_vulkan_readback *readback);
 
 /* ---------- samplers */
 
@@ -576,6 +599,7 @@ void *xgpu_vulkan_upload(uint32_t size, uint32_t alignment, struct xgpu_vulkan_r
 if it cannot be made */
 struct xgpu_vulkan_buffer;
 struct xgpu_vulkan_buffer *xgpu_vulkan_buffer_create(uint32_t size);
+struct xgpu_vulkan_buffer *xgpu_vulkan_buffer_create_mirror(uint32_t size);
 /* its handle, for a draw recorded now (which then reads it) */
 VkBuffer xgpu_vulkan_buffer_handle(struct xgpu_vulkan_buffer *buffer);
 /* its bytes, as the CPU last wrote them */
@@ -1000,7 +1024,8 @@ IMMEDIATE); the swapchain is made again when that changes. More than 1
 (battery saver's, at most 8) shows each frame for that many refreshes: it
 is presented that many times (xgpu_vulkan_frame_end) */
 void xgpu_vulkan_window_interval(int interval);
-/* display.low_latency (any thread): 0 auto, 1 on, 2 off. On, with vsync
+/* display.low_latency (any thread): 0 auto, 1 on, 2 off; 3 display.vrr on
+(xgpu_vulkan_pacing.c's HOST_RENDER_DISPLAY_VARIABLE). On, with vsync
 (the swap interval 1 or more, FIFO) and a device that says when each
 present reaches the screen, the game starts each frame just in time for
 the refresh it is shown at, with at most one frame waiting for the display

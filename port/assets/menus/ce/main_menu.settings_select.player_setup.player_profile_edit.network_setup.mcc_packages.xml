@@ -175,8 +175,8 @@
 		<string text=""/>
 		<string text="The MCC maps downloaded from hosts: their space, and removing them. The original packages and saved games are kept."/>
 		<string text=""/>
-		<string text="Draws and plays what was imported from your MCC install: sharper weapon and vehicle textures and MCC's clearer dialogue. A mod of the same thing wins. Off uses the game's own."/>
-		<string text="If you own Halo MCC, builds sharper weapon and vehicle textures and clearer English dialogue from your own install. Nothing is downloaded or shared."/>
+		<string text="Draws and plays what was imported from your MCC install: sharper weapon, vehicle and Spartan textures and MCC's clearer dialogue. A mod of the same thing wins. Off uses the game's own."/>
+		<string text="If you own Halo MCC, builds sharper weapon, vehicle and Spartan textures and clearer English dialogue from your own install. Nothing is downloaded or shared."/>
 		<string text="Deletes what was imported from MCC.|Select it twice: the first asks, the second deletes."/>
 	</strings>
 </menus>

@@ -84,6 +84,13 @@ between (spartan_link_feed_warp); a draw due in a frame that runs a tick's
 macro step (the world's update, the slowest frames) then waits for the next
 frame, once (spartan_link_frame_judge).
 
+With campaign scoring (campaign_score_hud.c), each teammate's score: with
+the link hidden, their names and scores in a line where the row goes
+beside the tracker; with it shown, their score in the row under their feed
+before their meters, and over the feed's top their streak (3 or more) at
+its left and their latest groups of points at its right ("+150 Triple
+Kill", the last SPARTAN_LINK_SCORE_MILLISECONDS'), on a dark band.
+
 Only what this machine draws: nothing is sent, the game state is not
 touched (no seed is taken, no effect, sound or HUD message made: the
 feeds' slots are first_person_weapons.c's own, beside the game state, with
@@ -140,6 +147,7 @@ over the network, in the game record (OpenH1's protocol version 36).
 #include "network_standard.h"
 #include "player_settings.h"
 #include "spartan_link.h"
+#include "campaign_score_hud.h"
 #include "royale.h"
 
 #include <limits.h>
@@ -174,6 +182,8 @@ void halo_screenshot_named(const char *name);
 
 /* source/objects/object_lights.c */
 void lights_port_keep(boolean keep);
+/* source/rasterizer/xbox/rasterizer_xbox_environment_fog.c */
+void fog_screen_port_keep(boolean keep);
 
 /* port/linux/game/render_interpolation.c */
 void render_interpolation_unit_camera_position(long unit_index, real_point3d *position);
@@ -2207,6 +2217,24 @@ static void spartan_link_draw_row(
 				health_y + health_height, health_color);
 		}
 	}
+	/* (campaign scoring: their score before the meters, brighter than the
+	name, where it fits) */
+	if (campaign_score_hud_active())
+	{
+		struct campaign_score_player const *entry = campaign_score_hud_player(feed->player_index);
+		wchar_t number[16];
+		real number_width;
+		real_argb_color score_color = text_color;
+
+		campaign_score_hud_number(entry ? entry->score : 0, number, NUMBEROF(number));
+		number_width = spartan_link_text_width(number) * text_scale;
+		if (bounds->x0 + number_width + 3.0f * gap <= right_left)
+		{
+			right_left -= number_width + gap;
+			score_color.alpha = 1.0f;
+			spartan_link_text(number, right_left, top, number_width, 0, text_scale, &score_color);
+		}
+	}
 	/* (the name as long as fits before the gap) */
 	for (length = (short)ustrlen(name); length > 0; length--)
 	{
@@ -2597,8 +2625,10 @@ static boolean spartan_link_feed_prepare(
 	spartan_link.posed_unit = through_eyes && object_get(feed->unit_index)->object.parent_object_index == NONE ?
 		feed->unit_index : NONE;
 	halo_view_begin(view, width, height);
-	/* (what the view's drawing sets of the lights, put back after it) */
+	/* (what the view's drawing sets of the lights and the fog screen, put
+	back after it) */
 	lights_port_keep(TRUE);
+	fog_screen_port_keep(TRUE);
 	if (spartan_link.log)
 	{
 		platform_log("spartan link: %ld %d %ld %d %.4f %.4f %.4f %.5f %.5f %.5f %.4f %.3f %.3f", game_time_get(),
@@ -2647,6 +2677,7 @@ void spartan_link_feed_end(
 		spartan_link.drawing_microseconds += platform_shared_clock_microseconds() - spartan_link.drawing_began;
 	halo_view_end();
 	lights_port_keep(FALSE);
+	fog_screen_port_keep(FALSE);
 	spartan_link.drawing = FALSE;
 	spartan_link.hidden_unit = NONE;
 	spartan_link.posed_unit = NONE;
@@ -2726,6 +2757,166 @@ short spartan_link_linked_units(
 	return count;
 }
 
+/* ---------- campaign scoring on the link (campaign_score_hud.c) */
+
+/* a teammate's groups of points shown over their feed for this long
+(milliseconds), at most two */
+#define SPARTAN_LINK_SCORE_MILLISECONDS 8000
+
+static real spartan_link_font_height(
+	void)
+{
+	long font_index = hud_get_font_index();
+	struct font_header *font;
+
+	if (font_index == NONE)
+		return 0.0f;
+	font = font_definition_get(font_index);
+	return (real)(font->ascending_height + font->descending_height);
+}
+
+/* "+150 Triple Kill" */
+static void spartan_link_score_words(
+	struct campaign_score_hud_group const *group,
+	wchar_t *text,
+	short size)
+{
+	wchar_t number[16];
+
+	campaign_score_hud_number(group->points >= 0 ? group->points : -group->points, number, NUMBEROF(number));
+	usnprintf(text, size, L"%s%s %s", group->points >= 0 ? L"+" : L"-", number, group->text);
+	text[size - 1] = 0;
+}
+
+/* over a feed's top (bounds), on a dark band: the teammate's latest groups
+of points at its right (the newest first, the older paler) and their streak
+(3 or more) at its left, on a line of its own where the first group leaves
+no room */
+static void spartan_link_draw_score(
+	struct bitmap_data *white,
+	short local_player_index,
+	short index,
+	real_rectangle2d const *bounds,
+	real scale)
+{
+	struct spartan_link_feed *feed = &spartan_link.windows[local_player_index].feeds[index];
+	struct campaign_score_player const *entry;
+	struct campaign_score_hud_group groups[2];
+	real width = bounds->x1 - bounds->x0;
+	real text_scale = 0.5f * MAX(scale, 0.9f) * MAX(spartan_link.size, 0.9f) *
+		PIN(width / (SPARTAN_LINK_NARROWEST * scale), 0.75f, 1.0f);
+	real line_height = spartan_link_font_height() * text_scale;
+	real pad = 2.0f * scale;
+	real streak_width = 0.0f;
+	real_argb_color color;
+	wchar_t streak[24];
+	wchar_t text[48];
+	boolean streak_shown;
+	boolean streak_alone = FALSE;
+	short count;
+	short lines;
+	short line;
+
+	if (!campaign_score_hud_active() || feed->down_at || line_height <= 0.0f)
+		return;
+	entry = campaign_score_hud_player(feed->player_index);
+	count = campaign_score_hud_recent(feed->player_index, SPARTAN_LINK_SCORE_MILLISECONDS, groups, NUMBEROF(groups));
+	streak_shown = entry && entry->current_streak >= 3;
+	if (!count && !streak_shown)
+		return;
+	if (streak_shown)
+	{
+		usnprintf(streak, NUMBEROF(streak), L"STREAK %ld", entry->current_streak);
+		streak_width = spartan_link_text_width(streak) * text_scale;
+		if (count)
+		{
+			spartan_link_score_words(&groups[0], text, NUMBEROF(text));
+			streak_alone = streak_width + spartan_link_text_width(text) * text_scale + 4.0f * pad > width;
+		}
+	}
+	lines = (short)(MAX(count, 1) + (streak_alone ? 1 : 0));
+	spartan_link_rectangle(white, bounds->x0, bounds->y0, bounds->x1, bounds->y0 + lines * line_height + 2.0f * pad,
+		0x8C000000UL);
+	hud_get_text_color(&color);
+	color.red += (1.0f - color.red) * 0.5f;
+	color.green += (1.0f - color.green) * 0.5f;
+	color.blue += (1.0f - color.blue) * 0.5f;
+	for (line = 0; line < count; line++)
+	{
+		color.alpha = line == 0 ? 1.0f : 0.65f;
+		spartan_link_score_words(&groups[line], text, NUMBEROF(text));
+		spartan_link_text(text, bounds->x0, bounds->y0 + pad + line * line_height, width - 2.0f * pad, 1, text_scale,
+			&color);
+	}
+	if (streak_shown)
+	{
+		color.alpha = 0.9f;
+		spartan_link_text(streak, bounds->x0 + 2.0f * pad,
+			bounds->y0 + pad + (streak_alone ? count : 0) * line_height, streak_width, 0, text_scale, &color);
+	}
+}
+
+/* with the link hidden, where its row goes (beside the tracker, or at the
+top), the teammates' names and scores in a line ("ALEX 1,250   SAM 900"),
+at most three: a co-op game with scoring, its player alive */
+static void spartan_link_draw_scores_line(
+	short local_player_index)
+{
+	long self = local_player_get_player_index(local_player_index);
+	struct data_iterator iterator;
+	struct player_datum *player;
+	real_argb_color color;
+	real_rectangle2d room;
+	real line_scale;
+	wchar_t text[96];
+	short shown = 0;
+
+	if (!campaign_score_hud_active() || !spartan_link_game() || game_engine_running() || self == NONE ||
+		player_get(self)->unit_index == NONE)
+	{
+		return;
+	}
+	text[0] = 0;
+	data_iterator_new(&iterator, player_data);
+	while ((player = data_iterator_next(&iterator)) != NULL && shown < 3)
+	{
+		struct campaign_score_player const *entry;
+		wchar_t name[16];
+		wchar_t number[16];
+		long length = ustrlen(text);
+
+		if (iterator.datum_index == self || player->quit_out_of_game)
+			continue;
+		entry = campaign_score_hud_player(iterator.datum_index);
+		ustrncpy(name, player->name, NUMBEROF(player->name));
+		name[NUMBEROF(player->name)] = 0;
+		campaign_score_hud_number(entry ? entry->score : 0, number, NUMBEROF(number));
+		usnprintf(text + length, NUMBEROF(text) - length, L"%s%s %s", shown ? L"   " : L"", name, number);
+		text[NUMBEROF(text) - 1] = 0;
+		shown++;
+	}
+	if (!shown)
+		return;
+	spartan_link_room(local_player_index, &render.camera, &room, &line_scale);
+	pixel32_to_real_argb_color(spartan_link_tracker_color(local_player_index), &color);
+	color.red += (1.0f - color.red) * SPARTAN_LINK_NAME_PALER;
+	color.green += (1.0f - color.green) * SPARTAN_LINK_NAME_PALER;
+	color.blue += (1.0f - color.blue) * SPARTAN_LINK_NAME_PALER;
+	color.alpha = SPARTAN_LINK_NAME_ALPHA;
+	if (spartan_link.top)
+	{
+		real top;
+
+		spartan_link_top_room(&render.camera, line_scale, &room.x0, &room.x1, &top);
+		spartan_link_text(text, room.x0, top, room.x1 - room.x0, 2, 0.7f * line_scale, &color);
+	}
+	else
+	{
+		spartan_link_text(text, room.x0, (room.y0 + room.y1) * 0.5f - SPARTAN_LINK_ROW * 0.5f * line_scale,
+			room.x1 - room.x0, 0, 0.7f * line_scale, &color);
+	}
+}
+
 void spartan_link_draw(
 	short local_player_index)
 {
@@ -2766,6 +2957,13 @@ void spartan_link_draw(
 				0.8f * line_scale, &color);
 		}
 	}
+	/* (campaign scoring: with the link hidden, the teammates' scores in its
+	place, none while a line shows there) */
+	if (!spartan_link_shown(local_player_index) &&
+		(!window->line_milliseconds || system_milliseconds() - window->line_at >= window->line_milliseconds))
+	{
+		spartan_link_draw_scores_line(local_player_index);
+	}
 	if (!spartan_link_shown(local_player_index))
 		return;
 	white = spartan_link_white();
@@ -2777,6 +2975,7 @@ void spartan_link_draw(
 		spartan_link_draw_feed(white, local_player_index, index, &rectangles[index], scale);
 		if (spartan_link.stats)
 			spartan_link_draw_row(white, local_player_index, index, &rectangles[index], scale);
+		spartan_link_draw_score(white, local_player_index, index, &rectangles[index], scale);
 		/* (the teammate's reticle, on their feed's picture) */
 		if (halo_view_drawn(SPARTAN_LINK_VIEW(local_player_index, index)))
 		{

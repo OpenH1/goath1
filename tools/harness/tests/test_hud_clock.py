@@ -2,7 +2,8 @@
 waits for a game engine, the mission's timer in the campaign and co-op, the level's game time. None in a cinematic,
 with the setting off, or with the scripts' show_hud off. The player's Hide HUD (controls.hide_hud's key) hides the HUD
 and the clock until pressed again, over map loads (which reset the scripts' show_hud) and other settings' changes;
-display.hide_hud is its state as the game starts."""
+display.hide_hud is its state as the game starts. The HUD's state line (an action's prompt, the multiplayer start's
+"Hold BACK for score") goes with the HUD: cleared while the scripts' show_hud or the player's Hide HUD hides it."""
 
 import re
 import sys
@@ -13,9 +14,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from harness import CHECK_FAILED, build, enum_with, function, mutated, read, run  # noqa: E402
 
-CASES = ["campaign", "multiplayer", "off", "hide", "studio", "hide_setting"]
+CASES = ["campaign", "multiplayer", "off", "hide", "studio", "hide_setting", "state_line"]
 FUNCTIONS = ["hud_match_timer_setting", "hud_hidden_by_player", "hud_shown", "hud_match_timer_shown",
-             "hud_draw_match_timer"]
+             "hud_draw_match_timer", "hud_update_state_line"]
 
 # a fault in the code, and the case that must catch it
 NEGATIVE_CONTROLS = {
@@ -29,6 +30,10 @@ NEGATIVE_CONTROLS = {
     "any-change-resets": ("hud_hidden_by_player", ("\t\tif (setting != hud_hide.setting)\n", ""), "hide"),
     # the menu studio's F3 hiding the HUD as well
     "studio-unheard": ("hud_hidden_by_player", (" && !menu_studio_on()", ""), "studio"),
+    # (as it was) the state line left as last set while the HUD is hidden: the score hint stuck on screen
+    "state-line-kept": ("hud_update_state_line",
+                        ("\telse\n\t\thud_enable_custom_state_message(render.local_player_index, FALSE);\n", ""),
+                        "state_line"),
 }
 
 

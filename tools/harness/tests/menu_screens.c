@@ -794,9 +794,9 @@ int main(int argc, char **argv)
 			rights += block->kind == MENU_SCREEN_BUTTON && block->side && !strcmp(block->side, "right");
 		}
 		/* (the choices: BOTS, SKILL, TEAMS, a GOAT H1 host's HIJACK and
-		SPARTAN LINK, a co-op host's BATTLE, and FRIEND; the panels' buttons: a co-op host's fix too, coop.fix; the
-		bar's right: a co-op host's COPY LINK too) */
-		CHECK(choices == 7 && panel_buttons == 9, "%d choices, %d panel buttons", choices, panel_buttons);
+		SPARTAN LINK, a co-op host's BATTLE and SCORE, and FRIEND; the panels' buttons: a co-op host's fix too,
+		coop.fix; the bar's right: a co-op host's COPY LINK too) */
+		CHECK(choices == 8 && panel_buttons == 9, "%d choices, %d panel buttons", choices, panel_buttons);
 		CHECK(rights == 7, "%d buttons at the bar's right", rights);
 		CHECK(kind_first(&screen, MENU_SCREEN_CHAT) >= 0 &&
 			!strcmp(screen.blocks[kind_first(&screen, MENU_SCREEN_CHAT)].source, "lobby.chat"), "the lobby's chat");
@@ -1065,6 +1065,31 @@ int main(int argc, char **argv)
 			"its columns and choices");
 		menu_screen_free(&screen);
 		refused(TABLE("<column id=\"a\" width=\"10\" kind=\"symbols\"/>"), "swatch or symbol");
+	}
+	else if (!strcmp(name, "goat_settings"))
+	{
+		struct menu_screen_block const *table;
+
+		/* (GOAT Settings: its six tabs, its table of the tab's rows (goat.rows)
+		whose A, left and right are the goat actions, its two columns) */
+		CHECK(read_text(goat_settings_xml, &screen, problem), "GOAT Settings' file is refused: %s", problem);
+		table = &screen.blocks[kind_first(&screen, MENU_SCREEN_TABLE)];
+		CHECK(!strcmp(table->source, "goat.rows") && !strcmp(table->action, "goat row") &&
+			!strcmp(table->left_action, "goat left") && !strcmp(table->right_action, "goat right"), "its table");
+		CHECK(kind_total(&screen, MENU_SCREEN_TAB, -2) == 6, "its tabs");
+		CHECK(kind_total(&screen, MENU_SCREEN_COLUMN, -2) == 2, "its columns");
+		menu_screen_free(&screen);
+		/* (its KEEP or REVERT after a display change: a pop-up of two choices,
+		REVERT focused, B and REVERT reverting, KEEP keeping) */
+		CHECK(read_text(goat_keep_xml, &screen, problem), "KEEP or REVERT's file is refused: %s", problem);
+		CHECK(screen.back && !strcmp(screen.back, "goat keep revert"), "its back");
+		CHECK(kind_total(&screen, MENU_SCREEN_DIALOG, -1) == 1 &&
+			kind_total(&screen, MENU_SCREEN_ITEM, kind_first(&screen, MENU_SCREEN_LIST)) == 2, "its two choices");
+		CHECK(block_of(&screen, "keep") && !strcmp(block_of(&screen, "keep")->action, "goat keep") &&
+			block_of(&screen, "revert") && !strcmp(block_of(&screen, "revert")->action, "goat keep revert"),
+			"its choices' actions");
+		CHECK(!strcmp(screen.blocks[kind_first(&screen, MENU_SCREEN_LIST)].focus, "revert"), "its focus");
+		menu_screen_free(&screen);
 	}
 	else if (!strcmp(name, "keyboard"))
 	{

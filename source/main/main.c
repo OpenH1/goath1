@@ -760,6 +760,7 @@ void vr_death_test_update(void);
 #include "speedrun_state.h" /* port: port/linux/game/speedrun_state.c */
 #include "stream_state.h" /* port: port/linux/game/stream_state.c */
 #include "practice.h" /* port: port/linux/game/practice.c */
+#include "campaign_score.h" /* port: port/linux/game/campaign_score.c */
 #include "network_latency_trace.h" /* port: port/linux/game/network_latency_trace.c */
 
 /* ---------- prototypes */
@@ -2796,6 +2797,8 @@ static void main_won_map_private(
 
 	/* port: (port/linux/game/speedrun_state.c) */
 	speedrun_state_level_won();
+	/* port: campaign scoring's level bonus and summary (campaign_score.c) */
+	campaign_score_level_won();
 	csstrncpy(next, main_script_next_level, sizeof(next) - 1);
 	next[sizeof(next) - 1] = 0;
 	main_script_next_level[0] = 0;

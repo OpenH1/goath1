@@ -29,6 +29,11 @@ and the Panini pass's supersampling draws the same frustum at more pixels.
 The plane is never moved farther than the game's: the stock view, and any
 whose corners are within NEAR_CLIP_REACH, are drawn exactly as before.
 
+With the player's own body drawn in the first person (display.first_person_
+legs, first_person_legs.c) the plane is brought nearer still, to where its
+corners are first_person_legs_near_reach from the eye: the body's chest is
+below and before the eye, nearer than the game's plane, which cut it open.
+
 The depth buffer (Vulkan's and Metal's reversed 32-bit floats: far_clip.c)
 keeps its precision as a share of the distance whatever the near distance
 is. It is drawing alone: nothing a tick reads sees the render camera.
@@ -87,12 +92,18 @@ static real near_clip_corner(struct render_camera const *camera, real_rectangle2
 	return (real)sqrt(1.0 + (double)across * across + (double)up * up);
 }
 
-real render_near_clip_distance(struct render_camera const *camera, real_rectangle2d const *frustum_bounds)
+real render_near_clip_distance_reaching(struct render_camera const *camera, real_rectangle2d const *frustum_bounds,
+	real reach)
 {
 	real tangent = (real)tan(camera->vertical_field_of_view * 0.5f);
-	real reached = NEAR_CLIP_REACH / near_clip_corner(camera, frustum_bounds, tangent);
+	real reached = reach / near_clip_corner(camera, frustum_bounds, tangent);
 
 	return reached < camera->z_near ? reached : camera->z_near;
+}
+
+real render_near_clip_distance(struct render_camera const *camera, real_rectangle2d const *frustum_bounds)
+{
+	return render_near_clip_distance_reaching(camera, frustum_bounds, NEAR_CLIP_REACH);
 }
 
 real render_first_person_near_clip_distance(struct render_camera const *camera,

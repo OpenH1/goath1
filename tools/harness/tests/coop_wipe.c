@@ -69,6 +69,8 @@ static boolean game_state_write_to_file(void){return save_succeeds;}
 static void game_state_note_event(char const *note){(void)note;}
 /* (game_state.c's: a co-op host's checkpoint kept as its saved game too) */
 static void game_state_coop_saved(void){}
+/* (campaign scoring's copy of the score at the checkpoint: campaign_score.c) */
+static void campaign_score_checkpoint_saved(void){}
 /* The unrelated state reset by the actual new-game lifecycle entry point. */
 static int coop_presentation,coop_events,host_devices,client_devices,client_names_differing[1];
 static int host_sent_transforms[1],host_sent_looks[1],host_sent_devices[1],host_player_structure_bsps[1],host_friendly_fire[1];

@@ -46,7 +46,14 @@ The loaded BSP (2 triangles); definition 7: two nodes, the first with a
 tetrahedron wound inward, the second with none; definition 9: one node and
 none (its box); objects 0x10003 (of 7, its nodes at x 10 and 20), 0x20005
 (of 9, an item, at y 5, scaled 2), 0x30006 (of 7, static scenery baked)
-and 0x40008 (of 11, neither an item nor any collision geometry: none). */
+and 0x40008 (of 11, neither an item nor any collision geometry: none).
+With permuted_world, object 0x50010 alone (of 13: one node of two
+collision permutations, a tetrahedron, a Jackal's shield up, and one
+triangle, its frame with the shield off), its node's permutation
+fake_permutation. */
+
+static int permuted_world;
+static signed char fake_permutation;
 
 static short bsp_index = 0;
 static int structure_asked, definitions_asked;
@@ -200,10 +207,22 @@ short world_rt_source_definition(long definition, float sphere[4], int *item)
 	sphere[1] = 0.0f;
 	sphere[2] = 0.5f;
 	sphere[3] = 1.0f;
-	return definition == 7 ? 2 : definition == 9 || definition == 11 ? 1 : 0;
+	return definition == 7 ? 2 : definition == 9 || definition == 11 || definition == 13 ? 1 : 0;
 }
 
-long world_rt_source_node(long definition, short node_index, float *triangles, long maximum)
+short world_rt_source_node_permutations(long definition, short node_index)
+{
+	return definition == 13 && node_index == 0 ? 2 : definition == 7 && node_index == 0 ? 1 : 0;
+}
+
+short world_proxies_source_permutations(long id, signed char *permutations, short maximum)
+{
+	CHECK(id == 0x50010 && maximum >= 1, "the permutations of %lx asked", (unsigned long)id);
+	permutations[0] = fake_permutation;
+	return 1;
+}
+
+long world_rt_source_node(long definition, short node_index, short permutation, float *triangles, long maximum)
 {
 	/* (a tetrahedron, each face wound inward) */
 	static const float inward[4][9] =
@@ -214,7 +233,17 @@ long world_rt_source_node(long definition, short node_index, float *triangles, l
 		{ 1, 0, 0, 0, 0, 1, 0, 1, 0 },
 	};
 
-	if (definition != 7 || node_index != 0)
+	/* (13's: its second permutation one triangle, wound inward too) */
+	if (definition == 13 && node_index == 0 && permutation == 1)
+	{
+		if (triangles)
+		{
+			CHECK(maximum >= 1, "room for %ld", maximum);
+			memcpy(triangles, inward[0], sizeof(inward[0]));
+		}
+		return 1;
+	}
+	if ((definition != 7 && definition != 13) || node_index != 0 || permutation != 0)
 		return 0;
 	if (triangles)
 	{
@@ -235,6 +264,13 @@ long world_proxies_source_instances(struct world_proxies_source_instance *instan
 	static const long ids[4] = { 0x10003, 0x20005, 0x30006, 0x40008 }, definitions[4] = { 7, 9, 7, 11 };
 	long index;
 
+	if (permuted_world)
+	{
+		memset(&instances[0], 0, sizeof(instances[0]));
+		instances[0].id = 0x50010;
+		instances[0].definition = 13;
+		return 1;
+	}
 	for (index = 0; index < 4 && index < maximum; index++)
 	{
 		memset(&instances[index], 0, sizeof(instances[index]));
@@ -247,7 +283,7 @@ long world_proxies_source_instances(struct world_proxies_source_instance *instan
 
 short world_proxies_source_nodes(long id, struct world_proxies_frame *frames, short maximum)
 {
-	short node, count = id == 0x20005 ? 1 : 2;
+	short node, count = id == 0x20005 || id == 0x50010 ? 1 : 2;
 
 	CHECK(maximum >= count, "room for %d", maximum);
 	for (node = 0; node < count; node++)
@@ -691,6 +727,32 @@ static void skin_case(void)
 	}
 }
 
+/* a node's collision mesh of the permutation its object has now (a dead
+Jackal's shield off: no shadow or occlusion of it, #1311), each made once */
+static void permutation_case(void)
+{
+	permuted_world = 1;
+	fake_permutation = 0;
+	world_rt_frame(1);
+	/* the structure's, 13's node's two permutations' */
+	CHECK(mesh_count == 3 && meshes[1].count == 4 && meshes[2].count == 1, "%d meshes: %lu %lu", mesh_count,
+		meshes[1].count, meshes[2].count);
+	CHECK(instance_count == 2 && instances[1].mesh == meshes[1].id, "the first permutation's: %lu %u", instance_count,
+		instances[1].mesh);
+	/* its shield off: the other permutation's mesh, nothing made again */
+	fake_permutation = 1;
+	world_rt_frame(2);
+	CHECK(mesh_count == 3 && instance_count == 2 && instances[1].mesh == meshes[2].id, "the second permutation's: %d %u",
+		mesh_count, instances[1].mesh);
+	/* a permutation with no geometry (or none): no instance */
+	fake_permutation = -1;
+	world_rt_frame(3);
+	CHECK(instance_count == 1, "none: %lu instances", instance_count);
+	fake_permutation = 0;
+	world_rt_frame(4);
+	CHECK(instance_count == 2 && instances[1].mesh == meshes[1].id, "back up: %u", instances[1].mesh);
+}
+
 int main(int argc, char **argv)
 {
 	const char *name = argc > 1 ? argv[1] : "";
@@ -705,6 +767,8 @@ int main(int argc, char **argv)
 		model_case();
 	else if (!strcmp(name, "skin"))
 		skin_case();
+	else if (!strcmp(name, "permutation"))
+		permutation_case();
 	else
 		return 2;
 	return 0;

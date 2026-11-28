@@ -191,7 +191,7 @@ def built(fault=None):
                                            f"static char const {name}_xml[] =\n" +
                                            c_string((ROOT / f"port/assets/menus/screens/{name}.xml").read_bytes()) +
                                            ";\n" for name in ("coop", "coop_who", "coop_join", "add_player", "stick_test", "keyboard",
-                                                        "controller_layout")))
+                                                        "controller_layout", "goat_settings", "goat_keep")))
     (work / "menu_screens.h").write_text(read("port/linux/include/menu_screens.h"))
     executable = work / "menu_screens"
     command = ["clang", *ABI_FLAGS, "-std=gnu99", "-O1", "-Wall", "-Werror", "-Wno-unused-function",
@@ -206,7 +206,7 @@ def built(fault=None):
 CASES = ["main", "hints", "good", "syntax", "elements", "spartan", "items", "actions", "bindings", "when",
          "kept", "browser", "profile_select", "profile_color", "tabs", "table", "panel", "buttons", "lanes", "choice", "lobby", "chat",
          "box", "picture", "panels", "dialog", "coop", "add_player", "stick", "keyboard",
-         "controller_layout"]
+         "controller_layout", "goat_settings"]
 
 
 @pytest.mark.parametrize("case", CASES)
@@ -286,6 +286,14 @@ def test_actions_registered():
             assert '"dlss."' in value, binding
             assert f'"{binding}"' in re.search(r"\nint dlss_addon_value\(.*?\n\}\n",
                                                 read("port/linux/src/dlss_addon.c"), re.S).group(0), binding
+        elif binding.startswith("goat."):
+            # (GOAT Settings', goat_settings.inc's pc_menu_goat_value)
+            assert '"goat."' in value, binding
+            # (KEEP or REVERT's goat.keep_*: goat_keep_revert.inc's goat_keep_value)
+            include, function = (("goat_keep_revert.inc", "static boolean goat_keep_value")
+                                if binding.startswith("goat.keep_") else ("goat_settings.inc", "int pc_menu_goat_value"))
+            assert f'"{binding}"' in re.search(r"\n" + re.escape(function) + r"\(.*?\n\}\n",
+                                                read(f"port/linux/game/{include}"), re.S).group(0), binding
         elif binding.startswith("data."):
             # (Settings' GAME DATA's, port/linux/src/game_data_page.c's game_data_page_value)
             assert '"data."' in value, binding
@@ -306,7 +314,7 @@ def test_main_menu_files_listed():
     listed = json.loads(read("port/assets/menus/menus.json"))["files"]
     assert "screens/main.xml" in listed and "screens/blocks.xml" in listed and "screens/browser.xml" in listed
     assert "screens/profile_select.xml" in listed and "screens/lobby.xml" in listed
-    assert "screens/profile_color.xml" in listed
+    assert "screens/profile_color.xml" in listed and "screens/goat_settings.xml" in listed
     assert all(f"screens/{name}.xml" in listed for name in ("coop", "coop_who", "coop_join", "add_player"))
     assert "screens/pause.xml" in listed and "screens/pause_campaign.xml" in listed
     assert "screens/quit.xml" in listed and "screens/save_changes.xml" in listed

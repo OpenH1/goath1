@@ -76,6 +76,8 @@ def generated(fault=None, faulty_function=None):
     tags = read("port/linux/game/menu_tags.c")
     config = enum_with(engine, "_carnage_column_place") + "\n" + enum_with(engine, "SCOREBOARD_PLACE_WIDTH") + "\n"
     config += re.search(r"^#define SCOREBOARD_SCALE [^\n]+", engine, re.M).group(0) + "\n"
+    # (campaign scoring's columns, which a column's width counts)
+    config += "\n".join(re.findall(r"^static short (?:const )?scoreboard_stat_\w+[^\n]+", engine, re.M)) + "\n"
     config += "\n".join(re.findall(r"^#define WIDE_LAYOUT_\w+ [^\n]+", tags, re.M)) + "\n"
     config += function(tags, "ui_widget_port_wide_extra_of") + "\n"
     for name in ("statistic_buffer", "carnage_column", "carnage_row"):

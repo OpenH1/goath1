@@ -210,6 +210,7 @@ def generated(fault=None, newest=False):
                  "render_interpolation_camera_substep_unit", "render_interpolation_camera_at_tick",
                  "render_interpolation_camera_anchors", "render_interpolation_camera_substep_vehicle",
                  "render_interpolation_camera_at_tick_in_vehicle", "render_interpolation_camera_vehicle_offset",
+                 "render_interpolation_camera_seat_vehicle", "render_interpolation_camera_at_tick_in_seat",
                  "render_interpolation_blended_camera"):
         text += function(code, name) + "\n"
     if newest:

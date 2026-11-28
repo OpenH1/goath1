@@ -2601,3 +2601,175 @@ boolean rasterizer_shadow_retained_caster(
 
 	return FALSE;
 }
+
+/* ---------- port: a ping's outline */
+
+/* port: the outline of a pinged unit or vehicle (port/linux/game/
+network_markers.c, drawn by render_objects.c's render_object_outline): the
+object's models drawn as its shadow's casters are (the shadow's vertex
+shader, the models' alpha-tested maps), into the view with its camera's
+projection in place of the shadow's. A mask pass marks the object's pixels
+in the stencil's top bit (PING_OUTLINE_STENCIL_BIT, which the game's own
+modes never use: theirs are the low two), drawing no colour; each ring pass
+draws the object again moved a few pixels on the screen, in a colour where
+the bit is not set, and sets it there (so that the rings, overlapping, blend
+once); the object's screen box is then cleared of the bit with one quad (the
+caller's draw bounds scissoring it). Through walls the passes test no depth;
+depth tested, a ring is drawn only where the object is in front of what the
+view has there (the mask not: so that no outline is drawn about a part of
+it hidden behind a wall). Nothing of it is drawn without a ping. */
+
+#define PING_OUTLINE_STENCIL_BIT 0x80
+
+static short ping_outline_stencil_mode = NONE;
+
+static void ping_outline_projection(
+	real offset_x,
+	real offset_y)
+{
+	real vertex_constants[5][4];
+	short column;
+	short row;
+
+	for (column = 0; column < 4; column++)
+	{
+		for (row = 0; row < 4; row++)
+		{
+			const real *n = global_window_parameters.frustum.world_to_view.n[row];
+
+			vertex_constants[column][row] =
+				n[0] * global_window_parameters.frustum.projection_matrix[0][column] +
+				n[1] * global_window_parameters.frustum.projection_matrix[1][column] +
+				n[2] * global_window_parameters.frustum.projection_matrix[2][column];
+		}
+		vertex_constants[column][3] +=
+			global_window_parameters.frustum.projection_matrix[3][column];
+	}
+	/* (moved on the screen: x + offset_x w, y + offset_y w) */
+	for (row = 0; row < 4; row++)
+	{
+		vertex_constants[0][row] += offset_x * vertex_constants[3][row];
+		vertex_constants[1][row] += offset_y * vertex_constants[3][row];
+		vertex_constants[4][row] = 0.0f;
+	}
+	IDirect3DDevice8_SetVertexShaderConstant(global_d3d_device, -68, vertex_constants, 5);
+
+	return;
+}
+
+boolean rasterizer_ping_outline_begin(
+	void)
+{
+	if (global_window_parameters.rasterizer_target != _rasterizer_target_render_primary ||
+		!rasterizer_debug_options.draw_environment_shadows)
+	{
+		return FALSE;
+	}
+	shadow_fingerprinting = FALSE;
+	ping_outline_stencil_mode = rasterizer_get_stencil_mode();
+	IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_ALPHATESTENABLE, FALSE);
+	IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_ZWRITEENABLE, FALSE);
+	IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_ZBIAS, 0);
+	IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_FOGENABLE, FALSE);
+	IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_STENCILENABLE, TRUE);
+	IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_STENCILFAIL, D3DSTENCILOP_KEEP);
+	IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_STENCILZFAIL, D3DSTENCILOP_KEEP);
+	IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_STENCILPASS, D3DSTENCILOP_REPLACE);
+	IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_STENCILREF, PING_OUTLINE_STENCIL_BIT);
+	IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_STENCILMASK, PING_OUTLINE_STENCIL_BIT);
+	IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_STENCILWRITEMASK, PING_OUTLINE_STENCIL_BIT);
+
+	return TRUE;
+}
+
+/* a pass: the mask (no colour, every pixel of the object), or a ring moved
+offset_x, offset_y (the view's -1..1 units) in a colour */
+void rasterizer_ping_outline_pass(
+	boolean mask,
+	real offset_x,
+	real offset_y,
+	pixel32 color,
+	boolean depth_tested)
+{
+	IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_COLORWRITEENABLE, mask ? 0 :
+		D3DCOLORWRITEENABLE_RED | D3DCOLORWRITEENABLE_GREEN | D3DCOLORWRITEENABLE_BLUE);
+	IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_ALPHABLENDENABLE, !mask);
+	IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+	IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+	IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_BLENDOP, D3DBLENDOP_ADD);
+	IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_ZENABLE, !mask && depth_tested);
+	IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_ZFUNC, D3DCMP_LESSEQUAL);
+	IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_STENCILFUNC, mask ? D3DCMP_ALWAYS : D3DCMP_NOTEQUAL);
+	IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_STENCILPASS, D3DSTENCILOP_REPLACE);
+
+	/* the colour and its alpha: rgb = c0, alpha = c0 */
+	csmemset(&pixel_shader, 0, sizeof(pixel_shader));
+	pixel_shader.combiner_count = 1;
+	pixel_shader.final_combiner_inputs_abcd = 0x00000001;
+	pixel_shader.final_combiner_inputs_efg = 0x00001100;
+	pixel_shader.final_combiner_constant_0 = color;
+	rasterizer_set_pixel_shader(&pixel_shader);
+	ping_outline_projection(offset_x, offset_y);
+
+	return;
+}
+
+/* the bit cleared again, over the view (scissored by the caller's draw
+bounds to the object's box) */
+void rasterizer_ping_outline_clear(
+	void)
+{
+	real screen_constants[5][4];
+	short screen_width = global_window_parameters.camera.viewport_bounds.x1 -
+		global_window_parameters.camera.viewport_bounds.x0;
+	short screen_height = global_window_parameters.camera.viewport_bounds.y1 -
+		global_window_parameters.camera.viewport_bounds.y0;
+
+	if (screen_width <= 0 || screen_height <= 0)
+		return;
+	IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_COLORWRITEENABLE, 0);
+	IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_ALPHABLENDENABLE, FALSE);
+	IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_ZENABLE, FALSE);
+	IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_CULLMODE, D3DCULL_NONE);
+	IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_STENCILFUNC, D3DCMP_ALWAYS);
+	IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_STENCILPASS, D3DSTENCILOP_ZERO);
+	rasterizer_set_vertex_shader_permutation(4, 8, 0);
+	csmemset(screen_constants, 0, sizeof(screen_constants));
+	screen_constants[0][0] = 2.0f / screen_width;
+	screen_constants[0][3] = -1.0f - 1.0f / screen_width;
+	screen_constants[1][1] = -2.0f / screen_height;
+	screen_constants[1][3] = 1.0f + 1.0f / screen_height;
+	screen_constants[2][3] = 0.5f;
+	screen_constants[3][3] = 1.0f;
+	screen_constants[4][3] = 1.0f;
+	IDirect3DDevice8_SetVertexShaderConstant(global_d3d_device, -68, screen_constants, 5);
+	csmemset(&pixel_shader, 0, sizeof(pixel_shader));
+	pixel_shader.combiner_count = 1;
+	pixel_shader.final_combiner_inputs_abcd = 0x00000001;
+	pixel_shader.final_combiner_inputs_efg = 0x00001100;
+	rasterizer_set_pixel_shader(&pixel_shader);
+	IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_PSTEXTUREMODES, 0);
+	IDirect3DDevice8_Begin(global_d3d_device, D3DPT_TRIANGLEFAN);
+	IDirect3DDevice8_SetVertexData2s(global_d3d_device, D3DVSDE_SPECULAR, 0, 0);
+	IDirect3DDevice8_SetVertexData2s(global_d3d_device, D3DVSDE_POSITION, 0, 0);
+	IDirect3DDevice8_SetVertexData2s(global_d3d_device, D3DVSDE_SPECULAR, 0, 0);
+	IDirect3DDevice8_SetVertexData2s(global_d3d_device, D3DVSDE_POSITION, screen_width, 0);
+	IDirect3DDevice8_SetVertexData2s(global_d3d_device, D3DVSDE_SPECULAR, 0, 0);
+	IDirect3DDevice8_SetVertexData2s(global_d3d_device, D3DVSDE_POSITION, screen_width, screen_height);
+	IDirect3DDevice8_SetVertexData2s(global_d3d_device, D3DVSDE_SPECULAR, 0, 0);
+	IDirect3DDevice8_SetVertexData2s(global_d3d_device, D3DVSDE_POSITION, 0, screen_height);
+	IDirect3DDevice8_End(global_d3d_device);
+
+	return;
+}
+
+void rasterizer_ping_outline_end(
+	void)
+{
+	IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_COLORWRITEENABLE,
+		D3DCOLORWRITEENABLE_RED | D3DCOLORWRITEENABLE_GREEN | D3DCOLORWRITEENABLE_BLUE);
+	IDirect3DDevice8_SetRenderState(global_d3d_device, D3DRS_ZENABLE, TRUE);
+	rasterizer_stencil_mode_restore(ping_outline_stencil_mode);
+
+	return;
+}

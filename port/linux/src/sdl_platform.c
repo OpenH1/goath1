@@ -1815,8 +1815,8 @@ int host_vulkan_window_open(unsigned int window, unsigned int debug, const char 
 #define HOST_VULKAN_DEBUG_STATISTICS 1
 #define HOST_VULKAN_DEBUG_VALIDATION 2
 /* display.low_latency, with the debugging settings: on, off (neither: auto);
-and display.vrr's VRR on (platform_vrr: the frames bounded by the display,
-not started for a refresh) */
+and display.vrr's VRR on (platform_vrr: the frames started just in time for the
+GPU, not for a refresh) */
 #define HOST_VULKAN_LOW_LATENCY_ON 4
 #define HOST_VULKAN_LOW_LATENCY_OFF 8
 #define HOST_VULKAN_VRR 16
@@ -1824,6 +1824,9 @@ not started for a refresh) */
 fifo_relaxed (none: the swap interval's choice) */
 #define HOST_VULKAN_PRESENT_MODE_SHIFT 5
 #define HOST_VULKAN_PRESENT_MODE_MASK (7u << HOST_VULKAN_PRESENT_MODE_SHIFT)
+/* debug.vulkan_push_textures, debug.vulkan_bar_uploads */
+#define HOST_VULKAN_PUSH_TEXTURES 256
+#define HOST_VULKAN_BAR_UPLOADS 512
 /* port/linux/vulkan/host_vulkan.c: whether the system says VRR is active
 (display.vrr's auto): HOST_VULKAN_VRR_NONE where it says nothing of it;
 gamescope's word (the Steam Deck's, the Steam Frame's), or a Linux
@@ -2090,6 +2093,8 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	if (!host_vulkan_window_open((unsigned int)(uintptr_t)platform_window,
 		(config_boolean("debug.gpu_stats") ? HOST_VULKAN_DEBUG_STATISTICS : 0) |
 		(config_boolean("debug.gpu_validation") || config_boolean("debug.gl_debug") ? HOST_VULKAN_DEBUG_VALIDATION : 0) |
+		(config_boolean("debug.vulkan_push_textures") ? HOST_VULKAN_PUSH_TEXTURES : 0) |
+		(config_boolean("debug.vulkan_bar_uploads") ? HOST_VULKAN_BAR_UPLOADS : 0) |
 		platform_low_latency_flags() | platform_present_mode_flags(), config_string("debug.gpu_dump_shaders"),
 		config_string("debug.texture_dump_directory"),
 		platform_interval_take(), battery_saver_active()))
@@ -2216,8 +2221,8 @@ display.vrr_cap_margin a second under the refresh rate (by default 3: 117
 at 120 Hz, 141 at 144),
 or display.max_fps where that is lower: so they stay inside the range and
 the display refreshes when each is ready, without vsync's queue. The frames
-are bounded by the display (at most one waits for it), not started just in
-time for a refresh, which a variable display does not have
+are started just in time for the GPU (two may wait for the display), not for
+a refresh, which a variable display does not have
 (HOST_VULKAN_VRR).
 
 "on" and "off" are the player's; "auto" turns it on only where the system

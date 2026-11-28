@@ -2710,3 +2710,29 @@ void hud_weapon_port_enumerate(
 
 	return;
 }
+
+/* port: a grenade type's icon in the HUD's messages, its HUD interface's
+messaging information (where this file's grenade_hud_interface_definition
+has messaging_icon_bitmap: the 16 bytes are an icon_hud_element_definition),
+as a ping of the grenade draws it (port/linux/game/network_markers.c): NULL
+for none */
+typedef char grenade_hud_messaging_icon_size_assert[
+	sizeof(struct icon_hud_element_definition) == sizeof(struct tag_reference) ? 1 : -1];
+
+struct icon_hud_element_definition const *hud_grenade_messaging_icon(
+	short grenade_type)
+{
+	struct game_globals *globals = scenario_get_game_globals();
+	struct game_globals_grenade *grenade;
+	struct icon_hud_element_definition const *icon;
+
+	if (!globals || grenade_type < 0 || grenade_type >= globals->grenades.count)
+		return NULL;
+	grenade = TAG_BLOCK_GET_ELEMENT(&globals->grenades, grenade_type, struct game_globals_grenade);
+	if (grenade->hud_interface.index == NONE)
+		return NULL;
+	icon = (struct icon_hud_element_definition const *)
+		&grenade_hud_interface_definition_get(grenade->hud_interface.index)->messaging_icon_bitmap;
+
+	return icon->sequence_index != NONE ? icon : NULL;
+}

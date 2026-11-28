@@ -191,6 +191,12 @@ struct stream_target
 	uint8_t format;
 	/* counts the draws and clears into it */
 	uint32_t written;
+	/* (a depth target) a copy of its depth for the draws that sample it
+	while it is their attachment (target_depth_sampled), copied from
+	image when depth_writes was depth_copied; counts its depth's writes
+	(draws, clears, copies into it) */
+	struct xgpu_vulkan_image *depth_copy, *depth_copied_from;
+	uint32_t depth_writes, depth_copied;
 };
 
 /* what a pipeline's shaders are made for besides its key */
@@ -205,6 +211,10 @@ struct variant
 frame (after the load: never in it) */
 #define WORLD_WAITING_MOST 1024
 #define WORLD_MADE_A_FRAME 2
+/* the longest a map's preparation waits for the effects' thicknesses its
+draws asked for (a slow machine's many large bitmaps: the rest come back
+in play, between frames) */
+#define THICKNESS_SETTLE_SECONDS 3.0
 
 struct stream_pipeline
 {
@@ -392,6 +402,9 @@ static struct
 	/* (HALO_LT_E1: a world pipeline's or a twin's draw made and waited for
 	now, not drawn apart: draw_input, prepass_draw) */
 	int world_now, wait_world;
+	/* the depth targets' copies made for the draws that sample them
+	(target_depth_sampled), for the statistics */
+	uint32_t depth_copies;
 	/* display.ambient_occlusion "world": each pipeline's definition as last
 	bound, and its stand-in (0 none: PIPELINE_STAND_IN), which draws until
 	its own is made (prepared only where its own cannot be); the pipelines whose
@@ -553,6 +566,52 @@ static void target_resolve(struct stream_target *target)
 	xgpu_vulkan_image_resolve(target->multisampled, target->image);
 }
 
+static struct xgpu_vulkan_image *target_image_make(const struct stream_target *target, int samples);
+
+/* The depth a draw samples of the single-sampled depth target it is drawn
+against (the soft effects', the glows', the ray-traced and contact
+shadows': the target stays their attachment, for their depth or stencil
+test): a copy of it, made again only where the depth was written since
+(depth_writes), outside a pass, so that no pass samples the image it has
+as its attachment. Vulkan allows that read where the pass writes none of
+it, but a driver may then read the attachment's compressed depth as it is
+(AMD's on Windows: blocks of an effect drawn wrong, #1247), and it split
+the passes at each effect after a draw that wrote depth. NULL where the
+copy cannot be made (the caller samples the attachment then, as before) */
+static struct xgpu_vulkan_image *target_depth_sampled(struct stream_target *target)
+{
+	const struct xgpu_vulkan_image_description *have;
+
+	if (!target || !target->depth || !target->image)
+		return NULL;
+	have = target->depth_copy ? xgpu_vulkan_image_description(target->depth_copy) : NULL;
+	if (have && (have->width != target->width || have->height != target->height ||
+		have->depth_or_layers != (target->layers > 1 ? target->layers : 1)))
+	{
+		xgpu_vulkan_image_destroy(target->depth_copy);
+		target->depth_copy = NULL;
+	}
+	if (!target->depth_copy)
+	{
+		target->depth_copy = target_image_make(target, 0);
+		target->depth_copied_from = NULL;
+		if (!target->depth_copy)
+			return NULL;
+	}
+	/* (preparation draws nothing: the copy is bound, not made) */
+	if (stream.preparing)
+		return target->depth_copy;
+	if (target->depth_copied_from != target->image || target->depth_copied != target->depth_writes)
+	{
+		if (!xgpu_vulkan_image_copy_depth(target->image, target->depth_copy))
+			return NULL;
+		target->depth_copied_from = target->image;
+		target->depth_copied = target->depth_writes;
+		stream.depth_copies++;
+	}
+	return target->depth_copy;
+}
+
 static void composites_forget(uint32_t number)
 {
 	struct composite *composite;
@@ -580,6 +639,7 @@ static void target_forget(uint32_t number)
 	if (!target->borrowed)
 		xgpu_vulkan_image_destroy(target->image);
 	xgpu_vulkan_image_destroy(target->multisampled);
+	xgpu_vulkan_image_destroy(target->depth_copy);
 	free(target);
 	stream.targets[number] = NULL;
 	composites_forget(number);
@@ -904,6 +964,8 @@ static void stream_clear(void *context, const struct xgpu_stream_clear *record)
 		stream.first_person_depth = 0;
 	if (target_get(stream.color))
 		target_get(stream.color)->written++;
+	if ((parts & XGPU_VULKAN_CLEAR_DEPTH) && target_get(stream.depth))
+		target_get(stream.depth)->depth_writes++;
 	targets_bind();
 	/* Preparation clears nothing: the enumeration's frame is not seen, and
 	its draws are not drawn, so its clears were its only GPU work, each a
@@ -990,6 +1052,53 @@ static int stream_read_target_halves(void *context, uint32_t number, uint32_t wi
 		return 0;
 	target_resolve(target);
 	return xgpu_vulkan_read_halves(target->image, 0, halves);
+}
+
+/* the screenshot key's target read back without a wait
+(xgpu_vulkan_readback_begin): BGRA8, display.hdr's half floats or
+display.output_depth's 16-bit channels */
+struct later_pixels
+{
+	struct host_render_later_pixels pixels;
+	struct xgpu_vulkan_readback *readback;
+};
+
+static const void *later_pixels_wait(struct host_render_later_pixels *pixels)
+{
+	return xgpu_vulkan_readback_wait(((struct later_pixels *)pixels)->readback);
+}
+
+static void later_pixels_release(struct host_render_later_pixels *pixels)
+{
+	xgpu_vulkan_readback_release(((struct later_pixels *)pixels)->readback);
+	free(pixels);
+}
+
+static struct host_render_later_pixels *stream_read_target_later(void *context, uint32_t number, uint32_t width,
+	uint32_t height)
+{
+	struct stream_target *target = target_get(number);
+	struct later_pixels *later;
+	int format;
+
+	(void)context;
+	if (!target || target->depth || target->width != width || target->height != height ||
+		!(later = calloc(1, sizeof(*later))))
+	{
+		return NULL;
+	}
+	target_resolve(target);
+	later->readback = xgpu_vulkan_readback_begin(target->image, 0, &format);
+	if (!later->readback)
+	{
+		free(later);
+		return NULL;
+	}
+	later->pixels.format = format == XGPU_VULKAN_FORMAT_RGBA16F ? HOST_RENDER_LATER_HALVES :
+		format == XGPU_VULKAN_FORMAT_RGBA16 ? HOST_RENDER_LATER_DEEP : HOST_RENDER_LATER_BGRA8;
+	later->pixels.wait = later_pixels_wait;
+	later->pixels.release = later_pixels_release;
+	return &later->pixels;
 }
 
 /* ---------- textures */
@@ -2053,7 +2162,7 @@ static struct xgpu_vulkan_buffer *segment_buffer(int32_t segment)
 	if (segment < 0 || segment >= MIRROR_SEGMENT_MAXIMUM)
 		return NULL;
 	if (!stream.segments[segment])
-		stream.segments[segment] = xgpu_vulkan_buffer_create(MIRROR_SEGMENT_SIZE);
+		stream.segments[segment] = xgpu_vulkan_buffer_create_mirror(MIRROR_SEGMENT_SIZE);
 	return stream.segments[segment];
 }
 
@@ -2311,11 +2420,13 @@ static void pipeline_description_trace(const struct xgpu_vulkan_pipeline_descrip
 }
 
 /* a VR effect's textures (xgpu_spirv.h): the stages' and past them the
-scene's depth, the views' layers of the depth target drawn into (in a pass
-that writes none of it: returns 1, the draw's reads_depth; or a multisampled
-target's, resolved), and its bitmap's thickness (the texture cache's, baked
-the first time: xgpu_vulkan_effects.h). Before the draw's uploads: the
-resolve and the bake are ordered among the stream's work. */
+scene's depth, the views' layers of the depth target drawn into (a copy of
+them, target_depth_sampled; a multisampled target's, resolved; or, where
+no copy can be made, the target's own in a pass that writes none of it:
+returns 1 then, the draw's reads_depth), and its bitmap's thickness (the
+texture cache's, baked on the effects' workers: xgpu_vulkan_effects.h, none
+until it is back). Before the draw's uploads: the copy and the resolve are
+ordered among the stream's work. */
 static int effect_textures(struct xgpu_vulkan_texture textures[XGPU_VULKAN_TEXTURES])
 {
 	struct stream_target *depth = target_get(stream.depth);
@@ -2336,11 +2447,13 @@ static int effect_textures(struct xgpu_vulkan_texture textures[XGPU_VULKAN_TEXTU
 	textures[XGPU_SPIRV_EFFECT_DEPTH_BINDING].image = NULL;
 	if (depth && depth->depth)
 	{
+		struct xgpu_vulkan_image *copy = NULL;
+
 		if (depth->multisampled && stream.samples)
 			target_resolve(depth);
-		else
+		else if (!(copy = target_depth_sampled(depth)))
 			reads_depth = 1;
-		textures[XGPU_SPIRV_EFFECT_DEPTH_BINDING].image = depth->image;
+		textures[XGPU_SPIRV_EFFECT_DEPTH_BINDING].image = copy ? copy : depth->image;
 	}
 	sampler.minify = sampler.magnify = XGPU_VULKAN_FILTER_LINEAR;
 	textures[XGPU_SPIRV_EFFECT_THICKNESS_BINDING].kind = XGPU_VULKAN_IMAGE_2D;
@@ -2621,8 +2734,9 @@ static int draw_pipeline(const struct draw_input *input, int apart)
 		the enumeration does not make either resource more ready. */
 		traced = preparation_start();
 		textures_bind();
-		/* (a VR effect's bitmap's thickness baked now, as the map is
-		prepared, not as it is first drawn in play) */
+		/* (an effect's bitmap's thickness asked for now, as the map is
+		prepared, not as it is first drawn in play: stream_prepared waits
+		for it) */
 		if (entry->effect)
 			(void)xgpu_vulkan_textures_thickness(&stream.stages[0].stage);
 		preparation_end(0, traced);
@@ -2733,6 +2847,10 @@ static int draw_pipeline(const struct draw_input *input, int apart)
 	if (!prepass.drawing && draw.writes_depth && stream.samples && target_get(stream.depth) &&
 		target_get(stream.depth)->multisampled)
 		target_get(stream.depth)->unresolved = 1;
+	/* (its depth written: copied again for the draws that sample it) */
+	if (!prepass.drawing && target_get(stream.depth) && stream.definition->key.depth_test &&
+		stream.definition->key.depth_write && !entry->effect_tests_depth)
+		target_get(stream.depth)->depth_writes++;
 	if (!prepass.drawing && target_get(stream.color))
 		target_get(stream.color)->written++;
 	/* (the weapon's pixels' projection, where they are marked) */
@@ -3065,6 +3183,21 @@ static unsigned char *lights_cells;
 /* (and the frame's block, for HALO_LT_E1's pass: xgpu_vulkan_lt.c) */
 static struct xgpu_dynamic_lights_block lights_block;
 
+/* when the world last came (seconds of the monotonic clock) */
+static double lights_world_given;
+
+/* the world's boxes and groups, once their thread has made them
+(stream_dynamic_lights_world's convert_later): until then every light is
+walked */
+static void lights_world_take(void)
+{
+	if (xgpu_dynamic_lights_world_take(&lights_world) && lights_world.bounded)
+		host_logf(HOST_LOG_INFO, "vulkan: the dynamic lights' world: %u boxes in %u groups (%u bytes), taken %.3f ms "
+			"after it came (made on a thread of their own)", lights_world.first[XGPU_DYNAMIC_LIGHTS_CLUSTERS],
+			lights_world.group_count, lights_world.group_bytes,
+			(host_load_trace_clock(CLOCK_MONOTONIC) - lights_world_given) * 1000.0);
+}
+
 /* HALO_LIGHTS_WORLD_VERIFY: each frame's walk mask found again by testing
 each cluster's boxes in turn (without their groups), and a difference
 logged; the updates compared and the differences, logged now and then (-1
@@ -3151,6 +3284,7 @@ static void dynamic_lights_cells(const struct xgpu_stream_dynamic_lights_block *
 				end = high;
 		}
 	}
+	lights_world_take();
 	xgpu_dynamic_lights_world_walked(&lights_world, (const float (*)[4])block, count, lights_cells, walk);
 	if (host_load_trace_switch("HALO_LIGHTS_WORLD_VERIFY", &lights_verify))
 	{
@@ -3219,7 +3353,6 @@ static void stream_dynamic_lights_change(void *context, const struct xgpu_stream
 static void stream_dynamic_lights_world(void *context, const struct xgpu_stream_dynamic_lights_world *record)
 {
 	const void *texels = host_pointer(record->texels);
-	double started, grouped;
 
 	(void)context;
 	if (!texels || !record->count || record->count > XGPU_STREAM_DYNAMIC_LIGHTS_WORLD_TEXELS)
@@ -3227,21 +3360,16 @@ static void stream_dynamic_lights_world(void *context, const struct xgpu_stream_
 	if (host_load_trace_switch("HALO_LIGHTS_WORLD_VERIFY", &lights_verify))
 		host_logf(HOST_LOG_INFO, "vulkan: lights world verify: %llu updates compared, %llu differ (a new world)",
 			lights_verified, lights_verify_differences);
-	if (!xgpu_dynamic_lights_world_convert(&lights_world, (const uint32_t (*)[4])texels, record->count))
+	/* (its clusters' boxes, in groups that a light's test of them walks,
+	made on a thread of their own: a large world's held the frame for 80 ms
+	as a structure was switched to; lights_world_take) */
+	lights_world_given = host_load_trace_clock(CLOCK_MONOTONIC);
+	if (!xgpu_dynamic_lights_world_convert_later(&lights_world, (const uint32_t (*)[4])texels, record->count))
 		host_logf(HOST_LOG_WARN, "vulkan: the dynamic lights' world (%u texels) could not be made: its lights reach "
 			"every cluster", record->count);
 	else if (lights_world.game_nodes)
 		host_logf(HOST_LOG_INFO, "vulkan: the dynamic lights' world: %u nodes, %u deep (the game's %u, %u deep)",
 			lights_world.nodes, lights_world.depth, lights_world.game_nodes, lights_world.game_depth);
-	/* (its clusters' boxes in groups, which a light's test of them walks) */
-	started = host_load_trace_clock(CLOCK_MONOTONIC);
-	if (xgpu_dynamic_lights_world_group(&lights_world))
-	{
-		grouped = host_load_trace_clock(CLOCK_MONOTONIC);
-		host_logf(HOST_LOG_INFO, "vulkan: the dynamic lights' world: %u boxes in %u groups (%u bytes), in %.3f ms",
-			lights_world.first[XGPU_DYNAMIC_LIGHTS_CLUSTERS], lights_world.group_count, lights_world.group_bytes,
-			(grouped - started) * 1000.0);
-	}
 	if (lights_world.count)
 		xgpu_vulkan_dynamic_lights_world(lights_world.texels, lights_world.count);
 }
@@ -3394,7 +3522,8 @@ static void stream_dynamic_lights_halos(void *context, const struct xgpu_stream_
 	struct xgpu_vulkan_dynamic_state dynamic;
 	struct xgpu_vulkan_draw draw;
 	uint32_t layers = record->layers > 1 ? (uint32_t)record->layers : 1, attempt;
-	int slot = layers == 1 ? 0 : layers == 2 ? 1 : 2, halo, corner, merged, split, first_person;
+	int slot = layers == 1 ? 0 : layers == 2 ? 1 : 2, halo, corner, merged, split, first_person, reads_depth;
+	struct xgpu_vulkan_image *copy;
 	struct xgpu_vulkan_range first_person_constants;
 	uint64_t before;
 
@@ -3468,6 +3597,13 @@ static void stream_dynamic_lights_halos(void *context, const struct xgpu_stream_
 	sampler.address[0] = sampler.address[1] = sampler.address[2] = XGPU_VULKAN_ADDRESS_CLAMP;
 	sampler.anisotropy = 1;
 	draw.textures[0].image = depth->image;
+	/* (where the depth is their attachment too: its copy, target_depth_sampled) */
+	reads_depth = merged || (split && !depth->multisampled);
+	if (reads_depth && (copy = target_depth_sampled(depth)) != NULL)
+	{
+		draw.textures[0].image = copy;
+		reads_depth = 0;
+	}
 	draw.textures[0].kind = layers > 1 ? XGPU_VULKAN_IMAGE_2D_ARRAY : XGPU_VULKAN_IMAGE_2D;
 	draw.textures[0].sampler = xgpu_vulkan_sampler(&sampler);
 	/* (the viewport and depth range the 3D view was drawn with, and no
@@ -3538,7 +3674,7 @@ static void stream_dynamic_lights_halos(void *context, const struct xgpu_stream_
 	color->written++;
 	xgpu_vulkan_set_target_views(color->multisampled ? color->multisampled : color->image, merged ? depth->image :
 		split ? (depth->multisampled ? depth->multisampled : depth->image) : NULL, 0, layers);
-	draw.reads_depth = (uint8_t)(merged || (split && !depth->multisampled));
+	draw.reads_depth = (uint8_t)reads_depth;
 	dynamic.stencil_reference = 0;
 	xgpu_vulkan_draw(&draw);
 	if (first_person)
@@ -3637,7 +3773,7 @@ static int rt_shadows_pipeline(const struct stream_target *color, const struct s
 	pipeline->blend_destination = XGPU_BLEND_SOURCE_COLOR;
 	pipeline->blend_operation = XGPU_BLEND_ADD;
 	pipeline->color_mask = 7;
-	/* (the level's pixels alone: the models' have the stencil's first bit) */
+	/* (not the first-person weapon's pixels: they have the stencil's first bit) */
 	pipeline->stencil_test = 1;
 	pipeline->stencil_function = XGPU_COMPARE_EQUAL;
 	pipeline->stencil_fail = pipeline->stencil_depth_fail = pipeline->stencil_pass = XGPU_STENCIL_KEEP;
@@ -3783,7 +3919,8 @@ static void stream_rt_shadows(void *context, const struct xgpu_stream_rt_shadows
 	struct xgpu_vulkan_draw draw;
 	float (*header)[4], (*casters)[4];
 	uint64_t before, serial;
-	int multisampled, attempt;
+	int multisampled, attempt, reads_depth;
+	struct xgpu_vulkan_image *copy;
 
 	(void)context;
 	if (!stream.capabilities.ray_queries)
@@ -3828,6 +3965,13 @@ static void stream_rt_shadows(void *context, const struct xgpu_stream_rt_shadows
 	if (multisampled)
 		target_resolve(depth);
 	draw.textures[0].image = depth->image;
+	/* (the depth their attachment too: its copy, target_depth_sampled) */
+	reads_depth = !multisampled;
+	if (reads_depth && (copy = target_depth_sampled(depth)) != NULL)
+	{
+		draw.textures[0].image = copy;
+		reads_depth = 0;
+	}
 	draw.textures[0].kind = XGPU_VULKAN_IMAGE_2D;
 	draw.textures[0].sampler = rt_shadows.sampler;
 	draw.dynamic = &dynamic;
@@ -3866,7 +4010,7 @@ static void stream_rt_shadows(void *context, const struct xgpu_stream_rt_shadows
 	color->written++;
 	xgpu_vulkan_set_target_views(multisampled ? color->multisampled : color->image,
 		multisampled ? depth->multisampled : depth->image, 0, 1);
-	draw.reads_depth = (uint8_t)!multisampled;
+	draw.reads_depth = (uint8_t)reads_depth;
 	xgpu_vulkan_draw(&draw);
 	/* (the stream's targets again, for what follows) */
 	targets_bind();
@@ -3965,7 +4109,8 @@ static void stream_contact_shadows(void *context, const struct xgpu_stream_rt_sh
 	struct xgpu_vulkan_draw draw;
 	void *block;
 	uint64_t before, serial;
-	int multisampled, attempt;
+	int multisampled, attempt, reads_depth;
+	struct xgpu_vulkan_image *copy;
 
 	(void)context;
 	if (stream.preparing)
@@ -4011,6 +4156,13 @@ static void stream_contact_shadows(void *context, const struct xgpu_stream_rt_sh
 	if (multisampled)
 		target_resolve(depth);
 	draw.textures[0].image = depth->image;
+	/* (the depth their attachment too: its copy, target_depth_sampled) */
+	reads_depth = !multisampled;
+	if (reads_depth && (copy = target_depth_sampled(depth)) != NULL)
+	{
+		draw.textures[0].image = copy;
+		reads_depth = 0;
+	}
 	draw.textures[0].kind = XGPU_VULKAN_IMAGE_2D;
 	draw.textures[0].sampler = xgpu_vulkan_contact_shadows_sampler();
 	draw.textures[1].image = contact_shadows.light;
@@ -4037,7 +4189,7 @@ static void stream_contact_shadows(void *context, const struct xgpu_stream_rt_sh
 	color->written++;
 	xgpu_vulkan_set_target_views(multisampled ? color->multisampled : color->image,
 		multisampled ? depth->multisampled : depth->image, 0, 1);
-	draw.reads_depth = (uint8_t)!multisampled;
+	draw.reads_depth = (uint8_t)reads_depth;
 	xgpu_vulkan_draw(&draw);
 	/* (the stream's targets again, for what follows) */
 	targets_bind();
@@ -4891,6 +5043,7 @@ static void prepass_prime_end(uint32_t replay)
 		xgpu_vulkan_image_copy_depth(prepass.depth, depth->image))
 	{
 		depth->written++;
+		depth->depth_writes++;
 		if (!prepass.primed_logged)
 		{
 			prepass.primed_logged = 1;
@@ -5272,7 +5425,7 @@ static void stream_frame_end(void *context)
 				"%u attachment loads, %u attachment clears, %u texture sets written, %u reused, %u pipelines made "
 				"(%.1f ms), %u uploads ordered, %u early, %llu ring bytes; %u stores discarded (%u at frames' ends), "
 				"%u resolves in passes, %u skipped, %u in light; %u passes continued, %u put aside, %u buffers renamed; "
-				"textures %u made, %u remade, %u images, %u effects' thicknesses baked (%.1f ms); "
+				"textures %u made, %u remade, %u images, %u effects' thicknesses baked (%.1f ms apart, %.1f ms making them); "
 				"GPU %.3f ms a frame, %.3f ms between frames",
 				statistics.frames, statistics.submissions, statistics.passes, statistics.draws, statistics.clears,
 				statistics.clears_as_draws, statistics.attachment_loads, statistics.attachment_clears,
@@ -5283,8 +5436,12 @@ static void stream_frame_end(void *context)
 				statistics.frame_end_discards, statistics.resolves_in_pass, statistics.resolves_skipped,
 				statistics.resolves_in_light, statistics.passes_continued, statistics.passes_aside, statistics.buffers_renamed, textures.made, textures.remade,
 				textures.images, textures.thickness, textures.thickness_seconds * 1000.0,
+				textures.thickness_landing_seconds * 1000.0,
 				statistics.gpu_frames ? statistics.gpu_milliseconds / statistics.gpu_frames : 0.0,
 				statistics.frames_timed ? statistics.frame_seconds * 1000.0 / statistics.frames_timed : 0.0);
+			host_logf(HOST_LOG_INFO, "vulkan: %u frames: %u depth copies for the draws that sample it", 600u,
+				stream.depth_copies);
+			stream.depth_copies = 0;
 		}
 	}
 	/* (each stage's texture looked for at least once a frame, so that the
@@ -5399,6 +5556,18 @@ static uint32_t stream_prepared(void *context)
 
 	(void)context;
 	xgpu_vulkan_preparation_service(NULL);
+	/* the effects' thicknesses its draws asked for (baked meanwhile, beside
+	the pipelines), made before play: none of its first frames draws an
+	effect without one. Not past THICKNESS_SETTLE_SECONDS: those still on
+	their way come back in play, between frames */
+	{
+		double waited = host_load_trace_clock(CLOCK_MONOTONIC);
+		uint32_t made = xgpu_vulkan_textures_thickness_settle(THICKNESS_SETTLE_SECONDS);
+
+		if (made)
+			host_logf(HOST_LOG_INFO, "vulkan: map preparation's effects' thicknesses: %u made, %.0f ms waited for",
+				made, (host_load_trace_clock(CLOCK_MONOTONIC) - waited) * 1000.0);
+	}
 	finished = host_load_trace_clock(CLOCK_MONOTONIC);
 	if (stream.trace_preparing)
 	{
@@ -5482,6 +5651,7 @@ const struct host_render_backend *xgpu_vulkan_stream_backend(void)
 		backend.clear_target = stream_clear_target;
 		backend.read_target = stream_read_target;
 		backend.read_target_halves = stream_read_target_halves;
+		backend.read_target_later = stream_read_target_later;
 		backend.set_textures = stream_set_textures;
 		backend.set_constants = stream_set_constants;
 		backend.vertex_program = stream_vertex_program;

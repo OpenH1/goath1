@@ -7,7 +7,8 @@ effect's bitmap, baked once from its alpha as the texture is made
 (xgpu_vulkan_textures.c), and each eye's transforms between the world and
 its pixels, which the effects' shaders reconstruct the world from
 (xgpu_vulkan_stream.c, host_vulkan_vr.c). "VR" in port/linux/vulkan/README.md
-says what they draw.
+says what they draw. A flat screen's soft effects (display.soft_particles)
+fade over the thickness's radius too. The bakes run on worker threads.
 */
 
 #ifndef __HALO_LINUX_XGPU_VULKAN_EFFECTS_H
@@ -48,6 +49,43 @@ int xgpu_vulkan_thickness_bake(const uint32_t *texels, uint32_t width, uint32_t 
 texel to the nearest one outside (inside: nonzero), the texels past the
 edges outside; 0 when out of memory */
 int xgpu_vulkan_thickness_distances(const uint8_t *inside, uint32_t width, uint32_t height, float *squared);
+
+/* ---------- the thickness baked apart
+
+The bakes are made on worker threads (a millisecond for a 256-texel
+sprite sheet, 20 or more for a 1024-texel one, and its decoding besides),
+so that no frame waits for one: a job is handed over with its own copy of
+what it is baked from, and comes back finished, for the render thread to
+make its image of. The workers start with the first job. */
+struct xgpu_vulkan_thickness_job
+{
+	/* the caller's: the texels' size; decode, on a worker, writes
+	width x height ARGB texels from input (0: none to bake) and must use
+	nothing else the render thread changes; input, freed with the job;
+	owner and generation, the caller's own (the queue never reads them:
+	the caller may change owner while the job is out) */
+	uint32_t width, height;
+	int (*decode)(const struct xgpu_vulkan_thickness_job *job, uint32_t *texels);
+	void *input;
+	void *owner;
+	uint32_t generation;
+	/* the result, once finished: width x height x 4 bytes as
+	xgpu_vulkan_thickness_bake writes them (NULL: not baked), and the
+	worker's seconds on it */
+	uint8_t *thickness;
+	double seconds;
+	struct xgpu_vulkan_thickness_job *next;
+};
+
+/* the job queued (the queue owns it until it is finished); 0 if no worker
+could be started (the job is then the caller's still) */
+int xgpu_vulkan_thickness_submit(struct xgpu_vulkan_thickness_job *job);
+/* a finished job (the oldest), the caller's to free, or NULL */
+struct xgpu_vulkan_thickness_job *xgpu_vulkan_thickness_finished(void);
+/* waits up to seconds (0: not at all) for every job queued to be baked;
+1 if none is left to bake (finished ones may wait to be taken) */
+int xgpu_vulkan_thickness_wait(double seconds);
+void xgpu_vulkan_thickness_free(struct xgpu_vulkan_thickness_job *job);
 
 /* ---------- each eye's transforms
 

@@ -883,6 +883,9 @@ camera's distance (the depth's precision) */
 #define XGPU_RT_SHADOWS_SPREAD 0.06f
 #define XGPU_RT_SHADOWS_BIAS 0.02f
 #define XGPU_RT_SHADOWS_BIAS_FAR 0.002f
+/* how squarely a surface faces a caster's light (the cosine) for its whole
+shadow: less, a share of it; facing away, none */
+#define XGPU_RT_SHADOWS_FACING 0.25f
 struct xgpu_rt_shadow_caster
 {
 	float sphere[4];

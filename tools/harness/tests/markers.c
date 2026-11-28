@@ -7,6 +7,9 @@ this machine muted). */
 #include "harness.h"
 #include <math.h>
 #include "config.inc"
+#ifndef MAX
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+#endif
 
 /* an object drawn between the ticks (render_interpolation.c): its middle as
 the last tick left it, drawn moved by drawn_motion; a biped's head marker is
@@ -240,6 +243,49 @@ int main(int argc, char **argv) {
 
 		CHECK(markers_unit_near(0x10003, &ahead), "a seated pinger's ping beside them refused");
 		CHECK(!markers_unit_near(0x10003, &far), "a ping past the range taken");
+	}
+	else if (!strcmp(name, "pick"))
+	{
+		/* (a health pack, 0.07 across its middle, 10 ahead: aimed at; just
+		off its edge, where 2 degrees reach; on the floor just short of it,
+		the pack lying past the hit; and a crate's worth past the hit, and
+		far off the line, not) */
+		real nearness = 2.0f;
+
+		CHECK(network_markers_pick(10.0f, 0.0f, 0.07f, 10.2f, &nearness) && nearness == 0.0f,
+			"a health pack aimed at missed (%f)", nearness);
+		CHECK(network_markers_pick(10.0f, 0.44f, 0.07f, 10.2f, &nearness) && nearness < 1.0f,
+			"a health pack just off the aim missed");
+		CHECK(network_markers_pick(10.0f, 0.1f, 0.07f, 9.6f, &nearness),
+			"a health pack on the floor just past where the aim lands missed");
+		CHECK(!network_markers_pick(10.0f, 0.1f, 0.07f, 8.0f, &nearness),
+			"an item 2 past a wall the aim hit taken");
+		CHECK(!network_markers_pick(10.0f, 0.6f, 0.07f, 10.2f, &nearness), "an item far off the aim taken");
+		CHECK(!network_markers_pick(-1.0f, 0.0f, 0.07f, 10.2f, &nearness), "an item behind the eye taken");
+		/* (a Warthog: its own size, as before) */
+		CHECK(network_markers_pick(30.0f, 1.5f, 1.2f, 31.0f, &nearness) && nearness < 1.0f,
+			"a Warthog aimed near missed");
+		CHECK(!network_markers_pick(30.0f, 3.0f, 1.2f, 31.0f, &nearness), "a Warthog far off the aim taken");
+	}
+	else if (!strcmp(name, "claim"))
+	{
+		/* (an item another's ping is on: claimed; the claimer's again: taken
+		away; a unit, a point and an item no one pinged: as sent) */
+		CHECK(network_markers_decided_kind(_marker_kind_object, FALSE, TRUE, TRUE) == _marker_kind_claim,
+			"an item another pinged not claimed");
+		CHECK(network_markers_decided_kind(_marker_kind_object, TRUE, TRUE, TRUE) == _marker_kind_clear,
+			"a claim pinged again not taken away");
+		CHECK(network_markers_decided_kind(_marker_kind_object, FALSE, TRUE, FALSE) == _marker_kind_object,
+			"an item no one pinged claimed");
+		CHECK(network_markers_decided_kind(_marker_kind_object, FALSE, FALSE, TRUE) == _marker_kind_object,
+			"a unit another pinged claimed");
+		CHECK(network_markers_decided_kind(_marker_kind_point, FALSE, FALSE, TRUE) == _marker_kind_point,
+			"a point claimed");
+		CHECK(network_markers_decided_kind(_marker_kind_point, TRUE, FALSE, FALSE) == _marker_kind_clear,
+			"a point pinged again not taken away");
+		/* (the kind on the wire: a build before claims took none past 3) */
+		CHECK(_marker_kind_claim == 4 && NUMBER_OF_MARKER_KINDS == 5, "the claim's kind moved (%d of %d)",
+			_marker_kind_claim, NUMBER_OF_MARKER_KINDS);
 	}
 	else
 	{

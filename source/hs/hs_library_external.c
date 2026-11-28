@@ -905,9 +905,11 @@ boolean hs_trigger_volume_test_objects_all(
 	if (!coop_scripts_any_player_will_do(object_list_index))
 		return hs_trigger_volume_test_objects(trigger_volume_index, object_list_index, TRUE);
 	/* port: in network co-op, waiting for every player means waiting for
-	any one of them, and the rest are brought to them (coop_scripts.c) */
+	any one of them, and, where the wait is a gate that could leave the
+	rest behind, they are brought to them (coop_scripts.c). A wait that
+	only directs the AI (a30's falling back) moves no one. */
 	inside = hs_trigger_volume_test_objects(trigger_volume_index, object_list_index, FALSE);
-	if (inside && waiting)
+	if (inside && waiting && hs_runtime_waiting_call_is_a_gate())
 	{
 		coop_scripts_gather_in_volume(trigger_volume_index, object_list_index);
 		/* port: gathering may fail or choose a point outside this volume.

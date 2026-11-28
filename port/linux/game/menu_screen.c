@@ -108,6 +108,16 @@ buttons, their words, and its actions, the row given) */
 extern struct menu_table_source const pc_menu_layout_source;
 int pc_menu_layout_value(char const *name, char *value, unsigned long size);
 int pc_menu_layout_action(char const *name, short row);
+/* (menu_functions.c's goat_settings.inc: GOAT Settings' rows, their words,
+its actions (the row given), and whether it takes Settings' place) */
+extern struct menu_table_source const pc_menu_goat_source;
+int pc_menu_goat_value(char const *name, char *value, unsigned long size);
+int pc_menu_goat_action(struct widget_instance *widget, struct event_record *event, char const *name, short row,
+	int *deleted);
+int pc_menu_goat_takes(void);
+/* (its KEEP or REVERT after a display change: the countdown run each frame
+the question is drawn) */
+void pc_menu_goat_keep_frame(struct widget_instance *screen);
 
 /* ---------- constants */
 
@@ -321,6 +331,8 @@ static boolean screen_call_dlss(struct widget_instance *widget, struct event_rec
 	boolean *deleted);
 static boolean screen_call_game_data(struct widget_instance *widget, struct event_record *event, char const *name,
 	boolean *deleted);
+static boolean screen_call_goat(struct widget_instance *widget, struct event_record *event, char const *name,
+	boolean *deleted);
 /* the row of the table an action is run for (0 up, on the table), NONE for
 none (a key's, a button's) */
 static short screen_action_row = NONE;
@@ -456,6 +468,9 @@ static struct screen_action const screen_actions[] =
 	/* (the co-op host's BIGGER BATTLES stepped) */
 	{ "lobby battle left", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_lobby },
 	{ "lobby battle right", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_lobby },
+	/* (the co-op host's SCORING turned over) */
+	{ "lobby scoring left", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_lobby },
+	{ "lobby scoring right", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_lobby },
 	/* (the lobby's chat: a line begun, the on-screen keyboard's on a
 	controller or a touchscreen) */
 	{ "lobby chat", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_lobby },
@@ -506,6 +521,23 @@ static struct screen_action const screen_actions[] =
 	/* (the question of a layout's bindings, screens/layout_bindings.xml:
 	USE THIS LAYOUT'S, and back) */
 	{ "layout bindings use", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_layout },
+	/* (GOAT Settings', screens/goat_settings.xml (menu_functions.c's
+	goat_settings.inc): a tab chosen, a row stepped or opened, the changes
+	written or let go of) */
+	{ "goat tab display", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_goat },
+	{ "goat tab graphics", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_goat },
+	{ "goat tab audio", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_goat },
+	{ "goat tab controls", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_goat },
+	{ "goat tab gameplay", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_goat },
+	{ "goat tab system", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_goat },
+	{ "goat row", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_goat },
+	{ "goat left", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_goat },
+	{ "goat right", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_goat },
+	{ "goat apply", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_goat },
+	{ "goat cancel", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_goat },
+	/* (its KEEP or REVERT after a display change, screens/goat_keep.xml) */
+	{ "goat keep", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_goat },
+	{ "goat keep revert", NULL, NULL, NULL, NULL, NULL, NULL, screen_call_goat },
 	/* (the NVIDIA DLSS add-on's, screens/dlss_addon.xml (port/linux/src/
 	dlss_addon.c): NVIDIA's license accepted and the add-on downloaded, the
 	add-on removed, the game restarted for it, the license's lines paged) */
@@ -534,6 +566,7 @@ static char const *const screen_action_names[] =
 	"lobby team toggle", "lobby invite", "lobby settings", "lobby host", "lobby add player", "lobby bots left",
 	"lobby bots right", "lobby skill left", "lobby skill right", "lobby teams left", "lobby teams right",
 	"lobby hijack left", "lobby hijack right", "lobby spartan link left", "lobby spartan link right", "lobby battle left", "lobby battle right",
+	"lobby scoring left", "lobby scoring right",
 	"lobby chat", "lobby card", "lobby card friend", "lobby card mute", "lobby card kick", "lobby friends",
 	"lobby friend left", "lobby friend right", "lobby friend invite", "lobby close",
 	"add player done", "add player back",
@@ -542,6 +575,9 @@ static char const *const screen_action_names[] =
 	"layout name", "layout legend", "layout clear", "layout shape left", "layout shape right", "layout color left",
 	"layout color right", "layout bindings use", "dlss accept", "dlss remove", "dlss restart", "dlss page up",
 	"dlss page down", "data add", "data open folder",
+	"goat tab display", "goat tab graphics", "goat tab audio", "goat tab controls", "goat tab gameplay",
+	"goat tab system", "goat row", "goat left", "goat right", "goat apply", "goat cancel",
+	"goat keep", "goat keep revert",
 };
 
 /* a binding's value: the saved game's mission and difficulty (player 1's
@@ -570,6 +606,7 @@ static char const *const screen_binding_names[] =
 	"lobby.map", "lobby.limits", "lobby.kind", "lobby.kind.tone", "lobby.tick", "lobby.opence", "lobby.after",
 	"lobby.bots", "lobby.bots.shown", "lobby.bots.some", "lobby.bots.locked", "lobby.bots.count.locked", "lobby.skill", "lobby.teams",
 	"lobby.hijack", "lobby.hijack.shown", "lobby.spartan_link", "lobby.spartan_link.shown", "lobby.battle", "lobby.battle.shown",
+	"lobby.scoring", "lobby.scoring.shown",
 	"lobby.status", "lobby.start", "lobby.host", "lobby.settings", "lobby.controls", "lobby.waiting",
 	"lobby.team.change", "lobby.invite", "lobby.add", "lobby.chat", "lobby.details", "lobby.card", "lobby.inviting",
 	"lobby.panel.open", "lobby.card.name", "lobby.card.color", "lobby.card.ping", "lobby.card.platform",
@@ -586,6 +623,8 @@ static char const *const screen_binding_names[] =
 	"dlss.detail", "dlss.heading", "dlss.status", "dlss.credit", "dlss.license.empty", "dlss.can_accept",
 	"dlss.can_remove", "dlss.can_restart", "dlss.panel",
 	"data.detail", "data.heading", "data.status", "data.from", "data.folder", "data.opened", "data.add",
+	"goat.tab", "goat.title", "goat.help", "goat.changed", "goat.pending", "goat.empty",
+	"goat.keep_text", "goat.keep_revert",
 };
 
 /* the row sources a table may name (menu_table.h), and their names */
@@ -600,6 +639,7 @@ static struct menu_table_source const *const screen_sources[] =
 	&pc_menu_layout_source,
 	&dlss_addon_license_source,
 	&game_data_page_source,
+	&pc_menu_goat_source,
 };
 
 static char const *const screen_source_names[] =
@@ -613,6 +653,7 @@ static char const *const screen_source_names[] =
 	"layout.controls",
 	"dlss.license",
 	"data.sources",
+	"goat.rows",
 };
 
 /* the chats a <chat> may name (menu_table.h), and their names */
@@ -666,6 +707,9 @@ static int screen_value(void *context, char const *name, char *value, unsigned l
 	/* (Settings' GAME DATA's: port/linux/src/game_data_page.c) */
 	if (!strncmp(name, "data.", 5))
 		return game_data_page_value(name, value, size);
+	/* (GOAT Settings': goat_settings.inc) */
+	if (!strncmp(name, "goat.", 5))
+		return pc_menu_goat_value(name, value, size);
 	/* (Stick Test's: the sticks' readings and drift, stick_test_menu.inc) */
 	if (!strncmp(name, "stick.", 6))
 		return pc_menu_stick_value(name, value, size);
@@ -817,6 +861,14 @@ static struct screen_place const screen_places[] =
 	the maps, their copies: game_data_page.c; the maps the lists have, told
 	each frame) */
 	{ "game_data", "screens\\game_data", screen_game_data_frame, NULL },
+	/* (GOAT Settings, in place of Settings' first tab while
+	display.goat_menus is on: goat_settings.inc) */
+	{ "goat_settings",
+		"main_menu\\settings_select\\player_setup\\player_profile_edit\\video_settings\\video_settings_screen",
+		NULL, pc_menu_goat_takes },
+	/* (its KEEP or REVERT, a pop-up over it after an APPLY that changes the
+	display: its countdown run each frame it is drawn, goat_keep_revert.inc) */
+	{ "goat_keep", "screens\\goat_keep", pc_menu_goat_keep_frame, NULL },
 	/* (the on-screen keyboard, a pop-up: keyboard.c opens it, reads its
 	input each frame it is drawn and takes every event of its own) */
 	{ "keyboard", "screens\\keyboard", keyboard_frame, NULL, NULL, keyboard_event, keyboard_screen_closed },
@@ -1070,6 +1122,26 @@ static void screen_text_set(struct widget_instance *widget, char const *utf8)
 		return;
 	csmemcpy(buffer, text, length * (long)sizeof(wchar_t));
 	widget->parameters.text_box.text = buffer;
+}
+
+/* a text box's words set only if they differ from those it has (made
+again each frame: dialog_frame) */
+static void screen_text_change(struct widget_instance *widget, char const *utf8)
+{
+	unsigned short text[MENU_SCREEN_MAXIMUM_TEXT];
+	long length = halo_menus_utf16(utf8, text, NUMBEROF(text)), index;
+	wchar_t const *now = widget->parameters.text_box.text;
+
+	if (now && length > 0)
+	{
+		/* (the text's terminator included: a shorter one's differs first) */
+		for (index = 0; index < length && (unsigned short)now[index] == text[index]; index++)
+		{
+		}
+		if (index == length)
+			return;
+	}
+	screen_text_set(widget, utf8);
 }
 
 /* a text box's words, from the game's own (a string list's) */
@@ -1837,6 +1909,41 @@ static void box_frame(struct screen_open *open)
 	}
 }
 
+/* each frame: a <dialog>'s words and its choices' labels with bindings
+read again (GOAT Settings' KEEP or REVERT counting down), its size as it
+was made; set only as they change */
+static void dialog_frame(struct screen_open *open)
+{
+	struct menu_screen const *screen = menu_screens_find(open->place->screen);
+	struct screen_values values;
+	char label[MENU_SCREEN_MAXIMUM_TEXT];
+	long index;
+
+	if (!screen)
+		return;
+	screen_values_clear(&values, open);
+	for (index = 0; index < screen->block_count; index++)
+	{
+		struct menu_screen_block const *dialog = &screen->blocks[index];
+
+		if (dialog->kind == MENU_SCREEN_DIALOG && dialog->text && strchr(dialog->text, '{') &&
+			menu_screen_text(dialog->text, screen_value, &values, label, sizeof(label)) && label[0])
+		{
+			screen_text_change(open->dialog_text, label);
+		}
+	}
+	for (index = 0; index < open->item_count; index++)
+	{
+		struct menu_screen_block const *item = open->item_blocks[index];
+
+		if (item && item->label && strchr(item->label, '{') &&
+			menu_screen_text(item->label, screen_value, &values, label, sizeof(label)))
+		{
+			screen_text_change(open->items[index], label);
+		}
+	}
+}
+
 /* a box's middle drawn as much wider as its legend's growth, and its rows
 with the game map's frame of them (BOX_ROW_PICTURE: the menus have it on
 the maps the pause menu is played on, not ui.map, which their files are
@@ -2484,6 +2591,9 @@ void menu_screen_frame(struct widget_instance *widget)
 	/* (a box's: its rows' labels, its legend's room) */
 	if (open->box)
 		box_frame(open);
+	/* (a dialog's: its words and choices' labels) */
+	if (open->dialog_text)
+		dialog_frame(open);
 	/* (the tall layout's: its blocks each frame) */
 	if (tall_of(open))
 	{
@@ -2647,6 +2757,18 @@ static boolean screen_call_color(struct widget_instance *widget, struct event_re
 	}
 	menu_tags_back(widget, event, deleted);
 	return TRUE;
+}
+
+/* GOAT Settings' actions (menu_functions.c's goat_settings.inc), the row
+given */
+static boolean screen_call_goat(struct widget_instance *widget, struct event_record *event, char const *name,
+	boolean *deleted)
+{
+	int goat_deleted = FALSE;
+	boolean result = pc_menu_goat_action(widget, event, name, screen_action_row, &goat_deleted) != 0;
+
+	*deleted = goat_deleted != 0;
+	return result;
 }
 
 /* Controller Layout's actions (menu_functions.c's controller_layout_menu.inc),

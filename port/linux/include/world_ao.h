@@ -138,6 +138,12 @@ it; -1 none, the structure); the first-person weapon drawn (TRUE) and done
 (FALSE: none drawn now), which the occlusion leaves as it is */
 void world_ao_object_begin(long object_index);
 void world_ao_first_person(int drawing);
+/* the window's transparent geometry drawn now (TRUE) and done (FALSE): a
+window draws it after its span ends (render_window), and a map's
+preparation draws its queue as it fills, among the opaque draws
+(rasterizer_transparent_geometry_flush), so it is drawn outside the span
+there too, as play draws it (render_enumerate.c) */
+void world_ao_transparents(int drawing);
 /* the model shader drawn next is a two-sided one's cards (TRUE: its
 _shader_model_two_sided_bit, a plant's leaves; FALSE after its draws):
 their occlusion is taken about their most open direction, the sky's or

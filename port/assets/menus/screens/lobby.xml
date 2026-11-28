@@ -61,6 +61,7 @@ touchscreen; the host's LOBBY TEXT CHAT has it on or off for everyone. -->
 		<choice label="HIJACK" value="{lobby.hijack}" left="lobby hijack left" right="lobby hijack right" if="lobby.hijack.shown"/>
 		<choice label="LINK" value="{lobby.spartan_link}" left="lobby spartan link left" right="lobby spartan link right" if="lobby.spartan_link.shown"/>
 		<choice label="BATTLE" value="{lobby.battle}" left="lobby battle left" right="lobby battle right" if="lobby.battle.shown"/>
+		<choice label="SCORE" value="{lobby.scoring}" left="lobby scoring left" right="lobby scoring right" if="lobby.scoring.shown"/>
 		<text text="{lobby.status}" lines="2"/>
 		<heading text="{lobby.waiting}" if="lobby.waiting"/>
 		<button key="accept" label="{coop.fix}" if="coop.fix" do="lobby fix"/>

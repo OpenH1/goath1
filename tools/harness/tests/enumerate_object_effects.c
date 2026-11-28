@@ -90,7 +90,8 @@ static struct draw draw_make(long model_index, short state, struct render_model_
 	draw.modifier = NONE;
 	if (effect)
 	{
-		CHECK(effect->source_object_index == STAND_IN_OBJECT_INDEX, "the stand-in object");
+		CHECK((effect->source_object_index & ~0xffffL) == STAND_IN_OBJECT_INDEX && effect->source_object_index != 0,
+			"a stand-in object");
 		draw.type = effect->type;
 		draw.modifier = effect->modifier_shader ? (long)(effect->modifier_shader - shaders) : NONE;
 		draw.intensity = (int)(effect->intensity * 2.0f);

@@ -60,6 +60,8 @@ static short fake_substep_count = 1;
 static real fake_fraction = 1.0f;
 static sim_substep_procedure slot_procedure;
 static boolean vehicle_micro = TRUE;
+/* the vehicle moved as one of the macro lane is: the whole tick at once, in its first sub-step */
+static boolean vehicle_whole_tick;
 static short perspective = _director_perspective_first_person;
 
 static long absolute(long index) { return DATUM_INDEX_TO_ABSOLUTE_INDEX(index); }
@@ -332,7 +334,10 @@ static void world_substep(void)
 	real t = ((real)tick - 1.0f + (real)(substeps_run + 1) / (real)fake_substep_count) * seconds_per_tick();
 
 	CHECK(tick < MAXIMUM_TICKS, "too many ticks");
-	world_pose(tick, t);
+	if (vehicle_whole_tick)
+		t = (real)tick * seconds_per_tick();
+	if (!vehicle_whole_tick || substeps_run == 0)
+		world_pose(tick, t);
 	frame_places[tick][substeps_run] = vehicle_place_at(t);
 	frame_rotations[tick][substeps_run] = vehicle_rotation_at(t);
 	render_interpolation_register();
@@ -352,6 +357,7 @@ static void world_new(short substep_count)
 	ticks_ended = 0;
 	substeps_run = 0;
 	vehicle_micro = TRUE;
+	vehicle_whole_tick = FALSE;
 	fake_player_unit = RIDER;
 	render_interpolation_register();
 	object_add(VEHICLE, _object_type_vehicle, NONE, 3);
@@ -721,6 +727,60 @@ static void case_macro(void)
 	}
 }
 
+/* A vehicle of the macro lane (a dropship the AI or its script flies) at 120, which moves the whole tick at once in
+the tick's first sub-step, the frames slower than a sub-step (two or three a frame): the first frame after a tick
+has run the next tick's first sub-step, the vehicle a tick ahead of the one drawn. The view in its seat, in the first
+person or following it, is on the line between where the ticks left the seat's camera point, never a tick ahead */
+static void macro_slow_case(short view)
+{
+	long frame;
+
+	world_new(4);
+	vehicle_micro = FALSE;
+	vehicle_whole_tick = TRUE;
+	perspective = view;
+	for (frame = 0; frame < 80; frame++)
+	{
+		struct observer_result observer;
+		struct observer_result const *camera;
+		real_point3d before, after, eye;
+
+		world_substep();
+		world_substep();
+		if (frame % 3 == 0)
+			world_substep();
+		if (ticks_ended < 1)
+			continue;
+		frame_begin(random_part());
+		observer = observer_now();
+		camera = render_interpolation_blended_camera(0, &observer);
+		if (ticks_ended < 4)
+		{
+			render_interpolation_frame_end();
+			continue;
+		}
+		{
+			real_matrix4x3 b = q_frame(vehicle_rotation_at((real)(ticks_ended - 1) * seconds_per_tick()),
+				vehicle_place_at((real)(ticks_ended - 1) * seconds_per_tick()));
+			real_matrix4x3 a = q_frame(vehicle_rotation_at((real)ticks_ended * seconds_per_tick()),
+				vehicle_place_at((real)ticks_ended * seconds_per_tick()));
+
+			before = placed(&b, ANCHOR_AT);
+			after = placed(&a, ANCHOR_AT);
+		}
+		eye = point_between(&before, &after, fake_fraction);
+		if (view == _director_perspective_third_person)
+		{
+			eye.x += swing.i;
+			eye.y += swing.j;
+			eye.z += swing.k;
+		}
+		CHECK(distance(&camera->position, &eye) < 1e-4f, "frame %ld: the view off the line between the ticks by %f",
+			frame, distance(&camera->position, &eye));
+		render_interpolation_frame_end();
+	}
+}
+
 int main(int argc, char **argv)
 {
 	CHECK(argc == 2, "usage: %s <case>", argv[0]);
@@ -743,6 +803,10 @@ int main(int argc, char **argv)
 		respawn_case(_director_perspective_third_person);
 	else if (!strcmp(argv[1], "macro"))
 		case_macro();
+	else if (!strcmp(argv[1], "macro_slow"))
+		macro_slow_case(_director_perspective_first_person);
+	else if (!strcmp(argv[1], "macro_following_slow"))
+		macro_slow_case(_director_perspective_third_person);
 	else
 		CHECK(0, "no case %s", argv[1]);
 	return 0;

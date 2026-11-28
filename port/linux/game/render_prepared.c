@@ -98,7 +98,7 @@ and the game's code it draws through) or to this file's form must make it 2,
 build, so that an update keeps them; the journal's own form is in the key
 too (halo_gpu_journal_form), and a record whose replay does not make its
 draws is made again all the same. */
-#define PREPARED_VERSION 8
+#define PREPARED_VERSION 9
 /* a record's words are its segments, each a structure's own walk: the
 first the map's (its first structure's, with its models, effects and the
 rest), each after it a later structure's (its first frame's world passes:

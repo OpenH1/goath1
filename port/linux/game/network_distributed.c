@@ -94,6 +94,8 @@ machine (their datum identifiers need not be).
 #include "network_host_controls.h"
 #include "network_host_rules.h"
 #include "network_hijack.h"
+#include "campaign_score.h"
+#include "network_campaign_score.h"
 #include "network_markers.h"
 #include "network_shield_effects.h"
 #include "network_substeps.h"
@@ -10775,6 +10777,7 @@ static boolean distributed_world_side_kind(
 	case _distributed_message_host_team:
 	case _distributed_message_host_teleport:
 	case _distributed_message_vehicle_hijack:
+	case _distributed_message_campaign_score:
 	case _distributed_message_clock_phase:
 	case _distributed_message_marker_up:
 	case _distributed_message_marker_down:
@@ -11278,7 +11281,7 @@ void network_distributed_handle_message(
 	{
 	/* (OpenH1's own, read whole: network_substeps.c, network_standard.c,
 	network_host_controls.c, network_hijack.c, network_clock.c,
-	network_markers.c) */
+	network_markers.c, network_campaign_score.c) */
 	case _distributed_message_player_substeps:
 	case _distributed_message_relayed_substeps:
 	case _distributed_message_player_live_controls:
@@ -11296,6 +11299,9 @@ void network_distributed_handle_message(
 		break;
 	case _distributed_message_vehicle_hijack:
 		network_hijack_handle_message(machine_index, message, size, from_stream);
+		break;
+	case _distributed_message_campaign_score:
+		network_campaign_score_handle_message(machine_index, message, size, from_stream);
 		break;
 	case _distributed_message_clock_phase:
 		network_clock_handle_message(machine_index, message, size, from_stream);
