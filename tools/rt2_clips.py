@@ -69,6 +69,13 @@ PLAYER = "(unit (list_get (players) 0))"
 MOMENTS = {
     # (Damnation, a multiplayer map in a local game: the script's camera held in the lower hall by the spotlights,
     # where the live picture was a tenth of the classic's)
+    # (b40's canyon by a Covenant torch (levels\b40\scenery\b40_ctorch, a baked point light), BSP 1, a held camera)
+    "b40_torch": (
+        "levels\\b40\\b40", 44, 50,
+        [(1, "object_cannot_take_damage (players)"), (2, "ai_erase_all"), (38, "switch_bsp 1"), (39, "ai_erase_all"),
+         (40, cam(156, -398, 22.5, 215, -15))],
+        "",
+        "b40's canyon by a Covenant torch, a held camera"),
     "damnation_hall": (
         "local:damnation:slayer", 16, 22,
         [(15, cam(-2.0, -8.8, 6.5, 0, -10))],
@@ -172,7 +179,7 @@ MOMENTS = {
 
 # the moments not yet frame-identical run to run (on-demand pipeline compiles still land on different frames there:
 # about 15% and 96% of frames differ); played only when named, not by "all"
-FOLLOW_UP = {"damnation_hall"}
+FOLLOW_UP = {"damnation_hall", "b40_torch"}
 
 
 def say(*words):
