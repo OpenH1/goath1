@@ -343,7 +343,7 @@ def emitter_lines(assets: "AssetsFile") -> List[str]:
     file"""
     tool = emitters()
     lines = ['#include "lt_emitters_assets.h"', "", "struct lt_emitters_asset const lt_emitters_assets[] =", "{"]
-    found = tool.levels()
+    found = tool.levels(ROOT / EMITTER_ASSETS)
     for name, scenario, bsp, group_count, triangle_count, pack in found:
         if group_count > tool.GROUPS_MAXIMUM or triangle_count > tool.TRIANGLES_MAXIMUM:
             sys.exit(f"{EMITTER_ASSETS / name}: {group_count} groups, {triangle_count} triangles: more than the "
@@ -437,7 +437,7 @@ def hud_asset_inputs() -> List[Path]:
             *([PICTURE_MAPS] if (ROOT / PICTURE_MAPS).is_file() else []), *picture_poses(),
             *([EFFECT_LIST] if (ROOT / EFFECT_LIST).is_file() else []),
             *([MCC_FIT_LIST] if (ROOT / MCC_FIT_LIST).is_file() else []),
-            EMITTER_TOOL, *(EMITTER_ASSETS / path.name for path in emitters().files()),
+            EMITTER_TOOL, *(EMITTER_ASSETS / path.name for path in emitters().files(ROOT / EMITTER_ASSETS)),
             *(path for path in [VECTOR_BAKE_TOOL, *VECTOR_BAKE_SOURCES, *VECTOR_BAKE_HEADERS] if (ROOT / path).is_file())]
 
 

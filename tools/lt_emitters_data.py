@@ -51,9 +51,9 @@ def linear_colour(entry, radiance):
     return [c * k for c in linear]
 
 
-def files() -> list[Path]:
+def files(folder: Path = FOLDER) -> list[Path]:
     """the emitter files, in the order they are packed"""
-    return sorted(FOLDER.glob("*_bsp*.json"))
+    return sorted(folder.glob("*_bsp*.json"))
 
 
 def level(path: Path):
@@ -77,10 +77,10 @@ def level(path: Path):
     return doc["scenario"], int(doc.get("bsp_index", 0)), len(groups), len(triangles), bytes(pack)
 
 
-def levels():
+def levels(folder: Path = FOLDER):
     """every file's level, each as (file name, scenario, BSP index, group count, triangle count, pack)"""
     found = []
-    for path in files():
+    for path in files(folder):
         built = level(path)
         if built:
             found.append((path.name, *built))
