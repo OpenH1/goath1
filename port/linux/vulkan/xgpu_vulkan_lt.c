@@ -1817,6 +1817,12 @@ static void lt_pass_draw(struct xgpu_vulkan_image *into, const int32_t rectangle
 	draw.ambient_occlusion = 1;
 	draw.dynamic_lights = 1;
 	draw.kind[0] = LT_KIND;
+	/* (HALO_VULKAN_DRAW_TIMES' sub-pass: R reservoirs (kind[2] 1 the level's
+	light sources' half), F final, G the re-shade, V emitter visibility, M
+	the main draw) */
+	draw.kind[1] = (params->control[3] & LT_RESERVOIR) ? 'R' : (params->control[3] & LT_FINAL) ? 'F' :
+		(params->control[3] & LT_GRADIENT) ? 'G' : (params->control[3] & LT_EMITTER_VISIBILITY) ? 'V' : 'M';
+	draw.kind[2] = (uint8_t)(rectangle[0] >= (int32_t)xgpu_vulkan_image_description(inputs)->width);
 	xgpu_vulkan_set_target_views(into, NULL, 0, 1);
 	xgpu_vulkan_draw(&draw);
 }
