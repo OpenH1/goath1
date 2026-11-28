@@ -32,6 +32,24 @@ def number(value: float) -> str:
     return text + ("f" if any(c in text for c in ".e") else ".0f")
 
 
+def luminance(c):
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+
+
+def linear_colour(entry, radiance):
+    """the group's radiance with the tag's colour taken to linear light (^2.2), its luminance kept: the tag's colour is
+    a display colour (the lightmap shows its light ^2.2), so a blue strip's light is as blue on screen as the bake's;
+    the solve's brightness (its per-group scale, fitted on luminance) is kept"""
+    colour = entry.get("tag_color")
+    if not colour or len(colour) != 3 or max(colour) <= 0.0 or luminance(radiance) <= 0.0:
+        return radiance
+    linear = [max(c, 0.0) ** 2.2 for c in colour]
+    if luminance(linear) <= 0.0:
+        return radiance
+    k = luminance(radiance) / luminance(linear)
+    return [c * k for c in linear]
+
+
 def generate() -> str:
     levels, groups, triangles = [], [], []
     for path in sorted(FOLDER.glob("*_bsp*.json")):
@@ -41,7 +59,7 @@ def generate() -> str:
         entries = list(doc.get("lamps") or []) + list(doc.get("added_emitters") or [])
         first_group = len(groups)
         for entry in entries:
-            radiance = entry.get("radiance") or [0.0, 0.0, 0.0]
+            radiance = linear_colour(entry, entry.get("radiance") or [0.0, 0.0, 0.0])
             corners = [t for t in entry.get("triangles") or [] if len(t) == 9]
             if not corners or max(radiance) <= 0.0:
                 continue

@@ -7,363 +7,363 @@ static struct lt_emitters_level const lt_emitters_levels[] = {
 };
 
 static struct lt_emitters_group const lt_emitters_groups[] = {
-	{ { 20.9744f, 23.0135f, 21.8483f }, 0, 14 }, /* levels\a10\shaders\flourescent */
-	{ { 17.0205f, 18.6753f, 17.7297f }, 14, 14 }, /* levels\a10\shaders\flourescent */
-	{ { 32.4523f, 35.6074f, 33.8045f }, 28, 4 }, /* levels\a10\shaders\flourescent */
-	{ { 10.9422f, 12.0061f, 11.3982f }, 32, 9 }, /* levels\a10\shaders\flourescent */
-	{ { 1.60114f, 1.75681f, 1.66786f }, 41, 1 }, /* levels\a10\shaders\flourescent */
-	{ { 0.036251f, 0.050257f, 0.029248f }, 42, 8 }, /* levels\a10\shaders\tech rack mount */
-	{ { 0.030206f, 0.041876f, 0.024371f }, 50, 8 }, /* levels\a10\shaders\tech rack mount */
-	{ { 0.022102f, 0.030641f, 0.017832f }, 58, 82 }, /* levels\a10\shaders\tech rack mount */
-	{ { 0.038004f, 0.052688f, 0.030663f }, 140, 80 }, /* levels\a10\shaders\tech rack mount */
-	{ { 0.092712f, 0.128532f, 0.074801f }, 220, 2 }, /* levels\a10\shaders\tech rack mount */
-	{ { 0.008478f, 0.011753f, 0.00684f }, 222, 2 }, /* levels\a10\shaders\tech rack mount */
+	{ { 19.248f, 23.6066f, 21.0566f }, 0, 14 }, /* levels\a10\shaders\flourescent */
+	{ { 15.6196f, 19.1566f, 17.0873f }, 14, 14 }, /* levels\a10\shaders\flourescent */
+	{ { 29.7813f, 36.5251f, 32.5796f }, 28, 4 }, /* levels\a10\shaders\flourescent */
+	{ { 10.0416f, 12.3155f, 10.9852f }, 32, 9 }, /* levels\a10\shaders\flourescent */
+	{ { 1.46936f, 1.80209f, 1.60742f }, 41, 1 }, /* levels\a10\shaders\flourescent */
+	{ { 0.0265282f, 0.0544298f, 0.0165429f }, 42, 8 }, /* levels\a10\shaders\tech rack mount */
+	{ { 0.0221043f, 0.045353f, 0.0137842f }, 50, 8 }, /* levels\a10\shaders\tech rack mount */
+	{ { 0.0161739f, 0.0331851f, 0.010086f }, 58, 82 }, /* levels\a10\shaders\tech rack mount */
+	{ { 0.0278113f, 0.0570625f, 0.0173431f }, 140, 80 }, /* levels\a10\shaders\tech rack mount */
+	{ { 0.0678457f, 0.139204f, 0.0423085f }, 220, 2 }, /* levels\a10\shaders\tech rack mount */
+	{ { 0.00620388f, 0.012729f, 0.00386873f }, 222, 2 }, /* levels\a10\shaders\tech rack mount */
 	{ { 2.99755f, 0.0f, 0.0f }, 224, 2 }, /* levels\a10\shaders\red light dim */
-	{ { 11.9663f, 13.1297f, 12.4649f }, 226, 8 }, /* levels\a10\shaders\flourescent */
+	{ { 10.9814f, 13.468f, 12.0132f }, 226, 8 }, /* levels\a10\shaders\flourescent */
 	{ { 0.877152f, 0.0f, 0.0f }, 234, 2 }, /* levels\a10\shaders\red light dim */
 	{ { 1.5036f, 0.0f, 0.0f }, 236, 2 }, /* levels\a10\shaders\red light dim */
 	{ { 2.4592f, 0.0f, 0.0f }, 238, 2 }, /* levels\a10\shaders\red light dim */
 	{ { 0.249691f, 0.0f, 0.0f }, 240, 2 }, /* levels\a10\shaders\red light dim */
-	{ { 283.56f, 306.515f, 344.323f }, 242, 8 }, /* levels\a10\shaders\halogen on */
-	{ { 327.311f, 353.808f, 397.45f }, 250, 8 }, /* levels\a10\shaders\halogen on */
-	{ { 60.0938f, 64.9585f, 72.971f }, 258, 88 }, /* levels\a10\shaders\halogen on */
-	{ { 71.0162f, 76.7652f, 86.234f }, 346, 88 }, /* levels\a10\shaders\halogen on */
-	{ { 16.4796f, 17.8137f, 20.0109f }, 434, 18 }, /* levels\a10\shaders\halogen on */
-	{ { 78.6763f, 85.0453f, 95.5355f }, 452, 18 }, /* levels\a10\shaders\halogen on */
-	{ { 148.952f, 163.434f, 155.159f }, 470, 6 }, /* levels\a10\shaders\flourescent */
-	{ { 0.090899f, 0.089591f, 0.075858f }, 476, 8 }, /* levels\a10\shaders\flourescent flicker */
-	{ { 0.024831f, 0.034466f, 0.038914f }, 484, 2 }, /* levels\a10\shaders\monitors */
-	{ { 51.6437f, 56.6646f, 53.7955f }, 486, 112 }, /* levels\a10\shaders\flourescent */
-	{ { 159.932f, 175.481f, 166.596f }, 598, 4 }, /* levels\a10\shaders\flourescent */
-	{ { 51.0516f, 56.0149f, 53.1787f }, 602, 46 }, /* levels\a10\shaders\flourescent */
-	{ { 5.94381f, 6.52168f, 6.19146f }, 648, 2 }, /* levels\a10\shaders\flourescent */
-	{ { 34.3352f, 37.6734f, 35.7659f }, 650, 47 }, /* levels\a10\shaders\flourescent */
-	{ { 34.9389f, 38.3357f, 36.3947f }, 697, 29 }, /* levels\a10\shaders\flourescent */
-	{ { 0.235389f, 0.242451f, 0.506086f }, 726, 6 }, /* levels\c20\shaders\plasma panel */
-	{ { 0.417284f, 0.429803f, 0.89716f }, 732, 12 }, /* levels\c20\shaders\plasma panel */
-	{ { 0.624917f, 0.643665f, 1.34357f }, 744, 4 }, /* levels\c20\shaders\plasma panel */
-	{ { 14.3107f, 14.6777f, 32.1075f }, 748, 24 }, /* levels\c20\shaders\c20 light dim blue c */
-	{ { 8.72369f, 8.9474f, 19.5724f }, 772, 8 }, /* levels\c20\shaders\c20 light dim blue c */
-	{ { 2.7489f, 2.81939f, 6.16741f }, 780, 24 }, /* levels\c20\shaders\c20 light dim blue c */
-	{ { 5.79914f, 5.94785f, 13.0109f }, 804, 8 }, /* levels\c20\shaders\c20 light dim blue c */
-	{ { 0.587909f, 0.602985f, 1.31903f }, 812, 4 }, /* levels\c20\shaders\c20 light dim blue c */
-	{ { 7.54483f, 7.73831f, 16.9275f }, 816, 8 }, /* levels\c20\shaders\c20 light dim blue c */
-	{ { 17.9847f, 18.4459f, 40.3503f }, 824, 4 }, /* levels\c20\shaders\c20 light dim blue c */
-	{ { 16.9699f, 17.4051f, 38.0736f }, 828, 4 }, /* levels\c20\shaders\c20 light dim blue c */
-	{ { 14.1855f, 14.5493f, 31.8265f }, 832, 4 }, /* levels\c20\shaders\c20 light dim blue c */
-	{ { 38.5045f, 39.4919f, 86.3885f }, 836, 8 }, /* levels\c20\shaders\c20 light dim blue c */
-	{ { 0.421424f, 0.434067f, 0.90606f }, 844, 4 }, /* levels\c20\shaders\plasma panel */
-	{ { 2.27121f, 2.32945f, 5.09567f }, 848, 4 }, /* levels\c20\shaders\c20 light dim blue c */
-	{ { 4.17195f, 4.27893f, 9.36016f }, 852, 4 }, /* levels\c20\shaders\c20 light dim blue c */
-	{ { 0.587909f, 0.602985f, 1.31903f }, 856, 4 }, /* levels\c20\shaders\c20 light dim blue c */
-	{ { 9.41008f, 9.65139f, 21.1124f }, 860, 4 }, /* levels\c20\shaders\c20 light dim blue c */
-	{ { 0.820813f, 0.841862f, 1.84157f }, 864, 4 }, /* levels\c20\shaders\c20 light dim blue c */
-	{ { 0.587909f, 0.602985f, 1.31903f }, 868, 4 }, /* levels\c20\shaders\c20 light dim blue c */
-	{ { 24.8522f, 25.4895f, 55.7583f }, 872, 4 }, /* levels\c20\shaders\c20 light dim blue c */
-	{ { 0.650348f, 0.667025f, 1.45912f }, 876, 4 }, /* levels\c20\shaders\c20 light dim blue c */
-	{ { 22.5096f, 23.0868f, 50.5024f }, 880, 4 }, /* levels\c20\shaders\c20 light dim blue c */
-	{ { 3.95409f, 4.05548f, 8.87136f }, 884, 4 }, /* levels\c20\shaders\c20 light dim blue c */
-	{ { 0.680926f, 0.701354f, 1.46399f }, 888, 8 }, /* levels\c20\shaders\plasma panel */
-	{ { 0.587909f, 0.602985f, 1.31903f }, 896, 4 }, /* levels\c20\shaders\c20 light dim blue c */
-	{ { 4.30169f, 4.412f, 9.65124f }, 900, 4 }, /* levels\c20\shaders\c20 light dim blue c */
-	{ { 1.63329f, 1.67518f, 3.66444f }, 904, 2 }, /* levels\c20\shaders\c20 light dim blue b */
-	{ { 8.09295f, 8.30048f, 18.1573f }, 906, 2 }, /* levels\c20\shaders\c20 light dim blue b */
-	{ { 18.4353f, 18.9081f, 41.3614f }, 908, 4 }, /* levels\c20\shaders\c20 light dim blue b */
-	{ { 8.37549f, 8.59027f, 18.7912f }, 912, 4 }, /* levels\c20\shaders\c20 light dim blue b */
-	{ { 23.1916f, 23.7864f, 52.0326f }, 916, 6 }, /* levels\c20\shaders\c20 light dim blue b */
-	{ { 8.69343f, 8.91637f, 19.5045f }, 922, 6 }, /* levels\c20\shaders\c20 light dim blue b */
-	{ { 32.1695f, 32.9945f, 72.1753f }, 928, 4 }, /* levels\c20\shaders\c20 light dim blue b */
-	{ { 10.1731f, 10.434f, 22.8243f }, 932, 4 }, /* levels\c20\shaders\c20 light dim blue b */
-	{ { 0.391894f, 0.403652f, 0.842572f }, 936, 6 }, /* levels\c20\shaders\plasma panel */
-	{ { 15.9904f, 16.4004f, 35.8759f }, 942, 4 }, /* levels\c20\shaders\c20 light dim blue b */
-	{ { 7.76522f, 7.96434f, 17.422f }, 946, 4 }, /* levels\c20\shaders\c20 light dim blue b */
-	{ { 9.11626f, 9.35004f, 20.4532f }, 950, 4 }, /* levels\c20\shaders\c20 light dim blue b */
-	{ { 9.16211f, 9.39706f, 20.556f }, 954, 4 }, /* levels\c20\shaders\c20 light dim blue b */
-	{ { 9.97142f, 10.2271f, 22.3718f }, 958, 8 }, /* levels\c20\shaders\c20 light dim blue b */
-	{ { 5.49084f, 5.63165f, 12.3192f }, 966, 8 }, /* levels\c20\shaders\c20 light dim blue b */
-	{ { 5.07598f, 5.20615f, 11.3884f }, 974, 4 }, /* levels\c20\shaders\c20 light dim blue b */
-	{ { 13.8117f, 14.1659f, 30.9879f }, 978, 4 }, /* levels\c20\shaders\c20 light dim blue b */
-	{ { 9.80729f, 10.0588f, 22.0036f }, 982, 4 }, /* levels\c20\shaders\c20 light dim blue b */
-	{ { 14.815f, 15.1949f, 33.2388f }, 986, 4 }, /* levels\c20\shaders\c20 light dim blue b */
-	{ { 0.272636f, 0.280815f, 0.586167f }, 990, 12 }, /* levels\c20\shaders\plasma panel */
-	{ { 8.80029f, 9.02596f, 19.7443f }, 1002, 8 }, /* levels\c20\shaders\c20 light dim blue b */
-	{ { 7.73993f, 7.93841f, 17.3653f }, 1010, 8 }, /* levels\c20\shaders\c20 light dim blue b */
-	{ { 0.744435f, 0.89644f, 0.89644f }, 1018, 8 }, /* levels\b30\shaders\light bright white */
-	{ { 10.2069f, 12.291f, 12.291f }, 1026, 4 }, /* levels\b30\shaders\light bright white */
-	{ { 15.5215f, 18.6908f, 18.6908f }, 1030, 4 }, /* levels\b30\shaders\light bright white */
-	{ { 12.7508f, 15.3543f, 15.3543f }, 1034, 4 }, /* levels\b30\shaders\light bright white */
-	{ { 7.08708f, 8.53418f, 8.53418f }, 1038, 4 }, /* levels\b30\shaders\light bright white */
-	{ { 0.57585f, 0.693432f, 0.693432f }, 1042, 4 }, /* levels\b30\shaders\light bright white */
-	{ { 3.50616f, 4.22208f, 4.22208f }, 1046, 8 }, /* levels\b30\shaders\light bright white */
-	{ { 15.1026f, 18.1864f, 18.1864f }, 1054, 4 }, /* levels\b30\shaders\light bright white */
-	{ { 0.753748f, 0.776361f, 1.62056f }, 1058, 6 }, /* levels\c20\shaders\plasma panel */
-	{ { 2.76299f, 3.32716f, 3.32716f }, 1064, 4 }, /* levels\b30\shaders\light bright white */
-	{ { 4.25818f, 5.12765f, 5.12765f }, 1068, 4 }, /* levels\b30\shaders\light bright white */
-	{ { 1.13835f, 1.37079f, 1.37079f }, 1072, 8 }, /* levels\b30\shaders\light bright white */
-	{ { 32.345f, 38.9495f, 38.9495f }, 1080, 8 }, /* levels\b30\shaders\light bright white */
-	{ { 9.53954f, 11.4874f, 11.4874f }, 1088, 8 }, /* levels\b30\shaders\light bright white */
-	{ { 4.95764f, 4.00336f, 1.83875f }, 1096, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
-	{ { 0.908778f, 0.733849f, 0.337059f }, 1100, 8 }, /* levels\c20\shaders\c20light_inv_5warmglow */
-	{ { 0.601111f, 0.485404f, 0.222947f }, 1108, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
-	{ { 0.311514f, 0.251551f, 0.115538f }, 1112, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
-	{ { 0.735158f, 0.593649f, 0.272665f }, 1116, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
-	{ { 0.075074f, 0.076357f, 0.127047f }, 1120, 8 }, /* levels\c20\shaders\plasma panel slow */
-	{ { 1.01292f, 0.817947f, 0.375685f }, 1128, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
-	{ { 0.892133f, 0.720409f, 0.330885f }, 1132, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
-	{ { 3.04757f, 2.46095f, 1.13032f }, 1136, 8 }, /* levels\c20\shaders\c20light_inv_5warmglow */
-	{ { 1.5027f, 1.21345f, 0.557339f }, 1144, 12 }, /* levels\c20\shaders\c20light_inv_5warmglow */
-	{ { 2.66591f, 2.15276f, 0.988767f }, 1156, 8 }, /* levels\c20\shaders\c20light_inv_5warmglow */
-	{ { 0.973834f, 0.786383f, 0.361187f }, 1164, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
-	{ { 1.48715f, 1.20089f, 0.551572f }, 1168, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
-	{ { 1.92181f, 1.55189f, 0.712786f }, 1172, 8 }, /* levels\c20\shaders\c20light_inv_5warmglow */
-	{ { 1.01349f, 0.818404f, 0.375895f }, 1180, 8 }, /* levels\c20\shaders\c20light_inv_5warmglow */
-	{ { 1.70213f, 1.37449f, 0.631306f }, 1188, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
-	{ { 0.135559f, 0.137876f, 0.229407f }, 1192, 4 }, /* levels\c20\shaders\plasma panel slow */
-	{ { 3.51361f, 2.83728f, 1.30317f }, 1196, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
-	{ { 2.72974f, 2.2043f, 1.01244f }, 1200, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
-	{ { 11.4908f, 9.27892f, 4.26183f }, 1204, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
-	{ { 1.51143f, 1.2205f, 0.560578f }, 1208, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
-	{ { 3.78191f, 3.05394f, 1.40268f }, 1212, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
-	{ { 1.62272f, 1.31037f, 0.601856f }, 1216, 8 }, /* levels\c20\shaders\c20light_inv_5warmglow */
-	{ { 0.30813f, 0.248819f, 0.114283f }, 1224, 8 }, /* levels\c20\shaders\c20light_inv_5warmglow */
-	{ { 0.364681f, 0.294484f, 0.135257f }, 1232, 6 }, /* levels\c20\shaders\c20light_inv_5warmglow */
-	{ { 13.6451f, 11.0186f, 5.06088f }, 1238, 2 }, /* levels\c20\shaders\c20light_inv_5warmglow */
-	{ { 10.913f, 8.81241f, 4.04756f }, 1240, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
-	{ { 0.250992f, 0.245339f, 0.178634f }, 1244, 8 }, /* levels\c20\shaders\c20 light dim white b */
-	{ { 32.1089f, 25.9283f, 11.9089f }, 1252, 8 }, /* levels\c20\shaders\c20light_inv_5warmglow */
-	{ { 9.98649f, 8.06421f, 3.70391f }, 1260, 2 }, /* levels\c20\shaders\c20light_inv_5warmglow */
-	{ { 9.54028f, 7.70389f, 3.53842f }, 1262, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
-	{ { 32.1089f, 25.9283f, 11.9089f }, 1266, 8 }, /* levels\c20\shaders\c20light_inv_5warmglow */
-	{ { 22.8936f, 18.4868f, 8.49104f }, 1274, 8 }, /* levels\c20\shaders\c20light_inv_5warmglow */
-	{ { 4.21126f, 3.40064f, 1.56192f }, 1282, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
-	{ { 0.27457f, 0.221718f, 0.101836f }, 1286, 6 }, /* levels\c20\shaders\c20light_inv_5warmglow */
-	{ { 0.721693f, 0.705102f, 0.51431f }, 1292, 8 }, /* levels\c20\shaders\c20light_8warmwhite */
-	{ { 1.18516f, 1.15791f, 0.844594f }, 1300, 8 }, /* levels\c20\shaders\c20light_8warmwhite */
-	{ { 1.03062f, 1.00693f, 0.734468f }, 1308, 8 }, /* levels\c20\shaders\c20light_8warmwhite */
-	{ { 3.09653f, 3.02679f, 2.20384f }, 1316, 12 }, /* levels\c20\shaders\c20 light dim white b */
-	{ { 7.91255f, 7.4221f, 6.47391f }, 1328, 8 }, /* levels\c20\shaders\c20light_inv_5whiteglow */
-	{ { 12.5502f, 11.7723f, 10.2684f }, 1336, 8 }, /* levels\c20\shaders\c20light_inv_5whiteglow */
-	{ { 1.13033f, 1.06027f, 0.924814f }, 1344, 8 }, /* levels\c20\shaders\c20light_inv_5whiteglow */
-	{ { 1.17448f, 1.10168f, 0.960936f }, 1352, 32 }, /* levels\c20\shaders\c20light_inv_5whiteglow */
-	{ { 22.0327f, 21.683f, 16.6119f }, 1384, 8 }, /* levels\c20\shaders\c20 light bright white */
-	{ { 5.47862f, 5.39166f, 4.13071f }, 1392, 4 }, /* levels\c20\shaders\c20 light bright white */
-	{ { 4.33615f, 4.26732f, 3.26932f }, 1396, 4 }, /* levels\c20\shaders\c20 light bright white */
-	{ { 12.2264f, 12.0323f, 9.21832f }, 1400, 4 }, /* levels\c20\shaders\c20 light bright white */
-	{ { 12.7488f, 12.5464f, 9.61216f }, 1404, 8 }, /* levels\c20\shaders\c20 light bright white */
-	{ { 1.93303f, 1.90235f, 1.45744f }, 1412, 4 }, /* levels\c20\shaders\c20 light bright white */
-	{ { 0.676225f, 0.696512f, 1.45388f }, 1416, 6 }, /* levels\c20\shaders\plasma panel */
-	{ { 15.8059f, 15.4499f, 11.2493f }, 1422, 50 }, /* levels\c20\shaders\c20 light dim white b */
-	{ { 10.2363f, 10.0739f, 7.71788f }, 1472, 4 }, /* levels\c20\shaders\c20 light bright white */
-	{ { 15.2351f, 14.9933f, 11.4868f }, 1476, 4 }, /* levels\c20\shaders\c20 light bright white */
-	{ { 8.10069f, 7.97211f, 6.10767f }, 1480, 8 }, /* levels\c20\shaders\c20 light bright white */
-	{ { 1.28996f, 1.26948f, 0.972586f }, 1488, 4 }, /* levels\c20\shaders\c20 light bright white */
-	{ { 32.9347f, 32.412f, 24.8317f }, 1492, 4 }, /* levels\c20\shaders\c20 light bright white */
-	{ { 1.64977f, 1.62358f, 1.24387f }, 1496, 2 }, /* levels\c20\shaders\c20 light bright white */
-	{ { 2.92625f, 2.87981f, 2.2063f }, 1498, 2 }, /* levels\c20\shaders\c20 light bright white */
-	{ { 2.04856f, 2.01604f, 1.54455f }, 1500, 4 }, /* levels\c20\shaders\c20 light bright white */
-	{ { 33.0108f, 32.4868f, 24.8891f }, 1504, 4 }, /* levels\c20\shaders\c20 light bright white */
-	{ { 2.29121f, 2.25484f, 1.7275f }, 1508, 2 }, /* levels\c20\shaders\c20 light bright white */
-	{ { 12.1316f, 11.8584f, 8.63423f }, 1510, 8 }, /* levels\c20\shaders\c20 light dim white b */
-	{ { 3.83325f, 3.7724f, 2.89015f }, 1518, 2 }, /* levels\c20\shaders\c20 light bright white */
-	{ { 1.83054f, 2.021f, 0.740681f }, 1520, 8 }, /* levels\b40\shaders\b40_light_inv_5green */
-	{ { 1.77951f, 1.96466f, 0.720034f }, 1528, 2 }, /* levels\b40\shaders\b40_light_inv_5green */
-	{ { 15.6994f, 17.3328f, 6.35235f }, 1530, 32 }, /* levels\b40\shaders\b40_light_25green */
-	{ { 6.62988f, 6.7999f, 14.8748f }, 1562, 4 }, /* levels\c20\shaders\c20 light dim blue */
-	{ { 5.51906f, 5.66059f, 12.3825f }, 1566, 8 }, /* levels\c20\shaders\c20 light dim blue */
-	{ { 3.92657f, 4.02726f, 8.80963f }, 1574, 8 }, /* levels\c20\shaders\c20 light dim blue */
-	{ { 7.06398f, 7.24513f, 15.8487f }, 1582, 8 }, /* levels\c20\shaders\c20 light dim blue */
-	{ { 8.87763f, 9.10529f, 19.9178f }, 1590, 4 }, /* levels\c20\shaders\c20 light dim blue */
-	{ { 5.85172f, 6.00178f, 13.1289f }, 1594, 8 }, /* levels\c20\shaders\c20 light dim blue */
-	{ { 1.71949f, 1.68076f, 1.22378f }, 1602, 8 }, /* levels\c20\shaders\c20 light dim white b */
-	{ { 4.68623f, 4.8064f, 10.514f }, 1610, 8 }, /* levels\c20\shaders\c20 light dim blue */
-	{ { 6.10773f, 6.26435f, 13.7033f }, 1618, 8 }, /* levels\c20\shaders\c20 light dim blue */
-	{ { 6.44144f, 6.60662f, 14.452f }, 1626, 8 }, /* levels\c20\shaders\c20 light dim blue */
-	{ { 10.2685f, 10.5318f, 23.0384f }, 1634, 8 }, /* levels\c20\shaders\c20 light dim blue */
-	{ { 10.2159f, 10.4779f, 22.9203f }, 1642, 8 }, /* levels\c20\shaders\c20 light dim blue */
-	{ { 17.2221f, 17.6637f, 38.6393f }, 1650, 8 }, /* levels\c20\shaders\c20 light dim blue */
-	{ { 7.82382f, 8.02445f, 17.5535f }, 1658, 8 }, /* levels\c20\shaders\c20 light dim blue */
-	{ { 7.12286f, 7.30552f, 15.9808f }, 1666, 8 }, /* levels\c20\shaders\c20 light dim blue */
-	{ { 6.29764f, 6.45914f, 14.1294f }, 1674, 8 }, /* levels\c20\shaders\c20 light dim blue */
-	{ { 11.1276f, 11.4129f, 24.9658f }, 1682, 8 }, /* levels\c20\shaders\c20 light dim blue */
-	{ { 7.99995f, 7.81977f, 5.69366f }, 1690, 4 }, /* levels\c20\shaders\c20 light dim white b */
-	{ { 2.24535f, 2.30293f, 5.03765f }, 1694, 8 }, /* levels\c20\shaders\c20 light dim blue */
-	{ { 3.40159f, 3.48882f, 7.6318f }, 1702, 8 }, /* levels\c20\shaders\c20 light dim blue */
-	{ { 7.87087f, 8.07271f, 17.659f }, 1710, 8 }, /* levels\c20\shaders\c20 light dim blue */
-	{ { 14.6128f, 14.9875f, 32.7852f }, 1718, 8 }, /* levels\c20\shaders\c20 light dim blue */
-	{ { 1.75122f, 1.79613f, 3.92903f }, 1726, 8 }, /* levels\c20\shaders\c20 light dim blue */
-	{ { 12.9571f, 13.2893f, 29.0704f }, 1734, 8 }, /* levels\c20\shaders\c20 light dim blue */
-	{ { 3.46648f, 3.55537f, 7.77737f }, 1742, 8 }, /* levels\c20\shaders\c20 light dim blue */
-	{ { 11.9524f, 12.2589f, 26.8162f }, 1750, 8 }, /* levels\c20\shaders\c20 light dim blue */
-	{ { 9.23541f, 9.47224f, 20.7205f }, 1758, 4 }, /* levels\c20\shaders\c20 light dim blue */
-	{ { 5.26466f, 5.39967f, 11.8118f }, 1762, 8 }, /* levels\c20\shaders\c20 light dim blue */
-	{ { 4.78903f, 4.68116f, 3.40841f }, 1770, 4 }, /* levels\c20\shaders\c20 light dim white b */
-	{ { 9.91375f, 10.168f, 22.2424f }, 1774, 8 }, /* levels\c20\shaders\c20 light dim blue */
-	{ { 10.2719f, 10.5353f, 23.0459f }, 1782, 8 }, /* levels\c20\shaders\c20 light dim blue */
-	{ { 5.03019f, 5.15919f, 11.2857f }, 1790, 4 }, /* levels\c20\shaders\c20 light dim blue */
-	{ { 5.74512f, 5.89244f, 12.8897f }, 1794, 8 }, /* levels\c20\shaders\c20 light dim blue */
-	{ { 7.63465f, 7.83043f, 17.129f }, 1802, 8 }, /* levels\c20\shaders\c20 light dim blue */
-	{ { 6.06266f, 6.21813f, 13.6021f }, 1810, 8 }, /* levels\c20\shaders\c20 light dim blue */
-	{ { 0.841047f, 0.632953f, 1.01879f }, 1818, 4 }, /* levels\c20\shaders\c20 light dim purple */
-	{ { 3.66376f, 2.75727f, 4.43807f }, 1822, 4 }, /* levels\c20\shaders\c20 light dim purple */
-	{ { 3.72429f, 2.80282f, 4.51139f }, 1826, 4 }, /* levels\c20\shaders\c20 light dim purple */
-	{ { 1.42959f, 1.07588f, 1.73172f }, 1830, 4 }, /* levels\c20\shaders\c20 light dim purple */
-	{ { 2.80303f, 2.7399f, 1.99495f }, 1834, 4 }, /* levels\c20\shaders\c20 light dim white b */
-	{ { 0.132631f, 0.115237f, 0.201121f }, 1838, 20 }, /* levels\c20\shaders\c20light_inv_2purple */
-	{ { 0.24349f, 0.211557f, 0.369227f }, 1858, 20 }, /* levels\c20\shaders\c20light_inv_2purple */
-	{ { 0.544131f, 0.472769f, 0.825117f }, 1878, 2 }, /* levels\c20\shaders\c20light_inv_2purple */
-	{ { 0.249856f, 0.217088f, 0.37888f }, 1880, 2 }, /* levels\c20\shaders\c20light_inv_2purple */
-	{ { 0.191057f, 0.247395f, 0.524184f }, 1882, 72 }, /* levels\c20\shaders\c20light_inv_5blueglow */
-	{ { 0.720769f, 0.933304f, 1.9775f }, 1954, 4 }, /* levels\c20\shaders\c20light_inv_5blueglow */
-	{ { 0.358932f, 0.464771f, 0.984763f }, 1958, 84 }, /* levels\c20\shaders\c20light_inv_5blueglow */
-	{ { 0.062606f, 0.081066f, 0.171765f }, 2042, 20 }, /* levels\c20\shaders\c20light_inv_5blueglow */
-	{ { 0.390383f, 0.505496f, 1.07105f }, 2062, 16 }, /* levels\c20\shaders\c20light_inv_5blueglow */
-	{ { 0.216379f, 0.280183f, 0.593655f }, 2078, 20 }, /* levels\c20\shaders\c20light_inv_5blueglow */
-	{ { 7.62509f, 7.45335f, 5.42687f }, 2098, 4 }, /* levels\c20\shaders\c20 light dim white b */
-	{ { 0.050865f, 0.065863f, 0.139553f }, 2102, 20 }, /* levels\c20\shaders\c20light_inv_5blueglow */
-	{ { 0.064154f, 0.083071f, 0.176011f }, 2122, 20 }, /* levels\c20\shaders\c20light_inv_5blueglow */
-	{ { 0.057416f, 0.074346f, 0.157526f }, 2142, 20 }, /* levels\c20\shaders\c20light_inv_5blueglow */
-	{ { 0.205761f, 0.266435f, 0.564526f }, 2162, 20 }, /* levels\c20\shaders\c20light_inv_5blueglow */
-	{ { 0.069935f, 0.090557f, 0.191873f }, 2182, 20 }, /* levels\c20\shaders\c20light_inv_5blueglow */
-	{ { 0.270483f, 0.35024f, 0.742095f }, 2202, 84 }, /* levels\c20\shaders\c20light_inv_5blueglow */
-	{ { 2.03014f, 2.62878f, 5.56989f }, 2286, 4 }, /* levels\c20\shaders\c20light_inv_5blueglow */
-	{ { 0.192341f, 0.249057f, 0.527706f }, 2290, 4 }, /* levels\c20\shaders\c20light_inv_5blueglow */
-	{ { 0.120662f, 0.156242f, 0.331048f }, 2294, 84 }, /* levels\c20\shaders\c20light_inv_5blueglow */
-	{ { 16.7328f, 27.888f, 26.2298f }, 2378, 4 }, /* levels\c20\shaders\c20light_inv_5greenglow */
-	{ { 6.15358f, 6.01499f, 4.37958f }, 2382, 14 }, /* levels\c20\shaders\c20 light dim white b */
-	{ { 1.48552f, 2.47588f, 2.32866f }, 2396, 8 }, /* levels\c20\shaders\c20light_inv_5greenglow */
-	{ { 16.7328f, 27.888f, 26.2298f }, 2404, 4 }, /* levels\c20\shaders\c20light_inv_5greenglow */
-	{ { 16.7328f, 27.888f, 26.2298f }, 2408, 4 }, /* levels\c20\shaders\c20light_inv_5greenglow */
-	{ { 0.795038f, 1.32506f, 1.24628f }, 2412, 4 }, /* levels\c20\shaders\c20light_inv_5greenglow */
-	{ { 0.287382f, 0.478969f, 0.45049f }, 2416, 8 }, /* levels\c20\shaders\c20light_inv_5greenglow */
-	{ { 16.7328f, 27.888f, 26.2298f }, 2424, 4 }, /* levels\c20\shaders\c20light_inv_5greenglow */
-	{ { 0.674397f, 1.124f, 1.05716f }, 2428, 4 }, /* levels\c20\shaders\c20light_inv_5greenglow */
-	{ { 0.629433f, 1.04906f, 0.986679f }, 2432, 8 }, /* levels\c20\shaders\c20light_inv_5greenglow */
-	{ { 0.169258f, 0.125936f, 0.068509f }, 2440, 4 }, /* levels\c20\shaders\c20light_inv_1warmglow */
-	{ { 0.06063f, 0.045112f, 0.024541f }, 2444, 8 }, /* levels\c20\shaders\c20light_inv_1warmglow */
-	{ { 2.68295f, 2.62252f, 1.90949f }, 2452, 4 }, /* levels\c20\shaders\c20 light dim white b */
-	{ { 0.057696f, 0.042929f, 0.023353f }, 2456, 10 }, /* levels\c20\shaders\c20light_inv_1warmglow */
-	{ { 0.03163f, 0.023535f, 0.012803f }, 2466, 6 }, /* levels\c20\shaders\c20light_inv_1warmglow */
-	{ { 0.047892f, 0.035634f, 0.019385f }, 2472, 12 }, /* levels\c20\shaders\c20light_inv_1warmglow */
-	{ { 0.132896f, 0.098881f, 0.053791f }, 2484, 4 }, /* levels\c20\shaders\c20light_inv_1warmglow */
-	{ { 0.068293f, 0.050813f, 0.027642f }, 2488, 14 }, /* levels\c20\shaders\c20light_inv_1warmglow */
-	{ { 0.08072f, 0.060059f, 0.032672f }, 2502, 12 }, /* levels\c20\shaders\c20light_inv_1warmglow */
-	{ { 0.046758f, 0.03479f, 0.018926f }, 2514, 16 }, /* levels\c20\shaders\c20light_inv_1warmglow */
-	{ { 0.055762f, 0.04149f, 0.02257f }, 2530, 14 }, /* levels\c20\shaders\c20light_inv_1warmglow */
-	{ { 0.03765f, 0.028013f, 0.015239f }, 2544, 8 }, /* levels\c20\shaders\c20light_inv_1warmglow */
-	{ { 0.077423f, 0.057606f, 0.031338f }, 2552, 8 }, /* levels\c20\shaders\c20light_inv_1warmglow */
-	{ { 7.38215f, 7.21589f, 5.25397f }, 2560, 8 }, /* levels\c20\shaders\c20 light dim white b */
-	{ { 0.015005f, 0.011164f, 0.006073f }, 2568, 14 }, /* levels\c20\shaders\c20light_inv_1warmglow */
-	{ { 0.175159f, 0.130326f, 0.070898f }, 2582, 12 }, /* levels\c20\shaders\c20light_inv_1warmglow */
-	{ { 0.031844f, 0.023693f, 0.012889f }, 2594, 12 }, /* levels\c20\shaders\c20light_inv_1warmglow */
-	{ { 0.067188f, 0.049991f, 0.027195f }, 2606, 14 }, /* levels\c20\shaders\c20light_inv_1warmglow */
-	{ { 0.069943f, 0.052041f, 0.02831f }, 2620, 4 }, /* levels\c20\shaders\c20light_inv_1warmglow */
-	{ { 0.020858f, 0.01552f, 0.008443f }, 2624, 12 }, /* levels\c20\shaders\c20light_inv_1warmglow */
-	{ { 0.074748f, 0.055616f, 0.030255f }, 2636, 10 }, /* levels\c20\shaders\c20light_inv_1warmglow */
-	{ { 0.094317f, 0.070176f, 0.038176f }, 2646, 10 }, /* levels\c20\shaders\c20light_inv_1warmglow */
-	{ { 0.058648f, 0.043637f, 0.023739f }, 2656, 8 }, /* levels\c20\shaders\c20light_inv_1warmglow */
-	{ { 0.083173f, 0.061885f, 0.033665f }, 2664, 4 }, /* levels\c20\shaders\c20light_inv_1warmglow */
-	{ { 0.473775f, 0.487988f, 1.01862f }, 2668, 12 }, /* levels\c20\shaders\plasma panel */
-	{ { 7.3735f, 7.20743f, 5.24781f }, 2680, 4 }, /* levels\c20\shaders\c20 light dim white b */
-	{ { 0.641264f, 0.459177f, 0.295562f }, 2684, 4 }, /* levels\c20\shaders\c20light_10orange */
-	{ { 1.38272f, 0.990094f, 0.637302f }, 2688, 4 }, /* levels\c20\shaders\c20light_10orange */
-	{ { 2.79225f, 1.99939f, 1.28697f }, 2692, 4 }, /* levels\c20\shaders\c20light_10orange */
-	{ { 0.52845f, 0.378396f, 0.243566f }, 2696, 4 }, /* levels\c20\shaders\c20light_10orange */
-	{ { 1.99595f, 1.4292f, 0.919943f }, 2700, 4 }, /* levels\c20\shaders\c20light_10orange */
-	{ { 2.70182f, 1.93464f, 1.24528f }, 2704, 4 }, /* levels\c20\shaders\c20light_10orange */
-	{ { 0.557327f, 0.399074f, 0.256875f }, 2708, 4 }, /* levels\c20\shaders\c20light_10orange */
-	{ { 1.93471f, 1.38535f, 0.891721f }, 2712, 4 }, /* levels\c20\shaders\c20light_10orange */
-	{ { 1.13601f, 0.813441f, 0.523594f }, 2716, 4 }, /* levels\c20\shaders\c20light_10orange */
-	{ { 1.54138f, 1.1037f, 0.710431f }, 2720, 4 }, /* levels\c20\shaders\c20light_10orange */
-	{ { 7.25621f, 7.09278f, 5.16434f }, 2724, 4 }, /* levels\c20\shaders\c20 light dim white b */
-	{ { 18.1289f, 12.9812f, 8.35571f }, 2728, 4 }, /* levels\c20\shaders\c20light_10orange */
-	{ { 0.606721f, 0.434442f, 0.279641f }, 2732, 4 }, /* levels\c20\shaders\c20light_10orange */
-	{ { 0.165183f, 0.133387f, 0.061265f }, 2736, 8 }, /* levels\c20\shaders\c20light_inv_3warmglow */
-	{ { 0.422031f, 0.340795f, 0.156528f }, 2744, 8 }, /* levels\c20\shaders\c20light_inv_3warmglow */
-	{ { 0.607436f, 0.490512f, 0.225293f }, 2752, 8 }, /* levels\c20\shaders\c20light_inv_3warmglow */
-	{ { 0.483457f, 0.390398f, 0.17931f }, 2760, 8 }, /* levels\c20\shaders\c20light_inv_3warmglow */
-	{ { 0.686893f, 0.554674f, 0.254763f }, 2768, 8 }, /* levels\c20\shaders\c20light_inv_3warmglow */
-	{ { 0.048163f, 0.038892f, 0.017863f }, 2776, 8 }, /* levels\c20\shaders\c20light_inv_3warmglow */
-	{ { 0.1133f, 0.091491f, 0.042022f }, 2784, 8 }, /* levels\c20\shaders\c20light_inv_3warmglow */
-	{ { 0.364587f, 0.294409f, 0.135223f }, 2792, 8 }, /* levels\c20\shaders\c20light_inv_3warmglow */
-	{ { 1.92226f, 1.87896f, 1.36809f }, 2800, 4 }, /* levels\c20\shaders\c20 light dim white b */
-	{ { 0.325621f, 0.262943f, 0.12077f }, 2804, 8 }, /* levels\c20\shaders\c20light_inv_3warmglow */
-	{ { 0.21331f, 0.17225f, 0.079115f }, 2812, 8 }, /* levels\c20\shaders\c20light_inv_3warmglow */
-	{ { 0.325974f, 0.263228f, 0.120901f }, 2820, 8 }, /* levels\c20\shaders\c20light_inv_3warmglow */
-	{ { 0.239007f, 0.193001f, 0.088646f }, 2828, 8 }, /* levels\c20\shaders\c20light_inv_3warmglow */
-	{ { 5.17661f, 5.06002f, 3.68426f }, 2836, 4 }, /* levels\c20\shaders\c20 light dim white c */
-	{ { 2.72399f, 2.66264f, 1.9387f }, 2840, 8 }, /* levels\c20\shaders\c20 light dim white b */
-	{ { 0.667565f, 0.65253f, 0.475114f }, 2848, 4 }, /* levels\c20\shaders\c20 light dim white b */
-	{ { 3.98557f, 3.89581f, 2.83658f }, 2852, 4 }, /* levels\c20\shaders\c20 light dim white b */
-	{ { 11.7411f, 11.4767f, 8.3563f }, 2856, 20 }, /* levels\c20\shaders\c20 light dim white b */
-	{ { 10.8843f, 10.6391f, 7.74646f }, 2876, 26 }, /* levels\c20\shaders\c20 light dim white b */
-	{ { 9.9093f, 9.68611f, 7.05257f }, 2902, 22 }, /* levels\c20\shaders\c20 light dim white b */
-	{ { 15.0704f, 14.731f, 10.7258f }, 2924, 24 }, /* levels\c20\shaders\c20 light dim white b */
-	{ { 0.844906f, 0.870254f, 1.81655f }, 2948, 6 }, /* levels\c20\shaders\plasma panel */
-	{ { 2.98579f, 2.91854f, 2.12502f }, 2954, 4 }, /* levels\c20\shaders\c20 light dim white b */
-	{ { 1.0817f, 1.05734f, 0.769859f }, 2958, 4 }, /* levels\c20\shaders\c20 light dim white */
-	{ { 10.356f, 10.1228f, 7.3705f }, 2962, 4 }, /* levels\c20\shaders\c20 light dim white */
-	{ { 2.75389f, 2.69186f, 1.95998f }, 2966, 4 }, /* levels\c20\shaders\c20 light dim white */
-	{ { 5.17597f, 5.05939f, 3.6838f }, 2970, 4 }, /* levels\c20\shaders\c20 light dim white */
-	{ { 2.04094f, 1.99498f, 1.45257f }, 2974, 4 }, /* levels\c20\shaders\c20 light dim white */
-	{ { 6.46073f, 6.31522f, 4.59818f }, 2978, 4 }, /* levels\c20\shaders\c20 light dim white */
-	{ { 3.31278f, 3.23817f, 2.35775f }, 2982, 4 }, /* levels\c20\shaders\c20 light dim white */
-	{ { 10.5243f, 10.2873f, 7.49029f }, 2986, 4 }, /* levels\c20\shaders\c20 light dim white */
-	{ { 26.5764f, 25.9779f, 18.9148f }, 2990, 4 }, /* levels\c20\shaders\c20 light dim white */
-	{ { 0.293216f, 0.302013f, 0.630414f }, 2994, 6 }, /* levels\c20\shaders\plasma panel */
-	{ { 1.62193f, 1.5854f, 1.15434f }, 3000, 28 }, /* levels\c20\shaders\c20 light dim white */
-	{ { 21.1977f, 20.7203f, 15.0867f }, 3028, 4 }, /* levels\c20\shaders\c20 light dim white */
-	{ { 8.3879f, 8.19899f, 5.96977f }, 3032, 4 }, /* levels\c20\shaders\c20 light dim white */
-	{ { 0.532077f, 0.520093f, 0.378685f }, 3036, 28 }, /* levels\c20\shaders\c20 light dim white */
-	{ { 13.949f, 13.6349f, 9.92769f }, 3064, 2 }, /* levels\c20\shaders\c20 light dim white */
-	{ { 2.40844f, 2.3542f, 1.71412f }, 3066, 4 }, /* levels\c20\shaders\c20 light dim white */
-	{ { 7.61039f, 7.43898f, 5.4164f }, 3070, 4 }, /* levels\c20\shaders\c20 light dim white */
-	{ { 4.65936f, 4.55441f, 3.31612f }, 3074, 28 }, /* levels\c20\shaders\c20 light dim white */
-	{ { 49.0102f, 47.9063f, 34.8811f }, 3102, 2 }, /* levels\c20\shaders\c20 light dim white */
-	{ { 11.8076f, 11.5417f, 8.40361f }, 3104, 4 }, /* levels\c20\shaders\c20 light dim white */
-	{ { 0.289466f, 0.29815f, 0.622352f }, 3108, 12 }, /* levels\c20\shaders\plasma panel */
-	{ { 1.43196f, 1.39971f, 1.01914f }, 3120, 28 }, /* levels\c20\shaders\c20 light dim white */
-	{ { 6.0233f, 5.88764f, 4.28686f }, 3148, 4 }, /* levels\c20\shaders\c20 light dim white */
-	{ { 0.246923f, 0.319733f, 0.677456f }, 3152, 36 }, /* levels\c20\shaders\c20light_inv_3blueglow */
-	{ { 0.427785f, 0.553926f, 1.17367f }, 3188, 12 }, /* levels\c20\shaders\c20light_inv_3blueglow */
-	{ { 0.985092f, 1.27557f, 2.70269f }, 3200, 48 }, /* levels\c20\shaders\c20light_inv_3blueglow */
-	{ { 0.336725f, 0.436016f, 0.923837f }, 3248, 16 }, /* levels\c20\shaders\c20light_inv_3blueglow */
-	{ { 0.198583f, 0.25714f, 0.544832f }, 3264, 128 }, /* levels\c20\shaders\c20light_inv_3blueglow */
-	{ { 0.017637f, 0.022838f, 0.048389f }, 3392, 16 }, /* levels\c20\shaders\c20light_inv_3blueglow */
-	{ { 0.276523f, 0.358061f, 0.758666f }, 3408, 60 }, /* levels\c20\shaders\c20light_inv_3blueglow */
-	{ { 0.391603f, 0.507076f, 1.0744f }, 3468, 20 }, /* levels\c20\shaders\c20light_inv_3blueglow */
-	{ { 0.282267f, 0.290735f, 0.606874f }, 3488, 2 }, /* levels\c20\shaders\plasma panel */
-	{ { 0.2191f, 0.283706f, 0.60112f }, 3490, 48 }, /* levels\c20\shaders\c20light_inv_3blueglow */
-	{ { 1.12082f, 1.45132f, 3.07508f }, 3538, 16 }, /* levels\c20\shaders\c20light_inv_3blueglow */
-	{ { 0.104661f, 0.135522f, 0.287146f }, 3554, 48 }, /* levels\c20\shaders\c20light_inv_3blueglow */
-	{ { 0.42062f, 0.544649f, 1.15401f }, 3602, 32 }, /* levels\c20\shaders\c20light_inv_3blueglow */
-	{ { 0.266286f, 0.344806f, 0.730581f }, 3634, 24 }, /* levels\c20\shaders\c20light_inv_3blueglow */
-	{ { 0.249461f, 0.32302f, 0.684419f }, 3658, 24 }, /* levels\c20\shaders\c20light_inv_3blueglow */
-	{ { 0.359423f, 0.465407f, 0.986111f }, 3682, 48 }, /* levels\c20\shaders\c20light_inv_3blueglow */
-	{ { 0.35488f, 0.459525f, 0.973648f }, 3730, 16 }, /* levels\c20\shaders\c20light_inv_3blueglow */
-	{ { 0.101585f, 0.13154f, 0.278709f }, 3746, 48 }, /* levels\c20\shaders\c20light_inv_3blueglow */
-	{ { 0.359331f, 0.465288f, 0.98586f }, 3794, 16 }, /* levels\c20\shaders\c20light_inv_3blueglow */
-	{ { 0.292216f, 0.300982f, 0.628263f }, 3810, 2 }, /* levels\c20\shaders\plasma panel */
-	{ { 0.049567f, 0.064183f, 0.135992f }, 3812, 48 }, /* levels\c20\shaders\c20light_inv_3blueglow */
-	{ { 0.088082f, 0.114055f, 0.241661f }, 3860, 180 }, /* levels\c20\shaders\c20light_inv_3blueglow */
-	{ { 0.156031f, 0.202041f, 0.428087f }, 4040, 76 }, /* levels\c20\shaders\c20light_inv_3blueglow */
-	{ { 0.797702f, 1.03292f, 2.18857f }, 4116, 16 }, /* levels\c20\shaders\c20light_inv_3blueglow */
-	{ { 0.115099f, 0.149038f, 0.315784f }, 4132, 64 }, /* levels\c20\shaders\c20light_inv_3blueglow */
-	{ { 0.161975f, 0.209737f, 0.444393f }, 4196, 80 }, /* levels\c20\shaders\c20light_inv_3blueglow */
-	{ { 0.236413f, 0.306125f, 0.648622f }, 4276, 48 }, /* levels\c20\shaders\c20light_inv_3blueglow */
-	{ { 0.111112f, 0.143875f, 0.304846f }, 4324, 16 }, /* levels\c20\shaders\c20light_inv_3blueglow */
-	{ { 0.179128f, 0.231948f, 0.491454f }, 4340, 32 }, /* levels\c20\shaders\c20light_inv_3blueglow */
-	{ { 16.764f, 17.1939f, 37.6117f }, 4372, 24 }, /* levels\c20\shaders\c20 light dim blue c */
-	{ { 0.34033f, 0.35054f, 0.731709f }, 4396, 4 }, /* levels\c20\shaders\plasma panel */
-	{ { 6.12148f, 6.27845f, 13.7341f }, 4400, 8 }, /* levels\c20\shaders\c20 light dim blue c */
-	{ { 7.82593f, 8.02661f, 17.5582f }, 4408, 24 }, /* levels\c20\shaders\c20 light dim blue c */
-	{ { 9.50636f, 9.75014f, 21.3284f }, 4432, 8 }, /* levels\c20\shaders\c20 light dim blue c */
-	{ { 6.64004f, 6.81032f, 14.8976f }, 4440, 24 }, /* levels\c20\shaders\c20 light dim blue c */
-	{ { 8.82127f, 9.04748f, 19.7914f }, 4464, 8 }, /* levels\c20\shaders\c20 light dim blue c */
-	{ { 4.4904f, 4.60555f, 10.0746f }, 4472, 24 }, /* levels\c20\shaders\c20 light dim blue c */
-	{ { 10.1206f, 10.3801f, 22.7065f }, 4496, 8 }, /* levels\c20\shaders\c20 light dim blue c */
-	{ { 1.23693f, 1.26866f, 2.77518f }, 4504, 8 }, /* levels\c20\shaders\c20 light dim blue c */
-	{ { 11.3675f, 11.659f, 25.5041f }, 4512, 4 }, /* levels\c20\shaders\c20 light dim blue c */
-	{ { 11.0876f, 11.3719f, 24.876f }, 4516, 4 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 259.682f, 308.188f, 398.059f }, 242, 8 }, /* levels\a10\shaders\halogen on */
+	{ { 299.749f, 355.74f, 459.477f }, 250, 8 }, /* levels\a10\shaders\halogen on */
+	{ { 55.0333f, 65.3132f, 84.3592f }, 258, 88 }, /* levels\a10\shaders\halogen on */
+	{ { 65.036f, 77.1842f, 99.692f }, 346, 88 }, /* levels\a10\shaders\halogen on */
+	{ { 15.0919f, 17.9109f, 23.1339f }, 434, 18 }, /* levels\a10\shaders\halogen on */
+	{ { 72.051f, 85.5096f, 110.445f }, 452, 18 }, /* levels\a10\shaders\halogen on */
+	{ { 136.692f, 167.646f, 149.537f }, 470, 6 }, /* levels\a10\shaders\flourescent */
+	{ { 0.0931774f, 0.0902534f, 0.0625872f }, 476, 8 }, /* levels\a10\shaders\flourescent flicker */
+	{ { 0.017433f, 0.0358649f, 0.0468407f }, 484, 2 }, /* levels\a10\shaders\monitors */
+	{ { 47.393f, 58.1249f, 51.8463f }, 486, 112 }, /* levels\a10\shaders\flourescent */
+	{ { 146.768f, 180.003f, 160.559f }, 598, 4 }, /* levels\a10\shaders\flourescent */
+	{ { 46.8496f, 57.4585f, 51.2518f }, 602, 46 }, /* levels\a10\shaders\flourescent */
+	{ { 5.45458f, 6.68975f, 5.96712f }, 648, 2 }, /* levels\a10\shaders\flourescent */
+	{ { 31.5092f, 38.6443f, 34.4699f }, 650, 47 }, /* levels\a10\shaders\flourescent */
+	{ { 32.0632f, 39.3237f, 35.076f }, 697, 29 }, /* levels\a10\shaders\flourescent */
+	{ { 0.190491f, 0.20329f, 1.02621f }, 726, 6 }, /* levels\c20\shaders\plasma panel */
+	{ { 0.337691f, 0.360381f, 1.81921f }, 732, 12 }, /* levels\c20\shaders\plasma panel */
+	{ { 0.50572f, 0.5397f, 2.72442f }, 744, 4 }, /* levels\c20\shaders\plasma panel */
+	{ { 11.3601f, 12.0108f, 67.2138f }, 748, 24 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 6.92499f, 7.32169f, 40.9729f }, 772, 8 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 2.18211f, 2.30712f, 12.9108f }, 780, 24 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 4.60344f, 4.86715f, 27.237f }, 804, 8 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 0.46669f, 0.493425f, 2.76125f }, 812, 4 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 5.98919f, 6.33229f, 35.4361f }, 816, 8 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 14.2765f, 15.0943f, 84.4692f }, 824, 4 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 13.471f, 14.2427f, 79.7033f }, 828, 4 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 11.2606f, 11.9057f, 66.6254f }, 832, 4 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 30.5654f, 32.3164f, 180.846f }, 836, 8 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 0.341041f, 0.363956f, 1.83726f }, 844, 4 }, /* levels\c20\shaders\plasma panel */
+	{ { 1.80292f, 1.9062f, 10.6673f }, 848, 4 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 3.31175f, 3.50147f, 19.5945f }, 852, 4 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 0.46669f, 0.493425f, 2.76125f }, 856, 4 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 7.46985f, 7.89777f, 44.1967f }, 860, 4 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 0.651573f, 0.688899f, 3.85514f }, 864, 4 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 0.46669f, 0.493425f, 2.76125f }, 868, 4 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 19.728f, 20.8582f, 116.724f }, 872, 4 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 0.516255f, 0.545829f, 3.05451f }, 876, 4 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 17.8684f, 18.892f, 105.722f }, 880, 4 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 3.13881f, 3.31862f, 18.5713f }, 884, 4 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 0.551045f, 0.588071f, 2.9686f }, 888, 8 }, /* levels\c20\shaders\plasma panel */
+	{ { 0.46669f, 0.493425f, 2.76125f }, 896, 4 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 3.41474f, 3.61036f, 20.2039f }, 900, 4 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 1.29653f, 1.3708f, 7.67113f }, 904, 2 }, /* levels\c20\shaders\c20 light dim blue b */
+	{ { 6.42429f, 6.79232f, 38.0104f }, 906, 2 }, /* levels\c20\shaders\c20 light dim blue b */
+	{ { 14.6342f, 15.4726f, 86.5859f }, 908, 4 }, /* levels\c20\shaders\c20 light dim blue b */
+	{ { 6.64858f, 7.02945f, 39.3375f }, 912, 4 }, /* levels\c20\shaders\c20 light dim blue b */
+	{ { 18.4098f, 19.4645f, 108.925f }, 916, 6 }, /* levels\c20\shaders\c20 light dim blue b */
+	{ { 6.90097f, 7.2963f, 40.8308f }, 922, 6 }, /* levels\c20\shaders\c20 light dim blue b */
+	{ { 25.5366f, 26.9995f, 151.092f }, 928, 4 }, /* levels\c20\shaders\c20 light dim blue b */
+	{ { 8.07554f, 8.53816f, 47.7803f }, 932, 4 }, /* levels\c20\shaders\c20 light dim blue b */
+	{ { 0.317144f, 0.338454f, 1.70852f }, 936, 6 }, /* levels\c20\shaders\plasma panel */
+	{ { 12.6934f, 13.4205f, 75.1025f }, 942, 4 }, /* levels\c20\shaders\c20 light dim blue b */
+	{ { 6.16413f, 6.51725f, 36.4712f }, 946, 4 }, /* levels\c20\shaders\c20 light dim blue b */
+	{ { 7.23661f, 7.65117f, 42.8167f }, 950, 4 }, /* levels\c20\shaders\c20 light dim blue b */
+	{ { 7.27301f, 7.68965f, 43.032f }, 954, 4 }, /* levels\c20\shaders\c20 light dim blue b */
+	{ { 7.91545f, 8.36889f, 46.8331f }, 958, 8 }, /* levels\c20\shaders\c20 light dim blue b */
+	{ { 4.35871f, 4.6084f, 25.789f }, 966, 8 }, /* levels\c20\shaders\c20 light dim blue b */
+	{ { 4.02938f, 4.26021f, 23.8405f }, 974, 4 }, /* levels\c20\shaders\c20 light dim blue b */
+	{ { 10.9639f, 11.592f, 64.87f }, 978, 4 }, /* levels\c20\shaders\c20 light dim blue b */
+	{ { 7.78516f, 8.23114f, 46.0622f }, 982, 4 }, /* levels\c20\shaders\c20 light dim blue b */
+	{ { 11.7603f, 12.434f, 69.5819f }, 986, 4 }, /* levels\c20\shaders\c20 light dim blue b */
+	{ { 0.220633f, 0.235458f, 1.1886f }, 990, 12 }, /* levels\c20\shaders\plasma panel */
+	{ { 6.98579f, 7.38598f, 41.3326f }, 1002, 8 }, /* levels\c20\shaders\c20 light dim blue b */
+	{ { 6.14406f, 6.49603f, 36.3524f }, 1010, 8 }, /* levels\c20\shaders\c20 light dim blue b */
+	{ { 0.618286f, 0.930501f, 0.930501f }, 1018, 8 }, /* levels\b30\shaders\light bright white */
+	{ { 8.47726f, 12.758f, 12.758f }, 1026, 4 }, /* levels\b30\shaders\light bright white */
+	{ { 12.8913f, 19.401f, 19.401f }, 1030, 4 }, /* levels\b30\shaders\light bright white */
+	{ { 10.5901f, 15.9377f, 15.9377f }, 1034, 4 }, /* levels\b30\shaders\light bright white */
+	{ { 5.88613f, 8.85844f, 8.85844f }, 1038, 4 }, /* levels\b30\shaders\light bright white */
+	{ { 0.478268f, 0.719779f, 0.719779f }, 1042, 4 }, /* levels\b30\shaders\light bright white */
+	{ { 2.91202f, 4.3825f, 4.3825f }, 1046, 8 }, /* levels\b30\shaders\light bright white */
+	{ { 12.5434f, 18.8774f, 18.8774f }, 1054, 4 }, /* levels\b30\shaders\light bright white */
+	{ { 0.609977f, 0.650963f, 3.28608f }, 1058, 6 }, /* levels\c20\shaders\plasma panel */
+	{ { 2.29478f, 3.45358f, 3.45358f }, 1064, 4 }, /* levels\b30\shaders\light bright white */
+	{ { 3.5366f, 5.32247f, 5.32247f }, 1068, 4 }, /* levels\b30\shaders\light bright white */
+	{ { 0.945448f, 1.42287f, 1.42287f }, 1072, 8 }, /* levels\b30\shaders\light bright white */
+	{ { 26.8639f, 40.4294f, 40.4294f }, 1080, 8 }, /* levels\b30\shaders\light bright white */
+	{ { 7.923f, 11.9239f, 11.9239f }, 1088, 8 }, /* levels\b30\shaders\light bright white */
+	{ { 6.06654f, 3.79026f, 0.684363f }, 1096, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
+	{ { 1.11205f, 0.694787f, 0.125449f }, 1100, 8 }, /* levels\c20\shaders\c20light_inv_5warmglow */
+	{ { 0.735564f, 0.459566f, 0.0829785f }, 1108, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
+	{ { 0.381192f, 0.238161f, 0.0430019f }, 1112, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
+	{ { 0.899595f, 0.56205f, 0.101483f }, 1116, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
+	{ { 0.0673123f, 0.0698696f, 0.214165f }, 1120, 8 }, /* levels\c20\shaders\plasma panel slow */
+	{ { 1.23949f, 0.774408f, 0.139826f }, 1128, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
+	{ { 1.09168f, 0.682062f, 0.123152f }, 1132, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
+	{ { 3.72923f, 2.32995f, 0.420692f }, 1136, 8 }, /* levels\c20\shaders\c20light_inv_5warmglow */
+	{ { 1.83882f, 1.14886f, 0.207435f }, 1144, 12 }, /* levels\c20\shaders\c20light_inv_5warmglow */
+	{ { 3.26221f, 2.03817f, 0.368008f }, 1156, 8 }, /* levels\c20\shaders\c20light_inv_5warmglow */
+	{ { 1.19166f, 0.744524f, 0.13443f }, 1164, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
+	{ { 1.81979f, 1.13697f, 0.205289f }, 1168, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
+	{ { 2.35168f, 1.46928f, 0.265291f }, 1172, 8 }, /* levels\c20\shaders\c20light_inv_5warmglow */
+	{ { 1.24018f, 0.774841f, 0.139904f }, 1180, 8 }, /* levels\c20\shaders\c20light_inv_5warmglow */
+	{ { 2.08285f, 1.30133f, 0.234965f }, 1188, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
+	{ { 0.121544f, 0.126162f, 0.386713f }, 1192, 4 }, /* levels\c20\shaders\plasma panel slow */
+	{ { 4.29952f, 2.68626f, 0.485026f }, 1196, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
+	{ { 3.34032f, 2.08697f, 0.376819f }, 1200, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
+	{ { 14.0609f, 8.78501f, 1.58621f }, 1204, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
+	{ { 1.8495f, 1.15553f, 0.208641f }, 1208, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
+	{ { 4.62783f, 2.89138f, 0.522063f }, 1212, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
+	{ { 1.98569f, 1.24062f, 0.224004f }, 1216, 8 }, /* levels\c20\shaders\c20light_inv_5warmglow */
+	{ { 0.377051f, 0.235575f, 0.0425349f }, 1224, 8 }, /* levels\c20\shaders\c20light_inv_5warmglow */
+	{ { 0.446251f, 0.278809f, 0.0503412f }, 1232, 6 }, /* levels\c20\shaders\c20light_inv_5warmglow */
+	{ { 16.6972f, 10.4321f, 1.8836f }, 1238, 2 }, /* levels\c20\shaders\c20light_inv_5warmglow */
+	{ { 13.354f, 8.34333f, 1.50646f }, 1240, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
+	{ { 0.260758f, 0.248012f, 0.123398f }, 1244, 8 }, /* levels\c20\shaders\c20 light dim white b */
+	{ { 39.2909f, 24.5482f, 4.43237f }, 1252, 8 }, /* levels\c20\shaders\c20light_inv_5warmglow */
+	{ { 12.2202f, 7.63496f, 1.37855f }, 1260, 2 }, /* levels\c20\shaders\c20light_inv_5warmglow */
+	{ { 11.6742f, 7.29382f, 1.31696f }, 1262, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
+	{ { 39.2909f, 24.5482f, 4.43237f }, 1266, 8 }, /* levels\c20\shaders\c20light_inv_5warmglow */
+	{ { 28.0143f, 17.5028f, 3.16027f }, 1274, 8 }, /* levels\c20\shaders\c20light_inv_5warmglow */
+	{ { 5.15321f, 3.21963f, 0.58133f }, 1282, 4 }, /* levels\c20\shaders\c20light_inv_5warmglow */
+	{ { 0.335984f, 0.209916f, 0.0379021f }, 1286, 6 }, /* levels\c20\shaders\c20light_inv_5warmglow */
+	{ { 0.750064f, 0.712653f, 0.355974f }, 1292, 8 }, /* levels\c20\shaders\c20light_8warmwhite */
+	{ { 1.23175f, 1.17031f, 0.584576f }, 1300, 8 }, /* levels\c20\shaders\c20light_8warmwhite */
+	{ { 1.07114f, 1.01771f, 0.508354f }, 1308, 8 }, /* levels\c20\shaders\c20light_8warmwhite */
+	{ { 3.21702f, 3.05977f, 1.52238f }, 1316, 12 }, /* levels\c20\shaders\c20 light dim white b */
+	{ { 8.47187f, 7.35939f, 5.44815f }, 1328, 8 }, /* levels\c20\shaders\c20light_inv_5whiteglow */
+	{ { 13.4374f, 11.6729f, 8.64141f }, 1336, 8 }, /* levels\c20\shaders\c20light_inv_5whiteglow */
+	{ { 1.21023f, 1.05131f, 0.778282f }, 1344, 8 }, /* levels\c20\shaders\c20light_inv_5whiteglow */
+	{ { 1.2575f, 1.09237f, 0.80868f }, 1352, 32 }, /* levels\c20\shaders\c20light_inv_5whiteglow */
+	{ { 22.7118f, 21.9263f, 12.2019f }, 1384, 8 }, /* levels\c20\shaders\c20 light bright white */
+	{ { 5.6475f, 5.45216f, 3.03412f }, 1392, 4 }, /* levels\c20\shaders\c20 light bright white */
+	{ { 4.46981f, 4.31521f, 2.40141f }, 1396, 4 }, /* levels\c20\shaders\c20 light bright white */
+	{ { 12.6033f, 12.1673f, 6.77111f }, 1400, 4 }, /* levels\c20\shaders\c20 light bright white */
+	{ { 13.1417f, 12.6872f, 7.0604f }, 1404, 8 }, /* levels\c20\shaders\c20 light bright white */
+	{ { 1.99261f, 1.92369f, 1.07053f }, 1412, 4 }, /* levels\c20\shaders\c20 light bright white */
+	{ { 0.547241f, 0.584011f, 2.9481f }, 1416, 6 }, /* levels\c20\shaders\plasma panel */
+	{ { 16.4209f, 15.6183f, 7.77083f }, 1422, 50 }, /* levels\c20\shaders\c20 light dim white b */
+	{ { 10.5519f, 10.1869f, 5.669f }, 1472, 4 }, /* levels\c20\shaders\c20 light bright white */
+	{ { 15.7047f, 15.1615f, 8.43737f }, 1476, 4 }, /* levels\c20\shaders\c20 light bright white */
+	{ { 8.35039f, 8.06157f, 4.48625f }, 1480, 8 }, /* levels\c20\shaders\c20 light bright white */
+	{ { 1.32972f, 1.28373f, 0.714392f }, 1488, 4 }, /* levels\c20\shaders\c20 light bright white */
+	{ { 33.9499f, 32.7757f, 18.2396f }, 1492, 4 }, /* levels\c20\shaders\c20 light bright white */
+	{ { 1.70062f, 1.6418f, 0.913659f }, 1496, 2 }, /* levels\c20\shaders\c20 light bright white */
+	{ { 3.01645f, 2.91212f, 1.62059f }, 1498, 2 }, /* levels\c20\shaders\c20 light bright white */
+	{ { 2.11171f, 2.03867f, 1.13452f }, 1500, 4 }, /* levels\c20\shaders\c20 light bright white */
+	{ { 34.0283f, 32.8514f, 18.2817f }, 1504, 4 }, /* levels\c20\shaders\c20 light bright white */
+	{ { 2.36183f, 2.28014f, 1.2689f }, 1508, 2 }, /* levels\c20\shaders\c20 light bright white */
+	{ { 12.6037f, 11.9876f, 5.96441f }, 1510, 8 }, /* levels\c20\shaders\c20 light dim white b */
+	{ { 3.9514f, 3.81473f, 2.12289f }, 1518, 2 }, /* levels\c20\shaders\c20 light bright white */
+	{ { 1.69841f, 2.11163f, 0.232038f }, 1520, 8 }, /* levels\b40\shaders\b40_light_inv_5green */
+	{ { 1.65107f, 2.05276f, 0.22557f }, 1528, 2 }, /* levels\b40\shaders\b40_light_inv_5green */
+	{ { 14.5662f, 18.1101f, 1.99004f }, 1530, 32 }, /* levels\b40\shaders\b40_light_25green */
+	{ { 5.26289f, 5.56438f, 31.1388f }, 1562, 4 }, /* levels\c20\shaders\c20 light dim blue */
+	{ { 4.38111f, 4.63208f, 25.9216f }, 1566, 8 }, /* levels\c20\shaders\c20 light dim blue */
+	{ { 3.11697f, 3.29552f, 18.4421f }, 1574, 8 }, /* levels\c20\shaders\c20 light dim blue */
+	{ { 5.60749f, 5.92872f, 33.1776f }, 1582, 8 }, /* levels\c20\shaders\c20 light dim blue */
+	{ { 7.04719f, 7.45089f, 41.6959f }, 1590, 4 }, /* levels\c20\shaders\c20 light dim blue */
+	{ { 4.64518f, 4.91128f, 27.484f }, 1594, 8 }, /* levels\c20\shaders\c20 light dim blue */
+	{ { 1.7864f, 1.69908f, 0.845371f }, 1602, 8 }, /* levels\c20\shaders\c20 light dim white b */
+	{ { 3.71999f, 3.9331f, 22.01f }, 1610, 8 }, /* levels\c20\shaders\c20 light dim blue */
+	{ { 4.8484f, 5.12614f, 28.6864f }, 1618, 8 }, /* levels\c20\shaders\c20 light dim blue */
+	{ { 5.1133f, 5.40622f, 30.2537f }, 1626, 8 }, /* levels\c20\shaders\c20 light dim blue */
+	{ { 8.15129f, 8.61825f, 48.2285f }, 1634, 8 }, /* levels\c20\shaders\c20 light dim blue */
+	{ { 8.10952f, 8.57409f, 47.9814f }, 1642, 8 }, /* levels\c20\shaders\c20 light dim blue */
+	{ { 13.6711f, 14.4543f, 80.8874f }, 1650, 8 }, /* levels\c20\shaders\c20 light dim blue */
+	{ { 6.21066f, 6.56644f, 36.7464f }, 1658, 8 }, /* levels\c20\shaders\c20 light dim blue */
+	{ { 5.65423f, 5.97814f, 33.4542f }, 1666, 8 }, /* levels\c20\shaders\c20 light dim blue */
+	{ { 4.99915f, 5.28554f, 29.5783f }, 1674, 8 }, /* levels\c20\shaders\c20 light dim blue */
+	{ { 8.83323f, 9.33925f, 52.2633f }, 1682, 8 }, /* levels\c20\shaders\c20 light dim blue */
+	{ { 8.31123f, 7.90496f, 3.9331f }, 1690, 4 }, /* levels\c20\shaders\c20 light dim white b */
+	{ { 1.78239f, 1.88449f, 10.5458f }, 1694, 8 }, /* levels\c20\shaders\c20 light dim blue */
+	{ { 2.70023f, 2.85492f, 15.9764f }, 1702, 8 }, /* levels\c20\shaders\c20 light dim blue */
+	{ { 6.24801f, 6.60593f, 36.9674f }, 1710, 8 }, /* levels\c20\shaders\c20 light dim blue */
+	{ { 11.5998f, 12.2643f, 68.6324f }, 1718, 8 }, /* levels\c20\shaders\c20 light dim blue */
+	{ { 1.39014f, 1.46978f, 8.22502f }, 1726, 8 }, /* levels\c20\shaders\c20 light dim blue */
+	{ { 10.2855f, 10.8747f, 60.8558f }, 1734, 8 }, /* levels\c20\shaders\c20 light dim blue */
+	{ { 2.75174f, 2.90938f, 16.2811f }, 1742, 8 }, /* levels\c20\shaders\c20 light dim blue */
+	{ { 9.48795f, 10.0315f, 56.1371f }, 1750, 8 }, /* levels\c20\shaders\c20 light dim blue */
+	{ { 7.33119f, 7.75117f, 43.3763f }, 1758, 4 }, /* levels\c20\shaders\c20 light dim blue */
+	{ { 4.17916f, 4.41857f, 24.7267f }, 1762, 8 }, /* levels\c20\shaders\c20 light dim blue */
+	{ { 4.97537f, 4.73217f, 2.35448f }, 1770, 4 }, /* levels\c20\shaders\c20 light dim white b */
+	{ { 7.86967f, 8.32049f, 46.5622f }, 1774, 8 }, /* levels\c20\shaders\c20 light dim blue */
+	{ { 8.15397f, 8.62108f, 48.2443f }, 1782, 8 }, /* levels\c20\shaders\c20 light dim blue */
+	{ { 3.99304f, 4.22178f, 23.6255f }, 1790, 4 }, /* levels\c20\shaders\c20 light dim blue */
+	{ { 4.56055f, 4.82181f, 26.9833f }, 1794, 8 }, /* levels\c20\shaders\c20 light dim blue */
+	{ { 6.06049f, 6.40767f, 35.8579f }, 1802, 8 }, /* levels\c20\shaders\c20 light dim blue */
+	{ { 4.81262f, 5.08832f, 28.4747f }, 1810, 8 }, /* levels\c20\shaders\c20 light dim blue */
+	{ { 0.999552f, 0.534833f, 1.52402f }, 1818, 4 }, /* levels\c20\shaders\c20 light dim purple */
+	{ { 4.35424f, 2.32984f, 6.63894f }, 1822, 4 }, /* levels\c20\shaders\c20 light dim purple */
+	{ { 4.42618f, 2.36833f, 6.74862f }, 1826, 4 }, /* levels\c20\shaders\c20 light dim purple */
+	{ { 1.69901f, 0.909096f, 2.5905f }, 1830, 4 }, /* levels\c20\shaders\c20 light dim purple */
+	{ { 2.9121f, 2.76975f, 1.37808f }, 1834, 4 }, /* levels\c20\shaders\c20 light dim white b */
+	{ { 0.136317f, 0.100053f, 0.340673f }, 1838, 20 }, /* levels\c20\shaders\c20light_inv_2purple */
+	{ { 0.250257f, 0.183682f, 0.625422f }, 1858, 20 }, /* levels\c20\shaders\c20light_inv_2purple */
+	{ { 0.559253f, 0.410478f, 1.39764f }, 1878, 2 }, /* levels\c20\shaders\c20light_inv_2purple */
+	{ { 0.2568f, 0.188485f, 0.641773f }, 1880, 2 }, /* levels\c20\shaders\c20light_inv_2purple */
+	{ { 0.119324f, 0.210682f, 1.09909f }, 1882, 72 }, /* levels\c20\shaders\c20light_inv_5blueglow */
+	{ { 0.450153f, 0.794802f, 4.14633f }, 1954, 4 }, /* levels\c20\shaders\c20light_inv_5blueglow */
+	{ { 0.224169f, 0.395799f, 2.06481f }, 1958, 84 }, /* levels\c20\shaders\c20light_inv_5blueglow */
+	{ { 0.0391f, 0.069036f, 0.360148f }, 2042, 20 }, /* levels\c20\shaders\c20light_inv_5blueglow */
+	{ { 0.243812f, 0.430481f, 2.24573f }, 2062, 16 }, /* levels\c20\shaders\c20light_inv_5blueglow */
+	{ { 0.135138f, 0.238604f, 1.24475f }, 2078, 20 }, /* levels\c20\shaders\c20light_inv_5blueglow */
+	{ { 7.92178f, 7.53456f, 3.7488f }, 2098, 4 }, /* levels\c20\shaders\c20 light dim white b */
+	{ { 0.0317673f, 0.0560891f, 0.292606f }, 2102, 20 }, /* levels\c20\shaders\c20light_inv_5blueglow */
+	{ { 0.0400669f, 0.0707433f, 0.369054f }, 2122, 20 }, /* levels\c20\shaders\c20light_inv_5blueglow */
+	{ { 0.0358588f, 0.0633132f, 0.330293f }, 2142, 20 }, /* levels\c20\shaders\c20light_inv_5blueglow */
+	{ { 0.128507f, 0.226896f, 1.18367f }, 2162, 20 }, /* levels\c20\shaders\c20light_inv_5blueglow */
+	{ { 0.0436776f, 0.0771183f, 0.402311f }, 2182, 20 }, /* levels\c20\shaders\c20light_inv_5blueglow */
+	{ { 0.168929f, 0.298265f, 1.55599f }, 2202, 84 }, /* levels\c20\shaders\c20light_inv_5blueglow */
+	{ { 1.26792f, 2.23867f, 11.6787f }, 2286, 4 }, /* levels\c20\shaders\c20light_inv_5blueglow */
+	{ { 0.120126f, 0.212097f, 1.10647f }, 2290, 4 }, /* levels\c20\shaders\c20light_inv_5blueglow */
+	{ { 0.0753589f, 0.133056f, 0.694126f }, 2294, 84 }, /* levels\c20\shaders\c20light_inv_5blueglow */
+	{ { 9.74147f, 29.9703f, 26.1892f }, 2378, 4 }, /* levels\c20\shaders\c20light_inv_5greenglow */
+	{ { 6.39302f, 6.08052f, 3.02535f }, 2382, 14 }, /* levels\c20\shaders\c20 light dim white b */
+	{ { 0.86484f, 2.66074f, 2.32506f }, 2396, 8 }, /* levels\c20\shaders\c20light_inv_5greenglow */
+	{ { 9.74147f, 29.9703f, 26.1892f }, 2404, 4 }, /* levels\c20\shaders\c20light_inv_5greenglow */
+	{ { 9.74147f, 29.9703f, 26.1892f }, 2408, 4 }, /* levels\c20\shaders\c20light_inv_5greenglow */
+	{ { 0.462854f, 1.424f, 1.24435f }, 2412, 4 }, /* levels\c20\shaders\c20light_inv_5greenglow */
+	{ { 0.167307f, 0.514733f, 0.449793f }, 2416, 8 }, /* levels\c20\shaders\c20light_inv_5greenglow */
+	{ { 9.74147f, 29.9703f, 26.1892f }, 2424, 4 }, /* levels\c20\shaders\c20light_inv_5greenglow */
+	{ { 0.392619f, 1.20792f, 1.05553f }, 2428, 4 }, /* levels\c20\shaders\c20light_inv_5greenglow */
+	{ { 0.366442f, 1.12739f, 0.985152f }, 2432, 8 }, /* levels\c20\shaders\c20light_inv_5greenglow */
+	{ { 0.219918f, 0.114758f, 0.0300677f }, 2440, 4 }, /* levels\c20\shaders\c20light_inv_1warmglow */
+	{ { 0.0787774f, 0.0411076f, 0.0107706f }, 2444, 8 }, /* levels\c20\shaders\c20light_inv_1warmglow */
+	{ { 2.78735f, 2.6511f, 1.31905f }, 2452, 4 }, /* levels\c20\shaders\c20 light dim white b */
+	{ { 0.0749652f, 0.0391184f, 0.0102494f }, 2456, 10 }, /* levels\c20\shaders\c20light_inv_1warmglow */
+	{ { 0.041098f, 0.0214458f, 0.00561902f }, 2466, 6 }, /* levels\c20\shaders\c20light_inv_1warmglow */
+	{ { 0.0622265f, 0.032471f, 0.00850775f }, 2472, 12 }, /* levels\c20\shaders\c20light_inv_1warmglow */
+	{ { 0.172673f, 0.090104f, 0.0236082f }, 2484, 4 }, /* levels\c20\shaders\c20light_inv_1warmglow */
+	{ { 0.0887331f, 0.0463027f, 0.0121318f }, 2488, 14 }, /* levels\c20\shaders\c20light_inv_1warmglow */
+	{ { 0.104879f, 0.0547281f, 0.0143393f }, 2502, 12 }, /* levels\c20\shaders\c20light_inv_1warmglow */
+	{ { 0.0607527f, 0.031702f, 0.00830626f }, 2514, 16 }, /* levels\c20\shaders\c20light_inv_1warmglow */
+	{ { 0.0724523f, 0.0378071f, 0.00990586f }, 2530, 14 }, /* levels\c20\shaders\c20light_inv_1warmglow */
+	{ { 0.0489184f, 0.0255266f, 0.00668824f }, 2544, 8 }, /* levels\c20\shaders\c20light_inv_1warmglow */
+	{ { 0.100596f, 0.0524928f, 0.0137537f }, 2552, 8 }, /* levels\c20\shaders\c20light_inv_1warmglow */
+	{ { 7.6694f, 7.2945f, 3.62937f }, 2560, 8 }, /* levels\c20\shaders\c20 light dim white b */
+	{ { 0.0194955f, 0.0101731f, 0.00266547f }, 2568, 14 }, /* levels\c20\shaders\c20light_inv_1warmglow */
+	{ { 0.227584f, 0.118758f, 0.0311159f }, 2582, 12 }, /* levels\c20\shaders\c20light_inv_1warmglow */
+	{ { 0.0413745f, 0.0215901f, 0.00565682f }, 2594, 12 }, /* levels\c20\shaders\c20light_inv_1warmglow */
+	{ { 0.0872977f, 0.0455537f, 0.0119355f }, 2606, 14 }, /* levels\c20\shaders\c20light_inv_1warmglow */
+	{ { 0.0908774f, 0.0474217f, 0.012425f }, 2620, 4 }, /* levels\c20\shaders\c20light_inv_1warmglow */
+	{ { 0.0271018f, 0.0141422f, 0.00370542f }, 2624, 12 }, /* levels\c20\shaders\c20light_inv_1warmglow */
+	{ { 0.0971204f, 0.0506794f, 0.0132785f }, 2636, 10 }, /* levels\c20\shaders\c20light_inv_1warmglow */
+	{ { 0.122546f, 0.0639471f, 0.0167548f }, 2646, 10 }, /* levels\c20\shaders\c20light_inv_1warmglow */
+	{ { 0.0762019f, 0.0397637f, 0.0104185f }, 2656, 8 }, /* levels\c20\shaders\c20light_inv_1warmglow */
+	{ { 0.108068f, 0.0563918f, 0.0147753f }, 2664, 4 }, /* levels\c20\shaders\c20light_inv_1warmglow */
+	{ { 0.383406f, 0.409168f, 2.06549f }, 2668, 12 }, /* levels\c20\shaders\plasma panel */
+	{ { 7.66041f, 7.28596f, 3.62511f }, 2680, 4 }, /* levels\c20\shaders\c20 light dim white b */
+	{ { 0.854649f, 0.409886f, 0.155501f }, 2684, 4 }, /* levels\c20\shaders\c20light_10orange */
+	{ { 1.84283f, 0.88381f, 0.335298f }, 2688, 4 }, /* levels\c20\shaders\c20light_10orange */
+	{ { 3.72139f, 1.78476f, 0.677099f }, 2692, 4 }, /* levels\c20\shaders\c20light_10orange */
+	{ { 0.704295f, 0.337776f, 0.128145f }, 2696, 4 }, /* levels\c20\shaders\c20light_10orange */
+	{ { 2.66011f, 1.27578f, 0.484001f }, 2700, 4 }, /* levels\c20\shaders\c20light_10orange */
+	{ { 3.60087f, 1.72696f, 0.655169f }, 2704, 4 }, /* levels\c20\shaders\c20light_10orange */
+	{ { 0.742781f, 0.356234f, 0.135147f }, 2708, 4 }, /* levels\c20\shaders\c20light_10orange */
+	{ { 2.5785f, 1.23664f, 0.469153f }, 2712, 4 }, /* levels\c20\shaders\c20light_10orange */
+	{ { 1.51403f, 0.72612f, 0.275474f }, 2716, 4 }, /* levels\c20\shaders\c20light_10orange */
+	{ { 2.05428f, 0.985224f, 0.373772f }, 2720, 4 }, /* levels\c20\shaders\c20light_10orange */
+	{ { 7.53856f, 7.17006f, 3.56745f }, 2724, 4 }, /* levels\c20\shaders\c20 light dim white b */
+	{ { 24.1614f, 11.5877f, 4.39611f }, 2728, 4 }, /* levels\c20\shaders\c20light_10orange */
+	{ { 0.808611f, 0.387806f, 0.147125f }, 2732, 4 }, /* levels\c20\shaders\c20light_10orange */
+	{ { 0.20213f, 0.126287f, 0.0228021f }, 2736, 8 }, /* levels\c20\shaders\c20light_inv_3warmglow */
+	{ { 0.516429f, 0.322655f, 0.0582579f }, 2744, 8 }, /* levels\c20\shaders\c20light_inv_3warmglow */
+	{ { 0.743304f, 0.464402f, 0.0838516f }, 2752, 8 }, /* levels\c20\shaders\c20light_inv_3warmglow */
+	{ { 0.591595f, 0.369617f, 0.0667374f }, 2760, 8 }, /* levels\c20\shaders\c20light_inv_3warmglow */
+	{ { 0.840533f, 0.525149f, 0.09482f }, 2768, 8 }, /* levels\c20\shaders\c20light_inv_3warmglow */
+	{ { 0.0589356f, 0.0368219f, 0.00664848f }, 2776, 8 }, /* levels\c20\shaders\c20light_inv_3warmglow */
+	{ { 0.138642f, 0.086621f, 0.0156401f }, 2784, 8 }, /* levels\c20\shaders\c20light_inv_3warmglow */
+	{ { 0.446137f, 0.278738f, 0.0503284f }, 2792, 8 }, /* levels\c20\shaders\c20light_inv_3warmglow */
+	{ { 1.99705f, 1.89943f, 0.94506f }, 2800, 4 }, /* levels\c20\shaders\c20 light dim white b */
+	{ { 0.398454f, 0.248947f, 0.0449494f }, 2804, 8 }, /* levels\c20\shaders\c20light_inv_3warmglow */
+	{ { 0.261022f, 0.163081f, 0.0294457f }, 2812, 8 }, /* levels\c20\shaders\c20light_inv_3warmglow */
+	{ { 0.398886f, 0.249217f, 0.0449981f }, 2820, 8 }, /* levels\c20\shaders\c20light_inv_3warmglow */
+	{ { 0.292467f, 0.182728f, 0.032993f }, 2828, 8 }, /* levels\c20\shaders\c20light_inv_3warmglow */
+	{ { 5.37804f, 5.11515f, 2.54503f }, 2836, 4 }, /* levels\c20\shaders\c20 light dim white c */
+	{ { 2.82998f, 2.69165f, 1.33922f }, 2840, 8 }, /* levels\c20\shaders\c20 light dim white b */
+	{ { 0.693541f, 0.659639f, 0.328202f }, 2848, 4 }, /* levels\c20\shaders\c20 light dim white b */
+	{ { 4.14065f, 3.93825f, 1.95947f }, 2852, 4 }, /* levels\c20\shaders\c20 light dim white b */
+	{ { 12.198f, 11.6017f, 5.77241f }, 2856, 20 }, /* levels\c20\shaders\c20 light dim white b */
+	{ { 11.3078f, 10.755f, 5.35114f }, 2876, 26 }, /* levels\c20\shaders\c20 light dim white b */
+	{ { 10.2949f, 9.79165f, 4.87181f }, 2902, 22 }, /* levels\c20\shaders\c20 light dim white b */
+	{ { 15.6568f, 14.8915f, 7.40923f }, 2924, 24 }, /* levels\c20\shaders\c20 light dim white b */
+	{ { 0.683748f, 0.72969f, 3.68349f }, 2948, 6 }, /* levels\c20\shaders\plasma panel */
+	{ { 3.10197f, 2.95034f, 1.46794f }, 2954, 4 }, /* levels\c20\shaders\c20 light dim white b */
+	{ { 1.12379f, 1.06886f, 0.531807f }, 2958, 4 }, /* levels\c20\shaders\c20 light dim white */
+	{ { 10.759f, 10.2331f, 5.09144f }, 2962, 4 }, /* levels\c20\shaders\c20 light dim white */
+	{ { 2.86104f, 2.72119f, 1.35392f }, 2966, 4 }, /* levels\c20\shaders\c20 light dim white */
+	{ { 5.37737f, 5.11452f, 2.54472f }, 2970, 4 }, /* levels\c20\shaders\c20 light dim white */
+	{ { 2.12036f, 2.01671f, 1.00341f }, 2974, 4 }, /* levels\c20\shaders\c20 light dim white */
+	{ { 6.71212f, 6.38402f, 3.17636f }, 2978, 4 }, /* levels\c20\shaders\c20 light dim white */
+	{ { 3.44169f, 3.27345f, 1.6287f }, 2982, 4 }, /* levels\c20\shaders\c20 light dim white */
+	{ { 10.9338f, 10.3994f, 5.17418f }, 2986, 4 }, /* levels\c20\shaders\c20 light dim white */
+	{ { 27.6105f, 26.2609f, 13.0661f }, 2990, 4 }, /* levels\c20\shaders\c20 light dim white */
+	{ { 0.237288f, 0.253232f, 1.27832f }, 2994, 6 }, /* levels\c20\shaders\plasma panel */
+	{ { 1.68504f, 1.60267f, 0.797405f }, 3000, 28 }, /* levels\c20\shaders\c20 light dim white */
+	{ { 22.0225f, 20.946f, 10.4217f }, 3028, 4 }, /* levels\c20\shaders\c20 light dim white */
+	{ { 8.71428f, 8.28831f, 4.12383f }, 3032, 4 }, /* levels\c20\shaders\c20 light dim white */
+	{ { 0.55278f, 0.52576f, 0.261591f }, 3036, 28 }, /* levels\c20\shaders\c20 light dim white */
+	{ { 14.4918f, 13.7834f, 6.8579f }, 3064, 2 }, /* levels\c20\shaders\c20 light dim white */
+	{ { 2.50216f, 2.37985f, 1.18409f }, 3066, 4 }, /* levels\c20\shaders\c20 light dim white */
+	{ { 7.90651f, 7.52003f, 3.74158f }, 3070, 4 }, /* levels\c20\shaders\c20 light dim white */
+	{ { 4.84065f, 4.60404f, 2.29073f }, 3074, 28 }, /* levels\c20\shaders\c20 light dim white */
+	{ { 50.9172f, 48.4283f, 24.0954f }, 3102, 2 }, /* levels\c20\shaders\c20 light dim white */
+	{ { 12.267f, 11.6674f, 5.80509f }, 3104, 4 }, /* levels\c20\shaders\c20 light dim white */
+	{ { 0.234253f, 0.249993f, 1.26197f }, 3108, 12 }, /* levels\c20\shaders\plasma panel */
+	{ { 1.48768f, 1.41496f, 0.704009f }, 3120, 28 }, /* levels\c20\shaders\c20 light dim white */
+	{ { 6.25767f, 5.95179f, 2.9613f }, 3148, 4 }, /* levels\c20\shaders\c20 light dim white */
+	{ { 0.154214f, 0.272285f, 1.42046f }, 3152, 36 }, /* levels\c20\shaders\c20light_inv_3blueglow */
+	{ { 0.267171f, 0.471724f, 2.46089f }, 3188, 12 }, /* levels\c20\shaders\c20light_inv_3blueglow */
+	{ { 0.615234f, 1.08627f, 5.66688f }, 3200, 48 }, /* levels\c20\shaders\c20light_inv_3blueglow */
+	{ { 0.2103f, 0.371311f, 1.93706f }, 3248, 16 }, /* levels\c20\shaders\c20light_inv_3blueglow */
+	{ { 0.124024f, 0.21898f, 1.14238f }, 3264, 128 }, /* levels\c20\shaders\c20light_inv_3blueglow */
+	{ { 0.0110152f, 0.0194488f, 0.10146f }, 3392, 16 }, /* levels\c20\shaders\c20light_inv_3blueglow */
+	{ { 0.172701f, 0.304925f, 1.59074f }, 3408, 60 }, /* levels\c20\shaders\c20light_inv_3blueglow */
+	{ { 0.244574f, 0.431826f, 2.25275f }, 3468, 20 }, /* levels\c20\shaders\c20light_inv_3blueglow */
+	{ { 0.228427f, 0.243775f, 1.23058f }, 3488, 2 }, /* levels\c20\shaders\plasma panel */
+	{ { 0.136838f, 0.241604f, 1.2604f }, 3490, 48 }, /* levels\c20\shaders\c20light_inv_3blueglow */
+	{ { 0.700003f, 1.23594f, 6.44768f }, 3538, 16 }, /* levels\c20\shaders\c20light_inv_3blueglow */
+	{ { 0.0653653f, 0.115411f, 0.602075f }, 3554, 48 }, /* levels\c20\shaders\c20light_inv_3blueglow */
+	{ { 0.262696f, 0.463823f, 2.41968f }, 3602, 32 }, /* levels\c20\shaders\c20light_inv_3blueglow */
+	{ { 0.166308f, 0.293637f, 1.53185f }, 3634, 24 }, /* levels\c20\shaders\c20light_inv_3blueglow */
+	{ { 0.1558f, 0.275084f, 1.43506f }, 3658, 24 }, /* levels\c20\shaders\c20light_inv_3blueglow */
+	{ { 0.224476f, 0.396341f, 2.06763f }, 3682, 48 }, /* levels\c20\shaders\c20light_inv_3blueglow */
+	{ { 0.221639f, 0.391332f, 2.0415f }, 3730, 16 }, /* levels\c20\shaders\c20light_inv_3blueglow */
+	{ { 0.0634446f, 0.112019f, 0.584384f }, 3746, 48 }, /* levels\c20\shaders\c20light_inv_3blueglow */
+	{ { 0.224419f, 0.39624f, 2.0671f }, 3794, 16 }, /* levels\c20\shaders\c20light_inv_3blueglow */
+	{ { 0.236478f, 0.252367f, 1.27396f }, 3810, 2 }, /* levels\c20\shaders\plasma panel */
+	{ { 0.0309569f, 0.0546583f, 0.285142f }, 3812, 48 }, /* levels\c20\shaders\c20light_inv_3blueglow */
+	{ { 0.0550112f, 0.0971293f, 0.506704f }, 3860, 180 }, /* levels\c20\shaders\c20light_inv_3blueglow */
+	{ { 0.0974487f, 0.172058f, 0.897594f }, 4040, 76 }, /* levels\c20\shaders\c20light_inv_3blueglow */
+	{ { 0.498201f, 0.879637f, 4.5889f }, 4116, 16 }, /* levels\c20\shaders\c20light_inv_3blueglow */
+	{ { 0.0718843f, 0.126921f, 0.662122f }, 4132, 64 }, /* levels\c20\shaders\c20light_inv_3blueglow */
+	{ { 0.101161f, 0.178612f, 0.931785f }, 4196, 80 }, /* levels\c20\shaders\c20light_inv_3blueglow */
+	{ { 0.147651f, 0.260696f, 1.36f }, 4276, 48 }, /* levels\c20\shaders\c20light_inv_3blueglow */
+	{ { 0.0693942f, 0.122524f, 0.639185f }, 4324, 16 }, /* levels\c20\shaders\c20light_inv_3blueglow */
+	{ { 0.111874f, 0.197527f, 1.03046f }, 4340, 32 }, /* levels\c20\shaders\c20light_inv_3blueglow */
+	{ { 13.3075f, 14.0699f, 78.7362f }, 4372, 24 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 0.275415f, 0.293921f, 1.48372f }, 4396, 4 }, /* levels\c20\shaders\plasma panel */
+	{ { 4.85931f, 5.13768f, 28.7509f }, 4400, 8 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 6.21233f, 6.56821f, 36.7563f }, 4408, 24 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 7.54628f, 7.97857f, 44.6488f }, 4432, 8 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 5.27096f, 5.57291f, 31.1865f }, 4440, 24 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 7.00245f, 7.40359f, 41.4312f }, 4464, 8 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 3.56454f, 3.76874f, 21.0902f }, 4472, 24 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 8.03385f, 8.49408f, 47.5337f }, 4496, 8 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 0.981896f, 1.03815f, 5.80956f }, 4504, 8 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 9.02369f, 9.54062f, 53.3902f }, 4512, 4 }, /* levels\c20\shaders\c20 light dim blue c */
+	{ { 8.80146f, 9.30566f, 52.0753f }, 4516, 4 }, /* levels\c20\shaders\c20 light dim blue c */
 	{ { 0.0f, 0.0f, 0.0f }, 0, 0 },
 };
 

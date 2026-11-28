@@ -65,6 +65,8 @@
 #define LIGHTS_HEROES 2
 #define LIGHTS_RESTIR 4
 #define LIGHTS_REUSE 8
+// (the level's light sources' reservoirs drawn this frame: the reservoirs' right half)
+#define LIGHTS_EMITTER_REUSE 32
 // a level lit live (lt_lights.c's lt_lights_real_sky, ~/dev/rt2-realtime-design.md section 9): the suns' rows are the
 // sky's whole light, not the lightmap's share; a row of angular diameter past a half turn is the sky's dome (the
 // bounce's: a ray that leaves the scene returns it, lt/indirect.glsl)
@@ -89,6 +91,9 @@
 // RIS's candidates: the direct light's, a bounce hit's
 #define EMITTER_CANDIDATES 12
 #define EMITTER_PICKS 2
+// ReSTIR's count cap (frames of history); its spatial neighbours
+#define EMITTER_M_CAP 20.0
+#define EMITTER_NEIGHBOURS 3
 #define EMITTER_BOUNCE_CANDIDATES 3
 
 // the draw set's uniforms: struct xgpu_world_ao_pass, then (at 1024) xgpu_vulkan_lt.c's struct lt_params
@@ -548,14 +553,43 @@ float emitter_cell_chance(int group, float u, out int picked)
     return chance;
 }
 
-// one candidate point of the level's light sources for p (normal n, shaded the bump-mapped one): u the group's
-// choice, xi the point's. Out: the point, and its light at p unshadowed in area measure (radiance x cos x cos' /
-// d^2 / pi, the pass's units) and the chance density of drawing it (per world unit squared); false none
-bool emitter_candidate(vec3 p, vec3 n, vec3 shaded, int cell, float u, vec2 xi, out vec3 q, out vec3 f,
+// a point of a light source's triangle (tri, its edges' coordinates ab) and its light at p unshadowed in area measure
+// (radiance x cos x cos' / d^2 / pi, the pass's units): 0 where it faces away or is behind p
+vec3 emitter_light(vec3 p, vec3 n, vec3 shaded, int tri, vec2 ab, out vec3 q)
+{
+    vec4 t0 = emitter_texel(pass.emitter_bases.x + 3 * tri), t1 = emitter_texel(pass.emitter_bases.x + 3 * tri + 1),
+        t2 = emitter_texel(pass.emitter_bases.x + 3 * tri + 2);
+    q = t0.xyz + t1.xyz * ab.x + t2.xyz * ab.y;
+    vec3 to = q - p;
+    float d2 = max(dot(to, to), 1.0e-6);
+    vec3 l = to * inversesqrt(d2);
+    float emitting = dot(normalize(cross(t1.xyz, t2.xyz)), -l), lit = max(dot(shaded, l), 0.0);
+    if (emitting <= 0.0 || dot(n, l) <= 0.0 || lit <= 0.0)
+        return vec3(0.0);
+    // (the distance squared no less than a hundredth of a world unit's: a receiver touching a lamp)
+    return emitter_texel(2 * int(t1.w) + 1).rgb * (lit * emitting / (max(d2, 0.01) * 3.14159265));
+}
+
+// whether q (a light source's point) is seen from p (normal n), the receiver's own object left out
+float emitter_visible(vec3 p, vec3 n, vec3 q, int receiver)
+{
+    vec3 origin = p + n * (0.004 + 0.0005 * length(p - pass.camera[0].xyz));
+    vec3 ray = q - origin;
+    float length_to = length(ray);
+    // (ending short of the lamp's own surface, 0.01 under the light)
+    float t_max = length_to - 0.02;
+    return t_max > 0.0 ? visible_by(origin, ray / length_to, t_max, receiver, 0xffffffffu, MASK_AO) : 0.0;
+}
+
+// one candidate point of the level's light sources for p: u the group's choice, xi the point's. Out: its triangle
+// and coordinates, its light at p unshadowed (emitter_light) and the chance density of drawing it (per world unit
+// squared); false none
+bool emitter_candidate(vec3 p, vec3 n, vec3 shaded, int cell, float u, vec2 xi, out int tri, out vec2 ab, out vec3 f,
     out float density)
 {
     int group, picked;
-    q = vec3(0.0);
+    tri = -1;
+    ab = vec2(0.0);
     f = vec3(0.0);
     density = 0.0;
     float level_share = cell >= 0 ? EMITTER_LEVEL_SHARE : 1.0;
@@ -585,43 +619,48 @@ bool emitter_candidate(vec3 p, vec3 n, vec3 shaded, int cell, float u, vec2 xi, 
         else
             low = middle + 1;
     }
-    vec4 t0 = emitter_texel(pass.emitter_bases.x + 3 * low), t1 = emitter_texel(pass.emitter_bases.x + 3 * low + 1),
-        t2 = emitter_texel(pass.emitter_bases.x + 3 * low + 2);
     float before = low > int(g0.x) ? emitter_texel(pass.emitter_bases.x + 3 * (low - 1)).w : 0.0;
-    float x = clamp((a - before) / max(t0.w - before, 1.0e-12), 0.0, 1.0), s = sqrt(x);
-    q = t0.xyz + t1.xyz * (s * (1.0 - xi.y)) + t2.xyz * (s * xi.y);
-    vec3 to = q - p;
-    float d2 = max(dot(to, to), 1.0e-6);
-    vec3 l = to * inversesqrt(d2);
-    float emitting = dot(normalize(cross(t1.xyz, t2.xyz)), -l), lit = max(dot(shaded, l), 0.0);
+    float top = emitter_texel(pass.emitter_bases.x + 3 * low).w;
+    float x = clamp((a - before) / max(top - before, 1.0e-12), 0.0, 1.0), s = sqrt(x);
+    tri = low;
+    ab = vec2(s * (1.0 - xi.y), s * xi.y);
+    vec3 q;
+    f = emitter_light(p, n, shaded, tri, ab, q);
     density = chance / g0.z;
-    if (emitting <= 0.0 || dot(n, l) <= 0.0 || lit <= 0.0)
-        return true;
-    // (the distance squared no less than a hundredth of a world unit's: a receiver touching a lamp)
-    f = g1.rgb * (lit * emitting / (max(d2, 0.01) * 3.14159265));
     return true;
 }
 
-// the level's light sources' light at p, unbiased: RIS over candidates of them (each drawn by its group's light
-// about p and its area, weighted by its own unshadowed light there), one shadow ray to the one chosen
-vec3 emitter_sample(vec3 p, vec3 n, vec3 shaded, int candidates, inout uint h, int receiver, bool shadow)
+// RIS over candidates of the level's light sources at p (each drawn by its group's light about p and its area,
+// weighted by its own unshadowed light there): the one chosen (tri -1 none), its light, and its weight W (the sum of
+// the weights over the candidates and its target)
+struct EmitterPick
 {
+    int tri;
+    vec2 ab;
+    vec3 f;
+    float w;
+};
+
+EmitterPick emitter_ris(vec3 p, vec3 n, vec3 shaded, int candidates, inout uint h)
+{
+    EmitterPick pick = EmitterPick(-1, vec2(0.0), vec3(0.0), 0.0);
     if (pass.emitter_counts.w <= 0)
-        return vec3(0.0);
+        return pick;
     int cell = emitter_cell(p + n * 0.02);
     // (a cell no group lights: the level's power alone)
     if (cell >= 0 && emitter_texel(cell).x < 0.0)
         cell = -1;
     emitter_cell_read(cell);
-    vec3 chosen = vec3(0.0), chosen_f = vec3(0.0);
     float w_sum = 0.0, chosen_target = 0.0;
     for (int k = 0; k < candidates; k++)
     {
-        vec3 q, f;
+        int tri;
+        vec2 ab;
+        vec3 f;
         float density;
         float u = random(h);
         vec2 xi = vec2(random(h), random(h));
-        if (!emitter_candidate(p, n, shaded, cell, u, xi, q, f, density) || density <= 0.0)
+        if (!emitter_candidate(p, n, shaded, cell, u, xi, tri, ab, f, density) || density <= 0.0)
             continue;
         float target = luminance_of(f);
         if (target <= 0.0)
@@ -630,24 +669,70 @@ vec3 emitter_sample(vec3 p, vec3 n, vec3 shaded, int candidates, inout uint h, i
         w_sum += w;
         if (random(h) * w_sum < w)
         {
-            chosen = q;
-            chosen_f = f;
+            pick.tri = tri;
+            pick.ab = ab;
+            pick.f = f;
             chosen_target = target;
         }
     }
-    if (chosen_target <= 0.0)
+    pick.w = chosen_target > 0.0 ? w_sum / (float(candidates) * chosen_target) : 0.0;
+    return pick;
+}
+
+// the level's light sources' light at p: RIS, one shadow ray to the one chosen
+vec3 emitter_sample(vec3 p, vec3 n, vec3 shaded, int candidates, inout uint h, int receiver, bool shadow)
+{
+    EmitterPick pick = emitter_ris(p, n, shaded, candidates, h);
+    if (pick.tri < 0 || pick.w <= 0.0)
         return vec3(0.0);
-    float seen = 1.0;
-    if (shadow)
+    vec3 q;
+    emitter_light(p, n, shaded, pick.tri, pick.ab, q);
+    return pick.f * pick.w * (shadow ? emitter_visible(p, n, q, receiver) : 1.0);
+}
+
+// ---------- ReSTIR over the level's light sources (~/dev/rt2-realtime-design.md section 11): a pixel's reservoir in
+// the reservoirs' right half (from x = the window's width): x its triangle x 64 + its count M (-1 none), y and z the
+// point's edge coordinates, w its weight W. RESERVOIR's right half draws this frame's: RIS's pick, its visibility
+// traced (an unseen pick keeps its count, its weight 0), merged with the frame before's at the same surface (its count
+// capped before the merge so that the sum is at most EMITTER_M_CAP; its sample's light and visibility at p found
+// again: the validation); the main draw reuses it spatially and traces the one chosen. The targets: the light at p
+// with its visibility (the temporal draw's), unshadowed (the spatial merge's, each neighbour's sample seen from
+// there; the final ray decides)
+struct EmitterReservoir
+{
+    int tri;
+    vec2 ab;
+    float m, w;
+};
+
+EmitterReservoir emitter_reservoir_read(vec4 t)
+{
+    if (t.x < 0.0)
+        return EmitterReservoir(-1, vec2(0.0), 0.0, 0.0);
+    int packed = int(t.x + 0.5);
+    return EmitterReservoir(packed >> 6, t.yz, float(packed & 63), max(t.w, 0.0));
+}
+
+vec4 emitter_reservoir_write(EmitterReservoir r)
+{
+    return r.tri >= 0 ? vec4(float(r.tri * 64 + int(r.m)), r.ab, r.w) : vec4(-1.0, 0.0, 0.0, 0.0);
+}
+
+// merged into r (w_sum its running sum, target its sample's): another reservoir's sample by its target at p
+void emitter_reservoir_merge(inout EmitterReservoir r, inout float w_sum, inout float target, EmitterReservoir other,
+    float other_target, float u)
+{
+    float w = other_target * other.w * other.m;
+    r.m += other.m;
+    if (other.tri < 0 || w <= 0.0)
+        return;
+    w_sum += w;
+    if (u * w_sum < w)
     {
-        vec3 origin = p + n * (0.004 + 0.0005 * length(p - pass.camera[0].xyz));
-        vec3 ray = chosen - origin;
-        float length_to = length(ray);
-        // (ending short of the lamp's own surface, 0.01 under the light)
-        float t_max = length_to - 0.02;
-        seen = t_max > 0.0 ? visible_by(origin, ray / length_to, t_max, receiver, 0xffffffffu, MASK_AO) : 0.0;
+        r.tri = other.tri;
+        r.ab = other.ab;
+        target = other_target;
     }
-    return chosen_f * (seen * w_sum / (float(candidates) * chosen_target));
 }
 
 // a reservoir: its light's row (-1 none), the sum of the weights, its count, the chosen one's target
@@ -952,6 +1037,11 @@ void main()
     }
     if ((pass.control.w & GRADIENT) != 0)
         pixel = lt_gradient_pixel_in(pixel, pass.history.y);
+    // (the reservoirs' right half: the level's light sources' at the pixel a window's width to the left)
+    int half_width = textureSize(inputs, 0).x;
+    bool emitter_half = (pass.control.w & RESERVOIR) != 0 && pixel.x >= half_width;
+    if (emitter_half)
+        pixel.x -= half_width;
     uvec4 words = texelFetch(inputs, pixel, 0);
     vec3 n = unfold(unpackSnorm2x16(words.x));
     vec3 shaded = unfold(unpackSnorm2x16(texelFetch(guides, pixel, 0).x));
@@ -987,6 +1077,39 @@ void main()
         return;
     }
     // (the reservoirs: RIS over the cell's lights but the heroes, merged with the last frame's at the same point)
+    if (emitter_half)
+    {
+        // (the light sources' reservoir: RIS's pick seen or not, merged with the frame before's, validated)
+        result = vec4(-1.0, 0.0, 0.0, 0.0);
+        if (!present)
+            return;
+        uint h = seed(pixel, 5u);
+        EmitterPick pick = emitter_ris(p, n, shaded, EMITTER_CANDIDATES, h);
+        EmitterReservoir r = EmitterReservoir(pick.tri, pick.ab, 1.0, pick.w);
+        float target = 0.0, w_sum = 0.0;
+        vec3 q;
+        if (r.tri >= 0 && r.w > 0.0)
+        {
+            target = luminance_of(emitter_light(p, n, shaded, r.tri, r.ab, q)) * emitter_visible(p, n, q, receiver);
+            w_sum = target * r.w;
+        }
+        if (target <= 0.0)
+            r.tri = -1;
+        ivec2 q_pixel;
+        if ((pass.control.w & RESET) == 0 && reproject(p, n, words.w, q_pixel))
+        {
+            EmitterReservoir before = emitter_reservoir_read(texelFetch(reservoirs, q_pixel + ivec2(half_width, 0), 0));
+            before.m = min(before.m, max(EMITTER_M_CAP - r.m, 0.0));
+            float before_target = 0.0;
+            if (before.tri >= 0 && before.m > 0.0 && before.w > 0.0)
+                before_target = luminance_of(emitter_light(p, n, shaded, before.tri, before.ab, q)) *
+                    emitter_visible(p, n, q, receiver);
+            emitter_reservoir_merge(r, w_sum, target, before, before_target, random(h));
+        }
+        r.w = r.tri >= 0 && target > 0.0 && r.m > 0.0 ? w_sum / (r.m * target) : 0.0;
+        result = emitter_reservoir_write(r);
+        return;
+    }
     if ((pass.control.w & RESERVOIR) != 0)
     {
         result = vec4(-1.0, 0.0, 0.0, 0.0);
@@ -1060,11 +1183,51 @@ void main()
     // (the level's light sources: one point of them, one ray)
     if (pass.emitter_counts.w > 0)
     {
-        // (two independent picks, a shadow ray each: most of a level's lamps are behind a wall from most receivers)
         uint h = seed(pixel, 4u);
-        for (int k = 0; k < EMITTER_PICKS; k++)
-            lit += emitter_sample(p, n, shaded, EMITTER_CANDIDATES, h, receiver, (pass.control.w & VISIBILITY) != 0) *
-                (1.0 / float(EMITTER_PICKS));
+        bool shadow = (pass.control.w & VISIBILITY) != 0;
+        // (the reservoirs, reused spatially, where they were drawn; not at this frame's gradient pixels, which the
+        // denoiser's re-shade shades the next frame without them: the same estimator on both sides of its gradient)
+        if ((pass.lights.z & LIGHTS_EMITTER_REUSE) != 0 && (pass.control.w & GRADIENT) == 0 &&
+            !lt_gradient_pixel(pixel, pass.history.y))
+        {
+            int half_width_now = textureSize(inputs, 0).x;
+            EmitterReservoir r = EmitterReservoir(-1, vec2(0.0), 0.0, 0.0);
+            float w_sum = 0.0, target = 0.0, distance = uintBitsToFloat(words.z);
+            vec3 q;
+            for (int k = 0; k <= EMITTER_NEIGHBOURS; k++)
+            {
+                ivec2 at = pixel;
+                if (k > 0)
+                {
+                    float angle = random(h) * 6.2831853, reach = 2.0 + random(h) * 10.0;
+                    at = pixel + ivec2(round(vec2(cos(angle), sin(angle)) * reach));
+                    if (any(lessThan(at, pass.corners.xy)) || any(greaterThanEqual(at, pass.corners.zw)))
+                        continue;
+                    uvec4 there = texelFetch(inputs, at, 0);
+                    if ((there.y & INPUT_PRESENT) == 0u || abs(uintBitsToFloat(there.z) - distance) > 0.1 * distance ||
+                        dot(unfold(unpackSnorm2x16(there.x)), n) < 0.9)
+                        continue;
+                }
+                EmitterReservoir other = emitter_reservoir_read(texelFetch(reservoirs, at + ivec2(half_width_now, 0),
+                    0));
+                float other_target = other.tri >= 0 ?
+                    luminance_of(emitter_light(p, n, shaded, other.tri, other.ab, q)) : 0.0;
+                emitter_reservoir_merge(r, w_sum, target, other, other_target, random(h));
+            }
+            if (r.tri >= 0 && target > 0.0 && r.m > 0.0)
+            {
+                vec3 f = emitter_light(p, n, shaded, r.tri, r.ab, q);
+                lit += f * (w_sum / (r.m * target)) * (shadow ? emitter_visible(p, n, q, receiver) : 1.0);
+            }
+        }
+        else
+        {
+            // (two independent picks, a shadow ray each: most of a level's lamps are behind a wall from most
+            // receivers)
+            for (int k = 0; k < EMITTER_PICKS; k++)
+                lit += emitter_sample(p, n, shaded, EMITTER_CANDIDATES, h, receiver, shadow) *
+                    (1.0 / float(EMITTER_PICKS));
+        }
     }
     // (the suns on the structure, which the lightmap lights: their whole share less what a dynamic object blocks,
     // FINAL taking the whole off; SUN_FIRST rays where the pixel has no history)
