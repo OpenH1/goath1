@@ -320,6 +320,63 @@ static unsigned long reflection_byte(float strength)
 	return scaled <= 0.0f ? 0ul : scaled >= 255.0f ? 255ul : (unsigned long)scaled;
 }
 
+/* its roughness (the light transport's GGX: ~/dev/rt2-realtime-design.md
+section 10), derived from the shader's own data where it reflects, as Halo
+has no roughness: the stronger the reflection, the smoother (a strength of
+1 or more is a polished floor, a faint one a dull coat); an environment's
+"extra shiny" specular smoother still, its flat cube map (an unbumped
+mirror floor) smoother, its bumped radiosity rougher, a dynamic mirror a
+mirror; a model's (Halo's model cube maps are a soft environment) between
+0.2 and 0.5. The code in the flags' bits (XGPU_WORLD_RT_MATERIAL_ROUGHNESS_*,
+k x 0.02) */
+#define WORLD_RT_ENVIRONMENT_SPECULAR_FLAGS 0x27C
+#define WORLD_RT_ENVIRONMENT_SPECULAR_EXTRA_SHINY 0x2
+#define WORLD_RT_ENVIRONMENT_REFLECTION_FLAGS 0x2D0
+#define WORLD_RT_ENVIRONMENT_REFLECTION_TYPE 0x2D2
+#define WORLD_RT_ENVIRONMENT_REFLECTION_DYNAMIC_MIRROR 0x1
+#define WORLD_RT_ENVIRONMENT_REFLECTION_FLAT 1
+#define WORLD_RT_ENVIRONMENT_REFLECTION_BUMPED_RADIOSITY 2
+#define WORLD_RT_ROUGHNESS_STEP 0.02f
+
+static short shader_short(void const *shader, int offset)
+{
+	short value;
+
+	memcpy(&value, (char const *)shader + offset, sizeof(value));
+	return value;
+}
+
+static unsigned long material_roughness(struct shader const *shader, float strength)
+{
+	float s = strength < 0.0f ? 0.0f : strength > 1.0f ? 1.0f : strength, roughness;
+	long code;
+
+	if (shader->base.type == _world_rt_shader_type_environment)
+	{
+		unsigned short specular_flags = (unsigned short)shader_short(shader, WORLD_RT_ENVIRONMENT_SPECULAR_FLAGS);
+		unsigned short reflection_flags = (unsigned short)shader_short(shader, WORLD_RT_ENVIRONMENT_REFLECTION_FLAGS);
+		short type = shader_short(shader, WORLD_RT_ENVIRONMENT_REFLECTION_TYPE);
+
+		roughness = 0.45f - 0.35f * s;
+		if (specular_flags & WORLD_RT_ENVIRONMENT_SPECULAR_EXTRA_SHINY)
+			roughness -= 0.08f;
+		if (type == WORLD_RT_ENVIRONMENT_REFLECTION_FLAT)
+			roughness -= 0.05f;
+		else if (type == WORLD_RT_ENVIRONMENT_REFLECTION_BUMPED_RADIOSITY)
+			roughness += 0.1f;
+		if (reflection_flags & WORLD_RT_ENVIRONMENT_REFLECTION_DYNAMIC_MIRROR)
+			roughness = 0.02f;
+		roughness = roughness < 0.02f ? 0.02f : roughness > 0.6f ? 0.6f : roughness;
+	}
+	else
+	{
+		roughness = 0.5f - 0.3f * s;
+	}
+	code = (long)(roughness / WORLD_RT_ROUGHNESS_STEP + 0.5f);
+	code = code < 1 ? 1 : code > WORLD_RT_MATERIAL_ROUGHNESS_MASK ? WORLD_RT_MATERIAL_ROUGHNESS_MASK : code;
+	return (unsigned long)code << WORLD_RT_MATERIAL_ROUGHNESS_SHIFT;
+}
+
 static void material_reflection(struct shader const *shader, struct world_rt_source_material *material)
 {
 	float perpendicular, parallel;
@@ -348,6 +405,8 @@ static void material_reflection(struct shader const *shader, struct world_rt_sou
 		return;
 	material->flags |= reflection_byte(perpendicular) << WORLD_RT_MATERIAL_REFLECTION_PERPENDICULAR_SHIFT |
 		reflection_byte(parallel) << WORLD_RT_MATERIAL_REFLECTION_PARALLEL_SHIFT;
+	if (perpendicular > 0.0f || parallel > 0.0f)
+		material->flags |= material_roughness(shader, perpendicular > parallel ? perpendicular : parallel);
 }
 
 /* a shader as a render mesh's material: its type and flags, its maps, and

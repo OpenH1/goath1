@@ -88,6 +88,8 @@ enum
 	WORLD_RT_MATERIAL_MASK_MULTIPURPOSE = 0x200,
 	WORLD_RT_MATERIAL_REFLECTION_PERPENDICULAR_SHIFT = 16,
 	WORLD_RT_MATERIAL_REFLECTION_PARALLEL_SHIFT = 24,
+	WORLD_RT_MATERIAL_ROUGHNESS_SHIFT = 10,
+	WORLD_RT_MATERIAL_ROUGHNESS_MASK = 0x1f,
 	/* the scene as drawn's memory (world_rt.c's budget): a triangle's
 	bytes, estimated (its share of a bottom-level structure, about 160
 	before compaction on RADV, with its corners, material and vertices'

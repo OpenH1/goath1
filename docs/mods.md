@@ -295,6 +295,10 @@ mods/
   a DirectX-style map).
 - `<bitmap>.orm.png` packs ambient occlusion in red, roughness in green
   (0 smooth, 255 rough) and metalness in blue (0 not a metal), as glTF does.
+  An RGBA file's alpha is how much the part glows (0 not at all): with
+  ray-traced lighting on, the glowing part shows its base map's color at
+  full light (the MCC import writes MCC's emissive maps there). An RGB
+  file glows nowhere.
 - Either can be left out. Each is an 8-bit RGB or RGBA PNG, not
   interlaced, each side a power of two from 4 to 2048, and need not be the
   bitmap's size.

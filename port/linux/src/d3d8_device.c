@@ -575,13 +575,18 @@ unsigned long halo_gpu_settings_taken(void);
 /* (a record playing: below) */
 static BOOL journal_playing;
 
+int lt_lights_pass_on(void); /* port/linux/game/lt_lights.h */
+
 static int rt_reflections_wanted(void)
 {
 	if (!rt_reflections.read || rt_reflections.read_at != halo_gpu_settings_taken())
 	{
 		rt_reflections.read = 1;
 		rt_reflections.read_at = halo_gpu_settings_taken();
-		rt_reflections.on = config_boolean("display.rt_reflections") && xgpu_backend_capabilities.ray_queries;
+		/* (on with the ray-traced lighting too: its reflections are the
+		pass's, display.rt_reflections' tags say where) */
+		rt_reflections.on = (config_boolean("display.rt_reflections") || lt_lights_pass_on()) &&
+			xgpu_backend_capabilities.ray_queries;
 	}
 	return rt_reflections.on;
 }
@@ -921,7 +926,9 @@ _Static_assert(sizeof(struct world_rt_mesh_header) == sizeof(struct xgpu_world_r
 	WORLD_RT_MATERIAL_MASK_BUMP == XGPU_WORLD_RT_MATERIAL_MASK_BUMP &&
 	WORLD_RT_MATERIAL_MASK_MULTIPURPOSE == XGPU_WORLD_RT_MATERIAL_MASK_MULTIPURPOSE &&
 	WORLD_RT_MATERIAL_REFLECTION_PERPENDICULAR_SHIFT == XGPU_WORLD_RT_MATERIAL_REFLECTION_PERPENDICULAR_SHIFT &&
-	WORLD_RT_MATERIAL_REFLECTION_PARALLEL_SHIFT == XGPU_WORLD_RT_MATERIAL_REFLECTION_PARALLEL_SHIFT,
+	WORLD_RT_MATERIAL_REFLECTION_PARALLEL_SHIFT == XGPU_WORLD_RT_MATERIAL_REFLECTION_PARALLEL_SHIFT &&
+	WORLD_RT_MATERIAL_ROUGHNESS_SHIFT == XGPU_WORLD_RT_MATERIAL_ROUGHNESS_SHIFT &&
+	WORLD_RT_MATERIAL_ROUGHNESS_MASK == XGPU_WORLD_RT_MATERIAL_ROUGHNESS_MASK,
 	"the ray-traced scene's meshes as drawn");
 
 void halo_world_rt_mesh(unsigned long id, void const *data, unsigned long size)
