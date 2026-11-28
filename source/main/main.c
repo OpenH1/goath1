@@ -1969,6 +1969,18 @@ void main_save_map_no_timeout(
 	return;
 }
 
+/* port: whether the ticks running are a script's skipped ones
+(game_skip_ticks: main_skip_private), which run with no frame between them:
+the scripted camera's time left (camera_scripting.c), which the frames
+counted down, is not counted down by them */
+static boolean main_skipping;
+
+boolean main_skipping_ticks(
+	void)
+{
+	return main_skipping;
+}
+
 void main_skip(
 	short ticks)
 {
@@ -2436,8 +2448,10 @@ static void main_skip_private(
 		real saved_speed = game_time_get_speed();
 
 		game_time_set_speed(1.0f);
+		main_skipping = TRUE;
 		while (main_globals.skip_ticks-- > 0)
 			game_time_update(1.0f / TICKS_PER_SECOND);
+		main_skipping = FALSE;
 		game_time_set_speed(saved_speed);
 	}
 	else

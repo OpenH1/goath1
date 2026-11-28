@@ -126,6 +126,7 @@ struct game_options;
 #include "bink/bink_playback.h"
 #include "bungie_net/network/transport.h"
 #include "cache/cache_files.h"
+#include "camera/camera_scripting.h"
 #include "camera/director.h"
 #include "camera/observer.h"
 #include "cseries/errors.h"
@@ -485,6 +486,9 @@ static void game_tick_after_substeps(
 	/* port: the letterbox's slide and the chapter titles' time
 	(cinematics.c: they moved with the frames) */
 	cinematic_update();
+	/* port: the scripted camera's time left, a tick's step once a tick
+	(camera_scripting.c: it stepped by the frames' time, #1236) */
+	scripted_camera_tick();
 	/* port: the wind's step, once a tick (scenario.c: it stepped by the
 	frames' time) */
 	scenario_tick_update();

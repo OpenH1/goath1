@@ -7627,7 +7627,9 @@ contrails, which a tick adds points to, still part by the frame rate.)
   (`sound/game_sound.c`), as its mouth moves to it.
 - Time. The ticks read only the game's time. The speakers' mouths move in
   the ticks, from the ticks since the sound began; the wind steps once a
-  tick.
+  tick, and so does the scripted camera's time left, which the scripts'
+  `camera_time` reads (the frames between move the camera on from where the
+  tick left it: `camera/camera_scripting.c`).
 - What the ticks keep. Not the sound manager's indices, which are the
   mixer's (a unit's speech, the first-person weapon's sound), nor the
   decals, which are the frames' (above). What the game

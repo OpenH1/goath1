@@ -55,6 +55,8 @@ short scripted_camera_time(
 	void);
 void *scripted_camera_port_demo_state(
 	long *size);
+void scripted_camera_tick(
+	void);
 long scripted_camera_object_relative_to(
 	void);
 void scripted_camera_update(
