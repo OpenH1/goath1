@@ -65,6 +65,12 @@ Render thread alone.
 #define INDIRECT_COVERAGE 2097152
 #define INDIRECT_CACHE_ON 4194304
 #define INDIRECT_BOUNCE_HISTORY 8388608
+#define INDIRECT_BOUNCE_HIT 16777216
+#define INDIRECT_BOUNCE_GRADIENT 33554432
+#define INDIRECT_HISTORY_PASS 67108864
+#define INDIRECT_GRADIENT_ON 134217728
+/* (lt/indirect.glsl's GRADIENT_STRATUM: a gradient texel's blocks across) */
+#define INDIRECT_GRADIENT_STRATUM 3
 /* where its parameters are in the uniforms (lt/e1.frag's indirect[4]) */
 #define INDIRECT_PARAMS_OFFSET 1536
 /* the cache's slots (a texel each, RGBA32F: 24 MB; lt/indirect_cache.glsl's
@@ -100,6 +106,11 @@ static struct
 	bounce pass's second output: the one the denoiser reads this frame */
 	struct xgpu_vulkan_image *bounce_histories[2], *bounce_history;
 	int bounce_history_valid;
+	/* (the fold's) the bounce's temporal gradient: each frame's hits in
+	turn (lt/indirect.glsl's BOUNCE_HIT; the last frame's valid), the
+	gradient (BOUNCE_GRADIENT: both frames' light at those hits) */
+	struct xgpu_vulkan_image *hits[2], *gradient;
+	int hits_valid;
 	int current, cache_current, cache_valid;
 	unsigned long frames;
 	/* this frame's bounce's phase, and whether it was drawn (the fold's) */
@@ -168,7 +179,7 @@ static int indirect_shaders(void)
 	{
 		/* (a reload: the kernels made again, the histories and the cache
 		started again) */
-		indirect.made = indirect.failed = indirect.cache_valid = indirect.bounce_history_valid = 0;
+		indirect.made = indirect.failed = indirect.cache_valid = indirect.bounce_history_valid = indirect.hits_valid = 0;
 		indirect.generation = generation;
 	}
 	if (indirect.made)
@@ -364,12 +375,25 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 				indirect.bounce_history_valid = 0;
 			indirect.bounce_histories[index] = indirect_image(indirect.bounce_histories[index],
 				XGPU_VULKAN_FORMAT_RGBA32F, half_width, half_height);
-			if (!indirect.bounce_histories[index])
+			if (!indirect.hits[index] || xgpu_vulkan_image_description(indirect.hits[index])->width != half_width ||
+				xgpu_vulkan_image_description(indirect.hits[index])->height != half_height)
+				indirect.hits_valid = 0;
+			indirect.hits[index] = indirect_image(indirect.hits[index], XGPU_VULKAN_FORMAT_RGBA32F, half_width,
+				half_height);
+			if (!indirect.bounce_histories[index] || !indirect.hits[index])
 				return NULL;
 		}
+		indirect.gradient = indirect_image(indirect.gradient, XGPU_VULKAN_FORMAT_RGBA32F,
+			(half_width + INDIRECT_GRADIENT_STRATUM - 1) / INDIRECT_GRADIENT_STRATUM,
+			(half_height + INDIRECT_GRADIENT_STRATUM - 1) / INDIRECT_GRADIENT_STRATUM);
+		if (!indirect.gradient)
+			return NULL;
 	}
 	else
+	{
 		indirect.bounce_history_valid = 0;
+		indirect.hits_valid = 0;
+	}
 	if (!frame->fold)
 		indirect.total = indirect_image(indirect.total, accumulate ? XGPU_VULKAN_FORMAT_RGBA32F :
 			XGPU_VULKAN_FORMAT_RGBA16F, width, height);
@@ -411,21 +435,45 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 
 		if (frame->fold)
 		{
-			/* (the fold: the bounce's half-resolution history counted by the
-			same pass, its second output, from the last frame's) */
+			/* (the fold: the bounce, its hits its second output; the
+			gradient, the last frame's hits under both frames' tables; the
+			bounce's half-resolution history counted from the last frame's,
+			relit by the gradient: lt/indirect.glsl's HISTORY_PASS) */
 			float counted[4][4];
-			int history_reset = reset || !indirect.bounce_history_valid;
+			int32_t lights[4], strata[4] = { 0, 0, 0, 0 };
+			int history_reset = reset || !indirect.bounce_history_valid, gradient = 0;
+			struct xgpu_vulkan_image *halves = xgpu_vulkan_lt_table_halves(lights);
+			struct xgpu_vulkan_image *history_textures[6] = { frame->inputs, indirect.gradient, frame->previous_inputs,
+				frame->guides, indirect.bounce, indirect.bounce_histories[indirect.current] };
 
 			memcpy(counted, parameters, sizeof(counted));
 			counted[3][0] = (float)INDIRECT_BOUNCE_CAP;
-			textures[5] = indirect.bounce_histories[indirect.current];
-			indirect.bounce_history = indirect.bounce_histories[indirect.current ^ 1];
-			xgpu_vulkan_set_motion_target(indirect.bounce_history, indirect.bounce);
-			indirect_pass(indirect.bounce, half, frame, INDIRECT_BOUNCE | INDIRECT_BOUNCE_HISTORY |
-				(history_reset ? INDIRECT_RESET : 0), frame->cap, textures, &indirect.bounce_pass, counted);
+			xgpu_vulkan_set_motion_target(indirect.hits[indirect.current ^ 1], indirect.bounce);
+			indirect_pass(indirect.bounce, half, frame, INDIRECT_BOUNCE | INDIRECT_BOUNCE_HIT |
+				(history_reset ? INDIRECT_RESET : 0), frame->cap, textures, &indirect.bounce_pass, parameters);
 			xgpu_vulkan_set_motion_target(NULL, NULL);
-			textures[5] = NULL;
+			if (indirect.hits_valid && halves && !history_reset)
+			{
+				struct xgpu_vulkan_image *gradient_textures[6] = { NULL, indirect.hits[indirect.current], NULL, NULL,
+					halves, NULL };
+				float rows[4][4];
+
+				memcpy(rows, parameters, sizeof(rows));
+				rows[3][1] = (float)lights[0];
+				rows[3][2] = (float)lights[1];
+				rows[3][3] = (float)lights[2];
+				strata[2] = (int32_t)xgpu_vulkan_image_description(indirect.gradient)->width;
+				strata[3] = (int32_t)xgpu_vulkan_image_description(indirect.gradient)->height;
+				indirect_pass(indirect.gradient, strata, frame, INDIRECT_BOUNCE_GRADIENT, frame->cap, gradient_textures,
+					&indirect.wide, rows);
+				gradient = 1;
+			}
+			indirect.bounce_history = indirect.bounce_histories[indirect.current ^ 1];
+			indirect_pass(indirect.bounce_history, half, frame, INDIRECT_HISTORY_PASS |
+				(history_reset ? INDIRECT_RESET : 0) | (gradient ? INDIRECT_GRADIENT_ON : 0), frame->cap,
+				history_textures, &indirect.wide, counted);
 			indirect.bounce_history_valid = 1;
+			indirect.hits_valid = 1;
 		}
 		else
 			indirect_pass(indirect.bounce, half, frame, INDIRECT_BOUNCE | (reset ? INDIRECT_RESET : 0), frame->cap,

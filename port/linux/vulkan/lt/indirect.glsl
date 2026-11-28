@@ -38,6 +38,19 @@
 #define CACHE_ON 4194304
 // (with BOUNCE: its history too, the second output)
 #define BOUNCE_HISTORY 8388608
+// the bounce's temporal gradient (xgpu_vulkan_lt_indirect.c, folded): BOUNCE with BOUNCE_HIT writes each block's hit
+// (its point, normal and albedo's luminance) as its second output in place of the history; BOUNCE_GRADIENT (a texel
+// GRADIENT_STRATUM^2 blocks) re-shades the frame before's hits under both frames' light tables (the forward table's
+// halves, light_table here: no rays, every light unshadowed at the hit), their sums; HISTORY_PASS counts the bounce's
+// history, relit by the gradient's ratio (GRADIENT_ON) where the lights changed
+#define BOUNCE_HIT 16777216
+#define BOUNCE_GRADIENT 33554432
+#define HISTORY_PASS 67108864
+#define GRADIENT_ON 134217728
+#define GRADIENT_STRATUM 3
+// (the forward table's: the view's flashlight's row in each half, past the 128 rows and 8 suns; xgpu_spirv.h's
+// XGPU_SPIRV_LT_FLASHLIGHT_ROW)
+#define TABLE_FLASHLIGHT_ROW 136
 
 // the shader types (shaders.c's; xgpu_spirv.c's RT_REFLECTION_KIND_*)
 #define KIND_ENVIRONMENT 3u
@@ -341,9 +354,87 @@ bool point_at(ivec2 pixel, out vec3 p, out vec3 n)
         all(lessThan(pixel, pass.corners.zw));
 }
 
-vec4 bounce_main(ivec2 block, out vec3 p, out vec3 n, out uint owner, out bool found)
+// a bounce's hit as the gradient keeps it (BOUNCE_HIT): its point, and 1 + its normal (octahedral, 7 bits an axis)
+// + 16384 x its albedo's luminance (8 bits) as one whole number, exact in a float; a 0: none
+vec4 hit_pack(vec3 p, vec3 n, float albedo)
+{
+    n /= abs(n.x) + abs(n.y) + abs(n.z);
+    vec2 e = n.z >= 0.0 ? n.xy : (1.0 - abs(n.yx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
+    vec2 q = clamp(floor((e * 0.5 + 0.5) * 127.0 + 0.5), 0.0, 127.0);
+    return vec4(p, 1.0 + q.x + 128.0 * q.y + 16384.0 * clamp(floor(albedo * 255.0 + 0.5), 0.0, 255.0));
+}
+
+bool hit_unpack(vec4 record, out vec3 p, out vec3 n, out float albedo)
+{
+    p = record.xyz;
+    float code = record.a - 1.0;
+    albedo = floor(code / 16384.0);
+    code -= 16384.0 * albedo;
+    albedo /= 255.0;
+    float y = floor(code / 128.0);
+    n = unfold(vec2(code - 128.0 * y, y) / 127.0 * 2.0 - 1.0);
+    return record.a >= 1.0;
+}
+
+// a row's unshadowed light at a hit (point p, normal n) from a table's half (light_table: the forward table's halves),
+// luminance: lt/denoise_gradient.frag's row_light, its gel left out (a sum's ratio, not a picture)
+float gradient_row(int row, vec3 p, vec3 n)
+{
+    vec4 t4 = row_texel(row, 4);
+    if (t4.w < 0.0 || t4.w > 2.5)
+        return 0.0;
+    vec4 t0 = row_texel(row, 0), t1 = row_texel(row, 1);
+    int kind = int(t4.w);
+    vec3 to = t0.xyz - p;
+    float d2 = max(dot(to, to), 1.0e-8), d = sqrt(d2);
+    vec3 l = to / d;
+    float facing = dot(n, l), window = range_window(d, t1.w);
+    if (facing <= 0.0 || window <= 0.0)
+        return 0.0;
+    float r2 = t0.w * t0.w, e = dot(t1.xyz, -l), profile;
+    if (kind == SPOT)
+        profile = e > 0.0 ? cone_ramp(e, row_texel(row, 2).w, row_texel(row, 3).w) * e / max(d2, 1.0e-4) : 0.0;
+    else if (kind == PANEL)
+        profile = e > 0.0 ? e * r2 / (r2 + d2) : 0.0;
+    else
+        profile = 1.0 / max(d2, r2);
+    return luminance_of(t4.rgb) * profile * facing * window;
+}
+
+float gradient_table(int first, int rows, vec3 p, vec3 n)
+{
+    float sum = 0.0;
+    for (int row = 0; row < rows; row++)
+        sum += gradient_row(first + row, p, n);
+    return sum + gradient_row(first + TABLE_FLASHLIGHT_ROW, p, n);
+}
+
+// BOUNCE_GRADIENT: a stratum's GRADIENT_STRATUM^2 blocks' hits of the frame before (history_image) re-shaded under
+// this frame's table (light_table's rows from 0, indirect[3].y of them) and the frame before's (from indirect[3].w,
+// indirect[3].z of them), each by its albedo: x this frame's sum, y the frame before's
+vec4 gradient_main(ivec2 stratum)
+{
+    ivec2 blocks = ivec2(pass.indirect[0].xy);
+    float now = 0.0, before = 0.0;
+    for (int k = 0; k < GRADIENT_STRATUM * GRADIENT_STRATUM; k++)
+    {
+        ivec2 block = stratum * GRADIENT_STRATUM + ivec2(k % GRADIENT_STRATUM, k / GRADIENT_STRATUM);
+        if (any(greaterThanEqual(block, blocks)))
+            continue;
+        vec3 p, n;
+        float albedo;
+        if (!hit_unpack(texelFetch(history_image, block, 0), p, n, albedo) || albedo <= 0.0)
+            continue;
+        now += albedo * gradient_table(0, int(pass.indirect[3].y), p, n);
+        before += albedo * gradient_table(int(pass.indirect[3].w), int(pass.indirect[3].z), p, n);
+    }
+    return vec4(now, before, 0.0, 1.0);
+}
+
+vec4 bounce_main(ivec2 block, out vec3 p, out vec3 n, out uint owner, out bool found, out vec4 hit_record)
 {
     int phase = int(pass.indirect[1].y);
+    hit_record = vec4(0.0);
     vec3 shaded;
     int which = 0;
     ivec2 pixel = ivec2(0);
@@ -368,8 +459,12 @@ vec4 bounce_main(ivec2 block, out vec3 p, out vec3 n, out uint owner, out bool f
             continue;
         Hit hit = trace(origin, d, BOUNCE_REACH, int(owner), false, MASK_AO);
         if (hit.attributes)
+        {
             e += hit.albedo * (direct_one(hit.p, hit.n, hit.owner, pixel, 6.0 + 17.0 * float(k), h) +
                 cache_lookup(hit.p, hit.n));
+            if (hit_record.a == 0.0)
+                hit_record = hit_pack(hit.p, hit.n, luminance_of(hit.albedo));
+        }
     }
     e /= float(rays);
     if (any(isnan(e)) || any(isinf(e)))
@@ -520,16 +615,94 @@ vec3 upsampled(ivec2 pixel, vec3 p, vec3 n, uint owner)
     return weights > 0.0 ? sum / weights : vec3(0.0);
 }
 
+// HISTORY_PASS: the bounce's history (the fold's), its own draw after the gradient: the block's sample (light_table:
+// the bounce's output, rgb and its code) counted where its receiver (the code's pixel) was the frame before
+// (reservoirs: the history then), 1/n up to indirect[3].x frames. Where the lights changed, by the gradient
+// (history_image, a texel GRADIENT_STRATUM^2 blocks; its 3x3 about the history's place summed): the history relit by
+// the hits' light now over then, and its count cut by the change's share squared (A-SVGF's rule, which the guide's
+// fewest passes on to the denoiser, whose own history the bounce's change does not relight), so a light that went
+// takes its bounce with it at once and a needle crossing a corner, a small share of the light there, keeps the
+// history. Without the gradient (its first frame): the light-id hash's rule, the history started again on a change.
+// Out: rgb the mean, a the sample's code + 8192 x the count (BOUNCE_HISTORY's)
+vec4 history_main(ivec2 block)
+{
+    vec4 sample_ = texelFetch(light_table, block, 0);
+    if (sample_.a < 0.5)
+        return vec4(0.0);
+    int which = int(floor((sample_.a - 1.0) / 1024.0));
+    ivec2 pixel = block * 2 + block_pixel(int(pass.indirect[1].y) + which);
+    vec3 p, n;
+    if (!point_at(pixel, p, n))
+        return vec4(0.0);
+    uint owner = texelFetch(inputs, pixel, 0).w;
+    vec3 mean = vec3(0.0);
+    float count = 0.0;
+    ivec2 q;
+    if ((pass.control.w & RESET) == 0 && reproject(p, n, owner, q))
+    {
+        vec4 old = texelFetch(reservoirs, q / 2, 0);
+        count = floor(old.a / 8192.0);
+        mean = old.rgb;
+        if (count > 0.0 && (pass.control.w & GRADIENT_ON) != 0)
+        {
+            ivec2 middle = q / 2 / GRADIENT_STRATUM, strata = ivec2(textureSize(history_image, 0));
+            vec2 sums = vec2(0.0);
+            for (int k = 0; k < 9; k++)
+            {
+                ivec2 s = middle + ivec2(k % 3 - 1, k / 3 - 1);
+                if (all(greaterThanEqual(s, ivec2(0))) && all(lessThan(s, strata)))
+                    sums += texelFetch(history_image, s, 0).xy;
+            }
+            float now = sums.x, then = sums.y;
+            if (then > 0.0)
+            {
+                float change = abs(now - then) / max(now, then);
+                mean *= now / then;
+                count = floor(count * (1.0 - change) * (1.0 - change));
+            }
+            else if (now > 0.0)
+                count = 0.0;
+        }
+        else if (count > 0.0)
+        {
+            float was = old.a - 8192.0 * count - 1.0, code = sample_.a - 1.0;
+            if (mod(was, 1024.0) != mod(code, 1024.0))
+                count = 0.0;
+        }
+        if (count <= 0.0)
+            mean = vec3(0.0);
+    }
+    count = min(count + 1.0, max(pass.indirect[3].x, 1.0));
+    mean += (sample_.rgb - mean) / count;
+    return vec4(mean, sample_.a + 8192.0 * count);
+}
+
 void main()
 {
     ivec2 pixel = ivec2(gl_FragCoord.xy);
     int flags = pass.control.w;
+    if ((flags & BOUNCE_GRADIENT) != 0)
+    {
+        result = gradient_main(pixel);
+        return;
+    }
+    if ((flags & HISTORY_PASS) != 0)
+    {
+        result = history_main(pixel);
+        return;
+    }
     if ((flags & BOUNCE) != 0)
     {
         vec3 p, n;
         uint owner;
         bool found;
-        result = bounce_main(pixel, p, n, owner, found);
+        vec4 hit_record;
+        result = bounce_main(pixel, p, n, owner, found, hit_record);
+        if ((flags & BOUNCE_HIT) != 0)
+        {
+            bounce_history = hit_record;
+            return;
+        }
         // (the bounce's history at half resolution, ahead of the denoiser's temporal stage: its block's samples counted
         // (1/n up to indirect[3].x frames) where the block's surface was the frame before (the traced pixel's point
         // reprojected, the previous inputs' surface there: lt/e1.frag's reproject); rgb the mean, a the sample's code
