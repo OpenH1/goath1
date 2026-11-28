@@ -297,7 +297,10 @@ static struct
 	/* (HALO_LT_MASK's, the workbench's light by term: LT_MASK_*) */
 	int mask;
 	uint32_t only_id[LT_ONLY_IDS];
-	float kind_scale[5];
+	float kind_scale[6];
+	/* (HALO_LT_KIND_SCALE gave the kind's: a level lit live's sky rows
+	(their own real k) scaled only then) */
+	int kind_given[6];
 	int drop_kind;
 	uint32_t drop_id;
 	/* the last pass lit its level live by the sky's traced lights, the
@@ -728,8 +731,12 @@ enum
 	LT_MASK_OBJECTS = 2,
 };
 
-/* HALO_LT_KIND_SCALE's kinds (a sun's "sun", a wide sky light's "fill") */
-static const char *const lt_kind_names[5] = { "point", "spot", "panel", "sun", "fill" };
+/* HALO_LT_KIND_SCALE's kinds (a sun's "sun", a wide sky light's "fill", a
+level lit live's outdoor ambient dome "dome"; a level lit live's sky rows
+carry their own real k, scaled by the kind's only where it is given) */
+#define LT_KINDS_SCALED 6
+#define LT_KIND_SCALE_DOME 5
+static const char *const lt_kind_names[LT_KINDS_SCALED] = { "point", "spot", "panel", "sun", "fill", "dome" };
 
 static void lt_settings(void)
 {
@@ -765,8 +772,11 @@ static void lt_settings(void)
 	/* (HALO_LT_REUSE=0: RIS alone each frame, no reservoirs kept: unbiased,
 	the reuse's check) */
 	lt.reuse_on = !getenv("HALO_LT_REUSE") || strcmp(getenv("HALO_LT_REUSE"), "0");
-	for (kind = 0; kind < 5; kind++)
+	for (kind = 0; kind < LT_KINDS_SCALED; kind++)
+	{
 		lt.kind_scale[kind] = -1.0f;
+		lt.kind_given[kind] = 0;
+	}
 	/* (the suns' k: the lightmap's direct share's, ~/dev/rt2-calibration.json's
 	sun_power_scale and fill_power_scale, whatever k the record was given) */
 	lt.kind_scale[3] = LT_SUN_POWER_SCALE;
@@ -774,13 +784,14 @@ static void lt_settings(void)
 	given = getenv("HALO_LT_KIND_SCALE");
 	while (given && *given)
 	{
-		for (kind = 0; kind < 5; kind++)
+		for (kind = 0; kind < LT_KINDS_SCALED; kind++)
 		{
 			size_t length = strlen(lt_kind_names[kind]);
 
 			if (!strncmp(given, lt_kind_names[kind], length) && given[length] == '=')
 			{
 				lt.kind_scale[kind] = (float)atof(given + length + 1);
+				lt.kind_given[kind] = 1;
 				break;
 			}
 		}
@@ -806,9 +817,9 @@ static void lt_settings(void)
 			lt.drop_kind = kind;
 	if (lt.only || !lt.heroes_on || !lt.restir_on || !lt.sun_on || getenv("HALO_LT_KIND_SCALE") || lt.drop_kind != -2)
 		host_logf(HOST_LOG_WARN, "vulkan: light transport: only %d, heroes %d, ReSTIR %d, sun %d, kind scales %g %g %g "
-			"%g %g, drop %d (checking)", lt.only, lt.heroes_on, lt.restir_on, lt.sun_on, (double)lt.kind_scale[0],
+			"%g %g %g, drop %d (checking)", lt.only, lt.heroes_on, lt.restir_on, lt.sun_on, (double)lt.kind_scale[0],
 			(double)lt.kind_scale[1], (double)lt.kind_scale[2], (double)lt.kind_scale[3], (double)lt.kind_scale[4],
-			lt.drop_kind);
+			(double)lt.kind_scale[5], lt.drop_kind);
 }
 
 /* (HALO_LT_TABLE_LOG: each row's record's flags this frame, its object's
@@ -1537,7 +1548,13 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 		light, lt_lights.c's real k), the dome among them) */
 		if (light->flags & XGPU_LT_LIGHT_REAL_SKY)
 		{
-			lt_set(t[4], light->power[0], light->power[1], light->power[2], 0.0f);
+			/* (HALO_LT_KIND_SCALE's sun, fill or dome where given, checking:
+			the workbench's terms) */
+			int kind = light->flags & XGPU_LT_LIGHT_SKY_DOME ? LT_KIND_SCALE_DOME :
+				light->angular_diameter >= LT_FILL_DIAMETER ? 4 : 3;
+			float k = lt.kind_given[kind] ? lt.kind_scale[kind] : 1.0f;
+
+			lt_set(t[4], light->power[0] * k, light->power[1] * k, light->power[2] * k, 0.0f);
 			real = 1;
 		}
 		else if (lt_real_replay() && light->power_scale > 0.0f)
@@ -1566,6 +1583,9 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 
 		if (given)
 			sscanf(given, "%f,%f,%f", &dome[0], &dome[1], &dome[2]);
+		if (lt.kind_given[LT_KIND_SCALE_DOME])
+			for (index = 0; index < 3; index++)
+				dome[index] *= lt.kind_scale[LT_KIND_SCALE_DOME];
 		lt_set(t[1], 0.0f, 0.0f, 1.0f, 0.0f);
 		lt_set(t[2], 1.0f, 0.0f, 0.0f, -1.0f);
 		lt_set(t[3], 0.0f, 1.0f, 0.0f, -1.0f);
