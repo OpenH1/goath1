@@ -107,12 +107,12 @@ MOMENTS = {
         "",
         "b30's landing zone camp: the Covenant's portable shields (purple, drawn adding), the ground and the Covenant "
         "about them; a slow pan"),
-    # (a50's opening at night on the cliff: its two portable shields at about (0, -28.2) and (-3.8, -25.6))
+    # (a50's opening at night on the cliff, after its cutscene (skipped by playing it fast, undrawn: the clip comes
+    # after it): its two portable shields at about (0, -28.2) and (-3.8, -25.6), the camera close by, a slow pan)
     "a50_shields": (
-        "levels\\a50\\a50", 14, 26,
-        [(10, "cheat_deathless_player true"),
-         (13.5, cam(4.0, -30.5, 89.0, 140, -12)),
-         (14, cam(4.0, -30.5, 89.0, 160, -12, 12))],
+        "levels\\a50\\a50", 40, 52,
+        [(39.5, cam(3.0, -30.0, 88.8, 140, -18)),
+         (40, cam(3.0, -30.0, 88.8, 165, -18, 12))],
         "",
         "a50's opening at night: the Covenant's portable shields on the cliff, the ground about them; a slow pan"),
     "a10_cryo": (
