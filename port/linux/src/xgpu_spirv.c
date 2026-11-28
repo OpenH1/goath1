@@ -6752,8 +6752,8 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 		int bound = XGPU_HDR_EMITTER_BOUND(program->hdr);
 
 		result = vec4_of(&m, fadd(&m, 3, rgb, boost_extra(&m, rgb, rgb, XGPU_HDR_BOOST_OF(program->hdr),
-			bound == XGPU_HDR_CEILING_WEAPON || bound == XGPU_HDR_CEILING_ENERGY ? xgpu_hdr_ceiling_value(bound) :
-				XGPU_HDR_CEILING_LIGHT_VALUE)),
+			bound == XGPU_HDR_CEILING_WEAPON ? XGPU_HDR_CEILING_WEAPON_VALUE :
+				bound == XGPU_HDR_CEILING_ENERGY ? XGPU_HDR_CEILING_ENERGY_VALUE : XGPU_HDR_CEILING_LIGHT_VALUE)),
 			extract(&m, result, 3));
 	}
 	if (program->source_blend)
