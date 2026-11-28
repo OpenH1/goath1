@@ -163,6 +163,9 @@ static struct
 	the probe's frame drawn) */
 	struct xgpu_vulkan_pipeline_description temporal_probe_pass;
 	int probe, probe_drawn;
+	/* (and the diffuse sample the temporal stage took, the bounce folded
+	in, this frame) */
+	struct xgpu_vulkan_image *probe_sample;
 	/* the diffuse channel, the specular */
 	struct denoise_channel channels[2];
 	/* checking (HALO_LT_DENOISE_*) */
@@ -572,6 +575,7 @@ static struct xgpu_vulkan_image *denoise_channel_draw(struct denoise_channel *ch
 			{
 				denoise_pass(channel->probe, wide, &uniforms, &params, &denoise.temporal_probe_pass, textures, 6);
 				denoise.probe_drawn = 1;
+				denoise.probe_sample = raw;
 			}
 		}
 	}
@@ -715,8 +719,8 @@ static struct xgpu_vulkan_image *denoise_shared(struct xgpu_vulkan_denoise_final
 	out->drawn = 1;
 	out->specular_denoised = specular ? s->filtered[1] : NULL;
 	/* (a dump's: the diffuse's step 4 into its result, as the single
-	channel's passes have it) */
-	if (out->result || dumped)
+	channel's passes have it; the workbench's light view's too) */
+	if (out->result || dumped || denoise.probe)
 	{
 		struct xgpu_vulkan_image *textures[3] = { d->filtered[1], dh, guide };
 
@@ -765,14 +769,15 @@ struct xgpu_vulkan_image *xgpu_vulkan_denoise_specular_draw(struct xgpu_vulkan_i
 	return denoise_channel_draw(&denoise.channels[1], 1, raw, NULL, inputs, NULL, guides, pass, rectangle, NULL, 0);
 }
 
-int xgpu_vulkan_denoise_probe_read(uint16_t **halves, uint32_t *width, uint32_t *height)
+int xgpu_vulkan_denoise_probe_read(int which, uint16_t **halves, uint32_t *width, uint32_t *height)
 {
-	struct xgpu_vulkan_image *probe = denoise.channels[0].probe;
+	struct xgpu_vulkan_image *image = which == 1 ? denoise.probe_sample : which == 2 ? denoise.channels[0].result :
+		denoise.channels[0].probe;
 
 	*halves = NULL;
-	if (!denoise.probe_drawn || !probe || xgpu_vulkan_read_halves(probe, 0, halves) != 1 || !*halves)
+	if (!denoise.probe_drawn || !image || xgpu_vulkan_read_halves(image, 0, halves) != 1 || !*halves)
 		return 0;
-	*width = xgpu_vulkan_image_description(probe)->width / 4;
-	*height = xgpu_vulkan_image_description(probe)->height;
+	*width = xgpu_vulkan_image_description(image)->width / (which ? 1 : 4);
+	*height = xgpu_vulkan_image_description(image)->height;
 	return 1;
 }

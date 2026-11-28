@@ -154,20 +154,27 @@ static float vulkan_half(uint16_t half)
 	return value;
 }
 
+/* the "sample" and "light" views' fields */
+static const char *const vulkan_light_view_names[4] = { "r", "g", "b", "a" };
+
 static const char *vulkan_view_setting(const char *name)
 {
-	return name && !strcmp(name, "denoise") ? "HALO_LT_DENOISE_PROBE=1" : NULL;
+	return name && (!strcmp(name, "denoise") || !strcmp(name, "sample") || !strcmp(name, "light")) ?
+		"HALO_LT_DENOISE_PROBE=1" : NULL;
 }
 
+/* "denoise": the denoiser's temporal stage (lt/denoise_temporal.frag's PROBE fields); "sample": the diffuse sample
+it took (rgb, a the bounce's count); "light": the denoised diffuse irradiance (rgb, a its deviation) */
 static int vulkan_view_read(const char *name, struct host_render_replay_view *view)
 {
+	int which = !vulkan_view_setting(name) ? -1 : !strcmp(name, "sample") ? 1 : !strcmp(name, "light") ? 2 : 0;
+	uint32_t width, height, x, y, field, fields = which ? 4 : 16, windows = which ? 1 : 4;
 	uint16_t *halves;
-	uint32_t width, height, x, y, field;
 
 	memset(view, 0, sizeof(*view));
-	if (!vulkan_view_setting(name) || !xgpu_vulkan_denoise_probe_read(&halves, &width, &height))
+	if (which < 0 || !xgpu_vulkan_denoise_probe_read(which, &halves, &width, &height))
 		return 0;
-	view->values = malloc((size_t)width * height * 16 * sizeof(float));
+	view->values = malloc((size_t)width * height * fields * sizeof(float));
 	if (!view->values)
 	{
 		free(halves);
@@ -175,14 +182,14 @@ static int vulkan_view_read(const char *name, struct host_render_replay_view *vi
 	}
 	for (y = 0; y < height; y++)
 		for (x = 0; x < width; x++)
-			for (field = 0; field < 16; field++)
-				view->values[((size_t)y * width + x) * 16 + field] =
-					vulkan_half(halves[(((size_t)y * 4 * width) + (field / 4) * width + x) * 4 + field % 4]);
+			for (field = 0; field < fields; field++)
+				view->values[((size_t)y * width + x) * fields + field] =
+					vulkan_half(halves[(((size_t)y * windows * width) + (field / 4) * width + x) * 4 + field % 4]);
 	free(halves);
 	view->width = width;
 	view->height = height;
-	view->fields = 16;
-	view->names = vulkan_denoise_view_names;
+	view->fields = fields;
+	view->names = which ? vulkan_light_view_names : vulkan_denoise_view_names;
 	return 1;
 }
 

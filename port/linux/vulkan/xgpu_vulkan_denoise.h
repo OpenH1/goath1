@@ -80,13 +80,15 @@ struct xgpu_vulkan_image *xgpu_vulkan_denoise_specular_draw(struct xgpu_vulkan_i
 light transport's own */
 void xgpu_vulkan_denoise_prepare(void);
 
-/* (debug, HALO_LT_DENOISE_PROBE=1: the workbench's view) the diffuse
-temporal stage's probe of the last frame drawn, after the work recorded so
-far (waits for the GPU): *halves (malloc'd, the caller's) RGBA half floats
-of an image four windows wide (*width each, *height), each pixel's four
-windows' fields as lt/denoise_temporal.frag's PROBE writes them; 1 on
-success, 0 none drawn */
-int xgpu_vulkan_denoise_probe_read(uint16_t **halves, uint32_t *width, uint32_t *height);
+/* (debug, HALO_LT_DENOISE_PROBE=1: the workbench's views) of the last
+frame drawn, after the work recorded so far (waits for the GPU), into
+*halves (malloc'd, the caller's) as RGBA half floats: which 0, the diffuse
+temporal stage's probe, an image four windows wide (*width each, *height),
+each pixel's four windows' fields as lt/denoise_temporal.frag's PROBE
+writes them; 1, the diffuse sample that stage took (the bounce folded in;
+a the bounce's count); 2, the denoised diffuse irradiance (the a-trous
+passes' last). 1 on success, 0 none drawn (or not half floats) */
+int xgpu_vulkan_denoise_probe_read(int which, uint16_t **halves, uint32_t *width, uint32_t *height);
 
 /* (xgpu_vulkan_lt.c's, for the denoiser) a light-transport kernel by its
 source's name (lt/<source>: the built-in SPIR-V, or HALO_LT_SHADER_DIR's or

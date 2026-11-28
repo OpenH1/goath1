@@ -3834,6 +3834,9 @@ static void rt_measure_json(struct text *text, const struct rt_measure *measure,
 	free(relative);
 }
 
+/* (rt_view's accumulation: called after each measured play, k of plays, with the measured plays' first) */
+static void (*rt_frames_each)(uint32_t k, uint32_t first, uint32_t plays);
+
 /* {"cmd":"rt_frames","n":N,"count":30,"warm":8,"last":20,"regions":[x,y,w,h,...],"dir":"<folder>"} and, held,
 {"cmd":"rt_frames","n":N,"hold":120,...}: the frames n to n+count-1 played exactly, as recorded (the world, the
 camera and the lights moving as they did; the temporal passes' histories as the game's), from the recording's start,
@@ -3920,6 +3923,8 @@ static void serve_rt_frames(struct text *text, const struct request *request)
 				error = "a play's picture was not read";
 			continue;
 		}
+		if (measured && rt_frames_each)
+			rt_frames_each(k, measured_from, plays);
 		if (measured && !rt_measure_add(&measure, pixels, width, height, k))
 			error = "the plays' pictures differ in size";
 		if (wanted)
@@ -4067,6 +4072,129 @@ static void rt_view_box_json(struct text *text, const struct host_render_replay_
 	TEXT(text, "}}");
 }
 
+/* rt_view's "accumulate": each listed view's fields summed over the measured plays (its first three as a colour,
+the luminance of them) and saved: <save>/<view>.f32, 13 floats a pixel, rows from the top: the mean colour, the
+mean luminance, the luminance's deviation over the plays, then the mean luminance of each of 8 batches of the plays
+in turn (their spread the mean's error where the plays are correlated) */
+#define RT_ACCUMULATED 4
+#define RT_BATCHES 8
+static struct
+{
+	int count;
+	char names[RT_ACCUMULATED][32];
+	double *sums[RT_ACCUMULATED];
+	uint32_t width[RT_ACCUMULATED], height[RT_ACCUMULATED], plays[RT_ACCUMULATED], batch_plays[RT_BATCHES];
+	const char *error;
+} rt_accumulated;
+
+static void rt_accumulate_play(uint32_t k, uint32_t first, uint32_t plays)
+{
+	int index;
+	uint32_t batch = (uint32_t)((uint64_t)(k - first) * RT_BATCHES / (plays - first + 1));
+
+	if (batch >= RT_BATCHES)
+		batch = RT_BATCHES - 1;
+	for (index = 0; index < rt_accumulated.count; index++)
+	{
+		struct host_render_replay_view view;
+		size_t pixel, count;
+
+		if (!platform->view_read(rt_accumulated.names[index], &view) || view.fields < 3)
+		{
+			free(view.values);
+			rt_accumulated.error = "a view to accumulate was not drawn";
+			return;
+		}
+		count = (size_t)view.width * view.height;
+		if (!rt_accumulated.sums[index])
+		{
+			rt_accumulated.sums[index] = calloc(count * (5 + RT_BATCHES), sizeof(double));
+			rt_accumulated.width[index] = view.width;
+			rt_accumulated.height[index] = view.height;
+		}
+		if (!rt_accumulated.sums[index] || rt_accumulated.width[index] != view.width ||
+			rt_accumulated.height[index] != view.height)
+		{
+			free(view.values);
+			rt_accumulated.error = "a view's size changed";
+			return;
+		}
+		for (pixel = 0; pixel < count; pixel++)
+		{
+			const float *at = &view.values[pixel * view.fields];
+			double *sum = &rt_accumulated.sums[index][pixel * (5 + RT_BATCHES)];
+			double r = isfinite(at[0]) ? at[0] : 0.0, g = isfinite(at[1]) ? at[1] : 0.0;
+			double b = isfinite(at[2]) ? at[2] : 0.0, l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+
+			sum[0] += r;
+			sum[1] += g;
+			sum[2] += b;
+			sum[3] += l;
+			sum[4] += l * l;
+			sum[5 + batch] += l;
+		}
+		rt_accumulated.plays[index]++;
+		free(view.values);
+	}
+	rt_accumulated.batch_plays[batch]++;
+}
+
+/* the sums saved (see rt_accumulated) and let go of; their files listed in the reply */
+static void rt_accumulate_save(struct text *text, const char *directory)
+{
+	int index;
+
+	TEXT(text, ",\"accumulated\":[");
+	for (index = 0; index < rt_accumulated.count; index++)
+	{
+		size_t count = (size_t)rt_accumulated.width[index] * rt_accumulated.height[index], pixel;
+		double plays = rt_accumulated.plays[index];
+		float *out = rt_accumulated.sums[index] && plays ? malloc(count * (5 + RT_BATCHES) * sizeof(float)) : NULL;
+		char path[4096];
+		int batch;
+
+		if (index)
+			TEXT(text, ",");
+		TEXT(text, "{\"view\":");
+		text_string(text, rt_accumulated.names[index]);
+		text_printf(text, ",\"plays\":%u,\"width\":%u,\"height\":%u,\"batches\":[", rt_accumulated.plays[index],
+			rt_accumulated.width[index], rt_accumulated.height[index]);
+		for (batch = 0; batch < RT_BATCHES; batch++)
+			text_printf(text, "%s%u", batch ? "," : "", rt_accumulated.batch_plays[batch]);
+		TEXT(text, "]");
+		if (out && directory)
+		{
+			for (pixel = 0; pixel < count; pixel++)
+			{
+				const double *sum = &rt_accumulated.sums[index][pixel * (5 + RT_BATCHES)];
+				float *to = &out[pixel * (5 + RT_BATCHES)];
+				double mean = sum[3] / plays, variance = sum[4] / plays - mean * mean;
+
+				to[0] = (float)(sum[0] / plays);
+				to[1] = (float)(sum[1] / plays);
+				to[2] = (float)(sum[2] / plays);
+				to[3] = (float)mean;
+				to[4] = (float)sqrt(variance > 0.0 ? variance : 0.0);
+				for (batch = 0; batch < RT_BATCHES; batch++)
+					to[5 + batch] = rt_accumulated.batch_plays[batch] ?
+						(float)(sum[5 + batch] / rt_accumulated.batch_plays[batch]) : NAN;
+			}
+			snprintf(path, sizeof(path), "%s/%s.f32", directory, rt_accumulated.names[index]);
+			if (file_write(path, out, count * (5 + RT_BATCHES) * sizeof(float)))
+			{
+				TEXT(text, ",\"f32\":");
+				text_string(text, path);
+			}
+		}
+		TEXT(text, "}");
+		free(out);
+		free(rt_accumulated.sums[index]);
+		rt_accumulated.sums[index] = NULL;
+	}
+	TEXT(text, "]");
+	rt_accumulated.count = 0;
+}
+
 /* {"cmd":"rt_view","view":"denoise","show":"cut_share","scale":1,"n":N,"count":30|"hold":H,"warm":-1,
 "regions":[x,y,w,h,...],"inline":true}: rt_frames's play and reply, then the backend's view of the last play's frame
 (platform->view_read): its fields, the whole picture's and each region's numbers, and a picture of one field or
@@ -4112,12 +4240,56 @@ static void serve_rt_view(struct text *text, const struct request *request)
 			exact = 0;
 		}
 	}
+	/* (the views to accumulate over the measured plays: "sample,light") */
+	memset(&rt_accumulated, 0, sizeof(rt_accumulated));
+	{
+		const char *list = request_string(request, "accumulate");
+
+		while (list && *list && rt_accumulated.count < RT_ACCUMULATED)
+		{
+			size_t length = strcspn(list, ",");
+
+			snprintf(rt_accumulated.names[rt_accumulated.count++], 32, "%.*s", (int)(length < 31 ? length : 31), list);
+			list += length + (list[length] == ',');
+		}
+		if (rt_accumulated.count)
+			rt_frames_each = rt_accumulate_play;
+	}
 	serve_rt_frames(&frames, request);
+	rt_frames_each = NULL;
+	if (rt_accumulated.error && frames.used >= 10 && !strncmp(frames.data, "{\"ok\":true", 10))
+	{
+		frames.used = 0;
+		reply_error(&frames, rt_accumulated.error);
+	}
 	if (frames.used < 2 || strncmp(frames.data, "{\"ok\":true", 10))
 	{
+		int index;
+
+		for (index = 0; index < rt_accumulated.count; index++)
+			free(rt_accumulated.sums[index]);
+		rt_accumulated.count = 0;
 		text_add(text, frames.data, frames.used);
 		free(frames.data);
 		return;
+	}
+	/* (accumulation alone: the sums saved into "save", no view of the last play) */
+	if (rt_accumulated.count && !request_string(request, "show"))
+	{
+		text_add(text, frames.data, frames.used - 1);
+		free(frames.data);
+		text_printf(text, ",\"exact\":%s", exact ? "true" : "false");
+		rt_accumulate_save(text, request_string(request, "save"));
+		TEXT(text, "}");
+		return;
+	}
+	/* (with show too: the sums not kept) */
+	{
+		int index;
+
+		for (index = 0; index < rt_accumulated.count; index++)
+			free(rt_accumulated.sums[index]);
+		rt_accumulated.count = 0;
 	}
 	if (!platform->view_read(name, &view))
 	{
