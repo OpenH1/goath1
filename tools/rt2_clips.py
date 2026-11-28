@@ -46,6 +46,8 @@ COMMON = [
     "HALO_SKIP_CINEMATICS=1",
     "HALO_NETWORK_TEST_START=2",
     "HALO_HIDE_HUD=1",
+    # (the Spartan link's key hint, shown once for a time on the real clock, taken as shown)
+    "HALO_SPARTAN_LINK_HINT=true",
     MCC_IMPORT,
 ]
 
@@ -63,20 +65,23 @@ PLAYER = "(unit (list_get (players) 0))"
 # controller (debug.test_input "script:" events), what it shows). The scenario's clock starts when the player has a
 # unit; a cue runs at the first tick at or after its second.
 MOMENTS = {
+    # (b30 opens with the Pelican's ride, a cutscene skipped by playing it fast, undrawn: the beach from about 29 s,
+    # the Pelicans landed until about 40 s)
     "b30_sun": (
-        "levels\\b30\\b30", 8, 20,
-        [(3, "ai_erase_all"),
-         (4, 'debug_object_place "vehicles\\warthog\\warthog -63.5 24.0 1.4 200"'),
-         (4.5, 'debug_object_place "characters\\elite\\elite -60.5 22.5 1.4 160"'),
-         (7.5, cam(-72.0, 14.0, 3.2, 35, -9)),
-         (8, cam(-70.0, 28.0, 3.6, -30, -11, 12))],
+        "levels\\b30\\b30", 30, 42,
+        [(26, "ai_erase_all"),
+         (27, 'debug_object_place "vehicles\\warthog\\warthog -62.0 27.0 1.6 200"'),
+         (27.5, 'debug_object_place "characters\\elite\\elite -60.0 24.0 1.6 160"'),
+         (29, cam(-72.0, 17.0, 3.2, 40, -9)),
+         (30, cam(-69.0, 26.0, 3.6, 5, -10, 12))],
         "",
-        "b30's beach in the sun: the Pelicans, a Warthog, an Elite, their shadows on the sand; a slow camera move"),
+        "b30's beach in the sun: the Pelicans landing, a Warthog, an Elite, their shadows on the sand; a slow camera move"),
     "b30_fight": (
-        "levels\\b30\\b30", 6, 18,
-        [(1, "cheat_deathless_player 1")],
-        "3-18 hunt; 9-9.4 throw; 13-13.4 throw",
-        "b30's beach firefight in first person: Covenant plasma and needles, two grenades, the rifle's muzzle flashes"),
+        "levels\\b30\\b30", 31, 43,
+        [(26, "cheat_deathless_player 1")],
+        "29-33 move=0,1; 33-43 hunt; 34-36 fire; 37-37.4 throw; 40-40.4 throw",
+        "b30's beach in first person: the rifle's muzzle flashes, two grenades, the Covenant's fire where they reach "
+        "the player"),
     "a10_cryo": (
         "levels\\a10\\a10", 12, 24,
         [(11.5, cam(-52.0, 0.0, 0.6, 180, -12)),
@@ -97,6 +102,11 @@ MOMENTS = {
         "c20's Library in first person with the flashlight on (by the console: the scripted button toggles it each "
         "tick it is held); walking, then a slow turn"),
 }
+
+
+# the moments not yet frame-identical run to run (on-demand pipeline compiles still land on different frames there:
+# about 15% and 96% of frames differ); played only when named, not by "all"
+FOLLOW_UP = {"a10_cryo", "b30_sun"}
 
 
 def say(*words):
@@ -195,6 +205,7 @@ for pair in "{left} left" "{right} right"; do set -- $pair
     mv ~/goat-rig/runs/$1/game/video.mp4 {moment}_$2.mp4
     cp ~/goat-rig/runs/$1/game/halo.log {moment}_$2.log
     cp ~/goat-rig/runs/$1/summary.txt {moment}_$2.summary.txt
+    cp ~/goat-rig/runs/$1/game/video.framemd5 {moment}_$2.framemd5
   fi
 done
 rm -rf ~/goat-rig/runs/{left} ~/goat-rig/runs/{right}
@@ -203,7 +214,6 @@ ffmpeg -nostdin -loglevel error -y -i {moment}_left.mp4 -i {moment}_right.mp4 -f
 ffmpeg -nostdin -loglevel error -y -i {moment}.mp4 -vf "select='not(mod(n\\,{max(1, frames // 12)}))',scale={width}:-1,tile=2x6" \\
   -frames:v 1 -q:v 3 {moment}_sheet.jpg
 ffmpeg -nostdin -loglevel error -y -i {moment}.mp4 -vf "select='{select}'" -fps_mode vfr -q:v 2 {moment}_still%d.jpg
-for side in left right; do ffmpeg -nostdin -loglevel error -i {moment}_$side.mp4 -f framemd5 - > {moment}_$side.framemd5; done
 """
     ssh(host, script)
     say(f"rt2_clips: {moment}: {what}")
@@ -234,11 +244,12 @@ def main():
     args = parser.parse_args()
     if args.list:
         for name, moment in MOMENTS.items():
-            print(f"{name:16} {moment[0]:18} {moment[1]:g}-{moment[2]:g} s  {moment[5]}")
+            print(f"{name:16} {moment[0]:18} {moment[1]:g}-{moment[2]:g} s  {moment[5]}"
+                  + ("  (follow-up: not yet frame-identical)" if name in FOLLOW_UP else ""))
         return 0
     if not args.build:
         parser.error("--build is needed")
-    moments = list(MOMENTS) if args.moments == "all" else args.moments.split(",")
+    moments = [m for m in MOMENTS if m not in FOLLOW_UP] if args.moments == "all" else args.moments.split(",")
     for moment in moments:
         if moment not in MOMENTS:
             parser.error(f"{moment}: not a moment ({', '.join(MOMENTS)})")

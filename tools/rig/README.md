@@ -66,6 +66,9 @@ goat-rig run clip --seconds 25 --video 60 -- HALO_NETWORK_TEST=local:bloodgulch:
   HALO_SCREENSHOT_FROM=8 HALO_SCREENSHOT_UNTIL=12 "HALO_TEST_INPUT=script:6-14 move=0,1; 8-12 look=0.3,0"
 ```
 
+`video.framemd5` beside it holds each frame's MD5 as the game drew it (before the lossy encoding), so two runs'
+frames compare exactly; `tools/rt2_clips.py --repeat` does that for the ray tracing's standard moments.
+
 **7. OpenCE 359 as one side** (omarchy only; the build must have cross-play):
 ```sh
 goat-rig run xplay --pair host:opence client:my-branch --seconds 75 --shots every:1500 -- \
