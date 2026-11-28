@@ -1080,7 +1080,7 @@ static struct world_rt_definition *world_rt_definition(long definition)
 	/* (none: an item's model's render mesh as drawn, a grenade's say: the
 	box about its bounding sphere, far larger than a grenade, cast a square
 	shadow about each one lying on the ground) */
-	if (!any && item && entry->node_count > 0 && !config_boolean("debug.rt_render_geometry"))
+	if (!any && item && entry->node_count > 0 && !world_rt.render_geometry)
 	{
 		triangles = world_rt_definition_render(definition, entry);
 		any = triangles > 0;
