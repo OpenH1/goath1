@@ -40,6 +40,10 @@ again: the game's side (lt_lights.c's light list, the object lamps' gather: they
 records). The backend's C (xgpu_vulkan_lt*.c, the denoiser's and the bounce's C): push the branch to the rig's
 mirror and rebuild the replay (goat-rig build <ref> linux_replay, about 30 s warm), then run again on the same
 recording. Recordings hold the game's art: they stay on the rig.
+
+--host bosgame: the same on the Windows VM's RTX 3090 (rt2_clips.py's bosgame hosts: the hops through omarchy, Git
+Bash in the VM), the Windows build and its replay (windows_replay) cross-compiled on omarchy, the replay copied
+into the VM, the recordings in the VM's ~/goat-rig/rt2-bench.
 """
 
 from __future__ import annotations
@@ -67,6 +71,7 @@ import vulkan_lt_shaders  # noqa: E402
 REMOTE = "goat-rig/rt2-bench"  # (under the rig's $HOME)
 SIZE = rt2_clips.SIZE
 SHOT_EVERY = 20
+WINDOWS_BUILDS = "goat-rig/builds"  # (bosgame: the replays in the VM, under its home)
 
 
 def say(*words):
@@ -74,8 +79,12 @@ def say(*words):
 
 
 def ssh(host, script, check=True):
-    result = subprocess.run(["ssh", "-o", "BatchMode=yes", rt2_clips.rig_target(host), "bash", "-s"], input=script,
-                            text=True, capture_output=True)
+    if rt2_clips.windows(host):
+        result = subprocess.run(rt2_clips.remote_argv(host, script), stdin=subprocess.DEVNULL, text=True,
+                                capture_output=True)
+    else:
+        result = subprocess.run(["ssh", "-o", "BatchMode=yes", rt2_clips.rig_target(host), "bash", "-s"],
+                                input=script, text=True, capture_output=True)
     if check and result.returncode:
         raise SystemExit(f"rt2_bench: {host}: {(result.stderr or result.stdout).strip()[-800:]}")
     return result.stdout
@@ -92,13 +101,47 @@ def name_of(args):
     return args.name or f"{args.moment}-{args.build.replace('/', '-')}"
 
 
+def replay_path(host, ref):
+    """the build's replay under the rig's home"""
+    if rt2_clips.windows(host):
+        return f"{WINDOWS_BUILDS}/{rt2_scorecard.build_folder(ref)}.win/halo_replay.exe"
+    return rt2_scorecard.replay_path(ref)
+
+
 def build(host, ref, game=True):
     """the replay built warm on the rig (and the game, for a recording: goat-rig build's default targets)"""
+    if rt2_clips.windows(host):
+        return build_windows(host, ref, game)
     for extra in ([[]] if game else []) + [["linux_replay"]]:
         result = subprocess.run([sys.executable, str(rt2_clips.RIG), f"@{host}", "build", ref, *extra],
                                 capture_output=True, text=True)
         if result.returncode:
             raise SystemExit(f"rt2_bench: building {ref} failed:\n{(result.stdout + result.stderr)[-2000:]}")
+
+
+def build_windows(host, ref, game):
+    """the Windows build cross-compiled on omarchy (goat-rig @bosgame build: the game, which goat-rig @bosgame run
+    puts in the VM, and windows_replay), the replay and SDL3.dll copied into the VM's goat-rig/builds/<name>.win
+    when they differ from those there"""
+    targets = (["windows"] if game else []) + ["windows_replay"]
+    result = subprocess.run([sys.executable, str(rt2_clips.RIG), f"@{host}", "build", ref, *targets],
+                            capture_output=True, text=True)
+    if result.returncode:
+        raise SystemExit(f"rt2_bench: building {ref} failed:\n{(result.stdout + result.stderr)[-2000:]}")
+    built = f"goat-rig/builds/{rt2_scorecard.build_folder(ref)}.win/build/windows"
+    files = "halo_replay.exe SDL3.dll"
+    builder = ["ssh", "-o", "BatchMode=yes", rt2_clips.rig_target(rt2_clips.WINDOWS_BUILDER)]
+    there = os.path.dirname(replay_path(host, ref))
+    digest = subprocess.run(builder + [f"cd ~/{built} && sha256sum {files} | cut -c1-64"], capture_output=True,
+                            text=True, check=True).stdout
+    if ssh(host, f"cd ~/{there} 2>/dev/null && sha256sum {files} | cut -c1-64 || true") == digest:
+        return
+    source = subprocess.Popen(builder + [f"tar -C ~/{built} -cf - {files}"], stdout=subprocess.PIPE)
+    sink = subprocess.run(rt2_clips.remote_argv(host, f"set -e; mkdir -p ~/{there}; tar -xf - -C ~/{there}"),
+                          stdin=source.stdout, capture_output=True, text=True)
+    source.stdout.close()
+    if source.wait() or sink.returncode:
+        raise SystemExit(f"rt2_bench: copying the replay into the VM failed: {sink.stderr.strip()[-400:]}")
 
 
 # ---------- record
@@ -107,12 +150,20 @@ def record(args):
     level, start, end, _, _, what = rt2_clips.MOMENTS[args.moment]
     at = args.at if args.at is not None else end
     folder = f"{REMOTE}/{name_of(args)}"
-    home = ssh(args.host, "echo $HOME").strip()
+    home = service_home(args.host)
+    on_windows = rt2_clips.windows(args.host)
     owner_check(args.host)
     build(args.host, args.build)
     say(f"rt2_bench: {args.build} built on {args.host}; recording {args.moment} to {at:g} s ({what})")
-    ssh(args.host, f"rm -rf ~/{folder} && mkdir -p ~/{folder}/game")
-    env = [e for e in rt2_clips.settings(args.moment, True) if not e.startswith(("HALO_SCREENSHOT_", "HALO_TRACE"))]
+    ssh(args.host, (rt2_clips.windows_unlink(f"{folder}/data") + "; " if on_windows else "") +
+        f"rm -rf ~/{folder} && mkdir -p ~/{folder}/game")
+    if on_windows:
+        # (the game's own data folder in the VM, the maps and the MCC import linked: goat-rig run's @link there)
+        rt2_clips.windows_data_folder(args.host, f"{folder}/data")
+        env = rt2_clips.windows_settings(args.moment, f"{home}/{folder}/data")
+    else:
+        env = rt2_clips.settings(args.moment, True)
+    env = [e for e in env if not e.startswith(("HALO_SCREENSHOT_", "HALO_TRACE"))]
     env += [f"HALO_RENDER_RECORD={home}/{folder}/moment.hrpl", "HALO_RENDER_MARKS=1",
             f"HALO_RENDER_SHOTS={home}/{folder}/game", f"HALO_RENDER_SHOT_FRAMES=0-1000000/{SHOT_EVERY}",
             # (rt2_clips' fixed frame time, without its video: 1/60 s of game time a frame)
@@ -120,15 +171,24 @@ def record(args):
             "HALO_TRACE=bench.trace", f"HALO_TRACE_SECONDS={at + 0.1:g}"]
     label = f"bench-{name_of(args)}"[:80]
     started = time.monotonic()
+    # (bosgame's run: one game in the VM through winvm, muted and on loopback, under bosgame's lock; its window
+    # 1280x720, the run's own size there)
+    options = ["--seconds", str(args.seconds)] if on_windows else ["--shared", "--size", SIZE, "--seconds",
+                                                                   str(args.seconds)]
     result = subprocess.run([sys.executable, str(rt2_clips.RIG), f"@{args.host}", "run", label, "--build",
-                             args.build, "--shared", "--size", SIZE, "--seconds", str(args.seconds), "--", *env],
-                            capture_output=True, text=True)
+                             args.build, *options, "--", *env], capture_output=True, text=True)
     tail = (result.stdout + result.stderr).strip().splitlines()
-    ssh(args.host, f"cp ~/goat-rig/runs/{label}/game/halo.log ~/{folder}/game.log 2>/dev/null; "
-        f"cp ~/goat-rig/runs/{label}/summary.txt ~/{folder}/ 2>/dev/null; rm -rf ~/goat-rig/runs/{label}", check=False)
+    if on_windows:
+        keep_windows_logs(args.host, label, folder)
+    else:
+        ssh(args.host, f"cp ~/goat-rig/runs/{label}/game/halo.log ~/{folder}/game.log 2>/dev/null; "
+            f"cp ~/goat-rig/runs/{label}/summary.txt ~/{folder}/ 2>/dev/null; rm -rf ~/goat-rig/runs/{label}",
+            check=False)
     if result.returncode:
         raise SystemExit("rt2_bench: the recording's run failed:\n" + "\n".join(tail[-12:]))
-    sha = ssh(args.host, f"git -C ~/goat-rig/builds/{rt2_scorecard.build_folder(args.build)} rev-parse --short HEAD")
+    tree = rt2_scorecard.build_folder(args.build) + (".win" if on_windows else "")
+    sha = ssh(rt2_clips.WINDOWS_BUILDER if on_windows else args.host,
+              f"git -C ~/goat-rig/builds/{tree} rev-parse --short HEAD")
     shots = sorted(int(m) for m in re.findall(r"frame_(\d+)\.png",
                                               ssh(args.host, f"ls ~/{folder}/game")))
     meta = {"moment": args.moment, "build": args.build, "sha": sha.strip(), "at": at, "size": SIZE,
@@ -148,6 +208,21 @@ def record(args):
     return 0
 
 
+def keep_windows_logs(host, label, folder):
+    """bosgame's run kept on omarchy (goat-rig @bosgame run's ~/goat-rig/runs/<label>/bosgame): its game log and
+    summary copied beside the recording in the VM, the run's folder there removed"""
+    builder = ["ssh", "-o", "BatchMode=yes", rt2_clips.rig_target(rt2_clips.WINDOWS_BUILDER)]
+    run = f"goat-rig/runs/{label}"
+    source = subprocess.Popen(builder + [f"cd ~/{run}/bosgame 2>/dev/null && tar -cf - halo.log summary.txt "
+                                         "2>/dev/null; true"], stdout=subprocess.PIPE)
+    subprocess.run(rt2_clips.remote_argv(host, f"cd ~/{folder} && tar -xf - 2>/dev/null; "
+                                               "[ -e halo.log ] && mv halo.log game.log; true"),
+                   stdin=source.stdout, capture_output=True)
+    source.stdout.close()
+    source.wait()
+    subprocess.run(builder + [f"rm -rf ~/{run}"], capture_output=True)
+
+
 def meta_of(host, folder):
     text = ssh(host, f"cat ~/{folder}/meta.json", check=False)
     if not text.strip():
@@ -155,8 +230,26 @@ def meta_of(host, folder):
     return json.loads(text)
 
 
+class WindowsService(rt2_scorecard.Service):
+    """the replay's service in bosgame's VM (halo_replay.exe --serve, through the hops), under bosgame's locks held
+    shared on its host (a game run there waits for it); refused while a game runs in the VM"""
+
+    def __init__(self, host, replay, recording, env):
+        command = " ".join(["exec", "env", *[shlex.quote(e) for e in env], shlex.quote(replay),
+                            shlex.quote(recording), "--serve"])
+        script = (f"cd ~\nif [ -n \"$({rt2_clips.WINDOWS_GAME_RUNNING})\" ]; then "
+                  "echo 'a game is running in the VM' >&2; exit 3; fi\n" + command + "\n")
+        self.host = host
+        self.errors = tempfile.TemporaryFile()
+        self.process = subprocess.Popen(rt2_clips.remote_argv(host, script, rt2_clips.WINDOWS_LOCKS),
+                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.errors, text=True,
+                                        bufsize=1)
+
+
 def open_service(host, ref, folder, env=()):
     owner_check(host)
+    if rt2_clips.windows(host):
+        return WindowsService(host, replay_path(host, ref), f"{folder}/moment.hrpl", list(env))
     return rt2_scorecard.Service(host, rt2_scorecard.replay_path(ref), f"{folder}/moment.hrpl", list(env), "shared")
 
 
@@ -187,7 +280,7 @@ def compare(host, replay, first, second):
 def verify(args):
     folder = f"{REMOTE}/{name_of(args)}"
     meta = meta_of(args.host, folder)
-    replay = rt2_scorecard.replay_path(args.build)
+    replay = replay_path(args.host, args.build)
     if args.build != meta["build"]:
         say(f"rt2_bench: note: recorded by {meta['build']}, replayed by {args.build}: only the same build is "
             "expected to match")
@@ -237,7 +330,8 @@ _homes = {}
 
 def service_home(host):
     if host not in _homes:
-        _homes[host] = ssh(host, "echo $HOME").strip()
+        # (in the Windows VM the home as the replay takes paths: C:/Users/<name>)
+        _homes[host] = ssh(host, "cygpath -m ~" if rt2_clips.windows(host) else "echo $HOME").strip()
     return _homes[host]
 
 
@@ -385,7 +479,15 @@ def run(args):
                 settings = settings_from(args.settings, args.set)
                 env = [f"{k}={v}" for k, v in settings.items()]
                 if not args.built_in:
-                    if changed:
+                    if changed and rt2_clips.windows(args.host):
+                        # (no rsync in the VM: the changed kernels as a tar stream through the hops)
+                        names = [f"{name}.spv" for name in changed]
+                        stream = subprocess.run(["tar", "--no-xattrs", "--no-mac-metadata", "-C", scratch.name,
+                                                 "-cf", "-", *names], capture_output=True, check=True,
+                                                env={**os.environ, "COPYFILE_DISABLE": "1"}).stdout
+                        subprocess.run(rt2_clips.remote_argv(args.host, f"tar -xf - -C ~/{remote}/k"), check=True,
+                                       capture_output=True, input=stream)
+                    elif changed:
                         subprocess.run(["rsync", "-a", "--delete", f"{scratch.name}/",
                                         f"{rt2_clips.rig_target(args.host)}:{remote}/k/"], check=True,
                                        capture_output=True)
@@ -433,7 +535,8 @@ def main():
     parser.add_argument("what", choices=["record", "verify", "run"])
     parser.add_argument("--moment", required=True, choices=list(rt2_clips.MOMENTS), help="tools/rt2_clips.py's")
     parser.add_argument("--build", required=True, help="the build (goat-rig build's ref: a branch, local/<name>)")
-    parser.add_argument("--host", default="omarchy", choices=("omarchy", "5900x"))
+    parser.add_argument("--host", default="omarchy", choices=("omarchy", "5900x", *rt2_clips.WINDOWS_HOSTS),
+                        help="the rig (bosgame: the Windows VM with the RTX 3090, through omarchy)")
     parser.add_argument("--name", help="the recording's folder ~/goat-rig/rt2-bench/<name> (default moment-build)")
     parser.add_argument("--at", type=float, help="record: the moment's second the recording ends at")
     parser.add_argument("--seconds", type=float, default=420, help="record: the run's limit in real seconds")
