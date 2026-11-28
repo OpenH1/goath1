@@ -731,18 +731,6 @@ static float temporal_lod_bias(void)
 	return log2f(fraction) - (motion_vectors_technique() == 1 ? 1.0f : 0.0f);
 }
 
-/* whether the draw's self-illumination is in the light the world's light
-multiplies or replaces: a lightmap pass's (rasterizer_xbox_environment.c:
-its final combiner adds it to the lightmap's light). A model's is not:
-its combiner stage 1 adds it to the vertices' light after (the program's
-v0, rasterizer_xbox_models.c), so the model is lit as any other, a
-Pelican's bay and an Elite's armour among them, and its glow kept */
-static BOOL self_illumination_in_light(void)
-{
-	return (inputs.hdr_kind & HALO_HDR_KIND_SELF_ILLUMINATION) &&
-		((inputs.hdr_kind >> 8) & 0xFF) != (1 << 1);
-}
-
 /* the draw takes the world's light where its window is given: one of the
 window's opaque surfaces, not the first-person weapon, not lighting itself
 (the window's span alone, so that the renderer's manifest notes it with
@@ -750,7 +738,7 @@ the setting off and in a map's preparation: manifest_note_basis) */
 static BOOL world_ao_applies(void)
 {
 	return (inputs.world_span == WORLD_AO_SPAN_OPEN || inputs.world_span == WORLD_AO_SPAN_FOUND) &&
-		!self_illumination_in_light();
+		!(inputs.hdr_kind & HALO_HDR_KIND_SELF_ILLUMINATION);
 }
 
 /* while a map's pipelines are prepared, the world's light as the window's
