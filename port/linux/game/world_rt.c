@@ -1154,6 +1154,11 @@ static void world_rt_lamps_made(struct world_rt_definition *entry, short node, s
 	}
 }
 
+/* (measuring) the generic shaders' lamps this frame: placed, too faint,
+their region not drawn; the placed ones' radiance summed */
+static long world_rt_staged_counts[3];
+static float world_rt_staged_radiance[3];
+
 /* a node's lamps (its instance's transform this frame) onto the frame's */
 static void world_rt_lamps_placed(struct world_rt_definition const *definition, short node,
 	float const transform[3][4], unsigned long owner, struct world_rt_source_shading const *shading)
@@ -1179,7 +1184,10 @@ static void world_rt_lamps_placed(struct world_rt_definition const *definition, 
 		was taken from) */
 		if (shading && lamp->region >= 0 && lamp->region < 8 &&
 			((shading->destroyed & (1u << lamp->region)) || shading->permutations[lamp->region] != 0))
+		{
+			world_rt_staged_counts[2] += lamp->samples != NULL;
 			continue;
+		}
 		if (lamp->samples)
 		{
 			float *radiance = world_rt.lamp_radiance[world_rt.lamp_count], rgb[3];
@@ -1196,7 +1204,13 @@ static void world_rt_lamps_placed(struct world_rt_definition const *definition, 
 			for (channel = 0; channel < 3; channel++)
 				radiance[channel] *= WORLD_RT_LAMP_K / (float)lamp->sample_count;
 			if (0.2126f * radiance[0] + 0.7152f * radiance[1] + 0.0722f * radiance[2] < WORLD_RT_LAMP_LEAST)
+			{
+				world_rt_staged_counts[1]++;
 				continue;
+			}
+			world_rt_staged_counts[0]++;
+			for (channel = 0; channel < 3; channel++)
+				world_rt_staged_radiance[channel] += radiance[channel];
 		}
 		else
 			memcpy(world_rt.lamp_radiance[world_rt.lamp_count], lamp->radiance, sizeof(lamp->radiance));
@@ -1756,6 +1770,15 @@ void world_rt_frame(unsigned long frame)
 		{
 			printf("world ao: the ray-traced scene's %.1f instances a frame; %lu meshes made, %ld triangles\n",
 				(double)world_rt.count_instances / 600.0, world_rt.next_mesh - 1, world_rt.count_triangles);
+			printf("world ao: object lamps this frame %ld; generic shaders' a frame: %.1f placed (radiance %.3f %.3f "
+				"%.3f each), %.1f too faint, %.1f of regions not drawn\n", world_rt.lamp_count,
+				(double)world_rt_staged_counts[0] / 600.0,
+				world_rt_staged_counts[0] ? world_rt_staged_radiance[0] / (float)world_rt_staged_counts[0] : 0.0f,
+				world_rt_staged_counts[0] ? world_rt_staged_radiance[1] / (float)world_rt_staged_counts[0] : 0.0f,
+				world_rt_staged_counts[0] ? world_rt_staged_radiance[2] / (float)world_rt_staged_counts[0] : 0.0f,
+				(double)world_rt_staged_counts[1] / 600.0, (double)world_rt_staged_counts[2] / 600.0);
+			memset(world_rt_staged_counts, 0, sizeof(world_rt_staged_counts));
+			memset(world_rt_staged_radiance, 0, sizeof(world_rt_staged_radiance));
 			fflush(stdout);
 			world_rt.count_frames = world_rt.count_instances = 0;
 		}
