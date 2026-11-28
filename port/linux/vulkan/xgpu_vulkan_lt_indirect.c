@@ -383,6 +383,10 @@ static void indirect_pass(struct xgpu_vulkan_image *into, const int32_t rectangl
 	draw.ambient_occlusion = 1;
 	draw.dynamic_lights = 1;
 	draw.kind[0] = INDIRECT_KIND;
+	/* (HALO_VULKAN_DRAW_TIMES' sub-pass: the mode's lowest bit from BOUNCE's, 12 on) */
+	for (stage = 12; stage < 26 && !(flags & (1 << stage)); stage++)
+		;
+	draw.kind[1] = (uint8_t)stage;
 	xgpu_vulkan_set_target_views(into, NULL, 0, 1);
 	xgpu_vulkan_draw(&draw);
 }

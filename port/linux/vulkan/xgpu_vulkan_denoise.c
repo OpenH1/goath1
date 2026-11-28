@@ -497,6 +497,12 @@ static void denoise_pass(struct xgpu_vulkan_image *into, const int32_t rectangle
 	draw.ambient_occlusion = 1;
 	draw.dynamic_lights = 1;
 	draw.kind[0] = DENOISE_KIND;
+	/* (HALO_VULKAN_DRAW_TIMES' sub-pass: the stage; kind[2] 1 the specular channel) */
+	draw.kind[1] = pipeline == &denoise.guide_pass ? 'g' : pipeline == &denoise.guide_fold_pass ? 'f' :
+		pipeline == &denoise.gradient_pass ? 'd' : pipeline == &denoise.temporal_pass ? 't' :
+		pipeline == &denoise.temporal_probe_pass ? 'p' : pipeline == &denoise.atrous_pass ? 'a' :
+		pipeline == &denoise.atrous_pair_pass ? 'P' : pipeline == &denoise.atrous_final_pass ? 'F' : '?';
+	draw.kind[2] = (uint8_t)((params->control[1] & DENOISE_SPECULAR) != 0);
 	xgpu_vulkan_set_target_views(into, NULL, 0, 1);
 	xgpu_vulkan_draw(&draw);
 }

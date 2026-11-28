@@ -6,6 +6,7 @@ Run with glslangValidator and spirv-val on PATH:
 It writes port/linux/vulkan/lt/xgpu_vulkan_lt_shaders.inc, the SPIR-V of the GLSL in port/linux/vulkan/lt/, which
 xgpu_vulkan_lt.c includes: the game needs no shader compiler. --check verifies that the checked-in file still matches.
 
+The lighting at a reduced resolution (xgpu_vulkan_lt.c's lt_scaled): lt/scale.frag's DOWN and UP.
 E1/E2 (the flashlight's direct light, accumulated by count): lt/e1.vert, a triangle over the window, and lt/e1.frag.
 W3, the denoiser (xgpu_vulkan_denoise.c): lt/denoise_gradient.frag, denoise_temporal.frag, denoise_guide.frag (and
 its FOLD) and denoise_atrous.frag (and its PAIR and FINAL, lt/denoise_pair.glsl),
@@ -36,7 +37,9 @@ KERNELS = [("lt_e1_vertex_spirv", "e1.vert", []), ("lt_e1_spirv", "e1.frag", [])
            ("lt_denoise_atrous_pair_spirv", "denoise_atrous.frag", ["PAIR"]),
            ("lt_denoise_atrous_final_spirv", "denoise_atrous.frag", ["FINAL"]), ("lt_denoise_guide_spirv", "denoise_guide.frag", []),
            ("lt_denoise_guide_fold_spirv", "denoise_guide.frag", ["FOLD"]),
-           ("lt_indirect_spirv", "e1.frag", ["LT_INDIRECT"])]
+           ("lt_indirect_spirv", "e1.frag", ["LT_INDIRECT"]),
+           # (the lighting at a reduced resolution: xgpu_vulkan_lt.c's lt_scaled)
+           ("lt_scale_down_spirv", "scale.frag", ["DOWN"]), ("lt_scale_up_spirv", "scale.frag", ["UP"])]
 
 
 def kernel_name(source: str, defines=()) -> str:
@@ -44,7 +47,7 @@ def kernel_name(source: str, defines=()) -> str:
     with its define (e1.frag's LT_INDIRECT: e1_indirect.frag)"""
     if "LT_INDIRECT" in defines:
         return source.replace(".frag", "_indirect.frag")
-    for define in ("FOLD", "PAIR", "FINAL", "PROBE"):
+    for define in ("FOLD", "PAIR", "FINAL", "PROBE", "DOWN", "UP"):
         if define in defines:
             return source.replace(".frag", f"_{define.lower()}.frag")
     return source
