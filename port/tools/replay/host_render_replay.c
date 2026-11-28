@@ -1711,6 +1711,10 @@ static void play_again(void)
 	play.offset = start - recording.records[0].position;
 	play.index = 0;
 	next_record = 0;
+	/* (the backend's temporal passes begun again, as at the stream's start:
+	their histories are the frames played since, as the game's were) */
+	if (platform->shaders_reload)
+		platform->shaders_reload(NULL);
 }
 
 /* the frame just played (frame n: the records played to its end) to be

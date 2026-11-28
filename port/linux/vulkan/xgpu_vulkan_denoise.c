@@ -180,6 +180,7 @@ static int denoise_shaders(void)
 	{
 		/* (a reload: the kernels made again, the history started again) */
 		denoise.made = denoise.failed = denoise.channels[0].previous_valid = denoise.channels[1].previous_valid = 0;
+		denoise.channels[0].current = denoise.channels[1].current = 0;
 		denoise.generation = generation;
 	}
 	if (denoise.made)

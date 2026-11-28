@@ -188,6 +188,7 @@ static int indirect_shaders(void)
 		/* (a reload: the kernels made again, the histories and the cache
 		started again) */
 		indirect.made = indirect.failed = indirect.cache_valid = indirect.bounce_history_valid = 0;
+		indirect.current = indirect.cache_current = 0;
 		indirect.generation = generation;
 	}
 	if (indirect.made)

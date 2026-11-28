@@ -484,6 +484,16 @@ static int lt_shaders(void)
 	if (reloaded)
 	{
 		lt.made = lt.failed = lt.prepared = lt.previous_valid = 0;
+		/* (every history as at the stream's start, so that a replay played
+		from its start again draws what the game drew: the reservoirs, the
+		table's frame before, the images' turns) */
+		lt.reservoirs_valid = lt.emitter_reservoirs_valid = 0;
+		lt.current = lt.ids_current = lt.reservoir_current = 0;
+		lt.had_light = 0;
+		lt.since_start = 0;
+		lt.previous_rows = 0;
+		memset(lt.rows, 0, sizeof(lt.rows));
+		memset(lt.ids, 0, sizeof(lt.ids));
 		lt_generation++;
 	}
 	if (lt.made)
