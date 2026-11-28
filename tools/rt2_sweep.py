@@ -290,7 +290,8 @@ def rows_of(scene, regions, folder):
         if doc.get("classic") and doc.get("game"):
             c, g = doc["classic"][i]["mean"], doc["game"][i]["mean"]
             row["classic"], row["setting_on"] = c, g
-            row["data"] = (g * ref / rt) / c - 1 if rt and c else None
+            # (where the setting's light is black the game's own picture against classic: -100% when it is)
+            row["data"] = ((g * ref / rt) / c - 1 if rt > 0 else g / c - 1) if c > 0 else None
             row["game_vs_classic"] = g / c - 1 if c else None
         rows.append(row)
     return rows
@@ -309,7 +310,7 @@ def estimator_kind(row):
 
 def data_score(row):
     d = row.get("data")
-    return abs(math.log(1 + d)) if d is not None and d > -1 else 0
+    return abs(math.log(max(1 + d, 0.01))) if d is not None else 0
 
 
 def thumbnail(folder, row, index):

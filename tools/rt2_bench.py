@@ -938,14 +938,19 @@ def triage(args):
                  f"(gradients cut {d['share']['gradient_cut'] * 100:.0f}% of pixels, the sample's test "
                  f"{d['share']['sample_cut'] * 100:.0f}%, disoccluded {d['share']['disoccluded'] * 100:.0f}%); "
                  f"history used {number(d['mean'].get('count'), 3)} frames"]
+        data = None
         if classic:
             c, g = classic[i]["mean"], game[i]["mean"]
             # (the presented pictures, sRGB decoded: the game's with the setting on and off; the reference's own
-            # presented picture estimated as the game's scaled by reference / realtime irradiance there)
-            lines.append(f"    DATA/LOOK (reference against classic, presented): {((g * ref / rt) / c - 1) * 100:+.1f}%"
-                         f" (the game's {(g / c - 1) * 100:+.1f}%; classic {c:.4f}, setting on {g:.4f})")
-        verdict = ("estimator" if abs(estimator) > 0.1 else "data/look" if classic and
-                   abs((g * ref / rt) / c - 1) > 0.1 else "neither beyond 10%")
+            # presented picture estimated as the game's scaled by reference / realtime irradiance there; none
+            # where either is black)
+            data = (g * ref / rt) / c - 1 if rt > 0 and c > 0 else None
+            lines.append(f"    DATA/LOOK (reference against classic, presented): "
+                         f"{'-' if data is None else f'{data * 100:+.1f}%'}"
+                         f" (the game's {'-' if c <= 0 else f'{(g / c - 1) * 100:+.1f}%'}; classic {c:.4f}, "
+                         f"setting on {g:.4f})")
+        verdict = ("estimator" if abs(estimator) > 0.1 else "data/look" if data is not None and
+                   abs(data) > 0.1 else "neither beyond 10%")
         lines.append(f"    FIRST LOOK AT: {verdict}")
         report += lines
     for line in report:
