@@ -109,9 +109,9 @@ def state(host, replays=0, util=0, game="", lock="free", have=(), built=True):
 
 
 class HostChoice(unittest.TestCase):
-    def pick(self, states):
+    def pick(self, states, what="run"):
         import argparse
-        args = argparse.Namespace(what="run", build="b", name=None, moment="a50_shields", classic=None, at=None)
+        args = argparse.Namespace(what=what, build="b", name=None, moment="a50_shields", classic=None, at=None)
         # (what a helper recorded: the moment to 46 s; run asks for it by --moment alone)
         rid = hosts.shared_id("a50_shields", "k" + hosts.recipe_hash("a50_shields"), at=46)
         by_host = {s["host"]: s for s in states}
@@ -120,12 +120,15 @@ class HostChoice(unittest.TestCase):
         original = hosts.probe
         hosts.probe = lambda host, refs: by_host[host]
         try:
-            return hosts.choose([s["host"] for s in states], hosts.needs_for(args), describe=False)[0]
+            return hosts.choose([s["host"] for s in states], hosts.needs_for(args), describe=False,
+                                work=hosts.WORK[what])[0]
         finally:
             hosts.probe = original
 
     def test_least_busy_with_the_recording(self):
-        self.assertEqual(self.pick([state("5900x", replays=3, have=["R"]), state("omarchy", replays=0, have=["R"]),
+        self.assertEqual(self.pick([state("5900x", replays=2, have=["R"]), state("omarchy", replays=0, have=["R"]),
+                                    state("bosgame", replays=0)]), "5900x")
+        self.assertEqual(self.pick([state("5900x", replays=8, have=["R"]), state("omarchy", replays=0, have=["R"]),
                                     state("bosgame", replays=0)]), "omarchy")
 
     def test_owner_playing_never_chosen(self):
@@ -133,8 +136,9 @@ class HostChoice(unittest.TestCase):
                                                                                     have=["R"])]), "omarchy")
 
     def test_copy_when_the_holder_is_full(self):
-        # (16 replays on the 5900X: copying to an idle omarchy beats waiting)
-        self.assertEqual(self.pick([state("5900x", replays=16, util=100, have=["R"]), state("omarchy")]), "omarchy")
+        # (16 replays on the 5900X: for a triage, copying to an idle omarchy beats waiting; for one try it does not)
+        self.assertEqual(self.pick([state("5900x", replays=16, have=["R"]), state("omarchy")], "triage"), "omarchy")
+        self.assertEqual(self.pick([state("5900x", replays=16, have=["R"]), state("omarchy")]), "5900x")
 
     def test_no_copy_when_the_holder_has_room(self):
         self.assertEqual(self.pick([state("5900x", replays=1, util=40, have=["R"]), state("omarchy")]), "5900x")

@@ -34,8 +34,8 @@ recently used first, never one used in the last hour.
 5900X only when its owner is not playing (checked again before every replay: rt2_bench.owner_check), bosgame only
 with no game in the VM; its replays now (drawing or queued for goat-rig's 3 picture slots), a measuring run's lock,
 whether it has the build and the recording. The host taken is the one where the command should end soonest
-(score(): an exact try's time alone on that GPU times the replays sharing it plus one, times the command's work,
-plus a copy or a build first): a GPU's throughput does not grow with replays at once, so a busy host's try waits.
+(score(): an exact try's time alone on that GPU, longer for each replay sharing it as measured, times the command's
+work, plus a copy or a build first).
 """
 
 from __future__ import annotations
@@ -491,15 +491,15 @@ def probe(host, refs):
 
 def score(state, needs, work=1):
     """the seconds the command is expected to take there (lower is better): an exact try's time on the host's GPU
-    alone (ALONE) times the replays sharing it plus this one (measured: a GPU's throughput does not grow with
-    replays at once, each takes that much longer), times the command's work in tries (WORK), plus what must be done
+    alone and its start (ALONE, OVERHEAD), longer by SLOWER for each replay sharing the GPU (measured), times the
+    command's work in tries (WORK), plus what must be done
     first (its replay built, BUILD_SECONDS; each recording copied from another rig, COPY_SECONDS) and a measuring
     run's lock (LOCK_SECONDS). None: not eligible (its owner playing, a game in the VM, unreachable, or a
     recording it lacks and cannot be given)"""
     host = state["host"]
     if state["error"] or state["game"]:
         return None
-    s = ALONE[host] * (state["replays"] + 1) * work
+    s = (ALONE[host] + OVERHEAD[host]) * (1 + SLOWER[host] * state["replays"]) * work
     if state["lock"] == "held":
         s += LOCK_SECONDS
     for need in needs:
@@ -514,9 +514,13 @@ def score(state, needs, work=1):
     return s
 
 
-# measured 2026-11-28 on a50_shields (1380 frames, every frame whole): one exact try alone on each GPU; omarchy 3 at
-# once 118 s each, 6 at once 106 s then 204 s (the 3 picture slots), so the throughput stays one try's
-ALONE = {"5900x": 9.3, "omarchy": 35.0, "bosgame": 20.0}
+# measured 2026-11-28 on a50_shields (1300-1380 frames, every frame whole): one exact try alone on each GPU (its
+# replay's seconds), the hops' and start's seconds besides, and how much longer a try takes for each replay beside it
+# (omarchy: 3 at once 118 s each, 6 at once 106 s then 204 s, the 3 picture slots: its throughput stays one try's;
+# the 4090: 6 tries 4 s apart 14-24 s each; the VM: 2 at once 33 s each)
+ALONE = {"5900x": 9.3, "omarchy": 35.0, "bosgame": 19.7}
+OVERHEAD = {"5900x": 2.0, "omarchy": 3.0, "bosgame": 8.0}
+SLOWER = {"5900x": 0.4, "omarchy": 1.2, "bosgame": 0.7}
 COPY_SECONDS = 50.0  # (1.8 GB rig to rig, rsync: 50 s measured 5900X to omarchy)
 BUILD_SECONDS = 30.0  # (the replay built warm)
 LOCK_SECONDS = 60.0
