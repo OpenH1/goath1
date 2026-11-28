@@ -371,3 +371,10 @@ They come back there only when a solve takes them as known sources.
 Open: the one k (0.446, fitted on a50's spots) leaves b40's torches far under the bake's pools (the torch region live
 about x0.04 of classic, the torch itself adding a few percent): the bake's point lights, or that region's other
 light, are not yet explained.
+
+The light tags' k against the surfaces' rule (2026-11-28): a surface's power is an exitance, so L = M / pi with no
+fit; a light tag's radiosity intensity has no area, and 1/pi alone does not fix its unit. The pass reads a baked
+light's power as on-axis intensity (E = I / d^2, I = intensity x colour^2.2 x k x 1.009). Read as (a) a radiant
+intensity, k would be 0.99 (x2.2 today's); as (b) an isotropic point's flux, 1/(4 pi) = 0.080 (x0.18). a50's pools
+fit 0.446, between the two, and b40's torch (x0.04 of classic) would reach only x0.09 under (a): its gap is not the
+k. So k stays 0.446, the one documented calibration, until the lightmap tool's point unit is pinned.
