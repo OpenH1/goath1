@@ -2832,6 +2832,15 @@ static int draw_pipeline(const struct draw_input *input, int apart)
 		(void)xgpu_vulkan_rt_build();
 		draw.ambient_occlusion = 1;
 	}
+	/* (the light-transport pass on: a draw lit by the dynamic lights reads
+	the pass's light table and traces its visibility (the one light model's
+	forward receivers, xgpu_spirv.h's XGPU_SPIRV_BINDING_LT_TABLE): the
+	occlusion's sets and the hit set, the scene as the pass built it this
+	frame (not built again here: a build between the pass and the surfaces
+	finds the hits' textures again, which moved the reflections' hits
+	between a held frame's plays)) */
+	if (draw.dynamic_lights && xgpu_vulkan_lt_mode())
+		draw.ambient_occlusion = 1;
 	draw.reads_color = pipeline.color_read;
 	draw.stores_color = pipeline.color_store;
 	{

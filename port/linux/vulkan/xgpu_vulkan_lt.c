@@ -135,7 +135,19 @@ LT_SUN_ROW */
 #define LT_TABLE_TEXELS 8
 #define LT_SUN_ROW XGPU_DYNAMIC_LIGHTS_MAXIMUM
 #define LT_SUNS 8
-#define LT_TABLE_ROWS (LT_SUN_ROW + LT_SUNS)
+/* (past the suns, the view's shadowed flashlight's row: the pass's own E1
+light, which no block row carries for the pass; read by the one light
+model's forward receivers alone, xgpu_spirv.h's XGPU_SPIRV_LT_FLASHLIGHT_ROW) */
+#define LT_FLASHLIGHT_ROW (LT_SUN_ROW + LT_SUNS)
+#define LT_TABLE_ROWS (LT_FLASHLIGHT_ROW + 1)
+/* (the pass's own table, the image its kernels read: the block's rows and
+the suns' alone, as before the forward receivers; the flashlight's row and
+the frame before's rows are in the forward table, an image of their own,
+so that nothing the pass reads changes with them) */
+#define LT_PASS_ROWS (LT_SUN_ROW + LT_SUNS)
+_Static_assert(LT_TABLE_TEXELS == XGPU_SPIRV_LT_TABLE_TEXELS && LT_SUN_ROW == XGPU_SPIRV_LT_SUN_ROW &&
+	LT_SUNS == XGPU_SPIRV_LT_SUNS && LT_FLASHLIGHT_ROW == XGPU_SPIRV_LT_FLASHLIGHT_ROW &&
+	LT_TABLE_ROWS == XGPU_SPIRV_LT_TABLE_ROWS, "the light table as the forward receivers read it (xgpu_spirv.h)");
 #define LT_ONLY_IDS 8
 /* the suns' direct share of the lightmap, a k for a sun (a narrow sky
 light) and one for a fill (a wide one, LT_FILL_DIAMETER across or more:
@@ -148,13 +160,19 @@ fit with sun and fill apart (b30, the lightmap ^2.2)) */
 #define LT_FILL_DIAMETER 0.17453293f
 enum
 {
-	LT_KIND_SKIP = -1,
-	LT_KIND_POINT,
+	LT_KIND_SKIP = XGPU_SPIRV_LT_KIND_CLASSIC,
+	/* (the block's row of the view's shadowed flashlight: not the pass's
+	block row, lit from LT_FLASHLIGHT_ROW) */
+	LT_KIND_FLASHLIGHT = XGPU_SPIRV_LT_KIND_FLASHLIGHT,
+	/* (the pass's kinds from 0: lt/e1.frag's POINT, SPOT, PANEL, DIRECTIONAL) */
+	LT_KIND_POINT = 0,
 	LT_KIND_SPOT,
 	LT_KIND_PANEL,
 	LT_KIND_DIRECTIONAL,
 };
 /* (without a light list: the emitters' radii as lt_lights.c gives them) */
+_Static_assert(LT_KIND_POINT == 0 && LT_KIND_SPOT == 1 && LT_KIND_PANEL == 2 && LT_KIND_DIRECTIONAL == 3,
+	"the kinds as lt/e1.frag numbers them");
 #define LT_DISK_SCALE 0.05f
 #define LT_DISK_LEAST 0.1f
 #define LT_DISK_MOST 0.5f
@@ -183,8 +201,20 @@ static struct
 	turn, the light after the suns' share (what the surfaces read); each
 	row's light's id this frame and the last (0 none), the rows' count */
 	struct xgpu_vulkan_image *table, *reservoirs[2], *final;
+	/* (the forward table: this frame's rows, the flashlight's among them,
+	then the frame before's: the one light model's forward receivers' and
+	the denoiser's deterministic gradients', xgpu_vulkan_lt_table_halves) */
+	struct xgpu_vulkan_image *forward_table;
+	/* (each row's light is one the game placed on the first-person
+	weapon (XGPU_LT_LIGHT_FIRST_PERSON): the forward table's texel 7's y) */
+	unsigned char first_person[LT_TABLE_ROWS];
 	int handled;
 	float texels[LT_TABLE_ROWS][LT_TABLE_TEXELS][4];
+	/* (the frame before's, kept below this frame's in the table's image
+	(rows from LT_TABLE_ROWS): the denoiser's deterministic gradients,
+	xgpu_vulkan_lt_table_halves) */
+	float previous_texels[LT_TABLE_ROWS][LT_TABLE_TEXELS][4];
+	int previous_rows;
 	uint32_t ids[2][LT_TABLE_ROWS][2];
 	int rows[2], ids_current, reservoir_current, reservoirs_valid;
 	/* (the stream's frame, the pre-pass's history[1]: HALO_LT_TABLE_LOG's) */
@@ -201,6 +231,15 @@ static struct
 void xgpu_vulkan_lt_guides(struct xgpu_vulkan_image *guides)
 {
 	lt.guides = guides;
+}
+
+struct xgpu_vulkan_image *xgpu_vulkan_lt_table_halves(int32_t lights[4])
+{
+	lights[0] = lt.forward_table ? lt.rows[lt.ids_current] : 0;
+	lights[1] = lt.forward_table ? lt.previous_rows : 0;
+	lights[2] = LT_TABLE_ROWS;
+	lights[3] = XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE;
+	return lt.forward_table;
 }
 
 int xgpu_vulkan_lt_mode(void)
@@ -659,6 +698,9 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 		rows = XGPU_DYNAMIC_LIGHTS_MAXIMUM;
 	now = lt.ids_current ^= 1;
 	before = now ^ 1;
+	memcpy(lt.previous_texels, lt.texels, sizeof(lt.texels));
+	memset(lt.first_person, 0, sizeof(lt.first_person));
+	lt.previous_rows = lt.rows[before];
 	memset(lt.texels, 0, sizeof(lt.texels));
 	memset(lt.ids[now], 0, sizeof(lt.ids[now]));
 	for (row = 0; row < LT_TABLE_ROWS; row++)
@@ -701,6 +743,7 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 			lt_set(t[3], light->left[0], light->left[1], light->left[2], light->cone_outer);
 			lt_power(light, kind, t[4]);
 			lt_set(t[5], (float)light->owner, (float)light->gel_slot, light->gel_width, 0.0f);
+			lt.first_person[row] = (light->flags & XGPU_LT_LIGHT_FIRST_PERSON) != 0;
 			lt.ids[now][row][0] = light->id[0];
 			lt.ids[now][row][1] = light->id[1] | 1u << 23;
 			/* (its stable id, 20 bits of it: the radiance cache's light-id
@@ -758,6 +801,26 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 		lt_set(t[5], 0.0f, -1.0f, 0.0f, light->angular_diameter);
 		suns++;
 	}
+	/* (the view's shadowed flashlight, E1's light (its parameters, lt_light),
+	in its own row for the one light model's forward receivers, the pass's
+	formula as a spot: the disk at the lamp, the gel from the game's light
+	(its origin in texel 6), the range window by the light's radius, the
+	linear power pow(colour, 2.2) by the flashlight's k; its block row marked
+	so the forward receivers' classic sum leaves it out) */
+	if (skip >= 0 && skip < rows)
+	{
+		float (*t)[4] = lt.texels[LT_FLASHLIGHT_ROW];
+
+		lt_set(t[0], params->lamp[0], params->lamp[1], params->lamp[2], LT_DISK_RADIUS);
+		lt_set(t[1], params->forward[0], params->forward[1], params->forward[2], fabsf(params->light[3]));
+		lt_set(t[2], params->up[0], params->up[1], params->up[2], -1.0f);
+		lt_set(t[3], params->left[0], params->left[1], params->left[2], -1.0f);
+		for (index = 0; index < 3; index++)
+			t[4][index] = powf(params->color[index] > 0.0f ? params->color[index] : 0.0f, 2.2f) * LT_POWER_SCALE;
+		t[4][3] = (float)LT_KIND_SPOT;
+		lt_set(t[5], (float)params->owners[0], 0.0f, params->color[3], 0.0f);
+		lt_set(t[6], params->light[0], params->light[1], params->light[2], 1.0f);
+	}
 	/* (each light's row the frame before, by its stable id, and the
 	other way: the reservoirs' temporal reuse) */
 	for (row = 0; row < rows; row++)
@@ -805,14 +868,44 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 		description.format = XGPU_VULKAN_FORMAT_RGBA32F;
 		description.usage = XGPU_VULKAN_USAGE_SAMPLED | XGPU_VULKAN_USAGE_COPIED;
 		description.width = LT_TABLE_TEXELS;
-		description.height = LT_TABLE_ROWS;
+		description.height = LT_PASS_ROWS;
 		description.depth_or_layers = 1;
 		description.levels = 1;
 		lt.table = xgpu_vulkan_image_create(&description);
 	}
 	if (lt.table)
-		xgpu_vulkan_image_upload(lt.table, 0, 0, 0, 0, 0, LT_TABLE_TEXELS, LT_TABLE_ROWS, 1, lt.texels,
-			LT_TABLE_TEXELS * 16, LT_TABLE_TEXELS * LT_TABLE_ROWS * 16);
+		xgpu_vulkan_image_upload(lt.table, 0, 0, 0, 0, 0, LT_TABLE_TEXELS, LT_PASS_ROWS, 1, lt.texels,
+			LT_TABLE_TEXELS * 16, LT_TABLE_TEXELS * LT_PASS_ROWS * 16);
+	/* (the forward table: this frame's rows, then the frame before's) */
+	if (!lt.forward_table)
+	{
+		memset(&description, 0, sizeof(description));
+		description.type = XGPU_VULKAN_IMAGE_2D;
+		description.format = XGPU_VULKAN_FORMAT_RGBA32F;
+		description.usage = XGPU_VULKAN_USAGE_SAMPLED | XGPU_VULKAN_USAGE_COPIED;
+		description.width = LT_TABLE_TEXELS;
+		description.height = 2 * LT_TABLE_ROWS;
+		description.depth_or_layers = 1;
+		description.levels = 1;
+		lt.forward_table = xgpu_vulkan_image_create(&description);
+	}
+	if (lt.forward_table)
+	{
+		static float halves[2 * LT_TABLE_ROWS][LT_TABLE_TEXELS][4];
+
+		memcpy(halves, lt.texels, sizeof(lt.texels));
+		memcpy(halves[LT_TABLE_ROWS], lt.previous_texels, sizeof(lt.previous_texels));
+		/* (the block's row of the flashlight its own row lights: left out
+		of the forward receivers' classic sum) */
+		if (skip >= 0 && skip < rows)
+			halves[skip][4][3] = (float)LT_KIND_FLASHLIGHT;
+		for (row = 0; row < rows; row++)
+			halves[row][7][1] = lt.first_person[row] ? 1.0f : 0.0f;
+		xgpu_vulkan_image_upload(lt.forward_table, 0, 0, 0, 0, 0, LT_TABLE_TEXELS, 2 * LT_TABLE_ROWS, 1, halves,
+			LT_TABLE_TEXELS * 16, LT_TABLE_TEXELS * 2 * LT_TABLE_ROWS * 16);
+	}
+	/* (the forward receivers read it at the occlusion set's binding) */
+	xgpu_vulkan_lt_table_set(lt.forward_table);
 	memcpy(params->grid[0], block->grid[0], sizeof(params->grid[0]));
 	memcpy(params->grid[1], block->grid[1], sizeof(params->grid[1]));
 	params->lights[0] = lt.table ? rows : 0;

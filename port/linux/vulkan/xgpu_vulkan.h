@@ -775,10 +775,18 @@ XGPU_SPIRV_BINDING_FLASHLIGHT_SHADOW, xgpu.h's XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_SH
 pixel add: a 2D image of four halves, read by texel, a 1x1 of none where
 none is traced; xgpu_spirv.h's XGPU_SPIRV_BINDING_RT_BOUNCE) */
 #define XGPU_VULKAN_BINDING_RT_BOUNCE 10
+/* (and the light-transport pass's light table, which the one light
+model's forward receivers read: xgpu_spirv.h's XGPU_SPIRV_BINDING_LT_TABLE;
+xgpu_vulkan_lt_table_image's, or the bounced light's image as a stand-in
+where the pass is off) */
+#define XGPU_VULKAN_BINDING_LT_TABLE 11
 /* the bounced light the occlusion's sets name from now on (NULL: the
 stand-in), and whether they name this one */
 void xgpu_vulkan_rt_bounce_set(struct xgpu_vulkan_image *image);
 int xgpu_vulkan_rt_bounce_bound(const struct xgpu_vulkan_image *image);
+/* the light-transport pass's light table the occlusion's sets name from now
+on (XGPU_VULKAN_BINDING_LT_TABLE; NULL: none) */
+void xgpu_vulkan_lt_table_set(struct xgpu_vulkan_image *image);
 /* display.rt_bounce's passes (xgpu_vulkan_gi.c): the window's lights (the
 stream's RT_BOUNCE), the passes drawn after the pre-pass (its inputs and
 its pass's uniforms; where the device has ray queries) and the stand-in

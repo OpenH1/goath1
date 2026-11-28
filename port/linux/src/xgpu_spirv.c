@@ -2181,6 +2181,11 @@ struct pixel_state
 	/* display.rt_bounce: the bounced light found once a pixel, which the
 	lights' sums add (rt_bounce_declare; 0 none) */
 	unsigned int rt_bounce;
+	/* the one light model's forward receiver: the pass's light table
+	(lt_table_declare) and its direct light evaluated here (lt_forward_add),
+	the pass's lights left out of the classic sum */
+	BOOL lt_forward;
+	unsigned int lt_table;
 };
 
 /* display.rt_bounce (below) */
@@ -2200,6 +2205,10 @@ static unsigned int lt_e1_add(struct module *m, struct pixel_state *state, unsig
 	unsigned int p, unsigned int n);
 static unsigned int lt_reflection_texel(struct module *m, struct pixel_state *state, unsigned int cube);
 static BOOL lt_reflection_traced(const struct pixel_state *state);
+static void lt_table_declare(struct module *m, struct pixel_state *state);
+static unsigned int lt_forward_skips(struct module *m, struct pixel_state *state, unsigned int light);
+static unsigned int lt_forward_add(struct module *m, struct pixel_state *state, unsigned int lit, unsigned int tint,
+	unsigned int p, unsigned int n, unsigned int shaded);
 
 static unsigned int pixel_input(struct module *m, struct pixel_state *state, unsigned int variable_id, unsigned int type)
 {
@@ -5332,6 +5341,17 @@ static unsigned int dynamic_light_sum(struct module *m, struct pixel_state *stat
 		branch_conditional(m, condition, inner_continue, skip);
 		label_at(m, skip);
 	}
+	/* (a forward receiver of the one light model: the lights the pass
+	lights, which it adds itself by the pass's model, lt_forward_add: if
+	(lt_forward_skips(light)) continue;) */
+	if (state->lt_forward)
+	{
+		unsigned int skip = id_new(m), condition = lt_forward_skips(m, state, light);
+
+		selection_merge(m, skip);
+		branch_conditional(m, condition, inner_continue, skip);
+		label_at(m, skip);
+	}
 	if (environment)
 	{
 		unsigned int skip = id_new(m), condition = compare(m, OP_F_ORD_LESS_THAN, w, constant_float(m, 0.0f));
@@ -6092,15 +6112,20 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 	BOOL self_illuminated = XGPU_HDR_IS_SELF_ILLUMINATED(program->hdr) && !program->source_blend;
 	unsigned int self_illumination_base = 0, self_illumination = 0;
 	unsigned int in_motion_current = 0, in_motion_previous = 0, motion_out = 0;
+	BOOL lt_forward;
 	int stage;
 
 	lt_shader_on = options->light_transport != 0;
+	/* (the one light model's forward receiver: lit by the dynamic lights,
+	with no pass light of its own, nor a twin or an effect: xgpu_spirv.h's
+	XGPU_SPIRV_BINDING_LT_TABLE) */
+	lt_forward = lt_shader_on && program->dynamic_lights && !world_sampled && !world_inputs && !occluder && !effect;
 
 	memset(&state, 0, sizeof(state));
 	state.program = program;
 	state.options = options;
 	module_begin(&m, EXECUTION_MODEL_FRAGMENT);
-	if (world || environment)
+	if (world || environment || lt_forward)
 		declare_uniforms_world(&m, environment);
 	else
 		declare_uniforms(&m);
@@ -6161,6 +6186,11 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 			light_shadows_declare(&m, &state);
 			rt_bounce_declare(&m, &state); /* display.rt_bounce */
 		}
+	}
+	if (lt_forward)
+	{
+		state.lt_forward = TRUE;
+		lt_table_declare(&m, &state);
 	}
 	if (count_samples)
 	{
@@ -6346,6 +6376,8 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 				store(&m, linear_variable, rt_bounce_add(&m, &state, load(&m, m.t_v3, linear_variable)));
 			added = dynamic_light_add(&m, &state, lit, sum, load(&m, m.t_v3, linear_variable), FALSE);
 			added = lt_e1_add(&m, &state, added, 0, p, shaded);
+			/* (a forward receiver: the pass's light found here) */
+			added = lt_forward_add(&m, &state, added, 0, p, n, shaded);
 		}
 		/* (a metal's diffuse light darkened: material_read) */
 		if (state.metalness)
@@ -6520,6 +6552,10 @@ BOOL xgpu_spirv_pixel_shader(const struct xgpu_pixel_program *program, const str
 		lit = lt_e1_add(&m, &state, lit, ext2(&m, GLSL_POW, m.t_v3, fmax_scalar(&m, 3,
 			xyz(&m, uniform(&m, U_DYNAMIC_LIGHT_TINT, -1)), 0.0f), constant_splat(&m, 3, 2.2f)),
 			pixel_input(&m, &state, state.in_world_position, m.t_v3), n);
+		/* (a forward receiver: the pass's light found here) */
+		lit = lt_forward_add(&m, &state, lit, ext2(&m, GLSL_POW, m.t_v3, fmax_scalar(&m, 3,
+			xyz(&m, uniform(&m, U_DYNAMIC_LIGHT_TINT, -1)), 0.0f), constant_splat(&m, 3, 2.2f)),
+			pixel_input(&m, &state, state.in_world_position, m.t_v3), surface_normal, n);
 		}
 		/* (HALO_LIGHT_SHADOWS_VIEW: the lights over the surface darkened,
 		not under the shoulder, so a lit wall shows them too) */
@@ -7835,10 +7871,12 @@ static unsigned int rt_shadows_point(struct module *m, unsigned int header, unsi
 	unsigned int at, operands[4], depth, framebuffer, rows[4], h;
 	int row;
 
-	at = ext3(m, GLSL_S_CLAMP, m->t_iv2, op2(m, OP_I_ADD, m->t_iv2, pixel, construct(m, 2, (unsigned int[]){
-		constant_int(m, dx), constant_int(m, dy) })), construct(m, 2, (unsigned int[]){ constant_int(m, 0),
-		constant_int(m, 0) }), op2(m, OP_I_SUB, m->t_iv2, size, construct(m, 2, (unsigned int[]){ constant_int(m, 1),
-		constant_int(m, 1) })));
+	/* (int vectors: construct's are float ones, which spirv-val refuses for
+	int components) */
+	at = ext3(m, GLSL_S_CLAMP, m->t_iv2, op2(m, OP_I_ADD, m->t_iv2, pixel, op(m, OP_COMPOSITE_CONSTRUCT, m->t_iv2, 2,
+		(unsigned int[]){ constant_int(m, dx), constant_int(m, dy) })), op(m, OP_COMPOSITE_CONSTRUCT, m->t_iv2, 2,
+		(unsigned int[]){ constant_int(m, 0), constant_int(m, 0) }), op2(m, OP_I_SUB, m->t_iv2, size,
+		op(m, OP_COMPOSITE_CONSTRUCT, m->t_iv2, 2, (unsigned int[]){ constant_int(m, 1), constant_int(m, 1) })));
 	operands[0] = raw;
 	operands[1] = at;
 	operands[2] = IMAGE_OPERANDS_LOD;
@@ -9258,6 +9296,424 @@ static unsigned int lt_e1_add(struct module *m, struct pixel_state *state, unsig
 	/* (less than 0 where the suns' share a dynamic object shadows is more
 	than the lightmap's light: kept at 0) */
 	return ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, base, 0.0f), constant_splat(m, 3, 1.0f / 2.2f));
+}
+
+/* ---------- the one light model's forward receivers (xgpu_spirv.h's
+XGPU_SPIRV_BINDING_LT_TABLE; ~/dev/rt2-realtime-design.md, "One light model
+for every receiver")
+
+A draw lit by the enhanced dynamic lights that reads no pass light of its
+own (state->lt_forward: the first-person weapon and hands, a blended or
+self-illuminated model's or structure's pass) lights itself by the pass's
+own direct light, from the pass's light table, lt/e1.frag's formula
+(light_estimate's, in colour) at each light's emitter middle, with one
+visibility ray to it, as GLSL:
+
+vec3 sum = vec3(0.0);
+for each row of the pixel's cell (the dynamic lights' grid, as the pass's
+  cell_lights), then the view's flashlight's row (FLASHLIGHT_ROW):
+  vec4 t0..t6 = the row's texels; if (t4.w < 0.0 || t4.w > 2.5) continue;   (not the pass's; a sun)
+  vec3 to = t0.xyz - p; float d2 = max(dot(to, to), 1e-8), d = sqrt(d2); vec3 l = to / d;
+  float window = range_window(d, t1.w), e = dot(t1.xyz, -l), r2 = t0.w * t0.w, profile;
+  point: profile = 1.0 / max(d2, r2);
+  spot:  profile = e > 0 ? cone_ramp(e, t2.w, t3.w) * e / max(d2, 1e-4) : 0, by the gel's
+         pow(cookie(a, b), 2.2) where it has one (t5.y >= 0, t5.z its half width; from t6.xyz
+         where t6.w is 1, else from t0.xyz);
+  panel: profile = e > 0 ? e * r2 / (r2 + d2) : 0;
+  float lit = dot(n, l) > 0.0 ? profile * max(dot(shaded, l), 0.0) * window : 0.0;
+  if (lit > 0.0) lit *= visible(origin, t0.xyz, t_max = |t0.xyz - origin| - max(1.5 t0.w, 0.1),
+                                its owner int(t5.x), the draw's own instance);
+  sum += t4.rgb * lit;
+origin: the first-person weapon's (the draw's object WORLD_AO_OWNER_UNLIT) the eye (grid[0].xyz): it is
+drawn over the world from the viewer's place, so the world shadows it only where it shadows the eye;
+else p + n * (0.004 + 0.0005 |p - eye|), the pass's offset.
+The first-person weapon also leaves out the lights within its reach of
+the eye that the game did not place on the view model (the forward table's
+texel 7's y): those are its holder's third-person body's and held weapon's
+(an ammo counter's glow), which the view model stands in for, not where it
+is drawn; a model's own lights (model_lights[XGPU_MODEL_LIGHT_OWN_LIGHTS])
+light it no more than in the classic sum.
+
+The pass's lights the table's rows carry (t4.w >= 0) and the view's
+flashlight (its block row XGPU_SPIRV_LT_KIND_FLASHLIGHT) are then left out
+of the draw's classic sum (dynamic_light_sum's forward), which keeps the
+models-only lights (XGPU_SPIRV_LT_KIND_CLASSIC) as the pass's receivers keep
+them. Linear irradiance, the pass's units: lt_forward_add adds it as
+lt_e1_add adds the pass's. */
+
+#define LT_FORWARD_OWNER_FIRST_PERSON (-2.0f)
+/* how far from the eye a first-person model reaches at most (world units:
+d3d8_device.c's MODEL_BOUNDS_FIRST_PERSON_REACH) */
+#define LT_FORWARD_FIRST_PERSON_REACH 1.5f
+
+static void lt_table_declare(struct module *m, struct pixel_state *state)
+{
+	state->lt_table = variable(m, type_sampled_image(m, DIM_2D, FALSE, FALSE, TRUE), STORAGE_UNIFORM_CONSTANT, "lt_table");
+	decorate1(m, state->lt_table, DECORATION_DESCRIPTOR_SET, XGPU_SPIRV_SET_OCCLUSION);
+	decorate1(m, state->lt_table, DECORATION_BINDING, XGPU_SPIRV_BINDING_LT_TABLE);
+	if (!m->rt_reflection_scene)
+	{
+		m->rt_reflection_scene = variable(m, type0(m, OP_TYPE_ACCELERATION_STRUCTURE), STORAGE_UNIFORM_CONSTANT,
+			"rt_reflection_scene");
+		decorate1(m, m->rt_reflection_scene, DECORATION_DESCRIPTOR_SET, XGPU_SPIRV_SET_OCCLUSION);
+		decorate1(m, m->rt_reflection_scene, DECORATION_BINDING, XGPU_SPIRV_BINDING_WORLD_AO_SCENE);
+		m->ray_query = TRUE;
+	}
+	rt_hits_declare(m);
+}
+
+/* the table as an image (texelFetch's) */
+static unsigned int lt_table_image(struct module *m, struct pixel_state *state)
+{
+	unsigned int sampled = load(m, type_sampled_image(m, DIM_2D, FALSE, FALSE, TRUE), state->lt_table);
+
+	return op(m, OP_IMAGE, type_sampled_image(m, DIM_2D, FALSE, FALSE, FALSE), 1, &sampled);
+}
+
+/* a row's (an int) texel (a vec4) */
+static unsigned int lt_table_texel(struct module *m, unsigned int image, unsigned int row, int texel)
+{
+	unsigned int operands[4];
+
+	operands[0] = image;
+	operands[1] = op(m, OP_COMPOSITE_CONSTRUCT, m->t_iv2, 2, (unsigned int[]){ constant_int(m, texel), row });
+	operands[2] = IMAGE_OPERANDS_LOD;
+	operands[3] = constant_int(m, 0);
+	return op(m, OP_IMAGE_FETCH, m->t_v4, 4, operands);
+}
+
+/* the rows the bound table has (the stand-in's 1: none read) */
+static unsigned int lt_table_rows(struct module *m, unsigned int image)
+{
+	return op2(m, OP_COMPOSITE_EXTRACT, m->t_int, image_size(m, image, m->t_iv2), 1);
+}
+
+/* whether the segment from origin toward target is clear short of the
+emitter (its radius, as the pass ends its rays: lt/e1.frag's light_sample),
+its owner's instance and the receiver's own left out, the structure never:
+1 or 0 */
+static unsigned int lt_forward_visible(struct module *m, struct pixel_state *state, unsigned int origin,
+	unsigned int target, unsigned int radius, unsigned int owner, unsigned int receiver)
+{
+	struct words *locals = &state->locals;
+	unsigned int query = local(m, locals, type0(m, OP_TYPE_RAY_QUERY)), seen = local(m, locals, m->t_float);
+	unsigned int candidate = constant_int(m, RAY_QUERY_CANDIDATE), committed = constant_int(m, RAY_QUERY_COMMITTED);
+	unsigned int ray = fsub(m, 3, target, origin), length = flength(m, ray), d, t_max, operands[8], merge;
+	unsigned int header = id_new(m), condition = id_new(m), body = id_new(m), next = id_new(m), loop_merge = id_new(m);
+	unsigned int custom, structure, other, mine_merge;
+
+	store(m, seen, constant_float(m, 1.0f));
+	d = fdiv(m, 3, ray, splat(m, 3, fmax_scalar(m, 1, length, 1.0e-6f)));
+	t_max = fsub(m, 1, length, fmax_scalar(m, 1, fmul(m, 1, radius, constant_float(m, 1.5f)), 0.1f));
+	selection_begin(m, compare(m, OP_F_ORD_GREATER_THAN, t_max, constant_float(m, 0.0f)), &merge);
+	operands[0] = query;
+	operands[1] = load(m, type0(m, OP_TYPE_ACCELERATION_STRUCTURE), m->rt_reflection_scene);
+	operands[2] = constant_uint(m, 0);
+	operands[3] = constant_uint(m, XGPU_SPIRV_RT_MASK_AO);
+	operands[4] = origin;
+	operands[5] = constant_float(m, 0.0f);
+	operands[6] = d;
+	operands[7] = t_max;
+	op_void(m, OP_RAY_QUERY_INITIALIZE, 8, operands);
+	branch(m, header);
+	label_at(m, header);
+	operands[0] = loop_merge;
+	operands[1] = next;
+	operands[2] = 0;
+	op_void(m, OP_LOOP_MERGE, 3, operands);
+	branch(m, condition);
+	label_at(m, condition);
+	branch_conditional(m, op1(m, OP_RAY_QUERY_PROCEED, m->t_bool, query), body, loop_merge);
+	label_at(m, body);
+	custom = op2(m, OP_RAY_QUERY_GET_INTERSECTION_INSTANCE_CUSTOM_INDEX, m->t_int, query, candidate);
+	structure = op2(m, OP_I_EQUAL, m->t_bool, custom, constant_int(m, 0));
+	other = op2(m, OP_LOGICAL_AND, m->t_bool, op2(m, OP_I_NOT_EQUAL, m->t_bool, custom, owner),
+		op2(m, OP_I_NOT_EQUAL, m->t_bool, custom, receiver));
+	selection_begin(m, rt_candidate_commits(m, locals, query, structure, other), &mine_merge);
+	op_void(m, OP_RAY_QUERY_CONFIRM_INTERSECTION, 1, &query);
+	selection_end(m, mine_merge);
+	branch(m, next);
+	label_at(m, next);
+	branch(m, header);
+	label_at(m, loop_merge);
+	store(m, seen, fselect(m, op2(m, OP_I_EQUAL, m->t_bool, op2(m, OP_RAY_QUERY_GET_INTERSECTION_TYPE, m->t_uint, query,
+		committed), constant_uint(m, 0)), constant_float(m, 1.0f), constant_float(m, 0.0f)));
+	selection_end(m, merge);
+	return load(m, m->t_float, seen);
+}
+
+/* the flashlight's cookie (the cells' XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE,
+as lt/e1.frag's cookie reads it) at a, b in -1 to 1, bilinear, each axis
+warped (u = sign(a) sqrt(|a|)): gamma, 0 to 1 */
+static unsigned int lt_forward_cookie(struct module *m, unsigned int a, unsigned int b)
+{
+	struct flashlight_bilinear bl;
+	unsigned int x, y;
+	const float size = (float)XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE;
+
+	x = fmul(m, 1, ext1(m, GLSL_F_SIGN, m->t_float, a), fsqrt(m, ext1(m, GLSL_F_ABS, m->t_float, a)));
+	y = fmul(m, 1, ext1(m, GLSL_F_SIGN, m->t_float, b), fsqrt(m, ext1(m, GLSL_F_ABS, m->t_float, b)));
+	x = fsub(m, 1, fmul(m, 1, fadd(m, 1, fmul(m, 1, x, constant_float(m, 0.5f)), constant_float(m, 0.5f)),
+		constant_float(m, size)), constant_float(m, 0.5f));
+	y = fsub(m, 1, fmul(m, 1, fadd(m, 1, fmul(m, 1, y, constant_float(m, 0.5f)), constant_float(m, 0.5f)),
+		constant_float(m, size)), constant_float(m, 0.5f));
+	flashlight_bilinear(m, x, y, XGPU_DYNAMIC_LIGHTS_FLASHLIGHT_COOKIE_SIZE, &bl);
+	return flashlight_mix(m, flashlight_mix(m, flashlight_cookie_byte(m, bl.x0, bl.y0),
+		flashlight_cookie_byte(m, bl.x1, bl.y0), bl.fx), flashlight_mix(m, flashlight_cookie_byte(m, bl.x0, bl.y1),
+		flashlight_cookie_byte(m, bl.x1, bl.y1), bl.fx), bl.fy);
+}
+
+/* what lt_forward_light reads once a pixel */
+struct lt_forward_read
+{
+	unsigned int image, rows, p, n, shaded, origin, receiver, sum, eye, first_person;
+};
+
+/* a row's (an int) light at the pixel, added to the sum (lt_forward_light's
+loop body) */
+static void lt_forward_row(struct module *m, struct pixel_state *state, const struct lt_forward_read *read,
+	unsigned int row)
+{
+	unsigned int t[7], kind, to, d2, d, l, window, x, e, r2, ramp, inner, outer, spot, panel, point, profile;
+	unsigned int gel_origin, v, z, inverse, a, b, inside, gel, has_gel, lit, seen, merge, lit_merge, taken;
+	int texel;
+
+	taken = op2(m, OP_S_LESS_THAN, m->t_bool, row, read->rows);
+	selection_begin(m, taken, &merge);
+	t[4] = lt_table_texel(m, read->image, row, 4);
+	t[0] = lt_table_texel(m, read->image, row, 0);
+	kind = extract(m, t[4], 3);
+	/* (the first-person weapon: not the lights of its holder's body and
+	held weapon, which its view model stands in for (within the
+	first-person reach of the eye) but those the game placed on the view
+	model itself (texel 7's y): the third-person body's lights are not
+	where the view model is drawn) */
+	{
+		unsigned int placed = compare(m, OP_F_ORD_GREATER_THAN, extract(m, lt_table_texel(m, read->image, row, 7), 1),
+			constant_float(m, 0.5f));
+		unsigned int near = compare(m, OP_F_ORD_LESS_THAN, flength(m, fsub(m, 3, xyz(m, t[0]), read->eye)),
+			constant_float(m, LT_FORWARD_FIRST_PERSON_REACH));
+		unsigned int holders = op2(m, OP_LOGICAL_AND, m->t_bool, read->first_person, op2(m, OP_LOGICAL_AND, m->t_bool,
+			near, op1(m, OP_LOGICAL_NOT, m->t_bool, placed)));
+
+		selection_begin(m, op2(m, OP_LOGICAL_AND, m->t_bool, op2(m, OP_LOGICAL_AND, m->t_bool,
+			compare(m, OP_F_ORD_GREATER_THAN_EQUAL, kind, constant_float(m, 0.0f)),
+			compare(m, OP_F_ORD_LESS_THAN, kind, constant_float(m, 2.5f))), op1(m, OP_LOGICAL_NOT, m->t_bool, holders)),
+			&lit_merge);
+	}
+	for (texel = 1; texel < 7; texel++)
+		if (texel != 4)
+			t[texel] = lt_table_texel(m, read->image, row, texel);
+	to = fsub(m, 3, xyz(m, t[0]), read->p);
+	d2 = fmax_scalar(m, 1, fdot(m, to, to), 1.0e-8f);
+	d = fsqrt(m, d2);
+	l = fdiv(m, 3, to, splat(m, 3, d));
+	/* (the range window (1 - (d / r)^4)^2) */
+	x = fmul(m, 1, d, extract(m, t[1], 3));
+	window = saturate(m, 1, fsub(m, 1, constant_float(m, 1.0f), fmul(m, 1, fmul(m, 1, x, x), fmul(m, 1, x, x))));
+	window = fmul(m, 1, window, window);
+	e = fdot(m, xyz(m, t[1]), fneg(m, 3, l));
+	r2 = fmul(m, 1, extract(m, t[0], 3), extract(m, t[0], 3));
+	/* (a spot: its cone's ramp (none: outer -1; a step where inner <= outer), e / d^2, by its gel) */
+	inner = extract(m, t[2], 3);
+	outer = extract(m, t[3], 3);
+	ramp = saturate(m, 1, fdiv(m, 1, fsub(m, 1, e, outer), fmax_scalar(m, 1, fsub(m, 1, inner, outer), 1.0e-6f)));
+	ramp = fselect(m, compare(m, OP_F_ORD_LESS_THAN_EQUAL, inner, outer), fselect(m, compare(m, OP_F_ORD_GREATER_THAN, e,
+		outer), constant_float(m, 1.0f), constant_float(m, 0.0f)), ramp);
+	ramp = fselect(m, compare(m, OP_F_ORD_LESS_THAN_EQUAL, outer, constant_float(m, -1.0f)), constant_float(m, 1.0f), ramp);
+	spot = fdiv(m, 1, fmul(m, 1, ramp, e), fmax_scalar(m, 1, d2, 1.0e-4f));
+	gel_origin = select_n(m, 3, compare(m, OP_F_ORD_GREATER_THAN, extract(m, t[6], 3), constant_float(m, 0.5f)),
+		xyz(m, t[6]), xyz(m, t[0]));
+	v = fsub(m, 3, read->p, gel_origin);
+	z = fdot(m, v, xyz(m, t[1]));
+	inverse = fdiv(m, 1, constant_float(m, 1.0f), fmul(m, 1, fmax_scalar(m, 1, z, 1.0e-4f),
+		fmax_scalar(m, 1, extract(m, t[5], 2), 1.0e-4f)));
+	a = fmul(m, 1, fdot(m, v, xyz(m, t[3])), inverse);
+	b = fmul(m, 1, fdot(m, v, xyz(m, t[2])), inverse);
+	inside = op2(m, OP_LOGICAL_AND, m->t_bool, compare(m, OP_F_ORD_GREATER_THAN, z, constant_float(m, 1.0e-4f)),
+		op2(m, OP_LOGICAL_AND, m->t_bool,
+		compare(m, OP_F_ORD_LESS_THAN, ext1(m, GLSL_F_ABS, m->t_float, a), constant_float(m, 1.0f)),
+		compare(m, OP_F_ORD_LESS_THAN, ext1(m, GLSL_F_ABS, m->t_float, b), constant_float(m, 1.0f))));
+	gel = fselect(m, inside, ext2(m, GLSL_POW, m->t_float, fmax_scalar(m, 1, lt_forward_cookie(m,
+		fclamp_scalar(m, a, -1.0f, 1.0f), fclamp_scalar(m, b, -1.0f, 1.0f)), 0.0f), constant_float(m, 2.2f)),
+		constant_float(m, 0.0f));
+	has_gel = op2(m, OP_LOGICAL_AND, m->t_bool, compare(m, OP_F_ORD_GREATER_THAN_EQUAL, extract(m, t[5], 1),
+		constant_float(m, 0.0f)), compare(m, OP_F_ORD_GREATER_THAN, extract(m, t[5], 2), constant_float(m, 0.0f)));
+	spot = fmul(m, 1, spot, fselect(m, has_gel, gel, constant_float(m, 1.0f)));
+	/* (a panel: a one-sided Lambertian disk, e r^2 / (r^2 + d^2); a point: 1 / max(d^2, r^2)) */
+	panel = fdiv(m, 1, fmul(m, 1, e, r2), fadd(m, 1, r2, d2));
+	point = fdiv(m, 1, constant_float(m, 1.0f), ext2(m, GLSL_F_MAX, m->t_float, d2, r2));
+	profile = fselect(m, compare(m, OP_F_ORD_LESS_THAN, kind, constant_float(m, 0.5f)), point,
+		fselect(m, compare(m, OP_F_ORD_LESS_THAN, e, constant_float(m, 0.0f)), constant_float(m, 0.0f),
+		fselect(m, compare(m, OP_F_ORD_LESS_THAN, kind, constant_float(m, 1.5f)), spot, panel)));
+	/* (the receiver's cosine by its shaded normal; the side lit by its geometric one) */
+	lit = fmul(m, 1, fmul(m, 1, profile, fmax_scalar(m, 1, fdot(m, read->shaded, l), 0.0f)), window);
+	lit = fselect(m, compare(m, OP_F_ORD_GREATER_THAN, fdot(m, read->n, l), constant_float(m, 0.0f)), lit,
+		constant_float(m, 0.0f));
+	{
+		unsigned int ray_merge, lit_variable = local(m, &state->locals, m->t_float);
+
+		store(m, lit_variable, lit);
+		selection_begin(m, compare(m, OP_F_ORD_GREATER_THAN, lit, constant_float(m, 0.0f)), &ray_merge);
+		seen = lt_forward_visible(m, state, read->origin, xyz(m, t[0]), extract(m, t[0], 3),
+			op1(m, OP_CONVERT_F_TO_S, m->t_int, extract(m, t[5], 0)), read->receiver);
+		store(m, lit_variable, fmul(m, 1, lit, seen));
+		selection_end(m, ray_merge);
+		store(m, read->sum, fadd(m, 3, load(m, m->t_v3, read->sum), fscale(m, 3, xyz(m, t[4]),
+			load(m, m->t_float, lit_variable))));
+	}
+	selection_end(m, lit_merge);
+	selection_end(m, merge);
+}
+
+/* the pass's direct light at p (n its geometric normal, shaded its shaded
+one): linear irradiance */
+static unsigned int lt_forward_light(struct module *m, struct pixel_state *state, unsigned int p, unsigned int n,
+	unsigned int shaded, BOOL environment)
+{
+	unsigned int grid0 = dynamic_light(m, 0, constant_int(m, 0)), grid1 = dynamic_light(m, 0, constant_int(m, 1));
+	unsigned int eye = xyz(m, grid0), count, object, first_person, offset, cell, cell_index, mask, operands[3];
+	unsigned int word_variable, bits_variable, word, bits, light;
+	unsigned int outer_header, outer_condition, outer_body, outer_continue, outer_merge;
+	unsigned int inner_header, inner_condition, inner_body, inner_continue, inner_merge;
+	struct lt_forward_read read;
+
+	read.image = lt_table_image(m, state);
+	read.rows = lt_table_rows(m, read.image);
+	read.p = p;
+	read.n = n;
+	read.shaded = shaded;
+	read.sum = local(m, &state->locals, m->t_v3);
+	store(m, read.sum, constant_splat(m, 3, 0.0f));
+	/* (the draw's object: the first-person weapon's rays from the eye; its
+	own instance among the rays', left out) */
+	object = uniform(m, U_WORLD_AO, -1);
+	first_person = compare(m, OP_F_ORD_LESS_THAN, ext1(m, GLSL_F_ABS, m->t_float, fsub(m, 1,
+		extract(m, object, 0), constant_float(m, LT_FORWARD_OWNER_FIRST_PERSON))), constant_float(m, 0.5f));
+	read.receiver = op1(m, OP_CONVERT_F_TO_S, m->t_int, extract(m, object, 2));
+	read.eye = eye;
+	read.first_person = first_person;
+	read.origin = select_n(m, 3, first_person, eye, fadd(m, 3, p, fscale(m, 3, n, fadd(m, 1, constant_float(m, 0.004f),
+		fmul(m, 1, constant_float(m, 0.0005f), flength(m, fsub(m, 3, p, eye)))))));
+	count = op1(m, OP_CONVERT_F_TO_S, m->t_int, extract(m, grid0, 3));
+	/* (the cell's lights: the pass's cell_lights) */
+	offset = fsub(m, 3, p, eye);
+	cell = fadd(m, 3, fmul(m, 3, fmul(m, 3, ext1(m, GLSL_F_SIGN, m->t_v3, offset),
+		ext1(m, GLSL_LOG2, m->t_v3, fadd(m, 3, constant_splat(m, 3, 1.0f),
+		fscale(m, 3, ext1(m, GLSL_F_ABS, m->t_v3, offset), extract(m, grid1, 3))))), xyz(m, grid1)),
+		constant_vector(m, 3, (const float[]){ (float)(XGPU_DYNAMIC_LIGHTS_GRID_X / 2), (float)(XGPU_DYNAMIC_LIGHTS_GRID_Y / 2),
+		(float)(XGPU_DYNAMIC_LIGHTS_GRID_Z / 2) }));
+	cell_index = ext3(m, GLSL_S_CLAMP, m->t_iv3, op1(m, OP_CONVERT_F_TO_S, m->t_iv3, ext1(m, GLSL_FLOOR, m->t_v3, cell)),
+		op(m, OP_COMPOSITE_CONSTRUCT, m->t_iv3, 3, (unsigned int[]){ constant_int(m, 0), constant_int(m, 0), constant_int(m, 0) }),
+		op(m, OP_COMPOSITE_CONSTRUCT, m->t_iv3, 3, (unsigned int[]){ constant_int(m, XGPU_DYNAMIC_LIGHTS_GRID_X - 1),
+		constant_int(m, XGPU_DYNAMIC_LIGHTS_GRID_Y - 1), constant_int(m, XGPU_DYNAMIC_LIGHTS_GRID_Z - 1) }));
+	mask = dynamic_light_texel(m, cell_index);
+	word_variable = local(m, &state->locals, m->t_int);
+	bits_variable = local(m, &state->locals, m->t_uint);
+	store(m, word_variable, constant_int(m, 0));
+	outer_header = id_new(m);
+	outer_condition = id_new(m);
+	outer_body = id_new(m);
+	outer_continue = id_new(m);
+	outer_merge = id_new(m);
+	branch(m, outer_header);
+	label_at(m, outer_header);
+	operands[0] = outer_merge;
+	operands[1] = outer_continue;
+	operands[2] = 0;
+	op_void(m, OP_LOOP_MERGE, 3, operands);
+	branch(m, outer_condition);
+	label_at(m, outer_condition);
+	word = load(m, m->t_int, word_variable);
+	branch_conditional(m, op2(m, OP_S_LESS_THAN, m->t_bool, word, constant_int(m, 4)), outer_body, outer_merge);
+	label_at(m, outer_body);
+	store(m, bits_variable, op2(m, OP_VECTOR_EXTRACT_DYNAMIC, m->t_uint, mask, word));
+	inner_header = id_new(m);
+	inner_condition = id_new(m);
+	inner_body = id_new(m);
+	inner_continue = id_new(m);
+	inner_merge = id_new(m);
+	branch(m, inner_header);
+	label_at(m, inner_header);
+	operands[0] = inner_merge;
+	operands[1] = inner_continue;
+	operands[2] = 0;
+	op_void(m, OP_LOOP_MERGE, 3, operands);
+	branch(m, inner_condition);
+	label_at(m, inner_condition);
+	bits = load(m, m->t_uint, bits_variable);
+	branch_conditional(m, op2(m, OP_I_NOT_EQUAL, m->t_bool, bits, constant_uint(m, 0)), inner_body, inner_merge);
+	label_at(m, inner_body);
+	light = op2(m, OP_I_ADD, m->t_int, op2(m, OP_I_MUL, m->t_int, word, constant_int(m, 32)),
+		ext1(m, GLSL_FIND_I_LSB, m->t_int, bits));
+	store(m, bits_variable, op2(m, OP_BITWISE_AND, m->t_uint, bits, op2(m, OP_I_SUB, m->t_uint, bits, constant_uint(m, 1))));
+	{
+		unsigned int merge;
+
+		unsigned int taken = op2(m, OP_S_LESS_THAN, m->t_bool, light, count);
+
+		/* (the block's lights alone: row < count; a model's but those its
+		object's own, which do not light it, as the classic sum leaves
+		them: its model_lights[XGPU_MODEL_LIGHT_OWN_LIGHTS]) */
+		if (!environment)
+		{
+			unsigned int own = uniform(m, U_MODEL_LIGHTS, XGPU_MODEL_LIGHT_OWN_LIGHTS);
+			unsigned int index = op1(m, OP_CONVERT_S_TO_F, m->t_float, light), mine;
+			int slot;
+
+			mine = compare(m, OP_F_ORD_EQUAL, extract(m, own, 0), index);
+			for (slot = 1; slot < 4; slot++)
+				mine = op2(m, OP_LOGICAL_OR, m->t_bool, mine, compare(m, OP_F_ORD_EQUAL, extract(m, own, slot), index));
+			taken = op2(m, OP_LOGICAL_AND, m->t_bool, taken, op1(m, OP_LOGICAL_NOT, m->t_bool, mine));
+		}
+		selection_begin(m, taken, &merge);
+		lt_forward_row(m, state, &read, light);
+		selection_end(m, merge);
+	}
+	branch(m, inner_continue);
+	label_at(m, inner_continue);
+	branch(m, inner_header);
+	label_at(m, inner_merge);
+	branch(m, outer_continue);
+	label_at(m, outer_continue);
+	store(m, word_variable, op2(m, OP_I_ADD, m->t_int, load(m, m->t_int, word_variable), constant_int(m, 1)));
+	branch(m, outer_header);
+	label_at(m, outer_merge);
+	/* (the view's shadowed flashlight, E1's, in its own row) */
+	lt_forward_row(m, state, &read, constant_int(m, XGPU_SPIRV_LT_FLASHLIGHT_ROW));
+	return load(m, m->t_v3, read.sum);
+}
+
+/* whether the classic sum leaves a light (an int, the block's index) out
+for a forward receiver: the pass lights it (its row's kind 0 or more), or
+it is the view's flashlight (its own row lights it): a bool */
+static unsigned int lt_forward_skips(struct module *m, struct pixel_state *state, unsigned int light)
+{
+	unsigned int image = lt_table_image(m, state), kind;
+
+	kind = extract(m, lt_table_texel(m, image, light, 4), 3);
+	return op2(m, OP_LOGICAL_AND, m->t_bool, op2(m, OP_S_LESS_THAN, m->t_bool, light, lt_table_rows(m, image)),
+		op2(m, OP_LOGICAL_OR, m->t_bool, compare(m, OP_F_ORD_GREATER_THAN_EQUAL, kind, constant_float(m, -0.5f)),
+		compare(m, OP_F_ORD_LESS_THAN_EQUAL, kind, constant_float(m, -1.5f))));
+}
+
+/* the forward receiver's light (lt_forward_light) added to lit (the game's
+lights' result, gamma) as lt_e1_add adds the pass's, by tint (linear; 0: by
+1, a model's), as GLSL:
+pow(max(pow(max(lit, 0.0), vec3(2.2)) + light * tint, 0.0), vec3(1.0 / 2.2)) */
+static unsigned int lt_forward_add(struct module *m, struct pixel_state *state, unsigned int lit, unsigned int tint,
+	unsigned int p, unsigned int n, unsigned int shaded)
+{
+	unsigned int light;
+
+	if (!state->lt_forward)
+		return lit;
+	/* (tint: the structure's; none, a model's) */
+	light = lt_forward_light(m, state, p, n, shaded, tint != 0);
+	if (tint)
+		light = fmul(m, 3, light, tint);
+	return ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, fadd(m, 3, ext2(m, GLSL_POW, m->t_v3, fmax_scalar(m, 3, lit, 0.0f),
+		constant_splat(m, 3, 2.2f)), light), 0.0f), constant_splat(m, 3, 1.0f / 2.2f));
 }
 
 /* whether a reflection's texel is HALO_LT_E1's pass's: the structure's

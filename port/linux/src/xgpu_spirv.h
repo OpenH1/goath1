@@ -482,6 +482,32 @@ enum
 };
 #define XGPU_SPIRV_BINDING_RT_BOUNCE 10
 
+/* The one light model's forward receivers (~/dev/rt2-realtime-design.md,
+"One light model for every receiver"): with the light-transport pass on,
+a draw lit by the enhanced dynamic lights that reads no pass light of its
+own (the first-person weapon and hands, a blended or self-illuminated
+model's or structure's pass: none drawn into the pre-pass) evaluates the
+pass's direct light itself, from the pass's light table (xgpu_vulkan_lt.c's
+lt_table, lt/e1.frag's light_table), bound to the occlusion set here: an
+RGBA32F image XGPU_SPIRV_LT_TABLE_TEXELS wide, a row a light, the block's
+lights' rows by their index in the block, the suns' from
+XGPU_SPIRV_LT_SUN_ROW, and the view's shadowed flashlight (the pass's own
+E1 light, which no block row carries for the pass) at
+XGPU_SPIRV_LT_FLASHLIGHT_ROW. Texel 4's w is the row's kind (0 a point, 1 a
+spot, 2 a panel, 3 a sun), less than 0 where the pass does not light it:
+XGPU_SPIRV_LT_KIND_CLASSIC (the classic sum still adds it: a models-only
+light) or XGPU_SPIRV_LT_KIND_FLASHLIGHT (the block's row of the view's
+flashlight, lit from its own row). Texel 6's w is 1 where texel 6's xyz is
+a gel's origin apart from the emitter (the flashlight's). */
+#define XGPU_SPIRV_BINDING_LT_TABLE 11
+#define XGPU_SPIRV_LT_TABLE_TEXELS 8
+#define XGPU_SPIRV_LT_SUN_ROW 128
+#define XGPU_SPIRV_LT_SUNS 8
+#define XGPU_SPIRV_LT_FLASHLIGHT_ROW (XGPU_SPIRV_LT_SUN_ROW + XGPU_SPIRV_LT_SUNS)
+#define XGPU_SPIRV_LT_TABLE_ROWS (XGPU_SPIRV_LT_FLASHLIGHT_ROW + 1)
+#define XGPU_SPIRV_LT_KIND_CLASSIC (-1)
+#define XGPU_SPIRV_LT_KIND_FLASHLIGHT (-2)
+
 /* The light-transport pass's guides (contract C1, ~/dev/rt2-realtime-design.md
 section 1.1), with HALO_LT_E1 alone: the pre-pass's twins keep their
 pipelines' dynamic lights (so they shade their bump or normal map's normal

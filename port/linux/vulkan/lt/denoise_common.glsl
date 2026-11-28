@@ -44,6 +44,9 @@ layout(set = 0, binding = 1, std140) uniform Pass
     // (lt/denoise_pair.glsl's FINAL) x the suns, then each sun's forward and power (lt/e1.frag's light table rows)
     ivec4 suns;
     vec4 sun[16];
+    // (lt/denoise_gradient.frag's deterministic half) x, y the light table's rows this frame and the frame before, z
+    // the frame before's first row, w the flashlight's cookie's first texel in the cells
+    ivec4 lights;
 } pass;
 
 const float COS_25 = 0.906;
