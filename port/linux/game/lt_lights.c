@@ -405,6 +405,15 @@ int lt_lights_real_sky(void)
 			exterior++;
 	}
 	lt.live = total > 0 && (float)exterior >= LT_LIGHTS_REAL_SKY_SHARE * (float)total;
+	/* (or its interior's light sources solved from its lightmap: the level's
+	own lamps traced live, lt_emitters.c) */
+	if (!lt.live && lt_emitters_live())
+	{
+		lt.live = TRUE;
+		platform_log("lt lights: %ld of the BSP's %ld clusters see a lit sky; its light sources solved: lit live "
+			"(its lamps, the sky's lights and dome, the lightmap dropped)", exterior, total);
+		return lt.live;
+	}
 	platform_log("lt lights: %ld of the BSP's %ld clusters see a lit sky: %s", exterior, total,
 		lt.live ? "lit live (the sky's lights and dome, the lightmap dropped)" : "the lightmap kept");
 	return lt.live && lt_view_exterior();
@@ -812,7 +821,10 @@ void lt_lights_frame(struct halo_dynamic_light const *lights, unsigned long long
 		}
 	}
 	lt.frame++;
-	xgpu_backend_lt_lights(lt.lights, written, window, lt.frame);
+	/* (and this frame's share of the level's light sources' triangles, after
+	the lights: not in the dump) */
+	xgpu_backend_lt_lights(lt.lights, lt_emitters_append(lt.lights, written, XGPU_STREAM_LT_LIGHTS_MAXIMUM), window,
+		lt.frame);
 	lt_dump(written, window);
 }
 

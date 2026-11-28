@@ -33,6 +33,12 @@ enum
 	XGPU_LT_LIGHT_PANEL,
 	/* a sun: forward is toward it, at no distance; its angular diameter */
 	XGPU_LT_LIGHT_DIRECTIONAL,
+	/* one triangle of the level's static light sources (lt_emitters.c),
+	not a light of the list: id[0] its index in the set, id[1] the source
+	and the set's generation; object the set's triangles, owner its groups,
+	gel_slot its group; position, forward and up its corners (wound to glow
+	toward their normal); power its group's radiance */
+	XGPU_LT_LIGHT_EMITTER,
 };
 
 /* its flags: the first five are the enhanced lights' own
@@ -64,6 +70,8 @@ enum
 	/* (xgpu_stream.h's: a sky light of a level lit live, the sky's dome) */
 	XGPU_LT_LIGHT_REAL_SKY = 1 << 15,
 	XGPU_LT_LIGHT_SKY_DOME = 1 << 16,
+	/* (an EMITTER's: its set solved from the lightmap, the level lit live) */
+	XGPU_LT_LIGHT_EMITTER_SOLVED = 1 << 17,
 };
 
 /* an id's source (its high word's top byte; dynamic_lights.c's keys, as
@@ -75,6 +83,7 @@ enum
 	XGPU_LT_LIGHT_SOURCE_COPY = 5,      /* a game light's copy on another marker: low word its handle */
 	XGPU_LT_LIGHT_SOURCE_SUN = 6,       /* low word: the sky's index << 8 | the light's */
 	XGPU_LT_LIGHT_SOURCE_FRAME = 7,     /* low word: the light's place this frame (UNSTABLE_ID) */
+	XGPU_LT_LIGHT_SOURCE_EMITTER = 8,   /* an EMITTER's (its high word's low 24 bits the set's generation) */
 };
 
 /* 144 bytes. Positions in world units; directions unit length. */
@@ -151,6 +160,12 @@ int lt_lights_pass_on(void);
 sky's lights, its dome and their bounce the static light (its BSP's
 clusters mostly exterior; HALO_LT_REAL_SKY overrides) */
 int lt_lights_real_sky(void);
+/* the level's static light sources (lt_emitters.c): whether the loaded
+BSP's are solved from its lightmap (the level then lit live); and this
+frame's share of their records, after count records of lights (at most
+maximum in all): the count of all */
+int lt_emitters_live(void);
+int lt_emitters_append(struct xgpu_stream_lt_light *lights, int count, int maximum);
 /* each frame: the backend told when the pass is turned off */
 void lt_lights_update(void);
 

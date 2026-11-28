@@ -6,6 +6,12 @@ The light-transport pass's light list, received and kept
 list as it comes, for checking that a recording's replay gives the same
 lists: per list the game's count of lists sent, the window and the count
 (uint32 each, little-endian), then the count records as the stream has them.
+
+The level's static light sources' triangles ride in the lists as records of
+kind XGPU_LT_LIGHT_EMITTER, a share of them a frame (port/linux/game/
+lt_emitters.c): taken out of the list here and gathered by their set's
+generation into one set, whole once every triangle has come
+(xgpu_vulkan_lt_emitters).
 */
 
 #include "host.h"
@@ -26,7 +32,54 @@ static struct
 	int on;
 	int log_read;
 	FILE *log;
+	/* the light sources' set: its generation (0 none), triangles and
+	groups, whether solved, each triangle (had: come), how many have come,
+	and its number (counted up each time a set is whole) */
+	uint32_t emitter_generation;
+	int emitter_count, emitter_groups, emitter_solved, emitter_had_count, emitter_version, emitter_whole;
+	struct xgpu_vulkan_lt_emitter emitters[XGPU_VULKAN_LT_EMITTERS_MAXIMUM];
+	unsigned char emitter_had[XGPU_VULKAN_LT_EMITTERS_MAXIMUM];
 } lt_lights;
+
+/* a light source's triangle into the set (a new generation starts it again) */
+static void lt_emitter_take(const struct xgpu_stream_lt_light *light)
+{
+	uint32_t generation = light->id[1] & 0xffffffu, index = light->id[0];
+	int count = (int)light->object, groups = (int)light->owner;
+	struct xgpu_vulkan_lt_emitter *out;
+
+	if (count <= 0 || count > XGPU_VULKAN_LT_EMITTERS_MAXIMUM || groups <= 0 || index >= (uint32_t)count ||
+		light->gel_slot < 0 || light->gel_slot >= groups)
+		return;
+	if (generation != lt_lights.emitter_generation || count != lt_lights.emitter_count ||
+		groups != lt_lights.emitter_groups)
+	{
+		lt_lights.emitter_generation = generation;
+		lt_lights.emitter_count = count;
+		lt_lights.emitter_groups = groups;
+		lt_lights.emitter_had_count = 0;
+		lt_lights.emitter_whole = 0;
+		memset(lt_lights.emitter_had, 0, sizeof(lt_lights.emitter_had));
+	}
+	lt_lights.emitter_solved = (light->flags & XGPU_LT_LIGHT_EMITTER_SOLVED) != 0;
+	out = &lt_lights.emitters[index];
+	memcpy(out->corners, light->position, sizeof(float) * 3);
+	memcpy(out->corners + 3, light->forward, sizeof(float) * 3);
+	memcpy(out->corners + 6, light->up, sizeof(float) * 3);
+	memcpy(out->radiance, light->power, sizeof(out->radiance));
+	out->group = light->gel_slot;
+	if (!lt_lights.emitter_had[index])
+	{
+		lt_lights.emitter_had[index] = 1;
+		if (++lt_lights.emitter_had_count == count)
+		{
+			lt_lights.emitter_whole = 1;
+			lt_lights.emitter_version++;
+			host_logf(HOST_LOG_INFO, "vulkan: light transport: the level's light sources received (%d triangles, "
+				"%d groups, %s)", count, groups, lt_lights.emitter_solved ? "solved" : "the tags'");
+		}
+	}
+}
 
 void xgpu_vulkan_lt_lights_receive(void *context, const struct xgpu_stream_lt_lights *record)
 {
@@ -47,9 +100,22 @@ void xgpu_vulkan_lt_lights_receive(void *context, const struct xgpu_stream_lt_li
 	lt_lights.on = 1;
 	if (window < 0 || window > 3 || record->count > XGPU_STREAM_LT_LIGHTS_MAXIMUM || (record->count && !lights))
 		return;
-	memcpy(lt_lights.lights[window], lights ? lights : (const void *)lt_lights.lights[window],
-		lights ? record->count * sizeof(struct xgpu_stream_lt_light) : 0);
-	lt_lights.counts[window] = (int)record->count;
+	{
+		/* (the lights kept; the light sources' triangles, after them, taken
+		into their set) */
+		const struct xgpu_stream_lt_light *in = lights;
+		uint32_t index;
+		int kept = 0;
+
+		for (index = 0; in && index < record->count; index++)
+		{
+			if (in[index].kind == XGPU_LT_LIGHT_EMITTER)
+				lt_emitter_take(&in[index]);
+			else
+				lt_lights.lights[window][kept++] = in[index];
+		}
+		lt_lights.counts[window] = kept;
+	}
 	lt_lights.frames[window] = record->frame;
 	lt_lights.last_window = window;
 	if (!lt_lights.received++)
@@ -72,10 +138,11 @@ void xgpu_vulkan_lt_lights_receive(void *context, const struct xgpu_stream_lt_li
 
 		head[0] = record->frame;
 		head[1] = (uint32_t)window;
-		head[2] = record->count;
+		head[2] = (uint32_t)lt_lights.counts[window];
 		fwrite(head, sizeof(head), 1, lt_lights.log);
-		if (record->count)
-			fwrite(lt_lights.lights[window], sizeof(struct xgpu_stream_lt_light), record->count, lt_lights.log);
+		if (lt_lights.counts[window])
+			fwrite(lt_lights.lights[window], sizeof(struct xgpu_stream_lt_light), (size_t)lt_lights.counts[window],
+				lt_lights.log);
 		fflush(lt_lights.log);
 	}
 }
@@ -103,4 +170,19 @@ int xgpu_vulkan_lt_lights_window(void)
 int xgpu_vulkan_lt_lights_on(void)
 {
 	return lt_lights.on;
+}
+
+const struct xgpu_vulkan_lt_emitter *xgpu_vulkan_lt_emitters(int *count, int *groups, int *solved, int *version)
+{
+	if (!lt_lights.on || !lt_lights.emitter_whole)
+	{
+		*count = *groups = *solved = 0;
+		*version = 0;
+		return NULL;
+	}
+	*count = lt_lights.emitter_count;
+	*groups = lt_lights.emitter_groups;
+	*solved = lt_lights.emitter_solved;
+	*version = lt_lights.emitter_version;
+	return lt_lights.emitters;
 }

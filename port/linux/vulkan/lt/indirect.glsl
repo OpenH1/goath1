@@ -314,6 +314,8 @@ vec3 direct_one(vec3 p, vec3 n, int owner, ivec2 pixel, float salt, inout uint h
 uint light_hash(vec3 p, vec3 n)
 {
     uint h = pass.control.y != 0 && (pass.lights.z & LIGHTS_FLASHLIGHT) != 0 ? 0x2545u : 0u;
+    // (the level's light sources: their set's groups, so the cache starts again when they come)
+    h += uint(pass.emitter_counts.w) * 0x9e37u;
     if (pass.lights.x > 0)
     {
         uvec4 mask = cell_lights(p + n * 0.02);
@@ -474,9 +476,13 @@ vec4 bounce_main(ivec2 block, out vec3 p, out vec3 n, out uint owner, out bool f
         // (lit live: as far as the sky, a ray that leaves the scene the dome's)
         bool real = real_sky();
         Hit hit = trace(origin, d, real ? SUN_REACH : BOUNCE_REACH, int(owner), false, MASK_AO);
+        // (the hit lit by the level's light sources too, one point and ray: their light bounces, and the cache, which
+        // gathers these samples, carries it on to the next bounce: a room lit only through its doors by the next
+        // rooms' lamps, a10's cryo deck)
         if (hit.attributes)
             e += hit.albedo * (direct_one(hit.p, hit.n, hit.owner, pixel, 6.0 + 17.0 * float(k), h) +
-                cache_lookup(hit.p, hit.n) + (real ? sky_at(hit, pixel, 7.0 + 17.0 * float(k), true) : vec3(0.0)));
+                cache_lookup(hit.p, hit.n) + (real ? sky_at(hit, pixel, 7.0 + 17.0 * float(k), true) : vec3(0.0)) +
+                emitter_sample(hit.p, hit.n, hit.n, EMITTER_BOUNCE_CANDIDATES, h, hit.owner, true));
         else if (real && !hit.hit)
             e += dome_radiance();
     }
@@ -691,9 +697,12 @@ vec4 specular_main(ivec2 pixel)
         if (!hit.attributes)
             continue;
         // (lit live: the hit's own live light in place of its lightmap)
+        // (lit live by the level's light sources alone, no sky: their light, the lightmap dropped too)
         vec3 radiance = (real_sky() ? hit.albedo * sky_at(hit, pixel, 11.0 + 17.0 * float(k), false) :
-            pow(hit.surface, vec3(2.2))) + hit.albedo * (direct_one(hit.p, hit.n, hit.owner, pixel,
-            10.0 + 17.0 * float(k), h) + cache_lookup(hit.p, hit.n));
+            (pass.lights.z & LIGHTS_REAL) != 0 ? vec3(0.0) : pow(hit.surface, vec3(2.2))) +
+            hit.albedo * (direct_one(hit.p, hit.n, hit.owner, pixel, 10.0 + 17.0 * float(k), h) +
+            cache_lookup(hit.p, hit.n) + emitter_sample(hit.p, hit.n, hit.n, EMITTER_BOUNCE_CANDIDATES, h, hit.owner,
+            true));
         if (any(isnan(radiance)) || any(isinf(radiance)))
             radiance = vec3(0.0);
         sum += radiance * (1.0 - smoothstep(SPECULAR_REACH * SPECULAR_FADE, SPECULAR_REACH, hit.t));
