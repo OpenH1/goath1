@@ -712,7 +712,18 @@ vec4 specular_main(ivec2 pixel)
     float roughness = byte != 255u ? float(byte) / 255.0 : derived >= 0.0 ? derived :
         (owner == 0u ? ROUGH_STRUCTURE : ROUGH_OBJECT);
     uint hs = seed(pixel, 17u);
-    vec3 shine = direct_specular(p, n, normal, v, max(roughness * roughness, 1.0e-3), int(owner), pixel, hs);
+    // (the lobe widened by how much the shaded normal turns within the pixel (its neighbours' in the guides): a bump
+    // map finer than a far pixel, grazing sand, gave a sun's highlight pixel by pixel that crawled as the eye moved, a
+    // hatch; the normal's variance there added to alpha^2, Kaplanyan et al.'s specular antialiasing, at most 0.18)
+    float alpha2 = roughness * roughness * roughness * roughness;
+    {
+        vec3 nx = unfold(unpackSnorm2x16(texelFetch(guides, min(pixel + ivec2(1, 0), pass.corners.zw - 1), 0).x));
+        vec3 ny = unfold(unpackSnorm2x16(texelFetch(guides, min(pixel + ivec2(0, 1), pass.corners.zw - 1), 0).x));
+        vec3 dx = dot(nx, nx) > 0.5 ? nx - normal : vec3(0.0), dy = dot(ny, ny) > 0.5 ? ny - normal : vec3(0.0);
+        alpha2 += min(0.5 * (dot(dx, dx) + dot(dy, dy)), 0.18);
+    }
+    float alpha = max(sqrt(alpha2), 1.0e-3);
+    vec3 shine = direct_specular(p, n, normal, v, alpha, int(owner), pixel, hs);
     // (a rough lobe: no ray, the cube map for the scene (a miss) and the lights' shine)
     if (roughness > ROUGH_TRACED || (pass.control.w & SHINE_ONLY) != 0)
         return vec4(shine, 0.0);
