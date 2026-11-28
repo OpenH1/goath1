@@ -66,6 +66,7 @@ loaded) and the walk made.
 #include "network_standard.h"
 #include "menu_models.h"
 #include "mod_materials.h"
+#include "mods.h"
 
 #include "../src/xgpu_manifest.h"
 #include "render_enumerate.h"
@@ -340,8 +341,11 @@ them (a shipped one) does not hold, so a map with them records its own */
 static uint64_t prepared_key_materials(uint64_t hash)
 {
 	uint32_t identity = (uint32_t)mod_materials_identity();
+	/* (and the mods' shaders played: their draws are others too) */
+	uint32_t shaders = (uint32_t)mod_shaders_identity();
 
-	return identity ? xgpu_manifest_hash(&identity, sizeof(identity), hash) : hash;
+	hash = identity ? xgpu_manifest_hash(&identity, sizeof(identity), hash) : hash;
+	return shaders ? xgpu_manifest_hash(&shaders, sizeof(shaders), hash) : hash;
 }
 
 /* the enumeration's label for HALO_RENDER_COVERAGE (xgpu_manifest.h): the

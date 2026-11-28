@@ -9966,7 +9966,7 @@ static void distributed_build_text(
 
 /* the mods of a client's build (its lines, "folder version [what it
 replaces]": port_mods_list) that a Pro 2v2 game refuses, those that replace
-sounds, bitmaps or models (text alone, a translation, is played), or that
+sounds, bitmaps, models or shaders (text alone, a translation, is played), or that
 the list could not hold ("... [unlisted]"), or a line that does not say what
 it replaces: their folders, ", " between them, into names (cut short with
 "..." where they do not fit); how many. What a client says is all a host
@@ -9993,7 +9993,7 @@ static short distributed_pro_refused_mods(char const *mods, char *names, size_t 
 		if (open && close)
 		{
 			*close = 0;
-			if (!strstr(open, "sounds") && !strstr(open, "bitmaps") && !strstr(open, "models") &&
+			if (!strstr(open, "sounds") && !strstr(open, "bitmaps") && !strstr(open, "models") && !strstr(open, "shaders") &&
 				!strstr(open, "unlisted"))
 			{
 				continue;

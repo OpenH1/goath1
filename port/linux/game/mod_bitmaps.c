@@ -1953,3 +1953,14 @@ boolean mod_bitmaps_read(
 
 	return TRUE;
 }
+
+/* (mods.c: the shaders the mods play changed) */
+void mod_bitmaps_shaders_changed(
+	void)
+{
+	if (!mods_map_loaded() || (!bitmaps_played_count() && !custom_edition_cache_tags_loaded()))
+		return;
+	/* (the renderer is told a bitmap's channel order as its pixels load) */
+	texture_cache_flush();
+	mod_bitmaps_globals.orders_found = custom_edition_loaded_reordered_bitmaps_find();
+}

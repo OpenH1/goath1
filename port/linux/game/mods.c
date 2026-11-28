@@ -3,13 +3,15 @@ MODS.C
 
 Mods: tag files played over a map's tags on this machine, as a resource
 pack is: a map's sounds (mod_sounds.c), bitmaps (mod_bitmaps.c), text
-(mod_strings.c) and models (mod_models.c) from Halo PC tag files, as the
+(mod_strings.c), models (mod_models.c) and the drawing values of model
+and environment shaders (mod_shaders.c) from Halo PC tag files, as the
 Halo Editing Kit and Invader write them, in the mods of the mods folder that
 are on, in their load order (port/linux/src/port_mods.c; the main menu's
 Mods chooses: menu_functions.c; the mod.toml files: docs/mods.md). Nothing a
 mod plays is anything the machines of a network game must agree on: no tag
 that the game simulates is played from a file (a model's nodes, markers and
-regions must be the map's: only what is drawn of it is the file's), and no
+regions must be the map's: only what is drawn of it is the file's; a
+shader keeps the map's type, material and physics), and no
 mod is sent to another machine, so a mod is this machine's alone, in any
 game.
 
@@ -88,7 +90,9 @@ static struct
 	/* the groups' updates say what they did at the console (not as the
 	Mods menu applies them) */
 	boolean say;
-	/* how many of the map's strings, bitmaps, sounds and models the mods play */
+	/* how many of the map's strings, bitmaps, sounds, models and shaders the
+	mods play */
+	long shader_count;
 	long string_count;
 	long bitmap_count;
 	long sound_count;
@@ -104,10 +108,17 @@ static void mods_update(
 	boolean remove_all,
 	boolean at_load)
 {
+	boolean shaders_changed;
+
 	if (!at_load)
 		xgpu_backend_consume();
 	mods_globals.string_count = mod_strings_update(remove_all, at_load);
+	/* (the shaders before the bitmaps: which bitmaps are multipurpose maps
+	is found from the shaders played) */
+	mods_globals.shader_count = mod_shaders_update(remove_all, at_load, &shaders_changed);
 	mods_globals.bitmap_count = mod_bitmaps_update(remove_all, at_load);
+	if (shaders_changed && !at_load)
+		mod_bitmaps_shaders_changed();
 	mods_globals.sound_count = mod_sounds_update(remove_all, at_load);
 	mods_globals.model_count = mod_models_update(remove_all, at_load);
 	mod_materials_update(remove_all, at_load);
@@ -343,12 +354,13 @@ void mods_structure_bsp_read(
 }
 
 boolean mods_played_on_map(
-	long counts[4])
+	long counts[5])
 {
 	counts[0] = mods_globals.string_count;
 	counts[1] = mods_globals.bitmap_count;
 	counts[2] = mods_globals.sound_count;
 	counts[3] = mods_globals.model_count;
+	counts[4] = mods_globals.shader_count;
 
 	return mods_globals.map_loaded && mods_globals.enabled;
 }
@@ -433,6 +445,7 @@ static void mods_let_go(
 	mod_bitmaps_tags_unloaded();
 	mod_materials_tags_unloaded();
 	mod_models_tags_unloaded(give_back);
+	mod_shaders_tags_unloaded(give_back);
 	mod_strings_tags_unloaded();
 	mods_globals.map_loaded = FALSE;
 	mods_globals.enabled = FALSE;
@@ -444,6 +457,7 @@ static void mods_let_go(
 	mods_globals.bitmap_count = 0;
 	mods_globals.sound_count = 0;
 	mods_globals.model_count = 0;
+	mods_globals.shader_count = 0;
 
 	return;
 }
@@ -592,9 +606,9 @@ void mods_list(
 	{
 		if (mods_globals.enabled)
 		{
-			console_printf(FALSE, "mods: on %s, %ld string lists, %ld bitmaps, %ld sounds and %ld models are theirs (%lu KB kept)",
+			console_printf(FALSE, "mods: on %s, %ld string lists, %ld bitmaps, %ld sounds, %ld models and %ld shaders are theirs (%lu KB kept)",
 				mods_globals.map_name, mods_globals.string_count, mods_globals.bitmap_count, mods_globals.sound_count,
-				mods_globals.model_count, mods_globals.kept_bytes / 1024);
+				mods_globals.model_count, mods_globals.shader_count, mods_globals.kept_bytes / 1024);
 		}
 		else
 		{

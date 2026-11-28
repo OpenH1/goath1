@@ -1150,6 +1150,7 @@ static void mod_replaces(long index, char *words, size_t size)
 		{ "sounds", { ".sound", NULL } },
 		{ "bitmaps", { ".bitmap", NULL } },
 		{ "models", { ".gbxmodel", ".model", NULL } },
+		{ "shaders", { ".shader_model", ".shader_environment", NULL } },
 		{ "text", { ".unicode_string_list", ".string_list", ".hud_message_text", NULL } },
 	};
 	size_t kind;

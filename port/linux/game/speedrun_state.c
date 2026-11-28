@@ -203,7 +203,7 @@ static void speedrun_state_read_settings(
 	size_t build_size)
 {
 	char const *graphics = config_string("display.graphics");
-	long counts[4];
+	long counts[5];
 	long number = 0;
 	char flavor[32], repository[64];
 
@@ -214,7 +214,7 @@ static void speedrun_state_read_settings(
 		input->settings |= SPEEDRUN_STATE_SETTING_GRAPHICS_CUSTOM;
 	if (network_standard_enhanced_animations())
 		input->settings |= SPEEDRUN_STATE_SETTING_ENHANCED_ANIMATIONS;
-	if (mods_played_on_map(counts) && (counts[0] || counts[1] || counts[2] || counts[3]))
+	if (mods_played_on_map(counts) && (counts[0] || counts[1] || counts[2] || counts[3] || counts[4]))
 		input->settings |= SPEEDRUN_STATE_SETTING_MODS;
 	if (custom_edition_cache_tags_loaded())
 		input->settings |= SPEEDRUN_STATE_SETTING_CUSTOM_EDITION_MAP;

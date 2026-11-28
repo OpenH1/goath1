@@ -126,9 +126,9 @@ setting changed or they were made */
 void mods_builtins_update(void);
 /* whether the mods are played on the map loaded (not given back by
 mods_enable false, nor left off its menu pictures), and how many of its
-string lists, bitmaps, sounds and models are theirs (a Save Report's:
-report_game.c) */
-boolean mods_played_on_map(long counts[4]);
+string lists, bitmaps, sounds, models and shaders are theirs (a Save
+Report's: report_game.c) */
+boolean mods_played_on_map(long counts[5]);
 
 /* ---------- prototypes/MOD_SOUNDS.C */
 
@@ -174,6 +174,9 @@ long mod_bitmaps_structure_bsp_read(short structure_bsp_index, struct structure_
 /* the mods' lightmaps waiting for their bsp to be read (they are the
 map's until then) */
 long mod_bitmaps_waiting_count(void);
+/* the shaders the mods play changed: which bitmaps keep their channels
+where Halo PC does is found again (a model shader's multipurpose map) */
+void mod_bitmaps_shaders_changed(void);
 
 /* ---------- prototypes/MOD_LIGHTMAPS.C */
 
@@ -203,6 +206,15 @@ real mod_lightmap_page_correlation(real const *map_luminance, long map_width, lo
 
 long mod_strings_update(boolean remove_all, boolean at_load);
 void mod_strings_tags_unloaded(void);
+
+/* ---------- prototypes/MOD_SHADERS.C */
+
+/* (*changed: whether a shader played changed) */
+long mod_shaders_update(boolean remove_all, boolean at_load, boolean *changed);
+void mod_shaders_tags_unloaded(boolean give_back);
+/* the shaders played, mixed (0: none), for the map preparation's records'
+key (render_prepared.c) */
+unsigned long mod_shaders_identity(void);
 
 /* ---------- prototypes/MOD_MODELS.C */
 

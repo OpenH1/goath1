@@ -133,7 +133,7 @@ void report_game_mods_and_maps(char *text, size_t size)
 	char const *mod_map = mods_map_loaded() ? mods_map_name() : NULL;
 	char mods[2048], file[256], path[1024], line[160];
 	unsigned long file_size = 0;
-	long counts[4];
+	long counts[5];
 	boolean in_game, played;
 	int mod_count, listed = 0;
 	size_t used;
@@ -160,11 +160,11 @@ void report_game_mods_and_maps(char *text, size_t size)
 	else
 	{
 		line[0] = 0;
-		if (played && !(counts[0] | counts[1] | counts[2] | counts[3]))
+		if (played && !(counts[0] | counts[1] | counts[2] | counts[3] | counts[4]))
 			snprintf(line, sizeof(line), ", none of the map's tags theirs");
 		else if (played)
-			snprintf(line, sizeof(line), ", playing %ld bitmaps, %ld sounds, %ld models, %ld string lists of the map",
-				counts[1], counts[2], counts[3], counts[0]);
+			snprintf(line, sizeof(line), ", playing %ld bitmaps, %ld sounds, %ld models, %ld shaders, %ld string lists of the map",
+				counts[1], counts[2], counts[3], counts[4], counts[0]);
 		else if (in_game)
 			snprintf(line, sizeof(line), ", not played on this map");
 		snprintf(text, size, "- Mods, in load order: %d on%s%s\n", mod_count, line,

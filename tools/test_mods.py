@@ -29,6 +29,7 @@ STRINGS = "ui/hud/hud_item_messages"
 FP_MODEL = "weapons/assault rifle/fp/fp"
 MODEL = "weapons/assault rifle/assault rifle"
 VEHICLE_MODEL = "vehicles/warthog/warthog"
+SHADER = "vehicles/warthog/shaders/warthog hull"
 # where an Xbox map's tags are in memory
 TAG_BASE = 0x803A6000
 
@@ -188,6 +189,35 @@ def model_file(tags: MapTags, name: str, move_marker: bool = False, rename_node:
     return bytes(out)
 
 
+# a shader_model's fields the game takes from a file (mod_shaders.c): 16-bit words, runs of reals and its references
+SHADER_MODEL_WORDS = (0x28, 0x4C, 0x6C, 0x70, 0x72, 0xD4, 0xD6, 0xFC, 0xFE, 0x10C, 0x10E, 0x11C, 0x11E)
+SHADER_MODEL_REALS = ((0x38, 1), (0x74, 7), (0x9C, 2), (0xD8, 1), (0xEC, 1), (0x100, 3), (0x110, 3), (0x120, 5),
+                      (0x13C, 9))
+SHADER_MODEL_REFERENCES = (0xA4, 0xBC, 0xDC, 0x164)
+
+
+def shader_model_file(tags: MapTags, name: str, scale: float = None, names: dict = None) -> bytes:
+    """A shader_model tag file (Halo PC's, version 2) of the map's shader `name`: its drawing values, its maps' u and v
+    scales `scale` if given, and its references' names (by their offsets, `names` replacing them)"""
+    address = tags.find(b"soso", name)
+    shader = tags.tags[address - TAG_BASE:][:0x1B8]
+    root = bytearray(0x1B8)
+    for offset in SHADER_MODEL_WORDS:
+        struct.pack_into(">H", root, offset, struct.unpack_from("<H", shader, offset)[0])
+    for offset, count in SHADER_MODEL_REALS:
+        struct.pack_into(f">{count}f", root, offset, *struct.unpack_from(f"<{count}f", shader, offset))
+    if scale is not None:
+        struct.pack_into(">2f", root, 0x9C, scale, scale)
+    strings = b""
+    for offset in SHADER_MODEL_REFERENCES:
+        group, pointer, _, index = struct.unpack_from("<4sIii", shader, offset)
+        reference = (names or {}).get(offset, tags.string(pointer) if index != -1 else "")
+        struct.pack_into(">4sIii", root, offset, group[::-1], 0, len(reference), -1)
+        if reference:
+            strings += reference.encode() + b"\0"
+    return header(b"soso", 2) + bytes(root) + strings
+
+
 @pytest.fixture(scope="module")
 def game(tmp_path_factory) -> Path:
     """the Linux build, copied with its SDL to a folder of its own: its config.toml, which it writes beside
@@ -328,3 +358,36 @@ def test_models(game, tmp_path):
     assert "its markers are not the map's" in lines, lines
     assert "its nodes are not the map's" in lines, lines
     assert "1 models from their files (1 new), 0 given back, 2 left out" in lines, lines
+
+
+def test_shaders(game, tmp_path):
+    # the map's warthog hull with its maps tiled 8 times plays (its drawing values only); every damaged or wrong file
+    # is left out, the map's shader drawn: cut short anywhere, a name longer than the file, another group's header,
+    # an enum past its values, a number that is not finite, and a bitmap the map has not got
+    data, saves = folders(tmp_path)
+    tags = MapTags(MAPS / "bloodgulch.map")
+    good = shader_model_file(tags, SHADER, scale=8.0)
+    others = [name for _, name, _ in [value for value in tags.instances.values() if value[0] == b"soso"]
+              if name != SHADER.replace("/", "\\")]
+    damaged = []
+    for length in (0x3F, 0x40, 0x100, 0x40 + 0x1B8 - 1, len(good) - 1):
+        damaged.append(good[:length])
+    longer = bytearray(good)
+    struct.pack_into(">I", longer, 0x40 + 0xA4 + 8, 0x7FFFFFFF)
+    damaged.append(bytes(longer))
+    damaged.append(good + b"\0")
+    damaged.append(header(b"senv", 2) + good[0x40:])
+    enum = bytearray(good)
+    struct.pack_into(">h", enum, 0x40 + 0xD6, 9)
+    damaged.append(bytes(enum))
+    infinite = bytearray(good)
+    struct.pack_into(">f", infinite, 0x40 + 0x9C, float("inf"))
+    damaged.append(bytes(infinite))
+    damaged.append(shader_model_file(tags, others[0], names={0xA4: "no such bitmap"}))
+    files = {f"{SHADER}.shader_model": good}
+    for index, content in enumerate(damaged):
+        files[f"{others[index + 1].replace(chr(92), '/')}.shader_model"] = content
+    write_mod(data, files)
+    lines = run_game(game, data, saves)
+    assert f"1 shaders from their files (1 new), 0 given back, {len(damaged)} left out" in lines, lines
+    assert "it names a bitmap the map has not got" in lines, lines
