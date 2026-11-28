@@ -381,7 +381,13 @@ lightmap tool lit with the sky's lights and dome) LT_LIGHTS_REAL_SKY_SHARE
 of them or more. Interior clusters' light came from emitters the tags
 mostly lack (a10's cryo deck: none), so a level made mostly of them keeps
 its lightmap until those are solved (~/dev/rt2-realtime-design.md section
-9). HALO_LT_REAL_SKY=0 or 1 overrides it (checking) */
+9). A BSP whose light sources are solved (lt_emitters_live) drops its
+lightmap in every cluster: its lamps were fitted to the bake less the sky's
+share, so the sky is then the sky's whole light (the real k, the dome) in an
+interior view too, as the pass's LIGHTS_REAL takes it (xgpu_vulkan_lt.c: set
+by the solved lamps whatever the view), never the lightmap-share k under a
+pass that no longer takes that share off. HALO_LT_REAL_SKY=0 or 1 overrides
+it (checking) */
 int lt_lights_real_sky(void)
 {
 	struct structure_bsp *bsp = global_structure_bsp_get();
@@ -394,7 +400,7 @@ int lt_lights_real_sky(void)
 	if (!bsp || !scenario)
 		return FALSE;
 	if (bsp == lt.real_bsp)
-		return lt.live && lt_view_exterior();
+		return lt.live && (lt_emitters_live() || lt_view_exterior());
 	lt.real_bsp = bsp;
 	for (index = 0; bsp->clusters.address && index < bsp->clusters.count; index++)
 	{
@@ -417,7 +423,7 @@ int lt_lights_real_sky(void)
 	}
 	platform_log("lt lights: %ld of the BSP's %ld clusters see a lit sky: %s", exterior, total,
 		lt.live ? "lit live (the sky's lights and dome, the lightmap dropped)" : "the lightmap kept");
-	return lt.live && lt_view_exterior();
+	return lt.live && (lt_emitters_live() || lt_view_exterior());
 }
 
 /* HALO_LT_SUN_ANGLES=<yaw>,<pitch> (degrees; checking): the sky's first
