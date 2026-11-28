@@ -114,6 +114,29 @@ MOMENTS = {
         "5-11 move=0,1; 11-17 look=0.15,0",
         "c20's Library in first person with the flashlight on (by the console: the scripted button toggles it each "
         "tick it is held); walking up to a wall, then a slow turn along it"),
+    # (the emitter files' BSPs, indoors where the lamps light it: the start, then switch_bsp to the BSP and the
+    # script's camera at a spot inside a lamp-lit room (picked from the BSP's mesh beside its strongest lamp groups); a
+    # slow pan. The level's own scripts still run: it shows the BSP as lit, not a moment of play. b40 and c10
+    # open with a cutscene, skipped by playing it fast, undrawn, which runs the game's clock past a clip in it: their
+    # clips come after it)
+    "b40_bsp8": (
+        "levels\\b40\\b40", 50, 60,
+        [(46, "ai_erase_all"), (47, "switch_bsp 8"),
+         (49, cam(269.48, -577.3, 23.87, 240, -9)), (50, cam(269.48, -577.3, 23.87, 270, -9, 10))],
+        "",
+        "b40's BSP 8 (cells x1.12): a lamp-lit room, live from its emitter file; a slow pan"),
+    "c10_bsp1": (
+        "levels\\c10\\c10", 50, 60,
+        [(46, "ai_erase_all"), (47, "switch_bsp 1"),
+         (49, cam(-53.16, -6.05, 2.86, -15, -9)), (50, cam(-53.16, -6.05, 2.86, 15, -9, 10))],
+        "",
+        "c10's BSP 1 (the worst cells: x3.60): a lamp-lit room, live from its emitter file; a slow pan"),
+    "d40_bsp4": (
+        "levels\\d40\\d40", 7, 17,
+        [(3, "ai_erase_all"), (4, "switch_bsp 4"),
+         (6, cam(-92.43, -5.21, 8.11, 285, -9)), (7, cam(-92.43, -5.21, 8.11, 315, -9, 10))],
+        "",
+        "d40's BSP 4 (x1.24): a lamp-lit room, live from its emitter file; a slow pan"),
 }
 
 

@@ -58,7 +58,11 @@ Any export of the level will do (the whole BSP is used, not the view): `scenes.j
 - `--mode rooms` (the default, what `port/assets/emitters/` holds): only the level's own glowing shaders, at
   the tag's color x relative power, split into lamp groups by 12 wu cells (`--cell`); each group gets one
   scale, a damped fixed point that moves it by the bake-over-traced mean light of the cells its light lands
-  in, so every cell's traced mean light equals the bake's. No texel-level fit, nothing added. The rest of
+  in, so every cell's traced mean light equals the bake's. No texel-level fit, nothing added. The sky's tag
+  parts (dome, sky lights) are traced too: their scales are fitted on the cells the lamps cannot light (under
+  `--outside`, 5%, of the bake's light at the level scale: a hull outside a window, a canyon), their light is
+  taken off the bake everywhere, and a cell the sky gives all but 5% of is left to it. The sky stays out of
+  the file (it is traced from its own tags apart); `fit.sky` records its share and scales. The rest of
   this section is `--mode fit`, the free fit kept for study: on a10 and c20 no set of diffuse emitters in the
   exported geometry reproduces the bake texel by texel (R^2 about 0.33 with every 2 wu surface patch free),
   while b30's sun and sky reproduce it at 0.70 as shown.

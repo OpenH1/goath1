@@ -400,7 +400,7 @@ def transport(scene, owner, keys, S, spp=64, max_depth=8, seed=0, log=print):
     return X
 
 
-def regressors(sc, S, sources, spp, log, seed=0):
+def regressors(sc, S, sources, spp, log, seed=0, sky_spp=None):
     """X for the sources: {"shader:<i>": radiance, "rect:<i>": (radiance, rect), "sky:...": dict,
     "floor": rgb, "patch:<i>": (radiance, triangles)}; one scene for the area emitters, one per sky part (Mitsuba takes one sky a scene).
     Returns (keys, X N x K x 3)."""
@@ -417,7 +417,7 @@ def regressors(sc, S, sources, spp, log, seed=0):
             continue
         shapes, _, _ = static_shapes(sc, {})
         scene = mi.load_dict({"type": "scene", **shapes, "sky": skyd})
-        Xs.append(transport(scene, k, [k], S, spp, seed=seed, log=log))
+        Xs.append(transport(scene, k, [k], S, sky_spp or spp, seed=seed, log=log))
         keys.append(k)
     # A source's light at a white surface can be no more than its own radiance (it filling the whole
     # hemisphere) or, for the sky, its whole radiance and irradiance / pi: a texel beside a lamp sampled by
@@ -958,7 +958,7 @@ def lamp_groups(sc, cell):
     return out
 
 
-def solve_rooms(folder, out, spp=128, max_samples=300000, cell=12.0, report=None, log=print):
+def solve_rooms(folder, out, spp=128, max_samples=300000, cell=12.0, report=None, log=print, outside=0.05):
     """The level's light from its own lamps (the shaders with radiosity power, at the tag's color and relative
     power), with one brightness scale per room-sized cluster of lamps (`cell` wu cells), set so that in each
     cell the traced mean light equals the bake's (linear light, the lightmap ^2.2, area-weighted; texels
@@ -977,16 +977,55 @@ def solve_rooms(folder, out, spp=128, max_samples=300000, cell=12.0, report=None
     lamps = lamp_groups(sc, cell)
     src = {"patch:%d" % i: ([c * L["power"] * EMISSION_RADIANCE_PER_POWER for c in L["color"]], L["triangles"])
            for i, L in enumerate(lamps)}
-    keys, X = regressors(sc, S, src, spp, log)
-    order = [int(k[6:]) for k in keys]
-    Xl = X @ display.LUMA  # N x K, each lamp group at the tag's power
-    k0 = float((w * y).sum() / max((w * Xl.sum(1)).sum(), 1e-30))
-    s = np.full(len(order), k0)
+    sky = sky_parts(sc)  # the sky's dome and lights at the tag's power, to tell the sky's light from the lamps'
+    src.update(sky)
+    keys, X = regressors(sc, S, src, spp, log, sky_spp=max(128, spp // 8))  # the sky's light is smooth
+    li = [j for j, k in enumerate(keys) if k.startswith("patch:")]
+    si = [j for j, k in enumerate(keys) if k.startswith("sky:")]
+    order = [int(keys[j][6:]) for j in li]
+    Xl = X[:, li] @ display.LUMA  # N x K, each lamp group at the tag's power
+    Xs = X[:, si] @ display.LUMA  # N x parts, each sky part at the tag's power
     tc = np.floor(S["pos"] / cell).astype(np.int64)
     _, inv = np.unique(tc, axis=0, return_inverse=True)
     inv = inv.reshape(-1)
     nc = inv.max() + 1
-    Yc = np.bincount(inv, w * y, nc)
+    # (1) Cells the lamps cannot light (at the level's scale, under `outside` of the bake's light there) are lit
+    # by something else: the sky through an opening, a ship's hull outside. They are the sky's, left out.
+    w_all = w.copy()
+    Y0 = np.bincount(inv, w * y, nc)
+    dark = np.zeros(nc, bool)
+    for _ in range(3):
+        k0 = float((w * y).sum() / max((w * Xl.sum(1)).sum(), 1e-30))
+        F0 = np.bincount(inv, w * Xl.sum(1) * k0, nc)
+        new = (Y0 > 0) & (F0 < outside * Y0) & ~dark
+        if not new.any():
+            break
+        dark |= new
+        w = np.where(dark[inv], 0.0, w)
+    # (2) The sky's scales (one a part: dome, each sky light) from those cells, where only the sky lights the bake;
+    # the sky's light is then taken off the bake everywhere, and the lamps match what is left. A cell where the
+    # sky gives all but `outside` of the bake's light is the sky's too.
+    Sc = np.stack([np.bincount(inv, w_all * Xs[:, j], nc) for j in range(len(si))], 1) if si else np.zeros((nc, 0))
+    ks = np.zeros(len(si))
+    # only where the sky is the light: those cells hold 1% of the bake at least, and the sky at the tag's power
+    # gives a tenth of their light at least (a crack's leak does not set the sky's scale for the whole BSP)
+    fit_c = dark & (Sc.sum(1) >= 0.1 * Y0) if si else dark
+    if si and fit_c.any() and Y0[dark].sum() >= 0.01 * Y0.sum():
+        D = Sc[fit_c]
+        ks = np.minimum(nnls_quadratic(D.T @ D, D.T @ Y0[fit_c]), 4.0)
+    sky_c = Sc @ ks
+    Yc = np.where(dark, 0.0, np.maximum(Y0 - sky_c, 0.0))
+    dark |= (Y0 > 0) & (Yc < outside * Y0)
+    Yc = np.where(dark, 0.0, Yc)
+    w = np.where(dark[inv], 0.0, w_all)
+    bake_all = max(float(Y0.sum()), 1e-30)
+    out_share = float(Y0[dark].sum()) / bake_all
+    sky_share = float(np.minimum(sky_c, Y0).sum()) / bake_all
+    if dark.any() or ks.any():
+        log("rooms: the sky (its tags x %s) gives %.1f%% of the bake's light; %.1f%% is in cells left to it" % (
+            ", ".join("%s %.3g" % (keys[j][4:], k) for j, k in zip(si, ks)), 100 * sky_share, 100 * out_share))
+    k0 = float(Yc.sum() / max((w * Xl.sum(1)).sum(), 1e-30))
+    s = np.full(len(order), k0)
     land = np.stack([np.bincount(inv, w * Xl[:, j], nc) for j in range(len(order))], 1)  # cells x lamps
     share = land / np.maximum(land.sum(0, keepdims=True), 1e-30)
     for it in range(30):
@@ -998,7 +1037,7 @@ def solve_rooms(folder, out, spp=128, max_samples=300000, cell=12.0, report=None
     wc = np.bincount(inv, w, nc)
     lr = np.log(np.maximum(Fc[lit], 1e-30) / Yc[lit])
     spread = float(np.exp(np.sqrt((wc[lit] * lr ** 2).sum() / wc[lit].sum())))
-    total = float((w * (Xl @ s)).sum() / max((w * y).sum(), 1e-30))
+    total = float((w * (Xl @ s)).sum() / max(float(Yc.sum()), 1e-30))  # against the bake less the sky
     log("rooms: %d lamp groups in %g wu cells; level scale %.4g; traced / bake over the level %.3f; per cell "
         "(area-weighted) within x%.2f typically" % (len(order), cell, k0, total, spread))
     scen, bsp, h = scenario_key(sc)
@@ -1012,6 +1051,12 @@ def solve_rooms(folder, out, spp=128, max_samples=300000, cell=12.0, report=None
                           "surfaces in one %g wu cell), set so each cell's traced mean light equals the bake's" % cell,
                    "level_scale": round(k0, 6), "traced_over_bake_level": round(total, 4),
                    "cell_brightness_spread": round(spread, 3), "cell_wu": cell, "spp": spp,
+                   "sky": {"bake_share": round(sky_share, 4), "cells_left_to_it_bake_share": round(out_share, 4),
+                           "scales": {keys[j][4:]: round(float(k), 6) for j, k in zip(si, ks)},
+                           "how": "the sky's tag parts traced too; their scales fitted where the lamps at the level "
+                                  "scale give under %g of the bake's light, their light taken off the bake before the "
+                                  "lamps are matched; a cell the sky gives all but %g of is left to it. Not in this "
+                                  "file: the sky is traced from its own tags apart" % (outside, outside)},
                    "samples": int(len(w)), "samples_used": int((w > 0).sum()),
                    "transport": "BSP and the level's scenery/machines, diffuse bounces off their albedos, every bounce"},
            "shader_emitters": [], "sky": {"suns": []}, "ambient_floor": {"radiance": [0.0, 0.0, 0.0]},

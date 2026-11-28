@@ -85,6 +85,10 @@ EFFECT_RECIPES = {"flash": 1, "splat": 2}
 # the MCC import's fits of our models onto MCC's preview meshes, numbers only (port/linux/src/mcc_import_bake.h;
 # tools/mcc_preview_bake.py --fits-out makes it)
 MCC_FIT_LIST = Path("port/assets/mcc_import/mcc_import.json")
+# the levels' static light sources, a file a BSP, packed by tools/lt_emitters_data.py (port/linux/include/
+# lt_emitters_assets.h)
+EMITTER_ASSETS = Path("port/assets/emitters")
+EMITTER_TOOL = Path("tools/lt_emitters_data.py")
 
 
 def font_files() -> List[str]:
@@ -325,6 +329,36 @@ def picture_lines() -> List[str]:
     return lines
 
 
+def emitters():
+    """tools/lt_emitters_data.py, as a module (this file runs as a script and is imported from the package)"""
+    try:
+        from . import lt_emitters_data
+    except ImportError:
+        import lt_emitters_data
+    return lt_emitters_data
+
+
+def emitter_lines(assets: "AssetsFile") -> List[str]:
+    """The levels' static light sources' table (lt_emitters_assets.h): each BSP's pack compressed in the assets'
+    file"""
+    tool = emitters()
+    lines = ['#include "lt_emitters_assets.h"', "", "struct lt_emitters_asset const lt_emitters_assets[] =", "{"]
+    found = tool.levels(ROOT / EMITTER_ASSETS)
+    for name, scenario, bsp, group_count, triangle_count, pack in found:
+        if group_count > tool.GROUPS_MAXIMUM or triangle_count > tool.TRIANGLES_MAXIMUM:
+            sys.exit(f"{EMITTER_ASSETS / name}: {group_count} groups, {triangle_count} triangles: more than the "
+                     f"game holds ({tool.GROUPS_MAXIMUM}, {tool.TRIANGLES_MAXIMUM})")
+        packed = tool.compress(pack)
+        lines.append(f'\t{{ {c_string(scenario)}, {bsp}, {assets.add(packed)}u, {len(packed)}u, {len(pack)}u }}, '
+                     f'/* {name} */')
+    if not found:
+        lines.append("\t{ 0 },")
+    lines.append("};")
+    lines.append(f"unsigned int const lt_emitters_asset_count = {len(found)};")
+    lines.append("")
+    return lines
+
+
 def effect_lines() -> List[str]:
     """The HD effects' table (hd_effects.h)."""
     effects = json.loads((ROOT / EFFECT_LIST).read_text())["effects"] if (ROOT / EFFECT_LIST).is_file() else []
@@ -403,6 +437,7 @@ def hud_asset_inputs() -> List[Path]:
             *([PICTURE_MAPS] if (ROOT / PICTURE_MAPS).is_file() else []), *picture_poses(),
             *([EFFECT_LIST] if (ROOT / EFFECT_LIST).is_file() else []),
             *([MCC_FIT_LIST] if (ROOT / MCC_FIT_LIST).is_file() else []),
+            EMITTER_TOOL, *(EMITTER_ASSETS / path.name for path in emitters().files(ROOT / EMITTER_ASSETS)),
             *(path for path in [VECTOR_BAKE_TOOL, *VECTOR_BAKE_SOURCES, *VECTOR_BAKE_HEADERS] if (ROOT / path).is_file())]
 
 
@@ -419,6 +454,9 @@ def hud_configure_inputs() -> List[Path]:
     # (a pose dropped in changes the folder: configure.py runs again)
     if (ROOT / PICTURE_ASSETS).is_dir():
         inputs.append(PICTURE_ASSETS)
+    # (and an emitter file added or removed)
+    if (ROOT / EMITTER_ASSETS).is_dir():
+        inputs.append(EMITTER_ASSETS)
     return inputs
 
 
@@ -661,6 +699,7 @@ def main() -> None:
     lines.extend(effect_lines())
     lines.extend(mcc_fit_lines())
     lines.extend(mcc_layout_lines())
+    lines.extend(emitter_lines(assets))
     # the assets' file, its size and CRC-32 in its header too
     struct.pack_into("<I", assets.data, 8, len(assets.data))
     lines.append('#include "embedded_assets.h"')

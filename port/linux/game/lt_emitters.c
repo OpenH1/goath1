@@ -8,9 +8,9 @@ pass samples by power and traces live (lt/e1.frag's emitter_sample), so the
 lightmap is no longer the static light where they are known.
 
 Where they come from, for the loaded BSP:
-- solved (port/assets/emitters/<map>_bsp<k>.json, built in by
-  tools/lt_emitters_data.py as lt_emitters_data.inc): the indoor emitters'
-  solve from the BSP's own lightmap, the level's lamp shaders at the tag's
+- solved (port/assets/emitters/<map>_bsp<k>.json, packed by
+  tools/lt_emitters_data.py into openh1.assets and unpacked here when the BSP
+  changes: lt_emitters_assets.h): the indoor emitters' solve from the BSP's own lightmap, the level's lamp shaders at the tag's
   colour x relative power, one brightness a lamp group (a shader's surfaces in
   a 12 wu cell), set so each cell's traced light matches the bake's. A BSP
   that has them is lit live (lt_lights_real_sky).
@@ -41,6 +41,7 @@ solved file is built in.
 #include "tag_files/tag_files.h"
 
 #include "halo_dynamic_lights.h"
+#include "lt_emitters_assets.h"
 #include "lt_lights.h"
 #include "world_rt.h"
 
@@ -66,20 +67,6 @@ its surface toward its normal (the solve's) */
 #define LT_EMITTERS_CELL 12.0f
 #define LT_EMITTERS_LIFT 0.01f
 
-struct lt_emitters_level
-{
-	char const *scenario;
-	short bsp_index;
-	int first_group, group_count;
-};
-
-struct lt_emitters_group
-{
-	float radiance[3];
-	int first_triangle, triangle_count;
-};
-
-#include "lt_emitters_data.inc"
 
 static struct
 {
@@ -128,36 +115,70 @@ static int lt_emitters_room(void)
 	return lt_emitters.triangles && lt_emitters.group_of && lt_emitters.radiance;
 }
 
-/* the built-in solve for the scenario's BSP (FALSE none) */
+static unsigned int lt_emitters_word(unsigned char const *bytes)
+{
+	return (unsigned int)bytes[0] | (unsigned int)bytes[1] << 8 | (unsigned int)bytes[2] << 16 |
+		(unsigned int)bytes[3] << 24;
+}
+
+static float lt_emitters_float(unsigned char const *bytes)
+{
+	unsigned int word = lt_emitters_word(bytes);
+	float value;
+
+	memcpy(&value, &word, sizeof(value));
+	return value;
+}
+
+/* the built-in solve for the scenario's BSP (FALSE none): its pack
+(tools/lt_emitters_data.py's form) unpacked from openh1.assets */
 static int lt_emitters_solved(char const *scenario, short bsp_index)
 {
-	int level, group, triangle;
+	unsigned int size = 0, group_count, triangle_count, group, triangle, first, count, value;
+	unsigned char *pack;
+	unsigned char const *groups, *triangles;
 
-	for (level = 0; scenario && lt_emitters_levels[level].scenario; level++)
+	size = lt_emitters_asset_size(scenario, bsp_index);
+	pack = size ? malloc(size) : NULL;
+	if (!pack || !lt_emitters_asset_read(scenario, bsp_index, pack, size))
 	{
-		struct lt_emitters_level const *found = &lt_emitters_levels[level];
-
-		if (found->bsp_index != bsp_index || csstrcasecmp(found->scenario, scenario))
-			continue;
-		for (group = found->first_group; group < found->first_group + found->group_count; group++)
-		{
-			struct lt_emitters_group const *source = &lt_emitters_groups[group];
-
-			if (lt_emitters.group_count >= LT_EMITTERS_GROUPS_MAXIMUM ||
-				lt_emitters.triangle_count + source->triangle_count > LT_EMITTERS_TRIANGLES_MAXIMUM)
-				break;
-			memcpy(lt_emitters.radiance[lt_emitters.group_count], source->radiance, sizeof(source->radiance));
-			for (triangle = 0; triangle < source->triangle_count; triangle++)
-			{
-				memcpy(lt_emitters.triangles[lt_emitters.triangle_count],
-					lt_emitters_triangles[source->first_triangle + triangle], sizeof(float) * 9);
-				lt_emitters.group_of[lt_emitters.triangle_count++] = lt_emitters.group_count;
-			}
-			lt_emitters.group_count++;
-		}
-		return lt_emitters.group_count > 0;
+		free(pack);
+		return FALSE;
 	}
-	return FALSE;
+	group_count = size >= 8 ? lt_emitters_word(pack) : 0;
+	triangle_count = size >= 8 ? lt_emitters_word(pack + 4) : 0;
+	groups = pack + 8;
+	triangles = groups + (size_t)group_count * 20;
+	if (size < 8 || group_count > LT_EMITTERS_GROUPS_MAXIMUM * 64u || triangle_count > LT_EMITTERS_TRIANGLES_MAXIMUM * 64u ||
+		(size_t)size != 8 + (size_t)group_count * 20 + (size_t)triangle_count * 36)
+	{
+		platform_log("lt emitters: the built-in pack for bsp %d is not whole", bsp_index);
+		free(pack);
+		return FALSE;
+	}
+	for (group = 0; group < group_count; group++)
+	{
+		unsigned char const *source = groups + (size_t)group * 20;
+
+		first = lt_emitters_word(source + 12);
+		count = lt_emitters_word(source + 16);
+		if (first > triangle_count || count > triangle_count - first ||
+			lt_emitters.group_count >= LT_EMITTERS_GROUPS_MAXIMUM ||
+			lt_emitters.triangle_count + (int)count > LT_EMITTERS_TRIANGLES_MAXIMUM)
+			break;
+		for (value = 0; value < 3; value++)
+			lt_emitters.radiance[lt_emitters.group_count][value] = lt_emitters_float(source + 4 * value);
+		for (triangle = first; triangle < first + count; triangle++)
+		{
+			for (value = 0; value < 9; value++)
+				lt_emitters.triangles[lt_emitters.triangle_count][value] =
+					lt_emitters_float(triangles + (size_t)triangle * 36 + 4 * value);
+			lt_emitters.group_of[lt_emitters.triangle_count++] = lt_emitters.group_count;
+		}
+		lt_emitters.group_count++;
+	}
+	free(pack);
+	return lt_emitters.group_count > 0;
 }
 
 /* a tags' triangle: its material and cell, for grouping */
