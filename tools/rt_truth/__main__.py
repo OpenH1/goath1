@@ -53,6 +53,13 @@ def main():
                    help="rooms: a fixture's light cone or card a lamp group beside its glowing lamp (study)")
     e.add_argument("--outside", type=float, default=0.05, help="rooms: a cell whose lamps give under this share of "
                    "the bake's light is the sky's (an opening, a hull outside), left out")
+    e.add_argument("--near", type=float, default=0.5, help="rooms: texels this close to a lamp (wu) left out of "
+                   "the match; 0 keeps every texel")
+    e.add_argument("--clipped", default="out", choices=("out", "as-shown", "floor"),
+                   help="rooms: texels the bake clipped left out, or matched at the value the game shows")
+    e.add_argument("--match", default="linear", choices=("linear", "shown"),
+                   help="rooms: each cell's mean light matched in linear light, or as the game shows it (^1/2.2)")
+    e.add_argument("--fit-cell", type=float, help="rooms: the cells whose mean light is matched (wu; default --cell)")
     e.add_argument("--patch-size", type=float, default=2.0, help="the candidate patches' cell, wu")
     e.add_argument("--weights", default="area", choices=("area", "display"),
                    help="squared errors by world area (linear light), or as the shown page sees them")
@@ -88,6 +95,10 @@ def main():
         _E.TARGET_GAMMA = a.target_gamma
         _E.FIXTURES = getattr(a, "fixtures", "on") == "on"
         _E.CONES = getattr(a, "cones", "off") == "on"
+        _E.NEAR_WU = a.near
+        _E.CLIPPED_AS_SHOWN = {"out": False, "as-shown": True, "floor": "floor"}[a.clipped]
+        _E.FIT_CELL = a.fit_cell
+        _E.MATCH = a.match
         from .render import GpuLock, wait_for_no_player
         import os
         wait_for_no_player(print)
