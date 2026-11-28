@@ -347,9 +347,9 @@ campaign and multiplayer maps:
 | the same, no cone (a point) | a point light | was LOST, now real (a spot whose cone is the whole sphere, the same k) | 323 static | b40/c40 Forerunner spotlights (180) and Covenant torches (75), damnation (25), carousel/ratrace (18), fog lights |
 | the same, no lens flare and not dynamic (the game makes no light datum) | a light | was LOST, now real (from the object's attachment, at its marker) | 716 static | holo lights on consoles (a50/d20 purple 0.35; b30/c10/c20/b40 blue 0.05), b30/c10 "generic light" fixtures (95) |
 | on bipeds, vehicles, weapons (hunters' fuel rods, the Monitor) | not baked (not static) | not wanted | 48 | |
-| shader radiosity power, BSP surfaces | area emitters | solved lamps (25 BSPs) or the tags' emitters x 0.36 | 279 shaders | every level |
-| shader radiosity power, object shaders | (unverified) | approximated: object lamps from the drawn glow (x5.36), not the tag power | 37 shaders | MP teleporter shields, b40 volume lights, the Monitor |
-| shader radiosity tint (light through a transparent surface) | tinted transmission | LOST (rays pass glass untinted) | 194 shaders with a tint | small |
+| shader radiosity power, BSP surfaces | area emitters | solved lamps (25 BSPs) or the tags' emitters x 0.36 | 282 (shader, map) pairs | every level |
+| shader radiosity power, object shaders | (unverified) | approximated: object lamps from the drawn glow (x5.36), not the tag power | 42 (shader, map) pairs | MP teleporter shields, b40 volume lights, the Monitor |
+| shader radiosity tint (light through a transparent surface) | tinted transmission | LOST (rays pass glass untinted) | 237 (shader, map) pairs with a tint | small |
 | sky outdoor ambient (0x48/0x54) | dome on exterior clusters | real: the dome, the real-sky k | every sky-lit BSP | |
 | sky lights (0xC4), "affects exteriors/interiors" | sun and fills by cluster kind | real: traced everywhere they reach (shadow rays, not the flag) | every sky | |
 | sky indoor ambient (0x38/0x44) | uniform ambient on interior clusters | LOST in exterior views of interior clusters of a sky-lit BSP; absorbed by the lamp scales in solved BSPs | b40/c40 0.3, c20 0.4, c10 0.15, carousel 0.12, MP test skies 20 | b40 bsp1 (20 interior clusters), c40 bsp1 (22), beavercreek (2) |
