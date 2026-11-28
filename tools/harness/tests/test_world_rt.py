@@ -65,8 +65,8 @@ CONTROLS = [
     ("\t\tworld_rt_compose(node, definition->inverses[node_index], node);\n", "", "skin"),
     ("\t\tworld_rt_compose(inverse, node, pose->transforms[node_index]);",
      "\t\tmemcpy(pose->transforms[node_index], node, sizeof(node));", "skin"),
-    ("\t\t\tinstance->pad = (unsigned int)++pose_count;\n\t\t\t/* (measuring",
-     "\t\t\t++pose_count;\n\t\t\t/* (measuring", "skin"),
+    ("\t\t\tinstance->pad = (unsigned int)++pose_count;\n\t\t\t/* (its lamps",
+     "\t\t\t++pose_count;\n\t\t\t/* (its lamps", "skin"),
     # the octahedral map's lower half not folded
     ("\tif (vector[2] < 0.0f)\n", "\tif (0)\n", "arithmetic"),
     # ... or not made again for another BSP
