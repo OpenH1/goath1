@@ -427,8 +427,11 @@ vec3 dome_at(vec3 p, vec3 n, ivec2 pixel, float salt)
 // ray, for a reflection's hit, whose single sample a pixel would otherwise flicker)
 vec3 sky_at(Hit hit, ivec2 pixel, float salt, bool ray)
 {
-    bool found;
-    vec3 cached = cache_find(hit.p, hit.n, found);
+    // (a dynamic object's hit: the cache gives it nothing (cache_at), so its dome comes by the ray, whatever cell of
+    // the world's its point lies in: a landed Pelican's hull in the beach's cells)
+    bool found = false;
+    if (hit.owner <= 0)
+        cache_find(hit.p, hit.n, found);
     return sun_real(hit.p, hit.n, hit.n, pixel, 1) + (found ? vec3(0.0) : ray ? dome_at(hit.p, hit.n, pixel, salt) :
         dome_radiance() * (0.5 + 0.5 * hit.n.z));
 }
@@ -518,7 +521,10 @@ vec4 bounce_main(ivec2 block, out vec3 p, out vec3 n, out uint owner, out bool f
             continue;
         // (lit live: as far as the sky, a ray that leaves the scene the dome's)
         bool real = real_sky();
-        Hit hit = trace(origin, d, real ? SUN_REACH : BOUNCE_REACH, int(owner), false, MASK_AO);
+        // (every instance met, the receiver's own object too: an object's surfaces shade and light each other as the
+        // world's do, a Pelican's bay roofed by its hull and lit by its walls, a marine's arm by its chest; the ray
+        // starts off the surface as the suns' shadow rays do, which already find an object's own shadow)
+        Hit hit = trace(origin, d, real ? SUN_REACH : BOUNCE_REACH, -1, false, MASK_AO);
         // (the hit lit by the level's light sources too, one point and ray: their light bounces, and the cache, which
         // gathers these samples, carries it on to the next bounce: a room lit only through its doors by the next
         // rooms' lamps, a10's cryo deck)
