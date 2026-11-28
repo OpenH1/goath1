@@ -70,6 +70,7 @@ need the backend's ID buffer, `cost` its GPU timing; `cpu_cost`: `cost`
 takes `"cpu"`). `cost_methods`: the methods `cost` can measure draws with
 (below), the default last. `call_kinds` (where the backend counts its calls
 of the driver, Vulkan's): the kinds `cost`'s `"cpu"` counts them by.
+`lt_unit` (a service started with `HALO_LT_UNIT`, below): the light-list unit's counts so far.
 
 ### frame
 
@@ -326,6 +327,24 @@ where it is not already set, `"exact": false` then, as after `rt_set`; a service
 and saved as `save/<view>.f32`, 13 float32 a pixel, rows from the top: the mean rgb, the mean luminance (Rec. 709),
 the luminance's deviation over the plays, and the mean luminance of each of 8 batches of the plays in turn (the
 mean's error, where the plays are correlated, is the batches' spread / sqrt(8)). No `show` with it: no view picture.
+
+### The light-list unit: HALO_LT_UNIT
+
+A recording made by a build with the light list's inputs (`xgpu_stream.h`'s `LT_INPUTS`, sent before each
+`LT_LIGHTS` while `HALO_RENDER_RECORD` is set: what `port/linux/game/lt_lights_build.c` reads of the game) can have
+its light lists built again by that code, changed, without recording again: a service started with
+`HALO_LT_UNIT=<lt_lights_unit.so>` (`ninja linux_lt_unit`, or `tools/rt2_bench.py ... --unit`, which compiles the
+working tree's) builds each list from the inputs before it and hands the backend that list in place of the
+recorded one. The level's light sources' triangles (`lt_emitters.c`'s share each frame) are taken from the
+recorded list. A list with no inputs before it (an older recording) plays as recorded. `info`'s `lt_unit`:
+
+```json
+"lt_unit": {"path": "/home/me/goat-rig/rt2-bench/unit/0123/lt_lights_unit.so", "loaded": true, "rebuilt": 1361,
+            "same": 1361, "differ": 0, "first_differ": 0, "as_recorded": 0}
+```
+
+`same`: lists byte for byte the recorded one (unchanged code: every one); `first_differ`: the game's list count of
+the first other. A play from the recording's start forgets the inputs kept from the play before; `rt_set` or `rt_reload` naming another `HALO_LT_UNIT` loads that one (its counts begun again).
 
 ### cost
 
