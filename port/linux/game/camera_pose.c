@@ -8,7 +8,10 @@ first so that it takes the camera at once as its first command (in the step
 the script's camera takes on being set), so the next frame is drawn from
 there, also with the game's time stopped (game_speed 0), when the observer
 takes no steps of its own. The first-person weapon is not drawn from the
-script's camera; the HUD is show_hud's.
+script's camera; the HUD is show_hud's. An eighth number, whole seconds,
+moves the camera there from where it is over that time instead, as the
+cutscenes' camera_set does (a steady pan for the test clips,
+tools/rt2_clips.py).
 */
 
 #include "cseries.h"
@@ -36,7 +39,7 @@ void scripted_camera_set_camera_point_absolute(real_point3d const *position, rea
 
 void camera_pose_set(char const *pose)
 {
-	float x, y, z, yaw, pitch, roll, field_of_view;
+	float x, y, z, yaw, pitch, roll, field_of_view, seconds = 0.0f;
 	float cy, sy, cp, sp, cr, sr;
 	real_point3d position;
 	real_vector3d forward, level_up, right, up;
@@ -46,11 +49,11 @@ void camera_pose_set(char const *pose)
 		director_script_camera(FALSE);
 		return;
 	}
-	if (!pose || sscanf(pose, "%f %f %f %f %f %f %f", &x, &y, &z, &yaw, &pitch, &roll, &field_of_view) != 7 ||
-		field_of_view <= 0.0f || field_of_view >= 90.0f)
+	if (!pose || sscanf(pose, "%f %f %f %f %f %f %f %f", &x, &y, &z, &yaw, &pitch, &roll, &field_of_view, &seconds) < 7 ||
+		field_of_view <= 0.0f || field_of_view >= 90.0f || seconds < 0.0f || seconds > 60.0f)
 	{
 		/* (the script's camera halts the game past 90 degrees: camera_scripting.c) */
-		console_printf(FALSE, "debug_camera_set \"<x> <y> <z> <yaw> <pitch> <roll> <field of view under 90>\" (degrees), or \"off\"");
+		console_printf(FALSE, "debug_camera_set \"<x> <y> <z> <yaw> <pitch> <roll> <field of view under 90> [<seconds to move there>]\" (degrees), or \"off\"");
 		return;
 	}
 	cy = cosf(yaw * DEGREES_TO_RADIANS);
@@ -76,8 +79,12 @@ void camera_pose_set(char const *pose)
 	up.j = cr * level_up.j + sr * right.j;
 	up.k = cr * level_up.k + sr * right.k;
 	director_script_camera(TRUE);
-	observer_obsolete_position(0);
-	scripted_camera_set_camera_point_absolute(&position, &forward, &up, field_of_view * DEGREES_TO_RADIANS, 0);
+	/* (a move starts from where the camera is: the observer kept) */
+	if (seconds <= 0.0f)
+		observer_obsolete_position(0);
+	/* (in ticks, which the scripted camera takes in whole seconds) */
+	scripted_camera_set_camera_point_absolute(&position, &forward, &up, field_of_view * DEGREES_TO_RADIANS,
+		(word)(seconds * TICKS_PER_SECOND + 0.5f));
 }
 
 /* ---------- objects placed for the picture (debug_object_place) */
