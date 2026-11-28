@@ -3,11 +3,48 @@
 **Since 2026-11-28 these files are a CHECK, not the source.** The game lights every BSP on every map (campaign
 and multiplayer) by one rule from each shader's own data (lt_emitters.c): every structure surface, opaque,
 alpha-tested or transparent, whose shader has radiosity power glows with radiance power x colour of emitted light
-/ pi (the lightmap tool's exitance M of a Lambertian emitter, L = M / pi; no fit), a transparent card both ways,
+x K_tool (1/pi: the lightmap tool's exitance M of a Lambertian emitter, L = M / pi; no fit; see Units), a transparent card both ways,
 the strongest 8192 triangles by power. The per-BSP fits below came out at 0.27 (median of 2429 lamp groups) to
 0.43 (power-weighted) for that same ratio, each BSP 0.15 to 0.6, so 1/pi = 0.318 sits in the middle.
 `HALO_LT_EMITTERS=solved` plays a BSP's file in place of the rule, for comparing;
 `tools/rt2_emitter_screen.py --env HALO_LT_EMITTERS=solved --name solved` screens the files that way.
+
+## Units: one constant, K_tool = 1/pi, and one colour rule (2026-11-28)
+
+Every light from the radiosity tool's data is in one unit (port/linux/game/lt_light_colour.h, `LT_TOOL_K`):
+glowing shaders, the sky's lights and its outdoor ambient dome, and light tags' radiosity (the baked-light spots).
+
+- **What the tool's numbers are.** The tool's powers are exitances and irradiances: a glowing shader's exitance
+  M = colour x power; a sky light's irradiance facing it, colour x power; the sky's outdoor ambient, the irradiance
+  under the whole open dome; a light tag's radiosity intensity, the irradiance a unit away on its axis.
+- **What the pass's numbers are.** The pass, like the lightmap, carries radiance: what a white diffuse surface shows
+  is its irradiance / pi, and an area light's contribution is radiance x cos x cos' / d^2 / pi
+  (lt/e1.frag `emitter_light`). An emitter of exitance M has radiance M / pi.
+- **So** every tool power becomes pass units by the same 1/pi: K_tool = 1/pi = 0.318. Nothing is fitted.
+- **Checked, not refitted:**
+  - b30's bake (truth renderer, ~/dev/rt2-calibration.json `real_sky`): the sky's fitted k (fill and dome) 0.339
+    against 0.318.
+  - a50's floodlights: the old per-light fit gave 0.617 of power for their 1.8, the unit gives 0.573.
+  - the per-BSP solves below: 0.27 (median) to 0.43 (power-weighted), 1/pi in the middle.
+  - b30's sun: fitted 0.596, about 1.9x the unit. That is the bake's extra contrast (sunlit / shade 5.88 against the
+    traced 3.78), which the camera's light curve now carries (xgpu_hdr.h `XGPU_HDR_CAMERA_LIGHT_CONTRAST`, 1.33 =
+    ln 5.88 / ln 3.78, pivot 0.18, per channel on the light at compose where the pass is the whole light), not the
+    sun's power.
+- **Removed:** the per-channel sky k's (sun 0.558/0.592/0.722, sky 0.324/0.338/0.506), the baked lights' 0.446, the
+  object lamps' 5.36, the bounce's glow k 0.48, and the frame's luminance contrast 1.22 where the sky lit the view.
+- **Not the tool's data:**
+  - Runtime lights (muzzle flashes, explosions, the port's own lights) keep the classic light model's own formula
+    (lt_lights_build.c `lt_point_power_scale`).
+  - Glows with no radiosity data (an object's self-illumination, an additive part) emit what they show, by 1: the
+    same radiance whether a light sample reaches them (world_rt.c's lamps) or a bounce or reflection ray hits them
+    (lt/indirect.glsl `hit.glow`). The energy class (shields, plasma) has its hook at 1 in both
+    (`WORLD_RT_LAMP_ENERGY_FACTOR`, `LT_EMITTERS_ENERGY_FACTOR`), pending a decision.
+  - The suns' share of a kept lightmap (0.417 / 0.187, levels that keep their bake) is a measure of the lightmap,
+    not a light.
+- **Colours.** Every designer colour is an on-screen colour, so its hue is c^2.2. The tool multiplies colour by
+  power linearly, so its luminance is kept: c_lin = lum(c) x c^2.2 / lum(c^2.2) (`lt_light_colour_tool`). A colour
+  as drawn (a glow, a runtime light's colour in the classic formula) is the screen's own light, c^2.2
+  (`lt_light_colour_drawn`). tools/test_rt2_light_colour.py fails if a light's colour bypasses these.
 
 `<map>_bsp<k>.json`: the level's own glowing shaders (lamps, strips, light cards, screens: radiosity
 power > 0 in the shader tag) as area lights, at the tag's color and relative power, with one brightness
@@ -133,8 +170,8 @@ solver's own transport at the screen's spots (texels near a spot, each lamp grou
   XGPU_HDR_CAMERA_CONTRAST, 1.22 about middle grey, fitted on b30's traced sky) applied wherever the pass lit the
   level live, solved lamps too. The lamps are fitted to the bake's own light, so a dim room (light about 0.01)
   came out at about x0.55 and a bright one went brighter (c20's gold room blown). That was the uniform x0.5-0.6 of
-  b40 bsp4/5, c40 bsp5/6, c10 bsp5 and d40 bsp0/6. The contrast now applies only where the sky lights the view
-  live (xgpu_vulkan_lt_live); a view lit by solved lamps alone keeps the bake's spread, as the lightmap does.
+  b40 bsp4/5, c40 bsp5/6, c10 bsp5 and d40 bsp0/6. The contrast then applied only where the sky lit the view
+  live; since the Units change it is one light-space curve on every live view (see Units).
 - **Cells met by near-field peaks.** Where no lamp of the BSP gives the bake's light, the per-cell fixed point
   pushed the nearest glow strips to its 20x limit (d20 bsp4: 49% of the lamps' power at the limit, d20 bsp1 36%,
   d20 bsp2 10%, b40 bsp0 14%). A cell's mean light was then met by the few texels within a unit of a strip, its
@@ -377,4 +414,5 @@ fit; a light tag's radiosity intensity has no area, and 1/pi alone does not fix 
 light's power as on-axis intensity (E = I / d^2, I = intensity x colour^2.2 x k x 1.009). Read as (a) a radiant
 intensity, k would be 0.99 (x2.2 today's); as (b) an isotropic point's flux, 1/(4 pi) = 0.080 (x0.18). a50's pools
 fit 0.446, between the two, and b40's torch (x0.04 of classic) would reach only x0.09 under (a): its gap is not the
-k. So k stays 0.446, the one documented calibration, until the lightmap tool's point unit is pinned.
+k. Superseded by the Units section (K_tool): with the pass's radiance convention (a white surface shows E / pi),
+reading (a) gives 1/pi, which the baked lights now use.

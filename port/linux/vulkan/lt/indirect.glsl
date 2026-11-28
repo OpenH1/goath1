@@ -49,8 +49,6 @@
 // the shader types (shaders.c's; xgpu_spirv.c's RT_REFLECTION_KIND_*)
 #define KIND_ENVIRONMENT 3u
 #define KIND_MODEL 4u
-// (the live lights' one k: lt_lights.c's LT_LIGHTS_REAL_*_POWER_SCALE)
-#define GLOW_K 0.48
 #define MASK_REFLECTIONS 0x1Bu
 // the rays' reach (world units), the reflections' fade from 80% of it (display.rt_reflections')
 #define BOUNCE_REACH 32.0
@@ -227,14 +225,14 @@ Hit trace(vec3 origin, vec3 d, float t_max, int skip, bool lightmap, uint mask)
     hit.albedo = pow(base, vec3(2.2));
     // (a model's self-illumination, lit live: an object's own lamps, the light it gives what it meets; as the model
     // pass draws it, the colour masked by the multipurpose map's green added to the light before the albedo
-    // multiplies, so its radiance is albedo x (mask x colour)^2.2 (tools/rt_truth's HaloSelfIllum), at the live
-    // lights' one k (lt_lights.c's LT_LIGHTS_REAL_*_POWER_SCALE). The level's own glowing surfaces are its emitters,
-    // sampled apart (emitter_sample))
+    // multiplies, so its radiance is albedo x (mask x colour)^2.2 (tools/rt_truth's HaloSelfIllum), by 1: it emits
+    // what it shows, the same radiance its lamps give (world_rt.c, lt_light_colour.h's colour as drawn). The level's
+    // own glowing surfaces are its emitters, sampled apart (emitter_sample))
     uint glow = table.words[at + 15u];
     if (kind == KIND_MODEL && glow != 0u && (pass.lights.z & LIGHTS_REAL) != 0)
     {
         float mask = hit_texel(table.words[at + 10u], st * scale, level).g;
-        hit.glow = GLOW_K * hit.albedo * pow(clamp(unpackUnorm4x8(glow).rgb * mask, 0.0, 1.0), vec3(2.2));
+        hit.glow = hit.albedo * pow(clamp(unpackUnorm4x8(glow).rgb * mask, 0.0, 1.0), vec3(2.2));
     }
     if (lightmap)
     {

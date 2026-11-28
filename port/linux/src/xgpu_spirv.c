@@ -9403,6 +9403,18 @@ static unsigned int lt_e1_guides(struct module *m, struct pixel_state *state, un
 		lt_octahedral(m, normal), material, motion });
 }
 
+/* the camera's light curve (xgpu_hdr.h's XGPU_HDR_MODE_CAMERA): each
+channel of the light, before the albedo multiplies, to PIVOT (E / PIVOT)^
+CONTRAST; where the pass's light is the whole light (live), else as it is */
+static unsigned int lt_light_curve(struct module *m, unsigned int light, unsigned int live)
+{
+	unsigned int curved = fscale(m, 3, ext2(m, GLSL_POW, m->t_v3, fscale(m, 3, fmax_scalar(m, 3, light, 0.0f),
+		constant_float(m, 1.0f / XGPU_HDR_CAMERA_LIGHT_PIVOT)), constant_splat(m, 3, XGPU_HDR_CAMERA_LIGHT_CONTRAST)),
+		constant_float(m, XGPU_HDR_CAMERA_LIGHT_PIVOT));
+
+	return select_n(m, 3, live, curved, light);
+}
+
 /* ... the traced lights' light (linear, at display.rt_bounce's binding:
 their irradiance, its cosine by the shaded normal of the twins' guides,
 lt_e1_guides) added to lit (the game's lights' result, gamma) linearly, by
@@ -9427,10 +9439,13 @@ static unsigned int lt_e1_add(struct module *m, struct pixel_state *state, unsig
 	(void)to_lamp;
 	/* (a model's (no tint) never less than 0: the suns' share is the
 	structure's, whose pixel a model the pre-pass did not draw reads) */
+	if (!tint)
+		light = fmax_scalar(m, 3, light, 0.0f);
+	/* (the camera's light curve where the pass's light is the whole light:
+	the alpha below) */
+	light = lt_light_curve(m, light, compare(m, OP_F_ORD_GREATER_THAN, extract(m, texel, 3), constant_float(m, 0.5f)));
 	if (tint)
 		light = fmul(m, 3, light, tint);
-	else
-		light = fmax_scalar(m, 3, light, 0.0f);
 	/* (the light's alpha: 1 where the level is lit live (lt/e1.frag's
 	LIGHTS_REAL), whose static light the pass's light is: the game's own
 	light here (the lightmap's, a model's lighting from the lightmap under
@@ -10084,6 +10099,8 @@ static unsigned int lt_forward_add(struct module *m, struct pixel_state *state, 
 		return lit;
 	/* (tint: the structure's; none, a model's) */
 	light = lt_forward_light(m, state, p, n, shaded, tint != 0);
+	/* (the camera's light curve lit live, as lt_e1_add's) */
+	light = lt_light_curve(m, light, load(m, m->t_bool, state->lt_live));
 	if (tint)
 		light = fmul(m, 3, light, tint);
 	/* (a level lit live: the game's own light here, the lightmap's or a

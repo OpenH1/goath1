@@ -311,17 +311,23 @@ frame's values made linear) is
   dark rooms and dim the beach toward one grey, pump with every muzzle flash
   and the flashlight, and give held frames and replays a history. Fitted
   against b30's bake, the best exposure with the live sky's k is 0.99.
-- given contrast about middle grey (XGPU_HDR_CAMERA_MIDDLE): its luminance
-  L to MIDDLE (L / MIDDLE)^contrast, its hue kept. 1 where the level keeps
-  its lightmap, which is already a picture (the bake's own look), and where
-  the level's light sources solved from that lightmap light it (an interior
-  view: port/assets/emitters, fitted to the bake's light, its spread in it);
-  XGPU_HDR_CAMERA_CONTRAST where the sky lights it live (lt/e1.frag's
-  LIGHTS_REAL from the sky's records, xgpu_vulkan_lt_live):
-  the traced light's brightness quantiles matched to the bake's as shown
-  (b30_exterior, albedo x page^2.2: the mood, not pixel for pixel), 1.22,
-  error 0.13 in log brightness against 0.30 without it. (The bake's sunlit
-  over shaded is 6.1 against the light's 3.8: 3.8^1.35.)
+- its contrast on the light, not here: where the pass's light is the
+  whole light (a level lit live by its sky or its glowing surfaces), the
+  compose (xgpu_spirv.c's lt_e1_add, lt_forward_add) curves each channel
+  of the demodulated light, before the albedo multiplies, about
+  XGPU_HDR_CAMERA_LIGHT_PIVOT: E to PIVOT (E / PIVOT)^XGPU_HDR_CAMERA_LIGHT_
+  CONTRAST. One curve on every live view, day and night; the frame's
+  contrast here stays 1 (the window uniform's x). Where a level keeps its
+  lightmap, the lightmap is already a picture (the bake's own look), and
+  the pass's added light is not curved. The contrast is the bake's own
+  between sun and shade over the traced light's (b30, the truth renderer,
+  ~/dev/rt2-calibration.json's real_sky: sunlit over shaded 5.88 against
+  3.78, ln 5.88 / ln 3.78 = 1.33), which the tags' powers in the tool's one
+  unit (lt_light_colour.h's LT_TOOL_K) do not have: it lifts the sun and
+  deepens the shade, and on light per channel it gives the bake's warmer
+  sun and bluer shade too. The pivot is middle grey's light, 0.18 (b30's
+  numbers put the light that the curve leaves as it is near 0.2: the
+  shade's 0.84 and the sun's 3.1 of it).
 - rolled off: each channel under Punchy's shoulder (identity to
   XGPU_HDR_PUNCHY_KNEE of the peak, at most paper white; rising toward the
   peak, never reaching it), so that the flashlight's pool, an explosion's
@@ -338,8 +344,9 @@ turned Blood Gulch's sand pale; one from the lightmap's mean, sunlit texels
 dominating, made b30 warmer still). That colour is the sky lights' own,
 for their calibration. */
 #define XGPU_HDR_CAMERA_EXPOSURE 1.0f
-#define XGPU_HDR_CAMERA_CONTRAST 1.22f
 #define XGPU_HDR_CAMERA_MIDDLE 0.18f
+#define XGPU_HDR_CAMERA_LIGHT_CONTRAST 1.333f
+#define XGPU_HDR_CAMERA_LIGHT_PIVOT 0.18f
 
 /* the display's encodings (xgpu_hdr_frame.output) */
 enum

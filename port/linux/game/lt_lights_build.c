@@ -35,6 +35,9 @@ void lt_musl_qsort(void *base, size_t count, size_t width, int (*compare)(void c
 #define qsort lt_musl_qsort
 #endif
 
+/* (the one colour rule and the tool's unit, with the unit's powf) */
+#include "lt_light_colour.h"
+
 #ifndef NONE
 #define NONE -1
 #endif
@@ -60,15 +63,10 @@ sun_power_scale and fill_power_scale (xgpu_vulkan_lt.c's, the same rule) */
 #define LT_LIGHTS_FILL_POWER_SCALE 0.187f
 #define LT_LIGHTS_FILL_DIAMETER 0.17453293f
 /* a level lit live (lt_lights_real_sky): the sky's lights and its ambient
-dome as the whole light, each group's k for each channel from the truth
-renderer's multi-bounce render of b30 (432 samples a pixel, every bounce)
-against its lightmap as the game shows it (pages ^2.2), the lightmap the
-answer key only: the sun's, and the sky's (its wide lights and its dome:
-the lightmap tool's sky alike), red, green and blue (R^2 0.536, 0.568,
-0.620; one k for all, 0.457 0.475 0.594, R^2 0.524, 0.554, 0.614;
-~/dev/rt2-calibration.json's real_sky colour_fit) */
-static const float lt_lights_real_sun_k[3] = { 0.558f, 0.592f, 0.722f };
-static const float lt_lights_real_sky_k[3] = { 0.324f, 0.338f, 0.506f };
+dome as the whole light, in the radiosity tool's units (lt_light_colour.h's
+LT_TOOL_K, the same as every glowing surface's: no per-group or
+per-channel k; the bake's extra contrast between sun and shade is the
+camera's light curve, xgpu_hdr.h's XGPU_HDR_CAMERA_LIGHT_CONTRAST) */
 /* the emitters' radii (world units): E1's flashlight disk, then
 dynamic_lights.c's shadow disks' (SHADOWED_DISK_*) */
 #define LT_LIGHTS_FLASHLIGHT_DISK 0.01f
@@ -125,11 +123,6 @@ static void lt_cross(struct lt_vector const *a, struct lt_vector const *b, struc
 
 /* ---------- the list */
 
-static float lt_linear(float value)
-{
-	return value > 0.0f ? powf(value, 2.2f) : 0.0f;
-}
-
 static void lt_copy3(float out[3], float x, float y, float z)
 {
 	out[0] = x;
@@ -165,6 +158,7 @@ static int lt_suns(struct lt_inputs const *in, struct xgpu_stream_lt_light *ligh
 	{
 		struct lt_input_sky_light const *light = &in->sky_lights[index];
 		struct xgpu_stream_lt_light *out = &lights[count];
+		float colour[3];
 
 		memset(out, 0, sizeof(*out));
 		out->id[0] = ((unsigned int)sky_index << 8) | (unsigned int)(index & 0xff);
@@ -178,21 +172,17 @@ static int lt_suns(struct lt_inputs const *in, struct xgpu_stream_lt_light *ligh
 		lt_copy3(out->up, light->up[0], light->up[1], light->up[2]);
 		lt_left(out);
 		out->cone_inner = out->cone_outer = -1.0f;
-		out->power_scale = light->diameter >= LT_LIGHTS_FILL_DIAMETER ? LT_LIGHTS_FILL_POWER_SCALE :
+		/* (the colour linearized keeping the tool's luminance: lt_light_colour.h;
+		lit live, the tool's unit, LT_TOOL_K; else its kind's share of the
+		lightmap) */
+		lt_light_colour_tool(light->color, colour);
+		out->power_scale = live ? LT_TOOL_K : light->diameter >= LT_LIGHTS_FILL_DIAMETER ? LT_LIGHTS_FILL_POWER_SCALE :
 			LT_LIGHTS_SUN_POWER_SCALE;
-		lt_copy3(out->color, light->color[0], light->color[1], light->color[2]);
-		lt_copy3(out->power, light->color[0] * light->power * out->power_scale,
-			light->color[1] * light->power * out->power_scale, light->color[2] * light->power * out->power_scale);
-		/* (lit live: its group's k each channel, a wide one the sky's) */
 		if (live)
-		{
-			float const *k = light->diameter >= LT_LIGHTS_FILL_DIAMETER ? lt_lights_real_sky_k : lt_lights_real_sun_k;
-
 			out->flags |= XGPU_LT_LIGHT_REAL_SKY;
-			out->power_scale = k[1];
-			lt_copy3(out->power, light->color[0] * light->power * k[0], light->color[1] * light->power * k[1],
-				light->color[2] * light->power * k[2]);
-		}
+		lt_copy3(out->color, light->color[0], light->color[1], light->color[2]);
+		lt_copy3(out->power, colour[0] * light->power * out->power_scale, colour[1] * light->power * out->power_scale,
+			colour[2] * light->power * out->power_scale);
 		out->angular_diameter = light->diameter;
 		count++;
 	}
@@ -204,7 +194,7 @@ static int lt_suns(struct lt_inputs const *in, struct xgpu_stream_lt_light *ligh
 	{
 		struct xgpu_stream_lt_light *out = &lights[count];
 		float const *color = in->ambient_color;
-		float power = in->ambient_power;
+		float power = in->ambient_power, colour[3];
 
 		if (power > 0.0f && power < 1.0e6f)
 		{
@@ -220,10 +210,11 @@ static int lt_suns(struct lt_inputs const *in, struct xgpu_stream_lt_light *ligh
 			lt_copy3(out->up, 1.0f, 0.0f, 0.0f);
 			lt_left(out);
 			out->cone_inner = out->cone_outer = -1.0f;
-			out->power_scale = lt_lights_real_sky_k[1];
+			out->power_scale = LT_TOOL_K;
 			lt_copy3(out->color, color[0], color[1], color[2]);
-			lt_copy3(out->power, color[0] * power * lt_lights_real_sky_k[0], color[1] * power * lt_lights_real_sky_k[1],
-				color[2] * power * lt_lights_real_sky_k[2]);
+			lt_light_colour_tool(color, colour);
+			lt_copy3(out->power, colour[0] * power * LT_TOOL_K, colour[1] * power * LT_TOOL_K,
+				colour[2] * power * LT_TOOL_K);
 			out->angular_diameter = 3.14159265358979323846f * 2.0f;
 			count++;
 		}
@@ -426,8 +417,9 @@ int lt_lights_build_list(struct lt_inputs const *in, struct lt_input_light const
 		/* (the power: its kind's k, once its kind, flags and object are
 		known) */
 		out->power_scale = lt_power_scale(out);
+		lt_light_colour_drawn(light->color, out->power);
 		for (channel = 0; channel < 3; channel++)
-			out->power[channel] = lt_linear(light->color[channel]) * out->power_scale;
+			out->power[channel] *= out->power_scale;
 		written++;
 	}
 	written = lt_suns(in, records, written);
