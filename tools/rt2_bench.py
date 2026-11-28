@@ -811,24 +811,22 @@ CACHE = "cache"  # (beside the recording: ~/goat-rig/rt2-bench/<name>/cache/<key
 CACHE_GB = float(os.environ.get("RT2_BENCH_CACHE_GB", "20"))  # (each rig's whole cache, oldest used dropped first)
 CACHE_FREE_GB = 60  # (never cached when the rig's disk would have less free)
 
-FINGERPRINT = r"""
+# (its parts: pure functions of files, which tools/test_rt2_bench.py runs on fixtures)
+FINGERPRINT_LIB = r"""
 import hashlib, json, os, re, subprocess, sys
-job = json.loads(sys.argv[1])
-home = os.path.expanduser("~")
 def sha_file(path, blank=()):
     data = open(path, "rb").read()
     blank = [b"\0" + w.encode() + b"\0" for w in blank if w]
     # (the linker's build id: the note's header (name size 4, id size 20, NT_GNU_BUILD_ID) and "GNU", then the id)
     note = b"\x04\x00\x00\x00\x14\x00\x00\x00\x03\x00\x00\x00GNU\x00"
     at = data.find(note)
-    if at >= 0 and blank is not None:
+    if at >= 0:
         data = data[:at + 16] + bytes(20) + data[at + 36:]
     for word in blank:
         data = data.replace(word, b"\0" * len(word))
     return hashlib.sha256(data).hexdigest()
-def recording(folder):
+def recording(path):
     # (the recording's hash, kept beside it while its size, time and inode are the same)
-    path = os.path.join(home, folder, "moment.hrpl")
     st = os.stat(path)
     stamp = f"{st.st_size} {st.st_mtime_ns} {st.st_ino}"
     kept = path + ".sha256"
@@ -845,17 +843,11 @@ def recording(folder):
     open(kept + ".part", "w").write(f"{stamp} {digest.hexdigest()}\n")
     os.replace(kept + ".part", kept)
     return digest.hexdigest()
-out = {"recordings": {f: recording(f) for f in job["folders"]}}
-replay = os.path.join(home, job["replay"])
-tree = replay.split("/build/")[0]
-# (the label is the commit configure.py last ran at, not always the tree's HEAD: any of the tree's recent commits'
-# that the binary holds, as a whole string)
-data = open(replay, "rb").read()
-commits = subprocess.run(["git", "-C", tree, "rev-list", "--max-count=2000", "HEAD"], capture_output=True,
-                         text=True).stdout.split()
-held = set(m.decode() for m in re.findall(rb"\0([0-9a-f]{12})\0", data))
-labels = [c[:12] for c in commits if c[:12] in held]
-out["code"] = sha_file(replay, blank=labels)
+def code_hash(replay, commits):
+    # (the label is the commit configure.py last ran at, not always the tree's HEAD: any of the tree's recent
+    # commits that the binary holds, as a whole string)
+    held = set(m.decode() for m in re.findall(rb"\0([0-9a-f]{12})\0", open(replay, "rb").read()))
+    return sha_file(replay, blank=[c[:12] for c in commits if c[:12] in held])
 def folder_hash(path):
     digest = hashlib.sha256()
     for name in sorted(os.listdir(path)):
@@ -863,16 +855,27 @@ def folder_hash(path):
         if os.path.isfile(full):
             digest.update(name.encode() + b"\0" + open(full, "rb").read())
     return digest.hexdigest()
-out["files"] = {}
-for name, path in job["paths"].items():
-    path = os.path.expanduser(path)
-    out["files"][name] = (folder_hash(path) if os.path.isdir(path) else sha_file(path) if os.path.exists(path)
-                          else "missing")
+def fingerprint(job, home, commits, gpu):
+    out = {"recordings": {f: recording(os.path.join(home, f, "moment.hrpl")) for f in job["folders"]}}
+    out["code"] = code_hash(os.path.join(home, job["replay"]), commits)
+    out["files"] = {}
+    for name, path in job["paths"].items():
+        path = os.path.expanduser(path)
+        out["files"][name] = (folder_hash(path) if os.path.isdir(path) else sha_file(path) if os.path.exists(path)
+                              else "missing")
+    out["gpu"] = gpu
+    return out
+"""
+FINGERPRINT = FINGERPRINT_LIB + r"""
+job = json.loads(sys.argv[1])
+home = os.path.expanduser("~")
+tree = os.path.join(home, job["replay"]).split("/build/")[0]
+commits = subprocess.run(["git", "-C", tree, "rev-list", "--max-count=2000", "HEAD"], capture_output=True,
+                         text=True).stdout.split()
 gpu = subprocess.run("nvidia-smi --query-gpu=name,driver_version --format=csv,noheader 2>/dev/null || "
                      "(pacman -Q mesa vulkan-radeon 2>/dev/null; grep -h PCI_ID /sys/class/drm/card*/device/uevent "
                      "2>/dev/null | sort -u)", shell=True, capture_output=True, text=True).stdout.strip()
-out["gpu"] = gpu + " / " + os.uname().release
-print(json.dumps(out))
+print(json.dumps(fingerprint(job, home, commits, gpu + " / " + os.uname().release)))
 """
 
 # the settings that point the replay to files: their contents are part of the key
