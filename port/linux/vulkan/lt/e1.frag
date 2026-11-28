@@ -285,7 +285,7 @@ vec3 flashlight(vec3 p, vec3 n, vec3 shaded, ivec2 pixel, int receiver)
 
 // the light table's texel of a row: 0 the emitter's middle and radius, 1 forward and 1 / range (0 none), 2 up and
 // the cone's inner cosine, 3 left and its outer one (-1 none), 4 the linear power and the kind (less than 0: not this
-// pass's), 5 the owner, the gel's slot (-1 none), its half width, a sun's angular diameter, 6 x the row this light
+// pass's), 5 the owner, the gel's slot (-1 none), its half width, a sun's angular diameter (another light's: the instance it leaves unlit, 0 none: its owner where its tag says "don't light own object" or it is a projectile's, xgpu_vulkan_lt.c), 6 x the row this light
 // had the frame before (-1 none) and y the row now of the light that had this row the frame before (-1 none)
 vec4 row_texel(int row, int texel)
 {
@@ -372,6 +372,14 @@ float light_estimate(int row, vec3 p, vec3 shaded)
     return luminance_of(t4.rgb) * profile * facing * window;
 }
 
+// how far about a light's middle its emitter's body reaches (its own glow, a bolt's body, the weapon it is on): the
+// shadow rays end short of it, and a bounce ray that meets a surface within it has met the light itself
+// (lt/indirect.glsl's direct_one)
+float emitter_body(float radius)
+{
+    return max(1.5 * radius, 0.1);
+}
+
 // a row's light at p with one point of its emitter (xi) and, with shadow, one ray to it: point a sphere (its disk
 // facing p), spot a disk facing forward in its cone (its gel the angular profile), panel a one-sided Lambertian disk
 vec3 light_sample(int row, vec3 p, vec3 n, vec3 shaded, vec2 xi, int receiver, bool shadow)
@@ -379,6 +387,9 @@ vec3 light_sample(int row, vec3 p, vec3 n, vec3 shaded, vec2 xi, int receiver, b
     vec4 t0 = row_texel(row, 0), t1 = row_texel(row, 1), t4 = row_texel(row, 4), t5 = row_texel(row, 5);
     int kind = int(t4.w);
     if (t4.w < 0.0 || kind == DIRECTIONAL)
+        return vec3(0.0);
+    // (the instance it leaves unlit: its tag's "don't light own object", a projectile's own body)
+    if (receiver != 0 && int(t5.w) == receiver)
         return vec3(0.0);
     vec3 centre = t0.xyz, f = t1.xyz;
     float radius = t0.w;
@@ -436,8 +447,8 @@ vec3 light_sample(int row, vec3 p, vec3 n, vec3 shaded, vec2 xi, int receiver, b
         vec3 origin = p + n * (0.004 + 0.0005 * length(p - pass.camera[0].xyz));
         vec3 ray = emitter - origin;
         float length_to = length(ray);
-        // (ending short of the emitter: its own glow, a bolt's body, the weapon it is on)
-        float t_max = length_to - max(1.5 * radius, 0.1);
+        // (ending short of the emitter: its own glow, a bolt's body, the weapon it is on: emitter_body's reach)
+        float t_max = length_to - emitter_body(radius);
         if (t_max > 0.0)
             lit *= visible_by(origin, ray / length_to, t_max, receiver, uint(t5.x), MASK_AO);
     }

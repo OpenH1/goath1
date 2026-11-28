@@ -107,7 +107,33 @@ static struct
 	/* this frame's reflections' radiance (their samples, their count); the
 	light the surfaces read (HALO_LT_SPECULAR_DUMP=final's) */
 	struct xgpu_vulkan_image *specular_light, *final;
+	/* (a 1x1 RGBA32Uint of zeros: the uint slots' stand-in, lt/e1.frag's
+	inputs, previous_inputs and guides, where a mode binds none: a float
+	image there is an unsigned sampler's undefined read) */
+	struct xgpu_vulkan_image *uint_stand_in;
 } indirect;
+
+/* the stand-in for an unsigned slot left empty (NULL if it cannot be made) */
+static struct xgpu_vulkan_image *indirect_uint_stand_in(void)
+{
+	static const uint32_t zeros[4] = { 0u, 0u, 0u, 0u };
+	struct xgpu_vulkan_image_description description;
+
+	if (indirect.uint_stand_in)
+		return indirect.uint_stand_in;
+	memset(&description, 0, sizeof(description));
+	description.type = XGPU_VULKAN_IMAGE_2D;
+	description.format = XGPU_VULKAN_FORMAT_RGBA32_UINT;
+	description.usage = XGPU_VULKAN_USAGE_SAMPLED | XGPU_VULKAN_USAGE_COPIED;
+	description.width = 1;
+	description.height = 1;
+	description.depth_or_layers = 1;
+	description.levels = 1;
+	indirect.uint_stand_in = xgpu_vulkan_image_create(&description);
+	if (indirect.uint_stand_in)
+		xgpu_vulkan_image_upload(indirect.uint_stand_in, 0, 0, 0, 0, 0, 1, 1, 1, zeros, 16, 16);
+	return indirect.uint_stand_in;
+}
 
 static void indirect_settings(void)
 {
@@ -228,9 +254,15 @@ static void indirect_pass(struct xgpu_vulkan_image *into, const int32_t rectangl
 		return;
 	for (stage = 0; stage < 6; stage++)
 	{
+		/* (an empty slot: lt/e1.frag's unsigned ones (0 inputs, 2
+		previous_inputs, 3 guides) a zero uint image, the float ones the
+		table) */
+		int unsigned_slot = stage == 0 || stage == 2 || stage == 3;
+
 		draw.textures[stage].kind = XGPU_VULKAN_IMAGE_2D;
 		draw.textures[stage].sampler = indirect.sampler;
-		draw.textures[stage].image = textures[stage] ? textures[stage] : frame->table;
+		draw.textures[stage].image = textures[stage] ? textures[stage] : unsigned_slot && indirect_uint_stand_in() ?
+			indirect_uint_stand_in() : frame->table;
 	}
 	bytes = xgpu_vulkan_upload(192 * 16, 256, &draw.uniforms);
 	if (!bytes)

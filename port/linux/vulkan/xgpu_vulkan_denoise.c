@@ -90,6 +90,10 @@ struct denoise_params
 	/* (the final pass: the suns, each one's forward and power) */
 	int32_t suns[4];
 	float sun[16][4];
+	/* (the gradients' deterministic half: the light table's rows this
+	frame and the frame before, the frame before's first row, the
+	flashlight's cookie's first texel: xgpu_vulkan_lt_table_halves) */
+	int32_t lights[4];
 };
 /* the final pass's control.w (lt/denoise_pair.glsl's RIGHT): the right
 half's draw */
@@ -425,7 +429,10 @@ static struct xgpu_vulkan_image *denoise_channel_draw(struct denoise_channel *ch
 			return NULL;
 	}
 	channel->reshaded = denoise_image(channel->reshaded, XGPU_VULKAN_FORMAT_RGBA32F, gradient_width, gradient_height);
-	channel->gradients = denoise_image(channel->gradients, XGPU_VULKAN_FORMAT_RGBA32_UINT, gradient_width, gradient_height);
+	/* (twice as wide: the right half the deterministic gradients,
+	lt/denoise_gradient.frag) */
+	channel->gradients = denoise_image(channel->gradients, XGPU_VULKAN_FORMAT_RGBA32_UINT, 2 * gradient_width,
+		gradient_height);
 	/* (the specular's: no re-shade, none kept) */
 	channel->previous_guides = denoise_image(channel->previous_guides, XGPU_VULKAN_FORMAT_RGBA32_UINT,
 		specular ? 1 : width, specular ? 1 : height);
@@ -490,14 +497,23 @@ static struct xgpu_vulkan_image *denoise_channel_draw(struct denoise_channel *ch
 	frame's light, against its own samples) */
 	if (history_valid && previous_raw && previous_inputs && !denoise.no_gradients)
 	{
-		struct xgpu_vulkan_image *textures[4] = { guide, previous_guide, channel->reshaded, previous_raw };
+		struct xgpu_vulkan_image *textures[5] = { guide, previous_guide, channel->reshaded, previous_raw, NULL };
 
 		xgpu_vulkan_lt_reshade(channel->reshaded, &channel->previous_pass, previous_inputs, channel->previous_guides);
+		/* (and the light table, both frames', for the deterministic half;
+		none: the half left without, the stochastic alone) */
+		textures[4] = xgpu_vulkan_lt_table_halves(params.lights);
+		if (!textures[4])
+		{
+			/* (a float image in its float slot, never read: lights.z 0) */
+			textures[4] = previous_raw;
+			memset(params.lights, 0, sizeof(params.lights));
+		}
 		gradient_rectangle[0] = 0;
 		gradient_rectangle[1] = 0;
-		gradient_rectangle[2] = (int32_t)gradient_width;
+		gradient_rectangle[2] = 2 * (int32_t)gradient_width;
 		gradient_rectangle[3] = (int32_t)gradient_height;
-		denoise_pass(channel->gradients, gradient_rectangle, &uniforms, &params, &denoise.gradient_pass, textures, 4);
+		denoise_pass(channel->gradients, gradient_rectangle, &uniforms, &params, &denoise.gradient_pass, textures, 5);
 		params.control[1] |= DENOISE_GRADIENTS;
 	}
 	/* 3: the temporal stage */

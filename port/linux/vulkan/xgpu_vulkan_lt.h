@@ -41,6 +41,11 @@ int xgpu_vulkan_lt_mode(void);
 /* the pre-pass's twins' guides (xgpu_spirv.h's C1), which the pass reads
 for the shaded normal */
 void xgpu_vulkan_lt_guides(struct xgpu_vulkan_image *guides);
+/* the light table's image (NULL none): this frame's rows, then from
+lights[2] the frame before's (the denoiser's deterministic gradients,
+lt/denoise_gradient.frag); lights[0] and [1] the block's rows of each,
+lights[3] the flashlight's cookie's first texel in the cells */
+struct xgpu_vulkan_image *xgpu_vulkan_lt_table_halves(int32_t lights[4]);
 /* at the pre-pass's end (xgpu_vulkan_stream.c): the pass drawn from its
 inputs (the window's target's size), its uniforms and the frame's lights
 (the cells as the GPU has them, the block), its light bound where the
