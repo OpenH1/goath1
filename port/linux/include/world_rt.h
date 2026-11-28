@@ -282,6 +282,7 @@ void const *world_rt_source_texture(struct world_rt_source_map const *map);
 /* a map's 2D texture's texels (ARGB words) at its first level no larger
 than largest each way, and that level's size: the caller frees them; NULL
 where it cannot be read (world_rt.c's object lamps) */
+char const *world_rt_source_tag_name(long tag);
 unsigned long *world_rt_source_texels(struct world_rt_source_map const *map, unsigned long largest,
 	unsigned long *width, unsigned long *height);
 /* a definition's nodes (at most WORLD_RT_NODES), its bounding sphere in

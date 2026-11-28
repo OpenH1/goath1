@@ -961,6 +961,8 @@ static unsigned long const *world_rt_lamp_bitmap(struct world_rt_source_map cons
 		&world_rt.lamp_bitmaps[index].width, &world_rt.lamp_bitmaps[index].height);
 	*width = world_rt.lamp_bitmaps[index].width;
 	*height = world_rt.lamp_bitmaps[index].height;
+	platform_log("ray-traced scene: lamp map %s %ld: %lux%lu%s", world_rt_source_tag_name(map->bitmap), (long)map->index,
+		*width, *height, world_rt.lamp_bitmaps[index].texels ? "" : " (unread)");
 	return world_rt.lamp_bitmaps[index].texels;
 }
 

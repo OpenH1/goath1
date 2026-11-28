@@ -994,6 +994,11 @@ void const *world_rt_source_texture(struct world_rt_source_map const *map)
 	return _texture_cache_bitmap_get_hardware_format(bitmap, FALSE, TRUE);
 }
 
+char const *world_rt_source_tag_name(long tag)
+{
+	return tag == NONE ? "none" : tag_get_name(tag);
+}
+
 unsigned long *world_rt_source_texels(struct world_rt_source_map const *map, unsigned long largest,
 	unsigned long *width, unsigned long *height)
 {
