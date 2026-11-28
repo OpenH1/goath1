@@ -1130,7 +1130,7 @@ static void lt_lamp_rows(const float eye[3])
 
 /* the frame's object lamps into the table's last rows (LT_OBJECT_LAMP_ROW):
 their count (0 none) */
-static int lt_object_lamp_rows(void)
+static int lt_object_lamp_rows(const float eye[3])
 {
 	static float texels[LT_OBJECT_LAMPS * 4][4];
 	const struct xgpu_vulkan_lt_object_lamp *lamps;
@@ -1154,8 +1154,18 @@ static int lt_object_lamp_rows(void)
 		}
 		lt_emitter_cross(e1, e2, normal);
 		area[index] = 0.5f * sqrtf(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
-		power[index] = (0.2126f * lamp->radiance[0] + 0.7152f * lamp->radiance[1] + 0.0722f * lamp->radiance[2]) *
-			area[index];
+		/* (drawn by its power over its distance squared from the eye, no
+		nearer than its size: a far Pelican's bright strips do not take the
+		candidates from a near shield; the pass divides by the chance) */
+		{
+			float to[3], d2;
+
+			for (axis = 0; axis < 3; axis++)
+				to[axis] = (lamp->corners[axis] + lamp->corners[3 + axis] + lamp->corners[6 + axis]) / 3.0f - eye[axis];
+			d2 = to[0] * to[0] + to[1] * to[1] + to[2] * to[2];
+			power[index] = (0.2126f * lamp->radiance[0] + 0.7152f * lamp->radiance[1] + 0.0722f * lamp->radiance[2]) *
+				area[index] / (d2 > area[index] ? d2 : area[index]);
+		}
 		if (!(power[index] > 0.0f) || !isfinite(power[index]))
 			power[index] = 0.0f;
 		total += power[index];
@@ -1496,7 +1506,7 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 	}
 	/* (the objects' own lamps, in a level lit live: emitter_bases' w their
 count, lt/e1.frag's object_lamp_sample) */
-	params->emitter_bases[3] = (params->lights[2] & LT_LIGHTS_REAL) && !lt.only ? lt_object_lamp_rows() : 0;
+	params->emitter_bases[3] = (params->lights[2] & LT_LIGHTS_REAL) && !lt.only ? lt_object_lamp_rows(block->grid[0]) : 0;
 	lt.live = real && params->lights[1] > 0;
 }
 

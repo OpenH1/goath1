@@ -72,10 +72,11 @@ enum
 	/* the BSPs whose meshes are kept by index (a scenario's most:
 	scenario_definitions.h's MAXIMUM_STRUCTURE_BSPS_PER_SCENARIO) */
 	WORLD_RT_BSPS = 32,
-	/* the object lamps' triangles a frame holds (the backend's room:
-	xgpu_vulkan_lt.c's LT_OBJECT_LAMPS), and the bitmaps decoded to find
-	them kept */
-	WORLD_RT_LAMPS = 512,
+	/* the object lamps' triangles a frame holds (every object's: the ones
+	that matter most to a view go to its pass, lt_lights.c's
+	lt_object_lamps_append, at most the backend's room), and the bitmaps
+	decoded to find them kept */
+	WORLD_RT_LAMPS = 4096,
 	WORLD_RT_LAMP_BITMAPS = 64,
 };
 
@@ -1212,6 +1213,16 @@ static void world_rt_lamps_placed(struct world_rt_definition const *definition, 
 				continue;
 			}
 			world_rt_staged_counts[0]++;
+			/* (measuring: a generic shader's first lamp of each frame-600th, its object's shading) */
+			if (world_rt.counts_wanted > 0 && shading && world_rt.count_frames == 1 &&
+				(index == 0 || !definition->lamps[index - 1].samples))
+				printf("world ao: %s's lamp: functions %.2f %.2f %.2f %.2f, change colours %.2f %.2f %.2f | %.2f %.2f %.2f | "
+					"%.2f %.2f %.2f | %.2f %.2f %.2f, radiance %.4f %.4f %.4f\n", world_rt_source_name(definition->definition),
+					shading->values[0], shading->values[1], shading->values[2], shading->values[3], shading->colours[0][0],
+					shading->colours[0][1], shading->colours[0][2], shading->colours[1][0], shading->colours[1][1],
+					shading->colours[1][2], shading->colours[2][0], shading->colours[2][1], shading->colours[2][2],
+					shading->colours[3][0], shading->colours[3][1], shading->colours[3][2], radiance[0], radiance[1],
+					radiance[2]);
 			for (channel = 0; channel < 3; channel++)
 				world_rt_staged_radiance[channel] += radiance[channel];
 		}
