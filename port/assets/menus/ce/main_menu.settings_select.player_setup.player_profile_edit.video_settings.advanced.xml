@@ -307,7 +307,7 @@
 		<string text="Adds fine shadows where characters and vehicles touch the ground and walls. Does nothing where Ray Traced Shadows are on, which already trace them."/>
 		<string text="Lights characters and weapons smoothly, without the flat facets of the Xbox's lighting, at a small cost."/>
 		<string text="Enhanced: plasma bolts, muzzle flashes and blasts light their surroundings smoothly, with a glow. Classic lights them as the Xbox did.|Classic for everyone in a Pro 2v2 game; yours again after it."/>
-		<string text="World: soft shade where characters, vehicles and scenery meet the level and each other, from the level's shape; the levels keep their own lighting. Ray Traced: the shade of characters and vehicles traced by the graphics card, where it can (else World)."/>
+		<string text="World: soft shade where characters, vehicles and scenery meet the level and each other, from the level's shape; the levels keep their own lighting. Ray Traced: the shade of characters and vehicles traced by the graphics card, where it can (else World).|Off while Ray-Traced Lighting is on: it traces its own shadows and occlusion."/>
 		<string text="Shields light their surroundings as they flare, in the shield's own color. Online: the host's choice.|Off in Pro 2v2 games, for everyone."/>
 		<string text="Light Show: the shields' glow reaches three times as far, and is brighter. Online: the host's choice.|Default in Pro 2v2 games, for everyone."/>
 	</strings>

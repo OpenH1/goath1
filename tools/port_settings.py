@@ -917,6 +917,9 @@ SETTINGS_NAMED_VALUE_WIDTH = 110
 # profile made and edited, menu_functions.c's settings_profile_new)
 # display.movies's help: where the movies come from (xiso.c's
 # xiso_extract_bink, with the maps; bink_import.c's, for a data root without)
+# (the note of the older ray-traced rows the ray-traced lighting supersedes,
+# dimmed while it is on: SETTINGS_ROW_ENABLED's rt_lighting_on)
+RT_LIGHTING_SUPERSEDES = "Off while Ray-Traced Lighting is on: it traces its own shadows and occlusion."
 MOVIES_HELP = ("Plays the Xbox's intro movie as the game starts, and its attract movies on an idle main menu. Any "
                "button skips the intro.|They are the bink folder of your Xbox disc image, copied with the maps. "
                "Without them, put the disc's bink folder beside your maps folder.")
@@ -1418,7 +1421,7 @@ PAGES = {
              [("OFF", "off"), ("WORLD", "world"), ("RAY TRACED", "ray_traced")],
              "World: soft shade where characters, vehicles and scenery meet the level and each other, from the "
              "level's shape; the levels keep their own lighting. Ray Traced: the shade of characters and vehicles "
-             "traced by the graphics card, where it can (else World).", "desktop android"),
+             "traced by the graphics card, where it can (else World).|" + RT_LIGHTING_SUPERSEDES, "desktop android"),
             ("SHIELD GLOW", "display.shield_glow", ON_OFF,
              "Shields light their surroundings as they flare, in the shield's own color. Online: the host's "
              "choice.|Off in Pro 2v2 games, for everyone.", None),
@@ -1575,7 +1578,7 @@ PAGES = {
             ("RAY TRACED SHADOWS", "display.shadows", [("OFF", "classic"), ("ON", "ray_traced")],
              "The shadows of characters and vehicles traced by the graphics card from their own shapes, soft at "
              "the edges, in the same place and darkness as the game's, which frees the processor's shadow work. Off "
-             "draws them as the Xbox did.",
+             "draws them as the Xbox did.|" + RT_LIGHTING_SUPERSEDES,
              "desktop android"),
             # (port/linux/src/bink_movie.c; the help says where the movies go:
             # MOVIES_HELP. Here, not on Video's list, which EXPERIMENTAL took
@@ -2964,6 +2967,12 @@ SETTINGS_ROW_WHEN = {
     "layout_bindings": "layout_bindings",
 }
 SETTINGS_ROW_ENABLED = {
+    # (display.shadows "ray_traced" and display.ambient_occlusion's: dimmed
+    # while the ray-traced lighting is on, which traces its own shadows and
+    # occlusion and draws them as "classic" and "off", their values kept:
+    # settings_condition_term's rt_lighting_on, lt_lights.c's
+    # lt_lights_pass_chosen)
+    "shadows": "!rt_lighting_on", "ambient_occlusion": "!rt_lighting_on",
     # (the flick's time while the flick stick is on)
     "flick_stick_time": "flick_stick=true",
     # (macOS's Metal and ProMotion set it: SET BY MACOS; its frame cap only

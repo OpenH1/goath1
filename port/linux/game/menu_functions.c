@@ -3278,6 +3278,18 @@ static boolean settings_condition_term(struct widget_instance *list, char const 
 	/* (the renderer has ray queries: display.shadows "ray_traced") */
 	if (!strcmp(name, "ray_queries"))
 		return halo_world_ao_ray_queries() != 0;
+	/* (the ray-traced lighting on with the choices shown, its row on another
+	page: lt_lights.c's decision, display.dynamic_lights's choice too. It
+	traces its own shadows and occlusion, so display.shadows' and
+	display.ambient_occlusion's rows are dimmed, their values kept) */
+	if (!strcmp(name, "rt_lighting_on"))
+	{
+		char lighting[8], lights[16];
+
+		return lt_lights_pass_chosen(settings_value("display.ray_traced_lighting", lighting, sizeof(lighting)) &&
+			!strcmp(lighting, "true"), settings_value("display.dynamic_lights", lights, sizeof(lights)) ?
+			!strcmp(lights, "enhanced") : -1) != 0;
+	}
 	/* (the renderer draws display.contact_shadows: Vulkan's) */
 	if (!strcmp(name, "contact_drawn"))
 		return halo_contact_shadows_drawn() != 0;

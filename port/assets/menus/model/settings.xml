@@ -613,8 +613,9 @@
 			<choice shown="CLASSIC" value="classic"/>
 			<choice shown="ENHANCED" value="enhanced"/>
 		</row>
-		<row key="ambient_occlusion" kind="choice" setting="display.ambient_occlusion" label="AMBIENT OCCLUSION" crumb="VIDEO › ADVANCED GRAPHICS" search="ao ssao" search_choices="world ray traced" when="desktop android">
+		<row key="ambient_occlusion" kind="choice" setting="display.ambient_occlusion" label="AMBIENT OCCLUSION" crumb="VIDEO › ADVANCED GRAPHICS" search="ao ssao" search_choices="world ray traced" when="desktop android" enabled="!rt_lighting_on">
 			<help>World: soft shade where characters, vehicles and scenery meet the level and each other, from the level's shape; the levels keep their own lighting. Ray Traced: the shade of characters and vehicles traced by the graphics card, where it can (else World).</help>
+			<note>Off while Ray-Traced Lighting is on: it traces its own shadows and occlusion.</note>
 			<choice shown="OFF" value="off"/>
 			<choice shown="WORLD" value="world"/>
 			<choice shown="RAY TRACED" value="ray_traced"/>
@@ -873,8 +874,9 @@
 			<choice shown="OFF" value="false"/>
 		</row>
 		<section key="section_14" title="RAY TRACING"/>
-		<row key="shadows" kind="choice" setting="display.shadows" label="RAY TRACED SHADOWS" crumb="VIDEO › FRAME RATE &amp; SYNC" search="shadows" when="desktop+ray_queries android+ray_queries">
+		<row key="shadows" kind="choice" setting="display.shadows" label="RAY TRACED SHADOWS" crumb="VIDEO › FRAME RATE &amp; SYNC" search="shadows" when="desktop+ray_queries android+ray_queries" enabled="!rt_lighting_on">
 			<help>The shadows of characters and vehicles traced by the graphics card from their own shapes, soft at the edges, in the same place and darkness as the game's, which frees the processor's shadow work. Off draws them as the Xbox did.</help>
+			<note>Off while Ray-Traced Lighting is on: it traces its own shadows and occlusion.</note>
 			<choice shown="OFF" value="classic"/>
 			<choice shown="ON" value="ray_traced"/>
 		</row>

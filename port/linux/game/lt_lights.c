@@ -201,7 +201,7 @@ static int lt_switch(char const *name)
 	return strcmp(given, "off") && strcmp(given, "0") && strcmp(given, "false");
 }
 
-int lt_lights_pass_on(void)
+int lt_lights_pass_chosen(int lighting, int enhanced)
 {
 	static int pass = -2;
 
@@ -209,8 +209,12 @@ int lt_lights_pass_on(void)
 		pass = lt_switch("HALO_LT_E1");
 	if (pass >= 0)
 		return pass;
-	return config_boolean("display.ray_traced_lighting") && halo_world_ao_ray_queries() &&
-		halo_dynamic_lights_enhanced();
+	return lighting && halo_world_ao_ray_queries() && halo_dynamic_lights_enhanced_chosen(enhanced);
+}
+
+int lt_lights_pass_on(void)
+{
+	return lt_lights_pass_chosen(config_boolean("display.ray_traced_lighting"), -1);
 }
 
 /* whether the list is built and sent: HALO_LT_LIGHTS (or HALO_LT_LIGHTS_DUMP)

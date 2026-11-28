@@ -456,6 +456,9 @@ int halo_dlss_gpu(void);
 int halo_temporal_metalfx_drawn(void);
 /* port: the renderer has ray queries (port/linux/src/d3d8_device.c; world_ao.h) */
 int halo_world_ao_ray_queries(void);
+/* port: whether the ray-traced lighting would be on with these choices
+(port/linux/game/lt_lights.h) */
+int lt_lights_pass_chosen(int lighting, int enhanced);
 #ifndef HALO_HDR_KIND_NONE
 #define HALO_HDR_KIND_NONE 0
 #define HALO_HDR_KIND_FIRST_PERSON 1
