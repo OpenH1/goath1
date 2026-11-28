@@ -195,6 +195,24 @@ long world_rt_source_model_mesh(long definition, struct world_rt_source_mesh *me
 	return 3;
 }
 
+/* (no model has additive parts: no object lamps here) */
+long world_rt_source_model_lamps(long definition, struct world_rt_source_mesh *mesh)
+{
+	(void)definition;
+	mesh->vertex_count = mesh->triangle_count = mesh->opaque_count = mesh->material_count = mesh->left_out = 0;
+	return 0;
+}
+
+/* (no texture's texels are read here) */
+unsigned long *world_rt_source_texels(struct world_rt_source_map const *map, unsigned long largest,
+	unsigned long *width, unsigned long *height)
+{
+	(void)map;
+	(void)largest;
+	*width = *height = 0;
+	return NULL;
+}
+
 /* (bitmap 200 loaded, 201 once bump_loaded) */
 static int bump_loaded;
 static const unsigned long base_header[5], bump_header[5];

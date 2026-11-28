@@ -24,5 +24,12 @@ larger than largest each way (port/linux/game/dynamic_lights_bounce.c: a
 shader's base map); 0 for one that cannot be read */
 int xgpu_texture_average_color(unsigned int format_word, unsigned int size_word, const unsigned char *texels,
 	unsigned long largest, float linear[3]);
+/* a 2D swizzled or compressed texture's texels (ARGB, blue the lowest
+byte) at its first level no larger than largest each way, and that level's
+size: the caller frees them; NULL for one that cannot be read
+(port/linux/game/world_rt.c's object lamps: a model's base and
+multipurpose maps) */
+unsigned long *xgpu_texture_texels(unsigned int format_word, unsigned int size_word, const unsigned char *texels,
+	unsigned long largest, unsigned long *width, unsigned long *height);
 
 #endif

@@ -385,6 +385,13 @@ vec3 cache_lookup(vec3 p, vec3 n)
     return cache_find(p, n, found);
 }
 
+// the cache's light at a hit: none on a dynamic object (owner > 0), whose cells the cache does not keep (its
+// resolve leaves an object's samples out: a moving object's light is not where it was)
+vec3 cache_at(Hit hit)
+{
+    return hit.owner > 0 ? vec3(0.0) : cache_lookup(hit.p, hit.n);
+}
+
 // ---------- a level lit live (lt/e1.frag's LIGHTS_REAL; ~/dev/rt2-realtime-design.md section 9)
 
 bool real_sky()
@@ -515,9 +522,10 @@ vec4 bounce_main(ivec2 block, out vec3 p, out vec3 n, out uint owner, out bool f
         // (the hit lit by the level's light sources too, one point and ray: their light bounces, and the cache, which
         // gathers these samples, carries it on to the next bounce: a room lit only through its doors by the next
         // rooms' lamps, a10's cryo deck)
+        // (an object's lamp the ray meets is not added: its light is the hit's direct light, object_lamp_sample's)
         if (hit.attributes)
-            e += hit.glow + hit.albedo * (direct_one(hit.p, hit.n, hit.owner, pixel, 6.0 + 17.0 * float(k), h) +
-                cache_lookup(hit.p, hit.n) + (real ? sky_at(hit, pixel, 7.0 + 17.0 * float(k), true) : vec3(0.0)) +
+            e += hit.albedo * (object_lamp_sample(hit.p, hit.n, hit.n, 1, h, true) + direct_one(hit.p, hit.n, hit.owner, pixel, 6.0 + 17.0 * float(k), h) +
+                cache_at(hit) + (real ? sky_at(hit, pixel, 7.0 + 17.0 * float(k), true) : vec3(0.0)) +
                 emitter_sample(hit.p, hit.n, hit.n, EMITTER_BOUNCE_CANDIDATES, h, hit.owner, true));
         else if (real && !hit.hit)
             e += dome_radiance();
@@ -737,7 +745,7 @@ vec4 specular_main(ivec2 pixel)
         vec3 radiance = hit.glow + (real_sky() ? hit.albedo * sky_at(hit, pixel, 11.0 + 17.0 * float(k), false) :
             (pass.lights.z & LIGHTS_REAL) != 0 ? vec3(0.0) : pow(hit.surface, vec3(2.2))) +
             hit.albedo * (direct_one(hit.p, hit.n, hit.owner, pixel, 10.0 + 17.0 * float(k), h) +
-            cache_lookup(hit.p, hit.n) + emitter_sample(hit.p, hit.n, hit.n, EMITTER_BOUNCE_CANDIDATES, h, hit.owner,
+            cache_at(hit) + emitter_sample(hit.p, hit.n, hit.n, EMITTER_BOUNCE_CANDIDATES, h, hit.owner,
             true));
         if (any(isnan(radiance)) || any(isinf(radiance)))
             radiance = vec3(0.0);
@@ -893,6 +901,10 @@ void main()
             int which = int(floor((s.a - 1.0) / 1024.0));
             if (!known && (!point_at(block * 2 + block_pixel(phase + which), sp, sn) || cascade_of(sp) != k ||
                 octant_of(sn) != octant || ivec3(floor(sp / size)) != c))
+                continue;
+            // (a dynamic object's surface, its owner's instance, is no cell's: the cache is the world's, still, and an
+            // object moves through its cells (a Pelican in flight); its light is the object's own, cache_at's)
+            if (texelFetch(inputs, block * 2 + block_pixel(phase + which), 0).w != 0u)
                 continue;
             sum += s.rgb;
             samples += 1.0;

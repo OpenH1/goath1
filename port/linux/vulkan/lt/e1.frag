@@ -88,6 +88,9 @@
 // the level's light sources' texels in the table, from its row EMITTER_ROW (xgpu_vulkan_lt.c's LT_EMITTER_ROW, past
 // the suns' rows); a cell's groups; the share of the samples drawn by the level's power (the rest by the cell's)
 #define EMITTER_ROW 136
+// the objects' own lamps this frame (xgpu_vulkan_lt.c's LT_OBJECT_LAMP_ROW, 4 texels each), pass.emitter_bases.w of them
+#define OBJECT_LAMP_ROW 16128
+#define OBJECT_LAMP_CANDIDATES 4
 #define EMITTER_CELL_GROUPS 32
 #define EMITTER_LEVEL_SHARE 0.1
 // RIS's candidates: the direct light's, a bounce hit's
@@ -594,6 +597,74 @@ float emitter_visible(vec3 p, vec3 n, vec3 q, int receiver)
     // (ending short of the lamp's own surface, 0.01 under the light)
     float t_max = length_to - 0.02;
     return t_max > 0.0 ? visible_by(origin, ray / length_to, t_max, receiver, 0xffffffffu, MASK_AO) : 0.0;
+}
+
+// ---------- the objects' own lamps (xgpu_vulkan_lt.c's lt_object_lamp_rows): a model's self-illuminated triangles where
+// they glow, placed with the object this frame (a Pelican's bay strips), Lambertian and one-sided toward the winding:
+// RIS over candidates drawn by power and area, one shadow ray, every instance counted (its own object's other surfaces
+// shadow a lamp too). The pass's units, as emitter_light's
+
+vec4 lamp_texel(int k)
+{
+    return texelFetch(light_table, ivec2(k & 7, OBJECT_LAMP_ROW + (k >> 3)), 0);
+}
+
+int lamp_pick(float u)
+{
+    int low = 0, high = pass.emitter_bases.w - 1;
+    while (low < high)
+    {
+        int middle = (low + high) >> 1;
+        if (lamp_texel(4 * middle).w > u)
+            high = middle;
+        else
+            low = middle + 1;
+    }
+    return low;
+}
+
+vec3 lamp_light(vec3 p, vec3 n, vec3 shaded, int lamp, vec2 ab, out vec3 q)
+{
+    vec4 t0 = lamp_texel(4 * lamp), t1 = lamp_texel(4 * lamp + 1), t2 = lamp_texel(4 * lamp + 2);
+    q = t0.xyz + t1.xyz * ab.x + t2.xyz * ab.y;
+    vec3 to = q - p;
+    float d2 = max(dot(to, to), 1.0e-6);
+    vec3 l = to * inversesqrt(d2);
+    float emitting = dot(normalize(cross(t1.xyz, t2.xyz)), -l), lit = max(dot(shaded, l), 0.0);
+    if (emitting <= 0.0 || dot(n, l) <= 0.0 || lit <= 0.0)
+        return vec3(0.0);
+    return lamp_texel(4 * lamp + 3).rgb * (lit * emitting / (max(d2, 0.01) * 3.14159265));
+}
+
+vec3 object_lamp_sample(vec3 p, vec3 n, vec3 shaded, int candidates, inout uint h, bool shadow)
+{
+    if (pass.emitter_bases.w <= 0)
+        return vec3(0.0);
+    float w_sum = 0.0, chosen_target = 0.0;
+    vec3 chosen_f = vec3(0.0), chosen_q = vec3(0.0);
+    for (int k = 0; k < candidates; k++)
+    {
+        int lamp = lamp_pick(random(h));
+        float x = random(h), y = random(h), s = sqrt(x);
+        vec3 q;
+        vec3 f = lamp_light(p, n, shaded, lamp, vec2(s * (1.0 - y), s * y), q);
+        float density = lamp_texel(4 * lamp + 3).w / max(lamp_texel(4 * lamp + 1).w, 1.0e-8);
+        float target = luminance_of(f);
+        if (target <= 0.0 || density <= 0.0)
+            continue;
+        float w = target / density;
+        w_sum += w;
+        if (random(h) * w_sum < w)
+        {
+            chosen_f = f;
+            chosen_q = q;
+            chosen_target = target;
+        }
+    }
+    if (chosen_target <= 0.0)
+        return vec3(0.0);
+    vec3 e = chosen_f * (w_sum / (float(candidates) * chosen_target));
+    return shadow ? e * emitter_visible(p, n, chosen_q, -1) : e;
 }
 
 // one candidate point of the level's light sources for p: u the group's choice, xi the point's. Out: its triangle
@@ -1254,6 +1325,12 @@ void main()
         // (lit live: every receiver, the suns' whole light)
         bool fresh = (pass.control.w & (RESET | GRADIENT)) == RESET || !reproject(p, n, words.w, q);
         lit += sun_real(p, n, shaded, pixel, fresh ? SUN_FIRST : 1);
+    }
+    // (lit live: the objects' own lamps, a Pelican's bay lit by its strips)
+    if ((pass.lights.z & LIGHTS_REAL) != 0 && pass.emitter_bases.w > 0)
+    {
+        uint h = seed(pixel, 9u);
+        lit += object_lamp_sample(p, n, shaded, OBJECT_LAMP_CANDIDATES, h, (pass.control.w & VISIBILITY) != 0);
     }
     else if (receiver == 0 && pass.lights.y > 0)
     {

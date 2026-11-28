@@ -38,10 +38,14 @@ nodes. Read only; render-only.
 #include "world_proxies_source.h"
 #include "world_rt.h"
 #include "world_scene.h"
+#include "../src/xgpu_coverage.h"
 
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 #include <xtl.h>
+
+void platform_log(const char *format, ...);
 
 /* (cache_files.c) */
 boolean tag_index_is_group(long tag_index, long group_tag);
@@ -288,6 +292,54 @@ static boolean shader_cutout(struct shader const *shader, struct world_rt_source
 		material->alpha_map = WORLD_RT_MAP_BASE;
 		material->alpha_scale[0] = u_scale != 0.0f ? u_scale : 1.0f;
 		material->alpha_scale[1] = v_scale != 0.0f ? v_scale : 1.0f;
+	}
+	return TRUE;
+}
+
+/* whether a transparent shader is drawn adding to the frame (blend 3,
+rasterizer_xbox_transparent_geometry.c's add) with a first map; with
+material, that map as its base, at its scale, white self-illumination,
+transparent: an object lamp (world_rt.c's world_rt_lamps_made reads it so) */
+#define WORLD_RT_FRAMEBUFFER_BLEND_ADD 3
+
+static boolean additive_map(struct shader const *shader, struct world_rt_source_material *material)
+{
+	struct world_rt_shader_transparent const *transparent = (void const *)shader;
+	struct tag_reference const *map;
+	real u_scale, v_scale;
+
+	if (!shader || (shader->base.type != _world_rt_shader_type_transparent_generic &&
+		shader->base.type != _world_rt_shader_type_transparent_chicago) ||
+		transparent->framebuffer_blend_function != WORLD_RT_FRAMEBUFFER_BLEND_ADD ||
+		transparent->maps.count <= 0 || !transparent->maps.address)
+	{
+		return FALSE;
+	}
+	if (shader->base.type == _world_rt_shader_type_transparent_generic)
+	{
+		struct world_rt_transparent_generic_map const *first = transparent->maps.address;
+
+		map = &first->map;
+		u_scale = first->map_u_scale;
+		v_scale = first->map_v_scale;
+	}
+	else
+	{
+		struct world_rt_transparent_chicago_map const *first = transparent->maps.address;
+
+		map = &first->map;
+		u_scale = first->map_u_scale;
+		v_scale = first->map_v_scale;
+	}
+	if (map->index == NONE)
+		return FALSE;
+	if (material)
+	{
+		map_of(map, &material->maps[WORLD_RT_MAP_BASE]);
+		material->flags |= WORLD_RT_MATERIAL_TRANSPARENT;
+		material->alpha_scale[0] = u_scale != 0.0f ? u_scale : 1.0f;
+		material->alpha_scale[1] = v_scale != 0.0f ? v_scale : 1.0f;
+		material->self_illumination = 0xFFFFFFFFu;
 	}
 	return TRUE;
 }
@@ -734,11 +786,20 @@ static int model_part_add(struct world_rt_source_mesh *mesh, struct model const 
 	one left out) */
 	if (shader_cutout(shader, NULL))
 		kind = WORLD_RT_SURFACES_ALPHA_TESTED;
+	/* (an environment shader on a model, a b30 device's metal strips and
+	panels: opaque, or alpha-tested as its flag says, as on the structure) */
+	else if (shader->base.type == _world_rt_shader_type_environment)
+		kind = TEST_FLAG(((struct world_rt_shader_environment const *)shader)->flags,
+			_world_rt_shader_environment_alpha_tested_bit) ? WORLD_RT_SURFACES_ALPHA_TESTED : WORLD_RT_SURFACES_OPAQUE;
 	else if (shader_type_is_transparent(shader->base.type) || shader->base.type != _world_rt_shader_type_model)
 		kind = WORLD_RT_SURFACES_TRANSPARENT;
 	else
 		kind = TEST_FLAG(((struct world_rt_shader_model const *)shader)->flags, _world_rt_shader_model_not_alpha_tested_bit) ?
 			WORLD_RT_SURFACES_OPAQUE : WORLD_RT_SURFACES_ALPHA_TESTED;
+	/* (an object's lamps: a transparent shader drawn adding, its first map
+what it adds) */
+	if (surfaces == WORLD_RT_SURFACES_ADDITIVE)
+		kind = kind == WORLD_RT_SURFACES_TRANSPARENT && additive_map(shader, NULL) ? WORLD_RT_SURFACES_ADDITIVE : -1;
 	if (kind != surfaces)
 		return TRUE;
 	if (!vertex_buffer->hardware_format || vertex_buffer->count <= 0 || !triangle_buffer->hardware_format ||
@@ -777,6 +838,8 @@ static int model_part_add(struct world_rt_source_mesh *mesh, struct model const 
 	if (filled)
 	{
 		material_describe(reference->shader.index, &mesh->materials[mesh->material_count]);
+		if (surfaces == WORLD_RT_SURFACES_ADDITIVE)
+			additive_map(shader, &mesh->materials[mesh->material_count]);
 		for (index = 0; index < vertex_buffer->count; index++)
 		{
 			struct world_rt_source_vertex *out = &mesh->vertices[first_vertex + index];
@@ -876,7 +939,7 @@ static int model_part_add(struct world_rt_source_mesh *mesh, struct model const 
 	return TRUE;
 }
 
-long world_rt_source_model_mesh(long definition, struct world_rt_source_mesh *mesh, float (*inverses)[3][4])
+static long model_mesh(long definition, struct world_rt_source_mesh *mesh, float (*inverses)[3][4], int lamps)
 {
 	struct object_definition const *object_definition;
 	struct model const *model;
@@ -921,7 +984,8 @@ long world_rt_source_model_mesh(long definition, struct world_rt_source_mesh *me
 			}
 		}
 	}
-	for (surfaces = WORLD_RT_SURFACES_OPAQUE; surfaces <= WORLD_RT_SURFACES_TRANSPARENT; surfaces++)
+	for (surfaces = lamps ? WORLD_RT_SURFACES_ADDITIVE : WORLD_RT_SURFACES_OPAQUE;
+		surfaces <= (lamps ? WORLD_RT_SURFACES_ADDITIVE : WORLD_RT_SURFACES_TRANSPARENT); surfaces++)
 	{
 		long before = mesh->triangle_count;
 
@@ -973,11 +1037,21 @@ long world_rt_source_model_mesh(long definition, struct world_rt_source_mesh *me
 				}
 			}
 		}
-		if (surfaces == WORLD_RT_SURFACES_OPAQUE)
+		if (surfaces == WORLD_RT_SURFACES_OPAQUE || surfaces == WORLD_RT_SURFACES_ADDITIVE)
 			mesh->opaque_count = mesh->triangle_count;
 		(void)before;
 	}
 	return mesh->triangle_count;
+}
+
+long world_rt_source_model_mesh(long definition, struct world_rt_source_mesh *mesh, float (*inverses)[3][4])
+{
+	return model_mesh(definition, mesh, inverses, FALSE);
+}
+
+long world_rt_source_model_lamps(long definition, struct world_rt_source_mesh *mesh)
+{
+	return model_mesh(definition, mesh, NULL, TRUE);
 }
 
 void const *world_rt_source_texture(struct world_rt_source_map const *map)
@@ -991,6 +1065,27 @@ void const *world_rt_source_texture(struct world_rt_source_map const *map)
 	if (!bitmap || bitmap->type != _world_rt_bitmap_type_2d)
 		return NULL;
 	return _texture_cache_bitmap_get_hardware_format(bitmap, FALSE, TRUE);
+}
+
+unsigned long *world_rt_source_texels(struct world_rt_source_map const *map, unsigned long largest,
+	unsigned long *width, unsigned long *height)
+{
+	struct bitmap_group *group;
+	struct bitmap_data const *bitmap;
+	DWORD const *header;
+
+	*width = *height = 0;
+	if (map->bitmap == NONE || map->index < 0 || !tag_index_is_group(map->bitmap, BITMAP_GROUP_TAG) ||
+		!(group = bitmap_group_get(map->bitmap)) || !group->bitmaps.address || map->index >= group->bitmaps.count)
+		return NULL;
+	/* (loaded as a draw loads it, and waited for: dynamic_lights_bounce.c's
+	read of a base map) */
+	header = texture_cache_port_load((unsigned long)map->bitmap, (unsigned long)map->index);
+	bitmap = TAG_BLOCK_GET_ELEMENT(&group->bitmaps, map->index, struct bitmap_data);
+	if (!header || !bitmap || !bitmap->base_address || bitmap->type != _world_rt_bitmap_type_2d)
+		return NULL;
+	return xgpu_texture_texels((unsigned int)header[3], (unsigned int)header[4],
+		(unsigned char const *)bitmap->base_address, largest, width, height);
 }
 
 short world_rt_source_definition(long definition, float sphere[4], int *item)

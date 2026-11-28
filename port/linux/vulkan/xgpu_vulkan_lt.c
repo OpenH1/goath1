@@ -172,12 +172,21 @@ LT_EMITTER_ROW to LT_TABLE_HEIGHT, its texels in order (a row's 8 in turn):
   squared (lt/e1.frag's emitter_sample mixes in the level's power too) */
 #define LT_EMITTER_ROW LT_PASS_ROWS
 #define LT_TABLE_HEIGHT 16384
-#define LT_EMITTER_TEXELS ((LT_TABLE_HEIGHT - LT_EMITTER_ROW) * LT_TABLE_TEXELS)
+/* the objects' own lamps this frame (xgpu_vulkan_lt_object_lamps) in the
+table's last rows, from LT_OBJECT_LAMP_ROW (lt/e1.frag's OBJECT_LAMP_ROW),
+4 texels a triangle: its first corner and the lamps' power share up to and
+with it; its first edge and its area; its second edge and its object's
+owner; its radiance and its power's share */
+#define LT_OBJECT_LAMPS XGPU_VULKAN_LT_OBJECT_LAMPS_MAXIMUM
+#define LT_OBJECT_LAMP_ROWS (LT_OBJECT_LAMPS * 4 / LT_TABLE_TEXELS)
+#define LT_OBJECT_LAMP_ROW (LT_TABLE_HEIGHT - LT_OBJECT_LAMP_ROWS)
+#define LT_EMITTER_TEXELS ((LT_OBJECT_LAMP_ROW - LT_EMITTER_ROW) * LT_TABLE_TEXELS)
 #define LT_EMITTER_CELL_GROUPS 32
 #define LT_EMITTER_CELL_TEXELS (LT_EMITTER_CELL_GROUPS / 2)
 /* the grid's reach past the light sources (world units), and its least cell */
 #define LT_EMITTER_MARGIN 24.0f
 #define LT_EMITTER_CELL_LEAST 3.0f
+_Static_assert(LT_OBJECT_LAMP_ROW == 16128, "lt/e1.frag's OBJECT_LAMP_ROW");
 _Static_assert(LT_EMITTER_CELL_GROUPS == 32 && LT_EMITTER_CELL_TEXELS % LT_TABLE_TEXELS == 0 && LT_EMITTER_ROW == 136,
 	"the light sources' rows as lt/e1.frag reads them (EMITTER_ROW, EMITTER_CELL_GROUPS)");
 _Static_assert(LT_TABLE_TEXELS == XGPU_SPIRV_LT_TABLE_TEXELS && LT_SUN_ROW == XGPU_SPIRV_LT_SUN_ROW &&
@@ -1116,6 +1125,59 @@ static void lt_lamp_rows(const float eye[3])
 	}
 }
 
+/* the frame's object lamps into the table's last rows (LT_OBJECT_LAMP_ROW):
+their count (0 none) */
+static int lt_object_lamp_rows(void)
+{
+	static float texels[LT_OBJECT_LAMPS * 4][4];
+	const struct xgpu_vulkan_lt_object_lamp *lamps;
+	float total = 0.0f, running = 0.0f, power[LT_OBJECT_LAMPS], area[LT_OBJECT_LAMPS];
+	int count, index, axis, used = 0;
+
+	lamps = xgpu_vulkan_lt_object_lamps(xgpu_vulkan_lt_lights_window(), &count);
+	if (!lamps || count <= 0 || !lt.table)
+		return 0;
+	if (count > LT_OBJECT_LAMPS)
+		count = LT_OBJECT_LAMPS;
+	for (index = 0; index < count; index++)
+	{
+		const struct xgpu_vulkan_lt_object_lamp *lamp = &lamps[index];
+		float e1[3], e2[3], normal[3];
+
+		for (axis = 0; axis < 3; axis++)
+		{
+			e1[axis] = lamp->corners[3 + axis] - lamp->corners[axis];
+			e2[axis] = lamp->corners[6 + axis] - lamp->corners[axis];
+		}
+		lt_emitter_cross(e1, e2, normal);
+		area[index] = 0.5f * sqrtf(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
+		power[index] = (0.2126f * lamp->radiance[0] + 0.7152f * lamp->radiance[1] + 0.0722f * lamp->radiance[2]) *
+			area[index];
+		if (!(power[index] > 0.0f) || !isfinite(power[index]))
+			power[index] = 0.0f;
+		total += power[index];
+	}
+	if (!(total > 0.0f))
+		return 0;
+	for (index = 0; index < count; index++)
+	{
+		const struct xgpu_vulkan_lt_object_lamp *lamp = &lamps[index];
+
+		running += power[index];
+		lt_set(texels[4 * index], lamp->corners[0], lamp->corners[1], lamp->corners[2],
+			index == count - 1 ? 1.0f : running / total);
+		lt_set(texels[4 * index + 1], lamp->corners[3] - lamp->corners[0], lamp->corners[4] - lamp->corners[1],
+			lamp->corners[5] - lamp->corners[2], area[index]);
+		lt_set(texels[4 * index + 2], lamp->corners[6] - lamp->corners[0], lamp->corners[7] - lamp->corners[1],
+			lamp->corners[8] - lamp->corners[2], (float)lamp->owner);
+		lt_set(texels[4 * index + 3], lamp->radiance[0], lamp->radiance[1], lamp->radiance[2], power[index] / total);
+	}
+	used = (4 * count + LT_TABLE_TEXELS - 1) / LT_TABLE_TEXELS;
+	xgpu_vulkan_image_upload(lt.table, 0, 0, 0, LT_OBJECT_LAMP_ROW, 0, LT_TABLE_TEXELS, (uint32_t)used, 1, texels,
+		LT_TABLE_TEXELS * 16, LT_TABLE_TEXELS * (uint32_t)used * 16);
+	return count;
+}
+
 /* the frame's light table into lt.texels (and the GPU's), its rows' and
 suns' counts into params; skip: the view's shadowed flashlight's index in
 the block (-1 none), E1's own */
@@ -1429,6 +1491,9 @@ static void lt_table(const unsigned char *cells, const struct xgpu_dynamic_light
 		memcpy(params->emitter_counts, lt.emitter_counts, sizeof(params->emitter_counts));
 		memcpy(params->emitter_bases, lt.emitter_bases, sizeof(params->emitter_bases));
 	}
+	/* (the objects' own lamps, in a level lit live: emitter_bases' w their
+count, lt/e1.frag's object_lamp_sample) */
+	params->emitter_bases[3] = (params->lights[2] & LT_LIGHTS_REAL) && !lt.only ? lt_object_lamp_rows() : 0;
 	lt.live = (params->lights[2] & LT_LIGHTS_REAL) != 0;
 }
 
