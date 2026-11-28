@@ -65,6 +65,9 @@ Render thread alone.
 #define INDIRECT_COVERAGE 2097152
 #define INDIRECT_CACHE_ON 4194304
 #define INDIRECT_BOUNCE_HISTORY 8388608
+#define INDIRECT_RESTIR 16777216
+#define INDIRECT_RESTIR_TEMPORAL 33554432
+#define INDIRECT_RESTIR_SPATIAL 67108864
 /* where its parameters are in the uniforms (lt/e1.frag's indirect[4]) */
 #define INDIRECT_PARAMS_OFFSET 1536
 /* the cache's slots (a texel each, RGBA32F: 24 MB; lt/indirect_cache.glsl's
@@ -85,7 +88,7 @@ _Static_assert(INDIRECT_PARAMS_OFFSET + 64 <= 192 * 16, "the parameters within t
 
 static struct
 {
-	int settings_read, indirect, reflections, cache, only, made, failed, said;
+	int settings_read, indirect, reflections, cache, only, restir_on, made, failed, said;
 	unsigned generation;
 	VkShaderModule vertex, fragment;
 	VkSampler sampler;
@@ -100,6 +103,10 @@ static struct
 	bounce pass's second output: the one the denoiser reads this frame */
 	struct xgpu_vulkan_image *bounce_histories[2], *bounce_history;
 	int bounce_history_valid;
+	/* ReSTIR GI (lt/indirect.glsl's RESTIR): the initial reservoirs (a, b),
+	the temporal ones in turn (this frame's the next's history) */
+	struct xgpu_vulkan_image *restir_initial[2], *restir[2][2];
+	int restir_current, restir_valid;
 	int current, cache_current, cache_valid;
 	unsigned long frames;
 	/* this frame's bounce's phase, and whether it was drawn (the fold's) */
@@ -146,6 +153,9 @@ static void indirect_settings(void)
 	indirect.indirect = !given || strcmp(given, "0");
 	indirect.only = given && !strcmp(given, "only");
 	indirect.cache = !given || strcmp(given, "nocache");
+	/* (HALO_LT_RESTIR_GI=0, checking: the bounce's own sample, no reuse) */
+	given = getenv("HALO_LT_RESTIR_GI");
+	indirect.restir_on = !given || strcmp(given, "0");
 	given = getenv("HALO_LT_SPECULAR");
 	indirect.reflections = indirect.indirect && (!given || strcmp(given, "0"));
 	if (getenv("HALO_LT_INDIRECT") || getenv("HALO_LT_SPECULAR"))
@@ -168,7 +178,7 @@ static int indirect_shaders(void)
 	{
 		/* (a reload: the kernels made again, the histories and the cache
 		started again) */
-		indirect.made = indirect.failed = indirect.cache_valid = indirect.bounce_history_valid = 0;
+		indirect.made = indirect.failed = indirect.cache_valid = indirect.bounce_history_valid = indirect.restir_valid = 0;
 		indirect.generation = generation;
 	}
 	if (indirect.made)
@@ -391,6 +401,25 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 	}
 	if (indirect.reflections)
 		indirect.specular_raw = indirect_image(indirect.specular_raw, XGPU_VULKAN_FORMAT_RGBA16F, width, height);
+	if (indirect.restir_on)
+	{
+		for (index = 0; index < 2; index++)
+		{
+			int half_index;
+
+			if (!indirect.restir[index][0] ||
+				xgpu_vulkan_image_description(indirect.restir[index][0])->width != half_width ||
+				xgpu_vulkan_image_description(indirect.restir[index][0])->height != half_height)
+				indirect.restir_valid = 0;
+			indirect.restir_initial[index] = indirect_image(indirect.restir_initial[index], XGPU_VULKAN_FORMAT_RGBA32F,
+				half_width, half_height);
+			for (half_index = 0; half_index < 2; half_index++)
+				indirect.restir[index][half_index] = indirect_image(indirect.restir[index][half_index],
+					XGPU_VULKAN_FORMAT_RGBA32F, half_width, half_height);
+			if (!indirect.restir_initial[index] || !indirect.restir[index][0] || !indirect.restir[index][1])
+				return NULL;
+		}
+	}
 	if (!indirect.bounce || (!frame->fold && !indirect.total) || !indirect.caches[0] || !indirect.caches[1] || (counted && (!indirect.histories[0] || !indirect.histories[1])) ||
 		(indirect.reflections && (!indirect.specular_raw || !indirect.coverage[0] || !indirect.coverage[1] ||
 		(accumulate && (!indirect.specular_histories[0] || !indirect.specular_histories[1])))))
@@ -409,7 +438,48 @@ struct xgpu_vulkan_image *xgpu_vulkan_lt_indirect_draw(const struct xgpu_vulkan_
 		struct xgpu_vulkan_image *textures[6] = { frame->inputs, indirect.caches[indirect.cache_current],
 			frame->previous_inputs, frame->guides, frame->table, NULL };
 
-		if (frame->fold)
+		if (indirect.restir_on)
+		{
+			/* ReSTIR GI: the initial reservoirs (b the color target, a the
+			second), the temporal reuse into this frame's, the spatial reuse
+			and the block's sample (and, folded, its history) into the
+			bounce, which the cache, the history and the upsampling read as
+			they read the bounce's own sample */
+			struct xgpu_vulkan_image *const *now = indirect.restir[indirect.restir_current ^ 1];
+			struct xgpu_vulkan_image *const *before = indirect.restir[indirect.restir_current];
+			struct xgpu_vulkan_image *temporal[6] = { frame->inputs, indirect.restir_initial[1], frame->previous_inputs,
+				before[1], indirect.restir_initial[0], before[0] };
+			struct xgpu_vulkan_image *spatial[6] = { frame->inputs, now[1], frame->previous_inputs, frame->guides, now[0],
+				NULL };
+			float counted[4][4];
+			int history_reset = reset || !indirect.bounce_history_valid;
+
+			xgpu_vulkan_set_motion_target(indirect.restir_initial[0], indirect.restir_initial[1]);
+			indirect_pass(indirect.restir_initial[1], half, frame, INDIRECT_BOUNCE | INDIRECT_RESTIR |
+				(reset ? INDIRECT_RESET : 0), frame->cap, textures, &indirect.bounce_pass, parameters);
+			xgpu_vulkan_set_motion_target(now[0], now[1]);
+			indirect_pass(now[1], half, frame, INDIRECT_RESTIR_TEMPORAL | (reset || !indirect.restir_valid ?
+				INDIRECT_RESET : 0), frame->cap, temporal, &indirect.bounce_pass, parameters);
+			xgpu_vulkan_set_motion_target(NULL, NULL);
+			memcpy(counted, parameters, sizeof(counted));
+			counted[3][0] = (float)INDIRECT_BOUNCE_CAP;
+			if (frame->fold)
+			{
+				spatial[5] = indirect.bounce_histories[indirect.current];
+				indirect.bounce_history = indirect.bounce_histories[indirect.current ^ 1];
+				xgpu_vulkan_set_motion_target(indirect.bounce_history, indirect.bounce);
+				indirect_pass(indirect.bounce, half, frame, INDIRECT_RESTIR_SPATIAL | INDIRECT_BOUNCE_HISTORY |
+					(history_reset ? INDIRECT_RESET : 0), frame->cap, spatial, &indirect.bounce_pass, counted);
+				xgpu_vulkan_set_motion_target(NULL, NULL);
+				indirect.bounce_history_valid = 1;
+			}
+			else
+				indirect_pass(indirect.bounce, half, frame, INDIRECT_RESTIR_SPATIAL, frame->cap, spatial, &indirect.wide,
+					parameters);
+			indirect.restir_current ^= 1;
+			indirect.restir_valid = 1;
+		}
+		else if (frame->fold)
 		{
 			/* (the fold: the bounce's half-resolution history counted by the
 			same pass, its second output, from the last frame's) */

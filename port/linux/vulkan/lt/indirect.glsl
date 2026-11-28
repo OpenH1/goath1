@@ -38,6 +38,15 @@
 #define CACHE_ON 4194304
 // (with BOUNCE: its history too, the second output)
 #define BOUNCE_HISTORY 8388608
+// ReSTIR GI (Ouyang 2021) for the bounce, three draws at half resolution (xgpu_vulkan_lt_indirect.c): with BOUNCE,
+// each block's initial reservoir (its rays as RIS candidates) in place of its sample; RESTIR_TEMPORAL, the frame
+// before's reservoir merged in where the block's surface was; RESTIR_SPATIAL, neighbour blocks' reservoirs merged in
+// (each shifted to this receiver by its Jacobian and one visibility ray), then the block's sample (the old BOUNCE's
+// output, which the cache, the history and the upsampling read) and its history (BOUNCE_HISTORY)
+#define RESTIR 16777216
+#define RESTIR_TEMPORAL 33554432
+#define RESTIR_SPATIAL 67108864
+#define LIGHT_HASH 127u
 
 // the shader types (shaders.c's; xgpu_spirv.c's RT_REFLECTION_KIND_*)
 #define KIND_ENVIRONMENT 3u
@@ -61,9 +70,24 @@
 #define BOUNCE_FIRST 4
 // the roughness up to which a reflection is its mirror ray alone
 #define MIRROR_ROUGHNESS 0.1
+// ReSTIR GI: the temporal history's count, capped before it is merged (the direct ReSTIR's lesson, lt/e1.frag: capped
+// after, its weight grows every frame a held view keeps it); the spatial neighbours, their reach (blocks); a shift's
+// Jacobian kept within a factor of RESTIR_JACOBIAN (beyond it the neighbour's sample is a different path: rejected)
+#define RESTIR_M_CAP 20.0
+#define RESTIR_NEIGHBOURS 3
+#define RESTIR_PREVIOUS_NEIGHBOURS 2
+#define RESTIR_RADIUS 6.0
+#define RESTIR_JACOBIAN 8.0
+// the history kept where the lights about a receiver changed (its light-id hash): the bounce's history's frames, the
+// ReSTIR GI temporal reuse's count (a few frames' lag for a light that went, never a history started again each frame)
+#define LIGHTS_CHANGED 4.0
+#define PI 3.14159265
 
 // (the bindings as the modes use them)
 #define cache_image history_image
+// (RESTIR_TEMPORAL: the frame before's reservoirs' second half in the guides' slot, a float image there; only that
+// mode reads it, and only through this name: a binding read as one type a draw)
+layout(set = 1, binding = 3) uniform sampler2D restir_previous_b;
 
 struct Hit
 {
@@ -258,7 +282,8 @@ vec3 direct_one(vec3 p, vec3 n, int owner, ivec2 pixel, float salt, inout uint h
 }
 
 // the light-id hash of p's lights (its cell's, by their stable ids: the light table's texel 7; the flashlight's
-// being on), 10 bits
+// being on), 7 bits (LIGHT_HASH: what the ReSTIR GI reservoirs have room for, its packed word; a change missed once in
+// 128)
 uint light_hash(vec3 p, vec3 n)
 {
     uint h = pass.control.y != 0 && (pass.lights.z & LIGHTS_FLASHLIGHT) != 0 ? 0x2545u : 0u;
@@ -279,7 +304,7 @@ uint light_hash(vec3 p, vec3 n)
             }
         }
     }
-    return h & 1023u;
+    return h & LIGHT_HASH;
 }
 
 // the cache's indirect light at a hit: its cell's mean where the slot holds that cell (its check) for the same lights
@@ -339,6 +364,296 @@ bool point_at(ivec2 pixel, out vec3 p, out vec3 n)
     p = pass.camera[0].xyz + ray * uintBitsToFloat(words.z);
     return (words.y & INPUT_PRESENT) != 0u && all(greaterThanEqual(pixel, pass.corners.xy)) &&
         all(lessThan(pixel, pass.corners.zw));
+}
+
+// ---------- ReSTIR GI: a reservoir a block, two RGBA32F texels (a: the sample's point, then its normal (octahedral,
+// 6 bits an axis), the count M (5 bits) and the receiver's light-id hash (7 bits) as one whole number, exact in a
+// float; b: the sample's outgoing radiance (linear, a Lambertian hit's: the same toward every receiver) and the
+// weights' sum). The target is the radiance's luminance, so a weight carries over between receivers by the shift's
+// Jacobian alone; a reservoir's W is its sum over M x the target; the block's sample is f W, f the radiance times the
+// receiver's own cosine (its shaded normal).
+struct GI
+{
+    vec3 x, n, L;
+    float w, m;
+    uint hash;
+};
+
+vec2 octahedral(vec3 n)
+{
+    n /= abs(n.x) + abs(n.y) + abs(n.z);
+    vec2 e = n.xy;
+    if (n.z < 0.0)
+        e = (1.0 - abs(e.yx)) * vec2(e.x >= 0.0 ? 1.0 : -1.0, e.y >= 0.0 ? 1.0 : -1.0);
+    return e;
+}
+
+GI gi_read(vec4 a, vec4 b)
+{
+    uint packed = uint(max(a.w, 0.0));
+    vec2 e = vec2(float(packed & 63u), float((packed >> 6) & 63u)) / 63.0 * 2.0 - 1.0;
+    return GI(a.xyz, unfold(e), max(b.rgb, vec3(0.0)), max(b.a, 0.0), float((packed >> 12) & 31u), packed >> 17);
+}
+
+void gi_write(GI r, out vec4 a, out vec4 b)
+{
+    uvec2 q = uvec2(clamp(floor((octahedral(r.n) * 0.5 + 0.5) * 63.0 + 0.5), 0.0, 63.0));
+    a = vec4(r.x, float(q.x + 64u * q.y + 4096u * uint(min(r.m, 31.0)) + 131072u * (r.hash & LIGHT_HASH)));
+    b = vec4(r.L, r.w);
+}
+
+// a candidate (its RIS weight w, its count m) streamed into r
+void gi_update(inout GI r, GI candidate, float w, float m, inout uint h)
+{
+    r.w += w;
+    r.m += m;
+    if (w > 0.0 && random(h) * r.w < w)
+    {
+        r.x = candidate.x;
+        r.n = candidate.n;
+        r.L = candidate.L;
+    }
+}
+
+// the shift of a sample (point x, normal n toward its first receiver) from receiver from to receiver to: the solid
+// angle's Jacobian, (cos at x toward to / toward from) x (distance from from / from to)^2; 0 where x's surface faces
+// away from to or the ratio is beyond RESTIR_JACOBIAN either way (another path)
+float gi_jacobian(vec3 from, vec3 to, vec3 x, vec3 n)
+{
+    vec3 a = from - x, b = to - x;
+    float da = dot(a, a), db = dot(b, b);
+    if (da <= 0.0 || db <= 0.0)
+        return 0.0;
+    float ca = dot(n, a) * inversesqrt(da), cb = dot(n, b) * inversesqrt(db);
+    if (ca <= 1.0e-4 || cb <= 1.0e-4)
+        return 0.0;
+    float j = (cb / ca) * (da / db);
+    return j > RESTIR_JACOBIAN || j < 1.0 / RESTIR_JACOBIAN ? 0.0 : j;
+}
+
+// a block's receiver this frame: the first of its pixels in the phase's turn with a surface (bounce_main's choice)
+bool gi_receiver(ivec2 block, int phase, out ivec2 pixel, out int which, out vec3 p, out vec3 n, out uint owner)
+{
+    for (which = 0; which < 4; which++)
+    {
+        pixel = block * 2 + block_pixel(phase + which);
+        if (point_at(pixel, p, n))
+        {
+            owner = texelFetch(inputs, pixel, 0).w;
+            return true;
+        }
+    }
+    owner = 0u;
+    return false;
+}
+
+// a block's receiver the frame before (the frame before's phase, its inputs and camera): its point
+bool gi_previous_receiver(ivec2 block, out vec3 p)
+{
+    int phase = int(pass.indirect[1].y) + 3;
+    vec2 low = vec2(pass.previous_corners.xy), size = vec2(pass.previous_corners.zw) - low;
+    for (int which = 0; which < 4; which++)
+    {
+        ivec2 pixel = block * 2 + block_pixel(phase + which);
+        uvec4 words = texelFetch(previous_inputs, pixel, 0);
+        if ((words.y & INPUT_PRESENT) == 0u || any(lessThan(pixel, pass.previous_corners.xy)) ||
+            any(greaterThanEqual(pixel, pass.previous_corners.zw)))
+            continue;
+        vec2 screen = (vec2(pixel) + 0.5 - low) * 2.0 / size - 1.0;
+        vec3 ray = normalize(pass.previous[1].xyz + pass.previous[2].xyz * screen.x + pass.previous[3].xyz * screen.y);
+        p = pass.previous[0].xyz + ray * uintBitsToFloat(words.z);
+        return true;
+    }
+    p = vec3(0.0);
+    return false;
+}
+
+// BOUNCE with RESTIR: the block's initial reservoir, its rays its RIS candidates (the source's pdf the cosine's about
+// the shaded normal, cos / pi; the weight the target over it). A ray that meets nothing (or a hit without a record)
+// is a candidate of no radiance, its point along the ray at its reach (the sky's, once the bounce carries it: a far
+// point, its normal back along the ray, so its shifts' Jacobian is about 1)
+void bounce_initial(ivec2 block, out vec4 a, out vec4 b)
+{
+    a = vec4(0.0);
+    b = vec4(0.0);
+    ivec2 pixel;
+    int which;
+    vec3 p, n, shaded;
+    uint owner;
+    int phase = int(pass.indirect[1].y);
+    bool found = false;
+    for (which = 0; which < 4 && !found; which++)
+    {
+        pixel = block * 2 + block_pixel(phase + which);
+        found = surface_at(pixel, p, n, shaded, owner);
+    }
+    if (!found)
+        return;
+    int rays = (pass.control.w & RESET) != 0 ? BOUNCE_FIRST : 1;
+    vec3 origin = p + n * (0.004 + 0.0005 * length(p - pass.camera[0].xyz));
+    uint h = seed(pixel, 11u), choose = seed(pixel, 23u);
+    GI r = GI(origin, n, vec3(0.0), 0.0, 0.0, light_hash(p, n));
+    for (int k = 0; k < rays; k++)
+    {
+        vec3 d = cosine_direction(shaded, stratified(pixel, 5.0 + 17.0 * float(k)));
+        float c = dot(shaded, d);
+        GI s = GI(origin + d * BOUNCE_REACH, -d, vec3(0.0), 0.0, 1.0, 0u);
+        if (dot(d, n) > 0.0 && c > 1.0e-4)
+        {
+            Hit hit = trace(origin, d, BOUNCE_REACH, int(owner), false, MASK_AO);
+            if (hit.hit)
+            {
+                s.x = hit.p;
+                s.n = hit.n;
+            }
+            if (hit.attributes)
+                s.L = hit.albedo * (direct_one(hit.p, hit.n, hit.owner, pixel, 6.0 + 17.0 * float(k), h) +
+                    cache_lookup(hit.p, hit.n)) / PI;
+            if (any(isnan(s.L)) || any(isinf(s.L)))
+                s.L = vec3(0.0);
+        }
+        gi_update(r, s, c > 1.0e-4 ? luminance_of(s.L) * PI / c : 0.0, 1.0, choose);
+    }
+    gi_write(r, a, b);
+}
+
+// RESTIR_TEMPORAL: the initial reservoir (history_image: b, light_table: a) and the frame before's (reservoirs: a,
+// restir_previous_b: b) where the block's receiver was, and RESTIR_PREVIOUS_NEIGHBOURS of its neighbours' there (on
+// the same surface, a ray from this receiver reaching their point), so that a rare bright path spreads from frame to
+// frame over the blocks that can see it. The frame before's counts are capped before the merge, together: at most
+// RESTIR_M_CAP of history whatever the neighbours (the direct ReSTIR's lesson), LIGHTS_CHANGED where the receiver's
+// lights changed (the hash: a light that went takes its bounce with it within a few frames); each shifted to this
+// receiver by its Jacobian
+void restir_temporal(ivec2 block, out vec4 a, out vec4 b)
+{
+    GI r = gi_read(texelFetch(light_table, block, 0), texelFetch(history_image, block, 0));
+    a = texelFetch(light_table, block, 0);
+    b = texelFetch(history_image, block, 0);
+    ivec2 pixel, q;
+    int which;
+    vec3 p, n;
+    uint owner;
+    if ((pass.control.w & RESET) != 0 || r.m <= 0.0 || !gi_receiver(block, int(pass.indirect[1].y), pixel, which, p, n,
+        owner) || !reproject(p, n, owner, q))
+        return;
+    ivec2 before = q / 2, blocks = ivec2(pass.indirect[0].xy);
+    uint h = seed(pixel, 29u);
+    float distance = length(p - pass.camera[0].xyz);
+    vec3 origin = p + n * (0.004 + 0.0005 * distance);
+    // (the candidates: the block's own (k 0, no ray: its own surface's history) and its neighbours')
+    GI candidates[1 + RESTIR_PREVIOUS_NEIGHBOURS];
+    float weights[1 + RESTIR_PREVIOUS_NEIGHBOURS], counts[1 + RESTIR_PREVIOUS_NEIGHBOURS], total = 0.0;
+    for (int k = 0; k <= RESTIR_PREVIOUS_NEIGHBOURS; k++)
+    {
+        weights[k] = 0.0;
+        counts[k] = 0.0;
+        candidates[k] = r;
+        ivec2 other = before;
+        if (k > 0)
+        {
+            vec2 u = vec2(random(h), random(h));
+            other += ivec2(round(sqrt(u.x) * RESTIR_RADIUS * vec2(cos(6.2831853 * u.y), sin(6.2831853 * u.y))));
+            if (other == before || any(lessThan(other, ivec2(0))) || any(greaterThanEqual(other, blocks)))
+                continue;
+        }
+        GI old = gi_read(texelFetch(reservoirs, other, 0), texelFetch(restir_previous_b, other, 0));
+        vec3 from;
+        if (old.m <= 0.0 || !gi_previous_receiver(other, from))
+            continue;
+        if (k > 0 && abs(dot(from - p, n)) > 0.02 * distance)
+            continue;
+        float j = gi_jacobian(from, p, old.x, old.n);
+        if (j <= 0.0)
+            continue;
+        if (k > 0)
+        {
+            vec3 to = old.x - origin;
+            float reach = length(to);
+            if (dot(to, n) <= 0.0 || reach <= 1.0e-3 ||
+                visible_by(origin, to / reach, reach * 0.999 - 0.002, int(owner), 0u, MASK_AO) <= 0.0)
+                continue;
+        }
+        float m = min(old.m, old.hash != r.hash ? LIGHTS_CHANGED : RESTIR_M_CAP);
+        candidates[k] = old;
+        counts[k] = m;
+        weights[k] = old.w * (m / old.m) * j;
+        total += m;
+    }
+    float scale = total > RESTIR_M_CAP ? RESTIR_M_CAP / total : 1.0;
+    // (the lights changed: at most LIGHTS_CHANGED of history in all)
+    if (counts[0] > 0.0 && candidates[0].hash != r.hash)
+        scale = min(scale, LIGHTS_CHANGED / total);
+    GI merged = r;
+    merged.w = 0.0;
+    merged.m = 0.0;
+    gi_update(merged, r, r.w, r.m, h);
+    for (int k = 0; k <= RESTIR_PREVIOUS_NEIGHBOURS; k++)
+        if (counts[k] > 0.0)
+            gi_update(merged, candidates[k], weights[k] * scale, counts[k] * scale, h);
+    gi_write(merged, a, b);
+}
+
+// RESTIR_SPATIAL: the block's reservoir (light_table: a, history_image: b) and RESTIR_NEIGHBOURS neighbours' within
+// RESTIR_RADIUS blocks on the same surface (owner, normal within 25 degrees, the plane), each
+// shifted to this receiver and kept where a ray reaches its point; then the block's sample, f W (out: rgb, a its code:
+// 1 + the light-id hash + 1024 x the block's pixel, as BOUNCE's); p, n, owner the receiver's for the history
+vec4 restir_spatial(ivec2 block, out vec3 p, out vec3 n, out uint owner, out bool found)
+{
+    ivec2 pixel;
+    vec3 shaded;
+    int which, phase = int(pass.indirect[1].y);
+    found = false;
+    for (which = 0; which < 4 && !found; which++)
+    {
+        pixel = block * 2 + block_pixel(phase + which);
+        found = surface_at(pixel, p, n, shaded, owner);
+    }
+    if (!found)
+        return vec4(0.0);
+    which--;
+    GI own = gi_read(texelFetch(light_table, block, 0), texelFetch(history_image, block, 0));
+    GI r = own;
+    r.w = 0.0;
+    r.m = 0.0;
+    uint h = seed(pixel, 31u);
+    gi_update(r, own, own.w, own.m, h);
+    ivec2 blocks = ivec2(pass.indirect[0].xy);
+    float distance = length(p - pass.camera[0].xyz);
+    vec3 origin = p + n * (0.004 + 0.0005 * distance);
+    for (int k = 0; k < RESTIR_NEIGHBOURS; k++)
+    {
+        vec2 u = vec2(random(h), random(h));
+        vec2 offset = sqrt(u.x) * RESTIR_RADIUS * vec2(cos(6.2831853 * u.y), sin(6.2831853 * u.y));
+        ivec2 other = block + ivec2(round(offset));
+        if (other == block || any(lessThan(other, ivec2(0))) || any(greaterThanEqual(other, blocks)))
+            continue;
+        ivec2 opixel;
+        int owhich;
+        vec3 q, qn;
+        uint qowner;
+        if (!gi_receiver(other, phase, opixel, owhich, q, qn, qowner) || qowner != owner || dot(qn, n) < 0.906 ||
+            abs(dot(q - p, n)) > 0.02 * distance)
+            continue;
+        GI s = gi_read(texelFetch(light_table, other, 0), texelFetch(history_image, other, 0));
+        // (any neighbour's lights: its sample's radiance is this frame's or its own chain's, as true here as there;
+        // the target is the radiance at the sample's point, the same for every receiver)
+        if (s.m <= 0.0)
+            continue;
+        float j = gi_jacobian(q, p, s.x, s.n);
+        vec3 to = s.x - origin;
+        float reach = length(to);
+        if (j <= 0.0 || dot(to, n) <= 0.0 || reach <= 1.0e-3 ||
+            visible_by(origin, to / reach, reach * 0.999 - 0.002, int(owner), 0u, MASK_AO) <= 0.0)
+            continue;
+        gi_update(r, s, s.w * j, s.m, h);
+    }
+    float target = luminance_of(r.L);
+    vec3 d = r.x - p;
+    float c = max(dot(shaded, normalize(d)), 0.0);
+    vec3 e = target > 0.0 && r.m > 0.0 && dot(d, n) > 0.0 ? r.L * c * (r.w / (r.m * target)) : vec3(0.0);
+    if (any(isnan(e)) || any(isinf(e)))
+        e = vec3(0.0);
+    return vec4(e, 1.0 + float(own.hash) + 1024.0 * float(which));
 }
 
 vec4 bounce_main(ivec2 block, out vec3 p, out vec3 n, out uint owner, out bool found)
@@ -524,12 +839,23 @@ void main()
 {
     ivec2 pixel = ivec2(gl_FragCoord.xy);
     int flags = pass.control.w;
-    if ((flags & BOUNCE) != 0)
+    if ((flags & BOUNCE) != 0 && (flags & RESTIR) != 0)
+    {
+        bounce_initial(pixel, bounce_history, result);
+        return;
+    }
+    if ((flags & RESTIR_TEMPORAL) != 0)
+    {
+        restir_temporal(pixel, bounce_history, result);
+        return;
+    }
+    if ((flags & (BOUNCE | RESTIR_SPATIAL)) != 0)
     {
         vec3 p, n;
         uint owner;
         bool found;
-        result = bounce_main(pixel, p, n, owner, found);
+        result = (flags & RESTIR_SPATIAL) != 0 ? restir_spatial(pixel, p, n, owner, found) :
+            bounce_main(pixel, p, n, owner, found);
         // (the bounce's history at half resolution, ahead of the denoiser's temporal stage: its block's samples counted
         // (1/n up to indirect[3].x frames) where the block's surface was the frame before (the traced pixel's point
         // reprojected, the previous inputs' surface there: lt/e1.frag's reproject); rgb the mean, a the sample's code
@@ -547,13 +873,13 @@ void main()
                 count = floor(old.a / 8192.0);
                 mean = old.rgb;
                 // (the lights about the surface changed (one came or went: its light-id hash, the cache's rule):
-                // the history starts again, so a light that is gone leaves no bounce behind it)
+                // the history kept short, LIGHTS_CHANGED frames, so a light that is gone takes its bounce with it
+                // within a few frames. Not started again: where many small lights come and go (needles, bolts
+                // crossing the cells) the hash changes nearly every frame, and a history started again each frame is
+                // the raw sample, a rare bright path shown whole: the combat's speckles)
                 float was = old.a - 8192.0 * count - 1.0, now = result.a - 1.0;
                 if (count > 0.0 && mod(was, 1024.0) != mod(now, 1024.0))
-                {
-                    count = 0.0;
-                    mean = vec3(0.0);
-                }
+                    count = min(count, LIGHTS_CHANGED);
             }
             count = min(count + 1.0, max(pass.indirect[3].x, 1.0));
             mean += (result.rgb - mean) / count;
